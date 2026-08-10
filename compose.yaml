@@ -1,0 +1,22 @@
+services:
+  webobs:
+    image: webobs:m0
+    build:
+      context: .
+      dockerfile: docker/Dockerfile
+      args:
+        OBS_VERSION: "32.1.2"
+    environment:
+      WEBOBS_RTSP_URL: ${WEBOBS_RTSP_URL:-}
+      WEBOBS_OUTPUT: ${WEBOBS_OUTPUT:-}
+      WEBOBS_DURATION_SECONDS: ${WEBOBS_DURATION_SECONDS:-0}
+      WEBOBS_WIDTH: ${WEBOBS_WIDTH:-1920}
+      WEBOBS_HEIGHT: ${WEBOBS_HEIGHT:-1080}
+      WEBOBS_FPS: ${WEBOBS_FPS:-30}
+      WEBOBS_BITRATE_KBPS: ${WEBOBS_BITRATE_KBPS:-6000}
+      WEBOBS_CONNECT_TIMEOUT_SECONDS: ${WEBOBS_CONNECT_TIMEOUT_SECONDS:-20}
+      WEBOBS_RTSP_TRANSPORT: ${WEBOBS_RTSP_TRANSPORT:-tcp}
+      WEBOBS_LOG_LEVEL: ${WEBOBS_LOG_LEVEL:-info}
+    volumes:
+      - ./recordings:/recordings
+    stop_grace_period: 20s

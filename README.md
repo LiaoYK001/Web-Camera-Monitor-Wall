@@ -1,0 +1,153 @@
+# Web Camera Monitor Wall
+
+一个基于 `libobs` 的无桌面 Web 监控墙/合成器项目。当前仓库处于 **M0**：先证明无需 OBS Qt 界面，也能在 Linux Docker 容器中完成下面的闭环。
+
+```text
+RTSP camera -> libobs ffmpeg_source -> OBS scene -> obs_x264 -> video-only MP4
+```
+
+当前版本没有 Web UI、HTTP API、WebRTC、正式 MediaMTX 服务、多路场景、摄像头音频或硬件编码。这些属于后续里程碑。
+
+## M0 技术基线
+
+- OBS Studio `32.1.2`，固定 submodule 提交 `fb4d98bf88fae5fc85cb11fc57f7c5e309282194`
+- Ubuntu 24.04、C++20、CMake 3.28+、x86_64
+- X11/EGL + Xvfb + Mesa 软件合成
+- x264 CBR、`veryfast`、High Profile、2 秒关键帧间隔
+- RTSP 默认使用 TCP，硬件解码关闭
+- 产品运行时只有一个 Docker 镜像，不开放网络端口
+
+OBS 的 `ffmpeg_muxer` 要求同时连接视频和音频编码器。M0 会写入一个带静音 AAC 的临时 MKV，停止后通过 FFmpeg stream copy 生成只有 H.264 视频轨的最终 MP4；画面不会被二次编码，临时文件成功后会删除。
+
+## 前置条件
+
+- Docker Desktop，启用 WSL2 与 Linux containers
+- Docker Compose v2
+- Git
+- 建议给 Docker 分配至少 8 GB 内存并预留 20 GB 磁盘；首次编译 OBS 会花费较长时间
+
+克隆时必须初始化递归 submodule：
+
+```bash
+git clone --recurse-submodules https://github.com/LiaoYK001/Web-Camera-Monitor-Wall.git
+cd Web-Camera-Monitor-Wall
+git submodule update --init --recursive
+```
+
+已存在的工作副本只需执行最后一条命令。
+
+## 使用真实摄像头
+
+PowerShell：
+
+```powershell
+Copy-Item .env.example .env
+notepad .env
+docker compose up --build --abort-on-container-exit
+```
+
+Linux/macOS shell：
+
+```bash
+cp .env.example .env
+${EDITOR:-vi} .env
+docker compose up --build --abort-on-container-exit
+```
+
+至少修改：
+
+```dotenv
+WEBOBS_RTSP_URL=rtsp://user:password@camera-host:554/stream
+```
+
+默认输出到 `recordings/webobs-<UTC timestamp>.mp4`。若 `WEBOBS_DURATION_SECONDS=0`，录制会持续到 `Ctrl+C` 或容器收到 `SIGTERM`；停止时会完成 muxer 和 MP4 封装。已有的显式输出文件不会被覆盖。
+
+RTSP URL 可能被 OBS 插件写入日志，因此核心日志处理器会把 `rtsp://user:password@host/...` 统一改写成 `rtsp://***:***@host/...`。不要把真实 URL 写入 Compose、README 或提交到 Git。
+
+## 命令行接口
+
+容器配置优先级为：命令行参数 > `WEBOBS_*` 环境变量 > 默认值。
+
+```text
+webobsd
+  --rtsp-url <url>
+  --output <path.mp4>
+  --duration-seconds <0..604800>
+  --width <even 16..8192>
+  --height <even 16..8192>
+  --fps <1..120>
+  --bitrate-kbps <50..100000>
+  --connect-timeout-seconds <1..300>
+  --rtsp-transport <tcp|udp>
+  --log-level <error|warn|info|debug>
+  --help
+  --version
+```
+
+例如直接覆盖 Compose 的默认命令：
+
+```bash
+docker compose run --rm webobs \
+  --rtsp-url "rtsp://user:password@camera/stream" \
+  --output /recordings/manual.mp4 \
+  --duration-seconds 30
+```
+
+## 确定性烟测
+
+烟测中的 MediaMTX 和 FFmpeg 只负责产生本地测试图 RTSP，不会进入产品镜像。测试会构建项目、录制约 10 秒，再检查：
+
+- MP4 存在且可完整解码
+- 唯一视频轨为 H.264
+- 不含音频轨
+- 分辨率为 640×360
+- 帧率为 10 FPS
+- 时长在预期范围内
+- 首帧不是空黑画面
+
+同一入口还覆盖缺失 URL、无法连接、错误输出目录、已有文件拒绝覆盖、日志凭据脱敏，以及容器收到 `SIGTERM` 后完整冲洗并封装 MP4。
+
+PowerShell：
+
+```powershell
+./tests/run-smoke.ps1
+```
+
+Linux shell：
+
+```bash
+./tests/run-smoke.sh
+```
+
+成功产物位于 `tests/artifacts/smoke.mp4`；SIGTERM 用例还会生成 `tests/artifacts/signal.mp4`。该目录内容不会进入 Git。
+
+## 本地 CMake 结构
+
+Docker 构建会先配置 OBS，并只编译以下目标：
+
+```text
+libobs
+libobs-opengl
+obs-ffmpeg
+obs-x264
+obs-ffmpeg-mux
+```
+
+之后编译 `webobsd` 和无外部测试框架的 CTest 单元测试。单元测试覆盖参数边界、CLI/环境变量优先级和 RTSP 凭据脱敏。
+
+## 退出状态
+
+| 状态 | 含义 |
+| ---: | --- |
+| 0 | 成功或录制开始前收到正常停止信号 |
+| 2 | 配置或命令行无效 |
+| 3 | libobs、图形、音频或模块初始化失败 |
+| 4 | RTSP 在超时前没有产生视频帧 |
+| 5 | 编码器、muxer、目录或录制输出失败 |
+| 6 | 最终 video-only MP4 封装失败 |
+
+## 许可证
+
+本项目采用 `GPL-2.0-or-later`。OBS Studio 及其 submodule 保留各自的上游版权和许可证声明。
+
+漏洞报告和凭据处理要求见 [SECURITY.md](SECURITY.md)。

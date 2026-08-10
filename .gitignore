@@ -1,1 +1,14 @@
 /document/plan
+/.env*
+!/.env.example
+/secrets/
+*.key
+*.pem
+*.p12
+*.pfx
+/build/
+/build-*/
+/recordings/*
+!/recordings/.gitkeep
+/tests/artifacts/*
+!/tests/artifacts/.gitkeep

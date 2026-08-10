@@ -1,0 +1,15 @@
+.git
+**/.env*
+!.env.example
+**/secrets/**
+**/*.key
+**/*.pem
+**/*.p12
+**/*.pfx
+build
+build-*
+document
+recordings/*
+!recordings/.gitkeep
+tests/artifacts/*
+!tests/artifacts/.gitkeep
