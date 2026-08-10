@@ -8,6 +8,8 @@ RTSP camera -> libobs ffmpeg_source -> OBS scene -> obs_x264 -> video-only MP4
 
 当前版本没有 Web UI、HTTP API、WebRTC、正式 MediaMTX 服务、多路场景、摄像头音频或硬件编码。这些属于后续里程碑。
 
+开发路线、里程碑验收标准和当前进度见 [ROADMAP.md](ROADMAP.md)。目前位于 **M0 运行验收门禁**：实现和静态检查已完成，Docker 合成流及真实摄像头验收尚待执行。
+
 ## M0 技术基线
 
 - OBS Studio `32.1.2`，固定 submodule 提交 `fb4d98bf88fae5fc85cb11fc57f7c5e309282194`
