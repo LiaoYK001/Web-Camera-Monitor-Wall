@@ -24,6 +24,6 @@ Please avoid opening a public issue for a suspected vulnerability. Use the repos
 
 ## Supported versions / 支持版本
 
-Security fixes are currently provided for the latest commit on the default branch while the project is in M0 development. M0 exposes no network port and includes no Web UI or HTTP/WebSocket/WebRTC service.
+Security fixes are currently provided for the latest commit on the default branch while the project is in M1 development. The M1 REST/WebSocket control plane has no authentication or TLS: the product Compose publishes it on host loopback only, validates local Host/Origin values, sends no CORS permission, and requires `If-Match` for mutations. Do not expose it on a LAN or the Internet. Authentication, authorization, TLS, and hardened remote deployment remain M6 work.
 
-项目处于 M0 开发阶段，安全修复仅面向默认分支的最新提交。M0 不开放网络端口，也不包含 Web UI、HTTP、WebSocket 或 WebRTC 服务。
+项目处于 M1 开发阶段，安全修复仅面向默认分支的最新提交。M1 REST/WebSocket 控制面尚无认证和 TLS；产品 Compose 仅发布到主机回环地址，并校验本地 Host/Origin、不授予 CORS、要求变更携带 `If-Match`。不得暴露到局域网或互联网；认证、授权、TLS 和远程部署加固仍属于 M6。

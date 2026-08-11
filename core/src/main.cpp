@@ -74,11 +74,7 @@ int main(int argc, char **argv)
         if (loaded.document) {
             document = std::move(*loaded.document);
         } else {
-            if (config.rtsp_url.empty()) {
-                std::cerr << "configuration error: scene file does not exist and no bootstrap RTSP URL was provided\n";
-                return static_cast<int>(webobs::ExitCode::invalid_config);
-            }
-            document = bootstrap_scene(config);
+            document = config.rtsp_url.empty() ? webobs::SceneDocument{} : bootstrap_scene(config);
             if (const auto save_error = webobs::save_scene_file_atomic(config.scene_file, document)) {
                 std::cerr << "scene storage error: " << webobs::redact_rtsp_credentials(*save_error) << '\n';
                 return static_cast<int>(webobs::ExitCode::scene_store_failed);

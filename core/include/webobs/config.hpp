@@ -18,6 +18,9 @@ enum class LogLevel {
 struct Config {
     std::string rtsp_url;
     std::string scene_file;
+    std::string listen_address = "127.0.0.1";
+    int http_port = 8080;
+    bool allow_insecure_remote = false;
     std::string output_path;
     int duration_seconds = 0;
     int width = 1920;

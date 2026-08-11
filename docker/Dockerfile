@@ -6,8 +6,8 @@ ARG TARGETARCH
 
 RUN test "$TARGETARCH" = "amd64"
 
-RUN apt-get update \
-    && apt-get install -y --no-install-recommends \
+RUN apt-get -o Acquire::Retries=5 -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30 update \
+    && apt-get -o Acquire::Retries=5 -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30 install -y --no-install-recommends \
         build-essential \
         ca-certificates \
         cmake \
@@ -17,6 +17,7 @@ RUN apt-get update \
         libavfilter-dev \
         libavformat-dev \
         libavutil-dev \
+        libboost-dev \
         libcurl4-openssl-dev \
         libdrm-dev \
         libegl1-mesa-dev \
@@ -115,8 +116,8 @@ FROM ubuntu:24.04 AS runtime
 
 ARG DEBIAN_FRONTEND=noninteractive
 
-RUN apt-get update \
-    && apt-get install -y --no-install-recommends \
+RUN apt-get -o Acquire::Retries=5 -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30 update \
+    && apt-get -o Acquire::Retries=5 -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30 install -y --no-install-recommends \
         ca-certificates \
         ffmpeg \
         libdrm2 \
@@ -167,9 +168,10 @@ RUN mkdir -p /config/obs /config/webobs /recordings \
 
 WORKDIR /opt/obs
 VOLUME ["/config/webobs", "/recordings"]
+EXPOSE 8080
 
 LABEL org.opencontainers.image.title="Web Camera Monitor Wall" \
-      org.opencontainers.image.description="M0 headless libobs RTSP to H.264 MP4 proof" \
+      org.opencontainers.image.description="Headless libobs multi-source monitor wall and local control plane" \
       org.opencontainers.image.licenses="GPL-2.0-or-later" \
       org.opencontainers.image.source="https://github.com/LiaoYK001/Web-Camera-Monitor-Wall" \
       org.opencontainers.image.version="0.1.0"

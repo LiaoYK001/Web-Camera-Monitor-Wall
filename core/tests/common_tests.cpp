@@ -1,6 +1,7 @@
 #include "webobs/config.hpp"
 #include "webobs/redaction.hpp"
 #include "webobs/scene_document.hpp"
+#include "webobs/scene_mutation.hpp"
 #include "webobs/scene_store.hpp"
 
 #include <array>
@@ -52,6 +53,7 @@ void config_tests()
         {"--duration-seconds", "-1"},       {"--height", "0"},
         {"--fps", "121"},                  {"--bitrate-kbps", "49"},
         {"--connect-timeout-seconds", "0"}, {"--log-level", "verbose"},
+        {"--http-port", "65536"},          {"--allow-insecure-remote", "sometimes"},
     };
     for (const auto &[flag, value] : invalid_values) {
         result = webobs::parse_config({"--rtsp-url", "rtsp://camera/live", flag, value}, empty_environment);
@@ -82,6 +84,16 @@ void config_tests()
 
     result = webobs::parse_config({"--rtsp-url", "rtsp://camera/live", "--rtsp-transport", "quic"}, empty_environment);
     expect(!result.ok(), "unsupported RTSP transport must fail");
+
+    result = webobs::parse_config(
+        {"--rtsp-url", "rtsp://camera/live", "--listen-address", "0.0.0.0"}, empty_environment);
+    expect(!result.ok(), "non-loopback listener must require an explicit insecure-remote opt-in");
+
+    result = webobs::parse_config({"--rtsp-url", "rtsp://camera/live", "--listen-address", "0.0.0.0",
+                                   "--allow-insecure-remote", "true"},
+                                  empty_environment);
+    expect(result.ok() && result.config && result.config->allow_insecure_remote,
+           "explicit insecure-remote opt-in must allow a container listener");
 
     result = webobs::parse_config({"--rtsp-url", "rtsp://camera/live", "--output", "capture.mkv"}, empty_environment);
     expect(!result.ok(), "non-MP4 output must fail");
@@ -387,6 +399,77 @@ void scene_store_tests()
     expect(!webobs::load_scene_file("relative-scene.json").ok(), "scene load must reject a relative path");
 }
 
+void scene_mutation_tests()
+{
+    const webobs::SceneDocument current = valid_scene_document();
+    const auto public_json =
+        webobs::serialize_scene_json(current, webobs::SceneJsonView::public_api, false);
+    expect(public_json.ok(), "scene mutation fixture must serialize as a public document");
+    if (!public_json.ok())
+        return;
+
+    auto candidate = webobs::parse_scene_json(public_json.json);
+    expect(candidate.ok(), "redacted public scene must remain structurally parseable");
+    if (!candidate.ok())
+        return;
+    candidate.document->items.front().x = 321;
+    const auto moved_json =
+        webobs::serialize_scene_json(*candidate.document, webobs::SceneJsonView::persistence, false);
+    const auto moved = webobs::plan_scene_replacement(current, moved_json.json, current.revision);
+    expect(moved.ok() && moved.document->revision == current.revision + 1 &&
+               moved.document->items.front().x == 321,
+           "matching If-Match must plan one revision-advancing scene change");
+    expect(moved.ok() && moved.document->sources.front().rtsp_url == current.sources.front().rtsp_url,
+           "unchanged redacted source URL must restore its persisted credentials");
+
+    const auto missing_precondition = webobs::plan_scene_replacement(current, moved_json.json, std::nullopt);
+    expect(missing_precondition.rejection == webobs::SceneMutationRejection::precondition_required,
+           "scene mutation must require If-Match");
+
+    const auto stale = webobs::plan_scene_replacement(current, moved_json.json, current.revision - 1);
+    expect(stale.rejection == webobs::SceneMutationRejection::revision_conflict,
+           "stale If-Match must reject a scene mutation");
+
+    candidate.document->revision = current.revision - 1;
+    const auto wrong_body_revision =
+        webobs::serialize_scene_json(*candidate.document, webobs::SceneJsonView::persistence, false);
+    const auto body_conflict =
+        webobs::plan_scene_replacement(current, wrong_body_revision.json, current.revision);
+    expect(body_conflict.rejection == webobs::SceneMutationRejection::revision_conflict,
+           "body revision must match If-Match");
+
+    candidate.document->revision = current.revision;
+    candidate.document->sources.front().id = "new-source";
+    candidate.document->items.front().source_id = "new-source";
+    const auto masked_new_json =
+        webobs::serialize_scene_json(*candidate.document, webobs::SceneJsonView::persistence, false);
+    const auto masked_new = webobs::plan_scene_replacement(current, masked_new_json.json, current.revision);
+    expect(masked_new.rejection == webobs::SceneMutationRejection::invalid_document,
+           "new source must not accept credential placeholders");
+
+    candidate = webobs::parse_scene_json(public_json.json);
+    candidate.document->sources.front().rtsp_url = "rtsp://***:***@different.invalid/live";
+    const auto masked_changed_json =
+        webobs::serialize_scene_json(*candidate.document, webobs::SceneJsonView::persistence, false);
+    const auto masked_changed =
+        webobs::plan_scene_replacement(current, masked_changed_json.json, current.revision);
+    expect(masked_changed.rejection == webobs::SceneMutationRejection::invalid_document,
+           "changed endpoint must not accept credential placeholders");
+
+    candidate.document->sources.front().rtsp_url = "rtsp://u:p@different.invalid/live";
+    const auto replacement_json =
+        webobs::serialize_scene_json(*candidate.document, webobs::SceneJsonView::persistence, false);
+    const auto replacement =
+        webobs::plan_scene_replacement(current, replacement_json.json, current.revision);
+    expect(replacement.ok() && replacement.document->sources.front().rtsp_url.find("u:p") != std::string::npos,
+           "explicit replacement credentials must be accepted for a changed endpoint");
+
+    const auto secret_error = webobs::plan_scene_replacement(
+        current, R"({"schemaVersion":1,"name":"do-not-echo-this-secret")", current.revision);
+    expect(!secret_error.ok() && secret_error.error.find("do-not-echo-this-secret") == std::string::npos,
+           "scene mutation errors must not echo secret-bearing input");
+}
+
 } // namespace
 
 int main()
@@ -395,6 +478,7 @@ int main()
     redaction_tests();
     scene_document_tests();
     scene_store_tests();
+    scene_mutation_tests();
     if (failures == 0) {
         std::cout << "All webobs unit tests passed\n";
         return 0;

@@ -13,6 +13,7 @@ enum class ExitCode : int {
     output_failed = 5,
     remux_failed = 6,
     scene_store_failed = 7,
+    control_server_failed = 8,
 };
 
 ExitCode run_obs_engine(const Config &config, const SceneDocument &document);

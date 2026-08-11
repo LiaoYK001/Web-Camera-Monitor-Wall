@@ -1,7 +1,9 @@
 #include "webobs/obs_engine.hpp"
 
+#include "webobs/control_server.hpp"
 #include "webobs/obs_scene_runtime.hpp"
 #include "webobs/redaction.hpp"
+#include "webobs/scene_controller.hpp"
 
 #include <obs-nix-platform.h>
 #include <obs.h>
@@ -346,40 +348,39 @@ ExitCode run_obs_engine(const Config &config, const SceneDocument &document)
     scene_runtime.activate();
     const std::size_t expected_sources = scene_runtime.visible_source_count();
     if (expected_sources == 0) {
-        blog(LOG_ERROR, "Scene must contain at least one visible RTSP source for recording");
-        return ExitCode::source_timeout;
-    }
-
-    blog(LOG_INFO, "Waiting up to %d seconds for %zu visible RTSP source(s)", config.connect_timeout_seconds,
-         expected_sources);
-    const auto source_deadline =
-        std::chrono::steady_clock::now() + std::chrono::seconds(config.connect_timeout_seconds);
-    while (!stop_requested && std::chrono::steady_clock::now() < source_deadline) {
-        if (scene_runtime.ready_visible_source_count() == expected_sources)
-            break;
-        std::this_thread::sleep_for(std::chrono::milliseconds(50));
-    }
-    if (stop_requested) {
-        blog(LOG_INFO, "Stopped before recording began");
-        return ExitCode::success;
-    }
-    const std::size_t ready_sources = scene_runtime.ready_visible_source_count();
-    if (ready_sources == 0) {
-        blog(LOG_ERROR, "No visible RTSP source produced a video frame before the timeout");
-        return ExitCode::source_timeout;
-    }
-    if (ready_sources < expected_sources) {
-        const std::vector<std::string> pending = scene_runtime.pending_visible_source_ids();
-        std::string identifiers;
-        for (const std::string &id : pending) {
-            if (!identifiers.empty())
-                identifiers += ',';
-            identifiers += id;
-        }
-        blog(LOG_WARNING, "%zu of %zu visible RTSP sources are ready; pending source ids: %s", ready_sources,
-             expected_sources, identifiers.c_str());
+        blog(LOG_INFO, "Scene has no visible RTSP sources; recording starts with a black canvas");
     } else {
-        blog(LOG_INFO, "All %zu visible RTSP source(s) are ready", ready_sources);
+        blog(LOG_INFO, "Waiting up to %d seconds for %zu visible RTSP source(s)", config.connect_timeout_seconds,
+             expected_sources);
+        const auto source_deadline =
+            std::chrono::steady_clock::now() + std::chrono::seconds(config.connect_timeout_seconds);
+        while (!stop_requested && std::chrono::steady_clock::now() < source_deadline) {
+            if (scene_runtime.ready_visible_source_count() == expected_sources)
+                break;
+            std::this_thread::sleep_for(std::chrono::milliseconds(50));
+        }
+        if (stop_requested) {
+            blog(LOG_INFO, "Stopped before recording began");
+            return ExitCode::success;
+        }
+        const std::size_t ready_sources = scene_runtime.ready_visible_source_count();
+        if (ready_sources == 0 && config.scene_file.empty()) {
+            blog(LOG_ERROR, "No visible RTSP source produced a video frame before the timeout");
+            return ExitCode::source_timeout;
+        }
+        if (ready_sources < expected_sources) {
+            const std::vector<std::string> pending = scene_runtime.pending_visible_source_ids();
+            std::string identifiers;
+            for (const std::string &id : pending) {
+                if (!identifiers.empty())
+                    identifiers += ',';
+                identifiers += id;
+            }
+            blog(LOG_WARNING, "%zu of %zu visible RTSP sources are ready; pending source ids: %s", ready_sources,
+                 expected_sources, identifiers.c_str());
+        } else {
+            blog(LOG_INFO, "All %zu visible RTSP source(s) are ready", ready_sources);
+        }
     }
 
     DataPtr video_settings(obs_data_create());
@@ -418,6 +419,18 @@ ExitCode run_obs_engine(const Config &config, const SceneDocument &document)
     obs_output_set_video_encoder(output.get(), video_encoder.get());
     obs_output_set_audio_encoder(output.get(), audio_encoder.get(), 0);
 
+    SceneController scene_controller(document, config.scene_file, scene_runtime);
+    ControlServer control_server(config, scene_controller);
+    if (const auto server_error = control_server.start()) {
+        blog(LOG_ERROR, "Could not start the HTTP control server: %s", server_error->c_str());
+        return ExitCode::control_server_failed;
+    }
+    if (config.http_port != 0) {
+        blog(LOG_INFO, "HTTP control server listening on %s:%d", config.listen_address.c_str(), config.http_port);
+        if (config.allow_insecure_remote)
+            blog(LOG_WARNING, "HTTP control listener has no M6 authentication; keep the published host port local");
+    }
+
     if (!obs_output_start(output.get())) {
         const char *message = obs_output_get_last_error(output.get());
         blog(LOG_ERROR, "Could not start recording%s%s", message && *message ? ": " : "", message && *message ? message : "");
@@ -440,10 +453,12 @@ ExitCode run_obs_engine(const Config &config, const SceneDocument &document)
     }
 
     if (unexpected_stop) {
+        control_server.stop();
         blog(LOG_ERROR, "Recording stopped unexpectedly (code %lld)", output_state.stop_code.load());
         output.reset();
         return ExitCode::output_failed;
     }
+    control_server.stop();
     if (!wait_for_output_stop(output.get(), output_state)) {
         output.reset();
         return ExitCode::output_failed;

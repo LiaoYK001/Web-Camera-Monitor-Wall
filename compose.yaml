@@ -9,6 +9,9 @@ services:
     environment:
       WEBOBS_RTSP_URL: ${WEBOBS_RTSP_URL:-}
       WEBOBS_SCENE_FILE: ${WEBOBS_SCENE_FILE:-/config/webobs/scene.json}
+      WEBOBS_LISTEN_ADDRESS: 0.0.0.0
+      WEBOBS_HTTP_PORT: ${WEBOBS_HTTP_PORT:-8080}
+      WEBOBS_ALLOW_INSECURE_REMOTE: "true"
       WEBOBS_OUTPUT: ${WEBOBS_OUTPUT:-}
       WEBOBS_DURATION_SECONDS: ${WEBOBS_DURATION_SECONDS:-0}
       WEBOBS_WIDTH: ${WEBOBS_WIDTH:-1920}
@@ -21,6 +24,8 @@ services:
     volumes:
       - webobs-config:/config/webobs
       - ./recordings:/recordings
+    ports:
+      - "127.0.0.1:${WEBOBS_HTTP_PORT:-8080}:${WEBOBS_HTTP_PORT:-8080}"
     stop_grace_period: 20s
 
 volumes:

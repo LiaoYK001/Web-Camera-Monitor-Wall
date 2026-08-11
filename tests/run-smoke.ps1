@@ -44,6 +44,9 @@ try {
 
     & (Join-Path $PSScriptRoot 'run-contracts.ps1') -ComposeFile $ComposeFile -ArtifactDirectory $ArtifactDirectory
     if ($LASTEXITCODE -ne 0) { throw 'M0 contract tests failed' }
+
+    & (Join-Path $PSScriptRoot 'run-control-plane.ps1') -SkipBuild
+    if ($LASTEXITCODE -ne 0) { throw 'M1 control-plane acceptance failed' }
 }
 finally {
     docker compose -f $ComposeFile down --volumes --remove-orphans

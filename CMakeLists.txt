@@ -12,12 +12,15 @@ set(WEBOBS_OBS_BUILD_DIR "${WEBOBS_OBS_SOURCE_DIR}/build_ubuntu" CACHE PATH "OBS
 set(WEBOBS_OBS_PREFIX "/opt/obs" CACHE PATH "Runtime OBS installation prefix")
 
 find_package(PkgConfig REQUIRED)
+find_package(Boost 1.83 REQUIRED)
+find_package(Threads REQUIRED)
 pkg_check_modules(JANSSON REQUIRED IMPORTED_TARGET jansson)
 
 add_library(webobs-common
     core/src/config.cpp
     core/src/redaction.cpp
     core/src/scene_document.cpp
+    core/src/scene_mutation.cpp
     core/src/scene_store.cpp
 )
 target_include_directories(webobs-common PUBLIC core/include)
@@ -42,13 +45,19 @@ set_target_properties(webobs-libobs PROPERTIES
 )
 
 add_executable(webobsd
+    core/src/control_server.cpp
     core/src/main.cpp
     core/src/obs_engine.cpp
     core/src/obs_scene_runtime.cpp
+    core/src/scene_controller.cpp
 )
-target_link_libraries(webobsd PRIVATE webobs-common webobs-libobs)
+target_link_libraries(webobsd PRIVATE webobs-common webobs-libobs Boost::headers Threads::Threads)
 target_compile_options(webobsd PRIVATE -Wall -Wextra -Wpedantic)
-target_compile_definitions(webobsd PRIVATE WEBOBS_OBS_PREFIX="${WEBOBS_OBS_PREFIX}")
+target_compile_definitions(webobsd PRIVATE
+    WEBOBS_OBS_PREFIX="${WEBOBS_OBS_PREFIX}"
+    BOOST_ERROR_CODE_HEADER_ONLY
+    BOOST_SYSTEM_NO_DEPRECATED
+)
 set_target_properties(webobsd PROPERTIES
     BUILD_RPATH "${WEBOBS_OBS_BUILD_DIR}/rundir/Release/lib"
     INSTALL_RPATH "$ORIGIN/../lib"

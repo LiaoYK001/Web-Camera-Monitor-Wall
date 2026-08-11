@@ -25,6 +25,9 @@ struct SettingSpec {
 constexpr SettingSpec setting_specs[] = {
     {"--rtsp-url", "WEBOBS_RTSP_URL", "rtsp_url"},
     {"--scene-file", "WEBOBS_SCENE_FILE", "scene_file"},
+    {"--listen-address", "WEBOBS_LISTEN_ADDRESS", "listen_address"},
+    {"--http-port", "WEBOBS_HTTP_PORT", "http_port"},
+    {"--allow-insecure-remote", "WEBOBS_ALLOW_INSECURE_REMOTE", "allow_insecure_remote"},
     {"--output", "WEBOBS_OUTPUT", "output"},
     {"--duration-seconds", "WEBOBS_DURATION_SECONDS", "duration"},
     {"--width", "WEBOBS_WIDTH", "width"},
@@ -82,6 +85,20 @@ std::string lowercase(std::string value)
     return value;
 }
 
+bool parse_boolean(std::string_view value, bool &target)
+{
+    const std::string normalized = lowercase(std::string(value));
+    if (normalized == "1" || normalized == "true" || normalized == "yes") {
+        target = true;
+        return true;
+    }
+    if (normalized == "0" || normalized == "false" || normalized == "no") {
+        target = false;
+        return true;
+    }
+    return false;
+}
+
 ParseResult failure(std::string message)
 {
     ParseResult result;
@@ -97,6 +114,8 @@ ParseResult parse_config(const std::vector<std::string> &arguments, const Enviro
         {"duration", "0"},          {"width", "1920"},       {"height", "1080"},
         {"fps", "30"},             {"bitrate", "6000"},     {"connect_timeout", "20"},
         {"transport", "tcp"},       {"log_level", "info"},
+        {"listen_address", "127.0.0.1"}, {"http_port", "8080"},
+        {"allow_insecure_remote", "false"},
     };
 
     for (const auto &spec : setting_specs) {
@@ -147,6 +166,18 @@ ParseResult parse_config(const std::vector<std::string> &arguments, const Enviro
         if (lowercase(scene_path.extension().string()) != ".json")
             return failure("scene-file must use the .json extension");
     }
+
+    config.listen_address = lowercase(values["listen_address"]);
+    if (config.listen_address != "127.0.0.1" && config.listen_address != "::1" &&
+        config.listen_address != "0.0.0.0" && config.listen_address != "::")
+        return failure("listen-address must be 127.0.0.1, ::1, 0.0.0.0, or ::");
+    if (!parse_integer(values["http_port"], 0, 65535, config.http_port))
+        return failure("http-port must be between 0 and 65535");
+    if (!parse_boolean(values["allow_insecure_remote"], config.allow_insecure_remote))
+        return failure("allow-insecure-remote must be true or false");
+    const bool loopback = config.listen_address == "127.0.0.1" || config.listen_address == "::1";
+    if (config.http_port != 0 && !loopback && !config.allow_insecure_remote)
+        return failure("non-loopback HTTP listening requires --allow-insecure-remote true");
 
     config.output_path = values.contains("output") ? values["output"] : timestamped_output_path();
     if (config.output_path.empty())
@@ -209,6 +240,9 @@ At least one of --rtsp-url or --scene-file is required. A saved scene takes
 precedence; the RTSP URL is used only to create a missing scene.
 
 Options:
+  --listen-address <address>        HTTP bind address (default: 127.0.0.1)
+  --http-port <n>                   HTTP/WebSocket port; 0 disables (default: 8080)
+  --allow-insecure-remote <bool>    Required for 0.0.0.0 or :: before M6 auth
   --output <path>                  MP4 output path (default: UTC timestamp under /recordings)
   --duration-seconds <n>           Stop after n seconds; 0 waits for a signal (default: 0)
   --width <n>                      Even output width (default: 1920)
