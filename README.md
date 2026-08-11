@@ -111,6 +111,8 @@ PowerShell：
 ./tests/run-m1-real-camera.ps1
 ```
 
+默认从本地 `.env` 读取地址；也可在当前 PowerShell 会话中临时设置 `WEBOBS_RTSP_URL`，脚本会直接使用它而不要求创建文件。显式传入 `-EnvFile` 时，该文件优先于当前进程环境。
+
 已有当前产品和测试镜像时可增加 `-SkipBuild`。Linux shell 使用：
 
 ```bash
@@ -118,6 +120,8 @@ PowerShell：
 ```
 
 shell 参数沿用 `WEBOBS_ENV_FILE`、`WEBOBS_REAL_*` 和 `WEBOBS_SKIP_BUILD=1`。门禁不会把私有 URL 放入 Docker、curl 或 jq 命令参数；URL 只通过环境进入隔离测试网络，场景凭据只存在于一次性命名卷，结束时随测试项目销毁。原始容器日志先在内存中检查凭据泄漏，写入忽略目录前会进一步隐藏整个 RTSP 端点。
+
+POSIX Shell 同样支持直接设置当前进程的 `WEBOBS_RTSP_URL`；配置优先级为 `WEBOBS_ENV_FILE` 指定文件、当前进程 `WEBOBS_RTSP_URL`、默认本地 `.env`。
 
 不使用真实摄像头时，可执行完全相同控制路径的 MediaMTX 合成演练：
 

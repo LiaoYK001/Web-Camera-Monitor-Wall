@@ -60,20 +60,29 @@ if ($UseSyntheticFixture) {
     $RtspUrl = ('rts' + 'p://mediamtx:8554/m0-test')
 }
 else {
-    if ([string]::IsNullOrWhiteSpace($EnvFile)) {
-        $EnvFile = Join-Path $RepositoryRoot '.env'
-    }
-    elseif (-not [IO.Path]::IsPathRooted($EnvFile)) {
-        $EnvFile = Join-Path $RepositoryRoot $EnvFile
-    }
-    if (-not (Test-Path -LiteralPath $EnvFile -PathType Leaf)) {
-        throw 'Local environment file not found. Copy .env.example to .env and edit it before running this test.'
-    }
-    $EnvFile = (Resolve-Path -LiteralPath $EnvFile).Path
-    $RtspUrl = Get-DotEnvValue -Path $EnvFile -Name 'WEBOBS_RTSP_URL'
     $exampleUrl = Get-DotEnvValue -Path (Join-Path $RepositoryRoot '.env.example') -Name 'WEBOBS_RTSP_URL'
+    if (-not [string]::IsNullOrWhiteSpace($EnvFile)) {
+        if (-not [IO.Path]::IsPathRooted($EnvFile)) {
+            $EnvFile = Join-Path $RepositoryRoot $EnvFile
+        }
+        if (-not (Test-Path -LiteralPath $EnvFile -PathType Leaf)) {
+            throw 'The selected local environment file was not found.'
+        }
+        $EnvFile = (Resolve-Path -LiteralPath $EnvFile).Path
+        $RtspUrl = Get-DotEnvValue -Path $EnvFile -Name 'WEBOBS_RTSP_URL'
+    }
+    elseif (-not [string]::IsNullOrWhiteSpace($env:WEBOBS_RTSP_URL)) {
+        $RtspUrl = $env:WEBOBS_RTSP_URL
+    }
+    else {
+        $EnvFile = Join-Path $RepositoryRoot '.env'
+        if (-not (Test-Path -LiteralPath $EnvFile -PathType Leaf)) {
+            throw 'WEBOBS_RTSP_URL is not set and the local .env file was not found.'
+        }
+        $RtspUrl = Get-DotEnvValue -Path $EnvFile -Name 'WEBOBS_RTSP_URL'
+    }
     if ([string]::IsNullOrWhiteSpace($RtspUrl)) {
-        throw 'WEBOBS_RTSP_URL is missing from the selected environment file.'
+        throw 'WEBOBS_RTSP_URL is missing from the selected configuration source.'
     }
     if ($RtspUrl -eq $exampleUrl) {
         throw 'WEBOBS_RTSP_URL still contains the .env.example placeholder.'

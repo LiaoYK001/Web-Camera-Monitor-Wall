@@ -7,7 +7,7 @@ product_compose_file="$repository_root/compose.yaml"
 test_compose_file="$script_directory/compose.smoke.yaml"
 recording_directory="$repository_root/recordings"
 artifact_directory="$script_directory/artifacts"
-env_file="${WEBOBS_ENV_FILE:-$repository_root/.env}"
+env_file="${WEBOBS_ENV_FILE:-}"
 duration_seconds="${WEBOBS_REAL_DURATION_SECONDS:-30}"
 width="${WEBOBS_REAL_WIDTH:-1920}"
 height="${WEBOBS_REAL_HEIGHT:-1080}"
@@ -30,18 +30,29 @@ if [ "$use_synthetic_fixture" = "1" ]; then
     rtsp_scheme="rtsp"
     rtsp_url="${rtsp_scheme}://mediamtx:8554/m0-test"
 else
-    case "$env_file" in
-        /*) ;;
-        *) env_file="$repository_root/$env_file" ;;
-    esac
-    if [ ! -f "$env_file" ]; then
-        echo "Local environment file not found. Copy .env.example to .env and edit it before running this test." >&2
-        exit 2
-    fi
-    rtsp_url="$(dotenv_value WEBOBS_RTSP_URL "$env_file")"
     example_url="$(dotenv_value WEBOBS_RTSP_URL "$repository_root/.env.example")"
+    if [ -n "$env_file" ]; then
+        case "$env_file" in
+            /*) ;;
+            *) env_file="$repository_root/$env_file" ;;
+        esac
+        if [ ! -f "$env_file" ]; then
+            echo "The selected local environment file was not found." >&2
+            exit 2
+        fi
+        rtsp_url="$(dotenv_value WEBOBS_RTSP_URL "$env_file")"
+    elif [ -n "${WEBOBS_RTSP_URL:-}" ]; then
+        rtsp_url="$WEBOBS_RTSP_URL"
+    else
+        env_file="$repository_root/.env"
+        if [ ! -f "$env_file" ]; then
+            echo "WEBOBS_RTSP_URL is not set and the local .env file was not found." >&2
+            exit 2
+        fi
+        rtsp_url="$(dotenv_value WEBOBS_RTSP_URL "$env_file")"
+    fi
     if [ -z "$rtsp_url" ]; then
-        echo "WEBOBS_RTSP_URL is missing from the selected environment file." >&2
+        echo "WEBOBS_RTSP_URL is missing from the selected configuration source." >&2
         exit 2
     fi
     if [ "$rtsp_url" = "$example_url" ]; then
