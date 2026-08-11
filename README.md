@@ -1,6 +1,6 @@
 # Web Camera Monitor Wall
 
-一个基于 `libobs` 的无桌面 Web 监控墙/合成器项目。仓库已经完成 **M0 Headless Proof**：无需 OBS Qt 界面，也能在 Linux Docker 容器中完成下面的闭环。
+一个基于 `libobs` 的无桌面 Web 监控墙/合成器项目。仓库已完成 **M0 Headless Proof、M1 Web Control 和 M2 Composite WebRTC**：无需 OBS Qt 界面，也能在 Linux Docker 容器中完成下面的闭环。
 
 ```text
 RTSP camera -> libobs ffmpeg_source -> OBS scene -> obs_x264 -> video-only MP4
@@ -8,7 +8,7 @@ RTSP camera -> libobs ffmpeg_source -> OBS scene -> obs_x264 -> video-only MP4
 
 当前开发版本已能从持久化场景启动多路 RTSP 合成，并通过随产品镜像提供的 React/TypeScript 编辑器及本机 REST/WebSocket 接口，在录制期间原子更新布局和来源。M2 已在同一产品镜像中通过固定版本 MediaMTX 和 `obs-webrtc` 发布 WHIP/H.264，并由同源 WHEP 代理在浏览器实时播放；输出音轨与硬件编码尚未加入。
 
-开发路线、里程碑验收标准和当前进度见 [ROADMAP.md](ROADMAP.md)。**M0 与 M1 已通过全部验收；当前正在 M2 接入服务端合成 WebRTC。**场景与持久化契约见 [docs/scene-schema-v1.md](docs/scene-schema-v1.md)，控制协议见 [docs/api-v1.md](docs/api-v1.md)。
+开发路线、里程碑验收标准和当前进度见 [ROADMAP.md](ROADMAP.md)。**M0、M1 与 M2 已通过全部验收；下一里程碑为 M3 Direct & Hybrid。**场景与持久化契约见 [docs/scene-schema-v1.md](docs/scene-schema-v1.md)，控制协议见 [docs/api-v1.md](docs/api-v1.md)。
 
 `WEBOBS_SCENE_FILE` 默认指向 `/config/webobs/scene.json`。首次启动使用 `WEBOBS_RTSP_URL` 创建并保存单路场景；后续启动以场景文件为准。手工编辑场景文件前应停止容器，且真实 RTSP 凭据不得提交到 Git。
 
@@ -136,6 +136,18 @@ POSIX Shell 同样支持直接设置当前进程的 `WEBOBS_RTSP_URL`；配置�
 ```
 
 shell 对应设置 `WEBOBS_REAL_USE_SYNTHETIC=1`；合成演练只证明门禁编排和控制事务，不能替代最终真实摄像头复验。
+
+### M2 真实摄像头验收
+
+M2 门禁在隔离的产品 Compose 项目中启动真实来源，通过本机 headless Chrome 建立同源 WHEP/H.264 播放，持续至少 30 秒后优雅停止产品，并验证浏览器 reader、容器退出状态、日志脱敏和最终 MP4。录像必须为 H.264、仅视频轨、指定分辨率与 FPS，可完整解码且无黑帧。
+
+PowerShell：
+
+```powershell
+./tests/run-m2-real-camera.ps1
+```
+
+脚本按 `-EnvFile`、当前进程 `WEBOBS_RTSP_URL`、本地 `.env` 的顺序读取私有端点；已有镜像时可增加 `-SkipBuild`。端点只通过容器环境传入，一次性场景卷在退出时销毁；原始日志仅在内存中执行泄漏检查，写入忽略目录前会隐藏整个 RTSP 端点。此门禁要求可信的本机 Chrome，可用 `WEBOBS_CHROME_BIN` 指定其路径。
 
 ## 命令行接口
 
