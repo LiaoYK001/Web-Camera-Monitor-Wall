@@ -14,6 +14,7 @@ fi
 
 mkdir -p "$artifact_directory"
 rm -f "$artifact_directory/smoke.mp4"
+rm -f "$artifact_directory/multi.mp4"
 rm -f "$artifact_directory"/.smoke.mp4.webobsd-*.mkv
 
 cleanup() {
@@ -25,4 +26,10 @@ cd "$repository_root"
 docker compose -f "$compose_file" down --volumes --remove-orphans
 docker compose -f "$compose_file" up "$build_option" --abort-on-container-exit --exit-code-from webobs webobs
 docker compose -f "$compose_file" run --rm validator
+docker compose -f "$compose_file" up "$build_option" --abort-on-container-exit --exit-code-from webobs-multi webobs-multi
+docker compose -f "$compose_file" run --rm \
+    -e TEST_RECORDING=/artifacts/multi.mp4 \
+    -e TEST_REQUIRE_PILLARBOX=0 \
+    -e TEST_REQUIRE_TWO_UP=1 \
+    validator
 "$script_directory/run-contracts.sh" "$compose_file" "$artifact_directory"

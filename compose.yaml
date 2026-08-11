@@ -8,6 +8,7 @@ services:
         OBS_VERSION: "32.1.2"
     environment:
       WEBOBS_RTSP_URL: ${WEBOBS_RTSP_URL:-}
+      WEBOBS_SCENE_FILE: ${WEBOBS_SCENE_FILE:-/config/webobs/scene.json}
       WEBOBS_OUTPUT: ${WEBOBS_OUTPUT:-}
       WEBOBS_DURATION_SECONDS: ${WEBOBS_DURATION_SECONDS:-0}
       WEBOBS_WIDTH: ${WEBOBS_WIDTH:-1920}

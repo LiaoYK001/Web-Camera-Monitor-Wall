@@ -7,10 +7,15 @@ expected_frame_rate="${TEST_FRAME_RATE:-10/1}"
 minimum_duration="${TEST_MIN_DURATION:-8}"
 maximum_duration="${TEST_MAX_DURATION:-15}"
 require_pillarbox="${TEST_REQUIRE_PILLARBOX:-0}"
+require_two_up="${TEST_REQUIRE_TWO_UP:-0}"
 
 case "$require_pillarbox" in
     0|1) ;;
     *) echo "TEST_REQUIRE_PILLARBOX must be 0 or 1" >&2; exit 2 ;;
+esac
+case "$require_two_up" in
+    0|1) ;;
+    *) echo "TEST_REQUIRE_TWO_UP must be 0 or 1" >&2; exit 2 ;;
 esac
 
 test -s "$file"
@@ -76,5 +81,31 @@ if [ "$require_pillarbox" = "1" ]; then
     pillarbox_report=" pillarbox_left_yavg=$left_yavg pillarbox_center_yavg=$center_yavg pillarbox_right_yavg=$right_yavg"
 fi
 
+two_up_report=""
+if [ "$require_two_up" = "1" ]; then
+    top_yavg="$(ffmpeg -hide_banner -loglevel info -i "$file" -frames:v 1 \
+        -vf 'crop=iw:40:0:0,signalstats,metadata=print' -f null - 2>&1 \
+        | awk -F= '/lavfi.signalstats.YAVG=/{print $2; exit}')"
+    bottom_yavg="$(ffmpeg -hide_banner -loglevel info -i "$file" -frames:v 1 \
+        -vf 'crop=iw:40:0:ih-40,signalstats,metadata=print' -f null - 2>&1 \
+        | awk -F= '/lavfi.signalstats.YAVG=/{print $2; exit}')"
+    left_center_yavg="$(ffmpeg -hide_banner -loglevel info -i "$file" -frames:v 1 \
+        -vf 'crop=40:180:0:(ih-oh)/2,signalstats,metadata=print' -f null - 2>&1 \
+        | awk -F= '/lavfi.signalstats.YAVG=/{print $2; exit}')"
+    right_center_yavg="$(ffmpeg -hide_banner -loglevel info -i "$file" -frames:v 1 \
+        -vf 'crop=40:180:iw-40:(ih-oh)/2,signalstats,metadata=print' -f null - 2>&1 \
+        | awk -F= '/lavfi.signalstats.YAVG=/{print $2; exit}')"
+    test -n "$top_yavg"
+    test -n "$bottom_yavg"
+    test -n "$left_center_yavg"
+    test -n "$right_center_yavg"
+    awk -v top="$top_yavg" -v bottom="$bottom_yavg" -v left="$left_center_yavg" -v right="$right_center_yavg" '
+        BEGIN {
+            exit !(top < 24 && bottom < 24 && left > 40 && right > 40 &&
+                   left - top > 25 && right - top > 25)
+        }'
+    two_up_report=" two_up_top_yavg=$top_yavg two_up_bottom_yavg=$bottom_yavg two_up_left_yavg=$left_center_yavg two_up_right_yavg=$right_center_yavg"
+fi
+
 ffmpeg -v error -i "$file" -map 0:v:0 -f null -
-echo "M0 recording verified: codec=$codec dimensions=$dimensions nominal_fps=$nominal_frame_rate average_fps=$average_frame_rate duration=$duration yavg=$yavg$pillarbox_report"
+echo "Recording verified: codec=$codec dimensions=$dimensions nominal_fps=$nominal_frame_rate average_fps=$average_frame_rate duration=$duration yavg=$yavg$pillarbox_report$two_up_report"

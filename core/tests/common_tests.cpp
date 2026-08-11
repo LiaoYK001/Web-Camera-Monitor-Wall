@@ -61,6 +61,22 @@ void config_tests()
     result = webobs::parse_config({"--rtsp-url", "http://camera/live"}, empty_environment);
     expect(!result.ok(), "non-RTSP URL must fail");
 
+    result = webobs::parse_config({"--scene-file", "relative.json"}, empty_environment);
+    expect(!result.ok(), "relative scene file path must fail");
+
+    result = webobs::parse_config({"--scene-file", "/config/webobs/scene.txt"}, empty_environment);
+    expect(!result.ok(), "non-JSON scene file path must fail");
+
+    result = webobs::parse_config({"--scene-file", "/config/webobs/scene.json"}, empty_environment);
+    expect(result.ok() && result.config && result.config->rtsp_url.empty(),
+           "absolute scene file must allow startup without a bootstrap URL");
+
+    result = webobs::parse_config(
+        {"--scene-file", "/config/webobs/cli.json"},
+        environment({{"WEBOBS_SCENE_FILE", "/config/webobs/environment.json"}}));
+    expect(result.ok() && result.config && result.config->scene_file == "/config/webobs/cli.json",
+           "CLI scene file must override the environment scene file");
+
     result = webobs::parse_config({"--rtsp-url", "rtsp://camera/live", "--width", "1919"}, empty_environment);
     expect(!result.ok(), "odd NV12 width must fail");
 
@@ -134,6 +150,7 @@ webobs::SceneDocument valid_scene_document()
                               .y = 50,
                               .width = 960,
                               .height = 540,
+                              .scale_mode = "contain",
                               .crop = {.top = 1, .right = 2, .bottom = 3, .left = 4},
                               .z_index = 0,
                               .visible = true});
@@ -184,6 +201,14 @@ void scene_document_tests()
     invalid = document;
     invalid.canvas.width = 1919;
     expect(webobs::validate_scene_document(invalid).has_value(), "odd canvas width must fail validation");
+
+    invalid = document;
+    invalid.canvas.background_color = "#ffffff";
+    expect(webobs::validate_scene_document(invalid).has_value(), "non-black M1 canvas background must fail validation");
+
+    invalid = document;
+    invalid.items.front().scale_mode = "tile";
+    expect(webobs::validate_scene_document(invalid).has_value(), "unsupported item scale mode must fail validation");
 
     invalid = document;
     invalid.sources.front().volume = 1.01;

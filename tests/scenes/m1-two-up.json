@@ -1,0 +1,57 @@
+{
+  "schemaVersion": 1,
+  "revision": 3,
+  "id": "main",
+  "name": "M1 Two-Up Test",
+  "canvas": {
+    "width": 640,
+    "height": 360,
+    "backgroundColor": "#000000"
+  },
+  "sources": [
+    {
+      "id": "camera-left",
+      "kind": "rtsp",
+      "name": "Left Test Camera",
+      "rtspUrl": "rtsp://mediamtx:8554/m0-test",
+      "transport": "tcp",
+      "muted": true,
+      "volume": 1.0
+    },
+    {
+      "id": "camera-right",
+      "kind": "rtsp",
+      "name": "Right Test Camera",
+      "rtspUrl": "rtsp://mediamtx:8554/m0-test",
+      "transport": "tcp",
+      "muted": true,
+      "volume": 0.5
+    }
+  ],
+  "items": [
+    {
+      "id": "item-left",
+      "sourceId": "camera-left",
+      "x": 0,
+      "y": 0,
+      "width": 320,
+      "height": 360,
+      "scaleMode": "contain",
+      "crop": { "top": 0, "right": 0, "bottom": 0, "left": 0 },
+      "zIndex": 0,
+      "visible": true
+    },
+    {
+      "id": "item-right",
+      "sourceId": "camera-right",
+      "x": 320,
+      "y": 0,
+      "width": 320,
+      "height": 360,
+      "scaleMode": "contain",
+      "crop": { "top": 0, "right": 0, "bottom": 0, "left": 0 },
+      "zIndex": 1,
+      "visible": true
+    }
+  ]
+}

@@ -6,9 +6,11 @@
 RTSP camera -> libobs ffmpeg_source -> OBS scene -> obs_x264 -> video-only MP4
 ```
 
-当前版本没有 Web UI、HTTP API、WebRTC、正式 MediaMTX 服务、多路场景、摄像头音频或硬件编码。这些属于后续里程碑。
+当前开发版本已能从持久化场景启动多路 RTSP 合成，但还没有 Web UI、HTTP API、WebRTC、正式 MediaMTX 服务、输出音轨或硬件编码；这些继续按路线图实现。
 
-开发路线、里程碑验收标准和当前进度见 [ROADMAP.md](ROADMAP.md)。**M0 已通过全部验收；M1 Web Control 正在开发，当前已建立版本化单一场景文档、安全 JSON 视图及原子私有存储层。**场景与持久化契约见 [docs/scene-schema-v1.md](docs/scene-schema-v1.md)。
+开发路线、里程碑验收标准和当前进度见 [ROADMAP.md](ROADMAP.md)。**M0 已通过全部验收；M1 Web Control 正在开发，当前已建立版本化场景、原子私有存储，并将多路布局接入 libobs 运行时。**场景与持久化契约见 [docs/scene-schema-v1.md](docs/scene-schema-v1.md)。
+
+`WEBOBS_SCENE_FILE` 默认指向 `/config/webobs/scene.json`。首次启动使用 `WEBOBS_RTSP_URL` 创建并保存单路场景；后续启动以场景文件为准。手工编辑场景文件前应停止容器，且真实 RTSP 凭据不得提交到 Git。
 
 ## M0 技术基线
 

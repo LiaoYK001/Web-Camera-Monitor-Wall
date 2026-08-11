@@ -49,6 +49,7 @@ struct SceneItem {
     int y = 0;
     int width = 640;
     int height = 360;
+    std::string scale_mode = "contain";
     SceneCrop crop;
     int z_index = 0;
     bool visible = true;

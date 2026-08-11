@@ -204,6 +204,8 @@ std::optional<std::string> validate_scene_document(const SceneDocument &document
         return "canvas height must be an even number between 16 and 8192";
     if (!valid_color(document.canvas.background_color))
         return "canvas backgroundColor must use #RRGGBB";
+    if (document.canvas.background_color != "#000000")
+        return "M1 canvas backgroundColor must be #000000";
     if (document.sources.size() > maximum_scene_sources)
         return "scene has too many sources";
     if (document.items.size() > maximum_scene_items)
@@ -238,6 +240,8 @@ std::optional<std::string> validate_scene_document(const SceneDocument &document
             return "item coordinates are out of range";
         if (item.width < 1 || item.width > 8192 || item.height < 1 || item.height > 8192)
             return "item dimensions are out of range";
+        if (item.scale_mode != "contain" && item.scale_mode != "cover" && item.scale_mode != "stretch")
+            return "item scaleMode must be contain, cover, or stretch";
         const std::array<int, 4> crop_values = {item.crop.top, item.crop.right, item.crop.bottom, item.crop.left};
         if (std::any_of(crop_values.begin(), crop_values.end(),
                         [](int value) { return value < 0 || value > 8192; }))
@@ -325,7 +329,8 @@ SceneParseResult parse_scene_json(std::string_view input)
     {
         if (!json_is_object(item_object) ||
             !has_only_fields(item_object,
-                             {"id", "sourceId", "x", "y", "width", "height", "crop", "zIndex", "visible"}))
+                             {"id", "sourceId", "x", "y", "width", "height", "scaleMode", "crop", "zIndex",
+                              "visible"}))
             return parse_failure("item entry is invalid or contains an unsupported field");
         SceneItem item;
         if (!read_string(item_object, "id", item.id, 64, error, "item") ||
@@ -337,6 +342,10 @@ SceneParseResult parse_scene_json(std::string_view input)
             !read_integer(item_object, "zIndex", 0, static_cast<int>(maximum_scene_items - 1), item.z_index,
                           error, "item") ||
             !read_boolean(item_object, "visible", item.visible, error, "item"))
+            return parse_failure(std::move(error));
+
+        if (json_object_get(item_object, "scaleMode") != nullptr &&
+            !read_string(item_object, "scaleMode", item.scale_mode, 16, error, "item"))
             return parse_failure(std::move(error));
 
         json_t *crop = json_object_get(item_object, "crop");
@@ -407,6 +416,7 @@ SceneSerializeResult serialize_scene_json(const SceneDocument &document, SceneJs
             !set_new(object.get(), "y", json_integer(item.y)) ||
             !set_new(object.get(), "width", json_integer(item.width)) ||
             !set_new(object.get(), "height", json_integer(item.height)) ||
+            !set_new(object.get(), "scaleMode", json_stringn(item.scale_mode.data(), item.scale_mode.size())) ||
             !set_new(object.get(), "crop", crop.release()) ||
             !set_new(object.get(), "zIndex", json_integer(item.z_index)) ||
             !set_new(object.get(), "visible", json_boolean(item.visible)) ||

@@ -1,6 +1,7 @@
 #pragma once
 
 #include "webobs/config.hpp"
+#include "webobs/scene_document.hpp"
 
 namespace webobs {
 
@@ -11,8 +12,9 @@ enum class ExitCode : int {
     source_timeout = 4,
     output_failed = 5,
     remux_failed = 6,
+    scene_store_failed = 7,
 };
 
-ExitCode run_obs_engine(const Config &config);
+ExitCode run_obs_engine(const Config &config, const SceneDocument &document);
 
 } // namespace webobs

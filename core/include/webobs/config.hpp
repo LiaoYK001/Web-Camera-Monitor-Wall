@@ -17,6 +17,7 @@ enum class LogLevel {
 
 struct Config {
     std::string rtsp_url;
+    std::string scene_file;
     std::string output_path;
     int duration_seconds = 0;
     int width = 1920;

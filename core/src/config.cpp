@@ -24,6 +24,7 @@ struct SettingSpec {
 
 constexpr SettingSpec setting_specs[] = {
     {"--rtsp-url", "WEBOBS_RTSP_URL", "rtsp_url"},
+    {"--scene-file", "WEBOBS_SCENE_FILE", "scene_file"},
     {"--output", "WEBOBS_OUTPUT", "output"},
     {"--duration-seconds", "WEBOBS_DURATION_SECONDS", "duration"},
     {"--width", "WEBOBS_WIDTH", "width"},
@@ -132,10 +133,20 @@ ParseResult parse_config(const std::vector<std::string> &arguments, const Enviro
     Config config;
     if (const auto iterator = values.find("rtsp_url"); iterator != values.end())
         config.rtsp_url = iterator->second;
-    if (config.rtsp_url.empty())
-        return failure("RTSP URL is required; use --rtsp-url or WEBOBS_RTSP_URL");
-    if (!config.rtsp_url.starts_with("rtsp://") && !config.rtsp_url.starts_with("rtsps://"))
+    if (const auto iterator = values.find("scene_file"); iterator != values.end())
+        config.scene_file = iterator->second;
+    if (config.rtsp_url.empty() && config.scene_file.empty())
+        return failure("RTSP URL or scene file is required; use --rtsp-url or --scene-file");
+    if (!config.rtsp_url.empty() && !config.rtsp_url.starts_with("rtsp://") &&
+        !config.rtsp_url.starts_with("rtsps://"))
         return failure("RTSP URL must start with rtsp:// or rtsps://");
+    if (!config.scene_file.empty()) {
+        const std::filesystem::path scene_path(config.scene_file);
+        if (!scene_path.is_absolute())
+            return failure("scene-file must use an absolute path");
+        if (lowercase(scene_path.extension().string()) != ".json")
+            return failure("scene-file must use the .json extension");
+    }
 
     config.output_path = values.contains("output") ? values["output"] : timestamped_output_path();
     if (config.output_path.empty())
@@ -191,7 +202,11 @@ std::string usage_text()
     return R"(Usage: webobsd [options]
 
 Required:
-  --rtsp-url <url>                 RTSP input URL (or WEBOBS_RTSP_URL)
+  --rtsp-url <url>                 Bootstrap RTSP URL when no saved scene exists
+  --scene-file <path>              Absolute scene JSON path (or WEBOBS_SCENE_FILE)
+
+At least one of --rtsp-url or --scene-file is required. A saved scene takes
+precedence; the RTSP URL is used only to create a missing scene.
 
 Options:
   --output <path>                  MP4 output path (default: UTC timestamp under /recordings)
@@ -212,7 +227,7 @@ Command-line values override WEBOBS_* environment values.
 
 std::string version_text()
 {
-    return std::string("webobsd ") + WEBOBS_VERSION + " (M0, OBS 32.1.2)";
+    return std::string("webobsd ") + WEBOBS_VERSION + " (M1-dev, OBS 32.1.2)";
 }
 
 } // namespace webobs

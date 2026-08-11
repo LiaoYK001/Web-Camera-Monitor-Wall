@@ -36,6 +36,7 @@ M1 使用同一份带版本场景文档驱动 Web UI、控制 API、持久化层
       "y": 0,
       "width": 960,
       "height": 540,
+      "scaleMode": "contain",
       "crop": { "top": 0, "right": 0, "bottom": 0, "left": 0 },
       "zIndex": 0,
       "visible": true
@@ -54,6 +55,7 @@ M1 使用同一份带版本场景文档驱动 Web UI、控制 API、持久化层
 - A scene contains at most 64 sources and 256 items.
 - IDs contain only ASCII letters, digits, `.`, `_`, and `-`, with a maximum of 64 bytes.
 - Canvas dimensions are even values from 16 through 8192; item dimensions and crop values are bounded.
+- The M1 background is black; item `scaleMode` is `contain`, `cover`, or `stretch`.
 - Every item references an existing source, and source/item IDs are unique.
 - M1 accepts only RTSP/RTSPS sources and `tcp` or `udp` transport.
 - Volume is finite and between 0 and 1.
@@ -62,6 +64,7 @@ M1 使用同一份带版本场景文档驱动 Web UI、控制 API、持久化层
 - 单场景最多 64 个来源、256 个场景项。
 - ID 只允许 ASCII 字母、数字、`.`、`_`、`-`，最长 64 字节。
 - 画布尺寸必须是 16 到 8192 的偶数；场景项尺寸与裁切值均有边界。
+- M1 背景固定为黑色；场景项 `scaleMode` 可选 `contain`、`cover` 或 `stretch`。
 - 每个场景项必须引用已存在来源，来源 ID 与场景项 ID 各自唯一。
 - M1 仅接受 RTSP/RTSPS 来源以及 `tcp`、`udp` 传输。
 - 音量必须是 0 到 1 的有限数值。
@@ -82,6 +85,12 @@ The only historical format accepted by M1 is the explicitly marked pre-release `
 
 M1 仅接受明确标记的预发布 `schemaVersion: 0` 历史文档，其字段与 v1 相同，但不包含 `revision`。加载成功时会完整校验迁移结果，将 `revision` 初始化为零，并立即通过同一原子路径回写为 v1；无版本、损坏和未来版本文档会被拒绝且不改写。
 
-API mutation and live libobs synchronization are subsequent M1 batches built on this storage contract.
+API-driven live mutation and transactional persistence/runtime commit are subsequent M1 batches built on this storage contract.
 
-API 变更语义和 libobs 实时同步将在后续 M1 批次基于此存储契约实现。
+API 驱动的实时变更以及持久化/运行时事务提交将在后续 M1 批次基于此存储契约实现。
+
+## Runtime bootstrap / 运行时引导
+
+`--scene-file` or `WEBOBS_SCENE_FILE` selects the canonical absolute JSON path. When it exists, `webobsd` loads it and ignores the bootstrap URL. When it is absent, `--rtsp-url` or `WEBOBS_RTSP_URL` creates a one-camera `contain` scene and atomically saves it. The libobs runtime creates every declared RTSP source, applies transforms, crop, ordering, visibility, mute, and volume, and starts recording once at least one visible source is ready. A timed-out secondary source remains a black tile rather than stopping the whole wall.
+
+`--scene-file` 或 `WEBOBS_SCENE_FILE` 用于指定规范场景 JSON 的绝对路径。文件存在时，`webobsd` 加载它并忽略引导 URL；文件不存在时，使用 `--rtsp-url` 或 `WEBOBS_RTSP_URL` 创建单摄像头 `contain` 场景并原子保存。libobs 运行时会创建全部 RTSP 来源，应用变换、裁切、层级、可见性、静音和音量；至少一个可见来源就绪后开始录制，超时的次要来源保留黑色占位而不会停止整面监控墙。

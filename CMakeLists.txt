@@ -44,6 +44,7 @@ set_target_properties(webobs-libobs PROPERTIES
 add_executable(webobsd
     core/src/main.cpp
     core/src/obs_engine.cpp
+    core/src/obs_scene_runtime.cpp
 )
 target_link_libraries(webobsd PRIVATE webobs-common webobs-libobs)
 target_compile_options(webobsd PRIVATE -Wall -Wextra -Wpedantic)

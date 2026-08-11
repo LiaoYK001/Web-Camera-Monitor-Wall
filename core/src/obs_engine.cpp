@@ -1,11 +1,11 @@
 #include "webobs/obs_engine.hpp"
 
+#include "webobs/obs_scene_runtime.hpp"
 #include "webobs/redaction.hpp"
 
 #include <obs-nix-platform.h>
 #include <obs.h>
 #include <callback/calldata.h>
-#include <graphics/vec2.h>
 #include <util/base.h>
 
 #include <atomic>
@@ -97,38 +97,8 @@ struct ObsCoreGuard {
     }
 };
 
-struct OutputSourceGuard {
-    bool assigned = false;
-
-    ~OutputSourceGuard()
-    {
-        if (assigned)
-            obs_set_output_source(0, nullptr);
-    }
-};
-
-struct SceneItemGuard {
-    obs_sceneitem_t *item = nullptr;
-
-    ~SceneItemGuard()
-    {
-        if (item)
-            obs_sceneitem_remove(item);
-    }
-};
-
 struct DataDeleter {
     void operator()(obs_data_t *value) const { obs_data_release(value); }
-};
-struct SourceDeleter {
-    void operator()(obs_source_t *value) const { obs_source_release(value); }
-};
-struct SceneDeleter {
-    void operator()(obs_scene_t *value) const
-    {
-        obs_canvas_scene_remove(value);
-        obs_scene_release(value);
-    }
 };
 struct EncoderDeleter {
     void operator()(obs_encoder_t *value) const { obs_encoder_release(value); }
@@ -138,8 +108,6 @@ struct OutputDeleter {
 };
 
 using DataPtr = std::unique_ptr<obs_data_t, DataDeleter>;
-using SourcePtr = std::unique_ptr<obs_source_t, SourceDeleter>;
-using ScenePtr = std::unique_ptr<obs_scene_t, SceneDeleter>;
 using EncoderPtr = std::unique_ptr<obs_encoder_t, EncoderDeleter>;
 using OutputPtr = std::unique_ptr<obs_output_t, OutputDeleter>;
 
@@ -155,15 +123,6 @@ struct TemporaryFileGuard {
         }
     }
 };
-
-struct SourceState {
-    std::atomic_bool started = false;
-};
-
-void on_source_started(void *parameter, calldata_t *)
-{
-    static_cast<SourceState *>(parameter)->started.store(true);
-}
 
 struct OutputState {
     std::atomic_bool stopped = false;
@@ -309,7 +268,7 @@ bool wait_for_output_stop(obs_output_t *output, OutputState &state)
 
 } // namespace
 
-ExitCode run_obs_engine(const Config &config)
+ExitCode run_obs_engine(const Config &config, const SceneDocument &document)
 {
     stop_requested = 0;
     std::signal(SIGINT, handle_stop_signal);
@@ -345,16 +304,14 @@ ExitCode run_obs_engine(const Config &config)
         return ExitCode::obs_initialization_failed;
     }
     core.initialized = true;
-    OutputSourceGuard output_source_guard;
-
     obs_video_info video_info{};
     video_info.graphics_module = "libobs-opengl";
     video_info.fps_num = static_cast<uint32_t>(config.fps);
     video_info.fps_den = 1;
-    video_info.base_width = static_cast<uint32_t>(config.width);
-    video_info.base_height = static_cast<uint32_t>(config.height);
-    video_info.output_width = static_cast<uint32_t>(config.width);
-    video_info.output_height = static_cast<uint32_t>(config.height);
+    video_info.base_width = static_cast<uint32_t>(document.canvas.width);
+    video_info.base_height = static_cast<uint32_t>(document.canvas.height);
+    video_info.output_width = static_cast<uint32_t>(document.canvas.width);
+    video_info.output_height = static_cast<uint32_t>(document.canvas.height);
     video_info.output_format = VIDEO_FORMAT_NV12;
     video_info.adapter = 0;
     video_info.gpu_conversion = true;
@@ -380,71 +337,50 @@ ExitCode run_obs_engine(const Config &config)
         return ExitCode::obs_initialization_failed;
     obs_post_load_modules();
 
-    DataPtr source_settings(obs_data_create());
-    obs_data_set_bool(source_settings.get(), "is_local_file", false);
-    obs_data_set_string(source_settings.get(), "input", config.rtsp_url.c_str());
-    obs_data_set_string(source_settings.get(), "input_format", "rtsp");
-    obs_data_set_bool(source_settings.get(), "restart_on_activate", true);
-    obs_data_set_bool(source_settings.get(), "close_when_inactive", false);
-    obs_data_set_bool(source_settings.get(), "hw_decode", false);
-    obs_data_set_int(source_settings.get(), "buffering_mb", 2);
-    const long long timeout_microseconds = static_cast<long long>(config.connect_timeout_seconds) * 1000000LL;
-    const std::string ffmpeg_options = "rtsp_transport=" + config.rtsp_transport +
-                                       " timeout=" + std::to_string(timeout_microseconds);
-    obs_data_set_string(source_settings.get(), "ffmpeg_options", ffmpeg_options.c_str());
-
-    SourceState source_state;
-    SourcePtr source(obs_source_create("ffmpeg_source", "M0 RTSP Camera", source_settings.get(), nullptr));
-    if (!source) {
-        blog(LOG_ERROR, "Could not create ffmpeg_source");
+    ObsSceneRuntime scene_runtime(config.connect_timeout_seconds);
+    if (const auto prepare_error = scene_runtime.prepare(document)) {
+        blog(LOG_ERROR, "Could not prepare OBS scene: %s", prepare_error->c_str());
         return ExitCode::obs_initialization_failed;
     }
-    obs_source_set_muted(source.get(), true);
-    signal_handler_connect(obs_source_get_signal_handler(source.get()), "media_started", on_source_started, &source_state);
-
-    ScenePtr scene(obs_scene_create("M0 Scene"));
-    if (!scene) {
-        blog(LOG_ERROR, "Could not create OBS scene");
-        return ExitCode::obs_initialization_failed;
+    scene_runtime.commit_prepared();
+    scene_runtime.activate();
+    const std::size_t expected_sources = scene_runtime.visible_source_count();
+    if (expected_sources == 0) {
+        blog(LOG_ERROR, "Scene must contain at least one visible RTSP source for recording");
+        return ExitCode::source_timeout;
     }
-    obs_sceneitem_t *item = obs_scene_add(scene.get(), source.get());
-    if (!item) {
-        blog(LOG_ERROR, "Could not add RTSP source to scene");
-        return ExitCode::obs_initialization_failed;
-    }
-    SceneItemGuard scene_item_guard{item};
-    vec2 bounds{};
-    vec2_set(&bounds, static_cast<float>(config.width), static_cast<float>(config.height));
-    obs_sceneitem_set_alignment(item, OBS_ALIGN_LEFT | OBS_ALIGN_TOP);
-    obs_sceneitem_set_bounds_type(item, OBS_BOUNDS_SCALE_INNER);
-    obs_sceneitem_set_bounds_alignment(item, OBS_ALIGN_CENTER);
-    obs_sceneitem_set_bounds(item, &bounds);
 
-    obs_set_output_source(0, obs_scene_get_source(scene.get()));
-    output_source_guard.assigned = true;
-
-    blog(LOG_INFO, "Waiting up to %d seconds for the RTSP source", config.connect_timeout_seconds);
+    blog(LOG_INFO, "Waiting up to %d seconds for %zu visible RTSP source(s)", config.connect_timeout_seconds,
+         expected_sources);
     const auto source_deadline =
         std::chrono::steady_clock::now() + std::chrono::seconds(config.connect_timeout_seconds);
-    bool source_ready = false;
     while (!stop_requested && std::chrono::steady_clock::now() < source_deadline) {
-        const bool playing = source_state.started.load() ||
-                             obs_source_media_get_state(source.get()) == OBS_MEDIA_STATE_PLAYING;
-        if (playing && obs_source_get_width(source.get()) > 0 && obs_source_get_height(source.get()) > 0) {
-            source_ready = true;
+        if (scene_runtime.ready_visible_source_count() == expected_sources)
             break;
-        }
         std::this_thread::sleep_for(std::chrono::milliseconds(50));
     }
     if (stop_requested) {
         blog(LOG_INFO, "Stopped before recording began");
         return ExitCode::success;
     }
-    if (!source_ready) {
-        blog(LOG_ERROR, "RTSP source did not produce a video frame before the timeout");
+    const std::size_t ready_sources = scene_runtime.ready_visible_source_count();
+    if (ready_sources == 0) {
+        blog(LOG_ERROR, "No visible RTSP source produced a video frame before the timeout");
         return ExitCode::source_timeout;
     }
-    blog(LOG_INFO, "RTSP source ready at %ux%u", obs_source_get_width(source.get()), obs_source_get_height(source.get()));
+    if (ready_sources < expected_sources) {
+        const std::vector<std::string> pending = scene_runtime.pending_visible_source_ids();
+        std::string identifiers;
+        for (const std::string &id : pending) {
+            if (!identifiers.empty())
+                identifiers += ',';
+            identifiers += id;
+        }
+        blog(LOG_WARNING, "%zu of %zu visible RTSP sources are ready; pending source ids: %s", ready_sources,
+             expected_sources, identifiers.c_str());
+    } else {
+        blog(LOG_INFO, "All %zu visible RTSP source(s) are ready", ready_sources);
+    }
 
     DataPtr video_settings(obs_data_create());
     obs_data_set_string(video_settings.get(), "rate_control", "CBR");
@@ -452,7 +388,7 @@ ExitCode run_obs_engine(const Config &config)
     obs_data_set_int(video_settings.get(), "keyint_sec", 2);
     obs_data_set_string(video_settings.get(), "preset", "veryfast");
     obs_data_set_string(video_settings.get(), "profile", "high");
-    EncoderPtr video_encoder(obs_video_encoder_create("obs_x264", "M0 x264", video_settings.get(), nullptr));
+    EncoderPtr video_encoder(obs_video_encoder_create("obs_x264", "WebOBS x264", video_settings.get(), nullptr));
     if (!video_encoder) {
         blog(LOG_ERROR, "Could not create obs_x264 encoder");
         return ExitCode::output_failed;
@@ -461,7 +397,8 @@ ExitCode run_obs_engine(const Config &config)
 
     DataPtr audio_settings(obs_data_create());
     obs_data_set_int(audio_settings.get(), "bitrate", 64);
-    EncoderPtr audio_encoder(obs_audio_encoder_create("ffmpeg_aac", "M0 silent AAC", audio_settings.get(), 0, nullptr));
+    EncoderPtr audio_encoder(
+        obs_audio_encoder_create("ffmpeg_aac", "WebOBS silent AAC", audio_settings.get(), 0, nullptr));
     if (!audio_encoder) {
         blog(LOG_ERROR, "Could not create temporary AAC encoder required by ffmpeg_muxer");
         return ExitCode::output_failed;
@@ -472,7 +409,7 @@ ExitCode run_obs_engine(const Config &config)
     obs_data_set_string(output_settings.get(), "path", temporary_path.c_str());
     obs_data_set_bool(output_settings.get(), "allow_overwrite", true);
     OutputState output_state;
-    OutputPtr output(obs_output_create("ffmpeg_muxer", "M0 file output", output_settings.get(), nullptr));
+    OutputPtr output(obs_output_create("ffmpeg_muxer", "WebOBS file output", output_settings.get(), nullptr));
     if (!output) {
         blog(LOG_ERROR, "Could not create ffmpeg_muxer output");
         return ExitCode::output_failed;
@@ -486,8 +423,8 @@ ExitCode run_obs_engine(const Config &config)
         blog(LOG_ERROR, "Could not start recording%s%s", message && *message ? ": " : "", message && *message ? message : "");
         return ExitCode::output_failed;
     }
-    blog(LOG_INFO, "Recording started: %dx%d at %d fps, %d Kbps", config.width, config.height, config.fps,
-         config.bitrate_kbps);
+    blog(LOG_INFO, "Recording started: %dx%d at %d fps, %d Kbps", document.canvas.width,
+         document.canvas.height, config.fps, config.bitrate_kbps);
 
     const auto recording_started = std::chrono::steady_clock::now();
     bool unexpected_stop = false;
@@ -514,8 +451,7 @@ ExitCode run_obs_engine(const Config &config)
     output.reset();
     video_encoder.reset();
     audio_encoder.reset();
-    obs_set_output_source(0, nullptr);
-    output_source_guard.assigned = false;
+    scene_runtime.deactivate();
 
     if (!std::filesystem::is_regular_file(temporary_path, path_error) ||
         std::filesystem::file_size(temporary_path, path_error) == 0) {

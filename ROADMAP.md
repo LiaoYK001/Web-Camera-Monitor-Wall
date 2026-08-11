@@ -8,11 +8,11 @@ This roadmap describes milestone order and acceptance gates, not promised releas
 
 ## Current position / 当前位置
 
-**🟡 M1 — Web Control：场景文档、原子私有存储与 v0→v1 迁移已实现；当前进入运行时接入。**
+**🟡 M1 — Web Control：持久场景已接入多来源 libobs 启动；当前实现录制期间的实时变更。**
 
-M0 is complete. M1 now has a strict, versioned scene document plus atomic private storage and validated v0-to-v1 migration. The current batch integrates that state with the live libobs runtime; REST/WebSocket control and the browser editor follow it.
+M0 is complete. M1 now loads persistent multi-source scenes into libobs with transforms, crop, ordering, visibility, mute, volume, and partial-source timeout tolerance. The current batch adds live mutations while recording; REST/WebSocket control and the browser editor follow it.
 
-M0 已全部完成。M1 现已建立严格、带版本的单一场景文档、原子私有存储和经过校验的 v0→v1 迁移；当前批次将其接入 libobs 运行时，之后继续 REST/WebSocket 控制和浏览器编辑器。
+M0 已全部完成。M1 现可将持久化多来源场景加载进 libobs，应用变换、裁切、层级、可见性、静音和音量，并容忍部分来源超时；当前批次继续实现录制期间实时变更，之后接入 REST/WebSocket 和浏览器编辑器。
 
 ```text
 M0 implementation       Docker + synthetic RTSP       Real RTSP       M1 Web Control
