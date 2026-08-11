@@ -23,6 +23,7 @@ public:
 
     std::optional<std::string> prepare(const SceneDocument &document);
     [[nodiscard]] bool has_prepared() const;
+    [[nodiscard]] std::optional<std::string> wait_prepared_visible_sources();
     void discard_prepared();
     void commit_prepared();
 

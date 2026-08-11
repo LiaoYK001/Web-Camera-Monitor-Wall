@@ -8,6 +8,16 @@ minimum_duration="${TEST_MIN_DURATION:-8}"
 maximum_duration="${TEST_MAX_DURATION:-15}"
 require_pillarbox="${TEST_REQUIRE_PILLARBOX:-0}"
 require_two_up="${TEST_REQUIRE_TWO_UP:-0}"
+reject_blackout="${TEST_REJECT_BLACKOUT:-0}"
+sample_timestamp="${TEST_SAMPLE_TIMESTAMP:-0}"
+sample_from_end_seconds="${TEST_SAMPLE_FROM_END_SECONDS:-}"
+
+sample_seek_option="-ss"
+sample_seek_value="$sample_timestamp"
+if [ -n "$sample_from_end_seconds" ]; then
+    sample_seek_option="-sseof"
+    sample_seek_value="-$sample_from_end_seconds"
+fi
 
 case "$require_pillarbox" in
     0|1) ;;
@@ -16,6 +26,10 @@ esac
 case "$require_two_up" in
     0|1) ;;
     *) echo "TEST_REQUIRE_TWO_UP must be 0 or 1" >&2; exit 2 ;;
+esac
+case "$reject_blackout" in
+    0|1) ;;
+    *) echo "TEST_REJECT_BLACKOUT must be 0 or 1" >&2; exit 2 ;;
 esac
 
 test -s "$file"
@@ -59,13 +73,13 @@ awk -v yavg="$yavg" 'BEGIN { exit !(yavg > 5) }'
 
 pillarbox_report=""
 if [ "$require_pillarbox" = "1" ]; then
-    left_yavg="$(ffmpeg -hide_banner -loglevel info -i "$file" -frames:v 1 \
+    left_yavg="$(ffmpeg -hide_banner -loglevel info "$sample_seek_option" "$sample_seek_value" -i "$file" -frames:v 1 \
         -vf 'crop=40:ih:0:0,signalstats,metadata=print' -f null - 2>&1 \
         | awk -F= '/lavfi.signalstats.YAVG=/{print $2; exit}')"
-    right_yavg="$(ffmpeg -hide_banner -loglevel info -i "$file" -frames:v 1 \
+    right_yavg="$(ffmpeg -hide_banner -loglevel info "$sample_seek_option" "$sample_seek_value" -i "$file" -frames:v 1 \
         -vf 'crop=40:ih:iw-40:0,signalstats,metadata=print' -f null - 2>&1 \
         | awk -F= '/lavfi.signalstats.YAVG=/{print $2; exit}')"
-    center_yavg="$(ffmpeg -hide_banner -loglevel info -i "$file" -frames:v 1 \
+    center_yavg="$(ffmpeg -hide_banner -loglevel info "$sample_seek_option" "$sample_seek_value" -i "$file" -frames:v 1 \
         -vf 'crop=320:180:(iw-ow)/2:(ih-oh)/2,signalstats,metadata=print' -f null - 2>&1 \
         | awk -F= '/lavfi.signalstats.YAVG=/{print $2; exit}')"
     test -n "$left_yavg"
@@ -107,5 +121,30 @@ if [ "$require_two_up" = "1" ]; then
     two_up_report=" two_up_top_yavg=$top_yavg two_up_bottom_yavg=$bottom_yavg two_up_left_yavg=$left_center_yavg two_up_right_yavg=$right_center_yavg"
 fi
 
+blackout_report=""
+if [ "$reject_blackout" = "1" ]; then
+    blackout_stats="$(ffmpeg -hide_banner -loglevel info -i "$file" \
+        -vf 'signalstats,metadata=print' -f null - 2>&1 \
+        | awk -F= '
+            /lavfi.signalstats.YAVG=/ {
+                value = $2 + 0
+                if (!seen || value < minimum) minimum = value
+                if (value < 30) black_frames++
+                seen = 1
+            }
+            END {
+                if (!seen) exit 1
+                print minimum, black_frames + 0
+            }')"
+    set -- $blackout_stats
+    minimum_yavg="$1"
+    black_frames="$2"
+    if [ "$black_frames" -ne 0 ]; then
+        echo "Recording contains $black_frames full-black frame(s); minimum YAVG is $minimum_yavg" >&2
+        exit 1
+    fi
+    blackout_report=" minimum_yavg=$minimum_yavg black_frames=$black_frames"
+fi
+
 ffmpeg -v error -i "$file" -map 0:v:0 -f null -
-echo "Recording verified: codec=$codec dimensions=$dimensions nominal_fps=$nominal_frame_rate average_fps=$average_frame_rate duration=$duration yavg=$yavg$pillarbox_report$two_up_report"
+echo "Recording verified: codec=$codec dimensions=$dimensions nominal_fps=$nominal_frame_rate average_fps=$average_frame_rate duration=$duration yavg=$yavg$pillarbox_report$two_up_report$blackout_report"

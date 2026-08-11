@@ -80,11 +80,12 @@ On success the server:
 
 1. validates the candidate and revision;
 2. restores the stored credential only when a redacted URL still identifies the same existing source;
-3. prepares a complete replacement libobs scene without changing the active output;
-4. atomically persists revision `N + 1` with private permissions;
-5. swaps the active OBS scene and broadcasts `scene.updated`.
+3. prepares a complete replacement libobs scene and prewarms every visible source while the old output remains active;
+4. waits up to `connect-timeout-seconds` for candidate sources to produce a decoded frame, then primes that frame into the source texture;
+5. atomically persists revision `N + 1` with private permissions;
+6. atomically replaces the items inside the current output scene without dropping reused source activity or exposing an empty scene, then broadcasts `scene.updated`.
 
-成功时，服务会验证文档与版本，仅为未改变的既有来源恢复已存凭据，在不影响当前输出的前提下准备新 libobs 场景，原子保存 `N + 1` 版本，然后切换活动场景并广播事件。
+成功时，服务会验证文档与版本，仅为未改变的既有来源恢复已存凭据；旧输出继续运行期间，候选场景会预热全部可见来源、等待真实解码帧并将该帧预装到来源纹理。全部就绪后才原子保存 `N + 1` 版本，再在当前输出场景内部原子替换 items，避免暴露空场景并保持复用来源 active，最后广播事件。不可达的新来源会使整个事务回滚，活动场景、磁盘文件和 revision 均保持不变。
 
 A redacted credential placeholder is rejected for a new source or a changed endpoint. To change credentials, submit the complete new RTSP URL over the local connection. The server never echoes that secret in its response or parse errors.
 
@@ -96,6 +97,7 @@ Common status codes:
 | ---: | --- | --- |
 | 200 | — | scene committed; response and ETag contain the new revision |
 | 403 | `origin_rejected` | a present Origin is not the same local authority as Host |
+| 409 | `runtime_rejected` | a candidate source timed out or libobs could not prepare the replacement; no change is committed |
 | 412 | `revision_conflict` | `If-Match` or body revision is stale |
 | 413 | `body_too_large` | request body exceeds 1 MiB |
 | 415 | `content_type` | content type is not `application/json` |

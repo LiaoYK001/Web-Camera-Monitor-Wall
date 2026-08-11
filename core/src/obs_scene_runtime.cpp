@@ -6,9 +6,11 @@
 
 #include <algorithm>
 #include <atomic>
+#include <chrono>
 #include <memory>
 #include <string>
 #include <string_view>
+#include <thread>
 #include <unordered_map>
 #include <unordered_set>
 #include <utility>
@@ -48,6 +50,8 @@ struct SourceEntry {
     SceneSource configuration;
     std::shared_ptr<SourceStatus> status;
     SourcePtr source;
+    bool prewarmed = false;
+    bool frame_primed = false;
 };
 
 struct RuntimeState {
@@ -57,6 +61,13 @@ struct RuntimeState {
 
     ~RuntimeState()
     {
+        for (auto &[id, entry] : sources) {
+            (void)id;
+            if (entry.prewarmed) {
+                obs_source_dec_active(entry.source.get());
+                entry.prewarmed = false;
+            }
+        }
         scene.reset();
         sources.clear();
     }
@@ -143,6 +154,63 @@ void configure_scene_item(obs_sceneitem_t *scene_item, const SceneItem &configur
     obs_sceneitem_set_order_position(scene_item, configuration.z_index);
 }
 
+bool retain_scene_item(obs_scene_t *, obs_sceneitem_t *item, void *parameter)
+{
+    obs_sceneitem_addref(item);
+    static_cast<std::vector<obs_sceneitem_t *> *>(parameter)->push_back(item);
+    return true;
+}
+
+struct AtomicSceneReplacement {
+    RuntimeState *candidate;
+    bool succeeded = false;
+};
+
+void replace_scene_contents(void *parameter, obs_scene_t *scene)
+{
+    auto &replacement = *static_cast<AtomicSceneReplacement *>(parameter);
+    std::vector<obs_sceneitem_t *> previous_items;
+    obs_scene_enum_items(scene, retain_scene_item, &previous_items);
+
+    std::vector<const SceneItem *> ordered_items;
+    ordered_items.reserve(replacement.candidate->document.items.size());
+    for (const SceneItem &item : replacement.candidate->document.items)
+        ordered_items.push_back(&item);
+    std::sort(ordered_items.begin(), ordered_items.end(), [](const SceneItem *left, const SceneItem *right) {
+        return left->z_index < right->z_index;
+    });
+
+    std::vector<std::pair<obs_sceneitem_t *, const SceneItem *>> added_items;
+    added_items.reserve(ordered_items.size());
+    for (const SceneItem *item : ordered_items) {
+        const auto source = replacement.candidate->sources.find(item->source_id);
+        if (source == replacement.candidate->sources.end())
+            break;
+        obs_sceneitem_t *scene_item = obs_scene_add(scene, source->second.source.get());
+        if (!scene_item)
+            break;
+        added_items.emplace_back(scene_item, item);
+    }
+
+    if (added_items.size() != ordered_items.size()) {
+        for (const auto &[scene_item, configuration] : added_items) {
+            (void)configuration;
+            obs_sceneitem_remove(scene_item);
+        }
+        for (obs_sceneitem_t *item : previous_items)
+            obs_sceneitem_release(item);
+        return;
+    }
+
+    for (obs_sceneitem_t *item : previous_items) {
+        obs_sceneitem_remove(item);
+        obs_sceneitem_release(item);
+    }
+    for (const auto &[scene_item, configuration] : added_items)
+        configure_scene_item(scene_item, *configuration);
+    replacement.succeeded = true;
+}
+
 std::unordered_set<std::string> visible_source_ids(const RuntimeState *state)
 {
     std::unordered_set<std::string> result;
@@ -162,6 +230,33 @@ bool source_ready(const SourceEntry &entry)
     const obs_media_state state = obs_source_media_get_state(entry.source.get());
     return (entry.status->started.load() || state == OBS_MEDIA_STATE_PLAYING) &&
            obs_source_get_width(entry.source.get()) > 0 && obs_source_get_height(entry.source.get()) > 0;
+}
+
+bool prime_source_frame(SourceEntry &entry)
+{
+    if (entry.frame_primed)
+        return source_ready(entry);
+
+    obs_source_frame *frame = obs_source_get_frame(entry.source.get());
+    if (!frame)
+        return false;
+    obs_source_set_video_frame(entry.source.get(), frame);
+    obs_source_release_frame(entry.source.get(), frame);
+    entry.frame_primed = true;
+    return source_ready(entry);
+}
+
+void release_prewarmed_sources(RuntimeState *state)
+{
+    if (!state)
+        return;
+    for (auto &[id, entry] : state->sources) {
+        (void)id;
+        if (entry.prewarmed) {
+            obs_source_dec_active(entry.source.get());
+            entry.prewarmed = false;
+        }
+    }
 }
 
 } // namespace
@@ -233,6 +328,19 @@ std::optional<std::string> ObsSceneRuntime::prepare(const SceneDocument &documen
         configure_scene_item(scene_item, *item);
     }
 
+    const auto visible = visible_source_ids(candidate.get());
+    for (const std::string &id : visible) {
+        auto source = candidate->sources.find(id);
+        if (source != candidate->sources.end()) {
+            const bool already_active = obs_source_active(source->second.source.get());
+            source->second.frame_primed = already_active;
+            if (!already_active)
+                source->second.status->started.store(false);
+            obs_source_inc_active(source->second.source.get());
+            source->second.prewarmed = true;
+        }
+    }
+
     impl_->prepared = std::move(candidate);
     return std::nullopt;
 }
@@ -240,6 +348,36 @@ std::optional<std::string> ObsSceneRuntime::prepare(const SceneDocument &documen
 bool ObsSceneRuntime::has_prepared() const
 {
     return impl_->prepared != nullptr;
+}
+
+std::optional<std::string> ObsSceneRuntime::wait_prepared_visible_sources()
+{
+    if (!impl_->prepared)
+        return "no OBS scene replacement is prepared";
+
+    const auto deadline = std::chrono::steady_clock::now() +
+                          std::chrono::seconds(impl_->connect_timeout_seconds);
+    std::vector<std::string> pending;
+    while (true) {
+        pending.clear();
+        const auto visible = visible_source_ids(impl_->prepared.get());
+        for (const std::string &id : visible) {
+            auto source = impl_->prepared->sources.find(id);
+            if (source == impl_->prepared->sources.end() || !prime_source_frame(source->second))
+                pending.push_back(id);
+        }
+        if (pending.empty())
+            return std::nullopt;
+        if (std::chrono::steady_clock::now() >= deadline)
+            break;
+        std::this_thread::sleep_for(std::chrono::milliseconds(50));
+    }
+
+    std::sort(pending.begin(), pending.end());
+    std::string message = "RTSP sources did not produce a video frame before timeout:";
+    for (const std::string &id : pending)
+        message += " " + id;
+    return message;
 }
 
 void ObsSceneRuntime::discard_prepared()
@@ -256,8 +394,19 @@ void ObsSceneRuntime::commit_prepared()
         obs_source_set_volume(entry.source.get(), static_cast<float>(entry.configuration.volume));
         obs_source_set_muted(entry.source.get(), entry.configuration.muted);
     }
-    if (impl_->active)
+    if (impl_->active && impl_->current) {
+        AtomicSceneReplacement replacement{impl_->prepared.get()};
+        obs_scene_atomic_update(impl_->current->scene.get(), replace_scene_contents, &replacement);
+        if (replacement.succeeded) {
+            impl_->prepared->scene.reset();
+            impl_->prepared->scene = std::move(impl_->current->scene);
+        } else {
+            blog(LOG_ERROR, "Could not atomically replace the active OBS scene; using prepared scene output");
+            obs_set_output_source(0, obs_scene_get_source(impl_->prepared->scene.get()));
+        }
+    } else if (impl_->active) {
         obs_set_output_source(0, obs_scene_get_source(impl_->prepared->scene.get()));
+    }
     impl_->current = std::move(impl_->prepared);
 }
 
@@ -275,6 +424,7 @@ void ObsSceneRuntime::deactivate()
     if (!impl_ || !impl_->active)
         return;
     obs_set_output_source(0, nullptr);
+    release_prewarmed_sources(impl_->current.get());
     impl_->active = false;
 }
 

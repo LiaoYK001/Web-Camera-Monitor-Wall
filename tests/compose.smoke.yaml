@@ -81,14 +81,14 @@ services:
     entrypoint:
       - /bin/sh
       - -c
-      - install -m 0600 /test-scenes/m1-two-up.json /test-config/scene.json && exec /opt/webobs/entrypoint.sh
+      - chmod 0700 /test-config; test -f /test-config/scene.json || install -m 0600 /test-scenes/m1-two-up.json /test-config/scene.json; exec /opt/webobs/entrypoint.sh
     environment:
       WEBOBS_SCENE_FILE: /test-config/scene.json
       WEBOBS_OUTPUT: /artifacts/control-plane.mp4
       WEBOBS_DURATION_SECONDS: "0"
       WEBOBS_FPS: "10"
       WEBOBS_BITRATE_KBPS: "800"
-      WEBOBS_CONNECT_TIMEOUT_SECONDS: "30"
+      WEBOBS_CONNECT_TIMEOUT_SECONDS: "8"
       WEBOBS_LOG_LEVEL: info
       WEBOBS_LISTEN_ADDRESS: 0.0.0.0
       WEBOBS_HTTP_PORT: "8080"
@@ -96,8 +96,7 @@ services:
     volumes:
       - ./artifacts:/artifacts
       - ./scenes:/test-scenes:ro
-    tmpfs:
-      - /test-config:mode=0700
+      - control-config:/test-config
     ports:
       - "127.0.0.1:18080:8080"
     depends_on:
@@ -115,3 +114,6 @@ services:
       TEST_REQUIRE_PILLARBOX: "1"
     volumes:
       - ./artifacts:/artifacts:ro
+
+volumes:
+  control-config:

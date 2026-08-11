@@ -67,6 +67,10 @@ SceneUpdateResult SceneController::replace(std::string_view candidate_json,
 
     if (const auto runtime_error = runtime_.prepare(*plan.document))
         return update_failure(SceneUpdateStatus::runtime_rejected, document_.revision, *runtime_error);
+    if (const auto readiness_error = runtime_.wait_prepared_visible_sources()) {
+        runtime_.discard_prepared();
+        return update_failure(SceneUpdateStatus::runtime_rejected, document_.revision, *readiness_error);
+    }
     if (const auto save_error = save_scene_file_atomic(scene_file_, *plan.document)) {
         runtime_.discard_prepared();
         return update_failure(SceneUpdateStatus::persistence_failed, document_.revision, *save_error);

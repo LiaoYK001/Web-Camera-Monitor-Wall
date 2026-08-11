@@ -11,6 +11,7 @@ $RepositoryRoot = (Resolve-Path (Join-Path $PSScriptRoot '..')).Path
 $ComposeFile = Join-Path $PSScriptRoot 'compose.smoke.yaml'
 $ArtifactDirectory = Join-Path $PSScriptRoot 'artifacts'
 $Artifact = Join-Path $ArtifactDirectory 'control-plane.mp4'
+$LiveMutationArtifact = Join-Path $ArtifactDirectory 'control-plane-live-mutation.mp4'
 $BaseUri = 'http://127.0.0.1:18080'
 $LocalOrigin = 'http://127.0.0.1:18080'
 
@@ -92,6 +93,9 @@ New-Item -ItemType Directory -Force -Path $ArtifactDirectory | Out-Null
 if (Test-Path -LiteralPath $Artifact) {
     Remove-Item -LiteralPath $Artifact -Force
 }
+if (Test-Path -LiteralPath $LiveMutationArtifact) {
+    Remove-Item -LiteralPath $LiveMutationArtifact -Force
+}
 
 $handler = [Net.Http.HttpClientHandler]::new()
 $handler.UseProxy = $false
@@ -161,8 +165,12 @@ try {
 
     $initialScene.items[0].x = 10
     $initialScene.items[0].width = 300
+    $initialScene.items[0].crop.left = 12
+    $initialScene.items[0].zIndex = 1
     $initialScene.items[1].x = 330
     $initialScene.items[1].width = 300
+    $initialScene.items[1].zIndex = 0
+    $initialScene.items[1].visible = $false
     $initialScene.sources[1].muted = $false
     $initialScene.sources[1].volume = 0.25
     $replacement = $initialScene | ConvertTo-Json -Depth 10 -Compress
@@ -172,35 +180,123 @@ try {
     Assert-True ($updated.Headers.ETag.Tag -eq '"4"') 'Successful PUT must advance ETag exactly once'
     $updatedScene = $updated.Body | ConvertFrom-Json
     Assert-True ($updatedScene.revision -eq 4) 'Successful PUT must advance the document revision exactly once'
+    Assert-True ($updatedScene.items[0].crop.left -eq 12 -and $updatedScene.items[0].zIndex -eq 1) `
+        'Successful PUT must apply crop and layer order'
+    Assert-True (-not $updatedScene.items[1].visible) 'Successful PUT must apply source visibility'
 
     $updatedEvent = Receive-WebSocketText -Socket $socket | ConvertFrom-Json
     Assert-True ($updatedEvent.type -eq 'scene.updated') 'Successful PUT must broadcast scene.updated'
     Assert-True ($updatedEvent.scene.revision -eq 4) 'WebSocket update must contain the committed revision'
 
+    $updatedScene.items[1].visible = $true
+    $updatedScene.sources = @($updatedScene.sources) + [PSCustomObject]@{
+        id = 'camera-added'
+        kind = 'rtsp'
+        name = 'Added Test Camera'
+        rtspUrl = 'rtsp://mediamtx:8554/m0-test'
+        transport = 'tcp'
+        muted = $true
+        volume = 0.6
+    }
+    $updatedScene.items = @($updatedScene.items) + [PSCustomObject]@{
+        id = 'item-added'
+        sourceId = 'camera-added'
+        x = 0
+        y = 0
+        width = 640
+        height = 360
+        scaleMode = 'contain'
+        crop = [PSCustomObject]@{ top = 0; right = 0; bottom = 0; left = 0 }
+        zIndex = 2
+        visible = $true
+    }
+    $addBody = $updatedScene | ConvertTo-Json -Depth 10 -Compress
+    $added = Invoke-ControlRequest -Client $client -Method ([Net.Http.HttpMethod]::Put) -Path '/api/v1/scene' `
+        -Body $addBody -Headers @{ 'If-Match' = '"4"'; Origin = $LocalOrigin }
+    Assert-True ($added.Status -eq 200) 'Adding an RTSP source while recording must succeed'
+    Assert-True ($added.Headers.ETag.Tag -eq '"5"') 'Adding a source must advance ETag exactly once'
+    $addedScene = $added.Body | ConvertFrom-Json
+    Assert-True ($addedScene.sources.Count -eq 3 -and $addedScene.items.Count -eq 3) 'Added source and item must be returned'
+    $addedEvent = Receive-WebSocketText -Socket $socket | ConvertFrom-Json
+    Assert-True ($addedEvent.type -eq 'scene.updated' -and $addedEvent.scene.revision -eq 5) `
+        'Adding a source must broadcast revision five'
+
+    $addedScene.sources = @($addedScene.sources | Where-Object { $_.id -eq 'camera-added' })
+    $addedScene.items = @($addedScene.items | Where-Object { $_.id -eq 'item-added' })
+    $addedScene.items[0].zIndex = 0
+    $removeBody = $addedScene | ConvertTo-Json -Depth 10 -Compress
+    $removed = Invoke-ControlRequest -Client $client -Method ([Net.Http.HttpMethod]::Put) -Path '/api/v1/scene' `
+        -Body $removeBody -Headers @{ 'If-Match' = '"5"'; Origin = $LocalOrigin }
+    Assert-True ($removed.Status -eq 200) 'Removing RTSP sources while recording must succeed'
+    Assert-True ($removed.Headers.ETag.Tag -eq '"6"') 'Removing sources must advance ETag exactly once'
+    $currentScene = $removed.Body | ConvertFrom-Json
+    Assert-True ($currentScene.sources.Count -eq 1 -and $currentScene.sources[0].id -eq 'camera-added') `
+        'Removed sources must disappear from the committed document'
+    $removedEvent = Receive-WebSocketText -Socket $socket | ConvertFrom-Json
+    Assert-True ($removedEvent.type -eq 'scene.updated' -and $removedEvent.scene.revision -eq 6) `
+        'Removing sources must broadcast revision six'
+
     $persistedText = @(& docker compose -f $ComposeFile exec -T webobs-control sh -c 'cat /test-config/scene.json') -join "`n"
     if ($LASTEXITCODE -ne 0) { throw 'Could not read the persisted scene from the test container' }
     $persisted = $persistedText | ConvertFrom-Json
-    Assert-True ($persisted.revision -eq 4) 'Successful PUT must persist the committed revision'
-    Assert-True ($persisted.items[0].x -eq 10) 'Successful PUT must persist scene transforms'
+    Assert-True ($persisted.revision -eq 6) 'Source CRUD must persist the committed revision'
+    Assert-True ($persisted.sources.Count -eq 1 -and $persisted.sources[0].id -eq 'camera-added') `
+        'Source CRUD must persist the final source set'
+    Assert-True ($persisted.items[0].width -eq 640) 'Source CRUD must persist the final full-canvas transform'
     $mode = (@(& docker compose -f $ComposeFile exec -T webobs-control stat -c '%a' /test-config/scene.json) -join '').Trim()
     Assert-True ($LASTEXITCODE -eq 0 -and $mode -eq '600') 'Persisted scene must retain mode 0600'
+    $directoryMode = (@(& docker compose -f $ComposeFile exec -T webobs-control stat -c '%a' /test-config) -join '').Trim()
+    Assert-True ($LASTEXITCODE -eq 0 -and $directoryMode -eq '700') 'Persisted scene directory must retain mode 0700'
 
     $stale = Invoke-ControlRequest -Client $client -Method ([Net.Http.HttpMethod]::Put) -Path '/api/v1/scene' `
         -Body $replacement -Headers @{ 'If-Match' = '"3"'; Origin = $LocalOrigin }
     Assert-True ($stale.Status -eq 412) 'Stale If-Match must return 412'
-    Assert-True (($stale.Body | ConvertFrom-Json).revision -eq 4) 'Conflict response must expose the current revision'
+    Assert-True (($stale.Body | ConvertFrom-Json).revision -eq 6) 'Conflict response must expose the current revision'
 
-    $currentBody = $updatedScene | ConvertTo-Json -Depth 10 -Compress
+    $currentBody = $currentScene | ConvertTo-Json -Depth 10 -Compress
+    $unreachableScene = $currentBody | ConvertFrom-Json
+    $unreachableScene.sources = @($unreachableScene.sources) + [PSCustomObject]@{
+        id = 'camera-unreachable'
+        kind = 'rtsp'
+        name = 'Unreachable Test Camera'
+        rtspUrl = 'rtsp://mediamtx:8554/m1-missing'
+        transport = 'tcp'
+        muted = $true
+        volume = 1.0
+    }
+    $unreachableScene.items = @($unreachableScene.items) + [PSCustomObject]@{
+        id = 'item-unreachable'
+        sourceId = 'camera-unreachable'
+        x = 0
+        y = 0
+        width = 320
+        height = 180
+        scaleMode = 'contain'
+        crop = [PSCustomObject]@{ top = 0; right = 0; bottom = 0; left = 0 }
+        zIndex = 1
+        visible = $true
+    }
+    $unreachableBody = $unreachableScene | ConvertTo-Json -Depth 10 -Compress
+    $unreachable = Invoke-ControlRequest -Client $client -Method ([Net.Http.HttpMethod]::Put) -Path '/api/v1/scene' `
+        -Body $unreachableBody -Headers @{ 'If-Match' = '"6"'; Origin = $LocalOrigin }
+    Assert-True ($unreachable.Status -eq 409) 'An unreachable added source must reject the transaction'
+    Assert-True (($unreachable.Body | ConvertFrom-Json).revision -eq 6) `
+        'A rejected source transaction must retain the current revision'
+    $afterRejectedSource = Invoke-ControlRequest -Client $client -Method ([Net.Http.HttpMethod]::Get) -Path '/api/v1/scene'
+    $afterRejectedScene = $afterRejectedSource.Body | ConvertFrom-Json
+    Assert-True ($afterRejectedSource.Headers.ETag.Tag -eq '"6"' -and $afterRejectedScene.sources.Count -eq 1) `
+        'A rejected source transaction must leave the active scene unchanged'
+
     $missing = Invoke-ControlRequest -Client $client -Method ([Net.Http.HttpMethod]::Put) -Path '/api/v1/scene' `
         -Body $currentBody -Headers @{ Origin = $LocalOrigin }
     Assert-True ($missing.Status -eq 428) 'Missing If-Match must return 428'
 
     $wrongType = Invoke-ControlRequest -Client $client -Method ([Net.Http.HttpMethod]::Put) -Path '/api/v1/scene' `
-        -Body '{}' -ContentType 'text/plain' -Headers @{ 'If-Match' = '"4"'; Origin = $LocalOrigin }
+        -Body '{}' -ContentType 'text/plain' -Headers @{ 'If-Match' = '"6"'; Origin = $LocalOrigin }
     Assert-True ($wrongType.Status -eq 415) 'Non-JSON scene PUT must return 415'
 
     $foreignOrigin = Invoke-ControlRequest -Client $client -Method ([Net.Http.HttpMethod]::Put) -Path '/api/v1/scene' `
-        -Body $currentBody -Headers @{ 'If-Match' = '"4"'; Origin = 'http://example.invalid' }
+        -Body $currentBody -Headers @{ 'If-Match' = '"6"'; Origin = 'http://example.invalid' }
     Assert-True ($foreignOrigin.Status -eq 403) 'Foreign Origin must return 403'
 
     $badHost = Invoke-ControlRequest -Client $client -Method ([Net.Http.HttpMethod]::Get) -Path '/api/v1/health' `
@@ -209,30 +305,70 @@ try {
 
     $oversized = 'x' * (1024 * 1024 + 1)
     $tooLarge = Invoke-ControlRequest -Client $client -Method ([Net.Http.HttpMethod]::Put) -Path '/api/v1/scene' `
-        -Body $oversized -Headers @{ 'If-Match' = '"4"'; Origin = $LocalOrigin }
+        -Body $oversized -Headers @{ 'If-Match' = '"6"'; Origin = $LocalOrigin }
     Assert-True ($tooLarge.Status -eq 413) 'Scene request over one MiB must return 413'
 
     $largeHeader = Invoke-ControlRequest -Client $client -Method ([Net.Http.HttpMethod]::Get) -Path '/api/v1/health' `
         -Headers @{ 'X-Test-Padding' = ('x' * (17 * 1024)) }
     Assert-True ($largeHeader.Status -eq 431) 'Headers over 16 KiB must return 431'
 
-    Start-Sleep -Seconds 2
+    Start-Sleep -Seconds 3
     $socket.Dispose()
     $socket = $null
     docker compose -f $ComposeFile stop webobs-control
     if ($LASTEXITCODE -ne 0) { throw 'M1 control-plane container did not stop cleanly' }
+    Move-Item -LiteralPath $Artifact -Destination $LiveMutationArtifact
+    docker compose -f $ComposeFile run --rm `
+        -e TEST_RECORDING=/artifacts/control-plane-live-mutation.mp4 `
+        -e TEST_MIN_DURATION=1 `
+        -e TEST_MAX_DURATION=60 `
+        -e TEST_REQUIRE_PILLARBOX=1 `
+        -e TEST_SAMPLE_FROM_END_SECONDS=1 `
+        -e TEST_REJECT_BLACKOUT=1 `
+        validator
+    if ($LASTEXITCODE -ne 0) { throw 'M1 live source CRUD recording validation failed' }
+
+    docker compose -f $ComposeFile up -d --no-deps webobs-control
+    if ($LASTEXITCODE -ne 0) { throw 'M1 persisted-scene restart failed' }
+    $restartHealth = $null
+    $restartDeadline = [DateTime]::UtcNow.AddSeconds(60)
+    while ([DateTime]::UtcNow -lt $restartDeadline) {
+        try {
+            $candidate = Invoke-ControlRequest -Client $client -Method ([Net.Http.HttpMethod]::Get) -Path '/api/v1/health'
+            if ($candidate.Status -eq 200) {
+                $restartHealth = $candidate
+                break
+            }
+        } catch {
+            Start-Sleep -Milliseconds 250
+        }
+    }
+    if ($null -eq $restartHealth) {
+        docker compose -f $ComposeFile ps -a
+        docker compose -f $ComposeFile logs --no-color --tail 160 webobs-control
+    }
+    Assert-True ($null -ne $restartHealth) 'Control plane must become healthy after a persisted-scene restart'
+    $restarted = Invoke-ControlRequest -Client $client -Method ([Net.Http.HttpMethod]::Get) -Path '/api/v1/scene'
+    $restartedScene = $restarted.Body | ConvertFrom-Json
+    Assert-True ($restarted.Status -eq 200 -and $restarted.Headers.ETag.Tag -eq '"6"') `
+        'Restart must restore the last committed revision'
+    Assert-True ($restartedScene.sources.Count -eq 1 -and $restartedScene.sources[0].id -eq 'camera-added') `
+        'Restart must restore the last committed source set'
+    Start-Sleep -Seconds 2
+    docker compose -f $ComposeFile stop webobs-control
+    if ($LASTEXITCODE -ne 0) { throw 'Restarted M1 control-plane container did not stop cleanly' }
     docker compose -f $ComposeFile run --rm `
         -e TEST_RECORDING=/artifacts/control-plane.mp4 `
         -e TEST_MIN_DURATION=1 `
         -e TEST_MAX_DURATION=60 `
-        -e TEST_REQUIRE_PILLARBOX=0 `
+        -e TEST_REQUIRE_PILLARBOX=1 `
         validator
-    if ($LASTEXITCODE -ne 0) { throw 'M1 control-plane recording validation failed' }
+    if ($LASTEXITCODE -ne 0) { throw 'M1 persisted-scene restart recording validation failed' }
 
     $logs = @(& docker compose -f $ComposeFile logs --no-color webobs-control) -join "`n"
     $rtspUserinfoPattern = 'rts' + 'p://[^\s]+@'
     Assert-True ($logs -notmatch $rtspUserinfoPattern) 'Control-plane logs must not expose RTSP userinfo'
-    Write-Host 'M1 control-plane acceptance passed: REST, ETag, WebSocket, persistence, security, and recording.'
+    Write-Host 'M1 control-plane acceptance passed: live source CRUD, transforms, REST, ETag, WebSocket, restart persistence, security, and recording.'
 } finally {
     if ($null -ne $socket) {
         $socket.Dispose()
