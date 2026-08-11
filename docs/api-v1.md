@@ -19,6 +19,7 @@ The server applies these additional controls:
 - JSON bodies are limited to 1 MiB, headers to 16 KiB, and reads to 15 seconds;
 - responses disable caching and include restrictive CSP, content-type, referrer, and permissions headers;
 - API scene responses redact RTSP userinfo and never return stored credentials.
+- the bundled editor is served from the same origin, with a restrictive CSP and no external scripts, fonts, or CDN dependencies.
 
 服务还会限制本地 Host、校验 Origin、不返回 CORS 授权、限制请求体/请求头/读取时长、发送严格安全响应头，并在所有 API 场景响应中隐藏 RTSP 凭据。这些措施只降低本机误用和浏览器跨站请求风险，不能代替 M6 的身份认证与加密。
 
@@ -35,6 +36,12 @@ The explicit remote-bind flag is a guardrail for container networking, not an ap
 非回环确认开关只是容器网络防误配措施，不代表 M1 可以安全远程暴露。场景变更还要求配置绝对 `--scene-file`；没有持久化场景路径的运行实例会对更新返回 `503`。
 
 ## HTTP resources / HTTP 资源
+
+### `GET /`
+
+Returns the bundled React/TypeScript scene editor. The non-hashed HTML entry is served with `Cache-Control: no-store`; hashed JavaScript and CSS under `/assets/` are immutable. Static requests accept only generated asset filenames, reject traversal attempts, and cap individual files at 2 MiB.
+
+返回随产品镜像交付的 React/TypeScript 场景编辑器。未哈希的 HTML 入口使用 `Cache-Control: no-store`，`/assets/` 下的哈希 JavaScript/CSS 使用长期不可变缓存。静态资源只接受生成的文件名，拒绝目录穿越，并把单文件上限限制为 2 MiB。
 
 ### `GET /api/v1/health`
 

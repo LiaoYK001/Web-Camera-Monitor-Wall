@@ -8,6 +8,8 @@
 *.pfx
 /build/
 /build-*/
+/web/node_modules/
+/web/dist/
 /recordings/*
 !/recordings/.gitkeep
 /tests/artifacts/*

@@ -1,3 +1,19 @@
+FROM node:24.14.0-bookworm-slim@sha256:d8e448a56fc63242f70026718378bd4b00f8c82e78d20eefb199224a4d8e33d8 AS web-builder
+
+WORKDIR /src/web
+RUN corepack enable \
+    && attempt=1 \
+    && until corepack prepare pnpm@11.16.0 --activate; do \
+        if [ "$attempt" -ge 5 ]; then exit 1; fi; \
+        attempt=$((attempt + 1)); \
+        sleep 5; \
+    done
+COPY web/package.json web/pnpm-lock.yaml ./
+RUN pnpm config set fetch-retries 5 \
+    && pnpm install --frozen-lockfile --ignore-scripts
+COPY web/ ./
+RUN pnpm run build
+
 FROM ubuntu:24.04 AS obs-builder
 
 ARG DEBIAN_FRONTEND=noninteractive
@@ -144,6 +160,7 @@ RUN apt-get -o Acquire::Retries=5 -o Acquire::http::Timeout=30 -o Acquire::https
     && rm -rf /var/lib/apt/lists/*
 
 COPY --from=core-builder /opt/obs /opt/obs
+COPY --from=web-builder /src/web/dist /opt/webobs/ui
 COPY docker/entrypoint.sh /opt/webobs/entrypoint.sh
 COPY LICENSE /usr/share/licenses/webobs/LICENSE
 COPY obs/obs-studio/COPYING /usr/share/licenses/webobs/OBS-COPYING

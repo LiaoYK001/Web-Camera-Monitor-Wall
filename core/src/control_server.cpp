@@ -14,6 +14,8 @@
 #include <chrono>
 #include <cstdint>
 #include <deque>
+#include <filesystem>
+#include <fstream>
 #include <memory>
 #include <optional>
 #include <string>
@@ -32,6 +34,10 @@ namespace websocket = beast::websocket;
 using tcp = net::ip::tcp;
 using HttpRequest = http::request<http::string_body>;
 using HttpResponse = http::response<http::string_body>;
+
+#ifndef WEBOBS_WEB_ROOT
+#define WEBOBS_WEB_ROOT "/opt/webobs/ui"
+#endif
 
 std::string_view view(beast::string_view value)
 {
@@ -155,25 +161,90 @@ std::string error_body(std::string_view code, std::string_view message, std::uin
            json_escape(message) + "\"},\"revision\":" + std::to_string(revision) + "}";
 }
 
-void set_security_headers(HttpResponse &response)
+void set_security_headers(HttpResponse &response, std::string_view content_type,
+                          std::string_view cache_control)
 {
     response.set(http::field::server, "webobsd");
-    response.set(http::field::cache_control, "no-store");
-    response.set(http::field::content_type, "application/json; charset=utf-8");
-    response.set("Content-Security-Policy", "default-src 'none'; frame-ancestors 'none'");
+    response.set(http::field::cache_control, cache_control);
+    response.set(http::field::content_type, content_type);
+    response.set("Content-Security-Policy",
+                 "default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self' data:; "
+                 "connect-src 'self' ws://localhost:* ws://127.0.0.1:* ws://[::1]:*; "
+                 "base-uri 'none'; form-action 'none'; frame-ancestors 'none'; object-src 'none'");
     response.set("X-Content-Type-Options", "nosniff");
+    response.set("X-Frame-Options", "DENY");
     response.set("Referrer-Policy", "no-referrer");
     response.set("Permissions-Policy", "camera=(), microphone=(), geolocation=()");
+    response.set("Cross-Origin-Resource-Policy", "same-origin");
 }
 
-HttpResponse response(http::status status, unsigned int version, std::string body)
+HttpResponse response(http::status status, unsigned int version, std::string body,
+                      std::string_view content_type = "application/json; charset=utf-8",
+                      std::string_view cache_control = "no-store")
 {
     HttpResponse result(status, version);
-    set_security_headers(result);
+    set_security_headers(result, content_type, cache_control);
     result.keep_alive(false);
     result.body() = std::move(body);
     result.prepare_payload();
     return result;
+}
+
+std::string static_content_type(std::string_view filename)
+{
+    if (filename.ends_with(".html"))
+        return "text/html; charset=utf-8";
+    if (filename.ends_with(".js"))
+        return "text/javascript; charset=utf-8";
+    if (filename.ends_with(".css"))
+        return "text/css; charset=utf-8";
+    if (filename.ends_with(".png"))
+        return "image/png";
+    if (filename.ends_with(".ico"))
+        return "image/x-icon";
+    if (filename.ends_with(".webmanifest"))
+        return "application/manifest+json";
+    return "application/octet-stream";
+}
+
+std::optional<HttpResponse> static_file_response(std::string_view target, unsigned int version)
+{
+    std::string filename;
+    bool immutable = false;
+    if (target == "/" || target == "/index.html") {
+        filename = "index.html";
+    } else if (target.starts_with("/assets/")) {
+        const std::string_view asset = target.substr(std::string_view("/assets/").size());
+        if (asset.empty() || !std::all_of(asset.begin(), asset.end(), [](unsigned char character) {
+                return std::isalnum(character) || character == '.' || character == '_' || character == '-';
+            }))
+            return std::nullopt;
+        filename = "assets/" + std::string(asset);
+        immutable = true;
+    } else {
+        return std::nullopt;
+    }
+
+    const std::filesystem::path path = std::filesystem::path(WEBOBS_WEB_ROOT) / filename;
+    std::error_code error;
+    if (!std::filesystem::is_regular_file(path, error) || error)
+        return response(http::status::not_found, version,
+                        error_body("ui_not_installed", "Web editor asset is unavailable"));
+    const std::uintmax_t size = std::filesystem::file_size(path, error);
+    if (error || size > 2 * 1024 * 1024)
+        return response(http::status::internal_server_error, version,
+                        error_body("ui_asset_invalid", "Web editor asset could not be served"));
+
+    std::ifstream input(path, std::ios::binary);
+    if (!input)
+        return response(http::status::internal_server_error, version,
+                        error_body("ui_asset_unreadable", "Web editor asset could not be read"));
+    std::string body(static_cast<std::size_t>(size), '\0');
+    if (size > 0 && !input.read(body.data(), static_cast<std::streamsize>(size)))
+        return response(http::status::internal_server_error, version,
+                        error_body("ui_asset_unreadable", "Web editor asset could not be read"));
+    return response(http::status::ok, version, std::move(body), static_content_type(filename),
+                    immutable ? "public, max-age=31536000, immutable" : "no-store");
 }
 
 std::string etag(std::uint64_t revision)
@@ -232,7 +303,7 @@ public:
         stream_.read_message_max(64 * 1024);
         stream_.set_option(websocket::stream_base::decorator([](websocket::response_type &upgrade) {
             upgrade.set(http::field::server, "webobsd");
-            upgrade.set("Content-Security-Policy", "default-src 'none'; frame-ancestors 'none'");
+            upgrade.set("Content-Security-Policy", "default-src 'none'; frame-ancestors 'none'; object-src 'none'");
             upgrade.set("X-Content-Type-Options", "nosniff");
         }));
         stream_.async_accept(request,
@@ -338,8 +409,13 @@ HttpResponse handle_request(const HttpRequest &request, SceneController &control
     if (request.method() == http::verb::get && target == "/api/v1/health")
         return response(http::status::ok, version, "{\"status\":\"ok\",\"milestone\":\"M1\"}");
 
-    if (target != "/api/v1/scene")
+    if (target != "/api/v1/scene") {
+        if (request.method() == http::verb::get) {
+            if (auto static_response = static_file_response(target, version))
+                return std::move(*static_response);
+        }
         return response(http::status::not_found, version, error_body("not_found", "resource not found"));
+    }
 
     if (request.method() == http::verb::get) {
         const SceneSnapshot snapshot = controller.snapshot();

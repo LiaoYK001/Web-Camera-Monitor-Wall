@@ -133,6 +133,19 @@ try {
     Assert-True (($health.Headers.GetValues('X-Content-Type-Options') -join ',') -eq 'nosniff') 'Responses must set nosniff'
     Assert-True (($health.Headers.GetValues('Content-Security-Policy') -join ',') -match "default-src 'none'") 'Responses must set a restrictive CSP'
 
+    $editor = Invoke-ControlRequest -Client $client -Method ([Net.Http.HttpMethod]::Get) -Path '/'
+    Assert-True ($editor.Status -eq 200) 'Web editor index must be served by the product container'
+    Assert-True ($editor.ContentHeaders.ContentType.MediaType -eq 'text/html') 'Web editor index must use an HTML content type'
+    Assert-True ($editor.Body -match '<title>WebOBS Monitor Wall</title>') 'Web editor index must contain product metadata'
+    $assetMatch = [Regex]::Match($editor.Body, 'src="(?<path>/assets/[^\"]+\.js)"')
+    Assert-True ($assetMatch.Success) 'Web editor index must reference a bundled JavaScript asset'
+    $editorAsset = Invoke-ControlRequest -Client $client -Method ([Net.Http.HttpMethod]::Get) -Path $assetMatch.Groups['path'].Value
+    Assert-True ($editorAsset.Status -eq 200) 'Bundled Web editor JavaScript must be served'
+    Assert-True ($editorAsset.ContentHeaders.ContentType.MediaType -eq 'text/javascript') 'Web editor JavaScript must use a script content type'
+    Assert-True (($editorAsset.Headers.GetValues('Cache-Control') -join ',') -match 'immutable') 'Hashed Web assets must use immutable caching'
+    $traversal = Invoke-ControlRequest -Client $client -Method ([Net.Http.HttpMethod]::Get) -Path '/assets/..%2Findex.html'
+    Assert-True ($traversal.Status -eq 404) 'Encoded traversal paths must not access Web editor files'
+
     $initial = Invoke-ControlRequest -Client $client -Method ([Net.Http.HttpMethod]::Get) -Path '/api/v1/scene'
     Assert-True ($initial.Status -eq 200) 'GET scene must succeed'
     Assert-True ($initial.Headers.ETag.Tag -eq '"3"') 'GET scene must expose the current revision as ETag'

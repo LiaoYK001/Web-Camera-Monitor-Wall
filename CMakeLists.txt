@@ -10,6 +10,7 @@ option(WEBOBS_BUILD_TESTS "Build the webobs unit tests" ON)
 set(WEBOBS_OBS_SOURCE_DIR "${CMAKE_SOURCE_DIR}/obs/obs-studio" CACHE PATH "OBS Studio source directory")
 set(WEBOBS_OBS_BUILD_DIR "${WEBOBS_OBS_SOURCE_DIR}/build_ubuntu" CACHE PATH "OBS Studio build directory")
 set(WEBOBS_OBS_PREFIX "/opt/obs" CACHE PATH "Runtime OBS installation prefix")
+set(WEBOBS_WEB_ROOT "/opt/webobs/ui" CACHE PATH "Installed WebOBS editor root")
 
 find_package(PkgConfig REQUIRED)
 find_package(Boost 1.83 REQUIRED)
@@ -55,6 +56,7 @@ target_link_libraries(webobsd PRIVATE webobs-common webobs-libobs Boost::headers
 target_compile_options(webobsd PRIVATE -Wall -Wextra -Wpedantic)
 target_compile_definitions(webobsd PRIVATE
     WEBOBS_OBS_PREFIX="${WEBOBS_OBS_PREFIX}"
+    WEBOBS_WEB_ROOT="${WEBOBS_WEB_ROOT}"
     BOOST_ERROR_CODE_HEADER_ONLY
     BOOST_SYSTEM_NO_DEPRECATED
 )

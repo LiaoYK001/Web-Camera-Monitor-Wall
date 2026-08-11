@@ -6,9 +6,9 @@
 RTSP camera -> libobs ffmpeg_source -> OBS scene -> obs_x264 -> video-only MP4
 ```
 
-当前开发版本已能从持久化场景启动多路 RTSP 合成，并通过本机 REST/WebSocket 接口在录制期间原子更新布局和来源；尚未加入 Web UI、WebRTC、正式 MediaMTX 服务、输出音轨或硬件编码。
+当前开发版本已能从持久化场景启动多路 RTSP 合成，并通过随产品镜像提供的 React/TypeScript 编辑器及本机 REST/WebSocket 接口，在录制期间原子更新布局和来源；尚未加入 WebRTC、正式 MediaMTX 服务、输出音轨或硬件编码。
 
-开发路线、里程碑验收标准和当前进度见 [ROADMAP.md](ROADMAP.md)。**M0 已通过全部验收；M1 Web Control 的场景模型、原子私有存储、libobs 实时变更和本地安全控制 API 已完成，当前进入 React/TypeScript 编辑器。**场景与持久化契约见 [docs/scene-schema-v1.md](docs/scene-schema-v1.md)，控制协议见 [docs/api-v1.md](docs/api-v1.md)。
+开发路线、里程碑验收标准和当前进度见 [ROADMAP.md](ROADMAP.md)。**M0 已通过全部验收；M1 Web Control 的场景模型、原子私有存储、libobs 实时变更、本地安全控制 API 和浏览器编辑器已完成，当前进行最终真实摄像头复验。**场景与持久化契约见 [docs/scene-schema-v1.md](docs/scene-schema-v1.md)，控制协议见 [docs/api-v1.md](docs/api-v1.md)。
 
 `WEBOBS_SCENE_FILE` 默认指向 `/config/webobs/scene.json`。首次启动使用 `WEBOBS_RTSP_URL` 创建并保存单路场景；后续启动以场景文件为准。手工编辑场景文件前应停止容器，且真实 RTSP 凭据不得提交到 Git。
 
@@ -66,7 +66,7 @@ WEBOBS_RTSP_URL=rtsp://user:password@camera-host:554/stream
 
 默认输出到 `recordings/webobs-<UTC timestamp>.mp4`。`WEBOBS_DURATION_SECONDS=0` 时录制和控制接口会持续运行到 `Ctrl+C` 或容器收到 `SIGTERM`；停止时会完成 muxer 和 MP4 封装。已有的显式输出文件不会被覆盖。
 
-Compose 只把 `8080` 发布到主机 `127.0.0.1`。启动后可检查控制面：
+Compose 只把 `8080` 发布到主机 `127.0.0.1`。启动后在本机浏览器打开 `http://127.0.0.1:8080/` 即可使用场景编辑器，也可直接检查控制接口：
 
 ```bash
 curl http://127.0.0.1:8080/api/v1/health
@@ -74,6 +74,8 @@ curl http://127.0.0.1:8080/api/v1/scene
 ```
 
 M1 尚无认证、TLS 或远程暴露承诺。不要将端口映射改为所有网卡，也不要通过公网反向代理发布；完整的本地安全约束和更新示例见 [控制 API 文档](docs/api-v1.md)。
+
+编辑器支持来源增删、RTSP 传输方式、静音/音量、拖动、缩放、适配模式、裁切、可见性和层级调整。修改先保留在浏览器草稿中，点击“保存场景”后以 ETag/`If-Match` 提交；WebSocket 会同步其他本地标签页的已提交版本并提示冲突。页面不会显示已存储的 RTSP 用户名或密码。
 
 RTSP URL 可能被 OBS 插件写入日志，因此核心日志处理器会把 `rtsp://user:password@host/...` 统一改写成 `rtsp://***:***@host/...`。不要把真实 URL 写入 Compose、README 或提交到 Git。
 

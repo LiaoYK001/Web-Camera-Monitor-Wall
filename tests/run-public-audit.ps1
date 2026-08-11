@@ -68,8 +68,10 @@ try {
             $path -cne 'tests/artifacts/.gitkeep'
         $isBuildDirectory = $path.StartsWith('build/', [StringComparison]::OrdinalIgnoreCase) -or
             $path -match '^(?i:build-[^/]+)/'
+        $isWebBuild = $path.StartsWith('web/node_modules/', [StringComparison]::OrdinalIgnoreCase) -or
+            $path.StartsWith('web/dist/', [StringComparison]::OrdinalIgnoreCase)
 
-        if ($isEnvFile -or $isSecretDirectory -or $isRecording -or $isArtifact -or $isBuildDirectory -or
+        if ($isEnvFile -or $isSecretDirectory -or $isRecording -or $isArtifact -or $isBuildDirectory -or $isWebBuild -or
             $blockedExtensions -contains $extension) {
             $pathViolations.Add($path)
         }
@@ -88,6 +90,8 @@ try {
         '*.pfx',
         '/build/',
         '/build-*/',
+        '/web/node_modules/',
+        '/web/dist/',
         '/recordings/*',
         '!/recordings/.gitkeep',
         '/tests/artifacts/*',
@@ -104,6 +108,8 @@ try {
         '**/*.pfx',
         'build',
         'build-*',
+        'web/node_modules',
+        'web/dist',
         'recordings/*',
         '!recordings/.gitkeep',
         'tests/artifacts/*',

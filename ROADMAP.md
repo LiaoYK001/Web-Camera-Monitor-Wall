@@ -8,16 +8,16 @@ This roadmap describes milestone order and acceptance gates, not promised releas
 
 ## Current position / 当前位置
 
-**🟡 M1 — Web Control：场景、libobs 实时变更和本地安全 REST/WebSocket 已完成；当前进入 React/TypeScript 编辑器。**
+**🟡 M1 — Web Control：浏览器编辑器和确定性回归已完成；当前位置是最终真实摄像头复验。**
 
-M0 is complete. M1 now performs transactional source/layout changes while recording, persists them atomically, protects revisions with ETag/If-Match, and broadcasts committed scenes through WebSocket. The current work is the browser editor; full M1 regression and real-camera acceptance follow it.
+M0 is complete. M1 now provides a bundled React/TypeScript editor that shares the versioned scene document with libobs, persists edits atomically through ETag/If-Match, and synchronizes committed scenes through WebSocket. Docker build and deterministic regression pass; the remaining M1 exit gate is real-camera revalidation.
 
-M0 已全部完成。M1 现可在录制期间事务式修改来源和布局、原子持久化，通过 ETag/If-Match 保护版本，并以 WebSocket 广播已提交场景；当前位置是浏览器编辑器，随后执行完整 M1 回归和真实摄像头验收。
+M0 已全部完成。M1 现已提供随镜像交付的 React/TypeScript 编辑器，与 libobs 共用版本化场景文档，通过 ETag/If-Match 原子保存修改，并以 WebSocket 同步已提交场景。Docker 构建和确定性回归已通过；剩余的 M1 完成门禁是真实摄像头复验。
 
 ```text
-M0 implementation       Docker + synthetic RTSP       Real RTSP       M1 Web Control
-实现完成             -> 构建与合成流验收通过        -> 真实摄像头   -> Web 控制
-✅                      ✅                              ✅               🟡 CURRENT
+M0 complete       M1 scene + API       M1 browser editor       Real-camera revalidation
+M0 已完成      -> M1 场景与接口      -> M1 浏览器编辑器      -> 真实摄像头复验
+✅                ✅                    ✅                       🟡 CURRENT
 ```
 
 ### M0 acceptance / M0 验收
@@ -43,7 +43,8 @@ M0 已于 2026-08-11 在真实摄像头门禁通过后完成。后续修改采�
 - Contracts / 契约：missing URL, invalid output directory, unreachable RTSP, existing-output refusal, credential masking, and SIGTERM finalization all pass / 无 URL、错误目录、连接失败、拒绝覆盖、凭据脱敏和 SIGTERM 完整封装均通过。
 - Public-repository audit / 公开仓库审计：the Git index rejects sensitive/generated paths, high-confidence secrets, unapproved RTSP credentials, ignore-rule drift, and OBS pin drift / Git 索引会拒绝敏感或生成文件、高置信度密钥、未批准 RTSP 凭据、忽略规则漂移及 OBS 固定提交漂移。
 - Real camera / 真实摄像头：a private 640×360 source produced a 30.100-second H.264 1920×1080, 30 FPS, video-only MP4 that passed full decode and non-black-frame validation; no private URL or credential is recorded here / 私有 640×360 来源生成 30.100 秒 H.264 1920×1080、30 FPS、仅视频 MP4，并通过完整解码与非黑帧校验；此处不记录私有地址或凭据。
-- M1 control plane / M1 控制面：REST, ETag/If-Match, WebSocket snapshot/update, atomic persistence, local Host/Origin policy, bounded requests, and a 5.2-second decodable recording passed together / REST、ETag/If-Match、WebSocket 快照/更新、原子持久化、本地 Host/Origin 策略、请求边界和 5.2 秒可解码录制联合通过。
+- M1 control plane / M1 控制面：REST, ETag/If-Match, WebSocket snapshot/update, atomic persistence, local Host/Origin policy, bounded requests, and a 6.0-second decodable recording passed together / REST、ETag/If-Match、WebSocket 快照/更新、原子持久化、本地 Host/Origin 策略、请求边界和 6.0 秒可解码录制联合通过。
+- M1 browser editor / M1 浏览器编辑器：pinned React 19.2.8, TypeScript 7.0.2, and Vite 8.1.5 build successfully; the product image serves the editor and hashed assets with restrictive headers, traversal rejection, and same-origin API/WebSocket access / 固定版本 React 19.2.8、TypeScript 7.0.2 与 Vite 8.1.5 构建成功；产品镜像可在严格响应头、目录穿越拒绝及同源 API/WebSocket 约束下提供编辑器和哈希资源。
 
 ## Milestones / 里程碑
 
@@ -73,7 +74,7 @@ M0 已于 2026-08-11 在真实摄像头门禁通过后完成。后续修改采�
 - [x] Atomic persistence, restrictive permissions, and schema migration / 原子持久化、严格文件权限和 schema 迁移
 - [x] Live libobs source CRUD, transforms, crop, ordering, mute, and volume / libobs 来源实时增删改、变换、裁切、排序、静音和音量
 - [x] REST and WebSocket control with optimistic concurrency / 带乐观并发控制的 REST 与 WebSocket
-- [ ] React/TypeScript Web editor using the same scene document / 使用同一场景文档的 React/TypeScript Web 编辑器
+- [x] React/TypeScript Web editor using the same scene document / 使用同一场景文档的 React/TypeScript Web 编辑器
 - [ ] Docker, synthetic RTSP, real camera, persistence, and security acceptance / Docker、合成 RTSP、真实摄像头、持久化与安全验收
 
 ### M2 — Composite WebRTC
