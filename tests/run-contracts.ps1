@@ -15,8 +15,17 @@ function Invoke-ExpectedExit {
         [scriptblock]$Command
     )
 
-    $commandOutput = (& $Command 2>&1 | Out-String)
-    $status = $LASTEXITCODE
+    $previousErrorActionPreference = $ErrorActionPreference
+    try {
+        # Windows PowerShell 5 surfaces native stderr as ErrorRecord objects.
+        # Expected-failure cases must capture those records without terminating.
+        $ErrorActionPreference = 'Continue'
+        $commandOutput = (& $Command 2>&1 | Out-String)
+        $status = $LASTEXITCODE
+    }
+    finally {
+        $ErrorActionPreference = $previousErrorActionPreference
+    }
     if ($status -ne $Expected) {
         Write-Error "$Label`: expected exit $Expected, got $status`n$commandOutput"
     }
@@ -28,8 +37,21 @@ function Remove-SignalContainer {
     docker rm -f $SignalContainer 2>$null | Out-Null
 }
 
+function Get-SignalContainerLogs {
+    $previousErrorActionPreference = $ErrorActionPreference
+    try {
+        $ErrorActionPreference = 'Continue'
+        return (docker logs $SignalContainer 2>&1 | Out-String)
+    }
+    finally {
+        $ErrorActionPreference = $previousErrorActionPreference
+    }
+}
+
 New-Item -ItemType Directory -Force -Path $ArtifactDirectory | Out-Null
 Remove-Item -LiteralPath (Join-Path $ArtifactDirectory 'signal.mp4') -Force -ErrorAction SilentlyContinue
+Get-ChildItem -LiteralPath $ArtifactDirectory -Filter '.signal.mp4.webobsd-*.mkv' -File -ErrorAction SilentlyContinue |
+    Remove-Item -Force
 Remove-SignalContainer
 
 try {
@@ -80,7 +102,7 @@ try {
 
     $started = $false
     for ($attempt = 0; $attempt -lt 60; $attempt++) {
-        $logs = (docker logs $SignalContainer 2>&1 | Out-String)
+        $logs = Get-SignalContainerLogs
         if ($logs.Contains('Recording started:')) {
             $started = $true
             break
@@ -90,18 +112,19 @@ try {
         Start-Sleep -Seconds 1
     }
     if (-not $started) {
-        docker logs $SignalContainer
+        Write-Host (Get-SignalContainerLogs)
         throw 'SIGTERM test: recording did not start'
     }
 
     Start-Sleep -Seconds 3
-    docker stop --time 20 $SignalContainer | Out-Null
+    docker stop --timeout 20 $SignalContainer | Out-Null
     if ($LASTEXITCODE -ne 0) { throw 'SIGTERM test: docker stop failed' }
     $signalExit = docker inspect -f '{{.State.ExitCode}}' $SignalContainer
     if ([int]$signalExit -ne 0) {
-        docker logs $SignalContainer
+        Write-Host (Get-SignalContainerLogs)
         throw "SIGTERM test: expected exit 0, got $signalExit"
     }
+    Remove-SignalContainer
     docker compose -f $ComposeFile run --rm `
         -e TEST_RECORDING=/artifacts/signal.mp4 `
         -e TEST_MIN_DURATION=2 `

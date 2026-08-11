@@ -1,6 +1,12 @@
 services:
   mediamtx:
-    image: bluenviron/mediamtx:1.18.2
+    image: webobs-m0-mediamtx:1.18.2-local
+    build:
+      context: ..
+      dockerfile: tests/mediamtx-fixture/Dockerfile
+      args:
+        MEDIAMTX_VERSION: "1.18.2"
+        MEDIAMTX_LINUX_AMD64_SHA256: 73ed27c292e05ceb4990dcb34531f01872dfff5374b7515c45a202e0abf47706
 
   fixture:
     image: webobs-m0-rtsp-fixture:local

@@ -1,3 +1,7 @@
+param(
+    [switch]$SkipBuild
+)
+
 $ErrorActionPreference = 'Stop'
 $PSNativeCommandUseErrorActionPreference = $false
 
@@ -10,11 +14,14 @@ New-Item -ItemType Directory -Force -Path $ArtifactDirectory | Out-Null
 if (Test-Path -LiteralPath $Artifact) {
     Remove-Item -LiteralPath $Artifact -Force
 }
+Get-ChildItem -LiteralPath $ArtifactDirectory -Filter '.smoke.mp4.webobsd-*.mkv' -File -ErrorAction SilentlyContinue |
+    Remove-Item -Force
 
 Push-Location $RepositoryRoot
 try {
     docker compose -f $ComposeFile down --volumes --remove-orphans
-    docker compose -f $ComposeFile up --build --abort-on-container-exit --exit-code-from webobs webobs
+    $buildOption = if ($SkipBuild) { '--no-build' } else { '--build' }
+    docker compose -f $ComposeFile up $buildOption --abort-on-container-exit --exit-code-from webobs webobs
     if ($LASTEXITCODE -ne 0) { throw 'M0 recording container failed' }
     docker compose -f $ComposeFile run --rm validator
     if ($LASTEXITCODE -ne 0) { throw 'M0 recording validation failed' }

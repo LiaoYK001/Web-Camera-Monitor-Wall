@@ -29,6 +29,7 @@ cleanup_signal_container() {
 
 mkdir -p "$artifact_directory"
 rm -f "$artifact_directory/signal.mp4"
+rm -f "$artifact_directory"/.signal.mp4.webobsd-*.mkv
 cleanup_signal_container
 trap cleanup_signal_container EXIT INT TERM
 
@@ -91,13 +92,14 @@ if [ "$started" -ne 1 ]; then
 fi
 
 sleep 3
-docker stop --time 20 "$signal_container" >/dev/null
+docker stop --timeout 20 "$signal_container" >/dev/null
 signal_exit="$(docker inspect -f '{{.State.ExitCode}}' "$signal_container")"
 if [ "$signal_exit" -ne 0 ]; then
     docker logs "$signal_container" >&2 || true
     echo "SIGTERM test: expected exit 0, got $signal_exit" >&2
     exit 1
 fi
+cleanup_signal_container
 docker compose -f "$compose_file" run --rm \
     -e TEST_RECORDING=/artifacts/signal.mp4 \
     -e TEST_MIN_DURATION=2 \

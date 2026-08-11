@@ -97,7 +97,7 @@ docker compose run --rm webobs \
 
 ## 确定性烟测
 
-烟测中的 MediaMTX 和 FFmpeg 只负责产生本地测试图 RTSP，不会进入产品镜像。测试会构建项目、录制约 10 秒，再检查：
+烟测中的 MediaMTX 和 FFmpeg 只负责产生本地测试图 RTSP，不会进入产品镜像。测试夹具会从 MediaMTX 官方 GitHub Release 下载固定的 `v1.18.2` Linux amd64 二进制并校验 SHA-256，不依赖可变标签。测试会构建项目、录制约 10 秒，再检查：
 
 - MP4 存在且可完整解码
 - 唯一视频轨为 H.264
@@ -115,11 +115,15 @@ PowerShell：
 ./tests/run-smoke.ps1
 ```
 
+如果三个测试镜像已经成功构建，而 registry 暂时不可用，可显式复用本地镜像：`./tests/run-smoke.ps1 -SkipBuild`。这不会跳过录制、解码、失败路径或 SIGTERM 验收。
+
 Linux shell：
 
 ```bash
 ./tests/run-smoke.sh
 ```
+
+Linux 下对应使用 `WEBOBS_SKIP_BUILD=1 ./tests/run-smoke.sh`。
 
 成功产物位于 `tests/artifacts/smoke.mp4`；SIGTERM 用例还会生成 `tests/artifacts/signal.mp4`。该目录内容不会进入 Git。
 

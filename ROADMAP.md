@@ -1,6 +1,6 @@
 # Roadmap / 项目路线图
 
-> Last updated / 最后更新：2026-08-10
+> Last updated / 最后更新：2026-08-11
 
 This roadmap describes milestone order and acceptance gates, not promised release dates. Priorities may change based on validation results and maintainer capacity.
 
@@ -8,16 +8,16 @@ This roadmap describes milestone order and acceptance gates, not promised releas
 
 ## Current position / 当前位置
 
-**🟡 M0 — Headless libobs Proof：实现完成，正在等待运行验收。**
+**🟡 M0 — Headless libobs Proof：Docker 与合成 RTSP 验收通过，等待真实摄像头验收。**
 
-The M0 source, container definition, unit tests, and deterministic smoke-test harness are implemented. Static checks pass. Docker Desktop/CMake are not currently available in the development environment, so the image build, synthetic RTSP run, and real-camera run have not yet been executed. M1 has not started.
+The complete multi-stage image build, container CTest suite, runtime dependency check, deterministic RTSP recording, failure contracts, credential redaction, repeated output protection, and graceful SIGTERM finalization now pass on Docker Desktop with WSL2 Linux containers. The remaining M0 gate is a 30-second real-camera recording. M1 has not started.
 
-M0 的核心代码、容器定义、单元测试和确定性烟测框架已经实现，静态检查已通过。当前开发环境尚不可用 Docker Desktop/CMake，因此镜像构建、合成 RTSP 运行和真实摄像头运行仍待执行；M1 尚未开始。
+完整多阶段镜像构建、容器内 CTest、运行时依赖检查、确定性 RTSP 录制、失败契约、凭据脱敏、重复输出保护和 SIGTERM 完整封装现已在 Docker Desktop + WSL2 Linux containers 环境通过。M0 只剩真实摄像头至少 30 秒录制验收；M1 尚未开始。
 
 ```text
-M0 implementation          M0 acceptance gate                  M1+
-实现完成             ->    Docker + synthetic + real RTSP    -> 后续功能
-✅                         🟡 CURRENT / 当前                    ⬜
+M0 implementation       Docker + synthetic RTSP       Real RTSP       M1+
+实现完成             -> 构建与合成流验收通过        -> 真实摄像头   -> 后续功能
+✅                      ✅                              🟡 CURRENT      ⬜
 ```
 
 ### M0 remaining acceptance / M0 剩余验收
@@ -27,19 +27,26 @@ M0 implementation          M0 acceptance gate                  M1+
 - [x] Add Xvfb/Mesa headless runtime and single-container product Compose / 增加无头运行环境和单容器 Compose
 - [x] Add configuration, redaction, failure-path, and SIGTERM tests / 增加配置、脱敏、失败路径和信号测试
 - [x] Pass source, YAML, Dockerfile, shell, security, and Git static checks / 通过静态检查
-- [ ] Run the complete multi-stage Docker build / 完成多阶段 Docker 构建
-- [ ] Pass the MediaMTX + FFmpeg synthetic RTSP smoke test / 通过合成 RTSP 烟测
+- [x] Run the complete multi-stage Docker build / 完成多阶段 Docker 构建
+- [x] Pass the MediaMTX + FFmpeg synthetic RTSP smoke test / 通过合成 RTSP 烟测
 - [ ] Record at least 30 seconds from a real camera and verify playback, finalization, and redaction / 使用真实摄像头录制至少 30 秒并验证播放、封装和脱敏
 
-M0 is complete only after all three unchecked acceptance items pass. Run `./tests/run-smoke.ps1` on Docker Desktop with WSL2 Linux containers, or `./tests/run-smoke.sh` on Linux.
+M0 is complete after the remaining real-camera acceptance item passes. Run `./tests/run-smoke.ps1` on Docker Desktop with WSL2 Linux containers, or `./tests/run-smoke.sh` on Linux.
 
-只有上述三个未勾选的验收项全部通过后，M0 才算正式完成。
+真实摄像头验收通过后，M0 才算正式完成。真实 RTSP URL 只应通过本地 `.env` 或命令行传入，不得写入仓库、日志附件或提交历史。
+
+### Latest validation evidence / 最新验收证据
+
+- Environment / 环境：Docker Desktop 4.86.0、Engine 29.7.2、Compose 5.3.1、BuildKit 0.32.2，WSL2 Linux/amd64。
+- Build / 构建：multi-stage product image and pinned test fixtures built successfully; container CTest reports 100% pass and runtime `ldd` finds no missing library / 产品镜像和固定版本测试夹具构建成功；容器内 CTest 100% 通过，运行时动态库无缺失。
+- Synthetic recording / 合成录制：H.264、640×360、10 FPS、10.0 seconds, video-only, fully decodable, non-black frame / H.264、640×360、10 FPS、10.0 秒、仅视频轨、可完整解码且非黑帧。
+- Contracts / 契约：missing URL, invalid output directory, unreachable RTSP, existing-output refusal, credential masking, and SIGTERM finalization all pass / 无 URL、错误目录、连接失败、拒绝覆盖、凭据脱敏和 SIGTERM 完整封装均通过。
 
 ## Milestones / 里程碑
 
 | Milestone | Status / 状态 | Primary outcome / 核心成果 | Exit gate / 完成门禁 |
 | --- | --- | --- | --- |
-| M0 — Headless Proof | 🟡 Acceptance pending / 待运行验收 | One RTSP source rendered by libobs and recorded as H.264 MP4 / 单路 RTSP 经 libobs 合成并录制为 H.264 MP4 | Docker build, synthetic RTSP, and real RTSP all pass / 三类验收全部通过 |
+| M0 — Headless Proof | 🟡 Real-camera pending / 待真实摄像头验收 | One RTSP source rendered by libobs and recorded as H.264 MP4 / 单路 RTSP 经 libobs 合成并录制为 H.264 MP4 | Docker build, synthetic RTSP, and real RTSP all pass / 三类验收全部通过 |
 | M1 — Web Control | ⬜ Planned / 计划中 | Web UI, API, persistent scene model, RTSP source CRUD and transforms / Web UI、API、场景持久化、来源管理和画面变换 | Browser edits and libobs use the same scene state; recording remains stable / 浏览器与 libobs 共用同一场景状态，录制稳定 |
 | M2 — Composite WebRTC | ⬜ Planned / 计划中 | Publish the server-composited program through WHIP/MediaMTX and play through WHEP/WebRTC / 服务端合成画面通过 WHIP/MediaMTX 发布并在浏览器播放 | Low-latency browser playback survives reconnects in one product container / 单容器内低延迟播放和重连通过 |
 | M3 — Direct & Hybrid | ⬜ Planned / 计划中 | Direct camera playback in browsers, client/server mode switching, selective transcoding / 浏览器直连播放、客户端/服务端模式切换和选择性转码 | Shared layout behaves consistently across Direct and Composite modes / 两种模式共享布局且行为一致 |
