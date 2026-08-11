@@ -8,7 +8,7 @@ RTSP camera -> libobs ffmpeg_source -> OBS scene -> obs_x264 -> video-only MP4
 
 当前版本没有 Web UI、HTTP API、WebRTC、正式 MediaMTX 服务、多路场景、摄像头音频或硬件编码。这些属于后续里程碑。
 
-开发路线、里程碑验收标准和当前进度见 [ROADMAP.md](ROADMAP.md)。目前位于 **M0 运行验收门禁**：实现和静态检查已完成，Docker 合成流及真实摄像头验收尚待执行。
+开发路线、里程碑验收标准和当前进度见 [ROADMAP.md](ROADMAP.md)。目前位于 **M0 最终验收门禁**：实现、Docker 构建和合成 RTSP 验收已通过，只剩真实摄像头至少 30 秒录制。
 
 ## M0 技术基线
 
@@ -65,6 +65,28 @@ WEBOBS_RTSP_URL=rtsp://user:password@camera-host:554/stream
 默认输出到 `recordings/webobs-<UTC timestamp>.mp4`。若 `WEBOBS_DURATION_SECONDS=0`，录制会持续到 `Ctrl+C` 或容器收到 `SIGTERM`；停止时会完成 muxer 和 MP4 封装。已有的显式输出文件不会被覆盖。
 
 RTSP URL 可能被 OBS 插件写入日志，因此核心日志处理器会把 `rtsp://user:password@host/...` 统一改写成 `rtsp://***:***@host/...`。不要把真实 URL 写入 Compose、README 或提交到 Git。
+
+### M0 真实摄像头验收
+
+配置本地 `.env` 后，使用专用入口录制至少 30 秒并自动执行完整解码、H.264、仅视频轨、分辨率、帧率、时长和非黑帧检查。每次运行使用新的 UTC 文件名，不会覆盖已有录像。
+
+PowerShell：
+
+```powershell
+./tests/run-real-camera.ps1
+```
+
+已有本地镜像时可使用 `./tests/run-real-camera.ps1 -SkipBuild`。非默认画布可显式传入，例如 `-Width 1280 -Height 720 -Fps 25`。
+
+Linux/macOS shell：
+
+```bash
+./tests/run-real-camera.sh
+```
+
+shell 入口通过 `WEBOBS_REAL_WIDTH`、`WEBOBS_REAL_HEIGHT`、`WEBOBS_REAL_FPS` 等变量覆盖验收参数；使用 `WEBOBS_SKIP_BUILD=1` 复用已有镜像。可用 `WEBOBS_ENV_FILE` 指向另一个未入库的环境文件。
+
+录像保存在忽略的 `recordings/`，经过二次脱敏的本地日志保存在忽略的 `tests/artifacts/`。脚本不会把 URL 放入命令行，也不会保存检测到凭据泄漏的原始日志。即使日志已脱敏，也不要将真实摄像头日志或录像上传到公开 Issue。
 
 ## 命令行接口
 

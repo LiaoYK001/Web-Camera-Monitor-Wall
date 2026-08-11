@@ -28,4 +28,4 @@ test -n "$yavg"
 awk -v yavg="$yavg" 'BEGIN { exit !(yavg > 5) }'
 
 ffmpeg -v error -i "$file" -map 0:v:0 -f null -
-echo "M0 smoke recording verified: codec=$codec dimensions=$dimensions fps=$frame_rate duration=$duration yavg=$yavg"
+echo "M0 recording verified: codec=$codec dimensions=$dimensions fps=$frame_rate duration=$duration yavg=$yavg"

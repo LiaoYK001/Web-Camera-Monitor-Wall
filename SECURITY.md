@@ -12,11 +12,13 @@ Please avoid opening a public issue for a suspected vulnerability. Use the repos
 - Prefer `WEBOBS_RTSP_URL` through a protected environment file over the `--rtsp-url` command-line option, because command-line arguments can be visible in process listings. Restrict access to the host, Docker daemon, environment file, and generated recordings.
 - The application redacts credentials embedded in `rtsp://` and `rtsps://` URLs before emitting OBS or configuration logs. Automated tests fail if the test username or password appears in captured logs.
 - If a real credential is ever committed or posted publicly, rotate it immediately. Removing it from the latest commit is not sufficient because Git history and caches may retain it.
+- Real-camera acceptance writes recordings under ignored `recordings/` and a second-pass sanitized log under ignored `tests/artifacts/`. Do not upload either artifact publicly, even when the automated credential check passes.
 
 - 真实配置应保存在本地 `.env`。除 `.env.example` 外，`.env*`、`secrets/`、常见私钥格式、录像、构建目录和测试产物均不会进入 Git 或 Docker 构建上下文。
 - 相比 `--rtsp-url` 命令行参数，优先通过受保护的环境文件提供 `WEBOBS_RTSP_URL`，因为进程列表可能暴露命令行参数。同时应限制主机、Docker daemon、环境文件和录像的访问权限。
 - 应用会在输出 OBS 或配置日志前，隐藏 `rtsp://` 和 `rtsps://` URL 中的凭据；自动化测试会检查测试用户名和密码没有出现在日志里。
 - 若真实凭据曾被提交或公开发布，应立即轮换。仅从最新提交删除并不安全，因为 Git 历史和缓存仍可能保留该凭据。
+- 真实摄像头验收会把录像写入已忽略的 `recordings/`，并把二次脱敏日志写入已忽略的 `tests/artifacts/`。即使自动凭据检查通过，也不要公开上传这些产物。
 
 ## Supported versions / 支持版本
 

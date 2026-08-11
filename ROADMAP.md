@@ -31,9 +31,9 @@ M0 implementation       Docker + synthetic RTSP       Real RTSP       M1+
 - [x] Pass the MediaMTX + FFmpeg synthetic RTSP smoke test / 通过合成 RTSP 烟测
 - [ ] Record at least 30 seconds from a real camera and verify playback, finalization, and redaction / 使用真实摄像头录制至少 30 秒并验证播放、封装和脱敏
 
-M0 is complete after the remaining real-camera acceptance item passes. Run `./tests/run-smoke.ps1` on Docker Desktop with WSL2 Linux containers, or `./tests/run-smoke.sh` on Linux.
+M0 is complete after the remaining real-camera acceptance item passes. Run `./tests/run-real-camera.ps1` on Docker Desktop with WSL2 Linux containers, or `./tests/run-real-camera.sh` on Linux. The `run-smoke` scripts remain the deterministic regression gate.
 
-真实摄像头验收通过后，M0 才算正式完成。真实 RTSP URL 只应通过本地 `.env` 或命令行传入，不得写入仓库、日志附件或提交历史。
+真实摄像头验收通过后，M0 才算正式完成。最终门禁使用 `run-real-camera` 脚本，`run-smoke` 脚本继续作为确定性回归门禁。真实 RTSP URL 只应通过本地 `.env` 提供，不得写入仓库、日志附件或提交历史。
 
 ### Latest validation evidence / 最新验收证据
 
@@ -41,6 +41,7 @@ M0 is complete after the remaining real-camera acceptance item passes. Run `./te
 - Build / 构建：multi-stage product image and pinned test fixtures built successfully; container CTest reports 100% pass and runtime `ldd` finds no missing library / 产品镜像和固定版本测试夹具构建成功；容器内 CTest 100% 通过，运行时动态库无缺失。
 - Synthetic recording / 合成录制：H.264、640×360、10 FPS、10.0 seconds, video-only, fully decodable, non-black frame / H.264、640×360、10 FPS、10.0 秒、仅视频轨、可完整解码且非黑帧。
 - Contracts / 契约：missing URL, invalid output directory, unreachable RTSP, existing-output refusal, credential masking, and SIGTERM finalization all pass / 无 URL、错误目录、连接失败、拒绝覆盖、凭据脱敏和 SIGTERM 完整封装均通过。
+- Real-camera runner / 实机入口：the PowerShell path passed a 30-second deterministic fixture with fake-credential redaction; both secure local runners are available, but an actual camera result is still required / PowerShell 路径已通过 30 秒确定性夹具与假凭据脱敏测试，两套安全本地入口均已提供，但仍需真实摄像头实测。
 
 ## Milestones / 里程碑
 
