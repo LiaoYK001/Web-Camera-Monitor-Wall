@@ -37,8 +37,14 @@ void handle_stop_signal(int)
 }
 
 struct LoggingState {
+    explicit LoggingState(int level) : maximum_level(level) {}
+
     int maximum_level = LOG_INFO;
     std::mutex mutex;
+};
+
+struct LogHandlerGuard {
+    ~LogHandlerGuard() { base_set_log_handler(nullptr, nullptr); }
 };
 
 const char *level_name(int level)
@@ -75,6 +81,7 @@ void obs_log_handler(int level, const char *format, va_list arguments, void *par
     std::lock_guard lock(state->mutex);
     std::ostream &stream = level <= LOG_WARNING ? std::cerr : std::cout;
     stream << '[' << level_name(level) << "] " << message << '\n';
+    stream.flush();
 }
 
 struct ObsCoreGuard {
@@ -82,8 +89,11 @@ struct ObsCoreGuard {
 
     ~ObsCoreGuard()
     {
-        if (initialized)
+        if (initialized) {
+            while (obs_wait_for_destroy_queue()) {
+            }
             obs_shutdown();
+        }
     }
 };
 
@@ -97,6 +107,16 @@ struct OutputSourceGuard {
     }
 };
 
+struct SceneItemGuard {
+    obs_sceneitem_t *item = nullptr;
+
+    ~SceneItemGuard()
+    {
+        if (item)
+            obs_sceneitem_remove(item);
+    }
+};
+
 struct DataDeleter {
     void operator()(obs_data_t *value) const { obs_data_release(value); }
 };
@@ -104,7 +124,11 @@ struct SourceDeleter {
     void operator()(obs_source_t *value) const { obs_source_release(value); }
 };
 struct SceneDeleter {
-    void operator()(obs_scene_t *value) const { obs_scene_release(value); }
+    void operator()(obs_scene_t *value) const
+    {
+        obs_canvas_scene_remove(value);
+        obs_scene_release(value);
+    }
 };
 struct EncoderDeleter {
     void operator()(obs_encoder_t *value) const { obs_encoder_release(value); }
@@ -258,17 +282,24 @@ bool wait_for_output_stop(obs_output_t *output, OutputState &state)
 {
     obs_output_stop(output);
     const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(15);
-    while (!state.stopped.load() && std::chrono::steady_clock::now() < deadline)
+    while ((!state.stopped.load() || obs_output_active(output)) &&
+           std::chrono::steady_clock::now() < deadline)
         std::this_thread::sleep_for(std::chrono::milliseconds(50));
-    if (!state.stopped.load()) {
+    if (obs_output_active(output)) {
         blog(LOG_WARNING, "Recording did not stop in time; forcing output shutdown");
         obs_output_force_stop(output);
         const auto force_deadline = std::chrono::steady_clock::now() + std::chrono::seconds(2);
         while (obs_output_active(output) && std::chrono::steady_clock::now() < force_deadline)
             std::this_thread::sleep_for(std::chrono::milliseconds(25));
     }
-    if (obs_output_active(output))
+    if (obs_output_active(output)) {
+        blog(LOG_ERROR, "Recording output remained active after forced shutdown");
         return false;
+    }
+    if (!state.stopped.load()) {
+        blog(LOG_ERROR, "Recording output stopped without reporting a completion status");
+        return false;
+    }
     if (state.stopped.load() && state.stop_code.load() != OBS_OUTPUT_SUCCESS) {
         blog(LOG_ERROR, "Recording finalization failed (code %lld)", state.stop_code.load());
         return false;
@@ -284,8 +315,9 @@ ExitCode run_obs_engine(const Config &config)
     std::signal(SIGINT, handle_stop_signal);
     std::signal(SIGTERM, handle_stop_signal);
 
-    LoggingState logging{static_cast<int>(config.log_level)};
+    LoggingState logging(static_cast<int>(config.log_level));
     base_set_log_handler(obs_log_handler, &logging);
+    LogHandlerGuard log_handler_guard;
 
     std::error_code path_error;
     const std::filesystem::path output_path = std::filesystem::absolute(config.output_path, path_error).lexically_normal();
@@ -380,6 +412,7 @@ ExitCode run_obs_engine(const Config &config)
         blog(LOG_ERROR, "Could not add RTSP source to scene");
         return ExitCode::obs_initialization_failed;
     }
+    SceneItemGuard scene_item_guard{item};
     vec2 bounds{};
     vec2_set(&bounds, static_cast<float>(config.width), static_cast<float>(config.height));
     obs_sceneitem_set_alignment(item, OBS_ALIGN_LEFT | OBS_ALIGN_TOP);

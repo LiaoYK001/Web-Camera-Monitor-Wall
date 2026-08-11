@@ -1,5 +1,3 @@
-# syntax=docker/dockerfile:1.7
-
 FROM ubuntu:24.04 AS obs-builder
 
 ARG DEBIAN_FRONTEND=noninteractive
@@ -51,6 +49,9 @@ RUN apt-get update \
 WORKDIR /src/obs
 COPY obs/obs-studio/ ./
 
+# OBS 32.1.2's Linux obs-ffmpeg VAAPI source still references its HEVC
+# capability helper when ENABLE_HEVC=OFF. Keep the core type support enabled;
+# M0 only builds/configures obs_x264 and never selects an HEVC encoder.
 RUN cmake -S /src/obs -B /build/obs -G Ninja \
         -DCMAKE_BUILD_TYPE=Release \
         -DCMAKE_INSTALL_PREFIX=/opt/obs \
@@ -59,7 +60,7 @@ RUN cmake -S /src/obs -B /build/obs -G Ninja \
         -DENABLE_UI=OFF \
         -DENABLE_FRONTEND=OFF \
         -DENABLE_SCRIPTING=OFF \
-        -DENABLE_HEVC=OFF \
+        -DENABLE_HEVC=ON \
         -DENABLE_BROWSER=OFF \
         -DENABLE_WEBSOCKET=OFF \
         -DENABLE_WEBRTC=OFF \
@@ -119,6 +120,7 @@ RUN apt-get update \
         ca-certificates \
         ffmpeg \
         libdrm2 \
+        libegl1 \
         libegl-mesa0 \
         libgl1-mesa-dri \
         libjansson4 \
@@ -145,6 +147,12 @@ COPY docker/entrypoint.sh /opt/webobs/entrypoint.sh
 COPY LICENSE /usr/share/licenses/webobs/LICENSE
 COPY obs/obs-studio/COPYING /usr/share/licenses/webobs/OBS-COPYING
 
+ENV LD_LIBRARY_PATH=/opt/obs/lib \
+    DISPLAY=:99 \
+    EGL_PLATFORM=x11 \
+    LIBGL_ALWAYS_SOFTWARE=1 \
+    GALLIUM_DRIVER=llvmpipe
+
 RUN mkdir -p /config/obs /recordings \
     && chmod 0755 /opt/webobs/entrypoint.sh \
     && LD_LIBRARY_PATH=/opt/obs/lib /opt/obs/bin/webobsd --version \
@@ -153,14 +161,8 @@ RUN mkdir -p /config/obs /recordings \
     && ldd /opt/obs/lib/obs-plugins/obs-ffmpeg.so >> /tmp/webobs-ldd.txt \
     && ldd /opt/obs/lib/obs-plugins/obs-x264.so >> /tmp/webobs-ldd.txt \
     && ldd /opt/obs/bin/obs-ffmpeg-mux >> /tmp/webobs-ldd.txt \
-    && ! grep -q "not found" /tmp/webobs-ldd.txt \
+    && if grep "not found" /tmp/webobs-ldd.txt; then exit 1; fi \
     && rm /tmp/webobs-ldd.txt
-
-ENV LD_LIBRARY_PATH=/opt/obs/lib \
-    DISPLAY=:99 \
-    EGL_PLATFORM=x11 \
-    LIBGL_ALWAYS_SOFTWARE=1 \
-    GALLIUM_DRIVER=llvmpipe
 
 WORKDIR /opt/obs
 VOLUME ["/recordings"]
