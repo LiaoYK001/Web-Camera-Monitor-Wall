@@ -153,7 +153,8 @@ ENV LD_LIBRARY_PATH=/opt/obs/lib \
     LIBGL_ALWAYS_SOFTWARE=1 \
     GALLIUM_DRIVER=llvmpipe
 
-RUN mkdir -p /config/obs /recordings \
+RUN mkdir -p /config/obs /config/webobs /recordings \
+    && chmod 0700 /config/webobs \
     && chmod 0755 /opt/webobs/entrypoint.sh \
     && LD_LIBRARY_PATH=/opt/obs/lib /opt/obs/bin/webobsd --version \
     && ldd /opt/obs/bin/webobsd > /tmp/webobs-ldd.txt \
@@ -165,7 +166,7 @@ RUN mkdir -p /config/obs /recordings \
     && rm /tmp/webobs-ldd.txt
 
 WORKDIR /opt/obs
-VOLUME ["/recordings"]
+VOLUME ["/config/webobs", "/recordings"]
 
 LABEL org.opencontainers.image.title="Web Camera Monitor Wall" \
       org.opencontainers.image.description="M0 headless libobs RTSP to H.264 MP4 proof" \

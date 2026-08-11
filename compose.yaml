@@ -18,5 +18,9 @@ services:
       WEBOBS_RTSP_TRANSPORT: ${WEBOBS_RTSP_TRANSPORT:-tcp}
       WEBOBS_LOG_LEVEL: ${WEBOBS_LOG_LEVEL:-info}
     volumes:
+      - webobs-config:/config/webobs
       - ./recordings:/recordings
     stop_grace_period: 20s
+
+volumes:
+  webobs-config:

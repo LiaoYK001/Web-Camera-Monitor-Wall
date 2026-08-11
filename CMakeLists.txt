@@ -18,6 +18,7 @@ add_library(webobs-common
     core/src/config.cpp
     core/src/redaction.cpp
     core/src/scene_document.cpp
+    core/src/scene_store.cpp
 )
 target_include_directories(webobs-common PUBLIC core/include)
 target_link_libraries(webobs-common PUBLIC PkgConfig::JANSSON)

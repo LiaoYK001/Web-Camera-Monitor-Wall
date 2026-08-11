@@ -8,11 +8,11 @@ This roadmap describes milestone order and acceptance gates, not promised releas
 
 ## Current position / 当前位置
 
-**🟡 M1 — Web Control：版本化单一场景文档与安全 JSON 边界已实现；当前进入原子持久化。**
+**🟡 M1 — Web Control：场景文档、原子私有存储与 v0→v1 迁移已实现；当前进入运行时接入。**
 
-M0 is complete. M1 now has a strict, versioned scene document shared by future persistence, API, Web UI, and libobs integration. The current batch is atomic persistence; live runtime mutations, REST/WebSocket control, and the browser editor follow it.
+M0 is complete. M1 now has a strict, versioned scene document plus atomic private storage and validated v0-to-v1 migration. The current batch integrates that state with the live libobs runtime; REST/WebSocket control and the browser editor follow it.
 
-M0 已全部完成。M1 现已建立严格、带版本的单一场景文档，后续持久化、API、Web UI 和 libobs 集成都将使用同一模型；当前批次为原子持久化，之后继续运行时实时变更、REST/WebSocket 控制和浏览器编辑器。
+M0 已全部完成。M1 现已建立严格、带版本的单一场景文档、原子私有存储和经过校验的 v0→v1 迁移；当前批次将其接入 libobs 运行时，之后继续 REST/WebSocket 控制和浏览器编辑器。
 
 ```text
 M0 implementation       Docker + synthetic RTSP       Real RTSP       M1 Web Control
@@ -69,7 +69,7 @@ M0 已于 2026-08-11 在真实摄像头门禁通过后完成。后续修改采�
 #### M1 progress / M1 进度
 
 - [x] Versioned scene schema, strict limits, deterministic JSON, and credential-redacted API view / 版本化场景 schema、严格边界、确定性 JSON 和凭据脱敏 API 视图
-- [ ] Atomic persistence, restrictive permissions, and schema migration / 原子持久化、严格文件权限和 schema 迁移
+- [x] Atomic persistence, restrictive permissions, and schema migration / 原子持久化、严格文件权限和 schema 迁移
 - [ ] Live libobs source CRUD, transforms, crop, ordering, mute, and volume / libobs 来源实时增删改、变换、裁切、排序、静音和音量
 - [ ] REST and WebSocket control with optimistic concurrency / 带乐观并发控制的 REST 与 WebSocket
 - [ ] React/TypeScript Web editor using the same scene document / 使用同一场景文档的 React/TypeScript Web 编辑器

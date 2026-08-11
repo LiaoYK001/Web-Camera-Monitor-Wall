@@ -1,9 +1,14 @@
 #include "webobs/config.hpp"
 #include "webobs/redaction.hpp"
 #include "webobs/scene_document.hpp"
+#include "webobs/scene_store.hpp"
 
+#include <array>
 #include <cstdint>
+#include <filesystem>
+#include <fstream>
 #include <iostream>
+#include <iterator>
 #include <limits>
 #include <map>
 #include <optional>
@@ -11,6 +16,9 @@
 #include <string_view>
 #include <utility>
 #include <vector>
+
+#include <sys/stat.h>
+#include <unistd.h>
 
 namespace {
 
@@ -214,6 +222,146 @@ void scene_document_tests()
     expect(!webobs::parse_scene_json(oversized).ok(), "oversized scene JSON must be rejected before parsing");
 }
 
+std::string read_test_file(const std::filesystem::path &path)
+{
+    std::ifstream stream(path, std::ios::binary);
+    return {std::istreambuf_iterator<char>(stream), std::istreambuf_iterator<char>()};
+}
+
+bool write_test_file(const std::filesystem::path &path, std::string_view content, mode_t mode)
+{
+    std::ofstream stream(path, std::ios::binary | std::ios::trunc);
+    stream.write(content.data(), static_cast<std::streamsize>(content.size()));
+    stream.close();
+    return stream.good() && chmod(path.c_str(), mode) == 0;
+}
+
+mode_t file_mode(const std::filesystem::path &path)
+{
+    struct stat metadata {};
+    if (stat(path.c_str(), &metadata) != 0)
+        return std::numeric_limits<mode_t>::max();
+    return metadata.st_mode & 0777;
+}
+
+void scene_store_tests()
+{
+    char directory_template[] = "/tmp/webobs-scene-store-XXXXXX";
+    const char *created_directory = mkdtemp(directory_template);
+    expect(created_directory != nullptr, "scene store test directory must be created");
+    if (!created_directory)
+        return;
+
+    const std::filesystem::path root(created_directory);
+    struct Cleanup {
+        std::filesystem::path path;
+        ~Cleanup()
+        {
+            std::error_code error;
+            std::filesystem::remove_all(path, error);
+        }
+    } cleanup{root};
+
+    const std::filesystem::path scene_path = root / "private" / "scene.json";
+    const webobs::SceneDocument document = valid_scene_document();
+    const auto save_error = webobs::save_scene_file_atomic(scene_path, document);
+    expect(!save_error.has_value(), "valid scene must be saved atomically");
+    if (save_error)
+        return;
+
+    expect(file_mode(scene_path.parent_path()) == 0700, "scene storage directory must use mode 0700");
+    expect(file_mode(scene_path) == 0600, "scene file must use mode 0600");
+    const auto loaded = webobs::load_scene_file(scene_path);
+    expect(loaded.ok() && loaded.status == webobs::SceneFileStatus::loaded && loaded.document == document,
+           "current scene file must load without migration");
+
+    bool temporary_file_found = false;
+    for (const auto &entry : std::filesystem::directory_iterator(scene_path.parent_path())) {
+        if (entry.path().filename().string().find(".tmp.") != std::string::npos)
+            temporary_file_found = true;
+    }
+    expect(!temporary_file_found, "successful atomic save must not leave a temporary file");
+
+    const std::string original_content = read_test_file(scene_path);
+    auto invalid_document = document;
+    invalid_document.canvas.width = 1919;
+    expect(webobs::save_scene_file_atomic(scene_path, invalid_document).has_value(),
+           "invalid scene must not be saved");
+    expect(read_test_file(scene_path) == original_content,
+           "failed validation must leave the existing scene file unchanged");
+
+    const auto compact = webobs::serialize_scene_json(document, webobs::SceneJsonView::persistence, false);
+    expect(compact.ok(), "migration fixture must serialize");
+    if (!compact.ok())
+        return;
+    std::string legacy_json = compact.json;
+    const std::string current_version = "\"schemaVersion\":1";
+    const std::size_t version_position = legacy_json.find(current_version);
+    const std::string revision = "\"revision\":7,";
+    const std::size_t revision_position = legacy_json.find(revision);
+    expect(version_position != std::string::npos && revision_position != std::string::npos,
+           "migration fixture must contain version and revision fields");
+    if (version_position == std::string::npos || revision_position == std::string::npos)
+        return;
+    legacy_json.replace(version_position, current_version.size(), "\"schemaVersion\":0");
+    legacy_json.erase(revision_position, revision.size());
+
+    const auto migrated_in_memory = webobs::migrate_scene_json(legacy_json);
+    expect(migrated_in_memory.ok() && migrated_in_memory.migrated && migrated_in_memory.document->revision == 0,
+           "schemaVersion 0 must migrate to revision zero");
+
+    const std::filesystem::path legacy_path = scene_path.parent_path() / "legacy.json";
+    expect(write_test_file(legacy_path, legacy_json, 0644), "legacy scene fixture must be written");
+    const auto migrated_file = webobs::load_scene_file(legacy_path);
+    expect(migrated_file.ok() && migrated_file.status == webobs::SceneFileStatus::migrated &&
+               migrated_file.document && migrated_file.document->schema_version == 1 &&
+               migrated_file.document->revision == 0,
+           "legacy scene file must migrate and load");
+    expect(file_mode(legacy_path) == 0600, "loaded legacy scene permissions must be tightened to 0600");
+    const auto rewritten = webobs::parse_scene_json(read_test_file(legacy_path));
+    expect(rewritten.ok() && rewritten.document && rewritten.document->revision == 0,
+           "migrated scene must be atomically rewritten as current JSON");
+
+    std::string future_json = compact.json;
+    future_json.replace(future_json.find(current_version), current_version.size(), "\"schemaVersion\":2");
+    const std::filesystem::path future_path = scene_path.parent_path() / "future.json";
+    expect(write_test_file(future_path, future_json, 0600), "future scene fixture must be written");
+    const auto future = webobs::load_scene_file(future_path);
+    expect(!future.ok(), "future scene schema must be rejected");
+    expect(read_test_file(future_path) == future_json, "rejected future scene must not be rewritten");
+
+    const std::filesystem::path malformed_path = scene_path.parent_path() / "malformed.json";
+    const std::string malformed = R"({"schemaVersion":1,"name":"sensitive-value")";
+    expect(write_test_file(malformed_path, malformed, 0600), "malformed scene fixture must be written");
+    const auto malformed_result = webobs::load_scene_file(malformed_path);
+    expect(!malformed_result.ok() && malformed_result.error.find("sensitive-value") == std::string::npos,
+           "scene store errors must not echo secret-bearing file content");
+
+    const std::filesystem::path missing_path = scene_path.parent_path() / "missing.json";
+    const auto missing = webobs::load_scene_file(missing_path);
+    expect(missing.ok() && missing.status == webobs::SceneFileStatus::not_found && !missing.document,
+           "missing scene file must be reported without an error");
+
+    const std::filesystem::path victim_path = scene_path.parent_path() / "victim.txt";
+    const std::string victim_content = "must remain unchanged";
+    expect(write_test_file(victim_path, victim_content, 0600), "symlink victim fixture must be written");
+    const std::filesystem::path symlink_path = scene_path.parent_path() / "symlink.json";
+    expect(symlink(victim_path.c_str(), symlink_path.c_str()) == 0, "scene symlink fixture must be created");
+    expect(webobs::save_scene_file_atomic(symlink_path, document).has_value(),
+           "atomic save must reject a symbolic-link target");
+    expect(read_test_file(victim_path) == victim_content, "rejected symlink save must not alter its target");
+
+    const std::filesystem::path hardlink_path = scene_path.parent_path() / "hardlink.json";
+    expect(link(victim_path.c_str(), hardlink_path.c_str()) == 0, "scene hard-link fixture must be created");
+    expect(webobs::save_scene_file_atomic(hardlink_path, document).has_value(),
+           "atomic save must reject a target with additional hard links");
+    expect(read_test_file(victim_path) == victim_content, "rejected hard-link save must not alter its target");
+
+    expect(webobs::save_scene_file_atomic("relative-scene.json", document).has_value(),
+           "scene save must reject a relative path");
+    expect(!webobs::load_scene_file("relative-scene.json").ok(), "scene load must reject a relative path");
+}
+
 } // namespace
 
 int main()
@@ -221,6 +369,7 @@ int main()
     config_tests();
     redaction_tests();
     scene_document_tests();
+    scene_store_tests();
     if (failures == 0) {
         std::cout << "All webobs unit tests passed\n";
         return 0;

@@ -72,6 +72,16 @@ The persistence view contains the complete RTSP URL because libobs needs it to c
 
 持久化视图包含 libobs 建连所需的完整 RTSP URL，因此属于本地秘密材料，不得提交、写入日志或由 API 原样返回。公开/API 视图在序列化前使用统一 RTSP 凭据脱敏器；校验和解析错误只标识字段，不回显输入值。
 
-Atomic persistence, migration, restrictive file permissions, and API mutation semantics are subsequent M1 batches built on this contract.
+## Persistence and migration / 持久化与迁移
 
-原子持久化、版本迁移、严格文件权限和 API 变更语义将在后续 M1 批次基于此契约实现。
+The canonical file is stored in the private `/config/webobs` volume. A save writes a mode `0600` temporary file in the same directory, synchronizes it, atomically renames it over the prior document, and then synchronizes the mode `0700` directory. The loader rejects symlinks, non-regular files, files owned by another user, additional hard links, and content larger than 1 MiB. Errors never contain scene content.
+
+规范场景文件位于私有 `/config/webobs` 卷。保存时先在同目录写入权限为 `0600` 的临时文件，完成同步后原子重命名覆盖旧文档，最后同步权限为 `0700` 的目录。加载器拒绝符号链接、非普通文件、其他用户拥有的文件、额外硬链接以及超过 1 MiB 的内容；错误消息不包含场景内容。
+
+The only historical format accepted by M1 is the explicitly marked pre-release `schemaVersion: 0` document. It has the same fields as v1 except that `revision` is absent. A successful load validates the complete migrated document, initializes `revision` to zero, and immediately rewrites it as v1 through the same atomic path. Unversioned, malformed, and future-version documents are rejected without rewriting.
+
+M1 仅接受明确标记的预发布 `schemaVersion: 0` 历史文档，其字段与 v1 相同，但不包含 `revision`。加载成功时会完整校验迁移结果，将 `revision` 初始化为零，并立即通过同一原子路径回写为 v1；无版本、损坏和未来版本文档会被拒绝且不改写。
+
+API mutation and live libobs synchronization are subsequent M1 batches built on this storage contract.
+
+API 变更语义和 libobs 实时同步将在后续 M1 批次基于此存储契约实现。
