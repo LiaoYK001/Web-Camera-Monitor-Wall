@@ -8,19 +8,19 @@ This roadmap describes milestone order and acceptance gates, not promised releas
 
 ## Current position / 当前位置
 
-**🟡 M0 — Headless libobs Proof：Docker 与合成 RTSP 验收通过，等待真实摄像头验收。**
+**✅ M0 — Headless libobs Proof 已完成；下一里程碑为 M1 Web Control。**
 
-The complete multi-stage image build, container CTest suite, runtime dependency check, deterministic RTSP recording, failure contracts, credential redaction, repeated output protection, and graceful SIGTERM finalization now pass on Docker Desktop with WSL2 Linux containers. The remaining M0 gate is a 30-second real-camera recording. M1 has not started.
+The complete multi-stage image build, container CTest suite, runtime dependency check, deterministic RTSP recording, aspect-fit rendering, failure contracts, credential redaction, repeated output protection, graceful SIGTERM finalization, and a 30-second real-camera recording all pass on Docker Desktop with WSL2 Linux containers. M1 has not started.
 
-完整多阶段镜像构建、容器内 CTest、运行时依赖检查、确定性 RTSP 录制、失败契约、凭据脱敏、重复输出保护和 SIGTERM 完整封装现已在 Docker Desktop + WSL2 Linux containers 环境通过。M0 只剩真实摄像头至少 30 秒录制验收；M1 尚未开始。
+完整多阶段镜像构建、容器内 CTest、运行时依赖检查、确定性 RTSP 录制、画面等比适配、失败契约、凭据脱敏、重复输出保护、SIGTERM 完整封装和真实摄像头 30 秒录制现已在 Docker Desktop + WSL2 Linux containers 环境全部通过。M1 尚未开始。
 
 ```text
-M0 implementation       Docker + synthetic RTSP       Real RTSP       M1+
-实现完成             -> 构建与合成流验收通过        -> 真实摄像头   -> 后续功能
-✅                      ✅                              🟡 CURRENT      ⬜
+M0 implementation       Docker + synthetic RTSP       Real RTSP       M1 Web Control
+实现完成             -> 构建与合成流验收通过        -> 真实摄像头   -> Web 控制
+✅                      ✅                              ✅               ⬜ NEXT
 ```
 
-### M0 remaining acceptance / M0 剩余验收
+### M0 acceptance / M0 验收
 
 - [x] Pin OBS Studio 32.1.2 and recursive submodules / 固定 OBS Studio 32.1.2 及递归 submodule
 - [x] Implement `RTSP → libobs Scene → x264 → video-only MP4` / 实现核心录制闭环
@@ -29,27 +29,27 @@ M0 implementation       Docker + synthetic RTSP       Real RTSP       M1+
 - [x] Pass source, YAML, Dockerfile, shell, security, and Git static checks / 通过静态检查
 - [x] Run the complete multi-stage Docker build / 完成多阶段 Docker 构建
 - [x] Pass the MediaMTX + FFmpeg synthetic RTSP smoke test / 通过合成 RTSP 烟测
-- [ ] Record at least 30 seconds from a real camera and verify playback, finalization, and redaction / 使用真实摄像头录制至少 30 秒并验证播放、封装和脱敏
+- [x] Record at least 30 seconds from a real camera and verify playback, finalization, and redaction / 使用真实摄像头录制至少 30 秒并验证播放、封装和脱敏
 
-M0 is complete after the remaining real-camera acceptance item passes. Run `./tests/run-real-camera.ps1` on Docker Desktop with WSL2 Linux containers, or `./tests/run-real-camera.sh` on Linux. The `run-smoke` scripts remain the deterministic regression gate.
+M0 completed on 2026-08-11 after the real-camera gate passed. Re-run `./tests/run-real-camera.ps1` on Docker Desktop with WSL2 Linux containers, or `./tests/run-real-camera.sh` on Linux, when changing the capture pipeline. The `run-smoke` scripts remain the deterministic regression gate.
 
-真实摄像头验收通过后，M0 才算正式完成。最终门禁使用 `run-real-camera` 脚本，`run-smoke` 脚本继续作为确定性回归门禁。真实 RTSP URL 只应通过本地 `.env` 提供，不得写入仓库、日志附件或提交历史。
+M0 已于 2026-08-11 在真实摄像头门禁通过后完成。后续修改采集链路时应重新运行 `run-real-camera`，并继续使用 `run-smoke` 作为确定性回归门禁。真实 RTSP URL 只应通过本地 `.env` 提供，不得写入仓库、日志附件或提交历史。
 
 ### Latest validation evidence / 最新验收证据
 
 - Environment / 环境：Docker Desktop 4.86.0、Engine 29.7.2、Compose 5.3.1、BuildKit 0.32.2，WSL2 Linux/amd64。
 - Build / 构建：multi-stage product image and pinned test fixtures built successfully; container CTest reports 100% pass and runtime `ldd` finds no missing library / 产品镜像和固定版本测试夹具构建成功；容器内 CTest 100% 通过，运行时动态库无缺失。
-- Synthetic recording / 合成录制：H.264、640×360、10 FPS、10.0 seconds, video-only, fully decodable, non-black frame / H.264、640×360、10 FPS、10.0 秒、仅视频轨、可完整解码且非黑帧。
+- Synthetic recording / 合成录制：a 640×480 source is proportionally centered in a 640×360 canvas with symmetric black bars; H.264, 10 FPS, video-only, fully decodable, and non-black center / 640×480 来源等比居中适配 640×360 画布且左右黑边对称；H.264、10 FPS、仅视频轨、可完整解码且中心非黑。
 - Contracts / 契约：missing URL, invalid output directory, unreachable RTSP, existing-output refusal, credential masking, and SIGTERM finalization all pass / 无 URL、错误目录、连接失败、拒绝覆盖、凭据脱敏和 SIGTERM 完整封装均通过。
 - Public-repository audit / 公开仓库审计：the Git index rejects sensitive/generated paths, high-confidence secrets, unapproved RTSP credentials, ignore-rule drift, and OBS pin drift / Git 索引会拒绝敏感或生成文件、高置信度密钥、未批准 RTSP 凭据、忽略规则漂移及 OBS 固定提交漂移。
-- Real-camera runner / 实机入口：the PowerShell path passed a 30-second deterministic fixture with fake-credential redaction; both secure local runners are available, but an actual camera result is still required / PowerShell 路径已通过 30 秒确定性夹具与假凭据脱敏测试，两套安全本地入口均已提供，但仍需真实摄像头实测。
+- Real camera / 真实摄像头：a private 640×360 source produced a 30.100-second H.264 1920×1080, 30 FPS, video-only MP4 that passed full decode and non-black-frame validation; no private URL or credential is recorded here / 私有 640×360 来源生成 30.100 秒 H.264 1920×1080、30 FPS、仅视频 MP4，并通过完整解码与非黑帧校验；此处不记录私有地址或凭据。
 
 ## Milestones / 里程碑
 
 | Milestone | Status / 状态 | Primary outcome / 核心成果 | Exit gate / 完成门禁 |
 | --- | --- | --- | --- |
-| M0 — Headless Proof | 🟡 Real-camera pending / 待真实摄像头验收 | One RTSP source rendered by libobs and recorded as H.264 MP4 / 单路 RTSP 经 libobs 合成并录制为 H.264 MP4 | Docker build, synthetic RTSP, and real RTSP all pass / 三类验收全部通过 |
-| M1 — Web Control | ⬜ Planned / 计划中 | Web UI, API, persistent scene model, RTSP source CRUD and transforms / Web UI、API、场景持久化、来源管理和画面变换 | Browser edits and libobs use the same scene state; recording remains stable / 浏览器与 libobs 共用同一场景状态，录制稳定 |
+| M0 — Headless Proof | ✅ Complete / 已完成 | One RTSP source rendered by libobs and recorded as H.264 MP4 / 单路 RTSP 经 libobs 合成并录制为 H.264 MP4 | Docker build, synthetic RTSP, and real RTSP all pass / 三类验收全部通过 |
+| M1 — Web Control | ⬜ Next / 下一步 | Web UI, API, persistent scene model, RTSP source CRUD and transforms / Web UI、API、场景持久化、来源管理和画面变换 | Browser edits and libobs use the same scene state; recording remains stable / 浏览器与 libobs 共用同一场景状态，录制稳定 |
 | M2 — Composite WebRTC | ⬜ Planned / 计划中 | Publish the server-composited program through WHIP/MediaMTX and play through WHEP/WebRTC / 服务端合成画面通过 WHIP/MediaMTX 发布并在浏览器播放 | Low-latency browser playback survives reconnects in one product container / 单容器内低延迟播放和重连通过 |
 | M3 — Direct & Hybrid | ⬜ Planned / 计划中 | Direct camera playback in browsers, client/server mode switching, selective transcoding / 浏览器直连播放、客户端/服务端模式切换和选择性转码 | Shared layout behaves consistently across Direct and Composite modes / 两种模式共享布局且行为一致 |
 | M4 — Browser Sources | ⬜ Planned / 计划中 | `obs-browser` sources for dashboards, satellite maps, overlays and embeddable media / 支持仪表盘、卫星图、叠加层和可嵌入媒体 | CEF lifecycle, isolation, recovery, and resource limits pass container tests / CEF 生命周期、隔离、恢复和资源限制通过测试 |

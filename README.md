@@ -1,6 +1,6 @@
 # Web Camera Monitor Wall
 
-一个基于 `libobs` 的无桌面 Web 监控墙/合成器项目。当前仓库处于 **M0**：先证明无需 OBS Qt 界面，也能在 Linux Docker 容器中完成下面的闭环。
+一个基于 `libobs` 的无桌面 Web 监控墙/合成器项目。仓库已经完成 **M0 Headless Proof**：无需 OBS Qt 界面，也能在 Linux Docker 容器中完成下面的闭环。
 
 ```text
 RTSP camera -> libobs ffmpeg_source -> OBS scene -> obs_x264 -> video-only MP4
@@ -8,7 +8,7 @@ RTSP camera -> libobs ffmpeg_source -> OBS scene -> obs_x264 -> video-only MP4
 
 当前版本没有 Web UI、HTTP API、WebRTC、正式 MediaMTX 服务、多路场景、摄像头音频或硬件编码。这些属于后续里程碑。
 
-开发路线、里程碑验收标准和当前进度见 [ROADMAP.md](ROADMAP.md)。目前位于 **M0 最终验收门禁**：实现、Docker 构建和合成 RTSP 验收已通过，只剩真实摄像头至少 30 秒录制。
+开发路线、里程碑验收标准和当前进度见 [ROADMAP.md](ROADMAP.md)。**M0 已通过 Docker 构建、合成 RTSP 和真实摄像头三类验收；M1 Web Control 尚未开始。**
 
 ## M0 技术基线
 
