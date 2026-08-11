@@ -9,7 +9,7 @@ while true; do
         -loglevel warning \
         -re \
         -f lavfi \
-        -i "testsrc2=size=640x360:rate=10" \
+        -i "testsrc2=size=640x480:rate=10" \
         -an \
         -c:v libx264 \
         -preset ultrafast \

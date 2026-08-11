@@ -51,5 +51,6 @@ services:
     entrypoint: ["/usr/local/bin/probe-recording"]
     environment:
       TEST_RECORDING: /artifacts/smoke.mp4
+      TEST_REQUIRE_PILLARBOX: "1"
     volumes:
       - ./artifacts:/artifacts:ro

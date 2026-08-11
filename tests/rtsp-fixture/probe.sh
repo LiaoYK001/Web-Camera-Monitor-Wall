@@ -6,6 +6,12 @@ expected_dimensions="${TEST_DIMENSIONS:-640x360}"
 expected_frame_rate="${TEST_FRAME_RATE:-10/1}"
 minimum_duration="${TEST_MIN_DURATION:-8}"
 maximum_duration="${TEST_MAX_DURATION:-15}"
+require_pillarbox="${TEST_REQUIRE_PILLARBOX:-0}"
+
+case "$require_pillarbox" in
+    0|1) ;;
+    *) echo "TEST_REQUIRE_PILLARBOX must be 0 or 1" >&2; exit 2 ;;
+esac
 
 test -s "$file"
 
@@ -46,5 +52,29 @@ yavg="$(ffmpeg -hide_banner -loglevel info -i "$file" -frames:v 1 -vf signalstat
 test -n "$yavg"
 awk -v yavg="$yavg" 'BEGIN { exit !(yavg > 5) }'
 
+pillarbox_report=""
+if [ "$require_pillarbox" = "1" ]; then
+    left_yavg="$(ffmpeg -hide_banner -loglevel info -i "$file" -frames:v 1 \
+        -vf 'crop=40:ih:0:0,signalstats,metadata=print' -f null - 2>&1 \
+        | awk -F= '/lavfi.signalstats.YAVG=/{print $2; exit}')"
+    right_yavg="$(ffmpeg -hide_banner -loglevel info -i "$file" -frames:v 1 \
+        -vf 'crop=40:ih:iw-40:0,signalstats,metadata=print' -f null - 2>&1 \
+        | awk -F= '/lavfi.signalstats.YAVG=/{print $2; exit}')"
+    center_yavg="$(ffmpeg -hide_banner -loglevel info -i "$file" -frames:v 1 \
+        -vf 'crop=320:180:(iw-ow)/2:(ih-oh)/2,signalstats,metadata=print' -f null - 2>&1 \
+        | awk -F= '/lavfi.signalstats.YAVG=/{print $2; exit}')"
+    test -n "$left_yavg"
+    test -n "$right_yavg"
+    test -n "$center_yavg"
+    awk -v left="$left_yavg" -v right="$right_yavg" -v center="$center_yavg" '
+        BEGIN {
+            edge_delta = left - right
+            if (edge_delta < 0) edge_delta = -edge_delta
+            exit !(left < 24 && right < 24 && center > 40 &&
+                   center - left > 30 && center - right > 30 && edge_delta < 3)
+        }'
+    pillarbox_report=" pillarbox_left_yavg=$left_yavg pillarbox_center_yavg=$center_yavg pillarbox_right_yavg=$right_yavg"
+fi
+
 ffmpeg -v error -i "$file" -map 0:v:0 -f null -
-echo "M0 recording verified: codec=$codec dimensions=$dimensions nominal_fps=$nominal_frame_rate average_fps=$average_frame_rate duration=$duration yavg=$yavg"
+echo "M0 recording verified: codec=$codec dimensions=$dimensions nominal_fps=$nominal_frame_rate average_fps=$average_frame_rate duration=$duration yavg=$yavg$pillarbox_report"
