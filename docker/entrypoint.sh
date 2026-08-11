@@ -5,6 +5,7 @@ display="${DISPLAY:-:99}"
 screen="${WEBOBS_XVFB_SCREEN:-1920x1080x24}"
 mediamtx_enabled="${WEBOBS_WEBRTC_ENABLED:-true}"
 mediamtx_config="${WEBOBS_MEDIAMTX_CONFIG:-/opt/webobs/etc/mediamtx.yml}"
+export WEBOBS_WEBRTC_ENABLED="$mediamtx_enabled"
 
 case "$mediamtx_enabled" in
     true|false) ;;

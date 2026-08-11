@@ -1,6 +1,6 @@
 # Roadmap / 项目路线图
 
-> Last updated / 最后更新：2026-08-11
+> Last updated / 最后更新：2026-08-12
 
 This roadmap describes milestone order and acceptance gates, not promised release dates. Priorities may change based on validation results and maintainer capacity.
 
@@ -8,15 +8,15 @@ This roadmap describes milestone order and acceptance gates, not promised releas
 
 ## Current position / 当前位置
 
-**🟡 M2 — Composite WebRTC：单镜像内 MediaMTX 运行底座已完成；当前位置是 libobs WHIP 发布。**
+**🟡 M2 — Composite WebRTC：MediaMTX 与 libobs WHIP 发布已完成；当前位置是同源 WHEP 浏览器播放。**
 
-M0 and M1 are complete. M2 now packages pinned MediaMTX 1.18.2 in the single product image, keeps its signaling listener internal, exposes an explicit ICE/UDP port, and supervises MediaMTX, Xvfb, and webobsd with graceful shutdown. The current implementation step is enabling the OBS WebRTC module and publishing the libobs program through WHIP.
+M0 and M1 are complete. M2 now packages pinned MediaMTX 1.18.2 in the single product image and publishes the H.264 program through pinned libdatachannel and `obs-webrtc`. The current implementation step is proxying WHEP through the same-origin control server and adding browser playback, status, and reconnect behavior.
 
-M0 与 M1 已全部完成。M2 现已在单一产品镜像中打包固定的 MediaMTX 1.18.2，信令监听保持在容器内部，仅显式发布 ICE/UDP 端口，并由入口监督 MediaMTX、Xvfb 与 webobsd 的优雅关停。当前实现步骤是启用 OBS WebRTC 模块并通过 WHIP 发布 libobs 合成画面。
+M0 与 M1 已全部完成。M2 现已在单一产品镜像中打包固定的 MediaMTX 1.18.2，并通过固定版本 libdatachannel 与 `obs-webrtc` 发布 H.264 合成画面。当前实现步骤是通过同源控制服务代理 WHEP，并加入浏览器播放、状态和重连行为。
 
 ```text
-M0 complete       M1 complete       M2 media router       M2 WHIP + WHEP
-M0 已完成      -> M1 已完成      -> M2 媒体路由底座      -> M2 发布与播放
+M0 complete       M1 complete       M2 router + WHIP       M2 WHEP browser
+M0 已完成      -> M1 已完成      -> M2 路由与发布         -> M2 浏览器播放
 ✅                ✅                ✅                       🟡 CURRENT
 ```
 
@@ -90,7 +90,7 @@ M0 已于 2026-08-11 在真实摄像头门禁通过后完成。后续修改采�
 
 - [x] Package pinned MediaMTX 1.18.2 and its license in the single product image / 在单一产品镜像中打包固定版本 MediaMTX 1.18.2 及许可证
 - [x] Keep signaling internal, expose explicit ICE/UDP, and supervise graceful multi-process shutdown / 保持信令内部监听、显式发布 ICE/UDP，并监督多进程优雅关停
-- [ ] Build and load `obs-webrtc`, then publish the libobs program through WHIP / 构建并加载 `obs-webrtc`，通过 WHIP 发布 libobs 合成画面
+- [x] Build and load `obs-webrtc`, then publish the libobs program through WHIP / 构建并加载 `obs-webrtc`，通过 WHIP 发布 libobs 合成画面
 - [ ] Proxy WHEP through the same-origin control server and add browser playback with reconnect / 通过同源控制服务代理 WHEP，并增加浏览器播放与重连
 - [ ] Pass deterministic container, browser, disconnect, security, and real-camera acceptance / 通过确定性容器、浏览器、断线、安全及真实摄像头验收
 

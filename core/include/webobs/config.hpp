@@ -21,6 +21,8 @@ struct Config {
     std::string listen_address = "127.0.0.1";
     int http_port = 8080;
     bool allow_insecure_remote = false;
+    bool webrtc_enabled = false;
+    std::string whip_url = "http://127.0.0.1:8889/program/whip";
     std::string output_path;
     int duration_seconds = 0;
     int width = 1920;

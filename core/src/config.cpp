@@ -28,6 +28,8 @@ constexpr SettingSpec setting_specs[] = {
     {"--listen-address", "WEBOBS_LISTEN_ADDRESS", "listen_address"},
     {"--http-port", "WEBOBS_HTTP_PORT", "http_port"},
     {"--allow-insecure-remote", "WEBOBS_ALLOW_INSECURE_REMOTE", "allow_insecure_remote"},
+    {"--webrtc-enabled", "WEBOBS_WEBRTC_ENABLED", "webrtc_enabled"},
+    {"--whip-url", "WEBOBS_WHIP_URL", "whip_url"},
     {"--output", "WEBOBS_OUTPUT", "output"},
     {"--duration-seconds", "WEBOBS_DURATION_SECONDS", "duration"},
     {"--width", "WEBOBS_WIDTH", "width"},
@@ -99,6 +101,21 @@ bool parse_boolean(std::string_view value, bool &target)
     return false;
 }
 
+bool valid_whip_url(std::string_view value)
+{
+    const std::size_t scheme_size = value.starts_with("http://") ? 7 : value.starts_with("https://") ? 8 : 0;
+    if (scheme_size == 0 || value.size() == scheme_size || value.find_first_of("?#") != std::string_view::npos)
+        return false;
+    if (std::any_of(value.begin(), value.end(), [](unsigned char character) {
+            return std::iscntrl(character) || std::isspace(character);
+        }))
+        return false;
+
+    const std::size_t authority_end = value.find('/', scheme_size);
+    const std::string_view authority = value.substr(scheme_size, authority_end - scheme_size);
+    return !authority.empty() && authority.find('@') == std::string_view::npos;
+}
+
 ParseResult failure(std::string message)
 {
     ParseResult result;
@@ -116,6 +133,7 @@ ParseResult parse_config(const std::vector<std::string> &arguments, const Enviro
         {"transport", "tcp"},       {"log_level", "info"},
         {"listen_address", "127.0.0.1"}, {"http_port", "8080"},
         {"allow_insecure_remote", "false"},
+        {"webrtc_enabled", "false"}, {"whip_url", "http://127.0.0.1:8889/program/whip"},
     };
 
     for (const auto &spec : setting_specs) {
@@ -178,6 +196,12 @@ ParseResult parse_config(const std::vector<std::string> &arguments, const Enviro
     const bool loopback = config.listen_address == "127.0.0.1" || config.listen_address == "::1";
     if (config.http_port != 0 && !loopback && !config.allow_insecure_remote)
         return failure("non-loopback HTTP listening requires --allow-insecure-remote true");
+
+    if (!parse_boolean(values["webrtc_enabled"], config.webrtc_enabled))
+        return failure("webrtc-enabled must be true or false");
+    config.whip_url = values["whip_url"];
+    if (config.webrtc_enabled && !valid_whip_url(config.whip_url))
+        return failure("whip-url must be an absolute HTTP(S) URL without credentials, query parameters, or fragments");
 
     config.output_path = values.contains("output") ? values["output"] : timestamped_output_path();
     if (config.output_path.empty())
@@ -243,6 +267,8 @@ Options:
   --listen-address <address>        HTTP bind address (default: 127.0.0.1)
   --http-port <n>                   HTTP/WebSocket port; 0 disables (default: 8080)
   --allow-insecure-remote <bool>    Required for 0.0.0.0 or :: before M6 auth
+  --webrtc-enabled <bool>          Publish the program through WHIP (default: false)
+  --whip-url <url>                 WHIP publish URL (default: internal MediaMTX)
   --output <path>                  MP4 output path (default: UTC timestamp under /recordings)
   --duration-seconds <n>           Stop after n seconds; 0 waits for a signal (default: 0)
   --width <n>                      Even output width (default: 1920)
@@ -261,7 +287,7 @@ Command-line values override WEBOBS_* environment values.
 
 std::string version_text()
 {
-    return std::string("webobsd ") + WEBOBS_VERSION + " (M1-dev, OBS 32.1.2)";
+    return std::string("webobsd ") + WEBOBS_VERSION + " (M2-dev, OBS 32.1.2)";
 }
 
 } // namespace webobs

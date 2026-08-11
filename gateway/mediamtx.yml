@@ -33,6 +33,9 @@ webrtcLocalTCPAddress: ''
 webrtcIPsFromInterfaces: false
 webrtcAdditionalHosts: [127.0.0.1]
 webrtcICEServers2: []
+# OBS initializes x264 before its asynchronous WHIP handshake. Allow the next
+# fixed two-second IDR to arrive without forcing a needless first reconnect.
+webrtcTrackGatherTimeout: 5s
 
 pathDefaults:
   source: publisher

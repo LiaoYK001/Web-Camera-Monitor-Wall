@@ -6,7 +6,7 @@
 RTSP camera -> libobs ffmpeg_source -> OBS scene -> obs_x264 -> video-only MP4
 ```
 
-当前开发版本已能从持久化场景启动多路 RTSP 合成，并通过随产品镜像提供的 React/TypeScript 编辑器及本机 REST/WebSocket 接口，在录制期间原子更新布局和来源。M2 已把固定版本 MediaMTX 路由器加入同一产品镜像；libobs WHIP 发布和浏览器 WHEP 播放仍在实现中，输出音轨与硬件编码尚未加入。
+当前开发版本已能从持久化场景启动多路 RTSP 合成，并通过随产品镜像提供的 React/TypeScript 编辑器及本机 REST/WebSocket 接口，在录制期间原子更新布局和来源。M2 已在同一产品镜像中通过固定版本 MediaMTX 和 `obs-webrtc` 把合成画面发布为 WHIP/H.264；浏览器 WHEP 播放仍在实现中，输出音轨与硬件编码尚未加入。
 
 开发路线、里程碑验收标准和当前进度见 [ROADMAP.md](ROADMAP.md)。**M0 与 M1 已通过全部验收；当前正在 M2 接入服务端合成 WebRTC。**场景与持久化契约见 [docs/scene-schema-v1.md](docs/scene-schema-v1.md)，控制协议见 [docs/api-v1.md](docs/api-v1.md)。
 
@@ -21,6 +21,7 @@ RTSP camera -> libobs ffmpeg_source -> OBS scene -> obs_x264 -> video-only MP4
 - RTSP 默认使用 TCP，硬件解码关闭
 - 产品运行时只有一个 Docker 镜像；M1 Compose 仅向主机回环地址发布控制端口
 - MediaMTX `1.18.2` 固定版本与 SHA-256 校验后打包进产品镜像，内部信令仅监听容器回环地址
+- libdatachannel `0.21.0` 固定到审核提交并使用 Ubuntu OpenSSL 3 后端，避免与系统 FFmpeg 的 Mbed TLS 2.x ABI 冲突
 
 OBS 的 `ffmpeg_muxer` 要求同时连接视频和音频编码器。M0 会写入一个带静音 AAC 的临时 MKV，停止后通过 FFmpeg stream copy 生成只有 H.264 视频轨的最终 MP4；画面不会被二次编码，临时文件成功后会删除。
 
@@ -145,6 +146,8 @@ webobsd
   --listen-address <127.0.0.1|::1|0.0.0.0|::>
   --http-port <0..65535>
   --allow-insecure-remote <true|false>
+  --webrtc-enabled <true|false>
+  --whip-url <absolute-http-or-https-url>
   --output <path.mp4>
   --duration-seconds <0..604800>
   --width <even 16..8192>
@@ -213,10 +216,11 @@ libobs
 libobs-opengl
 obs-ffmpeg
 obs-x264
+obs-webrtc
 obs-ffmpeg-mux
 ```
 
-之后编译 `webobsd` 和无外部测试框架的 CTest 单元测试。单元测试覆盖参数边界、CLI/环境变量优先级、RTSP 凭据脱敏、场景解析/迁移/存储和乐观并发变更计划。
+`obs-webrtc` 使用固定的 libdatachannel `0.21.0` 构建。WHIP URL 不接受 userinfo、查询参数或片段，避免令牌混入插件调试日志；当前内置 MediaMTX 使用无凭据的容器回环端点。之后编译 `webobsd` 和无外部测试框架的 CTest 单元测试。单元测试覆盖参数边界、CLI/环境变量优先级、WHIP URL 安全约束、RTSP 凭据脱敏、场景解析/迁移/存储和乐观并发变更计划。
 
 ## 退出状态
 

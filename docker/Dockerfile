@@ -35,6 +35,59 @@ RUN test "$TARGETARCH" = "amd64" \
     && mkdir -p /opt/mediamtx \
     && tar -xzf "/tmp/${archive}" -C /opt/mediamtx mediamtx LICENSE
 
+FROM ubuntu:24.04 AS datachannel-builder
+
+ARG DEBIAN_FRONTEND=noninteractive
+ARG LIBDATACHANNEL_VERSION=0.21.0
+ARG LIBDATACHANNEL_COMMIT=9d5c46b8f506943727104d766e5dad0693c5a223
+ARG TARGETARCH
+
+RUN test "$TARGETARCH" = "amd64" \
+    && apt-get -o Acquire::Retries=5 -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30 update \
+    && attempt=1 \
+    && until apt-get -o Acquire::Retries=5 -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30 install -y --no-install-recommends \
+        build-essential \
+        ca-certificates \
+        cmake \
+        git \
+        libssl-dev \
+        ninja-build; do \
+        if [ "$attempt" -ge 5 ]; then exit 1; fi; \
+        attempt=$((attempt + 1)); \
+        sleep 5; \
+        apt-get -o Acquire::Retries=5 -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30 update; \
+    done \
+    && rm -rf /var/lib/apt/lists/*
+
+RUN git init /src/libdatachannel \
+    && git -C /src/libdatachannel remote add origin https://github.com/paullouisageneau/libdatachannel.git \
+    && git -C /src/libdatachannel fetch --depth 1 origin "$LIBDATACHANNEL_COMMIT" \
+    && git -C /src/libdatachannel checkout --detach FETCH_HEAD \
+    && test "$(git -C /src/libdatachannel rev-parse HEAD)" = "$LIBDATACHANNEL_COMMIT"
+
+RUN attempt=1 \
+    && until git -C /src/libdatachannel submodule update --init --recursive --depth 1; do \
+        if [ "$attempt" -ge 5 ]; then exit 1; fi; \
+        attempt=$((attempt + 1)); \
+        sleep 5; \
+    done
+
+RUN cmake -S /src/libdatachannel -B /build/libdatachannel -G Ninja \
+        -DCMAKE_BUILD_TYPE=Release \
+        -DCMAKE_INSTALL_PREFIX=/opt/obs \
+        -DCMAKE_PREFIX_PATH=/opt/obs \
+        -DCMAKE_POLICY_VERSION_MINIMUM=3.5 \
+        -DBUILD_SHARED_LIBS=ON \
+        -DUSE_MBEDTLS=OFF \
+        -DNO_WEBSOCKET=ON \
+        -DNO_TESTS=ON \
+        -DNO_EXAMPLES=ON \
+    && cmake --build /build/libdatachannel --parallel \
+    && cmake --install /build/libdatachannel --strip \
+    && mkdir -p /opt/obs/share/licenses/libdatachannel \
+    && cp /src/libdatachannel/LICENSE /opt/obs/share/licenses/libdatachannel/LICENSE \
+    && printf '%s\n' "$LIBDATACHANNEL_VERSION" > /opt/obs/share/libdatachannel-version
+
 FROM ubuntu:24.04 AS obs-builder
 
 ARG DEBIAN_FRONTEND=noninteractive
@@ -86,6 +139,7 @@ RUN apt-get -o Acquire::Retries=5 -o Acquire::http::Timeout=30 -o Acquire::https
 
 WORKDIR /src/obs
 COPY obs/obs-studio/ ./
+COPY --from=datachannel-builder /opt/obs /opt/obs
 
 # OBS 32.1.2's Linux obs-ffmpeg VAAPI source still references its HEVC
 # capability helper when ENABLE_HEVC=OFF. Keep the core type support enabled;
@@ -94,6 +148,7 @@ RUN cmake -S /src/obs -B /build/obs -G Ninja \
         -DCMAKE_BUILD_TYPE=Release \
         -DCMAKE_INSTALL_PREFIX=/opt/obs \
         -DCMAKE_INSTALL_LIBDIR=lib \
+        -DCMAKE_PREFIX_PATH=/opt/obs \
         -DOBS_VERSION_OVERRIDE=${OBS_VERSION} \
         -DENABLE_UI=OFF \
         -DENABLE_FRONTEND=OFF \
@@ -101,7 +156,7 @@ RUN cmake -S /src/obs -B /build/obs -G Ninja \
         -DENABLE_HEVC=ON \
         -DENABLE_BROWSER=OFF \
         -DENABLE_WEBSOCKET=OFF \
-        -DENABLE_WEBRTC=OFF \
+        -DENABLE_WEBRTC=ON \
         -DENABLE_AJA=OFF \
         -DENABLE_DECKLINK=OFF \
         -DENABLE_ALSA=OFF \
@@ -123,6 +178,7 @@ RUN cmake -S /src/obs -B /build/obs -G Ninja \
         libobs-opengl \
         obs-ffmpeg \
         obs-x264 \
+        obs-webrtc \
         obs-ffmpeg-mux \
     && cmake -E copy_directory /build/obs/rundir/Release /opt/obs \
     && ln -sf libobs-opengl.so.30 /opt/obs/lib/libobs-opengl.so
@@ -147,7 +203,9 @@ RUN cmake -S /src/webobs -B /build/webobs -G Ninja \
     && ldd /opt/obs/bin/webobsd \
     && ldd /opt/obs/lib/libobs-opengl.so.30 \
     && ldd /opt/obs/lib/obs-plugins/obs-ffmpeg.so \
-    && ldd /opt/obs/lib/obs-plugins/obs-x264.so
+    && ldd /opt/obs/lib/obs-plugins/obs-x264.so \
+    && ldd /opt/obs/lib/obs-plugins/obs-webrtc.so \
+    && ldd /opt/obs/lib/libdatachannel.so
 
 FROM ubuntu:24.04 AS runtime
 
@@ -157,6 +215,7 @@ RUN apt-get -o Acquire::Retries=5 -o Acquire::http::Timeout=30 -o Acquire::https
     && apt-get -o Acquire::Retries=5 -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30 install -y --no-install-recommends \
         ca-certificates \
         ffmpeg \
+        libcurl4t64 \
         libdrm2 \
         libegl1 \
         libegl-mesa0 \
@@ -204,6 +263,8 @@ RUN mkdir -p /config/obs /config/webobs /recordings \
     && ldd /opt/obs/lib/libobs-opengl.so.30 >> /tmp/webobs-ldd.txt \
     && ldd /opt/obs/lib/obs-plugins/obs-ffmpeg.so >> /tmp/webobs-ldd.txt \
     && ldd /opt/obs/lib/obs-plugins/obs-x264.so >> /tmp/webobs-ldd.txt \
+    && ldd /opt/obs/lib/obs-plugins/obs-webrtc.so >> /tmp/webobs-ldd.txt \
+    && ldd /opt/obs/lib/libdatachannel.so >> /tmp/webobs-ldd.txt \
     && ldd /opt/obs/bin/obs-ffmpeg-mux >> /tmp/webobs-ldd.txt \
     && if grep "not found" /tmp/webobs-ldd.txt; then exit 1; fi \
     && rm /tmp/webobs-ldd.txt

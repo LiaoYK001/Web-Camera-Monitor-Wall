@@ -108,10 +108,14 @@ struct EncoderDeleter {
 struct OutputDeleter {
     void operator()(obs_output_t *value) const { obs_output_release(value); }
 };
+struct ServiceDeleter {
+    void operator()(obs_service_t *value) const { obs_service_release(value); }
+};
 
 using DataPtr = std::unique_ptr<obs_data_t, DataDeleter>;
 using EncoderPtr = std::unique_ptr<obs_encoder_t, EncoderDeleter>;
 using OutputPtr = std::unique_ptr<obs_output_t, OutputDeleter>;
+using ServicePtr = std::unique_ptr<obs_service_t, ServiceDeleter>;
 
 struct TemporaryFileGuard {
     std::filesystem::path path;
@@ -239,7 +243,7 @@ bool remux_video_only(const std::filesystem::path &temporary, const std::filesys
     return true;
 }
 
-bool wait_for_output_stop(obs_output_t *output, OutputState &state)
+bool wait_for_output_stop(obs_output_t *output, OutputState &state, std::string_view label)
 {
     obs_output_stop(output);
     const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(15);
@@ -247,22 +251,25 @@ bool wait_for_output_stop(obs_output_t *output, OutputState &state)
            std::chrono::steady_clock::now() < deadline)
         std::this_thread::sleep_for(std::chrono::milliseconds(50));
     if (obs_output_active(output)) {
-        blog(LOG_WARNING, "Recording did not stop in time; forcing output shutdown");
+        blog(LOG_WARNING, "%.*s did not stop in time; forcing output shutdown", static_cast<int>(label.size()),
+             label.data());
         obs_output_force_stop(output);
         const auto force_deadline = std::chrono::steady_clock::now() + std::chrono::seconds(2);
         while (obs_output_active(output) && std::chrono::steady_clock::now() < force_deadline)
             std::this_thread::sleep_for(std::chrono::milliseconds(25));
     }
     if (obs_output_active(output)) {
-        blog(LOG_ERROR, "Recording output remained active after forced shutdown");
+        blog(LOG_ERROR, "%.*s remained active after forced shutdown", static_cast<int>(label.size()), label.data());
         return false;
     }
     if (!state.stopped.load()) {
-        blog(LOG_ERROR, "Recording output stopped without reporting a completion status");
+        blog(LOG_ERROR, "%.*s stopped without reporting a completion status", static_cast<int>(label.size()),
+             label.data());
         return false;
     }
     if (state.stopped.load() && state.stop_code.load() != OBS_OUTPUT_SUCCESS) {
-        blog(LOG_ERROR, "Recording finalization failed (code %lld)", state.stop_code.load());
+        blog(LOG_ERROR, "%.*s finalization failed (code %lld)", static_cast<int>(label.size()), label.data(),
+             state.stop_code.load());
         return false;
     }
     return true;
@@ -335,7 +342,8 @@ ExitCode run_obs_engine(const Config &config, const SceneDocument &document)
     }
 
     const std::filesystem::path obs_prefix = WEBOBS_OBS_PREFIX;
-    if (!load_module(obs_prefix, "obs-ffmpeg") || !load_module(obs_prefix, "obs-x264"))
+    if (!load_module(obs_prefix, "obs-ffmpeg") || !load_module(obs_prefix, "obs-x264") ||
+        (config.webrtc_enabled && !load_module(obs_prefix, "obs-webrtc")))
         return ExitCode::obs_initialization_failed;
     obs_post_load_modules();
 
@@ -389,6 +397,18 @@ ExitCode run_obs_engine(const Config &config, const SceneDocument &document)
     obs_data_set_int(video_settings.get(), "keyint_sec", 2);
     obs_data_set_string(video_settings.get(), "preset", "veryfast");
     obs_data_set_string(video_settings.get(), "profile", "high");
+    ServicePtr whip_service;
+    if (config.webrtc_enabled) {
+        DataPtr service_settings(obs_data_create());
+        obs_data_set_string(service_settings.get(), "server", config.whip_url.c_str());
+        obs_data_set_string(service_settings.get(), "bearer_token", "");
+        whip_service.reset(obs_service_create("whip_custom", "WebOBS WHIP service", service_settings.get(), nullptr));
+        if (!whip_service) {
+            blog(LOG_ERROR, "Could not create the WHIP service");
+            return ExitCode::output_failed;
+        }
+        obs_service_apply_encoder_settings(whip_service.get(), video_settings.get(), nullptr);
+    }
     EncoderPtr video_encoder(obs_video_encoder_create("obs_x264", "WebOBS x264", video_settings.get(), nullptr));
     if (!video_encoder) {
         blog(LOG_ERROR, "Could not create obs_x264 encoder");
@@ -419,6 +439,20 @@ ExitCode run_obs_engine(const Config &config, const SceneDocument &document)
     obs_output_set_video_encoder(output.get(), video_encoder.get());
     obs_output_set_audio_encoder(output.get(), audio_encoder.get(), 0);
 
+    OutputState whip_output_state;
+    OutputPtr whip_output;
+    if (config.webrtc_enabled) {
+        whip_output.reset(obs_output_create("whip_output_video", "WebOBS WHIP video output", nullptr, nullptr));
+        if (!whip_output) {
+            blog(LOG_ERROR, "Could not create the WHIP video output");
+            return ExitCode::output_failed;
+        }
+        signal_handler_connect(obs_output_get_signal_handler(whip_output.get()), "stop", on_output_stopped,
+                               &whip_output_state);
+        obs_output_set_video_encoder(whip_output.get(), video_encoder.get());
+        obs_output_set_service(whip_output.get(), whip_service.get());
+    }
+
     SceneController scene_controller(document, config.scene_file, scene_runtime);
     ControlServer control_server(config, scene_controller);
     if (const auto server_error = control_server.start()) {
@@ -431,9 +465,23 @@ ExitCode run_obs_engine(const Config &config, const SceneDocument &document)
             blog(LOG_WARNING, "HTTP control listener has no M6 authentication; keep the published host port local");
     }
 
+    if (whip_output && !obs_output_start(whip_output.get())) {
+        const char *message = obs_output_get_last_error(whip_output.get());
+        blog(LOG_ERROR, "Could not start WebRTC publishing%s%s", message && *message ? ": " : "",
+             message && *message ? message : "");
+        control_server.stop();
+        return ExitCode::output_failed;
+    }
+    if (whip_output)
+        blog(LOG_INFO, "WebRTC program publishing started");
+
     if (!obs_output_start(output.get())) {
         const char *message = obs_output_get_last_error(output.get());
-        blog(LOG_ERROR, "Could not start recording%s%s", message && *message ? ": " : "", message && *message ? message : "");
+        blog(LOG_ERROR, "Could not start recording%s%s", message && *message ? ": " : "",
+             message && *message ? message : "");
+        control_server.stop();
+        if (whip_output && obs_output_active(whip_output.get()))
+            wait_for_output_stop(whip_output.get(), whip_output_state, "WebRTC output");
         return ExitCode::output_failed;
     }
     blog(LOG_INFO, "Recording started: %dx%d at %d fps, %d Kbps", document.canvas.width,
@@ -449,17 +497,36 @@ ExitCode run_obs_engine(const Config &config, const SceneDocument &document)
             unexpected_stop = true;
             break;
         }
+        if (whip_output && whip_output_state.stopped.load()) {
+            unexpected_stop = true;
+            break;
+        }
         std::this_thread::sleep_for(std::chrono::milliseconds(100));
     }
 
     if (unexpected_stop) {
         control_server.stop();
-        blog(LOG_ERROR, "Recording stopped unexpectedly (code %lld)", output_state.stop_code.load());
+        if (whip_output_state.stopped.load())
+            blog(LOG_ERROR, "WebRTC publishing stopped unexpectedly (code %lld)", whip_output_state.stop_code.load());
+        if (output_state.stopped.load())
+            blog(LOG_ERROR, "Recording stopped unexpectedly (code %lld)", output_state.stop_code.load());
+        if (whip_output && obs_output_active(whip_output.get()))
+            wait_for_output_stop(whip_output.get(), whip_output_state, "WebRTC output");
+        if (obs_output_active(output.get()))
+            wait_for_output_stop(output.get(), output_state, "Recording output");
+        whip_output.reset();
         output.reset();
         return ExitCode::output_failed;
     }
     control_server.stop();
-    if (!wait_for_output_stop(output.get(), output_state)) {
+    bool outputs_stopped = true;
+    if (whip_output)
+        outputs_stopped = wait_for_output_stop(whip_output.get(), whip_output_state, "WebRTC output");
+    whip_output.reset();
+    whip_service.reset();
+    if (!wait_for_output_stop(output.get(), output_state, "Recording output"))
+        outputs_stopped = false;
+    if (!outputs_stopped) {
         output.reset();
         return ExitCode::output_failed;
     }

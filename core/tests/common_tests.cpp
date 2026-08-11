@@ -54,6 +54,7 @@ void config_tests()
         {"--fps", "121"},                  {"--bitrate-kbps", "49"},
         {"--connect-timeout-seconds", "0"}, {"--log-level", "verbose"},
         {"--http-port", "65536"},          {"--allow-insecure-remote", "sometimes"},
+        {"--webrtc-enabled", "sometimes"},
     };
     for (const auto &[flag, value] : invalid_values) {
         result = webobs::parse_config({"--rtsp-url", "rtsp://camera/live", flag, value}, empty_environment);
@@ -97,6 +98,28 @@ void config_tests()
 
     result = webobs::parse_config({"--rtsp-url", "rtsp://camera/live", "--output", "capture.mkv"}, empty_environment);
     expect(!result.ok(), "non-MP4 output must fail");
+
+    result = webobs::parse_config({"--rtsp-url", "rtsp://camera/live", "--webrtc-enabled", "true",
+                                   "--whip-url", "http://name:secret@router/program/whip"},
+                                  empty_environment);
+    expect(!result.ok(), "WHIP URLs containing credentials must fail");
+
+    result = webobs::parse_config({"--rtsp-url", "rtsp://camera/live", "--webrtc-enabled", "true",
+                                   "--whip-url", "https://router/program/whip?token=secret"},
+                                  empty_environment);
+    expect(!result.ok(), "WHIP URLs containing query credentials must fail");
+
+    result = webobs::parse_config({"--rtsp-url", "rtsp://camera/live", "--webrtc-enabled", "true",
+                                   "--whip-url", "http://127.0.0.1:8889/program/whip"},
+                                  empty_environment);
+    expect(result.ok() && result.config && result.config->webrtc_enabled,
+           "valid WHIP configuration must enable WebRTC publishing");
+
+    result = webobs::parse_config(
+        {"--rtsp-url", "rtsp://camera/live", "--webrtc-enabled", "false"},
+        environment({{"WEBOBS_WEBRTC_ENABLED", "true"}, {"WEBOBS_WHIP_URL", "not-a-url"}}));
+    expect(result.ok() && result.config && !result.config->webrtc_enabled,
+           "CLI WebRTC setting must override the environment and ignore a disabled WHIP URL");
 
     result = webobs::parse_config(
         {"--rtsp-url", "rtsp://cli/live", "--fps", "25"},
