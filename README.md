@@ -6,9 +6,9 @@
 RTSP camera -> libobs ffmpeg_source -> OBS scene -> obs_x264 -> video-only MP4
 ```
 
-当前开发版本已能从持久化场景启动多路 RTSP 合成，并通过随产品镜像提供的 React/TypeScript 编辑器及本机 REST/WebSocket 接口，在录制期间原子更新布局和来源；尚未加入 WebRTC、正式 MediaMTX 服务、输出音轨或硬件编码。
+当前开发版本已能从持久化场景启动多路 RTSP 合成，并通过随产品镜像提供的 React/TypeScript 编辑器及本机 REST/WebSocket 接口，在录制期间原子更新布局和来源。M2 已把固定版本 MediaMTX 路由器加入同一产品镜像；libobs WHIP 发布和浏览器 WHEP 播放仍在实现中，输出音轨与硬件编码尚未加入。
 
-开发路线、里程碑验收标准和当前进度见 [ROADMAP.md](ROADMAP.md)。**M0 已通过全部验收；M1 Web Control 的场景模型、原子私有存储、libobs 实时变更、本地安全控制 API 和浏览器编辑器已完成，当前进行最终真实摄像头复验。**场景与持久化契约见 [docs/scene-schema-v1.md](docs/scene-schema-v1.md)，控制协议见 [docs/api-v1.md](docs/api-v1.md)。
+开发路线、里程碑验收标准和当前进度见 [ROADMAP.md](ROADMAP.md)。**M0 与 M1 已通过全部验收；当前正在 M2 接入服务端合成 WebRTC。**场景与持久化契约见 [docs/scene-schema-v1.md](docs/scene-schema-v1.md)，控制协议见 [docs/api-v1.md](docs/api-v1.md)。
 
 `WEBOBS_SCENE_FILE` 默认指向 `/config/webobs/scene.json`。首次启动使用 `WEBOBS_RTSP_URL` 创建并保存单路场景；后续启动以场景文件为准。手工编辑场景文件前应停止容器，且真实 RTSP 凭据不得提交到 Git。
 
@@ -20,6 +20,7 @@ RTSP camera -> libobs ffmpeg_source -> OBS scene -> obs_x264 -> video-only MP4
 - x264 CBR、`veryfast`、High Profile、2 秒关键帧间隔
 - RTSP 默认使用 TCP，硬件解码关闭
 - 产品运行时只有一个 Docker 镜像；M1 Compose 仅向主机回环地址发布控制端口
+- MediaMTX `1.18.2` 固定版本与 SHA-256 校验后打包进产品镜像，内部信令仅监听容器回环地址
 
 OBS 的 `ffmpeg_muxer` 要求同时连接视频和音频编码器。M0 会写入一个带静音 AAC 的临时 MKV，停止后通过 FFmpeg stream copy 生成只有 H.264 视频轨的最终 MP4；画面不会被二次编码，临时文件成功后会删除。
 
@@ -168,7 +169,7 @@ docker compose run --rm webobs \
 
 ## 确定性烟测
 
-烟测中的 MediaMTX 和 FFmpeg 只负责产生本地测试图 RTSP，不会进入产品镜像。测试夹具会从 MediaMTX 官方 GitHub Release 下载固定的 `v1.18.2` Linux amd64 二进制并校验 SHA-256，不依赖可变标签。测试会构建项目、录制约 10 秒，再检查：
+烟测中的独立 MediaMTX 和 FFmpeg 只负责产生本地测试图 RTSP，与产品镜像内为 M2 提供 WHIP/WHEP 路由的 MediaMTX 进程用途不同。两者都从官方 GitHub Release 获取固定的 `v1.18.2` Linux amd64 二进制并校验 SHA-256，不依赖可变标签。测试会构建项目、录制约 10 秒，再检查：
 
 - MP4 存在且可完整解码
 - 唯一视频轨为 H.264

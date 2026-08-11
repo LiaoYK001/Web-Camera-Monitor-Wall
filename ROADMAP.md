@@ -8,16 +8,16 @@ This roadmap describes milestone order and acceptance gates, not promised releas
 
 ## Current position / 当前位置
 
-**✅ M1 — Web Control 已完成；当前位置进入 M2 — Composite WebRTC 的设计与实现。**
+**🟡 M2 — Composite WebRTC：单镜像内 MediaMTX 运行底座已完成；当前位置是 libobs WHIP 发布。**
 
-M0 and M1 are complete. The bundled React/TypeScript editor shares the versioned scene document with libobs, persists edits atomically through ETag/If-Match, and synchronizes committed scenes through WebSocket. Docker build, deterministic regression, synthetic rehearsal, and the private real-camera gate all pass. The next milestone is M2 server-composited WebRTC playback.
+M0 and M1 are complete. M2 now packages pinned MediaMTX 1.18.2 in the single product image, keeps its signaling listener internal, exposes an explicit ICE/UDP port, and supervises MediaMTX, Xvfb, and webobsd with graceful shutdown. The current implementation step is enabling the OBS WebRTC module and publishing the libobs program through WHIP.
 
-M0 与 M1 已全部完成。随镜像交付的 React/TypeScript 编辑器与 libobs 共用版本化场景文档，通过 ETag/If-Match 原子保存修改，并以 WebSocket 同步已提交场景。Docker 构建、确定性回归、合成演练及私有真实摄像头门禁全部通过。下一里程碑是 M2 服务端合成 WebRTC 播放。
+M0 与 M1 已全部完成。M2 现已在单一产品镜像中打包固定的 MediaMTX 1.18.2，信令监听保持在容器内部，仅显式发布 ICE/UDP 端口，并由入口监督 MediaMTX、Xvfb 与 webobsd 的优雅关停。当前实现步骤是启用 OBS WebRTC 模块并通过 WHIP 发布 libobs 合成画面。
 
 ```text
-M0 complete       M1 scene + editor       M1 real-camera gate       M2 Composite WebRTC
-M0 已完成      -> M1 场景与编辑器      -> M1 真实摄像头门禁      -> M2 合成 WebRTC
-✅                ✅                       ✅                         🟡 NEXT
+M0 complete       M1 complete       M2 media router       M2 WHIP + WHEP
+M0 已完成      -> M1 已完成      -> M2 媒体路由底座      -> M2 发布与播放
+✅                ✅                ✅                       🟡 CURRENT
 ```
 
 ### M0 acceptance / M0 验收
@@ -54,7 +54,7 @@ M0 已于 2026-08-11 在真实摄像头门禁通过后完成。后续修改采�
 | --- | --- | --- | --- |
 | M0 — Headless Proof | ✅ Complete / 已完成 | One RTSP source rendered by libobs and recorded as H.264 MP4 / 单路 RTSP 经 libobs 合成并录制为 H.264 MP4 | Docker build, synthetic RTSP, and real RTSP all pass / 三类验收全部通过 |
 | M1 — Web Control | ✅ Complete / 已完成 | Web UI, API, persistent scene model, RTSP source CRUD and transforms / Web UI、API、场景持久化、来源管理和画面变换 | Browser edits and libobs use the same scene state; recording remains stable / 浏览器与 libobs 共用同一场景状态，录制稳定 |
-| M2 — Composite WebRTC | ⬜ Planned / 计划中 | Publish the server-composited program through WHIP/MediaMTX and play through WHEP/WebRTC / 服务端合成画面通过 WHIP/MediaMTX 发布并在浏览器播放 | Low-latency browser playback survives reconnects in one product container / 单容器内低延迟播放和重连通过 |
+| M2 — Composite WebRTC | 🟡 In progress / 进行中 | Publish the server-composited program through WHIP/MediaMTX and play through WHEP/WebRTC / 服务端合成画面通过 WHIP/MediaMTX 发布并在浏览器播放 | Low-latency browser playback survives reconnects in one product container / 单容器内低延迟播放和重连通过 |
 | M3 — Direct & Hybrid | ⬜ Planned / 计划中 | Direct camera playback in browsers, client/server mode switching, selective transcoding / 浏览器直连播放、客户端/服务端模式切换和选择性转码 | Shared layout behaves consistently across Direct and Composite modes / 两种模式共享布局且行为一致 |
 | M4 — Browser Sources | ⬜ Planned / 计划中 | `obs-browser` sources for dashboards, satellite maps, overlays and embeddable media / 支持仪表盘、卫星图、叠加层和可嵌入媒体 | CEF lifecycle, isolation, recovery, and resource limits pass container tests / CEF 生命周期、隔离、恢复和资源限制通过测试 |
 | M5 — Audio | ⬜ Planned / 计划中 | Per-source mute/volume, Web Audio in Direct mode, libobs mixing in Composite mode / 单源静音与音量、Direct Web Audio、Composite libobs 混音 | Multi-source sync, mute, volume, and output audio are verified / 多源同步、静音、音量和输出音轨通过验证 |
@@ -85,6 +85,14 @@ M0 已于 2026-08-11 在真实摄像头门禁通过后完成。后续修改采�
 - Enable `obs-webrtc` and publish the program output through WHIP / 启用 `obs-webrtc`，通过 WHIP 发布合成画面。
 - Provide WHEP/WebRTC playback, connection state, and reconnect behavior / 提供浏览器播放、连接状态和重连。
 - Define LAN-first ICE defaults; TURN remains an explicit production dependency / 默认优先局域网 ICE，TURN 留到生产配置。
+
+#### M2 progress / M2 进度
+
+- [x] Package pinned MediaMTX 1.18.2 and its license in the single product image / 在单一产品镜像中打包固定版本 MediaMTX 1.18.2 及许可证
+- [x] Keep signaling internal, expose explicit ICE/UDP, and supervise graceful multi-process shutdown / 保持信令内部监听、显式发布 ICE/UDP，并监督多进程优雅关停
+- [ ] Build and load `obs-webrtc`, then publish the libobs program through WHIP / 构建并加载 `obs-webrtc`，通过 WHIP 发布 libobs 合成画面
+- [ ] Proxy WHEP through the same-origin control server and add browser playback with reconnect / 通过同源控制服务代理 WHEP，并增加浏览器播放与重连
+- [ ] Pass deterministic container, browser, disconnect, security, and real-camera acceptance / 通过确定性容器、浏览器、断线、安全及真实摄像头验收
 
 ### M3 — Direct & Hybrid
 

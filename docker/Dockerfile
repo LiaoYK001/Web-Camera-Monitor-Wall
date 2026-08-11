@@ -14,6 +14,27 @@ RUN pnpm config set fetch-retries 5 \
 COPY web/ ./
 RUN pnpm run build
 
+FROM ubuntu:24.04 AS mediamtx-downloader
+
+ARG DEBIAN_FRONTEND=noninteractive
+ARG MEDIAMTX_VERSION=1.18.2
+ARG MEDIAMTX_LINUX_AMD64_SHA256=73ed27c292e05ceb4990dcb34531f01872dfff5374b7515c45a202e0abf47706
+ARG TARGETARCH
+
+RUN test "$TARGETARCH" = "amd64" \
+    && apt-get -o Acquire::Retries=5 -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30 update \
+    && apt-get -o Acquire::Retries=5 -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30 install -y --no-install-recommends \
+        ca-certificates \
+        curl \
+    && rm -rf /var/lib/apt/lists/* \
+    && archive="mediamtx_v${MEDIAMTX_VERSION}_linux_amd64.tar.gz" \
+    && curl --fail --location --retry 5 --retry-all-errors \
+        --output "/tmp/${archive}" \
+        "https://github.com/bluenviron/mediamtx/releases/download/v${MEDIAMTX_VERSION}/${archive}" \
+    && echo "${MEDIAMTX_LINUX_AMD64_SHA256}  /tmp/${archive}" | sha256sum --check \
+    && mkdir -p /opt/mediamtx \
+    && tar -xzf "/tmp/${archive}" -C /opt/mediamtx mediamtx LICENSE
+
 FROM ubuntu:24.04 AS obs-builder
 
 ARG DEBIAN_FRONTEND=noninteractive
@@ -161,7 +182,10 @@ RUN apt-get -o Acquire::Retries=5 -o Acquire::http::Timeout=30 -o Acquire::https
 
 COPY --from=core-builder /opt/obs /opt/obs
 COPY --from=web-builder /src/web/dist /opt/webobs/ui
+COPY --from=mediamtx-downloader /opt/mediamtx/mediamtx /opt/webobs/bin/mediamtx
+COPY --from=mediamtx-downloader /opt/mediamtx/LICENSE /usr/share/licenses/mediamtx/LICENSE
 COPY docker/entrypoint.sh /opt/webobs/entrypoint.sh
+COPY gateway/mediamtx.yml /opt/webobs/etc/mediamtx.yml
 COPY LICENSE /usr/share/licenses/webobs/LICENSE
 COPY obs/obs-studio/COPYING /usr/share/licenses/webobs/OBS-COPYING
 
@@ -173,7 +197,8 @@ ENV LD_LIBRARY_PATH=/opt/obs/lib \
 
 RUN mkdir -p /config/obs /config/webobs /recordings \
     && chmod 0700 /config/webobs \
-    && chmod 0755 /opt/webobs/entrypoint.sh \
+    && chmod 0755 /opt/webobs/entrypoint.sh /opt/webobs/bin/mediamtx \
+    && /opt/webobs/bin/mediamtx --version \
     && LD_LIBRARY_PATH=/opt/obs/lib /opt/obs/bin/webobsd --version \
     && ldd /opt/obs/bin/webobsd > /tmp/webobs-ldd.txt \
     && ldd /opt/obs/lib/libobs-opengl.so.30 >> /tmp/webobs-ldd.txt \
@@ -185,7 +210,7 @@ RUN mkdir -p /config/obs /config/webobs /recordings \
 
 WORKDIR /opt/obs
 VOLUME ["/config/webobs", "/recordings"]
-EXPOSE 8080
+EXPOSE 8080 8189/udp
 
 LABEL org.opencontainers.image.title="Web Camera Monitor Wall" \
       org.opencontainers.image.description="Headless libobs multi-source monitor wall and local control plane" \
