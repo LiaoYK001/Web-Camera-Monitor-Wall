@@ -41,6 +41,7 @@ M0 is complete after the remaining real-camera acceptance item passes. Run `./te
 - Build / 构建：multi-stage product image and pinned test fixtures built successfully; container CTest reports 100% pass and runtime `ldd` finds no missing library / 产品镜像和固定版本测试夹具构建成功；容器内 CTest 100% 通过，运行时动态库无缺失。
 - Synthetic recording / 合成录制：H.264、640×360、10 FPS、10.0 seconds, video-only, fully decodable, non-black frame / H.264、640×360、10 FPS、10.0 秒、仅视频轨、可完整解码且非黑帧。
 - Contracts / 契约：missing URL, invalid output directory, unreachable RTSP, existing-output refusal, credential masking, and SIGTERM finalization all pass / 无 URL、错误目录、连接失败、拒绝覆盖、凭据脱敏和 SIGTERM 完整封装均通过。
+- Public-repository audit / 公开仓库审计：the Git index rejects sensitive/generated paths, high-confidence secrets, unapproved RTSP credentials, ignore-rule drift, and OBS pin drift / Git 索引会拒绝敏感或生成文件、高置信度密钥、未批准 RTSP 凭据、忽略规则漂移及 OBS 固定提交漂移。
 - Real-camera runner / 实机入口：the PowerShell path passed a 30-second deterministic fixture with fake-credential redaction; both secure local runners are available, but an actual camera result is still required / PowerShell 路径已通过 30 秒确定性夹具与假凭据脱敏测试，两套安全本地入口均已提供，但仍需真实摄像头实测。
 
 ## Milestones / 里程碑

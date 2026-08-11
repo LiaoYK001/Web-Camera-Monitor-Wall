@@ -10,6 +10,9 @@ $ComposeFile = Join-Path $PSScriptRoot 'compose.smoke.yaml'
 $ArtifactDirectory = Join-Path $PSScriptRoot 'artifacts'
 $Artifact = Join-Path $ArtifactDirectory 'smoke.mp4'
 
+& (Join-Path $PSScriptRoot 'run-public-audit.ps1')
+if ($LASTEXITCODE -ne 0) { throw 'Public-repository audit failed' }
+
 New-Item -ItemType Directory -Force -Path $ArtifactDirectory | Out-Null
 if (Test-Path -LiteralPath $Artifact) {
     Remove-Item -LiteralPath $Artifact -Force

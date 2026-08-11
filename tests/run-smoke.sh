@@ -10,6 +10,8 @@ if [ "${WEBOBS_SKIP_BUILD:-0}" = "1" ]; then
     build_option="--no-build"
 fi
 
+"$script_directory/run-public-audit.sh"
+
 mkdir -p "$artifact_directory"
 rm -f "$artifact_directory/smoke.mp4"
 rm -f "$artifact_directory"/.smoke.mp4.webobsd-*.mkv

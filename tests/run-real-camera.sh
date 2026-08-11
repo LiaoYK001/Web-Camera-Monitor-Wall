@@ -84,6 +84,8 @@ case "$rtsp_transport" in
     *) echo "WEBOBS_REAL_RTSP_TRANSPORT must be tcp or udp." >&2; exit 2 ;;
 esac
 
+"$script_directory/run-public-audit.sh"
+
 command -v docker >/dev/null 2>&1
 docker compose version >/dev/null
 

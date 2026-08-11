@@ -143,6 +143,9 @@ function Test-CredentialLeak {
     return $false
 }
 
+& (Join-Path $PSScriptRoot 'run-public-audit.ps1')
+if ($LASTEXITCODE -ne 0) { throw 'Public-repository audit failed' }
+
 Get-Command docker -ErrorAction Stop | Out-Null
 docker compose version | Out-Null
 if ($LASTEXITCODE -ne 0) { throw 'Docker Compose is unavailable.' }
