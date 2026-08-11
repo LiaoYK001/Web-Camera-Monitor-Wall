@@ -6,16 +6,21 @@ set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 
-option(WEBOBS_BUILD_TESTS "Build the M0 unit tests" ON)
+option(WEBOBS_BUILD_TESTS "Build the webobs unit tests" ON)
 set(WEBOBS_OBS_SOURCE_DIR "${CMAKE_SOURCE_DIR}/obs/obs-studio" CACHE PATH "OBS Studio source directory")
 set(WEBOBS_OBS_BUILD_DIR "${WEBOBS_OBS_SOURCE_DIR}/build_ubuntu" CACHE PATH "OBS Studio build directory")
 set(WEBOBS_OBS_PREFIX "/opt/obs" CACHE PATH "Runtime OBS installation prefix")
 
+find_package(PkgConfig REQUIRED)
+pkg_check_modules(JANSSON REQUIRED IMPORTED_TARGET jansson)
+
 add_library(webobs-common
     core/src/config.cpp
     core/src/redaction.cpp
+    core/src/scene_document.cpp
 )
 target_include_directories(webobs-common PUBLIC core/include)
+target_link_libraries(webobs-common PUBLIC PkgConfig::JANSSON)
 target_compile_features(webobs-common PUBLIC cxx_std_20)
 target_compile_options(webobs-common PRIVATE -Wall -Wextra -Wpedantic)
 target_compile_definitions(webobs-common PUBLIC WEBOBS_VERSION="${PROJECT_VERSION}")

@@ -8,7 +8,7 @@ RTSP camera -> libobs ffmpeg_source -> OBS scene -> obs_x264 -> video-only MP4
 
 当前版本没有 Web UI、HTTP API、WebRTC、正式 MediaMTX 服务、多路场景、摄像头音频或硬件编码。这些属于后续里程碑。
 
-开发路线、里程碑验收标准和当前进度见 [ROADMAP.md](ROADMAP.md)。**M0 已通过 Docker 构建、合成 RTSP 和真实摄像头三类验收；M1 Web Control 尚未开始。**
+开发路线、里程碑验收标准和当前进度见 [ROADMAP.md](ROADMAP.md)。**M0 已通过全部验收；M1 Web Control 正在开发，当前已建立版本化单一场景文档、严格校验和安全 JSON 视图。**场景契约见 [docs/scene-schema-v1.md](docs/scene-schema-v1.md)。
 
 ## M0 技术基线
 

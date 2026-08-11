@@ -8,16 +8,16 @@ This roadmap describes milestone order and acceptance gates, not promised releas
 
 ## Current position / 当前位置
 
-**✅ M0 — Headless libobs Proof 已完成；下一里程碑为 M1 Web Control。**
+**🟡 M1 — Web Control：版本化单一场景文档与安全 JSON 边界已实现；当前进入原子持久化。**
 
-The complete multi-stage image build, container CTest suite, runtime dependency check, deterministic RTSP recording, aspect-fit rendering, failure contracts, credential redaction, repeated output protection, graceful SIGTERM finalization, and a 30-second real-camera recording all pass on Docker Desktop with WSL2 Linux containers. M1 has not started.
+M0 is complete. M1 now has a strict, versioned scene document shared by future persistence, API, Web UI, and libobs integration. The current batch is atomic persistence; live runtime mutations, REST/WebSocket control, and the browser editor follow it.
 
-完整多阶段镜像构建、容器内 CTest、运行时依赖检查、确定性 RTSP 录制、画面等比适配、失败契约、凭据脱敏、重复输出保护、SIGTERM 完整封装和真实摄像头 30 秒录制现已在 Docker Desktop + WSL2 Linux containers 环境全部通过。M1 尚未开始。
+M0 已全部完成。M1 现已建立严格、带版本的单一场景文档，后续持久化、API、Web UI 和 libobs 集成都将使用同一模型；当前批次为原子持久化，之后继续运行时实时变更、REST/WebSocket 控制和浏览器编辑器。
 
 ```text
 M0 implementation       Docker + synthetic RTSP       Real RTSP       M1 Web Control
 实现完成             -> 构建与合成流验收通过        -> 真实摄像头   -> Web 控制
-✅                      ✅                              ✅               ⬜ NEXT
+✅                      ✅                              ✅               🟡 CURRENT
 ```
 
 ### M0 acceptance / M0 验收
@@ -49,7 +49,7 @@ M0 已于 2026-08-11 在真实摄像头门禁通过后完成。后续修改采�
 | Milestone | Status / 状态 | Primary outcome / 核心成果 | Exit gate / 完成门禁 |
 | --- | --- | --- | --- |
 | M0 — Headless Proof | ✅ Complete / 已完成 | One RTSP source rendered by libobs and recorded as H.264 MP4 / 单路 RTSP 经 libobs 合成并录制为 H.264 MP4 | Docker build, synthetic RTSP, and real RTSP all pass / 三类验收全部通过 |
-| M1 — Web Control | ⬜ Next / 下一步 | Web UI, API, persistent scene model, RTSP source CRUD and transforms / Web UI、API、场景持久化、来源管理和画面变换 | Browser edits and libobs use the same scene state; recording remains stable / 浏览器与 libobs 共用同一场景状态，录制稳定 |
+| M1 — Web Control | 🟡 In progress / 进行中 | Web UI, API, persistent scene model, RTSP source CRUD and transforms / Web UI、API、场景持久化、来源管理和画面变换 | Browser edits and libobs use the same scene state; recording remains stable / 浏览器与 libobs 共用同一场景状态，录制稳定 |
 | M2 — Composite WebRTC | ⬜ Planned / 计划中 | Publish the server-composited program through WHIP/MediaMTX and play through WHEP/WebRTC / 服务端合成画面通过 WHIP/MediaMTX 发布并在浏览器播放 | Low-latency browser playback survives reconnects in one product container / 单容器内低延迟播放和重连通过 |
 | M3 — Direct & Hybrid | ⬜ Planned / 计划中 | Direct camera playback in browsers, client/server mode switching, selective transcoding / 浏览器直连播放、客户端/服务端模式切换和选择性转码 | Shared layout behaves consistently across Direct and Composite modes / 两种模式共享布局且行为一致 |
 | M4 — Browser Sources | ⬜ Planned / 计划中 | `obs-browser` sources for dashboards, satellite maps, overlays and embeddable media / 支持仪表盘、卫星图、叠加层和可嵌入媒体 | CEF lifecycle, isolation, recovery, and resource limits pass container tests / CEF 生命周期、隔离、恢复和资源限制通过测试 |
@@ -65,6 +65,15 @@ M0 已于 2026-08-11 在真实摄像头门禁通过后完成。后续修改采�
 - Add, remove, move, resize, crop, reorder, mute, and configure RTSP sources / 支持 RTSP 来源增删、移动、缩放、裁切、层级、静音和配置。
 - Persist scenes atomically and validate migrations / 原子持久化场景并验证迁移。
 - Keep MP4 recording as the output while the control plane stabilizes / 控制面稳定前仍以 MP4 录制作为输出。
+
+#### M1 progress / M1 进度
+
+- [x] Versioned scene schema, strict limits, deterministic JSON, and credential-redacted API view / 版本化场景 schema、严格边界、确定性 JSON 和凭据脱敏 API 视图
+- [ ] Atomic persistence, restrictive permissions, and schema migration / 原子持久化、严格文件权限和 schema 迁移
+- [ ] Live libobs source CRUD, transforms, crop, ordering, mute, and volume / libobs 来源实时增删改、变换、裁切、排序、静音和音量
+- [ ] REST and WebSocket control with optimistic concurrency / 带乐观并发控制的 REST 与 WebSocket
+- [ ] React/TypeScript Web editor using the same scene document / 使用同一场景文档的 React/TypeScript Web 编辑器
+- [ ] Docker, synthetic RTSP, real camera, persistence, and security acceptance / Docker、合成 RTSP、真实摄像头、持久化与安全验收
 
 ### M2 — Composite WebRTC
 
