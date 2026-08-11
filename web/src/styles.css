@@ -505,6 +505,31 @@ select:focus-visible,
   font-size: 10px;
 }
 
+.workspace-mode {
+  display: flex;
+  padding: 3px;
+  border: 1px solid #2b3140;
+  border-radius: 8px;
+  background: #090c11;
+}
+
+.workspace-mode button {
+  min-height: 30px;
+  padding: 0 11px;
+  border: 0;
+  border-radius: 5px;
+  color: #767f90;
+  background: transparent;
+  font-size: 10px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.workspace-mode button.active {
+  color: #11160b;
+  background: var(--accent);
+}
+
 .stage-wrap {
   display: grid;
   min-height: 0;
@@ -523,6 +548,73 @@ select:focus-visible,
   background: #000;
   box-shadow: 0 30px 70px rgba(0, 0, 0, 0.48), 0 0 0 8px rgba(255, 255, 255, 0.015);
   user-select: none;
+}
+
+.program-preview {
+  position: relative;
+  width: min(100%, 1100px);
+  overflow: hidden;
+  border: 1px solid #3b4250;
+  border-radius: 3px;
+  background: #000;
+  box-shadow: 0 30px 70px rgba(0, 0, 0, 0.48), 0 0 0 8px rgba(255, 255, 255, 0.015);
+}
+
+.program-preview video {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  background: #000;
+}
+
+.program-preview-placeholder {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  color: rgba(185, 255, 79, 0.12);
+  font-size: clamp(72px, 14vw, 190px);
+  font-weight: 800;
+  pointer-events: none;
+}
+
+.program-preview-status {
+  position: absolute;
+  z-index: 2;
+  top: 12px;
+  left: 12px;
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 6px 9px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 6px;
+  color: #d4dae5;
+  background: rgba(4, 6, 9, 0.74);
+  backdrop-filter: blur(8px);
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+}
+
+.program-preview-status i {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--warning);
+  box-shadow: 0 0 8px rgba(255, 203, 102, 0.5);
+}
+
+.program-preview.live .program-preview-status i {
+  background: var(--accent);
+  box-shadow: 0 0 9px rgba(185, 255, 79, 0.7);
+}
+
+.program-preview.offline .program-preview-status i,
+.program-preview.disabled .program-preview-status i {
+  background: var(--danger);
+  box-shadow: none;
 }
 
 .stage-grid {

@@ -1,8 +1,8 @@
 # Control API v1 / 控制接口 v1
 
-M1 exposes a small HTTP/1.1 and WebSocket control plane from `webobsd`. It uses the same [scene document](scene-schema-v1.md) that libobs renders and that the atomic scene store persists.
+M1 exposes a small HTTP/1.1 and WebSocket control plane from `webobsd`. M2 extends the same origin with a constrained WHEP playback proxy. The scene API uses the same [scene document](scene-schema-v1.md) that libobs renders and that the atomic scene store persists.
 
-M1 由 `webobsd` 提供一组精简的 HTTP/1.1 与 WebSocket 控制接口。接口、libobs 渲染和原子场景存储共用同一份[场景文档](scene-schema-v1.md)。
+M1 由 `webobsd` 提供一组精简的 HTTP/1.1 与 WebSocket 控制接口，M2 在同源下增加受限 WHEP 播放代理。场景接口、libobs 渲染和原子场景存储共用同一份[场景文档](scene-schema-v1.md)。
 
 ## Security boundary / 安全边界
 
@@ -16,10 +16,11 @@ The server applies these additional controls:
 - mutation requests reject a present foreign Origin;
 - WebSocket upgrades require an Origin exactly matching the local Host;
 - no CORS permission is returned;
-- JSON bodies are limited to 1 MiB, headers to 16 KiB, and reads to 15 seconds;
+- JSON bodies are limited to 1 MiB, WHEP SDP to 64 KiB, headers to 16 KiB, and reads to 15 seconds;
 - responses disable caching and include restrictive CSP, content-type, referrer, and permissions headers;
 - API scene responses redact RTSP userinfo and never return stored credentials.
 - the bundled editor is served from the same origin, with a restrictive CSP and no external scripts, fonts, or CDN dependencies.
+- the WHEP upstream is fixed to the container loopback MediaMTX; upstream session locations are replaced with random same-origin tokens and never exposed to browsers.
 
 服务还会限制本地 Host、校验 Origin、不返回 CORS 授权、限制请求体/请求头/读取时长、发送严格安全响应头，并在所有 API 场景响应中隐藏 RTSP 凭据。这些措施只降低本机误用和浏览器跨站请求风险，不能代替 M6 的身份认证与加密。
 
@@ -48,8 +49,32 @@ Returns the bundled React/TypeScript scene editor. The non-hashed HTML entry is 
 Returns `200` while the control thread is serving:
 
 ```json
-{"status":"ok","milestone":"M1"}
+{"status":"ok","milestone":"M2"}
 ```
+
+### `GET /api/v1/program/status`
+
+Returns whether WebRTC output is configured and the only browser-visible signaling route. `enabled` describes configuration, not current peer or publisher health.
+
+```json
+{"enabled":true,"endpoint":"/api/v1/program/whep"}
+```
+
+### `POST /api/v1/program/whep`
+
+Accepts one complete recvonly WebRTC offer with `Content-Type: application/sdp`. The browser waits for ICE gathering to complete before POST; trickle ICE/PATCH is not implemented in M2. A successful response is `201 application/sdp`, contains the answer, and rewrites MediaMTX's internal location to an opaque local resource:
+
+```http
+Location: /api/v1/program/whep/session/0123456789abcdef0123456789abcdef
+```
+
+The proxy accepts no caller-selected upstream URL, credentials, query parameters, or fragments. It rejects a foreign Origin with `403`, SDP larger than 64 KiB with `413`, non-SDP content with `415`, and upstream signaling failure with `502`. At most 64 opaque sessions are retained; stale bookkeeping expires after ten minutes.
+
+浏览器只向本站提交完整 ICE offer。代理的上游固定为容器回环 MediaMTX，内部会话地址会被替换为随机同源令牌；调用方不能选择目标或携带上游凭据。M2 尚不支持 trickle ICE/PATCH。
+
+### `DELETE /api/v1/program/whep/session/{token}`
+
+Closes the mapped MediaMTX reader and returns `204`. Unknown or malformed tokens return `404`; the upstream location is never accepted from the client. The bundled player sends this request on reconnect and page close when the browser permits a keepalive request.
 
 ### `GET /api/v1/scene`
 

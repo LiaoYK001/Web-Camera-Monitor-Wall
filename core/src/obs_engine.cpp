@@ -275,6 +275,19 @@ bool wait_for_output_stop(obs_output_t *output, OutputState &state, std::string_
     return true;
 }
 
+bool wait_for_webrtc_connection(obs_output_t *output, const OutputState &state, int timeout_seconds)
+{
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(timeout_seconds);
+    while (std::chrono::steady_clock::now() < deadline) {
+        if (state.stopped.load())
+            return false;
+        if (obs_output_get_connect_time_ms(output) > 0 && obs_output_get_total_frames(output) > 0)
+            return true;
+        std::this_thread::sleep_for(std::chrono::milliseconds(50));
+    }
+    return false;
+}
+
 } // namespace
 
 ExitCode run_obs_engine(const Config &config, const SceneDocument &document)
@@ -473,7 +486,7 @@ ExitCode run_obs_engine(const Config &config, const SceneDocument &document)
         return ExitCode::output_failed;
     }
     if (whip_output)
-        blog(LOG_INFO, "WebRTC program publishing started");
+        blog(LOG_INFO, "WebRTC program publishing initiated");
 
     if (!obs_output_start(output.get())) {
         const char *message = obs_output_get_last_error(output.get());
@@ -486,6 +499,26 @@ ExitCode run_obs_engine(const Config &config, const SceneDocument &document)
     }
     blog(LOG_INFO, "Recording started: %dx%d at %d fps, %d Kbps", document.canvas.width,
          document.canvas.height, config.fps, config.bitrate_kbps);
+
+    if (whip_output &&
+        !wait_for_webrtc_connection(whip_output.get(), whip_output_state, config.connect_timeout_seconds)) {
+        blog(LOG_ERROR, "WebRTC publishing did not become ready within %d seconds",
+             config.connect_timeout_seconds);
+        control_server.stop();
+        bool stopped = true;
+        if (obs_output_active(whip_output.get()))
+            stopped = wait_for_output_stop(whip_output.get(), whip_output_state, "WebRTC output");
+        if (obs_output_active(output.get()) && !wait_for_output_stop(output.get(), output_state, "Recording output"))
+            stopped = false;
+        whip_output.reset();
+        output.reset();
+        std::filesystem::remove(temporary_path, path_error);
+        if (!stopped)
+            blog(LOG_ERROR, "One or more outputs could not be stopped after the WebRTC startup timeout");
+        return ExitCode::output_failed;
+    }
+    if (whip_output)
+        blog(LOG_INFO, "WebRTC program publishing is ready");
 
     const auto recording_started = std::chrono::steady_clock::now();
     bool unexpected_stop = false;

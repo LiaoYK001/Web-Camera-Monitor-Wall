@@ -14,6 +14,7 @@ set(WEBOBS_WEB_ROOT "/opt/webobs/ui" CACHE PATH "Installed WebOBS editor root")
 
 find_package(PkgConfig REQUIRED)
 find_package(Boost 1.83 REQUIRED)
+find_package(CURL REQUIRED)
 find_package(Threads REQUIRED)
 pkg_check_modules(JANSSON REQUIRED IMPORTED_TARGET jansson)
 
@@ -52,7 +53,7 @@ add_executable(webobsd
     core/src/obs_scene_runtime.cpp
     core/src/scene_controller.cpp
 )
-target_link_libraries(webobsd PRIVATE webobs-common webobs-libobs Boost::headers Threads::Threads)
+target_link_libraries(webobsd PRIVATE webobs-common webobs-libobs Boost::headers CURL::libcurl Threads::Threads)
 target_compile_options(webobsd PRIVATE -Wall -Wextra -Wpedantic)
 target_compile_definitions(webobsd PRIVATE
     WEBOBS_OBS_PREFIX="${WEBOBS_OBS_PREFIX}"

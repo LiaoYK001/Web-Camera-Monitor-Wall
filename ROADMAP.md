@@ -8,15 +8,15 @@ This roadmap describes milestone order and acceptance gates, not promised releas
 
 ## Current position / 当前位置
 
-**🟡 M2 — Composite WebRTC：MediaMTX 与 libobs WHIP 发布已完成；当前位置是同源 WHEP 浏览器播放。**
+**🟡 M2 — Composite WebRTC：WHIP 发布、同源 WHEP 播放与自动重连已完成；当前位置是故障、安全和真实来源收尾验收。**
 
-M0 and M1 are complete. M2 now packages pinned MediaMTX 1.18.2 in the single product image and publishes the H.264 program through pinned libdatachannel and `obs-webrtc`. The current implementation step is proxying WHEP through the same-origin control server and adding browser playback, status, and reconnect behavior.
+M0 and M1 are complete. M2 packages pinned MediaMTX 1.18.2 in the single product image, publishes the H.264 program through pinned libdatachannel and `obs-webrtc`, and plays it through an opaque same-origin WHEP proxy. Deterministic Chrome acceptance now proves initial playback and automatic reconnect across a product restart; failure, security, and private-source gates remain.
 
-M0 与 M1 已全部完成。M2 现已在单一产品镜像中打包固定的 MediaMTX 1.18.2，并通过固定版本 libdatachannel 与 `obs-webrtc` 发布 H.264 合成画面。当前实现步骤是通过同源控制服务代理 WHEP，并加入浏览器播放、状态和重连行为。
+M0 与 M1 已全部完成。M2 已在单一产品镜像中打包固定版本 MediaMTX 1.18.2，通过固定版本 libdatachannel 与 `obs-webrtc` 发布 H.264 合成画面，并经随机令牌同源 WHEP 代理播放。确定性 Chrome 验收已证明首次播放和产品重启后的自动重连；当前剩余故障、安全和私有来源门禁。
 
 ```text
-M0 complete       M1 complete       M2 router + WHIP       M2 WHEP browser
-M0 已完成      -> M1 已完成      -> M2 路由与发布         -> M2 浏览器播放
+M0 complete       M1 complete       M2 WHIP + WHEP         M2 final gates
+M0 已完成      -> M1 已完成      -> M2 发布与播放         -> M2 收尾门禁
 ✅                ✅                ✅                       🟡 CURRENT
 ```
 
@@ -47,6 +47,7 @@ M0 已于 2026-08-11 在真实摄像头门禁通过后完成。后续修改采�
 - M1 browser editor / M1 浏览器编辑器：pinned React 19.2.8, TypeScript 7.0.2, and Vite 8.1.5 build successfully; the product image serves the editor and hashed assets with restrictive headers, traversal rejection, and same-origin API/WebSocket access / 固定版本 React 19.2.8、TypeScript 7.0.2 与 Vite 8.1.5 构建成功；产品镜像可在严格响应头、目录穿越拒绝及同源 API/WebSocket 约束下提供编辑器和哈希资源。
 - M1 real-camera gate rehearsal / M1 真实门禁演练：both PowerShell and POSIX-shell entry points passed; the isolated gate added and removed a duplicate RTSP source through the API, applied move/resize/mute/volume, destroyed its credential-bearing volume, and produced recordings up to 20.1 seconds with zero blackout frames using the MediaMTX fixture / PowerShell 与 POSIX Shell 两套入口均通过；隔离门禁通过 API 增删同源 RTSP、应用移动/缩放/静音/音量、销毁含凭据配置卷，并使用 MediaMTX 夹具生成最长 20.1 秒且空黑帧为零的录像；该证据不替代真实摄像头复验。
 - M1 real-camera acceptance / M1 真实摄像头验收：a private source passed live add/remove, move/resize, mute, and volume mutations while recording; the finalized H.264 1920×1080, 30 FPS, video-only MP4 is 38.3 seconds long, fully decodable, and contains zero blackout frames; the endpoint is intentionally omitted / 私有来源在录制期间通过在线增删、移动/缩放、静音和音量变更；最终 H.264 1920×1080、30 FPS、仅视频 MP4 时长 38.3 秒，可完整解码且空黑帧为零；此处有意省略端点信息。
+- M2 browser WebRTC / M2 浏览器 WebRTC：an isolated Chrome session established a same-origin WHEP H.264 reader, survived a full product-container restart through automatic reconnect, and produced a second 21.6-second 640×360, 10 FPS, video-only, fully decodable, non-black MP4; wrong content type, foreign Origin, oversized SDP, and forged session tokens were rejected / 隔离 Chrome 通过同源 WHEP 建立 H.264 reader，并在产品容器完整重启后自动重连；第二轮生成 21.6 秒 640×360、10 FPS、仅视频、可完整解码且非黑的 MP4，同时错误媒体类型、外部 Origin、超大 SDP 和伪造令牌均被拒绝。
 
 ## Milestones / 里程碑
 
@@ -91,7 +92,7 @@ M0 已于 2026-08-11 在真实摄像头门禁通过后完成。后续修改采�
 - [x] Package pinned MediaMTX 1.18.2 and its license in the single product image / 在单一产品镜像中打包固定版本 MediaMTX 1.18.2 及许可证
 - [x] Keep signaling internal, expose explicit ICE/UDP, and supervise graceful multi-process shutdown / 保持信令内部监听、显式发布 ICE/UDP，并监督多进程优雅关停
 - [x] Build and load `obs-webrtc`, then publish the libobs program through WHIP / 构建并加载 `obs-webrtc`，通过 WHIP 发布 libobs 合成画面
-- [ ] Proxy WHEP through the same-origin control server and add browser playback with reconnect / 通过同源控制服务代理 WHEP，并增加浏览器播放与重连
+- [x] Proxy WHEP through the same-origin control server and add browser playback with reconnect / 通过同源控制服务代理 WHEP，并增加浏览器播放与重连
 - [ ] Pass deterministic container, browser, disconnect, security, and real-camera acceptance / 通过确定性容器、浏览器、断线、安全及真实摄像头验收
 
 ### M3 — Direct & Hybrid

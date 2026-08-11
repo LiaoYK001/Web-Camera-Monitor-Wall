@@ -8,9 +8,11 @@ import {
   useState,
 } from 'react';
 import { connectSceneEvents, ControlApiError, fetchScene, replaceScene } from './api';
+import ProgramPreview from './ProgramPreview';
 import type { ScaleMode, SceneDocument, SceneItem, SceneSource, Transport } from './types';
 
 type ConnectionState = 'connecting' | 'online' | 'offline';
+type WorkspaceMode = 'program' | 'layout';
 type PointerMode = 'move' | 'resize';
 
 interface PointerOperation {
@@ -105,6 +107,7 @@ export default function App() {
   const [conflict, setConflict] = useState('');
   const [saving, setSaving] = useState(false);
   const [adding, setAdding] = useState(false);
+  const [workspaceMode, setWorkspaceMode] = useState<WorkspaceMode>('program');
   const [newName, setNewName] = useState('新摄像头');
   const [newUrl, setNewUrl] = useState('');
   const [newTransport, setNewTransport] = useState<Transport>('tcp');
@@ -478,10 +481,15 @@ export default function App() {
               <span className="eyebrow">节目画布</span>
               <strong>{draft.canvas.width} × {draft.canvas.height}</strong>
             </div>
-            <p>拖动画面调整位置，拖动右下角调整尺寸</p>
+            <div className="workspace-mode" aria-label="工作区显示模式">
+              <button className={workspaceMode === 'program' ? 'active' : ''} type="button" onClick={() => setWorkspaceMode('program')}>实时节目</button>
+              <button className={workspaceMode === 'layout' ? 'active' : ''} type="button" onClick={() => setWorkspaceMode('layout')}>布局编辑</button>
+            </div>
           </div>
           <div className="stage-wrap">
-            {draft.items.length === 0 ? <EmptyState onAdd={() => setAdding(true)} /> : (
+            {workspaceMode === 'program' ? (
+              <ProgramPreview aspectRatio={`${draft.canvas.width} / ${draft.canvas.height}`} />
+            ) : draft.items.length === 0 ? <EmptyState onAdd={() => setAdding(true)} /> : (
               <div
                 className="stage"
                 ref={stageRef}
@@ -533,8 +541,8 @@ export default function App() {
             )}
           </div>
           <div className="workspace-footer">
-            <span>布局预览</span>
-            <span>实际视频由容器内 libobs 持续合成与录制</span>
+            <span>{workspaceMode === 'program' ? 'WHEP 实时播放' : '布局预览'}</span>
+            <span>{workspaceMode === 'program' ? '浏览器仅连接同源信令代理，不接触容器内部端点' : '保存后由容器内 libobs 原子应用到合成输出'}</span>
           </div>
         </section>
 

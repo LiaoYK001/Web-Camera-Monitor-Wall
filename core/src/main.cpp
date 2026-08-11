@@ -4,6 +4,8 @@
 #include "webobs/scene_document.hpp"
 #include "webobs/scene_store.hpp"
 
+#include <curl/curl.h>
+
 #include <iostream>
 #include <string>
 #include <utility>
@@ -88,5 +90,11 @@ int main(int argc, char **argv)
         std::cerr << "configuration error: " << *validation_error << '\n';
         return static_cast<int>(webobs::ExitCode::invalid_config);
     }
-    return static_cast<int>(webobs::run_obs_engine(config, document));
+    if (curl_global_init(CURL_GLOBAL_DEFAULT) != CURLE_OK) {
+        std::cerr << "runtime error: could not initialize the HTTP signaling library\n";
+        return static_cast<int>(webobs::ExitCode::control_server_failed);
+    }
+    const int exit_code = static_cast<int>(webobs::run_obs_engine(config, document));
+    curl_global_cleanup();
+    return exit_code;
 }
