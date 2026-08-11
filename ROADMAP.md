@@ -8,11 +8,11 @@ This roadmap describes milestone order and acceptance gates, not promised releas
 
 ## Current position / 当前位置
 
-**🟡 M1 — Web Control：浏览器编辑器和确定性回归已完成；当前位置是最终真实摄像头复验。**
+**🟡 M1 — Web Control：浏览器编辑器、确定性回归和真实门禁合成演练已完成；当前位置是最终真实摄像头复验。**
 
-M0 is complete. M1 now provides a bundled React/TypeScript editor that shares the versioned scene document with libobs, persists edits atomically through ETag/If-Match, and synchronizes committed scenes through WebSocket. Docker build and deterministic regression pass; the remaining M1 exit gate is real-camera revalidation.
+M0 is complete. M1 now provides a bundled React/TypeScript editor that shares the versioned scene document with libobs, persists edits atomically through ETag/If-Match, and synchronizes committed scenes through WebSocket. Docker build, deterministic regression, and the synthetic rehearsal of the isolated real-camera gate pass; the remaining M1 exit gate is execution against a private real camera.
 
-M0 已全部完成。M1 现已提供随镜像交付的 React/TypeScript 编辑器，与 libobs 共用版本化场景文档，通过 ETag/If-Match 原子保存修改，并以 WebSocket 同步已提交场景。Docker 构建和确定性回归已通过；剩余的 M1 完成门禁是真实摄像头复验。
+M0 已全部完成。M1 现已提供随镜像交付的 React/TypeScript 编辑器，与 libobs 共用版本化场景文档，通过 ETag/If-Match 原子保存修改，并以 WebSocket 同步已提交场景。Docker 构建、确定性回归及隔离真实门禁的合成演练已通过；剩余的 M1 完成门禁是在私有真实摄像头上执行该门禁。
 
 ```text
 M0 complete       M1 scene + API       M1 browser editor       Real-camera revalidation
@@ -45,6 +45,7 @@ M0 已于 2026-08-11 在真实摄像头门禁通过后完成。后续修改采�
 - Real camera / 真实摄像头：a private 640×360 source produced a 30.100-second H.264 1920×1080, 30 FPS, video-only MP4 that passed full decode and non-black-frame validation; no private URL or credential is recorded here / 私有 640×360 来源生成 30.100 秒 H.264 1920×1080、30 FPS、仅视频 MP4，并通过完整解码与非黑帧校验；此处不记录私有地址或凭据。
 - M1 control plane / M1 控制面：live add/remove, transforms, crop, ordering, visibility, decoded-frame texture priming, atomic item replacement, unreachable-source rollback, ETag/WebSocket synchronization, private persistence, and same-container restart pass together; three consecutive mutation recordings of at least 18 seconds contain no black frame, and each restarted scene produces another decodable MP4 / 在线增删、变换、裁切、层级、可见性、解码帧纹理预装、原子 item 替换、不可达来源回滚、ETag/WebSocket 同步、私有持久化及同容器重启联合通过；连续三轮至少 18 秒动态变更录像均无黑帧，每次重启恢复场景后均可再次生成可解码 MP4。
 - M1 browser editor / M1 浏览器编辑器：pinned React 19.2.8, TypeScript 7.0.2, and Vite 8.1.5 build successfully; the product image serves the editor and hashed assets with restrictive headers, traversal rejection, and same-origin API/WebSocket access / 固定版本 React 19.2.8、TypeScript 7.0.2 与 Vite 8.1.5 构建成功；产品镜像可在严格响应头、目录穿越拒绝及同源 API/WebSocket 约束下提供编辑器和哈希资源。
+- M1 real-camera gate rehearsal / M1 真实门禁演练：both PowerShell and POSIX-shell entry points passed; the isolated gate added and removed a duplicate RTSP source through the API, applied move/resize/mute/volume, destroyed its credential-bearing volume, and produced recordings up to 20.1 seconds with zero blackout frames using the MediaMTX fixture / PowerShell 与 POSIX Shell 两套入口均通过；隔离门禁通过 API 增删同源 RTSP、应用移动/缩放/静音/音量、销毁含凭据配置卷，并使用 MediaMTX 夹具生成最长 20.1 秒且空黑帧为零的录像；该证据不替代真实摄像头复验。
 
 ## Milestones / 里程碑
 

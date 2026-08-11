@@ -101,6 +101,34 @@ shell 入口通过 `WEBOBS_REAL_WIDTH`、`WEBOBS_REAL_HEIGHT`、`WEBOBS_REAL_FPS
 
 录像保存在忽略的 `recordings/`，经过二次脱敏的本地日志保存在忽略的 `tests/artifacts/`。脚本不会把 URL 放入命令行，也不会保存检测到凭据泄漏的原始日志。即使日志已脱敏，也不要将真实摄像头日志或录像上传到公开 Issue。
 
+### M1 真实摄像头验收
+
+M1 使用独立门禁验证真实来源在持续录制期间接受 Web 控制：先把既有画面缩放到左侧并通过 API 在线添加同一摄像头的第二个来源，验证静音和音量配置后删除原来源，再把新来源恢复为全画布。测试至少继续录制 30 秒，停止后验证 H.264、仅视频轨、分辨率、FPS、完整解码和逐帧无空黑场。
+
+PowerShell：
+
+```powershell
+./tests/run-m1-real-camera.ps1
+```
+
+已有当前产品和测试镜像时可增加 `-SkipBuild`。Linux shell 使用：
+
+```bash
+./tests/run-m1-real-camera.sh
+```
+
+shell 参数沿用 `WEBOBS_ENV_FILE`、`WEBOBS_REAL_*` 和 `WEBOBS_SKIP_BUILD=1`。门禁不会把私有 URL 放入 Docker、curl 或 jq 命令参数；URL 只通过环境进入隔离测试网络，场景凭据只存在于一次性命名卷，结束时随测试项目销毁。原始容器日志先在内存中检查凭据泄漏，写入忽略目录前会进一步隐藏整个 RTSP 端点。
+
+不使用真实摄像头时，可执行完全相同控制路径的 MediaMTX 合成演练：
+
+```powershell
+./tests/run-m1-real-camera.ps1 -SkipBuild -UseSyntheticFixture `
+  -DurationSeconds 10 -Width 640 -Height 360 -Fps 10 `
+  -BitrateKbps 800 -ConnectTimeoutSeconds 8
+```
+
+shell 对应设置 `WEBOBS_REAL_USE_SYNTHETIC=1`；合成演练只证明门禁编排和控制事务，不能替代最终真实摄像头复验。
+
 ## 命令行接口
 
 容器配置优先级为：命令行参数 > `WEBOBS_*` 环境变量 > 默认值。

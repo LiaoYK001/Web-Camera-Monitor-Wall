@@ -9,6 +9,7 @@ maximum_duration="${TEST_MAX_DURATION:-15}"
 require_pillarbox="${TEST_REQUIRE_PILLARBOX:-0}"
 require_two_up="${TEST_REQUIRE_TWO_UP:-0}"
 reject_blackout="${TEST_REJECT_BLACKOUT:-0}"
+blackout_yavg_max="${TEST_BLACKOUT_YAVG_MAX:-30}"
 sample_timestamp="${TEST_SAMPLE_TIMESTAMP:-0}"
 sample_from_end_seconds="${TEST_SAMPLE_FROM_END_SECONDS:-}"
 
@@ -31,6 +32,10 @@ case "$reject_blackout" in
     0|1) ;;
     *) echo "TEST_REJECT_BLACKOUT must be 0 or 1" >&2; exit 2 ;;
 esac
+if ! awk -v value="$blackout_yavg_max" 'BEGIN { exit !(value >= 0 && value <= 255) }'; then
+    echo "TEST_BLACKOUT_YAVG_MAX must be between 0 and 255" >&2
+    exit 2
+fi
 
 test -s "$file"
 
@@ -129,13 +134,13 @@ if [ "$reject_blackout" = "1" ]; then
             /lavfi.signalstats.YAVG=/ {
                 value = $2 + 0
                 if (!seen || value < minimum) minimum = value
-                if (value < 30) black_frames++
+                if (value < threshold) black_frames++
                 seen = 1
             }
             END {
                 if (!seen) exit 1
                 print minimum, black_frames + 0
-            }')"
+            }' threshold="$blackout_yavg_max")"
     set -- $blackout_stats
     minimum_yavg="$1"
     black_frames="$2"
