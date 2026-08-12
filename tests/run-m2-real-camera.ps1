@@ -16,7 +16,9 @@ param(
     [ValidateRange(1, 300)]
     [int]$ConnectTimeoutSeconds = 20,
     [ValidateSet('tcp', 'udp')]
-    [string]$RtspTransport = 'tcp'
+    [string]$RtspTransport = 'tcp',
+    [ValidateSet('composite', 'direct')]
+    [string]$PlaybackMode = 'composite'
 )
 
 $ErrorActionPreference = 'Stop'
@@ -28,6 +30,8 @@ $TestComposeFile = Join-Path $PSScriptRoot 'compose.smoke.yaml'
 $RecordingDirectory = Join-Path $RepositoryRoot 'recordings'
 $ArtifactDirectory = Join-Path $PSScriptRoot 'artifacts'
 $BaseUri = 'http://127.0.0.1:8080'
+$Milestone = if ($PlaybackMode -eq 'direct') { 'M3' } else { 'M2' }
+$RecordingPrefix = if ($PlaybackMode -eq 'direct') { 'm3-real-camera' } else { 'm2-real-camera' }
 
 function Assert-True {
     param([bool]$Condition, [string]$Message)
@@ -46,7 +50,7 @@ function Get-ContainerLogText {
     finally {
         $ErrorActionPreference = $PreviousPreference
     }
-    if ($Status -ne 0) { throw 'Could not read the M2 product log.' }
+    if ($Status -ne 0) { throw "Could not read the $Milestone product log." }
     return $Lines -join "`n"
 }
 
@@ -89,7 +93,7 @@ else {
     $RtspUrl = Get-DotEnvValue -Path $EnvFile -Name 'WEBOBS_RTSP_URL'
 }
 if ([string]::IsNullOrWhiteSpace($RtspUrl) -or $RtspUrl.Contains('${')) {
-    throw 'M2 real-camera acceptance requires a literal WEBOBS_RTSP_URL.'
+    throw "$Milestone real-camera acceptance requires a literal WEBOBS_RTSP_URL."
 }
 try { $ParsedRtspUrl = [Uri]$RtspUrl }
 catch { throw 'WEBOBS_RTSP_URL is not a valid absolute URI.' }
@@ -154,12 +158,12 @@ if ($LASTEXITCODE -ne 0) { throw 'Docker Compose is unavailable.' }
 
 New-Item -ItemType Directory -Force -Path $RecordingDirectory, $ArtifactDirectory | Out-Null
 $Timestamp = [DateTime]::UtcNow.ToString('yyyyMMddTHHmmssZ')
-$RecordingName = "m2-real-camera-$Timestamp.mp4"
+$RecordingName = "$RecordingPrefix-$Timestamp.mp4"
 $RecordingPath = Join-Path $RecordingDirectory $RecordingName
-$LogPath = Join-Path $ArtifactDirectory "m2-real-camera-$Timestamp.log"
-$Profile = Join-Path $ArtifactDirectory ('chrome-m2-real-' + [Guid]::NewGuid().ToString('N'))
+$LogPath = Join-Path $ArtifactDirectory "$RecordingPrefix-$Timestamp.log"
+$Profile = Join-Path $ArtifactDirectory ("chrome-$RecordingPrefix-" + [Guid]::NewGuid().ToString('N'))
 New-Item -ItemType Directory -Path $Profile | Out-Null
-$ProjectName = ("webobs-m2-real-$Timestamp").ToLowerInvariant()
+$ProjectName = ("webobs-$RecordingPrefix-$Timestamp").ToLowerInvariant()
 
 $ManagedEnvironment = @{
     WEBOBS_RTSP_URL = $RtspUrl
@@ -198,36 +202,65 @@ try {
     }
 
     & docker @ComposeArguments up --no-build -d webobs
-    if ($LASTEXITCODE -ne 0) { throw 'Could not start the isolated M2 product container.' }
+    if ($LASTEXITCODE -ne 0) { throw "Could not start the isolated $Milestone product container." }
     $ContainerId = (@(& docker @ComposeArguments ps -q webobs) -join '').Trim()
-    if ([string]::IsNullOrWhiteSpace($ContainerId)) { throw 'Could not resolve the M2 product container ID.' }
+    if ([string]::IsNullOrWhiteSpace($ContainerId)) { throw "Could not resolve the $Milestone product container ID." }
 
     $Ready = $false
     $Deadline = [DateTime]::UtcNow.AddSeconds($ConnectTimeoutSeconds + 45)
     while ([DateTime]::UtcNow -lt $Deadline) {
         try {
-            $Status = Invoke-RestMethod -Uri "$BaseUri/api/v1/program/status" -TimeoutSec 2
-            if ($Status.enabled -eq $true -and $Status.endpoint -eq '/api/v1/program/whep') {
-                $Ready = $true
-                break
+            if ($PlaybackMode -eq 'direct') {
+                $CapabilityResponse = Invoke-WebRequest -UseBasicParsing `
+                    -Uri "$BaseUri/api/v1/playback/capabilities" -TimeoutSec 2
+                Assert-True ($CapabilityResponse.Content -notmatch 'rtsp://|(?:direct|hybrid)-[a-f0-9]{32}|mediamtx') `
+                    'M3 real-camera capabilities exposed an RTSP or internal endpoint.'
+                $Capabilities = $CapabilityResponse.Content | ConvertFrom-Json
+                $Capability = $Capabilities.sources | Where-Object sourceId -eq 'camera-1'
+                if ($Capabilities.modes.direct.enabled -eq $true -and
+                    $Capability.endpoint -eq '/api/v1/sources/camera-1/whep') {
+                    $Ready = $true
+                    break
+                }
+            } else {
+                $Status = Invoke-RestMethod -Uri "$BaseUri/api/v1/program/status" -TimeoutSec 2
+                if ($Status.enabled -eq $true -and $Status.endpoint -eq '/api/v1/program/whep') {
+                    $Ready = $true
+                    break
+                }
             }
         } catch { Start-Sleep -Milliseconds 250 }
     }
-    Assert-True $Ready 'M2 product did not expose an enabled same-origin program endpoint.'
+    Assert-True $Ready "$Milestone product did not expose the expected same-origin playback endpoint."
 
     $ChromeArguments = @(
         '--headless=new', '--disable-gpu', '--disable-features=WebRtcHideLocalIpsWithMdns',
         '--no-first-run', '--no-default-browser-check', '--autoplay-policy=no-user-gesture-required',
-        "--user-data-dir=$Profile", "$BaseUri/"
+        "--user-data-dir=$Profile", $(if ($PlaybackMode -eq 'direct') { "$BaseUri/#direct" } else { "$BaseUri/" })
     )
     $ChromeProcess = Start-Process -FilePath $ChromePath -ArgumentList $ChromeArguments `
         -WindowStyle Hidden -PassThru
     Start-Sleep -Seconds $DurationSeconds
-    Assert-True (-not $ChromeProcess.HasExited) 'Headless Chrome exited before M2 real-camera playback completed.'
+    Assert-True (-not $ChromeProcess.HasExited) "Headless Chrome exited before $Milestone real-camera playback completed."
 
     $RawLog = Get-ContainerLogText -Id $ContainerId
-    Assert-True ($RawLog -match "is reading from path 'program', 1 track \(H264\)") `
-        'Chrome did not establish an H.264 WHEP reader for the real source.'
+    if ($PlaybackMode -eq 'direct') {
+        $CapabilityResponse = Invoke-WebRequest -UseBasicParsing `
+            -Uri "$BaseUri/api/v1/playback/capabilities" -TimeoutSec 5
+        Assert-True ($CapabilityResponse.Content -notmatch 'rtsp://|(?:direct|hybrid)-[a-f0-9]{32}|mediamtx') `
+            'M3 real-camera capabilities exposed an RTSP or internal endpoint.'
+        $Capabilities = $CapabilityResponse.Content | ConvertFrom-Json
+        $Capability = $Capabilities.sources | Where-Object sourceId -eq 'camera-1'
+        Assert-True ($Capability.strategy -in @('passthrough', 'transcode') -and
+            -not [string]::IsNullOrWhiteSpace($Capability.codec)) `
+            'M3 real-camera source was not classified for Direct/Hybrid playback.'
+        $ExpectedPath = if ($Capability.strategy -eq 'transcode') { 'hybrid' } else { 'direct' }
+        Assert-True ($RawLog -match "is reading from path '$ExpectedPath-[a-f0-9]{32}', 1 track \(H264\)") `
+            'Chrome did not establish the classified source-scoped H.264 WHEP reader.'
+    } else {
+        Assert-True ($RawLog -match "is reading from path 'program', 1 track \(H264\)") `
+            'Chrome did not establish an H.264 program WHEP reader for the real source.'
+    }
     if (Test-CredentialLeak -Text $RawLog) {
         throw 'Credential redaction failed; raw output was suppressed.'
     }
@@ -238,9 +271,9 @@ try {
     $ChromeProcess = $null
 
     & docker @ComposeArguments stop webobs
-    if ($LASTEXITCODE -ne 0) { throw 'The M2 product container did not stop cleanly.' }
+    if ($LASTEXITCODE -ne 0) { throw "The $Milestone product container did not stop cleanly." }
     $ExitCode = (@(& docker inspect --format '{{.State.ExitCode}}' $ContainerId) -join '').Trim()
-    Assert-True ($LASTEXITCODE -eq 0 -and $ExitCode -eq '0') 'The M2 product process returned a non-zero status.'
+    Assert-True ($LASTEXITCODE -eq 0 -and $ExitCode -eq '0') "$Milestone product process returned a non-zero status."
 
     $RawLog = Get-ContainerLogText -Id $ContainerId
     if (Test-CredentialLeak -Text $RawLog) { throw 'Credential redaction failed; raw output was suppressed.' }
@@ -263,9 +296,9 @@ try {
         'webobs-m0-rtsp-fixture:local'
     )
     & docker @ValidatorArguments
-    if ($LASTEXITCODE -ne 0) { throw 'M2 real-camera recording validation failed.' }
+    if ($LASTEXITCODE -ne 0) { throw "$Milestone real-camera recording validation failed." }
 
-    Write-Host "M2 real-camera WebRTC acceptance passed. Recording: $RecordingPath"
+    Write-Host "$Milestone real-camera $PlaybackMode WebRTC acceptance passed. Recording: $RecordingPath"
     Write-Host "Endpoint-redacted local log (do not attach publicly): $LogPath"
 }
 finally {

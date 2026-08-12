@@ -8,16 +8,16 @@ This roadmap describes milestone order and acceptance gates, not promised releas
 
 ## Current position / 当前位置
 
-**🟡 M3 — Direct & Hybrid：按需 Direct WHEP、显式模式切换、共享布局与选择性 Hybrid 转码已完成；当前位置是在线场景变更、重连与私有来源门禁。**
+**✅ M3 — Direct & Hybrid 已完成；当前位置推进到 M4 Browser Sources 的设计与依赖评估，M4 尚未开始施工。**
 
-M0, M1, and M2 are complete. M3 now creates random, source-scoped MediaMTX pull paths on demand, exposes only same-origin WHEP resources, and renders sources in the browser with the same scene geometry as libobs. Codec probing keeps compatible streams on passthrough and starts an on-demand H.264 transcoder only for incompatible streams. Deterministic Direct and mixed H.264/HEVC Hybrid Chrome acceptance pass. Live mutation/reconnect coverage and the private-source gate remain.
+M0 through M3 are complete. M3 creates random source-scoped MediaMTX pull paths on demand, exposes only same-origin WHEP resources, shares scene geometry between browser and libobs rendering, keeps compatible codecs on passthrough, and starts H.264 transcoding only for incompatible sources. Deterministic Direct/Hybrid, live mutation, disconnect/reconnect, route cleanup, and private real-source gates all pass. M4 dependency and security design is next and has not started.
 
-M0、M1 与 M2 已全部完成。M3 现已按需创建随机且按来源隔离的 MediaMTX 拉流路径，只向浏览器暴露同源 WHEP，并使用与 libobs 相同的场景几何数据布局来源；编码探测会让兼容流保持直通，且仅为不兼容流启动按需 H.264 转码。确定性 Direct 与 H.264/HEVC 混合 Hybrid Chrome 验收均已通过。当前剩余在线变更/重连覆盖和私有来源门禁。
+M0 至 M3 已全部完成。M3 会按需创建随机且按来源隔离的 MediaMTX 拉流路径，只向浏览器暴露同源 WHEP，并让浏览器与 libobs 共享场景几何数据；兼容编码保持直通，仅为不兼容来源启动按需 H.264 转码。确定性 Direct/Hybrid、在线场景变更、断流重连、路由清理及私有真实来源门禁均已通过。下一步是 M4 依赖与安全设计，尚未开始施工。
 
 ```text
-M0 complete       M1 complete       M2 complete             M3 Direct & Hybrid
-M0 已完成      -> M1 已完成      -> M2 已完成             -> M3 直连与混合
-✅                ✅                ✅                       🟡 CURRENT
+M0 complete       M1 complete       M2 complete       M3 complete       M4 Browser Sources
+M0 已完成      -> M1 已完成      -> M2 已完成      -> M3 已完成      -> M4 浏览器源
+✅                ✅                ✅                ✅                ⬜ NEXT
 ```
 
 ### M0 acceptance / M0 验收
@@ -51,6 +51,8 @@ M0 已于 2026-08-11 在真实摄像头门禁通过后完成。后续修改采�
 - M2 real-camera acceptance / M2 真实摄像头验收：a private source sustained same-origin WHEP/H.264 playback in isolated Chrome and produced a 38.966-second 1920×1080, 30 FPS, video-only MP4 that passed full decode with zero black frames; the product stopped with exit code 0, and no private endpoint or credential is recorded here / 私有来源在隔离 Chrome 中持续完成同源 WHEP/H.264 播放，并生成 38.966 秒 1920×1080、30 FPS、仅视频 MP4，完整解码且黑帧为零；产品以状态码 0 停止，此处不记录私有端点或凭据。
 - M3 Direct foundation / M3 直达底座：isolated Chrome established two concurrent H.264 readers through source-scoped same-origin WHEP routes backed by random 128-bit internal paths; capability responses exposed neither RTSP nor internal endpoints, origin/content/source boundary tests passed, and the concurrent run produced a 26.8-second 640×360, 10 FPS, fully decodable MP4 with zero black frames / 隔离 Chrome 通过按来源限定的同源 WHEP 路由并发建立两路 H.264 reader，内部路径为随机 128-bit 名称；能力响应未暴露 RTSP 或内部端点，Origin、媒体类型和来源边界测试通过，并在并发运行中生成 26.8 秒 640×360、10 FPS、可完整解码且零黑帧 MP4。
 - M3 selective Hybrid / M3 选择性混合：the deterministic H.264/HEVC scene classified H.264 as passthrough and HEVC as transcode, ran exactly one on-demand FFmpeg/x264 process, released it after the browser page closed, and produced a 25.3-second 640×360, 10 FPS recording with zero black frames; subsequent Direct and Composite reconnect regressions also passed / 确定性 H.264/HEVC 场景将 H.264 分类为直通、HEVC 分类为转码，只运行一个按需 FFmpeg/x264 进程并在浏览器页面关闭后释放；生成 25.3 秒 640×360、10 FPS、零黑帧录像，后续 Direct 与 Composite 重连回归亦通过。
+- M3 lifecycle / M3 生命周期：an isolated Direct browser survived an HEVC publisher outage, rebuilt WHEP after recovery, switched one live source from Hybrid to Direct and back, replaced the opaque Hybrid route, removed the source and its transcoder, and produced a 49.1-second 640×360, 10 FPS H.264 recording with zero black frames / 隔离 Direct 浏览器在 HEVC 发布端断流后完成恢复与 WHEP 重建，将同一在线来源从 Hybrid 切换为 Direct 再切回、替换不透明 Hybrid 路径，并在移除来源后释放转码器；生成 49.1 秒 640×360、10 FPS、零黑帧 H.264 录像。
+- M3 real-camera acceptance / M3 真实摄像头验收：a private H.264 source used source-scoped same-origin Direct WHEP passthrough in isolated Chrome and produced a finalized 30.8-second 640×360, 10 FPS recording with zero black frames; capability responses and persisted evidence contain no private endpoint / 私有 H.264 来源在隔离 Chrome 中通过按来源限定的同源 Direct WHEP 直通，并生成完成封装的 30.8 秒 640×360、10 FPS、零黑帧录像；能力响应和持久化证据均不包含私有端点。
 
 ## Milestones / 里程碑
 
@@ -59,7 +61,7 @@ M0 已于 2026-08-11 在真实摄像头门禁通过后完成。后续修改采�
 | M0 — Headless Proof | ✅ Complete / 已完成 | One RTSP source rendered by libobs and recorded as H.264 MP4 / 单路 RTSP 经 libobs 合成并录制为 H.264 MP4 | Docker build, synthetic RTSP, and real RTSP all pass / 三类验收全部通过 |
 | M1 — Web Control | ✅ Complete / 已完成 | Web UI, API, persistent scene model, RTSP source CRUD and transforms / Web UI、API、场景持久化、来源管理和画面变换 | Browser edits and libobs use the same scene state; recording remains stable / 浏览器与 libobs 共用同一场景状态，录制稳定 |
 | M2 — Composite WebRTC | ✅ Complete / 已完成 | Publish the server-composited program through WHIP/MediaMTX and play through WHEP/WebRTC / 服务端合成画面通过 WHIP/MediaMTX 发布并在浏览器播放 | Low-latency browser playback survives reconnects in one product container / 单容器内低延迟播放和重连通过 |
-| M3 — Direct & Hybrid | 🟡 In progress / 进行中 | Direct camera playback in browsers, client/server mode switching, selective transcoding / 浏览器直连播放、客户端/服务端模式切换和选择性转码 | Shared layout behaves consistently across Direct and Composite modes / 两种模式共享布局且行为一致 |
+| M3 — Direct & Hybrid | ✅ Complete / 已完成 | Direct camera playback in browsers, client/server mode switching, selective transcoding / 浏览器直连播放、客户端/服务端模式切换和选择性转码 | Shared layout behaves consistently across Direct and Composite modes / 两种模式共享布局且行为一致 |
 | M4 — Browser Sources | ⬜ Planned / 计划中 | `obs-browser` sources for dashboards, satellite maps, overlays and embeddable media / 支持仪表盘、卫星图、叠加层和可嵌入媒体 | CEF lifecycle, isolation, recovery, and resource limits pass container tests / CEF 生命周期、隔离、恢复和资源限制通过测试 |
 | M5 — Audio | ⬜ Planned / 计划中 | Per-source mute/volume, Web Audio in Direct mode, libobs mixing in Composite mode / 单源静音与音量、Direct Web Audio、Composite libobs 混音 | Multi-source sync, mute, volume, and output audio are verified / 多源同步、静音、音量和输出音轨通过验证 |
 | M6 — Production | ⬜ Planned / 计划中 | Authentication, HTTPS, TURN, health checks, GPU detection, backup, observability and upgrades / 鉴权、HTTPS、TURN、健康检查、GPU 检测、备份、可观测性和升级 | Security review, upgrade/rollback, recovery, and documented deployment pass / 安全、升级回滚、恢复和部署文档验收通过 |
@@ -118,8 +120,12 @@ M2 已于 2026-08-12 完成：确定性浏览器重连、故障与安全覆盖�
 - [x] Pass deterministic two-source Chrome, boundary-security, decode, and blackout acceptance / 通过确定性双路 Chrome、边界安全、解码与黑帧验收
 - [x] Detect source codec/browser capability and transcode only incompatible sources / 探测来源编码与浏览器能力，仅转码不兼容来源
 - [x] Add Hybrid per-source fallback and page-close cleanup acceptance / 增加 Hybrid 单源回退与页面关闭清理验收
-- [ ] Add live scene mutation and reconnect acceptance in Direct/Hybrid mode / 增加 Direct/Hybrid 模式下的在线场景变更与重连验收
-- [ ] Pass private real-camera Direct/Hybrid acceptance without endpoint leakage / 通过不泄漏端点的私有真实摄像头 Direct/Hybrid 验收
+- [x] Add live scene mutation and reconnect acceptance in Direct/Hybrid mode / 增加 Direct/Hybrid 模式下的在线场景变更与重连验收
+- [x] Pass private real-camera Direct/Hybrid acceptance without endpoint leakage / 通过不泄漏端点的私有真实摄像头 Direct/Hybrid 验收
+
+M3 completed on 2026-08-13 after deterministic Direct and selective Hybrid playback, live codec switching, source removal, publisher disconnect/reconnect, resource cleanup, and private real-source acceptance all passed without exposing upstream endpoints.
+
+M3 已于 2026-08-13 完成：确定性 Direct、选择性 Hybrid、在线编码切换、来源移除、发布端断流重连、资源回收及私有真实来源验收均已通过，且未暴露上游端点。
 
 ### M4 — Browser Sources
 
