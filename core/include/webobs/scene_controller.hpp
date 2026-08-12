@@ -44,6 +44,7 @@ public:
     SceneController(SceneDocument document, std::filesystem::path scene_file, ObsSceneRuntime &runtime);
 
     [[nodiscard]] SceneSnapshot snapshot() const;
+    [[nodiscard]] SceneDocument private_document_snapshot() const;
     SceneUpdateResult replace(std::string_view candidate_json,
                               std::optional<std::uint64_t> expected_revision);
 

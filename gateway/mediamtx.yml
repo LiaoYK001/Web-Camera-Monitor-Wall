@@ -12,8 +12,15 @@ authInternalUsers:
         path: program
       - action: read
         path: program
+      - action: read
+        path: ~^direct-[a-f0-9]{32}$
+      - action: api
 
-api: false
+api: true
+apiAddress: 127.0.0.1:9997
+apiEncryption: false
+apiAllowOrigins: []
+apiTrustedProxies: []
 metrics: false
 pprof: false
 playback: false

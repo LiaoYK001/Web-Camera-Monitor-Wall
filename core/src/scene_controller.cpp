@@ -54,6 +54,12 @@ SceneSnapshot SceneController::snapshot() const
     return result;
 }
 
+SceneDocument SceneController::private_document_snapshot() const
+{
+    std::lock_guard lock(mutex_);
+    return document_;
+}
+
 SceneUpdateResult SceneController::replace(std::string_view candidate_json,
                                            std::optional<std::uint64_t> expected_revision)
 {

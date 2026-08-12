@@ -1,8 +1,8 @@
 # Control API v1 / 控制接口 v1
 
-M1 exposes a small HTTP/1.1 and WebSocket control plane from `webobsd`. M2 extends the same origin with a constrained WHEP playback proxy. The scene API uses the same [scene document](scene-schema-v1.md) that libobs renders and that the atomic scene store persists.
+M1 exposes a small HTTP/1.1 and WebSocket control plane from `webobsd`. M2 extends the same origin with a constrained program WHEP proxy. M3 adds source-scoped Direct WHEP routes and a capability document. The scene API uses the same [scene document](scene-schema-v1.md) that libobs and the browser renderer consume and that the atomic scene store persists.
 
-M1 由 `webobsd` 提供一组精简的 HTTP/1.1 与 WebSocket 控制接口，M2 在同源下增加受限 WHEP 播放代理。场景接口、libobs 渲染和原子场景存储共用同一份[场景文档](scene-schema-v1.md)。
+M1 由 `webobsd` 提供一组精简的 HTTP/1.1 与 WebSocket 控制接口，M2 在同源下增加受限节目 WHEP 代理，M3 再增加按来源隔离的 Direct WHEP 路由和能力文档。场景接口、libobs、浏览器渲染和原子场景存储共用同一份[场景文档](scene-schema-v1.md)。
 
 ## Security boundary / 安全边界
 
@@ -21,6 +21,7 @@ The server applies these additional controls:
 - API scene responses redact RTSP userinfo and never return stored credentials.
 - the bundled editor is served from the same origin, with a restrictive CSP and no external scripts, fonts, or CDN dependencies.
 - the WHEP upstream is fixed to the container loopback MediaMTX; upstream session locations are replaced with random same-origin tokens and never exposed to browsers.
+- Direct MediaMTX paths use random 128-bit names, are created only for current scene sources, pull RTSP on demand, and are removed when their source leaves the scene; all MediaMTX output passes through the RTSP credential filter.
 
 服务还会限制本地 Host、校验 Origin、不返回 CORS 授权、限制请求体/请求头/读取时长、发送严格安全响应头，并在所有 API 场景响应中隐藏 RTSP 凭据。这些措施只降低本机误用和浏览器跨站请求风险，不能代替 M6 的身份认证与加密。
 
@@ -49,7 +50,7 @@ Returns the bundled React/TypeScript scene editor. The non-hashed HTML entry is 
 Returns `200` while the control thread is serving:
 
 ```json
-{"status":"ok","milestone":"M2"}
+{"status":"ok","milestone":"M3"}
 ```
 
 ### `GET /api/v1/program/status`
@@ -71,6 +72,38 @@ Location: /api/v1/program/whep/session/0123456789abcdef0123456789abcdef
 The proxy accepts no caller-selected upstream URL, credentials, query parameters, or fragments. It rejects a foreign Origin with `403`, SDP larger than 64 KiB with `413`, non-SDP content with `415`, and upstream signaling failure with `502`. At most 64 opaque sessions are retained; stale bookkeeping expires after ten minutes.
 
 浏览器只向本站提交完整 ICE offer。代理的上游固定为容器回环 MediaMTX，内部会话地址会被替换为随机同源令牌；调用方不能选择目标或携带上游凭据。M2 尚不支持 trickle ICE/PATCH。
+
+### `GET /api/v1/playback/capabilities`
+
+Returns the explicit playback modes and one source-scoped same-origin endpoint for every source in the current scene. The response contains source IDs already present in the public scene, but never contains RTSP URLs, credentials, MediaMTX addresses, internal path names, or caller-selectable upstreams.
+
+```json
+{
+  "defaultMode": "composite",
+  "modes": {
+    "composite": {"enabled": true, "endpoint": "/api/v1/program/whep"},
+    "direct": {"enabled": true, "fallback": "composite"}
+  },
+  "sources": [{
+    "sourceId": "camera-front",
+    "endpoint": "/api/v1/sources/camera-front/whep",
+    "preferred": "direct",
+    "fallback": "composite"
+  }]
+}
+```
+
+返回当前明确支持的播放模式，以及场景中每个来源对应的同源端点。响应只复用公开场景已有的来源 ID，不包含 RTSP、凭据、MediaMTX 地址、内部路径或调用方可选上游。
+
+### `POST /api/v1/sources/{sourceId}/whep`
+
+Accepts the same complete SDP offer as the program endpoint. The source ID must exactly match a current scene source. On first use, the server creates a random internal MediaMTX path and configures an on-demand RTSP pull through the loopback-only Control API. Unknown sources return `404`; signaling/configuration failure returns `502`. Content, Origin, size, and global 64-session limits are identical to program WHEP.
+
+首次使用当前场景来源时，服务会通过仅回环可达的 Control API 创建随机内部路径，并仅在 reader 存在时拉取 RTSP。浏览器不能指定内部路径或上游 URL。
+
+### `DELETE /api/v1/sources/{sourceId}/whep/session/{token}`
+
+Closes only a session created for the same source-scoped route. A valid token cannot be replayed through another source route; mismatches and unknown tokens return `404`.
 
 ### `DELETE /api/v1/program/whep/session/{token}`
 

@@ -211,7 +211,7 @@ HttpResponse response(http::status status, unsigned int version, std::string bod
 
 class WhepProxy {
 public:
-    explicit WhepProxy(bool enabled) : enabled_(enabled) {}
+    WhepProxy(bool enabled, SceneController &controller) : enabled_(enabled), controller_(controller) {}
 
     HttpResponse status(unsigned int version) const
     {
@@ -220,49 +220,73 @@ public:
                             ",\"endpoint\":\"/api/v1/program/whep\"}");
     }
 
-    HttpResponse create(const HttpRequest &request)
+    HttpResponse capabilities(unsigned int version)
     {
-        const unsigned int version = request.version();
-        if (!enabled_)
-            return response(http::status::service_unavailable, version,
-                            error_body("webrtc_disabled", "WebRTC program output is disabled"));
-        if (!sdp_content_type(request))
-            return response(http::status::unsupported_media_type, version,
-                            error_body("content_type", "Content-Type must be application/sdp"));
-        if (!request_origin_allowed(request, false))
-            return response(http::status::forbidden, version,
-                            error_body("origin_rejected", "Origin must match the local Host"));
-        if (request.body().empty() || request.body().size() > maximum_sdp_bytes)
-            return response(request.body().empty() ? http::status::bad_request : http::status::payload_too_large,
-                            version, error_body("invalid_sdp", "SDP offer must contain at most 64 KiB"));
-        prune_expired_sessions();
-        if (sessions_.size() >= maximum_sessions)
-            return response(http::status::too_many_requests, version,
-                            error_body("session_limit", "Too many active WebRTC playback sessions"));
-
-        UpstreamResponse upstream = request_upstream(upstream_create_url, request.body(), true);
-        if (!upstream.ok || upstream.status != 201 || upstream.body.empty())
-            return response(http::status::bad_gateway, version,
-                            error_body("whep_upstream", "WebRTC signaling did not accept the offer"));
-        const auto upstream_location = normalize_location(upstream.location);
-        if (!upstream_location)
-            return response(http::status::bad_gateway, version,
-                            error_body("whep_location", "WebRTC signaling returned an invalid session"));
-
-        std::string token;
-        do {
-            token = random_token();
-        } while (sessions_.contains(token));
-        sessions_.emplace(token, Session{*upstream_location, std::chrono::steady_clock::now()});
-
-        HttpResponse result = response(http::status::created, version, std::move(upstream.body), "application/sdp");
-        result.set(http::field::location, std::string(session_prefix) + token);
-        for (const std::string &link : upstream.links)
-            result.insert(http::field::link, link);
-        return result;
+        const SceneDocument document = controller_.private_document_snapshot();
+        reconcile(document);
+        std::string body = std::string("{\"defaultMode\":\"composite\",\"modes\":{") +
+                           "\"composite\":{\"enabled\":" + (enabled_ ? "true" : "false") +
+                           ",\"endpoint\":\"/api/v1/program/whep\"}," +
+                           "\"direct\":{\"enabled\":" + (enabled_ ? "true" : "false") +
+                           ",\"fallback\":\"composite\"}},\"sources\":[";
+        bool first = true;
+        for (const SceneSource &source : document.sources) {
+            if (!first)
+                body.push_back(',');
+            first = false;
+            body += "{\"sourceId\":\"" + json_escape(source.id) +
+                    "\",\"endpoint\":\"/api/v1/sources/" + json_escape(source.id) +
+                    "/whep\",\"preferred\":\"direct\",\"fallback\":\"composite\"}";
+        }
+        body += "]}";
+        return response(http::status::ok, version, std::move(body));
     }
 
-    HttpResponse remove(const HttpRequest &request, std::string_view token)
+    HttpResponse create_program(const HttpRequest &request)
+    {
+        if (auto invalid = validate_offer(request))
+            return std::move(*invalid);
+        return create_validated(request, "program", session_prefix);
+    }
+
+    HttpResponse create_direct(const HttpRequest &request, std::string_view source_id)
+    {
+        if (auto invalid = validate_offer(request))
+            return std::move(*invalid);
+        const SceneDocument document = controller_.private_document_snapshot();
+        const auto source = std::find_if(document.sources.begin(), document.sources.end(),
+                                         [source_id](const SceneSource &candidate) {
+                                             return candidate.id == source_id;
+                                         });
+        if (source == document.sources.end())
+            return response(http::status::not_found, request.version(),
+                            error_body("source_not_found", "source not found"));
+        const auto route = ensure_direct_route(*source);
+        if (!route)
+            return response(http::status::bad_gateway, request.version(),
+                            error_body("direct_route", "direct source routing is unavailable"));
+        const std::string browser_prefix = "/api/v1/sources/" + std::string(source_id) + "/whep/session/";
+        return create_validated(request, *route, browser_prefix);
+    }
+
+    HttpResponse remove_program(const HttpRequest &request, std::string_view token)
+    {
+        return remove(request, token, session_prefix);
+    }
+
+    HttpResponse remove_direct(const HttpRequest &request, std::string_view source_id, std::string_view token)
+    {
+        const std::string browser_prefix = "/api/v1/sources/" + std::string(source_id) + "/whep/session/";
+        return remove(request, token, browser_prefix);
+    }
+
+    void reconcile_sources()
+    {
+        reconcile(controller_.private_document_snapshot());
+    }
+
+private:
+    HttpResponse remove(const HttpRequest &request, std::string_view token, std::string_view browser_prefix)
     {
         const unsigned int version = request.version();
         if (!request_origin_allowed(request, false))
@@ -272,31 +296,36 @@ public:
             !std::all_of(token.begin(), token.end(), [](unsigned char character) { return std::isxdigit(character); }))
             return response(http::status::not_found, version, error_body("session_not_found", "session not found"));
         const auto session = sessions_.find(std::string(token));
-        if (session == sessions_.end())
+        if (session == sessions_.end() || session->second.browser_prefix != browser_prefix)
             return response(http::status::not_found, version, error_body("session_not_found", "session not found"));
 
         const std::string upstream_url = std::move(session->second.upstream_url);
         sessions_.erase(session);
-        const UpstreamResponse upstream = request_upstream(upstream_url, {}, false);
+        const UpstreamResponse upstream = request_http(upstream_url, {}, "DELETE", {});
         if (!upstream.ok || (upstream.status != 200 && upstream.status != 204 && upstream.status != 404))
             return response(http::status::bad_gateway, version,
                             error_body("whep_upstream", "WebRTC signaling could not close the session"));
         return response(http::status::no_content, version, {}, "application/json; charset=utf-8");
     }
 
-private:
     static constexpr std::size_t maximum_sdp_bytes = 64 * 1024;
     static constexpr std::size_t maximum_sessions = 64;
     static constexpr auto session_retention = std::chrono::minutes(10);
     static constexpr std::size_t token_length = 32;
     static constexpr std::string_view upstream_origin = "http://127.0.0.1:8889";
-    static constexpr std::string_view upstream_create_url = "http://127.0.0.1:8889/program/whep";
-    static constexpr std::string_view upstream_session_prefix = "/program/whep/";
+    static constexpr std::string_view control_origin = "http://127.0.0.1:9997";
     static constexpr std::string_view session_prefix = "/api/v1/program/whep/session/";
 
     struct Session {
         std::string upstream_url;
         std::chrono::steady_clock::time_point created_at;
+        std::string browser_prefix;
+    };
+
+    struct DirectRoute {
+        std::string path;
+        std::string rtsp_url;
+        std::string transport;
     };
 
     struct UpstreamResponse {
@@ -340,7 +369,8 @@ private:
         return bytes;
     }
 
-    static UpstreamResponse request_upstream(std::string_view url, std::string_view body, bool create)
+    static UpstreamResponse request_http(std::string_view url, std::string_view body,
+                                         std::string_view method, std::string_view content_type)
     {
         UpstreamResponse result;
         CURL *handle = curl_easy_init();
@@ -348,9 +378,11 @@ private:
             return result;
         const std::string url_value(url);
         curl_slist *headers = nullptr;
-        if (create) {
-            headers = curl_slist_append(headers, "Content-Type: application/sdp");
-            headers = curl_slist_append(headers, "Accept: application/sdp");
+        if (!content_type.empty()) {
+            const std::string header = "Content-Type: " + std::string(content_type);
+            headers = curl_slist_append(headers, header.c_str());
+            if (content_type == "application/sdp")
+                headers = curl_slist_append(headers, "Accept: application/sdp");
         }
         curl_easy_setopt(handle, CURLOPT_URL, url_value.c_str());
         curl_easy_setopt(handle, CURLOPT_PROTOCOLS_STR, "http");
@@ -363,12 +395,15 @@ private:
         curl_easy_setopt(handle, CURLOPT_HEADERDATA, &result);
         if (headers)
             curl_easy_setopt(handle, CURLOPT_HTTPHEADER, headers);
-        if (create) {
+        if (method == "POST") {
             curl_easy_setopt(handle, CURLOPT_POST, 1L);
+        } else if (method != "GET") {
+            const std::string method_value(method);
+            curl_easy_setopt(handle, CURLOPT_CUSTOMREQUEST, method_value.c_str());
+        }
+        if (!body.empty()) {
             curl_easy_setopt(handle, CURLOPT_POSTFIELDS, body.data());
             curl_easy_setopt(handle, CURLOPT_POSTFIELDSIZE_LARGE, static_cast<curl_off_t>(body.size()));
-        } else {
-            curl_easy_setopt(handle, CURLOPT_CUSTOMREQUEST, "DELETE");
         }
         result.ok = curl_easy_perform(handle) == CURLE_OK;
         if (result.ok)
@@ -378,19 +413,127 @@ private:
         return result;
     }
 
-    static std::optional<std::string> normalize_location(std::string_view location)
+    static std::optional<std::string> normalize_location(std::string_view location,
+                                                          std::string_view expected_prefix)
     {
         if (location.starts_with(upstream_origin))
             location.remove_prefix(upstream_origin.size());
-        if (!location.starts_with(upstream_session_prefix) || location.size() <= upstream_session_prefix.size() ||
+        if (!location.starts_with(expected_prefix) || location.size() <= expected_prefix.size() ||
             location.find_first_of("?#\r\n") != std::string_view::npos)
             return std::nullopt;
-        const std::string_view suffix = location.substr(upstream_session_prefix.size());
+        const std::string_view suffix = location.substr(expected_prefix.size());
         if (!std::all_of(suffix.begin(), suffix.end(), [](unsigned char character) {
                 return std::isalnum(character) || character == '-';
             }))
             return std::nullopt;
         return std::string(upstream_origin) + std::string(location);
+    }
+
+    std::optional<HttpResponse> validate_offer(const HttpRequest &request) const
+    {
+        const unsigned int version = request.version();
+        if (!enabled_)
+            return response(http::status::service_unavailable, version,
+                            error_body("webrtc_disabled", "WebRTC playback is disabled"));
+        if (!sdp_content_type(request))
+            return response(http::status::unsupported_media_type, version,
+                            error_body("content_type", "Content-Type must be application/sdp"));
+        if (!request_origin_allowed(request, false))
+            return response(http::status::forbidden, version,
+                            error_body("origin_rejected", "Origin must match the local Host"));
+        if (request.body().empty() || request.body().size() > maximum_sdp_bytes)
+            return response(request.body().empty() ? http::status::bad_request : http::status::payload_too_large,
+                            version, error_body("invalid_sdp", "SDP offer must contain at most 64 KiB"));
+        return std::nullopt;
+    }
+
+    HttpResponse create_validated(const HttpRequest &request, std::string_view path,
+                                  std::string_view browser_prefix)
+    {
+        const unsigned int version = request.version();
+        prune_expired_sessions();
+        if (sessions_.size() >= maximum_sessions)
+            return response(http::status::too_many_requests, version,
+                            error_body("session_limit", "Too many active WebRTC playback sessions"));
+
+        const std::string create_url = std::string(upstream_origin) + "/" + std::string(path) + "/whep";
+        UpstreamResponse upstream = request_http(create_url, request.body(), "POST", "application/sdp");
+        if (!upstream.ok || upstream.status != 201 || upstream.body.empty())
+            return response(http::status::bad_gateway, version,
+                            error_body("whep_upstream", "WebRTC signaling did not accept the offer"));
+        const std::string upstream_prefix = "/" + std::string(path) + "/whep/";
+        const auto upstream_location = normalize_location(upstream.location, upstream_prefix);
+        if (!upstream_location)
+            return response(http::status::bad_gateway, version,
+                            error_body("whep_location", "WebRTC signaling returned an invalid session"));
+
+        std::string token;
+        do {
+            token = random_token();
+        } while (sessions_.contains(token));
+        sessions_.emplace(token, Session{*upstream_location, std::chrono::steady_clock::now(),
+                                         std::string(browser_prefix)});
+
+        HttpResponse result = response(http::status::created, version, std::move(upstream.body), "application/sdp");
+        result.set(http::field::location, std::string(browser_prefix) + token);
+        for (const std::string &link : upstream.links)
+            result.insert(http::field::link, link);
+        return result;
+    }
+
+    std::optional<std::string> ensure_direct_route(const SceneSource &source)
+    {
+        auto existing = direct_routes_.find(source.id);
+        const bool adding = existing == direct_routes_.end();
+        if (!adding && existing->second.rtsp_url == source.rtsp_url &&
+            existing->second.transport == source.transport)
+            return existing->second.path;
+
+        DirectRoute route;
+        if (adding) {
+            if (direct_routes_.size() >= maximum_scene_sources)
+                return std::nullopt;
+            do {
+                route.path = "direct-" + random_token();
+            } while (std::any_of(direct_routes_.begin(), direct_routes_.end(), [&route](const auto &entry) {
+                return entry.second.path == route.path;
+            }));
+        } else {
+            route = existing->second;
+        }
+        route.rtsp_url = source.rtsp_url;
+        route.transport = source.transport;
+        const std::string body = "{\"source\":\"" + json_escape(route.rtsp_url) +
+                                 "\",\"sourceOnDemand\":true,\"sourceOnDemandStartTimeout\":\"10s\"," +
+                                 "\"sourceOnDemandCloseAfter\":\"5s\",\"maxReaders\":8," +
+                                 "\"overridePublisher\":false,\"rtspTransport\":\"" +
+                                 json_escape(route.transport) + "\"}";
+        const std::string operation = adding ? "add" : "patch";
+        const std::string method = adding ? "POST" : "PATCH";
+        const std::string url = std::string(control_origin) + "/v3/config/paths/" + operation + "/" + route.path;
+        const UpstreamResponse configured = request_http(url, body, method, "application/json");
+        if (!configured.ok || configured.status != 200)
+            return std::nullopt;
+        direct_routes_[source.id] = route;
+        return route.path;
+    }
+
+    void reconcile(const SceneDocument &document)
+    {
+        for (auto iterator = direct_routes_.begin(); iterator != direct_routes_.end();) {
+            const bool present = std::any_of(document.sources.begin(), document.sources.end(),
+                                             [&iterator](const SceneSource &source) {
+                                                 return source.id == iterator->first;
+                                             });
+            if (present) {
+                ++iterator;
+                continue;
+            }
+            const std::string url = std::string(control_origin) + "/v3/config/paths/delete/" +
+                                    iterator->second.path;
+            request_http(url, {}, "DELETE", {});
+            iterator = direct_routes_.erase(iterator);
+        }
     }
 
     static std::string random_token()
@@ -416,7 +559,9 @@ private:
     }
 
     bool enabled_ = false;
+    SceneController &controller_;
     std::unordered_map<std::string, Session> sessions_;
+    std::unordered_map<std::string, DirectRoute> direct_routes_;
 };
 
 std::string static_content_type(std::string_view filename)
@@ -637,16 +782,18 @@ HttpResponse handle_request(const HttpRequest &request, SceneController &control
 
     const std::string_view target = view(request.target());
     if (request.method() == http::verb::get && target == "/api/v1/health")
-        return response(http::status::ok, version, "{\"status\":\"ok\",\"milestone\":\"M2\"}");
+        return response(http::status::ok, version, "{\"status\":\"ok\",\"milestone\":\"M3\"}");
 
     if (request.method() == http::verb::get && target == "/api/v1/program/status")
         return whep_proxy.status(version);
+    if (request.method() == http::verb::get && target == "/api/v1/playback/capabilities")
+        return whep_proxy.capabilities(version);
 
     constexpr std::string_view whep_target = "/api/v1/program/whep";
     constexpr std::string_view whep_session_prefix = "/api/v1/program/whep/session/";
     if (target == whep_target) {
         if (request.method() == http::verb::post)
-            return whep_proxy.create(request);
+            return whep_proxy.create_program(request);
         HttpResponse result = response(http::status::method_not_allowed, version,
                                        error_body("method_not_allowed", "use POST"));
         result.set(http::field::allow, "POST");
@@ -654,11 +801,47 @@ HttpResponse handle_request(const HttpRequest &request, SceneController &control
     }
     if (target.starts_with(whep_session_prefix)) {
         if (request.method() == http::verb::delete_)
-            return whep_proxy.remove(request, target.substr(whep_session_prefix.size()));
+            return whep_proxy.remove_program(request, target.substr(whep_session_prefix.size()));
         HttpResponse result = response(http::status::method_not_allowed, version,
                                        error_body("method_not_allowed", "use DELETE"));
         result.set(http::field::allow, "DELETE");
         return result;
+    }
+
+    constexpr std::string_view source_prefix = "/api/v1/sources/";
+    if (target.starts_with(source_prefix)) {
+        const std::string_view source_route = target.substr(source_prefix.size());
+        const std::size_t separator = source_route.find('/');
+        if (separator == std::string_view::npos)
+            return response(http::status::not_found, version, error_body("not_found", "resource not found"));
+        const std::string_view source_id = source_route.substr(0, separator);
+        const std::string_view operation = source_route.substr(separator);
+        const bool valid_source_id = !source_id.empty() && source_id.size() <= 64 &&
+                                     std::all_of(source_id.begin(), source_id.end(), [](unsigned char character) {
+                                         return std::isalnum(character) || character == '.' || character == '_' ||
+                                                character == '-';
+                                     });
+        if (!valid_source_id)
+            return response(http::status::not_found, version, error_body("not_found", "resource not found"));
+        if (operation == "/whep") {
+            if (request.method() == http::verb::post)
+                return whep_proxy.create_direct(request, source_id);
+            HttpResponse result = response(http::status::method_not_allowed, version,
+                                           error_body("method_not_allowed", "use POST"));
+            result.set(http::field::allow, "POST");
+            return result;
+        }
+        constexpr std::string_view direct_session = "/whep/session/";
+        if (operation.starts_with(direct_session)) {
+            if (request.method() == http::verb::delete_)
+                return whep_proxy.remove_direct(request, source_id,
+                                                operation.substr(direct_session.size()));
+            HttpResponse result = response(http::status::method_not_allowed, version,
+                                           error_body("method_not_allowed", "use DELETE"));
+            result.set(http::field::allow, "DELETE");
+            return result;
+        }
+        return response(http::status::not_found, version, error_body("not_found", "resource not found"));
     }
 
     if (target != "/api/v1/scene") {
@@ -732,6 +915,7 @@ HttpResponse handle_request(const HttpRequest &request, SceneController &control
     }
 
     const std::string event = scene_event("scene.updated", updated.public_json);
+    whep_proxy.reconcile_sources();
     hub.broadcast(event);
     HttpResponse result = response(http::status::ok, version, updated.public_json);
     result.set(http::field::etag, etag(updated.revision));
@@ -876,7 +1060,8 @@ private:
 
 struct ControlServer::Impl {
     Impl(const Config &configuration, SceneController &scene_controller)
-        : config(configuration), controller(scene_controller), whep_proxy(configuration.webrtc_enabled)
+        : config(configuration), controller(scene_controller),
+          whep_proxy(configuration.webrtc_enabled, scene_controller)
     {
     }
 

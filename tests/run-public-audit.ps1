@@ -125,6 +125,7 @@ try {
 
     $allowedRtspReferences = @{
         '.env.example'                = @('user:password')
+        'docker/Dockerfile'           = @('user:password', '***:***')
         'README.md'                   = @('user:password', '***:***')
         'core/tests/common_tests.cpp' = @('user:password', '***:***', 'user', '***', 'name:p%40ss', 'u:p', 'x:y')
         'tests/run-contracts.ps1'     = @('test-user:supersecret', '***:***')

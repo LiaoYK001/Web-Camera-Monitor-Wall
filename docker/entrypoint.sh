@@ -42,6 +42,8 @@ rm -f -- "$display_lock" "$display_socket"
 Xvfb "$display" -screen 0 "$screen" -nolisten tcp -ac +extension GLX +render -noreset &
 xvfb_pid=$!
 mediamtx_pid=""
+mediamtx_filter_pid=""
+mediamtx_log_pipe=""
 webobsd_pid=""
 shutdown_requested=0
 
@@ -89,7 +91,12 @@ if [ "$ready" -ne 1 ]; then
 fi
 
 if [ "$mediamtx_enabled" = "true" ]; then
-    /opt/webobs/bin/mediamtx "$mediamtx_config" &
+    mediamtx_log_pipe="/tmp/webobs-mediamtx-log.$$"
+    umask 077
+    mkfifo "$mediamtx_log_pipe"
+    /opt/obs/bin/webobs-log-filter < "$mediamtx_log_pipe" &
+    mediamtx_filter_pid=$!
+    /opt/webobs/bin/mediamtx "$mediamtx_config" > "$mediamtx_log_pipe" 2>&1 &
     mediamtx_pid=$!
 fi
 
@@ -100,6 +107,12 @@ exit_status=0
 while kill -0 "$webobsd_pid" 2>/dev/null; do
     if [ "$shutdown_requested" -eq 0 ] && [ -n "$mediamtx_pid" ] && ! kill -0 "$mediamtx_pid" 2>/dev/null; then
         echo "MediaMTX exited while webobsd was running" >&2
+        exit_status=3
+        terminate_child "$webobsd_pid"
+        break
+    fi
+    if [ "$shutdown_requested" -eq 0 ] && [ -n "$mediamtx_filter_pid" ] && ! kill -0 "$mediamtx_filter_pid" 2>/dev/null; then
+        echo "MediaMTX log filter exited while webobsd was running" >&2
         exit_status=3
         terminate_child "$webobsd_pid"
         break
@@ -124,6 +137,12 @@ fi
 shutdown_children
 if [ -n "$mediamtx_pid" ]; then
     wait "$mediamtx_pid" 2>/dev/null || true
+fi
+if [ -n "$mediamtx_filter_pid" ]; then
+    wait "$mediamtx_filter_pid" 2>/dev/null || true
+fi
+if [ -n "$mediamtx_log_pipe" ]; then
+    rm -f -- "$mediamtx_log_pipe"
 fi
 wait "$xvfb_pid" 2>/dev/null || true
 exit "$exit_status"

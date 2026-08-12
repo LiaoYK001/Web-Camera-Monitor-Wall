@@ -50,6 +50,9 @@ try {
 
     & (Join-Path $PSScriptRoot 'run-webrtc.ps1') -SkipBuild
     if ($LASTEXITCODE -ne 0) { throw 'M2 WebRTC browser acceptance failed' }
+
+    & (Join-Path $PSScriptRoot 'run-direct.ps1') -SkipBuild
+    if ($LASTEXITCODE -ne 0) { throw 'M3 Direct browser acceptance failed' }
 }
 finally {
     docker compose -f $ComposeFile down --volumes --remove-orphans

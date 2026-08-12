@@ -530,6 +530,41 @@ select:focus-visible,
   background: var(--accent);
 }
 
+.playback-mode {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 38px;
+  padding: 0 18px;
+  border-bottom: 1px solid rgba(37, 42, 54, 0.65);
+  background: rgba(9, 12, 17, 0.72);
+}
+
+.playback-mode span {
+  margin-right: 4px;
+  color: #70798a;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.playback-mode button {
+  padding: 5px 10px;
+  border: 1px solid #2b3140;
+  border-radius: 999px;
+  color: #8790a0;
+  background: #0b0f15;
+  font-size: 11px;
+  cursor: pointer;
+}
+
+.playback-mode button.active {
+  border-color: rgba(185, 255, 79, 0.5);
+  color: var(--accent);
+  background: rgba(185, 255, 79, 0.08);
+}
+
 .stage-wrap {
   display: grid;
   min-height: 0;
@@ -615,6 +650,95 @@ select:focus-visible,
 .program-preview.disabled .program-preview-status i {
   background: var(--danger);
   box-shadow: none;
+}
+
+.direct-preview {
+  position: relative;
+  width: min(100%, 1100px);
+  overflow: hidden;
+  border: 1px solid #3b4250;
+  border-radius: 3px;
+  background: #000;
+  box-shadow: 0 30px 70px rgba(0, 0, 0, 0.48), 0 0 0 8px rgba(255, 255, 255, 0.015);
+}
+
+.direct-tile-position,
+.direct-tile {
+  position: absolute;
+  overflow: hidden;
+}
+
+.direct-tile {
+  inset: 0;
+  background: #05070a;
+}
+
+.direct-tile video {
+  position: absolute;
+  display: block;
+  max-width: none;
+  max-height: none;
+  background: #000;
+}
+
+.direct-tile-state {
+  position: absolute;
+  z-index: 2;
+  top: 7px;
+  left: 7px;
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  padding: 4px 6px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 999px;
+  color: rgba(255, 255, 255, 0.78);
+  background: rgba(4, 6, 9, 0.78);
+  font-size: clamp(6px, 0.65vw, 9px);
+  font-weight: 700;
+  pointer-events: none;
+}
+
+.direct-tile-state i {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--warning);
+}
+
+.direct-tile.live .direct-tile-state i {
+  background: var(--accent);
+  box-shadow: 0 0 7px rgba(185, 255, 79, 0.7);
+}
+
+.direct-tile.offline .direct-tile-state i,
+.direct-tile.disabled .direct-tile-state i {
+  background: var(--danger);
+}
+
+.direct-tile-name {
+  position: absolute;
+  right: 8px;
+  bottom: 8px;
+  left: 8px;
+  overflow: hidden;
+  color: rgba(255, 255, 255, 0.62);
+  font-size: clamp(7px, 0.85vw, 12px);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.direct-preview-unavailable {
+  position: absolute;
+  z-index: 1000;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+  color: #ffb6b6;
+  background: rgba(7, 9, 13, 0.9);
+  font-size: 13px;
+  text-align: center;
 }
 
 .stage-grid {

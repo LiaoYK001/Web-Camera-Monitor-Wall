@@ -1,4 +1,4 @@
-import type { ApiErrorEnvelope, SceneDocument, SceneEvent } from './types';
+import type { ApiErrorEnvelope, PlaybackCapabilities, SceneDocument, SceneEvent } from './types';
 
 export class ControlApiError extends Error {
   readonly status: number;
@@ -37,6 +37,16 @@ export async function fetchScene(signal?: AbortSignal): Promise<SceneDocument> {
   });
   if (!response.ok) throw await parseError(response);
   return (await response.json()) as SceneDocument;
+}
+
+export async function fetchPlaybackCapabilities(signal?: AbortSignal): Promise<PlaybackCapabilities> {
+  const response = await fetch('/api/v1/playback/capabilities', {
+    method: 'GET',
+    cache: 'no-store',
+    signal,
+  });
+  if (!response.ok) throw await parseError(response);
+  return (await response.json()) as PlaybackCapabilities;
 }
 
 export async function replaceScene(scene: SceneDocument): Promise<SceneDocument> {

@@ -67,6 +67,15 @@ set_target_properties(webobsd PROPERTIES
 )
 install(TARGETS webobsd RUNTIME DESTINATION bin)
 
+add_executable(webobs-log-filter
+    core/src/log_filter.cpp
+    core/src/redaction.cpp
+)
+target_include_directories(webobs-log-filter PRIVATE core/include)
+target_compile_features(webobs-log-filter PRIVATE cxx_std_20)
+target_compile_options(webobs-log-filter PRIVATE -Wall -Wextra -Wpedantic)
+install(TARGETS webobs-log-filter RUNTIME DESTINATION bin)
+
 if(WEBOBS_BUILD_TESTS)
     include(CTest)
     add_executable(webobs-unit-tests core/tests/common_tests.cpp)

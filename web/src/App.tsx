@@ -8,8 +8,9 @@ import {
   useState,
 } from 'react';
 import { connectSceneEvents, ControlApiError, fetchScene, replaceScene } from './api';
+import DirectPreview from './DirectPreview';
 import ProgramPreview from './ProgramPreview';
-import type { ScaleMode, SceneDocument, SceneItem, SceneSource, Transport } from './types';
+import type { PlaybackMode, ScaleMode, SceneDocument, SceneItem, SceneSource, Transport } from './types';
 
 type ConnectionState = 'connecting' | 'online' | 'offline';
 type WorkspaceMode = 'program' | 'layout';
@@ -30,6 +31,7 @@ interface PointerOperation {
 const cloneScene = (scene: SceneDocument): SceneDocument => JSON.parse(JSON.stringify(scene)) as SceneDocument;
 const clamp = (value: number, minimum: number, maximum: number) =>
   Math.min(Math.max(value, minimum), maximum);
+const initialPlaybackMode = (): PlaybackMode => window.location.hash === '#direct' ? 'direct' : 'composite';
 
 function normalizeZIndexes(items: SceneItem[]): SceneItem[] {
   return [...items]
@@ -108,6 +110,7 @@ export default function App() {
   const [saving, setSaving] = useState(false);
   const [adding, setAdding] = useState(false);
   const [workspaceMode, setWorkspaceMode] = useState<WorkspaceMode>('program');
+  const [playbackMode, setPlaybackMode] = useState<PlaybackMode>(initialPlaybackMode);
   const [newName, setNewName] = useState('新摄像头');
   const [newUrl, setNewUrl] = useState('');
   const [newTransport, setNewTransport] = useState<Transport>('tcp');
@@ -174,6 +177,17 @@ export default function App() {
     ),
     [applyRemoteScene],
   );
+
+  useEffect(() => {
+    const changed = () => setPlaybackMode(initialPlaybackMode());
+    window.addEventListener('hashchange', changed);
+    return () => window.removeEventListener('hashchange', changed);
+  }, []);
+
+  const selectPlaybackMode = (mode: PlaybackMode) => {
+    setPlaybackMode(mode);
+    window.history.replaceState(null, '', mode === 'direct' ? '#direct' : window.location.pathname);
+  };
 
   const updateDraft = useCallback((update: (scene: SceneDocument) => SceneDocument) => {
     dirtyRef.current = true;
@@ -486,9 +500,18 @@ export default function App() {
               <button className={workspaceMode === 'layout' ? 'active' : ''} type="button" onClick={() => setWorkspaceMode('layout')}>布局编辑</button>
             </div>
           </div>
+          {workspaceMode === 'program' && (
+            <div className="playback-mode" aria-label="实时播放渲染模式">
+              <span>渲染路径</span>
+              <button className={playbackMode === 'composite' ? 'active' : ''} type="button" onClick={() => selectPlaybackMode('composite')}>服务端合成</button>
+              <button className={playbackMode === 'direct' ? 'active' : ''} type="button" onClick={() => selectPlaybackMode('direct')}>浏览器直达</button>
+            </div>
+          )}
           <div className="stage-wrap">
             {workspaceMode === 'program' ? (
-              <ProgramPreview aspectRatio={`${draft.canvas.width} / ${draft.canvas.height}`} />
+              playbackMode === 'composite'
+                ? <ProgramPreview aspectRatio={`${draft.canvas.width} / ${draft.canvas.height}`} />
+                : <DirectPreview scene={baseline ?? draft} />
             ) : draft.items.length === 0 ? <EmptyState onAdd={() => setAdding(true)} /> : (
               <div
                 className="stage"
@@ -541,8 +564,10 @@ export default function App() {
             )}
           </div>
           <div className="workspace-footer">
-            <span>{workspaceMode === 'program' ? 'WHEP 实时播放' : '布局预览'}</span>
-            <span>{workspaceMode === 'program' ? '浏览器仅连接同源信令代理，不接触容器内部端点' : '保存后由容器内 libobs 原子应用到合成输出'}</span>
+            <span>{workspaceMode === 'program' ? (playbackMode === 'direct' ? 'Direct WHEP' : 'Composite WHEP') : '布局预览'}</span>
+            <span>{workspaceMode === 'program'
+              ? (playbackMode === 'direct' ? '每路来源按同一场景文档在浏览器布局，内部 RTSP 与媒体路径均不暴露' : '浏览器播放容器内 libobs 合成节目')
+              : '保存后由容器内 libobs 原子应用到合成输出'}</span>
           </div>
         </section>
 

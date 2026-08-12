@@ -103,6 +103,8 @@ case "$secret_status" in
 esac
 
 allowed_rtsp_references=' .env.example|user:password
+docker/Dockerfile|user:password
+docker/Dockerfile|***:***
 README.md|user:password
 README.md|***:***
 core/tests/common_tests.cpp|user:password

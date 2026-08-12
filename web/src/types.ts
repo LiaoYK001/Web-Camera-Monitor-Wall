@@ -59,3 +59,21 @@ export interface ApiErrorEnvelope {
   };
   revision?: number;
 }
+
+export type PlaybackMode = 'composite' | 'direct';
+
+export interface SourcePlaybackCapability {
+  sourceId: string;
+  endpoint: string;
+  preferred: 'direct';
+  fallback: 'composite';
+}
+
+export interface PlaybackCapabilities {
+  defaultMode: 'composite';
+  modes: {
+    composite: { enabled: boolean; endpoint: string };
+    direct: { enabled: boolean; fallback: 'composite' };
+  };
+  sources: SourcePlaybackCapability[];
+}

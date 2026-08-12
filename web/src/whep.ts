@@ -9,6 +9,8 @@ export interface ProgramConnection {
   close: () => void;
 }
 
+type EndpointResolver = (signal: AbortSignal) => Promise<string | null>;
+
 const gatherIce = (peer: RTCPeerConnection, timeoutMs = 10_000): Promise<void> => {
   if (peer.iceGatheringState === 'complete') return Promise.resolve();
   return new Promise((resolve, reject) => {
@@ -26,17 +28,28 @@ const gatherIce = (peer: RTCPeerConnection, timeoutMs = 10_000): Promise<void> =
   });
 };
 
-const validSessionLocation = (value: string | null): string | null => {
+const validEndpoint = (value: string): string | null => {
+  const endpoint = new URL(value, window.location.href);
+  if (endpoint.origin !== window.location.origin || endpoint.search || endpoint.hash) return null;
+  if (endpoint.pathname === '/api/v1/program/whep') return endpoint.pathname;
+  if (/^\/api\/v1\/sources\/[A-Za-z0-9._-]{1,64}\/whep$/.test(endpoint.pathname)) return endpoint.pathname;
+  return null;
+};
+
+const validSessionLocation = (value: string | null, endpoint: string): string | null => {
   if (!value) return null;
   const location = new URL(value, window.location.href);
   if (location.origin !== window.location.origin) return null;
-  if (!/^\/api\/v1\/program\/whep\/session\/[a-f0-9]{32}$/.test(location.pathname)) return null;
+  const prefix = `${endpoint}/session/`;
+  if (!location.pathname.startsWith(prefix) || !/^[a-f0-9]{32}$/.test(location.pathname.slice(prefix.length)))
+    return null;
   if (location.search || location.hash) return null;
   return location.pathname;
 };
 
-export function connectProgram(
+function connectWhep(
   video: HTMLVideoElement,
+  resolveEndpoint: EndpointResolver,
   onState: (state: ProgramConnectionState) => void,
 ): ProgramConnection {
   let closed = false;
@@ -93,17 +106,13 @@ export function connectProgram(
     onState(attempt === 0 ? 'checking' : 'reconnecting');
     request = new AbortController();
     try {
-      const statusResponse = await fetch('/api/v1/program/status', {
-        cache: 'no-store',
-        signal: request.signal,
-      });
-      if (!statusResponse.ok) throw new Error('Program status is unavailable');
-      const status = (await statusResponse.json()) as ProgramStatus;
-      if (!status.enabled) {
+      const resolved = await resolveEndpoint(request.signal);
+      if (resolved === null) {
         onState('disabled');
         return;
       }
-      if (status.endpoint !== '/api/v1/program/whep') throw new Error('Program endpoint is invalid');
+      const endpoint = validEndpoint(resolved);
+      if (!endpoint) throw new Error('WHEP endpoint is invalid');
       onState(attempt === 0 ? 'connecting' : 'reconnecting');
 
       const nextPeer = new RTCPeerConnection();
@@ -134,18 +143,18 @@ export function connectProgram(
       await nextPeer.setLocalDescription(await nextPeer.createOffer());
       await gatherIce(nextPeer);
       if (!nextPeer.localDescription?.sdp) throw new Error('Browser did not produce an SDP offer');
-      const offerResponse = await fetch(status.endpoint, {
+      const offerResponse = await fetch(endpoint, {
         method: 'POST',
-        headers: { 'Accept': 'application/sdp', 'Content-Type': 'application/sdp' },
+        headers: { Accept: 'application/sdp', 'Content-Type': 'application/sdp' },
         body: nextPeer.localDescription.sdp,
         signal: request.signal,
       });
-      if (offerResponse.status !== 201) throw new Error('Program offer was rejected');
-      const location = validSessionLocation(offerResponse.headers.get('Location'));
-      if (!location) throw new Error('Program session location is invalid');
+      if (offerResponse.status !== 201) throw new Error('WHEP offer was rejected');
+      const location = validSessionLocation(offerResponse.headers.get('Location'), endpoint);
+      if (!location) throw new Error('WHEP session location is invalid');
       sessionLocation = location;
       const answer = await offerResponse.text();
-      if (!answer || answer.length > 64 * 1024) throw new Error('Program answer is invalid');
+      if (!answer || answer.length > 64 * 1024) throw new Error('WHEP answer is invalid');
       await nextPeer.setRemoteDescription({ type: 'answer', sdp: answer });
       handshakeTimer = window.setTimeout(scheduleReconnect, 15_000);
     } catch (error) {
@@ -165,7 +174,25 @@ export function connectProgram(
 
   window.addEventListener('pagehide', close);
   void connect();
-  return {
-    close,
-  };
+  return { close };
+}
+
+export function connectProgram(
+  video: HTMLVideoElement,
+  onState: (state: ProgramConnectionState) => void,
+): ProgramConnection {
+  return connectWhep(video, async (signal) => {
+    const statusResponse = await fetch('/api/v1/program/status', { cache: 'no-store', signal });
+    if (!statusResponse.ok) throw new Error('Program status is unavailable');
+    const status = (await statusResponse.json()) as ProgramStatus;
+    return status.enabled ? status.endpoint : null;
+  }, onState);
+}
+
+export function connectSource(
+  video: HTMLVideoElement,
+  endpoint: string,
+  onState: (state: ProgramConnectionState) => void,
+): ProgramConnection {
+  return connectWhep(video, async () => endpoint, onState);
 }

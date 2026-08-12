@@ -200,7 +200,11 @@ RUN cmake -S /src/webobs -B /build/webobs -G Ninja \
     && ctest --test-dir /build/webobs --output-on-failure \
     && cmake --install /build/webobs \
     && LD_LIBRARY_PATH=/opt/obs/lib /opt/obs/bin/webobsd --version \
+    && printf '%s\n' 'rtsp://user:password@camera.invalid/live' \
+        | /opt/obs/bin/webobs-log-filter \
+        | grep -Fx 'rtsp://***:***@camera.invalid/live' \
     && ldd /opt/obs/bin/webobsd \
+    && ldd /opt/obs/bin/webobs-log-filter \
     && ldd /opt/obs/lib/libobs-opengl.so.30 \
     && ldd /opt/obs/lib/obs-plugins/obs-ffmpeg.so \
     && ldd /opt/obs/lib/obs-plugins/obs-x264.so \
@@ -260,6 +264,7 @@ RUN mkdir -p /config/obs /config/webobs /recordings \
     && /opt/webobs/bin/mediamtx --version \
     && LD_LIBRARY_PATH=/opt/obs/lib /opt/obs/bin/webobsd --version \
     && ldd /opt/obs/bin/webobsd > /tmp/webobs-ldd.txt \
+    && ldd /opt/obs/bin/webobs-log-filter >> /tmp/webobs-ldd.txt \
     && ldd /opt/obs/lib/libobs-opengl.so.30 >> /tmp/webobs-ldd.txt \
     && ldd /opt/obs/lib/obs-plugins/obs-ffmpeg.so >> /tmp/webobs-ldd.txt \
     && ldd /opt/obs/lib/obs-plugins/obs-x264.so >> /tmp/webobs-ldd.txt \
