@@ -88,7 +88,9 @@ Returns the explicit playback modes and one source-scoped same-origin endpoint f
     "sourceId": "camera-front",
     "endpoint": "/api/v1/sources/camera-front/whep",
     "preferred": "direct",
-    "fallback": "composite"
+    "fallback": "composite",
+    "strategy": "passthrough",
+    "codec": "h264"
   }]
 }
 ```
@@ -97,7 +99,7 @@ Returns the explicit playback modes and one source-scoped same-origin endpoint f
 
 ### `POST /api/v1/sources/{sourceId}/whep`
 
-Accepts the same complete SDP offer as the program endpoint. The source ID must exactly match a current scene source. On first use, the server creates a random internal MediaMTX path and configures an on-demand RTSP pull through the loopback-only Control API. Unknown sources return `404`; signaling/configuration failure returns `502`. Content, Origin, size, and global 64-session limits are identical to program WHEP.
+Accepts the same complete SDP offer as the program endpoint. The source ID must exactly match a current scene source. On first use, the server creates a random internal MediaMTX path, configures an on-demand RTSP pull through the loopback-only Control API, and probes the video codec through that opaque loopback path. Browser-compatible codecs pass through; incompatible codecs use a second random path and an on-demand H.264 transcoder that stops after the final reader closes. Unknown sources return `404`; signaling/configuration failure returns `502`. Content, Origin, size, and global 64-session limits are identical to program WHEP.
 
 首次使用当前场景来源时，服务会通过仅回环可达的 Control API 创建随机内部路径，并仅在 reader 存在时拉取 RTSP。浏览器不能指定内部路径或上游 URL。
 

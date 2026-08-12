@@ -67,6 +67,8 @@ export interface SourcePlaybackCapability {
   endpoint: string;
   preferred: 'direct';
   fallback: 'composite';
+  strategy: 'unknown' | 'passthrough' | 'transcode';
+  codec: string;
 }
 
 export interface PlaybackCapabilities {

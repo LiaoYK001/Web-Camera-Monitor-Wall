@@ -6,7 +6,7 @@
 RTSP camera -> libobs ffmpeg_source -> OBS scene -> obs_x264 -> video-only MP4
 ```
 
-当前开发版本已能从持久化场景启动多路 RTSP 合成，并通过随产品镜像提供的 React/TypeScript 编辑器及本机 REST/WebSocket 接口，在录制期间原子更新布局和来源。M2 已在同一产品镜像中通过固定版本 MediaMTX 和 `obs-webrtc` 发布 WHIP/H.264；M3 正在增加每路摄像头按需直达浏览器的 WHEP 路径，并让 Direct 与 Composite 复用同一场景布局。输出音轨与硬件编码尚未加入。
+当前开发版本已能从持久化场景启动多路 RTSP 合成，并通过随产品镜像提供的 React/TypeScript 编辑器及本机 REST/WebSocket 接口，在录制期间原子更新布局和来源。M2 已在同一产品镜像中通过固定版本 MediaMTX 和 `obs-webrtc` 发布 WHIP/H.264；M3 已支持每路摄像头按需直达浏览器、Direct 与 Composite 共享布局，并仅为浏览器不兼容来源启动按需 H.264 转码。输出音轨与硬件编码尚未加入。
 
 开发路线、里程碑验收标准和当前进度见 [ROADMAP.md](ROADMAP.md)。**M0、M1 与 M2 已通过全部验收；当前处于 M3 Direct & Hybrid。**场景与持久化契约见 [docs/scene-schema-v1.md](docs/scene-schema-v1.md)，控制协议见 [docs/api-v1.md](docs/api-v1.md)。
 
@@ -79,7 +79,7 @@ M1 尚无认证、TLS 或远程暴露承诺。不要将端口映射改为所有�
 
 编辑器默认显示“实时节目”，通过 recvonly WHEP 播放 libobs 合成后的 H.264 画面；切换到“布局编辑”可进行来源增删、RTSP 传输方式、静音/音量、拖动、缩放、适配模式、裁切、可见性和层级调整。修改先保留在浏览器草稿中，点击“保存场景”后以 ETag/`If-Match` 提交；WebSocket 会同步其他本地标签页的已提交版本并提示冲突。页面不会显示已存储的 RTSP 用户名或密码。
 
-M3 的实时节目区可显式选择“服务端合成”或“浏览器直达”。Direct 模式为每个可见来源建立独立的同源 WHEP 会话，并以同一份场景文档应用位置、尺寸、层级、可见性、裁切及 contain/cover/stretch；可用 `http://127.0.0.1:8080/#direct` 直接进入。内部 MediaMTX 路径使用每次进程启动随机生成的 128-bit 名称，RTSP 只在 reader 存在时按需拉取，能力接口和浏览器不会收到 RTSP 地址或内部路径。当前仅完成浏览器兼容流的 Direct 路径；不兼容编码的检测与选择性转码仍在后续 M3 批次中。
+M3 的实时节目区可显式选择“服务端合成”或“浏览器直达”。Direct 模式为每个可见来源建立独立的同源 WHEP 会话，并以同一份场景文档应用位置、尺寸、层级、可见性、裁切及 contain/cover/stretch；可用 `http://127.0.0.1:8080/#direct` 直接进入。内部 MediaMTX 路径使用每次进程启动随机生成的 128-bit 名称，RTSP 只在 reader 存在时按需拉取，能力接口和浏览器不会收到 RTSP 地址或内部路径。服务在容器回环路径探测视频编码：H.264、VP8、VP9 和 AV1 直通；HEVC 等不兼容编码仅在存在浏览器 reader 时由 FFmpeg/x264 转为 H.264，页面关闭后自动释放转码进程。
 
 浏览器只访问本站 `/api/v1/program/whep`。服务端把 offer 转发到固定的容器回环 MediaMTX，并把上游会话地址改写为随机同源令牌；任意上游 URL、跨源 offer、超过 64 KiB 的 SDP 和伪造会话令牌都会被拒绝。浏览器等待 ICE 收集完成后一次性提交 offer，断线以 1–8 秒退避重连，并在页面关闭时尽力删除会话；M2 暂不实现 trickle ICE/PATCH。
 
@@ -209,7 +209,7 @@ PowerShell：
 ./tests/run-smoke.ps1
 ```
 
-只运行 M1 控制面验收可使用 `./tests/run-control-plane.ps1 -SkipBuild`；只运行 M2 浏览器与重连验收可使用 `./tests/run-webrtc.ps1 -SkipBuild`；只运行 M3 双路 Direct 验收可使用 `./tests/run-direct.ps1 -SkipBuild`。浏览器门禁默认查找本机 Chrome，也可通过 `WEBOBS_CHROME_BIN` 指定可信的 Chrome 可执行文件。
+只运行 M1 控制面验收可使用 `./tests/run-control-plane.ps1 -SkipBuild`；只运行 M2 浏览器与重连验收可使用 `./tests/run-webrtc.ps1 -SkipBuild`；只运行 M3 双路 Direct 验收可使用 `./tests/run-direct.ps1 -SkipBuild`；只运行 M3 H.264/HEVC 选择性 Hybrid 验收可使用 `./tests/run-hybrid.ps1 -SkipBuild`。浏览器门禁默认查找本机 Chrome，也可通过 `WEBOBS_CHROME_BIN` 指定可信的 Chrome 可执行文件。
 
 如果三个测试镜像已经成功构建，而 registry 暂时不可用，可显式复用本地镜像：`./tests/run-smoke.ps1 -SkipBuild`。这不会跳过录制、解码、失败路径或 SIGTERM 验收。
 

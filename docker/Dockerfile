@@ -249,6 +249,7 @@ COPY --from=mediamtx-downloader /opt/mediamtx/mediamtx /opt/webobs/bin/mediamtx
 COPY --from=mediamtx-downloader /opt/mediamtx/LICENSE /usr/share/licenses/mediamtx/LICENSE
 COPY docker/entrypoint.sh /opt/webobs/entrypoint.sh
 COPY gateway/mediamtx.yml /opt/webobs/etc/mediamtx.yml
+COPY gateway/transcode-on-demand.sh /opt/webobs/bin/transcode-on-demand
 COPY LICENSE /usr/share/licenses/webobs/LICENSE
 COPY obs/obs-studio/COPYING /usr/share/licenses/webobs/OBS-COPYING
 
@@ -260,7 +261,7 @@ ENV LD_LIBRARY_PATH=/opt/obs/lib \
 
 RUN mkdir -p /config/obs /config/webobs /recordings \
     && chmod 0700 /config/webobs \
-    && chmod 0755 /opt/webobs/entrypoint.sh /opt/webobs/bin/mediamtx \
+    && chmod 0755 /opt/webobs/entrypoint.sh /opt/webobs/bin/mediamtx /opt/webobs/bin/transcode-on-demand \
     && /opt/webobs/bin/mediamtx --version \
     && LD_LIBRARY_PATH=/opt/obs/lib /opt/obs/bin/webobsd --version \
     && ldd /opt/obs/bin/webobsd > /tmp/webobs-ldd.txt \

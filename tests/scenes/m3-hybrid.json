@@ -1,0 +1,57 @@
+{
+  "schemaVersion": 1,
+  "revision": 1,
+  "id": "main",
+  "name": "M3 Hybrid Test",
+  "canvas": {
+    "width": 640,
+    "height": 360,
+    "backgroundColor": "#000000"
+  },
+  "sources": [
+    {
+      "id": "camera-h264",
+      "kind": "rtsp",
+      "name": "Compatible H264",
+      "rtspUrl": "rtsp://mediamtx:8554/m0-test",
+      "transport": "tcp",
+      "muted": true,
+      "volume": 1.0
+    },
+    {
+      "id": "camera-hevc",
+      "kind": "rtsp",
+      "name": "Incompatible HEVC",
+      "rtspUrl": "rtsp://mediamtx:8554/m3-hevc",
+      "transport": "tcp",
+      "muted": true,
+      "volume": 1.0
+    }
+  ],
+  "items": [
+    {
+      "id": "item-h264",
+      "sourceId": "camera-h264",
+      "x": 0,
+      "y": 0,
+      "width": 320,
+      "height": 360,
+      "scaleMode": "cover",
+      "crop": {"top": 20, "right": 30, "bottom": 20, "left": 30},
+      "zIndex": 0,
+      "visible": true
+    },
+    {
+      "id": "item-hevc",
+      "sourceId": "camera-hevc",
+      "x": 320,
+      "y": 0,
+      "width": 320,
+      "height": 360,
+      "scaleMode": "contain",
+      "crop": {"top": 0, "right": 0, "bottom": 0, "left": 0},
+      "zIndex": 1,
+      "visible": true
+    }
+  ]
+}

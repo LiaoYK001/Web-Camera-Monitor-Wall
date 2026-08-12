@@ -53,6 +53,9 @@ try {
 
     & (Join-Path $PSScriptRoot 'run-direct.ps1') -SkipBuild
     if ($LASTEXITCODE -ne 0) { throw 'M3 Direct browser acceptance failed' }
+
+    & (Join-Path $PSScriptRoot 'run-hybrid.ps1') -SkipBuild
+    if ($LASTEXITCODE -ne 0) { throw 'M3 Hybrid browser acceptance failed' }
 }
 finally {
     docker compose -f $ComposeFile down --volumes --remove-orphans

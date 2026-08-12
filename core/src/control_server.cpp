@@ -9,8 +9,15 @@
 #include <boost/beast/websocket.hpp>
 #include <curl/curl.h>
 
+#include <csignal>
+#include <fcntl.h>
+#include <spawn.h>
+#include <sys/wait.h>
+#include <unistd.h>
+
 #include <algorithm>
 #include <array>
+#include <cerrno>
 #include <charconv>
 #include <cctype>
 #include <chrono>
@@ -19,6 +26,7 @@
 #include <filesystem>
 #include <fstream>
 #include <memory>
+#include <mutex>
 #include <optional>
 #include <random>
 #include <string>
@@ -27,6 +35,8 @@
 #include <unordered_map>
 #include <utility>
 #include <vector>
+
+extern char **environ;
 
 namespace webobs {
 namespace {
@@ -223,7 +233,7 @@ public:
     HttpResponse capabilities(unsigned int version)
     {
         const SceneDocument document = controller_.private_document_snapshot();
-        reconcile(document);
+        const std::lock_guard lock(route_state_mutex_);
         std::string body = std::string("{\"defaultMode\":\"composite\",\"modes\":{") +
                            "\"composite\":{\"enabled\":" + (enabled_ ? "true" : "false") +
                            ",\"endpoint\":\"/api/v1/program/whep\"}," +
@@ -234,9 +244,15 @@ public:
             if (!first)
                 body.push_back(',');
             first = false;
+            const auto route = direct_routes_.find(source.id);
+            const std::string strategy = route == direct_routes_.end() || route->second.codec.empty()
+                                             ? "unknown"
+                                             : route->second.transcode ? "transcode" : "passthrough";
+            const std::string codec = route == direct_routes_.end() ? std::string{} : route->second.codec;
             body += "{\"sourceId\":\"" + json_escape(source.id) +
                     "\",\"endpoint\":\"/api/v1/sources/" + json_escape(source.id) +
-                    "/whep\",\"preferred\":\"direct\",\"fallback\":\"composite\"}";
+                    "/whep\",\"preferred\":\"direct\",\"fallback\":\"composite\"," +
+                    "\"strategy\":\"" + strategy + "\",\"codec\":\"" + json_escape(codec) + "\"}";
         }
         body += "]}";
         return response(http::status::ok, version, std::move(body));
@@ -261,7 +277,11 @@ public:
         if (source == document.sources.end())
             return response(http::status::not_found, request.version(),
                             error_body("source_not_found", "source not found"));
-        const auto route = ensure_direct_route(*source);
+        std::optional<std::string> route;
+        {
+            const std::lock_guard operation_lock(route_operation_mutex_);
+            route = ensure_playback_route(*source);
+        }
         if (!route)
             return response(http::status::bad_gateway, request.version(),
                             error_body("direct_route", "direct source routing is unavailable"));
@@ -282,6 +302,7 @@ public:
 
     void reconcile_sources()
     {
+        const std::lock_guard operation_lock(route_operation_mutex_);
         reconcile(controller_.private_document_snapshot());
     }
 
@@ -295,12 +316,16 @@ private:
         if (token.size() != token_length ||
             !std::all_of(token.begin(), token.end(), [](unsigned char character) { return std::isxdigit(character); }))
             return response(http::status::not_found, version, error_body("session_not_found", "session not found"));
-        const auto session = sessions_.find(std::string(token));
-        if (session == sessions_.end() || session->second.browser_prefix != browser_prefix)
-            return response(http::status::not_found, version, error_body("session_not_found", "session not found"));
-
-        const std::string upstream_url = std::move(session->second.upstream_url);
-        sessions_.erase(session);
+        std::string upstream_url;
+        {
+            const std::lock_guard lock(session_mutex_);
+            const auto session = sessions_.find(std::string(token));
+            if (session == sessions_.end() || session->second.browser_prefix != browser_prefix)
+                return response(http::status::not_found, version,
+                                error_body("session_not_found", "session not found"));
+            upstream_url = std::move(session->second.upstream_url);
+            sessions_.erase(session);
+        }
         const UpstreamResponse upstream = request_http(upstream_url, {}, "DELETE", {});
         if (!upstream.ok || (upstream.status != 200 && upstream.status != 204 && upstream.status != 404))
             return response(http::status::bad_gateway, version,
@@ -326,6 +351,9 @@ private:
         std::string path;
         std::string rtsp_url;
         std::string transport;
+        std::string codec;
+        bool transcode = false;
+        std::string hybrid_path;
     };
 
     struct UpstreamResponse {
@@ -387,7 +415,7 @@ private:
         curl_easy_setopt(handle, CURLOPT_URL, url_value.c_str());
         curl_easy_setopt(handle, CURLOPT_PROTOCOLS_STR, "http");
         curl_easy_setopt(handle, CURLOPT_CONNECTTIMEOUT_MS, 1500L);
-        curl_easy_setopt(handle, CURLOPT_TIMEOUT_MS, 10000L);
+        curl_easy_setopt(handle, CURLOPT_TIMEOUT_MS, 15000L);
         curl_easy_setopt(handle, CURLOPT_NOSIGNAL, 1L);
         curl_easy_setopt(handle, CURLOPT_WRITEFUNCTION, &write_body);
         curl_easy_setopt(handle, CURLOPT_WRITEDATA, &result.body);
@@ -451,10 +479,13 @@ private:
                                   std::string_view browser_prefix)
     {
         const unsigned int version = request.version();
-        prune_expired_sessions();
-        if (sessions_.size() >= maximum_sessions)
-            return response(http::status::too_many_requests, version,
-                            error_body("session_limit", "Too many active WebRTC playback sessions"));
+        {
+            const std::lock_guard lock(session_mutex_);
+            prune_expired_sessions();
+            if (sessions_.size() >= maximum_sessions)
+                return response(http::status::too_many_requests, version,
+                                error_body("session_limit", "Too many active WebRTC playback sessions"));
+        }
 
         const std::string create_url = std::string(upstream_origin) + "/" + std::string(path) + "/whep";
         UpstreamResponse upstream = request_http(create_url, request.body(), "POST", "application/sdp");
@@ -468,11 +499,25 @@ private:
                             error_body("whep_location", "WebRTC signaling returned an invalid session"));
 
         std::string token;
-        do {
-            token = random_token();
-        } while (sessions_.contains(token));
-        sessions_.emplace(token, Session{*upstream_location, std::chrono::steady_clock::now(),
-                                         std::string(browser_prefix)});
+        bool capacity_exhausted = false;
+        {
+            const std::lock_guard lock(session_mutex_);
+            prune_expired_sessions();
+            if (sessions_.size() >= maximum_sessions) {
+                capacity_exhausted = true;
+            } else {
+                do {
+                    token = random_token();
+                } while (sessions_.contains(token));
+                sessions_.emplace(token, Session{*upstream_location, std::chrono::steady_clock::now(),
+                                                 std::string(browser_prefix)});
+            }
+        }
+        if (capacity_exhausted) {
+            request_http(*upstream_location, {}, "DELETE", {});
+            return response(http::status::too_many_requests, version,
+                            error_body("session_limit", "Too many active WebRTC playback sessions"));
+        }
 
         HttpResponse result = response(http::status::created, version, std::move(upstream.body), "application/sdp");
         result.set(http::field::location, std::string(browser_prefix) + token);
@@ -481,25 +526,128 @@ private:
         return result;
     }
 
+    static std::optional<std::string> run_capture(const std::vector<std::string> &arguments,
+                                                   std::chrono::seconds timeout)
+    {
+        if (arguments.empty())
+            return std::nullopt;
+        int output_pipe[2] = {-1, -1};
+        if (pipe(output_pipe) != 0)
+            return std::nullopt;
+        std::vector<char *> raw;
+        raw.reserve(arguments.size() + 1);
+        for (const std::string &argument : arguments)
+            raw.push_back(const_cast<char *>(argument.c_str()));
+        raw.push_back(nullptr);
+
+        posix_spawn_file_actions_t actions;
+        if (posix_spawn_file_actions_init(&actions) != 0) {
+            close(output_pipe[0]);
+            close(output_pipe[1]);
+            return std::nullopt;
+        }
+        posix_spawn_file_actions_addopen(&actions, STDIN_FILENO, "/dev/null", O_RDONLY, 0);
+        posix_spawn_file_actions_addopen(&actions, STDERR_FILENO, "/dev/null", O_WRONLY, 0);
+        posix_spawn_file_actions_adddup2(&actions, output_pipe[1], STDOUT_FILENO);
+        posix_spawn_file_actions_addclose(&actions, output_pipe[0]);
+        posix_spawn_file_actions_addclose(&actions, output_pipe[1]);
+        pid_t child = -1;
+        const int spawn_result = posix_spawnp(&child, raw.front(), &actions, nullptr, raw.data(), environ);
+        posix_spawn_file_actions_destroy(&actions);
+        close(output_pipe[1]);
+        if (spawn_result != 0) {
+            close(output_pipe[0]);
+            return std::nullopt;
+        }
+
+        int status = 0;
+        bool finished = false;
+        const auto deadline = std::chrono::steady_clock::now() + timeout;
+        while (std::chrono::steady_clock::now() < deadline) {
+            const pid_t waited = waitpid(child, &status, WNOHANG);
+            if (waited == child) {
+                finished = true;
+                break;
+            }
+            if (waited < 0 && errno == ECHILD) {
+                finished = true;
+                break;
+            }
+            if (waited < 0 && errno != EINTR)
+                break;
+            std::this_thread::sleep_for(std::chrono::milliseconds(50));
+        }
+        if (!finished) {
+            kill(child, SIGKILL);
+            while (waitpid(child, &status, 0) < 0 && errno == EINTR) {
+            }
+        }
+        std::string output;
+        std::array<char, 256> buffer{};
+        for (;;) {
+            const ssize_t count = read(output_pipe[0], buffer.data(), buffer.size());
+            if (count > 0 && output.size() < 4096)
+                output.append(buffer.data(), static_cast<std::size_t>(count));
+            else if (count == 0)
+                break;
+            else if (count < 0 && errno != EINTR)
+                break;
+        }
+        close(output_pipe[0]);
+        while (!output.empty() && std::isspace(static_cast<unsigned char>(output.back())))
+            output.pop_back();
+        const std::size_t first = output.find_first_not_of(" \t\r\n");
+        if (first == std::string::npos)
+            return std::nullopt;
+        output.erase(0, first);
+        if (output.size() > 32 ||
+            !std::all_of(output.begin(), output.end(), [](unsigned char character) {
+                return std::isalnum(character) || character == '_';
+            }))
+            return std::nullopt;
+        return lowercase(output);
+    }
+
+    static bool browser_compatible_codec(std::string_view codec)
+    {
+        return codec == "h264" || codec == "vp8" || codec == "vp9" || codec == "av1";
+    }
+
+    void delete_config_path(std::string_view path)
+    {
+        if (path.empty())
+            return;
+        const std::string url = std::string(control_origin) + "/v3/config/paths/delete/" + std::string(path);
+        request_http(url, {}, "DELETE", {});
+    }
+
     std::optional<std::string> ensure_direct_route(const SceneSource &source)
     {
-        auto existing = direct_routes_.find(source.id);
-        const bool adding = existing == direct_routes_.end();
-        if (!adding && existing->second.rtsp_url == source.rtsp_url &&
-            existing->second.transport == source.transport)
-            return existing->second.path;
-
         DirectRoute route;
-        if (adding) {
-            if (direct_routes_.size() >= maximum_scene_sources)
-                return std::nullopt;
-            do {
-                route.path = "direct-" + random_token();
-            } while (std::any_of(direct_routes_.begin(), direct_routes_.end(), [&route](const auto &entry) {
-                return entry.second.path == route.path;
-            }));
-        } else {
-            route = existing->second;
+        bool adding = false;
+        std::string previous_hybrid_path;
+        {
+            const std::lock_guard lock(route_state_mutex_);
+            const auto existing = direct_routes_.find(source.id);
+            adding = existing == direct_routes_.end();
+            if (!adding && existing->second.rtsp_url == source.rtsp_url &&
+                existing->second.transport == source.transport)
+                return existing->second.path;
+            if (adding) {
+                if (direct_routes_.size() >= maximum_scene_sources)
+                    return std::nullopt;
+                do {
+                    route.path = "direct-" + random_token();
+                } while (std::any_of(direct_routes_.begin(), direct_routes_.end(), [&route](const auto &entry) {
+                    return entry.second.path == route.path;
+                }));
+            } else {
+                route = existing->second;
+                previous_hybrid_path = route.hybrid_path;
+                route.codec.clear();
+                route.transcode = false;
+                route.hybrid_path.clear();
+            }
         }
         route.rtsp_url = source.rtsp_url;
         route.transport = source.transport;
@@ -514,25 +662,91 @@ private:
         const UpstreamResponse configured = request_http(url, body, method, "application/json");
         if (!configured.ok || configured.status != 200)
             return std::nullopt;
-        direct_routes_[source.id] = route;
+        delete_config_path(previous_hybrid_path);
+        {
+            const std::lock_guard lock(route_state_mutex_);
+            direct_routes_[source.id] = route;
+        }
         return route.path;
+    }
+
+    std::optional<std::string> ensure_playback_route(const SceneSource &source)
+    {
+        const auto direct_path = ensure_direct_route(source);
+        if (!direct_path)
+            return std::nullopt;
+        DirectRoute route;
+        {
+            const std::lock_guard lock(route_state_mutex_);
+            route = direct_routes_.at(source.id);
+        }
+        if (route.codec.empty()) {
+            const std::string input = "rtsp://127.0.0.1:8554/" + route.path;
+            const auto codec = run_capture({"ffprobe", "-v", "error", "-rw_timeout", "8000000",
+                                            "-rtsp_transport", "tcp", "-select_streams", "v:0",
+                                            "-show_entries", "stream=codec_name", "-of",
+                                            "default=noprint_wrappers=1:nokey=1", input},
+                                           std::chrono::seconds(12));
+            if (!codec)
+                return std::nullopt;
+            route.codec = *codec;
+            route.transcode = !browser_compatible_codec(route.codec);
+            const std::lock_guard lock(route_state_mutex_);
+            direct_routes_.at(source.id).codec = route.codec;
+            direct_routes_.at(source.id).transcode = route.transcode;
+        }
+        if (!route.transcode)
+            return route.path;
+
+        if (route.hybrid_path.empty()) {
+            {
+                const std::lock_guard lock(route_state_mutex_);
+                do {
+                    route.hybrid_path = "hybrid-" + random_token();
+                } while (std::any_of(direct_routes_.begin(), direct_routes_.end(), [&route](const auto &entry) {
+                    return entry.second.hybrid_path == route.hybrid_path;
+                }));
+            }
+            const std::string command = "/opt/webobs/bin/transcode-on-demand " + route.path + " " +
+                                        route.hybrid_path;
+            const std::string body =
+                std::string("{\"source\":\"publisher\",\"overridePublisher\":false,\"maxReaders\":8,") +
+                "\"runOnDemand\":\"" + json_escape(command) +
+                "\",\"runOnDemandRestart\":false,\"runOnDemandStartTimeout\":\"10s\"," +
+                "\"runOnDemandCloseAfter\":\"2s\"}";
+            const std::string url = std::string(control_origin) + "/v3/config/paths/add/" + route.hybrid_path;
+            const UpstreamResponse configured = request_http(url, body, "POST", "application/json");
+            if (!configured.ok || configured.status != 200) {
+                route.hybrid_path.clear();
+                return std::nullopt;
+            }
+            const std::lock_guard lock(route_state_mutex_);
+            direct_routes_.at(source.id).hybrid_path = route.hybrid_path;
+        }
+        return route.hybrid_path;
     }
 
     void reconcile(const SceneDocument &document)
     {
-        for (auto iterator = direct_routes_.begin(); iterator != direct_routes_.end();) {
-            const bool present = std::any_of(document.sources.begin(), document.sources.end(),
-                                             [&iterator](const SceneSource &source) {
-                                                 return source.id == iterator->first;
-                                             });
-            if (present) {
-                ++iterator;
-                continue;
+        std::vector<DirectRoute> removed;
+        {
+            const std::lock_guard lock(route_state_mutex_);
+            for (auto iterator = direct_routes_.begin(); iterator != direct_routes_.end();) {
+                const bool present = std::any_of(document.sources.begin(), document.sources.end(),
+                                                 [&iterator](const SceneSource &source) {
+                                                     return source.id == iterator->first;
+                                                 });
+                if (present) {
+                    ++iterator;
+                    continue;
+                }
+                removed.push_back(iterator->second);
+                iterator = direct_routes_.erase(iterator);
             }
-            const std::string url = std::string(control_origin) + "/v3/config/paths/delete/" +
-                                    iterator->second.path;
-            request_http(url, {}, "DELETE", {});
-            iterator = direct_routes_.erase(iterator);
+        }
+        for (const DirectRoute &route : removed) {
+            delete_config_path(route.hybrid_path);
+            delete_config_path(route.path);
         }
     }
 
@@ -560,6 +774,9 @@ private:
 
     bool enabled_ = false;
     SceneController &controller_;
+    std::mutex session_mutex_;
+    std::mutex route_operation_mutex_;
+    std::mutex route_state_mutex_;
     std::unordered_map<std::string, Session> sessions_;
     std::unordered_map<std::string, DirectRoute> direct_routes_;
 };

@@ -14,6 +14,10 @@ authInternalUsers:
         path: program
       - action: read
         path: ~^direct-[a-f0-9]{32}$
+      - action: publish
+        path: ~^hybrid-[a-f0-9]{32}$
+      - action: read
+        path: ~^hybrid-[a-f0-9]{32}$
       - action: api
 
 api: true
@@ -25,7 +29,10 @@ metrics: false
 pprof: false
 playback: false
 
-rtsp: false
+rtsp: true
+rtspTransports: [tcp]
+rtspEncryption: "no"
+rtspAddress: 127.0.0.1:8554
 rtmp: false
 hls: false
 srt: false
@@ -42,7 +49,7 @@ webrtcAdditionalHosts: [127.0.0.1]
 webrtcICEServers2: []
 # OBS initializes x264 before its asynchronous WHIP handshake. Allow the next
 # fixed two-second IDR to arrive without forcing a needless first reconnect.
-webrtcTrackGatherTimeout: 5s
+webrtcTrackGatherTimeout: 12s
 
 pathDefaults:
   source: publisher

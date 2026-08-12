@@ -167,11 +167,13 @@ try {
     }
 
     foreach ($executablePath in @(
+        'gateway/transcode-on-demand.sh',
         'tests/run-contracts.sh',
         'tests/run-public-audit.sh',
         'tests/run-m1-real-camera.sh',
         'tests/run-real-camera.sh',
-        'tests/run-smoke.sh'
+        'tests/run-smoke.sh',
+        'tests/rtsp-fixture/publish-hevc.sh'
     )) {
         if (@($indexEntries | Where-Object { $_ -match "^100755 [0-9a-f]{40} 0`t$([Regex]::Escape($executablePath))$" }).Count -ne 1) {
             throw "Public-repository audit failed: '$executablePath' must remain executable in the Git index."

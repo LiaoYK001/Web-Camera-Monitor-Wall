@@ -19,6 +19,17 @@ services:
     depends_on:
       - mediamtx
 
+  fixture-hevc:
+    image: webobs-m0-rtsp-fixture:local
+    build:
+      context: ..
+      dockerfile: tests/rtsp-fixture/Dockerfile
+    entrypoint: ["/usr/local/bin/publish-hevc-stream"]
+    environment:
+      TEST_RTSP_URL: rtsp://mediamtx:8554/m3-hevc
+    depends_on:
+      - mediamtx
+
   webobs:
     image: webobs:m0
     build:
@@ -170,6 +181,44 @@ services:
       - "127.0.0.1:8189:8189/udp"
     depends_on:
       - fixture
+    stop_grace_period: 20s
+
+  webobs-hybrid:
+    image: webobs:m0
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+      args:
+        OBS_VERSION: "32.1.2"
+    entrypoint:
+      - /bin/sh
+      - -c
+      - install -m 0600 /test-scenes/m3-hybrid.json /test-config/scene.json && exec /opt/webobs/entrypoint.sh
+    environment:
+      WEBOBS_SCENE_FILE: /test-config/scene.json
+      WEBOBS_OUTPUT: /artifacts/${WEBOBS_HYBRID_RECORDING_NAME:-hybrid.mp4}
+      WEBOBS_DURATION_SECONDS: "0"
+      WEBOBS_FPS: "10"
+      WEBOBS_BITRATE_KBPS: "800"
+      WEBOBS_CONNECT_TIMEOUT_SECONDS: "12"
+      WEBOBS_LOG_LEVEL: info
+      WEBOBS_LISTEN_ADDRESS: 0.0.0.0
+      WEBOBS_HTTP_PORT: "8080"
+      WEBOBS_ALLOW_INSECURE_REMOTE: "true"
+      WEBOBS_WEBRTC_ENABLED: "true"
+      WEBOBS_WHIP_URL: http://127.0.0.1:8889/program/whip
+      MTX_WEBRTCADDITIONALHOSTS: 127.0.0.1
+    volumes:
+      - ./artifacts:/artifacts
+      - ./scenes:/test-scenes:ro
+    tmpfs:
+      - /test-config:mode=0700
+    ports:
+      - "127.0.0.1:18083:8080"
+      - "127.0.0.1:8189:8189/udp"
+    depends_on:
+      - fixture
+      - fixture-hevc
     stop_grace_period: 20s
 
   webobs-real-control:
