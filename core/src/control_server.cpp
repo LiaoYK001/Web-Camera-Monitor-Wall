@@ -1,6 +1,7 @@
 #include "webobs/control_server.hpp"
 
 #include "webobs/authentication.hpp"
+#include "webobs/audit_event.hpp"
 #include "webobs/scene_controller.hpp"
 #include "webobs/scene_document.hpp"
 
@@ -9,6 +10,7 @@
 #include <boost/beast/http.hpp>
 #include <boost/beast/websocket.hpp>
 #include <curl/curl.h>
+#include <util/base.h>
 
 #include <csignal>
 #include <fcntl.h>
@@ -1040,7 +1042,8 @@ struct ControlMetrics {
 HttpResponse authentication_response(AuthenticationDecision decision, unsigned int version,
                                      std::size_t retry_after_seconds)
 {
-    if (decision == AuthenticationDecision::rate_limited) {
+    if (decision == AuthenticationDecision::rate_limit_started ||
+        decision == AuthenticationDecision::rate_limited) {
         HttpResponse result = response(static_cast<http::status>(429), version,
                                        error_body("auth_rate_limited", "too many authentication failures"));
         result.set(http::field::retry_after, std::to_string(retry_after_seconds));
@@ -1067,6 +1070,15 @@ HttpResponse metrics_response(unsigned int version, const RuntimeStatus &status,
         std::string(metric(status.webrtc_configured.load())) + "\n" +
         "# TYPE webobs_webrtc_ready gauge\nwebobs_webrtc_ready " +
         std::string(metric(status.webrtc_ready.load())) + "\n" +
+        "# TYPE webobs_sources_visible gauge\nwebobs_sources_visible " +
+        std::to_string(status.source_visible.load()) + "\n" +
+        "# TYPE webobs_sources_healthy gauge\nwebobs_sources_healthy " +
+        std::to_string(status.source_healthy.load()) + "\n" +
+        "# TYPE webobs_sources_unhealthy gauge\nwebobs_sources_unhealthy " +
+        std::to_string(status.source_unhealthy.load()) + "\n" +
+        "# HELP webobs_source_restarts_total Automatic RTSP source restarts since process start.\n"
+        "# TYPE webobs_source_restarts_total counter\nwebobs_source_restarts_total " +
+        std::to_string(status.source_restarts.load()) + "\n" +
         "# HELP webobs_http_requests_total Parsed HTTP requests since process start.\n"
         "# TYPE webobs_http_requests_total counter\nwebobs_http_requests_total " +
         std::to_string(metrics.http_requests.load()) + "\n" +
@@ -1075,6 +1087,30 @@ HttpResponse metrics_response(unsigned int version, const RuntimeStatus &status,
         std::to_string(authenticator.failed_attempts()) + "\n";
     return response(http::status::ok, version, std::move(body),
                     "text/plain; version=0.0.4; charset=utf-8");
+}
+
+HttpResponse source_health_response(unsigned int version, SceneController &controller)
+{
+    const SourceHealthSnapshot snapshot = controller.source_health_snapshot();
+    std::string body = "{\"visible\":" + std::to_string(snapshot.visible) +
+                       ",\"healthy\":" + std::to_string(snapshot.healthy) +
+                       ",\"unhealthy\":" + std::to_string(snapshot.unhealthy) +
+                       ",\"totalRestarts\":" + std::to_string(snapshot.total_restarts) +
+                       ",\"sources\":[";
+    for (std::size_t index = 0; index < snapshot.sources.size(); ++index) {
+        const SourceHealthEntry &source = snapshot.sources[index];
+        if (index != 0)
+            body += ',';
+        body += "{\"id\":\"" + json_escape(source.id) + "\",\"kind\":\"" +
+                json_escape(source.kind) + "\",\"visible\":" +
+                std::string(source.visible ? "true" : "false") + ",\"state\":\"" +
+                json_escape(source.state) + "\",\"lastFrameAgeMs\":" +
+                (source.last_frame_age_ms < 0 ? std::string("null") :
+                 std::to_string(source.last_frame_age_ms)) +
+                ",\"restartCount\":" + std::to_string(source.restart_count) + "}";
+    }
+    body += "]}";
+    return response(http::status::ok, version, std::move(body));
 }
 
 HttpResponse handle_request(const HttpRequest &request, SceneController &controller, WebSocketHub &hub,
@@ -1101,6 +1137,8 @@ HttpResponse handle_request(const HttpRequest &request, SceneController &control
     }
     if (request.method() == http::verb::get && target == "/metrics")
         return metrics_response(version, runtime_status, metrics, authenticator);
+    if (request.method() == http::verb::get && target == "/api/v1/sources/status")
+        return source_health_response(version, controller);
 
     if (request.method() == http::verb::get && target == "/api/v1/program/status")
         return whep_proxy.status(version);
@@ -1227,12 +1265,20 @@ HttpResponse handle_request(const HttpRequest &request, SceneController &control
         case SceneUpdateStatus::success:
             break;
         }
+        const std::string revision = std::to_string(updated.revision);
+        const std::string audit = format_audit_event(
+            "scene_update", "rejected", {{"reason", code}, {"revision", revision}});
+        blog(LOG_WARNING, "%s", audit.c_str());
         HttpResponse result = response(status, version, error_body(code, updated.error, updated.revision));
         result.set(http::field::etag, etag(updated.revision));
         return result;
     }
 
     const std::string event = scene_event("scene.updated", updated.public_json);
+    const std::string revision = std::to_string(updated.revision);
+    const std::string audit =
+        format_audit_event("scene_update", "accepted", {{"revision", revision}});
+    blog(LOG_INFO, "%s", audit.c_str());
     whep_proxy.reconcile_sources();
     hub.broadcast(event);
     HttpResponse result = response(http::status::ok, version, updated.public_json);
@@ -1307,6 +1353,14 @@ private:
             const AuthenticationDecision decision =
                 authenticator_.authenticate(authorization, client_key_);
             if (decision != AuthenticationDecision::allowed) {
+                if (decision == AuthenticationDecision::invalid_credentials ||
+                    decision == AuthenticationDecision::rate_limit_started) {
+                    const std::string outcome =
+                        decision == AuthenticationDecision::rate_limit_started ? "rate_limited" : "rejected";
+                    const std::string audit = format_audit_event(
+                        "authentication", outcome, {{"client", client_key_}});
+                    blog(LOG_WARNING, "%s", audit.c_str());
+                }
                 send(authentication_response(decision, version, authenticator_.retry_after_seconds()));
                 return;
             }

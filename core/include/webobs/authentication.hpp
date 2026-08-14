@@ -19,6 +19,7 @@ enum class AuthenticationDecision {
     allowed,
     credentials_required,
     invalid_credentials,
+    rate_limit_started,
     rate_limited,
 };
 

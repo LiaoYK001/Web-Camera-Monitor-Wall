@@ -20,6 +20,7 @@ pkg_check_modules(JANSSON REQUIRED IMPORTED_TARGET jansson)
 
 add_library(webobs-common
     core/src/authentication.cpp
+    core/src/audit_event.cpp
     core/src/browser_security.cpp
     core/src/config.cpp
     core/src/redaction.cpp

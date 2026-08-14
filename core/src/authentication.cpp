@@ -125,7 +125,7 @@ AuthenticationDecision BasicAuthenticator::authenticate(
         entry = failures_.emplace(std::string(client_key), FailureWindow{now, 0}).first;
     }
     ++entry->second.failures;
-    return entry->second.failures >= failure_limit_ ? AuthenticationDecision::rate_limited
+    return entry->second.failures >= failure_limit_ ? AuthenticationDecision::rate_limit_started
                                                     : AuthenticationDecision::invalid_credentials;
 }
 

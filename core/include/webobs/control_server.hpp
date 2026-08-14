@@ -3,6 +3,7 @@
 #include "webobs/config.hpp"
 
 #include <atomic>
+#include <cstdint>
 #include <memory>
 #include <optional>
 #include <string>
@@ -15,10 +16,15 @@ struct RuntimeStatus {
     std::atomic<bool> recording_active{false};
     std::atomic<bool> webrtc_configured{false};
     std::atomic<bool> webrtc_ready{false};
+    std::atomic<std::uint64_t> source_visible{0};
+    std::atomic<std::uint64_t> source_healthy{0};
+    std::atomic<std::uint64_t> source_unhealthy{0};
+    std::atomic<std::uint64_t> source_restarts{0};
 
     [[nodiscard]] bool ready() const
     {
-        return recording_active.load() && (!webrtc_configured.load() || webrtc_ready.load());
+        return recording_active.load() && (!webrtc_configured.load() || webrtc_ready.load()) &&
+               source_unhealthy.load() == 0;
     }
 };
 

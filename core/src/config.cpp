@@ -35,6 +35,9 @@ constexpr SettingSpec setting_specs[] = {
     {"--auth-failure-limit", "WEBOBS_AUTH_FAILURE_LIMIT", "auth_failure_limit"},
     {"--auth-failure-window-seconds", "WEBOBS_AUTH_FAILURE_WINDOW_SECONDS", "auth_failure_window"},
     {"--control-allowed-origins", "WEBOBS_CONTROL_ALLOWED_ORIGINS", "control_allowed_origins"},
+    {"--source-stale-seconds", "WEBOBS_SOURCE_STALE_SECONDS", "source_stale_seconds"},
+    {"--source-recovery-base-seconds", "WEBOBS_SOURCE_RECOVERY_BASE_SECONDS", "source_recovery_base"},
+    {"--source-recovery-max-seconds", "WEBOBS_SOURCE_RECOVERY_MAX_SECONDS", "source_recovery_max"},
     {"--webrtc-enabled", "WEBOBS_WEBRTC_ENABLED", "webrtc_enabled"},
     {"--whip-url", "WEBOBS_WHIP_URL", "whip_url"},
     {"--browser-allowed-origins", "WEBOBS_BROWSER_ALLOWED_ORIGINS", "browser_allowed_origins"},
@@ -240,6 +243,8 @@ ParseResult parse_config(const std::vector<std::string> &arguments, const Enviro
         {"auth_username_file", ""}, {"auth_password_file", ""},
         {"auth_failure_limit", "5"}, {"auth_failure_window", "60"},
         {"control_allowed_origins", ""},
+        {"source_stale_seconds", "10"}, {"source_recovery_base", "5"},
+        {"source_recovery_max", "60"},
         {"webrtc_enabled", "false"}, {"whip_url", "http://127.0.0.1:8889/program/whip"},
         {"browser_allowed_origins", ""}, {"browser_allow_private_networks", "false"},
     };
@@ -336,6 +341,17 @@ ParseResult parse_config(const std::vector<std::string> &arguments, const Enviro
     if (config.http_port != 0 && !loopback && !config.allow_insecure_remote && !config.authentication)
         return failure("non-loopback HTTP listening requires authentication or --allow-insecure-remote true");
 
+    if (!parse_integer(values["source_stale_seconds"], 2, 300, config.source_stale_seconds))
+        return failure("source-stale-seconds must be between 2 and 300");
+    if (!parse_integer(values["source_recovery_base"], 1, 300,
+                       config.source_recovery_base_seconds))
+        return failure("source-recovery-base-seconds must be between 1 and 300");
+    if (!parse_integer(values["source_recovery_max"], 1, 3600,
+                       config.source_recovery_max_seconds))
+        return failure("source-recovery-max-seconds must be between 1 and 3600");
+    if (config.source_recovery_max_seconds < config.source_recovery_base_seconds)
+        return failure("source-recovery-max-seconds must not be less than source-recovery-base-seconds");
+
     if (!parse_boolean(values["webrtc_enabled"], config.webrtc_enabled))
         return failure("webrtc-enabled must be true or false");
     config.whip_url = values["whip_url"];
@@ -421,6 +437,9 @@ Options:
   --auth-failure-limit <n>          Invalid attempts per client/window (default: 5)
   --auth-failure-window-seconds <n> Failure window and lockout duration (default: 60)
   --control-allowed-origins <csv>   Authenticated HTTPS origins allowed beyond loopback
+  --source-stale-seconds <n>        No-new-frame threshold (default: 10)
+  --source-recovery-base-seconds <n> Initial RTSP restart backoff (default: 5)
+  --source-recovery-max-seconds <n>  Maximum RTSP restart backoff (default: 60)
   --webrtc-enabled <bool>          Publish the program through WHIP (default: false)
   --whip-url <url>                 WHIP publish URL (default: internal MediaMTX)
   --browser-allowed-origins <csv>  Exact HTTP(S) origins permitted for browser sources

@@ -363,6 +363,9 @@ services:
       WEBOBS_AUTH_FAILURE_LIMIT: "3"
       WEBOBS_AUTH_FAILURE_WINDOW_SECONDS: "2"
       WEBOBS_CONTROL_ALLOWED_ORIGINS: https://monitor.example.invalid
+      WEBOBS_SOURCE_STALE_SECONDS: "2"
+      WEBOBS_SOURCE_RECOVERY_BASE_SECONDS: "1"
+      WEBOBS_SOURCE_RECOVERY_MAX_SECONDS: "4"
       WEBOBS_WEBRTC_ENABLED: "false"
     volumes:
       - ./artifacts:/artifacts

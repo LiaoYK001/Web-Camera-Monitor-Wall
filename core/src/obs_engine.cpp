@@ -288,6 +288,14 @@ bool wait_for_webrtc_connection(obs_output_t *output, const OutputState &state, 
     return false;
 }
 
+void update_source_runtime_status(RuntimeStatus &status, const SourceHealthSnapshot &snapshot)
+{
+    status.source_visible.store(snapshot.visible);
+    status.source_healthy.store(snapshot.healthy);
+    status.source_unhealthy.store(snapshot.unhealthy);
+    status.source_restarts.store(snapshot.total_restarts);
+}
+
 } // namespace
 
 ExitCode run_obs_engine(const Config &config, const SceneDocument &document)
@@ -361,7 +369,10 @@ ExitCode run_obs_engine(const Config &config, const SceneDocument &document)
         return ExitCode::obs_initialization_failed;
     obs_post_load_modules();
 
-    ObsSceneRuntime scene_runtime(config.connect_timeout_seconds, config.browser_security);
+    ObsSceneRuntime scene_runtime(config.connect_timeout_seconds, config.browser_security,
+                                  config.source_stale_seconds,
+                                  config.source_recovery_base_seconds,
+                                  config.source_recovery_max_seconds);
     if (const auto prepare_error = scene_runtime.prepare(document)) {
         blog(LOG_ERROR, "Could not prepare OBS scene: %s", prepare_error->c_str());
         return ExitCode::obs_initialization_failed;
@@ -484,6 +495,8 @@ ExitCode run_obs_engine(const Config &config, const SceneDocument &document)
     SceneController scene_controller(document, config.scene_file, scene_runtime);
     RuntimeStatus runtime_status;
     runtime_status.webrtc_configured.store(config.webrtc_enabled);
+    scene_runtime.maintain_source_health();
+    update_source_runtime_status(runtime_status, scene_runtime.source_health_snapshot());
     ControlServer control_server(config, scene_controller, runtime_status);
     if (const auto server_error = control_server.start()) {
         blog(LOG_ERROR, "Could not start the HTTP control server: %s", server_error->c_str());
@@ -543,10 +556,17 @@ ExitCode run_obs_engine(const Config &config, const SceneDocument &document)
     runtime_status.webrtc_ready.store(whip_output != nullptr);
 
     const auto recording_started = std::chrono::steady_clock::now();
+    auto next_health_maintenance = recording_started;
     bool unexpected_stop = false;
     while (!stop_requested) {
+        const auto now = std::chrono::steady_clock::now();
+        if (now >= next_health_maintenance) {
+            scene_runtime.maintain_source_health();
+            update_source_runtime_status(runtime_status, scene_runtime.source_health_snapshot());
+            next_health_maintenance = now + std::chrono::milliseconds(500);
+        }
         if (config.duration_seconds > 0 &&
-            std::chrono::steady_clock::now() - recording_started >= std::chrono::seconds(config.duration_seconds))
+            now - recording_started >= std::chrono::seconds(config.duration_seconds))
             break;
         if (output_state.stopped.load()) {
             unexpected_stop = true;

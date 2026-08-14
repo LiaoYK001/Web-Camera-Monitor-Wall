@@ -10,9 +10,9 @@ This roadmap describes milestone order and acceptance gates, not promised releas
 
 **🚧 M6 — Production 正在开发；当前位于认证与可观测入口切片。**
 
-M0 through M5 are complete. M6 has started with optional file-backed single-operator Basic authentication across UI, REST, WebSocket, WHEP, and metrics; explicit remote HTTPS Origin/Host authorization; bounded failed-authentication rate limiting; public liveness/readiness; authenticated Prometheus metrics; and a Docker healthcheck. M6 is not complete: TLS termination, TURN, audit/recovery work, GPU detection, backup/restore, and upgrade/rollback remain open.
+M0 through M5 are complete. M6 now includes optional file-backed single-operator Basic authentication across UI, REST, WebSocket, WHEP, and metrics; explicit remote HTTPS Origin/Host authorization; bounded failed-authentication rate limiting; frame-freshness source health; exponential-backoff RTSP recovery; structured audit events; bounded Docker logs; public liveness/readiness; authenticated Prometheus metrics; and a Docker healthcheck. M6 is not complete: TLS termination, TURN, GPU detection, backup/restore, and upgrade/rollback remain open.
 
-M0 至 M5 已全部完成。M6 已从生产控制入口开始：UI、REST、WebSocket、WHEP 与指标可统一启用文件型单操作员 Basic 认证，并加入明确的远程 HTTPS Origin/Host 授权、有限认证失败限流、公开存活/就绪探针、受认证 Prometheus 指标和 Docker healthcheck。M6 尚未完成：TLS 终止、TURN、审计与恢复、GPU 检测、备份恢复及升级回滚仍待开发。
+M0 至 M5 已全部完成。M6 现已包含 UI、REST、WebSocket、WHEP 与指标统一文件型单操作员 Basic 认证、明确的远程 HTTPS Origin/Host 授权、有限认证失败限流、帧新鲜度来源健康、指数退避 RTSP 恢复、结构化审计事件、有界 Docker 日志、公开存活/就绪探针、受认证 Prometheus 指标和 Docker healthcheck。M6 尚未完成：TLS 终止、TURN、GPU 检测、备份恢复及升级回滚仍待开发。
 
 ```text
 M0 complete       M1 complete       M2 complete       M3 complete       M4 complete       M5 complete       M6 in progress
@@ -59,6 +59,7 @@ M0 已于 2026-08-11 在真实摄像头门禁通过后完成。后续修改采�
 - M5 real-audio acceptance / M5 真实音频验收：a private HEVC plus G.711 A-law source passed both Composite and Direct/Hybrid browser sessions and produced two finalized 30.941-second 640×360, 25 FPS H.264/AAC 48 kHz stereo recordings with non-silent audio and zero black frames. The endpoint and recordings remain private / 私有 HEVC + G.711 A-law 来源通过 Composite 与 Direct/Hybrid 浏览器会话，并生成两份 30.941 秒、640×360、25 FPS、H.264/AAC 48 kHz 双声道、非静音且零黑帧的最终录像；端点和录像保持私有。
 - M6 opening security slice / M6 安全起步切片：file-backed credentials protected static UI, REST, WebSocket, and WHEP under one boundary; allowlisted HTTPS authorities passed while foreign Origin and Host values failed; three invalid credentials triggered a bounded `429` lockout and recovered after expiry; public probes, authenticated metrics, Docker health, credential-free logs, graceful stop, and a finalized 6.621-second recording passed together / 文件型凭据统一保护静态 UI、REST、WebSocket 与 WHEP；允许的 HTTPS authority 通过而外部 Origin/Host 被拒绝；三次错误凭据触发有限 `429` 锁定并在到期后恢复；公开探针、受认证指标、Docker 健康状态、无凭据日志、优雅停止及 6.621 秒最终录像联合通过。
 - M6 compatibility regression / M6 兼容性回归：the rebuilt final image passed container CTest and dynamic-library closure, then the complete M0–M3 aggregate suite, M4 browser-source acceptance, and M5 deterministic audio acceptance; the latest M4 and M5 recordings were finalized at 12.621 and 38.921 seconds / 重建后的最终镜像通过容器 CTest 与动态库闭包，并继续通过 M0–M3 完整聚合套件、M4 浏览器源验收及 M5 确定性音频验收；最新 M4 与 M5 录像分别完整封装为 12.621 秒和 38.921 秒。
+- M6 health and recovery / M6 健康与恢复：two visible RTSP sources started healthy, became stale after their publisher stopped, degraded readiness and aggregate metrics, requested bounded exponential-backoff libobs restarts, then returned healthy after publication resumed. Credential-free status output, structured authentication/scene/recovery audit events, clean exit, and a finalized 19.621-second H.264/AAC recording passed together / 两路可见 RTSP 来源从健康状态开始，在发布端停止后变为陈旧并降低 readiness 与聚合指标，按有界指数退避请求 libobs 重启，并在发布恢复后重新健康；无凭据状态输出、结构化认证/场景/恢复审计事件、正常退出及 19.621 秒 H.264/AAC 最终录像联合通过。
 
 ## Milestones / 里程碑
 
@@ -189,7 +190,7 @@ M5 已于 2026-08-15 完成：多来源确定性音频及 M0–M4 全回归通�
 - [x] Add public detail-free liveness/readiness, authenticated Prometheus baseline metrics, and Docker healthcheck / 增加不暴露细节的公开存活/就绪探针、受认证 Prometheus 基线指标和 Docker healthcheck
 - [x] Add a Compose secret-file overlay, deterministic authentication/redaction acceptance, and deployment boundary documentation / 增加 Compose secret 文件覆盖、确定性认证/脱敏验收和部署边界文档
 - [ ] Add trusted HTTPS termination deployment and TURN configuration/acceptance / 增加受信 HTTPS 终止部署与 TURN 配置/验收
-- [ ] Add structured audit logs, bounded log retention, source health, reconnect, and recovery acceptance / 增加结构化审计日志、日志保留边界、来源健康、重连与恢复验收
+- [x] Add structured audit logs, bounded log retention, frame-freshness source health, exponential-backoff reconnect, and recovery acceptance / 增加结构化审计日志、有界日志保留、帧新鲜度来源健康、指数退避重连与恢复验收
 - [ ] Add CPU/VAAPI/QSV/NVIDIA detection with safe software fallback / 增加 CPU/VAAPI/QSV/NVIDIA 检测及安全软件回退
 - [ ] Add scene backup/restore plus image provenance, upgrade, rollback, and GPL source-distribution procedures / 增加场景备份恢复、镜像来源、升级回滚及 GPL 源码分发流程
 

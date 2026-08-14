@@ -1,5 +1,6 @@
 #include "webobs/config.hpp"
 #include "webobs/authentication.hpp"
+#include "webobs/audit_event.hpp"
 #include "webobs/browser_security.hpp"
 #include "webobs/redaction.hpp"
 #include "webobs/scene_document.hpp"
@@ -98,6 +99,20 @@ void config_tests()
                                   empty_environment);
     expect(result.ok() && result.config && result.config->allow_insecure_remote,
            "explicit insecure-remote opt-in must allow a container listener");
+
+    result = webobs::parse_config(
+        {"--scene-file", "/config/webobs/scene.json", "--source-stale-seconds", "4",
+         "--source-recovery-base-seconds", "2", "--source-recovery-max-seconds", "8"},
+        empty_environment);
+    expect(result.ok() && result.config && result.config->source_stale_seconds == 4 &&
+               result.config->source_recovery_base_seconds == 2 &&
+               result.config->source_recovery_max_seconds == 8,
+           "source health and recovery settings must parse within bounds");
+    result = webobs::parse_config(
+        {"--scene-file", "/config/webobs/scene.json", "--source-recovery-base-seconds", "10",
+         "--source-recovery-max-seconds", "5"},
+        empty_environment);
+    expect(!result.ok(), "source recovery maximum must not be below its base backoff");
 
     char auth_directory_template[] = "/tmp/webobs-auth-config-XXXXXX";
     const char *auth_directory = mkdtemp(auth_directory_template);
@@ -264,7 +279,7 @@ void authentication_tests()
                webobs::AuthenticationDecision::invalid_credentials,
            "incorrect Basic credentials must be rejected");
     expect(authenticator.authenticate("Basic Zm9vOmJhcg==", "client-a", start + 1s) ==
-               webobs::AuthenticationDecision::rate_limited,
+               webobs::AuthenticationDecision::rate_limit_started,
            "repeated incorrect credentials must trigger the bounded failure window");
     expect(authenticator.authenticate("Basic dXNlcjpwYXNzd29yZA==", "client-a", start + 2s) ==
                webobs::AuthenticationDecision::rate_limited,
@@ -283,6 +298,40 @@ void authentication_tests()
     expect(authenticator.authenticate("Basic dXNlcjpwYXNzd29yZA=", "client-d", start) ==
                webobs::AuthenticationDecision::invalid_credentials,
            "non-canonical Base64 must be rejected");
+}
+
+void audit_event_tests()
+{
+    const std::string credential_url =
+        std::string("rtsp") + "://" + "audit-user:audit-password@camera.invalid/live";
+    const std::string redacted_url =
+        std::string("rtsp") + "://" + "***:***@camera.invalid/live";
+    const std::string event = webobs::format_audit_event(
+        "source_health", "rejected",
+        {{"source_id", "camera-one"},
+         {"detail", credential_url},
+         {"Invalid-Key", "must-not-appear"}});
+    expect(event.find("\"component\":\"webobsd\"") != std::string::npos &&
+               event.find("\"event\":\"source_health\"") != std::string::npos &&
+               event.find("camera-one") != std::string::npos,
+           "audit events must use deterministic structured JSON fields");
+    expect(event.find("audit-user") == std::string::npos &&
+               event.find("audit-password") == std::string::npos &&
+               event.find(redacted_url) != std::string::npos,
+           "audit event values must pass through URL credential redaction");
+    expect(event.find("Invalid-Key") == std::string::npos &&
+               event.find("must-not-appear") == std::string::npos,
+           "audit events must reject unstructured field names");
+
+    const std::string long_password(300, 'p');
+    const std::string long_url =
+        std::string("rtsp") + "://" + "test-user:" + long_password + "@camera.invalid/live";
+    const std::string long_event =
+        webobs::format_audit_event("source_health", "rejected", {{"detail", long_url}});
+    expect(long_event.find("test-user") == std::string::npos &&
+               long_event.find(std::string(32, 'p')) == std::string::npos &&
+               long_event.find(redacted_url) != std::string::npos,
+           "audit event values must redact complete URLs before applying field length limits");
 }
 
 void redaction_tests()
@@ -778,6 +827,7 @@ int main()
 {
     config_tests();
     authentication_tests();
+    audit_event_tests();
     redaction_tests();
     browser_security_tests();
     scene_document_tests();

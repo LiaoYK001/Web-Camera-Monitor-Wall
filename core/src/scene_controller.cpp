@@ -60,6 +60,12 @@ SceneDocument SceneController::private_document_snapshot() const
     return document_;
 }
 
+SourceHealthSnapshot SceneController::source_health_snapshot() const
+{
+    std::lock_guard lock(mutex_);
+    return runtime_.source_health_snapshot();
+}
+
 SceneUpdateResult SceneController::replace(std::string_view candidate_json,
                                            std::optional<std::uint64_t> expected_revision)
 {

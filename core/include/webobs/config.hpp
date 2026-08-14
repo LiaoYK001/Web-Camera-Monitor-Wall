@@ -28,6 +28,9 @@ struct Config {
     int auth_failure_limit = 5;
     int auth_failure_window_seconds = 60;
     std::vector<std::string> control_allowed_origins;
+    int source_stale_seconds = 10;
+    int source_recovery_base_seconds = 5;
+    int source_recovery_max_seconds = 60;
     bool webrtc_enabled = false;
     std::string whip_url = "http://127.0.0.1:8889/program/whip";
     BrowserSecurityPolicy browser_security;

@@ -1,5 +1,7 @@
 #include "webobs/obs_scene_runtime.hpp"
 
+#include "webobs/audit_event.hpp"
+
 #include <obs.h>
 #include <callback/calldata.h>
 #include <graphics/vec2.h>
@@ -9,6 +11,8 @@
 #include <chrono>
 #include <cstring>
 #include <memory>
+#include <mutex>
+#include <new>
 #include <string>
 #include <string_view>
 #include <thread>
@@ -44,8 +48,59 @@ using ScenePtr = std::unique_ptr<obs_scene_t, SceneDeleter>;
 
 struct SourceStatus {
     std::atomic_bool started = false;
+    std::atomic_uint64_t frame_count = 0;
     std::chrono::steady_clock::time_point activated_at{};
+    std::chrono::steady_clock::time_point last_frame_at{};
+    std::chrono::steady_clock::time_point next_recovery_at{};
+    std::uint64_t last_observed_frame_count = 0;
+    std::uint64_t restart_count = 0;
+    unsigned int consecutive_restarts = 0;
+    bool recovering = false;
+    bool stale_reported = false;
 };
+
+const char *health_filter_name(void *)
+{
+    return "WebOBS frame health filter";
+}
+
+void *health_filter_create(obs_data_t *settings, obs_source_t *)
+{
+    const auto address = static_cast<std::uintptr_t>(obs_data_get_int(settings, "status_address"));
+    const auto *status = reinterpret_cast<const std::shared_ptr<SourceStatus> *>(address);
+    if (!status || !*status)
+        return nullptr;
+    return new (std::nothrow) std::shared_ptr<SourceStatus>(*status);
+}
+
+void health_filter_destroy(void *data)
+{
+    delete static_cast<std::shared_ptr<SourceStatus> *>(data);
+}
+
+obs_source_frame *health_filter_video(void *data, obs_source_frame *frame)
+{
+    const auto *status = static_cast<const std::shared_ptr<SourceStatus> *>(data);
+    if (status && *status && frame)
+        (*status)->frame_count.fetch_add(1, std::memory_order_relaxed);
+    return frame;
+}
+
+void register_source_health_filter()
+{
+    static std::once_flag registered;
+    std::call_once(registered, [] {
+        obs_source_info info{};
+        info.id = "webobs_frame_health_filter";
+        info.type = OBS_SOURCE_TYPE_FILTER;
+        info.output_flags = OBS_SOURCE_VIDEO | OBS_SOURCE_ASYNC;
+        info.get_name = health_filter_name;
+        info.create = health_filter_create;
+        info.destroy = health_filter_destroy;
+        info.filter_video = health_filter_video;
+        obs_register_source(&info);
+    });
+}
 
 void on_source_started(void *parameter, calldata_t *)
 {
@@ -212,6 +267,31 @@ SourceEntry create_source_entry(const SceneSource &configuration, int connect_ti
     if (configuration.kind == "rtsp")
         signal_handler_connect(obs_source_get_signal_handler(entry.source.get()), "media_started",
                                on_source_started, entry.status.get());
+    if (configuration.kind == "rtsp") {
+        DataPtr filter_settings(obs_data_create());
+        if (!filter_settings) {
+            entry.source.reset();
+            entry.status.reset();
+            return entry;
+        }
+        obs_data_set_int(filter_settings.get(), "status_address",
+                         static_cast<long long>(reinterpret_cast<std::uintptr_t>(&entry.status)));
+        const std::string filter_name = internal_name + " frame health";
+        SourcePtr filter(obs_source_create_private("webobs_frame_health_filter", filter_name.c_str(),
+                                                   filter_settings.get()));
+        if (!filter) {
+            entry.source.reset();
+            entry.status.reset();
+            return entry;
+        }
+        const std::size_t previous_filter_count = obs_source_filter_count(entry.source.get());
+        obs_source_filter_add(entry.source.get(), filter.get());
+        if (obs_source_filter_count(entry.source.get()) != previous_filter_count + 1) {
+            entry.source.reset();
+            entry.status.reset();
+            return entry;
+        }
+    }
     return entry;
 }
 
@@ -339,6 +419,55 @@ bool source_ready(const SourceEntry &entry)
            obs_source_get_width(entry.source.get()) > 0 && obs_source_get_height(entry.source.get()) > 0;
 }
 
+bool observe_latest_frame(SourceEntry &entry, std::chrono::steady_clock::time_point now)
+{
+    if (!entry.source || entry.configuration.kind != "rtsp")
+        return false;
+    const std::uint64_t frame_count = entry.status->frame_count.load(std::memory_order_relaxed);
+    if (frame_count == entry.status->last_observed_frame_count)
+        return false;
+
+    const bool recovered = entry.status->recovering || entry.status->stale_reported;
+    entry.status->last_observed_frame_count = frame_count;
+    entry.status->last_frame_at = now;
+    entry.status->consecutive_restarts = 0;
+    entry.status->recovering = false;
+    entry.status->next_recovery_at = {};
+    entry.status->stale_reported = false;
+    if (recovered) {
+        const std::string restarts = std::to_string(entry.status->restart_count);
+        const std::string event = format_audit_event(
+            "source_health", "recovered",
+            {{"source_id", entry.configuration.id}, {"restart_count", restarts}});
+        blog(LOG_INFO, "%s", event.c_str());
+    }
+    return true;
+}
+
+std::string source_health_state(const SourceEntry &entry, bool visible,
+                                std::chrono::steady_clock::time_point now,
+                                std::chrono::seconds stale_threshold)
+{
+    if (!visible)
+        return "idle";
+    if (entry.configuration.kind == "browser") {
+        if (source_ready(entry))
+            return "healthy";
+        if (entry.status->activated_at != std::chrono::steady_clock::time_point{} &&
+            now - entry.status->activated_at < stale_threshold)
+            return "starting";
+        return "stale";
+    }
+    if (entry.status->last_frame_at != std::chrono::steady_clock::time_point{} &&
+        now - entry.status->last_frame_at < stale_threshold)
+        return "healthy";
+    if (entry.status->last_frame_at == std::chrono::steady_clock::time_point{} &&
+        entry.status->activated_at != std::chrono::steady_clock::time_point{} &&
+        now - entry.status->activated_at < stale_threshold)
+        return "starting";
+    return entry.status->recovering ? "recovering" : "stale";
+}
+
 bool prime_source_frame(SourceEntry &entry)
 {
     if (entry.configuration.kind == "browser")
@@ -350,6 +479,9 @@ bool prime_source_frame(SourceEntry &entry)
     if (!frame)
         return false;
     obs_source_set_video_frame(entry.source.get(), frame);
+    entry.status->last_observed_frame_count =
+        entry.status->frame_count.load(std::memory_order_relaxed);
+    entry.status->last_frame_at = std::chrono::steady_clock::now();
     obs_source_release_frame(entry.source.get(), frame);
     entry.frame_primed = true;
     return source_ready(entry);
@@ -371,21 +503,34 @@ void release_prewarmed_sources(RuntimeState *state)
 } // namespace
 
 struct ObsSceneRuntime::Impl {
-    Impl(int timeout, BrowserSecurityPolicy policy)
-        : connect_timeout_seconds(timeout), browser_security(std::move(policy))
+    Impl(int timeout, BrowserSecurityPolicy policy, int stale_seconds, int recovery_base_seconds,
+         int recovery_max_seconds)
+        : connect_timeout_seconds(timeout), browser_security(std::move(policy)),
+          source_stale_seconds(stale_seconds), source_recovery_base_seconds(recovery_base_seconds),
+          source_recovery_max_seconds(recovery_max_seconds)
     {
     }
 
+    mutable std::mutex mutex;
     int connect_timeout_seconds;
     BrowserSecurityPolicy browser_security;
+    int source_stale_seconds;
+    int source_recovery_base_seconds;
+    int source_recovery_max_seconds;
+    std::uint64_t total_restarts = 0;
     bool active = false;
     std::unique_ptr<RuntimeState> current;
     std::unique_ptr<RuntimeState> prepared;
 };
 
-ObsSceneRuntime::ObsSceneRuntime(int connect_timeout_seconds, BrowserSecurityPolicy browser_security)
-    : impl_(std::make_unique<Impl>(connect_timeout_seconds, std::move(browser_security)))
+ObsSceneRuntime::ObsSceneRuntime(int connect_timeout_seconds, BrowserSecurityPolicy browser_security,
+                                 int source_stale_seconds, int source_recovery_base_seconds,
+                                 int source_recovery_max_seconds)
+    : impl_(std::make_unique<Impl>(connect_timeout_seconds, std::move(browser_security),
+                                  source_stale_seconds, source_recovery_base_seconds,
+                                  source_recovery_max_seconds))
 {
+    register_source_health_filter();
 }
 
 ObsSceneRuntime::~ObsSceneRuntime()
@@ -395,6 +540,7 @@ ObsSceneRuntime::~ObsSceneRuntime()
 
 std::optional<std::string> ObsSceneRuntime::prepare(const SceneDocument &document)
 {
+    std::lock_guard lock(impl_->mutex);
     impl_->prepared.reset();
     if (const auto validation_error = validate_scene_document(document))
         return validation_error;
@@ -466,11 +612,13 @@ std::optional<std::string> ObsSceneRuntime::prepare(const SceneDocument &documen
 
 bool ObsSceneRuntime::has_prepared() const
 {
+    std::lock_guard lock(impl_->mutex);
     return impl_->prepared != nullptr;
 }
 
 std::optional<std::string> ObsSceneRuntime::wait_prepared_visible_sources()
 {
+    std::lock_guard lock(impl_->mutex);
     if (!impl_->prepared)
         return "no OBS scene replacement is prepared";
 
@@ -501,11 +649,13 @@ std::optional<std::string> ObsSceneRuntime::wait_prepared_visible_sources()
 
 void ObsSceneRuntime::discard_prepared()
 {
+    std::lock_guard lock(impl_->mutex);
     impl_->prepared.reset();
 }
 
 void ObsSceneRuntime::commit_prepared()
 {
+    std::lock_guard lock(impl_->mutex);
     if (!impl_->prepared)
         return;
     for (const auto &[id, entry] : impl_->prepared->sources) {
@@ -537,6 +687,7 @@ void ObsSceneRuntime::commit_prepared()
 
 void ObsSceneRuntime::activate()
 {
+    std::lock_guard lock(impl_->mutex);
     if (impl_->active)
         return;
     impl_->active = true;
@@ -546,7 +697,10 @@ void ObsSceneRuntime::activate()
 
 void ObsSceneRuntime::deactivate()
 {
-    if (!impl_ || !impl_->active)
+    if (!impl_)
+        return;
+    std::lock_guard lock(impl_->mutex);
+    if (!impl_->active)
         return;
     obs_set_output_source(0, nullptr);
     release_prewarmed_sources(impl_->current.get());
@@ -555,11 +709,13 @@ void ObsSceneRuntime::deactivate()
 
 std::size_t ObsSceneRuntime::visible_source_count() const
 {
+    std::lock_guard lock(impl_->mutex);
     return visible_source_ids(impl_->current.get()).size();
 }
 
 std::size_t ObsSceneRuntime::ready_visible_source_count() const
 {
+    std::lock_guard lock(impl_->mutex);
     const auto visible = visible_source_ids(impl_->current.get());
     return static_cast<std::size_t>(std::count_if(visible.begin(), visible.end(), [this](const std::string &id) {
         const auto source = impl_->current->sources.find(id);
@@ -569,6 +725,7 @@ std::size_t ObsSceneRuntime::ready_visible_source_count() const
 
 std::vector<std::string> ObsSceneRuntime::pending_visible_source_ids() const
 {
+    std::lock_guard lock(impl_->mutex);
     std::vector<std::string> result;
     const auto visible = visible_source_ids(impl_->current.get());
     for (const std::string &id : visible) {
@@ -578,6 +735,91 @@ std::vector<std::string> ObsSceneRuntime::pending_visible_source_ids() const
     }
     std::sort(result.begin(), result.end());
     return result;
+}
+
+void ObsSceneRuntime::maintain_source_health()
+{
+    std::lock_guard lock(impl_->mutex);
+    if (!impl_->current || !impl_->active)
+        return;
+    const auto now = std::chrono::steady_clock::now();
+    const auto stale_threshold = std::chrono::seconds(impl_->source_stale_seconds);
+    const auto visible = visible_source_ids(impl_->current.get());
+    for (auto &[id, entry] : impl_->current->sources) {
+        const bool is_visible = visible.contains(id);
+        if (!is_visible)
+            continue;
+        observe_latest_frame(entry, now);
+        const std::string state = source_health_state(entry, true, now, stale_threshold);
+        if (state == "healthy" || state == "starting")
+            continue;
+        if (!entry.status->stale_reported) {
+            entry.status->stale_reported = true;
+            const std::string event = format_audit_event(
+                "source_health", "unavailable", {{"source_id", id}, {"source_kind", entry.configuration.kind}});
+            blog(LOG_WARNING, "%s", event.c_str());
+        }
+        if (entry.configuration.kind != "rtsp" ||
+            (entry.status->next_recovery_at != std::chrono::steady_clock::time_point{} &&
+             now < entry.status->next_recovery_at))
+            continue;
+
+        obs_source_media_restart(entry.source.get());
+        ++entry.status->restart_count;
+        ++impl_->total_restarts;
+        ++entry.status->consecutive_restarts;
+        entry.status->recovering = true;
+        int backoff = impl_->source_recovery_base_seconds;
+        for (unsigned int attempt = 1; attempt < entry.status->consecutive_restarts &&
+                                       backoff < impl_->source_recovery_max_seconds;
+             ++attempt) {
+            backoff = std::min(backoff * 2, impl_->source_recovery_max_seconds);
+        }
+        entry.status->next_recovery_at = now + std::chrono::seconds(backoff);
+        const std::string restart_count = std::to_string(entry.status->restart_count);
+        const std::string retry_seconds = std::to_string(backoff);
+        const std::string event = format_audit_event(
+            "source_recovery", "restart_requested",
+            {{"source_id", id}, {"restart_count", restart_count}, {"next_retry_seconds", retry_seconds}});
+        blog(LOG_WARNING, "%s", event.c_str());
+    }
+}
+
+SourceHealthSnapshot ObsSceneRuntime::source_health_snapshot() const
+{
+    std::lock_guard lock(impl_->mutex);
+    SourceHealthSnapshot snapshot;
+    snapshot.total_restarts = impl_->total_restarts;
+    if (!impl_->current)
+        return snapshot;
+    const auto now = std::chrono::steady_clock::now();
+    const auto stale_threshold = std::chrono::seconds(impl_->source_stale_seconds);
+    const auto visible = visible_source_ids(impl_->current.get());
+    snapshot.sources.reserve(impl_->current->sources.size());
+    for (const auto &[id, entry] : impl_->current->sources) {
+        SourceHealthEntry health;
+        health.id = id;
+        health.kind = entry.configuration.kind;
+        health.visible = visible.contains(id);
+        health.state = source_health_state(entry, health.visible, now, stale_threshold);
+        health.restart_count = entry.status->restart_count;
+        if (entry.status->last_frame_at != std::chrono::steady_clock::time_point{})
+            health.last_frame_age_ms =
+                std::chrono::duration_cast<std::chrono::milliseconds>(now - entry.status->last_frame_at).count();
+        if (health.visible) {
+            ++snapshot.visible;
+            if (health.state == "healthy")
+                ++snapshot.healthy;
+            else
+                ++snapshot.unhealthy;
+        }
+        snapshot.sources.push_back(std::move(health));
+    }
+    std::sort(snapshot.sources.begin(), snapshot.sources.end(),
+              [](const SourceHealthEntry &left, const SourceHealthEntry &right) {
+                  return left.id < right.id;
+              });
+    return snapshot;
 }
 
 } // namespace webobs

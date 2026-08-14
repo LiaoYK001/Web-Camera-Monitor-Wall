@@ -1,6 +1,6 @@
 # Control API v1 / 控制接口 v1
 
-M1 exposes a small HTTP/1.1 and WebSocket control plane from `webobsd`. M2 extends the same origin with a constrained program WHEP proxy. M3 adds source-scoped Direct WHEP routes and a capability document. M4 adds composite-only browser sources. M5 completes the unified audio model, Direct Web Audio mixing, Composite Opus, and AAC recordings. The opening M6 slice adds file-backed single-operator authentication, remote authority authorization, failed-authentication rate limiting, probes, and metrics. The scene API uses the same [scene document](scene-schema-v3.md) that libobs and the browser renderer consume and that the atomic scene store persists.
+M1 exposes a small HTTP/1.1 and WebSocket control plane from `webobsd`. M2 extends the same origin with a constrained program WHEP proxy. M3 adds source-scoped Direct WHEP routes and a capability document. M4 adds composite-only browser sources. M5 completes the unified audio model, Direct Web Audio mixing, Composite Opus, and AAC recordings. M6 currently adds file-backed single-operator authentication, remote authority authorization, failed-authentication rate limiting, frame-freshness source health and recovery, structured audit events, probes, and metrics. The scene API uses the same [scene document](scene-schema-v3.md) that libobs and the browser renderer consume and that the atomic scene store persists.
 
 M1 由 `webobsd` 提供一组精简的 HTTP/1.1 与 WebSocket 控制接口，M2 在同源下增加受限节目 WHEP 代理，M3 再增加按来源隔离的 Direct WHEP 路由和能力文档，M4 增加仅服务端合成的浏览器源，M5 完成统一音频模型、Direct Web Audio 混音、Composite Opus 和 AAC 录像。M6 起步切片增加文件型单操作员认证、远程 authority 授权、认证失败限流、探针和指标。场景接口、libobs、浏览器渲染和原子场景存储共用同一份[场景文档](scene-schema-v3.md)。
 
@@ -42,6 +42,9 @@ The server applies these additional controls:
 | `--auth-failure-limit` | `WEBOBS_AUTH_FAILURE_LIMIT` | `5` | invalid credentials allowed per client/window, 1–100 |
 | `--auth-failure-window-seconds` | `WEBOBS_AUTH_FAILURE_WINDOW_SECONDS` | `60` | failure window and lockout duration, 1–3600 |
 | `--control-allowed-origins` | `WEBOBS_CONTROL_ALLOWED_ORIGINS` | empty | comma-separated external HTTPS origins; requires credentials |
+| `--source-stale-seconds` | `WEBOBS_SOURCE_STALE_SECONDS` | `10` | seconds without a new visible-source frame before unhealthy, 2–300 |
+| `--source-recovery-base-seconds` | `WEBOBS_SOURCE_RECOVERY_BASE_SECONDS` | `5` | first RTSP restart backoff, 1–300 |
+| `--source-recovery-max-seconds` | `WEBOBS_SOURCE_RECOVERY_MAX_SECONDS` | `60` | exponential restart ceiling, 1–3600 and not below base |
 
 The username and password files must be configured as a pair. Each may contain one trailing newline, which is removed. The values are loaded once at startup and never logged. The supplied `compose.m6-auth.yaml` mounts both through Compose secrets and disables the legacy unauthenticated opt-in. Scene mutations also require an absolute `--scene-file`; a runtime without persistent scene storage returns `503` for updates.
 
@@ -67,11 +70,36 @@ This route is intentionally unauthenticated and contains no configuration detail
 
 ### `GET /api/v1/ready`
 
-Returns public `200 {"status":"ready"}` after recording is active and configured WebRTC publication is ready. It returns `503 {"status":"not_ready"}` while startup, recording, or configured publication is unavailable. Docker `HEALTHCHECK` uses this route.
+Returns public `200 {"status":"ready"}` after recording is active, configured WebRTC publication is ready, and every visible source is healthy. It returns `503 {"status":"not_ready"}` during startup, output failure, or a visible-source outage. The response intentionally contains no source identifiers or configuration. Docker `HEALTHCHECK` uses this route.
 
 ### `GET /metrics`
 
-Returns Prometheus text metrics for process up/readiness, recording state, WebRTC configuration/readiness, HTTP request count, and rejected credential count. This route requires authentication when credentials are configured; labels containing URLs, source IDs, usernames, or client addresses are not emitted.
+Returns Prometheus text metrics for process up/readiness, recording state, WebRTC configuration/readiness, aggregate visible/healthy/unhealthy source counts, automatic RTSP restart count, HTTP request count, and rejected credential count. This route requires authentication when credentials are configured; labels containing URLs, source IDs, usernames, or client addresses are not emitted.
+
+### `GET /api/v1/sources/status`
+
+Returns the authenticated per-source operational view. `state` is `idle`, `starting`, `healthy`, `stale`, or `recovering`; `lastFrameAgeMs` is `null` before the first observed RTSP frame and for synchronous browser sources. The response never contains RTSP/browser URLs, credentials, MediaMTX paths, or audit client addresses.
+
+```json
+{
+  "visible": 2,
+  "healthy": 2,
+  "unhealthy": 0,
+  "totalRestarts": 0,
+  "sources": [{
+    "id": "camera-front",
+    "kind": "rtsp",
+    "visible": true,
+    "state": "healthy",
+    "lastFrameAgeMs": 83,
+    "restartCount": 0
+  }]
+}
+```
+
+`webobsd` samples frame progress every 500 ms. Once an RTSP source exceeds the stale threshold, it requests `obs_source_media_restart()` immediately and retries with exponential backoff capped by the configured maximum. Fresh frames reset the consecutive backoff and restore readiness. Browser sources participate in health/readiness using activation and output dimensions, but RTSP-style media restart is not applied to them.
+
+`webobsd` 每 500 ms 采样一次帧进度。RTSP 来源超过陈旧阈值后会立即请求 `obs_source_media_restart()`，后续重试采用不超过配置上限的指数退避；新帧会重置连续退避并恢复 readiness。浏览器源通过激活状态与输出尺寸参与健康/readiness 判断，但不会套用 RTSP 媒体重启。
 
 ### `GET /api/v1/program/status`
 

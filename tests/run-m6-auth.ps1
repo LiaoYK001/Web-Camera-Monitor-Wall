@@ -121,7 +121,7 @@ try {
         $UnauthorizedRoot.Headers['WWW-Authenticate'] -match '^Basic realm="WebOBS"') `
         'The Web editor must issue a Basic challenge when credentials are absent.'
     foreach ($ProtectedPath in @('/api/v1/scene', '/api/v1/program/status',
-            '/api/v1/playback/capabilities', '/metrics')) {
+            '/api/v1/playback/capabilities', '/api/v1/sources/status', '/metrics')) {
         $Protected = Invoke-M6Request -Client $Client -Method ([Net.Http.HttpMethod]::Get) -Path $ProtectedPath
         Assert-True ($Protected.Status -eq 401) "Unauthenticated request unexpectedly reached $ProtectedPath."
     }
@@ -198,6 +198,14 @@ try {
     }
     Assert-True (-not $UnauthenticatedConnected) 'WebSocket upgrade succeeded without credentials.'
 
+    $InitialSourceStatus = Invoke-M6Request -Client $Client -Method ([Net.Http.HttpMethod]::Get) `
+        -Path '/api/v1/sources/status' -Headers $AuthHeaders
+    $InitialSources = $InitialSourceStatus.Body | ConvertFrom-Json
+    Assert-True ($InitialSourceStatus.Status -eq 200 -and $InitialSources.visible -eq 2 -and
+        $InitialSources.healthy -eq 2 -and $InitialSources.unhealthy -eq 0 -and
+        $InitialSources.totalRestarts -eq 0 -and $InitialSourceStatus.Body -notmatch 'rtsp://') `
+        'Authenticated source health did not report a credential-free healthy baseline.'
+
     $InvalidHeaders = @{ Authorization = 'Basic Zm9vOmJhcg==' }
     $FirstFailure = Invoke-M6Request -Client $Client -Method ([Net.Http.HttpMethod]::Get) `
         -Path '/api/v1/scene' -Headers $InvalidHeaders
@@ -221,8 +229,12 @@ try {
     Assert-True ($Metrics.Status -eq 200 -and
         $Metrics.Headers['Content-Type'] -match '^text/plain; version=0\.0\.4' -and
         $Metrics.Body -match '(?m)^webobs_ready 1$' -and
+        $Metrics.Body -match '(?m)^webobs_sources_visible 2$' -and
+        $Metrics.Body -match '(?m)^webobs_sources_healthy 2$' -and
+        $Metrics.Body -match '(?m)^webobs_sources_unhealthy 0$' -and
+        $Metrics.Body -match '(?m)^webobs_source_restarts_total 0$' -and
         $Metrics.Body -match '(?m)^webobs_auth_failures_total 3$') `
-        'Authenticated Prometheus metrics did not report readiness and rejected credentials.'
+        'Authenticated Prometheus metrics did not report readiness, source health, and rejected credentials.'
     $HealthStatus = ''
     $HealthDeadline = [DateTime]::UtcNow.AddSeconds(15)
     while ([DateTime]::UtcNow -lt $HealthDeadline) {
@@ -233,12 +245,65 @@ try {
     }
     Assert-True ($HealthStatus -eq 'healthy') 'The product Docker healthcheck did not become healthy.'
 
+    docker compose -f $ComposeFile stop -t 5 fixture
+    Assert-True ($LASTEXITCODE -eq 0) 'Could not stop the RTSP publisher for recovery acceptance.'
+    $OutageObserved = $false
+    $OutageDeadline = [DateTime]::UtcNow.AddSeconds(20)
+    while ([DateTime]::UtcNow -lt $OutageDeadline) {
+        try {
+            $OutageStatusResponse = Invoke-M6Request -Client $Client -Method ([Net.Http.HttpMethod]::Get) `
+                -Path '/api/v1/sources/status' -Headers $AuthHeaders
+            $OutageReadiness = Invoke-M6Request -Client $Client -Method ([Net.Http.HttpMethod]::Get) `
+                -Path '/api/v1/ready'
+            $OutageSources = $OutageStatusResponse.Body | ConvertFrom-Json
+            if ($OutageStatusResponse.Status -eq 200 -and $OutageSources.unhealthy -eq 2 -and
+                $OutageSources.totalRestarts -ge 2 -and $OutageReadiness.Status -eq 503) {
+                $OutageObserved = $true
+                break
+            }
+        } catch {}
+        Start-Sleep -Milliseconds 250
+    }
+    Assert-True $OutageObserved `
+        'Source frame staleness did not degrade readiness and request bounded RTSP restarts.'
+    $OutageMetrics = Invoke-M6Request -Client $Client -Method ([Net.Http.HttpMethod]::Get) `
+        -Path '/metrics' -Headers $AuthHeaders
+    Assert-True ($OutageMetrics.Body -match '(?m)^webobs_ready 0$' -and
+        $OutageMetrics.Body -match '(?m)^webobs_sources_unhealthy 2$' -and
+        $OutageMetrics.Body -match '(?m)^webobs_source_restarts_total (?:[2-9]|[1-9][0-9]+)$') `
+        'Outage metrics did not expose aggregate unhealthy and restart state.'
+
+    docker compose -f $ComposeFile start fixture
+    Assert-True ($LASTEXITCODE -eq 0) 'Could not restart the RTSP publisher for recovery acceptance.'
+    $SourceRecovered = $false
+    $RecoveryDeadline = [DateTime]::UtcNow.AddSeconds(40)
+    while ([DateTime]::UtcNow -lt $RecoveryDeadline) {
+        try {
+            $RecoveredStatusResponse = Invoke-M6Request -Client $Client -Method ([Net.Http.HttpMethod]::Get) `
+                -Path '/api/v1/sources/status' -Headers $AuthHeaders
+            $RecoveredReadiness = Invoke-M6Request -Client $Client -Method ([Net.Http.HttpMethod]::Get) `
+                -Path '/api/v1/ready'
+            $RecoveredSources = $RecoveredStatusResponse.Body | ConvertFrom-Json
+            if ($RecoveredSources.healthy -eq 2 -and $RecoveredSources.unhealthy -eq 0 -and
+                $RecoveredSources.totalRestarts -ge 2 -and $RecoveredReadiness.Status -eq 200) {
+                $SourceRecovered = $true
+                break
+            }
+        } catch {}
+        Start-Sleep -Milliseconds 250
+    }
+    Assert-True $SourceRecovered 'RTSP sources did not recover and restore readiness after publisher restart.'
+
     $Logs = @(docker logs $ContainerId 2>&1 | ForEach-Object { $_.ToString() }) -join "`n"
     Assert-True ($Logs -notmatch [Regex]::Escape($Username) -and
         $Logs -notmatch [Regex]::Escape($Password) -and
         $Logs -match 'HTTP Basic authentication is enabled' -and
-        $Logs -notmatch 'listener is unauthenticated') `
-        'Authentication logs exposed credentials or reported the wrong security mode.'
+        $Logs -notmatch 'listener is unauthenticated' -and
+        $Logs -match '"event":"authentication"' -and
+        $Logs -match '"event":"scene_update"' -and
+        $Logs -match '"event":"source_recovery"' -and
+        $Logs -match '"outcome":"recovered"') `
+        'Structured audit logs were incomplete, exposed credentials, or reported the wrong security mode.'
 
     $MinimumRecordingStopAt = $ReadyAt.AddSeconds(6)
     if ([DateTime]::UtcNow -lt $MinimumRecordingStopAt) {
@@ -247,6 +312,9 @@ try {
     docker compose -f $ComposeFile stop -t 20 webobs-auth
     Assert-True ($LASTEXITCODE -eq 0) 'M6 authentication product did not stop cleanly.'
     $ExitCode = (@(docker inspect --format '{{.State.ExitCode}}' $ContainerId) -join '').Trim()
+    if ($ExitCode -ne '0') {
+        docker logs --tail 240 $ContainerId
+    }
     Assert-True ($ExitCode -eq '0') 'M6 authentication product returned a non-zero status.'
     docker compose -f $ComposeFile run --rm `
         -e TEST_RECORDING=/artifacts/m6-auth.mp4 `
@@ -254,7 +322,7 @@ try {
         -e TEST_REQUIRE_PILLARBOX=0 validator
     Assert-True ($LASTEXITCODE -eq 0) 'M6 authentication recording was not finalized correctly.'
 
-    Write-Host 'M6 file authentication, Host/Origin authorization, WebSocket protection, rate limit, probes, metrics, healthcheck, and redaction acceptance passed.'
+    Write-Host 'M6 authentication, authorization, rate limit, source health, recovery, audit, metrics, healthcheck, and redaction acceptance passed.'
 } finally {
     $Client.Dispose()
     $Handler.Dispose()
