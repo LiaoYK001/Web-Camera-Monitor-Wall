@@ -51,6 +51,7 @@ function connectWhep(
   video: HTMLVideoElement,
   resolveEndpoint: EndpointResolver,
   onState: (state: ProgramConnectionState) => void,
+  receiveAudio = false,
 ): ProgramConnection {
   let closed = false;
   let attempt = 0;
@@ -117,10 +118,14 @@ function connectWhep(
 
       const nextPeer = new RTCPeerConnection();
       peer = nextPeer;
+      const remoteStream = new MediaStream();
+      video.srcObject = remoteStream;
       nextPeer.addTransceiver('video', { direction: 'recvonly' });
+      if (receiveAudio) nextPeer.addTransceiver('audio', { direction: 'recvonly' });
       nextPeer.ontrack = (event) => {
         if (currentGeneration !== generation || closed) return;
-        video.srcObject = event.streams[0] ?? new MediaStream([event.track]);
+        if (!remoteStream.getTracks().some((track) => track.id === event.track.id))
+          remoteStream.addTrack(event.track);
         void video.play().catch(() => undefined);
       };
       nextPeer.onconnectionstatechange = () => {
@@ -194,5 +199,5 @@ export function connectSource(
   endpoint: string,
   onState: (state: ProgramConnectionState) => void,
 ): ProgramConnection {
-  return connectWhep(video, async () => endpoint, onState);
+  return connectWhep(video, async () => endpoint, onState, true);
 }

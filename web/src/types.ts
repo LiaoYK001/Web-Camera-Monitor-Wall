@@ -1,5 +1,6 @@
 export type ScaleMode = 'contain' | 'cover' | 'stretch';
 export type Transport = 'tcp' | 'udp';
+export type AudioMonitoring = 'off' | 'monitor-only' | 'monitor-and-output';
 
 export interface SceneCanvas {
   width: number;
@@ -12,6 +13,9 @@ interface SceneSourceBase {
   name: string;
   muted: boolean;
   volume: number;
+  syncOffsetMs: number;
+  monitoring: AudioMonitoring;
+  audioTrack: number;
 }
 
 export interface RtspSceneSource extends SceneSourceBase {
@@ -54,7 +58,7 @@ export interface SceneItem {
 }
 
 export interface SceneDocument {
-  schemaVersion: 2;
+  schemaVersion: 3;
   revision: number;
   id: string;
   name: string;

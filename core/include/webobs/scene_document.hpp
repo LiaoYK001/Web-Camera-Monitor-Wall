@@ -9,7 +9,7 @@
 
 namespace webobs {
 
-inline constexpr int current_scene_schema_version = 2;
+inline constexpr int current_scene_schema_version = 3;
 inline constexpr std::size_t maximum_scene_json_bytes = 1024 * 1024;
 inline constexpr std::size_t maximum_scene_sources = 64;
 inline constexpr std::size_t maximum_browser_sources = 8;
@@ -38,6 +38,9 @@ struct SceneSource {
     bool restart_when_active = true;
     bool muted = true;
     double volume = 1.0;
+    int sync_offset_ms = 0;
+    std::string monitoring = "off";
+    int audio_track = 1;
 
     bool operator==(const SceneSource &) const = default;
 };

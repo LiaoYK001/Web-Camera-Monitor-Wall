@@ -652,9 +652,38 @@ select:focus-visible,
   box-shadow: none;
 }
 
+.direct-preview-shell {
+  display: grid;
+  width: min(100%, 1100px);
+  gap: 10px;
+}
+
+.direct-audio-control {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  color: #7f8999;
+  font-size: 11px;
+}
+
+.direct-audio-control button {
+  padding: 6px 11px;
+  border: 1px solid #343c4b;
+  border-radius: 999px;
+  color: #a7b0bf;
+  background: #0b0f15;
+  cursor: pointer;
+}
+
+.direct-audio-control[data-audio-enabled='true'] button {
+  border-color: rgba(185, 255, 79, 0.5);
+  color: var(--accent);
+  background: rgba(185, 255, 79, 0.08);
+}
+
 .direct-preview {
   position: relative;
-  width: min(100%, 1100px);
+  width: 100%;
   overflow: hidden;
   border: 1px solid #3b4250;
   border-radius: 3px;

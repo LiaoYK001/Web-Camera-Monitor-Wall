@@ -1,5 +1,5 @@
 {
-  "schemaVersion": 2,
+  "schemaVersion": 3,
   "revision": 0,
   "id": "main",
   "name": "M4 Browser Fixture",
@@ -21,7 +21,10 @@
       "shutdownWhenHidden": true,
       "restartWhenActive": true,
       "muted": true,
-      "volume": 1.0
+      "volume": 1.0,
+      "syncOffsetMs": 0,
+      "monitoring": "off",
+      "audioTrack": 1
     }
   ],
   "items": [

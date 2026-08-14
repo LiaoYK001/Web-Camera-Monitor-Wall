@@ -204,6 +204,22 @@ std::optional<std::string> read_limited(int descriptor, std::string &content)
     }
 }
 
+bool set_default_integer(json_t *object, const char *key, json_int_t value)
+{
+    if (json_object_get(object, key) != nullptr)
+        return true;
+    json_t *encoded = json_integer(value);
+    return encoded && json_object_set_new(object, key, encoded) == 0;
+}
+
+bool set_default_string(json_t *object, const char *key, const char *value)
+{
+    if (json_object_get(object, key) != nullptr)
+        return true;
+    json_t *encoded = json_string(value);
+    return encoded && json_object_set_new(object, key, encoded) == 0;
+}
+
 std::string make_temporary_name(std::string_view filename, std::uint64_t sequence)
 {
     return "." + std::string(filename) + ".tmp." + std::to_string(static_cast<long long>(getpid())) + "." +
@@ -239,7 +255,7 @@ SceneMigrationResult migrate_scene_json(std::string_view input)
         result.document = std::move(parsed.document);
         return result;
     }
-    if (version != 0 && version != 1)
+    if (version > 2)
         return migration_failure("scene schemaVersion is unsupported");
     if (version == 0 && json_object_get(root.get(), "revision") != nullptr)
         return migration_failure("schemaVersion 0 scene must not contain revision");
@@ -251,6 +267,23 @@ SceneMigrationResult migrate_scene_json(std::string_view input)
         json_t *initial_revision = json_integer(0);
         if (!initial_revision || json_object_set_new(root.get(), "revision", initial_revision) != 0)
             return migration_failure("could not migrate scene JSON");
+    }
+
+    json_t *sources = json_object_get(root.get(), "sources");
+    if (!json_is_array(sources))
+        return migration_failure("legacy scene sources must be an array");
+    std::size_t source_index = 0;
+    json_t *source = nullptr;
+    json_array_foreach(sources, source_index, source)
+    {
+        if (!json_is_object(source))
+            return migration_failure("legacy source entry must be an object");
+        if (!set_default_integer(source, "syncOffsetMs", 0))
+            return migration_failure("could not migrate source sync offset");
+        if (!set_default_string(source, "monitoring", "off"))
+            return migration_failure("could not migrate source monitoring");
+        if (!set_default_integer(source, "audioTrack", 1))
+            return migration_failure("could not migrate source audio track");
     }
 
     char *encoded = json_dumps(root.get(), JSON_COMPACT | JSON_SORT_KEYS | JSON_REAL_PRECISION(6));

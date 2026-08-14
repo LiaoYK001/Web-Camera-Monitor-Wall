@@ -8,16 +8,16 @@ This roadmap describes milestone order and acceptance gates, not promised releas
 
 ## Current position / 当前位置
 
-**✅ M4 — Browser Sources 已完成；当前位置准备进入 M5 Audio。**
+**🚧 M5 — Audio 已开始；统一音频模型与 Direct 安全解锁底座已落地，完整音频输出尚未验收。**
 
-M0 through M4 are complete. M4 packages the OBS 32.1.2-matched `obs-browser` submodule and exact CEF archive, adds schema-v2 browser sources to the editor and libobs runtime, and enforces default-deny origin/private-network policy, URL redaction, bounded renderer processes, crash recovery, and ephemeral browser profiles. The deterministic browser-source gate now passes; M5's unified audio model is next.
+M0 through M4 are complete and M5 has started. Schema v3 unifies per-source mute, volume, sync offset, monitoring, and track assignment across persistence, API, editor, and libobs. Direct WHEP requests audio but remains muted until an explicit user gesture. Composite Opus, audible recording output, Web Audio mixing, and drift/reconnect acceptance are still pending, so M5 is not complete.
 
-M0 至 M4 已全部完成。M4 打包了与 OBS 32.1.2 匹配的 `obs-browser` submodule 和精确 CEF 归档，在编辑器及 libobs 运行时加入 schema v2 浏览器源，并实施默认拒绝的 Origin/私网策略、URL 脱敏、renderer 进程上限、崩溃恢复和临时浏览器 profile。确定性浏览器源门禁现已通过；下一步是 M5 的统一音频模型。
+M0 至 M4 已全部完成，M5 已开始。schema v3 已在持久化、API、编辑器和 libobs 间统一每路静音、音量、同步偏移、监听与音轨分配；Direct WHEP 会请求音频，但在明确用户手势前保持静音。Composite Opus、有声录像输出、Web Audio 混音及漂移/重连验收仍未完成，因此当前不能宣称 M5 完成。
 
 ```text
-M0 complete       M1 complete       M2 complete       M3 complete       M4 complete       M5 Audio
-M0 已完成      -> M1 已完成      -> M2 已完成      -> M3 已完成      -> M4 已完成      -> M5 音频
-✅                ✅                ✅                ✅                ✅                ⬜ NEXT
+M0 complete       M1 complete       M2 complete       M3 complete       M4 complete       M5 started
+M0 已完成      -> M1 已完成      -> M2 已完成      -> M3 已完成      -> M4 已完成      -> M5 已开始
+✅                ✅                ✅                ✅                ✅                🚧 IN PROGRESS
 ```
 
 ### M0 acceptance / M0 验收
@@ -54,6 +54,7 @@ M0 已于 2026-08-11 在真实摄像头门禁通过后完成。后续修改采�
 - M3 lifecycle / M3 生命周期：an isolated Direct browser survived an HEVC publisher outage, rebuilt WHEP after recovery, switched one live source from Hybrid to Direct and back, replaced the opaque Hybrid route, removed the source and its transcoder, and produced a 49.1-second 640×360, 10 FPS H.264 recording with zero black frames / 隔离 Direct 浏览器在 HEVC 发布端断流后完成恢复与 WHEP 重建，将同一在线来源从 Hybrid 切换为 Direct 再切回、替换不透明 Hybrid 路径，并在移除来源后释放转码器；生成 49.1 秒 640×360、10 FPS、零黑帧 H.264 录像。
 - M3 real-camera acceptance / M3 真实摄像头验收：a private H.264 source used source-scoped same-origin Direct WHEP passthrough in isolated Chrome and produced a finalized 30.8-second 640×360, 10 FPS recording with zero black frames; capability responses and persisted evidence contain no private endpoint / 私有 H.264 来源在隔离 Chrome 中通过按来源限定的同源 Direct WHEP 直通，并生成完成封装的 30.8 秒 640×360、10 FPS、零黑帧录像；能力响应和持久化证据均不包含私有端点。
 - M4 browser-source acceptance / M4 浏览器源验收：the pinned CEF/`obs-browser` runtime rendered an animated HTTP fixture through libobs, enforced default-deny and explicit private-network approval, redacted URL tokens, closed/recreated hidden browser instances, recovered after the renderer pool was killed, stayed within four renderer processes, removed its private profile on shutdown, and passed two consecutive final gates; the latest fully decodable 7.7-second 640×360, 10 FPS H.264 video-only MP4 had sampled YAVG 78.6251 / 固定 CEF/`obs-browser` 运行时通过 libobs 渲染动画 HTTP 夹具，验证默认拒绝与显式私网授权、URL 令牌脱敏、隐藏实例关闭/重建、renderer 池强杀后的恢复、最多四个 renderer、关停后私有 profile 清理，并连续两次通过最终门禁；最新 7.7 秒 640×360、10 FPS、H.264、仅视频且可完整解码的 MP4 抽样 YAVG 为 78.6251。
+- M5 opening slice / M5 起步切片：schema-v3 migration and validation passed CTest, the React/TypeScript editor built successfully, and the final product image passed control-plane, Direct, Hybrid, browser-source, and lifecycle regressions. Audio settings round-tripped through the API and private persistence; the 16.8-second control-plane, 26.4-second Direct, 28.5-second Hybrid, and 55.7-second lifecycle recordings all contained zero black frames / schema v3 迁移与校验通过 CTest，React/TypeScript 编辑器构建成功，最终产品镜像通过控制面、Direct、Hybrid、浏览器源及生命周期回归；音频设置完成 API 往返与私有持久化，16.8 秒控制面、26.4 秒 Direct、28.5 秒 Hybrid 和 55.7 秒生命周期录像均为零黑帧。上述证据只验收 M5 底座，不代表有声音轨已经完成。
 
 ## Milestones / 里程碑
 
@@ -64,7 +65,7 @@ M0 已于 2026-08-11 在真实摄像头门禁通过后完成。后续修改采�
 | M2 — Composite WebRTC | ✅ Complete / 已完成 | Publish the server-composited program through WHIP/MediaMTX and play through WHEP/WebRTC / 服务端合成画面通过 WHIP/MediaMTX 发布并在浏览器播放 | Low-latency browser playback survives reconnects in one product container / 单容器内低延迟播放和重连通过 |
 | M3 — Direct & Hybrid | ✅ Complete / 已完成 | Direct camera playback in browsers, client/server mode switching, selective transcoding / 浏览器直连播放、客户端/服务端模式切换和选择性转码 | Shared layout behaves consistently across Direct and Composite modes / 两种模式共享布局且行为一致 |
 | M4 — Browser Sources | ✅ Complete / 已完成 | `obs-browser` sources for dashboards, satellite maps, overlays and embeddable media / 支持仪表盘、卫星图、叠加层和可嵌入媒体 | CEF lifecycle, isolation, recovery, and resource limits pass container tests / CEF 生命周期、隔离、恢复和资源限制通过测试 |
-| M5 — Audio | ⬜ Planned / 计划中 | Per-source mute/volume, Web Audio in Direct mode, libobs mixing in Composite mode / 单源静音与音量、Direct Web Audio、Composite libobs 混音 | Multi-source sync, mute, volume, and output audio are verified / 多源同步、静音、音量和输出音轨通过验证 |
+| M5 — Audio | 🚧 In progress / 进行中 | Per-source mute/volume, Web Audio in Direct mode, libobs mixing in Composite mode / 单源静音与音量、Direct Web Audio、Composite libobs 混音 | Multi-source sync, mute, volume, and output audio are verified / 多源同步、静音、音量和输出音轨通过验证 |
 | M6 — Production | ⬜ Planned / 计划中 | Authentication, HTTPS, TURN, health checks, GPU detection, backup, observability and upgrades / 鉴权、HTTPS、TURN、健康检查、GPU 检测、备份、可观测性和升级 | Security review, upgrade/rollback, recovery, and documented deployment pass / 安全、升级回滚、恢复和部署文档验收通过 |
 
 ## Milestone details / 里程碑详情
@@ -154,6 +155,15 @@ M4 已于 2026-08-14 完成：精确固定的浏览器运行时通过容器构�
 - Implement Web Audio mixing for Direct mode / 为 Direct 模式实现 Web Audio 混音。
 - Implement libobs mixing and Opus/WebRTC output for Composite mode / 为 Composite 模式实现 libobs 混音及 Opus/WebRTC 输出。
 - Test drift, reconnects, simultaneous sources, and browser autoplay constraints / 测试漂移、重连、多源并发和浏览器自动播放限制。
+
+#### M5 progress / M5 进度
+
+- [x] Introduce schema v3 with mute, volume, sync offset, monitoring, and track assignment plus v0/v1/v2 migration / 引入统一静音、音量、同步偏移、监听和音轨分配的 schema v3，并支持 v0/v1/v2 迁移
+- [x] Apply the unified fields to libobs sources and verify API round-trip/private persistence / 将统一字段应用到 libobs 来源并验证 API 往返与私有持久化
+- [x] Negotiate Direct receive-only audio while keeping autoplay muted until an explicit user gesture / Direct 协商 recvonly 音频，并在明确用户手势前保持自动播放静音
+- [ ] Implement and verify multi-source Web Audio mixing in Direct mode / 实现并验证 Direct 多来源 Web Audio 混音
+- [ ] Publish mixed Opus audio in Composite WebRTC and add an intentional audible recording format / 在 Composite WebRTC 发布 Opus 混音，并加入明确的有声录像格式
+- [ ] Pass real audio source, mute/volume/sync, drift, reconnect, autoplay, and finalized-output gates / 通过真实音频来源、静音/音量/同步、漂移、重连、自动播放和最终输出门禁
 
 ### M6 — Production
 

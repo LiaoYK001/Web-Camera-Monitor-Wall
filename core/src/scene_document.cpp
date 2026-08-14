@@ -263,6 +263,13 @@ std::optional<std::string> validate_scene_document(const SceneDocument &document
         }
         if (!std::isfinite(source.volume) || source.volume < 0.0 || source.volume > 1.0)
             return "source volume must be between 0 and 1";
+        if (source.sync_offset_ms < -10000 || source.sync_offset_ms > 10000)
+            return "source syncOffsetMs must be between -10000 and 10000";
+        if (source.monitoring != "off" && source.monitoring != "monitor-only" &&
+            source.monitoring != "monitor-and-output")
+            return "source monitoring must be off, monitor-only, or monitor-and-output";
+        if (source.audio_track < 1 || source.audio_track > 6)
+            return "source audioTrack must be between 1 and 6";
     }
     if (browser_source_count > maximum_browser_sources)
         return "scene has too many browser sources";
@@ -348,11 +355,16 @@ SceneParseResult parse_scene_json(std::string_view input)
             !read_string(source_object, "kind", source.kind, 16, error, "source") ||
             !read_string(source_object, "name", source.name, 128, error, "source") ||
             !read_boolean(source_object, "muted", source.muted, error, "source") ||
-            !read_number(source_object, "volume", source.volume, error, "source"))
+            !read_number(source_object, "volume", source.volume, error, "source") ||
+            !read_integer(source_object, "syncOffsetMs", -10000, 10000, source.sync_offset_ms, error,
+                          "source") ||
+            !read_string(source_object, "monitoring", source.monitoring, 24, error, "source") ||
+            !read_integer(source_object, "audioTrack", 1, 6, source.audio_track, error, "source"))
             return parse_failure(std::move(error));
         if (source.kind == "rtsp") {
             if (!has_only_fields(source_object,
-                                 {"id", "kind", "name", "rtspUrl", "transport", "muted", "volume"}))
+                                 {"id", "kind", "name", "rtspUrl", "transport", "muted", "volume",
+                                  "syncOffsetMs", "monitoring", "audioTrack"}))
                 return parse_failure("RTSP source contains an unsupported field");
             if (!read_string(source_object, "rtspUrl", source.rtsp_url, 2048, error, "source") ||
                 !read_string(source_object, "transport", source.transport, 4, error, "source"))
@@ -360,7 +372,8 @@ SceneParseResult parse_scene_json(std::string_view input)
         } else if (source.kind == "browser") {
             if (!has_only_fields(source_object,
                                  {"id", "kind", "name", "url", "width", "height", "fps", "customCss",
-                                  "shutdownWhenHidden", "restartWhenActive", "muted", "volume"}))
+                                  "shutdownWhenHidden", "restartWhenActive", "muted", "volume",
+                                  "syncOffsetMs", "monitoring", "audioTrack"}))
                 return parse_failure("browser source contains an unsupported field");
             source.transport.clear();
             if (!read_string(source_object, "url", source.browser_url, 2048, error, "source") ||
@@ -456,7 +469,11 @@ SceneSerializeResult serialize_scene_json(const SceneDocument &document, SceneJs
             !set_new(object.get(), "kind", json_stringn(source.kind.data(), source.kind.size())) ||
             !set_new(object.get(), "name", json_stringn(source.name.data(), source.name.size())) ||
             !set_new(object.get(), "muted", json_boolean(source.muted)) ||
-            !set_new(object.get(), "volume", json_real(source.volume)))
+            !set_new(object.get(), "volume", json_real(source.volume)) ||
+            !set_new(object.get(), "syncOffsetMs", json_integer(source.sync_offset_ms)) ||
+            !set_new(object.get(), "monitoring",
+                     json_stringn(source.monitoring.data(), source.monitoring.size())) ||
+            !set_new(object.get(), "audioTrack", json_integer(source.audio_track)))
             return serialize_failure("could not build source JSON");
         if (source.kind == "rtsp") {
             const std::string safe_url = view == SceneJsonView::public_api

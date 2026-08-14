@@ -10,7 +10,7 @@ import {
 import { connectSceneEvents, ControlApiError, fetchScene, replaceScene } from './api';
 import DirectPreview from './DirectPreview';
 import ProgramPreview from './ProgramPreview';
-import type { PlaybackMode, ScaleMode, SceneDocument, SceneItem, SceneSource, Transport } from './types';
+import type { AudioMonitoring, PlaybackMode, ScaleMode, SceneDocument, SceneItem, SceneSource, Transport } from './types';
 
 type ConnectionState = 'connecting' | 'online' | 'offline';
 type WorkspaceMode = 'program' | 'layout';
@@ -282,6 +282,9 @@ export default function App() {
       transport: newTransport,
       muted: true,
       volume: 1,
+      syncOffsetMs: 0,
+      monitoring: 'off',
+      audioTrack: 1,
     } : {
       id: sourceId,
       kind: 'browser',
@@ -295,6 +298,9 @@ export default function App() {
       restartWhenActive: true,
       muted: true,
       volume: 1,
+      syncOffsetMs: 0,
+      monitoring: 'off',
+      audioTrack: 1,
     };
     const item: SceneItem = {
       id: itemId,
@@ -676,6 +682,19 @@ export default function App() {
                   <span>音量 <strong>{Math.round(selectedSource.volume * 100)}%</strong></span>
                   <input type="range" min="0" max="1" step="0.01" value={selectedSource.volume} onChange={(event) => updateSource(selectedSource.id, { volume: Number(event.target.value) })} />
                 </label>
+                <div className="field-grid">
+                  <NumberField label="同步偏移（ms）" value={selectedSource.syncOffsetMs} min={-10000} max={10000} onChange={(syncOffsetMs) => updateSource(selectedSource.id, { syncOffsetMs })} />
+                  <NumberField label="音轨" value={selectedSource.audioTrack} min={1} max={6} onChange={(audioTrack) => updateSource(selectedSource.id, { audioTrack })} />
+                </div>
+                <label className="field">
+                  <span>监听模式</span>
+                  <select value={selectedSource.monitoring} onChange={(event) => updateSource(selectedSource.id, { monitoring: event.target.value as AudioMonitoring })}>
+                    <option value="off">关闭</option>
+                    <option value="monitor-only">仅监听</option>
+                    <option value="monitor-and-output">监听并输出</option>
+                  </select>
+                </label>
+                <p className="security-note">M5 起步：同步、监听和轨道已应用到 libobs；最终 MP4 与 Composite WebRTC 音频输出仍待后续门禁。</p>
               </section>
 
               {selectedItem && (

@@ -232,6 +232,9 @@ webobs::SceneDocument valid_scene_document()
     source.transport = "tcp";
     source.muted = false;
     source.volume = 0.75;
+    source.sync_offset_ms = 250;
+    source.monitoring = "monitor-and-output";
+    source.audio_track = 3;
     document.sources.push_back(std::move(source));
     document.items.push_back({.id = "item-front",
                               .source_id = "camera-front",
@@ -284,7 +287,10 @@ void scene_document_tests()
                                         .shutdown_when_hidden = true,
                                         .restart_when_active = true,
                                         .muted = true,
-                                        .volume = 1.0});
+                                        .volume = 1.0,
+                                        .sync_offset_ms = -125,
+                                        .monitoring = "monitor-only",
+                                        .audio_track = 2});
     webobs::SceneItem browser_item;
     browser_item.id = "item-dashboard-main";
     browser_item.source_id = "dashboard-main";
@@ -298,7 +304,7 @@ void scene_document_tests()
     const auto browser_public =
         webobs::serialize_scene_json(browser_document, webobs::SceneJsonView::public_api, false);
     expect(browser_persistent.ok() && webobs::parse_scene_json(browser_persistent.json).ok(),
-           "browser source settings must persist and parse in schema v2");
+           "browser source settings must persist and parse in schema v3");
     expect(browser_public.ok() && browser_public.json.find("token=sensitive") == std::string::npos &&
                browser_public.json.find("?***#***") != std::string::npos,
            "public browser source JSON must redact query and fragment secrets");
@@ -337,6 +343,21 @@ void scene_document_tests()
     expect(webobs::validate_scene_document(invalid).has_value(), "source volume above one must fail validation");
 
     invalid = document;
+    invalid.sources.front().sync_offset_ms = 10001;
+    expect(webobs::validate_scene_document(invalid).has_value(),
+           "source sync offset outside ten seconds must fail validation");
+
+    invalid = document;
+    invalid.sources.front().monitoring = "speaker";
+    expect(webobs::validate_scene_document(invalid).has_value(),
+           "unsupported source monitoring mode must fail validation");
+
+    invalid = document;
+    invalid.sources.front().audio_track = 7;
+    expect(webobs::validate_scene_document(invalid).has_value(),
+           "source audio track above six must fail validation");
+
+    invalid = document;
     invalid.sources.front().rtsp_url = "rtsp://user:password@";
     expect(webobs::validate_scene_document(invalid).has_value(), "RTSP URL without a host must fail validation");
 
@@ -349,15 +370,15 @@ void scene_document_tests()
     expect(!webobs::parse_scene_json(unsupported_field).ok(), "unknown scene fields must be rejected");
 
     std::string future_schema = compact.json;
-    const std::string schema_two = "\"schemaVersion\":2";
-    const std::size_t schema_position = future_schema.find(schema_two);
+    const std::string schema_three = "\"schemaVersion\":3";
+    const std::size_t schema_position = future_schema.find(schema_three);
     if (schema_position != std::string::npos)
-        future_schema.replace(schema_position, schema_two.size(), "\"schemaVersion\":3");
+        future_schema.replace(schema_position, schema_three.size(), "\"schemaVersion\":4");
     expect(schema_position != std::string::npos && !webobs::parse_scene_json(future_schema).ok(),
            "future scene schema versions must be rejected");
 
     const std::string duplicate_key =
-        R"({"schemaVersion":2,"schemaVersion":2,"revision":0,"id":"main","name":"Main","canvas":{"width":1920,"height":1080,"backgroundColor":"#000000"},"sources":[],"items":[]})";
+        R"({"schemaVersion":3,"schemaVersion":3,"revision":0,"id":"main","name":"Main","canvas":{"width":1920,"height":1080,"backgroundColor":"#000000"},"sources":[],"items":[]})";
     expect(!webobs::parse_scene_json(duplicate_key).ok(), "duplicate JSON keys must be rejected");
 
     const std::string secret_in_invalid_json = R"({"name":"sensitive-value")";
@@ -442,7 +463,7 @@ void scene_store_tests()
     if (!compact.ok())
         return;
     std::string legacy_json = compact.json;
-    const std::string current_version = "\"schemaVersion\":2";
+    const std::string current_version = "\"schemaVersion\":3";
     const std::size_t version_position = legacy_json.find(current_version);
     const std::string revision = "\"revision\":7,";
     const std::size_t revision_position = legacy_json.find(revision);
@@ -451,16 +472,37 @@ void scene_store_tests()
     if (version_position == std::string::npos || revision_position == std::string::npos)
         return;
 
-    std::string version_one_json = compact.json;
-    version_one_json.replace(version_position, current_version.size(), "\"schemaVersion\":1");
+    std::string version_two_json = compact.json;
+    version_two_json.replace(version_position, current_version.size(), "\"schemaVersion\":2");
+    for (const std::string_view field : {"\"audioTrack\":3,", "\"monitoring\":\"monitor-and-output\",",
+                                         "\"syncOffsetMs\":250,"}) {
+        const std::size_t field_position = version_two_json.find(field);
+        expect(field_position != std::string::npos, "schemaVersion 2 fixture must contain removable audio fields");
+        if (field_position != std::string::npos)
+            version_two_json.erase(field_position, field.size());
+    }
+    const auto version_two_migration = webobs::migrate_scene_json(version_two_json);
+    expect(version_two_migration.ok() && version_two_migration.migrated &&
+               version_two_migration.document->schema_version == 3 &&
+               version_two_migration.document->sources.front().sync_offset_ms == 0 &&
+               version_two_migration.document->sources.front().monitoring == "off" &&
+               version_two_migration.document->sources.front().audio_track == 1,
+           "schemaVersion 2 must migrate to schemaVersion 3 with safe audio defaults");
+
+    std::string version_one_json = version_two_json;
+    version_one_json.replace(version_one_json.find("\"schemaVersion\":2"), current_version.size(),
+                             "\"schemaVersion\":1");
     const auto version_one_migration = webobs::migrate_scene_json(version_one_json);
     expect(version_one_migration.ok() && version_one_migration.migrated &&
-               version_one_migration.document->schema_version == 2 &&
+               version_one_migration.document->schema_version == 3 &&
                version_one_migration.document->revision == document.revision,
-           "schemaVersion 1 must migrate to schemaVersion 2 without changing revision");
+           "schemaVersion 1 must migrate to schemaVersion 3 without changing revision");
 
-    legacy_json.replace(version_position, current_version.size(), "\"schemaVersion\":0");
-    legacy_json.erase(revision_position, revision.size());
+    legacy_json = version_two_json;
+    legacy_json.replace(legacy_json.find("\"schemaVersion\":2"), current_version.size(),
+                        "\"schemaVersion\":0");
+    const std::size_t legacy_revision_position = legacy_json.find(revision);
+    legacy_json.erase(legacy_revision_position, revision.size());
 
     const auto migrated_in_memory = webobs::migrate_scene_json(legacy_json);
     expect(migrated_in_memory.ok() && migrated_in_memory.migrated && migrated_in_memory.document->revision == 0,
@@ -470,7 +512,7 @@ void scene_store_tests()
     expect(write_test_file(legacy_path, legacy_json, 0644), "legacy scene fixture must be written");
     const auto migrated_file = webobs::load_scene_file(legacy_path);
     expect(migrated_file.ok() && migrated_file.status == webobs::SceneFileStatus::migrated &&
-               migrated_file.document && migrated_file.document->schema_version == 2 &&
+               migrated_file.document && migrated_file.document->schema_version == 3 &&
                migrated_file.document->revision == 0,
            "legacy scene file must migrate and load");
     expect(file_mode(legacy_path) == 0600, "loaded legacy scene permissions must be tightened to 0600");
@@ -479,7 +521,7 @@ void scene_store_tests()
            "migrated scene must be atomically rewritten as current JSON");
 
     std::string future_json = compact.json;
-    future_json.replace(future_json.find(current_version), current_version.size(), "\"schemaVersion\":3");
+    future_json.replace(future_json.find(current_version), current_version.size(), "\"schemaVersion\":4");
     const std::filesystem::path future_path = scene_path.parent_path() / "future.json";
     expect(write_test_file(future_path, future_json, 0600), "future scene fixture must be written");
     const auto future = webobs::load_scene_file(future_path);
@@ -487,7 +529,7 @@ void scene_store_tests()
     expect(read_test_file(future_path) == future_json, "rejected future scene must not be rewritten");
 
     const std::filesystem::path malformed_path = scene_path.parent_path() / "malformed.json";
-    const std::string malformed = R"({"schemaVersion":2,"name":"sensitive-value")";
+    const std::string malformed = R"({"schemaVersion":3,"name":"sensitive-value")";
     expect(write_test_file(malformed_path, malformed, 0600), "malformed scene fixture must be written");
     const auto malformed_result = webobs::load_scene_file(malformed_path);
     expect(!malformed_result.ok() && malformed_result.error.find("sensitive-value") == std::string::npos,
@@ -612,7 +654,7 @@ void scene_mutation_tests()
            "new browser source must not accept query or fragment placeholders");
 
     const auto secret_error = webobs::plan_scene_replacement(
-        current, R"({"schemaVersion":2,"name":"do-not-echo-this-secret")", current.revision);
+        current, R"({"schemaVersion":3,"name":"do-not-echo-this-secret")", current.revision);
     expect(!secret_error.ok() && secret_error.error.find("do-not-echo-this-secret") == std::string::npos,
            "scene mutation errors must not echo secret-bearing input");
 }

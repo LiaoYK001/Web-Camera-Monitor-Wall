@@ -1,5 +1,5 @@
 {
-  "schemaVersion": 2,
+  "schemaVersion": 3,
   "revision": 3,
   "id": "main",
   "name": "M1 Two-Up Test",
@@ -16,7 +16,10 @@
       "rtspUrl": "rtsp://mediamtx:8554/m0-test",
       "transport": "tcp",
       "muted": true,
-      "volume": 1.0
+      "volume": 1.0,
+      "syncOffsetMs": 0,
+      "monitoring": "off",
+      "audioTrack": 1
     },
     {
       "id": "camera-right",
@@ -25,7 +28,10 @@
       "rtspUrl": "rtsp://mediamtx:8554/m0-test",
       "transport": "tcp",
       "muted": true,
-      "volume": 0.5
+      "volume": 0.5,
+      "syncOffsetMs": 125,
+      "monitoring": "off",
+      "audioTrack": 2
     }
   ],
   "items": [

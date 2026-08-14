@@ -224,6 +224,15 @@ obs_bounds_type bounds_type(std::string_view scale_mode)
     return OBS_BOUNDS_SCALE_INNER;
 }
 
+obs_monitoring_type monitoring_type(std::string_view value)
+{
+    if (value == "monitor-only")
+        return OBS_MONITORING_TYPE_MONITOR_ONLY;
+    if (value == "monitor-and-output")
+        return OBS_MONITORING_TYPE_MONITOR_AND_OUTPUT;
+    return OBS_MONITORING_TYPE_NONE;
+}
+
 void configure_scene_item(obs_sceneitem_t *scene_item, const SceneItem &configuration)
 {
     vec2 position{};
@@ -503,6 +512,12 @@ void ObsSceneRuntime::commit_prepared()
         (void)id;
         obs_source_set_volume(entry.source.get(), static_cast<float>(entry.configuration.volume));
         obs_source_set_muted(entry.source.get(), entry.configuration.muted);
+        obs_source_set_sync_offset(entry.source.get(),
+                                   static_cast<std::int64_t>(entry.configuration.sync_offset_ms) * 1000000LL);
+        obs_source_set_audio_mixers(entry.source.get(),
+                                    1U << static_cast<unsigned int>(entry.configuration.audio_track - 1));
+        obs_source_set_monitoring_type(entry.source.get(),
+                                       monitoring_type(entry.configuration.monitoring));
     }
     if (impl_->active && impl_->current) {
         AtomicSceneReplacement replacement{impl_->prepared.get()};

@@ -150,7 +150,7 @@ try {
     if ($LASTEXITCODE -ne 0) { throw 'M4 browser-source services failed to start.' }
 
     $Scene = Wait-Scene -Client $Client
-    Assert-True ($Scene.schemaVersion -eq 2) 'Browser scene API did not expose schemaVersion 2.'
+    Assert-True ($Scene.schemaVersion -eq 3) 'Browser scene API did not expose schemaVersion 3.'
     Assert-True ($Scene.sources.Count -eq 1 -and $Scene.sources[0].kind -eq 'browser') `
         'Browser scene API did not expose the expected browser source.'
     $PublicScene = $Scene | ConvertTo-Json -Depth 12 -Compress

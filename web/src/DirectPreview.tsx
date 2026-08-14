@@ -1,4 +1,4 @@
-import { type CSSProperties, useEffect, useMemo, useRef, useState } from 'react';
+import { type CSSProperties, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { fetchPlaybackCapabilities } from './api';
 import type { SceneDocument, SceneItem, SceneSource, SourcePlaybackCapability } from './types';
 import { connectSource, type ProgramConnectionState } from './whep';
@@ -34,10 +34,12 @@ function videoGeometry(item: SceneItem, width: number, height: number): CSSPrope
   };
 }
 
-function DirectTile({ item, source, capability }: {
+function DirectTile({ item, source, capability, audioEnabled, onAudioBlocked }: {
   item: SceneItem;
   source: SceneSource;
   capability?: SourcePlaybackCapability;
+  audioEnabled: boolean;
+  onAudioBlocked: () => void;
 }) {
   const videoRef = useRef<HTMLVideoElement>(null);
   const [state, setState] = useState<ProgramConnectionState>(capability ? 'checking' : 'offline');
@@ -49,6 +51,14 @@ function DirectTile({ item, source, capability }: {
     return connection.close;
   }, [capability]);
 
+  useEffect(() => {
+    const video = videoRef.current;
+    if (!video) return;
+    video.muted = !audioEnabled || source.muted;
+    video.volume = Math.min(Math.max(source.volume, 0), 1);
+    if (audioEnabled && !source.muted) void video.play().catch(onAudioBlocked);
+  }, [audioEnabled, onAudioBlocked, source.muted, source.volume]);
+
   const geometry = useMemo(
     () => videoGeometry(item, dimensions.width, dimensions.height),
     [item, dimensions],
@@ -59,7 +69,7 @@ function DirectTile({ item, source, capability }: {
       <video
         ref={videoRef}
         autoPlay
-        muted
+        muted={!audioEnabled || source.muted}
         playsInline
         style={geometry}
         aria-label={`${source.name} 直达画面`}
@@ -79,6 +89,9 @@ function DirectTile({ item, source, capability }: {
 export default function DirectPreview({ scene }: { scene: SceneDocument }) {
   const [capabilities, setCapabilities] = useState<SourcePlaybackCapability[]>([]);
   const [available, setAvailable] = useState(true);
+  const [audioEnabled, setAudioEnabled] = useState(false);
+  const [audioBlocked, setAudioBlocked] = useState(false);
+  const markAudioBlocked = useCallback(() => setAudioBlocked(true), []);
 
   useEffect(() => {
     const controller = new AbortController();
@@ -97,31 +110,50 @@ export default function DirectPreview({ scene }: { scene: SceneDocument }) {
   );
 
   return (
-    <div
-      className="direct-preview"
-      data-direct-available={available ? 'true' : 'false'}
-      style={{ aspectRatio: `${scene.canvas.width} / ${scene.canvas.height}`, backgroundColor: scene.canvas.backgroundColor }}
-    >
-      {[...scene.items]
-        .filter((item) => item.visible)
-        .sort((left, right) => left.zIndex - right.zIndex)
-        .map((item) => {
-          const source = scene.sources.find((candidate) => candidate.id === item.sourceId);
-          if (!source) return null;
-          const style = {
-            left: `${(item.x / scene.canvas.width) * 100}%`,
-            top: `${(item.y / scene.canvas.height) * 100}%`,
-            width: `${(item.width / scene.canvas.width) * 100}%`,
-            height: `${(item.height / scene.canvas.height) * 100}%`,
-            zIndex: item.zIndex + 1,
-          } as CSSProperties;
-          return (
-            <div className="direct-tile-position" style={style} key={item.id}>
-              <DirectTile item={item} source={source} capability={bySource.get(source.id)} />
-            </div>
-          );
-        })}
-      {!available && <div className="direct-preview-unavailable">Direct WebRTC 当前不可用，请切换到服务端合成。</div>}
+    <div className="direct-preview-shell">
+      <div className="direct-audio-control" data-audio-enabled={audioEnabled ? 'true' : 'false'}>
+        <button
+          type="button"
+          aria-pressed={audioEnabled}
+          onClick={() => {
+            setAudioBlocked(false);
+            setAudioEnabled((current) => !current);
+          }}
+        >{audioEnabled ? '关闭声音' : '启用声音'}</button>
+        <span>{audioBlocked ? '浏览器阻止了播放，请再次点击。' : '默认静音；启用后仍遵守每路静音与音量。'}</span>
+      </div>
+      <div
+        className="direct-preview"
+        data-direct-available={available ? 'true' : 'false'}
+        style={{ aspectRatio: `${scene.canvas.width} / ${scene.canvas.height}`, backgroundColor: scene.canvas.backgroundColor }}
+      >
+        {[...scene.items]
+          .filter((item) => item.visible)
+          .sort((left, right) => left.zIndex - right.zIndex)
+          .map((item) => {
+            const source = scene.sources.find((candidate) => candidate.id === item.sourceId);
+            if (!source) return null;
+            const style = {
+              left: `${(item.x / scene.canvas.width) * 100}%`,
+              top: `${(item.y / scene.canvas.height) * 100}%`,
+              width: `${(item.width / scene.canvas.width) * 100}%`,
+              height: `${(item.height / scene.canvas.height) * 100}%`,
+              zIndex: item.zIndex + 1,
+            } as CSSProperties;
+            return (
+              <div className="direct-tile-position" style={style} key={item.id}>
+                <DirectTile
+                  item={item}
+                  source={source}
+                  capability={bySource.get(source.id)}
+                  audioEnabled={audioEnabled}
+                  onAudioBlocked={markAudioBlocked}
+                />
+              </div>
+            );
+          })}
+        {!available && <div className="direct-preview-unavailable">Direct WebRTC 当前不可用，请切换到服务端合成。</div>}
+      </div>
     </div>
   );
 }

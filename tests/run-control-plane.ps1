@@ -197,6 +197,9 @@ try {
         transport = 'tcp'
         muted = $true
         volume = 0.6
+        syncOffsetMs = -80
+        monitoring = 'off'
+        audioTrack = 2
     }
     $updatedScene.items = @($updatedScene.items) + [PSCustomObject]@{
         id = 'item-added'
@@ -218,6 +221,9 @@ try {
     Assert-True ($added.Headers.ETag.Tag -eq '"5"') 'Adding a source must advance ETag exactly once'
     $addedScene = $added.Body | ConvertFrom-Json
     Assert-True ($addedScene.sources.Count -eq 3 -and $addedScene.items.Count -eq 3) 'Added source and item must be returned'
+    $addedAudio = $addedScene.sources | Where-Object { $_.id -eq 'camera-added' }
+    Assert-True ($addedAudio.syncOffsetMs -eq -80 -and $addedAudio.monitoring -eq 'off' -and `
+                 $addedAudio.audioTrack -eq 2) 'Unified M5 audio settings must round-trip through the API'
     $addedEvent = Receive-WebSocketText -Socket $socket | ConvertFrom-Json
     Assert-True ($addedEvent.type -eq 'scene.updated' -and $addedEvent.scene.revision -eq 5) `
         'Adding a source must broadcast revision five'
@@ -243,6 +249,8 @@ try {
     Assert-True ($persisted.revision -eq 6) 'Source CRUD must persist the committed revision'
     Assert-True ($persisted.sources.Count -eq 1 -and $persisted.sources[0].id -eq 'camera-added') `
         'Source CRUD must persist the final source set'
+    Assert-True ($persisted.sources[0].syncOffsetMs -eq -80 -and $persisted.sources[0].audioTrack -eq 2) `
+        'Source CRUD must persist unified audio settings'
     Assert-True ($persisted.items[0].width -eq 640) 'Source CRUD must persist the final full-canvas transform'
     $mode = (@(& docker compose -f $ComposeFile exec -T webobs-control stat -c '%a' /test-config/scene.json) -join '').Trim()
     Assert-True ($LASTEXITCODE -eq 0 -and $mode -eq '600') 'Persisted scene must retain mode 0600'
@@ -264,6 +272,9 @@ try {
         transport = 'tcp'
         muted = $true
         volume = 1.0
+        syncOffsetMs = 0
+        monitoring = 'off'
+        audioTrack = 1
     }
     $unreachableScene.items = @($unreachableScene.items) + [PSCustomObject]@{
         id = 'item-unreachable'
