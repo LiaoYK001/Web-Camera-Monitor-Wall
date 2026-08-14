@@ -1,11 +1,23 @@
 #!/bin/sh
 set -eu
+umask 077
 
 display="${DISPLAY:-:99}"
 screen="${WEBOBS_XVFB_SCREEN:-1920x1080x24}"
 mediamtx_enabled="${WEBOBS_WEBRTC_ENABLED:-true}"
 mediamtx_config="${WEBOBS_MEDIAMTX_CONFIG:-/opt/webobs/etc/mediamtx.yml}"
 export WEBOBS_WEBRTC_ENABLED="$mediamtx_enabled"
+browser_cache="/config/obs/plugin_config/obs-browser"
+
+cleanup_browser_cache() {
+    rm -rf -- "$browser_cache"
+}
+
+mkdir -p /config/obs/plugin_config
+chmod 0700 /config/obs /config/obs/plugin_config
+cleanup_browser_cache
+mkdir -m 0700 "$browser_cache"
+trap cleanup_browser_cache EXIT
 
 case "$mediamtx_enabled" in
     true|false) ;;
@@ -92,7 +104,6 @@ fi
 
 if [ "$mediamtx_enabled" = "true" ]; then
     mediamtx_log_pipe="/tmp/webobs-mediamtx-log.$$"
-    umask 077
     mkfifo "$mediamtx_log_pipe"
     /opt/obs/bin/webobs-log-filter < "$mediamtx_log_pipe" &
     mediamtx_filter_pid=$!

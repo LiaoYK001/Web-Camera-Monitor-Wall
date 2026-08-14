@@ -244,6 +244,12 @@ public:
             if (!first)
                 body.push_back(',');
             first = false;
+            if (source.kind == "browser") {
+                body += "{\"sourceId\":\"" + json_escape(source.id) +
+                        "\",\"preferred\":\"composite\",\"fallback\":\"composite\"," +
+                        "\"strategy\":\"composite\",\"codec\":\"\"}";
+                continue;
+            }
             const auto route = direct_routes_.find(source.id);
             const std::string strategy = route == direct_routes_.end() || route->second.codec.empty()
                                              ? "unknown"
@@ -277,6 +283,9 @@ public:
         if (source == document.sources.end())
             return response(http::status::not_found, request.version(),
                             error_body("source_not_found", "source not found"));
+        if (source->kind != "rtsp")
+            return response(http::status::conflict, request.version(),
+                            error_body("composite_only", "browser sources use composite playback"));
         std::optional<std::string> route;
         {
             const std::lock_guard operation_lock(route_operation_mutex_);
@@ -734,7 +743,7 @@ private:
             for (auto iterator = direct_routes_.begin(); iterator != direct_routes_.end();) {
                 const bool present = std::any_of(document.sources.begin(), document.sources.end(),
                                                  [&iterator](const SceneSource &source) {
-                                                     return source.id == iterator->first;
+                                                     return source.id == iterator->first && source.kind == "rtsp";
                                                  });
                 if (present) {
                     ++iterator;
@@ -999,7 +1008,7 @@ HttpResponse handle_request(const HttpRequest &request, SceneController &control
 
     const std::string_view target = view(request.target());
     if (request.method() == http::verb::get && target == "/api/v1/health")
-        return response(http::status::ok, version, "{\"status\":\"ok\",\"milestone\":\"M3\"}");
+        return response(http::status::ok, version, "{\"status\":\"ok\",\"milestone\":\"M4\"}");
 
     if (request.method() == http::verb::get && target == "/api/v1/program/status")
         return whep_proxy.status(version);

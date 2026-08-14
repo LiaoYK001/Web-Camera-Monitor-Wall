@@ -7,6 +7,7 @@
 #include <algorithm>
 #include <atomic>
 #include <chrono>
+#include <cstring>
 #include <memory>
 #include <string>
 #include <string_view>
@@ -15,6 +16,10 @@
 #include <unordered_set>
 #include <utility>
 #include <vector>
+
+#include <arpa/inet.h>
+#include <netdb.h>
+#include <sys/socket.h>
 
 namespace webobs {
 namespace {
@@ -39,6 +44,7 @@ using ScenePtr = std::unique_ptr<obs_scene_t, SceneDeleter>;
 
 struct SourceStatus {
     std::atomic_bool started = false;
+    std::chrono::steady_clock::time_point activated_at{};
 };
 
 void on_source_started(void *parameter, calldata_t *)
@@ -75,7 +81,78 @@ struct RuntimeState {
 
 bool connection_matches(const SceneSource &left, const SceneSource &right)
 {
-    return left.rtsp_url == right.rtsp_url && left.transport == right.transport;
+    if (left.kind != right.kind)
+        return false;
+    if (left.kind == "rtsp")
+        return left.rtsp_url == right.rtsp_url && left.transport == right.transport;
+    return left.browser_url == right.browser_url && left.browser_width == right.browser_width &&
+           left.browser_height == right.browser_height && left.browser_fps == right.browser_fps &&
+           left.browser_css == right.browser_css &&
+           left.shutdown_when_hidden == right.shutdown_when_hidden &&
+           left.restart_when_active == right.restart_when_active;
+}
+
+bool private_network_address(const sockaddr *address)
+{
+    if (address->sa_family == AF_INET) {
+        const auto *ipv4 = reinterpret_cast<const sockaddr_in *>(address);
+        const std::uint32_t value = ntohl(ipv4->sin_addr.s_addr);
+        const std::uint8_t first = static_cast<std::uint8_t>(value >> 24);
+        const std::uint8_t second = static_cast<std::uint8_t>(value >> 16);
+        return first == 0 || first == 10 || first == 127 || first >= 224 ||
+               (first == 100 && second >= 64 && second <= 127) ||
+               (first == 169 && second == 254) || (first == 172 && second >= 16 && second <= 31) ||
+               (first == 192 && second == 168) || (first == 198 && (second == 18 || second == 19));
+    }
+    if (address->sa_family == AF_INET6) {
+        const auto *ipv6 = reinterpret_cast<const sockaddr_in6 *>(address);
+        const unsigned char *bytes = ipv6->sin6_addr.s6_addr;
+        const bool unspecified = std::all_of(bytes, bytes + 16, [](unsigned char byte) { return byte == 0; });
+        const bool loopback = std::all_of(bytes, bytes + 15, [](unsigned char byte) { return byte == 0; }) &&
+                              bytes[15] == 1;
+        const bool unique_local = (bytes[0] & 0xfe) == 0xfc;
+        const bool link_local = bytes[0] == 0xfe && (bytes[1] & 0xc0) == 0x80;
+        const bool multicast = bytes[0] == 0xff;
+        const bool ipv4_mapped = std::all_of(bytes, bytes + 10, [](unsigned char byte) { return byte == 0; }) &&
+                                 bytes[10] == 0xff && bytes[11] == 0xff;
+        if (ipv4_mapped) {
+            sockaddr_in mapped{};
+            mapped.sin_family = AF_INET;
+            std::memcpy(&mapped.sin_addr.s_addr, bytes + 12, 4);
+            return private_network_address(reinterpret_cast<const sockaddr *>(&mapped));
+        }
+        return unspecified || loopback || unique_local || link_local || multicast;
+    }
+    return true;
+}
+
+std::optional<std::string> validate_browser_destination(const SceneSource &source,
+                                                        const BrowserSecurityPolicy &policy)
+{
+    if (source.kind != "browser")
+        return std::nullopt;
+    if (const auto policy_error = validate_browser_url_policy(source.browser_url, policy))
+        return policy_error;
+    if (policy.allow_private_networks)
+        return std::nullopt;
+
+    const BrowserUrlResult parsed = parse_browser_url(source.browser_url);
+    if (!parsed.ok())
+        return parsed.error;
+    addrinfo hints{};
+    hints.ai_family = AF_UNSPEC;
+    hints.ai_socktype = SOCK_STREAM;
+    hints.ai_flags = AI_ADDRCONFIG;
+    addrinfo *addresses = nullptr;
+    const std::string port = std::to_string(parsed.parts->port);
+    if (getaddrinfo(parsed.parts->host.c_str(), port.c_str(), &hints, &addresses) != 0)
+        return "browser source hostname could not be resolved";
+    const std::unique_ptr<addrinfo, decltype(&freeaddrinfo)> guard(addresses, freeaddrinfo);
+    for (const addrinfo *address = addresses; address; address = address->ai_next) {
+        if (private_network_address(address->ai_addr))
+            return "browser source hostname resolves to a local or private-network destination";
+    }
+    return std::nullopt;
 }
 
 SourceEntry create_source_entry(const SceneSource &configuration, int connect_timeout_seconds,
@@ -96,30 +173,45 @@ SourceEntry create_source_entry(const SceneSource &configuration, int connect_ti
     DataPtr settings(obs_data_create());
     if (!settings)
         return {};
-    obs_data_set_bool(settings.get(), "is_local_file", false);
-    obs_data_set_string(settings.get(), "input", configuration.rtsp_url.c_str());
-    obs_data_set_string(settings.get(), "input_format", "rtsp");
-    obs_data_set_bool(settings.get(), "restart_on_activate", true);
-    obs_data_set_bool(settings.get(), "close_when_inactive", false);
-    obs_data_set_bool(settings.get(), "hw_decode", false);
-    obs_data_set_int(settings.get(), "buffering_mb", 2);
-    const long long timeout_microseconds = static_cast<long long>(connect_timeout_seconds) * 1000000LL;
-    const std::string options =
-        "rtsp_transport=" + configuration.transport + " timeout=" + std::to_string(timeout_microseconds);
-    obs_data_set_string(settings.get(), "ffmpeg_options", options.c_str());
+    if (configuration.kind == "rtsp") {
+        obs_data_set_bool(settings.get(), "is_local_file", false);
+        obs_data_set_string(settings.get(), "input", configuration.rtsp_url.c_str());
+        obs_data_set_string(settings.get(), "input_format", "rtsp");
+        obs_data_set_bool(settings.get(), "restart_on_activate", true);
+        obs_data_set_bool(settings.get(), "close_when_inactive", false);
+        obs_data_set_bool(settings.get(), "hw_decode", false);
+        obs_data_set_int(settings.get(), "buffering_mb", 2);
+        const long long timeout_microseconds =
+            static_cast<long long>(connect_timeout_seconds) * 1000000LL;
+        const std::string options =
+            "rtsp_transport=" + configuration.transport + " timeout=" + std::to_string(timeout_microseconds);
+        obs_data_set_string(settings.get(), "ffmpeg_options", options.c_str());
+    } else {
+        obs_data_set_string(settings.get(), "url", configuration.browser_url.c_str());
+        obs_data_set_int(settings.get(), "width", configuration.browser_width);
+        obs_data_set_int(settings.get(), "height", configuration.browser_height);
+        obs_data_set_int(settings.get(), "fps", configuration.browser_fps);
+        obs_data_set_bool(settings.get(), "fps_custom", true);
+        obs_data_set_string(settings.get(), "css", configuration.browser_css.c_str());
+        obs_data_set_bool(settings.get(), "shutdown", configuration.shutdown_when_hidden);
+        obs_data_set_bool(settings.get(), "restart_when_active", configuration.restart_when_active);
+        obs_data_set_bool(settings.get(), "reroute_audio", false);
+    }
 
     SourceEntry entry;
     entry.configuration = configuration;
     entry.status = std::make_shared<SourceStatus>();
-    const std::string internal_name = "WebOBS RTSP " + configuration.id;
-    entry.source.reset(obs_source_create_private("ffmpeg_source", internal_name.c_str(), settings.get()));
+    const std::string internal_name = "WebOBS " + configuration.kind + " " + configuration.id;
+    const char *source_type = configuration.kind == "rtsp" ? "ffmpeg_source" : "browser_source";
+    entry.source.reset(obs_source_create_private(source_type, internal_name.c_str(), settings.get()));
     if (!entry.source) {
         entry.status.reset();
         return entry;
     }
     obs_source_set_muted(entry.source.get(), true);
-    signal_handler_connect(obs_source_get_signal_handler(entry.source.get()), "media_started", on_source_started,
-                           entry.status.get());
+    if (configuration.kind == "rtsp")
+        signal_handler_connect(obs_source_get_signal_handler(entry.source.get()), "media_started",
+                               on_source_started, entry.status.get());
     return entry;
 }
 
@@ -227,6 +319,12 @@ bool source_ready(const SourceEntry &entry)
 {
     if (!entry.source)
         return false;
+    if (entry.configuration.kind == "browser") {
+        return entry.status->activated_at != std::chrono::steady_clock::time_point{} &&
+               std::chrono::steady_clock::now() - entry.status->activated_at >=
+                   std::chrono::milliseconds(750) &&
+               obs_source_get_width(entry.source.get()) > 0 && obs_source_get_height(entry.source.get()) > 0;
+    }
     const obs_media_state state = obs_source_media_get_state(entry.source.get());
     return (entry.status->started.load() || state == OBS_MEDIA_STATE_PLAYING) &&
            obs_source_get_width(entry.source.get()) > 0 && obs_source_get_height(entry.source.get()) > 0;
@@ -234,6 +332,8 @@ bool source_ready(const SourceEntry &entry)
 
 bool prime_source_frame(SourceEntry &entry)
 {
+    if (entry.configuration.kind == "browser")
+        return source_ready(entry);
     if (entry.frame_primed)
         return source_ready(entry);
 
@@ -262,16 +362,20 @@ void release_prewarmed_sources(RuntimeState *state)
 } // namespace
 
 struct ObsSceneRuntime::Impl {
-    explicit Impl(int timeout) : connect_timeout_seconds(timeout) {}
+    Impl(int timeout, BrowserSecurityPolicy policy)
+        : connect_timeout_seconds(timeout), browser_security(std::move(policy))
+    {
+    }
 
     int connect_timeout_seconds;
+    BrowserSecurityPolicy browser_security;
     bool active = false;
     std::unique_ptr<RuntimeState> current;
     std::unique_ptr<RuntimeState> prepared;
 };
 
-ObsSceneRuntime::ObsSceneRuntime(int connect_timeout_seconds)
-    : impl_(std::make_unique<Impl>(connect_timeout_seconds))
+ObsSceneRuntime::ObsSceneRuntime(int connect_timeout_seconds, BrowserSecurityPolicy browser_security)
+    : impl_(std::make_unique<Impl>(connect_timeout_seconds, std::move(browser_security)))
 {
 }
 
@@ -303,10 +407,12 @@ std::optional<std::string> ObsSceneRuntime::prepare(const SceneDocument &documen
 
     candidate->sources.reserve(document.sources.size());
     for (const SceneSource &source : document.sources) {
+        if (const auto browser_error = validate_browser_destination(source, impl_->browser_security))
+            return "browser source " + source.id + " rejected: " + *browser_error;
         SourceEntry entry =
             create_source_entry(source, impl_->connect_timeout_seconds, impl_->current.get());
         if (!entry.source)
-            return "could not create OBS RTSP source " + source.id;
+            return "could not create OBS " + source.kind + " source " + source.id;
         candidate->sources.emplace(source.id, std::move(entry));
     }
 
@@ -334,8 +440,12 @@ std::optional<std::string> ObsSceneRuntime::prepare(const SceneDocument &documen
         if (source != candidate->sources.end()) {
             const bool already_active = obs_source_active(source->second.source.get());
             source->second.frame_primed = already_active;
-            if (!already_active)
+            if (!already_active) {
                 source->second.status->started.store(false);
+                source->second.status->activated_at = std::chrono::steady_clock::now();
+            } else if (source->second.status->activated_at == std::chrono::steady_clock::time_point{}) {
+                source->second.status->activated_at = std::chrono::steady_clock::now();
+            }
             obs_source_inc_active(source->second.source.get());
             source->second.prewarmed = true;
         }
@@ -374,7 +484,7 @@ std::optional<std::string> ObsSceneRuntime::wait_prepared_visible_sources()
     }
 
     std::sort(pending.begin(), pending.end());
-    std::string message = "RTSP sources did not produce a video frame before timeout:";
+    std::string message = "scene sources did not become ready before timeout:";
     for (const std::string &id : pending)
         message += " " + id;
     return message;

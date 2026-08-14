@@ -76,7 +76,7 @@ void obs_log_handler(int level, const char *format, va_list arguments, void *par
     std::vector<char> buffer(static_cast<std::size_t>(length) + 1);
     std::vsnprintf(buffer.data(), buffer.size(), format, arguments);
     std::string message(buffer.data(), static_cast<std::size_t>(length));
-    message = redact_rtsp_credentials(message);
+    message = redact_url_secrets(message);
     while (!message.empty() && (message.back() == '\n' || message.back() == '\r'))
         message.pop_back();
 
@@ -356,11 +356,12 @@ ExitCode run_obs_engine(const Config &config, const SceneDocument &document)
 
     const std::filesystem::path obs_prefix = WEBOBS_OBS_PREFIX;
     if (!load_module(obs_prefix, "obs-ffmpeg") || !load_module(obs_prefix, "obs-x264") ||
+        !load_module(obs_prefix, "obs-browser") ||
         (config.webrtc_enabled && !load_module(obs_prefix, "obs-webrtc")))
         return ExitCode::obs_initialization_failed;
     obs_post_load_modules();
 
-    ObsSceneRuntime scene_runtime(config.connect_timeout_seconds);
+    ObsSceneRuntime scene_runtime(config.connect_timeout_seconds, config.browser_security);
     if (const auto prepare_error = scene_runtime.prepare(document)) {
         blog(LOG_ERROR, "Could not prepare OBS scene: %s", prepare_error->c_str());
         return ExitCode::obs_initialization_failed;
@@ -369,9 +370,9 @@ ExitCode run_obs_engine(const Config &config, const SceneDocument &document)
     scene_runtime.activate();
     const std::size_t expected_sources = scene_runtime.visible_source_count();
     if (expected_sources == 0) {
-        blog(LOG_INFO, "Scene has no visible RTSP sources; recording starts with a black canvas");
+        blog(LOG_INFO, "Scene has no visible sources; recording starts with a black canvas");
     } else {
-        blog(LOG_INFO, "Waiting up to %d seconds for %zu visible RTSP source(s)", config.connect_timeout_seconds,
+        blog(LOG_INFO, "Waiting up to %d seconds for %zu visible source(s)", config.connect_timeout_seconds,
              expected_sources);
         const auto source_deadline =
             std::chrono::steady_clock::now() + std::chrono::seconds(config.connect_timeout_seconds);
@@ -386,7 +387,7 @@ ExitCode run_obs_engine(const Config &config, const SceneDocument &document)
         }
         const std::size_t ready_sources = scene_runtime.ready_visible_source_count();
         if (ready_sources == 0 && config.scene_file.empty()) {
-            blog(LOG_ERROR, "No visible RTSP source produced a video frame before the timeout");
+            blog(LOG_ERROR, "No visible source became ready before the timeout");
             return ExitCode::source_timeout;
         }
         if (ready_sources < expected_sources) {
@@ -397,10 +398,10 @@ ExitCode run_obs_engine(const Config &config, const SceneDocument &document)
                     identifiers += ',';
                 identifiers += id;
             }
-            blog(LOG_WARNING, "%zu of %zu visible RTSP sources are ready; pending source ids: %s", ready_sources,
+            blog(LOG_WARNING, "%zu of %zu visible sources are ready; pending source ids: %s", ready_sources,
                  expected_sources, identifiers.c_str());
         } else {
-            blog(LOG_INFO, "All %zu visible RTSP source(s) are ready", ready_sources);
+            blog(LOG_INFO, "All %zu visible source(s) are ready", ready_sources);
         }
     }
 

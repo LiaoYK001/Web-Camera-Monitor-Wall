@@ -30,6 +30,9 @@ constexpr SettingSpec setting_specs[] = {
     {"--allow-insecure-remote", "WEBOBS_ALLOW_INSECURE_REMOTE", "allow_insecure_remote"},
     {"--webrtc-enabled", "WEBOBS_WEBRTC_ENABLED", "webrtc_enabled"},
     {"--whip-url", "WEBOBS_WHIP_URL", "whip_url"},
+    {"--browser-allowed-origins", "WEBOBS_BROWSER_ALLOWED_ORIGINS", "browser_allowed_origins"},
+    {"--browser-allow-private-networks", "WEBOBS_BROWSER_ALLOW_PRIVATE_NETWORKS",
+     "browser_allow_private_networks"},
     {"--output", "WEBOBS_OUTPUT", "output"},
     {"--duration-seconds", "WEBOBS_DURATION_SECONDS", "duration"},
     {"--width", "WEBOBS_WIDTH", "width"},
@@ -116,6 +119,44 @@ bool valid_whip_url(std::string_view value)
     return !authority.empty() && authority.find('@') == std::string_view::npos;
 }
 
+bool parse_browser_origins(std::string_view value, std::vector<std::string> &origins,
+                           std::string &error)
+{
+    if (value.size() > 8192) {
+        error = "browser-allowed-origins exceeds the configured length limit";
+        return false;
+    }
+    std::size_t cursor = 0;
+    while (cursor < value.size()) {
+        const std::size_t comma = value.find(',', cursor);
+        const std::size_t end = comma == std::string_view::npos ? value.size() : comma;
+        std::string_view entry = value.substr(cursor, end - cursor);
+        while (!entry.empty() && std::isspace(static_cast<unsigned char>(entry.front())))
+            entry.remove_prefix(1);
+        while (!entry.empty() && std::isspace(static_cast<unsigned char>(entry.back())))
+            entry.remove_suffix(1);
+        if (entry.empty()) {
+            error = "browser-allowed-origins must be a comma-separated list without empty entries";
+            return false;
+        }
+        std::string normalized;
+        if (const auto origin_error = normalize_browser_origin(entry, normalized)) {
+            error = *origin_error;
+            return false;
+        }
+        if (std::find(origins.begin(), origins.end(), normalized) == origins.end())
+            origins.push_back(std::move(normalized));
+        if (origins.size() > 32) {
+            error = "browser-allowed-origins must contain at most 32 origins";
+            return false;
+        }
+        if (comma == std::string_view::npos)
+            break;
+        cursor = comma + 1;
+    }
+    return true;
+}
+
 ParseResult failure(std::string message)
 {
     ParseResult result;
@@ -134,6 +175,7 @@ ParseResult parse_config(const std::vector<std::string> &arguments, const Enviro
         {"listen_address", "127.0.0.1"}, {"http_port", "8080"},
         {"allow_insecure_remote", "false"},
         {"webrtc_enabled", "false"}, {"whip_url", "http://127.0.0.1:8889/program/whip"},
+        {"browser_allowed_origins", ""}, {"browser_allow_private_networks", "false"},
     };
 
     for (const auto &spec : setting_specs) {
@@ -203,6 +245,16 @@ ParseResult parse_config(const std::vector<std::string> &arguments, const Enviro
     if (config.webrtc_enabled && !valid_whip_url(config.whip_url))
         return failure("whip-url must be an absolute HTTP(S) URL without credentials, query parameters, or fragments");
 
+    if (!parse_boolean(values["browser_allow_private_networks"],
+                       config.browser_security.allow_private_networks))
+        return failure("browser-allow-private-networks must be true or false");
+    if (!values["browser_allowed_origins"].empty()) {
+        std::string browser_origin_error;
+        if (!parse_browser_origins(values["browser_allowed_origins"],
+                                   config.browser_security.allowed_origins, browser_origin_error))
+            return failure(std::move(browser_origin_error));
+    }
+
     config.output_path = values.contains("output") ? values["output"] : timestamped_output_path();
     if (config.output_path.empty())
         return failure("output path must not be empty");
@@ -269,6 +321,9 @@ Options:
   --allow-insecure-remote <bool>    Required for 0.0.0.0 or :: before M6 auth
   --webrtc-enabled <bool>          Publish the program through WHIP (default: false)
   --whip-url <url>                 WHIP publish URL (default: internal MediaMTX)
+  --browser-allowed-origins <csv>  Exact HTTP(S) origins permitted for browser sources
+  --browser-allow-private-networks <bool>
+                                   Permit allowlisted local/private destinations (default: false)
   --output <path>                  MP4 output path (default: UTC timestamp under /recordings)
   --duration-seconds <n>           Stop after n seconds; 0 waits for a signal (default: 0)
   --width <n>                      Even output width (default: 1920)
@@ -287,7 +342,7 @@ Command-line values override WEBOBS_* environment values.
 
 std::string version_text()
 {
-    return std::string("webobsd ") + WEBOBS_VERSION + " (M3-dev, OBS 32.1.2)";
+    return std::string("webobsd ") + WEBOBS_VERSION + " (M4-dev, OBS 32.1.2)";
 }
 
 } // namespace webobs

@@ -1,5 +1,6 @@
 #pragma once
 
+#include "webobs/browser_security.hpp"
 #include "webobs/scene_document.hpp"
 
 #include <cstddef>
@@ -15,7 +16,7 @@ namespace webobs {
 // performs the non-failing output swap. Callers can persist between the two.
 class ObsSceneRuntime {
 public:
-    explicit ObsSceneRuntime(int connect_timeout_seconds);
+    ObsSceneRuntime(int connect_timeout_seconds, BrowserSecurityPolicy browser_security);
     ~ObsSceneRuntime();
 
     ObsSceneRuntime(const ObsSceneRuntime &) = delete;

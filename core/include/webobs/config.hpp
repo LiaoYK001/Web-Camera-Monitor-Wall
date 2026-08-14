@@ -1,5 +1,7 @@
 #pragma once
 
+#include "webobs/browser_security.hpp"
+
 #include <functional>
 #include <optional>
 #include <string>
@@ -23,6 +25,7 @@ struct Config {
     bool allow_insecure_remote = false;
     bool webrtc_enabled = false;
     std::string whip_url = "http://127.0.0.1:8889/program/whip";
+    BrowserSecurityPolicy browser_security;
     std::string output_path;
     int duration_seconds = 0;
     int width = 1920;

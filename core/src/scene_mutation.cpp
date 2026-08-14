@@ -34,6 +34,11 @@ bool contains_redacted_userinfo(std::string_view url)
     return userinfo == "***" || userinfo == "***:***";
 }
 
+bool contains_redacted_browser_secret(std::string_view url)
+{
+    return url.find("?***") != std::string_view::npos || url.find("#***") != std::string_view::npos;
+}
+
 } // namespace
 
 SceneMutationPlan plan_scene_replacement(const SceneDocument &current, std::string_view candidate_json,
@@ -59,12 +64,22 @@ SceneMutationPlan plan_scene_replacement(const SceneDocument &current, std::stri
                                            [&candidate_source](const SceneSource &source) {
                                                return source.id == candidate_source.id;
                                            });
-        if (existing != current.sources.end() &&
-            candidate_source.rtsp_url == redact_rtsp_credentials(existing->rtsp_url)) {
-            candidate_source.rtsp_url = existing->rtsp_url;
-        } else if (contains_redacted_userinfo(candidate_source.rtsp_url)) {
-            return reject(SceneMutationRejection::invalid_document,
-                          "redacted RTSP credentials are valid only for an unchanged existing source");
+        if (candidate_source.kind == "rtsp") {
+            if (existing != current.sources.end() && existing->kind == "rtsp" &&
+                candidate_source.rtsp_url == redact_rtsp_credentials(existing->rtsp_url)) {
+                candidate_source.rtsp_url = existing->rtsp_url;
+            } else if (contains_redacted_userinfo(candidate_source.rtsp_url)) {
+                return reject(SceneMutationRejection::invalid_document,
+                              "redacted RTSP credentials are valid only for an unchanged existing source");
+            }
+        } else if (candidate_source.kind == "browser") {
+            if (existing != current.sources.end() && existing->kind == "browser" &&
+                candidate_source.browser_url == redact_browser_url(existing->browser_url)) {
+                candidate_source.browser_url = existing->browser_url;
+            } else if (contains_redacted_browser_secret(candidate_source.browser_url)) {
+                return reject(SceneMutationRejection::invalid_document,
+                              "redacted browser URL secrets are valid only for an unchanged existing source");
+            }
         }
     }
 

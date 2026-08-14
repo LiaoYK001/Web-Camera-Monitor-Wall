@@ -239,17 +239,19 @@ SceneMigrationResult migrate_scene_json(std::string_view input)
         result.document = std::move(parsed.document);
         return result;
     }
-    if (version != 0)
+    if (version != 0 && version != 1)
         return migration_failure("scene schemaVersion is unsupported");
-    if (json_object_get(root.get(), "revision") != nullptr)
+    if (version == 0 && json_object_get(root.get(), "revision") != nullptr)
         return migration_failure("schemaVersion 0 scene must not contain revision");
 
     json_t *current_version = json_integer(current_scene_schema_version);
     if (!current_version || json_object_set_new(root.get(), "schemaVersion", current_version) != 0)
         return migration_failure("could not migrate scene JSON");
-    json_t *initial_revision = json_integer(0);
-    if (!initial_revision || json_object_set_new(root.get(), "revision", initial_revision) != 0)
-        return migration_failure("could not migrate scene JSON");
+    if (version == 0) {
+        json_t *initial_revision = json_integer(0);
+        if (!initial_revision || json_object_set_new(root.get(), "revision", initial_revision) != 0)
+            return migration_failure("could not migrate scene JSON");
+    }
 
     char *encoded = json_dumps(root.get(), JSON_COMPACT | JSON_SORT_KEYS | JSON_REAL_PRECISION(6));
     if (!encoded)

@@ -1,0 +1,111 @@
+diff --git a/plugins/obs-browser/browser-client.cpp b/plugins/obs-browser/browser-client.cpp
+index 2c1a2b0..0000000 100644
+--- a/plugins/obs-browser/browser-client.cpp
++++ b/plugins/obs-browser/browser-client.cpp
+@@ -23,9 +23,11 @@
+ #include <obs-frontend-api.h>
+ #include <obs.hpp>
+ #include <util/platform.h>
++#ifdef BROWSER_AVAILABLE
+ #include <QApplication>
+ #include <QThread>
+ #include <QToolTip>
++#endif
+ #if defined(__APPLE__) && CHROME_VERSION_BUILD > 4430
+ #include <IOSurface/IOSurface.h>
+ #endif
+@@ -89,7 +91,7 @@ CefRefPtr<CefResourceRequestHandler> BrowserClient::GetResourceRequestHandler(Ce
+ 	return nullptr;
+ }
+ 
+-void BrowserClient::OnRenderProcessTerminated(CefRefPtr<CefBrowser>, TerminationStatus
++void BrowserClient::OnRenderProcessTerminated(CefRefPtr<CefBrowser> browser, TerminationStatus
+ #if CHROME_VERSION_BUILD >= 6367
+ 					      ,
+ 					      int, const CefString &error_string
+@@ -111,6 +113,7 @@ void BrowserClient::OnRenderProcessTerminated(CefRefPtr<CefBrowser>, Termination
+ 
+ 	blog(LOG_ERROR, "[obs-browser: '%s'] Webpage has crashed unexpectedly! Reason: '%s'", sourceName,
+ 	     str_text.c_str());
++	browser->ReloadIgnoreCache();
+ }
+ 
+ CefResourceRequestHandler::ReturnValue BrowserClient::OnBeforeResourceLoad(CefRefPtr<CefBrowser>, CefRefPtr<CefFrame>,
+@@ -295,9 +297,14 @@ void BrowserClient::GetViewRect(CefRefPtr<CefBrowser>, CefRect &rect)
+ 
+ bool BrowserClient::OnTooltip(CefRefPtr<CefBrowser>, CefString &text)
+ {
++#ifdef BROWSER_AVAILABLE
+ 	std::string str_text = text;
+ 	QMetaObject::invokeMethod(QCoreApplication::instance()->thread(),
+ 				  [str_text]() { QToolTip::showText(QCursor::pos(), str_text.c_str()); });
+ 	return true;
++#else
++	UNUSED_PARAMETER(text);
++	return false;
++#endif
+ }
+ 
+ void BrowserClient::OnPaint(CefRefPtr<CefBrowser>, PaintElementType type, const RectList &, const void *buffer,
+diff --git a/plugins/obs-browser/obs-browser-source.cpp b/plugins/obs-browser/obs-browser-source.cpp
+index 3efc124..0000000 100644
+--- a/plugins/obs-browser/obs-browser-source.cpp
++++ b/plugins/obs-browser/obs-browser-source.cpp
+@@ -22,7 +22,6 @@
+ #include "wide-string.hpp"
+ #include <nlohmann/json.hpp>
+ #include <util/threading.h>
+-#include <QApplication>
+ #include <util/dstr.h>
+ #include <functional>
+ #include <thread>
+@@ -33,6 +32,7 @@
+ #endif
+ 
+ #ifdef ENABLE_BROWSER_QT_LOOP
++#include <QApplication>
+ #include <QEventLoop>
+ #include <QThread>
+ #endif
+@@ -232,6 +232,7 @@ bool BrowserSource::CreateBrowser()
+ 							 CefRefPtr<CefDictionaryValue>(), nullptr);
+ 
+ 		SetBrowser(browser);
++		blog(LOG_INFO, "[obs-browser: '%s'] Browser instance created", obs_source_get_name(source));
+ 
+ 		if (reroute_audio)
+ 			cefBrowser->GetHost()->SetAudioMuted(true);
+@@ -245,6 +246,8 @@ bool BrowserSource::CreateBrowser()
+ 
+ void BrowserSource::DestroyBrowser()
+ {
++	if (GetBrowser())
++		blog(LOG_INFO, "[obs-browser: '%s'] Browser instance closed", obs_source_get_name(source));
+ 	ExecuteOnBrowser(ActuallyCloseBrowser, true);
+ 	SetBrowser(nullptr);
+ }
+diff --git a/plugins/obs-browser/browser-app.cpp b/plugins/obs-browser/browser-app.cpp
+index 0c21819..0000000 100644
+--- a/plugins/obs-browser/browser-app.cpp
++++ b/plugins/obs-browser/browser-app.cpp
+@@ -91,6 +91,7 @@ void BrowserApp::OnBeforeCommandLineProcessing(const CefString &type,
+ 	}
+ 
+ 	command_line->AppendSwitchWithValue("autoplay-policy", "no-user-gesture-required");
++	command_line->AppendSwitchWithValue("renderer-process-limit", "4");
+ #ifdef __APPLE__
+ 	command_line->AppendSwitch("use-mock-keychain");
+ #elif !defined(_WIN32)
+diff --git a/plugins/obs-browser/obs-browser-plugin.cpp b/plugins/obs-browser/obs-browser-plugin.cpp
+index 6b18229..0000000 100644
+--- a/plugins/obs-browser/obs-browser-plugin.cpp
++++ b/plugins/obs-browser/obs-browser-plugin.cpp
+@@ -742,6 +742,8 @@ bool obs_module_load(void)
+ 	     cef_version_info(5), cef_version_info(6), cef_version_info(7), CEF_VERSION);
+ 
+ 	RegisterBrowserSource();
++#ifdef BROWSER_AVAILABLE
+ 	obs_frontend_add_event_callback(handle_obs_frontend_event, nullptr);
++#endif
+ 
+ #ifdef ENABLE_BROWSER_SHARED_TEXTURE

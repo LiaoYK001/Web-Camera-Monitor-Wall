@@ -1,4 +1,5 @@
 #include "webobs/config.hpp"
+#include "webobs/browser_security.hpp"
 #include "webobs/redaction.hpp"
 #include "webobs/scene_document.hpp"
 #include "webobs/scene_mutation.hpp"
@@ -55,6 +56,7 @@ void config_tests()
         {"--connect-timeout-seconds", "0"}, {"--log-level", "verbose"},
         {"--http-port", "65536"},          {"--allow-insecure-remote", "sometimes"},
         {"--webrtc-enabled", "sometimes"},
+        {"--browser-allow-private-networks", "sometimes"},
     };
     for (const auto &[flag, value] : invalid_values) {
         result = webobs::parse_config({"--rtsp-url", "rtsp://camera/live", flag, value}, empty_environment);
@@ -122,6 +124,26 @@ void config_tests()
            "CLI WebRTC setting must override the environment and ignore a disabled WHIP URL");
 
     result = webobs::parse_config(
+        {"--scene-file", "/config/webobs/scene.json", "--browser-allowed-origins",
+         "HTTPS://Dashboard.Example:443/, http://overlay.example:8080"},
+        empty_environment);
+    expect(result.ok() && result.config && result.config->browser_security.allowed_origins.size() == 2 &&
+               result.config->browser_security.allowed_origins.front() == "https://dashboard.example",
+           "browser origin allowlist must be normalized and bounded");
+
+    result = webobs::parse_config(
+        {"--scene-file", "/config/webobs/scene.json", "--browser-allowed-origins",
+         "https://name:secret@dashboard.example"},
+        empty_environment);
+    expect(!result.ok(), "browser allowed origins containing credentials must fail");
+
+    result = webobs::parse_config(
+        {"--scene-file", "/config/webobs/scene.json", "--browser-allowed-origins",
+         "https://dashboard.example/path"},
+        empty_environment);
+    expect(!result.ok(), "browser allowed origins containing paths must fail");
+
+    result = webobs::parse_config(
         {"--rtsp-url", "rtsp://cli/live", "--fps", "25"},
         environment({{"WEBOBS_RTSP_URL", "rtsp://environment/live"}, {"WEBOBS_FPS", "15"}}));
     expect(result.ok() && result.config.has_value(), "valid CLI configuration must parse");
@@ -164,6 +186,36 @@ void redaction_tests()
     expect(webobs::redact_rtsp_credentials("a rtsp://u:p@one/live b rtsp://x:y@two/live") ==
                "a rtsp://***:***@one/live b rtsp://***:***@two/live",
            "all credentials in one log line must be redacted");
+    expect(webobs::redact_browser_url("https://dashboard.example/view?token=secret#panel") ==
+               "https://dashboard.example/view?***#***",
+           "browser URL query and fragment values must be redacted");
+    expect(webobs::redact_url_secrets(
+               "open https://name:secret@dashboard.example/view?token=secret then rtsp://u:p@camera/live") ==
+               "open https://***@dashboard.example/view?*** then rtsp://***:***@camera/live",
+           "combined log redaction must cover browser and RTSP secrets");
+}
+
+void browser_security_tests()
+{
+    const auto public_url = webobs::parse_browser_url("https://Dashboard.Example:443/view?token=value");
+    expect(public_url.ok() && public_url.parts->origin == "https://dashboard.example",
+           "browser URL parser must normalize origins without exposing the path");
+    expect(!webobs::parse_browser_url("file:///etc/passwd").ok(),
+           "browser URL parser must reject file URLs");
+    expect(!webobs::parse_browser_url("http://name:secret@example.invalid/").ok(),
+           "browser URL parser must reject URL userinfo");
+
+    webobs::BrowserSecurityPolicy policy{.allowed_origins = {"https://dashboard.example"}};
+    expect(!webobs::validate_browser_url_policy("https://dashboard.example/view", policy).has_value(),
+           "an exact public origin on the allowlist must pass policy validation");
+    expect(webobs::validate_browser_url_policy("https://other.example/view", policy).has_value(),
+           "an origin outside the allowlist must fail policy validation");
+    policy.allowed_origins = {"http://127.0.0.1"};
+    expect(webobs::validate_browser_url_policy("http://127.0.0.1/view", policy).has_value(),
+           "private browser destinations must require a second explicit opt-in");
+    policy.allow_private_networks = true;
+    expect(!webobs::validate_browser_url_policy("http://127.0.0.1/view", policy).has_value(),
+           "allowlisted private browser destinations must pass only with explicit opt-in");
 }
 
 webobs::SceneDocument valid_scene_document()
@@ -173,12 +225,14 @@ webobs::SceneDocument valid_scene_document()
     document.id = "main";
     document.name = "Main Wall";
     document.canvas = {.width = 1920, .height = 1080, .background_color = "#000000"};
-    document.sources.push_back({.id = "camera-front",
-                                .name = "Front Camera",
-                                .rtsp_url = "rtsp://user:password@camera/live",
-                                .transport = "tcp",
-                                .muted = false,
-                                .volume = 0.75});
+    webobs::SceneSource source;
+    source.id = "camera-front";
+    source.name = "Front Camera";
+    source.rtsp_url = "rtsp://user:password@camera/live";
+    source.transport = "tcp";
+    source.muted = false;
+    source.volume = 0.75;
+    document.sources.push_back(std::move(source));
     document.items.push_back({.id = "item-front",
                               .source_id = "camera-front",
                               .x = 100,
@@ -215,6 +269,39 @@ void scene_document_tests()
     expect(parsed.ok(), "serialized persistence JSON must parse");
     if (parsed.document)
         expect(*parsed.document == document, "scene persistence JSON must round-trip without data loss");
+
+    webobs::SceneDocument browser_document;
+    browser_document.sources.push_back({.id = "dashboard-main",
+                                        .kind = "browser",
+                                        .name = "Operations Dashboard",
+                                        .rtsp_url = {},
+                                        .transport = {},
+                                        .browser_url = "https://dashboard.example/view?token=sensitive#wall",
+                                        .browser_width = 1280,
+                                        .browser_height = 720,
+                                        .browser_fps = 30,
+                                        .browser_css = "body { overflow: hidden; }",
+                                        .shutdown_when_hidden = true,
+                                        .restart_when_active = true,
+                                        .muted = true,
+                                        .volume = 1.0});
+    webobs::SceneItem browser_item;
+    browser_item.id = "item-dashboard-main";
+    browser_item.source_id = "dashboard-main";
+    browser_item.width = 1920;
+    browser_item.height = 1080;
+    browser_document.items.push_back(std::move(browser_item));
+    expect(!webobs::validate_scene_document(browser_document).has_value(),
+           "valid browser source document must pass structural validation");
+    const auto browser_persistent =
+        webobs::serialize_scene_json(browser_document, webobs::SceneJsonView::persistence, false);
+    const auto browser_public =
+        webobs::serialize_scene_json(browser_document, webobs::SceneJsonView::public_api, false);
+    expect(browser_persistent.ok() && webobs::parse_scene_json(browser_persistent.json).ok(),
+           "browser source settings must persist and parse in schema v2");
+    expect(browser_public.ok() && browser_public.json.find("token=sensitive") == std::string::npos &&
+               browser_public.json.find("?***#***") != std::string::npos,
+           "public browser source JSON must redact query and fragment secrets");
 
     const auto compact = webobs::serialize_scene_json(document, webobs::SceneJsonView::persistence, false);
     const auto compact_again = webobs::serialize_scene_json(document, webobs::SceneJsonView::persistence, false);
@@ -262,15 +349,15 @@ void scene_document_tests()
     expect(!webobs::parse_scene_json(unsupported_field).ok(), "unknown scene fields must be rejected");
 
     std::string future_schema = compact.json;
-    const std::string schema_one = "\"schemaVersion\":1";
-    const std::size_t schema_position = future_schema.find(schema_one);
+    const std::string schema_two = "\"schemaVersion\":2";
+    const std::size_t schema_position = future_schema.find(schema_two);
     if (schema_position != std::string::npos)
-        future_schema.replace(schema_position, schema_one.size(), "\"schemaVersion\":2");
+        future_schema.replace(schema_position, schema_two.size(), "\"schemaVersion\":3");
     expect(schema_position != std::string::npos && !webobs::parse_scene_json(future_schema).ok(),
            "future scene schema versions must be rejected");
 
     const std::string duplicate_key =
-        R"({"schemaVersion":1,"schemaVersion":1,"revision":0,"id":"main","name":"Main","canvas":{"width":1920,"height":1080,"backgroundColor":"#000000"},"sources":[],"items":[]})";
+        R"({"schemaVersion":2,"schemaVersion":2,"revision":0,"id":"main","name":"Main","canvas":{"width":1920,"height":1080,"backgroundColor":"#000000"},"sources":[],"items":[]})";
     expect(!webobs::parse_scene_json(duplicate_key).ok(), "duplicate JSON keys must be rejected");
 
     const std::string secret_in_invalid_json = R"({"name":"sensitive-value")";
@@ -355,7 +442,7 @@ void scene_store_tests()
     if (!compact.ok())
         return;
     std::string legacy_json = compact.json;
-    const std::string current_version = "\"schemaVersion\":1";
+    const std::string current_version = "\"schemaVersion\":2";
     const std::size_t version_position = legacy_json.find(current_version);
     const std::string revision = "\"revision\":7,";
     const std::size_t revision_position = legacy_json.find(revision);
@@ -363,6 +450,15 @@ void scene_store_tests()
            "migration fixture must contain version and revision fields");
     if (version_position == std::string::npos || revision_position == std::string::npos)
         return;
+
+    std::string version_one_json = compact.json;
+    version_one_json.replace(version_position, current_version.size(), "\"schemaVersion\":1");
+    const auto version_one_migration = webobs::migrate_scene_json(version_one_json);
+    expect(version_one_migration.ok() && version_one_migration.migrated &&
+               version_one_migration.document->schema_version == 2 &&
+               version_one_migration.document->revision == document.revision,
+           "schemaVersion 1 must migrate to schemaVersion 2 without changing revision");
+
     legacy_json.replace(version_position, current_version.size(), "\"schemaVersion\":0");
     legacy_json.erase(revision_position, revision.size());
 
@@ -374,7 +470,7 @@ void scene_store_tests()
     expect(write_test_file(legacy_path, legacy_json, 0644), "legacy scene fixture must be written");
     const auto migrated_file = webobs::load_scene_file(legacy_path);
     expect(migrated_file.ok() && migrated_file.status == webobs::SceneFileStatus::migrated &&
-               migrated_file.document && migrated_file.document->schema_version == 1 &&
+               migrated_file.document && migrated_file.document->schema_version == 2 &&
                migrated_file.document->revision == 0,
            "legacy scene file must migrate and load");
     expect(file_mode(legacy_path) == 0600, "loaded legacy scene permissions must be tightened to 0600");
@@ -383,7 +479,7 @@ void scene_store_tests()
            "migrated scene must be atomically rewritten as current JSON");
 
     std::string future_json = compact.json;
-    future_json.replace(future_json.find(current_version), current_version.size(), "\"schemaVersion\":2");
+    future_json.replace(future_json.find(current_version), current_version.size(), "\"schemaVersion\":3");
     const std::filesystem::path future_path = scene_path.parent_path() / "future.json";
     expect(write_test_file(future_path, future_json, 0600), "future scene fixture must be written");
     const auto future = webobs::load_scene_file(future_path);
@@ -391,7 +487,7 @@ void scene_store_tests()
     expect(read_test_file(future_path) == future_json, "rejected future scene must not be rewritten");
 
     const std::filesystem::path malformed_path = scene_path.parent_path() / "malformed.json";
-    const std::string malformed = R"({"schemaVersion":1,"name":"sensitive-value")";
+    const std::string malformed = R"({"schemaVersion":2,"name":"sensitive-value")";
     expect(write_test_file(malformed_path, malformed, 0600), "malformed scene fixture must be written");
     const auto malformed_result = webobs::load_scene_file(malformed_path);
     expect(!malformed_result.ok() && malformed_result.error.find("sensitive-value") == std::string::npos,
@@ -487,8 +583,36 @@ void scene_mutation_tests()
     expect(replacement.ok() && replacement.document->sources.front().rtsp_url.find("u:p") != std::string::npos,
            "explicit replacement credentials must be accepted for a changed endpoint");
 
+    webobs::SceneDocument browser_current = valid_scene_document();
+    browser_current.sources.front().kind = "browser";
+    browser_current.sources.front().rtsp_url.clear();
+    browser_current.sources.front().transport.clear();
+    browser_current.sources.front().browser_url =
+        "https://dashboard.example/view?token=persisted#panel";
+    const auto browser_public =
+        webobs::serialize_scene_json(browser_current, webobs::SceneJsonView::public_api, false);
+    auto browser_candidate = webobs::parse_scene_json(browser_public.json);
+    browser_candidate.document->items.front().x = 456;
+    const auto browser_candidate_json = webobs::serialize_scene_json(
+        *browser_candidate.document, webobs::SceneJsonView::persistence, false);
+    const auto browser_moved = webobs::plan_scene_replacement(
+        browser_current, browser_candidate_json.json, browser_current.revision);
+    expect(browser_moved.ok() &&
+               browser_moved.document->sources.front().browser_url ==
+                   browser_current.sources.front().browser_url,
+           "unchanged redacted browser URL must restore its persisted query and fragment");
+
+    browser_candidate.document->sources.front().id = "new-browser";
+    browser_candidate.document->items.front().source_id = "new-browser";
+    const auto masked_browser_json = webobs::serialize_scene_json(
+        *browser_candidate.document, webobs::SceneJsonView::persistence, false);
+    const auto masked_browser = webobs::plan_scene_replacement(
+        browser_current, masked_browser_json.json, browser_current.revision);
+    expect(masked_browser.rejection == webobs::SceneMutationRejection::invalid_document,
+           "new browser source must not accept query or fragment placeholders");
+
     const auto secret_error = webobs::plan_scene_replacement(
-        current, R"({"schemaVersion":1,"name":"do-not-echo-this-secret")", current.revision);
+        current, R"({"schemaVersion":2,"name":"do-not-echo-this-secret")", current.revision);
     expect(!secret_error.ok() && secret_error.error.find("do-not-echo-this-secret") == std::string::npos,
            "scene mutation errors must not echo secret-bearing input");
 }
@@ -499,6 +623,7 @@ int main()
 {
     config_tests();
     redaction_tests();
+    browser_security_tests();
     scene_document_tests();
     scene_store_tests();
     scene_mutation_tests();

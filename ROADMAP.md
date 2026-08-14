@@ -1,6 +1,6 @@
 # Roadmap / 项目路线图
 
-> Last updated / 最后更新：2026-08-13
+> Last updated / 最后更新：2026-08-14
 
 This roadmap describes milestone order and acceptance gates, not promised release dates. Priorities may change based on validation results and maintainer capacity.
 
@@ -8,16 +8,16 @@ This roadmap describes milestone order and acceptance gates, not promised releas
 
 ## Current position / 当前位置
 
-**✅ M3 — Direct & Hybrid 已完成；当前位置推进到 M4 Browser Sources 的设计与依赖评估，M4 尚未开始施工。**
+**✅ M4 — Browser Sources 已完成；当前位置准备进入 M5 Audio。**
 
-M0 through M3 are complete. M3 creates random source-scoped MediaMTX pull paths on demand, exposes only same-origin WHEP resources, shares scene geometry between browser and libobs rendering, keeps compatible codecs on passthrough, and starts H.264 transcoding only for incompatible sources. Deterministic Direct/Hybrid, live mutation, disconnect/reconnect, route cleanup, and private real-source gates all pass. M4 dependency and security design is next and has not started.
+M0 through M4 are complete. M4 packages the OBS 32.1.2-matched `obs-browser` submodule and exact CEF archive, adds schema-v2 browser sources to the editor and libobs runtime, and enforces default-deny origin/private-network policy, URL redaction, bounded renderer processes, crash recovery, and ephemeral browser profiles. The deterministic browser-source gate now passes; M5's unified audio model is next.
 
-M0 至 M3 已全部完成。M3 会按需创建随机且按来源隔离的 MediaMTX 拉流路径，只向浏览器暴露同源 WHEP，并让浏览器与 libobs 共享场景几何数据；兼容编码保持直通，仅为不兼容来源启动按需 H.264 转码。确定性 Direct/Hybrid、在线场景变更、断流重连、路由清理及私有真实来源门禁均已通过。下一步是 M4 依赖与安全设计，尚未开始施工。
+M0 至 M4 已全部完成。M4 打包了与 OBS 32.1.2 匹配的 `obs-browser` submodule 和精确 CEF 归档，在编辑器及 libobs 运行时加入 schema v2 浏览器源，并实施默认拒绝的 Origin/私网策略、URL 脱敏、renderer 进程上限、崩溃恢复和临时浏览器 profile。确定性浏览器源门禁现已通过；下一步是 M5 的统一音频模型。
 
 ```text
-M0 complete       M1 complete       M2 complete       M3 complete       M4 Browser Sources
-M0 已完成      -> M1 已完成      -> M2 已完成      -> M3 已完成      -> M4 浏览器源
-✅                ✅                ✅                ✅                ⬜ NEXT
+M0 complete       M1 complete       M2 complete       M3 complete       M4 complete       M5 Audio
+M0 已完成      -> M1 已完成      -> M2 已完成      -> M3 已完成      -> M4 已完成      -> M5 音频
+✅                ✅                ✅                ✅                ✅                ⬜ NEXT
 ```
 
 ### M0 acceptance / M0 验收
@@ -53,6 +53,7 @@ M0 已于 2026-08-11 在真实摄像头门禁通过后完成。后续修改采�
 - M3 selective Hybrid / M3 选择性混合：the deterministic H.264/HEVC scene classified H.264 as passthrough and HEVC as transcode, ran exactly one on-demand FFmpeg/x264 process, released it after the browser page closed, and produced a 25.3-second 640×360, 10 FPS recording with zero black frames; subsequent Direct and Composite reconnect regressions also passed / 确定性 H.264/HEVC 场景将 H.264 分类为直通、HEVC 分类为转码，只运行一个按需 FFmpeg/x264 进程并在浏览器页面关闭后释放；生成 25.3 秒 640×360、10 FPS、零黑帧录像，后续 Direct 与 Composite 重连回归亦通过。
 - M3 lifecycle / M3 生命周期：an isolated Direct browser survived an HEVC publisher outage, rebuilt WHEP after recovery, switched one live source from Hybrid to Direct and back, replaced the opaque Hybrid route, removed the source and its transcoder, and produced a 49.1-second 640×360, 10 FPS H.264 recording with zero black frames / 隔离 Direct 浏览器在 HEVC 发布端断流后完成恢复与 WHEP 重建，将同一在线来源从 Hybrid 切换为 Direct 再切回、替换不透明 Hybrid 路径，并在移除来源后释放转码器；生成 49.1 秒 640×360、10 FPS、零黑帧 H.264 录像。
 - M3 real-camera acceptance / M3 真实摄像头验收：a private H.264 source used source-scoped same-origin Direct WHEP passthrough in isolated Chrome and produced a finalized 30.8-second 640×360, 10 FPS recording with zero black frames; capability responses and persisted evidence contain no private endpoint / 私有 H.264 来源在隔离 Chrome 中通过按来源限定的同源 Direct WHEP 直通，并生成完成封装的 30.8 秒 640×360、10 FPS、零黑帧录像；能力响应和持久化证据均不包含私有端点。
+- M4 browser-source acceptance / M4 浏览器源验收：the pinned CEF/`obs-browser` runtime rendered an animated HTTP fixture through libobs, enforced default-deny and explicit private-network approval, redacted URL tokens, closed/recreated hidden browser instances, recovered after the renderer pool was killed, stayed within four renderer processes, removed its private profile on shutdown, and passed two consecutive final gates; the latest fully decodable 7.7-second 640×360, 10 FPS H.264 video-only MP4 had sampled YAVG 78.6251 / 固定 CEF/`obs-browser` 运行时通过 libobs 渲染动画 HTTP 夹具，验证默认拒绝与显式私网授权、URL 令牌脱敏、隐藏实例关闭/重建、renderer 池强杀后的恢复、最多四个 renderer、关停后私有 profile 清理，并连续两次通过最终门禁；最新 7.7 秒 640×360、10 FPS、H.264、仅视频且可完整解码的 MP4 抽样 YAVG 为 78.6251。
 
 ## Milestones / 里程碑
 
@@ -62,7 +63,7 @@ M0 已于 2026-08-11 在真实摄像头门禁通过后完成。后续修改采�
 | M1 — Web Control | ✅ Complete / 已完成 | Web UI, API, persistent scene model, RTSP source CRUD and transforms / Web UI、API、场景持久化、来源管理和画面变换 | Browser edits and libobs use the same scene state; recording remains stable / 浏览器与 libobs 共用同一场景状态，录制稳定 |
 | M2 — Composite WebRTC | ✅ Complete / 已完成 | Publish the server-composited program through WHIP/MediaMTX and play through WHEP/WebRTC / 服务端合成画面通过 WHIP/MediaMTX 发布并在浏览器播放 | Low-latency browser playback survives reconnects in one product container / 单容器内低延迟播放和重连通过 |
 | M3 — Direct & Hybrid | ✅ Complete / 已完成 | Direct camera playback in browsers, client/server mode switching, selective transcoding / 浏览器直连播放、客户端/服务端模式切换和选择性转码 | Shared layout behaves consistently across Direct and Composite modes / 两种模式共享布局且行为一致 |
-| M4 — Browser Sources | ⬜ Planned / 计划中 | `obs-browser` sources for dashboards, satellite maps, overlays and embeddable media / 支持仪表盘、卫星图、叠加层和可嵌入媒体 | CEF lifecycle, isolation, recovery, and resource limits pass container tests / CEF 生命周期、隔离、恢复和资源限制通过测试 |
+| M4 — Browser Sources | ✅ Complete / 已完成 | `obs-browser` sources for dashboards, satellite maps, overlays and embeddable media / 支持仪表盘、卫星图、叠加层和可嵌入媒体 | CEF lifecycle, isolation, recovery, and resource limits pass container tests / CEF 生命周期、隔离、恢复和资源限制通过测试 |
 | M5 — Audio | ⬜ Planned / 计划中 | Per-source mute/volume, Web Audio in Direct mode, libobs mixing in Composite mode / 单源静音与音量、Direct Web Audio、Composite libobs 混音 | Multi-source sync, mute, volume, and output audio are verified / 多源同步、静音、音量和输出音轨通过验证 |
 | M6 — Production | ⬜ Planned / 计划中 | Authentication, HTTPS, TURN, health checks, GPU detection, backup, observability and upgrades / 鉴权、HTTPS、TURN、健康检查、GPU 检测、备份、可观测性和升级 | Security review, upgrade/rollback, recovery, and documented deployment pass / 安全、升级回滚、恢复和部署文档验收通过 |
 
@@ -133,6 +134,19 @@ M3 已于 2026-08-13 完成：确定性 Direct、选择性 Hybrid、在线编码
 - Support dashboards, local overlays, satellite maps, and approved embeds / 支持仪表盘、本地叠加层、卫星图和允许嵌入的媒体。
 - Add URL policy, local-network access controls, process limits, crash recovery, and cache cleanup / 增加 URL 策略、内网访问控制、进程限制、崩溃恢复和缓存清理。
 - Evaluate hardware-backed graphics without making it a prerequisite / 评估硬件图形加速，但不将其设为前置条件。
+
+#### M4 progress / M4 进度
+
+- [x] Pin and package the OBS-matched CEF archive, `obs-browser`, helper binary, resources, and runtime libraries / 固定并打包与 OBS 匹配的 CEF 归档、`obs-browser`、helper、资源及运行库
+- [x] Add strict schema-v2 browser sources to persistence, REST/WebSocket, editor, and libobs rendering / 在持久化、REST/WebSocket、编辑器和 libobs 渲染中加入严格的 schema v2 浏览器源
+- [x] Enforce exact origins, separate private-network opt-in, DNS checks, URL redaction, and Composite-only Direct capabilities / 实施精确 Origin、独立私网开关、DNS 检查、URL 脱敏和 Direct 模式 Composite-only 能力
+- [x] Bound CEF renderers, close/recreate hidden instances, reload crashed renderers, and remove private profiles / 限制 CEF renderer、关闭/重建隐藏实例、重载崩溃 renderer 并清理私有 profile
+- [x] Pass deterministic policy, lifecycle, recovery, resource, cache, decode, and non-black recording acceptance / 通过确定性策略、生命周期、恢复、资源、缓存、解码和非黑录像验收
+- [x] Keep Mesa software rendering as the portable baseline; leave optional GPU detection and fallback selection to M6 / 保持 Mesa 软件渲染为可移植基线，将可选 GPU 检测与回退选择留到 M6
+
+M4 completed on 2026-08-14 after the exact pinned browser runtime passed container build/link checks and the deterministic animated-page acceptance covered policy, lifecycle, renderer recovery, resource ceilings, cache cleanup, redaction, graceful shutdown, and non-black MP4 finalization.
+
+M4 已于 2026-08-14 完成：精确固定的浏览器运行时通过容器构建与动态链接检查，动画页面确定性门禁覆盖策略、生命周期、renderer 恢复、资源上限、缓存清理、脱敏、优雅停止及非黑 MP4 完整封装。
 
 ### M5 — Audio
 

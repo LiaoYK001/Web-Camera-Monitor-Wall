@@ -12,6 +12,7 @@ reject_blackout="${TEST_REJECT_BLACKOUT:-0}"
 blackout_yavg_max="${TEST_BLACKOUT_YAVG_MAX:-30}"
 sample_timestamp="${TEST_SAMPLE_TIMESTAMP:-0}"
 sample_from_end_seconds="${TEST_SAMPLE_FROM_END_SECONDS:-}"
+sample_minimum_yavg="${TEST_MIN_YAVG:-5}"
 
 sample_seek_option="-ss"
 sample_seek_value="$sample_timestamp"
@@ -34,6 +35,10 @@ case "$reject_blackout" in
 esac
 if ! awk -v value="$blackout_yavg_max" 'BEGIN { exit !(value >= 0 && value <= 255) }'; then
     echo "TEST_BLACKOUT_YAVG_MAX must be between 0 and 255" >&2
+    exit 2
+fi
+if ! awk -v value="$sample_minimum_yavg" 'BEGIN { exit !(value >= 0 && value <= 255) }'; then
+    echo "TEST_MIN_YAVG must be between 0 and 255" >&2
     exit 2
 fi
 
@@ -71,10 +76,11 @@ awk -v actual="$average_frame_rate" -v expected="$expected_frame_rate" '
 awk -v duration="$duration" -v minimum="$minimum_duration" -v maximum="$maximum_duration" \
     'BEGIN { exit !(duration >= minimum && duration <= maximum) }'
 
-yavg="$(ffmpeg -hide_banner -loglevel info -i "$file" -frames:v 1 -vf signalstats,metadata=print -f null - 2>&1 \
+yavg="$(ffmpeg -hide_banner -loglevel info "$sample_seek_option" "$sample_seek_value" -i "$file" \
+    -frames:v 1 -vf signalstats,metadata=print -f null - 2>&1 \
     | awk -F= '/lavfi.signalstats.YAVG=/{print $2; exit}')"
 test -n "$yavg"
-awk -v yavg="$yavg" 'BEGIN { exit !(yavg > 5) }'
+awk -v yavg="$yavg" -v minimum="$sample_minimum_yavg" 'BEGIN { exit !(yavg > minimum) }'
 
 pillarbox_report=""
 if [ "$require_pillarbox" = "1" ]; then

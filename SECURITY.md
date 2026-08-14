@@ -15,6 +15,8 @@ Please avoid opening a public issue for a suspected vulnerability. Use the repos
 - Real-camera acceptance writes recordings under ignored `recordings/` and a second-pass sanitized log under ignored `tests/artifacts/`. Do not upload either artifact publicly, even when the automated credential check passes.
 - Run `tests/run-public-audit.ps1` or `tests/run-public-audit.sh` before every public commit. The audit inspects the Git index rather than untracked local configuration, rejects sensitive/generated paths and high-confidence credential material, allowlists only known RTSP fixtures, and verifies the pinned OBS submodule.
 - The bundled browser editor uses only same-origin static assets, REST, and WebSocket connections. It has no analytics, external font, CDN, or source-map dependency; treat browser profiles, screenshots, and pasted replacement URLs as sensitive nonetheless.
+- Server-rendered browser sources are denied by default. Approve exact trusted origins through `WEBOBS_BROWSER_ALLOWED_ORIGINS`; private/local destinations require the separate `WEBOBS_BROWSER_ALLOW_PRIVATE_NETWORKS=true` opt-in. An approved page can load subresources, so the allowlist is an administrator trust boundary rather than a complete content sandbox.
+- Browser source URLs reject userinfo. API and product logs hide query/fragment values; the ephemeral CEF profile is mode `0700` and is deleted before startup and after graceful shutdown. Do not put long-lived dashboard tokens in committed scene fixtures or public diagnostics.
 
 - 真实配置应保存在本地 `.env`。除 `.env.example` 外，`.env*`、`secrets/`、常见私钥格式、录像、构建目录和测试产物均不会进入 Git 或 Docker 构建上下文。
 - 相比 `--rtsp-url` 命令行参数，优先通过受保护的环境文件提供 `WEBOBS_RTSP_URL`，因为进程列表可能暴露命令行参数。同时应限制主机、Docker daemon、环境文件和录像的访问权限。
@@ -23,9 +25,11 @@ Please avoid opening a public issue for a suspected vulnerability. Use the repos
 - 真实摄像头验收会把录像写入已忽略的 `recordings/`，并把二次脱敏日志写入已忽略的 `tests/artifacts/`。即使自动凭据检查通过，也不要公开上传这些产物。
 - 每次公开提交前运行 `tests/run-public-audit.ps1` 或 `tests/run-public-audit.sh`。审计只检查 Git 索引而不会读取本地未跟踪配置；它会拒绝敏感/生成文件及高置信度凭据，只允许已知 RTSP 测试占位符，并验证 OBS submodule 固定提交。
 - 随镜像提供的浏览器编辑器只使用同源静态资源、REST 和 WebSocket，不包含分析脚本、外部字体、CDN 或 source map；但浏览器资料、截图及粘贴的新地址仍应按敏感信息处理。
+- 服务端浏览器源默认拒绝。只通过 `WEBOBS_BROWSER_ALLOWED_ORIGINS` 批准精确且可信的 Origin；私网或本地目标还需单独设置 `WEBOBS_BROWSER_ALLOW_PRIVATE_NETWORKS=true`。获准网页仍可加载子资源，因此允许列表是管理员信任边界，不是完整内容沙箱。
+- 浏览器源 URL 禁止 userinfo；API 和产品日志会隐藏查询与片段值。临时 CEF profile 权限为 `0700`，启动前和正常退出后都会删除。不得把长期仪表盘令牌写入已提交场景或公开诊断。
 
 ## Supported versions / 支持版本
 
-Security fixes are currently provided for the latest commit on the default branch while the project is in M1 development. The M1 REST/WebSocket control plane has no authentication or TLS: the product Compose publishes it on host loopback only, validates local Host/Origin values, sends no CORS permission, and requires `If-Match` for mutations. Do not expose it on a LAN or the Internet. Authentication, authorization, TLS, and hardened remote deployment remain M6 work.
+Security fixes are currently provided for the latest commit on the default branch after M4 completion. The REST/WebSocket control plane has no authentication or TLS: the product Compose publishes it on host loopback only, validates local Host/Origin values, sends no CORS permission, and requires `If-Match` for mutations. Do not expose it on a LAN or the Internet. Authentication, authorization, TLS, and hardened remote deployment remain M6 work.
 
-项目处于 M1 开发阶段，安全修复仅面向默认分支的最新提交。M1 REST/WebSocket 控制面尚无认证和 TLS；产品 Compose 仅发布到主机回环地址，并校验本地 Host/Origin、不授予 CORS、要求变更携带 `If-Match`。不得暴露到局域网或互联网；认证、授权、TLS 和远程部署加固仍属于 M6。
+项目已完成 M4，安全修复仅面向默认分支的最新提交。REST/WebSocket 控制面尚无认证和 TLS；产品 Compose 仅发布到主机回环地址，并校验本地 Host/Origin、不授予 CORS、要求变更携带 `If-Match`。不得暴露到局域网或互联网；认证、授权、TLS 和远程部署加固仍属于 M6。

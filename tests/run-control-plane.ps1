@@ -213,7 +213,8 @@ try {
     $addBody = $updatedScene | ConvertTo-Json -Depth 10 -Compress
     $added = Invoke-ControlRequest -Client $client -Method ([Net.Http.HttpMethod]::Put) -Path '/api/v1/scene' `
         -Body $addBody -Headers @{ 'If-Match' = '"4"'; Origin = $LocalOrigin }
-    Assert-True ($added.Status -eq 200) 'Adding an RTSP source while recording must succeed'
+    Assert-True ($added.Status -eq 200) `
+        "Adding an RTSP source while recording must succeed (HTTP $($added.Status): $($added.Body))"
     Assert-True ($added.Headers.ETag.Tag -eq '"5"') 'Adding a source must advance ETag exactly once'
     $addedScene = $added.Body | ConvertFrom-Json
     Assert-True ($addedScene.sources.Count -eq 3 -and $addedScene.items.Count -eq 3) 'Added source and item must be returned'

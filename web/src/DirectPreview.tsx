@@ -44,7 +44,7 @@ function DirectTile({ item, source, capability }: {
   const [dimensions, setDimensions] = useState({ width: 0, height: 0 });
 
   useEffect(() => {
-    if (!videoRef.current || !capability) return undefined;
+    if (!videoRef.current || !capability?.endpoint || capability.preferred !== 'direct') return undefined;
     const connection = connectSource(videoRef.current, capability.endpoint, setState);
     return connection.close;
   }, [capability]);
@@ -69,7 +69,9 @@ function DirectTile({ item, source, capability }: {
         })}
       />
       <span className="direct-tile-state"><i aria-hidden="true" />{labels[state]}</span>
-      {state !== 'live' && <span className="direct-tile-name">{source.name}</span>}
+      {source.kind === 'browser'
+        ? <span className="direct-tile-name">{source.name} · 仅服务端合成</span>
+        : state !== 'live' && <span className="direct-tile-name">{source.name}</span>}
     </div>
   );
 }

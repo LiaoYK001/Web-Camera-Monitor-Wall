@@ -1,0 +1,41 @@
+{
+  "schemaVersion": 2,
+  "revision": 0,
+  "id": "main",
+  "name": "M4 Browser Fixture",
+  "canvas": {
+    "width": 640,
+    "height": 360,
+    "backgroundColor": "#000000"
+  },
+  "sources": [
+    {
+      "id": "browser-fixture",
+      "kind": "browser",
+      "name": "Deterministic Dashboard",
+      "url": "http://browser-fixture:8080/?token=m4-test-token#wall",
+      "width": 640,
+      "height": 360,
+      "fps": 10,
+      "customCss": "",
+      "shutdownWhenHidden": true,
+      "restartWhenActive": true,
+      "muted": true,
+      "volume": 1.0
+    }
+  ],
+  "items": [
+    {
+      "id": "item-browser-fixture",
+      "sourceId": "browser-fixture",
+      "x": 0,
+      "y": 0,
+      "width": 640,
+      "height": 360,
+      "scaleMode": "stretch",
+      "crop": { "top": 0, "right": 0, "bottom": 0, "left": 0 },
+      "zIndex": 0,
+      "visible": true
+    }
+  ]
+}

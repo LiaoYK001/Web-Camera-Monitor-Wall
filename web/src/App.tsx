@@ -111,6 +111,7 @@ export default function App() {
   const [adding, setAdding] = useState(false);
   const [workspaceMode, setWorkspaceMode] = useState<WorkspaceMode>('program');
   const [playbackMode, setPlaybackMode] = useState<PlaybackMode>(initialPlaybackMode);
+  const [newKind, setNewKind] = useState<SceneSource['kind']>('rtsp');
   const [newName, setNewName] = useState('新摄像头');
   const [newUrl, setNewUrl] = useState('');
   const [newTransport, setNewTransport] = useState<Transport>('tcp');
@@ -198,7 +199,9 @@ export default function App() {
   const updateSource = useCallback((sourceId: string, update: Partial<SceneSource>) => {
     updateDraft((scene) => ({
       ...scene,
-      sources: scene.sources.map((source) => (source.id === sourceId ? { ...source, ...update } : source)),
+      sources: scene.sources.map((source) => (
+        source.id === sourceId ? { ...source, ...update } as SceneSource : source
+      )),
     }));
   }, [updateDraft]);
 
@@ -260,20 +263,36 @@ export default function App() {
   };
 
   const addSource = () => {
-    if (!draft || !newName.trim() || !/^rtsps?:\/\/\S+$/i.test(newUrl) || draft.sources.length >= 64) return;
+    const validUrl = newKind === 'rtsp' ? /^rtsps?:\/\/\S+$/i.test(newUrl) : /^https?:\/\/\S+$/i.test(newUrl);
+    const browserCount = draft?.sources.filter((source) => source.kind === 'browser').length ?? 0;
+    if (!draft || !newName.trim() || !validUrl || draft.sources.length >= 64 ||
+        (newKind === 'browser' && browserCount >= 8)) return;
     const suffix = Date.now().toString(36);
-    const sourceId = `camera-${suffix}`;
+    const sourceId = `${newKind === 'rtsp' ? 'camera' : 'browser'}-${suffix}`;
     const itemId = `item-${suffix}`;
     const column = draft.items.length % 2;
     const row = Math.floor(draft.items.length / 2) % 2;
     const width = Math.max(64, Math.floor(draft.canvas.width / 2));
     const height = Math.max(64, Math.floor(draft.canvas.height / 2));
-    const source: SceneSource = {
+    const source: SceneSource = newKind === 'rtsp' ? {
       id: sourceId,
       kind: 'rtsp',
       name: newName.trim(),
       rtspUrl: newUrl,
       transport: newTransport,
+      muted: true,
+      volume: 1,
+    } : {
+      id: sourceId,
+      kind: 'browser',
+      name: newName.trim(),
+      url: newUrl,
+      width: 1280,
+      height: 720,
+      fps: 30,
+      customCss: '',
+      shutdownWhenHidden: true,
+      restartWhenActive: true,
       muted: true,
       volume: 1,
     };
@@ -291,7 +310,7 @@ export default function App() {
     };
     updateDraft((scene) => ({ ...scene, sources: [...scene.sources, source], items: [...scene.items, item] }));
     setSelectedSourceId(sourceId);
-    setNewName('新摄像头');
+    setNewName(newKind === 'rtsp' ? '新摄像头' : '新网页');
     setNewUrl('');
     setNewTransport('tcp');
     setAdding(false);
@@ -438,7 +457,7 @@ export default function App() {
                   <span className="source-index">{String(index + 1).padStart(2, '0')}</span>
                   <span className="source-copy">
                     <strong>{source.name}</strong>
-                    <small>{source.transport.toUpperCase()} · {item?.visible === false ? '已隐藏' : '画布中'}</small>
+                    <small>{source.kind === 'rtsp' ? source.transport.toUpperCase() : 'BROWSER'} · {item?.visible === false ? '已隐藏' : '画布中'}</small>
                   </span>
                   <span className={`source-state ${item?.visible === false ? 'hidden' : ''}`} aria-hidden="true" />
                 </button>
@@ -449,42 +468,58 @@ export default function App() {
           {adding ? (
             <div className="add-source-form">
               <label className="field">
+                <span>来源类型</span>
+                <select value={newKind} onChange={(event) => {
+                  const kind = event.target.value as SceneSource['kind'];
+                  setNewKind(kind);
+                  setNewName(kind === 'rtsp' ? '新摄像头' : '新网页');
+                  setNewUrl('');
+                }}>
+                  <option value="rtsp">RTSP 摄像头</option>
+                  <option value="browser">浏览器网页</option>
+                </select>
+              </label>
+              <label className="field">
                 <span>显示名称</span>
                 <input value={newName} maxLength={128} onChange={(event) => setNewName(event.target.value)} />
               </label>
               <label className="field">
-                <span>RTSP 地址</span>
+                <span>{newKind === 'rtsp' ? 'RTSP 地址' : '网页地址'}</span>
                 <input
                   value={newUrl}
                   type="text"
                   inputMode="url"
                   autoComplete="off"
                   spellCheck={false}
-                  placeholder="rtsp://camera-host/stream"
+                  placeholder={newKind === 'rtsp' ? 'rtsp://camera-host/stream' : 'https://dashboard.example/view'}
                   onChange={(event) => setNewUrl(event.target.value)}
                 />
               </label>
-              <label className="field">
-                <span>传输方式</span>
-                <select value={newTransport} onChange={(event) => setNewTransport(event.target.value as Transport)}>
-                  <option value="tcp">TCP（推荐）</option>
-                  <option value="udp">UDP</option>
-                </select>
-              </label>
-              <p className="security-note">凭据不会由 API 回显。请勿在共享屏幕或浏览器同步中保存真实地址。</p>
+              {newKind === 'rtsp' && (
+                <label className="field">
+                  <span>传输方式</span>
+                  <select value={newTransport} onChange={(event) => setNewTransport(event.target.value as Transport)}>
+                    <option value="tcp">TCP（推荐）</option>
+                    <option value="udp">UDP</option>
+                  </select>
+                </label>
+              )}
+              <p className="security-note">{newKind === 'rtsp'
+                ? '凭据不会由 API 回显。请勿在共享屏幕或浏览器同步中保存真实地址。'
+                : '只允许管理员在 WEBOBS_BROWSER_ALLOWED_ORIGINS 中批准的来源；私网地址还需显式启用。'}</p>
               <div className="form-actions">
                 <button className="ghost-button" type="button" onClick={() => setAdding(false)}>取消</button>
                 <button
                   className="primary-button"
                   type="button"
-                  disabled={!newName.trim() || !/^rtsps?:\/\/\S+$/i.test(newUrl)}
+                  disabled={!newName.trim() || !(newKind === 'rtsp' ? /^rtsps?:\/\/\S+$/i : /^https?:\/\/\S+$/i).test(newUrl)}
                   onClick={addSource}
                 >添加到画布</button>
               </div>
             </div>
           ) : (
             <button className="add-source-button" type="button" onClick={() => setAdding(true)} disabled={draft.sources.length >= 64}>
-              <span aria-hidden="true">＋</span> 添加 RTSP 来源
+              <span aria-hidden="true">＋</span> 添加来源
             </button>
           )}
         </aside>
@@ -545,7 +580,9 @@ export default function App() {
                       onPointerDown={(event) => beginPointer(event, item, 'move')}
                     >
                       <div className="tile-noise" aria-hidden="true" />
-                      <span className="tile-tag">RTSP · {source.transport.toUpperCase()}</span>
+                      <span className="tile-tag">{source.kind === 'rtsp'
+                        ? `RTSP · ${source.transport.toUpperCase()}`
+                        : `BROWSER · ${source.width}×${source.height}`}</span>
                       <div className="tile-caption">
                         <strong>{source.name}</strong>
                         <span>{item.width} × {item.height}</span>
@@ -589,23 +626,51 @@ export default function App() {
                   <span>名称</span>
                   <input value={selectedSource.name} maxLength={128} onChange={(event) => updateSource(selectedSource.id, { name: event.target.value })} />
                 </label>
-                <label className="field">
-                  <span>RTSP 地址</span>
-                  <input
-                    value={selectedSource.rtspUrl}
-                    autoComplete="off"
-                    spellCheck={false}
-                    onChange={(event) => updateSource(selectedSource.id, { rtspUrl: event.target.value })}
-                  />
-                </label>
-                <p className="security-note"><code>***:***</code> 表示服务器保留的既有凭据；改变端点时请输入完整新地址。</p>
-                <label className="field">
-                  <span>传输方式</span>
-                  <select value={selectedSource.transport} onChange={(event) => updateSource(selectedSource.id, { transport: event.target.value as Transport })}>
-                    <option value="tcp">TCP</option>
-                    <option value="udp">UDP</option>
-                  </select>
-                </label>
+                {selectedSource.kind === 'rtsp' ? (
+                  <>
+                    <label className="field">
+                      <span>RTSP 地址</span>
+                      <input
+                        value={selectedSource.rtspUrl}
+                        autoComplete="off"
+                        spellCheck={false}
+                        onChange={(event) => updateSource(selectedSource.id, { rtspUrl: event.target.value })}
+                      />
+                    </label>
+                    <p className="security-note"><code>***:***</code> 表示服务器保留的既有凭据；改变端点时请输入完整新地址。</p>
+                    <label className="field">
+                      <span>传输方式</span>
+                      <select value={selectedSource.transport} onChange={(event) => updateSource(selectedSource.id, { transport: event.target.value as Transport })}>
+                        <option value="tcp">TCP</option>
+                        <option value="udp">UDP</option>
+                      </select>
+                    </label>
+                  </>
+                ) : (
+                  <>
+                    <label className="field">
+                      <span>网页地址</span>
+                      <input
+                        value={selectedSource.url}
+                        autoComplete="off"
+                        spellCheck={false}
+                        onChange={(event) => updateSource(selectedSource.id, { url: event.target.value })}
+                      />
+                    </label>
+                    <p className="security-note"><code>?***</code> 或 <code>#***</code> 表示服务器保留的查询参数或片段；来源必须命中管理员允许列表。</p>
+                    <div className="field-grid">
+                      <NumberField label="网页宽" value={selectedSource.width} min={16} max={8192} onChange={(width) => updateSource(selectedSource.id, { width })} />
+                      <NumberField label="网页高" value={selectedSource.height} min={16} max={8192} onChange={(height) => updateSource(selectedSource.id, { height })} />
+                      <NumberField label="帧率" value={selectedSource.fps} min={1} max={60} onChange={(fps) => updateSource(selectedSource.id, { fps })} />
+                    </div>
+                    <label className="field">
+                      <span>自定义 CSS（最多 32 KiB）</span>
+                      <textarea value={selectedSource.customCss} maxLength={32768} onChange={(event) => updateSource(selectedSource.id, { customCss: event.target.value })} />
+                    </label>
+                    <Toggle label="隐藏时释放浏览器" checked={selectedSource.shutdownWhenHidden} onChange={(shutdownWhenHidden) => updateSource(selectedSource.id, { shutdownWhenHidden })} />
+                    <Toggle label="重新显示时刷新" checked={selectedSource.restartWhenActive} onChange={(restartWhenActive) => updateSource(selectedSource.id, { restartWhenActive })} />
+                  </>
+                )}
                 <Toggle label="静音" checked={selectedSource.muted} onChange={(muted) => updateSource(selectedSource.id, { muted })} />
                 <label className="range-field">
                   <span>音量 <strong>{Math.round(selectedSource.volume * 100)}%</strong></span>

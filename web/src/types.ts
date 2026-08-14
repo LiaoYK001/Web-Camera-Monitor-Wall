@@ -7,15 +7,31 @@ export interface SceneCanvas {
   backgroundColor: string;
 }
 
-export interface SceneSource {
+interface SceneSourceBase {
   id: string;
-  kind: 'rtsp';
   name: string;
-  rtspUrl: string;
-  transport: Transport;
   muted: boolean;
   volume: number;
 }
+
+export interface RtspSceneSource extends SceneSourceBase {
+  kind: 'rtsp';
+  rtspUrl: string;
+  transport: Transport;
+}
+
+export interface BrowserSceneSource extends SceneSourceBase {
+  kind: 'browser';
+  url: string;
+  width: number;
+  height: number;
+  fps: number;
+  customCss: string;
+  shutdownWhenHidden: boolean;
+  restartWhenActive: boolean;
+}
+
+export type SceneSource = RtspSceneSource | BrowserSceneSource;
 
 export interface SceneCrop {
   top: number;
@@ -38,7 +54,7 @@ export interface SceneItem {
 }
 
 export interface SceneDocument {
-  schemaVersion: 1;
+  schemaVersion: 2;
   revision: number;
   id: string;
   name: string;
@@ -64,10 +80,10 @@ export type PlaybackMode = 'composite' | 'direct';
 
 export interface SourcePlaybackCapability {
   sourceId: string;
-  endpoint: string;
-  preferred: 'direct';
+  endpoint?: string;
+  preferred: 'direct' | 'composite';
   fallback: 'composite';
-  strategy: 'unknown' | 'passthrough' | 'transcode';
+  strategy: 'unknown' | 'passthrough' | 'transcode' | 'composite';
   codec: string;
 }
 

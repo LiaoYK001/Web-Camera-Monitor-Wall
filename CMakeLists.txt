@@ -19,6 +19,7 @@ find_package(Threads REQUIRED)
 pkg_check_modules(JANSSON REQUIRED IMPORTED_TARGET jansson)
 
 add_library(webobs-common
+    core/src/browser_security.cpp
     core/src/config.cpp
     core/src/redaction.cpp
     core/src/scene_document.cpp

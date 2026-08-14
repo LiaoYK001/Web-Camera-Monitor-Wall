@@ -1,14 +1,14 @@
 # Web Camera Monitor Wall
 
-一个基于 `libobs` 的无桌面 Web 监控墙/合成器项目。仓库已完成 **M0 Headless Proof、M1 Web Control 和 M2 Composite WebRTC**：无需 OBS Qt 界面，也能在 Linux Docker 容器中完成下面的闭环。
+一个基于 `libobs` 的无桌面 Web 监控墙/合成器项目。仓库已完成 **M0 Headless Proof、M1 Web Control、M2 Composite WebRTC、M3 Direct & Hybrid 和 M4 Browser Sources**：无需 OBS Qt 界面，也能在 Linux Docker 容器中完成下面的闭环。
 
 ```text
 RTSP camera -> libobs ffmpeg_source -> OBS scene -> obs_x264 -> video-only MP4
 ```
 
-当前开发版本已能从持久化场景启动多路 RTSP 合成，并通过随产品镜像提供的 React/TypeScript 编辑器及本机 REST/WebSocket 接口，在录制期间原子更新布局和来源。M2 已在同一产品镜像中通过固定版本 MediaMTX 和 `obs-webrtc` 发布 WHIP/H.264；M3 已完成每路摄像头按需直达浏览器、Direct 与 Composite 共享布局、浏览器不兼容来源的按需 H.264 转码，以及在线变更、断流重连和资源回收验收。输出音轨与硬件编码尚未加入。
+当前开发版本已能从持久化场景启动多路 RTSP 与受控网页来源合成，并通过随产品镜像提供的 React/TypeScript 编辑器及本机 REST/WebSocket 接口，在录制期间原子更新布局和来源。M2 已在同一产品镜像中通过固定版本 MediaMTX 和 `obs-webrtc` 发布 WHIP/H.264；M3 已完成每路摄像头按需直达浏览器及选择性 H.264 转码；M4 已完成固定版本 `obs-browser`/CEF、浏览器 URL 策略、生命周期、崩溃恢复和临时缓存清理。输出音轨与硬件编码尚未加入。
 
-开发路线、里程碑验收标准和当前进度见 [ROADMAP.md](ROADMAP.md)。**M0 至 M3 已通过全部验收；下一阶段为 M4 Browser Sources，尚未开始。**场景与持久化契约见 [docs/scene-schema-v1.md](docs/scene-schema-v1.md)，控制协议见 [docs/api-v1.md](docs/api-v1.md)。
+开发路线、里程碑验收标准和当前进度见 [ROADMAP.md](ROADMAP.md)。**M0 至 M4 已通过全部验收；下一阶段为 M5 Audio。**当前场景与持久化契约见 [docs/scene-schema-v2.md](docs/scene-schema-v2.md)，历史 v1 契约仍保留在 [docs/scene-schema-v1.md](docs/scene-schema-v1.md)，控制协议见 [docs/api-v1.md](docs/api-v1.md)。
 
 `WEBOBS_SCENE_FILE` 默认指向 `/config/webobs/scene.json`。首次启动使用 `WEBOBS_RTSP_URL` 创建并保存单路场景；后续启动以场景文件为准。手工编辑场景文件前应停止容器，且真实 RTSP 凭据不得提交到 Git。
 
@@ -22,6 +22,7 @@ RTSP camera -> libobs ffmpeg_source -> OBS scene -> obs_x264 -> video-only MP4
 - 产品运行时只有一个 Docker 镜像；M1 Compose 仅向主机回环地址发布控制端口
 - MediaMTX `1.18.2` 固定版本与 SHA-256 校验后打包进产品镜像，内部信令仅监听容器回环地址
 - libdatachannel `0.21.0` 固定到审核提交并使用 Ubuntu OpenSSL 3 后端，避免与系统 FFmpeg 的 Mbed TLS 2.x ABI 冲突
+- `obs-browser` 固定到 OBS 32.1.2 的递归 submodule 状态，CEF 固定为 6533 revision 6 并校验精确 SHA-256
 
 OBS 的 `ffmpeg_muxer` 要求同时连接视频和音频编码器。M0 会写入一个带静音 AAC 的临时 MKV，停止后通过 FFmpeg stream copy 生成只有 H.264 视频轨的最终 MP4；画面不会被二次编码，临时文件成功后会删除。
 
@@ -78,6 +79,8 @@ curl http://127.0.0.1:8080/api/v1/scene
 M1 尚无认证、TLS 或远程暴露承诺。不要将端口映射改为所有网卡，也不要通过公网反向代理发布；完整的本地安全约束和更新示例见 [控制 API 文档](docs/api-v1.md)。
 
 编辑器默认显示“实时节目”，通过 recvonly WHEP 播放 libobs 合成后的 H.264 画面；切换到“布局编辑”可进行来源增删、RTSP 传输方式、静音/音量、拖动、缩放、适配模式、裁切、可见性和层级调整。修改先保留在浏览器草稿中，点击“保存场景”后以 ETag/`If-Match` 提交；WebSocket 会同步其他本地标签页的已提交版本并提示冲突。页面不会显示已存储的 RTSP 用户名或密码。
+
+M4 编辑器还可添加 `http`/`https` 浏览器源。浏览器源默认全部拒绝，管理员必须在 `WEBOBS_BROWSER_ALLOWED_ORIGINS` 中列出精确 Origin；访问单标签主机、localhost、私网地址或解析到私网的 DNS 名称还必须显式启用 `WEBOBS_BROWSER_ALLOW_PRIVATE_NETWORKS=true`。公开 API 与产品日志会隐藏 URL 查询和片段值。浏览器源在 Direct 模式中明确标为 Composite-only，不会获得来源级 WHEP 端点。完整边界和迁移规则见 [scene schema v2](docs/scene-schema-v2.md)。
 
 M3 的实时节目区可显式选择“服务端合成”或“浏览器直达”。Direct 模式为每个可见来源建立独立的同源 WHEP 会话，并以同一份场景文档应用位置、尺寸、层级、可见性、裁切及 contain/cover/stretch；可用 `http://127.0.0.1:8080/#direct` 直接进入。内部 MediaMTX 路径使用每次进程启动随机生成的 128-bit 名称，RTSP 只在 reader 存在时按需拉取，能力接口和浏览器不会收到 RTSP 地址或内部路径。服务在容器回环路径探测视频编码：H.264、VP8、VP9 和 AV1 直通；HEVC 等不兼容编码仅在存在浏览器 reader 时由 FFmpeg/x264 转为 H.264，页面关闭后自动释放转码进程。
 
@@ -164,6 +167,8 @@ webobsd
   --allow-insecure-remote <true|false>
   --webrtc-enabled <true|false>
   --whip-url <absolute-http-or-https-url>
+  --browser-allowed-origins <comma-separated-origins>
+  --browser-allow-private-networks <true|false>
   --output <path.mp4>
   --duration-seconds <0..604800>
   --width <even 16..8192>
@@ -199,7 +204,7 @@ docker compose run --rm webobs \
 - 首帧不是空黑画面
 - 4:3 测试源在 16:9 画布中等比居中，左右黑边对称且中心画面有效
 
-同一入口还覆盖缺失 URL、无法连接、错误输出目录、已有文件拒绝覆盖、日志凭据脱敏，以及容器收到 `SIGTERM` 后完整冲洗并封装 MP4。M1 控制面验收另外覆盖 REST、安全响应头、ETag/`If-Match`、WebSocket 快照与广播、Host/Origin 拒绝、请求大小限制、原子持久化权限、在线来源增删、裁切/层级/可见性、不可达新来源回滚、解码首帧纹理预装、原子无黑帧切换，以及同一容器重启后的场景和录像恢复。M2 验收使用隔离的 headless Chrome 建立同源 WHEP/H.264 reader，覆盖错误媒体类型、跨源、超大 SDP、伪造令牌，并在产品容器重启后要求同一浏览器自动建立第二个 reader；重启后的录像仍须通过完整 MP4 验证。
+同一入口还覆盖缺失 URL、无法连接、错误输出目录、已有文件拒绝覆盖、日志凭据脱敏，以及容器收到 `SIGTERM` 后完整冲洗并封装 MP4。M1 控制面验收另外覆盖 REST、安全响应头、ETag/`If-Match`、WebSocket 快照与广播、Host/Origin 拒绝、请求大小限制、原子持久化权限、在线来源增删、裁切/层级/可见性、不可达新来源回滚、解码首帧纹理预装、原子无黑帧切换，以及同一容器重启后的场景和录像恢复。M2/M3 验收覆盖 Composite、Direct、Hybrid、重连和按需转码。M4 验收覆盖默认拒绝与私网双重授权、公开 URL 脱敏、Composite-only 能力、CEF 实例显示/隐藏、renderer 上限与崩溃恢复、临时缓存清理，以及真实非黑浏览器画面的最终 MP4。
 
 烟测和真实摄像头验收会先执行公开仓库审计：检查 Git 索引中没有 `.env`、录像、测试产物、私钥文件或高置信度令牌，只允许明确列出的 RTSP 测试占位符，并确认 Git/Docker 忽略规则及 OBS submodule 固定提交未漂移。也可以单独运行 `./tests/run-public-audit.ps1` 或 `./tests/run-public-audit.sh`；审计只读取 Git 索引，不读取本地未跟踪 `.env` 的内容。
 
@@ -209,7 +214,7 @@ PowerShell：
 ./tests/run-smoke.ps1
 ```
 
-只运行 M1 控制面验收可使用 `./tests/run-control-plane.ps1 -SkipBuild`；只运行 M2 浏览器与重连验收可使用 `./tests/run-webrtc.ps1 -SkipBuild`；只运行 M3 双路 Direct 验收可使用 `./tests/run-direct.ps1 -SkipBuild`；只运行 M3 H.264/HEVC 选择性 Hybrid 验收可使用 `./tests/run-hybrid.ps1 -SkipBuild`；在线变更、断流重连和路由回收验收使用 `./tests/run-m3-lifecycle.ps1 -SkipBuild`。浏览器门禁默认查找本机 Chrome，也可通过 `WEBOBS_CHROME_BIN` 指定可信的 Chrome 可执行文件。
+只运行 M1 控制面验收可使用 `./tests/run-control-plane.ps1 -SkipBuild`；只运行 M2 浏览器与重连验收可使用 `./tests/run-webrtc.ps1 -SkipBuild`；只运行 M3 双路 Direct 验收可使用 `./tests/run-direct.ps1 -SkipBuild`；只运行 M3 H.264/HEVC 选择性 Hybrid 验收可使用 `./tests/run-hybrid.ps1 -SkipBuild`；在线变更、断流重连和路由回收验收使用 `./tests/run-m3-lifecycle.ps1 -SkipBuild`；M4 浏览器源门禁使用 `./tests/run-browser-source.ps1 -SkipBuild`。浏览器门禁默认查找本机 Chrome，也可通过 `WEBOBS_CHROME_BIN` 指定可信的 Chrome 可执行文件。
 
 真实来源的 M3 Direct/Hybrid 门禁使用 `./tests/run-m3-real-camera.ps1 -SkipBuild`。RTSP URL 只通过当前进程的 `WEBOBS_RTSP_URL` 或受 Git 忽略的本地 `.env` 提供；该门禁会把录制和端点替换后的诊断日志分别写入受忽略的 `recordings/` 与 `tests/artifacts/`，不得将其作为公开附件提交。
 
@@ -235,10 +240,12 @@ libobs-opengl
 obs-ffmpeg
 obs-x264
 obs-webrtc
+obs-browser
+browser-helper
 obs-ffmpeg-mux
 ```
 
-`obs-webrtc` 使用固定的 libdatachannel `0.21.0` 构建。WHIP URL 不接受 userinfo、查询参数或片段，避免令牌混入插件调试日志；当前内置 MediaMTX 使用无凭据的容器回环端点。之后编译 `webobsd` 和无外部测试框架的 CTest 单元测试。单元测试覆盖参数边界、CLI/环境变量优先级、WHIP URL 安全约束、RTSP 凭据脱敏、场景解析/迁移/存储和乐观并发变更计划。
+`obs-webrtc` 使用固定的 libdatachannel `0.21.0` 构建；`obs-browser` 使用固定 CEF 并关闭依赖 Qt 前端的 panels。WHIP URL 不接受 userinfo、查询参数或片段，浏览器 URL 受精确 Origin 与私网策略约束；当前内置 MediaMTX 使用无凭据的容器回环端点。之后编译 `webobsd` 和无外部测试框架的 CTest 单元测试。单元测试覆盖参数边界、CLI/环境变量优先级、URL 安全与脱敏、场景解析/迁移/存储和乐观并发变更计划。
 
 ## 退出状态
 

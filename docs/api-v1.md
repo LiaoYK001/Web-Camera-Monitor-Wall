@@ -1,8 +1,8 @@
 # Control API v1 / 控制接口 v1
 
-M1 exposes a small HTTP/1.1 and WebSocket control plane from `webobsd`. M2 extends the same origin with a constrained program WHEP proxy. M3 adds source-scoped Direct WHEP routes and a capability document. The scene API uses the same [scene document](scene-schema-v1.md) that libobs and the browser renderer consume and that the atomic scene store persists.
+M1 exposes a small HTTP/1.1 and WebSocket control plane from `webobsd`. M2 extends the same origin with a constrained program WHEP proxy. M3 adds source-scoped Direct WHEP routes and a capability document. M4 adds composite-only browser sources. The scene API uses the same [scene document](scene-schema-v2.md) that libobs and the browser renderer consume and that the atomic scene store persists.
 
-M1 由 `webobsd` 提供一组精简的 HTTP/1.1 与 WebSocket 控制接口，M2 在同源下增加受限节目 WHEP 代理，M3 再增加按来源隔离的 Direct WHEP 路由和能力文档。场景接口、libobs、浏览器渲染和原子场景存储共用同一份[场景文档](scene-schema-v1.md)。
+M1 由 `webobsd` 提供一组精简的 HTTP/1.1 与 WebSocket 控制接口，M2 在同源下增加受限节目 WHEP 代理，M3 再增加按来源隔离的 Direct WHEP 路由和能力文档，M4 增加仅服务端合成的浏览器源。场景接口、libobs、浏览器渲染和原子场景存储共用同一份[场景文档](scene-schema-v2.md)。
 
 ## Security boundary / 安全边界
 
@@ -18,7 +18,7 @@ The server applies these additional controls:
 - no CORS permission is returned;
 - JSON bodies are limited to 1 MiB, WHEP SDP to 64 KiB, headers to 16 KiB, and reads to 15 seconds;
 - responses disable caching and include restrictive CSP, content-type, referrer, and permissions headers;
-- API scene responses redact RTSP userinfo and never return stored credentials.
+- API scene responses redact RTSP userinfo and browser URL query/fragment values, and never return stored secrets.
 - the bundled editor is served from the same origin, with a restrictive CSP and no external scripts, fonts, or CDN dependencies.
 - the WHEP upstream is fixed to the container loopback MediaMTX; upstream session locations are replaced with random same-origin tokens and never exposed to browsers.
 - Direct MediaMTX paths use random 128-bit names, are created only for current scene sources, pull RTSP on demand, and are removed when their source leaves the scene; all MediaMTX output passes through the RTSP credential filter.
@@ -50,7 +50,7 @@ Returns the bundled React/TypeScript scene editor. The non-hashed HTML entry is 
 Returns `200` while the control thread is serving:
 
 ```json
-{"status":"ok","milestone":"M3"}
+{"status":"ok","milestone":"M4"}
 ```
 
 ### `GET /api/v1/program/status`
@@ -75,7 +75,7 @@ The proxy accepts no caller-selected upstream URL, credentials, query parameters
 
 ### `GET /api/v1/playback/capabilities`
 
-Returns the explicit playback modes and one source-scoped same-origin endpoint for every source in the current scene. The response contains source IDs already present in the public scene, but never contains RTSP URLs, credentials, MediaMTX addresses, internal path names, or caller-selectable upstreams.
+Returns the explicit playback modes and one source-scoped same-origin endpoint for every RTSP source in the current scene. Browser sources are reported as `preferred: "composite"` and `strategy: "composite"` without an endpoint. The response contains source IDs already present in the public scene, but never contains RTSP/browser URLs, credentials, MediaMTX addresses, internal path names, or caller-selectable upstreams.
 
 ```json
 {
@@ -99,7 +99,7 @@ Returns the explicit playback modes and one source-scoped same-origin endpoint f
 
 ### `POST /api/v1/sources/{sourceId}/whep`
 
-Accepts the same complete SDP offer as the program endpoint. The source ID must exactly match a current scene source. On first use, the server creates a random internal MediaMTX path, configures an on-demand RTSP pull through the loopback-only Control API, and probes the video codec through that opaque loopback path. Browser-compatible codecs pass through; incompatible codecs use a second random path and an on-demand H.264 transcoder that stops after the final reader closes. Unknown sources return `404`; signaling/configuration failure returns `502`. Content, Origin, size, and global 64-session limits are identical to program WHEP.
+Accepts the same complete SDP offer as the program endpoint. The source ID must exactly match a current RTSP source. On first use, the server creates a random internal MediaMTX path, configures an on-demand RTSP pull through the loopback-only Control API, and probes the video codec through that opaque loopback path. Browser-compatible codecs pass through; incompatible codecs use a second random path and an on-demand H.264 transcoder that stops after the final reader closes. Unknown sources return `404`; browser sources return `409 composite_only`; signaling/configuration failure returns `502`. Content, Origin, size, and global 64-session limits are identical to program WHEP.
 
 首次使用当前场景来源时，服务会通过仅回环可达的 Control API 创建随机内部路径，并仅在 reader 存在时拉取 RTSP。浏览器不能指定内部路径或上游 URL。
 
@@ -121,7 +121,7 @@ Cache-Control: no-store
 Content-Type: application/json; charset=utf-8
 ```
 
-If a stored RTSP authority contains userinfo such as `name:secret@camera`, the response replaces it with `***:***@camera`. The unredacted value remains only in the protected scene file and the active OBS source.
+If a stored RTSP authority contains userinfo such as `name:secret@camera`, the response replaces it with `***:***@camera`. Browser URL query and fragment values are replaced with `?***` and `#***`. Unredacted values remain only in the protected scene file and active OBS source.
 
 若存储的 RTSP 地址含有用户信息，接口会把用户信息替换为 `***:***`。未脱敏值只保留在受保护场景文件和活动 OBS 来源中。
 
@@ -179,13 +179,13 @@ Connect to `ws://127.0.0.1:8080/api/v1/ws` from a page served under the same loc
 连接建立后首先收到完整的脱敏快照：
 
 ```json
-{"type":"scene.snapshot","scene":{"schemaVersion":1,"revision":4}}
+{"type":"scene.snapshot","scene":{"schemaVersion":2,"revision":4}}
 ```
 
 Each successful PUT broadcasts the committed public scene to all connected clients:
 
 ```json
-{"type":"scene.updated","scene":{"schemaVersion":1,"revision":5}}
+{"type":"scene.updated","scene":{"schemaVersion":2,"revision":5}}
 ```
 
 The examples abbreviate the scene object; actual events contain the complete public scene document. M1 clients do not send mutation messages over WebSocket—write through HTTP PUT, and use WebSocket for synchronization.

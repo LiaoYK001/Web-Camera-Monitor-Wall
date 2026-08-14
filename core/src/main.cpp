@@ -18,14 +18,14 @@ webobs::SceneDocument bootstrap_scene(const webobs::Config &config)
     webobs::SceneDocument document;
     document.canvas.width = config.width;
     document.canvas.height = config.height;
-    document.sources.push_back({
-        .id = "camera-1",
-        .name = "Camera 1",
-        .rtsp_url = config.rtsp_url,
-        .transport = config.rtsp_transport,
-        .muted = true,
-        .volume = 1.0,
-    });
+    webobs::SceneSource source;
+    source.id = "camera-1";
+    source.name = "Camera 1";
+    source.rtsp_url = config.rtsp_url;
+    source.transport = config.rtsp_transport;
+    source.muted = true;
+    source.volume = 1.0;
+    document.sources.push_back(std::move(source));
     document.items.push_back({
         .id = "item-camera-1",
         .source_id = "camera-1",
@@ -52,7 +52,7 @@ int main(int argc, char **argv)
 
     const webobs::ParseResult result = webobs::parse_config(arguments, webobs::process_environment);
     if (!result.ok()) {
-        std::cerr << "configuration error: " << webobs::redact_rtsp_credentials(result.error) << "\n\n"
+        std::cerr << "configuration error: " << webobs::redact_url_secrets(result.error) << "\n\n"
                   << webobs::usage_text();
         return static_cast<int>(webobs::ExitCode::invalid_config);
     }
@@ -70,7 +70,7 @@ int main(int argc, char **argv)
     if (!config.scene_file.empty()) {
         webobs::SceneFileLoadResult loaded = webobs::load_scene_file(config.scene_file);
         if (!loaded.ok()) {
-            std::cerr << "scene storage error: " << webobs::redact_rtsp_credentials(loaded.error) << '\n';
+            std::cerr << "scene storage error: " << webobs::redact_url_secrets(loaded.error) << '\n';
             return static_cast<int>(webobs::ExitCode::scene_store_failed);
         }
         if (loaded.document) {
@@ -78,7 +78,7 @@ int main(int argc, char **argv)
         } else {
             document = config.rtsp_url.empty() ? webobs::SceneDocument{} : bootstrap_scene(config);
             if (const auto save_error = webobs::save_scene_file_atomic(config.scene_file, document)) {
-                std::cerr << "scene storage error: " << webobs::redact_rtsp_credentials(*save_error) << '\n';
+                std::cerr << "scene storage error: " << webobs::redact_url_secrets(*save_error) << '\n';
                 return static_cast<int>(webobs::ExitCode::scene_store_failed);
             }
         }

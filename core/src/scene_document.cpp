@@ -1,5 +1,6 @@
 #include "webobs/scene_document.hpp"
 
+#include "webobs/browser_security.hpp"
 #include "webobs/redaction.hpp"
 
 #include <jansson.h>
@@ -62,6 +63,23 @@ bool read_string(const json_t *object, const char *key, std::string &target, std
     }
     const std::size_t length = json_string_length(value);
     if (length == 0 || length > maximum) {
+        error = std::string(context) + " field " + key + " has an invalid length";
+        return false;
+    }
+    target.assign(json_string_value(value), length);
+    return true;
+}
+
+bool read_string_allow_empty(const json_t *object, const char *key, std::string &target,
+                             std::size_t maximum, std::string &error, std::string_view context)
+{
+    json_t *value = json_object_get(object, key);
+    if (!json_is_string(value)) {
+        error = std::string(context) + " must contain a string field named " + key;
+        return false;
+    }
+    const std::size_t length = json_string_length(value);
+    if (length > maximum) {
         error = std::string(context) + " field " + key + " has an invalid length";
         return false;
     }
@@ -212,6 +230,7 @@ std::optional<std::string> validate_scene_document(const SceneDocument &document
         return "scene has too many items";
 
     std::unordered_set<std::string> source_ids;
+    std::size_t browser_source_count = 0;
     for (const SceneSource &source : document.sources) {
         if (!valid_identifier(source.id))
             return "source id is invalid";
@@ -219,13 +238,34 @@ std::optional<std::string> validate_scene_document(const SceneDocument &document
             return "source ids must be unique";
         if (!valid_display_name(source.name))
             return "source name is invalid";
-        if (!valid_rtsp_url(source.rtsp_url))
-            return "source rtspUrl is invalid";
-        if (source.transport != "tcp" && source.transport != "udp")
-            return "source transport must be tcp or udp";
+        if (source.kind == "rtsp") {
+            if (!valid_rtsp_url(source.rtsp_url))
+                return "source rtspUrl is invalid";
+            if (source.transport != "tcp" && source.transport != "udp")
+                return "source transport must be tcp or udp";
+            if (!source.browser_url.empty() || !source.browser_css.empty())
+                return "RTSP source must not contain browser-only settings";
+        } else if (source.kind == "browser") {
+            ++browser_source_count;
+            if (!parse_browser_url(source.browser_url).ok())
+                return "source browser URL is invalid";
+            if (source.browser_width < 16 || source.browser_width > 8192 ||
+                source.browser_height < 16 || source.browser_height > 8192)
+                return "browser source dimensions must be between 16 and 8192";
+            if (source.browser_fps < 1 || source.browser_fps > 60)
+                return "browser source fps must be between 1 and 60";
+            if (source.browser_css.size() > 32768)
+                return "browser source customCss exceeds the 32 KiB limit";
+            if (!source.rtsp_url.empty())
+                return "browser source must not contain RTSP-only settings";
+        } else {
+            return "source kind must be rtsp or browser";
+        }
         if (!std::isfinite(source.volume) || source.volume < 0.0 || source.volume > 1.0)
             return "source volume must be between 0 and 1";
     }
+    if (browser_source_count > maximum_browser_sources)
+        return "scene has too many browser sources";
 
     std::unordered_set<std::string> item_ids;
     std::vector<bool> z_indexes(document.items.size(), false);
@@ -301,22 +341,42 @@ SceneParseResult parse_scene_json(std::string_view input)
     json_t *source_object = nullptr;
     json_array_foreach(sources, index, source_object)
     {
-        if (!json_is_object(source_object) ||
-            !has_only_fields(source_object,
-                             {"id", "kind", "name", "rtspUrl", "transport", "muted", "volume"}))
-            return parse_failure("source entry is invalid or contains an unsupported field");
-        std::string kind;
+        if (!json_is_object(source_object))
+            return parse_failure("source entry must be an object");
         SceneSource source;
         if (!read_string(source_object, "id", source.id, 64, error, "source") ||
-            !read_string(source_object, "kind", kind, 16, error, "source") ||
+            !read_string(source_object, "kind", source.kind, 16, error, "source") ||
             !read_string(source_object, "name", source.name, 128, error, "source") ||
-            !read_string(source_object, "rtspUrl", source.rtsp_url, 2048, error, "source") ||
-            !read_string(source_object, "transport", source.transport, 4, error, "source") ||
             !read_boolean(source_object, "muted", source.muted, error, "source") ||
             !read_number(source_object, "volume", source.volume, error, "source"))
             return parse_failure(std::move(error));
-        if (kind != "rtsp")
-            return parse_failure("source kind must be rtsp in M1");
+        if (source.kind == "rtsp") {
+            if (!has_only_fields(source_object,
+                                 {"id", "kind", "name", "rtspUrl", "transport", "muted", "volume"}))
+                return parse_failure("RTSP source contains an unsupported field");
+            if (!read_string(source_object, "rtspUrl", source.rtsp_url, 2048, error, "source") ||
+                !read_string(source_object, "transport", source.transport, 4, error, "source"))
+                return parse_failure(std::move(error));
+        } else if (source.kind == "browser") {
+            if (!has_only_fields(source_object,
+                                 {"id", "kind", "name", "url", "width", "height", "fps", "customCss",
+                                  "shutdownWhenHidden", "restartWhenActive", "muted", "volume"}))
+                return parse_failure("browser source contains an unsupported field");
+            source.transport.clear();
+            if (!read_string(source_object, "url", source.browser_url, 2048, error, "source") ||
+                !read_integer(source_object, "width", 16, 8192, source.browser_width, error, "source") ||
+                !read_integer(source_object, "height", 16, 8192, source.browser_height, error, "source") ||
+                !read_integer(source_object, "fps", 1, 60, source.browser_fps, error, "source") ||
+                !read_string_allow_empty(source_object, "customCss", source.browser_css, 32768, error,
+                                         "source") ||
+                !read_boolean(source_object, "shutdownWhenHidden", source.shutdown_when_hidden, error,
+                              "source") ||
+                !read_boolean(source_object, "restartWhenActive", source.restart_when_active, error,
+                              "source"))
+                return parse_failure(std::move(error));
+        } else {
+            return parse_failure("source kind must be rtsp or browser");
+        }
         document.sources.push_back(std::move(source));
     }
 
@@ -392,16 +452,35 @@ SceneSerializeResult serialize_scene_json(const SceneDocument &document, SceneJs
 
     for (const SceneSource &source : document.sources) {
         JsonPtr object = make_object();
-        const std::string safe_url =
-            view == SceneJsonView::public_api ? redact_rtsp_credentials(source.rtsp_url) : source.rtsp_url;
         if (!object || !set_new(object.get(), "id", json_stringn(source.id.data(), source.id.size())) ||
-            !set_new(object.get(), "kind", json_string("rtsp")) ||
+            !set_new(object.get(), "kind", json_stringn(source.kind.data(), source.kind.size())) ||
             !set_new(object.get(), "name", json_stringn(source.name.data(), source.name.size())) ||
-            !set_new(object.get(), "rtspUrl", json_stringn(safe_url.data(), safe_url.size())) ||
-            !set_new(object.get(), "transport", json_stringn(source.transport.data(), source.transport.size())) ||
             !set_new(object.get(), "muted", json_boolean(source.muted)) ||
-            !set_new(object.get(), "volume", json_real(source.volume)) ||
-            json_array_append_new(sources.get(), object.release()) != 0)
+            !set_new(object.get(), "volume", json_real(source.volume)))
+            return serialize_failure("could not build source JSON");
+        if (source.kind == "rtsp") {
+            const std::string safe_url = view == SceneJsonView::public_api
+                                             ? redact_rtsp_credentials(source.rtsp_url)
+                                             : source.rtsp_url;
+            if (!set_new(object.get(), "rtspUrl", json_stringn(safe_url.data(), safe_url.size())) ||
+                !set_new(object.get(), "transport",
+                         json_stringn(source.transport.data(), source.transport.size())))
+                return serialize_failure("could not build RTSP source JSON");
+        } else {
+            const std::string safe_url = view == SceneJsonView::public_api
+                                             ? redact_browser_url(source.browser_url)
+                                             : source.browser_url;
+            if (!set_new(object.get(), "url", json_stringn(safe_url.data(), safe_url.size())) ||
+                !set_new(object.get(), "width", json_integer(source.browser_width)) ||
+                !set_new(object.get(), "height", json_integer(source.browser_height)) ||
+                !set_new(object.get(), "fps", json_integer(source.browser_fps)) ||
+                !set_new(object.get(), "customCss",
+                         json_stringn(source.browser_css.data(), source.browser_css.size())) ||
+                !set_new(object.get(), "shutdownWhenHidden", json_boolean(source.shutdown_when_hidden)) ||
+                !set_new(object.get(), "restartWhenActive", json_boolean(source.restart_when_active)))
+                return serialize_failure("could not build browser source JSON");
+        }
+        if (json_array_append_new(sources.get(), object.release()) != 0)
             return serialize_failure("could not build source JSON");
     }
     if (!set_new(root.get(), "sources", sources.release()))

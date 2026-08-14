@@ -9,9 +9,10 @@
 
 namespace webobs {
 
-inline constexpr int current_scene_schema_version = 1;
+inline constexpr int current_scene_schema_version = 2;
 inline constexpr std::size_t maximum_scene_json_bytes = 1024 * 1024;
 inline constexpr std::size_t maximum_scene_sources = 64;
+inline constexpr std::size_t maximum_browser_sources = 8;
 inline constexpr std::size_t maximum_scene_items = 256;
 
 struct SceneCanvas {
@@ -24,9 +25,17 @@ struct SceneCanvas {
 
 struct SceneSource {
     std::string id;
+    std::string kind = "rtsp";
     std::string name;
     std::string rtsp_url;
     std::string transport = "tcp";
+    std::string browser_url;
+    int browser_width = 1280;
+    int browser_height = 720;
+    int browser_fps = 30;
+    std::string browser_css;
+    bool shutdown_when_hidden = true;
+    bool restart_when_active = true;
     bool muted = true;
     double volume = 1.0;
 
