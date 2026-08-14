@@ -30,6 +30,6 @@ Please avoid opening a public issue for a suspected vulnerability. Use the repos
 
 ## Supported versions / 支持版本
 
-Security fixes are currently provided for the latest commit on the default branch while M5 is in development. The REST/WebSocket control plane has no authentication or TLS: the product Compose publishes it on host loopback only, validates local Host/Origin values, sends no CORS permission, and requires `If-Match` for mutations. Direct audio remains muted until an explicit browser user gesture. Do not expose the control plane on a LAN or the Internet. Authentication, authorization, TLS, and hardened remote deployment remain M6 work.
+Security fixes are currently provided for the latest commit on the default branch. M5 is complete and M6 has not started. The REST/WebSocket control plane has no authentication or TLS: the product Compose publishes it on host loopback only, validates local Host/Origin values, sends no CORS permission, and requires `If-Match` for mutations. Direct and Composite browser audio remain muted until an explicit user gesture. Do not expose the control plane on a LAN or the Internet. Authentication, authorization, TLS, and hardened remote deployment remain M6 work.
 
-项目处于 M5 开发阶段，安全修复仅面向默认分支的最新提交。REST/WebSocket 控制面尚无认证和 TLS；产品 Compose 仅发布到主机回环地址，并校验本地 Host/Origin、不授予 CORS、要求变更携带 `If-Match`。Direct 音频在明确的浏览器用户手势前保持静音。不得把控制面暴露到局域网或互联网；认证、授权、TLS 和远程部署加固仍属于 M6。
+安全修复仅面向默认分支的最新提交；M5 已完成，M6 尚未开始。REST/WebSocket 控制面没有认证和 TLS；产品 Compose 仅发布到主机回环地址，并校验本地 Host/Origin、不授予 CORS、要求变更携带 `If-Match`。Direct 与 Composite 浏览器音频在明确的用户手势前保持静音。不得把控制面暴露到局域网或互联网；认证、授权、TLS 和远程部署加固仍属于 M6。

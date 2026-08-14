@@ -52,6 +52,7 @@ function connectWhep(
   resolveEndpoint: EndpointResolver,
   onState: (state: ProgramConnectionState) => void,
   receiveAudio = false,
+  onRemoteStream?: (stream: MediaStream) => void,
 ): ProgramConnection {
   let closed = false;
   let attempt = 0;
@@ -126,6 +127,7 @@ function connectWhep(
         if (currentGeneration !== generation || closed) return;
         if (!remoteStream.getTracks().some((track) => track.id === event.track.id))
           remoteStream.addTrack(event.track);
+        onRemoteStream?.(remoteStream);
         void video.play().catch(() => undefined);
       };
       nextPeer.onconnectionstatechange = () => {
@@ -191,13 +193,14 @@ export function connectProgram(
     if (!statusResponse.ok) throw new Error('Program status is unavailable');
     const status = (await statusResponse.json()) as ProgramStatus;
     return status.enabled ? status.endpoint : null;
-  }, onState);
+  }, onState, true);
 }
 
 export function connectSource(
   video: HTMLVideoElement,
   endpoint: string,
   onState: (state: ProgramConnectionState) => void,
+  onRemoteStream?: (stream: MediaStream) => void,
 ): ProgramConnection {
-  return connectWhep(video, async () => endpoint, onState, true);
+  return connectWhep(video, async () => endpoint, onState, true, onRemoteStream);
 }

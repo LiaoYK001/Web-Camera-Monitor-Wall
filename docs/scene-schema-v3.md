@@ -30,9 +30,13 @@ Every RTSP or browser source contains these fields in addition to its v2 kind-sp
 - `monitoring` 只能是 `off`、`monitor-only` 或 `monitor-and-output`。
 - `audioTrack` 为 1 到 6 的整数，并精确映射到一个 libobs 音频 mixer 位。
 
-Direct WHEP now negotiates a receive-only audio transceiver. The Web player stays muted until a user explicitly enables sound, then applies each source's `muted` and `volume` values. This is the M5 foundation, not the complete audio exit gate: mixed Composite Opus, audible final recordings, multi-source drift/reconnect testing, and monitoring-device deployment remain pending.
+Direct WHEP negotiates receive-only audio. Every tile `<video>` remains muted permanently so audio is emitted exactly once through a shared 48 kHz Web Audio graph. A trusted user click creates/resumes that graph; each source then passes through a `DelayNode` and `GainNode` that apply `syncOffsetMs`, `muted`, and `volume`. Negative offsets are normalized against the most-negative active offset because a browser cannot play audio before it arrives; relative source alignment is preserved by delaying the other inputs. The graph is suspended again when sound is disabled and is rebuilt safely across WHEP reconnects.
 
-Direct WHEP 现会协商 recvonly 音频 transceiver。Web 播放器在用户明确启用声音前保持静音，启用后应用每路来源的 `muted` 与 `volume`。这是 M5 底座而不是完整音频验收：Composite Opus 混音、有声最终录像、多来源漂移/重连测试及监听设备部署仍待完成。
+Direct WHEP 会协商 recvonly 音频。所有画面 `<video>` 始终保持静音，声音只由一个共享的 48 kHz Web Audio 图输出一次。可信用户点击后才创建或恢复该图，每路来源经 `DelayNode` 与 `GainNode` 应用 `syncOffsetMs`、`muted` 和 `volume`。浏览器不能播放尚未到达的声音，因此负偏移会以当前最小偏移为基线，把其他输入相对延后，从而保持来源之间的相对对齐。关闭声音时该图会暂停，WHEP 重连后也会安全重建输入。
+
+Composite mode applies all five fields directly to libobs sources. Mixer track 1 is the M5 program track: it is encoded as 96 kbps Opus for WHIP/WHEP and 128 kbps AAC, 48 kHz stereo for the finalized MP4. Sources assigned to tracks 2 through 6 are excluded from these M5 program outputs and are reserved for later multi-output work. `audioTrack` does not split the single browser-side Direct destination. `monitoring` configures the libobs source, but the headless product image does not promise a host monitoring device.
+
+Composite 模式把五个字段全部应用到 libobs 来源。音轨 1 是 M5 节目轨：WHIP/WHEP 使用 96 kbps Opus，最终 MP4 使用 128 kbps AAC、48 kHz 双声道。分配到音轨 2 至 6 的来源不会进入这两个 M5 节目输出，留待后续多输出能力使用；`audioTrack` 不会拆分浏览器端唯一的 Direct 输出。`monitoring` 会配置 libobs 来源，但无头产品镜像不承诺存在主机监听设备。
 
 ## Migration / 迁移
 

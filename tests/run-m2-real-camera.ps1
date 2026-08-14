@@ -18,7 +18,8 @@ param(
     [ValidateSet('tcp', 'udp')]
     [string]$RtspTransport = 'tcp',
     [ValidateSet('composite', 'direct')]
-    [string]$PlaybackMode = 'composite'
+    [string]$PlaybackMode = 'composite',
+    [switch]$RequireAudio
 )
 
 $ErrorActionPreference = 'Stop'
@@ -30,8 +31,14 @@ $TestComposeFile = Join-Path $PSScriptRoot 'compose.smoke.yaml'
 $RecordingDirectory = Join-Path $RepositoryRoot 'recordings'
 $ArtifactDirectory = Join-Path $PSScriptRoot 'artifacts'
 $BaseUri = 'http://127.0.0.1:8080'
-$Milestone = if ($PlaybackMode -eq 'direct') { 'M3' } else { 'M2' }
-$RecordingPrefix = if ($PlaybackMode -eq 'direct') { 'm3-real-camera' } else { 'm2-real-camera' }
+$Milestone = if ($RequireAudio) { 'M5' } elseif ($PlaybackMode -eq 'direct') { 'M3' } else { 'M2' }
+$RecordingPrefix = if ($RequireAudio) {
+    "m5-real-audio-$PlaybackMode"
+} elseif ($PlaybackMode -eq 'direct') {
+    'm3-real-camera'
+} else {
+    'm2-real-camera'
+}
 
 function Assert-True {
     param([bool]$Condition, [string]$Message)
@@ -233,6 +240,35 @@ try {
     }
     Assert-True $Ready "$Milestone product did not expose the expected same-origin playback endpoint."
 
+    if ($RequireAudio) {
+        $AudioUpdateStage = 'scene GET'
+        try {
+            $SceneResponse = Invoke-WebRequest -UseBasicParsing -Uri "$BaseUri/api/v1/scene" -TimeoutSec 5
+            $AudioUpdateStage = 'scene validation'
+            $Scene = $SceneResponse.Content | ConvertFrom-Json
+            Assert-True (@($Scene.sources).Count -eq 1) 'M5 real-audio acceptance requires one bootstrap source.'
+            $Scene.sources[0].muted = $false
+            $Scene.sources[0].volume = 1.0
+            $Scene.sources[0].syncOffsetMs = 0
+            $Scene.sources[0].monitoring = 'off'
+            $Scene.sources[0].audioTrack = 1
+            $ETag = [string]$SceneResponse.Headers['ETag']
+            Assert-True (-not [string]::IsNullOrWhiteSpace($ETag)) 'M5 scene response did not include an ETag.'
+            $Headers = @{
+                'If-Match' = $ETag
+                'Origin' = $BaseUri
+            }
+            $AudioUpdateStage = 'scene PUT'
+            $UpdatedScene = Invoke-WebRequest -UseBasicParsing -Method Put `
+                -Uri "$BaseUri/api/v1/scene" -Headers $Headers -ContentType 'application/json' `
+                -Body ($Scene | ConvertTo-Json -Depth 12 -Compress) -TimeoutSec ($ConnectTimeoutSeconds + 10)
+            Assert-True ($UpdatedScene.StatusCode -eq 200) 'M5 could not enable the real source audio.'
+        }
+        catch {
+            throw "M5 could not enable the real source audio at $AudioUpdateStage; endpoint-bearing diagnostics were suppressed."
+        }
+    }
+
     $ChromeArguments = @(
         '--headless=new', '--disable-gpu', '--disable-features=WebRtcHideLocalIpsWithMdns',
         '--no-first-run', '--no-default-browser-check', '--autoplay-policy=no-user-gesture-required',
@@ -254,12 +290,21 @@ try {
         Assert-True ($Capability.strategy -in @('passthrough', 'transcode') -and
             -not [string]::IsNullOrWhiteSpace($Capability.codec)) `
             'M3 real-camera source was not classified for Direct/Hybrid playback.'
+        if ($RequireAudio) {
+            Assert-True (-not [string]::IsNullOrWhiteSpace($Capability.audioCodec)) `
+                'M5 real-camera source did not expose a classified audio codec.'
+        }
         $ExpectedPath = if ($Capability.strategy -eq 'transcode') { 'hybrid' } else { 'direct' }
-        Assert-True ($RawLog -match "is reading from path '$ExpectedPath-[a-f0-9]{32}', 1 track \(H264\)") `
-            'Chrome did not establish the classified source-scoped H.264 WHEP reader.'
+        $ExpectedTracks = if ($RequireAudio) {
+            "2 tracks \((?:H264, Opus|Opus, H264)\)"
+        } else {
+            "(?:1 track \(H264\)|2 tracks \((?:H264, Opus|Opus, H264)\))"
+        }
+        Assert-True ($RawLog -match "is reading from path '$ExpectedPath-[a-f0-9]{32}', $ExpectedTracks") `
+            'Chrome did not establish the classified source-scoped H.264[/Opus] WHEP reader.'
     } else {
-        Assert-True ($RawLog -match "is reading from path 'program', 1 track \(H264\)") `
-            'Chrome did not establish an H.264 program WHEP reader for the real source.'
+        Assert-True ($RawLog -match "is reading from path 'program', 2 tracks \((?:H264, Opus|Opus, H264)\)") `
+            'Chrome did not establish an H.264/Opus program WHEP reader for the real source.'
     }
     if (Test-CredentialLeak -Text $RawLog) {
         throw 'Credential redaction failed; raw output was suppressed.'
@@ -292,9 +337,12 @@ try {
         '-e', "TEST_MIN_DURATION=$DurationSeconds",
         '-e', "TEST_MAX_DURATION=$($DurationSeconds + 45)",
         '-e', 'TEST_REJECT_BLACKOUT=1',
-        '-e', 'TEST_BLACKOUT_YAVG_MAX=16.5',
-        'webobs-m0-rtsp-fixture:local'
+        '-e', 'TEST_BLACKOUT_YAVG_MAX=16.5'
     )
+    if ($RequireAudio) {
+        $ValidatorArguments += @('-e', 'TEST_REQUIRE_AUDIBLE=1', '-e', 'TEST_MIN_MEAN_VOLUME_DB=-80')
+    }
+    $ValidatorArguments += 'webobs-m0-rtsp-fixture:local'
     & docker @ValidatorArguments
     if ($LASTEXITCODE -ne 0) { throw "$Milestone real-camera recording validation failed." }
 

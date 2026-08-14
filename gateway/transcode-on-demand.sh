@@ -16,7 +16,7 @@ exec ffmpeg \
     -timeout 8000000 \
     -i "rtsp://127.0.0.1:8554/$1" \
     -map 0:v:0 \
-    -an \
+    -map '0:a:0?' \
     -c:v libx264 \
     -preset veryfast \
     -tune zerolatency \
@@ -25,6 +25,10 @@ exec ffmpeg \
     -bf 0 \
     -sc_threshold 0 \
     -force_key_frames 'expr:gte(t,n_forced*2)' \
+    -c:a libopus \
+    -b:a 96k \
+    -ar 48000 \
+    -ac 2 \
     -rtsp_transport tcp \
     -f rtsp \
     "rtsp://127.0.0.1:8554/$2"

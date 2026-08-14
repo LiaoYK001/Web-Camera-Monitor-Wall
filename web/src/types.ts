@@ -89,6 +89,7 @@ export interface SourcePlaybackCapability {
   fallback: 'composite';
   strategy: 'unknown' | 'passthrough' | 'transcode' | 'composite';
   codec: string;
+  audioCodec: string;
 }
 
 export interface PlaybackCapabilities {

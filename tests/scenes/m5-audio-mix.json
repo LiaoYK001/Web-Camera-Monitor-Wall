@@ -1,0 +1,25 @@
+{
+  "schemaVersion": 3,
+  "revision": 1,
+  "id": "main",
+  "name": "M5 Audio Mix",
+  "canvas": {"width": 640, "height": 360, "backgroundColor": "#000000"},
+  "sources": [
+    {
+      "id": "audio-a", "kind": "rtsp", "name": "440 Hz AV", "rtspUrl": "rtsp://mediamtx:8554/m5-audio-a",
+      "transport": "tcp", "muted": false, "volume": 1.0, "syncOffsetMs": 0,
+      "monitoring": "off", "audioTrack": 1
+    },
+    {
+      "id": "audio-b", "kind": "rtsp", "name": "880 Hz AV", "rtspUrl": "rtsp://mediamtx:8554/m5-audio-b",
+      "transport": "tcp", "muted": false, "volume": 0.25, "syncOffsetMs": 125,
+      "monitoring": "off", "audioTrack": 1
+    }
+  ],
+  "items": [
+    {"id": "item-a", "sourceId": "audio-a", "x": 0, "y": 0, "width": 320, "height": 360,
+     "scaleMode": "contain", "crop": {"top": 0, "right": 0, "bottom": 0, "left": 0}, "zIndex": 0, "visible": true},
+    {"id": "item-b", "sourceId": "audio-b", "x": 320, "y": 0, "width": 320, "height": 360,
+     "scaleMode": "contain", "crop": {"top": 0, "right": 0, "bottom": 0, "left": 0}, "zIndex": 1, "visible": true}
+  ]
+}

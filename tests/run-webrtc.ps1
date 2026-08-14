@@ -166,8 +166,8 @@ try {
 
         $InitialLogs = docker compose -f $ComposeFile logs --no-color webobs-webrtc | Out-String
         Assert-True ($LASTEXITCODE -eq 0) 'Could not read the initial M2 WebRTC service logs'
-        Assert-True ($InitialLogs -match "is reading from path 'program', 1 track \(H264\)") `
-            'Chrome did not establish its initial H.264 WHEP reader session'
+        Assert-True ($InitialLogs -match "is reading from path 'program', 2 tracks \((?:H264, Opus|Opus, H264)\)") `
+            'Chrome did not establish its initial H.264/Opus WHEP reader session'
 
         docker compose -f $ComposeFile stop -t 20 webobs-webrtc
         if ($LASTEXITCODE -ne 0) { throw 'M2 WebRTC service did not stop for the reconnect test' }
@@ -202,7 +202,7 @@ try {
 
     $Logs = docker compose -f $ComposeFile logs --no-color webobs-webrtc | Out-String
     Assert-True ($LASTEXITCODE -eq 0) 'Could not read M2 WebRTC service logs'
-    $ReaderSessions = [Regex]::Matches($Logs, "is reading from path 'program', 1 track \(H264\)").Count
+    $ReaderSessions = [Regex]::Matches($Logs, "is reading from path 'program', 2 tracks \((?:H264, Opus|Opus, H264)\)").Count
     Assert-True ($ReaderSessions -ge 2) 'Chrome did not reconnect WHEP after the product restart'
     Assert-True ($Logs -notmatch 'rtsp://[^/\s]+:[^@/\s]+@') 'Runtime logs must not expose RTSP credentials'
 

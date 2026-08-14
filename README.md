@@ -1,14 +1,15 @@
 # Web Camera Monitor Wall
 
-一个基于 `libobs` 的无桌面 Web 监控墙/合成器项目。仓库已完成 **M0 Headless Proof、M1 Web Control、M2 Composite WebRTC、M3 Direct & Hybrid 和 M4 Browser Sources**：无需 OBS Qt 界面，也能在 Linux Docker 容器中完成下面的闭环。
+一个基于 `libobs` 的无桌面 Web 监控墙/合成器项目。仓库已完成 **M0 Headless Proof、M1 Web Control、M2 Composite WebRTC、M3 Direct & Hybrid、M4 Browser Sources 和 M5 Audio**：无需 OBS Qt 界面，也能在 Linux Docker 容器中完成下面的闭环。
 
 ```text
-RTSP camera -> libobs ffmpeg_source -> OBS scene -> obs_x264 -> video-only MP4
+RTSP camera -> libobs ffmpeg_source -> OBS scene -> H.264/AAC MP4
+                                                   -> H.264/Opus WHIP/WHEP
 ```
 
-当前开发版本已能从持久化场景启动多路 RTSP 与受控网页来源合成，并通过随产品镜像提供的 React/TypeScript 编辑器及本机 REST/WebSocket 接口，在录制期间原子更新布局和来源。M2 已在同一产品镜像中通过固定版本 MediaMTX 和 `obs-webrtc` 发布 WHIP/H.264；M3 已完成每路摄像头按需直达浏览器及选择性 H.264 转码；M4 已完成固定版本 `obs-browser`/CEF 和安全生命周期。M5 已开始统一静音、音量、同步偏移、监听和音轨模型，并为 Direct WHEP 加入默认静音、用户手势解锁的音频协商。Composite Opus、最终输出音轨与硬件编码尚未加入。
+当前版本能从持久化场景启动多路 RTSP 与受控网页来源合成，并通过随产品镜像提供的 React/TypeScript 编辑器及本机 REST/WebSocket 接口，在录制期间原子更新布局和来源。M2 在同一产品镜像中通过固定版本 MediaMTX 和 `obs-webrtc` 发布 Composite H.264/Opus；M3 完成每路摄像头按需直达浏览器及选择性 H.264/Opus 转码；M4 完成固定版本 `obs-browser`/CEF 和安全生命周期；M5 完成统一静音、音量、同步偏移、监听和音轨模型、Direct Web Audio 混音及 H.264/AAC 最终录像。硬件编码仍留到 M6。
 
-开发路线、里程碑验收标准和当前进度见 [ROADMAP.md](ROADMAP.md)。**M0 至 M4 已通过全部验收；M5 Audio 已开始但尚未完成。**当前场景与持久化契约见 [docs/scene-schema-v3.md](docs/scene-schema-v3.md)，历史 [v2](docs/scene-schema-v2.md) 与 [v1](docs/scene-schema-v1.md) 契约仍保留，控制协议见 [docs/api-v1.md](docs/api-v1.md)。
+开发路线、里程碑验收标准和当前进度见 [ROADMAP.md](ROADMAP.md)。**M0 至 M5 已通过全部验收；下一里程碑 M6 Production 尚未开始。**当前场景与持久化契约见 [docs/scene-schema-v3.md](docs/scene-schema-v3.md)，历史 [v2](docs/scene-schema-v2.md) 与 [v1](docs/scene-schema-v1.md) 契约仍保留，控制协议见 [docs/api-v1.md](docs/api-v1.md)。
 
 `WEBOBS_SCENE_FILE` 默认指向 `/config/webobs/scene.json`。首次启动使用 `WEBOBS_RTSP_URL` 创建并保存单路场景；后续启动以场景文件为准。手工编辑场景文件前应停止容器，且真实 RTSP 凭据不得提交到 Git。
 
@@ -24,7 +25,7 @@ RTSP camera -> libobs ffmpeg_source -> OBS scene -> obs_x264 -> video-only MP4
 - libdatachannel `0.21.0` 固定到审核提交并使用 Ubuntu OpenSSL 3 后端，避免与系统 FFmpeg 的 Mbed TLS 2.x ABI 冲突
 - `obs-browser` 固定到 OBS 32.1.2 的递归 submodule 状态，CEF 固定为 6533 revision 6 并校验精确 SHA-256
 
-OBS 的 `ffmpeg_muxer` 要求同时连接视频和音频编码器。M0 会写入一个带静音 AAC 的临时 MKV，停止后通过 FFmpeg stream copy 生成只有 H.264 视频轨的最终 MP4；画面不会被二次编码，临时文件成功后会删除。
+OBS 的 `ffmpeg_muxer` 同时连接 H.264 视频和 AAC 48 kHz 双声道编码器，先写入私有临时 MKV；停止并冲洗后，FFmpeg 以 stream copy 封装为 H.264/AAC MP4，画面和声音都不会被二次编码，成功后删除临时文件。无可听来源或全部来源静音时，AAC 轨仍存在但内容为静音。
 
 ## 前置条件
 
@@ -78,11 +79,11 @@ curl http://127.0.0.1:8080/api/v1/scene
 
 M1 尚无认证、TLS 或远程暴露承诺。不要将端口映射改为所有网卡，也不要通过公网反向代理发布；完整的本地安全约束和更新示例见 [控制 API 文档](docs/api-v1.md)。
 
-编辑器默认显示“实时节目”，通过 recvonly WHEP 播放 libobs 合成后的 H.264 画面；切换到“布局编辑”可进行来源增删、RTSP 传输方式、静音/音量/同步偏移/监听/音轨、拖动、缩放、适配模式、裁切、可见性和层级调整。修改先保留在浏览器草稿中，点击“保存场景”后以 ETag/`If-Match` 提交；WebSocket 会同步其他本地标签页的已提交版本并提示冲突。页面不会显示已存储的 RTSP 用户名或密码。
+编辑器默认显示“实时节目”，通过 recvonly WHEP 播放 libobs 合成后的 H.264/Opus 节目；声音默认关闭，必须通过用户点击启用。切换到“布局编辑”可进行来源增删、RTSP 传输方式、静音/音量/同步偏移/监听/音轨、拖动、缩放、适配模式、裁切、可见性和层级调整。修改先保留在浏览器草稿中，点击“保存场景”后以 ETag/`If-Match` 提交；WebSocket 会同步其他本地标签页的已提交版本并提示冲突。页面不会显示已存储的 RTSP 用户名或密码。
 
 M4 编辑器还可添加 `http`/`https` 浏览器源。浏览器源默认全部拒绝，管理员必须在 `WEBOBS_BROWSER_ALLOWED_ORIGINS` 中列出精确 Origin；访问单标签主机、localhost、私网地址或解析到私网的 DNS 名称还必须显式启用 `WEBOBS_BROWSER_ALLOW_PRIVATE_NETWORKS=true`。公开 API 与产品日志会隐藏 URL 查询和片段值。浏览器源在 Direct 模式中明确标为 Composite-only，不会获得来源级 WHEP 端点。完整边界和迁移规则见 [scene schema v2](docs/scene-schema-v2.md)。
 
-M3 的实时节目区可显式选择“服务端合成”或“浏览器直达”。Direct 模式为每个可见来源建立独立的同源 WHEP 会话，并以同一份场景文档应用位置、尺寸、层级、可见性、裁切及 contain/cover/stretch；可用 `http://127.0.0.1:8080/#direct` 直接进入。内部 MediaMTX 路径使用每次进程启动随机生成的 128-bit 名称，RTSP 只在 reader 存在时按需拉取，能力接口和浏览器不会收到 RTSP 地址或内部路径。服务在容器回环路径探测视频编码：H.264、VP8、VP9 和 AV1 直通；HEVC 等不兼容编码仅在存在浏览器 reader 时由 FFmpeg/x264 转为 H.264，页面关闭后自动释放转码进程。M5 起步版本会同时请求来源音频，但播放器默认静音，必须由用户点击“启用声音”后才按每路静音与音量设置播放。
+实时节目区可显式选择“服务端合成”或“浏览器直达”。Direct 模式为每个可见 RTSP 来源建立独立的同源 WHEP 会话，并以同一份场景文档应用布局；可用 `http://127.0.0.1:8080/#direct` 直接进入。内部 MediaMTX 路径使用每次进程启动随机生成的 128-bit 名称，RTSP 只在 reader 存在时按需拉取，能力接口和浏览器不会收到 RTSP 地址或内部路径。服务会探测视频与音频：浏览器兼容组合直通，不兼容的视频或音频只在存在 reader 时转为 H.264/Opus，页面关闭后释放转码进程。所有 Direct `<video>` 始终静音，用户点击“启用声音”后才由一个共享 Web Audio 图按每路静音、音量和相对同步偏移输出，避免多元素重复播放。
 
 浏览器只访问本站 `/api/v1/program/whep`。服务端把 offer 转发到固定的容器回环 MediaMTX，并把上游会话地址改写为随机同源令牌；任意上游 URL、跨源 offer、超过 64 KiB 的 SDP 和伪造会话令牌都会被拒绝。浏览器等待 ICE 收集完成后一次性提交 offer，断线以 1–8 秒退避重连，并在页面关闭时尽力删除会话；M2 暂不实现 trickle ICE/PATCH。
 
@@ -90,7 +91,7 @@ RTSP URL 可能被 OBS 插件写入日志，因此核心日志处理器会把 `r
 
 ### M0 真实摄像头验收
 
-配置本地 `.env` 后，使用专用入口录制至少 30 秒并自动执行完整解码、H.264、仅视频轨、分辨率、帧率、时长和非黑帧检查。每次运行使用新的 UTC 文件名，不会覆盖已有录像。
+配置本地 `.env` 后，使用专用入口录制至少 30 秒并自动执行完整解码、H.264、AAC 48 kHz 双声道、分辨率、帧率、时长和非黑帧检查。每次运行使用新的 UTC 文件名，不会覆盖已有录像。
 
 PowerShell：
 
@@ -112,7 +113,7 @@ shell 入口通过 `WEBOBS_REAL_WIDTH`、`WEBOBS_REAL_HEIGHT`、`WEBOBS_REAL_FPS
 
 ### M1 真实摄像头验收
 
-M1 使用独立门禁验证真实来源在持续录制期间接受 Web 控制：先把既有画面缩放到左侧并通过 API 在线添加同一摄像头的第二个来源，验证静音和音量配置后删除原来源，再把新来源恢复为全画布。测试至少继续录制 30 秒，停止后验证 H.264、仅视频轨、分辨率、FPS、完整解码和逐帧无空黑场。
+M1 使用独立门禁验证真实来源在持续录制期间接受 Web 控制：先把既有画面缩放到左侧并通过 API 在线添加同一摄像头的第二个来源，验证静音和音量配置后删除原来源，再把新来源恢复为全画布。测试至少继续录制 30 秒，停止后验证 H.264/AAC、分辨率、FPS、完整解码和逐帧无空黑场。
 
 PowerShell：
 
@@ -144,7 +145,7 @@ shell 对应设置 `WEBOBS_REAL_USE_SYNTHETIC=1`；合成演练只证明门禁�
 
 ### M2 真实摄像头验收
 
-M2 门禁在隔离的产品 Compose 项目中启动真实来源，通过本机 headless Chrome 建立同源 WHEP/H.264 播放，持续至少 30 秒后优雅停止产品，并验证浏览器 reader、容器退出状态、日志脱敏和最终 MP4。录像必须为 H.264、仅视频轨、指定分辨率与 FPS，可完整解码且无黑帧。
+M2 门禁在隔离的产品 Compose 项目中启动真实来源，通过本机 headless Chrome 建立同源 WHEP/H.264/Opus 播放，持续至少 30 秒后优雅停止产品，并验证浏览器 reader、容器退出状态、日志脱敏和最终 MP4。当前录像必须为 H.264/AAC、指定分辨率与 FPS，可完整解码且无黑帧。
 
 PowerShell：
 
@@ -153,6 +154,16 @@ PowerShell：
 ```
 
 脚本按 `-EnvFile`、当前进程 `WEBOBS_RTSP_URL`、本地 `.env` 的顺序读取私有端点；已有镜像时可增加 `-SkipBuild`。端点只通过容器环境传入，一次性场景卷在退出时销毁；原始日志仅在内存中执行泄漏检查，写入忽略目录前会隐藏整个 RTSP 端点。此门禁要求可信的本机 Chrome，可用 `WEBOBS_CHROME_BIN` 指定其路径。
+
+### M5 真实音频验收
+
+M5 门禁要求 RTSP 来源实际包含音频。它依次运行至少 30 秒的 Composite 与 Direct/Hybrid 浏览器会话，先通过本地 API 将默认静音的来源显式设为音轨 1，再验证浏览器双轨 reader、容器正常退出、日志无端点泄漏，以及两份 H.264/AAC 48 kHz 双声道 MP4 均非静音、可完整解码且无黑帧。
+
+```powershell
+./tests/run-m5-real-audio.ps1 -SkipBuild
+```
+
+地址读取优先级与 M2/M3 门禁相同。录像和二次脱敏日志只写入受 Git 忽略的本地目录；不得把它们上传到公开 Issue。安防摄像头麦克风电平通常较低，真实源门禁使用可配置的响度下限来排除数字静音，而确定性音频门禁仍使用更严格的默认阈值。
 
 ## 命令行接口
 
@@ -197,14 +208,14 @@ docker compose run --rm webobs \
 
 - MP4 存在且可完整解码
 - 唯一视频轨为 H.264
-- 不含音频轨
+- AAC、48 kHz、双声道音频轨存在且可完整解码
 - 分辨率为 640×360
 - 帧率为 10 FPS
 - 时长在预期范围内
 - 首帧不是空黑画面
 - 4:3 测试源在 16:9 画布中等比居中，左右黑边对称且中心画面有效
 
-同一入口还覆盖缺失 URL、无法连接、错误输出目录、已有文件拒绝覆盖、日志凭据脱敏，以及容器收到 `SIGTERM` 后完整冲洗并封装 MP4。M1 控制面验收另外覆盖 REST、安全响应头、ETag/`If-Match`、WebSocket 快照与广播、Host/Origin 拒绝、请求大小限制、原子持久化权限、在线来源增删、裁切/层级/可见性、不可达新来源回滚、解码首帧纹理预装、原子无黑帧切换，以及同一容器重启后的场景和录像恢复。M2/M3 验收覆盖 Composite、Direct、Hybrid、重连和按需转码。M4 验收覆盖默认拒绝与私网双重授权、公开 URL 脱敏、Composite-only 能力、CEF 实例显示/隐藏、renderer 上限与崩溃恢复、临时缓存清理，以及真实非黑浏览器画面的最终 MP4。
+同一入口还覆盖缺失 URL、无法连接、错误输出目录、已有文件拒绝覆盖、日志凭据脱敏，以及容器收到 `SIGTERM` 后完整冲洗并封装 MP4。M1 控制面验收另外覆盖 REST、安全响应头、ETag/`If-Match`、WebSocket 快照与广播、Host/Origin 拒绝、请求大小限制、原子持久化权限、在线来源增删、裁切/层级/可见性、不可达新来源回滚、解码首帧纹理预装、原子无黑帧切换，以及同一容器重启后的场景和录像恢复。M2/M3 验收覆盖 Composite、Direct、Hybrid、重连和按需转码。M4 验收覆盖默认拒绝与私网双重授权、公开 URL 脱敏、Composite-only 能力、CEF 实例显示/隐藏、renderer 上限与崩溃恢复、临时缓存清理，以及真实非黑浏览器画面的最终 MP4。M5 确定性门禁覆盖 Opus 直通、AAC 转 Opus、共享 Web Audio、自动播放解锁、来源重连、静音、音量、同步、漂移、Composite Opus 和最终 AAC。
 
 烟测和真实摄像头验收会先执行公开仓库审计：检查 Git 索引中没有 `.env`、录像、测试产物、私钥文件或高置信度令牌，只允许明确列出的 RTSP 测试占位符，并确认 Git/Docker 忽略规则及 OBS submodule 固定提交未漂移。也可以单独运行 `./tests/run-public-audit.ps1` 或 `./tests/run-public-audit.sh`；审计只读取 Git 索引，不读取本地未跟踪 `.env` 的内容。
 
@@ -214,9 +225,9 @@ PowerShell：
 ./tests/run-smoke.ps1
 ```
 
-只运行 M1 控制面验收可使用 `./tests/run-control-plane.ps1 -SkipBuild`；只运行 M2 浏览器与重连验收可使用 `./tests/run-webrtc.ps1 -SkipBuild`；只运行 M3 双路 Direct 验收可使用 `./tests/run-direct.ps1 -SkipBuild`；只运行 M3 H.264/HEVC 选择性 Hybrid 验收可使用 `./tests/run-hybrid.ps1 -SkipBuild`；在线变更、断流重连和路由回收验收使用 `./tests/run-m3-lifecycle.ps1 -SkipBuild`；M4 浏览器源门禁使用 `./tests/run-browser-source.ps1 -SkipBuild`。浏览器门禁默认查找本机 Chrome，也可通过 `WEBOBS_CHROME_BIN` 指定可信的 Chrome 可执行文件。
+只运行 M1 控制面验收可使用 `./tests/run-control-plane.ps1 -SkipBuild`；只运行 M2 浏览器与重连验收可使用 `./tests/run-webrtc.ps1 -SkipBuild`；只运行 M3 双路 Direct 验收可使用 `./tests/run-direct.ps1 -SkipBuild`；只运行 M3 H.264/HEVC 选择性 Hybrid 验收可使用 `./tests/run-hybrid.ps1 -SkipBuild`；在线变更、断流重连和路由回收验收使用 `./tests/run-m3-lifecycle.ps1 -SkipBuild`；M4 浏览器源门禁使用 `./tests/run-browser-source.ps1 -SkipBuild`；M5 确定性音频门禁使用 `./tests/run-m5-audio.ps1 -SkipBuild`。浏览器门禁默认查找本机 Chrome，也可通过 `WEBOBS_CHROME_BIN` 指定可信的 Chrome 可执行文件。
 
-真实来源的 M3 Direct/Hybrid 门禁使用 `./tests/run-m3-real-camera.ps1 -SkipBuild`。RTSP URL 只通过当前进程的 `WEBOBS_RTSP_URL` 或受 Git 忽略的本地 `.env` 提供；该门禁会把录制和端点替换后的诊断日志分别写入受忽略的 `recordings/` 与 `tests/artifacts/`，不得将其作为公开附件提交。
+真实来源的 M3 Direct/Hybrid 门禁使用 `./tests/run-m3-real-camera.ps1 -SkipBuild`，M5 Composite + Direct/Hybrid 真实音频门禁使用 `./tests/run-m5-real-audio.ps1 -SkipBuild`。RTSP URL 只通过当前进程的 `WEBOBS_RTSP_URL` 或受 Git 忽略的本地 `.env` 提供；这些门禁会把录像和端点替换后的诊断日志分别写入受忽略的 `recordings/` 与 `tests/artifacts/`，不得将其作为公开附件提交。
 
 如果三个测试镜像已经成功构建，而 registry 暂时不可用，可显式复用本地镜像：`./tests/run-smoke.ps1 -SkipBuild`。这不会跳过录制、解码、失败路径或 SIGTERM 验收。
 
@@ -256,7 +267,7 @@ obs-ffmpeg-mux
 | 3 | libobs、图形、音频或模块初始化失败 |
 | 4 | RTSP 在超时前没有产生视频帧 |
 | 5 | 编码器、muxer、目录或录制输出失败 |
-| 6 | 最终 video-only MP4 封装失败 |
+| 6 | 最终 H.264/AAC MP4 封装失败 |
 | 7 | 场景文件加载、迁移或原子持久化失败 |
 | 8 | HTTP/WebSocket 控制监听器启动失败 |
 

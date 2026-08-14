@@ -1,8 +1,8 @@
 # Control API v1 / 控制接口 v1
 
-M1 exposes a small HTTP/1.1 and WebSocket control plane from `webobsd`. M2 extends the same origin with a constrained program WHEP proxy. M3 adds source-scoped Direct WHEP routes and a capability document. M4 adds composite-only browser sources. M5 begins a unified audio model. The scene API uses the same [scene document](scene-schema-v3.md) that libobs and the browser renderer consume and that the atomic scene store persists.
+M1 exposes a small HTTP/1.1 and WebSocket control plane from `webobsd`. M2 extends the same origin with a constrained program WHEP proxy. M3 adds source-scoped Direct WHEP routes and a capability document. M4 adds composite-only browser sources. M5 completes the unified audio model, Direct Web Audio mixing, Composite Opus, and AAC recordings. The scene API uses the same [scene document](scene-schema-v3.md) that libobs and the browser renderer consume and that the atomic scene store persists.
 
-M1 由 `webobsd` 提供一组精简的 HTTP/1.1 与 WebSocket 控制接口，M2 在同源下增加受限节目 WHEP 代理，M3 再增加按来源隔离的 Direct WHEP 路由和能力文档，M4 增加仅服务端合成的浏览器源，M5 开始统一音频模型。场景接口、libobs、浏览器渲染和原子场景存储共用同一份[场景文档](scene-schema-v3.md)。
+M1 由 `webobsd` 提供一组精简的 HTTP/1.1 与 WebSocket 控制接口，M2 在同源下增加受限节目 WHEP 代理，M3 再增加按来源隔离的 Direct WHEP 路由和能力文档，M4 增加仅服务端合成的浏览器源，M5 完成统一音频模型、Direct Web Audio 混音、Composite Opus 和 AAC 录像。场景接口、libobs、浏览器渲染和原子场景存储共用同一份[场景文档](scene-schema-v3.md)。
 
 ## Security boundary / 安全边界
 
@@ -90,12 +90,15 @@ Returns the explicit playback modes and one source-scoped same-origin endpoint f
     "preferred": "direct",
     "fallback": "composite",
     "strategy": "passthrough",
-    "codec": "h264"
+    "codec": "h264",
+    "audioCodec": "opus"
   }]
 }
 ```
 
-返回当前明确支持的播放模式，以及场景中每个来源对应的同源端点。响应只复用公开场景已有的来源 ID，不包含 RTSP、凭据、MediaMTX 地址、内部路径或调用方可选上游。
+`codec` and `audioCodec` report the probed upstream codec names without revealing the upstream address. H.264/VP8/VP9/AV1 video and absent/Opus/G.711 A-law/G.711 mu-law audio can pass through; if either present codec is browser-incompatible, the on-demand Hybrid route emits H.264/Opus and reports `strategy: "transcode"`.
+
+返回当前明确支持的播放模式，以及场景中每个来源对应的同源端点。响应只复用公开场景已有的来源 ID，不包含 RTSP、凭据、MediaMTX 地址、内部路径或调用方可选上游。`codec` 与 `audioCodec` 只报告探测到的上游编码名称；H.264/VP8/VP9/AV1 视频和无音频/Opus/G.711 A-law/G.711 mu-law 音频可直通，任一现有编码不兼容时，按需 Hybrid 路由输出 H.264/Opus，并返回 `strategy: "transcode"`。
 
 ### `POST /api/v1/sources/{sourceId}/whep`
 

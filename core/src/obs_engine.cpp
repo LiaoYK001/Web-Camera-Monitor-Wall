@@ -219,12 +219,12 @@ int run_process(const std::vector<std::string> &arguments)
     return -1;
 }
 
-bool remux_video_only(const std::filesystem::path &temporary, const std::filesystem::path &output)
+bool remux_recording(const std::filesystem::path &temporary, const std::filesystem::path &output)
 {
-    blog(LOG_INFO, "Finalizing video-only MP4 '%s'", output.c_str());
+    blog(LOG_INFO, "Finalizing H.264/AAC MP4 '%s'", output.c_str());
     const std::vector<std::string> arguments = {
         "ffmpeg", "-hide_banner", "-loglevel", "error", "-n", "-i", temporary.string(),
-        "-map", "0:v:0", "-an", "-c:v", "copy", "-movflags", "+faststart", output.string(),
+        "-map", "0:v:0", "-map", "0:a:0", "-c", "copy", "-movflags", "+faststart", output.string(),
     };
     const int status = run_process(arguments);
     if (status != 0) {
@@ -431,14 +431,27 @@ ExitCode run_obs_engine(const Config &config, const SceneDocument &document)
     obs_encoder_set_video(video_encoder.get(), obs_get_video());
 
     DataPtr audio_settings(obs_data_create());
-    obs_data_set_int(audio_settings.get(), "bitrate", 64);
+    obs_data_set_int(audio_settings.get(), "bitrate", 128);
     EncoderPtr audio_encoder(
-        obs_audio_encoder_create("ffmpeg_aac", "WebOBS silent AAC", audio_settings.get(), 0, nullptr));
+        obs_audio_encoder_create("ffmpeg_aac", "WebOBS program AAC", audio_settings.get(), 0, nullptr));
     if (!audio_encoder) {
-        blog(LOG_ERROR, "Could not create temporary AAC encoder required by ffmpeg_muxer");
+        blog(LOG_ERROR, "Could not create the recording AAC encoder");
         return ExitCode::output_failed;
     }
     obs_encoder_set_audio(audio_encoder.get(), obs_get_audio());
+
+    DataPtr webrtc_audio_settings(obs_data_create());
+    obs_data_set_int(webrtc_audio_settings.get(), "bitrate", 96);
+    EncoderPtr webrtc_audio_encoder;
+    if (config.webrtc_enabled) {
+        webrtc_audio_encoder.reset(
+            obs_audio_encoder_create("ffmpeg_opus", "WebOBS program Opus", webrtc_audio_settings.get(), 0, nullptr));
+        if (!webrtc_audio_encoder) {
+            blog(LOG_ERROR, "Could not create the WebRTC Opus encoder");
+            return ExitCode::output_failed;
+        }
+        obs_encoder_set_audio(webrtc_audio_encoder.get(), obs_get_audio());
+    }
 
     DataPtr output_settings(obs_data_create());
     obs_data_set_string(output_settings.get(), "path", temporary_path.c_str());
@@ -456,14 +469,15 @@ ExitCode run_obs_engine(const Config &config, const SceneDocument &document)
     OutputState whip_output_state;
     OutputPtr whip_output;
     if (config.webrtc_enabled) {
-        whip_output.reset(obs_output_create("whip_output_video", "WebOBS WHIP video output", nullptr, nullptr));
+        whip_output.reset(obs_output_create("whip_output", "WebOBS WHIP program output", nullptr, nullptr));
         if (!whip_output) {
-            blog(LOG_ERROR, "Could not create the WHIP video output");
+            blog(LOG_ERROR, "Could not create the WHIP audio/video output");
             return ExitCode::output_failed;
         }
         signal_handler_connect(obs_output_get_signal_handler(whip_output.get()), "stop", on_output_stopped,
                                &whip_output_state);
         obs_output_set_video_encoder(whip_output.get(), video_encoder.get());
+        obs_output_set_audio_encoder(whip_output.get(), webrtc_audio_encoder.get(), 0);
         obs_output_set_service(whip_output.get(), whip_service.get());
     }
 
@@ -566,6 +580,7 @@ ExitCode run_obs_engine(const Config &config, const SceneDocument &document)
     }
     output.reset();
     video_encoder.reset();
+    webrtc_audio_encoder.reset();
     audio_encoder.reset();
     scene_runtime.deactivate();
 
@@ -574,7 +589,7 @@ ExitCode run_obs_engine(const Config &config, const SceneDocument &document)
         blog(LOG_ERROR, "Temporary recording is missing or empty");
         return ExitCode::output_failed;
     }
-    if (!remux_video_only(temporary_path, output_path))
+    if (!remux_recording(temporary_path, output_path))
         return ExitCode::remux_failed;
 
     std::filesystem::remove(temporary_path, path_error);

@@ -652,7 +652,8 @@ select:focus-visible,
   box-shadow: none;
 }
 
-.direct-preview-shell {
+.direct-preview-shell,
+.program-preview-shell {
   display: grid;
   width: min(100%, 1100px);
   gap: 10px;

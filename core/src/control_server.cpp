@@ -247,7 +247,7 @@ public:
             if (source.kind == "browser") {
                 body += "{\"sourceId\":\"" + json_escape(source.id) +
                         "\",\"preferred\":\"composite\",\"fallback\":\"composite\"," +
-                        "\"strategy\":\"composite\",\"codec\":\"\"}";
+                        "\"strategy\":\"composite\",\"codec\":\"\",\"audioCodec\":\"\"}";
                 continue;
             }
             const auto route = direct_routes_.find(source.id);
@@ -255,10 +255,13 @@ public:
                                              ? "unknown"
                                              : route->second.transcode ? "transcode" : "passthrough";
             const std::string codec = route == direct_routes_.end() ? std::string{} : route->second.codec;
+            const std::string audio_codec =
+                route == direct_routes_.end() ? std::string{} : route->second.audio_codec;
             body += "{\"sourceId\":\"" + json_escape(source.id) +
                     "\",\"endpoint\":\"/api/v1/sources/" + json_escape(source.id) +
                     "/whep\",\"preferred\":\"direct\",\"fallback\":\"composite\"," +
-                    "\"strategy\":\"" + strategy + "\",\"codec\":\"" + json_escape(codec) + "\"}";
+                    "\"strategy\":\"" + strategy + "\",\"codec\":\"" + json_escape(codec) +
+                    "\",\"audioCodec\":\"" + json_escape(audio_codec) + "\"}";
         }
         body += "]}";
         return response(http::status::ok, version, std::move(body));
@@ -361,6 +364,7 @@ private:
         std::string rtsp_url;
         std::string transport;
         std::string codec;
+        std::string audio_codec;
         bool transcode = false;
         std::string hybrid_path;
     };
@@ -622,6 +626,11 @@ private:
         return codec == "h264" || codec == "vp8" || codec == "vp9" || codec == "av1";
     }
 
+    static bool browser_compatible_audio_codec(std::string_view codec)
+    {
+        return codec.empty() || codec == "opus" || codec == "pcm_alaw" || codec == "pcm_mulaw";
+    }
+
     void delete_config_path(std::string_view path)
     {
         if (path.empty())
@@ -654,6 +663,7 @@ private:
                 route = existing->second;
                 previous_hybrid_path = route.hybrid_path;
                 route.codec.clear();
+                route.audio_codec.clear();
                 route.transcode = false;
                 route.hybrid_path.clear();
             }
@@ -699,9 +709,17 @@ private:
             if (!codec)
                 return std::nullopt;
             route.codec = *codec;
-            route.transcode = !browser_compatible_codec(route.codec);
+            const auto audio_codec = run_capture({"ffprobe", "-v", "error", "-rw_timeout", "8000000",
+                                                  "-rtsp_transport", "tcp", "-select_streams", "a:0",
+                                                  "-show_entries", "stream=codec_name", "-of",
+                                                  "default=noprint_wrappers=1:nokey=1", input},
+                                                 std::chrono::seconds(12));
+            route.audio_codec = audio_codec.value_or("");
+            route.transcode = !browser_compatible_codec(route.codec) ||
+                              !browser_compatible_audio_codec(route.audio_codec);
             const std::lock_guard lock(route_state_mutex_);
             direct_routes_.at(source.id).codec = route.codec;
+            direct_routes_.at(source.id).audio_codec = route.audio_codec;
             direct_routes_.at(source.id).transcode = route.transcode;
         }
         if (!route.transcode)

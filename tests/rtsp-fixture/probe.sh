@@ -13,6 +13,9 @@ blackout_yavg_max="${TEST_BLACKOUT_YAVG_MAX:-30}"
 sample_timestamp="${TEST_SAMPLE_TIMESTAMP:-0}"
 sample_from_end_seconds="${TEST_SAMPLE_FROM_END_SECONDS:-}"
 sample_minimum_yavg="${TEST_MIN_YAVG:-5}"
+audio_mode="${TEST_AUDIO_MODE:-present}"
+require_audible="${TEST_REQUIRE_AUDIBLE:-0}"
+minimum_mean_volume_db="${TEST_MIN_MEAN_VOLUME_DB:--50}"
 
 sample_seek_option="-ss"
 sample_seek_value="$sample_timestamp"
@@ -33,6 +36,22 @@ case "$reject_blackout" in
     0|1) ;;
     *) echo "TEST_REJECT_BLACKOUT must be 0 or 1" >&2; exit 2 ;;
 esac
+case "$audio_mode" in
+    present|absent|ignore) ;;
+    *) echo "TEST_AUDIO_MODE must be present, absent, or ignore" >&2; exit 2 ;;
+esac
+case "$require_audible" in
+    0|1) ;;
+    *) echo "TEST_REQUIRE_AUDIBLE must be 0 or 1" >&2; exit 2 ;;
+esac
+if [ "$require_audible" = "1" ] && [ "$audio_mode" != "present" ]; then
+    echo "TEST_REQUIRE_AUDIBLE requires TEST_AUDIO_MODE=present" >&2
+    exit 2
+fi
+if ! awk -v value="$minimum_mean_volume_db" 'BEGIN { exit !(value >= -120 && value < 0) }'; then
+    echo "TEST_MIN_MEAN_VOLUME_DB must be at least -120 and below 0" >&2
+    exit 2
+fi
 if ! awk -v value="$blackout_yavg_max" 'BEGIN { exit !(value >= 0 && value <= 255) }'; then
     echo "TEST_BLACKOUT_YAVG_MAX must be between 0 and 255" >&2
     exit 2
@@ -54,7 +73,20 @@ duration="$(ffprobe -v error -show_entries format=duration -of default=nw=1:nk=1
 test "$codec" = "h264"
 test "$dimensions" = "$expected_dimensions"
 test "$nominal_frame_rate" = "$expected_frame_rate"
-test -z "$audio_streams"
+audio_report=""
+if [ "$audio_mode" = "absent" ]; then
+    test -z "$audio_streams"
+elif [ "$audio_mode" = "present" ]; then
+    test -n "$audio_streams"
+    audio_codec="$(ffprobe -v error -select_streams a:0 -show_entries stream=codec_name -of default=nw=1:nk=1 "$file")"
+    audio_sample_rate="$(ffprobe -v error -select_streams a:0 -show_entries stream=sample_rate -of default=nw=1:nk=1 "$file")"
+    audio_channels="$(ffprobe -v error -select_streams a:0 -show_entries stream=channels -of default=nw=1:nk=1 "$file")"
+    test "$audio_codec" = "aac"
+    test "$audio_sample_rate" = "48000"
+    test "$audio_channels" = "2"
+    ffmpeg -v error -i "$file" -map 0:a:0 -f null -
+    audio_report=" audio_codec=$audio_codec audio_rate=$audio_sample_rate audio_channels=$audio_channels"
+fi
 awk -v actual="$average_frame_rate" -v expected="$expected_frame_rate" '
     function rate(value, parts, count) {
         count = split(value, parts, "/")
@@ -157,5 +189,15 @@ if [ "$reject_blackout" = "1" ]; then
     blackout_report=" minimum_yavg=$minimum_yavg black_frames=$black_frames"
 fi
 
+audible_report=""
+if [ "$require_audible" = "1" ]; then
+    mean_volume="$(ffmpeg -hide_banner -i "$file" -map 0:a:0 -af volumedetect -f null - 2>&1 \
+        | awk '/mean_volume:/{print $(NF-1); exit}')"
+    test -n "$mean_volume"
+    awk -v value="$mean_volume" -v minimum="$minimum_mean_volume_db" \
+        'BEGIN { exit !(value > minimum && value <= 0) }'
+    audible_report=" mean_volume_db=$mean_volume"
+fi
+
 ffmpeg -v error -i "$file" -map 0:v:0 -f null -
-echo "Recording verified: codec=$codec dimensions=$dimensions nominal_fps=$nominal_frame_rate average_fps=$average_frame_rate duration=$duration yavg=$yavg$pillarbox_report$two_up_report$blackout_report"
+echo "Recording verified: codec=$codec dimensions=$dimensions nominal_fps=$nominal_frame_rate average_fps=$average_frame_rate duration=$duration yavg=$yavg$audio_report$audible_report$pillarbox_report$two_up_report$blackout_report"

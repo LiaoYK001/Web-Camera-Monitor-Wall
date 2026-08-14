@@ -1,5 +1,6 @@
-import { type CSSProperties, useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { type CSSProperties, useEffect, useMemo, useRef, useState } from 'react';
 import { fetchPlaybackCapabilities } from './api';
+import { DirectAudioMixer, type DirectAudioSnapshot } from './directAudioMixer';
 import type { SceneDocument, SceneItem, SceneSource, SourcePlaybackCapability } from './types';
 import { connectSource, type ProgramConnectionState } from './whep';
 
@@ -34,30 +35,27 @@ function videoGeometry(item: SceneItem, width: number, height: number): CSSPrope
   };
 }
 
-function DirectTile({ item, source, capability, audioEnabled, onAudioBlocked }: {
+function DirectTile({ item, source, capability, mixer }: {
   item: SceneItem;
   source: SceneSource;
   capability?: SourcePlaybackCapability;
-  audioEnabled: boolean;
-  onAudioBlocked: () => void;
+  mixer: DirectAudioMixer | null;
 }) {
   const videoRef = useRef<HTMLVideoElement>(null);
   const [state, setState] = useState<ProgramConnectionState>(capability ? 'checking' : 'offline');
   const [dimensions, setDimensions] = useState({ width: 0, height: 0 });
 
   useEffect(() => {
-    if (!videoRef.current || !capability?.endpoint || capability.preferred !== 'direct') return undefined;
-    const connection = connectSource(videoRef.current, capability.endpoint, setState);
+    if (!videoRef.current || !mixer || !capability?.endpoint || capability.preferred !== 'direct') return undefined;
+    const connection = connectSource(videoRef.current, capability.endpoint, setState,
+      (stream) => mixer.bindStream(source.id, stream));
     return connection.close;
-  }, [capability]);
+  }, [capability, mixer, source.id]);
 
   useEffect(() => {
-    const video = videoRef.current;
-    if (!video) return;
-    video.muted = !audioEnabled || source.muted;
-    video.volume = Math.min(Math.max(source.volume, 0), 1);
-    if (audioEnabled && !source.muted) void video.play().catch(onAudioBlocked);
-  }, [audioEnabled, onAudioBlocked, source.muted, source.volume]);
+    if (!mixer || !videoRef.current || !capability?.endpoint || capability.preferred !== 'direct') return undefined;
+    return mixer.attach(source.id, videoRef.current);
+  }, [capability, mixer, source.id]);
 
   const geometry = useMemo(
     () => videoGeometry(item, dimensions.width, dimensions.height),
@@ -65,11 +63,16 @@ function DirectTile({ item, source, capability, audioEnabled, onAudioBlocked }: 
   );
 
   return (
-    <div className={`direct-tile ${state}`} data-source-id={source.id}>
+    <div
+      className={`direct-tile ${state}`}
+      data-source-id={source.id}
+      data-audio-gain={source.muted ? '0' : source.volume.toFixed(3)}
+      data-audio-sync-ms={source.syncOffsetMs}
+    >
       <video
         ref={videoRef}
         autoPlay
-        muted={!audioEnabled || source.muted}
+        muted
         playsInline
         style={geometry}
         aria-label={`${source.name} 直达画面`}
@@ -89,9 +92,16 @@ function DirectTile({ item, source, capability, audioEnabled, onAudioBlocked }: 
 export default function DirectPreview({ scene }: { scene: SceneDocument }) {
   const [capabilities, setCapabilities] = useState<SourcePlaybackCapability[]>([]);
   const [available, setAvailable] = useState(true);
-  const [audioEnabled, setAudioEnabled] = useState(false);
-  const [audioBlocked, setAudioBlocked] = useState(false);
-  const markAudioBlocked = useCallback(() => setAudioBlocked(true), []);
+  const [mixer, setMixer] = useState<DirectAudioMixer | null>(null);
+  const [audio, setAudio] = useState<DirectAudioSnapshot>({ state: 'disabled', inputCount: 0, level: 0 });
+
+  useEffect(() => {
+    const nextMixer = new DirectAudioMixer(setAudio);
+    setMixer(nextMixer);
+    return () => nextMixer.destroy();
+  }, []);
+
+  useEffect(() => mixer?.configure(scene.sources), [mixer, scene.sources]);
 
   useEffect(() => {
     const controller = new AbortController();
@@ -108,19 +118,25 @@ export default function DirectPreview({ scene }: { scene: SceneDocument }) {
     () => new Map(capabilities.map((capability) => [capability.sourceId, capability])),
     [capabilities],
   );
+  const audioEnabled = audio.state === 'running';
 
   return (
     <div className="direct-preview-shell">
-      <div className="direct-audio-control" data-audio-enabled={audioEnabled ? 'true' : 'false'}>
+      <div
+        className="direct-audio-control"
+        data-audio-enabled={audioEnabled ? 'true' : 'false'}
+        data-audio-state={audio.state}
+        data-audio-inputs={audio.inputCount}
+        data-audio-level={audio.level.toFixed(4)}
+      >
         <button
           type="button"
           aria-pressed={audioEnabled}
-          onClick={() => {
-            setAudioBlocked(false);
-            setAudioEnabled((current) => !current);
-          }}
+          onClick={() => { if (audioEnabled) void mixer?.disable(); else void mixer?.enable(); }}
         >{audioEnabled ? '关闭声音' : '启用声音'}</button>
-        <span>{audioBlocked ? '浏览器阻止了播放，请再次点击。' : '默认静音；启用后仍遵守每路静音与音量。'}</span>
+        <span>{audio.state === 'blocked'
+          ? '浏览器阻止了播放，请再次点击。'
+          : `Web Audio 混音 · ${audio.inputCount} 路 · 默认静音，点击后启用`}</span>
       </div>
       <div
         className="direct-preview"
@@ -146,8 +162,7 @@ export default function DirectPreview({ scene }: { scene: SceneDocument }) {
                   item={item}
                   source={source}
                   capability={bySource.get(source.id)}
-                  audioEnabled={audioEnabled}
-                  onAudioBlocked={markAudioBlocked}
+                  mixer={mixer}
                 />
               </div>
             );
