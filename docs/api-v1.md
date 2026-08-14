@@ -1,20 +1,25 @@
 # Control API v1 / 控制接口 v1
 
-M1 exposes a small HTTP/1.1 and WebSocket control plane from `webobsd`. M2 extends the same origin with a constrained program WHEP proxy. M3 adds source-scoped Direct WHEP routes and a capability document. M4 adds composite-only browser sources. M5 completes the unified audio model, Direct Web Audio mixing, Composite Opus, and AAC recordings. The scene API uses the same [scene document](scene-schema-v3.md) that libobs and the browser renderer consume and that the atomic scene store persists.
+M1 exposes a small HTTP/1.1 and WebSocket control plane from `webobsd`. M2 extends the same origin with a constrained program WHEP proxy. M3 adds source-scoped Direct WHEP routes and a capability document. M4 adds composite-only browser sources. M5 completes the unified audio model, Direct Web Audio mixing, Composite Opus, and AAC recordings. The opening M6 slice adds file-backed single-operator authentication, remote authority authorization, failed-authentication rate limiting, probes, and metrics. The scene API uses the same [scene document](scene-schema-v3.md) that libobs and the browser renderer consume and that the atomic scene store persists.
 
-M1 由 `webobsd` 提供一组精简的 HTTP/1.1 与 WebSocket 控制接口，M2 在同源下增加受限节目 WHEP 代理，M3 再增加按来源隔离的 Direct WHEP 路由和能力文档，M4 增加仅服务端合成的浏览器源，M5 完成统一音频模型、Direct Web Audio 混音、Composite Opus 和 AAC 录像。场景接口、libobs、浏览器渲染和原子场景存储共用同一份[场景文档](scene-schema-v3.md)。
+M1 由 `webobsd` 提供一组精简的 HTTP/1.1 与 WebSocket 控制接口，M2 在同源下增加受限节目 WHEP 代理，M3 再增加按来源隔离的 Direct WHEP 路由和能力文档，M4 增加仅服务端合成的浏览器源，M5 完成统一音频模型、Direct Web Audio 混音、Composite Opus 和 AAC 录像。M6 起步切片增加文件型单操作员认证、远程 authority 授权、认证失败限流、探针和指标。场景接口、libobs、浏览器渲染和原子场景存储共用同一份[场景文档](scene-schema-v3.md)。
 
 ## Security boundary / 安全边界
 
-The API has no authentication, authorization, or TLS in M1. Direct CLI usage binds to `127.0.0.1:8080` by default. Product Compose binds inside the container and publishes only `127.0.0.1:8080` on the host. Keep that loopback mapping intact; do not expose the port through a LAN address, public proxy, tunnel, or router.
+Authentication remains disabled by default for backwards-compatible loopback development. Direct CLI usage binds to `127.0.0.1:8080`; base product Compose binds inside the container and publishes only `127.0.0.1:8080` on the host. When both credential files are configured, HTTP Basic authentication covers the editor and assets, REST, WebSocket upgrades, Program/Source WHEP, and metrics. Only liveness and readiness remain public. The implementation is a single-operator authentication boundary, not role-based authorization.
 
-M1 接口尚无认证、授权或 TLS。直接运行默认监听 `127.0.0.1:8080`；产品 Compose 在容器内监听，并仅发布到主机 `127.0.0.1:8080`。请保留该回环映射，不得通过局域网地址、公共反向代理、隧道或路由器暴露端口。
+为保持本地开发兼容，认证默认关闭。直接运行默认监听 `127.0.0.1:8080`；基础产品 Compose 在容器内监听，并仅发布到主机 `127.0.0.1:8080`。同时配置两个凭据文件后，HTTP Basic 认证会统一保护编辑器与静态资源、REST、WebSocket upgrade、Program/Source WHEP 和指标；只有存活与就绪探针保持公开。该实现是单操作员认证边界，并不是基于角色的授权系统。
+
+Basic credentials are cleartext on an unencrypted connection. Remote deployments must terminate HTTPS at a trusted reverse proxy, set only externally visible HTTPS origins in `WEBOBS_CONTROL_ALLOWED_ORIGINS`, and prevent direct access to the backend port. `webobsd` validates the external Host/Origin relationship but does not terminate TLS in this M6 slice. Base Compose loopback mode can remain unauthenticated; never expose that mode beyond the host.
+
+未加密连接上的 Basic 凭据是明文。远程部署必须由受信反向代理终止 HTTPS，只把外部可见的 HTTPS Origin 写入 `WEBOBS_CONTROL_ALLOWED_ORIGINS`，并阻止客户端绕过代理直连后端端口。本轮 `webobsd` 会校验外部 Host/Origin 关系，但尚不自行终止 TLS。基础 Compose 的无认证回环模式只能留在本机。
 
 The server applies these additional controls:
 
-- only `localhost`, `127.0.0.1`, and `[::1]` Host authorities are accepted;
-- mutation requests reject a present foreign Origin;
-- WebSocket upgrades require an Origin exactly matching the local Host;
+- local authorities are always accepted; authenticated remote authorities must derive from an explicitly allowlisted HTTPS origin;
+- requests with Origin require that origin to match the request Host, and remote origins must also be allowlisted;
+- WebSocket upgrades apply the same authentication and Host/Origin checks as HTTP;
+- invalid credentials are rate-limited per client address for a bounded window; missing credentials do not consume the failure budget;
 - no CORS permission is returned;
 - JSON bodies are limited to 1 MiB, WHEP SDP to 64 KiB, headers to 16 KiB, and reads to 15 seconds;
 - responses disable caching and include restrictive CSP, content-type, referrer, and permissions headers;
@@ -23,7 +28,7 @@ The server applies these additional controls:
 - the WHEP upstream is fixed to the container loopback MediaMTX; upstream session locations are replaced with random same-origin tokens and never exposed to browsers.
 - Direct MediaMTX paths use random 128-bit names, are created only for current scene sources, pull RTSP on demand, and are removed when their source leaves the scene; all MediaMTX output passes through the RTSP credential filter.
 
-服务还会限制本地 Host、校验 Origin、不返回 CORS 授权、限制请求体/请求头/读取时长、发送严格安全响应头，并在所有 API 场景响应中隐藏 RTSP 凭据。这些措施只降低本机误用和浏览器跨站请求风险，不能代替 M6 的身份认证与加密。
+服务还会校验 Host/Origin、不返回 CORS 授权、限制请求体/请求头/读取时长、发送严格安全响应头，并在所有 API 场景响应中隐藏 RTSP 凭据。无凭据请求返回带 `WWW-Authenticate` 的 `401`；凭据错误达到阈值后返回带 `Retry-After` 的 `429`。认证不能替代 HTTPS 加密。
 
 ## Configuration / 配置
 
@@ -31,11 +36,16 @@ The server applies these additional controls:
 | --- | --- | --- | --- |
 | `--listen-address` | `WEBOBS_LISTEN_ADDRESS` | `127.0.0.1` | `127.0.0.1`, `::1`, `0.0.0.0`, or `::` |
 | `--http-port` | `WEBOBS_HTTP_PORT` | `8080` | `0` disables HTTP/WebSocket |
-| `--allow-insecure-remote` | `WEBOBS_ALLOW_INSECURE_REMOTE` | `false` | must be explicitly true for a non-loopback bind |
+| `--allow-insecure-remote` | `WEBOBS_ALLOW_INSECURE_REMOTE` | `false` | legacy unauthenticated non-loopback opt-in; unsafe |
+| `--auth-username-file` | `WEBOBS_AUTH_USERNAME_FILE` | unset | absolute readable file; 1–64 printable ASCII bytes, no colon |
+| `--auth-password-file` | `WEBOBS_AUTH_PASSWORD_FILE` | unset | absolute readable file; 16–256 bytes, no control bytes |
+| `--auth-failure-limit` | `WEBOBS_AUTH_FAILURE_LIMIT` | `5` | invalid credentials allowed per client/window, 1–100 |
+| `--auth-failure-window-seconds` | `WEBOBS_AUTH_FAILURE_WINDOW_SECONDS` | `60` | failure window and lockout duration, 1–3600 |
+| `--control-allowed-origins` | `WEBOBS_CONTROL_ALLOWED_ORIGINS` | empty | comma-separated external HTTPS origins; requires credentials |
 
-The explicit remote-bind flag is a guardrail for container networking, not an approval to expose M1 remotely. Scene mutations also require an absolute `--scene-file`; a runtime without persistent scene storage returns `503` for updates.
+The username and password files must be configured as a pair. Each may contain one trailing newline, which is removed. The values are loaded once at startup and never logged. The supplied `compose.m6-auth.yaml` mounts both through Compose secrets and disables the legacy unauthenticated opt-in. Scene mutations also require an absolute `--scene-file`; a runtime without persistent scene storage returns `503` for updates.
 
-非回环确认开关只是容器网络防误配措施，不代表 M1 可以安全远程暴露。场景变更还要求配置绝对 `--scene-file`；没有持久化场景路径的运行实例会对更新返回 `503`。
+用户名和密码文件必须成对配置；文件末尾允许一个换行并会在读取时移除。值只在启动时加载且不会写入日志。仓库提供的 `compose.m6-auth.yaml` 会通过 Compose secrets 挂载两者，并关闭旧的无认证许可。场景变更还要求配置绝对 `--scene-file`；没有持久化场景路径的运行实例会对更新返回 `503`。
 
 ## HTTP resources / HTTP 资源
 
@@ -50,8 +60,18 @@ Returns the bundled React/TypeScript scene editor. The non-hashed HTML entry is 
 Returns `200` while the control thread is serving:
 
 ```json
-{"status":"ok","milestone":"M5"}
+{"status":"ok","milestone":"M6"}
 ```
+
+This route is intentionally unauthenticated and contains no configuration details.
+
+### `GET /api/v1/ready`
+
+Returns public `200 {"status":"ready"}` after recording is active and configured WebRTC publication is ready. It returns `503 {"status":"not_ready"}` while startup, recording, or configured publication is unavailable. Docker `HEALTHCHECK` uses this route.
+
+### `GET /metrics`
+
+Returns Prometheus text metrics for process up/readiness, recording state, WebRTC configuration/readiness, HTTP request count, and rejected credential count. This route requires authentication when credentials are configured; labels containing URLs, source IDs, usernames, or client addresses are not emitted.
 
 ### `GET /api/v1/program/status`
 

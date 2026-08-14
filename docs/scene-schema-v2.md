@@ -49,9 +49,9 @@ Browser sources are denied by default. Every page origin must exactly match one 
 
 浏览器源默认拒绝。每个页面 Origin 必须精确命中 `WEBOBS_BROWSER_ALLOWED_ORIGINS` 中的一项；该变量是逗号分隔且不含凭据、路径、查询或片段的 Origin 列表。localhost、单标签主机名、私网/链路本地地址以及解析到非公网地址的 DNS 结果，还必须显式设置 `WEBOBS_BROWSER_ALLOW_PRIVATE_NETWORKS=true`。
 
-The allowlist is an administrator trust boundary, not a page-content sandbox: an approved page can load its own subresources. Approve only pages controlled by trusted operators, and do not expose the unauthenticated control plane outside host loopback before M6.
+The allowlist is an administrator trust boundary, not a page-content sandbox: an approved page can load its own subresources. Approve only pages controlled by trusted operators. Keep the base unauthenticated control plane on host loopback; any remote deployment must enable the M6 file-auth boundary and trusted HTTPS termination.
 
-允许列表是管理员信任边界，不是网页内容沙箱：获准页面仍可加载自身子资源。只批准可信运维方控制的页面；M6 之前不得把无认证控制面暴露到主机回环以外。
+允许列表是管理员信任边界，不是网页内容沙箱：获准页面仍可加载自身子资源。只批准可信运维方控制的页面；基础无认证控制面必须留在主机回环，任何远程部署都必须启用 M6 文件认证边界和受信 HTTPS 终止。
 
 HTTP URL userinfo is rejected. Persistence retains query and fragment values when a dashboard needs them, but the public API replaces them with `?***` and `#***`. An unchanged placeholder restores only the same existing source's stored value; a new source or changed endpoint must submit the complete URL. Product logs apply the same query/fragment and userinfo filtering.
 

@@ -17,6 +17,8 @@ Please avoid opening a public issue for a suspected vulnerability. Use the repos
 - The bundled browser editor uses only same-origin static assets, REST, and WebSocket connections. It has no analytics, external font, CDN, or source-map dependency; treat browser profiles, screenshots, and pasted replacement URLs as sensitive nonetheless.
 - Server-rendered browser sources are denied by default. Approve exact trusted origins through `WEBOBS_BROWSER_ALLOWED_ORIGINS`; private/local destinations require the separate `WEBOBS_BROWSER_ALLOW_PRIVATE_NETWORKS=true` opt-in. An approved page can load subresources, so the allowlist is an administrator trust boundary rather than a complete content sandbox.
 - Browser source URLs reject userinfo. API and product logs hide query/fragment values; the ephemeral CEF profile is mode `0700` and is deleted before startup and after graceful shutdown. Do not put long-lived dashboard tokens in committed scene fixtures or public diagnostics.
+- M6 credentials are accepted only as an absolute username/password file pair. Use the `compose.m6-auth.yaml` secret mounts, keep source files under the ignored `secrets/` directory with host access restricted, and never place credential values directly in Compose, `.env.example`, command lines, logs, or issue reports.
+- HTTP Basic does not encrypt credentials. For any remote access, terminate HTTPS at a trusted reverse proxy, allowlist only its externally visible HTTPS origin, block direct access to the backend port, and keep liveness/readiness payloads free of configuration details. Native TLS and a reviewed Internet-facing deployment remain unfinished M6 work.
 
 - 真实配置应保存在本地 `.env`。除 `.env.example` 外，`.env*`、`secrets/`、常见私钥格式、录像、构建目录和测试产物均不会进入 Git 或 Docker 构建上下文。
 - 相比 `--rtsp-url` 命令行参数，优先通过受保护的环境文件提供 `WEBOBS_RTSP_URL`，因为进程列表可能暴露命令行参数。同时应限制主机、Docker daemon、环境文件和录像的访问权限。
@@ -27,9 +29,11 @@ Please avoid opening a public issue for a suspected vulnerability. Use the repos
 - 随镜像提供的浏览器编辑器只使用同源静态资源、REST 和 WebSocket，不包含分析脚本、外部字体、CDN 或 source map；但浏览器资料、截图及粘贴的新地址仍应按敏感信息处理。
 - 服务端浏览器源默认拒绝。只通过 `WEBOBS_BROWSER_ALLOWED_ORIGINS` 批准精确且可信的 Origin；私网或本地目标还需单独设置 `WEBOBS_BROWSER_ALLOW_PRIVATE_NETWORKS=true`。获准网页仍可加载子资源，因此允许列表是管理员信任边界，不是完整内容沙箱。
 - 浏览器源 URL 禁止 userinfo；API 和产品日志会隐藏查询与片段值。临时 CEF profile 权限为 `0700`，启动前和正常退出后都会删除。不得把长期仪表盘令牌写入已提交场景或公开诊断。
+- M6 凭据只接受绝对路径的用户名/密码文件对。应使用 `compose.m6-auth.yaml` 的 secret 挂载，把源文件放在已忽略的 `secrets/` 目录并限制主机访问；不得把凭据值直接写入 Compose、`.env.example`、命令行、日志或 Issue。
+- HTTP Basic 不会加密凭据。任何远程访问都必须由受信反向代理终止 HTTPS，只允许其外部 HTTPS Origin，阻止客户端直连后端端口，并保证公开存活/就绪响应不含配置细节。原生 TLS 和经过评审的互联网部署仍是未完成的 M6 工作。
 
 ## Supported versions / 支持版本
 
-Security fixes are currently provided for the latest commit on the default branch. M5 is complete and M6 has not started. The REST/WebSocket control plane has no authentication or TLS: the product Compose publishes it on host loopback only, validates local Host/Origin values, sends no CORS permission, and requires `If-Match` for mutations. Direct and Composite browser audio remain muted until an explicit user gesture. Do not expose the control plane on a LAN or the Internet. Authentication, authorization, TLS, and hardened remote deployment remain M6 work.
+Security fixes are currently provided for the latest commit on the default branch. M5 is complete and M6 is in development. The opening M6 slice provides optional file-backed single-operator Basic authentication across UI, REST, WebSocket, WHEP, and metrics; explicit HTTPS Origin/Host authorization; bounded per-client failed-authentication rate limiting; and public detail-free liveness/readiness probes. Authentication is disabled in base loopback Compose, TLS/TURN and role-based authorization are not implemented, and the milestone has not passed its production security gate. Do not expose the backend directly to a LAN or the Internet.
 
-安全修复仅面向默认分支的最新提交；M5 已完成，M6 尚未开始。REST/WebSocket 控制面没有认证和 TLS；产品 Compose 仅发布到主机回环地址，并校验本地 Host/Origin、不授予 CORS、要求变更携带 `If-Match`。Direct 与 Composite 浏览器音频在明确的用户手势前保持静音。不得把控制面暴露到局域网或互联网；认证、授权、TLS 和远程部署加固仍属于 M6。
+安全修复仅面向默认分支的最新提交；M5 已完成，M6 正在开发。M6 起步切片为 UI、REST、WebSocket、WHEP 与指标提供可选的文件型单操作员 Basic 认证，同时加入明确的 HTTPS Origin/Host 授权、逐客户端有限认证失败限流，以及不暴露配置细节的公开存活/就绪探针。基础回环 Compose 默认不启用认证，TLS/TURN 与角色授权尚未实现，里程碑也尚未通过生产安全门禁。不得把后端直接暴露到局域网或互联网。

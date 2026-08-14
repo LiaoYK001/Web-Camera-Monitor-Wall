@@ -260,6 +260,7 @@ ARG DEBIAN_FRONTEND=noninteractive
 RUN apt-get -o Acquire::Retries=5 -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30 update \
     && apt-get -o Acquire::Retries=5 -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30 install -y --no-install-recommends \
         ca-certificates \
+        curl \
         ffmpeg \
         fonts-liberation \
         libasound2t64 \
@@ -341,6 +342,9 @@ RUN mkdir -p /config/obs /config/webobs /recordings \
 WORKDIR /opt/obs
 VOLUME ["/config/webobs", "/recordings"]
 EXPOSE 8080 8189/udp
+
+HEALTHCHECK --interval=15s --timeout=3s --start-period=30s --retries=3 \
+    CMD [ "${WEBOBS_HTTP_PORT:-8080}" = "0" ] || curl --fail --silent --show-error "http://127.0.0.1:${WEBOBS_HTTP_PORT:-8080}/api/v1/ready" >/dev/null || exit 1
 
 LABEL org.opencontainers.image.title="Web Camera Monitor Wall" \
       org.opencontainers.image.description="Headless libobs multi-source monitor wall and local control plane" \

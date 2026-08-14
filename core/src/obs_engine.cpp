@@ -482,15 +482,19 @@ ExitCode run_obs_engine(const Config &config, const SceneDocument &document)
     }
 
     SceneController scene_controller(document, config.scene_file, scene_runtime);
-    ControlServer control_server(config, scene_controller);
+    RuntimeStatus runtime_status;
+    runtime_status.webrtc_configured.store(config.webrtc_enabled);
+    ControlServer control_server(config, scene_controller, runtime_status);
     if (const auto server_error = control_server.start()) {
         blog(LOG_ERROR, "Could not start the HTTP control server: %s", server_error->c_str());
         return ExitCode::control_server_failed;
     }
     if (config.http_port != 0) {
         blog(LOG_INFO, "HTTP control server listening on %s:%d", config.listen_address.c_str(), config.http_port);
-        if (config.allow_insecure_remote)
-            blog(LOG_WARNING, "HTTP control listener has no M6 authentication; keep the published host port local");
+        if (config.authentication)
+            blog(LOG_INFO, "HTTP Basic authentication is enabled with file-based credentials");
+        else if (config.allow_insecure_remote)
+            blog(LOG_WARNING, "HTTP control listener is unauthenticated; keep the published host port local");
     }
 
     if (whip_output && !obs_output_start(whip_output.get())) {
@@ -512,6 +516,7 @@ ExitCode run_obs_engine(const Config &config, const SceneDocument &document)
             wait_for_output_stop(whip_output.get(), whip_output_state, "WebRTC output");
         return ExitCode::output_failed;
     }
+    runtime_status.recording_active.store(true);
     blog(LOG_INFO, "Recording started: %dx%d at %d fps, %d Kbps", document.canvas.width,
          document.canvas.height, config.fps, config.bitrate_kbps);
 
@@ -519,6 +524,7 @@ ExitCode run_obs_engine(const Config &config, const SceneDocument &document)
         !wait_for_webrtc_connection(whip_output.get(), whip_output_state, config.connect_timeout_seconds)) {
         blog(LOG_ERROR, "WebRTC publishing did not become ready within %d seconds",
              config.connect_timeout_seconds);
+        runtime_status.recording_active.store(false);
         control_server.stop();
         bool stopped = true;
         if (obs_output_active(whip_output.get()))
@@ -534,6 +540,7 @@ ExitCode run_obs_engine(const Config &config, const SceneDocument &document)
     }
     if (whip_output)
         blog(LOG_INFO, "WebRTC program publishing is ready");
+    runtime_status.webrtc_ready.store(whip_output != nullptr);
 
     const auto recording_started = std::chrono::steady_clock::now();
     bool unexpected_stop = false;
@@ -553,6 +560,8 @@ ExitCode run_obs_engine(const Config &config, const SceneDocument &document)
     }
 
     if (unexpected_stop) {
+        runtime_status.recording_active.store(false);
+        runtime_status.webrtc_ready.store(false);
         control_server.stop();
         if (whip_output_state.stopped.load())
             blog(LOG_ERROR, "WebRTC publishing stopped unexpectedly (code %lld)", whip_output_state.stop_code.load());
@@ -566,6 +575,8 @@ ExitCode run_obs_engine(const Config &config, const SceneDocument &document)
         output.reset();
         return ExitCode::output_failed;
     }
+    runtime_status.recording_active.store(false);
+    runtime_status.webrtc_ready.store(false);
     control_server.stop();
     bool outputs_stopped = true;
     if (whip_output)

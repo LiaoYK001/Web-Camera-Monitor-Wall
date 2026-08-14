@@ -1,5 +1,6 @@
 #pragma once
 
+#include "webobs/authentication.hpp"
 #include "webobs/browser_security.hpp"
 
 #include <functional>
@@ -23,6 +24,10 @@ struct Config {
     std::string listen_address = "127.0.0.1";
     int http_port = 8080;
     bool allow_insecure_remote = false;
+    std::optional<BasicAuthCredentials> authentication;
+    int auth_failure_limit = 5;
+    int auth_failure_window_seconds = 60;
+    std::vector<std::string> control_allowed_origins;
     bool webrtc_enabled = false;
     std::string whip_url = "http://127.0.0.1:8889/program/whip";
     BrowserSecurityPolicy browser_security;

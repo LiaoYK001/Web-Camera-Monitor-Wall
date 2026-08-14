@@ -8,16 +8,16 @@ This roadmap describes milestone order and acceptance gates, not promised releas
 
 ## Current position / 当前位置
 
-**✅ M5 — Audio 已完成；下一里程碑为尚未开始的 M6 — Production。**
+**🚧 M6 — Production 正在开发；当前位于认证与可观测入口切片。**
 
-M0 through M5 are complete. Direct mode uses one user-unlocked Web Audio graph for per-source gain and relative sync; Composite publishes the libobs mix as Opus, and finalized MP4 recordings contain H.264 plus AAC. Deterministic autoplay, reconnect, mute, volume, sync, and drift gates passed, followed by private real-audio Composite and Direct/Hybrid acceptance. M6 has not started.
+M0 through M5 are complete. M6 has started with optional file-backed single-operator Basic authentication across UI, REST, WebSocket, WHEP, and metrics; explicit remote HTTPS Origin/Host authorization; bounded failed-authentication rate limiting; public liveness/readiness; authenticated Prometheus metrics; and a Docker healthcheck. M6 is not complete: TLS termination, TURN, audit/recovery work, GPU detection, backup/restore, and upgrade/rollback remain open.
 
-M0 至 M5 已全部完成。Direct 模式使用一次用户解锁的共享 Web Audio 图应用每路增益和相对同步；Composite 以 Opus 发布 libobs 混音，最终 MP4 包含 H.264 与 AAC。自动播放、重连、静音、音量、同步和漂移的确定性门禁通过后，又完成了私有真实音频源的 Composite 与 Direct/Hybrid 验收。M6 尚未开始。
+M0 至 M5 已全部完成。M6 已从生产控制入口开始：UI、REST、WebSocket、WHEP 与指标可统一启用文件型单操作员 Basic 认证，并加入明确的远程 HTTPS Origin/Host 授权、有限认证失败限流、公开存活/就绪探针、受认证 Prometheus 指标和 Docker healthcheck。M6 尚未完成：TLS 终止、TURN、审计与恢复、GPU 检测、备份恢复及升级回滚仍待开发。
 
 ```text
-M0 complete       M1 complete       M2 complete       M3 complete       M4 complete       M5 complete       M6 next
-M0 已完成      -> M1 已完成      -> M2 已完成      -> M3 已完成      -> M4 已完成      -> M5 已完成      -> M6 待开始
-✅                ✅                ✅                ✅                ✅                ✅                ⬜ NEXT
+M0 complete       M1 complete       M2 complete       M3 complete       M4 complete       M5 complete       M6 in progress
+M0 已完成      -> M1 已完成      -> M2 已完成      -> M3 已完成      -> M4 已完成      -> M5 已完成      -> M6 开发中
+✅                ✅                ✅                ✅                ✅                ✅                🚧 NOW
 ```
 
 ### M0 acceptance / M0 验收
@@ -57,6 +57,8 @@ M0 已于 2026-08-11 在真实摄像头门禁通过后完成。后续修改采�
 - M5 opening slice / M5 起步切片：schema-v3 migration and validation passed CTest, the React/TypeScript editor built successfully, and the final product image passed control-plane, Direct, Hybrid, browser-source, and lifecycle regressions. Audio settings round-tripped through the API and private persistence; the 16.8-second control-plane, 26.4-second Direct, 28.5-second Hybrid, and 55.7-second lifecycle recordings all contained zero black frames / schema v3 迁移与校验通过 CTest，React/TypeScript 编辑器构建成功，最终产品镜像通过控制面、Direct、Hybrid、浏览器源及生命周期回归；音频设置完成 API 往返与私有持久化，16.8 秒控制面、26.4 秒 Direct、28.5 秒 Hybrid 和 55.7 秒生命周期录像均为零黑帧。上述证据只验收 M5 底座，不代表有声音轨已经完成。
 - M5 deterministic audio / M5 确定性音频：two synchronized sources covered native Opus and AAC-to-Opus Hybrid playback, one shared Direct Web Audio graph, default-muted user unlock, source reconnect, Composite H.264/Opus, and finalized H.264/AAC recordings. The final quarter-volume ratio was 0.281, the muted-source ratio 0.012, the measured 250 ms sync request produced a 220 ms effect within tolerance, and long-run drift was 0 ms / 两路同步来源覆盖原生 Opus、AAC 转 Opus Hybrid、共享 Direct Web Audio、默认静音与用户解锁、来源重连、Composite H.264/Opus 及最终 H.264/AAC 录像；最终四分之一音量比为 0.281，静音来源比为 0.012，250 ms 同步请求测得 220 ms 有效偏移并处于容差内，长时漂移为 0 ms。
 - M5 real-audio acceptance / M5 真实音频验收：a private HEVC plus G.711 A-law source passed both Composite and Direct/Hybrid browser sessions and produced two finalized 30.941-second 640×360, 25 FPS H.264/AAC 48 kHz stereo recordings with non-silent audio and zero black frames. The endpoint and recordings remain private / 私有 HEVC + G.711 A-law 来源通过 Composite 与 Direct/Hybrid 浏览器会话，并生成两份 30.941 秒、640×360、25 FPS、H.264/AAC 48 kHz 双声道、非静音且零黑帧的最终录像；端点和录像保持私有。
+- M6 opening security slice / M6 安全起步切片：file-backed credentials protected static UI, REST, WebSocket, and WHEP under one boundary; allowlisted HTTPS authorities passed while foreign Origin and Host values failed; three invalid credentials triggered a bounded `429` lockout and recovered after expiry; public probes, authenticated metrics, Docker health, credential-free logs, graceful stop, and a finalized 6.621-second recording passed together / 文件型凭据统一保护静态 UI、REST、WebSocket 与 WHEP；允许的 HTTPS authority 通过而外部 Origin/Host 被拒绝；三次错误凭据触发有限 `429` 锁定并在到期后恢复；公开探针、受认证指标、Docker 健康状态、无凭据日志、优雅停止及 6.621 秒最终录像联合通过。
+- M6 compatibility regression / M6 兼容性回归：the rebuilt final image passed container CTest and dynamic-library closure, then the complete M0–M3 aggregate suite, M4 browser-source acceptance, and M5 deterministic audio acceptance; the latest M4 and M5 recordings were finalized at 12.621 and 38.921 seconds / 重建后的最终镜像通过容器 CTest 与动态库闭包，并继续通过 M0–M3 完整聚合套件、M4 浏览器源验收及 M5 确定性音频验收；最新 M4 与 M5 录像分别完整封装为 12.621 秒和 38.921 秒。
 
 ## Milestones / 里程碑
 
@@ -68,7 +70,7 @@ M0 已于 2026-08-11 在真实摄像头门禁通过后完成。后续修改采�
 | M3 — Direct & Hybrid | ✅ Complete / 已完成 | Direct camera playback in browsers, client/server mode switching, selective transcoding / 浏览器直连播放、客户端/服务端模式切换和选择性转码 | Shared layout behaves consistently across Direct and Composite modes / 两种模式共享布局且行为一致 |
 | M4 — Browser Sources | ✅ Complete / 已完成 | `obs-browser` sources for dashboards, satellite maps, overlays and embeddable media / 支持仪表盘、卫星图、叠加层和可嵌入媒体 | CEF lifecycle, isolation, recovery, and resource limits pass container tests / CEF 生命周期、隔离、恢复和资源限制通过测试 |
 | M5 — Audio | ✅ Complete / 已完成 | Per-source mute/volume, Web Audio in Direct mode, libobs mixing in Composite mode / 单源静音与音量、Direct Web Audio、Composite libobs 混音 | Multi-source sync, mute, volume, and output audio are verified / 多源同步、静音、音量和输出音轨通过验证 |
-| M6 — Production | ⬜ Planned / 计划中 | Authentication, HTTPS, TURN, health checks, GPU detection, backup, observability and upgrades / 鉴权、HTTPS、TURN、健康检查、GPU 检测、备份、可观测性和升级 | Security review, upgrade/rollback, recovery, and documented deployment pass / 安全、升级回滚、恢复和部署文档验收通过 |
+| M6 — Production | 🚧 In progress / 开发中 | Authentication, HTTPS, TURN, health checks, GPU detection, backup, observability and upgrades / 鉴权、HTTPS、TURN、健康检查、GPU 检测、备份、可观测性和升级 | Security review, upgrade/rollback, recovery, and documented deployment pass / 安全、升级回滚、恢复和部署文档验收通过 |
 
 ## Milestone details / 里程碑详情
 
@@ -167,9 +169,9 @@ M4 已于 2026-08-14 完成：精确固定的浏览器运行时通过容器构�
 - [x] Publish mixed Opus audio in Composite WebRTC and finalize H.264/AAC MP4 recordings / 在 Composite WebRTC 发布 Opus 混音，并封装 H.264/AAC MP4 录像
 - [x] Pass real audio source, mute/volume/sync, drift, reconnect, autoplay, and finalized-output gates / 通过真实音频来源、静音/音量/同步、漂移、重连、自动播放和最终输出门禁
 
-M5 completed on 2026-08-15 after deterministic multi-source audio and full M0–M4 regressions passed, followed by two private real-audio 30-second Composite/Direct acceptance runs. M6 remains planned and has not started.
+M5 completed on 2026-08-15 after deterministic multi-source audio and full M0–M4 regressions passed, followed by two private real-audio 30-second Composite/Direct acceptance runs. M6 started afterward and remains in progress.
 
-M5 已于 2026-08-15 完成：多来源确定性音频及 M0–M4 全回归通过后，又完成两轮私有真实音频源的 30 秒 Composite/Direct 验收。M6 仍处于计划状态，尚未开始。
+M5 已于 2026-08-15 完成：多来源确定性音频及 M0–M4 全回归通过后，又完成两轮私有真实音频源的 30 秒 Composite/Direct 验收。随后 M6 已开始开发，目前仍在进行中。
 
 ### M6 — Production
 
@@ -178,6 +180,18 @@ M5 已于 2026-08-15 完成：多来源确定性音频及 M0–M4 全回归通�
 - Add health/readiness checks, structured metrics, bounded logs, and automatic recovery / 加入健康检查、指标、日志限制和自动恢复。
 - Detect CPU, VAAPI/QSV, and NVIDIA capabilities with safe software fallbacks / 检测 CPU、VAAPI/QSV 和 NVIDIA 能力，并保留安全的软件回退。
 - Document backup, restore, upgrade, rollback, image provenance, and GPL source distribution / 记录备份恢复、升级回滚、镜像来源和 GPL 源码分发流程。
+
+#### M6 progress / M6 进度
+
+- [x] Add paired file-backed Basic credentials with fixed-size constant-time comparison / 增加配对文件型 Basic 凭据和固定长度恒定时间比较
+- [x] Protect UI/assets, REST, WebSocket, Program/Source WHEP, and metrics under one authentication boundary / 以统一认证边界保护 UI/资源、REST、WebSocket、Program/Source WHEP 与指标
+- [x] Add explicit remote HTTPS Origin/Host authorization and bounded per-client authentication-failure rate limiting / 增加明确的远程 HTTPS Origin/Host 授权与逐客户端有限认证失败限流
+- [x] Add public detail-free liveness/readiness, authenticated Prometheus baseline metrics, and Docker healthcheck / 增加不暴露细节的公开存活/就绪探针、受认证 Prometheus 基线指标和 Docker healthcheck
+- [x] Add a Compose secret-file overlay, deterministic authentication/redaction acceptance, and deployment boundary documentation / 增加 Compose secret 文件覆盖、确定性认证/脱敏验收和部署边界文档
+- [ ] Add trusted HTTPS termination deployment and TURN configuration/acceptance / 增加受信 HTTPS 终止部署与 TURN 配置/验收
+- [ ] Add structured audit logs, bounded log retention, source health, reconnect, and recovery acceptance / 增加结构化审计日志、日志保留边界、来源健康、重连与恢复验收
+- [ ] Add CPU/VAAPI/QSV/NVIDIA detection with safe software fallback / 增加 CPU/VAAPI/QSV/NVIDIA 检测及安全软件回退
+- [ ] Add scene backup/restore plus image provenance, upgrade, rollback, and GPL source-distribution procedures / 增加场景备份恢复、镜像来源、升级回滚及 GPL 源码分发流程
 
 ## Cross-cutting rules / 贯穿规则
 

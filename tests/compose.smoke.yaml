@@ -337,6 +337,44 @@ services:
       - fixture-audio-b
     stop_grace_period: 20s
 
+  webobs-auth:
+    image: webobs:m0
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+      args:
+        OBS_VERSION: "32.1.2"
+    entrypoint:
+      - /bin/sh
+      - -c
+      - umask 077; printf '%s\n' 'm6-operator' > /test-config/auth-username; printf '%s\n' 'm6-public-test-password-1234' > /test-config/auth-password; install -m 0600 /test-scenes/m1-two-up.json /test-config/scene.json; exec /opt/webobs/entrypoint.sh
+    environment:
+      WEBOBS_SCENE_FILE: /test-config/scene.json
+      WEBOBS_OUTPUT: /artifacts/m6-auth.mp4
+      WEBOBS_DURATION_SECONDS: "0"
+      WEBOBS_FPS: "10"
+      WEBOBS_BITRATE_KBPS: "800"
+      WEBOBS_CONNECT_TIMEOUT_SECONDS: "8"
+      WEBOBS_LOG_LEVEL: info
+      WEBOBS_LISTEN_ADDRESS: 0.0.0.0
+      WEBOBS_HTTP_PORT: "8080"
+      WEBOBS_AUTH_USERNAME_FILE: /test-config/auth-username
+      WEBOBS_AUTH_PASSWORD_FILE: /test-config/auth-password
+      WEBOBS_AUTH_FAILURE_LIMIT: "3"
+      WEBOBS_AUTH_FAILURE_WINDOW_SECONDS: "2"
+      WEBOBS_CONTROL_ALLOWED_ORIGINS: https://monitor.example.invalid
+      WEBOBS_WEBRTC_ENABLED: "false"
+    volumes:
+      - ./artifacts:/artifacts
+      - ./scenes:/test-scenes:ro
+    tmpfs:
+      - /test-config:mode=0700
+    ports:
+      - "127.0.0.1:18086:8080"
+    depends_on:
+      - fixture
+    stop_grace_period: 20s
+
   webobs-real-control:
     image: webobs:m0
     build:

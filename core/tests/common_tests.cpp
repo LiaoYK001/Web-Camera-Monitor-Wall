@@ -1,4 +1,5 @@
 #include "webobs/config.hpp"
+#include "webobs/authentication.hpp"
 #include "webobs/browser_security.hpp"
 #include "webobs/redaction.hpp"
 #include "webobs/scene_document.hpp"
@@ -98,6 +99,79 @@ void config_tests()
     expect(result.ok() && result.config && result.config->allow_insecure_remote,
            "explicit insecure-remote opt-in must allow a container listener");
 
+    char auth_directory_template[] = "/tmp/webobs-auth-config-XXXXXX";
+    const char *auth_directory = mkdtemp(auth_directory_template);
+    expect(auth_directory != nullptr, "authentication config test directory must be created");
+    if (auth_directory) {
+        const std::filesystem::path username_path =
+            std::filesystem::path(auth_directory) / "username";
+        const std::filesystem::path password_path =
+            std::filesystem::path(auth_directory) / "password";
+        const std::filesystem::path short_password_path =
+            std::filesystem::path(auth_directory) / "short-password";
+        const std::filesystem::path delimiter_username_path =
+            std::filesystem::path(auth_directory) / "delimiter-username";
+        {
+            std::ofstream username_file(username_path, std::ios::binary);
+            std::ofstream password_file(password_path, std::ios::binary);
+            std::ofstream short_password_file(short_password_path, std::ios::binary);
+            std::ofstream delimiter_username_file(delimiter_username_path, std::ios::binary);
+            username_file << "operator\n";
+            password_file << "public-test-password-1234\n";
+            short_password_file << "too-short\n";
+            delimiter_username_file << "invalid:name\n";
+        }
+        result = webobs::parse_config(
+            {"--scene-file", "/config/webobs/scene.json", "--listen-address", "0.0.0.0",
+             "--auth-username-file", username_path.string(), "--auth-password-file",
+             password_path.string(), "--control-allowed-origins", "https://monitor.example.invalid"},
+            empty_environment);
+        expect(result.ok() && result.config && result.config->authentication &&
+                   result.config->authentication->username == "operator" &&
+                   result.config->authentication->password == "public-test-password-1234" &&
+                   result.config->control_allowed_origins.size() == 1,
+               "file authentication must permit an explicit HTTPS control origin");
+
+        result = webobs::parse_config(
+            {"--scene-file", "/config/webobs/scene.json", "--auth-username-file",
+             username_path.string()},
+            empty_environment);
+        expect(!result.ok(), "authentication files must be configured as a pair");
+
+        result = webobs::parse_config(
+            {"--scene-file", "/config/webobs/scene.json", "--auth-username-file",
+             username_path.string(), "--auth-password-file", short_password_path.string()},
+            empty_environment);
+        expect(!result.ok(), "authentication passwords shorter than 16 bytes must fail");
+
+        result = webobs::parse_config(
+            {"--scene-file", "/config/webobs/scene.json", "--auth-username-file",
+             delimiter_username_path.string(), "--auth-password-file", password_path.string()},
+            empty_environment);
+        expect(!result.ok(), "authentication usernames containing a colon must fail");
+
+        result = webobs::parse_config(
+            {"--scene-file", "/config/webobs/scene.json", "--auth-username-file", "relative-user",
+             "--auth-password-file", password_path.string()},
+            empty_environment);
+        expect(!result.ok(), "authentication secret paths must be absolute");
+
+        result = webobs::parse_config(
+            {"--scene-file", "/config/webobs/scene.json", "--auth-username-file",
+             username_path.string(), "--auth-password-file", password_path.string(),
+             "--control-allowed-origins", "http://monitor.example.invalid"},
+            empty_environment);
+        expect(!result.ok(), "non-loopback control origins must require HTTPS");
+
+        result = webobs::parse_config(
+            {"--scene-file", "/config/webobs/scene.json", "--control-allowed-origins",
+             "https://monitor.example.invalid"},
+            empty_environment);
+        expect(!result.ok(), "remote control origins must require authentication");
+        std::error_code remove_error;
+        std::filesystem::remove_all(auth_directory, remove_error);
+    }
+
     result = webobs::parse_config({"--rtsp-url", "rtsp://camera/live", "--output", "capture.mkv"}, empty_environment);
     expect(!result.ok(), "non-MP4 output must fail");
 
@@ -170,6 +244,45 @@ void config_tests()
         expect(result.config->output_path.starts_with("/recordings/webobs-"),
                "default output must be generated under /recordings");
     }
+}
+
+void authentication_tests()
+{
+    using namespace std::chrono_literals;
+    const auto start = std::chrono::steady_clock::time_point{};
+    webobs::BasicAuthenticator disabled(std::nullopt, 2, 10s);
+    expect(disabled.authenticate(std::nullopt, "client", start) ==
+               webobs::AuthenticationDecision::allowed,
+           "disabled authentication must preserve loopback compatibility");
+
+    webobs::BasicAuthenticator authenticator(
+        webobs::BasicAuthCredentials{"user", "password"}, 2, 10s);
+    expect(authenticator.authenticate(std::nullopt, "client-a", start) ==
+               webobs::AuthenticationDecision::credentials_required,
+           "missing authorization must request credentials without consuming a failure");
+    expect(authenticator.authenticate("Basic Zm9vOmJhcg==", "client-a", start) ==
+               webobs::AuthenticationDecision::invalid_credentials,
+           "incorrect Basic credentials must be rejected");
+    expect(authenticator.authenticate("Basic Zm9vOmJhcg==", "client-a", start + 1s) ==
+               webobs::AuthenticationDecision::rate_limited,
+           "repeated incorrect credentials must trigger the bounded failure window");
+    expect(authenticator.authenticate("Basic dXNlcjpwYXNzd29yZA==", "client-a", start + 2s) ==
+               webobs::AuthenticationDecision::rate_limited,
+           "a blocked client must remain blocked for the full failure window");
+    expect(authenticator.authenticate("Basic dXNlcjpwYXNzd29yZA==", "client-b", start + 2s) ==
+               webobs::AuthenticationDecision::allowed,
+           "one client's failures must not block another client");
+    expect(authenticator.authenticate("Basic dXNlcjpwYXNzd29yZA==", "client-a", start + 11s) ==
+               webobs::AuthenticationDecision::allowed,
+           "valid credentials must work after the failure window expires");
+    expect(authenticator.failed_attempts() == 2,
+           "authentication metrics must count invalid credentials without counting missing headers");
+    expect(authenticator.authenticate("Bearer dXNlcjpwYXNzd29yZA==", "client-c", start) ==
+               webobs::AuthenticationDecision::invalid_credentials,
+           "non-Basic schemes must be rejected");
+    expect(authenticator.authenticate("Basic dXNlcjpwYXNzd29yZA=", "client-d", start) ==
+               webobs::AuthenticationDecision::invalid_credentials,
+           "non-canonical Base64 must be rejected");
 }
 
 void redaction_tests()
@@ -664,6 +777,7 @@ void scene_mutation_tests()
 int main()
 {
     config_tests();
+    authentication_tests();
     redaction_tests();
     browser_security_tests();
     scene_document_tests();

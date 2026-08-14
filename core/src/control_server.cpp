@@ -1,5 +1,6 @@
 #include "webobs/control_server.hpp"
 
+#include "webobs/authentication.hpp"
 #include "webobs/scene_controller.hpp"
 #include "webobs/scene_document.hpp"
 
@@ -17,6 +18,7 @@
 
 #include <algorithm>
 #include <array>
+#include <atomic>
 #include <cerrno>
 #include <charconv>
 #include <cctype>
@@ -95,22 +97,37 @@ bool safe_local_authority(std::string_view authority)
     return colon == std::string::npos || decimal_port(std::string_view(normalized).substr(colon + 1));
 }
 
-bool same_local_origin(std::string_view origin, std::string_view host)
+std::string_view origin_authority(std::string_view origin)
 {
-    constexpr std::string_view scheme = "http://";
-    if (!origin.starts_with(scheme))
-        return false;
-    const std::string_view authority = origin.substr(scheme.size());
-    return authority.find_first_of("/?#") == std::string_view::npos && safe_local_authority(authority) &&
-           lowercase(authority) == lowercase(host);
+    const std::size_t separator = origin.find("://");
+    return separator == std::string_view::npos ? std::string_view{} : origin.substr(separator + 3);
 }
 
-bool request_origin_allowed(const HttpRequest &request, bool required)
+bool control_authority_allowed(std::string_view authority, const std::vector<std::string> &allowed_origins)
+{
+    if (safe_local_authority(authority))
+        return true;
+    const std::string normalized = lowercase(authority);
+    return std::any_of(allowed_origins.begin(), allowed_origins.end(), [&normalized](const std::string &origin) {
+        return lowercase(origin_authority(origin)) == normalized;
+    });
+}
+
+bool request_origin_allowed(const HttpRequest &request, bool required,
+                            const std::vector<std::string> &allowed_origins)
 {
     const auto origin = request.find(http::field::origin);
     if (origin == request.end())
         return !required;
-    return same_local_origin(view(origin->value()), view(request[http::field::host]));
+    std::string normalized_origin;
+    if (normalize_browser_origin(view(origin->value()), normalized_origin))
+        return false;
+    const std::string_view authority = origin_authority(normalized_origin);
+    if (lowercase(authority) != lowercase(view(request[http::field::host])))
+        return false;
+    if (safe_local_authority(authority))
+        return true;
+    return std::find(allowed_origins.begin(), allowed_origins.end(), normalized_origin) != allowed_origins.end();
 }
 
 bool json_content_type(const HttpRequest &request)
@@ -221,7 +238,10 @@ HttpResponse response(http::status status, unsigned int version, std::string bod
 
 class WhepProxy {
 public:
-    WhepProxy(bool enabled, SceneController &controller) : enabled_(enabled), controller_(controller) {}
+    WhepProxy(bool enabled, SceneController &controller, const std::vector<std::string> &allowed_origins)
+        : enabled_(enabled), controller_(controller), allowed_origins_(allowed_origins)
+    {
+    }
 
     HttpResponse status(unsigned int version) const
     {
@@ -322,7 +342,7 @@ private:
     HttpResponse remove(const HttpRequest &request, std::string_view token, std::string_view browser_prefix)
     {
         const unsigned int version = request.version();
-        if (!request_origin_allowed(request, false))
+        if (!request_origin_allowed(request, false, allowed_origins_))
             return response(http::status::forbidden, version,
                             error_body("origin_rejected", "Origin must match the local Host"));
         if (token.size() != token_length ||
@@ -479,7 +499,7 @@ private:
         if (!sdp_content_type(request))
             return response(http::status::unsupported_media_type, version,
                             error_body("content_type", "Content-Type must be application/sdp"));
-        if (!request_origin_allowed(request, false))
+        if (!request_origin_allowed(request, false, allowed_origins_))
             return response(http::status::forbidden, version,
                             error_body("origin_rejected", "Origin must match the local Host"));
         if (request.body().empty() || request.body().size() > maximum_sdp_bytes)
@@ -801,6 +821,7 @@ private:
 
     bool enabled_ = false;
     SceneController &controller_;
+    const std::vector<std::string> &allowed_origins_;
     std::mutex session_mutex_;
     std::mutex route_operation_mutex_;
     std::mutex route_state_mutex_;
@@ -1012,21 +1033,74 @@ void WebSocketHub::broadcast(const std::string &message)
     }
 }
 
+struct ControlMetrics {
+    std::atomic<std::uint64_t> http_requests{0};
+};
+
+HttpResponse authentication_response(AuthenticationDecision decision, unsigned int version,
+                                     std::size_t retry_after_seconds)
+{
+    if (decision == AuthenticationDecision::rate_limited) {
+        HttpResponse result = response(static_cast<http::status>(429), version,
+                                       error_body("auth_rate_limited", "too many authentication failures"));
+        result.set(http::field::retry_after, std::to_string(retry_after_seconds));
+        return result;
+    }
+    HttpResponse result = response(http::status::unauthorized, version,
+                                   error_body("authentication_required", "valid credentials are required"));
+    result.set(http::field::www_authenticate, "Basic realm=\"WebOBS\", charset=\"UTF-8\"");
+    return result;
+}
+
+HttpResponse metrics_response(unsigned int version, const RuntimeStatus &status,
+                              const ControlMetrics &metrics, const BasicAuthenticator &authenticator)
+{
+    const auto metric = [](bool value) { return value ? "1" : "0"; };
+    std::string body =
+        "# HELP webobs_up Whether the HTTP control process is running.\n"
+        "# TYPE webobs_up gauge\nwebobs_up 1\n"
+        "# HELP webobs_ready Whether recording and configured WebRTC outputs are ready.\n"
+        "# TYPE webobs_ready gauge\nwebobs_ready " + std::string(metric(status.ready())) + "\n" +
+        "# TYPE webobs_recording_active gauge\nwebobs_recording_active " +
+        std::string(metric(status.recording_active.load())) + "\n" +
+        "# TYPE webobs_webrtc_configured gauge\nwebobs_webrtc_configured " +
+        std::string(metric(status.webrtc_configured.load())) + "\n" +
+        "# TYPE webobs_webrtc_ready gauge\nwebobs_webrtc_ready " +
+        std::string(metric(status.webrtc_ready.load())) + "\n" +
+        "# HELP webobs_http_requests_total Parsed HTTP requests since process start.\n"
+        "# TYPE webobs_http_requests_total counter\nwebobs_http_requests_total " +
+        std::to_string(metrics.http_requests.load()) + "\n" +
+        "# HELP webobs_auth_failures_total Invalid Basic Auth attempts since process start.\n"
+        "# TYPE webobs_auth_failures_total counter\nwebobs_auth_failures_total " +
+        std::to_string(authenticator.failed_attempts()) + "\n";
+    return response(http::status::ok, version, std::move(body),
+                    "text/plain; version=0.0.4; charset=utf-8");
+}
+
 HttpResponse handle_request(const HttpRequest &request, SceneController &controller, WebSocketHub &hub,
-                            WhepProxy &whep_proxy)
+                            WhepProxy &whep_proxy, const std::vector<std::string> &allowed_origins,
+                            const RuntimeStatus &runtime_status, const ControlMetrics &metrics,
+                            const BasicAuthenticator &authenticator)
 {
     const unsigned int version = request.version();
     if (version != 11)
         return response(http::status::http_version_not_supported, version,
                         error_body("http_version", "HTTP/1.1 is required"));
     const std::string_view host = view(request[http::field::host]);
-    if (!safe_local_authority(host))
+    if (!control_authority_allowed(host, allowed_origins))
         return response(static_cast<http::status>(421), version,
-                        error_body("host_rejected", "Host must be localhost or a loopback address"));
+                        error_body("host_rejected", "Host is not in the configured control origin allowlist"));
 
     const std::string_view target = view(request.target());
     if (request.method() == http::verb::get && target == "/api/v1/health")
-        return response(http::status::ok, version, "{\"status\":\"ok\",\"milestone\":\"M5\"}");
+        return response(http::status::ok, version, "{\"status\":\"ok\",\"milestone\":\"M6\"}");
+    if (request.method() == http::verb::get && target == "/api/v1/ready") {
+        const bool ready = runtime_status.ready();
+        return response(ready ? http::status::ok : http::status::service_unavailable, version,
+                        ready ? "{\"status\":\"ready\"}" : "{\"status\":\"not_ready\"}");
+    }
+    if (request.method() == http::verb::get && target == "/metrics")
+        return metrics_response(version, runtime_status, metrics, authenticator);
 
     if (request.method() == http::verb::get && target == "/api/v1/program/status")
         return whep_proxy.status(version);
@@ -1115,7 +1189,7 @@ HttpResponse handle_request(const HttpRequest &request, SceneController &control
     if (!json_content_type(request))
         return response(http::status::unsupported_media_type, version,
                         error_body("content_type", "Content-Type must be application/json"));
-    if (!request_origin_allowed(request, false))
+    if (!request_origin_allowed(request, false, allowed_origins))
         return response(http::status::forbidden, version,
                         error_body("origin_rejected", "Origin must match the local Host"));
 
@@ -1168,9 +1242,16 @@ HttpResponse handle_request(const HttpRequest &request, SceneController &control
 
 class HttpSession : public std::enable_shared_from_this<HttpSession> {
 public:
-    HttpSession(tcp::socket socket, SceneController &controller, WebSocketHub &hub, WhepProxy &whep_proxy)
-        : stream_(std::move(socket)), controller_(controller), hub_(hub), whep_proxy_(whep_proxy)
+    HttpSession(tcp::socket socket, SceneController &controller, WebSocketHub &hub, WhepProxy &whep_proxy,
+                BasicAuthenticator &authenticator, ControlMetrics &metrics, RuntimeStatus &runtime_status,
+                const std::vector<std::string> &allowed_origins)
+        : stream_(std::move(socket)), controller_(controller), hub_(hub), whep_proxy_(whep_proxy),
+          authenticator_(authenticator), metrics_(metrics), runtime_status_(runtime_status),
+          allowed_origins_(allowed_origins)
     {
+        beast::error_code error;
+        const tcp::endpoint remote = stream_.socket().remote_endpoint(error);
+        client_key_ = error ? "unknown" : remote.address().to_string();
     }
 
     void run() { do_read(); }
@@ -1201,10 +1282,39 @@ private:
         if (error)
             return;
         HttpRequest request = parser_->release();
+        ++metrics_.http_requests;
+        const unsigned int version = request.version();
+        const std::string_view host = view(request[http::field::host]);
+        if (version != 11 || !control_authority_allowed(host, allowed_origins_)) {
+            send(handle_request(request, controller_, hub_, whep_proxy_, allowed_origins_, runtime_status_,
+                                metrics_, authenticator_));
+            return;
+        }
+        const std::string_view target = view(request.target());
+        const bool public_probe = request.method() == http::verb::get &&
+                                  (target == "/api/v1/health" || target == "/api/v1/ready");
+        if (!public_probe && authenticator_.enabled()) {
+            std::optional<std::string_view> authorization;
+            std::size_t authorization_count = 0;
+            for (const auto &field : request.base()) {
+                if (field.name() == http::field::authorization) {
+                    ++authorization_count;
+                    authorization = view(field.value());
+                }
+            }
+            if (authorization_count > 1)
+                authorization = std::string_view{};
+            const AuthenticationDecision decision =
+                authenticator_.authenticate(authorization, client_key_);
+            if (decision != AuthenticationDecision::allowed) {
+                send(authentication_response(decision, version, authenticator_.retry_after_seconds()));
+                return;
+            }
+        }
         if (websocket::is_upgrade(request)) {
-            const std::string_view host = view(request[http::field::host]);
             if (request.method() != http::verb::get || view(request.target()) != "/api/v1/ws" ||
-                !safe_local_authority(host) || !request_origin_allowed(request, true)) {
+                !control_authority_allowed(host, allowed_origins_) ||
+                !request_origin_allowed(request, true, allowed_origins_)) {
                 send(response(http::status::forbidden, request.version(),
                               error_body("websocket_rejected", "WebSocket requires a matching local Origin")));
                 return;
@@ -1219,7 +1329,8 @@ private:
                 ->run(std::move(request), scene_event("scene.snapshot", snapshot.public_json));
             return;
         }
-        send(handle_request(request, controller_, hub_, whep_proxy_));
+        send(handle_request(request, controller_, hub_, whep_proxy_, allowed_origins_, runtime_status_,
+                            metrics_, authenticator_));
     }
 
     void send(HttpResponse message)
@@ -1243,14 +1354,23 @@ private:
     SceneController &controller_;
     WebSocketHub &hub_;
     WhepProxy &whep_proxy_;
+    BasicAuthenticator &authenticator_;
+    ControlMetrics &metrics_;
+    RuntimeStatus &runtime_status_;
+    const std::vector<std::string> &allowed_origins_;
+    std::string client_key_;
     std::shared_ptr<HttpResponse> response_;
 };
 
 class Listener : public std::enable_shared_from_this<Listener> {
 public:
     Listener(net::io_context &context, const tcp::endpoint &endpoint, SceneController &controller,
-             WebSocketHub &hub, WhepProxy &whep_proxy)
-        : acceptor_(net::make_strand(context)), controller_(controller), hub_(hub), whep_proxy_(whep_proxy)
+             WebSocketHub &hub, WhepProxy &whep_proxy, BasicAuthenticator &authenticator,
+             ControlMetrics &metrics, RuntimeStatus &runtime_status,
+             const std::vector<std::string> &allowed_origins)
+        : acceptor_(net::make_strand(context)), controller_(controller), hub_(hub), whep_proxy_(whep_proxy),
+          authenticator_(authenticator), metrics_(metrics), runtime_status_(runtime_status),
+          allowed_origins_(allowed_origins)
     {
         beast::error_code error;
         acceptor_.open(endpoint.protocol(), error);
@@ -1288,7 +1408,8 @@ private:
     void on_accept(beast::error_code error, tcp::socket socket)
     {
         if (!error)
-            std::make_shared<HttpSession>(std::move(socket), controller_, hub_, whep_proxy_)->run();
+            std::make_shared<HttpSession>(std::move(socket), controller_, hub_, whep_proxy_, authenticator_,
+                                          metrics_, runtime_status_, allowed_origins_)->run();
         if (acceptor_.is_open())
             do_accept();
     }
@@ -1297,29 +1418,40 @@ private:
     SceneController &controller_;
     WebSocketHub &hub_;
     WhepProxy &whep_proxy_;
+    BasicAuthenticator &authenticator_;
+    ControlMetrics &metrics_;
+    RuntimeStatus &runtime_status_;
+    const std::vector<std::string> &allowed_origins_;
     std::string error_;
 };
 
 } // namespace
 
 struct ControlServer::Impl {
-    Impl(const Config &configuration, SceneController &scene_controller)
-        : config(configuration), controller(scene_controller),
-          whep_proxy(configuration.webrtc_enabled, scene_controller)
+    Impl(const Config &configuration, SceneController &scene_controller, RuntimeStatus &runtime_status)
+        : config(configuration), controller(scene_controller), status(runtime_status),
+          authenticator(configuration.authentication,
+                        static_cast<std::size_t>(configuration.auth_failure_limit),
+                        std::chrono::seconds(configuration.auth_failure_window_seconds)),
+          whep_proxy(configuration.webrtc_enabled, scene_controller,
+                     configuration.control_allowed_origins)
     {
     }
 
     const Config &config;
     SceneController &controller;
+    RuntimeStatus &status;
     net::io_context context{1};
     WebSocketHub hub;
+    BasicAuthenticator authenticator;
+    ControlMetrics metrics;
     WhepProxy whep_proxy;
     std::shared_ptr<Listener> listener;
     std::thread thread;
 };
 
-ControlServer::ControlServer(const Config &config, SceneController &controller)
-    : impl_(std::make_unique<Impl>(config, controller))
+ControlServer::ControlServer(const Config &config, SceneController &controller, RuntimeStatus &status)
+    : impl_(std::make_unique<Impl>(config, controller, status))
 {
 }
 
@@ -1338,7 +1470,8 @@ std::optional<std::string> ControlServer::start()
         return "HTTP listen address is invalid";
     impl_->listener = std::make_shared<Listener>(
         impl_->context, tcp::endpoint(address, static_cast<unsigned short>(impl_->config.http_port)),
-        impl_->controller, impl_->hub, impl_->whep_proxy);
+        impl_->controller, impl_->hub, impl_->whep_proxy, impl_->authenticator, impl_->metrics,
+        impl_->status, impl_->config.control_allowed_origins);
     if (!impl_->listener->error().empty())
         return impl_->listener->error();
     impl_->listener->run();

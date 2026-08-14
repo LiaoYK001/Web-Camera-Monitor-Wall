@@ -7,7 +7,9 @@
 #include <ctime>
 #include <cstdlib>
 #include <filesystem>
+#include <fstream>
 #include <iomanip>
+#include <iterator>
 #include <map>
 #include <sstream>
 #include <system_error>
@@ -28,6 +30,11 @@ constexpr SettingSpec setting_specs[] = {
     {"--listen-address", "WEBOBS_LISTEN_ADDRESS", "listen_address"},
     {"--http-port", "WEBOBS_HTTP_PORT", "http_port"},
     {"--allow-insecure-remote", "WEBOBS_ALLOW_INSECURE_REMOTE", "allow_insecure_remote"},
+    {"--auth-username-file", "WEBOBS_AUTH_USERNAME_FILE", "auth_username_file"},
+    {"--auth-password-file", "WEBOBS_AUTH_PASSWORD_FILE", "auth_password_file"},
+    {"--auth-failure-limit", "WEBOBS_AUTH_FAILURE_LIMIT", "auth_failure_limit"},
+    {"--auth-failure-window-seconds", "WEBOBS_AUTH_FAILURE_WINDOW_SECONDS", "auth_failure_window"},
+    {"--control-allowed-origins", "WEBOBS_CONTROL_ALLOWED_ORIGINS", "control_allowed_origins"},
     {"--webrtc-enabled", "WEBOBS_WEBRTC_ENABLED", "webrtc_enabled"},
     {"--whip-url", "WEBOBS_WHIP_URL", "whip_url"},
     {"--browser-allowed-origins", "WEBOBS_BROWSER_ALLOWED_ORIGINS", "browser_allowed_origins"},
@@ -119,11 +126,11 @@ bool valid_whip_url(std::string_view value)
     return !authority.empty() && authority.find('@') == std::string_view::npos;
 }
 
-bool parse_browser_origins(std::string_view value, std::vector<std::string> &origins,
-                           std::string &error)
+bool parse_origins(std::string_view value, std::string_view setting,
+                   std::vector<std::string> &origins, std::string &error)
 {
     if (value.size() > 8192) {
-        error = "browser-allowed-origins exceeds the configured length limit";
+        error = std::string(setting) + " exceeds the configured length limit";
         return false;
     }
     std::size_t cursor = 0;
@@ -136,7 +143,7 @@ bool parse_browser_origins(std::string_view value, std::vector<std::string> &ori
         while (!entry.empty() && std::isspace(static_cast<unsigned char>(entry.back())))
             entry.remove_suffix(1);
         if (entry.empty()) {
-            error = "browser-allowed-origins must be a comma-separated list without empty entries";
+            error = std::string(setting) + " must be a comma-separated list without empty entries";
             return false;
         }
         std::string normalized;
@@ -147,7 +154,7 @@ bool parse_browser_origins(std::string_view value, std::vector<std::string> &ori
         if (std::find(origins.begin(), origins.end(), normalized) == origins.end())
             origins.push_back(std::move(normalized));
         if (origins.size() > 32) {
-            error = "browser-allowed-origins must contain at most 32 origins";
+            error = std::string(setting) + " must contain at most 32 origins";
             return false;
         }
         if (comma == std::string_view::npos)
@@ -155,6 +162,62 @@ bool parse_browser_origins(std::string_view value, std::vector<std::string> &ori
         cursor = comma + 1;
     }
     return true;
+}
+
+bool loopback_control_origin(std::string_view origin)
+{
+    const BrowserUrlResult parsed = parse_browser_url(origin);
+    if (!parsed.ok())
+        return false;
+    const std::string &host = parsed.parts->host;
+    return host == "localhost" || host == "127.0.0.1" || host == "::1";
+}
+
+std::optional<std::string> read_auth_secret(std::string_view path_value, bool username,
+                                           std::string &error)
+{
+    const std::filesystem::path path(path_value);
+    const std::string field = username ? "auth-username-file" : "auth-password-file";
+    if (!path.is_absolute()) {
+        error = field + " must use an absolute path";
+        return std::nullopt;
+    }
+    std::error_code filesystem_error;
+    if (!std::filesystem::is_regular_file(path, filesystem_error) || filesystem_error) {
+        error = field + " must reference a readable regular file";
+        return std::nullopt;
+    }
+    const auto size = std::filesystem::file_size(path, filesystem_error);
+    if (filesystem_error || size > 4096) {
+        error = field + " exceeds the four KiB safety limit";
+        return std::nullopt;
+    }
+    std::ifstream input(path, std::ios::binary);
+    if (!input) {
+        error = field + " could not be read";
+        return std::nullopt;
+    }
+    std::string value((std::istreambuf_iterator<char>(input)), std::istreambuf_iterator<char>());
+    if (!value.empty() && value.back() == '\n') {
+        value.pop_back();
+        if (!value.empty() && value.back() == '\r')
+            value.pop_back();
+    }
+    const std::size_t minimum = username ? 1 : 16;
+    const std::size_t maximum = username ? 64 : 256;
+    if (value.size() < minimum || value.size() > maximum) {
+        error = field + (username ? " must contain 1 to 64 bytes" : " must contain 16 to 256 bytes");
+        return std::nullopt;
+    }
+    for (unsigned char character : value) {
+        const bool invalid_control = character < 0x20 || character == 0x7f;
+        const bool invalid_username = username && (character > 0x7e || character == ':');
+        if (invalid_control || invalid_username) {
+            error = field + " contains a forbidden control or delimiter byte";
+            return std::nullopt;
+        }
+    }
+    return value;
 }
 
 ParseResult failure(std::string message)
@@ -174,6 +237,9 @@ ParseResult parse_config(const std::vector<std::string> &arguments, const Enviro
         {"transport", "tcp"},       {"log_level", "info"},
         {"listen_address", "127.0.0.1"}, {"http_port", "8080"},
         {"allow_insecure_remote", "false"},
+        {"auth_username_file", ""}, {"auth_password_file", ""},
+        {"auth_failure_limit", "5"}, {"auth_failure_window", "60"},
+        {"control_allowed_origins", ""},
         {"webrtc_enabled", "false"}, {"whip_url", "http://127.0.0.1:8889/program/whip"},
         {"browser_allowed_origins", ""}, {"browser_allow_private_networks", "false"},
     };
@@ -236,8 +302,39 @@ ParseResult parse_config(const std::vector<std::string> &arguments, const Enviro
     if (!parse_boolean(values["allow_insecure_remote"], config.allow_insecure_remote))
         return failure("allow-insecure-remote must be true or false");
     const bool loopback = config.listen_address == "127.0.0.1" || config.listen_address == "::1";
-    if (config.http_port != 0 && !loopback && !config.allow_insecure_remote)
-        return failure("non-loopback HTTP listening requires --allow-insecure-remote true");
+
+    if (!parse_integer(values["auth_failure_limit"], 1, 100, config.auth_failure_limit))
+        return failure("auth-failure-limit must be between 1 and 100");
+    if (!parse_integer(values["auth_failure_window"], 1, 3600, config.auth_failure_window_seconds))
+        return failure("auth-failure-window-seconds must be between 1 and 3600");
+    const bool username_file_set = !values["auth_username_file"].empty();
+    const bool password_file_set = !values["auth_password_file"].empty();
+    if (username_file_set != password_file_set)
+        return failure("auth-username-file and auth-password-file must be configured together");
+    if (username_file_set) {
+        std::string secret_error;
+        const auto username = read_auth_secret(values["auth_username_file"], true, secret_error);
+        if (!username)
+            return failure(std::move(secret_error));
+        const auto password = read_auth_secret(values["auth_password_file"], false, secret_error);
+        if (!password)
+            return failure(std::move(secret_error));
+        config.authentication = BasicAuthCredentials{*username, *password};
+    }
+    if (!values["control_allowed_origins"].empty()) {
+        std::string origin_error;
+        if (!parse_origins(values["control_allowed_origins"], "control-allowed-origins",
+                           config.control_allowed_origins, origin_error))
+            return failure(std::move(origin_error));
+        if (!config.authentication)
+            return failure("control-allowed-origins requires file-based authentication");
+        for (const std::string &origin : config.control_allowed_origins) {
+            if (!origin.starts_with("https://") && !loopback_control_origin(origin))
+                return failure("non-loopback control origins must use HTTPS");
+        }
+    }
+    if (config.http_port != 0 && !loopback && !config.allow_insecure_remote && !config.authentication)
+        return failure("non-loopback HTTP listening requires authentication or --allow-insecure-remote true");
 
     if (!parse_boolean(values["webrtc_enabled"], config.webrtc_enabled))
         return failure("webrtc-enabled must be true or false");
@@ -250,8 +347,8 @@ ParseResult parse_config(const std::vector<std::string> &arguments, const Enviro
         return failure("browser-allow-private-networks must be true or false");
     if (!values["browser_allowed_origins"].empty()) {
         std::string browser_origin_error;
-        if (!parse_browser_origins(values["browser_allowed_origins"],
-                                   config.browser_security.allowed_origins, browser_origin_error))
+        if (!parse_origins(values["browser_allowed_origins"], "browser-allowed-origins",
+                           config.browser_security.allowed_origins, browser_origin_error))
             return failure(std::move(browser_origin_error));
     }
 
@@ -318,7 +415,12 @@ precedence; the RTSP URL is used only to create a missing scene.
 Options:
   --listen-address <address>        HTTP bind address (default: 127.0.0.1)
   --http-port <n>                   HTTP/WebSocket port; 0 disables (default: 8080)
-  --allow-insecure-remote <bool>    Required for 0.0.0.0 or :: before M6 auth
+  --allow-insecure-remote <bool>    Legacy unauthenticated non-loopback opt-in (unsafe)
+  --auth-username-file <path>       Absolute file containing the Basic Auth username
+  --auth-password-file <path>       Absolute file containing a password of at least 16 bytes
+  --auth-failure-limit <n>          Invalid attempts per client/window (default: 5)
+  --auth-failure-window-seconds <n> Failure window and lockout duration (default: 60)
+  --control-allowed-origins <csv>   Authenticated HTTPS origins allowed beyond loopback
   --webrtc-enabled <bool>          Publish the program through WHIP (default: false)
   --whip-url <url>                 WHIP publish URL (default: internal MediaMTX)
   --browser-allowed-origins <csv>  Exact HTTP(S) origins permitted for browser sources
@@ -342,7 +444,7 @@ Command-line values override WEBOBS_* environment values.
 
 std::string version_text()
 {
-    return std::string("webobsd ") + WEBOBS_VERSION + " (M5, OBS 32.1.2)";
+    return std::string("webobsd ") + WEBOBS_VERSION + " (M6-dev, OBS 32.1.2)";
 }
 
 } // namespace webobs
