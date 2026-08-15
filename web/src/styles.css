@@ -37,6 +37,55 @@ body {
     var(--bg);
 }
 
+.nvr-shell { min-height: 100vh; overflow: auto; background: #090b10; }
+.nvr-header { display: grid; min-height: 76px; grid-template-columns: 280px 1fr auto; align-items: center; gap: 20px; padding: 0 22px; border-bottom: 1px solid var(--line); background: #0a0c11; }
+.nvr-header h1 { margin: 3px 0 0; font-size: 20px; }
+.nvr-controls { display: flex; min-height: 64px; flex-wrap: wrap; align-items: center; gap: 18px; padding: 10px 18px; border-bottom: 1px solid var(--line); background: var(--panel); }
+.nvr-controls > label { display: grid; gap: 4px; color: var(--muted); font-size: 10px; }
+.nvr-controls input, .nvr-controls select, .transport-bar select { padding: 7px 9px; border: 1px solid #303644; border-radius: 5px; color: var(--text); background: #090c11; }
+.camera-picker { display: flex; max-width: min(720px, 60vw); flex-wrap: wrap; gap: 6px; }
+.camera-picker label { padding: 5px 8px; border: 1px solid #303644; border-radius: 999px; color: #b9c0cd; font-size: 10px; }
+.camera-picker input { margin-right: 5px; accent-color: var(--accent); }
+.nvr-query-stat { margin-left: auto; color: var(--accent); font-family: ui-monospace, monospace; font-size: 11px; }
+.nvr-content { display: grid; gap: 14px; padding: 16px 18px 28px; }
+.playback-grid { display: grid; min-height: 260px; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
+.playback-grid[data-count="1"] { grid-template-columns: minmax(0, 1fr); }
+.archive-player { position: relative; min-width: 0; overflow: hidden; border: 1px solid #2a303c; border-radius: 8px; background: #000; }
+.archive-player > header { position: absolute; z-index: 3; top: 0; right: 0; left: 0; display: flex; justify-content: space-between; padding: 8px 10px; background: linear-gradient(#000c, transparent); font-size: 10px; }
+.archive-player > header span { color: var(--accent); }
+.archive-player video { display: block; width: 100%; height: min(38vh, 360px); background: #000; object-fit: contain; }
+.archive-thumb { position: absolute; right: 8px; bottom: 8px; width: 96px; border: 1px solid #ffffff44; opacity: .78; }
+.gap-player, .nvr-empty { display: grid; min-height: 260px; place-content: center; gap: 6px; color: var(--muted); text-align: center; background: repeating-linear-gradient(135deg, #10131a, #10131a 12px, #0c0f15 12px, #0c0f15 24px); }
+.gap-player strong { color: var(--warning); }
+.transport-bar { display: flex; flex-wrap: wrap; align-items: center; gap: 7px; padding: 10px; border: 1px solid var(--line); border-radius: 8px; background: var(--panel); }
+.transport-bar button, .transport-bar label { padding: 7px 10px; border: 1px solid #343a47; border-radius: 5px; color: var(--text); background: #141923; font-size: 10px; }
+.transport-bar button:disabled { opacity: .35; }
+.transport-bar .danger-button { border-color: #7a3240; color: #ff8998; }
+.timeline-panel { position: relative; min-height: 150px; padding: 35px 10px 12px 100px; overflow: hidden; border: 1px solid var(--line); border-radius: 8px; background: #0d1016; cursor: crosshair; }
+.time-ruler { position: absolute; top: 9px; right: 10px; left: 100px; height: 20px; color: var(--muted); font: 9px ui-monospace, monospace; }
+.time-ruler span { position: absolute; transform: translateX(-50%); }
+.timeline-track { display: grid; height: 24px; grid-template-columns: 86px 1fr; align-items: center; gap: 4px; }
+.timeline-track > strong { overflow: hidden; color: #aeb6c4; font-size: 9px; text-overflow: ellipsis; white-space: nowrap; }
+.track-rail { position: relative; height: 10px; overflow: hidden; border-radius: 2px; background: #171b23; }
+.segment-block, .gap-block { position: absolute; top: 0; height: 100%; }
+.segment-block { z-index: 2; min-width: 2px; background: #68a7ff; }
+.kind-event, .kind-pre-event { background: #ffb34f; }
+.kind-manual { background: #d586ff; }
+.integrity-corrupt, .integrity-missing { background: var(--danger); }
+.gap-block { z-index: 1; min-width: 2px; background: repeating-linear-gradient(90deg, #4d252d 0 3px, transparent 3px 6px); opacity: .8; }
+.playhead { position: absolute; z-index: 5; top: 27px; bottom: 5px; width: 1px; background: var(--accent); box-shadow: 0 0 8px var(--accent); pointer-events: none; }
+.export-result { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; padding: 10px 12px; border: 1px solid #35552d; border-radius: 8px; background: #10180f; font: 10px ui-monospace, monospace; }
+.export-result span { overflow-wrap: anywhere; color: #b5c2b0; }
+.export-result a { color: var(--accent); }
+
+@media (max-width: 800px) {
+  .nvr-header { grid-template-columns: 1fr auto; }
+  .nvr-header > div:nth-child(2) { display: none; }
+  .playback-grid { grid-template-columns: 1fr; }
+  .camera-picker { max-width: 100%; }
+  .nvr-query-stat { width: 100%; margin-left: 0; }
+}
+
 button,
 input,
 select {

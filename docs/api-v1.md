@@ -1,8 +1,8 @@
 # Control API v1 / 控制接口 v1
 
-M1–M6 provide the secured HTTP/WebSocket/WebRTC control and playback plane. M7 adds a versioned Studio collection, isolated Preview/Program buses, transactional Cut/Fade Take, bounded history, and explicit Direct/Hybrid fallback analysis. M8 adds the authenticated `/api/v1/nvr/*` proxy for the independent archive plane. The composition APIs use the same current [scene document](scene-schema-v4.md) consumed by libobs and the browser editor; the strict archive contract is documented in [nvr-core.md](nvr-core.md).
+M1–M6 provide the secured HTTP/WebSocket/WebRTC control and playback plane. M7 adds Studio; M8 adds the authenticated `/api/v1/nvr/*` archive proxy; M9 adds UTC timeline, playback, derived media, export, evidence and delete operations in that same namespace. The composition contract is [scene-schema-v4.md](scene-schema-v4.md), the archive contract is [nvr-core.md](nvr-core.md), and M9 is specified in [timeline-evidence.md](timeline-evidence.md).
 
-M1–M6 提供受保护的 HTTP/WebSocket/WebRTC 控制与播放平面；M7 增加版本化 Studio 集合、隔离 Preview/Program 总线、事务性 Cut/Fade Take、有界历史和明确的 Direct/Hybrid 降级分析；M8 增加经过认证的 `/api/v1/nvr/*` 代理以提供独立归档平面。合成接口、libobs 与浏览器编辑器共用当前[场景文档](scene-schema-v4.md)，严格归档契约见 [nvr-core.md](nvr-core.md)。
+M1–M6 提供受保护的 HTTP/WebSocket/WebRTC 控制与播放平面；M7 增加 Studio；M8 增加经过认证的 `/api/v1/nvr/*` 归档代理；M9 在同一命名空间增加 UTC 时间线、回放、派生媒体、导出、证据和删除操作。合成契约见 [scene-schema-v4.md](scene-schema-v4.md)，归档契约见 [nvr-core.md](nvr-core.md)，M9 契约见 [timeline-evidence.md](timeline-evidence.md)。
 
 ## Security boundary / 安全边界
 
@@ -63,7 +63,7 @@ Returns the bundled React/TypeScript scene editor. The non-hashed HTML entry is 
 Returns `200` while the control thread is serving:
 
 ```json
-{"status":"ok","milestone":"M8"}
+{"status":"ok","milestone":"M9"}
 ```
 
 This route is intentionally unauthenticated and contains no configuration details.

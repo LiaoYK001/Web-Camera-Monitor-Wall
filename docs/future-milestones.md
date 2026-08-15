@@ -4,7 +4,7 @@
 >
 > Last updated / 最后更新：2026-08-15
 >
-> Current position / 当前位置：M8 NVR Core implementation is complete; M9 Timeline is in progress / M8 NVR 核心实现已完成，M9 时间线开发中
+> Current position / 当前位置：M9 Timeline implementation is complete; M10 Device Operations is next / M9 时间线实现已完成，下一阶段为 M10 设备运维
 
 This document expands the project from a web camera compositor into a self-hosted monitoring workspace with two first-class capabilities: an OBS-inspired customizable canvas and an NVR workflow inspired by mainstream monitoring applications such as tinyCam Monitor. It is a capability plan, not a compatibility or UI-cloning claim, and it does not promise release dates.
 
@@ -76,13 +76,13 @@ SQLite in WAL mode plus local volumes is the initial single-node metadata baseli
 
 ## 4. Milestone sequence / 里程碑顺序
 
-M6 established the production foundation, M7 completed Canvas Studio, and M8 completed the independent per-camera archive plane. M9 now makes those archives searchable, playable, and exportable; each later milestone still requires its predecessor's exit gate.
+M6 established the production foundation, M7 completed Canvas Studio, M8 completed the archive plane, and M9 made it searchable, playable, and exportable. M10 next adds bounded device operations; each later milestone still requires its predecessor's exit gate.
 
-M6 建立生产底座，M7 完成画布工作台，M8 完成独立逐路归档平面。M9 现使这些归档可检索、可回放、可导出；后续每个里程碑仍以前一里程碑完成为前提。
+M6 建立生产底座，M7 完成画布工作台，M8 完成独立逐路归档平面，M9 使归档可检索、可回放、可导出。M10 下一步增加有边界的设备运维；后续每个里程碑仍以前一里程碑完成为前提。
 
 ```text
 M6 Production      -> M7 Canvas Studio -> M8 NVR Core       -> M9 Timeline
-M6 生产化（完成）  -> M7 画布工作台（完成） -> M8 NVR 核心（完成） -> M9 时间线（当前）
+M6 生产化（完成）  -> M7 画布工作台（完成） -> M8 NVR 核心（完成） -> M9 时间线（完成） -> M10 设备运维（下一步）
                          -> M10 Device Ops -> M11 Events & AI -> M12 Operator UX -> M13 Scale
                          -> M10 设备运维   -> M11 事件与分析   -> M12 值守体验    -> M13 扩展
 ```

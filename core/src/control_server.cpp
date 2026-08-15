@@ -858,7 +858,7 @@ public:
                             error_body("invalid_target", "NVR request target is invalid"));
         const bool mutating = request.method() == http::verb::put || request.method() == http::verb::post ||
                               request.method() == http::verb::delete_;
-        if (mutating && !json_content_type(request))
+        if (mutating && !request.body().empty() && !json_content_type(request))
             return response(http::status::unsupported_media_type, request.version(),
                             error_body("content_type", "Content-Type must be application/json"));
 
@@ -876,9 +876,11 @@ public:
         const auto range = request.find(http::field::range);
         if (range != request.end()) {
             const std::string value(view(range->value()));
-            if (value.size() > 128 || !std::all_of(value.begin(), value.end(), [](unsigned char character) {
-                    return std::isdigit(character) || character == '=' || character == '-';
-                })) {
+            const std::string_view range_value(value);
+            if (value.size() > 128 || !range_value.starts_with("bytes=") || range_value.size() <= 6 ||
+                !std::all_of(range_value.begin() + 6, range_value.end(), [](unsigned char character) {
+                    return std::isdigit(character) || character == '-';
+                }) || std::count(range_value.begin() + 6, range_value.end(), '-') != 1) {
                 curl_easy_cleanup(handle);
                 if (headers)
                     curl_slist_free_all(headers);
@@ -1317,7 +1319,7 @@ HttpResponse handle_request(const HttpRequest &request, SceneController &control
 
     const std::string_view target = view(request.target());
     if (request.method() == http::verb::get && target == "/api/v1/health")
-        return response(http::status::ok, version, "{\"status\":\"ok\",\"milestone\":\"M8\"}");
+        return response(http::status::ok, version, "{\"status\":\"ok\",\"milestone\":\"M9\"}");
     if (request.method() == http::verb::get && target == "/api/v1/ready") {
         const bool ready = runtime_status.ready();
         return response(ready ? http::status::ok : http::status::service_unavailable, version,

@@ -4,6 +4,10 @@ M8 adds an independent per-camera archive process to the existing single product
 
 M8 在现有单产品容器内增加独立逐路归档进程。画布编辑、Preview/Program 转场和 libobs 节目录制器均不拥有 NVR worker。面向浏览器的 `webobsd` 控制面负责认证，并把固定的 `/api/v1/nvr/*` 命名空间代理到仅回环监听的服务；NVR 不发布额外容器端口。
 
+M9 extends this namespace with timeline playback and evidence export; see [timeline-evidence.md](timeline-evidence.md) for those response contracts and operations.
+
+M9 在该命名空间继续增加时间线回放与证据导出；对应响应契约与操作见 [timeline-evidence.md](timeline-evidence.md)。
+
 ## Enable and storage / 启用与存储
 
 Set the following only in the untracked `.env` file. The default remains disabled so existing M0–M7 deployments do not start archive jobs unexpectedly.

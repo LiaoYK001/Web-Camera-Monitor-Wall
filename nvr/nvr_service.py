@@ -30,6 +30,8 @@ from typing import Any
 MAX_BODY = 1024 * 1024
 CAMERA_ID = re.compile(r"^[A-Za-z0-9._-]{1,64}$")
 SEGMENT_ID = re.compile(r"^[a-f0-9]{32}$")
+ARTIFACT_ID = re.compile(r"^[a-f0-9]{32}$")
+SAFE_ARTIFACT_NAME = re.compile(r"^[A-Za-z0-9._-]{1,160}$")
 POLICIES = {"continuous", "scheduled", "event", "off"}
 MODES = {"auto", "copy", "transcode"}
 STREAMS = {"main", "sub"}
@@ -305,7 +307,14 @@ class NvrService:
         self.exports_root = storage_root / "exports"
         self.quarantine_root = storage_root / ".quarantine"
         self.ring_root = storage_root / ".pre-event"
-        for directory in (storage_root, self.exports_root, self.quarantine_root, self.ring_root):
+        self.thumbnail_root = storage_root / ".thumbnails"
+        self.snapshot_root = self.exports_root / "snapshots"
+        self.thumbnail_slots = threading.BoundedSemaphore(4)
+        self.reader_lock = threading.RLock()
+        self.active_readers: dict[str, int] = {}
+        self.playback_leases: dict[str, tuple[str, float]] = {}
+        for directory in (storage_root, self.exports_root, self.quarantine_root, self.ring_root,
+                          self.thumbnail_root, self.snapshot_root):
             directory.mkdir(mode=0o700, parents=True, exist_ok=True)
         self.reconcile()
 
@@ -639,6 +648,10 @@ class NvrService:
         for row in rows:
             camera_totals[row["camera_id"]] = camera_totals.get(row["camera_id"], 0) + row["size_bytes"]
         for row in rows:
+            with self.reader_lock:
+                self._expire_playback_leases()
+                if self._segment_active(row["id"]):
+                    continue
             camera = camera_config.get(row["camera_id"])
             if not camera:
                 continue
@@ -658,6 +671,7 @@ class NvrService:
             pressure = usage.free < config["minFreeBytes"]
             self.audit("nvr.retention.deleted", camera_id=row["camera_id"], segment_id=row["id"])
         self.stats.disk_pressure = pressure
+        self._trim_thumbnails()
 
     def status(self) -> dict[str, Any]:
         usage = shutil.disk_usage(self.storage_root)
@@ -702,20 +716,308 @@ class NvrService:
             "mediaUrl": f"/api/v1/nvr/media/{row['id']}",
         } for row in rows]
 
+    def timeline(self, query: dict[str, list[str]]) -> dict[str, Any]:
+        started = time.monotonic_ns()
+        start = bounded_int(int(query.get("from", [str(utc_ms() - 86_400_000)])[0]), 0, (1 << 63) - 1, "from")
+        end = bounded_int(int(query.get("to", [str(utc_ms())])[0]), 1, (1 << 63) - 1, "to")
+        if start >= end or end - start > 31 * 86_400_000:
+            raise ConfigError("timeline range must be positive and at most 31 days")
+        requested = [value for value in query.get("cameraId", []) if CAMERA_ID.fullmatch(value)]
+        with self.config_lock:
+            camera_config = {camera["id"]: camera for camera in self.config["cameras"]}
+            known = list(camera_config)
+        camera_ids = requested or known
+        if any(camera_id not in known for camera_id in camera_ids):
+            raise ConfigError("timeline cameraId is unknown")
+        segment_query = {"from": [str(start)], "to": [str(end)], "limit": ["5000"]}
+        if camera_ids:
+            segment_query["cameraId"] = camera_ids
+        segments = self.segments(segment_query)
+        cameras: list[dict[str, Any]] = []
+        for camera_id in camera_ids:
+            items = [item for item in segments if item["cameraId"] == camera_id]
+            items.sort(key=lambda item: (item["startUtcMs"], item["id"]))
+            gaps: list[dict[str, Any]] = []
+            cursor = start
+            for item in items:
+                if item["integrity"] in {"missing", "corrupt", "quarantined"}:
+                    gaps.append({"fromUtcMs": max(start, item["startUtcMs"]),
+                                 "toUtcMs": min(end, item["endUtcMs"]), "reason": item["integrity"]})
+                    continue
+                if item["startUtcMs"] > cursor + 250:
+                    gaps.append({"fromUtcMs": cursor, "toUtcMs": item["startUtcMs"], "reason": "offline"})
+                cursor = max(cursor, item["endUtcMs"])
+            if cursor < end:
+                gaps.append({"fromUtcMs": cursor, "toUtcMs": end, "reason": "offline"})
+            boundary_rows = self.catalog.query(
+                "SELECT MIN(start_utc_ms) AS boundary FROM segments WHERE camera_id=? AND integrity NOT IN ('deleted','missing')",
+                (camera_id,),
+            )
+            boundary = boundary_rows[0]["boundary"] if boundary_rows and boundary_rows[0]["boundary"] is not None else None
+            cameras.append({"cameraId": camera_id, "recordedStream": camera_config[camera_id]["stream"],
+                            "segments": items, "gaps": gaps,
+                            "retentionBoundaryUtcMs": boundary})
+        return {"fromUtcMs": start, "toUtcMs": end, "storageTimeZone": "UTC", "cameras": cameras,
+                "queryDurationMs": max(0, (time.monotonic_ns() - started) // 1_000_000)}
+
     def set_lock(self, segment_id: str, locked: bool) -> None:
         cursor = self.catalog.execute("UPDATE segments SET locked=? WHERE id=? AND integrity!='deleted'", (int(locked), segment_id))
         if cursor.rowcount != 1:
             raise KeyError(segment_id)
         self.audit("nvr.segment.lock", segment_id=segment_id, locked=locked)
 
-    def media_path(self, segment_id: str) -> pathlib.Path:
-        rows = self.catalog.query("SELECT storage_key FROM segments WHERE id=? AND integrity NOT IN ('deleted','missing')", (segment_id,))
+    def segment_row(self, segment_id: str) -> sqlite3.Row:
+        rows = self.catalog.query("SELECT * FROM segments WHERE id=? AND integrity NOT IN ('deleted','missing')", (segment_id,))
         if not rows:
             raise KeyError(segment_id)
-        path = (self.storage_root / rows[0]["storage_key"]).resolve()
+        return rows[0]
+
+    def media_path(self, segment_id: str) -> pathlib.Path:
+        row = self.segment_row(segment_id)
+        path = (self.storage_root / row["storage_key"]).resolve()
         if self.storage_root.resolve() not in path.parents or not path.is_file():
             raise KeyError(segment_id)
         return path
+
+    @contextlib.contextmanager
+    def playback_reader(self, segment_id: str):
+        path = self.media_path(segment_id)
+        with self.reader_lock:
+            self.active_readers[segment_id] = self.active_readers.get(segment_id, 0) + 1
+        self.audit("nvr.playback.opened", segment_id=segment_id)
+        try:
+            yield path
+        finally:
+            with self.reader_lock:
+                remaining = self.active_readers.get(segment_id, 1) - 1
+                if remaining > 0:
+                    self.active_readers[segment_id] = remaining
+                else:
+                    self.active_readers.pop(segment_id, None)
+
+    def _expire_playback_leases(self) -> None:
+        now = time.monotonic()
+        for lease_id, (_, expiry) in list(self.playback_leases.items()):
+            if expiry <= now:
+                self.playback_leases.pop(lease_id, None)
+
+    def _segment_active(self, segment_id: str) -> bool:
+        return self.active_readers.get(segment_id, 0) > 0 or any(
+            leased_segment == segment_id for leased_segment, _ in self.playback_leases.values()
+        )
+
+    def create_playback_lease(self, value: Any) -> dict[str, Any]:
+        if not isinstance(value, dict) or set(value) != {"segmentId", "ttlSeconds"}:
+            raise ConfigError("playback lease requires segmentId and ttlSeconds")
+        segment_id = value["segmentId"]
+        if not isinstance(segment_id, str) or not SEGMENT_ID.fullmatch(segment_id):
+            raise ConfigError("playback lease segmentId is invalid")
+        self.segment_row(segment_id)
+        ttl = bounded_int(value["ttlSeconds"], 10, 300, "ttlSeconds")
+        lease_id = uuid.uuid4().hex
+        with self.reader_lock:
+            self._expire_playback_leases()
+            self.playback_leases[lease_id] = (segment_id, time.monotonic() + ttl)
+        self.audit("nvr.playback.lease", segment_id=segment_id, lease_id=lease_id, ttl_seconds=ttl)
+        return {"id": lease_id, "segmentId": segment_id, "expiresUtcMs": utc_ms() + ttl * 1000}
+
+    def release_playback_lease(self, lease_id: str) -> None:
+        with self.reader_lock:
+            lease = self.playback_leases.pop(lease_id, None)
+        if lease is None:
+            raise KeyError(lease_id)
+        self.audit("nvr.playback.released", segment_id=lease[0], lease_id=lease_id)
+
+    def thumbnail(self, segment_id: str, offset_ms: int) -> pathlib.Path:
+        offset_ms = bounded_int(offset_ms, 0, 86_400_000, "offsetMs")
+        row = self.segment_row(segment_id)
+        if offset_ms >= row["duration_ms"]:
+            offset_ms = max(0, row["duration_ms"] - 1)
+        target = self.thumbnail_root / f"{segment_id}-{offset_ms}.jpg"
+        if target.is_file():
+            os.utime(target, None)
+            return target
+        if not self.thumbnail_slots.acquire(timeout=10):
+            raise RuntimeError("thumbnail capacity exhausted")
+        try:
+            temporary = target.with_suffix(".jpg.partial")
+            command = [self.ffmpeg, "-hide_banner", "-loglevel", "error", "-nostdin", "-ss",
+                       f"{offset_ms / 1000:.3f}", "-i", str(self.media_path(segment_id)), "-frames:v", "1",
+                       "-vf", "scale=320:-2", "-q:v", "4", "-f", "image2", "-y", str(temporary)]
+            completed = subprocess.run(command, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                                       timeout=20, check=False)
+            if completed.returncode != 0 or not temporary.is_file() or temporary.stat().st_size == 0:
+                temporary.unlink(missing_ok=True)
+                raise RuntimeError("thumbnail generation failed")
+            os.replace(temporary, target)
+            return target
+        finally:
+            self.thumbnail_slots.release()
+
+    def _trim_thumbnails(self) -> None:
+        files = sorted(self.thumbnail_root.glob("*.jpg"), key=lambda path: path.stat().st_mtime_ns, reverse=True)
+        cutoff = time.time() - 24 * 3600
+        for path in files[1000:]:
+            path.unlink(missing_ok=True)
+        for path in files[:1000]:
+            if path.stat().st_mtime < cutoff:
+                path.unlink(missing_ok=True)
+
+    def snapshot(self, value: Any) -> dict[str, Any]:
+        if not isinstance(value, dict) or set(value) != {"segmentId", "offsetMs"}:
+            raise ConfigError("snapshot requires segmentId and offsetMs")
+        segment_id = value["segmentId"]
+        if not isinstance(segment_id, str) or not SEGMENT_ID.fullmatch(segment_id):
+            raise ConfigError("snapshot segmentId is invalid")
+        offset_ms = bounded_int(value["offsetMs"], 0, 86_400_000, "offsetMs")
+        snapshot_id = uuid.uuid4().hex
+        target = self.snapshot_root / f"{snapshot_id}.jpg"
+        source = self.thumbnail(segment_id, offset_ms)
+        shutil.copyfile(source, target)
+        digest = hashlib.sha256(target.read_bytes()).hexdigest()
+        self.audit("nvr.snapshot.created", segment_id=segment_id, snapshot_id=snapshot_id)
+        return {"id": snapshot_id, "segmentId": segment_id, "offsetMs": offset_ms,
+                "sha256": digest, "downloadUrl": f"/api/v1/nvr/downloads/{snapshot_id}.jpg"}
+
+    @staticmethod
+    def _sha256(path: pathlib.Path) -> str:
+        digest = hashlib.sha256()
+        with path.open("rb") as source:
+            for block in iter(lambda: source.read(1024 * 1024), b""):
+                digest.update(block)
+        return digest.hexdigest()
+
+    def export_clip(self, value: Any) -> dict[str, Any]:
+        allowed = {"cameraIds", "fromUtcMs", "toUtcMs", "mode", "lock", "programRecordingId"}
+        if not isinstance(value, dict) or set(value) - allowed:
+            raise ConfigError("export request contains unsupported fields")
+        camera_ids = value.get("cameraIds")
+        if (not isinstance(camera_ids, list) or not 1 <= len(camera_ids) <= 4 or
+                len(set(camera_ids)) != len(camera_ids) or
+                any(not isinstance(item, str) or not CAMERA_ID.fullmatch(item) for item in camera_ids)):
+            raise ConfigError("export cameraIds must contain one to four unique ids")
+        start = bounded_int(value.get("fromUtcMs"), 0, (1 << 63) - 1, "fromUtcMs")
+        end = bounded_int(value.get("toUtcMs"), 1, (1 << 63) - 1, "toUtcMs")
+        if start >= end or end - start > 24 * 3600 * 1000:
+            raise ConfigError("export range must be positive and at most 24 hours")
+        mode = value.get("mode", "fast")
+        if mode not in {"fast", "exact"}:
+            raise ConfigError("export mode must be fast or exact")
+        lock = value.get("lock", True)
+        if not isinstance(lock, bool):
+            raise ConfigError("export lock must be boolean")
+        program_recording_id = value.get("programRecordingId")
+        if program_recording_id is not None and (
+            not isinstance(program_recording_id, str) or not re.fullmatch(r"[A-Za-z0-9._-]{1,128}", program_recording_id)
+        ):
+            raise ConfigError("programRecordingId must be a safe stable identifier")
+        export_id = uuid.uuid4().hex
+        audit_id = uuid.uuid4().hex
+        export_dir = self.exports_root / export_id
+        export_dir.mkdir(mode=0o700)
+        files: list[dict[str, Any]] = []
+        effective_start, effective_end = end, start
+        source_segment_ids: list[str] = []
+        try:
+            for camera_id in camera_ids:
+                rows = self.catalog.query(
+                    "SELECT * FROM segments WHERE camera_id=? AND end_utc_ms>=? AND start_utc_ms<=? "
+                    "AND integrity NOT IN ('deleted','missing','corrupt') ORDER BY start_utc_ms",
+                    (camera_id, start, end),
+                )
+                if not rows:
+                    raise ConfigError(f"no playable segments for camera {camera_id}")
+                source_segment_ids.extend(row["id"] for row in rows)
+                concat = export_dir / f".{camera_id}.concat.txt"
+                with concat.open("w", encoding="utf-8") as output:
+                    for row in rows:
+                        path = self.media_path(row["id"])
+                        output.write(f"file '{path.as_posix()}'\n")
+                os.chmod(concat, 0o600)
+                target = export_dir / f"{camera_id}.mp4"
+                if mode == "fast":
+                    command = [self.ffmpeg, "-hide_banner", "-loglevel", "error", "-nostdin", "-f", "concat",
+                               "-safe", "0", "-i", str(concat), "-c", "copy", "-movflags", "+faststart", "-y", str(target)]
+                    camera_start, camera_end = rows[0]["start_utc_ms"], rows[-1]["end_utc_ms"]
+                else:
+                    offset = max(0, start - rows[0]["start_utc_ms"])
+                    duration = end - start
+                    command = [self.ffmpeg, "-hide_banner", "-loglevel", "error", "-nostdin", "-f", "concat",
+                               "-safe", "0", "-i", str(concat), "-ss", f"{offset / 1000:.3f}",
+                               "-t", f"{duration / 1000:.3f}", "-map", "0:v:0", "-an", "-c:v", "libx264",
+                               "-preset", "veryfast", "-profile:v", "high", "-pix_fmt", "yuv420p",
+                               "-movflags", "+faststart", "-y", str(target)]
+                    camera_start, camera_end = start, end
+                completed = subprocess.run(command, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                                           timeout=300, check=False)
+                concat.unlink(missing_ok=True)
+                if completed.returncode != 0 or not target.is_file() or target.stat().st_size == 0:
+                    raise RuntimeError("clip export failed")
+                media = self._probe(str(target))
+                streams = [{"type": item.get("codec_type", ""), "codec": item.get("codec_name", "")}
+                           for item in media.get("streams", [])]
+                digest = self._sha256(target)
+                files.append({"cameraId": camera_id, "name": target.name, "sizeBytes": target.stat().st_size,
+                              "sha256": digest, "tracks": streams,
+                              "downloadUrl": f"/api/v1/nvr/downloads/{export_id}/{target.name}"})
+                effective_start = min(effective_start, camera_start)
+                effective_end = max(effective_end, camera_end)
+            manifest = {"schemaVersion": 1, "exportId": export_id, "auditId": audit_id,
+                        "softwareVersion": "webobsd-0.1.0-M9", "mode": mode,
+                        "requestedRange": {"fromUtcMs": start, "toUtcMs": end},
+                        "effectiveRange": {"fromUtcMs": effective_start, "toUtcMs": effective_end},
+                        "cameraIds": camera_ids, "sourceSegmentIds": source_segment_ids, "files": files,
+                        "programRecordingId": program_recording_id,
+                        "createdUtcMs": utc_ms(), "storageTimeZone": "UTC"}
+            manifest_path = export_dir / "manifest.json"
+            atomic_json(manifest_path, manifest)
+            manifest_hash = self._sha256(manifest_path)
+            if lock:
+                for segment_id in source_segment_ids:
+                    self.catalog.execute("UPDATE segments SET locked=1 WHERE id=?", (segment_id,))
+            self.catalog.execute(
+                "INSERT INTO exports(id,audit_id,created_utc_ms,storage_key,manifest_key,mode) VALUES(?,?,?,?,?,?)",
+                (export_id, audit_id, utc_ms(), f"exports/{export_id}",
+                 f"exports/{export_id}/manifest.json", mode),
+            )
+            self.audit("nvr.export.created", export_id=export_id, audit_id=audit_id,
+                       camera_count=len(camera_ids), mode=mode)
+            return {**manifest, "manifestSha256": manifest_hash,
+                    "manifestUrl": f"/api/v1/nvr/downloads/{export_id}/manifest.json"}
+        except Exception:
+            shutil.rmtree(export_dir, ignore_errors=True)
+            raise
+
+    def download_path(self, relative: str) -> tuple[pathlib.Path, str]:
+        parts = relative.split("/")
+        if len(parts) == 1 and SAFE_ARTIFACT_NAME.fullmatch(parts[0]) and parts[0].endswith(".jpg"):
+            artifact_id = parts[0][:-4]
+            if not ARTIFACT_ID.fullmatch(artifact_id):
+                raise KeyError(relative)
+            path = self.snapshot_root / parts[0]
+            content_type = "image/jpeg"
+        elif (len(parts) == 2 and ARTIFACT_ID.fullmatch(parts[0]) and
+              SAFE_ARTIFACT_NAME.fullmatch(parts[1]) and parts[1].endswith((".mp4", ".json"))):
+            path = self.exports_root / parts[0] / parts[1]
+            content_type = "video/mp4" if parts[1].endswith(".mp4") else "application/json; charset=utf-8"
+        else:
+            raise KeyError(relative)
+        resolved = path.resolve()
+        if self.exports_root.resolve() not in resolved.parents or not resolved.is_file():
+            raise KeyError(relative)
+        return resolved, content_type
+
+    def delete_segment(self, segment_id: str) -> None:
+        row = self.segment_row(segment_id)
+        if row["locked"]:
+            raise ConfigError("locked evidence cannot be deleted")
+        with self.reader_lock:
+            self._expire_playback_leases()
+            if self._segment_active(segment_id):
+                raise ConfigError("segment is active in playback")
+        self.media_path(segment_id).unlink()
+        self.catalog.execute("UPDATE segments SET integrity='deleted',size_bytes=0 WHERE id=?", (segment_id,))
+        self.audit("nvr.segment.deleted", segment_id=segment_id, camera_id=row["camera_id"])
 
 
 class Handler(http.server.BaseHTTPRequestHandler):
@@ -744,6 +1046,45 @@ class Handler(http.server.BaseHTTPRequestHandler):
         self.send_header("Content-Length", str(len(value)))
         self.end_headers()
         self.wfile.write(value)
+
+    def send_file(self, path: pathlib.Path, content_type: str) -> None:
+        size = path.stat().st_size
+        start, end = 0, size - 1
+        range_header = self.headers.get("Range", "")
+        match = re.fullmatch(r"bytes=(\d*)-(\d*)", range_header)
+        if range_header and not match:
+            self.send_error(416)
+            return
+        if match:
+            if match.group(1):
+                start = int(match.group(1))
+            if match.group(2):
+                end = min(end, int(match.group(2)))
+            if not match.group(1) and match.group(2):
+                suffix = int(match.group(2))
+                start = max(0, size - suffix)
+                end = size - 1
+            if start > end or start >= size:
+                self.send_error(416)
+                return
+        length = end - start + 1
+        self.send_response(206 if match else 200)
+        self.send_header("Content-Type", content_type)
+        self.send_header("Accept-Ranges", "bytes")
+        self.send_header("Content-Length", str(length))
+        self.send_header("Cache-Control", "private, max-age=300" if content_type.startswith("image/") else "no-store")
+        if match:
+            self.send_header("Content-Range", f"bytes {start}-{end}/{size}")
+        self.end_headers()
+        with path.open("rb") as source:
+            source.seek(start)
+            remaining = length
+            while remaining:
+                block = source.read(min(64 * 1024, remaining))
+                if not block:
+                    break
+                self.wfile.write(block)
+                remaining -= len(block)
 
     def metrics(self) -> bytes:
         status = self.service.status()
@@ -776,7 +1117,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
         parsed = urllib.parse.urlsplit(self.path)
         try:
             if parsed.path == "/health":
-                self.send_json(200, {"status": "ok", "milestone": "M8"})
+                self.send_json(200, {"status": "ok", "milestone": "M9"})
             elif parsed.path == "/status":
                 self.send_json(200, self.service.status())
             elif parsed.path == "/config":
@@ -784,44 +1125,32 @@ class Handler(http.server.BaseHTTPRequestHandler):
                     self.send_json(200, redacted_config(self.service.config))
             elif parsed.path == "/metrics":
                 self.send_bytes(200, "text/plain; version=0.0.4; charset=utf-8", self.metrics())
-            elif parsed.path in {"/segments", "/timeline"}:
+            elif parsed.path == "/segments":
                 self.send_json(200, {"segments": self.service.segments(urllib.parse.parse_qs(parsed.query))})
+            elif parsed.path == "/timeline":
+                self.send_json(200, self.service.timeline(urllib.parse.parse_qs(parsed.query)))
+            elif parsed.path.startswith("/thumbnails/"):
+                segment_id = parsed.path.removeprefix("/thumbnails/")
+                if not SEGMENT_ID.fullmatch(segment_id):
+                    raise KeyError(segment_id)
+                query = urllib.parse.parse_qs(parsed.query)
+                offset_ms = int(query.get("offsetMs", ["0"])[0])
+                self.send_file(self.service.thumbnail(segment_id, offset_ms), "image/jpeg")
             elif parsed.path.startswith("/media/"):
                 segment_id = parsed.path.removeprefix("/media/")
                 if not SEGMENT_ID.fullmatch(segment_id):
                     raise KeyError(segment_id)
-                path = self.service.media_path(segment_id)
-                size = path.stat().st_size
-                start, end = 0, size - 1
-                range_header = self.headers.get("Range", "")
-                match = re.fullmatch(r"bytes=(\d*)-(\d*)", range_header)
-                if match:
-                    if match.group(1):
-                        start = int(match.group(1))
-                    if match.group(2):
-                        end = min(end, int(match.group(2)))
-                    if start > end or start >= size:
-                        self.send_error(416)
-                        return
-                length = end - start + 1
-                self.send_response(206 if match else 200)
-                self.send_header("Content-Type", "video/mp4")
-                self.send_header("Accept-Ranges", "bytes")
-                self.send_header("Content-Length", str(length))
-                if match:
-                    self.send_header("Content-Range", f"bytes {start}-{end}/{size}")
-                self.end_headers()
-                with path.open("rb") as source:
-                    source.seek(start)
-                    remaining = length
-                    while remaining:
-                        block = source.read(min(64 * 1024, remaining))
-                        if not block:
-                            break
-                        self.wfile.write(block)
-                        remaining -= len(block)
+                with self.service.playback_reader(segment_id) as path:
+                    self.send_file(path, "video/mp4")
+            elif parsed.path.startswith("/downloads/"):
+                relative = parsed.path.removeprefix("/downloads/")
+                path, content_type = self.service.download_path(relative)
+                self.service.audit("nvr.artifact.downloaded", artifact_id=relative.split("/", 1)[0])
+                self.send_file(path, content_type)
             else:
                 self.send_json(404, {"error": {"code": "not_found", "message": "NVR resource not found"}})
+        except ConfigError as error:
+            self.send_json(422, {"error": {"code": "invalid_request", "message": str(error)}})
         except (KeyError, FileNotFoundError):
             self.send_json(404, {"error": {"code": "not_found", "message": "NVR resource not found"}})
         except Exception as error:
@@ -849,7 +1178,13 @@ class Handler(http.server.BaseHTTPRequestHandler):
 
     def do_POST(self) -> None:  # noqa: N802
         try:
-            if self.path.startswith("/events/"):
+            if self.path == "/snapshots":
+                self.send_json(201, self.service.snapshot(self.body()))
+            elif self.path == "/exports":
+                self.send_json(201, self.service.export_clip(self.body()))
+            elif self.path == "/playback-leases":
+                self.send_json(201, self.service.create_playback_lease(self.body()))
+            elif self.path.startswith("/events/"):
                 camera_id = self.path.removeprefix("/events/")
                 if not CAMERA_ID.fullmatch(camera_id):
                     raise KeyError(camera_id)
@@ -862,6 +1197,27 @@ class Handler(http.server.BaseHTTPRequestHandler):
                 self.send_json(404, {"error": {"code": "not_found", "message": "NVR resource not found"}})
         except ConfigError as error:
             self.send_json(422, {"error": {"code": "invalid_request", "message": str(error)}})
+        except KeyError:
+            self.send_json(404, {"error": {"code": "not_found", "message": "NVR resource not found"}})
+
+    def do_DELETE(self) -> None:  # noqa: N802
+        try:
+            if self.path.startswith("/playback-leases/"):
+                lease_id = self.path.removeprefix("/playback-leases/")
+                if not ARTIFACT_ID.fullmatch(lease_id):
+                    raise KeyError(lease_id)
+                self.service.release_playback_lease(lease_id)
+                self.send_json(200, {"id": lease_id, "released": True})
+            elif self.path.startswith("/segments/"):
+                segment_id = self.path.removeprefix("/segments/")
+                if not SEGMENT_ID.fullmatch(segment_id):
+                    raise KeyError(segment_id)
+                self.service.delete_segment(segment_id)
+                self.send_json(200, {"id": segment_id, "deleted": True})
+            else:
+                self.send_json(404, {"error": {"code": "not_found", "message": "NVR resource not found"}})
+        except ConfigError as error:
+            self.send_json(409, {"error": {"code": "segment_conflict", "message": str(error)}})
         except KeyError:
             self.send_json(404, {"error": {"code": "not_found", "message": "NVR resource not found"}})
 

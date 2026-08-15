@@ -8,20 +8,20 @@ This roadmap describes milestone order and acceptance gates, not promised releas
 
 ## Current position / 当前位置
 
-**🚧 M9 — Timeline 正在开发；M0–M8 实现已完成，独立 NVR Core 已通过确定性退出门禁。**
+**✅ M9 — Timeline 实现已完成；当前位置为 M10 Device Operations 开发起点。**
 
-M0 through M8 implementation is complete. M8 closed after four independent camera workers, copy/transcode, recording policies, UTC fragmented MP4, SQLite WAL, crash recovery, retention pressure, evidence locks, read-only failure, and redaction passed in the final product image. M9 now adds timeline playback and forensic export.
+M0 through M9 implementation is complete. M9 closed after UTC timeline/gap queries, four-player synchronization controls, Range playback, bounded JPEG derivation, fast/exact exports, SHA-256 evidence manifests, locks/deletion, and stable-ID audit passed in the final product image. M10 starts bounded device operations.
 
-M0 至 M8 实现已全部完成。M8 在四路独立 worker、复制/转码、录像策略、UTC fragmented MP4、SQLite WAL、崩溃恢复、保留压力、证据锁、只读失败和脱敏全部通过最终产品镜像门禁后关闭。M9 现开始实现时间线回放与取证导出。
+M0 至 M9 实现已全部完成。M9 在 UTC 时间线/断档查询、四播放器同步控制、Range 回放、有界 JPEG 派生、快速/精确导出、SHA-256 证据清单、锁定/删除和稳定 ID 审计全部通过最终产品镜像门禁后关闭。M10 从有边界的设备运维开始。
 
-M7 delivers the OBS-inspired Canvas Studio; M8 delivers the archive plane; M9–M13 continue the searchable NVR workflow. The detailed scope, architecture boundaries, dependencies, non-goals, and exit gates are defined in [docs/future-milestones.md](docs/future-milestones.md).
+M7 delivers Canvas Studio, M8 the archive plane, and M9 the searchable playback/evidence workflow. M10–M13 continue device operations, events, operator UX, and scale. The detailed boundaries and gates are defined in [docs/future-milestones.md](docs/future-milestones.md).
 
-M7 已交付受 OBS 启发的画布工作台，M8 已交付归档平面；M9–M13 继续实现可检索的完整 NVR 工作流。详细范围、架构边界、依赖、非目标及完成门禁见 [docs/future-milestones.md](docs/future-milestones.md)。
+M7 已交付画布工作台，M8 已交付归档平面，M9 已交付可检索回放/证据工作流。M10–M13 继续设备运维、事件、值守体验与规模化。详细边界与门禁见 [docs/future-milestones.md](docs/future-milestones.md)。
 
 ```text
-M0–M8 implementation complete   M9 in progress                 M10–M13 planned
-M0–M8 实现已完成           -> M9 开发中                  -> M10–M13 已规划
-✅                               🚧 NOW                         🧭 NOT STARTED
+M0–M9 implementation complete   M10 next                       M11–M13 planned
+M0–M9 实现已完成           -> M10 下一步                  -> M11–M13 已规划
+✅                               🚧 NEXT                        🧭 NOT STARTED
 ```
 
 ### M0 acceptance / M0 验收
@@ -85,7 +85,7 @@ M0 已于 2026-08-11 在真实摄像头门禁通过后完成。后续修改采�
 | M6 — Production | ✅ Complete / 已完成 | Authentication, HTTPS, TURN, health checks, GPU detection, backup, observability and upgrades / 鉴权、HTTPS、TURN、健康检查、GPU 检测、备份、可观测性和升级 | Security review, upgrade/rollback, recovery, and documented deployment pass / 安全、升级回滚、恢复和部署文档验收通过 |
 | M7 — Canvas Studio | ✅ Complete / 已完成 | Scene collections, nested scenes/groups, filters, Preview/Program and transitions / 场景集合、嵌套场景/组、滤镜、预览/节目与转场 | Persistent multi-scene Studio workflow and Direct/Composite capability contract pass / 持久化多场景工作流与 Direct/Composite 能力契约通过 |
 | M8 — NVR Core | ✅ Implementation complete / 实现完成 | Independent per-camera segmented recording, catalog, retention and crash recovery / 独立逐路分段录像、目录、保留与崩溃恢复 | Deterministic recovery/retention gate passes; six-hour and private burn-ins remain release qualification / 确定性恢复/保留门禁通过；六小时及私有耐久属于发布资格验证 |
-| M9 — Timeline | 🚧 In progress / 开发中 | Archive search, synchronized playback, clip export and evidence integrity / 归档检索、同步回放、片段导出与证据完整性 | Seek/sync, time-zone, permission and hash-verifiable export gates pass / 跳转/同步、时区、权限与可验证导出门禁通过 |
+| M9 — Timeline | ✅ Implementation complete / 实现完成 | Archive search, synchronized playback, clip export and evidence integrity / 归档检索、同步回放、片段导出与证据完整性 | UTC/gap, p95, Range, derived media, export/hash, lock/delete and audit gates pass / UTC/断档、p95、Range、派生媒体、导出/哈希、锁定/删除及审计门禁通过 |
 | M10 — Device Operations | 🧭 Planned / 已规划 | Bounded discovery, ONVIF Profile T, PTZ, presets, health and talk / 有界发现、ONVIF Profile T、PTZ、预置位、健康与对讲 | Emulator plus multi-vendor capability, safety and redaction matrix passes / 模拟器加多厂商能力、安全与脱敏矩阵通过 |
 | M11 — Events & Detection | 🧭 Planned / 已规划 | Native/software events, motion zones, detector providers, rules and notifications / 原生/软件事件、移动区域、检测提供器、规则与通知 | Analytics failure cannot block recording; event accuracy, queue and security gates pass / 分析失败不阻塞录像，事件准确性、队列与安全门禁通过 |
 | M12 — Operator UX | 🧭 Planned / 已规划 | Monitor/PWA/kiosk workflows, adaptive grids and least-privilege roles / 监看/PWA/值守流程、自适应宫格与最小权限角色 | 16-tile reference profile, browser/PWA and authorization matrix pass / 16 宫格参考配置、浏览器/PWA 与授权矩阵通过 |
@@ -250,6 +250,23 @@ M7 已于 2026-08-15 完成。任意插件、桌面采集、不受限脚本和 O
 M8 implementation completed on 2026-08-15. Long-duration burn-ins are deliberately recorded as release qualification rather than claimed by the short deterministic development gate. M9 starts from the verified archive/catalog contract documented in [docs/nvr-core.md](docs/nvr-core.md).
 
 M8 实现于 2026-08-15 完成。长时耐久被明确记录为发布资格验证，不由短时确定性开发门禁冒充完成。M9 从 [docs/nvr-core.md](docs/nvr-core.md) 所述已验证归档/目录契约继续。
+
+### M9 — Timeline, Playback & Evidence / 时间线、回放与证据
+
+#### M9 progress / M9 进度
+
+- [x] Add bounded 31-day UTC timeline queries with per-camera segments, retention boundaries and explicit offline/missing/corrupt gaps / 增加最长 31 天的有界 UTC 时间线查询、逐路片段、保留边界及明确离线/缺失/损坏断档
+- [x] Add one-to-four-player shared UTC play/pause/seek/speed/frame-step controls with a 250 ms correction threshold / 增加 1–4 播放器共享 UTC 播放/暂停/跳转/倍速/逐帧控制及 250 ms 纠偏阈值
+- [x] Add HTTP Range, transient playback retention locks and gap recovery / 增加 HTTP Range、回放临时保留锁和断档恢复
+- [x] Add four-slot thumbnail generation, bounded cache and SHA-256 snapshots / 增加四槽缩略图生成、有界缓存和带 SHA-256 的截图
+- [x] Add four-camera stream-copy export and exact H.264 re-encode with logical program association / 增加四路码流复制导出、精确 H.264 重编码及逻辑节目录像关联
+- [x] Add path-free schema-v1 manifests with requested/effective range, tracks, IDs, software version, audit ID and per-file hashes / 增加不含路径的 schema-v1 清单，记录请求/实际范围、轨道、ID、软件版本、审计 ID 和逐文件哈希
+- [x] Add authenticated same-origin UI/API operations and audit for playback, snapshot, export, download, lock/unlock and delete / 增加受认证同源 UI/API 操作，并审计回放、截图、导出、下载、锁定/解锁及删除
+- [x] Pass final-image TypeScript/Vite build and deterministic UTC/gap, p95, Range, JPEG, export, FFprobe, hash, conflict and redaction gate / 通过最终镜像 TypeScript/Vite 构建及 UTC/断档、p95、Range、JPEG、导出、FFprobe、哈希、冲突与脱敏确定性门禁
+
+M9 implementation completed on 2026-08-15. The deterministic reference run measured 40 local timeline queries at 10.8 ms p95. This is development evidence, not a universal storage guarantee; target deployments must repeat the measurement and browser/DST observation described in [docs/timeline-evidence.md](docs/timeline-evidence.md). M10 is the next milestone and is not implemented by this commit.
+
+M9 实现于 2026-08-15 完成。确定性参考运行测得 40 次本地时间线查询 p95 为 10.8 ms。该数值是开发证据，不是所有存储的性能承诺；目标部署必须重跑 [docs/timeline-evidence.md](docs/timeline-evidence.md) 所述测量及浏览器/DST 观察。M10 是下一里程碑，本提交不实现 M10。
 
 ## Cross-cutting rules / 贯穿规则
 

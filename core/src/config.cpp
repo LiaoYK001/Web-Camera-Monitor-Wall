@@ -495,7 +495,7 @@ Command-line values override WEBOBS_* environment values.
 
 std::string version_text()
 {
-    return std::string("webobsd ") + WEBOBS_VERSION + " (M8, OBS 32.1.2)";
+    return std::string("webobsd ") + WEBOBS_VERSION + " (M9, OBS 32.1.2)";
 }
 
 } // namespace webobs

@@ -150,3 +150,51 @@ export interface PlaybackCapabilities {
   };
   sources: SourcePlaybackCapability[];
 }
+
+export interface NvrSegment {
+  id: string;
+  cameraId: string;
+  startUtcMs: number;
+  endUtcMs: number;
+  durationMs: number;
+  kind: 'continuous' | 'event' | 'pre-event' | 'manual' | 'recovered' | 'orphan';
+  videoCodec: string;
+  audioCodec: string;
+  sizeBytes: number;
+  integrity: string;
+  locked: boolean;
+  mediaUrl: string;
+}
+
+export interface NvrTimelineCamera {
+  cameraId: string;
+  recordedStream: 'main' | 'sub';
+  retentionBoundaryUtcMs: number | null;
+  segments: NvrSegment[];
+  gaps: Array<{ fromUtcMs: number; toUtcMs: number; reason: string }>;
+}
+
+export interface NvrTimeline {
+  fromUtcMs: number;
+  toUtcMs: number;
+  storageTimeZone: 'UTC';
+  queryDurationMs: number;
+  cameras: NvrTimelineCamera[];
+}
+
+export interface NvrStatus {
+  status: string;
+  freeBytes: number;
+  diskPressure: boolean;
+  cameras: Array<{ id: string; policy: string; state: string; segments: number; eventActive: boolean }>;
+}
+
+export interface NvrExport {
+  exportId: string;
+  auditId: string;
+  mode: 'fast' | 'exact';
+  manifestSha256: string;
+  manifestUrl: string;
+  effectiveRange: { fromUtcMs: number; toUtcMs: number };
+  files: Array<{ cameraId: string; name: string; sha256: string; downloadUrl: string }>;
+}

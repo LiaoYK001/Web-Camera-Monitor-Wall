@@ -182,8 +182,8 @@ services:
       WEBOBS_NVR_STORAGE: /recordings/nvr
     volumes:
       - ./artifacts:/artifacts
-      - ./artifacts/m8-config:/test-config
-      - ./artifacts/m8-recordings:/recordings/nvr
+      - ${WEBOBS_TEST_NVR_CONFIG_ROOT:-./artifacts/m8-config}:/test-config
+      - ${WEBOBS_TEST_NVR_STORAGE_ROOT:-./artifacts/m8-recordings}:/recordings/nvr
       - ./scenes:/test-scenes:ro
     ports:
       - "127.0.0.1:18087:8080"

@@ -1,4 +1,4 @@
-import type { ApiErrorEnvelope, PlaybackCapabilities, SceneDocument, SceneEvent, StudioCapabilities, StudioDocument } from './types';
+import type { ApiErrorEnvelope, NvrExport, NvrStatus, NvrTimeline, PlaybackCapabilities, SceneDocument, SceneEvent, StudioCapabilities, StudioDocument } from './types';
 
 export class ControlApiError extends Error {
   readonly status: number;
@@ -137,3 +137,48 @@ export function connectSceneEvents(
     socket?.close();
   };
 }
+
+async function nvrRequest<T>(path: string, init?: RequestInit): Promise<T> {
+  const response = await fetch(`/api/v1/nvr${path}`, { cache: 'no-store', ...init });
+  if (!response.ok) throw await parseError(response);
+  return (await response.json()) as T;
+}
+
+export const fetchNvrStatus = (signal?: AbortSignal) =>
+  nvrRequest<NvrStatus>('/status', { signal });
+
+export const fetchNvrTimeline = (fromUtcMs: number, toUtcMs: number, cameraIds: string[], signal?: AbortSignal) => {
+  const query = new URLSearchParams({ from: String(fromUtcMs), to: String(toUtcMs) });
+  cameraIds.forEach((cameraId) => query.append('cameraId', cameraId));
+  return nvrRequest<NvrTimeline>(`/timeline?${query}`, { signal });
+};
+
+export const setNvrLock = (segmentId: string, locked: boolean) =>
+  nvrRequest<{ id: string; locked: boolean }>(`/locks/${segmentId}`, {
+    method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ locked }),
+  });
+
+export const deleteNvrSegment = (segmentId: string) =>
+  nvrRequest<{ id: string; deleted: boolean }>(`/segments/${segmentId}`, { method: 'DELETE' });
+
+export const createNvrSnapshot = (segmentId: string, offsetMs: number) =>
+  nvrRequest<{ id: string; sha256: string; downloadUrl: string }>('/snapshots', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ segmentId, offsetMs }),
+  });
+
+export const createNvrExport = (
+  cameraIds: string[], fromUtcMs: number, toUtcMs: number, mode: 'fast' | 'exact',
+) => nvrRequest<NvrExport>('/exports', {
+  method: 'POST', headers: { 'Content-Type': 'application/json' },
+  body: JSON.stringify({ cameraIds, fromUtcMs, toUtcMs, mode, lock: true }),
+});
+
+export const createPlaybackLease = (segmentId: string, ttlSeconds = 30) =>
+  nvrRequest<{ id: string; segmentId: string; expiresUtcMs: number }>('/playback-leases', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ segmentId, ttlSeconds }),
+  });
+
+export const releasePlaybackLease = (leaseId: string) =>
+  nvrRequest<{ id: string; released: boolean }>(`/playback-leases/${leaseId}`, { method: 'DELETE' });

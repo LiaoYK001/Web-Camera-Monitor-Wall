@@ -9,6 +9,7 @@ import {
 } from 'react';
 import { connectSceneEvents, ControlApiError, fetchStudio, fetchStudioCapabilities, replaceStudio, studioAction } from './api';
 import DirectPreview from './DirectPreview';
+import NvrTimeline from './NvrTimeline';
 import ProgramPreview from './ProgramPreview';
 import type { AudioMonitoring, FilterKind, PlaybackMode, ScaleMode, SceneDocument, SceneFilter, SceneItem, SceneSource, StudioCapabilities, StudioDocument, Transport } from './types';
 
@@ -102,6 +103,7 @@ function EmptyState({ onAdd }: { onAdd: () => void }) {
 }
 
 export default function App() {
+  const [productArea, setProductArea] = useState<'studio' | 'archive'>(window.location.hash === '#archive' ? 'archive' : 'studio');
   const [baseline, setBaseline] = useState<SceneDocument | null>(null);
   const [draft, setDraft] = useState<SceneDocument | null>(null);
   const [studioBaseline, setStudioBaseline] = useState<StudioDocument | null>(null);
@@ -200,7 +202,10 @@ export default function App() {
   );
 
   useEffect(() => {
-    const changed = () => setPlaybackMode(initialPlaybackMode());
+    const changed = () => {
+      setPlaybackMode(initialPlaybackMode());
+      setProductArea(window.location.hash === '#archive' ? 'archive' : 'studio');
+    };
     window.addEventListener('hashchange', changed);
     return () => window.removeEventListener('hashchange', changed);
   }, []);
@@ -620,6 +625,13 @@ export default function App() {
     await reload();
   };
 
+  if (productArea === 'archive') {
+    return <NvrTimeline onBack={() => {
+      window.history.replaceState(null, '', window.location.pathname);
+      setProductArea('studio');
+    }} />;
+  }
+
   if (!draft || !studioDraft) {
     return (
       <main className="boot-screen">
@@ -670,6 +682,10 @@ export default function App() {
           />
         </div>
         <div className="top-actions">
+          <button className="ghost-button" type="button" onClick={() => {
+            window.history.replaceState(null, '', '#archive');
+            setProductArea('archive');
+          }}>录像时间线</button>
           <span className={`connection ${connection}`}>
             <i aria-hidden="true" />
             {connection === 'online' ? '实时同步' : connection === 'connecting' ? '正在连接' : '连接中断'}

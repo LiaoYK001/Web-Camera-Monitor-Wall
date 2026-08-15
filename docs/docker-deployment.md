@@ -2,7 +2,7 @@
 
 本文面向从 Git 仓库克隆代码、在部署主机自行构建产品镜像的操作者。命令均在仓库根目录执行。
 
-> 当前项目已完成 M0–M8，正在开发 M9 Timeline。文件认证、恢复、硬件编码安全回退、校验备份恢复、单镜像受信 HTTPS/TURN、可验证发布、Canvas Studio 及独立 NVR Core 均已通过实现门禁。基础 HTTP 模式只能用于主机回环，远程部署必须使用本指南的 production 覆盖。
+> 当前项目已完成 M0–M9，下一阶段为 M10 Device Operations。文件认证、恢复、硬件编码安全回退、校验备份恢复、单镜像受信 HTTPS/TURN、可验证发布、Canvas Studio、独立 NVR Core 及时间线/证据导出均已通过实现门禁。基础 HTTP 模式只能用于主机回环，远程部署必须使用本指南的 production 覆盖。
 
 ## 1. 部署组成与数据边界
 
