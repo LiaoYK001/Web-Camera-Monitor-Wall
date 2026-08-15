@@ -220,10 +220,84 @@ bool set_default_string(json_t *object, const char *key, const char *value)
     return encoded && json_object_set_new(object, key, encoded) == 0;
 }
 
+bool set_default_boolean(json_t *object, const char *key, bool value)
+{
+    if (json_object_get(object, key) != nullptr)
+        return true;
+    json_t *encoded = json_boolean(value);
+    return encoded && json_object_set_new(object, key, encoded) == 0;
+}
+
+bool set_default_real(json_t *object, const char *key, double value)
+{
+    if (json_object_get(object, key) != nullptr)
+        return true;
+    json_t *encoded = json_real(value);
+    return encoded && json_object_set_new(object, key, encoded) == 0;
+}
+
+bool set_default_array(json_t *object, const char *key)
+{
+    if (json_object_get(object, key) != nullptr)
+        return true;
+    json_t *encoded = json_array();
+    return encoded && json_object_set_new(object, key, encoded) == 0;
+}
+
 std::string make_temporary_name(std::string_view filename, std::uint64_t sequence)
 {
     return "." + std::string(filename) + ".tmp." + std::to_string(static_cast<long long>(getpid())) + "." +
            std::to_string(sequence);
+}
+
+std::optional<std::string> write_private_content_atomic(const std::filesystem::path &path,
+                                                        std::string_view content)
+{
+    PrivateDirectoryResult directory = open_private_directory(path, true);
+    if (!directory.ok())
+        return directory.error;
+    if (const auto target_error = validate_existing_target(directory.descriptor.get(), directory.filename))
+        return target_error;
+
+    static std::atomic_uint64_t temporary_sequence = 0;
+    std::string temporary_name;
+    FileDescriptor temporary;
+    for (int attempt = 0; attempt < 100; ++attempt) {
+        temporary_name = make_temporary_name(directory.filename, temporary_sequence.fetch_add(1));
+        temporary = FileDescriptor(openat(directory.descriptor.get(), temporary_name.c_str(),
+                                          O_WRONLY | O_CREAT | O_EXCL | O_CLOEXEC | O_NOFOLLOW,
+                                          S_IRUSR | S_IWUSR));
+        if (temporary)
+            break;
+        if (errno != EEXIST)
+            return system_failure("creating a temporary scene file");
+    }
+    if (!temporary)
+        return "could not allocate a unique temporary scene file";
+
+    bool renamed = false;
+    const auto cleanup = [&] {
+        temporary.reset();
+        if (!renamed)
+            unlinkat(directory.descriptor.get(), temporary_name.c_str(), 0);
+    };
+    if (fchmod(temporary.get(), S_IRUSR | S_IWUSR) != 0 ||
+        !write_all(temporary.get(), content) || fsync(temporary.get()) != 0 ||
+        !temporary.close_checked()) {
+        const std::string error = system_failure("writing the temporary scene file");
+        cleanup();
+        return error;
+    }
+    if (renameat(directory.descriptor.get(), temporary_name.c_str(), directory.descriptor.get(),
+                 directory.filename.c_str()) != 0) {
+        const std::string error = system_failure("committing the scene file");
+        cleanup();
+        return error;
+    }
+    renamed = true;
+    if (fsync(directory.descriptor.get()) != 0)
+        return system_failure("synchronizing the scene storage directory");
+    return std::nullopt;
 }
 
 } // namespace
@@ -255,7 +329,7 @@ SceneMigrationResult migrate_scene_json(std::string_view input)
         result.document = std::move(parsed.document);
         return result;
     }
-    if (version > 2)
+    if (version > 3)
         return migration_failure("scene schemaVersion is unsupported");
     if (version == 0 && json_object_get(root.get(), "revision") != nullptr)
         return migration_failure("schemaVersion 0 scene must not contain revision");
@@ -284,6 +358,25 @@ SceneMigrationResult migrate_scene_json(std::string_view input)
             return migration_failure("could not migrate source monitoring");
         if (!set_default_integer(source, "audioTrack", 1))
             return migration_failure("could not migrate source audio track");
+        if (!set_default_array(source, "filters"))
+            return migration_failure("could not migrate source filters");
+    }
+
+    json_t *items = json_object_get(root.get(), "items");
+    if (!json_is_array(items))
+        return migration_failure("legacy scene items must be an array");
+    std::size_t item_index = 0;
+    json_t *item = nullptr;
+    json_array_foreach(items, item_index, item)
+    {
+        if (!json_is_object(item))
+            return migration_failure("legacy item entry must be an object");
+        if (!set_default_boolean(item, "locked", false) ||
+            !set_default_string(item, "groupId", "") ||
+            !set_default_real(item, "rotation", 0.0) ||
+            !set_default_real(item, "opacity", 1.0) ||
+            !set_default_string(item, "blendMode", "normal"))
+            return migration_failure("could not migrate item transforms");
     }
 
     char *encoded = json_dumps(root.get(), JSON_COMPACT | JSON_SORT_KEYS | JSON_REAL_PRECISION(6));
@@ -311,65 +404,7 @@ std::optional<std::string> save_scene_file_atomic(const std::filesystem::path &p
     if (serialized.json.size() > maximum_scene_json_bytes)
         return "encoded scene JSON exceeds the one MiB limit";
 
-    PrivateDirectoryResult directory = open_private_directory(path, true);
-    if (!directory.ok())
-        return directory.error;
-    if (const auto target_error = validate_existing_target(directory.descriptor.get(), directory.filename))
-        return target_error;
-
-    static std::atomic_uint64_t temporary_sequence = 0;
-    std::string temporary_name;
-    FileDescriptor temporary;
-    for (int attempt = 0; attempt < 100; ++attempt) {
-        temporary_name = make_temporary_name(directory.filename, temporary_sequence.fetch_add(1));
-        temporary = FileDescriptor(openat(directory.descriptor.get(), temporary_name.c_str(),
-                                          O_WRONLY | O_CREAT | O_EXCL | O_CLOEXEC | O_NOFOLLOW,
-                                          S_IRUSR | S_IWUSR));
-        if (temporary)
-            break;
-        if (errno != EEXIST)
-            return system_failure("creating a temporary scene file");
-    }
-    if (!temporary)
-        return "could not allocate a unique temporary scene file";
-
-    bool renamed = false;
-    const auto cleanup = [&] {
-        temporary.reset();
-        if (!renamed)
-            unlinkat(directory.descriptor.get(), temporary_name.c_str(), 0);
-    };
-
-    if (fchmod(temporary.get(), S_IRUSR | S_IWUSR) != 0) {
-        const std::string error = system_failure("restricting the temporary scene file");
-        cleanup();
-        return error;
-    }
-    if (!write_all(temporary.get(), serialized.json)) {
-        const std::string error = system_failure("writing the temporary scene file");
-        cleanup();
-        return error;
-    }
-    if (fsync(temporary.get()) != 0) {
-        const std::string error = system_failure("synchronizing the temporary scene file");
-        cleanup();
-        return error;
-    }
-    if (!temporary.close_checked()) {
-        const std::string error = system_failure("closing the temporary scene file");
-        cleanup();
-        return error;
-    }
-    if (renameat(directory.descriptor.get(), temporary_name.c_str(), directory.descriptor.get(),
-                 directory.filename.c_str()) != 0) {
-        const std::string error = system_failure("committing the scene file");
-        cleanup();
-        return error;
-    }
-    renamed = true;
-    if (fsync(directory.descriptor.get()) != 0)
-        return system_failure("synchronizing the scene storage directory");
-    return std::nullopt;
+    return write_private_content_atomic(path, serialized.json);
 }
 
 SceneFileLoadResult load_scene_file(const std::filesystem::path &path)
@@ -419,6 +454,9 @@ SceneFileLoadResult load_scene_file(const std::filesystem::path &path)
     if (!migrated.ok())
         return load_failure(std::move(migrated.error));
     if (migrated.migrated) {
+        const std::filesystem::path backup(path.string() + ".pre-v4.backup");
+        if (const auto backup_error = write_private_content_atomic(backup, content))
+            return load_failure("scene migration backup could not be preserved: " + *backup_error);
         if (const auto save_error = save_scene_file_atomic(path, *migrated.document))
             return load_failure("scene migration could not be committed: " + *save_error);
     }

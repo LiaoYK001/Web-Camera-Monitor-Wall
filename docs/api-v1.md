@@ -1,8 +1,8 @@
 # Control API v1 / 控制接口 v1
 
-M1 exposes a small HTTP/1.1 and WebSocket control plane from `webobsd`. M2 extends the same origin with a constrained program WHEP proxy. M3 adds source-scoped Direct WHEP routes and a capability document. M4 adds composite-only browser sources. M5 completes the unified audio model, Direct Web Audio mixing, Composite Opus, and AAC recordings. M6 currently adds file-backed single-operator authentication, remote authority authorization, failed-authentication rate limiting, frame-freshness source health and recovery, structured audit events, probes, and metrics. The scene API uses the same [scene document](scene-schema-v3.md) that libobs and the browser renderer consume and that the atomic scene store persists.
+M1–M6 provide the secured HTTP/WebSocket/WebRTC control and playback plane. M7 adds a versioned Studio collection, isolated Preview/Program buses, transactional Cut/Fade Take, bounded history, and explicit Direct/Hybrid fallback analysis. The APIs use the same current [scene document](scene-schema-v4.md) consumed by libobs and the browser editor.
 
-M1 由 `webobsd` 提供一组精简的 HTTP/1.1 与 WebSocket 控制接口，M2 在同源下增加受限节目 WHEP 代理，M3 再增加按来源隔离的 Direct WHEP 路由和能力文档，M4 增加仅服务端合成的浏览器源，M5 完成统一音频模型、Direct Web Audio 混音、Composite Opus 和 AAC 录像。M6 起步切片增加文件型单操作员认证、远程 authority 授权、认证失败限流、探针和指标。场景接口、libobs、浏览器渲染和原子场景存储共用同一份[场景文档](scene-schema-v3.md)。
+M1–M6 提供受保护的 HTTP/WebSocket/WebRTC 控制与播放平面；M7 增加版本化 Studio 集合、隔离 Preview/Program 总线、事务性 Cut/Fade Take、有界历史和明确的 Direct/Hybrid 降级分析。接口、libobs 与浏览器编辑器共用当前[场景文档](scene-schema-v4.md)。
 
 ## Security boundary / 安全边界
 
@@ -63,7 +63,7 @@ Returns the bundled React/TypeScript scene editor. The non-hashed HTML entry is 
 Returns `200` while the control thread is serving:
 
 ```json
-{"status":"ok","milestone":"M6"}
+{"status":"ok","milestone":"M7"}
 ```
 
 This route is intentionally unauthenticated and contains no configuration details.
@@ -245,6 +245,20 @@ All error bodies use a stable envelope and include the current revision without 
 {"error":{"code":"revision_conflict","message":"scene revision does not match If-Match"},"revision":4}
 ```
 
+### Studio collection endpoints / Studio 集合接口
+
+`GET /api/v1/studio` returns the redacted Studio collection and an ETag containing the Studio revision. `PUT /api/v1/studio` replaces the complete collection using the same JSON content type, `If-Match`, body limit, secret-restoration, private atomic persistence, and error envelope as the scene endpoint. Studio saves only change Preview definitions; they do not mutate the active Program runtime.
+
+`GET /api/v1/studio` 返回脱敏集合及 Studio revision ETag；`PUT /api/v1/studio` 使用与场景接口相同的 JSON、`If-Match`、大小限制、秘密恢复、私有原子持久化及错误信封。保存集合只修改 Preview 定义，不会直接改变活动 Program。
+
+`POST /api/v1/studio/take`, `/undo`, and `/redo` require `If-Match` and an empty body. Take prepares the selected Preview—including nested scenes and filters—then atomically commits Cut or Fade and persists the promoted Program. Undo/redo restore both the collection and active Program transactionally; runtime or persistence failure rolls the operation back. Taking when Program and Preview have the same ID still applies a changed saved definition.
+
+`POST /api/v1/studio/take`、`/undo`、`/redo` 均要求 `If-Match` 且不接收请求体。Take 会先准备完整 Preview，再原子提交 Cut/Fade 并持久化提升后的 Program；撤销重做会事务性恢复集合与活动 Program，运行时或持久化失败会回滚。
+
+`GET /api/v1/studio/capabilities` returns each scene's requested Direct/Hybrid result, exactness, selected fallback, and human-readable reasons. It never returns source URLs, credentials, internal routes, or file contents.
+
+`GET /api/v1/studio/capabilities` 返回每个场景的 Direct/Hybrid 精确性、实际选择及降级原因，绝不返回来源 URL、凭据、内部路由或文件内容。
+
 ## WebSocket / WebSocket 事件
 
 Connect to `ws://127.0.0.1:8080/api/v1/ws` from a page served under the same local authority. The upgrade must include an exact matching `Origin`, for example both Host and Origin using `127.0.0.1:8080`.
@@ -252,7 +266,7 @@ Connect to `ws://127.0.0.1:8080/api/v1/ws` from a page served under the same loc
 连接建立后首先收到完整的脱敏快照：
 
 ```json
-{"type":"scene.snapshot","scene":{"schemaVersion":3,"revision":4}}
+{"type":"scene.snapshot","scene":{"schemaVersion":4,"revision":4}}
 ```
 
 Each successful PUT broadcasts the committed public scene to all connected clients:

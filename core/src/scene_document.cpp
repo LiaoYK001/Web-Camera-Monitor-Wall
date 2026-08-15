@@ -160,6 +160,43 @@ bool valid_color(std::string_view value)
     });
 }
 
+bool valid_asset_path(std::string_view value)
+{
+    if (value.empty() || value.size() > 2048 || value.front() != '/')
+        return false;
+    if (value.find('\0') != std::string_view::npos || value.find("/../") != std::string_view::npos ||
+        value.ends_with("/.."))
+        return false;
+    return value.starts_with("/assets/") || value.starts_with("/recordings/");
+}
+
+bool valid_filter_kind(std::string_view value)
+{
+    constexpr std::array<std::string_view, 7> kinds = {
+        "crop-pad", "opacity", "color-correction", "mask-blend", "lut", "scaling", "delay"};
+    return std::find(kinds.begin(), kinds.end(), value) != kinds.end();
+}
+
+bool valid_scaling_resolution(std::string_view value)
+{
+    const std::size_t separator = value.find('x');
+    if (separator == std::string_view::npos || separator == 0 || separator + 1 >= value.size() ||
+        value.find('x', separator + 1) != std::string_view::npos)
+        return false;
+    const auto parse_dimension = [](std::string_view text) -> std::optional<unsigned long> {
+        if (text.empty() || text.size() > 4 ||
+            !std::all_of(text.begin(), text.end(), [](unsigned char c) { return c >= '0' && c <= '9'; }))
+            return std::nullopt;
+        unsigned long parsed = 0;
+        for (const char character : text)
+            parsed = parsed * 10 + static_cast<unsigned long>(character - '0');
+        return parsed;
+    };
+    const auto width = parse_dimension(value.substr(0, separator));
+    const auto height = parse_dimension(value.substr(separator + 1));
+    return width && height && *width >= 16 && *width <= 8192 && *height >= 16 && *height <= 8192;
+}
+
 bool valid_rtsp_url(std::string_view value)
 {
     constexpr std::array<std::string_view, 2> schemes = {"rtsp://", "rtsps://"};
@@ -222,8 +259,6 @@ std::optional<std::string> validate_scene_document(const SceneDocument &document
         return "canvas height must be an even number between 16 and 8192";
     if (!valid_color(document.canvas.background_color))
         return "canvas backgroundColor must use #RRGGBB";
-    if (document.canvas.background_color != "#000000")
-        return "M1 canvas backgroundColor must be #000000";
     if (document.sources.size() > maximum_scene_sources)
         return "scene has too many sources";
     if (document.items.size() > maximum_scene_items)
@@ -258,8 +293,22 @@ std::optional<std::string> validate_scene_document(const SceneDocument &document
                 return "browser source customCss exceeds the 32 KiB limit";
             if (!source.rtsp_url.empty())
                 return "browser source must not contain RTSP-only settings";
+        } else if (source.kind == "image" || source.kind == "media") {
+            if (!valid_asset_path(source.file_path))
+                return "image and media source filePath must be an absolute /assets or /recordings path";
+        } else if (source.kind == "text") {
+            if (source.text.empty() || source.text.size() > 8192)
+                return "text source content must be between 1 and 8192 bytes";
+            if (!valid_color(source.color))
+                return "text source color must use #RRGGBB";
+        } else if (source.kind == "color") {
+            if (!valid_color(source.color))
+                return "color source color must use #RRGGBB";
+        } else if (source.kind == "nested") {
+            if (!valid_identifier(source.nested_scene_id))
+                return "nested source sceneId is invalid";
         } else {
-            return "source kind must be rtsp or browser";
+            return "source kind must be rtsp, browser, image, text, color, media, or nested";
         }
         if (!std::isfinite(source.volume) || source.volume < 0.0 || source.volume > 1.0)
             return "source volume must be between 0 and 1";
@@ -270,6 +319,24 @@ std::optional<std::string> validate_scene_document(const SceneDocument &document
             return "source monitoring must be off, monitor-only, or monitor-and-output";
         if (source.audio_track < 1 || source.audio_track > 6)
             return "source audioTrack must be between 1 and 6";
+        if (source.filters.size() > maximum_source_filters)
+            return "source has too many filters";
+        std::unordered_set<std::string> filter_ids;
+        for (const SceneFilter &filter : source.filters) {
+            if (!valid_identifier(filter.id) || !filter_ids.insert(filter.id).second)
+                return "source filter ids must be valid and unique";
+            if (!valid_filter_kind(filter.kind))
+                return "source filter kind is unsupported";
+            if (!std::isfinite(filter.amount) || filter.amount < -10000.0 || filter.amount > 10000.0)
+                return "source filter amount is out of range";
+            if (filter.value.size() > 4096)
+                return "source filter value exceeds the 4 KiB limit";
+            if ((filter.kind == "lut" || filter.kind == "mask-blend") &&
+                !valid_asset_path(filter.value))
+                return "LUT and mask filter values must be absolute /assets or /recordings paths";
+            if (filter.kind == "scaling" && !valid_scaling_resolution(filter.value))
+                return "scaling filter value must use WIDTHxHEIGHT with dimensions between 16 and 8192";
+        }
     }
     if (browser_source_count > maximum_browser_sources)
         return "scene has too many browser sources";
@@ -297,6 +364,16 @@ std::optional<std::string> validate_scene_document(const SceneDocument &document
             z_indexes[static_cast<std::size_t>(item.z_index)])
             return "item zIndex values must be unique and contiguous";
         z_indexes[static_cast<std::size_t>(item.z_index)] = true;
+        if (!item.group_id.empty() && !valid_identifier(item.group_id))
+            return "item groupId is invalid";
+        if (!std::isfinite(item.rotation_degrees) || item.rotation_degrees < -360.0 ||
+            item.rotation_degrees > 360.0)
+            return "item rotation must be between -360 and 360 degrees";
+        if (!std::isfinite(item.opacity) || item.opacity < 0.0 || item.opacity > 1.0)
+            return "item opacity must be between 0 and 1";
+        if (item.blend_mode != "normal" && item.blend_mode != "add" &&
+            item.blend_mode != "multiply" && item.blend_mode != "screen")
+            return "item blendMode is unsupported";
     }
     return std::nullopt;
 }
@@ -364,7 +441,7 @@ SceneParseResult parse_scene_json(std::string_view input)
         if (source.kind == "rtsp") {
             if (!has_only_fields(source_object,
                                  {"id", "kind", "name", "rtspUrl", "transport", "muted", "volume",
-                                  "syncOffsetMs", "monitoring", "audioTrack"}))
+                                  "syncOffsetMs", "monitoring", "audioTrack", "filters"}))
                 return parse_failure("RTSP source contains an unsupported field");
             if (!read_string(source_object, "rtspUrl", source.rtsp_url, 2048, error, "source") ||
                 !read_string(source_object, "transport", source.transport, 4, error, "source"))
@@ -373,7 +450,7 @@ SceneParseResult parse_scene_json(std::string_view input)
             if (!has_only_fields(source_object,
                                  {"id", "kind", "name", "url", "width", "height", "fps", "customCss",
                                   "shutdownWhenHidden", "restartWhenActive", "muted", "volume",
-                                  "syncOffsetMs", "monitoring", "audioTrack"}))
+                                  "syncOffsetMs", "monitoring", "audioTrack", "filters"}))
                 return parse_failure("browser source contains an unsupported field");
             source.transport.clear();
             if (!read_string(source_object, "url", source.browser_url, 2048, error, "source") ||
@@ -387,8 +464,60 @@ SceneParseResult parse_scene_json(std::string_view input)
                 !read_boolean(source_object, "restartWhenActive", source.restart_when_active, error,
                               "source"))
                 return parse_failure(std::move(error));
+        } else if (source.kind == "image") {
+            if (!has_only_fields(source_object,
+                                 {"id", "kind", "name", "filePath", "muted", "volume",
+                                  "syncOffsetMs", "monitoring", "audioTrack", "filters"}) ||
+                !read_string(source_object, "filePath", source.file_path, 2048, error, "source"))
+                return parse_failure("image source is invalid or contains an unsupported field");
+        } else if (source.kind == "media") {
+            if (!has_only_fields(source_object,
+                                 {"id", "kind", "name", "filePath", "loop", "muted", "volume",
+                                  "syncOffsetMs", "monitoring", "audioTrack", "filters"}) ||
+                !read_string(source_object, "filePath", source.file_path, 2048, error, "source") ||
+                !read_boolean(source_object, "loop", source.loop, error, "source"))
+                return parse_failure("media source is invalid or contains an unsupported field");
+        } else if (source.kind == "text") {
+            if (!has_only_fields(source_object,
+                                 {"id", "kind", "name", "text", "color", "muted", "volume",
+                                  "syncOffsetMs", "monitoring", "audioTrack", "filters"}) ||
+                !read_string(source_object, "text", source.text, 8192, error, "source") ||
+                !read_string(source_object, "color", source.color, 7, error, "source"))
+                return parse_failure("text source is invalid or contains an unsupported field");
+        } else if (source.kind == "color") {
+            if (!has_only_fields(source_object,
+                                 {"id", "kind", "name", "color", "muted", "volume",
+                                  "syncOffsetMs", "monitoring", "audioTrack", "filters"}) ||
+                !read_string(source_object, "color", source.color, 7, error, "source"))
+                return parse_failure("color source is invalid or contains an unsupported field");
+        } else if (source.kind == "nested") {
+            if (!has_only_fields(source_object,
+                                 {"id", "kind", "name", "sceneId", "muted", "volume",
+                                  "syncOffsetMs", "monitoring", "audioTrack", "filters"}) ||
+                !read_string(source_object, "sceneId", source.nested_scene_id, 64, error, "source"))
+                return parse_failure("nested source is invalid or contains an unsupported field");
         } else {
-            return parse_failure("source kind must be rtsp or browser");
+            return parse_failure("source kind is unsupported");
+        }
+
+        json_t *filters = json_object_get(source_object, "filters");
+        if (!json_is_array(filters) || json_array_size(filters) > maximum_source_filters)
+            return parse_failure("source filters must be an array within the configured limit");
+        std::size_t filter_index = 0;
+        json_t *filter_object = nullptr;
+        json_array_foreach(filters, filter_index, filter_object)
+        {
+            if (!json_is_object(filter_object) ||
+                !has_only_fields(filter_object, {"id", "kind", "enabled", "amount", "value"}))
+                return parse_failure("source filter is invalid or contains an unsupported field");
+            SceneFilter filter;
+            if (!read_string(filter_object, "id", filter.id, 64, error, "filter") ||
+                !read_string(filter_object, "kind", filter.kind, 32, error, "filter") ||
+                !read_boolean(filter_object, "enabled", filter.enabled, error, "filter") ||
+                !read_number(filter_object, "amount", filter.amount, error, "filter") ||
+                !read_string_allow_empty(filter_object, "value", filter.value, 4096, error, "filter"))
+                return parse_failure(std::move(error));
+            source.filters.push_back(std::move(filter));
         }
         document.sources.push_back(std::move(source));
     }
@@ -403,7 +532,7 @@ SceneParseResult parse_scene_json(std::string_view input)
         if (!json_is_object(item_object) ||
             !has_only_fields(item_object,
                              {"id", "sourceId", "x", "y", "width", "height", "scaleMode", "crop", "zIndex",
-                              "visible"}))
+                              "visible", "locked", "groupId", "rotation", "opacity", "blendMode"}))
             return parse_failure("item entry is invalid or contains an unsupported field");
         SceneItem item;
         if (!read_string(item_object, "id", item.id, 64, error, "item") ||
@@ -415,6 +544,13 @@ SceneParseResult parse_scene_json(std::string_view input)
             !read_integer(item_object, "zIndex", 0, static_cast<int>(maximum_scene_items - 1), item.z_index,
                           error, "item") ||
             !read_boolean(item_object, "visible", item.visible, error, "item"))
+            return parse_failure(std::move(error));
+
+        if (!read_boolean(item_object, "locked", item.locked, error, "item") ||
+            !read_string_allow_empty(item_object, "groupId", item.group_id, 64, error, "item") ||
+            !read_number(item_object, "rotation", item.rotation_degrees, error, "item") ||
+            !read_number(item_object, "opacity", item.opacity, error, "item") ||
+            !read_string(item_object, "blendMode", item.blend_mode, 16, error, "item"))
             return parse_failure(std::move(error));
 
         if (json_object_get(item_object, "scaleMode") != nullptr &&
@@ -465,6 +601,7 @@ SceneSerializeResult serialize_scene_json(const SceneDocument &document, SceneJs
 
     for (const SceneSource &source : document.sources) {
         JsonPtr object = make_object();
+        JsonPtr filters(json_array());
         if (!object || !set_new(object.get(), "id", json_stringn(source.id.data(), source.id.size())) ||
             !set_new(object.get(), "kind", json_stringn(source.kind.data(), source.kind.size())) ||
             !set_new(object.get(), "name", json_stringn(source.name.data(), source.name.size())) ||
@@ -473,8 +610,21 @@ SceneSerializeResult serialize_scene_json(const SceneDocument &document, SceneJs
             !set_new(object.get(), "syncOffsetMs", json_integer(source.sync_offset_ms)) ||
             !set_new(object.get(), "monitoring",
                      json_stringn(source.monitoring.data(), source.monitoring.size())) ||
-            !set_new(object.get(), "audioTrack", json_integer(source.audio_track)))
+            !set_new(object.get(), "audioTrack", json_integer(source.audio_track)) || !filters)
             return serialize_failure("could not build source JSON");
+        for (const SceneFilter &filter : source.filters) {
+            JsonPtr filter_object = make_object();
+            if (!filter_object ||
+                !set_new(filter_object.get(), "id", json_stringn(filter.id.data(), filter.id.size())) ||
+                !set_new(filter_object.get(), "kind", json_stringn(filter.kind.data(), filter.kind.size())) ||
+                !set_new(filter_object.get(), "enabled", json_boolean(filter.enabled)) ||
+                !set_new(filter_object.get(), "amount", json_real(filter.amount)) ||
+                !set_new(filter_object.get(), "value", json_stringn(filter.value.data(), filter.value.size())) ||
+                json_array_append_new(filters.get(), filter_object.release()) != 0)
+                return serialize_failure("could not build source filter JSON");
+        }
+        if (!set_new(object.get(), "filters", filters.release()))
+            return serialize_failure("could not build source filter JSON");
         if (source.kind == "rtsp") {
             const std::string safe_url = view == SceneJsonView::public_api
                                              ? redact_rtsp_credentials(source.rtsp_url)
@@ -483,7 +633,7 @@ SceneSerializeResult serialize_scene_json(const SceneDocument &document, SceneJs
                 !set_new(object.get(), "transport",
                          json_stringn(source.transport.data(), source.transport.size())))
                 return serialize_failure("could not build RTSP source JSON");
-        } else {
+        } else if (source.kind == "browser") {
             const std::string safe_url = view == SceneJsonView::public_api
                                              ? redact_browser_url(source.browser_url)
                                              : source.browser_url;
@@ -496,6 +646,26 @@ SceneSerializeResult serialize_scene_json(const SceneDocument &document, SceneJs
                 !set_new(object.get(), "shutdownWhenHidden", json_boolean(source.shutdown_when_hidden)) ||
                 !set_new(object.get(), "restartWhenActive", json_boolean(source.restart_when_active)))
                 return serialize_failure("could not build browser source JSON");
+        } else if (source.kind == "image") {
+            if (!set_new(object.get(), "filePath",
+                         json_stringn(source.file_path.data(), source.file_path.size())))
+                return serialize_failure("could not build image source JSON");
+        } else if (source.kind == "media") {
+            if (!set_new(object.get(), "filePath",
+                         json_stringn(source.file_path.data(), source.file_path.size())) ||
+                !set_new(object.get(), "loop", json_boolean(source.loop)))
+                return serialize_failure("could not build media source JSON");
+        } else if (source.kind == "text") {
+            if (!set_new(object.get(), "text", json_stringn(source.text.data(), source.text.size())) ||
+                !set_new(object.get(), "color", json_stringn(source.color.data(), source.color.size())))
+                return serialize_failure("could not build text source JSON");
+        } else if (source.kind == "color") {
+            if (!set_new(object.get(), "color", json_stringn(source.color.data(), source.color.size())))
+                return serialize_failure("could not build color source JSON");
+        } else if (source.kind == "nested") {
+            if (!set_new(object.get(), "sceneId",
+                         json_stringn(source.nested_scene_id.data(), source.nested_scene_id.size())))
+                return serialize_failure("could not build nested source JSON");
         }
         if (json_array_append_new(sources.get(), object.release()) != 0)
             return serialize_failure("could not build source JSON");
@@ -516,6 +686,12 @@ SceneSerializeResult serialize_scene_json(const SceneDocument &document, SceneJs
             !set_new(object.get(), "crop", crop.release()) ||
             !set_new(object.get(), "zIndex", json_integer(item.z_index)) ||
             !set_new(object.get(), "visible", json_boolean(item.visible)) ||
+            !set_new(object.get(), "locked", json_boolean(item.locked)) ||
+            !set_new(object.get(), "groupId", json_stringn(item.group_id.data(), item.group_id.size())) ||
+            !set_new(object.get(), "rotation", json_real(item.rotation_degrees)) ||
+            !set_new(object.get(), "opacity", json_real(item.opacity)) ||
+            !set_new(object.get(), "blendMode",
+                     json_stringn(item.blend_mode.data(), item.blend_mode.size())) ||
             json_array_append_new(items.get(), object.release()) != 0)
             return serialize_failure("could not build item JSON");
     }

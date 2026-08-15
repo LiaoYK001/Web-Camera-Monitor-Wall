@@ -47,7 +47,8 @@ public:
     [[nodiscard]] SceneDocument private_document_snapshot() const;
     [[nodiscard]] SourceHealthSnapshot source_health_snapshot() const;
     SceneUpdateResult replace(std::string_view candidate_json,
-                              std::optional<std::uint64_t> expected_revision);
+                              std::optional<std::uint64_t> expected_revision,
+                              std::string_view transition_kind = "cut", int duration_ms = 0);
 
 private:
     mutable std::mutex mutex_;

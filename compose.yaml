@@ -37,6 +37,7 @@ services:
       MTX_WEBRTCADDITIONALHOSTS: ${WEBOBS_WEBRTC_ADDITIONAL_HOSTS:-127.0.0.1}
     volumes:
       - webobs-config:/config/webobs
+      - ./assets:/assets:ro
       - ./recordings:/recordings
     ports:
       - "${WEBOBS_BIND_ADDRESS:-127.0.0.1}:${WEBOBS_HTTP_PORT:-8080}:${WEBOBS_HTTP_PORT:-8080}"

@@ -8,19 +8,19 @@ This roadmap describes milestone order and acceptance gates, not promised releas
 
 ## Current position / 当前位置
 
-**🚧 M7 — Canvas Studio 正在开发；M0–M6 已完成，当前进入 OBS 风格画布工作台起步阶段。**
+**🚧 M8 — NVR Core 正在开发；M0–M7 已完成，Canvas Studio 已通过退出门禁。**
 
-M0 through M6 are complete. M6 closed after trusted HTTPS/TURN, hardware fallback, validated backup/restore, least-privilege attested releases, recursive corresponding-source distribution, and automatic unhealthy-candidate rollback all passed together with the complete M0–M5 regression suite. M7 implementation now starts from that production baseline.
+M0 through M7 are complete. M7 closed after schema-v4 migration, the six-scene Studio collection, mixed libobs sources, isolated Preview/Program, bounded undo/redo, restart persistence, and 500 alternating Cut/Fade operations passed in the final product image. M8 now starts the independent per-camera archive plane.
 
-M0 至 M6 已全部完成。M6 在受信 HTTPS/TURN、硬件回退、校验备份恢复、最小权限证明发布、递归对应源码分发及故障候选自动回滚全部通过，并完成 M0–M5 全回归后关闭。M7 现从该生产底座开始实现。
+M0 至 M7 已全部完成。M7 在 schema-v4 迁移、六场景 Studio 集合、混合 libobs 来源、Preview/Program 隔离、有界撤销重做、重启恢复及 500 次交替 Cut/Fade 全部通过最终产品镜像门禁后关闭。M8 现开始实现独立逐路归档平面。
 
-M7 implementation begins the planned expansion into an OBS-inspired Canvas Studio; M8–M13 remain planned as the full per-camera NVR workflow. The detailed scope, architecture boundaries, dependencies, non-goals, and exit gates are defined in [docs/future-milestones.md](docs/future-milestones.md).
+M7 delivers the OBS-inspired Canvas Studio; M8–M13 continue the per-camera NVR workflow. The detailed scope, architecture boundaries, dependencies, non-goals, and exit gates are defined in [docs/future-milestones.md](docs/future-milestones.md).
 
-M7 已开始实现受 OBS 启发的画布工作台；M8–M13 仍规划为完整逐路 NVR 工作流。详细范围、架构边界、依赖、非目标及完成门禁见 [docs/future-milestones.md](docs/future-milestones.md)。
+M7 已交付受 OBS 启发的画布工作台；M8–M13 继续实现完整逐路 NVR 工作流。详细范围、架构边界、依赖、非目标及完成门禁见 [docs/future-milestones.md](docs/future-milestones.md)。
 
 ```text
-M0–M6 complete                 M7 in progress                 M8–M13 planned
-M0–M6 已完成               -> M7 开发中                  -> M8–M13 已规划
+M0–M7 complete                 M8 in progress                 M9–M13 planned
+M0–M7 已完成               -> M8 开发中                  -> M9–M13 已规划
 ✅                              🚧 NOW                         🧭 NOT STARTED
 ```
 
@@ -70,6 +70,7 @@ M0 已于 2026-08-11 在真实摄像头门禁通过后完成。后续修改采�
 - M6 trusted HTTPS and TURN / M6 受信 HTTPS 与 TURN：the pinned Caddy gateway served an operator-provided certificate with hardened headers while the backend remained unpublished on container loopback; file-backed TURN settings reached pinned MediaMTX exactly once, credentials stayed out of image/container configuration and logs, HTTPS health passed, and the one product container stopped cleanly / 固定版本 Caddy 使用操作者提供证书和安全响应头提供 HTTPS，后端留在容器回环且未发布；文件型 TURN 配置只向固定版本 MediaMTX 注入一次，凭据未进入镜像/容器配置和日志，HTTPS 健康检查及单产品容器停机均通过。
 - M6 provenance and rollback / M6 来源证明与回滚：the release workflow is least-privilege and commit-pinned, emits linux/amd64 OCI labels, SBOM, max provenance, GitHub attestation, and a checksummed recursive corresponding-source bundle; a deterministic drill rejected an unhealthy candidate, restored the exact scene hash and prior image ID, then completed a healthy upgrade / 发布工作流使用最小权限并固定 action 提交，生成 linux/amd64 OCI 标签、SBOM、max provenance、GitHub attestation 及带校验和的递归对应源码包；确定性演练拒绝故障候选，恢复完全一致的场景哈希与旧 image ID，随后完成健康升级。
 - M6 final regression / M6 最终回归：the final image passed the full M0–M3 aggregate suite, M4 browser-source gate, M5 deterministic audio gate, and every M6 authentication/recovery, backup/restore, HTTPS/TURN, and upgrade/rollback gate; the longest lifecycle recording finalized at 62.621 seconds with zero black frames / 最终镜像通过 M0–M3 聚合套件、M4 浏览器源、M5 确定性音频及全部 M6 认证恢复、备份恢复、HTTPS/TURN、升级回滚门禁；最长生命周期录像 62.621 秒完整封装且零黑帧。
+- M7 Canvas Studio / M7 画布工作台：schema v4 and an atomic mode-0600 Studio store passed migration with byte-exact pre-v4 backup; six named scenes covered RTSP, image, media, text, color, nested/shared sources, ordered filters, advanced transforms, capability fallback, Preview isolation, same-ID retake, undo/redo, restart recovery, and 500 alternating Cut/Fade operations; the finalized H.264 recording decoded fully without black Program intervals and logs contained no fixture credentials / schema v4 与 `0600` 原子 Studio 存储通过带原始字节备份的迁移；六个命名场景覆盖 RTSP、图片、媒体、文字、色块、嵌套/共享来源、有序滤镜、高级变换、能力降级、Preview 隔离、同 ID 重新 Take、撤销重做、重启恢复及 500 次交替 Cut/Fade；最终 H.264 录像完整解码且无 Program 黑场，日志不含夹具凭据。
 
 ## Milestones / 里程碑
 
@@ -216,6 +217,22 @@ M5 已于 2026-08-15 完成：多来源确定性音频及 M0–M4 全回归通�
 M6 completed on 2026-08-15 after the full M0–M5 compatibility regression and every M6 production gate passed. M7 started afterward.
 
 M6 已于 2026-08-15 在 M0–M5 全兼容回归及全部 M6 生产门禁通过后完成；随后开始 M7。
+
+### M7 — Canvas Studio / 画布工作台
+
+#### M7 progress / M7 进度
+
+- [x] Add schema v4 sources for image, media, text, color, and nested scenes plus ordered bounded filters / 增加图片、媒体、文字、色块、嵌套场景及有界有序滤镜
+- [x] Add item lock, logical groups, rotation, opacity, blend modes, fit/fill/stretch, crop, numeric transforms, multi-select, snapping, alignment, and distribution / 增加锁定、逻辑分组、旋转、透明度、混合、缩放裁切、数值变换、多选吸附、对齐与分布
+- [x] Add a private atomic Studio collection for 1–64 scenes, two-level acyclic nesting, templates, copy/reorder/delete, and JSON import/export / 增加 1–64 场景的私有原子 Studio 集合、两层无环嵌套、模板、复制排序删除及 JSON 导入导出
+- [x] Isolate Preview and Program and implement atomic Cut/Fade Take, including changed-definition retake for the same scene ID / 隔离 Preview 与 Program，并实现原子 Cut/Fade Take 及同场景变更后重新 Take
+- [x] Add transactional bounded undo/redo, restart persistence, schema migration, and exact pre-v4 backup / 增加事务性有界撤销重做、重启持久化、schema 迁移及原始 v4 前备份
+- [x] Publish credential-free Direct/Hybrid/Composite capability analysis and show fallback reasons in the editor / 发布无凭据的播放能力分析并在编辑器显示降级原因
+- [x] Pass six-scene mixed-source acceptance, same-ID retake, 500 Cut/Fade operations, H.264 decode, black-frame, persistence, permissions, and log-redaction gates / 通过六场景混合来源、同 ID Take、500 次转场、解码、黑帧、持久化、权限及日志脱敏门禁
+
+M7 completed on 2026-08-15. Arbitrary plug-ins, desktop capture, unrestricted scripts, and pixel-perfect OBS desktop replication remain intentionally excluded. M8 starts from this verified Studio baseline and keeps per-camera archive lifecycles independent from Program composition.
+
+M7 已于 2026-08-15 完成。任意插件、桌面采集、不受限脚本和 OBS 桌面 UI 像素级复刻仍明确排除。M8 从该已验证 Studio 底座开始，并保持逐路归档生命周期独立于 Program 合成。
 
 ## Cross-cutting rules / 贯穿规则
 

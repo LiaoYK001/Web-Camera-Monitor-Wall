@@ -9,11 +9,22 @@
 
 namespace webobs {
 
-inline constexpr int current_scene_schema_version = 3;
+inline constexpr int current_scene_schema_version = 4;
 inline constexpr std::size_t maximum_scene_json_bytes = 1024 * 1024;
 inline constexpr std::size_t maximum_scene_sources = 64;
 inline constexpr std::size_t maximum_browser_sources = 8;
 inline constexpr std::size_t maximum_scene_items = 256;
+inline constexpr std::size_t maximum_source_filters = 16;
+
+struct SceneFilter {
+    std::string id;
+    std::string kind;
+    bool enabled = true;
+    double amount = 0.0;
+    std::string value;
+
+    bool operator==(const SceneFilter &) const = default;
+};
 
 struct SceneCanvas {
     int width = 1920;
@@ -41,6 +52,12 @@ struct SceneSource {
     int sync_offset_ms = 0;
     std::string monitoring = "off";
     int audio_track = 1;
+    std::string file_path;
+    std::string text;
+    std::string color = "#000000";
+    std::string nested_scene_id;
+    bool loop = true;
+    std::vector<SceneFilter> filters;
 
     bool operator==(const SceneSource &) const = default;
 };
@@ -65,6 +82,11 @@ struct SceneItem {
     SceneCrop crop;
     int z_index = 0;
     bool visible = true;
+    bool locked = false;
+    std::string group_id;
+    double rotation_degrees = 0.0;
+    double opacity = 1.0;
+    std::string blend_mode = "normal";
 
     bool operator==(const SceneItem &) const = default;
 };

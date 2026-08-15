@@ -4,6 +4,8 @@
 #include "webobs/obs_scene_runtime.hpp"
 #include "webobs/redaction.hpp"
 #include "webobs/scene_controller.hpp"
+#include "webobs/studio_controller.hpp"
+#include "webobs/studio_store.hpp"
 #include "webobs/video_encoder.hpp"
 
 #include <obs-nix-platform.h>
@@ -444,7 +446,9 @@ ExitCode run_obs_engine(const Config &config, const SceneDocument &document)
 
     const std::filesystem::path obs_prefix = WEBOBS_OBS_PREFIX;
     if (!load_module(obs_prefix, "obs-ffmpeg") || !load_module(obs_prefix, "obs-x264") ||
-        !load_module(obs_prefix, "obs-browser") ||
+        !load_module(obs_prefix, "obs-browser") || !load_module(obs_prefix, "image-source") ||
+        !load_module(obs_prefix, "text-freetype2") || !load_module(obs_prefix, "obs-filters") ||
+        !load_module(obs_prefix, "obs-transitions") ||
         (config.webrtc_enabled && !load_module(obs_prefix, "obs-webrtc")))
         return ExitCode::obs_initialization_failed;
     obs_post_load_modules();
@@ -600,12 +604,38 @@ ExitCode run_obs_engine(const Config &config, const SceneDocument &document)
     }
 
     SceneController scene_controller(document, config.scene_file, scene_runtime);
+    StudioDocument studio_document;
+    std::filesystem::path studio_path;
+    if (!config.scene_file.empty()) {
+        studio_path = default_studio_path(config.scene_file);
+        StudioFileLoadResult loaded_studio = load_studio_file(studio_path);
+        if (!loaded_studio.ok()) {
+            blog(LOG_ERROR, "Could not load Studio state: %s", loaded_studio.error.c_str());
+            return ExitCode::scene_store_failed;
+        }
+        if (loaded_studio.document) {
+            studio_document = std::move(*loaded_studio.document);
+        } else {
+            studio_document.program_scene_id = document.id;
+            studio_document.preview_scene_id = document.id;
+            studio_document.scenes.push_back(document);
+            if (const auto studio_error = save_studio_file_atomic(studio_path, studio_document, false)) {
+                blog(LOG_ERROR, "Could not initialize Studio state: %s", studio_error->c_str());
+                return ExitCode::scene_store_failed;
+            }
+        }
+    } else {
+        studio_document.program_scene_id = document.id;
+        studio_document.preview_scene_id = document.id;
+        studio_document.scenes.push_back(document);
+    }
+    StudioController studio_controller(std::move(studio_document), studio_path, scene_controller);
     RuntimeStatus runtime_status;
     runtime_status.video_encoder = encoder_capabilities;
     runtime_status.webrtc_configured.store(config.webrtc_enabled);
     scene_runtime.maintain_source_health();
     update_source_runtime_status(runtime_status, scene_runtime.source_health_snapshot());
-    ControlServer control_server(config, scene_controller, runtime_status);
+    ControlServer control_server(config, scene_controller, studio_controller, runtime_status);
     if (const auto server_error = control_server.start()) {
         blog(LOG_ERROR, "Could not start the HTTP control server: %s", server_error->c_str());
         return ExitCode::control_server_failed;

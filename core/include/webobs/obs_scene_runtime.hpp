@@ -8,6 +8,7 @@
 #include <memory>
 #include <optional>
 #include <string>
+#include <string_view>
 #include <vector>
 
 namespace webobs {
@@ -47,6 +48,7 @@ public:
     [[nodiscard]] std::optional<std::string> wait_prepared_visible_sources();
     void discard_prepared();
     void commit_prepared();
+    void commit_prepared(std::string_view transition_kind, int duration_ms);
 
     void activate();
     void deactivate();

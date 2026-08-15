@@ -3,6 +3,7 @@
 #include "webobs/authentication.hpp"
 #include "webobs/audit_event.hpp"
 #include "webobs/scene_controller.hpp"
+#include "webobs/studio_controller.hpp"
 #include "webobs/scene_document.hpp"
 
 #include <boost/asio.hpp>
@@ -1155,7 +1156,8 @@ HttpResponse source_health_response(unsigned int version, SceneController &contr
     return response(http::status::ok, version, std::move(body));
 }
 
-HttpResponse handle_request(const HttpRequest &request, SceneController &controller, WebSocketHub &hub,
+HttpResponse handle_request(const HttpRequest &request, SceneController &controller, StudioController &studio,
+                            WebSocketHub &hub,
                             WhepProxy &whep_proxy, const std::vector<std::string> &allowed_origins,
                             const RuntimeStatus &runtime_status, const ControlMetrics &metrics,
                             const BasicAuthenticator &authenticator)
@@ -1171,7 +1173,7 @@ HttpResponse handle_request(const HttpRequest &request, SceneController &control
 
     const std::string_view target = view(request.target());
     if (request.method() == http::verb::get && target == "/api/v1/health")
-        return response(http::status::ok, version, "{\"status\":\"ok\",\"milestone\":\"M6\"}");
+        return response(http::status::ok, version, "{\"status\":\"ok\",\"milestone\":\"M7\"}");
     if (request.method() == http::verb::get && target == "/api/v1/ready") {
         const bool ready = runtime_status.ready();
         return response(ready ? http::status::ok : http::status::service_unavailable, version,
@@ -1242,6 +1244,113 @@ HttpResponse handle_request(const HttpRequest &request, SceneController &control
             return result;
         }
         return response(http::status::not_found, version, error_body("not_found", "resource not found"));
+    }
+
+    constexpr std::string_view studio_target = "/api/v1/studio";
+    constexpr std::string_view studio_capabilities_target = "/api/v1/studio/capabilities";
+    const bool studio_action = target == "/api/v1/studio/take" || target == "/api/v1/studio/undo" ||
+                               target == "/api/v1/studio/redo";
+    if (target == studio_target || target == studio_capabilities_target || studio_action) {
+        if (target == studio_capabilities_target) {
+            if (request.method() != http::verb::get) {
+                HttpResponse result = response(http::status::method_not_allowed, version,
+                                               error_body("method_not_allowed", "use GET"));
+                result.set(http::field::allow, "GET");
+                return result;
+            }
+            const StudioUpdateResult snapshot = studio.snapshot();
+            if (!snapshot.ok())
+                return response(http::status::internal_server_error, version,
+                                error_body("serialization_failed", snapshot.error, snapshot.revision));
+            StudioParseResult parsed = parse_studio_json(snapshot.public_json);
+            if (!parsed.ok())
+                return response(http::status::internal_server_error, version,
+                                error_body("serialization_failed", parsed.error, snapshot.revision));
+            const SceneSerializeResult capabilities =
+                serialize_studio_capabilities_json(*parsed.document, false);
+            if (!capabilities.ok())
+                return response(http::status::internal_server_error, version,
+                                error_body("serialization_failed", capabilities.error,
+                                           snapshot.revision));
+            HttpResponse result = response(http::status::ok, version, capabilities.json);
+            result.set(http::field::etag, etag(snapshot.revision));
+            return result;
+        }
+        if (request.method() == http::verb::get && target == studio_target) {
+            const StudioUpdateResult snapshot = studio.snapshot();
+            if (!snapshot.ok())
+                return response(http::status::internal_server_error, version,
+                                error_body("serialization_failed", snapshot.error, snapshot.revision));
+            HttpResponse result = response(http::status::ok, version, snapshot.public_json);
+            result.set(http::field::etag, etag(snapshot.revision));
+            return result;
+        }
+        const bool replacing = request.method() == http::verb::put && target == studio_target;
+        const bool acting = request.method() == http::verb::post && studio_action;
+        if (!replacing && !acting) {
+            HttpResponse result = response(http::status::method_not_allowed, version,
+                                           error_body("method_not_allowed", "use GET, PUT, or POST"));
+            result.set(http::field::allow, target == studio_target ? "GET, PUT" : "POST");
+            return result;
+        }
+        if (replacing && !json_content_type(request))
+            return response(http::status::unsupported_media_type, version,
+                            error_body("content_type", "Content-Type must be application/json"));
+        if (!request_origin_allowed(request, false, allowed_origins))
+            return response(http::status::forbidden, version,
+                            error_body("origin_rejected", "Origin must match the local Host"));
+        const ParsedIfMatch precondition = parse_if_match(request);
+        if (precondition.present && !precondition.valid)
+            return response(http::status::bad_request, version,
+                            error_body("invalid_if_match", "If-Match must contain one quoted decimal revision"));
+        std::optional<std::uint64_t> expected;
+        if (precondition.present)
+            expected = precondition.revision;
+        StudioUpdateResult updated;
+        if (replacing)
+            updated = studio.replace(request.body(), expected);
+        else if (target == "/api/v1/studio/take")
+            updated = studio.take(expected);
+        else if (target == "/api/v1/studio/undo")
+            updated = studio.undo(expected);
+        else
+            updated = studio.redo(expected);
+        if (!updated.ok()) {
+            http::status status = http::status::unprocessable_entity;
+            std::string_view code = "invalid_studio";
+            if (updated.status == StudioUpdateStatus::precondition_required) {
+                status = static_cast<http::status>(428);
+                code = "precondition_required";
+            } else if (updated.status == StudioUpdateStatus::revision_conflict) {
+                status = http::status::precondition_failed;
+                code = "revision_conflict";
+            } else if (updated.status == StudioUpdateStatus::runtime_rejected) {
+                status = http::status::conflict;
+                code = "runtime_rejected";
+            } else if (updated.status == StudioUpdateStatus::persistence_failed) {
+                status = http::status::service_unavailable;
+                code = "persistence_failed";
+            } else if (updated.status == StudioUpdateStatus::history_empty) {
+                status = http::status::conflict;
+                code = "history_empty";
+            }
+            HttpResponse result = response(status, version, error_body(code, updated.error, updated.revision));
+            result.set(http::field::etag, etag(updated.revision));
+            return result;
+        }
+        const std::string revision = std::to_string(updated.revision);
+        const std::string action = replacing ? "studio_update" : std::string(target.substr(8));
+        const std::string audit = format_audit_event(action, "accepted", {{"revision", revision}});
+        blog(LOG_INFO, "%s", audit.c_str());
+        if (target == "/api/v1/studio/take") {
+            whep_proxy.reconcile_sources();
+            const SceneSnapshot program = controller.snapshot();
+            if (program.ok())
+                hub.broadcast(scene_event("scene.updated", program.public_json));
+        }
+        HttpResponse result = response(http::status::ok, version, updated.public_json);
+        result.set(http::field::etag, etag(updated.revision));
+        return result;
     }
 
     if (target != "/api/v1/scene") {
@@ -1332,10 +1441,11 @@ HttpResponse handle_request(const HttpRequest &request, SceneController &control
 
 class HttpSession : public std::enable_shared_from_this<HttpSession> {
 public:
-    HttpSession(tcp::socket socket, SceneController &controller, WebSocketHub &hub, WhepProxy &whep_proxy,
+    HttpSession(tcp::socket socket, SceneController &controller, StudioController &studio,
+                WebSocketHub &hub, WhepProxy &whep_proxy,
                 BasicAuthenticator &authenticator, ControlMetrics &metrics, RuntimeStatus &runtime_status,
                 const std::vector<std::string> &allowed_origins)
-        : stream_(std::move(socket)), controller_(controller), hub_(hub), whep_proxy_(whep_proxy),
+        : stream_(std::move(socket)), controller_(controller), studio_(studio), hub_(hub), whep_proxy_(whep_proxy),
           authenticator_(authenticator), metrics_(metrics), runtime_status_(runtime_status),
           allowed_origins_(allowed_origins)
     {
@@ -1376,7 +1486,7 @@ private:
         const unsigned int version = request.version();
         const std::string_view host = view(request[http::field::host]);
         if (version != 11 || !control_authority_allowed(host, allowed_origins_)) {
-            send(handle_request(request, controller_, hub_, whep_proxy_, allowed_origins_, runtime_status_,
+            send(handle_request(request, controller_, studio_, hub_, whep_proxy_, allowed_origins_, runtime_status_,
                                 metrics_, authenticator_));
             return;
         }
@@ -1427,7 +1537,7 @@ private:
                 ->run(std::move(request), scene_event("scene.snapshot", snapshot.public_json));
             return;
         }
-        send(handle_request(request, controller_, hub_, whep_proxy_, allowed_origins_, runtime_status_,
+        send(handle_request(request, controller_, studio_, hub_, whep_proxy_, allowed_origins_, runtime_status_,
                             metrics_, authenticator_));
     }
 
@@ -1450,6 +1560,7 @@ private:
     beast::flat_buffer buffer_;
     std::optional<http::request_parser<http::string_body>> parser_;
     SceneController &controller_;
+    StudioController &studio_;
     WebSocketHub &hub_;
     WhepProxy &whep_proxy_;
     BasicAuthenticator &authenticator_;
@@ -1463,10 +1574,11 @@ private:
 class Listener : public std::enable_shared_from_this<Listener> {
 public:
     Listener(net::io_context &context, const tcp::endpoint &endpoint, SceneController &controller,
+             StudioController &studio,
              WebSocketHub &hub, WhepProxy &whep_proxy, BasicAuthenticator &authenticator,
              ControlMetrics &metrics, RuntimeStatus &runtime_status,
              const std::vector<std::string> &allowed_origins)
-        : acceptor_(net::make_strand(context)), controller_(controller), hub_(hub), whep_proxy_(whep_proxy),
+        : acceptor_(net::make_strand(context)), controller_(controller), studio_(studio), hub_(hub), whep_proxy_(whep_proxy),
           authenticator_(authenticator), metrics_(metrics), runtime_status_(runtime_status),
           allowed_origins_(allowed_origins)
     {
@@ -1506,7 +1618,7 @@ private:
     void on_accept(beast::error_code error, tcp::socket socket)
     {
         if (!error)
-            std::make_shared<HttpSession>(std::move(socket), controller_, hub_, whep_proxy_, authenticator_,
+            std::make_shared<HttpSession>(std::move(socket), controller_, studio_, hub_, whep_proxy_, authenticator_,
                                           metrics_, runtime_status_, allowed_origins_)->run();
         if (acceptor_.is_open())
             do_accept();
@@ -1514,6 +1626,7 @@ private:
 
     tcp::acceptor acceptor_;
     SceneController &controller_;
+    StudioController &studio_;
     WebSocketHub &hub_;
     WhepProxy &whep_proxy_;
     BasicAuthenticator &authenticator_;
@@ -1526,8 +1639,9 @@ private:
 } // namespace
 
 struct ControlServer::Impl {
-    Impl(const Config &configuration, SceneController &scene_controller, RuntimeStatus &runtime_status)
-        : config(configuration), controller(scene_controller), status(runtime_status),
+    Impl(const Config &configuration, SceneController &scene_controller, StudioController &studio_controller,
+         RuntimeStatus &runtime_status)
+        : config(configuration), controller(scene_controller), studio(studio_controller), status(runtime_status),
           authenticator(configuration.authentication,
                         static_cast<std::size_t>(configuration.auth_failure_limit),
                         std::chrono::seconds(configuration.auth_failure_window_seconds)),
@@ -1538,6 +1652,7 @@ struct ControlServer::Impl {
 
     const Config &config;
     SceneController &controller;
+    StudioController &studio;
     RuntimeStatus &status;
     net::io_context context{1};
     WebSocketHub hub;
@@ -1548,8 +1663,9 @@ struct ControlServer::Impl {
     std::thread thread;
 };
 
-ControlServer::ControlServer(const Config &config, SceneController &controller, RuntimeStatus &status)
-    : impl_(std::make_unique<Impl>(config, controller, status))
+ControlServer::ControlServer(const Config &config, SceneController &controller, StudioController &studio,
+                             RuntimeStatus &status)
+    : impl_(std::make_unique<Impl>(config, controller, studio, status))
 {
 }
 
@@ -1568,7 +1684,7 @@ std::optional<std::string> ControlServer::start()
         return "HTTP listen address is invalid";
     impl_->listener = std::make_shared<Listener>(
         impl_->context, tcp::endpoint(address, static_cast<unsigned short>(impl_->config.http_port)),
-        impl_->controller, impl_->hub, impl_->whep_proxy, impl_->authenticator, impl_->metrics,
+        impl_->controller, impl_->studio, impl_->hub, impl_->whep_proxy, impl_->authenticator, impl_->metrics,
         impl_->status, impl_->config.control_allowed_origins);
     if (!impl_->listener->error().empty())
         return impl_->listener->error();

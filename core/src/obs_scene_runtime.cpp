@@ -9,6 +9,7 @@
 #include <algorithm>
 #include <atomic>
 #include <chrono>
+#include <cmath>
 #include <cstring>
 #include <memory>
 #include <mutex>
@@ -140,11 +141,75 @@ bool connection_matches(const SceneSource &left, const SceneSource &right)
         return false;
     if (left.kind == "rtsp")
         return left.rtsp_url == right.rtsp_url && left.transport == right.transport;
-    return left.browser_url == right.browser_url && left.browser_width == right.browser_width &&
-           left.browser_height == right.browser_height && left.browser_fps == right.browser_fps &&
-           left.browser_css == right.browser_css &&
-           left.shutdown_when_hidden == right.shutdown_when_hidden &&
-           left.restart_when_active == right.restart_when_active;
+    if (left.kind == "browser")
+        return left.browser_url == right.browser_url && left.browser_width == right.browser_width &&
+               left.browser_height == right.browser_height && left.browser_fps == right.browser_fps &&
+               left.browser_css == right.browser_css &&
+               left.shutdown_when_hidden == right.shutdown_when_hidden &&
+               left.restart_when_active == right.restart_when_active && left.filters == right.filters;
+    return left.file_path == right.file_path && left.text == right.text && left.color == right.color &&
+           left.loop == right.loop && left.filters == right.filters;
+}
+
+std::uint32_t obs_color(std::string_view color)
+{
+    const auto component = [color](std::size_t offset) {
+        return static_cast<std::uint32_t>(std::stoul(std::string(color.substr(offset, 2)), nullptr, 16));
+    };
+    const std::uint32_t red = component(1);
+    const std::uint32_t green = component(3);
+    const std::uint32_t blue = component(5);
+    return 0xff000000U | (blue << 16U) | (green << 8U) | red;
+}
+
+bool attach_configured_filters(obs_source_t *source, const SceneSource &configuration,
+                               std::string_view internal_name)
+{
+    for (const SceneFilter &filter : configuration.filters) {
+        DataPtr settings(obs_data_create());
+        if (!settings)
+            return false;
+        const char *filter_type = nullptr;
+        if (filter.kind == "opacity") {
+            filter_type = "color_filter";
+            obs_data_set_int(settings.get(), "opacity", static_cast<long long>(filter.amount * 100.0));
+        } else if (filter.kind == "color-correction") {
+            filter_type = "color_filter";
+            obs_data_set_double(settings.get(), "brightness", filter.amount);
+        } else if (filter.kind == "delay") {
+            filter_type = "async_delay_filter";
+            obs_data_set_int(settings.get(), "delay_ms", static_cast<long long>(filter.amount));
+        } else if (filter.kind == "scaling") {
+            filter_type = "scale_filter";
+            obs_data_set_string(settings.get(), "resolution", filter.value.c_str());
+            obs_data_set_string(settings.get(), "sampling", "bicubic");
+        } else if (filter.kind == "lut") {
+            filter_type = "clut_filter";
+            obs_data_set_string(settings.get(), "image_path", filter.value.c_str());
+            obs_data_set_double(settings.get(), "clut_amount", filter.amount);
+        } else if (filter.kind == "mask-blend") {
+            filter_type = "mask_filter";
+            obs_data_set_string(settings.get(), "image_path", filter.value.c_str());
+            obs_data_set_int(settings.get(), "opacity", static_cast<long long>(filter.amount * 100.0));
+        } else if (filter.kind == "crop-pad") {
+            filter_type = "crop_filter";
+            obs_data_set_bool(settings.get(), "relative", true);
+            long long crop = static_cast<long long>(filter.amount);
+            obs_data_set_int(settings.get(), "left", crop);
+            obs_data_set_int(settings.get(), "top", crop);
+            obs_data_set_int(settings.get(), "right", crop);
+            obs_data_set_int(settings.get(), "bottom", crop);
+        }
+        if (!filter_type)
+            return false;
+        const std::string name = std::string(internal_name) + " filter " + filter.id;
+        SourcePtr instance(obs_source_create_private(filter_type, name.c_str(), settings.get()));
+        if (!instance)
+            return false;
+        obs_source_filter_add(source, instance.get());
+        obs_source_set_enabled(instance.get(), filter.enabled);
+    }
+    return true;
 }
 
 bool private_network_address(const sockaddr *address)
@@ -241,7 +306,7 @@ SourceEntry create_source_entry(const SceneSource &configuration, int connect_ti
         const std::string options =
             "rtsp_transport=" + configuration.transport + " timeout=" + std::to_string(timeout_microseconds);
         obs_data_set_string(settings.get(), "ffmpeg_options", options.c_str());
-    } else {
+    } else if (configuration.kind == "browser") {
         obs_data_set_string(settings.get(), "url", configuration.browser_url.c_str());
         obs_data_set_int(settings.get(), "width", configuration.browser_width);
         obs_data_set_int(settings.get(), "height", configuration.browser_height);
@@ -251,19 +316,56 @@ SourceEntry create_source_entry(const SceneSource &configuration, int connect_ti
         obs_data_set_bool(settings.get(), "shutdown", configuration.shutdown_when_hidden);
         obs_data_set_bool(settings.get(), "restart_when_active", configuration.restart_when_active);
         obs_data_set_bool(settings.get(), "reroute_audio", false);
+    } else if (configuration.kind == "image") {
+        obs_data_set_string(settings.get(), "file", configuration.file_path.c_str());
+        obs_data_set_bool(settings.get(), "unload", false);
+    } else if (configuration.kind == "media") {
+        obs_data_set_bool(settings.get(), "is_local_file", true);
+        obs_data_set_string(settings.get(), "local_file", configuration.file_path.c_str());
+        obs_data_set_bool(settings.get(), "looping", configuration.loop);
+        obs_data_set_bool(settings.get(), "restart_on_activate", true);
+        obs_data_set_bool(settings.get(), "close_when_inactive", false);
+        obs_data_set_bool(settings.get(), "hw_decode", false);
+    } else if (configuration.kind == "color") {
+        obs_data_set_int(settings.get(), "color", obs_color(configuration.color));
+        obs_data_set_int(settings.get(), "width", 1920);
+        obs_data_set_int(settings.get(), "height", 1080);
+    } else if (configuration.kind == "text") {
+        obs_data_set_string(settings.get(), "text", configuration.text.c_str());
+        obs_data_set_int(settings.get(), "color", obs_color(configuration.color));
+        DataPtr font(obs_data_create());
+        if (!font)
+            return {};
+        obs_data_set_string(font.get(), "face", "Liberation Sans");
+        obs_data_set_string(font.get(), "style", "Regular");
+        obs_data_set_int(font.get(), "size", 48);
+        obs_data_set_int(font.get(), "flags", 0);
+        obs_data_set_obj(settings.get(), "font", font.get());
+    } else {
+        return {};
     }
 
     SourceEntry entry;
     entry.configuration = configuration;
     entry.status = std::make_shared<SourceStatus>();
     const std::string internal_name = "WebOBS " + configuration.kind + " " + configuration.id;
-    const char *source_type = configuration.kind == "rtsp" ? "ffmpeg_source" : "browser_source";
+    const char *source_type = configuration.kind == "rtsp" || configuration.kind == "media"
+                                  ? "ffmpeg_source"
+                              : configuration.kind == "browser" ? "browser_source"
+                              : configuration.kind == "image"   ? "image_source"
+                              : configuration.kind == "color"   ? "color_source"
+                                                                : "text_ft2_source";
     entry.source.reset(obs_source_create_private(source_type, internal_name.c_str(), settings.get()));
     if (!entry.source) {
         entry.status.reset();
         return entry;
     }
     obs_source_set_muted(entry.source.get(), true);
+    if (!attach_configured_filters(entry.source.get(), configuration, internal_name)) {
+        entry.source.reset();
+        entry.status.reset();
+        return entry;
+    }
     if (configuration.kind == "rtsp")
         signal_handler_connect(obs_source_get_signal_handler(entry.source.get()), "media_started",
                                on_source_started, entry.status.get());
@@ -331,8 +433,61 @@ void configure_scene_item(obs_sceneitem_t *scene_item, const SceneItem &configur
         .bottom = configuration.crop.bottom,
     };
     obs_sceneitem_set_crop(scene_item, &crop);
+    obs_sceneitem_set_rot(scene_item, static_cast<float>(configuration.rotation_degrees));
+    obs_blending_type blending = OBS_BLEND_NORMAL;
+    if (configuration.blend_mode == "add")
+        blending = OBS_BLEND_ADDITIVE;
+    else if (configuration.blend_mode == "multiply")
+        blending = OBS_BLEND_MULTIPLY;
+    else if (configuration.blend_mode == "screen")
+        blending = OBS_BLEND_SCREEN;
+    obs_sceneitem_set_blending_mode(scene_item, blending);
     obs_sceneitem_set_visible(scene_item, configuration.visible);
     obs_sceneitem_set_order_position(scene_item, configuration.z_index);
+}
+
+obs_sceneitem_t *add_scene_item(obs_scene_t *scene, obs_source_t *source,
+                                const SceneItem &configuration)
+{
+    obs_sceneitem_t *item = obs_scene_add(scene, source);
+    if (!item)
+        return nullptr;
+    if (configuration.opacity >= 0.999999) {
+        configure_scene_item(item, configuration);
+        return item;
+    }
+
+    static std::atomic_uint64_t group_sequence = 0;
+    const std::string group_name = "WebOBS item opacity " + configuration.id + " " +
+                                   std::to_string(group_sequence.fetch_add(1));
+    obs_sceneitem_t *group = obs_scene_insert_group2(scene, group_name.c_str(), &item, 1, false);
+    if (!group) {
+        obs_sceneitem_remove(item);
+        return nullptr;
+    }
+
+    DataPtr settings(obs_data_create());
+    if (!settings) {
+        obs_sceneitem_remove(group);
+        return nullptr;
+    }
+    obs_data_set_int(settings.get(), "opacity",
+                     static_cast<long long>(std::lround(configuration.opacity * 100.0)));
+    const std::string filter_name = group_name + " filter";
+    SourcePtr filter(obs_source_create_private("color_filter", filter_name.c_str(), settings.get()));
+    obs_source_t *group_source = obs_sceneitem_get_source(group);
+    if (!filter || !group_source) {
+        obs_sceneitem_remove(group);
+        return nullptr;
+    }
+    const std::size_t previous_filter_count = obs_source_filter_count(group_source);
+    obs_source_filter_add(group_source, filter.get());
+    if (obs_source_filter_count(group_source) != previous_filter_count + 1) {
+        obs_sceneitem_remove(group);
+        return nullptr;
+    }
+    configure_scene_item(group, configuration);
+    return group;
 }
 
 bool retain_scene_item(obs_scene_t *, obs_sceneitem_t *item, void *parameter)
@@ -367,7 +522,7 @@ void replace_scene_contents(void *parameter, obs_scene_t *scene)
         const auto source = replacement.candidate->sources.find(item->source_id);
         if (source == replacement.candidate->sources.end())
             break;
-        obs_sceneitem_t *scene_item = obs_scene_add(scene, source->second.source.get());
+        obs_sceneitem_t *scene_item = add_scene_item(scene, source->second.source.get(), *item);
         if (!scene_item)
             break;
         added_items.emplace_back(scene_item, item);
@@ -387,8 +542,6 @@ void replace_scene_contents(void *parameter, obs_scene_t *scene)
         obs_sceneitem_remove(item);
         obs_sceneitem_release(item);
     }
-    for (const auto &[scene_item, configuration] : added_items)
-        configure_scene_item(scene_item, *configuration);
     replacement.succeeded = true;
 }
 
@@ -408,6 +561,14 @@ bool source_ready(const SourceEntry &entry)
 {
     if (!entry.source)
         return false;
+    if (entry.configuration.kind == "image" || entry.configuration.kind == "color" ||
+        entry.configuration.kind == "text")
+        return obs_source_get_width(entry.source.get()) > 0 && obs_source_get_height(entry.source.get()) > 0;
+    if (entry.configuration.kind == "media") {
+        const obs_media_state state = obs_source_media_get_state(entry.source.get());
+        return (state == OBS_MEDIA_STATE_PLAYING || state == OBS_MEDIA_STATE_PAUSED) &&
+               obs_source_get_width(entry.source.get()) > 0 && obs_source_get_height(entry.source.get()) > 0;
+    }
     if (entry.configuration.kind == "browser") {
         return entry.status->activated_at != std::chrono::steady_clock::time_point{} &&
                std::chrono::steady_clock::now() - entry.status->activated_at >=
@@ -450,7 +611,7 @@ std::string source_health_state(const SourceEntry &entry, bool visible,
 {
     if (!visible)
         return "idle";
-    if (entry.configuration.kind == "browser") {
+    if (entry.configuration.kind != "rtsp") {
         if (source_ready(entry))
             return "healthy";
         if (entry.status->activated_at != std::chrono::steady_clock::time_point{} &&
@@ -470,7 +631,7 @@ std::string source_health_state(const SourceEntry &entry, bool visible,
 
 bool prime_source_frame(SourceEntry &entry)
 {
-    if (entry.configuration.kind == "browser")
+    if (entry.configuration.kind != "rtsp")
         return source_ready(entry);
     if (entry.frame_primed)
         return source_ready(entry);
@@ -521,6 +682,7 @@ struct ObsSceneRuntime::Impl {
     bool active = false;
     std::unique_ptr<RuntimeState> current;
     std::unique_ptr<RuntimeState> prepared;
+    SourcePtr transition;
 };
 
 ObsSceneRuntime::ObsSceneRuntime(int connect_timeout_seconds, BrowserSecurityPolicy browser_security,
@@ -583,10 +745,10 @@ std::optional<std::string> ObsSceneRuntime::prepare(const SceneDocument &documen
         const auto source = candidate->sources.find(item->source_id);
         if (source == candidate->sources.end())
             return "scene item references a missing runtime source";
-        obs_sceneitem_t *scene_item = obs_scene_add(candidate->scene.get(), source->second.source.get());
+        obs_sceneitem_t *scene_item =
+            add_scene_item(candidate->scene.get(), source->second.source.get(), *item);
         if (!scene_item)
             return "could not add scene item " + item->id + " to the OBS program scene";
-        configure_scene_item(scene_item, *item);
     }
 
     const auto visible = visible_source_ids(candidate.get());
@@ -655,6 +817,11 @@ void ObsSceneRuntime::discard_prepared()
 
 void ObsSceneRuntime::commit_prepared()
 {
+    commit_prepared("cut", 0);
+}
+
+void ObsSceneRuntime::commit_prepared(std::string_view transition_kind, int duration_ms)
+{
     std::lock_guard lock(impl_->mutex);
     if (!impl_->prepared)
         return;
@@ -669,7 +836,38 @@ void ObsSceneRuntime::commit_prepared()
         obs_source_set_monitoring_type(entry.source.get(),
                                        monitoring_type(entry.configuration.monitoring));
     }
-    if (impl_->active && impl_->current) {
+    bool fade_started = false;
+    if (impl_->active && impl_->current && transition_kind == "fade" && duration_ms > 0) {
+        if (!impl_->transition)
+            impl_->transition.reset(
+                obs_source_create_private("fade_transition", "WebOBS Studio Fade", nullptr));
+        if (impl_->transition) {
+            obs_transition_set(impl_->transition.get(), obs_scene_get_source(impl_->current->scene.get()));
+            obs_set_output_source(0, impl_->transition.get());
+            fade_started = obs_transition_start(impl_->transition.get(), OBS_TRANSITION_MODE_AUTO,
+                                                static_cast<std::uint32_t>(duration_ms),
+                                                obs_scene_get_source(impl_->prepared->scene.get()));
+            if (!fade_started) {
+                blog(LOG_WARNING, "Could not start fade transition; applying an atomic cut");
+                obs_set_output_source(0, obs_scene_get_source(impl_->prepared->scene.get()));
+                impl_->transition.reset();
+            }
+        } else {
+            blog(LOG_WARNING, "Could not create fade transition; applying an atomic cut");
+            AtomicSceneReplacement replacement{impl_->prepared.get()};
+            obs_scene_atomic_update(impl_->current->scene.get(), replace_scene_contents, &replacement);
+            if (replacement.succeeded) {
+                impl_->prepared->scene.reset();
+                impl_->prepared->scene = std::move(impl_->current->scene);
+            } else {
+                obs_set_output_source(0, obs_scene_get_source(impl_->prepared->scene.get()));
+            }
+        }
+    } else if (impl_->active && impl_->current) {
+        if (impl_->transition) {
+            obs_set_output_source(0, obs_scene_get_source(impl_->current->scene.get()));
+            impl_->transition.reset();
+        }
         AtomicSceneReplacement replacement{impl_->prepared.get()};
         obs_scene_atomic_update(impl_->current->scene.get(), replace_scene_contents, &replacement);
         if (replacement.succeeded) {
@@ -681,6 +879,11 @@ void ObsSceneRuntime::commit_prepared()
         }
     } else if (impl_->active) {
         obs_set_output_source(0, obs_scene_get_source(impl_->prepared->scene.get()));
+    }
+    if (fade_started) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(duration_ms + 34));
+        obs_set_output_source(0, obs_scene_get_source(impl_->prepared->scene.get()));
+        impl_->transition.reset();
     }
     impl_->current = std::move(impl_->prepared);
 }
@@ -703,6 +906,7 @@ void ObsSceneRuntime::deactivate()
     if (!impl_->active)
         return;
     obs_set_output_source(0, nullptr);
+    impl_->transition.reset();
     release_prewarmed_sources(impl_->current.get());
     impl_->active = false;
 }

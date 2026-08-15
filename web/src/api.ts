@@ -1,4 +1,4 @@
-import type { ApiErrorEnvelope, PlaybackCapabilities, SceneDocument, SceneEvent } from './types';
+import type { ApiErrorEnvelope, PlaybackCapabilities, SceneDocument, SceneEvent, StudioCapabilities, StudioDocument } from './types';
 
 export class ControlApiError extends Error {
   readonly status: number;
@@ -60,6 +60,40 @@ export async function replaceScene(scene: SceneDocument): Promise<SceneDocument>
   });
   if (!response.ok) throw await parseError(response);
   return (await response.json()) as SceneDocument;
+}
+
+export async function fetchStudio(signal?: AbortSignal): Promise<StudioDocument> {
+  const response = await fetch('/api/v1/studio', { method: 'GET', cache: 'no-store', signal });
+  if (!response.ok) throw await parseError(response);
+  return (await response.json()) as StudioDocument;
+}
+
+export async function fetchStudioCapabilities(signal?: AbortSignal): Promise<StudioCapabilities> {
+  const response = await fetch('/api/v1/studio/capabilities', { method: 'GET', cache: 'no-store', signal });
+  if (!response.ok) throw await parseError(response);
+  return (await response.json()) as StudioCapabilities;
+}
+
+export async function replaceStudio(studio: StudioDocument): Promise<StudioDocument> {
+  const response = await fetch('/api/v1/studio', {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json', 'If-Match': `"${studio.revision}"` },
+    body: JSON.stringify(studio),
+  });
+  if (!response.ok) throw await parseError(response);
+  return (await response.json()) as StudioDocument;
+}
+
+export async function studioAction(
+  action: 'take' | 'undo' | 'redo',
+  revision: number,
+): Promise<StudioDocument> {
+  const response = await fetch(`/api/v1/studio/${action}`, {
+    method: 'POST',
+    headers: { 'If-Match': `"${revision}"` },
+  });
+  if (!response.ok) throw await parseError(response);
+  return (await response.json()) as StudioDocument;
 }
 
 export function connectSceneEvents(

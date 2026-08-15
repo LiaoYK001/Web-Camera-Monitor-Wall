@@ -1,6 +1,16 @@
 export type ScaleMode = 'contain' | 'cover' | 'stretch';
 export type Transport = 'tcp' | 'udp';
 export type AudioMonitoring = 'off' | 'monitor-only' | 'monitor-and-output';
+export type BlendMode = 'normal' | 'add' | 'multiply' | 'screen';
+export type FilterKind = 'crop-pad' | 'opacity' | 'color-correction' | 'mask-blend' | 'lut' | 'scaling' | 'delay';
+
+export interface SceneFilter {
+  id: string;
+  kind: FilterKind;
+  enabled: boolean;
+  amount: number;
+  value: string;
+}
 
 export interface SceneCanvas {
   width: number;
@@ -16,6 +26,7 @@ interface SceneSourceBase {
   syncOffsetMs: number;
   monitoring: AudioMonitoring;
   audioTrack: number;
+  filters: SceneFilter[];
 }
 
 export interface RtspSceneSource extends SceneSourceBase {
@@ -35,7 +46,14 @@ export interface BrowserSceneSource extends SceneSourceBase {
   restartWhenActive: boolean;
 }
 
-export type SceneSource = RtspSceneSource | BrowserSceneSource;
+export interface ImageSceneSource extends SceneSourceBase { kind: 'image'; filePath: string }
+export interface MediaSceneSource extends SceneSourceBase { kind: 'media'; filePath: string; loop: boolean }
+export interface TextSceneSource extends SceneSourceBase { kind: 'text'; text: string; color: string }
+export interface ColorSceneSource extends SceneSourceBase { kind: 'color'; color: string }
+export interface NestedSceneSource extends SceneSourceBase { kind: 'nested'; sceneId: string }
+
+export type SceneSource = RtspSceneSource | BrowserSceneSource | ImageSceneSource | MediaSceneSource |
+  TextSceneSource | ColorSceneSource | NestedSceneSource;
 
 export interface SceneCrop {
   top: number;
@@ -55,16 +73,48 @@ export interface SceneItem {
   crop: SceneCrop;
   zIndex: number;
   visible: boolean;
+  locked: boolean;
+  groupId: string;
+  rotation: number;
+  opacity: number;
+  blendMode: BlendMode;
 }
 
 export interface SceneDocument {
-  schemaVersion: 3;
+  schemaVersion: 4;
   revision: number;
   id: string;
   name: string;
   canvas: SceneCanvas;
   sources: SceneSource[];
   items: SceneItem[];
+}
+
+export interface StudioDocument {
+  schemaVersion: 1;
+  revision: number;
+  programSceneId: string;
+  previewSceneId: string;
+  transition: {
+    kind: 'cut' | 'fade';
+    durationMs: number;
+  };
+  scenes: SceneDocument[];
+}
+
+export interface StudioModeCapability {
+  selected: 'direct' | 'hybrid' | 'composite';
+  exact: boolean;
+  reasons: string[];
+}
+
+export interface StudioCapabilities {
+  revision: number;
+  scenes: Array<{
+    sceneId: string;
+    direct: StudioModeCapability;
+    hybrid: StudioModeCapability;
+  }>;
 }
 
 export interface SceneEvent {

@@ -1,15 +1,15 @@
 # Web Camera Monitor Wall
 
-一个基于 `libobs` 的无桌面 Web 监控墙/合成器项目。仓库已完成 **M0 Headless Proof 至 M6 Production**，并已进入 **M7 Canvas Studio** 开发：无需 OBS Qt 界面，也能在 Linux Docker 容器中完成下面的闭环。
+一个基于 `libobs` 的无桌面 Web 监控墙/合成器项目。仓库已完成 **M0 Headless Proof 至 M7 Canvas Studio**，并进入 **M8 NVR Core** 开发：无需 OBS Qt 界面，也能在 Linux Docker 容器中完成下面的闭环。
 
 ```text
 RTSP camera -> libobs ffmpeg_source -> OBS scene -> H.264/AAC MP4
                                                    -> H.264/Opus WHIP/WHEP
 ```
 
-当前版本能从持久化场景启动多路 RTSP 与受控网页来源合成，并通过随产品镜像提供的 React/TypeScript 编辑器及 REST/WebSocket 接口，在录制期间原子更新布局和来源。M2 在同一产品镜像中通过固定版本 MediaMTX 和 `obs-webrtc` 发布 Composite H.264/Opus；M3 完成每路摄像头按需直达浏览器及选择性 H.264/Opus 转码；M4 完成固定版本 `obs-browser`/CEF 和安全生命周期；M5 完成统一静音、音量、同步偏移、监听和音轨模型、Direct Web Audio 混音及 H.264/AAC 最终录像。M6 当前已增加文件型单操作员 Basic 认证、失败限流、逐来源帧健康检测、指数退避自动恢复、存活/就绪探针、Prometheus 指标、结构化审计事件、有界 Docker 日志、CPU/VAAPI/QSV/NVENC 能力探测与 x264 安全回退、校验备份恢复，以及单镜像受信 HTTPS/TURN 部署；镜像来源证明和自动升级回滚仍未完成。
+当前版本能从持久化 Studio 集合启动多路 RTSP、受控网页、图片、文字、色块、媒体和嵌套场景，通过随产品镜像提供的 React/TypeScript 编辑器进行多选、吸附、对齐、分组、裁切、旋转、透明度、混合和有序滤镜编辑，并以隔离的 Preview/Program 总线执行原子 Cut/Fade Take。M2–M5 提供 Composite/Direct/Hybrid WebRTC、浏览器源和统一音频；M6 提供认证、TLS/TURN、恢复、指标、硬件能力安全回退、备份及可验证发布；M7 的 schema v4、Studio 集合、迁移备份、能力降级和 500 次转场稳定性门禁现已完成。
 
-开发路线、里程碑验收标准和当前进度见 [ROADMAP.md](ROADMAP.md)。**M0 至 M6 已通过全部验收；M7 Canvas Studio 正在开发，M8–M13 的 NVR 扩展仍处于规划状态。**详细的后续架构、功能归属、非目标和逐阶段完成门禁见 [M7–M13 产品路线](docs/future-milestones.md)。从 Git 克隆、配置、构建、运行、备份和回滚见 [Docker 部署指南](docs/docker-deployment.md)；不用 Docker Hub 时的镜像发布与拉取见 [GHCR 指南](docs/ghcr.md)。当前场景与持久化契约见 [docs/scene-schema-v3.md](docs/scene-schema-v3.md)，历史 [v2](docs/scene-schema-v2.md) 与 [v1](docs/scene-schema-v1.md) 契约仍保留，控制协议见 [docs/api-v1.md](docs/api-v1.md)。
+开发路线、里程碑验收标准和当前进度见 [ROADMAP.md](ROADMAP.md)。**M0 至 M7 已通过全部验收；当前位置是 M8 NVR Core 开发起点，M9–M13 仍按顺序规划。**详细的后续架构、功能归属、非目标和逐阶段完成门禁见 [M7–M13 产品路线](docs/future-milestones.md)。从 Git 克隆、配置、构建、运行、备份和回滚见 [Docker 部署指南](docs/docker-deployment.md)；不用 Docker Hub 时的镜像发布与拉取见 [GHCR 指南](docs/ghcr.md)。当前场景与持久化契约见 [docs/scene-schema-v4.md](docs/scene-schema-v4.md)，历史 [v3](docs/scene-schema-v3.md)、[v2](docs/scene-schema-v2.md) 与 [v1](docs/scene-schema-v1.md) 契约仍保留，控制协议见 [docs/api-v1.md](docs/api-v1.md)。
 
 `WEBOBS_SCENE_FILE` 默认指向 `/config/webobs/scene.json`。首次启动使用 `WEBOBS_RTSP_URL` 创建并保存单路场景；后续启动以场景文件为准。手工编辑场景文件前应停止容器，且真实 RTSP 凭据不得提交到 Git。
 
@@ -237,7 +237,7 @@ docker compose run --rm webobs \
 - 首帧不是空黑画面
 - 4:3 测试源在 16:9 画布中等比居中，左右黑边对称且中心画面有效
 
-同一入口还覆盖缺失 URL、无法连接、错误输出目录、已有文件拒绝覆盖、日志凭据脱敏，以及容器收到 `SIGTERM` 后完整冲洗并封装 MP4。M1 控制面验收另外覆盖 REST、安全响应头、ETag/`If-Match`、WebSocket 快照与广播、Host/Origin 拒绝、请求大小限制、原子持久化权限、在线来源增删、裁切/层级/可见性、不可达新来源回滚、解码首帧纹理预装、原子无黑帧切换，以及同一容器重启后的场景和录像恢复。M2/M3 验收覆盖 Composite、Direct、Hybrid、重连和按需转码。M4 验收覆盖默认拒绝与私网双重授权、公开 URL 脱敏、Composite-only 能力、CEF 实例显示/隐藏、renderer 上限与崩溃恢复、临时缓存清理，以及真实非黑浏览器画面的最终 MP4。M5 确定性门禁覆盖 Opus 直通、AAC 转 Opus、共享 Web Audio、自动播放解锁、来源重连、静音、音量、同步、漂移、Composite Opus 和最终 AAC。M6 门禁覆盖凭据文件、统一 HTTP/WebSocket/WHEP 认证、HTTPS Origin/Host 授权、逐客户端失败限流、来源帧陈旧降级、指数退避重启、发布端恢复、结构化审计、探针、指标、Docker healthcheck、日志脱敏、受信 TLS 终止、后端隔离、TURN secret 文件配置和停止后录像封装。
+同一入口还覆盖缺失 URL、无法连接、错误输出目录、已有文件拒绝覆盖、日志凭据脱敏，以及容器收到 `SIGTERM` 后完整冲洗并封装 MP4。M1–M5 验收覆盖事务性控制面、Composite/Direct/Hybrid WebRTC、浏览器源和确定性音频；M6 覆盖认证、恢复、指标、备份、TLS/TURN、来源证明与升级回滚；M7 覆盖 schema v4 原始迁移备份、六场景混合来源、Program/Preview 隔离、同 ID 重新 Take、撤销重做、重启恢复、权限与脱敏、500 次交替 Cut/Fade 以及最终 H.264 无黑场录像。
 
 烟测和真实摄像头验收会先执行公开仓库审计：检查 Git 索引中没有 `.env`、录像、测试产物、私钥文件或高置信度令牌，只允许明确列出的 RTSP 测试占位符，并确认 Git/Docker 忽略规则及 OBS submodule 固定提交未漂移。也可以单独运行 `./tests/run-public-audit.ps1` 或 `./tests/run-public-audit.sh`；审计只读取 Git 索引，不读取本地未跟踪 `.env` 的内容。
 
@@ -247,7 +247,7 @@ PowerShell：
 ./tests/run-smoke.ps1
 ```
 
-只运行 M1 控制面验收可使用 `./tests/run-control-plane.ps1 -SkipBuild`；只运行 M2 浏览器与重连验收可使用 `./tests/run-webrtc.ps1 -SkipBuild`；只运行 M3 双路 Direct 验收可使用 `./tests/run-direct.ps1 -SkipBuild`；只运行 M3 H.264/HEVC 选择性 Hybrid 验收可使用 `./tests/run-hybrid.ps1 -SkipBuild`；在线变更、断流重连和路由回收验收使用 `./tests/run-m3-lifecycle.ps1 -SkipBuild`；M4 浏览器源门禁使用 `./tests/run-browser-source.ps1 -SkipBuild`；M5 确定性音频门禁使用 `./tests/run-m5-audio.ps1 -SkipBuild`；M6 认证与可观测门禁使用 `./tests/run-m6-auth.ps1 -SkipBuild`，场景备份/恢复门禁使用 `./tests/run-m6-backup.ps1 -SkipBuild`，HTTPS/TURN 门禁使用 `./tests/run-m6-tls-turn.ps1 -SkipBuild`，升级回滚门禁使用 `./tests/run-m6-upgrade.ps1 -SkipBuild`。浏览器门禁默认查找本机 Chrome，也可通过 `WEBOBS_CHROME_BIN` 指定可信的 Chrome 可执行文件。
+只运行 M1 控制面验收可使用 `./tests/run-control-plane.ps1 -SkipBuild`；M2–M6 的分项命令保持不变；M7 完整 Studio 门禁使用 PowerShell 7 执行 `pwsh ./tests/run-m7-studio.ps1 -SkipBuild`。浏览器门禁默认查找本机 Chrome，也可通过 `WEBOBS_CHROME_BIN` 指定可信的 Chrome 可执行文件。
 
 真实来源的 M3 Direct/Hybrid 门禁使用 `./tests/run-m3-real-camera.ps1 -SkipBuild`，M5 Composite + Direct/Hybrid 真实音频门禁使用 `./tests/run-m5-real-audio.ps1 -SkipBuild`。RTSP URL 只通过当前进程的 `WEBOBS_RTSP_URL` 或受 Git 忽略的本地 `.env` 提供；这些门禁会把录像和端点替换后的诊断日志分别写入受忽略的 `recordings/` 与 `tests/artifacts/`，不得将其作为公开附件提交。
 

@@ -12,6 +12,7 @@
 namespace webobs {
 
 class SceneController;
+class StudioController;
 
 struct RuntimeStatus {
     VideoEncoderCapabilities video_encoder;
@@ -32,7 +33,8 @@ struct RuntimeStatus {
 
 class ControlServer {
 public:
-    ControlServer(const Config &config, SceneController &controller, RuntimeStatus &status);
+    ControlServer(const Config &config, SceneController &controller, StudioController &studio,
+                  RuntimeStatus &status);
     ~ControlServer();
 
     ControlServer(const ControlServer &) = delete;

@@ -14,5 +14,7 @@ web/dist
 document
 recordings/*
 !recordings/.gitkeep
+assets/*
+!assets/.gitkeep
 tests/artifacts/*
 !tests/artifacts/.gitkeep

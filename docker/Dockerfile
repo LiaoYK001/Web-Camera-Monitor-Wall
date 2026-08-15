@@ -204,7 +204,7 @@ RUN cmake -S /src/obs -B /build/obs -G Ninja \
         -DENABLE_QSV11=OFF \
         -DENABLE_VLC=OFF \
         -DENABLE_VST=OFF \
-        -DENABLE_FREETYPE=OFF \
+        -DENABLE_FREETYPE=ON \
         -DENABLE_LIBFDK=OFF \
         -DENABLE_SPEEXDSP=OFF \
         -DENABLE_RNNOISE=OFF \
@@ -215,6 +215,10 @@ RUN cmake -S /src/obs -B /build/obs -G Ninja \
         obs-ffmpeg \
         obs-x264 \
         obs-browser \
+        image-source \
+        text-freetype2 \
+        obs-filters \
+        obs-transitions \
         browser-helper \
         obs-webrtc \
         obs-ffmpeg-mux \
@@ -250,6 +254,10 @@ RUN cmake -S /src/webobs -B /build/webobs -G Ninja \
     && ldd /opt/obs/lib/obs-plugins/obs-ffmpeg.so \
     && ldd /opt/obs/lib/obs-plugins/obs-x264.so \
     && ldd /opt/obs/lib/obs-plugins/obs-browser.so \
+    && ldd /opt/obs/lib/obs-plugins/image-source.so \
+    && ldd /opt/obs/lib/obs-plugins/text-freetype2.so \
+    && ldd /opt/obs/lib/obs-plugins/obs-filters.so \
+    && ldd /opt/obs/lib/obs-plugins/obs-transitions.so \
     && ldd /opt/obs/lib/obs-plugins/obs-browser-page \
     && ldd /opt/obs/lib/obs-plugins/libcef.so \
     && ldd /opt/obs/lib/obs-plugins/obs-webrtc.so \
@@ -274,6 +282,8 @@ RUN apt-get -o Acquire::Retries=5 -o Acquire::http::Timeout=30 -o Acquire::https
         libdrm2 \
         libegl1 \
         libegl-mesa0 \
+        libfontconfig1 \
+        libfreetype6 \
         libgl1-mesa-dri \
         libjansson4 \
         libnspr4 \
@@ -325,7 +335,7 @@ ENV LD_LIBRARY_PATH=/opt/obs/lib \
     LIBGL_ALWAYS_SOFTWARE=1 \
     GALLIUM_DRIVER=llvmpipe
 
-RUN mkdir -p /config/obs /config/webobs /recordings /usr/share/licenses/caddy \
+RUN mkdir -p /assets /config/obs /config/webobs /recordings /usr/share/licenses/caddy \
     && cp /usr/share/common-licenses/Apache-2.0 /usr/share/licenses/caddy/LICENSE \
     && chmod 0700 /config/obs /config/webobs \
     && chmod 0755 /opt/webobs/entrypoint.sh /opt/webobs/bin/caddy /opt/webobs/bin/mediamtx /opt/webobs/bin/transcode-on-demand /opt/webobs/bin/webobs-backup \
@@ -340,6 +350,10 @@ RUN mkdir -p /config/obs /config/webobs /recordings /usr/share/licenses/caddy \
     && ldd /opt/obs/lib/obs-plugins/obs-ffmpeg.so >> /tmp/webobs-ldd.txt \
     && ldd /opt/obs/lib/obs-plugins/obs-x264.so >> /tmp/webobs-ldd.txt \
     && ldd /opt/obs/lib/obs-plugins/obs-browser.so >> /tmp/webobs-ldd.txt \
+    && ldd /opt/obs/lib/obs-plugins/image-source.so >> /tmp/webobs-ldd.txt \
+    && ldd /opt/obs/lib/obs-plugins/text-freetype2.so >> /tmp/webobs-ldd.txt \
+    && ldd /opt/obs/lib/obs-plugins/obs-filters.so >> /tmp/webobs-ldd.txt \
+    && ldd /opt/obs/lib/obs-plugins/obs-transitions.so >> /tmp/webobs-ldd.txt \
     && ldd /opt/obs/lib/obs-plugins/obs-browser-page >> /tmp/webobs-ldd.txt \
     && ldd /opt/obs/lib/obs-plugins/libcef.so >> /tmp/webobs-ldd.txt \
     && ldd /opt/obs/lib/obs-plugins/obs-webrtc.so >> /tmp/webobs-ldd.txt \

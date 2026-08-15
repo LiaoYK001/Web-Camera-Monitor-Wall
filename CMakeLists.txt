@@ -27,6 +27,8 @@ add_library(webobs-common
     core/src/scene_document.cpp
     core/src/scene_mutation.cpp
     core/src/scene_store.cpp
+    core/src/studio_document.cpp
+    core/src/studio_store.cpp
     core/src/video_encoder.cpp
 )
 target_include_directories(webobs-common PUBLIC core/include)
@@ -56,6 +58,7 @@ add_executable(webobsd
     core/src/obs_engine.cpp
     core/src/obs_scene_runtime.cpp
     core/src/scene_controller.cpp
+    core/src/studio_controller.cpp
 )
 target_link_libraries(webobsd PRIVATE webobs-common webobs-libobs Boost::headers CURL::libcurl Threads::Threads)
 target_compile_options(webobsd PRIVATE -Wall -Wextra -Wpedantic)

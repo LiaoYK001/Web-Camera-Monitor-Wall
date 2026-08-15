@@ -13,5 +13,7 @@
 /web/dist/
 /recordings/*
 !/recordings/.gitkeep
+/assets/*
+!/assets/.gitkeep
 /tests/artifacts/*
 !/tests/artifacts/.gitkeep

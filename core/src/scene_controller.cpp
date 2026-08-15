@@ -67,7 +67,8 @@ SourceHealthSnapshot SceneController::source_health_snapshot() const
 }
 
 SceneUpdateResult SceneController::replace(std::string_view candidate_json,
-                                           std::optional<std::uint64_t> expected_revision)
+                                           std::optional<std::uint64_t> expected_revision,
+                                           std::string_view transition_kind, int duration_ms)
 {
     std::lock_guard lock(mutex_);
     SceneMutationPlan plan = plan_scene_replacement(document_, candidate_json, expected_revision);
@@ -88,7 +89,7 @@ SceneUpdateResult SceneController::replace(std::string_view candidate_json,
         return update_failure(SceneUpdateStatus::persistence_failed, document_.revision, *save_error);
     }
 
-    runtime_.commit_prepared();
+    runtime_.commit_prepared(transition_kind, duration_ms);
     document_ = std::move(*plan.document);
     const SceneSerializeResult serialized =
         serialize_scene_json(document_, SceneJsonView::public_api, false);

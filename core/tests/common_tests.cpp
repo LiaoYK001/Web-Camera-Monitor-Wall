@@ -6,6 +6,8 @@
 #include "webobs/scene_document.hpp"
 #include "webobs/scene_mutation.hpp"
 #include "webobs/scene_store.hpp"
+#include "webobs/studio_document.hpp"
+#include "webobs/studio_store.hpp"
 #include "webobs/video_encoder.hpp"
 
 #include <array>
@@ -542,7 +544,8 @@ void scene_document_tests()
 
     invalid = document;
     invalid.canvas.background_color = "#ffffff";
-    expect(webobs::validate_scene_document(invalid).has_value(), "non-black M1 canvas background must fail validation");
+    expect(!webobs::validate_scene_document(invalid).has_value(),
+           "schemaVersion 4 canvas must allow a valid custom background color");
 
     invalid = document;
     invalid.items.front().scale_mode = "tile";
@@ -580,15 +583,15 @@ void scene_document_tests()
     expect(!webobs::parse_scene_json(unsupported_field).ok(), "unknown scene fields must be rejected");
 
     std::string future_schema = compact.json;
-    const std::string schema_three = "\"schemaVersion\":3";
-    const std::size_t schema_position = future_schema.find(schema_three);
+    const std::string schema_four = "\"schemaVersion\":4";
+    const std::size_t schema_position = future_schema.find(schema_four);
     if (schema_position != std::string::npos)
-        future_schema.replace(schema_position, schema_three.size(), "\"schemaVersion\":4");
+        future_schema.replace(schema_position, schema_four.size(), "\"schemaVersion\":5");
     expect(schema_position != std::string::npos && !webobs::parse_scene_json(future_schema).ok(),
            "future scene schema versions must be rejected");
 
     const std::string duplicate_key =
-        R"({"schemaVersion":3,"schemaVersion":3,"revision":0,"id":"main","name":"Main","canvas":{"width":1920,"height":1080,"backgroundColor":"#000000"},"sources":[],"items":[]})";
+        R"({"schemaVersion":4,"schemaVersion":4,"revision":0,"id":"main","name":"Main","canvas":{"width":1920,"height":1080,"backgroundColor":"#000000"},"sources":[],"items":[]})";
     expect(!webobs::parse_scene_json(duplicate_key).ok(), "duplicate JSON keys must be rejected");
 
     const std::string secret_in_invalid_json = R"({"name":"sensitive-value")";
@@ -673,7 +676,7 @@ void scene_store_tests()
     if (!compact.ok())
         return;
     std::string legacy_json = compact.json;
-    const std::string current_version = "\"schemaVersion\":3";
+    const std::string current_version = "\"schemaVersion\":4";
     const std::size_t version_position = legacy_json.find(current_version);
     const std::string revision = "\"revision\":7,";
     const std::size_t revision_position = legacy_json.find(revision);
@@ -693,20 +696,20 @@ void scene_store_tests()
     }
     const auto version_two_migration = webobs::migrate_scene_json(version_two_json);
     expect(version_two_migration.ok() && version_two_migration.migrated &&
-               version_two_migration.document->schema_version == 3 &&
+               version_two_migration.document->schema_version == 4 &&
                version_two_migration.document->sources.front().sync_offset_ms == 0 &&
                version_two_migration.document->sources.front().monitoring == "off" &&
                version_two_migration.document->sources.front().audio_track == 1,
-           "schemaVersion 2 must migrate to schemaVersion 3 with safe audio defaults");
+            "schemaVersion 2 must migrate to schemaVersion 4 with safe defaults");
 
     std::string version_one_json = version_two_json;
     version_one_json.replace(version_one_json.find("\"schemaVersion\":2"), current_version.size(),
                              "\"schemaVersion\":1");
     const auto version_one_migration = webobs::migrate_scene_json(version_one_json);
     expect(version_one_migration.ok() && version_one_migration.migrated &&
-               version_one_migration.document->schema_version == 3 &&
+               version_one_migration.document->schema_version == 4 &&
                version_one_migration.document->revision == document.revision,
-           "schemaVersion 1 must migrate to schemaVersion 3 without changing revision");
+            "schemaVersion 1 must migrate to schemaVersion 4 without changing revision");
 
     legacy_json = version_two_json;
     legacy_json.replace(legacy_json.find("\"schemaVersion\":2"), current_version.size(),
@@ -722,16 +725,21 @@ void scene_store_tests()
     expect(write_test_file(legacy_path, legacy_json, 0644), "legacy scene fixture must be written");
     const auto migrated_file = webobs::load_scene_file(legacy_path);
     expect(migrated_file.ok() && migrated_file.status == webobs::SceneFileStatus::migrated &&
-               migrated_file.document && migrated_file.document->schema_version == 3 &&
+                migrated_file.document && migrated_file.document->schema_version == 4 &&
                migrated_file.document->revision == 0,
            "legacy scene file must migrate and load");
     expect(file_mode(legacy_path) == 0600, "loaded legacy scene permissions must be tightened to 0600");
+    const std::filesystem::path migration_backup(legacy_path.string() + ".pre-v4.backup");
+    expect(file_mode(migration_backup) == 0600,
+           "scene migration must preserve a private pre-v4 backup");
+    expect(read_test_file(migration_backup) == legacy_json,
+           "scene migration backup must preserve the byte-exact legacy document");
     const auto rewritten = webobs::parse_scene_json(read_test_file(legacy_path));
     expect(rewritten.ok() && rewritten.document && rewritten.document->revision == 0,
            "migrated scene must be atomically rewritten as current JSON");
 
     std::string future_json = compact.json;
-    future_json.replace(future_json.find(current_version), current_version.size(), "\"schemaVersion\":4");
+    future_json.replace(future_json.find(current_version), current_version.size(), "\"schemaVersion\":5");
     const std::filesystem::path future_path = scene_path.parent_path() / "future.json";
     expect(write_test_file(future_path, future_json, 0600), "future scene fixture must be written");
     const auto future = webobs::load_scene_file(future_path);
@@ -739,7 +747,7 @@ void scene_store_tests()
     expect(read_test_file(future_path) == future_json, "rejected future scene must not be rewritten");
 
     const std::filesystem::path malformed_path = scene_path.parent_path() / "malformed.json";
-    const std::string malformed = R"({"schemaVersion":3,"name":"sensitive-value")";
+    const std::string malformed = R"({"schemaVersion":4,"name":"sensitive-value")";
     expect(write_test_file(malformed_path, malformed, 0600), "malformed scene fixture must be written");
     const auto malformed_result = webobs::load_scene_file(malformed_path);
     expect(!malformed_result.ok() && malformed_result.error.find("sensitive-value") == std::string::npos,
@@ -768,6 +776,73 @@ void scene_store_tests()
     expect(webobs::save_scene_file_atomic("relative-scene.json", document).has_value(),
            "scene save must reject a relative path");
     expect(!webobs::load_scene_file("relative-scene.json").ok(), "scene load must reject a relative path");
+}
+
+void studio_store_tests()
+{
+    char directory_template[] = "/tmp/webobs-studio-store-XXXXXX";
+    const char *created_directory = mkdtemp(directory_template);
+    expect(created_directory != nullptr, "studio store test directory must be created");
+    if (!created_directory)
+        return;
+
+    const std::filesystem::path root(created_directory);
+    struct Cleanup {
+        std::filesystem::path path;
+        ~Cleanup()
+        {
+            std::error_code error;
+            std::filesystem::remove_all(path, error);
+        }
+    } cleanup{root};
+
+    webobs::StudioDocument original;
+    original.revision = 3;
+    original.program_scene_id = "program";
+    original.preview_scene_id = "program";
+    auto scene = valid_scene_document();
+    scene.id = "program";
+    scene.name = "Program";
+    original.scenes.push_back(std::move(scene));
+
+    const std::filesystem::path scene_path = root / "private" / "scene.json";
+    const std::filesystem::path studio_path = webobs::default_studio_path(scene_path);
+    expect(studio_path == root / "private" / "studio.json",
+           "default studio file must live beside the private scene file");
+    expect(!webobs::save_studio_file_atomic(studio_path, original, false).has_value(),
+           "valid Studio document must be saved atomically");
+    expect(file_mode(studio_path.parent_path()) == 0700,
+           "Studio storage directory must use mode 0700");
+    expect(file_mode(studio_path) == 0600, "Studio file must use mode 0600");
+
+    const auto loaded = webobs::load_studio_file(studio_path);
+    expect(loaded.ok() && loaded.status == webobs::StudioFileStatus::loaded &&
+               loaded.document == original,
+           "current Studio file must load without recovery");
+
+    auto updated = original;
+    updated.revision = 4;
+    updated.scenes.front().name = "Updated Program";
+    expect(!webobs::save_studio_file_atomic(studio_path, updated, true).has_value(),
+           "Studio update must preserve a validated backup");
+    const std::filesystem::path backup_path(studio_path.string() + ".backup");
+    expect(file_mode(backup_path) == 0600, "Studio backup must use mode 0600");
+
+    expect(write_test_file(studio_path, R"({"schemaVersion":1,"secret":"must-not-leak")", 0600),
+           "corrupt Studio fixture must be written");
+    const auto recovered = webobs::load_studio_file(studio_path);
+    expect(recovered.ok() && recovered.status == webobs::StudioFileStatus::recovered_from_backup &&
+               recovered.document == original,
+           "a corrupt Studio file must recover the last validated revision");
+    const auto restored = webobs::load_studio_file(studio_path);
+    expect(restored.ok() && restored.status == webobs::StudioFileStatus::loaded &&
+               restored.document == original,
+           "Studio recovery must atomically restore the primary file");
+
+    expect(webobs::save_studio_file_atomic("relative-studio.json", original, false).has_value(),
+           "Studio save must reject a relative path");
+    expect(!webobs::load_studio_file("relative-studio.json").ok(),
+           "Studio load must reject a relative path");
 }
 
 void scene_mutation_tests()
@@ -864,9 +939,124 @@ void scene_mutation_tests()
            "new browser source must not accept query or fragment placeholders");
 
     const auto secret_error = webobs::plan_scene_replacement(
-        current, R"({"schemaVersion":3,"name":"do-not-echo-this-secret")", current.revision);
+        current, R"({"schemaVersion":4,"name":"do-not-echo-this-secret")", current.revision);
     expect(!secret_error.ok() && secret_error.error.find("do-not-echo-this-secret") == std::string::npos,
            "scene mutation errors must not echo secret-bearing input");
+}
+
+void studio_document_tests()
+{
+    webobs::SceneDocument main = valid_scene_document();
+    main.id = "program";
+    main.name = "Program";
+    main.items.front().locked = true;
+    main.items.front().rotation_degrees = 5.0;
+    main.items.front().opacity = 0.8;
+    main.items.front().blend_mode = "screen";
+    main.sources.front().filters.push_back({
+        .id = "delay-1", .kind = "delay", .enabled = true, .amount = 50.0, .value = ""});
+
+    webobs::SceneDocument unsafe_filter = main;
+    unsafe_filter.sources.front().filters.push_back({
+        .id = "lut-unsafe", .kind = "lut", .enabled = true, .amount = 1.0,
+        .value = "/etc/passwd"});
+    expect(webobs::validate_scene_document(unsafe_filter).has_value(),
+           "LUT and mask filters must not read arbitrary host paths");
+    webobs::SceneDocument invalid_scaling = main;
+    invalid_scaling.sources.front().filters.push_back({
+        .id = "scale-invalid", .kind = "scaling", .enabled = true, .amount = 1.0,
+        .value = "640;rm"});
+    expect(webobs::validate_scene_document(invalid_scaling).has_value(),
+           "scaling filter values must use a bounded WIDTHxHEIGHT contract");
+
+    webobs::SceneDocument child = valid_scene_document();
+    child.id = "child";
+    child.name = "Child";
+    child.sources.front().id = "shared-camera";
+    child.items.front().source_id = "shared-camera";
+
+    webobs::SceneSource nested;
+    nested.id = "nested-child";
+    nested.kind = "nested";
+    nested.name = "Nested Child";
+    nested.nested_scene_id = "child";
+    main.sources.push_back(nested);
+    main.items.push_back({
+        .id = "item-nested",
+        .source_id = "nested-child",
+        .x = 960,
+        .y = 0,
+        .width = 960,
+        .height = 540,
+        .scale_mode = "contain",
+        .crop = {},
+        .z_index = 1,
+        .visible = true,
+        .locked = false,
+        .group_id = "nested-group",
+        .rotation_degrees = 0.0,
+        .opacity = 1.0,
+        .blend_mode = "normal",
+    });
+
+    webobs::StudioDocument studio;
+    studio.revision = 9;
+    studio.program_scene_id = "program";
+    studio.preview_scene_id = "child";
+    studio.transition = {.kind = "fade", .duration_ms = 350};
+    studio.scenes = {main, child};
+    expect(!webobs::validate_studio_document(studio).has_value(),
+           "valid Studio document with a nested scene must pass validation");
+
+    const auto encoded = webobs::serialize_studio_json(studio, webobs::SceneJsonView::persistence, false);
+    expect(encoded.ok(), "Studio document must serialize");
+    const auto parsed = webobs::parse_studio_json(encoded.json);
+    expect(parsed.ok() && parsed.document == studio, "Studio JSON must round-trip byte fields");
+
+    const auto public_json =
+        webobs::serialize_studio_json(studio, webobs::SceneJsonView::public_api, false);
+    expect(public_json.ok() && public_json.json.find("user:password") == std::string::npos,
+           "Studio public JSON must redact RTSP credentials in every scene");
+
+    const auto flattened = webobs::flatten_studio_scene(studio, "program");
+    expect(flattened.ok() && flattened.document->sources.size() == 2 &&
+               flattened.document->items.size() == 2 &&
+               flattened.document->items.back().x == 1010 && flattened.document->items.back().width == 480,
+           "nested Studio scenes must flatten deterministically with parent transforms");
+
+    const auto direct = webobs::analyze_scene_capability(main, webobs::PlaybackCompositionMode::direct);
+    expect(direct.selected == webobs::PlaybackCompositionMode::composite && !direct.exact &&
+               !direct.reasons.empty(),
+           "Direct mode must explicitly fall back when filters or advanced transforms are present");
+    const auto hybrid = webobs::analyze_scene_capability(main, webobs::PlaybackCompositionMode::hybrid);
+    expect(hybrid.selected == webobs::PlaybackCompositionMode::hybrid && !hybrid.exact,
+           "Hybrid mode must disclose per-item Composite fallback");
+    const auto capabilities = webobs::serialize_studio_capabilities_json(studio, false);
+    expect(capabilities.ok() && capabilities.json.find("\"selected\":\"composite\"") != std::string::npos &&
+               capabilities.json.find("user:password") == std::string::npos,
+           "Studio capability contract must disclose Direct fallback without source secrets");
+
+    webobs::StudioDocument cycle = studio;
+    cycle.scenes[1].sources.clear();
+    cycle.scenes[1].items.clear();
+    webobs::SceneSource cycle_source = nested;
+    cycle_source.id = "nested-program";
+    cycle_source.nested_scene_id = "program";
+    cycle.scenes[1].sources.push_back(cycle_source);
+    cycle.scenes[1].items.push_back({
+        .id = "item-cycle", .source_id = "nested-program", .x = 0, .y = 0, .width = 640,
+        .height = 360, .scale_mode = "contain", .crop = {}, .z_index = 0, .visible = true});
+    expect(webobs::validate_studio_document(cycle).has_value(),
+           "nested Studio scene cycles must be rejected");
+
+    webobs::StudioHistory history(2);
+    expect(history.push("A") && history.push("B") && history.push("C") && history.undo_size() == 2,
+           "Studio undo history must enforce its configured bound");
+    const auto undo = history.undo("D");
+    const auto second_undo = history.undo(undo.value_or(""));
+    const auto redo = history.redo(second_undo.value_or(""));
+    expect(undo == "C" && second_undo == "B" && redo == "C",
+           "Studio undo and redo must restore byte-exact states");
 }
 
 } // namespace
@@ -880,7 +1070,9 @@ int main()
     browser_security_tests();
     scene_document_tests();
     scene_store_tests();
+    studio_store_tests();
     scene_mutation_tests();
+    studio_document_tests();
     video_encoder_tests();
     if (failures == 0) {
         std::cout << "All webobs unit tests passed\n";

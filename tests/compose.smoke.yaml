@@ -146,6 +146,7 @@ services:
       WEBOBS_ALLOW_INSECURE_REMOTE: "true"
     volumes:
       - ./artifacts:/artifacts
+      - ./artifacts/m7-assets:/assets:ro
       - ./scenes:/test-scenes:ro
       - control-config:/test-config
     ports:
