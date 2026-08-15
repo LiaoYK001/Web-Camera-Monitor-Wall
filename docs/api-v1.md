@@ -74,7 +74,7 @@ Returns public `200 {"status":"ready"}` after recording is active, configured We
 
 ### `GET /metrics`
 
-Returns Prometheus text metrics for process up/readiness, recording state, WebRTC configuration/readiness, aggregate visible/healthy/unhealthy source counts, automatic RTSP restart count, HTTP request count, and rejected credential count. This route requires authentication when credentials are configured; labels containing URLs, source IDs, usernames, or client addresses are not emitted.
+Returns Prometheus text metrics for process up/readiness, recording state, WebRTC configuration/readiness, aggregate visible/healthy/unhealthy source counts, automatic RTSP restart count, selected/available encoder backends, fallback state, HTTP request count, and rejected credential count. Encoder labels use only the fixed `x264`, `vaapi`, `qsv`, and `nvenc` set. This route requires authentication when credentials are configured; labels containing URLs, source IDs, usernames, device paths, or client addresses are not emitted.
 
 ### `GET /api/v1/sources/status`
 
@@ -100,6 +100,28 @@ Returns the authenticated per-source operational view. `state` is `idle`, `start
 `webobsd` samples frame progress every 500 ms. Once an RTSP source exceeds the stale threshold, it requests `obs_source_media_restart()` immediately and retries with exponential backoff capped by the configured maximum. Fresh frames reset the consecutive backoff and restore readiness. Browser sources participate in health/readiness using activation and output dimensions, but RTSP-style media restart is not applied to them.
 
 `webobsd` 每 500 ms 采样一次帧进度。RTSP 来源超过陈旧阈值后会立即请求 `obs_source_media_restart()`，后续重试采用不超过配置上限的指数退避；新帧会重置连续退避并恢复 readiness。浏览器源通过激活状态与输出尺寸参与健康/readiness 判断，但不会套用 RTSP 媒体重启。
+
+### `GET /api/v1/system/capabilities`
+
+Returns the configured and selected H.264 encoder plus fixed backend capability flags. This authenticated response never returns device paths, PCI identifiers, driver versions, or source URLs. `devicePresent` and `encoderAvailable` must both be true for `ready` to be true. An unavailable explicit request safely selects x264 and sets `fallback`.
+
+返回配置与实际选择的 H.264 编码器及固定后端能力标志。该接口要求认证，且不返回设备路径、PCI 标识、驱动版本或来源 URL。只有 `devicePresent` 与 `encoderAvailable` 同时为真时 `ready` 才为真；显式请求不可用后端时会安全选择 x264 并设置 `fallback`。
+
+```json
+{
+  "videoEncoder": {
+    "requested": "auto",
+    "selected": "x264",
+    "fallback": false,
+    "backends": {
+      "x264": {"devicePresent": true, "encoderAvailable": true, "ready": true},
+      "vaapi": {"devicePresent": false, "encoderAvailable": true, "ready": false},
+      "qsv": {"devicePresent": false, "encoderAvailable": false, "ready": false},
+      "nvenc": {"devicePresent": false, "encoderAvailable": false, "ready": false}
+    }
+  }
+}
+```
 
 ### `GET /api/v1/program/status`
 

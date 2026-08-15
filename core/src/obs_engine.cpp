@@ -4,12 +4,14 @@
 #include "webobs/obs_scene_runtime.hpp"
 #include "webobs/redaction.hpp"
 #include "webobs/scene_controller.hpp"
+#include "webobs/video_encoder.hpp"
 
 #include <obs-nix-platform.h>
 #include <obs.h>
 #include <callback/calldata.h>
 #include <util/base.h>
 
+#include <algorithm>
 #include <atomic>
 #include <cerrno>
 #include <chrono>
@@ -19,6 +21,7 @@
 #include <filesystem>
 #include <fstream>
 #include <iostream>
+#include <initializer_list>
 #include <memory>
 #include <mutex>
 #include <string>
@@ -296,6 +299,83 @@ void update_source_runtime_status(RuntimeStatus &status, const SourceHealthSnaps
     status.source_restarts.store(snapshot.total_restarts);
 }
 
+bool encoder_registered(std::initializer_list<std::string_view> identifiers)
+{
+    const char *identifier = nullptr;
+    for (std::size_t index = 0; obs_enum_encoder_types(index, &identifier); ++index) {
+        if (!identifier)
+            continue;
+        if (std::any_of(identifiers.begin(), identifiers.end(), [identifier](std::string_view expected) {
+                return expected == identifier;
+            }))
+            return true;
+    }
+    return false;
+}
+
+bool intel_render_device(const std::filesystem::path &device)
+{
+    const std::filesystem::path vendor_path =
+        std::filesystem::path("/sys/class/drm") / device.filename() / "device/vendor";
+    std::ifstream input(vendor_path);
+    std::string vendor;
+    input >> vendor;
+    return vendor == "0x8086" || vendor == "8086";
+}
+
+VideoEncoderCapabilities detect_video_encoder_capabilities(const Config &config)
+{
+    VideoEncoderCapabilities capabilities;
+    capabilities.x264.encoder_available = encoder_registered({"obs_x264"});
+
+    const std::filesystem::path vaapi_device(config.vaapi_device);
+    capabilities.vaapi.device_present = access(vaapi_device.c_str(), R_OK | W_OK) == 0;
+    capabilities.vaapi.encoder_available = encoder_registered({"ffmpeg_vaapi", "ffmpeg_vaapi_tex"});
+
+    capabilities.qsv.device_present = capabilities.vaapi.device_present && intel_render_device(vaapi_device);
+    capabilities.qsv.encoder_available =
+        encoder_registered({"obs_qsv11_soft_v2", "obs_qsv11_v2", "obs_qsv11_soft", "obs_qsv11"});
+
+    capabilities.nvenc.device_present = access("/dev/nvidia0", R_OK | W_OK) == 0 &&
+                                          access("/dev/nvidiactl", R_OK | W_OK) == 0;
+    capabilities.nvenc.encoder_available =
+        encoder_registered({"obs_nvenc_h264_soft", "obs_nvenc_h264_tex", "obs_nvenc_h264_cuda",
+                            "ffmpeg_nvenc"});
+    return select_video_encoder(config.video_encoder, capabilities);
+}
+
+const char *video_encoder_identifier(VideoEncoderKind kind)
+{
+    switch (kind) {
+    case VideoEncoderKind::x264:
+        return "obs_x264";
+    case VideoEncoderKind::vaapi:
+        return "ffmpeg_vaapi";
+    case VideoEncoderKind::qsv:
+        return "obs_qsv11_soft_v2";
+    case VideoEncoderKind::nvenc:
+        return "obs_nvenc_h264_soft";
+    }
+    return "obs_x264";
+}
+
+DataPtr video_encoder_settings(const Config &config, VideoEncoderKind kind)
+{
+    DataPtr settings(obs_data_create());
+    obs_data_set_string(settings.get(), "rate_control", "CBR");
+    obs_data_set_int(settings.get(), "bitrate", config.bitrate_kbps);
+    obs_data_set_int(settings.get(), "keyint_sec", 2);
+    if (kind == VideoEncoderKind::x264) {
+        obs_data_set_string(settings.get(), "preset", "veryfast");
+        obs_data_set_string(settings.get(), "profile", "high");
+    } else if (kind == VideoEncoderKind::vaapi) {
+        obs_data_set_string(settings.get(), "vaapi_device", config.vaapi_device.c_str());
+        obs_data_set_int(settings.get(), "profile", 100);
+        obs_data_set_int(settings.get(), "bf", 0);
+    }
+    return settings;
+}
+
 } // namespace
 
 ExitCode run_obs_engine(const Config &config, const SceneDocument &document)
@@ -369,6 +449,25 @@ ExitCode run_obs_engine(const Config &config, const SceneDocument &document)
         return ExitCode::obs_initialization_failed;
     obs_post_load_modules();
 
+    VideoEncoderCapabilities encoder_capabilities = detect_video_encoder_capabilities(config);
+    if (!encoder_capabilities.x264.encoder_available) {
+        blog(LOG_ERROR, "The mandatory obs_x264 software fallback is unavailable");
+        return ExitCode::obs_initialization_failed;
+    }
+    blog(LOG_INFO,
+         "Video encoder capabilities: requested=%s selected=%s fallback=%s "
+         "vaapi(device=%s,encoder=%s) qsv(device=%s,encoder=%s) "
+         "nvenc(device=%s,encoder=%s)",
+         video_encoder_preference_name(encoder_capabilities.requested).data(),
+         video_encoder_kind_name(encoder_capabilities.selected).data(),
+         encoder_capabilities.fallback ? "true" : "false",
+         encoder_capabilities.vaapi.device_present ? "true" : "false",
+         encoder_capabilities.vaapi.encoder_available ? "true" : "false",
+         encoder_capabilities.qsv.device_present ? "true" : "false",
+         encoder_capabilities.qsv.encoder_available ? "true" : "false",
+         encoder_capabilities.nvenc.device_present ? "true" : "false",
+         encoder_capabilities.nvenc.encoder_available ? "true" : "false");
+
     ObsSceneRuntime scene_runtime(config.connect_timeout_seconds, config.browser_security,
                                   config.source_stale_seconds,
                                   config.source_recovery_base_seconds,
@@ -416,12 +515,27 @@ ExitCode run_obs_engine(const Config &config, const SceneDocument &document)
         }
     }
 
-    DataPtr video_settings(obs_data_create());
-    obs_data_set_string(video_settings.get(), "rate_control", "CBR");
-    obs_data_set_int(video_settings.get(), "bitrate", config.bitrate_kbps);
-    obs_data_set_int(video_settings.get(), "keyint_sec", 2);
-    obs_data_set_string(video_settings.get(), "preset", "veryfast");
-    obs_data_set_string(video_settings.get(), "profile", "high");
+    DataPtr video_settings = video_encoder_settings(config, encoder_capabilities.selected);
+    const std::string encoder_name =
+        std::string("WebOBS ") + std::string(video_encoder_kind_name(encoder_capabilities.selected));
+    EncoderPtr video_encoder(obs_video_encoder_create(
+        video_encoder_identifier(encoder_capabilities.selected), encoder_name.c_str(),
+        video_settings.get(), nullptr));
+    if (!video_encoder && encoder_capabilities.selected != VideoEncoderKind::x264) {
+        blog(LOG_WARNING, "Could not initialize the selected %s encoder; falling back to x264",
+             video_encoder_kind_name(encoder_capabilities.selected).data());
+        encoder_capabilities.selected = VideoEncoderKind::x264;
+        encoder_capabilities.fallback = true;
+        video_settings = video_encoder_settings(config, encoder_capabilities.selected);
+        video_encoder.reset(obs_video_encoder_create("obs_x264", "WebOBS x264 fallback",
+                                                     video_settings.get(), nullptr));
+    }
+    if (!video_encoder) {
+        blog(LOG_ERROR, "Could not create the mandatory x264 video encoder");
+        return ExitCode::output_failed;
+    }
+    obs_encoder_set_video(video_encoder.get(), obs_get_video());
+
     ServicePtr whip_service;
     if (config.webrtc_enabled) {
         DataPtr service_settings(obs_data_create());
@@ -434,13 +548,6 @@ ExitCode run_obs_engine(const Config &config, const SceneDocument &document)
         }
         obs_service_apply_encoder_settings(whip_service.get(), video_settings.get(), nullptr);
     }
-    EncoderPtr video_encoder(obs_video_encoder_create("obs_x264", "WebOBS x264", video_settings.get(), nullptr));
-    if (!video_encoder) {
-        blog(LOG_ERROR, "Could not create obs_x264 encoder");
-        return ExitCode::output_failed;
-    }
-    obs_encoder_set_video(video_encoder.get(), obs_get_video());
-
     DataPtr audio_settings(obs_data_create());
     obs_data_set_int(audio_settings.get(), "bitrate", 128);
     EncoderPtr audio_encoder(
@@ -494,6 +601,7 @@ ExitCode run_obs_engine(const Config &config, const SceneDocument &document)
 
     SceneController scene_controller(document, config.scene_file, scene_runtime);
     RuntimeStatus runtime_status;
+    runtime_status.video_encoder = encoder_capabilities;
     runtime_status.webrtc_configured.store(config.webrtc_enabled);
     scene_runtime.maintain_source_health();
     update_source_runtime_status(runtime_status, scene_runtime.source_health_snapshot());

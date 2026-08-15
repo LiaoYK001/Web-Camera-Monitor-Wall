@@ -2,6 +2,7 @@
 
 #include "webobs/authentication.hpp"
 #include "webobs/browser_security.hpp"
+#include "webobs/video_encoder.hpp"
 
 #include <functional>
 #include <optional>
@@ -40,6 +41,8 @@ struct Config {
     int height = 1080;
     int fps = 30;
     int bitrate_kbps = 6000;
+    VideoEncoderPreference video_encoder = VideoEncoderPreference::automatic;
+    std::string vaapi_device = "/dev/dri/renderD128";
     int connect_timeout_seconds = 20;
     std::string rtsp_transport = "tcp";
     LogLevel log_level = LogLevel::info;

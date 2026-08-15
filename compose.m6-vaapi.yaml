@@ -1,0 +1,7 @@
+services:
+  webobs:
+    devices:
+      - "${WEBOBS_VAAPI_DEVICE:-/dev/dri/renderD128}:${WEBOBS_VAAPI_DEVICE:-/dev/dri/renderD128}"
+    environment:
+      WEBOBS_VIDEO_ENCODER: ${WEBOBS_VIDEO_ENCODER:-auto}
+      WEBOBS_VAAPI_DEVICE: ${WEBOBS_VAAPI_DEVICE:-/dev/dri/renderD128}

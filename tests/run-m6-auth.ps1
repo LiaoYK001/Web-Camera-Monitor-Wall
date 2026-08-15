@@ -121,7 +121,8 @@ try {
         $UnauthorizedRoot.Headers['WWW-Authenticate'] -match '^Basic realm="WebOBS"') `
         'The Web editor must issue a Basic challenge when credentials are absent.'
     foreach ($ProtectedPath in @('/api/v1/scene', '/api/v1/program/status',
-            '/api/v1/playback/capabilities', '/api/v1/sources/status', '/metrics')) {
+            '/api/v1/playback/capabilities', '/api/v1/sources/status',
+            '/api/v1/system/capabilities', '/metrics')) {
         $Protected = Invoke-M6Request -Client $Client -Method ([Net.Http.HttpMethod]::Get) -Path $ProtectedPath
         Assert-True ($Protected.Status -eq 401) "Unauthenticated request unexpectedly reached $ProtectedPath."
     }
@@ -144,6 +145,18 @@ try {
         -Path $AssetMatch.Groups['path'].Value -Headers $AuthHeaders
     Assert-True ($AssetWithoutAuth.Status -eq 401 -and $AssetWithAuth.Status -eq 200) `
         'Hashed UI assets must be protected by the same authentication boundary.'
+
+    $CapabilitiesResponse = Invoke-M6Request -Client $Client -Method ([Net.Http.HttpMethod]::Get) `
+        -Path '/api/v1/system/capabilities' -Headers $AuthHeaders
+    $Capabilities = $CapabilitiesResponse.Body | ConvertFrom-Json
+    Assert-True ($CapabilitiesResponse.Status -eq 200 -and
+        $Capabilities.videoEncoder.requested -eq 'nvenc' -and
+        $Capabilities.videoEncoder.selected -eq 'x264' -and
+        $Capabilities.videoEncoder.fallback -eq $true -and
+        $Capabilities.videoEncoder.backends.x264.ready -eq $true -and
+        $Capabilities.videoEncoder.backends.nvenc.ready -eq $false -and
+        $CapabilitiesResponse.Body -notmatch '/dev/|PCI|rtsp://') `
+        'Unavailable NVENC must report a credential-free x264 fallback capability state.'
 
     $RemoteHeaders = @{
         Authorization = $Authorization
@@ -233,8 +246,12 @@ try {
         $Metrics.Body -match '(?m)^webobs_sources_healthy 2$' -and
         $Metrics.Body -match '(?m)^webobs_sources_unhealthy 0$' -and
         $Metrics.Body -match '(?m)^webobs_source_restarts_total 0$' -and
+        $Metrics.Body -match '(?m)^webobs_video_encoder_selected\{backend="x264"\} 1$' -and
+        $Metrics.Body -match '(?m)^webobs_video_encoder_selected\{backend="nvenc"\} 0$' -and
+        $Metrics.Body -match '(?m)^webobs_video_encoder_fallback 1$' -and
+        $Metrics.Body -match '(?m)^webobs_video_encoder_available\{backend="x264"\} 1$' -and
         $Metrics.Body -match '(?m)^webobs_auth_failures_total 3$') `
-        'Authenticated Prometheus metrics did not report readiness, source health, and rejected credentials.'
+        'Authenticated Prometheus metrics did not report readiness, source health, encoder fallback, and rejected credentials.'
     $HealthStatus = ''
     $HealthDeadline = [DateTime]::UtcNow.AddSeconds(15)
     while ([DateTime]::UtcNow -lt $HealthDeadline) {

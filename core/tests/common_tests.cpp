@@ -6,6 +6,7 @@
 #include "webobs/scene_document.hpp"
 #include "webobs/scene_mutation.hpp"
 #include "webobs/scene_store.hpp"
+#include "webobs/video_encoder.hpp"
 
 #include <array>
 #include <cstdint>
@@ -59,6 +60,8 @@ void config_tests()
         {"--http-port", "65536"},          {"--allow-insecure-remote", "sometimes"},
         {"--webrtc-enabled", "sometimes"},
         {"--browser-allow-private-networks", "sometimes"},
+        {"--video-encoder", "gpu-magic"},
+        {"--vaapi-device", "/tmp/renderD128"},
     };
     for (const auto &[flag, value] : invalid_values) {
         result = webobs::parse_config({"--rtsp-url", "rtsp://camera/live", flag, value}, empty_environment);
@@ -213,6 +216,16 @@ void config_tests()
            "CLI WebRTC setting must override the environment and ignore a disabled WHIP URL");
 
     result = webobs::parse_config(
+        {"--scene-file", "/config/webobs/scene.json", "--video-encoder", "vaapi",
+         "--vaapi-device", "/dev/dri/renderD129"},
+        environment({{"WEBOBS_VIDEO_ENCODER", "nvenc"},
+                     {"WEBOBS_VAAPI_DEVICE", "/dev/dri/renderD128"}}));
+    expect(result.ok() && result.config &&
+               result.config->video_encoder == webobs::VideoEncoderPreference::vaapi &&
+               result.config->vaapi_device == "/dev/dri/renderD129",
+           "CLI video encoder settings must override environment values");
+
+    result = webobs::parse_config(
         {"--scene-file", "/config/webobs/scene.json", "--browser-allowed-origins",
          "HTTPS://Dashboard.Example:443/, http://overlay.example:8080"},
         empty_environment);
@@ -259,6 +272,41 @@ void config_tests()
         expect(result.config->output_path.starts_with("/recordings/webobs-"),
                "default output must be generated under /recordings");
     }
+}
+
+void video_encoder_tests()
+{
+    webobs::VideoEncoderCapabilities capabilities;
+    auto selected = webobs::select_video_encoder(webobs::VideoEncoderPreference::automatic,
+                                                 capabilities);
+    expect(selected.selected == webobs::VideoEncoderKind::x264 && !selected.fallback,
+           "automatic encoder selection must keep the software baseline without hardware");
+
+    capabilities.vaapi = {true, true};
+    selected = webobs::select_video_encoder(webobs::VideoEncoderPreference::automatic,
+                                            capabilities);
+    expect(selected.selected == webobs::VideoEncoderKind::vaapi && !selected.fallback,
+           "automatic encoder selection must use an available VAAPI backend");
+
+    capabilities.qsv = {true, true};
+    selected = webobs::select_video_encoder(webobs::VideoEncoderPreference::automatic,
+                                            capabilities);
+    expect(selected.selected == webobs::VideoEncoderKind::qsv,
+           "automatic encoder selection must prefer QSV over generic VAAPI");
+
+    capabilities.nvenc = {true, true};
+    selected = webobs::select_video_encoder(webobs::VideoEncoderPreference::automatic,
+                                            capabilities);
+    expect(selected.selected == webobs::VideoEncoderKind::nvenc,
+           "automatic encoder selection must prefer NVENC when it is ready");
+
+    capabilities.nvenc = {true, false};
+    selected = webobs::select_video_encoder(webobs::VideoEncoderPreference::nvenc,
+                                            capabilities);
+    expect(selected.selected == webobs::VideoEncoderKind::x264 && selected.fallback,
+           "an explicitly requested unavailable backend must fall back to x264");
+    expect(!webobs::video_encoder_backend_ready(capabilities.nvenc),
+           "a hardware device without its encoder module must not be reported ready");
 }
 
 void authentication_tests()
@@ -833,6 +881,7 @@ int main()
     scene_document_tests();
     scene_store_tests();
     scene_mutation_tests();
+    video_encoder_tests();
     if (failures == 0) {
         std::cout << "All webobs unit tests passed\n";
         return 0;

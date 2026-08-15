@@ -10,9 +10,9 @@ This roadmap describes milestone order and acceptance gates, not promised releas
 
 **🚧 M6 — Production 正在开发；当前位于生产底座收尾阶段。M7–M13 仅完成规划，尚未开始开发。**
 
-M0 through M5 are complete. M6 now includes optional file-backed single-operator Basic authentication across UI, REST, WebSocket, WHEP, and metrics; explicit remote HTTPS Origin/Host authorization; bounded failed-authentication rate limiting; frame-freshness source health; exponential-backoff RTSP recovery; structured audit events; bounded Docker logs; public liveness/readiness; authenticated Prometheus metrics; and a Docker healthcheck. M6 is not complete: TLS termination, TURN, GPU detection, backup/restore, and upgrade/rollback remain open.
+M0 through M5 are complete. M6 now includes optional file-backed single-operator Basic authentication across UI, REST, WebSocket, WHEP, and metrics; explicit remote HTTPS Origin/Host authorization; bounded failed-authentication rate limiting; frame-freshness source health; exponential-backoff RTSP recovery; structured audit events; bounded Docker logs; public liveness/readiness; authenticated Prometheus metrics; a Docker healthcheck; and CPU/VAAPI/QSV/NVENC capability detection with safe x264 fallback. M6 is not complete: TLS termination, TURN, backup/restore, and upgrade/rollback remain open.
 
-M0 至 M5 已全部完成。M6 现已包含 UI、REST、WebSocket、WHEP 与指标统一文件型单操作员 Basic 认证、明确的远程 HTTPS Origin/Host 授权、有限认证失败限流、帧新鲜度来源健康、指数退避 RTSP 恢复、结构化审计事件、有界 Docker 日志、公开存活/就绪探针、受认证 Prometheus 指标和 Docker healthcheck。M6 尚未完成：TLS 终止、TURN、GPU 检测、备份恢复及升级回滚仍待开发。
+M0 至 M5 已全部完成。M6 现已包含 UI、REST、WebSocket、WHEP 与指标统一文件型单操作员 Basic 认证、明确的远程 HTTPS Origin/Host 授权、有限认证失败限流、帧新鲜度来源健康、指数退避 RTSP 恢复、结构化审计事件、有界 Docker 日志、公开存活/就绪探针、受认证 Prometheus 指标、Docker healthcheck，以及 CPU/VAAPI/QSV/NVENC 能力探测与 x264 安全回退。M6 尚未完成：TLS 终止、TURN、备份恢复及升级回滚仍待开发。
 
 M7–M13 now form the planned expansion into an OBS-inspired Canvas Studio and a full per-camera NVR workflow. The detailed scope, architecture boundaries, dependencies, non-goals, and exit gates are defined in [docs/future-milestones.md](docs/future-milestones.md). M6 remains a hard gate: future planning does not change the current implementation position.
 
@@ -65,6 +65,7 @@ M0 已于 2026-08-11 在真实摄像头门禁通过后完成。后续修改采�
 - M6 compatibility regression / M6 兼容性回归：the rebuilt final image passed container CTest and dynamic-library closure, then the complete M0–M3 aggregate suite, M4 browser-source acceptance, and M5 deterministic audio acceptance; the latest M4 and M5 recordings were finalized at 12.621 and 38.921 seconds / 重建后的最终镜像通过容器 CTest 与动态库闭包，并继续通过 M0–M3 完整聚合套件、M4 浏览器源验收及 M5 确定性音频验收；最新 M4 与 M5 录像分别完整封装为 12.621 秒和 38.921 秒。
 - M6 health and recovery / M6 健康与恢复：two visible RTSP sources started healthy, became stale after their publisher stopped, degraded readiness and aggregate metrics, requested bounded exponential-backoff libobs restarts, then returned healthy after publication resumed. Credential-free status output, structured authentication/scene/recovery audit events, clean exit, and a finalized 19.621-second H.264/AAC recording passed together / 两路可见 RTSP 来源从健康状态开始，在发布端停止后变为陈旧并降低 readiness 与聚合指标，按有界指数退避请求 libobs 重启，并在发布恢复后重新健康；无凭据状态输出、结构化认证/场景/恢复审计事件、正常退出及 19.621 秒 H.264/AAC 最终录像联合通过。
 - M6 deployment documentation / M6 部署文档：source-build deployment, secure local configuration, lifecycle operations, manual backup/rollback, and GHCR manual/Actions publication and digest-pinned consumption are documented; Compose now accepts an explicit registry image and forwards browser-source security policy / 已记录源码构建部署、本地安全配置、生命周期操作、手工备份回滚、GHCR 手工/Actions 发布及 digest 固定消费流程；Compose 现可显式选择仓库镜像并正确传递浏览器源安全策略。
+- M6 encoder capability and fallback / M6 编码能力与回退：the final image detected fixed CPU/VAAPI/QSV/NVENC capability classes without exposing device identities, an explicit unavailable NVENC request selected x264 with a visible fallback state, authenticated API/metrics reflected the result, and the 19.621-second H.264/AAC recovery recording still finalized correctly / 最终镜像在不暴露设备身份的前提下探测固定 CPU/VAAPI/QSV/NVENC 能力类别；显式请求不可用 NVENC 时选择 x264 并显示回退状态，受认证 API/指标正确反映结果，19.621 秒 H.264/AAC 恢复录像仍完整封装。
 
 ## Milestones / 里程碑
 
@@ -204,7 +205,7 @@ M5 已于 2026-08-15 完成：多来源确定性音频及 M0–M4 全回归通�
 - [ ] Add trusted HTTPS termination deployment and TURN configuration/acceptance / 增加受信 HTTPS 终止部署与 TURN 配置/验收
 - [x] Add structured audit logs, bounded log retention, frame-freshness source health, exponential-backoff reconnect, and recovery acceptance / 增加结构化审计日志、有界日志保留、帧新鲜度来源健康、指数退避重连与恢复验收
 - [x] Document source-build deployment and GHCR publication/consumption with immutable image selection / 记录源码构建部署、GHCR 发布消费及不可变镜像选择流程
-- [ ] Add CPU/VAAPI/QSV/NVIDIA detection with safe software fallback / 增加 CPU/VAAPI/QSV/NVIDIA 检测及安全软件回退
+- [x] Add CPU/VAAPI/QSV/NVIDIA detection with safe software fallback / 增加 CPU/VAAPI/QSV/NVIDIA 检测及安全软件回退
 - [ ] Add scene backup/restore plus image provenance, upgrade, rollback, and GPL source-distribution procedures / 增加场景备份恢复、镜像来源、升级回滚及 GPL 源码分发流程
 
 ## Cross-cutting rules / 贯穿规则

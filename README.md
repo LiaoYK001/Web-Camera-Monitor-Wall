@@ -7,7 +7,7 @@ RTSP camera -> libobs ffmpeg_source -> OBS scene -> H.264/AAC MP4
                                                    -> H.264/Opus WHIP/WHEP
 ```
 
-当前版本能从持久化场景启动多路 RTSP 与受控网页来源合成，并通过随产品镜像提供的 React/TypeScript 编辑器及 REST/WebSocket 接口，在录制期间原子更新布局和来源。M2 在同一产品镜像中通过固定版本 MediaMTX 和 `obs-webrtc` 发布 Composite H.264/Opus；M3 完成每路摄像头按需直达浏览器及选择性 H.264/Opus 转码；M4 完成固定版本 `obs-browser`/CEF 和安全生命周期；M5 完成统一静音、音量、同步偏移、监听和音轨模型、Direct Web Audio 混音及 H.264/AAC 最终录像。M6 当前已增加文件型单操作员 Basic 认证、失败限流、逐来源帧健康检测、指数退避自动恢复、存活/就绪探针、Prometheus 指标、结构化审计事件及有界 Docker 日志；TLS、TURN、GPU 检测、备份恢复和升级回滚仍未完成。
+当前版本能从持久化场景启动多路 RTSP 与受控网页来源合成，并通过随产品镜像提供的 React/TypeScript 编辑器及 REST/WebSocket 接口，在录制期间原子更新布局和来源。M2 在同一产品镜像中通过固定版本 MediaMTX 和 `obs-webrtc` 发布 Composite H.264/Opus；M3 完成每路摄像头按需直达浏览器及选择性 H.264/Opus 转码；M4 完成固定版本 `obs-browser`/CEF 和安全生命周期；M5 完成统一静音、音量、同步偏移、监听和音轨模型、Direct Web Audio 混音及 H.264/AAC 最终录像。M6 当前已增加文件型单操作员 Basic 认证、失败限流、逐来源帧健康检测、指数退避自动恢复、存活/就绪探针、Prometheus 指标、结构化审计事件、有界 Docker 日志，以及 CPU/VAAPI/QSV/NVENC 能力探测与 x264 安全回退；TLS、TURN、备份恢复和升级回滚仍未完成。
 
 开发路线、里程碑验收标准和当前进度见 [ROADMAP.md](ROADMAP.md)。**M0 至 M5 已通过全部验收；M6 Production 正在开发，尚未达到生产完成门禁。M7–M13 的 OBS 风格画布与 NVR 能力仅完成规划，尚未开工。**详细的后续架构、功能归属、非目标和逐阶段完成门禁见 [M7–M13 产品路线](docs/future-milestones.md)。从 Git 克隆、配置、构建、运行、备份和回滚见 [Docker 部署指南](docs/docker-deployment.md)；不用 Docker Hub 时的镜像发布与拉取见 [GHCR 指南](docs/ghcr.md)。当前场景与持久化契约见 [docs/scene-schema-v3.md](docs/scene-schema-v3.md)，历史 [v2](docs/scene-schema-v2.md) 与 [v1](docs/scene-schema-v1.md) 契约仍保留，控制协议见 [docs/api-v1.md](docs/api-v1.md)。
 
@@ -86,6 +86,12 @@ docker compose -f compose.yaml -f compose.m6-auth.yaml up --build
 该覆盖会以 Compose secrets 挂载凭据文件并关闭旧的无认证非回环许可。远程浏览器访问还需配置 `WEBOBS_CONTROL_ALLOWED_ORIGINS=https://monitor.example.com`，并由受信反向代理终止 HTTPS；当前程序本身不提供 TLS，因此尚不能宣称互联网生产就绪。`/api/v1/health` 与 `/api/v1/ready` 保持公开供容器探针使用，其余 UI、REST、WebSocket、WHEP 与 `/metrics` 统一要求认证。完整边界见 [控制 API 文档](docs/api-v1.md)。
 
 运行时每 500 ms 汇总一次可见来源帧状态。RTSP 来源超过 `WEBOBS_SOURCE_STALE_SECONDS` 没有产生新帧后，readiness 会降为 `503`，并从 `WEBOBS_SOURCE_RECOVERY_BASE_SECONDS` 起按指数退避调用 libobs 媒体重启，间隔不超过 `WEBOBS_SOURCE_RECOVERY_MAX_SECONDS`；新帧恢复后 readiness 自动回到 `200`。受认证的 `/api/v1/sources/status` 只返回来源 ID、类型、状态、帧龄和重启次数，不返回 URL。认证失败、场景变更和来源恢复会写入经过统一 URL 脱敏的单行 JSON 审计事件；基础 Compose 默认把 Docker `json-file` 日志限制为 `10m × 3`，可通过 `.env` 中的有界值调整。
+
+M6 的视频编码器默认使用 `WEBOBS_VIDEO_ENCODER=auto`：容器会分别探测 x264、VAAPI、QSV 和 NVENC 的设备与 OBS 编码器模块，只有两者同时可用才会选择硬件后端；显式请求不可用后端或硬件初始化失败时会记录不含设备标识的警告并安全回退 x264。当前产品镜像提供 x264 和 Linux VAAPI 实现，QSV/NVENC 会被报告为未就绪而不会误选。受认证的 `/api/v1/system/capabilities` 与固定标签 Prometheus 指标公开实际选择和回退状态。Linux 主机需要显式使用 `compose.m6-vaapi.yaml` 挂载 render node；Docker Desktop 未提供 GPU 时保持软件基线：
+
+```bash
+docker compose -f compose.yaml -f compose.m6-vaapi.yaml up --build
+```
 
 编辑器默认显示“实时节目”，通过 recvonly WHEP 播放 libobs 合成后的 H.264/Opus 节目；声音默认关闭，必须通过用户点击启用。切换到“布局编辑”可进行来源增删、RTSP 传输方式、静音/音量/同步偏移/监听/音轨、拖动、缩放、适配模式、裁切、可见性和层级调整。修改先保留在浏览器草稿中，点击“保存场景”后以 ETag/`If-Match` 提交；WebSocket 会同步其他本地标签页的已提交版本并提示冲突。页面不会显示已存储的 RTSP 用户名或密码。
 

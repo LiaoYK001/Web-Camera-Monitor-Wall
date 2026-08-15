@@ -1,6 +1,7 @@
 #pragma once
 
 #include "webobs/config.hpp"
+#include "webobs/video_encoder.hpp"
 
 #include <atomic>
 #include <cstdint>
@@ -13,6 +14,7 @@ namespace webobs {
 class SceneController;
 
 struct RuntimeStatus {
+    VideoEncoderCapabilities video_encoder;
     std::atomic<bool> recording_active{false};
     std::atomic<bool> webrtc_configured{false};
     std::atomic<bool> webrtc_ready{false};

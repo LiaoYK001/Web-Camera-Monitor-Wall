@@ -27,6 +27,7 @@ add_library(webobs-common
     core/src/scene_document.cpp
     core/src/scene_mutation.cpp
     core/src/scene_store.cpp
+    core/src/video_encoder.cpp
 )
 target_include_directories(webobs-common PUBLIC core/include)
 target_link_libraries(webobs-common PUBLIC PkgConfig::JANSSON)

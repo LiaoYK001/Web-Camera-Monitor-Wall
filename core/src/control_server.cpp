@@ -1079,6 +1079,27 @@ HttpResponse metrics_response(unsigned int version, const RuntimeStatus &status,
         "# HELP webobs_source_restarts_total Automatic RTSP source restarts since process start.\n"
         "# TYPE webobs_source_restarts_total counter\nwebobs_source_restarts_total " +
         std::to_string(status.source_restarts.load()) + "\n" +
+        "# HELP webobs_video_encoder_selected Selected H.264 encoder backend.\n"
+        "# TYPE webobs_video_encoder_selected gauge\n"
+        "webobs_video_encoder_selected{backend=\"x264\"} " +
+        std::string(metric(status.video_encoder.selected == VideoEncoderKind::x264)) + "\n" +
+        "webobs_video_encoder_selected{backend=\"vaapi\"} " +
+        std::string(metric(status.video_encoder.selected == VideoEncoderKind::vaapi)) + "\n" +
+        "webobs_video_encoder_selected{backend=\"qsv\"} " +
+        std::string(metric(status.video_encoder.selected == VideoEncoderKind::qsv)) + "\n" +
+        "webobs_video_encoder_selected{backend=\"nvenc\"} " +
+        std::string(metric(status.video_encoder.selected == VideoEncoderKind::nvenc)) + "\n" +
+        "# TYPE webobs_video_encoder_fallback gauge\nwebobs_video_encoder_fallback " +
+        std::string(metric(status.video_encoder.fallback)) + "\n" +
+        "# HELP webobs_video_encoder_available Device and encoder module are both available.\n"
+        "# TYPE webobs_video_encoder_available gauge\n"
+        "webobs_video_encoder_available{backend=\"x264\"} 1\n"
+        "webobs_video_encoder_available{backend=\"vaapi\"} " +
+        std::string(metric(video_encoder_backend_ready(status.video_encoder.vaapi))) + "\n" +
+        "webobs_video_encoder_available{backend=\"qsv\"} " +
+        std::string(metric(video_encoder_backend_ready(status.video_encoder.qsv))) + "\n" +
+        "webobs_video_encoder_available{backend=\"nvenc\"} " +
+        std::string(metric(video_encoder_backend_ready(status.video_encoder.nvenc))) + "\n" +
         "# HELP webobs_http_requests_total Parsed HTTP requests since process start.\n"
         "# TYPE webobs_http_requests_total counter\nwebobs_http_requests_total " +
         std::to_string(metrics.http_requests.load()) + "\n" +
@@ -1087,6 +1108,27 @@ HttpResponse metrics_response(unsigned int version, const RuntimeStatus &status,
         std::to_string(authenticator.failed_attempts()) + "\n";
     return response(http::status::ok, version, std::move(body),
                     "text/plain; version=0.0.4; charset=utf-8");
+}
+
+std::string encoder_backend_json(const VideoEncoderBackend &backend)
+{
+    return std::string("{\"devicePresent\":") + (backend.device_present ? "true" : "false") +
+           ",\"encoderAvailable\":" + (backend.encoder_available ? "true" : "false") +
+           ",\"ready\":" + (video_encoder_backend_ready(backend) ? "true" : "false") + "}";
+}
+
+HttpResponse system_capabilities_response(unsigned int version, const RuntimeStatus &status)
+{
+    const VideoEncoderCapabilities &encoder = status.video_encoder;
+    std::string body = "{\"videoEncoder\":{\"requested\":\"" +
+                       std::string(video_encoder_preference_name(encoder.requested)) +
+                       "\",\"selected\":\"" + std::string(video_encoder_kind_name(encoder.selected)) +
+                       "\",\"fallback\":" + (encoder.fallback ? "true" : "false") +
+                       ",\"backends\":{\"x264\":" + encoder_backend_json(encoder.x264) +
+                       ",\"vaapi\":" + encoder_backend_json(encoder.vaapi) +
+                       ",\"qsv\":" + encoder_backend_json(encoder.qsv) +
+                       ",\"nvenc\":" + encoder_backend_json(encoder.nvenc) + "}}}";
+    return response(http::status::ok, version, std::move(body));
 }
 
 HttpResponse source_health_response(unsigned int version, SceneController &controller)
@@ -1139,6 +1181,8 @@ HttpResponse handle_request(const HttpRequest &request, SceneController &control
         return metrics_response(version, runtime_status, metrics, authenticator);
     if (request.method() == http::verb::get && target == "/api/v1/sources/status")
         return source_health_response(version, controller);
+    if (request.method() == http::verb::get && target == "/api/v1/system/capabilities")
+        return system_capabilities_response(version, runtime_status);
 
     if (request.method() == http::verb::get && target == "/api/v1/program/status")
         return whep_proxy.status(version);

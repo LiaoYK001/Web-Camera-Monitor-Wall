@@ -2,7 +2,7 @@
 
 本文面向从 Git 仓库克隆代码、在部署主机自行构建产品镜像的操作者。命令均在仓库根目录执行。
 
-> 当前项目已完成 M0–M5，正在开发 M6 Production。文件认证、限流、健康检查、指标、审计日志和来源自动恢复已经具备；原生 TLS、受信 HTTPS 反向代理方案、TURN、GPU 检测以及完整备份升级自动化仍未完成。当前版本适合本机或受控网络验收，不应把 HTTP 控制端口直接暴露到互联网。
+> 当前项目已完成 M0–M5，正在开发 M6 Production。文件认证、限流、健康检查、指标、审计日志、来源自动恢复及 CPU/VAAPI/QSV/NVENC 能力探测与 x264 安全回退已经具备；原生 TLS、受信 HTTPS 反向代理方案、TURN 以及完整备份升级自动化仍未完成。当前版本适合本机或受控网络验收，不应把 HTTP 控制端口直接暴露到互联网。
 
 ## 1. 部署组成与数据边界
 
@@ -22,6 +22,14 @@
 ## 2. 前置条件
 
 支持的产品平台目前只有 `linux/amd64`（x86_64）。ARM64、Windows containers 和 macOS 原生容器不是当前构建目标。
+
+编码默认值为 `WEBOBS_VIDEO_ENCODER=auto`。无 GPU 设备时自动使用 x264；不要为了消除软件编码日志而给容器 `--privileged`。Linux 主机若存在支持 H.264 编码的 VAAPI render node，可在 `.env` 中设置 `WEBOBS_VAAPI_DEVICE=/dev/dri/renderD128`，然后显式加入设备覆盖：
+
+```bash
+docker compose -f compose.yaml -f compose.m6-vaapi.yaml up -d --build
+```
+
+程序同时要求设备节点可访问且 OBS 编码器已注册，初始化失败仍会回退 x264。可通过受认证的 `/api/v1/system/capabilities` 或 `webobs_video_encoder_selected`、`webobs_video_encoder_fallback`、`webobs_video_encoder_available` 指标确认结果。当前镜像构建了 x264 与 VAAPI；QSV/NVENC 探测结果用于明确报告不支持状态，不会把设备存在误报为可用编码器。Docker Desktop/WSL2 是否能传递 GPU 取决于宿主配置，未挂载 render node 时按软件基线验收。
 
 - Git，能够递归拉取 submodule。
 - Docker Engine 和 Docker Compose v2，或启用 WSL2/Linux containers 的 Docker Desktop。

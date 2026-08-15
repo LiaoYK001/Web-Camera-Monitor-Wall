@@ -49,6 +49,8 @@ constexpr SettingSpec setting_specs[] = {
     {"--height", "WEBOBS_HEIGHT", "height"},
     {"--fps", "WEBOBS_FPS", "fps"},
     {"--bitrate-kbps", "WEBOBS_BITRATE_KBPS", "bitrate"},
+    {"--video-encoder", "WEBOBS_VIDEO_ENCODER", "video_encoder"},
+    {"--vaapi-device", "WEBOBS_VAAPI_DEVICE", "vaapi_device"},
     {"--connect-timeout-seconds", "WEBOBS_CONNECT_TIMEOUT_SECONDS", "connect_timeout"},
     {"--rtsp-transport", "WEBOBS_RTSP_TRANSPORT", "transport"},
     {"--log-level", "WEBOBS_LOG_LEVEL", "log_level"},
@@ -238,6 +240,7 @@ ParseResult parse_config(const std::vector<std::string> &arguments, const Enviro
         {"duration", "0"},          {"width", "1920"},       {"height", "1080"},
         {"fps", "30"},             {"bitrate", "6000"},     {"connect_timeout", "20"},
         {"transport", "tcp"},       {"log_level", "info"},
+        {"video_encoder", "auto"},  {"vaapi_device", "/dev/dri/renderD128"},
         {"listen_address", "127.0.0.1"}, {"http_port", "8080"},
         {"allow_insecure_remote", "false"},
         {"auth_username_file", ""}, {"auth_password_file", ""},
@@ -385,6 +388,28 @@ ParseResult parse_config(const std::vector<std::string> &arguments, const Enviro
         return failure("fps must be between 1 and 120");
     if (!parse_integer(values["bitrate"], 50, 100000, config.bitrate_kbps))
         return failure("bitrate-kbps must be between 50 and 100000");
+    const std::string video_encoder = lowercase(values["video_encoder"]);
+    if (video_encoder == "auto")
+        config.video_encoder = VideoEncoderPreference::automatic;
+    else if (video_encoder == "x264")
+        config.video_encoder = VideoEncoderPreference::x264;
+    else if (video_encoder == "vaapi")
+        config.video_encoder = VideoEncoderPreference::vaapi;
+    else if (video_encoder == "qsv")
+        config.video_encoder = VideoEncoderPreference::qsv;
+    else if (video_encoder == "nvenc")
+        config.video_encoder = VideoEncoderPreference::nvenc;
+    else
+        return failure("video-encoder must be auto, x264, vaapi, qsv, or nvenc");
+    config.vaapi_device = values["vaapi_device"];
+    const std::filesystem::path vaapi_path(config.vaapi_device);
+    const std::string vaapi_filename = vaapi_path.filename().string();
+    if (!vaapi_path.is_absolute() || vaapi_path.parent_path() != "/dev/dri" ||
+        !vaapi_filename.starts_with("renderD") || vaapi_filename.size() <= 7 ||
+        vaapi_filename.size() > 16 ||
+        !std::all_of(vaapi_filename.begin() + 7, vaapi_filename.end(),
+                     [](unsigned char character) { return std::isdigit(character); }))
+        return failure("vaapi-device must be an absolute /dev/dri/renderD<n> path");
     if (!parse_integer(values["connect_timeout"], 1, 300, config.connect_timeout_seconds))
         return failure("connect-timeout-seconds must be between 1 and 300");
 
@@ -450,7 +475,9 @@ Options:
   --width <n>                      Even output width (default: 1920)
   --height <n>                     Even output height (default: 1080)
   --fps <n>                        Output frames per second (default: 30)
-  --bitrate-kbps <n>               x264 CBR bitrate (default: 6000)
+  --bitrate-kbps <n>               H.264 CBR bitrate (default: 6000)
+  --video-encoder <backend>        auto, x264, vaapi, qsv, or nvenc (default: auto)
+  --vaapi-device <path>            VAAPI render node (default: /dev/dri/renderD128)
   --connect-timeout-seconds <n>    RTSP first-frame timeout (default: 20)
   --rtsp-transport <tcp|udp>       RTSP transport (default: tcp)
   --log-level <level>              error, warn, info, or debug (default: info)
