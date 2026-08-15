@@ -8,16 +8,20 @@ This roadmap describes milestone order and acceptance gates, not promised releas
 
 ## Current position / 当前位置
 
-**🚧 M6 — Production 正在开发；当前位于认证与可观测入口切片。**
+**🚧 M6 — Production 正在开发；当前位于生产底座收尾阶段。M7–M13 仅完成规划，尚未开始开发。**
 
 M0 through M5 are complete. M6 now includes optional file-backed single-operator Basic authentication across UI, REST, WebSocket, WHEP, and metrics; explicit remote HTTPS Origin/Host authorization; bounded failed-authentication rate limiting; frame-freshness source health; exponential-backoff RTSP recovery; structured audit events; bounded Docker logs; public liveness/readiness; authenticated Prometheus metrics; and a Docker healthcheck. M6 is not complete: TLS termination, TURN, GPU detection, backup/restore, and upgrade/rollback remain open.
 
 M0 至 M5 已全部完成。M6 现已包含 UI、REST、WebSocket、WHEP 与指标统一文件型单操作员 Basic 认证、明确的远程 HTTPS Origin/Host 授权、有限认证失败限流、帧新鲜度来源健康、指数退避 RTSP 恢复、结构化审计事件、有界 Docker 日志、公开存活/就绪探针、受认证 Prometheus 指标和 Docker healthcheck。M6 尚未完成：TLS 终止、TURN、GPU 检测、备份恢复及升级回滚仍待开发。
 
+M7–M13 now form the planned expansion into an OBS-inspired Canvas Studio and a full per-camera NVR workflow. The detailed scope, architecture boundaries, dependencies, non-goals, and exit gates are defined in [docs/future-milestones.md](docs/future-milestones.md). M6 remains a hard gate: future planning does not change the current implementation position.
+
+M7–M13 现规划为受 OBS 启发的画布工作台与完整逐路 NVR 工作流；详细范围、架构边界、依赖、非目标及完成门禁见 [docs/future-milestones.md](docs/future-milestones.md)。M6 仍是硬门禁，后续规划不会改变当前开发位置。
+
 ```text
-M0 complete       M1 complete       M2 complete       M3 complete       M4 complete       M5 complete       M6 in progress
-M0 已完成      -> M1 已完成      -> M2 已完成      -> M3 已完成      -> M4 已完成      -> M5 已完成      -> M6 开发中
-✅                ✅                ✅                ✅                ✅                ✅                🚧 NOW
+M0–M5 complete                 M6 in progress                 M7–M13 planned
+M0–M5 已完成               -> M6 开发中                  -> M7–M13 已规划
+✅                              🚧 NOW                         🧭 NOT STARTED
 ```
 
 ### M0 acceptance / M0 验收
@@ -73,6 +77,13 @@ M0 已于 2026-08-11 在真实摄像头门禁通过后完成。后续修改采�
 | M4 — Browser Sources | ✅ Complete / 已完成 | `obs-browser` sources for dashboards, satellite maps, overlays and embeddable media / 支持仪表盘、卫星图、叠加层和可嵌入媒体 | CEF lifecycle, isolation, recovery, and resource limits pass container tests / CEF 生命周期、隔离、恢复和资源限制通过测试 |
 | M5 — Audio | ✅ Complete / 已完成 | Per-source mute/volume, Web Audio in Direct mode, libobs mixing in Composite mode / 单源静音与音量、Direct Web Audio、Composite libobs 混音 | Multi-source sync, mute, volume, and output audio are verified / 多源同步、静音、音量和输出音轨通过验证 |
 | M6 — Production | 🚧 In progress / 开发中 | Authentication, HTTPS, TURN, health checks, GPU detection, backup, observability and upgrades / 鉴权、HTTPS、TURN、健康检查、GPU 检测、备份、可观测性和升级 | Security review, upgrade/rollback, recovery, and documented deployment pass / 安全、升级回滚、恢复和部署文档验收通过 |
+| M7 — Canvas Studio | 🧭 Planned / 已规划 | Scene collections, nested scenes/groups, filters, Preview/Program and transitions / 场景集合、嵌套场景/组、滤镜、预览/节目与转场 | Persistent multi-scene Studio workflow and Direct/Composite capability contract pass / 持久化多场景工作流与 Direct/Composite 能力契约通过 |
+| M8 — NVR Core | 🧭 Planned / 已规划 | Independent per-camera segmented recording, catalog, retention and crash recovery / 独立逐路分段录像、目录、保留与崩溃恢复 | Six-hour automated and private 24-hour recording gates plus recovery/retention pass / 六小时自动与私有 24 小时录像及恢复/保留门禁通过 |
+| M9 — Timeline | 🧭 Planned / 已规划 | Archive search, synchronized playback, clip export and evidence integrity / 归档检索、同步回放、片段导出与证据完整性 | Seek/sync, time-zone, permission and hash-verifiable export gates pass / 跳转/同步、时区、权限与可验证导出门禁通过 |
+| M10 — Device Operations | 🧭 Planned / 已规划 | Bounded discovery, ONVIF Profile T, PTZ, presets, health and talk / 有界发现、ONVIF Profile T、PTZ、预置位、健康与对讲 | Emulator plus multi-vendor capability, safety and redaction matrix passes / 模拟器加多厂商能力、安全与脱敏矩阵通过 |
+| M11 — Events & Detection | 🧭 Planned / 已规划 | Native/software events, motion zones, detector providers, rules and notifications / 原生/软件事件、移动区域、检测提供器、规则与通知 | Analytics failure cannot block recording; event accuracy, queue and security gates pass / 分析失败不阻塞录像，事件准确性、队列与安全门禁通过 |
+| M12 — Operator UX | 🧭 Planned / 已规划 | Monitor/PWA/kiosk workflows, adaptive grids and least-privilege roles / 监看/PWA/值守流程、自适应宫格与最小权限角色 | 16-tile reference profile, browser/PWA and authorization matrix pass / 16 宫格参考配置、浏览器/PWA 与授权矩阵通过 |
+| M13 — Scale & Resilience | 🧭 Planned / 已规划 | Multi-volume/node roles, integrations, resource scheduling and disaster recovery / 多卷/节点角色、集成、资源调度与灾难恢复 | Published density tiers, failure convergence, restore and signed upgrade/rollback pass / 公开密度档位、故障收敛、恢复及签名升级回滚通过 |
 
 ## Milestone details / 里程碑详情
 
@@ -199,15 +210,21 @@ M5 已于 2026-08-15 完成：多来源确定性音频及 M0–M4 全回归通�
 ## Cross-cutting rules / 贯穿规则
 
 - **One scene model / 一份场景模型：** client and server rendering must not develop incompatible layouts.
+- **One camera registry, two graphs / 一份摄像机资产，两条执行链：** live libobs composition and per-camera NVR capture share identity/capabilities but have independent lifecycles; canvas changes cannot interrupt archives.
 - **One product image / 一个产品镜像：** test fixtures may use multiple containers; product deployment remains one image.
 - **Pinned dependencies / 固定依赖：** OBS, MediaMTX, CEF, and protocol-facing dependencies use reviewed versions rather than moving branches.
 - **Security by milestone / 分阶段安全：** no Internet-facing control plane before authentication, TLS, and authorization exist.
 - **No secret leakage / 不泄漏凭据：** real RTSP URLs, tokens, recordings, and unredacted logs never enter Git, images, or issue reports.
 - **Deterministic acceptance / 确定性验收：** every milestone adds automated tests and an explicit exit gate before the next milestone begins.
 - **Software fallback first / 软件回退优先：** hardware acceleration improves performance but must not be required for basic operation.
+- **Recording integrity before analytics / 录像完整性优先：** event detection, notifications, and search must fail independently without blocking or corrupting per-camera recording.
 
-## Out of scope for the current roadmap / 当前路线图范围外
+## Expanded scope and exclusions / 扩展范围与排除项
 
-Traditional NVR features—24×7 recording databases, event timelines, retention policies, object detection, and forensic search—are not core roadmap commitments. They may be integrated with systems such as Frigate later instead of being embedded into the compositor.
+Per-camera continuous recording, retention, timeline playback, ONVIF device operations, events, bounded detection providers, and forensic export are now explicit M8–M13 commitments. They are implemented beside—not inside—the libobs composition graph. See [docs/future-milestones.md](docs/future-milestones.md) for the staged boundaries.
 
-传统 NVR 的 24×7 录像数据库、事件时间线、保留策略、目标检测和取证搜索不属于当前核心承诺。后续可与 Frigate 等系统集成，而不必塞入合成器核心。
+逐路连续录像、保留、时间线回放、ONVIF 设备运维、事件、有界检测提供器和取证导出现在是 M8–M13 的明确承诺；它们位于 libobs 合成图旁侧而非内部。分阶段边界见 [docs/future-milestones.md](docs/future-milestones.md)。
+
+Hosted multi-tenant SaaS, vendor P2P-cloud credential brokerage, access-control/door actuation, biometric identity databases, and a promise of unlimited camera density remain outside this roadmap. Native mobile applications are deferred until PWA evidence proves they are necessary.
+
+托管多租户 SaaS、厂商 P2P 云凭据代理、门禁/开门控制、生物身份数据库及无限摄像机密度承诺仍在路线图之外；原生移动应用推迟到 PWA 证据证明其确有必要之后。
