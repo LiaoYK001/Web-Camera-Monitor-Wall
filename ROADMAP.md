@@ -66,6 +66,7 @@ M0 已于 2026-08-11 在真实摄像头门禁通过后完成。后续修改采�
 - M6 health and recovery / M6 健康与恢复：two visible RTSP sources started healthy, became stale after their publisher stopped, degraded readiness and aggregate metrics, requested bounded exponential-backoff libobs restarts, then returned healthy after publication resumed. Credential-free status output, structured authentication/scene/recovery audit events, clean exit, and a finalized 19.621-second H.264/AAC recording passed together / 两路可见 RTSP 来源从健康状态开始，在发布端停止后变为陈旧并降低 readiness 与聚合指标，按有界指数退避请求 libobs 重启，并在发布恢复后重新健康；无凭据状态输出、结构化认证/场景/恢复审计事件、正常退出及 19.621 秒 H.264/AAC 最终录像联合通过。
 - M6 deployment documentation / M6 部署文档：source-build deployment, secure local configuration, lifecycle operations, manual backup/rollback, and GHCR manual/Actions publication and digest-pinned consumption are documented; Compose now accepts an explicit registry image and forwards browser-source security policy / 已记录源码构建部署、本地安全配置、生命周期操作、手工备份回滚、GHCR 手工/Actions 发布及 digest 固定消费流程；Compose 现可显式选择仓库镜像并正确传递浏览器源安全策略。
 - M6 encoder capability and fallback / M6 编码能力与回退：the final image detected fixed CPU/VAAPI/QSV/NVENC capability classes without exposing device identities, an explicit unavailable NVENC request selected x264 with a visible fallback state, authenticated API/metrics reflected the result, and the 19.621-second H.264/AAC recovery recording still finalized correctly / 最终镜像在不暴露设备身份的前提下探测固定 CPU/VAAPI/QSV/NVENC 能力类别；显式请求不可用 NVENC 时选择 x264 并显示回退状态，受认证 API/指标正确反映结果，19.621 秒 H.264/AAC 恢复录像仍完整封装。
+- M6 validated backup and restore / M6 校验备份与恢复：the final image created a mode-0600 scene archive and SHA-256 sidecar, verified checksum and tar paths, rejected restore without explicit confirmation, atomically reproduced the original validated scene, rejected corruption, and emitted no source URL / 最终镜像创建权限 0600 的场景归档及 SHA-256 sidecar，校验哈希与 tar 路径，拒绝无明确确认的恢复，原子还原并验证原始场景，拒绝损坏归档且不输出来源 URL。
 
 ## Milestones / 里程碑
 
@@ -206,7 +207,8 @@ M5 已于 2026-08-15 完成：多来源确定性音频及 M0–M4 全回归通�
 - [x] Add structured audit logs, bounded log retention, frame-freshness source health, exponential-backoff reconnect, and recovery acceptance / 增加结构化审计日志、有界日志保留、帧新鲜度来源健康、指数退避重连与恢复验收
 - [x] Document source-build deployment and GHCR publication/consumption with immutable image selection / 记录源码构建部署、GHCR 发布消费及不可变镜像选择流程
 - [x] Add CPU/VAAPI/QSV/NVIDIA detection with safe software fallback / 增加 CPU/VAAPI/QSV/NVIDIA 检测及安全软件回退
-- [ ] Add scene backup/restore plus image provenance, upgrade, rollback, and GPL source-distribution procedures / 增加场景备份恢复、镜像来源、升级回滚及 GPL 源码分发流程
+- [x] Add validated scene backup/restore with explicit confirmation and corruption rejection / 增加带明确确认、损坏拒绝的校验场景备份恢复
+- [ ] Add image provenance, automated upgrade/rollback, and GPL source-distribution verification / 增加镜像来源、自动升级回滚及 GPL 源码分发验证
 
 ## Cross-cutting rules / 贯穿规则
 

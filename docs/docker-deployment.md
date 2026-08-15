@@ -270,41 +270,44 @@ docker compose down
 
 不要使用 `docker kill`，它不给应用冲洗 muxer 的机会，可能留下未完成的临时文件。
 
-## 9. 手工备份与恢复
+## 9. 一致性备份与恢复
 
-项目级在线备份功能仍属于 M6 待办。当前应在容器停止后制作一致性备份。
+产品镜像内置 `/opt/webobs/bin/webobs-backup` 与场景校验器。备份覆盖当前 M6 的持久化场景：创建前验证 schema，把 `scene.json` 写入权限为 `0600` 的 tar.gz，并生成同名 SHA-256 sidecar。恢复会先校验 sidecar 格式、归档哈希、tar 路径、符号/硬链接及场景 schema，最后在配置卷内原子替换 `scene.json`。
 
-Linux shell：
+备份可能包含完整 RTSP 凭据。SHA-256 只提供完整性检查，不提供加密或来源认证；`backups/` 已被 Git 忽略，但仍必须位于加密介质并限制主机访问。不要把归档、sidecar、解压内容或恢复诊断上传到公开 Issue。
 
-```bash
-mkdir -p /secure-backup/webobs
-docker compose stop -t 20 webobs
-docker compose cp webobs:/config/webobs/scene.json "/secure-backup/webobs/scene-$(date -u +%Y%m%dT%H%M%SZ).json"
-docker compose start webobs
-```
-
-PowerShell：
-
-```powershell
-New-Item -ItemType Directory -Force C:\secure-backup\webobs | Out-Null
-$stamp = (Get-Date).ToUniversalTime().ToString('yyyyMMddTHHmmssZ')
-docker compose stop -t 20 webobs
-docker compose cp webobs:/config/webobs/scene.json "C:\secure-backup\webobs\scene-$stamp.json"
-docker compose start webobs
-```
-
-场景备份可能包含 RTSP 凭据，必须使用加密介质和最小访问权限。`.env`、`secrets/` 和录像也应分别备份，不能与公开源码归档混在一起。
-
-恢复步骤：先停止容器并备份当前场景，再复制经过确认的文件，随后启动并验证。
+先使用备份覆盖挂载受忽略的主机 `backups/` 目录，正常停止应用以取得一致快照，再运行一次性维护命令：
 
 ```bash
-docker compose stop -t 20 webobs
-docker compose cp /secure-backup/webobs/scene.json webobs:/config/webobs/scene.json
-docker compose start webobs
+docker compose -f compose.yaml -f compose.m6-backup.yaml stop -t 20 webobs
+docker compose -f compose.yaml -f compose.m6-backup.yaml run --rm --no-deps \
+  --entrypoint /opt/webobs/bin/webobs-backup webobs create
+docker compose -f compose.yaml -f compose.m6-backup.yaml start webobs
+```
+
+工具输出 UTC 文件名，例如 `/backups/webobs-config-20260815T103000Z.tar.gz`。可在不启动产品入口的情况下复验：
+
+```bash
+docker compose -f compose.yaml -f compose.m6-backup.yaml run --rm --no-deps \
+  --entrypoint /opt/webobs/bin/webobs-backup webobs \
+  verify /backups/webobs-config-20260815T103000Z.tar.gz
+```
+
+恢复是破坏性操作，必须先停止服务、为当前状态再做一份备份，并显式提供确认值。归档文件名只能使用字母、数字、点、下划线和连字符，且必须直接位于 `/backups`：
+
+```bash
+docker compose -f compose.yaml -f compose.m6-backup.yaml stop -t 20 webobs
+docker compose -f compose.yaml -f compose.m6-backup.yaml run --rm --no-deps \
+  --entrypoint /opt/webobs/bin/webobs-backup webobs create before-restore.tar.gz
+docker compose -f compose.yaml -f compose.m6-backup.yaml run --rm --no-deps \
+  -e WEBOBS_RESTORE_CONFIRM=replace-scene \
+  --entrypoint /opt/webobs/bin/webobs-backup webobs \
+  restore /backups/webobs-config-20260815T103000Z.tar.gz
+docker compose -f compose.yaml -f compose.m6-backup.yaml start webobs
 curl --fail http://127.0.0.1:8080/api/v1/ready
 ```
 
-若容器已被 `down` 删除，先执行 `docker compose create webobs`，再执行 `docker compose cp`。恢复旧版本场景前应查看对应的 `scene-schema-v*.md`。
+`.env`、`secrets/` 和录像不进入场景归档，必须分别使用受控加密备份。M8 引入录像目录数据库时会扩展此格式并保留版本化迁移，不会把运行中 SQLite 文件直接塞入当前 M6 归档。
 
 ## 10. 源码更新与回滚
 

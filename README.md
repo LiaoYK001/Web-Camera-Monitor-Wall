@@ -247,7 +247,7 @@ PowerShell：
 ./tests/run-smoke.ps1
 ```
 
-只运行 M1 控制面验收可使用 `./tests/run-control-plane.ps1 -SkipBuild`；只运行 M2 浏览器与重连验收可使用 `./tests/run-webrtc.ps1 -SkipBuild`；只运行 M3 双路 Direct 验收可使用 `./tests/run-direct.ps1 -SkipBuild`；只运行 M3 H.264/HEVC 选择性 Hybrid 验收可使用 `./tests/run-hybrid.ps1 -SkipBuild`；在线变更、断流重连和路由回收验收使用 `./tests/run-m3-lifecycle.ps1 -SkipBuild`；M4 浏览器源门禁使用 `./tests/run-browser-source.ps1 -SkipBuild`；M5 确定性音频门禁使用 `./tests/run-m5-audio.ps1 -SkipBuild`；M6 认证与可观测入口门禁使用 `./tests/run-m6-auth.ps1 -SkipBuild`。浏览器门禁默认查找本机 Chrome，也可通过 `WEBOBS_CHROME_BIN` 指定可信的 Chrome 可执行文件。
+只运行 M1 控制面验收可使用 `./tests/run-control-plane.ps1 -SkipBuild`；只运行 M2 浏览器与重连验收可使用 `./tests/run-webrtc.ps1 -SkipBuild`；只运行 M3 双路 Direct 验收可使用 `./tests/run-direct.ps1 -SkipBuild`；只运行 M3 H.264/HEVC 选择性 Hybrid 验收可使用 `./tests/run-hybrid.ps1 -SkipBuild`；在线变更、断流重连和路由回收验收使用 `./tests/run-m3-lifecycle.ps1 -SkipBuild`；M4 浏览器源门禁使用 `./tests/run-browser-source.ps1 -SkipBuild`；M5 确定性音频门禁使用 `./tests/run-m5-audio.ps1 -SkipBuild`；M6 认证与可观测门禁使用 `./tests/run-m6-auth.ps1 -SkipBuild`，场景备份/恢复门禁使用 `./tests/run-m6-backup.ps1 -SkipBuild`。浏览器门禁默认查找本机 Chrome，也可通过 `WEBOBS_CHROME_BIN` 指定可信的 Chrome 可执行文件。
 
 真实来源的 M3 Direct/Hybrid 门禁使用 `./tests/run-m3-real-camera.ps1 -SkipBuild`，M5 Composite + Direct/Hybrid 真实音频门禁使用 `./tests/run-m5-real-audio.ps1 -SkipBuild`。RTSP URL 只通过当前进程的 `WEBOBS_RTSP_URL` 或受 Git 忽略的本地 `.env` 提供；这些门禁会把录像和端点替换后的诊断日志分别写入受忽略的 `recordings/` 与 `tests/artifacts/`，不得将其作为公开附件提交。
 

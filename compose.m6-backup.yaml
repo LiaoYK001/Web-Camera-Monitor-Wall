@@ -1,0 +1,4 @@
+services:
+  webobs:
+    volumes:
+      - ./backups:/backups

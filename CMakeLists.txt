@@ -80,6 +80,11 @@ target_compile_features(webobs-log-filter PRIVATE cxx_std_20)
 target_compile_options(webobs-log-filter PRIVATE -Wall -Wextra -Wpedantic)
 install(TARGETS webobs-log-filter RUNTIME DESTINATION bin)
 
+add_executable(webobs-scene-tool core/src/scene_tool.cpp)
+target_link_libraries(webobs-scene-tool PRIVATE webobs-common)
+target_compile_options(webobs-scene-tool PRIVATE -Wall -Wextra -Wpedantic)
+install(TARGETS webobs-scene-tool RUNTIME DESTINATION bin)
+
 if(WEBOBS_BUILD_TESTS)
     include(CTest)
     add_executable(webobs-unit-tests core/tests/common_tests.cpp)
