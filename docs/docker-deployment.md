@@ -2,11 +2,11 @@
 
 本文面向从 Git 仓库克隆代码、在部署主机自行构建产品镜像的操作者。命令均在仓库根目录执行。
 
-> 当前项目已完成 M0–M5，正在开发 M6 Production。文件认证、限流、健康检查、指标、审计日志、来源自动恢复及 CPU/VAAPI/QSV/NVENC 能力探测与 x264 安全回退已经具备；原生 TLS、受信 HTTPS 反向代理方案、TURN 以及完整备份升级自动化仍未完成。当前版本适合本机或受控网络验收，不应把 HTTP 控制端口直接暴露到互联网。
+> 当前项目已完成 M0–M5，正在开发 M6 Production。文件认证、限流、健康检查、指标、审计日志、来源自动恢复、硬件编码安全回退、校验备份恢复，以及单镜像受信 HTTPS/TURN 部署已经具备；镜像来源证明和自动升级回滚仍未完成。基础 HTTP 模式只能用于主机回环，远程部署必须使用本指南的 production 覆盖。
 
 ## 1. 部署组成与数据边界
 
-产品部署只有一个 `webobs` 容器。容器内包含 `webobsd`、libobs、MediaMTX、Web 编辑器、Xvfb 和 Mesa 软件渲染环境。
+产品部署只有一个 `webobs` 容器。容器内包含 `webobsd`、libobs、MediaMTX、固定版本 Caddy、Web 编辑器、Xvfb 和 Mesa 软件渲染环境。
 
 | 内容 | 默认位置 | 持久性 |
 | --- | --- | --- |
@@ -15,6 +15,7 @@
 | 录像 | 主机仓库的 `recordings/` 映射到 `/recordings` | 主机文件 |
 | 私有运行配置 | 主机 `.env` | Git 忽略，必须限制访问 |
 | Basic 认证凭据 | 主机 `secrets/` 下的两个文件 | Git 忽略，通过 Compose secrets 只读挂载 |
+| TLS 证书/私钥与 TURN 凭据 | 主机 `secrets/` 下的四个文件 | Git 忽略，通过 Compose secrets 只读挂载 |
 | Docker 日志 | `json-file`，默认 `10m × 3` | 由 Docker 轮转 |
 
 `docker compose down --volumes` 会删除场景卷，不能作为普通停机命令使用。录像位于主机目录，不会随卷删除，但仍应单独备份。
@@ -218,7 +219,58 @@ docker compose --env-file .env -f compose.yaml -f compose.m6-auth.yaml up -d --n
 
 认证覆盖会关闭无认证远程许可，并通过 `/run/secrets` 挂载凭据。除 `/api/v1/health` 和 `/api/v1/ready` 外，UI、REST、WebSocket、WHEP 和 `/metrics` 均要求 Basic 认证。
 
-Basic 认证本身不加密连接。当前仓库尚未提供完成验收的 HTTPS 终止 Compose，因此即使启用了认证，也不要把控制端口直接发布到公网。远程部署必须增加受信 HTTPS 反向代理，只允许外部 HTTPS Origin，并阻止客户端绕过代理直连后端。
+Basic 认证本身不加密连接。该覆盖只适用于主机回环；远程部署使用下一节的受信 HTTPS/TURN 覆盖。
+
+### 6.3 受信 HTTPS 与 TURN 生产覆盖
+
+`compose.m6-production.yaml` 仍只运行一个产品容器：固定为 Caddy `2.11.4` 的网关在容器内终止 TLS，`webobsd` 强制监听 `127.0.0.1`，Compose 只发布 HTTPS 和 WebRTC ICE 端口。Caddy 不自动申请证书；请使用 ACME 客户端或组织 PKI 在主机取得包含完整证书链的 PEM 文件，并把私钥权限限制为管理员可读。
+
+TURN 是独立的生产依赖，不打包进产品容器。建议使用 Coturn 的 `use-auth-secret`/短期凭据模式，并优先提供 TCP 监听。创建以下受 Git 忽略的文件：
+
+```text
+secrets/webobs-auth-username.txt
+secrets/webobs-auth-password.txt
+secrets/webobs-tls-certificate.pem
+secrets/webobs-tls-private-key.pem
+secrets/webobs-turn-username.txt       # use-auth-secret 模式写 AUTH_SECRET
+secrets/webobs-turn-password.txt       # Coturn static-auth-secret 的值
+```
+
+在 `.env` 中设置实际公开名称和文件路径；示例域名不能直接用于部署：
+
+```dotenv
+WEBOBS_BIND_ADDRESS=0.0.0.0
+WEBOBS_HTTPS_PORT=443
+WEBOBS_TLS_SERVER_NAME=monitor.example.com
+WEBOBS_TLS_PUBLIC_AUTHORITY=monitor.example.com:443
+WEBOBS_CONTROL_ALLOWED_ORIGINS=https://monitor.example.com
+WEBOBS_TLS_CERTIFICATE_SOURCE=./secrets/webobs-tls-certificate.pem
+WEBOBS_TLS_PRIVATE_KEY_SOURCE=./secrets/webobs-tls-private-key.pem
+WEBOBS_AUTH_USERNAME_SOURCE=./secrets/webobs-auth-username.txt
+WEBOBS_AUTH_PASSWORD_SOURCE=./secrets/webobs-auth-password.txt
+WEBOBS_TURN_URL=turn:turn.example.com:3478?transport=tcp
+WEBOBS_TURN_USERNAME_SOURCE=./secrets/webobs-turn-username.txt
+WEBOBS_TURN_PASSWORD_SOURCE=./secrets/webobs-turn-password.txt
+WEBOBS_TURN_CLIENT_ONLY=false
+WEBOBS_WEBRTC_ADDITIONAL_HOSTS=monitor.example.com
+```
+
+`WEBOBS_TLS_SERVER_NAME` 必须与证书 SAN 匹配且不含端口；`WEBOBS_TLS_PUBLIC_AUTHORITY` 和 `WEBOBS_CONTROL_ALLOWED_ORIGINS` 必须与浏览器实际打开的外部 URL 完全一致。TURN URL 必须显式包含端口和 `transport=tcp`。如 TURN 只供浏览器侧使用而 MediaMTX 可直连，应显式设置 `WEBOBS_TURN_CLIENT_ONLY=true`。
+
+解析配置时使用 `--quiet`，避免把本机路径扩展内容写进 CI 日志：
+
+```bash
+docker compose --env-file .env \
+  -f compose.yaml \
+  -f compose.m6-production.yaml \
+  config --quiet
+docker compose --env-file .env \
+  -f compose.yaml \
+  -f compose.m6-production.yaml \
+  up -d --no-build webobs
+```
+
+公网防火墙只开放 HTTPS、MediaMTX 的 `8189/udp`（需要直连 ICE 时）以及外部 TURN 服务要求的 TCP/relay 端口；不要发布容器的 `8080`。TURN 密钥不会进入镜像或 Docker inspect 的 Compose 环境，但容器 root 仍能读取挂载 secret，因此应限制 Docker daemon 与主机管理员权限。证书轮换后使用 `docker compose ... up -d --force-recreate webobs` 重新挂载并加载文件。
 
 ## 7. 启动后验证
 
@@ -381,7 +433,7 @@ docker compose down --volumes
 - [ ] `.env`、`secrets/`、备份和录像均未被 Git 跟踪。
 - [ ] Compose `config --quiet` 与产品镜像构建成功。
 - [ ] 镜像报告 `linux/amd64`，`webobsd --version` 正常。
-- [ ] 主机端口只绑定到预期接口；未完成 TLS 前保持回环访问。
+- [ ] 基础 HTTP 只绑定回环；远程模式只发布受信 HTTPS 与所需 ICE 端口，未发布后端 8080。
 - [ ] health、ready、Docker healthcheck 均通过。
 - [ ] Web 编辑、Composite/Direct 播放和正常停止后的 MP4 已验证。
 - [ ] 日志中没有明文凭据，日志轮转值保持有限。

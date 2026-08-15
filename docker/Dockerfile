@@ -1,3 +1,5 @@
+FROM caddy:2.11.4-alpine@sha256:98eb57d882ccd5213d1688764db10c1ca2c58a1ca3a6717a3411ad798f7a423a AS caddy-runtime
+
 FROM node:24.14.0-bookworm-slim@sha256:d8e448a56fc63242f70026718378bd4b00f8c82e78d20eefb199224a4d8e33d8 AS web-builder
 
 WORKDIR /src/web
@@ -308,8 +310,10 @@ COPY --from=core-builder /opt/obs /opt/obs
 COPY --from=web-builder /src/web/dist /opt/webobs/ui
 COPY --from=mediamtx-downloader /opt/mediamtx/mediamtx /opt/webobs/bin/mediamtx
 COPY --from=mediamtx-downloader /opt/mediamtx/LICENSE /usr/share/licenses/mediamtx/LICENSE
+COPY --from=caddy-runtime /usr/bin/caddy /opt/webobs/bin/caddy
 COPY docker/entrypoint.sh /opt/webobs/entrypoint.sh
 COPY docker/backup.sh /opt/webobs/bin/webobs-backup
+COPY docker/Caddyfile /opt/webobs/etc/Caddyfile
 COPY gateway/mediamtx.yml /opt/webobs/etc/mediamtx.yml
 COPY gateway/transcode-on-demand.sh /opt/webobs/bin/transcode-on-demand
 COPY LICENSE /usr/share/licenses/webobs/LICENSE
@@ -321,9 +325,12 @@ ENV LD_LIBRARY_PATH=/opt/obs/lib \
     LIBGL_ALWAYS_SOFTWARE=1 \
     GALLIUM_DRIVER=llvmpipe
 
-RUN mkdir -p /config/obs /config/webobs /recordings \
+RUN mkdir -p /config/obs /config/webobs /recordings /usr/share/licenses/caddy \
+    && cp /usr/share/common-licenses/Apache-2.0 /usr/share/licenses/caddy/LICENSE \
     && chmod 0700 /config/obs /config/webobs \
-    && chmod 0755 /opt/webobs/entrypoint.sh /opt/webobs/bin/mediamtx /opt/webobs/bin/transcode-on-demand /opt/webobs/bin/webobs-backup \
+    && chmod 0755 /opt/webobs/entrypoint.sh /opt/webobs/bin/caddy /opt/webobs/bin/mediamtx /opt/webobs/bin/transcode-on-demand /opt/webobs/bin/webobs-backup \
+    && /opt/webobs/bin/caddy version \
+    && /opt/webobs/bin/caddy adapt --config /opt/webobs/etc/Caddyfile --adapter caddyfile >/dev/null \
     && /opt/webobs/bin/mediamtx --version \
     && LD_LIBRARY_PATH=/opt/obs/lib /opt/obs/bin/webobsd --version \
     && ldd /opt/obs/bin/webobsd > /tmp/webobs-ldd.txt \
@@ -343,10 +350,10 @@ RUN mkdir -p /config/obs /config/webobs /recordings \
 
 WORKDIR /opt/obs
 VOLUME ["/config/webobs", "/recordings"]
-EXPOSE 8080 8189/udp
+EXPOSE 8080 8443 8189/udp
 
 HEALTHCHECK --interval=15s --timeout=3s --start-period=30s --retries=3 \
-    CMD [ "${WEBOBS_HTTP_PORT:-8080}" = "0" ] || curl --fail --silent --show-error "http://127.0.0.1:${WEBOBS_HTTP_PORT:-8080}/api/v1/ready" >/dev/null || exit 1
+    CMD ["sh", "-c", "if [ \"${WEBOBS_HTTP_PORT:-8080}\" = 0 ]; then exit 0; elif [ \"${WEBOBS_TLS_ENABLED:-false}\" = true ]; then curl --fail --silent --show-error --cacert \"${WEBOBS_TLS_CA_FILE:-${WEBOBS_TLS_CERT_FILE}}\" --resolve \"${WEBOBS_TLS_SERVER_NAME:-localhost}:${WEBOBS_HTTPS_PORT:-8443}:127.0.0.1\" --header \"Host: ${WEBOBS_TLS_PUBLIC_AUTHORITY:-${WEBOBS_TLS_SERVER_NAME:-localhost}:${WEBOBS_HTTPS_PORT:-8443}}\" \"https://${WEBOBS_TLS_SERVER_NAME:-localhost}:${WEBOBS_HTTPS_PORT:-8443}/api/v1/ready\" >/dev/null; else curl --fail --silent --show-error \"http://127.0.0.1:${WEBOBS_HTTP_PORT:-8080}/api/v1/ready\" >/dev/null; fi"]
 
 LABEL org.opencontainers.image.title="Web Camera Monitor Wall" \
       org.opencontainers.image.description="Headless libobs multi-source monitor wall and local control plane" \

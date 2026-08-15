@@ -1,0 +1,16 @@
+{
+	admin off
+	auto_https off
+	persist_config off
+}
+
+https://:{$WEBOBS_HTTPS_PORT:8443} {
+	tls {$WEBOBS_TLS_CERT_FILE:/run/secrets/webobs_tls_certificate} {$WEBOBS_TLS_KEY_FILE:/run/secrets/webobs_tls_private_key}
+	bind 0.0.0.0
+	reverse_proxy 127.0.0.1:{$WEBOBS_HTTP_PORT:8080}
+	header {
+		-Server
+		Strict-Transport-Security "max-age=31536000; includeSubDomains"
+		X-Content-Type-Options "nosniff"
+	}
+}

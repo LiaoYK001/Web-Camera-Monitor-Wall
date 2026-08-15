@@ -10,9 +10,9 @@ Authentication remains disabled by default for backwards-compatible loopback dev
 
 为保持本地开发兼容，认证默认关闭。直接运行默认监听 `127.0.0.1:8080`；基础产品 Compose 在容器内监听，并仅发布到主机 `127.0.0.1:8080`。同时配置两个凭据文件后，HTTP Basic 认证会统一保护编辑器与静态资源、REST、WebSocket upgrade、Program/Source WHEP 和指标；只有存活与就绪探针保持公开。该实现是单操作员认证边界，并不是基于角色的授权系统。
 
-Basic credentials are cleartext on an unencrypted connection. Remote deployments must terminate HTTPS at a trusted reverse proxy, set only externally visible HTTPS origins in `WEBOBS_CONTROL_ALLOWED_ORIGINS`, and prevent direct access to the backend port. `webobsd` validates the external Host/Origin relationship but does not terminate TLS in this M6 slice. Base Compose loopback mode can remain unauthenticated; never expose that mode beyond the host.
+Basic credentials are cleartext on an unencrypted connection. Remote deployments must use `compose.m6-production.yaml`, set only externally visible HTTPS origins in `WEBOBS_CONTROL_ALLOWED_ORIGINS`, and prevent direct access to the backend port. The pinned Caddy process in the same product image terminates TLS with operator-mounted certificate files while `webobsd` validates the external Host/Origin relationship on container loopback. Base Compose loopback mode can remain unauthenticated; never expose that mode beyond the host.
 
-未加密连接上的 Basic 凭据是明文。远程部署必须由受信反向代理终止 HTTPS，只把外部可见的 HTTPS Origin 写入 `WEBOBS_CONTROL_ALLOWED_ORIGINS`，并阻止客户端绕过代理直连后端端口。本轮 `webobsd` 会校验外部 Host/Origin 关系，但尚不自行终止 TLS。基础 Compose 的无认证回环模式只能留在本机。
+未加密连接上的 Basic 凭据是明文。远程部署必须使用 `compose.m6-production.yaml`，只把外部可见的 HTTPS Origin 写入 `WEBOBS_CONTROL_ALLOWED_ORIGINS`，并阻止客户端绕过代理直连后端端口。同一产品镜像内固定版本 Caddy 使用操作者挂载的证书文件终止 TLS，`webobsd` 在容器回环继续校验外部 Host/Origin 关系。基础 Compose 的无认证回环模式只能留在本机。
 
 The server applies these additional controls:
 
