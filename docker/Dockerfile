@@ -311,6 +311,7 @@ RUN apt-get -o Acquire::Retries=5 -o Acquire::http::Timeout=30 -o Acquire::https
         libxcb-xinerama0 \
         libxcb1 \
         libxinerama1 \
+        python3 \
         tini \
         x11-utils \
         xvfb \
@@ -323,6 +324,7 @@ COPY --from=mediamtx-downloader /opt/mediamtx/LICENSE /usr/share/licenses/mediam
 COPY --from=caddy-runtime /usr/bin/caddy /opt/webobs/bin/caddy
 COPY docker/entrypoint.sh /opt/webobs/entrypoint.sh
 COPY docker/backup.sh /opt/webobs/bin/webobs-backup
+COPY nvr/nvr_service.py /opt/webobs/bin/webobs-nvrd
 COPY docker/Caddyfile /opt/webobs/etc/Caddyfile
 COPY gateway/mediamtx.yml /opt/webobs/etc/mediamtx.yml
 COPY gateway/transcode-on-demand.sh /opt/webobs/bin/transcode-on-demand
@@ -338,7 +340,8 @@ ENV LD_LIBRARY_PATH=/opt/obs/lib \
 RUN mkdir -p /assets /config/obs /config/webobs /recordings /usr/share/licenses/caddy \
     && cp /usr/share/common-licenses/Apache-2.0 /usr/share/licenses/caddy/LICENSE \
     && chmod 0700 /config/obs /config/webobs \
-    && chmod 0755 /opt/webobs/entrypoint.sh /opt/webobs/bin/caddy /opt/webobs/bin/mediamtx /opt/webobs/bin/transcode-on-demand /opt/webobs/bin/webobs-backup \
+    && chmod 0755 /opt/webobs/entrypoint.sh /opt/webobs/bin/caddy /opt/webobs/bin/mediamtx /opt/webobs/bin/transcode-on-demand /opt/webobs/bin/webobs-backup /opt/webobs/bin/webobs-nvrd \
+    && python3 -m py_compile /opt/webobs/bin/webobs-nvrd \
     && /opt/webobs/bin/caddy version \
     && /opt/webobs/bin/caddy adapt --config /opt/webobs/etc/Caddyfile --adapter caddyfile >/dev/null \
     && /opt/webobs/bin/mediamtx --version \

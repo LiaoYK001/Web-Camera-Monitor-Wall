@@ -11,6 +11,8 @@
 /build-*/
 /web/node_modules/
 /web/dist/
+__pycache__/
+*.pyc
 /recordings/*
 !/recordings/.gitkeep
 /assets/*

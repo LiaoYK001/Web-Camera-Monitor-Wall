@@ -832,6 +832,149 @@ private:
     std::unordered_map<std::string, DirectRoute> direct_routes_;
 };
 
+class NvrProxy {
+public:
+    explicit NvrProxy(bool enabled) : enabled_(enabled) {}
+
+    HttpResponse forward(const HttpRequest &request) const
+    {
+        if (!enabled_)
+            return response(http::status::service_unavailable, request.version(),
+                            error_body("nvr_disabled", "NVR service is disabled"));
+        constexpr std::string_view prefix = "/api/v1/nvr";
+        const std::string_view target = view(request.target());
+        if (!target.starts_with(prefix))
+            return response(http::status::not_found, request.version(),
+                            error_body("not_found", "resource not found"));
+        std::string_view suffix = target.substr(prefix.size());
+        if (suffix.empty())
+            suffix = "/status";
+        if (suffix.front() != '/' || suffix.size() > 4096 ||
+            !std::all_of(suffix.begin(), suffix.end(), [](unsigned char character) {
+                return std::isalnum(character) || std::string_view("/?&=._%:-").find(character) !=
+                                                      std::string_view::npos;
+            }))
+            return response(http::status::bad_request, request.version(),
+                            error_body("invalid_target", "NVR request target is invalid"));
+        const bool mutating = request.method() == http::verb::put || request.method() == http::verb::post ||
+                              request.method() == http::verb::delete_;
+        if (mutating && !json_content_type(request))
+            return response(http::status::unsupported_media_type, request.version(),
+                            error_body("content_type", "Content-Type must be application/json"));
+
+        std::string body;
+        std::string content_type = "application/json; charset=utf-8";
+        std::string content_range;
+        std::string accept_ranges;
+        const std::string url = "http://127.0.0.1:8091" + std::string(suffix);
+        CURL *handle = curl_easy_init();
+        if (!handle)
+            return unavailable(request.version());
+        struct curl_slist *headers = nullptr;
+        if (mutating)
+            headers = curl_slist_append(headers, "Content-Type: application/json");
+        const auto range = request.find(http::field::range);
+        if (range != request.end()) {
+            const std::string value(view(range->value()));
+            if (value.size() > 128 || !std::all_of(value.begin(), value.end(), [](unsigned char character) {
+                    return std::isdigit(character) || character == '=' || character == '-';
+                })) {
+                curl_easy_cleanup(handle);
+                if (headers)
+                    curl_slist_free_all(headers);
+                return response(http::status::bad_request, request.version(),
+                                error_body("invalid_range", "Range header is invalid"));
+            }
+            headers = curl_slist_append(headers, ("Range: " + value).c_str());
+        }
+        ResponseState state{&body, &content_type, &content_range, &accept_ranges};
+        curl_easy_setopt(handle, CURLOPT_URL, url.c_str());
+        curl_easy_setopt(handle, CURLOPT_PROTOCOLS_STR, "http");
+        curl_easy_setopt(handle, CURLOPT_CONNECTTIMEOUT_MS, 1000L);
+        curl_easy_setopt(handle, CURLOPT_TIMEOUT_MS, 30000L);
+        curl_easy_setopt(handle, CURLOPT_NOSIGNAL, 1L);
+        curl_easy_setopt(handle, CURLOPT_FOLLOWLOCATION, 0L);
+        curl_easy_setopt(handle, CURLOPT_WRITEFUNCTION, &write_body);
+        curl_easy_setopt(handle, CURLOPT_WRITEDATA, &state);
+        curl_easy_setopt(handle, CURLOPT_HEADERFUNCTION, &read_header);
+        curl_easy_setopt(handle, CURLOPT_HEADERDATA, &state);
+        if (headers)
+            curl_easy_setopt(handle, CURLOPT_HTTPHEADER, headers);
+        const std::string method(request.method_string());
+        curl_easy_setopt(handle, CURLOPT_CUSTOMREQUEST, method.c_str());
+        if (!request.body().empty()) {
+            curl_easy_setopt(handle, CURLOPT_POSTFIELDS, request.body().data());
+            curl_easy_setopt(handle, CURLOPT_POSTFIELDSIZE_LARGE,
+                             static_cast<curl_off_t>(request.body().size()));
+        }
+        const CURLcode code = curl_easy_perform(handle);
+        long status = 0;
+        if (code == CURLE_OK)
+            curl_easy_getinfo(handle, CURLINFO_RESPONSE_CODE, &status);
+        if (headers)
+            curl_slist_free_all(headers);
+        curl_easy_cleanup(handle);
+        if (code != CURLE_OK || status < 100 || status > 599)
+            return unavailable(request.version());
+        HttpResponse result = response(static_cast<http::status>(status), request.version(), std::move(body),
+                                       content_type.empty() ? "application/octet-stream" : content_type);
+        if (!content_range.empty())
+            result.set(http::field::content_range, content_range);
+        if (!accept_ranges.empty())
+            result.set(http::field::accept_ranges, accept_ranges);
+        return result;
+    }
+
+private:
+    struct ResponseState {
+        std::string *body;
+        std::string *content_type;
+        std::string *content_range;
+        std::string *accept_ranges;
+    };
+
+    static std::size_t write_body(char *data, std::size_t size, std::size_t count, void *context)
+    {
+        const std::size_t bytes = size * count;
+        auto &state = *static_cast<ResponseState *>(context);
+        constexpr std::size_t maximum_proxy_bytes = 64 * 1024 * 1024;
+        if (bytes > maximum_proxy_bytes || state.body->size() > maximum_proxy_bytes - bytes)
+            return 0;
+        state.body->append(data, bytes);
+        return bytes;
+    }
+
+    static std::size_t read_header(char *data, std::size_t size, std::size_t count, void *context)
+    {
+        const std::size_t bytes = size * count;
+        auto &state = *static_cast<ResponseState *>(context);
+        std::string_view line(data, bytes);
+        const auto capture = [line](std::string_view name, std::string &destination) {
+            if (line.size() <= name.size() || lowercase(line.substr(0, name.size())) != name)
+                return;
+            std::string_view value = line.substr(name.size());
+            while (!value.empty() && (value.front() == ' ' || value.front() == '\t'))
+                value.remove_prefix(1);
+            while (!value.empty() && (value.back() == '\r' || value.back() == '\n' || value.back() == ' '))
+                value.remove_suffix(1);
+            if (value.size() <= 256)
+                destination.assign(value);
+        };
+        capture("content-type:", *state.content_type);
+        capture("content-range:", *state.content_range);
+        capture("accept-ranges:", *state.accept_ranges);
+        return bytes;
+    }
+
+    static HttpResponse unavailable(unsigned int version)
+    {
+        return response(http::status::service_unavailable, version,
+                        error_body("nvr_unavailable", "NVR service is unavailable"));
+    }
+
+    bool enabled_ = false;
+};
+
 std::string static_content_type(std::string_view filename)
 {
     if (filename.ends_with(".html"))
@@ -1158,7 +1301,8 @@ HttpResponse source_health_response(unsigned int version, SceneController &contr
 
 HttpResponse handle_request(const HttpRequest &request, SceneController &controller, StudioController &studio,
                             WebSocketHub &hub,
-                            WhepProxy &whep_proxy, const std::vector<std::string> &allowed_origins,
+                            WhepProxy &whep_proxy, NvrProxy &nvr_proxy,
+                            const std::vector<std::string> &allowed_origins,
                             const RuntimeStatus &runtime_status, const ControlMetrics &metrics,
                             const BasicAuthenticator &authenticator)
 {
@@ -1173,7 +1317,7 @@ HttpResponse handle_request(const HttpRequest &request, SceneController &control
 
     const std::string_view target = view(request.target());
     if (request.method() == http::verb::get && target == "/api/v1/health")
-        return response(http::status::ok, version, "{\"status\":\"ok\",\"milestone\":\"M7\"}");
+        return response(http::status::ok, version, "{\"status\":\"ok\",\"milestone\":\"M8\"}");
     if (request.method() == http::verb::get && target == "/api/v1/ready") {
         const bool ready = runtime_status.ready();
         return response(ready ? http::status::ok : http::status::service_unavailable, version,
@@ -1185,6 +1329,15 @@ HttpResponse handle_request(const HttpRequest &request, SceneController &control
         return source_health_response(version, controller);
     if (request.method() == http::verb::get && target == "/api/v1/system/capabilities")
         return system_capabilities_response(version, runtime_status);
+
+    if (target == "/api/v1/nvr" || target.starts_with("/api/v1/nvr/")) {
+        if ((request.method() == http::verb::put || request.method() == http::verb::post ||
+             request.method() == http::verb::delete_) &&
+            !request_origin_allowed(request, false, allowed_origins))
+            return response(http::status::forbidden, version,
+                            error_body("origin_rejected", "Origin must match the local Host"));
+        return nvr_proxy.forward(request);
+    }
 
     if (request.method() == http::verb::get && target == "/api/v1/program/status")
         return whep_proxy.status(version);
@@ -1442,10 +1595,11 @@ HttpResponse handle_request(const HttpRequest &request, SceneController &control
 class HttpSession : public std::enable_shared_from_this<HttpSession> {
 public:
     HttpSession(tcp::socket socket, SceneController &controller, StudioController &studio,
-                WebSocketHub &hub, WhepProxy &whep_proxy,
+                WebSocketHub &hub, WhepProxy &whep_proxy, NvrProxy &nvr_proxy,
                 BasicAuthenticator &authenticator, ControlMetrics &metrics, RuntimeStatus &runtime_status,
                 const std::vector<std::string> &allowed_origins)
         : stream_(std::move(socket)), controller_(controller), studio_(studio), hub_(hub), whep_proxy_(whep_proxy),
+          nvr_proxy_(nvr_proxy),
           authenticator_(authenticator), metrics_(metrics), runtime_status_(runtime_status),
           allowed_origins_(allowed_origins)
     {
@@ -1486,7 +1640,7 @@ private:
         const unsigned int version = request.version();
         const std::string_view host = view(request[http::field::host]);
         if (version != 11 || !control_authority_allowed(host, allowed_origins_)) {
-            send(handle_request(request, controller_, studio_, hub_, whep_proxy_, allowed_origins_, runtime_status_,
+            send(handle_request(request, controller_, studio_, hub_, whep_proxy_, nvr_proxy_, allowed_origins_, runtime_status_,
                                 metrics_, authenticator_));
             return;
         }
@@ -1537,7 +1691,7 @@ private:
                 ->run(std::move(request), scene_event("scene.snapshot", snapshot.public_json));
             return;
         }
-        send(handle_request(request, controller_, studio_, hub_, whep_proxy_, allowed_origins_, runtime_status_,
+        send(handle_request(request, controller_, studio_, hub_, whep_proxy_, nvr_proxy_, allowed_origins_, runtime_status_,
                             metrics_, authenticator_));
     }
 
@@ -1563,6 +1717,7 @@ private:
     StudioController &studio_;
     WebSocketHub &hub_;
     WhepProxy &whep_proxy_;
+    NvrProxy &nvr_proxy_;
     BasicAuthenticator &authenticator_;
     ControlMetrics &metrics_;
     RuntimeStatus &runtime_status_;
@@ -1575,10 +1730,12 @@ class Listener : public std::enable_shared_from_this<Listener> {
 public:
     Listener(net::io_context &context, const tcp::endpoint &endpoint, SceneController &controller,
              StudioController &studio,
-             WebSocketHub &hub, WhepProxy &whep_proxy, BasicAuthenticator &authenticator,
+             WebSocketHub &hub, WhepProxy &whep_proxy, NvrProxy &nvr_proxy,
+             BasicAuthenticator &authenticator,
              ControlMetrics &metrics, RuntimeStatus &runtime_status,
              const std::vector<std::string> &allowed_origins)
         : acceptor_(net::make_strand(context)), controller_(controller), studio_(studio), hub_(hub), whep_proxy_(whep_proxy),
+          nvr_proxy_(nvr_proxy),
           authenticator_(authenticator), metrics_(metrics), runtime_status_(runtime_status),
           allowed_origins_(allowed_origins)
     {
@@ -1618,7 +1775,7 @@ private:
     void on_accept(beast::error_code error, tcp::socket socket)
     {
         if (!error)
-            std::make_shared<HttpSession>(std::move(socket), controller_, studio_, hub_, whep_proxy_, authenticator_,
+            std::make_shared<HttpSession>(std::move(socket), controller_, studio_, hub_, whep_proxy_, nvr_proxy_, authenticator_,
                                           metrics_, runtime_status_, allowed_origins_)->run();
         if (acceptor_.is_open())
             do_accept();
@@ -1629,6 +1786,7 @@ private:
     StudioController &studio_;
     WebSocketHub &hub_;
     WhepProxy &whep_proxy_;
+    NvrProxy &nvr_proxy_;
     BasicAuthenticator &authenticator_;
     ControlMetrics &metrics_;
     RuntimeStatus &runtime_status_;
@@ -1646,7 +1804,8 @@ struct ControlServer::Impl {
                         static_cast<std::size_t>(configuration.auth_failure_limit),
                         std::chrono::seconds(configuration.auth_failure_window_seconds)),
           whep_proxy(configuration.webrtc_enabled, scene_controller,
-                     configuration.control_allowed_origins)
+                     configuration.control_allowed_origins),
+          nvr_proxy(configuration.nvr_enabled)
     {
     }
 
@@ -1659,6 +1818,7 @@ struct ControlServer::Impl {
     BasicAuthenticator authenticator;
     ControlMetrics metrics;
     WhepProxy whep_proxy;
+    NvrProxy nvr_proxy;
     std::shared_ptr<Listener> listener;
     std::thread thread;
 };
@@ -1684,7 +1844,8 @@ std::optional<std::string> ControlServer::start()
         return "HTTP listen address is invalid";
     impl_->listener = std::make_shared<Listener>(
         impl_->context, tcp::endpoint(address, static_cast<unsigned short>(impl_->config.http_port)),
-        impl_->controller, impl_->studio, impl_->hub, impl_->whep_proxy, impl_->authenticator, impl_->metrics,
+        impl_->controller, impl_->studio, impl_->hub, impl_->whep_proxy, impl_->nvr_proxy,
+        impl_->authenticator, impl_->metrics,
         impl_->status, impl_->config.control_allowed_origins);
     if (!impl_->listener->error().empty())
         return impl_->listener->error();

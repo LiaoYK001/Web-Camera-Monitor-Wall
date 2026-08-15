@@ -39,6 +39,7 @@ constexpr SettingSpec setting_specs[] = {
     {"--source-recovery-base-seconds", "WEBOBS_SOURCE_RECOVERY_BASE_SECONDS", "source_recovery_base"},
     {"--source-recovery-max-seconds", "WEBOBS_SOURCE_RECOVERY_MAX_SECONDS", "source_recovery_max"},
     {"--webrtc-enabled", "WEBOBS_WEBRTC_ENABLED", "webrtc_enabled"},
+    {"--nvr-enabled", "WEBOBS_NVR_ENABLED", "nvr_enabled"},
     {"--whip-url", "WEBOBS_WHIP_URL", "whip_url"},
     {"--browser-allowed-origins", "WEBOBS_BROWSER_ALLOWED_ORIGINS", "browser_allowed_origins"},
     {"--browser-allow-private-networks", "WEBOBS_BROWSER_ALLOW_PRIVATE_NETWORKS",
@@ -248,7 +249,8 @@ ParseResult parse_config(const std::vector<std::string> &arguments, const Enviro
         {"control_allowed_origins", ""},
         {"source_stale_seconds", "10"}, {"source_recovery_base", "5"},
         {"source_recovery_max", "60"},
-        {"webrtc_enabled", "false"}, {"whip_url", "http://127.0.0.1:8889/program/whip"},
+        {"webrtc_enabled", "false"}, {"nvr_enabled", "false"},
+        {"whip_url", "http://127.0.0.1:8889/program/whip"},
         {"browser_allowed_origins", ""}, {"browser_allow_private_networks", "false"},
     };
 
@@ -357,6 +359,8 @@ ParseResult parse_config(const std::vector<std::string> &arguments, const Enviro
 
     if (!parse_boolean(values["webrtc_enabled"], config.webrtc_enabled))
         return failure("webrtc-enabled must be true or false");
+    if (!parse_boolean(values["nvr_enabled"], config.nvr_enabled))
+        return failure("nvr-enabled must be true or false");
     config.whip_url = values["whip_url"];
     if (config.webrtc_enabled && !valid_whip_url(config.whip_url))
         return failure("whip-url must be an absolute HTTP(S) URL without credentials, query parameters, or fragments");
@@ -466,6 +470,7 @@ Options:
   --source-recovery-base-seconds <n> Initial RTSP restart backoff (default: 5)
   --source-recovery-max-seconds <n>  Maximum RTSP restart backoff (default: 60)
   --webrtc-enabled <bool>          Publish the program through WHIP (default: false)
+  --nvr-enabled <bool>             Run the independent per-camera NVR service (default: false)
   --whip-url <url>                 WHIP publish URL (default: internal MediaMTX)
   --browser-allowed-origins <csv>  Exact HTTP(S) origins permitted for browser sources
   --browser-allow-private-networks <bool>
@@ -490,7 +495,7 @@ Command-line values override WEBOBS_* environment values.
 
 std::string version_text()
 {
-    return std::string("webobsd ") + WEBOBS_VERSION + " (M7, OBS 32.1.2)";
+    return std::string("webobsd ") + WEBOBS_VERSION + " (M8, OBS 32.1.2)";
 }
 
 } // namespace webobs

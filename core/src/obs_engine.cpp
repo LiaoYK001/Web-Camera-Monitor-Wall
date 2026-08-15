@@ -396,8 +396,10 @@ ExitCode run_obs_engine(const Config &config, const SceneDocument &document)
         blog(LOG_ERROR, "Could not resolve output path: %s", path_error.message().c_str());
         return ExitCode::output_failed;
     }
-    const std::filesystem::path temporary_path =
-        output_path.parent_path() / ("." + output_path.filename().string() + ".webobsd-" + std::to_string(getpid()) + ".mkv");
+    const auto temporary_nonce = std::chrono::steady_clock::now().time_since_epoch().count();
+    const std::filesystem::path temporary_path = output_path.parent_path() /
+        ("." + output_path.filename().string() + ".webobsd-" + std::to_string(getpid()) + "-" +
+         std::to_string(temporary_nonce) + ".mkv");
     TemporaryFileGuard temporary_guard{temporary_path};
     if (!prepare_output_paths(output_path, temporary_path))
         return ExitCode::output_failed;

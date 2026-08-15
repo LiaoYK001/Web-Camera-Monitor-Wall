@@ -33,13 +33,13 @@ Please avoid opening a public issue for a suspected vulnerability. Use the repos
 - 服务端浏览器源默认拒绝。只通过 `WEBOBS_BROWSER_ALLOWED_ORIGINS` 批准精确且可信的 Origin；私网或本地目标还需单独设置 `WEBOBS_BROWSER_ALLOW_PRIVATE_NETWORKS=true`。获准网页仍可加载子资源，因此允许列表是管理员信任边界，不是完整内容沙箱。
 - 浏览器源 URL 禁止 userinfo；API 和产品日志会隐藏查询与片段值。临时 CEF profile 权限为 `0700`，启动前和正常退出后都会删除。不得把长期仪表盘令牌写入已提交场景或公开诊断。
 - M6 凭据只接受绝对路径的用户名/密码文件对。应使用 `compose.m6-auth.yaml` 的 secret 挂载，把源文件放在已忽略的 `secrets/` 目录并限制主机访问；不得把凭据值直接写入 Compose、`.env.example`、命令行、日志或 Issue。
-- HTTP Basic 不会加密凭据。任何远程访问都必须由受信反向代理终止 HTTPS，只允许其外部 HTTPS Origin，阻止客户端直连后端端口，并保证公开存活/就绪响应不含配置细节。原生 TLS 和经过评审的互联网部署仍是未完成的 M6 工作。
+- HTTP Basic 不会加密凭据。任何远程访问都必须使用 M6 production 覆盖在同一产品容器内由 Caddy 终止受信 HTTPS，只允许其外部 HTTPS Origin，阻止客户端直连后端端口，并保证公开存活/就绪响应不含配置细节。
 - 认证拒绝、场景变更、来源断流、重启请求和恢复会在 URL 脱敏后写为单行 JSON。认证审计字段只标识后端 TCP 对端（通常是受信反向代理），绝不记录用户名或 Authorization 值。即使省略了凭据与来源 URL，保留日志仍应视为敏感运维数据。
 - 基础 Compose 默认把 Docker `json-file` 日志限制为三份、每份 10 MiB。`WEBOBS_LOG_MAX_SIZE` 与 `WEBOBS_LOG_MAX_FILES` 必须保持有限，并应把轮转文件纳入主机备份和访问策略；应用脱敏不代表日志可以公开发布。
 - 不得把运行时凭据作为镜像构建参数或发布到 registry 元数据。应优先部署不可变 GHCR digest，在可用时验证 provenance，并为每个已分发镜像保留精确对应的 GPL 源码提交与递归 submodule 状态。
 
 ## Supported versions / 支持版本
 
-Security fixes are currently provided for the latest commit on the default branch. M5 is complete and M6 is in development. M6 currently provides optional file-backed single-operator Basic authentication across UI, REST, WebSocket, WHEP, and metrics; explicit HTTPS Origin/Host authorization; bounded per-client failed-authentication rate limiting; frame-freshness source health and recovery; structured audit events; bounded Docker logs; and public detail-free liveness/readiness probes. Authentication is disabled in base loopback Compose, TLS/TURN and role-based authorization are not implemented, and the milestone has not passed its production security gate. Do not expose the backend directly to a LAN or the Internet.
+Security fixes are currently provided for the latest commit on the default branch. M0–M8 implementation is complete and M9 is in development. M6 provides file-backed authentication, trusted HTTPS/TURN deployment, strict Origin/Host authorization, bounded failed-authentication rate limiting, source recovery, structured audit, bounded logs, and detail-free probes. M8 routes its loopback-only NVR process through the same control boundary and redacts all source endpoints. Authentication remains disabled in base loopback Compose. Do not expose that base backend directly to a LAN or the Internet; use the documented production overlay and least-privilege network policy.
 
-安全修复仅面向默认分支的最新提交；M5 已完成，M6 正在开发。M6 当前为 UI、REST、WebSocket、WHEP 与指标提供可选的文件型单操作员 Basic 认证，同时加入明确的 HTTPS Origin/Host 授权、逐客户端有限认证失败限流、帧新鲜度来源健康与恢复、结构化审计事件、有界 Docker 日志，以及不暴露配置细节的公开存活/就绪探针。基础回环 Compose 默认不启用认证，TLS/TURN 与角色授权尚未实现，里程碑也尚未通过生产安全门禁。不得把后端直接暴露到局域网或互联网。
+安全修复仅面向默认分支的最新提交；M0–M8 实现已完成，M9 正在开发。M6 已提供文件型认证、受信 HTTPS/TURN 部署、严格 Origin/Host 授权、有限认证失败限流、来源恢复、结构化审计、有界日志及无细节探针。M8 的仅回环 NVR 进程通过同一控制边界提供，全部来源端点均脱敏。基础回环 Compose 仍默认不启用认证；不得将其后端直接暴露到局域网或互联网，应使用已记录的 production 覆盖和最小权限网络策略。

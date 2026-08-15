@@ -7,6 +7,7 @@ screen="${WEBOBS_XVFB_SCREEN:-1920x1080x24}"
 mediamtx_enabled="${WEBOBS_WEBRTC_ENABLED:-true}"
 mediamtx_config="${WEBOBS_MEDIAMTX_CONFIG:-/opt/webobs/etc/mediamtx.yml}"
 tls_enabled="${WEBOBS_TLS_ENABLED:-false}"
+nvr_enabled="${WEBOBS_NVR_ENABLED:-false}"
 caddy_config="${WEBOBS_CADDY_CONFIG:-/opt/webobs/etc/Caddyfile}"
 export WEBOBS_WEBRTC_ENABLED="$mediamtx_enabled"
 browser_cache="/config/obs/plugin_config/obs-browser"
@@ -48,6 +49,10 @@ trap cleanup_browser_cache EXIT
 case "$mediamtx_enabled" in
     true|false) ;;
     *) fail "WEBOBS_WEBRTC_ENABLED must be true or false" ;;
+esac
+case "$nvr_enabled" in
+    true|false) ;;
+    *) fail "WEBOBS_NVR_ENABLED must be true or false" ;;
 esac
 if [ "$mediamtx_enabled" = "true" ] && [ ! -r "$mediamtx_config" ]; then
     fail "MediaMTX configuration is not readable"
@@ -140,6 +145,9 @@ mediamtx_log_pipe=""
 caddy_pid=""
 caddy_filter_pid=""
 caddy_log_pipe=""
+nvr_pid=""
+nvr_filter_pid=""
+nvr_log_pipe=""
 webobsd_pid=""
 shutdown_requested=0
 
@@ -154,6 +162,7 @@ shutdown_children() {
     terminate_child "$webobsd_pid"
     terminate_child "$caddy_pid"
     terminate_child "$mediamtx_pid"
+    terminate_child "$nvr_pid"
     terminate_child "$xvfb_pid"
 }
 
@@ -189,6 +198,7 @@ fi
 
 if [ "$mediamtx_enabled" = "true" ]; then
     mediamtx_log_pipe="/tmp/webobs-mediamtx-log.$$"
+    rm -f -- "$mediamtx_log_pipe"
     mkfifo "$mediamtx_log_pipe"
     /opt/obs/bin/webobs-log-filter < "$mediamtx_log_pipe" &
     mediamtx_filter_pid=$!
@@ -199,11 +209,22 @@ fi
 if [ "$tls_enabled" = "true" ]; then
     /opt/webobs/bin/caddy validate --config "$caddy_config" --adapter caddyfile >/dev/null
     caddy_log_pipe="/tmp/webobs-caddy-log.$$"
+    rm -f -- "$caddy_log_pipe"
     mkfifo "$caddy_log_pipe"
     /opt/obs/bin/webobs-log-filter < "$caddy_log_pipe" &
     caddy_filter_pid=$!
     /opt/webobs/bin/caddy run --config "$caddy_config" --adapter caddyfile > "$caddy_log_pipe" 2>&1 &
     caddy_pid=$!
+fi
+
+if [ "$nvr_enabled" = "true" ]; then
+    nvr_log_pipe="/tmp/webobs-nvr-log.$$"
+    rm -f -- "$nvr_log_pipe"
+    mkfifo "$nvr_log_pipe"
+    /opt/obs/bin/webobs-log-filter < "$nvr_log_pipe" &
+    nvr_filter_pid=$!
+    /opt/webobs/bin/webobs-nvrd > "$nvr_log_pipe" 2>&1 &
+    nvr_pid=$!
 fi
 
 /opt/obs/bin/webobsd "$@" &
@@ -231,6 +252,18 @@ while kill -0 "$webobsd_pid" 2>/dev/null; do
     fi
     if [ "$shutdown_requested" -eq 0 ] && [ -n "$caddy_filter_pid" ] && ! kill -0 "$caddy_filter_pid" 2>/dev/null; then
         echo "HTTPS proxy log filter exited while webobsd was running" >&2
+        exit_status=3
+        terminate_child "$webobsd_pid"
+        break
+    fi
+    if [ "$shutdown_requested" -eq 0 ] && [ -n "$nvr_pid" ] && ! kill -0 "$nvr_pid" 2>/dev/null; then
+        echo "NVR service exited while webobsd was running" >&2
+        exit_status=3
+        terminate_child "$webobsd_pid"
+        break
+    fi
+    if [ "$shutdown_requested" -eq 0 ] && [ -n "$nvr_filter_pid" ] && ! kill -0 "$nvr_filter_pid" 2>/dev/null; then
+        echo "NVR log filter exited while webobsd was running" >&2
         exit_status=3
         terminate_child "$webobsd_pid"
         break
@@ -265,11 +298,20 @@ fi
 if [ -n "$caddy_filter_pid" ]; then
     wait "$caddy_filter_pid" 2>/dev/null || true
 fi
+if [ -n "$nvr_pid" ]; then
+    wait "$nvr_pid" 2>/dev/null || true
+fi
+if [ -n "$nvr_filter_pid" ]; then
+    wait "$nvr_filter_pid" 2>/dev/null || true
+fi
 if [ -n "$mediamtx_log_pipe" ]; then
     rm -f -- "$mediamtx_log_pipe"
 fi
 if [ -n "$caddy_log_pipe" ]; then
     rm -f -- "$caddy_log_pipe"
+fi
+if [ -n "$nvr_log_pipe" ]; then
+    rm -f -- "$nvr_log_pipe"
 fi
 wait "$xvfb_pid" 2>/dev/null || true
 exit "$exit_status"

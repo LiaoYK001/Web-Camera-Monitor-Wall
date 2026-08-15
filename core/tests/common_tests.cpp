@@ -60,7 +60,7 @@ void config_tests()
         {"--fps", "121"},                  {"--bitrate-kbps", "49"},
         {"--connect-timeout-seconds", "0"}, {"--log-level", "verbose"},
         {"--http-port", "65536"},          {"--allow-insecure-remote", "sometimes"},
-        {"--webrtc-enabled", "sometimes"},
+        {"--webrtc-enabled", "sometimes"}, {"--nvr-enabled", "sometimes"},
         {"--browser-allow-private-networks", "sometimes"},
         {"--video-encoder", "gpu-magic"},
         {"--vaapi-device", "/tmp/renderD128"},

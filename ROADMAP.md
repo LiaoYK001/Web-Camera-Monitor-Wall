@@ -8,20 +8,20 @@ This roadmap describes milestone order and acceptance gates, not promised releas
 
 ## Current position / 当前位置
 
-**🚧 M8 — NVR Core 正在开发；M0–M7 已完成，Canvas Studio 已通过退出门禁。**
+**🚧 M9 — Timeline 正在开发；M0–M8 实现已完成，独立 NVR Core 已通过确定性退出门禁。**
 
-M0 through M7 are complete. M7 closed after schema-v4 migration, the six-scene Studio collection, mixed libobs sources, isolated Preview/Program, bounded undo/redo, restart persistence, and 500 alternating Cut/Fade operations passed in the final product image. M8 now starts the independent per-camera archive plane.
+M0 through M8 implementation is complete. M8 closed after four independent camera workers, copy/transcode, recording policies, UTC fragmented MP4, SQLite WAL, crash recovery, retention pressure, evidence locks, read-only failure, and redaction passed in the final product image. M9 now adds timeline playback and forensic export.
 
-M0 至 M7 已全部完成。M7 在 schema-v4 迁移、六场景 Studio 集合、混合 libobs 来源、Preview/Program 隔离、有界撤销重做、重启恢复及 500 次交替 Cut/Fade 全部通过最终产品镜像门禁后关闭。M8 现开始实现独立逐路归档平面。
+M0 至 M8 实现已全部完成。M8 在四路独立 worker、复制/转码、录像策略、UTC fragmented MP4、SQLite WAL、崩溃恢复、保留压力、证据锁、只读失败和脱敏全部通过最终产品镜像门禁后关闭。M9 现开始实现时间线回放与取证导出。
 
-M7 delivers the OBS-inspired Canvas Studio; M8–M13 continue the per-camera NVR workflow. The detailed scope, architecture boundaries, dependencies, non-goals, and exit gates are defined in [docs/future-milestones.md](docs/future-milestones.md).
+M7 delivers the OBS-inspired Canvas Studio; M8 delivers the archive plane; M9–M13 continue the searchable NVR workflow. The detailed scope, architecture boundaries, dependencies, non-goals, and exit gates are defined in [docs/future-milestones.md](docs/future-milestones.md).
 
-M7 已交付受 OBS 启发的画布工作台；M8–M13 继续实现完整逐路 NVR 工作流。详细范围、架构边界、依赖、非目标及完成门禁见 [docs/future-milestones.md](docs/future-milestones.md)。
+M7 已交付受 OBS 启发的画布工作台，M8 已交付归档平面；M9–M13 继续实现可检索的完整 NVR 工作流。详细范围、架构边界、依赖、非目标及完成门禁见 [docs/future-milestones.md](docs/future-milestones.md)。
 
 ```text
-M0–M7 complete                 M8 in progress                 M9–M13 planned
-M0–M7 已完成               -> M8 开发中                  -> M9–M13 已规划
-✅                              🚧 NOW                         🧭 NOT STARTED
+M0–M8 implementation complete   M9 in progress                 M10–M13 planned
+M0–M8 实现已完成           -> M9 开发中                  -> M10–M13 已规划
+✅                               🚧 NOW                         🧭 NOT STARTED
 ```
 
 ### M0 acceptance / M0 验收
@@ -83,9 +83,9 @@ M0 已于 2026-08-11 在真实摄像头门禁通过后完成。后续修改采�
 | M4 — Browser Sources | ✅ Complete / 已完成 | `obs-browser` sources for dashboards, satellite maps, overlays and embeddable media / 支持仪表盘、卫星图、叠加层和可嵌入媒体 | CEF lifecycle, isolation, recovery, and resource limits pass container tests / CEF 生命周期、隔离、恢复和资源限制通过测试 |
 | M5 — Audio | ✅ Complete / 已完成 | Per-source mute/volume, Web Audio in Direct mode, libobs mixing in Composite mode / 单源静音与音量、Direct Web Audio、Composite libobs 混音 | Multi-source sync, mute, volume, and output audio are verified / 多源同步、静音、音量和输出音轨通过验证 |
 | M6 — Production | ✅ Complete / 已完成 | Authentication, HTTPS, TURN, health checks, GPU detection, backup, observability and upgrades / 鉴权、HTTPS、TURN、健康检查、GPU 检测、备份、可观测性和升级 | Security review, upgrade/rollback, recovery, and documented deployment pass / 安全、升级回滚、恢复和部署文档验收通过 |
-| M7 — Canvas Studio | 🚧 In progress / 开发中 | Scene collections, nested scenes/groups, filters, Preview/Program and transitions / 场景集合、嵌套场景/组、滤镜、预览/节目与转场 | Persistent multi-scene Studio workflow and Direct/Composite capability contract pass / 持久化多场景工作流与 Direct/Composite 能力契约通过 |
-| M8 — NVR Core | 🧭 Planned / 已规划 | Independent per-camera segmented recording, catalog, retention and crash recovery / 独立逐路分段录像、目录、保留与崩溃恢复 | Six-hour automated and private 24-hour recording gates plus recovery/retention pass / 六小时自动与私有 24 小时录像及恢复/保留门禁通过 |
-| M9 — Timeline | 🧭 Planned / 已规划 | Archive search, synchronized playback, clip export and evidence integrity / 归档检索、同步回放、片段导出与证据完整性 | Seek/sync, time-zone, permission and hash-verifiable export gates pass / 跳转/同步、时区、权限与可验证导出门禁通过 |
+| M7 — Canvas Studio | ✅ Complete / 已完成 | Scene collections, nested scenes/groups, filters, Preview/Program and transitions / 场景集合、嵌套场景/组、滤镜、预览/节目与转场 | Persistent multi-scene Studio workflow and Direct/Composite capability contract pass / 持久化多场景工作流与 Direct/Composite 能力契约通过 |
+| M8 — NVR Core | ✅ Implementation complete / 实现完成 | Independent per-camera segmented recording, catalog, retention and crash recovery / 独立逐路分段录像、目录、保留与崩溃恢复 | Deterministic recovery/retention gate passes; six-hour and private burn-ins remain release qualification / 确定性恢复/保留门禁通过；六小时及私有耐久属于发布资格验证 |
+| M9 — Timeline | 🚧 In progress / 开发中 | Archive search, synchronized playback, clip export and evidence integrity / 归档检索、同步回放、片段导出与证据完整性 | Seek/sync, time-zone, permission and hash-verifiable export gates pass / 跳转/同步、时区、权限与可验证导出门禁通过 |
 | M10 — Device Operations | 🧭 Planned / 已规划 | Bounded discovery, ONVIF Profile T, PTZ, presets, health and talk / 有界发现、ONVIF Profile T、PTZ、预置位、健康与对讲 | Emulator plus multi-vendor capability, safety and redaction matrix passes / 模拟器加多厂商能力、安全与脱敏矩阵通过 |
 | M11 — Events & Detection | 🧭 Planned / 已规划 | Native/software events, motion zones, detector providers, rules and notifications / 原生/软件事件、移动区域、检测提供器、规则与通知 | Analytics failure cannot block recording; event accuracy, queue and security gates pass / 分析失败不阻塞录像，事件准确性、队列与安全门禁通过 |
 | M12 — Operator UX | 🧭 Planned / 已规划 | Monitor/PWA/kiosk workflows, adaptive grids and least-privilege roles / 监看/PWA/值守流程、自适应宫格与最小权限角色 | 16-tile reference profile, browser/PWA and authorization matrix pass / 16 宫格参考配置、浏览器/PWA 与授权矩阵通过 |
@@ -233,6 +233,23 @@ M6 已于 2026-08-15 在 M0–M5 全兼容回归及全部 M6 生产门禁通过�
 M7 completed on 2026-08-15. Arbitrary plug-ins, desktop capture, unrestricted scripts, and pixel-perfect OBS desktop replication remain intentionally excluded. M8 starts from this verified Studio baseline and keeps per-camera archive lifecycles independent from Program composition.
 
 M7 已于 2026-08-15 完成。任意插件、桌面采集、不受限脚本和 OBS 桌面 UI 像素级复刻仍明确排除。M8 从该已验证 Studio 底座开始，并保持逐路归档生命周期独立于 Program 合成。
+
+### M8 — NVR Core / NVR 核心
+
+#### M8 progress / M8 进度
+
+- [x] Add an opt-in loopback-only NVR process inside the single product container / 在单产品容器内增加默认关闭、仅回环监听的 NVR 进程
+- [x] Implement at most 64 independent continuous/scheduled/event/off workers with main/sub and copy/transcode policy / 实现最多 64 路独立 worker，支持连续/计划/事件/关闭、主辅码流及复制/转码策略
+- [x] Finalize UTC fragmented MP4 segments into a mode-0600 SQLite WAL catalog / 将 UTC fragmented MP4 分段写入权限 0600 的 SQLite WAL 目录
+- [x] Recover partial/orphan/missing state idempotently and survive arbitrary-phase product-container kill / 幂等恢复残片/孤立/缺失状态并通过产品容器任意阶段强杀
+- [x] Enforce age/quota/free-space retention, evidence locks, pre-event ring, health and stable-label metrics / 执行时长/配额/剩余空间保留、证据锁、事件前环、健康及固定标签指标
+- [x] Proxy the NVR namespace through the existing authentication/Origin boundary and preserve secrets across redacted config round trips / 通过现有认证/Origin 边界代理 NVR 命名空间，并在脱敏配置往返时保留密钥
+- [x] Pass the four-camera deterministic copy/transcode, policy, crash, retention, read-only, decode and redaction gate / 通过四路复制/转码、策略、崩溃、保留、只读、解码与脱敏确定性门禁
+- [ ] Complete the optional six-hour fixture soak and private 24-hour release burn-in on deployment hardware / 在部署硬件完成可选六小时夹具耐久和私有 24 小时发布耐久
+
+M8 implementation completed on 2026-08-15. Long-duration burn-ins are deliberately recorded as release qualification rather than claimed by the short deterministic development gate. M9 starts from the verified archive/catalog contract documented in [docs/nvr-core.md](docs/nvr-core.md).
+
+M8 实现于 2026-08-15 完成。长时耐久被明确记录为发布资格验证，不由短时确定性开发门禁冒充完成。M9 从 [docs/nvr-core.md](docs/nvr-core.md) 所述已验证归档/目录契约继续。
 
 ## Cross-cutting rules / 贯穿规则
 

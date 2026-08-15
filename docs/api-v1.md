@@ -1,8 +1,8 @@
 # Control API v1 / 控制接口 v1
 
-M1–M6 provide the secured HTTP/WebSocket/WebRTC control and playback plane. M7 adds a versioned Studio collection, isolated Preview/Program buses, transactional Cut/Fade Take, bounded history, and explicit Direct/Hybrid fallback analysis. The APIs use the same current [scene document](scene-schema-v4.md) consumed by libobs and the browser editor.
+M1–M6 provide the secured HTTP/WebSocket/WebRTC control and playback plane. M7 adds a versioned Studio collection, isolated Preview/Program buses, transactional Cut/Fade Take, bounded history, and explicit Direct/Hybrid fallback analysis. M8 adds the authenticated `/api/v1/nvr/*` proxy for the independent archive plane. The composition APIs use the same current [scene document](scene-schema-v4.md) consumed by libobs and the browser editor; the strict archive contract is documented in [nvr-core.md](nvr-core.md).
 
-M1–M6 提供受保护的 HTTP/WebSocket/WebRTC 控制与播放平面；M7 增加版本化 Studio 集合、隔离 Preview/Program 总线、事务性 Cut/Fade Take、有界历史和明确的 Direct/Hybrid 降级分析。接口、libobs 与浏览器编辑器共用当前[场景文档](scene-schema-v4.md)。
+M1–M6 提供受保护的 HTTP/WebSocket/WebRTC 控制与播放平面；M7 增加版本化 Studio 集合、隔离 Preview/Program 总线、事务性 Cut/Fade Take、有界历史和明确的 Direct/Hybrid 降级分析；M8 增加经过认证的 `/api/v1/nvr/*` 代理以提供独立归档平面。合成接口、libobs 与浏览器编辑器共用当前[场景文档](scene-schema-v4.md)，严格归档契约见 [nvr-core.md](nvr-core.md)。
 
 ## Security boundary / 安全边界
 
@@ -63,7 +63,7 @@ Returns the bundled React/TypeScript scene editor. The non-hashed HTML entry is 
 Returns `200` while the control thread is serving:
 
 ```json
-{"status":"ok","milestone":"M7"}
+{"status":"ok","milestone":"M8"}
 ```
 
 This route is intentionally unauthenticated and contains no configuration details.

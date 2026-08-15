@@ -33,6 +33,7 @@ struct Config {
     int source_recovery_base_seconds = 5;
     int source_recovery_max_seconds = 60;
     bool webrtc_enabled = false;
+    bool nvr_enabled = false;
     std::string whip_url = "http://127.0.0.1:8889/program/whip";
     BrowserSecurityPolicy browser_security;
     std::string output_path;

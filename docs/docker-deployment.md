@@ -2,7 +2,7 @@
 
 本文面向从 Git 仓库克隆代码、在部署主机自行构建产品镜像的操作者。命令均在仓库根目录执行。
 
-> 当前项目已完成 M0–M7，正在开发 M8 NVR Core。文件认证、恢复、硬件编码安全回退、校验备份恢复、单镜像受信 HTTPS/TURN、可验证发布及 Canvas Studio 均已通过门禁。基础 HTTP 模式只能用于主机回环，远程部署必须使用本指南的 production 覆盖。
+> 当前项目已完成 M0–M8，正在开发 M9 Timeline。文件认证、恢复、硬件编码安全回退、校验备份恢复、单镜像受信 HTTPS/TURN、可验证发布、Canvas Studio 及独立 NVR Core 均已通过实现门禁。基础 HTTP 模式只能用于主机回环，远程部署必须使用本指南的 production 覆盖。
 
 ## 1. 部署组成与数据边界
 
@@ -324,7 +324,7 @@ docker compose down
 
 ## 9. 一致性备份与恢复
 
-产品镜像内置 `/opt/webobs/bin/webobs-backup` 与场景校验器。备份覆盖当前持久化配置：创建前分别验证 `scene.json` 及可选的 M7 `studio.json`，写入权限为 `0600` 的 tar.gz，并生成同名 SHA-256 sidecar。恢复会先校验 sidecar 格式、归档哈希、固定 tar 路径、符号/硬链接及两种 schema，最后在配置卷内替换已验证文件。恢复应在产品容器停止时执行，以避免跨文件并发更新。
+产品镜像内置 `/opt/webobs/bin/webobs-backup`、场景校验器与 NVR 配置校验器。备份覆盖当前持久化配置：创建前分别验证 `scene.json`、可选的 M7 `studio.json` 及可选的 M8 `nvr.json`，写入权限为 `0600` 的 tar.gz，并生成同名 SHA-256 sidecar。恢复会先校验 sidecar 格式、归档哈希、固定 tar 路径、符号/硬链接及全部存在的 schema，最后在配置卷内替换已验证文件。恢复应在产品容器停止时执行，以避免跨文件并发更新。
 
 备份可能包含完整 RTSP 凭据。SHA-256 只提供完整性检查，不提供加密或来源认证；`backups/` 已被 Git 忽略，但仍必须位于加密介质并限制主机访问。不要把归档、sidecar、解压内容或恢复诊断上传到公开 Issue。
 
@@ -359,7 +359,7 @@ docker compose -f compose.yaml -f compose.m6-backup.yaml start webobs
 curl --fail http://127.0.0.1:8080/api/v1/ready
 ```
 
-`.env`、`secrets/`、素材和录像不进入配置归档，必须分别使用受控加密备份。M8 引入录像目录数据库时会扩展此格式并保留版本化迁移，不会把运行中的 SQLite 文件直接塞入当前配置归档。
+`.env`、`secrets/`、素材、录像和运行中的 SQLite/WAL 不进入配置归档，必须分别使用受控加密备份。NVR 配置会进入校验归档；媒体卷与目录应通过应用一致的存储快照或停机备份保护，不能直接复制活动数据库文件。
 
 ## 10. 源码更新与回滚
 

@@ -1,15 +1,15 @@
 # Web Camera Monitor Wall
 
-一个基于 `libobs` 的无桌面 Web 监控墙/合成器项目。仓库已完成 **M0 Headless Proof 至 M7 Canvas Studio**，并进入 **M8 NVR Core** 开发：无需 OBS Qt 界面，也能在 Linux Docker 容器中完成下面的闭环。
+一个基于 `libobs` 的无桌面 Web 监控墙/合成器项目。仓库已完成 **M0 Headless Proof 至 M8 NVR Core**，并进入 **M9 Timeline** 开发：无需 OBS Qt 界面，也能在 Linux Docker 容器中完成下面的闭环。
 
 ```text
 RTSP camera -> libobs ffmpeg_source -> OBS scene -> H.264/AAC MP4
                                                    -> H.264/Opus WHIP/WHEP
 ```
 
-当前版本能从持久化 Studio 集合启动多路 RTSP、受控网页、图片、文字、色块、媒体和嵌套场景，通过随产品镜像提供的 React/TypeScript 编辑器进行多选、吸附、对齐、分组、裁切、旋转、透明度、混合和有序滤镜编辑，并以隔离的 Preview/Program 总线执行原子 Cut/Fade Take。M2–M5 提供 Composite/Direct/Hybrid WebRTC、浏览器源和统一音频；M6 提供认证、TLS/TURN、恢复、指标、硬件能力安全回退、备份及可验证发布；M7 的 schema v4、Studio 集合、迁移备份、能力降级和 500 次转场稳定性门禁现已完成。
+当前版本能从持久化 Studio 集合启动多路 RTSP、受控网页、图片、文字、色块、媒体和嵌套场景，通过随产品镜像提供的 React/TypeScript 编辑器进行多选、吸附、对齐、分组、裁切、旋转、透明度、混合和有序滤镜编辑，并以隔离的 Preview/Program 总线执行原子 Cut/Fade Take。M2–M5 提供 Composite/Direct/Hybrid WebRTC、浏览器源和统一音频；M6 提供认证、TLS/TURN、恢复、指标、硬件能力安全回退、备份及可验证发布；M7 交付 Canvas Studio；M8 新增与节目合成独立的逐路 MP4 分段、SQLite WAL 目录、录像策略、崩溃恢复、保留与证据锁。
 
-开发路线、里程碑验收标准和当前进度见 [ROADMAP.md](ROADMAP.md)。**M0 至 M7 已通过全部验收；当前位置是 M8 NVR Core 开发起点，M9–M13 仍按顺序规划。**详细的后续架构、功能归属、非目标和逐阶段完成门禁见 [M7–M13 产品路线](docs/future-milestones.md)。从 Git 克隆、配置、构建、运行、备份和回滚见 [Docker 部署指南](docs/docker-deployment.md)；不用 Docker Hub 时的镜像发布与拉取见 [GHCR 指南](docs/ghcr.md)。当前场景与持久化契约见 [docs/scene-schema-v4.md](docs/scene-schema-v4.md)，历史 [v3](docs/scene-schema-v3.md)、[v2](docs/scene-schema-v2.md) 与 [v1](docs/scene-schema-v1.md) 契约仍保留，控制协议见 [docs/api-v1.md](docs/api-v1.md)。
+开发路线、里程碑验收标准和当前进度见 [ROADMAP.md](ROADMAP.md)。**M0 至 M8 的实现门禁已通过；当前位置是 M9 Timeline 开发起点，M10–M13 仍按顺序规划。**详细的后续架构、功能归属、非目标和逐阶段完成门禁见 [M7–M13 产品路线](docs/future-milestones.md)。NVR 配置、存储、接口和验证见 [NVR Core 指南](docs/nvr-core.md)。从 Git 克隆、配置、构建、运行、备份和回滚见 [Docker 部署指南](docs/docker-deployment.md)；不用 Docker Hub 时的镜像发布与拉取见 [GHCR 指南](docs/ghcr.md)。当前场景与持久化契约见 [docs/scene-schema-v4.md](docs/scene-schema-v4.md)，历史 [v3](docs/scene-schema-v3.md)、[v2](docs/scene-schema-v2.md) 与 [v1](docs/scene-schema-v1.md) 契约仍保留，控制协议见 [docs/api-v1.md](docs/api-v1.md)。
 
 `WEBOBS_SCENE_FILE` 默认指向 `/config/webobs/scene.json`。首次启动使用 `WEBOBS_RTSP_URL` 创建并保存单路场景；后续启动以场景文件为准。手工编辑场景文件前应停止容器，且真实 RTSP 凭据不得提交到 Git。
 

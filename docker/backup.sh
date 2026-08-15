@@ -6,6 +6,7 @@ config_root="${WEBOBS_BACKUP_CONFIG_ROOT:-/config/webobs}"
 backup_root="${WEBOBS_BACKUP_ROOT:-/backups}"
 scene_path="$config_root/scene.json"
 studio_path="$config_root/studio.json"
+nvr_path="$config_root/nvr.json"
 
 fail() {
     echo "webobs-backup: $*" >&2
@@ -65,12 +66,13 @@ verify_archive() {
     trap 'safe_remove_temp "$listing"' EXIT HUP INT TERM
     tar -tzf "$archive" > "$listing" || fail "archive cannot be listed"
     awk '
-        BEGIN { scene = 0; studio = 0 }
+        BEGIN { scene = 0; studio = 0; nvr = 0 }
         $0 == "webobs/" { next }
         $0 == "webobs/scene.json" { scene++; next }
         $0 == "webobs/studio.json" { studio++; next }
+        $0 == "webobs/nvr.json" { nvr++; next }
         { exit 1 }
-        END { if (scene != 1 || studio > 1) exit 1 }
+        END { if (scene != 1 || studio > 1 || nvr > 1) exit 1 }
     ' "$listing" || fail "archive contains unexpected paths"
     safe_remove_temp "$listing"
     trap - EXIT HUP INT TERM
@@ -80,10 +82,16 @@ create_backup() {
     [ -f "$scene_path" ] && [ ! -L "$scene_path" ] || fail "scene.json is missing or unsafe"
     /opt/obs/bin/webobs-scene-tool validate "$scene_path" >/dev/null || fail "scene validation failed"
     include_studio=0
+    include_nvr=0
     if [ -e "$studio_path" ]; then
         [ -f "$studio_path" ] && [ ! -L "$studio_path" ] || fail "studio.json is unsafe"
         /opt/obs/bin/webobs-scene-tool validate-studio "$studio_path" >/dev/null || fail "studio validation failed"
         include_studio=1
+    fi
+    if [ -e "$nvr_path" ]; then
+        [ -f "$nvr_path" ] && [ ! -L "$nvr_path" ] || fail "nvr.json is unsafe"
+        /opt/webobs/bin/webobs-nvrd --config "$nvr_path" --validate-config >/dev/null || fail "NVR validation failed"
+        include_nvr=1
     fi
     timestamp="$(date -u +%Y%m%dT%H%M%SZ)"
     name="${1:-webobs-config-$timestamp.tar.gz}"
@@ -97,11 +105,10 @@ create_backup() {
 
     temporary="$(mktemp -d "$backup_root/.webobs-backup.XXXXXX")"
     trap 'safe_remove_temp "$temporary"' EXIT HUP INT TERM
-    if [ "$include_studio" -eq 1 ]; then
-        tar -C "${config_root%/webobs}" -czf "$temporary/$name" webobs/scene.json webobs/studio.json
-    else
-        tar -C "${config_root%/webobs}" -czf "$temporary/$name" webobs/scene.json
-    fi
+    set -- webobs/scene.json
+    [ "$include_studio" -eq 0 ] || set -- "$@" webobs/studio.json
+    [ "$include_nvr" -eq 0 ] || set -- "$@" webobs/nvr.json
+    tar -C "${config_root%/webobs}" -czf "$temporary/$name" "$@"
     hash="$(sha256sum "$temporary/$name" | awk '{print $1}')"
     printf '%s  %s\n' "$hash" "$name" > "$temporary/$name.sha256"
     chmod 0600 "$temporary/$name" "$temporary/$name.sha256"
@@ -131,10 +138,20 @@ restore_backup() {
         /opt/obs/bin/webobs-scene-tool validate-studio "$extracted_studio" >/dev/null || fail "restored Studio validation failed"
         install -m 0600 "$extracted_studio" "$temporary/studio.json.staged"
     fi
+    extracted_nvr="$temporary/webobs/nvr.json"
+    if [ -e "$extracted_nvr" ]; then
+        [ -f "$extracted_nvr" ] && [ ! -L "$extracted_nvr" ] || fail "restored NVR configuration is unsafe"
+        [ "$(stat -c '%h' "$extracted_nvr")" = "1" ] || fail "restored NVR configuration must not be a hard link"
+        /opt/webobs/bin/webobs-nvrd --config "$extracted_nvr" --validate-config >/dev/null || fail "restored NVR validation failed"
+        install -m 0600 "$extracted_nvr" "$temporary/nvr.json.staged"
+    fi
     staged="$temporary/scene.json.staged"
     install -m 0600 "$extracted" "$staged"
     if [ -f "$temporary/studio.json.staged" ]; then
         mv -f "$temporary/studio.json.staged" "$studio_path"
+    fi
+    if [ -f "$temporary/nvr.json.staged" ]; then
+        mv -f "$temporary/nvr.json.staged" "$nvr_path"
     fi
     mv -f "$staged" "$scene_path"
     safe_remove_temp "$temporary"
