@@ -1,0 +1,6 @@
+FROM webobs:m0
+
+LABEL org.opencontainers.image.source="https://github.com/LiaoYK001/Web-Camera-Monitor-Wall" \
+      org.opencontainers.image.licenses="GPL-2.0-or-later" \
+      org.opencontainers.image.revision="1111111111111111111111111111111111111111" \
+      org.opencontainers.image.version="m6-upgrade-test"

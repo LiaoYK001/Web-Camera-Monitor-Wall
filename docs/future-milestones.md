@@ -4,7 +4,7 @@
 >
 > Last updated / 最后更新：2026-08-15
 >
-> Current position / 当前位置：M6 Production is still in progress; M7 has not started / M6 Production 仍在开发，M7 尚未开始
+> Current position / 当前位置：M6 Production is complete; M7 Canvas Studio is in progress / M6 Production 已完成，M7 Canvas Studio 开发中
 
 This document expands the project from a web camera compositor into a self-hosted monitoring workspace with two first-class capabilities: an OBS-inspired customizable canvas and an NVR workflow inspired by mainstream monitoring applications such as tinyCam Monitor. It is a capability plan, not a compatibility or UI-cloning claim, and it does not promise release dates.
 
@@ -76,13 +76,13 @@ SQLite in WAL mode plus local volumes is the initial single-node metadata baseli
 
 ## 4. Milestone sequence / 里程碑顺序
 
-M6 is a hard production-foundation gate. Design work may continue, but M7 implementation cannot be declared started until M6 TLS/TURN, hardware fallback, backup/restore, provenance, and upgrade/rollback gates pass. Each later milestone requires its predecessor's exit gate.
+M6 was the hard production-foundation gate and is now complete after TLS/TURN, hardware fallback, backup/restore, provenance, and upgrade/rollback passed. M7 implementation has started; each later milestone still requires its predecessor's exit gate.
 
-M6 是生产底座的硬门禁。可以继续设计，但在 M6 的 TLS/TURN、硬件回退、备份恢复、来源证明及升级回滚全部通过前，不能宣称 M7 已开工；后续每个里程碑均以前一里程碑完成为前提。
+M6 是生产底座硬门禁，现已在 TLS/TURN、硬件回退、备份恢复、来源证明及升级回滚全部通过后完成。M7 已开始实现；后续每个里程碑仍以前一里程碑完成为前提。
 
 ```text
 M6 Production      -> M7 Canvas Studio -> M8 NVR Core       -> M9 Timeline
-M6 生产化（当前）  -> M7 画布工作台    -> M8 NVR 核心       -> M9 时间线
+M6 生产化（完成）  -> M7 画布工作台（当前） -> M8 NVR 核心   -> M9 时间线
                          -> M10 Device Ops -> M11 Events & AI -> M12 Operator UX -> M13 Scale
                          -> M10 设备运维   -> M11 事件与分析   -> M12 值守体验    -> M13 扩展
 ```

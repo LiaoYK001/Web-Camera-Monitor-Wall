@@ -1,0 +1,8 @@
+FROM webobs-upgrade-good:local
+
+LABEL org.opencontainers.image.source="https://github.com/LiaoYK001/Web-Camera-Monitor-Wall" \
+      org.opencontainers.image.licenses="GPL-2.0-or-later" \
+      org.opencontainers.image.revision="2222222222222222222222222222222222222222" \
+      org.opencontainers.image.version="m6-upgrade-bad-test"
+
+ENTRYPOINT ["/bin/sh", "-c", "exit 42"]

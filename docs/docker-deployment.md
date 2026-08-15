@@ -2,7 +2,7 @@
 
 本文面向从 Git 仓库克隆代码、在部署主机自行构建产品镜像的操作者。命令均在仓库根目录执行。
 
-> 当前项目已完成 M0–M5，正在开发 M6 Production。文件认证、限流、健康检查、指标、审计日志、来源自动恢复、硬件编码安全回退、校验备份恢复，以及单镜像受信 HTTPS/TURN 部署已经具备；镜像来源证明和自动升级回滚仍未完成。基础 HTTP 模式只能用于主机回环，远程部署必须使用本指南的 production 覆盖。
+> 当前项目已完成 M0–M6，正在开发 M7 Canvas Studio。文件认证、限流、健康检查、指标、审计日志、来源自动恢复、硬件编码安全回退、校验备份恢复、单镜像受信 HTTPS/TURN、镜像来源证明和自动升级回滚均已通过 M6 门禁。基础 HTTP 模式只能用于主机回环，远程部署必须使用本指南的 production 覆盖。
 
 ## 1. 部署组成与数据边界
 
@@ -362,6 +362,24 @@ curl --fail http://127.0.0.1:8080/api/v1/ready
 `.env`、`secrets/` 和录像不进入场景归档，必须分别使用受控加密备份。M8 引入录像目录数据库时会扩展此格式并保留版本化迁移，不会把运行中 SQLite 文件直接塞入当前 M6 归档。
 
 ## 10. 源码更新与回滚
+
+### 10.1 GHCR digest 自动升级与失败回滚
+
+正式发布镜像应使用完整 GHCR digest。`scripts/upgrade-image.ps1` 会先调用 `scripts/verify-image.ps1`，核对 linux/amd64、OCI source/license/revision/version、GitHub artifact attestation，以及同版本 GitHub Release 中对应源码包的 SHA-256 和安全归档结构。验证通过后才会停机并创建场景备份；候选容器未在时限内变为 healthy 时，工具会先恢复升级前场景，再用精确旧 image ID 重建并验证健康状态。
+
+```powershell
+./scripts/verify-image.ps1 `
+  -Image 'ghcr.io/liaoyk001/web-camera-monitor-wall@sha256:<verified-digest>'
+
+./scripts/upgrade-image.ps1 `
+  -CandidateImage 'ghcr.io/liaoyk001/web-camera-monitor-wall@sha256:<verified-digest>' `
+  -ComposeFiles 'compose.yaml,compose.m6-production.yaml,compose.m6-backup.yaml' `
+  -EnvFile .env
+```
+
+脚本必须从仓库根目录运行，且 `compose.m6-backup.yaml` 必须恰好出现一次。成功输出会记录旧 image ID 与备份文件名，供后续人工回退；失败退出码仍为非零，即使自动回滚已成功，这样 CI/运维系统不会把失败候选误记为成功。`-AllowLocalImage` 只用于仓库的确定性测试夹具，会跳过 registry attestation 和公开对应源码下载，生产部署不得使用。
+
+### 10.2 源码自构建更新与手工回滚
 
 更新前记录当前提交，停止容器并备份场景、`.env`、认证文件和重要录像，再给当前镜像增加本地回滚标签：
 

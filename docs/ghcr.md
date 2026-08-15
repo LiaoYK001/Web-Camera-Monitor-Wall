@@ -113,7 +113,7 @@ GHCR 第一次发布的 package 默认为 private，即使源码仓库是 public
 
 推荐只在受保护的版本 tag 或人工 `workflow_dispatch` 上发布，不要让每个 PR 或普通提交都推送大型产品镜像。本项目首次完整 OBS 构建需要较多磁盘和内存；GitHub-hosted runner 资源不足时，应使用受控的 x86_64 Linux self-hosted runner，并禁止不受信 PR 在该 runner 上执行。
 
-下面是可放入 `.github/workflows/publish-ghcr.yml` 的参考工作流。它没有在本仓库自动启用；启用属于供应链策略变更，应先评审触发条件、runner 和 action 固定版本。
+仓库已提供 `.github/workflows/release-image.yaml`。它只在 `v*` tag 或人工 `workflow_dispatch` 触发，所有外部 action 均固定到已记录的完整 commit SHA；发布 linux/amd64 镜像时同时生成 BuildKit max provenance、SBOM、GitHub registry attestation，以及完整递归 submodule 对应源码包。下列片段仅用于解释关键结构，实际发布以仓库工作流为准。
 
 ```yaml
 name: Publish GHCR image
@@ -135,7 +135,7 @@ jobs:
     runs-on: ubuntu-24.04
     steps:
       - name: Check out repository and submodules
-        uses: actions/checkout@v6
+        uses: actions/checkout@<reviewed-full-commit>
         with:
           submodules: recursive
 
@@ -145,10 +145,10 @@ jobs:
         run: echo "name=ghcr.io/${GITHUB_REPOSITORY,,}" >> "$GITHUB_OUTPUT"
 
       - name: Set up Buildx
-        uses: docker/setup-buildx-action@v4
+        uses: docker/setup-buildx-action@<reviewed-full-commit>
 
       - name: Log in to GHCR
-        uses: docker/login-action@v4
+        uses: docker/login-action@<reviewed-full-commit>
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
@@ -156,7 +156,7 @@ jobs:
 
       - name: Generate OCI metadata
         id: meta
-        uses: docker/metadata-action@v6
+        uses: docker/metadata-action@<reviewed-full-commit>
         with:
           images: ${{ steps.image.outputs.name }}
           tags: |
@@ -166,7 +166,7 @@ jobs:
 
       - name: Build and push linux/amd64 image
         id: push
-        uses: docker/build-push-action@v7
+        uses: docker/build-push-action@<reviewed-full-commit>
         with:
           context: .
           file: ./docker/Dockerfile
@@ -180,7 +180,7 @@ jobs:
           sbom: true
 
       - name: Attest published image
-        uses: actions/attest@v4
+        uses: actions/attest@<reviewed-full-commit>
         with:
           subject-name: ${{ steps.image.outputs.name }}
           subject-digest: ${{ steps.push.outputs.digest }}
@@ -190,7 +190,7 @@ jobs:
 注意事项：
 
 - `submodules: recursive` 不可省略，否则 OBS/obs-browser 来源不完整。
-- GitHub 官方建议第三方 action 固定到完整 commit SHA。示例使用当前主版本便于阅读；正式启用时应把 Docker actions 替换为已评审 release 的完整 SHA，并定期通过单独 PR 更新。
+- 实际工作流已固定完整 commit SHA；升级 action 时必须单独审查 release、变更日志和新 SHA，不能改用浮动主版本。
 - `GITHUB_TOKEN` 只授予 `contents: read`、`packages: write` 和证明所需权限，不需要 PAT。
 - 公开仓库的 max provenance 可能包含 build arguments。构建参数只能是公开版本和校验值，绝不能传入摄像头地址或任何 secret。
 - Actions 首次发布通常会自动关联工作流所在仓库。如果同名 package 先由命令行发布且未关联仓库，应先在 package settings 中授予仓库 Actions access。
@@ -252,6 +252,13 @@ gh attestation verify \
 
 验证通过不代表镜像没有漏洞或业务配置安全；它只证明所验证 digest 与声明的 Actions 构建来源相符。仍需审查 Dockerfile、依赖固定值、发布 workflow 和运行配置。
 
+仓库验证器会把 digest、OCI 标签、attestation 和对应源码检查合并为一个失败即停止的命令：
+
+```powershell
+./scripts/verify-image.ps1 `
+  -Image 'ghcr.io/liaoyk001/web-camera-monitor-wall@sha256:<digest>'
+```
+
 ## 6. GPL 源码对应关系
 
 产品采用 `GPL-2.0-or-later`，镜像还包含相应第三方许可证。分发 GHCR 镜像时，应保留：
@@ -260,6 +267,8 @@ gh attestation verify \
 - 完整递归 submodule 固定状态。
 - Dockerfile、补丁、构建脚本和锁文件。
 - 仓库 `LICENSE` 以及镜像内第三方许可证。
+
+发布工作流执行 `scripts/create-source-bundle.sh`，只从 Git 索引及递归 submodule 收集文件，加入根提交、OBS 提交和 `SOURCE_DATE_EPOCH` 元数据，以确定性 tar/gzip 生成 `webobs-source-<version>.tar.gz` 和 SHA-256 sidecar。tag 发布会把二者附加到同名 GitHub Release；`scripts/verify-source-bundle.sh` 会拒绝缺少许可证、Dockerfile、libobs 来源，或包含 `.git`、私有 `.env`、`secrets/` 与危险路径的归档。
 
 不要发布一个无法从公开源码版本重建或无法确定对应源码提交的浮动镜像。具体合规义务应按发布主体所在法域进行法律评审。
 

@@ -1,6 +1,6 @@
 # Web Camera Monitor Wall
 
-一个基于 `libobs` 的无桌面 Web 监控墙/合成器项目。仓库已完成 **M0 Headless Proof、M1 Web Control、M2 Composite WebRTC、M3 Direct & Hybrid、M4 Browser Sources 和 M5 Audio**，并已进入 **M6 Production** 开发：无需 OBS Qt 界面，也能在 Linux Docker 容器中完成下面的闭环。
+一个基于 `libobs` 的无桌面 Web 监控墙/合成器项目。仓库已完成 **M0 Headless Proof 至 M6 Production**，并已进入 **M7 Canvas Studio** 开发：无需 OBS Qt 界面，也能在 Linux Docker 容器中完成下面的闭环。
 
 ```text
 RTSP camera -> libobs ffmpeg_source -> OBS scene -> H.264/AAC MP4
@@ -9,7 +9,7 @@ RTSP camera -> libobs ffmpeg_source -> OBS scene -> H.264/AAC MP4
 
 当前版本能从持久化场景启动多路 RTSP 与受控网页来源合成，并通过随产品镜像提供的 React/TypeScript 编辑器及 REST/WebSocket 接口，在录制期间原子更新布局和来源。M2 在同一产品镜像中通过固定版本 MediaMTX 和 `obs-webrtc` 发布 Composite H.264/Opus；M3 完成每路摄像头按需直达浏览器及选择性 H.264/Opus 转码；M4 完成固定版本 `obs-browser`/CEF 和安全生命周期；M5 完成统一静音、音量、同步偏移、监听和音轨模型、Direct Web Audio 混音及 H.264/AAC 最终录像。M6 当前已增加文件型单操作员 Basic 认证、失败限流、逐来源帧健康检测、指数退避自动恢复、存活/就绪探针、Prometheus 指标、结构化审计事件、有界 Docker 日志、CPU/VAAPI/QSV/NVENC 能力探测与 x264 安全回退、校验备份恢复，以及单镜像受信 HTTPS/TURN 部署；镜像来源证明和自动升级回滚仍未完成。
 
-开发路线、里程碑验收标准和当前进度见 [ROADMAP.md](ROADMAP.md)。**M0 至 M5 已通过全部验收；M6 Production 正在开发，尚未达到生产完成门禁。M7–M13 的 OBS 风格画布与 NVR 能力仅完成规划，尚未开工。**详细的后续架构、功能归属、非目标和逐阶段完成门禁见 [M7–M13 产品路线](docs/future-milestones.md)。从 Git 克隆、配置、构建、运行、备份和回滚见 [Docker 部署指南](docs/docker-deployment.md)；不用 Docker Hub 时的镜像发布与拉取见 [GHCR 指南](docs/ghcr.md)。当前场景与持久化契约见 [docs/scene-schema-v3.md](docs/scene-schema-v3.md)，历史 [v2](docs/scene-schema-v2.md) 与 [v1](docs/scene-schema-v1.md) 契约仍保留，控制协议见 [docs/api-v1.md](docs/api-v1.md)。
+开发路线、里程碑验收标准和当前进度见 [ROADMAP.md](ROADMAP.md)。**M0 至 M6 已通过全部验收；M7 Canvas Studio 正在开发，M8–M13 的 NVR 扩展仍处于规划状态。**详细的后续架构、功能归属、非目标和逐阶段完成门禁见 [M7–M13 产品路线](docs/future-milestones.md)。从 Git 克隆、配置、构建、运行、备份和回滚见 [Docker 部署指南](docs/docker-deployment.md)；不用 Docker Hub 时的镜像发布与拉取见 [GHCR 指南](docs/ghcr.md)。当前场景与持久化契约见 [docs/scene-schema-v3.md](docs/scene-schema-v3.md)，历史 [v2](docs/scene-schema-v2.md) 与 [v1](docs/scene-schema-v1.md) 契约仍保留，控制协议见 [docs/api-v1.md](docs/api-v1.md)。
 
 `WEBOBS_SCENE_FILE` 默认指向 `/config/webobs/scene.json`。首次启动使用 `WEBOBS_RTSP_URL` 创建并保存单路场景；后续启动以场景文件为准。手工编辑场景文件前应停止容器，且真实 RTSP 凭据不得提交到 Git。
 
@@ -247,7 +247,7 @@ PowerShell：
 ./tests/run-smoke.ps1
 ```
 
-只运行 M1 控制面验收可使用 `./tests/run-control-plane.ps1 -SkipBuild`；只运行 M2 浏览器与重连验收可使用 `./tests/run-webrtc.ps1 -SkipBuild`；只运行 M3 双路 Direct 验收可使用 `./tests/run-direct.ps1 -SkipBuild`；只运行 M3 H.264/HEVC 选择性 Hybrid 验收可使用 `./tests/run-hybrid.ps1 -SkipBuild`；在线变更、断流重连和路由回收验收使用 `./tests/run-m3-lifecycle.ps1 -SkipBuild`；M4 浏览器源门禁使用 `./tests/run-browser-source.ps1 -SkipBuild`；M5 确定性音频门禁使用 `./tests/run-m5-audio.ps1 -SkipBuild`；M6 认证与可观测门禁使用 `./tests/run-m6-auth.ps1 -SkipBuild`，场景备份/恢复门禁使用 `./tests/run-m6-backup.ps1 -SkipBuild`，HTTPS/TURN 门禁使用 `./tests/run-m6-tls-turn.ps1 -SkipBuild`。浏览器门禁默认查找本机 Chrome，也可通过 `WEBOBS_CHROME_BIN` 指定可信的 Chrome 可执行文件。
+只运行 M1 控制面验收可使用 `./tests/run-control-plane.ps1 -SkipBuild`；只运行 M2 浏览器与重连验收可使用 `./tests/run-webrtc.ps1 -SkipBuild`；只运行 M3 双路 Direct 验收可使用 `./tests/run-direct.ps1 -SkipBuild`；只运行 M3 H.264/HEVC 选择性 Hybrid 验收可使用 `./tests/run-hybrid.ps1 -SkipBuild`；在线变更、断流重连和路由回收验收使用 `./tests/run-m3-lifecycle.ps1 -SkipBuild`；M4 浏览器源门禁使用 `./tests/run-browser-source.ps1 -SkipBuild`；M5 确定性音频门禁使用 `./tests/run-m5-audio.ps1 -SkipBuild`；M6 认证与可观测门禁使用 `./tests/run-m6-auth.ps1 -SkipBuild`，场景备份/恢复门禁使用 `./tests/run-m6-backup.ps1 -SkipBuild`，HTTPS/TURN 门禁使用 `./tests/run-m6-tls-turn.ps1 -SkipBuild`，升级回滚门禁使用 `./tests/run-m6-upgrade.ps1 -SkipBuild`。浏览器门禁默认查找本机 Chrome，也可通过 `WEBOBS_CHROME_BIN` 指定可信的 Chrome 可执行文件。
 
 真实来源的 M3 Direct/Hybrid 门禁使用 `./tests/run-m3-real-camera.ps1 -SkipBuild`，M5 Composite + Direct/Hybrid 真实音频门禁使用 `./tests/run-m5-real-audio.ps1 -SkipBuild`。RTSP URL 只通过当前进程的 `WEBOBS_RTSP_URL` 或受 Git 忽略的本地 `.env` 提供；这些门禁会把录像和端点替换后的诊断日志分别写入受忽略的 `recordings/` 与 `tests/artifacts/`，不得将其作为公开附件提交。
 

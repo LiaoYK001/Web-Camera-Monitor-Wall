@@ -8,19 +8,19 @@ This roadmap describes milestone order and acceptance gates, not promised releas
 
 ## Current position / 当前位置
 
-**🚧 M6 — Production 正在开发；当前位于生产底座收尾阶段。M7–M13 仅完成规划，尚未开始开发。**
+**🚧 M7 — Canvas Studio 正在开发；M0–M6 已完成，当前进入 OBS 风格画布工作台起步阶段。**
 
-M0 through M5 are complete. M6 now includes optional file-backed single-operator Basic authentication across UI, REST, WebSocket, WHEP, and metrics; explicit remote HTTPS Origin/Host authorization; bounded failed-authentication rate limiting; frame-freshness source health; exponential-backoff RTSP recovery; structured audit events; bounded Docker logs; public liveness/readiness; authenticated Prometheus metrics; a Docker healthcheck; CPU/VAAPI/QSV/NVENC capability detection with safe x264 fallback; validated backup/restore; and single-image trusted HTTPS plus secret-file TURN configuration. M6 is not complete: image provenance and automated upgrade/rollback remain open.
+M0 through M6 are complete. M6 closed after trusted HTTPS/TURN, hardware fallback, validated backup/restore, least-privilege attested releases, recursive corresponding-source distribution, and automatic unhealthy-candidate rollback all passed together with the complete M0–M5 regression suite. M7 implementation now starts from that production baseline.
 
-M0 至 M5 已全部完成。M6 现已包含 UI、REST、WebSocket、WHEP 与指标统一文件型单操作员 Basic 认证、明确的远程 HTTPS Origin/Host 授权、有限认证失败限流、帧新鲜度来源健康、指数退避 RTSP 恢复、结构化审计事件、有界 Docker 日志、公开存活/就绪探针、受认证 Prometheus 指标、Docker healthcheck、CPU/VAAPI/QSV/NVENC 能力探测与 x264 安全回退、校验备份恢复，以及单镜像受信 HTTPS 与 secret 文件型 TURN 配置。M6 尚未完成：镜像来源证明及自动升级回滚仍待开发。
+M0 至 M6 已全部完成。M6 在受信 HTTPS/TURN、硬件回退、校验备份恢复、最小权限证明发布、递归对应源码分发及故障候选自动回滚全部通过，并完成 M0–M5 全回归后关闭。M7 现从该生产底座开始实现。
 
-M7–M13 now form the planned expansion into an OBS-inspired Canvas Studio and a full per-camera NVR workflow. The detailed scope, architecture boundaries, dependencies, non-goals, and exit gates are defined in [docs/future-milestones.md](docs/future-milestones.md). M6 remains a hard gate: future planning does not change the current implementation position.
+M7 implementation begins the planned expansion into an OBS-inspired Canvas Studio; M8–M13 remain planned as the full per-camera NVR workflow. The detailed scope, architecture boundaries, dependencies, non-goals, and exit gates are defined in [docs/future-milestones.md](docs/future-milestones.md).
 
-M7–M13 现规划为受 OBS 启发的画布工作台与完整逐路 NVR 工作流；详细范围、架构边界、依赖、非目标及完成门禁见 [docs/future-milestones.md](docs/future-milestones.md)。M6 仍是硬门禁，后续规划不会改变当前开发位置。
+M7 已开始实现受 OBS 启发的画布工作台；M8–M13 仍规划为完整逐路 NVR 工作流。详细范围、架构边界、依赖、非目标及完成门禁见 [docs/future-milestones.md](docs/future-milestones.md)。
 
 ```text
-M0–M5 complete                 M6 in progress                 M7–M13 planned
-M0–M5 已完成               -> M6 开发中                  -> M7–M13 已规划
+M0–M6 complete                 M7 in progress                 M8–M13 planned
+M0–M6 已完成               -> M7 开发中                  -> M8–M13 已规划
 ✅                              🚧 NOW                         🧭 NOT STARTED
 ```
 
@@ -68,6 +68,8 @@ M0 已于 2026-08-11 在真实摄像头门禁通过后完成。后续修改采�
 - M6 encoder capability and fallback / M6 编码能力与回退：the final image detected fixed CPU/VAAPI/QSV/NVENC capability classes without exposing device identities, an explicit unavailable NVENC request selected x264 with a visible fallback state, authenticated API/metrics reflected the result, and the 19.621-second H.264/AAC recovery recording still finalized correctly / 最终镜像在不暴露设备身份的前提下探测固定 CPU/VAAPI/QSV/NVENC 能力类别；显式请求不可用 NVENC 时选择 x264 并显示回退状态，受认证 API/指标正确反映结果，19.621 秒 H.264/AAC 恢复录像仍完整封装。
 - M6 validated backup and restore / M6 校验备份与恢复：the final image created a mode-0600 scene archive and SHA-256 sidecar, verified checksum and tar paths, rejected restore without explicit confirmation, atomically reproduced the original validated scene, rejected corruption, and emitted no source URL / 最终镜像创建权限 0600 的场景归档及 SHA-256 sidecar，校验哈希与 tar 路径，拒绝无明确确认的恢复，原子还原并验证原始场景，拒绝损坏归档且不输出来源 URL。
 - M6 trusted HTTPS and TURN / M6 受信 HTTPS 与 TURN：the pinned Caddy gateway served an operator-provided certificate with hardened headers while the backend remained unpublished on container loopback; file-backed TURN settings reached pinned MediaMTX exactly once, credentials stayed out of image/container configuration and logs, HTTPS health passed, and the one product container stopped cleanly / 固定版本 Caddy 使用操作者提供证书和安全响应头提供 HTTPS，后端留在容器回环且未发布；文件型 TURN 配置只向固定版本 MediaMTX 注入一次，凭据未进入镜像/容器配置和日志，HTTPS 健康检查及单产品容器停机均通过。
+- M6 provenance and rollback / M6 来源证明与回滚：the release workflow is least-privilege and commit-pinned, emits linux/amd64 OCI labels, SBOM, max provenance, GitHub attestation, and a checksummed recursive corresponding-source bundle; a deterministic drill rejected an unhealthy candidate, restored the exact scene hash and prior image ID, then completed a healthy upgrade / 发布工作流使用最小权限并固定 action 提交，生成 linux/amd64 OCI 标签、SBOM、max provenance、GitHub attestation 及带校验和的递归对应源码包；确定性演练拒绝故障候选，恢复完全一致的场景哈希与旧 image ID，随后完成健康升级。
+- M6 final regression / M6 最终回归：the final image passed the full M0–M3 aggregate suite, M4 browser-source gate, M5 deterministic audio gate, and every M6 authentication/recovery, backup/restore, HTTPS/TURN, and upgrade/rollback gate; the longest lifecycle recording finalized at 62.621 seconds with zero black frames / 最终镜像通过 M0–M3 聚合套件、M4 浏览器源、M5 确定性音频及全部 M6 认证恢复、备份恢复、HTTPS/TURN、升级回滚门禁；最长生命周期录像 62.621 秒完整封装且零黑帧。
 
 ## Milestones / 里程碑
 
@@ -79,8 +81,8 @@ M0 已于 2026-08-11 在真实摄像头门禁通过后完成。后续修改采�
 | M3 — Direct & Hybrid | ✅ Complete / 已完成 | Direct camera playback in browsers, client/server mode switching, selective transcoding / 浏览器直连播放、客户端/服务端模式切换和选择性转码 | Shared layout behaves consistently across Direct and Composite modes / 两种模式共享布局且行为一致 |
 | M4 — Browser Sources | ✅ Complete / 已完成 | `obs-browser` sources for dashboards, satellite maps, overlays and embeddable media / 支持仪表盘、卫星图、叠加层和可嵌入媒体 | CEF lifecycle, isolation, recovery, and resource limits pass container tests / CEF 生命周期、隔离、恢复和资源限制通过测试 |
 | M5 — Audio | ✅ Complete / 已完成 | Per-source mute/volume, Web Audio in Direct mode, libobs mixing in Composite mode / 单源静音与音量、Direct Web Audio、Composite libobs 混音 | Multi-source sync, mute, volume, and output audio are verified / 多源同步、静音、音量和输出音轨通过验证 |
-| M6 — Production | 🚧 In progress / 开发中 | Authentication, HTTPS, TURN, health checks, GPU detection, backup, observability and upgrades / 鉴权、HTTPS、TURN、健康检查、GPU 检测、备份、可观测性和升级 | Security review, upgrade/rollback, recovery, and documented deployment pass / 安全、升级回滚、恢复和部署文档验收通过 |
-| M7 — Canvas Studio | 🧭 Planned / 已规划 | Scene collections, nested scenes/groups, filters, Preview/Program and transitions / 场景集合、嵌套场景/组、滤镜、预览/节目与转场 | Persistent multi-scene Studio workflow and Direct/Composite capability contract pass / 持久化多场景工作流与 Direct/Composite 能力契约通过 |
+| M6 — Production | ✅ Complete / 已完成 | Authentication, HTTPS, TURN, health checks, GPU detection, backup, observability and upgrades / 鉴权、HTTPS、TURN、健康检查、GPU 检测、备份、可观测性和升级 | Security review, upgrade/rollback, recovery, and documented deployment pass / 安全、升级回滚、恢复和部署文档验收通过 |
+| M7 — Canvas Studio | 🚧 In progress / 开发中 | Scene collections, nested scenes/groups, filters, Preview/Program and transitions / 场景集合、嵌套场景/组、滤镜、预览/节目与转场 | Persistent multi-scene Studio workflow and Direct/Composite capability contract pass / 持久化多场景工作流与 Direct/Composite 能力契约通过 |
 | M8 — NVR Core | 🧭 Planned / 已规划 | Independent per-camera segmented recording, catalog, retention and crash recovery / 独立逐路分段录像、目录、保留与崩溃恢复 | Six-hour automated and private 24-hour recording gates plus recovery/retention pass / 六小时自动与私有 24 小时录像及恢复/保留门禁通过 |
 | M9 — Timeline | 🧭 Planned / 已规划 | Archive search, synchronized playback, clip export and evidence integrity / 归档检索、同步回放、片段导出与证据完整性 | Seek/sync, time-zone, permission and hash-verifiable export gates pass / 跳转/同步、时区、权限与可验证导出门禁通过 |
 | M10 — Device Operations | 🧭 Planned / 已规划 | Bounded discovery, ONVIF Profile T, PTZ, presets, health and talk / 有界发现、ONVIF Profile T、PTZ、预置位、健康与对讲 | Emulator plus multi-vendor capability, safety and redaction matrix passes / 模拟器加多厂商能力、安全与脱敏矩阵通过 |
@@ -209,7 +211,11 @@ M5 已于 2026-08-15 完成：多来源确定性音频及 M0–M4 全回归通�
 - [x] Document source-build deployment and GHCR publication/consumption with immutable image selection / 记录源码构建部署、GHCR 发布消费及不可变镜像选择流程
 - [x] Add CPU/VAAPI/QSV/NVIDIA detection with safe software fallback / 增加 CPU/VAAPI/QSV/NVIDIA 检测及安全软件回退
 - [x] Add validated scene backup/restore with explicit confirmation and corruption rejection / 增加带明确确认、损坏拒绝的校验场景备份恢复
-- [ ] Add image provenance, automated upgrade/rollback, and GPL source-distribution verification / 增加镜像来源、自动升级回滚及 GPL 源码分发验证
+- [x] Add image provenance, automated upgrade/rollback, and GPL source-distribution verification / 增加镜像来源、自动升级回滚及 GPL 源码分发验证
+
+M6 completed on 2026-08-15 after the full M0–M5 compatibility regression and every M6 production gate passed. M7 started afterward.
+
+M6 已于 2026-08-15 在 M0–M5 全兼容回归及全部 M6 生产门禁通过后完成；随后开始 M7。
 
 ## Cross-cutting rules / 贯穿规则
 
