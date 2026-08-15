@@ -2,6 +2,7 @@
 /.env*
 !/.env.example
 /secrets/
+/backups/
 *.key
 *.pem
 *.p12

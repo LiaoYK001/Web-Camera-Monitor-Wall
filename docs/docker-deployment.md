@@ -1,0 +1,378 @@
+# Docker 源码构建与部署指南
+
+本文面向从 Git 仓库克隆代码、在部署主机自行构建产品镜像的操作者。命令均在仓库根目录执行。
+
+> 当前项目已完成 M0–M5，正在开发 M6 Production。文件认证、限流、健康检查、指标、审计日志和来源自动恢复已经具备；原生 TLS、受信 HTTPS 反向代理方案、TURN、GPU 检测以及完整备份升级自动化仍未完成。当前版本适合本机或受控网络验收，不应把 HTTP 控制端口直接暴露到互联网。
+
+## 1. 部署组成与数据边界
+
+产品部署只有一个 `webobs` 容器。容器内包含 `webobsd`、libobs、MediaMTX、Web 编辑器、Xvfb 和 Mesa 软件渲染环境。
+
+| 内容 | 默认位置 | 持久性 |
+| --- | --- | --- |
+| 产品镜像 | `webobs:m0` | Docker 镜像存储 |
+| 场景配置 | Docker volume `webobs-config` 中的 `/config/webobs/scene.json` | `docker compose down` 后保留 |
+| 录像 | 主机仓库的 `recordings/` 映射到 `/recordings` | 主机文件 |
+| 私有运行配置 | 主机 `.env` | Git 忽略，必须限制访问 |
+| Basic 认证凭据 | 主机 `secrets/` 下的两个文件 | Git 忽略，通过 Compose secrets 只读挂载 |
+| Docker 日志 | `json-file`，默认 `10m × 3` | 由 Docker 轮转 |
+
+`docker compose down --volumes` 会删除场景卷，不能作为普通停机命令使用。录像位于主机目录，不会随卷删除，但仍应单独备份。
+
+## 2. 前置条件
+
+支持的产品平台目前只有 `linux/amd64`（x86_64）。ARM64、Windows containers 和 macOS 原生容器不是当前构建目标。
+
+- Git，能够递归拉取 submodule。
+- Docker Engine 和 Docker Compose v2，或启用 WSL2/Linux containers 的 Docker Desktop。
+- 构建期间可访问 Ubuntu、GitHub、OBS/CEF 下载源以及 Docker 基础镜像源。
+- 建议至少 8 GB 可用内存、20 GB 可用磁盘。首次构建明显慢于缓存构建。
+- 部署主机能够访问摄像头；浏览器能够访问部署主机发布的 HTTP 和 WebRTC UDP 端口。
+
+开始前检查：
+
+```bash
+git --version
+docker version
+docker compose version
+docker info --format '{{.OSType}}/{{.Architecture}}'
+```
+
+最后一条应返回类似 `linux/x86_64`。Docker Desktop 用户还应确认当前处于 Linux containers 模式。
+
+## 3. 克隆并验证固定依赖
+
+必须递归克隆，OBS 自身还包含构建所需的 submodule：
+
+```bash
+git clone --recurse-submodules https://github.com/LiaoYK001/Web-Camera-Monitor-Wall.git
+cd Web-Camera-Monitor-Wall
+git submodule update --init --recursive
+```
+
+已有工作副本更新后执行：
+
+```bash
+git pull --ff-only
+git submodule sync --recursive
+git submodule update --init --recursive
+```
+
+验证仓库状态和 OBS 固定提交：
+
+```bash
+git status --short
+git -C obs/obs-studio rev-parse HEAD
+```
+
+第二条必须输出：
+
+```text
+fb4d98bf88fae5fc85cb11fc57f7c5e309282194
+```
+
+生产或长期运行环境还应记录根仓库提交，不要只记录分支名：
+
+```bash
+git rev-parse HEAD
+```
+
+## 4. 创建私有配置
+
+### 4.1 复制环境文件
+
+PowerShell：
+
+```powershell
+Copy-Item .env.example .env
+notepad .env
+```
+
+Linux shell：
+
+```bash
+cp .env.example .env
+chmod 600 .env
+${EDITOR:-vi} .env
+```
+
+至少把 `WEBOBS_RTSP_URL` 改为完整的私有摄像头地址。真实地址、账号、密码和查询令牌只能保存在本机 `.env`，不得写入 Compose、文档、提交、Issue 或公开日志附件。
+
+| 变量 | 建议 |
+| --- | --- |
+| `WEBOBS_RTSP_URL` | 首次场景引导使用的私有 RTSP URL |
+| `WEBOBS_BIND_ADDRESS` | 本机部署保持 `127.0.0.1` |
+| `WEBOBS_HTTP_PORT` | 默认 `8080`，冲突时换未占用端口 |
+| `WEBOBS_WEBRTC_ADDITIONAL_HOSTS` | 本机使用 `127.0.0.1`；受信代理部署时填写浏览器可达地址 |
+| `WEBOBS_WEBRTC_UDP_PORT` | 默认 `8189/udp` |
+| `WEBOBS_OUTPUT` | 留空时按 UTC 时间生成录像名 |
+| `WEBOBS_DURATION_SECONDS` | `0` 表示持续运行，直至 SIGTERM/Ctrl+C |
+| `WEBOBS_WIDTH` / `HEIGHT` / `FPS` | 按 CPU 预算调整；默认 1920×1080@30 |
+| `WEBOBS_BITRATE_KBPS` | 默认 6000 Kbps |
+| `WEBOBS_RTSP_TRANSPORT` | 默认 `tcp`，只有明确需要时才改 `udp` |
+| `WEBOBS_LOG_MAX_SIZE` / `FILES` | 保持有限值，默认三份、每份 10 MiB |
+
+### 4.2 理解首次场景引导
+
+`WEBOBS_RTSP_URL` 只在 `/config/webobs/scene.json` 不存在时创建第一路来源。场景写入 `webobs-config` 卷后，后续启动以持久化场景为准；修改 `.env` 中的 URL 不会自动替换已有场景。
+
+后续改地址应优先通过 Web 编辑器保存。若需要手工编辑，应先停止容器、备份场景，再修改卷中的文件。删除整个 volume 会同时删除所有持久化场景。
+
+### 4.3 可选：创建文件型认证凭据
+
+即使只绑定主机回环地址，长期运行也建议启用认证覆盖。用户名为 1–64 个可打印 ASCII 字符且不能含冒号；密码为 16–256 字节且不能含控制字符。
+
+PowerShell（密码通过系统凭据对话框输入，不进入命令历史）：
+
+```powershell
+New-Item -ItemType Directory -Force secrets | Out-Null
+Set-Content -NoNewline secrets/webobs-auth-username.txt 'operator'
+$credential = Get-Credential -UserName 'operator' -Message '输入至少 16 字节的 WebOBS 密码'
+[IO.File]::WriteAllText(
+    (Join-Path (Resolve-Path secrets) 'webobs-auth-password.txt'),
+    $credential.GetNetworkCredential().Password)
+Remove-Variable credential
+```
+
+Linux shell：
+
+```bash
+umask 077
+mkdir -p secrets
+printf '%s' 'operator' > secrets/webobs-auth-username.txt
+read -rsp 'WebOBS password (16-256 bytes): ' WEBOBS_LOCAL_PASSWORD
+printf '%s' "$WEBOBS_LOCAL_PASSWORD" > secrets/webobs-auth-password.txt
+unset WEBOBS_LOCAL_PASSWORD
+chmod 600 secrets/webobs-auth-username.txt secrets/webobs-auth-password.txt
+```
+
+在 `.env` 中取消下面两项的注释：
+
+```dotenv
+WEBOBS_AUTH_USERNAME_SOURCE=./secrets/webobs-auth-username.txt
+WEBOBS_AUTH_PASSWORD_SOURCE=./secrets/webobs-auth-password.txt
+```
+
+不要把明文密码直接放入 `.env`；覆盖文件只接受文件路径。
+
+## 5. 从源码构建镜像
+
+先解析 Compose，`--quiet` 可避免把展开后的环境值打印到终端或 CI 日志：
+
+```bash
+docker compose --env-file .env -f compose.yaml config --quiet
+```
+
+构建产品服务：
+
+```bash
+docker compose --env-file .env -f compose.yaml build --pull webobs
+```
+
+构建会完成固定版本前端、MediaMTX、libdatachannel、CEF、OBS 32.1.2 和 `webobsd`，并在构建容器内执行 CTest、版本检查、动态库闭包和日志脱敏探针。最终镜像默认名为 `webobs:m0`。
+
+检查镜像：
+
+```bash
+docker image inspect webobs:m0 --format '{{.Id}} {{.Os}}/{{.Architecture}}'
+docker run --rm --entrypoint /opt/obs/bin/webobsd webobs:m0 --version
+```
+
+不要把 RTSP URL、密码或令牌作为 Docker build argument。构建参数可能出现在镜像历史、缓存或 provenance 中；摄像头配置只属于运行时配置。
+
+## 6. 启动方式
+
+### 6.1 本机回环模式
+
+```bash
+docker compose --env-file .env -f compose.yaml up -d --no-build webobs
+docker compose --env-file .env -f compose.yaml ps
+```
+
+本机打开 `http://127.0.0.1:8080/`。基础 Compose 为本地开发兼容模式：容器内监听所有接口，但主机默认只发布到 `127.0.0.1`，且不启用认证。不要把 `WEBOBS_BIND_ADDRESS` 改为 `0.0.0.0` 后直接暴露此模式。
+
+### 6.2 文件认证覆盖
+
+Linux shell：
+
+```bash
+docker compose --env-file .env \
+  -f compose.yaml \
+  -f compose.m6-auth.yaml \
+  up -d --no-build webobs
+```
+
+PowerShell：
+
+```powershell
+docker compose --env-file .env -f compose.yaml -f compose.m6-auth.yaml up -d --no-build webobs
+```
+
+认证覆盖会关闭无认证远程许可，并通过 `/run/secrets` 挂载凭据。除 `/api/v1/health` 和 `/api/v1/ready` 外，UI、REST、WebSocket、WHEP 和 `/metrics` 均要求 Basic 认证。
+
+Basic 认证本身不加密连接。当前仓库尚未提供完成验收的 HTTPS 终止 Compose，因此即使启用了认证，也不要把控制端口直接发布到公网。远程部署必须增加受信 HTTPS 反向代理，只允许外部 HTTPS Origin，并阻止客户端绕过代理直连后端。
+
+## 7. 启动后验证
+
+Linux shell：
+
+```bash
+curl --fail http://127.0.0.1:8080/api/v1/health
+curl --fail http://127.0.0.1:8080/api/v1/ready
+docker compose --env-file .env ps
+docker compose --env-file .env logs --tail 100 webobs
+```
+
+PowerShell：
+
+```powershell
+curl.exe --fail http://127.0.0.1:8080/api/v1/health
+curl.exe --fail http://127.0.0.1:8080/api/v1/ready
+docker compose --env-file .env ps
+docker compose --env-file .env logs --tail 100 webobs
+```
+
+预期行为：
+
+- `/api/v1/health` 返回 `200`，表示进程存活。
+- `/api/v1/ready` 在录制输出、WebRTC 和可见来源都准备好后返回 `200`。
+- 来源启动或断流期间 readiness 可以暂时返回 `503`；RTSP 来源会按有界指数退避自动重启。
+- `docker compose ps` 最终显示容器为 `healthy`。
+- `recordings/` 中出现录像；收到正常停止信号后 MP4 才完成最终封装。
+
+日志会隐藏已识别 URL 的凭据、查询和片段，但仍可能含主机名、来源 ID、内部状态和操作时间。不要把原始日志直接发布到公开 Issue。
+
+## 8. 日常运维
+
+```bash
+# 状态、日志和资源
+docker compose ps
+docker compose logs --tail 200 webobs
+docker stats --no-stream
+
+# 重启，不重建镜像
+docker compose restart webobs
+
+# 正常停止，给 muxer 足够时间封装
+docker compose stop -t 20 webobs
+
+# 删除容器和网络但保留场景卷
+docker compose down
+```
+
+不要使用 `docker kill`，它不给应用冲洗 muxer 的机会，可能留下未完成的临时文件。
+
+## 9. 手工备份与恢复
+
+项目级在线备份功能仍属于 M6 待办。当前应在容器停止后制作一致性备份。
+
+Linux shell：
+
+```bash
+mkdir -p /secure-backup/webobs
+docker compose stop -t 20 webobs
+docker compose cp webobs:/config/webobs/scene.json "/secure-backup/webobs/scene-$(date -u +%Y%m%dT%H%M%SZ).json"
+docker compose start webobs
+```
+
+PowerShell：
+
+```powershell
+New-Item -ItemType Directory -Force C:\secure-backup\webobs | Out-Null
+$stamp = (Get-Date).ToUniversalTime().ToString('yyyyMMddTHHmmssZ')
+docker compose stop -t 20 webobs
+docker compose cp webobs:/config/webobs/scene.json "C:\secure-backup\webobs\scene-$stamp.json"
+docker compose start webobs
+```
+
+场景备份可能包含 RTSP 凭据，必须使用加密介质和最小访问权限。`.env`、`secrets/` 和录像也应分别备份，不能与公开源码归档混在一起。
+
+恢复步骤：先停止容器并备份当前场景，再复制经过确认的文件，随后启动并验证。
+
+```bash
+docker compose stop -t 20 webobs
+docker compose cp /secure-backup/webobs/scene.json webobs:/config/webobs/scene.json
+docker compose start webobs
+curl --fail http://127.0.0.1:8080/api/v1/ready
+```
+
+若容器已被 `down` 删除，先执行 `docker compose create webobs`，再执行 `docker compose cp`。恢复旧版本场景前应查看对应的 `scene-schema-v*.md`。
+
+## 10. 源码更新与回滚
+
+更新前记录当前提交，停止容器并备份场景、`.env`、认证文件和重要录像，再给当前镜像增加本地回滚标签：
+
+```bash
+git rev-parse HEAD
+docker image tag webobs:m0 webobs:rollback-before-upgrade
+git fetch --tags origin
+git pull --ff-only
+git submodule sync --recursive
+git submodule update --init --recursive
+docker compose --env-file .env build --pull webobs
+docker compose --env-file .env up -d --no-build --force-recreate webobs
+```
+
+升级后验证 health、ready、Web 编辑、WebRTC 和新录像。不要仅凭容器处于 `running` 判断升级成功。
+
+需要镜像回滚时：
+
+```bash
+docker compose stop -t 20 webobs
+docker image tag webobs:rollback-before-upgrade webobs:m0
+docker compose --env-file .env up -d --no-build --force-recreate webobs
+```
+
+如果新版本已迁移场景格式，还必须恢复升级前场景。源码也应切回记录的提交并递归同步 submodule。长期部署更推荐使用带版本或 digest 的仓库镜像，并通过 `WEBOBS_IMAGE` 切换；详见 [GHCR 指南](ghcr.md)。
+
+## 11. 常见问题
+
+### `obs/obs-studio` 为空或构建找不到 OBS
+
+```bash
+git submodule sync --recursive
+git submodule update --init --recursive
+```
+
+### 构建提示架构不支持
+
+当前 Dockerfile 明确拒绝非 `amd64` 目标。请在 x86_64 Linux builder 上构建，不要用 QEMU 把它误标为已支持的 ARM64 镜像。
+
+### 首次构建很慢或磁盘不足
+
+确认 Docker 可用空间至少约 20 GB；先用 `docker system df` 判断占用。不要运行会误删其他项目 volume 的无范围清理命令。
+
+### 修改 `.env` 后摄像头没有变化
+
+已有 `scene.json` 时不会重新执行 URL 引导。通过 UI 修改来源，或在停机和备份后处理场景文件。
+
+### UI 可打开但实时视频不可用
+
+检查 readiness、摄像头网络连通性、RTSP TCP/UDP 设置、主机 `8189/udp` 防火墙、`WEBOBS_WEBRTC_ADDITIONAL_HOSTS` 和来源恢复日志。
+
+### 容器反复 unhealthy
+
+`ready` 会把录制停止、WebRTC 未准备或可见来源无新帧视为失败。检查来源状态和日志，不要通过删除 HEALTHCHECK 掩盖故障。
+
+### 想彻底重置场景
+
+先备份并确认 Compose 项目。以下命令具有破坏性，会删除场景卷：
+
+```bash
+docker compose down --volumes
+```
+
+下次启动将再次使用 `.env` 中的 `WEBOBS_RTSP_URL` 创建初始场景。
+
+## 12. 部署验收清单
+
+- [ ] 根仓库提交和 OBS submodule 提交已记录。
+- [ ] `.env`、`secrets/`、备份和录像均未被 Git 跟踪。
+- [ ] Compose `config --quiet` 与产品镜像构建成功。
+- [ ] 镜像报告 `linux/amd64`，`webobsd --version` 正常。
+- [ ] 主机端口只绑定到预期接口；未完成 TLS 前保持回环访问。
+- [ ] health、ready、Docker healthcheck 均通过。
+- [ ] Web 编辑、Composite/Direct 播放和正常停止后的 MP4 已验证。
+- [ ] 日志中没有明文凭据，日志轮转值保持有限。
+- [ ] 场景和录像备份已实际恢复演练，而不仅是“存在备份文件”。
+- [ ] 更新与回滚使用明确提交、版本标签或镜像 digest，不依赖浮动 `latest`。

@@ -62,6 +62,7 @@ try {
             $path -cne '.env.example'
         $isSecretDirectory = $path.StartsWith('secrets/', [StringComparison]::OrdinalIgnoreCase) -or
             $path.IndexOf('/secrets/', [StringComparison]::OrdinalIgnoreCase) -ge 0
+        $isBackup = $path.StartsWith('backups/', [StringComparison]::OrdinalIgnoreCase)
         $isRecording = $path.StartsWith('recordings/', [StringComparison]::OrdinalIgnoreCase) -and
             $path -cne 'recordings/.gitkeep'
         $isArtifact = $path.StartsWith('tests/artifacts/', [StringComparison]::OrdinalIgnoreCase) -and
@@ -71,7 +72,7 @@ try {
         $isWebBuild = $path.StartsWith('web/node_modules/', [StringComparison]::OrdinalIgnoreCase) -or
             $path.StartsWith('web/dist/', [StringComparison]::OrdinalIgnoreCase)
 
-        if ($isEnvFile -or $isSecretDirectory -or $isRecording -or $isArtifact -or $isBuildDirectory -or $isWebBuild -or
+        if ($isEnvFile -or $isSecretDirectory -or $isBackup -or $isRecording -or $isArtifact -or $isBuildDirectory -or $isWebBuild -or
             $blockedExtensions -contains $extension) {
             $pathViolations.Add($path)
         }
@@ -84,6 +85,7 @@ try {
         '/.env*',
         '!/.env.example',
         '/secrets/',
+        '/backups/',
         '*.key',
         '*.pem',
         '*.p12',
@@ -102,6 +104,7 @@ try {
         '**/.env*',
         '!.env.example',
         '**/secrets/**',
+        'backups',
         '**/*.key',
         '**/*.pem',
         '**/*.p12',

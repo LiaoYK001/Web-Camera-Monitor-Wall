@@ -23,7 +23,7 @@ path_violations="$(
             .env*) [ "$path" = ".env.example" ] || printf '%s\n' "$path" ;;
         esac
         case "$lower_path" in
-            secrets/*|*/secrets/*) printf '%s\n' "$path" ;;
+            secrets/*|*/secrets/*|backups/*) printf '%s\n' "$path" ;;
             build/*|build-*/*|web/node_modules/*|web/dist/*) printf '%s\n' "$path" ;;
             recordings/*) [ "$path" = "recordings/.gitkeep" ] || printf '%s\n' "$path" ;;
             tests/artifacts/*) [ "$path" = "tests/artifacts/.gitkeep" ] || printf '%s\n' "$path" ;;
@@ -50,6 +50,7 @@ for required_line in \
     '/.env*' \
     '!/.env.example' \
     '/secrets/' \
+    '/backups/' \
     '*.key' \
     '*.pem' \
     '*.p12' \
@@ -71,6 +72,7 @@ for required_line in \
     '**/.env*' \
     '!.env.example' \
     '**/secrets/**' \
+    'backups' \
     '**/*.key' \
     '**/*.pem' \
     '**/*.p12' \

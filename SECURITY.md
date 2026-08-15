@@ -8,7 +8,7 @@ Please avoid opening a public issue for a suspected vulnerability. Use the repos
 
 ## Credential handling / 凭据处理
 
-- Keep real configuration in a local `.env` file. Files matching `.env*`, `secrets/`, common private-key formats, recordings, build directories, and test artifacts are excluded from Git and the Docker build context; `.env.example` is the only exception.
+- Keep real configuration in a local `.env` file. Files matching `.env*`, `secrets/`, `backups/`, common private-key formats, recordings, build directories, and test artifacts are excluded from Git and the Docker build context; `.env.example` is the only exception.
 - Prefer `WEBOBS_RTSP_URL` through a protected environment file over the `--rtsp-url` command-line option, because command-line arguments can be visible in process listings. Restrict access to the host, Docker daemon, environment file, and generated recordings.
 - The application redacts credentials embedded in `rtsp://` and `rtsps://` URLs before emitting OBS or configuration logs. Automated tests fail if the test username or password appears in captured logs.
 - If a real credential is ever committed or posted publicly, rotate it immediately. Removing it from the latest commit is not sufficient because Git history and caches may retain it.
@@ -21,8 +21,9 @@ Please avoid opening a public issue for a suspected vulnerability. Use the repos
 - HTTP Basic does not encrypt credentials. For any remote access, terminate HTTPS at a trusted reverse proxy, allowlist only its externally visible HTTPS origin, block direct access to the backend port, and keep liveness/readiness payloads free of configuration details. Native TLS and a reviewed Internet-facing deployment remain unfinished M6 work.
 - Authentication rejection, scene mutation, source outage, restart request, and recovery events are emitted as one-line JSON after URL redaction. Authentication audit fields identify only the backend TCP peer (normally the trusted reverse proxy), never the username or Authorization value. Treat retained logs as sensitive operational data even though credentials and source URLs are omitted.
 - Base Compose bounds Docker `json-file` logs to three 10 MiB files. Keep `WEBOBS_LOG_MAX_SIZE` and `WEBOBS_LOG_MAX_FILES` finite, include rotated files in host backup/access policy, and do not rely on application redaction as permission to publish logs.
+- Never pass runtime credentials as image build arguments or publish them in registry metadata. Prefer immutable GHCR digests, verify provenance when available, and keep the exact corresponding GPL source commit and recursive submodule state available for every distributed image.
 
-- 真实配置应保存在本地 `.env`。除 `.env.example` 外，`.env*`、`secrets/`、常见私钥格式、录像、构建目录和测试产物均不会进入 Git 或 Docker 构建上下文。
+- 真实配置应保存在本地 `.env`。除 `.env.example` 外，`.env*`、`secrets/`、`backups/`、常见私钥格式、录像、构建目录和测试产物均不会进入 Git 或 Docker 构建上下文。
 - 相比 `--rtsp-url` 命令行参数，优先通过受保护的环境文件提供 `WEBOBS_RTSP_URL`，因为进程列表可能暴露命令行参数。同时应限制主机、Docker daemon、环境文件和录像的访问权限。
 - 应用会在输出 OBS 或配置日志前，隐藏 `rtsp://` 和 `rtsps://` URL 中的凭据；自动化测试会检查测试用户名和密码没有出现在日志里。
 - 若真实凭据曾被提交或公开发布，应立即轮换。仅从最新提交删除并不安全，因为 Git 历史和缓存仍可能保留该凭据。
@@ -35,6 +36,7 @@ Please avoid opening a public issue for a suspected vulnerability. Use the repos
 - HTTP Basic 不会加密凭据。任何远程访问都必须由受信反向代理终止 HTTPS，只允许其外部 HTTPS Origin，阻止客户端直连后端端口，并保证公开存活/就绪响应不含配置细节。原生 TLS 和经过评审的互联网部署仍是未完成的 M6 工作。
 - 认证拒绝、场景变更、来源断流、重启请求和恢复会在 URL 脱敏后写为单行 JSON。认证审计字段只标识后端 TCP 对端（通常是受信反向代理），绝不记录用户名或 Authorization 值。即使省略了凭据与来源 URL，保留日志仍应视为敏感运维数据。
 - 基础 Compose 默认把 Docker `json-file` 日志限制为三份、每份 10 MiB。`WEBOBS_LOG_MAX_SIZE` 与 `WEBOBS_LOG_MAX_FILES` 必须保持有限，并应把轮转文件纳入主机备份和访问策略；应用脱敏不代表日志可以公开发布。
+- 不得把运行时凭据作为镜像构建参数或发布到 registry 元数据。应优先部署不可变 GHCR digest，在可用时验证 provenance，并为每个已分发镜像保留精确对应的 GPL 源码提交与递归 submodule 状态。
 
 ## Supported versions / 支持版本
 
