@@ -2,11 +2,11 @@
 
 本文面向从 Git 仓库克隆代码、在部署主机自行构建产品镜像的操作者。命令均在仓库根目录执行。
 
-> 当前项目已完成 M0–M9，下一阶段为 M10 Device Operations。文件认证、恢复、硬件编码安全回退、校验备份恢复、单镜像受信 HTTPS/TURN、可验证发布、Canvas Studio、独立 NVR Core 及时间线/证据导出均已通过实现门禁。基础 HTTP 模式只能用于主机回环，远程部署必须使用本指南的 production 覆盖。
+> 当前项目已完成 M0–M9，处于 M10 Device Operations 实施阶段。空配置可直接启动，摄像机由 WebUI/Camera Registry 管理；基础 HTTP 模式只能用于主机回环，远程部署必须使用 production HTTPS 覆盖。
 
 ## 1. 部署组成与数据边界
 
-产品部署只有一个 `webobs` 容器。容器内包含 `webobsd`、libobs、MediaMTX、固定版本 Caddy、Web 编辑器、Xvfb 和 Mesa 软件渲染环境。
+产品部署只有一个 `webobs` 容器。容器内包含 `webobsd`、libobs、MediaMTX、Camera Registry、NVR、固定版本 Caddy、Web 编辑器、Weston/Xwayland、Xvfb 和 Mesa。Direct-only 时不启动 libobs 视频线程；Composite/录制才选择硬件或软件 renderer。
 
 | 内容 | 默认位置 | 持久性 |
 | --- | --- | --- |
@@ -14,7 +14,8 @@
 | 场景配置 | Docker volume `webobs-config` 中的 `/config/webobs/scene.json` | `docker compose down` 后保留 |
 | 录像 | 主机仓库的 `recordings/` 映射到 `/recordings` | 主机文件 |
 | 私有运行配置 | 主机 `.env` | Git 忽略，必须限制访问 |
-| Basic 认证凭据 | 主机 `secrets/` 下的两个文件 | Git 忽略，通过 Compose secrets 只读挂载 |
+| 登录/Basic 兼容凭据 | 主机 `secrets/` 下的两个文件 | Git 忽略，通过 Compose secrets 只读挂载 |
+| Camera Registry/Session | `webobs-config` 中的 SQLite WAL | 随配置卷保留，不存明文 Session token |
 | TLS 证书/私钥与 TURN 凭据 | 主机 `secrets/` 下的四个文件 | Git 忽略，通过 Compose secrets 只读挂载 |
 | Docker 日志 | `json-file`，默认 `10m × 3` | 由 Docker 轮转 |
 
@@ -30,7 +31,7 @@
 docker compose -f compose.yaml -f compose.m6-vaapi.yaml up -d --build
 ```
 
-程序同时要求设备节点可访问且 OBS 编码器已注册，初始化失败仍会回退 x264。可通过受认证的 `/api/v1/system/capabilities` 或 `webobs_video_encoder_selected`、`webobs_video_encoder_fallback`、`webobs_video_encoder_available` 指标确认结果。当前镜像构建了 x264 与 VAAPI；QSV/NVENC 探测结果用于明确报告不支持状态，不会把设备存在误报为可用编码器。Docker Desktop/WSL2 是否能传递 GPU 取决于宿主配置，未挂载 render node 时按软件基线验收。
+镜像包含 `libva-drm2`、`mesa-va-drivers` 与 `vainfo`。运行时分别检查 render node、VA driver、Encode/Decode entrypoint 和实际 probe，再决定 VAAPI；“设备存在”不会被误报为“硬件可用”。`renderer=auto` 尝试 Weston headless EGL/Xwayland GPU 上下文，失败后回退 Xvfb/llvmpipe。详见 [性能和硬件指南](performance-and-hardware.md)。
 
 - Git，能够递归拉取 submodule。
 - Docker Engine 和 Docker Compose v2，或启用 WSL2/Linux containers 的 Docker Desktop。
@@ -105,27 +106,23 @@ chmod 600 .env
 ${EDITOR:-vi} .env
 ```
 
-至少把 `WEBOBS_RTSP_URL` 改为完整的私有摄像头地址。真实地址、账号、密码和查询令牌只能保存在本机 `.env`，不得写入 Compose、文档、提交、Issue 或公开日志附件。
+默认 `.env.example` 已可直接启动，不需要 RTSP URL。摄像机、码流、布局、NVR 和硬件偏好应从 WebUI 配置；Compose 只保留镜像、网络、存储、GPU、HTTPS 和 secrets。真实地址、账号、密码和查询令牌不得写入 Compose、文档、提交、Issue 或公开日志附件。
 
 | 变量 | 建议 |
 | --- | --- |
-| `WEBOBS_RTSP_URL` | 首次场景引导使用的私有 RTSP URL |
 | `WEBOBS_BIND_ADDRESS` | 本机部署保持 `127.0.0.1` |
 | `WEBOBS_HTTP_PORT` | 默认 `8080`，冲突时换未占用端口 |
 | `WEBOBS_WEBRTC_ADDITIONAL_HOSTS` | 本机使用 `127.0.0.1`；受信代理部署时填写浏览器可达地址 |
 | `WEBOBS_WEBRTC_UDP_PORT` | 默认 `8189/udp` |
-| `WEBOBS_OUTPUT` | 留空时按 UTC 时间生成录像名 |
-| `WEBOBS_DURATION_SECONDS` | `0` 表示持续运行，直至 SIGTERM/Ctrl+C |
-| `WEBOBS_WIDTH` / `HEIGHT` / `FPS` | 按 CPU 预算调整；默认 1920×1080@30 |
-| `WEBOBS_BITRATE_KBPS` | 默认 6000 Kbps |
-| `WEBOBS_RTSP_TRANSPORT` | 默认 `tcp`，只有明确需要时才改 `udp` |
+| `WEBOBS_NVR_ENABLED` | 默认 `false`，需要逐路归档时启用 |
+| `WEBOBS_RENDERER` / `WEBOBS_HARDWARE_DECODE` | VAAPI 覆盖中默认 `auto` |
 | `WEBOBS_LOG_MAX_SIZE` / `FILES` | 保持有限值，默认三份、每份 10 MiB |
 
-### 4.2 理解首次场景引导
+### 4.2 空配置与兼容 bootstrap
 
-`WEBOBS_RTSP_URL` 只在 `/config/webobs/scene.json` 不存在时创建第一路来源。场景写入 `webobs-config` 卷后，后续启动以持久化场景为准；修改 `.env` 中的 URL 不会自动替换已有场景。
+未提供 RTSP URL 时，首次启动创建空 Scene 和空 Camera Registry。打开 WebUI 后会看到“尚未添加摄像机”，通过“设备管理”添加。旧版自动化仍可临时设置 `WEBOBS_RTSP_URL`；它只在 Scene 不存在时创建一条兼容 RTSP 来源并触发时间戳录像，不属于推荐生产配置。
 
-后续改地址应优先通过 Web 编辑器保存。若需要手工编辑，应先停止容器、备份场景，再修改卷中的文件。删除整个 volume 会同时删除所有持久化场景。
+日常配置应通过 WebUI 保存。若需要手工编辑，应先停止容器并备份；删除整个 volume 会同时删除场景、Camera Registry、Session 与其他 metadata。
 
 ### 4.3 可选：创建文件型认证凭据
 
@@ -200,7 +197,7 @@ docker compose --env-file .env -f compose.yaml ps
 
 本机打开 `http://127.0.0.1:8080/`。基础 Compose 为本地开发兼容模式：容器内监听所有接口，但主机默认只发布到 `127.0.0.1`，且不启用认证。不要把 `WEBOBS_BIND_ADDRESS` 改为 `0.0.0.0` 后直接暴露此模式。
 
-### 6.2 文件认证覆盖
+### 6.2 回环 HTTP 登录覆盖
 
 Linux shell：
 
@@ -217,9 +214,9 @@ PowerShell：
 docker compose --env-file .env -f compose.yaml -f compose.m6-auth.yaml up -d --no-build webobs
 ```
 
-认证覆盖会关闭无认证远程许可，并通过 `/run/secrets` 挂载凭据。除 `/api/v1/health` 和 `/api/v1/ready` 外，UI、REST、WebSocket、WHEP 和 `/metrics` 均要求 Basic 认证。
+认证覆盖会关闭无认证远程许可并挂载凭据。登录页/静态资源公开加载，浏览器登录后获得 7 天 inactivity sliding Session；业务 API、WebSocket、WHEP 与 `/metrics` 受保护。Basic 只保留给 CLI/应急自动化。
 
-Basic 认证本身不加密连接。该覆盖只适用于主机回环；远程部署使用下一节的受信 HTTPS/TURN 覆盖。
+该覆盖为回环 HTTP 显式设置 `WEBOBS_SESSION_COOKIE_SECURE=false`，只能本机使用；远程部署必须使用下一节 HTTPS 覆盖并保持 Secure Cookie。
 
 ### 6.3 受信 HTTPS 与 TURN 生产覆盖
 
@@ -433,7 +430,7 @@ git submodule update --init --recursive
 
 ### 容器反复 unhealthy
 
-`ready` 会把录制停止、WebRTC 未准备或可见来源无新帧视为失败。检查来源状态和日志，不要通过删除 HEALTHCHECK 掩盖故障。
+`ready` 会把控制面未启动、配置的 Composite WebRTC 未准备或活动 OBS 来源无新帧视为失败。Direct-only 不要求 OBS engine 活动。检查状态和日志，不要删除 HEALTHCHECK 掩盖故障。
 
 ### 想彻底重置场景
 
@@ -443,7 +440,7 @@ git submodule update --init --recursive
 docker compose down --volumes
 ```
 
-下次启动将再次使用 `.env` 中的 `WEBOBS_RTSP_URL` 创建初始场景。
+下次启动默认创建空 Scene/Camera Registry；只有显式设置兼容 bootstrap 时才创建 RTSP 场景。
 
 ## 12. 部署验收清单
 
@@ -453,6 +450,8 @@ docker compose down --volumes
 - [ ] 镜像报告 `linux/amd64`，`webobsd --version` 正常。
 - [ ] 基础 HTTP 只绑定回环；远程模式只发布受信 HTTPS 与所需 ICE 端口，未发布后端 8080。
 - [ ] health、ready、Docker healthcheck 均通过。
+- [ ] VAAPI 部署已验证 driver/encode/decode/runtime probe，而非只看到 `/dev/dri`。
+- [ ] Direct-only 的 `engineActive=false`、无 FFmpeg transcoder，且 RTSP session 数符合预期。
 - [ ] Web 编辑、Composite/Direct 播放和正常停止后的 MP4 已验证。
 - [ ] 日志中没有明文凭据，日志轮转值保持有限。
 - [ ] 场景和录像备份已实际恢复演练，而不仅是“存在备份文件”。

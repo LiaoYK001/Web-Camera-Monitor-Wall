@@ -1,0 +1,37 @@
+services:
+  webobs:
+    image: ghcr.io/liaoyk001/web-camera-monitor-wall:v0.2.0
+    container_name: web-camera-monitor-wall
+    restart: unless-stopped
+    network_mode: host
+    environment:
+      WEBOBS_LISTEN_ADDRESS: 127.0.0.1
+      WEBOBS_ALLOW_INSECURE_REMOTE: "false"
+      WEBOBS_WEBRTC_ENABLED: "true"
+      WEBOBS_COMPOSITE_ENABLED: "false"
+      WEBOBS_NVR_ENABLED: "true"
+      WEBOBS_TLS_ENABLED: "true"
+      WEBOBS_TLS_CERT_FILE: /run/secrets/webobs_tls_certificate
+      WEBOBS_TLS_KEY_FILE: /run/secrets/webobs_tls_private_key
+      WEBOBS_TLS_SERVER_NAME: monitor.example.invalid
+      WEBOBS_TLS_PUBLIC_AUTHORITY: monitor.example.invalid:28777
+      WEBOBS_HTTPS_PORT: "28777"
+      WEBOBS_CONTROL_ALLOWED_ORIGINS: https://monitor.example.invalid:28777
+      WEBOBS_AUTH_USERNAME_FILE: /run/secrets/webobs_auth_username
+      WEBOBS_AUTH_PASSWORD_FILE: /run/secrets/webobs_auth_password
+      WEBOBS_SESSION_COOKIE_SECURE: "true"
+      WEBOBS_VIDEO_ENCODER: auto
+      WEBOBS_RENDERER: auto
+      WEBOBS_HARDWARE_DECODE: auto
+      WEBOBS_VAAPI_DEVICE: /dev/dri/renderD128
+      MTX_WEBRTCADDITIONALHOSTS: 192.0.2.10
+    devices:
+      - /dev/dri/renderD128:/dev/dri/renderD128
+    volumes:
+      - /home/webobs/webobs-config:/config/webobs:Z
+      - /home/webobs/assets:/assets:ro,Z
+      - /home/webobs/recordings:/recordings:Z
+      - /home/webobs/secrets/tls-certificate.pem:/run/secrets/webobs_tls_certificate:ro,Z
+      - /home/webobs/secrets/tls-private-key.pem:/run/secrets/webobs_tls_private_key:ro,Z
+      - /home/webobs/secrets/auth-username.txt:/run/secrets/webobs_auth_username:ro,Z
+      - /home/webobs/secrets/auth-password.txt:/run/secrets/webobs_auth_password:ro,Z

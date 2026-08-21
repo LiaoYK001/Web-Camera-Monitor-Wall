@@ -1,6 +1,6 @@
 # Roadmap / 项目路线图
 
-> Last updated / 最后更新：2026-08-15
+> Last updated / 最后更新：2026-08-22
 
 This roadmap describes milestone order and acceptance gates, not promised release dates. Priorities may change based on validation results and maintainer capacity.
 
@@ -8,20 +8,20 @@ This roadmap describes milestone order and acceptance gates, not promised releas
 
 ## Current position / 当前位置
 
-**✅ M9 — Timeline 实现已完成；当前位置为 M10 Device Operations 开发起点。**
+**🚧 M10 — Device Operations 正在实施；Camera Registry 与 Source Adapter 基础已落地。**
 
-M0 through M9 implementation is complete. M9 closed after UTC timeline/gap queries, four-player synchronization controls, Range playback, bounded JPEG derivation, fast/exact exports, SHA-256 evidence manifests, locks/deletion, and stable-ID audit passed in the final product image. M10 starts bounded device operations.
+M0 through M9 implementation is complete. M10 now has a SQLite WAL Camera Registry, stable Camera/Profile references, secret-file credential indirection, bounded WS-Discovery, source-adapter contracts, empty first-run deployment, and shared live/NVR identity. Authenticated ONVIF Profile T media negotiation, PTZ/presets/events, talk, and the emulator/multi-vendor exit matrix remain open.
 
-M0 至 M9 实现已全部完成。M9 在 UTC 时间线/断档查询、四播放器同步控制、Range 回放、有界 JPEG 派生、快速/精确导出、SHA-256 证据清单、锁定/删除和稳定 ID 审计全部通过最终产品镜像门禁后关闭。M10 从有边界的设备运维开始。
+M0 至 M9 实现已全部完成。M10 现已具备 SQLite WAL Camera Registry、稳定 Camera/Profile 引用、Secret 文件凭据间接引用、有界 WS-Discovery、来源 Adapter 契约、空配置首次部署，以及实时/NVR 共享设备身份。带认证的 ONVIF Profile T 媒体协商、PTZ/预置位/事件、对讲和模拟器/多厂商退出矩阵仍未关闭。
 
 M7 delivers Canvas Studio, M8 the archive plane, and M9 the searchable playback/evidence workflow. M10–M13 continue device operations, events, operator UX, and scale. The detailed boundaries and gates are defined in [docs/future-milestones.md](docs/future-milestones.md).
 
 M7 已交付画布工作台，M8 已交付归档平面，M9 已交付可检索回放/证据工作流。M10–M13 继续设备运维、事件、值守体验与规模化。详细边界与门禁见 [docs/future-milestones.md](docs/future-milestones.md)。
 
 ```text
-M0–M9 implementation complete   M10 next                       M11–M13 planned
-M0–M9 实现已完成           -> M10 下一步                  -> M11–M13 已规划
-✅                               🚧 NEXT                        🧭 NOT STARTED
+M0–M9 implementation complete   M10 foundation in progress     M11–M13 planned
+M0–M9 实现已完成           -> M10 基础实施中              -> M11–M13 已规划
+✅                               🚧 IN PROGRESS                 🧭 NOT STARTED
 ```
 
 ### M0 acceptance / M0 验收
@@ -70,6 +70,7 @@ M0 已于 2026-08-11 在真实摄像头门禁通过后完成。后续修改采�
 - M6 trusted HTTPS and TURN / M6 受信 HTTPS 与 TURN：the pinned Caddy gateway served an operator-provided certificate with hardened headers while the backend remained unpublished on container loopback; file-backed TURN settings reached pinned MediaMTX exactly once, credentials stayed out of image/container configuration and logs, HTTPS health passed, and the one product container stopped cleanly / 固定版本 Caddy 使用操作者提供证书和安全响应头提供 HTTPS，后端留在容器回环且未发布；文件型 TURN 配置只向固定版本 MediaMTX 注入一次，凭据未进入镜像/容器配置和日志，HTTPS 健康检查及单产品容器停机均通过。
 - M6 provenance and rollback / M6 来源证明与回滚：the release workflow is least-privilege and commit-pinned, emits linux/amd64 OCI labels, SBOM, max provenance, GitHub attestation, and a checksummed recursive corresponding-source bundle; a deterministic drill rejected an unhealthy candidate, restored the exact scene hash and prior image ID, then completed a healthy upgrade / 发布工作流使用最小权限并固定 action 提交，生成 linux/amd64 OCI 标签、SBOM、max provenance、GitHub attestation 及带校验和的递归对应源码包；确定性演练拒绝故障候选，恢复完全一致的场景哈希与旧 image ID，随后完成健康升级。
 - M6 final regression / M6 最终回归：the final image passed the full M0–M3 aggregate suite, M4 browser-source gate, M5 deterministic audio gate, and every M6 authentication/recovery, backup/restore, HTTPS/TURN, and upgrade/rollback gate; the longest lifecycle recording finalized at 62.621 seconds with zero black frames / 最终镜像通过 M0–M3 聚合套件、M4 浏览器源、M5 确定性音频及全部 M6 认证恢复、备份恢复、HTTPS/TURN、升级回滚门禁；最长生命周期录像 62.621 秒完整封装且零黑帧。
+- Browser session hardening / 浏览器会话加固：the browser now uses a server-side SQLite WAL session whose random token is stored only as SHA-256, slides after authenticated activity, expires after seven inactive days, prunes stale rows, and is delivered with `HttpOnly`, `Secure`, `SameSite=Strict`, and `Path=/`; Basic remains only for CLI and emergency compatibility / 浏览器现使用服务端 SQLite WAL Session，随机 token 仅以 SHA-256 保存，认证访问时滑动续期、连续七天无访问后失效并清理过期行，通过 `HttpOnly`、`Secure`、`SameSite=Strict`、`Path=/` Cookie 传递；Basic 仅保留给 CLI 和应急兼容。
 - M7 Canvas Studio / M7 画布工作台：schema v4 and an atomic mode-0600 Studio store passed migration with byte-exact pre-v4 backup; six named scenes covered RTSP, image, media, text, color, nested/shared sources, ordered filters, advanced transforms, capability fallback, Preview isolation, same-ID retake, undo/redo, restart recovery, and 500 alternating Cut/Fade operations; the finalized H.264 recording decoded fully without black Program intervals and logs contained no fixture credentials / schema v4 与 `0600` 原子 Studio 存储通过带原始字节备份的迁移；六个命名场景覆盖 RTSP、图片、媒体、文字、色块、嵌套/共享来源、有序滤镜、高级变换、能力降级、Preview 隔离、同 ID 重新 Take、撤销重做、重启恢复及 500 次交替 Cut/Fade；最终 H.264 录像完整解码且无 Program 黑场，日志不含夹具凭据。
 
 ## Milestones / 里程碑
@@ -86,7 +87,7 @@ M0 已于 2026-08-11 在真实摄像头门禁通过后完成。后续修改采�
 | M7 — Canvas Studio | ✅ Complete / 已完成 | Scene collections, nested scenes/groups, filters, Preview/Program and transitions / 场景集合、嵌套场景/组、滤镜、预览/节目与转场 | Persistent multi-scene Studio workflow and Direct/Composite capability contract pass / 持久化多场景工作流与 Direct/Composite 能力契约通过 |
 | M8 — NVR Core | ✅ Implementation complete / 实现完成 | Independent per-camera segmented recording, catalog, retention and crash recovery / 独立逐路分段录像、目录、保留与崩溃恢复 | Deterministic recovery/retention gate passes; six-hour and private burn-ins remain release qualification / 确定性恢复/保留门禁通过；六小时及私有耐久属于发布资格验证 |
 | M9 — Timeline | ✅ Implementation complete / 实现完成 | Archive search, synchronized playback, clip export and evidence integrity / 归档检索、同步回放、片段导出与证据完整性 | UTC/gap, p95, Range, derived media, export/hash, lock/delete and audit gates pass / UTC/断档、p95、Range、派生媒体、导出/哈希、锁定/删除及审计门禁通过 |
-| M10 — Device Operations | 🧭 Planned / 已规划 | Bounded discovery, ONVIF Profile T, PTZ, presets, health and talk / 有界发现、ONVIF Profile T、PTZ、预置位、健康与对讲 | Emulator plus multi-vendor capability, safety and redaction matrix passes / 模拟器加多厂商能力、安全与脱敏矩阵通过 |
+| M10 — Device Operations | 🚧 In progress / 实施中 | Camera Registry, adapter contracts and bounded discovery are implemented; Profile T, PTZ, events and talk remain / Camera Registry、Adapter 契约与有界发现已实现；Profile T、PTZ、事件和对讲仍待完成 | Emulator plus multi-vendor capability, safety and redaction matrix passes / 模拟器加多厂商能力、安全与脱敏矩阵通过 |
 | M11 — Events & Detection | 🧭 Planned / 已规划 | Native/software events, motion zones, detector providers, rules and notifications / 原生/软件事件、移动区域、检测提供器、规则与通知 | Analytics failure cannot block recording; event accuracy, queue and security gates pass / 分析失败不阻塞录像，事件准确性、队列与安全门禁通过 |
 | M12 — Operator UX | 🧭 Planned / 已规划 | Monitor/PWA/kiosk workflows, adaptive grids and least-privilege roles / 监看/PWA/值守流程、自适应宫格与最小权限角色 | 16-tile reference profile, browser/PWA and authorization matrix pass / 16 宫格参考配置、浏览器/PWA 与授权矩阵通过 |
 | M13 — Scale & Resilience | 🧭 Planned / 已规划 | Multi-volume/node roles, integrations, resource scheduling and disaster recovery / 多卷/节点角色、集成、资源调度与灾难恢复 | Published density tiers, failure convergence, restore and signed upgrade/rollback pass / 公开密度档位、故障收敛、恢复及签名升级回滚通过 |
@@ -264,9 +265,27 @@ M8 实现于 2026-08-15 完成。长时耐久被明确记录为发布资格验�
 - [x] Add authenticated same-origin UI/API operations and audit for playback, snapshot, export, download, lock/unlock and delete / 增加受认证同源 UI/API 操作，并审计回放、截图、导出、下载、锁定/解锁及删除
 - [x] Pass final-image TypeScript/Vite build and deterministic UTC/gap, p95, Range, JPEG, export, FFprobe, hash, conflict and redaction gate / 通过最终镜像 TypeScript/Vite 构建及 UTC/断档、p95、Range、JPEG、导出、FFprobe、哈希、冲突与脱敏确定性门禁
 
-M9 implementation completed on 2026-08-15. The deterministic reference run measured 40 local timeline queries at 10.8 ms p95. This is development evidence, not a universal storage guarantee; target deployments must repeat the measurement and browser/DST observation described in [docs/timeline-evidence.md](docs/timeline-evidence.md). M10 is the next milestone and is not implemented by this commit.
+M9 implementation completed on 2026-08-15. The deterministic reference run measured 40 local timeline queries at 10.8 ms p95. This is development evidence, not a universal storage guarantee; target deployments must repeat the measurement and browser/DST observation described in [docs/timeline-evidence.md](docs/timeline-evidence.md). M10 development is now in progress.
 
-M9 实现于 2026-08-15 完成。确定性参考运行测得 40 次本地时间线查询 p95 为 10.8 ms。该数值是开发证据，不是所有存储的性能承诺；目标部署必须重跑 [docs/timeline-evidence.md](docs/timeline-evidence.md) 所述测量及浏览器/DST 观察。M10 是下一里程碑，本提交不实现 M10。
+M9 实现于 2026-08-15 完成。确定性参考运行测得 40 次本地时间线查询 p95 为 10.8 ms。该数值是开发证据，不是所有存储的性能承诺；目标部署必须重跑 [docs/timeline-evidence.md](docs/timeline-evidence.md) 所述测量及浏览器/DST 观察。M10 现已进入实施阶段。
+
+### M10 — Device Operations & Camera Adapters / 设备运维与摄像机适配
+
+#### M10 progress / M10 进度
+
+- [x] Add a SQLite WAL Camera Registry with stable Camera/Profile IDs and credential references / 增加使用 SQLite WAL、稳定 Camera/Profile ID 和凭据引用的 Camera Registry
+- [x] Migrate Scene v5 and NVR configuration from embedded camera URLs to registry references / 将 Scene v5 与 NVR 配置从内嵌摄像机 URL 迁移到 Registry 引用
+- [x] Add explicit RTSP, MJPEG, Snapshot, HLS, HTTP-FLV, WHEP, SRT, RTP and V4L2 adapter contracts / 增加明确的 RTSP、MJPEG、Snapshot、HLS、HTTP-FLV、WHEP、SRT、RTP 与 V4L2 Adapter 契约
+- [x] Add bounded ONVIF WS-Discovery and WebUI device registration/automatic detection / 增加有界 ONVIF WS-Discovery 与 WebUI 设备注册/自动检测
+- [x] Support an empty first-run Scene/Registry without an RTSP bootstrap secret / 支持无需 RTSP bootstrap secret 的空 Scene/Registry 首次启动
+- [x] Reject embedded credentials and token-like URL query values at the Registry boundary / 在 Registry 边界拒绝内嵌凭据和类似 token 的 URL 查询值
+- [ ] Implement authenticated Profile T media profiles and Profile S compatibility fallback / 实现带认证的 Profile T 媒体 Profile 与 Profile S 兼容回退
+- [ ] Implement capability-driven PTZ, presets, events, snapshots and guarded two-way talk / 实现能力驱动的 PTZ、预置位、事件、快照及受控双向对讲
+- [ ] Pass emulator plus multiple real-vendor capability, timeout, redaction and safety matrices / 通过模拟器及多个真实厂商的能力、超时、脱敏与安全矩阵
+
+The checked items establish storage, identity and protocol boundaries; they do not claim that every declared adapter or ONVIF operation has passed end-to-end hardware acceptance. M10 closes only after the remaining items and published exit gate pass.
+
+已勾选项目建立了存储、身份和协议边界，不表示每个声明的 Adapter 或 ONVIF 操作都已通过端到端硬件验收。只有剩余项目与公开退出门禁全部通过后，M10 才会关闭。
 
 ## Cross-cutting rules / 贯穿规则
 

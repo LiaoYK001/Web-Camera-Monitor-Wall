@@ -1,14 +1,14 @@
 # Control API v1 / 控制接口 v1
 
-M1–M6 provide the secured HTTP/WebSocket/WebRTC control and playback plane. M7 adds Studio; M8 adds the authenticated `/api/v1/nvr/*` archive proxy; M9 adds UTC timeline, playback, derived media, export, evidence and delete operations in that same namespace. The composition contract is [scene-schema-v4.md](scene-schema-v4.md), the archive contract is [nvr-core.md](nvr-core.md), and M9 is specified in [timeline-evidence.md](timeline-evidence.md).
+M1–M9 provide the control, Studio, WebRTC, NVR and evidence plane. The M10 foundation adds Camera Registry, source adapters, session login, execution-chain diagnostics and detailed hardware probes. The current composition contract is [scene-schema-v5.md](scene-schema-v5.md).
 
-M1–M6 提供受保护的 HTTP/WebSocket/WebRTC 控制与播放平面；M7 增加 Studio；M8 增加经过认证的 `/api/v1/nvr/*` 归档代理；M9 在同一命名空间增加 UTC 时间线、回放、派生媒体、导出、证据和删除操作。合成契约见 [scene-schema-v4.md](scene-schema-v4.md)，归档契约见 [nvr-core.md](nvr-core.md)，M9 契约见 [timeline-evidence.md](timeline-evidence.md)。
+M1–M9 提供控制、Studio、WebRTC、NVR 与证据平面；M10 基础新增 Camera Registry、来源 Adapter、Session 登录、执行链诊断和细粒度硬件探测。当前合成契约见 [scene-schema-v5.md](scene-schema-v5.md)。
 
 ## Security boundary / 安全边界
 
-Authentication remains disabled by default for backwards-compatible loopback development. Direct CLI usage binds to `127.0.0.1:8080`; base product Compose binds inside the container and publishes only `127.0.0.1:8080` on the host. When both credential files are configured, HTTP Basic authentication covers the editor and assets, REST, WebSocket upgrades, Program/Source WHEP, and metrics. Only liveness and readiness remain public. The implementation is a single-operator authentication boundary, not role-based authorization.
+Authentication remains disabled by default for loopback development. When credential files are configured, `/` and hashed static assets remain public so the application can render its login page without a browser Basic challenge. REST, WebSocket, Program/Source WHEP and metrics require either a valid HttpOnly session or explicit Basic credentials. Liveness and readiness remain public. This is still a single-operator boundary, not role-based authorization.
 
-为保持本地开发兼容，认证默认关闭。直接运行默认监听 `127.0.0.1:8080`；基础产品 Compose 在容器内监听，并仅发布到主机 `127.0.0.1:8080`。同时配置两个凭据文件后，HTTP Basic 认证会统一保护编辑器与静态资源、REST、WebSocket upgrade、Program/Source WHEP 和指标；只有存活与就绪探针保持公开。该实现是单操作员认证边界，并不是基于角色的授权系统。
+认证默认关闭并只用于回环开发。配置凭据后，登录页和哈希静态资源保持公开，浏览器不会弹出 Basic 对话框；REST、WebSocket、Program/Source WHEP 和指标要求 HttpOnly Session 或显式 Basic。存活与就绪探针保持公开。该实现仍是单操作员边界，不是 RBAC。
 
 Basic credentials are cleartext on an unencrypted connection. Remote deployments must use `compose.m6-production.yaml`, set only externally visible HTTPS origins in `WEBOBS_CONTROL_ALLOWED_ORIGINS`, and prevent direct access to the backend port. The pinned Caddy process in the same product image terminates TLS with operator-mounted certificate files while `webobsd` validates the external Host/Origin relationship on container loopback. Base Compose loopback mode can remain unauthenticated; never expose that mode beyond the host.
 
@@ -28,7 +28,7 @@ The server applies these additional controls:
 - the WHEP upstream is fixed to the container loopback MediaMTX; upstream session locations are replaced with random same-origin tokens and never exposed to browsers.
 - Direct MediaMTX paths use random 128-bit names, are created only for current scene sources, pull RTSP on demand, and are removed when their source leaves the scene; all MediaMTX output passes through the RTSP credential filter.
 
-服务还会校验 Host/Origin、不返回 CORS 授权、限制请求体/请求头/读取时长、发送严格安全响应头，并在所有 API 场景响应中隐藏 RTSP 凭据。无凭据请求返回带 `WWW-Authenticate` 的 `401`；凭据错误达到阈值后返回带 `Retry-After` 的 `429`。认证不能替代 HTTPS 加密。
+服务还会校验 Host/Origin、不返回 CORS 授权、限制请求体/请求头/读取时长、发送严格安全响应头，并隐藏来源凭据。无凭据 API 返回不含 `WWW-Authenticate` 的 `401`，避免浏览器 Basic 弹窗；显式 Basic 仍可用于 curl。错误达到阈值后返回带 `Retry-After` 的 `429`。认证不能替代 HTTPS。
 
 ## Configuration / 配置
 
@@ -41,6 +41,9 @@ The server applies these additional controls:
 | `--auth-password-file` | `WEBOBS_AUTH_PASSWORD_FILE` | unset | absolute readable file; 16–256 bytes, no control bytes |
 | `--auth-failure-limit` | `WEBOBS_AUTH_FAILURE_LIMIT` | `5` | invalid credentials allowed per client/window, 1–100 |
 | `--auth-failure-window-seconds` | `WEBOBS_AUTH_FAILURE_WINDOW_SECONDS` | `60` | failure window and lockout duration, 1–3600 |
+| `--session-database` | `WEBOBS_SESSION_DATABASE` | `/config/webobs/auth-sessions.db` | absolute SQLite WAL path |
+| `--session-inactivity-seconds` | `WEBOBS_SESSION_INACTIVITY_SECONDS` | `604800` | sliding inactivity expiry, 300–2592000 |
+| `--session-cookie-secure` | `WEBOBS_SESSION_COOKIE_SECURE` | `true` | require HTTPS when sending browser cookie |
 | `--control-allowed-origins` | `WEBOBS_CONTROL_ALLOWED_ORIGINS` | empty | comma-separated external HTTPS origins; requires credentials |
 | `--source-stale-seconds` | `WEBOBS_SOURCE_STALE_SECONDS` | `10` | seconds without a new visible-source frame before unhealthy, 2–300 |
 | `--source-recovery-base-seconds` | `WEBOBS_SOURCE_RECOVERY_BASE_SECONDS` | `5` | first RTSP restart backoff, 1–300 |
@@ -58,19 +61,27 @@ Returns the bundled React/TypeScript scene editor. The non-hashed HTML entry is 
 
 返回随产品镜像交付的 React/TypeScript 场景编辑器。未哈希的 HTML 入口使用 `Cache-Control: no-store`，`/assets/` 下的哈希 JavaScript/CSS 使用长期不可变缓存。静态资源只接受生成的文件名，拒绝目录穿越，并把单文件上限限制为 2 MiB。
 
+### Browser session / 浏览器会话
+
+- `POST /api/v1/auth/login` accepts bounded `{"username":"…","password":"…"}` JSON and returns a `webobs_session` cookie with `HttpOnly; Secure; SameSite=Strict; Path=/` in production.
+- `GET /api/v1/auth/session` validates the hashed server-side record, updates `last_seen`, and slides `expires_at` by seven days by default.
+- `POST /api/v1/auth/logout` revokes the SQLite row and clears the cookie.
+
+SQLite stores only SHA-256 token hashes plus user, creation/last-seen/expiry timestamps and bounded client metadata. JavaScript cannot read the token. Production must keep `Secure=true`; the loopback-only HTTP test overlay explicitly disables it.
+
 ### `GET /api/v1/health`
 
 Returns `200` while the control thread is serving:
 
 ```json
-{"status":"ok","milestone":"M9"}
+{"status":"ok","milestone":"M10-foundation"}
 ```
 
 This route is intentionally unauthenticated and contains no configuration details.
 
 ### `GET /api/v1/ready`
 
-Returns public `200 {"status":"ready"}` after recording is active, configured WebRTC publication is ready, and every visible source is healthy. It returns `503 {"status":"not_ready"}` during startup, output failure, or a visible-source outage. The response intentionally contains no source identifiers or configuration. Docker `HEALTHCHECK` uses this route.
+Returns public `200 {"status":"ready"}` after the control plane is active, configured Composite publication is ready, and every active OBS source is healthy. Direct-only operation is ready with `engineActive=false`; it does not initialize libobs video. It returns `503` during startup, output failure, or an active Composite source outage.
 
 ### `GET /metrics`
 
@@ -103,7 +114,7 @@ Returns the authenticated per-source operational view. `state` is `idle`, `start
 
 ### `GET /api/v1/system/capabilities`
 
-Returns the configured and selected H.264 encoder plus fixed backend capability flags. This authenticated response never returns device paths, PCI identifiers, driver versions, or source URLs. `devicePresent` and `encoderAvailable` must both be true for `ready` to be true. An unavailable explicit request safely selects x264 and sets `fallback`.
+Returns encoder, renderer and hardware-decode decisions. Every backend reports `devicePresent`, `vaDriverLoaded`, `encodeSupported`, `decodeSupported`, `runtimeProbePassed`, `encoderAvailable`, and `ready`; device existence alone is never enough. Responses omit device paths, PCI IDs, driver versions and source URLs. Renderer is `idle` in Direct-only mode, `hardware` after a non-software GL probe, or `software` after the explicit llvmpipe fallback.
 
 返回配置与实际选择的 H.264 编码器及固定后端能力标志。该接口要求认证，且不返回设备路径、PCI 标识、驱动版本或来源 URL。只有 `devicePresent` 与 `encoderAvailable` 同时为真时 `ready` 才为真；显式请求不可用后端时会安全选择 x264 并设置 `fallback`。
 
@@ -149,7 +160,7 @@ Returns the explicit playback modes and one source-scoped same-origin endpoint f
 
 ```json
 {
-  "defaultMode": "composite",
+  "defaultMode": "direct",
   "modes": {
     "composite": {"enabled": true, "endpoint": "/api/v1/program/whep"},
     "direct": {"enabled": true, "fallback": "composite"}
@@ -166,9 +177,22 @@ Returns the explicit playback modes and one source-scoped same-origin endpoint f
 }
 ```
 
-`codec` and `audioCodec` report the probed upstream codec names without revealing the upstream address. H.264/VP8/VP9/AV1 video and absent/Opus/G.711 A-law/G.711 mu-law audio can pass through; if either present codec is browser-incompatible, the on-demand Hybrid route emits H.264/Opus and reports `strategy: "transcode"`.
+`codec` and `audioCodec` report probed names without an address. The response also returns `deliveryMode`, independent `videoDelivery`/`audioDelivery`, server decode/encode/audio-transcode booleans, decoder/encoder, reason, LOW/MEDIUM/HIGH `serverCost`, and whether Composite is concurrently active. Hybrid copies every compatible track and transcodes only the incompatible track.
 
-返回当前明确支持的播放模式，以及场景中每个来源对应的同源端点。响应只复用公开场景已有的来源 ID，不包含 RTSP、凭据、MediaMTX 地址、内部路径或调用方可选上游。`codec` 与 `audioCodec` 只报告探测到的上游编码名称；H.264/VP8/VP9/AV1 视频和无音频/Opus/G.711 A-law/G.711 mu-law 音频可直通，任一现有编码不兼容时，按需 Hybrid 路由输出 H.264/Opus，并返回 `strategy: "transcode"`。
+### `GET /api/v1/system/processes`
+
+Returns five fixed process groups (`webobsd`, `mediamtx`, `ffmpeg`, `caddy`, `obs-browser`) with instance count, RSS KiB and adjacent-sample CPU percent, plus RTSP TCP session count, AMD GPU busy when readable, and `controlPlaneActive`, `engineActive`, `compositePublisherActive`. No PID, command line, URL or filesystem path is returned.
+
+### Camera Registry / 摄像机注册表
+
+- `GET|POST /api/v1/cameras`, `GET|PUT|DELETE /api/v1/cameras/{cameraId}` manage stable devices and profiles.
+- `POST /api/v1/camera-detect` classifies a bounded IP/hostname/URL and probes media where supported.
+- `GET /api/v1/camera-adapters` returns the supported adapter names.
+- `POST /api/v1/onvif/discover` performs bounded WS-Discovery and returns at most 128 non-credential XAddr results.
+
+All mutations require the normal authentication and same-origin boundary. Embedded URL userinfo, credential-like query keys/fragments, unsafe IDs and traversal in `credentialsRef` are rejected. The loopback service stores SQLite WAL metadata; only internal consumers can resolve `/run/secrets/webobs-camera-credentials/<ref>.json`.
+
+返回当前明确支持的播放模式，以及场景中每个来源对应的同源端点。响应只复用公开场景已有的来源 ID，不包含 RTSP、凭据、MediaMTX 地址、内部路径或调用方可选上游。`codec` 与 `audioCodec` 只报告探测到的上游编码名称；H.264/VP8/VP9/AV1 视频和无音频/Opus/G.711 A-law/G.711 mu-law 音频可直通，任一现有编码不兼容时，按需 Hybrid 路由只转换必要轨道，并返回 `strategy: "hybrid"`。
 
 ### `POST /api/v1/sources/{sourceId}/whep`
 

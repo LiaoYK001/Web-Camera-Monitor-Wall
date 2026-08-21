@@ -16,10 +16,10 @@ ghcr.io/liaoyk001/web-camera-monitor-wall:<tag>
 
 推荐同时生成：
 
-- 发布版本：`v0.6.0` 或 `0.6.0`。
+- 发布版本：`v0.2.0`。
 - Git 提交：`sha-<12位提交>`。
 - 不可变 digest：`@sha256:<digest>`，生产部署优先使用。
-- `latest`：只作人工体验入口，不应作为生产升级或回滚依据。
+- `latest`：当前稳定 Tag；`dev`：人工开发发布。两者都不应作为严格生产升级或回滚依据。
 
 当前产品只支持 `linux/amd64`，发布工作流不得宣称存在未经验证的 `linux/arm64` 变体。
 
@@ -73,7 +73,7 @@ Linux shell 示例：
 
 ```bash
 IMAGE=ghcr.io/liaoyk001/web-camera-monitor-wall
-VERSION=v0.6.0
+VERSION=v0.2.0
 REVISION="sha-$(git rev-parse --short=12 HEAD)"
 
 docker image tag webobs:m0 "$IMAGE:$VERSION"
@@ -86,7 +86,7 @@ PowerShell：
 
 ```powershell
 $image = 'ghcr.io/liaoyk001/web-camera-monitor-wall'
-$version = 'v0.6.0'
+$version = 'v0.2.0'
 $revision = 'sha-' + (git rev-parse --short=12 HEAD)
 docker image tag webobs:m0 "${image}:$version"
 docker image tag webobs:m0 "${image}:$revision"
@@ -111,9 +111,9 @@ GHCR 第一次发布的 package 默认为 private，即使源码仓库是 public
 
 ## 3. 使用 GitHub Actions 自动发布
 
-推荐只在受保护的版本 tag 或人工 `workflow_dispatch` 上发布，不要让每个 PR 或普通提交都推送大型产品镜像。本项目首次完整 OBS 构建需要较多磁盘和内存；GitHub-hosted runner 资源不足时，应使用受控的 x86_64 Linux self-hosted runner，并禁止不受信 PR 在该 runner 上执行。
+只在受保护的版本 Tag 或维护者人工 `workflow_dispatch` 上发布，不让 PR 或普通提交运行重型产品镜像构建。当前工作流把轻量源码审计留在 GitHub-hosted runner，把完整 OBS/CEF 构建固定到受控的 Fedora x86_64 Self-hosted Runner，并禁止不受信 PR 使用该机器。安装、隔离、标签、缓存与事故响应见 [Self-hosted Runner 指南](self-hosted-runner.md)。
 
-仓库已提供 `.github/workflows/release-image.yaml`。它只在 `v*` tag 或人工 `workflow_dispatch` 触发，所有外部 action 均固定到已记录的完整 commit SHA；发布 linux/amd64 镜像时同时生成 BuildKit max provenance、SBOM、GitHub registry attestation，以及完整递归 submodule 对应源码包。下列片段仅用于解释关键结构，实际发布以仓库工作流为准。
+仓库已提供 `.github/workflows/release-image.yaml`。它只在 `v*` Tag 或人工 `workflow_dispatch` 触发，所有外部 action 均固定到已记录的完整 commit SHA；发布 linux/amd64 镜像时同时生成 BuildKit max provenance、SBOM、GitHub registry attestation，以及完整递归 submodule 对应源码包。下列片段只说明 runner 分工，实际发布以仓库工作流为准。
 
 ```yaml
 name: Publish GHCR image
@@ -131,60 +131,15 @@ permissions:
   id-token: write
 
 jobs:
-  publish:
+  audit:
     runs-on: ubuntu-24.04
-    steps:
-      - name: Check out repository and submodules
-        uses: actions/checkout@<reviewed-full-commit>
-        with:
-          submodules: recursive
+    # executable-bit and public-source audit only
 
-      - name: Normalize image name
-        id: image
-        shell: bash
-        run: echo "name=ghcr.io/${GITHUB_REPOSITORY,,}" >> "$GITHUB_OUTPUT"
-
-      - name: Set up Buildx
-        uses: docker/setup-buildx-action@<reviewed-full-commit>
-
-      - name: Log in to GHCR
-        uses: docker/login-action@<reviewed-full-commit>
-        with:
-          registry: ghcr.io
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Generate OCI metadata
-        id: meta
-        uses: docker/metadata-action@<reviewed-full-commit>
-        with:
-          images: ${{ steps.image.outputs.name }}
-          tags: |
-            type=semver,pattern={{version}}
-            type=semver,pattern={{major}}.{{minor}}
-            type=sha,format=long
-
-      - name: Build and push linux/amd64 image
-        id: push
-        uses: docker/build-push-action@<reviewed-full-commit>
-        with:
-          context: .
-          file: ./docker/Dockerfile
-          platforms: linux/amd64
-          push: true
-          tags: ${{ steps.meta.outputs.tags }}
-          labels: ${{ steps.meta.outputs.labels }}
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
-          provenance: mode=max
-          sbom: true
-
-      - name: Attest published image
-        uses: actions/attest@<reviewed-full-commit>
-        with:
-          subject-name: ${{ steps.image.outputs.name }}
-          subject-digest: ${{ steps.push.outputs.digest }}
-          push-to-registry: true
+  release:
+    needs: audit
+    runs-on: [self-hosted, linux, x64, webobs-builder]
+    # recursive checkout, re-audit, local BuildKit cache,
+    # test/build, SBOM, provenance, GHCR push and attestation
 ```
 
 注意事项：
@@ -192,6 +147,8 @@ jobs:
 - `submodules: recursive` 不可省略，否则 OBS/obs-browser 来源不完整。
 - 实际工作流已固定完整 commit SHA；升级 action 时必须单独审查 release、变更日志和新 SHA，不能改用浮动主版本。
 - `GITHUB_TOKEN` 只授予 `contents: read`、`packages: write` 和证明所需权限，不需要 PAT。
+- Self-hosted Runner 上只运行可信 Tag/人工发布，不能让未知 Fork PR 执行仓库代码。
+- 本地 BuildKit cache 保留 OBS/CEF 大层，成功后再原子轮换 `-next` 目录。
 - 公开仓库的 max provenance 可能包含 build arguments。构建参数只能是公开版本和校验值，绝不能传入摄像头地址或任何 secret。
 - Actions 首次发布通常会自动关联工作流所在仓库。如果同名 package 先由命令行发布且未关联仓库，应先在 package settings 中授予仓库 Actions access。
 - `0.x.y` 阶段不建议自动生成容易误解为稳定大版本的 `0` 标签。
@@ -236,8 +193,8 @@ docker compose --env-file .env up -d --no-build --force-recreate webobs
 拉取后记录 registry 返回的 digest：
 
 ```bash
-docker pull ghcr.io/liaoyk001/web-camera-monitor-wall:v0.6.0
-docker image inspect ghcr.io/liaoyk001/web-camera-monitor-wall:v0.6.0 \
+docker pull ghcr.io/liaoyk001/web-camera-monitor-wall:v0.2.0
+docker image inspect ghcr.io/liaoyk001/web-camera-monitor-wall:v0.2.0 \
   --format '{{json .RepoDigests}}'
 ```
 
@@ -246,7 +203,7 @@ docker image inspect ghcr.io/liaoyk001/web-camera-monitor-wall:v0.6.0 \
 ```bash
 docker login ghcr.io
 gh attestation verify \
-  oci://ghcr.io/liaoyk001/web-camera-monitor-wall:v0.6.0 \
+  oci://ghcr.io/liaoyk001/web-camera-monitor-wall:v0.2.0 \
   --repo LiaoYK001/Web-Camera-Monitor-Wall
 ```
 

@@ -1,25 +1,25 @@
 # Web Camera Monitor Wall
 
-一个基于 `libobs` 的无桌面 Web 监控墙/合成器项目。仓库已完成 **M0 Headless Proof 至 M9 Timeline & Evidence**，下一阶段为 **M10 Device Operations**：无需 OBS Qt 界面，也能在 Linux Docker 容器中完成下面的闭环。
+一个基于 `libobs` 的无桌面 Web 监控墙、Direct WebRTC 网关与 NVR 项目。仓库已完成 **M0 Headless Proof 至 M9 Timeline & Evidence**，当前位于 **M10 Device Operations 实施阶段**。
 
 ```text
 RTSP camera -> libobs ffmpeg_source -> OBS scene -> H.264/AAC MP4
                                                    -> H.264/Opus WHIP/WHEP
 ```
 
-当前版本能从持久化 Studio 集合启动多路 RTSP、受控网页、图片、文字、色块、媒体和嵌套场景，通过随产品镜像提供的 React/TypeScript 编辑器进行多选、吸附、对齐、分组、裁切、旋转、透明度、混合和有序滤镜编辑，并以隔离的 Preview/Program 总线执行原子 Cut/Fade Take。M2–M5 提供 Composite/Direct/Hybrid WebRTC、浏览器源和统一音频；M6 提供认证、TLS/TURN、恢复、指标、硬件能力安全回退、备份及可验证发布；M7 交付 Canvas Studio；M8 新增独立 NVR；M9 提供 UTC 时间线、四路同步回放、断档、缩略图、截图、快速/精确导出、SHA-256 清单和证据审计。
+当前版本新增 SQLite WAL Camera Registry、稳定 Camera/Profile ID、ONVIF WS-Discovery 和 RTSP/MJPEG/Snapshot/HLS/HTTP-FLV/WHEP/SRT/RTP/V4L2 adapter 契约。默认 Direct-only 运行完全不初始化 OBS 解码、合成或编码；只有录制或启用 Composite 才启动 libobs。VA-API 会分别报告设备、驱动、编解码能力和真实运行探测，AMD 可使用硬解、OpenGL 合成与硬编，失败时明确回退。Hybrid 只转码不兼容的轨道。WebUI 另提供 7 天滑动 Session、真全屏、Screen Wake Lock、逐路执行链与进程 CPU/RSS 诊断。
 
-开发路线、里程碑验收标准和当前进度见 [ROADMAP.md](ROADMAP.md)。**M0 至 M9 的实现门禁已通过；当前位置是 M10 Device Operations 起点，M10–M13 仍按顺序规划。**详细的后续架构、功能归属、非目标和逐阶段完成门禁见 [M7–M13 产品路线](docs/future-milestones.md)。NVR 配置与存储见 [NVR Core 指南](docs/nvr-core.md)，回放与证据契约见 [M9 时间线与证据指南](docs/timeline-evidence.md)。从 Git 克隆、配置、构建、运行、备份和回滚见 [Docker 部署指南](docs/docker-deployment.md)；不用 Docker Hub 时的镜像发布与拉取见 [GHCR 指南](docs/ghcr.md)。当前场景与持久化契约见 [docs/scene-schema-v4.md](docs/scene-schema-v4.md)，历史 [v3](docs/scene-schema-v3.md)、[v2](docs/scene-schema-v2.md) 与 [v1](docs/scene-schema-v1.md) 契约仍保留，控制协议见 [docs/api-v1.md](docs/api-v1.md)。
+开发路线、里程碑验收标准和当前进度见 [ROADMAP.md](ROADMAP.md)。**M0–M9 门禁已通过；M10 的 Registry/Adapter 基础已落地，完整 ONVIF Profile T/PTZ/事件门禁仍在进行。**详细路线见 [M7–M13 产品路线](docs/future-milestones.md)。部署见 [Docker 部署指南](docs/docker-deployment.md) 与 [Fedora Podman 示例](deploy/README-podman.md)，硬件与性能验收见 [性能和硬件指南](docs/performance-and-hardware.md)，不用 Docker Hub 时见 [GHCR 指南](docs/ghcr.md)，自建发布节点见 [Self-hosted Runner 指南](docs/self-hosted-runner.md)。当前场景契约是 [schema v5](docs/scene-schema-v5.md)，控制协议见 [API v1](docs/api-v1.md)。
 
-`WEBOBS_SCENE_FILE` 默认指向 `/config/webobs/scene.json`。首次启动使用 `WEBOBS_RTSP_URL` 创建并保存单路场景；后续启动以场景文件为准。手工编辑场景文件前应停止容器，且真实 RTSP 凭据不得提交到 Git。
+`WEBOBS_SCENE_FILE` 默认指向 `/config/webobs/scene.json`。空配置首次启动会创建空 Scene/Camera Registry，直接在 WebUI 的“设备管理”中添加设备；`WEBOBS_RTSP_URL` 只保留为一次性兼容 bootstrap，不再是部署必填项。Scene v5 只保存 Camera/Profile ID，凭据通过未提交 Git 的 Secret 引用解析。
 
-## M0 技术基线
+## 运行技术基线
 
 - OBS Studio `32.1.2`，固定 submodule 提交 `fb4d98bf88fae5fc85cb11fc57f7c5e309282194`
 - Ubuntu 24.04、C++20、CMake 3.28+、x86_64
-- X11/EGL + Xvfb + Mesa 软件合成
+- `renderer=auto|hardware|software`；AMD render node 就绪时使用 GPU，失败时回退 Xvfb/llvmpipe
 - x264 CBR、`veryfast`、High Profile、2 秒关键帧间隔
-- RTSP 默认使用 TCP，硬件解码关闭
+- RTSP 默认 TCP，硬件解码支持全局与逐摄像机 `auto|on|off`
 - 产品运行时只有一个 Docker 镜像；M1 Compose 仅向主机回环地址发布控制端口
 - MediaMTX `1.18.2` 固定版本与 SHA-256 校验后打包进产品镜像，内部信令仅监听容器回环地址
 - libdatachannel `0.21.0` 固定到审核提交并使用 Ubuntu OpenSSL 3 后端，避免与系统 FFmpeg 的 Mbed TLS 2.x ABI 冲突
@@ -44,7 +44,7 @@ git submodule update --init --recursive
 
 已存在的工作副本只需执行最后一条命令。
 
-## 使用真实摄像头
+## 首次启动与添加摄像机
 
 PowerShell：
 
@@ -62,13 +62,7 @@ ${EDITOR:-vi} .env
 docker compose up --build --abort-on-container-exit
 ```
 
-至少修改：
-
-```dotenv
-WEBOBS_RTSP_URL=rtsp://user:password@camera-host:554/stream
-```
-
-默认输出到 `recordings/webobs-<UTC timestamp>.mp4`。`WEBOBS_DURATION_SECONDS=0` 时录制和控制接口会持续运行到 `Ctrl+C` 或容器收到 `SIGTERM`；停止时会完成 muxer 和 MP4 封装。已有的显式输出文件不会被覆盖。
+正常部署无需填写 RTSP bootstrap。启动后打开 WebUI，进入“设备管理”，可以手工添加 Camera Source Adapter 或进行 ONVIF 发现；地址禁止内嵌账号密码。若使用旧式 `WEBOBS_RTSP_URL` bootstrap，则默认输出到 `recordings/webobs-<UTC timestamp>.mp4`，停止时会完成 muxer 和 MP4 封装。
 
 Compose 只把 `8080` 发布到主机 `127.0.0.1`。启动后在本机浏览器打开 `http://127.0.0.1:8080/` 即可使用场景编辑器，也可直接检查控制接口：
 
@@ -83,7 +77,7 @@ curl http://127.0.0.1:8080/api/v1/scene
 docker compose -f compose.yaml -f compose.m6-auth.yaml up --build
 ```
 
-该覆盖会以 Compose secrets 挂载凭据文件并关闭旧的无认证非回环许可。本机认证可使用 `compose.m6-auth.yaml`；远程部署改用 `compose.m6-production.yaml`，由同一产品镜像内固定版本 Caddy 使用操作者提供的受信证书终止 HTTPS，后端仅监听容器回环，并把 TURN 共享密钥从只读文件注入固定版本 MediaMTX。`/api/v1/health` 与 `/api/v1/ready` 保持公开供容器探针使用，其余 UI、REST、WebSocket、WHEP 与 `/metrics` 统一要求认证。完整边界见 [控制 API 文档](docs/api-v1.md) 和 [Docker 部署指南](docs/docker-deployment.md)。
+该覆盖会挂载凭据文件并关闭旧的无认证非回环许可。本机 HTTP 覆盖仅为兼容测试；远程部署必须使用 `compose.m6-production.yaml` 的 HTTPS。浏览器使用 HttpOnly Session Cookie，连续 7 天未访问才失效；Basic 仅保留给 CLI/应急自动化。登录页与其静态资源公开加载，业务 API、WebSocket、WHEP 与 `/metrics` 仍需认证；健康探针保持公开。
 
 运行时每 500 ms 汇总一次可见来源帧状态。RTSP 来源超过 `WEBOBS_SOURCE_STALE_SECONDS` 没有产生新帧后，readiness 会降为 `503`，并从 `WEBOBS_SOURCE_RECOVERY_BASE_SECONDS` 起按指数退避调用 libobs 媒体重启，间隔不超过 `WEBOBS_SOURCE_RECOVERY_MAX_SECONDS`；新帧恢复后 readiness 自动回到 `200`。受认证的 `/api/v1/sources/status` 只返回来源 ID、类型、状态、帧龄和重启次数，不返回 URL。认证失败、场景变更和来源恢复会写入经过统一 URL 脱敏的单行 JSON 审计事件；基础 Compose 默认把 Docker `json-file` 日志限制为 `10m × 3`，可通过 `.env` 中的有界值调整。
 
