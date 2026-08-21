@@ -287,14 +287,14 @@ try {
             'M3 real-camera capabilities exposed an RTSP or internal endpoint.'
         $Capabilities = $CapabilityResponse.Content | ConvertFrom-Json
         $Capability = $Capabilities.sources | Where-Object sourceId -eq 'camera-1'
-        Assert-True ($Capability.strategy -in @('passthrough', 'transcode') -and
+        Assert-True ($Capability.strategy -in @('passthrough', 'hybrid') -and
             -not [string]::IsNullOrWhiteSpace($Capability.codec)) `
             'M3 real-camera source was not classified for Direct/Hybrid playback.'
         if ($RequireAudio) {
             Assert-True (-not [string]::IsNullOrWhiteSpace($Capability.audioCodec)) `
                 'M5 real-camera source did not expose a classified audio codec.'
         }
-        $ExpectedPath = if ($Capability.strategy -eq 'transcode') { 'hybrid' } else { 'direct' }
+        $ExpectedPath = if ($Capability.strategy -eq 'hybrid') { 'hybrid' } else { 'direct' }
         $ExpectedTracks = if ($RequireAudio) {
             "2 tracks \((?:H264, Opus|Opus, H264)\)"
         } else {

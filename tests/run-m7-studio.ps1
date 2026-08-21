@@ -69,7 +69,7 @@ function Item([string]$Id, [string]$SourceId, [int]$X, [int]$Y, [int]$Width,
 function Scene([string]$Id, [string]$Name, [object[]]$Sources, [object[]]$Items,
                [string]$Background = '#000000') {
     [ordered]@{
-        schemaVersion = 4; revision = 0; id = $Id; name = $Name
+        schemaVersion = 5; revision = 0; id = $Id; name = $Name
         canvas = [ordered]@{ width = 640; height = 360; backgroundColor = $Background }
         sources = $Sources; items = $Items
     }
@@ -220,9 +220,9 @@ try {
     Assert-True ($sceneAfterRetake -ne $sceneBeforeRetake -and $sceneAfterRetake -match 'Red Studio Retaken') `
         'Take must apply saved edits even when Program and Preview reference the same scene id'
 
-    $migrationMode = (@(& docker compose -f $Compose exec -T webobs-control stat -c '%a' /test-config/scene.json.pre-v4.backup) -join '').Trim()
+    $migrationMode = (@(& docker compose -f $Compose exec -T webobs-control stat -c '%a' /test-config/scene.json.pre-v5.backup) -join '').Trim()
     Assert-True ($LASTEXITCODE -eq 0 -and $migrationMode -eq '600') 'Pre-v4 migration backup must exist with mode 0600'
-    docker compose -f $Compose exec -T webobs-control sh -c 'cmp -s /test-config/scene.json.pre-v4.backup /test-scenes/m1-two-up.json'
+    docker compose -f $Compose exec -T webobs-control sh -c 'cmp -s /test-config/scene.json.pre-v5.backup /test-scenes/m1-two-up.json'
     Assert-True ($LASTEXITCODE -eq 0) 'Migration backup must preserve the exact v3 fixture'
     $studioMode = (@(& docker compose -f $Compose exec -T webobs-control stat -c '%a' /test-config/studio.json) -join '').Trim()
     Assert-True ($LASTEXITCODE -eq 0 -and $studioMode -eq '600') 'Studio collection must persist with mode 0600'

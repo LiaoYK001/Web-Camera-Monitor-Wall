@@ -85,6 +85,12 @@ $Handler = [Net.Http.HttpClientHandler]::new()
 $Handler.UseProxy = $false
 $Client = [Net.Http.HttpClient]::new($Handler)
 $Client.Timeout = [TimeSpan]::FromSeconds(20)
+$SessionHandler = [Net.Http.HttpClientHandler]::new()
+$SessionHandler.UseProxy = $false
+$SessionHandler.UseCookies = $true
+$SessionHandler.CookieContainer = [Net.CookieContainer]::new()
+$SessionClient = [Net.Http.HttpClient]::new($SessionHandler)
+$SessionClient.Timeout = [TimeSpan]::FromSeconds(20)
 $ContainerId = $null
 
 Push-Location $RepositoryRoot
@@ -112,19 +118,20 @@ try {
         Start-Sleep -Milliseconds 250
     }
     Assert-True $Ready 'M6 public liveness/readiness probes did not become ready.'
-    Assert-True ($Health.Body -match '"milestone":"M(?:6|7|8|9)"' -and $Readiness.Body -eq '{"status":"ready"}') `
+    Assert-True ($Health.Body -match '"milestone":"M(?:6|7|8|9|10-foundation)"' -and $Readiness.Body -eq '{"status":"ready"}') `
         'M6 probes returned an unexpected public payload.'
     $ReadyAt = [DateTime]::UtcNow
 
-    $UnauthorizedRoot = Invoke-M6Request -Client $Client -Method ([Net.Http.HttpMethod]::Get) -Path '/'
-    Assert-True ($UnauthorizedRoot.Status -eq 401 -and
-        $UnauthorizedRoot.Headers['WWW-Authenticate'] -match '^Basic realm="WebOBS"') `
-        'The Web editor must issue a Basic challenge when credentials are absent.'
+    $PublicRoot = Invoke-M6Request -Client $Client -Method ([Net.Http.HttpMethod]::Get) -Path '/'
+    Assert-True ($PublicRoot.Status -eq 200 -and $PublicRoot.Body -match '<div id="root"></div>' -and
+        -not $PublicRoot.Headers.ContainsKey('WWW-Authenticate')) `
+        'The login shell must load without triggering a browser Basic Auth challenge.'
     foreach ($ProtectedPath in @('/api/v1/scene', '/api/v1/program/status',
             '/api/v1/playback/capabilities', '/api/v1/sources/status',
             '/api/v1/system/capabilities', '/metrics')) {
         $Protected = Invoke-M6Request -Client $Client -Method ([Net.Http.HttpMethod]::Get) -Path $ProtectedPath
-        Assert-True ($Protected.Status -eq 401) "Unauthenticated request unexpectedly reached $ProtectedPath."
+        Assert-True ($Protected.Status -eq 401 -and -not $Protected.Headers.ContainsKey('WWW-Authenticate')) `
+            "Unauthenticated request unexpectedly reached $ProtectedPath or issued a Basic challenge."
     }
     foreach ($ProtectedWhepPath in @('/api/v1/program/whep', '/api/v1/sources/camera-left/whep')) {
         $ProtectedWhep = Invoke-M6Request -Client $Client -Method ([Net.Http.HttpMethod]::Post) `
@@ -133,18 +140,37 @@ try {
             "Unauthenticated request unexpectedly reached $ProtectedWhepPath."
     }
 
-    $AuthHeaders = @{ Authorization = $Authorization }
-    $Root = Invoke-M6Request -Client $Client -Method ([Net.Http.HttpMethod]::Get) -Path '/' -Headers $AuthHeaders
-    Assert-True ($Root.Status -eq 200 -and $Root.Body -match '<div id="root"></div>') `
-        'Valid credentials did not unlock the bundled Web editor.'
-    $AssetMatch = [Regex]::Match($Root.Body, 'src="(?<path>/assets/[^"?]+\.js)"')
-    Assert-True $AssetMatch.Success 'The authenticated Web editor did not reference its JavaScript asset.'
+    $AssetMatch = [Regex]::Match($PublicRoot.Body, 'src="(?<path>/assets/[^"?]+\.js)"')
+    Assert-True $AssetMatch.Success 'The public login shell did not reference its JavaScript asset.'
     $AssetWithoutAuth = Invoke-M6Request -Client $Client -Method ([Net.Http.HttpMethod]::Get) `
         -Path $AssetMatch.Groups['path'].Value
-    $AssetWithAuth = Invoke-M6Request -Client $Client -Method ([Net.Http.HttpMethod]::Get) `
-        -Path $AssetMatch.Groups['path'].Value -Headers $AuthHeaders
-    Assert-True ($AssetWithoutAuth.Status -eq 401 -and $AssetWithAuth.Status -eq 200) `
-        'Hashed UI assets must be protected by the same authentication boundary.'
+    Assert-True ($AssetWithoutAuth.Status -eq 200) 'The login page JavaScript must be publicly loadable.'
+
+    $Login = Invoke-M6Request -Client $SessionClient -Method ([Net.Http.HttpMethod]::Post) `
+        -Path '/api/v1/auth/login' -Body (@{ username = $Username; password = $Password } | ConvertTo-Json -Compress)
+    $LoginBody = $Login.Body | ConvertFrom-Json
+    Assert-True ($Login.Status -eq 200 -and $LoginBody.authenticated -eq $true -and
+        $LoginBody.expiresInSeconds -eq 604800 -and
+        $Login.Headers['Set-Cookie'] -match 'HttpOnly' -and
+        $Login.Headers['Set-Cookie'] -match 'SameSite=Strict' -and
+        $Login.Headers['Set-Cookie'] -notmatch '; Secure') `
+        'Session login did not create the expected seven-day test cookie.'
+    $Session = Invoke-M6Request -Client $SessionClient -Method ([Net.Http.HttpMethod]::Get) `
+        -Path '/api/v1/auth/session'
+    $SessionBody = $Session.Body | ConvertFrom-Json
+    $MinimumExpiry = [DateTimeOffset]::UtcNow.ToUnixTimeSeconds() + 604700
+    Assert-True ($Session.Status -eq 200 -and $SessionBody.authenticated -eq $true -and
+        $SessionBody.via -eq 'session' -and $SessionBody.expiresAt -ge $MinimumExpiry) `
+        'The browser session was not accepted or its inactivity expiry did not slide.'
+    $SessionScene = Invoke-M6Request -Client $SessionClient -Method ([Net.Http.HttpMethod]::Get) `
+        -Path '/api/v1/scene'
+    Assert-True ($SessionScene.Status -eq 200) 'The session cookie did not authorize the control API.'
+    $SessionProbe = "import sqlite3; rows=sqlite3.connect('/config/webobs/auth-sessions.db').execute('SELECT session_id_hash FROM auth_sessions').fetchall(); print(str(len(rows))+'|'+str(sum(len(row[0]) == 64 and all(ch in '0123456789abcdef' for ch in row[0]) for row in rows)))"
+    $StoredSessionShape = (@(docker exec $ContainerId python3 -c $SessionProbe) -join '').Trim()
+    Assert-True ($LASTEXITCODE -eq 0 -and $StoredSessionShape -eq '1|1') `
+        'The session database did not store exactly one SHA-256 token hash.'
+
+    $AuthHeaders = @{ Authorization = $Authorization }
 
     $CapabilitiesResponse = Invoke-M6Request -Client $Client -Method ([Net.Http.HttpMethod]::Get) `
         -Path '/api/v1/system/capabilities' -Headers $AuthHeaders
@@ -311,6 +337,14 @@ try {
     }
     Assert-True $SourceRecovered 'RTSP sources did not recover and restore readiness after publisher restart.'
 
+    $Logout = Invoke-M6Request -Client $SessionClient -Method ([Net.Http.HttpMethod]::Post) `
+        -Path '/api/v1/auth/logout'
+    $AfterLogout = Invoke-M6Request -Client $SessionClient -Method ([Net.Http.HttpMethod]::Get) `
+        -Path '/api/v1/scene'
+    Assert-True ($Logout.Status -eq 204 -and $AfterLogout.Status -eq 401 -and
+        $Logout.Headers['Set-Cookie'] -match 'Max-Age=0') `
+        'Logout did not revoke the server-side session and clear the browser cookie.'
+
     $Logs = @(docker logs $ContainerId 2>&1 | ForEach-Object { $_.ToString() }) -join "`n"
     Assert-True ($Logs -notmatch [Regex]::Escape($Username) -and
         $Logs -notmatch [Regex]::Escape($Password) -and
@@ -341,6 +375,8 @@ try {
 
     Write-Host 'M6 authentication, authorization, rate limit, source health, recovery, audit, metrics, healthcheck, and redaction acceptance passed.'
 } finally {
+    $SessionClient.Dispose()
+    $SessionHandler.Dispose()
     $Client.Dispose()
     $Handler.Dispose()
     docker compose -f $ComposeFile down --volumes --remove-orphans | Out-Null

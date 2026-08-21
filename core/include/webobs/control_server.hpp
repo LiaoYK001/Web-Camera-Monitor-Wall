@@ -16,6 +16,10 @@ class StudioController;
 
 struct RuntimeStatus {
     VideoEncoderCapabilities video_encoder;
+    RendererCapabilities renderer;
+    HardwareDecodeCapabilities hardware_decode;
+    std::atomic<bool> control_plane_active{false};
+    std::atomic<bool> engine_active{false};
     std::atomic<bool> recording_active{false};
     std::atomic<bool> webrtc_configured{false};
     std::atomic<bool> webrtc_ready{false};
@@ -26,7 +30,7 @@ struct RuntimeStatus {
 
     [[nodiscard]] bool ready() const
     {
-        return recording_active.load() && (!webrtc_configured.load() || webrtc_ready.load()) &&
+        return control_plane_active.load() && (!webrtc_configured.load() || webrtc_ready.load()) &&
                source_unhealthy.load() == 0;
     }
 };

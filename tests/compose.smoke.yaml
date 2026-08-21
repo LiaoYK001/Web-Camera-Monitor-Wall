@@ -212,6 +212,7 @@ services:
       WEBOBS_HTTP_PORT: "8080"
       WEBOBS_ALLOW_INSECURE_REMOTE: "true"
       WEBOBS_WEBRTC_ENABLED: "true"
+      WEBOBS_COMPOSITE_ENABLED: "true"
       WEBOBS_WHIP_URL: http://127.0.0.1:8889/program/whip
       MTX_WEBRTCADDITIONALHOSTS: 127.0.0.1
     volumes:
@@ -246,6 +247,7 @@ services:
       WEBOBS_HTTP_PORT: "8080"
       WEBOBS_ALLOW_INSECURE_REMOTE: "true"
       WEBOBS_WEBRTC_ENABLED: "true"
+      WEBOBS_COMPOSITE_ENABLED: "true"
       WEBOBS_WHIP_URL: http://127.0.0.1:8889/program/whip
       MTX_WEBRTCADDITIONALHOSTS: 127.0.0.1
     volumes:
@@ -283,6 +285,7 @@ services:
       WEBOBS_HTTP_PORT: "8080"
       WEBOBS_ALLOW_INSECURE_REMOTE: "true"
       WEBOBS_WEBRTC_ENABLED: "true"
+      WEBOBS_COMPOSITE_ENABLED: "true"
       WEBOBS_WHIP_URL: http://127.0.0.1:8889/program/whip
       MTX_WEBRTCADDITIONALHOSTS: 127.0.0.1
     volumes:
@@ -359,6 +362,7 @@ services:
       WEBOBS_HTTP_PORT: "8080"
       WEBOBS_ALLOW_INSECURE_REMOTE: "true"
       WEBOBS_WEBRTC_ENABLED: "true"
+      WEBOBS_COMPOSITE_ENABLED: "true"
       WEBOBS_WHIP_URL: http://127.0.0.1:8889/program/whip
       MTX_WEBRTCADDITIONALHOSTS: 127.0.0.1
     volumes:
@@ -400,6 +404,7 @@ services:
       WEBOBS_AUTH_PASSWORD_FILE: /test-config/auth-password
       WEBOBS_AUTH_FAILURE_LIMIT: "3"
       WEBOBS_AUTH_FAILURE_WINDOW_SECONDS: "2"
+      WEBOBS_SESSION_COOKIE_SECURE: "false"
       WEBOBS_CONTROL_ALLOWED_ORIGINS: https://monitor.example.invalid
       WEBOBS_SOURCE_STALE_SECONDS: "2"
       WEBOBS_SOURCE_RECOVERY_BASE_SECONDS: "1"
@@ -453,6 +458,7 @@ services:
       WEBOBS_TURN_PASSWORD_FILE: /test-secrets/turn-password
       WEBOBS_TURN_CLIENT_ONLY: "true"
       WEBOBS_WEBRTC_ENABLED: "true"
+      WEBOBS_COMPOSITE_ENABLED: "true"
       WEBOBS_WHIP_URL: http://127.0.0.1:8889/program/whip
       MTX_WEBRTCADDITIONALHOSTS: 127.0.0.1
     volumes:

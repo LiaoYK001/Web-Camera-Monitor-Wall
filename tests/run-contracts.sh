@@ -33,8 +33,9 @@ rm -f "$artifact_directory"/.signal.mp4.webobsd-*.mkv
 cleanup_signal_container
 trap cleanup_signal_container EXIT INT TERM
 
-expect_exit 2 "missing URL" \
-    docker run --rm --entrypoint /opt/obs/bin/webobsd -e WEBOBS_RTSP_URL= webobs:m0
+expect_exit 0 "empty Direct configuration" \
+    docker run --rm --entrypoint /opt/obs/bin/webobsd -e WEBOBS_RTSP_URL= webobs:m0 \
+        --http-port 0 --duration-seconds 1
 
 expect_exit 5 "missing output directory" \
     docker run --rm --entrypoint /opt/obs/bin/webobsd \

@@ -53,7 +53,10 @@ void config_tests()
 {
     const auto empty_environment = environment({});
     auto result = webobs::parse_config({}, empty_environment);
-    expect(!result.ok(), "missing RTSP URL must fail");
+    expect(result.ok() && result.config && result.config->rtsp_url.empty() &&
+               result.config->scene_file == "/config/webobs/scene.json" &&
+               result.config->output_path.empty(),
+           "empty deployment must start from a persistent empty scene without recording");
 
     const std::vector<std::pair<std::string, std::string>> invalid_values = {
         {"--duration-seconds", "-1"},       {"--height", "0"},
@@ -61,8 +64,14 @@ void config_tests()
         {"--connect-timeout-seconds", "0"}, {"--log-level", "verbose"},
         {"--http-port", "65536"},          {"--allow-insecure-remote", "sometimes"},
         {"--webrtc-enabled", "sometimes"}, {"--nvr-enabled", "sometimes"},
+        {"--composite-enabled", "sometimes"},
         {"--browser-allow-private-networks", "sometimes"},
         {"--video-encoder", "gpu-magic"},
+        {"--renderer", "gpu-magic"},
+        {"--hardware-decode", "sometimes"},
+        {"--session-inactivity-seconds", "299"},
+        {"--session-cookie-secure", "sometimes"},
+        {"--session-database", "relative.db"},
         {"--vaapi-device", "/tmp/renderD128"},
     };
     for (const auto &[flag, value] : invalid_values) {
@@ -211,6 +220,10 @@ void config_tests()
     expect(result.ok() && result.config && result.config->webrtc_enabled,
            "valid WHIP configuration must enable WebRTC publishing");
 
+    result = webobs::parse_config({"--scene-file", "/config/webobs/scene.json",
+                                   "--composite-enabled", "true"}, empty_environment);
+    expect(!result.ok(), "Composite publishing must require the WebRTC gateway");
+
     result = webobs::parse_config(
         {"--rtsp-url", "rtsp://camera/live", "--webrtc-enabled", "false"},
         environment({{"WEBOBS_WEBRTC_ENABLED", "true"}, {"WEBOBS_WHIP_URL", "not-a-url"}}));
@@ -226,6 +239,14 @@ void config_tests()
                result.config->video_encoder == webobs::VideoEncoderPreference::vaapi &&
                result.config->vaapi_device == "/dev/dri/renderD129",
            "CLI video encoder settings must override environment values");
+
+    result = webobs::parse_config(
+        {"--scene-file", "/config/webobs/scene.json", "--renderer", "hardware",
+         "--hardware-decode", "on"}, empty_environment);
+    expect(result.ok() && result.config &&
+               result.config->renderer == webobs::RendererPreference::hardware &&
+               result.config->hardware_decode == webobs::HardwareDecodePreference::on,
+           "renderer and hardware decode modes must parse independently");
 
     result = webobs::parse_config(
         {"--scene-file", "/config/webobs/scene.json", "--browser-allowed-origins",
@@ -284,31 +305,38 @@ void video_encoder_tests()
     expect(selected.selected == webobs::VideoEncoderKind::x264 && !selected.fallback,
            "automatic encoder selection must keep the software baseline without hardware");
 
-    capabilities.vaapi = {true, true};
+    capabilities.vaapi = {true, true, true, true, true, true};
     selected = webobs::select_video_encoder(webobs::VideoEncoderPreference::automatic,
                                             capabilities);
     expect(selected.selected == webobs::VideoEncoderKind::vaapi && !selected.fallback,
            "automatic encoder selection must use an available VAAPI backend");
 
-    capabilities.qsv = {true, true};
+    capabilities.qsv = {true, true, true, true, true, true};
     selected = webobs::select_video_encoder(webobs::VideoEncoderPreference::automatic,
                                             capabilities);
     expect(selected.selected == webobs::VideoEncoderKind::qsv,
            "automatic encoder selection must prefer QSV over generic VAAPI");
 
-    capabilities.nvenc = {true, true};
+    capabilities.nvenc = {true, true, true, true, true, true};
     selected = webobs::select_video_encoder(webobs::VideoEncoderPreference::automatic,
                                             capabilities);
     expect(selected.selected == webobs::VideoEncoderKind::nvenc,
            "automatic encoder selection must prefer NVENC when it is ready");
 
-    capabilities.nvenc = {true, false};
+    capabilities.nvenc = {true, true, false, true, true, true};
     selected = webobs::select_video_encoder(webobs::VideoEncoderPreference::nvenc,
                                             capabilities);
     expect(selected.selected == webobs::VideoEncoderKind::x264 && selected.fallback,
            "an explicitly requested unavailable backend must fall back to x264");
     expect(!webobs::video_encoder_backend_ready(capabilities.nvenc),
            "a hardware device without its encoder module must not be reported ready");
+
+    capabilities.vaapi = {true, false, true, true, true, false};
+    selected = webobs::select_video_encoder(webobs::VideoEncoderPreference::vaapi,
+                                            capabilities);
+    expect(selected.selected == webobs::VideoEncoderKind::x264 && selected.fallback &&
+               selected.fallback_reason == "vaapi_runtime_not_ready",
+           "a render node without a loaded VA driver and passing probe must fall back explicitly");
 }
 
 void authentication_tests()
@@ -348,6 +376,33 @@ void authentication_tests()
     expect(authenticator.authenticate("Basic dXNlcjpwYXNzd29yZA=", "client-d", start) ==
                webobs::AuthenticationDecision::invalid_credentials,
            "non-canonical Base64 must be rejected");
+
+    char session_directory_template[] = "/tmp/webobs-session-tests-XXXXXX";
+    const char *session_directory = mkdtemp(session_directory_template);
+    expect(session_directory != nullptr, "session test directory must be created");
+    if (session_directory) {
+        const std::filesystem::path database =
+            std::filesystem::path(session_directory) / "sessions.db";
+        webobs::SessionStore sessions(database.string(), std::chrono::hours(24 * 7), true);
+        expect(!sessions.initialize().has_value(), "session SQLite WAL store must initialize");
+        const auto token = sessions.create("operator", "test-client");
+        expect(token && token->size() == 64, "session token must use 256 bits of random material");
+        if (token) {
+            const auto record = sessions.validate_and_slide(*token);
+            expect(record && record->user == "operator" && record->expires_at > record->last_seen,
+                   "valid session must slide its inactivity expiry");
+            const std::string cookie = sessions.set_cookie_header(*token);
+            expect(cookie.find("HttpOnly") != std::string::npos &&
+                       cookie.find("Secure") != std::string::npos &&
+                       cookie.find("SameSite=Strict") != std::string::npos &&
+                       cookie.find("Path=/") != std::string::npos,
+                   "browser session cookie must carry all required security attributes");
+            expect(sessions.revoke(*token) && !sessions.validate_and_slide(*token),
+                   "logout must revoke the hashed server-side session");
+        }
+        std::error_code remove_error;
+        std::filesystem::remove_all(session_directory, remove_error);
+    }
 }
 
 void audit_event_tests()
@@ -545,7 +600,25 @@ void scene_document_tests()
     invalid = document;
     invalid.canvas.background_color = "#ffffff";
     expect(!webobs::validate_scene_document(invalid).has_value(),
-           "schemaVersion 4 canvas must allow a valid custom background color");
+           "schemaVersion 5 canvas must allow a valid custom background color");
+
+    webobs::SceneDocument camera_document;
+    webobs::SceneSource camera_source;
+    camera_source.id = "registry-camera";
+    camera_source.kind = "camera";
+    camera_source.name = "Registry Camera";
+    camera_source.camera_id = "camera-stable-id";
+    camera_source.profile_id = "sub";
+    camera_source.hardware_decode = "auto";
+    camera_document.sources.push_back(camera_source);
+    camera_document.items.push_back({.id = "registry-item", .source_id = "registry-camera"});
+    expect(!webobs::validate_scene_document(camera_document),
+           "schemaVersion 5 must accept stable Camera Registry references without a raw URL");
+    const auto camera_json = webobs::serialize_scene_json(
+        camera_document, webobs::SceneJsonView::persistence, false);
+    expect(camera_json.ok() && camera_json.json.find("camera-stable-id") != std::string::npos &&
+               camera_json.json.find("rtspUrl") == std::string::npos,
+           "camera scene serialization must store only cameraId/profileId references");
 
     invalid = document;
     invalid.items.front().scale_mode = "tile";
@@ -583,15 +656,15 @@ void scene_document_tests()
     expect(!webobs::parse_scene_json(unsupported_field).ok(), "unknown scene fields must be rejected");
 
     std::string future_schema = compact.json;
-    const std::string schema_four = "\"schemaVersion\":4";
-    const std::size_t schema_position = future_schema.find(schema_four);
+    const std::string schema_five = "\"schemaVersion\":5";
+    const std::size_t schema_position = future_schema.find(schema_five);
     if (schema_position != std::string::npos)
-        future_schema.replace(schema_position, schema_four.size(), "\"schemaVersion\":5");
+        future_schema.replace(schema_position, schema_five.size(), "\"schemaVersion\":6");
     expect(schema_position != std::string::npos && !webobs::parse_scene_json(future_schema).ok(),
            "future scene schema versions must be rejected");
 
     const std::string duplicate_key =
-        R"({"schemaVersion":4,"schemaVersion":4,"revision":0,"id":"main","name":"Main","canvas":{"width":1920,"height":1080,"backgroundColor":"#000000"},"sources":[],"items":[]})";
+        R"({"schemaVersion":5,"schemaVersion":5,"revision":0,"id":"main","name":"Main","canvas":{"width":1920,"height":1080,"backgroundColor":"#000000"},"sources":[],"items":[]})";
     expect(!webobs::parse_scene_json(duplicate_key).ok(), "duplicate JSON keys must be rejected");
 
     const std::string secret_in_invalid_json = R"({"name":"sensitive-value")";
@@ -676,7 +749,7 @@ void scene_store_tests()
     if (!compact.ok())
         return;
     std::string legacy_json = compact.json;
-    const std::string current_version = "\"schemaVersion\":4";
+    const std::string current_version = "\"schemaVersion\":5";
     const std::size_t version_position = legacy_json.find(current_version);
     const std::string revision = "\"revision\":7,";
     const std::size_t revision_position = legacy_json.find(revision);
@@ -696,20 +769,20 @@ void scene_store_tests()
     }
     const auto version_two_migration = webobs::migrate_scene_json(version_two_json);
     expect(version_two_migration.ok() && version_two_migration.migrated &&
-               version_two_migration.document->schema_version == 4 &&
+               version_two_migration.document->schema_version == 5 &&
                version_two_migration.document->sources.front().sync_offset_ms == 0 &&
                version_two_migration.document->sources.front().monitoring == "off" &&
                version_two_migration.document->sources.front().audio_track == 1,
-            "schemaVersion 2 must migrate to schemaVersion 4 with safe defaults");
+            "schemaVersion 2 must migrate to schemaVersion 5 with safe defaults");
 
     std::string version_one_json = version_two_json;
     version_one_json.replace(version_one_json.find("\"schemaVersion\":2"), current_version.size(),
                              "\"schemaVersion\":1");
     const auto version_one_migration = webobs::migrate_scene_json(version_one_json);
     expect(version_one_migration.ok() && version_one_migration.migrated &&
-               version_one_migration.document->schema_version == 4 &&
+               version_one_migration.document->schema_version == 5 &&
                version_one_migration.document->revision == document.revision,
-            "schemaVersion 1 must migrate to schemaVersion 4 without changing revision");
+            "schemaVersion 1 must migrate to schemaVersion 5 without changing revision");
 
     legacy_json = version_two_json;
     legacy_json.replace(legacy_json.find("\"schemaVersion\":2"), current_version.size(),
@@ -725,13 +798,13 @@ void scene_store_tests()
     expect(write_test_file(legacy_path, legacy_json, 0644), "legacy scene fixture must be written");
     const auto migrated_file = webobs::load_scene_file(legacy_path);
     expect(migrated_file.ok() && migrated_file.status == webobs::SceneFileStatus::migrated &&
-                migrated_file.document && migrated_file.document->schema_version == 4 &&
+                migrated_file.document && migrated_file.document->schema_version == 5 &&
                migrated_file.document->revision == 0,
            "legacy scene file must migrate and load");
     expect(file_mode(legacy_path) == 0600, "loaded legacy scene permissions must be tightened to 0600");
-    const std::filesystem::path migration_backup(legacy_path.string() + ".pre-v4.backup");
+    const std::filesystem::path migration_backup(legacy_path.string() + ".pre-v5.backup");
     expect(file_mode(migration_backup) == 0600,
-           "scene migration must preserve a private pre-v4 backup");
+           "scene migration must preserve a private pre-v5 backup");
     expect(read_test_file(migration_backup) == legacy_json,
            "scene migration backup must preserve the byte-exact legacy document");
     const auto rewritten = webobs::parse_scene_json(read_test_file(legacy_path));
@@ -739,7 +812,7 @@ void scene_store_tests()
            "migrated scene must be atomically rewritten as current JSON");
 
     std::string future_json = compact.json;
-    future_json.replace(future_json.find(current_version), current_version.size(), "\"schemaVersion\":5");
+    future_json.replace(future_json.find(current_version), current_version.size(), "\"schemaVersion\":6");
     const std::filesystem::path future_path = scene_path.parent_path() / "future.json";
     expect(write_test_file(future_path, future_json, 0600), "future scene fixture must be written");
     const auto future = webobs::load_scene_file(future_path);
@@ -747,7 +820,7 @@ void scene_store_tests()
     expect(read_test_file(future_path) == future_json, "rejected future scene must not be rewritten");
 
     const std::filesystem::path malformed_path = scene_path.parent_path() / "malformed.json";
-    const std::string malformed = R"({"schemaVersion":4,"name":"sensitive-value")";
+    const std::string malformed = R"({"schemaVersion":5,"name":"sensitive-value")";
     expect(write_test_file(malformed_path, malformed, 0600), "malformed scene fixture must be written");
     const auto malformed_result = webobs::load_scene_file(malformed_path);
     expect(!malformed_result.ok() && malformed_result.error.find("sensitive-value") == std::string::npos,
@@ -939,7 +1012,7 @@ void scene_mutation_tests()
            "new browser source must not accept query or fragment placeholders");
 
     const auto secret_error = webobs::plan_scene_replacement(
-        current, R"({"schemaVersion":4,"name":"do-not-echo-this-secret")", current.revision);
+        current, R"({"schemaVersion":5,"name":"do-not-echo-this-secret")", current.revision);
     expect(!secret_error.ok() && secret_error.error.find("do-not-echo-this-secret") == std::string::npos,
            "scene mutation errors must not echo secret-bearing input");
 }

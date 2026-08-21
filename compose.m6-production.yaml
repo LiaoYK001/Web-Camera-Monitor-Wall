@@ -11,6 +11,7 @@ services:
       WEBOBS_HTTPS_PORT: ${WEBOBS_HTTPS_PORT:-8443}
       WEBOBS_AUTH_USERNAME_FILE: /run/secrets/webobs_auth_username
       WEBOBS_AUTH_PASSWORD_FILE: /run/secrets/webobs_auth_password
+      WEBOBS_SESSION_COOKIE_SECURE: "true"
       WEBOBS_CONTROL_ALLOWED_ORIGINS: ${WEBOBS_CONTROL_ALLOWED_ORIGINS:?set WEBOBS_CONTROL_ALLOWED_ORIGINS}
       WEBOBS_TURN_URL: ${WEBOBS_TURN_URL:?set WEBOBS_TURN_URL}
       WEBOBS_TURN_USERNAME_FILE: /run/secrets/webobs_turn_username

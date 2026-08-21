@@ -36,7 +36,8 @@ std::string_view video_encoder_kind_name(VideoEncoderKind kind)
 
 bool video_encoder_backend_ready(const VideoEncoderBackend &backend)
 {
-    return backend.device_present && backend.encoder_available;
+    return backend.device_present && backend.va_driver_loaded && backend.encoder_available &&
+           backend.encode_supported && backend.runtime_probe_passed;
 }
 
 VideoEncoderCapabilities select_video_encoder(VideoEncoderPreference preference,
@@ -45,6 +46,7 @@ VideoEncoderCapabilities select_video_encoder(VideoEncoderPreference preference,
     capabilities.requested = preference;
     capabilities.selected = VideoEncoderKind::x264;
     capabilities.fallback = false;
+    capabilities.fallback_reason.clear();
 
     const auto select_if_ready = [&capabilities](VideoEncoderKind kind,
                                                  const VideoEncoderBackend &backend) {
@@ -65,15 +67,22 @@ VideoEncoderCapabilities select_video_encoder(VideoEncoderPreference preference,
         return capabilities;
     case VideoEncoderPreference::vaapi:
         capabilities.fallback = !select_if_ready(VideoEncoderKind::vaapi, capabilities.vaapi);
+        if (capabilities.fallback)
+            capabilities.fallback_reason = "vaapi_runtime_not_ready";
         return capabilities;
     case VideoEncoderPreference::qsv:
         capabilities.fallback = !select_if_ready(VideoEncoderKind::qsv, capabilities.qsv);
+        if (capabilities.fallback)
+            capabilities.fallback_reason = "qsv_runtime_not_ready";
         return capabilities;
     case VideoEncoderPreference::nvenc:
         capabilities.fallback = !select_if_ready(VideoEncoderKind::nvenc, capabilities.nvenc);
+        if (capabilities.fallback)
+            capabilities.fallback_reason = "nvenc_runtime_not_ready";
         return capabilities;
     }
     capabilities.fallback = true;
+    capabilities.fallback_reason = "unknown_encoder_preference";
     return capabilities;
 }
 

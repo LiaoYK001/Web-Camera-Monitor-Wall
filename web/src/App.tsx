@@ -7,16 +7,18 @@ import {
   useRef,
   useState,
 } from 'react';
-import { connectSceneEvents, ControlApiError, fetchStudio, fetchStudioCapabilities, replaceStudio, studioAction } from './api';
+import { connectSceneEvents, ControlApiError, fetchCameras, fetchStudio, fetchStudioCapabilities, replaceStudio, studioAction } from './api';
 import DirectPreview from './DirectPreview';
+import CameraRegistry from './CameraRegistry';
 import NvrTimeline from './NvrTimeline';
 import ProgramPreview from './ProgramPreview';
-import type { AudioMonitoring, FilterKind, PlaybackMode, ScaleMode, SceneDocument, SceneFilter, SceneItem, SceneSource, StudioCapabilities, StudioDocument, Transport } from './types';
+import SystemStatus from './SystemStatus';
+import type { AudioMonitoring, CameraRecord, FilterKind, PlaybackMode, ScaleMode, SceneDocument, SceneFilter, SceneItem, SceneSource, StudioCapabilities, StudioDocument, Transport } from './types';
 
 type ConnectionState = 'connecting' | 'online' | 'offline';
 type WorkspaceMode = 'program' | 'layout';
 type PointerMode = 'move' | 'resize';
-type AddSourceKind = 'rtsp' | 'browser' | 'image' | 'media' | 'text' | 'color' | 'nested';
+type AddSourceKind = 'camera' | 'rtsp' | 'browser' | 'image' | 'media' | 'text' | 'color' | 'nested';
 
 interface PointerOperation {
   mode: PointerMode;
@@ -34,7 +36,7 @@ interface PointerOperation {
 const cloneScene = (scene: SceneDocument): SceneDocument => JSON.parse(JSON.stringify(scene)) as SceneDocument;
 const clamp = (value: number, minimum: number, maximum: number) =>
   Math.min(Math.max(value, minimum), maximum);
-const initialPlaybackMode = (): PlaybackMode => window.location.hash === '#direct' ? 'direct' : 'composite';
+const initialPlaybackMode = (): PlaybackMode => window.location.hash === '#composite' ? 'composite' : 'direct';
 
 function normalizeZIndexes(items: SceneItem[]): SceneItem[] {
   return [...items]
@@ -95,15 +97,15 @@ function EmptyState({ onAdd }: { onAdd: () => void }) {
   return (
     <div className="empty-state">
       <div className="empty-mark" aria-hidden="true">+</div>
-      <h2>添加第一路摄像头</h2>
-      <p>从 RTSP 来源开始构建监控墙。凭据只会写入受保护的本地场景文件。</p>
+      <h2>尚未添加摄像机</h2>
+      <p>优先从 Camera Registry 选择设备；场景只保存稳定 ID，不保存摄像机凭据。</p>
       <button className="primary-button" type="button" onClick={onAdd}>添加来源</button>
     </div>
   );
 }
 
 export default function App() {
-  const [productArea, setProductArea] = useState<'studio' | 'archive'>(window.location.hash === '#archive' ? 'archive' : 'studio');
+  const [productArea, setProductArea] = useState<'studio' | 'archive' | 'devices' | 'system'>(window.location.hash === '#archive' ? 'archive' : window.location.hash === '#devices' ? 'devices' : window.location.hash === '#system' ? 'system' : 'studio');
   const [baseline, setBaseline] = useState<SceneDocument | null>(null);
   const [draft, setDraft] = useState<SceneDocument | null>(null);
   const [studioBaseline, setStudioBaseline] = useState<StudioDocument | null>(null);
@@ -122,11 +124,16 @@ export default function App() {
   const [workspaceMode, setWorkspaceMode] = useState<WorkspaceMode>('program');
   const [playbackMode, setPlaybackMode] = useState<PlaybackMode>(initialPlaybackMode);
   const [canvasZoom, setCanvasZoom] = useState(1);
-  const [newKind, setNewKind] = useState<AddSourceKind>('rtsp');
+  const [newKind, setNewKind] = useState<AddSourceKind>('camera');
   const [newName, setNewName] = useState('新摄像头');
   const [newUrl, setNewUrl] = useState('');
   const [newTransport, setNewTransport] = useState<Transport>('tcp');
+  const [registryCameras, setRegistryCameras] = useState<CameraRecord[]>([]);
   const stageRef = useRef<HTMLDivElement>(null);
+  const monitorRef = useRef<HTMLDivElement>(null);
+  const wakeLockRef = useRef<{ release: () => Promise<void>; addEventListener: (type: 'release', listener: () => void) => void } | null>(null);
+  const [fullscreen, setFullscreen] = useState(false);
+  const [wakeLockState, setWakeLockState] = useState<'off' | 'active' | 'unsupported' | 'failed'>('off');
   const importRef = useRef<HTMLInputElement>(null);
   const pointerOperation = useRef<PointerOperation | null>(null);
   const baselineRef = useRef<SceneDocument | null>(null);
@@ -137,6 +144,15 @@ export default function App() {
     () => Boolean(studioBaseline && studioDraft && JSON.stringify(studioBaseline) !== JSON.stringify(studioDraft)),
     [studioBaseline, studioDraft],
   );
+
+  useEffect(() => {
+    if (!adding) return;
+    const controller = new AbortController();
+    fetchCameras(controller.signal)
+      .then((result) => setRegistryCameras(result.cameras))
+      .catch(() => setRegistryCameras([]));
+    return () => controller.abort();
+  }, [adding]);
 
   useEffect(() => {
     baselineRef.current = baseline;
@@ -161,6 +177,55 @@ export default function App() {
     );
     setSelectedSourceIds(scene.sources[0] ? [scene.sources[0].id] : []);
   }, []);
+
+  const requestWakeLock = useCallback(async () => {
+    if (!document.fullscreenElement || document.visibilityState !== 'visible') return;
+    if (wakeLockRef.current) return;
+    const wakeLock = (navigator as Navigator & { wakeLock?: { request: (type: 'screen') => Promise<{ release: () => Promise<void>; addEventListener: (type: 'release', listener: () => void) => void }> } }).wakeLock;
+    if (!wakeLock) { setWakeLockState('unsupported'); return; }
+    try {
+      const sentinel = await wakeLock.request('screen');
+      wakeLockRef.current = sentinel;
+      setWakeLockState('active');
+      sentinel.addEventListener('release', () => {
+        if (wakeLockRef.current === sentinel) {
+          wakeLockRef.current = null;
+          setWakeLockState('off');
+        }
+      });
+    } catch {
+      setWakeLockState('failed');
+    }
+  }, []);
+
+  useEffect(() => {
+    const fullscreenChanged = () => {
+      const active = document.fullscreenElement === monitorRef.current;
+      setFullscreen(active);
+      if (active) void requestWakeLock();
+      else {
+        void wakeLockRef.current?.release();
+        wakeLockRef.current = null;
+        setWakeLockState('off');
+      }
+    };
+    const visibilityChanged = () => {
+      if (document.visibilityState === 'visible' && document.fullscreenElement === monitorRef.current)
+        void requestWakeLock();
+    };
+    document.addEventListener('fullscreenchange', fullscreenChanged);
+    document.addEventListener('visibilitychange', visibilityChanged);
+    return () => {
+      document.removeEventListener('fullscreenchange', fullscreenChanged);
+      document.removeEventListener('visibilitychange', visibilityChanged);
+      void wakeLockRef.current?.release();
+    };
+  }, [requestWakeLock]);
+
+  const toggleFullscreen = async () => {
+    if (document.fullscreenElement) await document.exitFullscreen();
+    else await monitorRef.current?.requestFullscreen();
+  };
 
   const reload = useCallback(async () => {
     setLoadingError('');
@@ -204,7 +269,7 @@ export default function App() {
   useEffect(() => {
     const changed = () => {
       setPlaybackMode(initialPlaybackMode());
-      setProductArea(window.location.hash === '#archive' ? 'archive' : 'studio');
+      setProductArea(window.location.hash === '#archive' ? 'archive' : window.location.hash === '#devices' ? 'devices' : 'studio');
     };
     window.addEventListener('hashchange', changed);
     return () => window.removeEventListener('hashchange', changed);
@@ -212,7 +277,7 @@ export default function App() {
 
   const selectPlaybackMode = (mode: PlaybackMode) => {
     setPlaybackMode(mode);
-    window.history.replaceState(null, '', mode === 'direct' ? '#direct' : window.location.pathname);
+    window.history.replaceState(null, '', mode === 'composite' ? '#composite' : window.location.pathname);
   };
 
   const updateDraft = useCallback((update: (scene: SceneDocument) => SceneDocument) => {
@@ -333,7 +398,8 @@ export default function App() {
   };
 
   const addSource = () => {
-    const validValue = newKind === 'rtsp' ? /^rtsps?:\/\/\S+$/i.test(newUrl)
+    const validValue = newKind === 'camera' ? /^[a-zA-Z0-9._-]{1,64}\/[a-zA-Z0-9._-]{1,64}$/.test(newUrl)
+      : newKind === 'rtsp' ? /^rtsps?:\/\/\S+$/i.test(newUrl)
       : newKind === 'browser' ? /^https?:\/\/\S+$/i.test(newUrl)
         : newKind === 'image' || newKind === 'media' ? /^\/(assets|recordings)\/[^.\/][^\r\n]*$/i.test(newUrl)
           : newKind === 'color' ? /^#[0-9a-f]{6}$/i.test(newUrl)
@@ -353,7 +419,13 @@ export default function App() {
       id: sourceId, name: newName.trim(), muted: true, volume: 1, syncOffsetMs: 0,
       monitoring: 'off' as AudioMonitoring, audioTrack: 1, filters: [],
     };
-    const source: SceneSource = newKind === 'rtsp' ? {
+    const source: SceneSource = newKind === 'camera' ? {
+      ...base,
+      kind: 'camera',
+      cameraId: newUrl.split('/', 2)[0],
+      profileId: newUrl.split('/', 2)[1],
+      hardwareDecode: 'auto',
+    } : newKind === 'rtsp' ? {
       ...base,
       id: sourceId,
       kind: 'rtsp',
@@ -393,7 +465,7 @@ export default function App() {
     };
     updateDraft((scene) => ({ ...scene, sources: [...scene.sources, source], items: [...scene.items, item] }));
     setSelectedSourceId(sourceId);
-    setNewName(newKind === 'rtsp' ? '新摄像头' : '新来源');
+    setNewName(newKind === 'camera' || newKind === 'rtsp' ? '新摄像头' : '新来源');
     setNewUrl('');
     setNewTransport('tcp');
     setAdding(false);
@@ -631,6 +703,18 @@ export default function App() {
       setProductArea('studio');
     }} />;
   }
+  if (productArea === 'devices') {
+    return <CameraRegistry onBack={() => {
+      window.history.replaceState(null, '', window.location.pathname);
+      setProductArea('studio');
+    }} />;
+  }
+  if (productArea === 'system') {
+    return <SystemStatus onBack={() => {
+      window.history.replaceState(null, '', window.location.pathname);
+      setProductArea('studio');
+    }} />;
+  }
 
   if (!draft || !studioDraft) {
     return (
@@ -655,7 +739,8 @@ export default function App() {
     return (rightItem?.zIndex ?? -1) - (leftItem?.zIndex ?? -1);
   });
   const selectedCapability = studioCapabilities?.scenes.find((scene) => scene.sceneId === draft.id);
-  const newSourceValueValid = newKind === 'rtsp' ? /^rtsps?:\/\/\S+$/i.test(newUrl)
+  const newSourceValueValid = newKind === 'camera' ? /^[a-zA-Z0-9._-]{1,64}\/[a-zA-Z0-9._-]{1,64}$/.test(newUrl)
+    : newKind === 'rtsp' ? /^rtsps?:\/\/\S+$/i.test(newUrl)
     : newKind === 'browser' ? /^https?:\/\/\S+$/i.test(newUrl)
       : newKind === 'image' || newKind === 'media' ? /^\/(assets|recordings)\/[^.\/][^\r\n]*$/i.test(newUrl)
         : newKind === 'color' ? /^#[0-9a-f]{6}$/i.test(newUrl)
@@ -682,6 +767,14 @@ export default function App() {
           />
         </div>
         <div className="top-actions">
+          <button className="ghost-button" type="button" onClick={() => {
+            window.history.replaceState(null, '', '#system');
+            setProductArea('system');
+          }}>系统状态</button>
+          <button className="ghost-button" type="button" onClick={() => {
+            window.history.replaceState(null, '', '#devices');
+            setProductArea('devices');
+          }}>设备管理</button>
           <button className="ghost-button" type="button" onClick={() => {
             window.history.replaceState(null, '', '#archive');
             setProductArea('archive');
@@ -801,7 +894,7 @@ export default function App() {
                   <span className="source-index">{String(index + 1).padStart(2, '0')}</span>
                   <span className="source-copy">
                     <strong>{source.name}</strong>
-                    <small>{source.kind === 'rtsp' ? source.transport.toUpperCase() : source.kind.toUpperCase()} · {item?.visible === false ? '已隐藏' : '画布中'}</small>
+                    <small>{source.kind === 'rtsp' ? source.transport.toUpperCase() : source.kind === 'camera' ? 'REGISTRY' : source.kind.toUpperCase()} · {item?.visible === false ? '已隐藏' : '画布中'}</small>
                   </span>
                   <span className={`source-state ${item?.visible === false ? 'hidden' : ''}`} aria-hidden="true" />
                 </button>
@@ -816,9 +909,10 @@ export default function App() {
                 <select value={newKind} onChange={(event) => {
                   const kind = event.target.value as AddSourceKind;
                   setNewKind(kind);
-                  setNewName(kind === 'rtsp' ? '新摄像头' : `新${{ browser: '网页', image: '图片', media: '媒体', text: '文字', color: '色块', nested: '嵌套场景' }[kind]}`);
+                  setNewName(kind === 'camera' || kind === 'rtsp' ? '新摄像头' : `新${{ browser: '网页', image: '图片', media: '媒体', text: '文字', color: '色块', nested: '嵌套场景' }[kind]}`);
                   setNewUrl(kind === 'color' ? '#2563eb' : '');
                 }}>
+                  <option value="camera">Camera Registry（推荐）</option>
                   <option value="rtsp">RTSP 摄像头</option>
                   <option value="browser">浏览器网页</option>
                   <option value="image">图片素材</option>
@@ -832,7 +926,22 @@ export default function App() {
                 <span>显示名称</span>
                 <input value={newName} maxLength={128} onChange={(event) => setNewName(event.target.value)} />
               </label>
-              {newKind === 'nested' ? (
+              {newKind === 'camera' ? (
+                <label className="field"><span>设备与码流 Profile</span><select value={newUrl} onChange={(event) => {
+                  const value = event.target.value;
+                  setNewUrl(value);
+                  const [cameraId] = value.split('/', 1);
+                  const camera = registryCameras.find((candidate) => candidate.id === cameraId);
+                  if (camera) setNewName(camera.name);
+                }}>
+                  <option value="">选择已登记设备…</option>
+                  {registryCameras.flatMap((camera) => camera.profiles.map((profile) => (
+                    <option key={`${camera.id}/${profile.id}`} value={`${camera.id}/${profile.id}`}>
+                      {camera.name} · {profile.role} · {profile.videoCodec || 'unknown'} {profile.width ? `${profile.width}×${profile.height}` : ''}
+                    </option>
+                  )))}
+                </select>{registryCameras.length === 0 && <small>请先进入“设备管理”添加或发现摄像机。</small>}</label>
+              ) : newKind === 'nested' ? (
                 <label className="field"><span>嵌套场景</span><select value={newUrl} onChange={(event) => setNewUrl(event.target.value)}>
                   <option value="">选择场景…</option>
                   {studioDraft.scenes.filter((scene) => scene.id !== draft.id).map((scene) => <option key={scene.id} value={scene.id}>{scene.name}</option>)}
@@ -867,7 +976,8 @@ export default function App() {
               )}
               <p className="security-note">{newKind === 'rtsp'
                 ? '凭据不会由 API 回显。请勿在共享屏幕或浏览器同步中保存真实地址。'
-                : newKind === 'browser' ? '只允许管理员批准的网页 Origin；私网地址还需显式启用。'
+                : newKind === 'camera' ? 'Scene 只保存 cameraId/profileId；账号密码由容器 Secret 引用在内部解析。'
+                  : newKind === 'browser' ? '只允许管理员批准的网页 Origin；私网地址还需显式启用。'
                   : newKind === 'image' || newKind === 'media' ? '素材路径仅允许 /assets 或 /recordings，拒绝目录穿越。'
                     : newKind === 'nested' ? '嵌套深度最多两级，循环引用会由服务器拒绝。'
                       : '该来源由 libobs 在容器内生成，不会加载外部网络内容。'}</p>
@@ -904,6 +1014,7 @@ export default function App() {
               <span>渲染路径</span>
               <button className={playbackMode === 'composite' ? 'active' : ''} type="button" onClick={() => selectPlaybackMode('composite')}>服务端合成</button>
               <button className={playbackMode === 'direct' ? 'active' : ''} type="button" onClick={() => selectPlaybackMode('direct')}>浏览器直达</button>
+              <button type="button" onClick={() => void toggleFullscreen()}>真全屏</button>
             </div>
           )}
           {workspaceMode === 'layout' && <div className="canvas-tools" aria-label="画布工具">
@@ -916,7 +1027,15 @@ export default function App() {
               <button type="button" key={operation} disabled={selectedSourceIds.length < 2} onClick={() => transformSelection(operation)}>{label}</button>)}
             <button type="button" disabled={selectedSourceIds.length < 2} onClick={groupSelection}>成组</button>
           </div>}
-          <div className="stage-wrap">
+          <div className="stage-wrap" ref={monitorRef} data-fullscreen={fullscreen ? 'true' : 'false'}>
+            {workspaceMode === 'program' && fullscreen && (
+              <div className="monitor-overlay">
+                <button type="button" onClick={() => void toggleFullscreen()}>退出全屏</button>
+                <button type="button" onClick={() => void document.exitFullscreen().then(() => setWorkspaceMode('layout'))}>布局编辑</button>
+                <span>{playbackMode === 'direct' ? 'Direct' : 'Composite'}</span>
+                <span>{wakeLockState === 'active' ? '● 屏幕常亮' : wakeLockState === 'unsupported' ? '⚠ 不支持防休眠' : wakeLockState === 'failed' ? '⚠ 防休眠申请失败' : '屏幕常亮待申请'}</span>
+              </div>
+            )}
             {workspaceMode === 'program' ? (
               playbackMode === 'composite'
                 ? <ProgramPreview aspectRatio={`${draft.canvas.width} / ${draft.canvas.height}`} />
@@ -959,7 +1078,8 @@ export default function App() {
                       <div className="tile-noise" aria-hidden="true" />
                       <span className="tile-tag">{source.kind === 'rtsp'
                         ? `RTSP · ${source.transport.toUpperCase()}`
-                        : source.kind === 'browser' ? `BROWSER · ${source.width}×${source.height}`
+                        : source.kind === 'camera' ? `CAMERA · ${source.profileId}`
+                          : source.kind === 'browser' ? `BROWSER · ${source.width}×${source.height}`
                           : source.kind.toUpperCase()}</span>
                       <div className="tile-caption">
                         <strong>{source.name}</strong>
@@ -1023,6 +1143,15 @@ export default function App() {
                         <option value="udp">UDP</option>
                       </select>
                     </label>
+                  </>
+                ) : selectedSource.kind === 'camera' ? (
+                  <>
+                    <label className="field"><span>Camera ID</span><input value={selectedSource.cameraId} readOnly /></label>
+                    <label className="field"><span>Profile ID</span><input value={selectedSource.profileId} readOnly /></label>
+                    <label className="field"><span>硬件解码</span><select value={selectedSource.hardwareDecode} onChange={(event) => updateSource(selectedSource.id, { hardwareDecode: event.target.value as 'auto' | 'on' | 'off' })}>
+                      <option value="auto">自动（推荐）</option><option value="on">优先硬件</option><option value="off">关闭</option>
+                    </select></label>
+                    <p className="security-note">端点和凭据由 Camera Registry 内部解析；要切换设备或 Profile，请移除此来源后重新选择。</p>
                   </>
                 ) : selectedSource.kind === 'browser' ? (
                   <>

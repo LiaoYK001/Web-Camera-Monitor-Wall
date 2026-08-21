@@ -280,6 +280,14 @@ std::optional<std::string> validate_scene_document(const SceneDocument &document
                 return "source transport must be tcp or udp";
             if (!source.browser_url.empty() || !source.browser_css.empty())
                 return "RTSP source must not contain browser-only settings";
+        } else if (source.kind == "camera") {
+            if (!valid_identifier(source.camera_id) || !valid_identifier(source.profile_id))
+                return "camera source cameraId and profileId must be valid identifiers";
+            if (source.hardware_decode != "auto" && source.hardware_decode != "on" &&
+                source.hardware_decode != "off")
+                return "camera source hardwareDecode must be auto, on, or off";
+            if (!source.rtsp_url.empty() || !source.browser_url.empty())
+                return "camera source must not contain a raw URL";
         } else if (source.kind == "browser") {
             ++browser_source_count;
             if (!parse_browser_url(source.browser_url).ok())
@@ -308,7 +316,7 @@ std::optional<std::string> validate_scene_document(const SceneDocument &document
             if (!valid_identifier(source.nested_scene_id))
                 return "nested source sceneId is invalid";
         } else {
-            return "source kind must be rtsp, browser, image, text, color, media, or nested";
+            return "source kind must be camera, rtsp, browser, image, text, color, media, or nested";
         }
         if (!std::isfinite(source.volume) || source.volume < 0.0 || source.volume > 1.0)
             return "source volume must be between 0 and 1";
@@ -445,6 +453,16 @@ SceneParseResult parse_scene_json(std::string_view input)
                 return parse_failure("RTSP source contains an unsupported field");
             if (!read_string(source_object, "rtspUrl", source.rtsp_url, 2048, error, "source") ||
                 !read_string(source_object, "transport", source.transport, 4, error, "source"))
+                return parse_failure(std::move(error));
+        } else if (source.kind == "camera") {
+            if (!has_only_fields(source_object,
+                                 {"id", "kind", "name", "cameraId", "profileId", "hardwareDecode",
+                                  "muted", "volume", "syncOffsetMs", "monitoring", "audioTrack", "filters"}))
+                return parse_failure("camera source contains an unsupported field");
+            source.transport.clear();
+            if (!read_string(source_object, "cameraId", source.camera_id, 64, error, "source") ||
+                !read_string(source_object, "profileId", source.profile_id, 64, error, "source") ||
+                !read_string(source_object, "hardwareDecode", source.hardware_decode, 4, error, "source"))
                 return parse_failure(std::move(error));
         } else if (source.kind == "browser") {
             if (!has_only_fields(source_object,
@@ -633,6 +651,14 @@ SceneSerializeResult serialize_scene_json(const SceneDocument &document, SceneJs
                 !set_new(object.get(), "transport",
                          json_stringn(source.transport.data(), source.transport.size())))
                 return serialize_failure("could not build RTSP source JSON");
+        } else if (source.kind == "camera") {
+            if (!set_new(object.get(), "cameraId",
+                         json_stringn(source.camera_id.data(), source.camera_id.size())) ||
+                !set_new(object.get(), "profileId",
+                         json_stringn(source.profile_id.data(), source.profile_id.size())) ||
+                !set_new(object.get(), "hardwareDecode",
+                         json_stringn(source.hardware_decode.data(), source.hardware_decode.size())))
+                return serialize_failure("could not build camera source JSON");
         } else if (source.kind == "browser") {
             const std::string safe_url = view == SceneJsonView::public_api
                                              ? redact_browser_url(source.browser_url)

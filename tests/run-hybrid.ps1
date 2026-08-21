@@ -124,7 +124,7 @@ try {
             $H264 = $Capabilities.sources | Where-Object sourceId -eq 'camera-h264'
             $Hevc = $Capabilities.sources | Where-Object sourceId -eq 'camera-hevc'
             if ($H264.strategy -eq 'passthrough' -and $H264.codec -eq 'h264' -and
-                $Hevc.strategy -eq 'transcode' -and $Hevc.codec -eq 'hevc') {
+                $Hevc.strategy -eq 'hybrid' -and $Hevc.codec -eq 'hevc') {
                 $Classified = $true
                 break
             }
@@ -134,7 +134,7 @@ try {
         "$($_.sourceId)=$($_.strategy)/$($_.codec)"
     }) -join ', '
     Assert-True $Classified `
-        "M3 did not classify H.264 as passthrough and HEVC as transcode ($ClassificationSummary)."
+        "M3 did not classify H.264 as passthrough and HEVC as Hybrid ($ClassificationSummary)."
     Start-Sleep -Seconds 12
     Assert-True (-not $ChromeProcess.HasExited) 'Headless Chrome exited before Hybrid playback completed.'
 

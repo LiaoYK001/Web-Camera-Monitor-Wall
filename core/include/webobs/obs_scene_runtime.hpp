@@ -37,7 +37,8 @@ class ObsSceneRuntime {
 public:
     ObsSceneRuntime(int connect_timeout_seconds, BrowserSecurityPolicy browser_security,
                     int source_stale_seconds, int source_recovery_base_seconds,
-                    int source_recovery_max_seconds);
+                    int source_recovery_max_seconds, bool hardware_decode_enabled,
+                    bool runtime_enabled = true);
     ~ObsSceneRuntime();
 
     ObsSceneRuntime(const ObsSceneRuntime &) = delete;

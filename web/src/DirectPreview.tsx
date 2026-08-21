@@ -82,6 +82,14 @@ function DirectTile({ item, source, capability, mixer }: {
         })}
       />
       <span className="direct-tile-state"><i aria-hidden="true" />{labels[state]}</span>
+      {capability && capability.strategy !== 'unknown' && (
+        <div className={`delivery-diagnostic cost-${capability.serverCost ?? 'low'}`}>
+          <strong>{capability.deliveryMode === 'hybrid' ? 'HYBRID' : 'DIRECT PASSTHROUGH'}</strong>
+          <span>Video: {capability.videoDelivery ?? 'copy'} · Audio: {capability.audioDelivery ?? 'copy'}</span>
+          <span>Server decode: {capability.serverVideoDecode ? 'ON' : 'OFF'} · encode: {capability.encoder ?? 'none'}</span>
+          {capability.reason && <span>Reason: {capability.reason}</span>}
+        </div>
+      )}
       {source.kind === 'browser'
         ? <span className="direct-tile-name">{source.name} · 仅服务端合成</span>
         : state !== 'live' && <span className="direct-tile-name">{source.name}</span>}
@@ -167,7 +175,7 @@ export default function DirectPreview({ scene }: { scene: SceneDocument }) {
               </div>
             );
           })}
-        {!available && <div className="direct-preview-unavailable">Direct WebRTC 当前不可用，请切换到服务端合成。</div>}
+        {!available && <div className="direct-preview-unavailable">Direct WebRTC 当前不可用；请检查网关状态或显式启用 Composite。</div>}
       </div>
     </div>
   );

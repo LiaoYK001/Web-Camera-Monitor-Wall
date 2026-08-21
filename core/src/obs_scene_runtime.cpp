@@ -3,6 +3,8 @@
 #include "webobs/audit_event.hpp"
 
 #include <obs.h>
+#include <curl/curl.h>
+#include <jansson.h>
 #include <callback/calldata.h>
 #include <graphics/vec2.h>
 
@@ -141,6 +143,9 @@ bool connection_matches(const SceneSource &left, const SceneSource &right)
         return false;
     if (left.kind == "rtsp")
         return left.rtsp_url == right.rtsp_url && left.transport == right.transport;
+    if (left.kind == "camera")
+        return left.camera_id == right.camera_id && left.profile_id == right.profile_id &&
+               left.hardware_decode == right.hardware_decode;
     if (left.kind == "browser")
         return left.browser_url == right.browser_url && left.browser_width == right.browser_width &&
                left.browser_height == right.browser_height && left.browser_fps == right.browser_fps &&
@@ -149,6 +154,58 @@ bool connection_matches(const SceneSource &left, const SceneSource &right)
                left.restart_when_active == right.restart_when_active && left.filters == right.filters;
     return left.file_path == right.file_path && left.text == right.text && left.color == right.color &&
            left.loop == right.loop && left.filters == right.filters;
+}
+
+struct ResolvedCameraSource {
+    std::string endpoint;
+    std::string adapter;
+    std::string hardware_decode;
+};
+
+std::optional<ResolvedCameraSource> resolve_camera_source(const SceneSource &source)
+{
+    std::string body;
+    CURL *handle = curl_easy_init();
+    if (!handle)
+        return std::nullopt;
+    const std::string url = "http://127.0.0.1:8092/resolve/" + source.camera_id + "/" + source.profile_id;
+    const auto write = [](char *data, std::size_t size, std::size_t count, void *context) -> std::size_t {
+        const std::size_t bytes = size * count;
+        auto &output = *static_cast<std::string *>(context);
+        if (bytes > 8192 || output.size() > 8192 - bytes)
+            return 0;
+        output.append(data, bytes);
+        return bytes;
+    };
+    curl_easy_setopt(handle, CURLOPT_URL, url.c_str());
+    curl_easy_setopt(handle, CURLOPT_PROTOCOLS_STR, "http");
+    curl_easy_setopt(handle, CURLOPT_CONNECTTIMEOUT_MS, 1000L);
+    curl_easy_setopt(handle, CURLOPT_TIMEOUT_MS, 3000L);
+    curl_easy_setopt(handle, CURLOPT_NOSIGNAL, 1L);
+    curl_easy_setopt(handle, CURLOPT_WRITEFUNCTION, +write);
+    curl_easy_setopt(handle, CURLOPT_WRITEDATA, &body);
+    const CURLcode code = curl_easy_perform(handle);
+    long status = 0;
+    if (code == CURLE_OK)
+        curl_easy_getinfo(handle, CURLINFO_RESPONSE_CODE, &status);
+    curl_easy_cleanup(handle);
+    if (code != CURLE_OK || status != 200)
+        return std::nullopt;
+    json_error_t error{};
+    json_t *root = json_loadb(body.data(), body.size(), JSON_REJECT_DUPLICATES, &error);
+    if (!root || !json_is_object(root)) {
+        json_decref(root);
+        return std::nullopt;
+    }
+    json_t *endpoint = json_object_get(root, "endpoint");
+    json_t *adapter = json_object_get(root, "adapter");
+    json_t *hardware = json_object_get(root, "hardwareDecode");
+    std::optional<ResolvedCameraSource> result;
+    if (json_is_string(endpoint) && json_is_string(adapter) && json_is_string(hardware))
+        result = ResolvedCameraSource{json_string_value(endpoint), json_string_value(adapter),
+                                      json_string_value(hardware)};
+    json_decref(root);
+    return result;
 }
 
 std::uint32_t obs_color(std::string_view color)
@@ -276,7 +333,7 @@ std::optional<std::string> validate_browser_destination(const SceneSource &sourc
 }
 
 SourceEntry create_source_entry(const SceneSource &configuration, int connect_timeout_seconds,
-                                const RuntimeState *current)
+                                const RuntimeState *current, bool hardware_decode_enabled)
 {
     if (current) {
         const auto existing = current->sources.find(configuration.id);
@@ -293,18 +350,38 @@ SourceEntry create_source_entry(const SceneSource &configuration, int connect_ti
     DataPtr settings(obs_data_create());
     if (!settings)
         return {};
-    if (configuration.kind == "rtsp") {
+    if (configuration.kind == "rtsp" || configuration.kind == "camera") {
+        std::string input = configuration.rtsp_url;
+        std::string adapter = "rtsp";
+        std::string decode_override = "auto";
+        if (configuration.kind == "camera") {
+            const auto resolved = resolve_camera_source(configuration);
+            if (!resolved)
+                return {};
+            input = resolved->endpoint;
+            adapter = resolved->adapter;
+            decode_override = configuration.hardware_decode == "auto"
+                                  ? resolved->hardware_decode : configuration.hardware_decode;
+        }
+        // A per-camera "on" preference must not bypass the runtime capability
+        // probe. The resolved global flag is false when VA-API initialization
+        // failed, so every requested hardware path safely falls back to FFmpeg's
+        // software decoder instead of failing the source outright.
+        const bool source_hardware_decode = decode_override != "off" && hardware_decode_enabled;
         obs_data_set_bool(settings.get(), "is_local_file", false);
-        obs_data_set_string(settings.get(), "input", configuration.rtsp_url.c_str());
-        obs_data_set_string(settings.get(), "input_format", "rtsp");
+        obs_data_set_string(settings.get(), "input", input.c_str());
+        if (adapter == "rtsp")
+            obs_data_set_string(settings.get(), "input_format", "rtsp");
         obs_data_set_bool(settings.get(), "restart_on_activate", true);
         obs_data_set_bool(settings.get(), "close_when_inactive", false);
-        obs_data_set_bool(settings.get(), "hw_decode", false);
+        obs_data_set_bool(settings.get(), "hw_decode", source_hardware_decode);
         obs_data_set_int(settings.get(), "buffering_mb", 2);
         const long long timeout_microseconds =
             static_cast<long long>(connect_timeout_seconds) * 1000000LL;
-        const std::string options =
-            "rtsp_transport=" + configuration.transport + " timeout=" + std::to_string(timeout_microseconds);
+        const std::string transport = configuration.kind == "rtsp" ? configuration.transport : "tcp";
+        const std::string options = adapter == "rtsp"
+            ? "rtsp_transport=" + transport + " timeout=" + std::to_string(timeout_microseconds)
+            : "rw_timeout=" + std::to_string(timeout_microseconds);
         obs_data_set_string(settings.get(), "ffmpeg_options", options.c_str());
     } else if (configuration.kind == "browser") {
         obs_data_set_string(settings.get(), "url", configuration.browser_url.c_str());
@@ -325,7 +402,7 @@ SourceEntry create_source_entry(const SceneSource &configuration, int connect_ti
         obs_data_set_bool(settings.get(), "looping", configuration.loop);
         obs_data_set_bool(settings.get(), "restart_on_activate", true);
         obs_data_set_bool(settings.get(), "close_when_inactive", false);
-        obs_data_set_bool(settings.get(), "hw_decode", false);
+        obs_data_set_bool(settings.get(), "hw_decode", hardware_decode_enabled);
     } else if (configuration.kind == "color") {
         obs_data_set_int(settings.get(), "color", obs_color(configuration.color));
         obs_data_set_int(settings.get(), "width", 1920);
@@ -349,7 +426,7 @@ SourceEntry create_source_entry(const SceneSource &configuration, int connect_ti
     entry.configuration = configuration;
     entry.status = std::make_shared<SourceStatus>();
     const std::string internal_name = "WebOBS " + configuration.kind + " " + configuration.id;
-    const char *source_type = configuration.kind == "rtsp" || configuration.kind == "media"
+    const char *source_type = configuration.kind == "rtsp" || configuration.kind == "camera" || configuration.kind == "media"
                                   ? "ffmpeg_source"
                               : configuration.kind == "browser" ? "browser_source"
                               : configuration.kind == "image"   ? "image_source"
@@ -366,10 +443,10 @@ SourceEntry create_source_entry(const SceneSource &configuration, int connect_ti
         entry.status.reset();
         return entry;
     }
-    if (configuration.kind == "rtsp")
+    if (configuration.kind == "rtsp" || configuration.kind == "camera")
         signal_handler_connect(obs_source_get_signal_handler(entry.source.get()), "media_started",
                                on_source_started, entry.status.get());
-    if (configuration.kind == "rtsp") {
+    if (configuration.kind == "rtsp" || configuration.kind == "camera") {
         DataPtr filter_settings(obs_data_create());
         if (!filter_settings) {
             entry.source.reset();
@@ -582,7 +659,7 @@ bool source_ready(const SourceEntry &entry)
 
 bool observe_latest_frame(SourceEntry &entry, std::chrono::steady_clock::time_point now)
 {
-    if (!entry.source || entry.configuration.kind != "rtsp")
+    if (!entry.source || (entry.configuration.kind != "rtsp" && entry.configuration.kind != "camera"))
         return false;
     const std::uint64_t frame_count = entry.status->frame_count.load(std::memory_order_relaxed);
     if (frame_count == entry.status->last_observed_frame_count)
@@ -611,7 +688,7 @@ std::string source_health_state(const SourceEntry &entry, bool visible,
 {
     if (!visible)
         return "idle";
-    if (entry.configuration.kind != "rtsp") {
+    if (entry.configuration.kind != "rtsp" && entry.configuration.kind != "camera") {
         if (source_ready(entry))
             return "healthy";
         if (entry.status->activated_at != std::chrono::steady_clock::time_point{} &&
@@ -631,7 +708,7 @@ std::string source_health_state(const SourceEntry &entry, bool visible,
 
 bool prime_source_frame(SourceEntry &entry)
 {
-    if (entry.configuration.kind != "rtsp")
+    if (entry.configuration.kind != "rtsp" && entry.configuration.kind != "camera")
         return source_ready(entry);
     if (entry.frame_primed)
         return source_ready(entry);
@@ -665,10 +742,11 @@ void release_prewarmed_sources(RuntimeState *state)
 
 struct ObsSceneRuntime::Impl {
     Impl(int timeout, BrowserSecurityPolicy policy, int stale_seconds, int recovery_base_seconds,
-         int recovery_max_seconds)
+         int recovery_max_seconds, bool hardware_decode, bool runtime)
         : connect_timeout_seconds(timeout), browser_security(std::move(policy)),
           source_stale_seconds(stale_seconds), source_recovery_base_seconds(recovery_base_seconds),
-          source_recovery_max_seconds(recovery_max_seconds)
+          source_recovery_max_seconds(recovery_max_seconds), hardware_decode_enabled(hardware_decode),
+          runtime_enabled(runtime)
     {
     }
 
@@ -678,6 +756,9 @@ struct ObsSceneRuntime::Impl {
     int source_stale_seconds;
     int source_recovery_base_seconds;
     int source_recovery_max_seconds;
+    bool hardware_decode_enabled;
+    bool runtime_enabled;
+    bool disabled_prepared = false;
     std::uint64_t total_restarts = 0;
     bool active = false;
     std::unique_ptr<RuntimeState> current;
@@ -687,12 +768,15 @@ struct ObsSceneRuntime::Impl {
 
 ObsSceneRuntime::ObsSceneRuntime(int connect_timeout_seconds, BrowserSecurityPolicy browser_security,
                                  int source_stale_seconds, int source_recovery_base_seconds,
-                                 int source_recovery_max_seconds)
+                                 int source_recovery_max_seconds, bool hardware_decode_enabled,
+                                 bool runtime_enabled)
     : impl_(std::make_unique<Impl>(connect_timeout_seconds, std::move(browser_security),
                                   source_stale_seconds, source_recovery_base_seconds,
-                                  source_recovery_max_seconds))
+                                  source_recovery_max_seconds, hardware_decode_enabled,
+                                  runtime_enabled))
 {
-    register_source_health_filter();
+    if (runtime_enabled)
+        register_source_health_filter();
 }
 
 ObsSceneRuntime::~ObsSceneRuntime()
@@ -704,8 +788,17 @@ std::optional<std::string> ObsSceneRuntime::prepare(const SceneDocument &documen
 {
     std::lock_guard lock(impl_->mutex);
     impl_->prepared.reset();
+    impl_->disabled_prepared = false;
     if (const auto validation_error = validate_scene_document(document))
         return validation_error;
+    if (!impl_->runtime_enabled) {
+        for (const SceneSource &source : document.sources) {
+            if (const auto browser_error = validate_browser_destination(source, impl_->browser_security))
+                return "browser source " + source.id + " rejected: " + *browser_error;
+        }
+        impl_->disabled_prepared = true;
+        return std::nullopt;
+    }
     if (impl_->current && (impl_->current->document.canvas.width != document.canvas.width ||
                            impl_->current->document.canvas.height != document.canvas.height))
         return "canvas dimensions cannot change while the OBS video runtime is active";
@@ -727,7 +820,8 @@ std::optional<std::string> ObsSceneRuntime::prepare(const SceneDocument &documen
         if (const auto browser_error = validate_browser_destination(source, impl_->browser_security))
             return "browser source " + source.id + " rejected: " + *browser_error;
         SourceEntry entry =
-            create_source_entry(source, impl_->connect_timeout_seconds, impl_->current.get());
+            create_source_entry(source, impl_->connect_timeout_seconds, impl_->current.get(),
+                                impl_->hardware_decode_enabled);
         if (!entry.source)
             return "could not create OBS " + source.kind + " source " + source.id;
         candidate->sources.emplace(source.id, std::move(entry));
@@ -775,12 +869,15 @@ std::optional<std::string> ObsSceneRuntime::prepare(const SceneDocument &documen
 bool ObsSceneRuntime::has_prepared() const
 {
     std::lock_guard lock(impl_->mutex);
-    return impl_->prepared != nullptr;
+    return impl_->prepared != nullptr || impl_->disabled_prepared;
 }
 
 std::optional<std::string> ObsSceneRuntime::wait_prepared_visible_sources()
 {
     std::lock_guard lock(impl_->mutex);
+    if (!impl_->runtime_enabled)
+        return impl_->disabled_prepared ? std::nullopt :
+               std::optional<std::string>("no scene replacement is prepared");
     if (!impl_->prepared)
         return "no OBS scene replacement is prepared";
 
@@ -813,6 +910,7 @@ void ObsSceneRuntime::discard_prepared()
 {
     std::lock_guard lock(impl_->mutex);
     impl_->prepared.reset();
+    impl_->disabled_prepared = false;
 }
 
 void ObsSceneRuntime::commit_prepared()
@@ -823,6 +921,10 @@ void ObsSceneRuntime::commit_prepared()
 void ObsSceneRuntime::commit_prepared(std::string_view transition_kind, int duration_ms)
 {
     std::lock_guard lock(impl_->mutex);
+    if (!impl_->runtime_enabled) {
+        impl_->disabled_prepared = false;
+        return;
+    }
     if (!impl_->prepared)
         return;
     for (const auto &[id, entry] : impl_->prepared->sources) {
@@ -891,6 +993,8 @@ void ObsSceneRuntime::commit_prepared(std::string_view transition_kind, int dura
 void ObsSceneRuntime::activate()
 {
     std::lock_guard lock(impl_->mutex);
+    if (!impl_->runtime_enabled)
+        return;
     if (impl_->active)
         return;
     impl_->active = true;
@@ -903,6 +1007,8 @@ void ObsSceneRuntime::deactivate()
     if (!impl_)
         return;
     std::lock_guard lock(impl_->mutex);
+    if (!impl_->runtime_enabled)
+        return;
     if (!impl_->active)
         return;
     obs_set_output_source(0, nullptr);
@@ -914,12 +1020,16 @@ void ObsSceneRuntime::deactivate()
 std::size_t ObsSceneRuntime::visible_source_count() const
 {
     std::lock_guard lock(impl_->mutex);
+    if (!impl_->runtime_enabled)
+        return 0;
     return visible_source_ids(impl_->current.get()).size();
 }
 
 std::size_t ObsSceneRuntime::ready_visible_source_count() const
 {
     std::lock_guard lock(impl_->mutex);
+    if (!impl_->runtime_enabled)
+        return 0;
     const auto visible = visible_source_ids(impl_->current.get());
     return static_cast<std::size_t>(std::count_if(visible.begin(), visible.end(), [this](const std::string &id) {
         const auto source = impl_->current->sources.find(id);
@@ -930,6 +1040,8 @@ std::size_t ObsSceneRuntime::ready_visible_source_count() const
 std::vector<std::string> ObsSceneRuntime::pending_visible_source_ids() const
 {
     std::lock_guard lock(impl_->mutex);
+    if (!impl_->runtime_enabled)
+        return {};
     std::vector<std::string> result;
     const auto visible = visible_source_ids(impl_->current.get());
     for (const std::string &id : visible) {
@@ -944,6 +1056,8 @@ std::vector<std::string> ObsSceneRuntime::pending_visible_source_ids() const
 void ObsSceneRuntime::maintain_source_health()
 {
     std::lock_guard lock(impl_->mutex);
+    if (!impl_->runtime_enabled)
+        return;
     if (!impl_->current || !impl_->active)
         return;
     const auto now = std::chrono::steady_clock::now();
@@ -963,7 +1077,7 @@ void ObsSceneRuntime::maintain_source_health()
                 "source_health", "unavailable", {{"source_id", id}, {"source_kind", entry.configuration.kind}});
             blog(LOG_WARNING, "%s", event.c_str());
         }
-        if (entry.configuration.kind != "rtsp" ||
+        if ((entry.configuration.kind != "rtsp" && entry.configuration.kind != "camera") ||
             (entry.status->next_recovery_at != std::chrono::steady_clock::time_point{} &&
              now < entry.status->next_recovery_at))
             continue;
@@ -993,6 +1107,8 @@ SourceHealthSnapshot ObsSceneRuntime::source_health_snapshot() const
 {
     std::lock_guard lock(impl_->mutex);
     SourceHealthSnapshot snapshot;
+    if (!impl_->runtime_enabled)
+        return snapshot;
     snapshot.total_restarts = impl_->total_restarts;
     if (!impl_->current)
         return snapshot;

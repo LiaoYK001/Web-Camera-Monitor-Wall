@@ -6,6 +6,8 @@ services:
       WEBOBS_AUTH_PASSWORD_FILE: /run/secrets/webobs_auth_password
       WEBOBS_AUTH_FAILURE_LIMIT: ${WEBOBS_AUTH_FAILURE_LIMIT:-5}
       WEBOBS_AUTH_FAILURE_WINDOW_SECONDS: ${WEBOBS_AUTH_FAILURE_WINDOW_SECONDS:-60}
+      # Loopback-only HTTP compatibility. Production HTTPS keeps Secure=true.
+      WEBOBS_SESSION_COOKIE_SECURE: "false"
       WEBOBS_CONTROL_ALLOWED_ORIGINS: ${WEBOBS_CONTROL_ALLOWED_ORIGINS:-}
     secrets:
       - webobs_auth_username

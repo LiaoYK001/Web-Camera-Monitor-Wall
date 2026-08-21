@@ -9,7 +9,7 @@
 
 namespace webobs {
 
-inline constexpr int current_scene_schema_version = 4;
+inline constexpr int current_scene_schema_version = 5;
 inline constexpr std::size_t maximum_scene_json_bytes = 1024 * 1024;
 inline constexpr std::size_t maximum_scene_sources = 64;
 inline constexpr std::size_t maximum_browser_sources = 8;
@@ -40,6 +40,9 @@ struct SceneSource {
     std::string name;
     std::string rtsp_url;
     std::string transport = "tcp";
+    std::string camera_id;
+    std::string profile_id;
+    std::string hardware_decode = "auto";
     std::string browser_url;
     int browser_width = 1280;
     int browser_height = 720;

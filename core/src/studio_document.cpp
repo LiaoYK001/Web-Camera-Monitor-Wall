@@ -354,7 +354,7 @@ SceneCapability analyze_scene_capability(const SceneDocument &document,
     if (requested == PlaybackCompositionMode::composite)
         return result;
     for (const SceneSource &source : document.sources) {
-        if (source.kind != "rtsp")
+        if (source.kind != "rtsp" && source.kind != "camera")
             result.reasons.push_back(source.id + ": source kind requires Composite");
         if (!source.filters.empty())
             result.reasons.push_back(source.id + ": ordered filters require Composite");

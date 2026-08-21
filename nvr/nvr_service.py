@@ -23,6 +23,7 @@ import subprocess
 import threading
 import time
 import urllib.parse
+import urllib.request
 import uuid
 from dataclasses import dataclass, field
 from typing import Any
@@ -130,7 +131,8 @@ def validate_config(value: Any) -> dict[str, Any]:
     for raw in cameras:
         allowed = {
             "id", "name", "policy", "mainUrl", "subUrl", "stream", "mode", "transport",
-            "segmentSeconds", "maxAgeHours", "maxBytes", "preEventSeconds", "schedule",
+            "cameraId", "mainProfileId", "subProfileId", "segmentSeconds", "maxAgeHours",
+            "maxBytes", "preEventSeconds", "schedule",
         }
         if not isinstance(raw, dict) or set(raw) - allowed:
             raise ConfigError("camera configuration contains unsupported fields")
@@ -147,18 +149,40 @@ def validate_config(value: Any) -> dict[str, Any]:
         transport = raw.get("transport", "tcp")
         if policy not in POLICIES or stream not in STREAMS or mode not in MODES or transport not in {"tcp", "udp"}:
             raise ConfigError("camera policy, stream, mode, or transport is invalid")
-        main_url = safe_rtsp(raw.get("mainUrl"), "mainUrl")
-        sub_url = raw.get("subUrl", "")
-        if sub_url:
-            sub_url = safe_rtsp(sub_url, "subUrl")
-        if stream == "sub" and not sub_url:
-            raise ConfigError("sub stream selection requires subUrl")
+        registry_camera_id = raw.get("cameraId", "")
+        if registry_camera_id:
+            if not isinstance(registry_camera_id, str) or not CAMERA_ID.fullmatch(registry_camera_id):
+                raise ConfigError("cameraId must be a safe Camera Registry identifier")
+            if raw.get("mainUrl") or raw.get("subUrl"):
+                raise ConfigError("Camera Registry references cannot be combined with raw RTSP URLs")
+            main_profile_id = raw.get("mainProfileId", "main")
+            sub_profile_id = raw.get("subProfileId", "")
+            if not isinstance(main_profile_id, str) or not CAMERA_ID.fullmatch(main_profile_id):
+                raise ConfigError("mainProfileId is invalid")
+            if sub_profile_id and (not isinstance(sub_profile_id, str) or not CAMERA_ID.fullmatch(sub_profile_id)):
+                raise ConfigError("subProfileId is invalid")
+            if stream == "sub" and not sub_profile_id:
+                raise ConfigError("sub stream selection requires subProfileId")
+            main_url = ""
+            sub_url = ""
+        else:
+            main_profile_id = ""
+            sub_profile_id = ""
+            main_url = safe_rtsp(raw.get("mainUrl"), "mainUrl")
+            sub_url = raw.get("subUrl", "")
+            if sub_url:
+                sub_url = safe_rtsp(sub_url, "subUrl")
+            if stream == "sub" and not sub_url:
+                raise ConfigError("sub stream selection requires subUrl")
         result["cameras"].append({
             "id": camera_id,
             "name": name,
             "policy": policy,
             "mainUrl": main_url,
             "subUrl": sub_url,
+            "cameraId": registry_camera_id,
+            "mainProfileId": main_profile_id,
+            "subProfileId": sub_profile_id,
             "stream": stream,
             "mode": mode,
             "transport": transport,
@@ -174,10 +198,26 @@ def validate_config(value: Any) -> dict[str, Any]:
 def redacted_config(config: dict[str, Any]) -> dict[str, Any]:
     result = json.loads(json.dumps(config))
     for camera in result["cameras"]:
-        camera["mainUrl"] = "rtsp://***"
+        if camera["mainUrl"]:
+            camera["mainUrl"] = "rtsp://***"
         if camera["subUrl"]:
             camera["subUrl"] = "rtsp://***"
     return result
+
+
+def resolve_registry_source(camera: dict[str, Any]) -> str:
+    profile_id = camera["subProfileId"] if camera["stream"] == "sub" else camera["mainProfileId"]
+    path = "/resolve/{}/{}".format(
+        urllib.parse.quote(camera["cameraId"], safe=""), urllib.parse.quote(profile_id, safe="")
+    )
+    request = urllib.request.Request("http://127.0.0.1:8092" + path, method="GET")
+    with urllib.request.urlopen(request, timeout=3) as response:
+        body = response.read(MAX_BODY + 1)
+    if len(body) > MAX_BODY:
+        raise RuntimeError("Camera Registry response is too large")
+    resolved = json.loads(body)
+    endpoint = resolved.get("endpoint", "") if isinstance(resolved, dict) else ""
+    return safe_rtsp(endpoint, "resolved endpoint")
 
 
 def schedule_active(camera: dict[str, Any], now: dt.datetime) -> bool:
@@ -454,7 +494,9 @@ class NvrService:
 
     def _capture_segment(self, camera: dict[str, Any], kind: str, state: WorkerState,
                          worker_stop: threading.Event, ring: bool) -> dict[str, Any] | None:
-        source_url = camera["subUrl"] if camera["stream"] == "sub" else camera["mainUrl"]
+        source_url = resolve_registry_source(camera) if camera.get("cameraId") else (
+            camera["subUrl"] if camera["stream"] == "sub" else camera["mainUrl"]
+        )
         start_utc = utc_ms()
         start_monotonic = time.monotonic_ns()
         segment_id = uuid.uuid4().hex
@@ -963,7 +1005,7 @@ class NvrService:
                 effective_start = min(effective_start, camera_start)
                 effective_end = max(effective_end, camera_end)
             manifest = {"schemaVersion": 1, "exportId": export_id, "auditId": audit_id,
-                        "softwareVersion": "webobsd-0.1.0-M9", "mode": mode,
+                        "softwareVersion": "webobsd-0.1.0-M10-foundation", "mode": mode,
                         "requestedRange": {"fromUtcMs": start, "toUtcMs": end},
                         "effectiveRange": {"fromUtcMs": effective_start, "toUtcMs": effective_end},
                         "cameraIds": camera_ids, "sourceSegmentIds": source_segment_ids, "files": files,
@@ -1117,7 +1159,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
         parsed = urllib.parse.urlsplit(self.path)
         try:
             if parsed.path == "/health":
-                self.send_json(200, {"status": "ok", "milestone": "M9"})
+                self.send_json(200, {"status": "ok", "milestone": "M10-foundation"})
             elif parsed.path == "/status":
                 self.send_json(200, self.service.status())
             elif parsed.path == "/config":

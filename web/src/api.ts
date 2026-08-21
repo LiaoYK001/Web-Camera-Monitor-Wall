@@ -1,4 +1,4 @@
-import type { ApiErrorEnvelope, NvrExport, NvrStatus, NvrTimeline, PlaybackCapabilities, SceneDocument, SceneEvent, StudioCapabilities, StudioDocument } from './types';
+import type { ApiErrorEnvelope, CameraDetection, CameraRecord, NvrExport, NvrStatus, NvrTimeline, PlaybackCapabilities, ProcessDiagnostics, SceneDocument, SceneEvent, StudioCapabilities, StudioDocument, SystemCapabilities } from './types';
 
 export class ControlApiError extends Error {
   readonly status: number;
@@ -12,6 +12,35 @@ export class ControlApiError extends Error {
     this.code = code;
     this.revision = revision;
   }
+}
+
+export interface AuthSession {
+  authenticated: boolean;
+  authenticationEnabled?: boolean;
+  user?: string;
+  via?: 'session' | 'basic';
+  expiresAt?: number | null;
+}
+
+export async function fetchAuthSession(signal?: AbortSignal): Promise<AuthSession> {
+  const response = await fetch('/api/v1/auth/session', { cache: 'no-store', credentials: 'same-origin', signal });
+  if (response.status === 401) return { authenticated: false, authenticationEnabled: true };
+  if (!response.ok) throw await parseError(response);
+  return (await response.json()) as AuthSession;
+}
+
+export async function login(username: string, password: string): Promise<AuthSession> {
+  const response = await fetch('/api/v1/auth/login', {
+    method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ username, password }),
+  });
+  if (!response.ok) throw await parseError(response);
+  return (await response.json()) as AuthSession;
+}
+
+export async function logout(): Promise<void> {
+  const response = await fetch('/api/v1/auth/logout', { method: 'POST', credentials: 'same-origin' });
+  if (!response.ok && response.status !== 204) throw await parseError(response);
 }
 
 async function parseError(response: Response): Promise<ControlApiError> {
@@ -47,6 +76,18 @@ export async function fetchPlaybackCapabilities(signal?: AbortSignal): Promise<P
   });
   if (!response.ok) throw await parseError(response);
   return (await response.json()) as PlaybackCapabilities;
+}
+
+export async function fetchSystemCapabilities(signal?: AbortSignal): Promise<SystemCapabilities> {
+  const response = await fetch('/api/v1/system/capabilities', { cache: 'no-store', signal });
+  if (!response.ok) throw await parseError(response);
+  return (await response.json()) as SystemCapabilities;
+}
+
+export async function fetchProcessDiagnostics(signal?: AbortSignal): Promise<ProcessDiagnostics> {
+  const response = await fetch('/api/v1/system/processes', { cache: 'no-store', signal });
+  if (!response.ok) throw await parseError(response);
+  return (await response.json()) as ProcessDiagnostics;
 }
 
 export async function replaceScene(scene: SceneDocument): Promise<SceneDocument> {
@@ -182,3 +223,21 @@ export const createPlaybackLease = (segmentId: string, ttlSeconds = 30) =>
 
 export const releasePlaybackLease = (leaseId: string) =>
   nvrRequest<{ id: string; released: boolean }>(`/playback-leases/${leaseId}`, { method: 'DELETE' });
+
+async function cameraRequest<T>(path: string, init?: RequestInit): Promise<T> {
+  const response = await fetch(`/api/v1${path}`, { cache: 'no-store', ...init });
+  if (!response.ok) throw await parseError(response);
+  return (await response.json()) as T;
+}
+
+export const fetchCameras = (signal?: AbortSignal) => cameraRequest<{ cameras: CameraRecord[] }>('/cameras', { signal });
+export const detectCamera = (address: string) => cameraRequest<CameraDetection>('/camera-detect', {
+  method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ address }),
+});
+export const discoverOnvif = () => cameraRequest<{ devices: Array<{ address: string; host: string; adapter: 'onvif' }> }>('/onvif/discover', {
+  method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}',
+});
+export const createCamera = (camera: Partial<CameraRecord>) => cameraRequest<CameraRecord>('/cameras', {
+  method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(camera),
+});
+export const deleteCamera = (cameraId: string) => cameraRequest<{ id: string; deleted: boolean }>(`/cameras/${encodeURIComponent(cameraId)}`, { method: 'DELETE' });

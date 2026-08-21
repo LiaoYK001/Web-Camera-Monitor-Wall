@@ -35,6 +35,10 @@ export interface RtspSceneSource extends SceneSourceBase {
   transport: Transport;
 }
 
+export interface CameraSceneSource extends SceneSourceBase {
+  kind: 'camera'; cameraId: string; profileId: string; hardwareDecode: 'auto' | 'on' | 'off';
+}
+
 export interface BrowserSceneSource extends SceneSourceBase {
   kind: 'browser';
   url: string;
@@ -52,7 +56,7 @@ export interface TextSceneSource extends SceneSourceBase { kind: 'text'; text: s
 export interface ColorSceneSource extends SceneSourceBase { kind: 'color'; color: string }
 export interface NestedSceneSource extends SceneSourceBase { kind: 'nested'; sceneId: string }
 
-export type SceneSource = RtspSceneSource | BrowserSceneSource | ImageSceneSource | MediaSceneSource |
+export type SceneSource = CameraSceneSource | RtspSceneSource | BrowserSceneSource | ImageSceneSource | MediaSceneSource |
   TextSceneSource | ColorSceneSource | NestedSceneSource;
 
 export interface SceneCrop {
@@ -81,7 +85,7 @@ export interface SceneItem {
 }
 
 export interface SceneDocument {
-  schemaVersion: 4;
+  schemaVersion: 5;
   revision: number;
   id: string;
   name: string;
@@ -137,13 +141,24 @@ export interface SourcePlaybackCapability {
   endpoint?: string;
   preferred: 'direct' | 'composite';
   fallback: 'composite';
-  strategy: 'unknown' | 'passthrough' | 'transcode' | 'composite';
+  strategy: 'unknown' | 'passthrough' | 'hybrid' | 'composite';
   codec: string;
   audioCodec: string;
+  deliveryMode?: 'direct' | 'hybrid' | 'composite';
+  reason?: string;
+  videoDelivery?: 'copy' | 'transcode' | 'composite';
+  audioDelivery?: 'copy' | 'transcode' | 'composite';
+  serverVideoDecode?: boolean;
+  serverVideoEncode?: boolean;
+  serverAudioTranscode?: boolean;
+  decoder?: string;
+  encoder?: string;
+  serverCost?: 'low' | 'medium' | 'high';
+  compositePublisherActive?: boolean;
 }
 
 export interface PlaybackCapabilities {
-  defaultMode: 'composite';
+  defaultMode: 'direct' | 'composite';
   modes: {
     composite: { enabled: boolean; endpoint: string };
     direct: { enabled: boolean; fallback: 'composite' };
@@ -197,4 +212,24 @@ export interface NvrExport {
   manifestUrl: string;
   effectiveRange: { fromUtcMs: number; toUtcMs: number };
   files: Array<{ cameraId: string; name: string; sha256: string; downloadUrl: string }>;
+}
+
+export type CameraAdapter = 'onvif' | 'rtsp' | 'mjpeg' | 'snapshot' | 'hls' | 'http-flv' | 'whep' | 'srt' | 'rtp' | 'v4l2';
+export interface CameraProfile { id: string; name: string; role: 'main' | 'sub' | 'snapshot' | 'auxiliary'; endpoint: string; videoCodec: string; audioCodec: string; width: number; height: number; fps: number; }
+export interface CameraRecord { id: string; name: string; address: string; adapter: CameraAdapter; credentialsRef: string; hardwareDecode: 'auto' | 'on' | 'off'; capabilities: Record<string, unknown>; health: string; profiles: CameraProfile[]; createdAt: number; updatedAt: number; }
+export interface CameraDetection { address: string; adapter: CameraAdapter; probe: string; contentType?: string; profiles: CameraProfile[]; }
+
+export interface VideoBackendCapability {
+  devicePresent: boolean; vaDriverLoaded: boolean; encoderAvailable: boolean;
+  encodeSupported: boolean; decodeSupported: boolean; runtimeProbePassed: boolean; ready: boolean;
+}
+export interface SystemCapabilities {
+  videoEncoder: { requested: string; selected: string; fallback: boolean; fallbackReason: string;
+    backends: { x264: VideoBackendCapability; vaapi: VideoBackendCapability; qsv: VideoBackendCapability; nvenc: VideoBackendCapability } };
+  renderer: { requested: string; selected: string; hardwareProbePassed: boolean; fallback: boolean; fallbackReason: string };
+  hardwareDecode: { requested: string; selected: string; fallback: boolean; fallbackReason: string };
+}
+export interface ProcessDiagnostics {
+  processes: Array<{ name: string; instances: number; rssKiB: number; cpuPercent: number }>;
+  rtspSessions: number; gpuBusyPercent: number; controlPlaneActive: boolean; engineActive: boolean; compositePublisherActive: boolean;
 }

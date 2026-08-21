@@ -19,6 +19,9 @@ enum class LogLevel {
     debug = 400,
 };
 
+enum class RendererPreference { automatic, hardware, software };
+enum class HardwareDecodePreference { automatic, on, off };
+
 struct Config {
     std::string rtsp_url;
     std::string scene_file;
@@ -28,12 +31,17 @@ struct Config {
     std::optional<BasicAuthCredentials> authentication;
     int auth_failure_limit = 5;
     int auth_failure_window_seconds = 60;
+    std::string session_database = "/config/webobs/auth-sessions.db";
+    int session_inactivity_seconds = 604800;
+    bool session_cookie_secure = true;
     std::vector<std::string> control_allowed_origins;
     int source_stale_seconds = 10;
     int source_recovery_base_seconds = 5;
     int source_recovery_max_seconds = 60;
     bool webrtc_enabled = false;
+    bool composite_enabled = false;
     bool nvr_enabled = false;
+    bool camera_registry_enabled = true;
     std::string whip_url = "http://127.0.0.1:8889/program/whip";
     BrowserSecurityPolicy browser_security;
     std::string output_path;
@@ -44,6 +52,8 @@ struct Config {
     int bitrate_kbps = 6000;
     VideoEncoderPreference video_encoder = VideoEncoderPreference::automatic;
     std::string vaapi_device = "/dev/dri/renderD128";
+    RendererPreference renderer = RendererPreference::automatic;
+    HardwareDecodePreference hardware_decode = HardwareDecodePreference::automatic;
     int connect_timeout_seconds = 20;
     std::string rtsp_transport = "tcp";
     LogLevel log_level = LogLevel::info;
@@ -69,5 +79,7 @@ ParseResult parse_config(const std::vector<std::string> &arguments, const Enviro
 std::optional<std::string> process_environment(std::string_view name);
 std::string usage_text();
 std::string version_text();
+std::string_view renderer_preference_name(RendererPreference preference);
+std::string_view hardware_decode_preference_name(HardwareDecodePreference preference);
 
 } // namespace webobs

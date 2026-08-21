@@ -34,12 +34,17 @@ constexpr SettingSpec setting_specs[] = {
     {"--auth-password-file", "WEBOBS_AUTH_PASSWORD_FILE", "auth_password_file"},
     {"--auth-failure-limit", "WEBOBS_AUTH_FAILURE_LIMIT", "auth_failure_limit"},
     {"--auth-failure-window-seconds", "WEBOBS_AUTH_FAILURE_WINDOW_SECONDS", "auth_failure_window"},
+    {"--session-database", "WEBOBS_SESSION_DATABASE", "session_database"},
+    {"--session-inactivity-seconds", "WEBOBS_SESSION_INACTIVITY_SECONDS", "session_inactivity"},
+    {"--session-cookie-secure", "WEBOBS_SESSION_COOKIE_SECURE", "session_cookie_secure"},
     {"--control-allowed-origins", "WEBOBS_CONTROL_ALLOWED_ORIGINS", "control_allowed_origins"},
     {"--source-stale-seconds", "WEBOBS_SOURCE_STALE_SECONDS", "source_stale_seconds"},
     {"--source-recovery-base-seconds", "WEBOBS_SOURCE_RECOVERY_BASE_SECONDS", "source_recovery_base"},
     {"--source-recovery-max-seconds", "WEBOBS_SOURCE_RECOVERY_MAX_SECONDS", "source_recovery_max"},
     {"--webrtc-enabled", "WEBOBS_WEBRTC_ENABLED", "webrtc_enabled"},
+    {"--composite-enabled", "WEBOBS_COMPOSITE_ENABLED", "composite_enabled"},
     {"--nvr-enabled", "WEBOBS_NVR_ENABLED", "nvr_enabled"},
+    {"--camera-registry-enabled", "WEBOBS_CAMERA_REGISTRY_ENABLED", "camera_registry_enabled"},
     {"--whip-url", "WEBOBS_WHIP_URL", "whip_url"},
     {"--browser-allowed-origins", "WEBOBS_BROWSER_ALLOWED_ORIGINS", "browser_allowed_origins"},
     {"--browser-allow-private-networks", "WEBOBS_BROWSER_ALLOW_PRIVATE_NETWORKS",
@@ -52,6 +57,8 @@ constexpr SettingSpec setting_specs[] = {
     {"--bitrate-kbps", "WEBOBS_BITRATE_KBPS", "bitrate"},
     {"--video-encoder", "WEBOBS_VIDEO_ENCODER", "video_encoder"},
     {"--vaapi-device", "WEBOBS_VAAPI_DEVICE", "vaapi_device"},
+    {"--renderer", "WEBOBS_RENDERER", "renderer"},
+    {"--hardware-decode", "WEBOBS_HARDWARE_DECODE", "hardware_decode"},
     {"--connect-timeout-seconds", "WEBOBS_CONNECT_TIMEOUT_SECONDS", "connect_timeout"},
     {"--rtsp-transport", "WEBOBS_RTSP_TRANSPORT", "transport"},
     {"--log-level", "WEBOBS_LOG_LEVEL", "log_level"},
@@ -242,14 +249,19 @@ ParseResult parse_config(const std::vector<std::string> &arguments, const Enviro
         {"fps", "30"},             {"bitrate", "6000"},     {"connect_timeout", "20"},
         {"transport", "tcp"},       {"log_level", "info"},
         {"video_encoder", "auto"},  {"vaapi_device", "/dev/dri/renderD128"},
+        {"renderer", "auto"},       {"hardware_decode", "auto"},
+        {"scene_file", "/config/webobs/scene.json"},
         {"listen_address", "127.0.0.1"}, {"http_port", "8080"},
         {"allow_insecure_remote", "false"},
         {"auth_username_file", ""}, {"auth_password_file", ""},
         {"auth_failure_limit", "5"}, {"auth_failure_window", "60"},
+        {"session_database", "/config/webobs/auth-sessions.db"},
+        {"session_inactivity", "604800"}, {"session_cookie_secure", "true"},
         {"control_allowed_origins", ""},
         {"source_stale_seconds", "10"}, {"source_recovery_base", "5"},
         {"source_recovery_max", "60"},
-        {"webrtc_enabled", "false"}, {"nvr_enabled", "false"},
+        {"webrtc_enabled", "false"}, {"composite_enabled", "false"}, {"nvr_enabled", "false"},
+        {"camera_registry_enabled", "true"},
         {"whip_url", "http://127.0.0.1:8889/program/whip"},
         {"browser_allowed_origins", ""}, {"browser_allow_private_networks", "false"},
     };
@@ -290,8 +302,6 @@ ParseResult parse_config(const std::vector<std::string> &arguments, const Enviro
         config.rtsp_url = iterator->second;
     if (const auto iterator = values.find("scene_file"); iterator != values.end())
         config.scene_file = iterator->second;
-    if (config.rtsp_url.empty() && config.scene_file.empty())
-        return failure("RTSP URL or scene file is required; use --rtsp-url or --scene-file");
     if (!config.rtsp_url.empty() && !config.rtsp_url.starts_with("rtsp://") &&
         !config.rtsp_url.starts_with("rtsps://"))
         return failure("RTSP URL must start with rtsp:// or rtsps://");
@@ -317,6 +327,14 @@ ParseResult parse_config(const std::vector<std::string> &arguments, const Enviro
         return failure("auth-failure-limit must be between 1 and 100");
     if (!parse_integer(values["auth_failure_window"], 1, 3600, config.auth_failure_window_seconds))
         return failure("auth-failure-window-seconds must be between 1 and 3600");
+    config.session_database = values["session_database"];
+    if (!std::filesystem::path(config.session_database).is_absolute() ||
+        lowercase(std::filesystem::path(config.session_database).extension().string()) != ".db")
+        return failure("session-database must be an absolute .db path");
+    if (!parse_integer(values["session_inactivity"], 300, 2592000, config.session_inactivity_seconds))
+        return failure("session-inactivity-seconds must be between 300 and 2592000");
+    if (!parse_boolean(values["session_cookie_secure"], config.session_cookie_secure))
+        return failure("session-cookie-secure must be true or false");
     const bool username_file_set = !values["auth_username_file"].empty();
     const bool password_file_set = !values["auth_password_file"].empty();
     if (username_file_set != password_file_set)
@@ -359,8 +377,14 @@ ParseResult parse_config(const std::vector<std::string> &arguments, const Enviro
 
     if (!parse_boolean(values["webrtc_enabled"], config.webrtc_enabled))
         return failure("webrtc-enabled must be true or false");
+    if (!parse_boolean(values["composite_enabled"], config.composite_enabled))
+        return failure("composite-enabled must be true or false");
+    if (config.composite_enabled && !config.webrtc_enabled)
+        return failure("composite-enabled requires webrtc-enabled true");
     if (!parse_boolean(values["nvr_enabled"], config.nvr_enabled))
         return failure("nvr-enabled must be true or false");
+    if (!parse_boolean(values["camera_registry_enabled"], config.camera_registry_enabled))
+        return failure("camera-registry-enabled must be true or false");
     config.whip_url = values["whip_url"];
     if (config.webrtc_enabled && !valid_whip_url(config.whip_url))
         return failure("whip-url must be an absolute HTTP(S) URL without credentials, query parameters, or fragments");
@@ -375,12 +399,15 @@ ParseResult parse_config(const std::vector<std::string> &arguments, const Enviro
             return failure(std::move(browser_origin_error));
     }
 
-    config.output_path = values.contains("output") ? values["output"] : timestamped_output_path();
-    if (config.output_path.empty())
-        return failure("output path must not be empty");
-    const std::string extension = lowercase(std::filesystem::path(config.output_path).extension().string());
-    if (extension != ".mp4")
-        return failure("output path must use the .mp4 extension");
+    if (values.contains("output"))
+        config.output_path = values["output"];
+    else if (!config.rtsp_url.empty())
+        config.output_path = timestamped_output_path();
+    if (!config.output_path.empty()) {
+        const std::string extension = lowercase(std::filesystem::path(config.output_path).extension().string());
+        if (extension != ".mp4")
+            return failure("output path must use the .mp4 extension");
+    }
 
     if (!parse_integer(values["duration"], 0, 604800, config.duration_seconds))
         return failure("duration-seconds must be between 0 and 604800");
@@ -405,6 +432,24 @@ ParseResult parse_config(const std::vector<std::string> &arguments, const Enviro
         config.video_encoder = VideoEncoderPreference::nvenc;
     else
         return failure("video-encoder must be auto, x264, vaapi, qsv, or nvenc");
+    const std::string renderer = lowercase(values["renderer"]);
+    if (renderer == "auto")
+        config.renderer = RendererPreference::automatic;
+    else if (renderer == "hardware")
+        config.renderer = RendererPreference::hardware;
+    else if (renderer == "software")
+        config.renderer = RendererPreference::software;
+    else
+        return failure("renderer must be auto, hardware, or software");
+    const std::string hardware_decode = lowercase(values["hardware_decode"]);
+    if (hardware_decode == "auto")
+        config.hardware_decode = HardwareDecodePreference::automatic;
+    else if (hardware_decode == "on")
+        config.hardware_decode = HardwareDecodePreference::on;
+    else if (hardware_decode == "off")
+        config.hardware_decode = HardwareDecodePreference::off;
+    else
+        return failure("hardware-decode must be auto, on, or off");
     config.vaapi_device = values["vaapi_device"];
     const std::filesystem::path vaapi_path(config.vaapi_device);
     const std::string vaapi_filename = vaapi_path.filename().string();
@@ -450,12 +495,12 @@ std::string usage_text()
 {
     return R"(Usage: webobsd [options]
 
-Required:
+Bootstrap (optional):
   --rtsp-url <url>                 Bootstrap RTSP URL when no saved scene exists
   --scene-file <path>              Absolute scene JSON path (or WEBOBS_SCENE_FILE)
 
-At least one of --rtsp-url or --scene-file is required. A saved scene takes
-precedence; the RTSP URL is used only to create a missing scene.
+An empty deployment creates the default scene file with no cameras. A saved
+scene takes precedence; an RTSP URL is used only to create a missing scene.
 
 Options:
   --listen-address <address>        HTTP bind address (default: 127.0.0.1)
@@ -465,17 +510,22 @@ Options:
   --auth-password-file <path>       Absolute file containing a password of at least 16 bytes
   --auth-failure-limit <n>          Invalid attempts per client/window (default: 5)
   --auth-failure-window-seconds <n> Failure window and lockout duration (default: 60)
+  --session-database <path>        SQLite WAL session database
+  --session-inactivity-seconds <n> Sliding expiry (default: 604800 / 7 days)
+  --session-cookie-secure <bool>   Require HTTPS for browser session cookie (default: true)
   --control-allowed-origins <csv>   Authenticated HTTPS origins allowed beyond loopback
   --source-stale-seconds <n>        No-new-frame threshold (default: 10)
   --source-recovery-base-seconds <n> Initial RTSP restart backoff (default: 5)
   --source-recovery-max-seconds <n>  Maximum RTSP restart backoff (default: 60)
   --webrtc-enabled <bool>          Publish the program through WHIP (default: false)
+  --composite-enabled <bool>       Activate OBS sources and Program WHIP (default: false)
   --nvr-enabled <bool>             Run the independent per-camera NVR service (default: false)
+  --camera-registry-enabled <bool> Run the SQLite Camera Registry service (default: true)
   --whip-url <url>                 WHIP publish URL (default: internal MediaMTX)
   --browser-allowed-origins <csv>  Exact HTTP(S) origins permitted for browser sources
   --browser-allow-private-networks <bool>
                                    Permit allowlisted local/private destinations (default: false)
-  --output <path>                  MP4 output path (default: UTC timestamp under /recordings)
+  --output <path>                  MP4 output path (RTSP bootstrap defaults to a UTC timestamp)
   --duration-seconds <n>           Stop after n seconds; 0 waits for a signal (default: 0)
   --width <n>                      Even output width (default: 1920)
   --height <n>                     Even output height (default: 1080)
@@ -483,6 +533,8 @@ Options:
   --bitrate-kbps <n>               H.264 CBR bitrate (default: 6000)
   --video-encoder <backend>        auto, x264, vaapi, qsv, or nvenc (default: auto)
   --vaapi-device <path>            VAAPI render node (default: /dev/dri/renderD128)
+  --renderer <mode>                auto, hardware, or software (default: auto)
+  --hardware-decode <mode>         auto, on, or off (default: auto)
   --connect-timeout-seconds <n>    RTSP first-frame timeout (default: 20)
   --rtsp-transport <tcp|udp>       RTSP transport (default: tcp)
   --log-level <level>              error, warn, info, or debug (default: info)
@@ -495,7 +547,27 @@ Command-line values override WEBOBS_* environment values.
 
 std::string version_text()
 {
-    return std::string("webobsd ") + WEBOBS_VERSION + " (M9, OBS 32.1.2)";
+    return std::string("webobsd ") + WEBOBS_VERSION + " (M10 foundation, OBS 32.1.2)";
+}
+
+std::string_view renderer_preference_name(RendererPreference preference)
+{
+    switch (preference) {
+    case RendererPreference::automatic: return "auto";
+    case RendererPreference::hardware: return "hardware";
+    case RendererPreference::software: return "software";
+    }
+    return "unknown";
+}
+
+std::string_view hardware_decode_preference_name(HardwareDecodePreference preference)
+{
+    switch (preference) {
+    case HardwareDecodePreference::automatic: return "auto";
+    case HardwareDecodePreference::on: return "on";
+    case HardwareDecodePreference::off: return "off";
+    }
+    return "unknown";
 }
 
 } // namespace webobs

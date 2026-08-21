@@ -55,8 +55,9 @@ Get-ChildItem -LiteralPath $ArtifactDirectory -Filter '.signal.mp4.webobsd-*.mkv
 Remove-SignalContainer
 
 try {
-    Invoke-ExpectedExit 2 'missing URL' {
-        docker run --rm --entrypoint /opt/obs/bin/webobsd -e WEBOBS_RTSP_URL= webobs:m0
+    Invoke-ExpectedExit 0 'empty Direct configuration' {
+        docker run --rm --entrypoint /opt/obs/bin/webobsd -e WEBOBS_RTSP_URL= `
+            webobs:m0 --http-port 0 --duration-seconds 1
     } | Out-Null
 
     Invoke-ExpectedExit 5 'missing output directory' {

@@ -11,6 +11,7 @@
 #include <boost/beast/http.hpp>
 #include <boost/beast/websocket.hpp>
 #include <curl/curl.h>
+#include <jansson.h>
 #include <util/base.h>
 
 #include <csignal>
@@ -34,6 +35,7 @@
 #include <mutex>
 #include <optional>
 #include <random>
+#include <sstream>
 #include <string>
 #include <string_view>
 #include <thread>
@@ -210,6 +212,66 @@ std::string error_body(std::string_view code, std::string_view message, std::uin
            json_escape(message) + "\"},\"revision\":" + std::to_string(revision) + "}";
 }
 
+std::optional<std::string> session_cookie_token(const HttpRequest &request)
+{
+    std::optional<std::string> token;
+    std::size_t cookie_headers = 0;
+    for (const auto &field : request.base()) {
+        if (field.name() != http::field::cookie)
+            continue;
+        if (++cookie_headers > 1 || field.value().size() > 4096)
+            return std::nullopt;
+        std::string_view cookies = view(field.value());
+        std::size_t cursor = 0;
+        while (cursor <= cookies.size()) {
+            const std::size_t separator = cookies.find(';', cursor);
+            const std::size_t end = separator == std::string_view::npos ? cookies.size() : separator;
+            std::string_view entry = cookies.substr(cursor, end - cursor);
+            while (!entry.empty() && (entry.front() == ' ' || entry.front() == '\t'))
+                entry.remove_prefix(1);
+            constexpr std::string_view prefix = "webobs_session=";
+            if (entry.starts_with(prefix)) {
+                if (token)
+                    return std::nullopt;
+                std::string_view value = entry.substr(prefix.size());
+                if (value.size() != 64 || !std::all_of(value.begin(), value.end(), [](unsigned char character) {
+                        return std::isxdigit(character);
+                    }))
+                    return std::nullopt;
+                token = std::string(value);
+            }
+            if (separator == std::string_view::npos)
+                break;
+            cursor = separator + 1;
+        }
+    }
+    return token;
+}
+
+std::optional<std::pair<std::string, std::string>> parse_login_body(const HttpRequest &request)
+{
+    if (!json_content_type(request) || request.body().empty() || request.body().size() > 4096)
+        return std::nullopt;
+    json_error_t error{};
+    json_t *root = json_loadb(request.body().data(), request.body().size(), JSON_REJECT_DUPLICATES, &error);
+    if (!root || !json_is_object(root) || json_object_size(root) != 2) {
+        json_decref(root);
+        return std::nullopt;
+    }
+    json_t *username = json_object_get(root, "username");
+    json_t *password = json_object_get(root, "password");
+    if (!json_is_string(username) || !json_is_string(password)) {
+        json_decref(root);
+        return std::nullopt;
+    }
+    std::string user = json_string_value(username);
+    std::string secret = json_string_value(password);
+    json_decref(root);
+    if (user.empty() || user.size() > 64 || secret.size() < 1 || secret.size() > 256)
+        return std::nullopt;
+    return std::pair<std::string, std::string>{std::move(user), std::move(secret)};
+}
+
 void set_security_headers(HttpResponse &response, std::string_view content_type,
                           std::string_view cache_control)
 {
@@ -223,7 +285,8 @@ void set_security_headers(HttpResponse &response, std::string_view content_type,
     response.set("X-Content-Type-Options", "nosniff");
     response.set("X-Frame-Options", "DENY");
     response.set("Referrer-Policy", "no-referrer");
-    response.set("Permissions-Policy", "camera=(), microphone=(), geolocation=()");
+    response.set("Permissions-Policy",
+                 "camera=(), microphone=(), geolocation=(), fullscreen=(self), screen-wake-lock=(self)");
     response.set("Cross-Origin-Resource-Policy", "same-origin");
 }
 
@@ -239,17 +302,59 @@ HttpResponse response(http::status status, unsigned int version, std::string bod
     return result;
 }
 
+struct ResolvedCameraEndpoint { std::string endpoint; std::string adapter; };
+
+std::optional<ResolvedCameraEndpoint> resolve_camera_endpoint(std::string_view camera_id,
+                                                              std::string_view profile_id)
+{
+    std::string body;
+    CURL *handle = curl_easy_init();
+    if (!handle) return std::nullopt;
+    const std::string url = "http://127.0.0.1:8092/resolve/" + std::string(camera_id) + "/" + std::string(profile_id);
+    const auto write = [](char *data, std::size_t size, std::size_t count, void *context) -> std::size_t {
+        const std::size_t bytes = size * count;
+        auto &output = *static_cast<std::string *>(context);
+        if (bytes > 8192 || output.size() > 8192 - bytes) return 0;
+        output.append(data, bytes); return bytes;
+    };
+    curl_easy_setopt(handle, CURLOPT_URL, url.c_str());
+    curl_easy_setopt(handle, CURLOPT_PROTOCOLS_STR, "http");
+    curl_easy_setopt(handle, CURLOPT_CONNECTTIMEOUT_MS, 1000L);
+    curl_easy_setopt(handle, CURLOPT_TIMEOUT_MS, 3000L);
+    curl_easy_setopt(handle, CURLOPT_NOSIGNAL, 1L);
+    curl_easy_setopt(handle, CURLOPT_WRITEFUNCTION, +write);
+    curl_easy_setopt(handle, CURLOPT_WRITEDATA, &body);
+    const CURLcode code = curl_easy_perform(handle);
+    long status = 0;
+    if (code == CURLE_OK) curl_easy_getinfo(handle, CURLINFO_RESPONSE_CODE, &status);
+    curl_easy_cleanup(handle);
+    if (code != CURLE_OK || status != 200) return std::nullopt;
+    json_error_t error{};
+    json_t *root = json_loadb(body.data(), body.size(), JSON_REJECT_DUPLICATES, &error);
+    if (!root || !json_is_object(root)) { json_decref(root); return std::nullopt; }
+    json_t *endpoint = json_object_get(root, "endpoint");
+    json_t *adapter = json_object_get(root, "adapter");
+    std::optional<ResolvedCameraEndpoint> result;
+    if (json_is_string(endpoint) && json_is_string(adapter))
+        result = ResolvedCameraEndpoint{json_string_value(endpoint), json_string_value(adapter)};
+    json_decref(root);
+    return result;
+}
+
 class WhepProxy {
 public:
-    WhepProxy(bool enabled, SceneController &controller, const std::vector<std::string> &allowed_origins)
-        : enabled_(enabled), controller_(controller), allowed_origins_(allowed_origins)
+    WhepProxy(bool enabled, bool composite_enabled, SceneController &controller,
+              const std::vector<std::string> &allowed_origins, const RuntimeStatus &runtime_status)
+        : enabled_(enabled), composite_enabled_(composite_enabled), controller_(controller),
+          allowed_origins_(allowed_origins),
+          runtime_status_(runtime_status)
     {
     }
 
     HttpResponse status(unsigned int version) const
     {
         return response(http::status::ok, version,
-                        std::string("{\"enabled\":") + (enabled_ ? "true" : "false") +
+                        std::string("{\"enabled\":") + (enabled_ && composite_enabled_ ? "true" : "false") +
                             ",\"endpoint\":\"/api/v1/program/whep\"}");
     }
 
@@ -257,8 +362,8 @@ public:
     {
         const SceneDocument document = controller_.private_document_snapshot();
         const std::lock_guard lock(route_state_mutex_);
-        std::string body = std::string("{\"defaultMode\":\"composite\",\"modes\":{") +
-                           "\"composite\":{\"enabled\":" + (enabled_ ? "true" : "false") +
+        std::string body = std::string("{\"defaultMode\":\"direct\",\"modes\":{") +
+                           "\"composite\":{\"enabled\":" + (enabled_ && composite_enabled_ ? "true" : "false") +
                            ",\"endpoint\":\"/api/v1/program/whep\"}," +
                            "\"direct\":{\"enabled\":" + (enabled_ ? "true" : "false") +
                            ",\"fallback\":\"composite\"}},\"sources\":[";
@@ -267,7 +372,7 @@ public:
             if (!first)
                 body.push_back(',');
             first = false;
-            if (source.kind == "browser") {
+            if (source.kind != "rtsp" && source.kind != "camera") {
                 body += "{\"sourceId\":\"" + json_escape(source.id) +
                         "\",\"preferred\":\"composite\",\"fallback\":\"composite\"," +
                         "\"strategy\":\"composite\",\"codec\":\"\",\"audioCodec\":\"\"}";
@@ -276,15 +381,35 @@ public:
             const auto route = direct_routes_.find(source.id);
             const std::string strategy = route == direct_routes_.end() || route->second.codec.empty()
                                              ? "unknown"
-                                             : route->second.transcode ? "transcode" : "passthrough";
+                                             : route->second.transcode ? "hybrid" : "passthrough";
             const std::string codec = route == direct_routes_.end() ? std::string{} : route->second.codec;
             const std::string audio_codec =
                 route == direct_routes_.end() ? std::string{} : route->second.audio_codec;
+            const bool video_transcode = route != direct_routes_.end() && route->second.video_transcode;
+            const bool audio_transcode = route != direct_routes_.end() && route->second.audio_transcode;
+            const std::string video_delivery = video_transcode ? "transcode" : "copy";
+            const std::string audio_delivery = audio_transcode ? "transcode" : "copy";
+            const std::string cost = video_transcode ? "high" : audio_transcode ? "medium" : "low";
+            const std::string reason = video_transcode ? "video_codec_incompatible" :
+                                       audio_transcode ? "audio_codec_incompatible" : "";
+            const std::string encoder = video_transcode
+                ? (video_encoder_backend_ready(runtime_status_.video_encoder.vaapi) ? "h264_vaapi" : "libx264")
+                : "none";
             body += "{\"sourceId\":\"" + json_escape(source.id) +
                     "\",\"endpoint\":\"/api/v1/sources/" + json_escape(source.id) +
                     "/whep\",\"preferred\":\"direct\",\"fallback\":\"composite\"," +
                     "\"strategy\":\"" + strategy + "\",\"codec\":\"" + json_escape(codec) +
-                    "\",\"audioCodec\":\"" + json_escape(audio_codec) + "\"}";
+                    "\",\"audioCodec\":\"" + json_escape(audio_codec) +
+                    "\",\"deliveryMode\":\"" + (route != direct_routes_.end() && route->second.transcode ? "hybrid" : "direct") +
+                    "\",\"reason\":\"" + reason + "\",\"videoDelivery\":\"" + video_delivery +
+                    "\",\"audioDelivery\":\"" + audio_delivery +
+                    "\",\"serverVideoDecode\":" + (video_transcode ? "true" : "false") +
+                    ",\"serverVideoEncode\":" + (video_transcode ? "true" : "false") +
+                    ",\"serverAudioTranscode\":" + (audio_transcode ? "true" : "false") +
+                    ",\"decoder\":\"" + (video_transcode ? "vaapi-or-software" : "browser") +
+                    "\",\"encoder\":\"" + encoder + "\",\"serverCost\":\"" + cost +
+                    "\",\"compositePublisherActive\":" +
+                    (runtime_status_.webrtc_ready.load() ? "true" : "false") + "}";
         }
         body += "]}";
         return response(http::status::ok, version, std::move(body));
@@ -292,6 +417,9 @@ public:
 
     HttpResponse create_program(const HttpRequest &request)
     {
+        if (!composite_enabled_)
+            return response(http::status::service_unavailable, request.version(),
+                            error_body("composite_idle", "Composite Program is disabled to keep server load low"));
         if (auto invalid = validate_offer(request))
             return std::move(*invalid);
         return create_validated(request, "program", session_prefix);
@@ -309,7 +437,7 @@ public:
         if (source == document.sources.end())
             return response(http::status::not_found, request.version(),
                             error_body("source_not_found", "source not found"));
-        if (source->kind != "rtsp")
+        if (source->kind != "rtsp" && source->kind != "camera")
             return response(http::status::conflict, request.version(),
                             error_body("composite_only", "browser sources use composite playback"));
         std::optional<std::string> route;
@@ -385,10 +513,13 @@ private:
     struct DirectRoute {
         std::string path;
         std::string rtsp_url;
+        std::string source_key;
         std::string transport;
         std::string codec;
         std::string audio_codec;
         bool transcode = false;
+        bool video_transcode = false;
+        bool audio_transcode = false;
         std::string hybrid_path;
     };
 
@@ -664,6 +795,17 @@ private:
 
     std::optional<std::string> ensure_direct_route(const SceneSource &source)
     {
+        std::string effective_url = source.rtsp_url;
+        if (source.kind == "camera") {
+            const auto resolved = resolve_camera_endpoint(source.camera_id, source.profile_id);
+            if (!resolved)
+                return std::nullopt;
+            effective_url = resolved->endpoint;
+        }
+        const std::string source_key = source.kind == "camera"
+                                           ? source.camera_id + "/" + source.profile_id
+                                           : source.rtsp_url;
+        const std::string source_transport = source.kind == "rtsp" ? source.transport : "tcp";
         DirectRoute route;
         bool adding = false;
         std::string previous_hybrid_path;
@@ -671,8 +813,8 @@ private:
             const std::lock_guard lock(route_state_mutex_);
             const auto existing = direct_routes_.find(source.id);
             adding = existing == direct_routes_.end();
-            if (!adding && existing->second.rtsp_url == source.rtsp_url &&
-                existing->second.transport == source.transport)
+            if (!adding && existing->second.source_key == source_key &&
+                existing->second.transport == source_transport)
                 return existing->second.path;
             if (adding) {
                 if (direct_routes_.size() >= maximum_scene_sources)
@@ -688,11 +830,14 @@ private:
                 route.codec.clear();
                 route.audio_codec.clear();
                 route.transcode = false;
+                route.video_transcode = false;
+                route.audio_transcode = false;
                 route.hybrid_path.clear();
             }
         }
-        route.rtsp_url = source.rtsp_url;
-        route.transport = source.transport;
+        route.rtsp_url = effective_url;
+        route.source_key = source_key;
+        route.transport = source_transport;
         const std::string body = "{\"source\":\"" + json_escape(route.rtsp_url) +
                                  "\",\"sourceOnDemand\":true,\"sourceOnDemandStartTimeout\":\"10s\"," +
                                  "\"sourceOnDemandCloseAfter\":\"5s\",\"maxReaders\":8," +
@@ -738,12 +883,15 @@ private:
                                                   "default=noprint_wrappers=1:nokey=1", input},
                                                  std::chrono::seconds(12));
             route.audio_codec = audio_codec.value_or("");
-            route.transcode = !browser_compatible_codec(route.codec) ||
-                              !browser_compatible_audio_codec(route.audio_codec);
+            route.video_transcode = !browser_compatible_codec(route.codec);
+            route.audio_transcode = !browser_compatible_audio_codec(route.audio_codec);
+            route.transcode = route.video_transcode || route.audio_transcode;
             const std::lock_guard lock(route_state_mutex_);
             direct_routes_.at(source.id).codec = route.codec;
             direct_routes_.at(source.id).audio_codec = route.audio_codec;
             direct_routes_.at(source.id).transcode = route.transcode;
+            direct_routes_.at(source.id).video_transcode = route.video_transcode;
+            direct_routes_.at(source.id).audio_transcode = route.audio_transcode;
         }
         if (!route.transcode)
             return route.path;
@@ -758,7 +906,9 @@ private:
                 }));
             }
             const std::string command = "/opt/webobs/bin/transcode-on-demand " + route.path + " " +
-                                        route.hybrid_path;
+                                        route.hybrid_path + " " +
+                                        (route.video_transcode ? "transcode" : "copy") + " " +
+                                        (route.audio_transcode ? "transcode" : "copy");
             const std::string body =
                 std::string("{\"source\":\"publisher\",\"overridePublisher\":false,\"maxReaders\":8,") +
                 "\"runOnDemand\":\"" + json_escape(command) +
@@ -784,7 +934,8 @@ private:
             for (auto iterator = direct_routes_.begin(); iterator != direct_routes_.end();) {
                 const bool present = std::any_of(document.sources.begin(), document.sources.end(),
                                                  [&iterator](const SceneSource &source) {
-                                                     return source.id == iterator->first && source.kind == "rtsp";
+                                                     return source.id == iterator->first &&
+                                                            (source.kind == "rtsp" || source.kind == "camera");
                                                  });
                 if (present) {
                     ++iterator;
@@ -823,8 +974,10 @@ private:
     }
 
     bool enabled_ = false;
+    bool composite_enabled_ = false;
     SceneController &controller_;
     const std::vector<std::string> &allowed_origins_;
+    const RuntimeStatus &runtime_status_;
     std::mutex session_mutex_;
     std::mutex route_operation_mutex_;
     std::mutex route_state_mutex_;
@@ -975,6 +1128,97 @@ private:
     }
 
     bool enabled_ = false;
+};
+
+class CameraProxy {
+public:
+    explicit CameraProxy(bool enabled) : enabled_(enabled) {}
+
+    HttpResponse forward(const HttpRequest &request) const
+    {
+        if (!enabled_)
+            return response(http::status::service_unavailable, request.version(),
+                            error_body("camera_registry_disabled", "Camera Registry is disabled"));
+        const std::string_view target = view(request.target());
+        std::string suffix;
+        if (target == "/api/v1/cameras" || target.starts_with("/api/v1/cameras/"))
+            suffix = std::string(target.substr(std::string_view("/api/v1").size()));
+        else if (target == "/api/v1/camera-adapters")
+            suffix = "/adapters";
+        else if (target == "/api/v1/camera-detect")
+            suffix = "/detect";
+        else if (target == "/api/v1/onvif/discover")
+            suffix = "/onvif/discover";
+        else
+            return response(http::status::not_found, request.version(),
+                            error_body("not_found", "resource not found"));
+        if (suffix.size() > 256 || !std::all_of(suffix.begin(), suffix.end(), [](unsigned char character) {
+                return std::isalnum(character) || character == '/' || character == '.' ||
+                       character == '_' || character == '-';
+            }))
+            return response(http::status::bad_request, request.version(),
+                            error_body("invalid_target", "Camera Registry target is invalid"));
+        const bool mutating = request.method() == http::verb::put || request.method() == http::verb::post ||
+                              request.method() == http::verb::delete_;
+        if (mutating && !request.body().empty() && !json_content_type(request))
+            return response(http::status::unsupported_media_type, request.version(),
+                            error_body("content_type", "Content-Type must be application/json"));
+
+        std::string body;
+        CURL *handle = curl_easy_init();
+        if (!handle)
+            return unavailable(request.version());
+        const std::string url = "http://127.0.0.1:8092" + suffix;
+        curl_slist *headers = nullptr;
+        if (mutating)
+            headers = curl_slist_append(headers, "Content-Type: application/json");
+        curl_easy_setopt(handle, CURLOPT_URL, url.c_str());
+        curl_easy_setopt(handle, CURLOPT_PROTOCOLS_STR, "http");
+        curl_easy_setopt(handle, CURLOPT_CONNECTTIMEOUT_MS, 1000L);
+        curl_easy_setopt(handle, CURLOPT_TIMEOUT_MS, suffix == "/onvif/discover" ? 5000L : 10000L);
+        curl_easy_setopt(handle, CURLOPT_NOSIGNAL, 1L);
+        curl_easy_setopt(handle, CURLOPT_FOLLOWLOCATION, 0L);
+        curl_easy_setopt(handle, CURLOPT_WRITEFUNCTION, &write_body);
+        curl_easy_setopt(handle, CURLOPT_WRITEDATA, &body);
+        if (headers)
+            curl_easy_setopt(handle, CURLOPT_HTTPHEADER, headers);
+        const std::string method(request.method_string());
+        curl_easy_setopt(handle, CURLOPT_CUSTOMREQUEST, method.c_str());
+        if (!request.body().empty()) {
+            curl_easy_setopt(handle, CURLOPT_POSTFIELDS, request.body().data());
+            curl_easy_setopt(handle, CURLOPT_POSTFIELDSIZE_LARGE,
+                             static_cast<curl_off_t>(request.body().size()));
+        }
+        const CURLcode code = curl_easy_perform(handle);
+        long status = 0;
+        if (code == CURLE_OK)
+            curl_easy_getinfo(handle, CURLINFO_RESPONSE_CODE, &status);
+        curl_slist_free_all(headers);
+        curl_easy_cleanup(handle);
+        if (code != CURLE_OK || status < 100 || status > 599)
+            return unavailable(request.version());
+        return response(static_cast<http::status>(status), request.version(), std::move(body));
+    }
+
+private:
+    static std::size_t write_body(char *data, std::size_t size, std::size_t count, void *context)
+    {
+        const std::size_t bytes = size * count;
+        auto &body = *static_cast<std::string *>(context);
+        constexpr std::size_t maximum = 4 * 1024 * 1024;
+        if (bytes > maximum || body.size() > maximum - bytes)
+            return 0;
+        body.append(data, bytes);
+        return bytes;
+    }
+
+    static HttpResponse unavailable(unsigned int version)
+    {
+        return response(http::status::service_unavailable, version,
+                        error_body("camera_registry_unavailable", "Camera Registry is unavailable"));
+    }
+
+    bool enabled_ = true;
 };
 
 std::string static_content_type(std::string_view filename)
@@ -1197,7 +1441,6 @@ HttpResponse authentication_response(AuthenticationDecision decision, unsigned i
     }
     HttpResponse result = response(http::status::unauthorized, version,
                                    error_body("authentication_required", "valid credentials are required"));
-    result.set(http::field::www_authenticate, "Basic realm=\"WebOBS\", charset=\"UTF-8\"");
     return result;
 }
 
@@ -1259,7 +1502,11 @@ HttpResponse metrics_response(unsigned int version, const RuntimeStatus &status,
 std::string encoder_backend_json(const VideoEncoderBackend &backend)
 {
     return std::string("{\"devicePresent\":") + (backend.device_present ? "true" : "false") +
+           ",\"vaDriverLoaded\":" + (backend.va_driver_loaded ? "true" : "false") +
            ",\"encoderAvailable\":" + (backend.encoder_available ? "true" : "false") +
+           ",\"encodeSupported\":" + (backend.encode_supported ? "true" : "false") +
+           ",\"decodeSupported\":" + (backend.decode_supported ? "true" : "false") +
+           ",\"runtimeProbePassed\":" + (backend.runtime_probe_passed ? "true" : "false") +
            ",\"ready\":" + (video_encoder_backend_ready(backend) ? "true" : "false") + "}";
 }
 
@@ -1270,10 +1517,150 @@ HttpResponse system_capabilities_response(unsigned int version, const RuntimeSta
                        std::string(video_encoder_preference_name(encoder.requested)) +
                        "\",\"selected\":\"" + std::string(video_encoder_kind_name(encoder.selected)) +
                        "\",\"fallback\":" + (encoder.fallback ? "true" : "false") +
+                       ",\"fallbackReason\":\"" + json_escape(encoder.fallback_reason) + "\"" +
                        ",\"backends\":{\"x264\":" + encoder_backend_json(encoder.x264) +
                        ",\"vaapi\":" + encoder_backend_json(encoder.vaapi) +
                        ",\"qsv\":" + encoder_backend_json(encoder.qsv) +
-                       ",\"nvenc\":" + encoder_backend_json(encoder.nvenc) + "}}}";
+                       ",\"nvenc\":" + encoder_backend_json(encoder.nvenc) + "}}," +
+                       "\"renderer\":{\"requested\":\"" + json_escape(status.renderer.requested) +
+                       "\",\"selected\":\"" + json_escape(status.renderer.selected) +
+                       "\",\"hardwareProbePassed\":" +
+                       (status.renderer.hardware_probe_passed ? "true" : "false") +
+                       ",\"fallback\":" + (status.renderer.fallback ? "true" : "false") +
+                       ",\"fallbackReason\":\"" + json_escape(status.renderer.fallback_reason) + "\"}," +
+                       "\"hardwareDecode\":{\"requested\":\"" +
+                       json_escape(status.hardware_decode.requested) + "\",\"selected\":\"" +
+                       json_escape(status.hardware_decode.selected) + "\",\"fallback\":" +
+                       (status.hardware_decode.fallback ? "true" : "false") +
+                       ",\"fallbackReason\":\"" +
+                       json_escape(status.hardware_decode.fallback_reason) + "\"}}";
+    return response(http::status::ok, version, std::move(body));
+}
+
+HttpResponse process_diagnostics_response(unsigned int version, const RuntimeStatus &status)
+{
+    struct ProcessTotal {
+        std::uint64_t rss_kib = 0;
+        std::uint64_t instances = 0;
+        double cpu_percent = 0.0;
+    };
+    struct CpuSample {
+        std::uint64_t ticks = 0;
+        std::chrono::steady_clock::time_point captured_at;
+    };
+    static std::mutex sample_mutex;
+    static std::unordered_map<std::string, CpuSample> previous_samples;
+    const std::lock_guard sample_lock(sample_mutex);
+    const auto captured_at = std::chrono::steady_clock::now();
+    const long clock_ticks = std::max<long>(1, sysconf(_SC_CLK_TCK));
+    std::unordered_map<std::string, ProcessTotal> totals;
+    const auto recognized = [](std::string_view name) -> std::string_view {
+        if (name == "webobsd" || name == "mediamtx" || name == "ffmpeg" || name == "caddy")
+            return name;
+        if (name.starts_with("obs-browser"))
+            return "obs-browser";
+        return {};
+    };
+    std::error_code error;
+    for (const auto &entry : std::filesystem::directory_iterator("/proc", error)) {
+        if (error)
+            break;
+        const std::string pid = entry.path().filename().string();
+        if (pid.empty() || !std::all_of(pid.begin(), pid.end(), [](unsigned char value) {
+                return std::isdigit(value);
+            }))
+            continue;
+        std::ifstream comm(entry.path() / "comm");
+        std::string name;
+        std::getline(comm, name);
+        const std::string_view role = recognized(name);
+        if (role.empty())
+            continue;
+        std::uint64_t rss_kib = 0;
+        std::ifstream status(entry.path() / "status");
+        std::string line;
+        while (std::getline(status, line)) {
+            if (!line.starts_with("VmRSS:"))
+                continue;
+            const std::string_view value(line.data() + 6, line.size() - 6);
+            const std::size_t digit = value.find_first_of("0123456789");
+            if (digit != std::string_view::npos)
+                std::from_chars(value.data() + digit, value.data() + value.size(), rss_kib);
+            break;
+        }
+        ProcessTotal &total = totals[std::string(role)];
+        total.rss_kib += rss_kib;
+        ++total.instances;
+
+        std::ifstream stat(entry.path() / "stat");
+        std::string stat_line;
+        std::getline(stat, stat_line);
+        const std::size_t command_end = stat_line.rfind(')');
+        if (command_end != std::string::npos && command_end + 2 < stat_line.size()) {
+            std::istringstream fields(stat_line.substr(command_end + 2));
+            char process_state = 0;
+            std::uint64_t ignored = 0;
+            std::uint64_t user_ticks = 0;
+            std::uint64_t system_ticks = 0;
+            fields >> process_state;
+            for (int field = 0; field < 10 && fields; ++field)
+                fields >> ignored;
+            fields >> user_ticks >> system_ticks;
+            if (fields) {
+                const std::uint64_t ticks = user_ticks + system_ticks;
+                const auto previous = previous_samples.find(pid);
+                if (previous != previous_samples.end() && ticks >= previous->second.ticks) {
+                    const double elapsed = std::chrono::duration<double>(
+                        captured_at - previous->second.captured_at).count();
+                    if (elapsed > 0.0)
+                        total.cpu_percent += static_cast<double>(ticks - previous->second.ticks) /
+                                             static_cast<double>(clock_ticks) / elapsed * 100.0;
+                }
+                previous_samples[pid] = {ticks, captured_at};
+            }
+        }
+    }
+
+    std::uint64_t rtsp_sessions = 0;
+    for (const char *table : {"/proc/net/tcp", "/proc/net/tcp6"}) {
+        std::ifstream input(table);
+        std::string line;
+        std::getline(input, line);
+        while (std::getline(input, line)) {
+            std::istringstream fields(line);
+            std::string slot, local, remote, state;
+            if (fields >> slot >> local >> remote >> state && state == "01" &&
+                (remote.ends_with(":022A") || remote.ends_with(":216A")))
+                ++rtsp_sessions;
+        }
+    }
+
+    int gpu_busy_percent = -1;
+    error.clear();
+    for (const auto &entry : std::filesystem::directory_iterator("/sys/class/drm", error)) {
+        if (error || !entry.path().filename().string().starts_with("card"))
+            continue;
+        std::ifstream busy(entry.path() / "device/gpu_busy_percent");
+        if (busy >> gpu_busy_percent)
+            break;
+    }
+
+    std::string body = "{\"processes\":[";
+    bool first = true;
+    for (const std::string_view role : {"webobsd", "mediamtx", "ffmpeg", "caddy", "obs-browser"}) {
+        const ProcessTotal total = totals[std::string(role)];
+        if (!first)
+            body.push_back(',');
+        first = false;
+        body += "{\"name\":\"" + std::string(role) + "\",\"instances\":" +
+                std::to_string(total.instances) + ",\"rssKiB\":" + std::to_string(total.rss_kib) +
+                ",\"cpuPercent\":" + std::to_string(total.cpu_percent) + "}";
+    }
+    body += "],\"rtspSessions\":" + std::to_string(rtsp_sessions) +
+            ",\"gpuBusyPercent\":" + std::to_string(gpu_busy_percent) +
+            ",\"controlPlaneActive\":" + (status.control_plane_active.load() ? "true" : "false") +
+            ",\"engineActive\":" + (status.engine_active.load() ? "true" : "false") +
+            ",\"compositePublisherActive\":" + (status.webrtc_ready.load() ? "true" : "false") + "}";
     return response(http::status::ok, version, std::move(body));
 }
 
@@ -1303,7 +1690,7 @@ HttpResponse source_health_response(unsigned int version, SceneController &contr
 
 HttpResponse handle_request(const HttpRequest &request, SceneController &controller, StudioController &studio,
                             WebSocketHub &hub,
-                            WhepProxy &whep_proxy, NvrProxy &nvr_proxy,
+                            WhepProxy &whep_proxy, NvrProxy &nvr_proxy, CameraProxy &camera_proxy,
                             const std::vector<std::string> &allowed_origins,
                             const RuntimeStatus &runtime_status, const ControlMetrics &metrics,
                             const BasicAuthenticator &authenticator)
@@ -1319,7 +1706,8 @@ HttpResponse handle_request(const HttpRequest &request, SceneController &control
 
     const std::string_view target = view(request.target());
     if (request.method() == http::verb::get && target == "/api/v1/health")
-        return response(http::status::ok, version, "{\"status\":\"ok\",\"milestone\":\"M9\"}");
+        return response(http::status::ok, version,
+                        "{\"status\":\"ok\",\"milestone\":\"M10-foundation\"}");
     if (request.method() == http::verb::get && target == "/api/v1/ready") {
         const bool ready = runtime_status.ready();
         return response(ready ? http::status::ok : http::status::service_unavailable, version,
@@ -1331,6 +1719,8 @@ HttpResponse handle_request(const HttpRequest &request, SceneController &control
         return source_health_response(version, controller);
     if (request.method() == http::verb::get && target == "/api/v1/system/capabilities")
         return system_capabilities_response(version, runtime_status);
+    if (request.method() == http::verb::get && target == "/api/v1/system/processes")
+        return process_diagnostics_response(version, runtime_status);
 
     if (target == "/api/v1/nvr" || target.starts_with("/api/v1/nvr/")) {
         if ((request.method() == http::verb::put || request.method() == http::verb::post ||
@@ -1339,6 +1729,17 @@ HttpResponse handle_request(const HttpRequest &request, SceneController &control
             return response(http::status::forbidden, version,
                             error_body("origin_rejected", "Origin must match the local Host"));
         return nvr_proxy.forward(request);
+    }
+
+    if (target == "/api/v1/cameras" || target.starts_with("/api/v1/cameras/") ||
+        target == "/api/v1/camera-adapters" || target == "/api/v1/camera-detect" ||
+        target == "/api/v1/onvif/discover") {
+        if ((request.method() == http::verb::put || request.method() == http::verb::post ||
+             request.method() == http::verb::delete_) &&
+            !request_origin_allowed(request, false, allowed_origins))
+            return response(http::status::forbidden, version,
+                            error_body("origin_rejected", "Origin must match the local Host"));
+        return camera_proxy.forward(request);
     }
 
     if (request.method() == http::verb::get && target == "/api/v1/program/status")
@@ -1597,12 +1998,14 @@ HttpResponse handle_request(const HttpRequest &request, SceneController &control
 class HttpSession : public std::enable_shared_from_this<HttpSession> {
 public:
     HttpSession(tcp::socket socket, SceneController &controller, StudioController &studio,
-                WebSocketHub &hub, WhepProxy &whep_proxy, NvrProxy &nvr_proxy,
-                BasicAuthenticator &authenticator, ControlMetrics &metrics, RuntimeStatus &runtime_status,
+                WebSocketHub &hub, WhepProxy &whep_proxy, NvrProxy &nvr_proxy, CameraProxy &camera_proxy,
+                BasicAuthenticator &authenticator, SessionStore &session_store,
+                ControlMetrics &metrics, RuntimeStatus &runtime_status,
                 const std::vector<std::string> &allowed_origins)
         : stream_(std::move(socket)), controller_(controller), studio_(studio), hub_(hub), whep_proxy_(whep_proxy),
           nvr_proxy_(nvr_proxy),
-          authenticator_(authenticator), metrics_(metrics), runtime_status_(runtime_status),
+          camera_proxy_(camera_proxy),
+          authenticator_(authenticator), session_store_(session_store), metrics_(metrics), runtime_status_(runtime_status),
           allowed_origins_(allowed_origins)
     {
         beast::error_code error;
@@ -1642,14 +2045,68 @@ private:
         const unsigned int version = request.version();
         const std::string_view host = view(request[http::field::host]);
         if (version != 11 || !control_authority_allowed(host, allowed_origins_)) {
-            send(handle_request(request, controller_, studio_, hub_, whep_proxy_, nvr_proxy_, allowed_origins_, runtime_status_,
+            send(handle_request(request, controller_, studio_, hub_, whep_proxy_, nvr_proxy_, camera_proxy_, allowed_origins_, runtime_status_,
                                 metrics_, authenticator_));
             return;
         }
         const std::string_view target = view(request.target());
+        const bool static_resource = !target.starts_with("/api/v1/") && target != "/metrics";
+        const bool login_request = target == "/api/v1/auth/login";
         const bool public_probe = request.method() == http::verb::get &&
                                   (target == "/api/v1/health" || target == "/api/v1/ready");
-        if (!public_probe && authenticator_.enabled()) {
+        if (login_request) {
+            if (request.method() != http::verb::post) {
+                HttpResponse result = response(http::status::method_not_allowed, version,
+                                               error_body("method_not_allowed", "use POST"));
+                result.set(http::field::allow, "POST");
+                send(std::move(result));
+                return;
+            }
+            if (!authenticator_.enabled() || !session_store_.enabled()) {
+                send(response(http::status::not_found, version,
+                              error_body("authentication_disabled", "browser login is not configured")));
+                return;
+            }
+            if (!request_origin_allowed(request, false, allowed_origins_)) {
+                send(response(http::status::forbidden, version,
+                              error_body("origin_rejected", "Origin must match the local Host")));
+                return;
+            }
+            const auto credentials = parse_login_body(request);
+            if (!credentials) {
+                send(response(http::status::bad_request, version,
+                              error_body("invalid_login", "username and password JSON fields are required")));
+                return;
+            }
+            const AuthenticationDecision decision = authenticator_.authenticate_plain(
+                credentials->first, credentials->second, client_key_);
+            if (decision != AuthenticationDecision::allowed) {
+                send(authentication_response(decision, version, authenticator_.retry_after_seconds()));
+                return;
+            }
+            const auto token = session_store_.create(authenticator_.configured_username(), client_key_);
+            if (!token) {
+                send(response(http::status::internal_server_error, version,
+                              error_body("session_create_failed", "could not create a browser session")));
+                return;
+            }
+            HttpResponse result = response(http::status::ok, version,
+                "{\"authenticated\":true,\"user\":\"" +
+                json_escape(authenticator_.configured_username()) + "\",\"expiresInSeconds\":" +
+                std::to_string(session_store_.inactivity_expiry_seconds()) + "}");
+            result.set(http::field::set_cookie, session_store_.set_cookie_header(*token));
+            blog(LOG_INFO, "%s", format_audit_event("authentication", "session_created",
+                                                       {{"client", client_key_}}).c_str());
+            send(std::move(result));
+            return;
+        }
+
+        std::optional<std::string> session_token = session_cookie_token(request);
+        std::optional<SessionRecord> session_record;
+        if (session_token)
+            session_record = session_store_.validate_and_slide(*session_token);
+        bool basic_authenticated = false;
+        if (!public_probe && !static_resource && authenticator_.enabled() && !session_record) {
             std::optional<std::string_view> authorization;
             std::size_t authorization_count = 0;
             for (const auto &field : request.base()) {
@@ -1674,6 +2131,45 @@ private:
                 send(authentication_response(decision, version, authenticator_.retry_after_seconds()));
                 return;
             }
+            basic_authenticated = true;
+        }
+        if (target == "/api/v1/auth/session") {
+            if (request.method() != http::verb::get) {
+                send(response(http::status::method_not_allowed, version,
+                              error_body("method_not_allowed", "use GET")));
+                return;
+            }
+            if (!authenticator_.enabled()) {
+                send(response(http::status::ok, version,
+                              "{\"authenticated\":false,\"authenticationEnabled\":false}"));
+                return;
+            }
+            const std::string user = session_record ? session_record->user :
+                                     basic_authenticated ? std::string(authenticator_.configured_username()) : "";
+            HttpResponse result = response(http::status::ok, version,
+                "{\"authenticated\":true,\"user\":\"" + json_escape(user) +
+                "\",\"via\":\"" + (session_record ? "session" : "basic") +
+                "\",\"expiresAt\":" +
+                (session_record ? std::to_string(session_record->expires_at) : "null") + "}");
+            if (session_token && session_record)
+                result.set(http::field::set_cookie, session_store_.set_cookie_header(*session_token));
+            send(std::move(result));
+            return;
+        }
+        if (target == "/api/v1/auth/logout") {
+            if (request.method() != http::verb::post ||
+                !request_origin_allowed(request, false, allowed_origins_)) {
+                send(response(request.method() == http::verb::post ? http::status::forbidden :
+                              http::status::method_not_allowed, version,
+                              error_body("logout_rejected", "logout requires POST from the local Origin")));
+                return;
+            }
+            if (session_token)
+                session_store_.revoke(*session_token);
+            HttpResponse result = response(http::status::no_content, version, {});
+            result.set(http::field::set_cookie, session_store_.clear_cookie_header());
+            send(std::move(result));
+            return;
         }
         if (websocket::is_upgrade(request)) {
             if (request.method() != http::verb::get || view(request.target()) != "/api/v1/ws" ||
@@ -1693,8 +2189,11 @@ private:
                 ->run(std::move(request), scene_event("scene.snapshot", snapshot.public_json));
             return;
         }
-        send(handle_request(request, controller_, studio_, hub_, whep_proxy_, nvr_proxy_, allowed_origins_, runtime_status_,
-                            metrics_, authenticator_));
+        HttpResponse result = handle_request(request, controller_, studio_, hub_, whep_proxy_, nvr_proxy_, camera_proxy_,
+                                             allowed_origins_, runtime_status_, metrics_, authenticator_);
+        if (session_token && session_record)
+            result.set(http::field::set_cookie, session_store_.set_cookie_header(*session_token));
+        send(std::move(result));
     }
 
     void send(HttpResponse message)
@@ -1720,7 +2219,9 @@ private:
     WebSocketHub &hub_;
     WhepProxy &whep_proxy_;
     NvrProxy &nvr_proxy_;
+    CameraProxy &camera_proxy_;
     BasicAuthenticator &authenticator_;
+    SessionStore &session_store_;
     ControlMetrics &metrics_;
     RuntimeStatus &runtime_status_;
     const std::vector<std::string> &allowed_origins_;
@@ -1732,13 +2233,14 @@ class Listener : public std::enable_shared_from_this<Listener> {
 public:
     Listener(net::io_context &context, const tcp::endpoint &endpoint, SceneController &controller,
              StudioController &studio,
-             WebSocketHub &hub, WhepProxy &whep_proxy, NvrProxy &nvr_proxy,
-             BasicAuthenticator &authenticator,
+             WebSocketHub &hub, WhepProxy &whep_proxy, NvrProxy &nvr_proxy, CameraProxy &camera_proxy,
+             BasicAuthenticator &authenticator, SessionStore &session_store,
              ControlMetrics &metrics, RuntimeStatus &runtime_status,
              const std::vector<std::string> &allowed_origins)
         : acceptor_(net::make_strand(context)), controller_(controller), studio_(studio), hub_(hub), whep_proxy_(whep_proxy),
           nvr_proxy_(nvr_proxy),
-          authenticator_(authenticator), metrics_(metrics), runtime_status_(runtime_status),
+          camera_proxy_(camera_proxy),
+          authenticator_(authenticator), session_store_(session_store), metrics_(metrics), runtime_status_(runtime_status),
           allowed_origins_(allowed_origins)
     {
         beast::error_code error;
@@ -1777,7 +2279,7 @@ private:
     void on_accept(beast::error_code error, tcp::socket socket)
     {
         if (!error)
-            std::make_shared<HttpSession>(std::move(socket), controller_, studio_, hub_, whep_proxy_, nvr_proxy_, authenticator_,
+            std::make_shared<HttpSession>(std::move(socket), controller_, studio_, hub_, whep_proxy_, nvr_proxy_, camera_proxy_, authenticator_, session_store_,
                                           metrics_, runtime_status_, allowed_origins_)->run();
         if (acceptor_.is_open())
             do_accept();
@@ -1789,7 +2291,9 @@ private:
     WebSocketHub &hub_;
     WhepProxy &whep_proxy_;
     NvrProxy &nvr_proxy_;
+    CameraProxy &camera_proxy_;
     BasicAuthenticator &authenticator_;
+    SessionStore &session_store_;
     ControlMetrics &metrics_;
     RuntimeStatus &runtime_status_;
     const std::vector<std::string> &allowed_origins_;
@@ -1805,9 +2309,13 @@ struct ControlServer::Impl {
           authenticator(configuration.authentication,
                         static_cast<std::size_t>(configuration.auth_failure_limit),
                         std::chrono::seconds(configuration.auth_failure_window_seconds)),
-          whep_proxy(configuration.webrtc_enabled, scene_controller,
-                     configuration.control_allowed_origins),
-          nvr_proxy(configuration.nvr_enabled)
+          session_store(configuration.session_database,
+                        std::chrono::seconds(configuration.session_inactivity_seconds),
+                        configuration.session_cookie_secure),
+          whep_proxy(configuration.webrtc_enabled, configuration.composite_enabled, scene_controller,
+                     configuration.control_allowed_origins, runtime_status),
+          nvr_proxy(configuration.nvr_enabled),
+          camera_proxy(configuration.camera_registry_enabled)
     {
     }
 
@@ -1818,9 +2326,11 @@ struct ControlServer::Impl {
     net::io_context context{1};
     WebSocketHub hub;
     BasicAuthenticator authenticator;
+    SessionStore session_store;
     ControlMetrics metrics;
     WhepProxy whep_proxy;
     NvrProxy nvr_proxy;
+    CameraProxy camera_proxy;
     std::shared_ptr<Listener> listener;
     std::thread thread;
 };
@@ -1840,14 +2350,18 @@ std::optional<std::string> ControlServer::start()
 {
     if (impl_->config.http_port == 0 || impl_->thread.joinable())
         return std::nullopt;
+    if (impl_->authenticator.enabled()) {
+        if (const auto session_error = impl_->session_store.initialize())
+            return *session_error;
+    }
     beast::error_code error;
     const net::ip::address address = net::ip::make_address(impl_->config.listen_address, error);
     if (error)
         return "HTTP listen address is invalid";
     impl_->listener = std::make_shared<Listener>(
         impl_->context, tcp::endpoint(address, static_cast<unsigned short>(impl_->config.http_port)),
-        impl_->controller, impl_->studio, impl_->hub, impl_->whep_proxy, impl_->nvr_proxy,
-        impl_->authenticator, impl_->metrics,
+        impl_->controller, impl_->studio, impl_->hub, impl_->whep_proxy, impl_->nvr_proxy, impl_->camera_proxy,
+        impl_->authenticator, impl_->session_store, impl_->metrics,
         impl_->status, impl_->config.control_allowed_origins);
     if (!impl_->listener->error().empty())
         return impl_->listener->error();

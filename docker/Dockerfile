@@ -132,6 +132,7 @@ RUN apt-get -o Acquire::Retries=5 -o Acquire::http::Timeout=30 -o Acquire::https
         nlohmann-json3-dev \
         libpci-dev \
         libsimde-dev \
+        libsqlite3-dev \
         libswresample-dev \
         libswscale-dev \
         libva-dev \
@@ -227,6 +228,10 @@ RUN cmake -S /src/obs -B /build/obs -G Ninja \
 
 FROM obs-builder AS core-builder
 
+RUN apt-get -o Acquire::Retries=5 update \
+    && apt-get -o Acquire::Retries=5 install -y --no-install-recommends libssl-dev \
+    && rm -rf /var/lib/apt/lists/*
+
 WORKDIR /src/webobs
 COPY CMakeLists.txt ./
 COPY core/ ./core/
@@ -242,6 +247,9 @@ RUN cmake -S /src/webobs -B /build/webobs -G Ninja \
     && ctest --test-dir /build/webobs --output-on-failure \
     && cmake --install /build/webobs \
     && LD_LIBRARY_PATH=/opt/obs/lib /opt/obs/bin/webobsd --version \
+    && WEBOBS_HTTP_PORT=0 WEBOBS_WEBRTC_ENABLED=true WEBOBS_COMPOSITE_ENABLED=false \
+       WEBOBS_NVR_ENABLED=false LD_LIBRARY_PATH=/opt/obs/lib \
+       /opt/obs/bin/webobsd --duration-seconds 1 \
     && printf '%s\n' 'rtsp://user:password@camera.invalid/live' \
         | /opt/obs/bin/webobs-log-filter \
         | grep -Fx 'rtsp://***:***@camera.invalid/live' \
@@ -292,7 +300,11 @@ RUN apt-get -o Acquire::Retries=5 -o Acquire::http::Timeout=30 -o Acquire::https
         libpangocairo-1.0-0 \
         libpci3 \
         libuuid1 \
+        libsqlite3-0 \
         libva2 \
+        libva-drm2 \
+        mesa-utils \
+        mesa-va-drivers \
         libx11-6 \
         libx11-xcb1 \
         libx264-164 \
@@ -315,6 +327,9 @@ RUN apt-get -o Acquire::Retries=5 -o Acquire::http::Timeout=30 -o Acquire::https
         tini \
         x11-utils \
         xvfb \
+        vainfo \
+        weston \
+        xwayland \
     && rm -rf /var/lib/apt/lists/*
 
 COPY --from=core-builder /opt/obs /opt/obs
@@ -325,26 +340,34 @@ COPY --from=caddy-runtime /usr/bin/caddy /opt/webobs/bin/caddy
 COPY docker/entrypoint.sh /opt/webobs/entrypoint.sh
 COPY docker/backup.sh /opt/webobs/bin/webobs-backup
 COPY nvr/nvr_service.py /opt/webobs/bin/webobs-nvrd
+COPY camera/camera_registry.py /opt/webobs/bin/webobs-camera-registry
 COPY docker/Caddyfile /opt/webobs/etc/Caddyfile
 COPY gateway/mediamtx.yml /opt/webobs/etc/mediamtx.yml
 COPY gateway/transcode-on-demand.sh /opt/webobs/bin/transcode-on-demand
+COPY tests/test_camera_registry.py /tmp/test_camera_registry.py
 COPY LICENSE /usr/share/licenses/webobs/LICENSE
 COPY obs/obs-studio/COPYING /usr/share/licenses/webobs/OBS-COPYING
 
 ENV LD_LIBRARY_PATH=/opt/obs/lib \
     DISPLAY=:99 \
-    EGL_PLATFORM=x11 \
-    LIBGL_ALWAYS_SOFTWARE=1 \
-    GALLIUM_DRIVER=llvmpipe
+    EGL_PLATFORM=x11
 
 RUN mkdir -p /assets /config/obs /config/webobs /recordings /usr/share/licenses/caddy \
     && cp /usr/share/common-licenses/Apache-2.0 /usr/share/licenses/caddy/LICENSE \
     && chmod 0700 /config/obs /config/webobs \
-    && chmod 0755 /opt/webobs/entrypoint.sh /opt/webobs/bin/caddy /opt/webobs/bin/mediamtx /opt/webobs/bin/transcode-on-demand /opt/webobs/bin/webobs-backup /opt/webobs/bin/webobs-nvrd \
+    && chmod 0755 /opt/webobs/entrypoint.sh /opt/webobs/bin/caddy /opt/webobs/bin/mediamtx /opt/webobs/bin/transcode-on-demand /opt/webobs/bin/webobs-backup /opt/webobs/bin/webobs-nvrd /opt/webobs/bin/webobs-camera-registry \
     && python3 -m py_compile /opt/webobs/bin/webobs-nvrd \
+    && python3 -m py_compile /opt/webobs/bin/webobs-camera-registry \
+    && WEBOBS_TEST_CAMERA_REGISTRY=/opt/webobs/bin/webobs-camera-registry \
+       WEBOBS_TEST_NVR_SERVICE=/opt/webobs/bin/webobs-nvrd \
+       PYTHONDONTWRITEBYTECODE=1 python3 /tmp/test_camera_registry.py \
+    && rm -f /tmp/test_camera_registry.py \
     && /opt/webobs/bin/caddy version \
     && /opt/webobs/bin/caddy adapt --config /opt/webobs/etc/Caddyfile --adapter caddyfile >/dev/null \
     && /opt/webobs/bin/mediamtx --version \
+    && vainfo --help >/dev/null \
+    && test -d /usr/lib/x86_64-linux-gnu/dri \
+    && if [ -e /dev/dri/renderD128 ]; then vainfo --display drm --device /dev/dri/renderD128 >/dev/null; fi \
     && LD_LIBRARY_PATH=/opt/obs/lib /opt/obs/bin/webobsd --version \
     && ldd /opt/obs/bin/webobsd > /tmp/webobs-ldd.txt \
     && ldd /opt/obs/bin/webobs-log-filter >> /tmp/webobs-ldd.txt \

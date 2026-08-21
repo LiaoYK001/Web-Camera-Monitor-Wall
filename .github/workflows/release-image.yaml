@@ -7,18 +7,37 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: write
-  packages: write
-  attestations: write
-  id-token: write
+  contents: read
 
 concurrency:
   group: release-${{ github.ref }}
   cancel-in-progress: false
 
 jobs:
-  release:
+  audit:
     runs-on: ubuntu-24.04
+    steps:
+      - name: Check out source for lightweight audit
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          submodules: recursive
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Verify executable modes before running repository scripts
+        shell: bash
+        run: bash ./scripts/check-executable-bits.sh
+      - name: Audit public source and dependency pins
+        shell: bash
+        run: ./tests/run-public-audit.sh
+
+  release:
+    needs: audit
+    runs-on: [self-hosted, linux, x64, webobs-builder]
+    permissions:
+      contents: write
+      packages: write
+      attestations: write
+      id-token: write
     steps:
       - name: Check out reviewed source recursively
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -27,9 +46,11 @@ jobs:
           fetch-depth: 0
           persist-credentials: false
 
-      - name: Audit public source and dependency pins
+      - name: Re-audit checked-out release source
         shell: bash
-        run: ./tests/run-public-audit.sh
+        run: |
+          ./scripts/check-executable-bits.sh
+          ./tests/run-public-audit.sh
 
       - name: Define immutable release identity
         id: identity
@@ -69,7 +90,10 @@ jobs:
           images: ${{ steps.identity.outputs.image }}
           tags: |
             type=raw,value=${{ steps.identity.outputs.version }}
-            type=sha,format=long
+            type=sha,prefix=sha-,format=short
+            type=semver,pattern={{version}},enable=${{ github.ref_type == 'tag' }}
+            type=raw,value=latest,enable=${{ github.ref_type == 'tag' }}
+            type=raw,value=dev,enable=${{ github.ref_type != 'tag' }}
           labels: |
             org.opencontainers.image.source=https://github.com/${{ github.repository }}
             org.opencontainers.image.url=https://github.com/${{ github.repository }}/releases/tag/${{ steps.identity.outputs.version }}
@@ -87,10 +111,17 @@ jobs:
           push: true
           tags: ${{ steps.metadata.outputs.tags }}
           labels: ${{ steps.metadata.outputs.labels }}
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
+          cache-from: type=local,src=/var/cache/webobs-buildkit
+          cache-to: type=local,dest=/var/cache/webobs-buildkit-next,mode=max
           provenance: mode=max
           sbom: true
+
+      - name: Rotate trusted local BuildKit cache
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo rm -rf -- /var/cache/webobs-buildkit
+          sudo mv -- /var/cache/webobs-buildkit-next /var/cache/webobs-buildkit
 
       - name: Publish GitHub artifact attestation
         uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2

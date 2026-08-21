@@ -15,6 +15,8 @@ set(WEBOBS_WEB_ROOT "/opt/webobs/ui" CACHE PATH "Installed WebOBS editor root")
 find_package(PkgConfig REQUIRED)
 find_package(Boost 1.83 REQUIRED)
 find_package(CURL REQUIRED)
+find_package(OpenSSL REQUIRED)
+find_package(SQLite3 REQUIRED)
 find_package(Threads REQUIRED)
 pkg_check_modules(JANSSON REQUIRED IMPORTED_TARGET jansson)
 
@@ -32,7 +34,7 @@ add_library(webobs-common
     core/src/video_encoder.cpp
 )
 target_include_directories(webobs-common PUBLIC core/include)
-target_link_libraries(webobs-common PUBLIC PkgConfig::JANSSON)
+target_link_libraries(webobs-common PUBLIC PkgConfig::JANSSON OpenSSL::Crypto SQLite::SQLite3)
 target_compile_features(webobs-common PUBLIC cxx_std_20)
 target_compile_options(webobs-common PRIVATE -Wall -Wextra -Wpedantic)
 target_compile_definitions(webobs-common PUBLIC WEBOBS_VERSION="${PROJECT_VERSION}")

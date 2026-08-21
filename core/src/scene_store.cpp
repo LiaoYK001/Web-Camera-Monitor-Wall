@@ -329,7 +329,7 @@ SceneMigrationResult migrate_scene_json(std::string_view input)
         result.document = std::move(parsed.document);
         return result;
     }
-    if (version > 3)
+    if (version > 4)
         return migration_failure("scene schemaVersion is unsupported");
     if (version == 0 && json_object_get(root.get(), "revision") != nullptr)
         return migration_failure("schemaVersion 0 scene must not contain revision");
@@ -454,7 +454,7 @@ SceneFileLoadResult load_scene_file(const std::filesystem::path &path)
     if (!migrated.ok())
         return load_failure(std::move(migrated.error));
     if (migrated.migrated) {
-        const std::filesystem::path backup(path.string() + ".pre-v4.backup");
+        const std::filesystem::path backup(path.string() + ".pre-v5.backup");
         if (const auto backup_error = write_private_content_atomic(backup, content))
             return load_failure("scene migration backup could not be preserved: " + *backup_error);
         if (const auto save_error = save_scene_file_atomic(path, *migrated.document))

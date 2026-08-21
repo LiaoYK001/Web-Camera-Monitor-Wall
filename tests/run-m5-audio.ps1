@@ -280,7 +280,7 @@ JSON.stringify([...document.querySelectorAll('.direct-tile')].map(tile => ({
         ConvertFrom-Json
     Assert-True ((@($ResolvedCapabilities.sources.audioCodec | Sort-Object -Unique) -join ',') -eq 'aac,opus') `
         'Playback capability probing must report both AAC and Opus audio codecs'
-    Assert-True ((@($ResolvedCapabilities.sources.strategy | Sort-Object -Unique) -join ',') -eq 'passthrough,transcode') `
+    Assert-True ((@($ResolvedCapabilities.sources.strategy | Sort-Object -Unique) -join ',') -eq 'hybrid,passthrough') `
         'Opus must stay on passthrough while AAC uses the Hybrid Opus fallback'
     docker compose -f $ComposeFile stop fixture-audio-b
     Assert-True ($LASTEXITCODE -eq 0) 'Could not stop the second audio publisher for reconnect coverage'

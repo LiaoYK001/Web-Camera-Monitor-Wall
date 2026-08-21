@@ -325,25 +325,83 @@ bool intel_render_device(const std::filesystem::path &device)
     return vendor == "0x8086" || vendor == "8086";
 }
 
-VideoEncoderCapabilities detect_video_encoder_capabilities(const Config &config)
+VideoEncoderCapabilities detect_video_encoder_capabilities(const Config &config, bool modules_loaded = true)
 {
     VideoEncoderCapabilities capabilities;
-    capabilities.x264.encoder_available = encoder_registered({"obs_x264"});
+    // Direct-only operation intentionally skips obs_startup and module loading.
+    // The image build verifies these two mandatory plugins, while the device
+    // and driver fields below still come only from the live runtime probes.
+    capabilities.x264.encoder_available = !modules_loaded || encoder_registered({"obs_x264"});
 
     const std::filesystem::path vaapi_device(config.vaapi_device);
-    capabilities.vaapi.device_present = access(vaapi_device.c_str(), R_OK | W_OK) == 0;
-    capabilities.vaapi.encoder_available = encoder_registered({"ffmpeg_vaapi", "ffmpeg_vaapi_tex"});
+    const auto environment_true = [](std::string_view name, bool fallback) {
+        const auto value = process_environment(name);
+        if (!value)
+            return fallback;
+        return *value == "true" || *value == "1";
+    };
+    capabilities.vaapi.device_present = environment_true(
+        "WEBOBS_VAAPI_DEVICE_PRESENT", access(vaapi_device.c_str(), R_OK | W_OK) == 0);
+    capabilities.vaapi.va_driver_loaded = environment_true("WEBOBS_VAAPI_DRIVER_LOADED", false);
+    capabilities.vaapi.encoder_available = !modules_loaded ||
+        encoder_registered({"ffmpeg_vaapi", "ffmpeg_vaapi_tex"});
+    capabilities.vaapi.encode_supported = environment_true("WEBOBS_VAAPI_ENCODE_SUPPORTED", false);
+    capabilities.vaapi.decode_supported = environment_true("WEBOBS_VAAPI_DECODE_SUPPORTED", false);
+    capabilities.vaapi.runtime_probe_passed =
+        environment_true("WEBOBS_VAAPI_RUNTIME_PROBE_PASSED", false);
 
     capabilities.qsv.device_present = capabilities.vaapi.device_present && intel_render_device(vaapi_device);
     capabilities.qsv.encoder_available =
+        modules_loaded &&
         encoder_registered({"obs_qsv11_soft_v2", "obs_qsv11_v2", "obs_qsv11_soft", "obs_qsv11"});
+    capabilities.qsv.va_driver_loaded = capabilities.qsv.device_present;
+    capabilities.qsv.encode_supported = capabilities.qsv.encoder_available;
+    capabilities.qsv.decode_supported = capabilities.qsv.device_present;
+    capabilities.qsv.runtime_probe_passed = capabilities.qsv.device_present;
 
     capabilities.nvenc.device_present = access("/dev/nvidia0", R_OK | W_OK) == 0 &&
                                           access("/dev/nvidiactl", R_OK | W_OK) == 0;
     capabilities.nvenc.encoder_available =
+        modules_loaded &&
         encoder_registered({"obs_nvenc_h264_soft", "obs_nvenc_h264_tex", "obs_nvenc_h264_cuda",
                             "ffmpeg_nvenc"});
+    capabilities.nvenc.va_driver_loaded = capabilities.nvenc.device_present;
+    capabilities.nvenc.encode_supported = capabilities.nvenc.encoder_available;
+    capabilities.nvenc.decode_supported = capabilities.nvenc.device_present;
+    capabilities.nvenc.runtime_probe_passed = capabilities.nvenc.device_present;
     return select_video_encoder(config.video_encoder, capabilities);
+}
+
+RendererCapabilities detect_renderer_capabilities(const Config &config)
+{
+    RendererCapabilities result;
+    result.requested = std::string(renderer_preference_name(config.renderer));
+    result.selected = process_environment("WEBOBS_RENDERER_SELECTED").value_or(
+        config.renderer == RendererPreference::hardware ? "hardware" : "software");
+    result.hardware_probe_passed = result.selected == "hardware";
+    result.fallback = process_environment("WEBOBS_RENDERER_FALLBACK").value_or("false") == "true";
+    result.fallback_reason = process_environment("WEBOBS_RENDERER_FALLBACK_REASON").value_or("");
+    return result;
+}
+
+HardwareDecodeCapabilities select_hardware_decode(const Config &config,
+                                                   const VideoEncoderCapabilities &capabilities)
+{
+    HardwareDecodeCapabilities result;
+    result.requested = std::string(hardware_decode_preference_name(config.hardware_decode));
+    const bool ready = capabilities.vaapi.device_present && capabilities.vaapi.va_driver_loaded &&
+                       capabilities.vaapi.decode_supported && capabilities.vaapi.runtime_probe_passed;
+    if (config.hardware_decode == HardwareDecodePreference::off)
+        return result;
+    if (ready) {
+        result.selected = "vaapi";
+        return result;
+    }
+    if (config.hardware_decode == HardwareDecodePreference::on) {
+        result.fallback = true;
+        result.fallback_reason = "vaapi_decode_runtime_not_ready";
+    }
+    return result;
 }
 
 const char *video_encoder_identifier(VideoEncoderKind kind)
@@ -391,18 +449,96 @@ ExitCode run_obs_engine(const Config &config, const SceneDocument &document)
     LogHandlerGuard log_handler_guard;
 
     std::error_code path_error;
-    const std::filesystem::path output_path = std::filesystem::absolute(config.output_path, path_error).lexically_normal();
-    if (path_error) {
-        blog(LOG_ERROR, "Could not resolve output path: %s", path_error.message().c_str());
-        return ExitCode::output_failed;
+    const bool recording_enabled = !config.output_path.empty();
+    const bool composite_runtime_active = recording_enabled || config.composite_enabled;
+    std::filesystem::path output_path;
+    std::filesystem::path temporary_path;
+    if (recording_enabled) {
+        output_path = std::filesystem::absolute(config.output_path, path_error).lexically_normal();
+        if (path_error) {
+            blog(LOG_ERROR, "Could not resolve output path: %s", path_error.message().c_str());
+            return ExitCode::output_failed;
+        }
+        const auto temporary_nonce = std::chrono::steady_clock::now().time_since_epoch().count();
+        temporary_path = output_path.parent_path() /
+            ("." + output_path.filename().string() + ".webobsd-" + std::to_string(getpid()) + "-" +
+             std::to_string(temporary_nonce) + ".mkv");
     }
-    const auto temporary_nonce = std::chrono::steady_clock::now().time_since_epoch().count();
-    const std::filesystem::path temporary_path = output_path.parent_path() /
-        ("." + output_path.filename().string() + ".webobsd-" + std::to_string(getpid()) + "-" +
-         std::to_string(temporary_nonce) + ".mkv");
     TemporaryFileGuard temporary_guard{temporary_path};
-    if (!prepare_output_paths(output_path, temporary_path))
+    if (recording_enabled && !prepare_output_paths(output_path, temporary_path))
         return ExitCode::output_failed;
+
+    if (!composite_runtime_active) {
+        VideoEncoderCapabilities encoder_capabilities =
+            detect_video_encoder_capabilities(config, false);
+        const RendererCapabilities renderer_capabilities = detect_renderer_capabilities(config);
+        const HardwareDecodeCapabilities hardware_decode =
+            select_hardware_decode(config, encoder_capabilities);
+        ObsSceneRuntime scene_runtime(config.connect_timeout_seconds, config.browser_security,
+                                      config.source_stale_seconds,
+                                      config.source_recovery_base_seconds,
+                                      config.source_recovery_max_seconds,
+                                      hardware_decode.selected == "vaapi", false);
+        if (const auto prepare_error = scene_runtime.prepare(document)) {
+            blog(LOG_ERROR, "Could not prepare the direct-only scene state: %s", prepare_error->c_str());
+            return ExitCode::scene_store_failed;
+        }
+        scene_runtime.commit_prepared();
+        SceneController scene_controller(document, config.scene_file, scene_runtime);
+        StudioDocument studio_document;
+        std::filesystem::path studio_path;
+        if (!config.scene_file.empty()) {
+            studio_path = default_studio_path(config.scene_file);
+            StudioFileLoadResult loaded_studio = load_studio_file(studio_path);
+            if (!loaded_studio.ok()) {
+                blog(LOG_ERROR, "Could not load Studio state: %s", loaded_studio.error.c_str());
+                return ExitCode::scene_store_failed;
+            }
+            if (loaded_studio.document) {
+                studio_document = std::move(*loaded_studio.document);
+            } else {
+                studio_document.program_scene_id = document.id;
+                studio_document.preview_scene_id = document.id;
+                studio_document.scenes.push_back(document);
+                if (const auto studio_error = save_studio_file_atomic(studio_path, studio_document, false)) {
+                    blog(LOG_ERROR, "Could not initialize Studio state: %s", studio_error->c_str());
+                    return ExitCode::scene_store_failed;
+                }
+            }
+        } else {
+            studio_document.program_scene_id = document.id;
+            studio_document.preview_scene_id = document.id;
+            studio_document.scenes.push_back(document);
+        }
+        StudioController studio_controller(std::move(studio_document), studio_path, scene_controller);
+        RuntimeStatus runtime_status;
+        runtime_status.video_encoder = encoder_capabilities;
+        runtime_status.renderer = renderer_capabilities;
+        runtime_status.hardware_decode = hardware_decode;
+        runtime_status.control_plane_active.store(true);
+        runtime_status.engine_active.store(false);
+        runtime_status.webrtc_configured.store(false);
+        ControlServer control_server(config, scene_controller, studio_controller, runtime_status);
+        if (const auto server_error = control_server.start()) {
+            blog(LOG_ERROR, "Could not start the HTTP control server: %s", server_error->c_str());
+            return ExitCode::control_server_failed;
+        }
+        if (config.http_port != 0)
+            blog(LOG_INFO, "HTTP control server listening on %s:%d", config.listen_address.c_str(),
+                 config.http_port);
+        blog(LOG_INFO, "Direct-only mode is active; OBS decode, scene composition, and encoding are not initialized");
+        const auto started_at = std::chrono::steady_clock::now();
+        while (!stop_requested) {
+            if (config.duration_seconds > 0 &&
+                std::chrono::steady_clock::now() - started_at >=
+                    std::chrono::seconds(config.duration_seconds))
+                break;
+            std::this_thread::sleep_for(std::chrono::milliseconds(100));
+        }
+        runtime_status.control_plane_active.store(false);
+        control_server.stop();
+        return ExitCode::success;
+    }
 
     const std::filesystem::path config_directory = "/config/obs";
     std::filesystem::create_directories(config_directory, path_error);
@@ -456,18 +592,25 @@ ExitCode run_obs_engine(const Config &config, const SceneDocument &document)
     obs_post_load_modules();
 
     VideoEncoderCapabilities encoder_capabilities = detect_video_encoder_capabilities(config);
+    const RendererCapabilities renderer_capabilities = detect_renderer_capabilities(config);
+    const HardwareDecodeCapabilities hardware_decode =
+        select_hardware_decode(config, encoder_capabilities);
     if (!encoder_capabilities.x264.encoder_available) {
         blog(LOG_ERROR, "The mandatory obs_x264 software fallback is unavailable");
         return ExitCode::obs_initialization_failed;
     }
     blog(LOG_INFO,
          "Video encoder capabilities: requested=%s selected=%s fallback=%s "
-         "vaapi(device=%s,encoder=%s) qsv(device=%s,encoder=%s) "
+         "vaapi(device=%s,driver=%s,encode=%s,decode=%s,probe=%s,encoder=%s) qsv(device=%s,encoder=%s) "
          "nvenc(device=%s,encoder=%s)",
          video_encoder_preference_name(encoder_capabilities.requested).data(),
          video_encoder_kind_name(encoder_capabilities.selected).data(),
          encoder_capabilities.fallback ? "true" : "false",
          encoder_capabilities.vaapi.device_present ? "true" : "false",
+         encoder_capabilities.vaapi.va_driver_loaded ? "true" : "false",
+         encoder_capabilities.vaapi.encode_supported ? "true" : "false",
+         encoder_capabilities.vaapi.decode_supported ? "true" : "false",
+         encoder_capabilities.vaapi.runtime_probe_passed ? "true" : "false",
          encoder_capabilities.vaapi.encoder_available ? "true" : "false",
          encoder_capabilities.qsv.device_present ? "true" : "false",
          encoder_capabilities.qsv.encoder_available ? "true" : "false",
@@ -477,15 +620,19 @@ ExitCode run_obs_engine(const Config &config, const SceneDocument &document)
     ObsSceneRuntime scene_runtime(config.connect_timeout_seconds, config.browser_security,
                                   config.source_stale_seconds,
                                   config.source_recovery_base_seconds,
-                                  config.source_recovery_max_seconds);
+                                  config.source_recovery_max_seconds,
+                                  hardware_decode.selected == "vaapi");
     if (const auto prepare_error = scene_runtime.prepare(document)) {
         blog(LOG_ERROR, "Could not prepare OBS scene: %s", prepare_error->c_str());
         return ExitCode::obs_initialization_failed;
     }
     scene_runtime.commit_prepared();
-    scene_runtime.activate();
+    if (composite_runtime_active)
+        scene_runtime.activate();
     const std::size_t expected_sources = scene_runtime.visible_source_count();
-    if (expected_sources == 0) {
+    if (!composite_runtime_active) {
+        blog(LOG_INFO, "Composite pipeline is idle; OBS sources are not decoding");
+    } else if (expected_sources == 0) {
         blog(LOG_INFO, "Scene has no visible sources; recording starts with a black canvas");
     } else {
         blog(LOG_INFO, "Waiting up to %d seconds for %zu visible source(s)", config.connect_timeout_seconds,
@@ -502,7 +649,7 @@ ExitCode run_obs_engine(const Config &config, const SceneDocument &document)
             return ExitCode::success;
         }
         const std::size_t ready_sources = scene_runtime.ready_visible_source_count();
-        if (ready_sources == 0 && config.scene_file.empty()) {
+        if (ready_sources == 0 && !config.rtsp_url.empty()) {
             blog(LOG_ERROR, "No visible source became ready before the timeout");
             return ExitCode::source_timeout;
         }
@@ -543,7 +690,7 @@ ExitCode run_obs_engine(const Config &config, const SceneDocument &document)
     obs_encoder_set_video(video_encoder.get(), obs_get_video());
 
     ServicePtr whip_service;
-    if (config.webrtc_enabled) {
+    if (config.webrtc_enabled && config.composite_enabled) {
         DataPtr service_settings(obs_data_create());
         obs_data_set_string(service_settings.get(), "server", config.whip_url.c_str());
         obs_data_set_string(service_settings.get(), "bearer_token", "");
@@ -554,20 +701,23 @@ ExitCode run_obs_engine(const Config &config, const SceneDocument &document)
         }
         obs_service_apply_encoder_settings(whip_service.get(), video_settings.get(), nullptr);
     }
-    DataPtr audio_settings(obs_data_create());
-    obs_data_set_int(audio_settings.get(), "bitrate", 128);
-    EncoderPtr audio_encoder(
-        obs_audio_encoder_create("ffmpeg_aac", "WebOBS program AAC", audio_settings.get(), 0, nullptr));
-    if (!audio_encoder) {
-        blog(LOG_ERROR, "Could not create the recording AAC encoder");
-        return ExitCode::output_failed;
+    EncoderPtr audio_encoder;
+    if (recording_enabled) {
+        DataPtr audio_settings(obs_data_create());
+        obs_data_set_int(audio_settings.get(), "bitrate", 128);
+        audio_encoder.reset(
+            obs_audio_encoder_create("ffmpeg_aac", "WebOBS program AAC", audio_settings.get(), 0, nullptr));
+        if (!audio_encoder) {
+            blog(LOG_ERROR, "Could not create the recording AAC encoder");
+            return ExitCode::output_failed;
+        }
+        obs_encoder_set_audio(audio_encoder.get(), obs_get_audio());
     }
-    obs_encoder_set_audio(audio_encoder.get(), obs_get_audio());
 
     DataPtr webrtc_audio_settings(obs_data_create());
     obs_data_set_int(webrtc_audio_settings.get(), "bitrate", 96);
     EncoderPtr webrtc_audio_encoder;
-    if (config.webrtc_enabled) {
+    if (config.webrtc_enabled && config.composite_enabled) {
         webrtc_audio_encoder.reset(
             obs_audio_encoder_create("ffmpeg_opus", "WebOBS program Opus", webrtc_audio_settings.get(), 0, nullptr));
         if (!webrtc_audio_encoder) {
@@ -577,22 +727,25 @@ ExitCode run_obs_engine(const Config &config, const SceneDocument &document)
         obs_encoder_set_audio(webrtc_audio_encoder.get(), obs_get_audio());
     }
 
-    DataPtr output_settings(obs_data_create());
-    obs_data_set_string(output_settings.get(), "path", temporary_path.c_str());
-    obs_data_set_bool(output_settings.get(), "allow_overwrite", true);
     OutputState output_state;
-    OutputPtr output(obs_output_create("ffmpeg_muxer", "WebOBS file output", output_settings.get(), nullptr));
-    if (!output) {
-        blog(LOG_ERROR, "Could not create ffmpeg_muxer output");
-        return ExitCode::output_failed;
+    OutputPtr output;
+    if (recording_enabled) {
+        DataPtr output_settings(obs_data_create());
+        obs_data_set_string(output_settings.get(), "path", temporary_path.c_str());
+        obs_data_set_bool(output_settings.get(), "allow_overwrite", true);
+        output.reset(obs_output_create("ffmpeg_muxer", "WebOBS file output", output_settings.get(), nullptr));
+        if (!output) {
+            blog(LOG_ERROR, "Could not create ffmpeg_muxer output");
+            return ExitCode::output_failed;
+        }
+        signal_handler_connect(obs_output_get_signal_handler(output.get()), "stop", on_output_stopped, &output_state);
+        obs_output_set_video_encoder(output.get(), video_encoder.get());
+        obs_output_set_audio_encoder(output.get(), audio_encoder.get(), 0);
     }
-    signal_handler_connect(obs_output_get_signal_handler(output.get()), "stop", on_output_stopped, &output_state);
-    obs_output_set_video_encoder(output.get(), video_encoder.get());
-    obs_output_set_audio_encoder(output.get(), audio_encoder.get(), 0);
 
     OutputState whip_output_state;
     OutputPtr whip_output;
-    if (config.webrtc_enabled) {
+    if (config.webrtc_enabled && config.composite_enabled) {
         whip_output.reset(obs_output_create("whip_output", "WebOBS WHIP program output", nullptr, nullptr));
         if (!whip_output) {
             blog(LOG_ERROR, "Could not create the WHIP audio/video output");
@@ -634,7 +787,11 @@ ExitCode run_obs_engine(const Config &config, const SceneDocument &document)
     StudioController studio_controller(std::move(studio_document), studio_path, scene_controller);
     RuntimeStatus runtime_status;
     runtime_status.video_encoder = encoder_capabilities;
-    runtime_status.webrtc_configured.store(config.webrtc_enabled);
+    runtime_status.renderer = renderer_capabilities;
+    runtime_status.hardware_decode = hardware_decode;
+    runtime_status.control_plane_active.store(true);
+    runtime_status.engine_active.store(true);
+    runtime_status.webrtc_configured.store(config.webrtc_enabled && config.composite_enabled);
     scene_runtime.maintain_source_health();
     update_source_runtime_status(runtime_status, scene_runtime.source_health_snapshot());
     ControlServer control_server(config, scene_controller, studio_controller, runtime_status);
@@ -660,7 +817,7 @@ ExitCode run_obs_engine(const Config &config, const SceneDocument &document)
     if (whip_output)
         blog(LOG_INFO, "WebRTC program publishing initiated");
 
-    if (!obs_output_start(output.get())) {
+    if (output && !obs_output_start(output.get())) {
         const char *message = obs_output_get_last_error(output.get());
         blog(LOG_ERROR, "Could not start recording%s%s", message && *message ? ": " : "",
              message && *message ? message : "");
@@ -669,9 +826,10 @@ ExitCode run_obs_engine(const Config &config, const SceneDocument &document)
             wait_for_output_stop(whip_output.get(), whip_output_state, "WebRTC output");
         return ExitCode::output_failed;
     }
-    runtime_status.recording_active.store(true);
-    blog(LOG_INFO, "Recording started: %dx%d at %d fps, %d Kbps", document.canvas.width,
-         document.canvas.height, config.fps, config.bitrate_kbps);
+    runtime_status.recording_active.store(output != nullptr);
+    if (output)
+        blog(LOG_INFO, "Recording started: %dx%d at %d fps, %d Kbps", document.canvas.width,
+             document.canvas.height, config.fps, config.bitrate_kbps);
 
     if (whip_output &&
         !wait_for_webrtc_connection(whip_output.get(), whip_output_state, config.connect_timeout_seconds)) {
@@ -682,7 +840,7 @@ ExitCode run_obs_engine(const Config &config, const SceneDocument &document)
         bool stopped = true;
         if (obs_output_active(whip_output.get()))
             stopped = wait_for_output_stop(whip_output.get(), whip_output_state, "WebRTC output");
-        if (obs_output_active(output.get()) && !wait_for_output_stop(output.get(), output_state, "Recording output"))
+        if (output && obs_output_active(output.get()) && !wait_for_output_stop(output.get(), output_state, "Recording output"))
             stopped = false;
         whip_output.reset();
         output.reset();
@@ -708,7 +866,7 @@ ExitCode run_obs_engine(const Config &config, const SceneDocument &document)
         if (config.duration_seconds > 0 &&
             now - recording_started >= std::chrono::seconds(config.duration_seconds))
             break;
-        if (output_state.stopped.load()) {
+        if (output && output_state.stopped.load()) {
             unexpected_stop = true;
             break;
         }
@@ -722,14 +880,15 @@ ExitCode run_obs_engine(const Config &config, const SceneDocument &document)
     if (unexpected_stop) {
         runtime_status.recording_active.store(false);
         runtime_status.webrtc_ready.store(false);
+        runtime_status.control_plane_active.store(false);
         control_server.stop();
         if (whip_output_state.stopped.load())
             blog(LOG_ERROR, "WebRTC publishing stopped unexpectedly (code %lld)", whip_output_state.stop_code.load());
-        if (output_state.stopped.load())
+        if (output && output_state.stopped.load())
             blog(LOG_ERROR, "Recording stopped unexpectedly (code %lld)", output_state.stop_code.load());
         if (whip_output && obs_output_active(whip_output.get()))
             wait_for_output_stop(whip_output.get(), whip_output_state, "WebRTC output");
-        if (obs_output_active(output.get()))
+        if (output && obs_output_active(output.get()))
             wait_for_output_stop(output.get(), output_state, "Recording output");
         whip_output.reset();
         output.reset();
@@ -737,13 +896,15 @@ ExitCode run_obs_engine(const Config &config, const SceneDocument &document)
     }
     runtime_status.recording_active.store(false);
     runtime_status.webrtc_ready.store(false);
+    runtime_status.engine_active.store(false);
+    runtime_status.control_plane_active.store(false);
     control_server.stop();
     bool outputs_stopped = true;
     if (whip_output)
         outputs_stopped = wait_for_output_stop(whip_output.get(), whip_output_state, "WebRTC output");
     whip_output.reset();
     whip_service.reset();
-    if (!wait_for_output_stop(output.get(), output_state, "Recording output"))
+    if (output && !wait_for_output_stop(output.get(), output_state, "Recording output"))
         outputs_stopped = false;
     if (!outputs_stopped) {
         output.reset();
@@ -755,6 +916,8 @@ ExitCode run_obs_engine(const Config &config, const SceneDocument &document)
     audio_encoder.reset();
     scene_runtime.deactivate();
 
+    if (!recording_enabled)
+        return ExitCode::success;
     if (!std::filesystem::is_regular_file(temporary_path, path_error) ||
         std::filesystem::file_size(temporary_path, path_error) == 0) {
         blog(LOG_ERROR, "Temporary recording is missing or empty");
