@@ -9,7 +9,7 @@ RTSP camera -> libobs ffmpeg_source -> OBS scene -> H.264/AAC MP4
 
 当前版本新增 SQLite WAL Camera Registry、稳定 Camera/Profile ID、ONVIF WS-Discovery 和 RTSP/MJPEG/Snapshot/HLS/HTTP-FLV/WHEP/SRT/RTP/V4L2 adapter 契约。默认 Direct-only 运行完全不初始化 OBS 解码、合成或编码；只有录制或启用 Composite 才启动 libobs。VA-API 会分别报告设备、驱动、编解码能力和真实运行探测，AMD 可使用硬解、OpenGL 合成与硬编，失败时明确回退。Hybrid 只转码不兼容的轨道。WebUI 另提供 7 天滑动 Session、真全屏、Screen Wake Lock、逐路执行链与进程 CPU/RSS 诊断。
 
-开发路线、里程碑验收标准和当前进度见 [ROADMAP.md](ROADMAP.md)。**M0–M9 门禁已通过；M10 的 Registry/Adapter 基础已落地，完整 ONVIF Profile T/PTZ/事件门禁仍在进行。**详细路线见 [M7–M13 产品路线](docs/future-milestones.md)。部署见 [Docker 部署指南](docs/docker-deployment.md) 与 [Fedora Podman 示例](deploy/README-podman.md)，硬件与性能验收见 [性能和硬件指南](docs/performance-and-hardware.md)，不用 Docker Hub 时见 [GHCR 指南](docs/ghcr.md)，自建发布节点见 [Self-hosted Runner 指南](docs/self-hosted-runner.md)。当前场景契约是 [schema v5](docs/scene-schema-v5.md)，控制协议见 [API v1](docs/api-v1.md)。
+开发路线、里程碑验收标准和当前进度见 [ROADMAP.md](ROADMAP.md)。**M0–M9 门禁已通过；M10 的 Registry/Adapter 基础已落地，完整 ONVIF Profile T/PTZ/事件门禁仍在进行。**详细路线见 [M7–M13 产品路线](docs/future-milestones.md)。部署见 [Docker 部署指南](docs/docker-deployment.md) 与 [Fedora Podman 示例](deploy/README-podman.md)，硬件与性能验收见 [性能和硬件指南](docs/performance-and-hardware.md)，不用 Docker Hub 时见 [GHCR 指南](docs/ghcr.md)，逐条手工发布命令见 [Windows、WSL2 与 Fedora GHCR 手工发布指南](docs/manual-ghcr-release.md)，自建发布节点见 [Self-hosted Runner 指南](docs/self-hosted-runner.md)。当前场景契约是 [schema v5](docs/scene-schema-v5.md)，控制协议见 [API v1](docs/api-v1.md)。
 
 `WEBOBS_SCENE_FILE` 默认指向 `/config/webobs/scene.json`。空配置首次启动会创建空 Scene/Camera Registry，直接在 WebUI 的“设备管理”中添加设备；`WEBOBS_RTSP_URL` 只保留为一次性兼容 bootstrap，不再是部署必填项。Scene v5 只保存 Camera/Profile ID，凭据通过未提交 Git 的 Secret 引用解析。
 

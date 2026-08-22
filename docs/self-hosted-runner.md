@@ -75,7 +75,7 @@ vX.Y.Z            正式版本
 
 ## 5. Actions 故障时本地发布
 
-本地脚本只接受小写 GHCR 路径和 `dev`/`vX.Y.Z` 版本，拒绝脏工作树，并先执行 executable-bit 与公开仓库审计：
+本地脚本只接受小写 GHCR 路径和 `dev`/`vX.Y`/`vX.Y.Z` 版本，拒绝脏工作树，并先执行 executable-bit 与公开仓库审计：
 
 ```bash
 docker login ghcr.io

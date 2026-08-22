@@ -4,14 +4,16 @@ set -euo pipefail
 image="${1:-}"
 version="${2:-}"
 [[ "$image" =~ ^ghcr\.io/[a-z0-9][a-z0-9._-]{0,127}/[a-z0-9][a-z0-9._-]{0,127}$ ]] || {
-  echo "usage: $0 ghcr.io/owner/repository <vX.Y.Z|dev>" >&2
+  echo "usage: $0 ghcr.io/owner/repository <vX.Y|vX.Y.Z|dev>" >&2
   exit 64
 }
-[[ "$version" == dev || "$version" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]] || {
-  echo "version must be dev or vX.Y.Z" >&2
+[[ "$version" == dev || "$version" =~ ^v[0-9]+\.[0-9]+(\.[0-9]+)?$ ]] || {
+  echo "version must be dev, vX.Y, or vX.Y.Z" >&2
   exit 64
 }
 
+repository_root="$(git rev-parse --show-toplevel)"
+cd "$repository_root"
 git diff --quiet --ignore-submodules=none
 git diff --cached --quiet --ignore-submodules=none
 ./scripts/check-executable-bits.sh
@@ -19,8 +21,8 @@ git diff --cached --quiet --ignore-submodules=none
 
 revision="$(git rev-parse HEAD)"
 short_revision="$(git rev-parse --short=12 HEAD)"
-cache_root="/var/cache/webobs-buildkit-local"
-next_cache="${cache_root}-next"
+cache_root="${repository_root}/build/release-cache"
+next_cache="${repository_root}/build/release-cache-next"
 rm -rf -- "$next_cache"
 
 tags=(--tag "${image}:${version}" --tag "${image}:sha-${short_revision}")
