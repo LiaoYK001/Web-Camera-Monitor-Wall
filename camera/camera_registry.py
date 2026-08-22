@@ -20,7 +20,6 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import urlsplit
 from urllib.parse import quote, urlunsplit
-from urllib.request import Request, urlopen
 
 DB_PATH = Path(os.environ.get("WEBOBS_CAMERA_DATABASE", "/config/webobs/cameras.db"))
 LISTEN = ("127.0.0.1", 8092)
@@ -258,14 +257,6 @@ def classify(address: str) -> dict:
             result["probe"] = "ffprobe"
         except (subprocess.SubprocessError, OSError, ValueError, json.JSONDecodeError):
             result["probe"] = "unreachable-or-unsupported"
-    elif adapter in {"mjpeg", "snapshot", "whep", "onvif"}:
-        try:
-            request = Request(normalized, method="HEAD", headers={"User-Agent": "webobs-camera-probe/1"})
-            with urlopen(request, timeout=3) as response:
-                result["contentType"] = response.headers.get_content_type()
-                result["probe"] = "http-head"
-        except Exception:
-            result["probe"] = "unreachable-or-auth-required"
     return result
 
 
