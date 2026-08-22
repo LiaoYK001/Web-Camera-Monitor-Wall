@@ -80,7 +80,7 @@ vX.Y.Z            正式版本
 ```bash
 docker login ghcr.io
 ./scripts/release-image-local.sh \
-  ghcr.io/liaoyk001/web-camera-monitor-wall \
+  ghcr.io/your-user-or-organization/web-camera-monitor-wall \
   v0.2.0
 ```
 

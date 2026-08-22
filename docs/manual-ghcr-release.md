@@ -1,12 +1,12 @@
 # Windows、WSL2 与 Fedora 手工发布 GHCR 镜像
 
-本文用于维护者从可信工作副本手工构建并发布 `linux/amd64` 产品镜像。示例镜像为：
+本文用于维护者或 Fork 开发者从可信工作副本手工构建并发布 `linux/amd64` 产品镜像。本项目供普通用户拉取的官方镜像地址是：
 
 ```text
-ghcr.io/liaoyk001/web-camera-monitor-wall:v1.1
+ghcr.io/liaoyk001/web-camera-monitor-wall:<version-or-digest>
 ```
 
-版本标签应视为不可变：发布前确认标签不存在；发布后不要用另一提交覆盖 `v1.1`。需要修复时发布 `v1.1.1` 或下一版本。`latest` 是可移动的稳定别名，`sha-<12位提交>` 用于精确追踪源码，生产部署最终应锁定 digest。
+下文的发布命令不把任何个人用户名写死：`GHCR user` 是持有 PAT 的个人 GitHub 账号，`image owner` 是接收镜像的个人或组织 namespace，两者可以不同。示例版本使用 `v1.1`；版本标签应视为不可变，发布前确认标签不存在，发布后不要用另一提交覆盖它。需要修复时发布 `v1.1.1` 或下一版本。`latest` 是可移动的稳定别名，`sha-<12位提交>` 用于精确追踪源码，生产部署最终应锁定 digest。
 
 ## 1. 共同前置条件
 
@@ -31,7 +31,9 @@ git status --short
 `git status --short` 必须没有输出。再确认远端没有同名版本：
 
 ```bash
-docker buildx imagetools inspect ghcr.io/liaoyk001/web-camera-monitor-wall:v1.1
+IMAGE=ghcr.io/your-user-or-organization/web-camera-monitor-wall
+VERSION=v1.1
+docker buildx imagetools inspect "${IMAGE}:${VERSION}"
 ```
 
 命令报告 `manifest unknown` 表示标签尚不存在；如果能够读取 manifest，应停止发布并选择新版本。
@@ -59,7 +61,15 @@ docker buildx ls
 下面的 token 只短暂存在于进程内存，不会显示在终端：
 
 ```powershell
-$GhcrUser = 'LiaoYK001'
+$GhcrUser = Read-Host 'GitHub username that owns the PAT'
+$ImageOwner = Read-Host 'GHCR image owner (personal account or organization)'
+if ($GhcrUser -notmatch '^[A-Za-z0-9][A-Za-z0-9-]{0,63}$' -or
+    $ImageOwner -notmatch '^[A-Za-z0-9][A-Za-z0-9-]{0,63}$') {
+    throw 'GitHub user or image owner has an invalid format'
+}
+$Image = "ghcr.io/$($ImageOwner.ToLowerInvariant())/web-camera-monitor-wall"
+$Version = 'v1.1'
+
 $SecureToken = Read-Host 'GHCR personal access token' -AsSecureString
 $TokenPointer = [Runtime.InteropServices.Marshal]::SecureStringToBSTR($SecureToken)
 try {
@@ -83,8 +93,6 @@ Docker Desktop 会把凭据交给系统 credential helper；不要把 `~/.docker
 pwsh -NoProfile -File ./tests/run-public-audit.ps1
 if ($LASTEXITCODE -ne 0) { throw 'Public repository audit failed' }
 
-$Image = 'ghcr.io/liaoyk001/web-camera-monitor-wall'
-$Version = 'v1.1'
 $Revision = (git rev-parse HEAD).Trim()
 $ShortRevision = (git rev-parse --short=12 HEAD).Trim()
 
@@ -141,14 +149,20 @@ docker buildx ls
 ### 3.2 登录与发布
 
 ```bash
+read -rp 'GitHub username that owns the PAT: ' ghcr_user
+read -rp 'GHCR image owner (personal account or organization): ' image_owner
+case "$ghcr_user" in ''|*[!A-Za-z0-9-]*|-*|*-) echo 'invalid GitHub user' >&2; exit 64 ;; esac
+case "$image_owner" in ''|*[!A-Za-z0-9-]*|-*|*-) echo 'invalid image owner' >&2; exit 64 ;; esac
+image_owner="${image_owner,,}"
+image="ghcr.io/${image_owner}/web-camera-monitor-wall"
+version="v1.1"
+
 read -rsp 'GHCR personal access token: ' ghcr_token
-printf '%s' "$ghcr_token" | docker login ghcr.io -u LiaoYK001 --password-stdin
+printf '%s' "$ghcr_token" | docker login ghcr.io -u "$ghcr_user" --password-stdin
 unset ghcr_token
 echo
 
-./scripts/release-image-local.sh \
-  ghcr.io/liaoyk001/web-camera-monitor-wall \
-  v1.1
+./scripts/release-image-local.sh "$image" "$version"
 ```
 
 脚本会完成干净工作树检查、可执行位检查、公开仓库审计、`linux/amd64` Buildx 构建、SBOM/provenance、`v1.1`/`sha-*`/`latest` 标签推送，以及远端 manifest 检查。缓存保存在被 Git 忽略的 `build/release-cache`。
@@ -156,9 +170,9 @@ echo
 发布后：
 
 ```bash
-docker pull ghcr.io/liaoyk001/web-camera-monitor-wall:v1.1
-docker buildx imagetools inspect ghcr.io/liaoyk001/web-camera-monitor-wall:v1.1
-docker image inspect ghcr.io/liaoyk001/web-camera-monitor-wall:v1.1 \
+docker pull "${image}:${version}"
+docker buildx imagetools inspect "${image}:${version}"
+docker image inspect "${image}:${version}" \
   --format '{{json .RepoDigests}}'
 ```
 
@@ -194,18 +208,24 @@ docker buildx ls
 ### 4.2 登录、发布、验证
 
 ```bash
+read -rp 'GitHub username that owns the PAT: ' ghcr_user
+read -rp 'GHCR image owner (personal account or organization): ' image_owner
+case "$ghcr_user" in ''|*[!A-Za-z0-9-]*|-*|*-) echo 'invalid GitHub user' >&2; exit 64 ;; esac
+case "$image_owner" in ''|*[!A-Za-z0-9-]*|-*|*-) echo 'invalid image owner' >&2; exit 64 ;; esac
+image_owner="${image_owner,,}"
+image="ghcr.io/${image_owner}/web-camera-monitor-wall"
+version="v1.1"
+
 read -rsp 'GHCR personal access token: ' ghcr_token
-printf '%s' "$ghcr_token" | docker login ghcr.io -u LiaoYK001 --password-stdin
+printf '%s' "$ghcr_token" | docker login ghcr.io -u "$ghcr_user" --password-stdin
 unset ghcr_token
 echo
 
-./scripts/release-image-local.sh \
-  ghcr.io/liaoyk001/web-camera-monitor-wall \
-  v1.1
+./scripts/release-image-local.sh "$image" "$version"
 
-docker pull ghcr.io/liaoyk001/web-camera-monitor-wall:v1.1
-docker buildx imagetools inspect ghcr.io/liaoyk001/web-camera-monitor-wall:v1.1
-docker image inspect ghcr.io/liaoyk001/web-camera-monitor-wall:v1.1 \
+docker pull "${image}:${version}"
+docker buildx imagetools inspect "${image}:${version}"
+docker image inspect "${image}:${version}" \
   --format '{{json .RepoDigests}}'
 ```
 
@@ -215,7 +235,7 @@ AMD 机器还应运行实际硬件检查：
 test -e /dev/dri/renderD128
 vainfo --display drm --device /dev/dri/renderD128
 docker run --rm --device /dev/dri/renderD128:/dev/dri/renderD128 \
-  ghcr.io/liaoyk001/web-camera-monitor-wall:v1.1 \
+  "${image}:${version}" \
   vainfo --display drm --device /dev/dri/renderD128
 ```
 
@@ -223,7 +243,7 @@ docker run --rm --device /dev/dri/renderD128:/dev/dri/renderD128 \
 
 ```bash
 docker run --rm --device /dev/dri/renderD128:/dev/dri/renderD128 \
-  --entrypoint vainfo ghcr.io/liaoyk001/web-camera-monitor-wall:v1.1 \
+  --entrypoint vainfo "${image}:${version}" \
   --display drm --device /dev/dri/renderD128
 ```
 
@@ -232,17 +252,25 @@ docker run --rm --device /dev/dri/renderD128:/dev/dri/renderD128 \
 Podman 可以直接构建和推送普通 OCI 镜像，但不会自动复现本项目 Buildx `--sbom`/`--provenance=mode=max` 的发布证明。因此正式 release 推荐上一节的 Docker Buildx；Podman 更适合本地验证或应急镜像：
 
 ```bash
+read -rp 'GitHub username that owns the PAT: ' ghcr_user
+read -rp 'GHCR image owner (personal account or organization): ' image_owner
+case "$ghcr_user" in ''|*[!A-Za-z0-9-]*|-*|*-) echo 'invalid GitHub user' >&2; exit 64 ;; esac
+case "$image_owner" in ''|*[!A-Za-z0-9-]*|-*|*-) echo 'invalid image owner' >&2; exit 64 ;; esac
+image_owner="${image_owner,,}"
+image="ghcr.io/${image_owner}/web-camera-monitor-wall"
+version="v1.1"
+
 read -rsp 'GHCR personal access token: ' ghcr_token
-printf '%s' "$ghcr_token" | podman login ghcr.io -u LiaoYK001 --password-stdin
+printf '%s' "$ghcr_token" | podman login ghcr.io -u "$ghcr_user" --password-stdin
 unset ghcr_token
 echo
 
 revision="$(git rev-parse HEAD)"
 podman build --arch amd64 -f docker/Dockerfile \
   --label "org.opencontainers.image.revision=${revision}" \
-  --label 'org.opencontainers.image.version=v1.1' \
-  -t ghcr.io/liaoyk001/web-camera-monitor-wall:v1.1 .
-podman push ghcr.io/liaoyk001/web-camera-monitor-wall:v1.1
+  --label "org.opencontainers.image.version=${version}" \
+  -t "${image}:${version}" .
+podman push "${image}:${version}"
 ```
 
 ## 6. 发布后记录与生产锁定
@@ -250,14 +278,16 @@ podman push ghcr.io/liaoyk001/web-camera-monitor-wall:v1.1
 读取最终 digest：
 
 ```bash
+IMAGE=ghcr.io/your-user-or-organization/web-camera-monitor-wall
+VERSION=v1.1
 docker buildx imagetools inspect \
-  ghcr.io/liaoyk001/web-camera-monitor-wall:v1.1
+  "${IMAGE}:${VERSION}"
 ```
 
 生产 Compose 不应长期依赖可移动的 `latest`，应记录并使用：
 
 ```yaml
-image: ghcr.io/liaoyk001/web-camera-monitor-wall@sha256:<manifest-digest>
+image: ghcr.io/your-user-or-organization/web-camera-monitor-wall@sha256:<manifest-digest>
 ```
 
 同时记录源码 revision、版本、发布时间和 digest。若发布失败，不要删除或覆盖已经被部署引用的版本；修复问题后创建新版本。若 token 疑似泄漏，立即在 GitHub 撤销 token、执行 `docker logout ghcr.io`，检查 package 活动和本地 Docker credential store。

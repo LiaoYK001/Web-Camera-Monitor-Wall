@@ -25,7 +25,7 @@ ghcr.io/liaoyk001/web-camera-monitor-wall:<tag>
 
 ## 2. 手工发布
 
-手工发布适合首次验证；稳定发布更推荐后面的 GitHub Actions 流程。
+手工发布适合首次验证；稳定发布更推荐后面的 GitHub Actions 流程。Windows Docker Desktop、WSL2、Fedora Docker/Podman 的完整参数化命令见 [跨平台手工发布指南](manual-ghcr-release.md)。
 
 ### 2.1 构建并检查本地镜像
 
@@ -58,21 +58,24 @@ printf '%s' "$CR_PAT" | docker login ghcr.io -u YOUR_GITHUB_USER --password-stdi
 unset CR_PAT
 ```
 
-PowerShell 可从一个位于仓库外、受 ACL 保护的临时文件读取：
+PowerShell 使用交互输入，并让 token 只短暂存在于进程内存：
 
 ```powershell
-Get-Content -Raw C:\secure\ghcr-token.txt |
-    docker login ghcr.io -u YOUR_GITHUB_USER --password-stdin
+$ghcrUser = Read-Host 'GitHub username that owns the PAT'
+$ghcrToken = Read-Host 'GHCR token' -MaskInput
+$ghcrToken | docker login ghcr.io -u $ghcrUser --password-stdin
+Remove-Variable ghcrToken
 ```
 
-登录成功后应删除临时明文文件，或改用凭据管理器提供令牌。
+登录用户名属于 PAT 持有者；镜像 owner 可以是另一个已授予其 package 写权限的组织。登录成功后由 Docker credential helper 保存凭据，不要复制其配置文件。
 
 ### 2.3 打标签并推送
 
 Linux shell 示例：
 
 ```bash
-IMAGE=ghcr.io/liaoyk001/web-camera-monitor-wall
+IMAGE_OWNER=your-user-or-organization
+IMAGE="ghcr.io/${IMAGE_OWNER}/web-camera-monitor-wall"
 VERSION=v0.2.0
 REVISION="sha-$(git rev-parse --short=12 HEAD)"
 
@@ -85,7 +88,8 @@ docker push "$IMAGE:$REVISION"
 PowerShell：
 
 ```powershell
-$image = 'ghcr.io/liaoyk001/web-camera-monitor-wall'
+$imageOwner = 'your-user-or-organization'
+$image = "ghcr.io/$($imageOwner.ToLowerInvariant())/web-camera-monitor-wall"
 $version = 'v0.2.0'
 $revision = 'sha-' + (git rev-parse --short=12 HEAD)
 docker image tag webobs:m0 "${image}:$version"
