@@ -237,7 +237,13 @@ export const detectCamera = (address: string) => cameraRequest<CameraDetection>(
 export const discoverOnvif = () => cameraRequest<{ devices: Array<{ address: string; host: string; adapter: 'onvif' }> }>('/onvif/discover', {
   method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}',
 });
+export const probeOnvif = (address: string, credentialsRef: string) => cameraRequest<CameraDetection>('/onvif/probe', {
+  method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ address, credentialsRef }),
+});
 export const createCamera = (camera: Partial<CameraRecord>) => cameraRequest<CameraRecord>('/cameras', {
   method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(camera),
+});
+export const syncOnvifCamera = (cameraId: string) => cameraRequest<CameraRecord>(`/cameras/${encodeURIComponent(cameraId)}/onvif/sync`, {
+  method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}',
 });
 export const deleteCamera = (cameraId: string) => cameraRequest<{ id: string; deleted: boolean }>(`/cameras/${encodeURIComponent(cameraId)}`, { method: 'DELETE' });

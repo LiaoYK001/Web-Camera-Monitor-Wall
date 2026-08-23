@@ -1,8 +1,8 @@
 # Control API v1 / 控制接口 v1
 
-M1–M9 provide the control, Studio, WebRTC, NVR and evidence plane. The M10 foundation adds Camera Registry, source adapters, session login, execution-chain diagnostics and detailed hardware probes. The current composition contract is [scene-schema-v5.md](scene-schema-v5.md).
+M1–M9 provide the control, Studio, WebRTC, NVR and evidence plane. M10 now adds Camera Registry, source adapters, session login, execution-chain diagnostics, detailed hardware probes, and authenticated ONVIF media synchronization. The current composition contract is [scene-schema-v5.md](scene-schema-v5.md).
 
-M1–M9 提供控制、Studio、WebRTC、NVR 与证据平面；M10 基础新增 Camera Registry、来源 Adapter、Session 登录、执行链诊断和细粒度硬件探测。当前合成契约见 [scene-schema-v5.md](scene-schema-v5.md)。
+M1–M9 提供控制、Studio、WebRTC、NVR 与证据平面；M10 现已新增 Camera Registry、来源 Adapter、Session 登录、执行链诊断、细粒度硬件探测及带认证的 ONVIF 媒体同步。当前合成契约见 [scene-schema-v5.md](scene-schema-v5.md)。
 
 ## Security boundary / 安全边界
 
@@ -189,8 +189,10 @@ Returns five fixed process groups (`webobsd`, `mediamtx`, `ffmpeg`, `caddy`, `ob
 - `POST /api/v1/camera-detect` classifies a bounded IP/hostname/URL and probes media where supported.
 - `GET /api/v1/camera-adapters` returns the supported adapter names.
 - `POST /api/v1/onvif/discover` performs bounded WS-Discovery and returns at most 128 non-credential XAddr results.
+- `POST /api/v1/onvif/probe` accepts `address` and `credentialsRef`, then reads authenticated Media2/Profile T profiles with Media/Profile S fallback without saving partial state.
+- `POST /api/v1/cameras/{cameraId}/onvif/sync` atomically refreshes a saved ONVIF camera's profiles, capability cache, and health.
 
-All mutations require the normal authentication and same-origin boundary. Embedded URL userinfo, credential-like query keys/fragments, unsafe IDs and traversal in `credentialsRef` are rejected. The loopback service stores SQLite WAL metadata; only internal consumers can resolve `/run/secrets/webobs-camera-credentials/<ref>.json`.
+All mutations require the normal authentication and same-origin boundary. Embedded URL userinfo, credential-like query keys/fragments, unsafe IDs and traversal in `credentialsRef` are rejected. The loopback service stores SQLite WAL metadata; only internal consumers can resolve `/run/secrets/webobs-camera-credentials/<ref>.json`. ONVIF SOAP is response-size bounded, rejects DTD/entities and redirects, validates HTTPS normally, and never returns credential material. See [onvif-media.md](onvif-media.md).
 
 返回当前明确支持的播放模式，以及场景中每个来源对应的同源端点。响应只复用公开场景已有的来源 ID，不包含 RTSP、凭据、MediaMTX 地址、内部路径或调用方可选上游。`codec` 与 `audioCodec` 只报告探测到的上游编码名称；H.264/VP8/VP9/AV1 视频和无音频/Opus/G.711 A-law/G.711 mu-law 音频可直通，任一现有编码不兼容时，按需 Hybrid 路由只转换必要轨道，并返回 `strategy: "hybrid"`。
 

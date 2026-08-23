@@ -4,7 +4,7 @@
 >
 > Last updated / 最后更新：2026-08-15
 >
-> Current position / 当前位置：M9 is complete. M10 is in progress: Camera Registry, stable Camera/Profile references, adapter contracts and bounded WS-Discovery are implemented; authenticated Profile T media negotiation, PTZ/events and vendor exit-gate coverage remain / M9 已完成；M10 实施中：Camera Registry、稳定 Camera/Profile 引用、Adapter 契约和有界 WS-Discovery 已落地，Profile T 认证媒体协商、PTZ/事件及厂商门禁仍待完成
+> Current position / 当前位置：M9 is complete. M10 is in progress: Camera Registry, stable Camera/Profile references, adapter contracts, bounded WS-Discovery, and authenticated Profile T/S media synchronization are implemented; PTZ/events/talk and vendor exit-gate coverage remain / M9 已完成；M10 实施中：Camera Registry、稳定 Camera/Profile 引用、Adapter 契约、有界 WS-Discovery及带认证的 Profile T/S 媒体同步已落地，PTZ/事件/对讲及厂商门禁仍待完成
 
 This document expands the project from a web camera compositor into a self-hosted monitoring workspace with two first-class capabilities: an OBS-inspired customizable canvas and an NVR workflow inspired by mainstream monitoring applications such as tinyCam Monitor. It is a capability plan, not a compatibility or UI-cloning claim, and it does not promise release dates.
 
@@ -76,9 +76,9 @@ SQLite in WAL mode plus local volumes is the initial single-node metadata baseli
 
 ## 4. Milestone sequence / 里程碑顺序
 
-M6 established the production foundation, M7 completed Canvas Studio, M8 completed the archive plane, and M9 made it searchable, playable, and exportable. M10 device identity and adapter foundations are now implemented; the remaining M10 controls still require their published exit gate.
+M6 established the production foundation, M7 completed Canvas Studio, M8 completed the archive plane, and M9 made it searchable, playable, and exportable. M10 device identity, adapter foundations and authenticated media synchronization are now implemented; the remaining M10 controls still require their published exit gate.
 
-M6 建立生产底座，M7 完成画布工作台，M8 完成独立逐路归档平面，M9 使归档可检索、可回放、可导出。M10 的设备身份与 Adapter 底座已实现，剩余设备控制仍须通过既定门禁；后续里程碑继续以前序门禁为前提。
+M6 建立生产底座，M7 完成画布工作台，M8 完成独立逐路归档平面，M9 使归档可检索、可回放、可导出。M10 的设备身份、Adapter 底座与带认证媒体同步已实现，剩余设备控制仍须通过既定门禁；后续里程碑继续以前序门禁为前提。
 
 ```text
 M6 Production      -> M7 Canvas Studio -> M8 NVR Core       -> M9 Timeline

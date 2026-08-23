@@ -1149,6 +1149,8 @@ public:
             suffix = "/detect";
         else if (target == "/api/v1/onvif/discover")
             suffix = "/onvif/discover";
+        else if (target == "/api/v1/onvif/probe")
+            suffix = "/onvif/probe";
         else
             return response(http::status::not_found, request.version(),
                             error_body("not_found", "resource not found"));
@@ -1175,7 +1177,9 @@ public:
         curl_easy_setopt(handle, CURLOPT_URL, url.c_str());
         curl_easy_setopt(handle, CURLOPT_PROTOCOLS_STR, "http");
         curl_easy_setopt(handle, CURLOPT_CONNECTTIMEOUT_MS, 1000L);
-        curl_easy_setopt(handle, CURLOPT_TIMEOUT_MS, suffix == "/onvif/discover" ? 5000L : 10000L);
+        curl_easy_setopt(handle, CURLOPT_TIMEOUT_MS,
+                         suffix == "/onvif/discover" ? 5000L :
+                         (suffix == "/onvif/probe" || suffix.ends_with("/onvif/sync")) ? 30000L : 10000L);
         curl_easy_setopt(handle, CURLOPT_NOSIGNAL, 1L);
         curl_easy_setopt(handle, CURLOPT_FOLLOWLOCATION, 0L);
         curl_easy_setopt(handle, CURLOPT_WRITEFUNCTION, &write_body);
@@ -1733,7 +1737,7 @@ HttpResponse handle_request(const HttpRequest &request, SceneController &control
 
     if (target == "/api/v1/cameras" || target.starts_with("/api/v1/cameras/") ||
         target == "/api/v1/camera-adapters" || target == "/api/v1/camera-detect" ||
-        target == "/api/v1/onvif/discover") {
+        target == "/api/v1/onvif/discover" || target == "/api/v1/onvif/probe") {
         if ((request.method() == http::verb::put || request.method() == http::verb::post ||
              request.method() == http::verb::delete_) &&
             !request_origin_allowed(request, false, allowed_origins))

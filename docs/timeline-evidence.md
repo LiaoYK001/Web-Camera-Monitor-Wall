@@ -45,3 +45,7 @@ pwsh ./tests/run-m9-timeline.ps1
 The deterministic gate records four synthetic cameras, freezes the archive, measures 40 local timeline queries against a 500 ms p95 budget, verifies UTC/leap-day and corrupt-gap behavior, HTTP Range, JPEG thumbnail/snapshot hashes, four-camera fast export, exact-boundary export, logical program association, manifest and file SHA-256, FFprobe playback, evidence lock/delete conflicts, and credential/path-free audit events. The published p95 number is environment-specific and must be remeasured on deployment storage. Browser synchronization uses the explicit 250 ms correction threshold; production release qualification should additionally observe a real four-player session across target browsers and daylight-saving zones.
 
 确定性门禁录制四路合成摄像机并冻结归档，测量 40 次本地时间线查询与 500 ms p95 预算，验证 UTC/闰日及损坏断档、HTTP Range、JPEG 缩略图/截图哈希、四路快速导出、精确边界导出、逻辑节目录像关联、清单与文件 SHA-256、FFprobe 播放、证据锁/删除冲突及不含凭据/路径的审计事件。公开 p95 数值与环境相关，部署存储上必须重新测量。浏览器同步使用明确的 250 ms 纠正阈值；生产发布资格还应在目标浏览器及夏令时时区观察真实四播放器会话。
+
+The current-worktree image regression on 2026-08-23 passed the complete gate and measured 4.8 ms p95 for 40 local timeline queries. The result records this development machine and Docker storage only; it does not replace target-host storage measurement or real-browser/DST observation.
+
+2026-08-23 的当前工作树镜像回归通过完整门禁，40 次本地时间线查询 p95 为 4.8 ms。该结果只记录本开发机与 Docker 存储，不替代目标主机存储测量及真实浏览器/夏令时观察。

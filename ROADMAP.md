@@ -10,9 +10,9 @@ This roadmap describes milestone order and acceptance gates, not promised releas
 
 **🚧 M10 — Device Operations 正在实施；Camera Registry 与 Source Adapter 基础已落地。**
 
-M0 through M9 implementation is complete. M10 now has a SQLite WAL Camera Registry, stable Camera/Profile references, secret-file credential indirection, bounded WS-Discovery, source-adapter contracts, empty first-run deployment, and shared live/NVR identity. Authenticated ONVIF Profile T media negotiation, PTZ/presets/events, talk, and the emulator/multi-vendor exit matrix remain open.
+M0 through M9 implementation is complete. M10 now has a SQLite WAL Camera Registry, stable Camera/Profile references, secret-file credential indirection, bounded WS-Discovery, source-adapter contracts, empty first-run deployment, shared live/NVR identity, and authenticated Media2/Profile T media synchronization with Media/Profile S fallback. PTZ/presets/events, talk, and the full emulator/multi-vendor exit matrix remain open.
 
-M0 至 M9 实现已全部完成。M10 现已具备 SQLite WAL Camera Registry、稳定 Camera/Profile 引用、Secret 文件凭据间接引用、有界 WS-Discovery、来源 Adapter 契约、空配置首次部署，以及实时/NVR 共享设备身份。带认证的 ONVIF Profile T 媒体协商、PTZ/预置位/事件、对讲和模拟器/多厂商退出矩阵仍未关闭。
+M0 至 M9 实现已全部完成。M10 现已具备 SQLite WAL Camera Registry、稳定 Camera/Profile 引用、Secret 文件凭据间接引用、有界 WS-Discovery、来源 Adapter 契约、空配置首次部署、实时/NVR 共享设备身份，以及带认证的 Media2/Profile T 媒体同步和 Media/Profile S 回退。PTZ/预置位/事件、对讲及完整模拟器/多厂商退出矩阵仍未关闭。
 
 M7 delivers Canvas Studio, M8 the archive plane, and M9 the searchable playback/evidence workflow. M10–M13 continue device operations, events, operator UX, and scale. The detailed boundaries and gates are defined in [docs/future-milestones.md](docs/future-milestones.md).
 
@@ -87,7 +87,7 @@ M0 已于 2026-08-11 在真实摄像头门禁通过后完成。后续修改采�
 | M7 — Canvas Studio | ✅ Complete / 已完成 | Scene collections, nested scenes/groups, filters, Preview/Program and transitions / 场景集合、嵌套场景/组、滤镜、预览/节目与转场 | Persistent multi-scene Studio workflow and Direct/Composite capability contract pass / 持久化多场景工作流与 Direct/Composite 能力契约通过 |
 | M8 — NVR Core | ✅ Implementation complete / 实现完成 | Independent per-camera segmented recording, catalog, retention and crash recovery / 独立逐路分段录像、目录、保留与崩溃恢复 | Deterministic recovery/retention gate passes; six-hour and private burn-ins remain release qualification / 确定性恢复/保留门禁通过；六小时及私有耐久属于发布资格验证 |
 | M9 — Timeline | ✅ Implementation complete / 实现完成 | Archive search, synchronized playback, clip export and evidence integrity / 归档检索、同步回放、片段导出与证据完整性 | UTC/gap, p95, Range, derived media, export/hash, lock/delete and audit gates pass / UTC/断档、p95、Range、派生媒体、导出/哈希、锁定/删除及审计门禁通过 |
-| M10 — Device Operations | 🚧 In progress / 实施中 | Camera Registry, adapter contracts and bounded discovery are implemented; Profile T, PTZ, events and talk remain / Camera Registry、Adapter 契约与有界发现已实现；Profile T、PTZ、事件和对讲仍待完成 | Emulator plus multi-vendor capability, safety and redaction matrix passes / 模拟器加多厂商能力、安全与脱敏矩阵通过 |
+| M10 — Device Operations | 🚧 In progress / 实施中 | Registry, adapters, discovery and authenticated Profile T/S media synchronization are implemented; PTZ, events and talk remain / Registry、Adapter、发现及带认证的 Profile T/S 媒体同步已实现；PTZ、事件和对讲仍待完成 | Emulator plus multi-vendor capability, safety and redaction matrix passes / 模拟器加多厂商能力、安全与脱敏矩阵通过 |
 | M11 — Events & Detection | 🧭 Planned / 已规划 | Native/software events, motion zones, detector providers, rules and notifications / 原生/软件事件、移动区域、检测提供器、规则与通知 | Analytics failure cannot block recording; event accuracy, queue and security gates pass / 分析失败不阻塞录像，事件准确性、队列与安全门禁通过 |
 | M12 — Operator UX | 🧭 Planned / 已规划 | Monitor/PWA/kiosk workflows, adaptive grids and least-privilege roles / 监看/PWA/值守流程、自适应宫格与最小权限角色 | 16-tile reference profile, browser/PWA and authorization matrix pass / 16 宫格参考配置、浏览器/PWA 与授权矩阵通过 |
 | M13 — Scale & Resilience | 🧭 Planned / 已规划 | Multi-volume/node roles, integrations, resource scheduling and disaster recovery / 多卷/节点角色、集成、资源调度与灾难恢复 | Published density tiers, failure convergence, restore and signed upgrade/rollback pass / 公开密度档位、故障收敛、恢复及签名升级回滚通过 |
@@ -269,6 +269,10 @@ M9 implementation completed on 2026-08-15. The deterministic reference run measu
 
 M9 实现于 2026-08-15 完成。确定性参考运行测得 40 次本地时间线查询 p95 为 10.8 ms。该数值是开发证据，不是所有存储的性能承诺；目标部署必须重跑 [docs/timeline-evidence.md](docs/timeline-evidence.md) 所述测量及浏览器/DST 观察。M10 现已进入实施阶段。
 
+M9 was fully re-run from the current worktree image on 2026-08-23 while opening M10. The complete UTC/gap, Range, JPEG, four-camera fast/exact export, hash, lock/delete and audit gate passed; 40 local timeline queries measured 4.8 ms p95. This regression result is environment-specific evidence, not a production latency guarantee.
+
+M10 开始阶段于 2026-08-23 使用当前工作树最终镜像完整重跑 M9。UTC/断档、Range、JPEG、四路快速/精确导出、哈希、锁定/删除及审计门禁全部通过；40 次本地时间线查询 p95 为 4.8 ms。该回归结果仅是当前环境证据，不构成生产延迟承诺。
+
 ### M10 — Device Operations & Camera Adapters / 设备运维与摄像机适配
 
 #### M10 progress / M10 进度
@@ -279,13 +283,13 @@ M9 实现于 2026-08-15 完成。确定性参考运行测得 40 次本地时间�
 - [x] Add bounded ONVIF WS-Discovery and WebUI device registration/automatic detection / 增加有界 ONVIF WS-Discovery 与 WebUI 设备注册/自动检测
 - [x] Support an empty first-run Scene/Registry without an RTSP bootstrap secret / 支持无需 RTSP bootstrap secret 的空 Scene/Registry 首次启动
 - [x] Reject embedded credentials and token-like URL query values at the Registry boundary / 在 Registry 边界拒绝内嵌凭据和类似 token 的 URL 查询值
-- [ ] Implement authenticated Profile T media profiles and Profile S compatibility fallback / 实现带认证的 Profile T 媒体 Profile 与 Profile S 兼容回退
+- [x] Implement authenticated Profile T media profiles and Profile S compatibility fallback / 实现带认证的 Profile T 媒体 Profile 与 Profile S 兼容回退
 - [ ] Implement capability-driven PTZ, presets, events, snapshots and guarded two-way talk / 实现能力驱动的 PTZ、预置位、事件、快照及受控双向对讲
 - [ ] Pass emulator plus multiple real-vendor capability, timeout, redaction and safety matrices / 通过模拟器及多个真实厂商的能力、超时、脱敏与安全矩阵
 
-The checked items establish storage, identity and protocol boundaries; they do not claim that every declared adapter or ONVIF operation has passed end-to-end hardware acceptance. M10 closes only after the remaining items and published exit gate pass.
+The checked items establish storage, identity and protocol boundaries. The Profile T/S media client has deterministic HTTP Digest plus WS-Security tests, but this does not claim ONVIF product conformance or real-device acceptance. M10 closes only after the remaining items and published exit gate pass. See [docs/onvif-media.md](docs/onvif-media.md).
 
-已勾选项目建立了存储、身份和协议边界，不表示每个声明的 Adapter 或 ONVIF 操作都已通过端到端硬件验收。只有剩余项目与公开退出门禁全部通过后，M10 才会关闭。
+已勾选项目建立了存储、身份和协议边界。Profile T/S 媒体客户端已通过 HTTP Digest + WS-Security 确定性测试，但这不代表 ONVIF 产品合规或真实设备验收。只有剩余项目与公开退出门禁全部通过后，M10 才会关闭。详见 [docs/onvif-media.md](docs/onvif-media.md)。
 
 ## Cross-cutting rules / 贯穿规则
 

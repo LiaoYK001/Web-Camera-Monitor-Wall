@@ -9,28 +9,53 @@ secrets.
 from __future__ import annotations
 
 import json
+import base64
+import hashlib
 import os
 import re
+import secrets
 import socket
+import ssl
 import sqlite3
 import subprocess
 import time
 import uuid
+import xml.etree.ElementTree as ET
+from datetime import datetime, timezone
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
+from urllib.error import HTTPError, URLError
 from urllib.parse import urlsplit
 from urllib.parse import quote, urlunsplit
-from urllib.request import Request, urlopen
+from urllib.request import (
+    HTTPBasicAuthHandler, HTTPDigestAuthHandler, HTTPPasswordMgrWithDefaultRealm,
+    HTTPSHandler, HTTPRedirectHandler, Request, build_opener, urlopen,
+)
+from xml.sax.saxutils import escape
 
 DB_PATH = Path(os.environ.get("WEBOBS_CAMERA_DATABASE", "/config/webobs/cameras.db"))
 LISTEN = ("127.0.0.1", 8092)
 MAX_BODY = 1024 * 1024
+MAX_ONVIF_XML = 2 * 1024 * 1024
+ONVIF_TIMEOUT_SECONDS = 6
+TLS_CONTEXT = ssl.create_default_context()
+SECRET_ROOT = Path(os.environ.get(
+    "WEBOBS_CAMERA_SECRET_ROOT", "/run/secrets/webobs-camera-credentials"))
 ADAPTERS = {
     "onvif", "rtsp", "mjpeg", "snapshot", "hls", "http-flv", "whep",
     "srt", "rtp", "v4l2",
 }
 ID_RE = re.compile(r"^[a-zA-Z0-9._-]{1,64}$")
 SECRET_REF_RE = re.compile(r"^[a-zA-Z0-9._/-]{0,256}$")
+
+
+class OnvifError(RuntimeError):
+    """Safe, credential-free ONVIF failure for API responses."""
+
+
+class NoRedirect(HTTPRedirectHandler):
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        raise OnvifError("ONVIF endpoint redirects are forbidden")
 
 
 def connect() -> sqlite3.Connection:
@@ -98,6 +123,39 @@ def safe_endpoint(value: str, adapter: str) -> str:
     if parsed.scheme.lower() not in schemes[adapter] or not parsed.hostname:
         raise ValueError(f"endpoint scheme is not valid for {adapter}")
     return value if "://" in value else "http://" + value
+
+
+def load_credentials(credentials_ref: str) -> tuple[str, str]:
+    if not credentials_ref:
+        return "", ""
+    if not SECRET_REF_RE.fullmatch(credentials_ref) or ".." in credentials_ref.split("/"):
+        raise PermissionError("camera credential reference is invalid")
+    secret_root = SECRET_ROOT.resolve()
+    secret_path = (secret_root / f"{credentials_ref}.json").resolve()
+    if secret_root not in secret_path.parents or not secret_path.is_file():
+        raise PermissionError("camera credential reference is unavailable")
+    try:
+        secret = json.loads(secret_path.read_text(encoding="utf-8"))
+    except (OSError, ValueError, json.JSONDecodeError) as error:
+        raise PermissionError("camera credential secret is invalid") from error
+    username, password = secret.get("username", ""), secret.get("password", "")
+    if (not isinstance(username, str) or not isinstance(password, str) or not username or
+            len(username) > 256 or len(password) > 512):
+        raise PermissionError("camera credential secret is invalid")
+    return username, password
+
+
+def endpoint_with_credentials(endpoint: str, username: str, password: str) -> str:
+    if not username:
+        return endpoint
+    parsed = urlsplit(endpoint)
+    host = parsed.hostname or ""
+    if ":" in host and not host.startswith("["):
+        host = f"[{host}]"
+    if parsed.port:
+        host = f"{host}:{parsed.port}"
+    authority = f"{quote(username, safe='')}:{quote(password, safe='')}@{host}"
+    return urlunsplit((parsed.scheme, authority, parsed.path, parsed.query, ""))
 
 
 def validate_profile(profile: dict, adapter: str) -> dict:
@@ -180,19 +238,8 @@ def resolve_profile(database: sqlite3.Connection, camera_id: str, profile_id: st
     endpoint = profile["endpoint"] if profile else camera["address"]
     credentials_ref = camera["credentials_ref"]
     if credentials_ref:
-        secret_root = Path("/run/secrets/webobs-camera-credentials").resolve()
-        secret_path = (secret_root / f"{credentials_ref}.json").resolve()
-        if secret_root not in secret_path.parents or not secret_path.is_file():
-            raise PermissionError("camera credential reference is unavailable")
-        secret = json.loads(secret_path.read_text(encoding="utf-8"))
-        username, password = secret.get("username", ""), secret.get("password", "")
-        if not isinstance(username, str) or not isinstance(password, str) or not username or len(password) > 512:
-            raise PermissionError("camera credential secret is invalid")
-        parsed = urlsplit(endpoint)
-        host = parsed.hostname or ""
-        if ":" in host and not host.startswith("["): host = f"[{host}]"
-        if parsed.port: host = f"{host}:{parsed.port}"
-        endpoint = urlunsplit((parsed.scheme, f"{quote(username, safe='')}:{quote(password, safe='')}@{host}", parsed.path, parsed.query, ""))
+        username, password = load_credentials(credentials_ref)
+        endpoint = endpoint_with_credentials(endpoint, username, password)
     return {"endpoint": endpoint, "adapter": camera["adapter"],
             "hardwareDecode": camera["hardware_decode"], "cameraId": camera_id, "profileId": profile_id}
 
@@ -217,6 +264,303 @@ def save_camera(camera: dict, replace: bool) -> dict:
               p["audioCodec"], p["width"], p["height"], p["fps"]) for p in camera["profiles"]],
         )
         row = database.execute("SELECT * FROM cameras WHERE id=?", (camera["id"],)).fetchone()
+        return camera_document(database, row)
+
+
+def xml_local_name(tag: str) -> str:
+    return tag.rsplit("}", 1)[-1].split(":", 1)[-1]
+
+
+def xml_text(element: ET.Element | None, names: tuple[str, ...]) -> str:
+    if element is None:
+        return ""
+    wanted = set(names)
+    for child in element.iter():
+        if xml_local_name(child.tag) in wanted and child.text:
+            return child.text.strip()
+    return ""
+
+
+def parse_onvif_xml(data: bytes) -> ET.Element:
+    if len(data) > MAX_ONVIF_XML:
+        raise OnvifError("ONVIF response exceeds the size limit")
+    lowered = data.lower()
+    if b"<!doctype" in lowered or b"<!entity" in lowered:
+        raise OnvifError("ONVIF response contains forbidden XML declarations")
+    try:
+        root = ET.fromstring(data)
+    except ET.ParseError as error:
+        raise OnvifError("ONVIF response is malformed XML") from error
+    if any(xml_local_name(node.tag) == "Fault" for node in root.iter()):
+        raise OnvifError("ONVIF device returned a SOAP fault")
+    return root
+
+
+def ws_security_header(username: str, password: str) -> str:
+    if not username:
+        return ""
+    nonce = secrets.token_bytes(16)
+    created = datetime.now(timezone.utc).isoformat(timespec="seconds").replace("+00:00", "Z")
+    digest = base64.b64encode(hashlib.sha1(nonce + created.encode() + password.encode()).digest()).decode()
+    encoded_nonce = base64.b64encode(nonce).decode()
+    return (
+        '<s:Header><wsse:Security s:mustUnderstand="true" '
+        'xmlns:wsse="http://docs.oasis-open.org/wss/2004/01/oasis-200401-wss-wssecurity-secext-1.0.xsd" '
+        'xmlns:wsu="http://docs.oasis-open.org/wss/2004/01/oasis-200401-wss-wssecurity-utility-1.0.xsd">'
+        '<wsse:UsernameToken><wsse:Username>' + escape(username) + '</wsse:Username>'
+        '<wsse:Password Type="http://docs.oasis-open.org/wss/2004/01/oasis-200401-wss-username-token-profile-1.0#PasswordDigest">' + digest + '</wsse:Password>'
+        '<wsse:Nonce EncodingType="http://docs.oasis-open.org/wss/2004/01/oasis-200401-wss-soap-message-security-1.0#Base64Binary">' + encoded_nonce + '</wsse:Nonce>'
+        '<wsu:Created>' + created + '</wsu:Created></wsse:UsernameToken></wsse:Security></s:Header>'
+    )
+
+
+def onvif_soap(endpoint: str, action: str, body: str, username: str, password: str) -> ET.Element:
+    endpoint = safe_endpoint(endpoint, "onvif")
+    envelope = (
+        '<?xml version="1.0" encoding="UTF-8"?>'
+        '<s:Envelope xmlns:s="http://www.w3.org/2003/05/soap-envelope">' +
+        ws_security_header(username, password) + '<s:Body>' + body + '</s:Body></s:Envelope>'
+    ).encode()
+    password_manager = HTTPPasswordMgrWithDefaultRealm()
+    if username:
+        password_manager.add_password(None, endpoint, username, password)
+    opener = build_opener(
+        NoRedirect(),
+        HTTPDigestAuthHandler(password_manager),
+        HTTPBasicAuthHandler(password_manager),
+        HTTPSHandler(context=TLS_CONTEXT),
+    )
+    request = Request(endpoint, data=envelope, method="POST", headers={
+        "Content-Type": f'application/soap+xml; charset=utf-8; action="{action}"',
+        "SOAPAction": f'"{action}"',
+        "User-Agent": "webobs-onvif/1",
+        "Accept": "application/soap+xml, application/xml",
+    })
+    try:
+        with opener.open(request, timeout=ONVIF_TIMEOUT_SECONDS) as response:
+            data = response.read(MAX_ONVIF_XML + 1)
+    except HTTPError as error:
+        status = error.code
+        try:
+            error.close()
+        except (KeyError, ResourceWarning):
+            pass
+        if status in (401, 403):
+            raise PermissionError("ONVIF authentication failed") from error
+        raise OnvifError(f"ONVIF request failed with HTTP {status}") from error
+    except (URLError, TimeoutError, OSError) as error:
+        raise OnvifError("ONVIF endpoint is unavailable") from error
+    return parse_onvif_xml(data)
+
+
+def onvif_device_endpoint(address: str) -> str:
+    normalized = safe_endpoint(address, "onvif")
+    parsed = urlsplit(normalized)
+    if parsed.path in ("", "/"):
+        return urlunsplit((parsed.scheme, parsed.netloc, "/onvif/device_service", "", ""))
+    return normalized
+
+
+def onvif_service_endpoints(root: ET.Element) -> dict[str, str]:
+    services: dict[str, str] = {}
+    for node in root.iter():
+        if xml_local_name(node.tag) != "Service":
+            continue
+        namespace = xml_text(node, ("Namespace",)).lower()
+        address = xml_text(node, ("XAddr",))
+        if not address:
+            continue
+        if "/ver20/media/" in namespace:
+            services["media2"] = onvif_returned_endpoint(address, "onvif")
+        elif "/ver10/media/" in namespace:
+            services["media1"] = onvif_returned_endpoint(address, "onvif")
+        elif "/ptz/" in namespace:
+            services["ptz"] = onvif_returned_endpoint(address, "onvif")
+        elif "/events/" in namespace:
+            services["events"] = onvif_returned_endpoint(address, "onvif")
+        elif "/imaging/" in namespace:
+            services["imaging"] = onvif_returned_endpoint(address, "onvif")
+    return services
+
+
+def onvif_capability_endpoints(root: ET.Element) -> dict[str, str]:
+    services: dict[str, str] = {}
+    mapping = {"Media": "media1", "PTZ": "ptz", "Events": "events", "Imaging": "imaging"}
+    for node in root.iter():
+        kind = mapping.get(xml_local_name(node.tag))
+        if kind:
+            address = xml_text(node, ("XAddr",))
+            if address:
+                services[kind] = onvif_returned_endpoint(address, "onvif")
+    return services
+
+
+def onvif_discover_services(endpoint: str, username: str, password: str) -> dict[str, str]:
+    services: dict[str, str] = {}
+    try:
+        root = onvif_soap(
+            endpoint, "http://www.onvif.org/ver10/device/wsdl/GetServices",
+            '<tds:GetServices xmlns:tds="http://www.onvif.org/ver10/device/wsdl"><tds:IncludeCapability>true</tds:IncludeCapability></tds:GetServices>',
+            username, password,
+        )
+        services.update(onvif_service_endpoints(root))
+    except OnvifError:
+        pass
+    if "media1" not in services and "media2" not in services:
+        root = onvif_soap(
+            endpoint, "http://www.onvif.org/ver10/device/wsdl/GetCapabilities",
+            '<tds:GetCapabilities xmlns:tds="http://www.onvif.org/ver10/device/wsdl"><tds:Category>All</tds:Category></tds:GetCapabilities>',
+            username, password,
+        )
+        services.update(onvif_capability_endpoints(root))
+    if "media1" not in services and "media2" not in services:
+        raise OnvifError("ONVIF device exposes no Media service")
+    return services
+
+
+def onvif_configuration(profile: ET.Element, video: bool) -> ET.Element | None:
+    candidates = ({"VideoEncoderConfiguration", "VideoEncoder"} if video else
+                  {"AudioEncoderConfiguration", "AudioEncoder"})
+    return next((node for node in profile.iter() if xml_local_name(node.tag) in candidates), None)
+
+
+def onvif_number(element: ET.Element | None, names: tuple[str, ...], integer: bool = True):
+    value = xml_text(element, names)
+    try:
+        return int(float(value)) if integer and value else float(value) if value else 0
+    except ValueError:
+        return 0
+
+
+def onvif_returned_endpoint(endpoint: str, adapter: str) -> str:
+    try:
+        return safe_endpoint(endpoint, adapter)
+    except ValueError as error:
+        raise OnvifError("ONVIF device returned an invalid endpoint") from error
+
+
+def onvif_uri(root: ET.Element, adapter: str) -> str:
+    uri = xml_text(root, ("Uri", "URI"))
+    return onvif_returned_endpoint(uri, adapter) if uri else ""
+
+
+def onvif_media_profiles(endpoint: str, profile_kind: str, username: str, password: str) -> tuple[list[dict], str]:
+    media2 = profile_kind == "T"
+    namespace = "http://www.onvif.org/ver20/media/wsdl" if media2 else "http://www.onvif.org/ver10/media/wsdl"
+    prefix = "tr2" if media2 else "trt"
+    root = onvif_soap(
+        endpoint, f"{namespace}/GetProfiles",
+        f'<{prefix}:GetProfiles xmlns:{prefix}="{namespace}"/>', username, password,
+    )
+    raw_profiles = [node for node in root.iter()
+                    if xml_local_name(node.tag) in ("Profiles", "Profile") and node.get("token")]
+    discovered: list[tuple[str, dict]] = []
+    used_ids: set[str] = set()
+    for index, node in enumerate(raw_profiles[:16]):
+        token = str(node.get("token", ""))[:256]
+        if not token:
+            continue
+        identifier = re.sub(r"[^a-zA-Z0-9._-]", "-", token).strip("-")[:64] or f"profile-{index + 1}"
+        while identifier in used_ids:
+            identifier = (identifier[:56] + f"-{index + 1}")[:64]
+        used_ids.add(identifier)
+        video = onvif_configuration(node, True)
+        audio = onvif_configuration(node, False)
+        resolution = next((child for child in video.iter()
+                           if xml_local_name(child.tag) == "Resolution"), None) if video is not None else None
+        discovered.append((token, {
+            "id": identifier,
+            "name": (xml_text(node, ("Name",)) or identifier)[:128],
+            "role": "auxiliary",
+            "endpoint": "",
+            "videoCodec": (xml_text(video, ("Encoding",)) or "unknown").lower(),
+            "audioCodec": xml_text(audio, ("Encoding",)).lower(),
+            "width": onvif_number(resolution, ("Width",)),
+            "height": onvif_number(resolution, ("Height",)),
+            "fps": onvif_number(video, ("FrameRateLimit", "Framerate"), False),
+        }))
+    if not discovered:
+        raise OnvifError("ONVIF Media service returned no profiles")
+    for token, profile in discovered:
+        escaped_token = escape(token)
+        if media2:
+            body = (f'<tr2:GetStreamUri xmlns:tr2="{namespace}"><tr2:Protocol>RTSP</tr2:Protocol>'
+                    f'<tr2:ProfileToken>{escaped_token}</tr2:ProfileToken></tr2:GetStreamUri>')
+        else:
+            body = (f'<trt:GetStreamUri xmlns:trt="{namespace}" xmlns:tt="http://www.onvif.org/ver10/schema">'
+                    '<trt:StreamSetup><tt:Stream>RTP-Unicast</tt:Stream><tt:Transport><tt:Protocol>RTSP</tt:Protocol>'
+                    f'</tt:Transport></trt:StreamSetup><trt:ProfileToken>{escaped_token}</trt:ProfileToken></trt:GetStreamUri>')
+        uri_root = onvif_soap(endpoint, f"{namespace}/GetStreamUri", body, username, password)
+        profile["endpoint"] = onvif_uri(uri_root, "rtsp")
+    ordered = sorted(discovered, key=lambda item: item[1]["width"] * item[1]["height"], reverse=True)
+    for index, (_, profile) in enumerate(ordered):
+        profile["role"] = "main" if index == 0 else "sub" if index == 1 else "auxiliary"
+    snapshot = ""
+    try:
+        token = escape(ordered[0][0])
+        body = f'<{prefix}:GetSnapshotUri xmlns:{prefix}="{namespace}"><{prefix}:ProfileToken>{token}</{prefix}:ProfileToken></{prefix}:GetSnapshotUri>'
+        snapshot = onvif_uri(onvif_soap(endpoint, f"{namespace}/GetSnapshotUri", body, username, password), "snapshot")
+    except (OnvifError, ValueError):
+        pass
+    return [profile for _, profile in ordered], snapshot
+
+
+def onvif_probe(address: str, credentials_ref: str) -> dict:
+    endpoint = onvif_device_endpoint(address)
+    username, password = load_credentials(credentials_ref)
+    services = onvif_discover_services(endpoint, username, password)
+    profile_kind = ""
+    profiles: list[dict] = []
+    snapshot = ""
+    if "media2" in services:
+        try:
+            profiles, snapshot = onvif_media_profiles(services["media2"], "T", username, password)
+            profile_kind = "T"
+        except OnvifError:
+            if "media1" not in services:
+                raise
+    if not profiles and "media1" in services:
+        profiles, snapshot = onvif_media_profiles(services["media1"], "S", username, password)
+        profile_kind = "S"
+    capabilities = {
+        "onvif": {
+            "authenticated": bool(username),
+            "mediaProfile": profile_kind,
+            "profileCount": len(profiles),
+            "snapshot": bool(snapshot),
+            "ptz": "ptz" in services,
+            "events": "events" in services,
+            "imaging": "imaging" in services,
+            "syncedAt": int(time.time()),
+        }
+    }
+    if snapshot and len(profiles) < 16:
+        profiles.append({
+            "id": "snapshot", "name": "Snapshot", "role": "snapshot", "endpoint": snapshot,
+            "videoCodec": "jpeg", "audioCodec": "", "width": 0, "height": 0, "fps": 0,
+        })
+    return {
+        "address": endpoint, "adapter": "onvif", "probe": "onvif-authenticated",
+        "profileVersion": profile_kind, "profiles": profiles, "capabilities": capabilities,
+    }
+
+
+def sync_onvif_camera(camera_id: str) -> dict:
+    with connect() as database:
+        row = database.execute("SELECT * FROM cameras WHERE id=?", (camera_id,)).fetchone()
+        if not row:
+            raise KeyError("camera not found")
+        camera = camera_document(database, row)
+    if camera["adapter"] != "onvif":
+        raise ValueError("camera adapter is not onvif")
+    result = onvif_probe(camera["address"], camera["credentialsRef"])
+    camera["address"] = result["address"]
+    camera["profiles"] = result["profiles"]
+    camera["capabilities"] = result["capabilities"]
+    saved = save_camera(validate_camera(camera, camera_id), True)
+    with connect() as database:
+        database.execute("UPDATE cameras SET health='online' WHERE id=?", (camera_id,))
+        row = database.execute("SELECT * FROM cameras WHERE id=?", (camera_id,)).fetchone()
         return camera_document(database, row)
 
 
@@ -322,7 +666,9 @@ class Handler(BaseHTTPRequestHandler):
         if path == "/health":
             self.respond(200, {"status": "ready", "database": "sqlite-wal"}); return
         if path == "/adapters":
-            self.respond(200, {"adapters": sorted(ADAPTERS), "onvif": {"profiles": ["T", "S"], "discovery": True}}); return
+            self.respond(200, {"adapters": sorted(ADAPTERS), "onvif": {
+                "profiles": ["T", "S"], "discovery": True, "authenticatedMediaSync": True,
+            }}); return
         with connect() as database:
             if path.startswith("/resolve/"):
                 parts = path.removeprefix("/resolve/").split("/")
@@ -351,8 +697,20 @@ class Handler(BaseHTTPRequestHandler):
                 payload = self.payload(); self.respond(200, classify(str(payload.get("address", "")))); return
             if self.path == "/onvif/discover":
                 self.respond(200, {"devices": onvif_discover()}); return
+            if self.path == "/onvif/probe":
+                payload = self.payload()
+                credentials_ref = payload.get("credentialsRef", "")
+                if not isinstance(credentials_ref, str):
+                    raise ValueError("credentialsRef is invalid")
+                self.respond(200, onvif_probe(str(payload.get("address", "")), credentials_ref)); return
+            sync_match = re.fullmatch(r"/cameras/([a-zA-Z0-9._-]{1,64})/onvif/sync", self.path)
+            if sync_match:
+                self.respond(200, sync_onvif_camera(sync_match.group(1))); return
             self.respond(404, {"error": "not_found"})
         except FileExistsError as error: self.respond(409, {"error": str(error)})
+        except KeyError: self.respond(404, {"error": "camera not found"})
+        except PermissionError as error: self.respond(401, {"error": str(error)})
+        except OnvifError as error: self.respond(502, {"error": str(error)})
         except (ValueError, TypeError, json.JSONDecodeError) as error: self.respond(400, {"error": str(error)})
 
     def do_PUT(self) -> None:
