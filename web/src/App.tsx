@@ -13,6 +13,7 @@ import CameraRegistry from './CameraRegistry';
 import NvrTimeline from './NvrTimeline';
 import ProgramPreview from './ProgramPreview';
 import SystemStatus from './SystemStatus';
+import EventsPanel from './EventsPanel';
 import type { AudioMonitoring, CameraRecord, FilterKind, PlaybackMode, ScaleMode, SceneDocument, SceneFilter, SceneItem, SceneSource, StudioCapabilities, StudioDocument, Transport } from './types';
 
 type ConnectionState = 'connecting' | 'online' | 'offline';
@@ -105,7 +106,7 @@ function EmptyState({ onAdd }: { onAdd: () => void }) {
 }
 
 export default function App() {
-  const [productArea, setProductArea] = useState<'studio' | 'archive' | 'devices' | 'system'>(window.location.hash === '#archive' ? 'archive' : window.location.hash === '#devices' ? 'devices' : window.location.hash === '#system' ? 'system' : 'studio');
+  const [productArea, setProductArea] = useState<'studio' | 'archive' | 'devices' | 'events' | 'system'>(window.location.hash === '#archive' ? 'archive' : window.location.hash === '#devices' ? 'devices' : window.location.hash === '#events' ? 'events' : window.location.hash === '#system' ? 'system' : 'studio');
   const [baseline, setBaseline] = useState<SceneDocument | null>(null);
   const [draft, setDraft] = useState<SceneDocument | null>(null);
   const [studioBaseline, setStudioBaseline] = useState<StudioDocument | null>(null);
@@ -269,7 +270,7 @@ export default function App() {
   useEffect(() => {
     const changed = () => {
       setPlaybackMode(initialPlaybackMode());
-      setProductArea(window.location.hash === '#archive' ? 'archive' : window.location.hash === '#devices' ? 'devices' : 'studio');
+      setProductArea(window.location.hash === '#archive' ? 'archive' : window.location.hash === '#devices' ? 'devices' : window.location.hash === '#events' ? 'events' : window.location.hash === '#system' ? 'system' : 'studio');
     };
     window.addEventListener('hashchange', changed);
     return () => window.removeEventListener('hashchange', changed);
@@ -715,6 +716,12 @@ export default function App() {
       setProductArea('studio');
     }} />;
   }
+  if (productArea === 'events') {
+    return <EventsPanel onBack={() => {
+      window.history.replaceState(null, '', window.location.pathname);
+      setProductArea('studio');
+    }} />;
+  }
 
   if (!draft || !studioDraft) {
     return (
@@ -775,6 +782,10 @@ export default function App() {
             window.history.replaceState(null, '', '#devices');
             setProductArea('devices');
           }}>设备管理</button>
+          <button className="ghost-button" type="button" onClick={() => {
+            window.history.replaceState(null, '', '#events');
+            setProductArea('events');
+          }}>事件中心</button>
           <button className="ghost-button" type="button" onClick={() => {
             window.history.replaceState(null, '', '#archive');
             setProductArea('archive');
@@ -1013,7 +1024,7 @@ export default function App() {
             <div className="playback-mode" aria-label="实时播放渲染模式">
               <span>渲染路径</span>
               <button className={playbackMode === 'composite' ? 'active' : ''} type="button" onClick={() => selectPlaybackMode('composite')}>服务端合成</button>
-              <button className={playbackMode === 'direct' ? 'active' : ''} type="button" onClick={() => selectPlaybackMode('direct')}>浏览器直达</button>
+              <button className={playbackMode === 'direct' ? 'active' : ''} type="button" onClick={() => selectPlaybackMode('direct')}>网关直通</button>
               <button type="button" onClick={() => void toggleFullscreen()}>真全屏</button>
             </div>
           )}

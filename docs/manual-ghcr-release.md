@@ -10,7 +10,7 @@ ghcr.io/liaoyk001/web-camera-monitor-wall:<version-or-digest>
 
 ## 1. 共同前置条件
 
-1. 只从维护者控制的分支或 Tag 发布，不从未知 Fork/PR 工作树运行构建。
+1. 稳定版只从受保护的 `main` 或可从 `main` 到达的不可变 SemVer Tag 发布；`dev` 只发布 `dev`/`sha-*` 开发镜像或已完成的 `vX-MN` 检查点，不从未知 Fork/PR 工作树运行构建。完整规则见 [版本、里程碑与分支策略](versioning-and-branches.md)。
 2. Git 工作树必须干净，OBS submodule 必须递归初始化并保持固定提交。
 3. 当前提交必须先存在于公开 GitHub 仓库，使 OCI `revision` 标签和 GPL 对应源码可获取。
 4. Docker/Buildx 必须能构建 `linux/amd64`，建议预留至少 8 GB 内存和 20 GB 空间。
@@ -27,6 +27,8 @@ git submodule sync --recursive
 git submodule update --init --recursive
 git status --short
 ```
+
+上述稳定发布流程必须停留在 `main`。日常里程碑开发切换到 `dev`，不得把未完成的 `vX-MN` 构建标记为 `latest` 或 `vX.Y`。
 
 `git status --short` 必须没有输出。再确认远端没有同名版本：
 
@@ -130,7 +132,7 @@ docker run --rm `
   "${Image}:${Version}" --duration-seconds 2
 ```
 
-日志应显示 Direct-only，命令约两秒后以 `0` 退出，且不应出现凭据、Xvfb 或 OBS 初始化错误。
+日志应显示 Gateway Direct-only，命令约两秒后以 `0` 退出，且不应出现凭据、Xvfb 或 OBS 初始化错误。
 
 ## 3. Windows WSL2 环境
 

@@ -1141,6 +1141,7 @@ public:
                             error_body("camera_registry_disabled", "Camera Registry is disabled"));
         const std::string_view target = view(request.target());
         std::string suffix;
+        int upstream_port = 8092;
         if (target == "/api/v1/cameras" || target.starts_with("/api/v1/cameras/"))
             suffix = std::string(target.substr(std::string_view("/api/v1").size()));
         else if (target == "/api/v1/camera-adapters")
@@ -1151,12 +1152,25 @@ public:
             suffix = "/onvif/discover";
         else if (target == "/api/v1/onvif/probe")
             suffix = "/onvif/probe";
+        else if (target == "/api/v1/events" || target.starts_with("/api/v1/events?") ||
+                 target.starts_with("/api/v1/events/")) {
+            suffix = std::string(target.substr(std::string_view("/api/v1").size()));
+            upstream_port = 8093;
+        } else if (target == "/api/v1/event-rules" || target.starts_with("/api/v1/event-rules/") ||
+                   target == "/api/v1/motion-zones" || target.starts_with("/api/v1/motion-zones/") ||
+                   target == "/api/v1/motion/evaluate" ||
+                   target == "/api/v1/detector-providers" || target.starts_with("/api/v1/detector-providers/") ||
+                   target == "/api/v1/notification-outbox" || target == "/api/v1/notification-outbox/process") {
+            suffix = std::string(target.substr(std::string_view("/api/v1").size()));
+            upstream_port = 8093;
+        }
         else
             return response(http::status::not_found, request.version(),
                             error_body("not_found", "resource not found"));
-        if (suffix.size() > 256 || !std::all_of(suffix.begin(), suffix.end(), [](unsigned char character) {
+        if (suffix.size() > 1024 || !std::all_of(suffix.begin(), suffix.end(), [](unsigned char character) {
                 return std::isalnum(character) || character == '/' || character == '.' ||
-                       character == '_' || character == '-';
+                       character == '_' || character == '-' || character == '?' ||
+                       character == '&' || character == '=' || character == '%';
             }))
             return response(http::status::bad_request, request.version(),
                             error_body("invalid_target", "Camera Registry target is invalid"));
@@ -1170,7 +1184,7 @@ public:
         CURL *handle = curl_easy_init();
         if (!handle)
             return unavailable(request.version());
-        const std::string url = "http://127.0.0.1:8092" + suffix;
+        const std::string url = "http://127.0.0.1:" + std::to_string(upstream_port) + suffix;
         curl_slist *headers = nullptr;
         if (mutating)
             headers = curl_slist_append(headers, "Content-Type: application/json");
@@ -1179,7 +1193,7 @@ public:
         curl_easy_setopt(handle, CURLOPT_CONNECTTIMEOUT_MS, 1000L);
         curl_easy_setopt(handle, CURLOPT_TIMEOUT_MS,
                          suffix == "/onvif/discover" ? 5000L :
-                         (suffix == "/onvif/probe" || suffix.ends_with("/onvif/sync")) ? 30000L : 10000L);
+                         suffix.find("/onvif/") != std::string::npos ? 30000L : 10000L);
         curl_easy_setopt(handle, CURLOPT_NOSIGNAL, 1L);
         curl_easy_setopt(handle, CURLOPT_FOLLOWLOCATION, 0L);
         curl_easy_setopt(handle, CURLOPT_WRITEFUNCTION, &write_body);
@@ -1711,7 +1725,7 @@ HttpResponse handle_request(const HttpRequest &request, SceneController &control
     const std::string_view target = view(request.target());
     if (request.method() == http::verb::get && target == "/api/v1/health")
         return response(http::status::ok, version,
-                        "{\"status\":\"ok\",\"milestone\":\"M10-foundation\"}");
+                        "{\"status\":\"ok\",\"milestone\":\"v1-M11\"}");
     if (request.method() == http::verb::get && target == "/api/v1/ready") {
         const bool ready = runtime_status.ready();
         return response(ready ? http::status::ok : http::status::service_unavailable, version,
@@ -1737,7 +1751,13 @@ HttpResponse handle_request(const HttpRequest &request, SceneController &control
 
     if (target == "/api/v1/cameras" || target.starts_with("/api/v1/cameras/") ||
         target == "/api/v1/camera-adapters" || target == "/api/v1/camera-detect" ||
-        target == "/api/v1/onvif/discover" || target == "/api/v1/onvif/probe") {
+        target == "/api/v1/onvif/discover" || target == "/api/v1/onvif/probe" ||
+        target == "/api/v1/events" || target.starts_with("/api/v1/events?") || target.starts_with("/api/v1/events/") ||
+        target == "/api/v1/event-rules" || target.starts_with("/api/v1/event-rules/") ||
+        target == "/api/v1/motion-zones" || target.starts_with("/api/v1/motion-zones/") ||
+        target == "/api/v1/motion/evaluate" || target == "/api/v1/detector-providers" ||
+        target.starts_with("/api/v1/detector-providers/") || target == "/api/v1/notification-outbox" ||
+        target == "/api/v1/notification-outbox/process") {
         if ((request.method() == http::verb::put || request.method() == http::verb::post ||
              request.method() == http::verb::delete_) &&
             !request_origin_allowed(request, false, allowed_origins))

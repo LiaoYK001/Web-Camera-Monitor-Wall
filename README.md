@@ -1,15 +1,15 @@
 # Web Camera Monitor Wall
 
-一个基于 `libobs` 的无桌面 Web 监控墙、Direct WebRTC 网关与 NVR 项目。仓库已完成 **M0 Headless Proof 至 M9 Timeline & Evidence**，当前位于 **M10 Device Operations 实施阶段**。
+一个基于 `libobs` 的无桌面 Web 监控墙、Gateway Direct WebRTC 网关与 NVR 项目。仓库已实现 **M0 及 v1-M1 至 v1-M11**；最终 v1 系列版本 **v1.2** 的确定性协议与脱敏真实媒体门禁已通过。
 
 ```text
 RTSP camera -> libobs ffmpeg_source -> OBS scene -> H.264/AAC MP4
                                                    -> H.264/Opus WHIP/WHEP
 ```
 
-当前版本新增 SQLite WAL Camera Registry、稳定 Camera/Profile ID、ONVIF WS-Discovery 和 RTSP/MJPEG/Snapshot/HLS/HTTP-FLV/WHEP/SRT/RTP/V4L2 adapter 契约。默认 Direct-only 运行完全不初始化 OBS 解码、合成或编码；只有录制或启用 Composite 才启动 libobs。VA-API 会分别报告设备、驱动、编解码能力和真实运行探测，AMD 可使用硬解、OpenGL 合成与硬编，失败时明确回退。Hybrid 只转码不兼容的轨道。WebUI 另提供 7 天滑动 Session、真全屏、Screen Wake Lock、逐路执行链与进程 CPU/RSS 诊断。
+当前版本新增 SQLite WAL Camera Registry、受控 ONVIF PTZ/预置位/快照/事件/对讲，以及隔离的事件、移动检测区/隐私遮罩、Detector Provider、规则和有界通知发件箱。默认 Gateway Direct-only 运行完全不初始化 OBS 解码、合成或编码；只有录制或启用 Composite 才启动 libobs。VA-API 会分别报告设备、驱动、编解码能力和真实运行探测，失败时明确回退；Hybrid 只转码不兼容轨道。
 
-开发路线、里程碑验收标准和当前进度见 [ROADMAP.md](ROADMAP.md)。**M0–M9 门禁已通过；M10 的 Registry/Adapter、发现及带认证 Profile T/S 媒体同步已落地，PTZ/事件/对讲和真实厂商门禁仍在进行。**ONVIF 使用见 [ONVIF 媒体运维](docs/onvif-media.md)，详细路线见 [M7–M13 产品路线](docs/future-milestones.md)。部署见 [Docker 部署指南](docs/docker-deployment.md) 与 [Fedora Podman 示例](deploy/README-podman.md)，硬件与性能验收见 [性能和硬件指南](docs/performance-and-hardware.md)，不用 Docker Hub 时见 [GHCR 指南](docs/ghcr.md)，逐条手工发布命令见 [Windows、WSL2 与 Fedora GHCR 手工发布指南](docs/manual-ghcr-release.md)，自建发布节点见 [Self-hosted Runner 指南](docs/self-hosted-runner.md)。当前场景契约是 [schema v5](docs/scene-schema-v5.md)，控制协议见 [API v1](docs/api-v1.md)。
+开发路线和门禁见 [ROADMAP.md](ROADMAP.md)。v1-M10/M11 的 Digest/WS-Security/TLS、事件、Webhook/MQTT 及 Server Push MJPEG 契约已通过确定性测试；另有一个脱敏 Canon WV-HTTP 外部端点通过 MIME、媒体协商及五帧解码门禁。多厂商型号/固件矩阵改为持续兼容项目，不构成品牌级或 ONVIF 合规声明，详见 [摄像机兼容性资格](docs/camera-compatibility-qualification.md)。当前 `direct` 是媒体仍经过 Docker/MediaMTX 的“网关直通”，v2.0 才以 Docker 默认退出媒体数据面为核心目标。
 
 `WEBOBS_SCENE_FILE` 默认指向 `/config/webobs/scene.json`。空配置首次启动会创建空 Scene/Camera Registry，直接在 WebUI 的“设备管理”中添加设备；`WEBOBS_RTSP_URL` 只保留为一次性兼容 bootstrap，不再是部署必填项。Scene v5 只保存 Camera/Profile ID，凭据通过未提交 Git 的 Secret 引用解析。
 
@@ -91,7 +91,7 @@ docker compose -f compose.yaml -f compose.m6-vaapi.yaml up --build
 
 M4 编辑器还可添加 `http`/`https` 浏览器源。浏览器源默认全部拒绝，管理员必须在 `WEBOBS_BROWSER_ALLOWED_ORIGINS` 中列出精确 Origin；访问单标签主机、localhost、私网地址或解析到私网的 DNS 名称还必须显式启用 `WEBOBS_BROWSER_ALLOW_PRIVATE_NETWORKS=true`。公开 API 与产品日志会隐藏 URL 查询和片段值。浏览器源在 Direct 模式中明确标为 Composite-only，不会获得来源级 WHEP 端点。完整边界和迁移规则见 [scene schema v2](docs/scene-schema-v2.md)。
 
-实时节目区可显式选择“服务端合成”或“浏览器直达”。Direct 模式为每个可见 RTSP 来源建立独立的同源 WHEP 会话，并以同一份场景文档应用布局；可用 `http://127.0.0.1:8080/#direct` 直接进入。内部 MediaMTX 路径使用每次进程启动随机生成的 128-bit 名称，RTSP 只在 reader 存在时按需拉取，能力接口和浏览器不会收到 RTSP 地址或内部路径。服务会探测视频与音频：浏览器兼容组合直通，不兼容的视频或音频只在存在 reader 时转为 H.264/Opus，页面关闭后释放转码进程。所有 Direct `<video>` 始终静音，用户点击“启用声音”后才由一个共享 Web Audio 图按每路静音、音量和相对同步偏移输出，避免多元素重复播放。
+实时节目区可显式选择“服务端合成”或“网关直通”。API v1 继续使用兼容值 `direct`，但这不是绕过服务器的真直连：每个可见 RTSP 来源仍由 Docker 内 MediaMTX 按需拉取，再通过独立的同源 WHEP 会话转发给浏览器；兼容流不做服务端视频解码、合成或编码，但媒体包仍经过 Docker。可用 `http://127.0.0.1:8080/#direct` 直接进入。内部 MediaMTX 路径使用每次进程启动随机生成的 128-bit 名称，能力接口和浏览器不会收到 RTSP 地址或内部路径。服务会探测视频与音频：浏览器兼容组合转发，不兼容的视频或音频只在存在 reader 时按轨转为 H.264/Opus，页面关闭后释放转码进程。所有网关直通 `<video>` 始终静音，用户点击“启用声音”后才由一个共享 Web Audio 图按每路静音、音量和相对同步偏移输出，避免多元素重复播放。v2 的 True Direct 将由 Android/桌面本地运行端或受控本机伴随服务直接连接设备，Docker 默认只提供 UI/Registry/策略/可选信令且不承载视频数据；普通浏览器不能直接解码常规 RTSP，因此不作虚假承诺。
 
 浏览器只访问本站 `/api/v1/program/whep`。服务端把 offer 转发到固定的容器回环 MediaMTX，并把上游会话地址改写为随机同源令牌；任意上游 URL、跨源 offer、超过 64 KiB 的 SDP 和伪造会话令牌都会被拒绝。浏览器等待 ICE 收集完成后一次性提交 offer，断线以 1–8 秒退避重连，并在页面关闭时尽力删除会话；M2 暂不实现 trickle ICE/PATCH。
 

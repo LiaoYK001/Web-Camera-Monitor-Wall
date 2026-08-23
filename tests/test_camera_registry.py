@@ -10,11 +10,17 @@ import hashlib
 import json
 import os
 import re
+import shutil
+import ssl
+import subprocess
 import sys
 import tempfile
 import threading
+import time
 import unittest
+from unittest.mock import patch
 import xml.etree.ElementTree as ET
+from datetime import datetime, timedelta, timezone
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from pathlib import Path
 
@@ -46,6 +52,9 @@ class OnvifEmulatorHandler(BaseHTTPRequestHandler):
     require_http_digest = False
     username = "test-operator"
     password = "fixture-password"
+    action_log: list[str] = []
+    device_clock_offset = 0
+    scheme = "http"
 
     def log_message(self, format: str, *args: object) -> None:
         return
@@ -86,8 +95,28 @@ class OnvifEmulatorHandler(BaseHTTPRequestHandler):
         except KeyError:
             return False
 
+    def do_GET(self) -> None:
+        if self.path == "/snapshot.jpg":
+            data = b"\xff\xd8\xff\xe0webobs-fixture\xff\xd9"
+            self.send_response(200)
+            self.send_header("Content-Type", "image/jpeg")
+            self.send_header("Content-Length", str(len(data)))
+            self.end_headers()
+            self.wfile.write(data)
+            return
+        self.send_response(404); self.send_header("Content-Length", "0"); self.end_headers()
+
     def do_POST(self) -> None:
         request_body = self.rfile.read(int(self.headers.get("Content-Length", "0")))
+        action = self.headers.get("SOAPAction", "") + " " + self.headers.get("Content-Type", "")
+        if "GetSystemDateAndTime" in action:
+            current = datetime.now(timezone.utc) + timedelta(seconds=self.device_clock_offset)
+            self.soap('<tds:GetSystemDateAndTimeResponse xmlns:tds="http://www.onvif.org/ver10/device/wsdl" xmlns:tt="http://www.onvif.org/ver10/schema"><tds:SystemDateAndTime><tt:UTCDateTime><tt:Time>'
+                      f'<tt:Hour>{current.hour}</tt:Hour><tt:Minute>{current.minute}</tt:Minute><tt:Second>{current.second}</tt:Second>'
+                      '</tt:Time><tt:Date>'
+                      f'<tt:Year>{current.year}</tt:Year><tt:Month>{current.month}</tt:Month><tt:Day>{current.day}</tt:Day>'
+                      '</tt:Date></tt:UTCDateTime></tds:SystemDateAndTime></tds:GetSystemDateAndTimeResponse>')
+            return
         if self.require_http_digest and not self.digest_authenticated():
             self.send_response(401)
             self.send_header("WWW-Authenticate", 'Digest realm="webobs-fixture", nonce="fixture-nonce", algorithm=MD5, qop="auth"')
@@ -100,15 +129,16 @@ class OnvifEmulatorHandler(BaseHTTPRequestHandler):
         if not self.authenticated(root):
             self.soap('<s:Fault xmlns:s="http://www.w3.org/2003/05/soap-envelope"/>', 403)
             return
-        action = self.headers.get("SOAPAction", "") + " " + self.headers.get("Content-Type", "")
+        self.action_log.append(action)
         port = self.server.server_address[1]
-        base = f"http://127.0.0.1:{port}"
+        base = f"{self.scheme}://127.0.0.1:{port}"
         if "GetServices" in action:
             media_services = (f'<tds:Service><tds:Namespace>http://www.onvif.org/ver20/media/wsdl</tds:Namespace><tds:XAddr>{base}/media2</tds:XAddr></tds:Service>'
                               if self.profile_kind == "T" else "")
             media_services += f'<tds:Service><tds:Namespace>http://www.onvif.org/ver10/media/wsdl</tds:Namespace><tds:XAddr>{base}/media1</tds:XAddr></tds:Service>'
             self.soap('<tds:GetServicesResponse xmlns:tds="http://www.onvif.org/ver10/device/wsdl">' + media_services +
                       f'<tds:Service><tds:Namespace>http://www.onvif.org/ver20/ptz/wsdl</tds:Namespace><tds:XAddr>{base}/ptz</tds:XAddr></tds:Service>'
+                      f'<tds:Service><tds:Namespace>http://www.onvif.org/ver10/events/wsdl</tds:Namespace><tds:XAddr>{base}/events</tds:XAddr></tds:Service>'
                       '</tds:GetServicesResponse>')
         elif "GetProfiles" in action:
             if self.profile_kind == "T" and self.path == "/media2":
@@ -126,9 +156,43 @@ class OnvifEmulatorHandler(BaseHTTPRequestHandler):
                       f'rtsp://camera.example.invalid/{token}'
                       '</tt:Uri></trt:MediaUri></trt:GetStreamUriResponse>')
         elif "GetSnapshotUri" in action:
-            self.soap('<trt:GetSnapshotUriResponse xmlns:trt="http://www.onvif.org/ver10/media/wsdl" xmlns:tt="http://www.onvif.org/ver10/schema"><trt:MediaUri><tt:Uri>http://camera.example.invalid/snapshot.jpg</tt:Uri></trt:MediaUri></trt:GetSnapshotUriResponse>')
+            self.soap('<trt:GetSnapshotUriResponse xmlns:trt="http://www.onvif.org/ver10/media/wsdl" xmlns:tt="http://www.onvif.org/ver10/schema"><trt:MediaUri><tt:Uri>' + base + '/snapshot.jpg</tt:Uri></trt:MediaUri></trt:GetSnapshotUriResponse>')
+        elif "GetAudioDecoderConfigurationOptions" in action:
+            self.soap('<tr2:GetAudioDecoderConfigurationOptionsResponse xmlns:tr2="http://www.onvif.org/ver20/media/wsdl"/>')
+        elif "GetPresets" in action:
+            self.soap('<tptz:GetPresetsResponse xmlns:tptz="http://www.onvif.org/ver20/ptz/wsdl" xmlns:tt="http://www.onvif.org/ver10/schema"><tptz:Preset token="preset-1"><tt:Name>Entrance</tt:Name></tptz:Preset></tptz:GetPresetsResponse>')
+        elif "SetPreset" in action:
+            self.soap('<tptz:SetPresetResponse xmlns:tptz="http://www.onvif.org/ver20/ptz/wsdl"><tptz:PresetToken>preset-created</tptz:PresetToken></tptz:SetPresetResponse>')
+        elif any(name in action for name in ("ContinuousMove", "RelativeMove", "AbsoluteMove", "Stop", "GotoHomePosition", "GotoPreset", "RemovePreset")):
+            self.soap('<tptz:OperationResponse xmlns:tptz="http://www.onvif.org/ver20/ptz/wsdl"/>')
+        elif "CreatePullPointSubscription" in action:
+            self.soap('<tev:CreatePullPointSubscriptionResponse xmlns:tev="http://www.onvif.org/ver10/events/wsdl" xmlns:wsa="http://www.w3.org/2005/08/addressing"><tev:SubscriptionReference><wsa:Address>' + base + '/pullpoint</wsa:Address></tev:SubscriptionReference></tev:CreatePullPointSubscriptionResponse>')
+        elif "PullMessages" in action:
+            self.soap('<tev:PullMessagesResponse xmlns:tev="http://www.onvif.org/ver10/events/wsdl" xmlns:tt="http://www.onvif.org/ver10/schema"><tev:NotificationMessage><tev:Topic>tns1:RuleEngine/CellMotionDetector/Motion</tev:Topic><tev:Message><tt:Message><tt:Data><tt:SimpleItem Name="IsMotion" Value="true"/></tt:Data></tt:Message></tev:Message></tev:NotificationMessage></tev:PullMessagesResponse>')
         else:
             self.soap('<s:Fault xmlns:s="http://www.w3.org/2003/05/soap-envelope"/>', 500)
+
+
+class ServerPushMjpegHandler(BaseHTTPRequestHandler):
+    def log_message(self, format: str, *args: object) -> None:
+        return
+
+    def do_HEAD(self) -> None:
+        self.send_response(405)
+        self.send_header("Content-Length", "0")
+        self.end_headers()
+
+    def do_GET(self) -> None:
+        if not self.path.startswith("/-wvhttp-01-/video.cgi?"):
+            self.send_response(404); self.send_header("Content-Length", "0"); self.end_headers(); return
+        jpeg = b"\xff\xd8\xff\xe0webobs-mjpeg-fixture\xff\xd9"
+        body = (b"--fixture\r\nContent-Type: image/jpeg\r\nContent-Length: " +
+                str(len(jpeg)).encode() + b"\r\n\r\n" + jpeg + b"\r\n--fixture\r\n")
+        self.send_response(200)
+        self.send_header("Content-Type", "multipart/x-mixed-replace; boundary=fixture")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
 
 
 class CameraRegistryTests(unittest.TestCase):
@@ -138,6 +202,8 @@ class CameraRegistryTests(unittest.TestCase):
         registry.SECRET_ROOT = Path(self.temporary.name) / "secrets"
         registry.SECRET_ROOT.mkdir()
         registry.initialize()
+        registry.TLS_CONTEXT = ssl.create_default_context()
+        OnvifEmulatorHandler.action_log.clear()
 
     def tearDown(self) -> None:
         self.temporary.cleanup()
@@ -178,6 +244,24 @@ class CameraRegistryTests(unittest.TestCase):
                 "adapter": "rtsp", "credentialsRef": "../escape", "profiles": [],
             })
 
+    def test_canon_wvhttp_server_push_mjpeg_detection_without_head(self) -> None:
+        server = HTTPServer(("127.0.0.1", 0), ServerPushMjpegHandler)
+        thread = threading.Thread(target=server.serve_forever, daemon=True); thread.start()
+        try:
+            address = (f"http://127.0.0.1:{server.server_address[1]}"
+                       "/-wvhttp-01-/video.cgi?v=jpg%3A320x240%3A%3A5000&type=live")
+            detected = registry.classify(address)
+            self.assertEqual(detected["adapter"], "mjpeg")
+            self.assertEqual(detected["contentType"], "multipart/x-mixed-replace")
+            self.assertEqual(detected["probe"], "http-server-push-mjpeg")
+            self.assertEqual(detected["profiles"][0]["videoCodec"], "mjpeg")
+            self.assertNotIn("127.0.0.1", json.dumps({
+                "adapter": detected["adapter"], "contentType": detected["contentType"],
+                "probe": detected["probe"],
+            }))
+        finally:
+            server.shutdown(); server.server_close(); thread.join(timeout=2)
+
     def test_nvr_accepts_registry_ids_without_raw_urls(self) -> None:
         configuration = nvr.validate_config({
             "schemaVersion": 1,
@@ -198,14 +282,30 @@ class CameraRegistryTests(unittest.TestCase):
                 }],
             })
 
-    def onvif_server(self, profile_kind: str, require_http_digest: bool = False) -> tuple[HTTPServer, threading.Thread]:
+    def onvif_server(self, profile_kind: str, require_http_digest: bool = False, clock_offset: int = 0) -> tuple[HTTPServer, threading.Thread]:
         handler = type(f"Onvif{profile_kind}Handler", (OnvifEmulatorHandler,), {
             "profile_kind": profile_kind, "require_http_digest": require_http_digest,
+            "device_clock_offset": clock_offset,
         })
         server = HTTPServer(("127.0.0.1", 0), handler)
         thread = threading.Thread(target=server.serve_forever, daemon=True)
         thread.start()
         return server, thread
+
+    def onvif_tls_server(self) -> tuple[HTTPServer, threading.Thread, Path]:
+        openssl = shutil.which("openssl")
+        if not openssl: self.skipTest("OpenSSL CLI is required for the TLS fixture")
+        certificate, private_key = Path(self.temporary.name) / "fixture.crt", Path(self.temporary.name) / "fixture.key"
+        subprocess.run([openssl, "req", "-x509", "-newkey", "rsa:2048", "-nodes", "-days", "1",
+                        "-keyout", str(private_key), "-out", str(certificate), "-subj", "/CN=127.0.0.1",
+                        "-addext", "subjectAltName=IP:127.0.0.1"], check=True,
+                       stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        handler = type("OnvifTlsHandler", (OnvifEmulatorHandler,), {"profile_kind": "T", "scheme": "https"})
+        server = HTTPServer(("127.0.0.1", 0), handler)
+        context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER); context.load_cert_chain(certificate, private_key)
+        server.socket = context.wrap_socket(server.socket, server_side=True)
+        thread = threading.Thread(target=server.serve_forever, daemon=True); thread.start()
+        return server, thread, certificate
 
     def write_fixture_secret(self) -> None:
         (registry.SECRET_ROOT / "fixture.json").write_text(json.dumps({
@@ -224,6 +324,8 @@ class CameraRegistryTests(unittest.TestCase):
             self.assertEqual(probe["profiles"][0]["width"], 1920)
             self.assertEqual(probe["profiles"][1]["role"], "sub")
             self.assertTrue(probe["capabilities"]["onvif"]["ptz"])
+            self.assertTrue(probe["capabilities"]["onvif"]["events"])
+            self.assertTrue(probe["capabilities"]["onvif"]["talk"])
             self.assertNotIn(OnvifEmulatorHandler.password, json.dumps(probe))
 
             registry.save_camera(registry.validate_camera({
@@ -234,6 +336,61 @@ class CameraRegistryTests(unittest.TestCase):
             self.assertEqual(synced["health"], "online")
             self.assertEqual(synced["capabilities"]["onvif"]["mediaProfile"], "T")
             self.assertEqual(len(synced["profiles"]), 3)
+        finally:
+            server.shutdown(); server.server_close(); thread.join(timeout=2)
+
+    def test_guarded_device_operations_and_private_profile_tokens(self) -> None:
+        self.write_fixture_secret()
+        server, thread = self.onvif_server("T", require_http_digest=True)
+        try:
+            address = f"http://127.0.0.1:{server.server_address[1]}"
+            registry.save_camera(registry.validate_camera({
+                "id": "controlled-fixture", "name": "Controlled Fixture", "address": address,
+                "adapter": "onvif", "credentialsRef": "fixture", "profiles": [],
+            }), False)
+            synced = registry.sync_onvif_camera("controlled-fixture")
+            self.assertNotIn("device_token", json.dumps(synced))
+            self.assertEqual(registry.onvif_presets("controlled-fixture")[0]["token"], "preset-1")
+            moved = registry.onvif_ptz_command("controlled-fixture", {
+                "operation": "relative", "x": 0.25, "y": -0.1, "zoom": 0,
+            })
+            self.assertEqual(moved["state"], "accepted")
+            created = registry.onvif_preset_mutation("controlled-fixture", {
+                "operation": "set", "name": "Door",
+            })
+            self.assertEqual(created["presetToken"], "preset-created")
+            snapshot = registry.onvif_snapshot("controlled-fixture")
+            self.assertEqual(snapshot["contentType"], "image/jpeg")
+            self.assertEqual(base64.b64decode(snapshot["data"], validate=True)[:2], b"\xff\xd8")
+            pulled = registry.onvif_pull_events("controlled-fixture")
+            self.assertEqual(pulled["events"][0]["properties"]["IsMotion"], "true")
+            class FakeTalkProcess:
+                returncode = None
+                def poll(self): return self.returncode
+                def communicate(self, audio=None, timeout=None):
+                    self.returncode = 0
+                    return (b"", b"")
+                def terminate(self): self.returncode = -15
+                def kill(self): self.returncode = -9
+                def wait(self, timeout=None): self.returncode = self.returncode or 0
+            fake_process = FakeTalkProcess()
+            with patch.object(registry.subprocess, "Popen", return_value=fake_process):
+                talk = registry.onvif_talk("controlled-fixture", {
+                    "operation": "start", "contentType": "audio/wav",
+                    "data": base64.b64encode(b"RIFF-fixture-audio").decode(),
+                })
+                self.assertEqual(talk["state"], "active")
+                for _ in range(20):
+                    if "controlled-fixture" not in registry.TALK_PROCESSES: break
+                    time.sleep(0.01)
+            operations = registry.device_audit("controlled-fixture")
+            self.assertTrue(any(item["operation"] == "snapshot.read" for item in operations))
+            self.assertTrue(any(item["operation"] == "talk.session" for item in operations))
+            time.sleep(0.11)
+            with self.assertRaises(ValueError):
+                registry.onvif_ptz_command("controlled-fixture", {
+                    "operation": "absolute", "x": 2, "y": 0, "zoom": 0,
+                })
         finally:
             server.shutdown(); server.server_close(); thread.join(timeout=2)
 
@@ -261,6 +418,28 @@ class CameraRegistryTests(unittest.TestCase):
             with self.assertRaises(PermissionError) as raised:
                 registry.onvif_probe(f"http://127.0.0.1:{server.server_address[1]}", "wrong")
             self.assertNotIn("wrong-fixture-value", str(raised.exception))
+        finally:
+            server.shutdown(); server.server_close(); thread.join(timeout=2)
+
+    def test_clock_skew_and_bounded_discovery_interface(self) -> None:
+        self.write_fixture_secret(); server, thread = self.onvif_server("T", True, 120)
+        try:
+            probe = registry.onvif_probe(f"http://127.0.0.1:{server.server_address[1]}", "fixture")
+            self.assertGreater(probe["capabilities"]["onvif"]["clockOffsetSeconds"], 115)
+            self.assertLess(probe["capabilities"]["onvif"]["clockOffsetSeconds"], 125)
+        finally:
+            server.shutdown(); server.server_close(); thread.join(timeout=2)
+        with self.assertRaises(ValueError): registry.onvif_discover(6)
+        with self.assertRaises(ValueError): registry.onvif_discover(1, "::1")
+
+    def test_tls_device_requires_a_trusted_certificate(self) -> None:
+        self.write_fixture_secret(); server, thread, certificate = self.onvif_tls_server()
+        address = f"https://127.0.0.1:{server.server_address[1]}"
+        try:
+            with self.assertRaises(registry.OnvifError): registry.onvif_probe(address, "fixture")
+            registry.TLS_CONTEXT = ssl.create_default_context(cafile=str(certificate))
+            probe = registry.onvif_probe(address, "fixture")
+            self.assertEqual(probe["profileVersion"], "T")
         finally:
             server.shutdown(); server.server_close(); thread.join(timeout=2)
 

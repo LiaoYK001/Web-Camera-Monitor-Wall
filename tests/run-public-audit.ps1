@@ -174,6 +174,7 @@ try {
         'tests/run-contracts.sh',
         'tests/run-public-audit.sh',
         'tests/run-m1-real-camera.sh',
+        'tests/run-m10-real-mjpeg.sh',
         'tests/run-real-camera.sh',
         'tests/run-smoke.sh',
         'tests/rtsp-fixture/publish-hevc.sh'

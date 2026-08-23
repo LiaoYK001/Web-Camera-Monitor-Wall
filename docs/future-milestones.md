@@ -1,14 +1,14 @@
-# M7–M13 product roadmap / M7–M13 产品路线
+# v1.1–v2 product roadmap / v1.1–v2 产品路线
 
 > Status / 状态：Planning baseline / 规划基线
 >
-> Last updated / 最后更新：2026-08-15
+> Last updated / 最后更新：2026-08-24
 >
-> Current position / 当前位置：M9 is complete. M10 is in progress: Camera Registry, stable Camera/Profile references, adapter contracts, bounded WS-Discovery, and authenticated Profile T/S media synchronization are implemented; PTZ/events/talk and vendor exit-gate coverage remain / M9 已完成；M10 实施中：Camera Registry、稳定 Camera/Profile 引用、Adapter 契约、有界 WS-Discovery及带认证的 Profile T/S 媒体同步已落地，PTZ/事件/对讲及厂商门禁仍待完成
+> Current position / 当前位置：`v1-M10` and `v1-M11` are complete. The final v1.2 closure gate passed with deterministic protocol fixtures plus a redacted external Server Push MJPEG decode; model/firmware vendor matrices continue without blocking the release / `v1-M10` 与 `v1-M11` 已完成；v1.2 最终收口门禁已由确定性协议夹具与脱敏外部 Server Push MJPEG 解码共同通过，型号/固件厂商矩阵作为非阻塞工作继续
 
-This document expands the project from a web camera compositor into a self-hosted monitoring workspace with two first-class capabilities: an OBS-inspired customizable canvas and an NVR workflow inspired by mainstream monitoring applications such as tinyCam Monitor. It is a capability plan, not a compatibility or UI-cloning claim, and it does not promise release dates.
+This document expands the project from a web camera compositor into a self-hosted and local-first monitoring workspace with three first-class capabilities: an OBS-inspired customizable canvas, an NVR workflow inspired by mainstream monitoring applications such as tinyCam Monitor, and v2 True Direct local clients that keep Docker outside the media data plane. It is a capability plan, not a compatibility or UI-cloning claim, and it does not promise release dates.
 
-本文把项目从 Web 摄像头合成器扩展为自托管监控工作台，并将两类能力都作为一等功能：一类是受 OBS 启发的可自定义画布，另一类是参考 tinyCam Monitor 等主流监控软件的 NVR 工作流。本规划描述能力目标，不表示兼容或复刻其界面，也不承诺发布日期。
+本文把项目从 Web 摄像头合成器扩展为自托管且本地优先的监控工作台，并将三类能力作为一等功能：受 OBS 启发的可自定义画布、参考 tinyCam Monitor 等主流监控软件的 NVR 工作流，以及让 Docker 退出媒体数据面的 v2 真直连本地客户端。本规划描述能力目标，不表示兼容或复刻其界面，也不承诺发布日期。
 
 ## 1. Product goal / 产品目标
 
@@ -19,7 +19,8 @@ The target is one web application that can serve both a production operator and 
 - **Studio workspace / 画布工作台：** compose cameras, webpages, images, text, media, nested scenes, filters, and transitions into one or more program outputs / 将摄像头、网页、图片、文字、媒体、嵌套场景、滤镜和转场编排为一个或多个节目输出。
 - **Monitor workspace / 监控工作台：** view many cameras, control PTZ/audio, inspect health, switch layouts, and react to alarms / 多路查看摄像头、控制 PTZ/音频、检查健康、切换布局并处置告警。
 - **NVR workspace / 录像工作台：** continuously archive each camera independently, apply retention, search a timeline, replay synchronized cameras, and export evidence / 独立连续归档每路摄像头，执行保留策略，通过时间线检索，多路同步回放并导出证据。
-- **One secure control plane / 一个安全控制面：** use one camera registry, permission model, audit trail, and secret boundary across all workspaces / 所有工作台共用摄像机资产库、权限模型、审计记录和凭据边界。
+- **Local client workspace / 本地客户端工作台：** Android and desktop runtimes reuse the registry and canvas while connecting to approved camera profiles directly / Android 与桌面运行端复用资产库和画布，并直接连接获批摄像机 Profile。
+- **One secure, optional control plane / 一个安全且可选的控制面：** use one camera registry, permission model, audit trail, and secret boundary across all workspaces; v2 True Direct does not require Docker to carry media / 所有工作台共用摄像机资产库、权限模型、审计记录和凭据边界；v2 真直连不要求 Docker 承载媒体。
 
 Reliability takes priority over visual breadth: continuous recording and retention must remain correct even when the editor, live preview, analytics, or notification delivery fails.
 
@@ -45,7 +46,7 @@ flowchart LR
 - The **live composition graph** is a libobs scene graph. It is allowed to decode, transform, mix, transition, and encode for a program output / **实时合成链**是 libobs 场景图，可以为节目输出进行解码、变换、混音、转场和编码。
 - The **NVR capture graph** records each camera independently and prefers packet remux/stream copy when the input codec and destination permit it. Canvas edits and program transitions must not interrupt this graph / **NVR 采集链**独立录制每路摄像头；输入编码与目标封装允许时优先重封装/码流复制，画布编辑和节目转场不得中断该链。
 - Program recordings and per-camera archives are different products. A composed program may be recorded, but it cannot be treated as the only forensic archive / 节目录像与逐路归档是两种不同产物；合成节目可以录制，但不能作为唯一取证归档。
-- The single-node installation remains one product image. Test fixtures may use extra containers. M13 may run the same signed image in explicit controller/recorder roles, while single-node mode remains supported / 单节点部署继续只使用一个产品镜像，测试夹具可以使用额外容器；M13 可让同一签名镜像以 controller/recorder 角色运行，但继续支持单节点模式。
+- The single-node server installation remains one product image. Test fixtures may use extra containers. `v2-M6` may run the same signed server image in explicit controller/recorder roles, while single-node mode remains supported; native/local clients are separate deliverables, not hidden server containers / 单节点服务端部署继续只使用一个产品镜像，测试夹具可以使用额外容器；`v2-M6` 可让同一签名服务端镜像以 controller/recorder 角色运行，同时继续支持单节点模式；原生/本地客户端是独立交付物，不是隐藏的服务端容器。
 
 ### Persistent data domains / 持久化数据域
 
@@ -65,29 +66,37 @@ SQLite in WAL mode plus local volumes is the initial single-node metadata baseli
 
 | Capability family / 能力族 | Planned milestone / 计划里程碑 | Product interpretation / 本项目实现边界 |
 | --- | --- | --- |
-| Multiple scenes, nested scenes/groups, source transforms / 多场景、场景嵌套/分组、来源变换 | M7 | Versioned scene collection shared by editor and libobs / 编辑器与 libobs 共用版本化场景集合 |
-| Studio preview/program, transitions, source filters / 预览/节目双总线、转场、来源滤镜 | M7 | Deliberate web subset; unsupported Direct operations are explicit / 精选 Web 子集；Direct 不支持项必须明确标识 |
-| Continuous per-camera DVR, quotas, retention / 逐路连续 DVR、配额、保留策略 | M8 | Independent from program composition; stream copy preferred / 独立于节目合成，优先码流复制 |
-| Archive browser, timeline, synchronized playback, export / 归档浏览、时间线、同步回放、导出 | M9 | Gaps, integrity, time zones, permissions and audit are first-class / 将断档、完整性、时区、权限和审计作为一等能力 |
-| Discovery, ONVIF profiles, PTZ, presets, talk / 发现、ONVIF、PTZ、预置位、对讲 | M10 | Profile T first; Profile S compatibility only; bounded discovery / Profile T 优先，Profile S 仅兼容，发现范围受控 |
-| Motion zones, device events, object providers, rules / 移动区域、设备事件、目标提供器、规则 | M11 | Recording cannot depend on analytics; no biometric identity by default / 录像不依赖分析；默认不做生物身份识别 |
-| Grid/tour/kiosk/PWA, operator roles, mobile controls / 宫格/轮巡/值守/PWA、角色、移动控制 | M12 | Responsive web/PWA first, not a native-app commitment / 优先响应式 Web/PWA，不承诺原生应用 |
-| Multi-volume, remote recorder roles, integrations, disaster recovery / 多存储卷、远程录像节点、集成、灾难恢复 | M13 | Optional scale-out without removing the one-image single-node path / 可选横向扩展，不取消单镜像单节点路径 |
+| Multiple scenes, nested scenes/groups, source transforms / 多场景、场景嵌套/分组、来源变换 | `v1-M7` | Versioned scene collection shared by editor and libobs / 编辑器与 libobs 共用版本化场景集合 |
+| Studio preview/program, transitions, source filters / 预览/节目双总线、转场、来源滤镜 | `v1-M7` | Deliberate web subset; unsupported Gateway Direct operations are explicit / 精选 Web 子集；网关直通不支持项必须明确标识 |
+| Continuous per-camera DVR, quotas, retention / 逐路连续 DVR、配额、保留策略 | `v1-M8` | Independent from program composition; stream copy preferred / 独立于节目合成，优先码流复制 |
+| Archive browser, timeline, synchronized playback, export / 归档浏览、时间线、同步回放、导出 | `v1-M9` | Gaps, integrity, time zones, permissions and audit are first-class / 将断档、完整性、时区、权限和审计作为一等能力 |
+| Discovery, ONVIF profiles, PTZ, presets, talk / 发现、ONVIF、PTZ、预置位、对讲 | `v1-M10` | Profile T first; Profile S compatibility only; bounded discovery / Profile T 优先，Profile S 仅兼容，发现范围受控 |
+| Motion zones, device events, object providers, rules / 移动区域、设备事件、目标提供器、规则 | `v1-M11` | Recording cannot depend on analytics; no biometric identity by default / 录像不依赖分析；默认不做生物身份识别 |
+| True Direct topology, negotiation and proof / 真直连拓扑、协商与证明 | `v2-M1` | Docker carries no video payload in True Direct / 真直连时 Docker 不承载视频负载 |
+| Desktop and Android local runtimes / 桌面与 Android 本地运行端 | `v2-M2`–`v2-M3` | Shared local media/canvas core with platform-secure credentials / 共用本地媒体/画布核心与平台安全凭据 |
+| Offline registry/scene authorization and sync / 离线资产、场景授权与同步 | `v2-M4` | Encrypted, expiring and revocable local state / 加密、可过期、可撤销的本地状态 |
+| Grid/tour/kiosk/PWA and operator roles / 宫格、轮巡、值守、PWA 与角色 | `v2-M5` | One operator workflow across web and local runtimes / Web 与本地运行端共用值守工作流 |
+| Multi-volume, remote recorder roles, integrations, disaster recovery / 多存储卷、远程录像节点、集成、灾难恢复 | `v2-M6` | Optional scale-out without removing the one-image single-node path / 可选横向扩展，不取消单镜像单节点路径 |
 
 ## 4. Milestone sequence / 里程碑顺序
 
-M6 established the production foundation, M7 completed Canvas Studio, M8 completed the archive plane, and M9 made it searchable, playable, and exportable. M10 device identity, adapter foundations and authenticated media synchronization are now implemented; the remaining M10 controls still require their published exit gate.
+`v1.0` contains `v1-M1` through `v1-M6`. The `v1.1` milestone family contains `v1-M7` through `v1-M11`; `v1.2` is their final stabilization and qualification release, with no `v1-M12`. `v2.0` starts at `v2-M1` and introduces True Direct as a separately measured topology.
 
-M6 建立生产底座，M7 完成画布工作台，M8 完成独立逐路归档平面，M9 使归档可检索、可回放、可导出。M10 的设备身份、Adapter 底座与带认证媒体同步已实现，剩余设备控制仍须通过既定门禁；后续里程碑继续以前序门禁为前提。
+`v1.0` 包含 `v1-M1` 至 `v1-M6`；`v1.1` 里程碑族包含 `v1-M7` 至 `v1-M11`，`v1.2` 是其最终稳定与资格发布版本，不存在 `v1-M12`。`v2.0` 从 `v2-M1` 开始，把真直连作为单独测量的拓扑。
 
 ```text
-M6 Production      -> M7 Canvas Studio -> M8 NVR Core       -> M9 Timeline
-M6 生产化（完成）  -> M7 画布工作台（完成） -> M8 NVR 核心（完成） -> M9 时间线（完成） -> M10 设备运维（实施中）
-                         -> M10 Device Ops -> M11 Events & AI -> M12 Operator UX -> M13 Scale
-                         -> M10 设备运维   -> M11 事件与分析   -> M12 值守体验    -> M13 扩展
+v1.0: v1-M1 … v1-M6 (complete)
+v1.1 family: v1-M7 Canvas -> v1-M8 NVR -> v1-M9 Timeline -> v1-M10 Device Ops -> v1-M11 Events
+v1.2 final closure: qualification only, no v1-M12
+v2.0: v2-M1 True Direct -> v2-M2 Desktop -> v2-M3 Android -> v2-M4 Offline Sync -> v2-M5 Operator UX -> v2-M6 Scale
+
+v1.0：v1-M1 … v1-M6（完成）
+v1.1 里程碑族：v1-M7 画布 -> v1-M8 NVR -> v1-M9 时间线 -> v1-M10 设备运维 -> v1-M11 事件
+v1.2 最终收口：只做资格验证，不新增 v1-M12
+v2.0：v2-M1 真直连 -> v2-M2 桌面端 -> v2-M3 Android -> v2-M4 离线同步 -> v2-M5 值守体验 -> v2-M6 扩展
 ```
 
-### M7 — Canvas Studio / 画布工作台
+### v1-M7 — Canvas Studio / 画布工作台
 
 **Goal / 目标：** turn the existing single-scene editor into a persistent scene collection and an OBS-inspired web production workflow without creating a second client-only layout model / 将现有单场景编辑器升级为持久化场景集合与受 OBS 启发的 Web 制作流程，同时不产生客户端专属的第二套布局模型。
 
@@ -114,7 +123,7 @@ M6 生产化（完成）  -> M7 画布工作台（完成） -> M8 NVR 核心（�
 - Direct/Hybrid tests prove every unsupported operation is disclosed and routed to Composite or rejected before activation / Direct/Hybrid 测试证明每个不支持操作都会明确显示，并在激活前回退 Composite 或被拒绝。
 - Existing M0–M6 recording, WebRTC, browser-source, audio, security, redaction, and recovery suites remain green / M0–M6 录像、WebRTC、浏览器来源、音频、安全、脱敏和恢复套件保持通过。
 
-### M8 — NVR Core / NVR 核心
+### v1-M8 — NVR Core / NVR 核心
 
 **Goal / 目标：** add crash-tolerant, per-camera continuous recording and retention that is operationally independent from the canvas and program output / 增加可抗崩溃的逐路连续录像与保留策略，并在运行上独立于画布和节目输出。
 
@@ -139,7 +148,7 @@ M6 生产化（完成）  -> M7 画布工作台（完成） -> M8 NVR 核心（�
 - Quota, age, free-space reserve, evidence lock, clock rollback, duplicate timestamps, unwritable volume, and full-disk paths pass deterministic tests / 配额、时长、剩余空间、证据锁、时钟回拨、重复时间戳、不可写卷和磁盘写满路径通过确定性测试。
 - Catalog indexes, logs, metrics, backups, and support bundles contain stable camera IDs rather than source URLs or secrets / 目录索引、日志、指标、备份和支持包只包含稳定摄像机 ID，不包含来源 URL 或密钥。
 
-### M9 — Timeline, Playback & Evidence / 时间线、回放与证据
+### v1-M9 — Timeline, Playback & Evidence / 时间线、回放与证据
 
 **Goal / 目标：** make continuous archives operationally useful through fast search, synchronized replay, and auditable export / 通过快速检索、同步回放和可审计导出，让连续归档真正可用。
 
@@ -160,7 +169,7 @@ M6 生产化（完成）  -> M7 画布工作台（完成） -> M8 NVR 核心（�
 - Fast export reports keyframe-aligned effective boundaries; exact mode stays within one output frame of the request and both modes produce playable, hash-verifiable files / 快速导出报告按关键帧对齐的实际边界；精确模式与请求误差不超过一个输出帧，两种模式均生成可播放、哈希可验证文件。
 - UTC, multiple display zones, daylight-saving transitions, leap-day, clock rollback, and retention-during-playback cases pass / UTC、多显示时区、夏令时切换、闰日、时钟回拨及回放期间保留清理场景通过。
 
-### M10 — Device Operations & ONVIF / 设备运维与 ONVIF
+### v1-M10 — Device Operations & ONVIF / 设备运维与 ONVIF
 
 **Goal / 目标：** manage cameras as devices rather than opaque RTSP URLs, with bounded discovery and capability-driven controls / 将摄像机作为设备而非不透明 RTSP URL 管理，并提供有边界的发现和能力驱动控制。
 
@@ -177,12 +186,13 @@ M6 生产化（完成）  -> M7 画布工作台（完成） -> M8 NVR 核心（�
 
 **Exit gate / 完成门禁：**
 
-- A pinned ONVIF emulator plus at least three privately documented vendor/device combinations pass media discovery and applicable controls; public results identify capability classes, not private addresses or credentials / 固定 ONVIF 模拟器及至少三组私下记录的厂商/设备组合通过媒体发现和适用控制；公开结果只标识能力类别，不含私有地址或凭据。
+- A pinned ONVIF emulator passes media discovery and applicable controls, and at least one redacted external camera transport negotiates real media and decodes five consecutive frames; public results identify protocol/capability classes, not private addresses or credentials / 固定 ONVIF 模拟器通过媒体发现与适用控制，且至少一个脱敏外部摄像机传输完成真实媒体协商并连续解码五帧；公开结果只标识协议/能力类别，不含私有地址或凭据。
+- Model/firmware-specific multi-vendor testing remains an ongoing compatibility program and must never be generalized into brand-wide support or ONVIF-conformance claims / 具体型号/固件的多厂商测试作为持续兼容项目，不得泛化为品牌级支持或 ONVIF 合规声明。
 - Profile T primary and Profile S fallback paths both pass digest/TLS capability tests appropriate to the device; insecure fallback requires an explicit LAN-only warning and opt-in / Profile T 主路径与 Profile S 回退路径分别通过设备适用的 digest/TLS 能力测试；不安全回退要求显式局域网警告和选择加入。
 - Discovery scope, duplicate devices, IP changes, clock skew, malformed XML, slow devices, subscription renewal, and partial capabilities pass deterministic tests / 发现范围、重复设备、IP 变化、时钟偏差、畸形 XML、慢设备、订阅续期和部分能力通过确定性测试。
 - PTZ/talk permission denial, rate limiting, disconnect auto-stop, stuck-key/pointer cancellation, and audit redaction pass / PTZ/对讲权限拒绝、限速、断连自动 Stop、卡键/指针取消和审计脱敏通过。
 
-### M11 — Events, Detection & Automation / 事件、检测与自动化
+### v1-M11 — Events, Detection & Automation / 事件、检测与自动化
 
 **Goal / 目标：** normalize camera and software events into searchable incidents and bounded automations without allowing analytics to block recording / 将摄像机与软件事件统一为可搜索事件和有界自动化，同时保证分析不阻塞录像。
 
@@ -206,7 +216,39 @@ M6 生产化（完成）  -> M7 画布工作台（完成） -> M8 NVR 核心（�
 - Native events link to viewable archive segments with a documented p95 event-to-index budget; notification retries cannot create an unbounded queue or alert storm / 原生事件在规定 p95 入库预算内关联可查看录像分段；通知重试不能形成无界队列或告警风暴。
 - Webhook signing/secret files, MQTT credentials, redaction, SSRF controls, authorization, acknowledgement audit, and retention deletion pass security tests / Webhook 签名/密钥文件、MQTT 凭据、脱敏、SSRF 控制、授权、确认审计和保留删除通过安全测试。
 
-### M12 — Operator, Mobile & Kiosk UX / 值守、移动与大屏体验
+### v2-M1 — True Direct Contract & Proof / 真直连契约与闭环
+
+**Goal / 目标：** establish a topology in which an approved local client receives camera media without Docker carrying video payload, while retaining explicit Gateway Direct, Hybrid and Composite fallbacks / 建立获批本地客户端直接接收摄像机媒体且 Docker 不承载视频负载的拓扑，同时保留明确的网关直通、Hybrid 与 Composite 后备。
+
+**Scope / 范围：** define a versioned media-path contract, per-source topology negotiation, server-byte/session diagnostics, a local reference receiver, and the enrollment/credential boundary. The v1 API value `direct` continues to mean Gateway Direct / 定义版本化媒体路径契约、逐来源拓扑协商、服务端字节/会话诊断、本地参考接收端及配对/凭据边界；v1 API 的 `direct` 继续表示网关直通。
+
+**Exit gate / 完成门禁：** active True Direct viewing produces no corresponding camera upstream, MediaMTX reader, FFmpeg/libobs job or video payload on Docker after bounded control exchange; downgrade and credential tests pass and are visible before playback / 真直连活动时，在有界控制交换后 Docker 内不存在对应摄像机上游、MediaMTX reader、FFmpeg/libobs 作业或视频负载；降级与凭据测试通过且在播放前可见。完整门禁见 [true-direct-v2.md](true-direct-v2.md)。
+
+### v2-M2 — Desktop Local Runtime / 桌面本地运行端
+
+**Goal / 目标：** deliver the first offline-capable desktop reference client using the shared Camera Registry and canvas model, with local decode, composition and optional recording / 交付首个可离线的桌面参考客户端，复用 Camera Registry 与画布模型，在本地完成解码、编排和可选录像。
+
+**Scope / 范围：** Windows/Linux reference packages, hardware decode fallback, 1/4/9/16 and custom canvas views, local companion mode for browser UI where justified, reconnect, diagnostics, signed updates and OS-backed secret storage / Windows/Linux 参考包、硬解回退、1/4/9/16 与自定义画布、本机伴随模式（确有必要时）、重连、诊断、签名更新及系统密钥存储。
+
+**Exit gate / 完成门禁：** published reference hardware passes multi-camera True Direct, reconnect, sleep/resume, offline startup, revocation, update/rollback and secret-extraction tests without creating a server media session / 公开参考硬件通过多路真直连、重连、睡眠恢复、离线启动、撤销、升级回滚和密钥提取测试，且不创建服务端媒体会话。
+
+### v2-M3 — Android Local Runtime / Android 本地运行端
+
+**Goal / 目标：** provide a tinyCam-class Android monitoring surface that shares devices, layouts and policy with the server but performs approved live media work locally / 提供类似 tinyCam 使用方式的 Android 监看端，共享设备、布局和策略，但在本机执行获批实时媒体工作。
+
+**Scope / 范围：** phone/tablet adaptive grids, hardware decode, foreground monitor mode, full screen and Wake Lock, PTZ/audio permissions, network handoff, battery/thermal budgets, encrypted offline state and explicit background limitations / 手机/平板自适应宫格、硬解、前台监看、全屏与常亮、PTZ/音频权限、网络切换、电量/温控预算、加密离线状态及明确后台限制。
+
+**Exit gate / 完成门禁：** supported Android profiles pass local True Direct, 1/4/9/16-tile resource budgets, lifecycle/network transitions, permission denial, credential revocation and app-update migration; unsupported background behavior is disclosed / 受支持 Android 配置通过本地真直连、1/4/9/16 宫格资源预算、生命周期/网络切换、权限拒绝、凭据撤销与应用升级迁移；不支持的后台行为必须明确展示。
+
+### v2-M4 — Offline Authorization & Sync / 离线授权与同步
+
+**Goal / 目标：** make one registry and canvas usable across server, desktop and Android without turning the server database or administrator password into a portable secret / 让一份资产库与画布可在服务端、桌面和 Android 间使用，同时不把服务端数据库或管理员密码变成可携带密钥。
+
+**Scope / 范围：** device enrollment, scoped grants, encrypted local cache, expiry/revocation, conflict-aware scene sync, schema migration, offline audit queue and explicit local-only profiles / 设备配对、范围授权、加密本地缓存、过期/撤销、场景冲突同步、schema 迁移、离线审计队列及明确的仅本地 Profile。
+
+**Exit gate / 完成门禁：** deterministic offline/online conflict, expiry, lost-device revocation, clock skew, backup/restore, migration and credential-redaction matrices pass across all published clients / 所有公开客户端通过确定性离线/在线冲突、过期、遗失设备撤销、时钟偏差、备份恢复、迁移与凭据脱敏矩阵。
+
+### v2-M5 — Operator, Mobile & Kiosk UX / 值守、移动与大屏体验
 
 **Goal / 目标：** make Studio, Monitor, and NVR workflows usable from desktop, touch, wall display, and installable PWA surfaces with least-privilege roles / 让 Studio、Monitor 和 NVR 工作流可在桌面、触摸、大屏值守和可安装 PWA 上使用，并贯彻最小权限角色。
 
@@ -220,7 +262,7 @@ M6 生产化（完成）  -> M7 画布工作台（完成） -> M8 NVR 核心（�
 - Roles at minimum `admin`, `operator`, `viewer`, `auditor`, and `exporter`, with camera/group scopes and explicit permissions for talk, PTZ, playback, export, delete, settings, and user management / 至少提供 `admin`、`operator`、`viewer`、`auditor`、`exporter` 角色，支持摄像机/组范围，并明确对讲、PTZ、回放、导出、删除、设置和用户管理权限。
 - Keyboard and touch navigation, screen-reader labels, visible focus, reduced motion, color-independent alarms, and documented browser support / 支持键盘与触摸导航、屏幕阅读标签、可见焦点、减少动画、不依赖颜色的告警及有记录的浏览器支持范围。
 
-**Not in M12 / M12 不包含：** a separately maintained native Android/iOS/TV application. Native wrappers may be evaluated only after the PWA acceptance data identifies an unavoidable platform gap / 独立维护的 Android/iOS/TV 原生应用；只有 PWA 验收数据证明存在无法回避的平台缺口时才评估原生包装。
+**Boundary / 边界：** Android is delivered by `v2-M3`; `v2-M5` unifies operator workflows across Web/PWA, desktop and Android rather than treating a PWA as a substitute for local RTSP support. iOS/TV remain separate evidence-driven decisions / Android 由 `v2-M3` 交付；`v2-M5` 统一 Web/PWA、桌面与 Android 的值守流程，而不是把 PWA 当作本地 RTSP 支持的替代品。iOS/TV 仍需单独证据驱动决策。
 
 **Exit gate / 完成门禁：**
 
@@ -229,7 +271,7 @@ M6 生产化（完成）  -> M7 画布工作台（完成） -> M8 NVR 核心（�
 - The complete role/camera-scope matrix is deny-by-default and is exercised across UI, REST, WebSocket, media playback, export, PTZ, talk, metrics, and administration / 完整角色/摄像机范围矩阵默认拒绝，并覆盖 UI、REST、WebSocket、媒体回放、导出、PTZ、对讲、指标和管理面。
 - Core live monitoring and incident review pass keyboard-only, screen-reader smoke, visible-focus, contrast, and reduced-motion checks / 核心实时监看与事件复核通过纯键盘、屏幕阅读冒烟、可见焦点、对比度和减少动画检查。
 
-### M13 — Scale, Ecosystem & Resilience / 扩展、生态与韧性
+### v2-M6 — Scale, Ecosystem & Resilience / 扩展、生态与韧性
 
 **Goal / 目标：** scale beyond one host and one storage volume without weakening the simple single-image deployment, security boundary, or recoverability / 在不削弱单镜像部署、安全边界和可恢复性的前提下，扩展到多主机及多存储卷。
 
@@ -243,7 +285,7 @@ M6 生产化（完成）  -> M7 画布工作台（完成） -> M8 NVR 核心（�
 - Automated encrypted backups of configuration/catalog/audit keys, restore drills, media-catalog reconciliation, rolling schema migration, image provenance, staged upgrade, and rollback / 配置/目录/审计密钥自动加密备份、恢复演练、媒体目录对账、滚动 schema 迁移、镜像来源、分阶段升级和回滚。
 - Optional external NVR/detector interoperability through documented adapters instead of embedding every model or vendor protocol / 通过有文档适配器与外部 NVR/检测器互操作，不把所有模型或厂商协议嵌入核心。
 
-**Not in M13 / M13 不包含：** a hosted multi-tenant SaaS control plane, vendor P2P-cloud credential brokerage, access-control/door actuation, or a promise of unlimited camera density / 托管多租户 SaaS 控制面、厂商 P2P 云凭据代理、门禁/开门控制或无限摄像机密度承诺。
+**Not in v2-M6 / v2-M6 不包含：** a hosted multi-tenant SaaS control plane, vendor P2P-cloud credential brokerage, access-control/door actuation, or a promise of unlimited camera density / 托管多租户 SaaS 控制面、厂商 P2P 云凭据代理、门禁/开门控制或无限摄像机密度承诺。
 
 **Exit gate / 完成门禁：**
 

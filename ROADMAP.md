@@ -1,27 +1,31 @@
 # Roadmap / 项目路线图
 
-> Last updated / 最后更新：2026-08-22
+> Last updated / 最后更新：2026-08-24
 
 This roadmap describes milestone order and acceptance gates, not promised release dates. Priorities may change based on validation results and maintainer capacity.
 
 本路线图描述里程碑顺序和验收门禁，不承诺具体发布日期。优先级可能根据验证结果和维护能力调整。
 
+Canonical milestone names use `v<major>-M<number>`. Historical validation prose may retain its original short `M<number>` label so prior evidence remains traceable; the mapping is defined in [docs/versioning-and-branches.md](docs/versioning-and-branches.md).
+
+规范里程碑名称使用 `v<主版本>-M<序号>`。历史验收段落可保留当时的短名称 `M<序号>` 以维持证据可追溯性；映射见 [docs/versioning-and-branches.md](docs/versioning-and-branches.md)。
+
 ## Current position / 当前位置
 
-**🚧 M10 — Device Operations 正在实施；Camera Registry 与 Source Adapter 基础已落地。**
+**✅ v1.2 final v1 closure / v1 最终收口 — v1-M10/M11 实现、确定性协议与脱敏真实媒体门禁均已通过。**
 
-M0 through M9 implementation is complete. M10 now has a SQLite WAL Camera Registry, stable Camera/Profile references, secret-file credential indirection, bounded WS-Discovery, source-adapter contracts, empty first-run deployment, shared live/NVR identity, and authenticated Media2/Profile T media synchronization with Media/Profile S fallback. PTZ/presets/events, talk, and the full emulator/multi-vendor exit matrix remain open.
+The v1-M10 implementation includes the Registry/Adapter foundation, authenticated Profile T/S media, PTZ, presets, snapshots, PullPoint events, guarded talk, bounded interface discovery and clock-skew correction. v1-M11 adds an isolated SQLite WAL event service, normalized native/software events, masks/zones, detector provider v1, NVR event windows, search/acknowledgement, rules and a bounded signed Webhook/MQTT outbox. Deterministic protocol/event/notification fixtures pass, and a redacted Canon WV-HTTP Server Push MJPEG endpoint negotiated real media and decoded five frames. Multi-vendor model/firmware testing continues as compatibility evidence rather than a release blocker.
 
-M0 至 M9 实现已全部完成。M10 现已具备 SQLite WAL Camera Registry、稳定 Camera/Profile 引用、Secret 文件凭据间接引用、有界 WS-Discovery、来源 Adapter 契约、空配置首次部署、实时/NVR 共享设备身份，以及带认证的 Media2/Profile T 媒体同步和 Media/Profile S 回退。PTZ/预置位/事件、对讲及完整模拟器/多厂商退出矩阵仍未关闭。
+v1-M10 实现包含 Registry/Adapter 底座、带认证 Profile T/S 媒体、PTZ、预置位、快照、PullPoint 事件、受控对讲、指定接口发现及时钟偏移校正。v1-M11 增加隔离的 SQLite WAL 事件服务、统一原生/软件事件、遮罩/区域、Detector Provider v1、NVR 事件窗口、检索/确认、规则及有界签名 Webhook/MQTT 发件箱。确定性协议、事件与通知夹具均通过，且一个脱敏 Canon WV-HTTP Server Push MJPEG 端点已完成真实媒体协商与五帧解码。多厂商型号/固件测试继续作为兼容证据，不再阻塞发布。
 
-M7 delivers Canvas Studio, M8 the archive plane, and M9 the searchable playback/evidence workflow. M10–M13 continue device operations, events, operator UX, and scale. The detailed boundaries and gates are defined in [docs/future-milestones.md](docs/future-milestones.md).
+The `v1.0` series contains v1-M1 through v1-M6. The `v1.1` milestone family contains v1-M7 through v1-M11; `v1.2` is the final v1 closure release and introduces no v1-M12. `v2.0` starts at v2-M1 with a measurable True Direct contract.
 
-M7 已交付画布工作台，M8 已交付归档平面，M9 已交付可检索回放/证据工作流。M10–M13 继续设备运维、事件、值守体验与规模化。详细边界与门禁见 [docs/future-milestones.md](docs/future-milestones.md)。
+`v1.0` 系列包含 v1-M1 至 v1-M6，`v1.1` 里程碑族包含 v1-M7 至 v1-M11；`v1.2` 是 v1 的最终收口版本，不新增 v1-M12。`v2.0` 从 v2-M1 开始，以可测量的真直连契约为核心。
 
 ```text
-M0–M9 implementation complete   M10 foundation in progress     M11–M13 planned
-M0–M9 实现已完成           -> M10 基础实施中              -> M11–M13 已规划
-✅                               🚧 IN PROGRESS                 🧭 NOT STARTED
+M0 + v1-M1…v1-M9 complete -> v1-M10/M11 complete -> v1.2 closure -> v2-M1 True Direct
+M0 + v1-M1…v1-M9 已完成    -> v1-M10/M11 已完成    -> v1.2 收口    -> v2-M1 真直连
+✅                              ✅                     ✅              🧭
 ```
 
 ### M0 acceptance / M0 验收
@@ -41,6 +45,9 @@ M0 已于 2026-08-11 在真实摄像头门禁通过后完成。后续修改采�
 
 ### Latest validation evidence / 最新验收证据
 
+- v1-M10 deterministic device operations / v1-M10 确定性设备运维：the final linux/amd64 image passed ten Camera Registry/ONVIF/MJPEG tests covering Profile T/S, HTTP Digest, WS-Security with 120-second clock skew, generated TLS trust/rejection, private profile tokens, PTZ bounds/rate behavior, presets, snapshots, PullPoint normalization, guarded talk, credential-free audit and bounded Server Push MJPEG detection / 最终 linux/amd64 镜像通过 10 个 Camera Registry/ONVIF/MJPEG 测试，覆盖 Profile T/S、HTTP Digest、带 120 秒时钟偏移的 WS-Security、生成式 TLS 信任/拒绝、私有 Profile token、PTZ 边界/限速、预置位、快照、PullPoint 归一化、受控对讲、无凭据审计及有界 Server Push MJPEG 检测。
+- v1-M11 deterministic events / v1-M11 确定性事件：six tests passed normalized event deduplication, acknowledgement audit, immutable segment linkage, include/exclude/privacy motion ground truth, debounce/cooldown, detector schema v1, rule/outbox ceiling, signed Webhook/authenticated MQTT frames, sub-50 ms reference p95 indexing and DNS-rebinding-resistant SSRF rejection / 6 个测试通过统一事件去重、确认审计、不可变分段关联、包含/排除/隐私移动真值、去抖/冷却、Detector schema v1、规则/发件箱上限、签名 Webhook/认证 MQTT 帧、参考环境低于 50 ms 的 p95 入库及抗 DNS 重绑定 SSRF 拒绝。
+- v1.2 real external media / v1.2 真实外部媒体：a redacted Canon WV-HTTP endpoint returned Server Push MJPEG, negotiated 320×240 at 25 FPS and decoded five consecutive frames; no endpoint, frame or raw log is stored / 一个脱敏 Canon WV-HTTP 端点返回 Server Push MJPEG，实际协商 320×240、25 FPS 并连续解码五帧；未保存端点、帧或原始日志。
 - Environment / 环境：Docker Desktop 4.86.0、Engine 29.7.2、Compose 5.3.1、BuildKit 0.32.2，WSL2 Linux/amd64。
 - Build / 构建：multi-stage product image and pinned test fixtures built successfully; container CTest reports 100% pass and runtime `ldd` finds no missing library / 产品镜像和固定版本测试夹具构建成功；容器内 CTest 100% 通过，运行时动态库无缺失。
 - Synthetic recording / 合成录制：a 640×480 source is proportionally centered in a 640×360 canvas with symmetric black bars; H.264, 10 FPS, video-only, fully decodable, and non-black center / 640×480 来源等比居中适配 640×360 画布且左右黑边对称；H.264、10 FPS、仅视频轨、可完整解码且中心非黑。
@@ -78,23 +85,23 @@ M0 已于 2026-08-11 在真实摄像头门禁通过后完成。后续修改采�
 | Milestone | Status / 状态 | Primary outcome / 核心成果 | Exit gate / 完成门禁 |
 | --- | --- | --- | --- |
 | M0 — Headless Proof | ✅ Complete / 已完成 | One RTSP source rendered by libobs and recorded as H.264 MP4 / 单路 RTSP 经 libobs 合成并录制为 H.264 MP4 | Docker build, synthetic RTSP, and real RTSP all pass / 三类验收全部通过 |
-| M1 — Web Control | ✅ Complete / 已完成 | Web UI, API, persistent scene model, RTSP source CRUD and transforms / Web UI、API、场景持久化、来源管理和画面变换 | Browser edits and libobs use the same scene state; recording remains stable / 浏览器与 libobs 共用同一场景状态，录制稳定 |
-| M2 — Composite WebRTC | ✅ Complete / 已完成 | Publish the server-composited program through WHIP/MediaMTX and play through WHEP/WebRTC / 服务端合成画面通过 WHIP/MediaMTX 发布并在浏览器播放 | Low-latency browser playback survives reconnects in one product container / 单容器内低延迟播放和重连通过 |
-| M3 — Direct & Hybrid | ✅ Complete / 已完成 | Direct camera playback in browsers, client/server mode switching, selective transcoding / 浏览器直连播放、客户端/服务端模式切换和选择性转码 | Shared layout behaves consistently across Direct and Composite modes / 两种模式共享布局且行为一致 |
-| M4 — Browser Sources | ✅ Complete / 已完成 | `obs-browser` sources for dashboards, satellite maps, overlays and embeddable media / 支持仪表盘、卫星图、叠加层和可嵌入媒体 | CEF lifecycle, isolation, recovery, and resource limits pass container tests / CEF 生命周期、隔离、恢复和资源限制通过测试 |
-| M5 — Audio | ✅ Complete / 已完成 | Per-source mute/volume, Web Audio in Direct mode, libobs mixing in Composite mode / 单源静音与音量、Direct Web Audio、Composite libobs 混音 | Multi-source sync, mute, volume, and output audio are verified / 多源同步、静音、音量和输出音轨通过验证 |
-| M6 — Production | ✅ Complete / 已完成 | Authentication, HTTPS, TURN, health checks, GPU detection, backup, observability and upgrades / 鉴权、HTTPS、TURN、健康检查、GPU 检测、备份、可观测性和升级 | Security review, upgrade/rollback, recovery, and documented deployment pass / 安全、升级回滚、恢复和部署文档验收通过 |
-| M7 — Canvas Studio | ✅ Complete / 已完成 | Scene collections, nested scenes/groups, filters, Preview/Program and transitions / 场景集合、嵌套场景/组、滤镜、预览/节目与转场 | Persistent multi-scene Studio workflow and Direct/Composite capability contract pass / 持久化多场景工作流与 Direct/Composite 能力契约通过 |
-| M8 — NVR Core | ✅ Implementation complete / 实现完成 | Independent per-camera segmented recording, catalog, retention and crash recovery / 独立逐路分段录像、目录、保留与崩溃恢复 | Deterministic recovery/retention gate passes; six-hour and private burn-ins remain release qualification / 确定性恢复/保留门禁通过；六小时及私有耐久属于发布资格验证 |
-| M9 — Timeline | ✅ Implementation complete / 实现完成 | Archive search, synchronized playback, clip export and evidence integrity / 归档检索、同步回放、片段导出与证据完整性 | UTC/gap, p95, Range, derived media, export/hash, lock/delete and audit gates pass / UTC/断档、p95、Range、派生媒体、导出/哈希、锁定/删除及审计门禁通过 |
-| M10 — Device Operations | 🚧 In progress / 实施中 | Registry, adapters, discovery and authenticated Profile T/S media synchronization are implemented; PTZ, events and talk remain / Registry、Adapter、发现及带认证的 Profile T/S 媒体同步已实现；PTZ、事件和对讲仍待完成 | Emulator plus multi-vendor capability, safety and redaction matrix passes / 模拟器加多厂商能力、安全与脱敏矩阵通过 |
-| M11 — Events & Detection | 🧭 Planned / 已规划 | Native/software events, motion zones, detector providers, rules and notifications / 原生/软件事件、移动区域、检测提供器、规则与通知 | Analytics failure cannot block recording; event accuracy, queue and security gates pass / 分析失败不阻塞录像，事件准确性、队列与安全门禁通过 |
-| M12 — Operator UX | 🧭 Planned / 已规划 | Monitor/PWA/kiosk workflows, adaptive grids and least-privilege roles / 监看/PWA/值守流程、自适应宫格与最小权限角色 | 16-tile reference profile, browser/PWA and authorization matrix pass / 16 宫格参考配置、浏览器/PWA 与授权矩阵通过 |
-| M13 — Scale & Resilience | 🧭 Planned / 已规划 | Multi-volume/node roles, integrations, resource scheduling and disaster recovery / 多卷/节点角色、集成、资源调度与灾难恢复 | Published density tiers, failure convergence, restore and signed upgrade/rollback pass / 公开密度档位、故障收敛、恢复及签名升级回滚通过 |
+| v1-M1 — Web Control | ✅ Complete / 已完成 | Web UI, API, persistent scene model, RTSP source CRUD and transforms / Web UI、API、场景持久化、来源管理和画面变换 | Browser edits and libobs use the same scene state; recording remains stable / 浏览器与 libobs 共用同一场景状态，录制稳定 |
+| v1-M2 — Composite WebRTC | ✅ Complete / 已完成 | Publish the server-composited program through WHIP/MediaMTX and play through WHEP/WebRTC / 服务端合成画面通过 WHIP/MediaMTX 发布并在浏览器播放 | Low-latency browser playback survives reconnects in one product container / 单容器内低延迟播放和重连通过 |
+| v1-M3 — Gateway Direct & Hybrid | ✅ Complete / 已完成 | Gateway Direct browser playback, client/server mode switching and selective transcoding / 浏览器网关直通、客户端/服务端模式切换和选择性转码 | Shared layout behaves consistently across Gateway Direct and Composite modes / 网关直通与合成模式共享布局且行为一致 |
+| v1-M4 — Browser Sources | ✅ Complete / 已完成 | `obs-browser` sources for dashboards, satellite maps, overlays and embeddable media / 支持仪表盘、卫星图、叠加层和可嵌入媒体 | CEF lifecycle, isolation, recovery, and resource limits pass container tests / CEF 生命周期、隔离、恢复和资源限制通过测试 |
+| v1-M5 — Audio | ✅ Complete / 已完成 | Per-source mute/volume, Web Audio in Gateway Direct, libobs mixing in Composite / 单源静音与音量、网关直通 Web Audio、Composite libobs 混音 | Multi-source sync, mute, volume, and output audio are verified / 多源同步、静音、音量和输出音轨通过验证 |
+| v1-M6 — Production | ✅ Complete / 已完成 | Authentication, HTTPS, TURN, health checks, GPU detection, backup, observability and upgrades / 鉴权、HTTPS、TURN、健康检查、GPU 检测、备份、可观测性和升级 | Security review, upgrade/rollback, recovery, and documented deployment pass / 安全、升级回滚、恢复和部署文档验收通过 |
+| v1-M7 — Canvas Studio | ✅ Complete / 已完成 | Scene collections, nested scenes/groups, filters, Preview/Program and transitions / 场景集合、嵌套场景/组、滤镜、预览/节目与转场 | Persistent multi-scene Studio workflow and Gateway Direct/Composite capability contract pass / 持久化多场景工作流与网关直通/合成能力契约通过 |
+| v1-M8 — NVR Core | ✅ Implementation complete / 实现完成 | Independent per-camera segmented recording, catalog, retention and crash recovery / 独立逐路分段录像、目录、保留与崩溃恢复 | Deterministic recovery/retention gate passes; six-hour and private burn-ins remain release qualification / 确定性恢复/保留门禁通过；六小时及私有耐久属于发布资格验证 |
+| v1-M9 — Timeline | ✅ Implementation complete / 实现完成 | Archive search, synchronized playback, clip export and evidence integrity / 归档检索、同步回放、片段导出与证据完整性 | UTC/gap, p95, Range, derived media, export/hash, lock/delete and audit gates pass / UTC/断档、p95、Range、派生媒体、导出/哈希、锁定/删除及审计门禁通过 |
+| v1-M10 — Device Operations | ✅ Complete / 已完成 | Capability-driven Profile T/S media, PTZ, presets, events, snapshots and guarded talk / 能力驱动的 Profile T/S 媒体、PTZ、预置位、事件、快照与受控对讲 | Emulator plus bounded MJPEG fixture and redacted external media gate pass / 模拟器、有界 MJPEG 夹具及脱敏外部媒体门禁通过 |
+| v1-M11 — Events & Detection | ✅ Complete / 已完成 | Native/software events, motion zones/masks, detector providers, rules and bounded notifications / 原生/软件事件、移动区域/遮罩、检测提供器、规则与有界通知 | Deterministic accuracy, isolation, queue, signed delivery and SSRF gates pass / 确定性准确度、隔离、队列、签名交付及 SSRF 门禁通过 |
+| v2-M1 — True Direct Foundation | 🧭 Planned / 已规划 | Client-to-camera media with Docker outside the video data plane / 客户端到摄像机传输，Docker 退出视频数据面 | Zero server video payload plus explicit topology/fallback and credential gates pass / 服务端视频负载为零，并通过拓扑、回退与凭据门禁 |
+| v2-M2…v2-M6 — Local Clients to Scale | 🧭 Planned / 已规划 | Desktop/Android local runtimes, offline sync, operator UX and scale/resilience / 桌面与 Android 本地运行端、离线同步、值守体验及规模与韧性 | Each published v2 gate passes without weakening v1 recording or security guarantees / 各 v2 门禁通过且不削弱 v1 录像与安全保证 |
 
 ## Milestone details / 里程碑详情
 
-### M1 — Web Control
+### v1-M1 — Web Control
 
 - Introduce a versioned scene document as the single source of truth / 引入带版本的统一场景文档。
 - Add REST/WebSocket control without depending on `obs-websocket` / 实现独立 REST/WebSocket 控制接口。
@@ -102,7 +109,7 @@ M0 已于 2026-08-11 在真实摄像头门禁通过后完成。后续修改采�
 - Persist scenes atomically and validate migrations / 原子持久化场景并验证迁移。
 - Keep MP4 recording as the output while the control plane stabilizes / 控制面稳定前仍以 MP4 录制作为输出。
 
-#### M1 progress / M1 进度
+#### v1-M1 progress / v1-M1 进度
 
 - [x] Versioned scene schema, strict limits, deterministic JSON, and credential-redacted API view / 版本化场景 schema、严格边界、确定性 JSON 和凭据脱敏 API 视图
 - [x] Atomic persistence, restrictive permissions, and schema migration / 原子持久化、严格文件权限和 schema 迁移
@@ -111,14 +118,14 @@ M0 已于 2026-08-11 在真实摄像头门禁通过后完成。后续修改采�
 - [x] React/TypeScript Web editor using the same scene document / 使用同一场景文档的 React/TypeScript Web 编辑器
 - [x] Docker, synthetic RTSP, real camera, persistence, and security acceptance / Docker、合成 RTSP、真实摄像头、持久化与安全验收
 
-### M2 — Composite WebRTC
+### v1-M2 — Composite WebRTC
 
 - Add MediaMTX as an internal runtime service while preserving one product image / 将 MediaMTX 作为镜像内部服务，保持单产品镜像。
 - Enable `obs-webrtc` and publish the program output through WHIP / 启用 `obs-webrtc`，通过 WHIP 发布合成画面。
 - Provide WHEP/WebRTC playback, connection state, and reconnect behavior / 提供浏览器播放、连接状态和重连。
 - Define LAN-first ICE defaults; TURN remains an explicit production dependency / 默认优先局域网 ICE，TURN 留到生产配置。
 
-#### M2 progress / M2 进度
+#### v1-M2 progress / v1-M2 进度
 
 - [x] Package pinned MediaMTX 1.18.2 and its license in the single product image / 在单一产品镜像中打包固定版本 MediaMTX 1.18.2 及许可证
 - [x] Keep signaling internal, expose explicit ICE/UDP, and supervise graceful multi-process shutdown / 保持信令内部监听、显式发布 ICE/UDP，并监督多进程优雅关停
@@ -130,7 +137,7 @@ M2 completed on 2026-08-12 after deterministic browser reconnect and failure/sec
 
 M2 已于 2026-08-12 完成：确定性浏览器重连、故障与安全覆盖通过后，私有真实来源又完成至少 30 秒的 WHEP 播放和最终录像验证。
 
-### M3 — Direct & Hybrid
+### v1-M3 — Gateway Direct & Hybrid
 
 - Route compatible camera streams through MediaMTX without server composition / 兼容流通过 MediaMTX 直达浏览器，不经服务端合成。
 - Reuse the same scene model for HTML/CSS client layout and libobs server layout / HTML/CSS 客户端布局和 libobs 服务端布局共用场景模型。
@@ -138,7 +145,7 @@ M2 已于 2026-08-12 完成：确定性浏览器重连、故障与安全覆盖�
 - Add selective transcoding only for browser-incompatible sources / 仅对浏览器不兼容来源进行选择性转码。
 - Consider automatic mode selection only after explicit modes are reliable / 明确模式稳定后再考虑 Auto 模式。
 
-#### M3 progress / M3 进度
+#### v1-M3 progress / v1-M3 进度
 
 - [x] Add source-scoped on-demand MediaMTX routes with opaque internal names / 增加按来源隔离、内部名称不透明的 MediaMTX 按需路由
 - [x] Proxy Direct WHEP through same-origin endpoints without exposing RTSP or upstream locations / 通过同源端点代理 Direct WHEP，且不暴露 RTSP 或上游位置
@@ -153,14 +160,14 @@ M3 completed on 2026-08-13 after deterministic Direct and selective Hybrid playb
 
 M3 已于 2026-08-13 完成：确定性 Direct、选择性 Hybrid、在线编码切换、来源移除、发布端断流重连、资源回收及私有真实来源验收均已通过，且未暴露上游端点。
 
-### M4 — Browser Sources
+### v1-M4 — Browser Sources
 
 - Build and package pinned `obs-browser`/CEF dependencies / 构建并打包固定版本的 `obs-browser`/CEF。
 - Support dashboards, local overlays, satellite maps, and approved embeds / 支持仪表盘、本地叠加层、卫星图和允许嵌入的媒体。
 - Add URL policy, local-network access controls, process limits, crash recovery, and cache cleanup / 增加 URL 策略、内网访问控制、进程限制、崩溃恢复和缓存清理。
 - Evaluate hardware-backed graphics without making it a prerequisite / 评估硬件图形加速，但不将其设为前置条件。
 
-#### M4 progress / M4 进度
+#### v1-M4 progress / v1-M4 进度
 
 - [x] Pin and package the OBS-matched CEF archive, `obs-browser`, helper binary, resources, and runtime libraries / 固定并打包与 OBS 匹配的 CEF 归档、`obs-browser`、helper、资源及运行库
 - [x] Add strict schema-v2 browser sources to persistence, REST/WebSocket, editor, and libobs rendering / 在持久化、REST/WebSocket、编辑器和 libobs 渲染中加入严格的 schema v2 浏览器源
@@ -173,14 +180,14 @@ M4 completed on 2026-08-14 after the exact pinned browser runtime passed contain
 
 M4 已于 2026-08-14 完成：精确固定的浏览器运行时通过容器构建与动态链接检查，动画页面确定性门禁覆盖策略、生命周期、renderer 恢复、资源上限、缓存清理、脱敏、优雅停止及非黑 MP4 完整封装。
 
-### M5 — Audio
+### v1-M5 — Audio
 
 - Define one UI model for mute, volume, sync offset, monitoring, and track assignment / 统一静音、音量、同步偏移、监听和轨道分配模型。
 - Implement Web Audio mixing for Direct mode / 为 Direct 模式实现 Web Audio 混音。
 - Implement libobs mixing and Opus/WebRTC output for Composite mode / 为 Composite 模式实现 libobs 混音及 Opus/WebRTC 输出。
 - Test drift, reconnects, simultaneous sources, and browser autoplay constraints / 测试漂移、重连、多源并发和浏览器自动播放限制。
 
-#### M5 progress / M5 进度
+#### v1-M5 progress / v1-M5 进度
 
 - [x] Introduce schema v3 with mute, volume, sync offset, monitoring, and track assignment plus v0/v1/v2 migration / 引入统一静音、音量、同步偏移、监听和音轨分配的 schema v3，并支持 v0/v1/v2 迁移
 - [x] Apply the unified fields to libobs sources and verify API round-trip/private persistence / 将统一字段应用到 libobs 来源并验证 API 往返与私有持久化
@@ -193,7 +200,7 @@ M5 completed on 2026-08-15 after deterministic multi-source audio and full M0–
 
 M5 已于 2026-08-15 完成：多来源确定性音频及 M0–M4 全回归通过后，又完成两轮私有真实音频源的 30 秒 Composite/Direct 验收。随后 M6 已开始开发，目前仍在进行中。
 
-### M6 — Production
+### v1-M6 — Production
 
 - Add authentication and authorization before exposing control endpoints outside a trusted LAN / 控制接口离开可信局域网前加入认证和授权。
 - Add HTTPS, secure headers, rate limits, audit logs, and secret-file integration / 加入 HTTPS、安全响应头、限流、审计日志和 secret 文件集成。
@@ -201,7 +208,7 @@ M5 已于 2026-08-15 完成：多来源确定性音频及 M0–M4 全回归通�
 - Detect CPU, VAAPI/QSV, and NVIDIA capabilities with safe software fallbacks / 检测 CPU、VAAPI/QSV 和 NVIDIA 能力，并保留安全的软件回退。
 - Document backup, restore, upgrade, rollback, image provenance, and GPL source distribution / 记录备份恢复、升级回滚、镜像来源和 GPL 源码分发流程。
 
-#### M6 progress / M6 进度
+#### v1-M6 progress / v1-M6 进度
 
 - [x] Add paired file-backed Basic credentials with fixed-size constant-time comparison / 增加配对文件型 Basic 凭据和固定长度恒定时间比较
 - [x] Protect UI/assets, REST, WebSocket, Program/Source WHEP, and metrics under one authentication boundary / 以统一认证边界保护 UI/资源、REST、WebSocket、Program/Source WHEP 与指标
@@ -219,9 +226,9 @@ M6 completed on 2026-08-15 after the full M0–M5 compatibility regression and e
 
 M6 已于 2026-08-15 在 M0–M5 全兼容回归及全部 M6 生产门禁通过后完成；随后开始 M7。
 
-### M7 — Canvas Studio / 画布工作台
+### v1-M7 — Canvas Studio / 画布工作台
 
-#### M7 progress / M7 进度
+#### v1-M7 progress / v1-M7 进度
 
 - [x] Add schema v4 sources for image, media, text, color, and nested scenes plus ordered bounded filters / 增加图片、媒体、文字、色块、嵌套场景及有界有序滤镜
 - [x] Add item lock, logical groups, rotation, opacity, blend modes, fit/fill/stretch, crop, numeric transforms, multi-select, snapping, alignment, and distribution / 增加锁定、逻辑分组、旋转、透明度、混合、缩放裁切、数值变换、多选吸附、对齐与分布
@@ -235,9 +242,9 @@ M7 completed on 2026-08-15. Arbitrary plug-ins, desktop capture, unrestricted sc
 
 M7 已于 2026-08-15 完成。任意插件、桌面采集、不受限脚本和 OBS 桌面 UI 像素级复刻仍明确排除。M8 从该已验证 Studio 底座开始，并保持逐路归档生命周期独立于 Program 合成。
 
-### M8 — NVR Core / NVR 核心
+### v1-M8 — NVR Core / NVR 核心
 
-#### M8 progress / M8 进度
+#### v1-M8 progress / v1-M8 进度
 
 - [x] Add an opt-in loopback-only NVR process inside the single product container / 在单产品容器内增加默认关闭、仅回环监听的 NVR 进程
 - [x] Implement at most 64 independent continuous/scheduled/event/off workers with main/sub and copy/transcode policy / 实现最多 64 路独立 worker，支持连续/计划/事件/关闭、主辅码流及复制/转码策略
@@ -252,9 +259,9 @@ M8 implementation completed on 2026-08-15. Long-duration burn-ins are deliberate
 
 M8 实现于 2026-08-15 完成。长时耐久被明确记录为发布资格验证，不由短时确定性开发门禁冒充完成。M9 从 [docs/nvr-core.md](docs/nvr-core.md) 所述已验证归档/目录契约继续。
 
-### M9 — Timeline, Playback & Evidence / 时间线、回放与证据
+### v1-M9 — Timeline, Playback & Evidence / 时间线、回放与证据
 
-#### M9 progress / M9 进度
+#### v1-M9 progress / v1-M9 进度
 
 - [x] Add bounded 31-day UTC timeline queries with per-camera segments, retention boundaries and explicit offline/missing/corrupt gaps / 增加最长 31 天的有界 UTC 时间线查询、逐路片段、保留边界及明确离线/缺失/损坏断档
 - [x] Add one-to-four-player shared UTC play/pause/seek/speed/frame-step controls with a 250 ms correction threshold / 增加 1–4 播放器共享 UTC 播放/暂停/跳转/倍速/逐帧控制及 250 ms 纠偏阈值
@@ -265,17 +272,17 @@ M8 实现于 2026-08-15 完成。长时耐久被明确记录为发布资格验�
 - [x] Add authenticated same-origin UI/API operations and audit for playback, snapshot, export, download, lock/unlock and delete / 增加受认证同源 UI/API 操作，并审计回放、截图、导出、下载、锁定/解锁及删除
 - [x] Pass final-image TypeScript/Vite build and deterministic UTC/gap, p95, Range, JPEG, export, FFprobe, hash, conflict and redaction gate / 通过最终镜像 TypeScript/Vite 构建及 UTC/断档、p95、Range、JPEG、导出、FFprobe、哈希、冲突与脱敏确定性门禁
 
-M9 implementation completed on 2026-08-15. The deterministic reference run measured 40 local timeline queries at 10.8 ms p95. This is development evidence, not a universal storage guarantee; target deployments must repeat the measurement and browser/DST observation described in [docs/timeline-evidence.md](docs/timeline-evidence.md). M10 development is now in progress.
+v1-M9 implementation completed on 2026-08-15. The deterministic reference run measured 40 local timeline queries at 10.8 ms p95. This is development evidence, not a universal storage guarantee; target deployments must repeat the measurement and browser/DST observation described in [docs/timeline-evidence.md](docs/timeline-evidence.md). v1-M10 development is now in progress.
 
-M9 实现于 2026-08-15 完成。确定性参考运行测得 40 次本地时间线查询 p95 为 10.8 ms。该数值是开发证据，不是所有存储的性能承诺；目标部署必须重跑 [docs/timeline-evidence.md](docs/timeline-evidence.md) 所述测量及浏览器/DST 观察。M10 现已进入实施阶段。
+v1-M9 实现于 2026-08-15 完成。确定性参考运行测得 40 次本地时间线查询 p95 为 10.8 ms。该数值是开发证据，不是所有存储的性能承诺；目标部署必须重跑 [docs/timeline-evidence.md](docs/timeline-evidence.md) 所述测量及浏览器/DST 观察。v1-M10 现已进入实施阶段。
 
-M9 was fully re-run from the current worktree image on 2026-08-23 while opening M10. The complete UTC/gap, Range, JPEG, four-camera fast/exact export, hash, lock/delete and audit gate passed; 40 local timeline queries measured 4.8 ms p95. This regression result is environment-specific evidence, not a production latency guarantee.
+v1-M9 was fully re-run from the current worktree image on 2026-08-23 while opening v1-M10. The complete UTC/gap, Range, JPEG, four-camera fast/exact export, hash, lock/delete and audit gate passed; 40 local timeline queries measured 4.8 ms p95. This regression result is environment-specific evidence, not a production latency guarantee.
 
-M10 开始阶段于 2026-08-23 使用当前工作树最终镜像完整重跑 M9。UTC/断档、Range、JPEG、四路快速/精确导出、哈希、锁定/删除及审计门禁全部通过；40 次本地时间线查询 p95 为 4.8 ms。该回归结果仅是当前环境证据，不构成生产延迟承诺。
+v1-M10 开始阶段于 2026-08-23 使用当前工作树最终镜像完整重跑 v1-M9。UTC/断档、Range、JPEG、四路快速/精确导出、哈希、锁定/删除及审计门禁全部通过；40 次本地时间线查询 p95 为 4.8 ms。该回归结果仅是当前环境证据，不构成生产延迟承诺。
 
-### M10 — Device Operations & Camera Adapters / 设备运维与摄像机适配
+### v1-M10 — Device Operations & Camera Adapters / 设备运维与摄像机适配
 
-#### M10 progress / M10 进度
+#### v1-M10 progress / v1-M10 进度
 
 - [x] Add a SQLite WAL Camera Registry with stable Camera/Profile IDs and credential references / 增加使用 SQLite WAL、稳定 Camera/Profile ID 和凭据引用的 Camera Registry
 - [x] Migrate Scene v5 and NVR configuration from embedded camera URLs to registry references / 将 Scene v5 与 NVR 配置从内嵌摄像机 URL 迁移到 Registry 引用
@@ -284,12 +291,24 @@ M10 开始阶段于 2026-08-23 使用当前工作树最终镜像完整重跑 M9�
 - [x] Support an empty first-run Scene/Registry without an RTSP bootstrap secret / 支持无需 RTSP bootstrap secret 的空 Scene/Registry 首次启动
 - [x] Reject embedded credentials and token-like URL query values at the Registry boundary / 在 Registry 边界拒绝内嵌凭据和类似 token 的 URL 查询值
 - [x] Implement authenticated Profile T media profiles and Profile S compatibility fallback / 实现带认证的 Profile T 媒体 Profile 与 Profile S 兼容回退
-- [ ] Implement capability-driven PTZ, presets, events, snapshots and guarded two-way talk / 实现能力驱动的 PTZ、预置位、事件、快照及受控双向对讲
-- [ ] Pass emulator plus multiple real-vendor capability, timeout, redaction and safety matrices / 通过模拟器及多个真实厂商的能力、超时、脱敏与安全矩阵
+- [x] Implement capability-driven PTZ, presets, events, snapshots and guarded two-way talk / 实现能力驱动的 PTZ、预置位、事件、快照及受控双向对讲
+- [x] Pass the pinned emulator plus a redacted real external camera transport decode gate / 通过固定模拟器及脱敏真实外部摄像机传输解码门禁
+- [ ] Continue model/firmware-specific multi-vendor compatibility qualification without blocking v1.2 / 持续执行具体型号/固件的多厂商兼容验证，但不阻塞 v1.2
 
-The checked items establish storage, identity and protocol boundaries. The Profile T/S media client has deterministic HTTP Digest plus WS-Security tests, but this does not claim ONVIF product conformance or real-device acceptance. M10 closes only after the remaining items and published exit gate pass. See [docs/onvif-media.md](docs/onvif-media.md).
+The deterministic emulator covers Digest, WS-Security, clock skew, Profile T/S and device operations. The external media tier verifies real transport and decoding but does not claim ONVIF conformance or device controls. Model/firmware-specific vendor qualification remains deliberately open as an ongoing compatibility program; see [docs/camera-compatibility-qualification.md](docs/camera-compatibility-qualification.md).
 
-已勾选项目建立了存储、身份和协议边界。Profile T/S 媒体客户端已通过 HTTP Digest + WS-Security 确定性测试，但这不代表 ONVIF 产品合规或真实设备验收。只有剩余项目与公开退出门禁全部通过后，M10 才会关闭。详见 [docs/onvif-media.md](docs/onvif-media.md)。
+确定性模拟器覆盖 Digest、WS-Security、时钟偏移、Profile T/S 与设备操作；外部媒体层验证真实传输与解码，但不代表 ONVIF 合规或设备控制。具体型号/固件的厂商验证作为持续兼容项目有意保持开放，详见 [docs/camera-compatibility-qualification.md](docs/camera-compatibility-qualification.md)。
+
+#### v1-M11 progress / v1-M11 进度
+
+- [x] Normalize native/software events and immutable NVR segment references / 统一原生/软件事件与不可变 NVR 分段引用
+- [x] Add include zones, exclude/privacy masks, sensitivity, debounce and cooldown / 增加包含区、排除/隐私遮罩、灵敏度、去抖与冷却
+- [x] Add detector-provider schema v1 with bounded batches and failure isolation / 增加带有界批量和故障隔离的 Detector Provider schema v1
+- [x] Add event search, acknowledgement notes and audit / 增加事件检索、确认备注与审计
+- [x] Add rule predicates and a bounded deduplicated Webhook/MQTT outbox / 增加规则条件及有界去重 Webhook/MQTT 发件箱
+- [x] Pass deterministic motion, deduplication, linkage, provider and SSRF fixtures / 通过移动、去重、关联、Provider 与 SSRF 确定性夹具
+- [x] Verify signed Webhook and authenticated MQTT delivery frames without disclosing Secret values / 验证签名 Webhook 与认证 MQTT 交付帧且不泄露 Secret 值
+- [ ] Continue real-camera event accuracy sampling as non-blocking compatibility evidence / 持续采样真实摄像机事件准确度，作为非阻塞兼容证据
 
 ## Cross-cutting rules / 贯穿规则
 
@@ -305,10 +324,10 @@ The checked items establish storage, identity and protocol boundaries. The Profi
 
 ## Expanded scope and exclusions / 扩展范围与排除项
 
-Per-camera continuous recording, retention, timeline playback, ONVIF device operations, events, bounded detection providers, and forensic export are now explicit M8–M13 commitments. They are implemented beside—not inside—the libobs composition graph. See [docs/future-milestones.md](docs/future-milestones.md) for the staged boundaries.
+Per-camera continuous recording, retention, timeline playback, ONVIF device operations, events, bounded detection providers, local True Direct runtimes, operator UX, and forensic export are explicit v1-M8 through v2 commitments. They are implemented beside—not inside—the libobs composition graph. See [docs/future-milestones.md](docs/future-milestones.md) for the staged boundaries.
 
-逐路连续录像、保留、时间线回放、ONVIF 设备运维、事件、有界检测提供器和取证导出现在是 M8–M13 的明确承诺；它们位于 libobs 合成图旁侧而非内部。分阶段边界见 [docs/future-milestones.md](docs/future-milestones.md)。
+逐路连续录像、保留、时间线回放、ONVIF 设备运维、事件、有界检测提供器、本地真直连运行端、值守体验和取证导出现在是 v1-M8 至 v2 的明确承诺；它们位于 libobs 合成图旁侧而非内部。分阶段边界见 [docs/future-milestones.md](docs/future-milestones.md)。
 
-Hosted multi-tenant SaaS, vendor P2P-cloud credential brokerage, access-control/door actuation, biometric identity databases, and a promise of unlimited camera density remain outside this roadmap. Native mobile applications are deferred until PWA evidence proves they are necessary.
+Hosted multi-tenant SaaS, vendor P2P-cloud credential brokerage, access-control/door actuation, biometric identity databases, and a promise of unlimited camera density remain outside this roadmap. v2 plans native/local clients specifically for True Direct and offline operation; it does not claim that a PWA alone can decode ordinary RTSP.
 
-托管多租户 SaaS、厂商 P2P 云凭据代理、门禁/开门控制、生物身份数据库及无限摄像机密度承诺仍在路线图之外；原生移动应用推迟到 PWA 证据证明其确有必要之后。
+托管多租户 SaaS、厂商 P2P 云凭据代理、门禁/开门控制、生物身份数据库及无限摄像机密度承诺仍在路线图之外。v2 明确规划原生/本地客户端来实现真直连与离线运行，但不声称仅靠 PWA 就能解码常规 RTSP。

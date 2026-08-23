@@ -1,8 +1,8 @@
 # Control API v1 / 控制接口 v1
 
-M1–M9 provide the control, Studio, WebRTC, NVR and evidence plane. M10 now adds Camera Registry, source adapters, session login, execution-chain diagnostics, detailed hardware probes, and authenticated ONVIF media synchronization. The current composition contract is [scene-schema-v5.md](scene-schema-v5.md).
+v1-M1 through v1-M11 provide the control, Studio, WebRTC, NVR, evidence, device-operation and event planes. v1-M10 adds Camera Registry and guarded ONVIF operations; v1-M11 adds normalized events, motion zones, detector providers, rules and a bounded notification outbox. The current composition contract is [scene-schema-v5.md](scene-schema-v5.md).
 
-M1–M9 提供控制、Studio、WebRTC、NVR 与证据平面；M10 现已新增 Camera Registry、来源 Adapter、Session 登录、执行链诊断、细粒度硬件探测及带认证的 ONVIF 媒体同步。当前合成契约见 [scene-schema-v5.md](scene-schema-v5.md)。
+v1-M1 至 v1-M11 提供控制、Studio、WebRTC、NVR、证据、设备运维与事件平面；v1-M10 增加 Camera Registry 和受控 ONVIF 操作，v1-M11 增加统一事件、移动区域、检测提供器、规则与有界通知发件箱。当前合成契约见 [scene-schema-v5.md](scene-schema-v5.md)。
 
 ## Security boundary / 安全边界
 
@@ -74,14 +74,14 @@ SQLite stores only SHA-256 token hashes plus user, creation/last-seen/expiry tim
 Returns `200` while the control thread is serving:
 
 ```json
-{"status":"ok","milestone":"M10-foundation"}
+{"status":"ok","milestone":"v1-M11"}
 ```
 
 This route is intentionally unauthenticated and contains no configuration details.
 
 ### `GET /api/v1/ready`
 
-Returns public `200 {"status":"ready"}` after the control plane is active, configured Composite publication is ready, and every active OBS source is healthy. Direct-only operation is ready with `engineActive=false`; it does not initialize libobs video. It returns `503` during startup, output failure, or an active Composite source outage.
+Returns public `200 {"status":"ready"}` after the control plane is active, configured Composite publication is ready, and every active OBS source is healthy. Gateway Direct-only operation is ready with `engineActive=false`; it does not initialize libobs video. It returns `503` during startup, output failure, or an active Composite source outage.
 
 ### `GET /metrics`
 
@@ -114,7 +114,7 @@ Returns the authenticated per-source operational view. `state` is `idle`, `start
 
 ### `GET /api/v1/system/capabilities`
 
-Returns encoder, renderer and hardware-decode decisions. Every backend reports `devicePresent`, `vaDriverLoaded`, `encodeSupported`, `decodeSupported`, `runtimeProbePassed`, `encoderAvailable`, and `ready`; device existence alone is never enough. Responses omit device paths, PCI IDs, driver versions and source URLs. Renderer is `idle` in Direct-only mode, `hardware` after a non-software GL probe, or `software` after the explicit llvmpipe fallback.
+Returns encoder, renderer and hardware-decode decisions. Every backend reports `devicePresent`, `vaDriverLoaded`, `encodeSupported`, `decodeSupported`, `runtimeProbePassed`, `encoderAvailable`, and `ready`; device existence alone is never enough. Responses omit device paths, PCI IDs, driver versions and source URLs. Renderer is `idle` in Gateway Direct-only mode, `hardware` after a non-software GL probe, or `software` after the explicit llvmpipe fallback.
 
 返回配置与实际选择的 H.264 编码器及固定后端能力标志。该接口要求认证，且不返回设备路径、PCI 标识、驱动版本或来源 URL。只有 `devicePresent` 与 `encoderAvailable` 同时为真时 `ready` 才为真；显式请求不可用后端时会安全选择 x264 并设置 `fallback`。
 
@@ -158,6 +158,8 @@ The proxy accepts no caller-selected upstream URL, credentials, query parameters
 
 Returns the explicit playback modes and one source-scoped same-origin endpoint for every RTSP source in the current scene. Browser sources are reported as `preferred: "composite"` and `strategy: "composite"` without an endpoint. The response contains source IDs already present in the public scene, but never contains RTSP/browser URLs, credentials, MediaMTX addresses, internal path names, or caller-selectable upstreams.
 
+API v1 keeps the value `direct` for compatibility, but it means **Gateway Direct / Direct Relay**: MediaMTX in Docker still pulls and forwards the stream. It does not mean the v2 `true-direct` topology where Docker carries zero video payload. API v1 does not accept or advertise `true-direct`.
+
 ```json
 {
   "defaultMode": "direct",
@@ -186,7 +188,7 @@ Returns five fixed process groups (`webobsd`, `mediamtx`, `ffmpeg`, `caddy`, `ob
 ### Camera Registry / 摄像机注册表
 
 - `GET|POST /api/v1/cameras`, `GET|PUT|DELETE /api/v1/cameras/{cameraId}` manage stable devices and profiles.
-- `POST /api/v1/camera-detect` classifies a bounded IP/hostname/URL and probes media where supported.
+- `POST /api/v1/camera-detect` classifies a bounded IP/hostname/URL and probes media where supported. Canon WV-HTTP `/-wvhttp-01-/video.cgi` and ordinary MJPEG paths use a bounded `GET` because Server Push endpoints commonly reject `HEAD`; a successful probe requires `multipart/x-mixed-replace` plus a JPEG part marker.
 - `GET /api/v1/camera-adapters` returns the supported adapter names.
 - `POST /api/v1/onvif/discover` performs bounded WS-Discovery and returns at most 128 non-credential XAddr results.
 - `POST /api/v1/onvif/probe` accepts `address` and `credentialsRef`, then reads authenticated Media2/Profile T profiles with Media/Profile S fallback without saving partial state.
@@ -194,7 +196,7 @@ Returns five fixed process groups (`webobsd`, `mediamtx`, `ffmpeg`, `caddy`, `ob
 
 All mutations require the normal authentication and same-origin boundary. Embedded URL userinfo, credential-like query keys/fragments, unsafe IDs and traversal in `credentialsRef` are rejected. The loopback service stores SQLite WAL metadata; only internal consumers can resolve `/run/secrets/webobs-camera-credentials/<ref>.json`. ONVIF SOAP is response-size bounded, rejects DTD/entities and redirects, validates HTTPS normally, and never returns credential material. See [onvif-media.md](onvif-media.md).
 
-返回当前明确支持的播放模式，以及场景中每个来源对应的同源端点。响应只复用公开场景已有的来源 ID，不包含 RTSP、凭据、MediaMTX 地址、内部路径或调用方可选上游。`codec` 与 `audioCodec` 只报告探测到的上游编码名称；H.264/VP8/VP9/AV1 视频和无音频/Opus/G.711 A-law/G.711 mu-law 音频可直通，任一现有编码不兼容时，按需 Hybrid 路由只转换必要轨道，并返回 `strategy: "hybrid"`。
+返回当前明确支持的播放模式，以及场景中每个来源对应的同源端点。API v1 为兼容性保留 `direct` 值，但它表示 **Gateway Direct / 网关直通**：Docker 内 MediaMTX 仍会拉取并转发媒体，不等于 v2 中 Docker 视频负载为零的 `true-direct`。API v1 不接受或通告 `true-direct`。响应只复用公开场景已有的来源 ID，不包含 RTSP、凭据、MediaMTX 地址、内部路径或调用方可选上游。`codec` 与 `audioCodec` 只报告探测到的上游编码名称；H.264/VP8/VP9/AV1 视频和无音频/Opus/G.711 A-law/G.711 mu-law 音频可网关直通，任一现有编码不兼容时，按需 Hybrid 路由只转换必要轨道，并返回 `strategy: "hybrid"`。
 
 ### `POST /api/v1/sources/{sourceId}/whep`
 
@@ -284,6 +286,24 @@ All error bodies use a stable envelope and include the current revision without 
 `GET /api/v1/studio/capabilities` returns each scene's requested Direct/Hybrid result, exactness, selected fallback, and human-readable reasons. It never returns source URLs, credentials, internal routes, or file contents.
 
 `GET /api/v1/studio/capabilities` 返回每个场景的 Direct/Hybrid 精确性、实际选择及降级原因，绝不返回来源 URL、凭据、内部路由或文件内容。
+
+## Device operations / 设备操作
+
+Authenticated same-origin clients may use `GET /api/v1/cameras/{id}/onvif/presets`, `POST .../ptz`, `.../presets`, `.../snapshot`, `.../events/pull`, `.../talk`, and `GET /api/v1/cameras/{id}/operations`. PTZ continuous moves have a server-enforced 100–2000 ms auto-stop and per-camera rate limit. Snapshot and talk payloads are bounded; device tokens and credentials are private implementation state.
+
+认证且同源的客户端可使用上述预置位、PTZ、快照、事件、对讲与操作审计接口。连续 PTZ 由服务端强制在 100–2000 ms 自动停止并逐摄像机限速；快照与对讲负载有固定上限，设备 token 与凭据始终属于私有实现状态。
+
+## Events and automation / 事件与自动化
+
+- `GET|POST /api/v1/events` searches or creates normalized events; search accepts `cameraId`, `type`, `zoneId`, `label`, `acknowledged`, `from`, and `to`.
+- `PUT /api/v1/events/{id}/acknowledgement` changes acknowledgement and a bounded operator note with audit.
+- `GET|POST /api/v1/motion-zones` manages normalized include/exclude/privacy polygons.
+- `POST /api/v1/motion/evaluate` evaluates a bounded grayscale fixture/frame contract.
+- `GET|POST /api/v1/detector-providers` and `POST /api/v1/detector-providers/{id}/events` expose provider schema v1.
+- `GET|POST /api/v1/event-rules` manages bounded predicates/actions.
+- `GET /api/v1/notification-outbox` exposes delivery state without secrets; `POST .../process` is an authenticated diagnostic retry request.
+
+All mutations require JSON and pass the same authentication and Origin checks as Camera Registry operations. Notification endpoints are mounted Secret references; URLs and credentials are never accepted in an event or rule action. See [events-and-automation.md](events-and-automation.md).
 
 ## WebSocket / WebSocket 事件
 
