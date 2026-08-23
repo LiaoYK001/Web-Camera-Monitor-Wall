@@ -173,6 +173,28 @@ class OnvifEmulatorHandler(BaseHTTPRequestHandler):
             self.soap('<s:Fault xmlns:s="http://www.w3.org/2003/05/soap-envelope"/>', 500)
 
 
+class ServerPushMjpegHandler(BaseHTTPRequestHandler):
+    def log_message(self, format: str, *args: object) -> None:
+        return
+
+    def do_HEAD(self) -> None:
+        self.send_response(405)
+        self.send_header("Content-Length", "0")
+        self.end_headers()
+
+    def do_GET(self) -> None:
+        if not self.path.startswith("/-wvhttp-01-/video.cgi?"):
+            self.send_response(404); self.send_header("Content-Length", "0"); self.end_headers(); return
+        jpeg = b"\xff\xd8\xff\xe0webobs-mjpeg-fixture\xff\xd9"
+        body = (b"--fixture\r\nContent-Type: image/jpeg\r\nContent-Length: " +
+                str(len(jpeg)).encode() + b"\r\n\r\n" + jpeg + b"\r\n--fixture\r\n")
+        self.send_response(200)
+        self.send_header("Content-Type", "multipart/x-mixed-replace; boundary=fixture")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
+
 class CameraRegistryTests(unittest.TestCase):
     def setUp(self) -> None:
         self.temporary = tempfile.TemporaryDirectory(prefix="webobs-camera-tests-")
@@ -221,6 +243,24 @@ class CameraRegistryTests(unittest.TestCase):
                 "name": "Unsafe", "address": "rtsp://camera.example.invalid/live",
                 "adapter": "rtsp", "credentialsRef": "../escape", "profiles": [],
             })
+
+    def test_canon_wvhttp_server_push_mjpeg_detection_without_head(self) -> None:
+        server = HTTPServer(("127.0.0.1", 0), ServerPushMjpegHandler)
+        thread = threading.Thread(target=server.serve_forever, daemon=True); thread.start()
+        try:
+            address = (f"http://127.0.0.1:{server.server_address[1]}"
+                       "/-wvhttp-01-/video.cgi?v=jpg%3A320x240%3A%3A5000&type=live")
+            detected = registry.classify(address)
+            self.assertEqual(detected["adapter"], "mjpeg")
+            self.assertEqual(detected["contentType"], "multipart/x-mixed-replace")
+            self.assertEqual(detected["probe"], "http-server-push-mjpeg")
+            self.assertEqual(detected["profiles"][0]["videoCodec"], "mjpeg")
+            self.assertNotIn("127.0.0.1", json.dumps({
+                "adapter": detected["adapter"], "contentType": detected["contentType"],
+                "probe": detected["probe"],
+            }))
+        finally:
+            server.shutdown(); server.server_close(); thread.join(timeout=2)
 
     def test_nvr_accepts_registry_ids_without_raw_urls(self) -> None:
         configuration = nvr.validate_config({

@@ -1063,7 +1063,8 @@ def classify(address: str) -> dict:
     elif path.endswith(".m3u8"): adapter = "hls"
     elif path.endswith(".flv"): adapter = "http-flv"
     elif path.endswith((".jpg", ".jpeg")): adapter = "snapshot"
-    elif "mjpeg" in path or "mjpg" in path: adapter = "mjpeg"
+    elif ("mjpeg" in path or "mjpg" in path or
+          path.endswith("/-wvhttp-01-/video.cgi")): adapter = "mjpeg"
     elif "whep" in path: adapter = "whep"
     result = {"address": normalized, "adapter": adapter, "profiles": [], "probe": "classified"}
     if adapter in {"rtsp", "hls", "http-flv", "srt", "rtp"}:
@@ -1090,10 +1091,26 @@ def classify(address: str) -> dict:
             result["probe"] = "unreachable-or-unsupported"
     elif adapter in {"mjpeg", "snapshot", "whep", "onvif"}:
         try:
-            request = Request(normalized, method="HEAD", headers={"User-Agent": "webobs-camera-probe/1"})
+            # Server-push MJPEG endpoints frequently do not implement HEAD. Read
+            # only the first bounded block so protocol detection cannot retain a
+            # camera stream or buffer an unbounded multipart response.
+            method = "GET" if adapter == "mjpeg" else "HEAD"
+            request = Request(normalized, method=method, headers={"User-Agent": "webobs-camera-probe/1"})
             with urlopen(request, timeout=3) as response:
-                result["contentType"] = response.headers.get_content_type()
-                result["probe"] = "http-head"
+                content_type = response.headers.get_content_type().lower()
+                result["contentType"] = content_type
+                if method == "GET":
+                    block = response.read1(65536)
+                    if (content_type != "multipart/x-mixed-replace" or
+                            (b"image/jpeg" not in block.lower() and b"\xff\xd8" not in block)):
+                        raise ValueError("HTTP endpoint is not a server-push MJPEG stream")
+                    result["profiles"] = [{
+                        "id": "main", "name": "Main", "role": "main", "endpoint": normalized,
+                        "videoCodec": "mjpeg", "audioCodec": "", "width": 0, "height": 0, "fps": 0,
+                    }]
+                    result["probe"] = "http-server-push-mjpeg"
+                else:
+                    result["probe"] = "http-head"
         except Exception:
             result["probe"] = "unreachable-or-auth-required"
     return result

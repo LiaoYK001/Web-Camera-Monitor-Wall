@@ -4,7 +4,7 @@
 >
 > Last updated / 最后更新：2026-08-24
 >
-> Current position / 当前位置：`v1-M10` and `v1-M11` are implementation-complete. `v1.2` is the final v1 closure release and remains qualification-blocked only by the private three-vendor real-device matrix / `v1-M10` 与 `v1-M11` 已实现；`v1.2` 是 v1 最终收口版本，目前只受私下三厂商真实设备矩阵门禁约束
+> Current position / 当前位置：`v1-M10` and `v1-M11` are complete. The final v1.2 closure gate passed with deterministic protocol fixtures plus a redacted external Server Push MJPEG decode; model/firmware vendor matrices continue without blocking the release / `v1-M10` 与 `v1-M11` 已完成；v1.2 最终收口门禁已由确定性协议夹具与脱敏外部 Server Push MJPEG 解码共同通过，型号/固件厂商矩阵作为非阻塞工作继续
 
 This document expands the project from a web camera compositor into a self-hosted and local-first monitoring workspace with three first-class capabilities: an OBS-inspired customizable canvas, an NVR workflow inspired by mainstream monitoring applications such as tinyCam Monitor, and v2 True Direct local clients that keep Docker outside the media data plane. It is a capability plan, not a compatibility or UI-cloning claim, and it does not promise release dates.
 
@@ -186,7 +186,8 @@ v2.0：v2-M1 真直连 -> v2-M2 桌面端 -> v2-M3 Android -> v2-M4 离线同步
 
 **Exit gate / 完成门禁：**
 
-- A pinned ONVIF emulator plus at least three privately documented vendor/device combinations pass media discovery and applicable controls; public results identify capability classes, not private addresses or credentials / 固定 ONVIF 模拟器及至少三组私下记录的厂商/设备组合通过媒体发现和适用控制；公开结果只标识能力类别，不含私有地址或凭据。
+- A pinned ONVIF emulator passes media discovery and applicable controls, and at least one redacted external camera transport negotiates real media and decodes five consecutive frames; public results identify protocol/capability classes, not private addresses or credentials / 固定 ONVIF 模拟器通过媒体发现与适用控制，且至少一个脱敏外部摄像机传输完成真实媒体协商并连续解码五帧；公开结果只标识协议/能力类别，不含私有地址或凭据。
+- Model/firmware-specific multi-vendor testing remains an ongoing compatibility program and must never be generalized into brand-wide support or ONVIF-conformance claims / 具体型号/固件的多厂商测试作为持续兼容项目，不得泛化为品牌级支持或 ONVIF 合规声明。
 - Profile T primary and Profile S fallback paths both pass digest/TLS capability tests appropriate to the device; insecure fallback requires an explicit LAN-only warning and opt-in / Profile T 主路径与 Profile S 回退路径分别通过设备适用的 digest/TLS 能力测试；不安全回退要求显式局域网警告和选择加入。
 - Discovery scope, duplicate devices, IP changes, clock skew, malformed XML, slow devices, subscription renewal, and partial capabilities pass deterministic tests / 发现范围、重复设备、IP 变化、时钟偏差、畸形 XML、慢设备、订阅续期和部分能力通过确定性测试。
 - PTZ/talk permission denial, rate limiting, disconnect auto-stop, stuck-key/pointer cancellation, and audit redaction pass / PTZ/对讲权限拒绝、限速、断连自动 Stop、卡键/指针取消和审计脱敏通过。

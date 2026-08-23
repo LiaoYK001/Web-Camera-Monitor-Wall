@@ -188,7 +188,7 @@ Returns five fixed process groups (`webobsd`, `mediamtx`, `ffmpeg`, `caddy`, `ob
 ### Camera Registry / 摄像机注册表
 
 - `GET|POST /api/v1/cameras`, `GET|PUT|DELETE /api/v1/cameras/{cameraId}` manage stable devices and profiles.
-- `POST /api/v1/camera-detect` classifies a bounded IP/hostname/URL and probes media where supported.
+- `POST /api/v1/camera-detect` classifies a bounded IP/hostname/URL and probes media where supported. Canon WV-HTTP `/-wvhttp-01-/video.cgi` and ordinary MJPEG paths use a bounded `GET` because Server Push endpoints commonly reject `HEAD`; a successful probe requires `multipart/x-mixed-replace` plus a JPEG part marker.
 - `GET /api/v1/camera-adapters` returns the supported adapter names.
 - `POST /api/v1/onvif/discover` performs bounded WS-Discovery and returns at most 128 non-credential XAddr results.
 - `POST /api/v1/onvif/probe` accepts `address` and `credentialsRef`, then reads authenticated Media2/Profile T profiles with Media/Profile S fallback without saving partial state.
