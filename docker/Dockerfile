@@ -356,6 +356,10 @@ ENV LD_LIBRARY_PATH=/opt/obs/lib \
 
 RUN mkdir -p /assets /config/obs /config/webobs /recordings /usr/share/licenses/caddy \
     && cp /usr/share/common-licenses/Apache-2.0 /usr/share/licenses/caddy/LICENSE \
+    && sed -i 's/\r$//' /opt/webobs/bin/webobs-nvrd /opt/webobs/bin/webobs-camera-registry /opt/webobs/bin/webobs-events \
+    && test "$(head -n 1 /opt/webobs/bin/webobs-nvrd)" = '#!/usr/bin/env python3' \
+    && test "$(head -n 1 /opt/webobs/bin/webobs-camera-registry)" = '#!/usr/bin/env python3' \
+    && test "$(head -n 1 /opt/webobs/bin/webobs-events)" = '#!/usr/bin/env python3' \
     && chmod 0700 /config/obs /config/webobs \
     && chmod 0755 /opt/webobs/entrypoint.sh /opt/webobs/bin/caddy /opt/webobs/bin/mediamtx /opt/webobs/bin/transcode-on-demand /opt/webobs/bin/webobs-backup /opt/webobs/bin/webobs-nvrd /opt/webobs/bin/webobs-camera-registry /opt/webobs/bin/webobs-events \
     && python3 -m py_compile /opt/webobs/bin/webobs-nvrd \
@@ -404,6 +408,6 @@ LABEL org.opencontainers.image.title="Web Camera Monitor Wall" \
       org.opencontainers.image.description="Headless libobs multi-source monitor wall and local control plane" \
       org.opencontainers.image.licenses="GPL-2.0-or-later" \
       org.opencontainers.image.source="https://github.com/LiaoYK001/Web-Camera-Monitor-Wall" \
-      org.opencontainers.image.version="1.2.0"
+      org.opencontainers.image.version="1.2.1"
 
 ENTRYPOINT ["/usr/bin/tini", "--", "/opt/webobs/entrypoint.sh"]

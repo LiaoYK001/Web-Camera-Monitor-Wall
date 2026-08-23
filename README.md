@@ -1,6 +1,6 @@
 # Web Camera Monitor Wall
 
-一个基于 `libobs` 的无桌面 Web 监控墙、Gateway Direct WebRTC 网关与 NVR 项目。仓库已实现 **M0 及 v1-M1 至 v1-M11**；最终 v1 系列版本 **v1.2** 的确定性协议与脱敏真实媒体门禁已通过。
+一个基于 `libobs` 的无桌面 Web 监控墙、Gateway Direct WebRTC 网关与 NVR 项目。仓库已实现 **M0 及 v1-M1 至 v1-M11**；最终 v1 系列 **v1.2** 的当前修复版本是 **v1.2.1**。请勿部署最初的 `v1.2` 镜像，其 Windows 工作树行尾会导致 Python 辅助服务无法启动，详见 [v1.2.1 发布说明](docs/release-notes-v1.2.1.md)。
 
 ```text
 RTSP camera -> libobs ffmpeg_source -> OBS scene -> H.264/AAC MP4

@@ -361,7 +361,7 @@ if [ "$nvr_enabled" = "true" ]; then
     mkfifo "$nvr_log_pipe"
     /opt/obs/bin/webobs-log-filter < "$nvr_log_pipe" &
     nvr_filter_pid=$!
-    /opt/webobs/bin/webobs-nvrd > "$nvr_log_pipe" 2>&1 &
+    python3 /opt/webobs/bin/webobs-nvrd > "$nvr_log_pipe" 2>&1 &
     nvr_pid=$!
 fi
 
@@ -371,7 +371,7 @@ if [ "$camera_registry_enabled" = "true" ]; then
     mkfifo "$camera_registry_log_pipe"
     /opt/obs/bin/webobs-log-filter < "$camera_registry_log_pipe" &
     camera_registry_filter_pid=$!
-    /opt/webobs/bin/webobs-camera-registry > "$camera_registry_log_pipe" 2>&1 &
+    python3 /opt/webobs/bin/webobs-camera-registry > "$camera_registry_log_pipe" 2>&1 &
     camera_registry_pid=$!
     registry_ready=0
     registry_attempt=0
@@ -395,7 +395,7 @@ if [ "$events_enabled" = "true" ]; then
     mkfifo "$events_log_pipe"
     /opt/obs/bin/webobs-log-filter < "$events_log_pipe" &
     events_filter_pid=$!
-    /opt/webobs/bin/webobs-events > "$events_log_pipe" 2>&1 &
+    python3 /opt/webobs/bin/webobs-events > "$events_log_pipe" 2>&1 &
     events_pid=$!
     events_ready=0
     events_attempt=0
