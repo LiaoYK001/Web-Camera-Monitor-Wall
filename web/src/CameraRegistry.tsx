@@ -1,6 +1,59 @@
-import { useEffect, useState } from 'react';
-import { createCamera, deleteCamera, detectCamera, discoverOnvif, fetchCameras, probeOnvif, syncOnvifCamera } from './api';
-import type { CameraAdapter, CameraDetection, CameraRecord } from './types';
+import { useEffect, useRef, useState } from 'react';
+import { createCamera, deleteCamera, detectCamera, discoverOnvif, fetchCameras, fetchOnvifPresets, fetchOnvifSnapshot, mutateOnvifPreset, probeOnvif, pullOnvifEvents, sendOnvifPtz, sendOnvifTalk, syncOnvifCamera } from './api';
+import type { CameraAdapter, CameraDetection, CameraRecord, OnvifPreset } from './types';
+
+function DeviceControls({ camera, busy, fail }: { camera: CameraRecord; busy: boolean; fail: (message: string) => void }) {
+  const capabilities = ((camera.capabilities.onvif ?? {}) as Record<string, unknown>);
+  const [presets, setPresets] = useState<OnvifPreset[]>([]);
+  const [snapshot, setSnapshot] = useState('');
+  const [status, setStatus] = useState('');
+  const recorder = useRef<MediaRecorder | null>(null);
+  const chunks = useRef<Blob[]>([]);
+  const invoke = async (action: () => Promise<unknown>, success: string) => {
+    try { await action(); setStatus(success); } catch (reason) { fail(reason instanceof Error ? reason.message : '设备操作失败'); }
+  };
+  const move = (x: number, y: number, zoom = 0) => invoke(
+    () => sendOnvifPtz(camera.id, { operation: 'continuous', x, y, zoom, durationMs: 350 }), 'PTZ 命令已发送',
+  );
+  const toggleTalk = async () => {
+    if (recorder.current?.state === 'recording') { recorder.current.stop(); return; }
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      const mimeType = MediaRecorder.isTypeSupported('audio/webm') ? 'audio/webm' : 'audio/ogg';
+      const next = new MediaRecorder(stream, { mimeType }); chunks.current = []; recorder.current = next;
+      next.ondataavailable = (event) => { if (event.data.size) chunks.current.push(event.data); };
+      next.onstop = () => {
+        stream.getTracks().forEach((track) => track.stop());
+        const blob = new Blob(chunks.current, { type: mimeType });
+        if (blob.size > 512 * 1024) { fail('对讲片段超过 512 KiB，请缩短录音'); return; }
+        const reader = new FileReader();
+        reader.onload = () => void invoke(() => sendOnvifTalk(camera.id, {
+          operation: 'start', contentType: mimeType, data: String(reader.result).split(',', 2)[1] ?? '',
+        }), '对讲片段已发送');
+        reader.readAsDataURL(blob);
+      };
+      next.start(); setStatus('正在录音，再次点击即发送（最长 10 秒）');
+      window.setTimeout(() => { if (next.state === 'recording') next.stop(); }, 10000);
+    } catch (reason) { fail(reason instanceof Error ? reason.message : '麦克风不可用'); }
+  };
+  if (!Object.values(capabilities).some(Boolean)) return null;
+  return <div className="device-controls">
+    {capabilities.ptz === true && <><div className="ptz-pad" aria-label="PTZ 控制">
+      <button disabled={busy} onClick={() => void move(0, 1)}>↑</button><button disabled={busy} onClick={() => void move(-1, 0)}>←</button>
+      <button disabled={busy} onClick={() => void sendOnvifPtz(camera.id, { operation: 'stop' })}>■</button><button disabled={busy} onClick={() => void move(1, 0)}>→</button>
+      <button disabled={busy} onClick={() => void move(0, -1)}>↓</button><button disabled={busy} onClick={() => void move(0, 0, .5)}>＋</button><button disabled={busy} onClick={() => void move(0, 0, -.5)}>－</button>
+    </div><div className="preset-controls"><button className="ghost-button" onClick={() => void fetchOnvifPresets(camera.id).then((value) => setPresets(value.presets)).catch((reason: unknown) => fail(reason instanceof Error ? reason.message : '读取预置位失败'))}>预置位</button>
+      {presets.map((preset) => <button key={preset.token} onClick={() => void invoke(() => sendOnvifPtz(camera.id, { operation: 'gotoPreset', presetToken: preset.token }), `已转到 ${preset.name}`)}>{preset.name}</button>)}
+      <button onClick={() => void invoke(() => mutateOnvifPreset(camera.id, { operation: 'set', name: `Preset ${presets.length + 1}` }), '预置位已保存')}>保存当前位置</button></div></>}
+    <div className="device-actions">
+      {capabilities.snapshot === true && <button onClick={() => void fetchOnvifSnapshot(camera.id).then((value) => { setSnapshot(`data:${value.contentType};base64,${value.data}`); setStatus('快照已读取'); }).catch((reason: unknown) => fail(reason instanceof Error ? reason.message : '快照失败'))}>快照</button>}
+      {capabilities.events === true && <button onClick={() => void pullOnvifEvents(camera.id).then((value) => setStatus(`收到 ${value.events.length} 个设备事件`)).catch((reason: unknown) => fail(reason instanceof Error ? reason.message : '事件拉取失败'))}>拉取事件</button>}
+      {capabilities.talk === true && <button onClick={() => void toggleTalk()}>{recorder.current?.state === 'recording' ? '停止并发送' : '短按对讲'}</button>}
+    </div>
+    {snapshot && <img className="device-snapshot" src={snapshot} alt={`${camera.name} 快照`} />}
+    {status && <small role="status">{status}</small>}
+  </div>;
+}
 
 export default function CameraRegistry({ onBack }: { onBack: () => void }) {
   const [cameras, setCameras] = useState<CameraRecord[]>([]);
@@ -61,7 +114,7 @@ export default function CameraRegistry({ onBack }: { onBack: () => void }) {
       {discovered.length > 0 && <div className="discovery-list">{discovered.map((device) => <button type="button" key={device.address} onClick={() => { setAddress(device.address); setDetection(null); }}><strong>{device.host}</strong><span>{device.address}</span></button>)}</div>}
     </section>
     <section className="camera-list"><div className="section-title"><h2>Camera Registry</h2><span>{cameras.length} 台</span></div>
-      {cameras.length === 0 ? <div className="registry-empty"><h3>尚未添加摄像机</h3><p>使用自动检测，或通过 ONVIF WS-Discovery 查找局域网设备。</p></div> : cameras.map((camera) => <article className="camera-card" key={camera.id}><div><span className="adapter-pill">{camera.adapter}</span><h3>{camera.name}</h3><p>{camera.address}</p></div><dl><div><dt>Profile</dt><dd>{camera.profiles.length}</dd></div><div><dt>硬解</dt><dd>{camera.hardwareDecode}</dd></div><div><dt>健康</dt><dd>{camera.health}</dd></div></dl><div className="profile-list">{camera.profiles.map((profile) => <span key={profile.id}>{profile.role} · {profile.videoCodec || 'unknown'} {profile.width ? `${profile.width}×${profile.height}` : ''}</span>)}</div>{camera.adapter === 'onvif' && <button className="ghost-button" disabled={busy} type="button" onClick={() => void syncOnvif(camera.id)}>同步 ONVIF Profile</button>}<button className="danger-button" type="button" onClick={() => { if (window.confirm(`删除 ${camera.name}？`)) void deleteCamera(camera.id).then(reload); }}>删除</button></article>)}
+      {cameras.length === 0 ? <div className="registry-empty"><h3>尚未添加摄像机</h3><p>使用自动检测，或通过 ONVIF WS-Discovery 查找局域网设备。</p></div> : cameras.map((camera) => <article className="camera-card" key={camera.id}><div><span className="adapter-pill">{camera.adapter}</span><h3>{camera.name}</h3><p>{camera.address}</p></div><dl><div><dt>Profile</dt><dd>{camera.profiles.length}</dd></div><div><dt>硬解</dt><dd>{camera.hardwareDecode}</dd></div><div><dt>健康</dt><dd>{camera.health}</dd></div></dl><div className="profile-list">{camera.profiles.map((profile) => <span key={profile.id}>{profile.role} · {profile.videoCodec || 'unknown'} {profile.width ? `${profile.width}×${profile.height}` : ''}</span>)}</div><div className="camera-operations">{camera.adapter === 'onvif' && <><button className="ghost-button" disabled={busy} type="button" onClick={() => void syncOnvif(camera.id)}>同步 ONVIF Profile</button><DeviceControls camera={camera} busy={busy} fail={setError} /></>}<button className="danger-button" type="button" onClick={() => { if (window.confirm(`删除 ${camera.name}？`)) void deleteCamera(camera.id).then(reload); }}>删除</button></div></article>)}
     </section>
     <footer className="adapter-footer">支持：{(['onvif','rtsp','mjpeg','snapshot','hls','http-flv','whep','srt','rtp','v4l2'] as CameraAdapter[]).join(' · ')}</footer>
   </main>;

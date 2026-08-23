@@ -10,6 +10,7 @@ mediamtx_config="${WEBOBS_MEDIAMTX_CONFIG:-/opt/webobs/etc/mediamtx.yml}"
 tls_enabled="${WEBOBS_TLS_ENABLED:-false}"
 nvr_enabled="${WEBOBS_NVR_ENABLED:-false}"
 camera_registry_enabled="${WEBOBS_CAMERA_REGISTRY_ENABLED:-true}"
+events_enabled="${WEBOBS_EVENTS_ENABLED:-true}"
 caddy_config="${WEBOBS_CADDY_CONFIG:-/opt/webobs/etc/Caddyfile}"
 export WEBOBS_WEBRTC_ENABLED="$mediamtx_enabled"
 browser_cache="/config/obs/plugin_config/obs-browser"
@@ -82,6 +83,10 @@ esac
 case "$camera_registry_enabled" in
     true|false) ;;
     *) fail "WEBOBS_CAMERA_REGISTRY_ENABLED must be true or false" ;;
+esac
+case "$events_enabled" in
+    true|false) ;;
+    *) fail "WEBOBS_EVENTS_ENABLED must be true or false" ;;
 esac
 
 case "$renderer_requested" in
@@ -201,6 +206,9 @@ nvr_log_pipe=""
 camera_registry_pid=""
 camera_registry_filter_pid=""
 camera_registry_log_pipe=""
+events_pid=""
+events_filter_pid=""
+events_log_pipe=""
 webobsd_pid=""
 shutdown_requested=0
 
@@ -217,6 +225,7 @@ shutdown_children() {
     terminate_child "$mediamtx_pid"
     terminate_child "$nvr_pid"
     terminate_child "$camera_registry_pid"
+    terminate_child "$events_pid"
     terminate_child "$xvfb_pid"
     terminate_child "$weston_pid"
 }
@@ -380,6 +389,30 @@ if [ "$camera_registry_enabled" = "true" ]; then
     [ "$registry_ready" -eq 1 ] || fail "Timed out waiting for Camera Registry"
 fi
 
+if [ "$events_enabled" = "true" ]; then
+    events_log_pipe="/tmp/webobs-events-log.$$"
+    rm -f -- "$events_log_pipe"
+    mkfifo "$events_log_pipe"
+    /opt/obs/bin/webobs-log-filter < "$events_log_pipe" &
+    events_filter_pid=$!
+    /opt/webobs/bin/webobs-events > "$events_log_pipe" 2>&1 &
+    events_pid=$!
+    events_ready=0
+    events_attempt=0
+    while [ "$events_attempt" -lt 50 ]; do
+        if curl --fail --silent --show-error http://127.0.0.1:8093/health >/dev/null; then
+            events_ready=1
+            break
+        fi
+        if ! kill -0 "$events_pid" 2>/dev/null; then
+            fail "Event service exited before becoming ready"
+        fi
+        events_attempt=$((events_attempt + 1))
+        sleep 0.1
+    done
+    [ "$events_ready" -eq 1 ] || fail "Timed out waiting for Event service"
+fi
+
 /opt/obs/bin/webobsd "$@" &
 webobsd_pid=$!
 
@@ -433,6 +466,18 @@ while kill -0 "$webobsd_pid" 2>/dev/null; do
         terminate_child "$webobsd_pid"
         break
     fi
+    if [ "$shutdown_requested" -eq 0 ] && [ -n "$events_pid" ] && ! kill -0 "$events_pid" 2>/dev/null; then
+        echo "Event service exited while webobsd was running" >&2
+        exit_status=3
+        terminate_child "$webobsd_pid"
+        break
+    fi
+    if [ "$shutdown_requested" -eq 0 ] && [ -n "$events_filter_pid" ] && ! kill -0 "$events_filter_pid" 2>/dev/null; then
+        echo "Event service log filter exited while webobsd was running" >&2
+        exit_status=3
+        terminate_child "$webobsd_pid"
+        break
+    fi
     if [ "$shutdown_requested" -eq 0 ] && [ -n "$xvfb_pid" ] && ! kill -0 "$xvfb_pid" 2>/dev/null; then
         echo "software X display exited while webobsd was running" >&2
         exit_status=3
@@ -481,6 +526,12 @@ fi
 if [ -n "$camera_registry_filter_pid" ]; then
     wait "$camera_registry_filter_pid" 2>/dev/null || true
 fi
+if [ -n "$events_pid" ]; then
+    wait "$events_pid" 2>/dev/null || true
+fi
+if [ -n "$events_filter_pid" ]; then
+    wait "$events_filter_pid" 2>/dev/null || true
+fi
 if [ -n "$mediamtx_log_pipe" ]; then
     rm -f -- "$mediamtx_log_pipe"
 fi
@@ -492,6 +543,9 @@ if [ -n "$nvr_log_pipe" ]; then
 fi
 if [ -n "$camera_registry_log_pipe" ]; then
     rm -f -- "$camera_registry_log_pipe"
+fi
+if [ -n "$events_log_pipe" ]; then
+    rm -f -- "$events_log_pipe"
 fi
 if [ -n "$xvfb_pid" ]; then
     wait "$xvfb_pid" 2>/dev/null || true

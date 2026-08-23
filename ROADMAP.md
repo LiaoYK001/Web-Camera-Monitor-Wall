@@ -12,20 +12,20 @@ Canonical milestone names use `v<major>-M<number>`. Historical validation prose 
 
 ## Current position / 当前位置
 
-**🚧 v1.1 / v1-M10 — Device Operations 正在实施；Camera Registry 与 Source Adapter 基础已落地。**
+**🚧 v1.2 release qualification / 发布资格验证 — v1-M10 与 v1-M11 实现已落地，外部设备门禁待完成。**
 
-M0 and v1-M1 through v1-M9 are complete. v1-M10 now has a SQLite WAL Camera Registry, stable Camera/Profile references, secret-file credential indirection, bounded WS-Discovery, source-adapter contracts, empty first-run deployment, shared live/NVR identity, and authenticated Media2/Profile T media synchronization with Media/Profile S fallback. PTZ/presets/events, talk, and the full emulator/multi-vendor exit matrix remain open.
+The v1-M10 implementation now includes the Registry/Adapter foundation, authenticated Profile T/S media, PTZ, presets, snapshots, PullPoint events, guarded talk, bounded interface discovery and clock-skew correction. v1-M11 adds an isolated SQLite WAL event service, normalized native/software events, masks/zones, detector provider v1, NVR event windows, search/acknowledgement, rules and a bounded signed Webhook/MQTT outbox. Deterministic Digest/WS-Security/TLS and event fixtures pass; the privately recorded three-vendor and target notification delivery qualifications remain open, so v1.2 has not been released yet.
 
-M0 与 v1-M1 至 v1-M9 实现已全部完成。v1-M10 现已具备 SQLite WAL Camera Registry、稳定 Camera/Profile 引用、Secret 文件凭据间接引用、有界 WS-Discovery、来源 Adapter 契约、空配置首次部署、实时/NVR 共享设备身份，以及带认证的 Media2/Profile T 媒体同步和 Media/Profile S 回退。PTZ/预置位/事件、对讲及完整模拟器/多厂商退出矩阵仍未关闭。
+v1-M10 实现现已包含 Registry/Adapter 底座、带认证 Profile T/S 媒体、PTZ、预置位、快照、PullPoint 事件、受控对讲、指定接口发现及时钟偏移校正。v1-M11 增加隔离的 SQLite WAL 事件服务、统一原生/软件事件、遮罩/区域、Detector Provider v1、NVR 事件窗口、检索/确认、规则及有界签名 Webhook/MQTT 发件箱。Digest/WS-Security/TLS 与事件确定性夹具已通过；私下三厂商与目标通知交付资格仍待完成，因此 v1.2 尚未发布。
 
-The `v1.0` series contains v1-M1 through v1-M6. The `v1.1` series contains v1-M7 through v1-M11. `v2.0` starts at v2-M1 with a measurable True Direct contract: local clients receive camera media without Docker carrying the video data plane. The detailed boundaries and gates are defined in [docs/future-milestones.md](docs/future-milestones.md), [docs/true-direct-v2.md](docs/true-direct-v2.md), and [docs/versioning-and-branches.md](docs/versioning-and-branches.md).
+The `v1.0` series contains v1-M1 through v1-M6. The `v1.1` milestone family contains v1-M7 through v1-M11; `v1.2` is the final v1 closure release and introduces no v1-M12. `v2.0` starts at v2-M1 with a measurable True Direct contract.
 
-`v1.0` 系列包含 v1-M1 至 v1-M6，`v1.1` 系列包含 v1-M7 至 v1-M11。`v2.0` 从 v2-M1 开始，以可测量的真直连契约为核心：本地客户端接收摄像机媒体，Docker 不承载视频数据面。详细边界与门禁见 [docs/future-milestones.md](docs/future-milestones.md)、[docs/true-direct-v2.md](docs/true-direct-v2.md) 与 [docs/versioning-and-branches.md](docs/versioning-and-branches.md)。
+`v1.0` 系列包含 v1-M1 至 v1-M6，`v1.1` 里程碑族包含 v1-M7 至 v1-M11；`v1.2` 是 v1 的最终收口版本，不新增 v1-M12。`v2.0` 从 v2-M1 开始，以可测量的真直连契约为核心。
 
 ```text
-M0 + v1-M1…v1-M9 complete -> v1-M10 in progress -> v1-M11 planned -> v2-M1 True Direct planned
-M0 + v1-M1…v1-M9 已完成    -> v1-M10 实施中    -> v1-M11 已规划 -> v2-M1 真直连已规划
-✅                              🚧                    🧭                  🧭
+M0 + v1-M1…v1-M9 complete -> v1-M10/M11 implemented -> v1.2 qualification -> v2-M1 True Direct
+M0 + v1-M1…v1-M9 已完成    -> v1-M10/M11 已实现      -> v1.2 资格验证      -> v2-M1 真直连
+✅                              ✅                         🚧                   🧭
 ```
 
 ### M0 acceptance / M0 验收
@@ -45,6 +45,8 @@ M0 已于 2026-08-11 在真实摄像头门禁通过后完成。后续修改采�
 
 ### Latest validation evidence / 最新验收证据
 
+- v1-M10 deterministic device operations / v1-M10 确定性设备运维：the final linux/amd64 image passed nine Camera Registry/ONVIF tests covering Profile T/S, HTTP Digest, WS-Security with 120-second clock skew, generated TLS trust/rejection, private profile tokens, PTZ bounds/rate behavior, presets, snapshots, PullPoint normalization, guarded talk and credential-free audit / 最终 linux/amd64 镜像通过 9 个 Camera Registry/ONVIF 测试，覆盖 Profile T/S、HTTP Digest、带 120 秒时钟偏移的 WS-Security、生成式 TLS 信任/拒绝、私有 Profile token、PTZ 边界/限速、预置位、快照、PullPoint 归一化、受控对讲及无凭据审计。
+- v1-M11 deterministic events / v1-M11 确定性事件：five tests passed normalized event deduplication, acknowledgement audit, immutable segment linkage, include/exclude/privacy motion ground truth, debounce/cooldown, detector schema v1, rule/outbox ceiling, sub-50 ms reference p95 indexing and DNS-rebinding-resistant SSRF rejection. The rebuilt image then passed M8 and M9 regressions; the latest M9 run measured 21.7 ms p95 / 5 个测试通过统一事件去重、确认审计、不可变分段关联、包含/排除/隐私移动真值、去抖/冷却、Detector schema v1、规则/发件箱上限、参考环境低于 50 ms 的 p95 入库及抗 DNS 重绑定 SSRF 拒绝；重建镜像随后通过 M8/M9 回归，最新 M9 p95 为 21.7 ms。
 - Environment / 环境：Docker Desktop 4.86.0、Engine 29.7.2、Compose 5.3.1、BuildKit 0.32.2，WSL2 Linux/amd64。
 - Build / 构建：multi-stage product image and pinned test fixtures built successfully; container CTest reports 100% pass and runtime `ldd` finds no missing library / 产品镜像和固定版本测试夹具构建成功；容器内 CTest 100% 通过，运行时动态库无缺失。
 - Synthetic recording / 合成录制：a 640×480 source is proportionally centered in a 640×360 canvas with symmetric black bars; H.264, 10 FPS, video-only, fully decodable, and non-black center / 640×480 来源等比居中适配 640×360 画布且左右黑边对称；H.264、10 FPS、仅视频轨、可完整解码且中心非黑。
@@ -91,8 +93,8 @@ M0 已于 2026-08-11 在真实摄像头门禁通过后完成。后续修改采�
 | v1-M7 — Canvas Studio | ✅ Complete / 已完成 | Scene collections, nested scenes/groups, filters, Preview/Program and transitions / 场景集合、嵌套场景/组、滤镜、预览/节目与转场 | Persistent multi-scene Studio workflow and Gateway Direct/Composite capability contract pass / 持久化多场景工作流与网关直通/合成能力契约通过 |
 | v1-M8 — NVR Core | ✅ Implementation complete / 实现完成 | Independent per-camera segmented recording, catalog, retention and crash recovery / 独立逐路分段录像、目录、保留与崩溃恢复 | Deterministic recovery/retention gate passes; six-hour and private burn-ins remain release qualification / 确定性恢复/保留门禁通过；六小时及私有耐久属于发布资格验证 |
 | v1-M9 — Timeline | ✅ Implementation complete / 实现完成 | Archive search, synchronized playback, clip export and evidence integrity / 归档检索、同步回放、片段导出与证据完整性 | UTC/gap, p95, Range, derived media, export/hash, lock/delete and audit gates pass / UTC/断档、p95、Range、派生媒体、导出/哈希、锁定/删除及审计门禁通过 |
-| v1-M10 — Device Operations | 🚧 In progress / 实施中 | Registry, adapters, discovery and authenticated Profile T/S media synchronization are implemented; PTZ, events and talk remain / Registry、Adapter、发现及带认证的 Profile T/S 媒体同步已实现；PTZ、事件和对讲仍待完成 | Emulator plus multi-vendor capability, safety and redaction matrix passes / 模拟器加多厂商能力、安全与脱敏矩阵通过 |
-| v1-M11 — Events & Detection | 🧭 Planned / 已规划 | Native/software events, motion zones, detector providers, rules and notifications / 原生/软件事件、移动区域、检测提供器、规则与通知 | Analytics failure cannot block recording; event accuracy, queue and security gates pass / 分析失败不阻塞录像，事件准确性、队列与安全门禁通过 |
+| v1-M10 — Device Operations | ✅ Implementation complete / 实现完成 | Capability-driven Profile T/S media, PTZ, presets, events, snapshots and guarded talk / 能力驱动的 Profile T/S 媒体、PTZ、预置位、事件、快照与受控对讲 | Digest/WS-Security/TLS emulator passes; private multi-vendor qualification remains / Digest/WS-Security/TLS 模拟器通过；私下多厂商资格验证待完成 |
+| v1-M11 — Events & Detection | ✅ Implementation complete / 实现完成 | Native/software events, motion zones/masks, detector providers, rules and bounded notifications / 原生/软件事件、移动区域/遮罩、检测提供器、规则与有界通知 | Deterministic accuracy, isolation, queue and SSRF gates pass; deployment delivery qualification remains / 确定性准确度、隔离、队列与 SSRF 门禁通过；部署交付资格待验 |
 | v2-M1 — True Direct Foundation | 🧭 Planned / 已规划 | Client-to-camera media with Docker outside the video data plane / 客户端到摄像机传输，Docker 退出视频数据面 | Zero server video payload plus explicit topology/fallback and credential gates pass / 服务端视频负载为零，并通过拓扑、回退与凭据门禁 |
 | v2-M2…v2-M6 — Local Clients to Scale | 🧭 Planned / 已规划 | Desktop/Android local runtimes, offline sync, operator UX and scale/resilience / 桌面与 Android 本地运行端、离线同步、值守体验及规模与韧性 | Each published v2 gate passes without weakening v1 recording or security guarantees / 各 v2 门禁通过且不削弱 v1 录像与安全保证 |
 
@@ -288,12 +290,22 @@ v1-M10 开始阶段于 2026-08-23 使用当前工作树最终镜像完整重跑 
 - [x] Support an empty first-run Scene/Registry without an RTSP bootstrap secret / 支持无需 RTSP bootstrap secret 的空 Scene/Registry 首次启动
 - [x] Reject embedded credentials and token-like URL query values at the Registry boundary / 在 Registry 边界拒绝内嵌凭据和类似 token 的 URL 查询值
 - [x] Implement authenticated Profile T media profiles and Profile S compatibility fallback / 实现带认证的 Profile T 媒体 Profile 与 Profile S 兼容回退
-- [ ] Implement capability-driven PTZ, presets, events, snapshots and guarded two-way talk / 实现能力驱动的 PTZ、预置位、事件、快照及受控双向对讲
+- [x] Implement capability-driven PTZ, presets, events, snapshots and guarded two-way talk / 实现能力驱动的 PTZ、预置位、事件、快照及受控双向对讲
 - [ ] Pass emulator plus multiple real-vendor capability, timeout, redaction and safety matrices / 通过模拟器及多个真实厂商的能力、超时、脱敏与安全矩阵
 
-The checked items establish storage, identity and protocol boundaries. The Profile T/S media client has deterministic HTTP Digest plus WS-Security tests, but this does not claim ONVIF product conformance or real-device acceptance. v1-M10 closes only after the remaining items and published exit gate pass. See [docs/onvif-media.md](docs/onvif-media.md).
+The implementation items establish storage, identity, protocol and guarded-control boundaries. The deterministic emulator covers Digest, WS-Security, clock skew, Profile T/S and device operations, but does not claim ONVIF conformance or real-device acceptance. The release qualification item remains deliberately unchecked.
 
-已勾选项目建立了存储、身份和协议边界。Profile T/S 媒体客户端已通过 HTTP Digest + WS-Security 确定性测试，但这不代表 ONVIF 产品合规或真实设备验收。只有剩余项目与公开退出门禁全部通过后，v1-M10 才会关闭。详见 [docs/onvif-media.md](docs/onvif-media.md)。
+实现项建立了存储、身份、协议及受控操作边界；确定性模拟器覆盖 Digest、WS-Security、时钟偏移、Profile T/S 与设备操作，但不代表 ONVIF 合规或真实设备验收。发布资格项有意保持未勾选。
+
+#### v1-M11 progress / v1-M11 进度
+
+- [x] Normalize native/software events and immutable NVR segment references / 统一原生/软件事件与不可变 NVR 分段引用
+- [x] Add include zones, exclude/privacy masks, sensitivity, debounce and cooldown / 增加包含区、排除/隐私遮罩、灵敏度、去抖与冷却
+- [x] Add detector-provider schema v1 with bounded batches and failure isolation / 增加带有界批量和故障隔离的 Detector Provider schema v1
+- [x] Add event search, acknowledgement notes and audit / 增加事件检索、确认备注与审计
+- [x] Add rule predicates and a bounded deduplicated Webhook/MQTT outbox / 增加规则条件及有界去重 Webhook/MQTT 发件箱
+- [x] Pass deterministic motion, deduplication, linkage, provider and SSRF fixtures / 通过移动、去重、关联、Provider 与 SSRF 确定性夹具
+- [ ] Repeat external Webhook/MQTT delivery and real-camera event accuracy qualification on the target deployment / 在目标部署重跑外部 Webhook/MQTT 交付与真实摄像机事件准确度资格验证
 
 ## Cross-cutting rules / 贯穿规则
 

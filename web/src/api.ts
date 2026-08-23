@@ -1,4 +1,4 @@
-import type { ApiErrorEnvelope, CameraDetection, CameraRecord, NvrExport, NvrStatus, NvrTimeline, PlaybackCapabilities, ProcessDiagnostics, SceneDocument, SceneEvent, StudioCapabilities, StudioDocument, SystemCapabilities } from './types';
+import type { ApiErrorEnvelope, CameraDetection, CameraRecord, DeviceOperation, EventRule, MonitorEvent, MotionZone, NvrExport, NvrStatus, NvrTimeline, OnvifEvent, OnvifPreset, PlaybackCapabilities, ProcessDiagnostics, SceneDocument, SceneEvent, StudioCapabilities, StudioDocument, SystemCapabilities } from './types';
 
 export class ControlApiError extends Error {
   readonly status: number;
@@ -247,3 +247,21 @@ export const syncOnvifCamera = (cameraId: string) => cameraRequest<CameraRecord>
   method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}',
 });
 export const deleteCamera = (cameraId: string) => cameraRequest<{ id: string; deleted: boolean }>(`/cameras/${encodeURIComponent(cameraId)}`, { method: 'DELETE' });
+const onvifOperation = <T>(cameraId: string, operation: string, body: Record<string, unknown>) =>
+  cameraRequest<T>(`/cameras/${encodeURIComponent(cameraId)}/onvif/${operation}`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
+  });
+export const fetchOnvifPresets = (cameraId: string) => cameraRequest<{ presets: OnvifPreset[] }>(`/cameras/${encodeURIComponent(cameraId)}/onvif/presets`);
+export const sendOnvifPtz = (cameraId: string, body: Record<string, unknown>) => onvifOperation<{ state: string }>(cameraId, 'ptz', body);
+export const mutateOnvifPreset = (cameraId: string, body: Record<string, unknown>) => onvifOperation<{ presetToken: string }>(cameraId, 'presets', body);
+export const fetchOnvifSnapshot = (cameraId: string) => onvifOperation<{ contentType: string; data: string; sha256: string }>(cameraId, 'snapshot', {});
+export const pullOnvifEvents = (cameraId: string) => onvifOperation<{ events: OnvifEvent[] }>(cameraId, 'events/pull', {});
+export const sendOnvifTalk = (cameraId: string, body: Record<string, unknown>) => onvifOperation<{ state: string }>(cameraId, 'talk', body);
+export const fetchDeviceOperations = (cameraId: string) => cameraRequest<{ operations: DeviceOperation[] }>(`/cameras/${encodeURIComponent(cameraId)}/operations`);
+export const fetchEvents = (query = '') => cameraRequest<{ events: MonitorEvent[] }>(`/events${query ? `?${query}` : ''}`);
+export const createEvent = (event: Record<string, unknown>) => cameraRequest<MonitorEvent>('/events', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(event) });
+export const acknowledgeEvent = (eventId: string, acknowledged: boolean, note: string) => cameraRequest<{ id: string; acknowledged: boolean }>(`/events/${encodeURIComponent(eventId)}/acknowledgement`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ acknowledged, note }) });
+export const fetchMotionZones = () => cameraRequest<{ zones: MotionZone[] }>('/motion-zones');
+export const createMotionZone = (zone: Record<string, unknown>) => cameraRequest<MotionZone>('/motion-zones', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(zone) });
+export const fetchEventRules = () => cameraRequest<{ rules: EventRule[] }>('/event-rules');
+export const createEventRule = (rule: Record<string, unknown>) => cameraRequest<{ id: string }>('/event-rules', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(rule) });

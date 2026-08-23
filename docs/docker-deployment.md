@@ -2,11 +2,11 @@
 
 本文面向从 Git 仓库克隆代码、在部署主机自行构建产品镜像的操作者。命令均在仓库根目录执行。
 
-> 当前项目已完成 M0 与 v1-M1 至 v1-M9，处于 v1.1 / v1-M10 Device Operations 实施阶段。空配置可直接启动，摄像机由 WebUI/Camera Registry 管理；基础 HTTP 模式只能用于主机回环，远程部署必须使用 production HTTPS 覆盖。
+> 当前工作树已实现 v1-M1 至 v1-M11，处于 v1.2 发布资格验证阶段。空配置可直接启动，摄像机与事件由 WebUI 管理；基础 HTTP 模式只能用于主机回环，远程部署必须使用 production HTTPS 覆盖。
 
 ## 1. 部署组成与数据边界
 
-产品部署只有一个 `webobs` 容器。容器内包含 `webobsd`、libobs、MediaMTX、Camera Registry、NVR、固定版本 Caddy、Web 编辑器、Weston/Xwayland、Xvfb 和 Mesa。Gateway Direct-only 时不启动 libobs 视频线程，但媒体包仍经过 MediaMTX；Composite/录制才选择硬件或软件 renderer。
+产品部署只有一个 `webobs` 容器。容器内包含 `webobsd`、libobs、MediaMTX、Camera Registry、独立事件服务、NVR、固定版本 Caddy、Web 编辑器、Weston/Xwayland、Xvfb 和 Mesa。Gateway Direct-only 时不启动 libobs 视频线程，但媒体包仍经过 MediaMTX；Composite/录制才选择硬件或软件 renderer。
 
 | 内容 | 默认位置 | 持久性 |
 | --- | --- | --- |

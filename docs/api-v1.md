@@ -1,8 +1,8 @@
 # Control API v1 / 控制接口 v1
 
-v1-M1 through v1-M9 provide the control, Studio, WebRTC, NVR and evidence plane. v1-M10 now adds Camera Registry, source adapters, session login, execution-chain diagnostics, detailed hardware probes, and authenticated ONVIF media synchronization. The current composition contract is [scene-schema-v5.md](scene-schema-v5.md).
+v1-M1 through v1-M11 provide the control, Studio, WebRTC, NVR, evidence, device-operation and event planes. v1-M10 adds Camera Registry and guarded ONVIF operations; v1-M11 adds normalized events, motion zones, detector providers, rules and a bounded notification outbox. The current composition contract is [scene-schema-v5.md](scene-schema-v5.md).
 
-v1-M1 至 v1-M9 提供控制、Studio、WebRTC、NVR 与证据平面；v1-M10 现已新增 Camera Registry、来源 Adapter、Session 登录、执行链诊断、细粒度硬件探测及带认证的 ONVIF 媒体同步。当前合成契约见 [scene-schema-v5.md](scene-schema-v5.md)。
+v1-M1 至 v1-M11 提供控制、Studio、WebRTC、NVR、证据、设备运维与事件平面；v1-M10 增加 Camera Registry 和受控 ONVIF 操作，v1-M11 增加统一事件、移动区域、检测提供器、规则与有界通知发件箱。当前合成契约见 [scene-schema-v5.md](scene-schema-v5.md)。
 
 ## Security boundary / 安全边界
 
@@ -74,7 +74,7 @@ SQLite stores only SHA-256 token hashes plus user, creation/last-seen/expiry tim
 Returns `200` while the control thread is serving:
 
 ```json
-{"status":"ok","milestone":"v1-M10"}
+{"status":"ok","milestone":"v1-M11"}
 ```
 
 This route is intentionally unauthenticated and contains no configuration details.
@@ -286,6 +286,24 @@ All error bodies use a stable envelope and include the current revision without 
 `GET /api/v1/studio/capabilities` returns each scene's requested Direct/Hybrid result, exactness, selected fallback, and human-readable reasons. It never returns source URLs, credentials, internal routes, or file contents.
 
 `GET /api/v1/studio/capabilities` 返回每个场景的 Direct/Hybrid 精确性、实际选择及降级原因，绝不返回来源 URL、凭据、内部路由或文件内容。
+
+## Device operations / 设备操作
+
+Authenticated same-origin clients may use `GET /api/v1/cameras/{id}/onvif/presets`, `POST .../ptz`, `.../presets`, `.../snapshot`, `.../events/pull`, `.../talk`, and `GET /api/v1/cameras/{id}/operations`. PTZ continuous moves have a server-enforced 100–2000 ms auto-stop and per-camera rate limit. Snapshot and talk payloads are bounded; device tokens and credentials are private implementation state.
+
+认证且同源的客户端可使用上述预置位、PTZ、快照、事件、对讲与操作审计接口。连续 PTZ 由服务端强制在 100–2000 ms 自动停止并逐摄像机限速；快照与对讲负载有固定上限，设备 token 与凭据始终属于私有实现状态。
+
+## Events and automation / 事件与自动化
+
+- `GET|POST /api/v1/events` searches or creates normalized events; search accepts `cameraId`, `type`, `zoneId`, `label`, `acknowledged`, `from`, and `to`.
+- `PUT /api/v1/events/{id}/acknowledgement` changes acknowledgement and a bounded operator note with audit.
+- `GET|POST /api/v1/motion-zones` manages normalized include/exclude/privacy polygons.
+- `POST /api/v1/motion/evaluate` evaluates a bounded grayscale fixture/frame contract.
+- `GET|POST /api/v1/detector-providers` and `POST /api/v1/detector-providers/{id}/events` expose provider schema v1.
+- `GET|POST /api/v1/event-rules` manages bounded predicates/actions.
+- `GET /api/v1/notification-outbox` exposes delivery state without secrets; `POST .../process` is an authenticated diagnostic retry request.
+
+All mutations require JSON and pass the same authentication and Origin checks as Camera Registry operations. Notification endpoints are mounted Secret references; URLs and credentials are never accepted in an event or rule action. See [events-and-automation.md](events-and-automation.md).
 
 ## WebSocket / WebSocket 事件
 

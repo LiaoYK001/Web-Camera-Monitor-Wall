@@ -226,6 +226,12 @@ export interface CameraDetection {
   capabilities?: Record<string, unknown>;
   profiles: CameraProfile[];
 }
+export interface OnvifPreset { token: string; name: string; }
+export interface OnvifEvent { topic: string; properties: Record<string, string>; }
+export interface DeviceOperation { id: number; operation: string; result: string; createdAt: number; }
+export interface MonitorEvent { id: string; cameraId: string; type: string; source: string; topic: string; occurredAt: number; severity: string; confidence: number | null; zoneId: string; label: string; acknowledged: boolean; note: string; properties: Record<string, unknown>; segmentIds: string[]; }
+export interface MotionZone { id: string; cameraId: string; name: string; mode: 'include' | 'exclude' | 'privacy'; polygon: number[][]; sensitivity: number; debounceMs: number; cooldownMs: number; enabled: boolean; }
+export interface EventRule { id: string; name: string; enabled: number; conditions: Record<string, unknown>; actions: Array<Record<string, unknown>>; cooldown_ms: number; }
 
 export interface VideoBackendCapability {
   devicePresent: boolean; vaDriverLoaded: boolean; encoderAvailable: boolean;

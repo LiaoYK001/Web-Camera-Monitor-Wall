@@ -4,7 +4,7 @@
 >
 > Last updated / 最后更新：2026-08-24
 >
-> Current position / 当前位置：`v1-M9` is complete. `v1-M10` is in progress: Camera Registry, stable Camera/Profile references, adapter contracts, bounded WS-Discovery, and authenticated Profile T/S media synchronization are implemented; PTZ/events/talk and vendor exit-gate coverage remain / `v1-M9` 已完成；`v1-M10` 实施中：Camera Registry、稳定 Camera/Profile 引用、Adapter 契约、有界 WS-Discovery及带认证的 Profile T/S 媒体同步已落地，PTZ/事件/对讲及厂商门禁仍待完成
+> Current position / 当前位置：`v1-M10` and `v1-M11` are implementation-complete. `v1.2` is the final v1 closure release and remains qualification-blocked by the private three-vendor device matrix and target notification delivery evidence / `v1-M10` 与 `v1-M11` 已实现；`v1.2` 是 v1 最终收口版本，仍受私下三厂商设备矩阵及目标通知交付证据门禁约束
 
 This document expands the project from a web camera compositor into a self-hosted and local-first monitoring workspace with three first-class capabilities: an OBS-inspired customizable canvas, an NVR workflow inspired by mainstream monitoring applications such as tinyCam Monitor, and v2 True Direct local clients that keep Docker outside the media data plane. It is a capability plan, not a compatibility or UI-cloning claim, and it does not promise release dates.
 
@@ -80,17 +80,19 @@ SQLite in WAL mode plus local volumes is the initial single-node metadata baseli
 
 ## 4. Milestone sequence / 里程碑顺序
 
-`v1.0` contains `v1-M1` through `v1-M6`. `v1.1` contains `v1-M7` through `v1-M11`: Canvas Studio, NVR Core and Timeline are complete, while `v1-M10` Device Operations is current. `v2.0` starts at `v2-M1` and introduces True Direct as a separately measured topology, not a rename of the current MediaMTX relay.
+`v1.0` contains `v1-M1` through `v1-M6`. The `v1.1` milestone family contains `v1-M7` through `v1-M11`; `v1.2` is their final stabilization and qualification release, with no `v1-M12`. `v2.0` starts at `v2-M1` and introduces True Direct as a separately measured topology.
 
-`v1.0` 包含 `v1-M1` 至 `v1-M6`。`v1.1` 包含 `v1-M7` 至 `v1-M11`：画布工作台、NVR Core 与时间线已完成，当前位于 `v1-M10` 设备运维。`v2.0` 从 `v2-M1` 开始，把真直连作为单独测量的拓扑，而不是给当前 MediaMTX 转发链改名。
+`v1.0` 包含 `v1-M1` 至 `v1-M6`；`v1.1` 里程碑族包含 `v1-M7` 至 `v1-M11`，`v1.2` 是其最终稳定与资格发布版本，不存在 `v1-M12`。`v2.0` 从 `v2-M1` 开始，把真直连作为单独测量的拓扑。
 
 ```text
 v1.0: v1-M1 … v1-M6 (complete)
-v1.1: v1-M7 Canvas -> v1-M8 NVR -> v1-M9 Timeline -> v1-M10 Device Ops (current) -> v1-M11 Events
+v1.1 family: v1-M7 Canvas -> v1-M8 NVR -> v1-M9 Timeline -> v1-M10 Device Ops -> v1-M11 Events
+v1.2 final closure: qualification only, no v1-M12
 v2.0: v2-M1 True Direct -> v2-M2 Desktop -> v2-M3 Android -> v2-M4 Offline Sync -> v2-M5 Operator UX -> v2-M6 Scale
 
 v1.0：v1-M1 … v1-M6（完成）
-v1.1：v1-M7 画布 -> v1-M8 NVR -> v1-M9 时间线 -> v1-M10 设备运维（当前）-> v1-M11 事件
+v1.1 里程碑族：v1-M7 画布 -> v1-M8 NVR -> v1-M9 时间线 -> v1-M10 设备运维 -> v1-M11 事件
+v1.2 最终收口：只做资格验证，不新增 v1-M12
 v2.0：v2-M1 真直连 -> v2-M2 桌面端 -> v2-M3 Android -> v2-M4 离线同步 -> v2-M5 值守体验 -> v2-M6 扩展
 ```
 

@@ -58,8 +58,8 @@ Both operations require the normal authenticated, same-origin mutation boundary.
 python3 tests/test_camera_registry.py
 ```
 
-v1-M10 remains open. PTZ/presets, event subscriptions, guarded talk, bounded interface selection, clock-skew behavior, TLS device fixtures, and the private three-vendor matrix still require implementation and evidence. No real address, credential, serial number, or recording belongs in public test reports.
+The v1-M10 implementation now includes PTZ/presets, ephemeral PullPoint events, snapshots, guarded talk, bounded interface selection and clock-skew correction. A generated TLS fixture proves that an untrusted device certificate is rejected and a specifically trusted certificate succeeds; verification is never disabled. Release qualification remains open until the private three-vendor matrix is recorded. No real address, credential, serial number or recording belongs in public reports.
 
-v1-M10 仍未完成。PTZ/预置位、事件订阅、受控对讲、指定接口发现、时钟偏移处理、TLS 设备夹具及私下三厂商矩阵仍需实现和留证；公开测试报告不得包含真实地址、凭据、序列号或录像。
+v1-M10 实现现已包含 PTZ/预置位、临时 PullPoint 事件、快照、受控对讲、指定接口发现与时钟偏移校正；生成式 TLS 夹具证明不受信设备证书会被拒绝、显式信任后才成功，且从不关闭验证。私下三厂商矩阵完成留证前，发布资格仍保持未通过。公开报告不得包含真实地址、凭据、序列号或录像。
 
 The design follows the official [ONVIF Profile T](https://www.onvif.org/profiles/profile-t/) target and retains [Profile S](https://www.onvif.org/profiles/profile-s/) only as a compatibility path.

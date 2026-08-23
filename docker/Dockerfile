@@ -341,10 +341,12 @@ COPY docker/entrypoint.sh /opt/webobs/entrypoint.sh
 COPY docker/backup.sh /opt/webobs/bin/webobs-backup
 COPY nvr/nvr_service.py /opt/webobs/bin/webobs-nvrd
 COPY camera/camera_registry.py /opt/webobs/bin/webobs-camera-registry
+COPY events/event_service.py /opt/webobs/bin/webobs-events
 COPY docker/Caddyfile /opt/webobs/etc/Caddyfile
 COPY gateway/mediamtx.yml /opt/webobs/etc/mediamtx.yml
 COPY gateway/transcode-on-demand.sh /opt/webobs/bin/transcode-on-demand
 COPY tests/test_camera_registry.py /tmp/test_camera_registry.py
+COPY tests/test_event_service.py /tmp/test_event_service.py
 COPY LICENSE /usr/share/licenses/webobs/LICENSE
 COPY obs/obs-studio/COPYING /usr/share/licenses/webobs/OBS-COPYING
 
@@ -355,13 +357,16 @@ ENV LD_LIBRARY_PATH=/opt/obs/lib \
 RUN mkdir -p /assets /config/obs /config/webobs /recordings /usr/share/licenses/caddy \
     && cp /usr/share/common-licenses/Apache-2.0 /usr/share/licenses/caddy/LICENSE \
     && chmod 0700 /config/obs /config/webobs \
-    && chmod 0755 /opt/webobs/entrypoint.sh /opt/webobs/bin/caddy /opt/webobs/bin/mediamtx /opt/webobs/bin/transcode-on-demand /opt/webobs/bin/webobs-backup /opt/webobs/bin/webobs-nvrd /opt/webobs/bin/webobs-camera-registry \
+    && chmod 0755 /opt/webobs/entrypoint.sh /opt/webobs/bin/caddy /opt/webobs/bin/mediamtx /opt/webobs/bin/transcode-on-demand /opt/webobs/bin/webobs-backup /opt/webobs/bin/webobs-nvrd /opt/webobs/bin/webobs-camera-registry /opt/webobs/bin/webobs-events \
     && python3 -m py_compile /opt/webobs/bin/webobs-nvrd \
     && python3 -m py_compile /opt/webobs/bin/webobs-camera-registry \
+    && python3 -m py_compile /opt/webobs/bin/webobs-events \
     && WEBOBS_TEST_CAMERA_REGISTRY=/opt/webobs/bin/webobs-camera-registry \
        WEBOBS_TEST_NVR_SERVICE=/opt/webobs/bin/webobs-nvrd \
        PYTHONDONTWRITEBYTECODE=1 python3 /tmp/test_camera_registry.py \
-    && rm -f /tmp/test_camera_registry.py \
+    && WEBOBS_TEST_EVENT_SERVICE=/opt/webobs/bin/webobs-events \
+       PYTHONDONTWRITEBYTECODE=1 python3 /tmp/test_event_service.py \
+    && rm -f /tmp/test_camera_registry.py /tmp/test_event_service.py \
     && /opt/webobs/bin/caddy version \
     && /opt/webobs/bin/caddy adapt --config /opt/webobs/etc/Caddyfile --adapter caddyfile >/dev/null \
     && /opt/webobs/bin/mediamtx --version \
@@ -399,6 +404,6 @@ LABEL org.opencontainers.image.title="Web Camera Monitor Wall" \
       org.opencontainers.image.description="Headless libobs multi-source monitor wall and local control plane" \
       org.opencontainers.image.licenses="GPL-2.0-or-later" \
       org.opencontainers.image.source="https://github.com/LiaoYK001/Web-Camera-Monitor-Wall" \
-      org.opencontainers.image.version="0.1.0"
+      org.opencontainers.image.version="1.2.0"
 
 ENTRYPOINT ["/usr/bin/tini", "--", "/opt/webobs/entrypoint.sh"]
