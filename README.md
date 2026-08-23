@@ -9,7 +9,7 @@ RTSP camera -> libobs ffmpeg_source -> OBS scene -> H.264/AAC MP4
 
 当前版本新增 SQLite WAL Camera Registry、受控 ONVIF PTZ/预置位/快照/事件/对讲，以及隔离的事件、移动检测区/隐私遮罩、Detector Provider、规则和有界通知发件箱。默认 Gateway Direct-only 运行完全不初始化 OBS 解码、合成或编码；只有录制或启用 Composite 才启动 libobs。VA-API 会分别报告设备、驱动、编解码能力和真实运行探测，失败时明确回退；Hybrid 只转码不兼容轨道。
 
-开发路线、门禁和当前阻塞见 [ROADMAP.md](ROADMAP.md)。v1-M10/M11 的确定性 Digest/WS-Security/TLS 与事件实现已通过测试，但 v1.2 Tag/`latest` 仍要求私下三厂商矩阵及目标部署通知交付证据。当前 `direct` 是媒体仍经过 Docker/MediaMTX 的“网关直通”，v2.0 才以 Docker 默认退出媒体数据面为核心目标。事件安全边界见 [事件、检测与自动化](docs/events-and-automation.md)，版本与分支规则见 [版本策略](docs/versioning-and-branches.md)。
+开发路线、门禁和当前阻塞见 [ROADMAP.md](ROADMAP.md)。v1-M10/M11 的确定性 Digest/WS-Security/TLS、事件及 Webhook/MQTT 交付契约已通过测试，但 v1.2 Tag/`latest` 仍要求私下三厂商真实设备矩阵。当前 `direct` 是媒体仍经过 Docker/MediaMTX 的“网关直通”，v2.0 才以 Docker 默认退出媒体数据面为核心目标。事件安全边界见 [事件、检测与自动化](docs/events-and-automation.md)，版本与分支规则见 [版本策略](docs/versioning-and-branches.md)。
 
 `WEBOBS_SCENE_FILE` 默认指向 `/config/webobs/scene.json`。空配置首次启动会创建空 Scene/Camera Registry，直接在 WebUI 的“设备管理”中添加设备；`WEBOBS_RTSP_URL` 只保留为一次性兼容 bootstrap，不再是部署必填项。Scene v5 只保存 Camera/Profile ID，凭据通过未提交 Git 的 Secret 引用解析。
 

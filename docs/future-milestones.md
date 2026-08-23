@@ -4,7 +4,7 @@
 >
 > Last updated / 最后更新：2026-08-24
 >
-> Current position / 当前位置：`v1-M10` and `v1-M11` are implementation-complete. `v1.2` is the final v1 closure release and remains qualification-blocked by the private three-vendor device matrix and target notification delivery evidence / `v1-M10` 与 `v1-M11` 已实现；`v1.2` 是 v1 最终收口版本，仍受私下三厂商设备矩阵及目标通知交付证据门禁约束
+> Current position / 当前位置：`v1-M10` and `v1-M11` are implementation-complete. `v1.2` is the final v1 closure release and remains qualification-blocked only by the private three-vendor real-device matrix / `v1-M10` 与 `v1-M11` 已实现；`v1.2` 是 v1 最终收口版本，目前只受私下三厂商真实设备矩阵门禁约束
 
 This document expands the project from a web camera compositor into a self-hosted and local-first monitoring workspace with three first-class capabilities: an OBS-inspired customizable canvas, an NVR workflow inspired by mainstream monitoring applications such as tinyCam Monitor, and v2 True Direct local clients that keep Docker outside the media data plane. It is a capability plan, not a compatibility or UI-cloning claim, and it does not promise release dates.
 

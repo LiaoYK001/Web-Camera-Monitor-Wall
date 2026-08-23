@@ -32,6 +32,6 @@ Webhook 与 MQTT 目标通过 `/run/secrets/webobs-notifications/<引用>.json` 
 
 ## Verification boundary / 验证边界
 
-`tests/test_event_service.py` deterministically covers normalization, deduplication, acknowledgement audit, segment linkage, motion ground truth, masks, debounce/cooldown, rule/outbox creation, detector validation and SSRF rejection. These fixtures prove the implementation contract, not real-camera accuracy or delivery through a user's external webhook/MQTT infrastructure.
+`tests/test_event_service.py` deterministically covers normalization, deduplication, acknowledgement audit, segment linkage, motion ground truth, masks, debounce/cooldown, rule/outbox creation, detector validation, SSRF rejection, signed Webhook requests and authenticated MQTT frames. Secret values are fixtures and are not written to logs or responses. These tests prove the transport contract without requiring a public endpoint; real-camera accuracy remains part of the private three-vendor qualification.
 
-`tests/test_event_service.py` 确定性覆盖归一化、去重、确认审计、分段关联、移动真值、遮罩、去抖/冷却、规则/发件箱创建、检测提供器校验与 SSRF 拒绝。夹具证明实现契约，不代表真实摄像机准确率或用户外部 Webhook/MQTT 基础设施的交付结果。
+`tests/test_event_service.py` 确定性覆盖归一化、去重、确认审计、分段关联、移动真值、遮罩、去抖/冷却、规则/发件箱创建、检测提供器校验、SSRF 拒绝、签名 Webhook 请求及认证 MQTT 帧。Secret 值仅为夹具，且不会写入日志或响应；这些测试无需公开端点即可证明传输契约，真实摄像机准确度仍纳入私下三厂商资格验证。

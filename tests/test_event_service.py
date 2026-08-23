@@ -102,5 +102,31 @@ class EventServiceTests(unittest.TestCase):
             with events.connect() as database: self.assertLessEqual(database.execute("SELECT COUNT(*) FROM notification_outbox").fetchone()[0], 3)
         finally: events.MAX_OUTBOX = original_limit
 
+    def test_signed_webhook_and_authenticated_mqtt_delivery_frames(self) -> None:
+        (events.SECRET_ROOT / "webhook.json").write_text(json.dumps({"url":"https://alerts.example.invalid/hook?site=one","signingSecret":"fixture-signing-secret"}), encoding="utf-8")
+        (events.SECRET_ROOT / "mqtt.json").write_text(json.dumps({"host":"mqtt.example.invalid","port":8883,"topic":"webobs/events","username":"fixture-user","password":"fixture-pass"}), encoding="utf-8")
+        class FakeChannel:
+            def __init__(self): self.sent = []
+            def __enter__(self): return self
+            def __exit__(self, *args): return False
+            def sendall(self, data): self.sent.append(data)
+            def recv(self, size): return b"\x20\x02\x00\x00"
+        class FakeResponse:
+            status = 204
+            def __init__(self, channel): pass
+            def begin(self): pass
+            def read(self, size): return b""
+        webhook_channel, mqtt_channel = FakeChannel(), FakeChannel()
+        with patch.object(events, "tls_channel", return_value=webhook_channel), patch.object(events.http.client, "HTTPResponse", FakeResponse):
+            events.deliver({"destination_ref":"webhook", "payload_json":"{\"event\":1}", "kind":"webhook"})
+        request = webhook_channel.sent[0]
+        self.assertIn(b"POST /hook?site=one HTTP/1.1", request)
+        self.assertIn(b"X-WebOBS-Signature-256: sha256=", request)
+        self.assertNotIn(b"fixture-signing-secret", request)
+        with patch.object(events, "tls_channel", return_value=mqtt_channel):
+            events.deliver({"destination_ref":"mqtt", "payload_json":"{\"event\":1}", "kind":"mqtt"})
+        frames = b"".join(mqtt_channel.sent)
+        self.assertIn(b"fixture-user", frames); self.assertIn(b"fixture-pass", frames); self.assertIn(b"webobs/events", frames)
+
 
 if __name__ == "__main__": unittest.main()

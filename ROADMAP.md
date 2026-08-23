@@ -14,9 +14,9 @@ Canonical milestone names use `v<major>-M<number>`. Historical validation prose 
 
 **🚧 v1.2 release qualification / 发布资格验证 — v1-M10 与 v1-M11 实现已落地，外部设备门禁待完成。**
 
-The v1-M10 implementation now includes the Registry/Adapter foundation, authenticated Profile T/S media, PTZ, presets, snapshots, PullPoint events, guarded talk, bounded interface discovery and clock-skew correction. v1-M11 adds an isolated SQLite WAL event service, normalized native/software events, masks/zones, detector provider v1, NVR event windows, search/acknowledgement, rules and a bounded signed Webhook/MQTT outbox. Deterministic Digest/WS-Security/TLS and event fixtures pass; the privately recorded three-vendor and target notification delivery qualifications remain open, so v1.2 has not been released yet.
+The v1-M10 implementation now includes the Registry/Adapter foundation, authenticated Profile T/S media, PTZ, presets, snapshots, PullPoint events, guarded talk, bounded interface discovery and clock-skew correction. v1-M11 adds an isolated SQLite WAL event service, normalized native/software events, masks/zones, detector provider v1, NVR event windows, search/acknowledgement, rules and a bounded signed Webhook/MQTT outbox. Deterministic Digest/WS-Security/TLS, event and notification-delivery fixtures pass; the privately recorded three-vendor real-device qualification remains open, so v1.2 has not been released yet.
 
-v1-M10 实现现已包含 Registry/Adapter 底座、带认证 Profile T/S 媒体、PTZ、预置位、快照、PullPoint 事件、受控对讲、指定接口发现及时钟偏移校正。v1-M11 增加隔离的 SQLite WAL 事件服务、统一原生/软件事件、遮罩/区域、Detector Provider v1、NVR 事件窗口、检索/确认、规则及有界签名 Webhook/MQTT 发件箱。Digest/WS-Security/TLS 与事件确定性夹具已通过；私下三厂商与目标通知交付资格仍待完成，因此 v1.2 尚未发布。
+v1-M10 实现现已包含 Registry/Adapter 底座、带认证 Profile T/S 媒体、PTZ、预置位、快照、PullPoint 事件、受控对讲、指定接口发现及时钟偏移校正。v1-M11 增加隔离的 SQLite WAL 事件服务、统一原生/软件事件、遮罩/区域、Detector Provider v1、NVR 事件窗口、检索/确认、规则及有界签名 Webhook/MQTT 发件箱。Digest/WS-Security/TLS、事件与通知交付确定性夹具已通过；私下三厂商真实设备资格仍待完成，因此 v1.2 尚未发布。
 
 The `v1.0` series contains v1-M1 through v1-M6. The `v1.1` milestone family contains v1-M7 through v1-M11; `v1.2` is the final v1 closure release and introduces no v1-M12. `v2.0` starts at v2-M1 with a measurable True Direct contract.
 
@@ -305,7 +305,8 @@ The implementation items establish storage, identity, protocol and guarded-contr
 - [x] Add event search, acknowledgement notes and audit / 增加事件检索、确认备注与审计
 - [x] Add rule predicates and a bounded deduplicated Webhook/MQTT outbox / 增加规则条件及有界去重 Webhook/MQTT 发件箱
 - [x] Pass deterministic motion, deduplication, linkage, provider and SSRF fixtures / 通过移动、去重、关联、Provider 与 SSRF 确定性夹具
-- [ ] Repeat external Webhook/MQTT delivery and real-camera event accuracy qualification on the target deployment / 在目标部署重跑外部 Webhook/MQTT 交付与真实摄像机事件准确度资格验证
+- [x] Verify signed Webhook and authenticated MQTT delivery frames without disclosing Secret values / 验证签名 Webhook 与认证 MQTT 交付帧且不泄露 Secret 值
+- [ ] Qualify real-camera event accuracy as part of the private three-vendor device matrix / 在私下三厂商真实设备矩阵中验证事件准确度
 
 ## Cross-cutting rules / 贯穿规则
 
