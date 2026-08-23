@@ -115,9 +115,9 @@ GHCR 第一次发布的 package 默认为 private，即使源码仓库是 public
 
 ## 3. 使用 GitHub Actions 自动发布
 
-只在受保护的版本 Tag 或维护者人工 `workflow_dispatch` 上发布，不让 PR 或普通提交运行重型产品镜像构建。当前工作流把轻量源码审计留在 GitHub-hosted runner，把完整 OBS/CEF 构建固定到受控的 Fedora x86_64 Self-hosted Runner，并禁止不受信 PR 使用该机器。安装、隔离、标签、缓存与事故响应见 [Self-hosted Runner 指南](self-hosted-runner.md)。
+稳定镜像只在可从受保护 `main` 到达的 SemVer Tag 上发布；维护者可对已审查的 `dev` 提交人工 `workflow_dispatch` 生成开发镜像，但不能标为稳定版。不让 PR 或普通提交运行重型产品镜像构建。当前工作流把轻量源码审计留在 GitHub-hosted runner，把完整 OBS/CEF 构建固定到受控的 Fedora x86_64 Self-hosted Runner，并禁止不受信 PR 使用该机器。安装、隔离、标签、缓存与事故响应见 [Self-hosted Runner 指南](self-hosted-runner.md)，版本/分支职责见 [版本、里程碑与分支策略](versioning-and-branches.md)。
 
-仓库已提供 `.github/workflows/release-image.yaml`。它只在 `v*` Tag 或人工 `workflow_dispatch` 触发，所有外部 action 均固定到已记录的完整 commit SHA；发布 linux/amd64 镜像时同时生成 BuildKit max provenance、SBOM、GitHub registry attestation，以及完整递归 submodule 对应源码包。下列片段只说明 runner 分工，实际发布以仓库工作流为准。
+仓库已提供 `.github/workflows/release-image.yaml`。它只在 `v*.*` SemVer Tag 或人工 `workflow_dispatch` 触发，并验证 Tag 提交可从 `main` 到达；所有外部 action 均固定到已记录的完整 commit SHA。发布 linux/amd64 镜像时同时生成 BuildKit max provenance、SBOM、GitHub registry attestation，以及完整递归 submodule 对应源码包。下列片段只说明 runner 分工，实际发布以仓库工作流为准。
 
 ```yaml
 name: Publish GHCR image
@@ -125,7 +125,7 @@ name: Publish GHCR image
 on:
   push:
     tags:
-      - 'v*'
+      - 'v*.*'
   workflow_dispatch:
 
 permissions:

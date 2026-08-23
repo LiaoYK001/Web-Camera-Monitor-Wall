@@ -1,6 +1,6 @@
 # Fedora Self-hosted Runner 与 GHCR 发布
 
-本指南用于把 OBS/CEF 完整镜像构建放到维护者控制的 Fedora x86_64 主机。仓库的轻量公开源码审计仍运行在 GitHub-hosted runner；只有受信版本 Tag 或维护者手动触发的 release job 会进入标签为 `webobs-builder` 的 Self-hosted Runner。
+本指南用于把 OBS/CEF 完整镜像构建放到维护者控制的 Fedora x86_64 主机。仓库的轻量公开源码审计仍运行在 GitHub-hosted runner；只有可从受保护 `main` 到达的受信 SemVer Tag，或维护者审查后手动触发的 release job，会进入标签为 `webobs-builder` 的 Self-hosted Runner。`dev` 的职责和发布边界见 [版本、里程碑与分支策略](versioning-and-branches.md)。
 
 ## 安全边界
 
@@ -45,9 +45,9 @@ runs-on: [self-hosted, linux, x64, webobs-builder]
 
 ## 3. 保护发布入口
 
-工作流仅响应 `v*` Tag 和 `workflow_dispatch`。仍建议同时配置：
+工作流仅响应带点号的 `v*.*` Tag 和 `workflow_dispatch`，并在执行时验证 SemVer 格式及 Tag 提交属于 `main` 历史。仍建议同时配置：
 
-1. 版本 Tag 保护规则，例如 `v*` 仅允许维护者创建或删除。
+1. 版本 Tag 保护规则，例如 `v*.*` 仅允许维护者创建或删除；`vX-MN` 里程碑检查点不发布 `latest`。
 2. `CODEOWNERS`/分支保护，要求 `.github/workflows/**`、`docker/**`、`scripts/release-*` 经维护者审查。
 3. 仓库 Actions 权限默认只读；仅 release job 显式取得 `packages: write`、`attestations: write`、`id-token: write` 和发布源码附件所需的 `contents: write`。
 4. 禁止 Fork PR 直接使用 Self-hosted Runner；Pull Request 只运行 GitHub-hosted 的轻量审计。

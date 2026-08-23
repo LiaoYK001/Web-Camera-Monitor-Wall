@@ -328,7 +328,7 @@ bool intel_render_device(const std::filesystem::path &device)
 VideoEncoderCapabilities detect_video_encoder_capabilities(const Config &config, bool modules_loaded = true)
 {
     VideoEncoderCapabilities capabilities;
-    // Direct-only operation intentionally skips obs_startup and module loading.
+    // Gateway Direct-only operation intentionally skips obs_startup and module loading.
     // The image build verifies these two mandatory plugins, while the device
     // and driver fields below still come only from the live runtime probes.
     capabilities.x264.encoder_available = !modules_loaded || encoder_registered({"obs_x264"});
@@ -526,7 +526,7 @@ ExitCode run_obs_engine(const Config &config, const SceneDocument &document)
         if (config.http_port != 0)
             blog(LOG_INFO, "HTTP control server listening on %s:%d", config.listen_address.c_str(),
                  config.http_port);
-        blog(LOG_INFO, "Direct-only mode is active; OBS decode, scene composition, and encoding are not initialized");
+        blog(LOG_INFO, "Gateway Direct-only mode is active; OBS decode, scene composition, and encoding are not initialized");
         const auto started_at = std::chrono::steady_clock::now();
         while (!stop_requested) {
             if (config.duration_seconds > 0 &&

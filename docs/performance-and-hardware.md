@@ -2,12 +2,13 @@
 
 ## 1. 执行链原则
 
-默认优先级是 Direct passthrough、Direct 单轨必要转码、Hybrid hardware transcode、Composite hardware、Composite software fallback。Direct-only 进程不会调用 `obs_startup`，因此没有服务端视频解码、场景合成或 H.264 编码；MediaMTX 只在 WHEP reader 存在时拉取并转发 RTP/WebRTC 包。
+v1 默认优先级是 Gateway Direct relay、Gateway Direct 单轨必要转码、Hybrid hardware transcode、Composite hardware、Composite software fallback。Gateway Direct-only 进程不会调用 `obs_startup`，因此没有服务端视频解码、场景合成或 H.264 编码；但 MediaMTX 仍在 WHEP reader 存在时拉取并转发 RTP/WebRTC 包，所以当前 `direct` 是网关直通，不是 Docker 退出媒体数据面的真直连。
 
 ```text
-Direct:    Camera -> MediaMTX packet forwarding -> Browser GPU decode
-Composite: Camera -> VAAPI decode -> GPU scene -> VAAPI encode -> Program
-Fallback:  Camera -> software decode -> llvmpipe -> x264 -> Program
+True Direct (v2 planned): Camera/local endpoint -------------> local client decode (Docker video bytes = 0)
+Gateway Direct (v1):      Camera -> Docker MediaMTX relay ----> Browser GPU decode
+Composite:                Camera -> VAAPI decode -> GPU scene -> VAAPI encode -> Program
+Fallback:                 Camera -> software decode -> llvmpipe -> x264 -> Program
 ```
 
 Hybrid 会分别判断视频和音频：兼容轨道使用 copy，不兼容轨道才转码。AMD 路径使用 VAAPI decode 与 `h264_vaapi`；真实 probe 或运行失败时回落 `libx264`，日志不包含来源 URL。
@@ -35,13 +36,13 @@ docker exec web-camera-monitor-wall vainfo --display drm --device /dev/dri/rende
 
 `GET /api/v1/system/capabilities` 分开返回 `devicePresent`、`vaDriverLoaded`、`encodeSupported`、`decodeSupported`、`runtimeProbePassed`、`selected`、`fallback` 与 `fallbackReason`。要求 VAAPI 时的通过状态是 requested 为 `auto`/`vaapi`、selected 为 `vaapi`、fallback 为 false，且 VAAPI 的全部必要布尔值为 true。
 
-Renderer 使用 `WEBOBS_RENDERER=auto|hardware|software`。`auto` 在 VAAPI probe 成功后尝试 Weston headless EGL 和 Xwayland，并拒绝 llvmpipe/softpipe；失败后启动 Xvfb llvmpipe。Direct-only 显示 `idle`，因为它根本不需要场景 renderer。硬解可全局设置 `WEBOBS_HARDWARE_DECODE=auto|on|off`，并由 Camera Registry 的逐设备值及 Scene source 覆盖。
+Renderer 使用 `WEBOBS_RENDERER=auto|hardware|software`。`auto` 在 VAAPI probe 成功后尝试 Weston headless EGL 和 Xwayland，并拒绝 llvmpipe/softpipe；失败后启动 Xvfb llvmpipe。Gateway Direct-only 显示 `idle`，因为它根本不需要场景 renderer。硬解可全局设置 `WEBOBS_HARDWARE_DECODE=auto|on|off`，并由 Camera Registry 的逐设备值及 Scene source 覆盖。
 
-## 3. Direct/Hybrid 诊断
+## 3. Gateway Direct/Hybrid 诊断
 
 实时监看中的每路 tile 会显示：
 
-- `DIRECT PASSTHROUGH` 或 `HYBRID`；
+- `DIRECT RELAY` 或 `HYBRID`；
 - Video/Audio 分别为 copy 或 transcode；
 - 服务端视频 Decode/Encode 开关及 fallback 原因；
 - LOW（转发）、MEDIUM（音频转码）或 HIGH（视频转码/Composite）成本。
@@ -61,4 +62,4 @@ Renderer 使用 `WEBOBS_RENDERER=auto|hardware|software`。`auto` 在 VAAPI prob
 
 CSV 记录容器 CPU、内存/网络、逐进程 CPU/RSS、FFmpeg 进程数、RTSP session 与 GPU busy。另用 `radeontop`、`amdgpu_top` 或宿主等价工具记录 GFX、VCN Decode、VCN Encode，并记录端到端延迟。结果属于本地测试产物，不应提交 Git。
 
-Direct 验收不绑定一个不可靠的固定百分比，而要求：浏览器兼容 H.264/Opus 或 G.711 来源不出现 FFmpeg transcoder；`engineActive=false`、`compositePublisherActive=false`；增加摄像机时 CPU 不出现接近软件解码/编码的线性增长。若失败，依次检查 Hybrid 原因、Program reader、FFmpeg 进程、RTSP session 重复和浏览器是否仍持有旧 WHEP session。
+Gateway Direct 验收不绑定一个不可靠的固定百分比，而要求：浏览器兼容 H.264/Opus 或 G.711 来源不出现 FFmpeg transcoder；`engineActive=false`、`compositePublisherActive=false`；增加摄像机时 CPU 不出现接近软件解码/编码的线性增长。它仍会产生 Docker 网络流量和 MediaMTX 上游会话。若失败，依次检查 Hybrid 原因、Program reader、FFmpeg 进程、RTSP session 重复和浏览器是否仍持有旧 WHEP session。v2 True Direct 的独立零媒体数据面门禁见 [true-direct-v2.md](true-direct-v2.md)。

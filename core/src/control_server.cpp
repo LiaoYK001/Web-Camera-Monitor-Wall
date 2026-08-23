@@ -1711,7 +1711,7 @@ HttpResponse handle_request(const HttpRequest &request, SceneController &control
     const std::string_view target = view(request.target());
     if (request.method() == http::verb::get && target == "/api/v1/health")
         return response(http::status::ok, version,
-                        "{\"status\":\"ok\",\"milestone\":\"M10-foundation\"}");
+                        "{\"status\":\"ok\",\"milestone\":\"v1-M10\"}");
     if (request.method() == http::verb::get && target == "/api/v1/ready") {
         const bool ready = runtime_status.ready();
         return response(ready ? http::status::ok : http::status::service_unavailable, version,

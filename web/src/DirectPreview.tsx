@@ -75,7 +75,7 @@ function DirectTile({ item, source, capability, mixer }: {
         muted
         playsInline
         style={geometry}
-        aria-label={`${source.name} 直达画面`}
+        aria-label={`${source.name} 网关直通画面`}
         onLoadedMetadata={(event) => setDimensions({
           width: event.currentTarget.videoWidth,
           height: event.currentTarget.videoHeight,
@@ -84,7 +84,7 @@ function DirectTile({ item, source, capability, mixer }: {
       <span className="direct-tile-state"><i aria-hidden="true" />{labels[state]}</span>
       {capability && capability.strategy !== 'unknown' && (
         <div className={`delivery-diagnostic cost-${capability.serverCost ?? 'low'}`}>
-          <strong>{capability.deliveryMode === 'hybrid' ? 'HYBRID' : 'DIRECT PASSTHROUGH'}</strong>
+          <strong>{capability.deliveryMode === 'hybrid' ? 'HYBRID' : 'DIRECT RELAY'}</strong>
           <span>Video: {capability.videoDelivery ?? 'copy'} · Audio: {capability.audioDelivery ?? 'copy'}</span>
           <span>Server decode: {capability.serverVideoDecode ? 'ON' : 'OFF'} · encode: {capability.encoder ?? 'none'}</span>
           {capability.reason && <span>Reason: {capability.reason}</span>}

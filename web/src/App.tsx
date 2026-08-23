@@ -1013,7 +1013,7 @@ export default function App() {
             <div className="playback-mode" aria-label="实时播放渲染模式">
               <span>渲染路径</span>
               <button className={playbackMode === 'composite' ? 'active' : ''} type="button" onClick={() => selectPlaybackMode('composite')}>服务端合成</button>
-              <button className={playbackMode === 'direct' ? 'active' : ''} type="button" onClick={() => selectPlaybackMode('direct')}>浏览器直达</button>
+              <button className={playbackMode === 'direct' ? 'active' : ''} type="button" onClick={() => selectPlaybackMode('direct')}>网关直通</button>
               <button type="button" onClick={() => void toggleFullscreen()}>真全屏</button>
             </div>
           )}

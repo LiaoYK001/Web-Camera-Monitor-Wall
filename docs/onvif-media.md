@@ -1,8 +1,8 @@
 # ONVIF media operations / ONVIF 媒体运维
 
-M10 begins with an authenticated, read-only media synchronization path. It turns an ONVIF device endpoint into stable Camera Registry profiles without persisting a username, password, or credential-bearing URL.
+v1-M10 begins with an authenticated, read-only media synchronization path. It turns an ONVIF device endpoint into stable Camera Registry profiles without persisting a username, password, or credential-bearing URL.
 
-M10 首个设备运维闭环是带认证、只读的媒体同步路径。它把 ONVIF 设备端点转换为稳定的 Camera Registry Profile，同时不持久化用户名、密码或携带凭据的 URL。
+v1-M10 首个设备运维闭环是带认证、只读的媒体同步路径。它把 ONVIF 设备端点转换为稳定的 Camera Registry Profile，同时不持久化用户名、密码或携带凭据的 URL。
 
 ## Implemented boundary / 已实现边界
 
@@ -48,7 +48,7 @@ Both operations require the normal authenticated, same-origin mutation boundary.
 
 两个操作都受常规认证和同源写操作边界保护。探测失败不会创建摄像机，也不会留下部分更新。
 
-## Verification and remaining M10 work / 验证与剩余 M10 工作
+## Verification and remaining v1-M10 work / 验证与剩余 v1-M10 工作
 
 `tests/test_camera_registry.py` provides deterministic HTTP Digest plus WS-Security fixtures for the Media2/Profile T path, the Media/Profile S fallback, authentication redaction, malformed XML, entity rejection, and response-size limits. Run it with:
 
@@ -58,8 +58,8 @@ Both operations require the normal authenticated, same-origin mutation boundary.
 python3 tests/test_camera_registry.py
 ```
 
-M10 remains open. PTZ/presets, event subscriptions, guarded talk, bounded interface selection, clock-skew behavior, TLS device fixtures, and the private three-vendor matrix still require implementation and evidence. No real address, credential, serial number, or recording belongs in public test reports.
+v1-M10 remains open. PTZ/presets, event subscriptions, guarded talk, bounded interface selection, clock-skew behavior, TLS device fixtures, and the private three-vendor matrix still require implementation and evidence. No real address, credential, serial number, or recording belongs in public test reports.
 
-M10 仍未完成。PTZ/预置位、事件订阅、受控对讲、指定接口发现、时钟偏移处理、TLS 设备夹具及私下三厂商矩阵仍需实现和留证；公开测试报告不得包含真实地址、凭据、序列号或录像。
+v1-M10 仍未完成。PTZ/预置位、事件订阅、受控对讲、指定接口发现、时钟偏移处理、TLS 设备夹具及私下三厂商矩阵仍需实现和留证；公开测试报告不得包含真实地址、凭据、序列号或录像。
 
 The design follows the official [ONVIF Profile T](https://www.onvif.org/profiles/profile-t/) target and retains [Profile S](https://www.onvif.org/profiles/profile-s/) only as a compatibility path.

@@ -3,7 +3,7 @@ name: Release image
 on:
   push:
     tags:
-      - "v*"
+      - "v*.*"
   workflow_dispatch:
 
 permissions:
@@ -61,7 +61,14 @@ jobs:
         run: |
           set -euo pipefail
           image="ghcr.io/${GITHUB_REPOSITORY,,}"
-          if [[ "$REF_TYPE" == tag ]]; then version="$REF_NAME"; else version="sha-${GITHUB_SHA::12}"; fi
+          if [[ "$REF_TYPE" == tag ]]; then
+            [[ "$REF_NAME" =~ ^v[0-9]+\.[0-9]+(\.[0-9]+)?$ ]]
+            git fetch --no-tags origin main
+            git merge-base --is-ancestor "$GITHUB_SHA" origin/main
+            version="$REF_NAME"
+          else
+            version="sha-${GITHUB_SHA::12}"
+          fi
           [[ "$version" =~ ^[A-Za-z0-9._-]+$ ]]
           echo "image=$image" >> "$GITHUB_OUTPUT"
           echo "version=$version" >> "$GITHUB_OUTPUT"

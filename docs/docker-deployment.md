@@ -2,11 +2,11 @@
 
 本文面向从 Git 仓库克隆代码、在部署主机自行构建产品镜像的操作者。命令均在仓库根目录执行。
 
-> 当前项目已完成 M0–M9，处于 M10 Device Operations 实施阶段。空配置可直接启动，摄像机由 WebUI/Camera Registry 管理；基础 HTTP 模式只能用于主机回环，远程部署必须使用 production HTTPS 覆盖。
+> 当前项目已完成 M0 与 v1-M1 至 v1-M9，处于 v1.1 / v1-M10 Device Operations 实施阶段。空配置可直接启动，摄像机由 WebUI/Camera Registry 管理；基础 HTTP 模式只能用于主机回环，远程部署必须使用 production HTTPS 覆盖。
 
 ## 1. 部署组成与数据边界
 
-产品部署只有一个 `webobs` 容器。容器内包含 `webobsd`、libobs、MediaMTX、Camera Registry、NVR、固定版本 Caddy、Web 编辑器、Weston/Xwayland、Xvfb 和 Mesa。Direct-only 时不启动 libobs 视频线程；Composite/录制才选择硬件或软件 renderer。
+产品部署只有一个 `webobs` 容器。容器内包含 `webobsd`、libobs、MediaMTX、Camera Registry、NVR、固定版本 Caddy、Web 编辑器、Weston/Xwayland、Xvfb 和 Mesa。Gateway Direct-only 时不启动 libobs 视频线程，但媒体包仍经过 MediaMTX；Composite/录制才选择硬件或软件 renderer。
 
 | 内容 | 默认位置 | 持久性 |
 | --- | --- | --- |
@@ -430,7 +430,7 @@ git submodule update --init --recursive
 
 ### 容器反复 unhealthy
 
-`ready` 会把控制面未启动、配置的 Composite WebRTC 未准备或活动 OBS 来源无新帧视为失败。Direct-only 不要求 OBS engine 活动。检查状态和日志，不要删除 HEALTHCHECK 掩盖故障。
+`ready` 会把控制面未启动、配置的 Composite WebRTC 未准备或活动 OBS 来源无新帧视为失败。Gateway Direct-only 不要求 OBS engine 活动。检查状态和日志，不要删除 HEALTHCHECK 掩盖故障。
 
 ### 想彻底重置场景
 
@@ -451,7 +451,7 @@ docker compose down --volumes
 - [ ] 基础 HTTP 只绑定回环；远程模式只发布受信 HTTPS 与所需 ICE 端口，未发布后端 8080。
 - [ ] health、ready、Docker healthcheck 均通过。
 - [ ] VAAPI 部署已验证 driver/encode/decode/runtime probe，而非只看到 `/dev/dri`。
-- [ ] Direct-only 的 `engineActive=false`、无 FFmpeg transcoder，且 RTSP session 数符合预期。
+- [ ] Gateway Direct-only 的 `engineActive=false`、无 FFmpeg transcoder，且 RTSP session 数符合预期。
 - [ ] Web 编辑、Composite/Direct 播放和正常停止后的 MP4 已验证。
 - [ ] 日志中没有明文凭据，日志轮转值保持有限。
 - [ ] 场景和录像备份已实际恢复演练，而不仅是“存在备份文件”。

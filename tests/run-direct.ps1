@@ -88,7 +88,7 @@ try {
     Assert-True ($CapabilitiesResponse.Body -notmatch 'rtsp://|direct-[a-f0-9]|mediamtx') `
         'Playback capabilities exposed an internal endpoint or RTSP URL.'
     $Capabilities = $CapabilitiesResponse.Body | ConvertFrom-Json
-    Assert-True ($Capabilities.defaultMode -eq 'direct') 'Direct passthrough must be the low-load default mode.'
+    Assert-True ($Capabilities.defaultMode -eq 'direct') 'Gateway Direct relay must be the low-load default mode.'
     Assert-True ($Capabilities.modes.composite.enabled -eq $true -and $Capabilities.modes.direct.enabled -eq $true) `
         'Deterministic M3 service must expose both explicit playback modes.'
     Assert-True ($Capabilities.sources.Count -eq 2) 'M3 capabilities must contain both scene sources.'
