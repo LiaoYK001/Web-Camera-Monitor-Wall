@@ -1178,7 +1178,8 @@ public:
                    target == "/api/v2/clients" || target.starts_with("/api/v2/clients/") ||
                    target == "/api/v2/client/bootstrap" || target.starts_with("/api/v2/client/bootstrap?") ||
                    target == "/api/v2/media-plans" || target.starts_with("/api/v2/media-plans/") ||
-                   target == "/api/v2/client/audit/batch") {
+                   target == "/api/v2/client/audit/batch" ||
+                   target.starts_with("/api/v2/client/cameras/")) {
             suffix = std::string(target.substr(std::string_view("/api/v2").size()));
             upstream_port = 8094;
             v2_client_service = true;
@@ -1316,7 +1317,10 @@ bool v2_device_route(const HttpRequest &request)
         (target == "/api/v2/client/bootstrap" || target.starts_with("/api/v2/client/bootstrap?")))
         return true;
     if (request.method() == http::verb::post &&
-        (target == "/api/v2/media-plans" || target == "/api/v2/client/audit/batch"))
+        (target == "/api/v2/media-plans" || target == "/api/v2/client/audit/batch" ||
+         target.starts_with("/api/v2/client/cameras/")))
+        return true;
+    if (request.method() == http::verb::get && target.starts_with("/api/v2/client/cameras/"))
         return true;
     return request.method() == http::verb::get &&
            target.starts_with("/api/v2/media-plans/") &&
@@ -1822,7 +1826,8 @@ HttpResponse handle_request(const HttpRequest &request, SceneController &control
                            target == "/api/v2/clients" || target.starts_with("/api/v2/clients/") ||
                            target == "/api/v2/client/bootstrap" || target.starts_with("/api/v2/client/bootstrap?") ||
                            target == "/api/v2/media-plans" || target.starts_with("/api/v2/media-plans/") ||
-                           target == "/api/v2/client/audit/batch";
+                           target == "/api/v2/client/audit/batch" ||
+                           target.starts_with("/api/v2/client/cameras/");
     if (v2_target) {
         if ((request.method() == http::verb::put || request.method() == http::verb::post ||
              request.method() == http::verb::delete_) &&

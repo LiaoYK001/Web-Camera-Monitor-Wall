@@ -89,3 +89,38 @@ docker login ghcr.io
 ## 6. 运维检查
 
 定期升级 Runner 二进制、Docker/Buildx 与主机补丁，监控缓存磁盘占用，并检查 Runner 服务日志。若怀疑工作流或 Runner 被攻破，立即停止服务、从 GitHub 删除注册、撤销令牌、隔离主机，并把已发布 digest 当作不可信重新构建。
+
+## 7. v2 桌面客户端发布 Runner
+
+原生客户端使用独立标签 `webobs-desktop-builder`。Windows 构建机必须是 Windows 11 x86_64，并增加 `windows-11`；Fedora 验收机分别增加 `fedora-current`、`fedora-previous`。这些机器同样只接受可从 `main` 到达的受保护 v2 Tag，不得运行未知 Fork PR。
+
+```text
+Windows build + acceptance:
+self-hosted, windows, x64, windows-11, webobs-desktop-builder
+
+Fedora build/current acceptance:
+self-hosted, linux, x64, webobs-desktop-builder, fedora-current
+
+Previous Fedora acceptance:
+self-hosted, linux, x64, webobs-desktop-builder, fedora-previous
+```
+
+Windows Runner 通过仓库变量引用已审核的 Qt 6.11.2、GStreamer 1.28.6、libsodium 1.0.22、Syft 与 Cosign 路径；签名证书选择器保存在 Secret。Fedora 构建 Runner 还需提供已审核并校验 SHA-256 的 linuxdeploy 与 linuxdeploy Qt plugin。任何 SDK、证书或工具都不得提交到仓库。
+
+```text
+WEBOBS_WINDOWS_QT_ROOT
+WEBOBS_WINDOWS_GSTREAMER_ROOT
+WEBOBS_WINDOWS_SODIUM_ROOT
+WEBOBS_WINDOWS_SYFT / WEBOBS_WINDOWS_SYFT_SHA256
+WEBOBS_WINDOWS_COSIGN / WEBOBS_WINDOWS_COSIGN_SHA256
+WEBOBS_WINDOWS_CERTIFICATE_SHA1 (secret)
+
+WEBOBS_LINUX_LINUXDEPLOY / WEBOBS_LINUX_LINUXDEPLOY_SHA256
+WEBOBS_LINUX_LINUXDEPLOY_QT_PLUGIN / WEBOBS_LINUX_LINUXDEPLOY_QT_PLUGIN_SHA256
+WEBOBS_LINUX_SYFT / WEBOBS_LINUX_SYFT_SHA256
+WEBOBS_LINUX_COSIGN / WEBOBS_LINUX_COSIGN_SHA256
+```
+
+精确协议与 30 分钟硬件门禁只读取受保护 Secret/Runner 本地文件。五种私有端点通过 `WEBOBS_PRIVATE_RTSP_H264`、`WEBOBS_PRIVATE_RTSP_H265`、`WEBOBS_PRIVATE_MJPEG`、`WEBOBS_PRIVATE_HLS`、`WEBOBS_PRIVATE_WHEP` 提供；17 路参考清单由 `WEBOBS_WINDOWS_REFERENCE_MANIFEST` 或 `WEBOBS_LINUX_REFERENCE_MANIFEST` 指向 Runner 本地文件。脚本只输出协议名、解码器、帧数和掉帧统计，不输出端点、凭据或私有证据文件。`WEBOBS_REFERENCE_CONTROL_URL` 用于比较观看前后服务端 RTSP/媒体进程计数；认证值只放 Secret。
+
+稳定 v2 Tag 的发布顺序固定为：公开审计 → Windows/Fedora 构建与签名 → 固定运行时五协议 → Windows 11 与两个 Fedora 版本的 30 分钟硬件/零服务端增量门禁 → SBOM/Sigstore/GitHub attestation → 附加到不可变 GitHub Release。任一平台或证据失败都不会进入 `publish`。

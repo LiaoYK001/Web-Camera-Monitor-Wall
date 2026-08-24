@@ -1,0 +1,233 @@
+name: Release native clients
+
+on:
+  push:
+    tags:
+      - "v2.*"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-image-global
+  cancel-in-progress: false
+
+jobs:
+  audit:
+    runs-on: ubuntu-24.04
+    outputs:
+      package_version: ${{ steps.identity.outputs.package_version }}
+      release_tag: ${{ steps.identity.outputs.release_tag }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          submodules: recursive
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Audit source and derive immutable package version
+        id: identity
+        shell: bash
+        env:
+          REF_TYPE: ${{ github.ref_type }}
+          REF_NAME: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          ./tests/run-public-audit.sh
+          ./scripts/check-executable-bits.sh
+          python3 clients/scripts/verify_dependency_lock.py
+          [[ "$REF_TYPE" == tag ]]
+          [[ "$REF_NAME" =~ ^v2\.[0-9]+(\.[0-9]+)?$ ]]
+          git fetch --no-tags origin main
+          git merge-base --is-ancestor "$GITHUB_SHA" origin/main
+          numeric="${REF_NAME#v}"
+          if [[ "$numeric" =~ ^[0-9]+\.[0-9]+$ ]]; then numeric="$numeric.0"; fi
+          echo "package_version=$numeric" >> "$GITHUB_OUTPUT"
+          echo "release_tag=$REF_NAME" >> "$GITHUB_OUTPUT"
+
+  windows:
+    needs: audit
+    runs-on: [self-hosted, windows, x64, windows-11, webobs-desktop-builder]
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          submodules: recursive
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Re-audit trusted Windows checkout
+        shell: pwsh
+        run: |
+          python clients/scripts/verify_dependency_lock.py
+          if (git status --porcelain) { throw 'Release checkout is dirty' }
+      - name: Build signed installer and portable package
+        shell: pwsh
+        env:
+          QT_ROOT: ${{ vars.WEBOBS_WINDOWS_QT_ROOT }}
+          GSTREAMER_ROOT: ${{ vars.WEBOBS_WINDOWS_GSTREAMER_ROOT }}
+          SODIUM_ROOT: ${{ vars.WEBOBS_WINDOWS_SODIUM_ROOT }}
+          CERTIFICATE_SHA1: ${{ secrets.WEBOBS_WINDOWS_CERTIFICATE_SHA1 }}
+        run: |
+          ./clients/packaging/windows/build.ps1 `
+            -Version '${{ needs.audit.outputs.package_version }}' `
+            -QtRoot $env:QT_ROOT -GStreamerRoot $env:GSTREAMER_ROOT `
+            -SodiumRoot $env:SODIUM_ROOT -OutputDirectory "$env:RUNNER_TEMP\webobs-native" `
+            -SigningCertificateSha1 $env:CERTIFICATE_SHA1
+      - name: Run exact protocols and 30-minute Windows reference gate
+        shell: pwsh
+        env:
+          WEBOBS_PRIVATE_RTSP_H264: ${{ secrets.WEBOBS_PRIVATE_RTSP_H264 }}
+          WEBOBS_PRIVATE_RTSP_H265: ${{ secrets.WEBOBS_PRIVATE_RTSP_H265 }}
+          WEBOBS_PRIVATE_MJPEG: ${{ secrets.WEBOBS_PRIVATE_MJPEG }}
+          WEBOBS_PRIVATE_HLS: ${{ secrets.WEBOBS_PRIVATE_HLS }}
+          WEBOBS_PRIVATE_WHEP: ${{ secrets.WEBOBS_PRIVATE_WHEP }}
+          WEBOBS_REFERENCE_CONTROL_URL: ${{ vars.WEBOBS_REFERENCE_CONTROL_URL }}
+          WEBOBS_REFERENCE_CONTROL_USERNAME: ${{ secrets.WEBOBS_REFERENCE_CONTROL_USERNAME }}
+          WEBOBS_REFERENCE_CONTROL_PASSWORD: ${{ secrets.WEBOBS_REFERENCE_CONTROL_PASSWORD }}
+          REFERENCE_MANIFEST: ${{ vars.WEBOBS_WINDOWS_REFERENCE_MANIFEST }}
+        run: |
+          $client = 'clients\build-windows\stage\bin\webobs-native.exe'
+          python clients/tests/run-exact-protocol-gate.py $client
+          python clients/tests/run-desktop-reference-gate.py `
+            --client $client --manifest $env:REFERENCE_MANIFEST `
+            --evidence "$env:RUNNER_TEMP\webobs-m2-windows-private-evidence.json"
+      - name: Generate SPDX SBOM and Sigstore bundles
+        shell: pwsh
+        env:
+          SYFT: ${{ vars.WEBOBS_WINDOWS_SYFT }}
+          SYFT_SHA256: ${{ vars.WEBOBS_WINDOWS_SYFT_SHA256 }}
+          COSIGN: ${{ vars.WEBOBS_WINDOWS_COSIGN }}
+          COSIGN_SHA256: ${{ vars.WEBOBS_WINDOWS_COSIGN_SHA256 }}
+        run: |
+          if ((Get-FileHash -Algorithm SHA256 -LiteralPath $env:SYFT).Hash.ToLowerInvariant() -ne $env:SYFT_SHA256) { throw 'syft hash mismatch' }
+          if ((Get-FileHash -Algorithm SHA256 -LiteralPath $env:COSIGN).Hash.ToLowerInvariant() -ne $env:COSIGN_SHA256) { throw 'cosign hash mismatch' }
+          Get-ChildItem "$env:RUNNER_TEMP\webobs-native" -File | Where-Object { $_.Extension -in @('.zip', '.exe') } | ForEach-Object {
+            & $env:SYFT $_.FullName -o "spdx-json=$($_.FullName).spdx.json"
+            if ($LASTEXITCODE -ne 0) { throw 'SBOM generation failed' }
+            & $env:COSIGN sign-blob --yes --bundle "$($_.FullName).sigstore.json" $_.FullName
+            if ($LASTEXITCODE -ne 0) { throw 'Sigstore signing failed' }
+          }
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: native-windows-${{ needs.audit.outputs.package_version }}
+          path: ${{ runner.temp }}/webobs-native/*
+          if-no-files-found: error
+
+  linux:
+    needs: audit
+    runs-on: [self-hosted, linux, x64, webobs-desktop-builder]
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          submodules: recursive
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Re-audit trusted Fedora checkout
+        shell: bash
+        run: |
+          set -euo pipefail
+          ./tests/run-public-audit.sh
+          python3 clients/scripts/verify_dependency_lock.py
+          test -z "$(git status --porcelain)"
+      - name: Build AppImage and Flatpak
+        shell: bash
+        env:
+          WEBOBS_LINUXDEPLOY: ${{ vars.WEBOBS_LINUX_LINUXDEPLOY }}
+          WEBOBS_LINUXDEPLOY_SHA256: ${{ vars.WEBOBS_LINUX_LINUXDEPLOY_SHA256 }}
+          WEBOBS_LINUXDEPLOY_QT_PLUGIN: ${{ vars.WEBOBS_LINUX_LINUXDEPLOY_QT_PLUGIN }}
+          WEBOBS_LINUXDEPLOY_QT_PLUGIN_SHA256: ${{ vars.WEBOBS_LINUX_LINUXDEPLOY_QT_PLUGIN_SHA256 }}
+        run: |
+          set -euo pipefail
+          output="$RUNNER_TEMP/webobs-native"
+          mkdir -p "$output"
+          clients/packaging/linux/build-appimage.sh '${{ needs.audit.outputs.package_version }}' "$output"
+          clients/packaging/linux/build-flatpak.sh '${{ needs.audit.outputs.package_version }}' \
+            "$output/webobs-native-${{ needs.audit.outputs.package_version }}-linux-x86_64.AppImage" "$output"
+      - name: Generate SPDX SBOM and Sigstore bundles
+        shell: bash
+        env:
+          WEBOBS_SYFT: ${{ vars.WEBOBS_LINUX_SYFT }}
+          WEBOBS_SYFT_SHA256: ${{ vars.WEBOBS_LINUX_SYFT_SHA256 }}
+          WEBOBS_COSIGN: ${{ vars.WEBOBS_LINUX_COSIGN }}
+          WEBOBS_COSIGN_SHA256: ${{ vars.WEBOBS_LINUX_COSIGN_SHA256 }}
+        run: clients/packaging/finalize-artifacts.sh "$RUNNER_TEMP/webobs-native"
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: native-linux-${{ needs.audit.outputs.package_version }}
+          path: ${{ runner.temp }}/webobs-native/*
+          if-no-files-found: error
+
+  linux-acceptance:
+    needs: [audit, linux]
+    strategy:
+      fail-fast: false
+      matrix:
+        fedora: [fedora-current, fedora-previous]
+    runs-on:
+      - self-hosted
+      - linux
+      - x64
+      - webobs-desktop-builder
+      - ${{ matrix.fedora }}
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@70fc10c6e5e1ce46ad2ea6f2b72d43f7d47b13c3 # v8.0.0
+        with:
+          name: native-linux-${{ needs.audit.outputs.package_version }}
+          path: native-artifacts
+      - name: Run exact protocols and 30-minute Fedora reference gate
+        shell: bash
+        env:
+          WEBOBS_PRIVATE_RTSP_H264: ${{ secrets.WEBOBS_PRIVATE_RTSP_H264 }}
+          WEBOBS_PRIVATE_RTSP_H265: ${{ secrets.WEBOBS_PRIVATE_RTSP_H265 }}
+          WEBOBS_PRIVATE_MJPEG: ${{ secrets.WEBOBS_PRIVATE_MJPEG }}
+          WEBOBS_PRIVATE_HLS: ${{ secrets.WEBOBS_PRIVATE_HLS }}
+          WEBOBS_PRIVATE_WHEP: ${{ secrets.WEBOBS_PRIVATE_WHEP }}
+          WEBOBS_REFERENCE_CONTROL_URL: ${{ vars.WEBOBS_REFERENCE_CONTROL_URL }}
+          WEBOBS_REFERENCE_CONTROL_USERNAME: ${{ secrets.WEBOBS_REFERENCE_CONTROL_USERNAME }}
+          WEBOBS_REFERENCE_CONTROL_PASSWORD: ${{ secrets.WEBOBS_REFERENCE_CONTROL_PASSWORD }}
+          WEBOBS_REFERENCE_MANIFEST: ${{ vars.WEBOBS_LINUX_REFERENCE_MANIFEST }}
+        run: |
+          set -euo pipefail
+          client="native-artifacts/webobs-native-${{ needs.audit.outputs.package_version }}-linux-x86_64.AppImage"
+          chmod 0755 "$client"
+          python3 clients/tests/run-exact-protocol-gate.py "$client"
+          python3 clients/tests/run-desktop-reference-gate.py \
+            --client "$client" --manifest "$WEBOBS_REFERENCE_MANIFEST" \
+            --evidence "$RUNNER_TEMP/webobs-m2-${{ matrix.fedora }}-private-evidence.json"
+
+  publish:
+    needs: [audit, windows, linux, linux-acceptance]
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+      attestations: write
+      id-token: write
+    steps:
+      - uses: actions/download-artifact@70fc10c6e5e1ce46ad2ea6f2b72d43f7d47b13c3 # v8.0.0
+        with:
+          pattern: native-*-${{ needs.audit.outputs.package_version }}
+          path: release-assets
+          merge-multiple: true
+      - name: Attest native artifacts
+        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
+        with:
+          subject-path: release-assets/*
+      - name: Attach immutable artifacts to the reviewed tag
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          gh release view '${{ needs.audit.outputs.release_tag }}' >/dev/null 2>&1 || \
+            gh release create '${{ needs.audit.outputs.release_tag }}' --verify-tag \
+              --title '${{ needs.audit.outputs.release_tag }}' --generate-notes
+          gh release upload '${{ needs.audit.outputs.release_tag }}' release-assets/* --clobber

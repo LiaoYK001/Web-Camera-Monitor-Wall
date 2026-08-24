@@ -68,12 +68,31 @@ RUN apt-get -o Acquire::Retries=5 update \
     && apt-get -o Acquire::Retries=5 install -y --no-install-recommends \
         build-essential cmake libgstreamer-plugins-base1.0-dev libgstreamer1.0-dev \
         libsecret-1-dev libsodium-dev ninja-build pkg-config qt6-base-dev qt6-declarative-dev \
+        qt6-5compat-dev qml6-module-qt5compat-graphicaleffects \
     && rm -rf /var/lib/apt/lists/*
 COPY clients/ /src/clients/
+COPY LICENSE /src/LICENSE
 RUN cmake -S /src/clients -B /build/clients -G Ninja \
         -DCMAKE_BUILD_TYPE=Debug \
         -DWEBOBS_ENFORCE_LOCKED_DEPENDENCIES=OFF \
-    && cmake --build /build/clients --parallel
+    && cmake --build /build/clients --parallel \
+    && ctest --test-dir /build/clients --output-on-failure
+
+FROM client-compile-test AS client-protocol-test
+
+RUN apt-get -o Acquire::Retries=5 update \
+    && apt-get -o Acquire::Retries=5 install -y --no-install-recommends \
+        gstreamer1.0-libav gstreamer1.0-plugins-bad gstreamer1.0-plugins-good \
+        gstreamer1.0-plugins-ugly gstreamer1.0-tools \
+    && rm -rf /var/lib/apt/lists/*
+RUN gst-inspect-1.0 rtspsrc >/dev/null \
+    && gst-inspect-1.0 uridecodebin3 >/dev/null
+
+COPY tests/v2-direct-fixture/native-probe.sh /usr/local/bin/run-native-probe
+RUN chmod 0755 /usr/local/bin/run-native-probe
+
+ENV QT_QPA_PLATFORM=offscreen
+ENTRYPOINT ["/usr/local/bin/run-native-probe"]
 
 FROM ubuntu:24.04 AS mediamtx-downloader
 

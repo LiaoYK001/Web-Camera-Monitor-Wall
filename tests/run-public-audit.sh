@@ -120,6 +120,7 @@ tests/run-contracts.ps1|test-user:supersecret
 tests/run-contracts.ps1|***:***
 tests/run-contracts.sh|test-user:supersecret
 tests/run-contracts.sh|***:***
+tests/test_v2_client_control.py|fixture-user:fixture-password
 tests/run-real-camera.ps1|user:password
 tests/run-real-camera.sh|user:password'
 allowed_rtsp_references="${allowed_rtsp_references# }"

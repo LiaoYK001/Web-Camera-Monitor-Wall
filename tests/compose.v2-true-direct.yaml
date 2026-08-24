@@ -20,6 +20,25 @@ services:
     depends_on: [camera]
     networks: [camera-media]
 
+  publisher-hevc:
+    image: webobs-m0-rtsp-fixture:local
+    build:
+      context: ..
+      dockerfile: tests/rtsp-fixture/Dockerfile
+    entrypoint: ["/usr/local/bin/publish-hevc-stream"]
+    environment:
+      TEST_RTSP_URL: rtsp://camera:8554/v2-direct-hevc
+    depends_on: [camera]
+    networks: [camera-media]
+
+  mjpeg-camera:
+    image: webobs-v2-direct-fixture:local
+    build:
+      context: ..
+      dockerfile: tests/v2-direct-fixture/Dockerfile
+    entrypoint: ["python3", "/fixture/mjpeg_server.py"]
+    networks: [camera-media]
+
   webobs:
     image: ${WEBOBS_TEST_IMAGE:-webobs:v2-m1-dev}
     environment:
@@ -49,6 +68,46 @@ services:
       WEBOBS_FIXTURE_RTSP: rtsp://camera:8554/v2-direct
     depends_on: [webobs, publisher]
     networks: [control, camera-media]
+
+  native-rtsp-h264:
+    image: webobs-native-protocol-fixture:local
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+      target: client-protocol-test
+    environment:
+      WEBOBS_PROBE_ADAPTER: rtsp
+      WEBOBS_PROBE_CODEC: h264
+      WEBOBS_PROBE_ENDPOINT: rtsp://camera:8554/v2-direct
+    depends_on: [publisher]
+    networks: [camera-media]
+
+  native-rtsp-h265:
+    image: webobs-native-protocol-fixture:local
+    environment:
+      WEBOBS_PROBE_ADAPTER: rtsp
+      WEBOBS_PROBE_CODEC: h265
+      WEBOBS_PROBE_ENDPOINT: rtsp://camera:8554/v2-direct-hevc
+    depends_on: [publisher-hevc]
+    networks: [camera-media]
+
+  native-mjpeg:
+    image: webobs-native-protocol-fixture:local
+    environment:
+      WEBOBS_PROBE_ADAPTER: mjpeg
+      WEBOBS_PROBE_CODEC: mjpeg
+      WEBOBS_PROBE_ENDPOINT: http://mjpeg-camera:8000/camera.mjpeg
+    depends_on: [mjpeg-camera]
+    networks: [camera-media]
+
+  native-hls:
+    image: webobs-native-protocol-fixture:local
+    environment:
+      WEBOBS_PROBE_ADAPTER: hls
+      WEBOBS_PROBE_CODEC: h264
+      WEBOBS_PROBE_ENDPOINT: http://camera:8888/v2-direct/index.m3u8
+    depends_on: [publisher]
+    networks: [camera-media]
 
 networks:
   control:

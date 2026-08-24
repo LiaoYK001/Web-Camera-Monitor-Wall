@@ -2,9 +2,9 @@
 
 > Status / 状态：v2 execution baseline / v2 实施基线
 >
-> Last updated / 最后更新：2026-08-24
+> Last updated / 最后更新：2026-08-25
 >
-> Current position / 当前位置：v1 is closed at `v1.2.1`; `dev` is implementing `v2-M1`. API v2, encrypted grants, the topology planner, administrator UI and native-client source exist. An isolated H.264 architecture fixture proves a control-only Docker network and client-owned decode, while the locked-client five-protocol, NVR coexistence and platform hardware gates remain open / v1 已在 `v1.2.1` 收口；`dev` 正实施 `v2-M1`。API v2、加密 Grant、拓扑规划器、管理员 UI 与本地客户端源码已存在；隔离 H.264 架构夹具已证明 Docker 仅接控制网络且由客户端解码，但固定依赖客户端的五协议、NVR 共存及平台硬件门禁仍未完成
+> Current position / 当前位置：v1 is closed at `v1.2.1`; `dev` is qualifying `v2-M1` and implementing `v2-M2`. The deterministic production pipeline passes H.264/H.265 RTSP, Server Push MJPEG and HLS with Docker control-network isolation. Desktop Monitor/Studio, local operations, packaging and private hardware-gate tooling exist; exact WHEP, NVR coexistence and signed platform evidence remain open / v1 已在 `v1.2.1` 收口；`dev` 正验收 `v2-M1` 并实施 `v2-M2`。生产管线已在 Docker 控制网络隔离下确定性通过 H.264/H.265 RTSP、Server Push MJPEG 与 HLS；桌面 Monitor/Studio、本地操作、打包及私有硬件门禁工具已具备，固定 WHEP、NVR 共存和平台签名证据仍待完成
 
 This document expands the project from a web camera compositor into a self-hosted and local-first monitoring workspace with three first-class capabilities: an OBS-inspired customizable canvas, an NVR workflow inspired by mainstream monitoring applications such as tinyCam Monitor, and v2 True Direct local clients that keep Docker outside the media data plane. It is a capability plan, not a compatibility or UI-cloning claim, and it does not promise release dates.
 

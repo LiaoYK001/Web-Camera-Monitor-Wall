@@ -1,7 +1,9 @@
 #pragma once
 
 #include <QAbstractListModel>
+#include <QJsonArray>
 #include <QJsonObject>
+#include <QVariantList>
 
 namespace webobs::client {
 
@@ -18,6 +20,8 @@ public:
         KindRole, NameRole, XRole, YRole, WidthRole, HeightRole, RotationRole,
         OpacityRole, VisibleRole, LockedRole, ZRole, ScaleModeRole, TextRole, ColorRole,
         FilePathRole,
+        GroupIdRole, CropTopRole, CropRightRole, CropBottomRole, CropLeftRole,
+        FiltersRole, NestedSceneIdRole,
     };
     Q_ENUM(Role)
 
@@ -38,6 +42,20 @@ public:
     Q_INVOKABLE void resizeItem(int row, qreal width, qreal height);
     Q_INVOKABLE void setItemVisible(int row, bool visible);
     Q_INVOKABLE void setItemLocked(int row, bool locked);
+    Q_INVOKABLE void setItemRotation(int row, qreal degrees);
+    Q_INVOKABLE void setItemOpacity(int row, qreal opacity);
+    Q_INVOKABLE void setItemScaleMode(int row, const QString &mode);
+    Q_INVOKABLE void setItemCrop(int row, int top, int right, int bottom, int left);
+    Q_INVOKABLE void setItemGroup(int row, const QString &groupId);
+    Q_INVOKABLE bool setItemFilters(int row, const QVariantList &filters);
+    Q_INVOKABLE void alignItem(int row, const QString &horizontal, const QString &vertical);
+    Q_INVOKABLE bool addCamera(const QString &cameraId, const QString &profileId,
+                               const QString &name);
+    Q_INVOKABLE bool addText(const QString &text);
+    Q_INVOKABLE bool addImage(const QString &absolutePath);
+    Q_INVOKABLE bool addColor(const QString &color);
+    Q_INVOKABLE bool addNested(const QString &sceneId, const QString &name);
+    Q_INVOKABLE void removeItem(int row);
     QJsonObject toJson() const;
 
 signals:
@@ -55,6 +73,9 @@ private:
         QString text;
         QString color = QStringLiteral("#000000");
         QString file_path;
+        QString group_id;
+        QString nested_scene_id;
+        QJsonArray filters;
         qreal x = 0;
         qreal y = 0;
         qreal width = 320;
@@ -65,7 +86,13 @@ private:
         bool locked = false;
         int z = 0;
         QString scale_mode = QStringLiteral("contain");
+        int crop_top = 0;
+        int crop_right = 0;
+        int crop_bottom = 0;
+        int crop_left = 0;
     };
+    bool add_item(Item item);
+    static bool valid_color(const QString &value);
     QString id_ = QStringLiteral("local-monitor");
     QString name_ = QStringLiteral("Local Monitor");
     qint64 revision_ = 0;

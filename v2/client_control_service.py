@@ -23,7 +23,9 @@ import time
 import uuid
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
+from urllib.error import HTTPError, URLError
 from urllib.parse import parse_qs, urlsplit
+from urllib.request import Request, urlopen
 
 
 LISTEN = ("127.0.0.1", 8094)
@@ -37,6 +39,7 @@ SECRET_ROOT = Path(os.environ.get(
 KEY_PATH = Path(os.environ.get(
     "WEBOBS_V2_SIGNING_KEY", "/config/webobs/keys/client-grant-signing.key"))
 MAX_BODY = 1024 * 1024
+MAX_REGISTRY_RESPONSE = 4 * 1024 * 1024
 ENROLLMENT_SECONDS = 10 * 60
 GRANT_SECONDS = 30 * 24 * 60 * 60
 PLAN_SECONDS = 5 * 60
@@ -638,7 +641,7 @@ def _shared_scene_valid(scene: object) -> bool:
     source_fields = {
         "id", "kind", "name", "cameraId", "profileId", "hardwareDecode",
         "text", "color", "filePath", "muted", "volume", "syncOffsetMs",
-        "monitoring", "audioTrack", "filters",
+        "monitoring", "audioTrack", "filters", "sceneId",
     }
     item_fields = {
         "id", "sourceId", "x", "y", "width", "height", "scaleMode", "crop",
@@ -667,7 +670,7 @@ def _shared_scene_valid(scene: object) -> bool:
         source_id = source.get("id")
         kind = source.get("kind")
         if not isinstance(source_id, str) or not ID_RE.fullmatch(source_id) or source_id in source_ids or \
-                kind not in {"camera", "text", "color", "image"}:
+                kind not in {"camera", "text", "color", "image", "nested"}:
             return False
         source_ids.add(source_id)
         if not isinstance(source.get("name"), str) or not 1 <= len(source["name"].encode("utf-8")) <= 128:
@@ -700,12 +703,42 @@ def _shared_scene_valid(scene: object) -> bool:
         if "audioTrack" in source and (not isinstance(source["audioTrack"], int) or
                 isinstance(source["audioTrack"], bool) or not 1 <= source["audioTrack"] <= 6):
             return False
-        if source.get("filters", []) != []:
+        filters = source.get("filters", [])
+        if not isinstance(filters, list) or len(filters) > 16:
             return False
+        filter_ids: set[str] = set()
+        for scene_filter in filters:
+            if not isinstance(scene_filter, dict) or set(scene_filter) != {
+                    "id", "kind", "enabled", "amount", "value"}:
+                return False
+            filter_id = scene_filter.get("id")
+            filter_kind = scene_filter.get("kind")
+            amount = scene_filter.get("amount")
+            value = scene_filter.get("value")
+            if not isinstance(filter_id, str) or not ID_RE.fullmatch(filter_id) or \
+                    filter_id in filter_ids or filter_kind not in {
+                        "crop-pad", "opacity", "color-correction", "mask-blend",
+                        "lut", "scaling", "delay"} or \
+                    not isinstance(scene_filter.get("enabled"), bool) or \
+                    not isinstance(amount, (int, float)) or isinstance(amount, bool) or \
+                    not math.isfinite(amount) or not -10000 <= amount <= 10000 or \
+                    not isinstance(value, str) or len(value.encode("utf-8")) > 4096:
+                return False
+            filter_ids.add(filter_id)
+            if filter_kind in {"mask-blend", "lut"} and (
+                    not value.startswith("/assets/") or ".." in value.split("/")):
+                return False
+            if filter_kind == "scaling":
+                match = re.fullmatch(r"([0-9]{2,4})x([0-9]{2,4})", value)
+                if not match or any(not 16 <= int(dimension) <= 8192 for dimension in match.groups()):
+                    return False
         if kind == "image":
             file_path = source.get("filePath")
             if not isinstance(file_path, str) or not file_path.startswith("/assets/") or ".." in file_path.split("/"):
                 return False
+        if kind == "nested" and (not isinstance(source.get("sceneId"), str) or
+                not ID_RE.fullmatch(source["sceneId"]) or source["sceneId"] == scene["id"]):
+            return False
     item_ids: set[str] = set()
     for item in items:
         if not isinstance(item, dict) or not set(item).issubset(item_fields):
@@ -747,6 +780,31 @@ def _shared_scene_valid(scene: object) -> bool:
     return True
 
 
+def _shared_scene_graph_valid(scenes: list[object]) -> bool:
+    """Require every nested reference to exist and cap expansion at two levels."""
+    by_id: dict[str, dict[str, object]] = {}
+    for scene in scenes:
+        if not isinstance(scene, dict) or scene["id"] in by_id:
+            return False
+        by_id[scene["id"]] = scene
+
+    graph: dict[str, set[str]] = {}
+    for scene_id, scene in by_id.items():
+        graph[scene_id] = {
+            source["sceneId"] for source in scene["sources"]
+            if source.get("kind") == "nested"
+        }
+        if any(target not in by_id for target in graph[scene_id]):
+            return False
+
+    def visit(scene_id: str, path: tuple[str, ...]) -> bool:
+        if scene_id in path or len(path) > 2:
+            return False
+        return all(visit(target, path + (scene_id,)) for target in graph[scene_id])
+
+    return all(visit(scene_id, ()) for scene_id in by_id)
+
+
 def shared_scenes() -> list[object]:
     try:
         value = unique_json(SCENES_PATH.read_text(encoding="utf-8"))
@@ -762,7 +820,8 @@ def shared_scenes() -> list[object]:
     if len(encoded.encode("utf-8")) > MAX_BODY or re.search(
             r'(?i)(rtsp|rtsps|https?)://|"(?:password|credentials?|secret|token|endpoint|url|rtspUrl)"\s*:',
             encoded) or \
-            any(not _shared_scene_valid(scene) for scene in value["scenes"]):
+            any(not _shared_scene_valid(scene) for scene in value["scenes"]) or \
+            not _shared_scene_graph_valid(value["scenes"]):
         raise ApiError(503, "shared_scenes_unavailable", "shared Scene document is unsafe")
     return value["scenes"]
 
@@ -823,6 +882,55 @@ def _profile_for_client(client_id: str, camera_id: str, profile_id: str) -> tupl
     if profile is None:
         raise ApiError(404, "profile_not_found", "profile is unknown")
     return camera, profile
+
+
+def require_camera_permission(client_id: str, camera_id: str, permission: str) -> None:
+    with connect() as database:
+        grant = database.execute("SELECT permissions_json FROM grants WHERE client_id=? AND camera_id=?",
+                                 (client_id, camera_id)).fetchone()
+    if grant is None or permission not in json.loads(grant["permissions_json"]):
+        raise ApiError(403, "camera_permission_rejected",
+                       f"client is not granted {permission} permission for this camera")
+
+
+def registry_request(method: str, camera_id: str, operation: str,
+                     payload: object | None = None) -> object:
+    path = f"/cameras/{camera_id}/onvif/{operation}"
+    body = None if payload is None else json.dumps(
+        payload, separators=(",", ":"), allow_nan=False).encode("utf-8")
+    request = Request(f"http://127.0.0.1:8092{path}", data=body, method=method,
+                      headers={"Accept": "application/json", **(
+                          {"Content-Type": "application/json"} if body is not None else {})})
+    try:
+        with urlopen(request, timeout=12) as response:
+            encoded = response.read(MAX_REGISTRY_RESPONSE + 1)
+            if len(encoded) > MAX_REGISTRY_RESPONSE:
+                raise ApiError(502, "device_operation_failed", "device operation response is too large")
+            value = unique_json(encoded.decode("utf-8"))
+            if not isinstance(value, dict):
+                raise ValueError("registry response is not an object")
+            return value
+    except HTTPError as error:
+        status = error.code if error.code in {400, 401, 404, 409, 429, 502, 503} else 502
+        raise ApiError(status, "device_operation_failed", "camera operation failed safely") from error
+    except (URLError, TimeoutError, UnicodeDecodeError, ValueError, OSError) as error:
+        raise ApiError(503, "device_operation_unavailable",
+                       "camera operation service is unavailable") from error
+
+
+def client_camera_operation(client_id: str, camera_id: str, operation: str,
+                            payload: object | None) -> object:
+    permission = "snapshot" if operation == "snapshot" else "talk" if operation == "talk" else "ptz"
+    require_camera_permission(client_id, camera_id, permission)
+    if operation == "presets":
+        return registry_request("GET", camera_id, operation)
+    if operation == "snapshot":
+        if payload not in (None, {}):
+            raise ApiError(400, "invalid_device_operation", "snapshot does not accept a request body")
+        return registry_request("POST", camera_id, operation)
+    if not isinstance(payload, dict):
+        raise ApiError(400, "invalid_device_operation", "camera operation requires a JSON object")
+    return registry_request("POST", camera_id, operation, payload)
 
 
 def _decoder(platform: str, hardware: list[str], codec: str) -> str:
@@ -1076,6 +1184,19 @@ class Handler(BaseHTTPRequestHandler):
             return 200, get_media_plan(client["id"], match.group(1))
         if path == "/client/audit/batch" and self.command == "POST":
             return 200, audit_batch(client["id"], self.payload())
+        operation_match = re.fullmatch(
+            r"/client/cameras/([A-Za-z0-9._-]{1,64})/(ptz|presets|snapshot|talk)", path)
+        if operation_match:
+            operation = operation_match.group(2)
+            if operation == "presets" and self.command == "GET":
+                return 200, client_camera_operation(
+                    client["id"], operation_match.group(1), operation, None)
+            if operation in {"ptz", "snapshot", "talk"} and self.command == "POST":
+                payload = {} if operation == "snapshot" and self.headers.get("Content-Length", "0") == "0" \
+                    else self.payload()
+                status = 202 if operation == "talk" else 200
+                return status, client_camera_operation(
+                    client["id"], operation_match.group(1), operation, payload)
         raise ApiError(404, "not_found", "resource not found")
 
     def handle_method(self) -> None:

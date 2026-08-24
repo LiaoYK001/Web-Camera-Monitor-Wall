@@ -1,9 +1,11 @@
 #pragma once
 
 #include "webobs/client/grant_codec.hpp"
-#include "webobs/client/media_pipeline.hpp"
 #include "webobs/client/scene_model.hpp"
 #include "webobs/client/secure_store.hpp"
+#include "webobs/client/stream_session_model.hpp"
+#include "webobs/client/studio_workspace.hpp"
+#include "webobs/client/talk_capture.hpp"
 #include "webobs/client/topology_plan.hpp"
 
 #include <QNetworkAccessManager>
@@ -26,8 +28,14 @@ class ClientController final : public QObject {
     Q_PROPERTY(QString liveTopology READ liveTopology NOTIFY topologyChanged)
     Q_PROPERTY(QString archiveTopology READ archiveTopology NOTIFY topologyChanged)
     Q_PROPERTY(QString fallbackReason READ fallbackReason NOTIFY topologyChanged)
-    Q_PROPERTY(MediaPipeline* media READ media CONSTANT)
+    Q_PROPERTY(StreamSessionModel* gridStreams READ gridStreams CONSTANT)
+    Q_PROPERTY(StreamSessionModel* focusStreams READ focusStreams CONSTANT)
+    Q_PROPERTY(StreamSessionModel* studioPreviewStreams READ studioPreviewStreams CONSTANT)
+    Q_PROPERTY(StreamSessionModel* studioProgramStreams READ studioProgramStreams CONSTANT)
+    Q_PROPERTY(int gridCapacity READ gridCapacity NOTIFY gridChanged)
     Q_PROPERTY(SceneModel* scene READ scene CONSTANT)
+    Q_PROPERTY(StudioWorkspace* studio READ studio CONSTANT)
+    Q_PROPERTY(bool talkActive READ talkActive NOTIFY talkActiveChanged)
 
 public:
     explicit ClientController(QObject *parent = nullptr);
@@ -42,18 +50,48 @@ public:
     QString liveTopology() const;
     QString archiveTopology() const;
     QString fallbackReason() const;
-    MediaPipeline *media();
+    StreamSessionModel *gridStreams();
+    StreamSessionModel *focusStreams();
+    StreamSessionModel *studioPreviewStreams();
+    StreamSessionModel *studioProgramStreams();
+    int gridCapacity() const;
     SceneModel *scene();
+    StudioWorkspace *studio();
+    bool talkActive() const;
 
     Q_INVOKABLE void enroll(const QString &name);
     Q_INVOKABLE void pollEnrollment();
     Q_INVOKABLE void bootstrap();
-    Q_INVOKABLE void attachVideoItem(QObject *item);
     Q_INVOKABLE void startCamera(const QString &cameraId, const QString &profileId,
                                  const QString &policy = QStringLiteral("auto"));
+    Q_INVOKABLE void activateGrid(int capacity);
+    Q_INVOKABLE void focusCamera(const QString &cameraId);
+    Q_INVOKABLE void closeFocus();
+    Q_INVOKABLE void attachStream(bool focused, const QString &sessionId, QObject *videoItem);
+    Q_INVOKABLE void removeStream(bool focused, const QString &sessionId);
+    Q_INVOKABLE QString startStudioCamera(bool program, const QString &cameraId,
+                                          const QString &profileId);
+    Q_INVOKABLE void attachStudioStream(bool program, const QString &sessionId, QObject *videoItem);
+    Q_INVOKABLE void removeStudioStream(bool program, const QString &sessionId);
+    Q_INVOKABLE void setStudioActive(bool active);
     Q_INVOKABLE void stopAll();
     Q_INVOKABLE void revokeLocalIdentity();
-    Q_INVOKABLE bool startManualRecording(const QString &absoluteMkvPath);
+    Q_INVOKABLE bool startManualRecording(bool focused, const QString &sessionId,
+                                          const QString &absoluteMkvPath);
+    Q_INVOKABLE void stopManualRecording(bool focused, const QString &sessionId);
+    Q_INVOKABLE void setListening(bool focused, const QString &sessionId, bool enabled);
+    Q_INVOKABLE bool cameraHasPermission(const QString &cameraId, const QString &permission) const;
+    Q_INVOKABLE void movePtz(const QString &cameraId, qreal x, qreal y, qreal zoom = 0);
+    Q_INVOKABLE void stopPtz(const QString &cameraId);
+    Q_INVOKABLE void saveSnapshot(const QString &cameraId, const QString &absolutePath);
+    Q_INVOKABLE void saveLocalScreenshot(const QString &cameraId, QObject *visualItem,
+                                         const QString &absolutePath);
+    Q_INVOKABLE QString suggestedCapturePath(const QString &extension) const;
+    Q_INVOKABLE void startTalk(const QString &cameraId);
+    Q_INVOKABLE void finishTalk();
+    Q_INVOKABLE void cancelTalk();
+    Q_INVOKABLE void exportMkvToMp4(const QString &absoluteMkvPath,
+                                    const QString &absoluteMp4Path);
     Q_INVOKABLE void setMonitoringFullscreen(bool active);
 
 signals:
@@ -62,7 +100,10 @@ signals:
     void enrollmentChanged();
     void bootstrapChanged();
     void topologyChanged();
+    void gridChanged();
     void userError(const QString &message);
+    void operationCompleted(const QString &message);
+    void talkActiveChanged();
 
 private:
     using ReplyHandler = std::function<void(int, const QJsonObject &)>;
@@ -71,9 +112,17 @@ private:
     void bootstrap_internal(bool quiet_network_errors);
     void persist_identity();
     void set_state(const QString &value, const QString &status);
-    void submit_media_plan(const QString &reachability);
+    void submit_media_plan(StreamSessionModel *model, const QString &session_id,
+                           const QString &reachability);
+    void camera_operation(const QString &camera_id, const QString &operation,
+                          const QJsonObject *body, ReplyHandler handler);
     QVariantMap camera(const QString &camera_id) const;
     QVariantMap profile(const QVariantMap &camera, const QString &profile_id) const;
+    QVariantMap profile_for_role(const QVariantMap &camera, const QString &role) const;
+    MediaEndpoint media_endpoint(const QVariantMap &camera, const QVariantMap &profile) const;
+    QString prepare_stream(StreamSessionModel &model, const QVariantMap &camera,
+                           const QVariantMap &profile, const QString &policy);
+    static QString network_class(const QString &endpoint);
     static QString platform();
     static QStringList hardware_decoders();
 
@@ -81,8 +130,12 @@ private:
     SecureStore secure_store_;
     DeviceIdentity identity_;
     GrantDocument grant_;
-    MediaPipeline media_;
-    SceneModel scene_;
+    StreamSessionModel grid_streams_{16, false};
+    StreamSessionModel focus_streams_{1, true};
+    StreamSessionModel studio_preview_streams_{64, false, nullptr, true};
+    StreamSessionModel studio_program_streams_{64, false, nullptr, true};
+    StudioWorkspace studio_;
+    TalkCapture talk_capture_;
     QTimer enrollment_poll_;
     QTimer online_validation_;
     QTimer grant_expiry_;
@@ -91,12 +144,11 @@ private:
     QString pairing_code_;
     QString state_ = QStringLiteral("unpaired");
     QString status_text_ = QStringLiteral("Not paired");
-    QString current_camera_id_;
-    QString current_profile_id_;
-    QString current_policy_ = QStringLiteral("auto");
+    int grid_capacity_ = 4;
     QString live_topology_ = QStringLiteral("off");
     QString archive_topology_ = QStringLiteral("off");
     QString fallback_reason_;
+    QString talk_camera_id_;
 };
 
 }

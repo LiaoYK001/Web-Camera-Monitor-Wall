@@ -1,9 +1,13 @@
 #pragma once
 
 #include <QObject>
+#include <QElapsedTimer>
+#include <QPointer>
 #include <QTimer>
 
 #include <gst/gst.h>
+
+#include <atomic>
 
 namespace webobs::client {
 
@@ -23,6 +27,10 @@ class MediaPipeline final : public QObject {
     Q_PROPERTY(bool hardwareDecode READ hardwareDecode NOTIFY diagnosticsChanged)
     Q_PROPERTY(QString fallbackReason READ fallbackReason NOTIFY diagnosticsChanged)
     Q_PROPERTY(bool recording READ recording NOTIFY recordingChanged)
+    Q_PROPERTY(bool muted READ muted NOTIFY mutedChanged)
+    Q_PROPERTY(quint64 framesDecoded READ framesDecoded NOTIFY statisticsChanged)
+    Q_PROPERTY(quint64 framesDropped READ framesDropped NOTIFY statisticsChanged)
+    Q_PROPERTY(double currentFps READ currentFps NOTIFY statisticsChanged)
 
 public:
     explicit MediaPipeline(QObject *parent = nullptr);
@@ -30,6 +38,7 @@ public:
 
     static bool initialize(QString &error);
     void set_video_item(QObject *item);
+    Q_INVOKABLE void setVideoItem(QObject *item) { set_video_item(item); }
     bool start(const MediaEndpoint &endpoint, QString &error);
     Q_INVOKABLE void stop();
     bool start_recording(const QString &path, QString &error);
@@ -41,11 +50,17 @@ public:
     [[nodiscard]] bool hardwareDecode() const;
     [[nodiscard]] QString fallbackReason() const;
     [[nodiscard]] bool recording() const;
+    [[nodiscard]] bool muted() const;
+    [[nodiscard]] quint64 framesDecoded() const;
+    [[nodiscard]] quint64 framesDropped() const;
+    [[nodiscard]] double currentFps() const;
 
 signals:
     void stateChanged();
     void diagnosticsChanged();
     void recordingChanged();
+    void mutedChanged();
+    void statisticsChanged();
     void directReady();
     void directFailed(const QString &reason);
 
@@ -53,7 +68,8 @@ private:
     static void pad_added(GstElement *element, GstPad *pad, gpointer context);
     static void deep_element_added(GstBin *bin, GstBin *sub_bin, GstElement *element,
                                    gpointer context);
-    static void first_video_buffer(GstElement *identity, GstBuffer *buffer, gpointer context);
+    static GstPadProbeReturn video_buffer_probe(GstPad *pad, GstPadProbeInfo *info,
+                                                gpointer context);
     void set_state(const QString &state);
     void poll_bus();
     void fail(const QString &reason);
@@ -61,7 +77,7 @@ private:
     GstElement *make(const char *factory, const char *name, QString &error);
 
     MediaEndpoint endpoint_;
-    QObject *video_item_ = nullptr;
+    QPointer<QObject> video_item_;
     GstElement *pipeline_ = nullptr;
     GstElement *source_ = nullptr;
     GstElement *decoder_bin_ = nullptr;
@@ -77,9 +93,16 @@ private:
     QTimer direct_timeout_;
     QString state_ = QStringLiteral("idle");
     QString decoder_ = QStringLiteral("not-started");
+    QString decoder_factory_;
     QString fallback_reason_;
     bool hardware_decode_ = false;
+    bool software_fallback_forced_ = false;
     bool muted_ = true;
+    std::atomic<quint64> frames_decoded_{0};
+    std::atomic<quint64> frames_dropped_{0};
+    QElapsedTimer statistics_clock_;
+    quint64 last_reported_frames_ = 0;
+    double current_fps_ = 0;
 };
 
 }

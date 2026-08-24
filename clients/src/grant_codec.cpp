@@ -168,10 +168,12 @@ bool GrantCodec::initialize(QString &error)
         error = QStringLiteral("libsodium initialization failed");
         return false;
     }
+#if WEBOBS_LOCKED_RUNTIME
     if (QString::fromLatin1(sodium_version_string()) != QStringLiteral(WEBOBS_SODIUM_VERSION)) {
         error = QStringLiteral("libsodium runtime version does not match the locked build");
         return false;
     }
+#endif
     return true;
 }
 

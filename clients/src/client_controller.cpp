@@ -1,11 +1,27 @@
 #include "webobs/client/client_controller.hpp"
 
 #include <QDateTime>
+#include <QCryptographicHash>
+#include <QDir>
+#include <QFile>
+#include <QFileInfo>
 #include <QGuiApplication>
 #include <QJsonArray>
 #include <QJsonDocument>
+#include <QHostAddress>
+#include <QNetworkInterface>
 #include <QNetworkReply>
+#include <QRegularExpression>
+#include <QProcess>
+#include <QQuickItem>
+#include <QQuickItemGrabResult>
+#include <QSaveFile>
+#include <QStandardPaths>
 #include <QUrl>
+
+#include <limits>
+#include <algorithm>
+#include <utility>
 
 #if defined(Q_OS_ANDROID)
 #include <QJniObject>
@@ -36,7 +52,7 @@ ClientController::ClientController(QObject *parent) : QObject(parent)
                 const QJsonDocument scenes = QJsonDocument::fromJson(
                     identity_.latest_shared_scenes, &scene_error);
                 if (scene_error.error != QJsonParseError::NoError || !scenes.isArray() ||
-                    (!scenes.array().isEmpty() && !scene_.load(scenes.array().first().toObject())))
+                    (!scenes.array().isEmpty() && !studio_.load(scenes.array())))
                     error = QStringLiteral("stored shared Scene cache is invalid");
             }
             if (error.isEmpty() && grant_.expires_at > QDateTime::currentSecsSinceEpoch()) {
@@ -69,19 +85,56 @@ ClientController::ClientController(QObject *parent) : QObject(parent)
         grant_expiry_.start();
     if (restored_active_grant && !server_url_.isEmpty())
         online_validation_.start();
-    connect(&media_, &MediaPipeline::directReady, this, [this] {
-        submit_media_plan(QStringLiteral("reachable"));
-    });
-    connect(&media_, &MediaPipeline::directFailed, this, [this](const QString &reason) {
-        fallback_reason_ = reason;
-        emit topologyChanged();
-        submit_media_plan(QStringLiteral("unreachable"));
-    });
+    const auto wire_streams = [this](StreamSessionModel &model) {
+        StreamSessionModel *stream_model = &model;
+        connect(&model, &StreamSessionModel::directResult, this,
+            [this, stream_model](const QString &session_id, bool reachable, const QString &reason) {
+                if (!reachable) {
+                    fallback_reason_ = reason;
+                    emit topologyChanged();
+                }
+                submit_media_plan(stream_model, session_id,
+                                  reachable ? QStringLiteral("reachable") :
+                                              QStringLiteral("unreachable"));
+            });
+        connect(&model, &StreamSessionModel::userError, this, &ClientController::userError);
+    };
+    wire_streams(grid_streams_);
+    wire_streams(focus_streams_);
+    wire_streams(studio_preview_streams_);
+    wire_streams(studio_program_streams_);
     connect(qGuiApp, &QGuiApplication::applicationStateChanged, this, [this](Qt::ApplicationState state) {
         if (state != Qt::ApplicationActive) {
-            stopAll();
+            cancelTalk();
+            grid_streams_.suspend();
+            focus_streams_.suspend();
+            studio_preview_streams_.suspend();
+            studio_program_streams_.suspend();
             setMonitoringFullscreen(false);
+        } else if (grant_.expires_at > QDateTime::currentSecsSinceEpoch()) {
+            grid_streams_.resume();
+            focus_streams_.resume();
+            studio_preview_streams_.resume();
+            studio_program_streams_.resume();
         }
+    });
+    connect(&talk_capture_, &TalkCapture::activeChanged, this, &ClientController::talkActiveChanged);
+    connect(&talk_capture_, &TalkCapture::failed, this, &ClientController::userError);
+    connect(&talk_capture_, &TalkCapture::captured, this, [this](const QByteArray &wav) {
+        if (talk_camera_id_.isEmpty())
+            return;
+        QJsonObject body{{QStringLiteral("operation"), QStringLiteral("start")},
+            {QStringLiteral("contentType"), QStringLiteral("audio/wav")},
+            {QStringLiteral("data"), QString::fromLatin1(wav.toBase64())}};
+        const QString camera_id = std::exchange(talk_camera_id_, {});
+        camera_operation(camera_id, QStringLiteral("talk"), &body,
+            [this](int status, const QJsonObject &) {
+                if (status != 200) {
+                    emit userError(QStringLiteral("Push-to-Talk audio was rejected"));
+                    return;
+                }
+                emit operationCompleted(QStringLiteral("Push-to-Talk audio accepted (maximum 10 seconds)"));
+            });
     });
 }
 
@@ -105,6 +158,35 @@ QStringList ClientController::hardware_decoders()
 #else
     return {QStringLiteral("vaapi")};
 #endif
+}
+
+QString ClientController::network_class(const QString &endpoint)
+{
+    const QString host = QUrl(endpoint).host().toLower();
+    QHostAddress address;
+    if (address.setAddress(host)) {
+        bool ipv4 = false;
+        const quint32 value = address.toIPv4Address(&ipv4);
+        if (address.isLoopback() || address.isLinkLocal() ||
+            (ipv4 && ((value & 0xff000000U) == 0x0a000000U ||
+                      (value & 0xfff00000U) == 0xac100000U ||
+                      (value & 0xffff0000U) == 0xc0a80000U)) ||
+            (!ipv4 && (host.startsWith(QStringLiteral("fc")) ||
+                       host.startsWith(QStringLiteral("fd")))))
+            return QStringLiteral("lan");
+    } else if (host == QStringLiteral("localhost") || host.endsWith(QStringLiteral(".local")) ||
+               (!host.isEmpty() && !host.contains('.'))) {
+        return QStringLiteral("lan");
+    }
+    for (const QNetworkInterface &interface : QNetworkInterface::allInterfaces()) {
+        const QString name = (interface.name() + QLatin1Char(' ') +
+                              interface.humanReadableName()).toLower();
+        if (interface.flags().testFlag(QNetworkInterface::IsUp) &&
+            (name.contains(QStringLiteral("wireguard")) || name.contains(QStringLiteral("tailscale")) ||
+             name.startsWith(QStringLiteral("tun")) || name.startsWith(QStringLiteral("wg"))))
+            return QStringLiteral("vpn");
+    }
+    return QStringLiteral("wan");
 }
 
 void ClientController::request(const QByteArray &method, const QString &path, const QJsonObject *body,
@@ -248,7 +330,7 @@ void ClientController::bootstrap_internal(bool quiet_network_errors)
         }
         const QJsonArray shared_scenes = response.value("sharedScenes").toArray();
         if (response.value("changed").toBool()) {
-            if (!shared_scenes.isEmpty() && !scene_.load(shared_scenes.first().toObject())) {
+            if (!shared_scenes.isEmpty() && !studio_.load(shared_scenes)) {
                 emit userError(QStringLiteral("Control server returned an invalid shared Scene"));
                 return;
             }
@@ -282,6 +364,57 @@ QVariantMap ClientController::profile(const QVariantMap &camera, const QString &
     return {};
 }
 
+QVariantMap ClientController::profile_for_role(const QVariantMap &camera, const QString &role) const
+{
+    QVariantMap fallback;
+    qint64 fallback_pixels = role == QStringLiteral("main") ? -1 : std::numeric_limits<qint64>::max();
+    for (const QVariant &value : camera.value("profiles").toList()) {
+        const QVariantMap candidate = value.toMap();
+        if (candidate.value("role").toString() == role)
+            return candidate;
+        const qint64 pixels = candidate.value("width").toLongLong() *
+                              candidate.value("height").toLongLong();
+        if (fallback.isEmpty() || (role == QStringLiteral("main") ? pixels > fallback_pixels :
+                                                                    pixels < fallback_pixels)) {
+            fallback = candidate;
+            fallback_pixels = pixels;
+        }
+    }
+    return fallback;
+}
+
+MediaEndpoint ClientController::media_endpoint(const QVariantMap &selected_camera,
+                                               const QVariantMap &selected_profile) const
+{
+    const QVariantMap credentials = selected_camera.value("credentials").toMap();
+    MediaEndpoint endpoint;
+    endpoint.adapter = selected_profile.value("adapter").toString();
+    if (endpoint.adapter.isEmpty())
+        endpoint.adapter = selected_camera.value("adapter").toString();
+    endpoint.endpoint = selected_profile.value("endpoint").toString();
+    endpoint.video_codec = selected_profile.value("videoCodec").toString().toLower();
+    endpoint.username = credentials.value("username").toString();
+    endpoint.password = credentials.value("password").toString();
+    return endpoint;
+}
+
+QString ClientController::prepare_stream(StreamSessionModel &model, const QVariantMap &selected_camera,
+                                         const QVariantMap &selected_profile, const QString &policy)
+{
+    if (selected_camera.isEmpty() || selected_profile.isEmpty()) {
+        emit userError(QStringLiteral("Camera/Profile is outside this device grant"));
+        return {};
+    }
+    QString error;
+    const QString session_id = model.prepare(
+        selected_camera.value("cameraId").toString(), selected_profile.value("id").toString(),
+        selected_camera.value("name").toString(), policy,
+        media_endpoint(selected_camera, selected_profile), error);
+    if (!error.isEmpty())
+        emit userError(error);
+    return session_id;
+}
+
 void ClientController::startCamera(const QString &camera_id, const QString &profile_id,
                                    const QString &policy)
 {
@@ -290,53 +423,116 @@ void ClientController::startCamera(const QString &camera_id, const QString &prof
         emit userError(QStringLiteral("Offline authorization expired; reconnect before playback"));
         return;
     }
-    const QVariantMap selected_camera = camera(camera_id);
-    const QVariantMap selected_profile = profile(selected_camera, profile_id);
-    if (selected_camera.isEmpty() || selected_profile.isEmpty()) {
-        emit userError(QStringLiteral("Camera/Profile is outside this device grant"));
-        return;
-    }
-    const QVariantMap credentials = selected_camera.value("credentials").toMap();
-    QString selected_adapter = selected_profile.value("adapter").toString();
-    if (selected_adapter.isEmpty())
-        selected_adapter = selected_camera.value("adapter").toString();
-    MediaEndpoint endpoint;
-    endpoint.adapter = selected_adapter;
-    endpoint.endpoint = selected_profile.value("endpoint").toString();
-    endpoint.video_codec = selected_profile.value("videoCodec").toString();
-    endpoint.username = credentials.value("username").toString();
-    endpoint.password = credentials.value("password").toString();
-    current_camera_id_ = camera_id;
-    current_profile_id_ = profile_id;
-    current_policy_ = policy;
+    focus_streams_.clear();
     live_topology_ = QStringLiteral("probing-true-direct");
     archive_topology_ = QStringLiteral("unknown");
     fallback_reason_.clear();
     emit topologyChanged();
-    QString error;
-    if (!media_.start(endpoint, error)) {
-        fallback_reason_ = error;
-        emit topologyChanged();
-        submit_media_plan(QStringLiteral("unreachable"));
+    prepare_stream(focus_streams_, camera(camera_id), profile(camera(camera_id), profile_id), policy);
+}
+
+void ClientController::activateGrid(int capacity)
+{
+    if (!QList<int>{1, 4, 9, 16}.contains(capacity)) {
+        emit userError(QStringLiteral("Grid capacity must be 1, 4, 9, or 16"));
+        return;
+    }
+    if (grant_.expires_at <= QDateTime::currentSecsSinceEpoch()) {
+        emit userError(QStringLiteral("Offline authorization expired; reconnect before playback"));
+        return;
+    }
+    grid_streams_.clear();
+    grid_capacity_ = capacity;
+    int opened = 0;
+    for (const QVariant &value : grant_.cameras) {
+        if (opened >= capacity)
+            break;
+        const QVariantMap selected_camera = value.toMap();
+        const QVariantMap selected_profile = profile_for_role(selected_camera, QStringLiteral("sub"));
+        if (!selected_profile.isEmpty() &&
+            !prepare_stream(grid_streams_, selected_camera, selected_profile, QStringLiteral("auto")).isEmpty())
+            ++opened;
+    }
+    emit gridChanged();
+}
+
+void ClientController::focusCamera(const QString &camera_id)
+{
+    const QVariantMap selected_camera = camera(camera_id);
+    prepare_stream(focus_streams_, selected_camera,
+                   profile_for_role(selected_camera, QStringLiteral("main")), QStringLiteral("auto"));
+}
+
+void ClientController::closeFocus() { focus_streams_.clear(); }
+
+void ClientController::attachStream(bool focused, const QString &session_id, QObject *video_item)
+{
+    (focused ? focus_streams_ : grid_streams_).attach(session_id, video_item);
+}
+
+void ClientController::removeStream(bool focused, const QString &session_id)
+{
+    (focused ? focus_streams_ : grid_streams_).remove(session_id);
+}
+
+QString ClientController::startStudioCamera(bool program, const QString &camera_id,
+                                            const QString &profile_id)
+{
+    if (grant_.expires_at <= QDateTime::currentSecsSinceEpoch()) {
+        emit userError(QStringLiteral("Offline authorization expired; reconnect before playback"));
+        return {};
+    }
+    const QVariantMap selected_camera = camera(camera_id);
+    return prepare_stream(program ? studio_program_streams_ : studio_preview_streams_,
+                          selected_camera, profile(selected_camera, profile_id),
+                          QStringLiteral("true-direct-only"));
+}
+
+void ClientController::attachStudioStream(bool program, const QString &session_id, QObject *video_item)
+{
+    (program ? studio_program_streams_ : studio_preview_streams_).attach(session_id, video_item);
+}
+
+void ClientController::removeStudioStream(bool program, const QString &session_id)
+{
+    (program ? studio_program_streams_ : studio_preview_streams_).remove(session_id);
+}
+
+void ClientController::setStudioActive(bool active)
+{
+    if (active) {
+        grid_streams_.suspend();
+        focus_streams_.suspend();
+        studio_preview_streams_.resume();
+        studio_program_streams_.resume();
+    } else {
+        studio_preview_streams_.suspend();
+        studio_program_streams_.suspend();
+        grid_streams_.resume();
+        focus_streams_.resume();
     }
 }
 
-void ClientController::submit_media_plan(const QString &reachability)
+void ClientController::submit_media_plan(StreamSessionModel *model, const QString &session_id,
+                                         const QString &reachability)
 {
-    const QVariantMap selected_camera = camera(current_camera_id_);
-    const QVariantMap selected_profile = profile(selected_camera, current_profile_id_);
-    QString selected_adapter = selected_profile.value("adapter").toString();
-    if (selected_adapter.isEmpty())
-        selected_adapter = selected_camera.value("adapter").toString();
-    QJsonObject body{{"cameraId", current_camera_id_}, {"profileId", current_profile_id_},
-        {"policy", current_policy_}, {"receiverKind", "native"}, {"networkClass", "lan"},
+    if (!model)
+        return;
+    const std::optional<StreamPlanContext> selected = model->context(session_id);
+    if (!selected)
+        return;
+    QJsonObject body{{"cameraId", selected->camera_id}, {"profileId", selected->profile_id},
+        {"policy", selected->policy}, {"receiverKind", "native"},
+        {"networkClass", network_class(selected->endpoint)},
         {"reachability", reachability},
-        {"protocols", QJsonArray{selected_adapter}},
-        {"videoCodecs", QJsonArray{selected_profile.value("videoCodec").toString()}},
+        {"protocols", QJsonArray{selected->adapter}},
+        {"videoCodecs", QJsonArray{selected->video_codec}},
         {"hardwareDecoders", QJsonArray::fromStringList(hardware_decoders())},
         {"requiresComposite", false}};
     request("POST", QStringLiteral("/api/v2/media-plans"), &body, true,
-            [this](int status, const QJsonObject &response) {
+            [this, model, session_id, policy = selected->policy](int status, const QJsonObject &response) {
+        if (!model->context(session_id))
+            return;
         QString error;
         const TopologyPlan plan = TopologyPlan::from_json(response, error);
         if (!error.isEmpty()) {
@@ -346,10 +542,11 @@ void ClientController::submit_media_plan(const QString &reachability)
         live_topology_ = plan.topology;
         archive_topology_ = plan.archive_topology;
         fallback_reason_ = plan.fallback_reason;
+        model->set_plan(session_id, plan.topology, plan.archive_topology, plan.fallback_reason);
         emit topologyChanged();
         if (status == 409 || !plan.true_direct()) {
-            media_.stop();
-            if (current_policy_ == QStringLiteral("true-direct-only"))
+            model->halt(session_id);
+            if (policy == QStringLiteral("true-direct-only"))
                 emit userError(QStringLiteral("True Direct Only blocked fallback: %1").arg(plan.fallback_reason));
             else
                 emit userError(QStringLiteral("Fallback required: %1").arg(plan.fallback_reason));
@@ -357,8 +554,16 @@ void ClientController::submit_media_plan(const QString &reachability)
     });
 }
 
-void ClientController::attachVideoItem(QObject *item) { media_.set_video_item(item); }
-void ClientController::stopAll() { media_.stop(); live_topology_ = QStringLiteral("off"); emit topologyChanged(); }
+void ClientController::stopAll()
+{
+    cancelTalk();
+    grid_streams_.clear();
+    focus_streams_.clear();
+    studio_preview_streams_.clear();
+    studio_program_streams_.clear();
+    live_topology_ = QStringLiteral("off");
+    emit topologyChanged();
+}
 
 void ClientController::revokeLocalIdentity()
 {
@@ -373,13 +578,232 @@ void ClientController::revokeLocalIdentity()
     emit bootstrapChanged();
 }
 
-bool ClientController::startManualRecording(const QString &path)
+bool ClientController::startManualRecording(bool focused, const QString &session_id,
+                                            const QString &path)
 {
+    const auto context = (focused ? focus_streams_ : grid_streams_).context(session_id);
+    if (!context || !cameraHasPermission(context->camera_id, QStringLiteral("record-local"))) {
+        emit userError(QStringLiteral("This device grant does not permit local recording"));
+        return false;
+    }
+    return (focused ? focus_streams_ : grid_streams_).startRecording(session_id, path);
+}
+
+void ClientController::stopManualRecording(bool focused, const QString &session_id)
+{
+    (focused ? focus_streams_ : grid_streams_).stopRecording(session_id);
+}
+
+void ClientController::setListening(bool focused, const QString &session_id, bool enabled)
+{
+    (focused ? focus_streams_ : grid_streams_).setMuted(session_id, !enabled);
+}
+
+bool ClientController::cameraHasPermission(const QString &camera_id, const QString &permission) const
+{
+    static const QStringList allowed{QStringLiteral("view"), QStringLiteral("ptz"),
+        QStringLiteral("talk"), QStringLiteral("snapshot"), QStringLiteral("record-local")};
+    if (!allowed.contains(permission))
+        return false;
+    const QVariantList permissions = camera(camera_id).value(QStringLiteral("permissions")).toList();
+    return std::any_of(permissions.begin(), permissions.end(), [&permission](const QVariant &value) {
+        return value.toString() == permission;
+    });
+}
+
+void ClientController::camera_operation(const QString &camera_id, const QString &operation,
+                                        const QJsonObject *body, ReplyHandler handler)
+{
+    if (camera_id.isEmpty() || !QRegularExpression(QStringLiteral("^[A-Za-z0-9._-]{1,64}$"))
+                                    .match(camera_id).hasMatch()) {
+        emit userError(QStringLiteral("Camera ID is invalid"));
+        return;
+    }
+    const QByteArray method = operation == QStringLiteral("presets") ? "GET" : "POST";
+    request(method, QStringLiteral("/api/v2/client/cameras/%1/%2").arg(camera_id, operation),
+            body, true, std::move(handler));
+}
+
+void ClientController::movePtz(const QString &camera_id, qreal x, qreal y, qreal zoom)
+{
+    if (!cameraHasPermission(camera_id, QStringLiteral("ptz"))) {
+        emit userError(QStringLiteral("This device grant does not permit PTZ"));
+        return;
+    }
+    QJsonObject body{{QStringLiteral("operation"), QStringLiteral("continuous")},
+        {QStringLiteral("x"), std::clamp(x, -1.0, 1.0)},
+        {QStringLiteral("y"), std::clamp(y, -1.0, 1.0)},
+        {QStringLiteral("zoom"), std::clamp(zoom, -1.0, 1.0)},
+        {QStringLiteral("durationMs"), 500}};
+    camera_operation(camera_id, QStringLiteral("ptz"), &body,
+        [this](int status, const QJsonObject &) {
+            if (status < 200 || status >= 300)
+                emit userError(QStringLiteral("PTZ command was rejected"));
+        });
+}
+
+void ClientController::stopPtz(const QString &camera_id)
+{
+    if (!cameraHasPermission(camera_id, QStringLiteral("ptz")))
+        return;
+    QJsonObject body{{QStringLiteral("operation"), QStringLiteral("stop")}};
+    camera_operation(camera_id, QStringLiteral("ptz"), &body,
+        [this](int status, const QJsonObject &) {
+            if (status < 200 || status >= 300)
+                emit userError(QStringLiteral("PTZ stop command was rejected"));
+        });
+}
+
+void ClientController::saveSnapshot(const QString &camera_id, const QString &absolute_path)
+{
+    if (!cameraHasPermission(camera_id, QStringLiteral("snapshot"))) {
+        emit userError(QStringLiteral("This device grant does not permit snapshots"));
+        return;
+    }
+    if (!QFileInfo(absolute_path).isAbsolute()) {
+        emit userError(QStringLiteral("Snapshot target must be an absolute path"));
+        return;
+    }
+    camera_operation(camera_id, QStringLiteral("snapshot"), nullptr,
+        [this, absolute_path](int status, const QJsonObject &response) {
+            if (status != 200) {
+                emit userError(QStringLiteral("Snapshot request was rejected"));
+                return;
+            }
+            const QString content_type = response.value(QStringLiteral("contentType")).toString();
+            const QByteArray encoded = response.value(QStringLiteral("data")).toString().toLatin1();
+            const QByteArray bytes = QByteArray::fromBase64(encoded, QByteArray::AbortOnBase64DecodingErrors);
+            const QByteArray expected = response.value(QStringLiteral("sha256")).toString().toLatin1();
+            const QByteArray observed = QCryptographicHash::hash(bytes, QCryptographicHash::Sha256).toHex();
+            if ((content_type != QStringLiteral("image/jpeg") && content_type != QStringLiteral("image/png")) ||
+                bytes.isEmpty() || bytes.size() > 16 * 1024 * 1024 || expected.size() != 64 ||
+                expected != observed) {
+                emit userError(QStringLiteral("Camera returned an invalid or corrupted snapshot"));
+                return;
+            }
+            QSaveFile file(absolute_path);
+            if (!file.open(QIODevice::WriteOnly) || file.write(bytes) != bytes.size() || !file.commit()) {
+                emit userError(QStringLiteral("Snapshot could not be saved to the selected path"));
+                return;
+            }
+            emit operationCompleted(QStringLiteral("Snapshot saved"));
+        });
+}
+
+void ClientController::saveLocalScreenshot(const QString &camera_id, QObject *visual_item,
+                                           const QString &absolute_path)
+{
+    if (!cameraHasPermission(camera_id, QStringLiteral("snapshot"))) {
+        emit userError(QStringLiteral("This device grant does not permit screenshots"));
+        return;
+    }
+    auto *item = qobject_cast<QQuickItem *>(visual_item);
+    const QFileInfo target(absolute_path);
+    const QString suffix = target.suffix().toLower();
+    if (!item || !target.isAbsolute() || target.exists() ||
+        !QStringList{QStringLiteral("jpg"), QStringLiteral("png")}.contains(suffix) ||
+        !QDir(target.absolutePath()).exists()) {
+        emit userError(QStringLiteral(
+            "Local screenshot requires a rendered item and a new absolute JPEG/PNG target"));
+        return;
+    }
+    const auto capture = item->grabToImage();
+    if (!capture) {
+        emit userError(QStringLiteral("The decoded video surface could not be captured"));
+        return;
+    }
+    connect(capture.data(), &QQuickItemGrabResult::ready, this,
+            [this, capture, path = target.absoluteFilePath()] {
+        const QImage image = capture->image();
+        if (image.isNull() || image.sizeInBytes() > 64 * 1024 * 1024 ||
+            !capture->saveToFile(path)) {
+            QFile::remove(path);
+            emit userError(QStringLiteral("The local decoded-frame screenshot could not be saved"));
+            return;
+        }
+        emit operationCompleted(QStringLiteral("Local decoded-frame screenshot saved"));
+    });
+}
+
+QString ClientController::suggestedCapturePath(const QString &extension) const
+{
+    const QString suffix = QStringList{QStringLiteral("mkv"), QStringLiteral("jpg"),
+        QStringLiteral("png"), QStringLiteral("mp4"), QStringLiteral("json")}.contains(extension.toLower()) ?
+        extension.toLower() : QStringLiteral("mkv");
+    QString directory = QStandardPaths::writableLocation(QStandardPaths::MoviesLocation);
+    if (directory.isEmpty())
+        directory = QDir::homePath();
+    return QDir(directory).filePath(QStringLiteral("webobs-%1.%2").arg(
+        QDateTime::currentDateTimeUtc().toString(QStringLiteral("yyyyMMddTHHmmssZ")), suffix));
+}
+
+bool ClientController::talkActive() const { return talk_capture_.active(); }
+
+void ClientController::startTalk(const QString &camera_id)
+{
+    if (!cameraHasPermission(camera_id, QStringLiteral("talk"))) {
+        emit userError(QStringLiteral("This device grant does not permit Push-to-Talk"));
+        return;
+    }
     QString error;
-    const bool started = media_.start_recording(path, error);
-    if (!started)
+    if (!talk_capture_.start(error)) {
         emit userError(error);
-    return started;
+        return;
+    }
+    talk_camera_id_ = camera_id;
+}
+
+void ClientController::finishTalk()
+{
+    talk_capture_.finish();
+}
+
+void ClientController::cancelTalk()
+{
+    talk_capture_.cancel();
+    talk_camera_id_.clear();
+}
+
+void ClientController::exportMkvToMp4(const QString &mkv_path, const QString &mp4_path)
+{
+    const QFileInfo input(mkv_path);
+    const QFileInfo output(mp4_path);
+    if (!input.isAbsolute() || !input.isFile() ||
+        input.suffix().compare(QStringLiteral("mkv"), Qt::CaseInsensitive) != 0 ||
+        !output.isAbsolute() || output.suffix().compare(QStringLiteral("mp4"), Qt::CaseInsensitive) != 0 ||
+        output.exists() || input.absoluteFilePath() == output.absoluteFilePath() ||
+        !QDir(output.absolutePath()).exists()) {
+        emit userError(QStringLiteral("MP4 export requires an existing absolute MKV and a new absolute MP4 target"));
+        return;
+    }
+    auto *process = new QProcess(this);
+    process->setProgram(QStringLiteral("gst-launch-1.0"));
+    process->setArguments({QStringLiteral("-q"), QStringLiteral("-e"),
+        QStringLiteral("filesrc"), QStringLiteral("location=%1").arg(input.absoluteFilePath()),
+        QStringLiteral("!"), QStringLiteral("matroskademux"), QStringLiteral("!"),
+        QStringLiteral("parsebin"), QStringLiteral("!"), QStringLiteral("mp4mux"),
+        QStringLiteral("faststart=true"), QStringLiteral("!"), QStringLiteral("filesink"),
+        QStringLiteral("location=%1").arg(output.absoluteFilePath())});
+    process->setProcessChannelMode(QProcess::ForwardedErrorChannel);
+    connect(process, &QProcess::finished, this,
+        [this, process, target = output.absoluteFilePath()](int exit_code, QProcess::ExitStatus status) {
+            if (status == QProcess::NormalExit && exit_code == 0) {
+                emit operationCompleted(QStringLiteral("Crash-safe MKV exported to MP4 without video re-encoding"));
+            } else {
+                QFile::remove(target);
+                emit userError(QStringLiteral("MP4 remux failed; the incomplete target was removed"));
+            }
+            process->deleteLater();
+        });
+    connect(process, &QProcess::errorOccurred, this,
+        [this, process, target = output.absoluteFilePath()](QProcess::ProcessError error) {
+            if (error == QProcess::FailedToStart) {
+                QFile::remove(target);
+                emit userError(QStringLiteral("GStreamer MP4 export helper is unavailable"));
+                process->deleteLater();
+            }
+        });
+    process->start();
 }
 
 void ClientController::setMonitoringFullscreen(bool active)
@@ -430,7 +854,12 @@ QVariantList ClientController::cameras() const { return grant_.cameras; }
 QString ClientController::liveTopology() const { return live_topology_; }
 QString ClientController::archiveTopology() const { return archive_topology_; }
 QString ClientController::fallbackReason() const { return fallback_reason_; }
-MediaPipeline *ClientController::media() { return &media_; }
-SceneModel *ClientController::scene() { return &scene_; }
+StreamSessionModel *ClientController::gridStreams() { return &grid_streams_; }
+StreamSessionModel *ClientController::focusStreams() { return &focus_streams_; }
+StreamSessionModel *ClientController::studioPreviewStreams() { return &studio_preview_streams_; }
+StreamSessionModel *ClientController::studioProgramStreams() { return &studio_program_streams_; }
+int ClientController::gridCapacity() const { return grid_capacity_; }
+SceneModel *ClientController::scene() { return studio_.preview(); }
+StudioWorkspace *ClientController::studio() { return &studio_; }
 
 }

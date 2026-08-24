@@ -310,6 +310,75 @@ class V2ClientControlTests(unittest.TestCase):
             service.shared_scenes()
         service.SCENES_PATH.write_text(original, encoding="utf-8")
 
+    def test_shared_scenes_accept_bounded_filters_and_two_nested_levels(self):
+        document = json.loads(service.SCENES_PATH.read_text(encoding="utf-8"))
+        root = document["scenes"][0]
+        root["sources"][0]["filters"] = [{
+            "id": "scale-sub", "kind": "scaling", "enabled": True,
+            "amount": 1, "value": "640x360",
+        }, {
+            "id": "dim-sub", "kind": "opacity", "enabled": True,
+            "amount": 0.8, "value": "",
+        }]
+        child = json.loads(json.dumps(root))
+        child.update({"id": "shared-child", "name": "Shared child"})
+        grandchild = json.loads(json.dumps(root))
+        grandchild.update({"id": "shared-grandchild", "name": "Shared grandchild"})
+        child["sources"].append({
+            "id": "nested-grandchild", "kind": "nested", "name": "Grandchild",
+            "sceneId": "shared-grandchild", "muted": True, "volume": 1,
+            "syncOffsetMs": 0, "monitoring": "off", "audioTrack": 1, "filters": [],
+        })
+        child["items"].append({
+            "id": "item-grandchild", "sourceId": "nested-grandchild",
+            "x": 0, "y": 0, "width": 320, "height": 180, "scaleMode": "contain",
+            "crop": {"top": 0, "right": 0, "bottom": 0, "left": 0},
+            "zIndex": 1, "visible": True, "locked": False, "groupId": "",
+            "rotation": 0, "opacity": 1, "blendMode": "normal",
+        })
+        root["sources"].append({
+            "id": "nested-child", "kind": "nested", "name": "Child",
+            "sceneId": "shared-child", "muted": True, "volume": 1,
+            "syncOffsetMs": 0, "monitoring": "off", "audioTrack": 1, "filters": [],
+        })
+        root["items"].append({
+            "id": "item-child", "sourceId": "nested-child",
+            "x": 320, "y": 0, "width": 320, "height": 180, "scaleMode": "contain",
+            "crop": {"top": 0, "right": 0, "bottom": 0, "left": 0},
+            "zIndex": 1, "visible": True, "locked": False, "groupId": "",
+            "rotation": 0, "opacity": 1, "blendMode": "normal",
+        })
+        document["scenes"] = [root, child, grandchild]
+        service.SCENES_PATH.write_text(json.dumps(document), encoding="utf-8")
+        self.assertEqual(len(service.shared_scenes()), 3)
+
+        document["scenes"][2]["sources"].append({
+            "id": "cycle-root", "kind": "nested", "name": "Cycle",
+            "sceneId": "shared-grid", "muted": True, "volume": 1,
+            "syncOffsetMs": 0, "monitoring": "off", "audioTrack": 1, "filters": [],
+        })
+        document["scenes"][2]["items"].append({
+            "id": "item-cycle", "sourceId": "cycle-root", "x": 0, "y": 180,
+            "width": 320, "height": 180, "scaleMode": "contain",
+            "crop": {"top": 0, "right": 0, "bottom": 0, "left": 0},
+            "zIndex": 1, "visible": True, "locked": False, "groupId": "",
+            "rotation": 0, "opacity": 1, "blendMode": "normal",
+        })
+        service.SCENES_PATH.write_text(json.dumps(document), encoding="utf-8")
+        with self.assertRaisesRegex(service.ApiError, "unsafe"):
+            service.shared_scenes()
+
+    def test_shared_scenes_reject_unsafe_filter_parameters(self):
+        document = json.loads(service.SCENES_PATH.read_text(encoding="utf-8"))
+        source = document["scenes"][0]["sources"][0]
+        source["filters"] = [{
+            "id": "unsafe-mask", "kind": "mask-blend", "enabled": True,
+            "amount": 1, "value": "/assets/../private/mask.png",
+        }]
+        service.SCENES_PATH.write_text(json.dumps(document), encoding="utf-8")
+        with self.assertRaisesRegex(service.ApiError, "unsafe"):
+            service.shared_scenes()
+
     def test_true_direct_plan_keeps_live_and_archive_topologies_independent(self):
         enrollment, _ = self.enroll_and_approve()
         client = service.authenticate_device(enrollment["deviceToken"])
@@ -325,6 +394,58 @@ class V2ClientControlTests(unittest.TestCase):
         self.assertTrue(all(plan["archiveTopology"] == "server-copy" for plan in plans))
         self.assertTrue(all(plan["upstreamOwner"].startswith("client:") for plan in plans))
         self.assertTrue(all(plan["decoder"] == "vaapi" for plan in plans))
+
+    def test_device_operations_enforce_each_camera_permission(self):
+        enrollment, _ = self.enroll_and_approve()
+        client = service.authenticate_device(enrollment["deviceToken"])
+        client_id = client["id"]
+        with mock.patch.object(service, "registry_request", return_value={"ok": True}) as request:
+            self.assertEqual(
+                service.client_camera_operation(client_id, "camera-test", "snapshot", None),
+                {"ok": True})
+            request.assert_called_once_with("POST", "camera-test", "snapshot")
+
+        for operation, payload in (("ptz", {"action": "stop"}),
+                                   ("presets", None),
+                                   ("talk", {"action": "stop"})):
+            with self.subTest(operation=operation), self.assertRaises(service.ApiError) as rejected:
+                service.client_camera_operation(client_id, "camera-test", operation, payload)
+            self.assertEqual(rejected.exception.status, 403)
+
+    def test_device_operations_forward_only_the_fixed_registry_routes(self):
+        enrollment = service.start_enrollment(self.keys.enrollment(os.urandom(32)))
+        approved = service.approve_enrollment(enrollment["enrollmentId"], {
+            "pairingCode": enrollment["pairingCode"], "cameraGrants": [{
+                "cameraId": "camera-test", "profileIds": ["sub"],
+                "permissions": ["view", "snapshot", "ptz", "talk"],
+                "credentialMode": "existing",
+            }],
+        })
+        with mock.patch.object(service, "registry_request", return_value={"ok": True}) as request:
+            service.client_camera_operation(approved["clientId"], "camera-test", "presets", None)
+            request.assert_called_once_with("GET", "camera-test", "presets")
+            request.reset_mock()
+            service.client_camera_operation(
+                approved["clientId"], "camera-test", "ptz", {"action": "move", "x": 1})
+            request.assert_called_once_with(
+                "POST", "camera-test", "ptz", {"action": "move", "x": 1})
+            request.reset_mock()
+            service.client_camera_operation(
+                approved["clientId"], "camera-test", "talk", {"action": "stop"})
+            request.assert_called_once_with(
+                "POST", "camera-test", "talk", {"action": "stop"})
+
+        with self.assertRaises(service.ApiError) as body_rejected:
+            service.client_camera_operation(
+                approved["clientId"], "camera-test", "snapshot", {"unexpected": True})
+        self.assertEqual(body_rejected.exception.status, 400)
+
+        with mock.patch.object(service, "urlopen", side_effect=urllib.error.URLError(
+                "rtsp://fixture-user:fixture-password@camera.invalid")):
+            with self.assertRaises(service.ApiError) as hidden:
+                service.registry_request("POST", "camera-test", "snapshot")
+        self.assertEqual(hidden.exception.status, 503)
+        self.assertNotIn("fixture-password", str(hidden.exception))
 
     def test_no_silent_fallback_and_online_revocation(self):
         enrollment, approved = self.enroll_and_approve()

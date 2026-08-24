@@ -4,6 +4,7 @@
 
 #include <QFileInfo>
 #include <QMetaObject>
+#include <QRegularExpression>
 
 namespace webobs::client {
 namespace {
@@ -58,10 +59,24 @@ bool MediaPipeline::initialize(QString &error)
         return false;
     }
     const QString runtime = QString::fromLatin1(gst_version_string());
+#if WEBOBS_LOCKED_RUNTIME
     if (!runtime.contains(QStringLiteral("GStreamer 1.28.6"))) {
         error = QStringLiteral("GStreamer runtime does not match locked version 1.28.6");
         return false;
     }
+#endif
+    GstRegistry *registry = gst_registry_get();
+    GList *features = gst_registry_get_feature_list(registry, GST_TYPE_ELEMENT_FACTORY);
+    for (GList *item = features; item; item = item->next) {
+        auto *factory = GST_ELEMENT_FACTORY(item->data);
+        const QString klass = QString::fromLatin1(gst_element_factory_get_metadata(
+            factory, GST_ELEMENT_METADATA_KLASS));
+        const QString name = QString::fromLatin1(gst_plugin_feature_get_name(
+            GST_PLUGIN_FEATURE(factory)));
+        if (klass.contains(QStringLiteral("Decoder/Video")) && hardware_factory(name))
+            gst_plugin_feature_set_rank(GST_PLUGIN_FEATURE(factory), GST_RANK_PRIMARY + 100);
+    }
+    gst_plugin_feature_list_free(features);
     return true;
 }
 
@@ -69,7 +84,7 @@ void MediaPipeline::set_video_item(QObject *item)
 {
     video_item_ = item;
     if (video_sink_)
-        g_object_set(video_sink_, "widget", video_item_, nullptr);
+        g_object_set(video_sink_, "widget", video_item_.data(), nullptr);
 }
 
 GstElement *MediaPipeline::make(const char *factory, const char *name, QString &error)
@@ -119,18 +134,24 @@ bool MediaPipeline::build_pipeline(QString &error)
 
     video_convert_ = make("videoconvert", "videoConvert", error);
     video_probe_ = make("identity", "firstVideoBuffer", error);
-    video_sink_ = make("qml6glsink", "videoSink", error);
+    video_sink_ = make(video_item_ ? "qml6glsink" : "fakesink", "videoSink", error);
     audio_convert_ = make("audioconvert", "audioConvert", error);
     audio_resample_ = make("audioresample", "audioResample", error);
     audio_volume_ = make("volume", "audioVolume", error);
-    audio_sink_ = make("autoaudiosink", "audioSink", error);
+    audio_sink_ = make(video_item_ ? "autoaudiosink" : "fakesink", "audioSink", error);
     if (!video_convert_ || !video_probe_ || !video_sink_ || !audio_convert_ ||
         !audio_resample_ || !audio_volume_ || !audio_sink_)
         return false;
-    g_object_set(video_probe_, "signal-handoffs", true, "silent", true, nullptr);
+    g_object_set(video_probe_, "silent", true, nullptr);
     g_object_set(audio_volume_, "mute", muted_, nullptr);
+    // Some camera profiles are video-only.  Keep the optional, currently
+    // unlinked audio branch from participating in the pipeline preroll or a
+    // valid video stream can remain in ASYNC forever waiting for audio.
+    g_object_set(audio_sink_, "async", false, nullptr);
+    if (!video_item_)
+        g_object_set(audio_sink_, "sync", false, nullptr);
     if (video_item_)
-        g_object_set(video_sink_, "widget", video_item_, nullptr);
+        g_object_set(video_sink_, "widget", video_item_.data(), nullptr);
 
     gst_bin_add(GST_BIN(pipeline_), source_);
     if (decoder_bin_)
@@ -153,7 +174,14 @@ bool MediaPipeline::build_pipeline(QString &error)
     }
     g_signal_connect(pipeline_, "deep-element-added",
                      G_CALLBACK(&MediaPipeline::deep_element_added), this);
-    g_signal_connect(video_probe_, "handoff", G_CALLBACK(&MediaPipeline::first_video_buffer), this);
+    GstPad *probe_pad = gst_element_get_static_pad(video_probe_, "src");
+    if (!probe_pad) {
+        error = QStringLiteral("video diagnostics pad is unavailable");
+        return false;
+    }
+    gst_pad_add_probe(probe_pad, GST_PAD_PROBE_TYPE_BUFFER,
+                      &MediaPipeline::video_buffer_probe, this, nullptr);
+    gst_object_unref(probe_pad);
     return true;
 }
 
@@ -164,6 +192,9 @@ bool MediaPipeline::start(const MediaEndpoint &endpoint, QString &error)
     fallback_reason_.clear();
     decoder_ = QStringLiteral("discovering");
     hardware_decode_ = false;
+    frames_decoded_.store(0, std::memory_order_relaxed);
+    frames_dropped_.store(0, std::memory_order_relaxed);
+    current_fps_ = 0;
     if (!build_pipeline(error)) {
         stop();
         return false;
@@ -176,6 +207,11 @@ bool MediaPipeline::start(const MediaEndpoint &endpoint, QString &error)
         return false;
     }
     bus_timer_.start();
+    if (!statistics_clock_.isValid())
+        statistics_clock_.start();
+    else
+        statistics_clock_.restart();
+    last_reported_frames_ = frames_decoded_.load(std::memory_order_relaxed);
     direct_timeout_.start();
     return true;
 }
@@ -232,17 +268,24 @@ void MediaPipeline::deep_element_added(GstBin *, GstBin *, GstElement *element, 
         factory, GST_ELEMENT_METADATA_KLASS));
     if (!klass.contains(QStringLiteral("Decoder/Video")))
         return;
+    self->decoder_factory_ = QString::fromLatin1(
+        gst_plugin_feature_get_name(GST_PLUGIN_FEATURE(factory)));
     self->decoder_ = QString::fromLatin1(GST_OBJECT_NAME(element));
-    self->hardware_decode_ = hardware_factory(QString::fromLatin1(
-        gst_plugin_feature_get_name(GST_PLUGIN_FEATURE(factory))));
+    self->hardware_decode_ = hardware_factory(self->decoder_factory_);
     self->fallback_reason_ = self->hardware_decode_ ? QString{} :
         QStringLiteral("hardware_decoder_unavailable");
     QMetaObject::invokeMethod(self, [self] { emit self->diagnosticsChanged(); }, Qt::QueuedConnection);
 }
 
-void MediaPipeline::first_video_buffer(GstElement *, GstBuffer *, gpointer context)
+GstPadProbeReturn MediaPipeline::video_buffer_probe(GstPad *, GstPadProbeInfo *info,
+                                                    gpointer context)
 {
     auto *self = static_cast<MediaPipeline *>(context);
+    if (!GST_PAD_PROBE_INFO_BUFFER(info))
+        return GST_PAD_PROBE_OK;
+    const quint64 previous = self->frames_decoded_.fetch_add(1, std::memory_order_relaxed);
+    if (previous != 0)
+        return GST_PAD_PROBE_OK;
     QMetaObject::invokeMethod(self, [self] {
         if (self->state_ != QStringLiteral("probing"))
             return;
@@ -250,6 +293,7 @@ void MediaPipeline::first_video_buffer(GstElement *, GstBuffer *, gpointer conte
         self->set_state(QStringLiteral("playing"));
         emit self->directReady();
     }, Qt::QueuedConnection);
+    return GST_PAD_PROBE_OK;
 }
 
 void MediaPipeline::poll_bus()
@@ -259,14 +303,45 @@ void MediaPipeline::poll_bus()
     GstBus *bus = gst_element_get_bus(pipeline_);
     while (GstMessage *message = gst_bus_pop(bus)) {
         switch (GST_MESSAGE_TYPE(message)) {
-        case GST_MESSAGE_ERROR:
-            fail(message_text(message));
+        case GST_MESSAGE_ERROR: {
+            GstElement *origin = GST_IS_ELEMENT(GST_MESSAGE_SRC(message)) ?
+                GST_ELEMENT(GST_MESSAGE_SRC(message)) : nullptr;
+            GstElementFactory *origin_factory = origin ? gst_element_get_factory(origin) : nullptr;
+            const QString origin_name = origin_factory ? QString::fromLatin1(
+                gst_plugin_feature_get_name(GST_PLUGIN_FEATURE(origin_factory))) : QString{};
+            if (!software_fallback_forced_ && hardware_decode_ &&
+                (hardware_factory(origin_name) || origin_name == decoder_factory_)) {
+                GstPluginFeature *feature = gst_registry_find_feature(
+                    gst_registry_get(), decoder_factory_.toUtf8().constData(),
+                    GST_TYPE_ELEMENT_FACTORY);
+                if (feature) {
+                    gst_plugin_feature_set_rank(feature, GST_RANK_NONE);
+                    gst_object_unref(feature);
+                }
+                software_fallback_forced_ = true;
+                fail(QStringLiteral("hardware_decoder_failed_software_fallback"));
+            } else {
+                fail(message_text(message));
+            }
             break;
+        }
         case GST_MESSAGE_ASYNC_DONE:
             break;
         case GST_MESSAGE_EOS:
             fail(QStringLiteral("camera_stream_ended"));
             break;
+        case GST_MESSAGE_QOS: {
+            GstFormat format = GST_FORMAT_UNDEFINED;
+            guint64 processed = 0;
+            guint64 dropped = 0;
+            gst_message_parse_qos_stats(message, &format, &processed, &dropped);
+            if (format == GST_FORMAT_BUFFERS) {
+                quint64 observed = frames_dropped_.load(std::memory_order_relaxed);
+                while (dropped > observed && !frames_dropped_.compare_exchange_weak(
+                    observed, dropped, std::memory_order_relaxed)) {}
+            }
+            break;
+        }
         default:
             break;
         }
@@ -275,13 +350,30 @@ void MediaPipeline::poll_bus()
             break;
     }
     gst_object_unref(bus);
+    if (statistics_clock_.isValid() && statistics_clock_.elapsed() >= 1000) {
+        const quint64 current = frames_decoded_.load(std::memory_order_relaxed);
+        const qint64 elapsed = statistics_clock_.restart();
+        current_fps_ = elapsed > 0 ? 1000.0 * static_cast<double>(current - last_reported_frames_) /
+                                     static_cast<double>(elapsed) : 0.0;
+        last_reported_frames_ = current;
+        emit statisticsChanged();
+    }
 }
 
 void MediaPipeline::fail(const QString &reason)
 {
     if (state_ == QStringLiteral("failed"))
         return;
-    fallback_reason_ = reason.left(256);
+    QString sanitized = reason;
+    if (!endpoint_.endpoint.isEmpty())
+        sanitized.replace(endpoint_.endpoint, QStringLiteral("<redacted-media-endpoint>"));
+    sanitized.replace(QRegularExpression(
+        QStringLiteral(R"(([A-Za-z][A-Za-z0-9+.-]*://)[^\s/@]+:[^\s/@]+@)")),
+        QStringLiteral("\\1***:***@"));
+    sanitized.replace(QRegularExpression(
+        QStringLiteral(R"(([?&](?:token|access_token|password|key|sig)=)[^&#\s]+)"),
+        QRegularExpression::CaseInsensitiveOption), QStringLiteral("\\1***"));
+    fallback_reason_ = sanitized.left(256);
     set_state(QStringLiteral("failed"));
     emit diagnosticsChanged();
     emit directFailed(fallback_reason_);
@@ -333,6 +425,19 @@ bool MediaPipeline::start_recording(const QString &path, QString &error)
         return false;
     }
     g_signal_connect(source, "pad-added", G_CALLBACK(+[](GstElement *, GstPad *pad, gpointer target) {
+        GstCaps *caps = gst_pad_get_current_caps(pad);
+        if (!caps)
+            caps = gst_pad_query_caps(pad, nullptr);
+        const GstStructure *structure = caps && gst_caps_get_size(caps) > 0 ?
+            gst_caps_get_structure(caps, 0) : nullptr;
+        const gchar *media = structure ? gst_structure_get_string(structure, "media") : nullptr;
+        if (!media || g_strcmp0(media, "video") != 0) {
+            if (caps)
+                gst_caps_unref(caps);
+            return;
+        }
+        if (caps)
+            gst_caps_unref(caps);
         GstPad *sink_pad = gst_element_get_static_pad(GST_ELEMENT(target), "sink");
         if (sink_pad && !gst_pad_is_linked(sink_pad))
             gst_pad_link(pad, sink_pad);
@@ -367,9 +472,12 @@ void MediaPipeline::stopRecording()
 
 void MediaPipeline::set_muted(bool muted)
 {
+    if (muted_ == muted)
+        return;
     muted_ = muted;
     if (audio_volume_)
         g_object_set(audio_volume_, "mute", muted_, nullptr);
+    emit mutedChanged();
 }
 
 void MediaPipeline::set_state(const QString &state)
@@ -385,5 +493,9 @@ QString MediaPipeline::decoder() const { return decoder_; }
 bool MediaPipeline::hardwareDecode() const { return hardware_decode_; }
 QString MediaPipeline::fallbackReason() const { return fallback_reason_; }
 bool MediaPipeline::recording() const { return recording_pipeline_ != nullptr; }
+bool MediaPipeline::muted() const { return muted_; }
+quint64 MediaPipeline::framesDecoded() const { return frames_decoded_.load(std::memory_order_relaxed); }
+quint64 MediaPipeline::framesDropped() const { return frames_dropped_.load(std::memory_order_relaxed); }
+double MediaPipeline::currentFps() const { return current_fps_; }
 
 }

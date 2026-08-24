@@ -1,6 +1,6 @@
 # API v2 — local clients and True Direct / 本地客户端与真直连
 
-> Development status / 开发状态：`v2-M1` implementation is in progress on `dev`. API contract, encrypted grants, topology planning, deterministic security tests and an isolated H.264 architecture fixture exist; the locked five-protocol receiver, NVR coexistence and hardware acceptance gate is not complete.
+> Development status / 开发状态：API/Grant/Scene contract and the native four-protocol deterministic fixture pass on `dev`. Exact Qt 6.11.2/GStreamer 1.28.6 WHEP, NVR coexistence and platform hardware evidence are still release gates, so v2-M1 remains open / API、Grant、Scene 契约及本地四协议确定性夹具已通过；固定 Qt/GStreamer WHEP、NVR 共存与平台硬件证据仍是发布门禁，因此 v2-M1 尚未完成。
 
 API v1 is unchanged: its `direct` value means Gateway Direct and Docker remains in the media path. API v2 adds device enrollment and a separately measured `true-direct` topology. All responses use bounded unique-field JSON, `Cache-Control: no-store` and credential-free errors.
 
@@ -96,4 +96,4 @@ Live and archive are independent. An NVR `server-copy` plan may coexist with Tru
 
 ## Shared Scene boundary / 共享场景边界
 
-`/config/webobs/shared-scenes-v2.json` is a wrapper with schema version 1 and at most 64 Scene v5 documents. The current M1 local subset accepts Camera, text, color and `/assets/` image sources, stable IDs and basic transforms. It rejects raw URLs, endpoint/credential/secret/token fields, unknown fields, non-empty filters and unsupported blend behavior rather than silently changing scene semantics. Local-only layouts serialize the same Scene v5 shape and do not create a second canvas schema.
+`/config/webobs/shared-scenes-v2.json` is a wrapper with schema version 1 and at most 64 Scene v5 documents. The local subset accepts Camera, text, color, image and two-level nested Scene sources; stable IDs; bounded transforms/crop/grouping; and the standardized ordered filter records. LUT/mask paths are constrained to `/assets/` or `/recordings/`, scaling uses bounded `WIDTHxHEIGHT`, and nested references must exist, remain acyclic and stop at two levels. Raw URLs, endpoint/credential/secret/token fields, unknown fields and unsupported source kinds remain rejected. Local-only layouts serialize the same Scene v5 shape and do not create a second canvas schema.

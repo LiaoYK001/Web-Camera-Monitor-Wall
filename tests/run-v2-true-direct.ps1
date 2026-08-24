@@ -15,20 +15,30 @@ try {
     & docker compose -p $Project -f $ComposeFile up --detach --build
     if ($LASTEXITCODE -ne 0) { throw 'Could not start the True Direct fixture.' }
 
-    $ProbeId = (& docker compose -p $Project -f $ComposeFile ps --all --quiet v2-probe).Trim()
-    $WebObsId = (& docker compose -p $Project -f $ComposeFile ps --all --quiet webobs).Trim()
-    if (-not $ProbeId -or -not $WebObsId) { throw 'Fixture container identities are unavailable.' }
-    $Exited = $false
-    for ($Attempt = 0; $Attempt -lt 180; $Attempt++) {
-        $State = (& docker inspect --format '{{.State.Status}}' $ProbeId).Trim()
-        if ($State -eq 'exited') { $Exited = $true; break }
-        if ($State -notin @('running', 'created')) { break }
-        Start-Sleep -Seconds 1
+    $ProbeServices = @('v2-probe', 'native-rtsp-h264', 'native-rtsp-h265',
+        'native-mjpeg', 'native-hls')
+    $ProbeIds = @{}
+    foreach ($Service in $ProbeServices) {
+        $ProbeIds[$Service] = (& docker compose -p $Project -f $ComposeFile ps --all --quiet $Service).Trim()
     }
-    & docker compose -p $Project -f $ComposeFile logs --no-color v2-probe
-    if (-not $Exited) { throw 'True Direct probe did not finish within 180 seconds.' }
-    $ProbeExit = (& docker inspect --format '{{.State.ExitCode}}' $ProbeId).Trim()
-    if ($ProbeExit -ne '0') { throw "True Direct probe failed with exit code $ProbeExit." }
+    $WebObsId = (& docker compose -p $Project -f $ComposeFile ps --all --quiet webobs).Trim()
+    if (-not $WebObsId -or @($ProbeIds.Values | Where-Object { -not $_ }).Count -gt 0) {
+        throw 'Fixture container identities are unavailable.'
+    }
+    foreach ($Service in $ProbeServices) {
+        $ProbeId = $ProbeIds[$Service]
+        $Exited = $false
+        for ($Attempt = 0; $Attempt -lt 240; $Attempt++) {
+            $State = (& docker inspect --format '{{.State.Status}}' $ProbeId).Trim()
+            if ($State -eq 'exited') { $Exited = $true; break }
+            if ($State -notin @('running', 'created')) { break }
+            Start-Sleep -Seconds 1
+        }
+        & docker compose -p $Project -f $ComposeFile logs --no-color $Service
+        if (-not $Exited) { throw "True Direct probe '$Service' did not finish within 240 seconds." }
+        $ProbeExit = (& docker inspect --format '{{.State.ExitCode}}' $ProbeId).Trim()
+        if ($ProbeExit -ne '0') { throw "True Direct probe '$Service' failed with exit code $ProbeExit." }
+    }
 
     $Inspect = @(& docker inspect $WebObsId | ConvertFrom-Json)[0]
     $Networks = @($Inspect.NetworkSettings.Networks.PSObject.Properties.Name)
@@ -44,7 +54,7 @@ try {
     if ($ServerLogs.Contains('rtsp://camera:8554')) {
         throw 'Camera endpoint leaked into server logs.'
     }
-    Write-Host 'v2 architecture-level True Direct gate passed: control-only server network, client-owned H.264 RTSP decode, no server media helper.'
+    Write-Host 'v2 deterministic True Direct gate passed: the production client pipeline decoded H.264/H.265 RTSP, Server Push MJPEG and HLS; the control server had no camera network or media helper. WHEP remains an exact-runtime release gate.'
 }
 finally {
     & docker compose -p $Project -f $ComposeFile down --volumes --remove-orphans | Out-Null

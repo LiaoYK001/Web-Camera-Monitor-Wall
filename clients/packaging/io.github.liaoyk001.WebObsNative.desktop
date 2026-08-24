@@ -1,0 +1,8 @@
+[Desktop Entry]
+Type=Application
+Name=WebObs Native
+Comment=Local-first True Direct camera monitor
+Exec=webobs-native
+Icon=io.github.liaoyk001.WebObsNative
+Categories=AudioVideo;Video;Security;
+Terminal=false

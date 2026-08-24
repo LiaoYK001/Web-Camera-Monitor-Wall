@@ -29,7 +29,7 @@ cmake -S clients -B clients/build -G Ninja -DCMAKE_BUILD_TYPE=RelWithDebInfo
 cmake --build clients/build --parallel
 ```
 
-Required GStreamer plug-ins include `rtspsrc`, `uridecodebin3`, `decodebin3`, `qml6glsink`, `whepclientsrc`, H.264/H.265 RTP depayloaders/parsers, Matroska muxing, platform hardware decoders and audio output. Packaging must dynamically link LGPL Qt modules, omit Qt WebEngine, include third-party licenses and produce an SBOM.
+Required GStreamer plug-ins include `rtspsrc`, `uridecodebin3`, `decodebin3`, `qml6glsink`, `whepclientsrc`, H.264/H.265 RTP depayloaders/parsers, Matroska muxing, platform hardware decoders and audio output. Qt Quick Controls and Qt5Compat GraphicalEffects are dynamically deployed for the bounded local Studio filter subset. Packaging must omit Qt WebEngine, include third-party licenses and produce SHA-256, SPDX SBOM and Sigstore bundles.
 
 所需 GStreamer 插件包括 RTSP、URI 解码、`qml6glsink`、WHEP、H.264/H.265 RTP 解包/解析、Matroska 封装、平台硬解及音频输出。打包必须动态链接 LGPL Qt 模块，不引入 Qt WebEngine，并附第三方许可证与 SBOM。
 
@@ -47,8 +47,22 @@ Required GStreamer plug-ins include `rtspsrc`, `uridecodebin3`, `decodebin3`, `q
 - 摄像机凭据不进入 Scene、日志、指标或普通网页 JavaScript。复用摄像机账号会标记 `weakRevocation`；要立即让离线副本失效必须轮换摄像机密码。
 - 非回环控制只接受 HTTPS。真直连只承诺 LAN/用户自管 VPN；公网会显式规划后备，`true-direct-only` 则拒绝降级。
 
+## Implemented desktop surface / 已实现桌面功能
+
+- Native H.264/H.265 RTSP, Server Push MJPEG, HLS and WHEP adapters; RTSP defaults to TCP and decoded-buffer readiness has a three-second bound.
+- 1/4/9/16 substream grids, one independent main-stream focus, per-tile decoder/FPS/drop/reconnect diagnostics, exponential reconnect and suspend/resume recovery.
+- Local Preview/Program Studio with Cut/Fade, two nested levels, Camera/text/image/color sources, groups, lock/visibility, crop/rotation/opacity, contain/cover/stretch, alignment/snapping, color/opacity/mask/scaling filters and Scene v5 local save.
+- PTZ, listening, ten-second Push-to-Talk, camera-native snapshot, decoded-frame local screenshot, crash-safe stream-copy MKV and no-reencode MP4 export.
+- DPAPI/Secret Service identity storage, encrypted 30-day offline Grant cache, ten-second online revocation checks and explicit weak-revocation/fallback diagnostics.
+
+- 支持 H.264/H.265 RTSP、Server Push MJPEG、HLS 与 WHEP；RTSP 默认 TCP，三秒内必须得到真实解码 Buffer。
+- 支持 1/4/9/16 子码流宫格、一路独立主码流聚焦、逐路解码器/FPS/掉帧/重连诊断、指数退避重连与挂起恢复。
+- 本地 Preview/Program Studio 支持 Cut/Fade、两级嵌套、Camera/文字/图片/色块、组、锁定/显隐、裁切/旋转/透明度、适应/填充/拉伸、对齐/吸附、颜色/透明度/遮罩/缩放滤镜及 Scene v5 本地保存。
+- 支持 PTZ、监听、十秒按键对讲、摄像机原生快照、已解码画面的本地截图、抗崩溃 stream-copy MKV 与无重编码 MP4 导出。
+- 使用 DPAPI/Secret Service 保存身份，缓存加密的 30 天离线 Grant，每十秒检查在线撤销，并明确展示弱撤销与降级原因。
+
 ## Current evidence boundary / 当前证据边界
 
-The source builds and links in the repository diagnostic stage, the server cryptographic/API tests pass with pinned libsodium, and first video readiness is based on an actual decoded video buffer rather than state transition alone. Windows 11, Fedora and Android signed packages, multi-tile performance, hardware-decode, sleep/network recovery and 30-minute hardware gates remain required before v2-M2/v2-M3 or v2.0 can be declared complete.
+The diagnostic client and model tests pass. The deterministic control-only fixture runs the production receive pipeline for H.264/H.265 RTSP, Server Push MJPEG and HLS, validates continuous decoded buffers, stream-copy recording/remux, redaction and absence of Docker media helpers. The release workflow requires exact-runtime WHEP plus private Windows/Fedora 16-substream + one-main, 30-minute, hardware-decode, under-1%-drop and zero-server-increment evidence. Those self-hosted gates and signed artifacts have not run in this workspace; v2-M1/v2-M2 remain open.
 
-源码已通过仓库诊断阶段编译链接；服务端固定 libsodium 的密码学/API 测试通过；首帧就绪以实际解码视频 Buffer 为准，而不是仅依赖状态切换。Windows 11、Fedora、Android 正式签名包，多宫格性能、硬解、睡眠/网络恢复及 30 分钟硬件门禁仍未完成，因此不得宣称 v2-M2、v2-M3 或 v2.0 已完成。
+诊断客户端及模型测试已通过。确定性控制网络隔离夹具以生产接收管线运行 H.264/H.265 RTSP、Server Push MJPEG 与 HLS，并验证连续解码 Buffer、stream-copy 录像/remux、脱敏及 Docker 内无媒体 helper。发布工作流还强制执行固定运行时 WHEP，以及私有 Windows/Fedora 16 路子码流加一路主码流、30 分钟、硬解、掉帧低于 1% 和服务端零增量门禁。本工作区尚未执行这些 Self-hosted 门禁及生成签名产物，因此 v2-M1/v2-M2 仍未完成。
