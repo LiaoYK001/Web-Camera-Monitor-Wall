@@ -13,7 +13,9 @@ Release series use `v<major>.<minor>`; implementation milestones use `v<major>-M
 | `v1.0` | `v1-M1` … `v1-M6` | Complete / 已完成 |
 | `v1.1` | `v1-M7` … `v1-M11` | Milestone family is implementation-complete; external release qualification is tracked by v1.2 / 里程碑族实现完成；外部发布资格由 v1.2 跟踪 |
 | `v1.2` (`v1.2.1` current patch / 当前修复版) | Final v1 closure / v1 最终收口 | Contains no `v1-M12`; patch releases fix the final v1 baseline without adding a milestone / 不新增 `v1-M12`；补丁版本只修复最终 v1 基线，不增加里程碑 |
-| `v2.0` | starts at `v2-M1` / 从 `v2-M1` 开始 | Planned / 已规划 |
+| `v2.0` | `v2-M1` … `v2-M3` | Active development on `dev`; release only after all three gates / 正在 `dev` 开发；三个门禁全部通过后才发布 |
+| `v2.1` | `v2-M4` … `v2-M5` | Planned after stable v2.0 / 稳定 v2.0 后实施 |
+| `v2.2` | `v2-M6` | Planned / 已规划 |
 
 A milestone name is an engineering gate, not a release date. A release may be cut only from completed, reviewed gates. Public SemVer tags may add a patch component such as `v1.1.1`; an existing tag is immutable.
 

@@ -14,6 +14,7 @@ import NvrTimeline from './NvrTimeline';
 import ProgramPreview from './ProgramPreview';
 import SystemStatus from './SystemStatus';
 import EventsPanel from './EventsPanel';
+import ClientsPanel from './ClientsPanel';
 import type { AudioMonitoring, CameraRecord, FilterKind, PlaybackMode, ScaleMode, SceneDocument, SceneFilter, SceneItem, SceneSource, StudioCapabilities, StudioDocument, Transport } from './types';
 
 type ConnectionState = 'connecting' | 'online' | 'offline';
@@ -106,7 +107,7 @@ function EmptyState({ onAdd }: { onAdd: () => void }) {
 }
 
 export default function App() {
-  const [productArea, setProductArea] = useState<'studio' | 'archive' | 'devices' | 'events' | 'system'>(window.location.hash === '#archive' ? 'archive' : window.location.hash === '#devices' ? 'devices' : window.location.hash === '#events' ? 'events' : window.location.hash === '#system' ? 'system' : 'studio');
+  const [productArea, setProductArea] = useState<'studio' | 'archive' | 'devices' | 'clients' | 'events' | 'system'>(window.location.hash === '#archive' ? 'archive' : window.location.hash === '#devices' ? 'devices' : window.location.hash === '#clients' ? 'clients' : window.location.hash === '#events' ? 'events' : window.location.hash === '#system' ? 'system' : 'studio');
   const [baseline, setBaseline] = useState<SceneDocument | null>(null);
   const [draft, setDraft] = useState<SceneDocument | null>(null);
   const [studioBaseline, setStudioBaseline] = useState<StudioDocument | null>(null);
@@ -710,6 +711,12 @@ export default function App() {
       setProductArea('studio');
     }} />;
   }
+  if (productArea === 'clients') {
+    return <ClientsPanel onBack={() => {
+      window.history.replaceState(null, '', window.location.pathname);
+      setProductArea('studio');
+    }} />;
+  }
   if (productArea === 'system') {
     return <SystemStatus onBack={() => {
       window.history.replaceState(null, '', window.location.pathname);
@@ -782,6 +789,10 @@ export default function App() {
             window.history.replaceState(null, '', '#devices');
             setProductArea('devices');
           }}>设备管理</button>
+          <button className="ghost-button" type="button" onClick={() => {
+            window.history.replaceState(null, '', '#clients');
+            setProductArea('clients');
+          }}>本地客户端</button>
           <button className="ghost-button" type="button" onClick={() => {
             window.history.replaceState(null, '', '#events');
             setProductArea('events');

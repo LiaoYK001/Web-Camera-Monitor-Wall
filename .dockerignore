@@ -11,6 +11,11 @@ build
 build-*
 web/node_modules
 web/dist
+clients/build
+clients/build-*
+clients/package
+clients/packages
+clients/artifacts
 document
 recordings/*
 !recordings/.gitkeep

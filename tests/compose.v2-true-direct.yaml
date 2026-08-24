@@ -1,0 +1,57 @@
+services:
+  camera:
+    image: webobs-m0-mediamtx:1.18.2-local
+    build:
+      context: ..
+      dockerfile: tests/mediamtx-fixture/Dockerfile
+      args:
+        MEDIAMTX_VERSION: "1.18.2"
+        MEDIAMTX_LINUX_AMD64_SHA256: 73ed27c292e05ceb4990dcb34531f01872dfff5374b7515c45a202e0abf47706
+    networks: [camera-media]
+
+  publisher:
+    image: webobs-m0-rtsp-fixture:local
+    build:
+      context: ..
+      dockerfile: tests/rtsp-fixture/Dockerfile
+    entrypoint: ["/usr/local/bin/publish-test-stream"]
+    environment:
+      TEST_RTSP_URL: rtsp://camera:8554/v2-direct
+    depends_on: [camera]
+    networks: [camera-media]
+
+  webobs:
+    image: ${WEBOBS_TEST_IMAGE:-webobs:v2-m1-dev}
+    environment:
+      WEBOBS_LISTEN_ADDRESS: 0.0.0.0
+      WEBOBS_HTTP_PORT: "8080"
+      WEBOBS_ALLOW_INSECURE_REMOTE: "true"
+      WEBOBS_WEBRTC_ENABLED: "false"
+      WEBOBS_COMPOSITE_ENABLED: "false"
+      WEBOBS_NVR_ENABLED: "false"
+      WEBOBS_EVENTS_ENABLED: "false"
+      WEBOBS_CAMERA_REGISTRY_ENABLED: "true"
+      WEBOBS_V2_CLIENT_CONTROL_ENABLED: "true"
+    tmpfs:
+      - /config/webobs:mode=0700
+    volumes:
+      - ./v2-direct-fixture/camera-credentials.json:/run/secrets/webobs-camera-credentials/v2-direct-fixture.json:ro
+    networks: [control]
+    stop_grace_period: 20s
+
+  v2-probe:
+    image: webobs-v2-direct-fixture:local
+    build:
+      context: ..
+      dockerfile: tests/v2-direct-fixture/Dockerfile
+    environment:
+      WEBOBS_FIXTURE_CONTROL: http://webobs:8080
+      WEBOBS_FIXTURE_RTSP: rtsp://camera:8554/v2-direct
+    depends_on: [webobs, publisher]
+    networks: [control, camera-media]
+
+networks:
+  control:
+    internal: true
+  camera-media:
+    internal: true

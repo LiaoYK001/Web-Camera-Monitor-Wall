@@ -1,6 +1,6 @@
 # v2 True Direct architecture / v2 真直连架构
 
-> Status / 状态：v2.0 product contract; implementation starts at `v2-M1` / v2.0 产品契约；从 `v2-M1` 开始实现
+> Status / 状态：`v2-M1` implementation in progress on `dev`; not yet accepted / `dev` 正在实施 `v2-M1`，尚未完成验收
 >
 > Current implementation / 当前实现：v1 provides **Gateway Direct / Direct Relay**, not True Direct / v1 提供的是**网关直通**，不是真直连
 
@@ -82,6 +82,18 @@ Every source exposes the selected topology, reason, decoder, renderer, encoder, 
 - An enrolled client can start from its encrypted cache while Docker is unavailable, within a documented offline authorization window / 已配对客户端可在 Docker 不可用时从加密缓存启动，并遵守公开的离线授权时限。
 - Credential, origin, loopback, revocation, downgrade and public-repository redaction tests pass / 凭据、Origin、回环、撤销、降级与公开仓库脱敏测试通过。
 
-Until this gate passes, product text must say **planned True Direct** and must not describe Gateway Direct as server-bypass delivery.
+The API/grant/planner, administrator approval UI and Qt/GStreamer reference source are implemented and pass deterministic cryptographic, proxy, WebUI and compile gates. `tests/run-v2-true-direct.{sh,ps1}` additionally places Docker on a control-only network, completes enrollment and an encrypted Grant, decodes an H.264 RTSP stream in the client fixture, and proves that Docker cannot resolve the camera network and has no MediaMTX/FFmpeg/Program helper. This is architecture-level evidence, not the locked Qt receiver or hardware acceptance. H.265, MJPEG, HLS and WHEP under the locked release dependencies, packet-counter evidence, 1–16-viewer/NVR coexistence and platform hardware gates remain open. Until they pass, product text must say **True Direct development preview** and must not describe Gateway Direct as server-bypass delivery.
 
-在该门禁通过前，产品文案只能写“规划中的真直连”，不得把网关直通描述为绕过服务端的数据路径。
+API/Grant/规划器、管理员批准界面及 Qt/GStreamer 参考源码已经实现，并通过确定性密码学、代理、WebUI 与编译门禁。`tests/run-v2-true-direct.{sh,ps1}` 还会让 Docker 只接控制网络，完成配对与加密 Grant，由客户端夹具解码 H.264 RTSP，并证明 Docker 无法解析摄像机网络且不存在 MediaMTX/FFmpeg/Program helper；这只是架构级证据，不是固定 Qt 接收端或硬件验收。固定发布依赖下的 H.265、MJPEG、HLS、WHEP、包计数证据、1～16 观看端与 NVR 共存及平台硬件门禁仍未完成。在这些证据完成前，产品文案只能写“真直连开发预览”，不得把网关直通描述为绕过服务端的数据路径。
+
+Run the architecture fixture only with a locally built development image; it uses public synthetic credentials and endpoints and writes no private evidence:
+
+架构夹具只针对本地开发镜像运行，使用公开的合成凭据与端点，不写入私有验收证据：
+
+```powershell
+./tests/run-v2-true-direct.ps1 -Image webobs:v2-m1-dev
+```
+
+```bash
+WEBOBS_TEST_IMAGE=webobs:v2-m1-dev ./tests/run-v2-true-direct.sh
+```

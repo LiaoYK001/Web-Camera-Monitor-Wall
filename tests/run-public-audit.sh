@@ -165,7 +165,8 @@ for executable_path in \
     tests/run-m1-real-camera.sh \
     tests/run-m10-real-mjpeg.sh \
     tests/run-real-camera.sh \
-    tests/run-smoke.sh
+    tests/run-smoke.sh \
+    tests/run-v2-true-direct.sh
 do
     executable_mode="$(git ls-files --stage -- "$executable_path" | awk '{ print $1 }')"
     if [ "$executable_mode" != "100755" ]; then

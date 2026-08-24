@@ -177,6 +177,7 @@ try {
         'tests/run-m10-real-mjpeg.sh',
         'tests/run-real-camera.sh',
         'tests/run-smoke.sh',
+        'tests/run-v2-true-direct.sh',
         'tests/rtsp-fixture/publish-hevc.sh'
     )) {
         if (@($indexEntries | Where-Object { $_ -match "^100755 [0-9a-f]{40} 0`t$([Regex]::Escape($executablePath))$" }).Count -ne 1) {

@@ -48,7 +48,7 @@
 .session-logout { position: fixed; z-index: 4000; right: 12px; bottom: 12px; opacity: .28; }
 .session-logout:hover, .session-logout:focus-visible { opacity: 1; }
 
-.registry-page { min-height: 100vh; padding: 28px; color: var(--text); background: var(--bg); }
+.registry-page, .clients-page { min-height: 100vh; overflow: auto; padding: 28px; color: var(--text); background: var(--bg); }
 .registry-header, .section-title { display: flex; align-items: center; justify-content: space-between; gap: 18px; }
 .registry-header h1, .registry-add h2, .camera-list h2 { margin: 3px 0; }
 .registry-add, .camera-list { display: grid; gap: 16px; max-width: 1180px; margin: 24px auto; padding: 22px; border: 1px solid var(--line); background: var(--panel); }
@@ -73,6 +73,27 @@
 .ptz-pad button, .preset-controls button, .device-actions button { min-width: 34px; padding: 6px 9px; color: var(--text); border: 1px solid var(--line); background: #10141c; }
 .device-snapshot { width: min(100%, 420px); max-height: 260px; object-fit: contain; background: #000; }
 .adapter-footer { color: var(--muted); text-align: center; font-size: 11px; }
+.client-section { display: grid; gap: 16px; max-width: 1180px; margin: 24px auto; padding: 22px; border: 1px solid var(--line); background: var(--panel); }
+.client-section .section-title p { margin: 5px 0 0; color: var(--muted); }
+.enrollment-card { display: grid; gap: 16px; padding: 18px; border: 1px solid var(--line-soft); background: var(--panel-raised); }
+.enrollment-card > header, .enrollment-card > footer { display: flex; align-items: center; justify-content: space-between; gap: 16px; }
+.enrollment-card > header > div, .client-list article > div:first-child { display: grid; gap: 5px; }
+.enrollment-card header span, .enrollment-card footer span, .client-list article span { color: var(--muted); font-size: 12px; }
+.enrollment-card header label, .credential-mode { display: grid; gap: 6px; }
+.enrollment-card header input { width: 150px; font-size: 20px; letter-spacing: .2em; }
+.grant-list { display: grid; gap: 10px; }
+.grant-camera { padding: 12px; border: 1px solid var(--line); opacity: .7; }
+.grant-camera.enabled { border-color: rgba(185,255,79,.4); opacity: 1; }
+.grant-title, .grant-options, .credential-mode { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; }
+.grant-title small, .grant-options > span, .credential-mode > span { color: var(--muted); }
+.grant-options, .credential-mode { margin-top: 12px; padding-left: 26px; }
+.grant-options label { display: flex; align-items: center; gap: 5px; }
+.client-list { display: grid; gap: 10px; }
+.client-list article { display: grid; grid-template-columns: minmax(180px, 1fr) minmax(400px, 2fr) auto; align-items: center; gap: 16px; padding: 15px; border: 1px solid var(--line-soft); background: var(--panel-raised); }
+.client-list dl { display: flex; flex-wrap: wrap; gap: 18px; margin: 0; }
+.client-list dl div { display: grid; gap: 4px; }.client-list dt { color: var(--muted); font-size: 10px; }.client-list dd { margin: 0; font-size: 12px; }
+.client-list p { grid-column: 1 / -1; margin: 0; color: var(--warning); font-size: 12px; }
+@media (max-width: 850px) { .enrollment-card > header, .enrollment-card > footer { align-items: stretch; flex-direction: column; } .client-list article { grid-template-columns: 1fr; } }
 .system-page { min-height: 100vh; padding: 32px; background: var(--bg); color: var(--text); }
 .events-page { min-height: 100vh; overflow: auto; padding: 28px; color: var(--text); background: var(--bg); }
 .events-toolbar { display: flex; flex-wrap: wrap; gap: 10px; margin: 24px 0; }

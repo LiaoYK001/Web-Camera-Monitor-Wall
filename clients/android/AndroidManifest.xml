@@ -1,0 +1,27 @@
+<?xml version="1.0"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    package="org.webobs.nativeclient">
+    <uses-sdk android:minSdkVersion="29" android:targetSdkVersion="36" />
+    <uses-permission android:name="android.permission.INTERNET" />
+    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
+    <uses-permission android:name="android.permission.WAKE_LOCK" />
+    <application
+        android:name="org.qtproject.qt.android.bindings.QtApplication"
+        android:allowBackup="false"
+        android:fullBackupContent="false"
+        android:label="WebObs Monitor"
+        android:usesCleartextTraffic="false">
+        <activity
+            android:name="org.qtproject.qt.android.bindings.QtActivity"
+            android:configChanges="orientation|screenSize|smallestScreenSize|screenLayout|uiMode|keyboard|keyboardHidden|navigation|locale|layoutDirection|fontScale|density"
+            android:exported="true"
+            android:launchMode="singleTop"
+            android:screenOrientation="unspecified">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+            <meta-data android:name="android.app.lib_name" android:value="webobs-native" />
+        </activity>
+    </application>
+</manifest>

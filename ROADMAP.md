@@ -1,6 +1,6 @@
 # Roadmap / 项目路线图
 
-> Last updated / 最后更新：2026-08-24
+> Last updated / 最后更新：2026-08-25
 
 This roadmap describes milestone order and acceptance gates, not promised release dates. Priorities may change based on validation results and maintainer capacity.
 
@@ -12,7 +12,11 @@ Canonical milestone names use `v<major>-M<number>`. Historical validation prose 
 
 ## Current position / 当前位置
 
-**✅ v1.2 final v1 closure / v1 最终收口 — v1-M10/M11 实现、确定性协议与脱敏真实媒体门禁均已通过。**
+**🚧 v2-M1 True Direct implementation / 真直连实施中 — 控制与密码学闭环已完成，媒体与零负载门禁仍待完成。**
+
+The `dev` branch now contains API v2 enrollment, ten-minute pairing, least-privilege Camera/Profile grants, Ed25519-signed/X25519-sealed authorization, 30-day encrypted offline cache, ten-second online revocation checks, independent live/archive TopologyPlan selection, administrator approval/revocation UI and a Qt 6/QML + GStreamer reference client source. Pinned libsodium tests, C++ proxy/CTest, WebUI production build and client compile/link diagnostics pass. An isolated architecture fixture also completes a grant and H.264 direct decode while Docker has only a control network and no media helper. The locked Qt/GStreamer release build, H.264/H.265/MJPEG/HLS/WHEP receiver matrix, packet-counter proof, 1–16-client NVR coexistence, and Windows/Fedora/Android hardware gates remain open. Therefore v2-M1, v2-M2, v2-M3 and stable v2.0 are not marked complete.
+
+`dev` 现已包含 API v2 配对、十分钟配对码、最小权限 Camera/Profile Grant、Ed25519 签名与 X25519 密封授权、30 天加密离线缓存、十秒在线撤销校验、实时/归档独立 TopologyPlan、管理员批准/撤销界面，以及 Qt 6/QML + GStreamer 参考客户端源码。固定 libsodium 测试、C++ 代理/CTest、WebUI 生产构建及客户端编译链接诊断均已通过；隔离架构夹具也已完成 Grant 与 H.264 客户端直解，并证明 Docker 仅接控制网络且无媒体 helper。固定 Qt/GStreamer 发布构建、H.264/H.265/MJPEG/HLS/WHEP 接收矩阵、包计数证明、1～16 客户端与 NVR 共存、Windows/Fedora/Android 硬件门禁仍未完成，因此不会把 v2-M1、v2-M2、v2-M3 或稳定 v2.0 标记为完成。
 
 The v1-M10 implementation includes the Registry/Adapter foundation, authenticated Profile T/S media, PTZ, presets, snapshots, PullPoint events, guarded talk, bounded interface discovery and clock-skew correction. v1-M11 adds an isolated SQLite WAL event service, normalized native/software events, masks/zones, detector provider v1, NVR event windows, search/acknowledgement, rules and a bounded signed Webhook/MQTT outbox. Deterministic protocol/event/notification fixtures pass, and a redacted Canon WV-HTTP Server Push MJPEG endpoint negotiated real media and decoded five frames. Multi-vendor model/firmware testing continues as compatibility evidence rather than a release blocker.
 
@@ -25,7 +29,7 @@ The `v1.0` series contains v1-M1 through v1-M6. The `v1.1` milestone family cont
 ```text
 M0 + v1-M1…v1-M9 complete -> v1-M10/M11 complete -> v1.2 closure -> v2-M1 True Direct
 M0 + v1-M1…v1-M9 已完成    -> v1-M10/M11 已完成    -> v1.2 收口    -> v2-M1 真直连
-✅                              ✅                     ✅              🧭
+✅                              ✅                     ✅              🚧
 ```
 
 ### M0 acceptance / M0 验收
@@ -96,7 +100,7 @@ M0 已于 2026-08-11 在真实摄像头门禁通过后完成。后续修改采�
 | v1-M9 — Timeline | ✅ Implementation complete / 实现完成 | Archive search, synchronized playback, clip export and evidence integrity / 归档检索、同步回放、片段导出与证据完整性 | UTC/gap, p95, Range, derived media, export/hash, lock/delete and audit gates pass / UTC/断档、p95、Range、派生媒体、导出/哈希、锁定/删除及审计门禁通过 |
 | v1-M10 — Device Operations | ✅ Complete / 已完成 | Capability-driven Profile T/S media, PTZ, presets, events, snapshots and guarded talk / 能力驱动的 Profile T/S 媒体、PTZ、预置位、事件、快照与受控对讲 | Emulator plus bounded MJPEG fixture and redacted external media gate pass / 模拟器、有界 MJPEG 夹具及脱敏外部媒体门禁通过 |
 | v1-M11 — Events & Detection | ✅ Complete / 已完成 | Native/software events, motion zones/masks, detector providers, rules and bounded notifications / 原生/软件事件、移动区域/遮罩、检测提供器、规则与有界通知 | Deterministic accuracy, isolation, queue, signed delivery and SSRF gates pass / 确定性准确度、隔离、队列、签名交付及 SSRF 门禁通过 |
-| v2-M1 — True Direct Foundation | 🧭 Planned / 已规划 | Client-to-camera media with Docker outside the video data plane / 客户端到摄像机传输，Docker 退出视频数据面 | Zero server video payload plus explicit topology/fallback and credential gates pass / 服务端视频负载为零，并通过拓扑、回退与凭据门禁 |
+| v2-M1 — True Direct Foundation | 🚧 In progress / 实施中 | API/grant/planner/reference receiver plus isolated H.264 architecture proof / API、Grant、规划器、参考接收端及隔离 H.264 架构证明 | Full five-protocol locked receiver, zero-payload, NVR coexistence and credential gates pass / 固定接收端五协议、零负载、NVR 共存及凭据门禁全部通过 |
 | v2-M2…v2-M6 — Local Clients to Scale | 🧭 Planned / 已规划 | Desktop/Android local runtimes, offline sync, operator UX and scale/resilience / 桌面与 Android 本地运行端、离线同步、值守体验及规模与韧性 | Each published v2 gate passes without weakening v1 recording or security guarantees / 各 v2 门禁通过且不削弱 v1 录像与安全保证 |
 
 ## Milestone details / 里程碑详情

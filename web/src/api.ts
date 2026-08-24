@@ -1,4 +1,4 @@
-import type { ApiErrorEnvelope, CameraDetection, CameraRecord, DeviceOperation, EventRule, MonitorEvent, MotionZone, NvrExport, NvrStatus, NvrTimeline, OnvifEvent, OnvifPreset, PlaybackCapabilities, ProcessDiagnostics, SceneDocument, SceneEvent, StudioCapabilities, StudioDocument, SystemCapabilities } from './types';
+import type { ApiErrorEnvelope, CameraDetection, CameraRecord, ClientCameraGrant, ClientEnrollment, DeviceOperation, EnrolledClient, EventRule, MonitorEvent, MotionZone, NvrExport, NvrStatus, NvrTimeline, OnvifEvent, OnvifPreset, PlaybackCapabilities, ProcessDiagnostics, SceneDocument, SceneEvent, StudioCapabilities, StudioDocument, SystemCapabilities } from './types';
 
 export class ControlApiError extends Error {
   readonly status: number;
@@ -258,6 +258,24 @@ export const fetchOnvifSnapshot = (cameraId: string) => onvifOperation<{ content
 export const pullOnvifEvents = (cameraId: string) => onvifOperation<{ events: OnvifEvent[] }>(cameraId, 'events/pull', {});
 export const sendOnvifTalk = (cameraId: string, body: Record<string, unknown>) => onvifOperation<{ state: string }>(cameraId, 'talk', body);
 export const fetchDeviceOperations = (cameraId: string) => cameraRequest<{ operations: DeviceOperation[] }>(`/cameras/${encodeURIComponent(cameraId)}/operations`);
+async function clientAdminRequest<T>(path: string, init?: RequestInit): Promise<T> {
+  const response = await fetch(`/api/v2${path}`, { cache: 'no-store', credentials: 'same-origin', ...init });
+  if (!response.ok) throw await parseError(response);
+  return (await response.json()) as T;
+}
+export const fetchClientEnrollments = (signal?: AbortSignal) =>
+  clientAdminRequest<{ enrollments: ClientEnrollment[] }>('/enrollments', { signal });
+export const fetchEnrolledClients = (signal?: AbortSignal) =>
+  clientAdminRequest<{ clients: EnrolledClient[] }>('/clients', { signal });
+export const approveClientEnrollment = (enrollmentId: string, pairingCode: string, cameraGrants: ClientCameraGrant[]) =>
+  clientAdminRequest<{ clientId: string; state: 'approved'; grantExpiresAt: number; revision: number }>(
+    `/enrollments/${encodeURIComponent(enrollmentId)}/approve`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ pairingCode, cameraGrants }),
+    });
+export const revokeEnrolledClient = (clientId: string) =>
+  clientAdminRequest<{ clientId: string; status: 'revoked'; revokedAt: number; offlineEffectiveNoLaterThan: number }>(
+    `/clients/${encodeURIComponent(clientId)}`, { method: 'DELETE' });
 export const fetchEvents = (query = '') => cameraRequest<{ events: MonitorEvent[] }>(`/events${query ? `?${query}` : ''}`);
 export const createEvent = (event: Record<string, unknown>) => cameraRequest<MonitorEvent>('/events', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(event) });
 export const acknowledgeEvent = (eventId: string, acknowledged: boolean, note: string) => cameraRequest<{ id: string; acknowledged: boolean }>(`/events/${encodeURIComponent(eventId)}/acknowledgement`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ acknowledged, note }) });

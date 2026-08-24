@@ -10,7 +10,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: release-${{ github.ref }}
+  group: release-image-global
   cancel-in-progress: false
 
 jobs:
@@ -28,7 +28,9 @@ jobs:
         run: bash ./scripts/check-executable-bits.sh
       - name: Audit public source and dependency pins
         shell: bash
-        run: ./tests/run-public-audit.sh
+        run: |
+          ./tests/run-public-audit.sh
+          python3 ./clients/scripts/verify_dependency_lock.py
 
   release:
     needs: audit
@@ -51,6 +53,7 @@ jobs:
         run: |
           ./scripts/check-executable-bits.sh
           ./tests/run-public-audit.sh
+          python3 ./clients/scripts/verify_dependency_lock.py
 
       - name: Define immutable release identity
         id: identity
@@ -66,12 +69,18 @@ jobs:
             git fetch --no-tags origin main
             git merge-base --is-ancestor "$GITHUB_SHA" origin/main
             version="$REF_NAME"
+            newest="$(git tag --merged origin/main --sort=version:refname | \
+              grep -E '^v[0-9]+\.[0-9]+(\.[0-9]+)?$' | tail -n 1)"
+            [[ -n "$newest" ]]
+            if [[ "$REF_NAME" == "$newest" ]]; then promote_latest=true; else promote_latest=false; fi
           else
             version="sha-${GITHUB_SHA::12}"
+            promote_latest=false
           fi
           [[ "$version" =~ ^[A-Za-z0-9._-]+$ ]]
           echo "image=$image" >> "$GITHUB_OUTPUT"
           echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "promote_latest=$promote_latest" >> "$GITHUB_OUTPUT"
 
       - name: Create complete corresponding-source bundle
         shell: bash
@@ -99,7 +108,7 @@ jobs:
             type=raw,value=${{ steps.identity.outputs.version }}
             type=sha,prefix=sha-,format=short
             type=semver,pattern={{version}},enable=${{ github.ref_type == 'tag' }}
-            type=raw,value=latest,enable=${{ github.ref_type == 'tag' }}
+            type=raw,value=latest,enable=${{ steps.identity.outputs.promote_latest == 'true' }}
             type=raw,value=dev,enable=${{ github.ref_type != 'tag' }}
           labels: |
             org.opencontainers.image.source=https://github.com/${{ github.repository }}

@@ -16,6 +16,65 @@ RUN pnpm config set fetch-retries 5 \
 COPY web/ ./
 RUN pnpm run build
 
+FROM ubuntu:24.04 AS sodium-builder
+
+ARG DEBIAN_FRONTEND=noninteractive
+ARG LIBSODIUM_VERSION=1.0.22
+ARG LIBSODIUM_SHA256=adbdd8f16149e81ac6078a03aca6fc03b592b89ef7b5ed83841c086191be3349
+ARG TARGETARCH
+
+RUN test "$TARGETARCH" = "amd64" \
+    && apt-get -o Acquire::Retries=5 update \
+    && apt-get -o Acquire::Retries=5 install -y --no-install-recommends \
+        autoconf automake build-essential ca-certificates curl libtool pkg-config \
+    && rm -rf /var/lib/apt/lists/* \
+    && archive="libsodium-${LIBSODIUM_VERSION}.tar.gz" \
+    && curl --fail --location --retry 5 --retry-all-errors \
+        --output "/tmp/${archive}" \
+        "https://github.com/jedisct1/libsodium/releases/download/${LIBSODIUM_VERSION}-RELEASE/${archive}" \
+    && echo "${LIBSODIUM_SHA256}  /tmp/${archive}" | sha256sum --check \
+    && mkdir -p /src/libsodium \
+    && tar --strip-components 1 -xzf "/tmp/${archive}" -C /src/libsodium \
+    && cd /src/libsodium \
+    && ./configure --prefix=/opt/libsodium --disable-static \
+    && make -j"$(nproc)" \
+    && make check \
+    && make install \
+    && mkdir -p /opt/libsodium/share/licenses/libsodium \
+    && cp LICENSE /opt/libsodium/share/licenses/libsodium/LICENSE
+
+FROM sodium-builder AS v2-service-test
+
+ARG DEBIAN_FRONTEND=noninteractive
+RUN apt-get -o Acquire::Retries=5 update \
+    && apt-get -o Acquire::Retries=5 install -y --no-install-recommends python3 \
+    && rm -rf /var/lib/apt/lists/*
+COPY v2/client_control_service.py /opt/webobs/bin/webobs-client-control
+COPY tests/test_v2_client_control.py /tmp/test_v2_client_control.py
+COPY clients/dependencies.lock.json /tmp/client-dependencies.lock.json
+COPY clients/scripts/verify_dependency_lock.py /tmp/verify_dependency_lock.py
+ENV WEBOBS_LIBSODIUM_LIBRARY=/opt/libsodium/lib/libsodium.so.26 \
+    LD_LIBRARY_PATH=/opt/libsodium/lib \
+    WEBOBS_TEST_V2_SERVICE=/opt/webobs/bin/webobs-client-control \
+    PYTHONDONTWRITEBYTECODE=1
+RUN python3 -m py_compile /opt/webobs/bin/webobs-client-control /tmp/test_v2_client_control.py \
+    && python3 /tmp/test_v2_client_control.py \
+    && python3 /tmp/verify_dependency_lock.py --lock /tmp/client-dependencies.lock.json
+
+FROM ubuntu:24.04 AS client-compile-test
+
+ARG DEBIAN_FRONTEND=noninteractive
+RUN apt-get -o Acquire::Retries=5 update \
+    && apt-get -o Acquire::Retries=5 install -y --no-install-recommends \
+        build-essential cmake libgstreamer-plugins-base1.0-dev libgstreamer1.0-dev \
+        libsecret-1-dev libsodium-dev ninja-build pkg-config qt6-base-dev qt6-declarative-dev \
+    && rm -rf /var/lib/apt/lists/*
+COPY clients/ /src/clients/
+RUN cmake -S /src/clients -B /build/clients -G Ninja \
+        -DCMAKE_BUILD_TYPE=Debug \
+        -DWEBOBS_ENFORCE_LOCKED_DEPENDENCIES=OFF \
+    && cmake --build /build/clients --parallel
+
 FROM ubuntu:24.04 AS mediamtx-downloader
 
 ARG DEBIAN_FRONTEND=noninteractive
@@ -333,6 +392,8 @@ RUN apt-get -o Acquire::Retries=5 -o Acquire::http::Timeout=30 -o Acquire::https
     && rm -rf /var/lib/apt/lists/*
 
 COPY --from=core-builder /opt/obs /opt/obs
+COPY --from=sodium-builder /opt/libsodium/lib /opt/webobs/lib
+COPY --from=sodium-builder /opt/libsodium/share/licenses/libsodium /usr/share/licenses/libsodium
 COPY --from=web-builder /src/web/dist /opt/webobs/ui
 COPY --from=mediamtx-downloader /opt/mediamtx/mediamtx /opt/webobs/bin/mediamtx
 COPY --from=mediamtx-downloader /opt/mediamtx/LICENSE /usr/share/licenses/mediamtx/LICENSE
@@ -342,35 +403,42 @@ COPY docker/backup.sh /opt/webobs/bin/webobs-backup
 COPY nvr/nvr_service.py /opt/webobs/bin/webobs-nvrd
 COPY camera/camera_registry.py /opt/webobs/bin/webobs-camera-registry
 COPY events/event_service.py /opt/webobs/bin/webobs-events
+COPY v2/client_control_service.py /opt/webobs/bin/webobs-client-control
 COPY docker/Caddyfile /opt/webobs/etc/Caddyfile
 COPY gateway/mediamtx.yml /opt/webobs/etc/mediamtx.yml
 COPY gateway/transcode-on-demand.sh /opt/webobs/bin/transcode-on-demand
 COPY tests/test_camera_registry.py /tmp/test_camera_registry.py
 COPY tests/test_event_service.py /tmp/test_event_service.py
+COPY tests/test_v2_client_control.py /tmp/test_v2_client_control.py
 COPY LICENSE /usr/share/licenses/webobs/LICENSE
 COPY obs/obs-studio/COPYING /usr/share/licenses/webobs/OBS-COPYING
 
-ENV LD_LIBRARY_PATH=/opt/obs/lib \
+ENV LD_LIBRARY_PATH=/opt/obs/lib:/opt/webobs/lib \
+    WEBOBS_LIBSODIUM_LIBRARY=/opt/webobs/lib/libsodium.so.26 \
     DISPLAY=:99 \
     EGL_PLATFORM=x11
 
 RUN mkdir -p /assets /config/obs /config/webobs /recordings /usr/share/licenses/caddy \
     && cp /usr/share/common-licenses/Apache-2.0 /usr/share/licenses/caddy/LICENSE \
-    && sed -i 's/\r$//' /opt/webobs/bin/webobs-nvrd /opt/webobs/bin/webobs-camera-registry /opt/webobs/bin/webobs-events \
+    && sed -i 's/\r$//' /opt/webobs/bin/webobs-nvrd /opt/webobs/bin/webobs-camera-registry /opt/webobs/bin/webobs-events /opt/webobs/bin/webobs-client-control \
     && test "$(head -n 1 /opt/webobs/bin/webobs-nvrd)" = '#!/usr/bin/env python3' \
     && test "$(head -n 1 /opt/webobs/bin/webobs-camera-registry)" = '#!/usr/bin/env python3' \
     && test "$(head -n 1 /opt/webobs/bin/webobs-events)" = '#!/usr/bin/env python3' \
+    && test "$(head -n 1 /opt/webobs/bin/webobs-client-control)" = '#!/usr/bin/env python3' \
     && chmod 0700 /config/obs /config/webobs \
-    && chmod 0755 /opt/webobs/entrypoint.sh /opt/webobs/bin/caddy /opt/webobs/bin/mediamtx /opt/webobs/bin/transcode-on-demand /opt/webobs/bin/webobs-backup /opt/webobs/bin/webobs-nvrd /opt/webobs/bin/webobs-camera-registry /opt/webobs/bin/webobs-events \
+    && chmod 0755 /opt/webobs/entrypoint.sh /opt/webobs/bin/caddy /opt/webobs/bin/mediamtx /opt/webobs/bin/transcode-on-demand /opt/webobs/bin/webobs-backup /opt/webobs/bin/webobs-nvrd /opt/webobs/bin/webobs-camera-registry /opt/webobs/bin/webobs-events /opt/webobs/bin/webobs-client-control \
     && python3 -m py_compile /opt/webobs/bin/webobs-nvrd \
     && python3 -m py_compile /opt/webobs/bin/webobs-camera-registry \
     && python3 -m py_compile /opt/webobs/bin/webobs-events \
+    && python3 -m py_compile /opt/webobs/bin/webobs-client-control \
     && WEBOBS_TEST_CAMERA_REGISTRY=/opt/webobs/bin/webobs-camera-registry \
        WEBOBS_TEST_NVR_SERVICE=/opt/webobs/bin/webobs-nvrd \
        PYTHONDONTWRITEBYTECODE=1 python3 /tmp/test_camera_registry.py \
     && WEBOBS_TEST_EVENT_SERVICE=/opt/webobs/bin/webobs-events \
        PYTHONDONTWRITEBYTECODE=1 python3 /tmp/test_event_service.py \
-    && rm -f /tmp/test_camera_registry.py /tmp/test_event_service.py \
+    && WEBOBS_TEST_V2_SERVICE=/opt/webobs/bin/webobs-client-control \
+       PYTHONDONTWRITEBYTECODE=1 python3 /tmp/test_v2_client_control.py \
+    && rm -f /tmp/test_camera_registry.py /tmp/test_event_service.py /tmp/test_v2_client_control.py \
     && /opt/webobs/bin/caddy version \
     && /opt/webobs/bin/caddy adapt --config /opt/webobs/etc/Caddyfile --adapter caddyfile >/dev/null \
     && /opt/webobs/bin/mediamtx --version \

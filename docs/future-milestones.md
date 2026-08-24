@@ -1,10 +1,10 @@
 # v1.1–v2 product roadmap / v1.1–v2 产品路线
 
-> Status / 状态：Planning baseline / 规划基线
+> Status / 状态：v2 execution baseline / v2 实施基线
 >
 > Last updated / 最后更新：2026-08-24
 >
-> Current position / 当前位置：`v1-M10` and `v1-M11` are complete. The final v1.2 closure gate passed with deterministic protocol fixtures plus a redacted external Server Push MJPEG decode; model/firmware vendor matrices continue without blocking the release / `v1-M10` 与 `v1-M11` 已完成；v1.2 最终收口门禁已由确定性协议夹具与脱敏外部 Server Push MJPEG 解码共同通过，型号/固件厂商矩阵作为非阻塞工作继续
+> Current position / 当前位置：v1 is closed at `v1.2.1`; `dev` is implementing `v2-M1`. API v2, encrypted grants, the topology planner, administrator UI and native-client source exist. An isolated H.264 architecture fixture proves a control-only Docker network and client-owned decode, while the locked-client five-protocol, NVR coexistence and platform hardware gates remain open / v1 已在 `v1.2.1` 收口；`dev` 正实施 `v2-M1`。API v2、加密 Grant、拓扑规划器、管理员 UI 与本地客户端源码已存在；隔离 H.264 架构夹具已证明 Docker 仅接控制网络且由客户端解码，但固定依赖客户端的五协议、NVR 共存及平台硬件门禁仍未完成
 
 This document expands the project from a web camera compositor into a self-hosted and local-first monitoring workspace with three first-class capabilities: an OBS-inspired customizable canvas, an NVR workflow inspired by mainstream monitoring applications such as tinyCam Monitor, and v2 True Direct local clients that keep Docker outside the media data plane. It is a capability plan, not a compatibility or UI-cloning claim, and it does not promise release dates.
 
@@ -88,12 +88,16 @@ SQLite in WAL mode plus local volumes is the initial single-node metadata baseli
 v1.0: v1-M1 … v1-M6 (complete)
 v1.1 family: v1-M7 Canvas -> v1-M8 NVR -> v1-M9 Timeline -> v1-M10 Device Ops -> v1-M11 Events
 v1.2 final closure: qualification only, no v1-M12
-v2.0: v2-M1 True Direct -> v2-M2 Desktop -> v2-M3 Android -> v2-M4 Offline Sync -> v2-M5 Operator UX -> v2-M6 Scale
+v2.0: v2-M1 True Direct -> v2-M2 Desktop -> v2-M3 Android
+v2.1: v2-M4 Offline Sync -> v2-M5 Operator UX
+v2.2: v2-M6 Scale
 
 v1.0：v1-M1 … v1-M6（完成）
 v1.1 里程碑族：v1-M7 画布 -> v1-M8 NVR -> v1-M9 时间线 -> v1-M10 设备运维 -> v1-M11 事件
 v1.2 最终收口：只做资格验证，不新增 v1-M12
-v2.0：v2-M1 真直连 -> v2-M2 桌面端 -> v2-M3 Android -> v2-M4 离线同步 -> v2-M5 值守体验 -> v2-M6 扩展
+v2.0：v2-M1 真直连 -> v2-M2 桌面端 -> v2-M3 Android
+v2.1：v2-M4 离线同步 -> v2-M5 值守体验
+v2.2：v2-M6 扩展
 ```
 
 ### v1-M7 — Canvas Studio / 画布工作台
@@ -230,21 +234,21 @@ v2.0：v2-M1 真直连 -> v2-M2 桌面端 -> v2-M3 Android -> v2-M4 离线同步
 
 **Scope / 范围：** Windows/Linux reference packages, hardware decode fallback, 1/4/9/16 and custom canvas views, local companion mode for browser UI where justified, reconnect, diagnostics, signed updates and OS-backed secret storage / Windows/Linux 参考包、硬解回退、1/4/9/16 与自定义画布、本机伴随模式（确有必要时）、重连、诊断、签名更新及系统密钥存储。
 
-**Exit gate / 完成门禁：** published reference hardware passes multi-camera True Direct, reconnect, sleep/resume, offline startup, revocation, update/rollback and secret-extraction tests without creating a server media session / 公开参考硬件通过多路真直连、重连、睡眠恢复、离线启动、撤销、升级回滚和密钥提取测试，且不创建服务端媒体会话。
+**Exit gate / 完成门禁：** Windows 11 and current/previous Fedora reference hardware sustain 16 `640×360@15` substreams for 30 minutes plus one focused `1080p@25/30` main stream, with under 1% dropped frames, hardware decode when supported, ten-second reconnect, sleep/GPU fallback/offline/update rollback coverage, and zero incremental server live-media load / Windows 11 与当前/上一稳定 Fedora 参考硬件持续 30 分钟运行 16 路 `640×360@15` 子码流并聚焦一路 `1080p@25/30` 主码流，掉帧低于 1%，支持时使用硬解，并通过十秒重连、睡眠/GPU 回退/离线/升级回滚，服务端实时媒体负载增量为零。
 
 ### v2-M3 — Android Local Runtime / Android 本地运行端
 
 **Goal / 目标：** provide a tinyCam-class Android monitoring surface that shares devices, layouts and policy with the server but performs approved live media work locally / 提供类似 tinyCam 使用方式的 Android 监看端，共享设备、布局和策略，但在本机执行获批实时媒体工作。
 
-**Scope / 范围：** phone/tablet adaptive grids, hardware decode, foreground monitor mode, full screen and Wake Lock, PTZ/audio permissions, network handoff, battery/thermal budgets, encrypted offline state and explicit background limitations / 手机/平板自适应宫格、硬解、前台监看、全屏与常亮、PTZ/音频权限、网络切换、电量/温控预算、加密离线状态及明确后台限制。
+**Scope / 范围：** Android 10/API 29+ arm64-v8a, adaptive 1/4/9 grids, capability-gated 16-grid, MediaCodec, foreground monitor/manual recording, full screen and Wake Lock, PTZ/listen/ten-second push-to-talk, network handoff, private app storage plus Storage Access Framework export, encrypted offline state and explicit background stop behavior / Android 10/API 29+ arm64-v8a、自适应 1/4/9 宫格、能力探测通过后才开放 16 宫格、MediaCodec、前台监看/手动录像、全屏与常亮、PTZ/监听/十秒按键对讲、网络切换、应用私有存储与 SAF 导出、加密离线状态，以及明确的后台停止行为。
 
-**Exit gate / 完成门禁：** supported Android profiles pass local True Direct, 1/4/9/16-tile resource budgets, lifecycle/network transitions, permission denial, credential revocation and app-update migration; unsupported background behavior is disclosed / 受支持 Android 配置通过本地真直连、1/4/9/16 宫格资源预算、生命周期/网络切换、权限拒绝、凭据撤销与应用升级迁移；不支持的后台行为必须明确展示。
+**Exit gate / 完成门禁：** a reference device sustains nine `640×360@15` streams for 30 minutes below 2% dropped frames without severe thermal throttling; backgrounding releases camera connections, decoders and Wake Lock within five seconds; rotation, lock, foreground/background, Wi-Fi/VPN, denied permissions, reconnect, Grant expiry and revocation pass. Sixteen tiles are a capability-gated feature, not the v2-M3 minimum acceptance load / 参考设备持续 30 分钟播放九路 `640×360@15`，掉帧低于 2% 且不进入严重温控；后台后五秒内释放连接、解码器与 Wake Lock；旋转、锁屏、前后台、Wi-Fi/VPN、权限拒绝、重连、Grant 过期与撤销通过。16 宫格是按能力开放的功能，不是 v2-M3 最低验收负载。
 
 ### v2-M4 — Offline Authorization & Sync / 离线授权与同步
 
 **Goal / 目标：** make one registry and canvas usable across server, desktop and Android without turning the server database or administrator password into a portable secret / 让一份资产库与画布可在服务端、桌面和 Android 间使用，同时不把服务端数据库或管理员密码变成可携带密钥。
 
-**Scope / 范围：** device enrollment, scoped grants, encrypted local cache, expiry/revocation, conflict-aware scene sync, schema migration, offline audit queue and explicit local-only profiles / 设备配对、范围授权、加密本地缓存、过期/撤销、场景冲突同步、schema 迁移、离线审计队列及明确的仅本地 Profile。
+**Scope / 范围：** build on M1's baseline enrollment, scoped grants and encrypted cache to add bidirectional Registry/Scene synchronization, field-level conflicts, schema migration, lost-device workflows, backup/restore and durable bounded offline audit reconciliation / 在 M1 已建立的配对、范围 Grant 与加密缓存基础上，增加 Registry/Scene 双向同步、字段级冲突、schema 迁移、遗失设备流程、备份恢复及持久有界的离线审计对账。
 
 **Exit gate / 完成门禁：** deterministic offline/online conflict, expiry, lost-device revocation, clock skew, backup/restore, migration and credential-redaction matrices pass across all published clients / 所有公开客户端通过确定性离线/在线冲突、过期、遗失设备撤销、时钟偏差、备份恢复、迁移与凭据脱敏矩阵。
 

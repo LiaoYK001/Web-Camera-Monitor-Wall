@@ -11,6 +11,17 @@
 /build-*/
 /web/node_modules/
 /web/dist/
+/clients/build/
+/clients/build-*/
+/clients/packages/
+/clients/.gradle/
+/clients/android/local.properties
+*.apk
+*.aab
+*.AppImage
+*.flatpak
+*.msix
+*.sigstore.json
 __pycache__/
 *.pyc
 /recordings/*
@@ -19,3 +30,4 @@ __pycache__/
 !/assets/.gitkeep
 /tests/artifacts/*
 !/tests/artifacts/.gitkeep
+/tests/.v2-direct-*/

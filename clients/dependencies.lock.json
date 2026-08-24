@@ -1,0 +1,45 @@
+{
+  "schemaVersion": 2,
+  "artifacts": [
+    {
+      "id": "qt-source",
+      "name": "Qt source",
+      "platform": "all",
+      "version": "6.11.2",
+      "url": "https://download.qt.io/official_releases/qt/6.11/6.11.2/single/qt-everywhere-src-6.11.2.tar.xz",
+      "sha256": "6dcfbca271d76a6502741a2c0dc6fc98ef7dd0b7b4cfd0abcebb285a86a26f33"
+    },
+    {
+      "id": "gstreamer-source",
+      "name": "GStreamer core source",
+      "platform": "all",
+      "version": "1.28.6",
+      "url": "https://gstreamer.freedesktop.org/src/gstreamer/gstreamer-1.28.6.tar.xz",
+      "sha256": "62b6b9f0ad3147a6dd6420ac64a91180b14e990695bddd353b96041611d052ca"
+    },
+    {
+      "id": "gstreamer-windows-x86_64",
+      "name": "GStreamer MSVC x86_64 installer",
+      "platform": "windows-x86_64",
+      "version": "1.28.6",
+      "url": "https://gstreamer.freedesktop.org/data/pkg/windows/1.28.6/msvc/gstreamer-1.0-msvc-x86_64-1.28.6.exe",
+      "sha256": "059251444d1267b486eba390b18d25fed87e10315e72f757ec6c7e912fa746b5"
+    },
+    {
+      "id": "gstreamer-android-universal",
+      "name": "GStreamer Android universal bundle",
+      "platform": "android",
+      "version": "1.28.6",
+      "url": "https://gstreamer.freedesktop.org/data/pkg/android/1.28.6/gstreamer-1.0-android-universal-1.28.6.tar.xz",
+      "sha256": "8b6ea86f26ea33bf497759860d9c482c3274ff732e83c0e2dae6c434550a1175"
+    },
+    {
+      "id": "libsodium-source",
+      "name": "libsodium source",
+      "platform": "all",
+      "version": "1.0.22",
+      "url": "https://github.com/jedisct1/libsodium/releases/download/1.0.22-RELEASE/libsodium-1.0.22.tar.gz",
+      "sha256": "adbdd8f16149e81ac6078a03aca6fc03b592b89ef7b5ed83841c086191be3349"
+    }
+  ]
+}

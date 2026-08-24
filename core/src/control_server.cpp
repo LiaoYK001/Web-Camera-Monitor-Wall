@@ -28,6 +28,7 @@
 #include <cctype>
 #include <chrono>
 #include <cstdint>
+#include <cstdlib>
 #include <deque>
 #include <filesystem>
 #include <fstream>
@@ -1132,7 +1133,16 @@ private:
 
 class CameraProxy {
 public:
-    explicit CameraProxy(bool enabled) : enabled_(enabled) {}
+    explicit CameraProxy(bool enabled) : enabled_(enabled)
+    {
+        if (const char *value = std::getenv("WEBOBS_V2_INTERNAL_TOKEN")) {
+            const std::string_view token(value);
+            if (token.size() == 64 && std::all_of(token.begin(), token.end(), [](unsigned char character) {
+                    return std::isdigit(character) || (character >= 'a' && character <= 'f');
+                }))
+                v2_internal_token_ = token;
+        }
+    }
 
     HttpResponse forward(const HttpRequest &request) const
     {
@@ -1142,6 +1152,7 @@ public:
         const std::string_view target = view(request.target());
         std::string suffix;
         int upstream_port = 8092;
+        bool v2_client_service = false;
         if (target == "/api/v1/cameras" || target.starts_with("/api/v1/cameras/"))
             suffix = std::string(target.substr(std::string_view("/api/v1").size()));
         else if (target == "/api/v1/camera-adapters")
@@ -1163,6 +1174,14 @@ public:
                    target == "/api/v1/notification-outbox" || target == "/api/v1/notification-outbox/process") {
             suffix = std::string(target.substr(std::string_view("/api/v1").size()));
             upstream_port = 8093;
+        } else if (target == "/api/v2/enrollments" || target.starts_with("/api/v2/enrollments/") ||
+                   target == "/api/v2/clients" || target.starts_with("/api/v2/clients/") ||
+                   target == "/api/v2/client/bootstrap" || target.starts_with("/api/v2/client/bootstrap?") ||
+                   target == "/api/v2/media-plans" || target.starts_with("/api/v2/media-plans/") ||
+                   target == "/api/v2/client/audit/batch") {
+            suffix = std::string(target.substr(std::string_view("/api/v2").size()));
+            upstream_port = 8094;
+            v2_client_service = true;
         }
         else
             return response(http::status::not_found, request.version(),
@@ -1188,6 +1207,38 @@ public:
         curl_slist *headers = nullptr;
         if (mutating)
             headers = curl_slist_append(headers, "Content-Type: application/json");
+        std::string device_header;
+        std::string internal_admin_header;
+        if (v2_client_service) {
+            std::optional<std::string_view> authorization;
+            std::size_t authorization_count = 0;
+            for (const auto &field : request.base()) {
+                if (field.name() == http::field::authorization) {
+                    ++authorization_count;
+                    authorization = view(field.value());
+                }
+            }
+            constexpr std::string_view prefix = "WebObs-Device ";
+            if (authorization_count == 1 && authorization && authorization->starts_with(prefix)) {
+                const std::string_view token = authorization->substr(prefix.size());
+                if (token.size() >= 32 && token.size() <= 128 &&
+                    std::all_of(token.begin(), token.end(), [](unsigned char character) {
+                        return std::isalnum(character) || character == '_' || character == '-';
+                    })) {
+                    device_header = "X-WebObs-Device-Token: " + std::string(token);
+                    headers = curl_slist_append(headers, device_header.c_str());
+                }
+            }
+            const bool administrator_route =
+                (request.method() == http::verb::get && suffix == "/enrollments") ||
+                (request.method() == http::verb::post && suffix.ends_with("/approve")) ||
+                (request.method() == http::verb::get && suffix == "/clients") ||
+                (request.method() == http::verb::delete_ && suffix.starts_with("/clients/"));
+            if (administrator_route && !v2_internal_token_.empty()) {
+                internal_admin_header = "X-WebObs-Internal-Admin: " + v2_internal_token_;
+                headers = curl_slist_append(headers, internal_admin_header.c_str());
+            }
+        }
         curl_easy_setopt(handle, CURLOPT_URL, url.c_str());
         curl_easy_setopt(handle, CURLOPT_PROTOCOLS_STR, "http");
         curl_easy_setopt(handle, CURLOPT_CONNECTTIMEOUT_MS, 1000L);
@@ -1237,7 +1288,40 @@ private:
     }
 
     bool enabled_ = true;
+    std::string v2_internal_token_;
 };
+
+bool hex_identifier(std::string_view value)
+{
+    return value.size() == 32 && std::all_of(value.begin(), value.end(), [](unsigned char character) {
+        return std::isdigit(character) || (character >= 'a' && character <= 'f');
+    });
+}
+
+bool v2_action_route(std::string_view target, std::string_view prefix, std::string_view suffix)
+{
+    return target.starts_with(prefix) && target.ends_with(suffix) &&
+           hex_identifier(target.substr(prefix.size(), target.size() - prefix.size() - suffix.size()));
+}
+
+bool v2_device_route(const HttpRequest &request)
+{
+    const std::string_view target = view(request.target());
+    if (request.method() == http::verb::post && target == "/api/v2/enrollments")
+        return true;
+    if (request.method() == http::verb::post &&
+        v2_action_route(target, "/api/v2/enrollments/", "/complete"))
+        return true;
+    if (request.method() == http::verb::get &&
+        (target == "/api/v2/client/bootstrap" || target.starts_with("/api/v2/client/bootstrap?")))
+        return true;
+    if (request.method() == http::verb::post &&
+        (target == "/api/v2/media-plans" || target == "/api/v2/client/audit/batch"))
+        return true;
+    return request.method() == http::verb::get &&
+           target.starts_with("/api/v2/media-plans/") &&
+           hex_identifier(target.substr(std::string_view("/api/v2/media-plans/").size()));
+}
 
 std::string static_content_type(std::string_view filename)
 {
@@ -1733,6 +1817,20 @@ HttpResponse handle_request(const HttpRequest &request, SceneController &control
     }
     if (request.method() == http::verb::get && target == "/metrics")
         return metrics_response(version, runtime_status, metrics, authenticator);
+
+    const bool v2_target = target == "/api/v2/enrollments" || target.starts_with("/api/v2/enrollments/") ||
+                           target == "/api/v2/clients" || target.starts_with("/api/v2/clients/") ||
+                           target == "/api/v2/client/bootstrap" || target.starts_with("/api/v2/client/bootstrap?") ||
+                           target == "/api/v2/media-plans" || target.starts_with("/api/v2/media-plans/") ||
+                           target == "/api/v2/client/audit/batch";
+    if (v2_target) {
+        if ((request.method() == http::verb::put || request.method() == http::verb::post ||
+             request.method() == http::verb::delete_) &&
+            !request_origin_allowed(request, false, allowed_origins))
+            return response(http::status::forbidden, version,
+                            error_body("origin_rejected", "Origin must match the local Host"));
+        return camera_proxy.forward(request);
+    }
     if (request.method() == http::verb::get && target == "/api/v1/sources/status")
         return source_health_response(version, controller);
     if (request.method() == http::verb::get && target == "/api/v1/system/capabilities")
@@ -2074,7 +2172,8 @@ private:
             return;
         }
         const std::string_view target = view(request.target());
-        const bool static_resource = !target.starts_with("/api/v1/") && target != "/metrics";
+        const bool static_resource = !target.starts_with("/api/v1/") &&
+                                     !target.starts_with("/api/v2/") && target != "/metrics";
         const bool login_request = target == "/api/v1/auth/login";
         const bool public_probe = request.method() == http::verb::get &&
                                   (target == "/api/v1/health" || target == "/api/v1/ready");
@@ -2130,7 +2229,9 @@ private:
         if (session_token)
             session_record = session_store_.validate_and_slide(*session_token);
         bool basic_authenticated = false;
-        if (!public_probe && !static_resource && authenticator_.enabled() && !session_record) {
+        const bool device_request = v2_device_route(request);
+        if (!public_probe && !device_request && !static_resource &&
+            authenticator_.enabled() && !session_record) {
             std::optional<std::string_view> authorization;
             std::size_t authorization_count = 0;
             for (const auto &field : request.base()) {

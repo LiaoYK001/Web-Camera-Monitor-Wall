@@ -19,7 +19,8 @@ tests/run-m1-real-camera.sh
 tests/run-m10-real-mjpeg.sh
 tests/run-public-audit.sh
 tests/run-real-camera.sh
-tests/run-smoke.sh'
+tests/run-smoke.sh
+tests/run-v2-true-direct.sh'
 
 failed=0
 printf '%s\n' "$required" | while IFS= read -r path; do

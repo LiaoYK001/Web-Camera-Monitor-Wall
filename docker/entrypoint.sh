@@ -10,6 +10,7 @@ mediamtx_config="${WEBOBS_MEDIAMTX_CONFIG:-/opt/webobs/etc/mediamtx.yml}"
 tls_enabled="${WEBOBS_TLS_ENABLED:-false}"
 nvr_enabled="${WEBOBS_NVR_ENABLED:-false}"
 camera_registry_enabled="${WEBOBS_CAMERA_REGISTRY_ENABLED:-true}"
+v2_client_control_enabled="${WEBOBS_V2_CLIENT_CONTROL_ENABLED:-$camera_registry_enabled}"
 events_enabled="${WEBOBS_EVENTS_ENABLED:-true}"
 caddy_config="${WEBOBS_CADDY_CONFIG:-/opt/webobs/etc/Caddyfile}"
 export WEBOBS_WEBRTC_ENABLED="$mediamtx_enabled"
@@ -84,6 +85,20 @@ case "$camera_registry_enabled" in
     true|false) ;;
     *) fail "WEBOBS_CAMERA_REGISTRY_ENABLED must be true or false" ;;
 esac
+case "$v2_client_control_enabled" in
+    true|false) ;;
+    *) fail "WEBOBS_V2_CLIENT_CONTROL_ENABLED must be true or false" ;;
+esac
+[ "$v2_client_control_enabled" = "false" ] || [ "$camera_registry_enabled" = "true" ] || \
+    fail "v2 client control requires WEBOBS_CAMERA_REGISTRY_ENABLED=true"
+if [ "$v2_client_control_enabled" = "true" ]; then
+    WEBOBS_V2_INTERNAL_TOKEN="$(tr -d '-' < /proc/sys/kernel/random/uuid)$(tr -d '-' < /proc/sys/kernel/random/uuid)"
+    case "$WEBOBS_V2_INTERNAL_TOKEN" in
+        *[!0-9a-f]*|'') fail "could not create the v2 internal administrator token" ;;
+    esac
+    [ "${#WEBOBS_V2_INTERNAL_TOKEN}" -eq 64 ] || fail "could not create the v2 internal administrator token"
+    export WEBOBS_V2_INTERNAL_TOKEN
+fi
 case "$events_enabled" in
     true|false) ;;
     *) fail "WEBOBS_EVENTS_ENABLED must be true or false" ;;
@@ -206,6 +221,9 @@ nvr_log_pipe=""
 camera_registry_pid=""
 camera_registry_filter_pid=""
 camera_registry_log_pipe=""
+v2_client_control_pid=""
+v2_client_control_filter_pid=""
+v2_client_control_log_pipe=""
 events_pid=""
 events_filter_pid=""
 events_log_pipe=""
@@ -225,6 +243,7 @@ shutdown_children() {
     terminate_child "$mediamtx_pid"
     terminate_child "$nvr_pid"
     terminate_child "$camera_registry_pid"
+    terminate_child "$v2_client_control_pid"
     terminate_child "$events_pid"
     terminate_child "$xvfb_pid"
     terminate_child "$weston_pid"
@@ -389,6 +408,30 @@ if [ "$camera_registry_enabled" = "true" ]; then
     [ "$registry_ready" -eq 1 ] || fail "Timed out waiting for Camera Registry"
 fi
 
+if [ "$v2_client_control_enabled" = "true" ]; then
+    v2_client_control_log_pipe="/tmp/webobs-client-control-log.$$"
+    rm -f -- "$v2_client_control_log_pipe"
+    mkfifo "$v2_client_control_log_pipe"
+    /opt/obs/bin/webobs-log-filter < "$v2_client_control_log_pipe" &
+    v2_client_control_filter_pid=$!
+    python3 /opt/webobs/bin/webobs-client-control > "$v2_client_control_log_pipe" 2>&1 &
+    v2_client_control_pid=$!
+    v2_ready=0
+    v2_attempt=0
+    while [ "$v2_attempt" -lt 50 ]; do
+        if curl --fail --silent --show-error http://127.0.0.1:8094/health >/dev/null; then
+            v2_ready=1
+            break
+        fi
+        if ! kill -0 "$v2_client_control_pid" 2>/dev/null; then
+            fail "v2 client control exited before becoming ready"
+        fi
+        v2_attempt=$((v2_attempt + 1))
+        sleep 0.1
+    done
+    [ "$v2_ready" -eq 1 ] || fail "Timed out waiting for v2 client control"
+fi
+
 if [ "$events_enabled" = "true" ]; then
     events_log_pipe="/tmp/webobs-events-log.$$"
     rm -f -- "$events_log_pipe"
@@ -466,6 +509,18 @@ while kill -0 "$webobsd_pid" 2>/dev/null; do
         terminate_child "$webobsd_pid"
         break
     fi
+    if [ "$shutdown_requested" -eq 0 ] && [ -n "$v2_client_control_pid" ] && ! kill -0 "$v2_client_control_pid" 2>/dev/null; then
+        echo "v2 client control exited while webobsd was running" >&2
+        exit_status=3
+        terminate_child "$webobsd_pid"
+        break
+    fi
+    if [ "$shutdown_requested" -eq 0 ] && [ -n "$v2_client_control_filter_pid" ] && ! kill -0 "$v2_client_control_filter_pid" 2>/dev/null; then
+        echo "v2 client control log filter exited while webobsd was running" >&2
+        exit_status=3
+        terminate_child "$webobsd_pid"
+        break
+    fi
     if [ "$shutdown_requested" -eq 0 ] && [ -n "$events_pid" ] && ! kill -0 "$events_pid" 2>/dev/null; then
         echo "Event service exited while webobsd was running" >&2
         exit_status=3
@@ -526,6 +581,12 @@ fi
 if [ -n "$camera_registry_filter_pid" ]; then
     wait "$camera_registry_filter_pid" 2>/dev/null || true
 fi
+if [ -n "$v2_client_control_pid" ]; then
+    wait "$v2_client_control_pid" 2>/dev/null || true
+fi
+if [ -n "$v2_client_control_filter_pid" ]; then
+    wait "$v2_client_control_filter_pid" 2>/dev/null || true
+fi
 if [ -n "$events_pid" ]; then
     wait "$events_pid" 2>/dev/null || true
 fi
@@ -543,6 +604,9 @@ if [ -n "$nvr_log_pipe" ]; then
 fi
 if [ -n "$camera_registry_log_pipe" ]; then
     rm -f -- "$camera_registry_log_pipe"
+fi
+if [ -n "$v2_client_control_log_pipe" ]; then
+    rm -f -- "$v2_client_control_log_pipe"
 fi
 if [ -n "$events_log_pipe" ]; then
     rm -f -- "$events_log_pipe"
