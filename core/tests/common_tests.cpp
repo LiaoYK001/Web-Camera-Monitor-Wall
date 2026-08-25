@@ -540,6 +540,28 @@ void scene_document_tests()
     if (parsed.document)
         expect(*parsed.document == document, "scene persistence JSON must round-trip without data loss");
 
+    const std::string v1_compatible_scene =
+        R"({"schemaVersion":5,"revision":7,"id":"main","name":"Main Wall","canvas":{"width":1920,"height":1080,"backgroundColor":"#000000"},"sources":[{"id":"camera-front","kind":"rtsp","name":"Front Camera","muted":false,"volume":0.75,"syncOffsetMs":250,"monitoring":"monitor-and-output","audioTrack":3,"rtspUrl":"rtsp://user:password@camera/live","transport":"tcp"}],"items":[{"id":"item-front","sourceId":"camera-front","x":100,"y":50,"width":960,"height":540,"scaleMode":"contain","crop":{"top":1,"right":2,"bottom":3,"left":4},"zIndex":0,"visible":true}]})";
+    const auto parsed_v1_compatible = webobs::parse_scene_json(v1_compatible_scene);
+    expect(parsed_v1_compatible.ok() && parsed_v1_compatible.document &&
+               parsed_v1_compatible.document->sources.front().filters.empty() &&
+               !parsed_v1_compatible.document->items.front().locked &&
+               parsed_v1_compatible.document->items.front().group_id.empty() &&
+               parsed_v1_compatible.document->items.front().rotation_degrees == 0.0 &&
+               parsed_v1_compatible.document->items.front().opacity == 1.0 &&
+               parsed_v1_compatible.document->items.front().blend_mode == "normal",
+           "API v1 scenes that predate Studio fields must retain secure defaults");
+
+    const auto compatibility_json =
+        webobs::serialize_scene_json(document, webobs::SceneJsonView::persistence, false);
+    std::string invalid_filters = compatibility_json.json;
+    const std::size_t invalid_filters_position = invalid_filters.find("\"filters\":[]");
+    if (invalid_filters_position != std::string::npos)
+        invalid_filters.replace(invalid_filters_position, std::string("\"filters\":[]").size(),
+                                "\"filters\":null");
+    expect(invalid_filters_position != std::string::npos && !webobs::parse_scene_json(invalid_filters).ok(),
+           "an explicitly supplied non-array filter field must remain invalid");
+
     webobs::SceneDocument browser_document;
     browser_document.sources.push_back({.id = "dashboard-main",
                                         .kind = "browser",

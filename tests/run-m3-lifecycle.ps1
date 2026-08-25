@@ -207,7 +207,7 @@ try {
         -WindowStyle Hidden -PassThru
 
     [void](Wait-SourceClassification -Client $Client -SourceId 'camera-h264' -Strategy passthrough -Codec h264)
-    [void](Wait-SourceClassification -Client $Client -SourceId 'camera-hevc' -Strategy transcode -Codec hevc)
+    [void](Wait-SourceClassification -Client $Client -SourceId 'camera-hevc' -Strategy hybrid -Codec hevc)
     $ContainerId = (@(& docker compose -f $ComposeFile ps -q webobs-hybrid) -join '').Trim()
     Assert-True (-not [string]::IsNullOrWhiteSpace($ContainerId)) 'Could not resolve the M3 lifecycle product container.'
     Wait-TranscoderCount -ContainerId $ContainerId -Expected 1
@@ -240,7 +240,7 @@ try {
     ($Scene.sources | Where-Object id -eq 'camera-hevc').rtspUrl = 'rtsp://mediamtx:8554/m3-hevc'
     ($Scene.sources | Where-Object id -eq 'camera-hevc').name = 'Restored HEVC'
     $Scene = Update-Scene -Client $Client -Scene $Scene
-    [void](Wait-SourceClassification -Client $Client -SourceId 'camera-hevc' -Strategy transcode -Codec hevc)
+    [void](Wait-SourceClassification -Client $Client -SourceId 'camera-hevc' -Strategy hybrid -Codec hevc)
     Wait-TranscoderCount -ContainerId $ContainerId -Expected 1
     $RestoredLogs = Get-ProductLogs
     $HybridPaths = @([Regex]::Matches(

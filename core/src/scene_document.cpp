@@ -519,7 +519,8 @@ SceneParseResult parse_scene_json(std::string_view input)
         }
 
         json_t *filters = json_object_get(source_object, "filters");
-        if (!json_is_array(filters) || json_array_size(filters) > maximum_source_filters)
+        if (filters != nullptr &&
+            (!json_is_array(filters) || json_array_size(filters) > maximum_source_filters))
             return parse_failure("source filters must be an array within the configured limit");
         std::size_t filter_index = 0;
         json_t *filter_object = nullptr;
@@ -564,11 +565,16 @@ SceneParseResult parse_scene_json(std::string_view input)
             !read_boolean(item_object, "visible", item.visible, error, "item"))
             return parse_failure(std::move(error));
 
-        if (!read_boolean(item_object, "locked", item.locked, error, "item") ||
-            !read_string_allow_empty(item_object, "groupId", item.group_id, 64, error, "item") ||
-            !read_number(item_object, "rotation", item.rotation_degrees, error, "item") ||
-            !read_number(item_object, "opacity", item.opacity, error, "item") ||
-            !read_string(item_object, "blendMode", item.blend_mode, 16, error, "item"))
+        if ((json_object_get(item_object, "locked") != nullptr &&
+             !read_boolean(item_object, "locked", item.locked, error, "item")) ||
+            (json_object_get(item_object, "groupId") != nullptr &&
+             !read_string_allow_empty(item_object, "groupId", item.group_id, 64, error, "item")) ||
+            (json_object_get(item_object, "rotation") != nullptr &&
+             !read_number(item_object, "rotation", item.rotation_degrees, error, "item")) ||
+            (json_object_get(item_object, "opacity") != nullptr &&
+             !read_number(item_object, "opacity", item.opacity, error, "item")) ||
+            (json_object_get(item_object, "blendMode") != nullptr &&
+             !read_string(item_object, "blendMode", item.blend_mode, 16, error, "item")))
             return parse_failure(std::move(error));
 
         if (json_object_get(item_object, "scaleMode") != nullptr &&

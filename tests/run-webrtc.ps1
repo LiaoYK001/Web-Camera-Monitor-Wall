@@ -156,7 +156,7 @@ try {
         '--no-default-browser-check',
         '--autoplay-policy=no-user-gesture-required',
         "--user-data-dir=$Profile",
-        "$BaseUri/"
+        "$BaseUri/#composite"
     )
     $ChromeProcess = Start-Process -FilePath $ChromePath -ArgumentList $ChromeArguments `
         -WindowStyle Hidden -PassThru

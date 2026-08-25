@@ -13,7 +13,6 @@ $ComposeFile = Join-Path $PSScriptRoot 'compose.smoke.yaml'
 $ArtifactDirectory = Join-Path $PSScriptRoot 'artifacts'
 $BaseUri = 'http://127.0.0.1:18085'
 $CdpPort = 20000 + (Get-Random -Maximum 20000)
-$RunToken = [Guid]::NewGuid().ToString('N')
 $script:CdpIdentifier = 0
 
 function Assert-True {
@@ -308,14 +307,26 @@ document.querySelector('.direct-audio-control')?.dataset.audioState === 'disable
     $CdpSocket = $null
 
     $CdpPort += 1
-    $CompositeUrl = "$BaseUri/#m5-$RunToken-composite"
+    $CompositeUrl = "$BaseUri/#composite"
     $ChromeProcess = Start-AudioChrome -Url $CompositeUrl -Profile $CompositeProfile
     $CdpSocket = Connect-Cdp -Client $Client -ExpectedUrl $CompositeUrl
-    Wait-CdpExpression -Socket $CdpSocket -Expression @"
+    try {
+        Wait-CdpExpression -Socket $CdpSocket -Expression @"
 document.querySelector('.program-audio-control')?.dataset.audioState === 'disabled' &&
 document.querySelector('.program-preview video')?.muted === true &&
 document.querySelector('.program-preview')?.classList.contains('live')
 "@ -Message 'Composite Opus did not become live and muted by default'
+    } catch {
+        $CompositeDiagnostics = Invoke-CdpExpression -Socket $CdpSocket -Expression @"
+JSON.stringify({ href: location.href, body: document.body.innerText.slice(0, 300),
+  audioState: document.querySelector('.program-audio-control')?.dataset.audioState ?? null,
+  live: document.querySelector('.program-preview')?.classList.contains('live') ?? false,
+  video: (() => { const video = document.querySelector('.program-preview video'); return video ?
+    { muted: video.muted, paused: video.paused, readyState: video.readyState } : null })() })
+"@
+        $CompositeLogs = docker compose -f $ComposeFile logs --no-color --tail 120 webobs-audio | Out-String
+        throw "Composite default-muted state did not settle: $CompositeDiagnostics`n$CompositeLogs"
+    }
     Invoke-CdpClick -Socket $CdpSocket -Selector '.program-audio-control button'
     Wait-CdpExpression -Socket $CdpSocket -Expression @"
 document.querySelector('.program-audio-control')?.dataset.audioState === 'running' &&

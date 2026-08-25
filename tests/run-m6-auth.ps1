@@ -118,7 +118,8 @@ try {
         Start-Sleep -Milliseconds 250
     }
     Assert-True $Ready 'M6 public liveness/readiness probes did not become ready.'
-    Assert-True ($Health.Body -match '"milestone":"M(?:6|7|8|9|10-foundation)"' -and $Readiness.Body -eq '{"status":"ready"}') `
+    Assert-True ($Health.Body -eq '{"status":"ok","milestone":"v1-M11"}' -and
+        $Readiness.Body -eq '{"status":"ready"}') `
         'M6 probes returned an unexpected public payload.'
     $ReadyAt = [DateTime]::UtcNow
 
