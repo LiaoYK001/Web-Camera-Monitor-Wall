@@ -31,7 +31,10 @@ int main(int argc, char *argv[])
             QByteArrayView(argv[index]) == QByteArrayView("--probe-manifest") ||
             QByteArrayView(argv[index]) == QByteArrayView("--probe-background-release") ||
             QByteArrayView(argv[index]) == QByteArrayView("--probe-client-auth") ||
+            QByteArrayView(argv[index]) == QByteArrayView("--probe-offline-startup") ||
             QByteArrayView(argv[index]) == QByteArrayView("--probe-foreground-resume") ||
+            QByteArrayView(argv[index]) == QByteArrayView("--probe-lifecycle-trigger") ||
+            QByteArrayView(argv[index]) == QByteArrayView("--probe-force-hardware-failure") ||
             QByteArrayView(argv[index]) == QByteArrayView("--probe-reconnect") ||
             QByteArrayView(argv[index]) == QByteArrayView("--verify-runtime"))
             probe_requested = true;
@@ -82,12 +85,19 @@ int main(int argc, char *argv[])
                       QStringLiteral("Stop all probe pipelines when Android enters background")});
     parser.addOption({QStringLiteral("probe-foreground-resume"),
                       QStringLiteral("Restart a released Android batch when it returns foreground")});
+    parser.addOption({QStringLiteral("probe-lifecycle-trigger"),
+                      QStringLiteral("Acceptance-only absolute file carrying background/foreground"),
+                      QStringLiteral("absolute-path")});
     parser.addOption({QStringLiteral("probe-reconnect"),
                       QStringLiteral("Retry previously ready batch streams after a bounded outage")});
     parser.addOption({QStringLiteral("probe-client-auth"),
                       QStringLiteral("Exercise enrollment, encrypted authorization and stop policy")});
     parser.addOption({QStringLiteral("probe-auth-offline"),
                       QStringLiteral("Disconnect the control plane after authorized playback starts")});
+    parser.addOption({QStringLiteral("probe-preserve-identity"),
+                      QStringLiteral("Exit after enrollment while preserving the sealed device identity")});
+    parser.addOption({QStringLiteral("probe-offline-startup"),
+                      QStringLiteral("Start a stored authorization with the control plane unavailable")});
     parser.addOption({QStringLiteral("probe-control-url"),
                       QStringLiteral("HTTPS control URL for the authorization probe"),
                       QStringLiteral("url")});
@@ -106,10 +116,18 @@ int main(int argc, char *argv[])
     parser.addOption({QStringLiteral("probe-record-mkv"),
                       QStringLiteral("Also exercise the production RTSP stream-copy recorder"),
                       QStringLiteral("absolute-path")});
+    parser.addOption({QStringLiteral("probe-force-hardware-failure"),
+                      QStringLiteral("Acceptance-only hardware decoder failure injection")});
     parser.process(application);
     if (parser.isSet(QStringLiteral("probe-foreground-resume")) &&
         !parser.isSet(QStringLiteral("probe-background-release"))) {
         qCritical("foreground resume probe requires background release mode");
+        return 2;
+    }
+    if (parser.isSet(QStringLiteral("probe-lifecycle-trigger")) &&
+        (!parser.isSet(QStringLiteral("probe-background-release")) ||
+         !parser.isSet(QStringLiteral("probe-foreground-resume")))) {
+        qCritical("lifecycle trigger requires background release and foreground resume probes");
         return 2;
     }
     const bool endpoint_argument = parser.isSet(QStringLiteral("probe-endpoint"));
@@ -117,6 +135,11 @@ int main(int argc, char *argv[])
     if ((endpoint_argument && endpoint_environment) ||
         ((endpoint_argument || endpoint_environment) && parser.isSet(QStringLiteral("probe-manifest")))) {
         qCritical("choose one bounded probe mode");
+        return 2;
+    }
+    if (parser.isSet(QStringLiteral("probe-force-hardware-failure")) &&
+        !(endpoint_argument || endpoint_environment)) {
+        qCritical("hardware failure injection requires a single endpoint probe");
         return 2;
     }
     if (parser.isSet(QStringLiteral("verify-runtime"))) {
@@ -248,14 +271,28 @@ int main(int argc, char *argv[])
             {QStringLiteral("requiredElements"), required.size()}}).toJson(QJsonDocument::Compact);
         return 0;
     }
+    if (parser.isSet(QStringLiteral("probe-preserve-identity")) &&
+        !parser.isSet(QStringLiteral("probe-client-auth"))) {
+        qCritical("identity preservation is valid only for the enrollment probe");
+        return 2;
+    }
     if (parser.isSet(QStringLiteral("probe-client-auth"))) {
         const int result = webobs::client::run_client_auth_probe(
             application, parser.value(QStringLiteral("probe-control-url")),
             parser.value(QStringLiteral("probe-camera-id")),
             parser.value(QStringLiteral("probe-profile-id")),
-            parser.isSet(QStringLiteral("probe-auth-offline")), error);
+            parser.isSet(QStringLiteral("probe-auth-offline")),
+            parser.isSet(QStringLiteral("probe-preserve-identity")), error);
         if (result != 0 && !error.isEmpty())
             qCritical("authorization probe failed safely: %s", qPrintable(error.left(128)));
+        return result;
+    }
+    if (parser.isSet(QStringLiteral("probe-offline-startup"))) {
+        const int result = webobs::client::run_offline_startup_probe(
+            application, parser.value(QStringLiteral("probe-camera-id")),
+            parser.value(QStringLiteral("probe-profile-id")), error);
+        if (result != 0 && !error.isEmpty())
+            qCritical("offline startup probe failed safely: %s", qPrintable(error.left(128)));
         return result;
     }
     if (parser.isSet(QStringLiteral("probe-manifest"))) {
@@ -263,7 +300,8 @@ int main(int argc, char *argv[])
             application, parser.value(QStringLiteral("probe-manifest")), error,
             parser.isSet(QStringLiteral("probe-background-release")),
             parser.isSet(QStringLiteral("probe-reconnect")),
-            parser.isSet(QStringLiteral("probe-foreground-resume")));
+            parser.isSet(QStringLiteral("probe-foreground-resume")),
+            parser.value(QStringLiteral("probe-lifecycle-trigger")));
         if (result != 0 && !error.isEmpty())
             qCritical("batch protocol probe failed safely: %s", qPrintable(error.left(128)));
         return result;
@@ -309,8 +347,20 @@ int main(int argc, char *argv[])
         endpoint.password = qEnvironmentVariable("WEBOBS_PROBE_PASSWORD");
         webobs::client::MediaPipeline pipeline;
         int result = 4;
+        const bool force_hardware_failure = parser.isSet(
+            QStringLiteral("probe-force-hardware-failure"));
+        bool failure_injected = false;
         QObject::connect(&pipeline, &webobs::client::MediaPipeline::directReady, &application,
-            [&application, &pipeline, duration, record_path, &result] {
+            [&application, &pipeline, duration, record_path, force_hardware_failure,
+             &failure_injected, &result] {
+                if (force_hardware_failure && !failure_injected) {
+                    failure_injected = true;
+                    if (!pipeline.force_hardware_failure_for_acceptance()) {
+                        qCritical("hardware failure acceptance probe did not start on hardware");
+                        application.quit();
+                    }
+                    return;
+                }
                 if (!record_path.isEmpty()) {
                     QString recording_error;
                     if (!pipeline.start_recording(record_path, recording_error)) {
@@ -356,7 +406,8 @@ int main(int argc, char *argv[])
             qCritical("protocol probe could not start: %s", qPrintable(error.left(128)));
             return 4;
         }
-        QTimer::singleShot((duration + 5) * 1000, &application, [&application, &result] {
+        QTimer::singleShot((duration + (force_hardware_failure ? 15 : 5)) * 1000,
+            &application, [&application, &result] {
             result = 4;
             application.quit();
         });

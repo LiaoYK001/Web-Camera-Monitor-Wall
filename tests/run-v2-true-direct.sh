@@ -42,7 +42,27 @@ docker compose -f "$compose_file" logs --no-color native-reconnect | \
   grep -F '"result":"reconnected"' >/dev/null
 (( $(date +%s) - reconnect_started <= 10 ))
 
-probe_services=(v2-probe v2-fallback-probe v2-nvr-coexist-probe native-rtsp-h264 native-rtsp-h265 native-mjpeg native-hls native-batch native-reconnect)
+lifecycle_id="$(docker compose -f "$compose_file" ps --all --quiet native-lifecycle)"
+[[ -n "$lifecycle_id" ]]
+for _ in $(seq 1 45); do
+  docker compose -f "$compose_file" logs --no-color native-lifecycle | \
+    grep -F '"result":"ready"' >/dev/null && break
+  [[ "$(docker inspect --format '{{.State.Status}}' "$lifecycle_id")" == running ]]
+  sleep 1
+done
+docker compose -f "$compose_file" logs --no-color native-lifecycle | \
+  grep -F '"result":"ready"' >/dev/null
+docker exec "$lifecycle_id" sh -ceu "printf '%s\n' background > /tmp/webobs-lifecycle-command"
+for _ in $(seq 1 5); do
+  docker compose -f "$compose_file" logs --no-color native-lifecycle | \
+    grep -F '"result":"background-released"' >/dev/null && break
+  sleep 1
+done
+docker compose -f "$compose_file" logs --no-color native-lifecycle | \
+  grep -F '"result":"background-released"' >/dev/null
+docker exec "$lifecycle_id" sh -ceu "printf '%s\n' foreground > /tmp/webobs-lifecycle-command"
+
+probe_services=(v2-probe v2-fallback-probe v2-nvr-coexist-probe native-rtsp-h264 native-rtsp-h265 native-mjpeg native-hls native-batch native-reconnect native-lifecycle)
 for service in "${probe_services[@]}"; do
   probe_id="$(docker compose -f "$compose_file" ps --all --quiet "$service")"
   [[ -n "$probe_id" ]]

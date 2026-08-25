@@ -543,6 +543,21 @@ void ClientController::submit_media_plan(StreamSessionModel *model, const QStrin
     const std::optional<StreamPlanContext> selected = model->context(session_id);
     if (!selected)
         return;
+    if (state_ == QStringLiteral("offline-ready")) {
+        if (reachability == QStringLiteral("reachable") &&
+            (selected->policy == QStringLiteral("true-direct-only") ||
+             selected->policy == QStringLiteral("auto"))) {
+            live_topology_ = QStringLiteral("true-direct");
+            archive_topology_ = QStringLiteral("off");
+            fallback_reason_.clear();
+            model->set_plan(session_id, live_topology_, archive_topology_, {});
+            emit topologyChanged();
+        } else {
+            model->halt(session_id);
+            emit userError(QStringLiteral("Offline mode cannot negotiate a server fallback"));
+        }
+        return;
+    }
     QJsonObject body{{"cameraId", selected->camera_id}, {"profileId", selected->profile_id},
         {"policy", selected->policy}, {"receiverKind", "native"},
         {"networkClass", classify_network(selected->endpoint)},

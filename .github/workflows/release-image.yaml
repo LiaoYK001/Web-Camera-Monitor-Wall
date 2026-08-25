@@ -163,9 +163,12 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           set -euo pipefail
-          gh release view "${{ github.ref_name }}" >/dev/null 2>&1 || \
-            gh release create "${{ github.ref_name }}" --verify-tag --title "${{ github.ref_name }}" --generate-notes
-          gh release upload "${{ github.ref_name }}" \
+          if ! gh release view "${{ github.ref_name }}" >/dev/null 2>&1; then
+            latest=(--latest=false)
+            if [[ '${{ steps.identity.outputs.promote_latest }}' == true ]]; then latest=(--latest); fi
+            gh release create "${{ github.ref_name }}" --verify-tag \
+              --title "${{ github.ref_name }}" --generate-notes "${latest[@]}"
+          fi
+          ./scripts/upload-release-assets-immutable.sh "${{ github.ref_name }}" \
             "$RUNNER_TEMP/webobs-release/webobs-source-${{ steps.identity.outputs.version }}.tar.gz" \
-            "$RUNNER_TEMP/webobs-release/webobs-source-${{ steps.identity.outputs.version }}.tar.gz.sha256" \
-            --clobber
+            "$RUNNER_TEMP/webobs-release/webobs-source-${{ steps.identity.outputs.version }}.tar.gz.sha256"

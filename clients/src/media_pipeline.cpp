@@ -540,13 +540,7 @@ void MediaPipeline::poll_bus()
                 gst_plugin_feature_get_name(GST_PLUGIN_FEATURE(origin_factory))) : QString{};
             if (!software_fallback_forced_ && hardware_decode_ &&
                 (hardware_factory(origin_name) || origin_name == decoder_factory_)) {
-                if (hold_hardware_rank(decoder_factory_))
-                    failed_hardware_factory_ = decoder_factory_;
-                software_fallback_forced_ = true;
-                fallback_reason_ = QStringLiteral("hardware_decoder_failed_software_fallback");
-                set_state(QStringLiteral("software-fallback"));
-                bus_timer_.stop();
-                restart_scheduled = true;
+                restart_scheduled = begin_software_fallback();
             } else {
                 fail(message_text(message));
             }
@@ -600,6 +594,27 @@ void MediaPipeline::poll_bus()
         last_reported_frames_ = current;
         emit statisticsChanged();
     }
+}
+
+bool MediaPipeline::begin_software_fallback()
+{
+    if (software_fallback_forced_ || !hardware_decode_ || !pipeline_)
+        return false;
+    if (hold_hardware_rank(decoder_factory_))
+        failed_hardware_factory_ = decoder_factory_;
+    software_fallback_forced_ = true;
+    fallback_reason_ = QStringLiteral("hardware_decoder_failed_software_fallback");
+    set_state(QStringLiteral("software-fallback"));
+    bus_timer_.stop();
+    return true;
+}
+
+bool MediaPipeline::force_hardware_failure_for_acceptance()
+{
+    if (state_ != QStringLiteral("playing") || !begin_software_fallback())
+        return false;
+    QTimer::singleShot(0, this, &MediaPipeline::restart_with_software_fallback);
+    return true;
 }
 
 void MediaPipeline::restart_with_software_fallback()

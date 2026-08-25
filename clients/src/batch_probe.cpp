@@ -197,15 +197,41 @@ void release_background_batch(QGuiApplication &application, BatchState &state)
     }
 }
 
+void resume_background_batch(QGuiApplication &application, BatchState &state)
+{
+    if (!state.resume_after_background || !state.background_released ||
+        state.resuming || state.finished)
+        return;
+    state.resuming = true;
+    state.resumed = 0;
+    for (std::size_t index = 0; index < state.pipelines.size(); ++index) {
+        QString start_error;
+        if (!state.pipelines[index]->start(state.entries[index].endpoint, start_error)) {
+            state.finished = true;
+            state.result = 4;
+            application.quit();
+            return;
+        }
+    }
+}
+
 }
 
 int run_batch_probe(QGuiApplication &application, const QString &manifest_path, QString &error,
                     bool release_on_background, bool reconnect_on_failure,
-                    bool resume_after_background)
+                    bool resume_after_background, const QString &lifecycle_trigger_path)
 {
     BatchState state;
     if (!parse_manifest(manifest_path, state, error))
         return 2;
+    const QFileInfo lifecycle_trigger(lifecycle_trigger_path);
+    if (!lifecycle_trigger_path.isEmpty() && (!release_on_background ||
+        !resume_after_background || !lifecycle_trigger.isAbsolute() ||
+        !lifecycle_trigger.isFile() || lifecycle_trigger.isSymLink() ||
+        lifecycle_trigger.size() > 64)) {
+        error = QStringLiteral("lifecycle trigger must be a bounded absolute regular file");
+        return 2;
+    }
     state.pipelines.reserve(state.entries.size());
     state.ever_ready.assign(state.entries.size(), false);
     state.retry_pending.assign(state.entries.size(), false);
@@ -290,22 +316,28 @@ int run_batch_probe(QGuiApplication &application, const QString &manifest_path, 
                     release_background_batch(application, state);
                     return;
                 }
-                if (!state.resume_after_background || !state.background_released ||
-                    state.resuming || state.finished)
-                    return;
-                state.resuming = true;
-                state.resumed = 0;
-                for (std::size_t index = 0; index < state.pipelines.size(); ++index) {
-                    QString start_error;
-                    if (!state.pipelines[index]->start(state.entries[index].endpoint,
-                                                       start_error)) {
-                        state.finished = true;
-                        state.result = 4;
-                        application.quit();
-                        return;
-                    }
-                }
+                resume_background_batch(application, state);
             });
+    }
+    QTimer lifecycle_poll;
+    QString last_lifecycle_command;
+    if (!lifecycle_trigger_path.isEmpty()) {
+        lifecycle_poll.setInterval(100);
+        QObject::connect(&lifecycle_poll, &QTimer::timeout, &application,
+            [&application, &state, lifecycle_trigger_path, &last_lifecycle_command] {
+                QFile command_file(lifecycle_trigger_path);
+                if (!command_file.open(QIODevice::ReadOnly) || command_file.size() > 64)
+                    return;
+                const QString command = QString::fromUtf8(command_file.readAll()).trimmed();
+                if (command == last_lifecycle_command)
+                    return;
+                last_lifecycle_command = command;
+                if (command == QStringLiteral("background"))
+                    release_background_batch(application, state);
+                else if (command == QStringLiteral("foreground"))
+                    resume_background_batch(application, state);
+            });
+        lifecycle_poll.start();
     }
     for (std::size_t index = 0; index < state.pipelines.size(); ++index) {
         QString start_error;

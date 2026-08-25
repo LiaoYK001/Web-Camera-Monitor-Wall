@@ -51,6 +51,7 @@ public:
     bool start_recording(const QString &path, QString &error);
     Q_INVOKABLE void stopRecording();
     void set_muted(bool muted);
+    bool force_hardware_failure_for_acceptance();
 
     [[nodiscard]] QString state() const;
     [[nodiscard]] QString decoder() const;
@@ -84,6 +85,7 @@ private:
                                                 gpointer context);
     void set_state(const QString &state);
     void poll_bus();
+    bool begin_software_fallback();
     void fail(const QString &reason);
     void restart_with_software_fallback();
     void restore_failed_hardware_rank();

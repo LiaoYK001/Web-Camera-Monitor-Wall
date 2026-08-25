@@ -17,7 +17,8 @@ try {
 
     $ProbeServices = @('v2-probe', 'v2-fallback-probe', 'v2-nvr-coexist-probe',
         'native-rtsp-h264', 'native-rtsp-h265',
-        'native-mjpeg', 'native-hls', 'native-batch', 'native-reconnect')
+        'native-mjpeg', 'native-hls', 'native-batch', 'native-reconnect',
+        'native-lifecycle')
     $ProbeIds = @{}
     foreach ($Service in $ProbeServices) {
         $ProbeIds[$Service] = (& docker compose -p $Project -f $ComposeFile ps --all --quiet $Service).Trim()
@@ -53,6 +54,26 @@ try {
     if (-not $Reconnected -or $ReconnectStarted.Elapsed.TotalSeconds -gt 10) {
         throw 'Native reconnect exceeded the ten-second recovery budget.'
     }
+    $LifecycleId = $ProbeIds['native-lifecycle']
+    $LifecycleReady = $false
+    for ($Attempt = 0; $Attempt -lt 45; $Attempt++) {
+        $LifecycleLogs = (& docker compose -p $Project -f $ComposeFile logs --no-color native-lifecycle) -join "`n"
+        if ($LifecycleLogs.Contains('"result":"ready"')) { $LifecycleReady = $true; break }
+        if ((& docker inspect --format '{{.State.Status}}' $LifecycleId).Trim() -ne 'running') { break }
+        Start-Sleep -Seconds 1
+    }
+    if (-not $LifecycleReady) { throw 'Native lifecycle probe did not become ready.' }
+    & docker exec $LifecycleId sh -ceu "printf '%s`n' background > /tmp/webobs-lifecycle-command"
+    if ($LASTEXITCODE -ne 0) { throw 'Could not request native background release.' }
+    $Released = $false
+    for ($Attempt = 0; $Attempt -lt 5; $Attempt++) {
+        $LifecycleLogs = (& docker compose -p $Project -f $ComposeFile logs --no-color native-lifecycle) -join "`n"
+        if ($LifecycleLogs.Contains('"result":"background-released"')) { $Released = $true; break }
+        Start-Sleep -Seconds 1
+    }
+    if (-not $Released) { throw 'Native lifecycle probe did not release media within five seconds.' }
+    & docker exec $LifecycleId sh -ceu "printf '%s`n' foreground > /tmp/webobs-lifecycle-command"
+    if ($LASTEXITCODE -ne 0) { throw 'Could not request native foreground resume.' }
     foreach ($Service in $ProbeServices) {
         $ProbeId = $ProbeIds[$Service]
         $Exited = $false
@@ -88,7 +109,7 @@ try {
     if ($FallbackLogs -match 'fixture-viewer|fixture-password|rtsp://[^/\s]+:[^@/\s]+@') {
         throw 'Fallback logs exposed camera credentials.'
     }
-    Write-Host 'v2 deterministic gate passed: production client RTSP/MJPEG/HLS stayed off-server, a forced network outage recovered within ten seconds, 16 concurrent viewers did not add NVR upstream sessions, and authenticated Gateway fallback cleaned up without residue. Exact-runtime WHEP is verified by the locked desktop gate.'
+    Write-Host 'v2 deterministic gate passed: production client RTSP/MJPEG/HLS stayed off-server, forced network and lifecycle transitions recovered within budget, 16 concurrent viewers did not add NVR upstream sessions, and authenticated Gateway fallback cleaned up without residue. Exact-runtime WHEP is verified by the locked desktop gate.'
 }
 finally {
     & docker compose -p $Project -f $ComposeFile down --volumes --remove-orphans | Out-Null

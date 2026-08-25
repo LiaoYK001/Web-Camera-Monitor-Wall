@@ -17,6 +17,11 @@ services:
     entrypoint: ["/usr/local/bin/publish-test-stream"]
     environment:
       TEST_RTSP_URL: rtsp://camera:8554/v2-direct
+    healthcheck:
+      test: ["CMD-SHELL", "test -f /tmp/webobs-publisher-ready || (timeout 8 ffprobe -v error -rtsp_transport tcp -select_streams v:0 -show_entries stream=codec_name -of default=nw=1:nk=1 rtsp://camera:8554/v2-direct | grep -qx h264 && touch /tmp/webobs-publisher-ready)"]
+      interval: 1s
+      timeout: 10s
+      retries: 30
     depends_on: [camera]
     networks: [camera-media]
 
@@ -28,6 +33,11 @@ services:
     entrypoint: ["/usr/local/bin/publish-hevc-stream"]
     environment:
       TEST_RTSP_URL: rtsp://camera:8554/v2-direct-hevc
+    healthcheck:
+      test: ["CMD-SHELL", "test -f /tmp/webobs-publisher-ready || (timeout 8 ffprobe -v error -rtsp_transport tcp -select_streams v:0 -show_entries stream=codec_name -of default=nw=1:nk=1 rtsp://camera:8554/v2-direct-hevc | grep -qx hevc && touch /tmp/webobs-publisher-ready)"]
+      interval: 1s
+      timeout: 10s
+      retries: 30
     depends_on: [camera]
     networks: [camera-media]
 
@@ -151,7 +161,9 @@ services:
       WEBOBS_PROBE_ADAPTER: rtsp
       WEBOBS_PROBE_CODEC: h264
       WEBOBS_PROBE_ENDPOINT: rtsp://camera:8554/v2-direct
-    depends_on: [publisher]
+    depends_on:
+      publisher:
+        condition: service_healthy
     networks: [camera-media]
 
   native-rtsp-h265:
@@ -160,7 +172,9 @@ services:
       WEBOBS_PROBE_ADAPTER: rtsp
       WEBOBS_PROBE_CODEC: h265
       WEBOBS_PROBE_ENDPOINT: rtsp://camera:8554/v2-direct-hevc
-    depends_on: [publisher-hevc]
+    depends_on:
+      publisher-hevc:
+        condition: service_healthy
     networks: [camera-media]
 
   native-mjpeg:
@@ -188,7 +202,9 @@ services:
     entrypoint: ["/build/clients/webobs-native", "--probe-manifest", "/fixture/native-batch.json"]
     volumes:
       - ./v2-direct-fixture/native-batch.json:/fixture/native-batch.json:ro
-    depends_on: [publisher]
+    depends_on:
+      publisher:
+        condition: service_healthy
     networks: [camera-media]
 
   native-reconnect:
@@ -196,7 +212,28 @@ services:
     entrypoint: ["/build/clients/webobs-native", "--probe-manifest", "/fixture/native-reconnect.json", "--probe-reconnect"]
     volumes:
       - ./v2-direct-fixture/native-reconnect.json:/fixture/native-reconnect.json:ro
-    depends_on: [publisher]
+    depends_on:
+      publisher:
+        condition: service_healthy
+    networks: [camera-media]
+
+  native-lifecycle:
+    image: webobs-native-protocol-fixture:local
+    entrypoint:
+      - sh
+      - -ceu
+      - |
+        : > /tmp/webobs-lifecycle-command
+        exec /build/clients/webobs-native \
+          --probe-manifest /fixture/native-reconnect.json \
+          --probe-background-release \
+          --probe-foreground-resume \
+          --probe-lifecycle-trigger /tmp/webobs-lifecycle-command
+    volumes:
+      - ./v2-direct-fixture/native-reconnect.json:/fixture/native-reconnect.json:ro
+    depends_on:
+      publisher:
+        condition: service_healthy
     networks: [camera-media]
 
 networks:

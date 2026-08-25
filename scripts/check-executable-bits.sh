@@ -8,6 +8,7 @@ scripts/check-executable-bits.sh
 scripts/benchmark-video-pipelines.sh
 scripts/create-source-bundle.sh
 scripts/release-image-local.sh
+scripts/upload-release-assets-immutable.sh
 scripts/verify-source-bundle.sh
 clients/packaging/finalize-artifacts.sh
 clients/packaging/android/build-acceptance-driver.sh
@@ -18,11 +19,13 @@ clients/packaging/linux/build-flatpak.sh
 clients/packaging/linux/install-signed-appimage.sh
 clients/packaging/linux/rollback-appimage.sh
 clients/tests/run-android-reference-gate.py
+clients/tests/run-desktop-lifecycle-gate.py
 tests/rtsp-fixture/m1-real-control.sh
 tests/rtsp-fixture/probe.sh
 tests/rtsp-fixture/publish-audio.sh
 tests/rtsp-fixture/publish-hevc.sh
 tests/rtsp-fixture/publish.sh
+tests/test-immutable-release-assets.sh
 tests/run-contracts.sh
 tests/run-m1-real-camera.sh
 tests/run-m10-real-mjpeg.sh

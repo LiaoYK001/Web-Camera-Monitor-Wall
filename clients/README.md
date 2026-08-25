@@ -70,7 +70,7 @@ Required GStreamer plug-ins include `rtspsrc`, `uridecodebin3`, `decodebin3`, `q
 - 支持 1/4/9/16 子码流宫格、一路独立主码流聚焦、逐路解码器/FPS/掉帧/重连诊断、指数退避重连与挂起恢复。
 - 本地 Preview/Program Studio 支持 Cut/Fade、两级嵌套、Camera/文字/图片/色块、组、锁定/显隐、裁切/旋转/透明度、适应/填充/拉伸、对齐/吸附、颜色/透明度/遮罩/缩放滤镜及 Scene v5 本地保存。
 - 支持 PTZ、监听、十秒按键对讲、摄像机原生快照、已解码画面的本地截图、抗崩溃 stream-copy MKV 与无重编码 MP4 导出。
-- 使用 DPAPI/Secret Service 保存身份，缓存加密的 30 天离线 Grant，每十秒检查在线撤销，并明确展示弱撤销与降级原因。
+- 使用 DPAPI/Secret Service 保存身份，缓存加密的 30 天离线 Grant，每五秒检查在线撤销，并明确展示弱撤销与降级原因。
 - 显式激活 Gateway/Hybrid 租约并使用受认证的同源 v2 WHEP 别名；重连或睡眠恢复遇到过期计划时会释放并重新探测。
 
 ## Android build and qualification / Android 构建与验收
@@ -88,3 +88,28 @@ The private reference manifest contains exactly nine unauthenticated lab substre
 The diagnostic client and model tests pass. A Fedora exact-runtime build using Qt 6.11.2, GStreamer 1.28.6, libsodium 1.0.22 and the locked Rust commit decoded non-black H.264/H.265 RTSP, Server Push MJPEG, HLS and WHEP fixture video. The deterministic control-only fixture validates continuous decoded buffers, stream-copy recording/remux, redaction and absence of Docker media helpers. A separate synthetic fallback fixture proves owned activation, authenticated v2 WHEP routing, forged/stale request rejection, explicit release and zero route/process residue. Private endpoint probes pass only an environment-variable name on the command line, scrub unrelated `WEBOBS_PRIVATE_*` values from children and reject secret-bearing output. The fixture also keeps one NVR RTSP upstream active while 16 concurrent client-side viewers decode directly and proves the server upstream/helper signature does not change. Four production RTSP pipelines additionally pass in one native process. Hardware decoder errors rebuild through software while a process-wide rank hold prevents concurrent fallback races. Desktop focus/minimize keeps monitoring active, real application suspension rebuilds streams, and deterministic Windows/Linux rollback exchanges pass. Release packages verify representative GStreamer plug-in versions, including both locked Rust WHEP plug-ins, instead of trusting the core version alone. The remaining v2-M2 release gate is private Windows/Fedora 16-substream + one-main hardware evidence. It runs all 17 streams in one process and enforces the full 30-minute duration, exact 640×360 and 1920×1080 decoded dimensions, hardware decode, under-1% drops, sparse zero-black-frame samples, zero pipeline rebuilds, bounded RSS growth, periodic zero-server-media sampling, final cleanup and private-log rejection. Those self-hosted hardware gates and signed artifacts have not run in this workspace; v2-M2 remains open.
 
 诊断客户端及模型测试已通过。Fedora 精确运行时构建已使用 Qt 6.11.2、GStreamer 1.28.6、libsodium 1.0.22 与固定 Rust 提交，真实解码 H.264/H.265 RTSP、Server Push MJPEG、HLS 及 WHEP 非黑画面。确定性控制网络隔离夹具还验证连续解码 Buffer、stream-copy 录像/remux、脱敏及 Docker 内无媒体 helper；另一组合成后备夹具证明租约归属、受认证 WHEP 建路、伪造/陈旧请求拒绝、显式释放及无路由/进程残留。私有端点探针只把环境变量名称放进命令行，移除子进程无关的 `WEBOBS_PRIVATE_*` 值，并拒绝任何含 Secret 的输出。夹具保持一路 NVR RTSP 上游并让 16 个客户端观看端并发直解，证明服务端上游与 helper 特征不变；四条生产 RTSP 管线也已在单个本地进程内通过。硬解码器报错会重建软件管线，进程级优先级引用可避免并发回落竞态；桌面失焦/最小化继续监看，真正挂起才重建流，Windows/Linux 回滚交换也通过确定性测试。发布包会核对包括两种固定 Rust WHEP 插件在内的代表性插件版本。v2-M2 剩余发布门禁是私有 Windows/Fedora 16 路子码流加一路主码流硬件证据：单进程完整运行 30 分钟，检查实际 640×360/1920×1080、硬解、掉帧低于 1%、稀疏黑帧为零、管线不重建、RSS 增长有界、全程服务端零媒体增量、结束清理及私有日志不泄漏。本工作区尚未执行这些 Self-hosted 硬件门禁及生成签名产物，因此 v2-M2 仍未完成。
+
+`run-desktop-lifecycle-gate.py` is an additional mandatory Windows/Fedora release gate. Each
+self-hosted runner supplies three silent executables outside the checkout: network disconnect,
+network connect, and a real suspend helper that returns only after resume. The gate requires a
+ten-second reconnect, releases media before suspend and restores it within ten seconds, injects
+a hardware-decoder failure through the production software-fallback path, rejects private output,
+and verifies that Docker media state remains unchanged. Repository variables contain helper paths
+only; helper implementation, network details, endpoints, credentials, and evidence remain private.
+
+`run-desktop-lifecycle-gate.py` 是额外且强制的 Windows/Fedora 发布门禁。每台 Self-hosted
+Runner 在工作树之外提供三个静默可执行文件：断网、联网，以及仅在真实休眠恢复后才返回的
+Suspend helper。门禁要求十秒内重连、休眠前释放媒体且恢复后十秒内重建，并通过生产软件回落
+路径注入一次硬解码器故障；同时拒绝私有信息输出并验证 Docker 媒体状态不变。仓库变量只保存
+helper 路径，helper 实现、网络细节、端点、凭据与证据均留在私有 Runner。
+
+The same lifecycle gate performs a real two-process offline-start qualification: the first process
+enrolls through DPAPI or Secret Service and preserves the sealed Grant, then a fresh process starts
+with an unreachable control plane and must establish `true-direct` media using only that stored
+authorization. Deterministic Docker coverage separately drives the production background/foreground
+trigger and proves bounded release/resume; it is regression evidence, not a substitute for real sleep.
+
+同一门禁还执行真正的“两进程离线启动”：第一个进程通过 DPAPI 或 Secret Service 配对并保留
+密封 Grant，随后启动全新进程，在控制面不可达时仅依赖本地授权建立 `true-direct` 媒体。
+确定性 Docker 门禁另行驱动生产后台/前台触发路径并验证有界释放与恢复；它属于持续回归证据，
+不能替代真实系统休眠。

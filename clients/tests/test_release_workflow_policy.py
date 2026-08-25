@@ -8,6 +8,7 @@ import unittest
 
 ROOT = Path(__file__).resolve().parents[2]
 WORKFLOW = ROOT / ".github" / "workflows" / "release-native-clients.yaml"
+IMAGE_WORKFLOW = ROOT / ".github" / "workflows" / "release-image.yaml"
 
 
 def branch(text: str, label: str) -> str:
@@ -22,6 +23,7 @@ class NativeReleaseWorkflowPolicyTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls) -> None:
         cls.text = WORKFLOW.read_text(encoding="utf-8")
+        cls.image_text = IMAGE_WORKFLOW.read_text(encoding="utf-8")
 
     def test_self_hosted_jobs_have_no_untrusted_event_entry(self) -> None:
         self.assertIn("  workflow_dispatch:\n", self.text)
@@ -45,9 +47,36 @@ class NativeReleaseWorkflowPolicyTests(unittest.TestCase):
         self.assertIn("publish_allowed=true", tagged)
         self.assertIn("    if: needs.audit.outputs.publish_allowed == 'true'", self.text)
 
+    def test_older_queued_release_cannot_replace_latest_or_assets(self) -> None:
+        self.assertIn("git tag --merged origin/main --sort=version:refname", self.text)
+        self.assertIn("promote_latest=true", self.text)
+        self.assertIn("latest=(--latest=false)", self.text)
+        self.assertIn("scripts/upload-release-assets-immutable.sh", self.text)
+        self.assertNotIn("--clobber", self.text)
+        self.assertIn("scripts/upload-release-assets-immutable.sh", self.image_text)
+        self.assertIn("latest=(--latest=false)", self.image_text)
+        self.assertNotIn("--clobber", self.image_text)
+
     def test_candidate_windows_packages_cannot_skip_authenticode(self) -> None:
         self.assertIn("if ($env:CERTIFICATE_SHA1 -notmatch '^[0-9A-Fa-f]{40}$')", self.text)
         self.assertIn("-SigningCertificateSha1 $env:CERTIFICATE_SHA1", self.text)
+
+    def test_desktop_release_requires_private_network_suspend_and_gpu_gate(self) -> None:
+        self.assertEqual(self.text.count("run-desktop-lifecycle-gate.py"), 2)
+        for variable in ("WEBOBS_DESKTOP_NETWORK_DISCONNECT_HELPER",
+                         "WEBOBS_DESKTOP_NETWORK_CONNECT_HELPER",
+                         "WEBOBS_DESKTOP_SUSPEND_HELPER"):
+            self.assertGreaterEqual(self.text.count(variable), 4)
+        for variable in ("WEBOBS_DESKTOP_GRANT_CAMERA_ID",
+                         "WEBOBS_DESKTOP_GRANT_PROFILE_ID"):
+            self.assertEqual(self.text.count(variable), 4)
+
+    def test_built_desktop_artifacts_must_install_and_roll_back(self) -> None:
+        self.assertIn("Qualify signed portable install and rollback", self.text)
+        self.assertIn("Install-SignedPortableUpdate.ps1", self.text)
+        self.assertIn("Signed portable rollback did not restore", self.text)
+        self.assertIn("install-signed-appimage.sh", self.text)
+        self.assertIn('cmp --silent "$destination" "$previous"', self.text)
 
     def test_android_release_is_signed_gated_and_never_uploads_private_driver(self) -> None:
         self.assertIn("  android:\n", self.text)
@@ -58,11 +87,26 @@ class NativeReleaseWorkflowPolicyTests(unittest.TestCase):
         self.assertIn('--vpn-connect-helper "$WEBOBS_ANDROID_VPN_CONNECT_HELPER"', self.text)
         self.assertIn("WEBOBS_ANDROID_EXPIRY_CONTROL_URL", self.text)
         self.assertIn("WEBOBS_ANDROID_GRANT_CAMERA_ID", self.text)
+        android_job = self.text[self.text.index("  android:\n"):self.text.index("  publish:\n")]
+        self.assertIn("WEBOBS_ANDROID_EXPIRY_CONTROL_URL: ${{ vars.WEBOBS_ANDROID_EXPIRY_CONTROL_URL }}",
+                      android_job)
+        self.assertIn("WEBOBS_ANDROID_GRANT_CAMERA_ID: ${{ vars.WEBOBS_ANDROID_GRANT_CAMERA_ID }}",
+                      android_job)
+        self.assertIn("WEBOBS_ANDROID_GRANT_PROFILE_ID: ${{ vars.WEBOBS_ANDROID_GRANT_PROFILE_ID }}",
+                      android_job)
         self.assertIn("needs: [audit, windows, linux, linux-acceptance, android]", self.text)
         upload = re.search(r"name: native-android-.*?if-no-files-found: error",
                            self.text, re.DOTALL)
         self.assertIsNotNone(upload)
         self.assertNotIn("private-driver", upload.group(0))
+
+    def test_publish_requires_source_and_all_binary_sidecars(self) -> None:
+        publish = self.text[self.text.index("  publish:\n"):]
+        self.assertIn("scripts/create-source-bundle.sh", publish)
+        self.assertIn("scripts/verify-source-bundle.sh", publish)
+        self.assertIn('test "$count" -eq 5', publish)
+        self.assertIn("*.spdx.json", publish)
+        self.assertIn("*.sigstore.json", publish)
 
 
 if __name__ == "__main__":

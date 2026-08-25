@@ -17,4 +17,6 @@ while IFS= read -r -d '' artifact; do
   (cd "$artifact_dir" && sha256sum "$artifact_name" > "$artifact_name.sha256")
   "$syft" "$artifact" -o "spdx-json=$artifact.spdx.json"
   "$cosign" sign-blob --yes --bundle "$artifact.sigstore.json" "$artifact"
+  [[ -s "$artifact.sha256" && -s "$artifact.spdx.json" && -s "$artifact.sigstore.json" ]]
+  (cd "$artifact_dir" && sha256sum --check "$artifact_name.sha256" >/dev/null)
 done < <(find "$artifact_dir" -maxdepth 1 -type f -print0)

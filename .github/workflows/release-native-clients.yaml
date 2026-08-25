@@ -20,6 +20,7 @@ jobs:
       package_version: ${{ steps.identity.outputs.package_version }}
       release_tag: ${{ steps.identity.outputs.release_tag }}
       publish_allowed: ${{ steps.identity.outputs.publish_allowed }}
+      promote_latest: ${{ steps.identity.outputs.promote_latest }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -42,13 +43,16 @@ jobs:
           python3 clients/tests/test_dependency_lock.py
           python3 clients/tests/test_exact_protocol_gate.py
           python3 clients/tests/test_desktop_reference_gate.py
+          python3 clients/tests/test_desktop_lifecycle_gate.py
           python3 clients/tests/test_android_client_policy.py
           python3 clients/tests/test_android_reference_gate.py
           python3 clients/tests/test_release_workflow_policy.py
           ./clients/tests/test-portable-checksums.sh
+          ./tests/test-immutable-release-assets.sh
           package_version=
           release_tag=
           publish_allowed=false
+          promote_latest=false
           case "$EVENT_NAME" in
             push)
               [[ "$REF_TYPE" == tag ]]
@@ -61,6 +65,10 @@ jobs:
               fi
               release_tag="$REF_NAME"
               publish_allowed=true
+              newest="$(git tag --merged origin/main --sort=version:refname | \
+                grep -E '^v2\.[0-9]+(\.[0-9]+)?$' | tail -n 1)"
+              [[ -n "$newest" ]]
+              if [[ "$REF_NAME" == "$newest" ]]; then promote_latest=true; fi
               ;;
             workflow_dispatch)
               # Qualification builds may run only from the exact protected dev
@@ -77,6 +85,7 @@ jobs:
           echo "package_version=$package_version" >> "$GITHUB_OUTPUT"
           echo "release_tag=$release_tag" >> "$GITHUB_OUTPUT"
           echo "publish_allowed=$publish_allowed" >> "$GITHUB_OUTPUT"
+          echo "promote_latest=$promote_latest" >> "$GITHUB_OUTPUT"
 
   windows:
     needs: audit
@@ -144,11 +153,15 @@ jobs:
           WEBOBS_PRIVATE_HLS: ${{ secrets.WEBOBS_PRIVATE_HLS }}
           WEBOBS_PRIVATE_WHEP: ${{ secrets.WEBOBS_PRIVATE_WHEP }}
           WEBOBS_REFERENCE_CONTROL_URL: ${{ vars.WEBOBS_REFERENCE_CONTROL_URL }}
-          WEBOBS_ANDROID_EXPIRY_CONTROL_URL: ${{ vars.WEBOBS_ANDROID_EXPIRY_CONTROL_URL }}
-          WEBOBS_ANDROID_GRANT_CAMERA_ID: ${{ vars.WEBOBS_ANDROID_GRANT_CAMERA_ID }}
-          WEBOBS_ANDROID_GRANT_PROFILE_ID: ${{ vars.WEBOBS_ANDROID_GRANT_PROFILE_ID }}
           WEBOBS_REFERENCE_CONTROL_USERNAME: ${{ secrets.WEBOBS_REFERENCE_CONTROL_USERNAME }}
           WEBOBS_REFERENCE_CONTROL_PASSWORD: ${{ secrets.WEBOBS_REFERENCE_CONTROL_PASSWORD }}
+          WEBOBS_PRIVATE_CAMERA_USER: ${{ secrets.WEBOBS_PRIVATE_CAMERA_USER }}
+          WEBOBS_PRIVATE_CAMERA_PASSWORD: ${{ secrets.WEBOBS_PRIVATE_CAMERA_PASSWORD }}
+          WEBOBS_DESKTOP_NETWORK_DISCONNECT_HELPER: ${{ vars.WEBOBS_WINDOWS_NETWORK_DISCONNECT_HELPER }}
+          WEBOBS_DESKTOP_NETWORK_CONNECT_HELPER: ${{ vars.WEBOBS_WINDOWS_NETWORK_CONNECT_HELPER }}
+          WEBOBS_DESKTOP_SUSPEND_HELPER: ${{ vars.WEBOBS_WINDOWS_SUSPEND_HELPER }}
+          WEBOBS_DESKTOP_GRANT_CAMERA_ID: ${{ vars.WEBOBS_DESKTOP_GRANT_CAMERA_ID }}
+          WEBOBS_DESKTOP_GRANT_PROFILE_ID: ${{ vars.WEBOBS_DESKTOP_GRANT_PROFILE_ID }}
           REFERENCE_MANIFEST: ${{ vars.WEBOBS_WINDOWS_REFERENCE_MANIFEST }}
         run: |
           $client = 'clients\build-windows\stage\bin\webobs-native.exe'
@@ -156,6 +169,12 @@ jobs:
           python clients/tests/run-desktop-reference-gate.py `
             --client $client --manifest $env:REFERENCE_MANIFEST `
             --evidence "$env:RUNNER_TEMP\webobs-m2-windows-private-evidence.json"
+          python clients/tests/run-desktop-lifecycle-gate.py `
+            --client $client --manifest $env:REFERENCE_MANIFEST `
+            --network-disconnect-helper $env:WEBOBS_DESKTOP_NETWORK_DISCONNECT_HELPER `
+            --network-connect-helper $env:WEBOBS_DESKTOP_NETWORK_CONNECT_HELPER `
+            --suspend-helper $env:WEBOBS_DESKTOP_SUSPEND_HELPER `
+            --evidence "$env:RUNNER_TEMP\webobs-m2-windows-lifecycle-private-evidence.json"
       - name: Generate SPDX SBOM and Sigstore bundles
         shell: pwsh
         env:
@@ -171,6 +190,33 @@ jobs:
             if ($LASTEXITCODE -ne 0) { throw 'SBOM generation failed' }
             & $env:COSIGN sign-blob --yes --bundle "$($_.FullName).sigstore.json" $_.FullName
             if ($LASTEXITCODE -ne 0) { throw 'Sigstore signing failed' }
+          }
+      - name: Qualify signed portable install and rollback
+        shell: pwsh
+        env:
+          COSIGN: ${{ vars.WEBOBS_WINDOWS_COSIGN }}
+          COSIGN_SHA256: ${{ vars.WEBOBS_WINDOWS_COSIGN_SHA256 }}
+        run: |
+          $portable = Get-ChildItem "$env:RUNNER_TEMP\webobs-native" -Filter '*-portable.zip' -File
+          if ($portable.Count -ne 1) { throw 'Expected exactly one portable package' }
+          $sha256 = (Get-Content -Raw -LiteralPath "$($portable.FullName).sha256").Split(' ')[0]
+          $destination = "$env:RUNNER_TEMP\webobs-update-qualification"
+          try {
+            New-Item -ItemType Directory -Path $destination | Out-Null
+            Set-Content -LiteralPath "$destination\previous-build.txt" -Value 'rollback-evidence' -NoNewline
+            ./clients/packaging/windows/Install-SignedPortableUpdate.ps1 `
+              -Artifact $portable.FullName -Sha256 $sha256 `
+              -SigstoreBundle "$($portable.FullName).sigstore.json" `
+              -InstallDirectory $destination -Cosign $env:COSIGN `
+              -CosignSha256 $env:COSIGN_SHA256 `
+              -IdentityRegexp '^https://github.com/LiaoYK001/Web-Camera-Monitor-Wall/.github/workflows/release-native-clients.yaml@refs/(tags/v2\..+|heads/dev)$'
+            ./clients/packaging/windows/Restore-PortableRollback.ps1 -InstallDirectory $destination
+            if ((Get-Content -Raw -LiteralPath "$destination\previous-build.txt") -ne 'rollback-evidence') {
+              throw 'Signed portable rollback did not restore the previous installation'
+            }
+          }
+          finally {
+            Remove-Item -LiteralPath $destination, "$destination.previous" -Recurse -Force -ErrorAction SilentlyContinue
           }
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
@@ -280,6 +326,15 @@ jobs:
           WEBOBS_REFERENCE_CONTROL_URL: ${{ vars.WEBOBS_REFERENCE_CONTROL_URL }}
           WEBOBS_REFERENCE_CONTROL_USERNAME: ${{ secrets.WEBOBS_REFERENCE_CONTROL_USERNAME }}
           WEBOBS_REFERENCE_CONTROL_PASSWORD: ${{ secrets.WEBOBS_REFERENCE_CONTROL_PASSWORD }}
+          WEBOBS_PRIVATE_CAMERA_USER: ${{ secrets.WEBOBS_PRIVATE_CAMERA_USER }}
+          WEBOBS_PRIVATE_CAMERA_PASSWORD: ${{ secrets.WEBOBS_PRIVATE_CAMERA_PASSWORD }}
+          WEBOBS_DESKTOP_NETWORK_DISCONNECT_HELPER: ${{ vars.WEBOBS_LINUX_NETWORK_DISCONNECT_HELPER }}
+          WEBOBS_DESKTOP_NETWORK_CONNECT_HELPER: ${{ vars.WEBOBS_LINUX_NETWORK_CONNECT_HELPER }}
+          WEBOBS_DESKTOP_SUSPEND_HELPER: ${{ vars.WEBOBS_LINUX_SUSPEND_HELPER }}
+          WEBOBS_DESKTOP_GRANT_CAMERA_ID: ${{ vars.WEBOBS_DESKTOP_GRANT_CAMERA_ID }}
+          WEBOBS_DESKTOP_GRANT_PROFILE_ID: ${{ vars.WEBOBS_DESKTOP_GRANT_PROFILE_ID }}
+          WEBOBS_COSIGN: ${{ vars.WEBOBS_LINUX_COSIGN }}
+          WEBOBS_COSIGN_SHA256: ${{ vars.WEBOBS_LINUX_COSIGN_SHA256 }}
           WEBOBS_REFERENCE_MANIFEST: ${{ vars.WEBOBS_LINUX_REFERENCE_MANIFEST }}
         run: |
           set -euo pipefail
@@ -291,6 +346,24 @@ jobs:
           python3 clients/tests/run-desktop-reference-gate.py \
             --client "$client" --manifest "$WEBOBS_REFERENCE_MANIFEST" \
             --evidence "$RUNNER_TEMP/webobs-m2-${{ matrix.fedora }}-private-evidence.json"
+          python3 clients/tests/run-desktop-lifecycle-gate.py \
+            --client "$client" --manifest "$WEBOBS_REFERENCE_MANIFEST" \
+            --network-disconnect-helper "$WEBOBS_DESKTOP_NETWORK_DISCONNECT_HELPER" \
+            --network-connect-helper "$WEBOBS_DESKTOP_NETWORK_CONNECT_HELPER" \
+            --suspend-helper "$WEBOBS_DESKTOP_SUSPEND_HELPER" \
+            --evidence "$RUNNER_TEMP/webobs-m2-${{ matrix.fedora }}-lifecycle-private-evidence.json"
+          destination="$RUNNER_TEMP/webobs-update-qualification.AppImage"
+          previous="$RUNNER_TEMP/previous-build.AppImage"
+          printf '#!/bin/sh\n# rollback-evidence\nexit 0\n' > "$destination"
+          chmod 0755 "$destination"
+          cp "$destination" "$previous"
+          sha256="$(cut -d' ' -f1 "$client.sha256")"
+          WEBOBS_RELEASE_IDENTITY_REGEXP='^https://github.com/LiaoYK001/Web-Camera-Monitor-Wall/.github/workflows/release-native-clients.yaml@refs/(tags/v2\..+|heads/dev)$' \
+            clients/packaging/linux/install-signed-appimage.sh "$client" "$sha256" \
+              "$client.sigstore.json" "$destination"
+          clients/packaging/linux/rollback-appimage.sh "$destination"
+          cmp --silent "$destination" "$previous"
+          rm -f -- "$destination" "$destination.previous" "$previous"
 
   android:
     needs: audit
@@ -374,6 +447,9 @@ jobs:
           WEBOBS_ANDROID_VPN_CONNECT_HELPER: ${{ vars.WEBOBS_ANDROID_VPN_CONNECT_HELPER }}
           WEBOBS_ANDROID_VPN_DISCONNECT_HELPER: ${{ vars.WEBOBS_ANDROID_VPN_DISCONNECT_HELPER }}
           WEBOBS_REFERENCE_CONTROL_URL: ${{ vars.WEBOBS_REFERENCE_CONTROL_URL }}
+          WEBOBS_ANDROID_EXPIRY_CONTROL_URL: ${{ vars.WEBOBS_ANDROID_EXPIRY_CONTROL_URL }}
+          WEBOBS_ANDROID_GRANT_CAMERA_ID: ${{ vars.WEBOBS_ANDROID_GRANT_CAMERA_ID }}
+          WEBOBS_ANDROID_GRANT_PROFILE_ID: ${{ vars.WEBOBS_ANDROID_GRANT_PROFILE_ID }}
           WEBOBS_REFERENCE_CONTROL_USERNAME: ${{ secrets.WEBOBS_REFERENCE_CONTROL_USERNAME }}
           WEBOBS_REFERENCE_CONTROL_PASSWORD: ${{ secrets.WEBOBS_REFERENCE_CONTROL_PASSWORD }}
           ANDROID_SDK_ROOT: ${{ vars.WEBOBS_ANDROID_SDK_ROOT }}
@@ -414,11 +490,37 @@ jobs:
       attestations: write
       id-token: write
     steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          submodules: recursive
+          fetch-depth: 0
+          persist-credentials: false
       - uses: actions/download-artifact@70fc10c6e5e1ce46ad2ea6f2b72d43f7d47b13c3 # v8.0.0
         with:
           pattern: native-*-${{ needs.audit.outputs.package_version }}
           path: release-assets
           merge-multiple: true
+      - name: Add verified corresponding source
+        shell: bash
+        run: |
+          set -euo pipefail
+          ./scripts/create-source-bundle.sh '${{ needs.audit.outputs.release_tag }}' "$RUNNER_TEMP/native-source"
+          ./scripts/verify-source-bundle.sh \
+            "$RUNNER_TEMP/native-source/webobs-source-${{ needs.audit.outputs.release_tag }}.tar.gz"
+          cp "$RUNNER_TEMP/native-source/webobs-source-${{ needs.audit.outputs.release_tag }}.tar.gz"* \
+            release-assets/
+      - name: Verify immutable artifact sidecars
+        shell: bash
+        run: |
+          set -euo pipefail
+          count=0
+          while IFS= read -r -d '' artifact; do
+            case "$artifact" in *.sha256|*.spdx.json|*.sigstore.json|*-source-*.tar.gz) continue;; esac
+            test -s "$artifact.sha256" -a -s "$artifact.spdx.json" -a -s "$artifact.sigstore.json"
+            (cd release-assets && sha256sum --check "$(basename "$artifact.sha256")")
+            count=$((count + 1))
+          done < <(find release-assets -maxdepth 1 -type f -print0)
+          test "$count" -eq 5
       - name: Attest native artifacts
         uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
         with:
@@ -428,9 +530,12 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           set -euo pipefail
-          gh release view '${{ needs.audit.outputs.release_tag }}' >/dev/null 2>&1 || \
+          if ! gh release view '${{ needs.audit.outputs.release_tag }}' >/dev/null 2>&1; then
+            latest=(--latest=false)
+            if [[ '${{ needs.audit.outputs.promote_latest }}' == true ]]; then latest=(--latest); fi
             gh release create '${{ needs.audit.outputs.release_tag }}' --verify-tag \
-              --title '${{ needs.audit.outputs.release_tag }}' --generate-notes
-          # Release assets are immutable evidence. A rerun must use a new patch tag
-          # or delete an incomplete draft explicitly; it may never replace an asset.
-          gh release upload '${{ needs.audit.outputs.release_tag }}' release-assets/*
+              --title '${{ needs.audit.outputs.release_tag }}' --generate-notes "${latest[@]}"
+          fi
+          # Existing identical assets make reruns idempotent; different content is rejected.
+          ./scripts/upload-release-assets-immutable.sh \
+            '${{ needs.audit.outputs.release_tag }}' release-assets/*
