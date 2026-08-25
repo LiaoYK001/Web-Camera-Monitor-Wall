@@ -19,9 +19,11 @@ import re
 import secrets
 import sqlite3
 import struct
+import threading
 import time
 import uuid
 from collections.abc import Mapping
+from concurrent.futures import ThreadPoolExecutor
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.error import HTTPError, URLError
@@ -43,6 +45,8 @@ MAX_BODY = 1024 * 1024
 MAX_REGISTRY_RESPONSE = 4 * 1024 * 1024
 ENROLLMENT_SECONDS = 10 * 60
 DEFAULT_GRANT_SECONDS = 30 * 24 * 60 * 60
+ONLINE_VALIDATION_SECONDS = 5
+ENROLLMENT_APPROVAL_LOCK = threading.Lock()
 
 
 def configured_grant_seconds(environment: Mapping[str, str]) -> int:
@@ -527,6 +531,18 @@ def _validate_grants(raw_grants: object) -> list[dict[str, object]]:
         if mode == "dedicated" and reference == camera["credentials_ref"]:
             raise ApiError(409, "dedicated_credentials_required",
                            "dedicated mode requires a distinct credential reference")
+        if mode == "dedicated":
+            try:
+                capabilities = json.loads(camera["capabilities_json"])
+            except (TypeError, ValueError, json.JSONDecodeError) as error:
+                raise ApiError(409, "dedicated_credentials_unsupported",
+                               "camera capability state is unavailable") from error
+            onvif_capabilities = capabilities.get("onvif", {}) if isinstance(
+                capabilities, dict) else {}
+            if camera["adapter"] != "onvif" or not isinstance(onvif_capabilities, dict) or not \
+                    onvif_capabilities.get("userManagement", False):
+                raise ApiError(409, "dedicated_credentials_unsupported",
+                               "camera does not support managed dedicated credentials")
         grants.append({
             "cameraId": camera_id, "profileIds": sorted(set(profile_ids)),
             "permissions": permissions, "credentialMode": mode,
@@ -535,7 +551,26 @@ def _validate_grants(raw_grants: object) -> list[dict[str, object]]:
     return grants
 
 
+def _provision_dedicated_grants(grants: list[dict[str, object]]) -> None:
+    for grant in grants:
+        if grant["credentialMode"] != "dedicated":
+            continue
+        role = "operator" if set(grant["permissions"]) & {"ptz", "talk"} else "user"
+        result = registry_request("POST", str(grant["cameraId"]), "users", {
+            "operation": "ensure", "credentialsRef": grant["credentialsRef"], "role": role,
+        })
+        if result.get("state") not in {"created", "updated"} or \
+                result.get("weakRevocation") is not False:
+            raise ApiError(502, "dedicated_credentials_failed",
+                           "camera dedicated credential provisioning failed safely")
+
+
 def approve_enrollment(enrollment_id: str, payload: object) -> dict[str, object]:
+    with ENROLLMENT_APPROVAL_LOCK:
+        return _approve_enrollment_locked(enrollment_id, payload)
+
+
+def _approve_enrollment_locked(enrollment_id: str, payload: object) -> dict[str, object]:
     if not isinstance(payload, dict) or set(payload) != {"pairingCode", "cameraGrants"}:
         raise ApiError(400, "invalid_approval", "approval fields are invalid")
     code = payload.get("pairingCode")
@@ -553,6 +588,7 @@ def approve_enrollment(enrollment_id: str, payload: object) -> dict[str, object]
             raise ApiError(409, "enrollment_state", "enrollment is not pending")
         if not pairing_matches(row["pairing_code_hash"], code):
             raise ApiError(403, "pairing_code_rejected", "pairing code does not match")
+        _provision_dedicated_grants(grants)
         client_id = uuid.uuid4().hex
         next_revision = revision(database, True)
         expires = now + GRANT_SECONDS
@@ -873,7 +909,7 @@ def bootstrap(client: sqlite3.Row, since: int) -> dict[str, object]:
             "grantBundle": sealed_bundle(database, client),
             "sharedScenes": shared_scenes() if changed else [],
             "syncPolicy": "server-read-only-local-layouts",
-            "onlineValidationIntervalSeconds": 10,
+            "onlineValidationIntervalSeconds": ONLINE_VALIDATION_SECONDS,
         }
 
 
@@ -1197,8 +1233,41 @@ def revoke_client(client_id: str) -> dict[str, object]:
         database.execute("UPDATE clients SET status='revoked',revoked_at=?,revision=? WHERE id=?",
                          (now, next_revision, client_id))
         database.execute("DELETE FROM media_plans WHERE client_id=?", (client_id,))
+        grants = database.execute(
+            "SELECT camera_id,permissions_json,credential_mode,credentials_ref,weak_revocation "
+            "FROM grants WHERE client_id=? ORDER BY camera_id", (client_id,)).fetchall()
+    dedicated = [grant for grant in grants if grant["credential_mode"] == "dedicated"]
+    failed_cameras: list[str] = []
+    if dedicated:
+        def remove_account(grant: sqlite3.Row) -> tuple[str, bool]:
+            permissions = set(json.loads(grant["permissions_json"]))
+            role = "operator" if permissions & {"ptz", "talk"} else "user"
+            try:
+                result = registry_request("POST", grant["camera_id"], "users", {
+                    "operation": "delete", "credentialsRef": grant["credentials_ref"],
+                    "role": role,
+                })
+                return grant["camera_id"], result.get("state") == "deleted" and \
+                    result.get("weakRevocation") is False
+            except ApiError:
+                return grant["camera_id"], False
+
+        with ThreadPoolExecutor(max_workers=min(8, len(dedicated)),
+                                thread_name_prefix="webobs-revoke") as executor:
+            failed_cameras = [camera_id for camera_id, succeeded in executor.map(
+                remove_account, dedicated) if not succeeded]
+        if failed_cameras:
+            with connect() as database:
+                database.executemany(
+                    "UPDATE grants SET weak_revocation=1 WHERE client_id=? AND camera_id=?",
+                    [(client_id, camera_id) for camera_id in failed_cameras],
+                )
+    weak_revocation = any(bool(grant["weak_revocation"]) for grant in grants) or bool(failed_cameras)
     return {"clientId": client_id, "status": "revoked", "revokedAt": now,
-            "revision": next_revision, "offlineEffectiveNoLaterThan": row["grant_expires_at"]}
+            "revision": next_revision, "offlineEffectiveNoLaterThan": row["grant_expires_at"],
+            "weakRevocation": weak_revocation,
+            "cameraCredentialCleanup": "partial" if failed_cameras else
+                "complete" if dedicated else "not-applicable"}
 
 
 class Handler(BaseHTTPRequestHandler):

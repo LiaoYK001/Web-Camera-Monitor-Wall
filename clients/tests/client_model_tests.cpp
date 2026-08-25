@@ -4,6 +4,7 @@
 #include "webobs/client/scene_model.hpp"
 #include "webobs/client/stream_session_model.hpp"
 #include "webobs/client/studio_workspace.hpp"
+#include "webobs/client/topology_plan.hpp"
 
 #include <QDateTime>
 #include <QJsonArray>
@@ -20,6 +21,7 @@ using webobs::client::should_suspend_for_application_state;
 using webobs::client::SceneModel;
 using webobs::client::StreamSessionModel;
 using webobs::client::StudioWorkspace;
+using webobs::client::TopologyPlan;
 
 namespace {
 
@@ -98,6 +100,39 @@ private slots:
             Qt::ApplicationHidden, true));
         QVERIFY(!should_suspend_for_application_state(
             Qt::ApplicationActive, true));
+    }
+
+    void topology_plan_enforces_media_ownership_contract()
+    {
+        QJsonObject plan{{"contractVersion", 1}, {"planId", QString(32, QLatin1Char('a'))},
+            {"cameraId", "camera-a"}, {"profileId", "sub"}, {"status", "active"},
+            {"topology", "true-direct"}, {"receiverKind", "native"},
+            {"archiveTopology", "server-copy"}, {"decoder", "vaapi"},
+            {"renderer", "qt-quick"}, {"encoder", "none"},
+            {"upstreamOwner", QStringLiteral("client:") + QString(32, QLatin1Char('b'))},
+            {"liveServerMediaExpected", false}, {"fallbackReason", ""},
+            {"expiresAt", QDateTime::currentSecsSinceEpoch() + 300}};
+        QString error;
+        const TopologyPlan accepted = TopologyPlan::from_json(plan, error);
+        QVERIFY2(error.isEmpty(), qPrintable(error));
+        QVERIFY(accepted.true_direct());
+
+        plan.insert("liveServerMediaExpected", true);
+        error.clear();
+        TopologyPlan::from_json(plan, error);
+        QVERIFY(error.contains(QStringLiteral("ownership")));
+
+        plan.insert("liveServerMediaExpected", false);
+        plan.insert("upstreamOwner", "docker:mediamtx");
+        error.clear();
+        TopologyPlan::from_json(plan, error);
+        QVERIFY(error.contains(QStringLiteral("ownership")));
+
+        plan.insert("upstreamOwner", QStringLiteral("client:") + QString(32, QLatin1Char('b')));
+        plan.insert("unexpected", "field");
+        error.clear();
+        TopologyPlan::from_json(plan, error);
+        QVERIFY(error.contains(QStringLiteral("contract")));
     }
 
     void grid_capacity_and_duplicate_camera_are_bounded()

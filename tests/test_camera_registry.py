@@ -55,6 +55,7 @@ class OnvifEmulatorHandler(BaseHTTPRequestHandler):
     action_log: list[str] = []
     device_clock_offset = 0
     scheme = "http"
+    users: dict[str, str] = {username: "Administrator"}
 
     def log_message(self, format: str, *args: object) -> None:
         return
@@ -71,7 +72,10 @@ class OnvifEmulatorHandler(BaseHTTPRequestHandler):
         self.close_connection = True
 
     def authenticated(self, root: ET.Element) -> bool:
-        values = {local_name(node.tag): (node.text or "") for node in root.iter()}
+        token = next((node for node in root.iter()
+                      if local_name(node.tag) == "UsernameToken"), None)
+        values = {local_name(node.tag): (node.text or "") for node in token.iter()} \
+            if token is not None else {}
         try:
             nonce = base64.b64decode(values["Nonce"], validate=True)
             expected = base64.b64encode(hashlib.sha1(
@@ -159,6 +163,28 @@ class OnvifEmulatorHandler(BaseHTTPRequestHandler):
             self.soap('<trt:GetSnapshotUriResponse xmlns:trt="http://www.onvif.org/ver10/media/wsdl" xmlns:tt="http://www.onvif.org/ver10/schema"><trt:MediaUri><tt:Uri>' + base + '/snapshot.jpg</tt:Uri></trt:MediaUri></trt:GetSnapshotUriResponse>')
         elif "GetAudioDecoderConfigurationOptions" in action:
             self.soap('<tr2:GetAudioDecoderConfigurationOptionsResponse xmlns:tr2="http://www.onvif.org/ver20/media/wsdl"/>')
+        elif "GetUsers" in action:
+            users = "".join(
+                '<tds:User><tt:Username>' + username + '</tt:Username><tt:UserLevel>' + level +
+                '</tt:UserLevel></tds:User>' for username, level in sorted(self.users.items()))
+            self.soap('<tds:GetUsersResponse xmlns:tds="http://www.onvif.org/ver10/device/wsdl" '
+                      'xmlns:tt="http://www.onvif.org/ver10/schema">' + users +
+                      '</tds:GetUsersResponse>')
+        elif "CreateUsers" in action or "SetUser" in action:
+            fields = {local_name(node.tag): (node.text or "") for node in root.iter()}
+            account, level = fields.get("Username", ""), fields.get("UserLevel", "")
+            if not account or level not in {"User", "Operator"}:
+                self.soap('<s:Fault xmlns:s="http://www.w3.org/2003/05/soap-envelope"/>', 400)
+            else:
+                self.users[account] = level
+                self.soap('<tds:UserMutationResponse xmlns:tds="http://www.onvif.org/ver10/device/wsdl"/>')
+        elif "DeleteUsers" in action:
+            usernames = [node.text or "" for node in root.iter()
+                         if local_name(node.tag) == "Username"]
+            account = usernames[-1] if usernames else ""
+            if account != self.username:
+                self.users.pop(account, None)
+            self.soap('<tds:DeleteUsersResponse xmlns:tds="http://www.onvif.org/ver10/device/wsdl"/>')
         elif "GetPresets" in action:
             self.soap('<tptz:GetPresetsResponse xmlns:tptz="http://www.onvif.org/ver20/ptz/wsdl" xmlns:tt="http://www.onvif.org/ver10/schema"><tptz:Preset token="preset-1"><tt:Name>Entrance</tt:Name></tptz:Preset></tptz:GetPresetsResponse>')
         elif "SetPreset" in action:
@@ -286,6 +312,7 @@ class CameraRegistryTests(unittest.TestCase):
         handler = type(f"Onvif{profile_kind}Handler", (OnvifEmulatorHandler,), {
             "profile_kind": profile_kind, "require_http_digest": require_http_digest,
             "device_clock_offset": clock_offset,
+            "users": {OnvifEmulatorHandler.username: "Administrator"},
         })
         server = HTTPServer(("127.0.0.1", 0), handler)
         thread = threading.Thread(target=server.serve_forever, daemon=True)
@@ -300,7 +327,9 @@ class CameraRegistryTests(unittest.TestCase):
                         "-keyout", str(private_key), "-out", str(certificate), "-subj", "/CN=127.0.0.1",
                         "-addext", "subjectAltName=IP:127.0.0.1"], check=True,
                        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-        handler = type("OnvifTlsHandler", (OnvifEmulatorHandler,), {"profile_kind": "T", "scheme": "https"})
+        handler = type("OnvifTlsHandler", (OnvifEmulatorHandler,), {
+            "profile_kind": "T", "scheme": "https",
+            "users": {OnvifEmulatorHandler.username: "Administrator"}})
         server = HTTPServer(("127.0.0.1", 0), handler)
         context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER); context.load_cert_chain(certificate, private_key)
         server.socket = context.wrap_socket(server.socket, server_side=True)
@@ -326,6 +355,7 @@ class CameraRegistryTests(unittest.TestCase):
             self.assertTrue(probe["capabilities"]["onvif"]["ptz"])
             self.assertTrue(probe["capabilities"]["onvif"]["events"])
             self.assertTrue(probe["capabilities"]["onvif"]["talk"])
+            self.assertTrue(probe["capabilities"]["onvif"]["userManagement"])
             self.assertNotIn(OnvifEmulatorHandler.password, json.dumps(probe))
 
             registry.save_camera(registry.validate_camera({
@@ -336,6 +366,42 @@ class CameraRegistryTests(unittest.TestCase):
             self.assertEqual(synced["health"], "online")
             self.assertEqual(synced["capabilities"]["onvif"]["mediaProfile"], "T")
             self.assertEqual(len(synced["profiles"]), 3)
+        finally:
+            server.shutdown(); server.server_close(); thread.join(timeout=2)
+
+    def test_onvif_dedicated_user_lifecycle_is_secret_referenced(self) -> None:
+        self.write_fixture_secret()
+        (registry.SECRET_ROOT / "client-device.json").write_text(json.dumps({
+            "username": "webobs-client-device",
+            "password": "fixture-dedicated-password-32",
+        }), encoding="utf-8")
+        server, thread = self.onvif_server("T")
+        try:
+            address = f"http://127.0.0.1:{server.server_address[1]}"
+            registry.save_camera(registry.validate_camera({
+                "id": "managed-fixture", "name": "Managed Fixture", "address": address,
+                "adapter": "onvif", "credentialsRef": "fixture", "profiles": [],
+            }), False)
+            registry.sync_onvif_camera("managed-fixture")
+            created = registry.onvif_manage_dedicated_user("managed-fixture", {
+                "operation": "ensure", "credentialsRef": "client-device", "role": "operator",
+            })
+            self.assertEqual(created["state"], "created")
+            self.assertFalse(created["weakRevocation"])
+            self.assertEqual(server.RequestHandlerClass.users["webobs-client-device"], "Operator")
+            updated = registry.onvif_manage_dedicated_user("managed-fixture", {
+                "operation": "ensure", "credentialsRef": "client-device", "role": "user",
+            })
+            self.assertEqual(updated["state"], "updated")
+            self.assertEqual(server.RequestHandlerClass.users["webobs-client-device"], "User")
+            deleted = registry.onvif_manage_dedicated_user("managed-fixture", {
+                "operation": "delete", "credentialsRef": "client-device", "role": "user",
+            })
+            self.assertEqual(deleted["state"], "deleted")
+            self.assertNotIn("webobs-client-device", server.RequestHandlerClass.users)
+            operations = registry.device_audit("managed-fixture")
+            self.assertTrue(any(item["operation"] == "users.ensure-dedicated" for item in operations))
+            self.assertNotIn("fixture-dedicated-password-32", json.dumps(operations))
         finally:
             server.shutdown(); server.server_close(); thread.join(timeout=2)
 

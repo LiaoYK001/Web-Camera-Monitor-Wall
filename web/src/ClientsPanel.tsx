@@ -9,6 +9,12 @@ const permissions: Array<{ id: ClientPermission; label: string }> = [
 
 type GrantDraft = ClientCameraGrant & { enabled: boolean };
 
+const supportsManagedUsers = (camera: CameraRecord) => {
+  const onvif = camera.capabilities.onvif;
+  return camera.adapter === 'onvif' && typeof onvif === 'object' && onvif !== null &&
+    (onvif as Record<string, unknown>).userManagement === true;
+};
+
 const freshGrant = (camera: CameraRecord): GrantDraft => ({
   cameraId: camera.id, profileIds: camera.profiles.map((profile) => profile.id),
   permissions: ['view'], credentialMode: 'existing', enabled: false,
@@ -58,7 +64,8 @@ export default function ClientsPanel({ onBack }: { onBack: () => void }) {
     const cameraGrants = Object.values(drafts[enrollment.id] ?? {}).filter((grant) => grant.enabled)
       .map(({ enabled: _enabled, ...grant }) => grant);
     if (!/^\d{8}$/.test(codes[enrollment.id] ?? '') || cameraGrants.length === 0 ||
-        cameraGrants.some((grant) => grant.profileIds.length === 0)) {
+        cameraGrants.some((grant) => grant.profileIds.length === 0 ||
+          (grant.credentialMode === 'dedicated' && !grant.credentialsRef))) {
       setError('请输入客户端显示的八位配对码，并至少选择一个摄像机 Profile。'); return;
     }
     setBusy(true); setError(''); setNotice('');
@@ -83,15 +90,15 @@ export default function ClientsPanel({ onBack }: { onBack: () => void }) {
             <label className="grant-title"><input type="checkbox" checked={grant.enabled} onChange={(event) => updateGrant(enrollment.id, camera.id, { enabled: event.target.checked })} /><strong>{camera.name}</strong><small>{camera.adapter}</small></label>
             {grant.enabled && <><div className="grant-options"><span>Profile</span>{camera.profiles.map((profile) => <label key={profile.id}><input type="checkbox" checked={grant.profileIds.includes(profile.id)} onChange={(event) => updateGrant(enrollment.id, camera.id, { profileIds: event.target.checked ? [...grant.profileIds, profile.id] : grant.profileIds.filter((id) => id !== profile.id) })} />{profile.role} · {profile.videoCodec || 'unknown'} {profile.width ? `${profile.width}×${profile.height}` : ''}</label>)}</div>
               <div className="grant-options"><span>权限</span>{permissions.map((permission) => <label key={permission.id}><input type="checkbox" disabled={permission.id === 'view'} checked={grant.permissions.includes(permission.id)} onChange={(event) => updateGrant(enrollment.id, camera.id, { permissions: event.target.checked ? [...grant.permissions, permission.id] : grant.permissions.filter((id) => id !== permission.id) })} />{permission.label}</label>)}</div>
-              <label className="credential-mode"><span>凭据撤销</span><select value={grant.credentialMode} onChange={(event) => updateGrant(enrollment.id, camera.id, { credentialMode: event.target.value as 'existing' | 'dedicated', credentialsRef: undefined })}><option value="existing">复用现有 Secret（弱撤销）</option><option value="dedicated">专用只读 Secret</option></select></label>
-              {grant.credentialMode === 'dedicated' && <label className="credential-mode"><span>专用 Secret 引用</span><input value={grant.credentialsRef ?? ''} maxLength={256} onChange={(event) => updateGrant(enrollment.id, camera.id, { credentialsRef: event.target.value.replace(/[^a-zA-Z0-9._/-]/g, '') })} /></label>}</>}
+              <label className="credential-mode"><span>凭据撤销</span><select value={grant.credentialMode} onChange={(event) => updateGrant(enrollment.id, camera.id, { credentialMode: event.target.value as 'existing' | 'dedicated', credentialsRef: undefined })}><option value="existing">复用现有 Secret（弱撤销）</option><option value="dedicated" disabled={!supportsManagedUsers(camera)}>ONVIF 托管专用账号</option></select></label>
+              {grant.credentialMode === 'dedicated' && <label className="credential-mode"><span>专用 Secret 引用</span><input value={grant.credentialsRef ?? ''} maxLength={256} onChange={(event) => updateGrant(enrollment.id, camera.id, { credentialsRef: event.target.value.replace(/[^a-zA-Z0-9._/-]/g, '') })} /><small>Secret 用户名必须以 webobs- 开头，密码至少 16 字节；授权时创建账号，撤销时删除。</small></label>}</>}
           </div>;
         })}</div>
         <footer><span>完全离线设备最迟在 30 天 Grant 到期时失效；复用摄像机账号时，立即彻底撤销还需轮换摄像机密码。</span><button className="primary-button" disabled={busy} onClick={() => void approve(enrollment)}>批准并签发</button></footer>
       </article>)}
     </section>
     <section className="client-section"><div className="section-title"><h2>已配对设备</h2><span>{clients.length}</span></div>
-      {clients.length === 0 ? <div className="registry-empty">尚无已配对设备</div> : <div className="client-list">{clients.map((client) => <article key={client.id}><div><strong>{client.name}</strong><span>{client.platform} · {client.cameraCount} 台摄像机</span></div><dl><div><dt>状态</dt><dd>{client.status}</dd></div><div><dt>最近在线</dt><dd>{new Date(client.lastSeen * 1000).toLocaleString()}</dd></div><div><dt>离线授权到期</dt><dd>{new Date(client.grantExpiresAt * 1000).toLocaleString()}</dd></div></dl>{client.weakRevocation && <p>⚠ 复用设备凭据：撤销客户端后，完全离线副本在 Grant 到期前仍可能有效。</p>}<button className="danger-button" disabled={busy || client.status === 'revoked'} onClick={() => { if (window.confirm(`撤销 ${client.name}？在线播放与同步会在十秒内停止。`)) void revokeEnrolledClient(client.id).then((result) => { setNotice(`已撤销；完全离线设备最迟于 ${new Date(result.offlineEffectiveNoLaterThan * 1000).toLocaleString()} 失效。`); return reload(); }).catch((reason: unknown) => setError(reason instanceof Error ? reason.message : '撤销失败')); }}>撤销</button></article>)}</div>}
+      {clients.length === 0 ? <div className="registry-empty">尚无已配对设备</div> : <div className="client-list">{clients.map((client) => <article key={client.id}><div><strong>{client.name}</strong><span>{client.platform} · {client.cameraCount} 台摄像机</span></div><dl><div><dt>状态</dt><dd>{client.status}</dd></div><div><dt>最近在线</dt><dd>{new Date(client.lastSeen * 1000).toLocaleString()}</dd></div><div><dt>离线授权到期</dt><dd>{new Date(client.grantExpiresAt * 1000).toLocaleString()}</dd></div></dl>{client.weakRevocation && <p>⚠ 存在复用凭据或专用账号清理失败；彻底撤销可能还需轮换摄像机密码。</p>}<button className="danger-button" disabled={busy || client.status === 'revoked'} onClick={() => { if (window.confirm(`撤销 ${client.name}？在线播放与同步会在十秒内停止。`)) void revokeEnrolledClient(client.id).then((result) => { setNotice(result.weakRevocation ? `客户端已撤销，但摄像机凭据仍需人工轮换；现有 Grant 最迟于 ${new Date(result.offlineEffectiveNoLaterThan * 1000).toLocaleString()} 失效。` : '客户端已撤销，ONVIF 托管专用账号已清理。'); return reload(); }).catch((reason: unknown) => setError(reason instanceof Error ? reason.message : '撤销失败')); }}>撤销</button></article>)}</div>}
     </section>
   </main>;
 }

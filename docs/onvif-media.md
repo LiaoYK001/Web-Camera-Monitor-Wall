@@ -60,6 +60,10 @@ python3 tests/test_camera_registry.py
 
 The v1-M10 implementation includes PTZ/presets, ephemeral PullPoint events, snapshots, guarded talk, bounded interface selection and clock-skew correction. A generated TLS fixture proves that an untrusted device certificate is rejected and a specifically trusted certificate succeeds; verification is never disabled. v1.2 uses deterministic ONVIF coverage plus a redacted real external media decode gate. Multi-vendor model/firmware testing continues separately and does not create a brand-wide conformance claim. No real address, credential, serial number or recording belongs in public reports.
 
+v2 enrollment additionally probes ONVIF `GetUsers`. When an administrator selects managed dedicated credentials, the Camera Registry accepts only an external Secret whose username uses the reserved `webobs-` prefix and whose password is 16–128 UTF-8 bytes, then performs idempotent `CreateUsers`/`SetUser` with `User` or `Operator` scope. Client revocation calls `DeleteUsers`; failure is never reported as strong revocation and instead sets `weakRevocation=true` so the UI requires manual camera-password rotation. Usernames, passwords and Secret contents are absent from API responses and device-operation audit records.
+
+v2 配对还会探测 ONVIF `GetUsers`。管理员选择托管专用凭据时，Camera Registry 只接受用户名带 `webobs-` 保留前缀、密码为 16～128 个 UTF-8 字节的外部 Secret，并以 `User` 或 `Operator` 权限幂等执行 `CreateUsers`/`SetUser`。撤销客户端时调用 `DeleteUsers`；删除失败绝不会冒充强撤销，而会设置 `weakRevocation=true` 并要求在 UI 中人工轮换摄像机密码。用户名、密码及 Secret 内容均不进入 API 响应或设备操作审计。
+
 v1-M10 实现包含 PTZ/预置位、临时 PullPoint 事件、快照、受控对讲、指定接口发现与时钟偏移校正；生成式 TLS 夹具证明不受信设备证书会被拒绝、显式信任后才成功，且从不关闭验证。v1.2 采用确定性 ONVIF 覆盖加脱敏真实外部媒体解码门禁；多厂商型号/固件测试独立持续进行，不形成品牌级合规声明。公开报告不得包含真实地址、凭据、序列号或录像。
 
 The design follows the official [ONVIF Profile T](https://www.onvif.org/profiles/profile-t/) target and retains [Profile S](https://www.onvif.org/profiles/profile-s/) only as a compatibility path.

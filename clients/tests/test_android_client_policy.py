@@ -98,6 +98,13 @@ class AndroidClientPolicyTests(unittest.TestCase):
         self.assertIn("authorization-stopped", self.client_auth_probe)
         self.assertIn('https://127.0.0.1:1', self.client_auth_probe)
         self.assertIn("controller.revokeLocalIdentity()", self.client_auth_probe)
+        self.assertIn("online_validation_.setInterval(5'000)", self.client_controller)
+
+    def test_control_responses_are_bounded_while_streaming(self) -> None:
+        self.assertIn("QNetworkReply::readyRead", self.client_controller)
+        self.assertIn("maximum_response_bytes = 1024 * 1024", self.client_controller)
+        self.assertIn("reply->abort()", self.client_controller)
+        self.assertNotIn("const QByteArray data = reply->readAll()", self.client_controller)
 
     def test_android_keeps_the_qt_platform_and_media_has_a_stall_watchdog(self) -> None:
         platform_guard = self.main.index("#if !defined(Q_OS_ANDROID)")

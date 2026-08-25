@@ -187,12 +187,13 @@ if(BUILD_TESTING)
         include/webobs/client/scene_model.hpp
         include/webobs/client/stream_session_model.hpp
         include/webobs/client/studio_workspace.hpp
+        include/webobs/client/topology_plan.hpp
         src/media_pipeline.cpp
         src/grant_codec.cpp
         src/network_policy.cpp
         src/scene_model.cpp
         src/stream_session_model.cpp)
-    target_sources(webobs-native-model-tests PRIVATE src/studio_workspace.cpp)
+    target_sources(webobs-native-model-tests PRIVATE src/studio_workspace.cpp src/topology_plan.cpp)
     target_include_directories(webobs-native-model-tests PRIVATE include)
     target_link_libraries(webobs-native-model-tests PRIVATE
         Qt6::Core Qt6::Gui Qt6::Network Qt6::Test

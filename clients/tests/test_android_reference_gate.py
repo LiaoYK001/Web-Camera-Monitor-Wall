@@ -117,7 +117,8 @@ class AndroidReferenceGateTests(unittest.TestCase):
                          "foreground-resumed", "foregroundResumeWallMilliseconds",
                          "vpnHandoff", "vpn-connect-helper", "network-status",
                          "authorization-stopped", "grant-expired", "authOffline",
-                         "expiry-control-url",
+                         "expiry-control-url", "onlineRevocationMilliseconds",
+                         "remaining_grant_seconds", "stop_started + 10",
                          "dedicated reference device", "uninstall\", PACKAGE"):
             self.assertIn(required, source)
 

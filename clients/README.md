@@ -47,14 +47,14 @@ Required GStreamer plug-ins include `rtspsrc`, `uridecodebin3`, `decodebin3`, `q
 
 - Enrollment proves possession of an Ed25519 key and an X25519 key using deterministic CBOR. The ten-minute pairing code is approved in WebUI → Local clients.
 - The signed grant is sealed to the client. The cached copy remains ciphertext inside DPAPI, Secret Service or Android Keystore-backed storage. If secure storage is unavailable, the identity is memory-only.
-- An offline grant expires after 30 days. Each successful bootstrap renews it; an online revoked client is rejected on the next ten-second validation. A fully offline client cannot learn revocation before its existing grant expires.
-- Camera credentials never enter Scene JSON, logs, metrics or arbitrary browser JavaScript. Reused camera accounts are explicitly marked `weakRevocation`; immediate offline invalidation requires rotating that camera password.
+- An offline grant expires after 30 days. Each successful bootstrap renews it; a five-second validation cadence leaves bounded network headroom for an online revoked client to stop inside ten seconds. A fully offline client cannot learn revocation before its existing grant expires.
+- Camera credentials never enter Scene JSON, logs, metrics or arbitrary browser JavaScript. Verified ONVIF user management can provision and remove a reserved dedicated account; reused accounts or failed account cleanup are explicitly marked `weakRevocation` and require camera-password rotation.
 - Control HTTP is accepted only on loopback. Non-loopback control requires HTTPS. True Direct is LAN/user-managed-VPN only; WAN automatically plans a visible fallback unless `true-direct-only` forbids it.
 
 - 配对使用确定性 CBOR 证明 Ed25519/X25519 私钥持有，十分钟配对码在 WebUI“本地客户端”中批准。
 - 签名 Grant 只向该客户端密封；缓存仍是密文，并由 DPAPI、Secret Service 或 Android Keystore 保护。安全存储不可用时只允许内存临时身份。
-- 离线 Grant 为 30 天；成功 Bootstrap 会续期。在线撤销会在下一次十秒校验时生效，完全离线设备只能最迟在已有 Grant 到期时失效。
-- 摄像机凭据不进入 Scene、日志、指标或普通网页 JavaScript。复用摄像机账号会标记 `weakRevocation`；要立即让离线副本失效必须轮换摄像机密码。
+- 离线 Grant 为 30 天；成功 Bootstrap 会续期。五秒在线校验为网络往返预留余量，确保可达客户端在撤销后十秒内停播；完全离线设备只能最迟在已有 Grant 到期时失效。
+- 摄像机凭据不进入 Scene、日志、指标或普通网页 JavaScript。已验证的 ONVIF 用户管理可创建并撤销保留前缀的专用账号；复用账号或专用账号清理失败会标记 `weakRevocation`，并要求轮换摄像机密码。
 - 非回环控制只接受 HTTPS。真直连只承诺 LAN/用户自管 VPN；公网会显式规划后备，`true-direct-only` 则拒绝降级。
 
 ## Implemented desktop surface / 已实现桌面功能
@@ -63,7 +63,7 @@ Required GStreamer plug-ins include `rtspsrc`, `uridecodebin3`, `decodebin3`, `q
 - 1/4/9/16 substream grids, one independent main-stream focus, per-tile decoder/FPS/drop/reconnect diagnostics, exponential reconnect and suspend/resume recovery.
 - Local Preview/Program Studio with Cut/Fade, two nested levels, Camera/text/image/color sources, groups, lock/visibility, crop/rotation/opacity, contain/cover/stretch, alignment/snapping, color/opacity/mask/scaling filters and Scene v5 local save.
 - PTZ, listening, ten-second Push-to-Talk, camera-native snapshot, decoded-frame local screenshot, crash-safe stream-copy MKV and no-reencode MP4 export.
-- DPAPI/Secret Service identity storage, encrypted 30-day offline Grant cache, ten-second online revocation checks and explicit weak-revocation/fallback diagnostics.
+- DPAPI/Secret Service identity storage, encrypted 30-day offline Grant cache, five-second validation with a ten-second online revocation deadline, and explicit weak-revocation/fallback diagnostics.
 - Explicit Gateway/Hybrid activation leases and an authenticated same-origin v2 WHEP alias; stale plans are released and re-probed after reconnect or sleep recovery.
 
 - 支持 H.264/H.265 RTSP、Server Push MJPEG、HLS 与 WHEP；RTSP 默认 TCP，三秒内必须得到真实解码 Buffer。接收端优先使用同一固定 Rust 源码树中的 `whepsrc` 并显式声明 RTP 音视频 caps，以兼容 MediaMTX；GStreamer 1.28.6 的 `whepclientsrc` 保留为安全失败后备，端点及 Bearer 属性使用前都会验证。

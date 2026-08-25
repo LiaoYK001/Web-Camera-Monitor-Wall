@@ -23,6 +23,7 @@
 
 #include <limits>
 #include <algorithm>
+#include <memory>
 #include <utility>
 
 #if defined(Q_OS_ANDROID)
@@ -71,7 +72,9 @@ ClientController::ClientController(QObject *parent) : QObject(parent)
         emit userError(error);
     enrollment_poll_.setInterval(1000);
     connect(&enrollment_poll_, &QTimer::timeout, this, &ClientController::pollEnrollment);
-    online_validation_.setInterval(10'000);
+    // Keep enough headroom for the authenticated bootstrap round-trip so an
+    // online revocation stops media inside the public ten-second contract.
+    online_validation_.setInterval(5'000);
     connect(&online_validation_, &QTimer::timeout, this, [this] { bootstrap_internal(true); });
     grant_expiry_.setInterval(1000);
     connect(&grant_expiry_, &QTimer::timeout, this, [this] {
@@ -199,17 +202,36 @@ void ClientController::request(const QByteArray &method, const QString &path, co
     }
     const QByteArray payload = body ? QJsonDocument(*body).toJson(QJsonDocument::Compact) : QByteArray{};
     QNetworkReply *reply = network_.sendCustomRequest(request, method, payload);
+    constexpr qsizetype maximum_response_bytes = 1024 * 1024;
+    auto response = std::make_shared<QByteArray>();
+    auto oversized = std::make_shared<bool>(false);
+    connect(reply, &QNetworkReply::readyRead, this,
+            [reply, response, oversized] {
+        if (*oversized)
+            return;
+        response->append(reply->read(maximum_response_bytes + 1 - response->size()));
+        if (response->size() > maximum_response_bytes || reply->bytesAvailable() > 0) {
+            *oversized = true;
+            reply->abort();
+        }
+    });
     connect(reply, &QNetworkReply::finished, this,
-            [this, reply, handler = std::move(handler), quiet_network_errors] {
-        const QByteArray data = reply->readAll();
+            [this, reply, response, oversized, handler = std::move(handler), quiet_network_errors] {
+        if (!*oversized)
+            response->append(reply->read(maximum_response_bytes + 1 - response->size()));
+        if (response->size() > maximum_response_bytes)
+            *oversized = true;
         const int status = reply->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt();
         QJsonParseError parser_error;
-        const QJsonDocument document = QJsonDocument::fromJson(data, &parser_error);
+        const QJsonDocument document = QJsonDocument::fromJson(*response, &parser_error);
         QJsonObject object = document.isObject() ? document.object() : QJsonObject{};
-        if (reply->error() != QNetworkReply::NoError && status == 0) {
+        if (*oversized) {
+            if (!quiet_network_errors)
+                emit userError(QStringLiteral("Control server returned invalid bounded JSON"));
+        } else if (reply->error() != QNetworkReply::NoError && status == 0) {
             if (!quiet_network_errors)
                 emit userError(QStringLiteral("Control server is unreachable"));
-        } else if (parser_error.error != QJsonParseError::NoError || data.size() > 1024 * 1024) {
+        } else if (parser_error.error != QJsonParseError::NoError) {
             if (!quiet_network_errors)
                 emit userError(QStringLiteral("Control server returned invalid bounded JSON"));
         } else {
@@ -302,6 +324,13 @@ void ClientController::bootstrap_internal(bool quiet_network_errors)
         }
         if (status != 200)
             return;
+        const int validation_seconds = response.value(
+            QStringLiteral("onlineValidationIntervalSeconds")).toInt(0);
+        if (validation_seconds < 1 || validation_seconds > 5) {
+            emit userError(QStringLiteral(
+                "Control server returned an unsafe online validation interval"));
+            return;
+        }
         QString error;
         GrantDocument renewed = GrantCodec::open_bundle(response.value("grantBundle").toObject(),
                                                          identity_, error);
@@ -324,6 +353,7 @@ void ClientController::bootstrap_internal(bool quiet_network_errors)
                 QJsonDocument::Compact);
         }
         grant_ = std::move(renewed);
+        online_validation_.setInterval(validation_seconds * 1000);
         identity_.bootstrap_revision = next_revision;
         persist_identity();
         emit bootstrapChanged();
@@ -522,13 +552,20 @@ void ClientController::submit_media_plan(StreamSessionModel *model, const QStrin
         {"hardwareDecoders", QJsonArray::fromStringList(hardware_decoders())},
         {"requiresComposite", false}};
     request("POST", QStringLiteral("/api/v2/media-plans"), &body, true,
-            [this, model, session_id, policy = selected->policy](int status, const QJsonObject &response) {
+            [this, model, session_id, policy = selected->policy,
+             requested_camera = selected->camera_id,
+             requested_profile = selected->profile_id](int status, const QJsonObject &response) {
         if (!model->context(session_id))
             return;
         QString error;
         const TopologyPlan plan = TopologyPlan::from_json(response, error);
-        if (!error.isEmpty()) {
-            emit userError(error);
+        const bool status_matches = (status == 201 && plan.status == QStringLiteral("active")) ||
+                                    (status == 409 && plan.status == QStringLiteral("rejected"));
+        if (!error.isEmpty() || plan.camera_id != requested_camera ||
+            plan.profile_id != requested_profile ||
+            plan.receiver_kind != QStringLiteral("native") || !status_matches ||
+            plan.expires_at <= QDateTime::currentSecsSinceEpoch()) {
+            emit userError(QStringLiteral("TopologyPlan response did not match the media request"));
             return;
         }
         live_topology_ = plan.topology;

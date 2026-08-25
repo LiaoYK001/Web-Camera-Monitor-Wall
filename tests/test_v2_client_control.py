@@ -207,6 +207,77 @@ class V2ClientControlTests(unittest.TestCase):
                     "WEBOBS_V2_GRANT_SECONDS": value,
                 })
 
+    def prepare_managed_onvif_camera(self):
+        (service.SECRET_ROOT / "client-device.json").write_text(json.dumps({
+            "username": "webobs-client-device",
+            "password": "fixture-dedicated-password-32",
+        }), encoding="utf-8")
+        with sqlite3.connect(service.CAMERA_DB_PATH) as database:
+            database.execute(
+                "UPDATE cameras SET adapter='onvif',capabilities_json=? WHERE id='camera-test'",
+                (json.dumps({"onvif": {"userManagement": True}}),),
+            )
+
+    def approve_managed_client(self):
+        enrollment = service.start_enrollment(self.keys.enrollment(os.urandom(32)))
+        with mock.patch.object(service, "registry_request", return_value={
+                "state": "created", "weakRevocation": False}) as provision:
+            approved = service.approve_enrollment(enrollment["enrollmentId"], {
+                "pairingCode": enrollment["pairingCode"], "cameraGrants": [{
+                    "cameraId": "camera-test", "profileIds": ["sub"],
+                    "permissions": ["view", "ptz"], "credentialMode": "dedicated",
+                    "credentialsRef": "client-device",
+                }],
+            })
+        provision.assert_called_once_with("POST", "camera-test", "users", {
+            "operation": "ensure", "credentialsRef": "client-device", "role": "operator",
+        })
+        return approved
+
+    def test_managed_dedicated_credentials_are_provisioned_and_removed(self):
+        self.prepare_managed_onvif_camera()
+        approved = self.approve_managed_client()
+        with service.connect() as database:
+            grant = database.execute(
+                "SELECT credential_mode,weak_revocation FROM grants WHERE client_id=?",
+                (approved["clientId"],),
+            ).fetchone()
+        self.assertEqual(grant["credential_mode"], "dedicated")
+        self.assertEqual(grant["weak_revocation"], 0)
+        with mock.patch.object(service, "registry_request", return_value={
+                "state": "deleted", "weakRevocation": False}) as remove:
+            revoked = service.revoke_client(approved["clientId"])
+        remove.assert_called_once_with("POST", "camera-test", "users", {
+            "operation": "delete", "credentialsRef": "client-device", "role": "operator",
+        })
+        self.assertEqual(revoked["cameraCredentialCleanup"], "complete")
+        self.assertFalse(revoked["weakRevocation"])
+
+    def test_failed_dedicated_cleanup_is_disclosed_as_weak_revocation(self):
+        self.prepare_managed_onvif_camera()
+        approved = self.approve_managed_client()
+        with mock.patch.object(service, "registry_request", side_effect=service.ApiError(
+                503, "device_operation_unavailable", "safe failure")):
+            revoked = service.revoke_client(approved["clientId"])
+        self.assertEqual(revoked["cameraCredentialCleanup"], "partial")
+        self.assertTrue(revoked["weakRevocation"])
+        self.assertTrue(service.list_clients()["clients"][0]["weakRevocation"])
+
+    def test_dedicated_mode_rejects_unmanaged_camera(self):
+        (service.SECRET_ROOT / "client-device.json").write_text(json.dumps({
+            "username": "webobs-client-device", "password": "fixture-password-32",
+        }), encoding="utf-8")
+        enrollment = service.start_enrollment(self.keys.enrollment(os.urandom(32)))
+        with self.assertRaises(service.ApiError) as rejected:
+            service.approve_enrollment(enrollment["enrollmentId"], {
+                "pairingCode": enrollment["pairingCode"], "cameraGrants": [{
+                    "cameraId": "camera-test", "profileIds": ["sub"],
+                    "permissions": ["view"], "credentialMode": "dedicated",
+                    "credentialsRef": "client-device",
+                }],
+            })
+        self.assertEqual(rejected.exception.code, "dedicated_credentials_unsupported")
+
     def test_signed_enrollment_rejects_forgery_and_replay(self):
         payload = self.keys.enrollment(os.urandom(32))
         enrollment = service.start_enrollment(payload)
@@ -283,7 +354,7 @@ class V2ClientControlTests(unittest.TestCase):
                                   if key != "grantBundle"})
         self.assertNotIn("fixture-password", public_json)
         self.assertNotIn("rtsp://", public_json)
-        self.assertEqual(bootstrap["onlineValidationIntervalSeconds"], 10)
+        self.assertEqual(bootstrap["onlineValidationIntervalSeconds"], 5)
         self.assertEqual(bootstrap["sharedScenes"][0]["id"], "shared-grid")
         self.assertTrue(bootstrap["cameras"][0]["weakRevocation"])
         unchanged = service.bootstrap(client, bootstrap["revision"])

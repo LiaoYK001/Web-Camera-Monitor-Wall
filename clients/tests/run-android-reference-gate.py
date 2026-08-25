@@ -309,24 +309,36 @@ def approve_authorization_probe(serial: str, remote_manifest: str, control_url: 
     client_id = str(approval.get("clientId", ""))
     if status != 200 or not re.fullmatch(r"[A-Za-z0-9._-]{1,64}", client_id):
         raise RuntimeError("authorization probe approval failed")
+    grant_expires_at = approval.get("grantExpiresAt")
+    if not isinstance(grant_expires_at, int):
+        raise RuntimeError("authorization probe approval omitted its Grant expiry")
+    remaining_grant_seconds = grant_expires_at - int(time.time())
+    if expected_stop == "grant-expired" and not 30 <= remaining_grant_seconds <= 120:
+        raise RuntimeError("expiry control service did not issue a bounded acceptance Grant")
     playback_log, playback = wait_for_document(
         serial, "authorization-playback-ready", time.monotonic() + 45)
     if playback.get("streamCount") != 1:
         raise RuntimeError("authorized client did not start exactly one True Direct stream")
     if expected_stop == "revoked":
+        stop_started = time.monotonic()
         status, revoked = control_json("DELETE", control_url, f"/api/v2/clients/{client_id}")
         if status != 200 or revoked.get("status") != "revoked":
             raise RuntimeError("online client revocation failed")
-        stop_deadline = time.monotonic() + 12
+        stop_deadline = stop_started + 10
     else:
+        stop_started = time.monotonic()
         stop_deadline = time.monotonic() + 125
     stopped_log, stopped = wait_for_document(serial, "authorization-stopped", stop_deadline)
+    stop_milliseconds = int((time.monotonic() - stop_started) * 1000)
     if stopped.get("state") != expected_stop or stopped.get("streamCount") != 0:
         raise RuntimeError("authorization stop did not clear the active media pipeline")
+    if expected_stop == "revoked" and stop_milliseconds > 10_000:
+        raise RuntimeError("online revocation exceeded the ten-second stop contract")
     if any(value in pairing_log + playback_log + stopped_log for value in ("rtsp://", "rtsps://")):
         raise RuntimeError("authorization probe log exposed a media endpoint")
     adb(serial, "shell", "am", "force-stop", PACKAGE)
-    return {"state": expected_stop, "clientIdLength": len(client_id)}
+    return {"state": expected_stop, "clientIdLength": len(client_id),
+            "stopMilliseconds": stop_milliseconds}
 
 
 def write_evidence(path: Path, document: dict) -> None:
@@ -635,6 +647,7 @@ def main() -> int:
             "wifiReconnectedStreams": len(reconnected_names),
             "vpnHandoff": "vpn-to-wifi",
             "onlineAuthorization": revoked_authorization["state"],
+            "onlineRevocationMilliseconds": revoked_authorization["stopMilliseconds"],
             "offlineAuthorization": expired_authorization["state"],
             "rotationsTested": rotations_tested,
             "microphoneDeniedThenGranted": True, "streams": evidence_streams,

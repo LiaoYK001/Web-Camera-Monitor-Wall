@@ -598,6 +598,84 @@ def onvif_backchannel_supported(endpoint: str, username: str, password: str) -> 
         return False
 
 
+def onvif_users(endpoint: str, username: str, password: str) -> dict[str, str]:
+    namespace = "http://www.onvif.org/ver10/device/wsdl"
+    root = onvif_soap(
+        endpoint, f"{namespace}/GetUsers",
+        f'<tds:GetUsers xmlns:tds="{namespace}"/>', username, password,
+    )
+    users: dict[str, str] = {}
+    for node in root.iter():
+        if node.tag.rsplit("}", 1)[-1] != "User":
+            continue
+        fields = {child.tag.rsplit("}", 1)[-1]: (child.text or "") for child in node}
+        account = fields.get("Username", "")
+        level = fields.get("UserLevel", "")
+        if account and len(account) <= 64 and level in {"Administrator", "Operator", "User"}:
+            users[account] = level
+    return users
+
+
+def onvif_user_management_supported(endpoint: str, username: str, password: str) -> bool:
+    if not username:
+        return False
+    try:
+        onvif_users(endpoint, username, password)
+        return True
+    except (OnvifError, PermissionError):
+        return False
+
+
+def _dedicated_onvif_credentials(camera: dict, reference: object) -> tuple[str, str]:
+    if not isinstance(reference, str) or not reference or reference == camera["credentialsRef"]:
+        raise ValueError("dedicated ONVIF credentials require a distinct Secret reference")
+    dedicated_username, dedicated_password = load_credentials(reference)
+    administrator_username, _ = load_credentials(camera["credentialsRef"])
+    if not re.fullmatch(r"webobs-[A-Za-z0-9._-]{1,57}", dedicated_username) or \
+            dedicated_username == administrator_username or \
+            not 16 <= len(dedicated_password.encode("utf-8")) <= 128:
+        raise ValueError("dedicated ONVIF credentials violate the reserved account policy")
+    return dedicated_username, dedicated_password
+
+
+def onvif_manage_dedicated_user(camera_id: str, payload: dict) -> dict:
+    if not isinstance(payload, dict) or set(payload) != {"operation", "credentialsRef", "role"}:
+        raise ValueError("dedicated ONVIF user request fields are invalid")
+    operation = payload.get("operation")
+    role = payload.get("role")
+    if operation not in {"ensure", "delete"} or role not in {"user", "operator"}:
+        raise ValueError("dedicated ONVIF user operation or role is invalid")
+    camera, _, administrator_username, administrator_password = onvif_camera_context(camera_id)
+    if camera["adapter"] != "onvif" or not camera.get("capabilities", {}).get(
+            "onvif", {}).get("userManagement", False):
+        raise ValueError("camera does not advertise ONVIF user management")
+    account, account_password = _dedicated_onvif_credentials(
+        camera, payload.get("credentialsRef"))
+    endpoint = onvif_device_endpoint(camera["address"])
+    existing = onvif_users(endpoint, administrator_username, administrator_password)
+    namespace = "http://www.onvif.org/ver10/device/wsdl"
+    if operation == "delete":
+        if account in existing:
+            body = (f'<tds:DeleteUsers xmlns:tds="{namespace}">'
+                    f'<tds:Username>{escape(account)}</tds:Username></tds:DeleteUsers>')
+            onvif_soap(endpoint, f"{namespace}/DeleteUsers", body,
+                       administrator_username, administrator_password)
+        audit_device_operation(camera_id, "users.delete-dedicated", "completed")
+        return {"cameraId": camera_id, "state": "deleted", "weakRevocation": False}
+
+    level = "Operator" if role == "operator" else "User"
+    action = "SetUser" if account in existing else "CreateUsers"
+    body = (f'<tds:{action} xmlns:tds="{namespace}" xmlns:tt="http://www.onvif.org/ver10/schema">'
+            '<tds:User><tt:Username>' + escape(account) + '</tt:Username>'
+            '<tt:Password>' + escape(account_password) + '</tt:Password>'
+            '<tt:UserLevel>' + level + f'</tt:UserLevel></tds:User></tds:{action}>')
+    onvif_soap(endpoint, f"{namespace}/{action}", body,
+               administrator_username, administrator_password)
+    audit_device_operation(camera_id, "users.ensure-dedicated", "completed")
+    return {"cameraId": camera_id, "state": "updated" if account in existing else "created",
+            "userLevel": level, "weakRevocation": False}
+
+
 def onvif_probe(address: str, credentials_ref: str, include_private_tokens: bool = False) -> dict:
     endpoint = onvif_device_endpoint(address)
     username, password = load_credentials(credentials_ref)
@@ -633,6 +711,7 @@ def onvif_probe(address: str, credentials_ref: str, include_private_tokens: bool
             "imaging": "imaging" in services,
             "talk": bool(profile_kind == "T" and "media2" in services and
                          onvif_backchannel_supported(services["media2"], username, password)),
+            "userManagement": onvif_user_management_supported(endpoint, username, password),
             "syncedAt": int(time.time()),
         }
     }
@@ -1246,7 +1325,7 @@ class Handler(BaseHTTPRequestHandler):
             if sync_match:
                 self.respond(200, sync_onvif_camera(sync_match.group(1))); return
             operation_match = re.fullmatch(
-                r"/cameras/([a-zA-Z0-9._-]{1,64})/onvif/(ptz|presets|snapshot|events/pull|talk)",
+                r"/cameras/([a-zA-Z0-9._-]{1,64})/onvif/(ptz|presets|snapshot|events/pull|talk|users)",
                 self.path,
             )
             if operation_match:
@@ -1263,6 +1342,8 @@ class Handler(BaseHTTPRequestHandler):
                     if int(self.headers.get("Content-Length", "0")):
                         self.payload()
                     self.respond(200, onvif_pull_events(camera_id))
+                elif operation == "users":
+                    self.respond(200, onvif_manage_dedicated_user(camera_id, self.payload()))
                 else:
                     self.respond(202, onvif_talk(camera_id, self.payload()))
                 return

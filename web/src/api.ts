@@ -274,7 +274,9 @@ export const approveClientEnrollment = (enrollmentId: string, pairingCode: strin
       body: JSON.stringify({ pairingCode, cameraGrants }),
     });
 export const revokeEnrolledClient = (clientId: string) =>
-  clientAdminRequest<{ clientId: string; status: 'revoked'; revokedAt: number; offlineEffectiveNoLaterThan: number }>(
+  clientAdminRequest<{ clientId: string; status: 'revoked'; revokedAt: number;
+    offlineEffectiveNoLaterThan: number; weakRevocation: boolean;
+    cameraCredentialCleanup: 'complete' | 'partial' | 'not-applicable' }>(
     `/clients/${encodeURIComponent(clientId)}`, { method: 'DELETE' });
 export const fetchEvents = (query = '') => cameraRequest<{ events: MonitorEvent[] }>(`/events${query ? `?${query}` : ''}`);
 export const createEvent = (event: Record<string, unknown>) => cameraRequest<MonitorEvent>('/events', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(event) });
