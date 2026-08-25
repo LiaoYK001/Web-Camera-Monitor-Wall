@@ -1,6 +1,7 @@
 package org.webobs.nativeclient;
 
 import android.os.Bundle;
+import android.util.Log;
 
 import java.io.File;
 import java.io.FileOutputStream;
@@ -11,6 +12,10 @@ public final class WebObsProbeActivity extends WebObsActivity {
     public static final String EXTRA_MANIFEST = "org.webobs.nativeclient.extra.PROBE_MANIFEST";
     public static final String EXTRA_BACKGROUND_RELEASE =
             "org.webobs.nativeclient.extra.PROBE_BACKGROUND_RELEASE";
+    public static final String EXTRA_RECONNECT =
+            "org.webobs.nativeclient.extra.PROBE_RECONNECT";
+    public static final String EXTRA_MICROPHONE_PERMISSION =
+            "org.webobs.nativeclient.extra.PROBE_MICROPHONE_PERMISSION";
     private static final int MAX_MANIFEST_BYTES = 1024 * 1024;
     private File privateManifest;
 
@@ -18,6 +23,10 @@ public final class WebObsProbeActivity extends WebObsActivity {
     public void onCreate(Bundle state) {
         boolean backgroundRelease = getIntent() != null &&
                 getIntent().getBooleanExtra(EXTRA_BACKGROUND_RELEASE, false);
+        boolean reconnect = getIntent() != null &&
+                getIntent().getBooleanExtra(EXTRA_RECONNECT, false);
+        boolean microphonePermission = getIntent() != null &&
+                getIntent().getBooleanExtra(EXTRA_MICROPHONE_PERMISSION, false);
         String manifest = getIntent() == null ? null : getIntent().getStringExtra(EXTRA_MANIFEST);
         byte[] bytes = manifest == null ? new byte[0] : manifest.getBytes(StandardCharsets.UTF_8);
         if (bytes.length == 0 || bytes.length > MAX_MANIFEST_BYTES) {
@@ -37,10 +46,17 @@ public final class WebObsProbeActivity extends WebObsActivity {
             if (backgroundRelease) {
                 appendApplicationParameters("--probe-background-release");
             }
+            if (reconnect) {
+                appendApplicationParameters("--probe-reconnect");
+            }
         } catch (Exception error) {
             throw new IllegalStateException("The private acceptance manifest could not be staged", error);
         }
         super.onCreate(state);
+        if (microphonePermission) {
+            Log.i("WebObsProbe", "{\"result\":\"microphone-permission\"," +
+                    "\"granted\":" + ensureMicrophonePermission() + "}");
+        }
         if (backgroundRelease) {
             KeyStoreBridge.setWakeLock(true);
         }

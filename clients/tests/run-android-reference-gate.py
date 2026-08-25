@@ -112,12 +112,15 @@ def thermal_status(serial: str) -> int:
     return max(matches)
 
 
-def launch_probe(serial: str, remote_manifest: str, background: bool) -> None:
+def launch_probe(serial: str, remote_manifest: str, background: bool,
+                 reconnect: bool = False, microphone_permission: bool = False) -> None:
     adb(serial, "shell", "am", "force-stop", PACKAGE)
     adb(serial, "logcat", "-c")
     adb(serial, "shell", "am", "instrument", "-w", "-r",
         "-e", "manifestPath", remote_manifest,
         "-e", "backgroundRelease", "true" if background else "false",
+        "-e", "reconnect", "true" if reconnect else "false",
+        "-e", "microphonePermission", "true" if microphone_permission else "false",
         INSTRUMENTATION, timeout=60)
 
 
@@ -130,6 +133,55 @@ def wait_for_document(serial: str, result: str, deadline: float) -> tuple[str, d
                 return last_log, document
         time.sleep(1)
     raise RuntimeError(f"Android client did not emit bounded {result!r} evidence")
+
+
+def wait_for_reconnections(serial: str, expected_names: set[str],
+                           deadline: float) -> tuple[str, set[str]]:
+    observed: set[str] = set()
+    last_log = ""
+    while time.monotonic() < deadline:
+        last_log, documents = log_documents(serial)
+        for document in documents:
+            if document.get("result") == "reconnected" and \
+                    isinstance(document.get("name"), str):
+                observed.add(document["name"])
+        if observed == expected_names:
+            return last_log, observed
+        time.sleep(0.5)
+    raise RuntimeError("Android streams did not all reconnect inside the ten-second budget")
+
+
+def android_setting(serial: str, namespace: str, name: str) -> str:
+    return adb(serial, "shell", "settings", "get", namespace, name).strip()
+
+
+def put_android_setting(serial: str, namespace: str, name: str, value: str) -> None:
+    adb(serial, "shell", "settings", "put", namespace, name, value)
+
+
+def wifi_enabled(serial: str) -> bool | None:
+    output = adb(serial, "shell", "cmd", "wifi", "status", check=False).lower()
+    if "wi-fi is enabled" in output or "wifi is enabled" in output:
+        return True
+    if "wi-fi is disabled" in output or "wifi is disabled" in output:
+        return False
+    value = android_setting(serial, "global", "wifi_on")
+    return True if value == "1" else False if value == "0" else None
+
+
+def set_wifi_enabled(serial: str, enabled: bool, deadline_seconds: float = 30) -> None:
+    adb(serial, "shell", "svc", "wifi", "enable" if enabled else "disable", check=False)
+    deadline = time.monotonic() + deadline_seconds
+    while time.monotonic() < deadline:
+        if wifi_enabled(serial) is enabled:
+            return
+        time.sleep(0.5)
+    raise RuntimeError("reference device Wi-Fi state did not reach the requested value")
+
+
+def package_installed(serial: str, package: str) -> bool:
+    output = adb(serial, "shell", "pm", "path", package, check=False)
+    return any(line.startswith("package:") for line in output.splitlines())
 
 
 def write_evidence(path: Path, document: dict) -> None:
@@ -180,8 +232,12 @@ def main() -> int:
     state = adb(arguments.serial, "get-state").strip()
     api = int(adb(arguments.serial, "shell", "getprop", "ro.build.version.sdk").strip())
     abi = adb(arguments.serial, "shell", "getprop", "ro.product.cpu.abi").strip()
-    if state != "device" or api < 29 or abi != "arm64-v8a":
+    if state != "device" or api < 29 or abi != "arm64-v8a" or \
+            ":" in arguments.serial or "_adb-tls" in arguments.serial:
         raise SystemExit("reference device must be an authorized API 29+ arm64-v8a device")
+    if package_installed(arguments.serial, PACKAGE) or \
+            package_installed(arguments.serial, DRIVER):
+        raise SystemExit("dedicated reference device must not contain a prior client or driver")
 
     digest = hashlib.sha256(arguments.manifest.read_bytes()).hexdigest()[:16]
     remote = f"/data/local/tmp/webobs-m3-{digest}.json"
@@ -189,11 +245,22 @@ def main() -> int:
     temperatures: list[int] = []
     server_samples = 0
     final_log = ""
+    original_accelerometer_rotation = android_setting(
+        arguments.serial, "system", "accelerometer_rotation")
+    original_user_rotation = android_setting(arguments.serial, "system", "user_rotation")
+    rotation_steps = {3: "1", 6: "0", 9: "3", 12: "0"}
+    rotations_tested = 0
+    wifi_toggled = False
+    client_installed = False
+    driver_installed = False
     try:
         adb(arguments.serial, "install", "-r", "--no-streaming", str(arguments.apk), timeout=180)
+        client_installed = True
         adb(arguments.serial, "install", "-r", "--no-streaming", str(arguments.driver_apk), timeout=120)
+        driver_installed = True
         adb(arguments.serial, "push", str(arguments.manifest), remote, timeout=60)
         adb(arguments.serial, "shell", "chmod", "0644", remote)
+        put_android_setting(arguments.serial, "system", "accelerometer_rotation", "0")
         launch_probe(arguments.serial, remote, False)
         wait_for_document(arguments.serial, "ready", time.monotonic() + 45)
         deadline = time.monotonic() + manifest["durationSeconds"] + 45
@@ -211,6 +278,10 @@ def main() -> int:
             if temperatures[-1] > manifest["maxThermalStatus"]:
                 raise RuntimeError("Android device entered severe thermal status")
             server_samples += 1
+            if server_samples in rotation_steps:
+                put_android_setting(arguments.serial, "system", "user_rotation",
+                                    rotation_steps[server_samples])
+                rotations_tested += 1
             time.sleep(10)
         if passed is None:
             raise RuntimeError("Android 30-minute reference playback did not complete")
@@ -240,6 +311,42 @@ def main() -> int:
                 "framesDecoded": decoded, "framesDropped": dropped,
                 "droppedPercent": round(dropped_percent, 5)})
 
+        reconnect_manifest = dict(manifest)
+        reconnect_manifest["durationSeconds"] = 75
+        with tempfile.NamedTemporaryFile("w", encoding="utf-8", suffix=".json",
+                                         delete=False) as handle:
+            reconnect_path = Path(handle.name)
+            json.dump(reconnect_manifest, handle)
+        try:
+            adb(arguments.serial, "push", str(reconnect_path), remote, timeout=60)
+        finally:
+            reconnect_path.unlink(missing_ok=True)
+        if wifi_enabled(arguments.serial) is not True:
+            raise RuntimeError("Android lifecycle gate requires an enabled USB-controlled Wi-Fi device")
+        launch_probe(arguments.serial, remote, False, reconnect=True)
+        wait_for_document(arguments.serial, "ready", time.monotonic() + 45)
+        set_wifi_enabled(arguments.serial, False)
+        wifi_toggled = True
+        time.sleep(5)
+        reconnect_started = time.monotonic()
+        set_wifi_enabled(arguments.serial, True)
+        reconnect_log, reconnected_names = wait_for_reconnections(
+            arguments.serial, {item["name"] for item in manifest["streams"]},
+            reconnect_started + 10)
+        reconnect_wall_ms = int((time.monotonic() - reconnect_started) * 1000)
+        _, reconnect_passed = wait_for_document(
+            arguments.serial, "passed", time.monotonic() + 80)
+        reconnect_results = reconnect_passed.get("streams")
+        if reconnect_wall_ms > 10_000 or len(reconnected_names) != 9 or \
+                not isinstance(reconnect_results, list) or len(reconnect_results) != 9 or \
+                any(not isinstance(item, dict) or int(item.get("networkReconnects", 0)) < 1
+                    for item in reconnect_results):
+            raise RuntimeError("Android Wi-Fi recovery did not prove all nine stream reconnections")
+        if any(stream["endpoint"] in reconnect_log for stream in manifest["streams"]):
+            raise RuntimeError("Android reconnect log exposed a private endpoint")
+        if not DESKTOP.same_server_media(baseline, DESKTOP.server_processes(control_url)):
+            raise RuntimeError("Android reconnect gate changed server media sessions")
+
         short = dict(manifest)
         short["durationSeconds"] = 60
         with tempfile.NamedTemporaryFile("w", encoding="utf-8", suffix=".json",
@@ -265,6 +372,44 @@ def main() -> int:
             raise RuntimeError("Android background probe left its monitor Wake Lock held")
         if any(stream["endpoint"] in release_log for stream in manifest["streams"]):
             raise RuntimeError("Android background log exposed a private endpoint")
+
+        launch_probe(arguments.serial, remote, True)
+        wait_for_document(arguments.serial, "ready", time.monotonic() + 45)
+        lock_started = time.monotonic()
+        adb(arguments.serial, "shell", "input", "keyevent", "KEYCODE_SLEEP")
+        try:
+            lock_log, lock_released = wait_for_document(
+                arguments.serial, "background-released", lock_started + 5.5)
+        finally:
+            adb(arguments.serial, "shell", "input", "keyevent", "KEYCODE_WAKEUP", check=False)
+            adb(arguments.serial, "shell", "wm", "dismiss-keyguard", check=False)
+        lock_release_wall_ms = int((time.monotonic() - lock_started) * 1000)
+        if int(lock_released.get("streamCount", 0)) != 9 or \
+                int(lock_released.get("releaseMilliseconds", 6000)) > 5000 or \
+                lock_release_wall_ms > 5500:
+            raise RuntimeError("Android lock-screen resource release exceeded five seconds")
+        if any(stream["endpoint"] in lock_log for stream in manifest["streams"]):
+            raise RuntimeError("Android lock-screen log exposed a private endpoint")
+
+        adb(arguments.serial, "shell", "pm", "revoke", PACKAGE,
+            "android.permission.RECORD_AUDIO", check=False)
+        adb(arguments.serial, "shell", "appops", "set", PACKAGE, "RECORD_AUDIO", "deny",
+            check=False)
+        launch_probe(arguments.serial, remote, False, microphone_permission=True)
+        _, denied_permission = wait_for_document(
+            arguments.serial, "microphone-permission", time.monotonic() + 30)
+        if denied_permission.get("granted") is not False:
+            raise RuntimeError("Android microphone-denial boundary did not fail closed")
+        adb(arguments.serial, "shell", "am", "force-stop", PACKAGE)
+        adb(arguments.serial, "shell", "appops", "set", PACKAGE, "RECORD_AUDIO", "allow")
+        adb(arguments.serial, "shell", "pm", "grant", PACKAGE,
+            "android.permission.RECORD_AUDIO")
+        launch_probe(arguments.serial, remote, False, microphone_permission=True)
+        _, granted_permission = wait_for_document(
+            arguments.serial, "microphone-permission", time.monotonic() + 30)
+        if granted_permission.get("granted") is not True:
+            raise RuntimeError("Android microphone grant was not observed by the client boundary")
+        adb(arguments.serial, "shell", "am", "force-stop", PACKAGE)
         final_server = DESKTOP.server_processes(control_url)
         if not DESKTOP.same_server_media(baseline, final_server):
             raise RuntimeError("Android gate left incremental server media sessions")
@@ -272,16 +417,35 @@ def main() -> int:
             "apiLevel": api, "abi": abi, "durationSeconds": 1800, "streamCount": 9,
             "serverSamples": server_samples, "maxThermalStatus": max(temperatures),
             "backgroundReleaseMilliseconds": int(released["releaseMilliseconds"]),
-            "backgroundReleaseWallMilliseconds": release_wall_ms, "streams": evidence_streams,
+            "backgroundReleaseWallMilliseconds": release_wall_ms,
+            "lockScreenReleaseMilliseconds": int(lock_released["releaseMilliseconds"]),
+            "lockScreenReleaseWallMilliseconds": lock_release_wall_ms,
+            "wifiReconnectMilliseconds": reconnect_wall_ms,
+            "wifiReconnectedStreams": len(reconnected_names),
+            "rotationsTested": rotations_tested,
+            "microphoneDeniedThenGranted": True, "streams": evidence_streams,
             "serverRtspSessionsBefore": baseline["rtspSessions"],
             "serverRtspSessionsAfter": final_server["rtspSessions"]})
         print("v2-M3 Android reference gate passed: 9 MediaCodec streams for 30 minutes, "
-              "<2% drops, no severe thermal state, zero server media increment, and <=5s "
-              "background release.")
+              "<2% drops, four rotations, <=10s Wi-Fi recovery, no severe thermal state, "
+              "zero server media increment, and <=5s background/lock-screen release.")
         return 0
     finally:
-        adb(arguments.serial, "shell", "rm", "-f", remote, check=False)
-        adb(arguments.serial, "uninstall", DRIVER, check=False)
+        try:
+            if wifi_toggled:
+                set_wifi_enabled(arguments.serial, True)
+            if original_accelerometer_rotation in {"0", "1"}:
+                put_android_setting(arguments.serial, "system", "accelerometer_rotation",
+                                    original_accelerometer_rotation)
+            if original_user_rotation in {"0", "1", "2", "3"}:
+                put_android_setting(arguments.serial, "system", "user_rotation",
+                                    original_user_rotation)
+        finally:
+            adb(arguments.serial, "shell", "rm", "-f", remote, check=False)
+            if driver_installed:
+                adb(arguments.serial, "uninstall", DRIVER, check=False)
+            if client_installed:
+                adb(arguments.serial, "uninstall", PACKAGE, check=False)
 
 
 if __name__ == "__main__":

@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import importlib.util
 import unittest
+from unittest import mock
 from pathlib import Path
 
 
@@ -56,6 +57,37 @@ class AndroidReferenceGateTests(unittest.TestCase):
         value["streams"][0]["endpoint"] = "rtsp://" + "fixture-user:fixture-secret@192.0.2.1/sub"
         with self.assertRaises(ValueError):
             MODULE.validate_manifest(value)
+
+    def test_wifi_state_parser_is_fail_closed(self) -> None:
+        with mock.patch.object(MODULE, "adb", return_value="Wi-Fi is enabled"):
+            self.assertTrue(MODULE.wifi_enabled("fixture"))
+        with mock.patch.object(MODULE, "adb", return_value="Wi-Fi is disabled"):
+            self.assertFalse(MODULE.wifi_enabled("fixture"))
+        with mock.patch.object(MODULE, "adb", return_value="unsupported"), \
+                mock.patch.object(MODULE, "android_setting", return_value="unexpected"):
+            self.assertIsNone(MODULE.wifi_enabled("fixture"))
+
+    def test_package_probe_requires_a_real_package_path(self) -> None:
+        with mock.patch.object(MODULE, "adb", return_value="package:/data/app/base.apk\n"):
+            self.assertTrue(MODULE.package_installed("fixture", MODULE.PACKAGE))
+        with mock.patch.object(MODULE, "adb", return_value=""):
+            self.assertFalse(MODULE.package_installed("fixture", MODULE.PACKAGE))
+
+    def test_all_streams_must_report_reconnected(self) -> None:
+        documents = [{"result": "reconnected", "name": "one"},
+                     {"result": "reconnected", "name": "two"}]
+        with mock.patch.object(MODULE, "log_documents", return_value=("", documents)):
+            _, observed = MODULE.wait_for_reconnections(
+                "fixture", {"one", "two"}, MODULE.time.monotonic() + 1)
+        self.assertEqual(observed, {"one", "two"})
+
+    def test_device_matrix_commands_and_evidence_are_mandatory(self) -> None:
+        source = MODULE_PATH.read_text(encoding="utf-8")
+        for required in ("accelerometer_rotation", "KEYCODE_SLEEP", "svc\", \"wifi",
+                         "microphone-permission", "wifiReconnectMilliseconds",
+                         "lockScreenReleaseMilliseconds", "rotationsTested",
+                         "dedicated reference device", "uninstall\", PACKAGE"):
+            self.assertIn(required, source)
 
 
 if __name__ == "__main__":

@@ -39,6 +39,10 @@ public final class WebObsAcceptanceInstrumentation extends Instrumentation {
             intent.putExtra("org.webobs.nativeclient.extra.PROBE_MANIFEST", document);
             intent.putExtra("org.webobs.nativeclient.extra.PROBE_BACKGROUND_RELEASE",
                     arguments.getString("backgroundRelease", "false").equals("true"));
+            intent.putExtra("org.webobs.nativeclient.extra.PROBE_RECONNECT",
+                    arguments.getString("reconnect", "false").equals("true"));
+            intent.putExtra("org.webobs.nativeclient.extra.PROBE_MICROPHONE_PERMISSION",
+                    arguments.getString("microphonePermission", "false").equals("true"));
             intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_CLEAR_TASK);
             Activity activity = startActivitySync(intent);
             if (activity == null) {

@@ -15,6 +15,7 @@
 #include <QTimer>
 #include <QUrl>
 
+#include <algorithm>
 #include <memory>
 #include <vector>
 
@@ -29,10 +30,18 @@ struct ProbeEntry {
 struct BatchState {
     std::vector<ProbeEntry> entries;
     std::vector<std::unique_ptr<MediaPipeline>> pipelines;
+    std::vector<bool> ever_ready;
+    std::vector<bool> retry_pending;
+    std::vector<bool> recovering;
+    std::vector<int> retry_attempts;
+    std::vector<int> reconnects;
+    std::vector<quint64> decoded_before_retry;
+    std::vector<quint64> dropped_before_retry;
     int duration_seconds = 0;
     int ready = 0;
     int result = 4;
     bool finished = false;
+    bool reconnect_on_failure = false;
 };
 
 bool parse_manifest(const QString &path, BatchState &state, QString &error)
@@ -112,19 +121,22 @@ void finish_batch(QGuiApplication &application, BatchState &state)
     bool valid = true;
     for (std::size_t index = 0; index < state.pipelines.size(); ++index) {
         MediaPipeline &pipeline = *state.pipelines[index];
+        const quint64 decoded = state.decoded_before_retry[index] + pipeline.framesDecoded();
+        const quint64 dropped = state.dropped_before_retry[index] + pipeline.framesDropped();
         streams.append(QJsonObject{{QStringLiteral("name"), state.entries[index].name},
             {QStringLiteral("decoder"), pipeline.decoder().left(128)},
             {QStringLiteral("hardwareDecode"), pipeline.hardwareDecode()},
             {QStringLiteral("fallbackReason"), pipeline.fallbackReason().left(128)},
-            {QStringLiteral("framesDecoded"), static_cast<qint64>(pipeline.framesDecoded())},
-            {QStringLiteral("framesDropped"), static_cast<qint64>(pipeline.framesDropped())},
+            {QStringLiteral("framesDecoded"), static_cast<qint64>(decoded)},
+            {QStringLiteral("framesDropped"), static_cast<qint64>(dropped)},
             {QStringLiteral("fps"), pipeline.currentFps()},
             {QStringLiteral("width"), pipeline.videoWidth()},
             {QStringLiteral("height"), pipeline.videoHeight()},
             {QStringLiteral("visualSamples"), static_cast<qint64>(pipeline.visualSamples())},
             {QStringLiteral("blackSamples"), static_cast<qint64>(pipeline.blackSamples())},
-            {QStringLiteral("pipelineRestarts"), static_cast<qint64>(pipeline.pipelineRestarts())}});
-        valid = valid && pipeline.framesDecoded() >= static_cast<quint64>(state.duration_seconds);
+            {QStringLiteral("pipelineRestarts"), static_cast<qint64>(pipeline.pipelineRestarts())},
+            {QStringLiteral("networkReconnects"), state.reconnects[index]}});
+        valid = valid && decoded >= static_cast<quint64>(state.duration_seconds);
         pipeline.stop();
     }
     if (valid) {
@@ -136,6 +148,24 @@ void finish_batch(QGuiApplication &application, BatchState &state)
         state.result = 0;
     }
     application.quit();
+}
+
+void schedule_retry(QGuiApplication &application, BatchState &state, std::size_t index)
+{
+    if (state.finished || index >= state.pipelines.size() || state.retry_pending[index])
+        return;
+    state.retry_pending[index] = true;
+    const int exponent = std::min(state.retry_attempts[index], 2);
+    const int delay_ms = 1000 * (1 << exponent);
+    ++state.retry_attempts[index];
+    QTimer::singleShot(delay_ms, &application, [&application, &state, index] {
+        if (state.finished || index >= state.pipelines.size())
+            return;
+        state.retry_pending[index] = false;
+        QString start_error;
+        if (!state.pipelines[index]->start(state.entries[index].endpoint, start_error))
+            schedule_retry(application, state, index);
+    });
 }
 
 void release_background_batch(QGuiApplication &application, BatchState &state)
@@ -161,16 +191,38 @@ void release_background_batch(QGuiApplication &application, BatchState &state)
 }
 
 int run_batch_probe(QGuiApplication &application, const QString &manifest_path, QString &error,
-                    bool release_on_background)
+                    bool release_on_background, bool reconnect_on_failure)
 {
     BatchState state;
     if (!parse_manifest(manifest_path, state, error))
         return 2;
     state.pipelines.reserve(state.entries.size());
+    state.ever_ready.assign(state.entries.size(), false);
+    state.retry_pending.assign(state.entries.size(), false);
+    state.recovering.assign(state.entries.size(), false);
+    state.retry_attempts.assign(state.entries.size(), 0);
+    state.reconnects.assign(state.entries.size(), 0);
+    state.decoded_before_retry.assign(state.entries.size(), 0);
+    state.dropped_before_retry.assign(state.entries.size(), 0);
+    state.reconnect_on_failure = reconnect_on_failure;
     for (std::size_t index = 0; index < state.entries.size(); ++index) {
         auto pipeline = std::make_unique<MediaPipeline>();
         QObject::connect(pipeline.get(), &MediaPipeline::directReady, &application,
-            [&application, &state, release_on_background] {
+            [&application, &state, release_on_background, index] {
+                if (state.ever_ready[index] && state.recovering[index]) {
+                    state.recovering[index] = false;
+                    state.retry_attempts[index] = 0;
+                    ++state.reconnects[index];
+                    QTextStream output(stdout);
+                    output << QJsonDocument(QJsonObject{
+                        {QStringLiteral("result"), QStringLiteral("reconnected")},
+                        {QStringLiteral("name"), state.entries[index].name},
+                        {QStringLiteral("networkReconnects"), state.reconnects[index]}})
+                                  .toJson(QJsonDocument::Compact)
+                           << Qt::endl;
+                    return;
+                }
+                state.ever_ready[index] = true;
                 ++state.ready;
                 if (state.ready == static_cast<int>(state.pipelines.size())) {
                     QTextStream output(stdout);
@@ -185,8 +237,16 @@ int run_batch_probe(QGuiApplication &application, const QString &manifest_path, 
                 }
             });
         QObject::connect(pipeline.get(), &MediaPipeline::directFailed, &application,
-            [&application, &state](const QString &) {
-                if (!state.finished) {
+            [&application, &state, index](const QString &) {
+                if (state.finished)
+                    return;
+                if (state.reconnect_on_failure && state.ever_ready[index]) {
+                    state.decoded_before_retry[index] += state.pipelines[index]->framesDecoded();
+                    state.dropped_before_retry[index] += state.pipelines[index]->framesDropped();
+                    state.recovering[index] = true;
+                    state.pipelines[index]->stop();
+                    schedule_retry(application, state, index);
+                } else {
                     state.finished = true;
                     state.result = 4;
                     application.quit();

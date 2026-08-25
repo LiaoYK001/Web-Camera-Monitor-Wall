@@ -191,6 +191,14 @@ services:
     depends_on: [publisher]
     networks: [camera-media]
 
+  native-reconnect:
+    image: webobs-native-protocol-fixture:local
+    entrypoint: ["/build/clients/webobs-native", "--probe-manifest", "/fixture/native-reconnect.json", "--probe-reconnect"]
+    volumes:
+      - ./v2-direct-fixture/native-reconnect.json:/fixture/native-reconnect.json:ro
+    depends_on: [publisher]
+    networks: [camera-media]
+
 networks:
   control:
     internal: true

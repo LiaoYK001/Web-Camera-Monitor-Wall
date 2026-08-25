@@ -1,0 +1,7 @@
+{
+  "schemaVersion": 1,
+  "durationSeconds": 40,
+  "streams": [
+    {"name":"reconnect-camera","adapter":"rtsp","endpoint":"rtsp://camera:8554/v2-direct","codec":"h264","usernameEnv":"","passwordEnv":""}
+  ]
+}

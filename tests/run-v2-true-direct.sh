@@ -19,7 +19,30 @@ fallback_id="$(docker compose -f "$compose_file" ps --all --quiet webobs-fallbac
 [[ -n "$webobs_id" ]]
 [[ -n "$fallback_id" ]]
 
-probe_services=(v2-probe v2-fallback-probe v2-nvr-coexist-probe native-rtsp-h264 native-rtsp-h265 native-mjpeg native-hls native-batch)
+reconnect_id="$(docker compose -f "$compose_file" ps --all --quiet native-reconnect)"
+[[ -n "$reconnect_id" ]]
+for _ in $(seq 1 45); do
+  docker compose -f "$compose_file" logs --no-color native-reconnect | \
+    grep -F '"result":"ready"' >/dev/null && break
+  [[ "$(docker inspect --format '{{.State.Status}}' "$reconnect_id")" == running ]]
+  sleep 1
+done
+docker compose -f "$compose_file" logs --no-color native-reconnect | \
+  grep -F '"result":"ready"' >/dev/null
+docker network disconnect --force "${project}_camera-media" "$reconnect_id"
+sleep 5
+reconnect_started="$(date +%s)"
+docker network connect "${project}_camera-media" "$reconnect_id"
+for _ in $(seq 1 10); do
+  docker compose -f "$compose_file" logs --no-color native-reconnect | \
+    grep -F '"result":"reconnected"' >/dev/null && break
+  sleep 1
+done
+docker compose -f "$compose_file" logs --no-color native-reconnect | \
+  grep -F '"result":"reconnected"' >/dev/null
+(( $(date +%s) - reconnect_started <= 10 ))
+
+probe_services=(v2-probe v2-fallback-probe v2-nvr-coexist-probe native-rtsp-h264 native-rtsp-h265 native-mjpeg native-hls native-batch native-reconnect)
 for service in "${probe_services[@]}"; do
   probe_id="$(docker compose -f "$compose_file" ps --all --quiet "$service")"
   [[ -n "$probe_id" ]]
@@ -62,4 +85,4 @@ if docker compose -f "$compose_file" logs --no-color webobs-fallback | \
   exit 1
 fi
 
-echo "v2 deterministic gate passed: production client RTSP/MJPEG/HLS stayed off-server, 16 concurrent viewers did not add NVR upstream sessions, and authenticated Gateway fallback cleaned up without residue. Exact-runtime WHEP is verified by the locked desktop gate."
+echo "v2 deterministic gate passed: production client RTSP/MJPEG/HLS stayed off-server, a forced network outage recovered within ten seconds, 16 concurrent viewers did not add NVR upstream sessions, and authenticated Gateway fallback cleaned up without residue. Exact-runtime WHEP is verified by the locked desktop gate."

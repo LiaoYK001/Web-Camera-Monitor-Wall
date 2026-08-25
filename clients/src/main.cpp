@@ -29,10 +29,13 @@ int main(int argc, char *argv[])
             QByteArrayView(argv[index]) == QByteArrayView("--probe-endpoint-env") ||
             QByteArrayView(argv[index]) == QByteArrayView("--probe-manifest") ||
             QByteArrayView(argv[index]) == QByteArrayView("--probe-background-release") ||
+            QByteArrayView(argv[index]) == QByteArrayView("--probe-reconnect") ||
             QByteArrayView(argv[index]) == QByteArrayView("--verify-runtime"))
             probe_requested = true;
+#if !defined(Q_OS_ANDROID)
     if (probe_requested && qEnvironmentVariableIsEmpty("QT_QPA_PLATFORM"))
         qputenv("QT_QPA_PLATFORM", "offscreen");
+#endif
     QGuiApplication application(argc, argv);
     application.setApplicationName(QStringLiteral("WebObs Native"));
     application.setOrganizationName(QStringLiteral("WebObs"));
@@ -74,6 +77,8 @@ int main(int argc, char *argv[])
                       QStringLiteral("absolute-json-path")});
     parser.addOption({QStringLiteral("probe-background-release"),
                       QStringLiteral("Stop all probe pipelines when Android enters background")});
+    parser.addOption({QStringLiteral("probe-reconnect"),
+                      QStringLiteral("Retry previously ready batch streams after a bounded outage")});
     parser.addOption({QStringLiteral("probe-adapter"), QStringLiteral("rtsp, mjpeg, hls, or whep"),
                       QStringLiteral("adapter")});
     parser.addOption({QStringLiteral("probe-codec"), QStringLiteral("h264, h265, or mjpeg"),
@@ -223,7 +228,8 @@ int main(int argc, char *argv[])
     if (parser.isSet(QStringLiteral("probe-manifest"))) {
         const int result = webobs::client::run_batch_probe(
             application, parser.value(QStringLiteral("probe-manifest")), error,
-            parser.isSet(QStringLiteral("probe-background-release")));
+            parser.isSet(QStringLiteral("probe-background-release")),
+            parser.isSet(QStringLiteral("probe-reconnect")));
         if (result != 0 && !error.isEmpty())
             qCritical("batch protocol probe failed safely: %s", qPrintable(error.left(128)));
         return result;

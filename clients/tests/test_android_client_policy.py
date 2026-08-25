@@ -15,6 +15,9 @@ KEYSTORE = ANDROID / "src" / "org" / "webobs" / "nativeclient" / "KeyStoreBridge
 QML = ROOT / "clients" / "qml" / "Main.qml"
 MEDIA_PIPELINE = ROOT / "clients" / "src" / "media_pipeline.cpp"
 CLIENT_CONTROLLER = ROOT / "clients" / "src" / "client_controller.cpp"
+MAIN = ROOT / "clients" / "src" / "main.cpp"
+PROBE_ACTIVITY = (ANDROID / "src" / "org" / "webobs" / "nativeclient" /
+                  "WebObsProbeActivity.java")
 ANDROID_BUILD = ROOT / "clients" / "packaging" / "android" / "build.sh"
 QML6_BUILD = ROOT / "clients" / "packaging" / "android" / "build-qml6-plugin.sh"
 PATCH = (ROOT / "clients" / "packaging" / "android" / "patches" /
@@ -31,6 +34,8 @@ class AndroidClientPolicyTests(unittest.TestCase):
         cls.qml = QML.read_text(encoding="utf-8")
         cls.media_pipeline = MEDIA_PIPELINE.read_text(encoding="utf-8")
         cls.client_controller = CLIENT_CONTROLLER.read_text(encoding="utf-8")
+        cls.main = MAIN.read_text(encoding="utf-8")
+        cls.probe_activity = PROBE_ACTIVITY.read_text(encoding="utf-8")
         cls.android_build = ANDROID_BUILD.read_text(encoding="utf-8")
         cls.qml6_build = QML6_BUILD.read_text(encoding="utf-8")
         cls.patch = PATCH.read_text(encoding="utf-8")
@@ -81,6 +86,17 @@ class AndroidClientPolicyTests(unittest.TestCase):
             r"onPause\(\).*?setWakeLock\(false\)", re.DOTALL))
         self.assertIn("wakeLock.isHeld()", self.keystore)
         self.assertIn("wakeLockActive", self.qml)
+        self.assertIn("EXTRA_RECONNECT", self.probe_activity)
+        self.assertIn("EXTRA_MICROPHONE_PERMISSION", self.probe_activity)
+
+    def test_android_keeps_the_qt_platform_and_media_has_a_stall_watchdog(self) -> None:
+        platform_guard = self.main.index("#if !defined(Q_OS_ANDROID)")
+        offscreen = self.main.index('qputenv("QT_QPA_PLATFORM", "offscreen")')
+        platform_end = self.main.index("#endif", offscreen)
+        self.assertLess(platform_guard, offscreen)
+        self.assertLess(offscreen, platform_end)
+        self.assertIn("last_video_frame_monotonic_ms_", self.media_pipeline)
+        self.assertIn("camera_video_stalled_beyond_protocol_budget", self.media_pipeline)
 
     def test_sixteen_view_is_capability_and_thermal_gated(self) -> None:
         self.assertIn("getMaxSupportedInstances()", self.activity)

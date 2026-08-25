@@ -115,6 +115,7 @@ private:
     bool muted_ = true;
     std::atomic<quint64> frames_decoded_{0};
     std::atomic<quint64> frames_dropped_{0};
+    std::atomic<qint64> last_video_frame_monotonic_ms_{0};
     QElapsedTimer statistics_clock_;
     quint64 last_reported_frames_ = 0;
     double current_fps_ = 0;

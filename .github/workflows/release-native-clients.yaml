@@ -363,7 +363,7 @@ jobs:
             "$RUNNER_TEMP/webobs-android"
           clients/packaging/android/build-acceptance-driver.sh \
             "$RUNNER_TEMP/webobs-m3-private-driver.apk"
-      - name: Run 30-minute Android reference and background-release gates
+      - name: Run Android 30-minute, reconnect and lifecycle gates
         shell: bash
         env:
           WEBOBS_ANDROID_DEVICE_SERIAL: ${{ vars.WEBOBS_ANDROID_DEVICE_SERIAL }}

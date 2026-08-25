@@ -17,7 +17,7 @@ try {
 
     $ProbeServices = @('v2-probe', 'v2-fallback-probe', 'v2-nvr-coexist-probe',
         'native-rtsp-h264', 'native-rtsp-h265',
-        'native-mjpeg', 'native-hls', 'native-batch')
+        'native-mjpeg', 'native-hls', 'native-batch', 'native-reconnect')
     $ProbeIds = @{}
     foreach ($Service in $ProbeServices) {
         $ProbeIds[$Service] = (& docker compose -p $Project -f $ComposeFile ps --all --quiet $Service).Trim()
@@ -26,6 +26,32 @@ try {
     $FallbackId = (& docker compose -p $Project -f $ComposeFile ps --all --quiet webobs-fallback).Trim()
     if (-not $WebObsId -or -not $FallbackId -or @($ProbeIds.Values | Where-Object { -not $_ }).Count -gt 0) {
         throw 'Fixture container identities are unavailable.'
+    }
+    $ReconnectId = (& docker compose -p $Project -f $ComposeFile ps --all --quiet native-reconnect).Trim()
+    if (-not $ReconnectId) { throw 'Native reconnect probe identity is unavailable.' }
+    $Ready = $false
+    for ($Attempt = 0; $Attempt -lt 45; $Attempt++) {
+        $ReconnectLogs = (& docker compose -p $Project -f $ComposeFile logs --no-color native-reconnect) -join "`n"
+        if ($ReconnectLogs.Contains('"result":"ready"')) { $Ready = $true; break }
+        if ((& docker inspect --format '{{.State.Status}}' $ReconnectId).Trim() -ne 'running') { break }
+        Start-Sleep -Seconds 1
+    }
+    if (-not $Ready) { throw 'Native reconnect probe did not become ready.' }
+    & docker network disconnect --force "${Project}_camera-media" $ReconnectId
+    if ($LASTEXITCODE -ne 0) { throw 'Could not isolate the native reconnect probe.' }
+    Start-Sleep -Seconds 5
+    $ReconnectStarted = [System.Diagnostics.Stopwatch]::StartNew()
+    & docker network connect "${Project}_camera-media" $ReconnectId
+    if ($LASTEXITCODE -ne 0) { throw 'Could not restore the native reconnect probe network.' }
+    $Reconnected = $false
+    for ($Attempt = 0; $Attempt -lt 10; $Attempt++) {
+        $ReconnectLogs = (& docker compose -p $Project -f $ComposeFile logs --no-color native-reconnect) -join "`n"
+        if ($ReconnectLogs.Contains('"result":"reconnected"')) { $Reconnected = $true; break }
+        Start-Sleep -Seconds 1
+    }
+    $ReconnectStarted.Stop()
+    if (-not $Reconnected -or $ReconnectStarted.Elapsed.TotalSeconds -gt 10) {
+        throw 'Native reconnect exceeded the ten-second recovery budget.'
     }
     foreach ($Service in $ProbeServices) {
         $ProbeId = $ProbeIds[$Service]
@@ -62,7 +88,7 @@ try {
     if ($FallbackLogs -match 'fixture-viewer|fixture-password|rtsp://[^/\s]+:[^@/\s]+@') {
         throw 'Fallback logs exposed camera credentials.'
     }
-    Write-Host 'v2 deterministic gate passed: production client RTSP/MJPEG/HLS stayed off-server, 16 concurrent viewers did not add NVR upstream sessions, and authenticated Gateway fallback cleaned up without residue. Exact-runtime WHEP is verified by the locked desktop gate.'
+    Write-Host 'v2 deterministic gate passed: production client RTSP/MJPEG/HLS stayed off-server, a forced network outage recovered within ten seconds, 16 concurrent viewers did not add NVR upstream sessions, and authenticated Gateway fallback cleaned up without residue. Exact-runtime WHEP is verified by the locked desktop gate.'
 }
 finally {
     & docker compose -p $Project -f $ComposeFile down --volumes --remove-orphans | Out-Null

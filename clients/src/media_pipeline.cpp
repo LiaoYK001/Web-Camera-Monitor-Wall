@@ -15,6 +15,7 @@ GST_PLUGIN_STATIC_DECLARE(qml6);
 #endif
 
 #include <algorithm>
+#include <chrono>
 #include <optional>
 
 namespace webobs::client {
@@ -27,6 +28,12 @@ struct RankHold {
 
 QMutex rank_hold_mutex;
 QHash<QString, RankHold> rank_holds;
+
+qint64 monotonic_milliseconds()
+{
+    return std::chrono::duration_cast<std::chrono::milliseconds>(
+        std::chrono::steady_clock::now().time_since_epoch()).count();
+}
 
 bool hardware_factory(QString name)
 {
@@ -377,6 +384,7 @@ bool MediaPipeline::start(const MediaEndpoint &endpoint, QString &error)
     hardware_decode_ = false;
     frames_decoded_.store(0, std::memory_order_relaxed);
     frames_dropped_.store(0, std::memory_order_relaxed);
+    last_video_frame_monotonic_ms_.store(0, std::memory_order_relaxed);
     visual_samples_.store(0, std::memory_order_relaxed);
     black_samples_.store(0, std::memory_order_relaxed);
     pipeline_restarts_.store(0, std::memory_order_relaxed);
@@ -489,6 +497,8 @@ GstPadProbeReturn MediaPipeline::video_buffer_probe(GstPad *pad, GstPadProbeInfo
         }
     }
     const quint64 previous = self->frames_decoded_.fetch_add(1, std::memory_order_relaxed);
+    self->last_video_frame_monotonic_ms_.store(monotonic_milliseconds(),
+                                                std::memory_order_relaxed);
     // Evidence probes use a fakesink and may map sparse raw frames. Never force a
     // GPU-to-CPU readback on the interactive qml6glsink rendering path.
     if (!self->video_item_ && previous % 30 == 0) {
@@ -571,6 +581,17 @@ void MediaPipeline::poll_bus()
         QTimer::singleShot(0, this, &MediaPipeline::restart_with_software_fallback);
         return;
     }
+    const qint64 last_frame = last_video_frame_monotonic_ms_.load(std::memory_order_relaxed);
+    // HLS can legally wait across segment and playlist refresh boundaries. Keep
+    // its watchdog inside the ten-second recovery budget without applying the
+    // low-latency RTSP/MJPEG/WHEP threshold to segmented playback.
+    const qint64 stale_limit_ms = endpoint_.adapter.compare(
+        QStringLiteral("hls"), Qt::CaseInsensitive) == 0 ? 9000 : 3000;
+    if (state_ == QStringLiteral("playing") && last_frame > 0 &&
+        monotonic_milliseconds() - last_frame > stale_limit_ms) {
+        fail(QStringLiteral("camera_video_stalled_beyond_protocol_budget"));
+        return;
+    }
     if (statistics_clock_.isValid() && statistics_clock_.elapsed() >= 1000) {
         const quint64 current = frames_decoded_.load(std::memory_order_relaxed);
         const qint64 elapsed = statistics_clock_.restart();
@@ -594,6 +615,7 @@ void MediaPipeline::restart_with_software_fallback()
     audio_convert_ = audio_resample_ = audio_volume_ = audio_sink_ = nullptr;
     frames_decoded_.store(0, std::memory_order_relaxed);
     frames_dropped_.store(0, std::memory_order_relaxed);
+    last_video_frame_monotonic_ms_.store(0, std::memory_order_relaxed);
     video_width_.store(0, std::memory_order_relaxed);
     video_height_.store(0, std::memory_order_relaxed);
     decoder_ = QStringLiteral("software-fallback-discovering");
