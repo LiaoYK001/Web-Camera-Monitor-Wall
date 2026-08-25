@@ -1,0 +1,541 @@
+name: Release native clients
+
+on:
+  push:
+    tags:
+      - "v2.*"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-image-global
+  cancel-in-progress: false
+
+jobs:
+  audit:
+    runs-on: ubuntu-24.04
+    outputs:
+      package_version: ${{ steps.identity.outputs.package_version }}
+      release_tag: ${{ steps.identity.outputs.release_tag }}
+      publish_allowed: ${{ steps.identity.outputs.publish_allowed }}
+      promote_latest: ${{ steps.identity.outputs.promote_latest }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          submodules: recursive
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Audit source and derive immutable package version
+        id: identity
+        shell: bash
+        env:
+          REF_TYPE: ${{ github.ref_type }}
+          REF_NAME: ${{ github.ref_name }}
+          EVENT_NAME: ${{ github.event_name }}
+          COMMIT_SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          ./tests/run-public-audit.sh
+          ./scripts/check-executable-bits.sh
+          python3 clients/scripts/verify_dependency_lock.py
+          python3 clients/tests/test_dependency_lock.py
+          python3 clients/tests/test_exact_protocol_gate.py
+          python3 clients/tests/test_desktop_reference_gate.py
+          python3 clients/tests/test_desktop_lifecycle_gate.py
+          python3 clients/tests/test_android_client_policy.py
+          python3 clients/tests/test_android_reference_gate.py
+          python3 clients/tests/test_release_workflow_policy.py
+          ./clients/tests/test-portable-checksums.sh
+          ./tests/test-immutable-release-assets.sh
+          package_version=
+          release_tag=
+          publish_allowed=false
+          promote_latest=false
+          case "$EVENT_NAME" in
+            push)
+              [[ "$REF_TYPE" == tag ]]
+              [[ "$REF_NAME" =~ ^v2\.[0-9]+(\.[0-9]+)?$ ]]
+              git fetch --no-tags origin main
+              git merge-base --is-ancestor "$COMMIT_SHA" origin/main
+              package_version="${REF_NAME#v}"
+              if [[ "$package_version" =~ ^[0-9]+\.[0-9]+$ ]]; then
+                package_version="$package_version.0"
+              fi
+              release_tag="$REF_NAME"
+              publish_allowed=true
+              newest="$(git tag --merged origin/main --sort=version:refname | \
+                grep -E '^v2\.[0-9]+(\.[0-9]+)?$' | tail -n 1)"
+              [[ -n "$newest" ]]
+              if [[ "$REF_NAME" == "$newest" ]]; then promote_latest=true; fi
+              ;;
+            workflow_dispatch)
+              # Qualification builds may run only from the exact protected dev
+              # tip. They produce signed candidate artifacts but never a Release.
+              [[ "$REF_TYPE" == branch && "$REF_NAME" == dev ]]
+              git fetch --no-tags origin dev
+              [[ "$(git rev-parse origin/dev)" == "$COMMIT_SHA" ]]
+              package_version="2.0.0-dev.sha.${COMMIT_SHA:0:12}"
+              ;;
+            *)
+              exit 1
+              ;;
+          esac
+          echo "package_version=$package_version" >> "$GITHUB_OUTPUT"
+          echo "release_tag=$release_tag" >> "$GITHUB_OUTPUT"
+          echo "publish_allowed=$publish_allowed" >> "$GITHUB_OUTPUT"
+          echo "promote_latest=$promote_latest" >> "$GITHUB_OUTPUT"
+
+  windows:
+    needs: audit
+    runs-on: [self-hosted, windows, x64, windows-11, webobs-desktop-builder]
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          submodules: recursive
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Re-audit trusted Windows checkout
+        shell: pwsh
+        env:
+          QT_SOURCE_ARCHIVE: ${{ vars.WEBOBS_WINDOWS_QT_SOURCE_ARCHIVE }}
+          GST_SOURCE_ARCHIVE: ${{ vars.WEBOBS_WINDOWS_GSTREAMER_SOURCE_ARCHIVE }}
+          GST_BASE_SOURCE_ARCHIVE: ${{ vars.WEBOBS_WINDOWS_GSTREAMER_PLUGINS_BASE_SOURCE_ARCHIVE }}
+          GST_GOOD_SOURCE_ARCHIVE: ${{ vars.WEBOBS_WINDOWS_GSTREAMER_PLUGINS_GOOD_SOURCE_ARCHIVE }}
+          GST_BAD_SOURCE_ARCHIVE: ${{ vars.WEBOBS_WINDOWS_GSTREAMER_PLUGINS_BAD_SOURCE_ARCHIVE }}
+          GST_UGLY_SOURCE_ARCHIVE: ${{ vars.WEBOBS_WINDOWS_GSTREAMER_PLUGINS_UGLY_SOURCE_ARCHIVE }}
+          GST_LIBAV_SOURCE_ARCHIVE: ${{ vars.WEBOBS_WINDOWS_GSTREAMER_LIBAV_SOURCE_ARCHIVE }}
+          GST_RS_SOURCE_ARCHIVE: ${{ vars.WEBOBS_WINDOWS_GSTREAMER_PLUGINS_RS_SOURCE_ARCHIVE }}
+          GST_INSTALLER: ${{ vars.WEBOBS_WINDOWS_GSTREAMER_INSTALLER }}
+          SODIUM_SOURCE_ARCHIVE: ${{ vars.WEBOBS_WINDOWS_SODIUM_SOURCE_ARCHIVE }}
+        run: |
+          python clients/scripts/verify_dependency_lock.py `
+            --require-platform windows-x86_64 `
+            --artifact "qt-source=$env:QT_SOURCE_ARCHIVE" `
+            --artifact "gstreamer-source=$env:GST_SOURCE_ARCHIVE" `
+            --artifact "gstreamer-plugins-base-source=$env:GST_BASE_SOURCE_ARCHIVE" `
+            --artifact "gstreamer-plugins-good-source=$env:GST_GOOD_SOURCE_ARCHIVE" `
+            --artifact "gstreamer-plugins-bad-source=$env:GST_BAD_SOURCE_ARCHIVE" `
+            --artifact "gstreamer-plugins-ugly-source=$env:GST_UGLY_SOURCE_ARCHIVE" `
+            --artifact "gstreamer-libav-source=$env:GST_LIBAV_SOURCE_ARCHIVE" `
+            --artifact "gstreamer-plugins-rs-source=$env:GST_RS_SOURCE_ARCHIVE" `
+            --artifact "gstreamer-windows-x86_64=$env:GST_INSTALLER" `
+            --artifact "libsodium-source=$env:SODIUM_SOURCE_ARCHIVE"
+          python clients/tests/test_desktop_reference_gate.py
+          ./clients/tests/test-windows-update-rollback.ps1
+          if (git status --porcelain) { throw 'Release checkout is dirty' }
+      - name: Build signed installer and portable package
+        shell: pwsh
+        env:
+          QT_ROOT: ${{ vars.WEBOBS_WINDOWS_QT_ROOT }}
+          GSTREAMER_ROOT: ${{ vars.WEBOBS_WINDOWS_GSTREAMER_ROOT }}
+          SODIUM_ROOT: ${{ vars.WEBOBS_WINDOWS_SODIUM_ROOT }}
+          CERTIFICATE_SHA1: ${{ secrets.WEBOBS_WINDOWS_CERTIFICATE_SHA1 }}
+        run: |
+          if ($env:CERTIFICATE_SHA1 -notmatch '^[0-9A-Fa-f]{40}$') {
+            throw 'Native qualification and stable release packages require a reviewed Authenticode certificate selector'
+          }
+          ./clients/packaging/windows/build.ps1 `
+            -Version '${{ needs.audit.outputs.package_version }}' `
+            -QtRoot $env:QT_ROOT -GStreamerRoot $env:GSTREAMER_ROOT `
+            -SodiumRoot $env:SODIUM_ROOT -OutputDirectory "$env:RUNNER_TEMP\webobs-native" `
+            -SigningCertificateSha1 $env:CERTIFICATE_SHA1
+      - name: Run exact protocols and 30-minute Windows reference gate
+        shell: pwsh
+        env:
+          WEBOBS_PRIVATE_RTSP_H264: ${{ secrets.WEBOBS_PRIVATE_RTSP_H264 }}
+          WEBOBS_PRIVATE_RTSP_H265: ${{ secrets.WEBOBS_PRIVATE_RTSP_H265 }}
+          WEBOBS_PRIVATE_MJPEG: ${{ secrets.WEBOBS_PRIVATE_MJPEG }}
+          WEBOBS_PRIVATE_HLS: ${{ secrets.WEBOBS_PRIVATE_HLS }}
+          WEBOBS_PRIVATE_WHEP: ${{ secrets.WEBOBS_PRIVATE_WHEP }}
+          WEBOBS_REFERENCE_CONTROL_URL: ${{ vars.WEBOBS_REFERENCE_CONTROL_URL }}
+          WEBOBS_REFERENCE_CONTROL_USERNAME: ${{ secrets.WEBOBS_REFERENCE_CONTROL_USERNAME }}
+          WEBOBS_REFERENCE_CONTROL_PASSWORD: ${{ secrets.WEBOBS_REFERENCE_CONTROL_PASSWORD }}
+          WEBOBS_PRIVATE_CAMERA_USER: ${{ secrets.WEBOBS_PRIVATE_CAMERA_USER }}
+          WEBOBS_PRIVATE_CAMERA_PASSWORD: ${{ secrets.WEBOBS_PRIVATE_CAMERA_PASSWORD }}
+          WEBOBS_DESKTOP_NETWORK_DISCONNECT_HELPER: ${{ vars.WEBOBS_WINDOWS_NETWORK_DISCONNECT_HELPER }}
+          WEBOBS_DESKTOP_NETWORK_CONNECT_HELPER: ${{ vars.WEBOBS_WINDOWS_NETWORK_CONNECT_HELPER }}
+          WEBOBS_DESKTOP_SUSPEND_HELPER: ${{ vars.WEBOBS_WINDOWS_SUSPEND_HELPER }}
+          WEBOBS_DESKTOP_GRANT_CAMERA_ID: ${{ vars.WEBOBS_DESKTOP_GRANT_CAMERA_ID }}
+          WEBOBS_DESKTOP_GRANT_PROFILE_ID: ${{ vars.WEBOBS_DESKTOP_GRANT_PROFILE_ID }}
+          REFERENCE_MANIFEST: ${{ vars.WEBOBS_WINDOWS_REFERENCE_MANIFEST }}
+        run: |
+          $client = 'clients\build-windows\stage\bin\webobs-native.exe'
+          python clients/tests/run-exact-protocol-gate.py $client
+          python clients/tests/run-desktop-reference-gate.py `
+            --client $client --manifest $env:REFERENCE_MANIFEST `
+            --evidence "$env:RUNNER_TEMP\webobs-m2-windows-private-evidence.json"
+          python clients/tests/run-desktop-lifecycle-gate.py `
+            --client $client --manifest $env:REFERENCE_MANIFEST `
+            --network-disconnect-helper $env:WEBOBS_DESKTOP_NETWORK_DISCONNECT_HELPER `
+            --network-connect-helper $env:WEBOBS_DESKTOP_NETWORK_CONNECT_HELPER `
+            --suspend-helper $env:WEBOBS_DESKTOP_SUSPEND_HELPER `
+            --evidence "$env:RUNNER_TEMP\webobs-m2-windows-lifecycle-private-evidence.json"
+      - name: Generate SPDX SBOM and Sigstore bundles
+        shell: pwsh
+        env:
+          SYFT: ${{ vars.WEBOBS_WINDOWS_SYFT }}
+          SYFT_SHA256: ${{ vars.WEBOBS_WINDOWS_SYFT_SHA256 }}
+          COSIGN: ${{ vars.WEBOBS_WINDOWS_COSIGN }}
+          COSIGN_SHA256: ${{ vars.WEBOBS_WINDOWS_COSIGN_SHA256 }}
+        run: |
+          if ((Get-FileHash -Algorithm SHA256 -LiteralPath $env:SYFT).Hash.ToLowerInvariant() -ne $env:SYFT_SHA256) { throw 'syft hash mismatch' }
+          if ((Get-FileHash -Algorithm SHA256 -LiteralPath $env:COSIGN).Hash.ToLowerInvariant() -ne $env:COSIGN_SHA256) { throw 'cosign hash mismatch' }
+          Get-ChildItem "$env:RUNNER_TEMP\webobs-native" -File | Where-Object { $_.Extension -in @('.zip', '.exe') } | ForEach-Object {
+            & $env:SYFT $_.FullName -o "spdx-json=$($_.FullName).spdx.json"
+            if ($LASTEXITCODE -ne 0) { throw 'SBOM generation failed' }
+            & $env:COSIGN sign-blob --yes --bundle "$($_.FullName).sigstore.json" $_.FullName
+            if ($LASTEXITCODE -ne 0) { throw 'Sigstore signing failed' }
+          }
+      - name: Qualify signed portable install and rollback
+        shell: pwsh
+        env:
+          COSIGN: ${{ vars.WEBOBS_WINDOWS_COSIGN }}
+          COSIGN_SHA256: ${{ vars.WEBOBS_WINDOWS_COSIGN_SHA256 }}
+        run: |
+          $portable = Get-ChildItem "$env:RUNNER_TEMP\webobs-native" -Filter '*-portable.zip' -File
+          if ($portable.Count -ne 1) { throw 'Expected exactly one portable package' }
+          $sha256 = (Get-Content -Raw -LiteralPath "$($portable.FullName).sha256").Split(' ')[0]
+          $destination = "$env:RUNNER_TEMP\webobs-update-qualification"
+          try {
+            New-Item -ItemType Directory -Path $destination | Out-Null
+            Set-Content -LiteralPath "$destination\previous-build.txt" -Value 'rollback-evidence' -NoNewline
+            ./clients/packaging/windows/Install-SignedPortableUpdate.ps1 `
+              -Artifact $portable.FullName -Sha256 $sha256 `
+              -SigstoreBundle "$($portable.FullName).sigstore.json" `
+              -InstallDirectory $destination -Cosign $env:COSIGN `
+              -CosignSha256 $env:COSIGN_SHA256 `
+              -IdentityRegexp '^https://github.com/LiaoYK001/Web-Camera-Monitor-Wall/.github/workflows/release-native-clients.yaml@refs/(tags/v2\..+|heads/dev)$'
+            ./clients/packaging/windows/Restore-PortableRollback.ps1 -InstallDirectory $destination
+            if ((Get-Content -Raw -LiteralPath "$destination\previous-build.txt") -ne 'rollback-evidence') {
+              throw 'Signed portable rollback did not restore the previous installation'
+            }
+          }
+          finally {
+            Remove-Item -LiteralPath $destination, "$destination.previous" -Recurse -Force -ErrorAction SilentlyContinue
+          }
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: native-windows-${{ needs.audit.outputs.package_version }}
+          path: ${{ runner.temp }}/webobs-native/*
+          if-no-files-found: error
+
+  linux:
+    needs: audit
+    runs-on: [self-hosted, linux, x64, webobs-desktop-builder]
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          submodules: recursive
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Re-audit trusted Fedora checkout
+        shell: bash
+        env:
+          QT_SOURCE_ARCHIVE: ${{ vars.WEBOBS_LINUX_QT_SOURCE_ARCHIVE }}
+          GST_SOURCE_ARCHIVE: ${{ vars.WEBOBS_LINUX_GSTREAMER_SOURCE_ARCHIVE }}
+          GST_BASE_SOURCE_ARCHIVE: ${{ vars.WEBOBS_LINUX_GSTREAMER_PLUGINS_BASE_SOURCE_ARCHIVE }}
+          GST_GOOD_SOURCE_ARCHIVE: ${{ vars.WEBOBS_LINUX_GSTREAMER_PLUGINS_GOOD_SOURCE_ARCHIVE }}
+          GST_BAD_SOURCE_ARCHIVE: ${{ vars.WEBOBS_LINUX_GSTREAMER_PLUGINS_BAD_SOURCE_ARCHIVE }}
+          GST_UGLY_SOURCE_ARCHIVE: ${{ vars.WEBOBS_LINUX_GSTREAMER_PLUGINS_UGLY_SOURCE_ARCHIVE }}
+          GST_LIBAV_SOURCE_ARCHIVE: ${{ vars.WEBOBS_LINUX_GSTREAMER_LIBAV_SOURCE_ARCHIVE }}
+          GST_RS_SOURCE_ARCHIVE: ${{ vars.WEBOBS_LINUX_GSTREAMER_PLUGINS_RS_SOURCE_ARCHIVE }}
+          SODIUM_SOURCE_ARCHIVE: ${{ vars.WEBOBS_LINUX_SODIUM_SOURCE_ARCHIVE }}
+        run: |
+          set -euo pipefail
+          ./tests/run-public-audit.sh
+          ./clients/tests/test-linux-update-rollback.sh
+          ./clients/tests/test-portable-checksums.sh
+          python3 clients/scripts/verify_dependency_lock.py \
+            --require-platform linux-x86_64 \
+            --artifact "qt-source=$QT_SOURCE_ARCHIVE" \
+            --artifact "gstreamer-source=$GST_SOURCE_ARCHIVE" \
+            --artifact "gstreamer-plugins-base-source=$GST_BASE_SOURCE_ARCHIVE" \
+            --artifact "gstreamer-plugins-good-source=$GST_GOOD_SOURCE_ARCHIVE" \
+            --artifact "gstreamer-plugins-bad-source=$GST_BAD_SOURCE_ARCHIVE" \
+            --artifact "gstreamer-plugins-ugly-source=$GST_UGLY_SOURCE_ARCHIVE" \
+            --artifact "gstreamer-libav-source=$GST_LIBAV_SOURCE_ARCHIVE" \
+            --artifact "gstreamer-plugins-rs-source=$GST_RS_SOURCE_ARCHIVE" \
+            --artifact "libsodium-source=$SODIUM_SOURCE_ARCHIVE"
+          test -z "$(git status --porcelain)"
+      - name: Build AppImage and Flatpak
+        shell: bash
+        env:
+          WEBOBS_LINUXDEPLOY: ${{ vars.WEBOBS_LINUX_LINUXDEPLOY }}
+          WEBOBS_LINUXDEPLOY_SHA256: ${{ vars.WEBOBS_LINUX_LINUXDEPLOY_SHA256 }}
+          WEBOBS_LINUXDEPLOY_QT_PLUGIN: ${{ vars.WEBOBS_LINUX_LINUXDEPLOY_QT_PLUGIN }}
+          WEBOBS_LINUXDEPLOY_QT_PLUGIN_SHA256: ${{ vars.WEBOBS_LINUX_LINUXDEPLOY_QT_PLUGIN_SHA256 }}
+        run: |
+          set -euo pipefail
+          output="$RUNNER_TEMP/webobs-native"
+          mkdir -p "$output"
+          clients/packaging/linux/build-appimage.sh '${{ needs.audit.outputs.package_version }}' "$output"
+          clients/packaging/linux/build-flatpak.sh '${{ needs.audit.outputs.package_version }}' \
+            "$output/webobs-native-${{ needs.audit.outputs.package_version }}-linux-x86_64.AppImage" "$output"
+      - name: Generate SPDX SBOM and Sigstore bundles
+        shell: bash
+        env:
+          WEBOBS_SYFT: ${{ vars.WEBOBS_LINUX_SYFT }}
+          WEBOBS_SYFT_SHA256: ${{ vars.WEBOBS_LINUX_SYFT_SHA256 }}
+          WEBOBS_COSIGN: ${{ vars.WEBOBS_LINUX_COSIGN }}
+          WEBOBS_COSIGN_SHA256: ${{ vars.WEBOBS_LINUX_COSIGN_SHA256 }}
+        run: clients/packaging/finalize-artifacts.sh "$RUNNER_TEMP/webobs-native"
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: native-linux-${{ needs.audit.outputs.package_version }}
+          path: ${{ runner.temp }}/webobs-native/*
+          if-no-files-found: error
+
+  linux-acceptance:
+    needs: [audit, linux]
+    strategy:
+      fail-fast: false
+      matrix:
+        fedora: [fedora-current, fedora-previous]
+    runs-on:
+      - self-hosted
+      - linux
+      - x64
+      - webobs-desktop-builder
+      - ${{ matrix.fedora }}
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@70fc10c6e5e1ce46ad2ea6f2b72d43f7d47b13c3 # v8.0.0
+        with:
+          name: native-linux-${{ needs.audit.outputs.package_version }}
+          path: native-artifacts
+      - name: Run exact protocols and 30-minute Fedora reference gate
+        shell: bash
+        env:
+          WEBOBS_PRIVATE_RTSP_H264: ${{ secrets.WEBOBS_PRIVATE_RTSP_H264 }}
+          WEBOBS_PRIVATE_RTSP_H265: ${{ secrets.WEBOBS_PRIVATE_RTSP_H265 }}
+          WEBOBS_PRIVATE_MJPEG: ${{ secrets.WEBOBS_PRIVATE_MJPEG }}
+          WEBOBS_PRIVATE_HLS: ${{ secrets.WEBOBS_PRIVATE_HLS }}
+          WEBOBS_PRIVATE_WHEP: ${{ secrets.WEBOBS_PRIVATE_WHEP }}
+          WEBOBS_REFERENCE_CONTROL_URL: ${{ vars.WEBOBS_REFERENCE_CONTROL_URL }}
+          WEBOBS_REFERENCE_CONTROL_USERNAME: ${{ secrets.WEBOBS_REFERENCE_CONTROL_USERNAME }}
+          WEBOBS_REFERENCE_CONTROL_PASSWORD: ${{ secrets.WEBOBS_REFERENCE_CONTROL_PASSWORD }}
+          WEBOBS_PRIVATE_CAMERA_USER: ${{ secrets.WEBOBS_PRIVATE_CAMERA_USER }}
+          WEBOBS_PRIVATE_CAMERA_PASSWORD: ${{ secrets.WEBOBS_PRIVATE_CAMERA_PASSWORD }}
+          WEBOBS_DESKTOP_NETWORK_DISCONNECT_HELPER: ${{ vars.WEBOBS_LINUX_NETWORK_DISCONNECT_HELPER }}
+          WEBOBS_DESKTOP_NETWORK_CONNECT_HELPER: ${{ vars.WEBOBS_LINUX_NETWORK_CONNECT_HELPER }}
+          WEBOBS_DESKTOP_SUSPEND_HELPER: ${{ vars.WEBOBS_LINUX_SUSPEND_HELPER }}
+          WEBOBS_DESKTOP_GRANT_CAMERA_ID: ${{ vars.WEBOBS_DESKTOP_GRANT_CAMERA_ID }}
+          WEBOBS_DESKTOP_GRANT_PROFILE_ID: ${{ vars.WEBOBS_DESKTOP_GRANT_PROFILE_ID }}
+          WEBOBS_COSIGN: ${{ vars.WEBOBS_LINUX_COSIGN }}
+          WEBOBS_COSIGN_SHA256: ${{ vars.WEBOBS_LINUX_COSIGN_SHA256 }}
+          WEBOBS_REFERENCE_MANIFEST: ${{ vars.WEBOBS_LINUX_REFERENCE_MANIFEST }}
+        run: |
+          set -euo pipefail
+          client="native-artifacts/webobs-native-${{ needs.audit.outputs.package_version }}-linux-x86_64.AppImage"
+          (cd native-artifacts && sha256sum --check \
+            "webobs-native-${{ needs.audit.outputs.package_version }}-linux-x86_64.AppImage.sha256")
+          chmod 0755 "$client"
+          python3 clients/tests/run-exact-protocol-gate.py "$client"
+          python3 clients/tests/run-desktop-reference-gate.py \
+            --client "$client" --manifest "$WEBOBS_REFERENCE_MANIFEST" \
+            --evidence "$RUNNER_TEMP/webobs-m2-${{ matrix.fedora }}-private-evidence.json"
+          python3 clients/tests/run-desktop-lifecycle-gate.py \
+            --client "$client" --manifest "$WEBOBS_REFERENCE_MANIFEST" \
+            --network-disconnect-helper "$WEBOBS_DESKTOP_NETWORK_DISCONNECT_HELPER" \
+            --network-connect-helper "$WEBOBS_DESKTOP_NETWORK_CONNECT_HELPER" \
+            --suspend-helper "$WEBOBS_DESKTOP_SUSPEND_HELPER" \
+            --evidence "$RUNNER_TEMP/webobs-m2-${{ matrix.fedora }}-lifecycle-private-evidence.json"
+          destination="$RUNNER_TEMP/webobs-update-qualification.AppImage"
+          previous="$RUNNER_TEMP/previous-build.AppImage"
+          printf '#!/bin/sh\n# rollback-evidence\nexit 0\n' > "$destination"
+          chmod 0755 "$destination"
+          cp "$destination" "$previous"
+          sha256="$(cut -d' ' -f1 "$client.sha256")"
+          WEBOBS_RELEASE_IDENTITY_REGEXP='^https://github.com/LiaoYK001/Web-Camera-Monitor-Wall/.github/workflows/release-native-clients.yaml@refs/(tags/v2\..+|heads/dev)$' \
+            clients/packaging/linux/install-signed-appimage.sh "$client" "$sha256" \
+              "$client.sigstore.json" "$destination"
+          clients/packaging/linux/rollback-appimage.sh "$destination"
+          cmp --silent "$destination" "$previous"
+          rm -f -- "$destination" "$destination.previous" "$previous"
+
+  android:
+    needs: audit
+    runs-on: [self-hosted, linux, x64, android, arm64-v8a-device, webobs-client-builder]
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          submodules: recursive
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Re-audit trusted Android checkout and pinned inputs
+        shell: bash
+        env:
+          QT_SOURCE_ARCHIVE: ${{ vars.WEBOBS_ANDROID_QT_SOURCE_ARCHIVE }}
+          GST_SOURCE_ARCHIVE: ${{ vars.WEBOBS_ANDROID_GSTREAMER_SOURCE_ARCHIVE }}
+          GST_BASE_SOURCE_ARCHIVE: ${{ vars.WEBOBS_ANDROID_GSTREAMER_PLUGINS_BASE_SOURCE_ARCHIVE }}
+          GST_GOOD_SOURCE_ARCHIVE: ${{ vars.WEBOBS_ANDROID_GSTREAMER_PLUGINS_GOOD_SOURCE_ARCHIVE }}
+          GST_BAD_SOURCE_ARCHIVE: ${{ vars.WEBOBS_ANDROID_GSTREAMER_PLUGINS_BAD_SOURCE_ARCHIVE }}
+          GST_UGLY_SOURCE_ARCHIVE: ${{ vars.WEBOBS_ANDROID_GSTREAMER_PLUGINS_UGLY_SOURCE_ARCHIVE }}
+          GST_LIBAV_SOURCE_ARCHIVE: ${{ vars.WEBOBS_ANDROID_GSTREAMER_LIBAV_SOURCE_ARCHIVE }}
+          GST_RS_SOURCE_ARCHIVE: ${{ vars.WEBOBS_ANDROID_GSTREAMER_PLUGINS_RS_SOURCE_ARCHIVE }}
+          GST_ANDROID_BUNDLE: ${{ vars.WEBOBS_ANDROID_GSTREAMER_BUNDLE }}
+          SODIUM_SOURCE_ARCHIVE: ${{ vars.WEBOBS_ANDROID_SODIUM_SOURCE_ARCHIVE }}
+        run: |
+          set -euo pipefail
+          ./tests/run-public-audit.sh
+          python3 clients/tests/test_android_client_policy.py
+          python3 clients/tests/test_android_reference_gate.py
+          python3 clients/scripts/verify_dependency_lock.py --require-platform android \
+            --artifact "qt-source=$QT_SOURCE_ARCHIVE" \
+            --artifact "gstreamer-source=$GST_SOURCE_ARCHIVE" \
+            --artifact "gstreamer-plugins-base-source=$GST_BASE_SOURCE_ARCHIVE" \
+            --artifact "gstreamer-plugins-good-source=$GST_GOOD_SOURCE_ARCHIVE" \
+            --artifact "gstreamer-plugins-bad-source=$GST_BAD_SOURCE_ARCHIVE" \
+            --artifact "gstreamer-plugins-ugly-source=$GST_UGLY_SOURCE_ARCHIVE" \
+            --artifact "gstreamer-libav-source=$GST_LIBAV_SOURCE_ARCHIVE" \
+            --artifact "gstreamer-plugins-rs-source=$GST_RS_SOURCE_ARCHIVE" \
+            --artifact "gstreamer-android-universal=$GST_ANDROID_BUNDLE" \
+            --artifact "libsodium-source=$SODIUM_SOURCE_ARCHIVE"
+          test -z "$(git status --porcelain)"
+      - name: Build audited qml6 EGL plug-in and signed arm64 APK
+        shell: bash
+        env:
+          QT_ANDROID_ROOT: ${{ vars.WEBOBS_ANDROID_QT_ROOT }}
+          ANDROID_SDK_ROOT: ${{ vars.WEBOBS_ANDROID_SDK_ROOT }}
+          ANDROID_NDK_ROOT: ${{ vars.WEBOBS_ANDROID_NDK_ROOT }}
+          GSTREAMER_ROOT_ANDROID: ${{ vars.WEBOBS_ANDROID_GSTREAMER_ROOT }}
+          SODIUM_ANDROID_ROOT: ${{ vars.WEBOBS_ANDROID_SODIUM_ROOT }}
+          QT_SOURCE_ARCHIVE: ${{ vars.WEBOBS_ANDROID_QT_SOURCE_ARCHIVE }}
+          GST_SOURCE_ARCHIVE: ${{ vars.WEBOBS_ANDROID_GSTREAMER_SOURCE_ARCHIVE }}
+          GST_BASE_SOURCE_ARCHIVE: ${{ vars.WEBOBS_ANDROID_GSTREAMER_PLUGINS_BASE_SOURCE_ARCHIVE }}
+          GST_GOOD_SOURCE_ARCHIVE: ${{ vars.WEBOBS_ANDROID_GSTREAMER_PLUGINS_GOOD_SOURCE_ARCHIVE }}
+          GST_BAD_SOURCE_ARCHIVE: ${{ vars.WEBOBS_ANDROID_GSTREAMER_PLUGINS_BAD_SOURCE_ARCHIVE }}
+          GST_UGLY_SOURCE_ARCHIVE: ${{ vars.WEBOBS_ANDROID_GSTREAMER_PLUGINS_UGLY_SOURCE_ARCHIVE }}
+          GST_LIBAV_SOURCE_ARCHIVE: ${{ vars.WEBOBS_ANDROID_GSTREAMER_LIBAV_SOURCE_ARCHIVE }}
+          GST_RS_SOURCE_ARCHIVE: ${{ vars.WEBOBS_ANDROID_GSTREAMER_PLUGINS_RS_SOURCE_ARCHIVE }}
+          GST_ANDROID_BUNDLE: ${{ vars.WEBOBS_ANDROID_GSTREAMER_BUNDLE }}
+          SODIUM_SOURCE_ARCHIVE: ${{ vars.WEBOBS_ANDROID_SODIUM_SOURCE_ARCHIVE }}
+          WEBOBS_ANDROID_KEYSTORE: ${{ vars.WEBOBS_ANDROID_KEYSTORE }}
+          WEBOBS_ANDROID_KEY_ALIAS: ${{ secrets.WEBOBS_ANDROID_KEY_ALIAS }}
+          QT_ANDROID_KEYSTORE_STORE_PASS: ${{ secrets.WEBOBS_ANDROID_KEYSTORE_PASSWORD }}
+          QT_ANDROID_KEYSTORE_KEY_PASS: ${{ secrets.WEBOBS_ANDROID_KEY_PASSWORD }}
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/webobs-android" "$RUNNER_TEMP/webobs-qml6"
+          clients/packaging/android/build-qml6-plugin.sh \
+            "$GST_GOOD_SOURCE_ARCHIVE" "$QT_ANDROID_ROOT" "$RUNNER_TEMP/webobs-qml6"
+          export WEBOBS_ANDROID_QML6_PLUGIN="$RUNNER_TEMP/webobs-qml6/libgstqml6.a"
+          clients/packaging/android/build.sh '${{ needs.audit.outputs.package_version }}' \
+            "$RUNNER_TEMP/webobs-android"
+          clients/packaging/android/build-acceptance-driver.sh \
+            "$RUNNER_TEMP/webobs-m3-private-driver.apk"
+      - name: Run Android 30-minute, reconnect and lifecycle gates
+        shell: bash
+        env:
+          WEBOBS_ANDROID_DEVICE_SERIAL: ${{ vars.WEBOBS_ANDROID_DEVICE_SERIAL }}
+          WEBOBS_ANDROID_REFERENCE_MANIFEST: ${{ vars.WEBOBS_ANDROID_REFERENCE_MANIFEST }}
+          WEBOBS_ANDROID_VPN_CONNECT_HELPER: ${{ vars.WEBOBS_ANDROID_VPN_CONNECT_HELPER }}
+          WEBOBS_ANDROID_VPN_DISCONNECT_HELPER: ${{ vars.WEBOBS_ANDROID_VPN_DISCONNECT_HELPER }}
+          WEBOBS_REFERENCE_CONTROL_URL: ${{ vars.WEBOBS_REFERENCE_CONTROL_URL }}
+          WEBOBS_ANDROID_EXPIRY_CONTROL_URL: ${{ vars.WEBOBS_ANDROID_EXPIRY_CONTROL_URL }}
+          WEBOBS_ANDROID_GRANT_CAMERA_ID: ${{ vars.WEBOBS_ANDROID_GRANT_CAMERA_ID }}
+          WEBOBS_ANDROID_GRANT_PROFILE_ID: ${{ vars.WEBOBS_ANDROID_GRANT_PROFILE_ID }}
+          WEBOBS_REFERENCE_CONTROL_USERNAME: ${{ secrets.WEBOBS_REFERENCE_CONTROL_USERNAME }}
+          WEBOBS_REFERENCE_CONTROL_PASSWORD: ${{ secrets.WEBOBS_REFERENCE_CONTROL_PASSWORD }}
+          ANDROID_SDK_ROOT: ${{ vars.WEBOBS_ANDROID_SDK_ROOT }}
+        run: |
+          set -euo pipefail
+          python3 clients/tests/run-android-reference-gate.py \
+            --apk "$RUNNER_TEMP/webobs-android/webobs-native-${{ needs.audit.outputs.package_version }}-android-arm64-v8a.apk" \
+            --driver-apk "$RUNNER_TEMP/webobs-m3-private-driver.apk" \
+            --manifest "$WEBOBS_ANDROID_REFERENCE_MANIFEST" \
+            --serial "$WEBOBS_ANDROID_DEVICE_SERIAL" \
+            --apksigner "$ANDROID_SDK_ROOT/build-tools/36.0.0/apksigner" \
+            --vpn-connect-helper "$WEBOBS_ANDROID_VPN_CONNECT_HELPER" \
+            --vpn-disconnect-helper "$WEBOBS_ANDROID_VPN_DISCONNECT_HELPER" \
+            --grant-camera-id "$WEBOBS_ANDROID_GRANT_CAMERA_ID" \
+            --grant-profile-id "$WEBOBS_ANDROID_GRANT_PROFILE_ID" \
+            --expiry-control-url "$WEBOBS_ANDROID_EXPIRY_CONTROL_URL" \
+            --evidence "$RUNNER_TEMP/webobs-m3-android-private-evidence.json"
+      - name: Generate SPDX SBOM and Sigstore bundles
+        shell: bash
+        env:
+          WEBOBS_SYFT: ${{ vars.WEBOBS_LINUX_SYFT }}
+          WEBOBS_SYFT_SHA256: ${{ vars.WEBOBS_LINUX_SYFT_SHA256 }}
+          WEBOBS_COSIGN: ${{ vars.WEBOBS_LINUX_COSIGN }}
+          WEBOBS_COSIGN_SHA256: ${{ vars.WEBOBS_LINUX_COSIGN_SHA256 }}
+        run: clients/packaging/finalize-artifacts.sh "$RUNNER_TEMP/webobs-android"
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: native-android-${{ needs.audit.outputs.package_version }}
+          path: ${{ runner.temp }}/webobs-android/*
+          if-no-files-found: error
+
+  publish:
+    needs: [audit, windows, linux, linux-acceptance, android]
+    if: needs.audit.outputs.publish_allowed == 'true'
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+      attestations: write
+      id-token: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          submodules: recursive
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/download-artifact@70fc10c6e5e1ce46ad2ea6f2b72d43f7d47b13c3 # v8.0.0
+        with:
+          pattern: native-*-${{ needs.audit.outputs.package_version }}
+          path: release-assets
+          merge-multiple: true
+      - name: Add verified corresponding source
+        shell: bash
+        run: |
+          set -euo pipefail
+          ./scripts/create-source-bundle.sh '${{ needs.audit.outputs.release_tag }}' "$RUNNER_TEMP/native-source"
+          ./scripts/verify-source-bundle.sh \
+            "$RUNNER_TEMP/native-source/webobs-source-${{ needs.audit.outputs.release_tag }}.tar.gz"
+          cp "$RUNNER_TEMP/native-source/webobs-source-${{ needs.audit.outputs.release_tag }}.tar.gz"* \
+            release-assets/
+      - name: Verify immutable artifact sidecars
+        shell: bash
+        run: |
+          set -euo pipefail
+          count=0
+          while IFS= read -r -d '' artifact; do
+            case "$artifact" in *.sha256|*.spdx.json|*.sigstore.json|*-source-*.tar.gz) continue;; esac
+            test -s "$artifact.sha256" -a -s "$artifact.spdx.json" -a -s "$artifact.sigstore.json"
+            (cd release-assets && sha256sum --check "$(basename "$artifact.sha256")")
+            count=$((count + 1))
+          done < <(find release-assets -maxdepth 1 -type f -print0)
+          test "$count" -eq 5
+      - name: Attest native artifacts
+        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
+        with:
+          subject-path: release-assets/*
+      - name: Attach immutable artifacts to the reviewed tag
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          if ! gh release view '${{ needs.audit.outputs.release_tag }}' >/dev/null 2>&1; then
+            latest=(--latest=false)
+            if [[ '${{ needs.audit.outputs.promote_latest }}' == true ]]; then latest=(--latest); fi
+            gh release create '${{ needs.audit.outputs.release_tag }}' --verify-tag \
+              --title '${{ needs.audit.outputs.release_tag }}' --generate-notes "${latest[@]}"
+          fi
+          # Existing identical assets make reruns idempotent; different content is rejected.
+          ./scripts/upload-release-assets-immutable.sh \
+            '${{ needs.audit.outputs.release_tag }}' release-assets/*
