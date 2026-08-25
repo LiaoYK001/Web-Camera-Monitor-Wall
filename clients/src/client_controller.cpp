@@ -1,5 +1,6 @@
 #include "webobs/client/client_controller.hpp"
 #include "webobs/client/application_lifecycle.hpp"
+#include "webobs/client/network_policy.hpp"
 
 #include <QDateTime>
 #include <QCryptographicHash>
@@ -9,8 +10,6 @@
 #include <QGuiApplication>
 #include <QJsonArray>
 #include <QJsonDocument>
-#include <QHostAddress>
-#include <QNetworkInterface>
 #include <QNetworkReply>
 #include <QRegularExpression>
 #include <QProcess>
@@ -19,6 +18,8 @@
 #include <QSaveFile>
 #include <QStandardPaths>
 #include <QUrl>
+
+#include <sodium.h>
 
 #include <limits>
 #include <algorithm>
@@ -166,35 +167,6 @@ QStringList ClientController::hardware_decoders()
 #else
     return {QStringLiteral("vaapi")};
 #endif
-}
-
-QString ClientController::network_class(const QString &endpoint)
-{
-    const QString host = QUrl(endpoint).host().toLower();
-    QHostAddress address;
-    if (address.setAddress(host)) {
-        bool ipv4 = false;
-        const quint32 value = address.toIPv4Address(&ipv4);
-        if (address.isLoopback() || address.isLinkLocal() ||
-            (ipv4 && ((value & 0xff000000U) == 0x0a000000U ||
-                      (value & 0xfff00000U) == 0xac100000U ||
-                      (value & 0xffff0000U) == 0xc0a80000U)) ||
-            (!ipv4 && (host.startsWith(QStringLiteral("fc")) ||
-                       host.startsWith(QStringLiteral("fd")))))
-            return QStringLiteral("lan");
-    } else if (host == QStringLiteral("localhost") || host.endsWith(QStringLiteral(".local")) ||
-               (!host.isEmpty() && !host.contains('.'))) {
-        return QStringLiteral("lan");
-    }
-    for (const QNetworkInterface &interface : QNetworkInterface::allInterfaces()) {
-        const QString name = (interface.name() + QLatin1Char(' ') +
-                              interface.humanReadableName()).toLower();
-        if (interface.flags().testFlag(QNetworkInterface::IsUp) &&
-            (name.contains(QStringLiteral("wireguard")) || name.contains(QStringLiteral("tailscale")) ||
-             name.startsWith(QStringLiteral("tun")) || name.startsWith(QStringLiteral("wg"))))
-            return QStringLiteral("vpn");
-    }
-    return QStringLiteral("wan");
 }
 
 void ClientController::request(const QByteArray &method, const QString &path, const QJsonObject *body,
@@ -401,6 +373,7 @@ MediaEndpoint ClientController::media_endpoint(const QVariantMap &selected_camer
         endpoint.adapter = selected_camera.value("adapter").toString();
     endpoint.endpoint = selected_profile.value("endpoint").toString();
     endpoint.video_codec = selected_profile.value("videoCodec").toString().toLower();
+    endpoint.audio_codec = selected_profile.value("audioCodec").toString().toLower();
     endpoint.username = credentials.value("username").toString();
     endpoint.password = credentials.value("password").toString();
     return endpoint;
@@ -531,7 +504,7 @@ void ClientController::submit_media_plan(StreamSessionModel *model, const QStrin
         return;
     QJsonObject body{{"cameraId", selected->camera_id}, {"profileId", selected->profile_id},
         {"policy", selected->policy}, {"receiverKind", "native"},
-        {"networkClass", network_class(selected->endpoint)},
+        {"networkClass", classify_network(selected->endpoint)},
         {"reachability", reachability},
         {"protocols", QJsonArray{selected->adapter}},
         {"videoCodecs", QJsonArray{selected->video_codec}},
@@ -594,6 +567,7 @@ void ClientController::submit_media_plan(StreamSessionModel *model, const QStrin
                 endpoint.adapter = QStringLiteral("whep");
                 endpoint.endpoint = resolved.toString(QUrl::FullyEncoded);
                 endpoint.video_codec = QStringLiteral("h264");
+                endpoint.audio_codec = QStringLiteral("opus");
                 endpoint.bearer_token = identity_.device_token;
                 QString error;
                 if (!model->activate_fallback(session_id, plan.plan_id, plan.expires_at,
@@ -881,7 +855,11 @@ void ClientController::setMonitoringFullscreen(bool active)
 void ClientController::persist_identity()
 {
     QString warning;
-    if (!secure_store_.save(identity_.serialize(), warning))
+    QByteArray serialized = identity_.serialize();
+    const bool saved = secure_store_.save(serialized, warning);
+    if (!serialized.isEmpty())
+        sodium_memzero(serialized.data(), static_cast<size_t>(serialized.size()));
+    if (!saved)
         emit userError(warning);
     else if (!warning.isEmpty())
         emit userError(warning);

@@ -11,6 +11,7 @@
 
 #include <algorithm>
 #include <array>
+#include <utility>
 
 namespace webobs::client {
 namespace {
@@ -97,6 +98,58 @@ bool secure_sizes(const DeviceIdentity &identity)
            identity.enrollment_nonce.size() == 32;
 }
 
+}
+
+DeviceIdentity::~DeviceIdentity()
+{
+    clear_sensitive();
+}
+
+DeviceIdentity::DeviceIdentity(DeviceIdentity &&other) noexcept
+    : signing_public_key(std::move(other.signing_public_key)),
+      signing_secret_key(std::move(other.signing_secret_key)),
+      encryption_public_key(std::move(other.encryption_public_key)),
+      encryption_secret_key(std::move(other.encryption_secret_key)),
+      enrollment_nonce(std::move(other.enrollment_nonce)), device_token(std::move(other.device_token)),
+      server_signing_public_key(std::move(other.server_signing_public_key)),
+      latest_grant_bundle(std::move(other.latest_grant_bundle)),
+      latest_shared_scenes(std::move(other.latest_shared_scenes)),
+      bootstrap_revision(other.bootstrap_revision),
+      control_server_url(std::move(other.control_server_url))
+{
+    other.bootstrap_revision = 0;
+}
+
+DeviceIdentity &DeviceIdentity::operator=(DeviceIdentity &&other) noexcept
+{
+    if (this == &other)
+        return *this;
+    clear_sensitive();
+    signing_public_key = std::move(other.signing_public_key);
+    signing_secret_key = std::move(other.signing_secret_key);
+    encryption_public_key = std::move(other.encryption_public_key);
+    encryption_secret_key = std::move(other.encryption_secret_key);
+    enrollment_nonce = std::move(other.enrollment_nonce);
+    device_token = std::move(other.device_token);
+    server_signing_public_key = std::move(other.server_signing_public_key);
+    latest_grant_bundle = std::move(other.latest_grant_bundle);
+    latest_shared_scenes = std::move(other.latest_shared_scenes);
+    bootstrap_revision = other.bootstrap_revision;
+    control_server_url = std::move(other.control_server_url);
+    other.bootstrap_revision = 0;
+    return *this;
+}
+
+void DeviceIdentity::clear_sensitive() noexcept
+{
+    if (!signing_secret_key.isEmpty())
+        sodium_memzero(signing_secret_key.data(), static_cast<size_t>(signing_secret_key.size()));
+    if (!encryption_secret_key.isEmpty())
+        sodium_memzero(encryption_secret_key.data(), static_cast<size_t>(encryption_secret_key.size()));
+    signing_secret_key.clear();
+    encryption_secret_key.clear();
+    device_token.fill(QChar('\0'));
+    device_token.clear();
 }
 
 bool DeviceIdentity::valid() const

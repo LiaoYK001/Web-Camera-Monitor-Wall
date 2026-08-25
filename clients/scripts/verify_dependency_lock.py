@@ -14,6 +14,12 @@ from urllib.parse import urlsplit
 EXPECTED = {
     "qt-source": ("6.11.2", "all"),
     "gstreamer-source": ("1.28.6", "all"),
+    "gstreamer-plugins-base-source": ("1.28.6", "all"),
+    "gstreamer-plugins-good-source": ("1.28.6", "all"),
+    "gstreamer-plugins-bad-source": ("1.28.6", "all"),
+    "gstreamer-plugins-ugly-source": ("1.28.6", "all"),
+    "gstreamer-libav-source": ("1.28.6", "all"),
+    "gstreamer-plugins-rs-source": ("0.15.3", "all"),
     "gstreamer-windows-x86_64": ("1.28.6", "windows-x86_64"),
     "gstreamer-android-universal": ("1.28.6", "android"),
     "libsodium-source": ("1.0.22", "all"),
@@ -82,21 +88,34 @@ def main() -> None:
                         default=Path(__file__).resolve().parents[1] / "dependencies.lock.json")
     parser.add_argument("--artifact", action="append", default=[], metavar="ID=PATH",
                         help="verify a downloaded artifact; may be repeated")
+    parser.add_argument("--require-platform", choices=("windows-x86_64", "linux-x86_64", "android"),
+                        help="require every common and platform artifact to be supplied exactly once")
     arguments = parser.parse_args()
     artifacts = verify_lock(arguments.lock)
-    verified = 0
+    verified: set[str] = set()
     for specification in arguments.artifact:
         identifier, separator, raw_path = specification.partition("=")
         if not separator or identifier not in artifacts or not raw_path:
             fail("--artifact must use a locked ID=PATH")
+        if identifier in verified:
+            fail(f"artifact {identifier!r} was supplied more than once")
         artifact_path = Path(raw_path)
         if not artifact_path.is_file():
             fail(f"artifact file for {identifier!r} does not exist")
         actual = sha256_file(artifact_path)
         if actual != artifacts[identifier]["sha256"]:
             fail(f"artifact {identifier!r} SHA-256 mismatch")
-        verified += 1
-    print(f"dependency lock passed: {len(artifacts)} pinned artifacts, {verified} files verified")
+        verified.add(identifier)
+    if arguments.require_platform:
+        required = {
+            identifier for identifier, item in artifacts.items()
+            if item["platform"] in {"all", arguments.require_platform}
+        }
+        if verified != required:
+            missing = sorted(required - verified)
+            extra = sorted(verified - required)
+            fail(f"{arguments.require_platform} artifact set mismatch; missing={missing}, extra={extra}")
+    print(f"dependency lock passed: {len(artifacts)} pinned artifacts, {len(verified)} files verified")
 
 
 if __name__ == "__main__":

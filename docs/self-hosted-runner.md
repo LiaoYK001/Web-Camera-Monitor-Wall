@@ -116,6 +116,12 @@ WEBOBS_WINDOWS_COSIGN / WEBOBS_WINDOWS_COSIGN_SHA256
 WEBOBS_WINDOWS_CERTIFICATE_SHA1 (secret)
 WEBOBS_WINDOWS_QT_SOURCE_ARCHIVE
 WEBOBS_WINDOWS_GSTREAMER_SOURCE_ARCHIVE
+WEBOBS_WINDOWS_GSTREAMER_PLUGINS_BASE_SOURCE_ARCHIVE
+WEBOBS_WINDOWS_GSTREAMER_PLUGINS_GOOD_SOURCE_ARCHIVE
+WEBOBS_WINDOWS_GSTREAMER_PLUGINS_BAD_SOURCE_ARCHIVE
+WEBOBS_WINDOWS_GSTREAMER_PLUGINS_UGLY_SOURCE_ARCHIVE
+WEBOBS_WINDOWS_GSTREAMER_LIBAV_SOURCE_ARCHIVE
+WEBOBS_WINDOWS_GSTREAMER_PLUGINS_RS_SOURCE_ARCHIVE
 WEBOBS_WINDOWS_GSTREAMER_INSTALLER
 WEBOBS_WINDOWS_SODIUM_SOURCE_ARCHIVE
 
@@ -125,17 +131,28 @@ WEBOBS_LINUX_SYFT / WEBOBS_LINUX_SYFT_SHA256
 WEBOBS_LINUX_COSIGN / WEBOBS_LINUX_COSIGN_SHA256
 WEBOBS_LINUX_QT_SOURCE_ARCHIVE
 WEBOBS_LINUX_GSTREAMER_SOURCE_ARCHIVE
+WEBOBS_LINUX_GSTREAMER_PLUGINS_BASE_SOURCE_ARCHIVE
+WEBOBS_LINUX_GSTREAMER_PLUGINS_GOOD_SOURCE_ARCHIVE
+WEBOBS_LINUX_GSTREAMER_PLUGINS_BAD_SOURCE_ARCHIVE
+WEBOBS_LINUX_GSTREAMER_PLUGINS_UGLY_SOURCE_ARCHIVE
+WEBOBS_LINUX_GSTREAMER_LIBAV_SOURCE_ARCHIVE
+WEBOBS_LINUX_GSTREAMER_PLUGINS_RS_SOURCE_ARCHIVE
 WEBOBS_LINUX_SODIUM_SOURCE_ARCHIVE
 ```
 
 These archive variables point to runner-local, previously downloaded upstream files. The release
-workflow hashes the actual Qt/GStreamer/libsodium source archives and the Windows GStreamer
-installer against `clients/dependencies.lock.json`; a version string alone is not accepted as
-supply-chain evidence.
+workflow hashes the actual Qt, libsodium, GStreamer core/base/good/bad/ugly/libav and pinned
+GStreamer Rust plug-in source archives plus the Windows GStreamer installer against
+`clients/dependencies.lock.json`. The Rust source is the immutable commit behind the upstream
+`gstreamer-1.28.6` release tag and supplies `whepclientsrc` plus the MediaMTX-compatible `whepsrc`; a core version string or a partial
+archive set is not accepted as supply-chain evidence. Use `--require-platform` when reproducing
+the check manually so omission is a hard failure.
 
-这些 archive 变量指向 Runner 本地预先下载的上游文件。发布工作流会把真实的 Qt、GStreamer、
-libsodium 源码包及 Windows GStreamer 安装器与 `clients/dependencies.lock.json` 对照计算摘要；
-只有版本字符串不能作为供应链证据。
+这些 archive 变量指向 Runner 本地预先下载的上游文件。发布工作流会把真实的 Qt、libsodium、
+GStreamer core/base/good/bad/ugly/libav、固定 Rust 插件源码包及 Windows GStreamer 安装器与
+`clients/dependencies.lock.json` 对照计算摘要。Rust 包固定到上游 `gstreamer-1.28.6` 标签对应的
+不可变提交并提供 `whepclientsrc` 与 MediaMTX 兼容的 `whepsrc`；仅有 core 版本字符串或缺少任一源码包都不能作为供应链证据。
+人工复现时必须使用 `--require-platform`，确保遗漏立即失败。
 
 精确协议与 30 分钟硬件门禁只读取受保护 Secret/Runner 本地文件。五种私有端点通过 `WEBOBS_PRIVATE_RTSP_H264`、`WEBOBS_PRIVATE_RTSP_H265`、`WEBOBS_PRIVATE_MJPEG`、`WEBOBS_PRIVATE_HLS`、`WEBOBS_PRIVATE_WHEP` 提供；17 路参考清单由 `WEBOBS_WINDOWS_REFERENCE_MANIFEST` 或 `WEBOBS_LINUX_REFERENCE_MANIFEST` 指向 Runner 本地文件。脚本只输出协议名、解码器、帧数和掉帧统计，不输出端点、凭据或私有证据文件。`WEBOBS_REFERENCE_CONTROL_URL` 用于比较观看前后服务端 RTSP/媒体进程计数；认证值只放 Secret。
 

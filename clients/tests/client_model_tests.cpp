@@ -1,4 +1,6 @@
 #include "webobs/client/application_lifecycle.hpp"
+#include "webobs/client/grant_codec.hpp"
+#include "webobs/client/network_policy.hpp"
 #include "webobs/client/scene_model.hpp"
 #include "webobs/client/stream_session_model.hpp"
 #include "webobs/client/studio_workspace.hpp"
@@ -8,7 +10,12 @@
 #include <QJsonObject>
 #include <QtTest>
 
+#include <type_traits>
+#include <utility>
+
 using webobs::client::MediaEndpoint;
+using webobs::client::classify_network;
+using webobs::client::DeviceIdentity;
 using webobs::client::should_suspend_for_application_state;
 using webobs::client::SceneModel;
 using webobs::client::StreamSessionModel;
@@ -48,6 +55,35 @@ class ClientModelTests final : public QObject {
     Q_OBJECT
 
 private slots:
+    void device_identity_is_move_only_and_explicitly_wipes_secret_fields()
+    {
+        static_assert(!std::is_copy_constructible_v<DeviceIdentity>);
+        static_assert(!std::is_copy_assignable_v<DeviceIdentity>);
+        DeviceIdentity identity;
+        identity.signing_secret_key = QByteArray(64, 's');
+        identity.encryption_secret_key = QByteArray(32, 'e');
+        identity.device_token = QString(64, QLatin1Char('t'));
+        DeviceIdentity moved(std::move(identity));
+        QCOMPARE(moved.signing_secret_key.size(), 64);
+        QCOMPARE(moved.encryption_secret_key.size(), 32);
+        moved.clear_sensitive();
+        QVERIFY(moved.signing_secret_key.isEmpty());
+        QVERIFY(moved.encryption_secret_key.isEmpty());
+        QVERIFY(moved.device_token.isEmpty());
+    }
+
+    void public_targets_do_not_become_vpn_merely_because_an_interface_exists()
+    {
+        QCOMPARE(classify_network(QStringLiteral("rtsp://192.168.31.10/live")),
+                 QStringLiteral("lan"));
+        QCOMPARE(classify_network(QStringLiteral("https://camera.local/stream.m3u8")),
+                 QStringLiteral("lan"));
+        QCOMPARE(classify_network(QStringLiteral("https://203.0.113.9/stream.m3u8")),
+                 QStringLiteral("wan"));
+        QCOMPARE(classify_network(QStringLiteral("https://camera.example/stream.m3u8")),
+                 QStringLiteral("wan"));
+    }
+
     void application_lifecycle_distinguishes_desktop_focus_from_suspend()
     {
         QVERIFY(!should_suspend_for_application_state(

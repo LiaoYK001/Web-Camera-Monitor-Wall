@@ -8,6 +8,13 @@
 namespace webobs::client {
 
 struct DeviceIdentity {
+    DeviceIdentity() = default;
+    ~DeviceIdentity();
+    DeviceIdentity(const DeviceIdentity &) = delete;
+    DeviceIdentity &operator=(const DeviceIdentity &) = delete;
+    DeviceIdentity(DeviceIdentity &&other) noexcept;
+    DeviceIdentity &operator=(DeviceIdentity &&other) noexcept;
+
     QByteArray signing_public_key;
     QByteArray signing_secret_key;
     QByteArray encryption_public_key;
@@ -22,6 +29,7 @@ struct DeviceIdentity {
 
     [[nodiscard]] bool valid() const;
     [[nodiscard]] QByteArray serialize() const;
+    void clear_sensitive() noexcept;
     static DeviceIdentity deserialize(const QByteArray &value, QString &error);
 };
 

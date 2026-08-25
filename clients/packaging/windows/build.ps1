@@ -29,7 +29,7 @@ if ((& $qtpaths --qt-version).Trim() -ne '6.11.2') { throw 'Release Qt must be e
 if ((& $gstLaunch --version | Select-String '^GStreamer 1\.28\.6$').Count -ne 1) {
     throw 'Release GStreamer must be exactly 1.28.6'
 }
-foreach ($element in @('rtspsrc', 'uridecodebin3', 'decodebin3', 'qml6glsink', 'whepclientsrc',
+foreach ($element in @('rtspsrc', 'uridecodebin3', 'decodebin3', 'qml6glsink', 'whepclientsrc', 'whepsrc',
         'rtph264depay', 'rtph265depay', 'h264parse', 'h265parse', 'matroskamux',
         'matroskademux', 'mp4mux', 'd3d11h264dec', 'd3d11h265dec')) {
     & $gstInspect $element | Out-Null

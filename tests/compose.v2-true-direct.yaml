@@ -39,6 +39,17 @@ services:
     entrypoint: ["python3", "/fixture/mjpeg_server.py"]
     networks: [camera-media]
 
+  hls-warmup:
+    image: webobs-v2-direct-fixture:local
+    build:
+      context: ..
+      dockerfile: tests/v2-direct-fixture/Dockerfile
+    entrypoint: ["python3", "/fixture/wait_hls.py"]
+    environment:
+      WEBOBS_FIXTURE_HLS: http://camera:8888/v2-direct/index.m3u8
+    depends_on: [publisher]
+    networks: [camera-media]
+
   webobs:
     image: ${WEBOBS_TEST_IMAGE:-webobs:v2-m1-dev}
     environment:
@@ -167,7 +178,9 @@ services:
       WEBOBS_PROBE_ADAPTER: hls
       WEBOBS_PROBE_CODEC: h264
       WEBOBS_PROBE_ENDPOINT: http://camera:8888/v2-direct/index.m3u8
-    depends_on: [publisher]
+    depends_on:
+      hls-warmup:
+        condition: service_completed_successfully
     networks: [camera-media]
 
   native-batch:

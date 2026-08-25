@@ -18,6 +18,54 @@
       "sha256": "62b6b9f0ad3147a6dd6420ac64a91180b14e990695bddd353b96041611d052ca"
     },
     {
+      "id": "gstreamer-plugins-base-source",
+      "name": "GStreamer base plug-ins source",
+      "platform": "all",
+      "version": "1.28.6",
+      "url": "https://gstreamer.freedesktop.org/src/gst-plugins-base/gst-plugins-base-1.28.6.tar.xz",
+      "sha256": "0ba699c7c6c66f4ba640be78cb38a24715add9683f3e3a199f5369dc5a4f04ac"
+    },
+    {
+      "id": "gstreamer-plugins-good-source",
+      "name": "GStreamer good plug-ins source",
+      "platform": "all",
+      "version": "1.28.6",
+      "url": "https://gstreamer.freedesktop.org/src/gst-plugins-good/gst-plugins-good-1.28.6.tar.xz",
+      "sha256": "b0c620a4b18b6ee931b4c43bbf1760d308666dc37f730a7e7f1ad327e59ce2df"
+    },
+    {
+      "id": "gstreamer-plugins-bad-source",
+      "name": "GStreamer bad plug-ins source",
+      "platform": "all",
+      "version": "1.28.6",
+      "url": "https://gstreamer.freedesktop.org/src/gst-plugins-bad/gst-plugins-bad-1.28.6.tar.xz",
+      "sha256": "6636f2c2289ceda52c4aba971338c81e2b5780d3381bd3673c1c116ec87587c3"
+    },
+    {
+      "id": "gstreamer-plugins-ugly-source",
+      "name": "GStreamer ugly plug-ins source",
+      "platform": "all",
+      "version": "1.28.6",
+      "url": "https://gstreamer.freedesktop.org/src/gst-plugins-ugly/gst-plugins-ugly-1.28.6.tar.xz",
+      "sha256": "ee279da13a740fd7f060d631a673223fa3bcc8c33d350c8d0264bd332a24ecd8"
+    },
+    {
+      "id": "gstreamer-libav-source",
+      "name": "GStreamer libav plug-in source",
+      "platform": "all",
+      "version": "1.28.6",
+      "url": "https://gstreamer.freedesktop.org/src/gst-libav/gst-libav-1.28.6.tar.xz",
+      "sha256": "71e6eafb4fff2a66d1bb0ba8d078224dfe7e3397307d8c0bba3dc23606e08f51"
+    },
+    {
+      "id": "gstreamer-plugins-rs-source",
+      "name": "GStreamer Rust plug-ins source at gstreamer-1.28.6 (75e46c3a1b868e9a08fd688d091476b76a498df1)",
+      "platform": "all",
+      "version": "0.15.3",
+      "url": "https://codeload.github.com/GStreamer/gst-plugins-rs/tar.gz/75e46c3a1b868e9a08fd688d091476b76a498df1",
+      "sha256": "b526d77a9f1af250988da25dc582bca19303a215d52dfe8c1228da0887405345"
+    },
+    {
       "id": "gstreamer-windows-x86_64",
       "name": "GStreamer MSVC x86_64 installer",
       "platform": "windows-x86_64",

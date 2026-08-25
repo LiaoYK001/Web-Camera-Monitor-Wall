@@ -8,6 +8,7 @@ namespace webobs::client {
 class SecureStore {
 public:
     SecureStore();
+    ~SecureStore();
     [[nodiscard]] bool persistent_available() const;
     [[nodiscard]] QString backend() const;
     bool save(const QByteArray &value, QString &error);

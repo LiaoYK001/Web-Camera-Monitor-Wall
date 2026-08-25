@@ -4,12 +4,15 @@
 #include "webobs/client/media_pipeline.hpp"
 
 #include <QGuiApplication>
+#include <QHash>
 #include <QCommandLineOption>
 #include <QCommandLineParser>
 #include <QCoreApplication>
 #include <QDir>
+#include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
+#include <QRegularExpression>
 #include <QSet>
 #include <QStringList>
 #include <QQmlApplicationEngine>
@@ -23,6 +26,7 @@ int main(int argc, char *argv[])
     bool probe_requested = false;
     for (int index = 1; index < argc; ++index)
         if (QByteArrayView(argv[index]) == QByteArrayView("--probe-endpoint") ||
+            QByteArrayView(argv[index]) == QByteArrayView("--probe-endpoint-env") ||
             QByteArrayView(argv[index]) == QByteArrayView("--probe-manifest") ||
             QByteArrayView(argv[index]) == QByteArrayView("--verify-runtime"))
             probe_requested = true;
@@ -61,6 +65,9 @@ int main(int argc, char *argv[])
                       QStringLiteral("Verify the self-contained desktop media runtime")});
     parser.addOption({QStringLiteral("probe-endpoint"), QStringLiteral("Run the production media pipeline without QML"),
                       QStringLiteral("url")});
+    parser.addOption({QStringLiteral("probe-endpoint-env"),
+                      QStringLiteral("Read the private probe endpoint from a named WEBOBS_* environment variable"),
+                      QStringLiteral("name")});
     parser.addOption({QStringLiteral("probe-manifest"),
                       QStringLiteral("Run multiple production media pipelines in one process"),
                       QStringLiteral("absolute-json-path")});
@@ -74,15 +81,18 @@ int main(int argc, char *argv[])
                       QStringLiteral("Also exercise the production RTSP stream-copy recorder"),
                       QStringLiteral("absolute-path")});
     parser.process(application);
-    if (parser.isSet(QStringLiteral("probe-endpoint")) &&
-        parser.isSet(QStringLiteral("probe-manifest"))) {
+    const bool endpoint_argument = parser.isSet(QStringLiteral("probe-endpoint"));
+    const bool endpoint_environment = parser.isSet(QStringLiteral("probe-endpoint-env"));
+    if ((endpoint_argument && endpoint_environment) ||
+        ((endpoint_argument || endpoint_environment) && parser.isSet(QStringLiteral("probe-manifest")))) {
         qCritical("choose one bounded probe mode");
         return 2;
     }
     if (parser.isSet(QStringLiteral("verify-runtime"))) {
         QStringList required{QStringLiteral("rtspsrc"), QStringLiteral("uridecodebin3"),
             QStringLiteral("decodebin3"), QStringLiteral("qml6glsink"),
-            QStringLiteral("whepclientsrc"), QStringLiteral("rtph264depay"),
+            QStringLiteral("whepclientsrc"), QStringLiteral("whepsrc"),
+            QStringLiteral("rtph264depay"),
             QStringLiteral("rtph265depay"), QStringLiteral("h264parse"),
             QStringLiteral("h265parse"), QStringLiteral("matroskamux"),
             QStringLiteral("matroskademux"), QStringLiteral("mp4mux"),
@@ -97,27 +107,91 @@ int main(int argc, char *argv[])
             QStringLiteral("rtpbin"), QStringLiteral("opusdec"),
             QStringLiteral("alawdec"), QStringLiteral("mulawdec"),
             QStringLiteral("avdec_aac")};
-#if defined(Q_OS_WIN)
-        required << QStringLiteral("d3d11h264dec") << QStringLiteral("d3d11h265dec");
-#elif defined(Q_OS_LINUX)
-        required << QStringLiteral("vah264dec") << QStringLiteral("vah265dec");
-#endif
         QStringList missing;
+        QJsonObject plugin_versions;
         for (const QString &name : required) {
             GstElementFactory *factory = gst_element_factory_find(name.toUtf8().constData());
-            if (factory)
+            if (factory) {
+                const gchar *plugin_name = gst_plugin_feature_get_plugin_name(
+                    GST_PLUGIN_FEATURE(factory));
+                GstPlugin *plugin = plugin_name ? gst_registry_find_plugin(
+                    gst_registry_get(), plugin_name) : nullptr;
+                if (plugin) {
+                    plugin_versions.insert(QString::fromLatin1(plugin_name),
+                        QString::fromLatin1(gst_plugin_get_version(plugin)));
+                    gst_object_unref(plugin);
+                }
                 gst_object_unref(factory);
-            else
+            } else {
                 missing << name;
+            }
         }
         if (!missing.isEmpty()) {
             qCritical("self-contained runtime is missing required media elements: %s",
                       qPrintable(missing.join(',')));
             return 2;
         }
+#if WEBOBS_LOCKED_RUNTIME
+        const QHash<QString, QString> locked_plugin_versions{
+            {QStringLiteral("rtspsrc"), QStringLiteral("1.28.6")},
+            {QStringLiteral("uridecodebin3"), QStringLiteral("1.28.6")},
+            {QStringLiteral("qml6glsink"), QStringLiteral("1.28.6")},
+            {QStringLiteral("hlsdemux2"), QStringLiteral("1.28.6")},
+            {QStringLiteral("avdec_h264"), QStringLiteral("1.28.6")},
+            {QStringLiteral("whepclientsrc"), QStringLiteral("0.15.3")},
+            {QStringLiteral("whepsrc"), QStringLiteral("0.15.3")},
+        };
+        QStringList mismatched;
+        for (auto expected = locked_plugin_versions.cbegin();
+             expected != locked_plugin_versions.cend(); ++expected) {
+            GstElementFactory *factory = gst_element_factory_find(expected.key().toUtf8().constData());
+            const gchar *plugin_name = factory ? gst_plugin_feature_get_plugin_name(
+                GST_PLUGIN_FEATURE(factory)) : nullptr;
+            GstPlugin *plugin = plugin_name ? gst_registry_find_plugin(
+                gst_registry_get(), plugin_name) : nullptr;
+            const QString actual = plugin ? QString::fromLatin1(gst_plugin_get_version(plugin)) : QString{};
+            const bool exact_rs_commit = (expected.key() == QStringLiteral("whepclientsrc") ||
+                expected.key() == QStringLiteral("whepsrc")) &&
+                actual == QStringLiteral("0.15.3-75e46c3a+");
+            if (actual != expected.value() && !exact_rs_commit)
+                mismatched << QStringLiteral("%1=%2").arg(expected.key(), actual.isEmpty() ?
+                    QStringLiteral("missing") : actual);
+            if (plugin)
+                gst_object_unref(plugin);
+            if (factory)
+                gst_object_unref(factory);
+        }
+        if (!mismatched.isEmpty()) {
+            qCritical("self-contained runtime has unlocked plug-in versions: %s",
+                      qPrintable(mismatched.join(',')));
+            return 2;
+        }
+#endif
+        QStringList hardware_decoders;
+#if defined(Q_OS_WIN)
+        const QStringList hardware_candidates{QStringLiteral("d3d11h264dec"),
+                                              QStringLiteral("d3d11h265dec")};
+#elif defined(Q_OS_LINUX)
+        const QStringList hardware_candidates{QStringLiteral("vah264dec"),
+                                              QStringLiteral("vah265dec")};
+#else
+        const QStringList hardware_candidates;
+#endif
+        for (const QString &name : hardware_candidates) {
+            GstElementFactory *factory = gst_element_factory_find(name.toUtf8().constData());
+            if (factory) {
+                hardware_decoders << name;
+                gst_object_unref(factory);
+            }
+        }
         qInfo().noquote() << QJsonDocument(QJsonObject{
             {QStringLiteral("result"), QStringLiteral("passed")},
             {QStringLiteral("gstreamer"), QString::fromLatin1(gst_version_string())},
+            {QStringLiteral("hardwareDecodeReady"),
+             hardware_decoders.size() == hardware_candidates.size()},
+            {QStringLiteral("hardwareDecoders"),
+             QJsonArray::fromStringList(hardware_decoders)},
+            {QStringLiteral("pluginVersions"), plugin_versions},
             {QStringLiteral("requiredElements"), required.size()}}).toJson(QJsonDocument::Compact);
         return 0;
     }
@@ -128,12 +202,22 @@ int main(int argc, char *argv[])
             qCritical("batch protocol probe failed safely: %s", qPrintable(error.left(128)));
         return result;
     }
-    if (parser.isSet(QStringLiteral("probe-endpoint"))) {
+    if (endpoint_argument || endpoint_environment) {
         const QString adapter = parser.value(QStringLiteral("probe-adapter")).toLower();
         const QString codec = parser.value(QStringLiteral("probe-codec")).toLower();
         bool duration_ok = false;
         const int duration = parser.value(QStringLiteral("probe-seconds")).toInt(&duration_ok);
-        const QUrl url(parser.value(QStringLiteral("probe-endpoint")));
+        const QString endpoint_environment_name = parser.value(QStringLiteral("probe-endpoint-env"));
+        if (endpoint_environment && !QRegularExpression(
+                QStringLiteral(R"(^WEBOBS_[A-Z0-9_]{1,56}$)"))
+                .match(endpoint_environment_name).hasMatch()) {
+            qCritical("private probe endpoint environment name is invalid");
+            return 2;
+        }
+        const QString raw_endpoint = endpoint_environment ?
+            qEnvironmentVariable(endpoint_environment_name.toUtf8().constData()) :
+            parser.value(QStringLiteral("probe-endpoint"));
+        const QUrl url(raw_endpoint);
         const QString record_path = parser.value(QStringLiteral("probe-record-mkv"));
         const QFileInfo record_target(record_path);
         const QSet<QString> adapters{QStringLiteral("rtsp"), QStringLiteral("mjpeg"),

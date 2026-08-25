@@ -8,6 +8,7 @@ RUN apt-get -o Acquire::Retries=5 update \
 COPY v2/client_control_service.py /fixture/client_control_service.py
 COPY tests/v2-direct-fixture/probe.py /fixture/probe.py
 COPY tests/v2-direct-fixture/mjpeg_server.py /fixture/mjpeg_server.py
+COPY tests/v2-direct-fixture/wait_hls.py /fixture/wait_hls.py
 COPY tests/v2-direct-fixture/nvr_coexist_probe.py /fixture/nvr_coexist_probe.py
 
 ENTRYPOINT ["python3", "/fixture/probe.py"]

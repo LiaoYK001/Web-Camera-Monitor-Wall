@@ -5,6 +5,9 @@
 #include <QFile>
 #include <QFileInfo>
 #include <QSaveFile>
+#include <QStandardPaths>
+
+#include <sodium.h>
 
 #if defined(WEBOBS_SECURE_STORE_DPAPI)
 #include <windows.h>
@@ -57,6 +60,12 @@ SecureStore::SecureStore()
 #endif
 }
 
+SecureStore::~SecureStore()
+{
+    if (!temporary_value_.isEmpty())
+        sodium_memzero(temporary_value_.data(), static_cast<size_t>(temporary_value_.size()));
+}
+
 bool SecureStore::persistent_available() const
 {
     return persistent_available_;
@@ -70,6 +79,8 @@ QString SecureStore::backend() const
 bool SecureStore::save(const QByteArray &value, QString &error)
 {
     if (!persistent_available_) {
+        if (!temporary_value_.isEmpty())
+            sodium_memzero(temporary_value_.data(), static_cast<size_t>(temporary_value_.size()));
         temporary_value_ = value;
         error = QStringLiteral("secure storage unavailable; identity is temporary and will not be persisted");
         return true;
@@ -85,8 +96,12 @@ bool SecureStore::save(const QByteArray &value, QString &error)
     }
     const QByteArray protected_value(reinterpret_cast<const char *>(output.pbData), output.cbData);
     LocalFree(output.pbData);
-    const QString path = qEnvironmentVariable("LOCALAPPDATA") +
-                         QStringLiteral("/WebObs/device-identity.dpapi");
+    const QString root = QStandardPaths::writableLocation(QStandardPaths::AppLocalDataLocation);
+    if (root.isEmpty() || !QFileInfo(root).isAbsolute()) {
+        error = QStringLiteral("DPAPI identity directory is unavailable");
+        return false;
+    }
+    const QString path = QDir(root).filePath(QStringLiteral("device-identity.dpapi"));
     if (!QDir().mkpath(QFileInfo(path).absolutePath())) {
         error = QStringLiteral("DPAPI identity directory could not be created");
         return false;
@@ -130,8 +145,12 @@ QByteArray SecureStore::load(QString &error) const
     if (!persistent_available_)
         return temporary_value_;
 #if defined(WEBOBS_SECURE_STORE_DPAPI)
-    const QString path = qEnvironmentVariable("LOCALAPPDATA") +
-                         QStringLiteral("/WebObs/device-identity.dpapi");
+    const QString root = QStandardPaths::writableLocation(QStandardPaths::AppLocalDataLocation);
+    if (root.isEmpty() || !QFileInfo(root).isAbsolute()) {
+        error = QStringLiteral("DPAPI identity directory is unavailable");
+        return {};
+    }
+    const QString path = QDir(root).filePath(QStringLiteral("device-identity.dpapi"));
     QFile file(path);
     if (!file.exists())
         return {};
@@ -179,12 +198,18 @@ QByteArray SecureStore::load(QString &error) const
 
 bool SecureStore::clear(QString &error)
 {
+    if (!temporary_value_.isEmpty())
+        sodium_memzero(temporary_value_.data(), static_cast<size_t>(temporary_value_.size()));
     temporary_value_.clear();
     if (!persistent_available_)
         return true;
 #if defined(WEBOBS_SECURE_STORE_DPAPI)
-    const QString path = qEnvironmentVariable("LOCALAPPDATA") +
-                         QStringLiteral("/WebObs/device-identity.dpapi");
+    const QString root = QStandardPaths::writableLocation(QStandardPaths::AppLocalDataLocation);
+    if (root.isEmpty() || !QFileInfo(root).isAbsolute()) {
+        error = QStringLiteral("DPAPI identity directory is unavailable");
+        return false;
+    }
+    const QString path = QDir(root).filePath(QStringLiteral("device-identity.dpapi"));
     if (QFile::exists(path) && !QFile::remove(path)) {
         error = QStringLiteral("DPAPI identity file could not be removed");
         return false;

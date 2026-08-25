@@ -62,4 +62,4 @@ if docker compose -f "$compose_file" logs --no-color webobs-fallback | \
   exit 1
 fi
 
-echo "v2 deterministic gate passed: production client RTSP/MJPEG/HLS stayed off-server, 16 concurrent viewers did not add NVR upstream sessions, and authenticated Gateway fallback cleaned up without residue. WHEP decode remains an exact-runtime release gate."
+echo "v2 deterministic gate passed: production client RTSP/MJPEG/HLS stayed off-server, 16 concurrent viewers did not add NVR upstream sessions, and authenticated Gateway fallback cleaned up without residue. Exact-runtime WHEP is verified by the locked desktop gate."

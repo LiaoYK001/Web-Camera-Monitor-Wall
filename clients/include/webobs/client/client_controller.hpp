@@ -123,7 +123,6 @@ private:
     MediaEndpoint media_endpoint(const QVariantMap &camera, const QVariantMap &profile) const;
     QString prepare_stream(StreamSessionModel &model, const QVariantMap &camera,
                            const QVariantMap &profile, const QString &policy);
-    static QString network_class(const QString &endpoint);
     static QString platform();
     static QStringList hardware_decoders();
 

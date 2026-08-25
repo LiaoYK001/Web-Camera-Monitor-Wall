@@ -30,10 +30,15 @@ def main() -> int:
         endpoint = os.environ.get(environment_name, "")
         if not endpoint:
             raise SystemExit(f"private endpoint reference is missing: {environment_name}")
+        child_environment = {
+            key: value for key, value in os.environ.items()
+            if not key.startswith("WEBOBS_PRIVATE_")
+        }
+        child_environment["WEBOBS_PROBE_ENDPOINT"] = endpoint
         result = subprocess.run([
-            str(binary), "--probe-endpoint", endpoint, "--probe-adapter", adapter,
+            str(binary), "--probe-endpoint-env", "WEBOBS_PROBE_ENDPOINT", "--probe-adapter", adapter,
             "--probe-codec", codec, "--probe-seconds", "10",
-        ], check=False, capture_output=True, text=True, timeout=30)
+        ], check=False, capture_output=True, text=True, timeout=30, env=child_environment)
         combined = result.stdout + result.stderr
         if endpoint in combined:
             raise SystemExit(f"protocol probe leaked its endpoint: {label}")

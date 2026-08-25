@@ -35,12 +35,11 @@ mkdir -p "$appdir/usr/lib/gstreamer-1.0" "$appdir/usr/libexec/gstreamer-1.0" \
   "$appdir/usr/share/icons/hicolor/scalable/apps"
 cp "$root/clients/packaging/io.github.liaoyk001.WebObsNative.svg" \
   "$appdir/usr/share/icons/hicolor/scalable/apps/io.github.liaoyk001.WebObsNative.svg"
-plugins=(rtspsrc uridecodebin3 decodebin3 qml6glsink whepclientsrc rtph264depay rtph265depay \
+plugins=(rtspsrc uridecodebin3 decodebin3 qml6glsink whepclientsrc whepsrc rtph264depay rtph265depay \
          h264parse h265parse matroskamux matroskademux mp4mux videoconvert identity \
          fakesink filesink audioconvert audioresample volume autoaudiosink autoaudiosrc \
          wavenc appsink souphttpsrc hlsdemux2 jpegdec avdec_h264 avdec_h265 webrtcbin \
-         nicesrc dtlssrtpdec dtlssrtpenc rtpbin opusdec alawdec mulawdec avdec_aac \
-         vah264dec vah265dec)
+         nicesrc dtlssrtpdec dtlssrtpenc rtpbin opusdec alawdec mulawdec avdec_aac)
 declare -A copied=()
 libraries=()
 for element in "${plugins[@]}"; do
@@ -53,6 +52,20 @@ for element in "${plugins[@]}"; do
     copied[$plugin]=1
   fi
 done
+# VA decoder factories are device-dependent and may not register on a headless
+# builder. Package the exact VA plug-in file even when no render node exists;
+# --verify-runtime reports hardwareDecodeReady separately at runtime.
+va_plugin="$(gst-inspect-1.0 va | awk -F': +' '/^[[:space:]]*Filename/{print $2; exit}')"
+[[ -n "$va_plugin" && -f "$va_plugin" ]] || {
+  echo "missing required GStreamer VA plug-in" >&2
+  exit 1
+}
+if [[ -z "${copied[$va_plugin]:-}" ]]; then
+  target="$appdir/usr/lib/gstreamer-1.0/$(basename "$va_plugin")"
+  cp "$va_plugin" "$target"
+  libraries+=(--library "$target")
+  copied[$va_plugin]=1
+fi
 plugin_scanner="$(pkg-config --variable=pluginscannerdir gstreamer-1.0)/gst-plugin-scanner"
 [[ -x "$plugin_scanner" ]] || { echo "GStreamer plugin scanner is unavailable" >&2; exit 1; }
 cp "$plugin_scanner" "$appdir/usr/libexec/gstreamer-1.0/gst-plugin-scanner"

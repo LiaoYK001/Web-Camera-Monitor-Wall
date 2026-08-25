@@ -225,26 +225,76 @@ bool MediaPipeline::build_pipeline(QString &error)
             return false;
         g_object_set(source_, "uri", endpoint_.endpoint.toUtf8().constData(), nullptr);
     } else if (adapter == QStringLiteral("whep")) {
-        source_ = make("whepclientsrc", "directSource", error);
+        // GStreamer 1.28.6 whepclientsrc currently emits an H.264 offer that
+        // common WHEP servers such as MediaMTX reject.  The same locked Rust
+        // source also ships whepsrc, whose explicit RTP caps are the upstream
+        // documented compatibility path.  Prefer it while retaining the new
+        // client as a fail-closed fallback for runtimes that omit webrtchttp.
+        source_ = gst_element_factory_make("whepsrc", "directSource");
         decoder_bin_ = make("decodebin3", "directDecoder", error);
-        if (!source_ || !decoder_bin_)
+        if (!decoder_bin_)
             return false;
-        g_object_set(source_, "whep-endpoint", endpoint_.endpoint.toUtf8().constData(), nullptr);
-        if (!endpoint_.bearer_token.isEmpty()) {
+        if (source_) {
+            const QByteArray video_encoding = endpoint_.video_codec.compare(
+                QStringLiteral("h265"), Qt::CaseInsensitive) == 0 ? "H265" : "H264";
+            const QByteArray video_description = QByteArray(
+                "application/x-rtp,media=video,encoding-name=") + video_encoding +
+                ",payload=127,clock-rate=90000";
+            GstCaps *video_caps = gst_caps_from_string(video_description.constData());
+            const QString audio_codec = endpoint_.audio_codec.toLower();
+            QByteArray audio_description(
+                "application/x-rtp,media=audio,encoding-name=PCMU,payload=0,clock-rate=8000");
+            if (audio_codec == QStringLiteral("opus"))
+                audio_description = "application/x-rtp,media=audio,encoding-name=OPUS,"
+                                    "payload=111,clock-rate=48000,encoding-params=(string)2";
+            else if (audio_codec == QStringLiteral("pcma") ||
+                     audio_codec == QStringLiteral("alaw") ||
+                     audio_codec == QStringLiteral("g711a"))
+                audio_description = "application/x-rtp,media=audio,encoding-name=PCMA,"
+                                    "payload=8,clock-rate=8000";
+            GstCaps *audio_caps = gst_caps_from_string(audio_description.constData());
+            if (!video_caps || !audio_caps) {
+                if (video_caps)
+                    gst_caps_unref(video_caps);
+                if (audio_caps)
+                    gst_caps_unref(audio_caps);
+                error = QStringLiteral("WHEP RTP capability construction failed");
+                return false;
+            }
+            g_object_set(source_, "whep-endpoint", endpoint_.endpoint.toUtf8().constData(),
+                         "use-link-headers", TRUE, "timeout", 3u,
+                         "video-caps", video_caps, "audio-caps", audio_caps, nullptr);
+            gst_caps_unref(video_caps);
+            gst_caps_unref(audio_caps);
+            if (!endpoint_.bearer_token.isEmpty())
+                g_object_set(source_, "auth-token",
+                             endpoint_.bearer_token.toUtf8().constData(), nullptr);
+        } else {
+            source_ = make("whepclientsrc", "directSource", error);
+            if (!source_)
+                return false;
             GObject *signaller = nullptr;
             if (g_object_class_find_property(G_OBJECT_GET_CLASS(source_), "signaller"))
                 g_object_get(source_, "signaller", &signaller, nullptr);
-            GObject *authentication_target = signaller ? signaller : G_OBJECT(source_);
-            if (!g_object_class_find_property(G_OBJECT_GET_CLASS(authentication_target), "auth-token")) {
+            if (!signaller || !g_object_class_find_property(
+                    G_OBJECT_GET_CLASS(signaller), "whep-endpoint")) {
                 if (signaller)
                     g_object_unref(signaller);
-                error = QStringLiteral("WHEP runtime does not support bearer authentication");
+                error = QStringLiteral("WHEP runtime has no compatible client signaller");
                 return false;
             }
-            g_object_set(authentication_target, "auth-token",
-                         endpoint_.bearer_token.toUtf8().constData(), nullptr);
-            if (signaller)
-                g_object_unref(signaller);
+            g_object_set(signaller, "whep-endpoint",
+                         endpoint_.endpoint.toUtf8().constData(), nullptr);
+            if (!endpoint_.bearer_token.isEmpty()) {
+                if (!g_object_class_find_property(G_OBJECT_GET_CLASS(signaller), "auth-token")) {
+                    g_object_unref(signaller);
+                    error = QStringLiteral("WHEP runtime does not support bearer authentication");
+                    return false;
+                }
+                g_object_set(signaller, "auth-token",
+                             endpoint_.bearer_token.toUtf8().constData(), nullptr);
+            }
+            g_object_unref(signaller);
         }
     } else {
         error = QStringLiteral("unsupported True Direct protocol adapter");

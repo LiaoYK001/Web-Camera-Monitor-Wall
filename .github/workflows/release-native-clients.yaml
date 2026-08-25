@@ -36,6 +36,8 @@ jobs:
           ./tests/run-public-audit.sh
           ./scripts/check-executable-bits.sh
           python3 clients/scripts/verify_dependency_lock.py
+          python3 clients/tests/test_dependency_lock.py
+          python3 clients/tests/test_exact_protocol_gate.py
           python3 clients/tests/test_desktop_reference_gate.py
           [[ "$REF_TYPE" == tag ]]
           [[ "$REF_NAME" =~ ^v2\.[0-9]+(\.[0-9]+)?$ ]]
@@ -63,12 +65,25 @@ jobs:
         env:
           QT_SOURCE_ARCHIVE: ${{ vars.WEBOBS_WINDOWS_QT_SOURCE_ARCHIVE }}
           GST_SOURCE_ARCHIVE: ${{ vars.WEBOBS_WINDOWS_GSTREAMER_SOURCE_ARCHIVE }}
+          GST_BASE_SOURCE_ARCHIVE: ${{ vars.WEBOBS_WINDOWS_GSTREAMER_PLUGINS_BASE_SOURCE_ARCHIVE }}
+          GST_GOOD_SOURCE_ARCHIVE: ${{ vars.WEBOBS_WINDOWS_GSTREAMER_PLUGINS_GOOD_SOURCE_ARCHIVE }}
+          GST_BAD_SOURCE_ARCHIVE: ${{ vars.WEBOBS_WINDOWS_GSTREAMER_PLUGINS_BAD_SOURCE_ARCHIVE }}
+          GST_UGLY_SOURCE_ARCHIVE: ${{ vars.WEBOBS_WINDOWS_GSTREAMER_PLUGINS_UGLY_SOURCE_ARCHIVE }}
+          GST_LIBAV_SOURCE_ARCHIVE: ${{ vars.WEBOBS_WINDOWS_GSTREAMER_LIBAV_SOURCE_ARCHIVE }}
+          GST_RS_SOURCE_ARCHIVE: ${{ vars.WEBOBS_WINDOWS_GSTREAMER_PLUGINS_RS_SOURCE_ARCHIVE }}
           GST_INSTALLER: ${{ vars.WEBOBS_WINDOWS_GSTREAMER_INSTALLER }}
           SODIUM_SOURCE_ARCHIVE: ${{ vars.WEBOBS_WINDOWS_SODIUM_SOURCE_ARCHIVE }}
         run: |
           python clients/scripts/verify_dependency_lock.py `
+            --require-platform windows-x86_64 `
             --artifact "qt-source=$env:QT_SOURCE_ARCHIVE" `
             --artifact "gstreamer-source=$env:GST_SOURCE_ARCHIVE" `
+            --artifact "gstreamer-plugins-base-source=$env:GST_BASE_SOURCE_ARCHIVE" `
+            --artifact "gstreamer-plugins-good-source=$env:GST_GOOD_SOURCE_ARCHIVE" `
+            --artifact "gstreamer-plugins-bad-source=$env:GST_BAD_SOURCE_ARCHIVE" `
+            --artifact "gstreamer-plugins-ugly-source=$env:GST_UGLY_SOURCE_ARCHIVE" `
+            --artifact "gstreamer-libav-source=$env:GST_LIBAV_SOURCE_ARCHIVE" `
+            --artifact "gstreamer-plugins-rs-source=$env:GST_RS_SOURCE_ARCHIVE" `
             --artifact "gstreamer-windows-x86_64=$env:GST_INSTALLER" `
             --artifact "libsodium-source=$env:SODIUM_SOURCE_ARCHIVE"
           python clients/tests/test_desktop_reference_gate.py
@@ -144,14 +159,27 @@ jobs:
         env:
           QT_SOURCE_ARCHIVE: ${{ vars.WEBOBS_LINUX_QT_SOURCE_ARCHIVE }}
           GST_SOURCE_ARCHIVE: ${{ vars.WEBOBS_LINUX_GSTREAMER_SOURCE_ARCHIVE }}
+          GST_BASE_SOURCE_ARCHIVE: ${{ vars.WEBOBS_LINUX_GSTREAMER_PLUGINS_BASE_SOURCE_ARCHIVE }}
+          GST_GOOD_SOURCE_ARCHIVE: ${{ vars.WEBOBS_LINUX_GSTREAMER_PLUGINS_GOOD_SOURCE_ARCHIVE }}
+          GST_BAD_SOURCE_ARCHIVE: ${{ vars.WEBOBS_LINUX_GSTREAMER_PLUGINS_BAD_SOURCE_ARCHIVE }}
+          GST_UGLY_SOURCE_ARCHIVE: ${{ vars.WEBOBS_LINUX_GSTREAMER_PLUGINS_UGLY_SOURCE_ARCHIVE }}
+          GST_LIBAV_SOURCE_ARCHIVE: ${{ vars.WEBOBS_LINUX_GSTREAMER_LIBAV_SOURCE_ARCHIVE }}
+          GST_RS_SOURCE_ARCHIVE: ${{ vars.WEBOBS_LINUX_GSTREAMER_PLUGINS_RS_SOURCE_ARCHIVE }}
           SODIUM_SOURCE_ARCHIVE: ${{ vars.WEBOBS_LINUX_SODIUM_SOURCE_ARCHIVE }}
         run: |
           set -euo pipefail
           ./tests/run-public-audit.sh
           ./clients/tests/test-linux-update-rollback.sh
           python3 clients/scripts/verify_dependency_lock.py \
+            --require-platform linux-x86_64 \
             --artifact "qt-source=$QT_SOURCE_ARCHIVE" \
             --artifact "gstreamer-source=$GST_SOURCE_ARCHIVE" \
+            --artifact "gstreamer-plugins-base-source=$GST_BASE_SOURCE_ARCHIVE" \
+            --artifact "gstreamer-plugins-good-source=$GST_GOOD_SOURCE_ARCHIVE" \
+            --artifact "gstreamer-plugins-bad-source=$GST_BAD_SOURCE_ARCHIVE" \
+            --artifact "gstreamer-plugins-ugly-source=$GST_UGLY_SOURCE_ARCHIVE" \
+            --artifact "gstreamer-libav-source=$GST_LIBAV_SOURCE_ARCHIVE" \
+            --artifact "gstreamer-plugins-rs-source=$GST_RS_SOURCE_ARCHIVE" \
             --artifact "libsodium-source=$SODIUM_SOURCE_ARCHIVE"
           test -z "$(git status --porcelain)"
       - name: Build AppImage and Flatpak
@@ -250,4 +278,6 @@ jobs:
           gh release view '${{ needs.audit.outputs.release_tag }}' >/dev/null 2>&1 || \
             gh release create '${{ needs.audit.outputs.release_tag }}' --verify-tag \
               --title '${{ needs.audit.outputs.release_tag }}' --generate-notes
-          gh release upload '${{ needs.audit.outputs.release_tag }}' release-assets/* --clobber
+          # Release assets are immutable evidence. A rerun must use a new patch tag
+          # or delete an incomplete draft explicitly; it may never replace an asset.
+          gh release upload '${{ needs.audit.outputs.release_tag }}' release-assets/*

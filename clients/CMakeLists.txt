@@ -42,6 +42,7 @@ qt_add_executable(webobs-native
     include/webobs/client/client_controller.hpp
     include/webobs/client/grant_codec.hpp
     include/webobs/client/media_pipeline.hpp
+    include/webobs/client/network_policy.hpp
     include/webobs/client/scene_model.hpp
     include/webobs/client/secure_store.hpp
     include/webobs/client/stream_session_model.hpp
@@ -53,6 +54,7 @@ qt_add_executable(webobs-native
     src/client_controller.cpp
     src/grant_codec.cpp
     src/media_pipeline.cpp
+    src/network_policy.cpp
     src/scene_model.cpp
     src/secure_store.cpp
     src/stream_session_model.cpp
@@ -120,17 +122,22 @@ if(BUILD_TESTING)
     qt_add_executable(webobs-native-model-tests
         tests/client_model_tests.cpp
         include/webobs/client/application_lifecycle.hpp
+        include/webobs/client/grant_codec.hpp
         include/webobs/client/media_pipeline.hpp
+        include/webobs/client/network_policy.hpp
         include/webobs/client/scene_model.hpp
         include/webobs/client/stream_session_model.hpp
         include/webobs/client/studio_workspace.hpp
         src/media_pipeline.cpp
+        src/grant_codec.cpp
+        src/network_policy.cpp
         src/scene_model.cpp
         src/stream_session_model.cpp)
     target_sources(webobs-native-model-tests PRIVATE src/studio_workspace.cpp)
     target_include_directories(webobs-native-model-tests PRIVATE include)
     target_link_libraries(webobs-native-model-tests PRIVATE
-        Qt6::Core Qt6::Gui Qt6::Test PkgConfig::GSTREAMER)
+        Qt6::Core Qt6::Gui Qt6::Network Qt6::Test
+        PkgConfig::GSTREAMER PkgConfig::SODIUM)
     target_compile_options(webobs-native-model-tests PRIVATE
         $<$<CXX_COMPILER_ID:GNU,Clang>:-Wall;-Wextra;-Wpedantic>)
     add_test(NAME webobs-native-model-tests COMMAND webobs-native-model-tests)

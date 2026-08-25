@@ -15,6 +15,7 @@ struct MediaEndpoint {
     QString adapter;
     QString endpoint;
     QString video_codec;
+    QString audio_codec;
     QString username;
     QString password;
     QString bearer_token;
