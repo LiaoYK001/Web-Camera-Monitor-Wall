@@ -77,6 +77,7 @@ RUN cmake -S /src/clients -B /build/clients -G Ninja \
         -DWEBOBS_ENFORCE_LOCKED_DEPENDENCIES=OFF \
       && cmake --build /build/clients --parallel \
       && ctest --test-dir /build/clients --output-on-failure \
+      && bash /src/clients/tests/test-linux-update-rollback.sh \
       && python3 /src/clients/tests/test_desktop_reference_gate.py
 
 FROM client-compile-test AS client-protocol-test

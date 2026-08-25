@@ -1,3 +1,4 @@
+#include "webobs/client/application_lifecycle.hpp"
 #include "webobs/client/scene_model.hpp"
 #include "webobs/client/stream_session_model.hpp"
 #include "webobs/client/studio_workspace.hpp"
@@ -8,6 +9,7 @@
 #include <QtTest>
 
 using webobs::client::MediaEndpoint;
+using webobs::client::should_suspend_for_application_state;
 using webobs::client::SceneModel;
 using webobs::client::StreamSessionModel;
 using webobs::client::StudioWorkspace;
@@ -46,6 +48,22 @@ class ClientModelTests final : public QObject {
     Q_OBJECT
 
 private slots:
+    void application_lifecycle_distinguishes_desktop_focus_from_suspend()
+    {
+        QVERIFY(!should_suspend_for_application_state(
+            Qt::ApplicationInactive, false));
+        QVERIFY(!should_suspend_for_application_state(
+            Qt::ApplicationHidden, false));
+        QVERIFY(should_suspend_for_application_state(
+            Qt::ApplicationSuspended, false));
+        QVERIFY(should_suspend_for_application_state(
+            Qt::ApplicationInactive, true));
+        QVERIFY(should_suspend_for_application_state(
+            Qt::ApplicationHidden, true));
+        QVERIFY(!should_suspend_for_application_state(
+            Qt::ApplicationActive, true));
+    }
+
     void grid_capacity_and_duplicate_camera_are_bounded()
     {
         StreamSessionModel model(16, false);

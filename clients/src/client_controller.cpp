@@ -1,4 +1,5 @@
 #include "webobs/client/client_controller.hpp"
+#include "webobs/client/application_lifecycle.hpp"
 
 #include <QDateTime>
 #include <QCryptographicHash>
@@ -106,7 +107,12 @@ ClientController::ClientController(QObject *parent) : QObject(parent)
     wire_streams(studio_preview_streams_);
     wire_streams(studio_program_streams_);
     connect(qGuiApp, &QGuiApplication::applicationStateChanged, this, [this](Qt::ApplicationState state) {
-        if (state != Qt::ApplicationActive) {
+#if defined(Q_OS_ANDROID)
+        constexpr bool mobile = true;
+#else
+        constexpr bool mobile = false;
+#endif
+        if (should_suspend_for_application_state(state, mobile)) {
             cancelTalk();
             grid_streams_.suspend();
             focus_streams_.suspend();

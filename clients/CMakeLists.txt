@@ -37,6 +37,7 @@ if(UNIX AND NOT ANDROID)
 endif()
 
 qt_add_executable(webobs-native
+    include/webobs/client/application_lifecycle.hpp
     include/webobs/client/batch_probe.hpp
     include/webobs/client/client_controller.hpp
     include/webobs/client/grant_codec.hpp
@@ -118,6 +119,7 @@ if(BUILD_TESTING)
     find_package(Qt6 REQUIRED COMPONENTS Test)
     qt_add_executable(webobs-native-model-tests
         tests/client_model_tests.cpp
+        include/webobs/client/application_lifecycle.hpp
         include/webobs/client/media_pipeline.hpp
         include/webobs/client/scene_model.hpp
         include/webobs/client/stream_session_model.hpp

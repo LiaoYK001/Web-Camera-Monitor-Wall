@@ -72,6 +72,7 @@ jobs:
             --artifact "gstreamer-windows-x86_64=$env:GST_INSTALLER" `
             --artifact "libsodium-source=$env:SODIUM_SOURCE_ARCHIVE"
           python clients/tests/test_desktop_reference_gate.py
+          ./clients/tests/test-windows-update-rollback.ps1
           if (git status --porcelain) { throw 'Release checkout is dirty' }
       - name: Build signed installer and portable package
         shell: pwsh
@@ -147,6 +148,7 @@ jobs:
         run: |
           set -euo pipefail
           ./tests/run-public-audit.sh
+          ./clients/tests/test-linux-update-rollback.sh
           python3 clients/scripts/verify_dependency_lock.py \
             --artifact "qt-source=$QT_SOURCE_ARCHIVE" \
             --artifact "gstreamer-source=$GST_SOURCE_ARCHIVE" \
