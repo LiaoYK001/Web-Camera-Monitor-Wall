@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+import base64
 import hashlib
 import importlib.util
 import json
@@ -15,6 +16,8 @@ import sys
 import tempfile
 import time
 import urllib.parse
+import urllib.error
+import urllib.request
 
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -236,6 +239,96 @@ def wait_for_network_status(serial: str, remote_manifest: str, expected: str,
     raise RuntimeError(f"Android network status did not become {expected!r}")
 
 
+def control_json(method: str, control_url: str, path: str,
+                 body: dict | None = None) -> tuple[int, dict]:
+    username, password = DESKTOP.validate_control_credentials()
+    headers = {"Accept": "application/json", "Authorization": "Basic " +
+        base64.b64encode(f"{username}:{password}".encode()).decode()}
+    payload = None
+    if body is not None:
+        payload = json.dumps(body, separators=(",", ":")).encode()
+        headers["Content-Type"] = "application/json"
+    request = urllib.request.Request(control_url + path, data=payload,
+                                     headers=headers, method=method)
+    try:
+        response = urllib.request.urlopen(request, timeout=10)
+    except urllib.error.HTTPError as http_error:
+        response = http_error
+    with response:
+        data = response.read(MAX_LOG_BYTES + 1)
+        status = response.status
+    if len(data) > MAX_LOG_BYTES:
+        raise RuntimeError("authorization control response exceeded the bounded limit")
+    try:
+        value = json.loads(data)
+    except (UnicodeDecodeError, json.JSONDecodeError) as error:
+        raise RuntimeError("authorization control response was invalid JSON") from error
+    if not isinstance(value, dict):
+        raise RuntimeError("authorization control response must be an object")
+    return status, value
+
+
+def launch_authorization_probe(serial: str, remote_manifest: str, control_url: str,
+                               camera_id: str, profile_id: str,
+                               offline_after_ready: bool) -> None:
+    adb(serial, "shell", "am", "force-stop", PACKAGE)
+    adb(serial, "logcat", "-c")
+    adb(serial, "shell", "am", "instrument", "-w", "-r",
+        "-e", "manifestPath", remote_manifest, "-e", "clientAuth", "true",
+        "-e", "controlUrl", control_url, "-e", "cameraId", camera_id,
+        "-e", "profileId", profile_id, "-e", "authOffline",
+        "true" if offline_after_ready else "false", INSTRUMENTATION, timeout=60)
+
+
+def approve_authorization_probe(serial: str, remote_manifest: str, control_url: str,
+                                camera_id: str, profile_id: str,
+                                expected_stop: str) -> dict:
+    launch_authorization_probe(serial, remote_manifest, control_url, camera_id, profile_id,
+                               expected_stop == "grant-expired")
+    pairing_log, pairing = wait_for_document(serial, "pairing-required", time.monotonic() + 30)
+    if pairing.get("storageBackend") != "android-keystore" or \
+            pairing.get("temporaryIdentity") is not False or \
+            not re.fullmatch(r"[0-9]{8}", str(pairing.get("pairingCode", ""))):
+        raise RuntimeError("Android authorization probe did not use a persistent Keystore identity")
+    status, pending = control_json("GET", control_url, "/api/v2/enrollments")
+    candidates = [item for item in pending.get("enrollments", []) if isinstance(item, dict) and
+                  item.get("name") == "Android authorization gate" and
+                  item.get("platform") == "android" and item.get("state") == "pending"]
+    if status != 200 or len(candidates) != 1:
+        raise RuntimeError("authorization probe enrollment was not uniquely pending")
+    enrollment_id = str(candidates[0].get("enrollmentId", candidates[0].get("id", "")))
+    if not re.fullmatch(r"[0-9a-f]{32}", enrollment_id):
+        raise RuntimeError("authorization probe enrollment ID was invalid")
+    status, approval = control_json(
+        "POST", control_url, f"/api/v2/enrollments/{enrollment_id}/approve", {
+            "pairingCode": pairing["pairingCode"], "cameraGrants": [{
+                "cameraId": camera_id, "profileIds": [profile_id],
+                "permissions": ["view"], "credentialMode": "existing",
+            }],
+        })
+    client_id = str(approval.get("clientId", ""))
+    if status != 200 or not re.fullmatch(r"[A-Za-z0-9._-]{1,64}", client_id):
+        raise RuntimeError("authorization probe approval failed")
+    playback_log, playback = wait_for_document(
+        serial, "authorization-playback-ready", time.monotonic() + 45)
+    if playback.get("streamCount") != 1:
+        raise RuntimeError("authorized client did not start exactly one True Direct stream")
+    if expected_stop == "revoked":
+        status, revoked = control_json("DELETE", control_url, f"/api/v2/clients/{client_id}")
+        if status != 200 or revoked.get("status") != "revoked":
+            raise RuntimeError("online client revocation failed")
+        stop_deadline = time.monotonic() + 12
+    else:
+        stop_deadline = time.monotonic() + 125
+    stopped_log, stopped = wait_for_document(serial, "authorization-stopped", stop_deadline)
+    if stopped.get("state") != expected_stop or stopped.get("streamCount") != 0:
+        raise RuntimeError("authorization stop did not clear the active media pipeline")
+    if any(value in pairing_log + playback_log + stopped_log for value in ("rtsp://", "rtsps://")):
+        raise RuntimeError("authorization probe log exposed a media endpoint")
+    adb(serial, "shell", "am", "force-stop", PACKAGE)
+    return {"state": expected_stop, "clientIdLength": len(client_id)}
+
+
 def write_evidence(path: Path, document: dict) -> None:
     target = DESKTOP.validate_evidence_path(path)
     target.parent.mkdir(parents=True, exist_ok=True)
@@ -269,6 +362,9 @@ def main() -> int:
     parser.add_argument("--apksigner", type=Path, required=True)
     parser.add_argument("--vpn-connect-helper", type=Path, required=True)
     parser.add_argument("--vpn-disconnect-helper", type=Path, required=True)
+    parser.add_argument("--grant-camera-id", required=True)
+    parser.add_argument("--grant-profile-id", required=True)
+    parser.add_argument("--expiry-control-url", required=True)
     parser.add_argument("--control-url", default=os.environ.get("WEBOBS_REFERENCE_CONTROL_URL", ""))
     arguments = parser.parse_args()
     for artifact in (arguments.apk, arguments.driver_apk, arguments.manifest,
@@ -287,6 +383,10 @@ def main() -> int:
     if not arguments.control_url:
         raise SystemExit("reference control URL is required for zero-server-media evidence")
     control_url = DESKTOP.validate_control_url(arguments.control_url)
+    expiry_control_url = DESKTOP.validate_control_url(arguments.expiry_control_url)
+    if not re.fullmatch(r"[A-Za-z0-9._-]{1,64}", arguments.grant_camera_id) or \
+            not re.fullmatch(r"[A-Za-z0-9._-]{1,64}", arguments.grant_profile_id):
+        raise SystemExit("authorization Camera/Profile IDs are invalid")
     DESKTOP.validate_control_credentials()
     state = adb(arguments.serial, "get-state").strip()
     api = int(adb(arguments.serial, "shell", "getprop", "ro.build.version.sdk").strip())
@@ -301,6 +401,7 @@ def main() -> int:
     digest = hashlib.sha256(arguments.manifest.read_bytes()).hexdigest()[:16]
     remote = f"/data/local/tmp/webobs-m3-{digest}.json"
     baseline = DESKTOP.server_processes(control_url)
+    expiry_baseline = DESKTOP.server_processes(expiry_control_url)
     temperatures: list[int] = []
     server_samples = 0
     final_log = ""
@@ -488,6 +589,18 @@ def main() -> int:
         if any(stream["endpoint"] in lock_log for stream in manifest["streams"]):
             raise RuntimeError("Android lock-screen log exposed a private endpoint")
 
+        revoked_authorization = approve_authorization_probe(
+            arguments.serial, remote, control_url, arguments.grant_camera_id,
+            arguments.grant_profile_id, "revoked")
+        if not DESKTOP.same_server_media(baseline, DESKTOP.server_processes(control_url)):
+            raise RuntimeError("Android online revocation changed server media sessions")
+        expired_authorization = approve_authorization_probe(
+            arguments.serial, remote, expiry_control_url, arguments.grant_camera_id,
+            arguments.grant_profile_id, "grant-expired")
+        if not DESKTOP.same_server_media(
+                expiry_baseline, DESKTOP.server_processes(expiry_control_url)):
+            raise RuntimeError("Android Grant expiry changed server media sessions")
+
         adb(arguments.serial, "shell", "pm", "revoke", PACKAGE,
             "android.permission.RECORD_AUDIO", check=False)
         adb(arguments.serial, "shell", "appops", "set", PACKAGE, "RECORD_AUDIO", "deny",
@@ -521,13 +634,16 @@ def main() -> int:
             "wifiReconnectMilliseconds": reconnect_wall_ms,
             "wifiReconnectedStreams": len(reconnected_names),
             "vpnHandoff": "vpn-to-wifi",
+            "onlineAuthorization": revoked_authorization["state"],
+            "offlineAuthorization": expired_authorization["state"],
             "rotationsTested": rotations_tested,
             "microphoneDeniedThenGranted": True, "streams": evidence_streams,
             "serverRtspSessionsBefore": baseline["rtspSessions"],
             "serverRtspSessionsAfter": final_server["rtspSessions"]})
         print("v2-M3 Android reference gate passed: 9 MediaCodec streams for 30 minutes, "
               "<2% drops, four rotations, <=10s Wi-Fi recovery, VPN handoff, no severe "
-              "thermal state, zero server media increment, and bounded lifecycle release/resume.")
+              "thermal state, Grant revoke/expiry, zero server media increment, and bounded "
+              "lifecycle release/resume.")
         return 0
     finally:
         try:

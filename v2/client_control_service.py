@@ -21,6 +21,7 @@ import sqlite3
 import struct
 import time
 import uuid
+from collections.abc import Mapping
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.error import HTTPError, URLError
@@ -41,7 +42,22 @@ KEY_PATH = Path(os.environ.get(
 MAX_BODY = 1024 * 1024
 MAX_REGISTRY_RESPONSE = 4 * 1024 * 1024
 ENROLLMENT_SECONDS = 10 * 60
-GRANT_SECONDS = 30 * 24 * 60 * 60
+DEFAULT_GRANT_SECONDS = 30 * 24 * 60 * 60
+
+
+def configured_grant_seconds(environment: Mapping[str, str]) -> int:
+    if environment.get("WEBOBS_V2_ACCEPTANCE_SHORT_GRANT") != "true":
+        return DEFAULT_GRANT_SECONDS
+    raw = environment.get("WEBOBS_V2_GRANT_SECONDS", "")
+    if not re.fullmatch(r"[0-9]{2,3}", raw):
+        raise RuntimeError("acceptance grant duration must be a bounded integer")
+    seconds = int(raw)
+    if not 30 <= seconds <= 120:
+        raise RuntimeError("acceptance grant duration must be between 30 and 120 seconds")
+    return seconds
+
+
+GRANT_SECONDS = configured_grant_seconds(os.environ)
 PLAN_SECONDS = 5 * 60
 ID_RE = re.compile(r"^[A-Za-z0-9._-]{1,64}$")
 PLATFORMS = {"windows", "linux", "android"}

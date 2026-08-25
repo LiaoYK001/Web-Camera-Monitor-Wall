@@ -194,6 +194,19 @@ class V2ClientControlTests(unittest.TestCase):
         })
         return enrollment, approved
 
+    def test_short_grants_require_explicit_bounded_acceptance_mode(self):
+        self.assertEqual(service.configured_grant_seconds({}), 30 * 24 * 60 * 60)
+        self.assertEqual(service.configured_grant_seconds({
+            "WEBOBS_V2_ACCEPTANCE_SHORT_GRANT": "true",
+            "WEBOBS_V2_GRANT_SECONDS": "45",
+        }), 45)
+        for value in ("", "29", "121", "not-a-number"):
+            with self.assertRaises(RuntimeError):
+                service.configured_grant_seconds({
+                    "WEBOBS_V2_ACCEPTANCE_SHORT_GRANT": "true",
+                    "WEBOBS_V2_GRANT_SECONDS": value,
+                })
+
     def test_signed_enrollment_rejects_forgery_and_replay(self):
         payload = self.keys.enrollment(os.urandom(32))
         enrollment = service.start_enrollment(payload)

@@ -144,6 +144,9 @@ jobs:
           WEBOBS_PRIVATE_HLS: ${{ secrets.WEBOBS_PRIVATE_HLS }}
           WEBOBS_PRIVATE_WHEP: ${{ secrets.WEBOBS_PRIVATE_WHEP }}
           WEBOBS_REFERENCE_CONTROL_URL: ${{ vars.WEBOBS_REFERENCE_CONTROL_URL }}
+          WEBOBS_ANDROID_EXPIRY_CONTROL_URL: ${{ vars.WEBOBS_ANDROID_EXPIRY_CONTROL_URL }}
+          WEBOBS_ANDROID_GRANT_CAMERA_ID: ${{ vars.WEBOBS_ANDROID_GRANT_CAMERA_ID }}
+          WEBOBS_ANDROID_GRANT_PROFILE_ID: ${{ vars.WEBOBS_ANDROID_GRANT_PROFILE_ID }}
           WEBOBS_REFERENCE_CONTROL_USERNAME: ${{ secrets.WEBOBS_REFERENCE_CONTROL_USERNAME }}
           WEBOBS_REFERENCE_CONTROL_PASSWORD: ${{ secrets.WEBOBS_REFERENCE_CONTROL_PASSWORD }}
           REFERENCE_MANIFEST: ${{ vars.WEBOBS_WINDOWS_REFERENCE_MANIFEST }}
@@ -384,6 +387,9 @@ jobs:
             --apksigner "$ANDROID_SDK_ROOT/build-tools/36.0.0/apksigner" \
             --vpn-connect-helper "$WEBOBS_ANDROID_VPN_CONNECT_HELPER" \
             --vpn-disconnect-helper "$WEBOBS_ANDROID_VPN_DISCONNECT_HELPER" \
+            --grant-camera-id "$WEBOBS_ANDROID_GRANT_CAMERA_ID" \
+            --grant-profile-id "$WEBOBS_ANDROID_GRANT_PROFILE_ID" \
+            --expiry-control-url "$WEBOBS_ANDROID_EXPIRY_CONTROL_URL" \
             --evidence "$RUNNER_TEMP/webobs-m3-android-private-evidence.json"
       - name: Generate SPDX SBOM and Sigstore bundles
         shell: bash

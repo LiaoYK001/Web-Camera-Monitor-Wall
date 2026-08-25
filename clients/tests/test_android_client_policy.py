@@ -15,6 +15,7 @@ KEYSTORE = ANDROID / "src" / "org" / "webobs" / "nativeclient" / "KeyStoreBridge
 QML = ROOT / "clients" / "qml" / "Main.qml"
 MEDIA_PIPELINE = ROOT / "clients" / "src" / "media_pipeline.cpp"
 CLIENT_CONTROLLER = ROOT / "clients" / "src" / "client_controller.cpp"
+CLIENT_AUTH_PROBE = ROOT / "clients" / "src" / "client_auth_probe.cpp"
 MAIN = ROOT / "clients" / "src" / "main.cpp"
 PROBE_ACTIVITY = (ANDROID / "src" / "org" / "webobs" / "nativeclient" /
                   "WebObsProbeActivity.java")
@@ -34,6 +35,7 @@ class AndroidClientPolicyTests(unittest.TestCase):
         cls.qml = QML.read_text(encoding="utf-8")
         cls.media_pipeline = MEDIA_PIPELINE.read_text(encoding="utf-8")
         cls.client_controller = CLIENT_CONTROLLER.read_text(encoding="utf-8")
+        cls.client_auth_probe = CLIENT_AUTH_PROBE.read_text(encoding="utf-8")
         cls.main = MAIN.read_text(encoding="utf-8")
         cls.probe_activity = PROBE_ACTIVITY.read_text(encoding="utf-8")
         cls.android_build = ANDROID_BUILD.read_text(encoding="utf-8")
@@ -92,6 +94,10 @@ class AndroidClientPolicyTests(unittest.TestCase):
         self.assertIn("EXTRA_FOREGROUND_RESUME", self.probe_activity)
         self.assertIn("EXTRA_MICROPHONE_PERMISSION", self.probe_activity)
         self.assertIn("EXTRA_NETWORK_STATUS", self.probe_activity)
+        self.assertIn("EXTRA_CLIENT_AUTH", self.probe_activity)
+        self.assertIn("authorization-stopped", self.client_auth_probe)
+        self.assertIn('https://127.0.0.1:1', self.client_auth_probe)
+        self.assertIn("controller.revokeLocalIdentity()", self.client_auth_probe)
 
     def test_android_keeps_the_qt_platform_and_media_has_a_stall_watchdog(self) -> None:
         platform_guard = self.main.index("#if !defined(Q_OS_ANDROID)")

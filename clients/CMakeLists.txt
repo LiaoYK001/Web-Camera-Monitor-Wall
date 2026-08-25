@@ -104,6 +104,7 @@ qt_add_executable(webobs-native
     include/webobs/client/topology_plan.hpp
     src/main.cpp
     src/batch_probe.cpp
+    src/client_auth_probe.cpp
     src/client_controller.cpp
     src/grant_codec.cpp
     src/media_pipeline.cpp

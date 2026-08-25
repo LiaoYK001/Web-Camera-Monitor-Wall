@@ -1,4 +1,5 @@
 #include "webobs/client/client_controller.hpp"
+#include "webobs/client/client_auth_probe.hpp"
 #include "webobs/client/batch_probe.hpp"
 #include "webobs/client/grant_codec.hpp"
 #include "webobs/client/media_pipeline.hpp"
@@ -29,6 +30,7 @@ int main(int argc, char *argv[])
             QByteArrayView(argv[index]) == QByteArrayView("--probe-endpoint-env") ||
             QByteArrayView(argv[index]) == QByteArrayView("--probe-manifest") ||
             QByteArrayView(argv[index]) == QByteArrayView("--probe-background-release") ||
+            QByteArrayView(argv[index]) == QByteArrayView("--probe-client-auth") ||
             QByteArrayView(argv[index]) == QByteArrayView("--probe-foreground-resume") ||
             QByteArrayView(argv[index]) == QByteArrayView("--probe-reconnect") ||
             QByteArrayView(argv[index]) == QByteArrayView("--verify-runtime"))
@@ -82,6 +84,19 @@ int main(int argc, char *argv[])
                       QStringLiteral("Restart a released Android batch when it returns foreground")});
     parser.addOption({QStringLiteral("probe-reconnect"),
                       QStringLiteral("Retry previously ready batch streams after a bounded outage")});
+    parser.addOption({QStringLiteral("probe-client-auth"),
+                      QStringLiteral("Exercise enrollment, encrypted authorization and stop policy")});
+    parser.addOption({QStringLiteral("probe-auth-offline"),
+                      QStringLiteral("Disconnect the control plane after authorized playback starts")});
+    parser.addOption({QStringLiteral("probe-control-url"),
+                      QStringLiteral("HTTPS control URL for the authorization probe"),
+                      QStringLiteral("url")});
+    parser.addOption({QStringLiteral("probe-camera-id"),
+                      QStringLiteral("Granted Camera ID for the authorization probe"),
+                      QStringLiteral("id")});
+    parser.addOption({QStringLiteral("probe-profile-id"),
+                      QStringLiteral("Granted Profile ID for the authorization probe"),
+                      QStringLiteral("id")});
     parser.addOption({QStringLiteral("probe-adapter"), QStringLiteral("rtsp, mjpeg, hls, or whep"),
                       QStringLiteral("adapter")});
     parser.addOption({QStringLiteral("probe-codec"), QStringLiteral("h264, h265, or mjpeg"),
@@ -232,6 +247,16 @@ int main(int argc, char *argv[])
             {QStringLiteral("pluginVersions"), plugin_versions},
             {QStringLiteral("requiredElements"), required.size()}}).toJson(QJsonDocument::Compact);
         return 0;
+    }
+    if (parser.isSet(QStringLiteral("probe-client-auth"))) {
+        const int result = webobs::client::run_client_auth_probe(
+            application, parser.value(QStringLiteral("probe-control-url")),
+            parser.value(QStringLiteral("probe-camera-id")),
+            parser.value(QStringLiteral("probe-profile-id")),
+            parser.isSet(QStringLiteral("probe-auth-offline")), error);
+        if (result != 0 && !error.isEmpty())
+            qCritical("authorization probe failed safely: %s", qPrintable(error.left(128)));
+        return result;
     }
     if (parser.isSet(QStringLiteral("probe-manifest"))) {
         const int result = webobs::client::run_batch_probe(
