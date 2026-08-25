@@ -19,6 +19,7 @@ jobs:
     outputs:
       package_version: ${{ steps.identity.outputs.package_version }}
       release_tag: ${{ steps.identity.outputs.release_tag }}
+      publish_allowed: ${{ steps.identity.outputs.publish_allowed }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -31,6 +32,8 @@ jobs:
         env:
           REF_TYPE: ${{ github.ref_type }}
           REF_NAME: ${{ github.ref_name }}
+          EVENT_NAME: ${{ github.event_name }}
+          COMMIT_SHA: ${{ github.sha }}
         run: |
           set -euo pipefail
           ./tests/run-public-audit.sh
@@ -39,15 +42,39 @@ jobs:
           python3 clients/tests/test_dependency_lock.py
           python3 clients/tests/test_exact_protocol_gate.py
           python3 clients/tests/test_desktop_reference_gate.py
+          python3 clients/tests/test_release_workflow_policy.py
           ./clients/tests/test-portable-checksums.sh
-          [[ "$REF_TYPE" == tag ]]
-          [[ "$REF_NAME" =~ ^v2\.[0-9]+(\.[0-9]+)?$ ]]
-          git fetch --no-tags origin main
-          git merge-base --is-ancestor "$GITHUB_SHA" origin/main
-          numeric="${REF_NAME#v}"
-          if [[ "$numeric" =~ ^[0-9]+\.[0-9]+$ ]]; then numeric="$numeric.0"; fi
-          echo "package_version=$numeric" >> "$GITHUB_OUTPUT"
-          echo "release_tag=$REF_NAME" >> "$GITHUB_OUTPUT"
+          package_version=
+          release_tag=
+          publish_allowed=false
+          case "$EVENT_NAME" in
+            push)
+              [[ "$REF_TYPE" == tag ]]
+              [[ "$REF_NAME" =~ ^v2\.[0-9]+(\.[0-9]+)?$ ]]
+              git fetch --no-tags origin main
+              git merge-base --is-ancestor "$COMMIT_SHA" origin/main
+              package_version="${REF_NAME#v}"
+              if [[ "$package_version" =~ ^[0-9]+\.[0-9]+$ ]]; then
+                package_version="$package_version.0"
+              fi
+              release_tag="$REF_NAME"
+              publish_allowed=true
+              ;;
+            workflow_dispatch)
+              # Qualification builds may run only from the exact protected dev
+              # tip. They produce signed candidate artifacts but never a Release.
+              [[ "$REF_TYPE" == branch && "$REF_NAME" == dev ]]
+              git fetch --no-tags origin dev
+              [[ "$(git rev-parse origin/dev)" == "$COMMIT_SHA" ]]
+              package_version="2.0.0-dev.sha.${COMMIT_SHA:0:12}"
+              ;;
+            *)
+              exit 1
+              ;;
+          esac
+          echo "package_version=$package_version" >> "$GITHUB_OUTPUT"
+          echo "release_tag=$release_tag" >> "$GITHUB_OUTPUT"
+          echo "publish_allowed=$publish_allowed" >> "$GITHUB_OUTPUT"
 
   windows:
     needs: audit
@@ -98,6 +125,9 @@ jobs:
           SODIUM_ROOT: ${{ vars.WEBOBS_WINDOWS_SODIUM_ROOT }}
           CERTIFICATE_SHA1: ${{ secrets.WEBOBS_WINDOWS_CERTIFICATE_SHA1 }}
         run: |
+          if ($env:CERTIFICATE_SHA1 -notmatch '^[0-9A-Fa-f]{40}$') {
+            throw 'Native qualification and stable release packages require a reviewed Authenticode certificate selector'
+          }
           ./clients/packaging/windows/build.ps1 `
             -Version '${{ needs.audit.outputs.package_version }}' `
             -QtRoot $env:QT_ROOT -GStreamerRoot $env:GSTREAMER_ROOT `
@@ -259,6 +289,7 @@ jobs:
 
   publish:
     needs: [audit, windows, linux, linux-acceptance]
+    if: needs.audit.outputs.publish_allowed == 'true'
     runs-on: ubuntu-24.04
     permissions:
       contents: write

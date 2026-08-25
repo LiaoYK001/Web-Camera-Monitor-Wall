@@ -50,6 +50,6 @@ Recommended protection:
 - `sha-xxxxxxxxxxxx`: immutable source identity for either branch / 任一分支的不可变源码身份。
 - `@sha256:...`: production deployment lock / 生产部署锁定方式。
 
-The repository's release workflow remains tag-driven. Creating a local branch or milestone label does not authorize publishing `latest`; maintainers must verify branch ancestry, a clean worktree, public-repository audit, corresponding source, SBOM and provenance before release.
+Stable publication remains tag-driven. The native-client workflow may be dispatched manually only against the exact protected `dev` tip to produce signed M2 qualification artifacts; that path cannot create a GitHub Release or publish a stable alias. Creating a local branch or milestone label does not authorize publishing `latest`; maintainers must verify branch ancestry, a clean worktree, public-repository audit, corresponding source, SBOM and provenance before release.
 
-仓库发布工作流继续由 Tag 驱动。仅创建本地分支或里程碑名称并不授权发布 `latest`；维护者必须在发布前验证分支祖先关系、干净工作树、公开仓库审计、对应源码、SBOM 与 provenance。
+稳定发布继续由 Tag 驱动。原生客户端工作流只允许对受保护 `dev` 的精确 HEAD 手工触发，以生成 M2 签名资格验收产物；该路径不能创建 GitHub Release 或发布稳定别名。仅创建本地分支或里程碑名称并不授权发布 `latest`；维护者必须在发布前验证分支祖先关系、干净工作树、公开仓库审计、对应源码、SBOM 与 provenance。

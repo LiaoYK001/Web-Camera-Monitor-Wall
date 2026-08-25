@@ -92,7 +92,7 @@ docker login ghcr.io
 
 ## 7. v2 桌面客户端发布 Runner
 
-原生客户端使用独立标签 `webobs-desktop-builder`。Windows 构建机必须是 Windows 11 x86_64，并增加 `windows-11`；Fedora 验收机分别增加 `fedora-current`、`fedora-previous`。这些机器同样只接受可从 `main` 到达的受保护 v2 Tag，不得运行未知 Fork PR。
+原生客户端使用独立标签 `webobs-desktop-builder`。Windows 构建机必须是 Windows 11 x86_64，并增加 `windows-11`；Fedora 验收机分别增加 `fedora-current`、`fedora-previous`。这些机器只接受两类入口：可从 `main` 到达的受保护 v2 SemVer Tag，或维护者从 GitHub UI 对受保护 `dev` 精确 HEAD 发起的手工资格验收；不得运行未知 Fork PR、任意分支或落后于远端 `dev` 的提交。
 
 ```text
 Windows build + acceptance:
@@ -156,4 +156,6 @@ GStreamer core/base/good/bad/ugly/libav、固定 Rust 插件源码包及 Windows
 
 精确协议与 30 分钟硬件门禁只读取受保护 Secret/Runner 本地文件。五种私有端点通过 `WEBOBS_PRIVATE_RTSP_H264`、`WEBOBS_PRIVATE_RTSP_H265`、`WEBOBS_PRIVATE_MJPEG`、`WEBOBS_PRIVATE_HLS`、`WEBOBS_PRIVATE_WHEP` 提供；17 路参考清单由 `WEBOBS_WINDOWS_REFERENCE_MANIFEST` 或 `WEBOBS_LINUX_REFERENCE_MANIFEST` 指向 Runner 本地文件，清单引用的每个凭据环境变量都必须非空。脚本只输出协议名、解码器、帧数和掉帧统计，不输出端点、凭据或私有证据文件。证据路径必须是 Git 工作区之外尚不存在的绝对路径，POSIX 上以 `0600` 原子落盘；长时间客户端输出写入有大小上限的私有临时文件，避免管道堵塞。`WEBOBS_REFERENCE_CONTROL_URL` 是必填项，用于比较观看前后服务端 RTSP/媒体进程计数；远端必须使用 HTTPS，仅回环地址可用 HTTP，控制用户名与密码必须成对放入 Secret。
 
-稳定 v2 Tag 的发布顺序固定为：公开审计 → Windows/Fedora 构建与签名 → 固定运行时五协议 → Windows 11 与两个 Fedora 版本的 30 分钟硬件/零服务端增量门禁 → SBOM/Sigstore/GitHub attestation → 附加到不可变 GitHub Release。任一平台或证据失败都不会进入 `publish`。
+在 M2 阶段，从 Actions 页面选择 `Release native clients`，以 `dev` 分支执行 `Run workflow`。审计 job 会再次读取远端 `dev`，要求当前提交与其精确 HEAD 相同；候选版本使用 `2.0.0-dev.sha.<commit>`，随后执行 Windows/Fedora 签名构建、五协议及三平台 30 分钟门禁，并只保存为 Actions 候选 Artifact，不创建 Tag、GitHub Release 或稳定别名。Windows 候选包也强制要求 Authenticode 证书，不能用未签名开发包冒充 M2 证据。
+
+M1～M3 全部完成并合入 `main` 后，稳定 v2 Tag 的发布顺序固定为：公开审计 → Windows/Fedora 构建与签名 → 固定运行时五协议 → Windows 11 与两个 Fedora 版本的 30 分钟硬件/零服务端增量门禁 → SBOM/Sigstore/GitHub attestation → 附加到不可变 GitHub Release。只有来自 `main` 的受保护 SemVer Tag 才允许进入 `publish`；手工 `dev` 资格验收和任一失败 job 都不会发布 Release。
