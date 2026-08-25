@@ -368,6 +368,8 @@ jobs:
         env:
           WEBOBS_ANDROID_DEVICE_SERIAL: ${{ vars.WEBOBS_ANDROID_DEVICE_SERIAL }}
           WEBOBS_ANDROID_REFERENCE_MANIFEST: ${{ vars.WEBOBS_ANDROID_REFERENCE_MANIFEST }}
+          WEBOBS_ANDROID_VPN_CONNECT_HELPER: ${{ vars.WEBOBS_ANDROID_VPN_CONNECT_HELPER }}
+          WEBOBS_ANDROID_VPN_DISCONNECT_HELPER: ${{ vars.WEBOBS_ANDROID_VPN_DISCONNECT_HELPER }}
           WEBOBS_REFERENCE_CONTROL_URL: ${{ vars.WEBOBS_REFERENCE_CONTROL_URL }}
           WEBOBS_REFERENCE_CONTROL_USERNAME: ${{ secrets.WEBOBS_REFERENCE_CONTROL_USERNAME }}
           WEBOBS_REFERENCE_CONTROL_PASSWORD: ${{ secrets.WEBOBS_REFERENCE_CONTROL_PASSWORD }}
@@ -380,6 +382,8 @@ jobs:
             --manifest "$WEBOBS_ANDROID_REFERENCE_MANIFEST" \
             --serial "$WEBOBS_ANDROID_DEVICE_SERIAL" \
             --apksigner "$ANDROID_SDK_ROOT/build-tools/36.0.0/apksigner" \
+            --vpn-connect-helper "$WEBOBS_ANDROID_VPN_CONNECT_HELPER" \
+            --vpn-disconnect-helper "$WEBOBS_ANDROID_VPN_DISCONNECT_HELPER" \
             --evidence "$RUNNER_TEMP/webobs-m3-android-private-evidence.json"
       - name: Generate SPDX SBOM and Sigstore bundles
         shell: bash

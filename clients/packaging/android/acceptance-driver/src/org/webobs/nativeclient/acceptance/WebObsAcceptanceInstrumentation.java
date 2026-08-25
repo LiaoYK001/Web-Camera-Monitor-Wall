@@ -45,6 +45,8 @@ public final class WebObsAcceptanceInstrumentation extends Instrumentation {
                     arguments.getString("foregroundResume", "false").equals("true"));
             intent.putExtra("org.webobs.nativeclient.extra.PROBE_MICROPHONE_PERMISSION",
                     arguments.getString("microphonePermission", "false").equals("true"));
+            intent.putExtra("org.webobs.nativeclient.extra.PROBE_NETWORK_STATUS",
+                    arguments.getString("networkStatus", "false").equals("true"));
             boolean resumeOnly = arguments.getString("resumeOnly", "false").equals("true");
             intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | (resumeOnly ?
                     Intent.FLAG_ACTIVITY_REORDER_TO_FRONT | Intent.FLAG_ACTIVITY_SINGLE_TOP :

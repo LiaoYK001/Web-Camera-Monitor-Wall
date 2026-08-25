@@ -1,6 +1,7 @@
 package org.webobs.nativeclient;
 
 import android.os.Bundle;
+import android.content.Intent;
 import android.util.Log;
 
 import java.io.File;
@@ -18,6 +19,8 @@ public final class WebObsProbeActivity extends WebObsActivity {
             "org.webobs.nativeclient.extra.PROBE_FOREGROUND_RESUME";
     public static final String EXTRA_MICROPHONE_PERMISSION =
             "org.webobs.nativeclient.extra.PROBE_MICROPHONE_PERMISSION";
+    public static final String EXTRA_NETWORK_STATUS =
+            "org.webobs.nativeclient.extra.PROBE_NETWORK_STATUS";
     private static final int MAX_MANIFEST_BYTES = 1024 * 1024;
     private File privateManifest;
 
@@ -66,6 +69,16 @@ public final class WebObsProbeActivity extends WebObsActivity {
         }
         if (backgroundRelease) {
             KeyStoreBridge.setWakeLock(true);
+        }
+    }
+
+    @Override
+    protected void onNewIntent(Intent intent) {
+        super.onNewIntent(intent);
+        setIntent(intent);
+        if (intent != null && intent.getBooleanExtra(EXTRA_NETWORK_STATUS, false)) {
+            Log.i("WebObsProbe", "{\"result\":\"network-status\",\"status\":\"" +
+                    networkStatus() + "\"}");
         }
     }
 

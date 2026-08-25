@@ -91,6 +91,7 @@ class AndroidClientPolicyTests(unittest.TestCase):
         self.assertIn("EXTRA_RECONNECT", self.probe_activity)
         self.assertIn("EXTRA_FOREGROUND_RESUME", self.probe_activity)
         self.assertIn("EXTRA_MICROPHONE_PERMISSION", self.probe_activity)
+        self.assertIn("EXTRA_NETWORK_STATUS", self.probe_activity)
 
     def test_android_keeps_the_qt_platform_and_media_has_a_stall_watchdog(self) -> None:
         platform_guard = self.main.index("#if !defined(Q_OS_ANDROID)")

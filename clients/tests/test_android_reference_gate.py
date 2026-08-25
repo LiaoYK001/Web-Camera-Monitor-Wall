@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import importlib.util
+import tempfile
 import unittest
 from unittest import mock
 from pathlib import Path
@@ -73,6 +74,33 @@ class AndroidReferenceGateTests(unittest.TestCase):
         with mock.patch.object(MODULE, "adb", return_value=""):
             self.assertFalse(MODULE.package_installed("fixture", MODULE.PACKAGE))
 
+    def test_vpn_helpers_must_remain_outside_the_public_worktree(self) -> None:
+        with self.assertRaises(ValueError):
+            MODULE.validate_private_helper(MODULE_PATH)
+        with tempfile.TemporaryDirectory() as directory:
+            helper = Path(directory) / "vpn-helper"
+            helper.write_text("private helper fixture", encoding="utf-8")
+            with mock.patch.object(MODULE.os, "access", return_value=True):
+                self.assertEqual(MODULE.validate_private_helper(helper), helper.resolve())
+
+    def test_vpn_helper_receives_no_webobs_secret_environment(self) -> None:
+        completed = MODULE.subprocess.CompletedProcess(["helper"], 0, "", "")
+        with mock.patch.dict(MODULE.os.environ,
+                             {"PATH": "/fixture/bin", "WEBOBS_PRIVATE_SECRET": "do-not-pass"},
+                             clear=True), \
+                mock.patch.object(MODULE.subprocess, "run", return_value=completed) as invoke:
+            MODULE.run_private_helper(Path("/private/helper"), "usb-serial")
+        environment = invoke.call_args.kwargs["env"]
+        self.assertEqual(environment, {"PATH": "/fixture/bin"})
+
+    def test_network_status_probe_requires_the_expected_transition(self) -> None:
+        documents = [{"result": "network-status", "status": "vpn"}]
+        with mock.patch.object(MODULE, "emit_network_status"), \
+                mock.patch.object(MODULE, "log_documents", return_value=("", documents)):
+            value = MODULE.wait_for_network_status(
+                "fixture", "/private/manifest", "vpn", MODULE.time.monotonic() + 1)
+        self.assertEqual(value["status"], "vpn")
+
     def test_all_streams_must_report_reconnected(self) -> None:
         documents = [{"result": "reconnected", "name": "one"},
                      {"result": "reconnected", "name": "two"}]
@@ -87,6 +115,7 @@ class AndroidReferenceGateTests(unittest.TestCase):
                          "microphone-permission", "wifiReconnectMilliseconds",
                          "lockScreenReleaseMilliseconds", "rotationsTested",
                          "foreground-resumed", "foregroundResumeWallMilliseconds",
+                         "vpnHandoff", "vpn-connect-helper", "network-status",
                          "dedicated reference device", "uninstall\", PACKAGE"):
             self.assertIn(required, source)
 

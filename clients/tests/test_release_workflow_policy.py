@@ -53,6 +53,9 @@ class NativeReleaseWorkflowPolicyTests(unittest.TestCase):
         self.assertIn("  android:\n", self.text)
         self.assertIn("run-android-reference-gate.py", self.text)
         self.assertIn("build-acceptance-driver.sh", self.text)
+        self.assertIn("WEBOBS_ANDROID_VPN_CONNECT_HELPER", self.text)
+        self.assertIn("WEBOBS_ANDROID_VPN_DISCONNECT_HELPER", self.text)
+        self.assertIn('--vpn-connect-helper "$WEBOBS_ANDROID_VPN_CONNECT_HELPER"', self.text)
         self.assertIn("needs: [audit, windows, linux, linux-acceptance, android]", self.text)
         upload = re.search(r"name: native-android-.*?if-no-files-found: error",
                            self.text, re.DOTALL)

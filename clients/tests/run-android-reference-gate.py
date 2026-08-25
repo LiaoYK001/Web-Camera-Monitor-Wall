@@ -192,6 +192,50 @@ def package_installed(serial: str, package: str) -> bool:
     return any(line.startswith("package:") for line in output.splitlines())
 
 
+def validate_private_helper(path: Path) -> Path:
+    resolved = path.resolve(strict=True)
+    try:
+        resolved.relative_to(ROOT.resolve())
+    except ValueError:
+        pass
+    else:
+        raise ValueError("VPN helper must remain outside the public worktree")
+    if not resolved.is_file() or not os.access(resolved, os.X_OK):
+        raise ValueError("VPN helper must be an executable private file")
+    return resolved
+
+
+def run_private_helper(path: Path, serial: str) -> None:
+    helper_environment = {name: os.environ[name] for name in (
+        "PATH", "LANG", "LC_ALL", "ANDROID_HOME", "ANDROID_SDK_ROOT",
+        "ADB_SERVER_SOCKET") if name in os.environ}
+    result = subprocess.run([str(path), serial], capture_output=True, text=True,
+                            encoding="utf-8", errors="replace", timeout=60, check=False,
+                            env=helper_environment, cwd=path.parent)
+    if result.returncode != 0 or result.stdout or result.stderr:
+        raise RuntimeError("private VPN helper failed or emitted unsafe output")
+
+
+def emit_network_status(serial: str, remote_manifest: str) -> None:
+    adb(serial, "shell", "am", "instrument", "-w", "-r",
+        "-e", "manifestPath", remote_manifest,
+        "-e", "resumeOnly", "true", "-e", "networkStatus", "true",
+        INSTRUMENTATION, timeout=60)
+
+
+def wait_for_network_status(serial: str, remote_manifest: str, expected: str,
+                            deadline: float) -> dict:
+    while time.monotonic() < deadline:
+        emit_network_status(serial, remote_manifest)
+        _, documents = log_documents(serial)
+        for document in reversed(documents):
+            if document.get("result") == "network-status" and \
+                    document.get("status") == expected:
+                return document
+        time.sleep(0.5)
+    raise RuntimeError(f"Android network status did not become {expected!r}")
+
+
 def write_evidence(path: Path, document: dict) -> None:
     target = DESKTOP.validate_evidence_path(path)
     target.parent.mkdir(parents=True, exist_ok=True)
@@ -223,6 +267,8 @@ def main() -> int:
     parser.add_argument("--evidence", type=Path, required=True)
     parser.add_argument("--serial", required=True)
     parser.add_argument("--apksigner", type=Path, required=True)
+    parser.add_argument("--vpn-connect-helper", type=Path, required=True)
+    parser.add_argument("--vpn-disconnect-helper", type=Path, required=True)
     parser.add_argument("--control-url", default=os.environ.get("WEBOBS_REFERENCE_CONTROL_URL", ""))
     arguments = parser.parse_args()
     for artifact in (arguments.apk, arguments.driver_apk, arguments.manifest,
@@ -230,6 +276,11 @@ def main() -> int:
         if not artifact.is_file():
             raise SystemExit(f"required private gate input is missing: {artifact.name}")
     manifest = validate_manifest(DESKTOP.unique_json(arguments.manifest))
+    try:
+        vpn_connect_helper = validate_private_helper(arguments.vpn_connect_helper)
+        vpn_disconnect_helper = validate_private_helper(arguments.vpn_disconnect_helper)
+    except (OSError, ValueError) as error:
+        raise SystemExit(str(error)) from error
     if certificate_digest(arguments.apksigner, arguments.apk) != \
             certificate_digest(arguments.apksigner, arguments.driver_apk):
         raise SystemExit("client and private acceptance driver signatures differ")
@@ -261,6 +312,7 @@ def main() -> int:
     wifi_toggled = False
     client_installed = False
     driver_installed = False
+    vpn_connected = False
     try:
         adb(arguments.serial, "install", "-r", "--no-streaming", str(arguments.apk), timeout=180)
         client_installed = True
@@ -355,6 +407,34 @@ def main() -> int:
         if not DESKTOP.same_server_media(baseline, DESKTOP.server_processes(control_url)):
             raise RuntimeError("Android reconnect gate changed server media sessions")
 
+        vpn_manifest = dict(manifest)
+        vpn_manifest["durationSeconds"] = 60
+        with tempfile.NamedTemporaryFile("w", encoding="utf-8", suffix=".json",
+                                         delete=False) as handle:
+            vpn_path = Path(handle.name)
+            json.dump(vpn_manifest, handle)
+        try:
+            adb(arguments.serial, "push", str(vpn_path), remote, timeout=60)
+        finally:
+            vpn_path.unlink(missing_ok=True)
+        launch_probe(arguments.serial, remote, False, reconnect=True)
+        wait_for_document(arguments.serial, "ready", time.monotonic() + 45)
+        run_private_helper(vpn_connect_helper, arguments.serial)
+        vpn_connected = True
+        wait_for_network_status(arguments.serial, remote, "vpn", time.monotonic() + 15)
+        run_private_helper(vpn_disconnect_helper, arguments.serial)
+        vpn_connected = False
+        wait_for_network_status(arguments.serial, remote, "wifi", time.monotonic() + 15)
+        vpn_log, vpn_passed = wait_for_document(
+            arguments.serial, "passed", time.monotonic() + 75)
+        if vpn_passed.get("processCount") != 1 or \
+                len(vpn_passed.get("streams", [])) != 9:
+            raise RuntimeError("Android VPN handoff did not preserve all nine streams")
+        if any(stream["endpoint"] in vpn_log for stream in manifest["streams"]):
+            raise RuntimeError("Android VPN handoff log exposed a private endpoint")
+        if not DESKTOP.same_server_media(baseline, DESKTOP.server_processes(control_url)):
+            raise RuntimeError("Android VPN handoff changed server media sessions")
+
         short = dict(manifest)
         short["durationSeconds"] = 60
         with tempfile.NamedTemporaryFile("w", encoding="utf-8", suffix=".json",
@@ -440,16 +520,22 @@ def main() -> int:
             "lockScreenReleaseWallMilliseconds": lock_release_wall_ms,
             "wifiReconnectMilliseconds": reconnect_wall_ms,
             "wifiReconnectedStreams": len(reconnected_names),
+            "vpnHandoff": "vpn-to-wifi",
             "rotationsTested": rotations_tested,
             "microphoneDeniedThenGranted": True, "streams": evidence_streams,
             "serverRtspSessionsBefore": baseline["rtspSessions"],
             "serverRtspSessionsAfter": final_server["rtspSessions"]})
         print("v2-M3 Android reference gate passed: 9 MediaCodec streams for 30 minutes, "
-              "<2% drops, four rotations, <=10s Wi-Fi recovery, no severe thermal state, "
-              "zero server media increment, and <=5s background/lock-screen release.")
+              "<2% drops, four rotations, <=10s Wi-Fi recovery, VPN handoff, no severe "
+              "thermal state, zero server media increment, and bounded lifecycle release/resume.")
         return 0
     finally:
         try:
+            if vpn_connected:
+                try:
+                    run_private_helper(vpn_disconnect_helper, arguments.serial)
+                except (OSError, RuntimeError, subprocess.SubprocessError):
+                    pass
             if wifi_toggled:
                 set_wifi_enabled(arguments.serial, True)
             if original_accelerometer_rotation in {"0", "1"}:
