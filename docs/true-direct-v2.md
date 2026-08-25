@@ -1,6 +1,6 @@
 # v2 True Direct architecture / v2 真直连架构
 
-> Status / 状态：`v2-M1` implementation in progress on `dev`; not yet accepted / `dev` 正在实施 `v2-M1`，尚未完成验收
+> Status / 状态：`v2-M1` complete on `dev`; `v2-M2` desktop release qualification is in progress / `dev` 已完成 `v2-M1`，正在执行 `v2-M2` 桌面发布验收
 >
 > Current implementation / 当前实现：v1 provides **Gateway Direct / Direct Relay**, not True Direct / v1 提供的是**网关直通**，不是真直连
 
@@ -71,20 +71,19 @@ Every source exposes the selected topology, reason, decoder, renderer, encoder, 
 
 ## 6. Acceptance gate / 完成门禁
 
-`v2-M1` cannot claim True Direct until all of these are automated or repeatably evidenced:
+`v2-M1` was accepted after all of these architecture requirements were automated or repeatably evidenced:
 
-只有下列条件均获得自动化或可重复证据后，`v2-M1` 才能宣称真直连：
+下列架构条件均获得自动化或可重复证据后，`v2-M1` 已通过验收：
 
 - For an active True Direct camera, Docker has no camera upstream session, MediaMTX reader, FFmpeg transcoder, libobs source or Program encoder attributable to that view / 真直连画面活动时，Docker 内不存在归属于该画面的摄像机上游会话、MediaMTX reader、FFmpeg 转码器、libobs 来源或 Program 编码器。
 - Server interface counters or packet capture show zero video payload bytes for the session after bounded control/bootstrap exchange / 有界控制或启动交换结束后，服务端网卡计数或抓包证明该会话的视频负载字节为零。
 - The UI and API report `true-direct`; any fallback changes the visible mode and reason before media starts / UI 与 API 报告 `true-direct`；任何回退都必须在媒体开始前改变可见模式并说明原因。
-- Local hardware decode, multi-tile layout and reconnect pass on published Android/desktop reference profiles / 本地硬解、多宫格布局与重连在公开 Android/桌面参考配置上通过。
 - An enrolled client can start from its encrypted cache while Docker is unavailable, within a documented offline authorization window / 已配对客户端可在 Docker 不可用时从加密缓存启动，并遵守公开的离线授权时限。
 - Credential, origin, loopback, revocation, downgrade and public-repository redaction tests pass / 凭据、Origin、回环、撤销、降级与公开仓库脱敏测试通过。
 
-The API/grant/planner and administrator approval UI pass deterministic cryptographic, proxy and WebUI gates. `tests/run-v2-true-direct.{sh,ps1}` puts the True Direct Docker service on a control-only network, completes enrollment and an encrypted Grant, then runs the production native pipeline for H.264/H.265 RTSP, Server Push MJPEG and HLS. Each probe must decode continuous buffers; the H.264 probe also records stream-copy MKV, remuxes it to MP4 and decodes the result. A separate fallback service proves explicit activation, authenticated WHEP route construction, rejection of forged/stale access, release and route/process cleanup. Its synthetic SDP may be rejected by the upstream and therefore is not decoded-WHEP evidence. The same public fixture keeps one NVR RTSP upstream active while 16 concurrent client-side viewers decode the camera, samples server media state every second, and requires the upstream/helper signature to remain unchanged. Exact GStreamer 1.28.6 decoded WHEP and platform hardware gates remain private release evidence. Until those pass, product text must say **True Direct development preview** and must not describe Gateway Direct as server-bypass delivery.
+The API/grant/planner and administrator approval UI pass deterministic cryptographic, proxy and WebUI gates. `tests/run-v2-true-direct.{sh,ps1}` puts the True Direct Docker service on a control-only network, completes enrollment and an encrypted Grant, then runs the production native pipeline for H.264/H.265 RTSP, Server Push MJPEG and HLS. Each probe decodes continuous buffers; the H.264 probe also records stream-copy MKV, remuxes it to MP4 and decodes the result. A separate fallback service proves explicit activation, authenticated WHEP route construction, forged/stale access rejection, release and route/process cleanup. The same public fixture keeps one NVR RTSP upstream active while 16 concurrent client-side viewers decode the camera, samples server media state every second, and requires the upstream/helper signature to remain unchanged. An exact Fedora runtime with Qt 6.11.2, GStreamer 1.28.6 and the locked Rust plug-ins additionally decodes non-black WHEP video. Platform hardware, thirty-minute 16+1 load and signed package gates belong to v2-M2 and remain open; this does not reopen the v2-M1 topology contract and never permits Gateway Direct to be described as server-bypass delivery.
 
-API/Grant/规划器与管理员批准界面已通过确定性密码学、代理及 WebUI 门禁。`tests/run-v2-true-direct.{sh,ps1}` 会让真直连 Docker 服务只接控制网络，完成配对与加密 Grant，再以生产本地管线运行 H.264/H.265 RTSP、Server Push MJPEG 和 HLS；每个探针必须连续解码，H.264 还会 stream-copy 录制 MKV、remux 为 MP4 并再次解码。独立后备服务会验证显式激活、受认证 WHEP 建路、伪造/陈旧访问拒绝、释放及路由/进程清理；其合成 SDP 可能被上游拒绝，因而不属于已解码 WHEP 证据。同一公开夹具会保持一路 NVR RTSP 上游，让 16 个客户端观看端并发直解摄像机，并每秒采样服务端媒体状态，要求上游与 helper 特征始终不变。固定 GStreamer 1.28.6 的已解码 WHEP 及平台硬件门禁仍是私有发布证据。在其通过前，产品文案只能写“真直连开发预览”，不得把网关直通描述为绕过服务端的数据路径。
+API/Grant/规划器与管理员批准界面已通过确定性密码学、代理及 WebUI 门禁。`tests/run-v2-true-direct.{sh,ps1}` 会让真直连 Docker 服务只接控制网络，完成配对与加密 Grant，再以生产本地管线运行 H.264/H.265 RTSP、Server Push MJPEG 和 HLS；每个探针会连续解码，H.264 还会 stream-copy 录制 MKV、remux 为 MP4 并再次解码。独立后备服务会验证显式激活、受认证 WHEP 建路、伪造/陈旧访问拒绝、释放及路由/进程清理。同一公开夹具会保持一路 NVR RTSP 上游，让 16 个客户端观看端并发直解摄像机，并每秒采样服务端媒体状态，要求上游与 helper 特征始终不变。使用 Qt 6.11.2、GStreamer 1.28.6 与固定 Rust 插件的精确 Fedora 运行时也已解码非黑 WHEP 画面。平台硬件、16+1 三十分钟负载及签名包门禁属于 v2-M2，仍待执行；它们不会重新打开 v2-M1 拓扑契约，也绝不允许把网关直通描述为绕过服务端的数据路径。
 
 Run the architecture fixture only with a locally built development image; it uses public synthetic credentials and endpoints and writes no private evidence:
 
