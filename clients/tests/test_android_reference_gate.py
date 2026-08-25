@@ -86,6 +86,7 @@ class AndroidReferenceGateTests(unittest.TestCase):
         for required in ("accelerometer_rotation", "KEYCODE_SLEEP", "svc\", \"wifi",
                          "microphone-permission", "wifiReconnectMilliseconds",
                          "lockScreenReleaseMilliseconds", "rotationsTested",
+                         "foreground-resumed", "foregroundResumeWallMilliseconds",
                          "dedicated reference device", "uninstall\", PACKAGE"):
             self.assertIn(required, source)
 

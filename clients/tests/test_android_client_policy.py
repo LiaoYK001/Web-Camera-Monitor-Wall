@@ -58,6 +58,8 @@ class AndroidClientPolicyTests(unittest.TestCase):
                      if item.attrib[ANDROID_NS + "name"].endswith("WebObsProbeActivity"))
         self.assertEqual(probe.attrib[ANDROID_NS + "permission"],
                          "org.webobs.nativeclient.permission.RUN_ACCEPTANCE")
+        self.assertEqual(probe.attrib[ANDROID_NS + "noHistory"], "false")
+        self.assertEqual(probe.attrib[ANDROID_NS + "launchMode"], "singleTop")
         declared = self.manifest.find("permission")
         self.assertEqual(declared.attrib[ANDROID_NS + "protectionLevel"], "signature")
 
@@ -87,6 +89,7 @@ class AndroidClientPolicyTests(unittest.TestCase):
         self.assertIn("wakeLock.isHeld()", self.keystore)
         self.assertIn("wakeLockActive", self.qml)
         self.assertIn("EXTRA_RECONNECT", self.probe_activity)
+        self.assertIn("EXTRA_FOREGROUND_RESUME", self.probe_activity)
         self.assertIn("EXTRA_MICROPHONE_PERMISSION", self.probe_activity)
 
     def test_android_keeps_the_qt_platform_and_media_has_a_stall_watchdog(self) -> None:

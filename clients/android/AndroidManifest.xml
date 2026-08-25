@@ -32,7 +32,8 @@
             android:exported="true"
             android:permission="org.webobs.nativeclient.permission.RUN_ACCEPTANCE"
             android:excludeFromRecents="true"
-            android:noHistory="true">
+            android:launchMode="singleTop"
+            android:noHistory="false">
             <meta-data android:name="android.app.lib_name" android:value="webobs-native" />
         </activity>
     </application>

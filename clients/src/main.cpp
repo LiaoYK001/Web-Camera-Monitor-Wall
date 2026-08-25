@@ -29,6 +29,7 @@ int main(int argc, char *argv[])
             QByteArrayView(argv[index]) == QByteArrayView("--probe-endpoint-env") ||
             QByteArrayView(argv[index]) == QByteArrayView("--probe-manifest") ||
             QByteArrayView(argv[index]) == QByteArrayView("--probe-background-release") ||
+            QByteArrayView(argv[index]) == QByteArrayView("--probe-foreground-resume") ||
             QByteArrayView(argv[index]) == QByteArrayView("--probe-reconnect") ||
             QByteArrayView(argv[index]) == QByteArrayView("--verify-runtime"))
             probe_requested = true;
@@ -77,6 +78,8 @@ int main(int argc, char *argv[])
                       QStringLiteral("absolute-json-path")});
     parser.addOption({QStringLiteral("probe-background-release"),
                       QStringLiteral("Stop all probe pipelines when Android enters background")});
+    parser.addOption({QStringLiteral("probe-foreground-resume"),
+                      QStringLiteral("Restart a released Android batch when it returns foreground")});
     parser.addOption({QStringLiteral("probe-reconnect"),
                       QStringLiteral("Retry previously ready batch streams after a bounded outage")});
     parser.addOption({QStringLiteral("probe-adapter"), QStringLiteral("rtsp, mjpeg, hls, or whep"),
@@ -89,6 +92,11 @@ int main(int argc, char *argv[])
                       QStringLiteral("Also exercise the production RTSP stream-copy recorder"),
                       QStringLiteral("absolute-path")});
     parser.process(application);
+    if (parser.isSet(QStringLiteral("probe-foreground-resume")) &&
+        !parser.isSet(QStringLiteral("probe-background-release"))) {
+        qCritical("foreground resume probe requires background release mode");
+        return 2;
+    }
     const bool endpoint_argument = parser.isSet(QStringLiteral("probe-endpoint"));
     const bool endpoint_environment = parser.isSet(QStringLiteral("probe-endpoint-env"));
     if ((endpoint_argument && endpoint_environment) ||
@@ -229,7 +237,8 @@ int main(int argc, char *argv[])
         const int result = webobs::client::run_batch_probe(
             application, parser.value(QStringLiteral("probe-manifest")), error,
             parser.isSet(QStringLiteral("probe-background-release")),
-            parser.isSet(QStringLiteral("probe-reconnect")));
+            parser.isSet(QStringLiteral("probe-reconnect")),
+            parser.isSet(QStringLiteral("probe-foreground-resume")));
         if (result != 0 && !error.isEmpty())
             qCritical("batch protocol probe failed safely: %s", qPrintable(error.left(128)));
         return result;

@@ -41,9 +41,14 @@ public final class WebObsAcceptanceInstrumentation extends Instrumentation {
                     arguments.getString("backgroundRelease", "false").equals("true"));
             intent.putExtra("org.webobs.nativeclient.extra.PROBE_RECONNECT",
                     arguments.getString("reconnect", "false").equals("true"));
+            intent.putExtra("org.webobs.nativeclient.extra.PROBE_FOREGROUND_RESUME",
+                    arguments.getString("foregroundResume", "false").equals("true"));
             intent.putExtra("org.webobs.nativeclient.extra.PROBE_MICROPHONE_PERMISSION",
                     arguments.getString("microphonePermission", "false").equals("true"));
-            intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_CLEAR_TASK);
+            boolean resumeOnly = arguments.getString("resumeOnly", "false").equals("true");
+            intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | (resumeOnly ?
+                    Intent.FLAG_ACTIVITY_REORDER_TO_FRONT | Intent.FLAG_ACTIVITY_SINGLE_TOP :
+                    Intent.FLAG_ACTIVITY_CLEAR_TASK));
             Activity activity = startActivitySync(intent);
             if (activity == null) {
                 throw new IllegalStateException("The signature-protected probe did not start");

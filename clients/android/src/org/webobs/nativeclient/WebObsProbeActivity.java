@@ -14,6 +14,8 @@ public final class WebObsProbeActivity extends WebObsActivity {
             "org.webobs.nativeclient.extra.PROBE_BACKGROUND_RELEASE";
     public static final String EXTRA_RECONNECT =
             "org.webobs.nativeclient.extra.PROBE_RECONNECT";
+    public static final String EXTRA_FOREGROUND_RESUME =
+            "org.webobs.nativeclient.extra.PROBE_FOREGROUND_RESUME";
     public static final String EXTRA_MICROPHONE_PERMISSION =
             "org.webobs.nativeclient.extra.PROBE_MICROPHONE_PERMISSION";
     private static final int MAX_MANIFEST_BYTES = 1024 * 1024;
@@ -25,6 +27,8 @@ public final class WebObsProbeActivity extends WebObsActivity {
                 getIntent().getBooleanExtra(EXTRA_BACKGROUND_RELEASE, false);
         boolean reconnect = getIntent() != null &&
                 getIntent().getBooleanExtra(EXTRA_RECONNECT, false);
+        boolean foregroundResume = getIntent() != null &&
+                getIntent().getBooleanExtra(EXTRA_FOREGROUND_RESUME, false);
         boolean microphonePermission = getIntent() != null &&
                 getIntent().getBooleanExtra(EXTRA_MICROPHONE_PERMISSION, false);
         String manifest = getIntent() == null ? null : getIntent().getStringExtra(EXTRA_MANIFEST);
@@ -48,6 +52,9 @@ public final class WebObsProbeActivity extends WebObsActivity {
             }
             if (reconnect) {
                 appendApplicationParameters("--probe-reconnect");
+            }
+            if (foregroundResume) {
+                appendApplicationParameters("--probe-foreground-resume");
             }
         } catch (Exception error) {
             throw new IllegalStateException("The private acceptance manifest could not be staged", error);

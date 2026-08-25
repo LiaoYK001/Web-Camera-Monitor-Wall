@@ -42,6 +42,10 @@ struct BatchState {
     int result = 4;
     bool finished = false;
     bool reconnect_on_failure = false;
+    bool resume_after_background = false;
+    bool background_released = false;
+    bool resuming = false;
+    int resumed = 0;
 };
 
 bool parse_manifest(const QString &path, BatchState &state, QString &error)
@@ -170,9 +174,10 @@ void schedule_retry(QGuiApplication &application, BatchState &state, std::size_t
 
 void release_background_batch(QGuiApplication &application, BatchState &state)
 {
-    if (state.finished || state.ready != static_cast<int>(state.pipelines.size()))
+    if (state.finished || state.background_released ||
+        state.ready != static_cast<int>(state.pipelines.size()))
         return;
-    state.finished = true;
+    state.background_released = true;
     QElapsedTimer elapsed;
     elapsed.start();
     for (const auto &pipeline : state.pipelines)
@@ -184,14 +189,19 @@ void release_background_batch(QGuiApplication &application, BatchState &state)
         {QStringLiteral("releaseMilliseconds"), elapsed.elapsed()}})
                   .toJson(QJsonDocument::Compact)
            << Qt::endl;
-    state.result = elapsed.elapsed() <= 5000 ? 0 : 4;
-    application.quit();
+    const qint64 release_milliseconds = elapsed.elapsed();
+    if (release_milliseconds > 5000 || !state.resume_after_background) {
+        state.finished = true;
+        state.result = release_milliseconds <= 5000 ? 0 : 4;
+        application.quit();
+    }
 }
 
 }
 
 int run_batch_probe(QGuiApplication &application, const QString &manifest_path, QString &error,
-                    bool release_on_background, bool reconnect_on_failure)
+                    bool release_on_background, bool reconnect_on_failure,
+                    bool resume_after_background)
 {
     BatchState state;
     if (!parse_manifest(manifest_path, state, error))
@@ -205,10 +215,29 @@ int run_batch_probe(QGuiApplication &application, const QString &manifest_path, 
     state.decoded_before_retry.assign(state.entries.size(), 0);
     state.dropped_before_retry.assign(state.entries.size(), 0);
     state.reconnect_on_failure = reconnect_on_failure;
+    state.resume_after_background = resume_after_background;
     for (std::size_t index = 0; index < state.entries.size(); ++index) {
         auto pipeline = std::make_unique<MediaPipeline>();
         QObject::connect(pipeline.get(), &MediaPipeline::directReady, &application,
             [&application, &state, release_on_background, index] {
+                if (state.resuming && state.ever_ready[index]) {
+                    ++state.resumed;
+                    if (state.resumed == static_cast<int>(state.pipelines.size())) {
+                        state.resuming = false;
+                        state.finished = true;
+                        state.result = 0;
+                        QTextStream output(stdout);
+                        output << QJsonDocument(QJsonObject{
+                            {QStringLiteral("result"), QStringLiteral("foreground-resumed")},
+                            {QStringLiteral("streamCount"), state.resumed}})
+                                      .toJson(QJsonDocument::Compact)
+                               << Qt::endl;
+                        for (const auto &entry : state.pipelines)
+                            entry->stop();
+                        application.quit();
+                    }
+                    return;
+                }
                 if (state.ever_ready[index] && state.recovering[index]) {
                     state.recovering[index] = false;
                     state.retry_attempts[index] = 0;
@@ -257,8 +286,25 @@ int run_batch_probe(QGuiApplication &application, const QString &manifest_path, 
     if (release_on_background) {
         QObject::connect(&application, &QGuiApplication::applicationStateChanged, &application,
             [&application, &state](Qt::ApplicationState application_state) {
-                if (application_state != Qt::ApplicationActive)
+                if (application_state != Qt::ApplicationActive) {
                     release_background_batch(application, state);
+                    return;
+                }
+                if (!state.resume_after_background || !state.background_released ||
+                    state.resuming || state.finished)
+                    return;
+                state.resuming = true;
+                state.resumed = 0;
+                for (std::size_t index = 0; index < state.pipelines.size(); ++index) {
+                    QString start_error;
+                    if (!state.pipelines[index]->start(state.entries[index].endpoint,
+                                                       start_error)) {
+                        state.finished = true;
+                        state.result = 4;
+                        application.quit();
+                        return;
+                    }
+                }
             });
     }
     for (std::size_t index = 0; index < state.pipelines.size(); ++index) {

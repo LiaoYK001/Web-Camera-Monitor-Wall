@@ -113,15 +113,23 @@ def thermal_status(serial: str) -> int:
 
 
 def launch_probe(serial: str, remote_manifest: str, background: bool,
-                 reconnect: bool = False, microphone_permission: bool = False) -> None:
+                 reconnect: bool = False, microphone_permission: bool = False,
+                 foreground_resume: bool = False) -> None:
     adb(serial, "shell", "am", "force-stop", PACKAGE)
     adb(serial, "logcat", "-c")
     adb(serial, "shell", "am", "instrument", "-w", "-r",
         "-e", "manifestPath", remote_manifest,
         "-e", "backgroundRelease", "true" if background else "false",
         "-e", "reconnect", "true" if reconnect else "false",
+        "-e", "foregroundResume", "true" if foreground_resume else "false",
         "-e", "microphonePermission", "true" if microphone_permission else "false",
         INSTRUMENTATION, timeout=60)
+
+
+def resume_probe(serial: str, remote_manifest: str) -> None:
+    adb(serial, "shell", "am", "instrument", "-w", "-r",
+        "-e", "manifestPath", remote_manifest,
+        "-e", "resumeOnly", "true", INSTRUMENTATION, timeout=60)
 
 
 def wait_for_document(serial: str, result: str, deadline: float) -> tuple[str, dict]:
@@ -357,7 +365,7 @@ def main() -> int:
             adb(arguments.serial, "push", str(short_path), remote, timeout=60)
         finally:
             short_path.unlink(missing_ok=True)
-        launch_probe(arguments.serial, remote, True)
+        launch_probe(arguments.serial, remote, True, foreground_resume=True)
         wait_for_document(arguments.serial, "ready", time.monotonic() + 45)
         background_started = time.monotonic()
         adb(arguments.serial, "shell", "input", "keyevent", "KEYCODE_HOME")
@@ -372,6 +380,15 @@ def main() -> int:
             raise RuntimeError("Android background probe left its monitor Wake Lock held")
         if any(stream["endpoint"] in release_log for stream in manifest["streams"]):
             raise RuntimeError("Android background log exposed a private endpoint")
+        foreground_started = time.monotonic()
+        resume_probe(arguments.serial, remote)
+        foreground_log, resumed = wait_for_document(
+            arguments.serial, "foreground-resumed", foreground_started + 10)
+        foreground_resume_wall_ms = int((time.monotonic() - foreground_started) * 1000)
+        if int(resumed.get("streamCount", 0)) != 9 or foreground_resume_wall_ms > 10_000:
+            raise RuntimeError("Android foreground stream recovery exceeded ten seconds")
+        if any(stream["endpoint"] in foreground_log for stream in manifest["streams"]):
+            raise RuntimeError("Android foreground recovery log exposed a private endpoint")
 
         launch_probe(arguments.serial, remote, True)
         wait_for_document(arguments.serial, "ready", time.monotonic() + 45)
@@ -418,6 +435,7 @@ def main() -> int:
             "serverSamples": server_samples, "maxThermalStatus": max(temperatures),
             "backgroundReleaseMilliseconds": int(released["releaseMilliseconds"]),
             "backgroundReleaseWallMilliseconds": release_wall_ms,
+            "foregroundResumeWallMilliseconds": foreground_resume_wall_ms,
             "lockScreenReleaseMilliseconds": int(lock_released["releaseMilliseconds"]),
             "lockScreenReleaseWallMilliseconds": lock_release_wall_ms,
             "wifiReconnectMilliseconds": reconnect_wall_ms,
