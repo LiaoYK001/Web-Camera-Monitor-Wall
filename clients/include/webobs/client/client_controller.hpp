@@ -9,6 +9,7 @@
 #include "webobs/client/topology_plan.hpp"
 
 #include <QNetworkAccessManager>
+#include <QHash>
 #include <QObject>
 #include <QTimer>
 
@@ -36,6 +37,13 @@ class ClientController final : public QObject {
     Q_PROPERTY(SceneModel* scene READ scene CONSTANT)
     Q_PROPERTY(StudioWorkspace* studio READ studio CONSTANT)
     Q_PROPERTY(bool talkActive READ talkActive NOTIFY talkActiveChanged)
+    Q_PROPERTY(bool androidPlatform READ androidPlatform CONSTANT)
+    Q_PROPERTY(int hardwareDecoderInstances READ hardwareDecoderInstances NOTIFY platformStatusChanged)
+    Q_PROPERTY(bool grid16Available READ grid16Available NOTIFY platformStatusChanged)
+    Q_PROPERTY(bool wakeLockActive READ wakeLockActive NOTIFY platformStatusChanged)
+    Q_PROPERTY(QString networkStatus READ networkStatus NOTIFY platformStatusChanged)
+    Q_PROPERTY(QString thermalStatus READ thermalStatus NOTIFY platformStatusChanged)
+    Q_PROPERTY(QString lastCapturePath READ lastCapturePath NOTIFY lastCapturePathChanged)
 
 public:
     explicit ClientController(QObject *parent = nullptr);
@@ -58,6 +66,13 @@ public:
     SceneModel *scene();
     StudioWorkspace *studio();
     bool talkActive() const;
+    bool androidPlatform() const;
+    int hardwareDecoderInstances() const;
+    bool grid16Available() const;
+    bool wakeLockActive() const;
+    QString networkStatus() const;
+    QString thermalStatus() const;
+    QString lastCapturePath() const;
 
     Q_INVOKABLE void enroll(const QString &name);
     Q_INVOKABLE void pollEnrollment();
@@ -93,6 +108,7 @@ public:
     Q_INVOKABLE void exportMkvToMp4(const QString &absoluteMkvPath,
                                     const QString &absoluteMp4Path);
     Q_INVOKABLE void setMonitoringFullscreen(bool active);
+    Q_INVOKABLE void exportLastCapture();
 
 signals:
     void serverUrlChanged();
@@ -104,6 +120,8 @@ signals:
     void userError(const QString &message);
     void operationCompleted(const QString &message);
     void talkActiveChanged();
+    void platformStatusChanged();
+    void lastCapturePathChanged();
 
 private:
     using ReplyHandler = std::function<void(int, const QJsonObject &)>;
@@ -125,6 +143,9 @@ private:
                            const QVariantMap &profile, const QString &policy);
     static QString platform();
     static QStringList hardware_decoders();
+    void refresh_platform_status();
+    void set_last_capture_path(const QString &path);
+    void finalize_pending_recordings();
 
     QNetworkAccessManager network_;
     SecureStore secure_store_;
@@ -139,6 +160,7 @@ private:
     QTimer enrollment_poll_;
     QTimer online_validation_;
     QTimer grant_expiry_;
+    QTimer platform_status_poll_;
     QString server_url_;
     QString enrollment_id_;
     QString pairing_code_;
@@ -149,6 +171,12 @@ private:
     QString archive_topology_ = QStringLiteral("off");
     QString fallback_reason_;
     QString talk_camera_id_;
+    int hardware_decoder_instances_ = 0;
+    bool wake_lock_active_ = false;
+    QString network_status_ = QStringLiteral("unknown");
+    QString thermal_status_ = QStringLiteral("unknown");
+    QString last_capture_path_;
+    QHash<QString, QString> pending_recordings_;
 };
 
 }

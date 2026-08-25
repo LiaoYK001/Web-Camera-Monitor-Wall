@@ -12,11 +12,11 @@ Canonical milestone names use `v<major>-M<number>`. Historical validation prose 
 
 ## Current position / 当前位置
 
-**🚧 v2-M2 release qualification / v2-M2 发布验收中。**
+**🚧 v2-M2/v2-M3 release qualification / v2-M2 与 v2-M3 发布验收中。**
 
-The `dev` branch contains the API v2 enrollment/Grant/topology contract and a functional Qt/QML desktop runtime. A Fedora exact-runtime build with Qt 6.11.2, GStreamer 1.28.6, libsodium 1.0.22 and the locked Rust WHEP commit decoded non-black H.264/H.265 RTSP, Server Push MJPEG, HLS and WHEP video. The isolated control and coexistence gates prove that 1–16 True Direct viewers add no Docker media helper or NVR upstream session, while forged, stale, replayed and revoked grants fail closed without leaking endpoints. This completes v2-M1. Desktop source includes 1/4/9/16 grids, independent main-stream focus, reconnect/suspend recovery, local Studio Preview/Program, two-level nested scenes, transforms, basic filters, PTZ, listen, bounded talk, screenshots and manual stream-copy recording. Hardware-decoder failure rebuilds a software pipeline and runtime validation reports device-dependent hardware readiness separately from package integrity. The remaining v2-M2 release evidence is signed Windows/Fedora artifacts plus the private 16+1 single-process 30-minute hardware, drop, black-frame, RSS, reconnect and zero-server-media gate. No v2.0 release tag is authorized until those gates actually run.
+The `dev` branch contains the API v2 enrollment/Grant/topology contract and a functional Qt/QML desktop runtime. A Fedora exact-runtime build with Qt 6.11.2, GStreamer 1.28.6, libsodium 1.0.22 and the locked Rust WHEP commit decoded non-black H.264/H.265 RTSP, Server Push MJPEG, HLS and WHEP video. The isolated control and coexistence gates prove that 1–16 True Direct viewers add no Docker media helper or NVR upstream session, while forged, stale, replayed and revoked grants fail closed without leaking endpoints. This completes v2-M1. Desktop source includes 1/4/9/16 grids, independent main-stream focus, reconnect/suspend recovery, local Studio Preview/Program, two-level nested scenes, transforms, basic filters, PTZ, listen, bounded talk, screenshots and manual stream-copy recording. Android source now covers API 29+ arm64-v8a, an adaptive Monitor, MediaCodec/thermal gating for 16 tiles, foreground capture, fullscreen Wake Lock, PTZ/listen/talk, network re-evaluation, Android Keystore, private storage and SAF export. The release workflow builds a signed APK and uses a same-certificate private driver for the nine-stream 30-minute and five-second background-release gates. v2-M2 still needs signed Windows/Fedora packages and private 16+1 hardware evidence; v2-M3 still needs the real arm64 build, nine-stream hardware/thermal run and complete device lifecycle matrix. No v2.0 release tag is authorized until those gates actually run.
 
-`dev` 已包含 API v2 配对、Grant、拓扑契约及可运行的 Qt/QML 桌面端。Fedora 精确运行时构建使用 Qt 6.11.2、GStreamer 1.28.6、libsodium 1.0.22 与固定 Rust WHEP 提交，已解码 H.264/H.265 RTSP、Server Push MJPEG、HLS 与 WHEP 非黑画面。隔离控制与 NVR 共存门禁证明 1～16 个真直连观看端不会增加 Docker 媒体 helper 或 NVR 上游会话；伪造、陈旧、重放及撤销 Grant 均安全拒绝且不泄漏端点，因此 v2-M1 已完成。桌面源码包含 1/4/9/16 宫格、独立主码流聚焦、重连/挂起恢复、本地 Studio Preview/Program、两级嵌套场景、变换、基础滤镜、PTZ、监听、有界对讲、截图与 stream-copy 手动录像。硬解失败会重建软件管线，运行时校验也已把依赖设备的硬件 readiness 与安装包完整性分开。v2-M2 剩余证据是 Windows/Fedora 签名产物，以及私有 16+1 单进程 30 分钟硬件、掉帧、黑帧、RSS、重连和服务端零媒体门禁；这些门禁真实执行前不允许发布 v2.0 Tag。
+`dev` 已包含 API v2 配对、Grant、拓扑契约及可运行的 Qt/QML 桌面端。Fedora 精确运行时构建使用 Qt 6.11.2、GStreamer 1.28.6、libsodium 1.0.22 与固定 Rust WHEP 提交，已解码 H.264/H.265 RTSP、Server Push MJPEG、HLS 与 WHEP 非黑画面。隔离控制与 NVR 共存门禁证明 1～16 个真直连观看端不会增加 Docker 媒体 helper 或 NVR 上游会话；伪造、陈旧、重放及撤销 Grant 均安全拒绝且不泄漏端点，因此 v2-M1 已完成。桌面源码包含 1/4/9/16 宫格、独立主码流聚焦、重连/挂起恢复、本地 Studio Preview/Program、两级嵌套场景、变换、基础滤镜、PTZ、监听、有界对讲、截图与 stream-copy 手动录像。Android 源码现支持 API 29+ arm64-v8a、自适应 Monitor、MediaCodec/温控 16 宫格门禁、前台录像、全屏常亮、PTZ/监听/按键对讲、网络切换复判、Android Keystore、私有存储及 SAF 导出；发布工作流会构建签名 APK，并用同证书私有驱动执行九路 30 分钟和后台五秒释放门禁。v2-M2 仍缺 Windows/Fedora 签名包及 16+1 实机证据，v2-M3 仍缺真实 arm64 Android 构建、九路硬解/温控及完整设备生命周期证据；这些门禁真实执行前不允许发布 v2.0 Tag。
 
 Desktop focus/minimize now keeps monitoring active, while a real application suspension rebuilds streams; Android retains foreground-only media. Deterministic Windows and Linux rollback exchanges also pass / 桌面失焦或最小化现会继续监看，真正的应用挂起才重建流；Android 仍仅在前台运行媒体。Windows 与 Linux 的确定性回滚交换也已通过。
 
@@ -29,9 +29,9 @@ The `v1.0` series contains v1-M1 through v1-M6. The `v1.1` milestone family cont
 `v1.0` 系列包含 v1-M1 至 v1-M6，`v1.1` 里程碑族包含 v1-M7 至 v1-M11；`v1.2` 是 v1 的最终收口版本，不新增 v1-M12。`v2.0` 从 v2-M1 开始，以可测量的真直连契约为核心。
 
 ```text
-M0 + v1-M1…v1-M9 complete -> v1-M10/M11 complete -> v1.2 closure -> v2-M1 True Direct
-M0 + v1-M1…v1-M9 已完成    -> v1-M10/M11 已完成    -> v1.2 收口    -> v2-M1 真直连
-✅                              ✅                     ✅              🚧
+M0 + v1-M1…v1-M9 complete -> v1-M10/M11 complete -> v1.2 closure -> v2-M1 complete -> v2-M2/M3 qualification
+M0 + v1-M1…v1-M9 已完成    -> v1-M10/M11 已完成    -> v1.2 收口    -> v2-M1 已完成    -> v2-M2/M3 验收中
+✅                              ✅                     ✅              ✅                🚧
 ```
 
 ### M0 acceptance / M0 验收
@@ -104,7 +104,8 @@ M0 已于 2026-08-11 在真实摄像头门禁通过后完成。后续修改采�
 | v1-M11 — Events & Detection | ✅ Complete / 已完成 | Native/software events, motion zones/masks, detector providers, rules and bounded notifications / 原生/软件事件、移动区域/遮罩、检测提供器、规则与有界通知 | Deterministic accuracy, isolation, queue, signed delivery and SSRF gates pass / 确定性准确度、隔离、队列、签名交付及 SSRF 门禁通过 |
 | v2-M1 — True Direct Foundation | ✅ Complete / 已完成 | API/grant/planner/reference receiver plus isolated five-protocol architecture proof / API、Grant、规划器、参考接收端及隔离五协议架构证明 | Locked receiver, zero-payload, NVR coexistence and credential gates pass / 固定接收端、零负载、NVR 共存及凭据门禁全部通过 |
 | v2-M2 — Windows/Linux Desktop | 🚧 In progress / 实施中 | Offline-capable Monitor/Studio, local media, hardware fallback and signed packages / 可离线 Monitor/Studio、本地媒体、硬件回落与签名包 | Windows/Fedora 16+1 30-minute hardware, reconnect, rollback and zero-server-media gates pass / Windows/Fedora 16+1 三十分钟硬件、重连、回滚及服务端零媒体门禁通过 |
-| v2-M3…v2-M6 — Android to Scale | 🧭 Planned / 已规划 | Android runtime, offline sync, operator UX and scale/resilience / Android 运行端、离线同步、值守体验及规模与韧性 | Each published v2 gate passes without weakening v1 recording or security guarantees / 各 v2 门禁通过且不削弱 v1 录像与安全保证 |
+| v2-M3 — Android Local Runtime | 🚧 In progress / 实施中 | API 29+ arm64 monitor, MediaCodec, secure offline identity and foreground capture / API 29+ arm64 监看、MediaCodec、安全离线身份与前台采集 | Signed APK plus nine-stream 30-minute, thermal, lifecycle and zero-server-media gates pass / 签名 APK、九路三十分钟、温控、生命周期及服务端零媒体门禁通过 |
+| v2-M4…v2-M6 — Sync to Scale | 🧭 Planned / 已规划 | Offline sync, operator UX and scale/resilience / 离线同步、值守体验及规模与韧性 | Each published v2 gate passes without weakening v1 recording or security guarantees / 各 v2 门禁通过且不削弱 v1 录像与安全保证 |
 
 ## Milestone details / 里程碑详情
 

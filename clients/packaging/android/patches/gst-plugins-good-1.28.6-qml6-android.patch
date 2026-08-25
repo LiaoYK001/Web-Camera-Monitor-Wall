@@ -1,0 +1,36 @@
+From: Web Camera Monitor Wall contributors
+Subject: [PATCH] qt6: enable the existing Android EGL implementation
+
+GStreamer 1.28.6 already contains the HAVE_QT_ANDROID implementation in
+gstqt6glutility.cc, but ext/qt6/meson.build leaves Android windowing disabled.
+This release-local patch mirrors the bounded Qt 5 checks without AndroidExtras,
+which was removed in Qt 6. It is applied only to the exact, hash-verified
+gst-plugins-good 1.28.6 source archive.
+
+--- a/ext/qt6/meson.build
++++ b/ext/qt6/meson.build
+@@ -153,7 +153,23 @@ if qt6_egl.allowed()
+   have_qt_windowing = true
+ endif
+ 
+-# TODO: Android windowing
++# Android EGL windowing. The implementation is already guarded by
++# HAVE_QT_ANDROID in gstqt6glutility.cc.
++if host_system == 'android'
++  qt6_android = qt6_option \
++      .require(gstglegl_dep.found(), error_message: 'gstreamer-gl-egl-1.0 is required') \
++      .require(gst_gl_have_window_android, error_message: 'android windowing support in gstreamer-gl is required') \
++      .require(gst_gl_have_platform_egl, error_message: 'egl platform support in gstreamer-gl is required') \
++      .require(have_qpa_include, error_message: 'QPA platform native interface header is required')
++  if qt6_android.allowed()
++    glesv2_dep = cc.find_library('GLESv2', required : qt6_android)
++    if glesv2_dep.found()
++      optional_deps += [gstglegl_dep, glesv2_dep]
++      qt_defines += ['-DHAVE_QT_ANDROID']
++      have_qt_windowing = true
++    endif
++  endif
++endif
+ 
+ # Win32 windowing
+ if host_system == 'windows'

@@ -1,10 +1,14 @@
 <?xml version="1.0"?>
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
     package="org.webobs.nativeclient">
+    <permission
+        android:name="org.webobs.nativeclient.permission.RUN_ACCEPTANCE"
+        android:protectionLevel="signature" />
     <uses-sdk android:minSdkVersion="29" android:targetSdkVersion="36" />
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
     <uses-permission android:name="android.permission.WAKE_LOCK" />
+    <uses-permission android:name="android.permission.RECORD_AUDIO" />
     <application
         android:name="org.qtproject.qt.android.bindings.QtApplication"
         android:allowBackup="false"
@@ -12,7 +16,7 @@
         android:label="WebObs Monitor"
         android:usesCleartextTraffic="false">
         <activity
-            android:name="org.qtproject.qt.android.bindings.QtActivity"
+            android:name="org.webobs.nativeclient.WebObsActivity"
             android:configChanges="orientation|screenSize|smallestScreenSize|screenLayout|uiMode|keyboard|keyboardHidden|navigation|locale|layoutDirection|fontScale|density"
             android:exported="true"
             android:launchMode="singleTop"
@@ -21,6 +25,14 @@
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
+            <meta-data android:name="android.app.lib_name" android:value="webobs-native" />
+        </activity>
+        <activity
+            android:name="org.webobs.nativeclient.WebObsProbeActivity"
+            android:exported="true"
+            android:permission="org.webobs.nativeclient.permission.RUN_ACCEPTANCE"
+            android:excludeFromRecents="true"
+            android:noHistory="true">
             <meta-data android:name="android.app.lib_name" android:value="webobs-native" />
         </activity>
     </application>

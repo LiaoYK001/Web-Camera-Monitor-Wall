@@ -4,13 +4,14 @@ import QtQuick.Layouts
 
 ApplicationWindow {
     id: window
-    width: 1440
-    height: 900
+    width: clientController.androidPlatform ? 430 : 1440
+    height: clientController.androidPlatform ? 820 : 900
     visible: true
     color: "#0b0f15"
     title: "WebObs Native — True Direct"
     property bool monitorFullscreen: false
     property bool studioMode: false
+    property bool compactMonitor: clientController.androidPlatform || width < 900
     onStudioModeChanged: clientController.setStudioActive(studioMode)
 
     function enterMonitorFullscreen() {
@@ -56,16 +57,21 @@ ApplicationWindow {
             }
             ToolButton {
                 text: "Studio"
+                visible: !clientController.androidPlatform
                 checked: window.studioMode
                 checkable: true
                 onClicked: window.studioMode = true
             }
             Item { Layout.fillWidth: true }
             Label {
+                visible: !window.compactMonitor
                 text: clientController.gridStreams.count + " grid + " +
                       clientController.focusStreams.count + " focus"
             }
-            Label { text: clientController.liveTopology + " / archive: " + clientController.archiveTopology }
+            Label {
+                visible: !window.compactMonitor
+                text: clientController.liveTopology + " / archive: " + clientController.archiveTopology
+            }
             Button { text: "Fullscreen"; onClicked: window.enterMonitorFullscreen() }
         }
     }
@@ -143,7 +149,7 @@ ApplicationWindow {
                 spacing: 0
 
                 Pane {
-                    visible: !window.monitorFullscreen
+                    visible: !window.monitorFullscreen && !window.compactMonitor
                     Layout.preferredWidth: 310
                     Layout.fillHeight: true
                     ColumnLayout {
@@ -157,6 +163,7 @@ ApplicationWindow {
                                     text: modelData.toString()
                                     checkable: true
                                     checked: clientController.gridCapacity === modelData
+                                    enabled: modelData !== 16 || clientController.grid16Available
                                     onClicked: clientController.activateGrid(modelData)
                                 }
                             }
@@ -182,10 +189,17 @@ ApplicationWindow {
                         Label { text: "Last fallback: " + clientController.fallbackReason; wrapMode: Text.Wrap }
                         TextField { id: remuxInput; placeholderText: "Absolute recorded .mkv path"; Layout.fillWidth: true }
                         Button {
+                            visible: !clientController.androidPlatform
                             text: "Export MKV to MP4"
                             enabled: remuxInput.text.length > 0
                             onClicked: clientController.exportMkvToMp4(
                                 remuxInput.text, clientController.suggestedCapturePath("mp4"))
+                        }
+                        Button {
+                            visible: clientController.androidPlatform
+                            text: "Export last capture"
+                            enabled: clientController.lastCapturePath.length > 0
+                            onClicked: clientController.exportLastCapture()
                         }
                         Button { text: "Stop all local media"; onClicked: clientController.stopAll() }
                     }
@@ -272,9 +286,66 @@ ApplicationWindow {
                             text: "Exit fullscreen"
                             onClicked: window.leaveMonitorFullscreen()
                         }
+                        Pane {
+                            visible: window.compactMonitor && !window.monitorFullscreen
+                            z: 25
+                            anchors.left: parent.left
+                            anchors.right: parent.right
+                            anchors.bottom: parent.bottom
+                            padding: 8
+                            background: Rectangle { color: "#dd111821"; radius: 8 }
+                            ColumnLayout {
+                                width: parent.width
+                                RowLayout {
+                                    Layout.fillWidth: true
+                                    Repeater {
+                                        model: [1, 4, 9, 16]
+                                        Button {
+                                            required property int modelData
+                                            text: modelData.toString()
+                                            checkable: true
+                                            checked: clientController.gridCapacity === modelData
+                                            enabled: modelData !== 16 || clientController.grid16Available
+                                            onClicked: clientController.activateGrid(modelData)
+                                        }
+                                    }
+                                    Button { text: "Full"; onClicked: window.enterMonitorFullscreen() }
+                                }
+                                RowLayout {
+                                    Layout.fillWidth: true
+                                    ComboBox {
+                                        id: mobileCamera
+                                        Layout.fillWidth: true
+                                        textRole: "name"
+                                        valueRole: "cameraId"
+                                        model: clientController.cameras
+                                    }
+                                    Button {
+                                        text: "Focus"
+                                        enabled: mobileCamera.currentValue !== undefined
+                                        onClicked: clientController.focusCamera(mobileCamera.currentValue)
+                                    }
+                                    Button {
+                                        text: "Export"
+                                        enabled: clientController.lastCapturePath.length > 0
+                                        onClicked: clientController.exportLastCapture()
+                                    }
+                                }
+                                Label {
+                                    Layout.fillWidth: true
+                                    elide: Text.ElideRight
+                                    color: clientController.thermalStatus === "severe" ? "#ff8d8d" : "#aab7c8"
+                                    text: "Network " + clientController.networkStatus +
+                                          " · MediaCodec " + clientController.hardwareDecoderInstances +
+                                          " · Thermal " + clientController.thermalStatus +
+                                          " · Wake " + (clientController.wakeLockActive ? "on" : "off")
+                                }
+                            }
+                        }
                     }
 
                     Item {
+                        visible: !clientController.androidPlatform
                         RowLayout {
                             anchors.fill: parent
                             spacing: 4

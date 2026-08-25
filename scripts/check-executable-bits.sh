@@ -10,10 +10,14 @@ scripts/create-source-bundle.sh
 scripts/release-image-local.sh
 scripts/verify-source-bundle.sh
 clients/packaging/finalize-artifacts.sh
+clients/packaging/android/build-acceptance-driver.sh
+clients/packaging/android/build-qml6-plugin.sh
+clients/packaging/android/build.sh
 clients/packaging/linux/build-appimage.sh
 clients/packaging/linux/build-flatpak.sh
 clients/packaging/linux/install-signed-appimage.sh
 clients/packaging/linux/rollback-appimage.sh
+clients/tests/run-android-reference-gate.py
 tests/rtsp-fixture/m1-real-control.sh
 tests/rtsp-fixture/probe.sh
 tests/rtsp-fixture/publish-audio.sh

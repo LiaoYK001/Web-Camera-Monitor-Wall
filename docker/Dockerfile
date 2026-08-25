@@ -78,7 +78,9 @@ RUN cmake -S /src/clients -B /build/clients -G Ninja \
       && cmake --build /build/clients --parallel \
       && ctest --test-dir /build/clients --output-on-failure \
       && bash /src/clients/tests/test-linux-update-rollback.sh \
-      && python3 /src/clients/tests/test_desktop_reference_gate.py
+      && python3 /src/clients/tests/test_desktop_reference_gate.py \
+      && python3 /src/clients/tests/test_android_client_policy.py \
+      && python3 /src/clients/tests/test_android_reference_gate.py
 
 FROM client-compile-test AS client-protocol-test
 

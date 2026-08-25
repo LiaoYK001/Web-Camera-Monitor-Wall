@@ -29,6 +29,10 @@ public final class KeyStoreBridge {
         return QtNative.getContext();
     }
 
+    static Context contextForPlatform() {
+        return context();
+    }
+
     private static KeyStore keyStore() throws Exception {
         KeyStore store = KeyStore.getInstance("AndroidKeyStore");
         store.load(null);
@@ -120,7 +124,7 @@ public final class KeyStoreBridge {
         }
     }
 
-    public static void setWakeLock(boolean active) {
+    public static boolean setWakeLock(boolean active) {
         try {
             if (active) {
                 if (wakeLock == null) {
@@ -135,8 +139,13 @@ public final class KeyStoreBridge {
             } else if (wakeLock != null && wakeLock.isHeld()) {
                 wakeLock.release();
             }
+            return !active || (wakeLock != null && wakeLock.isHeld());
         } catch (Exception ignored) {
-            // The QML status remains honest because the client never assumes acquisition succeeded.
+            return false;
         }
+    }
+
+    public static boolean wakeLockHeld() {
+        return wakeLock != null && wakeLock.isHeld();
     }
 }

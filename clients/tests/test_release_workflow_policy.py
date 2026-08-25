@@ -49,6 +49,16 @@ class NativeReleaseWorkflowPolicyTests(unittest.TestCase):
         self.assertIn("if ($env:CERTIFICATE_SHA1 -notmatch '^[0-9A-Fa-f]{40}$')", self.text)
         self.assertIn("-SigningCertificateSha1 $env:CERTIFICATE_SHA1", self.text)
 
+    def test_android_release_is_signed_gated_and_never_uploads_private_driver(self) -> None:
+        self.assertIn("  android:\n", self.text)
+        self.assertIn("run-android-reference-gate.py", self.text)
+        self.assertIn("build-acceptance-driver.sh", self.text)
+        self.assertIn("needs: [audit, windows, linux, linux-acceptance, android]", self.text)
+        upload = re.search(r"name: native-android-.*?if-no-files-found: error",
+                           self.text, re.DOTALL)
+        self.assertIsNotNone(upload)
+        self.assertNotIn("private-driver", upload.group(0))
+
 
 if __name__ == "__main__":
     unittest.main()

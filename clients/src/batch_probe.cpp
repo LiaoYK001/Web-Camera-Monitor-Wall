@@ -5,6 +5,7 @@
 #include <QFile>
 #include <QFileInfo>
 #include <QGuiApplication>
+#include <QElapsedTimer>
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
@@ -137,9 +138,30 @@ void finish_batch(QGuiApplication &application, BatchState &state)
     application.quit();
 }
 
+void release_background_batch(QGuiApplication &application, BatchState &state)
+{
+    if (state.finished || state.ready != static_cast<int>(state.pipelines.size()))
+        return;
+    state.finished = true;
+    QElapsedTimer elapsed;
+    elapsed.start();
+    for (const auto &pipeline : state.pipelines)
+        pipeline->stop();
+    QTextStream output(stdout);
+    output << QJsonDocument(QJsonObject{
+        {QStringLiteral("result"), QStringLiteral("background-released")},
+        {QStringLiteral("streamCount"), static_cast<int>(state.pipelines.size())},
+        {QStringLiteral("releaseMilliseconds"), elapsed.elapsed()}})
+                  .toJson(QJsonDocument::Compact)
+           << Qt::endl;
+    state.result = elapsed.elapsed() <= 5000 ? 0 : 4;
+    application.quit();
 }
 
-int run_batch_probe(QGuiApplication &application, const QString &manifest_path, QString &error)
+}
+
+int run_batch_probe(QGuiApplication &application, const QString &manifest_path, QString &error,
+                    bool release_on_background)
 {
     BatchState state;
     if (!parse_manifest(manifest_path, state, error))
@@ -148,11 +170,19 @@ int run_batch_probe(QGuiApplication &application, const QString &manifest_path, 
     for (std::size_t index = 0; index < state.entries.size(); ++index) {
         auto pipeline = std::make_unique<MediaPipeline>();
         QObject::connect(pipeline.get(), &MediaPipeline::directReady, &application,
-            [&application, &state] {
+            [&application, &state, release_on_background] {
                 ++state.ready;
-                if (state.ready == static_cast<int>(state.pipelines.size()))
-                    QTimer::singleShot(state.duration_seconds * 1000, &application,
-                        [&application, &state] { finish_batch(application, state); });
+                if (state.ready == static_cast<int>(state.pipelines.size())) {
+                    QTextStream output(stdout);
+                    output << QJsonDocument(QJsonObject{
+                        {QStringLiteral("result"), QStringLiteral("ready")},
+                        {QStringLiteral("streamCount"), state.ready}})
+                                  .toJson(QJsonDocument::Compact)
+                           << Qt::endl;
+                    if (!release_on_background)
+                        QTimer::singleShot(state.duration_seconds * 1000, &application,
+                            [&application, &state] { finish_batch(application, state); });
+                }
             });
         QObject::connect(pipeline.get(), &MediaPipeline::directFailed, &application,
             [&application, &state](const QString &) {
@@ -163,6 +193,13 @@ int run_batch_probe(QGuiApplication &application, const QString &manifest_path, 
                 }
             });
         state.pipelines.push_back(std::move(pipeline));
+    }
+    if (release_on_background) {
+        QObject::connect(&application, &QGuiApplication::applicationStateChanged, &application,
+            [&application, &state](Qt::ApplicationState application_state) {
+                if (application_state != Qt::ApplicationActive)
+                    release_background_batch(application, state);
+            });
     }
     for (std::size_t index = 0; index < state.pipelines.size(); ++index) {
         QString start_error;

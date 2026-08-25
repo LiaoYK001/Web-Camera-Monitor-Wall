@@ -28,6 +28,7 @@ int main(int argc, char *argv[])
         if (QByteArrayView(argv[index]) == QByteArrayView("--probe-endpoint") ||
             QByteArrayView(argv[index]) == QByteArrayView("--probe-endpoint-env") ||
             QByteArrayView(argv[index]) == QByteArrayView("--probe-manifest") ||
+            QByteArrayView(argv[index]) == QByteArrayView("--probe-background-release") ||
             QByteArrayView(argv[index]) == QByteArrayView("--verify-runtime"))
             probe_requested = true;
     if (probe_requested && qEnvironmentVariableIsEmpty("QT_QPA_PLATFORM"))
@@ -71,6 +72,8 @@ int main(int argc, char *argv[])
     parser.addOption({QStringLiteral("probe-manifest"),
                       QStringLiteral("Run multiple production media pipelines in one process"),
                       QStringLiteral("absolute-json-path")});
+    parser.addOption({QStringLiteral("probe-background-release"),
+                      QStringLiteral("Stop all probe pipelines when Android enters background")});
     parser.addOption({QStringLiteral("probe-adapter"), QStringLiteral("rtsp, mjpeg, hls, or whep"),
                       QStringLiteral("adapter")});
     parser.addOption({QStringLiteral("probe-codec"), QStringLiteral("h264, h265, or mjpeg"),
@@ -171,6 +174,8 @@ int main(int argc, char *argv[])
 #if defined(Q_OS_WIN)
         const QStringList hardware_candidates{QStringLiteral("d3d11h264dec"),
                                               QStringLiteral("d3d11h265dec")};
+#elif defined(Q_OS_ANDROID)
+        const QStringList hardware_candidates{QStringLiteral("android-mediacodec")};
 #elif defined(Q_OS_LINUX)
         const QStringList hardware_candidates{QStringLiteral("vah264dec"),
                                               QStringLiteral("vah265dec")};
@@ -178,17 +183,37 @@ int main(int argc, char *argv[])
         const QStringList hardware_candidates;
 #endif
         for (const QString &name : hardware_candidates) {
+#if defined(Q_OS_ANDROID)
+            Q_UNUSED(name)
+            GstRegistry *registry = gst_registry_get();
+            GList *features = gst_registry_get_feature_list(registry, GST_TYPE_ELEMENT_FACTORY);
+            for (GList *entry = features; entry; entry = entry->next) {
+                auto *factory = GST_ELEMENT_FACTORY(entry->data);
+                const QString factory_name = QString::fromUtf8(
+                    gst_plugin_feature_get_name(GST_PLUGIN_FEATURE(factory))).toLower();
+                const QString klass = QString::fromUtf8(
+                    gst_element_factory_get_metadata(factory, GST_ELEMENT_METADATA_KLASS)).toLower();
+                if (klass.contains(QStringLiteral("decoder/video")) &&
+                    (factory_name.contains(QStringLiteral("amc")) ||
+                     factory_name.contains(QStringLiteral("mediacodec")))) {
+                    hardware_decoders << factory_name;
+                    break;
+                }
+            }
+            gst_plugin_feature_list_free(features);
+#else
             GstElementFactory *factory = gst_element_factory_find(name.toUtf8().constData());
             if (factory) {
                 hardware_decoders << name;
                 gst_object_unref(factory);
             }
+#endif
         }
         qInfo().noquote() << QJsonDocument(QJsonObject{
             {QStringLiteral("result"), QStringLiteral("passed")},
             {QStringLiteral("gstreamer"), QString::fromLatin1(gst_version_string())},
             {QStringLiteral("hardwareDecodeReady"),
-             hardware_decoders.size() == hardware_candidates.size()},
+             hardware_decoders.size() >= hardware_candidates.size()},
             {QStringLiteral("hardwareDecoders"),
              QJsonArray::fromStringList(hardware_decoders)},
             {QStringLiteral("pluginVersions"), plugin_versions},
@@ -197,7 +222,8 @@ int main(int argc, char *argv[])
     }
     if (parser.isSet(QStringLiteral("probe-manifest"))) {
         const int result = webobs::client::run_batch_probe(
-            application, parser.value(QStringLiteral("probe-manifest")), error);
+            application, parser.value(QStringLiteral("probe-manifest")), error,
+            parser.isSet(QStringLiteral("probe-background-release")));
         if (result != 0 && !error.isEmpty())
             qCritical("batch protocol probe failed safely: %s", qPrintable(error.left(128)));
         return result;

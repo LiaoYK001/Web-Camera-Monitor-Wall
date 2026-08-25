@@ -87,6 +87,11 @@ ClientController::ClientController(QObject *parent) : QObject(parent)
         grant_expiry_.start();
     if (restored_active_grant && !server_url_.isEmpty())
         online_validation_.start();
+    platform_status_poll_.setInterval(1000);
+    connect(&platform_status_poll_, &QTimer::timeout,
+            this, &ClientController::refresh_platform_status);
+    refresh_platform_status();
+    platform_status_poll_.start();
     const auto wire_streams = [this](StreamSessionModel &model) {
         StreamSessionModel *stream_model = &model;
         connect(&model, &StreamSessionModel::directResult, this,
@@ -115,6 +120,7 @@ ClientController::ClientController(QObject *parent) : QObject(parent)
 #endif
         if (should_suspend_for_application_state(state, mobile)) {
             cancelTalk();
+            finalize_pending_recordings();
             grid_streams_.suspend();
             focus_streams_.suspend();
             studio_preview_streams_.suspend();
@@ -418,6 +424,11 @@ void ClientController::activateGrid(int capacity)
         emit userError(QStringLiteral("Grid capacity must be 1, 4, 9, or 16"));
         return;
     }
+    if (capacity == 16 && !grid16Available()) {
+        emit userError(QStringLiteral(
+            "16-view requires at least 16 hardware MediaCodec decoder instances and a non-severe thermal state"));
+        return;
+    }
     if (grant_.expires_at <= QDateTime::currentSecsSinceEpoch()) {
         emit userError(QStringLiteral("Offline authorization expired; reconnect before playback"));
         return;
@@ -593,6 +604,7 @@ void ClientController::release_media_plan(const QString &plan_id)
 void ClientController::stopAll()
 {
     cancelTalk();
+    finalize_pending_recordings();
     grid_streams_.clear();
     focus_streams_.clear();
     studio_preview_streams_.clear();
@@ -622,12 +634,21 @@ bool ClientController::startManualRecording(bool focused, const QString &session
         emit userError(QStringLiteral("This device grant does not permit local recording"));
         return false;
     }
-    return (focused ? focus_streams_ : grid_streams_).startRecording(session_id, path);
+    const bool started = (focused ? focus_streams_ : grid_streams_).startRecording(session_id, path);
+    if (started)
+        pending_recordings_.insert(QStringLiteral("%1:%2").arg(focused ?
+            QStringLiteral("focus") : QStringLiteral("grid"), session_id), path);
+    return started;
 }
 
 void ClientController::stopManualRecording(bool focused, const QString &session_id)
 {
     (focused ? focus_streams_ : grid_streams_).stopRecording(session_id);
+    const QString key = QStringLiteral("%1:%2").arg(focused ?
+        QStringLiteral("focus") : QStringLiteral("grid"), session_id);
+    const QString path = pending_recordings_.take(key);
+    if (!path.isEmpty() && QFileInfo(path).isFile())
+        set_last_capture_path(path);
 }
 
 void ClientController::setListening(bool focused, const QString &session_id, bool enabled)
@@ -722,6 +743,7 @@ void ClientController::saveSnapshot(const QString &camera_id, const QString &abs
                 emit userError(QStringLiteral("Snapshot could not be saved to the selected path"));
                 return;
             }
+            set_last_capture_path(absolute_path);
             emit operationCompleted(QStringLiteral("Snapshot saved"));
         });
 }
@@ -757,6 +779,7 @@ void ClientController::saveLocalScreenshot(const QString &camera_id, QObject *vi
             emit userError(QStringLiteral("The local decoded-frame screenshot could not be saved"));
             return;
         }
+        set_last_capture_path(path);
         emit operationCompleted(QStringLiteral("Local decoded-frame screenshot saved"));
     });
 }
@@ -766,6 +789,14 @@ QString ClientController::suggestedCapturePath(const QString &extension) const
     const QString suffix = QStringList{QStringLiteral("mkv"), QStringLiteral("jpg"),
         QStringLiteral("png"), QStringLiteral("mp4"), QStringLiteral("json")}.contains(extension.toLower()) ?
         extension.toLower() : QStringLiteral("mkv");
+#if defined(Q_OS_ANDROID)
+    const QJniObject result = QJniObject::callStaticObjectMethod(
+        "org/webobs/nativeclient/WebObsActivity", "privateCapturePath",
+        "(Ljava/lang/String;)Ljava/lang/String;", QJniObject::fromString(suffix).object<jstring>());
+    const QString android_path = result.toString();
+    if (!android_path.isEmpty())
+        return android_path;
+#endif
     QString directory = QStandardPaths::writableLocation(QStandardPaths::MoviesLocation);
     if (directory.isEmpty())
         directory = QDir::homePath();
@@ -781,6 +812,14 @@ void ClientController::startTalk(const QString &camera_id)
         emit userError(QStringLiteral("This device grant does not permit Push-to-Talk"));
         return;
     }
+#if defined(Q_OS_ANDROID)
+    if (!QJniObject::callStaticMethod<jboolean>(
+            "org/webobs/nativeclient/WebObsActivity", "ensureMicrophonePermission", "()Z")) {
+        emit userError(QStringLiteral(
+            "Microphone permission is required for Push-to-Talk; approve it and press Talk again"));
+        return;
+    }
+#endif
     QString error;
     if (!talk_capture_.start(error)) {
         emit userError(error);
@@ -845,11 +884,105 @@ void ClientController::exportMkvToMp4(const QString &mkv_path, const QString &mp
 void ClientController::setMonitoringFullscreen(bool active)
 {
 #if defined(Q_OS_ANDROID)
-    QJniObject::callStaticMethod<void>("org/webobs/nativeclient/KeyStoreBridge", "setWakeLock",
-                                       "(Z)V", static_cast<jboolean>(active));
+    wake_lock_active_ = QJniObject::callStaticMethod<jboolean>(
+        "org/webobs/nativeclient/KeyStoreBridge", "setWakeLock", "(Z)Z",
+        static_cast<jboolean>(active));
+    emit platformStatusChanged();
 #else
     Q_UNUSED(active)
 #endif
+}
+
+void ClientController::exportLastCapture()
+{
+#if defined(Q_OS_ANDROID)
+    const QFileInfo source(last_capture_path_);
+    if (!source.isAbsolute() || !source.isFile()) {
+        emit userError(QStringLiteral("There is no completed private capture to export"));
+        return;
+    }
+    QString mime = QStringLiteral("application/octet-stream");
+    if (source.suffix().compare(QStringLiteral("mkv"), Qt::CaseInsensitive) == 0)
+        mime = QStringLiteral("video/x-matroska");
+    else if (source.suffix().compare(QStringLiteral("jpg"), Qt::CaseInsensitive) == 0)
+        mime = QStringLiteral("image/jpeg");
+    else if (source.suffix().compare(QStringLiteral("png"), Qt::CaseInsensitive) == 0)
+        mime = QStringLiteral("image/png");
+    const jboolean started = QJniObject::callStaticMethod<jboolean>(
+        "org/webobs/nativeclient/WebObsActivity", "exportPrivateCapture",
+        "(Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;)Z",
+        QJniObject::fromString(source.absoluteFilePath()).object<jstring>(),
+        QJniObject::fromString(mime).object<jstring>(),
+        QJniObject::fromString(source.fileName()).object<jstring>());
+    if (!started)
+        emit userError(QStringLiteral("The private capture was rejected by the Android export boundary"));
+#else
+    emit userError(QStringLiteral("Storage Access Framework export is available only on Android"));
+#endif
+}
+
+void ClientController::refresh_platform_status()
+{
+#if defined(Q_OS_ANDROID)
+    const int decoder_instances = QJniObject::callStaticMethod<jint>(
+        "org/webobs/nativeclient/WebObsActivity", "hardwareVideoDecoderInstances", "()I");
+    const bool wake_lock = QJniObject::callStaticMethod<jboolean>(
+        "org/webobs/nativeclient/KeyStoreBridge", "wakeLockHeld", "()Z");
+    const QString network = QJniObject::callStaticObjectMethod(
+        "org/webobs/nativeclient/WebObsActivity", "networkStatus", "()Ljava/lang/String;").toString();
+    const QString thermal = QJniObject::callStaticObjectMethod(
+        "org/webobs/nativeclient/WebObsActivity", "thermalStatus", "()Ljava/lang/String;").toString();
+    const QString export_status = QJniObject::callStaticObjectMethod(
+        "org/webobs/nativeclient/WebObsActivity", "consumeExportStatus", "()Ljava/lang/String;").toString();
+    const bool network_changed = network_status_ != QStringLiteral("unknown") &&
+                                 network != network_status_;
+    const bool changed = decoder_instances != hardware_decoder_instances_ ||
+                         wake_lock != wake_lock_active_ || network != network_status_ ||
+                         thermal != thermal_status_;
+    hardware_decoder_instances_ = decoder_instances;
+    wake_lock_active_ = wake_lock;
+    network_status_ = network.isEmpty() ? QStringLiteral("unknown") : network;
+    thermal_status_ = thermal.isEmpty() ? QStringLiteral("unknown") : thermal;
+    if (changed)
+        emit platformStatusChanged();
+    if (network_changed && grant_.expires_at > QDateTime::currentSecsSinceEpoch()) {
+        fallback_reason_ = QStringLiteral(
+            "Network changed to %1; direct reachability is being re-evaluated").arg(network_status_);
+        emit topologyChanged();
+        grid_streams_.suspend();
+        focus_streams_.suspend();
+        grid_streams_.resume();
+        focus_streams_.resume();
+        if (!server_url_.isEmpty())
+            bootstrap_internal(true);
+    }
+    if (export_status == QStringLiteral("complete"))
+        emit operationCompleted(QStringLiteral(
+            "Capture exported through Android Storage Access Framework"));
+    else if (export_status == QStringLiteral("failed"))
+        emit userError(QStringLiteral("Android document provider could not export the capture"));
+#endif
+}
+
+void ClientController::set_last_capture_path(const QString &path)
+{
+    if (last_capture_path_ == path)
+        return;
+    last_capture_path_ = path;
+    emit lastCapturePathChanged();
+}
+
+void ClientController::finalize_pending_recordings()
+{
+    const auto pending = pending_recordings_;
+    pending_recordings_.clear();
+    for (auto item = pending.cbegin(); item != pending.cend(); ++item) {
+        const bool focused = item.key().startsWith(QStringLiteral("focus:"));
+        const QString session_id = item.key().section(QLatin1Char(':'), 1);
+        (focused ? focus_streams_ : grid_streams_).stopRecording(session_id);
+        if (QFileInfo(item.value()).isFile())
+            set_last_capture_path(item.value());
+    }
 }
 
 void ClientController::persist_identity()
@@ -901,5 +1034,29 @@ StreamSessionModel *ClientController::studioProgramStreams() { return &studio_pr
 int ClientController::gridCapacity() const { return grid_capacity_; }
 SceneModel *ClientController::scene() { return studio_.preview(); }
 StudioWorkspace *ClientController::studio() { return &studio_; }
+bool ClientController::androidPlatform() const
+{
+#if defined(Q_OS_ANDROID)
+    return true;
+#else
+    return false;
+#endif
+}
+int ClientController::hardwareDecoderInstances() const { return hardware_decoder_instances_; }
+bool ClientController::grid16Available() const
+{
+#if defined(Q_OS_ANDROID)
+    return hardware_decoder_instances_ >= 16 &&
+           !QStringList{QStringLiteral("severe"), QStringLiteral("critical"),
+                        QStringLiteral("emergency"), QStringLiteral("shutdown")}
+                .contains(thermal_status_);
+#else
+    return true;
+#endif
+}
+bool ClientController::wakeLockActive() const { return wake_lock_active_; }
+QString ClientController::networkStatus() const { return network_status_; }
+QString ClientController::thermalStatus() const { return thermal_status_; }
+QString ClientController::lastCapturePath() const { return last_capture_path_; }
 
 }

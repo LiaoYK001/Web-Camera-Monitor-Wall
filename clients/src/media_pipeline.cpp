@@ -10,6 +10,10 @@
 #include <QMutexLocker>
 #include <QRegularExpression>
 
+#if defined(Q_OS_ANDROID)
+GST_PLUGIN_STATIC_DECLARE(qml6);
+#endif
+
 #include <algorithm>
 #include <optional>
 
@@ -161,6 +165,15 @@ bool MediaPipeline::initialize(QString &error)
             g_error_free(native_error);
         return false;
     }
+#if defined(Q_OS_ANDROID)
+    GST_PLUGIN_STATIC_REGISTER(qml6);
+    GstElementFactory *qml_factory = gst_element_factory_find("qml6glsink");
+    if (!qml_factory) {
+        error = QStringLiteral("The audited static Android qml6 EGL plug-in could not register");
+        return false;
+    }
+    gst_object_unref(qml_factory);
+#endif
     const QString runtime = QString::fromLatin1(gst_version_string());
 #if WEBOBS_LOCKED_RUNTIME
     if (!runtime.contains(QStringLiteral("GStreamer 1.28.6"))) {

@@ -138,6 +138,25 @@ WEBOBS_LINUX_GSTREAMER_PLUGINS_UGLY_SOURCE_ARCHIVE
 WEBOBS_LINUX_GSTREAMER_LIBAV_SOURCE_ARCHIVE
 WEBOBS_LINUX_GSTREAMER_PLUGINS_RS_SOURCE_ARCHIVE
 WEBOBS_LINUX_SODIUM_SOURCE_ARCHIVE
+
+WEBOBS_ANDROID_QT_ROOT
+WEBOBS_ANDROID_SDK_ROOT
+WEBOBS_ANDROID_NDK_ROOT
+WEBOBS_ANDROID_GSTREAMER_ROOT
+WEBOBS_ANDROID_SODIUM_ROOT
+WEBOBS_ANDROID_DEVICE_SERIAL
+WEBOBS_ANDROID_REFERENCE_MANIFEST
+WEBOBS_ANDROID_KEYSTORE
+WEBOBS_ANDROID_QT_SOURCE_ARCHIVE
+WEBOBS_ANDROID_GSTREAMER_SOURCE_ARCHIVE
+WEBOBS_ANDROID_GSTREAMER_PLUGINS_BASE_SOURCE_ARCHIVE
+WEBOBS_ANDROID_GSTREAMER_PLUGINS_GOOD_SOURCE_ARCHIVE
+WEBOBS_ANDROID_GSTREAMER_PLUGINS_BAD_SOURCE_ARCHIVE
+WEBOBS_ANDROID_GSTREAMER_PLUGINS_UGLY_SOURCE_ARCHIVE
+WEBOBS_ANDROID_GSTREAMER_LIBAV_SOURCE_ARCHIVE
+WEBOBS_ANDROID_GSTREAMER_PLUGINS_RS_SOURCE_ARCHIVE
+WEBOBS_ANDROID_GSTREAMER_BUNDLE
+WEBOBS_ANDROID_SODIUM_SOURCE_ARCHIVE
 ```
 
 These archive variables point to runner-local, previously downloaded upstream files. The release
@@ -158,4 +177,6 @@ GStreamer core/base/good/bad/ugly/libav、固定 Rust 插件源码包及 Windows
 
 在 M2 阶段，从 Actions 页面选择 `Release native clients`，以 `dev` 分支执行 `Run workflow`。审计 job 会再次读取远端 `dev`，要求当前提交与其精确 HEAD 相同；候选版本使用 `2.0.0-dev.sha.<commit>`，随后执行 Windows/Fedora 签名构建、五协议及三平台 30 分钟门禁，并只保存为 Actions 候选 Artifact，不创建 Tag、GitHub Release 或稳定别名。Windows 候选包也强制要求 Authenticode 证书，不能用未签名开发包冒充 M2 证据。
 
-M1～M3 全部完成并合入 `main` 后，稳定 v2 Tag 的发布顺序固定为：公开审计 → Windows/Fedora 构建与签名 → 固定运行时五协议 → Windows 11 与两个 Fedora 版本的 30 分钟硬件/零服务端增量门禁 → SBOM/Sigstore/GitHub attestation → 附加到不可变 GitHub Release。只有来自 `main` 的受保护 SemVer Tag 才允许进入 `publish`；手工 `dev` 资格验收和任一失败 job 都不会发布 Release。
+Android Runner 还需要 JDK 21、Android platform/build-tools 36.0.0、NDK r27c、Qt 6.11.2 Android arm64 工具链、GStreamer 1.28.6 universal bundle、从固定源码构建的 libsodium 1.0.22，以及通过 ADB 独占连接的一台 API 29+ `arm64-v8a` 参考设备。发布密钥路径放 Runner 变量，Alias 与口令放 GitHub Secret；工作流不输出口令。九路私有清单不得包含明文用户名密码，只使用隔离实验室端点。工作流生成的同证书 acceptance-driver APK 和 `0600` 实机证据只存在于 `RUNNER_TEMP`，不会作为 Artifact 上传。
+
+M1～M3 全部完成并合入 `main` 后，稳定 v2 Tag 的发布顺序固定为：公开审计 → Windows/Fedora/Android 构建与签名 → 固定运行时五协议 → Windows 11、两个 Fedora 版本及 Android 参考设备的 30 分钟硬件/零服务端增量门禁 → SBOM/Sigstore/GitHub attestation → 附加到不可变 GitHub Release。只有来自 `main` 的受保护 SemVer Tag 才允许进入 `publish`；手工 `dev` 资格验收和任一失败 job 都不会发布 Release。
