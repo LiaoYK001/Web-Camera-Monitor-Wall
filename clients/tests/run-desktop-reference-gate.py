@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import argparse
 import base64
+import ipaddress
 import json
 import os
 from pathlib import Path
@@ -12,7 +13,9 @@ import platform
 import re
 import subprocess
 import sys
+import tempfile
 import time
+import urllib.parse
 import urllib.request
 
 
@@ -21,6 +24,8 @@ ALLOWED_CODECS = {"h264", "h265", "mjpeg"}
 MEDIA_PROCESSES = {"mediamtx", "ffmpeg", "obs-browser"}
 MEDIA_STATE_FIELDS = {"engineActive", "compositePublisherActive"}
 MONITOR_INTERVAL_SECONDS = 10.0
+MAX_CAPTURE_BYTES = 8 * 1024 * 1024
+REPOSITORY_ROOT = Path(__file__).resolve().parents[2]
 
 
 def unique_json(path: Path) -> object:
@@ -85,16 +90,81 @@ def validate_manifest(value: object) -> dict:
     return value
 
 
+def validate_control_url(url: str) -> str:
+    if not url:
+        return ""
+    parsed = urllib.parse.urlsplit(url)
+    if parsed.username is not None or parsed.password is not None or parsed.fragment or parsed.query:
+        raise ValueError("control URL cannot contain userinfo, a query, or a fragment")
+    if not parsed.hostname or parsed.scheme not in {"http", "https"}:
+        raise ValueError("control URL must be an absolute HTTP(S) URL")
+    loopback = parsed.hostname.lower() == "localhost"
+    try:
+        loopback = loopback or ipaddress.ip_address(parsed.hostname).is_loopback
+    except ValueError:
+        pass
+    if parsed.scheme != "https" and not loopback:
+        raise ValueError("remote control URL must use HTTPS")
+    return url.rstrip("/")
+
+
+def validate_control_credentials() -> tuple[str, str]:
+    username = os.environ.get("WEBOBS_REFERENCE_CONTROL_USERNAME", "")
+    password = os.environ.get("WEBOBS_REFERENCE_CONTROL_PASSWORD", "")
+    if not username or not password:
+        raise ValueError("reference control username and password are both required")
+    return username, password
+
+
+def validate_evidence_path(path: Path) -> Path:
+    if not path.is_absolute():
+        raise ValueError("private evidence path must be absolute")
+    resolved = path.resolve()
+    if resolved == REPOSITORY_ROOT or resolved.is_relative_to(REPOSITORY_ROOT):
+        raise ValueError("private evidence must be written outside the Git worktree")
+    if resolved.exists():
+        raise ValueError("private evidence is immutable and must not already exist")
+    return resolved
+
+
+def private_environment(manifest: dict) -> dict[str, str]:
+    names = {stream[field] for stream in manifest["streams"]
+             for field in ("usernameEnv", "passwordEnv") if stream[field]}
+    values = {name: os.environ.get(name, "") for name in names}
+    missing = sorted(name for name, value in values.items() if not value)
+    if missing:
+        raise ValueError("referenced private credential environment variables are empty")
+    environment = os.environ.copy()
+    for name in tuple(environment):
+        if name.startswith("WEBOBS_PRIVATE_") or name in {
+                "WEBOBS_REFERENCE_CONTROL_USERNAME", "WEBOBS_REFERENCE_CONTROL_PASSWORD"}:
+            environment.pop(name, None)
+    environment.update(values)
+    environment["GST_DEBUG"] = "0"
+    return environment
+
+
+def bounded_capture(handle) -> str:
+    handle.flush()
+    handle.seek(0, os.SEEK_END)
+    if handle.tell() > MAX_CAPTURE_BYTES:
+        raise RuntimeError("desktop reference diagnostics exceeded the private output limit")
+    handle.seek(0)
+    return handle.read()
+
+
+def peak_rss_growth(samples: list[int]) -> int:
+    return max(0, max(samples) - samples[0]) if samples else 0
+
+
 def server_processes(url: str) -> dict | None:
     if not url:
         return None
-    request = urllib.request.Request(url.rstrip("/") + "/api/v1/system/processes",
+    request = urllib.request.Request(validate_control_url(url) + "/api/v1/system/processes",
                                      headers={"Accept": "application/json"})
-    username = os.environ.get("WEBOBS_REFERENCE_CONTROL_USERNAME", "")
-    password = os.environ.get("WEBOBS_REFERENCE_CONTROL_PASSWORD", "")
-    if username or password:
-        request.add_header("Authorization", "Basic " + base64.b64encode(
-            f"{username}:{password}".encode()).decode())
+    username, password = validate_control_credentials()
+    request.add_header("Authorization", "Basic " + base64.b64encode(
+        f"{username}:{password}".encode()).decode())
     with urllib.request.urlopen(request, timeout=10) as response:
         value = json.load(response)
     if not isinstance(value, dict) or not isinstance(value.get("processes"), list) or \
@@ -183,25 +253,25 @@ def main() -> int:
     parser.add_argument("--evidence", type=Path, required=True)
     parser.add_argument("--control-url", default=os.environ.get("WEBOBS_REFERENCE_CONTROL_URL", ""))
     arguments = parser.parse_args()
-    if not arguments.client.is_file() or not arguments.evidence.is_absolute():
-        raise SystemExit("client must exist and evidence path must be absolute")
+    if not arguments.client.is_file():
+        raise SystemExit("client must exist")
+    if not arguments.control_url:
+        raise SystemExit("reference control URL is required for the zero-server-media gate")
     manifest = validate_manifest(unique_json(arguments.manifest))
-    baseline = server_processes(arguments.control_url)
+    evidence_path = validate_evidence_path(arguments.evidence)
+    control_url = validate_control_url(arguments.control_url)
+    environment = private_environment(manifest)
+    evidence_path.parent.mkdir(parents=True, exist_ok=True)
+    baseline = server_processes(control_url)
     process: subprocess.Popen[str] | None = None
+    stdout_capture = tempfile.TemporaryFile(mode="w+t", encoding="utf-8", errors="replace",
+                                            dir=evidence_path.parent)
+    stderr_capture = tempfile.TemporaryFile(mode="w+t", encoding="utf-8", errors="replace",
+                                            dir=evidence_path.parent)
     try:
-        environment = os.environ.copy()
-        private_names = {stream[field] for stream in manifest["streams"]
-                         for field in ("usernameEnv", "passwordEnv") if stream[field]}
-        private_values = {name: os.environ.get(name, "") for name in private_names}
-        for name in tuple(environment):
-            if name.startswith("WEBOBS_PRIVATE_") or name in {
-                    "WEBOBS_REFERENCE_CONTROL_USERNAME", "WEBOBS_REFERENCE_CONTROL_PASSWORD"}:
-                environment.pop(name, None)
-        environment.update(private_values)
-        environment["GST_DEBUG"] = "0"
         process = subprocess.Popen(
             [str(arguments.client), "--probe-manifest", str(arguments.manifest.resolve())],
-            stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
+            stdout=stdout_capture, stderr=stderr_capture, text=True,
             encoding="utf-8", errors="replace", env=environment)
         deadline = time.monotonic() + manifest["durationSeconds"] + 30
         during = None
@@ -211,7 +281,7 @@ def main() -> int:
         while process.poll() is None:
             if time.monotonic() >= deadline:
                 raise RuntimeError("desktop reference client exceeded its bounded deadline")
-            current = server_processes(arguments.control_url)
+            current = server_processes(control_url)
             if not same_server_media(baseline, current):
                 raise RuntimeError("opening the True Direct client changed server media sessions")
             during = current
@@ -221,7 +291,9 @@ def main() -> int:
                 if rss is not None:
                     rss_samples.append(rss)
             time.sleep(MONITOR_INTERVAL_SECONDS)
-        stdout, stderr = process.communicate(timeout=5)
+        process.wait(timeout=5)
+        stdout = bounded_capture(stdout_capture)
+        stderr = bounded_capture(stderr_capture)
         for stream in manifest["streams"]:
             assert_private_value_not_logged(stdout + stderr, stream, os.environ)
         if process.returncode != 0:
@@ -265,11 +337,11 @@ def main() -> int:
                 "pipelineRestarts": int(result.get("pipelineRestarts", -1))})
         if len(rss_samples) < 3:
             raise RuntimeError("desktop reference client produced insufficient RSS samples")
-        rss_growth = max(0, rss_samples[-1] - rss_samples[0])
+        rss_growth = peak_rss_growth(rss_samples)
         rss_limit = manifest["maxRssGrowthMiB"] * 1024 * 1024
         if rss_growth > rss_limit:
             raise RuntimeError("desktop reference client exceeded its bounded RSS growth gate")
-        final_server = server_processes(arguments.control_url)
+        final_server = server_processes(control_url)
         if not same_server_media(baseline, final_server):
             raise RuntimeError("True Direct clients left incremental server media sessions")
         document = {"schemaVersion": 1, "result": "passed", "platform": platform.platform(),
@@ -282,10 +354,23 @@ def main() -> int:
             "serverRtspSessionsBefore": baseline["rtspSessions"] if baseline else None,
             "serverRtspSessionsDuring": during["rtspSessions"] if during else None,
             "serverRtspSessionsAfter": final_server["rtspSessions"] if final_server else None}
-        arguments.evidence.parent.mkdir(parents=True, exist_ok=True)
-        temporary = arguments.evidence.with_suffix(arguments.evidence.suffix + ".tmp")
-        temporary.write_text(json.dumps(document, indent=2, sort_keys=True) + "\n", encoding="utf-8")
-        temporary.replace(arguments.evidence)
+        temporary_path: Path | None = None
+        try:
+            with tempfile.NamedTemporaryFile(mode="w", encoding="utf-8", newline="\n",
+                                             dir=evidence_path.parent, prefix=".webobs-m2-",
+                                             suffix=".json.tmp", delete=False) as temporary:
+                temporary_path = Path(temporary.name)
+                temporary.write(json.dumps(document, indent=2, sort_keys=True) + "\n")
+                temporary.flush()
+                os.fsync(temporary.fileno())
+            if os.name != "nt":
+                temporary_path.chmod(0o600)
+            os.link(temporary_path, evidence_path)
+            temporary_path.unlink()
+            temporary_path = None
+        finally:
+            if temporary_path is not None:
+                temporary_path.unlink(missing_ok=True)
         print("v2-M2 desktop reference gate passed in one client process: 16 substreams + 1 main, "
               "hardware decode, drop/RSS thresholds, continuous 30-minute server sampling, "
               "and zero incremental media load.")
@@ -298,6 +383,8 @@ def main() -> int:
                 process.wait(timeout=5)
             except subprocess.TimeoutExpired:
                 process.kill()
+        stdout_capture.close()
+        stderr_capture.close()
 
 
 if __name__ == "__main__":

@@ -39,6 +39,7 @@ jobs:
           python3 clients/tests/test_dependency_lock.py
           python3 clients/tests/test_exact_protocol_gate.py
           python3 clients/tests/test_desktop_reference_gate.py
+          ./clients/tests/test-portable-checksums.sh
           [[ "$REF_TYPE" == tag ]]
           [[ "$REF_NAME" =~ ^v2\.[0-9]+(\.[0-9]+)?$ ]]
           git fetch --no-tags origin main
@@ -170,6 +171,7 @@ jobs:
           set -euo pipefail
           ./tests/run-public-audit.sh
           ./clients/tests/test-linux-update-rollback.sh
+          ./clients/tests/test-portable-checksums.sh
           python3 clients/scripts/verify_dependency_lock.py \
             --require-platform linux-x86_64 \
             --artifact "qt-source=$QT_SOURCE_ARCHIVE" \
@@ -247,6 +249,8 @@ jobs:
         run: |
           set -euo pipefail
           client="native-artifacts/webobs-native-${{ needs.audit.outputs.package_version }}-linux-x86_64.AppImage"
+          (cd native-artifacts && sha256sum --check \
+            "webobs-native-${{ needs.audit.outputs.package_version }}-linux-x86_64.AppImage.sha256")
           chmod 0755 "$client"
           python3 clients/tests/run-exact-protocol-gate.py "$client"
           python3 clients/tests/run-desktop-reference-gate.py \

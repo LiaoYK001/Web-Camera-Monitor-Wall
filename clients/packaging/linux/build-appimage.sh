@@ -91,5 +91,5 @@ mkdir -p "$build/test-home"
 env -i HOME="$build/test-home" PATH=/usr/bin:/bin \
   "$output_dir/webobs-native-$version-linux-x86_64.AppImage" --appimage-extract-and-run \
   --verify-runtime >/dev/null
-sha256sum "$output_dir/webobs-native-$version-linux-x86_64.AppImage" > \
-  "$output_dir/webobs-native-$version-linux-x86_64.AppImage.sha256"
+(cd "$output_dir" && sha256sum "webobs-native-$version-linux-x86_64.AppImage" > \
+  "webobs-native-$version-linux-x86_64.AppImage.sha256")

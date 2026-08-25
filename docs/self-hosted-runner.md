@@ -154,6 +154,6 @@ GStreamer core/base/good/bad/ugly/libav、固定 Rust 插件源码包及 Windows
 不可变提交并提供 `whepclientsrc` 与 MediaMTX 兼容的 `whepsrc`；仅有 core 版本字符串或缺少任一源码包都不能作为供应链证据。
 人工复现时必须使用 `--require-platform`，确保遗漏立即失败。
 
-精确协议与 30 分钟硬件门禁只读取受保护 Secret/Runner 本地文件。五种私有端点通过 `WEBOBS_PRIVATE_RTSP_H264`、`WEBOBS_PRIVATE_RTSP_H265`、`WEBOBS_PRIVATE_MJPEG`、`WEBOBS_PRIVATE_HLS`、`WEBOBS_PRIVATE_WHEP` 提供；17 路参考清单由 `WEBOBS_WINDOWS_REFERENCE_MANIFEST` 或 `WEBOBS_LINUX_REFERENCE_MANIFEST` 指向 Runner 本地文件。脚本只输出协议名、解码器、帧数和掉帧统计，不输出端点、凭据或私有证据文件。`WEBOBS_REFERENCE_CONTROL_URL` 用于比较观看前后服务端 RTSP/媒体进程计数；认证值只放 Secret。
+精确协议与 30 分钟硬件门禁只读取受保护 Secret/Runner 本地文件。五种私有端点通过 `WEBOBS_PRIVATE_RTSP_H264`、`WEBOBS_PRIVATE_RTSP_H265`、`WEBOBS_PRIVATE_MJPEG`、`WEBOBS_PRIVATE_HLS`、`WEBOBS_PRIVATE_WHEP` 提供；17 路参考清单由 `WEBOBS_WINDOWS_REFERENCE_MANIFEST` 或 `WEBOBS_LINUX_REFERENCE_MANIFEST` 指向 Runner 本地文件，清单引用的每个凭据环境变量都必须非空。脚本只输出协议名、解码器、帧数和掉帧统计，不输出端点、凭据或私有证据文件。证据路径必须是 Git 工作区之外尚不存在的绝对路径，POSIX 上以 `0600` 原子落盘；长时间客户端输出写入有大小上限的私有临时文件，避免管道堵塞。`WEBOBS_REFERENCE_CONTROL_URL` 是必填项，用于比较观看前后服务端 RTSP/媒体进程计数；远端必须使用 HTTPS，仅回环地址可用 HTTP，控制用户名与密码必须成对放入 Secret。
 
 稳定 v2 Tag 的发布顺序固定为：公开审计 → Windows/Fedora 构建与签名 → 固定运行时五协议 → Windows 11 与两个 Fedora 版本的 30 分钟硬件/零服务端增量门禁 → SBOM/Sigstore/GitHub attestation → 附加到不可变 GitHub Release。任一平台或证据失败都不会进入 `publish`。

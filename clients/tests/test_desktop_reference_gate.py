@@ -6,6 +6,7 @@ from __future__ import annotations
 import importlib.util
 import os
 from pathlib import Path
+import tempfile
 import unittest
 
 
@@ -66,6 +67,73 @@ class DesktopReferenceGateTests(unittest.TestCase):
 
     def test_reads_current_process_rss(self) -> None:
         self.assertGreater(gate.process_rss_bytes(os.getpid()) or 0, 0)
+
+    def test_peak_rss_growth_cannot_hide_mid_run_growth(self) -> None:
+        self.assertEqual(gate.peak_rss_growth([100, 900, 120]), 800)
+
+    def test_remote_control_requires_https(self) -> None:
+        self.assertEqual(gate.validate_control_url("https://control.example.test:8443/base"),
+                         "https://control.example.test:8443/base")
+        self.assertEqual(gate.validate_control_url("http://127.0.0.1:8080/"),
+                         "http://127.0.0.1:8080")
+        with self.assertRaisesRegex(ValueError, "must use HTTPS"):
+            gate.validate_control_url("http://control.example.test:8080")
+        with self.assertRaisesRegex(ValueError, "userinfo"):
+            gate.validate_control_url("https://user:password@control.example.test")
+
+    def test_control_credentials_are_an_indivisible_secret_pair(self) -> None:
+        old_user = os.environ.get("WEBOBS_REFERENCE_CONTROL_USERNAME")
+        old_password = os.environ.get("WEBOBS_REFERENCE_CONTROL_PASSWORD")
+        try:
+            os.environ["WEBOBS_REFERENCE_CONTROL_USERNAME"] = "operator"
+            os.environ.pop("WEBOBS_REFERENCE_CONTROL_PASSWORD", None)
+            with self.assertRaisesRegex(ValueError, "both required"):
+                gate.validate_control_credentials()
+            os.environ["WEBOBS_REFERENCE_CONTROL_PASSWORD"] = "private-password"
+            self.assertEqual(gate.validate_control_credentials(),
+                             ("operator", "private-password"))
+        finally:
+            for name, previous in (("WEBOBS_REFERENCE_CONTROL_USERNAME", old_user),
+                                   ("WEBOBS_REFERENCE_CONTROL_PASSWORD", old_password)):
+                if previous is None:
+                    os.environ.pop(name, None)
+                else:
+                    os.environ[name] = previous
+
+    def test_private_evidence_must_stay_outside_repository_and_be_new(self) -> None:
+        with self.assertRaisesRegex(ValueError, "outside the Git worktree"):
+            gate.validate_evidence_path(gate.REPOSITORY_ROOT / "private.json")
+        with tempfile.TemporaryDirectory() as directory:
+            evidence = Path(directory).resolve() / "evidence.json"
+            self.assertEqual(gate.validate_evidence_path(evidence), evidence)
+            evidence.write_text("{}", encoding="utf-8")
+            with self.assertRaisesRegex(ValueError, "must not already exist"):
+                gate.validate_evidence_path(evidence)
+
+    def test_referenced_credentials_must_exist_and_unrelated_values_are_scrubbed(self) -> None:
+        value = manifest()
+        old_user = os.environ.get("WEBOBS_PRIVATE_USER")
+        old_password = os.environ.get("WEBOBS_PRIVATE_PASSWORD")
+        old_unrelated = os.environ.get("WEBOBS_PRIVATE_UNRELATED")
+        try:
+            os.environ.pop("WEBOBS_PRIVATE_USER", None)
+            os.environ.pop("WEBOBS_PRIVATE_PASSWORD", None)
+            with self.assertRaisesRegex(ValueError, "are empty"):
+                gate.private_environment(value)
+            os.environ["WEBOBS_PRIVATE_USER"] = "user"
+            os.environ["WEBOBS_PRIVATE_PASSWORD"] = "password"
+            os.environ["WEBOBS_PRIVATE_UNRELATED"] = "do-not-forward"
+            environment = gate.private_environment(value)
+            self.assertEqual(environment["WEBOBS_PRIVATE_USER"], "user")
+            self.assertNotIn("WEBOBS_PRIVATE_UNRELATED", environment)
+        finally:
+            for name, previous in (("WEBOBS_PRIVATE_USER", old_user),
+                                   ("WEBOBS_PRIVATE_PASSWORD", old_password),
+                                   ("WEBOBS_PRIVATE_UNRELATED", old_unrelated)):
+                if previous is None:
+                    os.environ.pop(name, None)
+                else:
+                    os.environ[name] = previous
 
     def test_server_media_comparison_covers_processes_and_rtsp(self) -> None:
         baseline = {"rtspSessions": 2, "engineActive": False,

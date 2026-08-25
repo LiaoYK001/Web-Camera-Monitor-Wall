@@ -23,5 +23,5 @@ flatpak build-export "$build/repo" "$build/app" "$version"
 flatpak build-bundle "$build/repo" \
   "$output_dir/webobs-native-$version-linux-x86_64.flatpak" \
   io.github.liaoyk001.WebObsNative "$version"
-sha256sum "$output_dir/webobs-native-$version-linux-x86_64.flatpak" > \
-  "$output_dir/webobs-native-$version-linux-x86_64.flatpak.sha256"
+(cd "$output_dir" && sha256sum "webobs-native-$version-linux-x86_64.flatpak" > \
+  "webobs-native-$version-linux-x86_64.flatpak.sha256")

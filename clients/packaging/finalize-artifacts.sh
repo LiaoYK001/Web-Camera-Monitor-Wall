@@ -13,7 +13,8 @@ done
 chmod +x "$syft" "$cosign"
 while IFS= read -r -d '' artifact; do
   case "$artifact" in *.sha256|*.spdx.json|*.sigstore.json) continue;; esac
-  sha256sum "$artifact" > "$artifact.sha256"
+  artifact_name="${artifact##*/}"
+  (cd "$artifact_dir" && sha256sum "$artifact_name" > "$artifact_name.sha256")
   "$syft" "$artifact" -o "spdx-json=$artifact.spdx.json"
   "$cosign" sign-blob --yes --bundle "$artifact.sigstore.json" "$artifact"
 done < <(find "$artifact_dir" -maxdepth 1 -type f -print0)
