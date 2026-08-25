@@ -1,0 +1,15 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+appdir="$(cd "$(dirname "$(readlink -f "$0")")" && pwd)"
+export PATH="$appdir/usr/bin${PATH:+:$PATH}"
+export LD_LIBRARY_PATH="$appdir/usr/lib:$appdir/usr/lib64${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
+export GST_PLUGIN_SYSTEM_PATH_1_0=
+export GST_PLUGIN_PATH_1_0="$appdir/usr/lib/gstreamer-1.0"
+export GST_PLUGIN_SCANNER_1_0="$appdir/usr/libexec/gstreamer-1.0/gst-plugin-scanner"
+
+for hook in "$appdir"/apprun-hooks/*.sh; do
+  if [[ -r "$hook" ]]; then source "$hook"; fi
+done
+
+exec "$appdir/usr/bin/webobs-native" "$@"

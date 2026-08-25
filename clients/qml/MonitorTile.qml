@@ -45,6 +45,8 @@ Item {
                     text: root.streamTopology + " · " +
                           (root.streamMedia ? root.streamMedia.decoder : "waiting") +
                           (root.streamMedia ? " · " + root.streamMedia.currentFps.toFixed(1) + " fps" : "") +
+                          (root.streamMedia && root.streamMedia.videoWidth > 0 ?
+                               " · " + root.streamMedia.videoWidth + "×" + root.streamMedia.videoHeight : "") +
                           (root.streamMedia && root.streamMedia.framesDropped > 0 ?
                               " · dropped " + root.streamMedia.framesDropped : "") +
                           (root.streamReconnectCount > 0 ? " · reconnect " + root.streamReconnectCount : "")

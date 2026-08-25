@@ -14,6 +14,8 @@ linuxdeploy_qt_sha256="${WEBOBS_LINUXDEPLOY_QT_PLUGIN_SHA256:?WEBOBS_LINUXDEPLOY
 [[ -f "$linuxdeploy_qt" ]]
 echo "$linuxdeploy_sha256  $linuxdeploy" | sha256sum --check
 echo "$linuxdeploy_qt_sha256  $linuxdeploy_qt" | sha256sum --check
+linuxdeploy="$(realpath "$linuxdeploy")"
+linuxdeploy_qt="$(realpath "$linuxdeploy_qt")"
 [[ "$(gst-launch-1.0 --version | awk '/GStreamer/{print $2; exit}')" == "1.28.6" ]]
 [[ "$(pkg-config --modversion libsodium)" == "1.0.22" ]]
 
@@ -29,14 +31,16 @@ cmake --build "$build/cmake" --parallel
 ctest --test-dir "$build/cmake" --output-on-failure
 DESTDIR="$appdir" cmake --install "$build/cmake" --strip
 
-mkdir -p "$appdir/usr/lib/gstreamer-1.0" "$appdir/usr/share/icons/hicolor/scalable/apps"
+mkdir -p "$appdir/usr/lib/gstreamer-1.0" "$appdir/usr/libexec/gstreamer-1.0" \
+  "$appdir/usr/share/icons/hicolor/scalable/apps"
 cp "$root/clients/packaging/io.github.liaoyk001.WebObsNative.svg" \
   "$appdir/usr/share/icons/hicolor/scalable/apps/io.github.liaoyk001.WebObsNative.svg"
-cp "$(command -v gst-launch-1.0)" "$appdir/usr/bin/gst-launch-1.0"
-
 plugins=(rtspsrc uridecodebin3 decodebin3 qml6glsink whepclientsrc rtph264depay rtph265depay \
-         h264parse h265parse matroskamux matroskademux mp4mux autoaudiosink autoaudiosrc \
-         audioconvert audioresample wavenc appsink vah264dec vah265dec)
+         h264parse h265parse matroskamux matroskademux mp4mux videoconvert identity \
+         fakesink filesink audioconvert audioresample volume autoaudiosink autoaudiosrc \
+         wavenc appsink souphttpsrc hlsdemux2 jpegdec avdec_h264 avdec_h265 webrtcbin \
+         nicesrc dtlssrtpdec dtlssrtpenc rtpbin opusdec alawdec mulawdec avdec_aac \
+         vah264dec vah265dec)
 declare -A copied=()
 libraries=()
 for element in "${plugins[@]}"; do
@@ -49,6 +53,9 @@ for element in "${plugins[@]}"; do
     copied[$plugin]=1
   fi
 done
+plugin_scanner="$(pkg-config --variable=pluginscannerdir gstreamer-1.0)/gst-plugin-scanner"
+[[ -x "$plugin_scanner" ]] || { echo "GStreamer plugin scanner is unavailable" >&2; exit 1; }
+cp "$plugin_scanner" "$appdir/usr/libexec/gstreamer-1.0/gst-plugin-scanner"
 
 chmod +x "$linuxdeploy"
 export QMAKE="${QMAKE:-$(command -v qmake6)}"
@@ -58,14 +65,18 @@ mkdir -p "$plugin_dir"
 cp "$linuxdeploy_qt" "$plugin_dir/linuxdeploy-plugin-qt"
 chmod 0755 "$plugin_dir/linuxdeploy-plugin-qt"
 export PATH="$plugin_dir:$PATH"
-"$linuxdeploy" --appdir "$appdir" \
+(cd "$build" && "$linuxdeploy" --appdir "$appdir" \
   --executable "$appdir/usr/bin/webobs-native" \
-  --executable "$appdir/usr/bin/gst-launch-1.0" \
   --desktop-file "$root/clients/packaging/io.github.liaoyk001.WebObsNative.desktop" \
   --icon-file "$root/clients/packaging/io.github.liaoyk001.WebObsNative.svg" \
-  "${libraries[@]}" --plugin qt --output appimage
-artifact="$(find . -maxdepth 1 -type f -name '*.AppImage' -printf '%p\n' | head -n 1)"
+  --custom-apprun "$root/clients/packaging/linux/AppRun" \
+  "${libraries[@]}" --plugin qt --output appimage)
+artifact="$(find "$build" -maxdepth 1 -type f -name '*.AppImage' -printf '%p\n' | head -n 1)"
 [[ -n "$artifact" ]]
 mv "$artifact" "$output_dir/webobs-native-$version-linux-x86_64.AppImage"
+mkdir -p "$build/test-home"
+env -i HOME="$build/test-home" PATH=/usr/bin:/bin \
+  "$output_dir/webobs-native-$version-linux-x86_64.AppImage" --appimage-extract-and-run \
+  --verify-runtime >/dev/null
 sha256sum "$output_dir/webobs-native-$version-linux-x86_64.AppImage" > \
   "$output_dir/webobs-native-$version-linux-x86_64.AppImage.sha256"

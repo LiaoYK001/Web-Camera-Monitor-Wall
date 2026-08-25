@@ -5,10 +5,12 @@
 #include <QGuiApplication>
 #include <QCommandLineOption>
 #include <QCommandLineParser>
+#include <QCoreApplication>
 #include <QDir>
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QSet>
+#include <QStringList>
 #include <QQmlApplicationEngine>
 #include <QQmlContext>
 #include <QTimer>
@@ -19,7 +21,8 @@ int main(int argc, char *argv[])
 {
     bool probe_requested = false;
     for (int index = 1; index < argc; ++index)
-        if (QByteArrayView(argv[index]) == QByteArrayView("--probe-endpoint"))
+        if (QByteArrayView(argv[index]) == QByteArrayView("--probe-endpoint") ||
+            QByteArrayView(argv[index]) == QByteArrayView("--verify-runtime"))
             probe_requested = true;
     if (probe_requested && qEnvironmentVariableIsEmpty("QT_QPA_PLATFORM"))
         qputenv("QT_QPA_PLATFORM", "offscreen");
@@ -27,6 +30,19 @@ int main(int argc, char *argv[])
     application.setApplicationName(QStringLiteral("WebObs Native"));
     application.setOrganizationName(QStringLiteral("WebObs"));
     application.setApplicationVersion(QStringLiteral(WEBOBS_CLIENT_VERSION));
+
+#if defined(Q_OS_WIN)
+    const QDir application_directory(QCoreApplication::applicationDirPath());
+    const QString bundled_plugins = application_directory.absoluteFilePath(
+        QStringLiteral("../lib/gstreamer-1.0"));
+    const QString bundled_scanner = application_directory.absoluteFilePath(
+        QStringLiteral("../libexec/gstreamer-1.0/gst-plugin-scanner.exe"));
+    if (QFileInfo::exists(bundled_plugins) && QFileInfo::exists(bundled_scanner)) {
+        qputenv("GST_PLUGIN_SYSTEM_PATH_1_0", QByteArray{});
+        qputenv("GST_PLUGIN_PATH_1_0", QDir::toNativeSeparators(bundled_plugins).toUtf8());
+        qputenv("GST_PLUGIN_SCANNER_1_0", QDir::toNativeSeparators(bundled_scanner).toUtf8());
+    }
+#endif
 
     QString error;
     if (!webobs::client::GrantCodec::initialize(error) ||
@@ -39,18 +55,62 @@ int main(int argc, char *argv[])
     parser.setApplicationDescription(QStringLiteral("WebObs Native True Direct client"));
     parser.addHelpOption();
     parser.addVersionOption();
+    parser.addOption({QStringLiteral("verify-runtime"),
+                      QStringLiteral("Verify the self-contained desktop media runtime")});
     parser.addOption({QStringLiteral("probe-endpoint"), QStringLiteral("Run the production media pipeline without QML"),
                       QStringLiteral("url")});
     parser.addOption({QStringLiteral("probe-adapter"), QStringLiteral("rtsp, mjpeg, hls, or whep"),
                       QStringLiteral("adapter")});
     parser.addOption({QStringLiteral("probe-codec"), QStringLiteral("h264, h265, or mjpeg"),
                       QStringLiteral("codec")});
-    parser.addOption({QStringLiteral("probe-seconds"), QStringLiteral("Playback evidence duration (1-300)"),
+    parser.addOption({QStringLiteral("probe-seconds"), QStringLiteral("Playback evidence duration (1-7200)"),
                       QStringLiteral("seconds"), QStringLiteral("8")});
     parser.addOption({QStringLiteral("probe-record-mkv"),
                       QStringLiteral("Also exercise the production RTSP stream-copy recorder"),
                       QStringLiteral("absolute-path")});
     parser.process(application);
+    if (parser.isSet(QStringLiteral("verify-runtime"))) {
+        QStringList required{QStringLiteral("rtspsrc"), QStringLiteral("uridecodebin3"),
+            QStringLiteral("decodebin3"), QStringLiteral("qml6glsink"),
+            QStringLiteral("whepclientsrc"), QStringLiteral("rtph264depay"),
+            QStringLiteral("rtph265depay"), QStringLiteral("h264parse"),
+            QStringLiteral("h265parse"), QStringLiteral("matroskamux"),
+            QStringLiteral("matroskademux"), QStringLiteral("mp4mux"),
+            QStringLiteral("videoconvert"), QStringLiteral("identity"),
+            QStringLiteral("fakesink"), QStringLiteral("filesink"),
+            QStringLiteral("audioconvert"), QStringLiteral("audioresample"),
+            QStringLiteral("volume"), QStringLiteral("souphttpsrc"),
+            QStringLiteral("hlsdemux2"), QStringLiteral("jpegdec"),
+            QStringLiteral("avdec_h264"), QStringLiteral("avdec_h265"),
+            QStringLiteral("webrtcbin"), QStringLiteral("nicesrc"),
+            QStringLiteral("dtlssrtpdec"), QStringLiteral("dtlssrtpenc"),
+            QStringLiteral("rtpbin"), QStringLiteral("opusdec"),
+            QStringLiteral("alawdec"), QStringLiteral("mulawdec"),
+            QStringLiteral("avdec_aac")};
+#if defined(Q_OS_WIN)
+        required << QStringLiteral("d3d11h264dec") << QStringLiteral("d3d11h265dec");
+#elif defined(Q_OS_LINUX)
+        required << QStringLiteral("vah264dec") << QStringLiteral("vah265dec");
+#endif
+        QStringList missing;
+        for (const QString &name : required) {
+            GstElementFactory *factory = gst_element_factory_find(name.toUtf8().constData());
+            if (factory)
+                gst_object_unref(factory);
+            else
+                missing << name;
+        }
+        if (!missing.isEmpty()) {
+            qCritical("self-contained runtime is missing required media elements: %s",
+                      qPrintable(missing.join(',')));
+            return 2;
+        }
+        qInfo().noquote() << QJsonDocument(QJsonObject{
+            {QStringLiteral("result"), QStringLiteral("passed")},
+            {QStringLiteral("gstreamer"), QString::fromLatin1(gst_version_string())},
+            {QStringLiteral("requiredElements"), required.size()}}).toJson(QJsonDocument::Compact);
+        return 0;
+    }
     if (parser.isSet(QStringLiteral("probe-endpoint"))) {
         const QString adapter = parser.value(QStringLiteral("probe-adapter")).toLower();
         const QString codec = parser.value(QStringLiteral("probe-codec")).toLower();
@@ -64,7 +124,7 @@ int main(int argc, char *argv[])
         const QSet<QString> codecs{QStringLiteral("h264"), QStringLiteral("h265"),
                                    QStringLiteral("mjpeg")};
         if (!adapters.contains(adapter) || !codecs.contains(codec) || !duration_ok ||
-            duration < 1 || duration > 300 || !url.isValid() || url.host().isEmpty()) {
+            duration < 1 || duration > 7200 || !url.isValid() || url.host().isEmpty()) {
             qCritical("invalid bounded protocol probe arguments");
             return 2;
         }
@@ -103,7 +163,9 @@ int main(int argc, char *argv[])
                         {QStringLiteral("fallbackReason"), pipeline.fallbackReason()},
                         {QStringLiteral("framesDecoded"), static_cast<qint64>(pipeline.framesDecoded())},
                         {QStringLiteral("framesDropped"), static_cast<qint64>(pipeline.framesDropped())},
-                        {QStringLiteral("fps"), pipeline.currentFps()}};
+                        {QStringLiteral("fps"), pipeline.currentFps()},
+                        {QStringLiteral("width"), pipeline.videoWidth()},
+                        {QStringLiteral("height"), pipeline.videoHeight()}};
                     if (pipeline.framesDecoded() < static_cast<quint64>(duration)) {
                         result = 4;
                     } else {

@@ -4,3 +4,4 @@
 *.py text eol=lf
 Dockerfile text eol=lf
 *.patch text eol=lf -whitespace
+clients/packaging/linux/AppRun text eol=lf

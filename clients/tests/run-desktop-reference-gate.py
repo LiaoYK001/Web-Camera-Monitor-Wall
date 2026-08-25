@@ -19,6 +19,8 @@ import urllib.request
 ALLOWED_ADAPTERS = {"rtsp", "mjpeg", "hls", "whep"}
 ALLOWED_CODECS = {"h264", "h265", "mjpeg"}
 MEDIA_PROCESSES = {"mediamtx", "ffmpeg", "obs-browser"}
+MEDIA_STATE_FIELDS = {"engineActive", "compositePublisherActive"}
+MONITOR_INTERVAL_SECONDS = 10.0
 
 
 def unique_json(path: Path) -> object:
@@ -37,7 +39,8 @@ def unique_json(path: Path) -> object:
 def validate_manifest(value: object) -> dict:
     root_fields = {"schemaVersion", "durationSeconds", "maxDroppedPercent", "requireHardware",
                    "streams"}
-    stream_fields = {"name", "role", "adapter", "endpoint", "codec", "expectedFps",
+    stream_fields = {"name", "role", "adapter", "endpoint", "codec", "expectedWidth",
+                     "expectedHeight", "expectedFps",
                      "usernameEnv", "passwordEnv"}
     if not isinstance(value, dict) or set(value) != root_fields or value["schemaVersion"] != 1:
         raise ValueError("reference manifest fields are invalid")
@@ -67,6 +70,11 @@ def validate_manifest(value: object) -> dict:
                 "@" in stream["endpoint"] or not isinstance(stream["expectedFps"], (int, float)) or \
                 not 1 <= stream["expectedFps"] <= 120:
             raise ValueError("stream protocol, endpoint, codec, or FPS is invalid")
+        expected_shape = (stream["expectedWidth"], stream["expectedHeight"], stream["expectedFps"])
+        allowed_shapes = {(640, 360, 15)} if stream["role"] == "sub" else {
+            (1920, 1080, 25), (1920, 1080, 30)}
+        if expected_shape not in allowed_shapes:
+            raise ValueError("substreams must be 640x360@15 and main must be 1080p@25/30")
         for field in ("usernameEnv", "passwordEnv"):
             if not isinstance(stream[field], str) or (stream[field] and not re.fullmatch(
                     r"WEBOBS_PRIVATE_[A-Z0-9_]{1,80}", stream[field])):
@@ -87,7 +95,8 @@ def server_processes(url: str) -> dict | None:
     with urllib.request.urlopen(request, timeout=10) as response:
         value = json.load(response)
     if not isinstance(value, dict) or not isinstance(value.get("processes"), list) or \
-            not isinstance(value.get("rtspSessions"), int):
+            not isinstance(value.get("rtspSessions"), int) or any(
+                not isinstance(value.get(field), bool) for field in MEDIA_STATE_FIELDS):
         raise RuntimeError("server process response is invalid")
     return value
 
@@ -95,6 +104,21 @@ def server_processes(url: str) -> dict | None:
 def media_counts(snapshot: dict) -> dict[str, int]:
     return {item["name"]: int(item["instances"]) for item in snapshot["processes"]
             if isinstance(item, dict) and item.get("name") in MEDIA_PROCESSES}
+
+
+def same_server_media(baseline: dict | None, current: dict | None) -> bool:
+    if baseline is None or current is None:
+        return baseline is current
+    return current["rtspSessions"] == baseline["rtspSessions"] and \
+        media_counts(current) == media_counts(baseline) and all(
+            current[field] == baseline[field] for field in MEDIA_STATE_FIELDS)
+
+
+def assert_private_value_not_logged(output: str, stream: dict, environment: dict[str, str]) -> None:
+    sensitive = [stream["endpoint"]]
+    sensitive.extend(environment.get(stream[field], "") for field in ("usernameEnv", "passwordEnv"))
+    if any(value and value in output for value in sensitive):
+        raise RuntimeError(f"stream {stream['name']} emitted a private endpoint or credential")
 
 
 def main() -> int:
@@ -112,26 +136,41 @@ def main() -> int:
     try:
         for stream in manifest["streams"]:
             environment = os.environ.copy()
-            environment["WEBOBS_PROBE_USERNAME"] = environment.get(stream["usernameEnv"], "")
-            environment["WEBOBS_PROBE_PASSWORD"] = environment.get(stream["passwordEnv"], "")
+            for name in tuple(environment):
+                if name.startswith("WEBOBS_PRIVATE_") or name in {
+                        "WEBOBS_REFERENCE_CONTROL_USERNAME", "WEBOBS_REFERENCE_CONTROL_PASSWORD"}:
+                    environment.pop(name, None)
+            environment["WEBOBS_PROBE_USERNAME"] = os.environ.get(stream["usernameEnv"], "")
+            environment["WEBOBS_PROBE_PASSWORD"] = os.environ.get(stream["passwordEnv"], "")
+            environment["GST_DEBUG"] = "0"
             command = [str(arguments.client), "--probe-endpoint", stream["endpoint"],
                        "--probe-adapter", stream["adapter"], "--probe-codec", stream["codec"],
                        "--probe-seconds", str(manifest["durationSeconds"])]
             processes.append((stream, subprocess.Popen(
                 command, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
                 encoding="utf-8", errors="replace", env=environment)))
-        time.sleep(20)
-        during = server_processes(arguments.control_url)
-        if baseline is not None and during is not None and (
-                during["rtspSessions"] != baseline["rtspSessions"] or
-                media_counts(during) != media_counts(baseline)):
-            raise RuntimeError("opening True Direct clients changed server media sessions")
+        deadline = time.monotonic() + manifest["durationSeconds"] + 30
+        during = None
+        samples = 0
+        while any(process.poll() is None for _, process in processes):
+            if time.monotonic() >= deadline:
+                raise RuntimeError("desktop reference clients exceeded their bounded deadline")
+            current = server_processes(arguments.control_url)
+            if not same_server_media(baseline, current):
+                raise RuntimeError("opening True Direct clients changed server media sessions")
+            during = current
+            samples += 1
+            failed = [stream["name"] for stream, process in processes
+                      if process.poll() not in (None, 0)]
+            if failed:
+                raise RuntimeError(f"desktop reference client failed: {failed[0]}")
+            time.sleep(MONITOR_INTERVAL_SECONDS)
         evidence_streams = []
-        timeout = manifest["durationSeconds"] + 30
         for stream, process in processes:
-            stdout, stderr = process.communicate(timeout=timeout)
+            stdout, stderr = process.communicate(timeout=5)
+            assert_private_value_not_logged(stdout + stderr, stream, os.environ)
             if process.returncode != 0:
-                raise RuntimeError(f"stream {stream['name']} failed: {stderr[-512:]}")
+                raise RuntimeError(f"stream {stream['name']} failed without publishing private logs")
             lines = [line for line in stdout.splitlines() if line.startswith("{")]
             if len(lines) != 1:
                 raise RuntimeError(f"stream {stream['name']} returned invalid bounded evidence")
@@ -139,17 +178,24 @@ def main() -> int:
             decoded = int(result.get("framesDecoded", 0))
             dropped = int(result.get("framesDropped", 0))
             dropped_percent = 100.0 * dropped / max(1, decoded + dropped)
+            width = int(result.get("width", 0))
+            height = int(result.get("height", 0))
             minimum_frames = manifest["durationSeconds"] * float(stream["expectedFps"]) * 0.95
             if result.get("hardwareDecode") is not True or decoded < minimum_frames or \
+                    width != stream["expectedWidth"] or height != stream["expectedHeight"] or \
                     dropped_percent >= manifest["maxDroppedPercent"]:
                 raise RuntimeError(f"stream {stream['name']} missed its hardware/frame/drop gate")
             evidence_streams.append({"name": stream["name"], "role": stream["role"],
                 "decoder": str(result.get("decoder", ""))[:128], "framesDecoded": decoded,
-                "framesDropped": dropped, "droppedPercent": round(dropped_percent, 5)})
+                "framesDropped": dropped, "droppedPercent": round(dropped_percent, 5),
+                "width": width, "height": height})
         final_server = server_processes(arguments.control_url)
+        if not same_server_media(baseline, final_server):
+            raise RuntimeError("True Direct clients left incremental server media sessions")
         document = {"schemaVersion": 1, "result": "passed", "platform": platform.platform(),
             "python": platform.python_version(), "durationSeconds": manifest["durationSeconds"],
-            "streamCount": len(evidence_streams), "streams": evidence_streams,
+            "streamCount": len(evidence_streams), "serverSamples": samples,
+            "streams": evidence_streams,
             "serverRtspSessionsBefore": baseline["rtspSessions"] if baseline else None,
             "serverRtspSessionsDuring": during["rtspSessions"] if during else None,
             "serverRtspSessionsAfter": final_server["rtspSessions"] if final_server else None}
@@ -158,7 +204,7 @@ def main() -> int:
         temporary.write_text(json.dumps(document, indent=2, sort_keys=True) + "\n", encoding="utf-8")
         temporary.replace(arguments.evidence)
         print("v2-M2 desktop reference gate passed: 16 substreams + 1 main, hardware decode, "
-              "drop threshold, 30-minute duration, and zero incremental server media load.")
+              "drop threshold, continuous 30-minute server sampling, and zero incremental media load.")
         return 0
     finally:
         for _, process in processes:

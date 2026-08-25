@@ -67,7 +67,7 @@ ARG DEBIAN_FRONTEND=noninteractive
 RUN apt-get -o Acquire::Retries=5 update \
     && apt-get -o Acquire::Retries=5 install -y --no-install-recommends \
         build-essential cmake libgstreamer-plugins-base1.0-dev libgstreamer1.0-dev \
-        libsecret-1-dev libsodium-dev ninja-build pkg-config qt6-base-dev qt6-declarative-dev \
+        libsecret-1-dev libsodium-dev ninja-build pkg-config python3 qt6-base-dev qt6-declarative-dev \
         qt6-5compat-dev qml6-module-qt5compat-graphicaleffects \
     && rm -rf /var/lib/apt/lists/*
 COPY clients/ /src/clients/
@@ -75,8 +75,9 @@ COPY LICENSE /src/LICENSE
 RUN cmake -S /src/clients -B /build/clients -G Ninja \
         -DCMAKE_BUILD_TYPE=Debug \
         -DWEBOBS_ENFORCE_LOCKED_DEPENDENCIES=OFF \
-    && cmake --build /build/clients --parallel \
-    && ctest --test-dir /build/clients --output-on-failure
+      && cmake --build /build/clients --parallel \
+      && ctest --test-dir /build/clients --output-on-failure \
+      && python3 /src/clients/tests/test_desktop_reference_gate.py
 
 FROM client-compile-test AS client-protocol-test
 

@@ -114,12 +114,28 @@ WEBOBS_WINDOWS_SODIUM_ROOT
 WEBOBS_WINDOWS_SYFT / WEBOBS_WINDOWS_SYFT_SHA256
 WEBOBS_WINDOWS_COSIGN / WEBOBS_WINDOWS_COSIGN_SHA256
 WEBOBS_WINDOWS_CERTIFICATE_SHA1 (secret)
+WEBOBS_WINDOWS_QT_SOURCE_ARCHIVE
+WEBOBS_WINDOWS_GSTREAMER_SOURCE_ARCHIVE
+WEBOBS_WINDOWS_GSTREAMER_INSTALLER
+WEBOBS_WINDOWS_SODIUM_SOURCE_ARCHIVE
 
 WEBOBS_LINUX_LINUXDEPLOY / WEBOBS_LINUX_LINUXDEPLOY_SHA256
 WEBOBS_LINUX_LINUXDEPLOY_QT_PLUGIN / WEBOBS_LINUX_LINUXDEPLOY_QT_PLUGIN_SHA256
 WEBOBS_LINUX_SYFT / WEBOBS_LINUX_SYFT_SHA256
 WEBOBS_LINUX_COSIGN / WEBOBS_LINUX_COSIGN_SHA256
+WEBOBS_LINUX_QT_SOURCE_ARCHIVE
+WEBOBS_LINUX_GSTREAMER_SOURCE_ARCHIVE
+WEBOBS_LINUX_SODIUM_SOURCE_ARCHIVE
 ```
+
+These archive variables point to runner-local, previously downloaded upstream files. The release
+workflow hashes the actual Qt/GStreamer/libsodium source archives and the Windows GStreamer
+installer against `clients/dependencies.lock.json`; a version string alone is not accepted as
+supply-chain evidence.
+
+这些 archive 变量指向 Runner 本地预先下载的上游文件。发布工作流会把真实的 Qt、GStreamer、
+libsodium 源码包及 Windows GStreamer 安装器与 `clients/dependencies.lock.json` 对照计算摘要；
+只有版本字符串不能作为供应链证据。
 
 精确协议与 30 分钟硬件门禁只读取受保护 Secret/Runner 本地文件。五种私有端点通过 `WEBOBS_PRIVATE_RTSP_H264`、`WEBOBS_PRIVATE_RTSP_H265`、`WEBOBS_PRIVATE_MJPEG`、`WEBOBS_PRIVATE_HLS`、`WEBOBS_PRIVATE_WHEP` 提供；17 路参考清单由 `WEBOBS_WINDOWS_REFERENCE_MANIFEST` 或 `WEBOBS_LINUX_REFERENCE_MANIFEST` 指向 Runner 本地文件。脚本只输出协议名、解码器、帧数和掉帧统计，不输出端点、凭据或私有证据文件。`WEBOBS_REFERENCE_CONTROL_URL` 用于比较观看前后服务端 RTSP/媒体进程计数；认证值只放 Secret。
 

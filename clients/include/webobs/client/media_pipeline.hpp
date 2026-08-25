@@ -32,6 +32,8 @@ class MediaPipeline final : public QObject {
     Q_PROPERTY(quint64 framesDecoded READ framesDecoded NOTIFY statisticsChanged)
     Q_PROPERTY(quint64 framesDropped READ framesDropped NOTIFY statisticsChanged)
     Q_PROPERTY(double currentFps READ currentFps NOTIFY statisticsChanged)
+    Q_PROPERTY(int videoWidth READ videoWidth NOTIFY statisticsChanged)
+    Q_PROPERTY(int videoHeight READ videoHeight NOTIFY statisticsChanged)
 
 public:
     explicit MediaPipeline(QObject *parent = nullptr);
@@ -55,6 +57,8 @@ public:
     [[nodiscard]] quint64 framesDecoded() const;
     [[nodiscard]] quint64 framesDropped() const;
     [[nodiscard]] double currentFps() const;
+    [[nodiscard]] int videoWidth() const;
+    [[nodiscard]] int videoHeight() const;
 
 signals:
     void stateChanged();
@@ -104,6 +108,8 @@ private:
     QElapsedTimer statistics_clock_;
     quint64 last_reported_frames_ = 0;
     double current_fps_ = 0;
+    std::atomic<int> video_width_{0};
+    std::atomic<int> video_height_{0};
 };
 
 }

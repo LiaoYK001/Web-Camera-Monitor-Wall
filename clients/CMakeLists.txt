@@ -96,6 +96,7 @@ install(TARGETS webobs-native
     BUNDLE DESTINATION .
     RUNTIME DESTINATION bin)
 install(FILES README.md dependencies.lock.json DESTINATION share/webobs-native)
+install(FILES packaging/THIRD_PARTY_NOTICES.md DESTINATION share/webobs-native)
 install(FILES ../LICENSE DESTINATION share/licenses/webobs-native)
 install(FILES packaging/io.github.liaoyk001.WebObsNative.desktop DESTINATION share/applications)
 install(FILES packaging/io.github.liaoyk001.WebObsNative.svg

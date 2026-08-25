@@ -19,9 +19,10 @@ $stage = Join-Path $build 'stage'
 $qtpaths = Join-Path $qtRootPath 'bin\qtpaths.exe'
 $gstLaunch = Join-Path $gstRootPath 'bin\gst-launch-1.0.exe'
 $gstInspect = Join-Path $gstRootPath 'bin\gst-inspect-1.0.exe'
+$gstScanner = Join-Path $gstRootPath 'libexec\gstreamer-1.0\gst-plugin-scanner.exe'
 $windeployqt = Join-Path $qtRootPath 'bin\windeployqt.exe'
 $qtEffects = Join-Path $qtRootPath 'qml\Qt5Compat\GraphicalEffects\qmldir'
-foreach ($required in @($qtpaths, $gstLaunch, $gstInspect, $windeployqt, $qtEffects)) {
+foreach ($required in @($qtpaths, $gstLaunch, $gstInspect, $gstScanner, $windeployqt, $qtEffects)) {
     if (-not (Test-Path -LiteralPath $required -PathType Leaf)) { throw "Required reviewed SDK tool is missing: $required" }
 }
 if ((& $qtpaths --qt-version).Trim() -ne '6.11.2') { throw 'Release Qt must be exactly 6.11.2' }
@@ -53,6 +54,24 @@ Copy-Item -LiteralPath $sodiumDll.FullName -Destination (Join-Path $stage 'bin')
 Copy-Item -Path (Join-Path $gstRootPath 'bin\*') -Destination (Join-Path $stage 'bin') -Recurse -Force
 Copy-Item -LiteralPath (Join-Path $gstRootPath 'lib\gstreamer-1.0') `
     -Destination (Join-Path $stage 'lib\gstreamer-1.0') -Recurse -Force
+$stagedScannerDirectory = Join-Path $stage 'libexec\gstreamer-1.0'
+New-Item -ItemType Directory -Path $stagedScannerDirectory -Force | Out-Null
+Copy-Item -LiteralPath $gstScanner -Destination $stagedScannerDirectory
+$oldPluginPath = $env:GST_PLUGIN_PATH_1_0
+$oldSystemPluginPath = $env:GST_PLUGIN_SYSTEM_PATH_1_0
+$oldPluginScanner = $env:GST_PLUGIN_SCANNER_1_0
+try {
+    $env:GST_PLUGIN_SYSTEM_PATH_1_0 = ''
+    $env:GST_PLUGIN_PATH_1_0 = Join-Path $stage 'lib\gstreamer-1.0'
+    $env:GST_PLUGIN_SCANNER_1_0 = Join-Path $stagedScannerDirectory 'gst-plugin-scanner.exe'
+    & $application --verify-runtime | Out-Null
+    if ($LASTEXITCODE -ne 0) { throw 'Staged Windows media runtime self-check failed' }
+}
+finally {
+    $env:GST_PLUGIN_PATH_1_0 = $oldPluginPath
+    $env:GST_PLUGIN_SYSTEM_PATH_1_0 = $oldSystemPluginPath
+    $env:GST_PLUGIN_SCANNER_1_0 = $oldPluginScanner
+}
 
 $stable = $Version -notmatch '[-]'
 if ($stable -and [string]::IsNullOrWhiteSpace($SigningCertificateSha1)) {
@@ -60,11 +79,9 @@ if ($stable -and [string]::IsNullOrWhiteSpace($SigningCertificateSha1)) {
 }
 if (-not [string]::IsNullOrWhiteSpace($SigningCertificateSha1)) {
     $signTool = (Get-Command signtool.exe -ErrorAction Stop).Source
-    Get-ChildItem -LiteralPath $stage -Recurse -File -Include *.exe,*.dll | ForEach-Object {
-        & $signTool sign /sha1 $SigningCertificateSha1 /fd SHA256 /td SHA256 `
-            /tr 'http://timestamp.digicert.com' $_.FullName
-        if ($LASTEXITCODE -ne 0) { throw "Authenticode signing failed for $($_.Name)" }
-    }
+    & $signTool sign /sha1 $SigningCertificateSha1 /fd SHA256 /td SHA256 `
+        /tr 'http://timestamp.digicert.com' $application
+    if ($LASTEXITCODE -ne 0) { throw 'Authenticode signing failed for the application' }
 }
 
 $portable = Join-Path $outputPath "webobs-native-$Version-windows-x86_64-portable.zip"

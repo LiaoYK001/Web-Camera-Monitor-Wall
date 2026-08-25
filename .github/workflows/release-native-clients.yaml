@@ -36,6 +36,7 @@ jobs:
           ./tests/run-public-audit.sh
           ./scripts/check-executable-bits.sh
           python3 clients/scripts/verify_dependency_lock.py
+          python3 clients/tests/test_desktop_reference_gate.py
           [[ "$REF_TYPE" == tag ]]
           [[ "$REF_NAME" =~ ^v2\.[0-9]+(\.[0-9]+)?$ ]]
           git fetch --no-tags origin main
@@ -59,8 +60,18 @@ jobs:
           persist-credentials: false
       - name: Re-audit trusted Windows checkout
         shell: pwsh
+        env:
+          QT_SOURCE_ARCHIVE: ${{ vars.WEBOBS_WINDOWS_QT_SOURCE_ARCHIVE }}
+          GST_SOURCE_ARCHIVE: ${{ vars.WEBOBS_WINDOWS_GSTREAMER_SOURCE_ARCHIVE }}
+          GST_INSTALLER: ${{ vars.WEBOBS_WINDOWS_GSTREAMER_INSTALLER }}
+          SODIUM_SOURCE_ARCHIVE: ${{ vars.WEBOBS_WINDOWS_SODIUM_SOURCE_ARCHIVE }}
         run: |
-          python clients/scripts/verify_dependency_lock.py
+          python clients/scripts/verify_dependency_lock.py `
+            --artifact "qt-source=$env:QT_SOURCE_ARCHIVE" `
+            --artifact "gstreamer-source=$env:GST_SOURCE_ARCHIVE" `
+            --artifact "gstreamer-windows-x86_64=$env:GST_INSTALLER" `
+            --artifact "libsodium-source=$env:SODIUM_SOURCE_ARCHIVE"
+          python clients/tests/test_desktop_reference_gate.py
           if (git status --porcelain) { throw 'Release checkout is dirty' }
       - name: Build signed installer and portable package
         shell: pwsh
@@ -129,10 +140,17 @@ jobs:
           persist-credentials: false
       - name: Re-audit trusted Fedora checkout
         shell: bash
+        env:
+          QT_SOURCE_ARCHIVE: ${{ vars.WEBOBS_LINUX_QT_SOURCE_ARCHIVE }}
+          GST_SOURCE_ARCHIVE: ${{ vars.WEBOBS_LINUX_GSTREAMER_SOURCE_ARCHIVE }}
+          SODIUM_SOURCE_ARCHIVE: ${{ vars.WEBOBS_LINUX_SODIUM_SOURCE_ARCHIVE }}
         run: |
           set -euo pipefail
           ./tests/run-public-audit.sh
-          python3 clients/scripts/verify_dependency_lock.py
+          python3 clients/scripts/verify_dependency_lock.py \
+            --artifact "qt-source=$QT_SOURCE_ARCHIVE" \
+            --artifact "gstreamer-source=$GST_SOURCE_ARCHIVE" \
+            --artifact "libsodium-source=$SODIUM_SOURCE_ARCHIVE"
           test -z "$(git status --porcelain)"
       - name: Build AppImage and Flatpak
         shell: bash

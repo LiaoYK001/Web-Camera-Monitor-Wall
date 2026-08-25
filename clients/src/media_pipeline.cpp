@@ -210,6 +210,8 @@ bool MediaPipeline::start(const MediaEndpoint &endpoint, QString &error)
     hardware_decode_ = false;
     frames_decoded_.store(0, std::memory_order_relaxed);
     frames_dropped_.store(0, std::memory_order_relaxed);
+    video_width_.store(0, std::memory_order_relaxed);
+    video_height_.store(0, std::memory_order_relaxed);
     current_fps_ = 0;
     if (!build_pipeline(error)) {
         stop();
@@ -293,12 +295,25 @@ void MediaPipeline::deep_element_added(GstBin *, GstBin *, GstElement *element, 
     QMetaObject::invokeMethod(self, [self] { emit self->diagnosticsChanged(); }, Qt::QueuedConnection);
 }
 
-GstPadProbeReturn MediaPipeline::video_buffer_probe(GstPad *, GstPadProbeInfo *info,
+GstPadProbeReturn MediaPipeline::video_buffer_probe(GstPad *pad, GstPadProbeInfo *info,
                                                     gpointer context)
 {
     auto *self = static_cast<MediaPipeline *>(context);
     if (!GST_PAD_PROBE_INFO_BUFFER(info))
         return GST_PAD_PROBE_OK;
+    GstCaps *caps = gst_pad_get_current_caps(pad);
+    if (caps && gst_caps_get_size(caps) > 0) {
+        const GstStructure *structure = gst_caps_get_structure(caps, 0);
+        int width = 0;
+        int height = 0;
+        if (gst_structure_get_int(structure, "width", &width) &&
+            gst_structure_get_int(structure, "height", &height)) {
+            self->video_width_.store(width, std::memory_order_relaxed);
+            self->video_height_.store(height, std::memory_order_relaxed);
+        }
+    }
+    if (caps)
+        gst_caps_unref(caps);
     const quint64 previous = self->frames_decoded_.fetch_add(1, std::memory_order_relaxed);
     if (previous != 0)
         return GST_PAD_PROBE_OK;
@@ -513,5 +528,7 @@ bool MediaPipeline::muted() const { return muted_; }
 quint64 MediaPipeline::framesDecoded() const { return frames_decoded_.load(std::memory_order_relaxed); }
 quint64 MediaPipeline::framesDropped() const { return frames_dropped_.load(std::memory_order_relaxed); }
 double MediaPipeline::currentFps() const { return current_fps_; }
+int MediaPipeline::videoWidth() const { return video_width_.load(std::memory_order_relaxed); }
+int MediaPipeline::videoHeight() const { return video_height_.load(std::memory_order_relaxed); }
 
 }
