@@ -17,7 +17,7 @@ try {
 
     $ProbeServices = @('v2-probe', 'v2-fallback-probe', 'v2-nvr-coexist-probe',
         'native-rtsp-h264', 'native-rtsp-h265',
-        'native-mjpeg', 'native-hls')
+        'native-mjpeg', 'native-hls', 'native-batch')
     $ProbeIds = @{}
     foreach ($Service in $ProbeServices) {
         $ProbeIds[$Service] = (& docker compose -p $Project -f $ComposeFile ps --all --quiet $Service).Trim()

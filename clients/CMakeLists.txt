@@ -37,6 +37,7 @@ if(UNIX AND NOT ANDROID)
 endif()
 
 qt_add_executable(webobs-native
+    include/webobs/client/batch_probe.hpp
     include/webobs/client/client_controller.hpp
     include/webobs/client/grant_codec.hpp
     include/webobs/client/media_pipeline.hpp
@@ -47,6 +48,7 @@ qt_add_executable(webobs-native
     include/webobs/client/talk_capture.hpp
     include/webobs/client/topology_plan.hpp
     src/main.cpp
+    src/batch_probe.cpp
     src/client_controller.cpp
     src/grant_codec.cpp
     src/media_pipeline.cpp

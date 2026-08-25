@@ -1,4 +1,5 @@
 #include "webobs/client/client_controller.hpp"
+#include "webobs/client/batch_probe.hpp"
 #include "webobs/client/grant_codec.hpp"
 #include "webobs/client/media_pipeline.hpp"
 
@@ -22,6 +23,7 @@ int main(int argc, char *argv[])
     bool probe_requested = false;
     for (int index = 1; index < argc; ++index)
         if (QByteArrayView(argv[index]) == QByteArrayView("--probe-endpoint") ||
+            QByteArrayView(argv[index]) == QByteArrayView("--probe-manifest") ||
             QByteArrayView(argv[index]) == QByteArrayView("--verify-runtime"))
             probe_requested = true;
     if (probe_requested && qEnvironmentVariableIsEmpty("QT_QPA_PLATFORM"))
@@ -59,6 +61,9 @@ int main(int argc, char *argv[])
                       QStringLiteral("Verify the self-contained desktop media runtime")});
     parser.addOption({QStringLiteral("probe-endpoint"), QStringLiteral("Run the production media pipeline without QML"),
                       QStringLiteral("url")});
+    parser.addOption({QStringLiteral("probe-manifest"),
+                      QStringLiteral("Run multiple production media pipelines in one process"),
+                      QStringLiteral("absolute-json-path")});
     parser.addOption({QStringLiteral("probe-adapter"), QStringLiteral("rtsp, mjpeg, hls, or whep"),
                       QStringLiteral("adapter")});
     parser.addOption({QStringLiteral("probe-codec"), QStringLiteral("h264, h265, or mjpeg"),
@@ -69,6 +74,11 @@ int main(int argc, char *argv[])
                       QStringLiteral("Also exercise the production RTSP stream-copy recorder"),
                       QStringLiteral("absolute-path")});
     parser.process(application);
+    if (parser.isSet(QStringLiteral("probe-endpoint")) &&
+        parser.isSet(QStringLiteral("probe-manifest"))) {
+        qCritical("choose one bounded probe mode");
+        return 2;
+    }
     if (parser.isSet(QStringLiteral("verify-runtime"))) {
         QStringList required{QStringLiteral("rtspsrc"), QStringLiteral("uridecodebin3"),
             QStringLiteral("decodebin3"), QStringLiteral("qml6glsink"),
@@ -110,6 +120,13 @@ int main(int argc, char *argv[])
             {QStringLiteral("gstreamer"), QString::fromLatin1(gst_version_string())},
             {QStringLiteral("requiredElements"), required.size()}}).toJson(QJsonDocument::Compact);
         return 0;
+    }
+    if (parser.isSet(QStringLiteral("probe-manifest"))) {
+        const int result = webobs::client::run_batch_probe(
+            application, parser.value(QStringLiteral("probe-manifest")), error);
+        if (result != 0 && !error.isEmpty())
+            qCritical("batch protocol probe failed safely: %s", qPrintable(error.left(128)));
+        return result;
     }
     if (parser.isSet(QStringLiteral("probe-endpoint"))) {
         const QString adapter = parser.value(QStringLiteral("probe-adapter")).toLower();
@@ -165,7 +182,10 @@ int main(int argc, char *argv[])
                         {QStringLiteral("framesDropped"), static_cast<qint64>(pipeline.framesDropped())},
                         {QStringLiteral("fps"), pipeline.currentFps()},
                         {QStringLiteral("width"), pipeline.videoWidth()},
-                        {QStringLiteral("height"), pipeline.videoHeight()}};
+                        {QStringLiteral("height"), pipeline.videoHeight()},
+                        {QStringLiteral("visualSamples"), static_cast<qint64>(pipeline.visualSamples())},
+                        {QStringLiteral("blackSamples"), static_cast<qint64>(pipeline.blackSamples())},
+                        {QStringLiteral("pipelineRestarts"), static_cast<qint64>(pipeline.pipelineRestarts())}};
                     if (pipeline.framesDecoded() < static_cast<quint64>(duration)) {
                         result = 4;
                     } else {

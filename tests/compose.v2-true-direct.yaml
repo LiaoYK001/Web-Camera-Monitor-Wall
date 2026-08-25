@@ -170,6 +170,14 @@ services:
     depends_on: [publisher]
     networks: [camera-media]
 
+  native-batch:
+    image: webobs-native-protocol-fixture:local
+    entrypoint: ["/build/clients/webobs-native", "--probe-manifest", "/fixture/native-batch.json"]
+    volumes:
+      - ./v2-direct-fixture/native-batch.json:/fixture/native-batch.json:ro
+    depends_on: [publisher]
+    networks: [camera-media]
+
 networks:
   control:
     internal: true

@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import importlib.util
+import os
 from pathlib import Path
 import unittest
 
@@ -33,6 +34,7 @@ def manifest() -> dict:
         "passwordEnv": "WEBOBS_PRIVATE_PASSWORD",
     })
     return {"schemaVersion": 1, "durationSeconds": 1800, "maxDroppedPercent": 0.99,
+            "maxRssGrowthMiB": 512,
             "requireHardware": True, "streams": streams}
 
 
@@ -55,6 +57,15 @@ class DesktopReferenceGateTests(unittest.TestCase):
         value["streams"][0]["expectedWidth"] = 1280
         with self.assertRaisesRegex(ValueError, "640x360"):
             gate.validate_manifest(value)
+
+    def test_rejects_unbounded_rss_growth(self) -> None:
+        value = manifest()
+        value["maxRssGrowthMiB"] = 4096
+        with self.assertRaisesRegex(ValueError, "RSS growth"):
+            gate.validate_manifest(value)
+
+    def test_reads_current_process_rss(self) -> None:
+        self.assertGreater(gate.process_rss_bytes(os.getpid()) or 0, 0)
 
     def test_server_media_comparison_covers_processes_and_rtsp(self) -> None:
         baseline = {"rtspSessions": 2, "engineActive": False,

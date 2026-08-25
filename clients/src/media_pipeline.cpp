@@ -1,13 +1,28 @@
 #include "webobs/client/media_pipeline.hpp"
 
 #include <gst/rtsp/gstrtsptransport.h>
+#include <gst/video/video.h>
 
 #include <QFileInfo>
+#include <QHash>
 #include <QMetaObject>
+#include <QMutex>
+#include <QMutexLocker>
 #include <QRegularExpression>
+
+#include <algorithm>
+#include <optional>
 
 namespace webobs::client {
 namespace {
+
+struct RankHold {
+    guint original_rank = GST_RANK_NONE;
+    int holders = 0;
+};
+
+QMutex rank_hold_mutex;
+QHash<QString, RankHold> rank_holds;
 
 bool hardware_factory(QString name)
 {
@@ -28,6 +43,94 @@ QString message_text(GstMessage *message)
         g_error_free(native_error);
     g_free(debug);
     return result;
+}
+
+bool hold_hardware_rank(const QString &factory_name)
+{
+    QMutexLocker locker(&rank_hold_mutex);
+    auto existing = rank_holds.find(factory_name);
+    if (existing != rank_holds.end()) {
+        ++existing->holders;
+        return true;
+    }
+    GstPluginFeature *feature = gst_registry_find_feature(
+        gst_registry_get(), factory_name.toUtf8().constData(), GST_TYPE_ELEMENT_FACTORY);
+    if (!feature)
+        return false;
+    RankHold hold{gst_plugin_feature_get_rank(feature), 1};
+    gst_plugin_feature_set_rank(feature, GST_RANK_NONE);
+    gst_object_unref(feature);
+    rank_holds.insert(factory_name, hold);
+    return true;
+}
+
+void release_hardware_rank(const QString &factory_name)
+{
+    QMutexLocker locker(&rank_hold_mutex);
+    auto existing = rank_holds.find(factory_name);
+    if (existing == rank_holds.end())
+        return;
+    if (--existing->holders > 0)
+        return;
+    GstPluginFeature *feature = gst_registry_find_feature(
+        gst_registry_get(), factory_name.toUtf8().constData(), GST_TYPE_ELEMENT_FACTORY);
+    if (feature) {
+        gst_plugin_feature_set_rank(feature, existing->original_rank);
+        gst_object_unref(feature);
+    }
+    rank_holds.erase(existing);
+}
+
+std::optional<bool> buffer_appears_black(GstBuffer *buffer, GstCaps *caps)
+{
+    GstVideoInfo video_info;
+    if (!caps || !gst_video_info_from_caps(&video_info, caps))
+        return std::nullopt;
+    const GstVideoFormatInfo *format = video_info.finfo;
+    if (!format || GST_VIDEO_FORMAT_INFO_N_COMPONENTS(format) < 1)
+        return std::nullopt;
+    GstVideoFrame frame;
+    if (!gst_video_frame_map(&frame, &video_info, buffer, GST_MAP_READ))
+        return std::nullopt;
+    const bool rgb = GST_VIDEO_FORMAT_INFO_IS_RGB(format);
+    const int components = rgb ? std::min(3, static_cast<int>(
+        GST_VIDEO_FORMAT_INFO_N_COMPONENTS(format))) : 1;
+    bool black = true;
+    for (int component = 0; component < components; ++component) {
+        if (GST_VIDEO_FORMAT_INFO_DEPTH(format, component) > 8) {
+            gst_video_frame_unmap(&frame);
+            return std::nullopt;
+        }
+        const int width = GST_VIDEO_FRAME_COMP_WIDTH(&frame, component);
+        const int height = GST_VIDEO_FRAME_COMP_HEIGHT(&frame, component);
+        const int stride = GST_VIDEO_FRAME_COMP_STRIDE(&frame, component);
+        const int pixel_stride = GST_VIDEO_FRAME_COMP_PSTRIDE(&frame, component);
+        const guint8 *data = GST_VIDEO_FRAME_COMP_DATA(&frame, component);
+        if (!data || width <= 0 || height <= 0 || stride <= 0 || pixel_stride <= 0) {
+            gst_video_frame_unmap(&frame);
+            return std::nullopt;
+        }
+        quint64 total = 0;
+        int minimum = 255;
+        int maximum = 0;
+        int samples = 0;
+        for (int y_index = 0; y_index < 8; ++y_index) {
+            const int y = std::min(height - 1, y_index * height / 8 + height / 16);
+            for (int x_index = 0; x_index < 8; ++x_index) {
+                const int x = std::min(width - 1, x_index * width / 8 + width / 16);
+                const int value = data[y * stride + x * pixel_stride];
+                total += static_cast<quint64>(value);
+                minimum = std::min(minimum, value);
+                maximum = std::max(maximum, value);
+                ++samples;
+            }
+        }
+        const double mean = static_cast<double>(total) / static_cast<double>(samples);
+        const double threshold = rgb ? 8.0 : 24.0;
+        black = black && mean <= threshold && maximum - minimum <= 8;
+    }
+    gst_video_frame_unmap(&frame);
+    return black;
 }
 
 }
@@ -205,11 +308,15 @@ bool MediaPipeline::start(const MediaEndpoint &endpoint, QString &error)
 {
     stop();
     endpoint_ = endpoint;
+    software_fallback_forced_ = false;
     fallback_reason_.clear();
     decoder_ = QStringLiteral("discovering");
     hardware_decode_ = false;
     frames_decoded_.store(0, std::memory_order_relaxed);
     frames_dropped_.store(0, std::memory_order_relaxed);
+    visual_samples_.store(0, std::memory_order_relaxed);
+    black_samples_.store(0, std::memory_order_relaxed);
+    pipeline_restarts_.store(0, std::memory_order_relaxed);
     video_width_.store(0, std::memory_order_relaxed);
     video_height_.store(0, std::memory_order_relaxed);
     current_fps_ = 0;
@@ -245,6 +352,7 @@ void MediaPipeline::stop()
     }
     pipeline_ = source_ = decoder_bin_ = video_convert_ = video_probe_ = video_sink_ = nullptr;
     audio_convert_ = audio_resample_ = audio_volume_ = audio_sink_ = nullptr;
+    restore_failed_hardware_rank();
     if (state_ != QStringLiteral("failed"))
         set_state(QStringLiteral("idle"));
 }
@@ -290,8 +398,13 @@ void MediaPipeline::deep_element_added(GstBin *, GstBin *, GstElement *element, 
         gst_plugin_feature_get_name(GST_PLUGIN_FEATURE(factory)));
     self->decoder_ = QString::fromLatin1(GST_OBJECT_NAME(element));
     self->hardware_decode_ = hardware_factory(self->decoder_factory_);
-    self->fallback_reason_ = self->hardware_decode_ ? QString{} :
-        QStringLiteral("hardware_decoder_unavailable");
+    if (self->software_fallback_forced_) {
+        self->fallback_reason_ = QStringLiteral("hardware_decoder_failed_software_fallback");
+        self->restore_failed_hardware_rank();
+    } else {
+        self->fallback_reason_ = self->hardware_decode_ ? QString{} :
+            QStringLiteral("hardware_decoder_unavailable");
+    }
     QMetaObject::invokeMethod(self, [self] { emit self->diagnosticsChanged(); }, Qt::QueuedConnection);
 }
 
@@ -312,9 +425,20 @@ GstPadProbeReturn MediaPipeline::video_buffer_probe(GstPad *pad, GstPadProbeInfo
             self->video_height_.store(height, std::memory_order_relaxed);
         }
     }
+    const quint64 previous = self->frames_decoded_.fetch_add(1, std::memory_order_relaxed);
+    // Evidence probes use a fakesink and may map sparse raw frames. Never force a
+    // GPU-to-CPU readback on the interactive qml6glsink rendering path.
+    if (!self->video_item_ && previous % 30 == 0) {
+        const std::optional<bool> black = buffer_appears_black(
+            GST_PAD_PROBE_INFO_BUFFER(info), caps);
+        if (black.has_value()) {
+            self->visual_samples_.fetch_add(1, std::memory_order_relaxed);
+            if (*black)
+                self->black_samples_.fetch_add(1, std::memory_order_relaxed);
+        }
+    }
     if (caps)
         gst_caps_unref(caps);
-    const quint64 previous = self->frames_decoded_.fetch_add(1, std::memory_order_relaxed);
     if (previous != 0)
         return GST_PAD_PROBE_OK;
     QMetaObject::invokeMethod(self, [self] {
@@ -332,6 +456,7 @@ void MediaPipeline::poll_bus()
     if (!pipeline_)
         return;
     GstBus *bus = gst_element_get_bus(pipeline_);
+    bool restart_scheduled = false;
     while (GstMessage *message = gst_bus_pop(bus)) {
         switch (GST_MESSAGE_TYPE(message)) {
         case GST_MESSAGE_ERROR: {
@@ -342,15 +467,13 @@ void MediaPipeline::poll_bus()
                 gst_plugin_feature_get_name(GST_PLUGIN_FEATURE(origin_factory))) : QString{};
             if (!software_fallback_forced_ && hardware_decode_ &&
                 (hardware_factory(origin_name) || origin_name == decoder_factory_)) {
-                GstPluginFeature *feature = gst_registry_find_feature(
-                    gst_registry_get(), decoder_factory_.toUtf8().constData(),
-                    GST_TYPE_ELEMENT_FACTORY);
-                if (feature) {
-                    gst_plugin_feature_set_rank(feature, GST_RANK_NONE);
-                    gst_object_unref(feature);
-                }
+                if (hold_hardware_rank(decoder_factory_))
+                    failed_hardware_factory_ = decoder_factory_;
                 software_fallback_forced_ = true;
-                fail(QStringLiteral("hardware_decoder_failed_software_fallback"));
+                fallback_reason_ = QStringLiteral("hardware_decoder_failed_software_fallback");
+                set_state(QStringLiteral("software-fallback"));
+                bus_timer_.stop();
+                restart_scheduled = true;
             } else {
                 fail(message_text(message));
             }
@@ -377,10 +500,14 @@ void MediaPipeline::poll_bus()
             break;
         }
         gst_message_unref(message);
-        if (!pipeline_)
+        if (!pipeline_ || restart_scheduled)
             break;
     }
     gst_object_unref(bus);
+    if (restart_scheduled) {
+        QTimer::singleShot(0, this, &MediaPipeline::restart_with_software_fallback);
+        return;
+    }
     if (statistics_clock_.isValid() && statistics_clock_.elapsed() >= 1000) {
         const quint64 current = frames_decoded_.load(std::memory_order_relaxed);
         const qint64 elapsed = statistics_clock_.restart();
@@ -389,6 +516,55 @@ void MediaPipeline::poll_bus()
         last_reported_frames_ = current;
         emit statisticsChanged();
     }
+}
+
+void MediaPipeline::restart_with_software_fallback()
+{
+    pipeline_restarts_.fetch_add(1, std::memory_order_relaxed);
+    direct_timeout_.stop();
+    bus_timer_.stop();
+    if (pipeline_) {
+        gst_element_set_state(pipeline_, GST_STATE_NULL);
+        gst_object_unref(pipeline_);
+    }
+    pipeline_ = source_ = decoder_bin_ = video_convert_ = video_probe_ = video_sink_ = nullptr;
+    audio_convert_ = audio_resample_ = audio_volume_ = audio_sink_ = nullptr;
+    frames_decoded_.store(0, std::memory_order_relaxed);
+    frames_dropped_.store(0, std::memory_order_relaxed);
+    video_width_.store(0, std::memory_order_relaxed);
+    video_height_.store(0, std::memory_order_relaxed);
+    decoder_ = QStringLiteral("software-fallback-discovering");
+    hardware_decode_ = false;
+    current_fps_ = 0;
+
+    QString error;
+    if (!build_pipeline(error)) {
+        restore_failed_hardware_rank();
+        fail(error);
+        return;
+    }
+    set_state(QStringLiteral("probing"));
+    if (gst_element_set_state(pipeline_, GST_STATE_PLAYING) == GST_STATE_CHANGE_FAILURE) {
+        restore_failed_hardware_rank();
+        fail(QStringLiteral("software fallback pipeline could not start"));
+        return;
+    }
+    if (!statistics_clock_.isValid())
+        statistics_clock_.start();
+    else
+        statistics_clock_.restart();
+    last_reported_frames_ = 0;
+    bus_timer_.start();
+    direct_timeout_.start();
+    emit diagnosticsChanged();
+}
+
+void MediaPipeline::restore_failed_hardware_rank()
+{
+    if (failed_hardware_factory_.isEmpty())
+        return;
+    release_hardware_rank(failed_hardware_factory_);
+    failed_hardware_factory_.clear();
 }
 
 void MediaPipeline::fail(const QString &reason)
@@ -530,5 +706,8 @@ quint64 MediaPipeline::framesDropped() const { return frames_dropped_.load(std::
 double MediaPipeline::currentFps() const { return current_fps_; }
 int MediaPipeline::videoWidth() const { return video_width_.load(std::memory_order_relaxed); }
 int MediaPipeline::videoHeight() const { return video_height_.load(std::memory_order_relaxed); }
+quint64 MediaPipeline::visualSamples() const { return visual_samples_.load(std::memory_order_relaxed); }
+quint64 MediaPipeline::blackSamples() const { return black_samples_.load(std::memory_order_relaxed); }
+quint64 MediaPipeline::pipelineRestarts() const { return pipeline_restarts_.load(std::memory_order_relaxed); }
 
 }

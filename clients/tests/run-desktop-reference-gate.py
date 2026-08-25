@@ -37,8 +37,8 @@ def unique_json(path: Path) -> object:
 
 
 def validate_manifest(value: object) -> dict:
-    root_fields = {"schemaVersion", "durationSeconds", "maxDroppedPercent", "requireHardware",
-                   "streams"}
+    root_fields = {"schemaVersion", "durationSeconds", "maxDroppedPercent", "maxRssGrowthMiB",
+                   "requireHardware", "streams"}
     stream_fields = {"name", "role", "adapter", "endpoint", "codec", "expectedWidth",
                      "expectedHeight", "expectedFps",
                      "usernameEnv", "passwordEnv"}
@@ -52,6 +52,9 @@ def validate_manifest(value: object) -> dict:
         raise ValueError("maximum dropped percentage must be below one")
     if value["requireHardware"] is not True:
         raise ValueError("the M2 reference gate must require hardware decode")
+    rss_limit = value["maxRssGrowthMiB"]
+    if not isinstance(rss_limit, int) or isinstance(rss_limit, bool) or not 32 <= rss_limit <= 2048:
+        raise ValueError("RSS growth limit must be 32-2048 MiB")
     streams = value["streams"]
     if not isinstance(streams, list) or len(streams) != 17 or \
             sum(isinstance(item, dict) and item.get("role") == "sub" for item in streams) != 16 or \
@@ -121,6 +124,58 @@ def assert_private_value_not_logged(output: str, stream: dict, environment: dict
         raise RuntimeError(f"stream {stream['name']} emitted a private endpoint or credential")
 
 
+def process_rss_bytes(process_id: int) -> int | None:
+    if sys.platform == "win32":
+        import ctypes
+        from ctypes import wintypes
+
+        class ProcessMemoryCounters(ctypes.Structure):
+            _fields_ = [("cb", wintypes.DWORD), ("PageFaultCount", wintypes.DWORD),
+                        ("PeakWorkingSetSize", ctypes.c_size_t),
+                        ("WorkingSetSize", ctypes.c_size_t),
+                        ("QuotaPeakPagedPoolUsage", ctypes.c_size_t),
+                        ("QuotaPagedPoolUsage", ctypes.c_size_t),
+                        ("QuotaPeakNonPagedPoolUsage", ctypes.c_size_t),
+                        ("QuotaNonPagedPoolUsage", ctypes.c_size_t),
+                        ("PagefileUsage", ctypes.c_size_t),
+                        ("PeakPagefileUsage", ctypes.c_size_t)]
+
+        query_information, virtual_memory_read = 0x0400, 0x0010
+        kernel32 = ctypes.windll.kernel32
+        psapi = ctypes.windll.psapi
+        kernel32.OpenProcess.argtypes = [wintypes.DWORD, wintypes.BOOL, wintypes.DWORD]
+        kernel32.OpenProcess.restype = wintypes.HANDLE
+        kernel32.CloseHandle.argtypes = [wintypes.HANDLE]
+        kernel32.CloseHandle.restype = wintypes.BOOL
+        psapi.GetProcessMemoryInfo.argtypes = [wintypes.HANDLE,
+                                               ctypes.POINTER(ProcessMemoryCounters),
+                                               wintypes.DWORD]
+        psapi.GetProcessMemoryInfo.restype = wintypes.BOOL
+        handle = kernel32.OpenProcess(
+            query_information | virtual_memory_read, False, process_id)
+        if not handle:
+            return None
+        try:
+            counters = ProcessMemoryCounters()
+            counters.cb = ctypes.sizeof(counters)
+            if not psapi.GetProcessMemoryInfo(handle, ctypes.byref(counters), counters.cb):
+                return None
+            return int(counters.WorkingSetSize)
+        finally:
+            kernel32.CloseHandle(handle)
+    status = Path(f"/proc/{process_id}/status")
+    if status.is_file():
+        match = re.search(r"^VmRSS:\s+(\d+)\s+kB$", status.read_text(
+            encoding="utf-8", errors="replace"), re.MULTILINE)
+        return int(match.group(1)) * 1024 if match else None
+    try:
+        value = subprocess.check_output(
+            ["ps", "-o", "rss=", "-p", str(process_id)], text=True, timeout=3).strip()
+        return int(value) * 1024 if value else None
+    except (OSError, subprocess.SubprocessError, ValueError):
+        return None
+
+
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--client", type=Path, required=True)
@@ -132,69 +187,97 @@ def main() -> int:
         raise SystemExit("client must exist and evidence path must be absolute")
     manifest = validate_manifest(unique_json(arguments.manifest))
     baseline = server_processes(arguments.control_url)
-    processes: list[tuple[dict, subprocess.Popen[str]]] = []
+    process: subprocess.Popen[str] | None = None
     try:
-        for stream in manifest["streams"]:
-            environment = os.environ.copy()
-            for name in tuple(environment):
-                if name.startswith("WEBOBS_PRIVATE_") or name in {
-                        "WEBOBS_REFERENCE_CONTROL_USERNAME", "WEBOBS_REFERENCE_CONTROL_PASSWORD"}:
-                    environment.pop(name, None)
-            environment["WEBOBS_PROBE_USERNAME"] = os.environ.get(stream["usernameEnv"], "")
-            environment["WEBOBS_PROBE_PASSWORD"] = os.environ.get(stream["passwordEnv"], "")
-            environment["GST_DEBUG"] = "0"
-            command = [str(arguments.client), "--probe-endpoint", stream["endpoint"],
-                       "--probe-adapter", stream["adapter"], "--probe-codec", stream["codec"],
-                       "--probe-seconds", str(manifest["durationSeconds"])]
-            processes.append((stream, subprocess.Popen(
-                command, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
-                encoding="utf-8", errors="replace", env=environment)))
+        environment = os.environ.copy()
+        private_names = {stream[field] for stream in manifest["streams"]
+                         for field in ("usernameEnv", "passwordEnv") if stream[field]}
+        private_values = {name: os.environ.get(name, "") for name in private_names}
+        for name in tuple(environment):
+            if name.startswith("WEBOBS_PRIVATE_") or name in {
+                    "WEBOBS_REFERENCE_CONTROL_USERNAME", "WEBOBS_REFERENCE_CONTROL_PASSWORD"}:
+                environment.pop(name, None)
+        environment.update(private_values)
+        environment["GST_DEBUG"] = "0"
+        process = subprocess.Popen(
+            [str(arguments.client), "--probe-manifest", str(arguments.manifest.resolve())],
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
+            encoding="utf-8", errors="replace", env=environment)
         deadline = time.monotonic() + manifest["durationSeconds"] + 30
         during = None
         samples = 0
-        while any(process.poll() is None for _, process in processes):
+        rss_samples: list[int] = []
+        started = time.monotonic()
+        while process.poll() is None:
             if time.monotonic() >= deadline:
-                raise RuntimeError("desktop reference clients exceeded their bounded deadline")
+                raise RuntimeError("desktop reference client exceeded its bounded deadline")
             current = server_processes(arguments.control_url)
             if not same_server_media(baseline, current):
-                raise RuntimeError("opening True Direct clients changed server media sessions")
+                raise RuntimeError("opening the True Direct client changed server media sessions")
             during = current
             samples += 1
-            failed = [stream["name"] for stream, process in processes
-                      if process.poll() not in (None, 0)]
-            if failed:
-                raise RuntimeError(f"desktop reference client failed: {failed[0]}")
+            if time.monotonic() - started >= 60:
+                rss = process_rss_bytes(process.pid)
+                if rss is not None:
+                    rss_samples.append(rss)
             time.sleep(MONITOR_INTERVAL_SECONDS)
-        evidence_streams = []
-        for stream, process in processes:
-            stdout, stderr = process.communicate(timeout=5)
+        stdout, stderr = process.communicate(timeout=5)
+        for stream in manifest["streams"]:
             assert_private_value_not_logged(stdout + stderr, stream, os.environ)
-            if process.returncode != 0:
-                raise RuntimeError(f"stream {stream['name']} failed without publishing private logs")
-            lines = [line for line in stdout.splitlines() if line.startswith("{")]
-            if len(lines) != 1:
-                raise RuntimeError(f"stream {stream['name']} returned invalid bounded evidence")
-            result = json.loads(lines[0])
+        if process.returncode != 0:
+            raise RuntimeError("desktop reference client failed without publishing private logs")
+        lines = [line for line in stdout.splitlines() if line.startswith("{")]
+        if len(lines) != 1:
+            raise RuntimeError("desktop reference client returned invalid bounded evidence")
+        batch_result = json.loads(lines[0])
+        if batch_result.get("result") != "passed" or batch_result.get("processCount") != 1:
+            raise RuntimeError("desktop reference evidence did not come from one client process")
+        results = batch_result.get("streams", [])
+        if not isinstance(results, list) or len(results) != len(manifest["streams"]):
+            raise RuntimeError("desktop reference client returned an invalid stream set")
+        results_by_name = {result.get("name"): result for result in results
+                           if isinstance(result, dict)}
+        if len(results_by_name) != len(results):
+            raise RuntimeError("desktop reference client returned duplicate stream evidence")
+        evidence_streams = []
+        for stream in manifest["streams"]:
+            result = results_by_name.get(stream["name"], {})
             decoded = int(result.get("framesDecoded", 0))
             dropped = int(result.get("framesDropped", 0))
             dropped_percent = 100.0 * dropped / max(1, decoded + dropped)
             width = int(result.get("width", 0))
             height = int(result.get("height", 0))
             minimum_frames = manifest["durationSeconds"] * float(stream["expectedFps"]) * 0.95
+            minimum_visual_samples = minimum_frames / 60
             if result.get("hardwareDecode") is not True or decoded < minimum_frames or \
                     width != stream["expectedWidth"] or height != stream["expectedHeight"] or \
-                    dropped_percent >= manifest["maxDroppedPercent"]:
+                    dropped_percent >= manifest["maxDroppedPercent"] or \
+                    int(result.get("visualSamples", 0)) < minimum_visual_samples or \
+                    int(result.get("blackSamples", -1)) != 0 or \
+                    int(result.get("pipelineRestarts", -1)) != 0:
                 raise RuntimeError(f"stream {stream['name']} missed its hardware/frame/drop gate")
             evidence_streams.append({"name": stream["name"], "role": stream["role"],
                 "decoder": str(result.get("decoder", ""))[:128], "framesDecoded": decoded,
                 "framesDropped": dropped, "droppedPercent": round(dropped_percent, 5),
-                "width": width, "height": height})
+                "width": width, "height": height,
+                "visualSamples": int(result.get("visualSamples", 0)),
+                "blackSamples": int(result.get("blackSamples", -1)),
+                "pipelineRestarts": int(result.get("pipelineRestarts", -1))})
+        if len(rss_samples) < 3:
+            raise RuntimeError("desktop reference client produced insufficient RSS samples")
+        rss_growth = max(0, rss_samples[-1] - rss_samples[0])
+        rss_limit = manifest["maxRssGrowthMiB"] * 1024 * 1024
+        if rss_growth > rss_limit:
+            raise RuntimeError("desktop reference client exceeded its bounded RSS growth gate")
         final_server = server_processes(arguments.control_url)
         if not same_server_media(baseline, final_server):
             raise RuntimeError("True Direct clients left incremental server media sessions")
         document = {"schemaVersion": 1, "result": "passed", "platform": platform.platform(),
             "python": platform.python_version(), "durationSeconds": manifest["durationSeconds"],
-            "streamCount": len(evidence_streams), "serverSamples": samples,
+            "processCount": 1, "streamCount": len(evidence_streams), "serverSamples": samples,
+            "rssSamples": len(rss_samples), "rssInitialBytes": rss_samples[0],
+            "rssFinalBytes": rss_samples[-1], "rssPeakBytes": max(rss_samples),
+            "rssGrowthBytes": rss_growth,
             "streams": evidence_streams,
             "serverRtspSessionsBefore": baseline["rtspSessions"] if baseline else None,
             "serverRtspSessionsDuring": during["rtspSessions"] if during else None,
@@ -203,14 +286,14 @@ def main() -> int:
         temporary = arguments.evidence.with_suffix(arguments.evidence.suffix + ".tmp")
         temporary.write_text(json.dumps(document, indent=2, sort_keys=True) + "\n", encoding="utf-8")
         temporary.replace(arguments.evidence)
-        print("v2-M2 desktop reference gate passed: 16 substreams + 1 main, hardware decode, "
-              "drop threshold, continuous 30-minute server sampling, and zero incremental media load.")
+        print("v2-M2 desktop reference gate passed in one client process: 16 substreams + 1 main, "
+              "hardware decode, drop/RSS thresholds, continuous 30-minute server sampling, "
+              "and zero incremental media load.")
         return 0
     finally:
-        for _, process in processes:
-            if process.poll() is None:
-                process.terminate()
-        for _, process in processes:
+        if process is not None and process.poll() is None:
+            process.terminate()
+        if process is not None:
             try:
                 process.wait(timeout=5)
             except subprocess.TimeoutExpired:

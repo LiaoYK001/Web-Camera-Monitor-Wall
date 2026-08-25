@@ -34,6 +34,9 @@ class MediaPipeline final : public QObject {
     Q_PROPERTY(double currentFps READ currentFps NOTIFY statisticsChanged)
     Q_PROPERTY(int videoWidth READ videoWidth NOTIFY statisticsChanged)
     Q_PROPERTY(int videoHeight READ videoHeight NOTIFY statisticsChanged)
+    Q_PROPERTY(quint64 visualSamples READ visualSamples NOTIFY statisticsChanged)
+    Q_PROPERTY(quint64 blackSamples READ blackSamples NOTIFY statisticsChanged)
+    Q_PROPERTY(quint64 pipelineRestarts READ pipelineRestarts NOTIFY statisticsChanged)
 
 public:
     explicit MediaPipeline(QObject *parent = nullptr);
@@ -59,6 +62,9 @@ public:
     [[nodiscard]] double currentFps() const;
     [[nodiscard]] int videoWidth() const;
     [[nodiscard]] int videoHeight() const;
+    [[nodiscard]] quint64 visualSamples() const;
+    [[nodiscard]] quint64 blackSamples() const;
+    [[nodiscard]] quint64 pipelineRestarts() const;
 
 signals:
     void stateChanged();
@@ -78,6 +84,8 @@ private:
     void set_state(const QString &state);
     void poll_bus();
     void fail(const QString &reason);
+    void restart_with_software_fallback();
+    void restore_failed_hardware_rank();
     bool build_pipeline(QString &error);
     GstElement *make(const char *factory, const char *name, QString &error);
 
@@ -99,6 +107,7 @@ private:
     QString state_ = QStringLiteral("idle");
     QString decoder_ = QStringLiteral("not-started");
     QString decoder_factory_;
+    QString failed_hardware_factory_;
     QString fallback_reason_;
     bool hardware_decode_ = false;
     bool software_fallback_forced_ = false;
@@ -110,6 +119,9 @@ private:
     double current_fps_ = 0;
     std::atomic<int> video_width_{0};
     std::atomic<int> video_height_{0};
+    std::atomic<quint64> visual_samples_{0};
+    std::atomic<quint64> black_samples_{0};
+    std::atomic<quint64> pipeline_restarts_{0};
 };
 
 }

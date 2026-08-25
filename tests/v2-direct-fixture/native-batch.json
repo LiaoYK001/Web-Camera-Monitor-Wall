@@ -1,0 +1,10 @@
+{
+  "schemaVersion": 1,
+  "durationSeconds": 8,
+  "streams": [
+    {"name":"tile-1","adapter":"rtsp","endpoint":"rtsp://camera:8554/v2-direct","codec":"h264","usernameEnv":"","passwordEnv":""},
+    {"name":"tile-2","adapter":"rtsp","endpoint":"rtsp://camera:8554/v2-direct","codec":"h264","usernameEnv":"","passwordEnv":""},
+    {"name":"tile-3","adapter":"rtsp","endpoint":"rtsp://camera:8554/v2-direct","codec":"h264","usernameEnv":"","passwordEnv":""},
+    {"name":"main-focus","adapter":"rtsp","endpoint":"rtsp://camera:8554/v2-direct","codec":"h264","usernameEnv":"","passwordEnv":""}
+  ]
+}

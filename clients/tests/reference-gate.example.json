@@ -2,6 +2,7 @@
   "schemaVersion": 1,
   "durationSeconds": 1800,
   "maxDroppedPercent": 0.99,
+  "maxRssGrowthMiB": 512,
   "requireHardware": true,
   "streams": [
     {"name":"sub-01","role":"sub","adapter":"rtsp","endpoint":"rtsp://camera-01.example.invalid/sub","codec":"h264","expectedWidth":640,"expectedHeight":360,"expectedFps":15,"usernameEnv":"WEBOBS_PRIVATE_CAMERA_USER","passwordEnv":"WEBOBS_PRIVATE_CAMERA_PASSWORD"},

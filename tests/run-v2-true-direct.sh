@@ -19,7 +19,7 @@ fallback_id="$(docker compose -f "$compose_file" ps --all --quiet webobs-fallbac
 [[ -n "$webobs_id" ]]
 [[ -n "$fallback_id" ]]
 
-probe_services=(v2-probe v2-fallback-probe v2-nvr-coexist-probe native-rtsp-h264 native-rtsp-h265 native-mjpeg native-hls)
+probe_services=(v2-probe v2-fallback-probe v2-nvr-coexist-probe native-rtsp-h264 native-rtsp-h265 native-mjpeg native-hls native-batch)
 for service in "${probe_services[@]}"; do
   probe_id="$(docker compose -f "$compose_file" ps --all --quiet "$service")"
   [[ -n "$probe_id" ]]
