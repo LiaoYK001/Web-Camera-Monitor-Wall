@@ -17,6 +17,7 @@ struct MediaEndpoint {
     QString video_codec;
     QString username;
     QString password;
+    QString bearer_token;
     QString transport = QStringLiteral("tcp");
 };
 

@@ -9,7 +9,7 @@ RTSP camera -> libobs ffmpeg_source -> OBS scene -> H.264/AAC MP4
 
 当前版本新增 SQLite WAL Camera Registry、受控 ONVIF PTZ/预置位/快照/事件/对讲，以及隔离的事件、移动检测区/隐私遮罩、Detector Provider、规则和有界通知发件箱。默认 Gateway Direct-only 运行完全不初始化 OBS 解码、合成或编码；只有录制或启用 Composite 才启动 libobs。VA-API 会分别报告设备、驱动、编解码能力和真实运行探测，失败时明确回退；Hybrid 只转码不兼容轨道。
 
-开发路线和门禁见 [ROADMAP.md](ROADMAP.md)。v1-M10/M11 的 Digest/WS-Security/TLS、事件、Webhook/MQTT 及 Server Push MJPEG 契约已通过确定性测试；另有一个脱敏 Canon WV-HTTP 外部端点通过 MIME、媒体协商及五帧解码门禁。多厂商型号/固件矩阵改为持续兼容项目，不构成品牌级或 ONVIF 合规声明，详见 [摄像机兼容性资格](docs/camera-compatibility-qualification.md)。当前 `direct` 是媒体仍经过 Docker/MediaMTX 的“网关直通”。`dev` 已进入 v2-M1 真直连开发预览，包含配对、加密 Grant、拓扑规划、管理界面、本地客户端源码及隔离 H.264 架构夹具；固定 Qt 接收端的完整协议与硬件验收未完成，尚未发布 v2.0。详见 [API v2](docs/api-v2.md)、[真直连边界](docs/true-direct-v2.md) 与 [本地客户端](clients/README.md)。
+开发路线和门禁见 [ROADMAP.md](ROADMAP.md)。v1-M10/M11 的 Digest/WS-Security/TLS、事件、Webhook/MQTT 及 Server Push MJPEG 契约已通过确定性测试；另有一个脱敏 Canon WV-HTTP 外部端点通过 MIME、媒体协商及五帧解码门禁。多厂商型号/固件矩阵改为持续兼容项目，不构成品牌级或 ONVIF 合规声明，详见 [摄像机兼容性资格](docs/camera-compatibility-qualification.md)。当前 `direct` 是媒体仍经过 Docker/MediaMTX 的“网关直通”。`dev` 已进入 v2-M1/M2 开发预览，包含配对、加密 Grant、拓扑规划、显式后备租约、管理界面、本地桌面客户端源码及隔离多协议架构夹具；固定 Qt/GStreamer WHEP、NVR 共存和 Windows/Fedora 硬件/签名验收尚未完成，尚未发布 v2.0。详见 [API v2](docs/api-v2.md)、[真直连边界](docs/true-direct-v2.md) 与 [本地客户端](clients/README.md)。
 
 `WEBOBS_SCENE_FILE` 默认指向 `/config/webobs/scene.json`。空配置首次启动会创建空 Scene/Camera Registry，直接在 WebUI 的“设备管理”中添加设备；`WEBOBS_RTSP_URL` 只保留为一次性兼容 bootstrap，不再是部署必填项。Scene v5 只保存 Camera/Profile ID，凭据通过未提交 Git 的 Secret 引用解析。
 

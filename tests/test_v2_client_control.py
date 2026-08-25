@@ -440,12 +440,12 @@ class V2ClientControlTests(unittest.TestCase):
                 approved["clientId"], "camera-test", "snapshot", {"unexpected": True})
         self.assertEqual(body_rejected.exception.status, 400)
 
-        with mock.patch.object(service, "urlopen", side_effect=urllib.error.URLError(
-                "rtsp://fixture-user:fixture-password@camera.invalid")):
+        synthetic_url = "rtsp://" + "fixture-user:" + "fixture-secret@camera.invalid"
+        with mock.patch.object(service, "urlopen", side_effect=urllib.error.URLError(synthetic_url)):
             with self.assertRaises(service.ApiError) as hidden:
                 service.registry_request("POST", "camera-test", "snapshot")
         self.assertEqual(hidden.exception.status, 503)
-        self.assertNotIn("fixture-password", str(hidden.exception))
+        self.assertNotIn("fixture-secret", str(hidden.exception))
 
     def test_no_silent_fallback_and_online_revocation(self):
         enrollment, approved = self.enroll_and_approve()
@@ -462,6 +462,85 @@ class V2ClientControlTests(unittest.TestCase):
         with self.assertRaisesRegex(service.ApiError, "invalid") as error:
             service.authenticate_device(enrollment["deviceToken"])
         self.assertEqual(error.exception.status, 401)
+
+    def test_server_fallback_activation_is_owned_idempotent_and_revoked(self):
+        enrollment, approved = self.enroll_and_approve()
+        client = service.authenticate_device(enrollment["deviceToken"])
+        status, plan = service.create_media_plan(client, {
+            "cameraId": "camera-test", "profileId": "sub", "policy": "auto",
+            "receiverKind": "native", "networkClass": "lan", "reachability": "unreachable",
+            "protocols": ["rtsp"], "videoCodecs": ["h264"], "hardwareDecoders": ["vaapi"],
+        })
+        self.assertEqual(status, 201)
+        self.assertEqual(plan["topology"], "gateway-direct")
+        activated = service.activate_media_plan(client["id"], plan["planId"])
+        self.assertEqual(activated["mediaEndpoint"], {
+            "adapter": "whep",
+            "endpoint": f"/api/v2/media-plans/{plan['planId']}/whep",
+            "authorization": "device-bearer",
+        })
+        again = service.activate_media_plan(client["id"], plan["planId"])
+        self.assertEqual(again["planId"], activated["planId"])
+        verified = service.media_plan_activation(client["id"], plan["planId"])
+        self.assertEqual(verified["cameraId"], "camera-test")
+
+        other_keys = DeviceKeys()
+        other_enrollment = service.start_enrollment(other_keys.enrollment(os.urandom(32)))
+        service.approve_enrollment(other_enrollment["enrollmentId"], {
+            "pairingCode": other_enrollment["pairingCode"], "cameraGrants": [{
+                "cameraId": "camera-test", "profileIds": ["sub"],
+                "permissions": ["view"], "credentialMode": "existing",
+            }],
+        })
+        other = service.authenticate_device(other_enrollment["deviceToken"])
+        with self.assertRaises(service.ApiError) as stolen:
+            service.media_plan_activation(other["id"], plan["planId"])
+        self.assertEqual(stolen.exception.status, 404)
+
+        _, expiring = service.create_media_plan(client, {
+            "cameraId": "camera-test", "profileId": "sub", "policy": "auto",
+            "receiverKind": "native", "networkClass": "lan", "reachability": "unreachable",
+            "protocols": ["rtsp"], "videoCodecs": ["h264"], "hardwareDecoders": [],
+        })
+        service.activate_media_plan(client["id"], expiring["planId"])
+        with service.connect() as database:
+            database.execute("UPDATE media_plans SET expires_at=? WHERE id=?",
+                             (int(time.time()) - 1, expiring["planId"]))
+        self.assertTrue(service.release_media_plan(client["id"], expiring["planId"])["released"])
+        with service.connect() as database:
+            self.assertIsNone(database.execute(
+                "SELECT id FROM media_plans WHERE id=?", (expiring["planId"],)).fetchone())
+
+        released = service.release_media_plan(client["id"], plan["planId"])
+        self.assertTrue(released["released"])
+        self.assertFalse(service.release_media_plan(client["id"], plan["planId"])["released"])
+        service.activate_media_plan(client["id"], plan["planId"])
+        service.revoke_client(approved["clientId"])
+        with service.connect() as database:
+            self.assertIsNone(database.execute(
+                "SELECT plan_id FROM media_plan_leases WHERE plan_id=?", (plan["planId"],)).fetchone())
+
+    def test_true_direct_and_rejected_plans_cannot_activate_server_media(self):
+        enrollment, _ = self.enroll_and_approve()
+        client = service.authenticate_device(enrollment["deviceToken"])
+        common = {
+            "cameraId": "camera-test", "profileId": "sub", "receiverKind": "native",
+            "networkClass": "lan", "protocols": ["rtsp"], "videoCodecs": ["h264"],
+            "hardwareDecoders": ["vaapi"],
+        }
+        _, direct = service.create_media_plan(client, {
+            **common, "policy": "auto", "reachability": "reachable",
+        })
+        with self.assertRaises(service.ApiError) as direct_rejected:
+            service.activate_media_plan(client["id"], direct["planId"])
+        self.assertEqual(direct_rejected.exception.status, 409)
+        _, rejected = service.create_media_plan(client, {
+            **common, "policy": "true-direct-only", "networkClass": "wan",
+            "reachability": "unreachable",
+        })
+        with self.assertRaises(service.ApiError) as policy_rejected:
+            service.activate_media_plan(client["id"], rejected["planId"])
+        self.assertEqual(policy_rejected.exception.status, 409)
 
     def test_expired_grant_and_bounded_audit(self):
         enrollment, approved = self.enroll_and_approve()

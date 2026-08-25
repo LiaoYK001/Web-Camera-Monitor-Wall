@@ -1,5 +1,6 @@
 #include "webobs/client/stream_session_model.hpp"
 
+#include <QDateTime>
 #include <QTimer>
 #include <QUuid>
 
@@ -80,6 +81,7 @@ QString StreamSessionModel::prepare(const QString &camera_id, const QString &pro
     session->profile_id = profile_id;
     session->title = title.left(128);
     session->policy = policy;
+    session->direct_endpoint = endpoint;
     session->endpoint = endpoint;
     session->pipeline = std::make_unique<MediaPipeline>();
     const QString id = session->id;
@@ -90,9 +92,11 @@ QString StreamSessionModel::prepare(const QString &camera_id, const QString &pro
         Session &current = *sessions_[static_cast<std::size_t>(row)];
         current.ever_ready = true;
         current.retry_pending = false;
-        current.fallback_reason.clear();
+        if (!current.server_fallback)
+            current.fallback_reason.clear();
         notify_row(row);
-        emit directResult(id, true, {});
+        if (!current.server_fallback)
+            emit directResult(id, true, {});
     });
     connect(session->pipeline.get(), &MediaPipeline::directFailed, this,
             [this, id](const QString &reason) {
@@ -102,7 +106,8 @@ QString StreamSessionModel::prepare(const QString &camera_id, const QString &pro
         Session &current = *sessions_[static_cast<std::size_t>(row)];
         current.fallback_reason = reason.left(256);
         notify_row(row);
-        if (current.ever_ready || reason == QStringLiteral("hardware_decoder_failed_software_fallback"))
+        if (current.server_fallback || current.ever_ready ||
+            reason == QStringLiteral("hardware_decoder_failed_software_fallback"))
             schedule_reconnect(id, reason);
         else
             emit directResult(id, false, reason);
@@ -138,10 +143,13 @@ void StreamSessionModel::remove(const QString &session_id)
     const int row = find(session_id);
     if (row < 0)
         return;
+    const QString plan_id = sessions_[static_cast<std::size_t>(row)]->plan_id;
     beginRemoveRows({}, row, row);
     sessions_.erase(sessions_.begin() + row);
     endRemoveRows();
     emit countChanged();
+    if (!plan_id.isEmpty())
+        emit fallbackReleaseRequested(plan_id);
 }
 
 void StreamSessionModel::setMuted(const QString &session_id, bool muted)
@@ -178,10 +186,16 @@ void StreamSessionModel::clear()
 {
     if (sessions_.empty())
         return;
+    QStringList plans;
+    for (const auto &session : sessions_)
+        if (!session->plan_id.isEmpty() && !plans.contains(session->plan_id))
+            plans.push_back(session->plan_id);
     beginResetModel();
     sessions_.clear();
     endResetModel();
     emit countChanged();
+    for (const QString &plan : plans)
+        emit fallbackReleaseRequested(plan);
 }
 
 void StreamSessionModel::halt(const QString &session_id)
@@ -236,6 +250,32 @@ void StreamSessionModel::set_plan(const QString &session_id, const QString &topo
     notify_row(row);
 }
 
+bool StreamSessionModel::activate_fallback(const QString &session_id, const QString &plan_id,
+                                           qint64 expires_at, const MediaEndpoint &endpoint,
+                                           QString &error)
+{
+    const int row = find(session_id);
+    if (row < 0 || plan_id.size() != 32 || endpoint.adapter != QStringLiteral("whep") ||
+        endpoint.endpoint.isEmpty() || endpoint.bearer_token.isEmpty() ||
+        expires_at <= QDateTime::currentSecsSinceEpoch()) {
+        error = QStringLiteral("server fallback activation contract is invalid");
+        return false;
+    }
+    Session &session = *sessions_[static_cast<std::size_t>(row)];
+    session.pipeline->stop();
+    session.endpoint = endpoint;
+    session.plan_id = plan_id;
+    session.fallback_expires_at = expires_at;
+    session.server_fallback = true;
+    session.ever_ready = false;
+    session.retry_pending = false;
+    session.reconnect_count = 0;
+    notify_row(row);
+    if (!suspended_ && session.video_item)
+        start(row);
+    return true;
+}
+
 int StreamSessionModel::find(const QString &session_id) const
 {
     for (int row = 0; row < rowCount(); ++row) {
@@ -249,6 +289,7 @@ void StreamSessionModel::start(int row)
 {
     if (suspended_ || row < 0 || row >= rowCount())
         return;
+    restore_expired_fallback(row);
     Session &session = *sessions_[static_cast<std::size_t>(row)];
     if (!session.video_item)
         return;
@@ -262,6 +303,31 @@ void StreamSessionModel::start(int row)
         else
             emit directResult(session.id, false, error);
     }
+}
+
+void StreamSessionModel::restore_expired_fallback(int row)
+{
+    if (row < 0 || row >= rowCount())
+        return;
+    Session &session = *sessions_[static_cast<std::size_t>(row)];
+    if (!session.server_fallback || session.fallback_expires_at == 0 ||
+        QDateTime::currentSecsSinceEpoch() < session.fallback_expires_at)
+        return;
+
+    const QString expired_plan = session.plan_id;
+    session.pipeline->stop();
+    session.endpoint = session.direct_endpoint;
+    session.plan_id.clear();
+    session.fallback_expires_at = 0;
+    session.server_fallback = false;
+    session.ever_ready = false;
+    session.retry_pending = false;
+    session.reconnect_count = 0;
+    session.topology = QStringLiteral("probing-true-direct");
+    session.fallback_reason = QStringLiteral("server_fallback_plan_expired_reprobe");
+    notify_row(row);
+    if (!expired_plan.isEmpty())
+        emit fallbackReleaseRequested(expired_plan);
 }
 
 void StreamSessionModel::schedule_reconnect(const QString &session_id, const QString &reason)

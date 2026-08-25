@@ -15,9 +15,11 @@ docker image inspect "${WEBOBS_TEST_IMAGE:-webobs:v2-m1-dev}" >/dev/null
 docker compose -f "$compose_file" up --detach --build
 
 webobs_id="$(docker compose -f "$compose_file" ps --all --quiet webobs)"
+fallback_id="$(docker compose -f "$compose_file" ps --all --quiet webobs-fallback)"
 [[ -n "$webobs_id" ]]
+[[ -n "$fallback_id" ]]
 
-probe_services=(v2-probe native-rtsp-h264 native-rtsp-h265 native-mjpeg native-hls)
+probe_services=(v2-probe v2-fallback-probe native-rtsp-h264 native-rtsp-h265 native-mjpeg native-hls)
 for service in "${probe_services[@]}"; do
   probe_id="$(docker compose -f "$compose_file" ps --all --quiet "$service")"
   [[ -n "$probe_id" ]]
@@ -49,5 +51,15 @@ if docker compose -f "$compose_file" logs --no-color webobs | grep -F "rtsp://ca
   echo "True Direct isolation failed: the camera endpoint appeared in server logs" >&2
   exit 1
 fi
+if docker exec "$fallback_id" sh -c \
+    "curl -fsS http://127.0.0.1:9997/v3/config/paths/list | grep -Eq 'direct-|hybrid-' || pgrep -x ffmpeg"; then
+  echo "Released v2 fallback retained a MediaMTX route or transcoder" >&2
+  exit 1
+fi
+if docker compose -f "$compose_file" logs --no-color webobs-fallback | \
+    grep -Eq 'fixture-viewer|fixture-password|rtsp://[^/[:space:]]+:[^@/[:space:]]+@'; then
+  echo "Fallback logs exposed camera credentials" >&2
+  exit 1
+fi
 
-echo "v2 deterministic True Direct gate passed: the production client pipeline decoded H.264/H.265 RTSP, Server Push MJPEG and HLS; the control server had no camera network or media helper. WHEP remains an exact-runtime release gate."
+echo "v2 deterministic gate passed: production client RTSP/MJPEG/HLS True Direct stayed off-server, and an authenticated Gateway fallback lease activated and cleaned up without residue. WHEP decode remains an exact-runtime release gate."

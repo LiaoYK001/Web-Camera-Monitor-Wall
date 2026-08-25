@@ -77,6 +77,16 @@ Permissions are `view`, `ptz`, `talk`, `snapshot`, and `record-local`; `view` is
 
 The reference client submits `reachability=reachable` only after receiving a decoded video buffer within three seconds. This is client evidence, not remote attestation; the server still validates the granted Profile and declared capability set. A plan never starts the server media graph by itself—it only records the selected contract. `true-direct-only` returns `409` instead of silently falling back. `GET /api/v2/media-plans/{planId}` retrieves the five-minute plan owned by that client.
 
+An `auto` plan that visibly selects `gateway-direct`, `hybrid`, or `composite` must be explicitly activated before server media starts:
+
+- `POST /api/v2/media-plans/{planId}/activate` creates an owned activation lease and returns only the same-origin WHEP alias `/api/v2/media-plans/{planId}/whep`.
+- `GET /api/v2/media-plans/{planId}/activation` revalidates the device, Grant, plan ownership, expiry, and lease before every WHEP creation or deletion.
+- `DELETE /api/v2/media-plans/{planId}/activation` is idempotent and tears down every WHEP session, on-demand MediaMTX route, and transcoder owned by that plan.
+
+The native client authenticates this WHEP alias with an in-memory device bearer; the C++ boundary never returns an internal MediaMTX path. Forged IDs, cross-client access, invalid bearers, expired plans, released leases, and True Direct activation are rejected before a media route is created. Client revocation also closes all active fallback sessions immediately. If a fallback plan expires while disconnected or suspended, the reference client restores its original camera endpoint and performs a new bounded True Direct probe instead of retrying a stale server URL.
+
+当 `auto` 计划明确选择 `gateway-direct`、`hybrid` 或 `composite` 时，客户端必须先显式激活，服务端才会启动媒体链：激活接口只返回同源 v2 WHEP 别名；查询接口会在每次创建/删除 WHEP 会话前重新校验设备、Grant、归属、期限与租约；删除激活是幂等的，并清理该计划的全部 WHEP 会话、按需 MediaMTX 路由及转码器。原生客户端仅在内存中携带 device bearer，内部 MediaMTX 路径不会暴露。伪造 ID、跨客户端访问、无效 bearer、过期计划、已释放租约及对真直连计划的激活都会在建路由前被拒绝；撤销客户端会立即关闭其所有后备会话。挂起或断线后若计划已过期，客户端会恢复原始摄像机端点并重新执行有界真直连探测，不会无限重试陈旧的服务端 URL。
+
 Every `TopologyPlan` contains:
 
 ```text

@@ -1,5 +1,6 @@
 #include "webobs/client/topology_plan.hpp"
 
+#include <QRegularExpression>
 #include <QSet>
 
 namespace webobs::client {
@@ -24,7 +25,8 @@ TopologyPlan TopologyPlan::from_json(const QJsonObject &value, QString &error)
     result.live_server_media_expected = value.value("liveServerMediaExpected").toBool(true);
     result.fallback_reason = value.value("fallbackReason").toString();
     result.expires_at = value.value("expiresAt").toInteger();
-    if (result.contract_version != 1 || result.plan_id.size() != 32 ||
+    static const QRegularExpression identifier(QStringLiteral("^[0-9a-f]{32}$"));
+    if (result.contract_version != 1 || !identifier.match(result.plan_id).hasMatch() ||
         result.camera_id.isEmpty() || result.profile_id.isEmpty() ||
         !topologies.contains(result.topology) || !receivers.contains(result.receiver_kind) ||
         result.expires_at <= 0) {

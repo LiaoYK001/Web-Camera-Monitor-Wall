@@ -300,6 +300,11 @@ def initialize() -> None:
             );
             CREATE INDEX IF NOT EXISTS media_plans_client_expiry
               ON media_plans(client_id,expires_at);
+            CREATE TABLE IF NOT EXISTS media_plan_leases(
+              plan_id TEXT PRIMARY KEY REFERENCES media_plans(id) ON DELETE CASCADE,
+              client_id TEXT NOT NULL REFERENCES clients(id) ON DELETE CASCADE,
+              activated_at INTEGER NOT NULL,last_seen INTEGER NOT NULL
+            );
             CREATE TABLE IF NOT EXISTS client_audit(
               id INTEGER PRIMARY KEY AUTOINCREMENT,client_id TEXT NOT NULL,
               sequence INTEGER NOT NULL,event_type TEXT NOT NULL,outcome TEXT NOT NULL,
@@ -1028,7 +1033,10 @@ def create_media_plan(client: sqlite3.Row, payload: object) -> tuple[int, dict[s
         "expiresAt": now + PLAN_SECONDS,
     }
     with connect() as database:
-        database.execute("DELETE FROM media_plans WHERE expires_at<=?", (now,))
+        database.execute(
+            "DELETE FROM media_plans WHERE expires_at<=? AND NOT EXISTS "
+            "(SELECT 1 FROM media_plan_leases WHERE media_plan_leases.plan_id=media_plans.id)",
+            (now,))
         database.execute(
             "INSERT INTO media_plans(id,client_id,camera_id,profile_id,body_json,created_at,expires_at) "
             "VALUES(?,?,?,?,?,?,?)",
@@ -1038,15 +1046,83 @@ def create_media_plan(client: sqlite3.Row, payload: object) -> tuple[int, dict[s
     return (409 if status == "rejected" else 201), plan
 
 
-def get_media_plan(client_id: str, plan_id: str) -> dict[str, object]:
+def _media_plan_row(client_id: str, plan_id: str, allow_expired: bool = False) -> sqlite3.Row:
     if not re.fullmatch(r"[0-9a-f]{32}", plan_id):
         raise ApiError(404, "media_plan_not_found", "media plan is unknown")
     with connect() as database:
         row = database.execute("SELECT * FROM media_plans WHERE id=? AND client_id=?",
                                (plan_id, client_id)).fetchone()
-    if row is None or row["expires_at"] <= int(time.time()):
+    if row is None or (not allow_expired and row["expires_at"] <= int(time.time())):
         raise ApiError(404, "media_plan_not_found", "media plan is unknown or expired")
+    return row
+
+
+def get_media_plan(client_id: str, plan_id: str) -> dict[str, object]:
+    row = _media_plan_row(client_id, plan_id)
     return json.loads(row["body_json"])
+
+
+def activate_media_plan(client_id: str, plan_id: str) -> dict[str, object]:
+    row = _media_plan_row(client_id, plan_id)
+    plan = json.loads(row["body_json"])
+    if plan.get("status") != "active" or plan.get("topology") == "true-direct":
+        raise ApiError(409, "media_plan_not_activatable",
+                       "only an active server fallback plan can be activated")
+    # Recheck the grant at activation time so a stale plan can never widen a
+    # client's Camera/Profile authorization.
+    _profile_for_client(client_id, row["camera_id"], row["profile_id"])
+    now = int(time.time())
+    with connect() as database:
+        database.execute(
+            "INSERT INTO media_plan_leases(plan_id,client_id,activated_at,last_seen) VALUES(?,?,?,?) "
+            "ON CONFLICT(plan_id) DO UPDATE SET last_seen=excluded.last_seen",
+            (plan_id, client_id, now, now),
+        )
+    return {
+        "contractVersion": 1, "planId": plan_id, "clientId": client_id,
+        "cameraId": row["camera_id"], "profileId": row["profile_id"],
+        "topology": plan["topology"], "fallbackReason": plan["fallbackReason"],
+        "expiresAt": row["expires_at"],
+        "mediaEndpoint": {
+            "adapter": "whep", "endpoint": f"/api/v2/media-plans/{plan_id}/whep",
+            "authorization": "device-bearer",
+        },
+    }
+
+
+def media_plan_activation(client_id: str, plan_id: str) -> dict[str, object]:
+    row = _media_plan_row(client_id, plan_id)
+    _profile_for_client(client_id, row["camera_id"], row["profile_id"])
+    now = int(time.time())
+    with connect() as database:
+        lease = database.execute(
+            "SELECT * FROM media_plan_leases WHERE plan_id=? AND client_id=?",
+            (plan_id, client_id)).fetchone()
+        if lease is not None:
+            database.execute(
+                "UPDATE media_plan_leases SET last_seen=? WHERE plan_id=? AND client_id=?",
+                (now, plan_id, client_id))
+    if lease is None:
+        raise ApiError(409, "media_plan_not_active", "media plan has no active server lease")
+    plan = json.loads(row["body_json"])
+    return {
+        "contractVersion": 1, "planId": plan_id, "clientId": client_id,
+        "cameraId": row["camera_id"], "profileId": row["profile_id"],
+        "topology": plan["topology"], "fallbackReason": plan["fallbackReason"],
+        "expiresAt": row["expires_at"],
+    }
+
+
+def release_media_plan(client_id: str, plan_id: str) -> dict[str, object]:
+    row = _media_plan_row(client_id, plan_id, allow_expired=True)
+    with connect() as database:
+        removed = database.execute(
+            "DELETE FROM media_plan_leases WHERE plan_id=? AND client_id=?",
+            (plan_id, client_id)).rowcount
+        if row["expires_at"] <= int(time.time()):
+            database.execute("DELETE FROM media_plans WHERE id=? AND client_id=?",
+                             (plan_id, client_id))
+    return {"planId": plan_id, "released": bool(removed)}
 
 
 def audit_batch(client_id: str, payload: object) -> dict[str, object]:
@@ -1182,6 +1258,15 @@ class Handler(BaseHTTPRequestHandler):
         match = re.fullmatch(r"/media-plans/([0-9a-f]{32})", path)
         if match and self.command == "GET":
             return 200, get_media_plan(client["id"], match.group(1))
+        match = re.fullmatch(r"/media-plans/([0-9a-f]{32})/(activate|activation)", path)
+        if match:
+            plan_id, operation = match.groups()
+            if operation == "activate" and self.command == "POST":
+                return 200, activate_media_plan(client["id"], plan_id)
+            if operation == "activation" and self.command == "GET":
+                return 200, media_plan_activation(client["id"], plan_id)
+            if operation == "activation" and self.command == "DELETE":
+                return 200, release_media_plan(client["id"], plan_id)
         if path == "/client/audit/batch" and self.command == "POST":
             return 200, audit_batch(client["id"], self.payload())
         operation_match = re.fullmatch(

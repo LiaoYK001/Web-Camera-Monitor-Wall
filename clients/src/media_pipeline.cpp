@@ -127,6 +127,22 @@ bool MediaPipeline::build_pipeline(QString &error)
         if (!source_ || !decoder_bin_)
             return false;
         g_object_set(source_, "whep-endpoint", endpoint_.endpoint.toUtf8().constData(), nullptr);
+        if (!endpoint_.bearer_token.isEmpty()) {
+            GObject *signaller = nullptr;
+            if (g_object_class_find_property(G_OBJECT_GET_CLASS(source_), "signaller"))
+                g_object_get(source_, "signaller", &signaller, nullptr);
+            GObject *authentication_target = signaller ? signaller : G_OBJECT(source_);
+            if (!g_object_class_find_property(G_OBJECT_GET_CLASS(authentication_target), "auth-token")) {
+                if (signaller)
+                    g_object_unref(signaller);
+                error = QStringLiteral("WHEP runtime does not support bearer authentication");
+                return false;
+            }
+            g_object_set(authentication_target, "auth-token",
+                         endpoint_.bearer_token.toUtf8().constData(), nullptr);
+            if (signaller)
+                g_object_unref(signaller);
+        }
     } else {
         error = QStringLiteral("unsupported True Direct protocol adapter");
         return false;

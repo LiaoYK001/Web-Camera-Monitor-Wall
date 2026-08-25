@@ -57,9 +57,9 @@ v2 的低服务端成本优先级为：
 3. `hybrid`: convert only incompatible tracks, preferring local or hardware conversion / 只转换不兼容轨道，优先本地或硬件转换。
 4. `composite`: server decode/render/encode when OBS-class functions are requested / 需要 OBS 类能力时由服务端解码、渲染和编码。
 
-Every source exposes the selected topology, reason, decoder, renderer, encoder, upstream session owner and fallback reason. A user choice never silently starts another server media graph.
+Every source exposes the selected topology, reason, decoder, renderer, encoder, upstream session owner and fallback reason. A user choice never silently starts another server media graph. The implemented native fallback path requires an owned activation lease, revalidates it at the v2 WHEP boundary, and destroys its on-demand route when the viewer closes, the lease is released, or the client is revoked.
 
-每个来源都展示已选拓扑、原因、解码器、渲染器、编码器、上游会话所有者及回退原因；用户选择一种模式时，不得在后台静默启动另一套服务端媒体图。
+每个来源都展示已选拓扑、原因、解码器、渲染器、编码器、上游会话所有者及回退原因；用户选择一种模式时，不得在后台静默启动另一套服务端媒体图。当前原生后备路径必须持有归属明确的激活租约，在 v2 WHEP 边界重新校验，并在观看端关闭、租约释放或客户端撤销时销毁按需路由。
 
 ## 5. Security contract / 安全契约
 
@@ -82,9 +82,9 @@ Every source exposes the selected topology, reason, decoder, renderer, encoder, 
 - An enrolled client can start from its encrypted cache while Docker is unavailable, within a documented offline authorization window / 已配对客户端可在 Docker 不可用时从加密缓存启动，并遵守公开的离线授权时限。
 - Credential, origin, loopback, revocation, downgrade and public-repository redaction tests pass / 凭据、Origin、回环、撤销、降级与公开仓库脱敏测试通过。
 
-The API/grant/planner and administrator approval UI pass deterministic cryptographic, proxy and WebUI gates. `tests/run-v2-true-direct.{sh,ps1}` puts Docker on a control-only network, completes enrollment and an encrypted Grant, then runs the production native pipeline for H.264/H.265 RTSP, Server Push MJPEG and HLS. Each probe must decode continuous buffers; the H.264 probe also records stream-copy MKV, remuxes it to MP4 and decodes the result. Docker cannot resolve the camera network and has no MediaMTX/FFmpeg/libobs/Program helper. Exact GStreamer 1.28.6 WHEP, 1–16-viewer NVR coexistence and platform hardware gates remain private release evidence. Until those pass, product text must say **True Direct development preview** and must not describe Gateway Direct as server-bypass delivery.
+The API/grant/planner and administrator approval UI pass deterministic cryptographic, proxy and WebUI gates. `tests/run-v2-true-direct.{sh,ps1}` puts the True Direct Docker service on a control-only network, completes enrollment and an encrypted Grant, then runs the production native pipeline for H.264/H.265 RTSP, Server Push MJPEG and HLS. Each probe must decode continuous buffers; the H.264 probe also records stream-copy MKV, remuxes it to MP4 and decodes the result. A separate fallback service proves explicit activation, authenticated WHEP route construction, rejection of forged/stale access, release and route/process cleanup. Its synthetic SDP may be rejected by the upstream and therefore is not decoded-WHEP evidence. Exact GStreamer 1.28.6 WHEP, 1–16-viewer NVR coexistence and platform hardware gates remain private release evidence. Until those pass, product text must say **True Direct development preview** and must not describe Gateway Direct as server-bypass delivery.
 
-API/Grant/规划器与管理员批准界面已通过确定性密码学、代理及 WebUI 门禁。`tests/run-v2-true-direct.{sh,ps1}` 会让 Docker 只接控制网络，完成配对与加密 Grant，再以生产本地管线运行 H.264/H.265 RTSP、Server Push MJPEG 和 HLS；每个探针必须连续解码，H.264 还会 stream-copy 录制 MKV、remux 为 MP4 并再次解码。Docker 无法解析摄像机网络，且不存在 MediaMTX/FFmpeg/libobs/Program helper。固定 GStreamer 1.28.6 的 WHEP、1～16 观看端与 NVR 共存及平台硬件门禁仍是私有发布证据。在其通过前，产品文案只能写“真直连开发预览”，不得把网关直通描述为绕过服务端的数据路径。
+API/Grant/规划器与管理员批准界面已通过确定性密码学、代理及 WebUI 门禁。`tests/run-v2-true-direct.{sh,ps1}` 会让真直连 Docker 服务只接控制网络，完成配对与加密 Grant，再以生产本地管线运行 H.264/H.265 RTSP、Server Push MJPEG 和 HLS；每个探针必须连续解码，H.264 还会 stream-copy 录制 MKV、remux 为 MP4 并再次解码。独立后备服务会验证显式激活、受认证 WHEP 建路、伪造/陈旧访问拒绝、释放及路由/进程清理；其合成 SDP 可能被上游拒绝，因而不属于已解码 WHEP 证据。固定 GStreamer 1.28.6 的 WHEP、1～16 观看端与 NVR 共存及平台硬件门禁仍是私有发布证据。在其通过前，产品文案只能写“真直连开发预览”，不得把网关直通描述为绕过服务端的数据路径。
 
 Run the architecture fixture only with a locally built development image; it uses public synthetic credentials and endpoints and writes no private evidence:
 

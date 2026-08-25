@@ -98,6 +98,8 @@ ClientController::ClientController(QObject *parent) : QObject(parent)
                                               QStringLiteral("unreachable"));
             });
         connect(&model, &StreamSessionModel::userError, this, &ClientController::userError);
+        connect(&model, &StreamSessionModel::fallbackReleaseRequested,
+                this, &ClientController::release_media_plan);
     };
     wire_streams(grid_streams_);
     wire_streams(focus_streams_);
@@ -546,12 +548,66 @@ void ClientController::submit_media_plan(StreamSessionModel *model, const QStrin
         emit topologyChanged();
         if (status == 409 || !plan.true_direct()) {
             model->halt(session_id);
-            if (policy == QStringLiteral("true-direct-only"))
+            if (policy == QStringLiteral("true-direct-only")) {
                 emit userError(QStringLiteral("True Direct Only blocked fallback: %1").arg(plan.fallback_reason));
-            else
-                emit userError(QStringLiteral("Fallback required: %1").arg(plan.fallback_reason));
+                return;
+            }
+            emit userError(QStringLiteral("Activating %1 fallback: %2")
+                               .arg(plan.topology, plan.fallback_reason));
+            QJsonObject activation_request;
+            request("POST", QStringLiteral("/api/v2/media-plans/%1/activate").arg(plan.plan_id),
+                    &activation_request, true,
+                    [this, model, session_id, plan](int activation_status,
+                                                    const QJsonObject &activation) {
+                if (activation_status != 200) {
+                    emit userError(QStringLiteral("Server fallback activation failed safely"));
+                    return;
+                }
+                const QJsonObject endpoint_value = activation.value("mediaEndpoint").toObject();
+                if (activation.value("planId").toString() != plan.plan_id ||
+                    endpoint_value.value("adapter").toString() != QStringLiteral("whep") ||
+                    endpoint_value.value("authorization").toString() !=
+                        QStringLiteral("device-bearer")) {
+                    emit userError(QStringLiteral("Server fallback endpoint contract is invalid"));
+                    release_media_plan(plan.plan_id);
+                    return;
+                }
+                const QString relative = endpoint_value.value("endpoint").toString();
+                const QString expected = QStringLiteral("/api/v2/media-plans/%1/whep")
+                                             .arg(plan.plan_id);
+                const QUrl server(server_url_);
+                const QUrl resolved = server.resolved(QUrl(relative));
+                if (relative != expected || !resolved.isValid() ||
+                    resolved.scheme() != server.scheme() || resolved.host() != server.host() ||
+                    resolved.port() != server.port() || !resolved.userInfo().isEmpty()) {
+                    emit userError(QStringLiteral("Server fallback endpoint was rejected"));
+                    release_media_plan(plan.plan_id);
+                    return;
+                }
+                MediaEndpoint endpoint;
+                endpoint.adapter = QStringLiteral("whep");
+                endpoint.endpoint = resolved.toString(QUrl::FullyEncoded);
+                endpoint.video_codec = QStringLiteral("h264");
+                endpoint.bearer_token = identity_.device_token;
+                QString error;
+                if (!model->activate_fallback(session_id, plan.plan_id, plan.expires_at,
+                                              endpoint, error)) {
+                    release_media_plan(plan.plan_id);
+                    if (!error.isEmpty())
+                        emit userError(error);
+                }
+            });
         }
     });
+}
+
+void ClientController::release_media_plan(const QString &plan_id)
+{
+    static const QRegularExpression identifier(QStringLiteral("^[0-9a-f]{32}$"));
+    if (!identifier.match(plan_id).hasMatch() || identity_.device_token.isEmpty())
+        return;
+    request("DELETE", QStringLiteral("/api/v2/media-plans/%1/activation").arg(plan_id),
+            nullptr, true, [](int, const QJsonObject &) {}, true);
 }
 
 void ClientController::stopAll()

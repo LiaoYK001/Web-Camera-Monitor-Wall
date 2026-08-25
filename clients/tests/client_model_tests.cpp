@@ -2,6 +2,7 @@
 #include "webobs/client/stream_session_model.hpp"
 #include "webobs/client/studio_workspace.hpp"
 
+#include <QDateTime>
 #include <QJsonArray>
 #include <QJsonObject>
 #include <QtTest>
@@ -111,6 +112,45 @@ private slots:
         QCOMPARE(StreamSessionModel::reconnectDelayMs(1), 2000);
         QCOMPARE(StreamSessionModel::reconnectDelayMs(2), 4000);
         QCOMPARE(StreamSessionModel::reconnectDelayMs(99), 4000);
+    }
+
+    void server_fallback_endpoint_is_bounded_and_released_with_session()
+    {
+        StreamSessionModel model(1, false);
+        QSignalSpy releases(&model, &StreamSessionModel::fallbackReleaseRequested);
+        QString error;
+        const QString session = model.prepare(QStringLiteral("camera-a"), QStringLiteral("sub"),
+            QStringLiteral("Camera A"), QStringLiteral("auto"), fixture_endpoint(1), error);
+        QVERIFY(!session.isEmpty());
+        MediaEndpoint fallback;
+        fallback.adapter = QStringLiteral("whep");
+        fallback.endpoint = QStringLiteral("https://monitor.invalid/api/v2/media-plans/") +
+            QString(32, QLatin1Char('a')) + QStringLiteral("/whep");
+        fallback.video_codec = QStringLiteral("h264");
+        fallback.bearer_token = QString(64, QLatin1Char('b'));
+        QVERIFY(model.activate_fallback(session, QString(32, QLatin1Char('a')),
+                                        QDateTime::currentSecsSinceEpoch() + 300,
+                                        fallback, error));
+        const auto context = model.context(session);
+        QVERIFY(context.has_value());
+        QCOMPARE(context->adapter, QStringLiteral("whep"));
+        QCOMPARE(context->endpoint, fallback.endpoint);
+        model.remove(session);
+        QCOMPARE(releases.count(), 1);
+        QCOMPARE(releases.first().first().toString(), QString(32, QLatin1Char('a')));
+
+        error.clear();
+        const QString second = model.prepare(QStringLiteral("camera-b"), QStringLiteral("sub"),
+            QStringLiteral("Camera B"), QStringLiteral("auto"), fixture_endpoint(2), error);
+        QVERIFY(!model.activate_fallback(second, QStringLiteral("not-a-plan"),
+                                         QDateTime::currentSecsSinceEpoch() + 300,
+                                         fallback, error));
+        QVERIFY(error.contains(QStringLiteral("contract")));
+
+        error.clear();
+        QVERIFY(!model.activate_fallback(second, QString(32, QLatin1Char('a')),
+                                         QDateTime::currentSecsSinceEpoch() - 1,
+                                         fallback, error));
     }
 
     void scene_round_trip_deduplicates_reused_sources()

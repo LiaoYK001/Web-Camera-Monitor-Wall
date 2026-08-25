@@ -114,6 +114,7 @@ private:
     void set_state(const QString &value, const QString &status);
     void submit_media_plan(StreamSessionModel *model, const QString &session_id,
                            const QString &reachability);
+    void release_media_plan(const QString &plan_id);
     void camera_operation(const QString &camera_id, const QString &operation,
                           const QJsonObject *body, ReplyHandler handler);
     QVariantMap camera(const QString &camera_id) const;

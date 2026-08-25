@@ -15,14 +15,15 @@ try {
     & docker compose -p $Project -f $ComposeFile up --detach --build
     if ($LASTEXITCODE -ne 0) { throw 'Could not start the True Direct fixture.' }
 
-    $ProbeServices = @('v2-probe', 'native-rtsp-h264', 'native-rtsp-h265',
+    $ProbeServices = @('v2-probe', 'v2-fallback-probe', 'native-rtsp-h264', 'native-rtsp-h265',
         'native-mjpeg', 'native-hls')
     $ProbeIds = @{}
     foreach ($Service in $ProbeServices) {
         $ProbeIds[$Service] = (& docker compose -p $Project -f $ComposeFile ps --all --quiet $Service).Trim()
     }
     $WebObsId = (& docker compose -p $Project -f $ComposeFile ps --all --quiet webobs).Trim()
-    if (-not $WebObsId -or @($ProbeIds.Values | Where-Object { -not $_ }).Count -gt 0) {
+    $FallbackId = (& docker compose -p $Project -f $ComposeFile ps --all --quiet webobs-fallback).Trim()
+    if (-not $WebObsId -or -not $FallbackId -or @($ProbeIds.Values | Where-Object { -not $_ }).Count -gt 0) {
         throw 'Fixture container identities are unavailable.'
     }
     foreach ($Service in $ProbeServices) {
@@ -54,7 +55,13 @@ try {
     if ($ServerLogs.Contains('rtsp://camera:8554')) {
         throw 'Camera endpoint leaked into server logs.'
     }
-    Write-Host 'v2 deterministic True Direct gate passed: the production client pipeline decoded H.264/H.265 RTSP, Server Push MJPEG and HLS; the control server had no camera network or media helper. WHEP remains an exact-runtime release gate.'
+    & docker exec $FallbackId sh -c "curl -fsS http://127.0.0.1:9997/v3/config/paths/list | grep -Eq 'direct-|hybrid-' && exit 9 || ! pgrep -x ffmpeg"
+    if ($LASTEXITCODE -ne 0) { throw 'Released v2 fallback retained a MediaMTX route or transcoder.' }
+    $FallbackLogs = (& docker compose -p $Project -f $ComposeFile logs --no-color webobs-fallback) -join "`n"
+    if ($FallbackLogs -match 'fixture-viewer|fixture-password|rtsp://[^/\s]+:[^@/\s]+@') {
+        throw 'Fallback logs exposed camera credentials.'
+    }
+    Write-Host 'v2 deterministic gate passed: production client RTSP/MJPEG/HLS True Direct stayed off-server, and an authenticated Gateway fallback lease activated and cleaned up without residue. WHEP decode remains an exact-runtime release gate.'
 }
 finally {
     & docker compose -p $Project -f $ComposeFile down --volumes --remove-orphans | Out-Null

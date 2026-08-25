@@ -69,6 +69,35 @@ services:
     depends_on: [webobs, publisher]
     networks: [control, camera-media]
 
+  webobs-fallback:
+    image: ${WEBOBS_TEST_IMAGE:-webobs:v2-m1-dev}
+    environment:
+      WEBOBS_LISTEN_ADDRESS: 0.0.0.0
+      WEBOBS_HTTP_PORT: "8080"
+      WEBOBS_ALLOW_INSECURE_REMOTE: "true"
+      WEBOBS_WEBRTC_ENABLED: "true"
+      WEBOBS_COMPOSITE_ENABLED: "false"
+      WEBOBS_NVR_ENABLED: "false"
+      WEBOBS_EVENTS_ENABLED: "false"
+      WEBOBS_CAMERA_REGISTRY_ENABLED: "true"
+      WEBOBS_V2_CLIENT_CONTROL_ENABLED: "true"
+      MTX_WEBRTCADDITIONALHOSTS: webobs-fallback
+    tmpfs:
+      - /config/webobs:mode=0700
+    volumes:
+      - ./v2-direct-fixture/camera-credentials.json:/run/secrets/webobs-camera-credentials/v2-direct-fixture.json:ro
+    networks: [control, camera-media]
+    stop_grace_period: 20s
+
+  v2-fallback-probe:
+    image: webobs-v2-direct-fixture:local
+    environment:
+      WEBOBS_FIXTURE_CONTROL: http://webobs-fallback:8080
+      WEBOBS_FIXTURE_RTSP: rtsp://camera:8554/v2-direct
+      WEBOBS_TEST_SERVER_FALLBACK: "true"
+    depends_on: [webobs-fallback, publisher]
+    networks: [control, camera-media]
+
   native-rtsp-h264:
     image: webobs-native-protocol-fixture:local
     build:

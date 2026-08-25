@@ -54,15 +54,17 @@ Required GStreamer plug-ins include `rtspsrc`, `uridecodebin3`, `decodebin3`, `q
 - Local Preview/Program Studio with Cut/Fade, two nested levels, Camera/text/image/color sources, groups, lock/visibility, crop/rotation/opacity, contain/cover/stretch, alignment/snapping, color/opacity/mask/scaling filters and Scene v5 local save.
 - PTZ, listening, ten-second Push-to-Talk, camera-native snapshot, decoded-frame local screenshot, crash-safe stream-copy MKV and no-reencode MP4 export.
 - DPAPI/Secret Service identity storage, encrypted 30-day offline Grant cache, ten-second online revocation checks and explicit weak-revocation/fallback diagnostics.
+- Explicit Gateway/Hybrid activation leases and an authenticated same-origin v2 WHEP alias; stale plans are released and re-probed after reconnect or sleep recovery.
 
 - 支持 H.264/H.265 RTSP、Server Push MJPEG、HLS 与 WHEP；RTSP 默认 TCP，三秒内必须得到真实解码 Buffer。
 - 支持 1/4/9/16 子码流宫格、一路独立主码流聚焦、逐路解码器/FPS/掉帧/重连诊断、指数退避重连与挂起恢复。
 - 本地 Preview/Program Studio 支持 Cut/Fade、两级嵌套、Camera/文字/图片/色块、组、锁定/显隐、裁切/旋转/透明度、适应/填充/拉伸、对齐/吸附、颜色/透明度/遮罩/缩放滤镜及 Scene v5 本地保存。
 - 支持 PTZ、监听、十秒按键对讲、摄像机原生快照、已解码画面的本地截图、抗崩溃 stream-copy MKV 与无重编码 MP4 导出。
 - 使用 DPAPI/Secret Service 保存身份，缓存加密的 30 天离线 Grant，每十秒检查在线撤销，并明确展示弱撤销与降级原因。
+- 显式激活 Gateway/Hybrid 租约并使用受认证的同源 v2 WHEP 别名；重连或睡眠恢复遇到过期计划时会释放并重新探测。
 
 ## Current evidence boundary / 当前证据边界
 
-The diagnostic client and model tests pass. The deterministic control-only fixture runs the production receive pipeline for H.264/H.265 RTSP, Server Push MJPEG and HLS, validates continuous decoded buffers, stream-copy recording/remux, redaction and absence of Docker media helpers. The release workflow requires exact-runtime WHEP plus private Windows/Fedora 16-substream + one-main, 30-minute, hardware-decode, under-1%-drop and zero-server-increment evidence. Those self-hosted gates and signed artifacts have not run in this workspace; v2-M1/v2-M2 remain open.
+The diagnostic client and model tests pass. The deterministic control-only fixture runs the production receive pipeline for H.264/H.265 RTSP, Server Push MJPEG and HLS, validates continuous decoded buffers, stream-copy recording/remux, redaction and absence of Docker media helpers. A separate synthetic fallback fixture proves owned activation, authenticated v2 WHEP routing, forged/stale request rejection, explicit release and zero route/process residue; it does not replace decoded WHEP evidence. The release workflow requires exact-runtime WHEP plus private Windows/Fedora 16-substream + one-main, 30-minute, hardware-decode, under-1%-drop and zero-server-increment evidence. Those self-hosted gates and signed artifacts have not run in this workspace; v2-M1/v2-M2 remain open.
 
-诊断客户端及模型测试已通过。确定性控制网络隔离夹具以生产接收管线运行 H.264/H.265 RTSP、Server Push MJPEG 与 HLS，并验证连续解码 Buffer、stream-copy 录像/remux、脱敏及 Docker 内无媒体 helper。发布工作流还强制执行固定运行时 WHEP，以及私有 Windows/Fedora 16 路子码流加一路主码流、30 分钟、硬解、掉帧低于 1% 和服务端零增量门禁。本工作区尚未执行这些 Self-hosted 门禁及生成签名产物，因此 v2-M1/v2-M2 仍未完成。
+诊断客户端及模型测试已通过。确定性控制网络隔离夹具以生产接收管线运行 H.264/H.265 RTSP、Server Push MJPEG 与 HLS，并验证连续解码 Buffer、stream-copy 录像/remux、脱敏及 Docker 内无媒体 helper。另一组合成后备夹具证明了租约归属、受认证 v2 WHEP 建路、伪造/陈旧请求拒绝、显式释放及无路由/进程残留，但它不能替代真实解码 WHEP 证据。发布工作流还强制执行固定运行时 WHEP，以及私有 Windows/Fedora 16 路子码流加一路主码流、30 分钟、硬解、掉帧低于 1% 和服务端零增量门禁。本工作区尚未执行这些 Self-hosted 门禁及生成签名产物，因此 v2-M1/v2-M2 仍未完成。

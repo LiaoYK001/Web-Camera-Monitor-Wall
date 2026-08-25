@@ -453,6 +453,40 @@ public:
         return create_validated(request, *route, browser_prefix);
     }
 
+    HttpResponse create_client_plan(const HttpRequest &request, std::string_view plan_id,
+                                    std::string_view client_id, std::string_view camera_id,
+                                    std::string_view profile_id, std::string_view topology)
+    {
+        if (auto invalid = validate_offer(request, false))
+            return std::move(*invalid);
+        const std::string prefix = "/api/v2/media-plans/" + std::string(plan_id) +
+                                   "/whep/session/";
+        if (topology == "composite") {
+            if (!composite_enabled_)
+                return response(http::status::service_unavailable, request.version(),
+                                error_body("composite_idle", "Composite Program is disabled"));
+            return create_validated(request, "program", prefix, client_id, {});
+        }
+        if (topology != "gateway-direct" && topology != "hybrid")
+            return response(http::status::conflict, request.version(),
+                            error_body("media_plan_topology", "media plan is not a server fallback"));
+        SceneSource source;
+        source.id = "v2-" + std::string(plan_id);
+        source.kind = "camera";
+        source.camera_id = std::string(camera_id);
+        source.profile_id = std::string(profile_id);
+        source.transport = "tcp";
+        std::optional<std::string> route;
+        {
+            const std::lock_guard operation_lock(route_operation_mutex_);
+            route = ensure_playback_route(source, topology == "hybrid");
+        }
+        if (!route)
+            return response(http::status::bad_gateway, request.version(),
+                            error_body("fallback_route", "server fallback routing is unavailable"));
+        return create_validated(request, *route, prefix, client_id, source.id);
+    }
+
     HttpResponse remove_program(const HttpRequest &request, std::string_view token)
     {
         return remove(request, token, session_prefix);
@@ -464,6 +498,24 @@ public:
         return remove(request, token, browser_prefix);
     }
 
+    HttpResponse remove_client_plan(const HttpRequest &request, std::string_view plan_id,
+                                    std::string_view token)
+    {
+        const std::string prefix = "/api/v2/media-plans/" + std::string(plan_id) +
+                                   "/whep/session/";
+        return remove(request, token, prefix, false);
+    }
+
+    void release_client_plan(std::string_view plan_id)
+    {
+        release_client_route("v2-" + std::string(plan_id), {}, plan_id);
+    }
+
+    void revoke_client(std::string_view client_id)
+    {
+        release_client_route({}, client_id, {});
+    }
+
     void reconcile_sources()
     {
         const std::lock_guard operation_lock(route_operation_mutex_);
@@ -471,29 +523,39 @@ public:
     }
 
 private:
-    HttpResponse remove(const HttpRequest &request, std::string_view token, std::string_view browser_prefix)
+    HttpResponse remove(const HttpRequest &request, std::string_view token,
+                        std::string_view browser_prefix, bool require_origin = true)
     {
         const unsigned int version = request.version();
-        if (!request_origin_allowed(request, false, allowed_origins_))
+        if (require_origin && !request_origin_allowed(request, false, allowed_origins_))
             return response(http::status::forbidden, version,
                             error_body("origin_rejected", "Origin must match the local Host"));
         if (token.size() != token_length ||
             !std::all_of(token.begin(), token.end(), [](unsigned char character) { return std::isxdigit(character); }))
             return response(http::status::not_found, version, error_body("session_not_found", "session not found"));
-        std::string upstream_url;
+        Session removed;
+        bool remove_route = false;
         {
             const std::lock_guard lock(session_mutex_);
             const auto session = sessions_.find(std::string(token));
             if (session == sessions_.end() || session->second.browser_prefix != browser_prefix)
                 return response(http::status::not_found, version,
                                 error_body("session_not_found", "session not found"));
-            upstream_url = std::move(session->second.upstream_url);
+            removed = std::move(session->second);
             sessions_.erase(session);
+            remove_route = !removed.route_source_id.empty() &&
+                std::none_of(sessions_.begin(), sessions_.end(), [&removed](const auto &entry) {
+                    return entry.second.route_source_id == removed.route_source_id;
+                });
         }
-        const UpstreamResponse upstream = request_http(upstream_url, {}, "DELETE", {});
+        const UpstreamResponse upstream = request_http(removed.upstream_url, {}, "DELETE", {});
         if (!upstream.ok || (upstream.status != 200 && upstream.status != 204 && upstream.status != 404))
             return response(http::status::bad_gateway, version,
                             error_body("whep_upstream", "WebRTC signaling could not close the session"));
+        if (remove_route) {
+            const std::lock_guard operation_lock(route_operation_mutex_);
+            remove_source_route(removed.route_source_id);
+        }
         return response(http::status::no_content, version, {}, "application/json; charset=utf-8");
     }
 
@@ -509,6 +571,8 @@ private:
         std::string upstream_url;
         std::chrono::steady_clock::time_point created_at;
         std::string browser_prefix;
+        std::string client_id;
+        std::string route_source_id;
     };
 
     struct DirectRoute {
@@ -625,7 +689,8 @@ private:
         return std::string(upstream_origin) + std::string(location);
     }
 
-    std::optional<HttpResponse> validate_offer(const HttpRequest &request) const
+    std::optional<HttpResponse> validate_offer(const HttpRequest &request,
+                                               bool require_origin = true) const
     {
         const unsigned int version = request.version();
         if (!enabled_)
@@ -634,7 +699,7 @@ private:
         if (!sdp_content_type(request))
             return response(http::status::unsupported_media_type, version,
                             error_body("content_type", "Content-Type must be application/sdp"));
-        if (!request_origin_allowed(request, false, allowed_origins_))
+        if (require_origin && !request_origin_allowed(request, false, allowed_origins_))
             return response(http::status::forbidden, version,
                             error_body("origin_rejected", "Origin must match the local Host"));
         if (request.body().empty() || request.body().size() > maximum_sdp_bytes)
@@ -644,7 +709,9 @@ private:
     }
 
     HttpResponse create_validated(const HttpRequest &request, std::string_view path,
-                                  std::string_view browser_prefix)
+                                  std::string_view browser_prefix,
+                                  std::string_view client_id = {},
+                                  std::string_view route_source_id = {})
     {
         const unsigned int version = request.version();
         {
@@ -678,7 +745,8 @@ private:
                     token = random_token();
                 } while (sessions_.contains(token));
                 sessions_.emplace(token, Session{*upstream_location, std::chrono::steady_clock::now(),
-                                                 std::string(browser_prefix)});
+                                                 std::string(browser_prefix), std::string(client_id),
+                                                 std::string(route_source_id)});
             }
         }
         if (capacity_exhausted) {
@@ -794,6 +862,58 @@ private:
         request_http(url, {}, "DELETE", {});
     }
 
+    void remove_source_route(std::string_view source_id)
+    {
+        DirectRoute route;
+        {
+            const std::lock_guard lock(route_state_mutex_);
+            const auto found = direct_routes_.find(std::string(source_id));
+            if (found == direct_routes_.end())
+                return;
+            route = std::move(found->second);
+            direct_routes_.erase(found);
+        }
+        delete_config_path(route.hybrid_path);
+        delete_config_path(route.path);
+    }
+
+    void release_client_route(std::string_view route_source_id, std::string_view client_id,
+                              std::string_view plan_id)
+    {
+        std::vector<std::string> upstream_sessions;
+        std::vector<std::string> route_sources;
+        const std::string plan_prefix = plan_id.empty() ? std::string{} :
+            "/api/v2/media-plans/" + std::string(plan_id) + "/whep/session/";
+        {
+            const std::lock_guard lock(session_mutex_);
+            for (auto iterator = sessions_.begin(); iterator != sessions_.end();) {
+                const bool selected = (!route_source_id.empty() &&
+                                           iterator->second.route_source_id == route_source_id) ||
+                                      (!client_id.empty() && iterator->second.client_id == client_id) ||
+                                      (!plan_prefix.empty() &&
+                                           iterator->second.browser_prefix == plan_prefix);
+                if (!selected) {
+                    ++iterator;
+                    continue;
+                }
+                upstream_sessions.push_back(iterator->second.upstream_url);
+                if (!iterator->second.route_source_id.empty())
+                    route_sources.push_back(iterator->second.route_source_id);
+                iterator = sessions_.erase(iterator);
+            }
+        }
+        if (!route_source_id.empty())
+            route_sources.emplace_back(route_source_id);
+        std::sort(route_sources.begin(), route_sources.end());
+        route_sources.erase(std::unique(route_sources.begin(), route_sources.end()),
+                            route_sources.end());
+        for (const std::string &url : upstream_sessions)
+            request_http(url, {}, "DELETE", {});
+        const std::lock_guard operation_lock(route_operation_mutex_);
+        for (const std::string &source : route_sources)
+            remove_source_route(source);
+    }
+
     std::optional<std::string> ensure_direct_route(const SceneSource &source)
     {
         std::string effective_url = source.rtsp_url;
@@ -858,7 +978,8 @@ private:
         return route.path;
     }
 
-    std::optional<std::string> ensure_playback_route(const SceneSource &source)
+    std::optional<std::string> ensure_playback_route(const SceneSource &source,
+                                                     bool force_video_transcode = false)
     {
         const auto direct_path = ensure_direct_route(source);
         if (!direct_path)
@@ -893,6 +1014,13 @@ private:
             direct_routes_.at(source.id).transcode = route.transcode;
             direct_routes_.at(source.id).video_transcode = route.video_transcode;
             direct_routes_.at(source.id).audio_transcode = route.audio_transcode;
+        }
+        if (force_video_transcode && !route.video_transcode) {
+            route.video_transcode = true;
+            route.transcode = true;
+            const std::lock_guard lock(route_state_mutex_);
+            direct_routes_.at(source.id).video_transcode = true;
+            direct_routes_.at(source.id).transcode = true;
         }
         if (!route.transcode)
             return route.path;
@@ -1219,8 +1347,13 @@ public:
                     authorization = view(field.value());
                 }
             }
-            constexpr std::string_view prefix = "WebObs-Device ";
-            if (authorization_count == 1 && authorization && authorization->starts_with(prefix)) {
+            constexpr std::string_view device_prefix = "WebObs-Device ";
+            constexpr std::string_view bearer_prefix = "Bearer ";
+            if (authorization_count == 1 && authorization &&
+                (authorization->starts_with(device_prefix) ||
+                 authorization->starts_with(bearer_prefix))) {
+                const std::string_view prefix = authorization->starts_with(device_prefix)
+                                                    ? device_prefix : bearer_prefix;
                 const std::string_view token = authorization->substr(prefix.size());
                 if (token.size() >= 32 && token.size() <= 128 &&
                     std::all_of(token.begin(), token.end(), [](unsigned char character) {
@@ -1299,6 +1432,77 @@ bool hex_identifier(std::string_view value)
     });
 }
 
+struct V2WhepRoute {
+    std::string plan_id;
+    std::string session_token;
+};
+
+std::optional<V2WhepRoute> v2_whep_route(std::string_view target)
+{
+    constexpr std::string_view prefix = "/api/v2/media-plans/";
+    constexpr std::string_view endpoint = "/whep";
+    constexpr std::string_view session = "/whep/session/";
+    if (!target.starts_with(prefix))
+        return std::nullopt;
+    target.remove_prefix(prefix.size());
+    if (target.size() < 32)
+        return std::nullopt;
+    const std::string_view plan_id = target.substr(0, 32);
+    if (!hex_identifier(plan_id))
+        return std::nullopt;
+    target.remove_prefix(32);
+    V2WhepRoute result{std::string(plan_id), {}};
+    if (target == endpoint)
+        return result;
+    if (!target.starts_with(session))
+        return std::nullopt;
+    target.remove_prefix(session.size());
+    if (!hex_identifier(target))
+        return std::nullopt;
+    result.session_token = std::string(target);
+    return result;
+}
+
+struct V2MediaActivation {
+    std::string client_id;
+    std::string camera_id;
+    std::string profile_id;
+    std::string topology;
+};
+
+std::optional<V2MediaActivation> parse_v2_media_activation(std::string_view body)
+{
+    json_error_t error{};
+    json_t *root = json_loadb(body.data(), body.size(), JSON_REJECT_DUPLICATES, &error);
+    if (!root || !json_is_object(root)) {
+        json_decref(root);
+        return std::nullopt;
+    }
+    const auto string_field = [root](const char *name) -> std::optional<std::string> {
+        json_t *value = json_object_get(root, name);
+        if (!json_is_string(value))
+            return std::nullopt;
+        const std::string result = json_string_value(value);
+        if (result.empty() || result.size() > 64 ||
+            !std::all_of(result.begin(), result.end(), [](unsigned char character) {
+                return std::isalnum(character) || character == '.' || character == '_' ||
+                       character == '-';
+            }))
+            return std::nullopt;
+        return result;
+    };
+    const auto client_id = string_field("clientId");
+    const auto camera_id = string_field("cameraId");
+    const auto profile_id = string_field("profileId");
+    const auto topology = string_field("topology");
+    std::optional<V2MediaActivation> result;
+    if (client_id && camera_id && profile_id && topology &&
+        (*topology == "gateway-direct" || *topology == "hybrid" || *topology == "composite"))
+        result = V2MediaActivation{*client_id, *camera_id, *profile_id, *topology};
+    json_decref(root);
+    return result;
+}
+
 bool v2_action_route(std::string_view target, std::string_view prefix, std::string_view suffix)
 {
     return target.starts_with(prefix) && target.ends_with(suffix) &&
@@ -1320,6 +1524,13 @@ bool v2_device_route(const HttpRequest &request)
         (target == "/api/v2/media-plans" || target == "/api/v2/client/audit/batch" ||
          target.starts_with("/api/v2/client/cameras/")))
         return true;
+    if (const auto whep = v2_whep_route(target))
+        return (request.method() == http::verb::post && whep->session_token.empty()) ||
+               (request.method() == http::verb::delete_ && !whep->session_token.empty());
+    if (target.starts_with("/api/v2/media-plans/") &&
+        (target.ends_with("/activate") || target.ends_with("/activation")))
+        return request.method() == http::verb::post || request.method() == http::verb::get ||
+               request.method() == http::verb::delete_;
     if (request.method() == http::verb::get && target.starts_with("/api/v2/client/cameras/"))
         return true;
     return request.method() == http::verb::get &&
@@ -1829,12 +2040,64 @@ HttpResponse handle_request(const HttpRequest &request, SceneController &control
                            target == "/api/v2/client/audit/batch" ||
                            target.starts_with("/api/v2/client/cameras/");
     if (v2_target) {
+        if (const auto route = v2_whep_route(target)) {
+            const bool creating = request.method() == http::verb::post && route->session_token.empty();
+            const bool removing = request.method() == http::verb::delete_ && !route->session_token.empty();
+            if (!creating && !removing) {
+                HttpResponse result = response(http::status::method_not_allowed, version,
+                                               error_body("method_not_allowed",
+                                                          route->session_token.empty() ? "use POST" : "use DELETE"));
+                result.set(http::field::allow, route->session_token.empty() ? "POST" : "DELETE");
+                return result;
+            }
+            HttpRequest verification = request;
+            verification.method(http::verb::get);
+            verification.target("/api/v2/media-plans/" + route->plan_id + "/activation");
+            verification.body().clear();
+            verification.erase(http::field::content_type);
+            verification.prepare_payload();
+            HttpResponse verified = camera_proxy.forward(verification);
+            if (verified.result() != http::status::ok)
+                return verified;
+            const auto activation = parse_v2_media_activation(verified.body());
+            if (!activation)
+                return response(http::status::bad_gateway, version,
+                                error_body("media_plan_contract",
+                                           "media plan activation response is invalid"));
+            if (creating)
+                return whep_proxy.create_client_plan(request, route->plan_id,
+                                                     activation->client_id, activation->camera_id,
+                                                     activation->profile_id, activation->topology);
+            return whep_proxy.remove_client_plan(request, route->plan_id,
+                                                 route->session_token);
+        }
         if ((request.method() == http::verb::put || request.method() == http::verb::post ||
              request.method() == http::verb::delete_) &&
             !request_origin_allowed(request, false, allowed_origins))
             return response(http::status::forbidden, version,
                             error_body("origin_rejected", "Origin must match the local Host"));
-        return camera_proxy.forward(request);
+        HttpResponse result = camera_proxy.forward(request);
+        constexpr std::string_view plan_prefix = "/api/v2/media-plans/";
+        constexpr std::string_view activation_suffix = "/activation";
+        if (request.method() == http::verb::delete_ && result.result() == http::status::ok &&
+            target.starts_with(plan_prefix) && target.ends_with(activation_suffix)) {
+            const std::string_view plan_id = target.substr(
+                plan_prefix.size(), target.size() - plan_prefix.size() - activation_suffix.size());
+            if (hex_identifier(plan_id))
+                whep_proxy.release_client_plan(plan_id);
+        }
+        constexpr std::string_view clients_prefix = "/api/v2/clients/";
+        if (request.method() == http::verb::delete_ && result.result() == http::status::ok &&
+            target.starts_with(clients_prefix)) {
+            const std::string_view client_id = target.substr(clients_prefix.size());
+            if (!client_id.empty() && client_id.size() <= 64 &&
+                std::all_of(client_id.begin(), client_id.end(), [](unsigned char character) {
+                    return std::isalnum(character) || character == '.' || character == '_' ||
+                           character == '-';
+                }))
+                whep_proxy.revoke_client(client_id);
+        }
+        return result;
     }
     if (request.method() == http::verb::get && target == "/api/v1/sources/status")
         return source_health_response(version, controller);

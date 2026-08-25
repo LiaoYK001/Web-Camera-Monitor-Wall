@@ -64,11 +64,14 @@ public:
     std::optional<StreamPlanContext> context(const QString &session_id) const;
     void set_plan(const QString &session_id, const QString &topology,
                   const QString &archive_topology, const QString &fallback_reason);
+    bool activate_fallback(const QString &session_id, const QString &plan_id,
+                           qint64 expires_at, const MediaEndpoint &endpoint, QString &error);
     static int reconnectDelayMs(int reconnectCount);
 
 signals:
     void countChanged();
     void directResult(const QString &sessionId, bool reachable, const QString &reason);
+    void fallbackReleaseRequested(const QString &planId);
     void userError(const QString &message);
 
 private:
@@ -81,16 +84,21 @@ private:
         QString topology = QStringLiteral("probing-true-direct");
         QString archive_topology = QStringLiteral("unknown");
         QString fallback_reason;
+        MediaEndpoint direct_endpoint;
         MediaEndpoint endpoint;
         std::unique_ptr<MediaPipeline> pipeline;
         QPointer<QObject> video_item;
         bool ever_ready = false;
+        bool server_fallback = false;
         bool retry_pending = false;
         int reconnect_count = 0;
+        QString plan_id;
+        qint64 fallback_expires_at = 0;
     };
 
     int find(const QString &session_id) const;
     void start(int row);
+    void restore_expired_fallback(int row);
     void schedule_reconnect(const QString &session_id, const QString &reason);
     void notify_row(int row);
 

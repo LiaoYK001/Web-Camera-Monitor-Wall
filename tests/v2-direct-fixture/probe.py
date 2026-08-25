@@ -19,6 +19,7 @@ import urllib.request
 
 CONTROL = os.environ.get("WEBOBS_FIXTURE_CONTROL", "http://webobs:8080")
 ENDPOINT = os.environ.get("WEBOBS_FIXTURE_RTSP", "rtsp://camera:8554/v2-direct")
+TEST_SERVER_FALLBACK = os.environ.get("WEBOBS_TEST_SERVER_FALLBACK", "false") == "true"
 SERVICE = Path("/fixture/client_control_service.py")
 
 
@@ -148,6 +149,77 @@ def request(method: str, path: str, body: object | None = None,
         return error.code, json.load(error)
 
 
+def request_sdp(method: str, path: str, token: str, body: str = "") -> tuple[int, str, str]:
+    headers = {
+        "Accept": "application/sdp", "Host": "127.0.0.1:8080",
+        "Authorization": "Bearer " + token,
+    }
+    data = None
+    if body:
+        data = body.encode("utf-8")
+        headers["Content-Type"] = "application/sdp"
+    message = urllib.request.Request(CONTROL + path, data=data, headers=headers, method=method)
+    try:
+        with urllib.request.urlopen(message, timeout=20) as response:
+            return response.status, response.headers.get("Location", ""), response.read().decode("utf-8")
+    except urllib.error.HTTPError as error:
+        return error.code, error.headers.get("Location", ""), error.read().decode("utf-8")
+
+
+def exercise_server_fallback(token: str) -> str:
+    status, plan = request("POST", "/api/v2/media-plans", {
+        "cameraId": "v2-direct-fixture", "profileId": "sub", "policy": "auto",
+        "receiverKind": "native", "networkClass": "lan", "reachability": "unreachable",
+        "protocols": ["rtsp"], "videoCodecs": ["h264"], "hardwareDecoders": [],
+        "requiresComposite": False,
+    }, token)
+    if status != 201 or plan.get("topology") != "gateway-direct":
+        raise RuntimeError("Gateway fallback topology was not selected")
+    plan_id = str(plan["planId"])
+    status, activation = request(
+        "POST", f"/api/v2/media-plans/{plan_id}/activate", {}, token)
+    if status != 200 or activation.get("mediaEndpoint", {}).get("endpoint") != \
+            f"/api/v2/media-plans/{plan_id}/whep":
+        raise RuntimeError("Gateway fallback lease activation failed")
+    forged_status, _, _ = request_sdp(
+        "POST", f"/api/v2/media-plans/{'0' * 32}/whep", token, "v=0\r\n")
+    if forged_status != 404:
+        raise RuntimeError("forged Gateway fallback plan was not rejected")
+    stolen_status, _, _ = request_sdp(
+        "POST", f"/api/v2/media-plans/{plan_id}/whep", "0" * 64, "v=0\r\n")
+    if stolen_status != 401:
+        raise RuntimeError("invalid Gateway fallback bearer was not rejected")
+    offer = "\r\n".join([
+        "v=0", "o=- 0 0 IN IP4 127.0.0.1", "s=-", "t=0 0",
+        "a=group:BUNDLE 0", "m=video 9 UDP/TLS/RTP/SAVPF 96", "c=IN IP4 0.0.0.0",
+        "a=mid:0", "a=recvonly", "a=rtcp-mux", "a=rtpmap:96 H264/90000",
+        "a=ice-ufrag:fixture", "a=ice-pwd:fixture-ice-credential-0001",
+        "a=fingerprint:sha-256 " + ":".join(["11"] * 32), "a=setup:actpass", "",
+    ])
+    status, location, _ = request_sdp(
+        "POST", f"/api/v2/media-plans/{plan_id}/whep", token, offer)
+    if status == 201:
+        if not location.startswith(f"/api/v2/media-plans/{plan_id}/whep/session/"):
+            raise RuntimeError("Gateway fallback returned an unsafe WHEP session location")
+        closed, _, _ = request_sdp("DELETE", location, token)
+        if closed not in {200, 204}:
+            raise RuntimeError("Gateway fallback WHEP session did not close")
+    elif status != 502:
+        raise RuntimeError(f"Gateway fallback did not reach WHEP upstream safely: HTTP {status}")
+    released, value = request(
+        "DELETE", f"/api/v2/media-plans/{plan_id}/activation", None, token)
+    if released != 200 or value.get("released") is not True:
+        raise RuntimeError("Gateway fallback lease did not release")
+    status, _ = request("GET", f"/api/v2/media-plans/{plan_id}/activation", None, token)
+    if status != 409:
+        raise RuntimeError("released Gateway fallback lease remained usable")
+    stale_status, _, _ = request_sdp(
+        "POST", f"/api/v2/media-plans/{plan_id}/whep", token, offer)
+    if stale_status != 409:
+        raise RuntimeError("released Gateway fallback WHEP endpoint remained usable")
+    return plan["topology"]
+
+
 def wait_ready() -> None:
     for _ in range(120):
         try:
@@ -228,10 +300,12 @@ def main() -> None:
     stream = probe.get("streams", [{}])[0]
     if stream.get("codec_name") != "h264" or int(stream.get("nb_read_frames", 0)) < 30:
         raise RuntimeError("direct RTSP decode produced insufficient video")
+    fallback = exercise_server_fallback(token) if TEST_SERVER_FALLBACK else "not-tested"
     print(json.dumps({
         "result": "passed", "topology": plan["topology"],
         "liveServerMediaExpected": plan["liveServerMediaExpected"],
         "codec": stream["codec_name"], "decodedFrames": int(stream["nb_read_frames"]),
+        "serverFallback": fallback,
     }, separators=(",", ":"), sort_keys=True))
 
 
