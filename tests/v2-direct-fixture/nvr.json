@@ -1,0 +1,24 @@
+{
+  "schemaVersion": 1,
+  "segmentSeconds": 300,
+  "maxAgeHours": 1,
+  "maxBytes": 0,
+  "minFreeBytes": 0,
+  "cameras": [
+    {
+      "id": "v2-direct-archive",
+      "name": "v2 direct archive fixture",
+      "policy": "continuous",
+      "mainUrl": "rtsp://camera:8554/v2-direct",
+      "subUrl": "rtsp://camera:8554/v2-direct",
+      "stream": "sub",
+      "mode": "copy",
+      "transport": "tcp",
+      "segmentSeconds": 300,
+      "maxAgeHours": 1,
+      "maxBytes": 0,
+      "preEventSeconds": 0,
+      "schedule": []
+    }
+  ]
+}

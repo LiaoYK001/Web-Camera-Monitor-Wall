@@ -98,6 +98,38 @@ services:
     depends_on: [webobs-fallback, publisher]
     networks: [control, camera-media]
 
+  webobs-nvr-direct:
+    image: ${WEBOBS_TEST_IMAGE:-webobs:v2-m1-dev}
+    environment:
+      WEBOBS_LISTEN_ADDRESS: 0.0.0.0
+      WEBOBS_HTTP_PORT: "8080"
+      WEBOBS_ALLOW_INSECURE_REMOTE: "true"
+      WEBOBS_WEBRTC_ENABLED: "false"
+      WEBOBS_COMPOSITE_ENABLED: "false"
+      WEBOBS_NVR_ENABLED: "true"
+      WEBOBS_NVR_CONFIG: /fixture-config/nvr.json
+      WEBOBS_NVR_STORAGE: /recordings/nvr
+      WEBOBS_EVENTS_ENABLED: "false"
+      WEBOBS_CAMERA_REGISTRY_ENABLED: "true"
+      WEBOBS_V2_CLIENT_CONTROL_ENABLED: "true"
+    tmpfs:
+      - /config/webobs:mode=0700
+      - /recordings/nvr:mode=0700
+    volumes:
+      - ./v2-direct-fixture/nvr.json:/fixture-config/nvr.json:ro
+    depends_on: [publisher]
+    networks: [control, camera-media]
+    stop_grace_period: 20s
+
+  v2-nvr-coexist-probe:
+    image: webobs-v2-direct-fixture:local
+    entrypoint: ["python3", "/fixture/nvr_coexist_probe.py"]
+    environment:
+      WEBOBS_FIXTURE_CONTROL: http://webobs-nvr-direct:8080
+      WEBOBS_FIXTURE_RTSP: rtsp://camera:8554/v2-direct
+    depends_on: [webobs-nvr-direct, publisher]
+    networks: [control, camera-media]
+
   native-rtsp-h264:
     image: webobs-native-protocol-fixture:local
     build:

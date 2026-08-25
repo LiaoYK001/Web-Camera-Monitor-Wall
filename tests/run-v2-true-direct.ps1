@@ -15,7 +15,8 @@ try {
     & docker compose -p $Project -f $ComposeFile up --detach --build
     if ($LASTEXITCODE -ne 0) { throw 'Could not start the True Direct fixture.' }
 
-    $ProbeServices = @('v2-probe', 'v2-fallback-probe', 'native-rtsp-h264', 'native-rtsp-h265',
+    $ProbeServices = @('v2-probe', 'v2-fallback-probe', 'v2-nvr-coexist-probe',
+        'native-rtsp-h264', 'native-rtsp-h265',
         'native-mjpeg', 'native-hls')
     $ProbeIds = @{}
     foreach ($Service in $ProbeServices) {
@@ -61,7 +62,7 @@ try {
     if ($FallbackLogs -match 'fixture-viewer|fixture-password|rtsp://[^/\s]+:[^@/\s]+@') {
         throw 'Fallback logs exposed camera credentials.'
     }
-    Write-Host 'v2 deterministic gate passed: production client RTSP/MJPEG/HLS True Direct stayed off-server, and an authenticated Gateway fallback lease activated and cleaned up without residue. WHEP decode remains an exact-runtime release gate.'
+    Write-Host 'v2 deterministic gate passed: production client RTSP/MJPEG/HLS stayed off-server, 16 concurrent viewers did not add NVR upstream sessions, and authenticated Gateway fallback cleaned up without residue. WHEP decode remains an exact-runtime release gate.'
 }
 finally {
     & docker compose -p $Project -f $ComposeFile down --volumes --remove-orphans | Out-Null

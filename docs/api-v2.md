@@ -1,6 +1,6 @@
 # API v2 — local clients and True Direct / 本地客户端与真直连
 
-> Development status / 开发状态：API/Grant/Scene contract and the native four-protocol deterministic fixture pass on `dev`. Exact Qt 6.11.2/GStreamer 1.28.6 WHEP, NVR coexistence and platform hardware evidence are still release gates, so v2-M1 remains open / API、Grant、Scene 契约及本地四协议确定性夹具已通过；固定 Qt/GStreamer WHEP、NVR 共存与平台硬件证据仍是发布门禁，因此 v2-M1 尚未完成。
+> Development status / 开发状态：API/Grant/Scene contract, the native four-protocol deterministic fixture, and 16-viewer True Direct coexistence with one unchanged NVR upstream pass on `dev`. Exact Qt 6.11.2/GStreamer 1.28.6 WHEP and platform hardware evidence are still release gates, so v2-M1 remains open / API、Grant、Scene 契约、本地四协议确定性夹具及 16 个真直连观看端与一路不变 NVR 上游的共存门禁已通过；固定 Qt/GStreamer WHEP 与平台硬件证据仍是发布门禁，因此 v2-M1 尚未完成。
 
 API v1 is unchanged: its `direct` value means Gateway Direct and Docker remains in the media path. API v2 adds device enrollment and a separately measured `true-direct` topology. All responses use bounded unique-field JSON, `Cache-Control: no-store` and credential-free errors.
 

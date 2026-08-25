@@ -19,7 +19,7 @@ fallback_id="$(docker compose -f "$compose_file" ps --all --quiet webobs-fallbac
 [[ -n "$webobs_id" ]]
 [[ -n "$fallback_id" ]]
 
-probe_services=(v2-probe v2-fallback-probe native-rtsp-h264 native-rtsp-h265 native-mjpeg native-hls)
+probe_services=(v2-probe v2-fallback-probe v2-nvr-coexist-probe native-rtsp-h264 native-rtsp-h265 native-mjpeg native-hls)
 for service in "${probe_services[@]}"; do
   probe_id="$(docker compose -f "$compose_file" ps --all --quiet "$service")"
   [[ -n "$probe_id" ]]
@@ -62,4 +62,4 @@ if docker compose -f "$compose_file" logs --no-color webobs-fallback | \
   exit 1
 fi
 
-echo "v2 deterministic gate passed: production client RTSP/MJPEG/HLS True Direct stayed off-server, and an authenticated Gateway fallback lease activated and cleaned up without residue. WHEP decode remains an exact-runtime release gate."
+echo "v2 deterministic gate passed: production client RTSP/MJPEG/HLS stayed off-server, 16 concurrent viewers did not add NVR upstream sessions, and authenticated Gateway fallback cleaned up without residue. WHEP decode remains an exact-runtime release gate."
