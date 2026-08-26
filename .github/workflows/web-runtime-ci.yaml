@@ -47,8 +47,8 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          docker build --target web-builder --tag webobs-pwa-gate:${GITHUB_SHA::12} -f docker/Dockerfile .
-          docker run --rm webobs-pwa-gate:${GITHUB_SHA::12} sh -lc 'pnpm typecheck && pnpm test:iwa && pnpm build'
+          podman build --target web-builder --tag webobs-pwa-gate:${GITHUB_SHA::12} -f docker/Dockerfile .
+          podman run --rm webobs-pwa-gate:${GITHUB_SHA::12} sh -lc 'pnpm typecheck && pnpm test:iwa && pnpm build'
       - name: Run Fedora Chromium PWA gate
         shell: bash
         run: |
