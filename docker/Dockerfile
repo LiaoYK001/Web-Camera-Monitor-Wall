@@ -311,6 +311,9 @@ RUN cmake -S /src/obs -B /build/obs -G Ninja \
 
 FROM obs-builder AS core-builder
 
+ARG WEBOBS_BUILD_VERSION=2.0.0-dev.0
+ARG WEBOBS_BUILD_MILESTONE=v2-M3-dev
+
 RUN apt-get -o Acquire::Retries=5 update \
     && apt-get -o Acquire::Retries=5 install -y --no-install-recommends libssl-dev \
     && rm -rf /var/lib/apt/lists/*
@@ -325,6 +328,8 @@ RUN cmake -S /src/webobs -B /build/webobs -G Ninja \
         -DWEBOBS_OBS_SOURCE_DIR=/src/obs \
         -DWEBOBS_OBS_BUILD_DIR=/build/obs \
         -DWEBOBS_OBS_PREFIX=/opt/obs \
+        -DWEBOBS_VERSION_OVERRIDE=${WEBOBS_BUILD_VERSION} \
+        -DWEBOBS_MILESTONE_OVERRIDE=${WEBOBS_BUILD_MILESTONE} \
         -DWEBOBS_BUILD_TESTS=ON \
     && cmake --build /build/webobs --parallel \
     && ctest --test-dir /build/webobs --output-on-failure \
@@ -357,6 +362,7 @@ RUN cmake -S /src/webobs -B /build/webobs -G Ninja \
 FROM ubuntu:24.04 AS runtime
 
 ARG DEBIAN_FRONTEND=noninteractive
+ARG WEBOBS_BUILD_VERSION=2.0.0-dev.0
 
 RUN apt-get -o Acquire::Retries=5 -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30 update \
     && apt-get -o Acquire::Retries=5 -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30 install -y --no-install-recommends \
@@ -388,6 +394,7 @@ RUN apt-get -o Acquire::Retries=5 -o Acquire::http::Timeout=30 -o Acquire::https
         libva-drm2 \
         mesa-utils \
         mesa-va-drivers \
+        openssl \
         libx11-6 \
         libx11-xcb1 \
         libx264-164 \
@@ -500,6 +507,6 @@ LABEL org.opencontainers.image.title="Web Camera Monitor Wall" \
       org.opencontainers.image.description="Headless libobs multi-source monitor wall and local control plane" \
       org.opencontainers.image.licenses="GPL-2.0-or-later" \
       org.opencontainers.image.source="https://github.com/LiaoYK001/Web-Camera-Monitor-Wall" \
-      org.opencontainers.image.version="1.2.1"
+      org.opencontainers.image.version="${WEBOBS_BUILD_VERSION}"
 
 ENTRYPOINT ["/usr/bin/tini", "--", "/opt/webobs/entrypoint.sh"]

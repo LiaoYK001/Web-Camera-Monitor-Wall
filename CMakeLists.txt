@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.28)
 
-project(webobs VERSION 1.2.1 LANGUAGES CXX)
+project(webobs VERSION 2.0.0 LANGUAGES CXX)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -11,6 +11,14 @@ set(WEBOBS_OBS_SOURCE_DIR "${CMAKE_SOURCE_DIR}/obs/obs-studio" CACHE PATH "OBS S
 set(WEBOBS_OBS_BUILD_DIR "${WEBOBS_OBS_SOURCE_DIR}/build_ubuntu" CACHE PATH "OBS Studio build directory")
 set(WEBOBS_OBS_PREFIX "/opt/obs" CACHE PATH "Runtime OBS installation prefix")
 set(WEBOBS_WEB_ROOT "/opt/webobs/ui" CACHE PATH "Installed WebOBS editor root")
+set(WEBOBS_VERSION_OVERRIDE "${PROJECT_VERSION}-dev.0" CACHE STRING "Reported product version")
+set(WEBOBS_MILESTONE_OVERRIDE "v2-M3-dev" CACHE STRING "Reported product milestone")
+if(NOT WEBOBS_VERSION_OVERRIDE MATCHES "^[0-9]+\\.[0-9]+\\.[0-9]+(-[0-9A-Za-z.-]+)?$")
+    message(FATAL_ERROR "WEBOBS_VERSION_OVERRIDE is not a safe SemVer value")
+endif()
+if(NOT WEBOBS_MILESTONE_OVERRIDE MATCHES "^v[0-9]+-M[0-9]+(-dev)?$")
+    message(FATAL_ERROR "WEBOBS_MILESTONE_OVERRIDE is invalid")
+endif()
 
 find_package(PkgConfig REQUIRED)
 find_package(Boost 1.83 REQUIRED)
@@ -37,7 +45,10 @@ target_include_directories(webobs-common PUBLIC core/include)
 target_link_libraries(webobs-common PUBLIC PkgConfig::JANSSON OpenSSL::Crypto SQLite::SQLite3)
 target_compile_features(webobs-common PUBLIC cxx_std_20)
 target_compile_options(webobs-common PRIVATE -Wall -Wextra -Wpedantic)
-target_compile_definitions(webobs-common PUBLIC WEBOBS_VERSION="${PROJECT_VERSION}")
+target_compile_definitions(webobs-common PUBLIC
+    WEBOBS_VERSION="${WEBOBS_VERSION_OVERRIDE}"
+    WEBOBS_MILESTONE="${WEBOBS_MILESTONE_OVERRIDE}"
+)
 
 set(_obs_library "${WEBOBS_OBS_BUILD_DIR}/libobs/libobs.so")
 set(_obs_config_header "${WEBOBS_OBS_BUILD_DIR}/config/obsconfig.h")

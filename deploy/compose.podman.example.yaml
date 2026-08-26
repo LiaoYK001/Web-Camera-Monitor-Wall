@@ -17,6 +17,8 @@ services:
       WEBOBS_TLS_PUBLIC_AUTHORITY: monitor.example.invalid:28777
       WEBOBS_HTTPS_PORT: "28777"
       WEBOBS_CONTROL_ALLOWED_ORIGINS: https://monitor.example.invalid:28777
+      WEBOBS_PWA_PUBLIC_ORIGIN: https://monitor.example.invalid:28777
+      WEBOBS_PWA_MEDIA_ALLOWED_ORIGINS: https://camera.example.invalid
       WEBOBS_AUTH_USERNAME_FILE: /run/secrets/webobs_auth_username
       WEBOBS_AUTH_PASSWORD_FILE: /run/secrets/webobs_auth_password
       WEBOBS_SESSION_COOKIE_SECURE: "true"

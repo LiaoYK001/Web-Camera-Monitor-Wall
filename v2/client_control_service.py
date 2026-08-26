@@ -45,6 +45,7 @@ MAX_BODY = 1024 * 1024
 MAX_REGISTRY_RESPONSE = 4 * 1024 * 1024
 ENROLLMENT_SECONDS = 10 * 60
 DEFAULT_GRANT_SECONDS = 30 * 24 * 60 * 60
+WEB_GRANT_SECONDS = 7 * 24 * 60 * 60
 ONLINE_VALIDATION_SECONDS = 5
 ENROLLMENT_APPROVAL_LOCK = threading.Lock()
 
@@ -64,7 +65,7 @@ def configured_grant_seconds(environment: Mapping[str, str]) -> int:
 GRANT_SECONDS = configured_grant_seconds(os.environ)
 PLAN_SECONDS = 5 * 60
 ID_RE = re.compile(r"^[A-Za-z0-9._-]{1,64}$")
-PLATFORMS = {"windows", "linux", "android"}
+PLATFORMS = {"windows", "linux", "android", "web", "chromium-iwa"}
 PERMISSIONS = {"view", "ptz", "talk", "snapshot", "record-local"}
 POLICIES = {"auto", "true-direct-only", "gateway", "hybrid", "composite"}
 RECEIVERS = {"native", "browser"}
@@ -377,6 +378,10 @@ def public_client(row: sqlite3.Row) -> dict[str, object]:
     }
 
 
+def grant_seconds_for(platform: str) -> int:
+    return WEB_GRANT_SECONDS if platform in {"web", "chromium-iwa"} else GRANT_SECONDS
+
+
 def clean_text(value: object, field: str, maximum: int = 128) -> str:
     if not isinstance(value, str):
         raise ApiError(400, "invalid_request", f"{field} must be a string")
@@ -496,7 +501,7 @@ def _profile_adapter(camera_adapter: str, endpoint: str) -> str:
     return camera_adapter.lower()
 
 
-def _validate_grants(raw_grants: object) -> list[dict[str, object]]:
+def _validate_grants(raw_grants: object, platform: str) -> list[dict[str, object]]:
     if not isinstance(raw_grants, list) or not 1 <= len(raw_grants) <= 64:
         raise ApiError(400, "invalid_grants", "cameraGrants must contain one to 64 cameras")
     grants = []
@@ -523,11 +528,13 @@ def _validate_grants(raw_grants: object) -> list[dict[str, object]]:
         if "view" not in permissions:
             raise ApiError(400, "invalid_grants", "view permission is required")
         mode = raw.get("credentialMode", "existing")
-        if mode not in {"existing", "dedicated"}:
+        allowed_modes = {"none"} if platform in {"web", "chromium-iwa"} else {"existing", "dedicated"}
+        if mode not in allowed_modes:
             raise ApiError(400, "invalid_grants", "credentialMode is invalid")
-        reference = raw.get("credentialsRef", camera["credentials_ref"])
-        reference = _safe_reference(reference, "credentialsRef")
-        _load_secret(reference)
+        reference = "" if mode == "none" else raw.get("credentialsRef", camera["credentials_ref"])
+        if mode != "none":
+            reference = _safe_reference(reference, "credentialsRef")
+            _load_secret(reference)
         if mode == "dedicated" and reference == camera["credentials_ref"]:
             raise ApiError(409, "dedicated_credentials_required",
                            "dedicated mode requires a distinct credential reference")
@@ -546,7 +553,7 @@ def _validate_grants(raw_grants: object) -> list[dict[str, object]]:
         grants.append({
             "cameraId": camera_id, "profileIds": sorted(set(profile_ids)),
             "permissions": permissions, "credentialMode": mode,
-            "credentialsRef": reference, "weakRevocation": mode != "dedicated",
+            "credentialsRef": reference, "weakRevocation": mode == "existing",
         })
     return grants
 
@@ -576,7 +583,6 @@ def _approve_enrollment_locked(enrollment_id: str, payload: object) -> dict[str,
     code = payload.get("pairingCode")
     if not isinstance(code, str) or not re.fullmatch(r"[0-9]{8}", code):
         raise ApiError(400, "invalid_pairing_code", "pairingCode must contain eight digits")
-    grants = _validate_grants(payload["cameraGrants"])
     now = int(time.time())
     with connect() as database:
         row = database.execute("SELECT * FROM enrollments WHERE id=?", (enrollment_id,)).fetchone()
@@ -588,10 +594,11 @@ def _approve_enrollment_locked(enrollment_id: str, payload: object) -> dict[str,
             raise ApiError(409, "enrollment_state", "enrollment is not pending")
         if not pairing_matches(row["pairing_code_hash"], code):
             raise ApiError(403, "pairing_code_rejected", "pairing code does not match")
+        grants = _validate_grants(payload["cameraGrants"], row["platform"])
         _provision_dedicated_grants(grants)
         client_id = uuid.uuid4().hex
         next_revision = revision(database, True)
-        expires = now + GRANT_SECONDS
+        expires = now + grant_seconds_for(row["platform"])
         database.execute(
             "INSERT INTO clients(id,name,platform,signing_public_key,encryption_public_key,"
             "device_token_hash,status,created_at,last_seen,grant_expires_at,revision) "
@@ -614,6 +621,94 @@ def _approve_enrollment_locked(enrollment_id: str, payload: object) -> dict[str,
             "revision": next_revision}
 
 
+def _browser_profile_reason(camera: sqlite3.Row, profile: sqlite3.Row,
+                            runtime: str = "web") -> str:
+    adapter = _profile_adapter(camera["adapter"], profile["endpoint"])
+    if runtime == "chromium-iwa" and adapter == "rtsp":
+        try:
+            endpoint = urlsplit(profile["endpoint"])
+            endpoint_port = endpoint.port
+        except ValueError:
+            return "iwa_lab_profile_unverified"
+        if endpoint.scheme.lower() != "rtsp" or not endpoint.hostname or endpoint_port is None or \
+                endpoint.username or endpoint.password or endpoint.query or endpoint.fragment or \
+                camera["credentials_ref"]:
+            return "iwa_lab_profile_unverified"
+        try:
+            capabilities = json.loads(camera["capabilities_json"] or "{}")
+        except json.JSONDecodeError:
+            return "iwa_lab_profile_unverified"
+        verified = capabilities.get("iwaDirectLab", {})
+        return "" if isinstance(verified, dict) and verified.get(profile["id"]) is True \
+            else "iwa_lab_profile_unverified"
+    if adapter not in DIRECT_ADAPTERS_BROWSER:
+        return "protocol_not_supported"
+    try:
+        endpoint = urlsplit(profile["endpoint"])
+    except ValueError:
+        return "endpoint_invalid"
+    if endpoint.scheme.lower() != "https":
+        return "browser_https_required"
+    if endpoint.username or endpoint.password or endpoint.query or endpoint.fragment:
+        return "browser_credential_exposure_forbidden"
+    if camera["credentials_ref"]:
+        return "browser_long_term_credentials_forbidden"
+    try:
+        origin_host = endpoint.hostname or ""
+        endpoint_port = endpoint.port
+    except ValueError:
+        return "endpoint_invalid"
+    origin_display_host = f"[{origin_host}]" if ":" in origin_host else origin_host
+    endpoint_origin = f"https://{origin_display_host}" + (
+        f":{endpoint_port}" if endpoint_port not in {None, 443} else "")
+    allowed_origins = set()
+    for raw in os.environ.get("WEBOBS_PWA_MEDIA_ALLOWED_ORIGINS", "").split(","):
+        try:
+            allowed = urlsplit(raw.strip())
+            host = allowed.hostname or ""
+            port = allowed.port
+            if allowed.scheme.lower() == "https" and host and not allowed.username and not allowed.password and \
+                    allowed.path in {"", "/"} and not allowed.query and not allowed.fragment:
+                display_host = f"[{host}]" if ":" in host else host
+                allowed_origins.add(f"https://{display_host}" + (
+                    f":{port}" if port not in {None, 443} else ""))
+        except ValueError:
+            continue
+    if endpoint_origin not in allowed_origins:
+        return "browser_origin_not_allowed"
+    try:
+        capabilities = json.loads(camera["capabilities_json"] or "{}")
+    except json.JSONDecodeError:
+        return "browser_policy_unverified"
+    direct = capabilities.get("browserDirect", {})
+    profiles = direct.get("profiles", {}) if isinstance(direct, dict) else {}
+    proof = profiles.get(profile["id"], {}) if isinstance(profiles, dict) else {}
+    if not isinstance(proof, dict) or proof.get("tlsVerified") is not True:
+        return "browser_tls_unverified"
+    if proof.get("corsVerified") is not True:
+        return "browser_cors_unverified"
+    try:
+        public = urlsplit(os.environ.get("WEBOBS_PWA_PUBLIC_ORIGIN", "").strip())
+        public_host = public.hostname or ""
+        public_port = public.port
+    except ValueError:
+        return "browser_pwa_origin_unverified"
+    if public.scheme.lower() != "https" or not public_host or public.username or public.password or \
+            public.path not in {"", "/"} or public.query or public.fragment:
+        return "browser_pwa_origin_unverified"
+    public_display_host = f"[{public_host}]" if ":" in public_host else public_host
+    public_origin = f"https://{public_display_host}" + (
+        f":{public_port}" if public_port not in {None, 443} else "")
+    if not secrets.compare_digest(
+            str(proof.get("pwaOriginSha256", "")), hashlib.sha256(public_origin.encode()).hexdigest()):
+        return "browser_pwa_origin_unverified"
+    checked_at = proof.get("checkedAt")
+    if not isinstance(checked_at, int) or isinstance(checked_at, bool) or \
+            checked_at < int(time.time()) - 24 * 60 * 60 or checked_at > int(time.time()) + 300:
+        return "browser_probe_stale"
+    return ""
+
+
 def _grant_payload(database: sqlite3.Connection, client: sqlite3.Row) -> dict[str, object]:
     items = []
     rows = database.execute("SELECT * FROM grants WHERE client_id=? ORDER BY camera_id",
@@ -621,23 +716,38 @@ def _grant_payload(database: sqlite3.Connection, client: sqlite3.Row) -> dict[st
     for row in rows:
         camera, profiles = _camera(row["camera_id"])
         profile_ids = set(json.loads(row["profile_ids_json"]))
-        selected = [{
-            "id": profile["id"], "name": profile["name"], "role": profile["role"],
-            "endpoint": profile["endpoint"],
-            "adapter": _profile_adapter(camera["adapter"], profile["endpoint"]),
-            "videoCodec": profile["video_codec"],
-            "audioCodec": profile["audio_codec"], "width": profile["width"],
-            "height": profile["height"], "fpsMilli": int(round(profile["fps"] * 1000)),
-        } for profile in profiles if profile["id"] in profile_ids]
-        credentials = _load_secret(row["credentials_ref"])
-        items.append({
+        browser = client["platform"] in {"web", "chromium-iwa"}
+        selected = []
+        for profile in profiles:
+            if profile["id"] not in profile_ids:
+                continue
+            item = {
+                "id": profile["id"], "name": profile["name"], "role": profile["role"],
+                "adapter": _profile_adapter(camera["adapter"], profile["endpoint"]),
+                "videoCodec": profile["video_codec"],
+                "audioCodec": profile["audio_codec"], "width": profile["width"],
+                "height": profile["height"], "fpsMilli": int(round(profile["fps"] * 1000)),
+            }
+            direct_reason = _browser_profile_reason(camera, profile, client["platform"]) if browser else ""
+            if not browser or not direct_reason:
+                item["endpoint"] = profile["endpoint"]
+            if browser:
+                item["browserDirectEligible"] = not direct_reason
+                item["browserDirectReason"] = direct_reason
+            selected.append(item)
+        grant = {
             "cameraId": row["camera_id"], "name": camera["name"], "adapter": camera["adapter"],
             "profiles": selected, "permissions": json.loads(row["permissions_json"]),
-            "credentials": credentials, "credentialMode": row["credential_mode"],
+            "credentialMode": row["credential_mode"],
             "weakRevocation": bool(row["weak_revocation"]),
-        })
+        }
+        if not browser:
+            grant["credentials"] = _load_secret(row["credentials_ref"])
+        items.append(grant)
     return {
-        "format": "webobs-client-grant-v1", "contractVersion": 1,
+        "format": "webobs-browser-grant-v1" if client["platform"] in {"web", "chromium-iwa"}
+            else "webobs-client-grant-v1",
+        "contractVersion": 2 if client["platform"] in {"web", "chromium-iwa"} else 1,
         "clientId": client["id"], "issuedAt": int(time.time()),
         "expiresAt": client["grant_expires_at"], "revision": client["revision"],
         "cameras": items,
@@ -650,7 +760,8 @@ def sealed_bundle(database: sqlite3.Connection, client: sqlite3.Row) -> dict[str
     signature = sodium().sign(encoded, secret)
     sealed = sodium().seal(signature + encoded, client["encryption_public_key"])
     return {
-        "format": "webobs-client-grant+cbor-sealed-v1", "contractVersion": 1,
+        "format": "webobs-client-grant+cbor-sealed-v1",
+        "contractVersion": 2 if client["platform"] in {"web", "chromium-iwa"} else 1,
         "keyId": hashlib.sha256(public).hexdigest()[:16],
         "serverSigningPublicKey": b64url(public), "ciphertext": b64url(sealed),
     }
@@ -686,7 +797,7 @@ def authenticate_device(token: str) -> sqlite3.Row:
             raise ApiError(401, "device_token_rejected", "device token is invalid")
         if client["grant_expires_at"] <= now:
             raise ApiError(401, "grant_expired", "offline authorization has expired")
-        expires = now + GRANT_SECONDS
+        expires = now + grant_seconds_for(client["platform"])
         database.execute("UPDATE clients SET last_seen=?,grant_expires_at=? WHERE id=?",
                          (now, expires, client["id"]))
         return database.execute("SELECT * FROM clients WHERE id=?", (client["id"],)).fetchone()
@@ -904,7 +1015,8 @@ def bootstrap(client: sqlite3.Row, since: int) -> dict[str, object]:
             })
         changed = since < current
         return {
-            "contractVersion": 1, "revision": current, "changed": changed,
+            "contractVersion": 2 if client["platform"] in {"web", "chromium-iwa"} else 1,
+            "revision": current, "changed": changed,
             "client": public_client(client), "cameras": cameras if changed else [],
             "grantBundle": sealed_bundle(database, client),
             "sharedScenes": shared_scenes() if changed else [],
@@ -995,6 +1107,8 @@ def _decoder(platform: str, hardware: list[str], codec: str) -> str:
     candidates = {
         "windows": ("d3d11", "d3d11"), "linux": ("vaapi", "vaapi"),
         "android": ("mediacodec", "mediacodec"),
+        "web": ("webcodecs", "webcodecs"),
+        "chromium-iwa": ("webcodecs", "webcodecs"),
     }
     requested, selected = candidates[platform]
     if requested in normalized and codec in DIRECT_VIDEO_CODECS:
@@ -1029,11 +1143,17 @@ def create_media_plan(client: sqlite3.Row, payload: object) -> tuple[int, dict[s
         codec = "h265"
     protocols = {str(item).lower() for item in payload.get("protocols", []) if isinstance(item, str)}
     codecs = {str(item).lower().replace(".", "") for item in payload.get("videoCodecs", []) if isinstance(item, str)}
-    direct_adapters = DIRECT_ADAPTERS_NATIVE if receiver == "native" else DIRECT_ADAPTERS_BROWSER
-    browser_allowed = receiver == "native" or payload.get("browserDirectEligible") is True
+    if client["platform"] in {"web", "chromium-iwa"} and receiver != "browser":
+        raise ApiError(400, "invalid_media_plan", "web runtimes must use receiverKind browser")
+    direct_adapters = DIRECT_ADAPTERS_NATIVE if receiver == "native" or \
+        client["platform"] == "chromium-iwa" else DIRECT_ADAPTERS_BROWSER
+    browser_reason = _browser_profile_reason(camera, profile, client["platform"]) \
+        if receiver == "browser" else ""
     direct_reason = ""
     if network == "wan":
         direct_reason = "network_not_lan_or_vpn"
+    elif browser_reason:
+        direct_reason = browser_reason
     elif reachability != "reachable":
         direct_reason = "camera_not_reachable" if reachability == "unreachable" else "reachability_not_proven"
     elif payload.get("requiresComposite") is True:
@@ -1042,8 +1162,6 @@ def create_media_plan(client: sqlite3.Row, payload: object) -> tuple[int, dict[s
         direct_reason = "protocol_not_supported"
     elif codec not in codecs:
         direct_reason = "codec_not_supported"
-    elif not browser_allowed:
-        direct_reason = "browser_direct_policy_unverified"
 
     status = "active"
     if policy == "true-direct-only" and direct_reason:
@@ -1075,8 +1193,9 @@ def create_media_plan(client: sqlite3.Row, payload: object) -> tuple[int, dict[s
         "docker:transcoder" if topology == "hybrid" else "docker:libobs"
     now = int(time.time())
     plan_id = uuid.uuid4().hex
+    web_runtime = client["platform"] in {"web", "chromium-iwa"}
     plan = {
-        "contractVersion": 1, "planId": plan_id, "cameraId": camera_id,
+        "contractVersion": 2 if web_runtime else 1, "planId": plan_id, "cameraId": camera_id,
         "profileId": profile_id, "status": status, "topology": topology,
         "receiverKind": receiver, "archiveTopology": archive_topology(camera_id),
         "decoder": decoder, "renderer": renderer, "encoder": encoder,
@@ -1084,6 +1203,14 @@ def create_media_plan(client: sqlite3.Row, payload: object) -> tuple[int, dict[s
         "fallbackReason": direct_reason if topology != "true-direct" or status == "rejected" else "",
         "expiresAt": now + PLAN_SECONDS,
     }
+    if web_runtime:
+        plan.update({
+            "runtimeKind": "pwa" if client["platform"] == "web" else "chromium-iwa",
+            "executionOwner": "browser" if topology == "true-direct" else "docker",
+            "mediaTransport": adapter if topology == "true-direct" else "whep",
+            "credentialExposure": "none",
+            "offlineConfigExpiresAt": client["grant_expires_at"],
+        })
     with connect() as database:
         database.execute(
             "DELETE FROM media_plans WHERE expires_at<=? AND NOT EXISTS "
@@ -1131,7 +1258,8 @@ def activate_media_plan(client_id: str, plan_id: str) -> dict[str, object]:
             (plan_id, client_id, now, now),
         )
     return {
-        "contractVersion": 1, "planId": plan_id, "clientId": client_id,
+        "contractVersion": 2 if plan.get("contractVersion") == 2 else 1,
+        "planId": plan_id, "clientId": client_id,
         "cameraId": row["camera_id"], "profileId": row["profile_id"],
         "topology": plan["topology"], "fallbackReason": plan["fallbackReason"],
         "expiresAt": row["expires_at"],
@@ -1158,7 +1286,8 @@ def media_plan_activation(client_id: str, plan_id: str) -> dict[str, object]:
         raise ApiError(409, "media_plan_not_active", "media plan has no active server lease")
     plan = json.loads(row["body_json"])
     return {
-        "contractVersion": 1, "planId": plan_id, "clientId": client_id,
+        "contractVersion": 2 if plan.get("contractVersion") == 2 else 1,
+        "planId": plan_id, "clientId": client_id,
         "cameraId": row["camera_id"], "profileId": row["profile_id"],
         "topology": plan["topology"], "fallbackReason": plan["fallbackReason"],
         "expiresAt": row["expires_at"],

@@ -269,6 +269,19 @@ void config_tests()
     expect(!result.ok(), "browser allowed origins containing paths must fail");
 
     result = webobs::parse_config(
+        {"--scene-file", "/config/webobs/scene.json", "--pwa-media-allowed-origins",
+         "HTTPS://Camera.Example:443,https://media.example:8443"},
+        empty_environment);
+    expect(result.ok() && result.config && result.config->pwa_media_allowed_origins.size() == 2 &&
+               result.config->pwa_media_allowed_origins.front() == "https://camera.example",
+           "PWA media origin allowlist must contain exact normalized HTTPS origins");
+
+    result = webobs::parse_config(
+        {"--scene-file", "/config/webobs/scene.json", "--pwa-media-allowed-origins",
+         "http://camera.example"}, empty_environment);
+    expect(!result.ok(), "PWA media origins must reject insecure HTTP cameras");
+
+    result = webobs::parse_config(
         {"--rtsp-url", "rtsp://cli/live", "--fps", "25"},
         environment({{"WEBOBS_RTSP_URL", "rtsp://environment/live"}, {"WEBOBS_FPS", "15"}}));
     expect(result.ok() && result.config.has_value(), "valid CLI configuration must parse");

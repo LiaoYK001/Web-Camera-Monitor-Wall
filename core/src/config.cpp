@@ -38,6 +38,7 @@ constexpr SettingSpec setting_specs[] = {
     {"--session-inactivity-seconds", "WEBOBS_SESSION_INACTIVITY_SECONDS", "session_inactivity"},
     {"--session-cookie-secure", "WEBOBS_SESSION_COOKIE_SECURE", "session_cookie_secure"},
     {"--control-allowed-origins", "WEBOBS_CONTROL_ALLOWED_ORIGINS", "control_allowed_origins"},
+    {"--pwa-media-allowed-origins", "WEBOBS_PWA_MEDIA_ALLOWED_ORIGINS", "pwa_media_allowed_origins"},
     {"--source-stale-seconds", "WEBOBS_SOURCE_STALE_SECONDS", "source_stale_seconds"},
     {"--source-recovery-base-seconds", "WEBOBS_SOURCE_RECOVERY_BASE_SECONDS", "source_recovery_base"},
     {"--source-recovery-max-seconds", "WEBOBS_SOURCE_RECOVERY_MAX_SECONDS", "source_recovery_max"},
@@ -258,6 +259,7 @@ ParseResult parse_config(const std::vector<std::string> &arguments, const Enviro
         {"session_database", "/config/webobs/auth-sessions.db"},
         {"session_inactivity", "604800"}, {"session_cookie_secure", "true"},
         {"control_allowed_origins", ""},
+        {"pwa_media_allowed_origins", ""},
         {"source_stale_seconds", "10"}, {"source_recovery_base", "5"},
         {"source_recovery_max", "60"},
         {"webrtc_enabled", "false"}, {"composite_enabled", "false"}, {"nvr_enabled", "false"},
@@ -359,6 +361,16 @@ ParseResult parse_config(const std::vector<std::string> &arguments, const Enviro
         for (const std::string &origin : config.control_allowed_origins) {
             if (!origin.starts_with("https://") && !loopback_control_origin(origin))
                 return failure("non-loopback control origins must use HTTPS");
+        }
+    }
+    if (!values["pwa_media_allowed_origins"].empty()) {
+        std::string origin_error;
+        if (!parse_origins(values["pwa_media_allowed_origins"], "pwa-media-allowed-origins",
+                           config.pwa_media_allowed_origins, origin_error))
+            return failure(std::move(origin_error));
+        for (const std::string &origin : config.pwa_media_allowed_origins) {
+            if (!origin.starts_with("https://"))
+                return failure("PWA media origins must use HTTPS");
         }
     }
     if (config.http_port != 0 && !loopback && !config.allow_insecure_remote && !config.authentication)
@@ -514,6 +526,7 @@ Options:
   --session-inactivity-seconds <n> Sliding expiry (default: 604800 / 7 days)
   --session-cookie-secure <bool>   Require HTTPS for browser session cookie (default: true)
   --control-allowed-origins <csv>   Authenticated HTTPS origins allowed beyond loopback
+  --pwa-media-allowed-origins <csv> Exact HTTPS camera origins allowed by the PWA CSP
   --source-stale-seconds <n>        No-new-frame threshold (default: 10)
   --source-recovery-base-seconds <n> Initial RTSP restart backoff (default: 5)
   --source-recovery-max-seconds <n>  Maximum RTSP restart backoff (default: 60)
@@ -547,7 +560,7 @@ Command-line values override WEBOBS_* environment values.
 
 std::string version_text()
 {
-    return std::string("webobsd ") + WEBOBS_VERSION + " (v1-M11, OBS 32.1.2)";
+    return std::string("webobsd ") + WEBOBS_VERSION + " (" + WEBOBS_MILESTONE + ", OBS 32.1.2)";
 }
 
 std::string_view renderer_preference_name(RendererPreference preference)

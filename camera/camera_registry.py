@@ -27,7 +27,7 @@ from datetime import datetime, timezone
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.error import HTTPError, URLError
-from urllib.parse import parse_qs, urlsplit
+from urllib.parse import parse_qs, urljoin, urlsplit
 from urllib.parse import quote, urlunsplit
 from urllib.request import (
     HTTPBasicAuthHandler, HTTPDigestAuthHandler, HTTPPasswordMgrWithDefaultRealm,
@@ -61,6 +61,10 @@ ONVIF_CLOCK_OFFSETS: dict[str, float] = {}
 
 class OnvifError(RuntimeError):
     """Safe, credential-free ONVIF failure for API responses."""
+
+
+class BrowserDirectProbeError(RuntimeError):
+    """Bounded, endpoint-free browser media qualification failure."""
 
 
 class NoRedirect(HTTPRedirectHandler):
@@ -259,6 +263,9 @@ def validate_camera(payload: dict, existing_id: str | None = None) -> dict:
     capabilities = payload.get("capabilities", {})
     if not isinstance(capabilities, dict):
         raise ValueError("capabilities must be an object")
+    capabilities = dict(capabilities)
+    capabilities.pop("browserDirect", None)
+    capabilities.pop("iwaDirectLab", None)
     return {
         "id": camera_id, "name": name.strip(), "address": address, "adapter": adapter,
         "credentialsRef": credentials_ref, "hardwareDecode": hardware_decode,
@@ -299,10 +306,19 @@ def resolve_profile(database: sqlite3.Connection, camera_id: str, profile_id: st
 def save_camera(camera: dict, replace: bool) -> dict:
     now = int(time.time())
     with connect() as database:
-        current = database.execute("SELECT created_at FROM cameras WHERE id=?", (camera["id"],)).fetchone()
+        current = database.execute(
+            "SELECT created_at,capabilities_json FROM cameras WHERE id=?", (camera["id"],)).fetchone()
         if current and not replace:
             raise FileExistsError("camera id already exists")
         created = current["created_at"] if current else now
+        if current:
+            try:
+                reserved = json.loads(current["capabilities_json"] or "{}")
+            except json.JSONDecodeError:
+                reserved = {}
+            for key in ("browserDirect", "iwaDirectLab"):
+                if key in reserved:
+                    camera["capabilities"][key] = reserved[key]
         database.execute(
             "INSERT OR REPLACE INTO cameras(id,name,address,adapter,credentials_ref,hardware_decode,capabilities_json,health,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?)",
             (camera["id"], camera["name"], camera["address"], camera["adapter"], camera["credentialsRef"],
@@ -317,6 +333,169 @@ def save_camera(camera: dict, replace: bool) -> dict:
         )
         row = database.execute("SELECT * FROM cameras WHERE id=?", (camera["id"],)).fetchone()
         return camera_document(database, row)
+
+
+def configured_pwa_origin() -> str:
+    raw = os.environ.get("WEBOBS_PWA_PUBLIC_ORIGIN", "").strip()
+    try:
+        parsed = urlsplit(raw)
+        port = parsed.port
+    except ValueError as error:
+        raise BrowserDirectProbeError("pwa_origin_invalid") from error
+    if parsed.scheme.lower() != "https" or not parsed.hostname or parsed.username or parsed.password or \
+            parsed.path not in {"", "/"} or parsed.query or parsed.fragment:
+        raise BrowserDirectProbeError("pwa_origin_invalid")
+    host = f"[{parsed.hostname}]" if ":" in parsed.hostname else parsed.hostname
+    return f"https://{host}" + (f":{port}" if port not in {None, 443} else "")
+
+
+def browser_probe_request(endpoint: str, origin: str, method: str = "GET",
+                          headers: dict[str, str] | None = None):
+    try:
+        parsed = urlsplit(endpoint)
+        addresses = {entry[4][0] for entry in socket.getaddrinfo(
+            parsed.hostname, parsed.port or 443, type=socket.SOCK_STREAM)}
+    except (ValueError, OSError, TypeError) as error:
+        raise BrowserDirectProbeError("endpoint_resolution_failed") from error
+    allow_test_loopback = os.environ.get("WEBOBS_CAMERA_ALLOW_TEST_ENDPOINTS") == "true" and \
+        os.environ.get("WEBOBS_BROWSER_PROBE_ALLOW_LOOPBACK") == "true"
+    if not addresses or len(addresses) > 8:
+        raise BrowserDirectProbeError("endpoint_resolution_unbounded")
+    for address in addresses:
+        value = ipaddress.ip_address(address.split("%", 1)[0])
+        if value.is_unspecified or value.is_multicast or value.is_link_local or \
+                (value.is_loopback and not allow_test_loopback):
+            raise BrowserDirectProbeError("endpoint_address_forbidden")
+    request_headers = {"Origin": origin, "User-Agent": "WebOBS-Browser-Qualification/1"}
+    request_headers.update(headers or {})
+    opener = build_opener(NoRedirect(), HTTPSHandler(context=TLS_CONTEXT))
+    try:
+        response = opener.open(Request(endpoint, method=method, headers=request_headers),
+                               timeout=ONVIF_TIMEOUT_SECONDS)
+    except (HTTPError, URLError, TimeoutError, ssl.SSLError, OSError, OnvifError) as error:
+        raise BrowserDirectProbeError("endpoint_unreachable_or_tls_invalid") from error
+    if response.headers.get("Access-Control-Allow-Origin", "").strip() != origin:
+        response.close()
+        raise BrowserDirectProbeError("cors_origin_rejected")
+    return response
+
+
+def bounded_http_body(response, limit: int = 128 * 1024) -> bytes:
+    try:
+        body = response.read(limit + 1)
+    except (TimeoutError, OSError) as error:
+        raise BrowserDirectProbeError("media_probe_read_failed") from error
+    finally:
+        response.close()
+    if len(body) > limit:
+        raise BrowserDirectProbeError("media_probe_response_too_large")
+    return body
+
+
+def bounded_http_prefix(response, limit: int) -> bytes:
+    try:
+        return response.read(limit)
+    except (TimeoutError, OSError) as error:
+        raise BrowserDirectProbeError("media_probe_read_failed") from error
+    finally:
+        response.close()
+
+
+def qualify_hls(endpoint: str, origin: str) -> None:
+    current = endpoint
+    for depth in range(2):
+        response = browser_probe_request(
+            current, origin, headers={"Accept": "application/vnd.apple.mpegurl"})
+        content_type = response.headers.get_content_type().lower()
+        if content_type not in {"application/vnd.apple.mpegurl", "application/x-mpegurl", "audio/mpegurl"}:
+            response.close()
+            raise BrowserDirectProbeError("hls_content_type_invalid")
+        try:
+            playlist = bounded_http_body(response).decode("utf-8", "strict")
+        except UnicodeDecodeError as error:
+            raise BrowserDirectProbeError("hls_manifest_invalid") from error
+        if not playlist.startswith("#EXTM3U"):
+            raise BrowserDirectProbeError("hls_manifest_invalid")
+        resources = [line.strip() for line in playlist.splitlines()
+                     if line.strip() and not line.lstrip().startswith("#")]
+        if not resources or len(resources) > 4096:
+            raise BrowserDirectProbeError("hls_manifest_unbounded")
+        try:
+            child = urlsplit(urljoin(current, resources[0]))
+            parent = urlsplit(endpoint)
+            child_port, parent_port = child.port, parent.port
+        except ValueError as error:
+            raise BrowserDirectProbeError("hls_child_origin_rejected") from error
+        if child.scheme.lower() != "https" or child.hostname != parent.hostname or child_port != parent_port or \
+                child.username or child.password or child.fragment:
+            raise BrowserDirectProbeError("hls_child_origin_rejected")
+        child_url = child.geturl()
+        if child.path.lower().endswith(".m3u8") and depth == 0:
+            current = child_url
+            continue
+        segment = browser_probe_request(child_url, origin, headers={"Range": "bytes=0-1023"})
+        if not bounded_http_prefix(segment, 1024):
+            raise BrowserDirectProbeError("hls_segment_empty")
+        return
+    raise BrowserDirectProbeError("hls_media_playlist_missing")
+
+
+def browser_direct_probe(camera_id: str, profile_id: str) -> dict:
+    origin = configured_pwa_origin()
+    with connect() as database:
+        camera = database.execute("SELECT * FROM cameras WHERE id=?", (camera_id,)).fetchone()
+        profile = database.execute(
+            "SELECT * FROM stream_profiles WHERE camera_id=? AND id=?", (camera_id, profile_id)).fetchone()
+        if not camera or not profile:
+            raise KeyError("camera or profile not found")
+        adapter = camera["adapter"]
+        endpoint = profile["endpoint"]
+        reason = ""
+        try:
+            parsed = urlsplit(endpoint)
+            if adapter not in {"whep", "hls", "mjpeg"}:
+                raise BrowserDirectProbeError("protocol_not_supported")
+            if parsed.scheme.lower() != "https" or parsed.username or parsed.password or parsed.query or parsed.fragment:
+                raise BrowserDirectProbeError("browser_https_endpoint_required")
+            if camera["credentials_ref"]:
+                raise BrowserDirectProbeError("long_term_credentials_forbidden")
+            if adapter == "whep":
+                response = browser_probe_request(endpoint, origin, "OPTIONS", {
+                    "Access-Control-Request-Method": "POST",
+                    "Access-Control-Request-Headers": "content-type",
+                })
+                allowed = {item.strip().upper() for item in response.headers.get(
+                    "Access-Control-Allow-Methods", "").split(",")}
+                response.close()
+                if "POST" not in allowed:
+                    raise BrowserDirectProbeError("whep_post_cors_rejected")
+            elif adapter == "hls":
+                qualify_hls(endpoint, origin)
+            else:
+                response = browser_probe_request(
+                    endpoint, origin, headers={"Accept": "multipart/x-mixed-replace"})
+                if response.headers.get_content_type().lower() != "multipart/x-mixed-replace":
+                    response.close()
+                    raise BrowserDirectProbeError("mjpeg_content_type_invalid")
+                response.close()
+        except BrowserDirectProbeError as error:
+            reason = str(error)
+        passed = not reason
+        try:
+            capabilities = json.loads(camera["capabilities_json"] or "{}")
+        except json.JSONDecodeError:
+            capabilities = {}
+        direct = capabilities.setdefault("browserDirect", {})
+        proofs = direct.setdefault("profiles", {})
+        proofs[profile_id] = {
+            "tlsVerified": passed, "corsVerified": passed,
+            "pwaOriginSha256": hashlib.sha256(origin.encode()).hexdigest(),
+            "checkedAt": int(time.time()), "reason": reason,
+        }
+        database.execute("UPDATE cameras SET capabilities_json=?,updated_at=? WHERE id=?", (
+            json.dumps(capabilities, separators=(",", ":"), sort_keys=True), int(time.time()), camera_id))
+    return {"cameraId": camera_id, "profileId": profile_id, "eligible": passed,
+            "reason": reason, "checkedAt": proofs[profile_id]["checkedAt"]}
 
 
 def xml_local_name(tag: str) -> str:
@@ -1324,6 +1503,14 @@ class Handler(BaseHTTPRequestHandler):
             sync_match = re.fullmatch(r"/cameras/([a-zA-Z0-9._-]{1,64})/onvif/sync", self.path)
             if sync_match:
                 self.respond(200, sync_onvif_camera(sync_match.group(1))); return
+            browser_probe_match = re.fullmatch(
+                r"/cameras/([a-zA-Z0-9._-]{1,64})/profiles/([a-zA-Z0-9._-]{1,64})/browser-direct/probe",
+                self.path,
+            )
+            if browser_probe_match:
+                if int(self.headers.get("Content-Length", "0")):
+                    self.payload()
+                self.respond(200, browser_direct_probe(*browser_probe_match.groups())); return
             operation_match = re.fullmatch(
                 r"/cameras/([a-zA-Z0-9._-]{1,64})/onvif/(ptz|presets|snapshot|events/pull|talk|users)",
                 self.path,
@@ -1351,8 +1538,9 @@ class Handler(BaseHTTPRequestHandler):
         except FileExistsError as error: self.respond(409, {"error": str(error)})
         except KeyError: self.respond(404, {"error": "camera not found"})
         except PermissionError as error: self.respond(401, {"error": str(error)})
-        except RuntimeError as error: self.respond(429, {"error": str(error)})
+        except BrowserDirectProbeError as error: self.respond(400, {"error": str(error)})
         except OnvifError as error: self.respond(502, {"error": str(error)})
+        except RuntimeError as error: self.respond(429, {"error": str(error)})
         except (ValueError, TypeError, json.JSONDecodeError) as error: self.respond(400, {"error": str(error)})
 
     def do_PUT(self) -> None:

@@ -273,16 +273,23 @@ std::optional<std::pair<std::string, std::string>> parse_login_body(const HttpRe
     return std::pair<std::string, std::string>{std::move(user), std::move(secret)};
 }
 
+std::vector<std::string> pwa_media_allowed_origins;
+
 void set_security_headers(HttpResponse &response, std::string_view content_type,
                           std::string_view cache_control)
 {
     response.set(http::field::server, "webobsd");
     response.set(http::field::cache_control, cache_control);
     response.set(http::field::content_type, content_type);
+    std::string media_origins;
+    for (const std::string &origin : pwa_media_allowed_origins)
+        media_origins += " " + origin;
     response.set("Content-Security-Policy",
-                 "default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self' data:; "
-                 "connect-src 'self' ws://localhost:* ws://127.0.0.1:* ws://[::1]:*; "
-                 "base-uri 'none'; form-action 'none'; frame-ancestors 'none'; object-src 'none'");
+                 "default-src 'none'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self'; img-src 'self' data: blob:" +
+                 media_origins + "; media-src 'self' blob:" + media_origins +
+                 "; connect-src 'self' ws://localhost:* ws://127.0.0.1:* ws://[::1]:*" + media_origins +
+                 "; worker-src 'self' blob:; manifest-src 'self'; base-uri 'none'; form-action 'self'; "
+                 "frame-ancestors 'none'; object-src 'none'; require-trusted-types-for 'script'; trusted-types default");
     response.set("X-Content-Type-Options", "nosniff");
     response.set("X-Frame-Options", "DENY");
     response.set("Referrer-Policy", "no-referrer");
@@ -1550,9 +1557,29 @@ std::string static_content_type(std::string_view filename)
         return "image/png";
     if (filename.ends_with(".ico"))
         return "image/x-icon";
+    if (filename.ends_with(".svg"))
+        return "image/svg+xml";
+    if (filename.ends_with(".wasm"))
+        return "application/wasm";
+    if (filename.ends_with(".json"))
+        return "application/json; charset=utf-8";
     if (filename.ends_with(".webmanifest"))
         return "application/manifest+json";
     return "application/octet-stream";
+}
+
+bool hashed_static_asset(std::string_view filename)
+{
+    const std::size_t extension = filename.rfind('.');
+    const std::size_t separator = extension == std::string_view::npos ? std::string_view::npos :
+        filename.rfind('-', extension);
+    if (separator == std::string_view::npos || extension - separator - 1 < 8)
+        return false;
+    const std::string_view hash = filename.substr(separator + 1, extension - separator - 1);
+    return std::all_of(hash.begin(), hash.end(),
+                       [](unsigned char character) {
+                           return std::isalnum(character) || character == '_';
+                       });
 }
 
 std::optional<HttpResponse> static_file_response(std::string_view target, unsigned int version)
@@ -1561,6 +1588,9 @@ std::optional<HttpResponse> static_file_response(std::string_view target, unsign
     bool immutable = false;
     if (target == "/" || target == "/index.html") {
         filename = "index.html";
+    } else if (target == "/manifest.webmanifest" || target == "/sw.js" ||
+               target == "/webobs-icon.svg" || target == "/offline.html") {
+        filename = std::string(target.substr(1));
     } else if (target.starts_with("/assets/")) {
         const std::string_view asset = target.substr(std::string_view("/assets/").size());
         if (asset.empty() || !std::all_of(asset.begin(), asset.end(), [](unsigned char character) {
@@ -1568,7 +1598,7 @@ std::optional<HttpResponse> static_file_response(std::string_view target, unsign
             }))
             return std::nullopt;
         filename = "assets/" + std::string(asset);
-        immutable = true;
+        immutable = hashed_static_asset(asset);
     } else {
         return std::nullopt;
     }
@@ -1579,7 +1609,7 @@ std::optional<HttpResponse> static_file_response(std::string_view target, unsign
         return response(http::status::not_found, version,
                         error_body("ui_not_installed", "Web editor asset is unavailable"));
     const std::uintmax_t size = std::filesystem::file_size(path, error);
-    if (error || size > 2 * 1024 * 1024)
+    if (error || size > (immutable ? 8 : 4) * 1024 * 1024)
         return response(http::status::internal_server_error, version,
                         error_body("ui_asset_invalid", "Web editor asset could not be served"));
 
@@ -1591,8 +1621,9 @@ std::optional<HttpResponse> static_file_response(std::string_view target, unsign
     if (size > 0 && !input.read(body.data(), static_cast<std::streamsize>(size)))
         return response(http::status::internal_server_error, version,
                         error_body("ui_asset_unreadable", "Web editor asset could not be read"));
-    return response(http::status::ok, version, std::move(body), static_content_type(filename),
-                    immutable ? "public, max-age=31536000, immutable" : "no-store");
+    const std::string_view cache = immutable ? "public, max-age=31536000, immutable" :
+        filename == "index.html" ? "no-cache" : "no-store";
+    return response(http::status::ok, version, std::move(body), static_content_type(filename), cache);
 }
 
 std::string etag(std::uint64_t revision)
@@ -2710,6 +2741,7 @@ struct ControlServer::Impl {
           nvr_proxy(configuration.nvr_enabled),
           camera_proxy(configuration.camera_registry_enabled)
     {
+        pwa_media_allowed_origins = configuration.pwa_media_allowed_origins;
     }
 
     const Config &config;

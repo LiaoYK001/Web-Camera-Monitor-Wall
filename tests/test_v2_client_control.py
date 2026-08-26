@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import base64
 import ctypes
+import hashlib
 import importlib.util
 from importlib.machinery import SourceFileLoader
 import json
@@ -100,12 +101,12 @@ class DeviceKeys:
             raise RuntimeError("fixture encryption key generation failed")
         self.encryption_public, self.encryption_secret = public.raw, secret.raw
 
-    def enrollment(self, nonce: bytes = bytes(range(32))) -> dict[str, str]:
+    def enrollment(self, nonce: bytes = bytes(range(32)), platform: str = "linux") -> dict[str, str]:
         proof = service.enrollment_proof(
-            "Test workstation", "linux", self.signing_public, self.encryption_public, nonce)
+            "Test workstation", platform, self.signing_public, self.encryption_public, nonce)
         signature = service.sodium().sign(proof, self.signing_secret)
         return {
-            "name": "Test workstation", "platform": "linux",
+            "name": "Test workstation", "platform": platform,
             "signingPublicKey": service.b64url(self.signing_public),
             "encryptionPublicKey": service.b64url(self.encryption_public),
             "enrollmentNonce": service.b64url(nonce), "signature": service.b64url(signature),
@@ -206,6 +207,76 @@ class V2ClientControlTests(unittest.TestCase):
                     "WEBOBS_V2_ACCEPTANCE_SHORT_GRANT": "true",
                     "WEBOBS_V2_GRANT_SECONDS": value,
                 })
+
+    def test_web_grant_is_seven_day_credential_free_and_server_qualified(self):
+        capabilities = {"browserDirect": {"profiles": {
+            "sub": {"tlsVerified": True, "corsVerified": True,
+                    "pwaOriginSha256": hashlib.sha256(b"https://monitor.invalid").hexdigest(),
+                    "checkedAt": int(time.time())},
+        }}}
+        with sqlite3.connect(service.CAMERA_DB_PATH) as database:
+            database.execute(
+                "UPDATE cameras SET adapter='whep',credentials_ref='',capabilities_json=? "
+                "WHERE id='camera-test'", (json.dumps(capabilities),))
+            database.execute(
+                "UPDATE stream_profiles SET endpoint='https://camera.invalid/whep',video_codec='h264' "
+                "WHERE camera_id='camera-test' AND id='sub'")
+        enrollment = service.start_enrollment(self.keys.enrollment(os.urandom(32), "web"))
+        with mock.patch.dict(os.environ, {
+                "WEBOBS_PWA_MEDIA_ALLOWED_ORIGINS": "https://camera.invalid",
+                "WEBOBS_PWA_PUBLIC_ORIGIN": "https://monitor.invalid"}):
+            approved = service.approve_enrollment(enrollment["enrollmentId"], {
+                "pairingCode": enrollment["pairingCode"], "cameraGrants": [{
+                    "cameraId": "camera-test", "profileIds": ["sub"],
+                    "permissions": ["view"], "credentialMode": "none",
+                }],
+            })
+            self.assertLessEqual(approved["grantExpiresAt"] - int(time.time()), 7 * 24 * 60 * 60)
+            complete_status, completed = service.complete_enrollment(
+                enrollment["enrollmentId"], enrollment["deviceToken"])
+            client = service.authenticate_device(enrollment["deviceToken"])
+            status, plan = service.create_media_plan(client, {
+                "cameraId": "camera-test", "profileId": "sub", "policy": "auto",
+                "receiverKind": "browser", "networkClass": "lan", "reachability": "reachable",
+                "protocols": ["whep"], "videoCodecs": ["h264"],
+                "hardwareDecoders": ["webcodecs"], "requiresComposite": False,
+                "browserDirectEligible": False,
+            })
+        self.assertEqual(status, 201)
+        self.assertEqual(complete_status, 200)
+        self.assertEqual(completed["grantBundle"]["contractVersion"], 2)
+        _encoded, grant = self.keys.open_bundle(completed["grantBundle"])
+        self.assertEqual(grant["format"], "webobs-browser-grant-v1")
+        self.assertEqual(grant["contractVersion"], 2)
+        self.assertNotIn("credentials", json.dumps(grant))
+        profile = grant["cameras"][0]["profiles"][0]
+        self.assertTrue(profile["browserDirectEligible"])
+        self.assertEqual(profile["endpoint"], "https://camera.invalid/whep")
+        self.assertEqual(plan["topology"], "true-direct")
+        self.assertEqual(plan["executionOwner"], "browser")
+        self.assertFalse(plan["liveServerMediaExpected"])
+
+        with mock.patch.dict(os.environ, {"WEBOBS_PWA_MEDIA_ALLOWED_ORIGINS": ""}):
+            _status, rejected = service.create_media_plan(client, {
+                "cameraId": "camera-test", "profileId": "sub", "policy": "auto",
+                "receiverKind": "browser", "networkClass": "lan", "reachability": "unreachable",
+                "protocols": ["whep"], "videoCodecs": ["h264"],
+                "hardwareDecoders": ["webcodecs"], "requiresComposite": False,
+                "browserDirectEligible": True,
+            })
+        self.assertEqual(rejected["topology"], "gateway-direct")
+        self.assertEqual(rejected["fallbackReason"], "browser_origin_not_allowed")
+
+    def test_browser_profile_rejects_malformed_port_without_server_error(self):
+        with sqlite3.connect(service.CAMERA_DB_PATH) as database:
+            database.execute(
+                "UPDATE cameras SET adapter='whep',credentials_ref='' WHERE id='camera-test'")
+            database.execute(
+                "UPDATE stream_profiles SET endpoint='https://camera.invalid:bad/whep' "
+                "WHERE camera_id='camera-test' AND id='sub'")
+        camera, profiles = service._camera("camera-test")
+        self.assertEqual(
+            service._browser_profile_reason(camera, profiles[0], "web"), "endpoint_invalid")
 
     def prepare_managed_onvif_camera(self):
         (service.SECRET_ROOT / "client-device.json").write_text(json.dumps({

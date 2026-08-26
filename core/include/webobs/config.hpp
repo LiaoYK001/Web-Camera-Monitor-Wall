@@ -35,6 +35,7 @@ struct Config {
     int session_inactivity_seconds = 604800;
     bool session_cookie_secure = true;
     std::vector<std::string> control_allowed_origins;
+    std::vector<std::string> pwa_media_allowed_origins;
     int source_stale_seconds = 10;
     int source_recovery_base_seconds = 5;
     int source_recovery_max_seconds = 60;

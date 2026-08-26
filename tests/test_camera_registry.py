@@ -221,6 +221,23 @@ class ServerPushMjpegHandler(BaseHTTPRequestHandler):
         self.wfile.write(body)
 
 
+class BrowserWhepHandler(BaseHTTPRequestHandler):
+    allowed_origin = "https://monitor.example.invalid:28777"
+
+    def log_message(self, format: str, *args: object) -> None:
+        return
+
+    def do_OPTIONS(self) -> None:
+        if self.headers.get("Origin") != self.allowed_origin:
+            self.send_response(403); self.send_header("Content-Length", "0"); self.end_headers(); return
+        self.send_response(204)
+        self.send_header("Access-Control-Allow-Origin", self.allowed_origin)
+        self.send_header("Access-Control-Allow-Methods", "POST, OPTIONS")
+        self.send_header("Access-Control-Allow-Headers", "Content-Type")
+        self.send_header("Content-Length", "0")
+        self.end_headers()
+
+
 class CameraRegistryTests(unittest.TestCase):
     def setUp(self) -> None:
         self.temporary = tempfile.TemporaryDirectory(prefix="webobs-camera-tests-")
@@ -269,6 +286,57 @@ class CameraRegistryTests(unittest.TestCase):
                 "name": "Unsafe", "address": "rtsp://camera.example.invalid/live",
                 "adapter": "rtsp", "credentialsRef": "../escape", "profiles": [],
             })
+
+    def test_browser_direct_proof_is_tls_cors_bound_and_not_user_forgeable(self) -> None:
+        openssl = shutil.which("openssl")
+        if not openssl: self.skipTest("OpenSSL CLI is required for the TLS fixture")
+        certificate = Path(self.temporary.name) / "browser-fixture.crt"
+        private_key = Path(self.temporary.name) / "browser-fixture.key"
+        subprocess.run([openssl, "req", "-x509", "-newkey", "rsa:2048", "-nodes", "-days", "1",
+                        "-keyout", str(private_key), "-out", str(certificate), "-subj", "/CN=127.0.0.1",
+                        "-addext", "subjectAltName=IP:127.0.0.1"], check=True,
+                       stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        server = HTTPServer(("127.0.0.1", 0), BrowserWhepHandler)
+        context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER); context.load_cert_chain(certificate, private_key)
+        server.socket = context.wrap_socket(server.socket, server_side=True)
+        thread = threading.Thread(target=server.serve_forever, daemon=True); thread.start()
+        try:
+            endpoint = f"https://127.0.0.1:{server.server_address[1]}/whep"
+            submitted = registry.validate_camera({
+                "id": "browser-fixture", "name": "Browser fixture", "address": endpoint,
+                "adapter": "whep", "credentialsRef": "", "profiles": [{
+                    "id": "main", "name": "Main", "role": "main", "endpoint": endpoint,
+                    "videoCodec": "h264", "audioCodec": "opus", "width": 640,
+                    "height": 360, "fps": 15,
+                }], "capabilities": {"browserDirect": {"profiles": {
+                    "main": {"tlsVerified": True, "corsVerified": True}}}},
+            })
+            self.assertNotIn("browserDirect", submitted["capabilities"])
+            registry.save_camera(submitted, False)
+            registry.TLS_CONTEXT = ssl.create_default_context(cafile=str(certificate))
+            with patch.dict(os.environ, {
+                    "WEBOBS_PWA_PUBLIC_ORIGIN": BrowserWhepHandler.allowed_origin,
+                    "WEBOBS_CAMERA_ALLOW_TEST_ENDPOINTS": "true",
+                    "WEBOBS_BROWSER_PROBE_ALLOW_LOOPBACK": "true",
+            }):
+                qualified = registry.browser_direct_probe("browser-fixture", "main")
+            self.assertTrue(qualified["eligible"])
+            with registry.connect() as database:
+                proof = json.loads(database.execute(
+                    "SELECT capabilities_json FROM cameras WHERE id='browser-fixture'").fetchone()[0])[
+                        "browserDirect"]["profiles"]["main"]
+            self.assertTrue(proof["tlsVerified"] and proof["corsVerified"])
+            self.assertEqual(proof["pwaOriginSha256"], hashlib.sha256(
+                BrowserWhepHandler.allowed_origin.encode()).hexdigest())
+
+            replacement = registry.validate_camera({
+                **submitted, "capabilities": {"browserDirect": {"profiles": {
+                    "main": {"tlsVerified": False, "corsVerified": False}}}},
+            }, "browser-fixture")
+            persisted = registry.save_camera(replacement, True)
+            self.assertTrue(persisted["capabilities"]["browserDirect"]["profiles"]["main"]["tlsVerified"])
+        finally:
+            server.shutdown(); server.server_close(); thread.join(timeout=2)
 
     def test_canon_wvhttp_server_push_mjpeg_detection_without_head(self) -> None:
         server = HTTPServer(("127.0.0.1", 0), ServerPushMjpegHandler)
