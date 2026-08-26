@@ -1,0 +1,13 @@
+{
+  "manifest_version": 1,
+  "name": "WebOBS RTSP Lab",
+  "version": "0.0.1",
+  "id": "https://iwa-lab.webobs.invalid/",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "permissions_policy": {
+    "cross-origin-isolated": ["self"],
+    "direct-sockets": ["self"]
+  }
+}
