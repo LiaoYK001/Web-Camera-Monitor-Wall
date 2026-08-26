@@ -413,7 +413,7 @@ class CameraRegistryTests(unittest.TestCase):
             }):
                 qualified = registry.browser_direct_probe("hls-cookie-fixture", "main")
             self.assertTrue(qualified["eligible"])
-            self.assertEqual(qualified["fallbackReason"], "")
+            self.assertEqual(qualified["reason"], "")
         finally:
             server.shutdown(); server.server_close(); thread.join(timeout=2)
 
