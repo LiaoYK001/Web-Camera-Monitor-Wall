@@ -12,6 +12,7 @@ test('installs a local-first app shell without caching private routes', async ({
       void registration.update();
     });
   });
+  await page.reload({ waitUntil: 'domcontentloaded' });
   await page.evaluate(async () => {
     for (const path of ['/api/private-gate', '/recordings/private.mp4', '/api/v1/program/whep'])
       await fetch(path, { cache: 'no-store' });
