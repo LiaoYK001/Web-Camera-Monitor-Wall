@@ -24,6 +24,7 @@ import time
 import uuid
 import xml.etree.ElementTree as ET
 from datetime import datetime, timezone
+from http.cookiejar import CookieJar
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.error import HTTPError, URLError
@@ -31,7 +32,7 @@ from urllib.parse import parse_qs, urljoin, urlsplit
 from urllib.parse import quote, urlunsplit
 from urllib.request import (
     HTTPBasicAuthHandler, HTTPDigestAuthHandler, HTTPPasswordMgrWithDefaultRealm,
-    HTTPSHandler, HTTPRedirectHandler, Request, build_opener, urlopen,
+    HTTPSHandler, HTTPCookieProcessor, HTTPRedirectHandler, Request, build_opener, urlopen,
 )
 from xml.sax.saxutils import escape
 
@@ -40,7 +41,8 @@ LISTEN = ("127.0.0.1", 8092)
 MAX_BODY = 1024 * 1024
 MAX_ONVIF_XML = 2 * 1024 * 1024
 ONVIF_TIMEOUT_SECONDS = 6
-TLS_CONTEXT = ssl.create_default_context()
+TLS_CONTEXT = ssl.create_default_context(
+    cafile=os.environ.get("WEBOBS_CAMERA_TLS_CA") or None)
 SECRET_ROOT = Path(os.environ.get(
     "WEBOBS_CAMERA_SECRET_ROOT", "/run/secrets/webobs-camera-credentials"))
 ADAPTERS = {
@@ -70,6 +72,20 @@ class BrowserDirectProbeError(RuntimeError):
 class NoRedirect(HTTPRedirectHandler):
     def redirect_request(self, req, fp, code, msg, headers, newurl):
         raise OnvifError("ONVIF endpoint redirects are forbidden")
+
+
+class SameOriginRedirect(HTTPRedirectHandler):
+    """Follow same-origin redirects (e.g. MediaMTX live HLS session redirects)
+    while forbidding any cross-origin hop."""
+
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        if code not in (301, 302, 303, 307, 308):
+            return None
+        old = urlsplit(req.full_url)
+        new = urlsplit(urljoin(req.full_url, newurl))
+        if (old.scheme, old.hostname, old.port) != (new.scheme, new.hostname, new.port):
+            raise OnvifError("cross-origin redirect is forbidden")
+        return super().redirect_request(req, fp, code, msg, headers, newurl)
 
 
 class ClosingConnection(sqlite3.Connection):
@@ -350,7 +366,7 @@ def configured_pwa_origin() -> str:
 
 
 def browser_probe_request(endpoint: str, origin: str, method: str = "GET",
-                          headers: dict[str, str] | None = None):
+                          headers: dict[str, str] | None = None, opener=None):
     try:
         parsed = urlsplit(endpoint)
         addresses = {entry[4][0] for entry in socket.getaddrinfo(
@@ -368,7 +384,7 @@ def browser_probe_request(endpoint: str, origin: str, method: str = "GET",
             raise BrowserDirectProbeError("endpoint_address_forbidden")
     request_headers = {"Origin": origin, "User-Agent": "WebOBS-Browser-Qualification/1"}
     request_headers.update(headers or {})
-    opener = build_opener(NoRedirect(), HTTPSHandler(context=TLS_CONTEXT))
+    opener = opener or build_opener(SameOriginRedirect(), HTTPSHandler(context=TLS_CONTEXT))
     try:
         response = opener.open(Request(endpoint, method=method, headers=request_headers),
                                timeout=ONVIF_TIMEOUT_SECONDS)
@@ -403,9 +419,15 @@ def bounded_http_prefix(response, limit: int) -> bytes:
 
 def qualify_hls(endpoint: str, origin: str) -> None:
     current = endpoint
+    cookies = CookieJar()
+    opener = build_opener(
+        SameOriginRedirect(), HTTPCookieProcessor(cookies), HTTPSHandler(context=TLS_CONTEXT))
     for depth in range(2):
         response = browser_probe_request(
-            current, origin, headers={"Accept": "application/vnd.apple.mpegurl"})
+            current, origin, headers={"Accept": "application/vnd.apple.mpegurl"}, opener=opener)
+        if len(cookies) > 16 or any(len(cookie.name) + len(cookie.value) > 4096 for cookie in cookies):
+            response.close()
+            raise BrowserDirectProbeError("hls_cookie_state_unbounded")
         content_type = response.headers.get_content_type().lower()
         if content_type not in {"application/vnd.apple.mpegurl", "application/x-mpegurl", "audio/mpegurl"}:
             response.close()
@@ -433,7 +455,8 @@ def qualify_hls(endpoint: str, origin: str) -> None:
         if child.path.lower().endswith(".m3u8") and depth == 0:
             current = child_url
             continue
-        segment = browser_probe_request(child_url, origin, headers={"Range": "bytes=0-1023"})
+        segment = browser_probe_request(
+            child_url, origin, headers={"Range": "bytes=0-1023"}, opener=opener)
         if not bounded_http_prefix(segment, 1024):
             raise BrowserDirectProbeError("hls_segment_empty")
         return

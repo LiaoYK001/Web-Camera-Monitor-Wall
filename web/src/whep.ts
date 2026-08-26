@@ -39,13 +39,15 @@ const validEndpoint = (value: string): URL | null => {
   return null;
 };
 
-const validSessionLocation = (value: string | null, endpoint: URL): string | null => {
+export const validSessionLocation = (value: string | null, endpoint: URL): string | null => {
   if (!value) return null;
   const location = new URL(value, endpoint);
   if (location.origin !== endpoint.origin) return null;
-  const prefix = `${endpoint.pathname.replace(/\/$/, '')}/session/`;
-  if (!location.pathname.startsWith(prefix) || !/^[A-Za-z0-9._~-]{1,128}$/.test(location.pathname.slice(prefix.length)))
-    return null;
+  const prefix = `${endpoint.pathname.replace(/\/$/, '')}/`;
+  if (!location.pathname.startsWith(prefix)) return null;
+  const relative = location.pathname.slice(prefix.length);
+  const sessionId = relative.startsWith('session/') ? relative.slice('session/'.length) : relative;
+  if (!/^[A-Za-z0-9._~-]{1,128}$/.test(sessionId)) return null;
   if (location.search || location.hash) return null;
   return location.href;
 };
@@ -269,10 +271,12 @@ export function connectApprovedWhep(
   const approved = new URL(endpoint);
   const validate: EndpointValidator = (value) => {
     const candidate = new URL(value);
-    if (candidate.href !== approved.href || candidate.protocol !== 'https:' || candidate.username ||
+    const secureTransport = candidate.protocol === 'https:' ||
+      (candidate.protocol === 'http:' && ['127.0.0.1', 'localhost', '::1'].includes(candidate.hostname));
+    if (candidate.href !== approved.href || !secureTransport || candidate.username ||
         candidate.password || candidate.search || candidate.hash || candidate.pathname.length > 1024) return null;
     return candidate;
   };
   return connectWhep(video, async () => endpoint, onState, true, options.onRemoteStream, validate,
-    options.deviceToken ? { 'X-WebObs-Device-Token': options.deviceToken } : {}, options.onAuthorizationRejected);
+    options.deviceToken ? { 'Authorization': `Bearer ${options.deviceToken}` } : {}, options.onAuthorizationRejected);
 }

@@ -1,4 +1,4 @@
-name: Web runtime CI
+name: Web runtime public CI
 
 on:
   pull_request:
@@ -10,7 +10,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: web-runtime-${{ github.ref }}
+  group: web-runtime-public-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
@@ -28,58 +28,17 @@ jobs:
           corepack enable
           corepack prepare pnpm@11.16.0 --activate
           ./tests/run-public-audit.sh
+          python3 ./clients/scripts/verify_dependency_lock.py
+          python3 ./clients/tests/test_release_workflow_policy.py
+          python3 ./clients/tests/test_local_gate_receipts.py
           cd web
           pnpm install --frozen-lockfile
           pnpm typecheck
           pnpm test:iwa
           pnpm build
 
-  fedora-web-gate:
-    if: github.event_name != 'pull_request' && (github.ref_name == 'dev' || github.ref_name == 'main')
-    needs: public-audit
-    runs-on: [self-hosted, linux, x64, webobs-builder]
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with: { persist-credentials: false }
-      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v5.0.0
-        with: { node-version: 24.14.0 }
-      - name: Build and test PWA in pinned Node image
+      - name: Explain private platform gates
         shell: bash
         run: |
-          set -euo pipefail
-          podman build --target web-builder --tag webobs-pwa-gate:${GITHUB_SHA::12} -f docker/Dockerfile .
-          podman run --rm webobs-pwa-gate:${GITHUB_SHA::12} sh -lc 'pnpm typecheck && pnpm test:iwa && pnpm build'
-      - name: Run Fedora Chromium PWA gate
-        shell: bash
-        run: |
-          set -euo pipefail
-          corepack enable
-          corepack prepare pnpm@11.16.0 --activate
-          cd web
-          pnpm install --frozen-lockfile
-          pnpm test:iwa
-          pnpm exec playwright install chromium
-          pnpm build
-          pnpm test:local
-          pnpm exec playwright test --project=chromium
-
-  windows-web-gate:
-    if: github.event_name != 'pull_request' && (github.ref_name == 'dev' || github.ref_name == 'main')
-    needs: public-audit
-    runs-on: [self-hosted, windows, x64, windows-11]
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with: { persist-credentials: false }
-      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v5.0.0
-        with: { node-version: 24.14.0 }
-      - name: Run installed Chrome and Edge gates
-        shell: powershell
-        run: |
-          corepack enable
-          corepack prepare pnpm@11.16.0 --activate
-          Set-Location web
-          pnpm install --frozen-lockfile
-          pnpm build
-          pnpm test:local:chrome
-          pnpm exec playwright test --project=chrome
-          pnpm exec playwright test --project=edge
+          echo "Release media gates intentionally run on the maintainer's local WSL2 Linux and Windows hosts."
+          echo "No untrusted repository code is dispatched to a self-hosted runner."

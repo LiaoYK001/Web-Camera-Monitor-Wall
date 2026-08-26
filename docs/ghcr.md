@@ -113,46 +113,34 @@ GHCR 第一次发布的 package 默认为 private，即使源码仓库是 public
 
 公开 GHCR 镜像允许匿名 `docker pull`。发布者无论 package 是 public 还是 private，都必须认证。
 
-## 3. 使用 GitHub Actions 自动发布
+## 3. GitHub Actions 预审与本地发布
 
-稳定镜像只在可从受保护 `main` 到达的 SemVer Tag 上发布；维护者可对已审查的 `dev` 提交人工 `workflow_dispatch` 生成开发镜像，但不能标为稳定版。不让 PR 或普通提交运行重型产品镜像构建。当前工作流把轻量源码审计留在 GitHub-hosted runner，把完整 OBS/CEF 构建固定到受控的 Fedora x86_64 Self-hosted Runner，并禁止不受信 PR 使用该机器。安装、隔离、标签、缓存与事故响应见 [Self-hosted Runner 指南](self-hosted-runner.md)，版本/分支职责见 [版本、里程碑与分支策略](versioning-and-branches.md)。
+稳定镜像只从受保护 `main` 的已审查提交发布。GitHub-hosted Actions 只做公开源码审计和确定性 Web 构建，不取得 GHCR 写权限，也不接触私有媒体夹具。Linux 平台门禁在维护者本机 WSL2 发行版执行，Windows Chrome/Edge 门禁在宿主机执行；两份脱敏收据必须绑定同一提交且不超过 48 小时。完整流程见 [本机 Windows 与 WSL2 发布门禁](local-platform-gates.md)，版本/分支职责见 [版本、里程碑与分支策略](versioning-and-branches.md)。
 
-仓库已提供 `.github/workflows/release-image.yaml`。它只在 `v*.*` SemVer Tag 或人工 `workflow_dispatch` 触发，并验证 Tag 提交可从 `main` 到达；所有外部 action 均固定到已记录的完整 commit SHA。发布 linux/amd64 镜像时同时生成 BuildKit max provenance、SBOM、GitHub registry attestation，以及完整递归 submodule 对应源码包。下列片段只说明 runner 分工，实际发布以仓库工作流为准。
+仓库的 `.github/workflows/release-image.yaml` 现在只是人工预审：它验证远端 `dev`/`main` 精确 HEAD、公开审计和 PWA 构建，但不会登录 GHCR、构建或推送镜像。本机布局由 Windows Docker Desktop 执行 OCI 构建，并在 Buildx 启动前验证两份本地门禁收据；具备原生 Docker/Buildx 的 Linux 主机仍可使用 `scripts/release-image-local.sh`。
 
 ```yaml
-name: Publish GHCR image
+name: Release preflight audit
 
-on:
-  push:
-    tags:
-      - 'v*.*'
-  workflow_dispatch:
+on: workflow_dispatch
 
-permissions:
-  contents: read
-  packages: write
-  attestations: write
-  id-token: write
+permissions: { contents: read }
 
 jobs:
   audit:
     runs-on: ubuntu-24.04
     # executable-bit and public-source audit only
 
-  release:
-    needs: audit
-    runs-on: [self-hosted, linux, x64, webobs-builder]
-    # recursive checkout, re-audit, local BuildKit cache,
-    # test/build, SBOM, provenance, GHCR push and attestation
+    # no package write permission and no self-hosted execution
 ```
 
 注意事项：
 
 - `submodules: recursive` 不可省略，否则 OBS/obs-browser 来源不完整。
 - 实际工作流已固定完整 commit SHA；升级 action 时必须单独审查 release、变更日志和新 SHA，不能改用浮动主版本。
-- `GITHUB_TOKEN` 只授予 `contents: read`、`packages: write` 和证明所需权限，不需要 PAT。
-- Self-hosted Runner 上只运行可信 Tag/人工发布，不能让未知 Fork PR 执行仓库代码。
-- 本地 BuildKit cache 保留 OBS/CEF 大层，成功后再原子轮换 `-next` 目录。
+- GitHub 预审的 `GITHUB_TOKEN` 只有 `contents: read`；本地 GHCR 登录使用短期输入且不写入仓库。
+- 两台 Self-hosted Runner 保持关闭；未知 Fork 代码不会在维护者机器上自动执行。
+- Windows Docker Desktop 的本地 BuildKit cache 保留 OBS/CEF 大层，成功后再原子轮换 `-next` 目录。
 - 公开仓库的 max provenance 可能包含 build arguments。构建参数只能是公开版本和校验值，绝不能传入摄像头地址或任何 secret。
 - Actions 首次发布通常会自动关联工作流所在仓库。如果同名 package 先由命令行发布且未关联仓库，应先在 package settings 中授予仓库 Actions access。
 - `0.x.y` 阶段不建议自动生成容易误解为稳定大版本的 `0` 标签。

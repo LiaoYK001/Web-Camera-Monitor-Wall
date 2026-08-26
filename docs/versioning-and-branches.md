@@ -37,7 +37,7 @@ Recommended protection:
 建议保护规则：
 
 - Require pull requests, successful public audit/tests and review for `main`; disallow direct pushes except an explicitly governed emergency / `main` 要求 PR、公开审计/测试成功及审查；除受控紧急流程外禁止直推。
-- Require public audit/tests for `dev`; unknown fork code must never execute on the self-hosted runner / `dev` 要求公开审计与测试；未知 Fork 代码不得在 Self-hosted Runner 上执行。
+- Require public audit/tests for `dev`; private platform/media gates run only from a reviewed checkout on the maintainer's WSL2 and Windows hosts / `dev` 要求公开审计与测试；私有平台/媒体门禁只从维护者 WSL2 与 Windows 主机上的已审查检出运行。
 - Restrict release workflow and package write permission to immutable release tags reachable from `main`, or reviewed manual dispatches / 发布工作流与包写权限只允许用于可从 `main` 到达的不可变发布 Tag，或经过审查的手工触发。
 - Delete short-lived feature branches after merge; never place credentials, real camera endpoints, recordings or private acceptance artifacts in any branch / 合并后删除短期功能分支；任何分支都不得包含凭据、真实摄像机端点、录像或私有验收产物。
 

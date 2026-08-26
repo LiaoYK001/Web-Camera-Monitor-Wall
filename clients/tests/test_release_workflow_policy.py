@@ -48,25 +48,30 @@ class NativeReleaseWorkflowPolicyTests(unittest.TestCase):
         self.assertNotIn("promote_latest=true", self.text)
         self.assertIn("    if: needs.audit.outputs.publish_allowed == 'true'", self.text)
 
-    def test_older_queued_release_cannot_replace_latest_or_assets(self) -> None:
-        self.assertIn("scripts/upload-release-assets-immutable.sh", self.image_text)
-        self.assertIn("latest=(--latest=false)", self.image_text)
-        self.assertNotIn("--clobber", self.image_text)
+    def test_github_release_preflight_cannot_publish_packages(self) -> None:
+        self.assertIn("name: Release preflight audit", self.image_text)
+        self.assertNotIn("packages: write", self.image_text)
+        self.assertNotIn("docker/login-action", self.image_text)
+        self.assertNotIn("docker/build-push-action", self.image_text)
+        self.assertNotIn("gh release create", self.image_text)
+        self.assertIn("scripts/release-image-local.sh", self.image_text)
 
-    def test_pwa_gates_use_only_trusted_self_hosted_entry_points(self) -> None:
-        self.assertIn("runs-on: [self-hosted, linux, x64, webobs-builder]", self.web_text)
-        self.assertIn("runs-on: [self-hosted, windows, x64, windows-11]", self.web_text)
-        self.assertIn("if: github.event_name != 'pull_request'", self.web_text)
-        self.assertIn("needs: [audit, pwa-fedora-gate, pwa-windows-gate]", self.image_text)
-        self.assertIn("WEBOBS_FEDORA_PWA_GATE_COMMAND", self.image_text)
-        self.assertIn("WEBOBS_WINDOWS_PWA_GATE_COMMAND", self.image_text)
-        self.assertEqual(self.image_text.count("scripts/run-private-pwa-gate.py"), 2)
-        self.assertGreaterEqual(self.web_text.count("pnpm test:local"), 2)
-        self.assertGreaterEqual(self.image_text.count("pnpm test:local"), 2)
+    def test_pwa_platform_gates_are_local_not_self_hosted(self) -> None:
+        self.assertNotIn("runs-on: [self-hosted", self.web_text)
+        self.assertNotIn("runs-on: [self-hosted", self.image_text)
+        self.assertNotIn("WEBOBS_FEDORA_PWA_GATE_COMMAND", self.image_text)
+        self.assertNotIn("WEBOBS_WINDOWS_PWA_GATE_COMMAND", self.image_text)
+        self.assertIn("local WSL2 Linux and Windows hosts", self.web_text)
+        release_script = (ROOT / "scripts" / "release-image-local.sh").read_text(encoding="utf-8")
+        windows_release_script = (ROOT / "scripts" / "release-image-local.ps1").read_text(encoding="utf-8")
+        gate_script = (ROOT / "scripts" / "run-private-pwa-gate.py").read_text(encoding="utf-8")
+        self.assertIn("verify-local-gate-receipts.py", release_script)
+        self.assertIn("verify-local-gate-receipts.py", windows_release_script)
+        self.assertIn('"linux-wsl2-chromium"', gate_script)
+        self.assertIn('"windows"', gate_script)
         self.assertIn('[[ "$REF_TYPE" == branch && ("$REF_NAME" == dev || "$REF_NAME" == main) ]]',
                       self.image_text)
-        self.assertIn('[[ "$(git rev-parse "origin/$REF_NAME")" == "$GITHUB_SHA" ]]',
-                      self.image_text)
+        self.assertIn('[[ "$remote_sha" == "$GITHUB_SHA" ]]', self.image_text)
 
     def test_candidate_windows_packages_cannot_skip_authenticode(self) -> None:
         self.assertIn("if ($env:CERTIFICATE_SHA1 -notmatch '^[0-9A-Fa-f]{40}$')", self.text)

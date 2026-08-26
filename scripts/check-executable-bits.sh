@@ -9,6 +9,8 @@ scripts/benchmark-video-pipelines.sh
 scripts/create-source-bundle.sh
 scripts/release-image-local.sh
 scripts/run-private-pwa-gate.py
+scripts/verify-local-gate-receipts.py
+scripts/test-web-runtime-wsl2.sh
 scripts/upload-release-assets-immutable.sh
 scripts/verify-source-bundle.sh
 clients/packaging/finalize-artifacts.sh

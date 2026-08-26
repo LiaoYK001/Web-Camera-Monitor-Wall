@@ -1,5 +1,7 @@
 import { defineConfig, devices } from '@playwright/test';
 
+const chromiumExecutable = process.env.WEBOBS_PLAYWRIGHT_CHROMIUM_EXECUTABLE;
+
 export default defineConfig({
   testDir: './tests',
   testIgnore: ['local-runtime/**'],
@@ -15,7 +17,10 @@ export default defineConfig({
     url: 'http://127.0.0.1:4173/', reuseExistingServer: !process.env.CI,
   },
   projects: [
-    { name: 'chromium', use: { ...devices['Desktop Chrome'] } },
+    { name: 'chromium', use: {
+      ...devices['Desktop Chrome'],
+      launchOptions: chromiumExecutable ? { executablePath: chromiumExecutable } : undefined,
+    } },
     { name: 'chrome', use: { ...devices['Desktop Chrome'], channel: 'chrome' } },
     { name: 'edge', use: { ...devices['Desktop Edge'], channel: 'msedge' } },
   ],

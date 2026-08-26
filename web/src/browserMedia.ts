@@ -1,5 +1,5 @@
 import Hls from 'hls.js';
-import { browserDeviceHeaders } from './browserEnrollment';
+import { browserDeviceHeaders, browserDeviceToken } from './browserEnrollment';
 import { clearPrivateRuntimeState, loadBrowserIdentity, type BrowserGrantProfile } from './localRuntime';
 import { connectApprovedWhep, type ProgramConnection, type ProgramConnectionState } from './whep';
 
@@ -97,6 +97,7 @@ export async function requestBrowserPlan(
 export async function activateGateway(planId: string): Promise<{ endpoint: string; deviceToken: string }> {
   if (!/^[0-9a-f]{32}$/.test(planId)) throw new Error('媒体计划 ID 无效');
   const headers = await browserDeviceHeaders();
+  const deviceToken = await browserDeviceToken();
   let response: Response;
   try {
     response = await fetch(`/api/v2/media-plans/${planId}/activate`, {
@@ -115,7 +116,19 @@ export async function activateGateway(planId: string): Promise<{ endpoint: strin
   if (endpoint.origin !== window.location.origin || endpoint.search || endpoint.hash ||
       endpoint.pathname !== `/api/v2/media-plans/${planId}/whep`)
     throw new BrowserPlanError('rejected', 'Gateway 返回了越界媒体端点');
-  return { endpoint: endpoint.href, deviceToken: headers['X-WebObs-Device-Token'] };
+  return { endpoint: endpoint.href, deviceToken };
+}
+
+export function validateHlsChildUrl(requestUrl: string, baseUrl: URL): void {
+  const mediaUrl = new URL(requestUrl, baseUrl);
+  if (mediaUrl.protocol !== 'https:' || mediaUrl.origin !== baseUrl.origin ||
+      mediaUrl.username || mediaUrl.password || mediaUrl.hash)
+    throw new Error('HLS child resource escaped the approved HTTPS origin');
+}
+
+export function hlsXhrSetup(xhr: XMLHttpRequest, requestUrl: string, baseUrl: URL): void {
+  validateHlsChildUrl(requestUrl, baseUrl);
+  xhr.withCredentials = false;
 }
 
 export function connectHls(
@@ -126,18 +139,12 @@ export function connectHls(
     throw new Error('HLS endpoint is not approved');
   let hls: Hls | undefined;
   let closed = false;
-  const timeout = window.setTimeout(() => { if (!closed) onState('offline'); }, 3000);
+  const timeout = window.setTimeout(() => { if (!closed) onState('offline'); }, 20_000);
   onState('connecting');
   if (Hls.isSupported()) {
     hls = new Hls({
       enableWorker: true, lowLatencyMode: true, maxBufferLength: 12, maxMaxBufferLength: 20,
-      xhrSetup(xhr, requestUrl) {
-        const mediaUrl = new URL(requestUrl, url);
-        if (mediaUrl.protocol !== 'https:' || mediaUrl.origin !== url.origin ||
-            mediaUrl.username || mediaUrl.password || mediaUrl.hash)
-          throw new Error('HLS child resource escaped the approved HTTPS origin');
-        xhr.withCredentials = false;
-      },
+      xhrSetup(xhr, requestUrl) { hlsXhrSetup(xhr, requestUrl, url); },
     });
     hls.on(Hls.Events.MANIFEST_PARSED, () => void video.play().catch(() => undefined));
     hls.on(Hls.Events.ERROR, (_event, data) => { if (data.fatal && !closed) onState('offline'); });
@@ -157,7 +164,7 @@ export function connectMjpeg(
   if (url.protocol !== 'https:' || url.username || url.password || url.search || url.hash)
     throw new Error('MJPEG endpoint is not approved');
   let closed = false;
-  const timeout = window.setTimeout(() => { if (!closed) onState('offline'); }, 3000);
+  const timeout = window.setTimeout(() => { if (!closed) onState('offline'); }, 20_000);
   const live = () => { window.clearTimeout(timeout); onState('live'); };
   const failed = () => { window.clearTimeout(timeout); onState('offline'); };
   image.addEventListener('load', live); image.addEventListener('error', failed);

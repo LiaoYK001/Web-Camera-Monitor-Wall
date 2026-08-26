@@ -59,10 +59,11 @@ Only one live chain may exist for a tile. A failed direct attempt is closed befo
 
 ## CI and release / CI 与发布
 
-- Fork PR: GitHub-hosted audit, dependency install, typecheck and deterministic PWA build only; no secrets and no self-hosted execution / Fork PR 只在 GitHub-hosted Runner 执行审计、依赖安装、类型检查和确定性 PWA 构建；无 Secret，也不进入 Self-hosted Runner。
-- `fedora-linux-1`: PWA build, Service Worker/Chromium gate, Docker integration and final OCI publication / `fedora-linux-1`：PWA 构建、Service Worker/Chromium 门禁、Docker 集成和最终 OCI 发布。
-- `win11-bedroom-1`: installed Chrome/Edge offline, update and compatibility gates / `win11-bedroom-1`：已安装 Chrome/Edge 的离线、升级及兼容门禁。
-- A v2 tag cannot enter the image publication job until both browser gates pass. Native-client workflow has no v2 tag trigger / 两个浏览器门禁全部通过前，v2 Tag 不能进入镜像发布 Job；原生客户端工作流没有 v2 Tag 触发器。
+- Fork PR and protected branches: GitHub-hosted audit, dependency install, typecheck and deterministic PWA build only; no secrets and no private media fixtures / Fork PR 与受保护分支只在 GitHub-hosted Runner 执行审计、依赖安装、类型检查和确定性 PWA 构建；无 Secret，也不接触私有媒体夹具。
+- Local WSL2 Linux: Linux shell, Chromium and Linux media acceptance; Windows Docker Desktop owns container builds / 本机 WSL2 Linux：Linux shell、Chromium 与 Linux 媒体验收；容器构建由 Windows Docker Desktop 负责。
+- Local Windows: installed Chrome/Edge, offline/update compatibility and long-run acceptance / 本机 Windows：已安装 Chrome/Edge、离线/升级兼容与长稳验收。
+- OCI publication is local-only and requires fresh revision-bound receipts from both hosts / OCI 仅允许本地发布，并要求同一提交的两份新鲜门禁收据。
+- A v2 tag cannot be created until both local browser gates pass. Native-client workflow has no v2 tag trigger / 两个本机浏览器门禁全部通过前不得创建 v2 Tag；原生客户端工作流没有 v2 Tag 触发器。
 
 The Chromium IWA RTSP/TCP worker is an experiment limited to an unauthenticated synthetic H.264 fixture and exact Grant host/port. It is neither cached into the production PWA nor released as `.swbn`, and its failure never lowers the v2.0 stable gate.
 

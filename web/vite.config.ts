@@ -1,7 +1,13 @@
+/// <reference types="node" />
+import { readFileSync } from 'node:fs';
 import { defineConfig } from 'vite';
 import react from '@vitejs/plugin-react';
 import { VitePWA } from 'vite-plugin-pwa';
 import packageJson from './package.json' with { type: 'json' };
+
+const httpsOptions = process.env.WEBOBS_VITE_HTTPS_CERT && process.env.WEBOBS_VITE_HTTPS_KEY
+  ? { cert: readFileSync(process.env.WEBOBS_VITE_HTTPS_CERT), key: readFileSync(process.env.WEBOBS_VITE_HTTPS_KEY) }
+  : undefined;
 
 export default defineConfig({
   define: {
@@ -40,11 +46,13 @@ export default defineConfig({
   ],
   server: {
     host: '127.0.0.1',
+    https: httpsOptions,
     proxy: {
       '/api': {
-        target: 'http://127.0.0.1:8080',
+        target: process.env.WEBOBS_API_PROXY_TARGET ?? 'http://127.0.0.1:8080',
         ws: true,
         changeOrigin: false,
+        secure: false,
       },
     },
   },

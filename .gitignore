@@ -35,3 +35,6 @@ __pycache__/
 /tests/artifacts/*
 !/tests/artifacts/.gitkeep
 /tests/.v2-direct-*/
+/gate/
+/.vite/
+/test-results/

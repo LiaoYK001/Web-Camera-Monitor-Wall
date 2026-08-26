@@ -238,6 +238,46 @@ class BrowserWhepHandler(BaseHTTPRequestHandler):
         self.end_headers()
 
 
+class BrowserHlsCookieHandler(BaseHTTPRequestHandler):
+    allowed_origin = BrowserWhepHandler.allowed_origin
+
+    def log_message(self, format: str, *args: object) -> None:
+        return
+
+    def response(self, status: int, content_type: str, body: bytes,
+                 *, set_cookie: bool = False) -> None:
+        self.send_response(status)
+        self.send_header("Access-Control-Allow-Origin", self.allowed_origin)
+        self.send_header("Content-Type", content_type)
+        self.send_header("Content-Length", str(len(body)))
+        if set_cookie:
+            self.send_header(
+                "Set-Cookie", "hlsSession=fixture; Path=/; Secure; SameSite=None")
+        self.end_headers()
+        self.wfile.write(body)
+
+    def do_GET(self) -> None:
+        if self.headers.get("Origin") != self.allowed_origin:
+            self.response(403, "text/plain", b"")
+            return
+        if self.path == "/master.m3u8":
+            self.response(200, "application/vnd.apple.mpegurl",
+                          b"#EXTM3U\nmedia.m3u8\n", set_cookie=True)
+            return
+        if self.headers.get("Cookie") != "hlsSession=fixture":
+            self.response(401, "text/plain", b"")
+            return
+        if self.path == "/media.m3u8":
+            self.response(200, "application/vnd.apple.mpegurl",
+                          b"#EXTM3U\n#EXTINF:1,\nsegment.ts\n")
+            return
+        if self.path == "/segment.ts":
+            self.response(206 if self.headers.get("Range") else 200,
+                          "video/mp2t", b"bounded-fixture-segment")
+            return
+        self.response(404, "text/plain", b"")
+
+
 class CameraRegistryTests(unittest.TestCase):
     def setUp(self) -> None:
         self.temporary = tempfile.TemporaryDirectory(prefix="webobs-camera-tests-")
@@ -335,6 +375,45 @@ class CameraRegistryTests(unittest.TestCase):
             }, "browser-fixture")
             persisted = registry.save_camera(replacement, True)
             self.assertTrue(persisted["capabilities"]["browserDirect"]["profiles"]["main"]["tlsVerified"])
+        finally:
+            server.shutdown(); server.server_close(); thread.join(timeout=2)
+
+    def test_hls_direct_probe_preserves_bounded_session_cookie(self) -> None:
+        openssl = shutil.which("openssl")
+        if not openssl: self.skipTest("OpenSSL CLI is required for the TLS fixture")
+        certificate = Path(self.temporary.name) / "hls-fixture.crt"
+        private_key = Path(self.temporary.name) / "hls-fixture.key"
+        subprocess.run([openssl, "req", "-x509", "-newkey", "rsa:2048", "-nodes", "-days", "1",
+                        "-keyout", str(private_key), "-out", str(certificate), "-subj", "/CN=127.0.0.1",
+                        "-addext", "subjectAltName=IP:127.0.0.1"], check=True,
+                       stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        server = HTTPServer(("127.0.0.1", 0), BrowserHlsCookieHandler)
+        context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+        context.load_cert_chain(certificate, private_key)
+        server.socket = context.wrap_socket(server.socket, server_side=True)
+        thread = threading.Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+        try:
+            endpoint = f"https://127.0.0.1:{server.server_address[1]}/master.m3u8"
+            camera = registry.validate_camera({
+                "id": "hls-cookie-fixture", "name": "HLS cookie fixture",
+                "address": endpoint, "adapter": "hls", "credentialsRef": "",
+                "profiles": [{
+                    "id": "main", "name": "Main", "role": "main", "endpoint": endpoint,
+                    "videoCodec": "h264", "audioCodec": "aac", "width": 640,
+                    "height": 360, "fps": 15,
+                }],
+            })
+            registry.save_camera(camera, False)
+            registry.TLS_CONTEXT = ssl.create_default_context(cafile=str(certificate))
+            with patch.dict(os.environ, {
+                    "WEBOBS_PWA_PUBLIC_ORIGIN": BrowserHlsCookieHandler.allowed_origin,
+                    "WEBOBS_CAMERA_ALLOW_TEST_ENDPOINTS": "true",
+                    "WEBOBS_BROWSER_PROBE_ALLOW_LOOPBACK": "true",
+            }):
+                qualified = registry.browser_direct_probe("hls-cookie-fixture", "main")
+            self.assertTrue(qualified["eligible"])
+            self.assertEqual(qualified["fallbackReason"], "")
         finally:
             server.shutdown(); server.server_close(); thread.join(timeout=2)
 

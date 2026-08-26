@@ -1,8 +1,8 @@
-# Fedora Self-hosted Runner 与 GHCR 发布
+# 已停用的 Self-hosted Runner 参考 / Retired self-hosted runner reference
 
-> v2.0 PWA 转向：`fedora-linux-1`（`self-hosted,linux,x64,webobs-builder`）现负责 Web 构建、Service Worker/Chromium、Docker 集成与 GHCR 发布；`win11-bedroom-1`（`self-hosted,windows,x64,windows-11`）负责已安装 Chrome/Edge 的离线、升级与兼容门禁。不需要 Android/macOS Runner。本文后部旧原生客户端内容只供显式确认且不发布的冻结候选工作流参考，不属于 v2.0 配置要求。
+> 自 2026-08-26 起，两台 GitHub self-hosted Runner 保持关闭，不属于 v2.0 活跃发布链。Linux 验收改在维护者本机 WSL2 发行版运行，Windows 验收在宿主机运行；当前流程见 [本机 Windows 与 WSL2 发布门禁](local-platform-gates.md)。本文余下内容只作为历史配置与安全撤销参考。
 
-本指南用于把 OBS/CEF 完整镜像构建放到维护者控制的 Fedora x86_64 主机。仓库的轻量公开源码审计仍运行在 GitHub-hosted runner；只有可从受保护 `main` 到达的受信 SemVer Tag，或维护者审查后手动触发的 release job，会进入标签为 `webobs-builder` 的 Self-hosted Runner。`dev` 的职责和发布边界见 [版本、里程碑与分支策略](versioning-and-branches.md)。
+以下内容记录旧 Fedora x86_64 构建机方案，不应按其重新启用 Runner，除非未来另行审查并更新威胁模型。仓库当前只让 GitHub-hosted Runner 执行公开、无 Secret 的轻量审计；私有门禁和发布在本机交互执行。
 
 ## 安全边界
 
@@ -186,29 +186,8 @@ GStreamer core/base/good/bad/ugly/libav、固定 Rust 插件源码包及 Windows
 
 Android Runner 还需要 JDK 21、Android platform/build-tools 36.0.0、NDK r27c、Qt 6.11.2 Android arm64 工具链、GStreamer 1.28.6 universal bundle、从固定源码构建的 libsodium 1.0.22，以及通过 USB ADB 独占连接的一台 API 29+ `arm64-v8a` 专用参考设备。设备必须在开始时未安装 `org.webobs.nativeclient` 及其验收驱动、未设置会阻止自动唤醒的锁屏 PIN，并连接到允许九路实验室 Camera 且可由 `adb shell svc wifi` 恢复的隔离 Wi-Fi；Wi-Fi ADB 或无线调试序列号会被拒绝，避免断网门禁切断控制通道。`WEBOBS_ANDROID_VPN_CONNECT_HELPER` 与 `WEBOBS_ANDROID_VPN_DISCONNECT_HELPER` 指向工作树外两个可执行、无输出的 Runner 私有文件；工作流只以 ADB serial 作为唯一参数调用它们，前者必须在返回前建立用户自管 VPN，后者必须恢复 Wi-Fi 路径。VPN 配置、证书和口令只由这些私有 helper 管理，禁止进入仓库、命令行或输出。`WEBOBS_ANDROID_GRANT_CAMERA_ID`/`PROFILE_ID` 指向两个控制实例中相同的只读实验室 Profile；常规 `WEBOBS_REFERENCE_CONTROL_URL` 用于在线撤销，独立的 `WEBOBS_ANDROID_EXPIRY_CONTROL_URL` 必须以 `WEBOBS_V2_ACCEPTANCE_SHORT_GRANT=true`、`WEBOBS_V2_GRANT_SECONDS=45` 启动。短 Grant 仅在显式验收模式下生效，正常部署始终固定 30 天。两个远程控制地址都必须使用 HTTPS 和同一组 Runner Secret 中的管理员认证。发布密钥路径放 Runner 变量，Alias 与口令放 GitHub Secret；工作流不输出口令。九路私有清单不得包含明文用户名密码，只使用隔离实验室端点。脚本自动验证旋转、五秒断网与十秒内九路重连、真实 `vpn → wifi` 状态及九路连续播放、HOME 五秒内释放与十秒内前台恢复、锁屏资源释放、Android Keystore 配对、在线撤销十秒停播、短 Grant 本地到期停播、Wake Lock 及麦克风拒绝/授权，并在成功或失败后断开 VPN、恢复旋转/Wi-Fi、清除授权身份、卸载两个 APK 和删除远端清单。工作流生成的同证书 acceptance-driver APK 和 `0600` 实机证据只存在于 `RUNNER_TEMP`，不会作为 Artifact 上传。整套实机门禁未真实通过前，v2-M3 不得标记完成。
 
-这些原生 M1～M3 说明不再定义 v2.0 的发布顺序。当前唯一稳定产物、两台 Web Runner 的职责以及私有媒体验收契约以本页下一节和 [Local-first PWA](local-first-pwa.md) 为准。
+这些原生 M1～M3 说明不再定义 v2.0 的发布顺序，也不得据此开启旧 Runner。
 
-## 8. v2.0 私有 PWA 媒体门禁
+## 8. 当前替代流程
 
-普通 `dev/main` Push 只执行仓库内的合成与浏览器门禁。正式 SemVer Tag 额外要求两台 Runner 各自提供一个工作区外的私有验收程序；程序路径分别配置为仓库 Actions Variable：
-
-```text
-WEBOBS_FEDORA_PWA_GATE_COMMAND
-WEBOBS_WINDOWS_PWA_GATE_COMMAND
-```
-
-Fedora 路径必须是可执行文件，Windows 路径可以是 `.exe`、`.cmd` 或 `.ps1`。验收程序从环境变量 `WEBOBS_PRIVATE_GATE_PLATFORM` 得到平台，并把结果写到 `WEBOBS_PRIVATE_GATE_RESULT` 指定的临时文件。它不得向 stdout/stderr 输出端点、凭据、抓包、设备名称或浏览器存储；仓库包装器会把全部子进程输出留在 Runner 临时目录，限制为 1 MiB，结束后删除，不上传 Artifact。
-
-结果只能是固定字段的 JSON。Fedora Chromium 必须确认 WHEP/HLS/MJPEG 真直连、RTSP 不误报、Gateway 回退、撤销停播与零服务端媒体增量；Windows 必须确认 Chrome 16 路 30 分钟/掉帧/内存/后台释放，以及 Edge 安装、离线、升级、三协议和四路十分钟。精确字段以 [run-private-pwa-gate.py](../scripts/run-private-pwa-gate.py) 的 `REQUIRED_CHECKS` 为准。示例结构：
-
-```json
-{
-  "contract": "webobs-private-pwa-gate-v1",
-  "platform": "fedora-chromium",
-  "checks": {
-    "whepDirect": true
-  }
-}
-```
-
-示例故意省略其余必填检查，不能直接作为通过结果。真实脚本、配置、证书、端点及证据必须只保留在隔离 Runner 上，不进入 GitHub Variables、Actions Artifact 或仓库。
+当前 v2.0 PWA 私有门禁不使用 GitHub Runner 或 Actions Variable。请在本机 Windows 与 WSL2 分别运行仓库提供的入口，并由 `scripts/run-private-pwa-gate.py` 写出绑定当前 Git revision 的脱敏收据。完整字段、48 小时有效期、发布前双收据验证和私有夹具边界见 [本机 Windows 与 WSL2 发布门禁](local-platform-gates.md)。

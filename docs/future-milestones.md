@@ -242,7 +242,7 @@ v2.2：v2-M6 扩展
 
 **Scope / 范围：** approved absolute HTTPS WHEP, hls.js HLS and restricted Server Push MJPEG; three-second first-frame proof; single-chain Gateway/Hybrid activation for ordinary RTSP or failed direct paths; explicit topology diagnostics. Chromium IWA H.264 RTSP/TCP remains a non-release experiment / 获批的绝对 HTTPS WHEP、hls.js HLS 与受限 Server Push MJPEG；三秒首帧证明；普通 RTSP 或直连失败时只激活一条 Gateway/Hybrid 链；明确的拓扑诊断。Chromium IWA H.264 RTSP/TCP 保持非发布实验。
 
-**Exit gate / 完成门禁：** synthetic WHEP/HLS/MJPEG are Camera→Browser with zero corresponding Docker reader/encoder load; ordinary PWA RTSP always reports Gateway/Hybrid; Windows Chrome passes the 16-stream thirty-minute gate, Edge the four-stream compatibility gate, and Fedora Chromium the protocol/fallback/container regression gate / 合成 WHEP/HLS/MJPEG 均为 Camera→Browser 且 Docker 无对应 reader/encoder 负载；普通 PWA RTSP 始终报告 Gateway/Hybrid；Windows Chrome 通过 16 路三十分钟门禁，Edge 通过四路兼容门禁，Fedora Chromium 通过协议、回退与容器回归门禁。
+**Exit gate / 完成门禁：** synthetic WHEP/HLS/MJPEG are Camera→Browser with zero corresponding Docker reader/encoder load; ordinary PWA RTSP always reports Gateway/Hybrid; Windows Chrome passes the 16-stream thirty-minute gate, Edge the four-stream compatibility gate, and local WSL2 Chromium the protocol/fallback/container regression gate / 合成 WHEP/HLS/MJPEG 均为 Camera→Browser 且 Docker 无对应 reader/encoder 负载；普通 PWA RTSP 始终报告 Gateway/Hybrid；Windows Chrome 通过 16 路三十分钟门禁，Edge 通过四路兼容门禁，本机 WSL2 Chromium 通过协议、回退与容器回归门禁。
 
 ### v2-M4 — Offline Authorization & Sync / 离线授权与同步
 

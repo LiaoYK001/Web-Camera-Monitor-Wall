@@ -18,6 +18,7 @@ git diff --quiet --ignore-submodules=none
 git diff --cached --quiet --ignore-submodules=none
 ./scripts/check-executable-bits.sh
 ./tests/run-public-audit.sh
+python3 ./scripts/verify-local-gate-receipts.py
 
 revision="$(git rev-parse HEAD)"
 short_revision="$(git rev-parse --short=12 HEAD)"

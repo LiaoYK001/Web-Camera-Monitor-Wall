@@ -68,9 +68,10 @@ function decodeCbor(input: Uint8Array): unknown {
       throw new Error('Grant CBOR simple value is unsupported');
     }
     const length = readLength(additional);
+    if (major === 0) return length;
+    if (major === 1) return -1 - length;
     if (length > 1024 * 1024 || ((major === 4 || major === 5) && length > 256))
       throw new Error('Grant CBOR collection is too large');
-    if (major === 0) return length;
     if ((major === 2 || major === 3) && offset + length <= input.length) {
       const value = input.slice(offset, offset + length); offset += length;
       return major === 2 ? value : new TextDecoder('utf-8', { fatal: true }).decode(value);
@@ -230,7 +231,7 @@ export async function completeBrowserEnrollment(): Promise<BrowserPairingState |
   if (!identity) return null;
   const response = await fetch(`/api/v2/enrollments/${identity.enrollmentId}/complete`, {
     method: 'POST', cache: 'no-store', credentials: 'same-origin',
-    headers: { 'X-WebObs-Device-Token': identity.deviceToken },
+    headers: { 'Authorization': `WebObs-Device ${identity.deviceToken}` },
   });
   if (response.status === 202) return {
     enrollmentId: identity.enrollmentId, pairingCode: identity.pairingCode ?? '', expiresAt: identity.expiresAt, state: 'pending',
@@ -251,7 +252,13 @@ export async function completeBrowserEnrollment(): Promise<BrowserPairingState |
 export async function browserDeviceHeaders(): Promise<Record<string, string>> {
   const identity = await loadBrowserIdentity();
   if (!identity?.clientId) throw new Error('此浏览器尚未完成配对');
-  return { 'X-WebObs-Device-Token': identity.deviceToken };
+  return { 'Authorization': `WebObs-Device ${identity.deviceToken}` };
+}
+
+export async function browserDeviceToken(): Promise<string> {
+  const identity = await loadBrowserIdentity();
+  if (!identity?.clientId) throw new Error('此浏览器尚未完成配对');
+  return identity.deviceToken;
 }
 
 export async function currentBrowserPairing(): Promise<BrowserPairingState | null> {
@@ -270,7 +277,7 @@ export async function refreshBrowserAuthorization(): Promise<number | null> {
   const revision = identity.grantPayload?.revision ?? 0;
   const response = await fetch(`/api/v2/client/bootstrap?sinceRevision=${revision}`, {
     cache: 'no-store', credentials: 'same-origin',
-    headers: { 'X-WebObs-Device-Token': identity.deviceToken },
+    headers: { 'Authorization': `WebObs-Device ${identity.deviceToken}` },
   });
   if (response.status === 401 || response.status === 403) {
     await clearPrivateRuntimeState();

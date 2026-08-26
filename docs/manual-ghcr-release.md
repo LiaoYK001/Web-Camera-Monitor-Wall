@@ -16,6 +16,7 @@ ghcr.io/liaoyk001/web-camera-monitor-wall:<version-or-digest>
 4. Docker/Buildx 必须能构建 `linux/amd64`，建议预留至少 8 GB 内存和 20 GB 空间。
 5. GHCR 登录使用 personal access token (classic)，至少授予 `write:packages`；私有依赖才需要额外 `repo`。组织启用 SSO 时还要为 token 授权 SSO。
 6. token 只通过标准输入交给 `docker login`，不要写入 `.env`、Compose、脚本参数、Dockerfile、Build Argument 或 shell history。
+7. 对本项目官方 v2 镜像，必须先按 [本机 Windows 与 WSL2 发布门禁](local-platform-gates.md) 生成同一提交的两份 48 小时内收据；`scripts/release-image-local.sh` 会 fail-closed 验证。Fork 维护者可保留自己的等价私有门禁，但不能把端点、凭据或原始证据提交到公开仓库。
 
 每次发布先同步源码：
 

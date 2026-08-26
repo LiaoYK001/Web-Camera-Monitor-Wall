@@ -1,266 +1,57 @@
-name: Release image
+name: Release preflight audit
 
 on:
-  push:
-    tags:
-      - "v*.*"
   workflow_dispatch:
 
 permissions:
   contents: read
 
 concurrency:
-  group: release-image-global
+  group: release-preflight-global
   cancel-in-progress: false
 
 jobs:
   audit:
     runs-on: ubuntu-24.04
     steps:
-      - name: Check out source for lightweight audit
+      - name: Check out reviewed source
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           submodules: recursive
           fetch-depth: 0
           persist-credentials: false
-      - name: Verify executable modes before running repository scripts
-        shell: bash
-        run: bash ./scripts/check-executable-bits.sh
-      - name: Audit public source and dependency pins
-        shell: bash
-        run: |
-          ./tests/run-public-audit.sh
-          python3 ./clients/scripts/verify_dependency_lock.py
-      - name: Reject untrusted release entry points before self-hosted jobs
+
+      - name: Require the exact remote dev or main tip
         shell: bash
         env:
-          EVENT_NAME: ${{ github.event_name }}
           REF_TYPE: ${{ github.ref_type }}
           REF_NAME: ${{ github.ref_name }}
         run: |
           set -euo pipefail
-          case "$EVENT_NAME" in
-            push)
-              [[ "$REF_TYPE" == tag ]]
-              [[ "$REF_NAME" =~ ^v[0-9]+\.[0-9]+(\.[0-9]+)?$ ]]
-              git fetch --no-tags origin main
-              git merge-base --is-ancestor "$GITHUB_SHA" origin/main
-              ;;
-            workflow_dispatch)
-              [[ "$REF_TYPE" == branch && ("$REF_NAME" == dev || "$REF_NAME" == main) ]]
-              git fetch --no-tags origin "$REF_NAME"
-              [[ "$(git rev-parse "origin/$REF_NAME")" == "$GITHUB_SHA" ]]
-              ;;
-            *) exit 1 ;;
-          esac
+          [[ "$REF_TYPE" == branch && ("$REF_NAME" == dev || "$REF_NAME" == main) ]]
+          git fetch --no-tags origin "$REF_NAME"
+          remote_sha="$(git rev-parse "origin/$REF_NAME")"
+          [[ "$remote_sha" == "$GITHUB_SHA" ]]
 
-  pwa-fedora-gate:
-    needs: audit
-    runs-on: [self-hosted, linux, x64, webobs-builder]
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with: { submodules: recursive, persist-credentials: false }
-      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v5.0.0
-        with: { node-version: 24.14.0, cache: pnpm, cache-dependency-path: web/pnpm-lock.yaml }
-      - name: Qualify PWA and Docker integration
+      - name: Audit public source and deterministic Web build
         shell: bash
         run: |
           set -euo pipefail
+          ./scripts/check-executable-bits.sh
+          ./tests/run-public-audit.sh
+          python3 ./clients/scripts/verify_dependency_lock.py
+          python3 ./clients/tests/test_release_workflow_policy.py
+          python3 ./clients/tests/test_local_gate_receipts.py
           corepack enable
           corepack prepare pnpm@11.16.0 --activate
           cd web
           pnpm install --frozen-lockfile
+          pnpm typecheck
           pnpm test:iwa
           pnpm build
-          pnpm exec playwright install chromium
-          pnpm test:local
-          pnpm exec playwright test --project=chromium
-          cd ..
-          docker build --target v2-service-test -f docker/Dockerfile .
-      - name: Run private Fedora browser-media acceptance
-        shell: bash
-        env:
-          WEBOBS_PRIVATE_PWA_GATE_COMMAND: ${{ vars.WEBOBS_FEDORA_PWA_GATE_COMMAND }}
-        run: |
-          set -euo pipefail
-          python3 ./scripts/run-private-pwa-gate.py --platform fedora-chromium
 
-  pwa-windows-gate:
-    needs: audit
-    runs-on: [self-hosted, windows, x64, windows-11]
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with: { persist-credentials: false }
-      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v5.0.0
-        with: { node-version: 24.14.0, cache: pnpm, cache-dependency-path: web/pnpm-lock.yaml }
-      - name: Qualify installed Chrome and Edge
-        shell: pwsh
-        run: |
-          corepack enable
-          corepack prepare pnpm@11.16.0 --activate
-          Set-Location web
-          pnpm install --frozen-lockfile
-          pnpm build
-          pnpm test:local:chrome
-          pnpm exec playwright test --project=chrome
-          pnpm exec playwright test --project=edge
-      - name: Run private Windows browser-media acceptance
-        shell: pwsh
-        env:
-          WEBOBS_PRIVATE_PWA_GATE_COMMAND: ${{ vars.WEBOBS_WINDOWS_PWA_GATE_COMMAND }}
-        run: |
-          python ./scripts/run-private-pwa-gate.py --platform windows
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-
-  release:
-    needs: [audit, pwa-fedora-gate, pwa-windows-gate]
-    runs-on: [self-hosted, linux, x64, webobs-builder]
-    permissions:
-      contents: write
-      packages: write
-      attestations: write
-      id-token: write
-    steps:
-      - name: Check out reviewed source recursively
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          submodules: recursive
-          fetch-depth: 0
-          persist-credentials: false
-
-      - name: Re-audit checked-out release source
+      - name: Record the local-only publication boundary
         shell: bash
         run: |
-          ./scripts/check-executable-bits.sh
-          ./tests/run-public-audit.sh
-          python3 ./clients/scripts/verify_dependency_lock.py
-
-      - name: Define immutable release identity
-        id: identity
-        shell: bash
-        env:
-          REF_TYPE: ${{ github.ref_type }}
-          REF_NAME: ${{ github.ref_name }}
-        run: |
-          set -euo pipefail
-          image="ghcr.io/${GITHUB_REPOSITORY,,}"
-          if [[ "$REF_TYPE" == tag ]]; then
-            [[ "$REF_NAME" =~ ^v[0-9]+\.[0-9]+(\.[0-9]+)?$ ]]
-            git fetch --no-tags origin main
-            git merge-base --is-ancestor "$GITHUB_SHA" origin/main
-            version="$REF_NAME"
-            newest="$(git tag --merged origin/main --sort=version:refname | \
-              grep -E '^v[0-9]+\.[0-9]+(\.[0-9]+)?$' | tail -n 1)"
-            [[ -n "$newest" ]]
-            if [[ "$REF_NAME" == "$newest" ]]; then promote_latest=true; else promote_latest=false; fi
-          else
-            version="sha-${GITHUB_SHA::12}"
-            promote_latest=false
-          fi
-          [[ "$version" =~ ^[A-Za-z0-9._-]+$ ]]
-          echo "image=$image" >> "$GITHUB_OUTPUT"
-          echo "version=$version" >> "$GITHUB_OUTPUT"
-          if [[ "$REF_TYPE" == tag ]]; then
-            build_version="${REF_NAME#v}"
-            build_milestone="v2-M3"
-          else
-            build_version="2.0.0-dev.${GITHUB_SHA::12}"
-            build_milestone="v2-M3-dev"
-          fi
-          echo "build_version=$build_version" >> "$GITHUB_OUTPUT"
-          echo "build_milestone=$build_milestone" >> "$GITHUB_OUTPUT"
-          echo "promote_latest=$promote_latest" >> "$GITHUB_OUTPUT"
-
-      - name: Create complete corresponding-source bundle
-        shell: bash
-        run: |
-          mkdir -p "$RUNNER_TEMP/webobs-release"
-          ./scripts/create-source-bundle.sh "${{ steps.identity.outputs.version }}" "$RUNNER_TEMP/webobs-release"
-          ./scripts/verify-source-bundle.sh "$RUNNER_TEMP/webobs-release/webobs-source-${{ steps.identity.outputs.version }}.tar.gz"
-
-      - name: Set up Buildx
-        uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c # v4.2.0
-
-      - name: Log in to GHCR
-        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
-        with:
-          registry: ghcr.io
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Generate OCI metadata
-        id: metadata
-        uses: docker/metadata-action@dc802804100637a589fabce1cb79ff13a1411302 # v6.2.0
-        with:
-          images: ${{ steps.identity.outputs.image }}
-          tags: |
-            type=raw,value=${{ steps.identity.outputs.version }}
-            type=sha,prefix=sha-,format=short
-            type=semver,pattern={{version}},enable=${{ github.ref_type == 'tag' }}
-            type=raw,value=latest,enable=${{ steps.identity.outputs.promote_latest == 'true' }}
-            type=raw,value=dev,enable=${{ github.ref_type != 'tag' }}
-          labels: |
-            org.opencontainers.image.source=https://github.com/${{ github.repository }}
-            org.opencontainers.image.url=https://github.com/${{ github.repository }}/releases/tag/${{ steps.identity.outputs.version }}
-            org.opencontainers.image.revision=${{ github.sha }}
-            org.opencontainers.image.version=${{ steps.identity.outputs.version }}
-            org.opencontainers.image.licenses=GPL-2.0-or-later
-
-      - name: Build and push linux/amd64 image with SBOM and provenance
-        id: build
-        uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7.3.0
-        with:
-          context: .
-          file: docker/Dockerfile
-          build-args: |
-            WEBOBS_BUILD_VERSION=${{ steps.identity.outputs.build_version }}
-            WEBOBS_BUILD_MILESTONE=${{ steps.identity.outputs.build_milestone }}
-          platforms: linux/amd64
-          push: true
-          tags: ${{ steps.metadata.outputs.tags }}
-          labels: ${{ steps.metadata.outputs.labels }}
-          cache-from: type=local,src=/var/cache/webobs-buildkit
-          cache-to: type=local,dest=/var/cache/webobs-buildkit-next,mode=max
-          provenance: mode=max
-          sbom: true
-
-      - name: Rotate trusted local BuildKit cache
-        shell: bash
-        run: |
-          set -euo pipefail
-          sudo rm -rf -- /var/cache/webobs-buildkit
-          sudo mv -- /var/cache/webobs-buildkit-next /var/cache/webobs-buildkit
-
-      - name: Publish GitHub artifact attestation
-        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
-        with:
-          subject-name: ${{ steps.identity.outputs.image }}
-          subject-digest: ${{ steps.build.outputs.digest }}
-          push-to-registry: true
-
-      - name: Upload corresponding source as workflow artifact
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
-        with:
-          name: corresponding-source-${{ steps.identity.outputs.version }}
-          path: |
-            ${{ runner.temp }}/webobs-release/webobs-source-${{ steps.identity.outputs.version }}.tar.gz
-            ${{ runner.temp }}/webobs-release/webobs-source-${{ steps.identity.outputs.version }}.tar.gz.sha256
-          if-no-files-found: error
-          retention-days: 90
-
-      - name: Attach corresponding source to immutable Git tag release
-        if: github.ref_type == 'tag'
-        shell: bash
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          set -euo pipefail
-          if ! gh release view "${{ github.ref_name }}" >/dev/null 2>&1; then
-            latest=(--latest=false)
-            if [[ '${{ steps.identity.outputs.promote_latest }}' == true ]]; then latest=(--latest); fi
-            gh release create "${{ github.ref_name }}" --verify-tag \
-              --title "${{ github.ref_name }}" --generate-notes "${latest[@]}"
-          fi
-          ./scripts/upload-release-assets-immutable.sh "${{ github.ref_name }}" \
-            "$RUNNER_TEMP/webobs-release/webobs-source-${{ steps.identity.outputs.version }}.tar.gz" \
-            "$RUNNER_TEMP/webobs-release/webobs-source-${{ steps.identity.outputs.version }}.tar.gz.sha256"
+          echo "This workflow does not build, sign, tag, or push an OCI image."
+          echo "Run both revision-bound local gates, then use scripts/release-image-local.ps1 or scripts/release-image-local.sh."
