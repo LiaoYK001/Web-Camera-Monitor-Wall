@@ -161,6 +161,7 @@ if [ "$submodule_entries" != "$expected_submodule_entry" ]; then
     exit 1
 fi
 for executable_path in \
+    scripts/run-private-pwa-gate.py \
     tests/run-contracts.sh \
     tests/run-public-audit.sh \
     tests/run-m1-real-camera.sh \

@@ -4,7 +4,7 @@
 >
 > Last updated / 最后更新：2026-08-25
 >
-> Current position / 当前位置：v1 is closed at `v1.2.1`; `dev` has completed `v2-M1` and is qualifying `v2-M2` and `v2-M3`. The production pipeline passes exact Qt 6.11.2/GStreamer 1.28.6 decoding for H.264/H.265 RTSP, Server Push MJPEG, HLS and WHEP with Docker control-network isolation, and 16 True Direct viewers coexist with one unchanged NVR upstream. Desktop and Android Monitor/Studio code, local operations, ONVIF-managed dedicated credential lifecycle, packaging and private hardware-gate tooling exist; signed Windows/Fedora/Android packages and private 16+1 desktop plus nine-stream Android thirty-minute evidence remain open / v1 已在 `v1.2.1` 收口；`dev` 已完成 `v2-M1`，正验收 `v2-M2` 与 `v2-M3`。生产管线已在 Docker 控制网络隔离下以固定 Qt 6.11.2/GStreamer 1.28.6 通过 H.264/H.265 RTSP、Server Push MJPEG、HLS 与 WHEP 解码，且 16 个真直连观看端可与一路不变的 NVR 上游共存；桌面与 Android Monitor/Studio、本地操作、ONVIF 专用凭据生命周期、打包及私有硬件门禁工具已具备，Windows/Fedora/Android 签名包、桌面 16+1 与 Android 九路三十分钟私有实机证据仍待完成
+> Current position / 当前位置：v1 is closed at `v1.2.1`; `dev` completed `v2-M1` and redefined `v2-M2/M3` as Local-first PWA and Browser Media Runtime. Native Windows/Linux/Android sources are frozen and no EXE/APK/native package is a v2.0 deliverable. Remaining stable gates cover PWA offline/security, direct WHEP/HLS/MJPEG, explicit RTSP Gateway fallback, and Fedora/Windows browser evidence / v1 已在 `v1.2.1` 收口；`dev` 已完成 `v2-M1`，并把 `v2-M2/M3` 重定义为 Local-first PWA 与浏览器媒体运行时。Windows/Linux/Android 原生源码冻结，EXE/APK/原生包不再属于 v2.0 交付物；剩余稳定门禁覆盖 PWA 离线与安全、WHEP/HLS/MJPEG 直连、明确的 RTSP Gateway 回退，以及 Fedora/Windows 浏览器证据。
 
 This document expands the project from a web camera compositor into a self-hosted and local-first monitoring workspace with three first-class capabilities: an OBS-inspired customizable canvas, an NVR workflow inspired by mainstream monitoring applications such as tinyCam Monitor, and v2 True Direct local clients that keep Docker outside the media data plane. It is a capability plan, not a compatibility or UI-cloning claim, and it does not promise release dates.
 
@@ -19,7 +19,7 @@ The target is one web application that can serve both a production operator and 
 - **Studio workspace / 画布工作台：** compose cameras, webpages, images, text, media, nested scenes, filters, and transitions into one or more program outputs / 将摄像头、网页、图片、文字、媒体、嵌套场景、滤镜和转场编排为一个或多个节目输出。
 - **Monitor workspace / 监控工作台：** view many cameras, control PTZ/audio, inspect health, switch layouts, and react to alarms / 多路查看摄像头、控制 PTZ/音频、检查健康、切换布局并处置告警。
 - **NVR workspace / 录像工作台：** continuously archive each camera independently, apply retention, search a timeline, replay synchronized cameras, and export evidence / 独立连续归档每路摄像头，执行保留策略，通过时间线检索，多路同步回放并导出证据。
-- **Local client workspace / 本地客户端工作台：** Android and desktop runtimes reuse the registry and canvas while connecting to approved camera profiles directly / Android 与桌面运行端复用资产库和画布，并直接连接获批摄像机 Profile。
+- **Local-first PWA workspace / 本地优先 PWA：** one cached browser runtime reuses the registry and canvas on every supported platform; approved browser-native media connects directly / 一套缓存到浏览器本地的运行时跨平台复用资产库和画布，并直接连接获批的浏览器原生媒体协议。
 - **One secure, optional control plane / 一个安全且可选的控制面：** use one camera registry, permission model, audit trail, and secret boundary across all workspaces; v2 True Direct does not require Docker to carry media / 所有工作台共用摄像机资产库、权限模型、审计记录和凭据边界；v2 真直连不要求 Docker 承载媒体。
 
 Reliability takes priority over visual breadth: continuous recording and retention must remain correct even when the editor, live preview, analytics, or notification delivery fails.
@@ -73,7 +73,7 @@ SQLite in WAL mode plus local volumes is the initial single-node metadata baseli
 | Discovery, ONVIF profiles, PTZ, presets, talk / 发现、ONVIF、PTZ、预置位、对讲 | `v1-M10` | Profile T first; Profile S compatibility only; bounded discovery / Profile T 优先，Profile S 仅兼容，发现范围受控 |
 | Motion zones, device events, object providers, rules / 移动区域、设备事件、目标提供器、规则 | `v1-M11` | Recording cannot depend on analytics; no biometric identity by default / 录像不依赖分析；默认不做生物身份识别 |
 | True Direct topology, negotiation and proof / 真直连拓扑、协商与证明 | `v2-M1` | Docker carries no video payload in True Direct / 真直连时 Docker 不承载视频负载 |
-| Desktop and Android local runtimes / 桌面与 Android 本地运行端 | `v2-M2`–`v2-M3` | Shared local media/canvas core with platform-secure credentials / 共用本地媒体/画布核心与平台安全凭据 |
+| Local-first PWA and browser media runtime / 本地优先 PWA 与浏览器媒体运行时 | `v2-M2`–`v2-M3` | Cached app/config, WHEP/HLS/MJPEG True Direct and explicit RTSP Gateway / 缓存应用与配置、WHEP/HLS/MJPEG 真直连及明确 RTSP 网关回退 |
 | Offline registry/scene authorization and sync / 离线资产、场景授权与同步 | `v2-M4` | Encrypted, expiring and revocable local state / 加密、可过期、可撤销的本地状态 |
 | Grid/tour/kiosk/PWA and operator roles / 宫格、轮巡、值守、PWA 与角色 | `v2-M5` | One operator workflow across web and local runtimes / Web 与本地运行端共用值守工作流 |
 | Multi-volume, remote recorder roles, integrations, disaster recovery / 多存储卷、远程录像节点、集成、灾难恢复 | `v2-M6` | Optional scale-out without removing the one-image single-node path / 可选横向扩展，不取消单镜像单节点路径 |
@@ -88,14 +88,14 @@ SQLite in WAL mode plus local volumes is the initial single-node metadata baseli
 v1.0: v1-M1 … v1-M6 (complete)
 v1.1 family: v1-M7 Canvas -> v1-M8 NVR -> v1-M9 Timeline -> v1-M10 Device Ops -> v1-M11 Events
 v1.2 final closure: qualification only, no v1-M12
-v2.0: v2-M1 True Direct -> v2-M2 Desktop -> v2-M3 Android
+v2.0: v2-M1 True Direct Contract -> v2-M2 Local-first PWA -> v2-M3 Browser Media Runtime
 v2.1: v2-M4 Offline Sync -> v2-M5 Operator UX
 v2.2: v2-M6 Scale
 
 v1.0：v1-M1 … v1-M6（完成）
 v1.1 里程碑族：v1-M7 画布 -> v1-M8 NVR -> v1-M9 时间线 -> v1-M10 设备运维 -> v1-M11 事件
 v1.2 最终收口：只做资格验证，不新增 v1-M12
-v2.0：v2-M1 真直连 -> v2-M2 桌面端 -> v2-M3 Android
+v2.0：v2-M1 真直连契约 -> v2-M2 本地优先 PWA -> v2-M3 浏览器媒体运行时
 v2.1：v2-M4 离线同步 -> v2-M5 值守体验
 v2.2：v2-M6 扩展
 ```
@@ -228,25 +228,25 @@ v2.2：v2-M6 扩展
 
 **Exit gate / 完成门禁：** active True Direct viewing produces no corresponding camera upstream, MediaMTX reader, FFmpeg/libobs job or video payload on Docker after bounded control exchange; downgrade and credential tests pass and are visible before playback / 真直连活动时，在有界控制交换后 Docker 内不存在对应摄像机上游、MediaMTX reader、FFmpeg/libobs 作业或视频负载；降级与凭据测试通过且在播放前可见。完整门禁见 [true-direct-v2.md](true-direct-v2.md)。
 
-### v2-M2 — Desktop Local Runtime / 桌面本地运行端
+### v2-M2 — Local-first PWA / 本地优先 PWA
 
-**Goal / 目标：** deliver the first offline-capable desktop reference client using the shared Camera Registry and canvas model, with local decode, composition and optional recording / 交付首个可离线的桌面参考客户端，复用 Camera Registry 与画布模型，在本地完成解码、编排和可选录像。
+**Goal / 目标：** cache a complete React application shell plus encrypted, expiring Registry/Scene state so the same HTTPS-delivered application executes locally in supported browsers / 缓存完整 React 应用壳和加密、可过期的 Registry/Scene 状态，使同一个经 HTTPS 交付的应用在受支持浏览器本地执行。
 
-**Scope / 范围：** Windows/Linux reference packages, hardware decode fallback, 1/4/9/16 and custom canvas views, local companion mode for browser UI where justified, reconnect, diagnostics, signed updates and OS-backed secret storage / Windows/Linux 参考包、硬解回退、1/4/9/16 与自定义画布、本机伴随模式（确有必要时）、重连、诊断、签名更新及系统密钥存储。
+**Scope / 范围：** installable manifest, repository-maintained Service Worker, atomic update prompt, cache/network policy, AES-GCM IndexedDB state protected by a non-extractable WebCrypto key, seven-day sliding offline authorization, local-only Scene v5 edits and explicit app/config/media state / 可安装 Manifest、仓库维护的 Service Worker、原子升级提示、缓存/网络策略、由不可导出 WebCrypto 密钥保护的 AES-GCM IndexedDB 状态、七天滑动离线授权、local-only Scene v5 编辑，以及明确的应用/配置/媒体状态。
 
-**Exit gate / 完成门禁：** Windows 11 and current/previous Fedora reference hardware sustain 16 `640×360@15` substreams for 30 minutes plus one focused `1080p@25/30` main stream, with under 1% dropped frames, hardware decode when supported, ten-second reconnect, sleep/GPU fallback/offline/update rollback coverage, and zero incremental server live-media load / Windows 11 与当前/上一稳定 Fedora 参考硬件持续 30 分钟运行 16 路 `640×360@15` 子码流并聚焦一路 `1080p@25/30` 主码流，掉帧低于 1%，支持时使用硬解，并通过十秒重连、睡眠/GPU 回退/离线/升级回滚，服务端实时媒体负载增量为零。
+**Exit gate / 完成门禁：** after one HTTPS visit Chrome/Edge opens the complete shell and last valid Scene with Docker blocked; private/API/media responses never enter CacheStorage; expiry, logout, revocation, cache poisoning, failed upgrade and public-repository redaction tests pass / 首次 HTTPS 访问后阻断 Docker，Chrome/Edge 仍能打开完整应用壳与最后有效 Scene；私有/API/媒体响应不进入 CacheStorage；过期、登出、撤销、缓存投毒、升级失败及公开仓库脱敏测试通过。
 
-### v2-M3 — Android Local Runtime / Android 本地运行端
+### v2-M3 — Browser Media Runtime / 浏览器媒体运行时
 
-**Goal / 目标：** provide a tinyCam-class Android monitoring surface that shares devices, layouts and policy with the server but performs approved live media work locally / 提供类似 tinyCam 使用方式的 Android 监看端，共享设备、布局和策略，但在本机执行获批实时媒体工作。
+**Goal / 目标：** perform browser-compatible live media work locally while describing every Docker media fallback honestly / 在浏览器本地执行兼容的实时媒体工作，并如实标识每一种 Docker 媒体回退。
 
-**Scope / 范围：** Android 10/API 29+ arm64-v8a, adaptive 1/4/9 grids, capability-gated 16-grid, MediaCodec, foreground monitor/manual recording, full screen and Wake Lock, PTZ/listen/ten-second push-to-talk, network handoff, private app storage plus Storage Access Framework export, encrypted offline state and explicit background stop behavior / Android 10/API 29+ arm64-v8a、自适应 1/4/9 宫格、能力探测通过后才开放 16 宫格、MediaCodec、前台监看/手动录像、全屏与常亮、PTZ/监听/十秒按键对讲、网络切换、应用私有存储与 SAF 导出、加密离线状态，以及明确的后台停止行为。
+**Scope / 范围：** approved absolute HTTPS WHEP, hls.js HLS and restricted Server Push MJPEG; three-second first-frame proof; single-chain Gateway/Hybrid activation for ordinary RTSP or failed direct paths; explicit topology diagnostics. Chromium IWA H.264 RTSP/TCP remains a non-release experiment / 获批的绝对 HTTPS WHEP、hls.js HLS 与受限 Server Push MJPEG；三秒首帧证明；普通 RTSP 或直连失败时只激活一条 Gateway/Hybrid 链；明确的拓扑诊断。Chromium IWA H.264 RTSP/TCP 保持非发布实验。
 
-**Exit gate / 完成门禁：** a reference device sustains nine `640×360@15` streams for 30 minutes below 2% dropped frames without severe thermal throttling; backgrounding releases camera connections, decoders and Wake Lock within five seconds; rotation, lock, foreground/background, Wi-Fi/VPN, denied permissions, reconnect, Grant expiry and revocation pass. Sixteen tiles are a capability-gated feature, not the v2-M3 minimum acceptance load / 参考设备持续 30 分钟播放九路 `640×360@15`，掉帧低于 2% 且不进入严重温控；后台后五秒内释放连接、解码器与 Wake Lock；旋转、锁屏、前后台、Wi-Fi/VPN、权限拒绝、重连、Grant 过期与撤销通过。16 宫格是按能力开放的功能，不是 v2-M3 最低验收负载。
+**Exit gate / 完成门禁：** synthetic WHEP/HLS/MJPEG are Camera→Browser with zero corresponding Docker reader/encoder load; ordinary PWA RTSP always reports Gateway/Hybrid; Windows Chrome passes the 16-stream thirty-minute gate, Edge the four-stream compatibility gate, and Fedora Chromium the protocol/fallback/container regression gate / 合成 WHEP/HLS/MJPEG 均为 Camera→Browser 且 Docker 无对应 reader/encoder 负载；普通 PWA RTSP 始终报告 Gateway/Hybrid；Windows Chrome 通过 16 路三十分钟门禁，Edge 通过四路兼容门禁，Fedora Chromium 通过协议、回退与容器回归门禁。
 
 ### v2-M4 — Offline Authorization & Sync / 离线授权与同步
 
-**Goal / 目标：** make one registry and canvas usable across server, desktop and Android without turning the server database or administrator password into a portable secret / 让一份资产库与画布可在服务端、桌面和 Android 间使用，同时不把服务端数据库或管理员密码变成可携带密钥。
+**Goal / 目标：** make one registry and canvas usable across server and PWA origins without turning the server database or administrator password into a portable secret / 让一份资产库与画布可在服务端和 PWA Origin 间使用，同时不把服务端数据库或管理员密码变成可携带密钥。
 
 **Scope / 范围：** build on M1's baseline enrollment, scoped grants and encrypted cache to add bidirectional Registry/Scene synchronization, field-level conflicts, schema migration, lost-device workflows, backup/restore and durable bounded offline audit reconciliation / 在 M1 已建立的配对、范围 Grant 与加密缓存基础上，增加 Registry/Scene 双向同步、字段级冲突、schema 迁移、遗失设备流程、备份恢复及持久有界的离线审计对账。
 
@@ -266,7 +266,7 @@ v2.2：v2-M6 扩展
 - Roles at minimum `admin`, `operator`, `viewer`, `auditor`, and `exporter`, with camera/group scopes and explicit permissions for talk, PTZ, playback, export, delete, settings, and user management / 至少提供 `admin`、`operator`、`viewer`、`auditor`、`exporter` 角色，支持摄像机/组范围，并明确对讲、PTZ、回放、导出、删除、设置和用户管理权限。
 - Keyboard and touch navigation, screen-reader labels, visible focus, reduced motion, color-independent alarms, and documented browser support / 支持键盘与触摸导航、屏幕阅读标签、可见焦点、减少动画、不依赖颜色的告警及有记录的浏览器支持范围。
 
-**Boundary / 边界：** Android is delivered by `v2-M3`; `v2-M5` unifies operator workflows across Web/PWA, desktop and Android rather than treating a PWA as a substitute for local RTSP support. iOS/TV remain separate evidence-driven decisions / Android 由 `v2-M3` 交付；`v2-M5` 统一 Web/PWA、桌面与 Android 的值守流程，而不是把 PWA 当作本地 RTSP 支持的替代品。iOS/TV 仍需单独证据驱动决策。
+**Boundary / 边界：** v2.0 ships no native desktop or Android package. `v2-M5` unifies responsive PWA, touch, kiosk and operator workflows; ordinary-browser RTSP remains Gateway/Hybrid unless browser platform capabilities materially change / v2.0 不发布原生桌面或 Android 包。`v2-M5` 统一响应式 PWA、触摸、大屏和值守流程；除非浏览器平台能力发生实质变化，普通浏览器 RTSP 继续使用 Gateway/Hybrid。
 
 **Exit gate / 完成门禁：**
 

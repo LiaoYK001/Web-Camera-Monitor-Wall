@@ -1,6 +1,6 @@
 # v2 True Direct architecture / v2 真直连架构
 
-> Status / 状态：`v2-M1` complete on `dev`; `v2-M2` desktop release qualification is in progress / `dev` 已完成 `v2-M1`，正在执行 `v2-M2` 桌面发布验收
+> Status / 状态：`v2-M1` complete on `dev`; `v2-M2/M3` now implement Local-first PWA and Browser Media Runtime / `dev` 已完成 `v2-M1`；`v2-M2/M3` 现实施本地优先 PWA 与浏览器媒体运行时
 >
 > Current implementation / 当前实现：v1 provides **Gateway Direct / Direct Relay**, not True Direct / v1 提供的是**网关直通**，不是真直连
 
@@ -23,7 +23,7 @@ The existing API value `direct` remains stable throughout API v1, but its displa
 
 **一份 Camera Registry 与画布模型，多种本地运行端；Docker 默认只作为可选控制面，不进入媒体数据面。**
 
-- Android and desktop clients connect to camera profiles directly, decode with local hardware, and render the shared layout locally / Android 与桌面客户端直接连接摄像机 Profile，使用本机硬件解码并在本地渲染共享布局。
+- The production PWA connects directly only to approved browser-native WHEP/HLS/MJPEG profiles and renders the shared layout locally / 正式 PWA 只直连获批的浏览器原生 WHEP/HLS/MJPEG Profile，并在浏览器本地渲染共享布局。
 - The Docker Web service may provide static UI assets, device/scene synchronization, authorization policy, discovery coordination and optional signaling, but True Direct video bytes do not traverse it / Docker Web 可提供静态界面、设备/场景同步、授权策略、发现协调与可选信令，但真直连视频字节不经过它。
 - A local/offline client can retain an encrypted, revocable copy of approved device and scene metadata and continue operating when Docker is unavailable / 本地或离线客户端可保存经授权、加密且可撤销的设备与场景元数据，并在 Docker 不可用时继续运行。
 - Gateway Direct, Hybrid and Composite remain explicit fallbacks for browser compatibility, remote access, filters, overlays, transitions, unified Program output and server-side recording / 网关直通、Hybrid 与 Composite 继续作为浏览器兼容、远程访问、滤镜、叠字、转场、统一节目输出及服务端录像的显式后备。
@@ -38,7 +38,7 @@ A standard browser cannot open ordinary `rtsp://` streams directly. True Direct 
 
 普通浏览器不能直接打开常规 `rtsp://` 流。真直连必须使用以下至少一种路径：
 
-1. A native Android or desktop client connects to RTSP/ONVIF and decodes locally / 原生 Android 或桌面客户端直接连接 RTSP/ONVIF 并本地解码。
+1. The production PWA connects directly to an exact, credential-free HTTPS WHEP/HLS/MJPEG endpoint that passed server TLS/CORS qualification / 正式 PWA 直连已通过服务端 TLS/CORS 验证的无凭据精确 HTTPS WHEP/HLS/MJPEG Endpoint。
 2. A local companion process exposes a loopback-only, authenticated browser-compatible transport while the camera traffic remains on that device / 本机伴随进程通过仅回环、受认证的浏览器兼容协议提供媒体，摄像机流量仍只到该客户端设备。
 3. The camera or an operator-selected local endpoint natively provides WebRTC/WHEP/HLS or another browser-compatible transport under acceptable origin and TLS policy / 摄像机或操作者指定的本地端点原生提供 WebRTC/WHEP/HLS 等浏览器兼容协议，并满足 Origin 与 TLS 策略。
 

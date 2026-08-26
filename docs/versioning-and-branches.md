@@ -13,7 +13,7 @@ Release series use `v<major>.<minor>`; implementation milestones use `v<major>-M
 | `v1.0` | `v1-M1` … `v1-M6` | Complete / 已完成 |
 | `v1.1` | `v1-M7` … `v1-M11` | Milestone family is implementation-complete; external release qualification is tracked by v1.2 / 里程碑族实现完成；外部发布资格由 v1.2 跟踪 |
 | `v1.2` (`v1.2.1` current patch / 当前修复版) | Final v1 closure / v1 最终收口 | Contains no `v1-M12`; patch releases fix the final v1 baseline without adding a milestone / 不新增 `v1-M12`；补丁版本只修复最终 v1 基线，不增加里程碑 |
-| `v2.0` | `v2-M1` … `v2-M3` | Active development on `dev`; release only after all three gates / 正在 `dev` 开发；三个门禁全部通过后才发布 |
+| `v2.0` | `v2-M1` … `v2-M3` | M1 contract complete; M2 Local-first PWA and M3 Browser Media Runtime active on `dev` / M1 契约完成；M2 本地优先 PWA 与 M3 浏览器媒体运行时正在 `dev` 开发 |
 | `v2.1` | `v2-M4` … `v2-M5` | Planned after stable v2.0 / 稳定 v2.0 后实施 |
 | `v2.2` | `v2-M6` | Planned / 已规划 |
 
@@ -50,6 +50,6 @@ Recommended protection:
 - `sha-xxxxxxxxxxxx`: immutable source identity for either branch / 任一分支的不可变源码身份。
 - `@sha256:...`: production deployment lock / 生产部署锁定方式。
 
-Stable publication remains tag-driven. The native-client workflow may be dispatched manually only against the exact protected `dev` tip to produce signed M2/M3 qualification artifacts; that path cannot create a GitHub Release or publish a stable alias. Creating a local branch or milestone label does not authorize publishing `latest`; maintainers must verify branch ancestry, a clean worktree, public-repository audit, corresponding source, SBOM and provenance before release.
+Stable publication remains tag-driven. v2.0 publishes only the GHCR image containing the PWA, corresponding source, checksums, SBOM, provenance and attestation. The frozen native-client workflow has no tag trigger and requires an explicit confirmation phrase against the protected `dev` tip; it cannot create a Release or stable alias. Fedora and Windows browser gates must pass before image publication.
 
-稳定发布继续由 Tag 驱动。原生客户端工作流只允许对受保护 `dev` 的精确 HEAD 手工触发，以生成 M2/M3 签名资格验收产物；该路径不能创建 GitHub Release 或发布稳定别名。仅创建本地分支或里程碑名称并不授权发布 `latest`；维护者必须在发布前验证分支祖先关系、干净工作树、公开仓库审计、对应源码、SBOM 与 provenance。
+稳定发布继续由 Tag 驱动。v2.0 只发布包含 PWA 的 GHCR 镜像、对应源码、校验和、SBOM、provenance 与 attestation。冻结的原生客户端工作流没有 Tag 触发器，且要求对受保护 `dev` 精确 HEAD 输入显式确认短语；它不能创建 Release 或稳定别名。Fedora 与 Windows 浏览器门禁全部通过后才允许发布镜像。

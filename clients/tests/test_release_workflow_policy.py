@@ -9,6 +9,7 @@ import unittest
 ROOT = Path(__file__).resolve().parents[2]
 WORKFLOW = ROOT / ".github" / "workflows" / "release-native-clients.yaml"
 IMAGE_WORKFLOW = ROOT / ".github" / "workflows" / "release-image.yaml"
+WEB_WORKFLOW = ROOT / ".github" / "workflows" / "web-runtime-ci.yaml"
 
 
 def branch(text: str, label: str) -> str:
@@ -24,11 +25,14 @@ class NativeReleaseWorkflowPolicyTests(unittest.TestCase):
     def setUpClass(cls) -> None:
         cls.text = WORKFLOW.read_text(encoding="utf-8")
         cls.image_text = IMAGE_WORKFLOW.read_text(encoding="utf-8")
+        cls.web_text = WEB_WORKFLOW.read_text(encoding="utf-8")
 
     def test_self_hosted_jobs_have_no_untrusted_event_entry(self) -> None:
         self.assertIn("  workflow_dispatch:\n", self.text)
         self.assertNotIn("  pull_request:\n", self.text)
         self.assertNotIn("  pull_request_target:\n", self.text)
+        self.assertNotIn("  push:\n", self.text.split("permissions:", 1)[0])
+        self.assertIn("BUILD-UNRELEASED-NATIVE-CANDIDATE", self.text)
 
     def test_manual_qualification_is_exact_protected_dev_tip(self) -> None:
         manual = branch(self.text, "workflow_dispatch")
@@ -39,23 +43,30 @@ class NativeReleaseWorkflowPolicyTests(unittest.TestCase):
         self.assertNotIn("publish_allowed=true", manual)
         self.assertNotIn("release_tag=", manual)
 
-    def test_only_main_reachable_semver_tag_can_publish(self) -> None:
-        tagged = branch(self.text, "push")
-        self.assertIn('[[ "$REF_TYPE" == tag ]]', tagged)
-        self.assertIn('[[ "$REF_NAME" =~ ^v2\\.[0-9]+(\\.[0-9]+)?$ ]]', tagged)
-        self.assertIn('git merge-base --is-ancestor "$COMMIT_SHA" origin/main', tagged)
-        self.assertIn("publish_allowed=true", tagged)
+    def test_native_candidates_cannot_publish_v2_release_assets(self) -> None:
+        self.assertNotIn("publish_allowed=true", self.text)
+        self.assertNotIn("promote_latest=true", self.text)
         self.assertIn("    if: needs.audit.outputs.publish_allowed == 'true'", self.text)
 
     def test_older_queued_release_cannot_replace_latest_or_assets(self) -> None:
-        self.assertIn("git tag --merged origin/main --sort=version:refname", self.text)
-        self.assertIn("promote_latest=true", self.text)
-        self.assertIn("latest=(--latest=false)", self.text)
-        self.assertIn("scripts/upload-release-assets-immutable.sh", self.text)
-        self.assertNotIn("--clobber", self.text)
         self.assertIn("scripts/upload-release-assets-immutable.sh", self.image_text)
         self.assertIn("latest=(--latest=false)", self.image_text)
         self.assertNotIn("--clobber", self.image_text)
+
+    def test_pwa_gates_use_only_trusted_self_hosted_entry_points(self) -> None:
+        self.assertIn("runs-on: [self-hosted, linux, x64, webobs-builder]", self.web_text)
+        self.assertIn("runs-on: [self-hosted, windows, x64, windows-11]", self.web_text)
+        self.assertIn("if: github.event_name != 'pull_request'", self.web_text)
+        self.assertIn("needs: [audit, pwa-fedora-gate, pwa-windows-gate]", self.image_text)
+        self.assertIn("WEBOBS_FEDORA_PWA_GATE_COMMAND", self.image_text)
+        self.assertIn("WEBOBS_WINDOWS_PWA_GATE_COMMAND", self.image_text)
+        self.assertEqual(self.image_text.count("scripts/run-private-pwa-gate.py"), 2)
+        self.assertGreaterEqual(self.web_text.count("pnpm test:local"), 2)
+        self.assertGreaterEqual(self.image_text.count("pnpm test:local"), 2)
+        self.assertIn('[[ "$REF_TYPE" == branch && ("$REF_NAME" == dev || "$REF_NAME" == main) ]]',
+                      self.image_text)
+        self.assertIn('[[ "$(git rev-parse "origin/$REF_NAME")" == "$GITHUB_SHA" ]]',
+                      self.image_text)
 
     def test_candidate_windows_packages_cannot_skip_authenticode(self) -> None:
         self.assertIn("if ($env:CERTIFICATE_SHA1 -notmatch '^[0-9A-Fa-f]{40}$')", self.text)

@@ -241,6 +241,8 @@ WEBOBS_HTTPS_PORT=443
 WEBOBS_TLS_SERVER_NAME=monitor.example.com
 WEBOBS_TLS_PUBLIC_AUTHORITY=monitor.example.com:443
 WEBOBS_CONTROL_ALLOWED_ORIGINS=https://monitor.example.com
+WEBOBS_PWA_PUBLIC_ORIGIN=https://monitor.example.com
+WEBOBS_PWA_MEDIA_ALLOWED_ORIGINS=https://camera.example.com
 WEBOBS_TLS_CERTIFICATE_SOURCE=./secrets/webobs-tls-certificate.pem
 WEBOBS_TLS_PRIVATE_KEY_SOURCE=./secrets/webobs-tls-private-key.pem
 WEBOBS_AUTH_USERNAME_SOURCE=./secrets/webobs-auth-username.txt
@@ -252,7 +254,7 @@ WEBOBS_TURN_CLIENT_ONLY=false
 WEBOBS_WEBRTC_ADDITIONAL_HOSTS=monitor.example.com
 ```
 
-`WEBOBS_TLS_SERVER_NAME` 必须与证书 SAN 匹配且不含端口；`WEBOBS_TLS_PUBLIC_AUTHORITY` 和 `WEBOBS_CONTROL_ALLOWED_ORIGINS` 必须与浏览器实际打开的外部 URL 完全一致。TURN URL 必须显式包含端口和 `transport=tcp`。如 TURN 只供浏览器侧使用而 MediaMTX 可直连，应显式设置 `WEBOBS_TURN_CLIENT_ONLY=true`。
+`WEBOBS_TLS_SERVER_NAME` 必须与证书 SAN 匹配且不含端口；`WEBOBS_TLS_PUBLIC_AUTHORITY`、`WEBOBS_CONTROL_ALLOWED_ORIGINS` 和 `WEBOBS_PWA_PUBLIC_ORIGIN` 必须与浏览器实际打开的外部 URL 完全一致。`WEBOBS_PWA_MEDIA_ALLOWED_ORIGINS` 只列获批摄像机的精确 HTTPS Origin，不允许 `https:` 或 `*` 通配。TURN URL 必须显式包含端口和 `transport=tcp`。如 TURN 只供浏览器侧使用而 MediaMTX 可直连，应显式设置 `WEBOBS_TURN_CLIENT_ONLY=true`。
 
 解析配置时使用 `--quiet`，避免把本机路径扩展内容写进 CI 日志：
 

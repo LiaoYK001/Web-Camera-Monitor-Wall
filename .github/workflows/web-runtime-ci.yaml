@@ -1,0 +1,85 @@
+name: Web runtime CI
+
+on:
+  pull_request:
+  push:
+    branches: [dev, main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: web-runtime-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  public-audit:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with: { persist-credentials: false }
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v5.0.0
+        with: { node-version: 24.14.0, cache: pnpm, cache-dependency-path: web/pnpm-lock.yaml }
+      - name: Audit and build the public PWA
+        shell: bash
+        run: |
+          set -euo pipefail
+          corepack enable
+          corepack prepare pnpm@11.16.0 --activate
+          ./tests/run-public-audit.sh
+          cd web
+          pnpm install --frozen-lockfile
+          pnpm typecheck
+          pnpm test:iwa
+          pnpm build
+
+  fedora-web-gate:
+    if: github.event_name != 'pull_request' && (github.ref_name == 'dev' || github.ref_name == 'main')
+    needs: public-audit
+    runs-on: [self-hosted, linux, x64, webobs-builder]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with: { persist-credentials: false, submodules: recursive }
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v5.0.0
+        with: { node-version: 24.14.0, cache: pnpm, cache-dependency-path: web/pnpm-lock.yaml }
+      - name: Build and test PWA in pinned Node image
+        shell: bash
+        run: |
+          set -euo pipefail
+          docker build --target web-builder --tag webobs-pwa-gate:${GITHUB_SHA::12} -f docker/Dockerfile .
+          docker run --rm webobs-pwa-gate:${GITHUB_SHA::12} sh -lc 'pnpm typecheck && pnpm test:iwa && pnpm build'
+      - name: Run Fedora Chromium PWA gate
+        shell: bash
+        run: |
+          set -euo pipefail
+          corepack enable
+          corepack prepare pnpm@11.16.0 --activate
+          cd web
+          pnpm install --frozen-lockfile
+          pnpm test:iwa
+          pnpm exec playwright install chromium
+          pnpm build
+          pnpm test:local
+          pnpm exec playwright test --project=chromium
+
+  windows-web-gate:
+    if: github.event_name != 'pull_request' && (github.ref_name == 'dev' || github.ref_name == 'main')
+    needs: public-audit
+    runs-on: [self-hosted, windows, x64, windows-11]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with: { persist-credentials: false }
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v5.0.0
+        with: { node-version: 24.14.0, cache: pnpm, cache-dependency-path: web/pnpm-lock.yaml }
+      - name: Run installed Chrome and Edge gates
+        shell: pwsh
+        run: |
+          corepack enable
+          corepack prepare pnpm@11.16.0 --activate
+          Set-Location web
+          pnpm install --frozen-lockfile
+          pnpm build
+          pnpm test:local:chrome
+          pnpm exec playwright test --project=chrome
+          pnpm exec playwright test --project=edge

@@ -1,6 +1,6 @@
 # API v2 — local clients and True Direct / 本地客户端与真直连
 
-> Development status / 开发状态：v2-M1 is complete on `dev`. API/Grant/Scene contracts, the isolated protocol fixture, exact Qt 6.11.2/GStreamer 1.28.6 RTSP/MJPEG/HLS/WHEP decoding, and 16-viewer True Direct coexistence with one unchanged NVR upstream pass. v2-M2 remains in release qualification until signed Windows/Fedora packages and private 16+1 thirty-minute hardware evidence pass / `dev` 上的 v2-M1 已完成：API/Grant/Scene 契约、隔离协议夹具、固定 Qt 6.11.2/GStreamer 1.28.6 的 RTSP/MJPEG/HLS/WHEP 解码，以及 16 个真直连观看端与一路不变 NVR 上游的共存门禁均通过。v2-M2 仍需 Windows/Fedora 签名包和私有 16+1 三十分钟硬件证据，故处于发布验收阶段。
+> Development status / 开发状态：v2-M1 is complete on `dev`; v2-M2/M3 now target the Local-first PWA and Browser Media Runtime. Native package qualification is frozen and is not a v2.0 release gate / `dev` 已完成 v2-M1；v2-M2/M3 现面向本地优先 PWA 与浏览器媒体运行时。原生包验收已冻结，不属于 v2.0 发布门禁。
 
 API v1 is unchanged: its `direct` value means Gateway Direct and Docker remains in the media path. API v2 adds device enrollment and a separately measured `true-direct` topology. All responses use bounded unique-field JSON, `Cache-Control: no-store` and credential-free errors.
 
@@ -10,7 +10,7 @@ API v1 保持不变：其中 `direct` 仍表示 Docker 位于媒体链中的网�
 
 - `POST /api/v2/enrollments` is public behind the configured Host/Origin boundary. It creates pending state only and is limited to 32 pending requests.
 - `GET /api/v2/enrollments`, approval, client listing and revocation require the existing administrator Session/Basic boundary. The C++ proxy also adds an ephemeral 256-bit internal token; port 8094 rejects direct administrative requests. This prevents Browser Source loopback SSRF from bypassing the public control plane.
-- Completion, bootstrap, media plans and audit use exactly one `Authorization: WebObs-Device <token>` header. The proxy forwards only its validated URL-safe token as an internal header. Device tokens are stored only as SHA-256 hashes.
+- Completion, bootstrap, media plans and audit use exactly one `X-WebObs-Device-Token` header. The proxy validates its URL-safe form and forwards only that value. Device tokens are stored only as SHA-256 hashes.
 - Native clients omit `Origin`; browser requests, when applicable, must use the configured same Origin. Remote control requires HTTPS.
 
 ## Enrollment / 配对
@@ -20,7 +20,7 @@ API v1 保持不变：其中 `direct` 仍表示 Docker 位于媒体链中的网�
 ```json
 {
   "name": "Guard desk",
-  "platform": "windows",
+  "platform": "web",
   "signingPublicKey": "<32-byte unpadded base64url>",
   "encryptionPublicKey": "<32-byte unpadded base64url>",
   "enrollmentNonce": "<32-byte unpadded base64url>",
@@ -41,18 +41,18 @@ The signature covers deterministic CBOR containing purpose `webobs-client-enroll
     "cameraId": "front-door",
     "profileIds": ["sub"],
     "permissions": ["view", "snapshot", "record-local"],
-    "credentialMode": "existing"
+    "credentialMode": "none"
   }]
 }
 ```
 
-Permissions are `view`, `ptz`, `talk`, `snapshot`, and `record-local`; `view` is mandatory. `dedicated` mode requires a synced ONVIF camera that advertises user management and a `credentialsRef` different from the Registry administrator credential. The referenced Secret username must use the reserved `webobs-` prefix and its password must contain 16–128 UTF-8 bytes. Approval idempotently creates or updates an ONVIF `User` account, or an `Operator` account when PTZ/talk is granted; plaintext credentials never enter the v2 database or response. Cameras without verified user management must use `existing` mode and are explicitly marked `weakRevocation=true`.
+Permissions are `view`, `ptz`, `talk`, `snapshot`, and `record-local`; `view` is mandatory. `web` and `chromium-iwa` enrollments must use `credentialMode=none`; their grants never contain camera credentials. Frozen native platforms retain `existing|dedicated`: dedicated mode requires verified ONVIF user management and a distinct Secret reference.
 
-`POST /api/v2/enrollments/{id}/complete` returns `202` while pending, then an identity summary plus the first `grantBundle`. The Grant payload is deterministic CBOR, signed by the server Ed25519 key and sealed to the client X25519 key. It contains only granted endpoints, profiles, permissions and credentials. The outer bootstrap/Scene documents never contain endpoints or credentials.
+`POST /api/v2/enrollments/{id}/complete` returns `202` while pending, then an identity summary plus the first `grantBundle`. The payload is deterministic CBOR, signed by the server Ed25519 key and sealed to the client X25519 key. Browser format `webobs-browser-grant-v1` contains only granted Camera/Profile metadata, non-secret eligible endpoints and permissions; it never contains `credentials`. Outer bootstrap/Scene documents never contain endpoints or credentials.
 
 ## Bootstrap and revocation / 启动与撤销
 
-`GET /api/v2/client/bootstrap?sinceRevision=<n>` returns the current global revision, redacted Registry metadata, Scene v5 shared-local subset, sync policy, a renewed sealed Grant and a five-second online validation interval. The interval is bounded so the control round trip still fits the ten-second online revocation deadline. The global bootstrap cursor is distinct from the per-client Grant revision. The reference client persists the cursor and last validated shared Scene inside its OS-protected encrypted identity cache so a new pairing receives the first Scene and offline startup can restore it. Successful authenticated access slides the 30-day offline expiry.
+`GET /api/v2/client/bootstrap?sinceRevision=<n>` returns the current global revision, redacted Registry metadata, Scene v5 shared-local subset, sync policy, a renewed sealed Grant and a five-second online validation interval. Successful authenticated access slides browser/IWA authorization by seven days; frozen native contracts retain 30 days. The PWA encrypts the cursor, Grant and redacted Scene snapshot in IndexedDB with a non-extractable AES-GCM wrapping key.
 
 `GET /api/v2/clients` lists at most 256 clients and reports `cameraCount` and `weakRevocation`. `DELETE /api/v2/clients/{id}` immediately revokes online API access, deletes active plans, removes managed ONVIF dedicated accounts in a bounded parallel cleanup, and returns `offlineEffectiveNoLaterThan`, `weakRevocation`, and `cameraCredentialCleanup`. If any camera is unreachable or refuses account removal, that Grant is atomically changed to weak revocation and the UI requires camera-password rotation. A disconnected client cannot learn server-token revocation before the already issued Grant expires; the UI always displays this boundary.
 
@@ -65,17 +65,17 @@ Permissions are `view`, `ptz`, `talk`, `snapshot`, and `record-local`; `view` is
   "cameraId": "front-door",
   "profileId": "sub",
   "policy": "auto",
-  "receiverKind": "native",
+  "receiverKind": "browser",
   "networkClass": "lan",
   "reachability": "reachable",
-  "protocols": ["rtsp"],
+  "protocols": ["whep", "hls", "mjpeg"],
   "videoCodecs": ["h264"],
-  "hardwareDecoders": ["d3d11"],
+  "hardwareDecoders": ["webcodecs"],
   "requiresComposite": false
 }
 ```
 
-The reference client submits `reachability=reachable` only after receiving a decoded video buffer within three seconds. This is client evidence, not remote attestation; the server still validates the granted Profile and declared capability set. A plan never starts the server media graph by itself—it only records the selected contract. `true-direct-only` returns `409` instead of silently falling back. `GET /api/v2/media-plans/{planId}` retrieves the five-minute plan owned by that client.
+The reference client submits `reachability=reachable` only after receiving a decoded video buffer within three seconds. This is client evidence, not remote attestation; the server still validates the granted Profile and declared capability set. For browser runtimes, an administrator first calls `POST /api/v1/cameras/{cameraId}/profiles/{profileId}/browser-direct/probe`; the bounded Registry probe verifies TLS, exact-origin CORS and a protocol-specific media response, binds proof to `WEBOBS_PWA_PUBLIC_ORIGIN`, and expires it after 24 hours. Reserved `browserDirect` fields from submitted Camera JSON are ignored. A plan never starts the server media graph by itself—it only records the selected contract. `true-direct-only` returns `409` instead of silently falling back. `GET /api/v2/media-plans/{planId}` retrieves the five-minute plan owned by that client.
 
 An `auto` plan that visibly selects `gateway-direct`, `hybrid`, or `composite` must be explicitly activated before server media starts:
 
@@ -96,6 +96,11 @@ receiverKind = native | browser
 archiveTopology = off | server-copy | server-transcode | local-manual
 decoder, renderer, encoder, upstreamOwner
 liveServerMediaExpected, fallbackReason, expiresAt
+runtimeKind = pwa | chromium-iwa
+executionOwner = browser | docker
+mediaTransport = whep | hls | mjpeg | rtsp
+credentialExposure = none | ephemeral
+offlineConfigExpiresAt
 ```
 
 Live and archive are independent. An NVR `server-copy` plan may coexist with True Direct, but adding viewers must not create another Docker Camera/MediaMTX/FFmpeg/libobs upstream.

@@ -171,6 +171,7 @@ try {
 
     foreach ($executablePath in @(
         'gateway/transcode-on-demand.sh',
+        'scripts/run-private-pwa-gate.py',
         'tests/run-contracts.sh',
         'tests/run-public-audit.sh',
         'tests/run-m1-real-camera.sh',

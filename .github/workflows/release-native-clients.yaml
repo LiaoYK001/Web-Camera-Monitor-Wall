@@ -1,10 +1,12 @@
 name: Release native clients
 
 on:
-  push:
-    tags:
-      - "v2.*"
   workflow_dispatch:
+    inputs:
+      confirm_native_candidate:
+        description: "Type BUILD-UNRELEASED-NATIVE-CANDIDATE to run frozen native qualification"
+        required: true
+        type: string
 
 permissions:
   contents: read
@@ -15,6 +17,7 @@ concurrency:
 
 jobs:
   audit:
+    if: inputs.confirm_native_candidate == 'BUILD-UNRELEASED-NATIVE-CANDIDATE'
     runs-on: ubuntu-24.04
     outputs:
       package_version: ${{ steps.identity.outputs.package_version }}
@@ -54,22 +57,6 @@ jobs:
           publish_allowed=false
           promote_latest=false
           case "$EVENT_NAME" in
-            push)
-              [[ "$REF_TYPE" == tag ]]
-              [[ "$REF_NAME" =~ ^v2\.[0-9]+(\.[0-9]+)?$ ]]
-              git fetch --no-tags origin main
-              git merge-base --is-ancestor "$COMMIT_SHA" origin/main
-              package_version="${REF_NAME#v}"
-              if [[ "$package_version" =~ ^[0-9]+\.[0-9]+$ ]]; then
-                package_version="$package_version.0"
-              fi
-              release_tag="$REF_NAME"
-              publish_allowed=true
-              newest="$(git tag --merged origin/main --sort=version:refname | \
-                grep -E '^v2\.[0-9]+(\.[0-9]+)?$' | tail -n 1)"
-              [[ -n "$newest" ]]
-              if [[ "$REF_NAME" == "$newest" ]]; then promote_latest=true; fi
-              ;;
             workflow_dispatch)
               # Qualification builds may run only from the exact protected dev
               # tip. They produce signed candidate artifacts but never a Release.
@@ -78,6 +65,7 @@ jobs:
               [[ "$(git rev-parse origin/dev)" == "$COMMIT_SHA" ]]
               package_version="2.0.0-dev.sha.${COMMIT_SHA:0:12}"
               ;;
+            *) exit 2 ;;
             *)
               exit 1
               ;;

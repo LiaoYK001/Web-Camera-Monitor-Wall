@@ -8,6 +8,7 @@ scripts/check-executable-bits.sh
 scripts/benchmark-video-pipelines.sh
 scripts/create-source-bundle.sh
 scripts/release-image-local.sh
+scripts/run-private-pwa-gate.py
 scripts/upload-release-assets-immutable.sh
 scripts/verify-source-bundle.sh
 clients/packaging/finalize-artifacts.sh
