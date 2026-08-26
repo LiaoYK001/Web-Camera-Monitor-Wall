@@ -10,6 +10,8 @@ export interface ProgramConnection {
 }
 
 type EndpointResolver = (signal: AbortSignal) => Promise<string | null>;
+type EndpointValidator = (value: string) => URL | null;
+type AuthorizationRejected = () => void | Promise<void>;
 
 const gatherIce = (peer: RTCPeerConnection, timeoutMs = 10_000): Promise<void> => {
   if (peer.iceGatheringState === 'complete') return Promise.resolve();
@@ -28,23 +30,62 @@ const gatherIce = (peer: RTCPeerConnection, timeoutMs = 10_000): Promise<void> =
   });
 };
 
-const validEndpoint = (value: string): string | null => {
+const validEndpoint = (value: string): URL | null => {
   const endpoint = new URL(value, window.location.href);
   if (endpoint.origin !== window.location.origin || endpoint.search || endpoint.hash) return null;
-  if (endpoint.pathname === '/api/v1/program/whep') return endpoint.pathname;
-  if (/^\/api\/v1\/sources\/[A-Za-z0-9._-]{1,64}\/whep$/.test(endpoint.pathname)) return endpoint.pathname;
+  if (endpoint.pathname === '/api/v1/program/whep') return endpoint;
+  if (/^\/api\/v1\/sources\/[A-Za-z0-9._-]{1,64}\/whep$/.test(endpoint.pathname)) return endpoint;
+  if (/^\/api\/v2\/media-plans\/[a-f0-9]{32}\/whep$/.test(endpoint.pathname)) return endpoint;
   return null;
 };
 
-const validSessionLocation = (value: string | null, endpoint: string): string | null => {
+const validSessionLocation = (value: string | null, endpoint: URL): string | null => {
   if (!value) return null;
-  const location = new URL(value, window.location.href);
-  if (location.origin !== window.location.origin) return null;
-  const prefix = `${endpoint}/session/`;
-  if (!location.pathname.startsWith(prefix) || !/^[a-f0-9]{32}$/.test(location.pathname.slice(prefix.length)))
+  const location = new URL(value, endpoint);
+  if (location.origin !== endpoint.origin) return null;
+  const prefix = `${endpoint.pathname.replace(/\/$/, '')}/session/`;
+  if (!location.pathname.startsWith(prefix) || !/^[A-Za-z0-9._~-]{1,128}$/.test(location.pathname.slice(prefix.length)))
     return null;
   if (location.search || location.hash) return null;
-  return location.pathname;
+  return location.href;
+};
+
+const validSdpAnswer = (answer: string): boolean => {
+  if (!answer || answer.length > 64 * 1024 || !answer.startsWith('v=0') ||
+      [...answer].some((character) => {
+        const code = character.charCodeAt(0);
+        return code !== 9 && code !== 10 && code !== 13 && (code < 32 || code > 126);
+      })) return false;
+  const lines = answer.replace(/\r\n/g, '\n').split('\n').filter(Boolean);
+  if (lines.length > 512 || lines.some((line) => line.length > 2048 || !/^[a-z]=/.test(line))) return false;
+  const media = lines.filter((line) => line.startsWith('m='));
+  if (media.length < 1 || media.length > 2 || media.filter((line) => line.startsWith('m=video ')).length !== 1 ||
+      media.some((line) => !line.startsWith('m=video ') && !line.startsWith('m=audio '))) return false;
+  return lines.filter((line) => line.startsWith('a=candidate:')).length <= 64 &&
+    lines.some((line) => /^a=fingerprint:sha-256 [0-9A-F:]+$/i.test(line));
+};
+
+const boundedText = async (response: Response, limit: number): Promise<string> => {
+  if (!response.body) return '';
+  const reader = response.body.getReader();
+  const chunks: Uint8Array[] = [];
+  let size = 0;
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      size += value.byteLength;
+      if (size > limit) throw new Error('WHEP response exceeds its size limit');
+      chunks.push(value);
+    }
+  } catch (error) {
+    await reader.cancel().catch(() => undefined);
+    throw error;
+  }
+  const merged = new Uint8Array(size);
+  let offset = 0;
+  for (const chunk of chunks) { merged.set(chunk, offset); offset += chunk.byteLength; }
+  return new TextDecoder('utf-8', { fatal: true }).decode(merged);
 };
 
 function connectWhep(
@@ -53,6 +94,9 @@ function connectWhep(
   onState: (state: ProgramConnectionState) => void,
   receiveAudio = false,
   onRemoteStream?: (stream: MediaStream) => void,
+  validateEndpoint: EndpointValidator = validEndpoint,
+  requestHeaders: Record<string, string> = {},
+  onAuthorizationRejected?: AuthorizationRejected,
 ): ProgramConnection {
   let closed = false;
   let attempt = 0;
@@ -84,7 +128,9 @@ function connectWhep(
     }
     video.srcObject = null;
     if (sessionLocation) {
-      void fetch(sessionLocation, { method: 'DELETE', keepalive: true }).catch(() => undefined);
+      void fetch(sessionLocation, {
+        method: 'DELETE', keepalive: true, cache: 'no-store', redirect: 'error', headers: requestHeaders,
+      }).catch(() => undefined);
       sessionLocation = null;
     }
   };
@@ -113,7 +159,7 @@ function connectWhep(
         onState('disabled');
         return;
       }
-      const endpoint = validEndpoint(resolved);
+      const endpoint = validateEndpoint(resolved);
       if (!endpoint) throw new Error('WHEP endpoint is invalid');
       onState(attempt === 0 ? 'connecting' : 'reconnecting');
 
@@ -150,18 +196,23 @@ function connectWhep(
       await nextPeer.setLocalDescription(await nextPeer.createOffer());
       await gatherIce(nextPeer);
       if (!nextPeer.localDescription?.sdp) throw new Error('Browser did not produce an SDP offer');
-      const offerResponse = await fetch(endpoint, {
+      const offerResponse = await fetch(endpoint.href, {
         method: 'POST',
-        headers: { Accept: 'application/sdp', 'Content-Type': 'application/sdp' },
+        headers: { Accept: 'application/sdp', 'Content-Type': 'application/sdp', ...requestHeaders },
         body: nextPeer.localDescription.sdp,
         signal: request.signal,
+        redirect: 'error',
       });
+      if (offerResponse.status === 401 || offerResponse.status === 403)
+        await onAuthorizationRejected?.();
       if (offerResponse.status !== 201) throw new Error('WHEP offer was rejected');
+      if (offerResponse.headers.get('Content-Type')?.split(';', 1)[0].trim().toLowerCase() !== 'application/sdp')
+        throw new Error('WHEP answer content type is invalid');
       const location = validSessionLocation(offerResponse.headers.get('Location'), endpoint);
       if (!location) throw new Error('WHEP session location is invalid');
       sessionLocation = location;
-      const answer = await offerResponse.text();
-      if (!answer || answer.length > 64 * 1024) throw new Error('WHEP answer is invalid');
+      const answer = await boundedText(offerResponse, 64 * 1024);
+      if (!validSdpAnswer(answer)) throw new Error('WHEP answer is invalid');
       await nextPeer.setRemoteDescription({ type: 'answer', sdp: answer });
       handshakeTimer = window.setTimeout(scheduleReconnect, 15_000);
     } catch (error) {
@@ -203,4 +254,25 @@ export function connectSource(
   onRemoteStream?: (stream: MediaStream) => void,
 ): ProgramConnection {
   return connectWhep(video, async () => endpoint, onState, true, onRemoteStream);
+}
+
+export function connectApprovedWhep(
+  video: HTMLVideoElement,
+  endpoint: string,
+  onState: (state: ProgramConnectionState) => void,
+  options: {
+    deviceToken?: string;
+    onRemoteStream?: (stream: MediaStream) => void;
+    onAuthorizationRejected?: AuthorizationRejected;
+  } = {},
+): ProgramConnection {
+  const approved = new URL(endpoint);
+  const validate: EndpointValidator = (value) => {
+    const candidate = new URL(value);
+    if (candidate.href !== approved.href || candidate.protocol !== 'https:' || candidate.username ||
+        candidate.password || candidate.search || candidate.hash || candidate.pathname.length > 1024) return null;
+    return candidate;
+  };
+  return connectWhep(video, async () => endpoint, onState, true, options.onRemoteStream, validate,
+    options.deviceToken ? { 'X-WebObs-Device-Token': options.deviceToken } : {}, options.onAuthorizationRejected);
 }

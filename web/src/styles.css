@@ -47,6 +47,14 @@
 .login-card input { width: 100%; }
 .session-logout { position: fixed; z-index: 4000; right: 12px; bottom: 12px; opacity: .28; }
 .session-logout:hover, .session-logout:focus-visible { opacity: 1; }
+.offline-session { position: fixed; z-index: 4000; right: 12px; bottom: 12px; padding: 8px 12px; color: var(--warning); border: 1px solid rgba(255,203,102,.35); background: #10141c; }
+.local-runtime-badge { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; max-width: 340px; padding: 5px 8px; color: #b8c2d0; border: 1px solid var(--line); background: #0d1118; font-size: 10px; }
+.local-runtime-badge[data-config-state='offline-valid'] { color: var(--warning); }
+.local-runtime-badge[data-config-state='offline-expired'] { color: var(--danger); }
+.local-runtime-badge button { padding: 3px 6px; color: var(--accent); border: 1px solid rgba(185,255,79,.3); background: transparent; font-size: 9px; }
+.browser-pairing { display: flex; align-items: end; flex-wrap: wrap; gap: .75rem; padding: 1rem; }
+.browser-pairing label { display: grid; gap: .35rem; min-width: 15rem; }
+.browser-pairing input { min-height: 2.4rem; }
 
 .registry-page, .clients-page { min-height: 100vh; overflow: auto; padding: 28px; color: var(--text); background: var(--bg); }
 .registry-header, .section-title { display: flex; align-items: center; justify-content: space-between; gap: 18px; }
@@ -66,7 +74,9 @@
 .camera-card dt { color: var(--muted); font-size: 10px; }
 .camera-card dd { margin: 0; }
 .adapter-pill { padding: 3px 6px; color: var(--accent); border: 1px solid rgba(185,255,79,.28); border-radius: 999px; font-size: 9px; text-transform: uppercase; }
-.profile-list span { color: #aab4c2; font-size: 11px; }
+.profile-list span { align-items: center; color: #aab4c2; display: flex; flex-wrap: wrap; font-size: 11px; gap: 7px; }
+.profile-list span small { color: #7f8fa5; }
+.profile-list span button { margin-left: auto; }
 .camera-operations, .device-controls, .preset-controls, .device-actions { display: grid; gap: 8px; }
 .device-controls { grid-column: 1 / -1; padding-top: 10px; border-top: 1px solid var(--line); }
 .ptz-pad, .preset-controls, .device-actions { display: flex; flex-wrap: wrap; gap: 6px; }
@@ -946,7 +956,8 @@ select:focus-visible,
   background: #05070a;
 }
 
-.direct-tile video {
+.direct-tile video,
+.direct-tile img {
   position: absolute;
   display: block;
   max-width: none;

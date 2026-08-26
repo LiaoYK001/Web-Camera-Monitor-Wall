@@ -1,8 +1,11 @@
 import { type FormEvent, type ReactNode, useEffect, useState } from 'react';
 import { fetchAuthSession, login, logout, type AuthSession } from './api';
+import { clearPrivateRuntimeState, localConfigState } from './localRuntime';
+
+type GateSession = AuthSession & { offlineAuthorized?: boolean };
 
 export default function LoginGate({ children }: { children: ReactNode }) {
-  const [session, setSession] = useState<AuthSession | null>(null);
+  const [session, setSession] = useState<GateSession | null>(null);
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
   const [error, setError] = useState('');
@@ -12,7 +15,10 @@ export default function LoginGate({ children }: { children: ReactNode }) {
     const controller = new AbortController();
     fetchAuthSession(controller.signal)
       .then(setSession)
-      .catch(() => setSession({ authenticated: false, authenticationEnabled: true }));
+      .catch(() => void localConfigState().then((state) => setSession({
+        authenticated: state === 'offline-valid', authenticationEnabled: true,
+        offlineAuthorized: state === 'offline-valid',
+      })));
     return () => controller.abort();
   }, []);
 
@@ -34,11 +40,14 @@ export default function LoginGate({ children }: { children: ReactNode }) {
   if (session.authenticationEnabled === false || session.authenticated) return (
     <>
       {children}
-      {session.authenticated && (
-        <button className="session-logout" type="button" onClick={() => void logout().then(() => setSession({ authenticated: false, authenticationEnabled: true }))}>
+      {session.authenticated && !session.offlineAuthorized && (
+        <button className="session-logout" type="button" onClick={() => void logout()
+          .finally(() => clearPrivateRuntimeState())
+          .finally(() => setSession({ authenticated: false, authenticationEnabled: true }))}>
           退出登录
         </button>
       )}
+      {session.offlineAuthorized && <span className="offline-session">离线授权模式 · 修改只保存在本机</span>}
     </>
   );
   return (

@@ -1,7 +1,9 @@
 import { type CSSProperties, useEffect, useMemo, useRef, useState } from 'react';
 import { fetchPlaybackCapabilities } from './api';
+import { activateGateway, approvedBrowserProfile, BrowserPlanError, browserGrantProfile, connectApprovedWhep, connectHls, connectMjpeg, offlineSignedGrantPlan, requestBrowserPlan, type BrowserTopologyPlan } from './browserMedia';
 import { DirectAudioMixer, type DirectAudioSnapshot } from './directAudioMixer';
-import type { SceneDocument, SceneItem, SceneSource, SourcePlaybackCapability } from './types';
+import { clearPrivateRuntimeState } from './localRuntime';
+import type { CameraSceneSource, SceneDocument, SceneItem, SceneSource, SourcePlaybackCapability } from './types';
 import { connectSource, type ProgramConnectionState } from './whep';
 
 const labels: Record<ProgramConnectionState, string> = {
@@ -46,14 +48,14 @@ function DirectTile({ item, source, capability, mixer }: {
   const [dimensions, setDimensions] = useState({ width: 0, height: 0 });
 
   useEffect(() => {
-    if (!videoRef.current || !mixer || !capability?.endpoint || capability.preferred !== 'direct') return undefined;
+    if (source.kind === 'camera' || !videoRef.current || !mixer || !capability?.endpoint || capability.preferred !== 'direct') return undefined;
     const connection = connectSource(videoRef.current, capability.endpoint, setState,
       (stream) => mixer.bindStream(source.id, stream));
     return connection.close;
   }, [capability, mixer, source.id]);
 
   useEffect(() => {
-    if (!mixer || !videoRef.current || !capability?.endpoint || capability.preferred !== 'direct') return undefined;
+    if (source.kind === 'camera' || !mixer || !videoRef.current || !capability?.endpoint || capability.preferred !== 'direct') return undefined;
     return mixer.attach(source.id, videoRef.current);
   }, [capability, mixer, source.id]);
 
@@ -61,6 +63,8 @@ function DirectTile({ item, source, capability, mixer }: {
     () => videoGeometry(item, dimensions.width, dimensions.height),
     [item, dimensions],
   );
+
+  if (source.kind === 'camera') return <BrowserCameraTile item={item} source={source} mixer={mixer} />;
 
   return (
     <div
@@ -95,6 +99,119 @@ function DirectTile({ item, source, capability, mixer }: {
         : state !== 'live' && <span className="direct-tile-name">{source.name}</span>}
     </div>
   );
+}
+
+function BrowserCameraTile({ item, source, mixer }: {
+  item: SceneItem;
+  source: CameraSceneSource;
+  mixer: DirectAudioMixer | null;
+}) {
+  const videoRef = useRef<HTMLVideoElement>(null);
+  const imageRef = useRef<HTMLImageElement>(null);
+  const [state, setState] = useState<ProgramConnectionState>('checking');
+  const [transport, setTransport] = useState<'whep' | 'hls' | 'mjpeg' | 'gateway'>('gateway');
+  const [plan, setPlan] = useState<BrowserTopologyPlan | null>(null);
+  const [dimensions, setDimensions] = useState({ width: 0, height: 0 });
+
+  useEffect(() => {
+    let connection: { close: () => void } | undefined;
+    let closed = false;
+    let fallbackStarted = false;
+    let directConfirmed = false;
+    const authorizationCleared = () => {
+      closed = true;
+      connection?.close(); connection = undefined;
+      setState('offline');
+    };
+    window.addEventListener('webobs:browser-authorization-cleared', authorizationCleared);
+    const startGateway = async (reason: string) => {
+      if (closed || fallbackStarted) return;
+      fallbackStarted = true;
+      connection?.close(); connection = undefined;
+      setTransport('gateway'); setState('connecting');
+      try {
+        const fallbackPlan = await requestBrowserPlan(source.cameraId, source.profileId, 'unreachable', 'rtsp');
+        setPlan(fallbackPlan);
+        const gateway = await activateGateway(fallbackPlan.planId);
+        if (!closed && videoRef.current) connection = connectApprovedWhep(videoRef.current, gateway.endpoint, setState, {
+          deviceToken: gateway.deviceToken, onRemoteStream: (stream) => mixer?.bindStream(source.id, stream),
+          onAuthorizationRejected: clearPrivateRuntimeState,
+        });
+      } catch (error) {
+        if (error instanceof BrowserPlanError && error.kind === 'authorization') {
+          authorizationCleared();
+          return;
+        }
+        setPlan({
+          contractVersion: 2, planId: '', cameraId: source.cameraId, profileId: source.profileId,
+          topology: 'gateway-direct', runtimeKind: 'pwa', executionOwner: 'docker', mediaTransport: 'rtsp',
+          credentialExposure: 'none', decoder: 'browser', renderer: 'browser', encoder: 'none',
+          liveServerMediaExpected: true, fallbackReason: reason, offlineConfigExpiresAt: 0,
+        });
+        if (!closed) setState('offline');
+      }
+    };
+    void browserGrantProfile(source.cameraId, source.profileId).then(async (grantedProfile) => {
+      const profile = await approvedBrowserProfile(source.cameraId, source.profileId);
+      if (closed || !profile?.endpoint) {
+        void startGateway(grantedProfile?.browserDirectReason ?? 'browser_profile_not_authorized');
+        return;
+      }
+      setTransport(profile.adapter as 'whep' | 'hls' | 'mjpeg');
+      const onState = (next: ProgramConnectionState) => {
+        if (closed) return;
+        setState(next);
+        if (next === 'live' && !directConfirmed) {
+          directConfirmed = true;
+          void requestBrowserPlan(source.cameraId, source.profileId, 'reachable', profile.adapter)
+            .then((value) => setPlan(value)).catch((reason: unknown) => {
+              if (reason instanceof BrowserPlanError && reason.kind === 'unavailable')
+                void offlineSignedGrantPlan(source.cameraId, source.profileId, profile.adapter as 'whep' | 'hls' | 'mjpeg')
+                  .then(setPlan).catch(authorizationCleared);
+              else authorizationCleared();
+            });
+        }
+        if (next === 'offline') void startGateway('direct_first_frame_timeout');
+      };
+      if (profile.adapter === 'whep' && videoRef.current)
+        connection = connectApprovedWhep(videoRef.current, profile.endpoint, onState, {
+          onRemoteStream: (stream) => mixer?.bindStream(source.id, stream),
+        });
+      else if (profile.adapter === 'hls' && videoRef.current)
+        connection = connectHls(videoRef.current, profile.endpoint, onState);
+      else if (profile.adapter === 'mjpeg' && imageRef.current)
+        connection = connectMjpeg(imageRef.current, profile.endpoint, onState);
+      else void startGateway('protocol_not_supported');
+    }).catch(() => startGateway('browser_identity_unavailable'));
+    return () => {
+      closed = true;
+      window.removeEventListener('webobs:browser-authorization-cleared', authorizationCleared);
+      connection?.close();
+    };
+  }, [mixer, source.cameraId, source.id, source.profileId]);
+
+  useEffect(() => {
+    if (!mixer || !videoRef.current || transport === 'mjpeg') return undefined;
+    return mixer.attach(source.id, videoRef.current);
+  }, [mixer, source.id, transport]);
+
+  const geometry = useMemo(() => videoGeometry(item, dimensions.width, dimensions.height), [item, dimensions]);
+  const trueDirect = plan?.topology === 'true-direct';
+  return <div className={`direct-tile ${state}`} data-source-id={source.id}>
+    <video ref={videoRef} autoPlay muted playsInline style={{ ...geometry, display: transport === 'mjpeg' ? 'none' : undefined }}
+      aria-label={`${source.name} 浏览器媒体画面`} onLoadedMetadata={(event) => setDimensions({ width: event.currentTarget.videoWidth, height: event.currentTarget.videoHeight })} />
+    <img ref={imageRef} alt={`${source.name} MJPEG 画面`} style={{ ...geometry, display: transport === 'mjpeg' ? undefined : 'none' }} />
+    <span className="direct-tile-state"><i aria-hidden="true" />{labels[state]}</span>
+    <div className={`delivery-diagnostic cost-${trueDirect ? 'low' : 'medium'}`}>
+      <strong>{trueDirect ? 'TRUE DIRECT' : 'GATEWAY / HYBRID'}</strong>
+      <span>媒体：{trueDirect ? 'Camera → Browser' : 'Camera → Docker → Browser'}</span>
+      <span>Protocol: {transport.toUpperCase()} · Owner: {plan?.executionOwner ?? 'checking'}</span>
+      <span>Decoder: {plan?.decoder ?? 'checking'} · Renderer: {plan?.renderer ?? 'browser'} · Encoder: {plan?.encoder ?? 'checking'}</span>
+      <span>Server media: {plan?.liveServerMediaExpected ? 'EXPECTED' : 'OFF'}</span>
+      {plan?.fallbackReason && <span>Reason: {plan.fallbackReason}</span>}
+    </div>
+    {state !== 'live' && <span className="direct-tile-name">{source.name}</span>}
+  </div>;
 }
 
 export default function DirectPreview({ scene }: { scene: SceneDocument }) {

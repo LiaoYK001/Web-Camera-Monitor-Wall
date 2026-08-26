@@ -15,6 +15,8 @@ import ProgramPreview from './ProgramPreview';
 import SystemStatus from './SystemStatus';
 import EventsPanel from './EventsPanel';
 import ClientsPanel from './ClientsPanel';
+import LocalRuntimeBadge from './LocalRuntimeBadge';
+import { loadOfflineStudio, saveLocalStudio, saveStudioSnapshot } from './localRuntime';
 import type { AudioMonitoring, CameraRecord, FilterKind, PlaybackMode, ScaleMode, SceneDocument, SceneFilter, SceneItem, SceneSource, StudioCapabilities, StudioDocument, Transport } from './types';
 
 type ConnectionState = 'connecting' | 'online' | 'offline';
@@ -232,9 +234,16 @@ export default function App() {
   const reload = useCallback(async () => {
     setLoadingError('');
     try {
-      applyRemoteStudio(await fetchStudio());
+      const studio = await fetchStudio();
+      applyRemoteStudio(studio);
+      void saveStudioSnapshot(studio).catch(() => undefined);
     } catch (error) {
-      setLoadingError(error instanceof Error ? error.message : '无法读取场景');
+      const offline = await loadOfflineStudio().catch(() => null);
+      if (offline) {
+        applyRemoteStudio(offline.studio);
+        setConnection('offline');
+        setNotice(`已载入本机离线场景；授权有效至 ${new Date(offline.expiresAt).toLocaleString()}。`);
+      } else setLoadingError(error instanceof Error ? error.message : '无法读取场景');
     }
   }, [applyRemoteStudio]);
 
@@ -250,10 +259,15 @@ export default function App() {
   useEffect(() => {
     const controller = new AbortController();
     fetchStudio(controller.signal)
-      .then(applyRemoteStudio)
-      .catch((error: unknown) => {
-        if (!controller.signal.aborted)
-          setLoadingError(error instanceof Error ? error.message : '无法读取场景');
+      .then((studio) => { applyRemoteStudio(studio); void saveStudioSnapshot(studio).catch(() => undefined); })
+      .catch(async (error: unknown) => {
+        if (controller.signal.aborted) return;
+        const offline = await loadOfflineStudio().catch(() => null);
+        if (offline) {
+          applyRemoteStudio(offline.studio);
+          setConnection('offline');
+          setNotice(`Docker 不可达，使用本机离线场景至 ${new Date(offline.expiresAt).toLocaleString()}。`);
+        } else setLoadingError(error instanceof Error ? error.message : '无法读取场景');
       });
     return () => controller.abort();
   }, [applyRemoteStudio]);
@@ -501,8 +515,15 @@ export default function App() {
     setSaving(true);
     setNotice('');
     try {
+      if (connection === 'offline') {
+        await saveLocalStudio(studioDraft);
+        applyRemoteStudio(studioDraft);
+        setNotice('本地 Scene 已保存为 local-only；恢复在线后不会自动覆盖共享场景。');
+        return;
+      }
       const committed = await replaceStudio(studioDraft);
       applyRemoteStudio(committed);
+      void saveStudioSnapshot(committed).catch(() => undefined);
       setNotice(`Studio s${committed.revision} 已保存；Preview 保持与 Program 隔离。`);
     } catch (error) {
       if (error instanceof ControlApiError && error.status === 412) {
@@ -781,6 +802,7 @@ export default function App() {
           />
         </div>
         <div className="top-actions">
+          <LocalRuntimeBadge />
           <button className="ghost-button" type="button" onClick={() => {
             window.history.replaceState(null, '', '#system');
             setProductArea('system');

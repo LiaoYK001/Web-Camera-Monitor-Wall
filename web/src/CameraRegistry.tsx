@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { createCamera, deleteCamera, detectCamera, discoverOnvif, fetchCameras, fetchOnvifPresets, fetchOnvifSnapshot, mutateOnvifPreset, probeOnvif, pullOnvifEvents, sendOnvifPtz, sendOnvifTalk, syncOnvifCamera } from './api';
+import { createCamera, deleteCamera, detectCamera, discoverOnvif, fetchCameras, fetchOnvifPresets, fetchOnvifSnapshot, mutateOnvifPreset, probeOnvif, pullOnvifEvents, qualifyBrowserDirect, sendOnvifPtz, sendOnvifTalk, syncOnvifCamera } from './api';
 import type { CameraAdapter, CameraDetection, CameraRecord, OnvifPreset } from './types';
 
 function DeviceControls({ camera, busy, fail }: { camera: CameraRecord; busy: boolean; fail: (message: string) => void }) {
@@ -64,6 +64,7 @@ export default function CameraRegistry({ onBack }: { onBack: () => void }) {
   const [discovered, setDiscovered] = useState<Array<{ address: string; host: string }>>([]);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
+  const [notice, setNotice] = useState('');
   const reload = async () => { try { setCameras((await fetchCameras()).cameras); } catch (reason) { setError(reason instanceof Error ? reason.message : '无法读取摄像机'); } };
   useEffect(() => { void reload(); }, []);
 
@@ -102,10 +103,22 @@ export default function CameraRegistry({ onBack }: { onBack: () => void }) {
     catch (reason) { setError(reason instanceof Error ? reason.message : 'ONVIF 同步失败'); }
     finally { setBusy(false); }
   };
+  const qualifyDirect = async (cameraId: string, profileId: string) => {
+    setBusy(true); setError(''); setNotice('');
+    try {
+      const result = await qualifyBrowserDirect(cameraId, profileId);
+      setNotice(result.eligible
+        ? '浏览器真直连 HTTPS、CORS 与媒体响应探测已通过。'
+        : `该 Profile 必须使用 Gateway/Hybrid：${result.reason}`);
+      await reload();
+    } catch (reason) { setError(reason instanceof Error ? reason.message : '浏览器直连资格探测失败'); }
+    finally { setBusy(false); }
+  };
 
   return <main className="registry-page">
     <header className="registry-header"><div><span className="eyebrow">Camera Source Adapter</span><h1>设备与码流</h1></div><button className="ghost-button" type="button" onClick={onBack}>返回 Studio</button></header>
     {error && <div className="alert" role="alert">{error}</div>}
+    {notice && <div className="notice" role="status">{notice}</div>}
     <section className="registry-add">
       <div><h2>添加设备</h2><p>输入 IP、主机名或 URL。地址中禁止明文账号密码；凭据通过 Secret 引用绑定。</p></div>
       <label><span>地址</span><input value={address} placeholder="camera.example.invalid 或 rtsp://camera.example.invalid/live" onChange={(event) => { setAddress(event.target.value); setDetection(null); }} /></label>
@@ -114,7 +127,12 @@ export default function CameraRegistry({ onBack }: { onBack: () => void }) {
       {discovered.length > 0 && <div className="discovery-list">{discovered.map((device) => <button type="button" key={device.address} onClick={() => { setAddress(device.address); setDetection(null); }}><strong>{device.host}</strong><span>{device.address}</span></button>)}</div>}
     </section>
     <section className="camera-list"><div className="section-title"><h2>Camera Registry</h2><span>{cameras.length} 台</span></div>
-      {cameras.length === 0 ? <div className="registry-empty"><h3>尚未添加摄像机</h3><p>使用自动检测，或通过 ONVIF WS-Discovery 查找局域网设备。</p></div> : cameras.map((camera) => <article className="camera-card" key={camera.id}><div><span className="adapter-pill">{camera.adapter}</span><h3>{camera.name}</h3><p>{camera.address}</p></div><dl><div><dt>Profile</dt><dd>{camera.profiles.length}</dd></div><div><dt>硬解</dt><dd>{camera.hardwareDecode}</dd></div><div><dt>健康</dt><dd>{camera.health}</dd></div></dl><div className="profile-list">{camera.profiles.map((profile) => <span key={profile.id}>{profile.role} · {profile.videoCodec || 'unknown'} {profile.width ? `${profile.width}×${profile.height}` : ''}</span>)}</div><div className="camera-operations">{camera.adapter === 'onvif' && <><button className="ghost-button" disabled={busy} type="button" onClick={() => void syncOnvif(camera.id)}>同步 ONVIF Profile</button><DeviceControls camera={camera} busy={busy} fail={setError} /></>}<button className="danger-button" type="button" onClick={() => { if (window.confirm(`删除 ${camera.name}？`)) void deleteCamera(camera.id).then(reload); }}>删除</button></div></article>)}
+      {cameras.length === 0 ? <div className="registry-empty"><h3>尚未添加摄像机</h3><p>使用自动检测，或通过 ONVIF WS-Discovery 查找局域网设备。</p></div> : cameras.map((camera) => <article className="camera-card" key={camera.id}><div><span className="adapter-pill">{camera.adapter}</span><h3>{camera.name}</h3><p>{camera.address}</p></div><dl><div><dt>Profile</dt><dd>{camera.profiles.length}</dd></div><div><dt>硬解</dt><dd>{camera.hardwareDecode}</dd></div><div><dt>健康</dt><dd>{camera.health}</dd></div></dl><div className="profile-list">{camera.profiles.map((profile) => {
+        const proof = ((camera.capabilities.browserDirect as { profiles?: Record<string, { tlsVerified?: boolean; corsVerified?: boolean; reason?: string }> } | undefined)?.profiles?.[profile.id]);
+        return <span key={profile.id}>{profile.role} · {profile.videoCodec || 'unknown'} {profile.width ? `${profile.width}×${profile.height}` : ''}
+          {['whep', 'hls', 'mjpeg'].includes(camera.adapter) && <><small>{proof?.tlsVerified && proof?.corsVerified ? ' · Browser Direct 已验证' : proof ? ` · 未通过：${proof.reason}` : ' · 未探测'}</small><button className="ghost-button" disabled={busy} type="button" onClick={() => void qualifyDirect(camera.id, profile.id)}>验证浏览器真直连</button></>}
+        </span>;
+      })}</div><div className="camera-operations">{camera.adapter === 'onvif' && <><button className="ghost-button" disabled={busy} type="button" onClick={() => void syncOnvif(camera.id)}>同步 ONVIF Profile</button><DeviceControls camera={camera} busy={busy} fail={setError} /></>}<button className="danger-button" type="button" onClick={() => { if (window.confirm(`删除 ${camera.name}？`)) void deleteCamera(camera.id).then(reload); }}>删除</button></div></article>)}
     </section>
     <footer className="adapter-footer">支持：{(['onvif','rtsp','mjpeg','snapshot','hls','http-flv','whep','srt','rtp','v4l2'] as CameraAdapter[]).join(' · ')}</footer>
   </main>;

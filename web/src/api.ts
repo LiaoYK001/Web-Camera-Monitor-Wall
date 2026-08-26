@@ -246,6 +246,11 @@ export const createCamera = (camera: Partial<CameraRecord>) => cameraRequest<Cam
 export const syncOnvifCamera = (cameraId: string) => cameraRequest<CameraRecord>(`/cameras/${encodeURIComponent(cameraId)}/onvif/sync`, {
   method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}',
 });
+export const qualifyBrowserDirect = (cameraId: string, profileId: string) => cameraRequest<{
+  cameraId: string; profileId: string; eligible: boolean; reason: string; checkedAt: number;
+}>(`/cameras/${encodeURIComponent(cameraId)}/profiles/${encodeURIComponent(profileId)}/browser-direct/probe`, {
+  method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}',
+});
 export const deleteCamera = (cameraId: string) => cameraRequest<{ id: string; deleted: boolean }>(`/cameras/${encodeURIComponent(cameraId)}`, { method: 'DELETE' });
 const onvifOperation = <T>(cameraId: string, operation: string, body: Record<string, unknown>) =>
   cameraRequest<T>(`/cameras/${encodeURIComponent(cameraId)}/onvif/${operation}`, {
