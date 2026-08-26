@@ -73,7 +73,7 @@ jobs:
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v5.0.0
         with: { node-version: 24.14.0 }
       - name: Run installed Chrome and Edge gates
-        shell: pwsh
+        shell: powershell
         run: |
           corepack enable
           corepack prepare pnpm@11.16.0 --activate
