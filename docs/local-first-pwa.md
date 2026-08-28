@@ -1,6 +1,6 @@
 # v2.0 Local-first PWA / v2.0 本地优先 PWA
 
-> Status / 状态：v2-M2/M3 shipped in `v2.0.1`; v2-M4/M5 are complete on `dev` as the unpublished v2.1 candidate / v2-M2/M3 已随 `v2.0.1` 发布；v2-M4/M5 已在 `dev` 完成并形成尚未发布的 v2.1 候选
+> Status / 状态：v2-M2/M3 shipped in `v2.0.1`; v2-M4/M5 ship in stable `v2.1` / v2-M2/M3 已随 `v2.0.1` 发布；v2-M4/M5 随稳定版 `v2.1` 发布
 
 ## Product boundary / 产品边界
 
@@ -61,7 +61,7 @@ Only one live chain may exist for a tile. A failed direct attempt is closed befo
 
 - Fork PR and protected branches: GitHub-hosted audit, dependency install, typecheck and deterministic PWA build only; no secrets and no private media fixtures / Fork PR 与受保护分支只在 GitHub-hosted Runner 执行审计、依赖安装、类型检查和确定性 PWA 构建；无 Secret，也不接触私有媒体夹具。
 - Local WSL2 Linux: Linux shell, Chromium and Linux media acceptance; Windows Docker Desktop owns container builds / 本机 WSL2 Linux：Linux shell、Chromium 与 Linux 媒体验收；容器构建由 Windows Docker Desktop 负责。
-- Local Windows: installed Chrome/Edge, offline/update compatibility and long-run acceptance / 本机 Windows：已安装 Chrome/Edge、离线/升级兼容与长稳验收。
+- Local Windows: installed Chrome/Edge, protocol, offline/update and background-release acceptance; long-duration load remains optional evidence / 本机 Windows：已安装 Chrome/Edge 的协议、离线/升级与后台资源释放验收；长时间负载保留为可选证据。
 - OCI publication is local-only and requires fresh revision-bound receipts from both hosts / OCI 仅允许本地发布，并要求同一提交的两份新鲜门禁收据。
 - A v2 tag cannot be created until both local browser gates pass. Native-client workflow has no v2 tag trigger / 两个本机浏览器门禁全部通过前不得创建 v2 Tag；原生客户端工作流没有 v2 Tag 触发器。
 

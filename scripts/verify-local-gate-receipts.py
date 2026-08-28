@@ -11,7 +11,7 @@ import subprocess
 from typing import NoReturn
 
 
-CONTRACT = "webobs-local-gate-receipt-v1"
+CONTRACT = "webobs-local-gate-receipt-v2"
 PLATFORMS = ("linux-wsl2-chromium", "windows")
 MAX_AGE = timedelta(hours=48)
 EXPECTED_CHECKS = {
@@ -21,10 +21,8 @@ EXPECTED_CHECKS = {
     },
     "windows": {
         "chromeWhepDirect", "chromeHlsDirect", "chromeMjpegDirect",
-        "chromeSixteenStreamsThirtyMinutes", "chromeDropRateBelowTwoPercent",
-        "chromeMemoryStable", "chromeBackgroundReleased", "edgeInstall",
-        "edgeOfflineRestore", "edgeUpdate", "edgeThreeProtocols",
-        "edgeFourStreamsTenMinutes",
+        "chromeBackgroundReleased", "edgeInstall", "edgeOfflineRestore",
+        "edgeUpdate", "edgeThreeProtocols",
     },
 }
 

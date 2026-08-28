@@ -1,6 +1,6 @@
 # MonitorView v1 and analytics handoff / MonitorView v1 与分析交接
 
-> Status / 状态：v2-M5 development is complete on `dev` for the unpublished v2.1 candidate / v2-M5 开发已在 `dev` 完成，当前为尚未发布的 v2.1 候选。
+> Status / 状态：v2-M5 is complete and published in stable v2.1 / v2-M5 已完成并随稳定版 v2.1 发布。
 
 ## View contract / 视图契约
 

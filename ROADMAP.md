@@ -12,11 +12,11 @@ Canonical milestone names use `v<major>-M<number>`. Historical validation prose 
 
 ## Current position / 当前位置
 
-**✅ `v2.0.1` 已发布；`dev` 已完成 v2-M4/v2-M5，形成尚未发布的 v2.1 候选。**
+**✅ `v2.1` 已完成并作为当前稳定版本发布，包含 v2-M4/v2-M5。**
 
-`v2.0.1` remains the current published baseline. The `dev` branch now completes v2-M4/M5: encrypted incremental Registry/Scene synchronization with field conflicts and bounded offline audit, plus per-tile telemetry, arbitrary 1–16 Scene v5 auto-layouts, M/S rotation, low-power profile selection, event-promotion contracts and atomic per-profile analytics policies. This is a v2.1 development candidate, not a published Tag. Native desktop/Android code stays frozen and no EXE/APK/native package is planned.
+`v2.1` is the current stable baseline and completes v2-M4/M5: encrypted incremental Registry/Scene synchronization with field conflicts and bounded offline audit, plus per-tile telemetry, arbitrary 1–16 Scene v5 auto-layouts, M/S rotation, low-power profile selection, event-promotion contracts and atomic per-profile analytics policies. Native desktop/Android code stays frozen and no EXE/APK/native package is planned.
 
-`v2.0.1` 仍是当前已发布基线。`dev` 已完成 v2-M4/M5：加密增量 Registry/Scene 同步、字段冲突与有界离线审计，以及逐画面统计、1–16 任意数量 Scene v5 自动布局、M/S 轮换、低功耗 Profile 选择、事件提升契约和逐 Profile 原子分析策略。这是 v2.1 开发候选，尚未创建稳定 Tag。原生桌面/Android 继续冻结，不规划 EXE/APK/原生包。
+`v2.1` 是当前稳定基线并完成 v2-M4/M5：加密增量 Registry/Scene 同步、字段冲突与有界离线审计，以及逐画面统计、1–16 任意数量 Scene v5 自动布局、M/S 轮换、低功耗 Profile 选择、事件提升契约和逐 Profile 原子分析策略。原生桌面/Android 继续冻结，不规划 EXE/APK/原生包。
 
 The Qt/GStreamer/Android implementation and its prior source gates remain in the repository for security maintenance and research. The native workflow has no tag trigger, requires an explicit frozen-candidate confirmation, and cannot publish v2.0 artifacts / Qt/GStreamer/Android 实现及既有源码门禁继续留在仓库供安全维护与研究；原生工作流没有 Tag 触发器，要求显式冻结候选确认，且不能发布 v2.0 产物。
 
@@ -105,8 +105,8 @@ M0 已于 2026-08-11 在真实摄像头门禁通过后完成。后续修改采�
 | v2-M1 — True Direct Foundation | ✅ Complete / 已完成 | API/grant/planner/reference receiver plus isolated five-protocol architecture proof / API、Grant、规划器、参考接收端及隔离五协议架构证明 | Locked receiver, zero-payload, NVR coexistence and credential gates pass / 固定接收端、零负载、NVR 共存及凭据门禁全部通过 |
 | v2-M2 — Local-first PWA | ✅ Complete / 已完成 | Cached app shell, encrypted expiring Registry/Scene and local-only Scene editing / 缓存应用壳、加密过期 Registry/Scene 与本地 Scene 编辑 | Published in v2.0.1 baseline / 已进入 v2.0.1 发布基线 |
 | v2-M3 — Browser Media Runtime | ✅ Complete / 已完成 | WHEP/HLS/MJPEG True Direct and explicit RTSP Gateway / WHEP/HLS/MJPEG 真直连及明确 RTSP 网关 | Published in v2.0.1 baseline / 已进入 v2.0.1 发布基线 |
-| v2-M4 — Offline Sync | ✅ Complete on `dev` / `dev` 已完成 | Encrypted bidirectional Registry/Scene deltas, field conflicts, tombstones and bounded offline audit / 加密双向 Registry/Scene 增量、字段冲突、墓碑与有界离线审计 | Deterministic Linux service and browser IndexedDB matrices pass / Linux 服务与浏览器 IndexedDB 确定性矩阵通过 |
-| v2-M5 — Monitor Layout & Telemetry | ✅ Complete on `dev` / `dev` 已完成 | Telemetry, 1–16 M/S layout/rotation, low power and analytics controls / 统计、1–16 M/S 布局轮换、低功耗与分析控制 | Layout, telemetry, lifecycle and policy regressions pass without inventing unavailable measurements / 布局、统计、生命周期与策略回归通过，不虚构不可测数据 |
+| v2-M4 — Offline Sync | ✅ Published in v2.1 / 已随 v2.1 发布 | Encrypted bidirectional Registry/Scene deltas, field conflicts, tombstones and bounded offline audit / 加密双向 Registry/Scene 增量、字段冲突、墓碑与有界离线审计 | Deterministic Linux service and browser IndexedDB matrices pass / Linux 服务与浏览器 IndexedDB 确定性矩阵通过 |
+| v2-M5 — Monitor Layout & Telemetry | ✅ Published in v2.1 / 已随 v2.1 发布 | Telemetry, 1–16 M/S layout/rotation, low power and analytics controls / 统计、1–16 M/S 布局轮换、低功耗与分析控制 | Layout, telemetry, lifecycle and policy regressions pass without inventing unavailable measurements / 布局、统计、生命周期与策略回归通过，不虚构不可测数据 |
 | v2-M6 — Scale | 🧭 Planned / 已规划 | Multi-node storage and resource scheduling / 多节点存储与资源调度 | Scale/resilience gates pass / 规模与韧性门禁通过 |
 | v3-M1/M2 — Analytics | 🧭 Planned / 已规划 | Motion/scene change, then person boxes / 运动与画面变化，随后人物框 | Per-stream opt-in, local-first privacy and bounded resource gates / 逐流选择、本地优先隐私与有界资源门禁 |
 

@@ -1,6 +1,6 @@
 # API v2 — local clients and True Direct / 本地客户端与真直连
 
-> Development status / 开发状态：v2-M1 through v2-M3 shipped in `v2.0.1`; v2-M4/M5 are complete on `dev` as the unpublished v2.1 candidate. Native package qualification remains frozen / v2-M1 至 v2-M3 已随 `v2.0.1` 发布；v2-M4/M5 已在 `dev` 完成并形成尚未发布的 v2.1 候选，原生包验收仍冻结。
+> Stable status / 稳定状态：v2-M1 through v2-M3 shipped in `v2.0.1`; v2-M4/M5 ship in `v2.1`. Native package qualification remains frozen / v2-M1 至 v2-M3 已随 `v2.0.1` 发布；v2-M4/M5 随 `v2.1` 发布，原生包验收仍冻结。
 
 API v1 is unchanged: its `direct` value means Gateway Direct and Docker remains in the media path. API v2 adds device enrollment and a separately measured `true-direct` topology. All responses use bounded unique-field JSON, `Cache-Control: no-store` and credential-free errors.
 

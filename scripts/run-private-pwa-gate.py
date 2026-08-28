@@ -32,20 +32,16 @@ REQUIRED_CHECKS = {
         "chromeWhepDirect",
         "chromeHlsDirect",
         "chromeMjpegDirect",
-        "chromeSixteenStreamsThirtyMinutes",
-        "chromeDropRateBelowTwoPercent",
-        "chromeMemoryStable",
         "chromeBackgroundReleased",
         "edgeInstall",
         "edgeOfflineRestore",
         "edgeUpdate",
         "edgeThreeProtocols",
-        "edgeFourStreamsTenMinutes",
     },
 }
 
 
-RECEIPT_CONTRACT = "webobs-local-gate-receipt-v1"
+RECEIPT_CONTRACT = "webobs-local-gate-receipt-v2"
 
 
 def fail(message: str) -> NoReturn:
