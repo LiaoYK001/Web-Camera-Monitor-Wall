@@ -49,6 +49,8 @@ class EventServiceTests(unittest.TestCase):
             database.execute("INSERT INTO event_audit(event_id,operation,actor,created_at) VALUES(?,?,?,?)", (first["id"], "acknowledge", "operator", timestamp))
             self.assertEqual(database.execute("SELECT operation FROM event_audit").fetchone()[0], "acknowledge")
         with self.assertRaises(ValueError): events.validate_event({"cameraId": "front-door", "type": "face-identity", "source": "onvif"})
+        scene_change = events.validate_event({"cameraId": "front-door", "type": "scene-change", "source": "software-motion", "confidence": .7})
+        self.assertEqual(scene_change["type"], "scene-change")
 
     def test_motion_ground_truth_zones_debounce_cooldown_and_mask(self) -> None:
         include = events.validate_zone({"id": "door", "cameraId": "cam-1", "name": "Door", "polygon": [[0,0],[.5,0],[.5,1],[0,1]], "sensitivity": .2, "debounceMs": 100, "cooldownMs": 1000})

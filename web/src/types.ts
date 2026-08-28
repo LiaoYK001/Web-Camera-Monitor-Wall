@@ -217,6 +217,13 @@ export interface NvrExport {
 export type CameraAdapter = 'onvif' | 'rtsp' | 'mjpeg' | 'snapshot' | 'hls' | 'http-flv' | 'whep' | 'srt' | 'rtp' | 'v4l2';
 export interface CameraProfile { id: string; name: string; role: 'main' | 'sub' | 'snapshot' | 'auxiliary'; endpoint: string; videoCodec: string; audioCodec: string; width: number; height: number; fps: number; }
 export interface CameraRecord { id: string; name: string; address: string; adapter: CameraAdapter; credentialsRef: string; hardwareDecode: 'auto' | 'on' | 'off'; capabilities: Record<string, unknown>; health: string; profiles: CameraProfile[]; createdAt: number; updatedAt: number; }
+export interface AnalyticsPolicy {
+  cameraId: string; profileId: string;
+  motionEnabled: boolean; sceneChangeEnabled: boolean; personEnabled: boolean;
+  allowEventPromotion: boolean; promotionThreshold: number;
+  promotionHoldSeconds: number; promotionCooldownSeconds: number;
+  forceAnalyticsAlwaysOn: boolean; updatedAt: number;
+}
 export interface CameraDetection {
   address: string;
   adapter: CameraAdapter;

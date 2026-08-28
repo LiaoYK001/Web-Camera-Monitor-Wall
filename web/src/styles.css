@@ -935,6 +935,58 @@ select:focus-visible,
   background: rgba(185, 255, 79, 0.08);
 }
 
+.monitor-view-controls {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 12px;
+  padding: 8px 10px;
+  border: 1px solid #2b3340;
+  border-radius: 6px;
+  color: #aeb7c5;
+  background: #0b0f15;
+  font-size: 11px;
+}
+
+.monitor-view-controls label { display: inline-flex; align-items: center; gap: 5px; }
+.monitor-view-controls button { padding: 4px 7px; }
+.monitor-view-controls summary { cursor: pointer; }
+.monitor-source-options { display: grid; gap: 5px; padding: 7px; }
+.monitor-source-options > span { display: flex; justify-content: space-between; gap: 10px; }
+.power-warning { color: var(--warning); }
+.monitor-view-controls input[type='number'] { width: 52px; }
+.monitor-view-controls select,
+.monitor-view-controls input[type='number'] {
+  padding: 3px 5px;
+  border: 1px solid #343c4b;
+  border-radius: 4px;
+  color: #dce4ef;
+  background: #070a0f;
+}
+
+.analytics-batch,
+.analytics-policy {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 7px 10px;
+}
+.analytics-batch {
+  margin: 0 0 12px;
+  padding: 9px 11px;
+  border: 1px solid #2b3340;
+  border-radius: 6px;
+  background: #0b0f15;
+}
+.analytics-policy {
+  width: 100%;
+  margin-top: 6px;
+  padding-top: 6px;
+  border-top: 1px solid rgba(255,255,255,.08);
+  font-size: 11px;
+}
+.analytics-policy label { display: inline-flex; align-items: center; gap: 4px; }
+
 .direct-preview {
   position: relative;
   width: 100%;
@@ -1010,6 +1062,39 @@ select:focus-visible,
   font-size: clamp(7px, 0.85vw, 12px);
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.telemetry-overlay {
+  position: absolute;
+  z-index: 4;
+  max-width: calc(100% - 12px);
+  padding: 4px 6px;
+  border-radius: 3px;
+  overflow: hidden;
+  font: 700 clamp(6px, .68vw, 10px)/1.25 ui-monospace, SFMono-Regular, Consolas, monospace;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  pointer-events: none;
+}
+.telemetry-overlay.position-top-left { top: 7px; left: 7px; }
+.telemetry-overlay.position-top-right { top: 7px; right: 7px; }
+.telemetry-overlay.position-bottom-left { bottom: 7px; left: 7px; }
+.telemetry-overlay.position-bottom-right { right: 7px; bottom: 7px; }
+.telemetry-overlay.position-custom { transform: translate(-50%, -50%); }
+
+.low-power-unmet {
+  position: absolute;
+  z-index: 4;
+  right: 7px;
+  bottom: 7px;
+  padding: 5px 7px;
+  border: 1px solid rgba(255, 203, 102, .55);
+  border-radius: 4px;
+  color: var(--warning);
+  background: rgba(5, 7, 10, .82);
+  font-size: clamp(5px, .55vw, 8px);
+  line-height: 1.35;
+  pointer-events: none;
 }
 
 .direct-preview-unavailable {

@@ -1,4 +1,4 @@
-import type { ApiErrorEnvelope, CameraDetection, CameraRecord, ClientCameraGrant, ClientEnrollment, DeviceOperation, EnrolledClient, EventRule, MonitorEvent, MotionZone, NvrExport, NvrStatus, NvrTimeline, OnvifEvent, OnvifPreset, PlaybackCapabilities, ProcessDiagnostics, SceneDocument, SceneEvent, StudioCapabilities, StudioDocument, SystemCapabilities } from './types';
+import type { AnalyticsPolicy, ApiErrorEnvelope, CameraDetection, CameraRecord, ClientCameraGrant, ClientEnrollment, DeviceOperation, EnrolledClient, EventRule, MonitorEvent, MotionZone, NvrExport, NvrStatus, NvrTimeline, OnvifEvent, OnvifPreset, PlaybackCapabilities, ProcessDiagnostics, SceneDocument, SceneEvent, StudioCapabilities, StudioDocument, SystemCapabilities } from './types';
 
 export class ControlApiError extends Error {
   readonly status: number;
@@ -231,6 +231,11 @@ async function cameraRequest<T>(path: string, init?: RequestInit): Promise<T> {
 }
 
 export const fetchCameras = (signal?: AbortSignal) => cameraRequest<{ cameras: CameraRecord[] }>('/cameras', { signal });
+export const fetchAnalyticsPolicies = (signal?: AbortSignal) => cameraRequest<{ policies: AnalyticsPolicy[] }>('/cameras/analytics-policies', { signal });
+export const updateAnalyticsPolicies = (policies: Array<Omit<AnalyticsPolicy, 'updatedAt'>>) =>
+  cameraRequest<{ policies: AnalyticsPolicy[] }>('/cameras/analytics-policies', {
+    method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ policies }),
+  });
 export const detectCamera = (address: string) => cameraRequest<CameraDetection>('/camera-detect', {
   method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ address }),
 });

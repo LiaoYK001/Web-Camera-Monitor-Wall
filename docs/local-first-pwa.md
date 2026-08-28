@@ -1,6 +1,6 @@
 # v2.0 Local-first PWA / v2.0 本地优先 PWA
 
-> Status / 状态：implementation on `dev`; not a stable v2.0 release claim / 正在 `dev` 实施；不表示 v2.0 已达到稳定发布条件
+> Status / 状态：v2-M2/M3 shipped in `v2.0.1`; v2-M5 monitor enhancements continue on `dev` / v2-M2/M3 已随 `v2.0.1` 发布；v2-M5 监控增强继续在 `dev` 开发
 
 ## Product boundary / 产品边界
 

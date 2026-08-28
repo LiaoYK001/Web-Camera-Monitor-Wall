@@ -13,9 +13,11 @@ Release series use `v<major>.<minor>`; implementation milestones use `v<major>-M
 | `v1.0` | `v1-M1` … `v1-M6` | Complete / 已完成 |
 | `v1.1` | `v1-M7` … `v1-M11` | Milestone family is implementation-complete; external release qualification is tracked by v1.2 / 里程碑族实现完成；外部发布资格由 v1.2 跟踪 |
 | `v1.2` (`v1.2.1` current patch / 当前修复版) | Final v1 closure / v1 最终收口 | Contains no `v1-M12`; patch releases fix the final v1 baseline without adding a milestone / 不新增 `v1-M12`；补丁版本只修复最终 v1 基线，不增加里程碑 |
-| `v2.0` | `v2-M1` … `v2-M3` | M1 contract complete; M2 Local-first PWA and M3 Browser Media Runtime active on `dev` / M1 契约完成；M2 本地优先 PWA 与 M3 浏览器媒体运行时正在 `dev` 开发 |
-| `v2.1` | `v2-M4` … `v2-M5` | Planned after stable v2.0 / 稳定 v2.0 后实施 |
+| `v2.0` (`v2.0.1` current patch / 当前修复版) | `v2-M1` … `v2-M3` | Complete and published / 已完成并发布 |
+| `v2.1` | `v2-M4` … `v2-M5` | Active on `dev`; v2-M5 functional slice implemented / 正在 `dev` 实施；v2-M5 功能切片已落地 |
 | `v2.2` | `v2-M6` | Planned / 已规划 |
+| `v3.0` | `v3-M1` | Motion and scene-change analytics / 运动与大范围画面变化分析 |
+| `v3.1` | `v3-M2` | Person boxes and analytics scheduling / 人物框与分析资源调度 |
 
 A milestone name is an engineering gate, not a release date. A release may be cut only from completed, reviewed gates. Public SemVer tags may add a patch component such as `v1.1.1`; an existing tag is immutable.
 

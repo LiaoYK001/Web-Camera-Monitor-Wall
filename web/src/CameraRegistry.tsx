@@ -1,6 +1,14 @@
 import { useEffect, useRef, useState } from 'react';
-import { createCamera, deleteCamera, detectCamera, discoverOnvif, fetchCameras, fetchOnvifPresets, fetchOnvifSnapshot, mutateOnvifPreset, probeOnvif, pullOnvifEvents, qualifyBrowserDirect, sendOnvifPtz, sendOnvifTalk, syncOnvifCamera } from './api';
-import type { CameraAdapter, CameraDetection, CameraRecord, OnvifPreset } from './types';
+import { createCamera, deleteCamera, detectCamera, discoverOnvif, fetchAnalyticsPolicies, fetchCameras, fetchOnvifPresets, fetchOnvifSnapshot, mutateOnvifPreset, probeOnvif, pullOnvifEvents, qualifyBrowserDirect, sendOnvifPtz, sendOnvifTalk, syncOnvifCamera, updateAnalyticsPolicies } from './api';
+import type { AnalyticsPolicy, CameraAdapter, CameraDetection, CameraRecord, OnvifPreset } from './types';
+
+type EditableAnalyticsPolicy = Omit<AnalyticsPolicy, 'updatedAt'>;
+const policyKey = (cameraId: string, profileId: string) => `${cameraId}\u0000${profileId}`;
+const defaultPolicy = (cameraId: string, profileId: string): EditableAnalyticsPolicy => ({
+  cameraId, profileId, motionEnabled: false, sceneChangeEnabled: false, personEnabled: false,
+  allowEventPromotion: false, promotionThreshold: .6, promotionHoldSeconds: 15,
+  promotionCooldownSeconds: 30, forceAnalyticsAlwaysOn: false,
+});
 
 function DeviceControls({ camera, busy, fail }: { camera: CameraRecord; busy: boolean; fail: (message: string) => void }) {
   const capabilities = ((camera.capabilities.onvif ?? {}) as Record<string, unknown>);
@@ -65,7 +73,12 @@ export default function CameraRegistry({ onBack }: { onBack: () => void }) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   const [notice, setNotice] = useState('');
-  const reload = async () => { try { setCameras((await fetchCameras()).cameras); } catch (reason) { setError(reason instanceof Error ? reason.message : '无法读取摄像机'); } };
+  const [policies, setPolicies] = useState<Map<string, EditableAnalyticsPolicy>>(new Map());
+  const reload = async () => { try {
+    const [cameraResult, policyResult] = await Promise.all([fetchCameras(), fetchAnalyticsPolicies()]);
+    setCameras(cameraResult.cameras);
+    setPolicies(new Map(policyResult.policies.map((policy) => [policyKey(policy.cameraId, policy.profileId), policy])));
+  } catch (reason) { setError(reason instanceof Error ? reason.message : '无法读取摄像机'); } };
   useEffect(() => { void reload(); }, []);
 
   const detect = async () => {
@@ -114,6 +127,33 @@ export default function CameraRegistry({ onBack }: { onBack: () => void }) {
     } catch (reason) { setError(reason instanceof Error ? reason.message : '浏览器直连资格探测失败'); }
     finally { setBusy(false); }
   };
+  const editPolicy = (cameraId: string, profileId: string, change: Partial<EditableAnalyticsPolicy>) => {
+    setPolicies((current) => {
+      const next = new Map(current); const key = policyKey(cameraId, profileId);
+      next.set(key, { ...(current.get(key) ?? defaultPolicy(cameraId, profileId)), ...change });
+      return next;
+    });
+  };
+  const savePolicySet = async (values: EditableAnalyticsPolicy[]) => {
+    setBusy(true); setError('');
+    try {
+      const saved = await updateAnalyticsPolicies(values);
+      setPolicies((current) => {
+        const next = new Map(current);
+        saved.policies.forEach((policy) => next.set(policyKey(policy.cameraId, policy.profileId), policy));
+        return next;
+      });
+      setNotice(`已原子更新 ${saved.policies.length} 个 Profile 的分析策略。`);
+    } catch (reason) { setError(reason instanceof Error ? reason.message : '分析策略更新失败'); }
+    finally { setBusy(false); }
+  };
+  const setAllAnalytics = (enabled: boolean) => {
+    const values = cameras.flatMap((camera) => camera.profiles.map((profile) => ({
+      ...(policies.get(policyKey(camera.id, profile.id)) ?? defaultPolicy(camera.id, profile.id)),
+      motionEnabled: enabled, sceneChangeEnabled: enabled, personEnabled: enabled,
+    })));
+    if (values.length) void savePolicySet(values);
+  };
 
   return <main className="registry-page">
     <header className="registry-header"><div><span className="eyebrow">Camera Source Adapter</span><h1>设备与码流</h1></div><button className="ghost-button" type="button" onClick={onBack}>返回 Studio</button></header>
@@ -127,10 +167,21 @@ export default function CameraRegistry({ onBack }: { onBack: () => void }) {
       {discovered.length > 0 && <div className="discovery-list">{discovered.map((device) => <button type="button" key={device.address} onClick={() => { setAddress(device.address); setDetection(null); }}><strong>{device.host}</strong><span>{device.address}</span></button>)}</div>}
     </section>
     <section className="camera-list"><div className="section-title"><h2>Camera Registry</h2><span>{cameras.length} 台</span></div>
+      <div className="analytics-batch"><span>当前列表分析开关</span><button className="ghost-button" disabled={busy || !cameras.length} onClick={() => setAllAnalytics(true)}>Select All</button><button className="ghost-button" disabled={busy || !cameras.length} onClick={() => setAllAnalytics(false)}>Unselect All</button><small>默认全部关闭；人物框为 v3-M2 预留接口。</small></div>
       {cameras.length === 0 ? <div className="registry-empty"><h3>尚未添加摄像机</h3><p>使用自动检测，或通过 ONVIF WS-Discovery 查找局域网设备。</p></div> : cameras.map((camera) => <article className="camera-card" key={camera.id}><div><span className="adapter-pill">{camera.adapter}</span><h3>{camera.name}</h3><p>{camera.address}</p></div><dl><div><dt>Profile</dt><dd>{camera.profiles.length}</dd></div><div><dt>硬解</dt><dd>{camera.hardwareDecode}</dd></div><div><dt>健康</dt><dd>{camera.health}</dd></div></dl><div className="profile-list">{camera.profiles.map((profile) => {
         const proof = ((camera.capabilities.browserDirect as { profiles?: Record<string, { tlsVerified?: boolean; corsVerified?: boolean; reason?: string }> } | undefined)?.profiles?.[profile.id]);
+        const policy = policies.get(policyKey(camera.id, profile.id)) ?? defaultPolicy(camera.id, profile.id);
         return <span key={profile.id}>{profile.role} · {profile.videoCodec || 'unknown'} {profile.width ? `${profile.width}×${profile.height}` : ''}
           {['whep', 'hls', 'mjpeg'].includes(camera.adapter) && <><small>{proof?.tlsVerified && proof?.corsVerified ? ' · Browser Direct 已验证' : proof ? ` · 未通过：${proof.reason}` : ' · 未探测'}</small><button className="ghost-button" disabled={busy} type="button" onClick={() => void qualifyDirect(camera.id, profile.id)}>验证浏览器真直连</button></>}
+          <span className="analytics-policy" aria-label={`${camera.name} ${profile.name} 分析策略`}>
+            <label><input type="checkbox" checked={policy.motionEnabled} onChange={(event) => editPolicy(camera.id, profile.id, { motionEnabled: event.target.checked })} />运动</label>
+            <label><input type="checkbox" checked={policy.sceneChangeEnabled} onChange={(event) => editPolicy(camera.id, profile.id, { sceneChangeEnabled: event.target.checked })} />大范围变化</label>
+            <label><input type="checkbox" checked={policy.personEnabled} onChange={(event) => editPolicy(camera.id, profile.id, { personEnabled: event.target.checked })} />人物框（v3-M2）</label>
+            <label><input type="checkbox" checked={policy.allowEventPromotion} onChange={(event) => editPolicy(camera.id, profile.id, { allowEventPromotion: event.target.checked })} />事件提升到 M</label>
+            {policy.allowEventPromotion && <><label>阈值<input type="number" min="0" max="1" step="0.05" value={policy.promotionThreshold} onChange={(event) => editPolicy(camera.id, profile.id, { promotionThreshold: Number(event.target.value) })} /></label><label>保持秒<input type="number" min="1" max="3600" value={policy.promotionHoldSeconds} onChange={(event) => editPolicy(camera.id, profile.id, { promotionHoldSeconds: Number(event.target.value) })} /></label><label>冷却秒<input type="number" min="0" max="86400" value={policy.promotionCooldownSeconds} onChange={(event) => editPolicy(camera.id, profile.id, { promotionCooldownSeconds: Number(event.target.value) })} /></label></>}
+            <label title="低功耗模式下仍执行软件分析会增加设备功耗"><input type="checkbox" checked={policy.forceAnalyticsAlwaysOn} onChange={(event) => editPolicy(camera.id, profile.id, { forceAnalyticsAlwaysOn: event.target.checked })} />强制持续分析 ⚠</label>
+            <button className="ghost-button" disabled={busy} onClick={() => void savePolicySet([policy])}>保存策略</button>
+          </span>
         </span>;
       })}</div><div className="camera-operations">{camera.adapter === 'onvif' && <><button className="ghost-button" disabled={busy} type="button" onClick={() => void syncOnvif(camera.id)}>同步 ONVIF Profile</button><DeviceControls camera={camera} busy={busy} fail={setError} /></>}<button className="danger-button" type="button" onClick={() => { if (window.confirm(`删除 ${camera.name}？`)) void deleteCamera(camera.id).then(reload); }}>删除</button></div></article>)}
     </section>

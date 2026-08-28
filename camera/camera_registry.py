@@ -138,6 +138,20 @@ def initialize() -> None:
               PRIMARY KEY(camera_id,id)
             );
             CREATE INDEX IF NOT EXISTS stream_profiles_camera ON stream_profiles(camera_id);
+            CREATE TABLE IF NOT EXISTS analytics_policies(
+              camera_id TEXT NOT NULL REFERENCES cameras(id) ON DELETE CASCADE,
+              profile_id TEXT NOT NULL,
+              motion_enabled INTEGER NOT NULL DEFAULT 0,
+              scene_change_enabled INTEGER NOT NULL DEFAULT 0,
+              person_enabled INTEGER NOT NULL DEFAULT 0,
+              allow_event_promotion INTEGER NOT NULL DEFAULT 0,
+              promotion_threshold REAL NOT NULL DEFAULT 0.6,
+              promotion_hold_seconds INTEGER NOT NULL DEFAULT 15,
+              promotion_cooldown_seconds INTEGER NOT NULL DEFAULT 30,
+              force_analytics_always_on INTEGER NOT NULL DEFAULT 0,
+              updated_at INTEGER NOT NULL,
+              PRIMARY KEY(camera_id,profile_id)
+            );
             CREATE TABLE IF NOT EXISTS onvif_profile_tokens(
               camera_id TEXT NOT NULL REFERENCES cameras(id) ON DELETE CASCADE,
               profile_id TEXT NOT NULL,
@@ -303,6 +317,76 @@ def camera_document(database: sqlite3.Connection, row: sqlite3.Row) -> dict:
     }
 
 
+def analytics_policy_document(row: sqlite3.Row) -> dict:
+    return {
+        "cameraId": row["camera_id"], "profileId": row["profile_id"],
+        "motionEnabled": bool(row["motion_enabled"]),
+        "sceneChangeEnabled": bool(row["scene_change_enabled"]),
+        "personEnabled": bool(row["person_enabled"]),
+        "allowEventPromotion": bool(row["allow_event_promotion"]),
+        "promotionThreshold": row["promotion_threshold"],
+        "promotionHoldSeconds": row["promotion_hold_seconds"],
+        "promotionCooldownSeconds": row["promotion_cooldown_seconds"],
+        "forceAnalyticsAlwaysOn": bool(row["force_analytics_always_on"]),
+        "updatedAt": row["updated_at"],
+    }
+
+
+def analytics_policies() -> list[dict]:
+    with connect() as database:
+        rows = database.execute("SELECT * FROM analytics_policies ORDER BY camera_id,profile_id").fetchall()
+        return [analytics_policy_document(row) for row in rows]
+
+
+def save_analytics_policies(payload: dict) -> list[dict]:
+    values = payload.get("policies") if isinstance(payload, dict) else None
+    if not isinstance(values, list) or not values or len(values) > 256:
+        raise ValueError("policies must contain 1 to 256 items")
+    normalized = []
+    for value in values:
+        if not isinstance(value, dict):
+            raise ValueError("policy must be an object")
+        camera_id, profile_id = value.get("cameraId"), value.get("profileId")
+        if not isinstance(camera_id, str) or not ID_RE.fullmatch(camera_id) or \
+                not isinstance(profile_id, str) or not ID_RE.fullmatch(profile_id):
+            raise ValueError("cameraId or profileId is invalid")
+        booleans = [value.get(key, False) for key in (
+            "motionEnabled", "sceneChangeEnabled", "personEnabled", "allowEventPromotion",
+            "forceAnalyticsAlwaysOn")]
+        if any(not isinstance(item, bool) for item in booleans):
+            raise ValueError("analytics switches must be boolean")
+        threshold = value.get("promotionThreshold", .6)
+        hold = value.get("promotionHoldSeconds", 15)
+        cooldown = value.get("promotionCooldownSeconds", 30)
+        if isinstance(threshold, bool) or not isinstance(threshold, (int, float)) or not 0 <= threshold <= 1:
+            raise ValueError("promotionThreshold must be between 0 and 1")
+        if isinstance(hold, bool) or not isinstance(hold, int) or not 1 <= hold <= 3600 or \
+                isinstance(cooldown, bool) or not isinstance(cooldown, int) or not 0 <= cooldown <= 86400:
+            raise ValueError("promotion timing is out of range")
+        normalized.append((camera_id, profile_id, *[int(item) for item in booleans],
+                           float(threshold), hold, cooldown, int(time.time())))
+    with connect() as database:
+        for camera_id, profile_id, *_ in normalized:
+            exists = database.execute(
+                "SELECT 1 FROM stream_profiles WHERE camera_id=? AND id=?", (camera_id, profile_id)).fetchone()
+            if not exists:
+                raise KeyError("camera profile not found")
+        database.executemany(
+            "INSERT INTO analytics_policies(camera_id,profile_id,motion_enabled,scene_change_enabled,person_enabled,"
+            "allow_event_promotion,force_analytics_always_on,promotion_threshold,promotion_hold_seconds,"
+            "promotion_cooldown_seconds,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?) "
+            "ON CONFLICT(camera_id,profile_id) DO UPDATE SET motion_enabled=excluded.motion_enabled,"
+            "scene_change_enabled=excluded.scene_change_enabled,person_enabled=excluded.person_enabled,"
+            "allow_event_promotion=excluded.allow_event_promotion,force_analytics_always_on=excluded.force_analytics_always_on,"
+            "promotion_threshold=excluded.promotion_threshold,promotion_hold_seconds=excluded.promotion_hold_seconds,"
+            "promotion_cooldown_seconds=excluded.promotion_cooldown_seconds,updated_at=excluded.updated_at",
+            normalized,
+        )
+        keys = {(item[0], item[1]) for item in normalized}
+        rows = database.execute("SELECT * FROM analytics_policies ORDER BY camera_id,profile_id").fetchall()
+        return [analytics_policy_document(row) for row in rows if (row["camera_id"], row["profile_id"]) in keys]
+
+
 def resolve_profile(database: sqlite3.Connection, camera_id: str, profile_id: str) -> dict:
     camera = database.execute("SELECT * FROM cameras WHERE id=?", (camera_id,)).fetchone()
     if not camera:
@@ -336,7 +420,10 @@ def save_camera(camera: dict, replace: bool) -> dict:
                 if key in reserved:
                     camera["capabilities"][key] = reserved[key]
         database.execute(
-            "INSERT OR REPLACE INTO cameras(id,name,address,adapter,credentials_ref,hardware_decode,capabilities_json,health,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?)",
+            "INSERT INTO cameras(id,name,address,adapter,credentials_ref,hardware_decode,capabilities_json,health,created_at,updated_at) "
+            "VALUES(?,?,?,?,?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET name=excluded.name,address=excluded.address,"
+            "adapter=excluded.adapter,credentials_ref=excluded.credentials_ref,hardware_decode=excluded.hardware_decode,"
+            "capabilities_json=excluded.capabilities_json,health=excluded.health,updated_at=excluded.updated_at",
             (camera["id"], camera["name"], camera["address"], camera["adapter"], camera["credentialsRef"],
              camera["hardwareDecode"], json.dumps(camera["capabilities"], separators=(",", ":"), sort_keys=True),
              "unknown", created, now),
@@ -347,6 +434,14 @@ def save_camera(camera: dict, replace: bool) -> dict:
             [(p["id"], camera["id"], p["name"], p["role"], p["endpoint"], p["videoCodec"],
               p["audioCodec"], p["width"], p["height"], p["fps"]) for p in camera["profiles"]],
         )
+        if camera["profiles"]:
+            placeholders = ",".join("?" for _ in camera["profiles"])
+            database.execute(
+                f"DELETE FROM analytics_policies WHERE camera_id=? AND profile_id NOT IN ({placeholders})",
+                (camera["id"], *[profile["id"] for profile in camera["profiles"]]),
+            )
+        else:
+            database.execute("DELETE FROM analytics_policies WHERE camera_id=?", (camera["id"],))
         row = database.execute("SELECT * FROM cameras WHERE id=?", (camera["id"],)).fetchone()
         return camera_document(database, row)
 
@@ -1497,6 +1592,8 @@ class Handler(BaseHTTPRequestHandler):
             if path == "/cameras":
                 rows = database.execute("SELECT * FROM cameras ORDER BY name,id").fetchall()
                 self.respond(200, {"cameras": [camera_document(database, row) for row in rows]}); return
+            if path == "/cameras/analytics-policies":
+                self.respond(200, {"policies": analytics_policies()}); return
             if path.startswith("/cameras/"):
                 camera_id = path.removeprefix("/cameras/")
                 if not ID_RE.fullmatch(camera_id): self.respond(404, {"error": "not_found"}); return
@@ -1567,6 +1664,12 @@ class Handler(BaseHTTPRequestHandler):
         except (ValueError, TypeError, json.JSONDecodeError) as error: self.respond(400, {"error": str(error)})
 
     def do_PUT(self) -> None:
+        if self.path == "/cameras/analytics-policies":
+            try:
+                self.respond(200, {"policies": save_analytics_policies(self.payload())})
+            except KeyError as error: self.respond(404, {"error": str(error)})
+            except (ValueError, TypeError, json.JSONDecodeError) as error: self.respond(400, {"error": str(error)})
+            return
         if not self.path.startswith("/cameras/"):
             self.respond(404, {"error": "not_found"}); return
         camera_id = self.path.removeprefix("/cameras/")

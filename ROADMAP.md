@@ -1,6 +1,6 @@
 # Roadmap / 项目路线图
 
-> Last updated / 最后更新：2026-08-26
+> Last updated / 最后更新：2026-08-28
 
 This roadmap describes milestone order and acceptance gates, not promised release dates. Priorities may change based on validation results and maintainer capacity.
 
@@ -12,11 +12,11 @@ Canonical milestone names use `v<major>-M<number>`. Historical validation prose 
 
 ## Current position / 当前位置
 
-**🚧 v2-M2 Local-first PWA / v2-M3 Browser Media Runtime 实施中。**
+**🚧 `v2.0.1` 已发布；`dev` 正在实施 v2-M4/v2-M5。**
 
-The `dev` branch has completed the v2-M1 enrollment/Grant/topology contract. v2-M2 now delivers an installable PWA, repository-owned Service Worker, encrypted redacted IndexedDB snapshots, seven-day browser grants and local-only Scene v5 editing. v2-M3 now delivers browser-native WHEP/HLS/MJPEG with three-second first-frame proof and a single explicit Gateway/Hybrid fallback chain for RTSP or failed direct media. Native desktop/Android code is frozen; v2.0 publishes no EXE/APK/native package. Stable release remains blocked on the documented local WSL2 Chromium, Windows Chrome/Edge, media isolation, security and v1 regression gates.
+`v2.0.1` is the current published baseline and completes v2-M1 through v2-M3. On `dev`, v2-M5 now has an implementation slice for in-memory per-tile telemetry, arbitrary 1–16 Scene v5 auto-layouts, M/S rotation, low-power profile selection, event-promotion contracts and atomic per-profile analytics policies. v2-M4 synchronization and the remaining v2-M5 qualification gates remain open. Native desktop/Android code stays frozen and no EXE/APK/native package is planned.
 
-`dev` 已完成 v2-M1 配对、Grant 与拓扑契约。v2-M2 现交付可安装 PWA、仓库维护的 Service Worker、加密且脱敏的 IndexedDB 快照、七天浏览器 Grant 及 local-only Scene v5 编辑。v2-M3 现交付浏览器原生 WHEP/HLS/MJPEG、三秒首帧证明，以及 RTSP 或直连失败时单一且明确的 Gateway/Hybrid 回退链。原生桌面/Android 代码冻结；v2.0 不发布 EXE/APK/原生包。稳定发布仍需通过本机 WSL2 Chromium、Windows Chrome/Edge、媒体隔离、安全及 v1 回归门禁。
+`v2.0.1` 是当前已发布基线，v2-M1 至 v2-M3 已完成。`dev` 的 v2-M5 已落地逐画面内存统计、1–16 任意数量 Scene v5 自动布局、M/S 轮换、低功耗 Profile 选择、事件提升契约和逐 Profile 原子分析策略；v2-M4 同步与 v2-M5 剩余资格门禁仍未完成。原生桌面/Android 继续冻结，不规划 EXE/APK/原生包。
 
 The Qt/GStreamer/Android implementation and its prior source gates remain in the repository for security maintenance and research. The native workflow has no tag trigger, requires an explicit frozen-candidate confirmation, and cannot publish v2.0 artifacts / Qt/GStreamer/Android 实现及既有源码门禁继续留在仓库供安全维护与研究；原生工作流没有 Tag 触发器，要求显式冻结候选确认，且不能发布 v2.0 产物。
 
@@ -103,9 +103,12 @@ M0 已于 2026-08-11 在真实摄像头门禁通过后完成。后续修改采�
 | v1-M10 — Device Operations | ✅ Complete / 已完成 | Capability-driven Profile T/S media, PTZ, presets, events, snapshots and guarded talk / 能力驱动的 Profile T/S 媒体、PTZ、预置位、事件、快照与受控对讲 | Emulator plus bounded MJPEG fixture and redacted external media gate pass / 模拟器、有界 MJPEG 夹具及脱敏外部媒体门禁通过 |
 | v1-M11 — Events & Detection | ✅ Complete / 已完成 | Native/software events, motion zones/masks, detector providers, rules and bounded notifications / 原生/软件事件、移动区域/遮罩、检测提供器、规则与有界通知 | Deterministic accuracy, isolation, queue, signed delivery and SSRF gates pass / 确定性准确度、隔离、队列、签名交付及 SSRF 门禁通过 |
 | v2-M1 — True Direct Foundation | ✅ Complete / 已完成 | API/grant/planner/reference receiver plus isolated five-protocol architecture proof / API、Grant、规划器、参考接收端及隔离五协议架构证明 | Locked receiver, zero-payload, NVR coexistence and credential gates pass / 固定接收端、零负载、NVR 共存及凭据门禁全部通过 |
-| v2-M2 — Local-first PWA | 🚧 In progress / 实施中 | Cached app shell, encrypted expiring Registry/Scene and local-only Scene editing / 缓存应用壳、加密过期 Registry/Scene 与本地 Scene 编辑 | Chrome/Edge offline, expiry, atomic update, cache and security gates pass / Chrome/Edge 离线、过期、原子升级、缓存与安全门禁通过 |
-| v2-M3 — Browser Media Runtime | 🚧 In progress / 实施中 | WHEP/HLS/MJPEG True Direct, explicit RTSP Gateway and experimental IWA / WHEP/HLS/MJPEG 真直连、明确 RTSP 网关及实验 IWA | Fedora/Windows media, 16-stream Chrome, Edge compatibility and zero-server-media gates pass / Fedora/Windows 媒体、Chrome 16 路、Edge 兼容及服务端零媒体门禁通过 |
-| v2-M4…v2-M6 — Sync to Scale | 🧭 Planned / 已规划 | Offline sync, operator UX and scale/resilience / 离线同步、值守体验及规模与韧性 | Each published v2 gate passes without weakening v1 recording or security guarantees / 各 v2 门禁通过且不削弱 v1 录像与安全保证 |
+| v2-M2 — Local-first PWA | ✅ Complete / 已完成 | Cached app shell, encrypted expiring Registry/Scene and local-only Scene editing / 缓存应用壳、加密过期 Registry/Scene 与本地 Scene 编辑 | Published in v2.0.1 baseline / 已进入 v2.0.1 发布基线 |
+| v2-M3 — Browser Media Runtime | ✅ Complete / 已完成 | WHEP/HLS/MJPEG True Direct and explicit RTSP Gateway / WHEP/HLS/MJPEG 真直连及明确 RTSP 网关 | Published in v2.0.1 baseline / 已进入 v2.0.1 发布基线 |
+| v2-M4 — Offline Sync | 🧭 Planned / 已规划 | Bidirectional offline Registry/Scene sync / Registry/Scene 双向离线同步 | Conflict, expiry, revocation and migration matrices pass / 冲突、过期、撤销与迁移矩阵通过 |
+| v2-M5 — Monitor Layout & Telemetry | 🚧 In progress / 实施中 | Telemetry, 1–16 M/S layout/rotation, low power and analytics controls / 统计、1–16 M/S 布局轮换、低功耗与分析控制 | Functional slice is implemented; full browser/media qualification remains / 功能切片已实现，完整浏览器与媒体资格仍待完成 |
+| v2-M6 — Scale | 🧭 Planned / 已规划 | Multi-node storage and resource scheduling / 多节点存储与资源调度 | Scale/resilience gates pass / 规模与韧性门禁通过 |
+| v3-M1/M2 — Analytics | 🧭 Planned / 已规划 | Motion/scene change, then person boxes / 运动与画面变化，随后人物框 | Per-stream opt-in, local-first privacy and bounded resource gates / 逐流选择、本地优先隐私与有界资源门禁 |
 
 ## Milestone details / 里程碑详情
 

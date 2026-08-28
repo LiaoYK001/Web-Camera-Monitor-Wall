@@ -4,7 +4,7 @@
 >
 > Last updated / 最后更新：2026-08-25
 >
-> Current position / 当前位置：v1 is closed at `v1.2.1`; `dev` completed `v2-M1` and redefined `v2-M2/M3` as Local-first PWA and Browser Media Runtime. Native Windows/Linux/Android sources are frozen and no EXE/APK/native package is a v2.0 deliverable. Remaining stable gates cover PWA offline/security, direct WHEP/HLS/MJPEG, explicit RTSP Gateway fallback, and Fedora/Windows browser evidence / v1 已在 `v1.2.1` 收口；`dev` 已完成 `v2-M1`，并把 `v2-M2/M3` 重定义为 Local-first PWA 与浏览器媒体运行时。Windows/Linux/Android 原生源码冻结，EXE/APK/原生包不再属于 v2.0 交付物；剩余稳定门禁覆盖 PWA 离线与安全、WHEP/HLS/MJPEG 直连、明确的 RTSP Gateway 回退，以及 Fedora/Windows 浏览器证据。
+> Current position / 当前位置：`v2.0.1` is published with v2-M1 through v2-M3 complete. `dev` is implementing v2-M4/M5; the M5 telemetry, arbitrary 1–16 M/S layout, rotation, low-power and per-profile analytics-policy slice is present, while its full acceptance matrix remains open. Native Windows/Linux/Android sources remain frozen / `v2.0.1` 已发布且 v2-M1 至 v2-M3 完成。`dev` 正实施 v2-M4/M5；M5 的统计、1–16 任意数量 M/S 布局、轮换、低功耗与逐 Profile 分析策略切片已落地，完整验收矩阵仍未完成。Windows/Linux/Android 原生源码继续冻结。
 
 This document expands the project from a web camera compositor into a self-hosted and local-first monitoring workspace with three first-class capabilities: an OBS-inspired customizable canvas, an NVR workflow inspired by mainstream monitoring applications such as tinyCam Monitor, and v2 True Direct local clients that keep Docker outside the media data plane. It is a capability plan, not a compatibility or UI-cloning claim, and it does not promise release dates.
 
@@ -91,6 +91,8 @@ v1.2 final closure: qualification only, no v1-M12
 v2.0: v2-M1 True Direct Contract -> v2-M2 Local-first PWA -> v2-M3 Browser Media Runtime
 v2.1: v2-M4 Offline Sync -> v2-M5 Operator UX
 v2.2: v2-M6 Scale
+v3.0: v3-M1 Motion & Scene Change
+v3.1: v3-M2 Person Boxes
 
 v1.0：v1-M1 … v1-M6（完成）
 v1.1 里程碑族：v1-M7 画布 -> v1-M8 NVR -> v1-M9 时间线 -> v1-M10 设备运维 -> v1-M11 事件
@@ -98,6 +100,8 @@ v1.2 最终收口：只做资格验证，不新增 v1-M12
 v2.0：v2-M1 真直连契约 -> v2-M2 本地优先 PWA -> v2-M3 浏览器媒体运行时
 v2.1：v2-M4 离线同步 -> v2-M5 值守体验
 v2.2：v2-M6 扩展
+v3.0：v3-M1 运动与大范围画面变化
+v3.1：v3-M2 人物框
 ```
 
 ### v1-M7 — Canvas Studio / 画布工作台
@@ -252,14 +256,17 @@ v2.2：v2-M6 扩展
 
 **Exit gate / 完成门禁：** deterministic offline/online conflict, expiry, lost-device revocation, clock skew, backup/restore, migration and credential-redaction matrices pass across all published clients / 所有公开客户端通过确定性离线/在线冲突、过期、遗失设备撤销、时钟偏差、备份恢复、迁移与凭据脱敏矩阵。
 
-### v2-M5 — Operator, Mobile & Kiosk UX / 值守、移动与大屏体验
+### v2-M5 — Monitor Layout, Telemetry & Low Power / 监控布局、统计与低功耗
 
-**Goal / 目标：** make Studio, Monitor, and NVR workflows usable from desktop, touch, wall display, and installable PWA surfaces with least-privilege roles / 让 Studio、Monitor 和 NVR 工作流可在桌面、触摸、大屏值守和可安装 PWA 上使用，并贯彻最小权限角色。
+**Goal / 目标：** make the Local-first PWA an efficient 1–16 camera monitor while retaining standard Scene v5 geometry and explicit media topology / 把 Local-first PWA 建设成高效的 1–16 路监控端，同时继续使用标准 Scene v5 几何并明确显示媒体拓扑。
 
 **Scope / 范围：**
 
 - Separate Studio, Monitor, Events, Playback, Devices, Storage, and Administration workspaces with a consistent camera identity and navigation model / 提供 Studio、监看、事件、回放、设备、存储和管理工作区，并统一摄像机身份与导航。
-- Grid presets (1/4/9/16), custom canvas views, favorites, groups, full screen, sequence/tour, focus mode, digital zoom, snapshots, and manual record markers / 宫格预设（1/4/9/16）、自定义画布视图、收藏、分组、全屏、轮巡、聚焦、数字变焦、截图和手工录像标记。
+- Automatic layouts for every count from 1 through 16, including odd counts, with configurable large/small slots that generate ordinary Scene v5 rectangles / 支持 1–16 任意数量（含奇数）的自动布局和可配置 M/S 槽位，最终生成普通 Scene v5 矩形。
+- Per-tile FPS, byte-rate, codec and decoder telemetry with configurable position/opacity; unavailable browser measurements are shown as `—`, never invented / 逐画面显示 FPS、字节速率、编码与解码器，可配置位置和透明度；浏览器不可测时显示 `—`，不得虚构。
+- Sequential or shuffle-bag large-tile rotation, pinned large slots and a bounded `DetectionSignal` promotion hook with per-profile opt-in, threshold, hold and cooldown / 支持顺序或 shuffle-bag 大画面轮换、固定 M 槽位，以及带逐 Profile 开关、阈值、保持和冷却的有界 `DetectionSignal` 提升入口。
+- Low-power mode selects the lowest-cost profile at or below 0.5–30 FPS, reports unmet targets explicitly, pauses future software analytics unless explicitly forced per stream, and never starts server transcoding merely to reduce FPS / 低功耗模式选择 0.5–30 FPS 目标内成本最低的 Profile，目标不满足时明确提示；除逐流强制外暂停未来软件分析，且不为降帧自动启动服务端转码。
 - Automatic main/substream selection based on tile size, visibility, bandwidth, decode budget, and foreground state; manual override remains visible / 根据画面尺寸、可见性、带宽、解码预算及前后台状态自动选择主/子码流，并保留可见的手工覆盖。
 - Responsive PWA, reconnect-safe state, install/update UX, background notification handling where the platform permits, and touch-safe PTZ/talk controls / 响应式 PWA、可重连状态、安装/更新体验、平台允许时的后台通知，以及触摸安全的 PTZ/对讲控制。
 - Kiosk/TV mode with read-only signed session, burn-in-aware rotation, health banner, offline tiles, and remote revocation / Kiosk/TV 模式使用只读签名会话，支持防烧屏轮换、健康横幅、离线画面和远程撤销。
@@ -267,6 +274,8 @@ v2.2：v2-M6 扩展
 - Keyboard and touch navigation, screen-reader labels, visible focus, reduced motion, color-independent alarms, and documented browser support / 支持键盘与触摸导航、屏幕阅读标签、可见焦点、减少动画、不依赖颜色的告警及有记录的浏览器支持范围。
 
 **Boundary / 边界：** v2.0 ships no native desktop or Android package. `v2-M5` unifies responsive PWA, touch, kiosk and operator workflows; ordinary-browser RTSP remains Gateway/Hybrid unless browser platform capabilities materially change / v2.0 不发布原生桌面或 Android 包。`v2-M5` 统一响应式 PWA、触摸、大屏和值守流程；除非浏览器平台能力发生实质变化，普通浏览器 RTSP 继续使用 Gateway/Hybrid。
+
+Detailed contracts and the v3 handoff are defined in [monitor-view-and-analytics.md](monitor-view-and-analytics.md) / 详细契约及 v3 交接见 [monitor-view-and-analytics.md](monitor-view-and-analytics.md)。
 
 **Exit gate / 完成门禁：**
 

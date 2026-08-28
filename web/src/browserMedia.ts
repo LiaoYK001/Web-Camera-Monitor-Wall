@@ -139,6 +139,8 @@ export function connectHls(
     throw new Error('HLS endpoint is not approved');
   let hls: Hls | undefined;
   let closed = false;
+  let receivedBytes = 0;
+  let codec = 'Unknown';
   const timeout = window.setTimeout(() => { if (!closed) onState('offline'); }, 20_000);
   onState('connecting');
   if (Hls.isSupported()) {
@@ -147,6 +149,12 @@ export function connectHls(
       xhrSetup(xhr, requestUrl) { hlsXhrSetup(xhr, requestUrl, url); },
     });
     hls.on(Hls.Events.MANIFEST_PARSED, () => void video.play().catch(() => undefined));
+    hls.on(Hls.Events.FRAG_LOADED, (_event, data) => {
+      receivedBytes += Math.max(0, data.payload.byteLength);
+      const level = hls?.levels[data.frag.level];
+      const advertised = level?.videoCodec || level?.codecSet || '';
+      if (advertised) codec = advertised.split('.')[0].replace(/^avc1$/i, 'H264').replace(/^hvc1|hev1$/i, 'H265').toUpperCase();
+    });
     hls.on(Hls.Events.ERROR, (_event, data) => { if (data.fatal && !closed) onState('offline'); });
     hls.loadSource(url.href); hls.attachMedia(video);
   } else if (video.canPlayType('application/vnd.apple.mpegurl')) {
@@ -154,7 +162,11 @@ export function connectHls(
   } else onState('offline');
   const live = () => { window.clearTimeout(timeout); onState('live'); };
   video.addEventListener('playing', live);
-  return { close: () => { closed = true; window.clearTimeout(timeout); video.removeEventListener('playing', live); hls?.destroy(); video.removeAttribute('src'); video.load(); } };
+  return {
+    close: () => { closed = true; window.clearTimeout(timeout); video.removeEventListener('playing', live); hls?.destroy(); video.removeAttribute('src'); video.load(); },
+    getReceivedBytes: () => receivedBytes,
+    getCodec: () => codec,
+  };
 }
 
 export function connectMjpeg(
@@ -169,7 +181,11 @@ export function connectMjpeg(
   const failed = () => { window.clearTimeout(timeout); onState('offline'); };
   image.addEventListener('load', live); image.addEventListener('error', failed);
   onState('connecting'); image.src = url.href;
-  return { close: () => { closed = true; window.clearTimeout(timeout); image.removeEventListener('load', live); image.removeEventListener('error', failed); image.removeAttribute('src'); } };
+  return {
+    close: () => { closed = true; window.clearTimeout(timeout); image.removeEventListener('load', live); image.removeEventListener('error', failed); image.removeAttribute('src'); },
+    getReceivedBytes: () => null,
+    getCodec: () => 'MJPEG',
+  };
 }
 
 export { connectApprovedWhep };

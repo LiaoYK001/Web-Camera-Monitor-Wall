@@ -4,6 +4,14 @@ v1-M1 through v1-M11 provide the control, Studio, WebRTC, NVR, evidence, device-
 
 v1-M1 至 v1-M11 提供控制、Studio、WebRTC、NVR、证据、设备运维与事件平面；v1-M10 增加 Camera Registry 和受控 ONVIF 操作，v1-M11 增加统一事件、移动区域、检测提供器、规则与有界通知发件箱。当前合成契约见 [scene-schema-v5.md](scene-schema-v5.md)。
 
+## Camera/Profile analytics policy / 摄像机码流分析策略
+
+`GET /api/v1/cameras/analytics-policies` returns explicitly stored per-profile policies. A missing row means all software analytics and event-promotion switches are off / 返回显式保存的逐 Profile 策略；没有记录即表示软件分析及事件提升开关全部关闭。
+
+`PUT /api/v1/cameras/analytics-policies` atomically validates and updates 1–256 records. Each record contains `cameraId`, `profileId`, independent `motionEnabled`, `sceneChangeEnabled`, `personEnabled`, `allowEventPromotion`, promotion threshold/hold/cooldown, and `forceAnalyticsAlwaysOn`. Every referenced profile must exist; otherwise no record in the batch is changed / 原子验证并更新 1–256 条记录。每条记录包含摄像机/Profile 标识、三类独立检测开关、事件提升开关与阈值/保持/冷却，以及低功耗覆盖。所有引用的 Profile 必须存在，否则整批不写入。
+
+This endpoint stores policy only. It never starts a media or detector pipeline. The additive event type `scene-change` preserves all existing v1 event behavior / 该接口只保存策略，不启动媒体或检测管线；新增 `scene-change` 事件类型不改变既有 v1 行为。
+
 ## Security boundary / 安全边界
 
 Authentication remains disabled by default for loopback development. When credential files are configured, `/` and hashed static assets remain public so the application can render its login page without a browser Basic challenge. REST, WebSocket, Program/Source WHEP and metrics require either a valid HttpOnly session or explicit Basic credentials. Liveness and readiness remain public. This is still a single-operator boundary, not role-based authorization.

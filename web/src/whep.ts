@@ -7,6 +7,10 @@ interface ProgramStatus {
 
 export interface ProgramConnection {
   close: () => void;
+  /** Live browser measurements only. Callers must never persist or log the returned report. */
+  getStats?: () => Promise<RTCStatsReport | null>;
+  getReceivedBytes?: () => number | null;
+  getCodec?: () => string;
 }
 
 type EndpointResolver = (signal: AbortSignal) => Promise<string | null>;
@@ -234,7 +238,7 @@ function connectWhep(
 
   window.addEventListener('pagehide', close);
   void connect();
-  return { close };
+  return { close, getStats: () => peer?.getStats() ?? Promise.resolve(null) };
 }
 
 export function connectProgram(

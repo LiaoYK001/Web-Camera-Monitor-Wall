@@ -314,6 +314,39 @@ class CameraRegistryTests(unittest.TestCase):
         with registry.connect() as database:
             self.assertEqual(database.execute("PRAGMA journal_mode").fetchone()[0], "wal")
 
+    def test_analytics_policies_are_per_profile_atomic_and_default_off(self) -> None:
+        camera = registry.validate_camera({
+            "id": "analytics-fixture", "name": "Analytics fixture",
+            "address": "rtsp://camera.example.invalid/live", "adapter": "rtsp",
+            "credentialsRef": "", "profiles": [{
+                "id": "sub", "name": "Sub", "role": "sub",
+                "endpoint": "rtsp://camera.example.invalid/sub", "videoCodec": "h264",
+                "audioCodec": "", "width": 640, "height": 360, "fps": 5,
+            }],
+        })
+        registry.save_camera(camera, False)
+        self.assertEqual(registry.analytics_policies(), [])
+        saved = registry.save_analytics_policies({"policies": [{
+            "cameraId": "analytics-fixture", "profileId": "sub",
+            "motionEnabled": True, "sceneChangeEnabled": True, "personEnabled": False,
+            "allowEventPromotion": True, "promotionThreshold": .75,
+            "promotionHoldSeconds": 10, "promotionCooldownSeconds": 20,
+            "forceAnalyticsAlwaysOn": False,
+        }]})
+        self.assertTrue(saved[0]["motionEnabled"] and saved[0]["sceneChangeEnabled"])
+        self.assertFalse(saved[0]["personEnabled"] or saved[0]["forceAnalyticsAlwaysOn"])
+        with self.assertRaises(KeyError):
+            registry.save_analytics_policies({"policies": [{
+                "cameraId": "analytics-fixture", "profileId": "missing",
+                "motionEnabled": False, "sceneChangeEnabled": False, "personEnabled": False,
+                "allowEventPromotion": False, "forceAnalyticsAlwaysOn": False,
+            }]})
+        self.assertEqual(len(registry.analytics_policies()), 1)
+        registry.save_camera(registry.validate_camera({**camera, "name": "Renamed fixture"}, "analytics-fixture"), True)
+        self.assertEqual(len(registry.analytics_policies()), 1)
+        registry.save_camera(registry.validate_camera({**camera, "profiles": []}, "analytics-fixture"), True)
+        self.assertEqual(registry.analytics_policies(), [])
+
     def test_embedded_credentials_and_secret_queries_are_rejected(self) -> None:
         with self.assertRaises(ValueError):
             registry.safe_endpoint(
