@@ -3,8 +3,9 @@ import { fetchAnalyticsPolicies, fetchCameras, fetchPlaybackCapabilities } from 
 import { activateGateway, approvedBrowserProfile, BrowserPlanError, browserGrantProfile, connectApprovedWhep, connectHls, connectMjpeg, offlineSignedGrantPlan, requestBrowserPlan, type BrowserTopologyPlan } from './browserMedia';
 import { DirectAudioMixer, type DirectAudioSnapshot } from './directAudioMixer';
 import { clearPrivateRuntimeState, loadMonitorView, saveMonitorView } from './localRuntime';
+import { observeTileVisibility, shouldRunPlayback } from './mediaLifecycle';
 import { formatTelemetry, sampleConnectionTelemetry, sampleElementTelemetry, unavailableTelemetry, type MediaTelemetry } from './mediaTelemetry';
-import { applyAutomaticLayout, defaultMonitorView, nextRotationWindow, normalizeMonitorView, selectLowPowerProfile, validDetectionSignal, type DetectionSignal, type MonitorView, type TelemetryOverlayConfig } from './monitorView';
+import { applyAutomaticLayout, defaultMonitorView, evaluatePromotion, nextRotationWindow, normalizeMonitorView, selectLowPowerProfile, validDetectionSignal, type DetectionSignal, type MonitorView, type TelemetryOverlayConfig } from './monitorView';
 import type { AnalyticsPolicy, CameraRecord, CameraSceneSource, SceneDocument, SceneItem, SceneSource, SourcePlaybackCapability } from './types';
 import { connectSource, type ProgramConnection, type ProgramConnectionState } from './whep';
 
@@ -145,14 +146,15 @@ function colorWithOpacity(color: string, opacity: number): string {
   return `rgba(${red},${green},${blue},${opacity})`;
 }
 
-function BrowserCameraTile({ item, source, mixer, telemetry, lowPower, playbackEnabled }: {
+function BrowserCameraTile({ item, source, mixer, telemetry, lowPower, documentVisible }: {
   item: SceneItem;
   source: CameraSceneSource;
   mixer: DirectAudioMixer | null;
   telemetry: TelemetryOverlayConfig;
   lowPower?: { targetFps: number; actualFps: number; targetMet: boolean };
-  playbackEnabled: boolean;
+  documentVisible: boolean;
 }) {
+  const tileRef = useRef<HTMLDivElement>(null);
   const videoRef = useRef<HTMLVideoElement>(null);
   const imageRef = useRef<HTMLImageElement>(null);
   const [state, setState] = useState<ProgramConnectionState>('checking');
@@ -160,6 +162,12 @@ function BrowserCameraTile({ item, source, mixer, telemetry, lowPower, playbackE
   const [plan, setPlan] = useState<BrowserTopologyPlan | null>(null);
   const [dimensions, setDimensions] = useState({ width: 0, height: 0 });
   const [activeConnection, setActiveConnection] = useState<ProgramConnection | null>(null);
+  const [tileIntersecting, setTileIntersecting] = useState(true);
+  const playbackEnabled = shouldRunPlayback({
+    lowPowerEnabled: Boolean(lowPower), documentVisible, tileIntersecting,
+  });
+
+  useEffect(() => tileRef.current ? observeTileVisibility(tileRef.current, setTileIntersecting) : undefined, []);
 
   useEffect(() => {
     let connection: ProgramConnection | undefined;
@@ -252,7 +260,8 @@ function BrowserCameraTile({ item, source, mixer, telemetry, lowPower, playbackE
 
   const geometry = useMemo(() => videoGeometry(item, dimensions.width, dimensions.height), [item, dimensions]);
   const trueDirect = plan?.topology === 'true-direct';
-  return <div className={`direct-tile ${state}`} data-source-id={source.id}>
+  return <div ref={tileRef} className={`direct-tile ${state}`} data-source-id={source.id}
+    data-playback-suspended={playbackEnabled ? 'false' : 'true'}>
     <video ref={videoRef} autoPlay muted playsInline style={{ ...geometry, display: transport === 'mjpeg' ? 'none' : undefined }}
       aria-label={`${source.name} 浏览器媒体画面`} onLoadedMetadata={(event) => setDimensions({ width: event.currentTarget.videoWidth, height: event.currentTarget.videoHeight })} />
     <img ref={imageRef} alt={`${source.name} MJPEG 画面`} style={{ ...geometry, display: transport === 'mjpeg' ? undefined : 'none' }} />
@@ -368,20 +377,24 @@ export default function DirectPreview({ scene }: { scene: SceneDocument }) {
   useEffect(() => {
     const promote = (event: Event) => {
       const signal = (event as CustomEvent<DetectionSignal>).detail;
-      if (!monitorView.promotion.allowEventPromotion || !validDetectionSignal(signal)) return;
+      if (!validDetectionSignal(signal)) return;
       const source = effectiveScene.sources.find((candidate) => candidate.kind === 'camera' &&
         candidate.cameraId === signal.cameraId && candidate.profileId === signal.profileId);
       if (!source || monitorView.largeCount < 1) return;
       const policy = analyticsPolicies.find((candidate) => candidate.cameraId === signal.cameraId && candidate.profileId === signal.profileId);
-      if (!policy?.allowEventPromotion || signal.confidence < Math.max(policy.promotionThreshold, monitorView.promotion.threshold)) return;
-      if (monitorView.lowPower.enabled && signal.source !== 'camera' && !policy.forceAnalyticsAlwaysOn) return;
       const now = Date.now(); const key = `${signal.cameraId}/${signal.profileId}`;
-      if ((promotionCooldowns.current.get(key) ?? 0) > now) return;
+      const decision = evaluatePromotion(signal, policy, {
+        enabled: monitorView.promotion.allowEventPromotion, threshold: monitorView.promotion.threshold,
+        holdSeconds: monitorView.promotion.holdSeconds, cooldownSeconds: monitorView.promotion.cooldownSeconds,
+        lowPowerEnabled: monitorView.lowPower.enabled, now,
+        cooldownUntil: promotionCooldowns.current.get(key) ?? 0,
+      });
+      if (!decision.accepted) return;
       const previous = monitorView.largeSourceIds;
       setMonitorView((value) => ({ ...value, largeSourceIds: [source.id, ...value.largeSourceIds.filter((id) => id !== source.id)].slice(0, value.largeCount) }));
-      const hold = Math.max(policy.promotionHoldSeconds, monitorView.promotion.holdSeconds);
+      const hold = Math.max(1, (decision.holdUntil - now) / 1000);
       promotionTimers.current.push(window.setTimeout(() => setMonitorView((value) => ({ ...value, largeSourceIds: previous })), hold * 1000));
-      promotionCooldowns.current.set(key, now + (hold + Math.max(policy.promotionCooldownSeconds, monitorView.promotion.cooldownSeconds)) * 1000);
+      promotionCooldowns.current.set(key, decision.cooldownUntil);
     };
     window.addEventListener('webobs:detection-signal', promote);
     return () => window.removeEventListener('webobs:detection-signal', promote);
@@ -483,7 +496,7 @@ export default function DirectPreview({ scene }: { scene: SceneDocument }) {
                         ? { ...monitorView.telemetry, refreshIntervalMs: Math.max(5000, monitorView.telemetry.refreshIntervalMs) }
                         : monitorView.telemetry}
                       lowPower={lowPowerBySource.get(source.id)}
-                      playbackEnabled={!monitorView.lowPower.enabled || pageVisible} />
+                      documentVisible={pageVisible} />
                   : <DirectTile item={item} source={source} capability={bySource.get(source.id)} mixer={mixer} />}
               </div>
             );

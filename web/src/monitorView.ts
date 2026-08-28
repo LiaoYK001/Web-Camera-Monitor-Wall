@@ -216,6 +216,33 @@ export function validDetectionSignal(signal: DetectionSignal): boolean {
       box.x + box.width <= 1 && box.y + box.height <= 1));
 }
 
+export interface PromotionPolicyInput {
+  allowEventPromotion: boolean;
+  promotionThreshold: number;
+  promotionHoldSeconds: number;
+  promotionCooldownSeconds: number;
+  forceAnalyticsAlwaysOn: boolean;
+}
+
+export function evaluatePromotion(signal: DetectionSignal, policy: PromotionPolicyInput | undefined, options: {
+  enabled: boolean; threshold: number; holdSeconds: number; cooldownSeconds: number;
+  lowPowerEnabled: boolean; now: number; cooldownUntil: number;
+}): { accepted: boolean; reason: string; holdUntil: number; cooldownUntil: number } {
+  const rejected = (reason: string) => ({ accepted: false, reason, holdUntil: 0, cooldownUntil: options.cooldownUntil });
+  if (!options.enabled || !policy?.allowEventPromotion) return rejected('promotion_disabled');
+  if (!validDetectionSignal(signal)) return rejected('invalid_signal');
+  if (signal.confidence < Math.max(options.threshold, policy.promotionThreshold)) return rejected('below_threshold');
+  if (options.lowPowerEnabled && signal.source !== 'camera' && !policy.forceAnalyticsAlwaysOn)
+    return rejected('low_power_software_analytics_disabled');
+  if (options.cooldownUntil > options.now) return rejected('cooldown_active');
+  const holdSeconds = Math.max(options.holdSeconds, policy.promotionHoldSeconds);
+  const cooldownSeconds = Math.max(options.cooldownSeconds, policy.promotionCooldownSeconds);
+  return {
+    accepted: true, reason: '', holdUntil: options.now + holdSeconds * 1000,
+    cooldownUntil: options.now + (holdSeconds + cooldownSeconds) * 1000,
+  };
+}
+
 export function createShuffleBag<T>(items: T[], random: () => number = Math.random): T[] {
   const bag = [...items];
   for (let index = bag.length - 1; index > 0; index -= 1) {

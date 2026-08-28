@@ -78,3 +78,50 @@ test('keeps low-power selection and analytics signals fail-closed', async ({ pag
       refreshIntervalMs: 1000 },
     unavailableText: 'FPS — · Speed — · MJPEG · Unknown' });
 });
+
+test('measures bounded telemetry and suspends only low-power invisible playback', async ({ page }) => {
+  await page.goto('/');
+  const result = await page.evaluate(async () => {
+    const telemetry = await import('/src/mediaTelemetry.ts');
+    const lifecycle = await import('/src/mediaLifecycle.ts');
+    const monitor = await import('/src/monitorView.ts');
+    const now = performance.now();
+    const reports = new Map<string, Record<string, unknown>>([
+      ['inbound', { id: 'inbound', type: 'inbound-rtp', kind: 'video', isRemote: false,
+        framesRendered: 25, framesDecoded: 25, bytesReceived: 46 * 1024, codecId: 'codec', decoderImplementation: 'D3D11 Video Decoder' }],
+      ['codec', { id: 'codec', type: 'codec', mimeType: 'video/H265' }],
+    ]);
+    const sampled = await telemetry.sampleConnectionTelemetry({ close() {}, async getStats() {
+      return { forEach: reports.forEach.bind(reports), get: reports.get.bind(reports) } as unknown as RTCStatsReport;
+    } }, { at: now - 1000, frames: 10, bytes: 10 * 1024 });
+    const signal = { schemaVersion: 1 as const, cameraId: 'cam', profileId: 'sub', kind: 'motion' as const,
+      occurredAt: Date.now(), confidence: .8, source: 'browser' as const };
+    const policy = { allowEventPromotion: true, promotionThreshold: .6, promotionHoldSeconds: 10,
+      promotionCooldownSeconds: 20, forceAnalyticsAlwaysOn: false };
+    const promoted = monitor.evaluatePromotion(signal, policy, { enabled: true, threshold: .5, holdSeconds: 5,
+      cooldownSeconds: 5, lowPowerEnabled: false, now: 1000, cooldownUntil: 0 });
+    const lowPowerRejected = monitor.evaluatePromotion(signal, policy, { enabled: true, threshold: .5, holdSeconds: 5,
+      cooldownSeconds: 5, lowPowerEnabled: true, now: 1000, cooldownUntil: 0 });
+    return {
+      fps: sampled.telemetry.fps, speed: sampled.telemetry.bytesPerSecond,
+      codec: sampled.telemetry.codec, decoder: sampled.telemetry.decoder,
+      normalHidden: lifecycle.shouldRunPlayback({ lowPowerEnabled: false, documentVisible: false, tileIntersecting: false }),
+      lowPowerDocumentHidden: lifecycle.shouldRunPlayback({ lowPowerEnabled: true, documentVisible: false, tileIntersecting: true }),
+      lowPowerTileHidden: lifecycle.shouldRunPlayback({ lowPowerEnabled: true, documentVisible: true, tileIntersecting: false }),
+      lowPowerVisible: lifecycle.shouldRunPlayback({ lowPowerEnabled: true, documentVisible: true, tileIntersecting: true }),
+      promoted, lowPowerRejected,
+    };
+  });
+  expect(result.fps).toBeGreaterThan(14);
+  expect(result.fps).toBeLessThan(16);
+  expect(result.speed).toBeGreaterThan(35 * 1024);
+  expect(result.speed).toBeLessThan(37 * 1024);
+  expect(result.codec).toBe('H265');
+  expect(result.decoder).toBe('HW');
+  expect(result.normalHidden).toBe(true);
+  expect(result.lowPowerDocumentHidden).toBe(false);
+  expect(result.lowPowerTileHidden).toBe(false);
+  expect(result.lowPowerVisible).toBe(true);
+  expect(result.promoted).toEqual({ accepted: true, reason: '', holdUntil: 11000, cooldownUntil: 31000 });
+  expect(result.lowPowerRejected.reason).toBe('low_power_software_analytics_disabled');
+});

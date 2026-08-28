@@ -18,9 +18,11 @@ Rotation pauses while the document is hidden, offline or in manual/edit mode. Ra
 
 ## Low-power boundary / 低功耗边界
 
-The default target is 2 FPS, with 0.5/1/2/5 shortcuts and a validated 0.5–30 range. The selector first chooses an available profile at or below the target, minimizing decoded pixel-rate; otherwise it keeps the lowest-FPS/lowest-cost profile and displays `Target unmet: no low-frame-rate profile`. It never starts a Docker transcoder just to meet the target. Hidden-tile pipeline suspension and measured zero-new-server-session acceptance remain release-gate work.
+The default target is 2 FPS, with 0.5/1/2/5 shortcuts and a validated 0.5–30 range. The selector first chooses an available profile at or below the target, minimizing decoded pixel-rate; otherwise it keeps the lowest-FPS/lowest-cost profile and displays `Target unmet: no low-frame-rate profile`. It never requests a Docker transcode merely to meet the target. While low-power mode is active, Page Visibility and Intersection Observer state release offscreen browser media connections and reconnect them only after they become visible. Measured zero-new-server-session acceptance remains release-gate work.
 
-默认目标为 2 FPS，快捷值为 0.5/1/2/5，验证范围为 0.5–30。选择器优先在不高于目标的 Profile 中最小化解码像素率；若不存在，则保留最低 FPS/最低成本 Profile，并显示 `Target unmet: no low-frame-rate profile`。它不会仅为达到目标而启动 Docker 转码。隐藏画面管线暂停及“服务端零新增会话”的实测仍属于发布门禁工作。
+默认目标为 2 FPS，快捷值为 0.5/1/2/5，验证范围为 0.5–30。选择器优先在不高于目标的 Profile 中最小化解码像素率；若不存在，则保留最低 FPS/最低成本 Profile，并显示 `Target unmet: no low-frame-rate profile`。它不会仅为达到目标而请求 Docker 转码。低功耗开启时，页面可见性和 Intersection Observer 会释放离屏浏览器媒体连接，仅在恢复可见后重连。“服务端零新增会话”的实测仍属于发布门禁工作。
+
+Deterministic browser tests cover every 1–16 landscape/portrait M/S combination, larger M area, stable re-layout, pinned sequential/random windows, unavailable MJPEG telemetry, WebRTC byte/frame/codec/decoder deltas, low-power visibility decisions and promotion threshold/cooldown behavior / 确定性浏览器测试覆盖 1–16 路横竖屏全部 M/S 组合、M 面积更大、稳定重排、固定顺序/随机窗口、MJPEG 不可测统计、WebRTC 字节/帧/编码/解码器差分、低功耗可见性决策及事件提升阈值/冷却行为。
 
 ## Analytics versions / 分析版本
 
