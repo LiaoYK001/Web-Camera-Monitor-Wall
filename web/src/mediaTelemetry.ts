@@ -46,10 +46,10 @@ export async function sampleConnectionTelemetry(connection: ProgramConnection, p
 }
 
 export function sampleElementTelemetry(
-  video: HTMLVideoElement, connection: ProgramConnection, previous?: PreviousSample,
+  video: HTMLVideoElement, connection: ProgramConnection, previous?: PreviousSample, renderedFrames?: number,
 ): { telemetry: MediaTelemetry; previous: PreviousSample } {
   const quality = video.getVideoPlaybackQuality?.();
-  const frames = quality?.totalVideoFrames ?? 0;
+  const frames = renderedFrames ?? quality?.totalVideoFrames ?? 0;
   const bytes = connection.getReceivedBytes?.() ?? 0;
   const at = performance.now();
   const seconds = previous ? Math.max((at - previous.at) / 1000, .001) : 0;

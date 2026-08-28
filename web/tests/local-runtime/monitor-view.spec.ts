@@ -94,6 +94,10 @@ test('measures bounded telemetry and suspends only low-power invisible playback'
     const sampled = await telemetry.sampleConnectionTelemetry({ close() {}, async getStats() {
       return { forEach: reports.forEach.bind(reports), get: reports.get.bind(reports) } as unknown as RTCStatsReport;
     } }, { at: now - 1000, frames: 10, bytes: 10 * 1024 });
+    const video = document.createElement('video');
+    const hls = telemetry.sampleElementTelemetry(video, {
+      close() {}, getReceivedBytes: () => 30 * 1024, getCodec: () => 'H264',
+    }, { at: performance.now() - 1000, frames: 5, bytes: 10 * 1024 }, 20);
     const signal = { schemaVersion: 1 as const, cameraId: 'cam', profileId: 'sub', kind: 'motion' as const,
       occurredAt: Date.now(), confidence: .8, source: 'browser' as const };
     const policy = { allowEventPromotion: true, promotionThreshold: .6, promotionHoldSeconds: 10,
@@ -105,6 +109,7 @@ test('measures bounded telemetry and suspends only low-power invisible playback'
     return {
       fps: sampled.telemetry.fps, speed: sampled.telemetry.bytesPerSecond,
       codec: sampled.telemetry.codec, decoder: sampled.telemetry.decoder,
+      hlsFps: hls.telemetry.fps, hlsSpeed: hls.telemetry.bytesPerSecond, hlsCodec: hls.telemetry.codec,
       normalHidden: lifecycle.shouldRunPlayback({ lowPowerEnabled: false, documentVisible: false, tileIntersecting: false }),
       lowPowerDocumentHidden: lifecycle.shouldRunPlayback({ lowPowerEnabled: true, documentVisible: false, tileIntersecting: true }),
       lowPowerTileHidden: lifecycle.shouldRunPlayback({ lowPowerEnabled: true, documentVisible: true, tileIntersecting: false }),
@@ -118,6 +123,11 @@ test('measures bounded telemetry and suspends only low-power invisible playback'
   expect(result.speed).toBeLessThan(37 * 1024);
   expect(result.codec).toBe('H265');
   expect(result.decoder).toBe('HW');
+  expect(result.hlsFps).toBeGreaterThan(14);
+  expect(result.hlsFps).toBeLessThan(16);
+  expect(result.hlsSpeed).toBeGreaterThan(19 * 1024);
+  expect(result.hlsSpeed).toBeLessThan(21 * 1024);
+  expect(result.hlsCodec).toBe('H264');
   expect(result.normalHidden).toBe(true);
   expect(result.lowPowerDocumentHidden).toBe(false);
   expect(result.lowPowerTileHidden).toBe(false);

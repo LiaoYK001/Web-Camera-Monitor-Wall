@@ -4,7 +4,7 @@ import { activateGateway, approvedBrowserProfile, BrowserPlanError, browserGrant
 import { DirectAudioMixer, type DirectAudioSnapshot } from './directAudioMixer';
 import { clearPrivateRuntimeState, loadMonitorView, saveMonitorView } from './localRuntime';
 import { observeTileVisibility, shouldRunPlayback } from './mediaLifecycle';
-import { formatTelemetry, sampleConnectionTelemetry, sampleElementTelemetry, unavailableTelemetry, type MediaTelemetry } from './mediaTelemetry';
+import { countRenderedFrames, formatTelemetry, sampleConnectionTelemetry, sampleElementTelemetry, unavailableTelemetry, type MediaTelemetry } from './mediaTelemetry';
 import { applyAutomaticLayout, defaultMonitorView, evaluatePromotion, nextRotationWindow, normalizeMonitorView, selectLowPowerProfile, validDetectionSignal, type DetectionSignal, type MonitorView, type TelemetryOverlayConfig } from './monitorView';
 import type { AnalyticsPolicy, CameraRecord, CameraSceneSource, SceneDocument, SceneItem, SceneSource, SourcePlaybackCapability } from './types';
 import { connectSource, type ProgramConnection, type ProgramConnectionState } from './whep';
@@ -111,6 +111,12 @@ function TelemetryOverlay({ config, transport, video, connection }: {
   connection: ProgramConnection | null;
 }) {
   const [value, setValue] = useState<MediaTelemetry>(unavailableTelemetry());
+  const renderedFrames = useRef(0);
+  useEffect(() => {
+    renderedFrames.current = 0;
+    if (!config.enabled || transport !== 'hls' || !video) return undefined;
+    return countRenderedFrames(video, () => { renderedFrames.current += 1; });
+  }, [config.enabled, transport, video]);
   useEffect(() => {
     if (!config.enabled) return undefined;
     let closed = false;
@@ -121,7 +127,7 @@ function TelemetryOverlay({ config, transport, video, connection }: {
       try {
         const result = connection.getStats
           ? await sampleConnectionTelemetry(connection, previous)
-          : video ? sampleElementTelemetry(video, connection, previous) : { telemetry: unavailableTelemetry() };
+          : video ? sampleElementTelemetry(video, connection, previous, renderedFrames.current) : { telemetry: unavailableTelemetry() };
         if (!closed) { setValue(result.telemetry); previous = result.previous; }
       } catch { if (!closed) setValue(unavailableTelemetry()); }
     };
