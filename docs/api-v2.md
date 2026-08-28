@@ -1,6 +1,6 @@
 # API v2 — local clients and True Direct / 本地客户端与真直连
 
-> Development status / 开发状态：v2-M1 through v2-M3 shipped in `v2.0.1`; v2-M4/M5 continue on `dev`. Native package qualification remains frozen / v2-M1 至 v2-M3 已随 `v2.0.1` 发布；v2-M4/M5 继续在 `dev` 开发，原生包验收仍冻结。
+> Development status / 开发状态：v2-M1 through v2-M3 shipped in `v2.0.1`; v2-M4/M5 are complete on `dev` as the unpublished v2.1 candidate. Native package qualification remains frozen / v2-M1 至 v2-M3 已随 `v2.0.1` 发布；v2-M4/M5 已在 `dev` 完成并形成尚未发布的 v2.1 候选，原生包验收仍冻结。
 
 API v1 is unchanged: its `direct` value means Gateway Direct and Docker remains in the media path. API v2 adds device enrollment and a separately measured `true-direct` topology. All responses use bounded unique-field JSON, `Cache-Control: no-store` and credential-free errors.
 
@@ -53,6 +53,19 @@ Permissions are `view`, `ptz`, `talk`, `snapshot`, and `record-local`; `view` is
 ## Bootstrap and revocation / 启动与撤销
 
 `GET /api/v2/client/bootstrap?sinceRevision=<n>` returns the current global revision, redacted Registry metadata, Scene v5 shared-local subset, sync policy, a renewed sealed Grant and a five-second online validation interval. Successful authenticated access slides browser/IWA authorization by seven days; frozen native contracts retain 30 days. The PWA encrypts the cursor, Grant and redacted Scene snapshot in IndexedDB with a non-extractable AES-GCM wrapping key.
+
+For contract-v2 browser clients, bootstrap also returns `sync.resetRequired`, `sync.documents`, and ordered `sync.changes`. A zero cursor or a cursor older than the bounded 4096-change journal receives a full safe snapshot. `syncPolicy=bidirectional-field-conflict-v1`; physical addresses, media endpoints, credential references and bearer values are never sync documents.
+
+对于 contract-v2 浏览器客户端，bootstrap 还返回 `sync.resetRequired`、`sync.documents` 与有序 `sync.changes`。游标为零或早于 4096 条有界变更日志时返回完整安全快照。同步策略固定为 `bidirectional-field-conflict-v1`；物理地址、媒体端点、凭据引用和 bearer 值永远不是同步文档。
+
+`POST /api/v2/client/sync` accepts schema-v1 batches with one base revision and at most 64 mutations. Supported document kinds are:
+
+- `scene`: the safe Camera/text/color/nested Scene v5 subset, addressed by stable Scene ID; fields are `name`, `canvas`, `sources`, and `items`.
+- `camera-preference`: a non-secret display overlay with `displayName`, `favorite`, and `group`, addressed by an already granted Camera ID.
+
+Each mutation is `upsert` or `delete`. The service validates the complete resulting document, client Camera/Profile scope, nested Scene graph, bounds and secret-free representation inside one SQLite transaction. A field changed after `baseRevision` returns `409` with only that field's safe server value and revision; unrelated stale fields can still commit. Deletes create tombstones, and retries with identical values are idempotent. The PWA retains conflicting encrypted mutations until the operator chooses “采用服务端” or rebases them with “保留本地”.
+
+`POST /api/v2/client/sync` 接收 schema-v1、携带一个基础 revision、最多 64 个 mutation 的批次。`scene` 只允许安全的 Camera/文字/纯色/嵌套 Scene v5 子集；`camera-preference` 只允许已授权 Camera ID 的显示名称、收藏与分组。服务在同一 SQLite 事务中校验完整结果、授权范围、嵌套图、边界和脱敏表示。基础 revision 之后被修改的字段返回 `409`，互不相关的旧字段仍可提交；删除使用墓碑，等值重试保持幂等。PWA 在操作员选择采用服务端或保留本地前，会继续以密文保留冲突 mutation。
 
 `GET /api/v2/clients` lists at most 256 clients and reports `cameraCount` and `weakRevocation`. `DELETE /api/v2/clients/{id}` immediately revokes online API access, deletes active plans, removes managed ONVIF dedicated accounts in a bounded parallel cleanup, and returns `offlineEffectiveNoLaterThan`, `weakRevocation`, and `cameraCredentialCleanup`. If any camera is unreachable or refuses account removal, that Grant is atomically changed to weak revocation and the UI requires camera-password rotation. A disconnected client cannot learn server-token revocation before the already issued Grant expires; the UI always displays this boundary.
 
@@ -108,6 +121,8 @@ Live and archive are independent. An NVR `server-copy` plan may coexist with Tru
 ## Offline audit / 离线审计
 
 `POST /api/v2/client/audit/batch` accepts at most 128 events per call and stores at most 8192 global recent rows. Events have exactly `sequence`, `type`, `outcome`, `cameraId`, and `createdAt`; duplicates are idempotent. Free text, endpoints, client addresses and credentials are not accepted.
+
+The PWA keeps at most 512 encrypted offline events and reconciles them in batches of 128. Revocation, Grant expiry, or logout atomically clears the audit queue together with identity, private snapshots, sync cursor and pending mutations; the static application shell remains cached.
 
 ## Shared Scene boundary / 共享场景边界
 

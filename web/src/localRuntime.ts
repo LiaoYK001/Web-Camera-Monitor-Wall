@@ -2,9 +2,9 @@ import type { StudioDocument } from './types';
 import type { MonitorView } from './monitorView';
 
 const DATABASE = 'webobs-local-v1';
-const VERSION = 1;
+const VERSION = 2;
 const LEASE_MS = 7 * 24 * 60 * 60 * 1000;
-const STORES = ['identity', 'snapshot', 'localScenes', 'auditQueue', 'runtimeMeta'] as const;
+const STORES = ['identity', 'snapshot', 'localScenes', 'auditQueue', 'runtimeMeta', 'syncQueue', 'syncState'] as const;
 type StoreName = typeof STORES[number];
 
 interface EncryptedRecord {
@@ -15,6 +15,50 @@ interface EncryptedRecord {
 }
 
 export type LocalConfigState = 'online' | 'offline-valid' | 'offline-expired' | 'empty';
+
+export interface SyncMutation {
+  kind: 'scene' | 'camera-preference';
+  id: string;
+  operation: 'upsert' | 'delete';
+  fields: Record<string, unknown>;
+}
+
+export interface SyncDocument {
+  kind: SyncMutation['kind'];
+  id: string;
+  revision: number;
+  deleted: boolean;
+  updatedAt: number;
+  document: Record<string, unknown> | null;
+}
+
+export interface SyncConflict {
+  kind: SyncMutation['kind'];
+  id: string;
+  fields: Array<{ field: string; serverValue: unknown; serverRevision: number }>;
+}
+
+export interface LocalSyncState {
+  schemaVersion: 1;
+  revision: number;
+  documents: SyncDocument[];
+  conflicts: SyncConflict[];
+  lastSyncedAt: number;
+}
+
+export interface LocalSyncQueue {
+  schemaVersion: 1;
+  baseRevision: number;
+  mutations: SyncMutation[];
+}
+
+export interface OfflineAuditEvent {
+  sequence: number;
+  type: string;
+  outcome: 'accepted' | 'completed' | 'failed' | 'denied' | 'stopped';
+  cameraId: string;
+  createdAt: number;
+}
 
 function requestResult<T>(request: IDBRequest<T>): Promise<T> {
   return new Promise((resolve, reject) => {
@@ -119,18 +163,134 @@ async function get<T>(store: StoreName, key: IDBValidKey): Promise<T | undefined
   }
 }
 
+async function failClosedNow(): Promise<number | null> {
+  const now = Date.now();
+  const clock = await get<{ highWater: number }>('runtimeMeta', 'clock');
+  if (clock && now + 5 * 60 * 1000 < clock.highWater) return null;
+  if (!clock || now > clock.highWater) await put('runtimeMeta', 'clock', { highWater: now });
+  return now;
+}
+
 export async function saveStudioSnapshot(studio: StudioDocument): Promise<number> {
   const expiresAt = Date.now() + LEASE_MS;
   await put('snapshot', 'studio', await encrypt(redactedStudio(studio), expiresAt));
   await put('runtimeMeta', 'lease', { expiresAt, build: __WEBOBS_BUILD_VERSION__, savedAt: Date.now() });
+  await put('runtimeMeta', 'clock', { highWater: Date.now() });
   window.dispatchEvent(new CustomEvent('webobs:local-state', { detail: 'online' }));
   return expiresAt;
 }
 
-export async function saveLocalStudio(studio: StudioDocument): Promise<void> {
+export async function saveLocalStudio(studio: StudioDocument, announce = true): Promise<void> {
   const expiresAt = Date.now() + LEASE_MS;
   await put('localScenes', 'studio', await encrypt({ kind: 'local-only', studio: redactedStudio(studio) }, expiresAt));
-  window.dispatchEvent(new CustomEvent('webobs:local-state', { detail: 'offline-valid' }));
+  if (announce) window.dispatchEvent(new CustomEvent('webobs:local-state', { detail: 'offline-valid' }));
+}
+
+export async function loadSyncState(): Promise<LocalSyncState | null> {
+  const record = await get<EncryptedRecord>('syncState', 'state');
+  if (!record || record.expiresAt <= Date.now()) return null;
+  try {
+    const value = await decrypt<LocalSyncState>(record);
+    return value.schemaVersion === 1 ? value : null;
+  } catch {
+    return null;
+  }
+}
+
+export async function saveSyncState(state: LocalSyncState): Promise<void> {
+  await put('syncState', 'state', await encrypt(state, Date.now() + LEASE_MS));
+  window.dispatchEvent(new CustomEvent('webobs:sync-state', { detail: state }));
+}
+
+export async function loadSyncQueue(): Promise<LocalSyncQueue | null> {
+  const record = await get<EncryptedRecord>('syncQueue', 'queue');
+  if (!record || record.expiresAt <= Date.now()) return null;
+  try {
+    const value = await decrypt<LocalSyncQueue>(record);
+    return value.schemaVersion === 1 ? value : null;
+  } catch {
+    return null;
+  }
+}
+
+export async function saveSyncQueue(queue: LocalSyncQueue | null): Promise<void> {
+  if (!queue) {
+    const db = await database();
+    try {
+      const transaction = db.transaction('syncQueue', 'readwrite');
+      transaction.objectStore('syncQueue').delete('queue');
+      await transactionDone(transaction);
+    } finally {
+      db.close();
+    }
+    return;
+  }
+  if (queue.mutations.length > 256) throw new Error('Offline sync queue is full');
+  await put('syncQueue', 'queue', await encrypt(queue, Date.now() + LEASE_MS));
+}
+
+export async function loadAuditQueue(): Promise<OfflineAuditEvent[]> {
+  const record = await get<EncryptedRecord>('auditQueue', 'events');
+  if (!record || record.expiresAt <= Date.now()) return [];
+  try {
+    const value = await decrypt<OfflineAuditEvent[]>(record);
+    return Array.isArray(value) ? value : [];
+  } catch {
+    return [];
+  }
+}
+
+export async function queueOfflineAudit(
+  type: string,
+  outcome: OfflineAuditEvent['outcome'],
+  cameraId = '',
+): Promise<void> {
+  if (!/^[a-z0-9._-]{1,64}$/.test(type) || !/^[A-Za-z0-9._-]{0,64}$/.test(cameraId))
+    throw new Error('Offline audit event is invalid');
+  const queue = await loadAuditQueue();
+  const random = crypto.getRandomValues(new Uint16Array(1))[0] % 1000;
+  queue.push({ sequence: Date.now() * 1000 + random, type, outcome, cameraId, createdAt: Date.now() });
+  if (queue.length > 512) queue.splice(0, queue.length - 512);
+  await put('auditQueue', 'events', await encrypt(queue, Date.now() + LEASE_MS));
+}
+
+export async function consumeAuditQueue(count: number): Promise<void> {
+  const queue = await loadAuditQueue();
+  const remaining = queue.slice(Math.max(0, count));
+  if (!remaining.length) {
+    const db = await database();
+    try {
+      const transaction = db.transaction('auditQueue', 'readwrite');
+      transaction.objectStore('auditQueue').delete('events');
+      await transactionDone(transaction);
+    } finally {
+      db.close();
+    }
+  } else await put('auditQueue', 'events', await encrypt(remaining, Date.now() + LEASE_MS));
+}
+
+export async function cacheSyncedScenes(documents: SyncDocument[]): Promise<void> {
+  const sceneDocuments = documents.filter((item) => item.kind === 'scene');
+  if (!sceneDocuments.length) return;
+  const local = await get<EncryptedRecord>('localScenes', 'studio');
+  const snapshot = local ?? await get<EncryptedRecord>('snapshot', 'studio');
+  if (!snapshot || snapshot.expiresAt <= Date.now()) return;
+  const decoded = await decrypt<StudioDocument | { kind: 'local-only'; studio: StudioDocument }>(snapshot);
+  const studio = 'kind' in decoded ? decoded.studio : decoded;
+  const byId = new Map(studio.scenes.map((scene) => [scene.id, scene]));
+  for (const item of sceneDocuments) {
+    if (item.deleted) byId.delete(item.id);
+    else if (item.document?.schemaVersion === 5) byId.set(item.id, item.document as unknown as StudioDocument['scenes'][number]);
+  }
+  const scenes = [...byId.values()];
+  if (!scenes.length) return;
+  const fallback = scenes[0].id;
+  await saveLocalStudio({
+    ...studio,
+    scenes,
+    previewSceneId: byId.has(studio.previewSceneId) ? studio.previewSceneId : fallback,
+    programSceneId: byId.has(studio.programSceneId) ? studio.programSceneId : fallback,
+  }, false);
 }
 
 export async function saveMonitorView(view: MonitorView): Promise<void> {
@@ -150,9 +310,14 @@ export async function loadMonitorView(): Promise<MonitorView | null> {
 }
 
 export async function loadOfflineStudio(): Promise<{ studio: StudioDocument; state: 'offline-valid'; expiresAt: number } | null> {
+  const now = await failClosedNow();
+  if (now === null) {
+    await clearPrivateRuntimeState();
+    return null;
+  }
   const identity = await get<EncryptedRecord>('identity', 'browser-device');
   if (!identity) return null;
-  if (identity.expiresAt <= Date.now()) {
+  if (identity.expiresAt <= now) {
     await clearPrivateRuntimeState();
     return null;
   }
@@ -166,7 +331,7 @@ export async function loadOfflineStudio(): Promise<{ studio: StudioDocument; sta
   const local = await get<EncryptedRecord>('localScenes', 'studio');
   const snapshot = local ?? await get<EncryptedRecord>('snapshot', 'studio');
   if (!snapshot) return null;
-  if (snapshot.expiresAt <= Date.now()) {
+  if (snapshot.expiresAt <= now) {
     await clearPrivateRuntimeState();
     window.dispatchEvent(new CustomEvent('webobs:local-state', { detail: 'offline-expired' }));
     return null;
@@ -180,8 +345,8 @@ export async function loadOfflineStudio(): Promise<{ studio: StudioDocument; sta
 export async function clearPrivateRuntimeState(): Promise<void> {
   const db = await database();
   try {
-    const transaction = db.transaction(['identity', 'snapshot', 'localScenes', 'auditQueue', 'runtimeMeta'], 'readwrite');
-    for (const store of ['identity', 'snapshot', 'localScenes', 'auditQueue'] as const) transaction.objectStore(store).clear();
+    const transaction = db.transaction(['identity', 'snapshot', 'localScenes', 'auditQueue', 'runtimeMeta', 'syncQueue', 'syncState'], 'readwrite');
+    for (const store of ['identity', 'snapshot', 'localScenes', 'auditQueue', 'syncQueue', 'syncState'] as const) transaction.objectStore(store).clear();
     transaction.objectStore('runtimeMeta').delete('lease');
     transaction.objectStore('runtimeMeta').delete('monitor-view');
     await transactionDone(transaction);
@@ -192,14 +357,19 @@ export async function clearPrivateRuntimeState(): Promise<void> {
 }
 
 export async function localConfigState(controlPlaneValidated = false): Promise<LocalConfigState> {
+  const now = await failClosedNow();
+  if (now === null) {
+    await clearPrivateRuntimeState();
+    return 'offline-expired';
+  }
   const lease = await get<{ expiresAt: number }>('runtimeMeta', 'lease');
   const identity = await get<EncryptedRecord>('identity', 'browser-device');
-  if (identity && identity.expiresAt <= Date.now()) {
+  if (identity && identity.expiresAt <= now) {
     await clearPrivateRuntimeState();
     return 'offline-expired';
   }
   if (!lease || !identity) return 'empty';
-  if (lease.expiresAt <= Date.now()) {
+  if (lease.expiresAt <= now) {
     await clearPrivateRuntimeState();
     return 'offline-expired';
   }
@@ -280,12 +450,18 @@ export async function saveBrowserIdentity(identity: StoredBrowserIdentity): Prom
       (identity.clientId !== undefined && !approvedIdentity(identity)))
     throw new Error('Browser identity is invalid or expired');
   await put('identity', 'browser-device', await encrypt(identity, identity.expiresAt, true));
+  await put('runtimeMeta', 'clock', { highWater: Date.now() });
 }
 
 export async function loadBrowserIdentity(): Promise<StoredBrowserIdentity | null> {
+  const now = await failClosedNow();
+  if (now === null) {
+    await clearPrivateRuntimeState();
+    return null;
+  }
   const record = await get<EncryptedRecord>('identity', 'browser-device');
   if (!record) return null;
-  if (record.expiresAt <= Date.now()) {
+  if (record.expiresAt <= now) {
     await clearPrivateRuntimeState();
     return null;
   }

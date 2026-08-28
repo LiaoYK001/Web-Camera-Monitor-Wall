@@ -63,7 +63,7 @@ test('encrypts bounded browser state and atomically removes it at expiry', async
       sourceKinds: offline?.studio.scenes[0].sources.map((source) => source.kind),
     };
   });
-  expect(result.storeNames).toEqual(['auditQueue', 'identity', 'localScenes', 'runtimeMeta', 'snapshot']);
+  expect(result.storeNames).toEqual(['auditQueue', 'identity', 'localScenes', 'runtimeMeta', 'snapshot', 'syncQueue', 'syncState']);
   expect(result.raw).not.toContain('d'.repeat(64));
   expect(result.raw).not.toContain('private.invalid');
   expect(result.sourceKinds).toEqual(['camera']);
@@ -96,7 +96,7 @@ test('encrypts bounded browser state and atomically removes it at expiry', async
       request.onsuccess = () => resolve(request.result);
       request.onerror = () => reject(request.error);
     });
-    const counts = await Promise.all(['identity', 'snapshot', 'localScenes', 'auditQueue'].map((name) =>
+    const counts = await Promise.all(['identity', 'snapshot', 'localScenes', 'auditQueue', 'syncQueue', 'syncState'].map((name) =>
       new Promise<number>((resolve, reject) => {
         const request = verification.transaction(name).objectStore(name).count();
         request.onsuccess = () => resolve(request.result); request.onerror = () => reject(request.error);
@@ -104,5 +104,58 @@ test('encrypts bounded browser state and atomically removes it at expiry', async
     verification.close();
     return { state, counts };
   });
-  expect(expired).toEqual({ state: 'offline-expired', counts: [0, 0, 0, 0] });
+  expect(expired).toEqual({ state: 'offline-expired', counts: [0, 0, 0, 0, 0, 0] });
+});
+
+test('migrates the v1 IndexedDB schema and fails closed on material clock rollback', async ({ page }) => {
+  await page.goto('/');
+  const result = await page.evaluate(async () => {
+    const runtime = await import('/src/localRuntime.ts');
+    await runtime.clearAllLocalRuntimeData();
+    await new Promise<void>((resolve, reject) => {
+      const request = indexedDB.open('webobs-local-v1', 1);
+      request.onupgradeneeded = () => {
+        for (const name of ['identity', 'snapshot', 'localScenes', 'auditQueue', 'runtimeMeta'])
+          request.result.createObjectStore(name);
+      };
+      request.onsuccess = () => { request.result.close(); resolve(); };
+      request.onerror = () => reject(request.error);
+    });
+    await runtime.saveSyncState({ schemaVersion: 1, revision: 0, documents: [], conflicts: [], lastSyncedAt: Date.now() });
+    const future = (Math.floor(Date.now() / 1000) + 3600) * 1000;
+    await runtime.saveBrowserIdentity({
+      enrollmentId: '0123456789abcdef0123456789abcdef', deviceToken: 'd'.repeat(64),
+      signingPublicKey: 's'.repeat(43), signingPrivateKey: 'p'.repeat(86),
+      encryptionPublicKey: 'e'.repeat(43), encryptionPrivateKey: 'x'.repeat(43),
+      clientId: 'abcdef0123456789abcdef0123456789', expiresAt: future,
+      grantPayload: { format: 'webobs-browser-grant-v1', contractVersion: 2,
+        clientId: 'abcdef0123456789abcdef0123456789', issuedAt: Math.floor(Date.now() / 1000),
+        expiresAt: future / 1000, revision: 1, cameras: [] },
+    });
+    const database = await new Promise<IDBDatabase>((resolve, reject) => {
+      const request = indexedDB.open('webobs-local-v1');
+      request.onsuccess = () => resolve(request.result); request.onerror = () => reject(request.error);
+    });
+    const stores = Array.from(database.objectStoreNames);
+    const transaction = database.transaction('runtimeMeta', 'readwrite');
+    transaction.objectStore('runtimeMeta').put({ highWater: Date.now() + 10 * 60 * 1000 }, 'clock');
+    await new Promise<void>((resolve, reject) => {
+      transaction.oncomplete = () => resolve(); transaction.onerror = () => reject(transaction.error);
+    });
+    database.close();
+    const state = await runtime.localConfigState();
+    const verification = await new Promise<IDBDatabase>((resolve, reject) => {
+      const request = indexedDB.open('webobs-local-v1');
+      request.onsuccess = () => resolve(request.result); request.onerror = () => reject(request.error);
+    });
+    const identityCount = await new Promise<number>((resolve, reject) => {
+      const request = verification.transaction('identity').objectStore('identity').count();
+      request.onsuccess = () => resolve(request.result); request.onerror = () => reject(request.error);
+    });
+    verification.close();
+    return { stores, state, identityCount };
+  });
+  expect(result.stores).toEqual(['auditQueue', 'identity', 'localScenes', 'runtimeMeta', 'snapshot', 'syncQueue', 'syncState']);
+  expect(result.state).toBe('offline-expired');
+  expect(result.identityCount).toBe(0);
 });

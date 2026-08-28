@@ -1,6 +1,6 @@
 # v2.0 Local-first PWA / v2.0 本地优先 PWA
 
-> Status / 状态：v2-M2/M3 shipped in `v2.0.1`; v2-M5 monitor enhancements continue on `dev` / v2-M2/M3 已随 `v2.0.1` 发布；v2-M5 监控增强继续在 `dev` 开发
+> Status / 状态：v2-M2/M3 shipped in `v2.0.1`; v2-M4/M5 are complete on `dev` as the unpublished v2.1 candidate / v2-M2/M3 已随 `v2.0.1` 发布；v2-M4/M5 已在 `dev` 完成并形成尚未发布的 v2.1 候选
 
 ## Product boundary / 产品边界
 

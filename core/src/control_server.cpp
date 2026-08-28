@@ -1314,6 +1314,7 @@ public:
                    target == "/api/v2/client/bootstrap" || target.starts_with("/api/v2/client/bootstrap?") ||
                    target == "/api/v2/media-plans" || target.starts_with("/api/v2/media-plans/") ||
                    target == "/api/v2/client/audit/batch" ||
+                   target == "/api/v2/client/sync" ||
                    target.starts_with("/api/v2/client/cameras/")) {
             suffix = std::string(target.substr(std::string_view("/api/v2").size()));
             upstream_port = 8094;
@@ -1529,6 +1530,7 @@ bool v2_device_route(const HttpRequest &request)
         return true;
     if (request.method() == http::verb::post &&
         (target == "/api/v2/media-plans" || target == "/api/v2/client/audit/batch" ||
+         target == "/api/v2/client/sync" ||
          target.starts_with("/api/v2/client/cameras/")))
         return true;
     if (const auto whep = v2_whep_route(target))
@@ -2055,7 +2057,7 @@ HttpResponse handle_request(const HttpRequest &request, SceneController &control
     const std::string_view target = view(request.target());
     if (request.method() == http::verb::get && target == "/api/v1/health")
         return response(http::status::ok, version,
-                        "{\"status\":\"ok\",\"milestone\":\"v1-M11\"}");
+                        "{\"status\":\"ok\",\"milestone\":\"v2-M5\"}");
     if (request.method() == http::verb::get && target == "/api/v1/ready") {
         const bool ready = runtime_status.ready();
         return response(ready ? http::status::ok : http::status::service_unavailable, version,
@@ -2069,6 +2071,7 @@ HttpResponse handle_request(const HttpRequest &request, SceneController &control
                            target == "/api/v2/client/bootstrap" || target.starts_with("/api/v2/client/bootstrap?") ||
                            target == "/api/v2/media-plans" || target.starts_with("/api/v2/media-plans/") ||
                            target == "/api/v2/client/audit/batch" ||
+                           target == "/api/v2/client/sync" ||
                            target.starts_with("/api/v2/client/cameras/");
     if (v2_target) {
         if (const auto route = v2_whep_route(target)) {

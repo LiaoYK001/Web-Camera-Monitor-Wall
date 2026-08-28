@@ -43,6 +43,8 @@ KEY_PATH = Path(os.environ.get(
     "WEBOBS_V2_SIGNING_KEY", "/config/webobs/keys/client-grant-signing.key"))
 MAX_BODY = 1024 * 1024
 MAX_REGISTRY_RESPONSE = 4 * 1024 * 1024
+MAX_SYNC_MUTATIONS = 64
+MAX_SYNC_CHANGES = 4096
 ENROLLMENT_SECONDS = 10 * 60
 DEFAULT_GRANT_SECONDS = 30 * 24 * 60 * 60
 WEB_GRANT_SECONDS = 7 * 24 * 60 * 60
@@ -332,6 +334,25 @@ def initialize() -> None:
               camera_id TEXT NOT NULL,created_at INTEGER NOT NULL,
               UNIQUE(client_id,sequence)
             );
+            CREATE TABLE IF NOT EXISTS sync_documents(
+              kind TEXT NOT NULL,document_id TEXT NOT NULL,body_json TEXT NOT NULL,
+              schema_version INTEGER NOT NULL,revision INTEGER NOT NULL,
+              deleted INTEGER NOT NULL,updated_at INTEGER NOT NULL,updated_by TEXT NOT NULL,
+              PRIMARY KEY(kind,document_id)
+            );
+            CREATE TABLE IF NOT EXISTS sync_field_revisions(
+              kind TEXT NOT NULL,document_id TEXT NOT NULL,field_name TEXT NOT NULL,
+              revision INTEGER NOT NULL,
+              PRIMARY KEY(kind,document_id,field_name)
+            );
+            CREATE TABLE IF NOT EXISTS sync_changes(
+              revision INTEGER PRIMARY KEY,kind TEXT NOT NULL,document_id TEXT NOT NULL,
+              operation TEXT NOT NULL,body_json TEXT NOT NULL,
+              changed_fields_json TEXT NOT NULL,client_id TEXT NOT NULL,
+              updated_at INTEGER NOT NULL
+            );
+            CREATE INDEX IF NOT EXISTS sync_changes_document
+              ON sync_changes(kind,document_id,revision);
             """
         )
         if database.execute("SELECT value FROM metadata WHERE key='revision'").fetchone() is None:
@@ -994,6 +1015,234 @@ def shared_scenes() -> list[object]:
     return value["scenes"]
 
 
+def _client_scope(database: sqlite3.Connection, client_id: str) -> dict[str, set[str]]:
+    return {
+        row["camera_id"]: set(json.loads(row["profile_ids_json"]))
+        for row in database.execute(
+            "SELECT camera_id,profile_ids_json FROM grants WHERE client_id=?", (client_id,))
+    }
+
+
+def _scene_in_scope(scene: Mapping[str, object], scope: Mapping[str, set[str]]) -> bool:
+    for source in scene.get("sources", []):
+        if not isinstance(source, dict) or source.get("kind") != "camera":
+            continue
+        if source.get("cameraId") not in scope or source.get("profileId") not in scope[source["cameraId"]]:
+            return False
+    return True
+
+
+def _sync_body_safe(body: object) -> bool:
+    try:
+        encoded = json.dumps(body, separators=(",", ":"), allow_nan=False)
+    except (TypeError, ValueError):
+        return False
+    return len(encoded.encode("utf-8")) <= MAX_BODY and not re.search(
+        r'(?i)(rtsp|rtsps|https?)://|"(?:password|credentials?|secret|token|endpoint|url|rtspUrl)"\s*:',
+        encoded)
+
+
+def _camera_preference_valid(document: object, scope: Mapping[str, set[str]]) -> bool:
+    if not isinstance(document, dict) or set(document) != {
+            "schemaVersion", "cameraId", "displayName", "favorite", "group"}:
+        return False
+    return document.get("schemaVersion") == 1 and \
+        isinstance(document.get("cameraId"), str) and document["cameraId"] in scope and \
+        isinstance(document.get("displayName"), str) and \
+        len(document["displayName"].encode("utf-8")) <= 128 and \
+        isinstance(document.get("favorite"), bool) and \
+        isinstance(document.get("group"), str) and len(document["group"].encode("utf-8")) <= 64
+
+
+def _sync_document_valid(kind: str, document: object,
+                         scope: Mapping[str, set[str]]) -> bool:
+    if not _sync_body_safe(document):
+        return False
+    if kind == "scene":
+        return isinstance(document, dict) and _shared_scene_valid(document) and \
+            _scene_in_scope(document, scope)
+    if kind == "camera-preference":
+        return _camera_preference_valid(document, scope)
+    return False
+
+
+def _sync_public(kind: str, document_id: str, body_json: str, document_revision: int,
+                 deleted: bool, updated_at: int) -> dict[str, object]:
+    return {
+        "kind": kind, "id": document_id, "revision": document_revision,
+        "deleted": deleted, "updatedAt": updated_at,
+        "document": None if deleted else json.loads(body_json),
+    }
+
+
+def _sync_state(database: sqlite3.Connection, client_id: str, since: int) -> dict[str, object]:
+    scope = _client_scope(database, client_id)
+    rows = database.execute(
+        "SELECT * FROM sync_documents ORDER BY kind,document_id").fetchall()
+    visible: dict[tuple[str, str], sqlite3.Row] = {}
+    for row in rows:
+        document = json.loads(row["body_json"])
+        if _sync_document_valid(row["kind"], document, scope):
+            visible[(row["kind"], row["document_id"])] = row
+
+    earliest = database.execute("SELECT MIN(revision) AS value FROM sync_changes").fetchone()["value"]
+    reset_required = bool(since and earliest is not None and since < int(earliest) - 1)
+    documents: list[dict[str, object]] = []
+    if since == 0 or reset_required:
+        for scene in shared_scenes():
+            key = ("scene", scene["id"])
+            if key not in visible and _scene_in_scope(scene, scope):
+                documents.append(_sync_public("scene", scene["id"], json.dumps(
+                    scene, separators=(",", ":"), allow_nan=False), 0, False, 0))
+        documents.extend(_sync_public(
+            row["kind"], row["document_id"], row["body_json"], row["revision"],
+            bool(row["deleted"]), row["updated_at"])
+            for row in visible.values() if not row["deleted"])
+
+    changes = []
+    if not reset_required:
+        for row in database.execute(
+                "SELECT * FROM sync_changes WHERE revision>? ORDER BY revision LIMIT ?",
+                (since, MAX_SYNC_CHANGES)).fetchall():
+            document = json.loads(row["body_json"])
+            if not _sync_document_valid(row["kind"], document, scope):
+                continue
+            changes.append({
+                **_sync_public(row["kind"], row["document_id"], row["body_json"],
+                               row["revision"], row["operation"] == "delete", row["updated_at"]),
+                "changedFields": json.loads(row["changed_fields_json"]),
+            })
+    return {"resetRequired": reset_required, "documents": documents, "changes": changes}
+
+
+def _initial_sync_document(kind: str, document_id: str) -> dict[str, object]:
+    if kind == "scene":
+        existing = next((scene for scene in shared_scenes() if scene["id"] == document_id), None)
+        if existing is not None:
+            return json.loads(json.dumps(existing))
+        return {"schemaVersion": 5, "revision": 0, "id": document_id}
+    return {"schemaVersion": 1, "cameraId": document_id,
+            "displayName": "", "favorite": False, "group": ""}
+
+
+def sync_mutations(client_id: str, payload: object) -> tuple[int, dict[str, object]]:
+    if not isinstance(payload, dict) or set(payload) != {"schemaVersion", "baseRevision", "mutations"} or \
+            payload.get("schemaVersion") != 1 or \
+            not isinstance(payload.get("baseRevision"), int) or isinstance(payload["baseRevision"], bool) or \
+            payload["baseRevision"] < 0 or not isinstance(payload.get("mutations"), list) or \
+            not 1 <= len(payload["mutations"]) <= MAX_SYNC_MUTATIONS:
+        raise ApiError(400, "invalid_sync_batch", "sync batch must use schema v1 and contain 1 to 64 mutations")
+    base_revision = payload["baseRevision"]
+    accepted: list[dict[str, object]] = []
+    conflicts: list[dict[str, object]] = []
+    now = int(time.time())
+    with connect() as database:
+        database.execute("BEGIN IMMEDIATE")
+        current = revision(database)
+        if base_revision > current:
+            raise ApiError(409, "future_revision", "baseRevision is newer than the server")
+        scope = _client_scope(database, client_id)
+        for mutation in payload["mutations"]:
+            if not isinstance(mutation, dict) or set(mutation) != {"kind", "id", "operation", "fields"}:
+                raise ApiError(400, "invalid_sync_mutation", "sync mutation fields are invalid")
+            kind, document_id, operation, fields = (
+                mutation.get("kind"), mutation.get("id"), mutation.get("operation"), mutation.get("fields"))
+            if kind not in {"scene", "camera-preference"} or not isinstance(document_id, str) or \
+                    not ID_RE.fullmatch(document_id) or operation not in {"upsert", "delete"} or \
+                    not isinstance(fields, dict):
+                raise ApiError(400, "invalid_sync_mutation", "sync mutation is invalid")
+            allowed_fields = {"name", "canvas", "sources", "items"} if kind == "scene" else {
+                "displayName", "favorite", "group"}
+            if (operation == "delete" and fields) or set(fields) - allowed_fields or \
+                    (operation == "upsert" and not fields):
+                raise ApiError(400, "invalid_sync_fields", "sync fields are invalid for this document kind")
+            row = database.execute(
+                "SELECT * FROM sync_documents WHERE kind=? AND document_id=?", (kind, document_id)).fetchone()
+            current_document = json.loads(row["body_json"]) if row else _initial_sync_document(kind, document_id)
+            changed_fields = sorted(fields) if operation == "upsert" else ["*"]
+            conflicting_fields = []
+            if operation == "delete" and row is not None and row["revision"] > base_revision:
+                conflicting_fields.append({
+                    "field": "*", "serverValue": current_document,
+                    "serverRevision": row["revision"],
+                })
+            for field in changed_fields:
+                if operation == "delete":
+                    continue
+                field_row = database.execute(
+                    "SELECT MAX(revision) AS revision FROM sync_field_revisions "
+                    "WHERE kind=? AND document_id=? AND field_name IN (?, '*')",
+                    (kind, document_id, field)).fetchone()
+                if field_row is not None and field_row["revision"] is not None and \
+                        field_row["revision"] > base_revision:
+                    incoming = fields.get(field) if field != "*" else None
+                    server_value = current_document.get(field) if field != "*" else current_document
+                    if incoming != server_value:
+                        conflicting_fields.append({
+                            "field": field, "serverValue": server_value,
+                            "serverRevision": field_row["revision"],
+                        })
+            if conflicting_fields:
+                conflicts.append({"kind": kind, "id": document_id, "fields": conflicting_fields})
+                continue
+            if operation == "delete" and row is None and not (
+                    kind == "scene" and any(scene["id"] == document_id for scene in shared_scenes())):
+                raise ApiError(404, "sync_document_not_found", "sync document does not exist")
+            next_document = dict(current_document)
+            next_document.update(fields)
+            if kind == "scene":
+                next_document.update({"schemaVersion": 5, "id": document_id})
+            else:
+                next_document.update({"schemaVersion": 1, "cameraId": document_id})
+            if not _sync_document_valid(kind, next_document, scope):
+                raise ApiError(400, "unsafe_sync_document", "sync document is invalid, out of scope, or unsafe")
+            if operation == "upsert" and row is not None and not row["deleted"] and \
+                    all(current_document.get(field) == value for field, value in fields.items()):
+                accepted.append({"kind": kind, "id": document_id, "revision": row["revision"], "unchanged": True})
+                continue
+            next_revision = revision(database, True)
+            if kind == "scene":
+                next_document["revision"] = next_revision
+            body_json = json.dumps(next_document, separators=(",", ":"), allow_nan=False)
+            database.execute(
+                "INSERT INTO sync_documents(kind,document_id,body_json,schema_version,revision,deleted,updated_at,updated_by) "
+                "VALUES(?,?,?,?,?,?,?,?) ON CONFLICT(kind,document_id) DO UPDATE SET "
+                "body_json=excluded.body_json,schema_version=excluded.schema_version,revision=excluded.revision,"
+                "deleted=excluded.deleted,updated_at=excluded.updated_at,updated_by=excluded.updated_by",
+                (kind, document_id, body_json, 5 if kind == "scene" else 1, next_revision,
+                 1 if operation == "delete" else 0, now, client_id))
+            for field in changed_fields:
+                database.execute(
+                    "INSERT INTO sync_field_revisions(kind,document_id,field_name,revision) VALUES(?,?,?,?) "
+                    "ON CONFLICT(kind,document_id,field_name) DO UPDATE SET revision=excluded.revision",
+                    (kind, document_id, field, next_revision))
+            database.execute(
+                "INSERT INTO sync_changes(revision,kind,document_id,operation,body_json,changed_fields_json,client_id,updated_at) "
+                "VALUES(?,?,?,?,?,?,?,?)",
+                (next_revision, kind, document_id, operation, body_json,
+                 json.dumps(changed_fields, separators=(",", ":")), client_id, now))
+            accepted.append({"kind": kind, "id": document_id, "revision": next_revision, "unchanged": False})
+        scene_graph = {scene["id"]: scene for scene in shared_scenes()}
+        for row in database.execute(
+                "SELECT document_id,body_json,deleted FROM sync_documents WHERE kind='scene'").fetchall():
+            if row["deleted"]:
+                scene_graph.pop(row["document_id"], None)
+            else:
+                scene_graph[row["document_id"]] = json.loads(row["body_json"])
+        if not scene_graph or not _shared_scene_graph_valid(list(scene_graph.values())):
+            raise ApiError(409, "scene_graph_conflict",
+                           "sync must retain a non-empty, acyclic and bounded nested Scene graph")
+        old = database.execute(
+            "SELECT revision FROM sync_changes ORDER BY revision DESC LIMIT 1 OFFSET ?",
+            (MAX_SYNC_CHANGES - 1,)).fetchone()
+        if old is not None:
+            database.execute("DELETE FROM sync_changes WHERE revision<?", (old["revision"],))
+        current = revision(database)
+    return (409 if conflicts else 200), {
+        "schemaVersion": 1, "revision": current, "accepted": accepted, "conflicts": conflicts,
+    }
+
+
 def bootstrap(client: sqlite3.Row, since: int) -> dict[str, object]:
     with connect() as database:
         current = revision(database)
@@ -1013,14 +1262,18 @@ def bootstrap(client: sqlite3.Row, since: int) -> dict[str, object]:
                 "permissions": json.loads(grant["permissions_json"]),
                 "weakRevocation": bool(grant["weak_revocation"]),
             })
+        if since > current:
+            raise ApiError(409, "future_revision", "sinceRevision is newer than the server")
         changed = since < current
+        sync = _sync_state(database, client["id"], since)
         return {
             "contractVersion": 2 if client["platform"] in {"web", "chromium-iwa"} else 1,
             "revision": current, "changed": changed,
             "client": public_client(client), "cameras": cameras if changed else [],
             "grantBundle": sealed_bundle(database, client),
             "sharedScenes": shared_scenes() if changed else [],
-            "syncPolicy": "server-read-only-local-layouts",
+            "syncPolicy": "bidirectional-field-conflict-v1",
+            "sync": sync,
             "onlineValidationIntervalSeconds": ONLINE_VALIDATION_SECONDS,
         }
 
@@ -1483,6 +1736,8 @@ class Handler(BaseHTTPRequestHandler):
                 return 200, release_media_plan(client["id"], plan_id)
         if path == "/client/audit/batch" and self.command == "POST":
             return 200, audit_batch(client["id"], self.payload())
+        if path == "/client/sync" and self.command == "POST":
+            return sync_mutations(client["id"], self.payload())
         operation_match = re.fullmatch(
             r"/client/cameras/([A-Za-z0-9._-]{1,64})/(ptz|presets|snapshot|talk)", path)
         if operation_match:

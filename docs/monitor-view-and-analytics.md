@@ -1,6 +1,6 @@
 # MonitorView v1 and analytics handoff / MonitorView v1 与分析交接
 
-> Status / 状态：v2-M5 functional slice on `dev`; complete release qualification is still required / `dev` 已落地 v2-M5 功能切片，仍需完整发布资格验证。
+> Status / 状态：v2-M5 development is complete on `dev` for the unpublished v2.1 candidate / v2-M5 开发已在 `dev` 完成，当前为尚未发布的 v2.1 候选。
 
 ## View contract / 视图契约
 

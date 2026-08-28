@@ -4,7 +4,7 @@
 >
 > Last updated / 最后更新：2026-08-25
 >
-> Current position / 当前位置：`v2.0.1` is published with v2-M1 through v2-M3 complete. `dev` is implementing v2-M4/M5; the M5 telemetry, arbitrary 1–16 M/S layout, rotation, low-power and per-profile analytics-policy slice is present, while its full acceptance matrix remains open. Native Windows/Linux/Android sources remain frozen / `v2.0.1` 已发布且 v2-M1 至 v2-M3 完成。`dev` 正实施 v2-M4/M5；M5 的统计、1–16 任意数量 M/S 布局、轮换、低功耗与逐 Profile 分析策略切片已落地，完整验收矩阵仍未完成。Windows/Linux/Android 原生源码继续冻结。
+> Current position / 当前位置：`v2.0.1` is published. v2-M4/M5 development is complete on `dev` as an unpublished v2.1 candidate, covering encrypted offline sync and the telemetry, arbitrary 1–16 M/S layout, rotation, low-power and per-profile analytics-policy runtime. Native Windows/Linux/Android sources remain frozen / `v2.0.1` 已发布；v2-M4/M5 已在 `dev` 完成并形成尚未发布的 v2.1 候选，覆盖加密离线同步，以及统计、1–16 任意数量 M/S 布局、轮换、低功耗与逐 Profile 分析策略运行时。Windows/Linux/Android 原生源码继续冻结。
 
 This document expands the project from a web camera compositor into a self-hosted and local-first monitoring workspace with three first-class capabilities: an OBS-inspired customizable canvas, an NVR workflow inspired by mainstream monitoring applications such as tinyCam Monitor, and v2 True Direct local clients that keep Docker outside the media data plane. It is a capability plan, not a compatibility or UI-cloning claim, and it does not promise release dates.
 

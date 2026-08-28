@@ -16,7 +16,8 @@ import SystemStatus from './SystemStatus';
 import EventsPanel from './EventsPanel';
 import ClientsPanel from './ClientsPanel';
 import LocalRuntimeBadge from './LocalRuntimeBadge';
-import { loadOfflineStudio, saveLocalStudio, saveStudioSnapshot } from './localRuntime';
+import { loadOfflineStudio, queueOfflineAudit, saveLocalStudio, saveStudioSnapshot } from './localRuntime';
+import { queueStudioSync, synchronizeBrowserState } from './syncRuntime';
 import type { AudioMonitoring, CameraRecord, FilterKind, PlaybackMode, ScaleMode, SceneDocument, SceneFilter, SceneItem, SceneSource, StudioCapabilities, StudioDocument, Transport } from './types';
 
 type ConnectionState = 'connecting' | 'online' | 'offline';
@@ -517,14 +518,18 @@ export default function App() {
     try {
       if (connection === 'offline') {
         await saveLocalStudio(studioDraft);
+        await queueStudioSync(studioDraft);
+        await queueOfflineAudit('scene.local-save', 'completed');
         applyRemoteStudio(studioDraft);
-        setNotice('本地 Scene 已保存为 local-only；恢复在线后不会自动覆盖共享场景。');
+        setNotice('本地 Scene 已保存并进入加密同步队列；恢复在线后按字段检测冲突。');
         return;
       }
       const committed = await replaceStudio(studioDraft);
       applyRemoteStudio(committed);
       void saveStudioSnapshot(committed).catch(() => undefined);
-      setNotice(`Studio s${committed.revision} 已保存；Preview 保持与 Program 隔离。`);
+      void queueStudioSync(committed).then(() => synchronizeBrowserState()).catch(() => undefined);
+      void queueOfflineAudit('scene.server-save', 'completed').catch(() => undefined);
+      setNotice(`Studio s${committed.revision} 已保存；共享 Scene 同步将按字段检测冲突。`);
     } catch (error) {
       if (error instanceof ControlApiError && error.status === 412) {
         setConflict(`保存冲突：服务器当前为 r${error.revision ?? '未知'}，请重新载入。`);

@@ -47,13 +47,13 @@ if (Test-Path -LiteralPath $nextCache) {
 $tags = @('--tag', "${Image}:${Version}", '--tag', "${Image}:sha-${shortRevision}")
 if ($Version -eq 'dev') {
     $tags += @('--tag', "${Image}:dev")
-    $buildVersion = "2.0.0-dev.${shortRevision}"
-    $buildMilestone = 'v2-M3-dev'
+    $buildVersion = "2.1.0-dev.${shortRevision}"
+    $buildMilestone = 'v2-M5-dev'
 }
 else {
     $tags += @('--tag', "${Image}:latest")
     $buildVersion = $Version.Substring(1)
-    $buildMilestone = 'v2-M3'
+    $buildMilestone = if ($Version -match '^v2\.1(?:\.|$)') { 'v2-M5' } else { 'v2-M3' }
 }
 
 $cacheArguments = @()

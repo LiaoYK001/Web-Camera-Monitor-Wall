@@ -2,6 +2,8 @@ import { useEffect, useState } from 'react';
 import { activatePwaUpdate, currentPwaInstallState, installPwa, type PwaInstallState, type PwaUpdateState } from './pwaRuntime';
 import { localConfigState, requestPersistentStorage, type LocalConfigState } from './localRuntime';
 import { refreshBrowserAuthorization } from './browserEnrollment';
+import { resolveSyncConflicts, synchronizeBrowserState } from './syncRuntime';
+import type { LocalSyncState } from './localRuntime';
 
 const labels: Record<LocalConfigState, string> = {
   online: '配置：在线',
@@ -15,6 +17,7 @@ export default function LocalRuntimeBadge() {
   const [pwa, setPwa] = useState<PwaUpdateState>('installing');
   const [persistent, setPersistent] = useState<boolean | null>(null);
   const [install, setInstall] = useState<PwaInstallState>(currentPwaInstallState());
+  const [sync, setSync] = useState<LocalSyncState | null>(null);
 
   useEffect(() => {
     let refreshing = false;
@@ -22,7 +25,10 @@ export default function LocalRuntimeBadge() {
       if (!navigator.onLine || refreshing) return;
       refreshing = true;
       void refreshBrowserAuthorization()
-        .then((expiresAt) => localConfigState(expiresAt !== null).then(setConfig))
+        .then(async (expiresAt) => {
+          setConfig(await localConfigState(expiresAt !== null));
+          if (expiresAt !== null) setSync(await synchronizeBrowserState());
+        })
         .catch(() => localConfigState().then(setConfig))
         .finally(() => { refreshing = false; });
     };
@@ -55,6 +61,11 @@ export default function LocalRuntimeBadge() {
     <div className="local-runtime-badge" data-config-state={config}>
       <span>应用：{pwa === 'cached' || pwa === 'update-ready' ? '本地缓存运行' : pwa === 'unsupported' ? '需要受信任 HTTPS' : pwa === 'error' ? '缓存失败' : '正在缓存'}</span>
       <span>{labels[config]}</span>
+      <span>同步：{sync ? `r${sync.revision}${sync.conflicts.length ? ` · ${sync.conflicts.length} 个冲突` : ''}` : '未配对'}</span>
+      {Boolean(sync?.conflicts.length) && <span className="sync-conflict-actions">
+        <button type="button" onClick={() => void resolveSyncConflicts('server').then(setSync)}>采用服务端</button>
+        <button type="button" onClick={() => void resolveSyncConflicts('local').then(setSync)}>保留本地</button>
+      </span>}
       <span>安装：{install === 'installed' ? '已安装' : install === 'installable' ? '可安装' : '浏览器模式'}</span>
       {install === 'installable' && <button type="button" onClick={() => void installPwa().then(setInstall)}>安装到本机</button>}
       {persistent === false && <small>浏览器未授予持久存储</small>}

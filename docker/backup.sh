@@ -7,6 +7,10 @@ backup_root="${WEBOBS_BACKUP_ROOT:-/backups}"
 scene_path="$config_root/scene.json"
 studio_path="$config_root/studio.json"
 nvr_path="$config_root/nvr.json"
+camera_db_path="$config_root/cameras.db"
+v2_db_path="$config_root/v2-clients.db"
+shared_scenes_path="$config_root/shared-scenes-v2.json"
+grant_key_path="$config_root/keys/client-grant-signing.key"
 
 fail() {
     echo "webobs-backup: $*" >&2
@@ -48,6 +52,44 @@ safe_remove_temp() {
     esac
 }
 
+validate_sqlite() {
+    database_path="$1"
+    python3 - "$database_path" <<'PY'
+import sqlite3
+import sys
+
+path = sys.argv[1]
+connection = sqlite3.connect(path, timeout=3)
+try:
+    busy, _log, _checkpointed = connection.execute("PRAGMA wal_checkpoint(TRUNCATE)").fetchone()
+    if busy:
+        raise SystemExit("database has an active writer")
+    if connection.execute("PRAGMA integrity_check").fetchone()[0] != "ok":
+        raise SystemExit("database integrity check failed")
+finally:
+    connection.close()
+PY
+}
+
+validate_shared_scenes() {
+    document_path="$1"
+    python3 - "$document_path" <<'PY'
+import json
+import math
+import sys
+
+def reject_constant(_value):
+    raise ValueError("non-finite number")
+
+with open(sys.argv[1], "r", encoding="utf-8") as source:
+    value = json.load(source, parse_constant=reject_constant)
+if not isinstance(value, dict) or set(value) != {"schemaVersion", "scenes"} or value["schemaVersion"] != 1:
+    raise SystemExit("shared Scene wrapper is invalid")
+if not isinstance(value["scenes"], list) or len(value["scenes"]) > 64:
+    raise SystemExit("shared Scene count is invalid")
+PY
+}
+
 verify_archive() {
     archive="$1"
     safe_archive_path "$archive"
@@ -66,13 +108,18 @@ verify_archive() {
     trap 'safe_remove_temp "$listing"' EXIT HUP INT TERM
     tar -tzf "$archive" > "$listing" || fail "archive cannot be listed"
     awk '
-        BEGIN { scene = 0; studio = 0; nvr = 0 }
+        BEGIN { scene = 0; studio = 0; nvr = 0; cameras = 0; v2 = 0; shared = 0; key = 0 }
         $0 == "webobs/" { next }
+        $0 == "webobs/keys/" { next }
         $0 == "webobs/scene.json" { scene++; next }
         $0 == "webobs/studio.json" { studio++; next }
         $0 == "webobs/nvr.json" { nvr++; next }
+        $0 == "webobs/cameras.db" { cameras++; next }
+        $0 == "webobs/v2-clients.db" { v2++; next }
+        $0 == "webobs/shared-scenes-v2.json" { shared++; next }
+        $0 == "webobs/keys/client-grant-signing.key" { key++; next }
         { exit 1 }
-        END { if (scene != 1 || studio > 1 || nvr > 1) exit 1 }
+        END { if (scene != 1 || studio > 1 || nvr > 1 || cameras > 1 || v2 > 1 || shared > 1 || key > 1 || v2 != key) exit 1 }
     ' "$listing" || fail "archive contains unexpected paths"
     safe_remove_temp "$listing"
     trap - EXIT HUP INT TERM
@@ -83,6 +130,9 @@ create_backup() {
     /opt/obs/bin/webobs-scene-tool validate "$scene_path" >/dev/null || fail "scene validation failed"
     include_studio=0
     include_nvr=0
+    include_camera_db=0
+    include_v2=0
+    include_shared_scenes=0
     if [ -e "$studio_path" ]; then
         [ -f "$studio_path" ] && [ ! -L "$studio_path" ] || fail "studio.json is unsafe"
         /opt/obs/bin/webobs-scene-tool validate-studio "$studio_path" >/dev/null || fail "studio validation failed"
@@ -92,6 +142,23 @@ create_backup() {
         [ -f "$nvr_path" ] && [ ! -L "$nvr_path" ] || fail "nvr.json is unsafe"
         /opt/webobs/bin/webobs-nvrd --config "$nvr_path" --validate-config >/dev/null || fail "NVR validation failed"
         include_nvr=1
+    fi
+    if [ -e "$camera_db_path" ]; then
+        [ -f "$camera_db_path" ] && [ ! -L "$camera_db_path" ] || fail "Camera Registry database is unsafe"
+        validate_sqlite "$camera_db_path" || fail "Camera Registry database validation failed"
+        include_camera_db=1
+    fi
+    if [ -e "$v2_db_path" ] || [ -e "$grant_key_path" ]; then
+        [ -f "$v2_db_path" ] && [ ! -L "$v2_db_path" ] || fail "v2 client database is missing or unsafe"
+        [ -f "$grant_key_path" ] && [ ! -L "$grant_key_path" ] || fail "v2 Grant signing key is missing or unsafe"
+        [ "$(wc -c < "$grant_key_path")" = "96" ] || fail "v2 Grant signing key length is invalid"
+        validate_sqlite "$v2_db_path" || fail "v2 client database validation failed"
+        include_v2=1
+    fi
+    if [ -e "$shared_scenes_path" ]; then
+        [ -f "$shared_scenes_path" ] && [ ! -L "$shared_scenes_path" ] || fail "shared Scene document is unsafe"
+        validate_shared_scenes "$shared_scenes_path" || fail "shared Scene document validation failed"
+        include_shared_scenes=1
     fi
     timestamp="$(date -u +%Y%m%dT%H%M%SZ)"
     name="${1:-webobs-config-$timestamp.tar.gz}"
@@ -108,6 +175,11 @@ create_backup() {
     set -- webobs/scene.json
     [ "$include_studio" -eq 0 ] || set -- "$@" webobs/studio.json
     [ "$include_nvr" -eq 0 ] || set -- "$@" webobs/nvr.json
+    [ "$include_camera_db" -eq 0 ] || set -- "$@" webobs/cameras.db
+    if [ "$include_v2" -ne 0 ]; then
+        set -- "$@" webobs/v2-clients.db webobs/keys/client-grant-signing.key
+    fi
+    [ "$include_shared_scenes" -eq 0 ] || set -- "$@" webobs/shared-scenes-v2.json
     tar -C "${config_root%/webobs}" -czf "$temporary/$name" "$@"
     hash="$(sha256sum "$temporary/$name" | awk '{print $1}')"
     printf '%s  %s\n' "$hash" "$name" > "$temporary/$name.sha256"
@@ -145,6 +217,31 @@ restore_backup() {
         /opt/webobs/bin/webobs-nvrd --config "$extracted_nvr" --validate-config >/dev/null || fail "restored NVR validation failed"
         install -m 0600 "$extracted_nvr" "$temporary/nvr.json.staged"
     fi
+    extracted_camera_db="$temporary/webobs/cameras.db"
+    if [ -e "$extracted_camera_db" ]; then
+        [ -f "$extracted_camera_db" ] && [ ! -L "$extracted_camera_db" ] || fail "restored Camera Registry database is unsafe"
+        [ "$(stat -c '%h' "$extracted_camera_db")" = "1" ] || fail "restored Camera Registry database must not be a hard link"
+        validate_sqlite "$extracted_camera_db" || fail "restored Camera Registry database validation failed"
+        install -m 0600 "$extracted_camera_db" "$temporary/cameras.db.staged"
+    fi
+    extracted_v2_db="$temporary/webobs/v2-clients.db"
+    extracted_grant_key="$temporary/webobs/keys/client-grant-signing.key"
+    if [ -e "$extracted_v2_db" ] || [ -e "$extracted_grant_key" ]; then
+        [ -f "$extracted_v2_db" ] && [ ! -L "$extracted_v2_db" ] || fail "restored v2 client database is missing or unsafe"
+        [ -f "$extracted_grant_key" ] && [ ! -L "$extracted_grant_key" ] || fail "restored Grant signing key is missing or unsafe"
+        [ "$(stat -c '%h' "$extracted_v2_db")" = "1" ] && [ "$(stat -c '%h' "$extracted_grant_key")" = "1" ] || fail "restored v2 identity files must not be hard links"
+        [ "$(wc -c < "$extracted_grant_key")" = "96" ] || fail "restored Grant signing key length is invalid"
+        validate_sqlite "$extracted_v2_db" || fail "restored v2 client database validation failed"
+        install -m 0600 "$extracted_v2_db" "$temporary/v2-clients.db.staged"
+        install -m 0600 "$extracted_grant_key" "$temporary/client-grant-signing.key.staged"
+    fi
+    extracted_shared_scenes="$temporary/webobs/shared-scenes-v2.json"
+    if [ -e "$extracted_shared_scenes" ]; then
+        [ -f "$extracted_shared_scenes" ] && [ ! -L "$extracted_shared_scenes" ] || fail "restored shared Scene document is unsafe"
+        [ "$(stat -c '%h' "$extracted_shared_scenes")" = "1" ] || fail "restored shared Scene document must not be a hard link"
+        validate_shared_scenes "$extracted_shared_scenes" || fail "restored shared Scene document validation failed"
+        install -m 0600 "$extracted_shared_scenes" "$temporary/shared-scenes-v2.json.staged"
+    fi
     staged="$temporary/scene.json.staged"
     install -m 0600 "$extracted" "$staged"
     if [ -f "$temporary/studio.json.staged" ]; then
@@ -152,6 +249,20 @@ restore_backup() {
     fi
     if [ -f "$temporary/nvr.json.staged" ]; then
         mv -f "$temporary/nvr.json.staged" "$nvr_path"
+    fi
+    if [ -f "$temporary/cameras.db.staged" ]; then
+        rm -f -- "$camera_db_path-wal" "$camera_db_path-shm"
+        mv -f "$temporary/cameras.db.staged" "$camera_db_path"
+    fi
+    if [ -f "$temporary/v2-clients.db.staged" ]; then
+        mkdir -p "$config_root/keys"
+        chmod 0700 "$config_root/keys"
+        rm -f -- "$v2_db_path-wal" "$v2_db_path-shm"
+        mv -f "$temporary/v2-clients.db.staged" "$v2_db_path"
+        mv -f "$temporary/client-grant-signing.key.staged" "$grant_key_path"
+    fi
+    if [ -f "$temporary/shared-scenes-v2.json.staged" ]; then
+        mv -f "$temporary/shared-scenes-v2.json.staged" "$shared_scenes_path"
     fi
     mv -f "$staged" "$scene_path"
     safe_remove_temp "$temporary"

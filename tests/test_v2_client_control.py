@@ -404,6 +404,15 @@ class V2ClientControlTests(unittest.TestCase):
                     body = json.load(response)
                 self.assertEqual(body["contractVersion"], 1)
                 self.assertNotIn("endpoint", json.dumps(body["cameras"]))
+                request = urllib.request.Request(origin + "/client/sync", method="POST",
+                    data=json.dumps({"schemaVersion": 1, "baseRevision": body["revision"],
+                        "mutations": [{"kind": "camera-preference", "id": "camera-test",
+                            "operation": "upsert", "fields": {"favorite": True}}]}).encode(),
+                    headers={"X-WebObs-Device-Token": enrollment["deviceToken"],
+                             "Content-Type": "application/json"})
+                with urllib.request.urlopen(request, timeout=2) as response:
+                    synced = json.load(response)
+                self.assertEqual(synced["accepted"][0]["id"], "camera-test")
         finally:
             server.shutdown()
             server.server_close()
@@ -447,6 +456,98 @@ class V2ClientControlTests(unittest.TestCase):
             encoding="utf-8")
         with self.assertRaisesRegex(service.ApiError, "unavailable"):
             service._load_secret("camera-test")
+
+    def test_bidirectional_sync_is_incremental_scoped_and_field_conflict_safe(self):
+        enrollment, _ = self.enroll_and_approve()
+        client = service.authenticate_device(enrollment["deviceToken"])
+        initial = service.bootstrap(client, 0)
+        self.assertEqual(initial["syncPolicy"], "bidirectional-field-conflict-v1")
+        self.assertFalse(initial["sync"]["resetRequired"])
+        self.assertEqual(initial["sync"]["documents"][0]["kind"], "scene")
+        base = initial["revision"]
+
+        status, result = service.sync_mutations(client["id"], {
+            "schemaVersion": 1, "baseRevision": base, "mutations": [{
+                "kind": "camera-preference", "id": "camera-test", "operation": "upsert",
+                "fields": {"displayName": "Front door", "favorite": True},
+            }],
+        })
+        self.assertEqual(status, 200)
+        self.assertGreater(result["revision"], base)
+        incremental = service.bootstrap(client, base)
+        self.assertEqual(incremental["sync"]["documents"], [])
+        self.assertEqual(incremental["sync"]["changes"][0]["document"]["displayName"], "Front door")
+        self.assertNotIn("endpoint", json.dumps(incremental["sync"]))
+
+        status, conflict = service.sync_mutations(client["id"], {
+            "schemaVersion": 1, "baseRevision": base, "mutations": [{
+                "kind": "camera-preference", "id": "camera-test", "operation": "upsert",
+                "fields": {"displayName": "Stale rename"},
+            }],
+        })
+        self.assertEqual(status, 409)
+        self.assertEqual(conflict["conflicts"][0]["fields"][0]["field"], "displayName")
+        self.assertEqual(conflict["conflicts"][0]["fields"][0]["serverValue"], "Front door")
+
+        # A stale edit to another field is accepted: conflicts are field-level, not document-level.
+        status, independent = service.sync_mutations(client["id"], {
+            "schemaVersion": 1, "baseRevision": base, "mutations": [{
+                "kind": "camera-preference", "id": "camera-test", "operation": "upsert",
+                "fields": {"group": "Entrance"},
+            }],
+        })
+        self.assertEqual(status, 200)
+        self.assertFalse(independent["conflicts"])
+
+        with self.assertRaises(service.ApiError) as ungranted:
+            service.sync_mutations(client["id"], {
+                "schemaVersion": 1, "baseRevision": independent["revision"], "mutations": [{
+                    "kind": "camera-preference", "id": "not-granted", "operation": "upsert",
+                    "fields": {"displayName": "Hidden"},
+                }],
+            })
+        self.assertEqual(ungranted.exception.status, 400)
+
+    def test_scene_sync_rejects_secrets_and_supports_tombstones(self):
+        enrollment, _ = self.enroll_and_approve()
+        client = service.authenticate_device(enrollment["deviceToken"])
+        base = service.bootstrap(client, 0)["revision"]
+        scene = json.loads(service.SCENES_PATH.read_text(encoding="utf-8"))["scenes"][0]
+        scene["id"] = "local-grid"
+        fields = {field: scene[field] for field in ("name", "canvas", "sources", "items")}
+        fields["name"] = "Synced grid"
+        status, created = service.sync_mutations(client["id"], {
+            "schemaVersion": 1, "baseRevision": base, "mutations": [{
+                "kind": "scene", "id": scene["id"], "operation": "upsert", "fields": fields,
+            }],
+        })
+        self.assertEqual(status, 200)
+        synced_revision = created["revision"]
+        snapshot = service.bootstrap(client, 0)["sync"]["documents"]
+        self.assertEqual(next(item for item in snapshot if item["id"] == scene["id"])["document"]["name"],
+                         "Synced grid")
+
+        unsafe = dict(fields)
+        synthetic_endpoint = "rtsp://" + "fixture-user:fixture-password@camera.invalid/live"
+        unsafe["sources"] = [dict(fields["sources"][0], endpoint=synthetic_endpoint)]
+        with self.assertRaises(service.ApiError) as rejected:
+            service.sync_mutations(client["id"], {
+                "schemaVersion": 1, "baseRevision": synced_revision, "mutations": [{
+                    "kind": "scene", "id": scene["id"], "operation": "upsert", "fields": unsafe,
+                }],
+            })
+        self.assertEqual(rejected.exception.status, 400)
+
+        status, deleted = service.sync_mutations(client["id"], {
+            "schemaVersion": 1, "baseRevision": synced_revision, "mutations": [{
+                "kind": "scene", "id": scene["id"], "operation": "delete", "fields": {},
+            }],
+        })
+        self.assertEqual(status, 200)
+        changes = service.bootstrap(client, synced_revision)["sync"]["changes"]
+        self.assertEqual(changes[-1]["id"], scene["id"])
+        self.assertTrue(changes[-1]["deleted"])
+        self.assertIsNone(changes[-1]["document"])
 
     def test_shared_scenes_reject_non_finite_and_invalid_transforms(self):
         original = service.SCENES_PATH.read_text(encoding="utf-8")

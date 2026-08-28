@@ -323,9 +323,9 @@ docker compose down
 
 ## 9. 一致性备份与恢复
 
-产品镜像内置 `/opt/webobs/bin/webobs-backup`、场景校验器与 NVR 配置校验器。备份覆盖当前持久化配置：创建前分别验证 `scene.json`、可选的 M7 `studio.json` 及可选的 M8 `nvr.json`，写入权限为 `0600` 的 tar.gz，并生成同名 SHA-256 sidecar。恢复会先校验 sidecar 格式、归档哈希、固定 tar 路径、符号/硬链接及全部存在的 schema，最后在配置卷内替换已验证文件。恢复应在产品容器停止时执行，以避免跨文件并发更新。
+产品镜像内置 `/opt/webobs/bin/webobs-backup`、场景校验器与 NVR 配置校验器。备份覆盖当前持久化配置：`scene.json`、可选的 Studio/NVR 配置，以及存在时成组保存的 Camera Registry SQLite、v2 客户端/同步 SQLite、共享 Scene 和 96 字节 Grant 签名密钥。SQLite 在停机备份时先执行 WAL checkpoint 与完整性检查；v2 数据库和签名密钥必须同时存在。归档与同名 SHA-256 sidecar 均使用 `0600`。恢复会校验 sidecar、归档哈希、固定 tar 路径、符号/硬链接、SQLite 完整性及全部存在的 schema，再替换已验证文件并清理旧 WAL/SHM。恢复必须在产品容器停止时执行，以避免跨文件并发更新。
 
-备份可能包含完整 RTSP 凭据。SHA-256 只提供完整性检查，不提供加密或来源认证；`backups/` 已被 Git 忽略，但仍必须位于加密介质并限制主机访问。不要把归档、sidecar、解压内容或恢复诊断上传到公开 Issue。
+备份可能包含完整 RTSP 凭据、设备元数据、客户端授权记录和 Grant 签名私钥。SHA-256 只提供完整性检查，不提供加密或来源认证；`backups/` 已被 Git 忽略，但仍必须位于加密介质并限制主机访问。不要把归档、sidecar、解压内容或恢复诊断上传到公开 Issue。
 
 先使用备份覆盖挂载受忽略的主机 `backups/` 目录，正常停止应用以取得一致快照，再运行一次性维护命令：
 
