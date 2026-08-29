@@ -76,6 +76,10 @@ function ProfileEditor({ camera, profile, onChanged, onPreview }: {
         }} /></label>
       <label><span>音频预期</span><select value={profile.audioExpectation} disabled={busy}
         onChange={(event) => void patch({ audioExpectation: event.target.value })}><option value="auto">自动</option><option value="required">必须有</option><option value="disabled">禁用</option></select></label>
+      {profile.endpointDisplay.startsWith('http://') && <label className="insecure-http-opt-in"><span>允许 HTTP 明文媒体</span>
+        <input type="checkbox" checked={profile.allowInsecureHttp} disabled={busy}
+          onChange={(event) => void patch({ allowInsecureHttp: event.target.checked })} />
+        <small>仅允许 Docker Gateway/NVR 拉取；HTTPS 浏览器不会将其视为真直连。</small></label>}
     </div>
     <div className="profile-facts"><span>{profile.width || '—'}×{profile.height || '—'}</span><span>{profile.fps || '—'} fps</span><span>{profile.endpointDisplay || '地址已保护'}</span><span>Probe: {profile.probeState}</span></div>
     <TrackList profile={profile} />{error && <p className="inline-error" role="alert">{error}</p>}

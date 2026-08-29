@@ -278,6 +278,41 @@ class V2ClientControlTests(unittest.TestCase):
         self.assertEqual(
             service._browser_profile_reason(camera, profiles[0], "web"), "endpoint_invalid")
 
+    def test_web_http_profile_is_gateway_only_and_grant_hides_endpoint(self):
+        with sqlite3.connect(service.CAMERA_DB_PATH) as database:
+            database.execute(
+                "UPDATE cameras SET adapter='mjpeg',credentials_ref='' WHERE id='camera-test'")
+            database.execute(
+                "UPDATE stream_profiles SET endpoint='http://camera.invalid/live.mjpg',"
+                "video_codec='mjpeg' WHERE camera_id='camera-test' AND id='sub'")
+        enrollment = service.start_enrollment(self.keys.enrollment(os.urandom(32), "web"))
+        service.approve_enrollment(enrollment["enrollmentId"], {
+            "pairingCode": enrollment["pairingCode"], "cameraGrants": [{
+                "cameraId": "camera-test", "profileIds": ["sub"],
+                "permissions": ["view"], "credentialMode": "none",
+            }],
+        })
+        _complete_status, completed = service.complete_enrollment(
+            enrollment["enrollmentId"], enrollment["deviceToken"])
+        _encoded, grant = self.keys.open_bundle(completed["grantBundle"])
+        profile = grant["cameras"][0]["profiles"][0]
+        self.assertFalse(profile["browserDirectEligible"])
+        self.assertNotIn("endpoint", profile)
+
+        client = service.authenticate_device(enrollment["deviceToken"])
+        status, plan = service.create_media_plan(client, {
+            "cameraId": "camera-test", "profileId": "sub", "policy": "auto",
+            "receiverKind": "browser", "networkClass": "lan", "reachability": "reachable",
+            "protocols": ["mjpeg"], "videoCodecs": ["mjpeg"],
+            "hardwareDecoders": [], "requiresComposite": False,
+        })
+        self.assertEqual(status, 201)
+        self.assertEqual(plan["topology"], "gateway-direct")
+        self.assertEqual(plan["fallbackReason"], "browser_https_required")
+        self.assertEqual(plan["executionOwner"], "docker")
+        self.assertTrue(plan["liveServerMediaExpected"])
+        self.assertEqual(plan["credentialExposure"], "none")
+
     def prepare_managed_onvif_camera(self):
         (service.SECRET_ROOT / "client-device.json").write_text(json.dumps({
             "username": "webobs-client-device",

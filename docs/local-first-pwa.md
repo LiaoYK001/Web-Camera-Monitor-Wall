@@ -53,6 +53,10 @@ Only one live chain may exist for a tile. A failed direct attempt is closed befo
 
 `WEBOBS_PWA_MEDIA_ALLOWED_ORIGINS` 是用于构造 CSP `connect-src`、`img-src` 和 `media-src` 的精确 HTTPS 摄像机 Origin 逗号列表。不得使用 `https:` 或 `https://*` 等全局通配策略。
 
+An operator may explicitly enable the per-Profile `allowInsecureHttp` exception for a legacy HTTP camera. This authorizes Docker Gateway/NVR ingestion only; it does not add an HTTP Origin to the PWA CSP, bypass Mixed Content, expose camera credentials, or qualify the Profile as True Direct.
+
+管理员可以为旧式 HTTP 摄像机逐 Profile 显式启用 `allowInsecureHttp` 豁免。它只授权 Docker Gateway/NVR 拉流，不会把 HTTP Origin 加入 PWA CSP、绕过 Mixed Content、暴露摄像机凭据或让该 Profile 获得真直连资格。
+
 `WEBOBS_PWA_PUBLIC_ORIGIN` is the one exact browser-facing HTTPS Origin (for example, `https://monitor.example.com:28777`) sent during Camera Registry CORS qualification. The UI qualification action performs a bounded TLS/CORS/media probe and records an origin-bound proof for 24 hours. User-submitted Camera capability JSON cannot create or overwrite that proof.
 
 `WEBOBS_PWA_PUBLIC_ORIGIN` 是浏览器实际访问的一条精确 HTTPS Origin（例如 `https://monitor.example.com:28777`），用于 Camera Registry 的 CORS 资格探测。UI 探测会执行有界 TLS/CORS/媒体检查，并记录与该 Origin 绑定、有效期 24 小时的证明；用户提交的 Camera capability JSON 不能创建或覆盖此证明。

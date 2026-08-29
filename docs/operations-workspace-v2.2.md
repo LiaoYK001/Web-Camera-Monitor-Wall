@@ -22,6 +22,7 @@ The stable Hash routes are `#/monitor`, `#/studio`, `#/devices`, `#/audio`, `#/e
 - Preview reports the actual TopologyPlan, execution owner, decoder and fallback reason, plus only the safe PTZ/snapshot/talk boolean capability summary. ONVIF service addresses never enter this response.
 - Device-wide Probe checks all Profiles through the same one-camera/four-global bounded executor; Profile-specific Probe remains available for targeted diagnosis.
 - A live bitrate cap affects only profile admission. It never edits camera firmware, NVR policy, or silently starts a transcoder.
+- Plain HTTP media is fail-closed by default. `allowInsecureHttp=true` is a per-Profile operator exception for Docker Gateway/NVR ingestion only. It creates a visible warning issue and never qualifies an HTTPS PWA for Camera-to-Browser True Direct; the media plan reports `browser_https_required` and Docker remains the execution owner. Since media and any HTTP authentication may cross the network without TLS protection, use this exception only on a trusted LAN or a user-managed VPN.
 
 ## Problem Center / 问题中心
 

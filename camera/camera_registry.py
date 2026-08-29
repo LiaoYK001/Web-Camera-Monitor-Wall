@@ -81,6 +81,10 @@ class RevisionConflict(RuntimeError):
     """Optimistic Camera Registry revision did not match."""
 
 
+class InsecureHttpDenied(PermissionError):
+    """A cleartext media endpoint was used without explicit Profile approval."""
+
+
 class NoRedirect(HTTPRedirectHandler):
     def redirect_request(self, req, fp, code, msg, headers, newurl):
         raise OnvifError("ONVIF endpoint redirects are forbidden")
@@ -238,6 +242,7 @@ def initialize() -> None:
             ("transport_mode", "TEXT NOT NULL DEFAULT 'auto'"),
             ("live_bitrate_cap_kbps", "INTEGER"),
             ("audio_expectation", "TEXT NOT NULL DEFAULT 'auto'"),
+            ("allow_insecure_http", "INTEGER NOT NULL DEFAULT 0"),
             ("probe_state", "TEXT NOT NULL DEFAULT 'legacy'"),
             ("last_probe_at", "INTEGER NOT NULL DEFAULT 0"),
         ):
@@ -377,6 +382,11 @@ def validate_profile(profile: dict, adapter: str) -> dict:
     audio_expectation = profile.get("audioExpectation", "auto")
     if audio_expectation not in {"auto", "required", "disabled"}:
         raise ValueError("audioExpectation must be auto, required, or disabled")
+    allow_insecure_http = profile.get("allowInsecureHttp", False)
+    if not isinstance(allow_insecure_http, bool):
+        raise ValueError("allowInsecureHttp must be boolean")
+    if allow_insecure_http and not endpoint.startswith("http://"):
+        raise ValueError("allowInsecureHttp is only valid for an HTTP media endpoint")
     return {
         "id": profile_id, "name": str(profile.get("name", profile_id))[:128], "role": role,
         "endpoint": endpoint, "videoCodec": str(profile.get("videoCodec", "unknown"))[:32].lower(),
@@ -384,6 +394,7 @@ def validate_profile(profile: dict, adapter: str) -> dict:
         "width": width, "height": height, "fps": fps,
         "enabled": enabled, "transportMode": transport_mode,
         "liveBitrateCapKbps": bitrate_cap, "audioExpectation": audio_expectation,
+        "allowInsecureHttp": allow_insecure_http,
         "probeState": str(profile.get("probeState", "legacy"))[:32],
         "lastProbeAt": int(profile.get("lastProbeAt", 0)),
     }
@@ -471,7 +482,8 @@ def profile_document(database: sqlite3.Connection, camera_id: str, profile: sqli
         "width": profile["width"], "height": profile["height"], "fps": profile["fps"],
         "enabled": bool(profile["enabled"]), "transportMode": profile["transport_mode"],
         "liveBitrateCapKbps": profile["live_bitrate_cap_kbps"],
-        "audioExpectation": profile["audio_expectation"], "probeState": profile["probe_state"],
+        "audioExpectation": profile["audio_expectation"],
+        "allowInsecureHttp": bool(profile["allow_insecure_http"]), "probeState": profile["probe_state"],
         "lastProbeAt": profile["last_probe_at"], "tracks": track_documents(database, camera_id, profile),
     }
     if include_endpoint:
@@ -623,6 +635,8 @@ def resolve_profile(database: sqlite3.Connection, camera_id: str, profile_id: st
         if measured > profile["live_bitrate_cap_kbps"]:
             raise PermissionError("camera profile exceeds the live bitrate cap")
     endpoint = profile["endpoint"] if profile else camera["address"]
+    if endpoint.startswith("http://") and (profile is None or not bool(profile["allow_insecure_http"])):
+        raise InsecureHttpDenied("insecure HTTP media requires explicit per-profile approval")
     credentials_ref = camera["credentials_ref"]
     if credentials_ref:
         username, password = load_credentials(credentials_ref)
@@ -663,11 +677,11 @@ def save_camera(camera: dict, replace: bool) -> dict:
         )
         database.execute("DELETE FROM stream_profiles WHERE camera_id=?", (camera["id"],))
         database.executemany(
-            "INSERT INTO stream_profiles(id,camera_id,name,role,endpoint,video_codec,audio_codec,width,height,fps,enabled,transport_mode,live_bitrate_cap_kbps,audio_expectation,probe_state,last_probe_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+            "INSERT INTO stream_profiles(id,camera_id,name,role,endpoint,video_codec,audio_codec,width,height,fps,enabled,transport_mode,live_bitrate_cap_kbps,audio_expectation,probe_state,last_probe_at,allow_insecure_http) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
             [(p["id"], camera["id"], p["name"], p["role"], p["endpoint"], p["videoCodec"],
               p["audioCodec"], p["width"], p["height"], p["fps"], int(p["enabled"]),
               p["transportMode"], p["liveBitrateCapKbps"], p["audioExpectation"],
-              p["probeState"], p["lastProbeAt"]) for p in camera["profiles"]],
+              p["probeState"], p["lastProbeAt"], int(p["allowInsecureHttp"])) for p in camera["profiles"]],
         )
         if camera["profiles"]:
             placeholders = ",".join("?" for _ in camera["profiles"])
@@ -694,6 +708,10 @@ ISSUE_TEMPLATES = {
     "LIVE_BITRATE_CAP_EXCEEDED": (
         "warning", "实时监看码率超过上限", "已测量轨道码率高于该 Profile 的实时监看准入上限。",
         ["选择更低码率的子码流", "调整实时监看码率上限", "检查设备编码配置"],
+    ),
+    "INSECURE_HTTP_MEDIA_ENABLED": (
+        "warning", "已允许 HTTP 明文媒体", "该 Profile 的媒体传输未加密，只允许经 Docker Gateway/NVR 使用。",
+        ["优先为摄像机配置 HTTPS", "确认摄像机位于受信任网络", "不再需要时关闭 HTTP 豁免"],
     ),
 }
 
@@ -786,6 +804,11 @@ def reconcile_audio_issues(database: sqlite3.Connection, camera_id: str) -> None
                          {"codec": profile["video_codec"] or "unknown"})
         else:
             resolve_issue(database, "LIVE_BITRATE_CAP_EXCEEDED", "profile", scope_id, "session-admission")
+        if bool(profile["allow_insecure_http"]) and profile["endpoint"].startswith("http://"):
+            upsert_issue(database, "INSECURE_HTTP_MEDIA_ENABLED", "profile", scope_id, "transport-policy",
+                         {"transportMode": "http"})
+        else:
+            resolve_issue(database, "INSECURE_HTTP_MEDIA_ENABLED", "profile", scope_id, "transport-policy")
 
 
 def expected_revision(header: str | None) -> int:
@@ -829,7 +852,7 @@ def validate_catalog_patch(payload: dict, adapter: str) -> tuple[dict, list[dict
     normalized_profiles = []
     for value in profile_updates:
         if not isinstance(value, dict) or set(value) - {
-                "id", "enabled", "transportMode", "liveBitrateCapKbps", "audioExpectation"}:
+                "id", "enabled", "transportMode", "liveBitrateCapKbps", "audioExpectation", "allowInsecureHttp"}:
             raise ValueError("profile patch contains an unsupported field")
         profile_id = value.get("id")
         if not isinstance(profile_id, str) or not ID_RE.fullmatch(profile_id):
@@ -853,6 +876,10 @@ def validate_catalog_patch(payload: dict, adapter: str) -> tuple[dict, list[dict
             if value["audioExpectation"] not in {"auto", "required", "disabled"}:
                 raise ValueError("audioExpectation must be auto, required, or disabled")
             update["audio_expectation"] = value["audioExpectation"]
+        if "allowInsecureHttp" in value:
+            if not isinstance(value["allowInsecureHttp"], bool):
+                raise ValueError("allowInsecureHttp must be boolean")
+            update["allow_insecure_http"] = int(value["allowInsecureHttp"])
         normalized_profiles.append(update)
     return camera_updates, normalized_profiles
 
@@ -866,9 +893,12 @@ def patch_source_catalog(camera_id: str, payload: dict, revision: int) -> dict:
             raise RevisionConflict(str(row["revision"]))
         camera_updates, profile_updates = validate_catalog_patch(payload, row["adapter"])
         for profile in profile_updates:
-            if not database.execute(
-                    "SELECT 1 FROM stream_profiles WHERE camera_id=? AND id=?", (camera_id, profile["id"])).fetchone():
+            stored_profile = database.execute(
+                "SELECT endpoint FROM stream_profiles WHERE camera_id=? AND id=?", (camera_id, profile["id"])).fetchone()
+            if not stored_profile:
                 raise KeyError("camera profile not found")
+            if profile.get("allow_insecure_http") == 1 and not stored_profile["endpoint"].startswith("http://"):
+                raise ValueError("allowInsecureHttp is only valid for an HTTP media endpoint")
         now = int(time.time())
         if camera_updates:
             assignments = ",".join(f"{field}=?" for field in camera_updates)
@@ -956,6 +986,8 @@ def probe_source_profile(camera_id: str, profile_id: str) -> dict:
                     "SELECT * FROM stream_profiles WHERE camera_id=? AND id=?", (camera_id, profile_id)).fetchone()
                 return profile_document(database, camera_id, refreshed, include_endpoint=False)
             endpoint, transport_mode = profile["endpoint"], profile["transport_mode"]
+            if endpoint.startswith("http://") and not bool(profile["allow_insecure_http"]):
+                raise InsecureHttpDenied("insecure HTTP media requires explicit per-profile approval")
             settings = database.execute("SELECT settings_json FROM runtime_settings WHERE id=1").fetchone()
             probe_timeout = int(json.loads(settings["settings_json"])["probeTimeoutSeconds"])
         command = ["ffprobe", "-v", "error", "-show_entries",
@@ -2330,6 +2362,7 @@ class Handler(BaseHTTPRequestHandler):
                     self.respond(404, {"error": "not_found"}); return
                 try: self.respond(200, resolve_profile(database, parts[0], parts[1]))
                 except KeyError: self.respond(404, {"error": "not_found"})
+                except InsecureHttpDenied: self.respond(403, {"error": "insecure_http_not_approved"})
                 except (PermissionError, OSError, ValueError, json.JSONDecodeError): self.respond(503, {"error": "credentials_unavailable"})
                 return
             if path == "/cameras":
@@ -2434,6 +2467,7 @@ class Handler(BaseHTTPRequestHandler):
             self.respond(404, {"error": "not_found"})
         except FileExistsError as error: self.respond(409, {"error": str(error)})
         except KeyError: self.respond(404, {"error": "camera not found"})
+        except InsecureHttpDenied: self.respond(403, {"error": "insecure_http_not_approved"})
         except PermissionError as error: self.respond(401, {"error": str(error)})
         except BrowserDirectProbeError as error: self.respond(400, {"error": str(error)})
         except OnvifError as error: self.respond(502, {"error": str(error)})

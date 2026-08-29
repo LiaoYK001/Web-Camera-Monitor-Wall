@@ -146,7 +146,7 @@ GET   /api/v2/settings/schema
 PATCH /api/v2/settings                                  If-Match required
 ```
 
-Catalog PATCH fields are bounded to device name/kind/enabled/group/tags/hardware decode and Profile enabled/transport/bitrate-cap/audio-expectation. A stale revision returns a conflict without a partial write. Disabling a device rejects new resolution immediately and closes its owned Gateway/Hybrid sessions at the C++ boundary. Probe concurrency is one per Camera and four globally, defaults to ten seconds, caps combined output at 1 MiB and records only allowlisted diagnostic fields.
+Catalog PATCH fields are bounded to device name/kind/enabled/group/tags/hardware decode and Profile enabled/transport/bitrate-cap/audio-expectation/`allowInsecureHttp`. A stale revision returns a conflict without a partial write. Plain HTTP media resolution and probing fail until the operator enables this per-Profile exception; the exception is never included in browser Grants and never relaxes HTTPS True Direct qualification. Disabling a device rejects new resolution immediately and closes its owned Gateway/Hybrid sessions at the C++ boundary. Probe concurrency is one per Camera and four globally, defaults to ten seconds, caps combined output at 1 MiB and records only allowlisted diagnostic fields.
 
 `OperationalIssue` is deduplicated by code, scope and component, bounded by the runtime retention policy, and never stores an endpoint, command line, raw response, PID, path or client address. `AUDIO_TRACK_MISSING` is created only when `audioExpectation=required`.
 

@@ -387,6 +387,37 @@ class CameraRegistryTests(unittest.TestCase):
                 "id": "main", "liveBitrateCapKbps": 31,
             }]}, "rtsp")
 
+    def test_insecure_http_media_requires_explicit_profile_opt_in(self) -> None:
+        camera = registry.validate_camera({
+            "id": "http-fixture", "name": "HTTP fixture",
+            "address": "http://camera.example.invalid/mjpeg", "adapter": "mjpeg",
+            "credentialsRef": "", "profiles": [{
+                "id": "main", "name": "Main", "role": "main",
+                "endpoint": "http://camera.example.invalid/mjpeg", "videoCodec": "mjpeg",
+                "audioCodec": "", "width": 640, "height": 360, "fps": 10,
+            }],
+        })
+        saved = registry.save_camera(camera, False)
+        with registry.connect() as database:
+            with self.assertRaises(PermissionError):
+                registry.resolve_profile(database, "http-fixture", "main")
+        changed = registry.patch_source_catalog("http-fixture", {
+            "profiles": [{"id": "main", "allowInsecureHttp": True}],
+        }, saved["revision"])
+        self.assertTrue(changed["profiles"][0]["allowInsecureHttp"])
+        with registry.connect() as database:
+            resolved = registry.resolve_profile(database, "http-fixture", "main")
+            issue = database.execute(
+                "SELECT * FROM operational_issues WHERE code='INSECURE_HTTP_MEDIA_ENABLED'").fetchone()
+        self.assertEqual(resolved["endpoint"], "http://camera.example.invalid/mjpeg")
+        self.assertIsNotNone(issue)
+        self.assertNotIn("camera.example.invalid", json.dumps(registry.issue_document(issue)))
+        with self.assertRaises(ValueError):
+            registry.validate_profile({
+                "id": "secure", "endpoint": "https://camera.example.invalid/live",
+                "allowInsecureHttp": True,
+            }, "hls")
+
     def test_registry_v1_to_v2_migration_is_idempotent(self) -> None:
         legacy = Path(self.temporary.name) / "legacy.db"
         database = sqlite3.connect(legacy)

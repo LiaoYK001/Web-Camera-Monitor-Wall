@@ -237,6 +237,7 @@ export interface CameraRecord {
 export interface SourceCatalogProfile extends Omit<CameraProfile, 'endpoint'> {
   endpointDisplay: string; enabled: boolean; transportMode: TransportMode; liveBitrateCapKbps: number | null;
   audioExpectation: AudioExpectation; probeState: string; lastProbeAt: number; tracks: TrackDescriptor[];
+  allowInsecureHttp: boolean;
 }
 export interface SourceCatalogItem {
   schemaVersion: 2; id: string; name: string; kind: CameraKind; adapter: CameraAdapter; enabled: boolean;
