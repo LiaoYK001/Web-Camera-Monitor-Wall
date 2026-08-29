@@ -31,6 +31,14 @@ struct StudioUpdateResult {
     [[nodiscard]] bool ok() const { return status == StudioUpdateStatus::success && !public_json.empty(); }
 };
 
+struct AudioSourcePatch {
+    std::optional<bool> muted;
+    std::optional<double> volume;
+    std::optional<std::string> monitoring;
+    std::optional<int> sync_offset_ms;
+    std::optional<int> audio_track;
+};
+
 class StudioController {
 public:
     StudioController(StudioDocument document, std::filesystem::path file, SceneController &program);
@@ -41,6 +49,9 @@ public:
     StudioUpdateResult take(std::optional<std::uint64_t> expected_revision);
     StudioUpdateResult undo(std::optional<std::uint64_t> expected_revision);
     StudioUpdateResult redo(std::optional<std::uint64_t> expected_revision);
+    StudioUpdateResult update_audio(std::string_view scene_id, std::string_view source_id,
+                                    const AudioSourcePatch &patch,
+                                    std::optional<std::uint64_t> expected_revision);
 
 private:
     StudioUpdateResult restore_history(bool redo, std::optional<std::uint64_t> expected_revision);

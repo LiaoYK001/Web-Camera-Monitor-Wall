@@ -135,3 +135,31 @@ test('measures bounded telemetry and suspends only low-power invisible playback'
   expect(result.promoted).toEqual({ accepted: true, reason: '', holdUntil: 11000, cooldownUntil: 31000 });
   expect(result.lowPowerRejected.reason).toBe('low_power_software_analytics_disabled');
 });
+
+test('migrates MonitorView v1 safely and keeps operational details bounded', async ({ page }) => {
+  await page.goto('/');
+  const result = await page.evaluate(async () => {
+    const monitor = await import('/src/monitorView.ts');
+    const issues = await import('/src/issueRuntime.ts');
+    const audio = await import('/src/directAudioMixer.ts');
+    let snapshot: import('/src/types.ts').OperationalIssue[] = [];
+    const unsubscribe = issues.subscribeLocalIssues((value) => { snapshot = value; });
+    issues.reportLocalIssue({
+      code: 'SAFE_FIXTURE', scopeId: 'camera-1', component: 'test', summary: 'Fixture', explanation: 'Fixture',
+      technicalDetails: { codec: 'h264', endpoint: 'rtsp://private.invalid/live', token: 'do-not-copy', retryCount: 2 },
+    });
+    const migrated = monitor.normalizeMonitorView({ schemaVersion: 1, largeCount: 99,
+      localMonitorVolume: 4 } as unknown as Partial<import('/src/monitorView.ts').MonitorView>, 4);
+    const issue = snapshot.find((value) => value.code === 'SAFE_FIXTURE');
+    unsubscribe();
+    return { version: migrated.schemaVersion, largeCount: migrated.largeCount,
+      localMonitorVolume: migrated.localMonitorVolume, panels: migrated.panels,
+      details: issue?.technicalDetails, silence: audio.amplitudeToDbfs(0), unity: audio.amplitudeToDbfs(1),
+      half: audio.amplitudeToDbfs(.5) };
+  });
+  expect({ ...result, half: undefined }).toEqual({ version: 2, largeCount: 4, localMonitorVolume: 1,
+    panels: { detailsOpen: false, issueCenterExpanded: false },
+    details: { codec: 'h264', retryCount: 2 }, silence: -120, unity: 0,
+    half: undefined });
+  expect(result.half).toBeCloseTo(-6.0206, 3);
+});

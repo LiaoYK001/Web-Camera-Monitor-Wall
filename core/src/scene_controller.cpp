@@ -66,6 +66,12 @@ SourceHealthSnapshot SceneController::source_health_snapshot() const
     return runtime_.source_health_snapshot();
 }
 
+SourceAudioMeterSnapshot SceneController::audio_meter_snapshot()
+{
+    std::lock_guard lock(mutex_);
+    return runtime_.audio_meter_snapshot();
+}
+
 SceneUpdateResult SceneController::replace(std::string_view candidate_json,
                                            std::optional<std::uint64_t> expected_revision,
                                            std::string_view transition_kind, int duration_ms)

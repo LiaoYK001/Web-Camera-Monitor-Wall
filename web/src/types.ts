@@ -215,8 +215,53 @@ export interface NvrExport {
 }
 
 export type CameraAdapter = 'onvif' | 'rtsp' | 'mjpeg' | 'snapshot' | 'hls' | 'http-flv' | 'whep' | 'srt' | 'rtp' | 'v4l2';
-export interface CameraProfile { id: string; name: string; role: 'main' | 'sub' | 'snapshot' | 'auxiliary'; endpoint: string; videoCodec: string; audioCodec: string; width: number; height: number; fps: number; }
-export interface CameraRecord { id: string; name: string; address: string; adapter: CameraAdapter; credentialsRef: string; hardwareDecode: 'auto' | 'on' | 'off'; capabilities: Record<string, unknown>; health: string; profiles: CameraProfile[]; createdAt: number; updatedAt: number; }
+export type CameraKind = 'camera' | 'network-stream';
+export type TransportMode = 'auto' | 'rtsp-tcp' | 'rtsp-udp' | 'rtsp-udp-multicast' | 'http' | 'https';
+export type AudioExpectation = 'auto' | 'required' | 'disabled';
+export interface TrackDescriptor {
+  index: number; kind: 'video' | 'audio' | 'data'; codec: string; bitrateKbps: number | null;
+  width: number; height: number; fps: number; sampleRate: number; channels: number; source: 'legacy' | 'probe';
+}
+export interface CameraProfile {
+  id: string; name: string; role: 'main' | 'sub' | 'snapshot' | 'auxiliary'; endpoint: string;
+  videoCodec: string; audioCodec: string; width: number; height: number; fps: number;
+  enabled?: boolean; transportMode?: TransportMode; liveBitrateCapKbps?: number | null;
+  audioExpectation?: AudioExpectation; probeState?: string; lastProbeAt?: number; tracks?: TrackDescriptor[];
+}
+export interface CameraRecord {
+  id: string; name: string; address: string; adapter: CameraAdapter; credentialsRef: string;
+  hardwareDecode: 'auto' | 'on' | 'off'; capabilities: Record<string, unknown>; health: string;
+  profiles: CameraProfile[]; createdAt: number; updatedAt: number; kind?: CameraKind; enabled?: boolean;
+  groupId?: string; tags?: string[]; revision?: number;
+}
+export interface SourceCatalogProfile extends Omit<CameraProfile, 'endpoint'> {
+  endpointDisplay: string; enabled: boolean; transportMode: TransportMode; liveBitrateCapKbps: number | null;
+  audioExpectation: AudioExpectation; probeState: string; lastProbeAt: number; tracks: TrackDescriptor[];
+}
+export interface SourceCatalogItem {
+  schemaVersion: 2; id: string; name: string; kind: CameraKind; adapter: CameraAdapter; enabled: boolean;
+  groupId: string; tags: string[]; addressDisplay: string; health: string;
+  hardwareDecode: 'auto' | 'on' | 'off'; profileCount: number; trackCount: number;
+  deviceCapabilities: { ptz: boolean; snapshot: boolean; talk: boolean };
+  profiles: SourceCatalogProfile[]; revision: number; createdAt: number; updatedAt: number;
+}
+export interface SourceCatalogPage { schemaVersion: 2; page: number; limit: number; total: number; items: SourceCatalogItem[]; }
+export interface OperationalIssue {
+  id: string; code: string; severity: 'info' | 'warning' | 'error'; state: 'open' | 'acknowledged' | 'resolved';
+  scopeKind: 'device' | 'profile' | 'source' | 'media-plan' | 'nvr' | 'system'; scopeId: string;
+  component: string; firstSeenAt: number; lastSeenAt: number; occurrences: number;
+  summary: string; explanation: string; recommendedActions: string[]; technicalDetails: Record<string, string | number | boolean>;
+}
+export interface RuntimeSettings {
+  schemaVersion: 1; revision: number;
+  values: { defaultTransportMode: 'auto' | 'rtsp-tcp' | 'rtsp-udp'; probeTimeoutSeconds: number;
+    sourceRecoveryEnabled: boolean; issueRetentionLimit: number };
+  deployment: Record<'tls' | 'ports' | 'secrets' | 'gpuDevice', 'read-only'>;
+}
+export interface AudioMeterSnapshot {
+  topology: 'direct' | 'composite'; executionOwner: 'browser' | 'docker';
+  sources: Array<{ sourceId: string; rmsDbfs: number | null; peakDbfs: number | null }>;
+}
 export interface AnalyticsPolicy {
   cameraId: string; profileId: string;
   motionEnabled: boolean; sceneChangeEnabled: boolean; personEnabled: boolean;

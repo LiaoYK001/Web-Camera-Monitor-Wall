@@ -295,15 +295,15 @@ export async function cacheSyncedScenes(documents: SyncDocument[]): Promise<void
 
 export async function saveMonitorView(view: MonitorView): Promise<void> {
   const expiresAt = Date.now() + LEASE_MS;
-  await put('runtimeMeta', 'monitor-view', await encrypt({ kind: 'monitor-view-v1', view }, expiresAt));
+  await put('runtimeMeta', 'monitor-view', await encrypt({ kind: 'monitor-view-v2', view }, expiresAt));
 }
 
 export async function loadMonitorView(): Promise<MonitorView | null> {
   const record = await get<EncryptedRecord>('runtimeMeta', 'monitor-view');
   if (!record || record.expiresAt <= Date.now()) return null;
   try {
-    const decoded = await decrypt<{ kind: 'monitor-view-v1'; view: MonitorView }>(record);
-    return decoded.kind === 'monitor-view-v1' ? decoded.view : null;
+    const decoded = await decrypt<{ kind: 'monitor-view-v1' | 'monitor-view-v2'; view: MonitorView }>(record);
+    return decoded.kind === 'monitor-view-v1' || decoded.kind === 'monitor-view-v2' ? decoded.view : null;
   } catch {
     return null;
   }

@@ -30,6 +30,17 @@ struct SourceHealthSnapshot {
     std::uint64_t total_restarts = 0;
 };
 
+struct SourceAudioMeterEntry {
+    std::string id;
+    bool available = false;
+    float rms_dbfs = -120.0F;
+    float peak_dbfs = -120.0F;
+};
+
+struct SourceAudioMeterSnapshot {
+    std::vector<SourceAudioMeterEntry> sources;
+};
+
 // Owns the libobs sources and scene corresponding to one SceneDocument.
 // prepare() is side-effect free for the active program scene; commit_prepared()
 // performs the non-failing output swap. Callers can persist between the two.
@@ -59,6 +70,7 @@ public:
     [[nodiscard]] std::vector<std::string> pending_visible_source_ids() const;
     void maintain_source_health();
     [[nodiscard]] SourceHealthSnapshot source_health_snapshot() const;
+    [[nodiscard]] SourceAudioMeterSnapshot audio_meter_snapshot();
 
 private:
     struct Impl;

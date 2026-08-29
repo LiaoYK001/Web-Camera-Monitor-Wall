@@ -12,6 +12,7 @@ import os
 import re
 import shutil
 import ssl
+import sqlite3
 import subprocess
 import sys
 import tempfile
@@ -313,6 +314,108 @@ class CameraRegistryTests(unittest.TestCase):
         self.assertNotIn("password", str(stored).lower())
         with registry.connect() as database:
             self.assertEqual(database.execute("PRAGMA journal_mode").fetchone()[0], "wal")
+
+    def test_registry_v2_catalog_revision_batch_and_redaction(self) -> None:
+        camera = registry.validate_camera({
+            "id": "catalog-fixture", "name": "Catalog fixture",
+            "address": "rtsp://camera.example.invalid/live?channel=1", "adapter": "rtsp",
+            "credentialsRef": "catalog-secret", "capabilities": {"onvif": {
+                "ptz": True, "snapshot": True, "talk": False,
+                "services": {"ptz": "https://private.example.invalid/ptz"},
+            }}, "profiles": [{
+                "id": "sub", "name": "Sub", "role": "sub",
+                "endpoint": "rtsp://camera.example.invalid/sub?channel=2", "videoCodec": "h264",
+                "audioCodec": "", "width": 640, "height": 360, "fps": 15,
+            }],
+        })
+        registry.save_camera(camera, False)
+        page = registry.source_catalog("limit=256&q=Catalog")
+        self.assertEqual(page["schemaVersion"], 2)
+        self.assertEqual(page["total"], 1)
+        item = page["items"][0]
+        self.assertEqual(item["addressDisplay"], "rtsp://camera.example.invalid/live")
+        self.assertNotIn("channel=", json.dumps(item))
+        self.assertEqual(item["deviceCapabilities"], {
+            "ptz": True, "snapshot": True, "talk": False,
+        })
+        self.assertNotIn("private.example.invalid", json.dumps(item))
+        probed = registry.probe_source_camera("catalog-fixture")
+        self.assertEqual([profile["id"] for profile in probed], ["sub"])
+        self.assertNotIn("endpoint", probed[0])
+        changed = registry.patch_source_catalog("catalog-fixture", {
+            "groupId": "Entrances", "tags": ["outdoor", "priority"],
+            "profiles": [{"id": "sub", "transportMode": "rtsp-tcp",
+                          "liveBitrateCapKbps": 2048, "audioExpectation": "required"}],
+        }, item["revision"])
+        self.assertEqual(changed["groupId"], "Entrances")
+        self.assertEqual(changed["profiles"][0]["liveBitrateCapKbps"], 2048)
+        with self.assertRaises(registry.RevisionConflict):
+            registry.patch_source_catalog("catalog-fixture", {"enabled": False}, item["revision"])
+        with registry.connect() as database:
+            self.assertEqual(database.execute("PRAGMA user_version").fetchone()[0], 2)
+            issues = database.execute(
+                "SELECT * FROM operational_issues WHERE code='AUDIO_TRACK_MISSING'").fetchall()
+            self.assertEqual(len(issues), 1)
+            self.assertNotIn("camera.example.invalid", json.dumps(registry.issue_document(issues[0])))
+
+    def test_registry_v2_batch_is_atomic_on_revision_conflict(self) -> None:
+        for camera_id in ("batch-one", "batch-two"):
+            registry.save_camera(registry.validate_camera({
+                "id": camera_id, "name": camera_id, "address": "rtsp://camera.example.invalid/live",
+                "adapter": "rtsp", "credentialsRef": "", "profiles": [],
+            }), False)
+        catalog = registry.source_catalog("limit=256")["items"]
+        revisions = {item["id"]: item["revision"] for item in catalog}
+        with self.assertRaises(registry.RevisionConflict):
+            registry.batch_source_catalog({"items": [
+                {"cameraId": "batch-one", "revision": revisions["batch-one"], "enabled": False},
+                {"cameraId": "batch-two", "revision": revisions["batch-two"] + 1, "enabled": False},
+            ]})
+        current = {item["id"]: item for item in registry.source_catalog("limit=256")["items"]}
+        self.assertTrue(current["batch-one"]["enabled"])
+        self.assertTrue(current["batch-two"]["enabled"])
+
+    def test_registry_v2_validation_limits(self) -> None:
+        with self.assertRaises(ValueError):
+            registry.validate_tags(["x"] * 33)
+        with self.assertRaises(ValueError):
+            registry.validate_catalog_patch({"profiles": [{
+                "id": "main", "transportMode": "https",
+            }]}, "rtsp")
+        with self.assertRaises(ValueError):
+            registry.validate_catalog_patch({"profiles": [{
+                "id": "main", "liveBitrateCapKbps": 31,
+            }]}, "rtsp")
+
+    def test_registry_v1_to_v2_migration_is_idempotent(self) -> None:
+        legacy = Path(self.temporary.name) / "legacy.db"
+        database = sqlite3.connect(legacy)
+        try:
+            database.executescript("""
+              CREATE TABLE cameras(id TEXT PRIMARY KEY,name TEXT NOT NULL,address TEXT NOT NULL,
+                adapter TEXT NOT NULL,credentials_ref TEXT NOT NULL,hardware_decode TEXT NOT NULL,
+                capabilities_json TEXT NOT NULL,health TEXT NOT NULL,created_at INTEGER NOT NULL,updated_at INTEGER NOT NULL);
+              CREATE TABLE stream_profiles(id TEXT NOT NULL,camera_id TEXT NOT NULL REFERENCES cameras(id) ON DELETE CASCADE,
+                name TEXT NOT NULL,role TEXT NOT NULL,endpoint TEXT NOT NULL,video_codec TEXT NOT NULL,
+                audio_codec TEXT NOT NULL,width INTEGER NOT NULL,height INTEGER NOT NULL,fps REAL NOT NULL,
+                PRIMARY KEY(camera_id,id));
+              INSERT INTO cameras VALUES('legacy-camera','Legacy','rtsp://camera.example.invalid/live','rtsp','',
+                'auto','{}','unknown',1,1);
+              INSERT INTO stream_profiles VALUES('main','legacy-camera','Main','main','rtsp://camera.example.invalid/live',
+                'h264','',1920,1080,25);
+            """)
+            database.commit()
+        finally:
+            database.close()
+        registry.DB_PATH = legacy
+        registry.initialize(); registry.initialize()
+        page = registry.source_catalog("limit=256")
+        self.assertEqual(page["items"][0]["kind"], "camera")
+        self.assertTrue(page["items"][0]["enabled"])
+        self.assertEqual(page["items"][0]["profiles"][0]["transportMode"], "auto")
+        with registry.connect() as database:
+            self.assertEqual(database.execute("PRAGMA user_version").fetchone()[0], 2)
+            self.assertEqual(database.execute("SELECT COUNT(*) FROM cameras").fetchone()[0], 1)
 
     def test_analytics_policies_are_per_profile_atomic_and_default_off(self) -> None:
         camera = registry.validate_camera({

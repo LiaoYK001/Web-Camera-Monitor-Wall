@@ -1,6 +1,6 @@
 # Roadmap / 项目路线图
 
-> Last updated / 最后更新：2026-08-28
+> Last updated / 最后更新：2026-08-29
 
 This roadmap describes milestone order and acceptance gates, not promised release dates. Priorities may change based on validation results and maintainer capacity.
 
@@ -13,6 +13,10 @@ Canonical milestone names use `v<major>-M<number>`. Historical validation prose 
 ## Current position / 当前位置
 
 **✅ `v2.1` 已完成并作为当前稳定版本发布，包含 v2-M4/v2-M5。**
+
+**🚧 `dev` 正在实现 `v2-M6 / v2.2`：运维工作区、Camera Registry v2、问题中心、独立 Profile 预览与 Direct/Composite 逐源音频工作台。多节点与多存储卷顺延至 `v2-M7 / v2.3`。**
+
+**🚧 `dev` is implementing `v2-M6 / v2.2`: the operations workspace, Camera Registry v2, Problem Center, isolated Profile preview, and truthful per-source Direct/Composite audio metering. Multi-node and multi-volume scale moves to `v2-M7 / v2.3`.**
 
 `v2.1` is the current stable baseline and completes v2-M4/M5: encrypted incremental Registry/Scene synchronization with field conflicts and bounded offline audit, plus per-tile telemetry, arbitrary 1–16 Scene v5 auto-layouts, M/S rotation, low-power profile selection, event-promotion contracts and atomic per-profile analytics policies. Native desktop/Android code stays frozen and no EXE/APK/native package is planned.
 
@@ -107,7 +111,8 @@ M0 已于 2026-08-11 在真实摄像头门禁通过后完成。后续修改采�
 | v2-M3 — Browser Media Runtime | ✅ Complete / 已完成 | WHEP/HLS/MJPEG True Direct and explicit RTSP Gateway / WHEP/HLS/MJPEG 真直连及明确 RTSP 网关 | Published in v2.0.1 baseline / 已进入 v2.0.1 发布基线 |
 | v2-M4 — Offline Sync | ✅ Published in v2.1 / 已随 v2.1 发布 | Encrypted bidirectional Registry/Scene deltas, field conflicts, tombstones and bounded offline audit / 加密双向 Registry/Scene 增量、字段冲突、墓碑与有界离线审计 | Deterministic Linux service and browser IndexedDB matrices pass / Linux 服务与浏览器 IndexedDB 确定性矩阵通过 |
 | v2-M5 — Monitor Layout & Telemetry | ✅ Published in v2.1 / 已随 v2.1 发布 | Telemetry, 1–16 M/S layout/rotation, low power and analytics controls / 统计、1–16 M/S 布局轮换、低功耗与分析控制 | Layout, telemetry, lifecycle and policy regressions pass without inventing unavailable measurements / 布局、统计、生命周期与策略回归通过，不虚构不可测数据 |
-| v2-M6 — Scale | 🧭 Planned / 已规划 | Multi-node storage and resource scheduling / 多节点存储与资源调度 | Scale/resilience gates pass / 规模与韧性门禁通过 |
+| v2-M6 — Operations Workspace | 🚧 In development / 开发中 | Source catalog, Profile preview, issues, settings and per-source audio / 来源目录、Profile 预览、问题、设置与逐源音频 | Registry v2 migration, truthful media/audio diagnostics and PWA regressions pass / Registry v2 迁移、真实媒体/音频诊断与 PWA 回归通过 |
+| v2-M7 — Scale | 🧭 Planned for v2.3 / 规划至 v2.3 | Multi-node storage and resource scheduling / 多节点存储与资源调度 | Scale/resilience gates pass / 规模与韧性门禁通过 |
 | v3-M1/M2 — Analytics | 🧭 Planned / 已规划 | Motion/scene change, then person boxes / 运动与画面变化，随后人物框 | Per-stream opt-in, local-first privacy and bounded resource gates / 逐流选择、本地优先隐私与有界资源门禁 |
 
 ## Milestone details / 里程碑详情

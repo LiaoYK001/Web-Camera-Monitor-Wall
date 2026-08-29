@@ -46,7 +46,7 @@ flowchart LR
 - The **live composition graph** is a libobs scene graph. It is allowed to decode, transform, mix, transition, and encode for a program output / **实时合成链**是 libobs 场景图，可以为节目输出进行解码、变换、混音、转场和编码。
 - The **NVR capture graph** records each camera independently and prefers packet remux/stream copy when the input codec and destination permit it. Canvas edits and program transitions must not interrupt this graph / **NVR 采集链**独立录制每路摄像头；输入编码与目标封装允许时优先重封装/码流复制，画布编辑和节目转场不得中断该链。
 - Program recordings and per-camera archives are different products. A composed program may be recorded, but it cannot be treated as the only forensic archive / 节目录像与逐路归档是两种不同产物；合成节目可以录制，但不能作为唯一取证归档。
-- The single-node server installation remains one product image. Test fixtures may use extra containers. `v2-M6` may run the same signed server image in explicit controller/recorder roles, while single-node mode remains supported; native/local clients are separate deliverables, not hidden server containers / 单节点服务端部署继续只使用一个产品镜像，测试夹具可以使用额外容器；`v2-M6` 可让同一签名服务端镜像以 controller/recorder 角色运行，同时继续支持单节点模式；原生/本地客户端是独立交付物，不是隐藏的服务端容器。
+- The single-node server installation remains one product image. Test fixtures may use extra containers. `v2-M7` may run the same signed server image in explicit controller/recorder roles, while single-node mode remains supported; native/local clients are separate deliverables, not hidden server containers / 单节点服务端部署继续只使用一个产品镜像，测试夹具可以使用额外容器；`v2-M7` 可让同一签名服务端镜像以 controller/recorder 角色运行，同时继续支持单节点模式；原生/本地客户端是独立交付物，不是隐藏的服务端容器。
 
 ### Persistent data domains / 持久化数据域
 
@@ -76,7 +76,8 @@ SQLite in WAL mode plus local volumes is the initial single-node metadata baseli
 | Local-first PWA and browser media runtime / 本地优先 PWA 与浏览器媒体运行时 | `v2-M2`–`v2-M3` | Cached app/config, WHEP/HLS/MJPEG True Direct and explicit RTSP Gateway / 缓存应用与配置、WHEP/HLS/MJPEG 真直连及明确 RTSP 网关回退 |
 | Offline registry/scene authorization and sync / 离线资产、场景授权与同步 | `v2-M4` | Encrypted, expiring and revocable local state / 加密、可过期、可撤销的本地状态 |
 | Grid/tour/kiosk/PWA and operator roles / 宫格、轮巡、值守、PWA 与角色 | `v2-M5` | One operator workflow across web and local runtimes / Web 与本地运行端共用值守工作流 |
-| Multi-volume, remote recorder roles, integrations, disaster recovery / 多存储卷、远程录像节点、集成、灾难恢复 | `v2-M6` | Optional scale-out without removing the one-image single-node path / 可选横向扩展，不取消单镜像单节点路径 |
+| Operations workspace, source diagnostics and audio mixer / 运维工作区、来源诊断与音频工作台 | `v2-M6` | Complete day-to-day monitoring operations without changing the media boundary / 不改变媒体边界的完整日常监控运维 |
+| Multi-volume, remote recorder roles, integrations, disaster recovery / 多存储卷、远程录像节点、集成、灾难恢复 | `v2-M7` | Optional scale-out without removing the one-image single-node path / 可选横向扩展，不取消单镜像单节点路径 |
 
 ## 4. Milestone sequence / 里程碑顺序
 
@@ -90,7 +91,8 @@ v1.1 family: v1-M7 Canvas -> v1-M8 NVR -> v1-M9 Timeline -> v1-M10 Device Ops ->
 v1.2 final closure: qualification only, no v1-M12
 v2.0: v2-M1 True Direct Contract -> v2-M2 Local-first PWA -> v2-M3 Browser Media Runtime
 v2.1: v2-M4 Offline Sync -> v2-M5 Operator UX
-v2.2: v2-M6 Scale
+v2.2: v2-M6 Operations Workspace
+v2.3: v2-M7 Scale
 v3.0: v3-M1 Motion & Scene Change
 v3.1: v3-M2 Person Boxes
 
@@ -99,7 +101,8 @@ v1.1 里程碑族：v1-M7 画布 -> v1-M8 NVR -> v1-M9 时间线 -> v1-M10 设�
 v1.2 最终收口：只做资格验证，不新增 v1-M12
 v2.0：v2-M1 真直连契约 -> v2-M2 本地优先 PWA -> v2-M3 浏览器媒体运行时
 v2.1：v2-M4 离线同步 -> v2-M5 值守体验
-v2.2：v2-M6 扩展
+v2.2：v2-M6 运维工作区
+v2.3：v2-M7 扩展
 v3.0：v3-M1 运动与大范围画面变化
 v3.1：v3-M2 人物框
 ```
@@ -284,7 +287,13 @@ Detailed contracts and the v3 handoff are defined in [monitor-view-and-analytics
 - The complete role/camera-scope matrix is deny-by-default and is exercised across UI, REST, WebSocket, media playback, export, PTZ, talk, metrics, and administration / 完整角色/摄像机范围矩阵默认拒绝，并覆盖 UI、REST、WebSocket、媒体回放、导出、PTZ、对讲、指标和管理面。
 - Core live monitoring and incident review pass keyboard-only, screen-reader smoke, visible-focus, contrast, and reduced-motion checks / 核心实时监看与事件复核通过纯键盘、屏幕阅读冒烟、可见焦点、对比度和减少动画检查。
 
-### v2-M6 — Scale, Ecosystem & Resilience / 扩展、生态与韧性
+### v2-M6 — Operations Workspace / 运维工作区
+
+**Goal / 目标：** deliver the source catalog, isolated Profile preview, Problem Center, settings taxonomy and truthful per-source Direct/Composite audio workbench defined in [operations-workspace-v2.2.md](operations-workspace-v2.2.md) / 交付 [operations-workspace-v2.2.md](operations-workspace-v2.2.md) 定义的来源目录、独立 Profile 预览、问题中心、设置分类和真实逐源 Direct/Composite 音频工作台。
+
+**Boundary / 边界：** one product image, one SQLite WAL Camera Registry, Scene v5 compatibility and the existing Local-first PWA media topology remain mandatory. Multi-node, multi-volume, S3, external providers and complete RBAC are deferred to v2-M7 / 继续强制单产品镜像、单 SQLite WAL Camera Registry、Scene v5 兼容和既有 Local-first PWA 媒体拓扑；多节点、多存储卷、S3、外部 Provider 与完整 RBAC 顺延至 v2-M7。
+
+### v2-M7 — Scale, Ecosystem & Resilience / 扩展、生态与韧性
 
 **Goal / 目标：** scale beyond one host and one storage volume without weakening the simple single-image deployment, security boundary, or recoverability / 在不削弱单镜像部署、安全边界和可恢复性的前提下，扩展到多主机及多存储卷。
 
@@ -298,7 +307,7 @@ Detailed contracts and the v3 handoff are defined in [monitor-view-and-analytics
 - Automated encrypted backups of configuration/catalog/audit keys, restore drills, media-catalog reconciliation, rolling schema migration, image provenance, staged upgrade, and rollback / 配置/目录/审计密钥自动加密备份、恢复演练、媒体目录对账、滚动 schema 迁移、镜像来源、分阶段升级和回滚。
 - Optional external NVR/detector interoperability through documented adapters instead of embedding every model or vendor protocol / 通过有文档适配器与外部 NVR/检测器互操作，不把所有模型或厂商协议嵌入核心。
 
-**Not in v2-M6 / v2-M6 不包含：** a hosted multi-tenant SaaS control plane, vendor P2P-cloud credential brokerage, access-control/door actuation, or a promise of unlimited camera density / 托管多租户 SaaS 控制面、厂商 P2P 云凭据代理、门禁/开门控制或无限摄像机密度承诺。
+**Not in v2-M7 / v2-M7 不包含：** a hosted multi-tenant SaaS control plane, vendor P2P-cloud credential brokerage, access-control/door actuation, or a promise of unlimited camera density / 托管多租户 SaaS 控制面、厂商 P2P 云凭据代理、门禁/开门控制或无限摄像机密度承诺。
 
 **Exit gate / 完成门禁：**
 

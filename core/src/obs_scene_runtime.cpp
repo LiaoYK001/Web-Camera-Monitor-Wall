@@ -3,6 +3,7 @@
 #include "webobs/audit_event.hpp"
 
 #include <obs.h>
+#include <obs-audio-controls.h>
 #include <curl/curl.h>
 #include <jansson.h>
 #include <callback/calldata.h>
@@ -62,6 +63,43 @@ struct SourceStatus {
     bool stale_reported = false;
 };
 
+struct MeterStatus {
+    std::atomic<float> rms_dbfs = -120.0F;
+    std::atomic<float> peak_dbfs = -120.0F;
+    std::atomic_bool available = false;
+};
+
+struct VolmeterDeleter {
+    void operator()(obs_volmeter_t *value) const { obs_volmeter_destroy(value); }
+};
+using VolmeterPtr = std::unique_ptr<obs_volmeter_t, VolmeterDeleter>;
+
+float logarithmic_deflection_to_db(float value)
+{
+    if (value >= 1.0F)
+        return 0.0F;
+    if (value <= 0.0F)
+        return -120.0F;
+    constexpr float range = 102.0F;
+    constexpr float offset = 6.0F;
+    return std::max(-120.0F, -range * std::pow(range / offset, -value) + offset);
+}
+
+void audio_meter_updated(void *parameter, const float magnitude[MAX_AUDIO_CHANNELS],
+                         const float peak[MAX_AUDIO_CHANNELS], const float[MAX_AUDIO_CHANNELS])
+{
+    auto *status = static_cast<MeterStatus *>(parameter);
+    float rms = 0.0F;
+    float maximum = 0.0F;
+    for (std::size_t index = 0; index < MAX_AUDIO_CHANNELS; ++index) {
+        rms = std::max(rms, magnitude[index]);
+        maximum = std::max(maximum, peak[index]);
+    }
+    status->rms_dbfs.store(logarithmic_deflection_to_db(rms));
+    status->peak_dbfs.store(logarithmic_deflection_to_db(maximum));
+    status->available.store(true);
+}
+
 const char *health_filter_name(void *)
 {
     return "WebOBS frame health filter";
@@ -116,6 +154,9 @@ struct SourceEntry {
     SourcePtr source;
     bool prewarmed = false;
     bool frame_primed = false;
+    std::shared_ptr<MeterStatus> meter_status;
+    VolmeterPtr meter;
+    std::chrono::steady_clock::time_point meter_requested_at{};
 };
 
 struct RuntimeState {
@@ -1064,6 +1105,11 @@ void ObsSceneRuntime::maintain_source_health()
     const auto stale_threshold = std::chrono::seconds(impl_->source_stale_seconds);
     const auto visible = visible_source_ids(impl_->current.get());
     for (auto &[id, entry] : impl_->current->sources) {
+        if (entry.meter && entry.meter_requested_at != std::chrono::steady_clock::time_point{} &&
+            now - entry.meter_requested_at > std::chrono::seconds(2)) {
+            entry.meter.reset();
+            entry.meter_status.reset();
+        }
         const bool is_visible = visible.contains(id);
         if (!is_visible)
             continue;
@@ -1137,6 +1183,42 @@ SourceHealthSnapshot ObsSceneRuntime::source_health_snapshot() const
     }
     std::sort(snapshot.sources.begin(), snapshot.sources.end(),
               [](const SourceHealthEntry &left, const SourceHealthEntry &right) {
+                  return left.id < right.id;
+              });
+    return snapshot;
+}
+
+SourceAudioMeterSnapshot ObsSceneRuntime::audio_meter_snapshot()
+{
+    std::lock_guard lock(impl_->mutex);
+    SourceAudioMeterSnapshot snapshot;
+    if (!impl_->runtime_enabled || !impl_->current)
+        return snapshot;
+    const auto now = std::chrono::steady_clock::now();
+    snapshot.sources.reserve(impl_->current->sources.size());
+    for (auto &[id, entry] : impl_->current->sources) {
+        if (!entry.meter) {
+            auto status = std::make_shared<MeterStatus>();
+            VolmeterPtr meter(obs_volmeter_create(OBS_FADER_LOG));
+            if (meter && obs_volmeter_attach_source(meter.get(), entry.source.get())) {
+                obs_volmeter_set_peak_meter_type(meter.get(), SAMPLE_PEAK_METER);
+                obs_volmeter_add_callback(meter.get(), audio_meter_updated, status.get());
+                entry.meter_status = std::move(status);
+                entry.meter = std::move(meter);
+            }
+        }
+        entry.meter_requested_at = now;
+        SourceAudioMeterEntry value;
+        value.id = id;
+        if (entry.meter_status) {
+            value.available = entry.meter_status->available.load();
+            value.rms_dbfs = entry.meter_status->rms_dbfs.load();
+            value.peak_dbfs = entry.meter_status->peak_dbfs.load();
+        }
+        snapshot.sources.push_back(std::move(value));
+    }
+    std::sort(snapshot.sources.begin(), snapshot.sources.end(),
+              [](const SourceAudioMeterEntry &left, const SourceAudioMeterEntry &right) {
                   return left.id < right.id;
               });
     return snapshot;

@@ -57,6 +57,14 @@ PTZ_STOP_TIMERS: dict[str, threading.Timer] = {}
 TALK_LOCK = threading.Lock()
 TALK_PROCESSES: dict[str, subprocess.Popen] = {}
 MAX_TALK_BYTES = 512 * 1024
+MAX_TRACKS_PER_PROFILE = 16
+MAX_CATALOG_PAGE = 256
+MAX_OPERATIONAL_ISSUES = 4096
+PROBE_TIMEOUT_SECONDS = 10
+PROBE_OUTPUT_LIMIT = 1024 * 1024
+PROBE_SEMAPHORE = threading.BoundedSemaphore(4)
+PROBE_LOCKS_GUARD = threading.Lock()
+PROBE_LOCKS: dict[str, threading.Lock] = {}
 ONVIF_CLOCK_LOCK = threading.Lock()
 ONVIF_CLOCK_OFFSETS: dict[str, float] = {}
 
@@ -67,6 +75,10 @@ class OnvifError(RuntimeError):
 
 class BrowserDirectProbeError(RuntimeError):
     """Bounded, endpoint-free browser media qualification failure."""
+
+
+class RevisionConflict(RuntimeError):
+    """Optimistic Camera Registry revision did not match."""
 
 
 class NoRedirect(HTTPRedirectHandler):
@@ -167,8 +179,79 @@ def initialize() -> None:
             );
             CREATE INDEX IF NOT EXISTS device_operation_audit_camera_time
               ON device_operation_audit(camera_id,created_at DESC);
+            CREATE TABLE IF NOT EXISTS profile_tracks(
+              camera_id TEXT NOT NULL,
+              profile_id TEXT NOT NULL,
+              track_index INTEGER NOT NULL,
+              kind TEXT NOT NULL,
+              codec TEXT NOT NULL,
+              bitrate_kbps INTEGER,
+              width INTEGER NOT NULL DEFAULT 0,
+              height INTEGER NOT NULL DEFAULT 0,
+              fps REAL NOT NULL DEFAULT 0,
+              sample_rate INTEGER NOT NULL DEFAULT 0,
+              channels INTEGER NOT NULL DEFAULT 0,
+              source TEXT NOT NULL DEFAULT 'probe',
+              PRIMARY KEY(camera_id,profile_id,track_index),
+              FOREIGN KEY(camera_id,profile_id) REFERENCES stream_profiles(camera_id,id) ON DELETE CASCADE
+            );
+            CREATE TABLE IF NOT EXISTS operational_issues(
+              id TEXT PRIMARY KEY,
+              fingerprint TEXT NOT NULL UNIQUE,
+              code TEXT NOT NULL,
+              severity TEXT NOT NULL,
+              state TEXT NOT NULL,
+              scope_kind TEXT NOT NULL,
+              scope_id TEXT NOT NULL,
+              component TEXT NOT NULL,
+              first_seen_at INTEGER NOT NULL,
+              last_seen_at INTEGER NOT NULL,
+              occurrences INTEGER NOT NULL,
+              summary TEXT NOT NULL,
+              explanation TEXT NOT NULL,
+              actions_json TEXT NOT NULL,
+              details_json TEXT NOT NULL
+            );
+            CREATE INDEX IF NOT EXISTS operational_issues_state_time
+              ON operational_issues(state,last_seen_at DESC);
+            CREATE TABLE IF NOT EXISTS runtime_settings(
+              id INTEGER PRIMARY KEY CHECK(id=1),
+              revision INTEGER NOT NULL,
+              settings_json TEXT NOT NULL,
+              updated_at INTEGER NOT NULL
+            );
             """
         )
+        camera_columns = {row["name"] for row in database.execute("PRAGMA table_info(cameras)")}
+        for name, definition in (
+            ("kind", "TEXT NOT NULL DEFAULT 'camera'"),
+            ("enabled", "INTEGER NOT NULL DEFAULT 1"),
+            ("group_id", "TEXT NOT NULL DEFAULT ''"),
+            ("tags_json", "TEXT NOT NULL DEFAULT '[]'"),
+            ("revision", "INTEGER NOT NULL DEFAULT 1"),
+        ):
+            if name not in camera_columns:
+                database.execute(f"ALTER TABLE cameras ADD COLUMN {name} {definition}")
+        profile_columns = {row["name"] for row in database.execute("PRAGMA table_info(stream_profiles)")}
+        for name, definition in (
+            ("enabled", "INTEGER NOT NULL DEFAULT 1"),
+            ("transport_mode", "TEXT NOT NULL DEFAULT 'auto'"),
+            ("live_bitrate_cap_kbps", "INTEGER"),
+            ("audio_expectation", "TEXT NOT NULL DEFAULT 'auto'"),
+            ("probe_state", "TEXT NOT NULL DEFAULT 'legacy'"),
+            ("last_probe_at", "INTEGER NOT NULL DEFAULT 0"),
+        ):
+            if name not in profile_columns:
+                database.execute(f"ALTER TABLE stream_profiles ADD COLUMN {name} {definition}")
+        defaults = {
+            "defaultTransportMode": "auto", "probeTimeoutSeconds": PROBE_TIMEOUT_SECONDS,
+            "sourceRecoveryEnabled": True, "issueRetentionLimit": MAX_OPERATIONAL_ISSUES,
+        }
+        database.execute(
+            "INSERT OR IGNORE INTO runtime_settings(id,revision,settings_json,updated_at) VALUES(1,1,?,?)",
+            (json.dumps(defaults, separators=(",", ":"), sort_keys=True), int(time.time())),
+        )
+        database.execute("PRAGMA user_version=2")
 
 
 def audit_device_operation(camera_id: str, operation: str, result: str) -> None:
@@ -244,6 +327,27 @@ def endpoint_with_credentials(endpoint: str, username: str, password: str) -> st
     return urlunsplit((parsed.scheme, authority, parsed.path, parsed.query, ""))
 
 
+def validate_tags(value: object) -> list[str]:
+    if not isinstance(value, list) or len(value) > 32:
+        raise ValueError("tags must contain at most 32 strings")
+    result: list[str] = []
+    for item in value:
+        if not isinstance(item, str) or not 1 <= len(item.strip()) <= 32 or any(ord(c) < 32 for c in item):
+            raise ValueError("each tag must contain 1 to 32 printable characters")
+        normalized = item.strip()
+        if normalized not in result:
+            result.append(normalized)
+    return result
+
+
+def transport_modes_for(adapter: str) -> set[str]:
+    if adapter in {"rtsp", "onvif"}:
+        return {"auto", "rtsp-tcp", "rtsp-udp", "rtsp-udp-multicast"}
+    if adapter in {"mjpeg", "snapshot", "hls", "http-flv", "whep"}:
+        return {"auto", "http", "https"}
+    return {"auto"}
+
+
 def validate_profile(profile: dict, adapter: str) -> dict:
     if not isinstance(profile, dict):
         raise ValueError("profiles must contain objects")
@@ -260,11 +364,28 @@ def validate_profile(profile: dict, adapter: str) -> dict:
     fps = float(profile.get("fps", 0))
     if width < 0 or width > 16384 or height < 0 or height > 16384 or fps < 0 or fps > 240:
         raise ValueError("profile media dimensions are out of range")
+    enabled = profile.get("enabled", True)
+    if not isinstance(enabled, bool):
+        raise ValueError("profile enabled must be boolean")
+    transport_mode = profile.get("transportMode", "auto")
+    if transport_mode not in transport_modes_for(adapter):
+        raise ValueError("profile transportMode is not valid for this adapter")
+    bitrate_cap = profile.get("liveBitrateCapKbps")
+    if bitrate_cap is not None and (isinstance(bitrate_cap, bool) or not isinstance(bitrate_cap, int) or
+                                    not 32 <= bitrate_cap <= 1_000_000):
+        raise ValueError("liveBitrateCapKbps must be null or between 32 and 1000000")
+    audio_expectation = profile.get("audioExpectation", "auto")
+    if audio_expectation not in {"auto", "required", "disabled"}:
+        raise ValueError("audioExpectation must be auto, required, or disabled")
     return {
         "id": profile_id, "name": str(profile.get("name", profile_id))[:128], "role": role,
         "endpoint": endpoint, "videoCodec": str(profile.get("videoCodec", "unknown"))[:32].lower(),
         "audioCodec": str(profile.get("audioCodec", ""))[:32].lower(),
         "width": width, "height": height, "fps": fps,
+        "enabled": enabled, "transportMode": transport_mode,
+        "liveBitrateCapKbps": bitrate_cap, "audioExpectation": audio_expectation,
+        "probeState": str(profile.get("probeState", "legacy"))[:32],
+        "lastProbeAt": int(profile.get("lastProbeAt", 0)),
     }
 
 
@@ -296,24 +417,124 @@ def validate_camera(payload: dict, existing_id: str | None = None) -> dict:
     capabilities = dict(capabilities)
     capabilities.pop("browserDirect", None)
     capabilities.pop("iwaDirectLab", None)
+    kind = payload.get("kind", "camera")
+    enabled = payload.get("enabled", True)
+    group_id = payload.get("groupId", "")
+    if kind not in {"camera", "network-stream"}:
+        raise ValueError("camera kind must be camera or network-stream")
+    if not isinstance(enabled, bool):
+        raise ValueError("camera enabled must be boolean")
+    if not isinstance(group_id, str) or len(group_id) > 64 or any(ord(c) < 32 for c in group_id):
+        raise ValueError("groupId must contain at most 64 printable characters")
+    tags = validate_tags(payload.get("tags", []))
+    revision = payload.get("revision", 1)
+    if isinstance(revision, bool) or not isinstance(revision, int) or revision < 1:
+        raise ValueError("camera revision must be a positive integer")
     return {
         "id": camera_id, "name": name.strip(), "address": address, "adapter": adapter,
         "credentialsRef": credentials_ref, "hardwareDecode": hardware_decode,
-        "capabilities": capabilities, "profiles": profiles,
+        "capabilities": capabilities, "profiles": profiles, "kind": kind,
+        "enabled": enabled, "groupId": group_id.strip(), "tags": tags, "revision": revision,
     }
 
 
+def track_documents(database: sqlite3.Connection, camera_id: str, profile: sqlite3.Row) -> list[dict]:
+    rows = database.execute(
+        "SELECT track_index,kind,codec,bitrate_kbps,width,height,fps,sample_rate,channels,source "
+        "FROM profile_tracks WHERE camera_id=? AND profile_id=? ORDER BY track_index",
+        (camera_id, profile["id"]),
+    ).fetchall()
+    if rows:
+        return [{
+            "index": item["track_index"], "kind": item["kind"], "codec": item["codec"],
+            "bitrateKbps": item["bitrate_kbps"], "width": item["width"], "height": item["height"],
+            "fps": item["fps"], "sampleRate": item["sample_rate"], "channels": item["channels"],
+            "source": item["source"],
+        } for item in rows]
+    result = []
+    if profile["video_codec"]:
+        result.append({"index": 0, "kind": "video", "codec": profile["video_codec"],
+                       "bitrateKbps": None, "width": profile["width"], "height": profile["height"],
+                       "fps": profile["fps"], "sampleRate": 0, "channels": 0, "source": "legacy"})
+    if profile["audio_codec"]:
+        result.append({"index": len(result), "kind": "audio", "codec": profile["audio_codec"],
+                       "bitrateKbps": None, "width": 0, "height": 0, "fps": 0,
+                       "sampleRate": 0, "channels": 0, "source": "legacy"})
+    return result
+
+
+def profile_document(database: sqlite3.Connection, camera_id: str, profile: sqlite3.Row,
+                     include_endpoint: bool = True) -> dict:
+    result = {
+        "id": profile["id"], "name": profile["name"], "role": profile["role"],
+        "videoCodec": profile["video_codec"], "audioCodec": profile["audio_codec"],
+        "width": profile["width"], "height": profile["height"], "fps": profile["fps"],
+        "enabled": bool(profile["enabled"]), "transportMode": profile["transport_mode"],
+        "liveBitrateCapKbps": profile["live_bitrate_cap_kbps"],
+        "audioExpectation": profile["audio_expectation"], "probeState": profile["probe_state"],
+        "lastProbeAt": profile["last_probe_at"], "tracks": track_documents(database, camera_id, profile),
+    }
+    if include_endpoint:
+        result["endpoint"] = profile["endpoint"]
+    return result
+
+
 def camera_document(database: sqlite3.Connection, row: sqlite3.Row) -> dict:
-    profiles = [dict(profile) for profile in database.execute(
-        "SELECT id,name,role,endpoint,video_codec AS videoCodec,audio_codec AS audioCodec,width,height,fps "
-        "FROM stream_profiles WHERE camera_id=? ORDER BY role,id", (row["id"],)
-    )]
+    profile_rows = database.execute(
+        "SELECT * FROM stream_profiles WHERE camera_id=? ORDER BY role,id", (row["id"],)
+    ).fetchall()
+    profiles = [profile_document(database, row["id"], profile) for profile in profile_rows]
     return {
         "id": row["id"], "name": row["name"], "address": row["address"],
         "adapter": row["adapter"], "credentialsRef": row["credentials_ref"],
         "hardwareDecode": row["hardware_decode"], "capabilities": json.loads(row["capabilities_json"]),
         "health": row["health"], "profiles": profiles, "createdAt": row["created_at"],
-        "updatedAt": row["updated_at"],
+        "updatedAt": row["updated_at"], "kind": row["kind"], "enabled": bool(row["enabled"]),
+        "groupId": row["group_id"], "tags": json.loads(row["tags_json"]), "revision": row["revision"],
+    }
+
+
+def sanitized_endpoint(value: str) -> str:
+    try:
+        parsed = urlsplit(value)
+        host = parsed.hostname or ""
+        if ":" in host and not host.startswith("["):
+            host = f"[{host}]"
+        if parsed.port:
+            host = f"{host}:{parsed.port}"
+        return urlunsplit((parsed.scheme, host, parsed.path, "", ""))
+    except ValueError:
+        return "unavailable"
+
+
+def source_catalog_document(database: sqlite3.Connection, row: sqlite3.Row) -> dict:
+    profile_rows = database.execute(
+        "SELECT * FROM stream_profiles WHERE camera_id=? ORDER BY role,id", (row["id"],)
+    ).fetchall()
+    profiles = []
+    total_tracks = 0
+    for profile in profile_rows:
+        value = profile_document(database, row["id"], profile, include_endpoint=False)
+        value["endpointDisplay"] = sanitized_endpoint(profile["endpoint"])
+        total_tracks += len(value["tracks"])
+        profiles.append(value)
+    try:
+        onvif = json.loads(row["capabilities_json"] or "{}").get("onvif", {})
+    except (json.JSONDecodeError, AttributeError):
+        onvif = {}
+    safe_capabilities = {
+        "ptz": bool(onvif.get("ptz", False)),
+        "snapshot": bool(onvif.get("snapshot", False)),
+        "talk": bool(onvif.get("talk", False)),
+    }
+    return {
+        "schemaVersion": 2, "id": row["id"], "name": row["name"], "kind": row["kind"],
+        "adapter": row["adapter"], "enabled": bool(row["enabled"]), "groupId": row["group_id"],
+        "tags": json.loads(row["tags_json"]), "addressDisplay": sanitized_endpoint(row["address"]),
+        "health": row["health"], "hardwareDecode": row["hardware_decode"],
+        "deviceCapabilities": safe_capabilities,
+        "profileCount": len(profiles), "trackCount": total_tracks, "profiles": profiles,
+        "revision": row["revision"], "createdAt": row["created_at"], "updatedAt": row["updated_at"],
     }
 
 
@@ -394,23 +615,32 @@ def resolve_profile(database: sqlite3.Connection, camera_id: str, profile_id: st
     profile = database.execute(
         "SELECT * FROM stream_profiles WHERE camera_id=? AND id=?", (camera_id, profile_id)
     ).fetchone()
+    if not bool(camera["enabled"]) or (profile is not None and not bool(profile["enabled"])):
+        raise PermissionError("camera profile is disabled")
+    if profile is not None and profile["live_bitrate_cap_kbps"] is not None:
+        tracks = track_documents(database, camera_id, profile)
+        measured = sum(track["bitrateKbps"] or 0 for track in tracks)
+        if measured > profile["live_bitrate_cap_kbps"]:
+            raise PermissionError("camera profile exceeds the live bitrate cap")
     endpoint = profile["endpoint"] if profile else camera["address"]
     credentials_ref = camera["credentials_ref"]
     if credentials_ref:
         username, password = load_credentials(credentials_ref)
         endpoint = endpoint_with_credentials(endpoint, username, password)
     return {"endpoint": endpoint, "adapter": camera["adapter"],
-            "hardwareDecode": camera["hardware_decode"], "cameraId": camera_id, "profileId": profile_id}
+            "hardwareDecode": camera["hardware_decode"], "cameraId": camera_id, "profileId": profile_id,
+            "transportMode": profile["transport_mode"] if profile else "auto"}
 
 
 def save_camera(camera: dict, replace: bool) -> dict:
     now = int(time.time())
     with connect() as database:
         current = database.execute(
-            "SELECT created_at,capabilities_json FROM cameras WHERE id=?", (camera["id"],)).fetchone()
+            "SELECT created_at,capabilities_json,revision FROM cameras WHERE id=?", (camera["id"],)).fetchone()
         if current and not replace:
             raise FileExistsError("camera id already exists")
         created = current["created_at"] if current else now
+        revision = current["revision"] + 1 if current else 1
         if current:
             try:
                 reserved = json.loads(current["capabilities_json"] or "{}")
@@ -420,19 +650,24 @@ def save_camera(camera: dict, replace: bool) -> dict:
                 if key in reserved:
                     camera["capabilities"][key] = reserved[key]
         database.execute(
-            "INSERT INTO cameras(id,name,address,adapter,credentials_ref,hardware_decode,capabilities_json,health,created_at,updated_at) "
-            "VALUES(?,?,?,?,?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET name=excluded.name,address=excluded.address,"
+            "INSERT INTO cameras(id,name,address,adapter,credentials_ref,hardware_decode,capabilities_json,health,created_at,updated_at,kind,enabled,group_id,tags_json,revision) "
+            "VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET name=excluded.name,address=excluded.address,"
             "adapter=excluded.adapter,credentials_ref=excluded.credentials_ref,hardware_decode=excluded.hardware_decode,"
-            "capabilities_json=excluded.capabilities_json,health=excluded.health,updated_at=excluded.updated_at",
+            "capabilities_json=excluded.capabilities_json,health=excluded.health,updated_at=excluded.updated_at,"
+            "kind=excluded.kind,enabled=excluded.enabled,group_id=excluded.group_id,tags_json=excluded.tags_json,"
+            "revision=excluded.revision",
             (camera["id"], camera["name"], camera["address"], camera["adapter"], camera["credentialsRef"],
              camera["hardwareDecode"], json.dumps(camera["capabilities"], separators=(",", ":"), sort_keys=True),
-             "unknown", created, now),
+             "unknown", created, now, camera["kind"], int(camera["enabled"]), camera["groupId"],
+             json.dumps(camera["tags"], separators=(",", ":"), ensure_ascii=False), revision),
         )
         database.execute("DELETE FROM stream_profiles WHERE camera_id=?", (camera["id"],))
         database.executemany(
-            "INSERT INTO stream_profiles(id,camera_id,name,role,endpoint,video_codec,audio_codec,width,height,fps) VALUES(?,?,?,?,?,?,?,?,?,?)",
+            "INSERT INTO stream_profiles(id,camera_id,name,role,endpoint,video_codec,audio_codec,width,height,fps,enabled,transport_mode,live_bitrate_cap_kbps,audio_expectation,probe_state,last_probe_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
             [(p["id"], camera["id"], p["name"], p["role"], p["endpoint"], p["videoCodec"],
-              p["audioCodec"], p["width"], p["height"], p["fps"]) for p in camera["profiles"]],
+              p["audioCodec"], p["width"], p["height"], p["fps"], int(p["enabled"]),
+              p["transportMode"], p["liveBitrateCapKbps"], p["audioExpectation"],
+              p["probeState"], p["lastProbeAt"]) for p in camera["profiles"]],
         )
         if camera["profiles"]:
             placeholders = ",".join("?" for _ in camera["profiles"])
@@ -443,7 +678,473 @@ def save_camera(camera: dict, replace: bool) -> dict:
         else:
             database.execute("DELETE FROM analytics_policies WHERE camera_id=?", (camera["id"],))
         row = database.execute("SELECT * FROM cameras WHERE id=?", (camera["id"],)).fetchone()
+        reconcile_audio_issues(database, camera["id"])
         return camera_document(database, row)
+
+
+ISSUE_TEMPLATES = {
+    "AUDIO_TRACK_MISSING": (
+        "warning", "要求的音频轨道不可用", "该 Profile 配置为要求音频，但最近的安全媒体信息中没有音频轨道。",
+        ["检查摄像机音频是否启用", "重新探测该 Profile", "不需要音频时改为自动或禁用"],
+    ),
+    "MEDIA_PROBE_FAILED": (
+        "warning", "媒体信息探测失败", "服务未能在限定时间和输出大小内读取该 Profile 的媒体信息。",
+        ["检查设备连通性和协议", "确认凭据 Secret 可用", "必要时手工选择传输方式后重试"],
+    ),
+    "LIVE_BITRATE_CAP_EXCEEDED": (
+        "warning", "实时监看码率超过上限", "已测量轨道码率高于该 Profile 的实时监看准入上限。",
+        ["选择更低码率的子码流", "调整实时监看码率上限", "检查设备编码配置"],
+    ),
+}
+
+
+def issue_fingerprint(code: str, scope_kind: str, scope_id: str, component: str) -> str:
+    return hashlib.sha256(f"{code}\0{scope_kind}\0{scope_id}\0{component}".encode()).hexdigest()
+
+
+def upsert_issue(database: sqlite3.Connection, code: str, scope_kind: str, scope_id: str,
+                 component: str, details: dict[str, object] | None = None) -> None:
+    if code not in ISSUE_TEMPLATES or scope_kind not in {
+            "device", "profile", "source", "media-plan", "nvr", "system"} or not ID_RE.fullmatch(scope_id):
+        raise ValueError("operational issue contains an unsupported field")
+    severity, summary, explanation, actions = ISSUE_TEMPLATES[code]
+    safe_details = {}
+    for key, value in (details or {}).items():
+        if key in {"adapter", "transportMode", "codec", "httpStatus", "retryCount", "lastFrameAgeMs"} and \
+                isinstance(value, (str, int, float, bool)):
+            safe_details[key] = value
+    fingerprint = issue_fingerprint(code, scope_kind, scope_id, component)
+    issue_id = fingerprint[:32]
+    now = int(time.time())
+    database.execute(
+        "INSERT INTO operational_issues(id,fingerprint,code,severity,state,scope_kind,scope_id,component,"
+        "first_seen_at,last_seen_at,occurrences,summary,explanation,actions_json,details_json) "
+        "VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(fingerprint) DO UPDATE SET "
+        "state='open',last_seen_at=excluded.last_seen_at,occurrences=operational_issues.occurrences+1,"
+        "details_json=excluded.details_json",
+        (issue_id, fingerprint, code, severity, "open", scope_kind, scope_id, component, now, now, 1,
+         summary, explanation, json.dumps(actions, ensure_ascii=False, separators=(",", ":")),
+         json.dumps(safe_details, ensure_ascii=False, separators=(",", ":"), sort_keys=True)),
+    )
+    settings_row = database.execute("SELECT settings_json FROM runtime_settings WHERE id=1").fetchone()
+    retention_limit = MAX_OPERATIONAL_ISSUES
+    if settings_row:
+        try:
+            retention_limit = int(json.loads(settings_row["settings_json"]).get(
+                "issueRetentionLimit", MAX_OPERATIONAL_ISSUES))
+        except (ValueError, TypeError, json.JSONDecodeError):
+            retention_limit = MAX_OPERATIONAL_ISSUES
+    excess = database.execute("SELECT MAX(0,COUNT(*)-?) FROM operational_issues",
+                              (retention_limit,)).fetchone()[0]
+    if excess:
+        database.execute(
+            "DELETE FROM operational_issues WHERE id IN (SELECT id FROM operational_issues "
+            "ORDER BY CASE state WHEN 'resolved' THEN 0 WHEN 'acknowledged' THEN 1 ELSE 2 END,"
+            "CASE severity WHEN 'info' THEN 0 WHEN 'warning' THEN 1 ELSE 2 END,last_seen_at LIMIT ?)",
+            (excess,))
+
+
+def resolve_issue(database: sqlite3.Connection, code: str, scope_kind: str,
+                  scope_id: str, component: str) -> None:
+    database.execute(
+        "UPDATE operational_issues SET state='resolved',last_seen_at=? WHERE fingerprint=? AND state!='resolved'",
+        (int(time.time()), issue_fingerprint(code, scope_kind, scope_id, component)),
+    )
+
+
+def issue_document(row: sqlite3.Row) -> dict:
+    return {
+        "id": row["id"], "code": row["code"], "severity": row["severity"], "state": row["state"],
+        "scopeKind": row["scope_kind"], "scopeId": row["scope_id"], "component": row["component"],
+        "firstSeenAt": row["first_seen_at"], "lastSeenAt": row["last_seen_at"],
+        "occurrences": row["occurrences"], "summary": row["summary"],
+        "explanation": row["explanation"], "recommendedActions": json.loads(row["actions_json"]),
+        "technicalDetails": json.loads(row["details_json"]),
+    }
+
+
+def reconcile_audio_issues(database: sqlite3.Connection, camera_id: str) -> None:
+    profiles = database.execute(
+        "SELECT * FROM stream_profiles WHERE camera_id=?", (camera_id,)).fetchall()
+    for profile in profiles:
+        scope_id = f"{camera_id}.{profile['id']}"
+        if len(scope_id) > 64:
+            scope_id = hashlib.sha256(scope_id.encode()).hexdigest()[:32]
+        has_audio = bool(profile["audio_codec"]) or database.execute(
+            "SELECT 1 FROM profile_tracks WHERE camera_id=? AND profile_id=? AND kind='audio' LIMIT 1",
+            (camera_id, profile["id"]),
+        ).fetchone() is not None
+        if profile["audio_expectation"] == "required" and not has_audio:
+            upsert_issue(database, "AUDIO_TRACK_MISSING", "profile", scope_id, "media-probe",
+                         {"codec": profile["audio_codec"] or "none"})
+        else:
+            resolve_issue(database, "AUDIO_TRACK_MISSING", "profile", scope_id, "media-probe")
+        tracks = track_documents(database, camera_id, profile)
+        measured_kbps = sum(track["bitrateKbps"] or 0 for track in tracks)
+        if profile["live_bitrate_cap_kbps"] is not None and measured_kbps > profile["live_bitrate_cap_kbps"]:
+            upsert_issue(database, "LIVE_BITRATE_CAP_EXCEEDED", "profile", scope_id, "session-admission",
+                         {"codec": profile["video_codec"] or "unknown"})
+        else:
+            resolve_issue(database, "LIVE_BITRATE_CAP_EXCEEDED", "profile", scope_id, "session-admission")
+
+
+def expected_revision(header: str | None) -> int:
+    if not header or not re.fullmatch(r'"[1-9][0-9]*"', header.strip()):
+        raise ValueError("If-Match must contain one quoted positive revision")
+    return int(header.strip()[1:-1])
+
+
+def validate_catalog_patch(payload: dict, adapter: str) -> tuple[dict, list[dict]]:
+    allowed = {"name", "kind", "enabled", "groupId", "tags", "hardwareDecode", "profiles"}
+    if not payload or set(payload) - allowed:
+        raise ValueError("source catalog patch contains an unsupported field")
+    camera_updates: dict[str, object] = {}
+    if "name" in payload:
+        if not isinstance(payload["name"], str) or not 1 <= len(payload["name"].strip()) <= 128:
+            raise ValueError("name must contain 1 to 128 characters")
+        camera_updates["name"] = payload["name"].strip()
+    if "kind" in payload:
+        if payload["kind"] not in {"camera", "network-stream"}:
+            raise ValueError("kind must be camera or network-stream")
+        camera_updates["kind"] = payload["kind"]
+    if "enabled" in payload:
+        if not isinstance(payload["enabled"], bool):
+            raise ValueError("enabled must be boolean")
+        camera_updates["enabled"] = int(payload["enabled"])
+    if "groupId" in payload:
+        value = payload["groupId"]
+        if not isinstance(value, str) or len(value) > 64 or any(ord(c) < 32 for c in value):
+            raise ValueError("groupId must contain at most 64 printable characters")
+        camera_updates["group_id"] = value.strip()
+    if "tags" in payload:
+        camera_updates["tags_json"] = json.dumps(
+            validate_tags(payload["tags"]), separators=(",", ":"), ensure_ascii=False)
+    if "hardwareDecode" in payload:
+        if payload["hardwareDecode"] not in {"auto", "on", "off"}:
+            raise ValueError("hardwareDecode must be auto, on, or off")
+        camera_updates["hardware_decode"] = payload["hardwareDecode"]
+    profile_updates = payload.get("profiles", [])
+    if not isinstance(profile_updates, list) or len(profile_updates) > 16:
+        raise ValueError("profiles patch must contain at most 16 items")
+    normalized_profiles = []
+    for value in profile_updates:
+        if not isinstance(value, dict) or set(value) - {
+                "id", "enabled", "transportMode", "liveBitrateCapKbps", "audioExpectation"}:
+            raise ValueError("profile patch contains an unsupported field")
+        profile_id = value.get("id")
+        if not isinstance(profile_id, str) or not ID_RE.fullmatch(profile_id):
+            raise ValueError("profile id is invalid")
+        update: dict[str, object] = {"id": profile_id}
+        if "enabled" in value:
+            if not isinstance(value["enabled"], bool):
+                raise ValueError("profile enabled must be boolean")
+            update["enabled"] = int(value["enabled"])
+        if "transportMode" in value:
+            if value["transportMode"] not in transport_modes_for(adapter):
+                raise ValueError("profile transportMode is not valid for this adapter")
+            update["transport_mode"] = value["transportMode"]
+        if "liveBitrateCapKbps" in value:
+            cap = value["liveBitrateCapKbps"]
+            if cap is not None and (isinstance(cap, bool) or not isinstance(cap, int) or
+                                    not 32 <= cap <= 1_000_000):
+                raise ValueError("liveBitrateCapKbps must be null or between 32 and 1000000")
+            update["live_bitrate_cap_kbps"] = cap
+        if "audioExpectation" in value:
+            if value["audioExpectation"] not in {"auto", "required", "disabled"}:
+                raise ValueError("audioExpectation must be auto, required, or disabled")
+            update["audio_expectation"] = value["audioExpectation"]
+        normalized_profiles.append(update)
+    return camera_updates, normalized_profiles
+
+
+def patch_source_catalog(camera_id: str, payload: dict, revision: int) -> dict:
+    with connect() as database:
+        row = database.execute("SELECT * FROM cameras WHERE id=?", (camera_id,)).fetchone()
+        if not row:
+            raise KeyError("camera not found")
+        if row["revision"] != revision:
+            raise RevisionConflict(str(row["revision"]))
+        camera_updates, profile_updates = validate_catalog_patch(payload, row["adapter"])
+        for profile in profile_updates:
+            if not database.execute(
+                    "SELECT 1 FROM stream_profiles WHERE camera_id=? AND id=?", (camera_id, profile["id"])).fetchone():
+                raise KeyError("camera profile not found")
+        now = int(time.time())
+        if camera_updates:
+            assignments = ",".join(f"{field}=?" for field in camera_updates)
+            database.execute(f"UPDATE cameras SET {assignments},updated_at=?,revision=revision+1 WHERE id=?",
+                             (*camera_updates.values(), now, camera_id))
+        else:
+            database.execute("UPDATE cameras SET updated_at=?,revision=revision+1 WHERE id=?", (now, camera_id))
+        for profile in profile_updates:
+            values = {key: value for key, value in profile.items() if key != "id"}
+            if values:
+                assignments = ",".join(f"{field}=?" for field in values)
+                database.execute(f"UPDATE stream_profiles SET {assignments} WHERE camera_id=? AND id=?",
+                                 (*values.values(), camera_id, profile["id"]))
+        reconcile_audio_issues(database, camera_id)
+        updated = database.execute("SELECT * FROM cameras WHERE id=?", (camera_id,)).fetchone()
+        return source_catalog_document(database, updated)
+
+
+def batch_source_catalog(payload: dict) -> list[dict]:
+    items = payload.get("items") if isinstance(payload, dict) else None
+    if not isinstance(items, list) or not 1 <= len(items) <= 256:
+        raise ValueError("items must contain 1 to 256 patches")
+    normalized = []
+    with connect() as database:
+        for item in items:
+            if not isinstance(item, dict) or set(item) - {"cameraId", "revision", "enabled", "groupId", "tags"}:
+                raise ValueError("batch item contains an unsupported field")
+            camera_id, revision = item.get("cameraId"), item.get("revision")
+            if not isinstance(camera_id, str) or not ID_RE.fullmatch(camera_id) or \
+                    isinstance(revision, bool) or not isinstance(revision, int) or revision < 1:
+                raise ValueError("batch cameraId or revision is invalid")
+            row = database.execute("SELECT * FROM cameras WHERE id=?", (camera_id,)).fetchone()
+            if not row:
+                raise KeyError("camera not found")
+            if row["revision"] != revision:
+                raise RevisionConflict(f"{camera_id}:{row['revision']}")
+            changes, profiles = validate_catalog_patch(
+                {key: value for key, value in item.items() if key not in {"cameraId", "revision"}}, row["adapter"])
+            if profiles:
+                raise ValueError("batch profile changes are not supported")
+            normalized.append((camera_id, changes))
+        now = int(time.time())
+        for camera_id, changes in normalized:
+            assignments = ",".join(f"{field}=?" for field in changes)
+            database.execute(f"UPDATE cameras SET {assignments},updated_at=?,revision=revision+1 WHERE id=?",
+                             (*changes.values(), now, camera_id))
+        rows = []
+        for camera_id, _ in normalized:
+            row = database.execute("SELECT * FROM cameras WHERE id=?", (camera_id,)).fetchone()
+            rows.append(source_catalog_document(database, row))
+        return rows
+
+
+def parse_rate(value: object) -> float:
+    if not isinstance(value, str) or not value:
+        return 0
+    try:
+        numerator, denominator = value.split("/", 1)
+        return 0 if float(denominator) == 0 else float(numerator) / float(denominator)
+    except (ValueError, ZeroDivisionError):
+        return 0
+
+
+def probe_source_profile(camera_id: str, profile_id: str) -> dict:
+    with PROBE_LOCKS_GUARD:
+        lock = PROBE_LOCKS.setdefault(camera_id, threading.Lock())
+    if not lock.acquire(blocking=False):
+        raise RuntimeError("camera probe is already running")
+    if not PROBE_SEMAPHORE.acquire(blocking=False):
+        lock.release()
+        raise RuntimeError("global camera probe limit reached")
+    try:
+        with connect() as database:
+            camera = database.execute("SELECT * FROM cameras WHERE id=?", (camera_id,)).fetchone()
+            profile = database.execute(
+                "SELECT * FROM stream_profiles WHERE camera_id=? AND id=?", (camera_id, profile_id)).fetchone()
+            if not camera or not profile:
+                raise KeyError("camera or profile not found")
+            if camera["credentials_ref"]:
+                database.execute(
+                    "UPDATE stream_profiles SET probe_state='cached',last_probe_at=? WHERE camera_id=? AND id=?",
+                    (int(time.time()), camera_id, profile_id))
+                reconcile_audio_issues(database, camera_id)
+                refreshed = database.execute(
+                    "SELECT * FROM stream_profiles WHERE camera_id=? AND id=?", (camera_id, profile_id)).fetchone()
+                return profile_document(database, camera_id, refreshed, include_endpoint=False)
+            endpoint, transport_mode = profile["endpoint"], profile["transport_mode"]
+            settings = database.execute("SELECT settings_json FROM runtime_settings WHERE id=1").fetchone()
+            probe_timeout = int(json.loads(settings["settings_json"])["probeTimeoutSeconds"])
+        command = ["ffprobe", "-v", "error", "-show_entries",
+                   "stream=index,codec_type,codec_name,bit_rate,width,height,avg_frame_rate,sample_rate,channels",
+                   "-of", "json"]
+        if endpoint.startswith(("rtsp://", "rtsps://")) and transport_mode in {"rtsp-tcp", "rtsp-udp", "rtsp-udp-multicast"}:
+            command += ["-rtsp_transport", "tcp" if transport_mode == "rtsp-tcp" else "udp"]
+        command.append(endpoint)
+        try:
+            result = subprocess.run(command, capture_output=True, timeout=probe_timeout,
+                                    check=False, env={**os.environ, "LC_ALL": "C"})
+            if result.returncode or len(result.stdout) > PROBE_OUTPUT_LIMIT or len(result.stderr) > PROBE_OUTPUT_LIMIT:
+                raise ValueError("probe_failed")
+            parsed = json.loads(result.stdout)
+            streams = parsed.get("streams", [])
+            if not isinstance(streams, list) or not 1 <= len(streams) <= MAX_TRACKS_PER_PROFILE:
+                raise ValueError("probe_tracks_invalid")
+            tracks = []
+            for item in streams:
+                kind = item.get("codec_type")
+                if kind not in {"video", "audio", "data"}:
+                    continue
+                bitrate = int(item["bit_rate"]) // 1000 if str(item.get("bit_rate", "")).isdigit() else None
+                tracks.append({
+                    "index": int(item.get("index", len(tracks))), "kind": kind,
+                    "codec": str(item.get("codec_name", "unknown"))[:32].lower(), "bitrateKbps": bitrate,
+                    "width": int(item.get("width", 0) or 0), "height": int(item.get("height", 0) or 0),
+                    "fps": parse_rate(item.get("avg_frame_rate", "")),
+                    "sampleRate": int(item.get("sample_rate", 0) or 0),
+                    "channels": int(item.get("channels", 0) or 0), "source": "probe",
+                })
+            if not tracks:
+                raise ValueError("probe_tracks_invalid")
+        except (OSError, subprocess.TimeoutExpired, ValueError, TypeError, json.JSONDecodeError):
+            with connect() as database:
+                database.execute(
+                    "UPDATE stream_profiles SET probe_state='failed',last_probe_at=? WHERE camera_id=? AND id=?",
+                    (int(time.time()), camera_id, profile_id))
+                upsert_issue(database, "MEDIA_PROBE_FAILED", "profile",
+                             f"{camera_id}.{profile_id}"[:64], "media-probe", {"transportMode": transport_mode})
+            raise ValueError("media probe failed")
+        with connect() as database:
+            database.execute("DELETE FROM profile_tracks WHERE camera_id=? AND profile_id=?", (camera_id, profile_id))
+            database.executemany(
+                "INSERT INTO profile_tracks(camera_id,profile_id,track_index,kind,codec,bitrate_kbps,width,height,fps,sample_rate,channels,source) "
+                "VALUES(?,?,?,?,?,?,?,?,?,?,?,?)",
+                [(camera_id, profile_id, item["index"], item["kind"], item["codec"], item["bitrateKbps"],
+                  item["width"], item["height"], item["fps"], item["sampleRate"], item["channels"], "probe")
+                 for item in tracks],
+            )
+            video = next((item for item in tracks if item["kind"] == "video"), None)
+            audio = next((item for item in tracks if item["kind"] == "audio"), None)
+            database.execute(
+                "UPDATE stream_profiles SET video_codec=?,audio_codec=?,width=?,height=?,fps=?,probe_state='ready',last_probe_at=? "
+                "WHERE camera_id=? AND id=?",
+                (video["codec"] if video else "", audio["codec"] if audio else "",
+                 video["width"] if video else 0, video["height"] if video else 0,
+                 video["fps"] if video else 0, int(time.time()), camera_id, profile_id),
+            )
+            resolve_issue(database, "MEDIA_PROBE_FAILED", "profile", f"{camera_id}.{profile_id}"[:64], "media-probe")
+            refreshed = database.execute(
+                "SELECT * FROM stream_profiles WHERE camera_id=? AND id=?", (camera_id, profile_id)).fetchone()
+            measured = sum(track["bitrateKbps"] or 0 for track in tracks)
+            if refreshed["live_bitrate_cap_kbps"] is not None and measured > refreshed["live_bitrate_cap_kbps"]:
+                upsert_issue(database, "LIVE_BITRATE_CAP_EXCEEDED", "profile",
+                             f"{camera_id}.{profile_id}"[:64], "session-admission")
+            else:
+                resolve_issue(database, "LIVE_BITRATE_CAP_EXCEEDED", "profile",
+                              f"{camera_id}.{profile_id}"[:64], "session-admission")
+            reconcile_audio_issues(database, camera_id)
+            return profile_document(database, camera_id, refreshed, include_endpoint=False)
+    finally:
+        PROBE_SEMAPHORE.release()
+        lock.release()
+
+
+def probe_source_camera(camera_id: str) -> list[dict]:
+    if not ID_RE.fullmatch(camera_id):
+        raise ValueError("camera id is invalid")
+    with connect() as database:
+        exists = database.execute("SELECT 1 FROM cameras WHERE id=?", (camera_id,)).fetchone()
+        if not exists:
+            raise KeyError("camera not found")
+        profile_ids = [row["id"] for row in database.execute(
+            "SELECT id FROM stream_profiles WHERE camera_id=? ORDER BY role,id", (camera_id,)).fetchall()]
+    if not profile_ids:
+        raise ValueError("camera has no profiles to probe")
+    return [probe_source_profile(camera_id, profile_id) for profile_id in profile_ids]
+
+
+def validate_runtime_settings(payload: dict, current: dict) -> dict:
+    allowed = {"defaultTransportMode", "probeTimeoutSeconds", "sourceRecoveryEnabled", "issueRetentionLimit"}
+    if not payload or set(payload) - allowed:
+        raise ValueError("settings patch contains an unsupported field")
+    result = dict(current)
+    if "defaultTransportMode" in payload:
+        if payload["defaultTransportMode"] not in {"auto", "rtsp-tcp", "rtsp-udp"}:
+            raise ValueError("defaultTransportMode is invalid")
+        result["defaultTransportMode"] = payload["defaultTransportMode"]
+    if "probeTimeoutSeconds" in payload:
+        value = payload["probeTimeoutSeconds"]
+        if isinstance(value, bool) or not isinstance(value, int) or not 2 <= value <= 30:
+            raise ValueError("probeTimeoutSeconds must be between 2 and 30")
+        result["probeTimeoutSeconds"] = value
+    if "sourceRecoveryEnabled" in payload:
+        if not isinstance(payload["sourceRecoveryEnabled"], bool):
+            raise ValueError("sourceRecoveryEnabled must be boolean")
+        result["sourceRecoveryEnabled"] = payload["sourceRecoveryEnabled"]
+    if "issueRetentionLimit" in payload:
+        value = payload["issueRetentionLimit"]
+        if isinstance(value, bool) or not isinstance(value, int) or not 128 <= value <= MAX_OPERATIONAL_ISSUES:
+            raise ValueError("issueRetentionLimit must be between 128 and 4096")
+        result["issueRetentionLimit"] = value
+    return result
+
+
+def source_catalog(query: str) -> dict:
+    values = parse_qs(query, keep_blank_values=True)
+    try:
+        page = int(values.get("page", ["1"])[0])
+        limit = int(values.get("limit", ["50"])[0])
+    except ValueError as error:
+        raise ValueError("page and limit must be integers") from error
+    if page < 1 or not 1 <= limit <= MAX_CATALOG_PAGE:
+        raise ValueError("source catalog pagination is out of range")
+    clauses, arguments = [], []
+    filters = {
+        "group": ("group_id", 64), "adapter": ("adapter", 32), "health": ("health", 32),
+    }
+    for key, (column, maximum) in filters.items():
+        value = values.get(key, [""])[0].strip()
+        if value:
+            if len(value) > maximum or any(ord(c) < 32 for c in value):
+                raise ValueError(f"{key} filter is invalid")
+            clauses.append(f"{column}=?"); arguments.append(value)
+    enabled = values.get("enabled", [""])[0]
+    if enabled:
+        if enabled not in {"true", "false"}:
+            raise ValueError("enabled filter must be true or false")
+        clauses.append("enabled=?"); arguments.append(int(enabled == "true"))
+    tag = values.get("tag", [""])[0].strip()
+    if tag:
+        if len(tag) > 32:
+            raise ValueError("tag filter is invalid")
+        clauses.append("EXISTS(SELECT 1 FROM json_each(cameras.tags_json) WHERE value=?)")
+        arguments.append(tag)
+    search = values.get("q", [""])[0].strip()
+    if search:
+        if len(search) > 128 or any(ord(c) < 32 for c in search):
+            raise ValueError("search query is invalid")
+        clauses.append("(name LIKE ? ESCAPE '\\' OR group_id LIKE ? ESCAPE '\\' OR "
+                       "EXISTS(SELECT 1 FROM json_each(cameras.tags_json) WHERE value LIKE ? ESCAPE '\\'))")
+        escaped = search.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+        arguments += [f"%{escaped}%", f"%{escaped}%", f"%{escaped}%"]
+    sort = values.get("sort", ["name"])[0]
+    direction = values.get("direction", ["asc"])[0]
+    columns = {"name": "name", "status": "health", "updated": "updated_at", "group": "group_id"}
+    if sort not in columns or direction not in {"asc", "desc"}:
+        raise ValueError("source catalog sort is invalid")
+    where = " WHERE " + " AND ".join(clauses) if clauses else ""
+    with connect() as database:
+        total = database.execute(f"SELECT COUNT(*) FROM cameras{where}", arguments).fetchone()[0]
+        rows = database.execute(
+            f"SELECT * FROM cameras{where} ORDER BY {columns[sort]} {direction.upper()},id "
+            "LIMIT ? OFFSET ?", (*arguments, limit, (page - 1) * limit)).fetchall()
+        return {"schemaVersion": 2, "page": page, "limit": limit, "total": total,
+                "items": [source_catalog_document(database, row) for row in rows]}
+
+
+def runtime_settings() -> dict:
+    with connect() as database:
+        row = database.execute("SELECT * FROM runtime_settings WHERE id=1").fetchone()
+        return {"schemaVersion": 1, "revision": row["revision"], "values": json.loads(row["settings_json"]),
+                "deployment": {"tls": "read-only", "ports": "read-only", "secrets": "read-only",
+                               "gpuDevice": "read-only"}}
+
+
+def patch_runtime_settings(payload: dict, revision: int) -> dict:
+    with connect() as database:
+        row = database.execute("SELECT * FROM runtime_settings WHERE id=1").fetchone()
+        if row["revision"] != revision:
+            raise RevisionConflict(str(row["revision"]))
+        values = validate_runtime_settings(payload, json.loads(row["settings_json"]))
+        database.execute("UPDATE runtime_settings SET revision=revision+1,settings_json=?,updated_at=? WHERE id=1",
+                         (json.dumps(values, separators=(",", ":"), sort_keys=True), int(time.time())))
+        updated = database.execute("SELECT * FROM runtime_settings WHERE id=1").fetchone()
+        return {"schemaVersion": 1, "revision": updated["revision"], "values": values,
+                "deployment": {"tls": "read-only", "ports": "read-only", "secrets": "read-only",
+                               "gpuDevice": "read-only"}}
 
 
 def configured_pwa_origin() -> str:
@@ -1537,11 +2238,13 @@ class Handler(BaseHTTPRequestHandler):
     def log_message(self, format: str, *args: object) -> None:
         return
 
-    def respond(self, status: int, value: object) -> None:
+    def respond(self, status: int, value: object, headers: dict[str, str] | None = None) -> None:
         body = json.dumps(value, separators=(",", ":"), sort_keys=True).encode()
         self.send_response(status)
         self.send_header("Content-Type", "application/json; charset=utf-8")
         self.send_header("Cache-Control", "no-store")
+        for name, header_value in (headers or {}).items():
+            self.send_header(name, header_value)
         self.send_header("Content-Length", str(len(body)))
         self.end_headers()
         self.wfile.write(body)
@@ -1565,6 +2268,46 @@ class Handler(BaseHTTPRequestHandler):
                 "ptz": True, "presets": True, "snapshots": True,
                 "pullPointEvents": True, "guardedTalk": True,
             }}); return
+        if path == "/source-catalog":
+            try:
+                self.respond(200, source_catalog(query))
+            except ValueError as error:
+                self.respond(400, {"error": str(error)})
+            return
+        catalog_match = re.fullmatch(r"/source-catalog/([a-zA-Z0-9._-]{1,64})", path)
+        if catalog_match:
+            with connect() as database:
+                row = database.execute("SELECT * FROM cameras WHERE id=?", (catalog_match.group(1),)).fetchone()
+                if not row:
+                    self.respond(404, {"error": "camera not found"}); return
+                value = source_catalog_document(database, row)
+                self.respond(200, value, {"ETag": f'"{value["revision"]}"'})
+            return
+        if path == "/operations/issues":
+            values = parse_qs(query, keep_blank_values=True)
+            state, severity, component = (values.get(name, [""])[0] for name in ("state", "severity", "component"))
+            if state and state not in {"open", "acknowledged", "resolved"} or \
+                    severity and severity not in {"info", "warning", "error"} or len(component) > 64:
+                self.respond(400, {"error": "issue filter is invalid"}); return
+            clauses, arguments = [], []
+            for column, value in (("state", state), ("severity", severity), ("component", component)):
+                if value: clauses.append(f"{column}=?"); arguments.append(value)
+            where = " WHERE " + " AND ".join(clauses) if clauses else ""
+            with connect() as database:
+                rows = database.execute(
+                    f"SELECT * FROM operational_issues{where} ORDER BY CASE state WHEN 'open' THEN 0 "
+                    "WHEN 'acknowledged' THEN 1 ELSE 2 END,last_seen_at DESC LIMIT 4096", arguments).fetchall()
+                self.respond(200, {"issues": [issue_document(row) for row in rows]})
+            return
+        if path == "/settings":
+            value = runtime_settings()
+            self.respond(200, value, {"ETag": f'"{value["revision"]}"'}); return
+        if path == "/settings/schema":
+            self.respond(200, {"schemaVersion": 1, "groups": [
+                "interface", "video", "audio", "recording", "analytics", "telemetry", "watchdog", "security-pwa"],
+                "writable": ["defaultTransportMode", "probeTimeoutSeconds", "sourceRecoveryEnabled", "issueRetentionLimit"],
+                "deploymentReadOnly": ["tls", "ports", "secrets", "gpuDevice"],
+            }); return
         presets_match = re.fullmatch(r"/cameras/([a-zA-Z0-9._-]{1,64})/onvif/presets", path)
         if presets_match:
             try:
@@ -1620,6 +2363,40 @@ class Handler(BaseHTTPRequestHandler):
                 if not isinstance(credentials_ref, str):
                     raise ValueError("credentialsRef is invalid")
                 self.respond(200, onvif_probe(str(payload.get("address", "")), credentials_ref)); return
+            if self.path == "/source-catalog/batch":
+                self.respond(200, {"items": batch_source_catalog(self.payload())}); return
+            camera_probe_match = re.fullmatch(
+                r"/source-catalog/([a-zA-Z0-9._-]{1,64})/probe", self.path)
+            if camera_probe_match:
+                if int(self.headers.get("Content-Length", "0")):
+                    self.payload()
+                camera_id = camera_probe_match.group(1)
+                self.respond(200, {"cameraId": camera_id,
+                                   "profiles": probe_source_camera(camera_id)}); return
+            catalog_probe_match = re.fullmatch(
+                r"/source-catalog/([a-zA-Z0-9._-]{1,64})/profiles/([a-zA-Z0-9._-]{1,64})/probe",
+                self.path,
+            )
+            if catalog_probe_match:
+                if int(self.headers.get("Content-Length", "0")):
+                    self.payload()
+                self.respond(200, {"cameraId": catalog_probe_match.group(1),
+                                   "profile": probe_source_profile(*catalog_probe_match.groups())}); return
+            issue_ack_match = re.fullmatch(
+                r"/operations/issues/([a-f0-9]{32})/acknowledge", self.path)
+            if issue_ack_match:
+                if int(self.headers.get("Content-Length", "0")):
+                    self.payload()
+                with connect() as database:
+                    changed = database.execute(
+                        "UPDATE operational_issues SET state='acknowledged',last_seen_at=? WHERE id=? AND state='open'",
+                        (int(time.time()), issue_ack_match.group(1))).rowcount
+                    row = database.execute("SELECT * FROM operational_issues WHERE id=?", (issue_ack_match.group(1),)).fetchone()
+                    if not row:
+                        self.respond(404, {"error": "issue not found"})
+                    else:
+                        self.respond(200, issue_document(row))
+                return
             sync_match = re.fullmatch(r"/cameras/([a-zA-Z0-9._-]{1,64})/onvif/sync", self.path)
             if sync_match:
                 self.respond(200, sync_onvif_camera(sync_match.group(1))); return
@@ -1660,6 +2437,7 @@ class Handler(BaseHTTPRequestHandler):
         except PermissionError as error: self.respond(401, {"error": str(error)})
         except BrowserDirectProbeError as error: self.respond(400, {"error": str(error)})
         except OnvifError as error: self.respond(502, {"error": str(error)})
+        except RevisionConflict as error: self.respond(409, {"error": "revision_conflict", "revision": str(error)})
         except RuntimeError as error: self.respond(429, {"error": str(error)})
         except (ValueError, TypeError, json.JSONDecodeError) as error: self.respond(400, {"error": str(error)})
 
@@ -1677,6 +2455,27 @@ class Handler(BaseHTTPRequestHandler):
             if not ID_RE.fullmatch(camera_id): raise ValueError("camera id is invalid")
             self.respond(200, save_camera(validate_camera(self.payload(), camera_id), True))
         except (ValueError, TypeError, json.JSONDecodeError) as error: self.respond(400, {"error": str(error)})
+
+    def do_PATCH(self) -> None:
+        try:
+            revision = expected_revision(self.headers.get("If-Match"))
+        except ValueError as error:
+            self.respond(428 if not self.headers.get("If-Match") else 400, {"error": str(error)}); return
+        try:
+            catalog_match = re.fullmatch(r"/source-catalog/([a-zA-Z0-9._-]{1,64})", self.path)
+            if catalog_match:
+                value = patch_source_catalog(catalog_match.group(1), self.payload(), revision)
+                self.respond(200, value, {"ETag": f'"{value["revision"]}"'}); return
+            if self.path == "/settings":
+                value = patch_runtime_settings(self.payload(), revision)
+                self.respond(200, value, {"ETag": f'"{value["revision"]}"'}); return
+            self.respond(404, {"error": "not_found"})
+        except RevisionConflict as error:
+            self.respond(409, {"error": "revision_conflict", "revision": str(error)})
+        except KeyError as error:
+            self.respond(404, {"error": str(error)})
+        except (ValueError, TypeError, json.JSONDecodeError) as error:
+            self.respond(400, {"error": str(error)})
 
     def do_DELETE(self) -> None:
         if not self.path.startswith("/cameras/"):

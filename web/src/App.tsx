@@ -9,13 +9,16 @@ import {
 } from 'react';
 import { connectSceneEvents, ControlApiError, fetchCameras, fetchStudio, fetchStudioCapabilities, replaceStudio, studioAction } from './api';
 import DirectPreview from './DirectPreview';
-import CameraRegistry from './CameraRegistry';
 import NvrTimeline from './NvrTimeline';
 import ProgramPreview from './ProgramPreview';
 import SystemStatus from './SystemStatus';
 import EventsPanel from './EventsPanel';
 import ClientsPanel from './ClientsPanel';
 import LocalRuntimeBadge from './LocalRuntimeBadge';
+import WorkspaceShell, { areaFromHash, type ProductArea } from './WorkspaceShell';
+import SourceCatalog from './SourceCatalog';
+import AudioWorkspace from './AudioWorkspace';
+import SettingsWorkspace from './SettingsWorkspace';
 import { loadOfflineStudio, queueOfflineAudit, saveLocalStudio, saveStudioSnapshot } from './localRuntime';
 import { queueStudioSync, synchronizeBrowserState } from './syncRuntime';
 import type { AudioMonitoring, CameraRecord, FilterKind, PlaybackMode, ScaleMode, SceneDocument, SceneFilter, SceneItem, SceneSource, StudioCapabilities, StudioDocument, Transport } from './types';
@@ -110,7 +113,7 @@ function EmptyState({ onAdd }: { onAdd: () => void }) {
 }
 
 export default function App() {
-  const [productArea, setProductArea] = useState<'studio' | 'archive' | 'devices' | 'clients' | 'events' | 'system'>(window.location.hash === '#archive' ? 'archive' : window.location.hash === '#devices' ? 'devices' : window.location.hash === '#clients' ? 'clients' : window.location.hash === '#events' ? 'events' : window.location.hash === '#system' ? 'system' : 'studio');
+  const [productArea, setProductArea] = useState<ProductArea>(areaFromHash());
   const [baseline, setBaseline] = useState<SceneDocument | null>(null);
   const [draft, setDraft] = useState<SceneDocument | null>(null);
   const [studioBaseline, setStudioBaseline] = useState<StudioDocument | null>(null);
@@ -286,11 +289,16 @@ export default function App() {
   useEffect(() => {
     const changed = () => {
       setPlaybackMode(initialPlaybackMode());
-      setProductArea(window.location.hash === '#archive' ? 'archive' : window.location.hash === '#devices' ? 'devices' : window.location.hash === '#events' ? 'events' : window.location.hash === '#system' ? 'system' : 'studio');
+      setProductArea(areaFromHash());
     };
     window.addEventListener('hashchange', changed);
     return () => window.removeEventListener('hashchange', changed);
   }, []);
+
+  const navigate = (area: ProductArea) => {
+    window.history.replaceState(null, '', `#/${area}`);
+    setProductArea(area);
+  };
 
   const selectPlaybackMode = (mode: PlaybackMode) => {
     setPlaybackMode(mode);
@@ -726,39 +734,24 @@ export default function App() {
   };
 
   if (productArea === 'archive') {
-    return <NvrTimeline onBack={() => {
-      window.history.replaceState(null, '', window.location.pathname);
-      setProductArea('studio');
-    }} />;
+    return <WorkspaceShell area={productArea} onNavigate={navigate} connection={connection}><NvrTimeline onBack={() => navigate('monitor')} /></WorkspaceShell>;
   }
   if (productArea === 'devices') {
-    return <CameraRegistry onBack={() => {
-      window.history.replaceState(null, '', window.location.pathname);
-      setProductArea('studio');
-    }} />;
+    return <WorkspaceShell area={productArea} onNavigate={navigate} connection={connection}><SourceCatalog /></WorkspaceShell>;
   }
   if (productArea === 'clients') {
-    return <ClientsPanel onBack={() => {
-      window.history.replaceState(null, '', window.location.pathname);
-      setProductArea('studio');
-    }} />;
+    return <WorkspaceShell area={productArea} onNavigate={navigate} connection={connection}><ClientsPanel onBack={() => navigate('settings')} /></WorkspaceShell>;
   }
-  if (productArea === 'system') {
-    return <SystemStatus onBack={() => {
-      window.history.replaceState(null, '', window.location.pathname);
-      setProductArea('studio');
-    }} />;
+  if (productArea === 'settings') {
+    return <WorkspaceShell area={productArea} onNavigate={navigate} connection={connection}><SettingsWorkspace /><SystemStatus onBack={() => navigate('monitor')} /></WorkspaceShell>;
   }
   if (productArea === 'events') {
-    return <EventsPanel onBack={() => {
-      window.history.replaceState(null, '', window.location.pathname);
-      setProductArea('studio');
-    }} />;
+    return <WorkspaceShell area={productArea} onNavigate={navigate} connection={connection}><EventsPanel onBack={() => navigate('monitor')} /></WorkspaceShell>;
   }
 
   if (!draft || !studioDraft) {
     return (
-      <main className="boot-screen">
+      <WorkspaceShell area={productArea} onNavigate={navigate} connection={connection}><main className="boot-screen">
         <div className="brand-mark">W</div>
         <h1>WebOBS Monitor Wall</h1>
         {loadingError ? (
@@ -767,8 +760,29 @@ export default function App() {
             <button className="primary-button" type="button" onClick={reload}>重新连接</button>
           </>
         ) : <p>正在连接本地合成器…</p>}
-      </main>
+      </main></WorkspaceShell>
     );
+  }
+
+  if (productArea === 'monitor') {
+    const monitorScene = programScene ?? studioDraft.scenes.find((scene) => scene.id === studioDraft.programSceneId) ?? draft;
+    return <WorkspaceShell area={productArea} onNavigate={navigate} connection={connection}><section className="monitor-workspace page-panel">
+      <header className="monitor-heading"><div><span className="eyebrow">Live monitor</span><h1>{monitorScene.name}</h1></div><div>
+        <button type="button" onClick={() => setPlaybackMode('direct')} className={playbackMode === 'direct' ? 'active' : ''}>浏览器媒体</button>
+        <button type="button" onClick={() => setPlaybackMode('composite')} className={playbackMode === 'composite' ? 'active' : ''}>服务端 Program</button>
+        <button type="button" onClick={() => void toggleFullscreen()}>真全屏</button>
+      </div></header><div ref={monitorRef} className="monitor-surface">
+        {playbackMode === 'direct' ? <DirectPreview scene={monitorScene} /> : <ProgramPreview aspectRatio={`${monitorScene.canvas.width} / ${monitorScene.canvas.height}`} />}
+        {fullscreen && <div className="fullscreen-overlay"><button type="button" onClick={() => void toggleFullscreen()}>退出全屏</button><span>{wakeLockState === 'active' ? '● 屏幕常亮' : wakeLockState === 'unsupported' ? '⚠ 不支持防休眠' : ''}</span></div>}
+      </div></section></WorkspaceShell>;
+  }
+
+  if (productArea === 'audio') {
+    return <WorkspaceShell area={productArea} onNavigate={navigate} connection={connection}><AudioWorkspace studio={studioDraft} onCommitted={applyRemoteStudio} /></WorkspaceShell>;
+  }
+
+  if (productArea === 'storage') {
+    return <WorkspaceShell area={productArea} onNavigate={navigate} connection={connection}><section className="page-panel"><header className="page-heading"><div><span className="eyebrow">Storage</span><h1>存储</h1><p>录像状态、时间线与部署卷信息。</p></div><button type="button" onClick={() => navigate('archive')}>打开录像回放</button></header><SystemStatus onBack={() => navigate('monitor')} /></section></WorkspaceShell>;
   }
 
   const selectedSource = draft.sources.find((source) => source.id === selectedSourceId) ?? null;
@@ -788,7 +802,7 @@ export default function App() {
             : newUrl.trim().length > 0;
 
   return (
-    <div className="app-shell">
+    <WorkspaceShell area="studio" onNavigate={navigate} connection={connection}><div className="app-shell">
       <header className="topbar">
         <div className="brand-block">
           <div className="brand-mark small">W</div>
@@ -809,8 +823,7 @@ export default function App() {
         <div className="top-actions">
           <LocalRuntimeBadge />
           <button className="ghost-button" type="button" onClick={() => {
-            window.history.replaceState(null, '', '#system');
-            setProductArea('system');
+            navigate('settings');
           }}>系统状态</button>
           <button className="ghost-button" type="button" onClick={() => {
             window.history.replaceState(null, '', '#devices');
@@ -1353,6 +1366,6 @@ export default function App() {
           )}
         </aside>
       </main>
-    </div>
+    </div></WorkspaceShell>
   );
 }

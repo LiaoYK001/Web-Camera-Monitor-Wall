@@ -29,12 +29,18 @@ rm -rf -- "$next_cache"
 tags=(--tag "${image}:${version}" --tag "${image}:sha-${short_revision}")
 if [ "$version" = dev ]; then
     tags+=(--tag "${image}:dev")
-    build_version="2.1.0-dev.${short_revision}"
-    build_milestone="v2-M5-dev"
+    build_version="2.2.0-dev.${short_revision}"
+    build_milestone="v2-M6-dev"
 else
     tags+=(--tag "${image}:latest")
     build_version="${version#v}"
-    if [[ "$version" =~ ^v2\.1(\.|$) ]]; then build_milestone="v2-M5"; else build_milestone="v2-M3"; fi
+    if [[ "$version" =~ ^v2\.2(\.|$) ]]; then
+        build_milestone="v2-M6"
+    elif [[ "$version" =~ ^v2\.1(\.|$) ]]; then
+        build_milestone="v2-M5"
+    else
+        build_milestone="v2-M3"
+    fi
 fi
 
 docker buildx build --platform linux/amd64 --file docker/Dockerfile \

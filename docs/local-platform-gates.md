@@ -22,9 +22,9 @@ v2.0 不再向两台 GitHub self-hosted Runner 调度仓库代码，可保持它
   -PrivateGateCommand C:\webobs-gates\run-gate.cmd
 ```
 
-The full command creates `build/private-gates/windows.json` only after all required Chrome/Edge protocol, offline/update and resource-release checks pass. Long-duration load tests are optional qualification evidence and are not part of the v2.1 publication contract.
+The full command creates `build/private-gates/windows.json` only after all required Chrome/Edge protocol, offline/update and resource-release checks pass. Long-duration load tests are optional qualification evidence and are not part of the v2.2 publication contract.
 
-完整命令只会在所有 Chrome/Edge 协议、离线/升级与资源释放必测项通过后生成 `build/private-gates/windows.json`。长时间负载测试属于可选资格证据，不进入 v2.1 发布契约。
+完整命令只会在所有 Chrome/Edge 协议、离线/升级与资源释放必测项通过后生成 `build/private-gates/windows.json`。长时间负载测试属于可选资格证据，不进入 v2.2 发布契约。
 
 ## WSL2 Linux / WSL2 Linux
 

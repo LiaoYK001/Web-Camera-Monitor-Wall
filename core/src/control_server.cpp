@@ -523,6 +523,21 @@ public:
         release_client_route({}, client_id, {});
     }
 
+    void disable_camera(std::string_view camera_id)
+    {
+        std::vector<std::string> routes;
+        {
+            const std::lock_guard lock(route_state_mutex_);
+            const std::string prefix = std::string(camera_id) + "/";
+            for (const auto &[source_id, route] : direct_routes_) {
+                if (route.source_key.starts_with(prefix))
+                    routes.push_back(source_id);
+            }
+        }
+        for (const std::string &source_id : routes)
+            release_client_route(source_id, {}, {});
+    }
+
     void reconcile_sources()
     {
         const std::lock_guard operation_lock(route_operation_mutex_);
@@ -1298,6 +1313,11 @@ public:
             suffix = "/onvif/discover";
         else if (target == "/api/v1/onvif/probe")
             suffix = "/onvif/probe";
+        else if (target == "/api/v2/source-catalog" || target.starts_with("/api/v2/source-catalog/") ||
+                 target == "/api/v2/operations/issues" || target.starts_with("/api/v2/operations/issues/") ||
+                 target == "/api/v2/settings" || target == "/api/v2/settings/schema") {
+            suffix = std::string(target.substr(std::string_view("/api/v2").size()));
+        }
         else if (target == "/api/v1/events" || target.starts_with("/api/v1/events?") ||
                  target.starts_with("/api/v1/events/")) {
             suffix = std::string(target.substr(std::string_view("/api/v1").size()));
@@ -1330,7 +1350,8 @@ public:
             }))
             return response(http::status::bad_request, request.version(),
                             error_body("invalid_target", "Camera Registry target is invalid"));
-        const bool mutating = request.method() == http::verb::put || request.method() == http::verb::post ||
+        const bool mutating = request.method() == http::verb::put || request.method() == http::verb::patch ||
+                              request.method() == http::verb::post ||
                               request.method() == http::verb::delete_;
         if (mutating && !request.body().empty() && !json_content_type(request))
             return response(http::status::unsupported_media_type, request.version(),
@@ -1344,6 +1365,16 @@ public:
         curl_slist *headers = nullptr;
         if (mutating)
             headers = curl_slist_append(headers, "Content-Type: application/json");
+        std::string if_match_header;
+        if (!request[http::field::if_match].empty()) {
+            const std::string_view if_match = view(request[http::field::if_match]);
+            if (if_match.size() <= 32 && std::none_of(if_match.begin(), if_match.end(), [](unsigned char character) {
+                    return character == '\r' || character == '\n';
+                })) {
+                if_match_header = "If-Match: " + std::string(if_match);
+                headers = curl_slist_append(headers, if_match_header.c_str());
+            }
+        }
         std::string device_header;
         std::string internal_admin_header;
         if (v2_client_service) {
@@ -1408,7 +1439,17 @@ public:
         curl_easy_cleanup(handle);
         if (code != CURLE_OK || status < 100 || status > 599)
             return unavailable(request.version());
-        return response(static_cast<http::status>(status), request.version(), std::move(body));
+        HttpResponse result = response(static_cast<http::status>(status), request.version(), std::move(body));
+        json_error_t json_error{};
+        json_t *root = json_loadb(result.body().data(), result.body().size(), JSON_REJECT_DUPLICATES, &json_error);
+        if (root && json_is_object(root)) {
+            json_t *revision = json_object_get(root, "revision");
+            if (json_is_integer(revision) && json_integer_value(revision) > 0)
+                result.set(http::field::etag, "\"" + std::to_string(json_integer_value(revision)) + "\"");
+        }
+        if (root)
+            json_decref(root);
+        return result;
     }
 
 private:
@@ -2038,6 +2079,36 @@ HttpResponse source_health_response(unsigned int version, SceneController &contr
     return response(http::status::ok, version, std::move(body));
 }
 
+std::string operational_event(std::string_view type)
+{
+    const auto timestamp = std::chrono::duration_cast<std::chrono::milliseconds>(
+        std::chrono::system_clock::now().time_since_epoch()).count();
+    return "{\"type\":\"" + json_escape(type) + "\",\"timestamp\":" +
+           std::to_string(timestamp) + "}";
+}
+
+HttpResponse audio_mixer_response(unsigned int version, SceneController &controller,
+                                  std::string_view target)
+{
+    const bool direct = target.find("topology=direct") != std::string_view::npos;
+    if (direct)
+        return response(http::status::ok, version,
+                        "{\"topology\":\"direct\",\"executionOwner\":\"browser\",\"sources\":[]}");
+    const SourceAudioMeterSnapshot snapshot = controller.audio_meter_snapshot();
+    std::string body = "{\"topology\":\"composite\",\"executionOwner\":\"docker\",\"sources\":[";
+    for (std::size_t index = 0; index < snapshot.sources.size(); ++index) {
+        if (index != 0)
+            body.push_back(',');
+        const SourceAudioMeterEntry &source = snapshot.sources[index];
+        body += "{\"sourceId\":\"" + json_escape(source.id) + "\",\"rmsDbfs\":" +
+                (source.available ? std::to_string(source.rms_dbfs) : std::string("null")) +
+                ",\"peakDbfs\":" +
+                (source.available ? std::to_string(source.peak_dbfs) : std::string("null")) + "}";
+    }
+    body += "]}";
+    return response(http::status::ok, version, std::move(body));
+}
+
 HttpResponse handle_request(const HttpRequest &request, SceneController &controller, StudioController &studio,
                             WebSocketHub &hub,
                             WhepProxy &whep_proxy, NvrProxy &nvr_proxy, CameraProxy &camera_proxy,
@@ -2057,7 +2128,7 @@ HttpResponse handle_request(const HttpRequest &request, SceneController &control
     const std::string_view target = view(request.target());
     if (request.method() == http::verb::get && target == "/api/v1/health")
         return response(http::status::ok, version,
-                        "{\"status\":\"ok\",\"milestone\":\"v2-M5\"}");
+                        "{\"status\":\"ok\",\"milestone\":\"v2-M6\"}");
     if (request.method() == http::verb::get && target == "/api/v1/ready") {
         const bool ready = runtime_status.ready();
         return response(ready ? http::status::ok : http::status::service_unavailable, version,
@@ -2066,13 +2137,108 @@ HttpResponse handle_request(const HttpRequest &request, SceneController &control
     if (request.method() == http::verb::get && target == "/metrics")
         return metrics_response(version, runtime_status, metrics, authenticator);
 
+    constexpr std::string_view audio_scene_prefix = "/api/v2/scenes/";
+    constexpr std::string_view audio_source_marker = "/audio/sources/";
+    if (target.starts_with(audio_scene_prefix) && target.find(audio_source_marker) != std::string_view::npos) {
+        if (request.method() != http::verb::patch) {
+            HttpResponse result = response(http::status::method_not_allowed, version,
+                                           error_body("method_not_allowed", "use PATCH"));
+            result.set(http::field::allow, "PATCH");
+            return result;
+        }
+        if (!request_origin_allowed(request, false, allowed_origins))
+            return response(http::status::forbidden, version,
+                            error_body("origin_rejected", "Origin must match the local Host"));
+        if (!json_content_type(request))
+            return response(http::status::unsupported_media_type, version,
+                            error_body("content_type", "Content-Type must be application/json"));
+        const std::size_t marker = target.find(audio_source_marker);
+        const std::string_view scene_id = target.substr(audio_scene_prefix.size(),
+                                                        marker - audio_scene_prefix.size());
+        const std::string_view source_id = target.substr(marker + audio_source_marker.size());
+        const auto valid_id = [](std::string_view value) {
+            return !value.empty() && value.size() <= 64 &&
+                   std::all_of(value.begin(), value.end(), [](unsigned char character) {
+                       return std::isalnum(character) || character == '.' || character == '_' || character == '-';
+                   });
+        };
+        if (!valid_id(scene_id) || !valid_id(source_id))
+            return response(http::status::not_found, version,
+                            error_body("not_found", "audio source was not found"));
+        const ParsedIfMatch precondition = parse_if_match(request);
+        if (!precondition.present || !precondition.valid)
+            return response(precondition.present ? http::status::bad_request : static_cast<http::status>(428),
+                            version, error_body("invalid_if_match", "If-Match must contain one quoted decimal revision"));
+        json_error_t parse_error{};
+        json_t *root = json_loadb(request.body().data(), request.body().size(),
+                                  JSON_REJECT_DUPLICATES, &parse_error);
+        if (!root || !json_is_object(root) || json_object_size(root) == 0) {
+            json_decref(root);
+            return response(http::status::bad_request, version,
+                            error_body("invalid_audio_patch", "audio patch must be a non-empty JSON object"));
+        }
+        AudioSourcePatch patch;
+        bool valid = true;
+        const char *key = nullptr;
+        json_t *value = nullptr;
+        json_object_foreach(root, key, value) {
+            const std::string_view field(key);
+            if (field == "muted" && json_is_boolean(value))
+                patch.muted = json_is_true(value);
+            else if (field == "volume" && json_is_number(value) &&
+                     json_number_value(value) >= 0.0 && json_number_value(value) <= 1.0)
+                patch.volume = json_number_value(value);
+            else if (field == "monitoring" && json_is_string(value) &&
+                     (std::string_view(json_string_value(value)) == "off" ||
+                      std::string_view(json_string_value(value)) == "monitor-only" ||
+                      std::string_view(json_string_value(value)) == "monitor-and-output"))
+                patch.monitoring = json_string_value(value);
+            else if (field == "syncOffsetMs" && json_is_integer(value) &&
+                     json_integer_value(value) >= -10000 && json_integer_value(value) <= 10000)
+                patch.sync_offset_ms = static_cast<int>(json_integer_value(value));
+            else if (field == "audioTrack" && json_is_integer(value) &&
+                     json_integer_value(value) >= 1 && json_integer_value(value) <= 6)
+                patch.audio_track = static_cast<int>(json_integer_value(value));
+            else
+                valid = false;
+        }
+        json_decref(root);
+        if (!valid)
+            return response(http::status::bad_request, version,
+                            error_body("invalid_audio_patch", "audio patch contains an unsupported value"));
+        StudioUpdateResult updated = studio.update_audio(scene_id, source_id, patch, precondition.revision);
+        if (!updated.ok()) {
+            http::status status = http::status::unprocessable_entity;
+            if (updated.status == StudioUpdateStatus::revision_conflict)
+                status = http::status::precondition_failed;
+            else if (updated.status == StudioUpdateStatus::runtime_rejected)
+                status = http::status::conflict;
+            else if (updated.status == StudioUpdateStatus::persistence_failed)
+                status = http::status::service_unavailable;
+            HttpResponse result = response(status, version,
+                                           error_body("audio_update_failed", updated.error, updated.revision));
+            result.set(http::field::etag, etag(updated.revision));
+            return result;
+        }
+        HttpResponse result = response(http::status::ok, version,
+                                       "{\"sceneId\":\"" + json_escape(scene_id) +
+                                       "\",\"sourceId\":\"" + json_escape(source_id) +
+                                       "\",\"revision\":" + std::to_string(updated.revision) + "}");
+        result.set(http::field::etag, etag(updated.revision));
+        hub.broadcast(operational_event("source.status"));
+        return result;
+    }
+
     const bool v2_target = target == "/api/v2/enrollments" || target.starts_with("/api/v2/enrollments/") ||
                            target == "/api/v2/clients" || target.starts_with("/api/v2/clients/") ||
                            target == "/api/v2/client/bootstrap" || target.starts_with("/api/v2/client/bootstrap?") ||
                            target == "/api/v2/media-plans" || target.starts_with("/api/v2/media-plans/") ||
                            target == "/api/v2/client/audit/batch" ||
                            target == "/api/v2/client/sync" ||
-                           target.starts_with("/api/v2/client/cameras/");
+                           target.starts_with("/api/v2/client/cameras/") ||
+                           target == "/api/v2/source-catalog" || target.starts_with("/api/v2/source-catalog/") ||
+                           target == "/api/v2/operations/issues" || target.starts_with("/api/v2/operations/issues/") ||
+                           target == "/api/v2/settings" || target == "/api/v2/settings/schema";
     if (v2_target) {
         if (const auto route = v2_whep_route(target)) {
             const bool creating = request.method() == http::verb::post && route->session_token.empty();
@@ -2105,12 +2271,20 @@ HttpResponse handle_request(const HttpRequest &request, SceneController &control
             return whep_proxy.remove_client_plan(request, route->plan_id,
                                                  route->session_token);
         }
-        if ((request.method() == http::verb::put || request.method() == http::verb::post ||
+        if ((request.method() == http::verb::put || request.method() == http::verb::patch ||
+             request.method() == http::verb::post ||
              request.method() == http::verb::delete_) &&
             !request_origin_allowed(request, false, allowed_origins))
             return response(http::status::forbidden, version,
                             error_body("origin_rejected", "Origin must match the local Host"));
         HttpResponse result = camera_proxy.forward(request);
+        constexpr std::string_view catalog_prefix = "/api/v2/source-catalog/";
+        if (request.method() == http::verb::patch && result.result() == http::status::ok &&
+            target.starts_with(catalog_prefix) && result.body().find("\"enabled\":false") != std::string::npos) {
+            const std::string_view camera_id = target.substr(catalog_prefix.size());
+            if (!camera_id.empty() && camera_id.find('/') == std::string_view::npos)
+                whep_proxy.disable_camera(camera_id);
+        }
         constexpr std::string_view plan_prefix = "/api/v2/media-plans/";
         constexpr std::string_view activation_suffix = "/activation";
         if (request.method() == http::verb::delete_ && result.result() == http::status::ok &&
@@ -2131,6 +2305,18 @@ HttpResponse handle_request(const HttpRequest &request, SceneController &control
                 }))
                 whep_proxy.revoke_client(client_id);
         }
+        if (result.result() == http::status::ok && request.method() != http::verb::get) {
+            if (target == "/api/v2/source-catalog/batch" ||
+                target.starts_with("/api/v2/source-catalog/")) {
+                const bool probe = target.ends_with("/probe");
+                hub.broadcast(operational_event(
+                    probe ? "source.status" : "source.catalog.updated"));
+                if (probe)
+                    hub.broadcast(operational_event("operations.issue.resolved"));
+            }
+            else if (target.starts_with("/api/v2/operations/issues/"))
+                hub.broadcast(operational_event("operations.issue"));
+        }
         return result;
     }
     if (request.method() == http::verb::get && target == "/api/v1/sources/status")
@@ -2139,6 +2325,24 @@ HttpResponse handle_request(const HttpRequest &request, SceneController &control
         return system_capabilities_response(version, runtime_status);
     if (request.method() == http::verb::get && target == "/api/v1/system/processes")
         return process_diagnostics_response(version, runtime_status);
+    if (target == "/api/v2/audio/mixer" || target.starts_with("/api/v2/audio/mixer?")) {
+        if (request.method() != http::verb::get) {
+            HttpResponse result = response(http::status::method_not_allowed, version,
+                                           error_body("method_not_allowed", "use GET"));
+            result.set(http::field::allow, "GET");
+            return result;
+        }
+        HttpResponse result = audio_mixer_response(version, controller, target);
+        if (result.result() == http::status::ok) {
+            std::string event = result.body();
+            if (!event.empty() && event.front() == '{')
+                event.replace(0, 1, "{\"type\":\"audio.meters\",\"timestamp\":" +
+                    std::to_string(std::chrono::duration_cast<std::chrono::milliseconds>(
+                        std::chrono::system_clock::now().time_since_epoch()).count()) + ",");
+            hub.broadcast(event);
+        }
+        return result;
+    }
 
     if (target == "/api/v1/nvr" || target.starts_with("/api/v1/nvr/")) {
         if ((request.method() == http::verb::put || request.method() == http::verb::post ||

@@ -6,6 +6,7 @@ import { clearPrivateRuntimeState, loadMonitorView, saveMonitorView } from './lo
 import { observeTileVisibility, shouldRunPlayback } from './mediaLifecycle';
 import { countRenderedFrames, formatTelemetry, sampleConnectionTelemetry, sampleElementTelemetry, unavailableTelemetry, type MediaTelemetry } from './mediaTelemetry';
 import { applyAutomaticLayout, defaultMonitorView, evaluatePromotion, nextRotationWindow, normalizeMonitorView, selectLowPowerProfile, validDetectionSignal, type DetectionSignal, type MonitorView, type TelemetryOverlayConfig } from './monitorView';
+import { openIssueCenter, reportLocalIssue, resolveLocalIssue } from './issueRuntime';
 import type { AnalyticsPolicy, CameraRecord, CameraSceneSource, SceneDocument, SceneItem, SceneSource, SourcePlaybackCapability } from './types';
 import { connectSource, type ProgramConnection, type ProgramConnectionState } from './whep';
 
@@ -89,14 +90,10 @@ function DirectTile({ item, source, capability, mixer }: {
         })}
       />
       <span className="direct-tile-state"><i aria-hidden="true" />{labels[state]}</span>
-      {capability && capability.strategy !== 'unknown' && (
-        <div className={`delivery-diagnostic cost-${capability.serverCost ?? 'low'}`}>
-          <strong>{capability.deliveryMode === 'hybrid' ? 'HYBRID' : 'DIRECT RELAY'}</strong>
-          <span>Video: {capability.videoDelivery ?? 'copy'} · Audio: {capability.audioDelivery ?? 'copy'}</span>
-          <span>Server decode: {capability.serverVideoDecode ? 'ON' : 'OFF'} · encode: {capability.encoder ?? 'none'}</span>
-          {capability.reason && <span>Reason: {capability.reason}</span>}
-        </div>
-      )}
+      {capability && capability.strategy !== 'unknown' && <button
+        className={`tile-status-button cost-${capability.serverCost ?? 'low'}`} type="button"
+        title={`${capability.deliveryMode ?? 'direct'} · ${capability.reason ?? '媒体链正常'}`}
+        onClick={() => openIssueCenter(source.id)} aria-label={`${source.name} 媒体链详情`}>ⓘ</button>}
       {source.kind === 'browser'
         ? <span className="direct-tile-name">{source.name} · 仅服务端合成</span>
         : state !== 'live' && <span className="direct-tile-name">{source.name}</span>}
@@ -266,31 +263,59 @@ function BrowserCameraTile({ item, source, mixer, telemetry, lowPower, documentV
 
   const geometry = useMemo(() => videoGeometry(item, dimensions.width, dimensions.height), [item, dimensions]);
   const trueDirect = plan?.topology === 'true-direct';
+  useEffect(() => {
+    const code = 'MEDIA_TOPOLOGY_FALLBACK';
+    if (plan && !trueDirect) reportLocalIssue({
+      code, scopeKind: 'media-plan', scopeId: source.id, component: 'browser-media',
+      summary: `${source.name} 正在使用服务端媒体链`,
+      explanation: '浏览器真直连资格或首帧检查未通过，当前画面经 Docker Gateway/Hybrid 传输。',
+      recommendedActions: ['检查 Profile 的 HTTPS、CORS 与浏览器直连资格。', '在设备预览中重新执行媒体探测。'],
+      technicalDetails: { topology: plan.topology, reason: plan.fallbackReason ?? 'not_true_direct', transportMode: transport },
+    });
+    else if (trueDirect) resolveLocalIssue(code, source.id, 'browser-media');
+  }, [plan, source.id, source.name, transport, trueDirect]);
+  useEffect(() => {
+    window.dispatchEvent(new CustomEvent('webobs:media-topology', { detail: {
+      sourceId: source.id,
+      topology: plan?.topology ?? 'checking',
+      executionOwner: plan?.executionOwner ?? 'unknown',
+      mediaTransport: plan?.mediaTransport ?? transport,
+      decoder: plan?.decoder ?? 'unknown',
+      liveServerMediaExpected: plan?.liveServerMediaExpected ?? null,
+      fallbackReason: plan?.fallbackReason ?? '',
+    } }));
+  }, [plan, source.id, transport]);
+  useEffect(() => {
+    const code = 'LOW_POWER_TARGET_UNMET';
+    if (lowPower && !lowPower.targetMet) reportLocalIssue({
+      code, scopeId: source.id, component: 'low-power', summary: `${source.name} 未达到低功耗帧率目标`,
+      explanation: 'Camera Registry 中没有符合目标帧率的低成本 Profile；系统不会为此启动服务端转码。',
+      recommendedActions: ['为设备增加低帧率子码流或 Snapshot Profile。'],
+      technicalDetails: { reason: 'no_low_frame_rate_profile' },
+    });
+    else resolveLocalIssue(code, source.id, 'low-power');
+  }, [lowPower, source.id, source.name]);
   return <div ref={tileRef} className={`direct-tile ${state}`} data-source-id={source.id}
     data-playback-suspended={playbackEnabled ? 'false' : 'true'}>
     <video ref={videoRef} autoPlay muted playsInline style={{ ...geometry, display: transport === 'mjpeg' ? 'none' : undefined }}
       aria-label={`${source.name} 浏览器媒体画面`} onLoadedMetadata={(event) => setDimensions({ width: event.currentTarget.videoWidth, height: event.currentTarget.videoHeight })} />
     <img ref={imageRef} alt={`${source.name} MJPEG 画面`} style={{ ...geometry, display: transport === 'mjpeg' ? undefined : 'none' }} />
     <span className="direct-tile-state"><i aria-hidden="true" />{labels[state]}</span>
-    <div className={`delivery-diagnostic cost-${trueDirect ? 'low' : 'medium'}`}>
-      <strong>{trueDirect ? 'TRUE DIRECT' : 'GATEWAY / HYBRID'}</strong>
-      <span>媒体：{trueDirect ? 'Camera → Browser' : 'Camera → Docker → Browser'}</span>
-      <span>Protocol: {transport.toUpperCase()} · Owner: {plan?.executionOwner ?? 'checking'}</span>
-      <span>Decoder: {plan?.decoder ?? 'checking'} · Renderer: {plan?.renderer ?? 'browser'} · Encoder: {plan?.encoder ?? 'checking'}</span>
-      <span>Server media: {plan?.liveServerMediaExpected ? 'EXPECTED' : 'OFF'}</span>
-      {plan?.fallbackReason && <span>Reason: {plan.fallbackReason}</span>}
-    </div>
+    <button className={`tile-status-button ${trueDirect ? 'cost-low' : 'cost-medium'}`} type="button"
+      aria-label={`${source.name} 媒体路径详情`} onClick={() => openIssueCenter(source.id)}
+      title={trueDirect ? `Camera → Browser · ${transport.toUpperCase()}` : `Camera → Docker → Browser · ${plan?.fallbackReason ?? '检查中'}`}>ⓘ</button>
     {state !== 'live' && <span className="direct-tile-name">{source.name}</span>}
-    {lowPower && !lowPower.targetMet && <span className="low-power-unmet">Low-power target: {lowPower.targetFps} FPS<br />Actual source: {lowPower.actualFps || '—'} FPS<br />Target unmet: no low-frame-rate profile</span>}
+    {lowPower && !lowPower.targetMet && <button className="low-power-status" type="button"
+      onClick={() => openIssueCenter(source.id)} title={`目标 ${lowPower.targetFps} FPS，实际 ${lowPower.actualFps || '—'} FPS`}>省电目标未达</button>}
     <TelemetryOverlay config={telemetry} transport={transport} video={videoRef.current} connection={activeConnection} />
   </div>;
 }
 
-export default function DirectPreview({ scene }: { scene: SceneDocument }) {
+export default function DirectPreview({ scene, compact = false }: { scene: SceneDocument; compact?: boolean }) {
   const [capabilities, setCapabilities] = useState<SourcePlaybackCapability[]>([]);
   const [available, setAvailable] = useState(true);
   const [mixer, setMixer] = useState<DirectAudioMixer | null>(null);
-  const [audio, setAudio] = useState<DirectAudioSnapshot>({ state: 'disabled', inputCount: 0, level: 0 });
+  const [audio, setAudio] = useState<DirectAudioSnapshot>({ state: 'disabled', inputCount: 0, level: 0, sources: [] });
   const [monitorView, setMonitorView] = useState<MonitorView>(defaultMonitorView);
   const [monitorLoaded, setMonitorLoaded] = useState(false);
   const [cameras, setCameras] = useState<CameraRecord[]>([]);
@@ -307,6 +332,17 @@ export default function DirectPreview({ scene }: { scene: SceneDocument }) {
     setMixer(nextMixer);
     return () => nextMixer.destroy();
   }, []);
+
+  useEffect(() => {
+    const enable = () => void mixer?.enable();
+    const disable = () => void mixer?.disable();
+    window.addEventListener('webobs:audio-monitor-enable', enable);
+    window.addEventListener('webobs:audio-monitor-disable', disable);
+    return () => {
+      window.removeEventListener('webobs:audio-monitor-enable', enable);
+      window.removeEventListener('webobs:audio-monitor-disable', disable);
+    };
+  }, [mixer]);
 
   useEffect(() => {
     const media = window.matchMedia('(orientation: portrait)');
@@ -341,6 +377,7 @@ export default function DirectPreview({ scene }: { scene: SceneDocument }) {
   }, [scene.revision]);
 
   useEffect(() => mixer?.configure(scene.sources), [mixer, scene.sources]);
+  useEffect(() => mixer?.setMasterVolume(monitorView.localMonitorVolume), [mixer, monitorView.localMonitorVolume]);
 
   useEffect(() => {
     const controller = new AbortController();
@@ -435,7 +472,7 @@ export default function DirectPreview({ scene }: { scene: SceneDocument }) {
 
   return (
     <div className="direct-preview-shell">
-      <div
+      {!compact && <><div
         className="direct-audio-control"
         data-audio-enabled={audioEnabled ? 'true' : 'false'}
         data-audio-state={audio.state}
@@ -447,6 +484,8 @@ export default function DirectPreview({ scene }: { scene: SceneDocument }) {
           aria-pressed={audioEnabled}
           onClick={() => { if (audioEnabled) void mixer?.disable(); else void mixer?.enable(); }}
         >{audioEnabled ? '关闭声音' : '启用声音'}</button>
+        <label>本地音量 <input aria-label="本地监听主音量" type="range" min="0" max="1" step="0.01"
+          value={monitorView.localMonitorVolume} onChange={(event) => setMonitorView((value) => ({ ...value, localMonitorVolume: Number(event.target.value) }))} /></label>
         <span>{audio.state === 'blocked'
           ? '浏览器阻止了播放，请再次点击。'
           : `Web Audio 混音 · ${audio.inputCount} 路 · 默认静音，点击后启用`}</span>
@@ -475,7 +514,7 @@ export default function DirectPreview({ scene }: { scene: SceneDocument }) {
         <label><input type="checkbox" checked={monitorView.lowPower.enabled} onChange={(event) => setMonitorView((value) => ({ ...value, lowPower: { ...value.lowPower, enabled: event.target.checked } }))} />低功耗</label>
         <label>目标 FPS<input list="low-power-fps" type="number" min="0.5" max="30" step="0.5" value={monitorView.lowPower.targetFps} onChange={(event) => setMonitorView((value) => normalizeMonitorView({ ...value, lowPower: { ...value.lowPower, targetFps: Number(event.target.value) } }, scene.items.length))} /><datalist id="low-power-fps"><option value="0.5" /><option value="1" /><option value="2" /><option value="5" /></datalist></label>
         {monitorView.lowPower.enabled && monitorView.lowPower.targetFps > 5 && <small className="power-warning">超过 5 FPS，节能效果可能有限。</small>}
-      </div>
+      </div></>}
       <div
         className="direct-preview"
         data-direct-available={available ? 'true' : 'false'}

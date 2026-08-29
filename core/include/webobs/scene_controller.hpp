@@ -46,6 +46,7 @@ public:
     [[nodiscard]] SceneSnapshot snapshot() const;
     [[nodiscard]] SceneDocument private_document_snapshot() const;
     [[nodiscard]] SourceHealthSnapshot source_health_snapshot() const;
+    [[nodiscard]] SourceAudioMeterSnapshot audio_meter_snapshot();
     SceneUpdateResult replace(std::string_view candidate_json,
                               std::optional<std::uint64_t> expected_revision,
                               std::string_view transition_kind = "cut", int duration_ms = 0);

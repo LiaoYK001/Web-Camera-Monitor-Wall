@@ -36,7 +36,7 @@ export interface LowPowerConfig {
 }
 
 export interface MonitorView {
-  schemaVersion: 1;
+  schemaVersion: 2;
   mode: 'auto' | 'manual';
   largeCount: number;
   largeSourceIds: string[];
@@ -44,6 +44,8 @@ export interface MonitorView {
   rotation: RotationConfig;
   promotion: PromotionConfig;
   lowPower: LowPowerConfig;
+  panels: { detailsOpen: boolean; issueCenterExpanded: boolean };
+  localMonitorVolume: number;
 }
 
 export interface DetectionSignal {
@@ -71,7 +73,7 @@ export const defaultTelemetryOverlay = (): TelemetryOverlayConfig => ({
 });
 
 export const defaultMonitorView = (): MonitorView => ({
-  schemaVersion: 1,
+  schemaVersion: 2,
   mode: 'auto',
   largeCount: 0,
   largeSourceIds: [],
@@ -79,6 +81,8 @@ export const defaultMonitorView = (): MonitorView => ({
   rotation: { enabled: false, strategy: 'sequential', intervalSeconds: 30, pinnedSourceIds: [] },
   promotion: { allowEventPromotion: false, threshold: .6, holdSeconds: 15, cooldownSeconds: 30 },
   lowPower: { enabled: false, targetFps: 2 },
+  panels: { detailsOpen: false, issueCenterExpanded: false },
+  localMonitorVolume: 1,
 });
 
 const clamp = (value: number, minimum: number, maximum: number) => Math.min(maximum, Math.max(minimum, value));
@@ -89,8 +93,9 @@ export function normalizeMonitorView(value: Partial<MonitorView> | null | undefi
   const rotation = { ...defaults.rotation, ...(value?.rotation ?? {}) };
   const promotion = { ...defaults.promotion, ...(value?.promotion ?? {}) };
   const lowPower = { ...defaults.lowPower, ...(value?.lowPower ?? {}) };
+  const panels = { ...defaults.panels, ...(value?.panels ?? {}) };
   return {
-    schemaVersion: 1,
+    schemaVersion: 2,
     mode: value?.mode === 'manual' ? 'manual' : 'auto',
     largeCount: clamp(Math.trunc(value?.largeCount ?? 0), 0, clamp(sourceCount, 0, 16)),
     largeSourceIds: [...new Set(value?.largeSourceIds ?? [])].slice(0, 16),
@@ -119,6 +124,8 @@ export function normalizeMonitorView(value: Partial<MonitorView> | null | undefi
       cooldownSeconds: clamp(Math.trunc(promotion.cooldownSeconds), 0, 24 * 60 * 60),
     },
     lowPower: { ...lowPower, targetFps: clamp(Number(lowPower.targetFps), .5, 30) },
+    panels: { detailsOpen: Boolean(panels.detailsOpen), issueCenterExpanded: Boolean(panels.issueCenterExpanded) },
+    localMonitorVolume: clamp(Number(value?.localMonitorVolume ?? 1), 0, 1),
   };
 }
 

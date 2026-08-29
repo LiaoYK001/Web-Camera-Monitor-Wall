@@ -252,4 +252,71 @@ StudioUpdateResult StudioController::redo(std::optional<std::uint64_t> expected_
     return restore_history(true, expected_revision);
 }
 
+StudioUpdateResult StudioController::update_audio(std::string_view scene_id, std::string_view source_id,
+                                                  const AudioSourcePatch &patch,
+                                                  std::optional<std::uint64_t> expected_revision)
+{
+    std::lock_guard lock(mutex_);
+    if (!expected_revision)
+        return result_locked(StudioUpdateStatus::precondition_required, "If-Match revision is required");
+    if (*expected_revision != document_.revision)
+        return result_locked(StudioUpdateStatus::revision_conflict,
+                             "Studio revision does not match If-Match");
+    if (document_.revision >= static_cast<std::uint64_t>(std::numeric_limits<std::int64_t>::max()))
+        return result_locked(StudioUpdateStatus::revision_conflict, "Studio revision cannot be advanced");
+    StudioDocument candidate = document_;
+    const auto scene = std::find_if(candidate.scenes.begin(), candidate.scenes.end(),
+                                    [scene_id](const SceneDocument &value) { return value.id == scene_id; });
+    if (scene == candidate.scenes.end())
+        return result_locked(StudioUpdateStatus::invalid_document, "audio Scene was not found");
+    const auto source = std::find_if(scene->sources.begin(), scene->sources.end(),
+                                     [source_id](const SceneSource &value) { return value.id == source_id; });
+    if (source == scene->sources.end())
+        return result_locked(StudioUpdateStatus::invalid_document, "audio source was not found");
+    if (patch.muted) source->muted = *patch.muted;
+    if (patch.volume) source->volume = *patch.volume;
+    if (patch.monitoring) source->monitoring = *patch.monitoring;
+    if (patch.sync_offset_ms) source->sync_offset_ms = *patch.sync_offset_ms;
+    if (patch.audio_track) source->audio_track = *patch.audio_track;
+    ++candidate.revision;
+    if (const auto validation_error = validate_studio_document(candidate))
+        return result_locked(StudioUpdateStatus::invalid_document, *validation_error);
+    const SceneSerializeResult previous =
+        serialize_studio_json(document_, SceneJsonView::persistence, false);
+    if (!previous.ok())
+        return result_locked(StudioUpdateStatus::persistence_failed, previous.error);
+
+    const bool program_changed = scene_id == document_.program_scene_id;
+    SceneDocument previous_program;
+    std::uint64_t applied_revision = 0;
+    if (program_changed) {
+        StudioFlattenResult flattened = flatten_studio_scene(candidate, candidate.program_scene_id);
+        if (!flattened.ok())
+            return result_locked(StudioUpdateStatus::invalid_document, flattened.error);
+        previous_program = program_.private_document_snapshot();
+        flattened.document->revision = previous_program.revision;
+        const SceneSerializeResult encoded =
+            serialize_scene_json(*flattened.document, SceneJsonView::persistence, false);
+        if (!encoded.ok())
+            return result_locked(StudioUpdateStatus::invalid_document, encoded.error);
+        const SceneUpdateResult applied = program_.replace(encoded.json, previous_program.revision, "cut", 0);
+        if (!applied.ok())
+            return result_locked(StudioUpdateStatus::runtime_rejected, applied.error);
+        applied_revision = applied.revision;
+    }
+    if (const auto save_error = save_studio_file_atomic(file_, candidate)) {
+        if (program_changed) {
+            previous_program.revision = applied_revision;
+            const SceneSerializeResult rollback =
+                serialize_scene_json(previous_program, SceneJsonView::persistence, false);
+            if (rollback.ok())
+                (void)program_.replace(rollback.json, applied_revision, "cut", 0);
+        }
+        return result_locked(StudioUpdateStatus::persistence_failed, *save_error);
+    }
+    history_.push(previous.json);
+    document_ = std::move(candidate);
+    return result_locked(StudioUpdateStatus::success);
+}
+
 } // namespace webobs

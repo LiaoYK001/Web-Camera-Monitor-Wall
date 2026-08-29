@@ -2,6 +2,8 @@
 
 > Stable status / 稳定状态：v2-M1 through v2-M3 shipped in `v2.0.1`; v2-M4/M5 ship in `v2.1`. Native package qualification remains frozen / v2-M1 至 v2-M3 已随 `v2.0.1` 发布；v2-M4/M5 随 `v2.1` 发布，原生包验收仍冻结。
 
+`dev` adds the v2-M6 operations contracts described below. They are not stable-release claims until the v2.2 gate and immutable Tag pass / `dev` 已加入下述 v2-M6 运维契约；在 v2.2 门禁和不可移动 Tag 通过前，不构成稳定版声明。
+
 API v1 is unchanged: its `direct` value means Gateway Direct and Docker remains in the media path. API v2 adds device enrollment and a separately measured `true-direct` topology. All responses use bounded unique-field JSON, `Cache-Control: no-store` and credential-free errors.
 
 API v1 保持不变：其中 `direct` 仍表示 Docker 位于媒体链中的网关直通。API v2 增加设备配对，并把 `true-direct` 作为独立测量的拓扑。所有响应均为有界 JSON、禁止缓存，错误不包含凭据。
@@ -123,6 +125,34 @@ Live and archive are independent. An NVR `server-copy` plan may coexist with Tru
 `POST /api/v2/client/audit/batch` accepts at most 128 events per call and stores at most 8192 global recent rows. Events have exactly `sequence`, `type`, `outcome`, `cameraId`, and `createdAt`; duplicates are idempotent. Free text, endpoints, client addresses and credentials are not accepted.
 
 The PWA keeps at most 512 encrypted offline events and reconciles them in batches of 128. Revocation, Grant expiry, or logout atomically clears the audit queue together with identity, private snapshots, sync cursor and pending mutations; the static application shell remains cached.
+
+## Operations workspace / 运维工作区
+
+Camera Registry schema v2 keeps `Camera → Profile → Track` as the only source hierarchy. Public catalog documents expose stable IDs and sanitized display addresses; credentials, query secrets and private endpoints are never returned by the catalog API.
+
+```text
+GET   /api/v2/source-catalog
+GET   /api/v2/source-catalog/{cameraId}
+PATCH /api/v2/source-catalog/{cameraId}                  If-Match required
+POST  /api/v2/source-catalog/batch                       1..256 atomic patches
+POST  /api/v2/source-catalog/{cameraId}/probe             all Profiles, bounded
+POST  /api/v2/source-catalog/{cameraId}/profiles/{profileId}/probe
+GET   /api/v2/operations/issues
+POST  /api/v2/operations/issues/{issueId}/acknowledge
+GET   /api/v2/audio/mixer?sceneId=<id>&topology=direct|composite
+PATCH /api/v2/scenes/{sceneId}/audio/sources/{sourceId} If-Match required
+GET   /api/v2/settings
+GET   /api/v2/settings/schema
+PATCH /api/v2/settings                                  If-Match required
+```
+
+Catalog PATCH fields are bounded to device name/kind/enabled/group/tags/hardware decode and Profile enabled/transport/bitrate-cap/audio-expectation. A stale revision returns a conflict without a partial write. Disabling a device rejects new resolution immediately and closes its owned Gateway/Hybrid sessions at the C++ boundary. Probe concurrency is one per Camera and four globally, defaults to ten seconds, caps combined output at 1 MiB and records only allowlisted diagnostic fields.
+
+`OperationalIssue` is deduplicated by code, scope and component, bounded by the runtime retention policy, and never stores an endpoint, command line, raw response, PID, path or client address. `AUDIO_TRACK_MISSING` is created only when `audioExpectation=required`.
+
+Direct meters are produced locally by per-source Web Audio analysers. Composite polling lazily attaches libobs `obs_volmeter` objects and returns real RMS/Peak values in `-120..0 dBFS`; inactive meters detach after two seconds. Missing or inaccessible audio is `null`/`—`, never synthetic. Audio PATCH accepts only `muted`, `volume`, `monitoring`, `syncOffsetMs` and `audioTrack`, updates the shared Scene v5 value atomically and applies a changed Program source through libobs.
+
+`/api/v1/ws` clients may ignore the new `source.catalog.updated`, `source.status`, `operations.issue`, `operations.issue.resolved`, and `audio.meters` event types. Meter events contain only a timestamp, topology, stable source IDs and dBFS values; no audio sample, address or endpoint is included. The PWA continues to use bounded polling as a reconnect-safe fallback.
 
 ## Shared Scene boundary / 共享场景边界
 

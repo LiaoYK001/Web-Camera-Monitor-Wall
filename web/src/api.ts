@@ -1,4 +1,4 @@
-import type { AnalyticsPolicy, ApiErrorEnvelope, CameraDetection, CameraRecord, ClientCameraGrant, ClientEnrollment, DeviceOperation, EnrolledClient, EventRule, MonitorEvent, MotionZone, NvrExport, NvrStatus, NvrTimeline, OnvifEvent, OnvifPreset, PlaybackCapabilities, ProcessDiagnostics, SceneDocument, SceneEvent, StudioCapabilities, StudioDocument, SystemCapabilities } from './types';
+import type { AnalyticsPolicy, ApiErrorEnvelope, AudioMeterSnapshot, CameraDetection, CameraRecord, ClientCameraGrant, ClientEnrollment, DeviceOperation, EnrolledClient, EventRule, MonitorEvent, MotionZone, NvrExport, NvrStatus, NvrTimeline, OnvifEvent, OnvifPreset, OperationalIssue, PlaybackCapabilities, ProcessDiagnostics, RuntimeSettings, SceneDocument, SceneEvent, SourceCatalogItem, SourceCatalogPage, StudioCapabilities, StudioDocument, SystemCapabilities } from './types';
 
 export class ControlApiError extends Error {
   readonly status: number;
@@ -273,6 +273,46 @@ async function clientAdminRequest<T>(path: string, init?: RequestInit): Promise<
   if (!response.ok) throw await parseError(response);
   return (await response.json()) as T;
 }
+export interface SourceCatalogQuery {
+  page?: number; limit?: number; q?: string; group?: string; adapter?: string; health?: string;
+  enabled?: boolean; tag?: string; sort?: 'name' | 'status' | 'updated' | 'group'; direction?: 'asc' | 'desc';
+}
+export const fetchSourceCatalog = (query: SourceCatalogQuery = {}, signal?: AbortSignal) => {
+  const parameters = new URLSearchParams();
+  Object.entries(query).forEach(([key, value]) => { if (value !== undefined && value !== '') parameters.set(key, String(value)); });
+  return clientAdminRequest<SourceCatalogPage>(`/source-catalog${parameters.size ? `?${parameters}` : ''}`, { signal });
+};
+export const fetchSourceCatalogItem = (cameraId: string, signal?: AbortSignal) =>
+  clientAdminRequest<SourceCatalogItem>(`/source-catalog/${encodeURIComponent(cameraId)}`, { signal });
+export const patchSourceCatalogItem = (cameraId: string, revision: number, patch: Record<string, unknown>) =>
+  clientAdminRequest<SourceCatalogItem>(`/source-catalog/${encodeURIComponent(cameraId)}`, {
+    method: 'PATCH', headers: { 'Content-Type': 'application/json', 'If-Match': `"${revision}"` }, body: JSON.stringify(patch),
+  });
+export const batchSourceCatalog = (items: Array<Record<string, unknown>>) =>
+  clientAdminRequest<{ items: SourceCatalogItem[] }>('/source-catalog/batch', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ items }),
+  });
+export const probeSourceProfile = (cameraId: string, profileId: string) =>
+  clientAdminRequest<{ cameraId: string; profile: SourceCatalogItem['profiles'][number] }>(
+    `/source-catalog/${encodeURIComponent(cameraId)}/profiles/${encodeURIComponent(profileId)}/probe`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}',
+    });
+export const fetchOperationalIssues = (query = '', signal?: AbortSignal) =>
+  clientAdminRequest<{ issues: OperationalIssue[] }>(`/operations/issues${query ? `?${query}` : ''}`, { signal });
+export const acknowledgeOperationalIssue = (issueId: string) =>
+  clientAdminRequest<OperationalIssue>(`/operations/issues/${encodeURIComponent(issueId)}/acknowledge`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}',
+  });
+export const fetchRuntimeSettings = (signal?: AbortSignal) =>
+  clientAdminRequest<RuntimeSettings>('/settings', { signal });
+export const patchRuntimeSettings = (revision: number, patch: Record<string, unknown>) =>
+  clientAdminRequest<RuntimeSettings>('/settings', {
+    method: 'PATCH', headers: { 'Content-Type': 'application/json', 'If-Match': `"${revision}"` }, body: JSON.stringify(patch),
+  });
+export const fetchAudioMeters = (sceneId: string, topology: 'direct' | 'composite', signal?: AbortSignal) => {
+  const query = new URLSearchParams({ sceneId, topology });
+  return clientAdminRequest<AudioMeterSnapshot>(`/audio/mixer?${query}`, { signal });
+};
 export const fetchClientEnrollments = (signal?: AbortSignal) =>
   clientAdminRequest<{ enrollments: ClientEnrollment[] }>('/enrollments', { signal });
 export const fetchEnrolledClients = (signal?: AbortSignal) =>

@@ -73,6 +73,15 @@ class NativeReleaseWorkflowPolicyTests(unittest.TestCase):
                       self.image_text)
         self.assertIn('[[ "$remote_sha" == "$GITHUB_SHA" ]]', self.image_text)
 
+    def test_local_image_release_uses_v22_operations_metadata(self) -> None:
+        release_script = (ROOT / "scripts" / "release-image-local.sh").read_text(encoding="utf-8")
+        windows_release_script = (ROOT / "scripts" / "release-image-local.ps1").read_text(encoding="utf-8")
+        for text in (release_script, windows_release_script):
+            self.assertIn("2.2.0-dev", text)
+            self.assertIn("v2-M6-dev", text)
+            self.assertIn("v2-M6", text)
+            self.assertIn("v2-M5", text)
+
     def test_candidate_windows_packages_cannot_skip_authenticode(self) -> None:
         self.assertIn("if ($env:CERTIFICATE_SHA1 -notmatch '^[0-9A-Fa-f]{40}$')", self.text)
         self.assertIn("-SigningCertificateSha1 $env:CERTIFICATE_SHA1", self.text)

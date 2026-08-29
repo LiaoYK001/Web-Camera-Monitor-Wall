@@ -6,6 +6,7 @@ export interface DirectAudioSnapshot {
   state: DirectAudioState;
   inputCount: number;
   level: number;
+  sources: Array<{ sourceId: string; rmsDbfs: number | null; peakDbfs: number | null }>;
 }
 
 interface MixerEntry {
@@ -14,6 +15,9 @@ interface MixerEntry {
   sourceNode?: MediaStreamAudioSourceNode;
   delayNode?: DelayNode;
   gainNode?: GainNode;
+  analyserNode?: AnalyserNode;
+  rmsDbfs?: number;
+  peakDbfs?: number;
 }
 
 const clamp = (value: number, minimum: number, maximum: number) =>
@@ -29,6 +33,7 @@ export class DirectAudioMixer {
   private enabled = false;
   private blocked = false;
   private level = 0;
+  private masterVolume = 1;
 
   constructor(private readonly onSnapshot: (snapshot: DirectAudioSnapshot) => void) {
     this.emit();
@@ -55,6 +60,12 @@ export class DirectAudioMixer {
     this.applyConfiguration();
   }
 
+  setMasterVolume(value: number): void {
+    this.masterVolume = clamp(value, 0, 1);
+    if (this.master && this.context)
+      this.master.gain.setTargetAtTime(this.masterVolume, this.context.currentTime, .01);
+  }
+
   bindStream(sourceId: string, stream: MediaStream): void {
     const entry = this.entries.get(sourceId);
     if (!entry) return;
@@ -79,6 +90,7 @@ export class DirectAudioMixer {
     if (!this.context) {
       this.context = new AudioContext({ latencyHint: 'interactive', sampleRate: 48_000 });
       this.master = this.context.createGain();
+      this.master.gain.value = this.masterVolume;
       this.analyser = this.context.createAnalyser();
       this.analyser.fftSize = 2048;
       this.master.connect(this.analyser).connect(this.context.destination);
@@ -130,10 +142,13 @@ export class DirectAudioMixer {
     const sourceNode = this.context.createMediaStreamSource(entry.stream);
     const delayNode = this.context.createDelay(20.1);
     const gainNode = this.context.createGain();
-    sourceNode.connect(delayNode).connect(gainNode).connect(this.master);
+    const analyserNode = this.context.createAnalyser();
+    analyserNode.fftSize = 1024;
+    sourceNode.connect(analyserNode).connect(delayNode).connect(gainNode).connect(this.master);
     entry.sourceNode = sourceNode;
     entry.delayNode = delayNode;
     entry.gainNode = gainNode;
+    entry.analyserNode = analyserNode;
   }
 
   private detach(sourceId: string): void {
@@ -148,9 +163,13 @@ export class DirectAudioMixer {
     entry.sourceNode?.disconnect();
     entry.delayNode?.disconnect();
     entry.gainNode?.disconnect();
+    entry.analyserNode?.disconnect();
     entry.sourceNode = undefined;
     entry.delayNode = undefined;
     entry.gainNode = undefined;
+    entry.analyserNode = undefined;
+    entry.rmsDbfs = undefined;
+    entry.peakDbfs = undefined;
   }
 
   private applyConfiguration(): void {
@@ -180,6 +199,15 @@ export class DirectAudioMixer {
       let sum = 0;
       for (const sample of samples) sum += sample * sample;
       this.level = Math.sqrt(sum / samples.length);
+      for (const entry of this.entries.values()) {
+        if (!entry.analyserNode) { entry.rmsDbfs = undefined; entry.peakDbfs = undefined; continue; }
+        const sourceSamples = new Float32Array(entry.analyserNode.fftSize);
+        entry.analyserNode.getFloatTimeDomainData(sourceSamples);
+        let sourceSum = 0; let peak = 0;
+        for (const sample of sourceSamples) { sourceSum += sample * sample; peak = Math.max(peak, Math.abs(sample)); }
+        entry.rmsDbfs = amplitudeToDbfs(Math.sqrt(sourceSum / sourceSamples.length));
+        entry.peakDbfs = amplitudeToDbfs(peak);
+      }
       this.emit();
     }, 100);
   }
@@ -188,6 +216,7 @@ export class DirectAudioMixer {
     if (this.meterTimer !== undefined) window.clearInterval(this.meterTimer);
     this.meterTimer = undefined;
     this.level = 0;
+    for (const entry of this.entries.values()) { entry.rmsDbfs = undefined; entry.peakDbfs = undefined; }
   }
 
   private emit(): void {
@@ -196,6 +225,15 @@ export class DirectAudioMixer {
         : this.context?.state === 'running' ? 'running' : 'suspended';
     const inputCount = [...this.entries.values()]
       .filter((entry) => (entry.stream?.getAudioTracks().length ?? 0) > 0).length;
-    this.onSnapshot({ state, inputCount, level: this.level });
+    const snapshot: DirectAudioSnapshot = { state, inputCount, level: this.level,
+      sources: [...this.entries.entries()].map(([sourceId, entry]) => ({ sourceId,
+        rmsDbfs: entry.rmsDbfs ?? null, peakDbfs: entry.peakDbfs ?? null })) };
+    this.onSnapshot(snapshot);
+    window.dispatchEvent(new CustomEvent('webobs:direct-audio-meters', { detail: snapshot }));
   }
+}
+
+export function amplitudeToDbfs(value: number): number {
+  if (!Number.isFinite(value) || value <= 0.000001) return -120;
+  return Math.max(-120, Math.min(0, 20 * Math.log10(value)));
 }
