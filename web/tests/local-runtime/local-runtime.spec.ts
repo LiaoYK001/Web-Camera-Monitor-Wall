@@ -108,7 +108,9 @@ test('encrypts bounded browser state and atomically removes it at expiry', async
 });
 
 test('migrates the v1 IndexedDB schema and fails closed on material clock rollback', async ({ page }) => {
-  await page.goto('/');
+  // Use the inert same-origin fallback page so the mounted application cannot
+  // reopen schema v2 between deleteDatabase() and the deliberate v1 fixture.
+  await page.goto('/offline.html');
   const result = await page.evaluate(async () => {
     const runtime = await import('/src/localRuntime.ts');
     await runtime.clearAllLocalRuntimeData();
