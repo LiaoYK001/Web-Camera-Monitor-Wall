@@ -15,7 +15,7 @@ Release series use `v<major>.<minor>`; implementation milestones use `v<major>-M
 | `v1.2` (`v1.2.1` current patch / 当前修复版) | Final v1 closure / v1 最终收口 | Contains no `v1-M12`; patch releases fix the final v1 baseline without adding a milestone / 不新增 `v1-M12`；补丁版本只修复最终 v1 基线，不增加里程碑 |
 | `v2.0` (`v2.0.1` final patch / 最终修复版) | `v2-M1` … `v2-M3` | Complete and published / 已完成并发布 |
 | `v2.1` | `v2-M4` … `v2-M5` | Complete and published / 已完成并发布 |
-| `v2.2` | `v2-M6` | In development: operations workspace / 开发中：运维工作区 |
+| `v2.2` | `v2-M6` | Complete and published: operations workspace / 已完成并发布：运维工作区 |
 | `v2.3` | `v2-M7` | Planned: scale and resilience / 已规划：扩展与韧性 |
 | `v3.0` | `v3-M1` | Motion and scene-change analytics / 运动与大范围画面变化分析 |
 | `v3.1` | `v3-M2` | Person boxes and analytics scheduling / 人物框与分析资源调度 |
@@ -53,6 +53,6 @@ Recommended protection:
 - `sha-xxxxxxxxxxxx`: immutable source identity for either branch / 任一分支的不可变源码身份。
 - `@sha256:...`: production deployment lock / 生产部署锁定方式。
 
-Stable publication remains tag-driven. v2.0 publishes only the GHCR image containing the PWA, corresponding source, checksums, SBOM, provenance and attestation. The frozen native-client workflow has no tag trigger and requires an explicit confirmation phrase against the protected `dev` tip; it cannot create a Release or stable alias. Fedora and Windows browser gates must pass before image publication.
+Stable publication remains tag-driven. The v2 series publishes only the GHCR image containing the PWA, corresponding source, checksums, SBOM, provenance and attestation. The frozen native-client workflow has no tag trigger and requires an explicit confirmation phrase against the protected `dev` tip; it cannot create a Release or stable alias. WSL2 Linux and local Windows browser gates must pass before image publication.
 
-稳定发布继续由 Tag 驱动。v2.0 只发布包含 PWA 的 GHCR 镜像、对应源码、校验和、SBOM、provenance 与 attestation。冻结的原生客户端工作流没有 Tag 触发器，且要求对受保护 `dev` 精确 HEAD 输入显式确认短语；它不能创建 Release 或稳定别名。Fedora 与 Windows 浏览器门禁全部通过后才允许发布镜像。
+稳定发布继续由 Tag 驱动。v2 系列只发布包含 PWA 的 GHCR 镜像、对应源码、校验和、SBOM、provenance 与 attestation。冻结的原生客户端工作流没有 Tag 触发器，且要求对受保护 `dev` 精确 HEAD 输入显式确认短语；它不能创建 Release 或稳定别名。WSL2 Linux 与本机 Windows 浏览器门禁全部通过后才允许发布镜像。

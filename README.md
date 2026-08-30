@@ -1,6 +1,6 @@
 # Web Camera Monitor Wall
 
-一个基于 `libobs` 的无桌面 Web 监控墙、Gateway Direct WebRTC 网关、Local-first PWA 与 NVR 项目。当前稳定版本为 **v2.1**，完成 v2-M4/M5；详见 [v2.1 发布说明](docs/release-notes-v2.1.md)。最终 v1 基线仍为 **v1.2.1**；请勿部署最初的 `v1.2` 镜像，详见 [v1.2.1 发布说明](docs/release-notes-v1.2.1.md)。
+一个基于 `libobs` 的无桌面 Web 监控墙、Gateway Direct WebRTC 网关、Local-first PWA 与 NVR 项目。当前稳定版本为 **v2.2**，完成 v2-M6 运维工作区；详见 [v2.2 发布说明](docs/release-notes-v2.2.md)。最终 v1 基线仍为 **v1.2.1**；请勿部署最初的 `v1.2` 镜像，详见 [v1.2.1 发布说明](docs/release-notes-v1.2.1.md)。
 
 ```text
 RTSP camera -> libobs ffmpeg_source -> OBS scene -> H.264/AAC MP4
@@ -9,7 +9,7 @@ RTSP camera -> libobs ffmpeg_source -> OBS scene -> H.264/AAC MP4
 
 当前版本新增 SQLite WAL Camera Registry、受控 ONVIF PTZ/预置位/快照/事件/对讲，以及隔离的事件、移动检测区/隐私遮罩、Detector Provider、规则和有界通知发件箱。默认 Gateway Direct-only 运行完全不初始化 OBS 解码、合成或编码；只有录制或启用 Composite 才启动 libobs。VA-API 会分别报告设备、驱动、编解码能力和真实运行探测，失败时明确回退；Hybrid 只转码不兼容轨道。
 
-开发路线和门禁见 [ROADMAP.md](ROADMAP.md)。当前 API v1 的 `direct` 仍是媒体经过 Docker/MediaMTX 的“网关直通”；获批的 HTTPS WHEP/HLS/MJPEG 可 Camera→Browser，普通 RTSP 明确回退 Camera→Docker→Browser。HTTP 摄像机可由管理员逐 Profile 显式豁免并经 Docker Gateway/NVR 使用，但不会被误报为 HTTPS 浏览器真直连。v2-M4 提供加密增量同步，v2-M5 提供统计、1–16 M/S 布局与低功耗；`dev` 正在实现 v2-M6 的运维工作区、来源目录、问题中心、独立预览和逐源音频工作台。Qt/GStreamer/Android 继续冻结，不新增 EXE/APK 发布门禁。详见 [v2.2 运维工作区](docs/operations-workspace-v2.2.md)、[MonitorView 与分析交接](docs/monitor-view-and-analytics.md)、[Local-first PWA](docs/local-first-pwa.md)、[本机 Windows/WSL2 门禁](docs/local-platform-gates.md)、[API v2](docs/api-v2.md) 与 [真直连边界](docs/true-direct-v2.md)。
+开发路线和门禁见 [ROADMAP.md](ROADMAP.md)。当前 API v1 的 `direct` 仍是媒体经过 Docker/MediaMTX 的“网关直通”；获批的 HTTPS WHEP/HLS/MJPEG 可 Camera→Browser，普通 RTSP 明确回退 Camera→Docker→Browser。HTTP 摄像机可由管理员逐 Profile 显式豁免并经 Docker Gateway/NVR 使用，但不会被误报为 HTTPS 浏览器真直连。v2-M4 提供加密增量同步，v2-M5 提供统计、1–16 M/S 布局与低功耗；v2-M6 提供运维工作区、分层来源目录、问题中心、独立预览和逐源音频工作台。下一阶段 `v2-M7 / v2.3` 面向多节点、多存储卷与资源调度。Qt/GStreamer/Android 继续冻结，不新增 EXE/APK 发布门禁。详见 [v2.2 运维工作区](docs/operations-workspace-v2.2.md)、[MonitorView 与分析交接](docs/monitor-view-and-analytics.md)、[Local-first PWA](docs/local-first-pwa.md)、[本机 Windows/WSL2 门禁](docs/local-platform-gates.md)、[API v2](docs/api-v2.md) 与 [真直连边界](docs/true-direct-v2.md)。
 
 `WEBOBS_SCENE_FILE` 默认指向 `/config/webobs/scene.json`。空配置首次启动会创建空 Scene/Camera Registry，直接在 WebUI 的“设备管理”中添加设备；`WEBOBS_RTSP_URL` 只保留为一次性兼容 bootstrap，不再是部署必填项。Scene v5 只保存 Camera/Profile ID，凭据通过未提交 Git 的 Secret 引用解析。
 

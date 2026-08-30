@@ -1,6 +1,6 @@
 # v2.2 operations workspace / v2.2 运维工作区
 
-> Status / 状态：`dev`, v2-M6 implementation in progress / `dev` 分支，v2-M6 开发中。
+> Status / 状态：v2-M6 complete and published in `v2.2` / v2-M6 已完成并随 `v2.2` 发布。
 
 v2.2 reorganizes the Local-first PWA around daily monitoring operations. The stable v2.1 media boundary does not change: approved HTTPS WHEP/HLS/MJPEG may remain `Camera → Browser`; ordinary RTSP is explicitly `Camera → Docker → Browser`; Profile preview never starts Composite Program.
 
