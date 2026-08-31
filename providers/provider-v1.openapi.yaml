@@ -1,0 +1,39 @@
+openapi: 3.1.0
+info:
+  title: WebOBS External Provider API
+  version: 1.0.0
+servers:
+  - url: https://provider.invalid
+paths:
+  /webobs/provider/v1/tasks:
+    post:
+      summary: Submit one bounded external provider task
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: ./provider-v1.schema.json
+      responses:
+        "202":
+          description: Task accepted
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required: [taskId, state]
+                properties:
+                  taskId: {type: string}
+                  state: {const: accepted}
+        "400": {description: Invalid bounded task}
+        "401": {description: Provider authentication rejected}
+        "429": {description: Provider capacity exhausted}
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: opaque-ephemeral

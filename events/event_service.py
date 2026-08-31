@@ -343,6 +343,69 @@ def mqtt_remaining(value: int) -> bytes:
         if not value: return bytes(result)
 
 
+def mqtt_publications(configuration: dict, payload_json: str) -> list[tuple[str, bytes, bool]]:
+    """Build stable v1 MQTT and optional HA Discovery publications.
+
+    Only stable IDs and bounded event state leave the process. Source endpoints,
+    credentials, media URLs and arbitrary event properties are intentionally
+    excluded from the v1 integration schema.
+    """
+    explicit = configuration.get("topic", "")
+    raw = json.loads(payload_json)
+    event = raw.get("event", {}) if isinstance(raw, dict) else {}
+    if not isinstance(event, dict):
+        event = {}
+    camera_id = event.get("cameraId", "")
+    event_type = event.get("type", "")
+    if (not isinstance(camera_id, str) or not ID_RE.fullmatch(camera_id) or not isinstance(event_type, str) or
+            event_type not in EVENT_TYPES) and isinstance(explicit, str) and explicit and len(explicit) <= 256 and \
+            "#" not in explicit and "+" not in explicit:
+        return [(explicit, payload_json.encode(), False)]
+    if not isinstance(camera_id, str) or not ID_RE.fullmatch(camera_id) or not isinstance(event_type, str) or \
+            event_type not in EVENT_TYPES:
+        raise ValueError("MQTT event envelope is invalid")
+    prefix = configuration.get("topicPrefix", "webobs/v1")
+    if not isinstance(prefix, str) or not re.fullmatch(r"[A-Za-z0-9._/-]{1,128}", prefix) or \
+            "#" in prefix or "+" in prefix or ".." in prefix.split("/"):
+        raise ValueError("MQTT topic prefix is invalid")
+    topic = explicit or f"{prefix}/cameras/{camera_id}/events/{event_type}"
+    if not isinstance(topic, str) or not topic or len(topic) > 256 or "#" in topic or "+" in topic:
+        raise ValueError("MQTT topic is invalid")
+    public = {
+        "schemaVersion": "webobs.mqtt.v1", "eventId": str(event.get("id", ""))[:64],
+        "cameraId": camera_id, "type": event_type,
+        "occurredAt": int(event.get("occurredAt", 0)),
+        "severity": event.get("severity", "info") if event.get("severity") in {"info", "warning", "error"} else "info",
+        "active": True,
+    }
+    publications = [(topic, json.dumps(public, separators=(",", ":"), sort_keys=True).encode(), False)]
+    discovery = configuration.get("homeAssistantDiscoveryPrefix", "")
+    if discovery:
+        if not isinstance(discovery, str) or not re.fullmatch(r"[A-Za-z0-9._/-]{1,64}", discovery) or \
+                "#" in discovery or "+" in discovery:
+            raise ValueError("Home Assistant discovery prefix is invalid")
+        if event_type in {"motion", "scene-change"}:
+            object_id = f"webobs_{camera_id}_{event_type.replace('-', '_')}"
+            state_topic = f"{prefix}/cameras/{camera_id}/{event_type}"
+            config_topic = f"{discovery}/binary_sensor/{object_id}/config"
+            config = {
+                "name": f"WebOBS {camera_id} {event_type}", "unique_id": object_id,
+                "state_topic": state_topic, "payload_on": "ON", "payload_off": "OFF",
+                "off_delay": 30, "device_class": "motion" if event_type == "motion" else "problem",
+                "device": {"identifiers": [f"webobs_camera_{camera_id}"], "name": f"WebOBS {camera_id}"},
+                "origin": {"name": "Web Camera Monitor Wall", "sw_version": "2.3"},
+            }
+            publications.append((config_topic, json.dumps(config, separators=(",", ":"), sort_keys=True).encode(), True))
+            publications.append((state_topic, b"ON", False))
+    return publications
+
+
+def mqtt_publish(channel, topic: str, payload: bytes, retain: bool = False) -> None:
+    publish = mqtt_string(topic) + payload
+    packet_type = b"\x31" if retain else b"\x30"
+    channel.sendall(packet_type + mqtt_remaining(len(publish)) + publish)
+
+
 def deliver(row: sqlite3.Row) -> None:
     configuration, payload = secret(row["destination_ref"]), row["payload_json"].encode()
     if row["kind"] == "webhook":
@@ -363,20 +426,21 @@ def deliver(row: sqlite3.Row) -> None:
             response = http.client.HTTPResponse(channel); response.begin(); response.read(1024)
             if response.status < 200 or response.status >= 300: raise OSError("webhook rejected delivery")
     else:
-        host, port, topic = configuration.get("host", ""), configuration.get("port", 8883), configuration.get("topic", "")
-        if not isinstance(host, str) or not host or not isinstance(port, int) or not 1 <= port <= 65535 or not isinstance(topic, str) or not topic or "#" in topic or "+" in topic: raise ValueError("MQTT destination is invalid")
+        host, port = configuration.get("host", ""), configuration.get("port", 8883)
+        publications = mqtt_publications(configuration, row["payload_json"])
+        if not isinstance(host, str) or not host or not isinstance(port, int) or not 1 <= port <= 65535: raise ValueError("MQTT destination is invalid")
         username, password = configuration.get("username", ""), configuration.get("password", "")
         if (username or password) and (not isinstance(username, str) or not isinstance(password, str) or len(username) > 256 or len(password) > 4096): raise ValueError("MQTT credentials are invalid")
         flags = 2 | (0x80 if username else 0) | (0x40 if password else 0)
         client = mqtt_string("MQTT") + bytes([4, flags, 0, 10]) + mqtt_string("webobs-" + uuid.uuid4().hex[:12])
         if username: client += mqtt_string(username)
         if password: client += mqtt_string(password)
-        publish = mqtt_string(topic) + payload
         with tls_channel(host, port) as channel:
             channel.sendall(b"\x10" + mqtt_remaining(len(client)) + client)
             reply = channel.recv(4)
             if len(reply) < 4 or reply[3] != 0: raise OSError("MQTT connect rejected")
-            channel.sendall(b"\x30" + mqtt_remaining(len(publish)) + publish)
+            for topic, publication, retain in publications:
+                mqtt_publish(channel, topic, publication, retain)
 
 
 def process_outbox(limit: int = 16) -> dict:

@@ -304,3 +304,44 @@ export interface ProcessDiagnostics {
   processes: Array<{ name: string; instances: number; rssKiB: number; cpuPercent: number }>;
   rtspSessions: number; gpuBusyPercent: number; controlPlaneActive: boolean; engineActive: boolean; compositePublisherActive: boolean;
 }
+
+export type ClusterRole = 'admin' | 'operator' | 'viewer' | 'auditor' | 'exporter';
+export interface ClusterUser {
+  id: string; username: string; enabled: boolean; roles: ClusterRole[];
+  scopes: Array<{ kind: 'camera' | 'group'; id: string }>; revision: number;
+}
+export interface ClusterNode {
+  id: string; name: string; role: 'recorder' | 'worker'; status: string; version: string;
+  lastSeenAt: number; clockOffsetMs: number; certificateExpiresAt: number;
+  capabilities: Record<string, unknown>; revision: number;
+}
+export interface StorageVolume {
+  id: string; nodeId: string; label: string; tier: 'hot' | 'warm' | 'archive';
+  state: 'online' | 'degraded' | 'read-only' | 'evacuating' | 'offline';
+  capacityBytes: number; freeBytes: number; reserveBytes: number;
+  highWatermark: number; lowWatermark: number; readOnly: boolean; lastScrubAt: number; revision: number;
+}
+export interface ResourceCapacity {
+  nodes: Array<{ nodeId: string; cpuCores: number; memoryBytes: number; rated: boolean;
+    capabilities: Record<string, unknown>; reservations: Array<Record<string, unknown>>; updatedAt: number }>;
+  taskPriorities: Record<string, number>;
+  referenceTiers: Record<string, { streams: number; profile: string; taskType: string }>;
+  revision: number;
+}
+export interface RecordingPlacement {
+  cameraId: string; profileId: string; nodeId: string; generation: number; state: string;
+  leaseExpiresAt: number; isolationDeadline: number;
+}
+export interface ArchiveTarget {
+  id: string; name: string; endpointAuthority: string; bucket: string;
+  credentialsRef: string; enabled: boolean; revision: number;
+}
+export interface BackupJob {
+  id: string; state: string; targetId: string; sha256: string;
+  createdAt: number; completedAt: number; errorCode: string;
+}
+export interface ExternalProvider {
+  id: string; name: string; endpointAuthority: string;
+  taskTypes: Array<'external-nvr' | 'export' | 'detector'>;
+  maxConcurrent: number; enabled: boolean; revision: number;
+}

@@ -5,13 +5,59 @@ umask 077
 display="${DISPLAY:-:99}"
 configured_display="$display"
 screen="${WEBOBS_XVFB_SCREEN:-1920x1080x24}"
-mediamtx_enabled="${WEBOBS_WEBRTC_ENABLED:-true}"
+node_role="${WEBOBS_NODE_ROLE:-standalone}"
+case "$node_role" in
+    standalone)
+        role_mediamtx_default=true
+        role_nvr_default=false
+        role_registry_default=true
+        role_v2_default=true
+        role_events_default=true
+        role_cluster_default=true
+        ;;
+    controller)
+        role_mediamtx_default=true
+        role_nvr_default=false
+        role_registry_default=true
+        role_v2_default=true
+        role_events_default=true
+        role_cluster_default=true
+        ;;
+    recorder)
+        role_mediamtx_default=false
+        role_nvr_default=true
+        role_registry_default=false
+        role_v2_default=false
+        role_events_default=false
+        role_cluster_default=false
+        export WEBOBS_HTTP_PORT="${WEBOBS_HTTP_PORT:-0}"
+        ;;
+    worker)
+        role_mediamtx_default=false
+        role_nvr_default=false
+        role_registry_default=false
+        role_v2_default=false
+        role_events_default=false
+        role_cluster_default=false
+        export WEBOBS_HTTP_PORT="${WEBOBS_HTTP_PORT:-0}"
+        ;;
+    *) fail_message="WEBOBS_NODE_ROLE must be standalone, controller, recorder, or worker"; echo "$fail_message" >&2; exit 3 ;;
+esac
+export WEBOBS_NODE_ROLE="$node_role"
+mediamtx_enabled="${WEBOBS_WEBRTC_ENABLED:-$role_mediamtx_default}"
 mediamtx_config="${WEBOBS_MEDIAMTX_CONFIG:-/opt/webobs/etc/mediamtx.yml}"
 tls_enabled="${WEBOBS_TLS_ENABLED:-false}"
-nvr_enabled="${WEBOBS_NVR_ENABLED:-false}"
-camera_registry_enabled="${WEBOBS_CAMERA_REGISTRY_ENABLED:-true}"
-v2_client_control_enabled="${WEBOBS_V2_CLIENT_CONTROL_ENABLED:-$camera_registry_enabled}"
-events_enabled="${WEBOBS_EVENTS_ENABLED:-true}"
+nvr_enabled="${WEBOBS_NVR_ENABLED:-$role_nvr_default}"
+camera_registry_enabled="${WEBOBS_CAMERA_REGISTRY_ENABLED:-$role_registry_default}"
+v2_client_control_enabled="${WEBOBS_V2_CLIENT_CONTROL_ENABLED:-$role_v2_default}"
+events_enabled="${WEBOBS_EVENTS_ENABLED:-$role_events_default}"
+cluster_enabled="${WEBOBS_CLUSTER_ENABLED:-$role_cluster_default}"
+archive_enabled="${WEBOBS_ARCHIVE_ENABLED:-false}"
+encrypted_backup_enabled="${WEBOBS_ENCRYPTED_BACKUP_ENABLED:-false}"
+node_agent_enabled=false
+case "$node_role" in
+    recorder|worker) node_agent_enabled=true ;;
+esac
 caddy_config="${WEBOBS_CADDY_CONFIG:-/opt/webobs/etc/Caddyfile}"
 export WEBOBS_WEBRTC_ENABLED="$mediamtx_enabled"
 browser_cache="/config/obs/plugin_config/obs-browser"
@@ -103,6 +149,40 @@ case "$events_enabled" in
     true|false) ;;
     *) fail "WEBOBS_EVENTS_ENABLED must be true or false" ;;
 esac
+case "$cluster_enabled" in
+    true|false) ;;
+    *) fail "WEBOBS_CLUSTER_ENABLED must be true or false" ;;
+esac
+case "$archive_enabled" in
+    true|false) ;;
+    *) fail "WEBOBS_ARCHIVE_ENABLED must be true or false" ;;
+esac
+[ "$archive_enabled" = "false" ] || [ "$nvr_enabled" = "true" ] || \
+    fail "S3 archive requires WEBOBS_NVR_ENABLED=true"
+if [ "$archive_enabled" = "true" ]; then
+    [ -r "${WEBOBS_ARCHIVE_CONFIG:-/config/webobs/archive.json}" ] || fail "S3 archive configuration is not readable"
+fi
+case "$encrypted_backup_enabled" in
+    true|false) ;;
+    *) fail "WEBOBS_ENCRYPTED_BACKUP_ENABLED must be true or false" ;;
+esac
+if [ "$encrypted_backup_enabled" = "true" ]; then
+    [ -r "${WEBOBS_BACKUP_KEY_FILE:-/run/secrets/webobs_backup_key}" ] || fail "encrypted backup key is not readable"
+    mkdir -p "${WEBOBS_BACKUP_ROOT:-/backups}"
+fi
+if [ "$cluster_enabled" = "true" ]; then
+    WEBOBS_CLUSTER_INTERNAL_TOKEN="$(tr -d '-' < /proc/sys/kernel/random/uuid)$(tr -d '-' < /proc/sys/kernel/random/uuid)"
+    case "$WEBOBS_CLUSTER_INTERNAL_TOKEN" in
+        *[!0-9a-f]*|'') fail "could not create the cluster internal administrator token" ;;
+    esac
+    [ "${#WEBOBS_CLUSTER_INTERNAL_TOKEN}" -eq 64 ] || fail "could not create the cluster internal administrator token"
+    export WEBOBS_CLUSTER_INTERNAL_TOKEN
+fi
+if [ "$node_agent_enabled" = "true" ]; then
+    [ -n "${WEBOBS_CONTROLLER_URL:-}" ] || fail "recorder and worker roles require WEBOBS_CONTROLLER_URL"
+    [ -n "${WEBOBS_CLUSTER_CA_FILE:-}" ] && [ -r "${WEBOBS_CLUSTER_CA_FILE}" ] || \
+        fail "recorder and worker roles require a readable cluster CA file"
+fi
 
 case "$renderer_requested" in
     auto|hardware|software) ;;
@@ -227,6 +307,18 @@ v2_client_control_log_pipe=""
 events_pid=""
 events_filter_pid=""
 events_log_pipe=""
+cluster_pid=""
+cluster_filter_pid=""
+cluster_log_pipe=""
+node_agent_pid=""
+node_agent_filter_pid=""
+node_agent_log_pipe=""
+archive_pid=""
+archive_filter_pid=""
+archive_log_pipe=""
+encrypted_backup_pid=""
+encrypted_backup_filter_pid=""
+encrypted_backup_log_pipe=""
 webobsd_pid=""
 shutdown_requested=0
 
@@ -245,6 +337,10 @@ shutdown_children() {
     terminate_child "$camera_registry_pid"
     terminate_child "$v2_client_control_pid"
     terminate_child "$events_pid"
+    terminate_child "$cluster_pid"
+    terminate_child "$node_agent_pid"
+    terminate_child "$archive_pid"
+    terminate_child "$encrypted_backup_pid"
     terminate_child "$xvfb_pid"
     terminate_child "$weston_pid"
 }
@@ -456,6 +552,69 @@ if [ "$events_enabled" = "true" ]; then
     [ "$events_ready" -eq 1 ] || fail "Timed out waiting for Event service"
 fi
 
+if [ "$cluster_enabled" = "true" ]; then
+    cluster_log_pipe="/tmp/webobs-cluster-log.$$"
+    rm -f -- "$cluster_log_pipe"
+    mkfifo "$cluster_log_pipe"
+    /opt/obs/bin/webobs-log-filter < "$cluster_log_pipe" &
+    cluster_filter_pid=$!
+    python3 /opt/webobs/bin/webobs-cluster > "$cluster_log_pipe" 2>&1 &
+    cluster_pid=$!
+    cluster_ready=0
+    cluster_attempt=0
+    while [ "$cluster_attempt" -lt 50 ]; do
+        if curl --fail --silent --show-error http://127.0.0.1:8095/health >/dev/null; then
+            cluster_ready=1
+            break
+        fi
+        if ! kill -0 "$cluster_pid" 2>/dev/null; then
+            fail "Cluster service exited before becoming ready"
+        fi
+        cluster_attempt=$((cluster_attempt + 1))
+        sleep 0.1
+    done
+    [ "$cluster_ready" -eq 1 ] || fail "Timed out waiting for Cluster service"
+fi
+
+if [ "$node_agent_enabled" = "true" ]; then
+    node_agent_log_pipe="/tmp/webobs-node-agent-log.$$"
+    rm -f -- "$node_agent_log_pipe"
+    mkfifo "$node_agent_log_pipe"
+    /opt/obs/bin/webobs-log-filter < "$node_agent_log_pipe" &
+    node_agent_filter_pid=$!
+    python3 /opt/webobs/bin/webobs-node-agent > "$node_agent_log_pipe" 2>&1 &
+    node_agent_pid=$!
+    # Enrollment may await explicit administrator approval. Only require the
+    # process to survive initial validation here; health is represented by its
+    # atomic assignment state and controller node status.
+    sleep 0.2
+    kill -0 "$node_agent_pid" 2>/dev/null || fail "Node agent exited during startup"
+fi
+
+if [ "$archive_enabled" = "true" ]; then
+    archive_log_pipe="/tmp/webobs-archive-log.$$"
+    rm -f -- "$archive_log_pipe"
+    mkfifo "$archive_log_pipe"
+    /opt/obs/bin/webobs-log-filter < "$archive_log_pipe" &
+    archive_filter_pid=$!
+    python3 /opt/webobs/bin/webobs-s3-archive > "$archive_log_pipe" 2>&1 &
+    archive_pid=$!
+    sleep 0.2
+    kill -0 "$archive_pid" 2>/dev/null || fail "S3 archive service exited during startup"
+fi
+
+if [ "$encrypted_backup_enabled" = "true" ]; then
+    encrypted_backup_log_pipe="/tmp/webobs-encrypted-backup-log.$$"
+    rm -f -- "$encrypted_backup_log_pipe"
+    mkfifo "$encrypted_backup_log_pipe"
+    /opt/obs/bin/webobs-log-filter < "$encrypted_backup_log_pipe" &
+    encrypted_backup_filter_pid=$!
+    python3 /opt/webobs/bin/webobs-encrypted-backup schedule > "$encrypted_backup_log_pipe" 2>&1 &
+    encrypted_backup_pid=$!
+    sleep 0.2
+    kill -0 "$encrypted_backup_pid" 2>/dev/null || fail "Encrypted backup scheduler exited during startup"
+fi
+
 /opt/obs/bin/webobsd "$@" &
 webobsd_pid=$!
 
@@ -533,6 +692,42 @@ while kill -0 "$webobsd_pid" 2>/dev/null; do
         terminate_child "$webobsd_pid"
         break
     fi
+    if [ "$shutdown_requested" -eq 0 ] && [ -n "$cluster_pid" ] && ! kill -0 "$cluster_pid" 2>/dev/null; then
+        echo "Cluster service exited while webobsd was running" >&2
+        exit_status=3
+        terminate_child "$webobsd_pid"
+        break
+    fi
+    if [ "$shutdown_requested" -eq 0 ] && [ -n "$cluster_filter_pid" ] && ! kill -0 "$cluster_filter_pid" 2>/dev/null; then
+        echo "Cluster service log filter exited while webobsd was running" >&2
+        exit_status=3
+        terminate_child "$webobsd_pid"
+        break
+    fi
+    if [ "$shutdown_requested" -eq 0 ] && [ -n "$node_agent_pid" ] && ! kill -0 "$node_agent_pid" 2>/dev/null; then
+        echo "Node agent exited while webobsd was running" >&2
+        exit_status=3
+        terminate_child "$webobsd_pid"
+        break
+    fi
+    if [ "$shutdown_requested" -eq 0 ] && [ -n "$node_agent_filter_pid" ] && ! kill -0 "$node_agent_filter_pid" 2>/dev/null; then
+        echo "Node agent log filter exited while webobsd was running" >&2
+        exit_status=3
+        terminate_child "$webobsd_pid"
+        break
+    fi
+    if [ "$shutdown_requested" -eq 0 ] && [ -n "$archive_pid" ] && ! kill -0 "$archive_pid" 2>/dev/null; then
+        echo "S3 archive service exited while webobsd was running" >&2
+        exit_status=3
+        terminate_child "$webobsd_pid"
+        break
+    fi
+    if [ "$shutdown_requested" -eq 0 ] && [ -n "$encrypted_backup_pid" ] && ! kill -0 "$encrypted_backup_pid" 2>/dev/null; then
+        echo "Encrypted backup scheduler exited while webobsd was running" >&2
+        exit_status=3
+        terminate_child "$webobsd_pid"
+        break
+    fi
     if [ "$shutdown_requested" -eq 0 ] && [ -n "$xvfb_pid" ] && ! kill -0 "$xvfb_pid" 2>/dev/null; then
         echo "software X display exited while webobsd was running" >&2
         exit_status=3
@@ -593,6 +788,30 @@ fi
 if [ -n "$events_filter_pid" ]; then
     wait "$events_filter_pid" 2>/dev/null || true
 fi
+if [ -n "$cluster_pid" ]; then
+    wait "$cluster_pid" 2>/dev/null || true
+fi
+if [ -n "$cluster_filter_pid" ]; then
+    wait "$cluster_filter_pid" 2>/dev/null || true
+fi
+if [ -n "$node_agent_pid" ]; then
+    wait "$node_agent_pid" 2>/dev/null || true
+fi
+if [ -n "$node_agent_filter_pid" ]; then
+    wait "$node_agent_filter_pid" 2>/dev/null || true
+fi
+if [ -n "$archive_pid" ]; then
+    wait "$archive_pid" 2>/dev/null || true
+fi
+if [ -n "$archive_filter_pid" ]; then
+    wait "$archive_filter_pid" 2>/dev/null || true
+fi
+if [ -n "$encrypted_backup_pid" ]; then
+    wait "$encrypted_backup_pid" 2>/dev/null || true
+fi
+if [ -n "$encrypted_backup_filter_pid" ]; then
+    wait "$encrypted_backup_filter_pid" 2>/dev/null || true
+fi
 if [ -n "$mediamtx_log_pipe" ]; then
     rm -f -- "$mediamtx_log_pipe"
 fi
@@ -610,6 +829,18 @@ if [ -n "$v2_client_control_log_pipe" ]; then
 fi
 if [ -n "$events_log_pipe" ]; then
     rm -f -- "$events_log_pipe"
+fi
+if [ -n "$cluster_log_pipe" ]; then
+    rm -f -- "$cluster_log_pipe"
+fi
+if [ -n "$node_agent_log_pipe" ]; then
+    rm -f -- "$node_agent_log_pipe"
+fi
+if [ -n "$archive_log_pipe" ]; then
+    rm -f -- "$archive_log_pipe"
+fi
+if [ -n "$encrypted_backup_log_pipe" ]; then
+    rm -f -- "$encrypted_backup_log_pipe"
 fi
 if [ -n "$xvfb_pid" ]; then
     wait "$xvfb_pid" 2>/dev/null || true

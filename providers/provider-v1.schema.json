@@ -1,0 +1,35 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://webobs.invalid/schemas/provider-v1.json",
+  "title": "WebOBS External Provider v1 task",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schemaVersion", "taskId", "taskType", "subject", "expiresAt", "mediaGrant"],
+  "properties": {
+    "schemaVersion": {"const": 1},
+    "taskId": {"type": "string", "pattern": "^[A-Za-z0-9._-]{1,64}$"},
+    "taskType": {"enum": ["external-nvr", "export", "detector"]},
+    "subject": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["cameraId", "profileId"],
+      "properties": {
+        "cameraId": {"type": "string", "pattern": "^[A-Za-z0-9._-]{1,64}$"},
+        "profileId": {"type": "string", "pattern": "^[A-Za-z0-9._-]{1,64}$"},
+        "segmentId": {"type": "string", "pattern": "^[A-Za-z0-9._-]{1,64}$"}
+      }
+    },
+    "expiresAt": {"type": "integer", "minimum": 1},
+    "mediaGrant": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["token", "method", "path"],
+      "properties": {
+        "token": {"type": "string", "minLength": 32, "maxLength": 128, "pattern": "^[A-Za-z0-9_-]+$"},
+        "method": {"const": "GET"},
+        "path": {"type": "string", "pattern": "^/api/v2/provider-media/[A-Za-z0-9._-]{1,64}$"}
+      }
+    },
+    "parameters": {"type": "object", "maxProperties": 32}
+  }
+}

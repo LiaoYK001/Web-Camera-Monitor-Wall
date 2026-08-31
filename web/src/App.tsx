@@ -19,6 +19,7 @@ import WorkspaceShell, { areaFromHash, type ProductArea } from './WorkspaceShell
 import SourceCatalog from './SourceCatalog';
 import AudioWorkspace from './AudioWorkspace';
 import SettingsWorkspace from './SettingsWorkspace';
+import ClusterAdmin from './ClusterAdmin';
 import { loadOfflineStudio, queueOfflineAudit, saveLocalStudio, saveStudioSnapshot } from './localRuntime';
 import { queueStudioSync, synchronizeBrowserState } from './syncRuntime';
 import type { AudioMonitoring, CameraRecord, FilterKind, PlaybackMode, ScaleMode, SceneDocument, SceneFilter, SceneItem, SceneSource, StudioCapabilities, StudioDocument, Transport } from './types';
@@ -783,6 +784,9 @@ export default function App() {
 
   if (productArea === 'storage') {
     return <WorkspaceShell area={productArea} onNavigate={navigate} connection={connection}><section className="page-panel"><header className="page-heading"><div><span className="eyebrow">Storage</span><h1>存储</h1><p>录像状态、时间线与部署卷信息。</p></div><button type="button" onClick={() => navigate('archive')}>打开录像回放</button></header><SystemStatus onBack={() => navigate('monitor')} /></section></WorkspaceShell>;
+  }
+  if (productArea === 'admin') {
+    return <WorkspaceShell area={productArea} onNavigate={navigate} connection={connection}><ClusterAdmin /></WorkspaceShell>;
   }
 
   const selectedSource = draft.sources.find((source) => source.id === selectedSourceId) ?? null;

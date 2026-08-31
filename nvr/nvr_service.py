@@ -33,6 +33,7 @@ CAMERA_ID = re.compile(r"^[A-Za-z0-9._-]{1,64}$")
 SEGMENT_ID = re.compile(r"^[a-f0-9]{32}$")
 ARTIFACT_ID = re.compile(r"^[a-f0-9]{32}$")
 SAFE_ARTIFACT_NAME = re.compile(r"^[A-Za-z0-9._-]{1,160}$")
+VOLUME_ID = re.compile(r"^[a-z0-9][a-z0-9-]{0,62}$")
 POLICIES = {"continuous", "scheduled", "event", "off"}
 MODES = {"auto", "copy", "transcode"}
 STREAMS = {"main", "sub"}
@@ -250,11 +251,35 @@ class Catalog:
         path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
         self.connection = sqlite3.connect(path, check_same_thread=False, timeout=15)
         os.chmod(path, 0o600)
-        with self.connection:
-            self.connection.execute("PRAGMA journal_mode=WAL")
-            self.connection.execute("PRAGMA synchronous=FULL")
-            self.connection.execute("PRAGMA foreign_keys=ON")
-            self.connection.executescript("""
+        existing_tables = {row[0] for row in self.connection.execute(
+            "SELECT name FROM sqlite_master WHERE type='table'")}
+        existing_columns = ({row[1] for row in self.connection.execute("PRAGMA table_info(segments)")}
+                            if "segments" in existing_tables else set())
+        migrations = {
+            "node_id": "TEXT NOT NULL DEFAULT 'standalone'",
+            "profile_id": "TEXT NOT NULL DEFAULT 'main'",
+            "volume_id": "TEXT NOT NULL DEFAULT 'default'",
+            "sha256": "TEXT NOT NULL DEFAULT ''",
+            "assignment_generation": "INTEGER NOT NULL DEFAULT 0",
+            "archive_state": "TEXT NOT NULL DEFAULT 'local'",
+        }
+        backup_path = path.with_name(path.name + ".pre-v2.3.backup")
+        upgrading = bool(existing_columns and set(migrations) - existing_columns)
+        if upgrading and not backup_path.exists():
+            backup = sqlite3.connect(backup_path)
+            try:
+                self.connection.backup(backup)
+                if backup.execute("PRAGMA integrity_check").fetchone()[0] != "ok":
+                    raise ConfigError("pre-v2.3 catalog backup failed integrity validation")
+            finally:
+                backup.close()
+            os.chmod(backup_path, 0o600)
+        try:
+            with self.connection:
+                self.connection.execute("PRAGMA journal_mode=WAL")
+                self.connection.execute("PRAGMA synchronous=FULL")
+                self.connection.execute("PRAGMA foreign_keys=ON")
+                self.connection.executescript("""
                 CREATE TABLE IF NOT EXISTS cameras (
                     id TEXT PRIMARY KEY, name TEXT NOT NULL, policy TEXT NOT NULL,
                     stream TEXT NOT NULL, mode TEXT NOT NULL, updated_utc_ms INTEGER NOT NULL
@@ -276,7 +301,22 @@ class Catalog:
                     id TEXT PRIMARY KEY, audit_id TEXT NOT NULL, created_utc_ms INTEGER NOT NULL,
                     storage_key TEXT NOT NULL, manifest_key TEXT NOT NULL, mode TEXT NOT NULL
                 );
-            """)
+                """)
+                columns = {row[1] for row in self.connection.execute("PRAGMA table_info(segments)")}
+                for name, declaration in migrations.items():
+                    if name not in columns:
+                        self.connection.execute(f"ALTER TABLE segments ADD COLUMN {name} {declaration}")
+                self.connection.execute("PRAGMA user_version=2")
+                if self.connection.execute("PRAGMA integrity_check").fetchone()[0] != "ok":
+                    raise ConfigError("migrated catalog failed integrity validation")
+        except Exception:
+            self.connection.close()
+            if upgrading and backup_path.is_file():
+                shutil.copy2(backup_path, path)
+                for suffix in ("-wal", "-shm"):
+                    with contextlib.suppress(FileNotFoundError):
+                        pathlib.Path(str(path) + suffix).unlink()
+            raise
 
     def execute(self, sql: str, parameters: tuple[Any, ...] = ()) -> sqlite3.Cursor:
         with self.lock, self.connection:
@@ -300,14 +340,73 @@ class Catalog:
     def add_segment(self, segment: dict[str, Any]) -> None:
         self.execute(
             "INSERT OR IGNORE INTO segments(id,camera_id,start_utc_ms,end_utc_ms,duration_ms,storage_key,"
-            "kind,video_codec,audio_codec,size_bytes,integrity,locked,created_utc_ms) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)",
+            "kind,video_codec,audio_codec,size_bytes,integrity,locked,created_utc_ms,node_id,volume_id,sha256,"
+            "profile_id,assignment_generation,archive_state) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
             (
                 segment["id"], segment["cameraId"], segment["startUtcMs"], segment["endUtcMs"],
                 segment["durationMs"], segment["storageKey"], segment["kind"], segment["videoCodec"],
                 segment["audioCodec"], segment["sizeBytes"], segment["integrity"],
-                int(segment.get("locked", False)), utc_ms(),
+                int(segment.get("locked", False)), utc_ms(), segment.get("nodeId", "standalone"),
+                segment.get("volumeId", "default"), segment.get("sha256", ""),
+                segment.get("profileId", "main"),
+                segment.get("assignmentGeneration", 0), segment.get("archiveState", "local"),
             ),
         )
+
+
+class VolumeManager:
+    """Restricts NVR writes to the legacy root or pre-mounted volume IDs."""
+
+    def __init__(self, legacy_root: pathlib.Path, volumes_root: pathlib.Path | None):
+        self.legacy_root = legacy_root
+        self.volumes_root = volumes_root
+        self.roots: dict[str, pathlib.Path] = {"default": legacy_root}
+        if volumes_root is not None:
+            volumes_root.mkdir(mode=0o700, parents=True, exist_ok=True)
+            if volumes_root.is_symlink():
+                raise ConfigError("volumes root must not be a symbolic link")
+            for child in sorted(volumes_root.iterdir()):
+                if child.is_dir() and not child.is_symlink() and VOLUME_ID.fullmatch(child.name):
+                    self.roots[child.name] = child
+
+    def choose(self, reserve_bytes: int) -> tuple[str, pathlib.Path]:
+        candidates = []
+        for volume_id, root in self.roots.items():
+            if volume_id == "default" and len(self.roots) > 1:
+                continue
+            usage = shutil.disk_usage(root)
+            if os.access(root, os.W_OK) and usage.free > reserve_bytes:
+                candidates.append((usage.free - reserve_bytes, volume_id, root))
+        if not candidates:
+            raise RuntimeError("no writable recording volume has sufficient reserve")
+        _, volume_id, root = max(candidates, key=lambda item: (item[0], item[1]))
+        return volume_id, root
+
+    def path(self, volume_id: str, storage_key: str) -> pathlib.Path:
+        root = self.roots.get(volume_id)
+        if root is None or not storage_key or storage_key.startswith("/") or ".." in storage_key.split("/"):
+            raise RuntimeError("segment location is invalid")
+        candidate = (root / storage_key).resolve()
+        resolved_root = root.resolve()
+        if candidate != resolved_root and resolved_root not in candidate.parents:
+            raise RuntimeError("segment escaped its recording volume")
+        return candidate
+
+    def inventories(self) -> list[dict[str, Any]]:
+        result = []
+        for volume_id, root in sorted(self.roots.items()):
+            usage = shutil.disk_usage(root)
+            result.append({"id": volume_id, "capacityBytes": usage.total, "freeBytes": usage.free,
+                           "readOnly": not os.access(root, os.W_OK)})
+        return result
+
+
+def file_sha256(path: pathlib.Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as source:
+        while chunk := source.read(1024 * 1024):
+            digest.update(chunk)
+    return digest.hexdigest()
 
 
 @dataclass
@@ -336,6 +435,15 @@ class NvrService:
         self.config_path = config_path
         self.storage_root = storage_root
         self.catalog = Catalog(storage_root / "catalog.sqlite3")
+        configured_volumes = os.environ.get("WEBOBS_NVR_VOLUMES_ROOT", "")
+        volumes_root = pathlib.Path(configured_volumes) if configured_volumes else None
+        if volumes_root is not None and not volumes_root.is_absolute():
+            raise ConfigError("WEBOBS_NVR_VOLUMES_ROOT must be absolute")
+        self.volumes = VolumeManager(storage_root, volumes_root)
+        self.node_role = os.environ.get("WEBOBS_NODE_ROLE", "standalone")
+        self.node_id = os.environ.get("WEBOBS_NODE_ID", "standalone")
+        self.assignment_path = pathlib.Path(os.environ.get(
+            "WEBOBS_NODE_ASSIGNMENTS_FILE", "/config/webobs/node/assignments.json"))
         self.config_lock = threading.RLock()
         self.config = self._load_or_default()
         self.catalog.sync_cameras(self.config)
@@ -443,6 +551,40 @@ class NvrService:
         with self.config_lock:
             return next((dict(camera) for camera in self.config["cameras"] if camera["id"] == camera_id), None)
 
+    def assignment_generation(self, camera: dict[str, Any]) -> int | None:
+        if self.node_role != "recorder":
+            return 0
+        try:
+            value = private_json(self.assignment_path)
+            node_id = value.get("nodeId", "")
+            if self.node_id != "standalone" and node_id != self.node_id:
+                return None
+            registry_camera = camera.get("cameraId") or camera["id"]
+            profile = camera.get("subProfileId") if camera["stream"] == "sub" else camera.get("mainProfileId")
+            profile = profile or camera["stream"]
+            now = int(time.time())
+            for assignment in value.get("assignments", []):
+                if assignment.get("cameraId") == registry_camera and assignment.get("profileId") == profile and \
+                        assignment.get("state") == "active" and assignment.get("isolationDeadline", 0) > now and \
+                        isinstance(assignment.get("generation"), int) and assignment["generation"] > 0:
+                    return assignment["generation"]
+        except (OSError, ValueError, TypeError, json.JSONDecodeError, ConfigError):
+            pass
+        return None
+
+    @staticmethod
+    def profile_id(camera: dict[str, Any]) -> str:
+        value = camera.get("subProfileId") if camera["stream"] == "sub" else camera.get("mainProfileId")
+        return value or camera["stream"]
+
+    def current_node_id(self) -> str:
+        if self.node_role == "recorder":
+            with contextlib.suppress(OSError, ValueError, TypeError, json.JSONDecodeError, ConfigError):
+                value = private_json(self.assignment_path).get("nodeId", "")
+                if isinstance(value, str) and re.fullmatch(r"[a-f0-9]{32}", value):
+                    return value
+        return self.node_id
+
     def _worker_loop(self, camera_id: str, worker_stop: threading.Event, state: WorkerState) -> None:
         while not self.stop_event.is_set() and not worker_stop.is_set():
             camera = self.camera(camera_id)
@@ -450,6 +592,9 @@ class NvrService:
                 return
             now = dt.datetime.now(dt.timezone.utc)
             active = schedule_active(camera, now)
+            assignment_generation = self.assignment_generation(camera)
+            if assignment_generation is None:
+                active = False
             kind = "continuous"
             ring = False
             if camera["policy"] == "event":
@@ -462,7 +607,8 @@ class NvrService:
                 continue
             state.state = "recording"
             try:
-                segment = self._capture_segment(camera, kind, state, worker_stop, ring)
+                segment = self._capture_segment(camera, kind, state, worker_stop, ring,
+                                                assignment_generation or 0)
                 if segment and not ring:
                     self.catalog.add_segment(segment)
                     state.segments += 1
@@ -493,7 +639,8 @@ class NvrService:
         return json.loads(completed.stdout)
 
     def _capture_segment(self, camera: dict[str, Any], kind: str, state: WorkerState,
-                         worker_stop: threading.Event, ring: bool) -> dict[str, Any] | None:
+                         worker_stop: threading.Event, ring: bool,
+                         assignment_generation: int = 0) -> dict[str, Any] | None:
         source_url = resolve_registry_source(camera) if camera.get("cameraId") else (
             camera["subUrl"] if camera["stream"] == "sub" else camera["mainUrl"]
         )
@@ -503,8 +650,11 @@ class NvrService:
         timestamp = dt.datetime.fromtimestamp(start_utc / 1000, dt.timezone.utc)
         if ring:
             directory = self.ring_root / camera["id"]
+            volume_id = "default"
+            volume_root = self.storage_root
         else:
-            directory = self.storage_root / camera["id"] / timestamp.strftime("%Y/%m/%d")
+            volume_id, volume_root = self.volumes.choose(self.config["minFreeBytes"])
+            directory = volume_root / camera["id"] / timestamp.strftime("%Y/%m/%d")
         directory.mkdir(mode=0o700, parents=True, exist_ok=True)
         final = directory / f"{timestamp.strftime('%Y%m%dT%H%M%S.%fZ')}-{segment_id}.mp4"
         partial = directory / f".{final.name}.partial"
@@ -550,7 +700,7 @@ class NvrService:
                 duration_ms = max(1, int(float(reported) * 1000))
         os.replace(partial, final)
         state.write_latency_ms = int((time.monotonic_ns() - start_monotonic) // 1_000_000)
-        storage_key = final.relative_to(self.storage_root).as_posix()
+        storage_key = final.relative_to(volume_root).as_posix()
         return {
             "id": segment_id, "cameraId": camera["id"], "startUtcMs": start_utc,
             "endUtcMs": start_utc + duration_ms, "durationMs": duration_ms,
@@ -558,6 +708,9 @@ class NvrService:
             "videoCodec": next((entry.get("codec_name", "") for entry in output_streams if entry.get("codec_type") == "video"), ""),
             "audioCodec": next((entry.get("codec_name", "") for entry in output_streams if entry.get("codec_type") == "audio"), ""),
             "sizeBytes": final.stat().st_size, "integrity": "verified", "locked": False,
+            "nodeId": self.current_node_id(), "volumeId": volume_id, "sha256": file_sha256(final),
+            "profileId": self.profile_id(camera),
+            "assignmentGeneration": assignment_generation, "archiveState": "local",
         }
 
     def _trim_ring(self, camera: dict[str, Any]) -> None:
@@ -589,7 +742,8 @@ class NvrService:
                 start = int(path.stat().st_mtime * 1000)
                 media = self._probe(str(path))
                 duration = max(1, int(float(media.get("format", {}).get("duration", 0)) * 1000))
-                target_dir = self.storage_root / camera["id"] / dt.datetime.fromtimestamp(
+                volume_id, volume_root = self.volumes.choose(self.config["minFreeBytes"])
+                target_dir = volume_root / camera["id"] / dt.datetime.fromtimestamp(
                     start / 1000, dt.timezone.utc).strftime("%Y/%m/%d")
                 target_dir.mkdir(mode=0o700, parents=True, exist_ok=True)
                 target = target_dir / path.name
@@ -598,10 +752,13 @@ class NvrService:
                 self.catalog.add_segment({
                     "id": segment_id, "cameraId": camera["id"], "startUtcMs": start,
                     "endUtcMs": start + duration, "durationMs": duration,
-                    "storageKey": target.relative_to(self.storage_root).as_posix(), "kind": "pre-event",
+                    "storageKey": target.relative_to(volume_root).as_posix(), "kind": "pre-event",
                     "videoCodec": next((entry.get("codec_name", "") for entry in streams if entry.get("codec_type") == "video"), ""),
                     "audioCodec": next((entry.get("codec_name", "") for entry in streams if entry.get("codec_type") == "audio"), ""),
                     "sizeBytes": target.stat().st_size, "integrity": "verified", "locked": False,
+                    "nodeId": self.current_node_id(), "volumeId": volume_id, "sha256": file_sha256(target),
+                    "profileId": self.profile_id(camera),
+                    "assignmentGeneration": self.assignment_generation(camera) or 0, "archiveState": "local",
                 })
             except Exception:
                 self.stats.quarantined += 1
@@ -610,64 +767,76 @@ class NvrService:
                     os.replace(path, target)
 
     def reconcile(self) -> None:
-        known = {row["storage_key"] for row in self.catalog.query("SELECT storage_key FROM segments")}
-        for partial in self.storage_root.rglob("*.partial"):
-            if self.quarantine_root in partial.parents:
-                continue
+        known = {(row["volume_id"], row["storage_key"]) for row in self.catalog.query(
+            "SELECT volume_id,storage_key FROM segments")}
+        for volume_id, volume_root in self.volumes.roots.items():
+            for partial in volume_root.rglob("*.partial"):
+                if self.quarantine_root in partial.parents:
+                    continue
+                try:
+                    media = self._probe(str(partial))
+                    duration = max(1, int(float(media.get("format", {}).get("duration", 0)) * 1000))
+                    final = partial.with_name(partial.name.removeprefix(".").removesuffix(".partial"))
+                    os.replace(partial, final)
+                    camera_id = final.relative_to(volume_root).parts[0]
+                    if not CAMERA_ID.fullmatch(camera_id) or self.camera(camera_id) is None:
+                        raise RuntimeError("unknown partial owner")
+                    segment_id = final.stem.rsplit("-", 1)[-1]
+                    if not SEGMENT_ID.fullmatch(segment_id):
+                        segment_id = uuid.uuid4().hex
+                    start = int(final.stat().st_mtime * 1000) - duration
+                    streams = media.get("streams", [])
+                    self.catalog.add_segment({
+                        "id": segment_id, "cameraId": camera_id, "startUtcMs": start,
+                        "endUtcMs": start + duration, "durationMs": duration,
+                        "storageKey": final.relative_to(volume_root).as_posix(), "kind": "recovered",
+                        "videoCodec": next((entry.get("codec_name", "") for entry in streams if entry.get("codec_type") == "video"), ""),
+                        "audioCodec": next((entry.get("codec_name", "") for entry in streams if entry.get("codec_type") == "audio"), ""),
+                        "sizeBytes": final.stat().st_size, "integrity": "recovered", "locked": False,
+                        "nodeId": self.current_node_id(), "volumeId": volume_id, "sha256": file_sha256(final),
+                        "profileId": self.profile_id(self.camera(camera_id) or {"stream": "main"}),
+                        "assignmentGeneration": 0, "archiveState": "local",
+                    })
+                    self.stats.recovered += 1
+                except Exception:
+                    target = self.quarantine_root / f"{uuid.uuid4().hex}.partial"
+                    with contextlib.suppress(OSError):
+                        os.replace(partial, target)
+                    self.stats.quarantined += 1
+            for path in volume_root.glob("*/*/*/*/*.mp4"):
+                storage_key = path.relative_to(volume_root).as_posix()
+                if (volume_id, storage_key) in known:
+                    continue
+                camera_id = storage_key.split("/", 1)[0]
+                camera = self.camera(camera_id)
+                if not camera:
+                    continue
+                try:
+                    media = self._probe(str(path))
+                    duration = max(1, int(float(media.get("format", {}).get("duration", 0)) * 1000))
+                    segment_id = path.stem.rsplit("-", 1)[-1]
+                    if not SEGMENT_ID.fullmatch(segment_id):
+                        segment_id = uuid.uuid4().hex
+                    start = int(path.stat().st_mtime * 1000) - duration
+                    streams = media.get("streams", [])
+                    self.catalog.add_segment({
+                        "id": segment_id, "cameraId": camera_id, "startUtcMs": start,
+                        "endUtcMs": start + duration, "durationMs": duration, "storageKey": storage_key,
+                        "kind": "orphan", "videoCodec": next((entry.get("codec_name", "") for entry in streams if entry.get("codec_type") == "video"), ""),
+                        "audioCodec": next((entry.get("codec_name", "") for entry in streams if entry.get("codec_type") == "audio"), ""),
+                        "sizeBytes": path.stat().st_size, "integrity": "reconciled", "locked": False,
+                        "nodeId": self.current_node_id(), "volumeId": volume_id, "sha256": file_sha256(path),
+                        "profileId": self.profile_id(camera),
+                        "assignmentGeneration": 0, "archiveState": "local",
+                    })
+                except Exception:
+                    self.stats.quarantined += 1
+        for row in self.catalog.query("SELECT id,volume_id,storage_key FROM segments WHERE integrity NOT IN ('deleted','missing')"):
             try:
-                media = self._probe(str(partial))
-                duration = max(1, int(float(media.get("format", {}).get("duration", 0)) * 1000))
-                final = partial.with_name(partial.name.removeprefix(".").removesuffix(".partial"))
-                os.replace(partial, final)
-                camera_id = final.relative_to(self.storage_root).parts[0]
-                if not CAMERA_ID.fullmatch(camera_id) or self.camera(camera_id) is None:
-                    raise RuntimeError("unknown partial owner")
-                segment_id = final.stem.rsplit("-", 1)[-1]
-                if not SEGMENT_ID.fullmatch(segment_id):
-                    segment_id = uuid.uuid4().hex
-                start = int(final.stat().st_mtime * 1000) - duration
-                streams = media.get("streams", [])
-                self.catalog.add_segment({
-                    "id": segment_id, "cameraId": camera_id, "startUtcMs": start,
-                    "endUtcMs": start + duration, "durationMs": duration,
-                    "storageKey": final.relative_to(self.storage_root).as_posix(), "kind": "recovered",
-                    "videoCodec": next((entry.get("codec_name", "") for entry in streams if entry.get("codec_type") == "video"), ""),
-                    "audioCodec": next((entry.get("codec_name", "") for entry in streams if entry.get("codec_type") == "audio"), ""),
-                    "sizeBytes": final.stat().st_size, "integrity": "recovered", "locked": False,
-                })
-                self.stats.recovered += 1
-            except Exception:
-                target = self.quarantine_root / f"{uuid.uuid4().hex}.partial"
-                with contextlib.suppress(OSError):
-                    os.replace(partial, target)
-                self.stats.quarantined += 1
-        for path in self.storage_root.glob("*/*/*/*/*.mp4"):
-            storage_key = path.relative_to(self.storage_root).as_posix()
-            if storage_key in known:
-                continue
-            camera_id = storage_key.split("/", 1)[0]
-            camera = self.camera(camera_id)
-            if not camera:
-                continue
-            try:
-                media = self._probe(str(path))
-                duration = max(1, int(float(media.get("format", {}).get("duration", 0)) * 1000))
-                segment_id = path.stem.rsplit("-", 1)[-1]
-                if not SEGMENT_ID.fullmatch(segment_id):
-                    segment_id = uuid.uuid4().hex
-                start = int(path.stat().st_mtime * 1000) - duration
-                streams = media.get("streams", [])
-                self.catalog.add_segment({
-                    "id": segment_id, "cameraId": camera_id, "startUtcMs": start,
-                    "endUtcMs": start + duration, "durationMs": duration, "storageKey": storage_key,
-                    "kind": "orphan", "videoCodec": next((entry.get("codec_name", "") for entry in streams if entry.get("codec_type") == "video"), ""),
-                    "audioCodec": next((entry.get("codec_name", "") for entry in streams if entry.get("codec_type") == "audio"), ""),
-                    "sizeBytes": path.stat().st_size, "integrity": "reconciled", "locked": False,
-                })
-            except Exception:
-                self.stats.quarantined += 1
-        for row in self.catalog.query("SELECT id,storage_key FROM segments WHERE integrity NOT IN ('deleted','missing')"):
-            if not (self.storage_root / row["storage_key"]).is_file():
+                exists = self.volumes.path(row["volume_id"], row["storage_key"]).is_file()
+            except RuntimeError:
+                exists = False
+            if not exists:
                 self.catalog.execute("UPDATE segments SET integrity='missing' WHERE id=?", (row["id"],))
 
     def _maintenance_loop(self) -> None:
@@ -678,8 +847,8 @@ class NvrService:
         with self.config_lock:
             config = json.loads(json.dumps(self.config))
         now = utc_ms()
-        usage = shutil.disk_usage(self.storage_root)
-        pressure = usage.free < config["minFreeBytes"]
+        inventories = self.volumes.inventories()
+        pressure = any(item["freeBytes"] < config["minFreeBytes"] for item in inventories)
         self.stats.disk_pressure = pressure
         camera_config = {camera["id"]: camera for camera in config["cameras"]}
         rows = self.catalog.query(
@@ -702,21 +871,25 @@ class NvrService:
             global_over = config["maxBytes"] > 0 and total > config["maxBytes"]
             if not (expired or camera_over or global_over or pressure):
                 continue
-            path = self.storage_root / row["storage_key"]
+            try:
+                path = self.volumes.path(row["volume_id"], row["storage_key"])
+            except RuntimeError:
+                self.catalog.execute("UPDATE segments SET integrity='missing' WHERE id=?", (row["id"],))
+                continue
             with contextlib.suppress(FileNotFoundError):
                 path.unlink()
             self.catalog.execute("UPDATE segments SET integrity='deleted',size_bytes=0 WHERE id=?", (row["id"],))
             total -= row["size_bytes"]
             camera_totals[row["camera_id"]] -= row["size_bytes"]
             self.stats.retention_deletes += 1
-            usage = shutil.disk_usage(self.storage_root)
-            pressure = usage.free < config["minFreeBytes"]
+            inventories = self.volumes.inventories()
+            pressure = any(item["freeBytes"] < config["minFreeBytes"] for item in inventories)
             self.audit("nvr.retention.deleted", camera_id=row["camera_id"], segment_id=row["id"])
         self.stats.disk_pressure = pressure
         self._trim_thumbnails()
 
     def status(self) -> dict[str, Any]:
-        usage = shutil.disk_usage(self.storage_root)
+        inventories = self.volumes.inventories()
         cameras = []
         for camera_id, (_, _, state) in sorted(self.workers.items()):
             camera = self.camera(camera_id)
@@ -729,7 +902,8 @@ class NvrService:
         return {
             "status": "degraded" if self.stats.disk_pressure or any(item["state"] == "degraded" for item in cameras) else "ok",
             "uptimeSeconds": int(time.monotonic() - self.stats.started_monotonic),
-            "freeBytes": usage.free, "diskPressure": self.stats.disk_pressure,
+            "freeBytes": sum(item["freeBytes"] for item in inventories),
+            "volumes": inventories, "diskPressure": self.stats.disk_pressure,
             "recovered": self.stats.recovered, "quarantined": self.stats.quarantined,
             "retentionDeletes": self.stats.retention_deletes, "cameras": cameras,
         }
@@ -747,7 +921,7 @@ class NvrService:
         parameters.append(limit)
         rows = self.catalog.query(
             "SELECT id,camera_id,start_utc_ms,end_utc_ms,duration_ms,kind,video_codec,audio_codec,"
-            "size_bytes,integrity,locked FROM segments WHERE " + " AND ".join(clauses) +
+            "size_bytes,integrity,locked,node_id,volume_id,archive_state FROM segments WHERE " + " AND ".join(clauses) +
             " ORDER BY start_utc_ms LIMIT ?", tuple(parameters),
         )
         return [{
@@ -755,6 +929,7 @@ class NvrService:
             "endUtcMs": row["end_utc_ms"], "durationMs": row["duration_ms"], "kind": row["kind"],
             "videoCodec": row["video_codec"], "audioCodec": row["audio_codec"],
             "sizeBytes": row["size_bytes"], "integrity": row["integrity"], "locked": bool(row["locked"]),
+            "nodeId": row["node_id"], "volumeId": row["volume_id"], "archiveState": row["archive_state"],
             "mediaUrl": f"/api/v1/nvr/media/{row['id']}",
         } for row in rows]
 
@@ -816,8 +991,11 @@ class NvrService:
 
     def media_path(self, segment_id: str) -> pathlib.Path:
         row = self.segment_row(segment_id)
-        path = (self.storage_root / row["storage_key"]).resolve()
-        if self.storage_root.resolve() not in path.parents or not path.is_file():
+        try:
+            path = self.volumes.path(row["volume_id"], row["storage_key"])
+        except RuntimeError:
+            raise KeyError(segment_id) from None
+        if not path.is_file():
             raise KeyError(segment_id)
         return path
 

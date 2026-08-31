@@ -130,5 +130,23 @@ class EventServiceTests(unittest.TestCase):
         frames = b"".join(mqtt_channel.sent)
         self.assertIn(b"fixture-user", frames); self.assertIn(b"fixture-pass", frames); self.assertIn(b"webobs/events", frames)
 
+    def test_mqtt_v1_and_home_assistant_discovery_are_stable_and_redacted(self) -> None:
+        payload = json.dumps({"schemaVersion": 1, "event": {
+            "id": "event-1", "cameraId": "camera-1", "type": "motion",
+            "occurredAt": 1234, "severity": "warning",
+            "properties": {"endpoint": "rtsp://user:password@camera.invalid/live"},
+        }})
+        publications = events.mqtt_publications({
+            "topicPrefix": "webobs/v1", "homeAssistantDiscoveryPrefix": "homeassistant",
+        }, payload)
+        self.assertEqual(len(publications), 3)
+        self.assertEqual(publications[0][0], "webobs/v1/cameras/camera-1/events/motion")
+        self.assertEqual(publications[1][0], "homeassistant/binary_sensor/webobs_camera-1_motion/config")
+        self.assertTrue(publications[1][2])
+        serialized = b"".join(item[1] for item in publications)
+        self.assertIn(b"webobs.mqtt.v1", serialized)
+        self.assertNotIn(b"rtsp", serialized)
+        self.assertNotIn(b"password", serialized)
+
 
 if __name__ == "__main__": unittest.main()

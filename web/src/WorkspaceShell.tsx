@@ -2,7 +2,7 @@ import type { ReactNode } from 'react';
 import LocalRuntimeBadge from './LocalRuntimeBadge';
 import ProblemCenter from './ProblemCenter';
 
-export type ProductArea = 'monitor' | 'studio' | 'devices' | 'audio' | 'events' | 'archive' | 'storage' | 'settings' | 'clients';
+export type ProductArea = 'monitor' | 'studio' | 'devices' | 'audio' | 'events' | 'archive' | 'storage' | 'settings' | 'admin' | 'clients';
 
 const entries: Array<{ id: ProductArea; label: string; short: string }> = [
   { id: 'monitor', label: '监看 Monitor', short: '监看' },
@@ -13,6 +13,7 @@ const entries: Array<{ id: ProductArea; label: string; short: string }> = [
   { id: 'archive', label: '录像回放', short: '回放' },
   { id: 'storage', label: '存储', short: '存储' },
   { id: 'settings', label: '系统设置', short: '设置' },
+  { id: 'admin', label: '集群与权限', short: '管理' },
 ];
 
 export function areaFromHash(hash = window.location.hash): ProductArea {

@@ -29,12 +29,17 @@ rm -rf -- "$next_cache"
 tags=(--tag "${image}:${version}" --tag "${image}:sha-${short_revision}")
 if [ "$version" = dev ]; then
     tags+=(--tag "${image}:dev")
-    build_version="2.2.0-dev.${short_revision}"
-    build_milestone="v2-M6-dev"
+    build_version="2.3.0-dev.${short_revision}"
+    build_milestone="v2-M7-dev"
 else
     tags+=(--tag "${image}:latest")
     build_version="${version#v}"
-    if [[ "$version" =~ ^v2\.2(\.|$) ]]; then
+    if [[ "$build_version" =~ ^[0-9]+\.[0-9]+$ ]]; then
+        build_version="${build_version}.0"
+    fi
+    if [[ "$version" =~ ^v2\.3(\.|$) ]]; then
+        build_milestone="v2-M7"
+    elif [[ "$version" =~ ^v2\.2(\.|$) ]]; then
         build_milestone="v2-M6"
     elif [[ "$version" =~ ^v2\.1(\.|$) ]]; then
         build_milestone="v2-M5"

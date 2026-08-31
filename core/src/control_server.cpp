@@ -273,6 +273,203 @@ std::optional<std::pair<std::string, std::string>> parse_login_body(const HttpRe
     return std::pair<std::string, std::string>{std::move(user), std::move(secret)};
 }
 
+bool cluster_authentication_enabled()
+{
+    const char *value = std::getenv("WEBOBS_CLUSTER_INTERNAL_TOKEN");
+    if (!value)
+        return false;
+    const std::string_view token(value);
+    return token.size() == 64 && std::all_of(token.begin(), token.end(), [](unsigned char character) {
+        return std::isdigit(character) || (character >= 'a' && character <= 'f');
+    });
+}
+
+struct ClusterLoginResult {
+    long status = 0;
+    std::string username;
+};
+
+ClusterLoginResult cluster_login(std::string_view username, std::string_view password,
+                                 std::string_view client_key)
+{
+    ClusterLoginResult result;
+    CURL *handle = curl_easy_init();
+    if (!handle)
+        return result;
+    std::string response_body;
+    const std::string body = "{\"clientKey\":\"" + json_escape(client_key) +
+                             "\",\"password\":\"" + json_escape(password) +
+                             "\",\"username\":\"" + json_escape(username) + "\"}";
+    curl_slist *headers = curl_slist_append(nullptr, "Content-Type: application/json");
+    curl_easy_setopt(handle, CURLOPT_URL, "http://127.0.0.1:8095/auth/login");
+    curl_easy_setopt(handle, CURLOPT_PROTOCOLS_STR, "http");
+    curl_easy_setopt(handle, CURLOPT_CONNECTTIMEOUT_MS, 500L);
+    curl_easy_setopt(handle, CURLOPT_TIMEOUT_MS, 3000L);
+    curl_easy_setopt(handle, CURLOPT_NOSIGNAL, 1L);
+    curl_easy_setopt(handle, CURLOPT_FOLLOWLOCATION, 0L);
+    curl_easy_setopt(handle, CURLOPT_HTTPHEADER, headers);
+    curl_easy_setopt(handle, CURLOPT_POSTFIELDS, body.data());
+    curl_easy_setopt(handle, CURLOPT_POSTFIELDSIZE_LARGE, static_cast<curl_off_t>(body.size()));
+    curl_easy_setopt(handle, CURLOPT_WRITEFUNCTION,
+        +[](char *data, std::size_t size, std::size_t count, void *context) -> std::size_t {
+            const std::size_t bytes = size * count;
+            auto &destination = *static_cast<std::string *>(context);
+            constexpr std::size_t maximum = 16 * 1024;
+            if (bytes > maximum || destination.size() > maximum - bytes)
+                return 0;
+            destination.append(data, bytes);
+            return bytes;
+        });
+    curl_easy_setopt(handle, CURLOPT_WRITEDATA, &response_body);
+    if (curl_easy_perform(handle) == CURLE_OK)
+        curl_easy_getinfo(handle, CURLINFO_RESPONSE_CODE, &result.status);
+    curl_slist_free_all(headers);
+    curl_easy_cleanup(handle);
+    if (result.status != 200)
+        return result;
+    json_error_t error{};
+    json_t *root = json_loadb(response_body.data(), response_body.size(), JSON_REJECT_DUPLICATES, &error);
+    json_t *value = root && json_is_object(root) ? json_object_get(root, "username") : nullptr;
+    if (json_is_string(value)) {
+        const std::string_view candidate(json_string_value(value));
+        if (!candidate.empty() && candidate.size() <= 64 &&
+            std::all_of(candidate.begin(), candidate.end(), [](unsigned char character) {
+                return std::isalnum(character) || character == '.' || character == '_' || character == '-';
+            }))
+            result.username = candidate;
+    }
+    if (result.username.empty())
+        result.status = 0;
+    json_decref(root);
+    return result;
+}
+
+std::string permission_for_request(const HttpRequest &request)
+{
+    const std::string_view target = view(request.target());
+    const bool mutating = request.method() == http::verb::post || request.method() == http::verb::put ||
+                          request.method() == http::verb::patch || request.method() == http::verb::delete_;
+    if (target.starts_with("/api/v2/users") || target == "/api/v2/roles")
+        return "user.manage";
+    if (target.starts_with("/api/v2/nodes") || target.starts_with("/api/v2/node-enrollments"))
+        return "node.manage";
+    if (target.starts_with("/api/v2/storage-volumes") || target.starts_with("/api/v2/recording-placements") ||
+        target.starts_with("/api/v2/archive-targets") || target.starts_with("/api/v2/backup-jobs"))
+        return "storage.manage";
+    if (target == "/api/v2/resource-capacity" || target == "/metrics" ||
+        target.starts_with("/api/v1/system/"))
+        return "metrics.view";
+    if (target.starts_with("/api/v2/settings"))
+        return "settings.manage";
+    if (target.starts_with("/api/v2/providers"))
+        return "settings.manage";
+    if (target.find("/ptz") != std::string_view::npos)
+        return "ptz.control";
+    if (target.find("/talk") != std::string_view::npos)
+        return "talk.control";
+    if (target.find("/snapshot") != std::string_view::npos)
+        return "snapshot.create";
+    if (target.starts_with("/api/v1/nvr")) {
+        if (request.method() == http::verb::delete_)
+            return "recording.delete";
+        if (target.find("/exports") != std::string_view::npos)
+            return "export.create";
+        if (target.find("/lock") != std::string_view::npos)
+            return "recording.lock";
+        return "playback.view";
+    }
+    if (target.starts_with("/api/v1/events") || target.starts_with("/api/v1/event-rules") ||
+        target.starts_with("/api/v1/motion-zones"))
+        return mutating ? "event.ack" : "live.view";
+    if (target.starts_with("/api/v1/cameras") || target.starts_with("/api/v2/source-catalog") ||
+        target.starts_with("/api/v1/onvif") || target == "/api/v1/camera-detect")
+        return mutating ? "device.manage" : "live.view";
+    if (target.starts_with("/api/v1/studio") || target.starts_with("/api/v1/scene") ||
+        target.starts_with("/api/v2/scenes"))
+        return mutating ? "scene.write" : "scene.read";
+    return "live.view";
+}
+
+std::string camera_scope_for_target(std::string_view target)
+{
+    for (const std::string_view prefix : {std::string_view("/api/v1/cameras/"),
+                                          std::string_view("/api/v2/source-catalog/")}) {
+        if (!target.starts_with(prefix))
+            continue;
+        std::string_view value = target.substr(prefix.size());
+        value = value.substr(0, value.find_first_of("/?"));
+        if (!value.empty() && value.size() <= 64 &&
+            std::all_of(value.begin(), value.end(), [](unsigned char character) {
+                return std::isalnum(character) || character == '.' || character == '_' || character == '-';
+            }))
+            return std::string(value);
+    }
+    constexpr std::string_view query = "cameraId=";
+    const std::size_t position = target.find(query);
+    if (position != std::string_view::npos) {
+        std::string_view value = target.substr(position + query.size());
+        value = value.substr(0, value.find('&'));
+        if (!value.empty() && value.size() <= 64 &&
+            std::all_of(value.begin(), value.end(), [](unsigned char character) {
+                return std::isalnum(character) || character == '.' || character == '_' || character == '-';
+            }))
+            return std::string(value);
+    }
+    return {};
+}
+
+enum class ClusterAuthorization { allowed, user_unknown, denied, unavailable };
+
+ClusterAuthorization cluster_authorize(std::string_view username, const HttpRequest &request)
+{
+    const char *token_value = std::getenv("WEBOBS_CLUSTER_INTERNAL_TOKEN");
+    if (!token_value)
+        return ClusterAuthorization::unavailable;
+    const std::string permission = permission_for_request(request);
+    const std::string camera_id = camera_scope_for_target(view(request.target()));
+    const std::string body = "{\"cameraId\":\"" + json_escape(camera_id) +
+                             "\",\"permission\":\"" + json_escape(permission) +
+                             "\",\"username\":\"" + json_escape(username) + "\"}";
+    CURL *handle = curl_easy_init();
+    if (!handle)
+        return ClusterAuthorization::unavailable;
+    std::string response_body;
+    const std::string token_header = "X-WebObs-Internal-Admin: " + std::string(token_value);
+    curl_slist *headers = curl_slist_append(nullptr, "Content-Type: application/json");
+    headers = curl_slist_append(headers, token_header.c_str());
+    curl_easy_setopt(handle, CURLOPT_URL, "http://127.0.0.1:8095/auth/authorize");
+    curl_easy_setopt(handle, CURLOPT_PROTOCOLS_STR, "http");
+    curl_easy_setopt(handle, CURLOPT_CONNECTTIMEOUT_MS, 500L);
+    curl_easy_setopt(handle, CURLOPT_TIMEOUT_MS, 2000L);
+    curl_easy_setopt(handle, CURLOPT_NOSIGNAL, 1L);
+    curl_easy_setopt(handle, CURLOPT_FOLLOWLOCATION, 0L);
+    curl_easy_setopt(handle, CURLOPT_HTTPHEADER, headers);
+    curl_easy_setopt(handle, CURLOPT_POSTFIELDS, body.data());
+    curl_easy_setopt(handle, CURLOPT_POSTFIELDSIZE_LARGE, static_cast<curl_off_t>(body.size()));
+    curl_easy_setopt(handle, CURLOPT_WRITEFUNCTION,
+        +[](char *data, std::size_t size, std::size_t count, void *context) -> std::size_t {
+            const std::size_t bytes = size * count;
+            auto &destination = *static_cast<std::string *>(context);
+            if (bytes > 4096 || destination.size() > 4096 - bytes)
+                return 0;
+            destination.append(data, bytes);
+            return bytes;
+        });
+    curl_easy_setopt(handle, CURLOPT_WRITEDATA, &response_body);
+    long status = 0;
+    if (curl_easy_perform(handle) == CURLE_OK)
+        curl_easy_getinfo(handle, CURLINFO_RESPONSE_CODE, &status);
+    curl_slist_free_all(headers);
+    curl_easy_cleanup(handle);
+    if (status == 200)
+        return ClusterAuthorization::allowed;
+    if (status == 404)
+        return ClusterAuthorization::user_unknown;
+    if (status == 403)
+        return ClusterAuthorization::denied;
+    return ClusterAuthorization::unavailable;
+}
+
 std::vector<std::string> pwa_media_allowed_origins;
 
 void set_security_headers(HttpResponse &response, std::string_view content_type,
@@ -1292,6 +1489,13 @@ public:
                 }))
                 v2_internal_token_ = token;
         }
+        if (const char *value = std::getenv("WEBOBS_CLUSTER_INTERNAL_TOKEN")) {
+            const std::string_view token(value);
+            if (token.size() == 64 && std::all_of(token.begin(), token.end(), [](unsigned char character) {
+                    return std::isdigit(character) || (character >= 'a' && character <= 'f');
+                }))
+                cluster_internal_token_ = token;
+        }
     }
 
     HttpResponse forward(const HttpRequest &request) const
@@ -1303,6 +1507,7 @@ public:
         std::string suffix;
         int upstream_port = 8092;
         bool v2_client_service = false;
+        bool cluster_service = false;
         if (target == "/api/v1/cameras" || target.starts_with("/api/v1/cameras/"))
             suffix = std::string(target.substr(std::string_view("/api/v1").size()));
         else if (target == "/api/v1/camera-adapters")
@@ -1339,6 +1544,23 @@ public:
             suffix = std::string(target.substr(std::string_view("/api/v2").size()));
             upstream_port = 8094;
             v2_client_service = true;
+        } else if (target == "/api/v2/users" || target.starts_with("/api/v2/users/") ||
+                   target == "/api/v2/roles" ||
+                   target == "/api/v2/nodes" || target.starts_with("/api/v2/nodes/") ||
+                   target == "/api/v2/node-enrollments" || target.starts_with("/api/v2/node-enrollments/") ||
+                   target == "/api/v2/storage-volumes" || target.starts_with("/api/v2/storage-volumes/") ||
+                   target == "/api/v2/recording-placements" || target.starts_with("/api/v2/recording-placements/") ||
+                   target == "/api/v2/resource-capacity" ||
+                   target == "/api/v2/archive-targets" || target.starts_with("/api/v2/archive-targets/") ||
+                   target == "/api/v2/backup-jobs" || target.starts_with("/api/v2/backup-jobs/")) {
+            suffix = std::string(target.substr(std::string_view("/api/v2").size()));
+            upstream_port = 8095;
+            cluster_service = true;
+        }
+        else if (target == "/api/v2/providers" || target.starts_with("/api/v2/providers/")) {
+            suffix = std::string(target.substr(std::string_view("/api/v2").size()));
+            upstream_port = 8095;
+            cluster_service = true;
         }
         else
             return response(http::status::not_found, request.version(),
@@ -1412,6 +1634,16 @@ public:
                 headers = curl_slist_append(headers, internal_admin_header.c_str());
             }
         }
+        if (cluster_service) {
+            if (cluster_internal_token_.empty()) {
+                curl_slist_free_all(headers);
+                curl_easy_cleanup(handle);
+                return response(http::status::service_unavailable, request.version(),
+                                error_body("cluster_unavailable", "Cluster service is unavailable"));
+            }
+            internal_admin_header = "X-WebObs-Internal-Admin: " + cluster_internal_token_;
+            headers = curl_slist_append(headers, internal_admin_header.c_str());
+        }
         curl_easy_setopt(handle, CURLOPT_URL, url.c_str());
         curl_easy_setopt(handle, CURLOPT_PROTOCOLS_STR, "http");
         curl_easy_setopt(handle, CURLOPT_CONNECTTIMEOUT_MS, 1000L);
@@ -1472,6 +1704,7 @@ private:
 
     bool enabled_ = true;
     std::string v2_internal_token_;
+    std::string cluster_internal_token_;
 };
 
 bool hex_identifier(std::string_view value)
@@ -2238,7 +2471,16 @@ HttpResponse handle_request(const HttpRequest &request, SceneController &control
                            target.starts_with("/api/v2/client/cameras/") ||
                            target == "/api/v2/source-catalog" || target.starts_with("/api/v2/source-catalog/") ||
                            target == "/api/v2/operations/issues" || target.starts_with("/api/v2/operations/issues/") ||
-                           target == "/api/v2/settings" || target == "/api/v2/settings/schema";
+                           target == "/api/v2/settings" || target == "/api/v2/settings/schema" ||
+                           target == "/api/v2/users" || target.starts_with("/api/v2/users/") ||
+                           target == "/api/v2/roles" ||
+                           target == "/api/v2/nodes" || target.starts_with("/api/v2/nodes/") ||
+                           target == "/api/v2/node-enrollments" || target.starts_with("/api/v2/node-enrollments/") ||
+                           target == "/api/v2/storage-volumes" || target.starts_with("/api/v2/storage-volumes/") ||
+                           target == "/api/v2/recording-placements" || target.starts_with("/api/v2/recording-placements/") ||
+                           target == "/api/v2/resource-capacity" ||
+                           target == "/api/v2/archive-targets" || target.starts_with("/api/v2/archive-targets/") ||
+                           target == "/api/v2/backup-jobs" || target.starts_with("/api/v2/backup-jobs/");
     if (v2_target) {
         if (const auto route = v2_whep_route(target)) {
             const bool creating = request.method() == http::verb::post && route->session_token.empty();
@@ -2691,7 +2933,8 @@ private:
                 send(std::move(result));
                 return;
             }
-            if (!authenticator_.enabled() || !session_store_.enabled()) {
+            const bool cluster_auth_enabled = cluster_authentication_enabled();
+            if ((!authenticator_.enabled() && !cluster_auth_enabled) || !session_store_.enabled()) {
                 send(response(http::status::not_found, version,
                               error_body("authentication_disabled", "browser login is not configured")));
                 return;
@@ -2707,13 +2950,33 @@ private:
                               error_body("invalid_login", "username and password JSON fields are required")));
                 return;
             }
-            const AuthenticationDecision decision = authenticator_.authenticate_plain(
-                credentials->first, credentials->second, client_key_);
-            if (decision != AuthenticationDecision::allowed) {
+            std::string authenticated_username;
+            long cluster_login_status = 0;
+            if (cluster_auth_enabled) {
+                const ClusterLoginResult cluster_result = cluster_login(credentials->first, credentials->second, client_key_);
+                cluster_login_status = cluster_result.status;
+                if (cluster_result.status == 200)
+                    authenticated_username = cluster_result.username;
+            }
+            AuthenticationDecision decision = AuthenticationDecision::invalid_credentials;
+            if (authenticated_username.empty() && authenticator_.enabled()) {
+                decision = authenticator_.authenticate_plain(
+                    credentials->first, credentials->second, client_key_);
+                if (decision == AuthenticationDecision::allowed)
+                    authenticated_username = std::string(authenticator_.configured_username());
+            }
+            if (authenticated_username.empty()) {
+                if (cluster_login_status == 429 && !authenticator_.enabled()) {
+                    HttpResponse result = response(http::status::too_many_requests, version,
+                                                   error_body("rate_limited", "too many authentication attempts"));
+                    result.set(http::field::retry_after, "60");
+                    send(std::move(result));
+                    return;
+                }
                 send(authentication_response(decision, version, authenticator_.retry_after_seconds()));
                 return;
             }
-            const auto token = session_store_.create(authenticator_.configured_username(), client_key_);
+            const auto token = session_store_.create(authenticated_username, client_key_);
             if (!token) {
                 send(response(http::status::internal_server_error, version,
                               error_body("session_create_failed", "could not create a browser session")));
@@ -2721,7 +2984,7 @@ private:
             }
             HttpResponse result = response(http::status::ok, version,
                 "{\"authenticated\":true,\"user\":\"" +
-                json_escape(authenticator_.configured_username()) + "\",\"expiresInSeconds\":" +
+                json_escape(authenticated_username) + "\",\"expiresInSeconds\":" +
                 std::to_string(session_store_.inactivity_expiry_seconds()) + "}");
             result.set(http::field::set_cookie, session_store_.set_cookie_header(*token));
             blog(LOG_INFO, "%s", format_audit_event("authentication", "session_created",
@@ -2736,8 +2999,13 @@ private:
             session_record = session_store_.validate_and_slide(*session_token);
         bool basic_authenticated = false;
         const bool device_request = v2_device_route(request);
+        const bool authentication_enabled = authenticator_.enabled() || cluster_authentication_enabled();
         if (!public_probe && !device_request && !static_resource &&
-            authenticator_.enabled() && !session_record) {
+            authentication_enabled && !session_record) {
+            if (!authenticator_.enabled()) {
+                send(authentication_response(AuthenticationDecision::credentials_required, version, 0));
+                return;
+            }
             std::optional<std::string_view> authorization;
             std::size_t authorization_count = 0;
             for (const auto &field : request.base()) {
@@ -2770,7 +3038,7 @@ private:
                               error_body("method_not_allowed", "use GET")));
                 return;
             }
-            if (!authenticator_.enabled()) {
+            if (!authentication_enabled) {
                 send(response(http::status::ok, version,
                               "{\"authenticated\":false,\"authenticationEnabled\":false}"));
                 return;
@@ -2801,6 +3069,23 @@ private:
             result.set(http::field::set_cookie, session_store_.clear_cookie_header());
             send(std::move(result));
             return;
+        }
+        if (session_record && !public_probe && !device_request && !static_resource &&
+            target != "/api/v1/auth/session" && cluster_authentication_enabled()) {
+            const ClusterAuthorization authorization = cluster_authorize(session_record->user, request);
+            const bool legacy_admin = authenticator_.enabled() &&
+                session_record->user == authenticator_.configured_username();
+            if (authorization == ClusterAuthorization::denied ||
+                (authorization == ClusterAuthorization::user_unknown && !legacy_admin)) {
+                send(response(http::status::forbidden, version,
+                              error_body("permission_rejected", "role or camera scope rejected this operation")));
+                return;
+            }
+            if (authorization == ClusterAuthorization::unavailable && !legacy_admin) {
+                send(response(http::status::service_unavailable, version,
+                              error_body("authorization_unavailable", "RBAC authorization is unavailable")));
+                return;
+            }
         }
         if (websocket::is_upgrade(request)) {
             if (request.method() != http::verb::get || view(request.target()) != "/api/v1/ws" ||

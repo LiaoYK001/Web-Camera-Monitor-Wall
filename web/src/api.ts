@@ -1,4 +1,4 @@
-import type { AnalyticsPolicy, ApiErrorEnvelope, AudioMeterSnapshot, CameraDetection, CameraRecord, ClientCameraGrant, ClientEnrollment, DeviceOperation, EnrolledClient, EventRule, MonitorEvent, MotionZone, NvrExport, NvrStatus, NvrTimeline, OnvifEvent, OnvifPreset, OperationalIssue, PlaybackCapabilities, ProcessDiagnostics, RuntimeSettings, SceneDocument, SceneEvent, SourceCatalogItem, SourceCatalogPage, StudioCapabilities, StudioDocument, SystemCapabilities } from './types';
+import type { AnalyticsPolicy, ApiErrorEnvelope, ArchiveTarget, AudioMeterSnapshot, BackupJob, CameraDetection, CameraRecord, ClientCameraGrant, ClientEnrollment, ClusterNode, ClusterRole, ClusterUser, DeviceOperation, EnrolledClient, EventRule, ExternalProvider, MonitorEvent, MotionZone, NvrExport, NvrStatus, NvrTimeline, OnvifEvent, OnvifPreset, OperationalIssue, PlaybackCapabilities, ProcessDiagnostics, RecordingPlacement, ResourceCapacity, RuntimeSettings, SceneDocument, SceneEvent, SourceCatalogItem, SourceCatalogPage, StorageVolume, StudioCapabilities, StudioDocument, SystemCapabilities } from './types';
 
 export class ControlApiError extends Error {
   readonly status: number;
@@ -328,6 +328,50 @@ export const revokeEnrolledClient = (clientId: string) =>
     offlineEffectiveNoLaterThan: number; weakRevocation: boolean;
     cameraCredentialCleanup: 'complete' | 'partial' | 'not-applicable' }>(
     `/clients/${encodeURIComponent(clientId)}`, { method: 'DELETE' });
+
+export const fetchClusterUsers = (signal?: AbortSignal) =>
+  clientAdminRequest<{ users: ClusterUser[]; revision: number }>('/users', { signal });
+export const createClusterUser = (value: { username: string; password: string; roles: ClusterRole[];
+  scopes: Array<{ kind: 'camera' | 'group'; id: string }> }) =>
+  clientAdminRequest<ClusterUser>('/users', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(value) });
+export const patchClusterUser = (userId: string, revision: number, patch: Record<string, unknown>) =>
+  clientAdminRequest<ClusterUser>(`/users/${encodeURIComponent(userId)}`, {
+    method: 'PATCH', headers: { 'Content-Type': 'application/json', 'If-Match': `"${revision}"` }, body: JSON.stringify(patch),
+  });
+export const fetchClusterRoles = (signal?: AbortSignal) =>
+  clientAdminRequest<{ roles: Array<{ id: ClusterRole; permissions: string[] }> }>('/roles', { signal });
+export const fetchClusterNodes = (signal?: AbortSignal) =>
+  clientAdminRequest<{ nodes: ClusterNode[]; revision: number }>('/nodes', { signal });
+export const createNodeEnrollment = (value: { name: string; role: 'recorder' | 'worker' }) =>
+  clientAdminRequest<{ id: string; token: string; expiresAt: number; state: string }>('/node-enrollments', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(value),
+  });
+export const approveNodeEnrollment = (enrollmentId: string) =>
+  clientAdminRequest<{ id: string; nodeId: string; state: string }>(`/node-enrollments/${encodeURIComponent(enrollmentId)}/approve`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}',
+  });
+export const revokeClusterNode = (nodeId: string, revision: number) =>
+  clientAdminRequest<{ id: string; state: string }>(`/nodes/${encodeURIComponent(nodeId)}`, {
+    method: 'DELETE', headers: { 'If-Match': `"${revision}"` },
+  });
+export const fetchStorageVolumes = (signal?: AbortSignal) =>
+  clientAdminRequest<{ volumes: StorageVolume[]; revision: number }>('/storage-volumes', { signal });
+export const patchStorageVolume = (volume: StorageVolume, patch: Record<string, unknown>) =>
+  clientAdminRequest<StorageVolume>(`/storage-volumes/${encodeURIComponent(volume.nodeId)}/${encodeURIComponent(volume.id)}`, {
+    method: 'PATCH', headers: { 'Content-Type': 'application/json', 'If-Match': `"${volume.revision}"` }, body: JSON.stringify(patch),
+  });
+export const fetchResourceCapacity = (signal?: AbortSignal) =>
+  clientAdminRequest<ResourceCapacity>('/resource-capacity', { signal });
+export const fetchRecordingPlacements = (signal?: AbortSignal) =>
+  clientAdminRequest<{ placements: RecordingPlacement[]; revision: number }>('/recording-placements', { signal });
+export const fetchArchiveTargets = (signal?: AbortSignal) =>
+  clientAdminRequest<{ targets: ArchiveTarget[]; revision: number }>('/archive-targets', { signal });
+export const fetchBackupJobs = (signal?: AbortSignal) =>
+  clientAdminRequest<{ jobs: BackupJob[]; revision: number }>('/backup-jobs', { signal });
+export const createBackupJob = (targetId = 'local') =>
+  clientAdminRequest<BackupJob>('/backup-jobs', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ targetId }) });
+export const fetchExternalProviders = (signal?: AbortSignal) =>
+  clientAdminRequest<{ providers: ExternalProvider[]; revision: number }>('/providers', { signal });
 export const fetchEvents = (query = '') => cameraRequest<{ events: MonitorEvent[] }>(`/events${query ? `?${query}` : ''}`);
 export const createEvent = (event: Record<string, unknown>) => cameraRequest<MonitorEvent>('/events', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(event) });
 export const acknowledgeEvent = (eventId: string, acknowledged: boolean, note: string) => cameraRequest<{ id: string; acknowledged: boolean }>(`/events/${encodeURIComponent(eventId)}/acknowledgement`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ acknowledged, note }) });
