@@ -27,6 +27,9 @@ git diff --cached --quiet --ignore-submodules=none
 ./scripts/check-executable-bits.sh
 ./tests/run-public-audit.sh
 "$python_command" ./scripts/verify-local-gate-receipts.py
+if [[ "$version" =~ ^v2\.3(\.|$) ]]; then
+    "$python_command" ./scripts/verify-m7-gate-receipts.py
+fi
 
 revision="$(git rev-parse HEAD)"
 short_revision="$(git rev-parse --short=12 HEAD)"

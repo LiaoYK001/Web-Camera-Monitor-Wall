@@ -312,11 +312,19 @@ def secret(ref: str) -> dict:
 
 
 def public_destination(host: str, port: int) -> tuple[int, tuple]:
+    allowed = set()
+    raw_allowed = os.environ.get("WEBOBS_NOTIFICATION_ALLOWED_HOSTS", "")
+    for item in raw_allowed.split(",") if raw_allowed else ():
+        candidate = item.strip().lower()
+        if not candidate or not re.fullmatch(r"[a-z0-9][a-z0-9.-]{0,252}", candidate):
+            raise ValueError("notification destination allowlist is invalid")
+        allowed.add(candidate)
     results = socket.getaddrinfo(host, port, type=socket.SOCK_STREAM)
     if not results: raise ValueError("notification destination cannot be resolved")
     for result in results:
         address = ipaddress.ip_address(result[4][0])
-        if not address.is_global: raise ValueError("notification destination resolves to a private or special address")
+        if not address.is_global and host.lower() not in allowed:
+            raise ValueError("notification destination resolves to a private or special address")
     return results[0][0], results[0][4]
 
 
@@ -325,7 +333,16 @@ def tls_channel(host: str, port: int):
     raw = socket.socket(family, socket.SOCK_STREAM); raw.settimeout(5)
     try:
         raw.connect(destination)
-        return ssl.create_default_context().wrap_socket(raw, server_hostname=host)
+        ca_file = os.environ.get("WEBOBS_NOTIFICATION_CA_FILE", "")
+        if ca_file:
+            ca_path = Path(ca_file)
+            try:
+                ca_path.resolve().relative_to("/run/secrets")
+            except ValueError as error:
+                raise ValueError("notification CA must be mounted below /run/secrets") from error
+            if not ca_path.is_file() or ca_path.is_symlink() or ca_path.stat().st_size > 1024 * 1024:
+                raise ValueError("notification CA is unavailable")
+        return ssl.create_default_context(cafile=ca_file or None).wrap_socket(raw, server_hostname=host)
     except Exception:
         raw.close(); raise
 

@@ -30,8 +30,11 @@ case "$(uname -s)" in MINGW*|MSYS*) bootstrap="$(cygpath -w "$bootstrap")";; esa
 
 sleep "$duration"
 compose ps
-for node in recorder-a recorder-b recorder-c; do
-    $runtime compose -f "$here/compose.yaml" exec -T "$node" \
-        python3 -c 'import json,sqlite3; p="/recordings/nvr/catalog.sqlite3"; c=sqlite3.connect(p); n=c.execute("select count(*) from segments where integrity not in (\"deleted\",\"missing\")").fetchone()[0]; assert n>0; print(n)'
-done
+verify="$here/verify-scale.py"
+case "$(uname -s)" in MINGW*|MSYS*) verify="$(cygpath -w "$verify")";; esac
+receipt_argument=""
+[ "$duration" -lt 900 ] || receipt_argument="--write-receipt"
+# shellcheck disable=SC2086
+"$python_bin" "$verify" --camera-count "$WEBOBS_M7_CAMERA_COUNT" \
+    --duration-seconds "$duration" $receipt_argument
 echo "M7 ${WEBOBS_M7_CAMERA_COUNT}-camera mixed-load gate passed for ${duration}s."

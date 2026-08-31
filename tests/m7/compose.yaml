@@ -8,6 +8,8 @@ x-recorder: &recorder
       condition: service_healthy
     mediamtx:
       condition: service_started
+    minio-init:
+      condition: service_completed_successfully
   environment: &recorder-environment
     WEBOBS_NODE_ROLE: recorder
     WEBOBS_CONTROLLER_URL: https://controller:9443
@@ -20,11 +22,15 @@ x-recorder: &recorder
     WEBOBS_NVR_VOLUMES_ROOT: /recordings/volumes
     WEBOBS_VOLUMES_ROOT: /recordings/volumes
     WEBOBS_NVR_CATALOG: /recordings/nvr/catalog.sqlite3
+    WEBOBS_ARCHIVE_ENABLED: "true"
+    WEBOBS_ARCHIVE_CONFIG: /config/webobs/archive.json
+    WEBOBS_ARCHIVE_CA_FILE: /run/secrets/cluster-ca.crt
   healthcheck:
     test: ["CMD-SHELL", "test -s /config/webobs/node/assignments.json && test -f /recordings/nvr/catalog.sqlite3"]
     interval: 5s
     timeout: 3s
     retries: 30
+  networks: [control, media]
 
 services:
   controller:
@@ -52,8 +58,12 @@ services:
       - ../.m7-cluster/recordings/controller:/recordings
       - ../.m7-cluster/secrets:/run/secrets:ro
       - ../../assets:/assets:ro
+      - ../../events/event_service.py:/fixture/event_service.py:ro
+      - ./mqtt-integration.py:/fixture/mqtt-integration.py:ro
+      - ../test_encrypted_backup.py:/fixture/test_encrypted_backup.py:ro
     ports:
       - 127.0.0.1:18080:8080
+    networks: [control]
     healthcheck:
       test: ["CMD", "curl", "--fail", "--silent", "http://127.0.0.1:8080/api/v1/health"]
       interval: 3s
@@ -71,6 +81,7 @@ services:
       - ../.m7-cluster/recordings/recorder-a:/recordings/nvr
       - ../.m7-cluster/volumes/recorder-a:/recordings/volumes
       - ../.m7-cluster/secrets/cluster-ca.crt:/run/secrets/cluster-ca.crt:ro
+      - ../.m7-cluster/secrets/minio-s3.json:/run/secrets/minio-s3.json:ro
 
   recorder-b:
     <<: *recorder
@@ -83,6 +94,7 @@ services:
       - ../.m7-cluster/recordings/recorder-b:/recordings/nvr
       - ../.m7-cluster/volumes/recorder-b:/recordings/volumes
       - ../.m7-cluster/secrets/cluster-ca.crt:/run/secrets/cluster-ca.crt:ro
+      - ../.m7-cluster/secrets/minio-s3.json:/run/secrets/minio-s3.json:ro
 
   recorder-c:
     <<: *recorder
@@ -95,12 +107,14 @@ services:
       - ../.m7-cluster/recordings/recorder-c:/recordings/nvr
       - ../.m7-cluster/volumes/recorder-c:/recordings/volumes
       - ../.m7-cluster/secrets/cluster-ca.crt:/run/secrets/cluster-ca.crt:ro
+      - ../.m7-cluster/secrets/minio-s3.json:/run/secrets/minio-s3.json:ro
 
   mediamtx:
     image: bluenviron/mediamtx:1.18.2@sha256:f8628851106cc053f9175b248050bb5f362a6e65abd72297c167a1cb5a9a3be2
     restart: "no"
     volumes:
       - ./mediamtx.yml:/mediamtx.yml:ro
+    networks: [media]
 
   publisher:
     image: ${WEBOBS_IMAGE:-webobs:m7-candidate}
@@ -115,6 +129,7 @@ services:
         -c:a aac -f rtsp -rtsp_transport tcp rtsp://mediamtx:8554/synth
     depends_on:
       - mediamtx
+    networks: [media]
     healthcheck:
       disable: true
 
@@ -135,9 +150,34 @@ services:
       interval: 3s
       timeout: 2s
       retries: 30
+    networks: [control]
+
+  minio-init:
+    image: ${WEBOBS_IMAGE:-webobs:m7-candidate}
+    restart: "no"
+    entrypoint: ["python3", "/fixture/create-s3-bucket.py"]
+    depends_on:
+      minio:
+        condition: service_healthy
+    volumes:
+      - ./create-s3-bucket.py:/fixture/create-s3-bucket.py:ro
+      - ../.m7-cluster/secrets/minio-s3.json:/run/secrets/minio-s3.json:ro
+      - ../.m7-cluster/secrets/cluster-ca.crt:/run/secrets/cluster-ca.crt:ro
+    networks: [control]
 
   mosquitto:
     image: eclipse-mosquitto:2.0.22@sha256:212f89e1eaeb2c322d6441b64396e3346026674db8fa9c27beac293405c32b3c
     restart: "no"
+    user: "0:0"
     volumes:
       - ../.m7-cluster/mosquitto.conf:/mosquitto/config/mosquitto.conf:ro
+      - ../.m7-cluster/secrets/cluster-ca.crt:/mosquitto/certs/cluster-ca.crt:ro
+      - ../.m7-cluster/secrets/cluster-server.crt:/mosquitto/certs/server.crt:ro
+      - ../.m7-cluster/secrets/cluster-server.key:/mosquitto/certs/server.key:ro
+    networks: [control]
+
+networks:
+  control:
+    name: webobs-m7-gate-control
+  media:
+    name: webobs-m7-gate-media

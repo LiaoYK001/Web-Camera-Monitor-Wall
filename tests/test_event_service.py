@@ -90,6 +90,12 @@ class EventServiceTests(unittest.TestCase):
         with self.assertRaises(ValueError): events.secret("../escape")
         with patch.object(events.socket, "getaddrinfo", return_value=[(2,1,6,"",("127.0.0.1",443))]):
             with self.assertRaises(ValueError): events.public_destination("attacker.invalid", 443)
+            with patch.dict(events.os.environ, {"WEBOBS_NOTIFICATION_ALLOWED_HOSTS": "mqtt.internal"}):
+                family, destination = events.public_destination("mqtt.internal", 8883)
+                self.assertEqual(family, 2); self.assertEqual(destination, ("127.0.0.1", 443))
+            with patch.dict(events.os.environ, {"WEBOBS_NOTIFICATION_ALLOWED_HOSTS": "bad/value"}):
+                with self.assertRaisesRegex(ValueError, "allowlist"):
+                    events.public_destination("mqtt.internal", 8883)
 
     def test_index_latency_and_outbox_ceiling_are_bounded(self) -> None:
         with events.connect() as database:

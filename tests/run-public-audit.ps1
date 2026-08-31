@@ -173,6 +173,7 @@ try {
         'gateway/transcode-on-demand.sh',
         'scripts/run-private-pwa-gate.py',
         'scripts/verify-local-gate-receipts.py',
+        'scripts/verify-m7-gate-receipts.py',
         'scripts/test-web-runtime-wsl2.sh',
         'tests/run-contracts.sh',
         'tests/run-public-audit.sh',

@@ -26,9 +26,9 @@ Rules may match camera, type, zone, label, minimum confidence, minimum duration 
 
 规则可匹配摄像机、类型、区域、标签、最低置信度、最低持续时间与 UTC 计划，并带冷却时间。动作只创建去重后的发件箱记录；队列最多 4096 条，24 小时过期，采用指数退避且最多重试八次。
 
-Webhook and MQTT destinations are Secret references under `/run/secrets/webobs-notifications/<reference>.json`. Webhooks require HTTPS and HMAC-SHA256 signing. Both adapters resolve the destination immediately before connecting and reject loopback, private, link-local, multicast and other non-global addresses to prevent SSRF. MQTT uses TLS and may read username/password from the same mounted Secret. Neither API responses nor SQLite rows contain these credentials.
+Webhook and MQTT destinations are Secret references under `/run/secrets/webobs-notifications/<reference>.json`. Webhooks require HTTPS and HMAC-SHA256 signing. Both adapters resolve the destination immediately before connecting and reject loopback, private, link-local, multicast and other non-global addresses to prevent SSRF. A local Home Assistant/MQTT broker is permitted only when its exact DNS name is listed in `WEBOBS_NOTIFICATION_ALLOWED_HOSTS`; this is an explicit private-network SSRF exception, not a CIDR or wildcard bypass. A private CA may be provided through `WEBOBS_NOTIFICATION_CA_FILE`, which must point below `/run/secrets`. MQTT uses TLS and may read username/password from the same mounted Secret. Neither API responses nor SQLite rows contain these credentials.
 
-Webhook 与 MQTT 目标通过 `/run/secrets/webobs-notifications/<引用>.json` 间接引用。Webhook 强制 HTTPS 与 HMAC-SHA256 签名；两种 Adapter 均在连接前解析目标并拒绝回环、私网、链路本地、组播及其他非全局地址，以防 SSRF。MQTT 强制 TLS，并可从同一挂载 Secret 读取用户名/密码。API 响应和 SQLite 均不保存这些凭据。
+Webhook 与 MQTT 目标通过 `/run/secrets/webobs-notifications/<引用>.json` 间接引用。Webhook 强制 HTTPS 与 HMAC-SHA256 签名；两种 Adapter 均在连接前解析目标并拒绝回环、私网、链路本地、组播及其他非全局地址，以防 SSRF。本地 Home Assistant/MQTT Broker 只有在其精确 DNS 名称进入 `WEBOBS_NOTIFICATION_ALLOWED_HOSTS` 后才允许访问；这是显式私网 SSRF 豁免，不支持 CIDR 或通配符。私有 CA 可通过 `WEBOBS_NOTIFICATION_CA_FILE` 提供，路径必须位于 `/run/secrets` 下。MQTT 强制 TLS，并可从同一挂载 Secret 读取用户名/密码。API 响应和 SQLite 均不保存这些凭据。
 
 ## Verification boundary / 验证边界
 

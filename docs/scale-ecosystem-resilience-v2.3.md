@@ -68,6 +68,15 @@ export WEBOBS_M7_GATE_SECONDS=900
 ./tests/m7/run-gate.sh
 ```
 
+对 `8`、`16`、`32` 三档分别运行一次会生成仅含当前 Git revision、完成时间、时长和检查项名称的 `build/private-gates/m7-scale-*.json`。故障注入另行执行：
+
+```bash
+./tests/m7/run-fault-gate.sh
+python3 scripts/verify-m7-gate-receipts.py
+```
+
+故障门禁使用相互独立的控制网和媒体网，按生产常量验证 20 秒节点健康边界、120 秒 Recorder 隔离录像、mTLS 重连、MinIO 中断续录/恢复、只读卷拒绝、真实 TLS MQTT/Home Assistant 发布及容器内 libsodium 灾备恢复。最后一个验证命令还要求同一 revision 的 Windows RBAC/节点/存储/PWA 运维回执；缺失、过期、时长不足或包含未知字段都会拒绝发布。
+
 该门禁只使用合成端点。真实节点、真实 S3、六小时耐久与真实网络分区证据仍只保存在维护者私有环境，不进入 Git 或公开 Artifact。
 
 ## 发布边界

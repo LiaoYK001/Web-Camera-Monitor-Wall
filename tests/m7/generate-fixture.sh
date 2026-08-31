@@ -32,7 +32,7 @@ if [ ! -s "$secrets/cluster-ca.key" ] || [ ! -s "$secrets/cluster-ca.crt" ]; the
         -keyout "$secrets/cluster-ca.key" -out "$secrets/cluster-ca.crt" >/dev/null 2>&1
 fi
 cat > "$root/server.ext" <<'EOF'
-subjectAltName=DNS:controller,DNS:minio,IP:127.0.0.1
+subjectAltName=DNS:controller,DNS:minio,DNS:mosquitto,IP:127.0.0.1
 extendedKeyUsage=serverAuth
 keyUsage=digitalSignature,keyEncipherment
 EOF
@@ -50,7 +50,14 @@ openssl rand -base64 32 | tr -d '\r\n' > "$secrets/admin-password"
 openssl rand -hex 32 | tr -d '\r\n' > "$secrets/cluster-internal-token"
 printf '%s' 'webobs-fixture' > "$secrets/minio-user"
 openssl rand -base64 32 | tr -d '\r\n' > "$secrets/minio-password"
-printf '%s\n' 'listener 1883 0.0.0.0' 'allow_anonymous true' 'persistence false' > "$root/mosquitto.conf"
+printf '%s\n' \
+    'listener 8883 0.0.0.0' \
+    'cafile /mosquitto/certs/cluster-ca.crt' \
+    'certfile /mosquitto/certs/server.crt' \
+    'keyfile /mosquitto/certs/server.key' \
+    'user root' \
+    'allow_anonymous true' \
+    'persistence false' > "$root/mosquitto.conf"
 
 python_bin=python3
 python3 --version >/dev/null 2>&1 || python_bin=python
@@ -61,6 +68,15 @@ import json, os, pathlib
 root = pathlib.Path(os.environ['ROOT'])
 count = int(os.environ['CAMERA_COUNT'])
 nodes = ['recorder-a', 'recorder-b', 'recorder-c']
+access_key = (root / 'secrets/minio-user').read_text(encoding='utf-8')
+secret_key = (root / 'secrets/minio-password').read_text(encoding='utf-8')
+(root / 'secrets/minio-s3.json').write_text(json.dumps({
+    'accessKeyId': access_key, 'secretAccessKey': secret_key,
+}, separators=(',', ':')) + '\n', encoding='utf-8')
+(root / 'secrets/mqtt.json').write_text(json.dumps({
+    'host': 'mosquitto', 'port': 8883, 'topicPrefix': 'webobs/v1',
+    'homeAssistantDiscoveryPrefix': 'homeassistant',
+}, separators=(',', ':')) + '\n', encoding='utf-8')
 for index, node in enumerate(nodes):
     cameras = []
     for camera in range(index + 1, count + 1, len(nodes)):
@@ -73,6 +89,10 @@ for index, node in enumerate(nodes):
     value = {'schemaVersion': 1, 'segmentSeconds': 10, 'maxAgeHours': 24,
              'maxBytes': 0, 'minFreeBytes': 0, 'cameras': cameras}
     (root / node / 'nvr.json').write_text(json.dumps(value, separators=(',', ':')) + '\n', encoding='utf-8')
+    (root / node / 'archive.json').write_text(json.dumps({
+        'endpoint': 'https://minio:9000', 'bucket': 'webobs-archive',
+        'region': 'us-east-1', 'credentialsFile': '/run/secrets/minio-s3.json',
+    }, separators=(',', ':')) + '\n', encoding='utf-8')
 PY
 
 chmod 0600 "$secrets"/* "$root"/minio-certs/* 2>/dev/null || true

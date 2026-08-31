@@ -10,6 +10,7 @@ scripts/create-source-bundle.sh
 scripts/release-image-local.sh
 scripts/run-private-pwa-gate.py
 scripts/verify-local-gate-receipts.py
+scripts/verify-m7-gate-receipts.py
 scripts/test-web-runtime-wsl2.sh
 scripts/upload-release-assets-immutable.sh
 scripts/verify-source-bundle.sh
@@ -36,8 +37,13 @@ tests/run-public-audit.sh
 tests/run-real-camera.sh
 tests/run-smoke.sh
 tests/run-v2-true-direct.sh
+tests/m7/create-s3-bucket.py
+tests/m7/fault-injection.py
 tests/m7/generate-fixture.sh
-tests/m7/run-gate.sh'
+tests/m7/mqtt-integration.py
+tests/m7/run-fault-gate.sh
+tests/m7/run-gate.sh
+tests/m7/verify-scale.py'
 
 failed=0
 printf '%s\n' "$required" | while IFS= read -r path; do

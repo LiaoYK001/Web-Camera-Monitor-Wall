@@ -104,6 +104,31 @@ class ClusterTests(unittest.TestCase):
         self.assertEqual(listed["id"], created["id"])
         self.assertNotIn("password", str(listed).lower())
 
+    def test_complete_builtin_role_matrix_and_group_scope(self) -> None:
+        expected = {
+            "admin": cluster.PERMISSIONS,
+            "operator": frozenset({"live.view", "scene.read", "playback.view",
+                                    "snapshot.create", "ptz.control", "talk.control",
+                                    "event.ack", "recording.lock"}),
+            "viewer": frozenset({"live.view", "scene.read", "playback.view"}),
+            "auditor": frozenset({"event.ack", "audit.view", "playback.view"}),
+            "exporter": frozenset({"playback.view", "export.create"}),
+        }
+        self.assertEqual(cluster.ROLE_PERMISSIONS, expected)
+        for role, permissions in expected.items():
+            created = self.store.create_user({
+                "username": f"matrix-{role}", "password": "correct-horse-battery",
+                "roles": [role], "scopes": [{"kind": "group", "id": "group-1"}],
+            })
+            principal = self.store.principal(created["id"])
+            self.assertEqual(principal.permissions, permissions)
+            for permission in cluster.PERMISSIONS:
+                self.assertEqual(permission in principal.permissions,
+                                 permission in permissions, f"{role}: {permission}")
+            if role != "admin" and "live.view" in permissions:
+                self.assertTrue(principal.permits("live.view", "camera-other", "group-1"))
+                self.assertFalse(principal.permits("live.view", "camera-other", "group-2"))
+
     def test_user_validation_and_unique_name(self) -> None:
         self.create_user()
         with self.assertRaisesRegex(cluster.ApiError, "username already exists"):
