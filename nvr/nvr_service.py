@@ -369,14 +369,26 @@ class VolumeManager:
                 if child.is_dir() and not child.is_symlink() and VOLUME_ID.fullmatch(child.name):
                     self.roots[child.name] = child
 
-    def choose(self, reserve_bytes: int) -> tuple[str, pathlib.Path]:
+    def choose(self, reserve_bytes: int, policies: dict[str, dict[str, Any]] | None = None,
+               excluded: set[str] | None = None) -> tuple[str, pathlib.Path]:
+        policies = policies or {}
+        excluded = excluded or set()
         candidates = []
         for volume_id, root in self.roots.items():
+            if volume_id in excluded:
+                continue
             if volume_id == "default" and len(self.roots) > 1:
                 continue
             usage = shutil.disk_usage(root)
-            if os.access(root, os.W_OK) and usage.free > reserve_bytes:
-                candidates.append((usage.free - reserve_bytes, volume_id, root))
+            policy = policies.get(volume_id, {})
+            state = policy.get("state", "online")
+            high = policy.get("highWatermark", 0.90)
+            policy_reserve = policy.get("reserveBytes", 0)
+            effective_reserve = max(reserve_bytes, policy_reserve if isinstance(policy_reserve, int) else 0)
+            used_ratio = 1 - (usage.free / max(1, usage.total))
+            if state == "online" and isinstance(high, (int, float)) and used_ratio < high and \
+                    os.access(root, os.W_OK) and usage.free > effective_reserve:
+                candidates.append((usage.free - effective_reserve, volume_id, root))
         if not candidates:
             raise RuntimeError("no writable recording volume has sufficient reserve")
         _, volume_id, root = max(candidates, key=lambda item: (item[0], item[1]))
@@ -461,7 +473,16 @@ class NvrService:
         self.reader_lock = threading.RLock()
         self.active_readers: dict[str, int] = {}
         self.playback_leases: dict[str, tuple[str, float]] = {}
+        self.archive_cache_root = storage_root / ".archive-cache"
+        self.archive_retrieval_enabled = os.environ.get("WEBOBS_ARCHIVE_RETRIEVAL_ENABLED", "false") == "true"
+        self.archive_command = os.environ.get("WEBOBS_ARCHIVE_COMMAND", "/opt/webobs/bin/webobs-s3-archive")
+        self.archive_cache_max_bytes = int(os.environ.get("WEBOBS_ARCHIVE_CACHE_MAX_BYTES", str(2 << 30)))
+        if not 0 <= self.archive_cache_max_bytes <= 1 << 50:
+            raise ConfigError("WEBOBS_ARCHIVE_CACHE_MAX_BYTES is invalid")
+        self.archive_locks: dict[str, threading.Lock] = {}
+        self.last_scrub_monotonic = 0.0
         for directory in (storage_root, self.exports_root, self.quarantine_root, self.ring_root,
+                          self.archive_cache_root,
                           self.thumbnail_root, self.snapshot_root):
             directory.mkdir(mode=0o700, parents=True, exist_ok=True)
         self.reconcile()
@@ -585,6 +606,18 @@ class NvrService:
                     return value
         return self.node_id
 
+    def volume_policies(self) -> dict[str, dict[str, Any]]:
+        if self.node_role != "recorder":
+            return {}
+        with contextlib.suppress(OSError, ValueError, TypeError, json.JSONDecodeError, ConfigError):
+            values = private_json(self.assignment_path).get("volumes", [])
+            result: dict[str, dict[str, Any]] = {}
+            for value in values[:256]:
+                if isinstance(value, dict) and VOLUME_ID.fullmatch(str(value.get("id", ""))):
+                    result[value["id"]] = value
+            return result
+        return {}
+
     def _worker_loop(self, camera_id: str, worker_stop: threading.Event, state: WorkerState) -> None:
         while not self.stop_event.is_set() and not worker_stop.is_set():
             camera = self.camera(camera_id)
@@ -653,7 +686,7 @@ class NvrService:
             volume_id = "default"
             volume_root = self.storage_root
         else:
-            volume_id, volume_root = self.volumes.choose(self.config["minFreeBytes"])
+            volume_id, volume_root = self.volumes.choose(self.config["minFreeBytes"], self.volume_policies())
             directory = volume_root / camera["id"] / timestamp.strftime("%Y/%m/%d")
         directory.mkdir(mode=0o700, parents=True, exist_ok=True)
         final = directory / f"{timestamp.strftime('%Y%m%dT%H%M%S.%fZ')}-{segment_id}.mp4"
@@ -742,7 +775,7 @@ class NvrService:
                 start = int(path.stat().st_mtime * 1000)
                 media = self._probe(str(path))
                 duration = max(1, int(float(media.get("format", {}).get("duration", 0)) * 1000))
-                volume_id, volume_root = self.volumes.choose(self.config["minFreeBytes"])
+                volume_id, volume_root = self.volumes.choose(self.config["minFreeBytes"], self.volume_policies())
                 target_dir = volume_root / camera["id"] / dt.datetime.fromtimestamp(
                     start / 1000, dt.timezone.utc).strftime("%Y/%m/%d")
                 target_dir.mkdir(mode=0o700, parents=True, exist_ok=True)
@@ -842,6 +875,105 @@ class NvrService:
     def _maintenance_loop(self) -> None:
         while not self.stop_event.wait(2):
             self.apply_retention()
+            self.migrate_under_pressure()
+            if time.monotonic() - self.last_scrub_monotonic >= 24 * 60 * 60:
+                self.scrub_once()
+                self.last_scrub_monotonic = time.monotonic()
+            self.trim_archive_cache()
+
+    def trim_archive_cache(self) -> None:
+        entries = []
+        total = 0
+        with contextlib.suppress(OSError):
+            for path in self.archive_cache_root.iterdir():
+                if path.is_file() and SEGMENT_ID.fullmatch(path.name):
+                    stat = path.stat()
+                    total += stat.st_size
+                    entries.append((stat.st_mtime_ns, path, stat.st_size))
+        for _, path, size in sorted(entries):
+            if total <= self.archive_cache_max_bytes:
+                break
+            segment_id = path.name
+            with self.reader_lock:
+                if self._segment_active(segment_id):
+                    continue
+            with contextlib.suppress(OSError):
+                path.unlink()
+                total -= size
+
+    def migrate_under_pressure(self) -> bool:
+        policies = self.volume_policies()
+        for volume_id, root in self.volumes.roots.items():
+            if volume_id == "default" and len(self.volumes.roots) > 1:
+                continue
+            usage = shutil.disk_usage(root)
+            policy = policies.get(volume_id, {})
+            high = policy.get("highWatermark", 0.90)
+            state = policy.get("state", "online")
+            if state != "evacuating" and (not isinstance(high, (int, float)) or
+                                            1 - usage.free / max(1, usage.total) < high):
+                continue
+            try:
+                target_id, target_root = self.volumes.choose(
+                    self.config["minFreeBytes"], policies, {volume_id})
+            except RuntimeError:
+                return False
+            rows = self.catalog.query("""
+              SELECT * FROM segments WHERE volume_id=? AND locked=0
+                AND integrity NOT IN ('deleted','missing','corrupt')
+              ORDER BY start_utc_ms LIMIT 32
+            """, (volume_id,))
+            for row in rows:
+                with self.reader_lock:
+                    if self._segment_active(row["id"]):
+                        continue
+                try:
+                    source = self.volumes.path(volume_id, row["storage_key"])
+                    target = self.volumes.path(target_id, row["storage_key"])
+                    target.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+                    temporary = target.with_name(f".{target.name}.{uuid.uuid4().hex}.migrating")
+                    shutil.copyfile(source, temporary)
+                    digest = file_sha256(temporary)
+                    expected = row["sha256"] or file_sha256(source)
+                    if digest != expected or temporary.stat().st_size != row["size_bytes"]:
+                        raise RuntimeError("migrated segment digest mismatch")
+                    os.replace(temporary, target)
+                    self.catalog.execute("UPDATE segments SET volume_id=?,sha256=? WHERE id=?",
+                                         (target_id, digest, row["id"]))
+                    with contextlib.suppress(OSError):
+                        source.unlink()
+                    self.audit("nvr.segment.migrated", segment_id=row["id"],
+                               source_volume=volume_id, target_volume=target_id)
+                    return True
+                except (OSError, RuntimeError):
+                    with contextlib.suppress(UnboundLocalError, OSError):
+                        temporary.unlink()
+                    self.catalog.execute("UPDATE segments SET integrity='migration-failed' WHERE id=?",
+                                         (row["id"],))
+                    return False
+        return False
+
+    def scrub_once(self, limit: int = 128) -> dict[str, int]:
+        checked = 0
+        corrupt = 0
+        rows = self.catalog.query("""
+          SELECT * FROM segments WHERE integrity NOT IN ('deleted','missing','corrupt')
+            AND length(sha256)=64 ORDER BY start_utc_ms LIMIT ?
+        """, (max(1, min(limit, 4096)),))
+        for row in rows:
+            with self.reader_lock:
+                if self._segment_active(row["id"]):
+                    continue
+            try:
+                valid = file_sha256(self.volumes.path(row["volume_id"], row["storage_key"])) == row["sha256"]
+            except (OSError, RuntimeError):
+                valid = False
+            checked += 1
+            if not valid:
+                corrupt += 1
+                self.catalog.execute("UPDATE segments SET integrity='corrupt' WHERE id=?", (row["id"],))
+                self.audit("nvr.segment.scrub-failed", segment_id=row["id"])
+        return {"checked": checked, "corrupt": corrupt}
 
     def apply_retention(self) -> None:
         with self.config_lock:
@@ -996,8 +1128,36 @@ class NvrService:
         except RuntimeError:
             raise KeyError(segment_id) from None
         if not path.is_file():
-            raise KeyError(segment_id)
+            path = self.restore_archived_segment(row)
+        with contextlib.suppress(OSError):
+            os.utime(path)
         return path
+
+    def restore_archived_segment(self, row: sqlite3.Row) -> pathlib.Path:
+        if not self.archive_retrieval_enabled or row["archive_state"] != "uploaded" or \
+                not re.fullmatch(r"[0-9a-f]{64}", row["sha256"] or ""):
+            raise KeyError(row["id"])
+        destination = self.archive_cache_root / row["id"]
+        with self.reader_lock:
+            lock = self.archive_locks.setdefault(row["id"], threading.Lock())
+        with lock:
+            if not destination.is_file():
+                command = [self.archive_command, "--retrieve-segment", row["id"],
+                           "--destination", str(destination)]
+                result = subprocess.run(command, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
+                                        stderr=subprocess.DEVNULL, timeout=120, check=False)
+                if result.returncode != 0:
+                    raise KeyError(row["id"])
+            try:
+                valid = destination.stat().st_size == row["size_bytes"] and \
+                    file_sha256(destination) == row["sha256"]
+            except OSError:
+                valid = False
+            if not valid:
+                with contextlib.suppress(OSError):
+                    destination.unlink()
+                raise KeyError(row["id"])
+        return destination
 
     @contextlib.contextmanager
     def playback_reader(self, segment_id: str):

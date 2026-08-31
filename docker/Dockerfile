@@ -54,6 +54,7 @@ COPY cluster/cluster_service.py /opt/webobs/bin/webobs-cluster
 COPY cluster/node_agent.py /opt/webobs/bin/webobs-node-agent
 COPY archive/s3_archive.py /opt/webobs/bin/webobs-s3-archive
 COPY backup/encrypted_backup.py /opt/webobs/bin/webobs-encrypted-backup
+COPY nvr/nvr_service.py /opt/webobs/bin/webobs-nvr
 COPY tests/test_v2_client_control.py /tmp/test_v2_client_control.py
 COPY tests/test_cluster_service.py /tmp/test_cluster_service.py
 COPY tests/test_node_agent.py /tmp/test_node_agent.py
@@ -65,9 +66,21 @@ COPY clients/scripts/verify_dependency_lock.py /tmp/verify_dependency_lock.py
 ENV WEBOBS_LIBSODIUM_LIBRARY=/opt/libsodium/lib/libsodium.so.26 \
     LD_LIBRARY_PATH=/opt/libsodium/lib \
     WEBOBS_TEST_V2_SERVICE=/opt/webobs/bin/webobs-client-control \
+    WEBOBS_TEST_CLUSTER_SERVICE=/opt/webobs/bin/webobs-cluster \
+    WEBOBS_TEST_NODE_AGENT=/opt/webobs/bin/webobs-node-agent \
+    WEBOBS_TEST_ARCHIVE_SERVICE=/opt/webobs/bin/webobs-s3-archive \
+    WEBOBS_TEST_ENCRYPTED_BACKUP=/opt/webobs/bin/webobs-encrypted-backup \
+    WEBOBS_TEST_NVR_SERVICE=/opt/webobs/bin/webobs-nvr \
     PYTHONDONTWRITEBYTECODE=1
-RUN python3 -m py_compile /opt/webobs/bin/webobs-client-control /tmp/test_v2_client_control.py \
+RUN python3 -m py_compile /opt/webobs/bin/webobs-client-control /opt/webobs/bin/webobs-cluster \
+        /opt/webobs/bin/webobs-node-agent /opt/webobs/bin/webobs-s3-archive \
+        /opt/webobs/bin/webobs-encrypted-backup /opt/webobs/bin/webobs-nvr \
     && python3 /tmp/test_v2_client_control.py \
+    && python3 /tmp/test_cluster_service.py \
+    && python3 /tmp/test_node_agent.py \
+    && python3 /tmp/test_s3_archive.py \
+    && python3 /tmp/test_encrypted_backup.py \
+    && python3 /tmp/test_nvr_storage.py \
     && python3 /tmp/verify_dependency_lock.py --lock /tmp/client-dependencies.lock.json
 
 FROM ubuntu:24.04 AS client-compile-test

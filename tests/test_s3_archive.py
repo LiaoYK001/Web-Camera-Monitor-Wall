@@ -7,6 +7,7 @@ import datetime as dt
 import importlib.machinery
 import importlib.util
 import pathlib
+import sqlite3
 import sys
 import tempfile
 import unittest
@@ -58,6 +59,31 @@ class ArchiveTests(unittest.TestCase):
             client.request("PUT", "../secret", "a" * 64, 1, b"x")
         with self.assertRaises(archive.ArchiveError):
             client.request("PUT", "segments/object", "invalid", 1, b"x")
+
+    def test_retrieve_uses_only_catalog_digest_derived_object_key(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = pathlib.Path(directory)
+            catalog = root / "catalog.sqlite3"
+            connection = sqlite3.connect(catalog)
+            connection.execute("CREATE TABLE segments(id TEXT PRIMARY KEY,sha256 TEXT,size_bytes INTEGER,"
+                               "archive_state TEXT,integrity TEXT,volume_id TEXT,storage_key TEXT)")
+            connection.execute("INSERT INTO segments VALUES(?,?,?,?,?,?,?)",
+                               ("a" * 32, "b" * 64, 7, "uploaded", "ok", "default", "ignored"))
+            connection.commit(); connection.close()
+            service = archive.ArchiveService(catalog, root / "queue.sqlite3", root / "volumes", self.config(), root)
+            calls = []
+            def download(key, destination, digest, size):
+                calls.append((key, destination, digest, size))
+                destination.parent.mkdir(parents=True)
+                destination.write_bytes(b"fixture")
+            service.client.download_verified = download
+            destination = root / "cache" / ("a" * 32)
+            service.retrieve("a" * 32, destination)
+            self.assertEqual(calls[0][0], "segments/bb/" + "b" * 64)
+            self.assertEqual(calls[0][2:], ("b" * 64, 7))
+            with self.assertRaises(archive.ArchiveError):
+                service.retrieve("../escape", root / "escape")
+            service.catalog.close(); service.queue.db.close()
 
 
 if __name__ == "__main__":

@@ -561,9 +561,11 @@ class ClusterStore:
             for volume in volumes:
                 self.db.execute("""
                   INSERT INTO storage_volumes VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)
-                  ON CONFLICT(node_id,id) DO UPDATE SET label=excluded.label,tier=excluded.tier,state=excluded.state,
-                    capacity_bytes=excluded.capacity_bytes,free_bytes=excluded.free_bytes,reserve_bytes=excluded.reserve_bytes,
-                    high_watermark=excluded.high_watermark,low_watermark=excluded.low_watermark,
+                  ON CONFLICT(node_id,id) DO UPDATE SET
+                    capacity_bytes=excluded.capacity_bytes,free_bytes=excluded.free_bytes,
+                    state=CASE WHEN excluded.read_only=1 THEN 'read-only'
+                               WHEN storage_volumes.state='offline' THEN 'online'
+                               ELSE storage_volumes.state END,
                     read_only=excluded.read_only,revision=storage_volumes.revision+1
                 """, (volume["id"], node_id, volume["label"], volume["tier"], volume["state"],
                        volume["capacityBytes"], volume["freeBytes"], volume["reserveBytes"],
@@ -766,10 +768,16 @@ class ClusterStore:
         require_identifier(node_id, "node_id")
         rows = self.db.execute("SELECT * FROM recording_assignments WHERE node_id=? ORDER BY camera_id,profile_id",
                                (node_id,)).fetchall()
+        volumes = self.db.execute("SELECT * FROM storage_volumes WHERE node_id=? ORDER BY id",
+                                  (node_id,)).fetchall()
         return {"assignments": [{"cameraId": row["camera_id"], "profileId": row["profile_id"],
                                   "nodeId": row["node_id"], "generation": row["generation"],
                                   "state": row["state"], "leaseExpiresAt": row["lease_expires_at"],
                                   "isolationDeadline": row["isolation_deadline"]} for row in rows],
+                "volumes": [{"id": row["id"], "label": row["label"], "tier": row["tier"],
+                             "state": row["state"], "reserveBytes": row["reserve_bytes"],
+                             "highWatermark": row["high_watermark"],
+                             "lowWatermark": row["low_watermark"]} for row in volumes],
                 "revision": self.revision()}
 
     def accept_catalog(self, node_id: str, value: Any) -> dict[str, Any]:
@@ -925,6 +933,39 @@ class ClusterStore:
                            "completedAt": row["completed_at"], "errorCode": row["error_code"]} for row in rows],
                 "revision": self.revision()}
 
+    def claim_backup_job(self) -> dict[str, Any]:
+        with self.lock, self.db:
+            row = self.db.execute(
+                "SELECT * FROM backup_jobs WHERE state='queued' ORDER BY created_at LIMIT 1").fetchone()
+            if row is None:
+                return {"job": None}
+            self.db.execute("UPDATE backup_jobs SET state='running' WHERE id=? AND state='queued'", (row["id"],))
+            self._bump()
+        return {"job": {"id": row["id"], "targetId": row["target_id"],
+                        "createdAt": row["created_at"]}}
+
+    def complete_backup_job(self, job_id: str, value: Any) -> dict[str, Any]:
+        require_identifier(job_id, "job_id")
+        value = require_exact_object(value, {"state", "sha256", "errorCode"}, {"state"})
+        state = value["state"]
+        digest = value.get("sha256", "")
+        error = value.get("errorCode", "")
+        if state not in {"completed", "failed"} or \
+                (state == "completed" and not re.fullmatch(r"[0-9a-f]{64}", str(digest))) or \
+                (state == "failed" and (not isinstance(error, str) or not IDENTIFIER.fullmatch(error))):
+            raise ApiError(400, "invalid_backup_result", "backup result is invalid")
+        with self.lock, self.db:
+            row = self.db.execute("SELECT state FROM backup_jobs WHERE id=?", (job_id,)).fetchone()
+            if row is None:
+                raise ApiError(404, "backup_job_not_found", "backup job was not found")
+            if row["state"] != "running":
+                raise ApiError(409, "backup_job_state", "backup job is not running")
+            self.db.execute("UPDATE backup_jobs SET state=?,sha256=?,completed_at=?,error_code=? WHERE id=?",
+                            (state, digest if state == "completed" else "", now_seconds(),
+                             error if state == "failed" else "", job_id))
+            revision = self._bump()
+        return {"id": job_id, "state": state, "revision": revision}
+
     def create_provider(self, value: Any) -> dict[str, Any]:
         required = {"name", "endpoint", "taskTypes", "credentialsRef", "maxConcurrent"}
         value = require_exact_object(value, required | {"enabled"}, required)
@@ -999,6 +1040,29 @@ class ClusterStore:
                 "expiresAt": expires_at, "mediaGrant": {"token": token, "method": "GET",
                 "path": f"/api/v2/provider-media/{task_id}"}, "parameters": parameters}
 
+    def consume_provider_grant(self, task_id: str, token: str) -> dict[str, Any]:
+        require_identifier(task_id, "task_id")
+        if not isinstance(token, str) or not 32 <= len(token) <= 128 or \
+                not re.fullmatch(r"[A-Za-z0-9_-]+", token):
+            raise ApiError(401, "provider_grant_rejected", "provider media grant was rejected")
+        token_hash = hashlib.sha256(token.encode()).hexdigest()
+        with self.lock, self.db:
+            row = self.db.execute(
+                "SELECT * FROM provider_grants WHERE token_hash=? AND task_id=?",
+                (token_hash, task_id),
+            ).fetchone()
+            if row is None or row["used"] or row["expires_at"] <= now_seconds():
+                raise ApiError(401, "provider_grant_rejected", "provider media grant was rejected")
+            updated = self.db.execute(
+                "UPDATE provider_grants SET used=1 WHERE token_hash=? AND task_id=? AND used=0 AND expires_at>?",
+                (token_hash, task_id, now_seconds()),
+            )
+            if updated.rowcount != 1:
+                raise ApiError(401, "provider_grant_rejected", "provider media grant was rejected")
+        return {"taskId": task_id, "cameraId": row["camera_id"], "profileId": row["profile_id"],
+                "segmentId": row["segment_id"] or None, "expiresAt": row["expires_at"],
+                "credentialExposure": "none"}
+
     def capacity(self) -> dict[str, Any]:
         reports = []
         for row in self.db.execute("SELECT * FROM resource_reports ORDER BY node_id LIMIT ?", (MAX_PAGE,)):
@@ -1072,6 +1136,11 @@ class Handler(http.server.BaseHTTPRequestHandler):
                                 "roles": principal.roles, "permissions": sorted(principal.permissions),
                                 "scopes": [{"kind": kind, "id": identifier} for kind, identifier in principal.scopes]})
             return
+        if path.startswith("/provider-media/") and self.command == "POST":
+            value = self.read_json()
+            require_exact_object(value, {"token"}, {"token"})
+            self.response(200, STORE.consume_provider_grant(path.split("/")[2], value["token"]))
+            return
         self.admin()
         if path == "/auth/authorize" and self.command == "POST":
             value = self.read_json()
@@ -1122,6 +1191,10 @@ class Handler(http.server.BaseHTTPRequestHandler):
             self.response(200, STORE.list_backup_jobs())
         elif path == "/backup-jobs" and self.command == "POST":
             self.response(202, STORE.create_backup_job(self.read_json()))
+        elif path == "/backup-jobs/claim" and self.command == "POST":
+            self.response(200, STORE.claim_backup_job())
+        elif path.startswith("/backup-jobs/") and path.endswith("/result") and self.command == "POST":
+            self.response(200, STORE.complete_backup_job(path.split("/")[2], self.read_json()))
         elif path == "/providers" and self.command == "GET":
             self.response(200, STORE.list_providers())
         elif path == "/providers" and self.command == "POST":

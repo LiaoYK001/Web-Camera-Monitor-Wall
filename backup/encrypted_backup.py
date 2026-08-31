@@ -8,9 +8,11 @@ import contextlib
 import ctypes
 import ctypes.util
 import hashlib
+import http.client
 import json
 import os
 import pathlib
+import re
 import shutil
 import sqlite3
 import struct
@@ -29,6 +31,14 @@ MAX_TOTAL = 8 * 1024 * 1024 * 1024
 
 class BackupError(RuntimeError):
     pass
+
+
+def file_sha256(path: pathlib.Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as source:
+        while chunk := source.read(CHUNK):
+            digest.update(chunk)
+    return digest.hexdigest()
 
 
 class SodiumStream:
@@ -167,7 +177,7 @@ def create(config_root: pathlib.Path, backup_root: pathlib.Path, key_file: pathl
                 shutil.copyfile(source, destination)
             os.chmod(destination, 0o600)
             manifest["files"].append({"path": relative.as_posix(), "size": destination.stat().st_size,
-                                      "sha256": hashlib.sha256(destination.read_bytes()).hexdigest()})
+                                      "sha256": file_sha256(destination)})
         (staging / "backup-manifest.json").write_text(
             json.dumps(manifest, separators=(",", ":"), sort_keys=True) + "\n", encoding="utf-8")
         tar_path = pathlib.Path(directory) / "snapshot.tar.gz"
@@ -180,7 +190,7 @@ def create(config_root: pathlib.Path, backup_root: pathlib.Path, key_file: pathl
             os.fsync(destination.fileno())
         os.chmod(temporary, 0o600)
         os.replace(temporary, output)
-        digest = hashlib.sha256(output.read_bytes()).hexdigest()
+        digest = file_sha256(output)
         checksum = output.with_suffix(output.suffix + ".sha256")
         checksum.write_text(f"{digest}  {output.name}\n", encoding="ascii")
         os.chmod(checksum, 0o600)
@@ -201,7 +211,7 @@ def verify_tree(root: pathlib.Path) -> None:
             raise BackupError("backup manifest path is unsafe")
         path = root.joinpath(*relative.parts)
         if not path.is_file() or path.is_symlink() or path.stat().st_size != item["size"] or \
-                hashlib.sha256(path.read_bytes()).hexdigest() != item["sha256"]:
+                file_sha256(path) != item["sha256"]:
             raise BackupError("backup file integrity verification failed")
         expected.add(relative.as_posix())
         if path.suffix in {".db", ".sqlite3"}:
@@ -263,6 +273,56 @@ def restore(config_root: pathlib.Path, archive_path: pathlib.Path, key_file: pat
         return rollback
 
 
+def cluster_request(port: int, token: str, path: str, value: dict) -> dict:
+    if not re.fullmatch(r"[0-9a-f]{64}", token) or not path.startswith("/backup-jobs"):
+        raise BackupError("backup worker control authentication is unavailable")
+    body = json.dumps(value, separators=(",", ":"), sort_keys=True).encode("utf-8")
+    connection = http.client.HTTPConnection("127.0.0.1", port, timeout=5)
+    try:
+        connection.request("POST", path, body=body, headers={
+            "Content-Type": "application/json", "Content-Length": str(len(body)),
+            "X-WebObs-Internal-Admin": token,
+        })
+        response = connection.getresponse()
+        payload = response.read(1024 * 1024 + 1)
+        if response.status >= 300 or len(payload) > 1024 * 1024:
+            raise BackupError("backup worker control request was rejected")
+        return json.loads(payload) if payload else {}
+    except (OSError, http.client.HTTPException, json.JSONDecodeError) as error:
+        raise BackupError("backup worker control request failed") from error
+    finally:
+        connection.close()
+
+
+def schedule(config_root: pathlib.Path, backup_root: pathlib.Path, key_file: pathlib.Path,
+             sodium: SodiumStream) -> None:
+    token = os.environ.get("WEBOBS_CLUSTER_INTERNAL_TOKEN", "")
+    port = int(os.environ.get("WEBOBS_CLUSTER_INTERNAL_PORT", "8095"))
+    next_scheduled = time.monotonic() + 15 * 60
+    while True:
+        job: dict | None = None
+        with contextlib.suppress(BackupError):
+            job = cluster_request(port, token, "/backup-jobs/claim", {}).get("job")
+        if job is not None:
+            try:
+                if job.get("targetId") != "local":
+                    raise BackupError("nonlocal_target_unavailable")
+                output = create(config_root, backup_root, key_file, sodium)
+                cluster_request(port, token, f"/backup-jobs/{job['id']}/result", {
+                    "state": "completed", "sha256": file_sha256(output),
+                })
+            except BackupError as error:
+                code = str(error) if re.fullmatch(r"[A-Za-z0-9._-]{1,64}", str(error)) else type(error).__name__
+                with contextlib.suppress(BackupError):
+                    cluster_request(port, token, f"/backup-jobs/{job['id']}/result", {
+                        "state": "failed", "errorCode": code,
+                    })
+        if time.monotonic() >= next_scheduled:
+            create(config_root, backup_root, key_file, sodium)
+            next_scheduled = time.monotonic() + 15 * 60
+        time.sleep(2)
+
+
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("action", choices={"create", "restore", "schedule"})
@@ -283,9 +343,7 @@ def main() -> None:
         restore(config_root, pathlib.Path(args.archive), key_file, sodium,
                 os.environ.get("WEBOBS_RESTORE_CONFIRM") == "replace-config")
     else:
-        while True:
-            time.sleep(900)
-            create(config_root, backup_root, key_file, sodium)
+        schedule(config_root, backup_root, key_file, sodium)
 
 
 if __name__ == "__main__":

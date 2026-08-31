@@ -189,6 +189,12 @@ class ClusterTests(unittest.TestCase):
             "label": "Evidence hot", "highWatermark": 0.88, "lowWatermark": 0.77,
         }, volume["revision"])
         self.assertEqual(updated["label"], "Evidence hot")
+        self.store.heartbeat(node_id, heartbeat(1001), timestamp=1001)
+        preserved = self.store.list_volumes()["volumes"][0]
+        self.assertEqual(preserved["label"], "Evidence hot")
+        self.assertEqual(preserved["highWatermark"], 0.88)
+        assignment_snapshot = self.store.assignments_for(node_id)
+        self.assertEqual(assignment_snapshot["volumes"][0]["lowWatermark"], 0.77)
         with self.assertRaisesRegex(cluster.ApiError, "HTTPS authority"):
             self.store.create_archive_target({
                 "name": "bad", "endpoint": "http://user:pass@example.test/path",
@@ -201,7 +207,13 @@ class ClusterTests(unittest.TestCase):
         self.assertNotIn("password", str(target).lower())
         job = self.store.create_backup_job({"targetId": target["id"]})
         self.assertEqual(job["state"], "queued")
-        self.assertEqual(len(self.store.list_backup_jobs()["jobs"]), 1)
+        claimed = self.store.claim_backup_job()["job"]
+        self.assertEqual(claimed["id"], job["id"])
+        completed = self.store.complete_backup_job(job["id"], {
+            "state": "completed", "sha256": "c" * 64,
+        })
+        self.assertEqual(completed["state"], "completed")
+        self.assertEqual(self.store.list_backup_jobs()["jobs"][0]["sha256"], "c" * 64)
 
     def test_external_provider_gets_only_bounded_ephemeral_media_grant(self) -> None:
         provider = self.store.create_provider({
@@ -222,6 +234,12 @@ class ClusterTests(unittest.TestCase):
             self.store.create_provider_task(provider["id"], {
                 "taskType": "detector", "cameraId": "camera-2", "profileId": "sub",
             })
+        token = task["mediaGrant"]["token"]
+        consumed = self.store.consume_provider_grant(task["taskId"], token)
+        self.assertEqual(consumed["cameraId"], "camera-1")
+        self.assertEqual(consumed["credentialExposure"], "none")
+        with self.assertRaisesRegex(cluster.ApiError, "rejected"):
+            self.store.consume_provider_grant(task["taskId"], token)
 
     def test_lease_renewal_isolation_and_generation_fencing(self) -> None:
         first, _, _ = self.enroll("Recorder A")

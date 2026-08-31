@@ -319,7 +319,8 @@ def run(args: argparse.Namespace) -> None:
             if status != 200 or heartbeat.get("status") == "clock-skew":
                 raise AgentError("heartbeat was rejected")
             status, payload = client.request("GET", "/internal/v1/assignments", node_id=node_id)
-            if status != 200 or not isinstance(payload.get("assignments"), list):
+            if status != 200 or not isinstance(payload.get("assignments"), list) or \
+                    not isinstance(payload.get("volumes", []), list):
                 raise AgentError("assignment synchronization failed")
             now = int(time.time())
             accepted = []
@@ -341,7 +342,8 @@ def run(args: argparse.Namespace) -> None:
                 if assignment["state"] == "active" and assignment["isolationDeadline"] > now:
                     accepted.append(assignment)
             atomic_json(assignments_path, {"nodeId": node_id, "controllerOnline": True,
-                                           "updatedAt": now, "assignments": accepted})
+                                           "updatedAt": now, "assignments": accepted,
+                                           "volumes": payload.get("volumes", [])[:256]})
             segments = catalog_batch(pathlib.Path(args.catalog), accepted)
             if segments:
                 catalog_status, _ = client.request("POST", "/internal/v1/catalog/batch",

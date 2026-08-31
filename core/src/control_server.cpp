@@ -284,6 +284,12 @@ bool cluster_authentication_enabled()
     });
 }
 
+bool compatibility_basic_auth_enabled()
+{
+    const char *value = std::getenv("WEBOBS_COMPAT_BASIC_AUTH");
+    return !value || std::string_view(value) != "false";
+}
+
 struct ClusterLoginResult {
     long status = 0;
     std::string username;
@@ -2920,6 +2926,7 @@ private:
             return;
         }
         const std::string_view target = view(request.target());
+        const bool basic_auth_enabled = authenticator_.enabled() && compatibility_basic_auth_enabled();
         const bool static_resource = !target.starts_with("/api/v1/") &&
                                      !target.starts_with("/api/v2/") && target != "/metrics";
         const bool login_request = target == "/api/v1/auth/login";
@@ -2934,7 +2941,7 @@ private:
                 return;
             }
             const bool cluster_auth_enabled = cluster_authentication_enabled();
-            if ((!authenticator_.enabled() && !cluster_auth_enabled) || !session_store_.enabled()) {
+            if ((!basic_auth_enabled && !cluster_auth_enabled) || !session_store_.enabled()) {
                 send(response(http::status::not_found, version,
                               error_body("authentication_disabled", "browser login is not configured")));
                 return;
@@ -2959,14 +2966,14 @@ private:
                     authenticated_username = cluster_result.username;
             }
             AuthenticationDecision decision = AuthenticationDecision::invalid_credentials;
-            if (authenticated_username.empty() && authenticator_.enabled()) {
+            if (authenticated_username.empty() && basic_auth_enabled) {
                 decision = authenticator_.authenticate_plain(
                     credentials->first, credentials->second, client_key_);
                 if (decision == AuthenticationDecision::allowed)
                     authenticated_username = std::string(authenticator_.configured_username());
             }
             if (authenticated_username.empty()) {
-                if (cluster_login_status == 429 && !authenticator_.enabled()) {
+                if (cluster_login_status == 429 && !basic_auth_enabled) {
                     HttpResponse result = response(http::status::too_many_requests, version,
                                                    error_body("rate_limited", "too many authentication attempts"));
                     result.set(http::field::retry_after, "60");
@@ -2999,10 +3006,10 @@ private:
             session_record = session_store_.validate_and_slide(*session_token);
         bool basic_authenticated = false;
         const bool device_request = v2_device_route(request);
-        const bool authentication_enabled = authenticator_.enabled() || cluster_authentication_enabled();
+        const bool authentication_enabled = basic_auth_enabled || cluster_authentication_enabled();
         if (!public_probe && !device_request && !static_resource &&
             authentication_enabled && !session_record) {
-            if (!authenticator_.enabled()) {
+            if (!basic_auth_enabled) {
                 send(authentication_response(AuthenticationDecision::credentials_required, version, 0));
                 return;
             }
@@ -3073,7 +3080,7 @@ private:
         if (session_record && !public_probe && !device_request && !static_resource &&
             target != "/api/v1/auth/session" && cluster_authentication_enabled()) {
             const ClusterAuthorization authorization = cluster_authorize(session_record->user, request);
-            const bool legacy_admin = authenticator_.enabled() &&
+            const bool legacy_admin = basic_auth_enabled &&
                 session_record->user == authenticator_.configured_username();
             if (authorization == ClusterAuthorization::denied ||
                 (authorization == ClusterAuthorization::user_unknown && !legacy_admin)) {
@@ -3267,7 +3274,7 @@ std::optional<std::string> ControlServer::start()
 {
     if (impl_->config.http_port == 0 || impl_->thread.joinable())
         return std::nullopt;
-    if (impl_->authenticator.enabled()) {
+    if (impl_->authenticator.enabled() || cluster_authentication_enabled()) {
         if (const auto session_error = impl_->session_store.initialize())
             return *session_error;
     }

@@ -129,6 +129,46 @@ class S3Client:
                 headers.get("x-amz-meta-sha256") != digest:
             raise ArchiveError("archive verification failed")
 
+    def download_verified(self, object_key: str, destination: pathlib.Path,
+                          digest: str, size: int) -> None:
+        if not DIGEST.fullmatch(digest) or not 0 <= size <= MAX_OBJECT or \
+                not re.fullmatch(r"[A-Za-z0-9._/-]{1,512}", object_key) or ".." in object_key.split("/"):
+            raise ArchiveError("archive object metadata is invalid")
+        empty_digest = hashlib.sha256(b"").hexdigest()
+        headers = self.headers("GET", object_key, empty_digest, 0)
+        path = f"/{quote(self.config['bucket'], safe='')}/{quote(object_key, safe='/')}"
+        connection = http.client.HTTPSConnection(self.config["host"], self.config["port"],
+                                                  context=self.context, timeout=60)
+        temporary = destination.with_name(f".{destination.name}.archive-download")
+        try:
+            connection.request("GET", path, headers=headers)
+            response = connection.getresponse()
+            if response.status != 200 or response.getheader("Location") or \
+                    int(response.getheader("Content-Length", "-1")) != size or \
+                    response.getheader("X-Amz-Meta-Sha256", "") != digest:
+                raise ArchiveError("archive download metadata verification failed")
+            destination.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+            total = 0
+            computed = hashlib.sha256()
+            with temporary.open("xb") as output:
+                while chunk := response.read(1024 * 1024):
+                    total += len(chunk)
+                    if total > size:
+                        raise ArchiveError("archive download exceeded declared size")
+                    computed.update(chunk)
+                    output.write(chunk)
+                output.flush()
+                os.fsync(output.fileno())
+            if total != size or computed.hexdigest() != digest:
+                raise ArchiveError("archive download digest verification failed")
+            os.replace(temporary, destination)
+        except (OSError, ssl.SSLError, http.client.HTTPException) as error:
+            raise ArchiveError("archive download failed") from error
+        finally:
+            connection.close()
+            with contextlib.suppress(FileNotFoundError):
+                temporary.unlink()
+
 
 class ArchiveQueue:
     def __init__(self, path: pathlib.Path):
@@ -180,11 +220,12 @@ class ArchiveQueue:
 
 class ArchiveService:
     def __init__(self, catalog_path: pathlib.Path, queue_path: pathlib.Path,
-                 volumes_root: pathlib.Path, config: dict[str, Any]):
+                 volumes_root: pathlib.Path, config: dict[str, Any], legacy_root: pathlib.Path | None = None):
         self.catalog = sqlite3.connect(catalog_path, check_same_thread=False, timeout=15)
         self.catalog.row_factory = sqlite3.Row
         self.queue = ArchiveQueue(queue_path)
         self.volumes_root = volumes_root
+        self.legacy_root = legacy_root or volumes_root.parent
         self.client = S3Client(config, os.environ.get("WEBOBS_ARCHIVE_CA_FILE", ""))
         self.stop = threading.Event()
 
@@ -193,7 +234,7 @@ class ArchiveService:
         if not VOLUME_ID.fullmatch(volume_id) or row["storage_key"].startswith("/") or \
                 ".." in row["storage_key"].split("/"):
             raise ArchiveError("segment location is invalid")
-        root = self.volumes_root / volume_id
+        root = self.legacy_root if volume_id == "default" else self.volumes_root / volume_id
         candidate = (root / row["storage_key"]).resolve()
         if root.resolve() not in candidate.parents:
             raise ArchiveError("segment escaped its volume")
@@ -223,6 +264,20 @@ class ArchiveService:
             except (ArchiveError, OSError, sqlite3.Error) as error:
                 self.queue.retry(job["segment_id"], type(error).__name__)
 
+    def retrieve(self, segment_id: str, destination: pathlib.Path) -> pathlib.Path:
+        """Restore one catalogued object without accepting an arbitrary object key."""
+        if not re.fullmatch(r"[a-f0-9]{32}", segment_id) or not destination.is_absolute() or destination.is_symlink():
+            raise ArchiveError("archive retrieval request is invalid")
+        row = self.catalog.execute(
+            "SELECT id,sha256,size_bytes,archive_state FROM segments WHERE id=? AND integrity NOT IN ('deleted','missing')",
+            (segment_id,),
+        ).fetchone()
+        if row is None or row["archive_state"] != "uploaded" or not DIGEST.fullmatch(row["sha256"]):
+            raise ArchiveError("archived segment is unavailable")
+        object_key = f"segments/{row['sha256'][:2]}/{row['sha256']}"
+        self.client.download_verified(object_key, destination, row["sha256"], row["size_bytes"])
+        return destination
+
     def run(self) -> None:
         workers = [threading.Thread(target=self.worker, daemon=True) for _ in range(MAX_WORKERS)]
         for worker in workers:
@@ -237,11 +292,23 @@ def main() -> None:
     parser.add_argument("--catalog", default=os.environ.get("WEBOBS_NVR_CATALOG", "/recordings/nvr/catalog.sqlite3"))
     parser.add_argument("--queue", default=os.environ.get("WEBOBS_ARCHIVE_QUEUE", "/config/webobs/archive-queue.sqlite3"))
     parser.add_argument("--volumes-root", default=os.environ.get("WEBOBS_NVR_VOLUMES_ROOT", "/recordings/volumes"))
+    parser.add_argument("--legacy-root", default=os.environ.get("WEBOBS_NVR_STORAGE_ROOT", "/recordings"))
+    parser.add_argument("--retrieve-segment", default="")
+    parser.add_argument("--destination", default="")
     args = parser.parse_args()
-    paths = [pathlib.Path(item) for item in (args.config, args.catalog, args.queue, args.volumes_root)]
+    paths = [pathlib.Path(item) for item in (args.config, args.catalog, args.queue, args.volumes_root,
+                                             args.legacy_root)]
     if any(not path.is_absolute() for path in paths):
         raise SystemExit("archive paths must be absolute")
-    service = ArchiveService(paths[1], paths[2], paths[3], load_config(paths[0]))
+    service = ArchiveService(paths[1], paths[2], paths[3], load_config(paths[0]), paths[4])
+    if args.retrieve_segment:
+        if not args.destination:
+            raise SystemExit("archive retrieval requires --destination")
+        destination = pathlib.Path(args.destination)
+        if not destination.is_absolute():
+            raise SystemExit("archive retrieval destination must be absolute")
+        service.retrieve(args.retrieve_segment, destination)
+        return
     service.run()
 
 
