@@ -1,0 +1,143 @@
+name: webobs-m7-gate
+
+x-recorder: &recorder
+  image: ${WEBOBS_IMAGE:-webobs:m7-candidate}
+  restart: "no"
+  depends_on:
+    controller:
+      condition: service_healthy
+    mediamtx:
+      condition: service_started
+  environment: &recorder-environment
+    WEBOBS_NODE_ROLE: recorder
+    WEBOBS_CONTROLLER_URL: https://controller:9443
+    WEBOBS_CLUSTER_CA_FILE: /run/secrets/cluster-ca.crt
+    WEBOBS_WEBRTC_ENABLED: "false"
+    WEBOBS_COMPOSITE_ENABLED: "false"
+    WEBOBS_RENDERER: software
+    WEBOBS_NODE_RATED: "true"
+    WEBOBS_NODE_DISK_BYTES_PER_SECOND: "67108864"
+    WEBOBS_NVR_VOLUMES_ROOT: /recordings/volumes
+    WEBOBS_VOLUMES_ROOT: /recordings/volumes
+    WEBOBS_NVR_CATALOG: /recordings/nvr/catalog.sqlite3
+  healthcheck:
+    test: ["CMD-SHELL", "test -s /config/webobs/node/assignments.json && test -f /recordings/nvr/catalog.sqlite3"]
+    interval: 5s
+    timeout: 3s
+    retries: 30
+
+services:
+  controller:
+    image: ${WEBOBS_IMAGE:-webobs:m7-candidate}
+    restart: "no"
+    environment:
+      WEBOBS_NODE_ROLE: controller
+      WEBOBS_LISTEN_ADDRESS: 0.0.0.0
+      WEBOBS_HTTP_PORT: "8080"
+      WEBOBS_ALLOW_INSECURE_REMOTE: "true"
+      WEBOBS_CONTROL_ALLOWED_ORIGINS: http://127.0.0.1:18080
+      WEBOBS_WEBRTC_ENABLED: "false"
+      WEBOBS_COMPOSITE_ENABLED: "false"
+      WEBOBS_CLUSTER_LISTEN: "true"
+      WEBOBS_CLUSTER_CA_CERT_FILE: /run/secrets/cluster-ca.crt
+      WEBOBS_CLUSTER_CA_KEY_FILE: /run/secrets/cluster-ca.key
+      WEBOBS_CLUSTER_SERVER_CERT_FILE: /run/secrets/cluster-server.crt
+      WEBOBS_CLUSTER_SERVER_KEY_FILE: /run/secrets/cluster-server.key
+      WEBOBS_CLUSTER_CLIENT_CA_FILE: /run/secrets/cluster-ca.crt
+      WEBOBS_CLUSTER_INTERNAL_TOKEN_FILE: /run/secrets/cluster-internal-token
+      WEBOBS_AUTH_USERNAME_FILE: /run/secrets/admin-user
+      WEBOBS_AUTH_PASSWORD_FILE: /run/secrets/admin-password
+    volumes:
+      - ../.m7-cluster/controller:/config/webobs
+      - ../.m7-cluster/recordings/controller:/recordings
+      - ../.m7-cluster/secrets:/run/secrets:ro
+      - ../../assets:/assets:ro
+    ports:
+      - 127.0.0.1:18080:8080
+    healthcheck:
+      test: ["CMD", "curl", "--fail", "--silent", "http://127.0.0.1:8080/api/v1/health"]
+      interval: 3s
+      timeout: 2s
+      retries: 30
+
+  recorder-a:
+    <<: *recorder
+    env_file: ../.m7-cluster/recorder-a.env
+    environment:
+      <<: *recorder-environment
+      WEBOBS_NODE_NAME: recorder-a
+    volumes:
+      - ../.m7-cluster/recorder-a:/config/webobs
+      - ../.m7-cluster/recordings/recorder-a:/recordings/nvr
+      - ../.m7-cluster/volumes/recorder-a:/recordings/volumes
+      - ../.m7-cluster/secrets/cluster-ca.crt:/run/secrets/cluster-ca.crt:ro
+
+  recorder-b:
+    <<: *recorder
+    env_file: ../.m7-cluster/recorder-b.env
+    environment:
+      <<: *recorder-environment
+      WEBOBS_NODE_NAME: recorder-b
+    volumes:
+      - ../.m7-cluster/recorder-b:/config/webobs
+      - ../.m7-cluster/recordings/recorder-b:/recordings/nvr
+      - ../.m7-cluster/volumes/recorder-b:/recordings/volumes
+      - ../.m7-cluster/secrets/cluster-ca.crt:/run/secrets/cluster-ca.crt:ro
+
+  recorder-c:
+    <<: *recorder
+    env_file: ../.m7-cluster/recorder-c.env
+    environment:
+      <<: *recorder-environment
+      WEBOBS_NODE_NAME: recorder-c
+    volumes:
+      - ../.m7-cluster/recorder-c:/config/webobs
+      - ../.m7-cluster/recordings/recorder-c:/recordings/nvr
+      - ../.m7-cluster/volumes/recorder-c:/recordings/volumes
+      - ../.m7-cluster/secrets/cluster-ca.crt:/run/secrets/cluster-ca.crt:ro
+
+  mediamtx:
+    image: bluenviron/mediamtx:1.18.2@sha256:f8628851106cc053f9175b248050bb5f362a6e65abd72297c167a1cb5a9a3be2
+    restart: "no"
+    volumes:
+      - ./mediamtx.yml:/mediamtx.yml:ro
+
+  publisher:
+    image: ${WEBOBS_IMAGE:-webobs:m7-candidate}
+    restart: "no"
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - >-
+        exec ffmpeg -hide_banner -loglevel error -re
+        -f lavfi -i testsrc2=size=640x360:rate=15
+        -f lavfi -i sine=frequency=1000:sample_rate=48000
+        -c:v libx264 -preset veryfast -tune zerolatency -g 30
+        -c:a aac -f rtsp -rtsp_transport tcp rtsp://mediamtx:8554/synth
+    depends_on:
+      - mediamtx
+    healthcheck:
+      disable: true
+
+  minio:
+    image: minio/minio:RELEASE.2025-04-22T22-12-26Z@sha256:a1ea29fa28355559ef137d71fc570e508a214ec84ff8083e39bc5428980b015e
+    command: server /data --console-address :9001
+    restart: "no"
+    environment:
+      MINIO_ROOT_USER_FILE: /run/secrets/minio-user
+      MINIO_ROOT_PASSWORD_FILE: /run/secrets/minio-password
+    volumes:
+      - ../.m7-cluster/minio:/data
+      - ../.m7-cluster/secrets/minio-user:/run/secrets/minio-user:ro
+      - ../.m7-cluster/secrets/minio-password:/run/secrets/minio-password:ro
+      - ../.m7-cluster/minio-certs:/root/.minio/certs:ro
+    healthcheck:
+      test: ["CMD", "curl", "--fail", "--silent", "--cacert", "/root/.minio/certs/CAs/cluster-ca.crt", "https://127.0.0.1:9000/minio/health/live"]
+      interval: 3s
+      timeout: 2s
+      retries: 30
+
+  mosquitto:
+    image: eclipse-mosquitto:2.0.22@sha256:212f89e1eaeb2c322d6441b64396e3346026674db8fa9c27beac293405c32b3c
+    restart: "no"
+    volumes:
+      - ../.m7-cluster/mosquitto.conf:/mosquitto/config/mosquitto.conf:ro

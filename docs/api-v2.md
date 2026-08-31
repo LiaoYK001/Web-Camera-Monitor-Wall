@@ -2,11 +2,46 @@
 
 > Stable status / 稳定状态：v2-M1 through v2-M3 shipped in `v2.0.1`; v2-M4/M5 ship in `v2.1`. Native package qualification remains frozen / v2-M1 至 v2-M3 已随 `v2.0.1` 发布；v2-M4/M5 随 `v2.1` 发布，原生包验收仍冻结。
 
-`dev` adds the v2-M6 operations contracts described below. They are not stable-release claims until the v2.2 gate and immutable Tag pass / `dev` 已加入下述 v2-M6 运维契约；在 v2.2 门禁和不可移动 Tag 通过前，不构成稳定版声明。
+The v2-M6 operations contracts shipped in `v2.2`. `dev` now adds the v2-M7 RBAC, node, storage, placement, archive, backup and Provider contracts; they are not stable-release claims until the v2.3 gates and immutable Tag pass / v2-M6 运维契约已随 `v2.2` 发布；`dev` 当前增加 v2-M7 的 RBAC、节点、存储、分配、归档、备份与 Provider 契约，在 v2.3 门禁和不可移动 Tag 通过前不构成稳定版声明。
 
 API v1 is unchanged: its `direct` value means Gateway Direct and Docker remains in the media path. API v2 adds device enrollment and a separately measured `true-direct` topology. All responses use bounded unique-field JSON, `Cache-Control: no-store` and credential-free errors.
 
 API v1 保持不变：其中 `direct` 仍表示 Docker 位于媒体链中的网关直通。API v2 增加设备配对，并把 `true-direct` 作为独立测量的拓扑。所有响应均为有界 JSON、禁止缓存，错误不包含凭据。
+
+## v2-M7 管理与集群接口（dev）
+
+下列公共接口继续位于既有 Session/RBAC/Origin 边界内。修改操作使用 `If-Match` revision；服务端不会把 Secret、节点私钥、主机路径或完整媒体端点返回给浏览器：
+
+```text
+GET/POST/PATCH /api/v2/users
+GET              /api/v2/roles
+GET/DELETE       /api/v2/nodes/{id?}
+POST             /api/v2/node-enrollments
+POST             /api/v2/node-enrollments/{id}/approve
+GET/PATCH        /api/v2/storage-volumes/{nodeId?}/{volumeId?}
+GET/POST         /api/v2/recording-placements
+GET              /api/v2/resource-capacity
+GET/POST         /api/v2/archive-targets
+GET/POST         /api/v2/backup-jobs
+GET/POST         /api/v2/providers
+POST             /api/v2/providers/{id}/tasks
+```
+
+角色权限与 Camera/Group scope 默认拒绝。Enrollment token 有效十分钟且只保存摘要；节点证书有效 30 天。`storage-volumes` 只能管理已经挂载并由节点报告的 `volumeId`，不接受主机路径。Provider 任务只返回最长 60 秒、单次可消费的媒体授权，`credentialExposure` 固定为 `none`。当任务引用录像时，`segmentId` 必须存在于 Controller Catalog，并且必须同时匹配获批的 `cameraId/profileId`；实际下载仅代理该只读 NVR 片段，不接受任意路径。旧 Catalog 行在 Recorder 重新对账补齐 Camera/Profile 绑定前保持拒绝访问。
+
+Controller 与 Recorder/Worker 之间的 `/internal/v1` 只在 TLS 1.3 mTLS 私网端口提供：
+
+```text
+POST /internal/v1/nodes/enroll
+POST /internal/v1/nodes/enroll/complete
+POST /internal/v1/nodes/heartbeat
+POST /internal/v1/nodes/certificate/renew
+GET  /internal/v1/assignments
+POST /internal/v1/leases/renew
+POST /internal/v1/catalog/batch
+```
+
+除两个一次性 Enrollment 请求外，每个请求都必须携带恰好一个已验证的 `webobs-node:<id>` URI SAN，且 `X-WebObs-Node-Id` 只能与该 SAN 相同。心跳、租约、generation fence、120 秒隔离窗口和 5 秒时钟偏差边界详见 [v2.3 扩展、生态与韧性](scale-ecosystem-resilience-v2.3.md)。
 
 ## Authentication / 认证
 

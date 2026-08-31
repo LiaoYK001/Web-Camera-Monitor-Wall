@@ -244,6 +244,7 @@ class ClusterStore:
                 segment_id TEXT NOT NULL,node_id TEXT NOT NULL,volume_id TEXT NOT NULL,storage_key TEXT NOT NULL,
                 size_bytes INTEGER NOT NULL,sha256 TEXT NOT NULL,assignment_generation INTEGER NOT NULL,
                 archive_state TEXT NOT NULL,integrity TEXT NOT NULL,created_at INTEGER NOT NULL,
+                camera_id TEXT NOT NULL DEFAULT '',profile_id TEXT NOT NULL DEFAULT '',
                 PRIMARY KEY(segment_id,node_id,volume_id));
               CREATE TABLE IF NOT EXISTS archive_targets(
                 id TEXT PRIMARY KEY,name TEXT NOT NULL,endpoint_authority TEXT NOT NULL,bucket TEXT NOT NULL,
@@ -268,7 +269,17 @@ class ClusterStore:
               CREATE INDEX IF NOT EXISTS archive_jobs_due ON archive_jobs(state,next_attempt_at);
               CREATE INDEX IF NOT EXISTS segment_locations_segment ON segment_locations(segment_id);
             """)
-            self.db.execute("PRAGMA user_version=1")
+            assignment_columns = {row[1] for row in self.db.execute("PRAGMA table_info(recording_assignments)")}
+            if "task_type" not in assignment_columns:
+                self.db.execute("ALTER TABLE recording_assignments ADD COLUMN task_type TEXT NOT NULL DEFAULT 'record-copy'")
+            if "costs_json" not in assignment_columns:
+                self.db.execute("ALTER TABLE recording_assignments ADD COLUMN costs_json TEXT NOT NULL DEFAULT '{}'")
+            location_columns = {row[1] for row in self.db.execute("PRAGMA table_info(segment_locations)")}
+            if "camera_id" not in location_columns:
+                self.db.execute("ALTER TABLE segment_locations ADD COLUMN camera_id TEXT NOT NULL DEFAULT ''")
+            if "profile_id" not in location_columns:
+                self.db.execute("ALTER TABLE segment_locations ADD COLUMN profile_id TEXT NOT NULL DEFAULT ''")
+            self.db.execute("PRAGMA user_version=3")
         with contextlib.suppress(OSError):
             os.chmod(database_path, 0o600)
 
@@ -677,8 +688,7 @@ class ClusterStore:
                 raise ApiError(400, "invalid_task_cost", f"{field} cost is invalid")
         timestamp = timestamp or now_seconds()
         with self.lock, self.db:
-            if not node_id:
-                node_id = self._select_node(camera_id, task_type, normalized_costs, timestamp)
+            node_id = self._select_node(camera_id, profile_id, task_type, normalized_costs, timestamp, node_id)
             node = self.db.execute("SELECT * FROM nodes WHERE id=? AND revoked=0 AND status='online'", (node_id,)).fetchone()
             if node is None or abs(node["clock_offset_ms"]) > MAX_CLOCK_SKEW_SECONDS * 1000:
                 raise ApiError(409, "node_not_eligible", "node is not eligible for recording")
@@ -690,18 +700,22 @@ class ClusterStore:
             lease_expires = timestamp + LEASE_SECONDS
             isolation_deadline = lease_expires + ISOLATION_GRACE_SECONDS
             self.db.execute("""
-              INSERT INTO recording_assignments VALUES(?,?,?,?,?,?,?,?)
+              INSERT INTO recording_assignments(camera_id,profile_id,node_id,generation,state,lease_expires_at,
+                isolation_deadline,updated_at,task_type,costs_json) VALUES(?,?,?,?,?,?,?,?,?,?)
               ON CONFLICT(camera_id,profile_id) DO UPDATE SET node_id=excluded.node_id,generation=excluded.generation,
                 state=excluded.state,lease_expires_at=excluded.lease_expires_at,
-                isolation_deadline=excluded.isolation_deadline,updated_at=excluded.updated_at
-            """, (camera_id, profile_id, node_id, generation, "active", lease_expires, isolation_deadline, timestamp))
+                isolation_deadline=excluded.isolation_deadline,updated_at=excluded.updated_at,
+                task_type=excluded.task_type,costs_json=excluded.costs_json
+            """, (camera_id, profile_id, node_id, generation, "active", lease_expires, isolation_deadline,
+                  timestamp, task_type, canonical_json(normalized_costs)))
             revision = self._bump()
         return {"cameraId": camera_id, "profileId": profile_id, "nodeId": node_id,
                 "generation": generation, "leaseExpiresAt": lease_expires,
                 "isolationDeadline": isolation_deadline, "taskType": task_type,
                 "costs": normalized_costs, "revision": revision}
 
-    def _select_node(self, stable_key: str, task_type: str, costs: dict[str, Any], timestamp: int) -> str:
+    def _select_node(self, stable_key: str, profile_id: str, task_type: str, costs: dict[str, Any], timestamp: int,
+                     required_node: str = "") -> str:
         candidates: list[tuple[float, str]] = []
         rows = self.db.execute("""
           SELECT n.*,r.cpu_cores,r.memory_bytes,r.capabilities_json AS resources_capabilities,
@@ -710,15 +724,30 @@ class ClusterStore:
           WHERE n.revoked=0 AND n.status='online'
         """).fetchall()
         for row in rows:
+            if required_node and row["id"] != required_node:
+                continue
             if abs(row["clock_offset_ms"]) > MAX_CLOCK_SKEW_SECONDS * 1000 or \
                     timestamp - row["last_seen_at"] > NODE_UNHEALTHY_SECONDS:
                 continue
             capabilities = json.loads(row["resources_capabilities"])
             reservations = json.loads(row["reservations_json"])
-            used = {field: 0.0 for field in costs}
+            reported = {field: 0.0 for field in costs}
             for reservation in reservations:
-                for field in used:
-                    used[field] += float(reservation.get(field, 0))
+                for field in reported:
+                    reported[field] += float(reservation.get(field, 0))
+            scheduled = {field: 0.0 for field in costs}
+            assignments = self.db.execute(
+                """SELECT costs_json FROM recording_assignments
+                   WHERE node_id=? AND state='active' AND isolation_deadline>?
+                     AND NOT (camera_id=? AND profile_id=?)""",
+                (row["id"], timestamp, stable_key, profile_id),
+            ).fetchall()
+            for assignment in assignments:
+                with contextlib.suppress(json.JSONDecodeError, TypeError, ValueError):
+                    reservation = json.loads(assignment["costs_json"])
+                    for field in scheduled:
+                        scheduled[field] += float(reservation.get(field, 0))
+            used = {field: max(reported[field], scheduled[field]) for field in costs}
             conservative = 1.0 if row["rated"] else 0.25
             limits = {
                 "cpuCores": row["cpu_cores"] * conservative,
@@ -739,6 +768,9 @@ class ClusterStore:
             score = usable / max(1, 1 << 30) + stable
             candidates.append((score, row["id"]))
         if not candidates:
+            if required_node:
+                raise ApiError(409, "node_not_eligible",
+                               "node is not eligible or lacks declared capacity; CPU fallback was not started")
             raise ApiError(409, "resource_capacity_exhausted",
                            "no eligible node has the declared task capacity; CPU fallback was not started")
         return max(candidates)[1]
@@ -805,10 +837,13 @@ class ClusterStore:
                 storage_key = segment["storageKey"]
                 if not isinstance(storage_key, str) or not storage_key or len(storage_key) > 512 or storage_key.startswith("/") or ".." in storage_key.split("/"):
                     raise ApiError(400, "invalid_storage_key", "storage key is invalid")
-                self.db.execute("INSERT OR REPLACE INTO segment_locations VALUES(?,?,?,?,?,?,?,?,?,?)",
+                self.db.execute("""INSERT OR REPLACE INTO segment_locations(
+                    segment_id,node_id,volume_id,storage_key,size_bytes,sha256,assignment_generation,
+                    archive_state,integrity,created_at,camera_id,profile_id) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)""",
                                 (segment["segmentId"], node_id, segment["volumeId"], storage_key,
                                  segment["sizeBytes"], digest, segment["generation"],
-                                 segment["archiveState"], integrity, now_seconds()))
+                                 segment["archiveState"], integrity, now_seconds(),
+                                 segment["cameraId"], segment["profileId"]))
                 accepted += 1
             revision = self._bump()
         return {"accepted": accepted, "conflicts": conflicts, "revision": revision}
@@ -873,7 +908,9 @@ class ClusterStore:
         return {"placements": [{"cameraId": row["camera_id"], "profileId": row["profile_id"],
                                   "nodeId": row["node_id"], "generation": row["generation"],
                                   "state": row["state"], "leaseExpiresAt": row["lease_expires_at"],
-                                  "isolationDeadline": row["isolation_deadline"]} for row in rows],
+                                  "isolationDeadline": row["isolation_deadline"],
+                                  "taskType": row["task_type"],
+                                  "costs": json.loads(row["costs_json"])} for row in rows],
                 "revision": self.revision()}
 
     def create_archive_target(self, value: Any) -> dict[str, Any]:
@@ -1012,8 +1049,8 @@ class ClusterStore:
         camera_id = require_identifier(value["cameraId"], "camera_id")
         profile_id = require_identifier(value["profileId"], "profile_id")
         segment_id = value.get("segmentId", "")
-        if segment_id:
-            require_identifier(segment_id, "segment_id")
+        if segment_id and (not isinstance(segment_id, str) or not re.fullmatch(r"[a-f0-9]{32}", segment_id)):
+            raise ApiError(400, "invalid_segment_id", "segment id is invalid")
         parameters = value.get("parameters", {})
         if not isinstance(parameters, dict) or len(parameters) > 32 or len(canonical_json(parameters)) > 16 * 1024:
             raise ApiError(400, "invalid_provider_parameters", "provider parameters are invalid")
@@ -1024,6 +1061,11 @@ class ClusterStore:
                 raise ApiError(404, "provider_not_found", "provider was not found")
             if value["taskType"] not in json.loads(provider["task_types_json"]):
                 raise ApiError(409, "provider_task_unsupported", "provider does not accept this task type")
+            if segment_id and self.db.execute(
+                    """SELECT 1 FROM segment_locations WHERE segment_id=? AND camera_id=? AND profile_id=?
+                       AND integrity='ok' LIMIT 1""", (segment_id, camera_id, profile_id)).fetchone() is None:
+                raise ApiError(404, "provider_segment_not_found",
+                               "the authorized recording segment was not found for this camera profile")
             active = self.db.execute("SELECT COUNT(*) FROM provider_grants WHERE provider_id=? AND expires_at>? AND used=0",
                                      (provider_id, now_seconds())).fetchone()[0]
             if active >= provider["max_concurrent"]:
@@ -1064,12 +1106,30 @@ class ClusterStore:
                 "credentialExposure": "none"}
 
     def capacity(self) -> dict[str, Any]:
+        scheduled: dict[str, dict[str, Any]] = {}
+        for row in self.db.execute(
+                "SELECT node_id,task_type,costs_json FROM recording_assignments WHERE state='active'"):
+            aggregate = scheduled.setdefault(row["node_id"], {
+                "taskCount": 0, "taskTypes": {}, "costs": {
+                    "cpuCores": 0.0, "memoryBytes": 0.0, "decodeSlots": 0.0,
+                    "encodeSlots": 0.0, "diskBytesPerSecond": 0.0,
+                },
+            })
+            aggregate["taskCount"] += 1
+            aggregate["taskTypes"][row["task_type"]] = aggregate["taskTypes"].get(row["task_type"], 0) + 1
+            with contextlib.suppress(json.JSONDecodeError, TypeError, ValueError):
+                costs = json.loads(row["costs_json"])
+                for field in aggregate["costs"]:
+                    aggregate["costs"][field] += float(costs.get(field, 0))
         reports = []
         for row in self.db.execute("SELECT * FROM resource_reports ORDER BY node_id LIMIT ?", (MAX_PAGE,)):
             reports.append({"nodeId": row["node_id"], "cpuCores": row["cpu_cores"],
                             "memoryBytes": row["memory_bytes"], "rated": bool(row["rated"]),
                             "capabilities": json.loads(row["capabilities_json"]),
                             "reservations": json.loads(row["reservations_json"]),
+                            "scheduledReservations": scheduled.get(row["node_id"], {
+                                "taskCount": 0, "taskTypes": {}, "costs": {},
+                            }),
                             "updatedAt": row["updated_at"]})
         return {"nodes": reports, "taskPriorities": TASK_PRIORITY, "referenceTiers": REFERENCE_TIERS,
                 "revision": self.revision()}
@@ -1136,10 +1196,16 @@ class Handler(http.server.BaseHTTPRequestHandler):
                                 "roles": principal.roles, "permissions": sorted(principal.permissions),
                                 "scopes": [{"kind": kind, "id": identifier} for kind, identifier in principal.scopes]})
             return
-        if path.startswith("/provider-media/") and self.command == "POST":
-            value = self.read_json()
-            require_exact_object(value, {"token"}, {"token"})
-            self.response(200, STORE.consume_provider_grant(path.split("/")[2], value["token"]))
+        if path.startswith("/provider-media/") and self.command in {"GET", "POST"}:
+            if self.command == "GET":
+                token = self.headers.get("X-WebObs-Provider-Token", "")
+                if not isinstance(token, str) or not re.fullmatch(r"[A-Za-z0-9_-]{32,128}", token):
+                    raise ApiError(401, "provider_grant_rejected", "provider media grant was rejected")
+            else:
+                value = self.read_json()
+                require_exact_object(value, {"token"}, {"token"})
+                token = value["token"]
+            self.response(200, STORE.consume_provider_grant(path.split("/")[2], token))
             return
         self.admin()
         if path == "/auth/authorize" and self.command == "POST":

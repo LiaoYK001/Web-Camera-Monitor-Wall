@@ -16,6 +16,39 @@ const bytes = (value: number) => value >= 1024 ** 3
   : `${(value / 1024 ** 2).toFixed(1)} MiB`;
 const time = (value: number) => value ? new Date(value * 1000).toLocaleString() : '—';
 
+function UserAccessEditor({ user, roles, onSaved, onError }: {
+  user: ClusterUser;
+  roles: Array<{ id: ClusterRole; permissions: string[] }>;
+  onSaved: () => Promise<void>;
+  onError: (message: string) => void;
+}) {
+  const [selectedRoles, setSelectedRoles] = useState<ClusterRole[]>(user.roles);
+  const [scopeText, setScopeText] = useState(user.scopes.map((scope) => `${scope.kind}:${scope.id}`).join(', '));
+  const [saving, setSaving] = useState(false);
+  const save = async () => {
+    const scopes = scopeText.split(',').map((value) => value.trim()).filter(Boolean).map((value) => {
+      const separator = value.indexOf(':');
+      const kind = value.slice(0, separator);
+      const id = value.slice(separator + 1);
+      if (separator < 1 || !['camera', 'group'].includes(kind) || !/^[A-Za-z0-9._-]{1,64}$/.test(id)) {
+        throw new Error('范围必须使用 camera:id 或 group:id，多个范围用逗号分隔。');
+      }
+      return { kind: kind as 'camera' | 'group', id };
+    });
+    if (!selectedRoles.length) throw new Error('用户至少需要一个角色。');
+    setSaving(true);
+    try {
+      await patchClusterUser(user.id, user.revision, { roles: selectedRoles, scopes });
+      await onSaved();
+    } finally { setSaving(false); }
+  };
+  return <article className="user-access-card"><div><strong>{user.username}</strong><small>{user.enabled ? '已启用' : '已停用'} · revision {user.revision}</small></div>
+    <fieldset><legend>角色</legend>{roles.map((role) => <label key={role.id} title={role.permissions.join(', ')}><input type="checkbox" checked={selectedRoles.includes(role.id)} onChange={() => setSelectedRoles((current) => current.includes(role.id) ? current.filter((item) => item !== role.id) : [...current, role.id])} />{role.id}</label>)}</fieldset>
+    <label>Camera/Group 范围<input value={scopeText} placeholder="camera:front-door, group:office" onChange={(event) => setScopeText(event.target.value)} /></label>
+    <div className="user-access-actions"><label><input type="checkbox" checked={user.enabled} onChange={() => void patchClusterUser(user.id, user.revision, { enabled: !user.enabled }).then(onSaved).catch((reason: Error) => onError(reason.message))} />启用</label><button type="button" disabled={saving || !selectedRoles.length} onClick={() => void save().catch((reason: Error) => onError(reason.message))}>{saving ? '保存中…' : '保存权限'}</button></div>
+  </article>;
+}
+
 export default function ClusterAdmin() {
   const [users, setUsers] = useState<ClusterUser[]>([]);
   const [roles, setRoles] = useState<Array<{ id: ClusterRole; permissions: string[] }>>([]);
@@ -81,7 +114,7 @@ export default function ClusterAdmin() {
 
     <section className="admin-section"><header><div><h2>用户与 RBAC</h2><p>所有范围默认拒绝；管理员可再为用户配置 Camera/Group 范围。</p></div><span>{users.length} users</span></header>
       <div className="admin-form"><input aria-label="用户名" placeholder="用户名" value={username} maxLength={64} onChange={(event) => setUsername(event.target.value)} /><input aria-label="临时密码" placeholder="至少 16 字节临时密码" type="password" autoComplete="new-password" value={password} onChange={(event) => setPassword(event.target.value)} /><select aria-label="角色" value={newRole} onChange={(event) => setNewRole(event.target.value as ClusterRole)}>{roles.map((role) => <option key={role.id} value={role.id}>{role.id}</option>)}</select><button type="button" disabled={username.trim().length < 3 || password.length < 16} onClick={() => void addUser()}>创建用户</button></div>
-      <div className="admin-list">{users.map((user) => <article key={user.id}><div><strong>{user.username}</strong><small>{user.roles.join(', ') || '无角色'} · {user.scopes.length ? `${user.scopes.length} 个范围` : '未授权资源范围'}</small></div><label><input type="checkbox" checked={user.enabled} onChange={() => void patchClusterUser(user.id, user.revision, { enabled: !user.enabled }).then(() => reload()).catch((reason: Error) => setError(reason.message))} />启用</label></article>)}</div>
+      <div className="admin-list">{users.map((user) => <UserAccessEditor key={`${user.id}:${user.revision}`} user={user} roles={roles} onSaved={() => reload()} onError={setError} />)}</div>
     </section>
 
     <section className="admin-section"><header><div><h2>节点与 mTLS</h2><p>注册令牌十分钟一次性；证书由节点本地私钥 CSR 签发并自动轮换。</p></div><span>{nodes.length} nodes</span></header>

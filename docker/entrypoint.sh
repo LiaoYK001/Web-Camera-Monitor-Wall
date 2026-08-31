@@ -171,7 +171,11 @@ if [ "$encrypted_backup_enabled" = "true" ]; then
     mkdir -p "${WEBOBS_BACKUP_ROOT:-/backups}"
 fi
 if [ "$cluster_enabled" = "true" ]; then
-    WEBOBS_CLUSTER_INTERNAL_TOKEN="$(tr -d '-' < /proc/sys/kernel/random/uuid)$(tr -d '-' < /proc/sys/kernel/random/uuid)"
+    if [ -n "${WEBOBS_CLUSTER_INTERNAL_TOKEN_FILE:-}" ]; then
+        WEBOBS_CLUSTER_INTERNAL_TOKEN="$(read_secret_file WEBOBS_CLUSTER_INTERNAL_TOKEN "${WEBOBS_CLUSTER_INTERNAL_TOKEN_FILE}")"
+    else
+        WEBOBS_CLUSTER_INTERNAL_TOKEN="$(tr -d '-' < /proc/sys/kernel/random/uuid)$(tr -d '-' < /proc/sys/kernel/random/uuid)"
+    fi
     case "$WEBOBS_CLUSTER_INTERNAL_TOKEN" in
         *[!0-9a-f]*|'') fail "could not create the cluster internal administrator token" ;;
     esac

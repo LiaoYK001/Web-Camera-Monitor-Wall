@@ -1484,6 +1484,8 @@ private:
     bool enabled_ = false;
 };
 
+bool hex_identifier(std::string_view value);
+
 class CameraProxy {
 public:
     explicit CameraProxy(bool enabled) : enabled_(enabled)
@@ -1514,6 +1516,7 @@ public:
         int upstream_port = 8092;
         bool v2_client_service = false;
         bool cluster_service = false;
+        bool provider_grant_service = false;
         if (target == "/api/v1/cameras" || target.starts_with("/api/v1/cameras/"))
             suffix = std::string(target.substr(std::string_view("/api/v1").size()));
         else if (target == "/api/v1/camera-adapters")
@@ -1568,6 +1571,13 @@ public:
             upstream_port = 8095;
             cluster_service = true;
         }
+        else if (request.method() == http::verb::get &&
+                 target.starts_with("/api/v2/provider-media/") &&
+                 hex_identifier(target.substr(std::string_view("/api/v2/provider-media/").size()))) {
+            suffix = std::string(target.substr(std::string_view("/api/v2").size()));
+            upstream_port = 8095;
+            provider_grant_service = true;
+        }
         else
             return response(http::status::not_found, request.version(),
                             error_body("not_found", "resource not found"));
@@ -1605,6 +1615,7 @@ public:
         }
         std::string device_header;
         std::string internal_admin_header;
+        std::string provider_header;
         if (v2_client_service) {
             std::optional<std::string_view> authorization;
             std::size_t authorization_count = 0;
@@ -1639,6 +1650,35 @@ public:
                 internal_admin_header = "X-WebObs-Internal-Admin: " + v2_internal_token_;
                 headers = curl_slist_append(headers, internal_admin_header.c_str());
             }
+        }
+        if (provider_grant_service) {
+            std::optional<std::string_view> authorization;
+            std::size_t authorization_count = 0;
+            for (const auto &field : request.base()) {
+                if (field.name() == http::field::authorization) {
+                    ++authorization_count;
+                    authorization = view(field.value());
+                }
+            }
+            constexpr std::string_view bearer_prefix = "Bearer ";
+            if (authorization_count != 1 || !authorization || !authorization->starts_with(bearer_prefix)) {
+                curl_slist_free_all(headers);
+                curl_easy_cleanup(handle);
+                return response(http::status::unauthorized, request.version(),
+                                error_body("provider_grant_rejected", "provider media grant was rejected"));
+            }
+            const std::string_view token = authorization->substr(bearer_prefix.size());
+            if (token.size() < 32 || token.size() > 128 ||
+                !std::all_of(token.begin(), token.end(), [](unsigned char character) {
+                    return std::isalnum(character) || character == '_' || character == '-';
+                })) {
+                curl_slist_free_all(headers);
+                curl_easy_cleanup(handle);
+                return response(http::status::unauthorized, request.version(),
+                                error_body("provider_grant_rejected", "provider media grant was rejected"));
+            }
+            provider_header = "X-WebObs-Provider-Token: " + std::string(token);
+            headers = curl_slist_append(headers, provider_header.c_str());
         }
         if (cluster_service) {
             if (cluster_internal_token_.empty()) {
@@ -1800,6 +1840,10 @@ bool v2_action_route(std::string_view target, std::string_view prefix, std::stri
 bool v2_device_route(const HttpRequest &request)
 {
     const std::string_view target = view(request.target());
+    constexpr std::string_view provider_media_prefix = "/api/v2/provider-media/";
+    if (request.method() == http::verb::get && target.starts_with(provider_media_prefix) &&
+        hex_identifier(target.substr(provider_media_prefix.size())))
+        return true;
     if (request.method() == http::verb::post && target == "/api/v2/enrollments")
         return true;
     if (request.method() == http::verb::post &&
@@ -2367,7 +2411,7 @@ HttpResponse handle_request(const HttpRequest &request, SceneController &control
     const std::string_view target = view(request.target());
     if (request.method() == http::verb::get && target == "/api/v1/health")
         return response(http::status::ok, version,
-                        "{\"status\":\"ok\",\"milestone\":\"v2-M6\"}");
+                        "{\"status\":\"ok\",\"milestone\":\"v2-M7-dev\"}");
     if (request.method() == http::verb::get && target == "/api/v1/ready") {
         const bool ready = runtime_status.ready();
         return response(ready ? http::status::ok : http::status::service_unavailable, version,
@@ -2486,8 +2530,41 @@ HttpResponse handle_request(const HttpRequest &request, SceneController &control
                            target == "/api/v2/recording-placements" || target.starts_with("/api/v2/recording-placements/") ||
                            target == "/api/v2/resource-capacity" ||
                            target == "/api/v2/archive-targets" || target.starts_with("/api/v2/archive-targets/") ||
-                           target == "/api/v2/backup-jobs" || target.starts_with("/api/v2/backup-jobs/");
+                           target == "/api/v2/backup-jobs" || target.starts_with("/api/v2/backup-jobs/") ||
+                           target == "/api/v2/providers" || target.starts_with("/api/v2/providers/") ||
+                           target.starts_with("/api/v2/provider-media/");
     if (v2_target) {
+        constexpr std::string_view provider_media_prefix = "/api/v2/provider-media/";
+        if (target.starts_with(provider_media_prefix)) {
+            if (request.method() != http::verb::get ||
+                !hex_identifier(target.substr(provider_media_prefix.size()))) {
+                HttpResponse result = response(http::status::method_not_allowed, version,
+                                               error_body("method_not_allowed", "use GET"));
+                result.set(http::field::allow, "GET");
+                return result;
+            }
+            HttpResponse authorized = camera_proxy.forward(request);
+            if (authorized.result() != http::status::ok)
+                return authorized;
+            json_error_t json_error{};
+            json_t *root = json_loadb(authorized.body().data(), authorized.body().size(),
+                                      JSON_REJECT_DUPLICATES, &json_error);
+            json_t *segment = root && json_is_object(root) ? json_object_get(root, "segmentId") : nullptr;
+            const char *segment_value = json_is_string(segment) ? json_string_value(segment) : nullptr;
+            const std::string segment_id = segment_value ? segment_value : "";
+            if (root)
+                json_decref(root);
+            if (!hex_identifier(segment_id))
+                return response(http::status::conflict, version,
+                                error_body("provider_live_media_unavailable",
+                                           "this provider grant does not identify a completed recording segment"));
+            HttpRequest media_request{http::verb::get, "/api/v1/nvr/media/" + segment_id, version};
+            const auto range = request.find(http::field::range);
+            if (range != request.end())
+                media_request.set(http::field::range, range->value());
+            media_request.prepare_payload();
+            return nvr_proxy.forward(media_request);
+        }
         if (const auto route = v2_whep_route(target)) {
             const bool creating = request.method() == http::verb::post && route->session_token.empty();
             const bool removing = request.method() == http::verb::delete_ && !route->session_token.empty();

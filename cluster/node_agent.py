@@ -213,6 +213,7 @@ def resource_report() -> dict[str, Any]:
         "runtimeProbePassed": os.environ.get("WEBOBS_HARDWARE_PROBE_PASSED", "false") == "true",
         "decodeSlots": int(os.environ.get("WEBOBS_DECODE_SLOTS", "0")),
         "encodeSlots": int(os.environ.get("WEBOBS_ENCODE_SLOTS", "0")),
+        "diskBytesPerSecond": int(os.environ.get("WEBOBS_NODE_DISK_BYTES_PER_SECOND", "0")),
     }
     return {"cpuCores": max(1, os.cpu_count() or 1), "memoryBytes": memory_bytes(),
             "capabilities": capabilities, "reservations": [], "rated": rated}

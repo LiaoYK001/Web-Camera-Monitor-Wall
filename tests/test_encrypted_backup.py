@@ -11,6 +11,7 @@ import sqlite3
 import sys
 import tempfile
 import unittest
+from unittest import mock
 
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
@@ -67,6 +68,36 @@ class BackupTests(unittest.TestCase):
             key.write_bytes(b"k" * 32)
             with self.assertRaisesRegex(backup.BackupError, "confirmation"):
                 backup.restore(root / "webobs", archive, key, self.sodium, False)
+
+    def test_nonlocal_backup_uses_pinned_s3_module_and_digest_key(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = pathlib.Path(directory)
+            archive = root / "fixture.wobk"
+            archive.write_bytes(b"encrypted-fixture")
+            config = root / "archive.json"
+            config.write_text("{}\n", encoding="utf-8")
+            marker = root / "upload.txt"
+            implementation = root / "webobs-s3-archive"
+            implementation.write_text(
+                "import pathlib\n"
+                "def load_config(path): return {'marker': str(path.parent / 'upload.txt')}\n"
+                "class S3Client:\n"
+                "  def __init__(self, config, ca): self.marker = pathlib.Path(config['marker'])\n"
+                "  def upload_verified(self, path, key, digest, size):\n"
+                "    self.marker.write_text(f'{key}|{digest}|{size}', encoding='ascii')\n",
+                encoding="utf-8",
+            )
+            with mock.patch.dict(os.environ, {
+                "WEBOBS_BACKUP_S3_TARGET_ID": "archive-main",
+                "WEBOBS_BACKUP_S3_CONFIG": str(config),
+                "WEBOBS_ARCHIVE_COMMAND": str(implementation),
+            }, clear=False):
+                digest = backup.upload_s3(archive, "archive-main")
+            self.assertEqual(digest, backup.file_sha256(archive))
+            self.assertEqual(marker.read_text(encoding="ascii"),
+                             f"backups/{digest[:2]}/{digest}.wobk|{digest}|17")
+            with self.assertRaisesRegex(backup.BackupError, "nonlocal_target_unavailable"):
+                backup.upload_s3(archive, "archive-other")
 
 
 if __name__ == "__main__":

@@ -1,0 +1,8 @@
+logLevel: warn
+rtsp: true
+rtspAddress: :8554
+webrtc: false
+hls: false
+paths:
+  synth:
+    source: publisher

@@ -334,7 +334,7 @@ RUN cmake -S /src/obs -B /build/obs -G Ninja \
 FROM obs-builder AS core-builder
 
 ARG WEBOBS_BUILD_VERSION=2.3.0-dev
-ARG WEBOBS_BUILD_MILESTONE=v2-M7
+ARG WEBOBS_BUILD_MILESTONE=v2-M7-dev
 
 RUN apt-get -o Acquire::Retries=5 update \
     && apt-get -o Acquire::Retries=5 install -y --no-install-recommends libssl-dev \

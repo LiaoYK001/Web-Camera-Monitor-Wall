@@ -12,6 +12,7 @@ import sqlite3
 import sys
 import tempfile
 import unittest
+from unittest import mock
 
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
@@ -56,6 +57,15 @@ class AgentTests(unittest.TestCase):
         self.assertIn("runtimeProbePassed", report["capabilities"])
         self.assertFalse(report["rated"])
         self.assertEqual(report["reservations"], [])
+
+    def test_rated_disk_capacity_must_be_explicit(self) -> None:
+        with mock.patch.dict(os.environ, {
+            "WEBOBS_NODE_RATED": "true",
+            "WEBOBS_NODE_DISK_BYTES_PER_SECOND": "67108864",
+        }, clear=False):
+            report = agent.resource_report()
+        self.assertTrue(report["rated"])
+        self.assertEqual(report["capabilities"]["diskBytesPerSecond"], 67108864)
 
     def test_catalog_batch_only_exports_current_assignment_and_no_endpoint(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

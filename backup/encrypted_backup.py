@@ -9,6 +9,8 @@ import ctypes
 import ctypes.util
 import hashlib
 import http.client
+import importlib.machinery
+import importlib.util
 import json
 import os
 import pathlib
@@ -294,6 +296,32 @@ def cluster_request(port: int, token: str, path: str, value: dict) -> dict:
         connection.close()
 
 
+def upload_s3(path: pathlib.Path, target_id: str) -> str:
+    """Upload a completed encrypted backup through the pinned S3 implementation."""
+    configured_target = os.environ.get("WEBOBS_BACKUP_S3_TARGET_ID", "")
+    config_path = pathlib.Path(os.environ.get("WEBOBS_BACKUP_S3_CONFIG", "/config/webobs/archive.json"))
+    archive_program = pathlib.Path(os.environ.get(
+        "WEBOBS_ARCHIVE_COMMAND", "/opt/webobs/bin/webobs-s3-archive"))
+    if not configured_target or target_id != configured_target or not config_path.is_absolute() or \
+            not archive_program.is_absolute() or not archive_program.is_file():
+        raise BackupError("nonlocal_target_unavailable")
+    loader = importlib.machinery.SourceFileLoader("webobs_backup_s3", str(archive_program))
+    specification = importlib.util.spec_from_loader(loader.name, loader)
+    if specification is None or specification.loader is None:
+        raise BackupError("nonlocal_target_unavailable")
+    module = importlib.util.module_from_spec(specification)
+    specification.loader.exec_module(module)
+    digest = file_sha256(path)
+    key = f"backups/{digest[:2]}/{digest}.wobk"
+    try:
+        config = module.load_config(config_path)
+        client = module.S3Client(config, os.environ.get("WEBOBS_ARCHIVE_CA_FILE", ""))
+        client.upload_verified(path, key, digest, path.stat().st_size)
+    except Exception as error:
+        raise BackupError("s3_backup_failed") from error
+    return digest
+
+
 def schedule(config_root: pathlib.Path, backup_root: pathlib.Path, key_file: pathlib.Path,
              sodium: SodiumStream) -> None:
     token = os.environ.get("WEBOBS_CLUSTER_INTERNAL_TOKEN", "")
@@ -305,11 +333,12 @@ def schedule(config_root: pathlib.Path, backup_root: pathlib.Path, key_file: pat
             job = cluster_request(port, token, "/backup-jobs/claim", {}).get("job")
         if job is not None:
             try:
-                if job.get("targetId") != "local":
-                    raise BackupError("nonlocal_target_unavailable")
                 output = create(config_root, backup_root, key_file, sodium)
+                digest = file_sha256(output)
+                if job.get("targetId") != "local":
+                    digest = upload_s3(output, str(job.get("targetId", "")))
                 cluster_request(port, token, f"/backup-jobs/{job['id']}/result", {
-                    "state": "completed", "sha256": file_sha256(output),
+                    "state": "completed", "sha256": digest,
                 })
             except BackupError as error:
                 code = str(error) if re.fullmatch(r"[A-Za-z0-9._-]{1,64}", str(error)) else type(error).__name__

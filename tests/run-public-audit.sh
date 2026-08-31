@@ -118,6 +118,7 @@ core/tests/common_tests.cpp|u:p
 core/tests/common_tests.cpp|x:y
 tests/run-contracts.ps1|test-user:supersecret
 tests/run-contracts.ps1|***:***
+tests/test_event_service.py|user:password
 tests/run-contracts.sh|test-user:supersecret
 tests/run-contracts.sh|***:***
 tests/test_v2_client_control.py|fixture-user:fixture-password

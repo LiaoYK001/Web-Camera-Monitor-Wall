@@ -6,7 +6,9 @@
 ghcr.io/liaoyk001/web-camera-monitor-wall:<version-or-digest>
 ```
 
-下文的发布命令不把任何个人用户名写死：`GHCR user` 是持有 PAT 的个人 GitHub 账号，`image owner` 是接收镜像的个人或组织 namespace，两者可以不同。示例版本使用 `v1.1`；版本标签应视为不可变，发布前确认标签不存在，发布后不要用另一提交覆盖它。需要修复时发布 `v1.1.1` 或下一版本。`latest` 是可移动的稳定别名，`sha-<12位提交>` 用于精确追踪源码，生产部署最终应锁定 digest。
+下文的发布命令不把任何个人用户名写死：`GHCR user` 是持有 PAT 的个人 GitHub 账号，`image owner` 是接收镜像的个人或组织 namespace，两者可以不同。示例版本使用 `v2.3`；版本标签应视为不可变，发布后不要用另一提交覆盖它，需要修复时发布 `v2.3.1`。`latest` 是可移动的稳定别名，`sha-<12位提交>` 用于精确追踪源码，生产部署最终应锁定 digest。
+
+稳定发布采用两阶段提升：脚本先只推送 `sha-*` 候选，创建并校验 Draft GitHub Release 与递归对应源码包；Draft 发布成功后，再从候选 manifest digest 创建 `v2.3` 和 `latest`。提升不会重建镜像，旧排队构建无法用另一份镜像覆盖已审查候选。仓库应启用 GitHub Immutable Releases；脚本同时拒绝覆盖同名但内容不同的 Release Asset。
 
 ## 1. 共同前置条件
 
@@ -35,7 +37,7 @@ git status --short
 
 ```bash
 IMAGE=ghcr.io/your-user-or-organization/web-camera-monitor-wall
-VERSION=v1.1
+VERSION=v2.3
 docker buildx imagetools inspect "${IMAGE}:${VERSION}"
 ```
 
@@ -71,7 +73,7 @@ if ($GhcrUser -notmatch '^[A-Za-z0-9][A-Za-z0-9-]{0,63}$' -or
     throw 'GitHub user or image owner has an invalid format'
 }
 $Image = "ghcr.io/$($ImageOwner.ToLowerInvariant())/web-camera-monitor-wall"
-$Version = 'v1.1'
+$Version = 'v2.3'
 
 $SecureToken = Read-Host 'GHCR personal access token' -AsSecureString
 $TokenPointer = [Runtime.InteropServices.Marshal]::SecureStringToBSTR($SecureToken)
@@ -79,6 +81,7 @@ try {
     $PlainToken = [Runtime.InteropServices.Marshal]::PtrToStringBSTR($TokenPointer)
     $PlainToken | docker login ghcr.io --username $GhcrUser --password-stdin
     if ($LASTEXITCODE -ne 0) { throw 'GHCR login failed' }
+    $env:GH_TOKEN = $PlainToken
 }
 finally {
     if ($TokenPointer -ne [IntPtr]::Zero) {
@@ -90,31 +93,21 @@ finally {
 
 Docker Desktop 会把凭据交给系统 credential helper；不要把 `~/.docker/config.json` 复制到仓库或共享给其他机器。
 
-### 2.3 审计、构建并推送
+### 2.3 审计、候选构建与原子提升
 
 ```powershell
-pwsh -NoProfile -File ./tests/run-public-audit.ps1
-if ($LASTEXITCODE -ne 0) { throw 'Public repository audit failed' }
-
-$Revision = (git rev-parse HEAD).Trim()
-$ShortRevision = (git rev-parse --short=12 HEAD).Trim()
-
-docker buildx build `
-  --platform linux/amd64 `
-  --file docker/Dockerfile `
-  --label "org.opencontainers.image.revision=$Revision" `
-  --label "org.opencontainers.image.version=$Version" `
-  --tag "${Image}:${Version}" `
-  --tag "${Image}:sha-${ShortRevision}" `
-  --tag "${Image}:latest" `
-  --provenance=mode=max `
-  --sbom=true `
-  --push .
-
-if ($LASTEXITCODE -ne 0) { throw 'Image build or push failed' }
+$env:GITHUB_REPOSITORY = "$ImageOwner/Web-Camera-Monitor-Wall"
+# GH_TOKEN 仅存在于当前 PowerShell 进程；不要作为脚本参数传递。
+try {
+    ./scripts/release-image-local.ps1 -Image $Image -Version $Version
+    if ($LASTEXITCODE -ne 0) { throw 'Staged image publication failed' }
+}
+finally {
+    Remove-Item Env:GH_TOKEN -ErrorAction SilentlyContinue
+}
 ```
 
-该命令直接把镜像、SBOM 和 provenance 推到 GHCR。Buildx 的 registry 输出不一定把镜像加载进本地 Docker image store；需要本地运行时再显式拉取：
+脚本验证干净工作树、本机 Windows/WSL2 收据、公开审计、Tag 与 `main`/远端身份，然后执行候选构建、SBOM/provenance、递归源码包、Draft Release、不可变 Asset 和 digest 提升。Buildx 的 registry 输出不一定把镜像加载进本地 Docker image store；需要本地运行时再显式拉取：
 
 ```powershell
 docker pull "${Image}:${Version}"
@@ -158,17 +151,20 @@ case "$ghcr_user" in ''|*[!A-Za-z0-9-]*|-*|*-) echo 'invalid GitHub user' >&2; e
 case "$image_owner" in ''|*[!A-Za-z0-9-]*|-*|*-) echo 'invalid image owner' >&2; exit 64 ;; esac
 image_owner="${image_owner,,}"
 image="ghcr.io/${image_owner}/web-camera-monitor-wall"
-version="v1.1"
+version="v2.3"
 
 read -rsp 'GHCR personal access token: ' ghcr_token
 printf '%s' "$ghcr_token" | docker login ghcr.io -u "$ghcr_user" --password-stdin
+export GH_TOKEN="$ghcr_token"
+export GITHUB_REPOSITORY="${image_owner}/Web-Camera-Monitor-Wall"
 unset ghcr_token
 echo
 
 ./scripts/release-image-local.sh "$image" "$version"
+unset GH_TOKEN
 ```
 
-脚本会完成干净工作树检查、可执行位检查、公开仓库审计、`linux/amd64` Buildx 构建、SBOM/provenance、`v1.1`/`sha-*`/`latest` 标签推送，以及远端 manifest 检查。缓存保存在被 Git 忽略的 `build/release-cache`。
+脚本会先推送 `sha-*` 候选并取得 digest，再生成递归对应源码与 SHA-256、创建 Draft Release，最后把同一 digest 提升为 `v2.3`/`latest`。缓存保存在被 Git 忽略的 `build/release-cache`。
 
 发布后：
 
@@ -217,14 +213,17 @@ case "$ghcr_user" in ''|*[!A-Za-z0-9-]*|-*|*-) echo 'invalid GitHub user' >&2; e
 case "$image_owner" in ''|*[!A-Za-z0-9-]*|-*|*-) echo 'invalid image owner' >&2; exit 64 ;; esac
 image_owner="${image_owner,,}"
 image="ghcr.io/${image_owner}/web-camera-monitor-wall"
-version="v1.1"
+version="v2.3"
 
 read -rsp 'GHCR personal access token: ' ghcr_token
 printf '%s' "$ghcr_token" | docker login ghcr.io -u "$ghcr_user" --password-stdin
+export GH_TOKEN="$ghcr_token"
+export GITHUB_REPOSITORY="${image_owner}/Web-Camera-Monitor-Wall"
 unset ghcr_token
 echo
 
 ./scripts/release-image-local.sh "$image" "$version"
+unset GH_TOKEN
 
 docker pull "${image}:${version}"
 docker buildx imagetools inspect "${image}:${version}"
@@ -261,7 +260,7 @@ case "$ghcr_user" in ''|*[!A-Za-z0-9-]*|-*|*-) echo 'invalid GitHub user' >&2; e
 case "$image_owner" in ''|*[!A-Za-z0-9-]*|-*|*-) echo 'invalid image owner' >&2; exit 64 ;; esac
 image_owner="${image_owner,,}"
 image="ghcr.io/${image_owner}/web-camera-monitor-wall"
-version="v1.1"
+version="v2.3"
 
 read -rsp 'GHCR personal access token: ' ghcr_token
 printf '%s' "$ghcr_token" | podman login ghcr.io -u "$ghcr_user" --password-stdin
@@ -282,7 +281,7 @@ podman push "${image}:${version}"
 
 ```bash
 IMAGE=ghcr.io/your-user-or-organization/web-camera-monitor-wall
-VERSION=v1.1
+VERSION=v2.3
 docker buildx imagetools inspect \
   "${IMAGE}:${VERSION}"
 ```

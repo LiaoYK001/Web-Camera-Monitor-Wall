@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.28)
 
-project(webobs VERSION 2.2.0 LANGUAGES CXX)
+project(webobs VERSION 2.3.0 LANGUAGES CXX)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -12,7 +12,7 @@ set(WEBOBS_OBS_BUILD_DIR "${WEBOBS_OBS_SOURCE_DIR}/build_ubuntu" CACHE PATH "OBS
 set(WEBOBS_OBS_PREFIX "/opt/obs" CACHE PATH "Runtime OBS installation prefix")
 set(WEBOBS_WEB_ROOT "/opt/webobs/ui" CACHE PATH "Installed WebOBS editor root")
 set(WEBOBS_VERSION_OVERRIDE "${PROJECT_VERSION}" CACHE STRING "Reported product version")
-set(WEBOBS_MILESTONE_OVERRIDE "v2-M6" CACHE STRING "Reported product milestone")
+set(WEBOBS_MILESTONE_OVERRIDE "v2-M7-dev" CACHE STRING "Reported product milestone")
 if(NOT WEBOBS_VERSION_OVERRIDE MATCHES "^[0-9]+\\.[0-9]+\\.[0-9]+(-[0-9A-Za-z.-]+)?$")
     message(FATAL_ERROR "WEBOBS_VERSION_OVERRIDE is not a safe SemVer value")
 endif()

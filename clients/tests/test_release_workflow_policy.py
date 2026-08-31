@@ -66,7 +66,7 @@ class NativeReleaseWorkflowPolicyTests(unittest.TestCase):
         windows_release_script = (ROOT / "scripts" / "release-image-local.ps1").read_text(encoding="utf-8")
         gate_script = (ROOT / "scripts" / "run-private-pwa-gate.py").read_text(encoding="utf-8")
         self.assertIn("verify-local-gate-receipts.py", release_script)
-        self.assertIn("verify-local-gate-receipts.py", windows_release_script)
+        self.assertIn("release-image-local.sh", windows_release_script)
         self.assertIn('"linux-wsl2-chromium"', gate_script)
         self.assertIn('"windows"', gate_script)
         self.assertIn('[[ "$REF_TYPE" == branch && ("$REF_NAME" == dev || "$REF_NAME" == main) ]]',
@@ -76,15 +76,21 @@ class NativeReleaseWorkflowPolicyTests(unittest.TestCase):
     def test_local_image_release_uses_v23_scale_metadata_and_normalizes_semver(self) -> None:
         release_script = (ROOT / "scripts" / "release-image-local.sh").read_text(encoding="utf-8")
         windows_release_script = (ROOT / "scripts" / "release-image-local.ps1").read_text(encoding="utf-8")
-        for text in (release_script, windows_release_script):
-            self.assertIn("2.3.0-dev", text)
-            self.assertIn("v2-M7-dev", text)
-            self.assertIn("v2-M7", text)
-            self.assertIn("v2-M6", text)
-            self.assertIn("v2-M5", text)
-            self.assertRegex(text, r"buildVersion|build_version")
+        for marker in ("2.3.0-dev", "v2-M7-dev", "v2-M7", "v2-M6", "v2-M5"):
+            self.assertIn(marker, release_script)
+        self.assertIn("build_version", release_script)
         self.assertIn('build_version="${build_version}.0"', release_script)
-        self.assertIn('$buildVersion = "${buildVersion}.0"', windows_release_script)
+        self.assertIn("release-image-local.sh", windows_release_script)
+
+    def test_stable_image_release_promotes_only_the_verified_candidate_digest(self) -> None:
+        release_script = (ROOT / "scripts" / "release-image-local.sh").read_text(encoding="utf-8")
+        build = release_script.split("docker buildx build", 1)[1].split("if [ \"$version\" = dev ]", 1)[0]
+        self.assertIn('sha-${short_revision}', build)
+        self.assertNotIn('${image}:${version}', build)
+        self.assertNotIn('${image}:latest', build)
+        self.assertIn('gh release create "$version"', release_script)
+        self.assertIn('gh release edit "$version"', release_script)
+        self.assertIn('"${image}@${digest}"', release_script)
 
     def test_candidate_windows_packages_cannot_skip_authenticode(self) -> None:
         self.assertIn("if ($env:CERTIFICATE_SHA1 -notmatch '^[0-9A-Fa-f]{40}$')", self.text)

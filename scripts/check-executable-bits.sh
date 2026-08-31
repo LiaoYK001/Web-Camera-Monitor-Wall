@@ -35,7 +35,9 @@ tests/run-m10-real-mjpeg.sh
 tests/run-public-audit.sh
 tests/run-real-camera.sh
 tests/run-smoke.sh
-tests/run-v2-true-direct.sh'
+tests/run-v2-true-direct.sh
+tests/m7/generate-fixture.sh
+tests/m7/run-gate.sh'
 
 failed=0
 printf '%s\n' "$required" | while IFS= read -r path; do

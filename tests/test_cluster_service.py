@@ -6,6 +6,7 @@ from __future__ import annotations
 import hashlib
 import importlib.machinery
 import importlib.util
+import json
 import pathlib
 import sys
 import tempfile
@@ -241,6 +242,32 @@ class ClusterTests(unittest.TestCase):
         with self.assertRaisesRegex(cluster.ApiError, "rejected"):
             self.store.consume_provider_grant(task["taskId"], token)
 
+    def test_provider_recording_grant_is_bound_to_catalog_camera_and_profile(self) -> None:
+        node_id, _, _ = self.enroll("Provider recorder")
+        self.store.heartbeat(node_id, heartbeat(1000), timestamp=1000)
+        self.store.assign("camera-1", "main", node_id, timestamp=1000)
+        segment_id = "a" * 32
+        self.store.accept_catalog(node_id, {"segments": [{
+            "segmentId": segment_id, "cameraId": "camera-1", "profileId": "main",
+            "volumeId": "hot-1", "storageKey": "camera-1/segment.mp4", "sizeBytes": 1024,
+            "sha256": "b" * 64, "generation": 1, "archiveState": "local", "integrity": "ok",
+        }]})
+        provider = self.store.create_provider({
+            "name": "Exporter fixture", "endpoint": "https://provider.example.test/tasks",
+            "taskTypes": ["export"], "credentialsRef": "provider-export", "maxConcurrent": 2,
+        })
+        with self.assertRaisesRegex(cluster.ApiError, "not found"):
+            self.store.create_provider_task(provider["id"], {
+                "taskType": "export", "cameraId": "camera-other", "profileId": "main",
+                "segmentId": segment_id,
+            })
+        task = self.store.create_provider_task(provider["id"], {
+            "taskType": "export", "cameraId": "camera-1", "profileId": "main",
+            "segmentId": segment_id,
+        })
+        grant = self.store.consume_provider_grant(task["taskId"], task["mediaGrant"]["token"])
+        self.assertEqual(grant["segmentId"], segment_id)
+
     def test_lease_renewal_isolation_and_generation_fencing(self) -> None:
         first, _, _ = self.enroll("Recorder A")
         second, _, _ = self.enroll("Recorder B")
@@ -252,8 +279,10 @@ class ClusterTests(unittest.TestCase):
         renewed = self.store.renew(first, {"cameraId": "camera-1", "profileId": "profile-1", "generation": 1},
                                    timestamp=1010)
         self.assertEqual(renewed["leaseExpiresAt"], 1040)
+        self.store.heartbeat(second, heartbeat(1149), timestamp=1149)
         with self.assertRaisesRegex(cluster.ApiError, "isolation deadline"):
             self.store.assign("camera-1", "profile-1", second, timestamp=1149)
+        self.store.heartbeat(second, heartbeat(1160), timestamp=1160)
         moved = self.store.assign("camera-1", "profile-1", second, timestamp=1160)
         self.assertEqual(moved["generation"], 2)
         with self.assertRaisesRegex(cluster.ApiError, "stale"):
@@ -273,6 +302,22 @@ class ClusterTests(unittest.TestCase):
                               costs={"encodeSlots": 1}, timestamp=1000)
         capacity = self.store.capacity()
         self.assertEqual(capacity["referenceTiers"]["copy-32"]["streams"], 32)
+
+    def test_scheduler_reserves_declared_assignment_costs_and_checks_explicit_nodes(self) -> None:
+        node, _, _ = self.enroll("Capacity recorder")
+        report = heartbeat(1000, free=3 << 30)
+        report["resources"]["reservations"] = []
+        report["resources"]["memoryBytes"] = 64 * 1024 * 1024
+        self.store.heartbeat(node, report, timestamp=1000)
+        costs = {"memoryBytes": 40 * 1024 * 1024}
+        self.store.assign("camera-first", "main", node, costs=costs, timestamp=1000)
+        with self.assertRaisesRegex(cluster.ApiError, "CPU fallback was not started"):
+            self.store.assign("camera-second", "main", node, costs=costs, timestamp=1001)
+        row = self.store.db.execute(
+            "SELECT task_type,costs_json FROM recording_assignments WHERE camera_id='camera-first'"
+        ).fetchone()
+        self.assertEqual(row["task_type"], "record-copy")
+        self.assertEqual(json.loads(row["costs_json"])["memoryBytes"], 40 * 1024 * 1024)
 
     def test_catalog_marks_stale_generation_as_conflict(self) -> None:
         node_id, _, _ = self.enroll()
