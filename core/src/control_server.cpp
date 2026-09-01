@@ -494,7 +494,7 @@ void set_security_headers(HttpResponse &response, std::string_view content_type,
     response.set("Content-Security-Policy",
                  "default-src 'none'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self'; img-src 'self' data: blob:" +
                  media_origins + "; media-src 'self' blob:" + media_origins +
-                 "; connect-src 'self' ws://localhost:* ws://127.0.0.1:* ws://[::1]:*" + media_origins +
+                 "; connect-src 'self' ws://localhost:* ws://127.0.0.1:*" + media_origins +
                  "; worker-src 'self' blob:; manifest-src 'self'; base-uri 'none'; form-action 'self'; "
                  "frame-ancestors 'none'; object-src 'none'; require-trusted-types-for 'script'; trusted-types default");
     response.set("X-Content-Type-Options", "nosniff");

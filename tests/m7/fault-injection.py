@@ -9,6 +9,7 @@ import json
 import os
 import pathlib
 import sqlite3
+import ssl
 import subprocess
 import sys
 import time
@@ -20,8 +21,9 @@ HERE = pathlib.Path(__file__).resolve().parent
 REPOSITORY = HERE.parents[1]
 ROOT = HERE.parent / ".m7-cluster"
 COMPOSE = HERE / "compose.yaml"
-BASE = os.environ.get("WEBOBS_M7_CONTROL_URL", "http://127.0.0.1:18080")
-ORIGIN = "http://127.0.0.1:18080"
+BASE = os.environ.get("WEBOBS_M7_CONTROL_URL", "https://127.0.0.1:18443")
+ORIGIN = BASE.rstrip("/")
+TLS_CONTEXT = ssl.create_default_context(cafile=str(ROOT / "secrets/cluster-ca.crt"))
 RUNTIME = os.environ.get("WEBOBS_CONTAINER_RUNTIME", "docker")
 CHECKS = ["archiveDigestVerified", "backupRestoreVerified", "clockSkewRejected",
           "controllerIsolationBounded", "minioOutageRecordingContinues",
@@ -48,7 +50,7 @@ def request(method: str, path: str, value: dict | None = None,
         headers["If-Match"] = f'"{if_match}"'
     call = urllib.request.Request(BASE + path, data=body, headers=headers, method=method)
     try:
-        with urllib.request.urlopen(call, timeout=10) as response:
+        with urllib.request.urlopen(call, timeout=10, context=TLS_CONTEXT) as response:
             if response.status != expected:
                 raise RuntimeError(f"unexpected controller status {response.status}")
             return json.load(response)

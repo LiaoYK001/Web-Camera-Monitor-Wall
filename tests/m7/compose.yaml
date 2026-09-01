@@ -38,10 +38,18 @@ services:
     restart: "no"
     environment:
       WEBOBS_NODE_ROLE: controller
-      WEBOBS_LISTEN_ADDRESS: 0.0.0.0
+      WEBOBS_LISTEN_ADDRESS: 127.0.0.1
       WEBOBS_HTTP_PORT: "8080"
-      WEBOBS_ALLOW_INSECURE_REMOTE: "true"
-      WEBOBS_CONTROL_ALLOWED_ORIGINS: http://127.0.0.1:18080
+      WEBOBS_ALLOW_INSECURE_REMOTE: "false"
+      WEBOBS_TLS_ENABLED: "true"
+      WEBOBS_TLS_CERT_FILE: /run/secrets/cluster-server.crt
+      WEBOBS_TLS_KEY_FILE: /run/secrets/cluster-server.key
+      WEBOBS_TLS_CA_FILE: /run/secrets/cluster-ca.crt
+      WEBOBS_TLS_SERVER_NAME: 127.0.0.1
+      WEBOBS_TLS_PUBLIC_AUTHORITY: 127.0.0.1:18443
+      WEBOBS_HTTPS_PORT: "8443"
+      WEBOBS_CONTROL_ALLOWED_ORIGINS: https://127.0.0.1:18443
+      WEBOBS_PWA_PUBLIC_ORIGIN: https://127.0.0.1:18443
       WEBOBS_PWA_MEDIA_ALLOWED_ORIGINS: https://127.0.0.1:19000
       WEBOBS_WEBRTC_ENABLED: "false"
       WEBOBS_COMPOSITE_ENABLED: "false"
@@ -63,10 +71,10 @@ services:
       - ./mqtt-integration.py:/fixture/mqtt-integration.py:ro
       - ../test_encrypted_backup.py:/fixture/test_encrypted_backup.py:ro
     ports:
-      - 127.0.0.1:18080:8080
+      - 127.0.0.1:18443:8443
     networks: [control]
     healthcheck:
-      test: ["CMD", "curl", "--fail", "--silent", "http://127.0.0.1:8080/api/v1/health"]
+      test: ["CMD", "curl", "--fail", "--silent", "--cacert", "/run/secrets/cluster-ca.crt", "https://127.0.0.1:8443/api/v1/health"]
       interval: 3s
       timeout: 2s
       retries: 30
@@ -141,7 +149,7 @@ services:
     environment:
       MINIO_ROOT_USER_FILE: /run/secrets/minio-user
       MINIO_ROOT_PASSWORD_FILE: /run/secrets/minio-password
-      MINIO_API_CORS_ALLOW_ORIGIN: http://127.0.0.1:18080
+      MINIO_API_CORS_ALLOW_ORIGIN: https://127.0.0.1:18443
     volumes:
       - ../.m7-cluster/minio:/data
       - ../.m7-cluster/secrets/minio-user:/run/secrets/minio-user:ro

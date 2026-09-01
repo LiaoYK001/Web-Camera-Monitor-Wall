@@ -26,6 +26,14 @@ The full command creates `build/private-gates/windows.json` only after all requi
 
 完整命令只会在所有 Chrome/Edge 协议、离线/升级与资源释放必测项通过后生成 `build/private-gates/windows.json`。长时间负载测试属于可选资格证据，不进入 v2.2 发布契约。
 
+For the active `v2-M7 / v2.3` development line, run the additional synthetic administration gate from Windows. It creates `windows-m7-admin.json` only after both installed browsers pass RBAC scope, cluster UI, S3 playback integrity, session revocation and offline-shell checks. No self-hosted runner is used.
+
+当前 `v2-M7 / v2.3` 开发线还需在 Windows 执行额外的合成运维门禁。只有本机 Chrome 与 Edge 均通过 RBAC scope、集群 UI、S3 回放完整性、Session 撤销和离线应用壳检查后，才会生成 `windows-m7-admin.json`；该流程不使用 self-hosted Runner。
+
+```powershell
+.\tests\m7\run-windows-admin-gate.ps1 -Image webobs:m7-candidate -Browser both
+```
+
 ## WSL2 Linux / WSL2 Linux
 
 Install a normal WSL2 distribution on the D drive (the maintainer gate uses Fedora Linux 44) with Node 22.23 or newer, pnpm 11, Python 3 and Chromium. Docker Desktop integration is not required for this gate: the Windows host owns Linux-container builds, while Fedora owns Linux shell and Chromium behavior. The Docker Desktop internal `docker-desktop` distribution is infrastructure and does not count as the Linux test environment.

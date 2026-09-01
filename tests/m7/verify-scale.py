@@ -19,8 +19,9 @@ import ssl
 
 ROOT = pathlib.Path(__file__).resolve().parents[1] / ".m7-cluster"
 REPOSITORY = pathlib.Path(__file__).resolve().parents[2]
-BASE = os.environ.get("WEBOBS_M7_CONTROL_URL", "http://127.0.0.1:18080")
-ORIGIN = "http://127.0.0.1:18080"
+BASE = os.environ.get("WEBOBS_M7_CONTROL_URL", "https://127.0.0.1:18443")
+ORIGIN = BASE.rstrip("/")
+TLS_CONTEXT = ssl.create_default_context(cafile=str(ROOT / "secrets/cluster-ca.crt"))
 CHECKS = ["archivedPlaybackVerified", "assignmentsAccepted", "catalogIntegrity", "controllerThreeRecorders",
           "recordingAllNodes", "resourceCapacityReported", "threeStorageVolumes"]
 
@@ -32,7 +33,7 @@ def request(path: str, method: str = "GET") -> dict:
     call = urllib.request.Request(BASE + path, data=b"" if method == "POST" else None, headers={
         "Authorization": auth, "Origin": ORIGIN, "Accept": "application/json",
     }, method=method)
-    with urllib.request.urlopen(call, timeout=10) as response:
+    with urllib.request.urlopen(call, timeout=10, context=TLS_CONTEXT) as response:
         return json.load(response)
 
 

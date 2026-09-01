@@ -9,6 +9,7 @@ import importlib.machinery
 import importlib.util
 import json
 import pathlib
+import sqlite3
 import sys
 import tempfile
 import unittest
@@ -70,8 +71,15 @@ class ClusterTests(unittest.TestCase):
         self.root = pathlib.Path(self.directory.name)
         self.secrets = self.root / "secrets"
         self.secrets.mkdir()
+        self.camera_registry = self.root / "cameras.sqlite3"
+        camera_database = sqlite3.connect(self.camera_registry)
+        camera_database.execute("CREATE TABLE cameras(id TEXT PRIMARY KEY,group_id TEXT NOT NULL)")
+        camera_database.execute("INSERT INTO cameras VALUES('camera-grouped','group-1')")
+        camera_database.commit()
+        camera_database.close()
         self.store = cluster.ClusterStore(self.root / "cluster.sqlite3",
-                                          FakeHasher(), FakeSigner(), self.secrets)
+                                          FakeHasher(), FakeSigner(), self.secrets,
+                                          self.camera_registry)
 
     def tearDown(self) -> None:
         self.store.close()
@@ -133,6 +141,9 @@ class ClusterTests(unittest.TestCase):
             if role != "admin" and "live.view" in permissions:
                 self.assertTrue(principal.permits("live.view", "camera-other", "group-1"))
                 self.assertFalse(principal.permits("live.view", "camera-other", "group-2"))
+        self.assertTrue(self.store.authorize("matrix-viewer", "live.view", "camera-grouped")["allowed"])
+        with self.assertRaisesRegex(cluster.ApiError, "scope"):
+            self.store.authorize("matrix-viewer", "live.view", "camera-unknown")
 
     def test_user_validation_and_unique_name(self) -> None:
         self.create_user()

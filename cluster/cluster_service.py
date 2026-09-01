@@ -203,11 +203,14 @@ class Principal:
 
 class ClusterStore:
     def __init__(self, database_path: pathlib.Path, hasher: Any, signer: Any | None = None,
-                 secrets_root: pathlib.Path | None = None):
+                 secrets_root: pathlib.Path | None = None,
+                 camera_registry_path: pathlib.Path | None = None):
         self.path = database_path
         self.hasher = hasher
         self.signer = signer
         self.secrets_root = secrets_root or pathlib.Path(os.environ.get("WEBOBS_SECRETS_ROOT", "/run/secrets"))
+        self.camera_registry_path = camera_registry_path or pathlib.Path(os.environ.get(
+            "WEBOBS_CAMERA_DATABASE", "/config/webobs/cameras.db"))
         self.lock = threading.RLock()
         self.auth_failures: dict[str, tuple[int, int]] = {}
         database_path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
@@ -408,9 +411,27 @@ class ClusterStore:
             if row is None:
                 raise ApiError(404, "user_not_found", "user is not managed by RBAC")
             principal = self.principal(row["id"])
-        if not principal.permits(permission, camera_id, group_id):
+        resolved_group = group_id or self._camera_group(camera_id)
+        if not principal.permits(permission, camera_id, resolved_group):
             raise ApiError(403, "permission_rejected", "permission or resource scope was rejected")
         return {"allowed": True, "userId": principal.user_id, "permission": permission}
+
+    def _camera_group(self, camera_id: str) -> str:
+        """Resolve a shared Registry group without copying its catalog into RBAC state."""
+        if not camera_id or not IDENTIFIER.fullmatch(camera_id) or not self.camera_registry_path.is_absolute():
+            return ""
+        database: sqlite3.Connection | None = None
+        try:
+            database = sqlite3.connect(
+                f"file:{self.camera_registry_path.as_posix()}?mode=ro", uri=True, timeout=1)
+            row = database.execute("SELECT group_id FROM cameras WHERE id=?", (camera_id,)).fetchone()
+        except sqlite3.Error:
+            return ""
+        finally:
+            if database is not None:
+                database.close()
+        group_id = row[0] if row else ""
+        return group_id if isinstance(group_id, str) and IDENTIFIER.fullmatch(group_id) else ""
 
     def principal(self, user_id: str) -> Principal:
         row = self.db.execute("SELECT * FROM users WHERE id=? AND enabled=1", (user_id,)).fetchone()

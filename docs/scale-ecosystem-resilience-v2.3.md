@@ -83,6 +83,14 @@ export WEBOBS_M7_GATE_SECONDS=900
 python3 scripts/verify-m7-gate-receipts.py
 ```
 
+Windows 宿主机还需在本机 Chrome 与 Edge 执行运维工作区门禁。该入口使用同一合成集群，为控制面和 MinIO 生成临时 CA/HTTPS 证书；浏览器仅在本次私有夹具进程中忽略该临时 CA 的系统信任错误，应用仍运行于 Secure Context，CORS、CSP、无重定向归档下载和 SHA-256 校验保持启用。生成的随机用户、Session、证书、录像和 Playwright 输出全部位于 Git 忽略目录，脚本退出时删除容器与匿名卷。
+
+```powershell
+.\tests\m7\run-windows-admin-gate.ps1 -Image webobs:m7-candidate -Browser both
+```
+
+Chrome 与 Edge 都通过后才写入 `build/private-gates/windows-m7-admin.json`。门禁覆盖五种内置角色、Camera/Group scope、被停用 Session、节点/卷 UI、跨节点时间线、浏览器本地 S3 摘要复核及离线 PWA 应用壳。Group scope 由服务端按稳定 Camera ID 查询共享 Registry；Registry 缺失、未知 Camera 或无效 Group ID 均 fail-closed。
+
 故障门禁使用相互独立的控制网和媒体网，按生产常量验证 20 秒节点健康边界、120 秒 Recorder 隔离录像、mTLS 重连、MinIO 中断续录/恢复、只读卷拒绝、真实 TLS MQTT/Home Assistant 发布及容器内 libsodium 灾备恢复。最后一个验证命令还要求同一 revision 的 Windows RBAC/节点/存储/PWA 运维回执；缺失、过期、时长不足或包含未知字段都会拒绝发布。
 
 该门禁只使用合成端点。真实节点、真实 S3、六小时耐久与真实网络分区证据仍只保存在维护者私有环境，不进入 Git 或公开 Artifact。
