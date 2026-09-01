@@ -1,13 +1,13 @@
 import { useCallback, useEffect, useState } from 'react';
 import {
   approveNodeEnrollment, createBackupJob, createClusterUser, createNodeEnrollment,
-  fetchArchiveTargets, fetchBackupJobs, fetchClusterNodes, fetchClusterRecordingTimeline, fetchClusterRoles,
+  fetchArchiveTargets, fetchBackupJobs, fetchClusterAudit, fetchClusterNodes, fetchClusterRecordingTimeline, fetchClusterRoles,
   fetchClusterUsers, fetchExternalProviders, fetchRecordingPlacements,
   fetchResourceCapacity, fetchStorageVolumes, fetchVerifiedArchivedRecording, patchClusterUser, patchStorageVolume,
   revokeClusterNode,
 } from './api';
 import type {
-  ArchiveTarget, BackupJob, ClusterNode, ClusterRecordingTimeline, ClusterRole, ClusterUser, ExternalProvider,
+  ArchiveTarget, BackupJob, ClusterAuditRecord, ClusterNode, ClusterRecordingTimeline, ClusterRole, ClusterUser, ExternalProvider,
   RecordingPlacement, ResourceCapacity, StorageVolume,
 } from './types';
 
@@ -53,6 +53,7 @@ function UserAccessEditor({ user, roles, onSaved, onError }: {
 export default function ClusterAdmin() {
   const [users, setUsers] = useState<ClusterUser[]>([]);
   const [roles, setRoles] = useState<Array<{ id: ClusterRole; permissions: string[] }>>([]);
+  const [auditRecords, setAuditRecords] = useState<ClusterAuditRecord[]>([]);
   const [nodes, setNodes] = useState<ClusterNode[]>([]);
   const [volumes, setVolumes] = useState<StorageVolume[]>([]);
   const [capacity, setCapacity] = useState<ResourceCapacity | null>(null);
@@ -75,14 +76,14 @@ export default function ClusterAdmin() {
   const reload = useCallback(async (signal?: AbortSignal) => {
     try {
       const now = Date.now();
-      const [nextUsers, nextRoles, nextNodes, nextVolumes, nextCapacity, nextPlacements,
+      const [nextUsers, nextRoles, nextAudit, nextNodes, nextVolumes, nextCapacity, nextPlacements,
         nextTimeline, nextTargets, nextJobs, nextProviders] = await Promise.all([
-        fetchClusterUsers(signal), fetchClusterRoles(signal), fetchClusterNodes(signal),
+        fetchClusterUsers(signal), fetchClusterRoles(signal), fetchClusterAudit(32, undefined, signal), fetchClusterNodes(signal),
         fetchStorageVolumes(signal), fetchResourceCapacity(signal), fetchRecordingPlacements(signal),
         fetchClusterRecordingTimeline(now - 86_400_000, now, signal), fetchArchiveTargets(signal),
         fetchBackupJobs(signal), fetchExternalProviders(signal),
       ]);
-      setUsers(nextUsers.users); setRoles(nextRoles.roles); setNodes(nextNodes.nodes);
+      setUsers(nextUsers.users); setRoles(nextRoles.roles); setAuditRecords(nextAudit.records); setNodes(nextNodes.nodes);
       setVolumes(nextVolumes.volumes); setCapacity(nextCapacity); setPlacements(nextPlacements.placements);
       setRecordingTimeline(nextTimeline);
       setTargets(nextTargets.targets); setJobs(nextJobs.jobs); setProviders(nextProviders.providers);
@@ -139,6 +140,7 @@ export default function ClusterAdmin() {
     <section className="admin-section"><header><div><h2>用户与 RBAC</h2><p>所有范围默认拒绝；管理员可再为用户配置 Camera/Group 范围。</p></div><span>{users.length} users</span></header>
       <div className="admin-form"><input aria-label="用户名" placeholder="用户名" value={username} maxLength={64} onChange={(event) => setUsername(event.target.value)} /><input aria-label="临时密码" placeholder="至少 16 字节临时密码" type="password" autoComplete="new-password" value={password} onChange={(event) => setPassword(event.target.value)} /><select aria-label="角色" value={newRole} onChange={(event) => setNewRole(event.target.value as ClusterRole)}>{roles.map((role) => <option key={role.id} value={role.id}>{role.id}</option>)}</select><button type="button" disabled={username.trim().length < 3 || password.length < 16} onClick={() => void addUser()}>创建用户</button></div>
       <div className="admin-list">{users.map((user) => <UserAccessEditor key={`${user.id}:${user.revision}`} user={user} roles={roles} onSaved={() => reload()} onError={setError} />)}</div>
+      <details><summary>最近 RBAC 审计（{auditRecords.length}）</summary><div className="admin-list">{auditRecords.map((record) => <article key={record.id}><div><strong>{record.event}</strong><small>{record.actorId} → {record.subjectId}<br />{time(record.createdAt)}</small></div><span>{record.result}</span></article>)}</div></details>
     </section>
 
     <section className="admin-section"><header><div><h2>节点与 mTLS</h2><p>注册令牌十分钟一次性；证书由节点本地私钥 CSR 签发并自动轮换。</p></div><span>{nodes.length} nodes</span></header>

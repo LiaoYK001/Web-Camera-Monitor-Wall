@@ -42,7 +42,9 @@ test('managed roles and camera/group scopes are enforced by the server', async (
     ['viewerCamera', '/api/v2/recordings?cameraId=fixture-02', 200],
     ['viewerCamera', '/api/v2/recordings?cameraId=fixture-01', 403],
     ['auditor', '/api/v2/recordings?cameraId=fixture-01', 200],
+    ['auditor', '/api/v2/audit?limit=10', 200],
     ['auditor', '/api/v2/nodes', 403],
+    ['viewerCamera', '/api/v2/audit?limit=10', 403],
     ['exporter', '/api/v2/recordings?cameraId=fixture-01', 200],
     ['exporter', '/api/v2/storage-volumes', 403],
   ];

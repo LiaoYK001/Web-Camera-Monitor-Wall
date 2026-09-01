@@ -340,6 +340,12 @@ export const patchClusterUser = (userId: string, revision: number, patch: Record
   });
 export const fetchClusterRoles = (signal?: AbortSignal) =>
   clientAdminRequest<{ roles: Array<{ id: ClusterRole; permissions: string[] }> }>('/roles', { signal });
+export const fetchClusterAudit = (limit = 100, before?: number, signal?: AbortSignal) => {
+  const query = new URLSearchParams({ limit: String(limit) });
+  if (before !== undefined) query.set('before', String(before));
+  return clientAdminRequest<{ records: import('./types').ClusterAuditRecord[]; nextBefore: number | null }>(
+    `/audit?${query}`, { signal });
+};
 export const fetchClusterNodes = (signal?: AbortSignal) =>
   clientAdminRequest<{ nodes: ClusterNode[]; revision: number }>('/nodes', { signal });
 export const createNodeEnrollment = (value: { name: string; role: 'recorder' | 'worker' }) =>

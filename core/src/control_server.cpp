@@ -357,6 +357,8 @@ std::string permission_for_request(const HttpRequest &request)
                           request.method() == http::verb::patch || request.method() == http::verb::delete_;
     if (target.starts_with("/api/v2/users") || target == "/api/v2/roles")
         return "user.manage";
+    if (target == "/api/v2/audit" || target.starts_with("/api/v2/audit?"))
+        return "audit.view";
     if (target.starts_with("/api/v2/nodes") || target.starts_with("/api/v2/node-enrollments"))
         return "node.manage";
     if (target.starts_with("/api/v2/storage-volumes") || target.starts_with("/api/v2/recording-placements") ||
@@ -1559,6 +1561,7 @@ public:
             v2_client_service = true;
         } else if (target == "/api/v2/users" || target.starts_with("/api/v2/users/") ||
                    target == "/api/v2/roles" ||
+                   target == "/api/v2/audit" || target.starts_with("/api/v2/audit?") ||
                    target == "/api/v2/nodes" || target.starts_with("/api/v2/nodes/") ||
                    target == "/api/v2/node-enrollments" || target.starts_with("/api/v2/node-enrollments/") ||
                    target == "/api/v2/storage-volumes" || target.starts_with("/api/v2/storage-volumes/") ||
@@ -2531,6 +2534,7 @@ HttpResponse handle_request(const HttpRequest &request, SceneController &control
                            target == "/api/v2/settings" || target == "/api/v2/settings/schema" ||
                            target == "/api/v2/users" || target.starts_with("/api/v2/users/") ||
                            target == "/api/v2/roles" ||
+                           target == "/api/v2/audit" || target.starts_with("/api/v2/audit?") ||
                            target == "/api/v2/nodes" || target.starts_with("/api/v2/nodes/") ||
                            target == "/api/v2/node-enrollments" || target.starts_with("/api/v2/node-enrollments/") ||
                            target == "/api/v2/storage-volumes" || target.starts_with("/api/v2/storage-volumes/") ||

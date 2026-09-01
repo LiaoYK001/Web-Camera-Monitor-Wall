@@ -340,6 +340,31 @@ class ClusterStore:
         self.db.execute("DELETE FROM rbac_audit WHERE id NOT IN (SELECT id FROM rbac_audit ORDER BY id DESC LIMIT ?)",
                         (MAX_AUDIT,))
 
+    def list_audit(self, query: dict[str, list[str]]) -> dict[str, Any]:
+        if not set(query).issubset({"limit", "before"}):
+            raise ApiError(400, "invalid_audit_query", "audit query contains unsupported fields")
+        limit_values = query.get("limit", ["100"])
+        before_values = query.get("before", [])
+        if len(limit_values) != 1 or not limit_values[0].isdigit():
+            raise ApiError(400, "invalid_audit_query", "audit limit is invalid")
+        limit = int(limit_values[0])
+        if not 1 <= limit <= MAX_PAGE or len(before_values) > 1 or \
+                (before_values and (not before_values[0].isdigit() or int(before_values[0]) < 1)):
+            raise ApiError(400, "invalid_audit_query", "audit pagination is invalid")
+        before = int(before_values[0]) if before_values else None
+        statement = "SELECT * FROM rbac_audit"
+        parameters: tuple[Any, ...] = ()
+        if before is not None:
+            statement += " WHERE id<?"
+            parameters = (before,)
+        rows = self.db.execute(statement + " ORDER BY id DESC LIMIT ?", (*parameters, limit + 1)).fetchall()
+        has_more = len(rows) > limit
+        rows = rows[:limit]
+        records = [{"id": row["id"], "event": row["event"], "actorId": row["actor_id"],
+                    "subjectId": row["subject_id"], "result": row["result"],
+                    "createdAt": row["created_at"]} for row in rows]
+        return {"records": records, "nextBefore": rows[-1]["id"] if has_more and rows else None}
+
     def create_user(self, value: Any, actor: str = "legacy-admin") -> dict[str, Any]:
         value = require_exact_object(value, {"username", "password", "roles", "scopes"},
                                      {"username", "password", "roles"})
@@ -1452,6 +1477,8 @@ class Handler(http.server.BaseHTTPRequestHandler):
         elif path == "/roles" and self.command == "GET":
             self.response(200, {"roles": [{"id": role, "permissions": sorted(permissions)}
                                            for role, permissions in ROLE_PERMISSIONS.items()]})
+        elif path == "/audit" and self.command == "GET":
+            self.response(200, STORE.list_audit(parse_qs(urlsplit(self.path).query)))
         elif path == "/users" and self.command == "GET":
             self.response(200, STORE.list_users())
         elif path == "/users" and self.command == "POST":

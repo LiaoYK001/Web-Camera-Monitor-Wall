@@ -310,6 +310,9 @@ export interface ClusterUser {
   id: string; username: string; enabled: boolean; roles: ClusterRole[];
   scopes: Array<{ kind: 'camera' | 'group'; id: string }>; revision: number;
 }
+export interface ClusterAuditRecord {
+  id: number; event: string; actorId: string; subjectId: string; result: string; createdAt: number;
+}
 export interface ClusterNode {
   id: string; name: string; role: 'recorder' | 'worker'; status: string; version: string;
   lastSeenAt: number; clockOffsetMs: number; certificateExpiresAt: number;

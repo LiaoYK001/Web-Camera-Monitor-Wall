@@ -155,6 +155,20 @@ class ClusterTests(unittest.TestCase):
         self.assertEqual(cluster.ROLE_PERMISSIONS["exporter"],
                          frozenset({"playback.view", "export.create"}))
 
+    def test_rbac_audit_is_bounded_paginated_and_redacted(self) -> None:
+        first = self.create_user(username="audit-user-one")
+        second = self.create_user(username="audit-user-two")
+        page = self.store.list_audit({"limit": ["1"]})
+        self.assertEqual(len(page["records"]), 1)
+        self.assertEqual(page["records"][0]["subjectId"], second["id"])
+        self.assertIsInstance(page["nextBefore"], int)
+        following = self.store.list_audit({"limit": ["2"], "before": [str(page["nextBefore"])]})
+        self.assertEqual(following["records"][0]["subjectId"], first["id"])
+        self.assertEqual(set(following["records"][0]),
+                         {"id", "event", "actorId", "subjectId", "result", "createdAt"})
+        with self.assertRaisesRegex(cluster.ApiError, "pagination"):
+            self.store.list_audit({"limit": ["257"]})
+
     def test_user_patch_is_revisioned_and_last_admin_is_protected(self) -> None:
         admin = self.create_user("admin-one", ["admin"])
         with self.assertRaisesRegex(cluster.ApiError, "last enabled"):
