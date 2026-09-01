@@ -82,6 +82,7 @@ public:
                                                     std::string_view client_metadata);
     [[nodiscard]] std::optional<SessionRecord> validate_and_slide(std::string_view token);
     bool revoke(std::string_view token);
+    std::size_t revoke_user(std::string_view user);
     [[nodiscard]] std::string set_cookie_header(std::string_view token) const;
     [[nodiscard]] std::string clear_cookie_header() const;
     [[nodiscard]] bool enabled() const { return !database_path_.empty(); }

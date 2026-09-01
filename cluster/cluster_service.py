@@ -455,9 +455,9 @@ class ClusterStore:
             else:
                 try:
                     principal = self.principal(row["id"])
-                except ApiError as error:
+                except ApiError:
                     self._audit("auth.authorization", row["id"], permission, "user-disabled")
-                    rejection = error
+                    rejection = ApiError(404, "user_not_found", "user is not managed by RBAC")
                 if principal is not None:
                     resolved_group = group_id or self._camera_group(camera_id)
                     if not principal.permits(permission, camera_id, resolved_group):

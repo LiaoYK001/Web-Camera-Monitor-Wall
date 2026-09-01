@@ -95,7 +95,13 @@ test('disabled user session is rejected on its next protected request', async ({
   expect(await status(admin, `/api/v2/users/${created.body.id}`, {
     method: 'PATCH', body: { enabled: false }, revision: String(created.body.revision),
   })).toBe(200);
-  expect(await status(viewer, '/api/v2/recordings?cameraId=fixture-01')).toBe(403);
+  expect(await status(viewer, '/api/v2/recordings?cameraId=fixture-01')).toBe(401);
+  const session = await viewer.evaluate(async () => {
+    const response = await fetch('/api/v1/auth/session', { credentials: 'same-origin' });
+    return { status: response.status, body: await response.json() as { authenticated: boolean } };
+  });
+  expect(session.status).toBe(200);
+  expect(session.body.authenticated).toBe(false);
   await adminContext.close();
   await viewerContext.close();
 });

@@ -3173,8 +3173,15 @@ private:
             const ClusterAuthorization authorization = cluster_authorize(session_record->user, request);
             const bool legacy_admin = basic_auth_enabled &&
                 session_record->user == authenticator_.configured_username();
-            if (authorization == ClusterAuthorization::denied ||
-                (authorization == ClusterAuthorization::user_unknown && !legacy_admin)) {
+            if (authorization == ClusterAuthorization::user_unknown && !legacy_admin) {
+                session_store_.revoke_user(session_record->user);
+                HttpResponse result = response(http::status::unauthorized, version,
+                    error_body("session_revoked", "the user is disabled or no longer exists"));
+                result.set(http::field::set_cookie, session_store_.clear_cookie_header());
+                send(std::move(result));
+                return;
+            }
+            if (authorization == ClusterAuthorization::denied) {
                 send(response(http::status::forbidden, version,
                               error_body("permission_rejected", "role or camera scope rejected this operation")));
                 return;

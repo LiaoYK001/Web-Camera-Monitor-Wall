@@ -413,6 +413,20 @@ void authentication_tests()
             expect(sessions.revoke(*token) && !sessions.validate_and_slide(*token),
                    "logout must revoke the hashed server-side session");
         }
+        const auto first_operator = sessions.create("operator", "browser-one");
+        const auto second_operator = sessions.create("operator", "browser-two");
+        const auto viewer = sessions.create("viewer", "browser-three");
+        expect(first_operator && second_operator && viewer,
+               "multiple users must be able to create independent sessions");
+        if (first_operator && second_operator && viewer) {
+            expect(sessions.revoke_user("operator") == 2 &&
+                       !sessions.validate_and_slide(*first_operator) &&
+                       !sessions.validate_and_slide(*second_operator) &&
+                       sessions.validate_and_slide(*viewer).has_value(),
+                   "disabling a user must revoke every matching session without affecting other users");
+        }
+        expect(sessions.revoke_user("") == 0 && sessions.revoke_user(std::string(65, 'x')) == 0,
+               "bulk session revocation must reject invalid user identifiers");
         std::error_code remove_error;
         std::filesystem::remove_all(session_directory, remove_error);
     }

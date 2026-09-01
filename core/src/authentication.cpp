@@ -404,6 +404,24 @@ bool SessionStore::revoke(std::string_view token)
     return removed;
 }
 
+std::size_t SessionStore::revoke_user(std::string_view user)
+{
+    if (user.empty() || user.size() > 64)
+        return 0;
+    std::lock_guard lock(mutex_);
+    if (!impl_->database)
+        return 0;
+    sqlite3_stmt *statement = nullptr;
+    if (sqlite3_prepare_v2(impl_->database,
+            "DELETE FROM auth_sessions WHERE user_name=?", -1, &statement, nullptr) != SQLITE_OK)
+        return 0;
+    sqlite3_bind_text(statement, 1, std::string(user).c_str(), -1, SQLITE_TRANSIENT);
+    const bool deleted = sqlite3_step(statement) == SQLITE_DONE;
+    const int changes = deleted ? sqlite3_changes(impl_->database) : 0;
+    sqlite3_finalize(statement);
+    return changes > 0 ? static_cast<std::size_t>(changes) : 0;
+}
+
 std::string SessionStore::set_cookie_header(std::string_view token) const
 {
     return "webobs_session=" + std::string(token) + "; Path=/; HttpOnly; SameSite=Strict; Max-Age=" +
