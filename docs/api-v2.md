@@ -47,9 +47,10 @@ POST /internal/v1/nodes/certificate/renew
 GET  /internal/v1/assignments
 POST /internal/v1/leases/renew
 POST /internal/v1/catalog/batch
+POST /internal/v1/jobs/result
 ```
 
-除两个一次性 Enrollment 请求外，每个请求都必须携带恰好一个已验证的 `webobs-node:<id>` URI SAN，且 `X-WebObs-Node-Id` 只能与该 SAN 相同。心跳、租约、generation fence、120 秒隔离窗口和 5 秒时钟偏差边界详见 [v2.3 扩展、生态与韧性](scale-ecosystem-resilience-v2.3.md)。
+除两个一次性 Enrollment 请求外，每个请求都必须携带恰好一个已验证的 `webobs-node:<id>` URI SAN，且 `X-WebObs-Node-Id` 只能与该 SAN 相同。任务分配包含固定 `taskType` 与有界资源成本；`jobs/result` 只接受当前所有节点对当前 generation 的 `completed | failed` 结果，失败详情仅为固定格式 `resultCode`，不接收原始异常。心跳、租约、generation fence、120 秒隔离窗口和 5 秒时钟偏差边界详见 [v2.3 扩展、生态与韧性](scale-ecosystem-resilience-v2.3.md)。
 
 ## Authentication / 认证
 

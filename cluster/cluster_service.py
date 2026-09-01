@@ -904,7 +904,8 @@ class ClusterStore:
         with self.lock, self.db:
             row = self.db.execute("SELECT * FROM recording_assignments WHERE camera_id=? AND profile_id=?",
                                   (camera_id, profile_id)).fetchone()
-            if row is None or row["node_id"] != node_id or row["generation"] != generation:
+            if row is None or row["node_id"] != node_id or row["generation"] != generation or \
+                    row["state"] != "active":
                 raise ApiError(409, "stale_assignment", "assignment is missing, moved, or stale")
             lease_expires = timestamp + LEASE_SECONDS
             isolation_deadline = lease_expires + ISOLATION_GRACE_SECONDS
@@ -922,12 +923,55 @@ class ClusterStore:
         return {"assignments": [{"cameraId": row["camera_id"], "profileId": row["profile_id"],
                                   "nodeId": row["node_id"], "generation": row["generation"],
                                   "state": row["state"], "leaseExpiresAt": row["lease_expires_at"],
-                                  "isolationDeadline": row["isolation_deadline"]} for row in rows],
+                                  "isolationDeadline": row["isolation_deadline"],
+                                  "taskType": row["task_type"],
+                                  "costs": json.loads(row["costs_json"])} for row in rows],
                 "volumes": [{"id": row["id"], "label": row["label"], "tier": row["tier"],
                              "state": row["state"], "reserveBytes": row["reserve_bytes"],
                              "highWatermark": row["high_watermark"],
                              "lowWatermark": row["low_watermark"]} for row in volumes],
                 "revision": self.revision()}
+
+    def report_job_result(self, node_id: str, value: Any,
+                          timestamp: int | None = None) -> dict[str, Any]:
+        value = require_exact_object(
+            value,
+            {"cameraId", "profileId", "generation", "state", "resultCode"},
+            {"cameraId", "profileId", "generation", "state"},
+        )
+        camera_id = require_identifier(value["cameraId"], "camera_id")
+        profile_id = require_identifier(value["profileId"], "profile_id")
+        generation = value["generation"]
+        state = value["state"]
+        result_code = value.get("resultCode", "")
+        if not isinstance(generation, int) or isinstance(generation, bool) or generation < 1:
+            raise ApiError(400, "invalid_generation", "assignment generation is invalid")
+        if state not in {"completed", "failed"} or \
+                (state == "completed" and result_code != "") or \
+                (state == "failed" and (not isinstance(result_code, str) or
+                                         not IDENTIFIER.fullmatch(result_code))):
+            raise ApiError(400, "invalid_job_result", "job result is invalid")
+        timestamp = timestamp or now_seconds()
+        with self.lock, self.db:
+            row = self.db.execute(
+                "SELECT * FROM recording_assignments WHERE camera_id=? AND profile_id=?",
+                (camera_id, profile_id),
+            ).fetchone()
+            if row is None or row["node_id"] != node_id or row["generation"] != generation or \
+                    row["state"] != "active":
+                raise ApiError(409, "stale_assignment", "assignment is missing, moved, or stale")
+            self.db.execute(
+                """UPDATE recording_assignments
+                   SET state=?,lease_expires_at=0,isolation_deadline=0,updated_at=?
+                   WHERE camera_id=? AND profile_id=?""",
+                (state, timestamp, camera_id, profile_id),
+            )
+            revision = self._bump()
+            subject = hashlib.sha256(f"{camera_id}\0{profile_id}".encode()).hexdigest()[:32]
+            self._audit("node.job.result", node_id, subject, state)
+        return {"cameraId": camera_id, "profileId": profile_id, "nodeId": node_id,
+                "generation": generation, "taskType": row["task_type"], "state": state,
+                "resultCode": result_code, "revision": revision}
 
     def accept_catalog(self, node_id: str, value: Any) -> dict[str, Any]:
         value = require_exact_object(value, {"segments"}, {"segments"})
@@ -1686,6 +1730,8 @@ class ClusterHandler(Handler):
             self.response(200, STORE.renew(node_id, self.read_json()))
         elif path == "/internal/v1/catalog/batch" and self.command == "POST":
             self.response(200, STORE.accept_catalog(node_id, self.read_json()))
+        elif path == "/internal/v1/jobs/result" and self.command == "POST":
+            self.response(200, STORE.report_job_result(node_id, self.read_json()))
         else:
             raise ApiError(404, "not_found", "resource was not found")
 

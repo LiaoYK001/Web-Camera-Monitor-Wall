@@ -393,6 +393,68 @@ class ClusterTests(unittest.TestCase):
             self.store.renew(first, {"cameraId": "camera-1", "profileId": "profile-1", "generation": 1},
                              timestamp=1161)
 
+    def test_job_result_is_owned_generation_fenced_and_redacted(self) -> None:
+        owner, _, _ = self.enroll("Job owner")
+        other, _, _ = self.enroll("Other recorder")
+        self.store.heartbeat(owner, heartbeat(1000), timestamp=1000)
+        self.store.heartbeat(other, heartbeat(1000), timestamp=1000)
+        costs = {"cpuCores": 0.25, "memoryBytes": 1024, "decodeSlots": 0,
+                 "encodeSlots": 0, "diskBytesPerSecond": 0}
+        self.store.assign("camera-job", "main", owner, task_type="export", costs=costs,
+                          timestamp=1000)
+        offered = self.store.assignments_for(owner)["assignments"][0]
+        self.assertEqual(offered["taskType"], "export")
+        self.assertEqual(offered["costs"], costs)
+        with self.assertRaisesRegex(cluster.ApiError, "stale"):
+            self.store.report_job_result(other, {
+                "cameraId": "camera-job", "profileId": "main", "generation": 1,
+                "state": "completed",
+            }, timestamp=1001)
+        with self.assertRaisesRegex(cluster.ApiError, "stale"):
+            self.store.report_job_result(owner, {
+                "cameraId": "camera-job", "profileId": "main", "generation": 2,
+                "state": "completed",
+            }, timestamp=1001)
+        result = self.store.report_job_result(owner, {
+            "cameraId": "camera-job", "profileId": "main", "generation": 1,
+            "state": "failed", "resultCode": "fixture_failed",
+        }, timestamp=1002)
+        self.assertEqual(result["state"], "failed")
+        placement = self.store.list_placements()["placements"][0]
+        self.assertEqual(placement["state"], "failed")
+        self.assertEqual(placement["leaseExpiresAt"], 0)
+        self.assertEqual(placement["isolationDeadline"], 0)
+        with self.assertRaisesRegex(cluster.ApiError, "stale"):
+            self.store.renew(owner, {
+                "cameraId": "camera-job", "profileId": "main", "generation": 1,
+            }, timestamp=1003)
+        with self.assertRaisesRegex(cluster.ApiError, "stale"):
+            self.store.report_job_result(owner, {
+                "cameraId": "camera-job", "profileId": "main", "generation": 1,
+                "state": "failed", "resultCode": "retry",
+            }, timestamp=1003)
+        audit = self.store.list_audit({"limit": ["32"]})["records"]
+        record = next(item for item in audit if item["event"] == "node.job.result")
+        self.assertEqual(record["actorId"], owner)
+        self.assertEqual(record["result"], "failed")
+        self.assertNotIn("camera-job", str(record))
+        self.assertNotIn("fixture_failed", str(audit))
+
+    def test_job_result_rejects_unbounded_failure_details(self) -> None:
+        node_id, _, _ = self.enroll("Invalid result recorder")
+        self.store.heartbeat(node_id, heartbeat(1000), timestamp=1000)
+        self.store.assign("camera-job", "main", node_id, timestamp=1000)
+        with self.assertRaisesRegex(cluster.ApiError, "job result"):
+            self.store.report_job_result(node_id, {
+                "cameraId": "camera-job", "profileId": "main", "generation": 1,
+                "state": "failed", "resultCode": "https://secret.example.test/failure",
+            })
+        with self.assertRaisesRegex(cluster.ApiError, "job result"):
+            self.store.report_job_result(node_id, {
+                "cameraId": "camera-job", "profileId": "main", "generation": 1,
+                "state": "completed", "resultCode": "unexpected-detail",
+            })
+
     def test_scheduler_is_stable_capacity_aware_and_never_silently_uses_cpu(self) -> None:
         first, _, _ = self.enroll("Recorder A")
         second, _, _ = self.enroll("Recorder B")
