@@ -259,11 +259,15 @@ def catalog_batch(catalog_path: pathlib.Path, assignments: list[dict[str, Any]])
         connection = sqlite3.connect(f"file:{catalog_path.as_posix()}?mode=ro", uri=True, timeout=2)
         connection.row_factory = sqlite3.Row
         columns = {row[1] for row in connection.execute("PRAGMA table_info(segments)")}
-        if not {"profile_id", "sha256", "volume_id", "assignment_generation", "archive_state"}.issubset(columns):
+        required_columns = {"profile_id", "sha256", "volume_id", "assignment_generation", "archive_state",
+                            "start_utc_ms", "end_utc_ms", "duration_ms", "kind", "video_codec",
+                            "audio_codec", "locked"}
+        if not required_columns.issubset(columns):
             return []
         rows = connection.execute("""
           SELECT id,camera_id,profile_id,volume_id,storage_key,size_bytes,sha256,
-                 assignment_generation,archive_state,integrity
+                 assignment_generation,archive_state,integrity,start_utc_ms,end_utc_ms,
+                 duration_ms,kind,video_codec,audio_codec,locked
           FROM segments
           WHERE integrity NOT IN ('deleted','missing') AND length(sha256)=64
           ORDER BY created_utc_ms DESC LIMIT 256
@@ -283,7 +287,10 @@ def catalog_batch(catalog_path: pathlib.Path, assignments: list[dict[str, Any]])
             "volumeId": row["volume_id"], "storageKey": row["storage_key"],
             "sizeBytes": row["size_bytes"], "sha256": row["sha256"],
             "generation": row["assignment_generation"], "archiveState": row["archive_state"],
-            "integrity": row["integrity"],
+            "integrity": row["integrity"], "startUtcMs": row["start_utc_ms"],
+            "endUtcMs": row["end_utc_ms"], "durationMs": row["duration_ms"],
+            "kind": row["kind"], "videoCodec": row["video_codec"],
+            "audioCodec": row["audio_codec"], "locked": bool(row["locked"]),
         })
     return result
 

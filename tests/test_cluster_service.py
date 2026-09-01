@@ -99,6 +99,7 @@ class ClusterTests(unittest.TestCase):
         self.assertFalse(principal.permits("ptz.control", "camera-2"))
         self.assertFalse(principal.permits("recording.delete", "camera-1"))
         self.assertFalse(principal.permits("user.manage"))
+        self.assertFalse(principal.permits("playback.view", "collection-scope"))
         self.assertIsNone(self.store.authenticate("operator-one", "wrong-password-value"))
         listed = self.store.list_users()["users"][0]
         self.assertEqual(listed["id"], created["id"])
@@ -358,6 +359,43 @@ class ClusterTests(unittest.TestCase):
         segment["generation"] = 0
         segment["segmentId"] = "segment-stale"
         self.assertEqual(self.store.accept_catalog(node_id, {"segments": [segment]})["conflicts"], 1)
+
+    def test_cross_node_recording_timeline_preserves_location_and_archive_state(self) -> None:
+        node_id, _, _ = self.enroll("Timeline recorder")
+        self.store.heartbeat(node_id, heartbeat(1000), timestamp=1000)
+        self.store.assign("camera-1", "main", node_id, timestamp=1000)
+        self.store.accept_catalog(node_id, {"segments": [{
+            "segmentId": "a" * 32, "cameraId": "camera-1", "profileId": "main",
+            "volumeId": "hot-1", "storageKey": "camera-1/segment.mkv", "sizeBytes": 4096,
+            "sha256": "b" * 64, "generation": 1, "archiveState": "uploaded", "integrity": "ok",
+            "startUtcMs": 1_000_000, "endUtcMs": 1_010_000, "durationMs": 10_000,
+            "kind": "continuous", "videoCodec": "h264", "audioCodec": "aac", "locked": True,
+        }]})
+        timeline = self.store.recording_timeline({
+            "from": ["999000"], "to": ["1011000"], "cameraId": ["camera-1"],
+        })
+        segment = timeline["cameras"][0]["segments"][0]
+        self.assertEqual(segment["nodeId"], node_id)
+        self.assertEqual(segment["volumeId"], "hot-1")
+        self.assertEqual(segment["archiveState"], "uploaded")
+        self.assertEqual(segment["playbackState"], "archived")
+        self.assertTrue(segment["locked"])
+        self.assertNotIn("storageKey", str(timeline))
+
+    def test_catalog_rejects_inconsistent_timeline_metadata(self) -> None:
+        node_id, _, _ = self.enroll("Invalid timeline recorder")
+        self.store.heartbeat(node_id, heartbeat(1000), timestamp=1000)
+        self.store.assign("camera-1", "main", node_id, timestamp=1000)
+        with self.assertRaisesRegex(cluster.ApiError, "timeline metadata"):
+            self.store.accept_catalog(node_id, {"segments": [{
+                "segmentId": "c" * 32, "cameraId": "camera-1", "profileId": "main",
+                "volumeId": "hot-1", "storageKey": "camera-1/segment.mkv", "sizeBytes": 4096,
+                "sha256": "d" * 64, "generation": 1, "archiveState": "local", "integrity": "ok",
+                "startUtcMs": 1000, "endUtcMs": 2000, "durationMs": 999,
+                "kind": "continuous", "videoCodec": "h264", "audioCodec": "", "locked": False,
+            }]})
+        with self.assertRaisesRegex(cluster.ApiError, "camera filter"):
+            self.store.recording_catalog({"cameraId": ["camera-1", "camera-2"]})
 
     def test_node_becomes_offline_after_twenty_seconds(self) -> None:
         node_id, _, _ = self.enroll()

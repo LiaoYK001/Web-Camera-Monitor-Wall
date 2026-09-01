@@ -245,6 +245,10 @@ class ClusterStore:
                 size_bytes INTEGER NOT NULL,sha256 TEXT NOT NULL,assignment_generation INTEGER NOT NULL,
                 archive_state TEXT NOT NULL,integrity TEXT NOT NULL,created_at INTEGER NOT NULL,
                 camera_id TEXT NOT NULL DEFAULT '',profile_id TEXT NOT NULL DEFAULT '',
+                start_utc_ms INTEGER NOT NULL DEFAULT 0,end_utc_ms INTEGER NOT NULL DEFAULT 0,
+                duration_ms INTEGER NOT NULL DEFAULT 0,kind TEXT NOT NULL DEFAULT 'continuous',
+                video_codec TEXT NOT NULL DEFAULT '',audio_codec TEXT NOT NULL DEFAULT '',
+                locked INTEGER NOT NULL DEFAULT 0,
                 PRIMARY KEY(segment_id,node_id,volume_id));
               CREATE TABLE IF NOT EXISTS archive_targets(
                 id TEXT PRIMARY KEY,name TEXT NOT NULL,endpoint_authority TEXT NOT NULL,bucket TEXT NOT NULL,
@@ -268,6 +272,8 @@ class ClusterStore:
               CREATE INDEX IF NOT EXISTS nodes_status_seen ON nodes(status,last_seen_at);
               CREATE INDEX IF NOT EXISTS archive_jobs_due ON archive_jobs(state,next_attempt_at);
               CREATE INDEX IF NOT EXISTS segment_locations_segment ON segment_locations(segment_id);
+              CREATE INDEX IF NOT EXISTS segment_locations_camera_time
+                ON segment_locations(camera_id,start_utc_ms,end_utc_ms);
             """)
             assignment_columns = {row[1] for row in self.db.execute("PRAGMA table_info(recording_assignments)")}
             if "task_type" not in assignment_columns:
@@ -279,7 +285,21 @@ class ClusterStore:
                 self.db.execute("ALTER TABLE segment_locations ADD COLUMN camera_id TEXT NOT NULL DEFAULT ''")
             if "profile_id" not in location_columns:
                 self.db.execute("ALTER TABLE segment_locations ADD COLUMN profile_id TEXT NOT NULL DEFAULT ''")
-            self.db.execute("PRAGMA user_version=3")
+            location_migrations = {
+                "start_utc_ms": "INTEGER NOT NULL DEFAULT 0",
+                "end_utc_ms": "INTEGER NOT NULL DEFAULT 0",
+                "duration_ms": "INTEGER NOT NULL DEFAULT 0",
+                "kind": "TEXT NOT NULL DEFAULT 'continuous'",
+                "video_codec": "TEXT NOT NULL DEFAULT ''",
+                "audio_codec": "TEXT NOT NULL DEFAULT ''",
+                "locked": "INTEGER NOT NULL DEFAULT 0",
+            }
+            for name, declaration in location_migrations.items():
+                if name not in location_columns:
+                    self.db.execute(f"ALTER TABLE segment_locations ADD COLUMN {name} {declaration}")
+            self.db.execute("CREATE INDEX IF NOT EXISTS segment_locations_camera_time "
+                            "ON segment_locations(camera_id,start_utc_ms,end_utc_ms)")
+            self.db.execute("PRAGMA user_version=4")
         with contextlib.suppress(OSError):
             os.chmod(database_path, 0o600)
 
@@ -823,12 +843,45 @@ class ClusterStore:
             for segment in segments:
                 required = {"segmentId", "cameraId", "profileId", "volumeId", "storageKey",
                             "sizeBytes", "sha256", "generation", "archiveState", "integrity"}
-                require_exact_object(segment, required, required)
+                metadata = {"startUtcMs", "endUtcMs", "durationMs", "kind", "videoCodec",
+                            "audioCodec", "locked"}
+                require_exact_object(segment, required | metadata, required)
+                segment_id = require_identifier(segment["segmentId"], "segment_id")
+                camera_id = require_identifier(segment["cameraId"], "camera_id")
+                profile_id = require_identifier(segment["profileId"], "profile_id")
+                volume_id = segment["volumeId"]
+                if not isinstance(volume_id, str) or not VOLUME_ID.fullmatch(volume_id):
+                    raise ApiError(400, "invalid_volume_id", "volume_id is invalid")
+                size_bytes = segment["sizeBytes"]
+                generation = segment["generation"]
+                if not isinstance(size_bytes, int) or isinstance(size_bytes, bool) or not 0 <= size_bytes <= (1 << 46) or \
+                        not isinstance(generation, int) or isinstance(generation, bool) or generation < 0:
+                    raise ApiError(400, "invalid_segment_metadata", "segment size or generation is invalid")
+                start_ms = segment.get("startUtcMs", 0)
+                end_ms = segment.get("endUtcMs", 0)
+                duration_ms = segment.get("durationMs", max(0, end_ms - start_ms)
+                                          if isinstance(start_ms, int) and isinstance(end_ms, int) else 0)
+                kind = segment.get("kind", "continuous")
+                video_codec = segment.get("videoCodec", "")
+                audio_codec = segment.get("audioCodec", "")
+                locked = segment.get("locked", False)
+                if any(not isinstance(item, int) or isinstance(item, bool) or item < 0 or item >= (1 << 63)
+                       for item in (start_ms, end_ms, duration_ms)) or \
+                        (start_ms and (end_ms <= start_ms or duration_ms != end_ms - start_ms)) or \
+                        kind not in {"continuous", "event", "pre-event", "manual", "recovered", "orphan"} or \
+                        not isinstance(video_codec, str) or len(video_codec) > 32 or \
+                        not isinstance(audio_codec, str) or len(audio_codec) > 32 or not isinstance(locked, bool):
+                    raise ApiError(400, "invalid_segment_metadata", "segment timeline metadata is invalid")
                 assignment = self.db.execute(
                     "SELECT * FROM recording_assignments WHERE camera_id=? AND profile_id=?",
-                    (segment["cameraId"], segment["profileId"])).fetchone()
+                    (camera_id, profile_id)).fetchone()
                 integrity = segment["integrity"]
-                if assignment is None or assignment["node_id"] != node_id or assignment["generation"] != segment["generation"]:
+                if not isinstance(integrity, str) or not IDENTIFIER.fullmatch(integrity):
+                    raise ApiError(400, "invalid_segment_integrity", "segment integrity is invalid")
+                archive_state = segment["archiveState"]
+                if not isinstance(archive_state, str) or not IDENTIFIER.fullmatch(archive_state):
+                    raise ApiError(400, "invalid_archive_state", "segment archive state is invalid")
+                if assignment is None or assignment["node_id"] != node_id or assignment["generation"] != generation:
                     integrity = "conflict"
                     conflicts += 1
                 digest = segment["sha256"]
@@ -839,14 +892,82 @@ class ClusterStore:
                     raise ApiError(400, "invalid_storage_key", "storage key is invalid")
                 self.db.execute("""INSERT OR REPLACE INTO segment_locations(
                     segment_id,node_id,volume_id,storage_key,size_bytes,sha256,assignment_generation,
-                    archive_state,integrity,created_at,camera_id,profile_id) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)""",
-                                (segment["segmentId"], node_id, segment["volumeId"], storage_key,
-                                 segment["sizeBytes"], digest, segment["generation"],
-                                 segment["archiveState"], integrity, now_seconds(),
-                                 segment["cameraId"], segment["profileId"]))
+                    archive_state,integrity,created_at,camera_id,profile_id,start_utc_ms,end_utc_ms,
+                    duration_ms,kind,video_codec,audio_codec,locked)
+                    VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                                (segment_id, node_id, volume_id, storage_key, size_bytes, digest, generation,
+                                 archive_state, integrity, now_seconds(), camera_id, profile_id,
+                                 start_ms, end_ms, duration_ms, kind, video_codec, audio_codec, int(locked)))
                 accepted += 1
             revision = self._bump()
         return {"accepted": accepted, "conflicts": conflicts, "revision": revision}
+
+    def recording_catalog(self, query: dict[str, list[str]]) -> dict[str, Any]:
+        try:
+            start = int(query.get("from", ["0"])[0])
+            end = int(query.get("to", [str((1 << 63) - 1)])[0])
+            limit = int(query.get("limit", [str(MAX_PAGE)])[0])
+        except (TypeError, ValueError) as error:
+            raise ApiError(400, "invalid_recording_range", "recording range is invalid") from error
+        if not 0 <= start < end < (1 << 63) or not 1 <= limit <= MAX_PAGE:
+            raise ApiError(400, "invalid_recording_range", "recording range is invalid")
+        camera_values = query.get("cameraId", [])
+        if len(camera_values) > 1 or any(not IDENTIFIER.fullmatch(value) for value in camera_values):
+            raise ApiError(400, "invalid_camera_filter", "recording camera filter is invalid")
+        clauses = ["start_utc_ms>0", "end_utc_ms>=?", "start_utc_ms<=?", "integrity!='deleted'"]
+        parameters: list[Any] = [start, end]
+        if camera_values:
+            clauses.append("camera_id IN (" + ",".join("?" for _ in camera_values) + ")")
+            parameters.extend(camera_values)
+        parameters.append(limit)
+        rows = self.db.execute(
+            "SELECT * FROM segment_locations WHERE " + " AND ".join(clauses) +
+            " ORDER BY start_utc_ms,segment_id,node_id LIMIT ?", tuple(parameters)).fetchall()
+        items = [{
+            "id": row["segment_id"], "cameraId": row["camera_id"], "profileId": row["profile_id"],
+            "startUtcMs": row["start_utc_ms"], "endUtcMs": row["end_utc_ms"],
+            "durationMs": row["duration_ms"], "kind": row["kind"],
+            "videoCodec": row["video_codec"], "audioCodec": row["audio_codec"],
+            "sizeBytes": row["size_bytes"], "integrity": row["integrity"],
+            "locked": bool(row["locked"]), "nodeId": row["node_id"],
+            "volumeId": row["volume_id"], "archiveState": row["archive_state"],
+            "playbackState": "archived" if row["archive_state"] == "uploaded" else "recorder",
+        } for row in rows]
+        return {"recordings": items, "revision": self.revision()}
+
+    def recording_timeline(self, query: dict[str, list[str]]) -> dict[str, Any]:
+        started = time.monotonic_ns()
+        catalog = self.recording_catalog({**query, "limit": [str(MAX_PAGE)]})
+        try:
+            start = int(query.get("from", ["0"])[0])
+            end = int(query.get("to", [str((1 << 63) - 1)])[0])
+        except (TypeError, ValueError) as error:
+            raise ApiError(400, "invalid_recording_range", "recording range is invalid") from error
+        if end - start > 31 * 86_400_000:
+            raise ApiError(400, "invalid_recording_range", "timeline range is limited to 31 days")
+        requested = query.get("cameraId", [])
+        camera_ids = requested or sorted({item["cameraId"] for item in catalog["recordings"]})
+        cameras = []
+        for camera_id in camera_ids:
+            segments = [item for item in catalog["recordings"] if item["cameraId"] == camera_id]
+            cursor = start
+            gaps = []
+            for item in segments:
+                if item["integrity"] in {"missing", "corrupt", "quarantined", "conflict"}:
+                    gaps.append({"fromUtcMs": max(start, item["startUtcMs"]),
+                                 "toUtcMs": min(end, item["endUtcMs"]), "reason": item["integrity"]})
+                    continue
+                if item["startUtcMs"] > cursor + 250:
+                    gaps.append({"fromUtcMs": cursor, "toUtcMs": item["startUtcMs"], "reason": "offline"})
+                cursor = max(cursor, item["endUtcMs"])
+            if cursor < end:
+                gaps.append({"fromUtcMs": cursor, "toUtcMs": end, "reason": "offline"})
+            cameras.append({"cameraId": camera_id, "recordedStream": "profile",
+                            "retentionBoundaryUtcMs": min((item["startUtcMs"] for item in segments), default=None),
+                            "segments": segments, "gaps": gaps})
+        return {"fromUtcMs": start, "toUtcMs": end, "storageTimeZone": "UTC", "cameras": cameras,
+                "queryDurationMs": max(0, (time.monotonic_ns() - started) // 1_000_000),
+                "revision": catalog["revision"]}
 
     def list_volumes(self) -> dict[str, Any]:
         rows = self.db.execute("SELECT * FROM storage_volumes ORDER BY node_id,id LIMIT ?", (MAX_PAGE,)).fetchall()
@@ -1249,6 +1370,10 @@ class Handler(http.server.BaseHTTPRequestHandler):
                                             value.get("taskType", "record-copy"), value.get("costs", {})))
         elif path == "/recording-placements" and self.command == "GET":
             self.response(200, STORE.list_placements())
+        elif path == "/recordings" and self.command == "GET":
+            self.response(200, STORE.recording_catalog(parse_qs(urlsplit(self.path).query)))
+        elif path == "/recordings/timeline" and self.command == "GET":
+            self.response(200, STORE.recording_timeline(parse_qs(urlsplit(self.path).query)))
         elif path == "/archive-targets" and self.command == "GET":
             self.response(200, STORE.list_archive_targets())
         elif path == "/archive-targets" and self.command == "POST":

@@ -44,6 +44,8 @@
 
 恢复连接后，节点先上传有界 Catalog 批次并同步分配，再继续工作。冲突 Segment 保留并标记，不自动删除证据文件。
 
+Recorder Catalog 对账会同时提交 UTC 起止时间、时长、类型、编解码器、锁定状态以及稳定的 Camera/Profile/Segment/Node/Volume ID。Controller 的跨节点目录和最近时间线不保存或返回 Recorder `storageKey`、主机路径、S3 object key 或媒体端点；旧节点未上报时间元数据的历史行继续保留，但不会伪造为可定位时间线片段。PWA 运维页按节点、卷和归档状态展示这一脱敏目录。
+
 ## 多存储卷与 S3
 
 主机只能把预先创建的卷挂载到 `/recordings/volumes/<volumeId>`；API 不接受主机路径。卷策略包含 `hot|warm|archive` 层级、保留空间、高/低水位和 `online|degraded|read-only|evacuating|offline` 状态。

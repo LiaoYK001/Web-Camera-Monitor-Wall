@@ -75,20 +75,25 @@ class AgentTests(unittest.TestCase):
               CREATE TABLE segments(
                 id TEXT,camera_id TEXT,profile_id TEXT,volume_id TEXT,storage_key TEXT,
                 size_bytes INTEGER,sha256 TEXT,assignment_generation INTEGER,
-                archive_state TEXT,integrity TEXT,created_utc_ms INTEGER);
+                archive_state TEXT,integrity TEXT,created_utc_ms INTEGER,
+                start_utc_ms INTEGER,end_utc_ms INTEGER,duration_ms INTEGER,kind TEXT,
+                video_codec TEXT,audio_codec TEXT,locked INTEGER);
             """)
-            connection.execute("INSERT INTO segments VALUES(?,?,?,?,?,?,?,?,?,?,?)", (
+            connection.execute("INSERT INTO segments VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)", (
                 "segment-1", "camera-1", "main", "hot-1", "camera-1/a.mp4", 10,
-                "a" * 64, 3, "local", "verified", 1))
-            connection.execute("INSERT INTO segments VALUES(?,?,?,?,?,?,?,?,?,?,?)", (
+                "a" * 64, 3, "local", "verified", 1, 1000, 2000, 1000,
+                "continuous", "h264", "aac", 0))
+            connection.execute("INSERT INTO segments VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)", (
                 "segment-stale", "camera-1", "main", "hot-1", "camera-1/b.mp4", 10,
-                "b" * 64, 2, "local", "verified", 2))
+                "b" * 64, 2, "local", "verified", 2, 2000, 3000, 1000,
+                "continuous", "h264", "aac", 0))
             connection.commit()
             connection.close()
             result = agent.catalog_batch(catalog, [{
                 "cameraId": "camera-1", "profileId": "main", "generation": 3,
             }])
             self.assertEqual([item["segmentId"] for item in result], ["segment-1"])
+            self.assertEqual(result[0]["startUtcMs"], 1000)
             self.assertNotIn("endpoint", str(result).lower())
 
 

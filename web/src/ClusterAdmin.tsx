@@ -1,13 +1,13 @@
 import { useCallback, useEffect, useState } from 'react';
 import {
   approveNodeEnrollment, createBackupJob, createClusterUser, createNodeEnrollment,
-  fetchArchiveTargets, fetchBackupJobs, fetchClusterNodes, fetchClusterRoles,
+  fetchArchiveTargets, fetchBackupJobs, fetchClusterNodes, fetchClusterRecordingTimeline, fetchClusterRoles,
   fetchClusterUsers, fetchExternalProviders, fetchRecordingPlacements,
   fetchResourceCapacity, fetchStorageVolumes, patchClusterUser, patchStorageVolume,
   revokeClusterNode,
 } from './api';
 import type {
-  ArchiveTarget, BackupJob, ClusterNode, ClusterRole, ClusterUser, ExternalProvider,
+  ArchiveTarget, BackupJob, ClusterNode, ClusterRecordingTimeline, ClusterRole, ClusterUser, ExternalProvider,
   RecordingPlacement, ResourceCapacity, StorageVolume,
 } from './types';
 
@@ -15,6 +15,7 @@ const bytes = (value: number) => value >= 1024 ** 3
   ? `${(value / 1024 ** 3).toFixed(1)} GiB`
   : `${(value / 1024 ** 2).toFixed(1)} MiB`;
 const time = (value: number) => value ? new Date(value * 1000).toLocaleString() : '—';
+const timeMs = (value: number) => value ? new Date(value).toLocaleString() : '—';
 
 function UserAccessEditor({ user, roles, onSaved, onError }: {
   user: ClusterUser;
@@ -56,6 +57,7 @@ export default function ClusterAdmin() {
   const [volumes, setVolumes] = useState<StorageVolume[]>([]);
   const [capacity, setCapacity] = useState<ResourceCapacity | null>(null);
   const [placements, setPlacements] = useState<RecordingPlacement[]>([]);
+  const [recordingTimeline, setRecordingTimeline] = useState<ClusterRecordingTimeline | null>(null);
   const [targets, setTargets] = useState<ArchiveTarget[]>([]);
   const [jobs, setJobs] = useState<BackupJob[]>([]);
   const [providers, setProviders] = useState<ExternalProvider[]>([]);
@@ -70,14 +72,17 @@ export default function ClusterAdmin() {
 
   const reload = useCallback(async (signal?: AbortSignal) => {
     try {
+      const now = Date.now();
       const [nextUsers, nextRoles, nextNodes, nextVolumes, nextCapacity, nextPlacements,
-        nextTargets, nextJobs, nextProviders] = await Promise.all([
+        nextTimeline, nextTargets, nextJobs, nextProviders] = await Promise.all([
         fetchClusterUsers(signal), fetchClusterRoles(signal), fetchClusterNodes(signal),
         fetchStorageVolumes(signal), fetchResourceCapacity(signal), fetchRecordingPlacements(signal),
-        fetchArchiveTargets(signal), fetchBackupJobs(signal), fetchExternalProviders(signal),
+        fetchClusterRecordingTimeline(now - 86_400_000, now, signal), fetchArchiveTargets(signal),
+        fetchBackupJobs(signal), fetchExternalProviders(signal),
       ]);
       setUsers(nextUsers.users); setRoles(nextRoles.roles); setNodes(nextNodes.nodes);
       setVolumes(nextVolumes.volumes); setCapacity(nextCapacity); setPlacements(nextPlacements.placements);
+      setRecordingTimeline(nextTimeline);
       setTargets(nextTargets.targets); setJobs(nextJobs.jobs); setProviders(nextProviders.providers);
       setError('');
     } catch (reason) {
@@ -127,6 +132,7 @@ export default function ClusterAdmin() {
       <div className="admin-grid">{volumes.map((volume) => { const used = volume.capacityBytes ? 1 - volume.freeBytes / volume.capacityBytes : 0; return <article key={`${volume.nodeId}/${volume.id}`}><header><strong>{volume.label}</strong><span>{volume.state}</span></header><p>{volume.tier} · {bytes(volume.freeBytes)} free / {bytes(volume.capacityBytes)}</p><progress value={Math.max(0, Math.min(1, used))} max={1} /><small>{Math.round(used * 100)}% used · high {Math.round(volume.highWatermark * 100)}%</small><select value={volume.state} onChange={(event) => void patchStorageVolume(volume, { state: event.target.value }).then(() => reload()).catch((reason: Error) => setError(reason.message))}><option value="online">online</option><option value="degraded">degraded</option><option value="read-only">read-only</option><option value="evacuating">evacuating</option><option value="offline">offline</option></select></article>; })}</div>
       <div className="admin-grid">{capacity?.nodes.map((node) => <article key={node.nodeId}><strong>节点资源 {node.nodeId.slice(0, 8)}</strong><p>{node.cpuCores} CPU · {bytes(node.memoryBytes)} RAM · {node.rated ? 'rated' : 'unrated/保守容量'}</p><small>{node.reservations.length} reservations · 更新 {time(node.updatedAt)}</small></article>)}</div>
       <details><summary>录像所有权租约（{placements.length}）</summary><div className="admin-list">{placements.map((item) => <article key={`${item.cameraId}/${item.profileId}`}><div><strong>{item.cameraId} / {item.profileId}</strong><small>node {item.nodeId.slice(0, 8)} · generation {item.generation}</small></div><span>{item.state}</span></article>)}</div></details>
+      <details><summary>跨节点录像目录（{recordingTimeline?.cameras.reduce((count, camera) => count + camera.segments.length, 0) ?? 0}）</summary><div className="admin-list">{recordingTimeline?.cameras.flatMap((camera) => camera.segments).map((segment) => <article key={`${segment.id}:${segment.nodeId}:${segment.volumeId}`}><div><strong>{segment.cameraId} / {segment.profileId}</strong><small>{timeMs(segment.startUtcMs)} · {Math.round(segment.durationMs / 1000)} s · {bytes(segment.sizeBytes)}<br />node {segment.nodeId.slice(0, 8)} · volume {segment.volumeId} · {segment.videoCodec || 'codec —'}</small></div><span>{segment.integrity} · {segment.archiveState}</span></article>)}</div></details>
     </section>
 
     <section className="admin-section"><header><div><h2>归档、备份与外部 Provider</h2><p>Secret 只以引用配置；UI 与 API 不返回凭据内容。</p></div><button type="button" onClick={() => void createBackupJob().then(() => { setNotice('本地加密备份已排队。'); return reload(); }).catch((reason: Error) => setError(reason.message))}>立即备份</button></header>

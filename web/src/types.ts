@@ -332,6 +332,17 @@ export interface RecordingPlacement {
   cameraId: string; profileId: string; nodeId: string; generation: number; state: string;
   leaseExpiresAt: number; isolationDeadline: number;
 }
+export interface ClusterRecording {
+  id: string; cameraId: string; profileId: string; startUtcMs: number; endUtcMs: number;
+  durationMs: number; kind: string; videoCodec: string; audioCodec: string; sizeBytes: number;
+  integrity: string; locked: boolean; nodeId: string; volumeId: string; archiveState: string;
+  playbackState: 'recorder' | 'archived';
+}
+export interface ClusterRecordingTimeline {
+  fromUtcMs: number; toUtcMs: number; storageTimeZone: 'UTC'; queryDurationMs: number; revision: number;
+  cameras: Array<{ cameraId: string; recordedStream: 'profile'; retentionBoundaryUtcMs: number | null;
+    segments: ClusterRecording[]; gaps: Array<{ fromUtcMs: number; toUtcMs: number; reason: string }> }>;
+}
 export interface ArchiveTarget {
   id: string; name: string; endpointAuthority: string; bucket: string;
   credentialsRef: string; enabled: boolean; revision: number;

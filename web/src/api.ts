@@ -1,4 +1,4 @@
-import type { AnalyticsPolicy, ApiErrorEnvelope, ArchiveTarget, AudioMeterSnapshot, BackupJob, CameraDetection, CameraRecord, ClientCameraGrant, ClientEnrollment, ClusterNode, ClusterRole, ClusterUser, DeviceOperation, EnrolledClient, EventRule, ExternalProvider, MonitorEvent, MotionZone, NvrExport, NvrStatus, NvrTimeline, OnvifEvent, OnvifPreset, OperationalIssue, PlaybackCapabilities, ProcessDiagnostics, RecordingPlacement, ResourceCapacity, RuntimeSettings, SceneDocument, SceneEvent, SourceCatalogItem, SourceCatalogPage, StorageVolume, StudioCapabilities, StudioDocument, SystemCapabilities } from './types';
+import type { AnalyticsPolicy, ApiErrorEnvelope, ArchiveTarget, AudioMeterSnapshot, BackupJob, CameraDetection, CameraRecord, ClientCameraGrant, ClientEnrollment, ClusterNode, ClusterRecordingTimeline, ClusterRole, ClusterUser, DeviceOperation, EnrolledClient, EventRule, ExternalProvider, MonitorEvent, MotionZone, NvrExport, NvrStatus, NvrTimeline, OnvifEvent, OnvifPreset, OperationalIssue, PlaybackCapabilities, ProcessDiagnostics, RecordingPlacement, ResourceCapacity, RuntimeSettings, SceneDocument, SceneEvent, SourceCatalogItem, SourceCatalogPage, StorageVolume, StudioCapabilities, StudioDocument, SystemCapabilities } from './types';
 
 export class ControlApiError extends Error {
   readonly status: number;
@@ -364,6 +364,10 @@ export const fetchResourceCapacity = (signal?: AbortSignal) =>
   clientAdminRequest<ResourceCapacity>('/resource-capacity', { signal });
 export const fetchRecordingPlacements = (signal?: AbortSignal) =>
   clientAdminRequest<{ placements: RecordingPlacement[]; revision: number }>('/recording-placements', { signal });
+export const fetchClusterRecordingTimeline = (fromUtcMs: number, toUtcMs: number, signal?: AbortSignal) => {
+  const query = new URLSearchParams({ from: String(fromUtcMs), to: String(toUtcMs) });
+  return clientAdminRequest<ClusterRecordingTimeline>(`/recordings/timeline?${query}`, { signal });
+};
 export const fetchArchiveTargets = (signal?: AbortSignal) =>
   clientAdminRequest<{ targets: ArchiveTarget[]; revision: number }>('/archive-targets', { signal });
 export const fetchBackupJobs = (signal?: AbortSignal) =>

@@ -20,6 +20,8 @@ POST             /api/v2/node-enrollments
 POST             /api/v2/node-enrollments/{id}/approve
 GET/PATCH        /api/v2/storage-volumes/{nodeId?}/{volumeId?}
 GET/POST         /api/v2/recording-placements
+GET              /api/v2/recordings
+GET              /api/v2/recordings/timeline
 GET              /api/v2/resource-capacity
 GET/POST         /api/v2/archive-targets
 GET/POST         /api/v2/backup-jobs
@@ -27,7 +29,7 @@ GET/POST         /api/v2/providers
 POST             /api/v2/providers/{id}/tasks
 ```
 
-角色权限与 Camera/Group scope 默认拒绝。Enrollment token 有效十分钟且只保存摘要；节点证书有效 30 天。`storage-volumes` 只能管理已经挂载并由节点报告的 `volumeId`，不接受主机路径。Provider 任务只返回最长 60 秒、单次可消费的媒体授权，`credentialExposure` 固定为 `none`。当任务引用录像时，`segmentId` 必须存在于 Controller Catalog，并且必须同时匹配获批的 `cameraId/profileId`；实际下载仅代理该只读 NVR 片段，不接受任意路径。旧 Catalog 行在 Recorder 重新对账补齐 Camera/Profile 绑定前保持拒绝访问。
+角色权限与 Camera/Group scope 默认拒绝。Enrollment token 有效十分钟且只保存摘要；节点证书有效 30 天。`storage-volumes` 只能管理已经挂载并由节点报告的 `volumeId`，不接受主机路径。`recordings` 与 `recordings/timeline` 只返回稳定 Camera/Profile/Segment/Node/Volume ID、UTC 时间、编码、完整性、锁定和归档状态；不返回 `storageKey`、主机路径、S3 object key 或媒体端点。查询范围最多 31 天，单次目录响应最多 256 个位置；非管理员必须提供一个获授权的 `cameraId`，多 Camera 查询需逐路执行，避免用首个参数绕过 scope。Provider 任务只返回最长 60 秒、单次可消费的媒体授权，`credentialExposure` 固定为 `none`。当任务引用录像时，`segmentId` 必须存在于 Controller Catalog，并且必须同时匹配获批的 `cameraId/profileId`；实际下载仅代理该只读 NVR 片段，不接受任意路径。旧 Catalog 行在 Recorder 重新对账补齐 Camera/Profile 绑定前保持拒绝访问。
 
 Controller 与 Recorder/Worker 之间的 `/internal/v1` 只在 TLS 1.3 mTLS 私网端口提供：
 

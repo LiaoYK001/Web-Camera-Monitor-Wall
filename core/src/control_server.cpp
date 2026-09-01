@@ -362,6 +362,8 @@ std::string permission_for_request(const HttpRequest &request)
     if (target.starts_with("/api/v2/storage-volumes") || target.starts_with("/api/v2/recording-placements") ||
         target.starts_with("/api/v2/archive-targets") || target.starts_with("/api/v2/backup-jobs"))
         return "storage.manage";
+    if (target.starts_with("/api/v2/recordings"))
+        return "playback.view";
     if (target == "/api/v2/resource-capacity" || target == "/metrics" ||
         target.starts_with("/api/v1/system/"))
         return "metrics.view";
@@ -421,6 +423,8 @@ std::string camera_scope_for_target(std::string_view target)
             }))
             return std::string(value);
     }
+    if (target.starts_with("/api/v2/recordings"))
+        return "collection-scope";
     return {};
 }
 
@@ -1559,6 +1563,8 @@ public:
                    target == "/api/v2/node-enrollments" || target.starts_with("/api/v2/node-enrollments/") ||
                    target == "/api/v2/storage-volumes" || target.starts_with("/api/v2/storage-volumes/") ||
                    target == "/api/v2/recording-placements" || target.starts_with("/api/v2/recording-placements/") ||
+                   target == "/api/v2/recordings" || target.starts_with("/api/v2/recordings?") ||
+                   target == "/api/v2/recordings/timeline" || target.starts_with("/api/v2/recordings/timeline?") ||
                    target == "/api/v2/resource-capacity" ||
                    target == "/api/v2/archive-targets" || target.starts_with("/api/v2/archive-targets/") ||
                    target == "/api/v2/backup-jobs" || target.starts_with("/api/v2/backup-jobs/")) {
@@ -2528,6 +2534,8 @@ HttpResponse handle_request(const HttpRequest &request, SceneController &control
                            target == "/api/v2/node-enrollments" || target.starts_with("/api/v2/node-enrollments/") ||
                            target == "/api/v2/storage-volumes" || target.starts_with("/api/v2/storage-volumes/") ||
                            target == "/api/v2/recording-placements" || target.starts_with("/api/v2/recording-placements/") ||
+                           target == "/api/v2/recordings" || target.starts_with("/api/v2/recordings?") ||
+                           target == "/api/v2/recordings/timeline" || target.starts_with("/api/v2/recordings/timeline?") ||
                            target == "/api/v2/resource-capacity" ||
                            target == "/api/v2/archive-targets" || target.starts_with("/api/v2/archive-targets/") ||
                            target == "/api/v2/backup-jobs" || target.starts_with("/api/v2/backup-jobs/") ||
