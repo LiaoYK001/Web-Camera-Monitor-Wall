@@ -286,11 +286,18 @@ class ClusterStore:
               CREATE TABLE IF NOT EXISTS provider_grants(
                 token_hash TEXT PRIMARY KEY,provider_id TEXT NOT NULL,task_id TEXT NOT NULL,camera_id TEXT NOT NULL,
                 profile_id TEXT NOT NULL,segment_id TEXT NOT NULL,expires_at INTEGER NOT NULL,used INTEGER NOT NULL);
+              CREATE TABLE IF NOT EXISTS provider_tasks(
+                id TEXT PRIMARY KEY,provider_id TEXT NOT NULL,task_type TEXT NOT NULL,
+                camera_id TEXT NOT NULL,profile_id TEXT NOT NULL,segment_id TEXT NOT NULL,
+                state TEXT NOT NULL,created_at INTEGER NOT NULL,expires_at INTEGER NOT NULL,
+                media_opened_at INTEGER NOT NULL,result_code TEXT NOT NULL);
               CREATE INDEX IF NOT EXISTS nodes_status_seen ON nodes(status,last_seen_at);
               CREATE INDEX IF NOT EXISTS archive_jobs_due ON archive_jobs(state,next_attempt_at);
               CREATE INDEX IF NOT EXISTS segment_locations_segment ON segment_locations(segment_id);
               CREATE INDEX IF NOT EXISTS segment_locations_camera_time
                 ON segment_locations(camera_id,start_utc_ms,end_utc_ms);
+              CREATE INDEX IF NOT EXISTS provider_tasks_provider_time
+                ON provider_tasks(provider_id,created_at DESC,id DESC);
             """)
             assignment_columns = {row[1] for row in self.db.execute("PRAGMA table_info(recording_assignments)")}
             if "task_type" not in assignment_columns:
@@ -319,7 +326,7 @@ class ClusterStore:
             target_columns = {row[1] for row in self.db.execute("PRAGMA table_info(archive_targets)")}
             if "region" not in target_columns:
                 self.db.execute("ALTER TABLE archive_targets ADD COLUMN region TEXT NOT NULL DEFAULT 'us-east-1'")
-            self.db.execute("PRAGMA user_version=5")
+            self.db.execute("PRAGMA user_version=6")
         with contextlib.suppress(OSError):
             os.chmod(database_path, 0o600)
 
@@ -1289,17 +1296,53 @@ class ClusterStore:
                             (provider_id, name.strip(), authority, parsed.path,
                              canonical_json(sorted(tasks)), credentials_ref, maximum, int(enabled), 1))
             catalog_revision = self._bump()
+            self._audit("provider.created", "web-session", provider_id, "completed")
         return {"id": provider_id, "name": name.strip(), "endpointAuthority": authority,
                 "taskTypes": sorted(tasks), "maxConcurrent": maximum, "enabled": enabled,
                 "revision": 1, "catalogRevision": catalog_revision}
 
     def list_providers(self) -> dict[str, Any]:
+        self._expire_provider_tasks()
         rows = self.db.execute("SELECT * FROM external_providers ORDER BY name LIMIT ?", (MAX_PAGE,)).fetchall()
-        return {"providers": [{"id": row["id"], "name": row["name"],
-                                "endpointAuthority": row["endpoint_authority"],
-                                "taskTypes": json.loads(row["task_types_json"]),
-                                "maxConcurrent": row["max_concurrent"], "enabled": bool(row["enabled"]),
-                                "revision": row["revision"]} for row in rows], "revision": self.revision()}
+        providers = []
+        for row in rows:
+            counts = {item["state"]: item["count"] for item in self.db.execute(
+                "SELECT state,COUNT(*) AS count FROM provider_tasks WHERE provider_id=? GROUP BY state",
+                (row["id"],))}
+            providers.append({"id": row["id"], "name": row["name"],
+                              "endpointAuthority": row["endpoint_authority"],
+                              "taskTypes": json.loads(row["task_types_json"]),
+                              "maxConcurrent": row["max_concurrent"], "enabled": bool(row["enabled"]),
+                              "taskCounts": counts, "revision": row["revision"]})
+        return {"providers": providers, "revision": self.revision()}
+
+    def _expire_provider_tasks(self, timestamp: int | None = None) -> None:
+        current = timestamp or now_seconds()
+        with self.lock, self.db:
+            self.db.execute("""UPDATE provider_tasks
+                SET state='expired',result_code='grant_expired'
+                WHERE state IN ('offered','media-opened') AND expires_at<=?""", (current,))
+            self.db.execute("DELETE FROM provider_grants WHERE expires_at<=?", (current,))
+
+    def list_provider_tasks(self, provider_id: str, query: dict[str, list[str]]) -> dict[str, Any]:
+        require_identifier(provider_id, "provider_id")
+        if not set(query).issubset({"limit"}):
+            raise ApiError(400, "invalid_provider_task_query", "provider task query is invalid")
+        values = query.get("limit", ["100"])
+        if len(values) != 1 or not values[0].isdigit() or not 1 <= int(values[0]) <= MAX_PAGE:
+            raise ApiError(400, "invalid_provider_task_query", "provider task limit is invalid")
+        self._expire_provider_tasks()
+        if self.db.execute("SELECT 1 FROM external_providers WHERE id=?", (provider_id,)).fetchone() is None:
+            raise ApiError(404, "provider_not_found", "provider was not found")
+        rows = self.db.execute("""SELECT * FROM provider_tasks WHERE provider_id=?
+            ORDER BY created_at DESC,id DESC LIMIT ?""", (provider_id, int(values[0]))).fetchall()
+        return {"tasks": [{"id": row["id"], "providerId": row["provider_id"],
+                            "taskType": row["task_type"], "cameraId": row["camera_id"],
+                            "profileId": row["profile_id"], "segmentId": row["segment_id"] or None,
+                            "state": row["state"], "createdAt": row["created_at"],
+                            "expiresAt": row["expires_at"],
+                            "mediaOpenedAt": row["media_opened_at"] or None,
+                            "resultCode": row["result_code"] or None} for row in rows]}
 
     def create_provider_task(self, provider_id: str, value: Any) -> dict[str, Any]:
         require_identifier(provider_id, "provider_id")
@@ -1314,6 +1357,10 @@ class ClusterStore:
         if not isinstance(parameters, dict) or len(parameters) > 32 or len(canonical_json(parameters)) > 16 * 1024:
             raise ApiError(400, "invalid_provider_parameters", "provider parameters are invalid")
         with self.lock, self.db:
+            current = now_seconds()
+            self.db.execute("""UPDATE provider_tasks SET state='expired',result_code='grant_expired'
+                WHERE state IN ('offered','media-opened') AND expires_at<=?""", (current,))
+            self.db.execute("DELETE FROM provider_grants WHERE expires_at<=?", (current,))
             provider = self.db.execute("SELECT * FROM external_providers WHERE id=? AND enabled=1",
                                        (provider_id,)).fetchone()
             if provider is None:
@@ -1326,18 +1373,22 @@ class ClusterStore:
                     (segment_id, camera_id, profile_id)).fetchone() is None:
                 raise ApiError(404, "provider_segment_not_found",
                                "the authorized recording segment was not found for this camera profile")
-            active = self.db.execute("SELECT COUNT(*) FROM provider_grants WHERE provider_id=? AND expires_at>? AND used=0",
-                                     (provider_id, now_seconds())).fetchone()[0]
+            active = self.db.execute("""SELECT COUNT(*) FROM provider_tasks
+                WHERE provider_id=? AND state IN ('offered','media-opened') AND expires_at>?""",
+                                     (provider_id, current)).fetchone()[0]
             if active >= provider["max_concurrent"]:
                 raise ApiError(429, "provider_capacity", "provider capacity is exhausted")
             task_id = secrets.token_hex(16)
             token = secrets.token_urlsafe(32)
-            expires_at = now_seconds() + 60
+            expires_at = current + 60
+            self.db.execute("INSERT INTO provider_tasks VALUES(?,?,?,?,?,?,?,?,?,?,?)",
+                            (task_id, provider_id, value["taskType"], camera_id, profile_id,
+                             segment_id, "offered", current, expires_at, 0, ""))
             self.db.execute("INSERT INTO provider_grants VALUES(?,?,?,?,?,?,?,0)",
                             (hashlib.sha256(token.encode()).hexdigest(), provider_id, task_id,
                              camera_id, profile_id, segment_id, expires_at))
-            self.db.execute("DELETE FROM provider_grants WHERE expires_at<=?", (now_seconds(),))
-        return {"schemaVersion": 1, "taskId": task_id, "taskType": value["taskType"],
+            self._audit("provider.task.created", "web-session", task_id, "offered")
+        return {"schemaVersion": 1, "taskId": task_id, "taskType": value["taskType"], "state": "offered",
                 "subject": {"cameraId": camera_id, "profileId": profile_id, **({"segmentId": segment_id} if segment_id else {})},
                 "expiresAt": expires_at, "mediaGrant": {"token": token, "method": "GET",
                 "path": f"/api/v2/provider-media/{task_id}"}, "parameters": parameters}
@@ -1361,6 +1412,9 @@ class ClusterStore:
             )
             if updated.rowcount != 1:
                 raise ApiError(401, "provider_grant_rejected", "provider media grant was rejected")
+            self.db.execute("""UPDATE provider_tasks SET state='media-opened',media_opened_at=?,result_code=''
+                WHERE id=? AND state='offered' AND expires_at>?""", (now_seconds(), task_id, now_seconds()))
+            self._audit("provider.media.opened", row["provider_id"], task_id, "completed")
         return {"taskId": task_id, "cameraId": row["camera_id"], "profileId": row["profile_id"],
                 "segmentId": row["segment_id"] or None, "expiresAt": row["expires_at"],
                 "credentialExposure": "none"}
@@ -1537,6 +1591,9 @@ class Handler(http.server.BaseHTTPRequestHandler):
             self.response(200, STORE.list_providers())
         elif path == "/providers" and self.command == "POST":
             self.response(201, STORE.create_provider(self.read_json()))
+        elif path.startswith("/providers/") and path.endswith("/tasks") and self.command == "GET":
+            self.response(200, STORE.list_provider_tasks(
+                path.split("/")[2], parse_qs(urlsplit(self.path).query)))
         elif path.startswith("/providers/") and path.endswith("/tasks") and self.command == "POST":
             self.response(202, STORE.create_provider_task(path.split("/")[2], self.read_json()))
         else:

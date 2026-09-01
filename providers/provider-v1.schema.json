@@ -4,11 +4,12 @@
   "title": "WebOBS External Provider v1 task",
   "type": "object",
   "additionalProperties": false,
-  "required": ["schemaVersion", "taskId", "taskType", "subject", "expiresAt", "mediaGrant"],
+  "required": ["schemaVersion", "taskId", "taskType", "state", "subject", "expiresAt", "mediaGrant"],
   "properties": {
     "schemaVersion": {"const": 1},
     "taskId": {"type": "string", "pattern": "^[A-Za-z0-9._-]{1,64}$"},
     "taskType": {"enum": ["external-nvr", "export", "detector"]},
+    "state": {"const": "offered"},
     "subject": {
       "type": "object",
       "additionalProperties": false,

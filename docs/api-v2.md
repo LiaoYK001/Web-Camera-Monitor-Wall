@@ -30,9 +30,10 @@ GET/POST         /api/v2/archive-targets
 GET/POST         /api/v2/backup-jobs
 GET/POST         /api/v2/providers
 POST             /api/v2/providers/{id}/tasks
+GET              /api/v2/providers/{id}/tasks?limit=1..256
 ```
 
-角色权限与 Camera/Group scope 默认拒绝。Enrollment token 有效十分钟且只保存摘要；节点证书有效 30 天。`storage-volumes` 只能管理已经挂载并由节点报告的 `volumeId`，不接受主机路径。`recordings` 与 `recordings/timeline` 只返回稳定 Camera/Profile/Segment/Node/Volume ID、UTC 时间、编码、完整性、锁定和归档状态；不返回 `storageKey`、主机路径、S3 object key 或媒体端点。查询范围最多 31 天，单次目录响应最多 256 个位置；非管理员必须提供一个获授权的 `cameraId`，多 Camera 查询需逐路执行，避免用首个参数绕过 scope。Provider 任务只返回最长 60 秒、单次可消费的媒体授权，`credentialExposure` 固定为 `none`。当任务引用录像时，`segmentId` 必须存在于 Controller Catalog，并且必须同时匹配获批的 `cameraId/profileId`；实际下载仅代理该只读 NVR 片段，不接受任意路径。旧 Catalog 行在 Recorder 重新对账补齐 Camera/Profile 绑定前保持拒绝访问。
+角色权限与 Camera/Group scope 默认拒绝。Enrollment token 有效十分钟且只保存摘要；节点证书有效 30 天。`storage-volumes` 只能管理已经挂载并由节点报告的 `volumeId`，不接受主机路径。`recordings` 与 `recordings/timeline` 只返回稳定 Camera/Profile/Segment/Node/Volume ID、UTC 时间、编码、完整性、锁定和归档状态；不返回 `storageKey`、主机路径、S3 object key 或媒体端点。查询范围最多 31 天，单次目录响应最多 256 个位置；非管理员必须提供一个获授权的 `cameraId`，多 Camera 查询需逐路执行，避免用首个参数绕过 scope。Provider 任务只返回最长 60 秒、单次可消费的媒体授权，`credentialExposure` 固定为 `none`。Controller 只持久化稳定 ID、`offered | media-opened | expired` 状态和固定结果码，不保存任务参数或 token 明文；未消费和已打开任务均占用并发额度，60 秒后自动过期，因此 Provider 失联不会形成无界积压或影响连续录像。当任务引用录像时，`segmentId` 必须存在于 Controller Catalog，并且必须同时匹配获批的 `cameraId/profileId`；实际下载仅代理该只读 NVR 片段，不接受任意路径。旧 Catalog 行在 Recorder 重新对账补齐 Camera/Profile 绑定前保持拒绝访问。
 
 归档回放票据只为 `archiveState=uploaded + integrity=verified`（兼容旧 `ok` 值）且 Camera 绑定完全匹配的片段签发，最长 60 秒，并要求恰好一个启用的 Archive Target。响应包含临时 SigV4 HTTPS GET URL、预期长度与 SHA-256，不包含长期 Secret；PWA 以 `credentials=omit`、禁止重定向和禁止缓存下载，完整重新计算摘要后才创建本地 Blob 播放。单片超过 512 MiB 会拒绝浏览器票据。S3 必须允许当前 PWA Origin 的 GET CORS，并加入 `WEBOBS_PWA_MEDIA_ALLOWED_ORIGINS`；票据及其查询参数不得进入日志、Issue、Artifact 或离线缓存。
 

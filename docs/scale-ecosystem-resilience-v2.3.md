@@ -60,7 +60,7 @@ Controller 可为已完成、已校验且 Camera scope 匹配的归档片段签�
 
 节点报告实际 runtime probe、CPU、内存、编解码槽位、磁盘和 Reservations。调度优先级为录像、Gateway/Composite、导出、Detector 预留；容量不足时显式拒绝，不静默切到 CPU。未校准节点为 `unrated`，使用保守容量。8/16/32 路结果只分别描述 stream-copy 资格，不能推断转码能力。
 
-外部 Provider 只得到稳定任务 ID 和最长 60 秒的单次媒体授权。授权 token 仅存 SHA-256，消费后重放失败，响应不含 Camera Secret、数据库路径或集群 CA。录像读取还会核对 Catalog 中 `segmentId + cameraId + profileId` 的绑定，只代理对应只读片段；无法建立绑定的旧记录保持 fail-closed，直到 Recorder 完成重新对账。实时 Detector 媒体仍为预留能力，不会因此取得 Camera Secret 或自动启动新媒体链。Provider 失败不得中断连续录像。
+外部 Provider 只得到稳定任务 ID 和最长 60 秒的单次媒体授权。授权 token 仅存 SHA-256，消费后重放失败，响应不含 Camera Secret、数据库路径或集群 CA。Controller 只保存稳定 ID、`offered | media-opened | expired` 状态和固定结果码，不落盘任务参数与 token 明文；任务在 60 秒窗口内占用 Provider 并发额度，超时自动释放。录像读取还会核对 Catalog 中 `segmentId + cameraId + profileId` 的绑定，只代理对应只读片段；无法建立绑定的旧记录保持 fail-closed，直到 Recorder 完成重新对账。实时 Detector 媒体仍为预留能力，不会因此取得 Camera Secret 或自动启动新媒体链。Provider 超时或失败不会改变 Recorder 分配、租约或连续录像状态。
 
 加密备份每 15 分钟生成一次，使用独立 32 字节 `WEBOBS_BACKUP_KEY_FILE` 和 XChaCha20-Poly1305 流式加密。恢复先在隔离目录验证 AEAD、SHA-256、SQLite integrity、Schema 和安全路径，再原子切换。备份默认不包含录像；恢复后重新对账本地卷与 S3 Manifest。目标为配置/目录/审计数据 `RPO ≤ 15 分钟`、干净安装 `RTO ≤ 30 分钟`。
 

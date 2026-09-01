@@ -281,6 +281,7 @@ class ClusterTests(unittest.TestCase):
             "taskType": "detector", "cameraId": "camera-1", "profileId": "sub",
             "parameters": {"model": "person"},
         })
+        self.assertEqual(task["state"], "offered")
         self.assertLessEqual(task["expiresAt"] - cluster.now_seconds(), 60)
         self.assertEqual(task["mediaGrant"]["method"], "GET")
         serialized = str(task).lower()
@@ -294,8 +295,27 @@ class ClusterTests(unittest.TestCase):
         consumed = self.store.consume_provider_grant(task["taskId"], token)
         self.assertEqual(consumed["cameraId"], "camera-1")
         self.assertEqual(consumed["credentialExposure"], "none")
+        listed = self.store.list_provider_tasks(provider["id"], {"limit": ["10"]})
+        self.assertEqual(listed["tasks"][0]["state"], "media-opened")
+        self.assertIsNotNone(listed["tasks"][0]["mediaOpenedAt"])
+        self.assertNotIn("parameters", listed["tasks"][0])
+        self.assertNotIn("token", str(listed).lower())
+        provider_status = self.store.list_providers()["providers"][0]
+        self.assertEqual(provider_status["taskCounts"], {"media-opened": 1})
         with self.assertRaisesRegex(cluster.ApiError, "rejected"):
             self.store.consume_provider_grant(task["taskId"], token)
+
+        self.store._expire_provider_tasks(task["expiresAt"] + 1)
+        expired = self.store.list_provider_tasks(provider["id"], {})["tasks"][0]
+        self.assertEqual(expired["state"], "expired")
+        self.assertEqual(expired["resultCode"], "grant_expired")
+        replacement = self.store.create_provider_task(provider["id"], {
+            "taskType": "detector", "cameraId": "camera-2", "profileId": "sub",
+        })
+        self.assertEqual(replacement["state"], "offered")
+
+        with self.assertRaisesRegex(cluster.ApiError, "limit"):
+            self.store.list_provider_tasks(provider["id"], {"limit": ["257"]})
 
     def test_provider_recording_grant_is_bound_to_catalog_camera_and_profile(self) -> None:
         node_id, _, _ = self.enroll("Provider recorder")

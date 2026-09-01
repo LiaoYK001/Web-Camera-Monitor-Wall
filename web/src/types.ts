@@ -358,4 +358,5 @@ export interface ExternalProvider {
   id: string; name: string; endpointAuthority: string;
   taskTypes: Array<'external-nvr' | 'export' | 'detector'>;
   maxConcurrent: number; enabled: boolean; revision: number;
+  taskCounts: Partial<Record<'offered' | 'media-opened' | 'expired', number>>;
 }
