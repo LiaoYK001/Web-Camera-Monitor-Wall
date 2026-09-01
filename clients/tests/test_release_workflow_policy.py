@@ -82,6 +82,16 @@ class NativeReleaseWorkflowPolicyTests(unittest.TestCase):
         self.assertIn('build_version="${build_version}.0"', release_script)
         self.assertIn("release-image-local.sh", windows_release_script)
 
+    def test_release_version_is_consistent_inside_the_image(self) -> None:
+        dockerfile = (ROOT / "docker" / "Dockerfile").read_text(encoding="utf-8")
+        vite = (ROOT / "web" / "vite.config.ts").read_text(encoding="utf-8")
+        control = (ROOT / "core" / "src" / "control_server.cpp").read_text(encoding="utf-8")
+        self.assertIn('WEBOBS_BUILD_VERSION="${WEBOBS_BUILD_VERSION}" pnpm run build', dockerfile)
+        self.assertIn('ENV WEBOBS_BUILD_VERSION="${WEBOBS_BUILD_VERSION}"', dockerfile)
+        self.assertIn("process.env.WEBOBS_BUILD_VERSION ?? packageJson.version", vite)
+        self.assertIn('WEBOBS_MILESTONE "\\\"}"', control)
+        self.assertNotIn('"milestone":"v2-M7-dev"', control)
+
     def test_stable_image_release_promotes_only_the_verified_candidate_digest(self) -> None:
         release_script = (ROOT / "scripts" / "release-image-local.sh").read_text(encoding="utf-8")
         build = release_script.split("docker buildx build", 1)[1].split("if [ \"$version\" = dev ]", 1)[0]

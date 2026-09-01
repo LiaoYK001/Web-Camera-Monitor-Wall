@@ -2,6 +2,7 @@ FROM caddy:2.11.4-alpine@sha256:98eb57d882ccd5213d1688764db10c1ca2c58a1ca3a6717a
 
 FROM node:24.14.0-bookworm-slim@sha256:d8e448a56fc63242f70026718378bd4b00f8c82e78d20eefb199224a4d8e33d8 AS web-builder
 
+ARG WEBOBS_BUILD_VERSION=2.3.0-dev
 WORKDIR /src/web
 RUN corepack enable \
     && attempt=1 \
@@ -14,7 +15,7 @@ COPY web/package.json web/pnpm-lock.yaml ./
 RUN pnpm config set fetch-retries 5 \
     && pnpm install --frozen-lockfile --ignore-scripts
 COPY web/ ./
-RUN pnpm run build
+RUN WEBOBS_BUILD_VERSION="${WEBOBS_BUILD_VERSION}" pnpm run build
 
 FROM ubuntu:24.04 AS sodium-builder
 
@@ -389,6 +390,7 @@ FROM ubuntu:24.04 AS runtime
 
 ARG DEBIAN_FRONTEND=noninteractive
 ARG WEBOBS_BUILD_VERSION=2.3.0-dev
+ENV WEBOBS_BUILD_VERSION="${WEBOBS_BUILD_VERSION}"
 
 RUN apt-get -o Acquire::Retries=5 -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30 update \
     && apt-get -o Acquire::Retries=5 -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30 install -y --no-install-recommends \

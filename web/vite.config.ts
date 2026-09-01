@@ -11,7 +11,7 @@ const httpsOptions = process.env.WEBOBS_VITE_HTTPS_CERT && process.env.WEBOBS_VI
 
 export default defineConfig({
   define: {
-    __WEBOBS_BUILD_VERSION__: JSON.stringify(packageJson.version),
+    __WEBOBS_BUILD_VERSION__: JSON.stringify(process.env.WEBOBS_BUILD_VERSION ?? packageJson.version),
   },
   plugins: [
     react(),
