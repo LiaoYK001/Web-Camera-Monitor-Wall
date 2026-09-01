@@ -52,6 +52,7 @@ camera_registry_enabled="${WEBOBS_CAMERA_REGISTRY_ENABLED:-$role_registry_defaul
 v2_client_control_enabled="${WEBOBS_V2_CLIENT_CONTROL_ENABLED:-$role_v2_default}"
 events_enabled="${WEBOBS_EVENTS_ENABLED:-$role_events_default}"
 cluster_enabled="${WEBOBS_CLUSTER_ENABLED:-$role_cluster_default}"
+compat_basic_auth="${WEBOBS_COMPAT_BASIC_AUTH:-true}"
 archive_enabled="${WEBOBS_ARCHIVE_ENABLED:-false}"
 encrypted_backup_enabled="${WEBOBS_ENCRYPTED_BACKUP_ENABLED:-false}"
 node_agent_enabled=false
@@ -153,6 +154,11 @@ case "$cluster_enabled" in
     true|false) ;;
     *) fail "WEBOBS_CLUSTER_ENABLED must be true or false" ;;
 esac
+case "$compat_basic_auth" in
+    true|false) ;;
+    *) fail "WEBOBS_COMPAT_BASIC_AUTH must be true or false" ;;
+esac
+export WEBOBS_COMPAT_BASIC_AUTH="$compat_basic_auth"
 case "$archive_enabled" in
     true|false) ;;
     *) fail "WEBOBS_ARCHIVE_ENABLED must be true or false" ;;

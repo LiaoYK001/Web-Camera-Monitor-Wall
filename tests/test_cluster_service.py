@@ -146,7 +146,14 @@ class ClusterTests(unittest.TestCase):
             self.store.authorize("matrix-viewer", "live.view", "camera-unknown")
 
     def test_user_validation_and_unique_name(self) -> None:
+        self.assertFalse(self.store.has_enabled_admin())
+        cluster.validate_compatibility_auth("true", self.store)
+        with self.assertRaisesRegex(RuntimeError, "database administrator"):
+            cluster.validate_compatibility_auth("false", self.store)
+        with self.assertRaisesRegex(RuntimeError, "true or false"):
+            cluster.validate_compatibility_auth("disabled", self.store)
         self.create_user()
+        self.assertFalse(self.store.has_enabled_admin())
         with self.assertRaisesRegex(cluster.ApiError, "username already exists"):
             self.create_user()
         with self.assertRaises(cluster.ApiError):
@@ -154,6 +161,9 @@ class ClusterTests(unittest.TestCase):
                                     "scopes": [{"kind": "all", "id": "camera-1"}]})
         self.assertEqual(cluster.ROLE_PERMISSIONS["exporter"],
                          frozenset({"playback.view", "export.create"}))
+        self.create_user("database-admin", ["admin"])
+        self.assertTrue(self.store.has_enabled_admin())
+        cluster.validate_compatibility_auth("false", self.store)
 
     def test_rbac_audit_is_bounded_paginated_and_redacted(self) -> None:
         first = self.create_user(username="audit-user-one")

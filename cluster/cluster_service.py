@@ -507,6 +507,12 @@ class ClusterStore:
                               "revision": row["revision"]})
         return {"users": users, "revision": self.revision()}
 
+    def has_enabled_admin(self) -> bool:
+        with self.lock:
+            return self.db.execute("""SELECT 1 FROM users u
+                JOIN user_roles r ON r.user_id=u.id
+                WHERE u.enabled=1 AND r.role='admin' LIMIT 1""").fetchone() is not None
+
     def update_user(self, user_id: str, value: Any, expected_revision: int,
                     actor: str = "web-session") -> dict[str, Any]:
         require_identifier(user_id, "user_id")
@@ -1684,6 +1690,14 @@ class ClusterHandler(Handler):
             raise ApiError(404, "not_found", "resource was not found")
 
 
+def validate_compatibility_auth(value: str, store: ClusterStore) -> None:
+    if value not in {"true", "false"}:
+        raise RuntimeError("WEBOBS_COMPAT_BASIC_AUTH must be true or false")
+    if value == "false" and not store.has_enabled_admin():
+        raise RuntimeError(
+            "compatibility Basic Auth cannot be disabled before an enabled database administrator exists")
+
+
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--database", default=os.environ.get("WEBOBS_CLUSTER_DATABASE", "/config/webobs/cluster.sqlite3"))
@@ -1704,6 +1718,12 @@ def main() -> None:
     if ca_cert or ca_key:
         signer = CertificateSigner(pathlib.Path(ca_cert), pathlib.Path(ca_key))
     STORE = ClusterStore(database, PasswordHasher(), signer)
+    compatibility_auth = os.environ.get("WEBOBS_COMPAT_BASIC_AUTH", "true")
+    try:
+        validate_compatibility_auth(compatibility_auth, STORE)
+    except RuntimeError as error:
+        STORE.close()
+        raise SystemExit(str(error)) from error
     admin_server = http.server.ThreadingHTTPServer(("127.0.0.1", args.port), Handler)
     servers: list[http.server.ThreadingHTTPServer] = [admin_server]
     if args.role == "controller" and os.environ.get("WEBOBS_CLUSTER_LISTEN", "false") == "true":
