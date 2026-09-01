@@ -368,6 +368,29 @@ export const fetchClusterRecordingTimeline = (fromUtcMs: number, toUtcMs: number
   const query = new URLSearchParams({ from: String(fromUtcMs), to: String(toUtcMs) });
   return clientAdminRequest<ClusterRecordingTimeline>(`/recordings/timeline?${query}`, { signal });
 };
+export const fetchVerifiedArchivedRecording = async (segmentId: string, cameraId: string): Promise<Blob> => {
+  const query = new URLSearchParams({ cameraId });
+  const ticket = await clientAdminRequest<{ segmentId: string; cameraId: string; url: string; sha256: string;
+    sizeBytes: number; contentType: string; expiresAt: number; credentialExposure: 'ephemeral' }>(
+    `/recordings/${encodeURIComponent(segmentId)}/playback-ticket?${query}`, { method: 'POST', body: '' },
+  );
+  const endpoint = new URL(ticket.url);
+  if (endpoint.protocol !== 'https:' || ticket.segmentId !== segmentId || ticket.cameraId !== cameraId
+      || ticket.credentialExposure !== 'ephemeral' || ticket.expiresAt * 1000 <= Date.now()
+      || !/^[0-9a-f]{64}$/.test(ticket.sha256) || ticket.sizeBytes < 1 || ticket.sizeBytes > 512 * 1024 * 1024) {
+    throw new Error('归档回放票据无效或已过期');
+  }
+  const response = await fetch(endpoint, {
+    method: 'GET', cache: 'no-store', credentials: 'omit', redirect: 'error', referrerPolicy: 'no-referrer',
+  });
+  if (!response.ok) throw new Error('无法读取归档录像');
+  const bytes = await response.arrayBuffer();
+  if (bytes.byteLength !== ticket.sizeBytes) throw new Error('归档录像大小校验失败');
+  const computed = [...new Uint8Array(await crypto.subtle.digest('SHA-256', bytes))]
+    .map((value) => value.toString(16).padStart(2, '0')).join('');
+  if (computed !== ticket.sha256) throw new Error('归档录像 SHA-256 校验失败');
+  return new Blob([bytes], { type: ticket.contentType === 'video/mp4' ? 'video/mp4' : 'application/octet-stream' });
+};
 export const fetchArchiveTargets = (signal?: AbortSignal) =>
   clientAdminRequest<{ targets: ArchiveTarget[]; revision: number }>('/archive-targets', { signal });
 export const fetchBackupJobs = (signal?: AbortSignal) =>

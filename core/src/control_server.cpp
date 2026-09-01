@@ -1564,6 +1564,7 @@ public:
                    target == "/api/v2/storage-volumes" || target.starts_with("/api/v2/storage-volumes/") ||
                    target == "/api/v2/recording-placements" || target.starts_with("/api/v2/recording-placements/") ||
                    target == "/api/v2/recordings" || target.starts_with("/api/v2/recordings?") ||
+                   target.starts_with("/api/v2/recordings/") ||
                    target == "/api/v2/recordings/timeline" || target.starts_with("/api/v2/recordings/timeline?") ||
                    target == "/api/v2/resource-capacity" ||
                    target == "/api/v2/archive-targets" || target.starts_with("/api/v2/archive-targets/") ||
@@ -2534,7 +2535,8 @@ HttpResponse handle_request(const HttpRequest &request, SceneController &control
                            target == "/api/v2/node-enrollments" || target.starts_with("/api/v2/node-enrollments/") ||
                            target == "/api/v2/storage-volumes" || target.starts_with("/api/v2/storage-volumes/") ||
                            target == "/api/v2/recording-placements" || target.starts_with("/api/v2/recording-placements/") ||
-                           target == "/api/v2/recordings" || target.starts_with("/api/v2/recordings?") ||
+                            target == "/api/v2/recordings" || target.starts_with("/api/v2/recordings?") ||
+                            target.starts_with("/api/v2/recordings/") ||
                            target == "/api/v2/recordings/timeline" || target.starts_with("/api/v2/recordings/timeline?") ||
                            target == "/api/v2/resource-capacity" ||
                            target == "/api/v2/archive-targets" || target.starts_with("/api/v2/archive-targets/") ||

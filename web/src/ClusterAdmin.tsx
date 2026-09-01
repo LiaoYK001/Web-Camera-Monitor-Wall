@@ -3,7 +3,7 @@ import {
   approveNodeEnrollment, createBackupJob, createClusterUser, createNodeEnrollment,
   fetchArchiveTargets, fetchBackupJobs, fetchClusterNodes, fetchClusterRecordingTimeline, fetchClusterRoles,
   fetchClusterUsers, fetchExternalProviders, fetchRecordingPlacements,
-  fetchResourceCapacity, fetchStorageVolumes, patchClusterUser, patchStorageVolume,
+  fetchResourceCapacity, fetchStorageVolumes, fetchVerifiedArchivedRecording, patchClusterUser, patchStorageVolume,
   revokeClusterNode,
 } from './api';
 import type {
@@ -58,6 +58,8 @@ export default function ClusterAdmin() {
   const [capacity, setCapacity] = useState<ResourceCapacity | null>(null);
   const [placements, setPlacements] = useState<RecordingPlacement[]>([]);
   const [recordingTimeline, setRecordingTimeline] = useState<ClusterRecordingTimeline | null>(null);
+  const [archivePreview, setArchivePreview] = useState<{ segmentId: string; url: string } | null>(null);
+  const [archiveLoading, setArchiveLoading] = useState('');
   const [targets, setTargets] = useState<ArchiveTarget[]>([]);
   const [jobs, setJobs] = useState<BackupJob[]>([]);
   const [providers, setProviders] = useState<ExternalProvider[]>([]);
@@ -96,6 +98,23 @@ export default function ClusterAdmin() {
     return () => controller.abort();
   }, [reload]);
 
+  useEffect(() => () => { if (archivePreview) URL.revokeObjectURL(archivePreview.url); }, [archivePreview]);
+
+  const playArchived = async (segmentId: string, cameraId: string) => {
+    setArchiveLoading(segmentId);
+    try {
+      const blob = await fetchVerifiedArchivedRecording(segmentId, cameraId);
+      const url = URL.createObjectURL(blob);
+      setArchivePreview((current) => {
+        if (current) URL.revokeObjectURL(current.url);
+        return { segmentId, url };
+      });
+      setNotice('归档录像已在浏览器本地完成大小与 SHA-256 校验。');
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : '归档回放校验失败');
+    } finally { setArchiveLoading(''); }
+  };
+
   const addUser = async () => {
     try {
       await createClusterUser({ username: username.trim(), password, roles: [newRole], scopes: [] });
@@ -132,7 +151,7 @@ export default function ClusterAdmin() {
       <div className="admin-grid">{volumes.map((volume) => { const used = volume.capacityBytes ? 1 - volume.freeBytes / volume.capacityBytes : 0; return <article key={`${volume.nodeId}/${volume.id}`}><header><strong>{volume.label}</strong><span>{volume.state}</span></header><p>{volume.tier} · {bytes(volume.freeBytes)} free / {bytes(volume.capacityBytes)}</p><progress value={Math.max(0, Math.min(1, used))} max={1} /><small>{Math.round(used * 100)}% used · high {Math.round(volume.highWatermark * 100)}%</small><select value={volume.state} onChange={(event) => void patchStorageVolume(volume, { state: event.target.value }).then(() => reload()).catch((reason: Error) => setError(reason.message))}><option value="online">online</option><option value="degraded">degraded</option><option value="read-only">read-only</option><option value="evacuating">evacuating</option><option value="offline">offline</option></select></article>; })}</div>
       <div className="admin-grid">{capacity?.nodes.map((node) => <article key={node.nodeId}><strong>节点资源 {node.nodeId.slice(0, 8)}</strong><p>{node.cpuCores} CPU · {bytes(node.memoryBytes)} RAM · {node.rated ? 'rated' : 'unrated/保守容量'}</p><small>{node.reservations.length} reservations · 更新 {time(node.updatedAt)}</small></article>)}</div>
       <details><summary>录像所有权租约（{placements.length}）</summary><div className="admin-list">{placements.map((item) => <article key={`${item.cameraId}/${item.profileId}`}><div><strong>{item.cameraId} / {item.profileId}</strong><small>node {item.nodeId.slice(0, 8)} · generation {item.generation}</small></div><span>{item.state}</span></article>)}</div></details>
-      <details><summary>跨节点录像目录（{recordingTimeline?.cameras.reduce((count, camera) => count + camera.segments.length, 0) ?? 0}）</summary><div className="admin-list">{recordingTimeline?.cameras.flatMap((camera) => camera.segments).map((segment) => <article key={`${segment.id}:${segment.nodeId}:${segment.volumeId}`}><div><strong>{segment.cameraId} / {segment.profileId}</strong><small>{timeMs(segment.startUtcMs)} · {Math.round(segment.durationMs / 1000)} s · {bytes(segment.sizeBytes)}<br />node {segment.nodeId.slice(0, 8)} · volume {segment.volumeId} · {segment.videoCodec || 'codec —'}</small></div><span>{segment.integrity} · {segment.archiveState}</span></article>)}</div></details>
+      <details><summary>跨节点录像目录（{recordingTimeline?.cameras.reduce((count, camera) => count + camera.segments.length, 0) ?? 0}）</summary><div className="admin-list">{recordingTimeline?.cameras.flatMap((camera) => camera.segments).map((segment) => <article key={`${segment.id}:${segment.nodeId}:${segment.volumeId}`}><div><strong>{segment.cameraId} / {segment.profileId}</strong><small>{timeMs(segment.startUtcMs)} · {Math.round(segment.durationMs / 1000)} s · {bytes(segment.sizeBytes)}<br />node {segment.nodeId.slice(0, 8)} · volume {segment.volumeId} · {segment.videoCodec || 'codec —'}</small></div><span>{segment.integrity} · {segment.archiveState}</span>{segment.archiveState === 'uploaded' && ['verified', 'ok'].includes(segment.integrity) && <button type="button" disabled={archiveLoading === segment.id} onClick={() => void playArchived(segment.id, segment.cameraId)}>{archiveLoading === segment.id ? '下载校验中…' : '校验并回放'}</button>}</article>)}</div>{archivePreview && <article className="archive-verified-preview"><header><strong>已校验归档片段</strong><button type="button" onClick={() => setArchivePreview(null)}>关闭</button></header><video key={archivePreview.segmentId} src={archivePreview.url} controls playsInline preload="metadata" /></article>}</details>
     </section>
 
     <section className="admin-section"><header><div><h2>归档、备份与外部 Provider</h2><p>Secret 只以引用配置；UI 与 API 不返回凭据内容。</p></div><button type="button" onClick={() => void createBackupJob().then(() => { setNotice('本地加密备份已排队。'); return reload(); }).catch((reason: Error) => setError(reason.message))}>立即备份</button></header>

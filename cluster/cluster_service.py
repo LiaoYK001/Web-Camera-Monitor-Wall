@@ -12,7 +12,9 @@ import argparse
 import contextlib
 import ctypes
 import ctypes.util
+import datetime as dt
 import hashlib
+import hmac
 import http.server
 import json
 import os
@@ -27,7 +29,7 @@ import threading
 import time
 from dataclasses import dataclass
 from typing import Any, Callable
-from urllib.parse import parse_qs, urlsplit
+from urllib.parse import parse_qs, quote, urlencode, urlsplit
 
 
 MAX_BODY = 1024 * 1024
@@ -41,6 +43,8 @@ LEASE_SECONDS = 30
 LEASE_RENEW_SECONDS = 10
 ISOLATION_GRACE_SECONDS = 120
 MAX_CLOCK_SKEW_SECONDS = 5
+ARCHIVE_TICKET_SECONDS = 60
+MAX_BROWSER_ARCHIVE_BYTES = 512 * 1024 * 1024
 ENROLLMENT_SECONDS = 600
 CERTIFICATE_SECONDS = 30 * 24 * 60 * 60
 CERTIFICATE_RENEW_SECONDS = 7 * 24 * 60 * 60
@@ -93,6 +97,13 @@ def now_seconds() -> int:
 
 def canonical_json(value: Any) -> str:
     return json.dumps(value, separators=(",", ":"), sort_keys=True)
+
+
+def aws_signing_key(secret: str, date: str, region: str) -> bytes:
+    date_key = hmac.new(("AWS4" + secret).encode(), date.encode(), hashlib.sha256).digest()
+    region_key = hmac.new(date_key, region.encode(), hashlib.sha256).digest()
+    service_key = hmac.new(region_key, b"s3", hashlib.sha256).digest()
+    return hmac.new(service_key, b"aws4_request", hashlib.sha256).digest()
 
 
 def require_identifier(value: Any, field: str) -> str:
@@ -191,10 +202,12 @@ class Principal:
 
 
 class ClusterStore:
-    def __init__(self, database_path: pathlib.Path, hasher: Any, signer: Any | None = None):
+    def __init__(self, database_path: pathlib.Path, hasher: Any, signer: Any | None = None,
+                 secrets_root: pathlib.Path | None = None):
         self.path = database_path
         self.hasher = hasher
         self.signer = signer
+        self.secrets_root = secrets_root or pathlib.Path(os.environ.get("WEBOBS_SECRETS_ROOT", "/run/secrets"))
         self.lock = threading.RLock()
         self.auth_failures: dict[str, tuple[int, int]] = {}
         database_path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
@@ -252,7 +265,8 @@ class ClusterStore:
                 PRIMARY KEY(segment_id,node_id,volume_id));
               CREATE TABLE IF NOT EXISTS archive_targets(
                 id TEXT PRIMARY KEY,name TEXT NOT NULL,endpoint_authority TEXT NOT NULL,bucket TEXT NOT NULL,
-                credentials_ref TEXT NOT NULL,enabled INTEGER NOT NULL,revision INTEGER NOT NULL);
+                credentials_ref TEXT NOT NULL,enabled INTEGER NOT NULL,revision INTEGER NOT NULL,
+                region TEXT NOT NULL DEFAULT 'us-east-1');
               CREATE TABLE IF NOT EXISTS archive_jobs(
                 id TEXT PRIMARY KEY,segment_id TEXT NOT NULL,target_id TEXT NOT NULL,state TEXT NOT NULL,
                 attempts INTEGER NOT NULL,next_attempt_at INTEGER NOT NULL,last_error_code TEXT NOT NULL,created_at INTEGER NOT NULL);
@@ -299,7 +313,10 @@ class ClusterStore:
                     self.db.execute(f"ALTER TABLE segment_locations ADD COLUMN {name} {declaration}")
             self.db.execute("CREATE INDEX IF NOT EXISTS segment_locations_camera_time "
                             "ON segment_locations(camera_id,start_utc_ms,end_utc_ms)")
-            self.db.execute("PRAGMA user_version=4")
+            target_columns = {row[1] for row in self.db.execute("PRAGMA table_info(archive_targets)")}
+            if "region" not in target_columns:
+                self.db.execute("ALTER TABLE archive_targets ADD COLUMN region TEXT NOT NULL DEFAULT 'us-east-1'")
+            self.db.execute("PRAGMA user_version=5")
         with contextlib.suppress(OSError):
             os.chmod(database_path, 0o600)
 
@@ -969,6 +986,75 @@ class ClusterStore:
                 "queryDurationMs": max(0, (time.monotonic_ns() - started) // 1_000_000),
                 "revision": catalog["revision"]}
 
+    def archive_playback_ticket(self, segment_id: str, camera_id: str,
+                                timestamp: dt.datetime | None = None) -> dict[str, Any]:
+        require_identifier(segment_id, "segment_id")
+        require_identifier(camera_id, "camera_id")
+        rows = self.db.execute("""SELECT * FROM segment_locations
+            WHERE segment_id=? AND camera_id=? AND archive_state='uploaded'
+              AND integrity IN ('verified','ok')
+            ORDER BY node_id,volume_id""", (segment_id, camera_id)).fetchall()
+        if not rows:
+            raise ApiError(404, "archived_recording_not_found", "archived recording was not found")
+        identities = {(row["sha256"], row["size_bytes"]) for row in rows}
+        if len(identities) != 1:
+            raise ApiError(409, "archive_location_conflict", "archived recording locations disagree")
+        digest, size_bytes = identities.pop()
+        if not re.fullmatch(r"[0-9a-f]{64}", digest) or not 1 <= size_bytes <= MAX_BROWSER_ARCHIVE_BYTES:
+            raise ApiError(409, "archive_browser_limit", "archived recording is not eligible for browser playback")
+        targets = self.db.execute("SELECT * FROM archive_targets WHERE enabled=1 ORDER BY id LIMIT 2").fetchall()
+        if len(targets) != 1:
+            raise ApiError(409, "archive_target_ambiguous", "exactly one archive target must be enabled")
+        target = targets[0]
+        secret_path = (self.secrets_root / target["credentials_ref"]).resolve()
+        try:
+            secret_path.relative_to(self.secrets_root.resolve())
+        except (OSError, ValueError) as error:
+            raise ApiError(503, "archive_credentials_unavailable", "archive credentials are unavailable") from error
+        if not secret_path.is_file() or secret_path.is_symlink() or secret_path.stat().st_size > 4096:
+            raise ApiError(503, "archive_credentials_unavailable", "archive credentials are unavailable")
+        try:
+            credentials = json.loads(secret_path.read_text(encoding="utf-8"))
+        except (OSError, UnicodeDecodeError, json.JSONDecodeError) as error:
+            raise ApiError(503, "archive_credentials_unavailable", "archive credentials are unavailable") from error
+        if not isinstance(credentials, dict) or set(credentials) != {"accessKeyId", "secretAccessKey"} or \
+                not all(isinstance(value, str) and 8 <= len(value) <= 256 for value in credentials.values()):
+            raise ApiError(503, "archive_credentials_unavailable", "archive credentials are unavailable")
+        current = timestamp or dt.datetime.now(dt.timezone.utc)
+        if current.tzinfo is None:
+            current = current.replace(tzinfo=dt.timezone.utc)
+        amz_date = current.astimezone(dt.timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+        short_date = current.astimezone(dt.timezone.utc).strftime("%Y%m%d")
+        scope = f"{short_date}/{target['region']}/s3/aws4_request"
+        object_key = f"segments/{digest[:2]}/{digest}"
+        canonical_uri = f"/{quote(target['bucket'], safe='-_.~')}/{quote(object_key, safe='/-_.~')}"
+        parameters = {
+            "X-Amz-Algorithm": "AWS4-HMAC-SHA256",
+            "X-Amz-Credential": f"{credentials['accessKeyId']}/{scope}",
+            "X-Amz-Date": amz_date,
+            "X-Amz-Expires": str(ARCHIVE_TICKET_SECONDS),
+            "X-Amz-SignedHeaders": "host",
+        }
+        canonical_query = urlencode(sorted(parameters.items()), quote_via=quote, safe="-_.~")
+        authority = target["endpoint_authority"]
+        canonical_request = "\n".join([
+            "GET", canonical_uri, canonical_query, f"host:{authority}\n", "host", "UNSIGNED-PAYLOAD",
+        ])
+        string_to_sign = "\n".join([
+            "AWS4-HMAC-SHA256", amz_date, scope,
+            hashlib.sha256(canonical_request.encode()).hexdigest(),
+        ])
+        signature = hmac.new(aws_signing_key(credentials["secretAccessKey"], short_date,
+                                              target["region"]), string_to_sign.encode(),
+                             hashlib.sha256).hexdigest()
+        expires_at = int(current.timestamp()) + ARCHIVE_TICKET_SECONDS
+        return {"segmentId": segment_id, "cameraId": camera_id,
+                "url": f"https://{authority}{canonical_uri}?{canonical_query}&X-Amz-Signature={signature}",
+                "sha256": digest, "sizeBytes": size_bytes,
+                "contentType": "video/mp4" if rows[0]["storage_key"].endswith(".mp4")
+                else "application/octet-stream",
+                "expiresAt": expires_at, "credentialExposure": "ephemeral"}
+
     def list_volumes(self) -> dict[str, Any]:
         rows = self.db.execute("SELECT * FROM storage_volumes ORDER BY node_id,id LIMIT ?", (MAX_PAGE,)).fetchall()
         return {"volumes": [{"id": row["id"], "nodeId": row["node_id"], "label": row["label"],
@@ -1035,7 +1121,7 @@ class ClusterStore:
                 "revision": self.revision()}
 
     def create_archive_target(self, value: Any) -> dict[str, Any]:
-        value = require_exact_object(value, {"name", "endpoint", "bucket", "credentialsRef", "enabled"},
+        value = require_exact_object(value, {"name", "endpoint", "bucket", "credentialsRef", "enabled", "region"},
                                      {"name", "endpoint", "bucket", "credentialsRef"})
         parsed = urlsplit(value["endpoint"]) if isinstance(value["endpoint"], str) else None
         if parsed is None or parsed.scheme != "https" or not parsed.hostname or parsed.username or parsed.password or \
@@ -1044,9 +1130,11 @@ class ClusterStore:
         name = value["name"]
         bucket = value["bucket"]
         credentials_ref = value["credentialsRef"]
+        region = value.get("region", "us-east-1")
         if not isinstance(name, str) or not name.strip() or len(name) > 64 or \
                 not isinstance(bucket, str) or not re.fullmatch(r"[a-z0-9][a-z0-9.-]{1,61}[a-z0-9]", bucket) or \
-                not isinstance(credentials_ref, str) or not SECRET_REF.fullmatch(credentials_ref):
+                not isinstance(credentials_ref, str) or not SECRET_REF.fullmatch(credentials_ref) or \
+                not isinstance(region, str) or not re.fullmatch(r"[a-z0-9][a-z0-9-]{0,31}", region):
             raise ApiError(400, "invalid_archive_target", "archive target fields are invalid")
         enabled = value.get("enabled", True)
         if not isinstance(enabled, bool):
@@ -1054,19 +1142,23 @@ class ClusterStore:
         target_id = secrets.token_hex(16)
         authority = f"{parsed.hostname}:{parsed.port}" if parsed.port else parsed.hostname
         with self.lock, self.db:
-            self.db.execute("INSERT INTO archive_targets VALUES(?,?,?,?,?,?,?)",
-                            (target_id, name.strip(), authority, bucket, credentials_ref, int(enabled), 1))
+            self.db.execute("""INSERT INTO archive_targets(
+                id,name,endpoint_authority,bucket,credentials_ref,enabled,revision,region)
+                VALUES(?,?,?,?,?,?,?,?)""",
+                            (target_id, name.strip(), authority, bucket, credentials_ref,
+                             int(enabled), 1, region))
             catalog_revision = self._bump()
         return {"id": target_id, "name": name.strip(), "endpointAuthority": authority,
                 "bucket": bucket, "credentialsRef": credentials_ref, "enabled": enabled,
-                "revision": 1, "catalogRevision": catalog_revision}
+                "region": region, "revision": 1, "catalogRevision": catalog_revision}
 
     def list_archive_targets(self) -> dict[str, Any]:
         rows = self.db.execute("SELECT * FROM archive_targets ORDER BY name LIMIT ?", (MAX_PAGE,)).fetchall()
         return {"targets": [{"id": row["id"], "name": row["name"],
-                              "endpointAuthority": row["endpoint_authority"], "bucket": row["bucket"],
-                              "credentialsRef": row["credentials_ref"], "enabled": bool(row["enabled"]),
-                              "revision": row["revision"]} for row in rows], "revision": self.revision()}
+                               "endpointAuthority": row["endpoint_authority"], "bucket": row["bucket"],
+                               "credentialsRef": row["credentials_ref"], "enabled": bool(row["enabled"]),
+                               "region": row["region"], "revision": row["revision"]} for row in rows],
+                "revision": self.revision()}
 
     def create_backup_job(self, value: Any) -> dict[str, Any]:
         value = require_exact_object(value, {"targetId"})
@@ -1184,7 +1276,8 @@ class ClusterStore:
                 raise ApiError(409, "provider_task_unsupported", "provider does not accept this task type")
             if segment_id and self.db.execute(
                     """SELECT 1 FROM segment_locations WHERE segment_id=? AND camera_id=? AND profile_id=?
-                       AND integrity='ok' LIMIT 1""", (segment_id, camera_id, profile_id)).fetchone() is None:
+                       AND integrity IN ('verified','ok') LIMIT 1""",
+                    (segment_id, camera_id, profile_id)).fetchone() is None:
                 raise ApiError(404, "provider_segment_not_found",
                                "the authorized recording segment was not found for this camera profile")
             active = self.db.execute("SELECT COUNT(*) FROM provider_grants WHERE provider_id=? AND expires_at>? AND used=0",
@@ -1374,6 +1467,12 @@ class Handler(http.server.BaseHTTPRequestHandler):
             self.response(200, STORE.recording_catalog(parse_qs(urlsplit(self.path).query)))
         elif path == "/recordings/timeline" and self.command == "GET":
             self.response(200, STORE.recording_timeline(parse_qs(urlsplit(self.path).query)))
+        elif path.startswith("/recordings/") and path.endswith("/playback-ticket") and self.command == "POST":
+            parts = path.split("/")
+            camera_ids = parse_qs(urlsplit(self.path).query).get("cameraId", [])
+            if len(parts) != 4 or len(camera_ids) != 1:
+                raise ApiError(400, "invalid_archive_ticket", "archive playback ticket is invalid")
+            self.response(201, STORE.archive_playback_ticket(parts[2], camera_ids[0]))
         elif path == "/archive-targets" and self.command == "GET":
             self.response(200, STORE.list_archive_targets())
         elif path == "/archive-targets" and self.command == "POST":

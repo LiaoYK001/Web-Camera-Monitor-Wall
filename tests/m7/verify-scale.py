@@ -7,29 +7,31 @@ import argparse
 import base64
 from datetime import datetime, timezone
 import json
+import hashlib
 import os
 import pathlib
 import sqlite3
 import subprocess
 import time
 import urllib.request
+import ssl
 
 
 ROOT = pathlib.Path(__file__).resolve().parents[1] / ".m7-cluster"
 REPOSITORY = pathlib.Path(__file__).resolve().parents[2]
 BASE = os.environ.get("WEBOBS_M7_CONTROL_URL", "http://127.0.0.1:18080")
 ORIGIN = "http://127.0.0.1:18080"
-CHECKS = ["assignmentsAccepted", "catalogIntegrity", "controllerThreeRecorders",
+CHECKS = ["archivedPlaybackVerified", "assignmentsAccepted", "catalogIntegrity", "controllerThreeRecorders",
           "recordingAllNodes", "resourceCapacityReported", "threeStorageVolumes"]
 
 
-def request(path: str) -> dict:
+def request(path: str, method: str = "GET") -> dict:
     auth = "Basic " + base64.b64encode(
         ((ROOT / "secrets/admin-user").read_text() + ":" +
          (ROOT / "secrets/admin-password").read_text()).encode()).decode()
-    call = urllib.request.Request(BASE + path, headers={
+    call = urllib.request.Request(BASE + path, data=b"" if method == "POST" else None, headers={
         "Authorization": auth, "Origin": ORIGIN, "Accept": "application/json",
-    })
+    }, method=method)
     with urllib.request.urlopen(call, timeout=10) as response:
         return json.load(response)
 
@@ -59,6 +61,25 @@ def catalog_measurements() -> list[dict[str, int]]:
                 raise SystemExit(f"{node} did not produce an uploaded, verifiable segment")
             time.sleep(2)
     return measurements
+
+
+def verify_archived_playback() -> None:
+    now_ms = int(time.time() * 1000)
+    timeline = request(f"/api/v2/recordings/timeline?from={now_ms - 86400000}&to={now_ms}")
+    segments = [segment for camera in timeline["cameras"] for segment in camera["segments"]
+                if segment["archiveState"] == "uploaded" and
+                segment["integrity"] in {"verified", "ok"}]
+    if not segments:
+        raise SystemExit("controller timeline did not expose an uploaded synthetic segment")
+    segment = segments[0]
+    ticket = request(
+        f"/api/v2/recordings/{segment['id']}/playback-ticket?cameraId={segment['cameraId']}", "POST")
+    context = ssl.create_default_context(cafile=str(ROOT / "secrets/cluster-ca.crt"))
+    call = urllib.request.Request(ticket["url"], headers={"Origin": ORIGIN}, method="GET")
+    with urllib.request.urlopen(call, context=context, timeout=30) as response:
+        payload = response.read(512 * 1024 * 1024 + 1)
+    if len(payload) != ticket["sizeBytes"] or hashlib.sha256(payload).hexdigest() != ticket["sha256"]:
+        raise SystemExit("presigned S3 playback did not pass size and SHA-256 verification")
 
 
 def atomic_receipt(camera_count: int, duration: int) -> pathlib.Path:
@@ -103,6 +124,7 @@ def main() -> None:
     measurements = catalog_measurements()
     if any(item["corrupt"] != 0 or item["uploaded"] <= 0 for item in measurements):
         raise SystemExit("catalog integrity or verified S3 archive state failed")
+    verify_archived_playback()
     if args.write_receipt:
         if args.duration_seconds < 900:
             raise SystemExit("scale receipts require a measured duration of at least 900 seconds")

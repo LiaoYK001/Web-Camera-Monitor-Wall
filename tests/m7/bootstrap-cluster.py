@@ -80,6 +80,12 @@ def main() -> None:
         time.sleep(2)
     else:
         raise SystemExit("recorders did not publish capacity and volumes before the bounded deadline")
+    request("POST", "/api/v2/archive-targets", {
+        "name": "M7 MinIO fixture", "endpoint": os.environ.get(
+            "WEBOBS_M7_ARCHIVE_PUBLIC_ENDPOINT", "https://127.0.0.1:19000"),
+        "bucket": "webobs-archive", "region": "us-east-1",
+        "credentialsRef": "minio-s3.json", "enabled": True,
+    })
     count = int(os.environ.get("WEBOBS_M7_CAMERA_COUNT", "8"))
     for camera in range(1, count + 1):
         node = ("recorder-a", "recorder-b", "recorder-c")[(camera - 1) % 3]

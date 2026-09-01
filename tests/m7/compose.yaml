@@ -42,6 +42,7 @@ services:
       WEBOBS_HTTP_PORT: "8080"
       WEBOBS_ALLOW_INSECURE_REMOTE: "true"
       WEBOBS_CONTROL_ALLOWED_ORIGINS: http://127.0.0.1:18080
+      WEBOBS_PWA_MEDIA_ALLOWED_ORIGINS: https://127.0.0.1:19000
       WEBOBS_WEBRTC_ENABLED: "false"
       WEBOBS_COMPOSITE_ENABLED: "false"
       WEBOBS_CLUSTER_LISTEN: "true"
@@ -140,11 +141,14 @@ services:
     environment:
       MINIO_ROOT_USER_FILE: /run/secrets/minio-user
       MINIO_ROOT_PASSWORD_FILE: /run/secrets/minio-password
+      MINIO_API_CORS_ALLOW_ORIGIN: http://127.0.0.1:18080
     volumes:
       - ../.m7-cluster/minio:/data
       - ../.m7-cluster/secrets/minio-user:/run/secrets/minio-user:ro
       - ../.m7-cluster/secrets/minio-password:/run/secrets/minio-password:ro
       - ../.m7-cluster/minio-certs:/root/.minio/certs:ro
+    ports:
+      - 127.0.0.1:19000:9000
     healthcheck:
       test: ["CMD", "curl", "--fail", "--silent", "--cacert", "/root/.minio/certs/CAs/cluster-ca.crt", "https://127.0.0.1:9000/minio/health/live"]
       interval: 3s

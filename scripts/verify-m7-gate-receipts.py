@@ -17,17 +17,20 @@ SPECS: dict[str, dict[str, Any]] = {
     "m7-scale-8": {
         "kind": "scale", "cameraCount": 8, "minimumDurationSeconds": 900,
         "checks": {"controllerThreeRecorders", "threeStorageVolumes", "assignmentsAccepted",
-                   "recordingAllNodes", "catalogIntegrity", "resourceCapacityReported"},
+                   "recordingAllNodes", "catalogIntegrity", "resourceCapacityReported",
+                   "archivedPlaybackVerified"},
     },
     "m7-scale-16": {
         "kind": "scale", "cameraCount": 16, "minimumDurationSeconds": 900,
         "checks": {"controllerThreeRecorders", "threeStorageVolumes", "assignmentsAccepted",
-                   "recordingAllNodes", "catalogIntegrity", "resourceCapacityReported"},
+                   "recordingAllNodes", "catalogIntegrity", "resourceCapacityReported",
+                   "archivedPlaybackVerified"},
     },
     "m7-scale-32": {
         "kind": "scale", "cameraCount": 32, "minimumDurationSeconds": 900,
         "checks": {"controllerThreeRecorders", "threeStorageVolumes", "assignmentsAccepted",
-                   "recordingAllNodes", "catalogIntegrity", "resourceCapacityReported"},
+                   "recordingAllNodes", "catalogIntegrity", "resourceCapacityReported",
+                   "archivedPlaybackVerified"},
     },
     "m7-faults": {
         "kind": "fault", "cameraCount": None, "minimumDurationSeconds": 0,

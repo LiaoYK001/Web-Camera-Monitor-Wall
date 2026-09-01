@@ -345,7 +345,7 @@ export interface ClusterRecordingTimeline {
 }
 export interface ArchiveTarget {
   id: string; name: string; endpointAuthority: string; bucket: string;
-  credentialsRef: string; enabled: boolean; revision: number;
+  credentialsRef: string; region: string; enabled: boolean; revision: number;
 }
 export interface BackupJob {
   id: string; state: string; targetId: string; sha256: string;

@@ -28,13 +28,25 @@ for node in recorder-a recorder-b recorder-c; do
 done
 
 if [ ! -s "$secrets/cluster-ca.key" ] || [ ! -s "$secrets/cluster-ca.crt" ]; then
-    openssl req -x509 -newkey ed25519 -nodes -days 3650 -subj '/CN=WebOBS M7 Fixture CA' \
-        -keyout "$secrets/cluster-ca.key" -out "$secrets/cluster-ca.crt" >/dev/null 2>&1
+    cat > "$root/ca.ext" <<'EOF'
+basicConstraints=critical,CA:TRUE
+keyUsage=critical,keyCertSign,cRLSign
+subjectKeyIdentifier=hash
+authorityKeyIdentifier=keyid:always
+EOF
+    openssl genpkey -algorithm ed25519 -out "$secrets/cluster-ca.key" >/dev/null 2>&1
+    openssl req -new -key "$secrets/cluster-ca.key" -subj '/CN=WebOBS M7 Fixture CA' \
+        -out "$root/ca.csr" >/dev/null 2>&1
+    openssl x509 -req -days 3650 -in "$root/ca.csr" -signkey "$secrets/cluster-ca.key" \
+        -extfile "$root/ca.ext" -out "$secrets/cluster-ca.crt" >/dev/null 2>&1
 fi
 cat > "$root/server.ext" <<'EOF'
 subjectAltName=DNS:controller,DNS:minio,DNS:mosquitto,IP:127.0.0.1
+basicConstraints=critical,CA:FALSE
 extendedKeyUsage=serverAuth
 keyUsage=digitalSignature,keyEncipherment
+subjectKeyIdentifier=hash
+authorityKeyIdentifier=keyid,issuer
 EOF
 openssl req -new -newkey rsa:2048 -nodes -subj '/CN=controller' \
     -keyout "$secrets/cluster-server.key" -out "$root/server.csr" >/dev/null 2>&1

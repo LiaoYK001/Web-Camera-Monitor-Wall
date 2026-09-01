@@ -54,6 +54,8 @@ Recorder Catalog 对账会同时提交 UTC 起止时间、时长、类型、编�
 
 S3 归档只允许 HTTPS authority、AWS Signature v4 和 `/run/secrets` 下的凭据引用。每节点最多两个上传，队列最多 4096 项，5 秒至 5 分钟退避。只有对象大小和 SHA-256 metadata 都验证成功后才标为 `uploaded`。本地文件不存在时可按需恢复到有界缓存；恢复过程中再次校验大小和摘要。任何校验失败都不会自动删除本地证据。
 
+Controller 可为已完成、已校验且 Camera scope 匹配的归档片段签发 60 秒 SigV4 只读票据。PWA 不保存该 URL，使用无凭据、无重定向、无缓存请求完整下载最多 512 MiB 的单片，并在本地重新校验长度和 SHA-256 后才播放。Archive Target 必须配置浏览器 Origin 的精确 GET CORS，且该 Origin 还必须进入 PWA CSP 白名单；长期 S3 Secret 始终只从 `/run/secrets` 读取。
+
 ## 资源、Provider 与灾备
 
 节点报告实际 runtime probe、CPU、内存、编解码槽位、磁盘和 Reservations。调度优先级为录像、Gateway/Composite、导出、Detector 预留；容量不足时显式拒绝，不静默切到 CPU。未校准节点为 `unrated`，使用保守容量。8/16/32 路结果只分别描述 stream-copy 资格，不能推断转码能力。

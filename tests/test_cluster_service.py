@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import hashlib
+import datetime as dt
 import importlib.machinery
 import importlib.util
 import json
@@ -66,8 +67,11 @@ def heartbeat(node_time: int, *, free: int = 800) -> dict:
 class ClusterTests(unittest.TestCase):
     def setUp(self) -> None:
         self.directory = tempfile.TemporaryDirectory()
-        self.store = cluster.ClusterStore(pathlib.Path(self.directory.name) / "cluster.sqlite3",
-                                          FakeHasher(), FakeSigner())
+        self.root = pathlib.Path(self.directory.name)
+        self.secrets = self.root / "secrets"
+        self.secrets.mkdir()
+        self.store = cluster.ClusterStore(self.root / "cluster.sqlite3",
+                                          FakeHasher(), FakeSigner(), self.secrets)
 
     def tearDown(self) -> None:
         self.store.close()
@@ -381,6 +385,37 @@ class ClusterTests(unittest.TestCase):
         self.assertEqual(segment["playbackState"], "archived")
         self.assertTrue(segment["locked"])
         self.assertNotIn("storageKey", str(timeline))
+
+    def test_archived_playback_ticket_is_short_lived_camera_bound_and_presigned(self) -> None:
+        (self.secrets / "archive-fixture.json").write_text(json.dumps({
+            "accessKeyId": "fixture-access", "secretAccessKey": "fixture-secret-value",
+        }), encoding="utf-8")
+        self.store.create_archive_target({
+            "name": "Archive fixture", "endpoint": "https://archive.example.test:9000",
+            "bucket": "webobs-archive", "region": "us-east-1",
+            "credentialsRef": "archive-fixture.json",
+        })
+        node_id, _, _ = self.enroll("Archive playback recorder")
+        self.store.heartbeat(node_id, heartbeat(1000), timestamp=1000)
+        self.store.assign("camera-1", "main", node_id, timestamp=1000)
+        segment_id = "e" * 32
+        self.store.accept_catalog(node_id, {"segments": [{
+            "segmentId": segment_id, "cameraId": "camera-1", "profileId": "main",
+            "volumeId": "hot-1", "storageKey": "camera-1/segment.mp4", "sizeBytes": 4096,
+            "sha256": "f" * 64, "generation": 1, "archiveState": "uploaded", "integrity": "ok",
+            "startUtcMs": 1_000_000, "endUtcMs": 1_010_000, "durationMs": 10_000,
+            "kind": "continuous", "videoCodec": "h264", "audioCodec": "aac", "locked": False,
+        }]})
+        timestamp = dt.datetime(2026, 1, 2, 3, 4, 5, tzinfo=dt.timezone.utc)
+        ticket = self.store.archive_playback_ticket(segment_id, "camera-1", timestamp)
+        self.assertEqual(ticket["expiresAt"], int(timestamp.timestamp()) + 60)
+        self.assertEqual(ticket["credentialExposure"], "ephemeral")
+        self.assertIn("X-Amz-Signature=", ticket["url"])
+        self.assertIn("X-Amz-Expires=60", ticket["url"])
+        self.assertNotIn("fixture-secret-value", str(ticket))
+        self.assertEqual(ticket["contentType"], "video/mp4")
+        with self.assertRaisesRegex(cluster.ApiError, "not found"):
+            self.store.archive_playback_ticket(segment_id, "camera-2", timestamp)
 
     def test_catalog_rejects_inconsistent_timeline_metadata(self) -> None:
         node_id, _, _ = self.enroll("Invalid timeline recorder")
