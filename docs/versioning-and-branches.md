@@ -16,7 +16,7 @@ Release series use `v<major>.<minor>`; implementation milestones use `v<major>-M
 | `v2.0` (`v2.0.1` final patch / 最终修复版) | `v2-M1` … `v2-M3` | Complete and published / 已完成并发布 |
 | `v2.1` | `v2-M4` … `v2-M5` | Complete and published / 已完成并发布 |
 | `v2.2` | `v2-M6` | Complete and published: operations workspace / 已完成并发布：运维工作区 |
-| `v2.3` | `v2-M7` | Active on `dev`: scale and resilience; not released / 正在 `dev` 开发：扩展与韧性；尚未发布 |
+| `v2.3` | `v2-M7` | Complete and published: scale, ecosystem and resilience / 已完成并发布：扩展、生态与韧性 |
 | `v3.0` | `v3-M1` | Motion and scene-change analytics / 运动与大范围画面变化分析 |
 | `v3.1` | `v3-M2` | Person boxes and analytics scheduling / 人物框与分析资源调度 |
 

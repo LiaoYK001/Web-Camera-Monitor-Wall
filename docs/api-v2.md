@@ -2,13 +2,13 @@
 
 > Stable status / 稳定状态：v2-M1 through v2-M3 shipped in `v2.0.1`; v2-M4/M5 ship in `v2.1`. Native package qualification remains frozen / v2-M1 至 v2-M3 已随 `v2.0.1` 发布；v2-M4/M5 随 `v2.1` 发布，原生包验收仍冻结。
 
-The v2-M6 operations contracts shipped in `v2.2`. `dev` now adds the v2-M7 RBAC, node, storage, placement, archive, backup and Provider contracts; they are not stable-release claims until the v2.3 gates and immutable Tag pass / v2-M6 运维契约已随 `v2.2` 发布；`dev` 当前增加 v2-M7 的 RBAC、节点、存储、分配、归档、备份与 Provider 契约，在 v2.3 门禁和不可移动 Tag 通过前不构成稳定版声明。
+The v2-M6 operations contracts shipped in `v2.2`. v2-M7 RBAC, node, storage, placement, archive, backup and Provider contracts are stable in `v2.3` / v2-M6 运维契约已随 `v2.2` 发布；v2-M7 的 RBAC、节点、存储、分配、归档、备份与 Provider 契约已随 `v2.3` 稳定发布。
 
 API v1 is unchanged: its `direct` value means Gateway Direct and Docker remains in the media path. API v2 adds device enrollment and a separately measured `true-direct` topology. All responses use bounded unique-field JSON, `Cache-Control: no-store` and credential-free errors.
 
 API v1 保持不变：其中 `direct` 仍表示 Docker 位于媒体链中的网关直通。API v2 增加设备配对，并把 `true-direct` 作为独立测量的拓扑。所有响应均为有界 JSON、禁止缓存，错误不包含凭据。
 
-## v2-M7 管理与集群接口（dev）
+## v2-M7 管理与集群接口（v2.3）
 
 `GET /api/v2/audit?limit=1..256&before=<id>` requires `audit.view` and returns only bounded RBAC records with stable IDs, event/result codes and timestamps. Login success is bound to the stable user ID; rejected and rate-limited attempts use `anonymous` and never retain the submitted username or client key. Authorization denial stores only the stable user ID and permission code. It never includes request bodies, passwords, endpoints, client addresses or raw exceptions. `nextBefore` is an opaque descending integer cursor for the next page / `GET /api/v2/audit?limit=1..256&before=<id>` 要求 `audit.view`，只返回有界的 RBAC 稳定 ID、事件/结果代码和时间戳。登录成功绑定稳定 User ID；被拒绝和限流的尝试统一使用 `anonymous`，不保留提交的用户名或客户端键；授权拒绝只保存稳定 User ID 和权限代码。记录不包含请求正文、密码、端点、客户端地址或原始异常；`nextBefore` 是下一页使用的降序整数游标。
 
