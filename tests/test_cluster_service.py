@@ -181,7 +181,7 @@ class ClusterTests(unittest.TestCase):
             self.store.update_user(second["id"], {"roles": ["viewer"]}, 99)
 
     def test_authentication_is_rate_limited_and_authorization_is_server_side(self) -> None:
-        self.create_user()
+        user = self.create_user()
         for attempt in range(5):
             self.assertIsNone(self.store.authenticate("operator-one", "wrong-password-value", "client-1",
                                                       timestamp=100 + attempt))
@@ -193,6 +193,25 @@ class ClusterTests(unittest.TestCase):
             self.store.authorize("operator-one", "live.view", "camera-2")
         with self.assertRaises(cluster.ApiError):
             self.store.authorize("operator-one", "recording.delete", "camera-1")
+        self.assertIsNotNone(self.store.authenticate(
+            "operator-one", "correct-horse-battery", "client-2", timestamp=200))
+        records = self.store.list_audit({"limit": ["32"]})["records"]
+        login_records = [record for record in records if record["event"] == "auth.login"]
+        self.assertEqual({record["result"] for record in login_records},
+                         {"rejected", "rate-limited", "succeeded"})
+        self.assertTrue(any(record["actorId"] == user["id"] and record["result"] == "succeeded"
+                            for record in login_records))
+        self.assertTrue(all(record["actorId"] in {"anonymous", user["id"]}
+                            and record["subjectId"] == "session" for record in login_records))
+        authorization_records = [record for record in records
+                                 if record["event"] == "auth.authorization"]
+        self.assertEqual(len(authorization_records), 2)
+        self.assertEqual({record["subjectId"] for record in authorization_records},
+                         {"live.view", "recording.delete"})
+        serialized = str(records).lower()
+        self.assertNotIn("operator-one", serialized)
+        self.assertNotIn("wrong-password", serialized)
+        self.assertNotIn("client-1", serialized)
 
     def test_one_time_enrollment_and_redacted_node_listing(self) -> None:
         node_id, enrollment_id, token = self.enroll()

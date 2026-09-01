@@ -423,29 +423,50 @@ class ClusterStore:
         if timestamp - started >= 60:
             started, failures = timestamp, 0
         if failures >= 5:
+            with self.lock, self.db:
+                self._audit("auth.login", "anonymous", "session", "rate-limited")
             raise ApiError(429, "authentication_rate_limited", "too many authentication failures")
         if not isinstance(username, str) or not isinstance(password, str) or len(password.encode("utf-8")) > 128:
             self.auth_failures[client_key] = (started, failures + 1)
+            with self.lock, self.db:
+                self._audit("auth.login", "anonymous", "session", "rejected")
             return None
-        with self.lock:
+        with self.lock, self.db:
             row = self.db.execute("SELECT * FROM users WHERE username=? AND enabled=1", (username,)).fetchone()
             if row is None or not self.hasher.verify(row["password_hash"], password):
                 self.auth_failures[client_key] = (started, failures + 1)
+                self._audit("auth.login", "anonymous", "session", "rejected")
                 return None
             self.auth_failures.pop(client_key, None)
-            return self.principal(row["id"])
+            principal = self.principal(row["id"])
+            self._audit("auth.login", principal.user_id, "session", "succeeded")
+            return principal
 
     def authorize(self, username: str, permission: str, camera_id: str = "", group_id: str = "") -> dict[str, Any]:
         if permission not in PERMISSIONS:
             raise ApiError(400, "invalid_permission", "permission is invalid")
-        with self.lock:
+        principal: Principal | None = None
+        rejection: ApiError | None = None
+        with self.lock, self.db:
             row = self.db.execute("SELECT id FROM users WHERE username=?", (username,)).fetchone()
             if row is None:
-                raise ApiError(404, "user_not_found", "user is not managed by RBAC")
-            principal = self.principal(row["id"])
-        resolved_group = group_id or self._camera_group(camera_id)
-        if not principal.permits(permission, camera_id, resolved_group):
-            raise ApiError(403, "permission_rejected", "permission or resource scope was rejected")
+                self._audit("auth.authorization", "anonymous", permission, "user-unknown")
+                rejection = ApiError(404, "user_not_found", "user is not managed by RBAC")
+            else:
+                try:
+                    principal = self.principal(row["id"])
+                except ApiError as error:
+                    self._audit("auth.authorization", row["id"], permission, "user-disabled")
+                    rejection = error
+                if principal is not None:
+                    resolved_group = group_id or self._camera_group(camera_id)
+                    if not principal.permits(permission, camera_id, resolved_group):
+                        self._audit("auth.authorization", principal.user_id, permission, "rejected")
+                        rejection = ApiError(403, "permission_rejected",
+                                             "permission or resource scope was rejected")
+        if rejection is not None:
+            raise rejection
+        assert principal is not None
         return {"allowed": True, "userId": principal.user_id, "permission": permission}
 
     def _camera_group(self, camera_id: str) -> str:

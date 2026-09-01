@@ -21,7 +21,7 @@
 
 ## 身份、RBAC 与节点注册
 
-身份库使用 SQLite WAL 和 libsodium Argon2id。内置角色为 `admin`、`operator`、`viewer`、`auditor`、`exporter`；REST、WebSocket、媒体、PTZ、对讲、录像和管理操作都由服务端按权限及 Camera/Group scope 再次校验。兼容 Secret-file 管理员可通过 `WEBOBS_COMPAT_BASIC_AUTH=false` 关闭，但只能在数据库管理员已经可登录后执行。
+身份库使用 SQLite WAL 和 libsodium Argon2id。内置角色为 `admin`、`operator`、`viewer`、`auditor`、`exporter`；REST、WebSocket、媒体、PTZ、对讲、录像和管理操作都由服务端按权限及 Camera/Group scope 再次校验。登录成功、登录拒绝/限流以及权限/范围拒绝进入有界审计：成功只记录稳定 User ID，失败统一使用 `anonymous`，不保存提交用户名、客户端键、地址、正文或端点。兼容 Secret-file 管理员可通过 `WEBOBS_COMPAT_BASIC_AUTH=false` 关闭，但只能在数据库管理员已经可登录后执行。
 
 节点注册流程：
 

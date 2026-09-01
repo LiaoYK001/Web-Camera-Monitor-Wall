@@ -10,7 +10,7 @@ API v1 保持不变：其中 `direct` 仍表示 Docker 位于媒体链中的网�
 
 ## v2-M7 管理与集群接口（dev）
 
-`GET /api/v2/audit?limit=1..256&before=<id>` requires `audit.view` and returns only bounded RBAC records with stable IDs, event/result codes and timestamps. It never includes request bodies, passwords, endpoints, client addresses or raw exceptions. `nextBefore` is an opaque descending integer cursor for the next page / `GET /api/v2/audit?limit=1..256&before=<id>` 要求 `audit.view`，只返回有界的 RBAC 稳定 ID、事件/结果代码和时间戳，不包含请求正文、密码、端点、客户端地址或原始异常；`nextBefore` 是下一页使用的降序整数游标。
+`GET /api/v2/audit?limit=1..256&before=<id>` requires `audit.view` and returns only bounded RBAC records with stable IDs, event/result codes and timestamps. Login success is bound to the stable user ID; rejected and rate-limited attempts use `anonymous` and never retain the submitted username or client key. Authorization denial stores only the stable user ID and permission code. It never includes request bodies, passwords, endpoints, client addresses or raw exceptions. `nextBefore` is an opaque descending integer cursor for the next page / `GET /api/v2/audit?limit=1..256&before=<id>` 要求 `audit.view`，只返回有界的 RBAC 稳定 ID、事件/结果代码和时间戳。登录成功绑定稳定 User ID；被拒绝和限流的尝试统一使用 `anonymous`，不保留提交的用户名或客户端键；授权拒绝只保存稳定 User ID 和权限代码。记录不包含请求正文、密码、端点、客户端地址或原始异常；`nextBefore` 是下一页使用的降序整数游标。
 
 下列公共接口继续位于既有 Session/RBAC/Origin 边界内。修改操作使用 `If-Match` revision；服务端不会把 Secret、节点私钥、主机路径或完整媒体端点返回给浏览器：
 
