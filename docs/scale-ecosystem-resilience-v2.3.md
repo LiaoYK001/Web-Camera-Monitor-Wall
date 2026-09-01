@@ -15,6 +15,10 @@
 
 `standalone` 仍为默认值。只有 `controller` 且显式设置 `WEBOBS_CLUSTER_LISTEN=true` 时才监听集群端口。集群端口必须只位于可信私网或自管 VPN；它使用 TLS 1.3 和节点 mTLS，不应暴露到互联网。
 
+首次用 v2-M7 镜像启动现有 `/config/webobs` 时，入口会在任何服务迁移 SQLite 前创建一次 SHA-256 校验的一致性快照。快照位于 `/config/webobs/.upgrade-backups/`，目录权限为 `0700`、文件权限为 `0600`；核心进程未能启动时，入口先停止所有子进程，再从已完整验真的快照回滚。容器在文件仍可能被子进程写入时不会冒险恢复，而会保留带认证路径约束的 pending 标记，并在下一次安全启动前完成回滚。成功启动会写入 v2-M7 完成标记，因此重启不会不断复制备份。
+
+升级快照是同一受保护配置卷内的本地明文恢复点，不能代替下面使用独立密钥的加密灾备。部署者应像保护 Registry 和 Scene 一样限制该卷的主机访问；升级确认稳定后可以按运维保留策略人工归档或删除旧快照，但程序不会自动删除这一最后恢复点。
+
 ## 身份、RBAC 与节点注册
 
 身份库使用 SQLite WAL 和 libsodium Argon2id。内置角色为 `admin`、`operator`、`viewer`、`auditor`、`exporter`；REST、WebSocket、媒体、PTZ、对讲、录像和管理操作都由服务端按权限及 Camera/Group scope 再次校验。兼容 Secret-file 管理员可通过 `WEBOBS_COMPAT_BASIC_AUTH=false` 关闭，但只能在数据库管理员已经可登录后执行。

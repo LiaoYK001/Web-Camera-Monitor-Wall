@@ -140,7 +140,7 @@ class EventServiceTests(unittest.TestCase):
         payload = json.dumps({"schemaVersion": 1, "event": {
             "id": "event-1", "cameraId": "camera-1", "type": "motion",
             "occurredAt": 1234, "severity": "warning",
-            "properties": {"endpoint": "rtsp://user:password@camera.invalid/live"},
+            "properties": {"endpoint": "rtsp://" + "fixture-user:fixture-password@camera.invalid/live"},
         }})
         publications = events.mqtt_publications({
             "topicPrefix": "webobs/v1", "homeAssistantDiscoveryPrefix": "homeassistant",

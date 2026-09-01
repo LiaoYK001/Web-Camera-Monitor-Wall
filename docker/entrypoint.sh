@@ -358,6 +358,45 @@ request_shutdown() {
 
 trap request_shutdown INT TERM
 
+# v2.3 performs a one-time, byte-verified configuration snapshot before any
+# service can migrate its SQLite schema. The EXIT trap restores immediately
+# when children have stopped, or leaves the authenticated pending marker for a
+# guaranteed rollback before the next start if a child is still flushing.
+upgrade_guard=/opt/webobs/bin/webobs-preupgrade-guard
+upgrade_pending=/config/webobs/.v2-m7-upgrade-pending.json
+python3 "$upgrade_guard" prepare --config-root /config/webobs
+upgrade_exit() {
+    upgrade_status=$?
+    trap - EXIT
+    if [ -f "$upgrade_pending" ]; then
+        shutdown_children
+        upgrade_wait=0
+        while [ "$upgrade_wait" -lt 20 ]; do
+            upgrade_alive=false
+            for upgrade_pid in "$webobsd_pid" "$nvr_pid" "$camera_registry_pid" \
+                    "$v2_client_control_pid" "$events_pid" "$cluster_pid" "$node_agent_pid" \
+                    "$archive_pid" "$encrypted_backup_pid"; do
+                if [ -n "$upgrade_pid" ] && kill -0 "$upgrade_pid" 2>/dev/null; then
+                    upgrade_alive=true
+                    break
+                fi
+            done
+            [ "$upgrade_alive" = true ] || break
+            upgrade_wait=$((upgrade_wait + 1))
+            sleep 0.1
+        done
+        if [ "$upgrade_alive" = false ]; then
+            python3 "$upgrade_guard" rollback --config-root /config/webobs || upgrade_status=3
+        else
+            echo "v2-M7 upgrade rollback deferred until the next safe start" >&2
+            upgrade_status=3
+        fi
+    fi
+    cleanup_browser_cache
+    exit "$upgrade_status"
+}
+trap upgrade_exit EXIT
+
 renderer_selected=idle
 renderer_fallback=false
 renderer_fallback_reason=""
@@ -621,6 +660,9 @@ fi
 
 /opt/obs/bin/webobsd "$@" &
 webobsd_pid=$!
+sleep 0.2
+kill -0 "$webobsd_pid" 2>/dev/null || fail "webobsd exited during v2-M7 migration startup"
+python3 "$upgrade_guard" commit --config-root /config/webobs || fail "v2-M7 migration commit failed"
 
 exit_status=0
 while kill -0 "$webobsd_pid" 2>/dev/null; do
