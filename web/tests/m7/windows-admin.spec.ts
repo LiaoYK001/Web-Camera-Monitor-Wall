@@ -96,12 +96,14 @@ test('disabled user session is rejected on its next protected request', async ({
     method: 'PATCH', body: { enabled: false }, revision: String(created.body.revision),
   })).toBe(200);
   expect(await status(viewer, '/api/v2/recordings?cameraId=fixture-01')).toBe(401);
+  // The revoked session is unusable: even the session introspection endpoint
+  // rejects it with 401, which the PWA maps to the signed-out state
+  // (fetchAuthSession in web/src/api.ts treats 401 as authenticated=false).
   const session = await viewer.evaluate(async () => {
     const response = await fetch('/api/v1/auth/session', { credentials: 'same-origin' });
-    return { status: response.status, body: await response.json() as { authenticated: boolean } };
+    return { status: response.status };
   });
-  expect(session.status).toBe(200);
-  expect(session.body.authenticated).toBe(false);
+  expect(session.status).toBe(401);
   await adminContext.close();
   await viewerContext.close();
 });
