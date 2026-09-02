@@ -4,7 +4,9 @@ const chromiumExecutable = process.env.WEBOBS_PLAYWRIGHT_CHROMIUM_EXECUTABLE;
 
 export default defineConfig({
   testDir: './tests',
-  testIgnore: ['local-runtime/**'],
+  // The v2-M7 administration suite runs only under playwright.m7.config.ts
+  // (it requires the ephemeral cluster credentials of the private gate).
+  testIgnore: ['local-runtime/**', 'tests/m7/**'],
   timeout: 30_000,
   expect: { timeout: 8_000 },
   forbidOnly: Boolean(process.env.CI),
