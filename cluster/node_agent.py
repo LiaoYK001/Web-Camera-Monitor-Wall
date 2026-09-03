@@ -357,6 +357,7 @@ def run_detector_job(client: ControllerClient, node_id: str, job: dict[str, Any]
         raise AgentError("detector job is invalid")
     result_code = ""
     signals: list[dict[str, Any]] = []
+    result: dict[str, Any] = {}
     try:
         grant = job.get("mediaGrant")
         if not isinstance(grant, dict) or grant.get("method") != "GET" or \
@@ -375,7 +376,8 @@ def run_detector_job(client: ControllerClient, node_id: str, job: dict[str, Any]
         result = runner.process(job, rgba, width, height, occurred_at=captured_at)
         boxes = result.get("boxes", [])
         if boxes:
-            signals = [{"kind": "person", "confidence": max(float(box["confidence"]) for box in boxes),
+            signals = [{"signalId": result.get("signalId", f"worker-{job_id}-{captured_at}"),
+                        "kind": "person", "confidence": max(float(box["confidence"]) for box in boxes),
                         "boxes": [{key: box[key] for key in ("x", "y", "width", "height")} for box in boxes],
                         "occurredAt": captured_at}]
     except Exception as error:
@@ -385,6 +387,8 @@ def run_detector_job(client: ControllerClient, node_id: str, job: dict[str, Any]
     status, _ = client.request("POST", "/internal/v1/analytics/jobs/result", {
         "jobId": job_id, "generation": generation,
         "state": "failed" if result_code else "completed", "resultCode": result_code,
+        "modelId": result.get("modelId", "") if result_code == "" else "",
+        "modelVersion": result.get("modelVersion", "") if result_code == "" else "",
         "modelSha256": model_sha, "signals": signals,
     }, node_id=node_id)
     if status != 200:

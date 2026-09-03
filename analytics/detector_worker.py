@@ -177,8 +177,11 @@ def result_metadata(boxes: list[dict[str, float]], *, job_id: str, camera_id: st
                 values["x"] + values["width"] > 1 or values["y"] + values["height"] > 1:
             raise DetectorError("result_invalid")
         safe.append(values)
+    signal_id = f"worker-{job_id}-{int(occurred_at)}"
+    if not re.fullmatch(r"[A-Za-z0-9._:-]{8,128}", signal_id):
+        raise DetectorError("identity_invalid")
     return {"jobId": job_id, "cameraId": camera_id, "profileId": profile_id, "kind": "person",
-            "occurredAt": int(occurred_at), "boxes": safe, "modelId": MODEL_ID,
+            "signalId": signal_id, "occurredAt": int(occurred_at), "boxes": safe, "modelId": MODEL_ID,
             "modelVersion": MODEL_VERSION, "modelSha256": model_sha256}
 
 

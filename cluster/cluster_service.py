@@ -27,6 +27,7 @@ import subprocess
 import tempfile
 import threading
 import time
+import urllib.request
 from dataclasses import dataclass
 from typing import Any, Callable
 from urllib.parse import parse_qs, quote, urlencode, urlsplit
@@ -1220,24 +1221,32 @@ class ClusterStore:
         return {"jobId": job_id, "generation": generation, "leaseExpiresAt": lease, "renewAfterSeconds": LEASE_RENEW_SECONDS}
 
     def report_analytics_job_result(self, node_id: str, value: Any, timestamp: int | None = None) -> dict[str, Any]:
-        value = require_exact_object(value, {"jobId", "generation", "state", "resultCode", "signals", "modelSha256"},
+        value = require_exact_object(value, {"jobId", "generation", "state", "resultCode", "signals", "modelId", "modelVersion", "modelSha256"},
                                      {"jobId", "generation", "state", "resultCode"})
         job_id = require_identifier(value["jobId"], "job_id")
         generation = value["generation"]
         state = value["state"]
         result_code = value.get("resultCode", "")
         signals = value.get("signals", [])
+        model_id = value.get("modelId", "")
+        model_version = value.get("modelVersion", "")
         model_sha = value.get("modelSha256", "")
         timestamp = timestamp or now_seconds()
         if not isinstance(generation, int) or isinstance(generation, bool) or generation < 1 or state not in {"completed", "failed"} or \
                 not isinstance(result_code, str) or len(result_code) > 64 or not re.fullmatch(r"[A-Za-z0-9._-]*", result_code) or \
                 not isinstance(signals, list) or len(signals) > 32 or \
-                (model_sha and (not isinstance(model_sha, str) or not re.fullmatch(r"[0-9a-f]{64}", model_sha))):
+                (model_id and (not isinstance(model_id, str) or not re.fullmatch(r"[A-Za-z0-9._-]{1,64}", model_id) or model_id != ANALYTICS_MODEL_ID)) or \
+                (model_version and (not isinstance(model_version, str) or not re.fullmatch(r"[A-Za-z0-9._-]{1,64}", model_version) or model_version != ANALYTICS_MODEL_VERSION)) or \
+                (model_sha and (not isinstance(model_sha, str) or not re.fullmatch(r"[0-9a-f]{64}", model_sha))) or \
+                (state == "failed" and signals):
             raise ApiError(400, "invalid_analytics_result", "analytics job result is invalid")
         safe_signals = []
         for signal in signals:
             if not isinstance(signal, dict) or signal.get("kind") != "person":
                 raise ApiError(400, "invalid_analytics_result", "only person signals are accepted")
+            signal_id = signal.get("signalId", "")
+            if signal_id and (not isinstance(signal_id, str) or not re.fullmatch(r"[A-Za-z0-9._:-]{8,128}", signal_id)):
+                raise ApiError(400, "invalid_analytics_result", "analytics signal id is invalid")
             confidence = signal.get("confidence")
             boxes = signal.get("boxes", [])
             if isinstance(confidence, bool) or not isinstance(confidence, (int, float)) or not 0 <= confidence <= 1 or \
@@ -1256,20 +1265,60 @@ class ClusterStore:
             if isinstance(occurred_at, bool) or not isinstance(occurred_at, int) or \
                     abs(timestamp * 1000 - occurred_at) > 300_000:
                 raise ApiError(400, "invalid_analytics_result", "analytics signal timestamp is invalid")
-            safe_signals.append({"kind": "person", "confidence": float(confidence), "boxes": safe_boxes,
-                                 "occurredAt": occurred_at})
+            # Agents before v3-M2 did not include a signal id.  Keep the wire
+            # contract backwards compatible while deriving a deterministic,
+            # job-bound id for event deduplication.
+            safe_signal_id = signal_id or f"worker-{job_id}-{occurred_at}"
+            safe_signals.append({"signalId": safe_signal_id, "kind": "person", "confidence": float(confidence),
+                                 "boxes": safe_boxes, "occurredAt": occurred_at})
         with self.lock, self.db:
             row = self.db.execute("SELECT * FROM analytics_jobs WHERE id=?", (job_id,)).fetchone()
             if row is None or row["node_id"] != node_id or row["generation"] != generation or row["state"] != "running" or row["lease_expires_at"] < timestamp:
                 raise ApiError(409, "stale_analytics_job", "analytics job lease is stale")
-            if signals and (not model_sha or model_sha != row["model_sha256"]):
+            if signals and (model_id not in {"", ANALYTICS_MODEL_ID} or
+                            model_version not in {"", ANALYTICS_MODEL_VERSION} or
+                            not model_sha or model_sha != row["model_sha256"] or
+                            row["model_id"] != ANALYTICS_MODEL_ID):
                 raise ApiError(400, "invalid_analytics_result", "analytics model digest does not match the job")
             self.db.execute("UPDATE analytics_jobs SET state=?,lease_expires_at=0,result_json=?,last_result_at=?,last_error_code=?,revision=revision+1 WHERE id=?",
-                            (state, canonical_json({"signals": safe_signals}), timestamp, result_code if state == "failed" else "", job_id))
+                            (state, canonical_json({"modelId": row["model_id"],
+                             "modelVersion": ANALYTICS_MODEL_VERSION,
+                             "modelSha256": row["model_sha256"], "signals": safe_signals}),
+                             timestamp, result_code if state == "failed" else "", job_id))
             self.db.execute("UPDATE analytics_media_grants SET revoked=1 WHERE job_id=?", (job_id,))
             revision = self._bump()
             self._audit("analytics.job.result", node_id, job_id, state)
+        # Analytics must not block recording or gateway media if the optional
+        # event service is restarting.  The bounded job result remains durable.
+        if state == "completed" and safe_signals:
+            self._forward_detector_events(row["camera_id"], row["profile_id"], job_id,
+                                          safe_signals, row["model_id"], ANALYTICS_MODEL_VERSION,
+                                          row["model_sha256"])
         return {"jobId": job_id, "state": state, "resultCode": result_code, "acceptedSignals": len(safe_signals), "revision": revision}
+
+    @staticmethod
+    def _forward_detector_events(camera_id: str, profile_id: str, job_id: str,
+                                 signals: list[dict[str, Any]], model_id: str,
+                                 model_version: str, model_sha256: str) -> None:
+        """Forward only bounded, server-authored person metadata to events."""
+        for signal in signals[:32]:
+            body = canonical_json({
+                "cameraId": camera_id, "type": "object", "source": "detector-v1",
+                "occurredAt": signal["occurredAt"], "confidence": signal["confidence"],
+                "label": "person", "dedupeKey": f"analytics:{job_id}:{signal['signalId']}",
+                "properties": {"analytics": {"schemaVersion": 2, "signalId": signal["signalId"],
+                    "boxes": signal["boxes"], "runtime": "worker", "cameraId": camera_id,
+                    "profileId": profile_id, "modelId": model_id,
+                    "modelVersion": model_version, "modelSha256": model_sha256}},
+            }).encode("utf-8")
+            try:
+                request = urllib.request.Request(
+                    "http://127.0.0.1:8093/events", data=body,
+                    headers={"Content-Type": "application/json"}, method="POST")
+                with urllib.request.urlopen(request, timeout=1) as response:
+                    response.read(64 * 1024)
+            except (OSError, ValueError):
+                continue
 
     def assignments_for(self, node_id: str) -> dict[str, Any]:
         require_identifier(node_id, "node_id")
