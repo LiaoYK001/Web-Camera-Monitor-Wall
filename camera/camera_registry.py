@@ -72,7 +72,8 @@ ANALYTICS_SESSION_LOCK = threading.Lock()
 ANALYTICS_PERSON_MODEL_ID = "ssd-mobilenet-v1-12-person"
 ANALYTICS_PERSON_MODEL_VERSION = "onnx-model-zoo-4c46cd00"
 ANALYTICS_PERSON_MODEL_SHA256 = "b8fba5e404077d4048d27fcd1667e85e27e192eb9bf51e696c46a3acd7d21058"
-ANALYTICS_SESSIONS: dict[str, tuple[int, str, str]] = {}
+ANALYTICS_SESSIONS: dict[str, tuple[int, str, str, str]] = {}
+ANALYTICS_PRINCIPAL_RE = re.compile(r"^[A-Za-z0-9._-]{1,64}$")
 # Bounded replay/rate state for browser analytics sessions.  Values contain no
 # frames or endpoint data and are discarded when a session expires/closes.
 ANALYTICS_SIGNAL_SEEN: dict[str, set[str]] = {}
@@ -761,7 +762,22 @@ def analytics_v3_policies(payload: dict, expected_revision: int | None = None) -
     return {"schemaVersion": 2, "revision": analytics_revision(), "policies": policies}
 
 
-def analytics_runtime_plan(payload: dict) -> dict:
+def _analytics_principal(value: object) -> str:
+    """Validate the control-plane principal propagated by webobsd.
+
+    The loopback Registry is not internet-facing, but accepting an unbounded
+    value here would still make it possible to persist or log identity data by
+    accident.  An absent principal is retained for direct unit/test callers;
+    authenticated requests through webobsd always provide one.
+    """
+    if value in (None, ""):
+        return ""
+    if not isinstance(value, str) or not ANALYTICS_PRINCIPAL_RE.fullmatch(value):
+        raise PermissionError("analytics principal is invalid")
+    return value
+
+
+def analytics_runtime_plan(payload: dict, principal: str = "") -> dict:
     if not isinstance(payload, dict): raise ValueError("runtime plan must be an object")
     camera_id, profile_id = payload.get("cameraId", ""), payload.get("profileId", "")
     if not isinstance(camera_id, str) or not ID_RE.fullmatch(camera_id) or not isinstance(profile_id, str) or not ID_RE.fullmatch(profile_id):
@@ -773,6 +789,7 @@ def analytics_runtime_plan(payload: dict) -> dict:
     # advisory input, while camera/native adapter capabilities must come from
     # the server-owned registry record.  Never let a client assert
     # ``onvifMotion`` (or any equivalent native capability) in the request.
+    principal = _analytics_principal(principal)
     capabilities = payload.get("capabilities", {}) if isinstance(payload.get("capabilities", {}), dict) else {}
     webgpu = capabilities.get("webgpu") is True; wasm = capabilities.get("wasm") is not False
     with connect() as database:
@@ -829,7 +846,7 @@ def analytics_runtime_plan(payload: dict) -> dict:
 
     expires = int(time.time()) + 600; session_id = secrets.token_urlsafe(32)
     with ANALYTICS_SESSION_LOCK:
-        ANALYTICS_SESSIONS[session_id] = (expires, camera_id, profile_id)
+        ANALYTICS_SESSIONS[session_id] = (expires, camera_id, profile_id, principal)
         ANALYTICS_SIGNAL_SEEN[session_id] = set()
         ANALYTICS_SIGNAL_RATE[session_id] = (int(time.time() // 60), 0)
     result = []
@@ -875,20 +892,37 @@ def analytics_runtime_plan(payload: dict) -> dict:
     return {"contractVersion": 2, "sessionId": session_id, "expiresAt": expires, "plans": [item for item in result if item["kind"] in kinds]}
 
 
-def close_analytics_session(session_id: str) -> bool:
+def close_analytics_session(session_id: str, principal: str = "", camera_id: str = "", profile_id: str = "") -> bool:
+    principal = _analytics_principal(principal)
     with ANALYTICS_SESSION_LOCK:
-        closed = ANALYTICS_SESSIONS.pop(session_id, None) is not None
+        session = ANALYTICS_SESSIONS.get(session_id)
+        if session is None:
+            closed = False
+        else:
+            if session[3] and session[3] != principal:
+                raise PermissionError("analytics runtime session owner mismatch")
+            if ((camera_id and camera_id != session[1]) or
+                    (profile_id and profile_id != session[2])):
+                raise PermissionError("analytics runtime session scope mismatch")
+            ANALYTICS_SESSIONS.pop(session_id, None)
+            closed = True
         ANALYTICS_SIGNAL_SEEN.pop(session_id, None)
         ANALYTICS_SIGNAL_RATE.pop(session_id, None)
         return closed
 
 
-def ingest_analytics_signals(payload: dict, session_id: str) -> dict:
+def ingest_analytics_signals(payload: dict, session_id: str, principal: str = "") -> dict:
+    principal = _analytics_principal(principal)
     with ANALYTICS_SESSION_LOCK:
         session = ANALYTICS_SESSIONS.get(session_id)
     if not session or session[0] <= int(time.time()):
-        close_analytics_session(session_id)
+        # Expiry cleanup is an internal operation and must not depend on the
+        # caller still presenting the original principal.
+        if session:
+            close_analytics_session(session_id, session[3])
         raise PermissionError("analytics runtime session is expired")
+    if session[3] and session[3] != principal:
+        raise PermissionError("analytics runtime session owner mismatch")
     values = payload.get("signals") if isinstance(payload, dict) else None
     if not isinstance(values, list) or not values or len(values) > 32:
         raise ValueError("signals must contain 1 to 32 items")
@@ -2759,11 +2793,14 @@ class Handler(BaseHTTPRequestHandler):
             if self.path == "/cameras":
                 self.respond(201, save_camera(validate_camera(self.payload()), False)); return
             if self.path == "/analytics/runtime-plans":
-                self.respond(200, analytics_runtime_plan(self.payload())); return
+                self.respond(200, analytics_runtime_plan(
+                    self.payload(), self.headers.get("X-WebObs-Analytics-Principal", ""))); return
             if self.path == "/analytics/signals/batch":
                 session_id = self.headers.get("X-WebObs-Analytics-Session", "")
                 if not re.fullmatch(r"[A-Za-z0-9_-]{32,128}", session_id): raise PermissionError("analytics runtime session is missing")
-                self.respond(202, ingest_analytics_signals(self.payload(), session_id)); return
+                self.respond(202, ingest_analytics_signals(
+                    self.payload(), session_id,
+                    self.headers.get("X-WebObs-Analytics-Principal", ""))); return
             session_match = re.fullmatch(r"/analytics/runtime-sessions/([A-Za-z0-9_-]{32,128})", self.path)
             if session_match:
                 self.respond(200, {"closed": close_analytics_session(session_match.group(1))}); return
@@ -2902,7 +2939,21 @@ class Handler(BaseHTTPRequestHandler):
     def do_DELETE(self) -> None:
         session_match = re.fullmatch(r"/analytics/runtime-sessions/([A-Za-z0-9_-]{32,128})", self.path)
         if session_match:
-            self.respond(200, {"closed": close_analytics_session(session_match.group(1))}); return
+            try:
+                body = self.payload() if int(self.headers.get("Content-Length", "0")) else {}
+                camera_id = body.get("cameraId", "")
+                profile_id = body.get("profileId", "")
+                if camera_id and (not isinstance(camera_id, str) or not ID_RE.fullmatch(camera_id)):
+                    raise ValueError("cameraId is invalid")
+                if profile_id and (not isinstance(profile_id, str) or not ID_RE.fullmatch(profile_id)):
+                    raise ValueError("profileId is invalid")
+                self.respond(200, {"closed": close_analytics_session(
+                    session_match.group(1), self.headers.get("X-WebObs-Analytics-Principal", ""),
+                    camera_id, profile_id)}); return
+            except PermissionError as error:
+                self.respond(403, {"error": str(error)}); return
+            except (ValueError, TypeError, json.JSONDecodeError) as error:
+                self.respond(400, {"error": str(error)}); return
         if not self.path.startswith("/cameras/"):
             self.respond(404, {"error": "not_found"}); return
         camera_id = self.path.removeprefix("/cameras/")

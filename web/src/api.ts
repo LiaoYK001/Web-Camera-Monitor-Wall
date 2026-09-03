@@ -252,7 +252,10 @@ export const fetchAnalyticsStatus = (signal?: AbortSignal) => analyticsRequest<{
 export const submitAnalyticsSignals = (sessionId: string, signals: Array<Record<string, unknown>>) => analyticsRequest<{ accepted: number; events: MonitorEvent[] }>('/analytics/signals/batch', {
   method: 'POST', headers: { 'Content-Type': 'application/json', 'X-WebObs-Analytics-Session': sessionId }, body: JSON.stringify({ signals }),
 });
-export const closeAnalyticsRuntimeSession = (sessionId: string) => analyticsRequest<{ closed: boolean }>(`/analytics/runtime-sessions/${encodeURIComponent(sessionId)}`, { method: 'DELETE' });
+export const closeAnalyticsRuntimeSession = (sessionId: string, cameraId?: string, profileId?: string) => analyticsRequest<{ closed: boolean }>(`/analytics/runtime-sessions/${encodeURIComponent(sessionId)}`, {
+  method: 'DELETE',
+  ...(cameraId && profileId ? { headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ cameraId, profileId }) } : {}),
+});
 export const fetchAnalyticsJobs = () => clientAdminRequest<{ jobs: AnalyticsJob[]; revision: number }>('/analytics-jobs');
 export const createAnalyticsJob = (value: { cameraId: string; profileId: string; modelId: string; modelSha256: string; nodeId?: string }) => clientAdminRequest<AnalyticsJob>('/analytics-jobs', {
   method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ kind: 'person', ...value }),

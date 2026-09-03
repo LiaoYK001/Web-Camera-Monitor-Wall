@@ -293,7 +293,7 @@ function BrowserCameraTile({ item, source, mixer, telemetry, lowPower, documentV
     void requestAnalyticsRuntimePlan(source.cameraId, source.profileId, requestedKinds,
       { webgpu: Boolean((navigator as Navigator & { gpu?: unknown }).gpu), wasm: true })
       .then((value) => {
-        if (stopped) { void closeAnalyticsRuntimeSession(value.sessionId).catch(() => undefined); return; }
+        if (stopped) { void closeAnalyticsRuntimeSession(value.sessionId, source.cameraId, source.profileId).catch(() => undefined); return; }
         analyticsSession.current = value.sessionId;
         const browserKinds = new Set(value.plans.filter((plan) => plan.execution === 'browser-wasm' || plan.execution === 'browser-webgpu').map((plan) => plan.kind));
         const nativeOnly = value.plans.filter((plan) => requestedKinds.includes(plan.kind) && plan.execution === 'native').map((plan) => plan.kind);
@@ -343,7 +343,7 @@ function BrowserCameraTile({ item, source, mixer, telemetry, lowPower, documentV
         runtime.start();
       })
       .catch(() => { if (!stopped) setAnalyticsStatus({ state: 'error', reason: 'runtime_plan_unavailable', sampleFps: 0, lastSignalAt: 0 }); });
-    return () => { stopped = true; runtime?.stop(); const session = analyticsSession.current; analyticsSession.current = null; if (session) void closeAnalyticsRuntimeSession(session).catch(() => undefined); };
+    return () => { stopped = true; runtime?.stop(); const session = analyticsSession.current; analyticsSession.current = null; if (session) void closeAnalyticsRuntimeSession(session, source.cameraId, source.profileId).catch(() => undefined); };
   }, [analyticsPolicy, analyticsZones, documentVisible, lowPower, source.cameraId, source.profileId, state, tileIntersecting, transport]);
 
   const geometry = useMemo(() => videoGeometry(item, dimensions.width, dimensions.height), [item, dimensions]);

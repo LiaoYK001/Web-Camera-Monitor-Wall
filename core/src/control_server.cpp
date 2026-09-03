@@ -1762,6 +1762,27 @@ public:
                 const std::string header = "X-WebObs-Analytics-Session: " + std::string(*analytics_session);
                 headers = curl_slist_append(headers, header.c_str());
             }
+            // The browser session principal is attached by HttpSession after
+            // authentication.  Forward only a bounded, validated value to
+            // the loopback Registry so runtime sessions are user-bound; an
+            // arbitrary client header is never trusted as an identity.
+            std::optional<std::string_view> analytics_principal;
+            std::size_t principal_count = 0;
+            for (const auto &field : request.base()) {
+                if (field.name_string() == "X-WebObs-Analytics-Principal") {
+                    ++principal_count;
+                    analytics_principal = view(field.value());
+                }
+            }
+            if (principal_count == 1 && analytics_principal &&
+                analytics_principal->size() <= 64 &&
+                !analytics_principal->empty() &&
+                std::all_of(analytics_principal->begin(), analytics_principal->end(), [](unsigned char character) {
+                    return std::isalnum(character) || character == '.' || character == '_' || character == '-';
+                })) {
+                const std::string header = "X-WebObs-Analytics-Principal: " + std::string(*analytics_principal);
+                headers = curl_slist_append(headers, header.c_str());
+            }
         }
         if (provider_grant_service) {
             std::optional<std::string_view> authorization;
@@ -3303,6 +3324,17 @@ private:
                               error_body("authorization_unavailable", "RBAC authorization is unavailable")));
                 return;
             }
+        }
+        if (target.starts_with("/api/v3/analytics")) {
+            // Bind every analytics runtime request to the already-authenticated
+            // browser principal.  This header is internal-only and is added
+            // after auth, replacing any user-supplied value before the proxy
+            // forwards the request to the loopback Registry.
+            const std::string principal = session_record ? session_record->user :
+                basic_authenticated ? std::string(authenticator_.configured_username()) : std::string{};
+            request.erase("X-WebObs-Analytics-Principal");
+            if (!principal.empty())
+                request.set("X-WebObs-Analytics-Principal", principal);
         }
         if (websocket::is_upgrade(request)) {
             if (request.method() != http::verb::get || view(request.target()) != "/api/v1/ws" ||

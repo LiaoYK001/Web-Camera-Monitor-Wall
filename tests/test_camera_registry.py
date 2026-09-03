@@ -612,6 +612,27 @@ class CameraRegistryTests(unittest.TestCase):
         self.assertEqual(browser["plans"][0]["execution"], "browser-wasm")
         registry.close_analytics_session(browser["sessionId"])
 
+    def test_v3_runtime_session_is_bound_to_authenticated_principal(self) -> None:
+        camera = registry.validate_camera({
+            "id": "v3-session-owner", "name": "Session owner", "address": "rtsp://camera.example.invalid/live",
+            "adapter": "rtsp", "credentialsRef": "", "profiles": [{"id": "main", "name": "Main", "role": "main",
+                "endpoint": "rtsp://camera.example.invalid/main", "videoCodec": "h264", "audioCodec": "",
+                "width": 640, "height": 360, "fps": 15}],
+        })
+        registry.save_camera(camera, False)
+        registry.save_analytics_policies({"policies": [{"cameraId": "v3-session-owner", "profileId": "main",
+            "motionEnabled": True, "sceneChangeEnabled": False, "personEnabled": False,
+            "allowEventPromotion": False, "forceAnalyticsAlwaysOn": False}]})
+        plan = registry.analytics_runtime_plan({"cameraId": "v3-session-owner", "profileId": "main",
+                                                "capabilities": {"wasm": True}}, "operator-one")
+        with self.assertRaisesRegex(PermissionError, "owner"):
+            registry.ingest_analytics_signals({"signals": [{"signalId": "owner-test", "cameraId": "v3-session-owner",
+                "profileId": "main", "kind": "motion", "occurredAt": int(time.time() * 1000), "confidence": .5}]},
+                plan["sessionId"], "operator-two")
+        with self.assertRaisesRegex(PermissionError, "owner"):
+            registry.close_analytics_session(plan["sessionId"], "operator-two", "v3-session-owner", "main")
+        self.assertTrue(registry.close_analytics_session(plan["sessionId"], "operator-one", "v3-session-owner", "main"))
+
     def test_v3_person_worker_preference_is_explicit_and_fallback_is_separate(self) -> None:
         camera = registry.validate_camera({
             "id": "v3-worker-plan", "name": "Worker plan", "address": "rtsp://camera.example.invalid/live",
