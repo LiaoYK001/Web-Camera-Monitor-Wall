@@ -529,6 +529,40 @@ class ClusterStore:
             if connection is not None:
                 connection.close()
 
+    def _analytics_worker_authorized(self, camera_id: str, profile_id: str) -> bool:
+        """Return whether this Camera/Profile explicitly permits server inference.
+
+        Detector jobs are a media-chain expansion and therefore must never be
+        created merely because a caller has ``analytics.run`` or because the
+        approved model is available.  The authoritative Registry policy must
+        opt the stream into person analytics and either select the worker
+        execution preference or explicitly permit a server fallback.  Missing
+        tables, rows, or malformed values fail closed so an older/corrupt
+        Registry cannot silently start a detector ingest.
+        """
+        if not self.camera_registry_path.is_absolute():
+            return False
+        connection: sqlite3.Connection | None = None
+        try:
+            connection = sqlite3.connect(
+                f"file:{self.camera_registry_path.as_posix()}?mode=ro", uri=True, timeout=1)
+            row = connection.execute(
+                "SELECT person_enabled, person_execution_preference, person_allow_server_fallback "
+                "FROM analytics_policies WHERE camera_id=? AND profile_id=? LIMIT 1",
+                (camera_id, profile_id),
+            ).fetchone()
+            if row is None:
+                return False
+            enabled, preference, fallback = row
+            return bool(enabled) and (
+                preference == "worker" or bool(fallback)
+            )
+        except (sqlite3.Error, TypeError, ValueError):
+            return False
+        finally:
+            if connection is not None:
+                connection.close()
+
     def principal(self, user_id: str) -> Principal:
         row = self.db.execute("SELECT * FROM users WHERE id=? AND enabled=1", (user_id,)).fetchone()
         if row is None:
@@ -979,6 +1013,9 @@ class ClusterStore:
         model_sha = value.get("modelSha256", "")
         if model_id != ANALYTICS_MODEL_ID or model_sha != ANALYTICS_MODEL_SHA256:
             raise ApiError(400, "invalid_analytics_model", "model is not approved")
+        if not self._analytics_worker_authorized(camera_id, profile_id):
+            raise ApiError(409, "analytics_not_authorized",
+                           "server detector execution is not authorized for this Camera/Profile")
         resources = value.get("requestedResources", {"cpuCores": .5, "memoryBytes": 128 * 1024 * 1024,
                                                         "decodeSlots": 0, "encodeSlots": 0, "diskBytesPerSecond": 0})
         require_exact_object(resources, {"cpuCores", "memoryBytes", "decodeSlots", "encodeSlots", "diskBytesPerSecond"})

@@ -87,6 +87,17 @@ class ClusterTests(unittest.TestCase):
             ("main", "camera-1"), ("profile-1", "camera-1"), ("sub", "camera-1"),
             ("main", "camera-grouped"),
         ])
+        camera_database.execute("""CREATE TABLE analytics_policies(
+            camera_id TEXT NOT NULL, profile_id TEXT NOT NULL,
+            person_enabled INTEGER NOT NULL DEFAULT 0,
+            person_execution_preference TEXT NOT NULL DEFAULT 'auto',
+            person_allow_server_fallback INTEGER NOT NULL DEFAULT 0,
+            PRIMARY KEY(camera_id, profile_id))""")
+        camera_database.execute(
+            "INSERT INTO analytics_policies(camera_id,profile_id,person_enabled,person_execution_preference,"
+            "person_allow_server_fallback) VALUES(?,?,?,?,?)",
+            ("camera-1", "sub", 1, "worker", 0),
+        )
         camera_database.commit()
         camera_database.close()
         self.store = cluster.ClusterStore(self.root / "cluster.sqlite3",
@@ -528,6 +539,41 @@ class ClusterTests(unittest.TestCase):
                 "modelId": cluster.ANALYTICS_MODEL_ID, "modelSha256": cluster.ANALYTICS_MODEL_SHA256,
                 "nodeId": recorder,
             }, timestamp=1000)
+
+    def test_detector_job_requires_explicit_registry_worker_opt_in(self) -> None:
+        worker, _, _ = self.enroll("Policy-gated detector", role="worker")
+        self.store.heartbeat(worker, heartbeat(1000), timestamp=1000)
+        database = sqlite3.connect(self.camera_registry)
+        try:
+            database.execute(
+                "UPDATE analytics_policies SET person_enabled=0, person_execution_preference='auto', "
+                "person_allow_server_fallback=0 WHERE camera_id=? AND profile_id=?",
+                ("camera-1", "sub"),
+            )
+            database.commit()
+        finally:
+            database.close()
+        with self.assertRaisesRegex(cluster.ApiError, "not authorized"):
+            self.store.create_analytics_job({
+                "cameraId": "camera-1", "profileId": "sub", "kind": "person",
+                "modelId": cluster.ANALYTICS_MODEL_ID, "modelSha256": cluster.ANALYTICS_MODEL_SHA256,
+            }, timestamp=1000)
+
+        database = sqlite3.connect(self.camera_registry)
+        try:
+            database.execute(
+                "UPDATE analytics_policies SET person_enabled=1, person_execution_preference='auto', "
+                "person_allow_server_fallback=1 WHERE camera_id=? AND profile_id=?",
+                ("camera-1", "sub"),
+            )
+            database.commit()
+        finally:
+            database.close()
+        job = self.store.create_analytics_job({
+            "cameraId": "camera-1", "profileId": "sub", "kind": "person",
+            "modelId": cluster.ANALYTICS_MODEL_ID, "modelSha256": cluster.ANALYTICS_MODEL_SHA256,
+        }, timestamp=1001)
+        self.assertEqual(job["state"], "queued")
 
     def test_detector_claim_mints_bounded_media_grant_and_reads_loopback_frame(self) -> None:
         worker, _, _ = self.enroll("Frame worker", role="worker")
