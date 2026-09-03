@@ -868,7 +868,10 @@ def analytics_runtime_plan(payload: dict, principal: str = "") -> dict:
     with ANALYTICS_SESSION_LOCK:
         ANALYTICS_SESSIONS[session_id] = (expires, camera_id, profile_id, principal)
         ANALYTICS_SIGNAL_SEEN[session_id] = set()
-        ANALYTICS_SIGNAL_RATE[session_id] = (int(time.time() // 60), 0)
+        # Unauthenticated test callers get an isolated session bucket.  For
+        # authenticated browser clients use the principal bucket so opening
+        # multiple runtime sessions cannot bypass the 60/minute client limit.
+        ANALYTICS_SIGNAL_RATE[principal or f"session:{session_id}"] = (int(time.time() // 60), 0)
     result = []
     for kind in ("motion", "scene-change", "person"):
         enabled = bool(row[{"motion": "motion_enabled", "scene-change": "scene_change_enabled", "person": "person_enabled"}[kind]])
