@@ -112,8 +112,17 @@ export function decodePersonOutputs(outputs: Record<string, ort.Tensor>, names: 
 
 export async function createPersonSession(bytes: ArrayBuffer): Promise<{ session: ort.InferenceSession; execution: 'browser-webgpu' | 'browser-wasm' }> {
   const hasGpu = typeof navigator !== 'undefined' && Boolean((navigator as Navigator & { gpu?: unknown }).gpu);
-  const execution: 'browser-webgpu' | 'browser-wasm' = hasGpu ? 'browser-webgpu' : 'browser-wasm';
-  return { session: await ort.InferenceSession.create(bytes, { executionProviders: hasGpu ? ['webgpu'] : ['wasm'] }), execution };
+  if (hasGpu) {
+    try {
+      return { session: await ort.InferenceSession.create(bytes, { executionProviders: ['webgpu'] }), execution: 'browser-webgpu' };
+    } catch {
+      // A present WebGPU object does not guarantee that the model or adapter
+      // can initialize. Continue with the bounded single-thread WASM path.
+    }
+  }
+  ort.env.wasm.numThreads = 1;
+  ort.env.wasm.proxy = false;
+  return { session: await ort.InferenceSession.create(bytes, { executionProviders: ['wasm'] }), execution: 'browser-wasm' };
 }
 
 export async function inferPersonsWithSession(session: ort.InferenceSession, rgba: Uint8ClampedArray, width: number, height: number,
