@@ -470,6 +470,28 @@ class CameraRegistryTests(unittest.TestCase):
         }]})
         self.assertTrue(saved[0]["motionEnabled"] and saved[0]["sceneChangeEnabled"])
         self.assertFalse(saved[0]["personEnabled"] or saved[0]["forceAnalyticsAlwaysOn"])
+        # The v1 compatibility projection must not reset v3 tuning fields when
+        # an older client sends only the legacy top-level switches.
+        tuned = registry.save_analytics_policies({"policies": [{
+            "cameraId": "analytics-fixture", "profileId": "sub",
+            "motionEnabled": True, "sceneChangeEnabled": True, "personEnabled": False,
+            "allowEventPromotion": True, "promotionThreshold": .42,
+            "promotionHoldSeconds": 7, "promotionCooldownSeconds": 19,
+            "forceAnalyticsAlwaysOn": False,
+            "motion": {"sensitivity": .33, "sampleFps": 1.5, "debounceMs": 123, "cooldownMs": 456},
+            "sceneChange": {"threshold": .71, "confirmFrames": 4, "cooldownMs": 789},
+            "person": {"confidenceThreshold": .81, "sampleFps": .75, "maxBoxes": 4,
+                        "executionPreference": "browser", "allowServerFallback": False},
+        }]})[0]
+        legacy = registry.save_analytics_policies({"policies": [{
+            "cameraId": "analytics-fixture", "profileId": "sub",
+            "motionEnabled": False, "sceneChangeEnabled": False, "personEnabled": False,
+            "allowEventPromotion": False, "forceAnalyticsAlwaysOn": False,
+        }]}, preserve_v3_tuning=True)[0]
+        self.assertFalse(legacy["motionEnabled"])
+        self.assertEqual(legacy["motion"], tuned["motion"])
+        self.assertEqual(legacy["sceneChange"], tuned["sceneChange"])
+        self.assertEqual(legacy["person"], tuned["person"])
         with self.assertRaises(KeyError):
             registry.save_analytics_policies({"policies": [{
                 "cameraId": "analytics-fixture", "profileId": "missing",

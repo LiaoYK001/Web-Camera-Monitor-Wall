@@ -75,7 +75,9 @@ ANALYTICS_PERSON_MODEL_SHA256 = "b8fba5e404077d4048d27fcd1667e85e27e192eb9bf51e6
 ANALYTICS_SESSIONS: dict[str, tuple[int, str, str, str]] = {}
 ANALYTICS_PRINCIPAL_RE = re.compile(r"^[A-Za-z0-9._-]{1,64}$")
 # Bounded replay/rate state for browser analytics sessions.  Values contain no
-# frames or endpoint data and are discarded when a session expires/closes.
+# frames or endpoint data.  The signal rate bucket is keyed by authenticated
+# principal (not just a runtime session), so opening multiple sessions cannot
+# bypass the per-client ceiling.
 ANALYTICS_SIGNAL_SEEN: dict[str, set[str]] = {}
 ANALYTICS_SIGNAL_RATE: dict[str, tuple[int, int]] = {}
 ANALYTICS_PROFILE_RATE: dict[tuple[str, str], tuple[int, int]] = {}
@@ -667,7 +669,7 @@ def analytics_policies() -> list[dict]:
         return [analytics_policy_document(row) for row in rows]
 
 
-def save_analytics_policies(payload: dict) -> list[dict]:
+def save_analytics_policies(payload: dict, *, preserve_v3_tuning: bool = False) -> list[dict]:
     values = payload.get("policies") if isinstance(payload, dict) else None
     if not isinstance(values, list) or not values or len(values) > 256:
         raise ValueError("policies must contain 1 to 256 items")
@@ -713,24 +715,34 @@ def save_analytics_policies(payload: dict) -> list[dict]:
             isinstance(person_boxes, bool) or not isinstance(person_boxes, int) or not 1 <= person_boxes <= 16 or
             person_execution not in {"auto", "browser", "worker"} or not isinstance(person_fallback, bool)):
             raise ValueError("person analytics settings are out of range")
-        normalized.append((camera_id, profile_id, *[int(item) for item in booleans], float(threshold), hold, cooldown,
-                           float(motion_sensitivity), float(motion_fps), motion_debounce, motion_cooldown,
-                           float(scene_threshold), scene_confirm, scene_cooldown, float(person_threshold), float(person_fps),
-                           person_boxes, person_execution, int(person_fallback), int(time.time())))
+        updated_at = int(time.time())
+        if preserve_v3_tuning:
+            # The compatibility projection accepts the legacy top-level
+            # values but deliberately discards any nested v3 tuning supplied
+            # by an old client.  Existing rows therefore retain their tuning;
+            # a first legacy write receives the documented v3 defaults.
+            normalized.append((camera_id, profile_id, *[int(item) for item in booleans], float(threshold), hold, cooldown,
+                               .15, 2, 500, 5000, .55, 2, 30000, .6, 1, 16, "auto", 0, updated_at))
+        else:
+            normalized.append((camera_id, profile_id, *[int(item) for item in booleans], float(threshold), hold, cooldown,
+                               float(motion_sensitivity), float(motion_fps), motion_debounce, motion_cooldown,
+                               float(scene_threshold), scene_confirm, scene_cooldown, float(person_threshold), float(person_fps),
+                               person_boxes, person_execution, int(person_fallback), updated_at))
     with connect() as database:
         for camera_id, profile_id, *_ in normalized:
             exists = database.execute(
                 "SELECT 1 FROM stream_profiles WHERE camera_id=? AND id=?", (camera_id, profile_id)).fetchone()
             if not exists:
                 raise KeyError("camera profile not found")
-        database.executemany(
-            "INSERT INTO analytics_policies(camera_id,profile_id,motion_enabled,scene_change_enabled,person_enabled,"
-            "allow_event_promotion,force_analytics_always_on,promotion_threshold,promotion_hold_seconds,"
-            "promotion_cooldown_seconds,motion_sensitivity,motion_sample_fps,motion_debounce_ms,motion_cooldown_ms,"
-            "scene_change_threshold,scene_change_confirm_frames,scene_change_cooldown_ms,person_confidence_threshold,"
-            "person_sample_fps,person_max_boxes,person_execution_preference,person_allow_server_fallback,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?) "
-            "ON CONFLICT(camera_id,profile_id) DO UPDATE SET motion_enabled=excluded.motion_enabled,"
-            "scene_change_enabled=excluded.scene_change_enabled,person_enabled=excluded.person_enabled,"
+        conflict_update = (
+            "motion_enabled=excluded.motion_enabled,scene_change_enabled=excluded.scene_change_enabled,"
+            "person_enabled=excluded.person_enabled,allow_event_promotion=excluded.allow_event_promotion,"
+            "force_analytics_always_on=excluded.force_analytics_always_on,"
+            "promotion_threshold=excluded.promotion_threshold,promotion_hold_seconds=excluded.promotion_hold_seconds,"
+            "promotion_cooldown_seconds=excluded.promotion_cooldown_seconds,"
+            "revision=analytics_policies.revision+1,updated_at=excluded.updated_at"
+            if preserve_v3_tuning else
+            "motion_enabled=excluded.motion_enabled,scene_change_enabled=excluded.scene_change_enabled,person_enabled=excluded.person_enabled,"
             "allow_event_promotion=excluded.allow_event_promotion,force_analytics_always_on=excluded.force_analytics_always_on,"
             "promotion_threshold=excluded.promotion_threshold,promotion_hold_seconds=excluded.promotion_hold_seconds,"
             "promotion_cooldown_seconds=excluded.promotion_cooldown_seconds,motion_sensitivity=excluded.motion_sensitivity,"
@@ -739,7 +751,15 @@ def save_analytics_policies(payload: dict) -> list[dict]:
             "scene_change_cooldown_ms=excluded.scene_change_cooldown_ms,person_confidence_threshold=excluded.person_confidence_threshold,"
             "person_sample_fps=excluded.person_sample_fps,person_max_boxes=excluded.person_max_boxes,"
             "person_execution_preference=excluded.person_execution_preference,person_allow_server_fallback=excluded.person_allow_server_fallback,"
-            "revision=analytics_policies.revision+1,updated_at=excluded.updated_at",
+            "revision=analytics_policies.revision+1,updated_at=excluded.updated_at"
+        )
+        database.executemany(
+            "INSERT INTO analytics_policies(camera_id,profile_id,motion_enabled,scene_change_enabled,person_enabled,"
+            "allow_event_promotion,force_analytics_always_on,promotion_threshold,promotion_hold_seconds,"
+            "promotion_cooldown_seconds,motion_sensitivity,motion_sample_fps,motion_debounce_ms,motion_cooldown_ms,"
+            "scene_change_threshold,scene_change_confirm_frames,scene_change_cooldown_ms,person_confidence_threshold,"
+            "person_sample_fps,person_max_boxes,person_execution_preference,person_allow_server_fallback,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?) "
+            "ON CONFLICT(camera_id,profile_id) DO UPDATE SET " + conflict_update,
             normalized,
         )
         database.execute("UPDATE analytics_metadata SET revision=revision+1,updated_at=? WHERE id=1", (int(time.time()),))
@@ -923,9 +943,10 @@ def close_analytics_session(session_id: str, principal: str = "", camera_id: str
                     (profile_id and profile_id != session[2])):
                 raise PermissionError("analytics runtime session scope mismatch")
             ANALYTICS_SESSIONS.pop(session_id, None)
+            if not session[3]:
+                ANALYTICS_SIGNAL_RATE.pop(f"session:{session_id}", None)
             closed = True
         ANALYTICS_SIGNAL_SEEN.pop(session_id, None)
-        ANALYTICS_SIGNAL_RATE.pop(session_id, None)
         return closed
 
 
@@ -1023,7 +1044,8 @@ def ingest_analytics_signals(payload: dict, session_id: str, principal: str = ""
                  "occurredAt": occurred, "confidence": float(confidence), "label": "person" if value["kind"] == "person" else "",
                  "properties": {"analytics": {"schemaVersion": 2, "signalId": signal_id, "boxes": safe_boxes, "runtime": "browser"}}}))
     with ANALYTICS_SESSION_LOCK:
-        current_rate_minute, current_rate = ANALYTICS_SIGNAL_RATE.get(session_id, (minute, 0))
+        rate_key = principal or f"session:{session_id}"
+        current_rate_minute, current_rate = ANALYTICS_SIGNAL_RATE.get(rate_key, (minute, 0))
         if current_rate_minute != minute:
             current_rate = 0
         profile_minute, profile_rate = ANALYTICS_PROFILE_RATE.get((session[1], session[2]), (minute, 0))
@@ -1035,7 +1057,13 @@ def ingest_analytics_signals(payload: dict, session_id: str, principal: str = ""
         if any(item[0]["signalId"] in existing for item in prepared):
             raise PermissionError("analytics signal replay detected")
         existing.update(item[0]["signalId"] for item in prepared)
-        ANALYTICS_SIGNAL_RATE[session_id] = (minute, current_rate + len(prepared))
+        ANALYTICS_SIGNAL_RATE[rate_key] = (minute, current_rate + len(prepared))
+        # Keep principal buckets bounded without retaining identity details:
+        # stale counters are safe to discard at the next minute boundary.
+        if len(ANALYTICS_SIGNAL_RATE) > 4096:
+            for key, (bucket, _) in list(ANALYTICS_SIGNAL_RATE.items()):
+                if bucket != minute:
+                    ANALYTICS_SIGNAL_RATE.pop(key, None)
         ANALYTICS_PROFILE_RATE[(session[1], session[2])] = (minute, profile_rate + len(prepared))
     accepted = []
     for value, event in prepared:
@@ -2964,7 +2992,11 @@ class Handler(BaseHTTPRequestHandler):
     def do_PUT(self) -> None:
         if self.path == "/cameras/analytics-policies":
             try:
-                self.respond(200, {"policies": save_analytics_policies(self.payload())})
+                # API v1 is intentionally a compatibility projection.  It may
+                # update the legacy top-level switches/timing values, but must
+                # not reset v3 motion/scene/person tuning that newer clients
+                # stored in the nested policy fields.
+                self.respond(200, {"policies": save_analytics_policies(self.payload(), preserve_v3_tuning=True)})
             except KeyError as error: self.respond(404, {"error": str(error)})
             except (ValueError, TypeError, json.JSONDecodeError) as error: self.respond(400, {"error": str(error)})
             return

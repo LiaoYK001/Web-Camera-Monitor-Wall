@@ -12,11 +12,17 @@ function planLabel(plan: AnalyticsRuntimePlan | undefined): string {
   return `${executionLabel[plan.execution]}${plan.reason ? ` · ${plan.reason}` : ''}`;
 }
 
+function mergePolicies(current: AnalyticsPolicy[], updated: AnalyticsPolicy[]): AnalyticsPolicy[] {
+  const changes = new Map(updated.map((policy) => [`${policy.cameraId}/${policy.profileId}`, policy]));
+  return current.map((policy) => changes.get(`${policy.cameraId}/${policy.profileId}`) ?? policy);
+}
+
 export default function AnalyticsWorkspace() {
   const [policies, setPolicies] = useState<AnalyticsPolicy[]>([]);
   const [statuses, setStatuses] = useState<AnalyticsStatus[]>([]);
   const [revision, setRevision] = useState(1);
   const [selected, setSelected] = useState<'all' | 'enabled' | 'unsupported'>('all');
+  const [bulkKind, setBulkKind] = useState<'motionEnabled' | 'sceneChangeEnabled' | 'personEnabled'>('motionEnabled');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
 
@@ -53,14 +59,29 @@ export default function AnalyticsWorkspace() {
       // this lets a scoped operator update an authorized profile without
       // accidentally submitting unrelated cameras from the list.
       const result = await patchV3AnalyticsPolicies(revision, [{ ...policy, [key]: value }]);
-      setPolicies(result.policies); setRevision(result.revision);
+      setPolicies((current) => mergePolicies(current, result.policies)); setRevision(result.revision);
     } catch (reason) { setError(reason instanceof Error ? reason.message : '策略更新失败，请刷新后重试'); }
+    finally { setBusy(false); }
+  };
+
+  const updateBulk = async (value: boolean) => {
+    if (visible.length === 0) return;
+    setBusy(true); setError('');
+    try {
+      // The API keeps the batch atomic and enforces the caller's Camera scope.
+      // A mixed-camera selection is therefore rejected explicitly instead of
+      // silently applying only part of the filtered list.
+      const cameraIds = new Set(visible.map((policy) => policy.cameraId));
+      if (cameraIds.size > 1) throw new Error('当前筛选跨多个 Camera，请按 Camera 分组后批量修改');
+      const result = await patchV3AnalyticsPolicies(revision, visible.map((policy) => ({ ...policy, [bulkKind]: value })));
+      setPolicies((current) => mergePolicies(current, result.policies)); setRevision(result.revision);
+    } catch (reason) { setError(reason instanceof Error ? reason.message : '批量策略更新失败，请刷新后重试'); }
     finally { setBusy(false); }
   };
 
   return <section className="page-panel analytics-workspace">
     <header className="page-heading"><div><span className="eyebrow">v3-M1 / v3-M2</span><h1>分析策略</h1><p>按 Camera/Profile 独立控制。默认关闭；帧只在浏览器本地内存处理。</p></div><button type="button" onClick={() => { reload(); }}>刷新</button></header>
-    <div className="analytics-toolbar"><span>策略 revision {revision}</span><select aria-label="分析状态筛选" value={selected} onChange={(event) => setSelected(event.target.value as typeof selected)}><option value="all">全部 Profile</option><option value="enabled">已启用</option><option value="unsupported">运行时不支持</option></select><span className="muted-copy">浏览器优先 · Worker 仅管理员显式允许</span></div>
+    <div className="analytics-toolbar"><span>策略 revision {revision}</span><select aria-label="分析状态筛选" value={selected} onChange={(event) => setSelected(event.target.value as typeof selected)}><option value="all">全部 Profile</option><option value="enabled">已启用</option><option value="unsupported">运行时不支持</option></select><select aria-label="批量分析类型" value={bulkKind} disabled={busy} onChange={(event) => setBulkKind(event.target.value as typeof bulkKind)}><option value="motionEnabled">运动</option><option value="sceneChangeEnabled">画面变化</option><option value="personEnabled">人物框</option></select><button type="button" disabled={busy || visible.length === 0} onClick={() => void updateBulk(true)}>Select All</button><button type="button" disabled={busy || visible.length === 0} onClick={() => void updateBulk(false)}>Unselect All</button><span className="muted-copy">当前 {visible.length} 个 Profile · 浏览器优先 · Worker 仅管理员显式允许</span></div>
     {error && <div className="alert conflict-alert" role="alert">{error}</div>}
     {visible.length === 0 ? <div className="empty-state"><h2>暂无分析策略</h2><p>请先在设备与来源中添加并探测 Profile。</p></div> : <div className="analytics-policy-list">{visible.map((policy) => {
       const status = statusMap.get(`${policy.cameraId}/${policy.profileId}`);
