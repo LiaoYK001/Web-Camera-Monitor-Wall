@@ -77,7 +77,10 @@ for asset in "$@"; do
   mkdir "$existing_directory"
   if [ -n "$release_id" ]; then
     asset_id=$(gh api "$release_api" --jq ".assets[] | select(.name == \"$name\") | .id")
-    gh api "repos/$GITHUB_REPOSITORY/releases/assets/$asset_id" --output "$existing_directory/$name"
+    # gh api has no --output flag; request the binary representation and
+    # redirect stdout without allowing metadata or credentials into logs.
+    gh api "repos/$GITHUB_REPOSITORY/releases/assets/$asset_id" \
+      -H "Accept: application/octet-stream" > "$existing_directory/$name"
   else
     gh release download "$release_ref" --pattern "$name" --dir "$existing_directory"
   fi
