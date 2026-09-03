@@ -581,6 +581,37 @@ class CameraRegistryTests(unittest.TestCase):
         self.assertEqual(motion["reason"], "")
         registry.close_analytics_session(qualified["sessionId"])
 
+    def test_v3_native_motion_uses_server_onvif_capability_not_client_claim(self) -> None:
+        camera = registry.validate_camera({
+            "id": "v3-onvif-capability", "name": "ONVIF capability", "address": "http://camera.example.invalid/onvif/device_service",
+            "adapter": "onvif", "credentialsRef": "", "capabilities": {
+                "onvif": {"events": True},
+            },
+            "profiles": [{"id": "sub", "name": "Sub", "role": "sub",
+                "endpoint": "rtsp://camera.example.invalid/sub", "videoCodec": "h264", "audioCodec": "",
+                "width": 640, "height": 360, "fps": 15}],
+        })
+        registry.save_camera(camera, False)
+        registry.save_analytics_policies({"policies": [{"cameraId": "v3-onvif-capability", "profileId": "sub",
+            "motionEnabled": True, "sceneChangeEnabled": False, "personEnabled": False,
+            "allowEventPromotion": False, "forceAnalyticsAlwaysOn": False}]})
+
+        # The client cannot grant or revoke native ONVIF execution.  The
+        # authoritative registry capability enables it even when the request
+        # claims the opposite.
+        native = registry.analytics_runtime_plan({"cameraId": "v3-onvif-capability", "profileId": "sub",
+                                                   "capabilities": {"wasm": True, "onvifMotion": False}})
+        self.assertEqual(native["plans"][0]["execution"], "native")
+        registry.close_analytics_session(native["sessionId"])
+
+        with registry.connect() as database:
+            database.execute("UPDATE cameras SET capabilities_json=? WHERE id=?", (
+                json.dumps({"onvif": {"events": False}}, separators=(",", ":")), "v3-onvif-capability"))
+        browser = registry.analytics_runtime_plan({"cameraId": "v3-onvif-capability", "profileId": "sub",
+                                                   "capabilities": {"wasm": True, "onvifMotion": True}})
+        self.assertEqual(browser["plans"][0]["execution"], "browser-wasm")
+        registry.close_analytics_session(browser["sessionId"])
+
     def test_v3_person_worker_preference_is_explicit_and_fallback_is_separate(self) -> None:
         camera = registry.validate_camera({
             "id": "v3-worker-plan", "name": "Worker plan", "address": "rtsp://camera.example.invalid/live",

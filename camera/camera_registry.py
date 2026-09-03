@@ -769,6 +769,10 @@ def analytics_runtime_plan(payload: dict) -> dict:
     kinds = payload.get("kinds", ["motion", "scene-change", "person"])
     if not isinstance(kinds, list) or not kinds or len(kinds) > 3 or any(item not in {"motion", "scene-change", "person"} for item in kinds):
         raise ValueError("analytics kinds are invalid")
+    # Runtime capabilities are split deliberately: browser feature flags are
+    # advisory input, while camera/native adapter capabilities must come from
+    # the server-owned registry record.  Never let a client assert
+    # ``onvifMotion`` (or any equivalent native capability) in the request.
     capabilities = payload.get("capabilities", {}) if isinstance(payload.get("capabilities", {}), dict) else {}
     webgpu = capabilities.get("webgpu") is True; wasm = capabilities.get("wasm") is not False
     with connect() as database:
@@ -782,13 +786,24 @@ def analytics_runtime_plan(payload: dict) -> dict:
     if not bool(row["camera_enabled"]) or not bool(row["profile_enabled"]):
         raise PermissionError("camera profile is disabled")
 
+    try:
+        registry_capabilities = json.loads(row["capabilities_json"] or "{}")
+    except (TypeError, json.JSONDecodeError):
+        registry_capabilities = {}
+    onvif_capabilities = registry_capabilities.get("onvif", {})
+    adapter = str(row["adapter"]).lower()
+    native_motion_available = (
+        adapter == "onvif"
+        and isinstance(onvif_capabilities, dict)
+        and onvif_capabilities.get("events") is True
+    )
+
     # Browser True Direct is a server-computed qualification.  A client may
     # report its capabilities, but it cannot assert that a profile is safe to
     # load directly.  Reuse only the proof written by browser_direct_probe:
     # HTTPS, no URL credentials/query, no Camera Secret, and a recent
     # TLS/CORS check bound to the configured PWA origin.  HTTP exemptions and
     # RTSP therefore remain Gateway/Hybrid media paths.
-    adapter = str(row["adapter"]).lower()
     media_transport = adapter if adapter in {"whep", "hls", "mjpeg"} else "rtsp"
     direct_eligible = False
     if media_transport in {"whep", "hls", "mjpeg"}:
@@ -842,7 +857,7 @@ def analytics_runtime_plan(payload: dict) -> dict:
             owner = "browser" if execution.startswith("browser") else "worker" if execution == "worker" else "none"
             sample = float(row["person_sample_fps"])
         else:
-            execution = "native" if enabled and kind == "motion" and capabilities.get("onvifMotion") is True else "browser-wasm" if enabled and wasm else "unsupported" if enabled else "off"
+            execution = "native" if enabled and kind == "motion" and native_motion_available else "browser-wasm" if enabled and wasm else "unsupported" if enabled else "off"
             owner = "camera" if execution == "native" else "browser" if execution.startswith("browser") else "none"
             sample = float(row["motion_sample_fps"] if kind == "motion" else 1)
         server_media_expected = execution == "worker" or (execution.startswith("browser") and not direct_eligible)
