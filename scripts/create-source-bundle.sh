@@ -20,6 +20,16 @@ case "$output_directory" in
 esac
 
 repository_root="$(git rev-parse --show-toplevel)"
+# Git Bash reports the repository root with a drive-letter path while
+# `pwd -P` uses the POSIX `/d/...` form.  Canonicalize that comparison so the
+# root-directory guard remains strict on both Windows Git Bash and Linux.
+case "$repository_root" in
+    [A-Za-z]:/*)
+        if command -v cygpath >/dev/null 2>&1; then
+            repository_root="$(cygpath -u "$repository_root")"
+        fi
+        ;;
+esac
 [ "$(pwd -P)" = "$repository_root" ] || {
     echo "Run this command from the repository root" >&2
     exit 64
