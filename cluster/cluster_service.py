@@ -48,6 +48,9 @@ MAX_BROWSER_ARCHIVE_BYTES = 512 * 1024 * 1024
 ENROLLMENT_SECONDS = 600
 CERTIFICATE_SECONDS = 30 * 24 * 60 * 60
 CERTIFICATE_RENEW_SECONDS = 7 * 24 * 60 * 60
+ANALYTICS_MODEL_ID = "ssd-mobilenet-v1-12-person"
+ANALYTICS_MODEL_VERSION = "onnx-model-zoo-main"
+ANALYTICS_MODEL_SHA256 = "b8fba5e404077d4048d27fcd1667e85e27e192eb9bf51e696c46a3acd7d21058"
 IDENTIFIER = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$")
 USERNAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{2,63}$")
 VOLUME_ID = re.compile(r"^[a-z0-9][a-z0-9-]{0,62}$")
@@ -963,11 +966,10 @@ class ClusterStore:
             raise ApiError(400, "invalid_analytics_kind", "only person detector jobs are supported")
         if not self._camera_profile_exists(camera_id, profile_id):
             raise ApiError(404, "camera_profile_not_found", "the detector Camera/Profile is not registered")
-        model_id = value.get("modelId", "ssd-mobilenet-v1-12-person")
+        model_id = value.get("modelId", ANALYTICS_MODEL_ID)
         model_sha = value.get("modelSha256", "")
-        if not isinstance(model_id, str) or not IDENTIFIER.fullmatch(model_id) or \
-                not isinstance(model_sha, str) or not re.fullmatch(r"[0-9a-f]{64}", model_sha):
-            raise ApiError(400, "invalid_analytics_model", "model identity is invalid")
+        if model_id != ANALYTICS_MODEL_ID or model_sha != ANALYTICS_MODEL_SHA256:
+            raise ApiError(400, "invalid_analytics_model", "model is not approved")
         resources = value.get("requestedResources", {"cpuCores": .5, "memoryBytes": 128 * 1024 * 1024,
                                                         "decodeSlots": 0, "encodeSlots": 0, "diskBytesPerSecond": 0})
         require_exact_object(resources, {"cpuCores", "memoryBytes", "decodeSlots", "encodeSlots", "diskBytesPerSecond"})

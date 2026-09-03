@@ -467,7 +467,7 @@ class ClusterTests(unittest.TestCase):
         self.store.heartbeat(worker, heartbeat(1000), timestamp=1000)
         job = self.store.create_analytics_job({
             "cameraId": "camera-1", "profileId": "sub", "kind": "person",
-            "modelId": "ssd-mobilenet-v1-12-person", "modelSha256": "a" * 64,
+            "modelId": cluster.ANALYTICS_MODEL_ID, "modelSha256": cluster.ANALYTICS_MODEL_SHA256,
         }, timestamp=1000)
         self.assertEqual(job["nodeId"], worker)
         self.assertEqual(job["state"], "queued")
@@ -480,7 +480,7 @@ class ClusterTests(unittest.TestCase):
         self.assertEqual(renewed["generation"], job["generation"])
         result = self.store.report_analytics_job_result(worker, {
             "jobId": job["jobId"], "generation": job["generation"],
-            "state": "completed", "resultCode": "", "modelSha256": "a" * 64, "signals": [{
+            "state": "completed", "resultCode": "", "modelSha256": cluster.ANALYTICS_MODEL_SHA256, "signals": [{
                 "kind": "person", "confidence": .91,
                 "boxes": [{"x": .1, "y": .2, "width": .3, "height": .4}],
                 "occurredAt": 1_011_000,
@@ -498,7 +498,7 @@ class ClusterTests(unittest.TestCase):
         self.store.heartbeat(worker, heartbeat(1000), timestamp=1000)
         job = self.store.create_analytics_job({
             "cameraId": "camera-1", "profileId": "sub", "kind": "person",
-            "modelId": "ssd-mobilenet-v1-12-person", "modelSha256": "c" * 64,
+            "modelId": cluster.ANALYTICS_MODEL_ID, "modelSha256": cluster.ANALYTICS_MODEL_SHA256,
         }, timestamp=1000)
         self.store.claim_analytics_job(worker, timestamp=1001)
         with self.assertRaisesRegex(cluster.ApiError, "digest"):
@@ -514,13 +514,13 @@ class ClusterTests(unittest.TestCase):
         with self.assertRaisesRegex(cluster.ApiError, "model"):
             self.store.create_analytics_job({
                 "cameraId": "camera-1", "profileId": "sub", "kind": "person",
-                "modelId": "../../unsafe", "modelSha256": "b" * 64,
+                "modelId": "../../unsafe", "modelSha256": cluster.ANALYTICS_MODEL_SHA256,
                 "nodeId": recorder,
             }, timestamp=1000)
         with self.assertRaisesRegex(cluster.ApiError, "node"):
             self.store.create_analytics_job({
                 "cameraId": "camera-1", "profileId": "sub", "kind": "person",
-                "modelId": "ssd-mobilenet-v1-12-person", "modelSha256": "b" * 64,
+                "modelId": cluster.ANALYTICS_MODEL_ID, "modelSha256": cluster.ANALYTICS_MODEL_SHA256,
                 "nodeId": recorder,
             }, timestamp=1000)
 
