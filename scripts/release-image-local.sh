@@ -153,7 +153,11 @@ if [ "$version" = dev ]; then
     exit 0
 fi
 
-release_root="${repository_root}/build/release-assets/${version}"
+# `git rev-parse --show-toplevel` returns a drive-letter path under Git Bash
+# on Windows (for example `D:/repo`), while the source-bundle helper requires
+# a POSIX absolute path.  Resolve the already-selected repository through the
+# shell so both Git Bash and native Linux pass the same contract.
+release_root="$(pwd -P)/build/release-assets/${version}"
 mkdir -p "$release_root"
 ./scripts/create-source-bundle.sh "$version" "$release_root"
 source_archive="${release_root}/webobs-source-${version}.tar.gz"
