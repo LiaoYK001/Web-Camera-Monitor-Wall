@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import importlib.util
 import importlib.machinery
+import base64
 import json
 import os
 import pathlib
@@ -12,6 +13,7 @@ import sqlite3
 import sys
 import tempfile
 import unittest
+import time
 from unittest import mock
 
 
@@ -95,6 +97,40 @@ class AgentTests(unittest.TestCase):
             self.assertEqual([item["segmentId"] for item in result], ["segment-1"])
             self.assertEqual(result[0]["startUtcMs"], 1000)
             self.assertNotIn("endpoint", str(result).lower())
+
+    def test_detector_job_uses_grant_frame_and_reports_only_bounded_metadata(self) -> None:
+        class FakeClient:
+            def __init__(self) -> None:
+                self.requests = []
+
+            def request(self, method, path, value=None, node_id="", extra_headers=None):
+                self.requests.append((method, path, value, node_id, extra_headers))
+                if path.endswith("/frame"):
+                    return 200, {"width": 2, "height": 2,
+                                 "rgbaBase64": base64.b64encode(bytes(range(16))).decode("ascii"),
+                                 "capturedAt": int(time.time() * 1000),
+                                 "grantExpiresAt": int(time.time()) + 60, "remainingRequests": 59}
+                return 200, {"acceptedSignals": 1}
+
+        class FakeDetector:
+            def process(self, job, rgba, width, height, *, occurred_at):
+                self.observed = (rgba, width, height, occurred_at)
+                return {"boxes": [{"x": .1, "y": .2, "width": .3, "height": .4, "confidence": .9}]}
+
+        client = FakeClient()
+        job = {"jobId": "job-1", "cameraId": "cam-1", "profileId": "sub", "kind": "person",
+               "generation": 1, "modelSha256": "a" * 64,
+               "mediaGrant": {"method": "GET", "path": "/internal/v1/analytics/jobs/job-1/frame",
+                               "token": "A" * 48}}
+        with mock.patch.object(agent, "_load_detector_module", return_value=type(
+                "DetectorModule", (), {"DetectorJobRunner": lambda _path: FakeDetector()})):
+            agent.run_detector_job(client, "node-1", job)
+        report = client.requests[-1]
+        self.assertEqual(report[0], "POST")
+        self.assertEqual(report[1], "/internal/v1/analytics/jobs/result")
+        self.assertEqual(report[2]["state"], "completed")
+        self.assertEqual(report[2]["signals"][0]["boxes"][0]["x"], .1)
+        self.assertNotIn("rgba", json.dumps(report[2]).lower())
 
 
 if __name__ == "__main__":

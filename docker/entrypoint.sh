@@ -641,13 +641,6 @@ if [ "$node_agent_enabled" = "true" ]; then
     # atomic assignment state and controller node status.
     sleep 0.2
     kill -0 "$node_agent_pid" 2>/dev/null || fail "Node agent exited during startup"
-    if [ "$node_role" = worker ]; then
-        detector_worker_log="/tmp/webobs-detector-worker-log.$$"
-        python3 /opt/webobs/bin/webobs-detector-worker --serve > "$detector_worker_log" 2>&1 &
-        detector_worker_pid=$!
-        sleep 0.2
-        kill -0 "$detector_worker_pid" 2>/dev/null || fail "Detector worker exited during startup"
-    fi
 fi
 
 if [ "$archive_enabled" = "true" ]; then

@@ -42,6 +42,18 @@ GET    /api/v3/analytics/status
 POST   /api/v3/analytics/signals/batch             (X-WebObs-Analytics-Session)
 DELETE /api/v3/analytics/runtime-sessions/{id}
 GET/POST /api/v2/analytics-jobs                    (administrator Worker jobs)
+
+An approved Worker claims a job over mTLS.  The claim response contains a
+60-second, Camera/Profile-bound `mediaGrant` whose token is stored only as a
+SHA-256 hash.  The Worker presents it on
+`GET /internal/v1/analytics/jobs/{jobId}/frame`; the controller accepts at most
+60 bounded `160x90` RGBA JSON frames from the explicitly configured
+`WEBOBS_ANALYTICS_MEDIA_ENDPOINT` loopback source.  No camera URL, Secret or
+arbitrary filesystem path is sent to the Worker.  The grant is renewed with
+the job lease and revoked atomically when the job completes or fails.  If no
+loopback frame source is configured, the job fails with
+`analytics_media_unavailable` rather than silently starting a decoder or
+transcoder.
 ```
 
 Policy writes are atomic and scoped: the control boundary parses every item in

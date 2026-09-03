@@ -4,7 +4,9 @@
 from __future__ import annotations
 
 import hashlib
+import base64
 import datetime as dt
+import http.server
 import importlib.machinery
 import importlib.util
 import json
@@ -12,6 +14,9 @@ import pathlib
 import sqlite3
 import sys
 import tempfile
+import threading
+import time
+from unittest import mock
 import unittest
 
 
@@ -524,6 +529,54 @@ class ClusterTests(unittest.TestCase):
                 "nodeId": recorder,
             }, timestamp=1000)
 
+    def test_detector_claim_mints_bounded_media_grant_and_reads_loopback_frame(self) -> None:
+        worker, _, _ = self.enroll("Frame worker", role="worker")
+        current = int(time.time())
+        self.store.heartbeat(worker, heartbeat(current), timestamp=current)
+        job = self.store.create_analytics_job({
+            "cameraId": "camera-1", "profileId": "sub", "kind": "person",
+            "modelId": cluster.ANALYTICS_MODEL_ID, "modelSha256": cluster.ANALYTICS_MODEL_SHA256,
+        }, timestamp=current)
+        frame = {"width": 2, "height": 2,
+                 "rgbaBase64": base64.b64encode(bytes(range(16))).decode("ascii"),
+                 "capturedAt": current * 1000}
+
+        class FrameHandler(http.server.BaseHTTPRequestHandler):
+            def do_GET(self) -> None:  # noqa: N802
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json")
+                body = json.dumps(frame, separators=(",", ":")).encode("ascii")
+                self.send_header("Content-Length", str(len(body)))
+                self.end_headers()
+                self.wfile.write(body)
+
+            def log_message(self, *_args: object) -> None:
+                return
+
+        server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), FrameHandler)
+        thread = threading.Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+        try:
+            with mock.patch.dict(__import__("os").environ, {
+                "WEBOBS_ANALYTICS_MEDIA_ENDPOINT": f"http://127.0.0.1:{server.server_port}/frame",
+            }, clear=False):
+                claimed = self.store.claim_analytics_job(worker, timestamp=current + 1)["job"]
+                grant = claimed["mediaGrant"]
+                self.assertEqual(grant["maxRequests"], 60)
+                packet = self.store.consume_analytics_media_frame(worker, job["jobId"], grant["token"])
+                self.assertEqual(packet["width"], 2)
+                self.assertEqual(packet["remainingRequests"], 59)
+                with self.assertRaisesRegex(cluster.ApiError, "rejected"):
+                    self.store.consume_analytics_media_frame("0" * 32, job["jobId"], grant["token"])
+                self.store.report_analytics_job_result(worker, {
+                    "jobId": job["jobId"], "generation": job["generation"], "state": "completed",
+                    "resultCode": "", "modelSha256": cluster.ANALYTICS_MODEL_SHA256, "signals": [],
+                }, timestamp=current + 2)
+                with self.assertRaisesRegex(cluster.ApiError, "rejected"):
+                    self.store.consume_analytics_media_frame(worker, job["jobId"], grant["token"])
+        finally:
+            server.shutdown()
+            server.server_close()
     def test_scheduler_is_stable_capacity_aware_and_never_silently_uses_cpu(self) -> None:
         first, _, _ = self.enroll("Recorder A")
         second, _, _ = self.enroll("Recorder B")

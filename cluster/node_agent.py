@@ -10,8 +10,10 @@ tokens, certificates, storage paths, or camera identifiers.
 from __future__ import annotations
 
 import argparse
+import base64
 import contextlib
 import http.client
+import importlib.util
 import json
 import os
 import pathlib
@@ -24,11 +26,14 @@ import subprocess
 import tempfile
 import time
 from typing import Any
+from importlib.machinery import SourceFileLoader
 from urllib.parse import urlsplit
 
 
 MAX_RESPONSE = 1024 * 1024
+MAX_ANALYTICS_FRAME_BYTES = 160 * 90 * 4
 VOLUME_ID = re.compile(r"^[a-z0-9][a-z0-9-]{0,62}$")
+ANALYTICS_TOKEN = re.compile(r"^[A-Za-z0-9_-]{32,128}$")
 STOP = False
 
 
@@ -87,11 +92,15 @@ class ControllerClient:
             self.context.load_cert_chain(str(cert_file), str(key_file))
 
     def request(self, method: str, path: str, value: Any | None = None,
-                node_id: str = "") -> tuple[int, Any]:
+                node_id: str = "", extra_headers: dict[str, str] | None = None) -> tuple[int, Any]:
         if not path.startswith("/internal/v1/") or "\r" in path or "\n" in path:
             raise AgentError("internal request path is invalid")
         body = canonical_json(value) if value is not None else None
         headers = {"Accept": "application/json"}
+        if extra_headers:
+            if any(not isinstance(key, str) or not isinstance(item, str) for key, item in extra_headers.items()):
+                raise AgentError("request headers are invalid")
+            headers.update(extra_headers)
         if body is not None:
             headers["Content-Type"] = "application/json"
             headers["Content-Length"] = str(len(body))
@@ -295,6 +304,93 @@ def catalog_batch(catalog_path: pathlib.Path, assignments: list[dict[str, Any]])
     return result
 
 
+def _load_detector_module() -> Any:
+    """Load the image-baked detector without importing arbitrary workspace code."""
+    module_path = pathlib.Path(os.environ.get(
+        "WEBOBS_DETECTOR_WORKER", "/opt/webobs/bin/webobs-detector-worker"))
+    if not module_path.is_absolute() or module_path.is_symlink() or not module_path.is_file():
+        raise AgentError("detector runtime is unavailable")
+    source_loader = SourceFileLoader("webobs_detector_runtime", str(module_path))
+    spec = importlib.util.spec_from_loader(source_loader.name, source_loader)
+    if spec is None or spec.loader is None:
+        raise AgentError("detector runtime is unavailable")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def _frame_packet(value: Any) -> tuple[bytes, int, int, int]:
+    """Decode the controller's bounded, in-memory RGBA frame packet."""
+    if not isinstance(value, dict) or set(value) - {"width", "height", "rgbaBase64", "capturedAt", "grantExpiresAt", "remainingRequests"}:
+        raise AgentError("detector frame is invalid")
+    width, height, encoded = value.get("width"), value.get("height"), value.get("rgbaBase64")
+    if isinstance(width, bool) or not isinstance(width, int) or not 2 <= width <= 160 or \
+            isinstance(height, bool) or not isinstance(height, int) or not 2 <= height <= 90 or \
+            not isinstance(encoded, str) or len(encoded) > MAX_ANALYTICS_FRAME_BYTES * 2:
+        raise AgentError("detector frame is invalid")
+    try:
+        rgba = base64.b64decode(encoded.encode("ascii"), validate=True)
+    except (ValueError, UnicodeEncodeError):
+        raise AgentError("detector frame is invalid") from None
+    if len(rgba) != width * height * 4 or len(rgba) > MAX_ANALYTICS_FRAME_BYTES:
+        raise AgentError("detector frame is invalid")
+    captured_at = value.get("capturedAt", int(time.time() * 1000))
+    if isinstance(captured_at, bool) or not isinstance(captured_at, int) or \
+            abs(int(time.time() * 1000) - captured_at) > 300_000:
+        raise AgentError("detector frame is invalid")
+    return rgba, width, height, captured_at
+
+
+def run_detector_job(client: ControllerClient, node_id: str, job: dict[str, Any]) -> None:
+    """Run one explicitly scheduled frame and close its lease.
+
+    The controller supplies a Camera/Profile-bound 60-second media grant. The
+    agent never receives a camera URL or Secret and reports only bounded
+    person metadata. A missing media source or runtime is a failed job, never
+    a silent software fallback.
+    """
+    job_id = job.get("jobId", "")
+    generation = job.get("generation")
+    model_sha = job.get("modelSha256", "")
+    if not isinstance(job_id, str) or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]{0,63}", job_id) or \
+            not isinstance(generation, int) or generation < 1 or not isinstance(model_sha, str):
+        raise AgentError("detector job is invalid")
+    result_code = ""
+    signals: list[dict[str, Any]] = []
+    try:
+        grant = job.get("mediaGrant")
+        if not isinstance(grant, dict) or grant.get("method") != "GET" or \
+                not isinstance(grant.get("path"), str) or not re.fullmatch(
+                    r"/internal/v1/analytics/jobs/[A-Za-z0-9][A-Za-z0-9._-]{0,63}/frame", grant["path"]) or \
+                not ANALYTICS_TOKEN.fullmatch(str(grant.get("token", ""))):
+            raise AgentError("detector media grant is invalid")
+        status, packet = client.request("GET", grant["path"], node_id=node_id,
+                                         extra_headers={"X-WebObs-Analytics-Grant": grant["token"]})
+        if status != 200:
+            raise AgentError("analytics_media_unavailable")
+        rgba, width, height, captured_at = _frame_packet(packet)
+        module = _load_detector_module()
+        runner = module.DetectorJobRunner(pathlib.Path(os.environ.get(
+            "WEBOBS_DETECTOR_MODEL", "/opt/webobs/ui/models/ssd_mobilenet_v1_12.onnx")))
+        result = runner.process(job, rgba, width, height, occurred_at=captured_at)
+        boxes = result.get("boxes", [])
+        if boxes:
+            signals = [{"kind": "person", "confidence": max(float(box["confidence"]) for box in boxes),
+                        "boxes": [{key: box[key] for key in ("x", "y", "width", "height")} for box in boxes],
+                        "occurredAt": captured_at}]
+    except Exception as error:
+        result_code = str(error) if isinstance(error, AgentError) else str(getattr(error, "args", ["detector_failed"])[0])
+        if not re.fullmatch(r"[A-Za-z0-9._-]{1,64}", result_code):
+            result_code = "detector_failed"
+    status, _ = client.request("POST", "/internal/v1/analytics/jobs/result", {
+        "jobId": job_id, "generation": generation,
+        "state": "failed" if result_code else "completed", "resultCode": result_code,
+        "modelSha256": model_sha, "signals": signals,
+    }, node_id=node_id)
+    if status != 200:
+        raise AgentError("detector result was rejected")
+
+
 def run(args: argparse.Namespace) -> None:
     state_dir = pathlib.Path(args.state_dir)
     state_dir.mkdir(parents=True, exist_ok=True, mode=0o700)
@@ -358,6 +454,12 @@ def run(args: argparse.Namespace) -> None:
                                                    {"segments": segments}, node_id)
                 if catalog_status != 200:
                     raise AgentError("catalog synchronization was rejected")
+            if getattr(args, "role", "") == "worker":
+                claim_status, claim = client.request("POST", "/internal/v1/analytics/jobs/claim", {}, node_id)
+                if claim_status == 200 and isinstance(claim, dict) and isinstance(claim.get("job"), dict):
+                    run_detector_job(client, node_id, claim["job"])
+                elif claim_status not in {200, 204}:
+                    raise AgentError("detector job claim was rejected")
             failure_started = 0.0
         except AgentError:
             if not failure_started:
@@ -380,6 +482,7 @@ def main() -> None:
     parser.add_argument("--enrollment-id", default=os.environ.get("WEBOBS_NODE_ENROLLMENT_ID", ""))
     parser.add_argument("--enrollment-token", default=os.environ.get("WEBOBS_NODE_ENROLLMENT_TOKEN", ""))
     parser.add_argument("--node-name", default=os.environ.get("WEBOBS_NODE_NAME", "webobs-recorder"))
+    parser.add_argument("--role", default=os.environ.get("WEBOBS_NODE_ROLE", "recorder"))
     parser.add_argument("--version", default=os.environ.get("WEBOBS_BUILD_VERSION", "3.1.0-dev"))
     args = parser.parse_args()
     if not args.controller or not pathlib.Path(args.ca_file).is_file():
