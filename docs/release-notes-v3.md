@@ -13,7 +13,7 @@ Status / 状态：implementation is on `dev`; `v3.0` and `v3.1` remain unrelease
 
 - Adds a same-origin, SHA-256 verified ONNX SSD-MobileNetV1 person-only model asset.
 - Browser inference prefers WebGPU and falls back to single-thread WASM; model output is letterboxed back to normalized source coordinates and limited to 16 boxes.
-- Adds an administrator-controlled, CPU-only detector job contract with worker-only scheduling, mTLS/generation fencing, bounded results and resource reservations. Worker failures never stop recording.
+- Adds an administrator-controlled, CPU-only detector job contract with worker-only scheduling, mTLS/generation fencing, a 60-second Camera/Profile-bound media Grant, bounded RGBA frame requests/results and resource reservations. Worker failures never stop recording; without an explicitly configured loopback frame source the job fails closed.
 - No face recognition, identity tracking, emotion inference, screenshots, raw frames, Camera secrets or unrestricted URLs are stored or published.
 
 ## Release boundary / 发布边界
