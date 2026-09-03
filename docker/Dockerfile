@@ -97,8 +97,8 @@ RUN python3 -m py_compile /opt/webobs/bin/webobs-client-control /opt/webobs/bin/
 FROM ubuntu:24.04 AS client-compile-test
 
 ARG DEBIAN_FRONTEND=noninteractive
-RUN apt-get -o Acquire::Retries=5 update \
-    && apt-get -o Acquire::Retries=5 install -y --no-install-recommends \
+RUN apt-get -o Acquire::Retries=5 -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30 update \
+    && apt-get -o Acquire::Retries=5 -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30 install -y --no-install-recommends \
         build-essential cmake libgstreamer-plugins-base1.0-dev libgstreamer1.0-dev \
         libsecret-1-dev libsodium-dev ninja-build pkg-config python3 qt6-base-dev qt6-declarative-dev \
         qt6-5compat-dev qml6-module-qt5compat-graphicaleffects \
@@ -131,6 +131,21 @@ RUN chmod 0755 /usr/local/bin/run-native-probe
 
 ENV QT_QPA_PLATFORM=offscreen
 ENTRYPOINT ["/usr/local/bin/run-native-probe"]
+
+FROM ubuntu:24.04 AS detector-runtime
+
+ARG DEBIAN_FRONTEND=noninteractive
+ARG TARGETARCH
+RUN test "$TARGETARCH" = "amd64"
+RUN apt-get -o Acquire::Retries=5 update \
+    && apt-get -o Acquire::Retries=5 install -y --no-install-recommends \
+        ca-certificates curl python3 python3-venv \
+    && rm -rf /var/lib/apt/lists/*
+COPY analytics/detector-requirements.lock /tmp/detector-requirements.lock
+COPY analytics/install_runtime.py /tmp/install-detector-runtime.py
+RUN python3 /tmp/install-detector-runtime.py \
+        --lock /tmp/detector-requirements.lock --venv /opt/webobs/venv \
+    && rm -f /tmp/detector-requirements.lock /tmp/install-detector-runtime.py
 
 FROM ubuntu:24.04 AS mediamtx-downloader
 
@@ -415,6 +430,7 @@ RUN apt-get -o Acquire::Retries=5 -o Acquire::http::Timeout=30 -o Acquire::https
         libegl-mesa0 \
         libfontconfig1 \
         libfreetype6 \
+        libgomp1 \
         libgl1-mesa-dri \
         libjansson4 \
         libnspr4 \
@@ -459,6 +475,7 @@ RUN apt-get -o Acquire::Retries=5 -o Acquire::http::Timeout=30 -o Acquire::https
 COPY --from=core-builder /opt/obs /opt/obs
 COPY --from=sodium-builder /opt/libsodium/lib /opt/webobs/lib
 COPY --from=sodium-builder /opt/libsodium/share/licenses/libsodium /usr/share/licenses/libsodium
+COPY --from=detector-runtime /opt/webobs/venv /opt/webobs/venv
 COPY --from=web-builder /src/web/dist /opt/webobs/ui
 COPY --from=mediamtx-downloader /opt/mediamtx/mediamtx /opt/webobs/bin/mediamtx
 COPY --from=mediamtx-downloader /opt/mediamtx/LICENSE /usr/share/licenses/mediamtx/LICENSE
@@ -490,21 +507,25 @@ COPY tests/test_preupgrade_guard.py /tmp/test_preupgrade_guard.py
 COPY tests/test_nvr_storage.py /tmp/test_nvr_storage.py
 COPY LICENSE /usr/share/licenses/webobs/LICENSE
 COPY obs/obs-studio/COPYING /usr/share/licenses/webobs/OBS-COPYING
+COPY analytics/detector-requirements.lock /usr/share/licenses/webobs/detector-requirements.lock
+COPY web/public/models/NOTICE.txt /usr/share/licenses/webobs/person-model-NOTICE.txt
 
-ENV LD_LIBRARY_PATH=/opt/obs/lib:/opt/webobs/lib \
+ENV PATH=/opt/webobs/venv/bin:$PATH \
+    LD_LIBRARY_PATH=/opt/obs/lib:/opt/webobs/lib \
     WEBOBS_LIBSODIUM_LIBRARY=/opt/webobs/lib/libsodium.so.26 \
     DISPLAY=:99 \
     EGL_PLATFORM=x11
 
 RUN mkdir -p /assets /config/obs /config/webobs /recordings /usr/share/licenses/caddy \
     && cp /usr/share/common-licenses/Apache-2.0 /usr/share/licenses/caddy/LICENSE \
-    && sed -i 's/\r$//' /opt/webobs/bin/webobs-nvrd /opt/webobs/bin/webobs-camera-registry /opt/webobs/bin/webobs-events /opt/webobs/bin/webobs-client-control /opt/webobs/bin/webobs-cluster /opt/webobs/bin/webobs-node-agent /opt/webobs/bin/webobs-s3-archive /opt/webobs/bin/webobs-encrypted-backup /opt/webobs/bin/webobs-preupgrade-guard \
+    && sed -i 's/\r$//' /opt/webobs/bin/webobs-nvrd /opt/webobs/bin/webobs-camera-registry /opt/webobs/bin/webobs-events /opt/webobs/bin/webobs-client-control /opt/webobs/bin/webobs-cluster /opt/webobs/bin/webobs-node-agent /opt/webobs/bin/webobs-detector-worker /opt/webobs/bin/webobs-s3-archive /opt/webobs/bin/webobs-encrypted-backup /opt/webobs/bin/webobs-preupgrade-guard \
     && test "$(head -n 1 /opt/webobs/bin/webobs-nvrd)" = '#!/usr/bin/env python3' \
     && test "$(head -n 1 /opt/webobs/bin/webobs-camera-registry)" = '#!/usr/bin/env python3' \
     && test "$(head -n 1 /opt/webobs/bin/webobs-events)" = '#!/usr/bin/env python3' \
     && test "$(head -n 1 /opt/webobs/bin/webobs-client-control)" = '#!/usr/bin/env python3' \
     && test "$(head -n 1 /opt/webobs/bin/webobs-cluster)" = '#!/usr/bin/env python3' \
     && test "$(head -n 1 /opt/webobs/bin/webobs-node-agent)" = '#!/usr/bin/env python3' \
+    && test "$(head -n 1 /opt/webobs/bin/webobs-detector-worker)" = '#!/usr/bin/env python3' \
     && test "$(head -n 1 /opt/webobs/bin/webobs-s3-archive)" = '#!/usr/bin/env python3' \
     && test "$(head -n 1 /opt/webobs/bin/webobs-encrypted-backup)" = '#!/usr/bin/env python3' \
     && test "$(head -n 1 /opt/webobs/bin/webobs-preupgrade-guard)" = '#!/usr/bin/env python3' \
@@ -519,6 +540,7 @@ RUN mkdir -p /assets /config/obs /config/webobs /recordings /usr/share/licenses/
     && python3 -m py_compile /opt/webobs/bin/webobs-s3-archive \
     && python3 -m py_compile /opt/webobs/bin/webobs-encrypted-backup \
     && python3 -m py_compile /opt/webobs/bin/webobs-preupgrade-guard \
+    && /opt/webobs/bin/webobs-detector-worker --model /opt/webobs/ui/models/ssd_mobilenet_v1_12.onnx --self-test \
     && WEBOBS_TEST_CAMERA_REGISTRY=/opt/webobs/bin/webobs-camera-registry \
        WEBOBS_TEST_NVR_SERVICE=/opt/webobs/bin/webobs-nvrd \
        PYTHONDONTWRITEBYTECODE=1 python3 /tmp/test_camera_registry.py \

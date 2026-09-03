@@ -38,15 +38,18 @@ class DetectorWorkerTests(unittest.TestCase):
             def reshape(self, _shape): return self.values
 
         outputs = {
-            "count": Values([2]),
-            "boxes": Values([0.0, 0.0, 1.0, 0.5, 0.0, 0.0, 1.0, 1.0]),
-            "scores": Values([0.95, 0.99]),
-            "classes": Values([1, 3]),
+            # The pinned ONNX model returns boxes/classes/scores/count in this
+            # order.  Post-processing must use semantic names, not provider
+            # output ordering.
+            "detection_boxes": Values([0.0, 0.0, 1.0, 0.5, 0.0, 0.0, 1.0, 1.0]),
+            "detection_classes": Values([1, 3]),
+            "detection_scores": Values([0.95, 0.99]),
+            "num_detections": Values([2]),
         }
         # A 160x90 frame is letterboxed vertically into 300x300. The first
         # model box maps back to the source frame, while the second class is
         # rejected even though its confidence is higher.
-        boxes = MODULE._boxes(outputs, ["count", "boxes", "scores", "classes"], .6,
+        boxes = MODULE._boxes(outputs, ["detection_boxes", "detection_classes", "detection_scores", "num_detections"], .6,
                               (0.0, 65.5, 300.0, 169.0))
         self.assertEqual(len(boxes), 1)
         self.assertEqual(boxes[0]["x"], 0.0)

@@ -16,8 +16,10 @@ For each Camera/Profile, motion and scene-change use the following order:
 Person boxes use the browser WebGPU execution provider first and single-thread
 WASM second. The model is a same-origin, SHA-256 verified static asset. A
 server Worker is optional, CPU-only in this release line, and never receives a
-Camera Secret or unrestricted URL. The first-party runtime is fail-closed when
-its optional native dependencies are unavailable.
+Camera Secret or unrestricted URL. Its image layer includes hash-locked
+`onnxruntime==1.29.0` and NumPy wheels; deployments that deliberately omit
+that optional layer fail closed with `runtime_unavailable` rather than silently
+switching to an unbounded CPU implementation.
 
 ## API / API
 

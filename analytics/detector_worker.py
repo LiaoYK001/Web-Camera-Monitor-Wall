@@ -1,10 +1,12 @@
+#!/usr/bin/env python3
 """First-party, optional person detector runtime.
 
 The worker is deliberately a small, fail-closed library.  It accepts only a
 bounded RGBA frame supplied by an already-authorized job; it never resolves a
-camera URL, reads a Secret, or writes frames to disk.  ``onnxruntime`` is an
-optional runtime dependency: when it is unavailable the caller receives the
-stable ``runtime_unavailable`` result instead of a silent CPU fallback.
+camera URL, reads a Secret, or writes frames to disk.  ``onnxruntime`` is a
+hash-locked runtime dependency in the worker image. If a deployment
+deliberately omits that optional image layer, the caller receives the stable
+``runtime_unavailable`` result instead of a silent CPU fallback.
 """
 from __future__ import annotations
 
@@ -42,11 +44,25 @@ def verify_model(model_path: pathlib.Path, expected_sha256: str = MODEL_SHA256) 
     return data
 
 
+def _output_name(names: list[str], *parts: str) -> str | None:
+    """Resolve SSD outputs by semantic name, never by provider ordering."""
+    for name in names:
+        normalized = name.lower().replace("-", "_")
+        if any(part in normalized for part in parts):
+            return name
+    return None
+
+
 def _boxes(outputs: dict[str, Any], names: list[str], threshold: float,
            transform: tuple[float, float, float, float]) -> list[dict[str, float]]:
-    if len(names) < 4:
+    count_name = _output_name(names, "num_detections", "detection_count", "count")
+    boxes_name = _output_name(names, "detection_boxes", "boxes")
+    scores_name = _output_name(names, "detection_scores", "scores")
+    classes_name = _output_name(names, "detection_classes", "classes")
+    if not all((count_name, boxes_name, scores_name, classes_name)):
         raise DetectorError("model_output_invalid")
-    arrays = [getattr(outputs.get(name), "reshape", lambda *_: [])(-1) for name in names[:4]]
+    arrays = [getattr(outputs.get(name), "reshape", lambda *_: [])(-1)
+              for name in (count_name, boxes_name, scores_name, classes_name)]
     count = min(int(float(arrays[0][0])) if len(arrays[0]) else 0, 100)
     offset_x, offset_y, scaled_width, scaled_height = transform
     result: list[dict[str, float]] = []
@@ -171,10 +187,15 @@ if __name__ == "__main__":
     import argparse
     parser = argparse.ArgumentParser()
     parser.add_argument("--model", default="/opt/webobs/ui/models/ssd_mobilenet_v1_12.onnx")
+    parser.add_argument("--self-test", action="store_true", help="load the model and run a bounded in-memory inference")
     parser.add_argument("--serve", action="store_true", help="keep a local worker runtime alive for controller job integration")
     args = parser.parse_args()
     verify_model(pathlib.Path(args.model))
-    print(json.dumps({"status": "model-verified", "modelId": MODEL_ID, "serve": args.serve}, separators=(",", ":")), flush=True)
+    if args.self_test:
+        detector = PersonDetector(pathlib.Path(args.model))
+        detector.infer(bytes(160 * 90 * 4), 160, 90)
+    print(json.dumps({"status": "self-test-passed" if args.self_test else "model-verified",
+                      "modelId": MODEL_ID, "serve": args.serve}, separators=(",", ":")), flush=True)
     if args.serve:
         import signal
         nonlocal_stop = [False]

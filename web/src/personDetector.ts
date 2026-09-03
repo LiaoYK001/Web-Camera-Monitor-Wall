@@ -91,11 +91,23 @@ function values(value: ort.Tensor | undefined): ArrayLike<number> {
   return value?.data as ArrayLike<number> ?? [];
 }
 
+function outputName(names: readonly string[], ...parts: string[]): string | undefined {
+  return names.find((name) => {
+    const normalized = name.toLowerCase().replaceAll('-', '_');
+    return parts.some((part) => normalized.includes(part));
+  });
+}
+
 export function decodePersonOutputs(outputs: Record<string, ort.Tensor>, names: readonly string[], width: number, height: number, threshold = .6, maxBoxes = 16): PersonBox[] {
-  if (names.length < 4) return [];
+  const countName = outputName(names, 'num_detections', 'detection_count', 'count');
+  const boxesName = outputName(names, 'detection_boxes', 'boxes');
+  const scoresName = outputName(names, 'detection_scores', 'scores');
+  const classesName = outputName(names, 'detection_classes', 'classes');
+  if (!countName || !boxesName || !scoresName || !classesName) return [];
   const transform = letterboxTransform(width, height);
-  const arrays = names.slice(0, 4).map((name) => values(outputs[name]));
+  const arrays = [countName, boxesName, scoresName, classesName].map((name) => values(outputs[name]));
   const count = Math.min(Number(arrays[0][0] ?? 0), 100);
+  const limit = Number.isInteger(maxBoxes) ? Math.min(16, Math.max(1, maxBoxes)) : 16;
   const boxes: PersonBox[] = [];
   for (let index = 0; index < count; index += 1) {
     const score = Number(arrays[2][index] ?? 0); const label = Number(arrays[3][index] ?? 0);
@@ -109,7 +121,7 @@ export function decodePersonOutputs(outputs: Record<string, ort.Tensor>, names: 
     const sourceRight = clamp((right - transform.offsetX) / transform.width, sourceLeft, 1);
     const sourceBottom = clamp((bottom - transform.offsetY) / transform.height, sourceTop, 1);
     boxes.push({ x: sourceLeft, y: sourceTop, width: sourceRight - sourceLeft, height: sourceBottom - sourceTop, confidence: clamp(score, 0, 1) });
-    if (boxes.length >= maxBoxes) break;
+    if (boxes.length >= limit) break;
   }
   return boxes;
 }
