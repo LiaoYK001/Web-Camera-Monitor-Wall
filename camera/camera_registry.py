@@ -883,9 +883,27 @@ def analytics_runtime_plan(payload: dict, principal: str = "") -> dict:
                        ("worker_not_allowed" if kind == "person" and execution == "unsupported" and
                         not row["person_allow_server_fallback"] and row["person_execution_preference"] != "worker" else
                         "runtime_unavailable" if execution == "unsupported" else reason))
+        # Keep the common TopologyPlan vocabulary on analytics plans as well.
+        # Consumers can therefore render one media-chain diagnostic for a
+        # regular preview and an analytics runtime without inferring topology
+        # from the execution string.  A detector Worker is a hybrid path: the
+        # browser may still be viewing a direct stream while Docker owns the
+        # short-lived detector ingest.
+        topology = ("hybrid" if execution == "worker" else
+                    "true-direct" if media_transport in {"whep", "hls", "mjpeg"} and not server_media_expected else
+                    "gateway-direct")
+        receiver_kind = "native" if execution == "worker" else "browser"
+        decoder = ("browser" if execution.startswith("browser") else
+                   "camera" if execution == "native" else
+                   "server" if execution == "worker" else "none")
+        renderer = "browser" if receiver_kind == "browser" else "server" if execution == "worker" else "none"
+        upstream_owner = "docker" if server_media_expected else "camera"
         result.append({"contractVersion": 2, "planId": uuid.uuid4().hex, "cameraId": camera_id, "profileId": profile_id, "kind": kind,
+                   "topology": topology, "receiverKind": receiver_kind, "archiveTopology": "off",
+                   "decoder": decoder, "renderer": renderer, "encoder": "none", "upstreamOwner": upstream_owner,
                    "execution": execution, "executionOwner": owner, "sampleFps": sample,
-                   "serverMediaExpected": server_media_expected, "reason": plan_reason, "expiresAt": expires,
+                   "serverMediaExpected": server_media_expected, "liveServerMediaExpected": server_media_expected,
+                   "reason": plan_reason, "fallbackReason": plan_reason, "expiresAt": expires,
                    "offlineConfigExpiresAt": int(time.time()) + 7 * 24 * 3600,
                    "runtimeKind": "pwa", "mediaTransport": media_transport,
                    "credentialExposure": "none"})
@@ -909,6 +927,27 @@ def close_analytics_session(session_id: str, principal: str = "", camera_id: str
         ANALYTICS_SIGNAL_SEEN.pop(session_id, None)
         ANALYTICS_SIGNAL_RATE.pop(session_id, None)
         return closed
+
+
+def renew_analytics_session(session_id: str, principal: str = "", camera_id: str = "", profile_id: str = "") -> dict:
+    """Slide an active analytics session forward by ten minutes.
+
+    Renewal is scoped and owner-bound like ingestion and close. It never
+    changes the Camera/Profile or grants new capabilities.
+    """
+    principal = _analytics_principal(principal)
+    with ANALYTICS_SESSION_LOCK:
+        session = ANALYTICS_SESSIONS.get(session_id)
+        if session is None or session[0] <= int(time.time()):
+            raise PermissionError("analytics runtime session is expired")
+        if session[3] and session[3] != principal:
+            raise PermissionError("analytics runtime session owner mismatch")
+        if ((camera_id and camera_id != session[1]) or
+                (profile_id and profile_id != session[2])):
+            raise PermissionError("analytics runtime session scope mismatch")
+        expires = int(time.time()) + 600
+        ANALYTICS_SESSIONS[session_id] = (expires, session[1], session[2], session[3])
+        return {"sessionId": session_id, "cameraId": session[1], "profileId": session[2], "expiresAt": expires}
 
 
 def ingest_analytics_signals(payload: dict, session_id: str, principal: str = "") -> dict:
@@ -2801,9 +2840,34 @@ class Handler(BaseHTTPRequestHandler):
                 self.respond(202, ingest_analytics_signals(
                     self.payload(), session_id,
                     self.headers.get("X-WebObs-Analytics-Principal", ""))); return
+            renew_match = re.fullmatch(r"/analytics/runtime-sessions/([A-Za-z0-9_-]{32,128})/renew", self.path)
+            if renew_match:
+                body = self.payload() if int(self.headers.get("Content-Length", "0")) else {}
+                camera_id = body.get("cameraId", "")
+                profile_id = body.get("profileId", "")
+                if camera_id and (not isinstance(camera_id, str) or not ID_RE.fullmatch(camera_id)):
+                    raise ValueError("cameraId is invalid")
+                if profile_id and (not isinstance(profile_id, str) or not ID_RE.fullmatch(profile_id)):
+                    raise ValueError("profileId is invalid")
+                self.respond(200, renew_analytics_session(
+                    renew_match.group(1), self.headers.get("X-WebObs-Analytics-Principal", ""), camera_id, profile_id)); return
             session_match = re.fullmatch(r"/analytics/runtime-sessions/([A-Za-z0-9_-]{32,128})", self.path)
             if session_match:
-                self.respond(200, {"closed": close_analytics_session(session_match.group(1))}); return
+                # Keep the historical POST alias for older clients, but apply
+                # the same authenticated owner and optional Camera/Profile
+                # scope checks as the canonical DELETE endpoint.  Without the
+                # principal a bound session must not be closable by an
+                # unauthenticated loopback caller.
+                body = self.payload() if int(self.headers.get("Content-Length", "0")) else {}
+                camera_id = body.get("cameraId", "")
+                profile_id = body.get("profileId", "")
+                if camera_id and (not isinstance(camera_id, str) or not ID_RE.fullmatch(camera_id)):
+                    raise ValueError("cameraId is invalid")
+                if profile_id and (not isinstance(profile_id, str) or not ID_RE.fullmatch(profile_id)):
+                    raise ValueError("profileId is invalid")
+                self.respond(200, {"closed": close_analytics_session(
+                    session_match.group(1), self.headers.get("X-WebObs-Analytics-Principal", ""),
+                    camera_id, profile_id)}); return
             if self.path == "/detect":
                 payload = self.payload(); self.respond(200, classify(str(payload.get("address", "")))); return
             if self.path == "/onvif/discover":

@@ -1,11 +1,11 @@
 import { type CSSProperties, useEffect, useMemo, useRef, useState } from 'react';
-import { closeAnalyticsRuntimeSession, fetchAnalyticsPolicies, fetchCameras, fetchMotionZones, fetchPlaybackCapabilities, requestAnalyticsRuntimePlan, submitAnalyticsSignals } from './api';
+import { closeAnalyticsRuntimeSession, fetchAnalyticsPolicies, fetchCameras, fetchMotionZones, fetchPlaybackCapabilities, renewAnalyticsRuntimeSession, requestAnalyticsRuntimePlan, submitAnalyticsSignals } from './api';
 import { activateGateway, approvedBrowserProfile, BrowserPlanError, browserGrantProfile, connectApprovedWhep, connectHls, connectMjpeg, offlineSignedGrantPlan, requestBrowserPlan, type BrowserTopologyPlan } from './browserMedia';
 import { DirectAudioMixer, type DirectAudioSnapshot } from './directAudioMixer';
 import { clearPrivateRuntimeState, loadMonitorView, saveMonitorView } from './localRuntime';
 import { observeTileVisibility, shouldRunPlayback } from './mediaLifecycle';
 import { countRenderedFrames, formatTelemetry, sampleConnectionTelemetry, sampleElementTelemetry, unavailableTelemetry, type MediaTelemetry } from './mediaTelemetry';
-import { applyAutomaticLayout, defaultMonitorView, evaluatePromotion, nextRotationWindow, normalizeMonitorView, selectLowPowerProfile, validDetectionSignal, type DetectionSignal, type MonitorView, type TelemetryOverlayConfig } from './monitorView';
+import { applyAutomaticLayout, defaultMonitorView, evaluatePromotion, mapDetectionBoxToTile, nextRotationWindow, normalizeMonitorView, selectLowPowerProfile, validDetectionSignal, type DetectionSignal, type MonitorView, type TelemetryOverlayConfig } from './monitorView';
 import { BrowserAnalyticsRuntime, type BrowserAnalyticsStatus } from './analyticsRuntime';
 import { openIssueCenter, reportLocalIssue, resolveLocalIssue } from './issueRuntime';
 import type { AnalyticsPolicy, CameraRecord, CameraSceneSource, MotionZone, SceneDocument, SceneItem, SceneSource, SourcePlaybackCapability } from './types';
@@ -183,9 +183,11 @@ function BrowserCameraTile({ item, source, mixer, telemetry, lowPower, documentV
   const [analyticsStatus, setAnalyticsStatus] = useState<BrowserAnalyticsStatus>({ state: 'idle', reason: '', sampleFps: 0, lastSignalAt: 0 });
   const [detectionBoxes, setDetectionBoxes] = useState<Array<{ x: number; y: number; width: number; height: number; confidence?: number }>>([]);
   const analyticsSession = useRef<string | null>(null);
-  const playbackEnabled = shouldRunPlayback({
-    lowPowerEnabled: Boolean(lowPower), documentVisible, tileIntersecting,
-  });
+  // A per-profile forceAnalyticsAlwaysOn policy is the explicit exception to
+  // the monitor-wide low-power suspension.  It must keep the media element
+  // alive so the browser runtime can actually sample frames.
+  const lowPowerForPlayback = Boolean(lowPower) && !Boolean(analyticsPolicy?.forceAnalyticsAlwaysOn);
+  const playbackEnabled = shouldRunPlayback({ lowPowerEnabled: lowPowerForPlayback, documentVisible, tileIntersecting });
 
   useEffect(() => tileRef.current ? observeTileVisibility(tileRef.current, setTileIntersecting) : undefined, []);
 
@@ -288,6 +290,7 @@ function BrowserCameraTile({ item, source, mixer, telemetry, lowPower, documentV
     }
     let stopped = false;
     let runtime: BrowserAnalyticsRuntime | undefined;
+    let renewalTimer = 0;
     const requestedKinds = [analyticsPolicy.motionEnabled ? 'motion' : '', analyticsPolicy.sceneChangeEnabled ? 'scene-change' : '', analyticsPolicy.personEnabled ? 'person' : '']
       .filter(Boolean) as Array<'motion' | 'scene-change' | 'person'>;
     void requestAnalyticsRuntimePlan(source.cameraId, source.profileId, requestedKinds,
@@ -315,7 +318,25 @@ function BrowserCameraTile({ item, source, mixer, telemetry, lowPower, documentV
             .map((zone) => ({ mode: zone.mode, polygon: zone.polygon })),
           visible: () => documentVisible && tileIntersecting,
           lowPower: () => Boolean(lowPower),
-          onStatus: setAnalyticsStatus,
+          onStatus: (status) => {
+            setAnalyticsStatus(status);
+            const issue = status.reason === 'pixel_access_denied'
+              ? { code: 'ANALYTICS_PIXEL_ACCESS_DENIED', summary: `${source.name} 无法读取浏览器像素`, explanation: '当前媒体为跨源或带凭据来源，浏览器不会把画面上传到服务端代为分析。', actions: ['改用支持 CORS 的 HTTPS WHEP/HLS 来源。', '或关闭该 Profile 的浏览器分析。'] }
+              : ['model_integrity_failed', 'model_manifest_invalid', 'model_unavailable'].includes(status.reason)
+                ? { code: 'ANALYTICS_MODEL_INTEGRITY_FAILED', summary: `${source.name} 人物模型校验失败`, explanation: '固定模型资源未通过清单或 SHA-256 校验，人物分析已停止。', actions: ['重新加载同源模型资源。', '检查镜像版本和公开模型清单。'] }
+                : status.reason === 'low_power'
+                  ? { code: 'ANALYTICS_LOW_POWER_SUSPENDED', summary: `${source.name} 分析受低功耗策略抑制`, explanation: '低功耗模式已暂停浏览器软件分析；逐流强制开启时才会继续。', actions: ['关闭低功耗模式或降低分析路数。'] }
+                  : status.state === 'unsupported' || status.state === 'error'
+                    ? { code: 'ANALYTICS_RUNTIME_UNAVAILABLE', summary: `${source.name} 分析运行时不可用`, explanation: '浏览器分析 Worker 或推理运行时不可用，系统未静默启动服务端分析。', actions: ['检查浏览器 Worker/WebAssembly 支持。', '如需服务端 Worker，请由管理员逐流明确启用。'] }
+                    : undefined;
+            const codes = ['ANALYTICS_PIXEL_ACCESS_DENIED', 'ANALYTICS_MODEL_INTEGRITY_FAILED', 'ANALYTICS_LOW_POWER_SUSPENDED', 'ANALYTICS_RUNTIME_UNAVAILABLE'];
+            for (const code of codes) if (!issue || code !== issue.code) resolveLocalIssue(code, source.id, 'browser-analytics');
+            if (issue && status.state !== 'running') reportLocalIssue({
+              code: issue.code, scopeKind: 'source', scopeId: source.id, component: 'browser-analytics',
+              summary: issue.summary, explanation: issue.explanation, recommendedActions: issue.actions,
+              technicalDetails: { reason: status.reason }, severity: issue.code === 'ANALYTICS_MODEL_INTEGRITY_FAILED' ? 'error' : 'warning',
+            });
+          },
           onPersonBoxes: (boxes, execution, model) => {
             setDetectionBoxes(boxes);
             if (boxes.length === 0) {
@@ -341,9 +362,17 @@ function BrowserCameraTile({ item, source, mixer, telemetry, lowPower, documentV
           },
         });
         runtime.start();
+        // Runtime plans are intentionally short-lived. Renew while the tab is
+        // actively using the profile, preserving the same authenticated owner
+        // and Camera/Profile scope; cleanup still closes the session promptly.
+        renewalTimer = window.setInterval(() => {
+          const session = analyticsSession.current;
+          if (!session || stopped) return;
+          void renewAnalyticsRuntimeSession(session, source.cameraId, source.profileId).catch(() => undefined);
+        }, 4 * 60 * 1000);
       })
       .catch(() => { if (!stopped) setAnalyticsStatus({ state: 'error', reason: 'runtime_plan_unavailable', sampleFps: 0, lastSignalAt: 0 }); });
-    return () => { stopped = true; runtime?.stop(); const session = analyticsSession.current; analyticsSession.current = null; if (session) void closeAnalyticsRuntimeSession(session, source.cameraId, source.profileId).catch(() => undefined); };
+    return () => { stopped = true; if (renewalTimer) window.clearInterval(renewalTimer); runtime?.stop(); const session = analyticsSession.current; analyticsSession.current = null; if (session) void closeAnalyticsRuntimeSession(session, source.cameraId, source.profileId).catch(() => undefined); };
   }, [analyticsPolicy, analyticsZones, documentVisible, lowPower, source.cameraId, source.profileId, state, tileIntersecting, transport]);
 
   const geometry = useMemo(() => videoGeometry(item, dimensions.width, dimensions.height), [item, dimensions]);
@@ -393,10 +422,14 @@ function BrowserCameraTile({ item, source, mixer, telemetry, lowPower, documentV
     {showAnalytics.showInferenceStatus && analyticsStatus.state !== 'idle' && <span className={`analytics-runtime-status ${analyticsStatus.state}`} title={analyticsStatus.reason}>
       {analyticsStatus.state === 'running' ? `分析 · ${analyticsStatus.sampleFps} FPS` : analyticsStatus.state === 'unsupported' ? '分析不可用' : analyticsStatus.state === 'suspended' ? '分析已暂停' : '分析错误'}
     </span>}
-    {showAnalytics.showDetectionBoxes && detectionBoxes.map((box, index) => <span key={`${source.id}-box-${index}`} className="detection-box" style={{
-      left: `${box.x * 100}%`, top: `${box.y * 100}%`, width: `${box.width * 100}%`, height: `${box.height * 100}%`,
-      opacity: showAnalytics.boxOpacity, borderWidth: `${showAnalytics.boxLineWidth}px`,
-    }} aria-hidden="true">{showAnalytics.showDetectionLabels && <small>person</small>}</span>)}
+    {showAnalytics.showDetectionBoxes && detectionBoxes.map((box, index) => {
+      const mapped = mapDetectionBoxToTile(box, item, dimensions.width, dimensions.height);
+      if (mapped.width <= 0 || mapped.height <= 0) return null;
+      return <span key={`${source.id}-box-${index}`} className="detection-box" style={{
+        left: `${mapped.x * 100}%`, top: `${mapped.y * 100}%`, width: `${mapped.width * 100}%`, height: `${mapped.height * 100}%`,
+        opacity: showAnalytics.boxOpacity, borderWidth: `${showAnalytics.boxLineWidth}px`,
+      }} aria-hidden="true">{showAnalytics.showDetectionLabels && <small>person</small>}</span>;
+    })}
     {lowPower && !lowPower.targetMet && <button className="low-power-status" type="button"
       onClick={() => openIssueCenter(source.id)} title={`目标 ${lowPower.targetFps} FPS，实际 ${lowPower.actualFps || '—'} FPS`}>省电目标未达</button>}
     <TelemetryOverlay config={telemetry} transport={transport} video={videoRef.current} connection={activeConnection} />
@@ -626,6 +659,8 @@ export default function DirectPreview({ scene, compact = false }: { scene: Scene
               width: `${(item.width / effectiveScene.canvas.width) * 100}%`,
               height: `${(item.height / effectiveScene.canvas.height) * 100}%`,
               zIndex: item.zIndex + 1,
+              opacity: item.opacity,
+              transform: `rotate(${item.rotation}deg)`,
             } as CSSProperties;
             return (
               <div className="direct-tile-position" style={style} key={item.id}>

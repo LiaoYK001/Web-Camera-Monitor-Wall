@@ -625,6 +625,15 @@ class CameraRegistryTests(unittest.TestCase):
             "allowEventPromotion": False, "forceAnalyticsAlwaysOn": False}]})
         plan = registry.analytics_runtime_plan({"cameraId": "v3-session-owner", "profileId": "main",
                                                 "capabilities": {"wasm": True}}, "operator-one")
+        motion_plan = next(item for item in plan["plans"] if item["kind"] == "motion")
+        self.assertEqual(motion_plan["topology"], "gateway-direct")
+        self.assertEqual(motion_plan["receiverKind"], "browser")
+        self.assertEqual(motion_plan["archiveTopology"], "off")
+        self.assertEqual(motion_plan["fallbackReason"], "rtsp_gateway_required")
+        renewed = registry.renew_analytics_session(plan["sessionId"], "operator-one", "v3-session-owner", "main")
+        self.assertGreaterEqual(renewed["expiresAt"], plan["expiresAt"])
+        with self.assertRaisesRegex(PermissionError, "owner"):
+            registry.renew_analytics_session(plan["sessionId"], "operator-two")
         with self.assertRaisesRegex(PermissionError, "owner"):
             registry.ingest_analytics_signals({"signals": [{"signalId": "owner-test", "cameraId": "v3-session-owner",
                 "profileId": "main", "kind": "motion", "occurredAt": int(time.time() * 1000), "confidence": .5}]},

@@ -276,8 +276,11 @@ export interface AnalyticsPolicy {
 export type AnalyticsExecution = 'native' | 'browser-webgpu' | 'browser-wasm' | 'worker' | 'unsupported' | 'off';
 export interface AnalyticsRuntimePlan {
   contractVersion?: 2; planId: string; cameraId: string; profileId: string; kind: 'motion' | 'scene-change' | 'person';
+  topology?: 'true-direct' | 'gateway-direct' | 'hybrid' | 'composite';
+  receiverKind?: 'native' | 'browser'; archiveTopology?: 'off' | 'server-copy' | 'server-transcode' | 'local-manual';
+  decoder?: string; renderer?: string; encoder?: string; upstreamOwner?: 'camera' | 'docker';
   execution: AnalyticsExecution; executionOwner: 'camera' | 'browser' | 'worker' | 'none';
-  sampleFps: number; serverMediaExpected: boolean; reason: string; expiresAt: number;
+  sampleFps: number; serverMediaExpected: boolean; liveServerMediaExpected?: boolean; reason: string; fallbackReason?: string; expiresAt: number;
   runtimeKind?: 'pwa' | 'chromium-iwa'; mediaTransport?: 'whep' | 'hls' | 'mjpeg' | 'rtsp' | 'onvif' | 'browser' | 'worker';
   credentialExposure?: 'none' | 'ephemeral'; offlineConfigExpiresAt?: number;
   model?: { id: string; version: string; sha256: string };

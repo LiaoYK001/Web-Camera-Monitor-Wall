@@ -130,7 +130,13 @@ export class BrowserAnalyticsRuntime {
 
   private async capture(): Promise<void> {
     if (this.stopped || !this.canvas || this.options.video.readyState < HTMLMediaElement.HAVE_CURRENT_DATA ||
-      this.options.visible?.() === false || (this.options.lowPower?.() === true && !this.options.policy.forceAnalyticsAlwaysOn)) return;
+      this.options.visible?.() === false) return;
+    const lowPowerSuppressed = this.options.lowPower?.() === true && !this.options.policy.forceAnalyticsAlwaysOn;
+    if (lowPowerSuppressed) {
+      if (this.status.state !== 'suspended') this.update('suspended', 'low_power');
+      return;
+    }
+    if (this.status.state === 'suspended') this.update('running', 'browser_worker');
     const now = performance.now();
     if (now - this.lastFrameAt < Math.max(50, this.captureIntervalMs - 4)) return;
     if (!requestAnalyticsSlot('frame', this.options.priority)) return;

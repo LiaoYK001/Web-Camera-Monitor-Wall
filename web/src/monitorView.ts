@@ -70,6 +70,48 @@ export interface DetectionSignal {
   modelSha256?: string;
 }
 
+/**
+ * Map a source-normalized detection box onto a Scene v5 tile.  The same crop
+ * and contain/cover/stretch math used by the video element is applied here so
+ * boxes do not drift when a source is letterboxed or cropped.  Values are
+ * clamped to the tile; an entirely cropped-out box is returned with zero
+ * extent and is safe for the caller to skip.
+ */
+export function mapDetectionBoxToTile(
+  box: { x: number; y: number; width: number; height: number },
+  item: SceneItem,
+  sourceWidth: number,
+  sourceHeight: number,
+): { x: number; y: number; width: number; height: number } {
+  if (!Number.isFinite(sourceWidth) || !Number.isFinite(sourceHeight) || sourceWidth <= 0 || sourceHeight <= 0)
+    return { x: clamp(box.x, 0, 1), y: clamp(box.y, 0, 1), width: clamp(box.width, 0, 1), height: clamp(box.height, 0, 1) };
+  const croppedWidth = Math.max(1, sourceWidth - Math.max(0, item.crop.left) - Math.max(0, item.crop.right));
+  const croppedHeight = Math.max(1, sourceHeight - Math.max(0, item.crop.top) - Math.max(0, item.crop.bottom));
+  const scaleX = item.width / croppedWidth;
+  const scaleY = item.height / croppedHeight;
+  const scale = item.scaleMode === 'contain' ? Math.min(scaleX, scaleY) : item.scaleMode === 'cover' ? Math.max(scaleX, scaleY) : 1;
+  const xScale = item.scaleMode === 'stretch' ? scaleX : scale;
+  const yScale = item.scaleMode === 'stretch' ? scaleY : scale;
+  const contentWidth = item.scaleMode === 'stretch' ? item.width : croppedWidth * scale;
+  const contentHeight = item.scaleMode === 'stretch' ? item.height : croppedHeight * scale;
+  const left = (item.width - contentWidth) / 2 - Math.max(0, item.crop.left) * xScale;
+  const top = (item.height - contentHeight) / 2 - Math.max(0, item.crop.top) * yScale;
+  const rawLeft = left + clamp(box.x, 0, 1) * sourceWidth * xScale;
+  const rawTop = top + clamp(box.y, 0, 1) * sourceHeight * yScale;
+  const rawRight = left + clamp(box.x + box.width, 0, 1) * sourceWidth * xScale;
+  const rawBottom = top + clamp(box.y + box.height, 0, 1) * sourceHeight * yScale;
+  const clippedLeft = clamp(Math.min(rawLeft, rawRight), 0, item.width);
+  const clippedTop = clamp(Math.min(rawTop, rawBottom), 0, item.height);
+  const clippedRight = clamp(Math.max(rawLeft, rawRight), 0, item.width);
+  const clippedBottom = clamp(Math.max(rawTop, rawBottom), 0, item.height);
+  return {
+    x: item.width ? clippedLeft / item.width : 0,
+    y: item.height ? clippedTop / item.height : 0,
+    width: item.width ? Math.max(0, clippedRight - clippedLeft) / item.width : 0,
+    height: item.height ? Math.max(0, clippedBottom - clippedTop) / item.height : 0,
+  };
+}
+
 export const defaultTelemetryOverlay = (): TelemetryOverlayConfig => ({
   enabled: false,
   fields: ['fps', 'bitrate', 'codec', 'decoder'],
@@ -235,13 +277,15 @@ export function selectLowPowerProfile(profiles: CameraProfile[], targetFps: numb
 }
 
 export function validDetectionSignal(signal: DetectionSignal): boolean {
+  const boxesValid = !signal.boxes || (signal.kind === 'person' && signal.boxes.length <= 16 && signal.boxes.every((box) =>
+    [box.x, box.y, box.width, box.height].every((value) => Number.isFinite(value) && value >= 0 && value <= 1) &&
+    box.x + box.width <= 1 && box.y + box.height <= 1));
   return (signal.schemaVersion === 1 || signal.schemaVersion === 2) && /^[A-Za-z0-9._-]{1,64}$/.test(signal.cameraId) &&
     /^[A-Za-z0-9._-]{1,64}$/.test(signal.profileId) && ['motion', 'scene-change', 'person'].includes(signal.kind) &&
-    Number.isFinite(signal.occurredAt) && signal.occurredAt > 0 && signal.confidence >= 0 && signal.confidence <= 1 &&
-    (!signal.boxes || signal.boxes.length <= (signal.kind === 'person' ? 16 : 64) && signal.boxes.every((box) =>
-      [box.x, box.y, box.width, box.height].every((value) => Number.isFinite(value) && value >= 0 && value <= 1) &&
-      box.x + box.width <= 1 && box.y + box.height <= 1)) &&
-    (!signal.signalId || /^[A-Za-z0-9._-]{1,96}$/.test(signal.signalId)) &&
+    ['camera', 'browser', 'server', 'external'].includes(signal.source) &&
+    Number.isInteger(signal.occurredAt) && signal.occurredAt > 0 && signal.confidence >= 0 && signal.confidence <= 1 && boxesValid &&
+    (signal.schemaVersion === 1 || (typeof signal.signalId === 'string' && /^[A-Za-z0-9._:-]{8,128}$/.test(signal.signalId))) &&
+    (!signal.signalId || /^[A-Za-z0-9._:-]{8,128}$/.test(signal.signalId)) &&
     (!signal.modelId || /^[A-Za-z0-9._-]{1,64}$/.test(signal.modelId)) &&
     (!signal.modelVersion || /^[A-Za-z0-9._-]{1,32}$/.test(signal.modelVersion)) &&
     (!signal.modelSha256 || /^[0-9a-f]{64}$/i.test(signal.modelSha256));

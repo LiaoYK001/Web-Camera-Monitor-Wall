@@ -73,6 +73,42 @@ test('keeps browser analytics bounded, zoned, and confirms scene cuts', async ({
   expect(result).toEqual({ outside: 0, inside: true, scene: 1 });
 });
 
+test('keeps scene-change histogram baselines scoped to the active zones', async ({ page }) => {
+  await page.goto('/');
+  const result = await page.evaluate(async () => {
+    const { MotionSceneEngine } = await import('/src/analyticsEngine.ts');
+    const ids = { cameraId: 'cam-zone', profileId: 'sub' };
+    const zone = [{ mode: 'include' as const, polygon: [[0, 0], [0.5, 0], [0.5, 1], [0, 1]] }];
+    const engine = new MotionSceneEngine();
+    const left = new Uint8Array(16); const rightCut = left.slice();
+    for (let index = 2; index < rightCut.length; index += 4) rightCut[index] = 255;
+    engine.evaluate({ width: 4, height: 4, pixels: left, timestamp: 1000 }, ids, { zones: zone });
+    const stable = engine.evaluate({ width: 4, height: 4, pixels: rightCut, timestamp: 2000 }, ids, {
+      zones: zone, sceneThreshold: .55, sceneConfirmFrames: 1, sceneCooldownMs: 0,
+    });
+    return { sceneSignals: stable.signals.filter((signal) => signal.kind === 'scene-change').length, sceneChange: stable.sceneChange };
+  });
+  expect(result).toEqual({ sceneSignals: 0, sceneChange: 0 });
+});
+
+test('maps person boxes through Scene v5 crop and scale transforms', async ({ page }) => {
+  await page.goto('/');
+  const result = await page.evaluate(async () => {
+    const { mapDetectionBoxToTile } = await import('/src/monitorView.ts');
+    const base = { id: 'item', sourceId: 'source', x: 0, y: 0, width: 1000, height: 1000,
+      scaleMode: 'contain' as const, crop: { top: 0, right: 400, bottom: 0, left: 400 }, zIndex: 0,
+      visible: true, locked: false, groupId: '', rotation: 0, opacity: 1, blendMode: 'normal' as const };
+    const mapped = mapDetectionBoxToTile({ x: .2, y: .25, width: .5, height: .5 }, base, 2000, 1000);
+    const clipped = mapDetectionBoxToTile({ x: 0, y: 0, width: .1, height: .1 }, base, 2000, 1000);
+    return { mapped, clipped };
+  });
+  expect(result.mapped.x).toBeGreaterThanOrEqual(0);
+  expect(result.mapped.x).toBeLessThan(.01);
+  expect(result.mapped.width).toBeGreaterThan(.8);
+  expect(result.mapped.width).toBeLessThan(.85);
+  expect(result.clipped.width).toBe(0);
+});
+
 test('keeps low-power selection and analytics signals fail-closed', async ({ page }) => {
   await page.goto('/');
   const result = await page.evaluate(async () => {
@@ -87,18 +123,19 @@ test('keeps low-power selection and analytics signals fail-closed', async ({ pag
     const unmet = monitor.selectLowPowerProfile(profiles.slice(0, 2), 2);
     const valid = monitor.validDetectionSignal({ schemaVersion: 1, cameraId: 'cam-1', profileId: 'sub', kind: 'motion', occurredAt: Date.now(), confidence: .8, source: 'browser' });
     const invalid = monitor.validDetectionSignal({ schemaVersion: 1, cameraId: 'cam-1', profileId: 'sub', kind: 'person', occurredAt: Date.now(), confidence: 2, boxes: [{ x: .9, y: 0, width: .2, height: 1 }], source: 'browser' });
+    const motionWithBoxes = monitor.validDetectionSignal({ schemaVersion: 1, cameraId: 'cam-1', profileId: 'sub', kind: 'motion', occurredAt: Date.now(), confidence: .8, boxes: [{ x: 0, y: 0, width: .1, height: .1 }], source: 'browser' });
     const sources = ['a', 'b', 'c', 'd', 'e']; let bag: string[] = [];
     const first = monitor.nextRotationWindow(sources, [], 3, ['a'], 'random', bag, () => 0); bag = first.bag;
     const second = monitor.nextRotationWindow(sources, first.selection, 3, ['a'], 'random', bag, () => 0);
     const sequential = monitor.nextRotationWindow(sources, ['a', 'b'], 2, ['a'], 'sequential');
     return { met: met.profile?.id, metOk: met.targetMet, unmet: unmet.profile?.id, unmetOk: unmet.targetMet,
-      reason: unmet.reason, valid, invalid, first: first.selection, second: second.selection,
+      reason: unmet.reason, valid, invalid, motionWithBoxes, first: first.selection, second: second.selection,
       randomUnique: new Set([...first.selection.slice(1), ...second.selection.slice(1)]).size,
       sequential: sequential.selection, overlay: monitor.defaultTelemetryOverlay(),
       unavailableText: telemetry.formatTelemetry({ fps: null, bytesPerSecond: null, codec: 'MJPEG', decoder: 'Unknown' }, ['fps', 'bitrate', 'codec', 'decoder']) };
   });
   expect(result).toEqual({ met: 'snapshot', metOk: true, unmet: 'sub', unmetOk: false,
-    reason: 'no_low_frame_rate_profile', valid: true, invalid: false,
+    reason: 'no_low_frame_rate_profile', valid: true, invalid: false, motionWithBoxes: false,
     first: ['a', 'c', 'd'], second: ['a', 'e', 'b'], randomUnique: 4, sequential: ['a', 'c'],
     overlay: { enabled: false, fields: ['fps', 'bitrate', 'codec', 'decoder'], position: 'bottom-left', customX: 0,
       customY: 1, textOpacity: .9, backgroundEnabled: true, backgroundColor: '#000000', backgroundOpacity: .45,

@@ -42,6 +42,7 @@ PATCH  /api/v3/analytics/policies                 (baseRevision + <=256 items)
 POST   /api/v3/analytics/runtime-plans             (one Camera/Profile session)
 GET    /api/v3/analytics/status
 POST   /api/v3/analytics/signals/batch             (X-WebObs-Analytics-Session)
+POST   /api/v3/analytics/runtime-sessions/{id}/renew (same owner/scope, +10 minutes)
 DELETE /api/v3/analytics/runtime-sessions/{id}
 GET/POST /api/v2/analytics-jobs                    (administrator Worker jobs)
 
@@ -63,6 +64,11 @@ a batch, rejects mixed Camera IDs, and applies the caller's RBAC camera scope
 before the loopback Registry sees the request. Runtime plans report execution,
 owner, transport, expiry and `serverMediaExpected`; an ordinary RTSP plan is
 never reported as browser True Direct.
+
+Runtime sessions are renewed only while a visible client is actively using the
+profile. Renewal is owner-bound and cannot change the Camera/Profile or grant
+new capabilities; a failed renewal is handled as a normal expiry/reconnect,
+not as a silent authorization extension.
 
 ## Model supply chain / 模型供应链
 

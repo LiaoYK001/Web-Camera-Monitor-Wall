@@ -252,6 +252,9 @@ export const fetchAnalyticsStatus = (signal?: AbortSignal) => analyticsRequest<{
 export const submitAnalyticsSignals = (sessionId: string, signals: Array<Record<string, unknown>>) => analyticsRequest<{ accepted: number; events: MonitorEvent[] }>('/analytics/signals/batch', {
   method: 'POST', headers: { 'Content-Type': 'application/json', 'X-WebObs-Analytics-Session': sessionId }, body: JSON.stringify({ signals }),
 });
+export const renewAnalyticsRuntimeSession = (sessionId: string, cameraId?: string, profileId?: string) => analyticsRequest<{ sessionId: string; cameraId: string; profileId: string; expiresAt: number }>(`/analytics/runtime-sessions/${encodeURIComponent(sessionId)}/renew`, {
+  method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ...(cameraId ? { cameraId } : {}), ...(profileId ? { profileId } : {}) }),
+});
 export const closeAnalyticsRuntimeSession = (sessionId: string, cameraId?: string, profileId?: string) => analyticsRequest<{ closed: boolean }>(`/analytics/runtime-sessions/${encodeURIComponent(sessionId)}`, {
   method: 'DELETE',
   ...(cameraId && profileId ? { headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ cameraId, profileId }) } : {}),

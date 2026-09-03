@@ -34,16 +34,28 @@ export class MotionSceneEngine {
   private previous: Uint8Array | undefined;
   private background: Float32Array | undefined;
   private previousHistogram: Uint32Array | undefined;
+  private previousActivePixels = 0;
+  private zoneSignature = '';
   private previousAt = 0;
   private pendingMotionAt = 0;
   private motionCooldownUntil = 0;
   private sceneConfirmations = 0;
   private sceneCooldownUntil = 0;
 
-  private histogram(pixels: Uint8Array): Uint32Array {
+  private histogram(pixels: Uint8Array, width: number, height: number,
+    includeZones: MotionRuntimeOptions['zones'] = [], excludedZones: MotionRuntimeOptions['zones'] = []): { values: Uint32Array; activePixels: number } {
     const result = new Uint32Array(16);
-    for (const pixel of pixels) result[Math.min(15, pixel >> 4)] += 1;
-    return result;
+    let activePixels = 0;
+    for (let index = 0; index < pixels.length; index += 1) {
+      const x = (index % width + .5) / width;
+      const y = (Math.floor(index / width) + .5) / height;
+      const inInclude = !includeZones.length || includeZones.some((zone) => pointInPolygon(x, y, zone.polygon));
+      const inExcluded = excludedZones.some((zone) => pointInPolygon(x, y, zone.polygon));
+      if (!inInclude || inExcluded) continue;
+      result[Math.min(15, pixels[index] >> 4)] += 1;
+      activePixels += 1;
+    }
+    return { values: result, activePixels };
   }
 
   private signalId(): string {
@@ -55,6 +67,8 @@ export class MotionSceneEngine {
     this.previous = undefined;
     this.background = undefined;
     this.previousHistogram = undefined;
+    this.previousActivePixels = 0;
+    this.zoneSignature = '';
     this.previousAt = 0;
     this.pendingMotionAt = 0;
     this.motionCooldownUntil = 0;
@@ -73,15 +87,28 @@ export class MotionSceneEngine {
     const sceneConfirmFrames = clamp(Math.trunc(options.sceneConfirmFrames ?? 2), 1, 5);
     const sceneCooldownMs = clamp(Math.trunc(options.sceneCooldownMs ?? 30_000), 0, 3_600_000);
     const now = Number.isFinite(frame.timestamp) ? frame.timestamp : Date.now();
+    const includeZones = (options.zones ?? []).filter((zone) => zone.mode === 'include' && zone.polygon.length >= 3);
+    const excludedZones = (options.zones ?? []).filter((zone) => (zone.mode === 'exclude' || zone.mode === 'privacy') && zone.polygon.length >= 3);
+    // Zone edits change the population used for histogram normalization.  A
+    // short re-baseline avoids comparing a whole-frame histogram with a
+    // masked-frame histogram and producing a false scene-change event.
+    const nextZoneSignature = JSON.stringify({ include: includeZones, exclude: excludedZones });
+    if (nextZoneSignature !== this.zoneSignature) {
+      this.zoneSignature = nextZoneSignature;
+      this.previous = undefined;
+      this.background = undefined;
+      this.previousHistogram = undefined;
+      this.previousActivePixels = 0;
+    }
     if (!this.background || this.background.length !== size || !this.previous || this.previous.length !== size) {
       this.background = Float32Array.from(frame.pixels);
       this.previous = frame.pixels.slice();
-      this.previousHistogram = this.histogram(frame.pixels);
+      const baseline = this.histogram(frame.pixels, frame.width, frame.height, includeZones, excludedZones);
+      this.previousHistogram = baseline.values;
+      this.previousActivePixels = baseline.activePixels;
       this.previousAt = now;
       return { motion: 0, sceneChange: 0, signals: [] };
     }
-    const includeZones = (options.zones ?? []).filter((zone) => zone.mode === 'include' && zone.polygon.length >= 3);
-    const excludedZones = (options.zones ?? []).filter((zone) => (zone.mode === 'exclude' || zone.mode === 'privacy') && zone.polygon.length >= 3);
     let changedCount = 0;
     let sceneDelta = 0;
     let activePixels = 0;
@@ -105,11 +132,12 @@ export class MotionSceneEngine {
       this.background[index] = this.background[index] * .92 + value * .08;
     }
     const motion = activePixels ? changedCount / activePixels : 0;
-    const histogramDistance = activePixels && this.previousHistogram
-      ? histogram.reduce((sum, value, index) => sum + Math.abs(value / activePixels - this.previousHistogram![index] / activePixels), 0) / 2 : 0;
+    const histogramDistance = activePixels && this.previousHistogram && this.previousActivePixels
+      ? histogram.reduce((sum, value, index) => sum + Math.abs(value / activePixels - this.previousHistogram![index] / this.previousActivePixels), 0) / 2 : 0;
     const sceneChange = activePixels ? Math.max(sceneDelta / activePixels, histogramDistance) : 0;
     this.previous.set(frame.pixels);
     this.previousHistogram = histogram;
+    this.previousActivePixels = activePixels;
     const signals: Array<Omit<DetectionSignal, 'schemaVersion'>> = [];
     if (motion >= sensitivity) {
       if (!this.pendingMotionAt) this.pendingMotionAt = now;
