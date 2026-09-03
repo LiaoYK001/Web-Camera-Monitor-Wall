@@ -24,8 +24,10 @@ release_id=""
 if [[ "$release_ref" =~ ^[0-9]+$ ]]; then
   release_id="$release_ref"
   release_api="repos/$GITHUB_REPOSITORY/releases/$release_id"
+  upload_api="$(gh api "$release_api" --jq .upload_url | sed 's/{?name,label}$//')"
 else
   release_api="repos/$GITHUB_REPOSITORY/releases/tags/$release_ref"
+  upload_api=""
 fi
 
 temporary_root=$(mktemp -d)
@@ -61,7 +63,9 @@ for asset in "$@"; do
   }
   if [[ "$asset_count" == 0 ]]; then
     if [ -n "$release_id" ]; then
-      gh api --method POST "${release_api}/assets?name=${name}" \
+      # Draft release assets are uploaded through uploads.github.com.  The
+      # regular api.github.com path returns 404 for this operation.
+      gh api --method POST "${upload_api}?name=${name}" \
         -H "Content-Type: application/octet-stream" --input "$asset" >/dev/null
     else
       gh release upload "$release_ref" "$asset"

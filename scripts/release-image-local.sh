@@ -186,6 +186,12 @@ fi
 
 release_lookup_tag="${draft_tag:-$version}"
 release_id="$(gh api "repos/$GITHUB_REPOSITORY/releases?per_page=100" --jq ".[] | select(.tag_name == \"$release_lookup_tag\") | .id" | head -n 1)"
+if [ -z "$release_id" ] && [ "$prerelease" = true ]; then
+    # A prior retry may have advanced HEAD and therefore changed draft_tag.
+    # Reuse the newest matching preview Draft instead of creating clutter.
+    release_id="$(gh api "repos/$GITHUB_REPOSITORY/releases?per_page=100" \
+        --jq "[.[] | select(.draft == true and .prerelease == true and .name == \"$version\")] | sort_by(.created_at) | last | .id // empty")"
+fi
 if [ -z "$release_id" ]; then
     release_id="$(gh api --method POST "repos/$GITHUB_REPOSITORY/releases" \
         -f "tag_name=$release_lookup_tag" -f "target_commitish=$revision" -f "name=$version" -f "body=$(<"$notes")" \
