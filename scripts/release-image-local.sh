@@ -190,8 +190,14 @@ if [ -z "$release_id" ]; then
     release_id="$(gh api --method POST "repos/$GITHUB_REPOSITORY/releases" \
         -f "tag_name=$release_lookup_tag" -f "target_commitish=$revision" -f "name=$version" -f "body=$(<"$notes")" \
         -F draft=true -F "prerelease=$prerelease" --jq .id)"
+else
+    # A retry may reuse the existing Draft.  Refresh its revision and notes so
+    # every asset remains tied to the candidate being published now.
+    gh api --method PATCH "repos/$GITHUB_REPOSITORY/releases/$release_id" \
+        -f "target_commitish=$revision" -f "name=$version" -f "body=$(<"$notes")" \
+        -F draft=true -F "prerelease=$prerelease" >/dev/null
 fi
-[ "$release_id" =~ ^[0-9]+$ ] || { echo "could not resolve a GitHub Release database id" >&2; exit 65; }
+[[ "$release_id" =~ ^[0-9]+$ ]] || { echo "could not resolve a GitHub Release database id" >&2; exit 65; }
 is_draft="$(gh api "repos/$GITHUB_REPOSITORY/releases/$release_id" --jq .draft)"
 [ "$is_draft" = true ] || { echo "refusing to mutate an already-published release" >&2; exit 65; }
 ./scripts/upload-release-assets-immutable.sh "$release_id" "$source_archive" "${source_archive}.sha256"
