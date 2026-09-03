@@ -85,16 +85,30 @@ The full command creates `build/private-gates/linux-wsl2-chromium.json` only aft
 
 ## Local OCI publication / 本地 OCI 发布
 
-After both receipts exist for the clean current revision and are less than 48 hours old:
+Stable v3.1 publication requires both platform receipts for the clean current revision and they must be less than 48 hours old:
 
-当两份收据均对应当前干净提交且生成时间不超过 48 小时后：
+正式 v3.1 发布要求两份收据均对应当前干净提交且生成时间不超过 48 小时：
 
 ```powershell
 python scripts\verify-local-gate-receipts.py
 .\scripts\release-image-local.ps1 `
-  -Image ghcr.io/owner/web-camera-monitor-wall -Version v3.0
+  -Image ghcr.io/owner/web-camera-monitor-wall -Version v3.1
 ```
 
-Both release scripts check the clean tree, public audit and both receipts before Buildx can push. They do not read or publish the private fixture output. `release-image-local.sh` remains available on Linux hosts that provide a native Docker/Buildx engine.
+For the v3.0 user-test preview, receipts are intentionally not required, but the
+preview flag is mandatory and the command must run from a `dev` HEAD that exactly
+matches `origin/dev`:
 
-两个发布脚本都会在 Buildx 推送前检查干净工作树、公开审计和两份收据；它们不会读取或发布私有夹具原始输出。具备原生 Docker/Buildx 的 Linux 主机仍可使用 `release-image-local.sh`。
+```powershell
+.\scripts\release-image-local.ps1 `
+  -Image ghcr.io/owner/web-camera-monitor-wall -Version v3.0 -Prerelease
+```
+
+The preview creates a GitHub `pre-release`, promotes only `v3.0` and `sha-*`, and
+never changes `latest`. Both release scripts still check the clean tree and public
+audit; they do not read or publish private fixture output. `release-image-local.sh`
+remains available on Linux hosts that provide a native Docker/Buildx engine.
+
+正式版发布脚本会在 Buildx 推送前检查干净工作树、公开审计和两份收据；预览
+脚本只跳过私有收据并保留同样的公开审计边界。脚本不会读取或发布私有夹具原始
+输出。具备原生 Docker/Buildx 的 Linux 主机仍可使用 `release-image-local.sh`。

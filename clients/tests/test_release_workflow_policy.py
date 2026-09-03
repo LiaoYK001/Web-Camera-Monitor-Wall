@@ -103,6 +103,19 @@ class NativeReleaseWorkflowPolicyTests(unittest.TestCase):
         self.assertNotIn('gh release create', release_script)
         self.assertIn('"${image}@${digest}"', release_script)
 
+    def test_v3_preview_is_explicit_and_never_promotes_latest(self) -> None:
+        release_script = (ROOT / "scripts" / "release-image-local.sh").read_text(encoding="utf-8")
+        windows_release_script = (ROOT / "scripts" / "release-image-local.ps1").read_text(encoding="utf-8")
+        self.assertIn('release_mode="${3:-}"', release_script)
+        self.assertIn('release_mode" == --prerelease', release_script)
+        self.assertIn('"$version" == v3.0', release_script)
+        self.assertIn('build_version="${WEBOBS_PRERELEASE_BUILD_VERSION:-3.0.0-pre.1}"', release_script)
+        self.assertIn('build_milestone="v3-M2-preview"', release_script)
+        self.assertIn('-F "prerelease=$prerelease"', release_script)
+        self.assertIn('latest was not changed', release_script)
+        self.assertIn('[switch]$Prerelease', windows_release_script)
+        self.assertIn('-Prerelease is currently restricted to v3.0', windows_release_script)
+
     def test_candidate_windows_packages_cannot_skip_authenticode(self) -> None:
         self.assertIn("if ($env:CERTIFICATE_SHA1 -notmatch '^[0-9A-Fa-f]{40}$')", self.text)
         self.assertIn("-SigningCertificateSha1 $env:CERTIFICATE_SHA1", self.text)

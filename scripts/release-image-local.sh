@@ -3,14 +3,29 @@ set -euo pipefail
 
 image="${1:-}"
 version="${2:-}"
+release_mode="${3:-}"
 [[ "$image" =~ ^ghcr\.io/[a-z0-9][a-z0-9._-]{0,127}/[a-z0-9][a-z0-9._-]{0,127}$ ]] || {
-  echo "usage: $0 ghcr.io/owner/repository <vX.Y|vX.Y.Z|dev>" >&2
+  echo "usage: $0 ghcr.io/owner/repository <vX.Y|vX.Y.Z|dev> [--prerelease]" >&2
   exit 64
 }
 [[ "$version" == dev || "$version" =~ ^v[0-9]+\.[0-9]+(\.[0-9]+)?$ ]] || {
   echo "version must be dev, vX.Y, or vX.Y.Z" >&2
   exit 64
 }
+[[ -z "$release_mode" || "$release_mode" == --prerelease ]] || {
+  echo "the optional release mode must be --prerelease" >&2
+  exit 64
+}
+prerelease=false
+if [[ "$release_mode" == --prerelease || "${WEBOBS_PRERELEASE:-false}" == true ]]; then
+    prerelease=true
+fi
+if [ "$prerelease" = true ]; then
+    [[ "$version" == v3.0 ]] || {
+        echo "--prerelease is currently restricted to v3.0; publish v3.1 only as a stable release" >&2
+        exit 64
+    }
+fi
 
 repository_root="$(git rev-parse --show-toplevel)"
 cd "$repository_root"
@@ -26,15 +41,17 @@ git diff --quiet --ignore-submodules=none
 git diff --cached --quiet --ignore-submodules=none
 ./scripts/check-executable-bits.sh
 ./tests/run-public-audit.sh
-"$python_command" ./scripts/verify-local-gate-receipts.py
-if [[ "$version" =~ ^v2\.3(\.|$) ]]; then
-    "$python_command" ./scripts/verify-m7-gate-receipts.py
-fi
-if [[ "$version" =~ ^v3\.0(\.|$) ]]; then
-    "$python_command" ./scripts/verify-v3-m1-gate-receipts.py
-fi
-if [[ "$version" =~ ^v3\.1(\.|$) ]]; then
-    "$python_command" ./scripts/verify-v3-m2-gate-receipts.py
+if [ "$prerelease" = false ]; then
+    "$python_command" ./scripts/verify-local-gate-receipts.py
+    if [[ "$version" =~ ^v2\.3(\.|$) ]]; then
+        "$python_command" ./scripts/verify-m7-gate-receipts.py
+    fi
+    if [[ "$version" =~ ^v3\.0(\.|$) ]]; then
+        "$python_command" ./scripts/verify-v3-m1-gate-receipts.py
+    fi
+    if [[ "$version" =~ ^v3\.1(\.|$) ]]; then
+        "$python_command" ./scripts/verify-v3-m2-gate-receipts.py
+    fi
 fi
 
 revision="$(git rev-parse HEAD)"
@@ -56,6 +73,27 @@ if [ "$version" = dev ]; then
         *) echo "unsupported development milestone: ${build_milestone}" >&2; exit 64 ;;
     esac
     build_version="${WEBOBS_DEV_VERSION:-${default_dev_version}}.${short_revision}"
+elif [ "$prerelease" = true ]; then
+    [ "$(git branch --show-current)" = dev ] || {
+        echo "v3.0 preview publication must run from dev" >&2
+        exit 65
+    }
+    remote_dev_revision="$(git ls-remote origin refs/heads/dev | awk '$2=="refs/heads/dev" {print $1}')"
+    [ "$remote_dev_revision" = "$revision" ] || {
+        echo "v3.0 preview requires HEAD to equal origin/dev" >&2
+        exit 65
+    }
+    : "${GITHUB_REPOSITORY:?GITHUB_REPOSITORY is required for a preview release}"
+    : "${GH_TOKEN:?GH_TOKEN is required for a preview release}"
+    command -v gh >/dev/null
+    remote_refs="$(git ls-remote --tags origin "refs/tags/${version}" "refs/tags/${version}^{}")"
+    [ -z "$remote_refs" ] || {
+        echo "the immutable preview tag already exists; use a new preview version" >&2
+        exit 65
+    }
+    build_version="${WEBOBS_PRERELEASE_BUILD_VERSION:-3.0.0-pre.1}"
+    build_milestone="v3-M2-preview"
+    draft_tag="release-draft-${version#v}-${short_revision}"
 else
     [ "$(git branch --show-current)" = main ] || { echo "stable publication must run from main" >&2; exit 65; }
     remote_refs="$(git ls-remote --tags origin "refs/tags/${version}" "refs/tags/${version}^{}")"
@@ -127,15 +165,25 @@ cat > "$notes" <<EOF
 - OCI digest: \`${digest}\`
 - Milestone: \`${build_milestone}\`
 
+EOF
+if [ "$prerelease" = true ]; then
+    cat >> "$notes" <<EOF
+This is a preview release for testing the v3-M1/v3-M2 analytics line. It is not the v3.1 stable release.
+The v3.0 tag is promoted from this exact candidate digest only after this pre-release draft and its corresponding source assets are published.
+The latest tag is intentionally unchanged. Do not use this preview as a production stability claim.
+EOF
+else
+    cat >> "$notes" <<EOF
 The version and latest tags are promoted from this exact candidate digest only after this draft and its corresponding-source assets are published.
 EOF
+fi
 
 release_lookup_tag="${draft_tag:-$version}"
 release_id="$(gh api "repos/$GITHUB_REPOSITORY/releases?per_page=100" --jq ".[] | select(.tag_name == \"$release_lookup_tag\") | .id" | head -n 1)"
 if [ -z "$release_id" ]; then
     release_id="$(gh api --method POST "repos/$GITHUB_REPOSITORY/releases" \
         -f "tag_name=$release_lookup_tag" -f "target_commitish=$revision" -f "name=$version" -f "body=$(<"$notes")" \
-        -F draft=true -F prerelease=false --jq .id)"
+        -F draft=true -F "prerelease=$prerelease" --jq .id)"
 fi
 [ "$release_id" =~ ^[0-9]+$ ] || { echo "could not resolve a GitHub Release database id" >&2; exit 65; }
 is_draft="$(gh api "repos/$GITHUB_REPOSITORY/releases/$release_id" --jq .draft)"
@@ -163,16 +211,29 @@ if [ -n "$draft_tag" ]; then
     }
     git push origin ":refs/tags/$draft_tag" >/dev/null 2>&1 || true
 fi
-gh api --method PATCH "repos/$GITHUB_REPOSITORY/releases/$release_id" -F draft=false >/dev/null
-
-docker buildx imagetools create \
-    --tag "${image}:${version}" --tag "${image}:latest" "${image}@${digest}"
-for promoted in "$version" latest; do
-    promoted_digest="$(docker buildx imagetools inspect "${image}:${promoted}" | \
+if [ "$prerelease" = true ]; then
+    gh api --method PATCH "repos/$GITHUB_REPOSITORY/releases/$release_id" \
+        -F draft=false -F prerelease=true >/dev/null
+    docker buildx imagetools create \
+        --tag "${image}:${version}" "${image}@${digest}"
+    promoted_digest="$(docker buildx imagetools inspect "${image}:${version}" | \
         awk '$1=="Digest:" && $2 ~ /^sha256:[0-9a-f]{64}$/ {print $2; exit}')"
     [ "$promoted_digest" = "$digest" ] || {
-        echo "promoted ${promoted} tag does not match the candidate digest" >&2; exit 65;
+        echo "promoted ${version} tag does not match the candidate digest" >&2; exit 65;
     }
-done
-gh api --method PATCH "repos/$GITHUB_REPOSITORY/releases/$release_id" -F make_latest=true >/dev/null
-echo "published ${version}, latest, and sha-${short_revision} from ${digest}"
+    echo "published preview ${version} and sha-${short_revision} from ${digest}; latest was not changed"
+else
+    gh api --method PATCH "repos/$GITHUB_REPOSITORY/releases/$release_id" -F draft=false >/dev/null
+
+    docker buildx imagetools create \
+        --tag "${image}:${version}" --tag "${image}:latest" "${image}@${digest}"
+    for promoted in "$version" latest; do
+        promoted_digest="$(docker buildx imagetools inspect "${image}:${promoted}" | \
+            awk '$1=="Digest:" && $2 ~ /^sha256:[0-9a-f]{64}$/ {print $2; exit}')"
+        [ "$promoted_digest" = "$digest" ] || {
+            echo "promoted ${promoted} tag does not match the candidate digest" >&2; exit 65;
+        }
+    done
+    gh api --method PATCH "repos/$GITHUB_REPOSITORY/releases/$release_id" -F make_latest=true >/dev/null
+    echo "published ${version}, latest, and sha-${short_revision} from ${digest}"
+fi

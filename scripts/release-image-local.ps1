@@ -1,7 +1,8 @@
 [CmdletBinding()]
 param(
     [Parameter(Mandatory = $true)][string]$Image,
-    [Parameter(Mandatory = $true)][string]$Version
+    [Parameter(Mandatory = $true)][string]$Version,
+    [switch]$Prerelease
 )
 
 $ErrorActionPreference = 'Stop'
@@ -10,6 +11,9 @@ if ($Image -cnotmatch '^ghcr\.io/[a-z0-9][a-z0-9._-]{0,127}/[a-z0-9][a-z0-9._-]{
 }
 if ($Version -ne 'dev' -and $Version -cnotmatch '^v[0-9]+\.[0-9]+(?:\.[0-9]+)?$') {
     throw 'Version must be dev, vX.Y, or vX.Y.Z.'
+}
+if ($Prerelease -and $Version -cne 'v3.0') {
+    throw '-Prerelease is currently restricted to v3.0; publish v3.1 only as a stable release.'
 }
 
 $repositoryRoot = (git rev-parse --show-toplevel).Trim()
@@ -30,5 +34,9 @@ if (-not $bash) {
 
 # Positional parameters avoid command-string interpolation of image, tag, or
 # token values. GH_TOKEN remains process-local and is never put on argv.
-& $bashPath -c './scripts/release-image-local.sh "$1" "$2"' -- $Image $Version
+if ($Prerelease) {
+    & $bashPath -c './scripts/release-image-local.sh "$1" "$2" --prerelease' -- $Image $Version
+} else {
+    & $bashPath -c './scripts/release-image-local.sh "$1" "$2"' -- $Image $Version
+}
 if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
