@@ -1,6 +1,9 @@
 param(
     [switch]$ReleaseGate,
-    [string]$PrivateGateCommand = $env:WEBOBS_PRIVATE_PWA_GATE_COMMAND
+    [string]$PrivateGateCommand = $env:WEBOBS_PRIVATE_PWA_GATE_COMMAND,
+    [ValidateSet('v3-M1', 'v3-M2')]
+    [string]$V3Milestone = '',
+    [string]$PrivateV3GateCommand = $env:WEBOBS_PRIVATE_V3_GATE_COMMAND
 )
 
 $ErrorActionPreference = 'Stop'
@@ -47,9 +50,17 @@ docker build --target core-builder -f docker/Dockerfile .
 if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
 if ($ReleaseGate) {
+    if ($V3Milestone) { throw 'Use -ReleaseGate for v2 PWA or -V3Milestone for a v3 analytics gate, not both.' }
     if (-not $PrivateGateCommand) { throw 'PrivateGateCommand is required with -ReleaseGate.' }
     $env:WEBOBS_PRIVATE_PWA_GATE_COMMAND = $PrivateGateCommand
     python .\scripts\run-private-pwa-gate.py --platform windows --evidence-dir build/private-gates
+    if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+}
+
+if ($V3Milestone) {
+    if (-not $PrivateV3GateCommand) { throw 'PrivateV3GateCommand is required with -V3Milestone.' }
+    python .\scripts\run-private-v3-gate.py --milestone $V3Milestone --platform windows `
+        --command $PrivateV3GateCommand --evidence-dir build/private-gates
     if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 }
 

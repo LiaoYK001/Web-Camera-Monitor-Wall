@@ -30,27 +30,39 @@ For the active `v3-M1 / v3.0` and `v3-M2 / v3.1` development lines, run the corr
 
 当前 `v3-M1 / v3.0` 与 `v3-M2 / v3.1` 开发线需要在本机 Windows 与 WSL2 分别执行分析门禁。只有协议、零服务端媒体、模型完整性和 Worker 资源释放等检查真实完成后，才会生成绑定当前 revision 的收据；该流程不使用 self-hosted Runner。
 
-```powershell
-.\tests\m7\run-windows-admin-gate.ps1 -Image webobs:m7-candidate -Browser both
+The repository does not fabricate v3 receipts. Use the private gate harness kept
+outside the checkout together with the public adapter below. The private command
+must perform the actual browser/media checks and write only this bounded result
+to `WEBOBS_PRIVATE_GATE_RESULT`:
+
+```json
+{"contract":"webobs-v3-m1-gate-v1","milestone":"v3-M1","platform":"windows","checks":{"windowsMotionScene":true}}
 ```
 
-The repository does not fabricate v3 receipts. Use the private gate harness kept
-outside the checkout and write only its redacted receipts under
-`build/private-gates/`:
+The adapter validates the exact check set, binds a redacted receipt to the current
+revision, and discards the raw private result/log:
 
 ```powershell
-# Windows host (Chrome + Edge)
-python scripts\run-private-pwa-gate.py --platform windows
+$env:WEBOBS_PRIVATE_V3_GATE_COMMAND = 'D:\webobs-private-gates\run-v3-gate.cmd'
+.\scripts\test-web-runtime-windows.ps1 -V3Milestone v3-M1 -PrivateV3GateCommand $env:WEBOBS_PRIVATE_V3_GATE_COMMAND
+.\scripts\test-web-runtime-windows.ps1 -V3Milestone v3-M2 -PrivateV3GateCommand $env:WEBOBS_PRIVATE_V3_GATE_COMMAND
 ```
 
 ```bash
-# WSL2 Linux (Chromium + Docker/Worker fixtures)
-python3 scripts/run-private-pwa-gate.py --platform linux-wsl2-chromium
+export WEBOBS_PRIVATE_V3_GATE_COMMAND=/opt/webobs-gates/run-v3-gate.sh
+./scripts/test-web-runtime-wsl2.sh --v3-milestone v3-M1 --private-v3-gate-command "$WEBOBS_PRIVATE_V3_GATE_COMMAND"
+./scripts/test-web-runtime-wsl2.sh --v3-milestone v3-M2 --private-v3-gate-command "$WEBOBS_PRIVATE_V3_GATE_COMMAND"
 ```
 
-The v3 release scripts then additionally require `v3-m1-*.json` for `v3.0` or
-`v3-m2-*.json` for `v3.1`; missing, stale, partial or differently revisioned
-receipts fail closed.
+The M2 model and historical-regression checks may run on either trusted local
+host, using `--platform model` and `--platform regression`. The adapter emits
+`build/private-gates/v3-m1-*.json` or `v3-m2-*.json`; the release verifiers then
+require every exact receipt for the target version. Missing, stale, partial or
+differently revisioned receipts fail closed. Keep the private command, browser
+profiles, credentials, endpoints, recordings and raw results outside the
+checkout.
+
+仓库不会伪造 v3 收据。请把真实浏览器/媒体夹具放在检出目录之外，并通过上面的公开适配器运行。私有命令必须执行实际检查，只向 `WEBOBS_PRIVATE_GATE_RESULT` 写入有界结果；适配器会校验精确检查集合、绑定当前 Git revision，并丢弃原始日志与结果。`model` 和 `regression` 收据可在任一可信本机执行。凭据、端点、浏览器 Profile、录像及原始证据始终留在仓库之外。
 
 ## WSL2 Linux / WSL2 Linux
 
