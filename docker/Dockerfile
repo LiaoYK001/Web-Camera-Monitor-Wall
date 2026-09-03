@@ -74,6 +74,7 @@ ENV WEBOBS_LIBSODIUM_LIBRARY=/opt/libsodium/lib/libsodium.so.26 \
     WEBOBS_TEST_V2_SERVICE=/opt/webobs/bin/webobs-client-control \
     WEBOBS_TEST_CLUSTER_SERVICE=/opt/webobs/bin/webobs-cluster \
     WEBOBS_TEST_NODE_AGENT=/opt/webobs/bin/webobs-node-agent \
+    WEBOBS_TEST_DETECTOR_WORKER=/opt/webobs/bin/webobs-detector-worker \
     WEBOBS_TEST_ARCHIVE_SERVICE=/opt/webobs/bin/webobs-s3-archive \
     WEBOBS_TEST_ENCRYPTED_BACKUP=/opt/webobs/bin/webobs-encrypted-backup \
     WEBOBS_TEST_PREUPGRADE_GUARD=/opt/webobs/bin/webobs-preupgrade-guard \
@@ -529,7 +530,8 @@ RUN mkdir -p /assets /config/obs /config/webobs /recordings /usr/share/licenses/
        PYTHONDONTWRITEBYTECODE=1 python3 /tmp/test_cluster_service.py \
     && WEBOBS_TEST_NODE_AGENT=/opt/webobs/bin/webobs-node-agent \
        PYTHONDONTWRITEBYTECODE=1 python3 /tmp/test_node_agent.py \
-    && PYTHONDONTWRITEBYTECODE=1 python3 /tmp/test_detector_worker.py \
+    && WEBOBS_TEST_DETECTOR_WORKER=/opt/webobs/bin/webobs-detector-worker \
+       PYTHONDONTWRITEBYTECODE=1 python3 /tmp/test_detector_worker.py \
     && WEBOBS_TEST_NVR_SERVICE=/opt/webobs/bin/webobs-nvrd \
        PYTHONDONTWRITEBYTECODE=1 python3 /tmp/test_nvr_storage.py \
     && WEBOBS_TEST_ARCHIVE_SERVICE=/opt/webobs/bin/webobs-s3-archive \

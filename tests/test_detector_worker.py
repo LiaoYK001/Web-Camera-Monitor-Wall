@@ -2,12 +2,16 @@ from __future__ import annotations
 
 import hashlib
 import importlib.util
+import os
 import tempfile
 import unittest
+from importlib.machinery import SourceFileLoader
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-SPEC = importlib.util.spec_from_file_location("webobs_detector_worker_test", ROOT / "analytics" / "detector_worker.py")
+MODULE_PATH = Path(os.environ.get("WEBOBS_TEST_DETECTOR_WORKER", str(ROOT / "analytics" / "detector_worker.py")))
+_LOADER = SourceFileLoader("webobs_detector_worker_test", str(MODULE_PATH))
+SPEC = importlib.util.spec_from_loader(_LOADER.name, _LOADER)
 assert SPEC and SPEC.loader
 MODULE = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(MODULE)
