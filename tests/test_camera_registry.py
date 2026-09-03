@@ -519,6 +519,60 @@ class CameraRegistryTests(unittest.TestCase):
         with self.assertRaises(PermissionError):
             registry.ingest_analytics_signals({"signals": [signal]}, plan["sessionId"])
 
+    def test_v3_runtime_plan_reuses_direct_probe_and_marks_gateway_media(self) -> None:
+        camera = registry.validate_camera({
+            "id": "v3-gateway-plan", "name": "Gateway plan", "address": "rtsp://camera.example.invalid/live",
+            "adapter": "rtsp", "credentialsRef": "", "profiles": [{"id": "main", "name": "Main", "role": "main",
+                "endpoint": "rtsp://camera.example.invalid/main", "videoCodec": "h264", "audioCodec": "",
+                "width": 640, "height": 360, "fps": 15}],
+        })
+        registry.save_camera(camera, False)
+        registry.save_analytics_policies({"policies": [{"cameraId": "v3-gateway-plan", "profileId": "main",
+            "motionEnabled": True, "sceneChangeEnabled": False, "personEnabled": False,
+            "allowEventPromotion": False, "forceAnalyticsAlwaysOn": False}]})
+        plan = registry.analytics_runtime_plan({"cameraId": "v3-gateway-plan", "profileId": "main",
+                                                "capabilities": {"wasm": True}})
+        motion = next(item for item in plan["plans"] if item["kind"] == "motion")
+        self.assertEqual(motion["execution"], "browser-wasm")
+        self.assertTrue(motion["serverMediaExpected"])
+        self.assertEqual(motion["reason"], "rtsp_gateway_required")
+        registry.close_analytics_session(plan["sessionId"])
+
+        direct_endpoint = "https://media.example.invalid/live"
+        direct = registry.validate_camera({
+            "id": "v3-direct-plan", "name": "Direct plan", "address": direct_endpoint,
+            "adapter": "whep", "credentialsRef": "", "profiles": [{"id": "main", "name": "Main", "role": "main",
+                "endpoint": direct_endpoint, "videoCodec": "h264", "audioCodec": "",
+                "width": 640, "height": 360, "fps": 15}],
+        })
+        registry.save_camera(direct, False)
+        registry.save_analytics_policies({"policies": [{"cameraId": "v3-direct-plan", "profileId": "main",
+            "motionEnabled": True, "sceneChangeEnabled": False, "personEnabled": False,
+            "allowEventPromotion": False, "forceAnalyticsAlwaysOn": False}]})
+        with patch.dict(os.environ, {"WEBOBS_PWA_PUBLIC_ORIGIN": "https://pwa.example.invalid"}):
+            unqualified = registry.analytics_runtime_plan({"cameraId": "v3-direct-plan", "profileId": "main",
+                                                            "capabilities": {"wasm": True}})
+        motion = next(item for item in unqualified["plans"] if item["kind"] == "motion")
+        self.assertTrue(motion["serverMediaExpected"])
+        self.assertEqual(motion["reason"], "browser_direct_not_qualified")
+        registry.close_analytics_session(unqualified["sessionId"])
+
+        with registry.connect() as database:
+            capabilities = {"browserDirect": {"profiles": {"main": {
+                "tlsVerified": True, "corsVerified": True,
+                "pwaOriginSha256": hashlib.sha256(b"https://pwa.example.invalid").hexdigest(),
+                "checkedAt": int(time.time()),
+            }}}}
+            database.execute("UPDATE cameras SET capabilities_json=? WHERE id=?", (
+                json.dumps(capabilities, separators=(",", ":")), "v3-direct-plan"))
+        with patch.dict(os.environ, {"WEBOBS_PWA_PUBLIC_ORIGIN": "https://pwa.example.invalid"}):
+            qualified = registry.analytics_runtime_plan({"cameraId": "v3-direct-plan", "profileId": "main",
+                                                         "capabilities": {"wasm": True}})
+        motion = next(item for item in qualified["plans"] if item["kind"] == "motion")
+        self.assertFalse(motion["serverMediaExpected"])
+        self.assertEqual(motion["reason"], "")
+        registry.close_analytics_session(qualified["sessionId"])
+
     def test_embedded_credentials_and_secret_queries_are_rejected(self) -> None:
         with self.assertRaises(ValueError):
             registry.safe_endpoint(

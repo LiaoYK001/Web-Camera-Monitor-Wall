@@ -770,16 +770,50 @@ def analytics_runtime_plan(payload: dict) -> dict:
     webgpu = capabilities.get("webgpu") is True; wasm = capabilities.get("wasm") is not False
     with connect() as database:
         row = database.execute(
-            "SELECT p.*, c.adapter FROM analytics_policies p JOIN cameras c ON c.id=p.camera_id "
+            "SELECT p.*, c.adapter, c.credentials_ref, c.capabilities_json, c.enabled AS camera_enabled, "
+            "s.enabled AS profile_enabled, s.endpoint, s.allow_insecure_http "
+            "FROM analytics_policies p JOIN cameras c ON c.id=p.camera_id "
+            "JOIN stream_profiles s ON s.camera_id=p.camera_id AND s.id=p.profile_id "
             "WHERE p.camera_id=? AND p.profile_id=?", (camera_id, profile_id)).fetchone()
     if not row: raise KeyError("analytics policy not found")
+    if not bool(row["camera_enabled"]) or not bool(row["profile_enabled"]):
+        raise PermissionError("camera profile is disabled")
+
+    # Browser True Direct is a server-computed qualification.  A client may
+    # report its capabilities, but it cannot assert that a profile is safe to
+    # load directly.  Reuse only the proof written by browser_direct_probe:
+    # HTTPS, no URL credentials/query, no Camera Secret, and a recent
+    # TLS/CORS check bound to the configured PWA origin.  HTTP exemptions and
+    # RTSP therefore remain Gateway/Hybrid media paths.
+    adapter = str(row["adapter"]).lower()
+    media_transport = adapter if adapter in {"whep", "hls", "mjpeg"} else "rtsp"
+    direct_eligible = False
+    if media_transport in {"whep", "hls", "mjpeg"}:
+        try:
+            parsed_endpoint = urlsplit(str(row["endpoint"]))
+            capabilities_json = json.loads(row["capabilities_json"] or "{}")
+            proof = (((capabilities_json.get("browserDirect") or {}).get("profiles") or {}).get(profile_id) or {})
+            origin = configured_pwa_origin()
+            checked_at = int(proof.get("checkedAt", 0))
+            direct_eligible = (
+                parsed_endpoint.scheme.lower() == "https"
+                and not parsed_endpoint.username and not parsed_endpoint.password
+                and not parsed_endpoint.query and not parsed_endpoint.fragment
+                and not str(row["credentials_ref"])
+                and not bool(row["allow_insecure_http"])
+                and proof.get("tlsVerified") is True
+                and proof.get("corsVerified") is True
+                and proof.get("pwaOriginSha256") == hashlib.sha256(origin.encode()).hexdigest()
+                and checked_at >= int(time.time()) - 48 * 3600
+            )
+        except (ValueError, TypeError, KeyError, json.JSONDecodeError):
+            direct_eligible = False
+
     expires = int(time.time()) + 600; session_id = secrets.token_urlsafe(32)
     with ANALYTICS_SESSION_LOCK:
         ANALYTICS_SESSIONS[session_id] = (expires, camera_id, profile_id)
         ANALYTICS_SIGNAL_SEEN[session_id] = set()
         ANALYTICS_SIGNAL_RATE[session_id] = (int(time.time() // 60), 0)
-    adapter = str(row["adapter"]).lower()
-    media_transport = adapter if adapter in {"whep", "hls", "mjpeg"} else "rtsp"
     result = []
     for kind in ("motion", "scene-change", "person"):
         enabled = bool(row[{"motion": "motion_enabled", "scene-change": "scene_change_enabled", "person": "person_enabled"}[kind]])
@@ -791,9 +825,15 @@ def analytics_runtime_plan(payload: dict) -> dict:
             execution = "native" if enabled and kind == "motion" and capabilities.get("onvifMotion") is True else "browser-wasm" if enabled and wasm else "unsupported" if enabled else "off"
             owner = "camera" if execution == "native" else "browser" if execution.startswith("browser") else "none"
             sample = float(row["motion_sample_fps"] if kind == "motion" else 1)
+        server_media_expected = execution == "worker" or (execution.startswith("browser") and not direct_eligible)
+        reason = "" if direct_eligible else ("rtsp_gateway_required" if media_transport == "rtsp" else "browser_direct_not_qualified")
+        plan_reason = ("" if execution in {"off", "native"} else
+                       ("worker_not_allowed" if kind == "person" and execution == "unsupported" and
+                        row["person_execution_preference"] == "worker" else
+                        "runtime_unavailable" if execution == "unsupported" else reason))
         result.append({"contractVersion": 2, "planId": uuid.uuid4().hex, "cameraId": camera_id, "profileId": profile_id, "kind": kind,
                    "execution": execution, "executionOwner": owner, "sampleFps": sample,
-                   "serverMediaExpected": execution == "worker", "reason": "" if execution not in {"unsupported"} else ("worker_not_allowed" if kind == "person" and row["person_execution_preference"] == "worker" else "runtime_unavailable"), "expiresAt": expires,
+                   "serverMediaExpected": server_media_expected, "reason": plan_reason, "expiresAt": expires,
                    "offlineConfigExpiresAt": int(time.time()) + 7 * 24 * 3600,
                    "runtimeKind": "pwa", "mediaTransport": media_transport,
                    "credentialExposure": "none"})
