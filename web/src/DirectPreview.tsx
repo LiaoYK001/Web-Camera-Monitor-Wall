@@ -1,13 +1,14 @@
 import { type CSSProperties, useEffect, useMemo, useRef, useState } from 'react';
-import { fetchAnalyticsPolicies, fetchCameras, fetchPlaybackCapabilities } from './api';
+import { closeAnalyticsRuntimeSession, fetchAnalyticsPolicies, fetchCameras, fetchMotionZones, fetchPlaybackCapabilities, requestAnalyticsRuntimePlan, submitAnalyticsSignals } from './api';
 import { activateGateway, approvedBrowserProfile, BrowserPlanError, browserGrantProfile, connectApprovedWhep, connectHls, connectMjpeg, offlineSignedGrantPlan, requestBrowserPlan, type BrowserTopologyPlan } from './browserMedia';
 import { DirectAudioMixer, type DirectAudioSnapshot } from './directAudioMixer';
 import { clearPrivateRuntimeState, loadMonitorView, saveMonitorView } from './localRuntime';
 import { observeTileVisibility, shouldRunPlayback } from './mediaLifecycle';
 import { countRenderedFrames, formatTelemetry, sampleConnectionTelemetry, sampleElementTelemetry, unavailableTelemetry, type MediaTelemetry } from './mediaTelemetry';
 import { applyAutomaticLayout, defaultMonitorView, evaluatePromotion, nextRotationWindow, normalizeMonitorView, selectLowPowerProfile, validDetectionSignal, type DetectionSignal, type MonitorView, type TelemetryOverlayConfig } from './monitorView';
+import { BrowserAnalyticsRuntime, type BrowserAnalyticsStatus } from './analyticsRuntime';
 import { openIssueCenter, reportLocalIssue, resolveLocalIssue } from './issueRuntime';
-import type { AnalyticsPolicy, CameraRecord, CameraSceneSource, SceneDocument, SceneItem, SceneSource, SourcePlaybackCapability } from './types';
+import type { AnalyticsPolicy, CameraRecord, CameraSceneSource, MotionZone, SceneDocument, SceneItem, SceneSource, SourcePlaybackCapability } from './types';
 import { connectSource, type ProgramConnection, type ProgramConnectionState } from './whep';
 
 const labels: Record<ProgramConnectionState, string> = {
@@ -18,6 +19,16 @@ const labels: Record<ProgramConnectionState, string> = {
   offline: '离线',
   disabled: '未启用',
 };
+
+function signalId(prefix: string): string {
+  const randomUuid = globalThis.crypto?.randomUUID?.();
+  if (randomUuid) return `${prefix}-${randomUuid}`;
+  // Secure-context browsers expose randomUUID; this bounded fallback keeps
+  // local development and older WebViews fail-closed without using a camera
+  // identifier or any other sensitive value in the ID.
+  const random = Math.random().toString(36).slice(2, 14);
+  return `${prefix}-${Date.now().toString(36)}-${random}`;
+}
 
 function videoGeometry(item: SceneItem, width: number, height: number): CSSProperties {
   if (width <= 0 || height <= 0) return { width: '100%', height: '100%', objectFit: item.scaleMode === 'stretch' ? 'fill' : item.scaleMode };
@@ -149,13 +160,16 @@ function colorWithOpacity(color: string, opacity: number): string {
   return `rgba(${red},${green},${blue},${opacity})`;
 }
 
-function BrowserCameraTile({ item, source, mixer, telemetry, lowPower, documentVisible }: {
+function BrowserCameraTile({ item, source, mixer, telemetry, lowPower, documentVisible, analyticsPolicy, analyticsZones, showAnalytics }: {
   item: SceneItem;
   source: CameraSceneSource;
   mixer: DirectAudioMixer | null;
   telemetry: TelemetryOverlayConfig;
   lowPower?: { targetFps: number; actualFps: number; targetMet: boolean };
   documentVisible: boolean;
+  analyticsPolicy?: AnalyticsPolicy;
+  analyticsZones?: MotionZone[];
+  showAnalytics: MonitorView['analytics'];
 }) {
   const tileRef = useRef<HTMLDivElement>(null);
   const videoRef = useRef<HTMLVideoElement>(null);
@@ -166,6 +180,9 @@ function BrowserCameraTile({ item, source, mixer, telemetry, lowPower, documentV
   const [dimensions, setDimensions] = useState({ width: 0, height: 0 });
   const [activeConnection, setActiveConnection] = useState<ProgramConnection | null>(null);
   const [tileIntersecting, setTileIntersecting] = useState(true);
+  const [analyticsStatus, setAnalyticsStatus] = useState<BrowserAnalyticsStatus>({ state: 'idle', reason: '', sampleFps: 0, lastSignalAt: 0 });
+  const [detectionBoxes, setDetectionBoxes] = useState<Array<{ x: number; y: number; width: number; height: number; confidence?: number }>>([]);
+  const analyticsSession = useRef<string | null>(null);
   const playbackEnabled = shouldRunPlayback({
     lowPowerEnabled: Boolean(lowPower), documentVisible, tileIntersecting,
   });
@@ -261,6 +278,74 @@ function BrowserCameraTile({ item, source, mixer, telemetry, lowPower, documentV
     return mixer.attach(source.id, videoRef.current);
   }, [mixer, source.id, transport]);
 
+  useEffect(() => {
+    if (!videoRef.current || !analyticsPolicy || transport === 'mjpeg' || state !== 'live' ||
+      (!analyticsPolicy.motionEnabled && !analyticsPolicy.sceneChangeEnabled && !analyticsPolicy.personEnabled)) {
+      const unsupportedMjpeg = transport === 'mjpeg' && Boolean(analyticsPolicy && (analyticsPolicy.motionEnabled || analyticsPolicy.sceneChangeEnabled || analyticsPolicy.personEnabled));
+      setAnalyticsStatus({ state: unsupportedMjpeg ? 'unsupported' : 'idle', reason: unsupportedMjpeg ? 'pixel_access_denied' : analyticsPolicy ? 'disabled' : 'policy_unavailable', sampleFps: 0, lastSignalAt: 0 });
+      setDetectionBoxes([]);
+      return undefined;
+    }
+    let stopped = false;
+    let runtime: BrowserAnalyticsRuntime | undefined;
+    const requestedKinds = [analyticsPolicy.motionEnabled ? 'motion' : '', analyticsPolicy.sceneChangeEnabled ? 'scene-change' : '', analyticsPolicy.personEnabled ? 'person' : '']
+      .filter(Boolean) as Array<'motion' | 'scene-change' | 'person'>;
+    void requestAnalyticsRuntimePlan(source.cameraId, source.profileId, requestedKinds,
+      { webgpu: Boolean((navigator as Navigator & { gpu?: unknown }).gpu), wasm: true })
+      .then((value) => {
+        if (stopped) { void closeAnalyticsRuntimeSession(value.sessionId).catch(() => undefined); return; }
+        analyticsSession.current = value.sessionId;
+        const browserKinds = new Set(value.plans.filter((plan) => plan.execution === 'browser-wasm' || plan.execution === 'browser-webgpu').map((plan) => plan.kind));
+        const nativeOnly = value.plans.filter((plan) => requestedKinds.includes(plan.kind) && plan.execution === 'native').map((plan) => plan.kind);
+        const effectivePolicy: AnalyticsPolicy = {
+          ...analyticsPolicy,
+          motionEnabled: analyticsPolicy.motionEnabled && browserKinds.has('motion'),
+          sceneChangeEnabled: analyticsPolicy.sceneChangeEnabled && browserKinds.has('scene-change'),
+          personEnabled: analyticsPolicy.personEnabled && browserKinds.has('person'),
+        };
+        if (nativeOnly.length && !effectivePolicy.motionEnabled && !effectivePolicy.sceneChangeEnabled && !effectivePolicy.personEnabled)
+          setAnalyticsStatus({ state: 'idle', reason: 'camera_native_event', sampleFps: 0, lastSignalAt: 0 });
+        const unsupported = value.plans.find((plan) => requestedKinds.includes(plan.kind) && plan.execution === 'unsupported');
+        if (unsupported && !effectivePolicy.motionEnabled && !effectivePolicy.sceneChangeEnabled && !effectivePolicy.personEnabled)
+          setAnalyticsStatus({ state: 'unsupported', reason: unsupported.reason || 'runtime_unavailable', sampleFps: 0, lastSignalAt: 0 });
+        if (!effectivePolicy.motionEnabled && !effectivePolicy.sceneChangeEnabled && !effectivePolicy.personEnabled) return;
+        runtime = new BrowserAnalyticsRuntime({
+          video: videoRef.current!, cameraId: source.cameraId, profileId: source.profileId, policy: effectivePolicy,
+          zones: (analyticsZones ?? []).filter((zone) => zone.cameraId === source.cameraId)
+            .map((zone) => ({ mode: zone.mode, polygon: zone.polygon })),
+          visible: () => documentVisible && tileIntersecting,
+          lowPower: () => Boolean(lowPower),
+          onStatus: setAnalyticsStatus,
+          onPersonBoxes: (boxes, execution, model) => {
+            setDetectionBoxes(boxes);
+            if (boxes.length === 0) {
+              if (showAnalytics.showInferenceStatus) setAnalyticsStatus((current) => ({ ...current, state: 'running', reason: execution }));
+              return;
+            }
+            const confidence = boxes.reduce((best, box) => Math.max(best, box.confidence ?? 0), 0);
+            const signal: DetectionSignal = { schemaVersion: 2, cameraId: source.cameraId, profileId: source.profileId,
+              kind: 'person', occurredAt: Date.now(), confidence, boxes, source: 'browser',
+              signalId: signalId('person'), modelId: model.id, modelVersion: model.version, modelSha256: model.sha256 };
+            window.dispatchEvent(new CustomEvent('webobs:detection-signal', { detail: signal }));
+            if (analyticsSession.current) void submitAnalyticsSignals(analyticsSession.current, [{ cameraId: signal.cameraId, profileId: signal.profileId,
+              signalId: signal.signalId, kind: signal.kind, occurredAt: signal.occurredAt, confidence: signal.confidence,
+              boxes: signal.boxes, modelId: signal.modelId, modelVersion: signal.modelVersion, modelSha256: signal.modelSha256 }]).catch(() => undefined);
+            if (showAnalytics.showInferenceStatus) setAnalyticsStatus((current) => ({ ...current, state: 'running', reason: execution }));
+          },
+          onSignal: (signal) => {
+            if (signal.kind === 'person' && signal.boxes) setDetectionBoxes(signal.boxes);
+            window.dispatchEvent(new CustomEvent('webobs:detection-signal', { detail: signal }));
+            if (analyticsSession.current) void submitAnalyticsSignals(analyticsSession.current, [{ cameraId: signal.cameraId, profileId: signal.profileId,
+              signalId: signal.signalId ?? signalId('signal'), kind: signal.kind, occurredAt: signal.occurredAt, confidence: signal.confidence,
+              boxes: signal.boxes, ...(signal.kind === 'person' ? { modelId: signal.modelId, modelVersion: signal.modelVersion, modelSha256: signal.modelSha256 } : {}) }]).catch(() => undefined);
+          },
+        });
+        runtime.start();
+      })
+      .catch(() => { if (!stopped) setAnalyticsStatus({ state: 'error', reason: 'runtime_plan_unavailable', sampleFps: 0, lastSignalAt: 0 }); });
+    return () => { stopped = true; runtime?.stop(); const session = analyticsSession.current; analyticsSession.current = null; if (session) void closeAnalyticsRuntimeSession(session).catch(() => undefined); };
+  }, [analyticsPolicy, analyticsZones, documentVisible, lowPower, source.cameraId, source.profileId, state, tileIntersecting, transport]);
+
   const geometry = useMemo(() => videoGeometry(item, dimensions.width, dimensions.height), [item, dimensions]);
   const trueDirect = plan?.topology === 'true-direct';
   useEffect(() => {
@@ -305,6 +390,13 @@ function BrowserCameraTile({ item, source, mixer, telemetry, lowPower, documentV
       aria-label={`${source.name} 媒体路径详情`} onClick={() => openIssueCenter(source.id)}
       title={trueDirect ? `Camera → Browser · ${transport.toUpperCase()}` : `Camera → Docker → Browser · ${plan?.fallbackReason ?? '检查中'}`}>ⓘ</button>
     {state !== 'live' && <span className="direct-tile-name">{source.name}</span>}
+    {showAnalytics.showInferenceStatus && analyticsStatus.state !== 'idle' && <span className={`analytics-runtime-status ${analyticsStatus.state}`} title={analyticsStatus.reason}>
+      {analyticsStatus.state === 'running' ? `分析 · ${analyticsStatus.sampleFps} FPS` : analyticsStatus.state === 'unsupported' ? '分析不可用' : analyticsStatus.state === 'suspended' ? '分析已暂停' : '分析错误'}
+    </span>}
+    {showAnalytics.showDetectionBoxes && detectionBoxes.map((box, index) => <span key={`${source.id}-box-${index}`} className="detection-box" style={{
+      left: `${box.x * 100}%`, top: `${box.y * 100}%`, width: `${box.width * 100}%`, height: `${box.height * 100}%`,
+      opacity: showAnalytics.boxOpacity, borderWidth: `${showAnalytics.boxLineWidth}px`,
+    }} aria-hidden="true">{showAnalytics.showDetectionLabels && <small>person</small>}</span>)}
     {lowPower && !lowPower.targetMet && <button className="low-power-status" type="button"
       onClick={() => openIssueCenter(source.id)} title={`目标 ${lowPower.targetFps} FPS，实际 ${lowPower.actualFps || '—'} FPS`}>省电目标未达</button>}
     <TelemetryOverlay config={telemetry} transport={transport} video={videoRef.current} connection={activeConnection} />
@@ -320,6 +412,7 @@ export default function DirectPreview({ scene, compact = false }: { scene: Scene
   const [monitorLoaded, setMonitorLoaded] = useState(false);
   const [cameras, setCameras] = useState<CameraRecord[]>([]);
   const [analyticsPolicies, setAnalyticsPolicies] = useState<AnalyticsPolicy[]>([]);
+  const [analyticsZones, setAnalyticsZones] = useState<MotionZone[]>([]);
   const [portrait, setPortrait] = useState(() => window.matchMedia('(orientation: portrait)').matches);
   const [pageVisible, setPageVisible] = useState(() => !document.hidden);
   const promotionCooldowns = useRef(new Map<string, number>());
@@ -370,8 +463,8 @@ export default function DirectPreview({ scene, compact = false }: { scene: Scene
 
   useEffect(() => {
     const controller = new AbortController();
-    void Promise.all([fetchCameras(controller.signal), fetchAnalyticsPolicies(controller.signal)])
-      .then(([cameraResult, policyResult]) => { setCameras(cameraResult.cameras); setAnalyticsPolicies(policyResult.policies); })
+    void Promise.all([fetchCameras(controller.signal), fetchAnalyticsPolicies(controller.signal), fetchMotionZones(controller.signal)])
+      .then(([cameraResult, policyResult, zoneResult]) => { setCameras(cameraResult.cameras); setAnalyticsPolicies(policyResult.policies); setAnalyticsZones(zoneResult.zones); })
       .catch(() => undefined);
     return () => controller.abort();
   }, [scene.revision]);
@@ -395,6 +488,7 @@ export default function DirectPreview({ scene, compact = false }: { scene: Scene
     [capabilities],
   );
   const audioEnabled = audio.state === 'running';
+  const analyticsByProfile = useMemo(() => new Map(analyticsPolicies.map((policy) => [`${policy.cameraId}\u0000${policy.profileId}`, policy])), [analyticsPolicies]);
   const effectiveScene = useMemo(() => {
     let current = monitorView.mode === 'auto' && portrait && scene.canvas.width > scene.canvas.height
       ? { ...scene, canvas: { ...scene.canvas, width: scene.canvas.height, height: scene.canvas.width } }
@@ -541,7 +635,10 @@ export default function DirectPreview({ scene, compact = false }: { scene: Scene
                         ? { ...monitorView.telemetry, refreshIntervalMs: Math.max(5000, monitorView.telemetry.refreshIntervalMs) }
                         : monitorView.telemetry}
                       lowPower={lowPowerBySource.get(source.id)}
-                      documentVisible={pageVisible} />
+                      documentVisible={pageVisible}
+                      analyticsPolicy={analyticsByProfile.get(`${source.cameraId}\u0000${source.profileId}`)}
+                      analyticsZones={analyticsZones}
+                      showAnalytics={monitorView.analytics} />
                   : <DirectTile item={item} source={source} capability={bySource.get(source.id)} mixer={mixer} />}
               </div>
             );

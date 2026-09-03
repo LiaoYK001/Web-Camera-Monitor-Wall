@@ -352,7 +352,7 @@ class CameraRegistryTests(unittest.TestCase):
         with self.assertRaises(registry.RevisionConflict):
             registry.patch_source_catalog("catalog-fixture", {"enabled": False}, item["revision"])
         with registry.connect() as database:
-            self.assertEqual(database.execute("PRAGMA user_version").fetchone()[0], 2)
+            self.assertEqual(database.execute("PRAGMA user_version").fetchone()[0], 3)
             issues = database.execute(
                 "SELECT * FROM operational_issues WHERE code='AUDIO_TRACK_MISSING'").fetchall()
             self.assertEqual(len(issues), 1)
@@ -445,8 +445,9 @@ class CameraRegistryTests(unittest.TestCase):
         self.assertTrue(page["items"][0]["enabled"])
         self.assertEqual(page["items"][0]["profiles"][0]["transportMode"], "auto")
         with registry.connect() as database:
-            self.assertEqual(database.execute("PRAGMA user_version").fetchone()[0], 2)
+            self.assertEqual(database.execute("PRAGMA user_version").fetchone()[0], 3)
             self.assertEqual(database.execute("SELECT COUNT(*) FROM cameras").fetchone()[0], 1)
+        self.assertEqual(list(legacy.parent.glob(f".{legacy.name}.pre-v3-*")), [])
 
     def test_analytics_policies_are_per_profile_atomic_and_default_off(self) -> None:
         camera = registry.validate_camera({
@@ -480,6 +481,43 @@ class CameraRegistryTests(unittest.TestCase):
         self.assertEqual(len(registry.analytics_policies()), 1)
         registry.save_camera(registry.validate_camera({**camera, "profiles": []}, "analytics-fixture"), True)
         self.assertEqual(registry.analytics_policies(), [])
+
+    def test_v3_runtime_plan_and_signal_contract_is_fail_closed(self) -> None:
+        camera = registry.validate_camera({
+            "id": "v3-analytics", "name": "v3 analytics", "address": "rtsp://camera.example.invalid/live",
+            "adapter": "rtsp", "credentialsRef": "", "profiles": [{"id": "sub", "name": "Sub", "role": "sub",
+                "endpoint": "rtsp://camera.example.invalid/sub", "videoCodec": "h264", "audioCodec": "",
+                "width": 640, "height": 360, "fps": 15}],
+        })
+        registry.save_camera(camera, False)
+        registry.save_analytics_policies({"policies": [{"cameraId": "v3-analytics", "profileId": "sub",
+            "motionEnabled": True, "sceneChangeEnabled": False, "personEnabled": True,
+            "allowEventPromotion": False, "forceAnalyticsAlwaysOn": False,
+            "person": {"executionPreference": "browser", "allowServerFallback": False}}]})
+        plan = registry.analytics_runtime_plan({"cameraId": "v3-analytics", "profileId": "sub",
+                                                "capabilities": {"wasm": True, "webgpu": False}})
+        self.assertEqual(plan["contractVersion"], 2)
+        self.assertEqual({item["kind"] for item in plan["plans"]}, {"motion", "scene-change", "person"})
+        self.assertEqual(next(item for item in plan["plans"] if item["kind"] == "motion")["execution"], "browser-wasm")
+        self.assertTrue(all(item["mediaTransport"] == "rtsp" for item in plan["plans"]))
+        self.assertEqual(next(item for item in plan["plans"] if item["kind"] == "scene-change")["execution"], "off")
+        self.assertEqual(next(item for item in plan["plans"] if item["kind"] == "person")["execution"], "browser-wasm")
+        with self.assertRaises(PermissionError):
+            registry.ingest_analytics_signals({"signals": [{"signalId": "disabled-01", "cameraId": "v3-analytics",
+                "profileId": "sub", "kind": "scene-change", "occurredAt": int(time.time() * 1000), "confidence": .9}]}, plan["sessionId"])
+        class EventResponse:
+            def __enter__(self): return self
+            def __exit__(self, *_): return False
+            def read(self, _limit): return b'{"id":"event-1"}'
+        with patch.object(registry, "urlopen", return_value=EventResponse()):
+            signal = {"signalId": "motion-0001", "cameraId": "v3-analytics", "profileId": "sub", "kind": "motion",
+                      "occurredAt": int(time.time() * 1000), "confidence": .8}
+            self.assertEqual(registry.ingest_analytics_signals({"signals": [signal]}, plan["sessionId"])["accepted"], 1)
+            with self.assertRaises(PermissionError):
+                registry.ingest_analytics_signals({"signals": [signal]}, plan["sessionId"])
+        self.assertTrue(registry.close_analytics_session(plan["sessionId"]))
+        with self.assertRaises(PermissionError):
+            registry.ingest_analytics_signals({"signals": [signal]}, plan["sessionId"])
 
     def test_embedded_credentials_and_secret_queries_are_rejected(self) -> None:
         with self.assertRaises(ValueError):

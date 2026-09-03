@@ -11,6 +11,8 @@ scripts/release-image-local.sh
 scripts/run-private-pwa-gate.py
 scripts/verify-local-gate-receipts.py
 scripts/verify-m7-gate-receipts.py
+scripts/verify-v3-m1-gate-receipts.py
+scripts/verify-v3-m2-gate-receipts.py
 scripts/test-web-runtime-wsl2.sh
 scripts/upload-release-assets-immutable.sh
 scripts/verify-source-bundle.sh

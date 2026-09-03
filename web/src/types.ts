@@ -268,7 +268,27 @@ export interface AnalyticsPolicy {
   motionEnabled: boolean; sceneChangeEnabled: boolean; personEnabled: boolean;
   allowEventPromotion: boolean; promotionThreshold: number;
   promotionHoldSeconds: number; promotionCooldownSeconds: number;
-  forceAnalyticsAlwaysOn: boolean; updatedAt: number;
+  forceAnalyticsAlwaysOn: boolean; updatedAt: number; revision?: number;
+  motion?: { sensitivity: number; sampleFps: number; debounceMs: number; cooldownMs: number };
+  sceneChange?: { threshold: number; confirmFrames: number; cooldownMs: number };
+  person?: { confidenceThreshold: number; sampleFps: number; maxBoxes: number; executionPreference: 'auto' | 'browser' | 'worker'; allowServerFallback: boolean };
+}
+export type AnalyticsExecution = 'native' | 'browser-webgpu' | 'browser-wasm' | 'worker' | 'unsupported' | 'off';
+export interface AnalyticsRuntimePlan {
+  contractVersion?: 2; planId: string; cameraId: string; profileId: string; kind: 'motion' | 'scene-change' | 'person';
+  execution: AnalyticsExecution; executionOwner: 'camera' | 'browser' | 'worker' | 'none';
+  sampleFps: number; serverMediaExpected: boolean; reason: string; expiresAt: number;
+  runtimeKind?: 'pwa' | 'chromium-iwa'; mediaTransport?: 'whep' | 'hls' | 'mjpeg' | 'rtsp' | 'onvif' | 'browser' | 'worker';
+  credentialExposure?: 'none' | 'ephemeral'; offlineConfigExpiresAt?: number;
+  model?: { id: string; version: string; sha256: string };
+}
+export interface AnalyticsStatus {
+  cameraId: string; profileId: string; motion: AnalyticsRuntimePlan; sceneChange: AnalyticsRuntimePlan; person: AnalyticsRuntimePlan;
+}
+export interface AnalyticsJob {
+  jobId: string; cameraId: string; profileId: string; kind: 'person'; nodeId: string; generation: number;
+  state: 'queued' | 'running' | 'completed' | 'failed'; leaseExpiresAt: number; modelId: string; modelSha256: string;
+  lastResultAt: number | null; lastErrorCode: string | null; revision: number;
 }
 export interface CameraDetection {
   address: string;

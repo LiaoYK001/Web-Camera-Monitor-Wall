@@ -20,6 +20,7 @@ import SourceCatalog from './SourceCatalog';
 import AudioWorkspace from './AudioWorkspace';
 import SettingsWorkspace from './SettingsWorkspace';
 import ClusterAdmin from './ClusterAdmin';
+import AnalyticsWorkspace from './AnalyticsWorkspace';
 import { loadOfflineStudio, queueOfflineAudit, saveLocalStudio, saveStudioSnapshot } from './localRuntime';
 import { queueStudioSync, synchronizeBrowserState } from './syncRuntime';
 import type { AudioMonitoring, CameraRecord, FilterKind, PlaybackMode, ScaleMode, SceneDocument, SceneFilter, SceneItem, SceneSource, StudioCapabilities, StudioDocument, Transport } from './types';
@@ -748,6 +749,9 @@ export default function App() {
   }
   if (productArea === 'events') {
     return <WorkspaceShell area={productArea} onNavigate={navigate} connection={connection}><EventsPanel onBack={() => navigate('monitor')} /></WorkspaceShell>;
+  }
+  if (productArea === 'analytics') {
+    return <WorkspaceShell area={productArea} onNavigate={navigate} connection={connection}><AnalyticsWorkspace /></WorkspaceShell>;
   }
 
   if (!draft || !studioDraft) {

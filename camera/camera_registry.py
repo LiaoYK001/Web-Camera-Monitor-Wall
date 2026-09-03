@@ -21,6 +21,7 @@ import sqlite3
 import subprocess
 import threading
 import time
+import tempfile
 import uuid
 import xml.etree.ElementTree as ET
 from datetime import datetime, timezone
@@ -67,6 +68,13 @@ PROBE_LOCKS_GUARD = threading.Lock()
 PROBE_LOCKS: dict[str, threading.Lock] = {}
 ONVIF_CLOCK_LOCK = threading.Lock()
 ONVIF_CLOCK_OFFSETS: dict[str, float] = {}
+ANALYTICS_SESSION_LOCK = threading.Lock()
+ANALYTICS_SESSIONS: dict[str, tuple[int, str, str]] = {}
+# Bounded replay/rate state for browser analytics sessions.  Values contain no
+# frames or endpoint data and are discarded when a session expires/closes.
+ANALYTICS_SIGNAL_SEEN: dict[str, set[str]] = {}
+ANALYTICS_SIGNAL_RATE: dict[str, tuple[int, int]] = {}
+ANALYTICS_PROFILE_RATE: dict[tuple[str, str], tuple[int, int]] = {}
 
 
 class OnvifError(RuntimeError):
@@ -123,7 +131,39 @@ def connect() -> sqlite3.Connection:
 
 def initialize() -> None:
     DB_PATH.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
-    with connect() as database:
+    migration_backup: Path | None = None
+    # A SQLite online backup captures a consistent pre-migration snapshot,
+    # including databases currently using WAL.  Keep it beside the database
+    # with restrictive permissions and remove it after a successful startup.
+    # If any DDL/default backfill fails, restore the exact old bytes and let
+    # the caller continue on the previous schema instead of a half-migrated
+    # registry.
+    if DB_PATH.is_file():
+        try:
+            source = sqlite3.connect(DB_PATH)
+            try:
+                user_version = int(source.execute("PRAGMA user_version").fetchone()[0])
+                if user_version > 3:
+                    raise RuntimeError("camera registry schema is newer than this runtime")
+                if user_version < 3:
+                    descriptor, temporary_name = tempfile.mkstemp(
+                        prefix=f".{DB_PATH.name}.pre-v3-", dir=DB_PATH.parent)
+                    os.close(descriptor)
+                    migration_backup = Path(temporary_name)
+                    os.chmod(migration_backup, 0o600)
+                    destination = sqlite3.connect(migration_backup)
+                    try:
+                        source.backup(destination)
+                    finally:
+                        destination.close()
+            finally:
+                source.close()
+        except Exception:
+            if migration_backup:
+                migration_backup.unlink(missing_ok=True)
+            raise
+    try:
+      with connect() as database:
         database.execute("PRAGMA journal_mode=WAL")
         database.execute("PRAGMA synchronous=NORMAL")
         database.executescript(
@@ -165,6 +205,19 @@ def initialize() -> None:
               promotion_hold_seconds INTEGER NOT NULL DEFAULT 15,
               promotion_cooldown_seconds INTEGER NOT NULL DEFAULT 30,
               force_analytics_always_on INTEGER NOT NULL DEFAULT 0,
+              motion_sensitivity REAL NOT NULL DEFAULT 0.15,
+              motion_sample_fps REAL NOT NULL DEFAULT 2,
+              motion_debounce_ms INTEGER NOT NULL DEFAULT 500,
+              motion_cooldown_ms INTEGER NOT NULL DEFAULT 5000,
+              scene_change_threshold REAL NOT NULL DEFAULT 0.55,
+              scene_change_confirm_frames INTEGER NOT NULL DEFAULT 2,
+              scene_change_cooldown_ms INTEGER NOT NULL DEFAULT 30000,
+              person_confidence_threshold REAL NOT NULL DEFAULT 0.6,
+              person_sample_fps REAL NOT NULL DEFAULT 1,
+              person_max_boxes INTEGER NOT NULL DEFAULT 16,
+              person_execution_preference TEXT NOT NULL DEFAULT 'auto',
+              person_allow_server_fallback INTEGER NOT NULL DEFAULT 0,
+              revision INTEGER NOT NULL DEFAULT 1,
               updated_at INTEGER NOT NULL,
               PRIMARY KEY(camera_id,profile_id)
             );
@@ -248,6 +301,28 @@ def initialize() -> None:
         ):
             if name not in profile_columns:
                 database.execute(f"ALTER TABLE stream_profiles ADD COLUMN {name} {definition}")
+        policy_columns = {row["name"] for row in database.execute("PRAGMA table_info(analytics_policies)")}
+        for name, definition in (
+            ("motion_sensitivity", "REAL NOT NULL DEFAULT 0.15"),
+            ("motion_sample_fps", "REAL NOT NULL DEFAULT 2"),
+            ("motion_debounce_ms", "INTEGER NOT NULL DEFAULT 500"),
+            ("motion_cooldown_ms", "INTEGER NOT NULL DEFAULT 5000"),
+            ("scene_change_threshold", "REAL NOT NULL DEFAULT 0.55"),
+            ("scene_change_confirm_frames", "INTEGER NOT NULL DEFAULT 2"),
+            ("scene_change_cooldown_ms", "INTEGER NOT NULL DEFAULT 30000"),
+            ("person_confidence_threshold", "REAL NOT NULL DEFAULT 0.6"),
+            ("person_sample_fps", "REAL NOT NULL DEFAULT 1"),
+            ("person_max_boxes", "INTEGER NOT NULL DEFAULT 16"),
+            ("person_execution_preference", "TEXT NOT NULL DEFAULT 'auto'"),
+            ("person_allow_server_fallback", "INTEGER NOT NULL DEFAULT 0"),
+            ("revision", "INTEGER NOT NULL DEFAULT 1"),
+        ):
+            if name not in policy_columns:
+                database.execute(f"ALTER TABLE analytics_policies ADD COLUMN {name} {definition}")
+        database.execute("""CREATE TABLE IF NOT EXISTS analytics_metadata(
+            id INTEGER PRIMARY KEY CHECK(id=1), revision INTEGER NOT NULL DEFAULT 1,
+            updated_at INTEGER NOT NULL)""")
+        database.execute("INSERT OR IGNORE INTO analytics_metadata(id,revision,updated_at) VALUES(1,1,?)", (int(time.time()),))
         defaults = {
             "defaultTransportMode": "auto", "probeTimeoutSeconds": PROBE_TIMEOUT_SECONDS,
             "sourceRecoveryEnabled": True, "issueRetentionLimit": MAX_OPERATIONAL_ISSUES,
@@ -256,7 +331,16 @@ def initialize() -> None:
             "INSERT OR IGNORE INTO runtime_settings(id,revision,settings_json,updated_at) VALUES(1,1,?,?)",
             (json.dumps(defaults, separators=(",", ":"), sort_keys=True), int(time.time())),
         )
-        database.execute("PRAGMA user_version=2")
+        database.execute("PRAGMA user_version=3")
+    except Exception:
+        if migration_backup and migration_backup.is_file():
+            for suffix in ("", "-wal", "-shm"):
+                Path(f"{DB_PATH}{suffix}").unlink(missing_ok=True)
+            os.replace(migration_backup, DB_PATH)
+        raise
+    finally:
+        if migration_backup:
+            migration_backup.unlink(missing_ok=True)
 
 
 def audit_device_operation(camera_id: str, operation: str, result: str) -> None:
@@ -561,6 +645,14 @@ def analytics_policy_document(row: sqlite3.Row) -> dict:
         "promotionHoldSeconds": row["promotion_hold_seconds"],
         "promotionCooldownSeconds": row["promotion_cooldown_seconds"],
         "forceAnalyticsAlwaysOn": bool(row["force_analytics_always_on"]),
+        "revision": row["revision"],
+        "motion": {"sensitivity": row["motion_sensitivity"], "sampleFps": row["motion_sample_fps"],
+                    "debounceMs": row["motion_debounce_ms"], "cooldownMs": row["motion_cooldown_ms"]},
+        "sceneChange": {"threshold": row["scene_change_threshold"], "confirmFrames": row["scene_change_confirm_frames"],
+                        "cooldownMs": row["scene_change_cooldown_ms"]},
+        "person": {"confidenceThreshold": row["person_confidence_threshold"], "sampleFps": row["person_sample_fps"],
+                   "maxBoxes": row["person_max_boxes"], "executionPreference": row["person_execution_preference"],
+                   "allowServerFallback": bool(row["person_allow_server_fallback"])},
         "updatedAt": row["updated_at"],
     }
 
@@ -596,8 +688,31 @@ def save_analytics_policies(payload: dict) -> list[dict]:
         if isinstance(hold, bool) or not isinstance(hold, int) or not 1 <= hold <= 3600 or \
                 isinstance(cooldown, bool) or not isinstance(cooldown, int) or not 0 <= cooldown <= 86400:
             raise ValueError("promotion timing is out of range")
-        normalized.append((camera_id, profile_id, *[int(item) for item in booleans],
-                           float(threshold), hold, cooldown, int(time.time())))
+        motion = value.get("motion") if isinstance(value.get("motion"), dict) else {}
+        scene = value.get("sceneChange") if isinstance(value.get("sceneChange"), dict) else {}
+        person = value.get("person") if isinstance(value.get("person"), dict) else {}
+        motion_sensitivity = motion.get("sensitivity", .15); motion_fps = motion.get("sampleFps", 2)
+        motion_debounce = motion.get("debounceMs", 500); motion_cooldown = motion.get("cooldownMs", 5000)
+        scene_threshold = scene.get("threshold", .55); scene_confirm = scene.get("confirmFrames", 2); scene_cooldown = scene.get("cooldownMs", 30000)
+        person_threshold = person.get("confidenceThreshold", .6); person_fps = person.get("sampleFps", 1); person_boxes = person.get("maxBoxes", 16)
+        person_execution = person.get("executionPreference", "auto"); person_fallback = person.get("allowServerFallback", False)
+        if (isinstance(motion_sensitivity, bool) or not isinstance(motion_sensitivity, (int, float)) or not .01 <= motion_sensitivity <= 1 or
+            isinstance(motion_fps, bool) or not isinstance(motion_fps, (int, float)) or not .1 <= motion_fps <= 5 or
+            any(isinstance(item, bool) or not isinstance(item, int) or not 0 <= item <= 3_600_000 for item in (motion_debounce, motion_cooldown))):
+            raise ValueError("motion analytics settings are out of range")
+        if (isinstance(scene_threshold, bool) or not isinstance(scene_threshold, (int, float)) or not .05 <= scene_threshold <= 1 or
+            isinstance(scene_confirm, bool) or not isinstance(scene_confirm, int) or not 1 <= scene_confirm <= 5 or
+            isinstance(scene_cooldown, bool) or not isinstance(scene_cooldown, int) or not 0 <= scene_cooldown <= 3_600_000):
+            raise ValueError("scene change settings are out of range")
+        if (isinstance(person_threshold, bool) or not isinstance(person_threshold, (int, float)) or not .05 <= person_threshold <= 1 or
+            isinstance(person_fps, bool) or not isinstance(person_fps, (int, float)) or not .1 <= person_fps <= 5 or
+            isinstance(person_boxes, bool) or not isinstance(person_boxes, int) or not 1 <= person_boxes <= 16 or
+            person_execution not in {"auto", "browser", "worker"} or not isinstance(person_fallback, bool)):
+            raise ValueError("person analytics settings are out of range")
+        normalized.append((camera_id, profile_id, *[int(item) for item in booleans], float(threshold), hold, cooldown,
+                           float(motion_sensitivity), float(motion_fps), motion_debounce, motion_cooldown,
+                           float(scene_threshold), scene_confirm, scene_cooldown, float(person_threshold), float(person_fps),
+                           person_boxes, person_execution, int(person_fallback), int(time.time())))
     with connect() as database:
         for camera_id, profile_id, *_ in normalized:
             exists = database.execute(
@@ -607,17 +722,184 @@ def save_analytics_policies(payload: dict) -> list[dict]:
         database.executemany(
             "INSERT INTO analytics_policies(camera_id,profile_id,motion_enabled,scene_change_enabled,person_enabled,"
             "allow_event_promotion,force_analytics_always_on,promotion_threshold,promotion_hold_seconds,"
-            "promotion_cooldown_seconds,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?) "
+            "promotion_cooldown_seconds,motion_sensitivity,motion_sample_fps,motion_debounce_ms,motion_cooldown_ms,"
+            "scene_change_threshold,scene_change_confirm_frames,scene_change_cooldown_ms,person_confidence_threshold,"
+            "person_sample_fps,person_max_boxes,person_execution_preference,person_allow_server_fallback,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?) "
             "ON CONFLICT(camera_id,profile_id) DO UPDATE SET motion_enabled=excluded.motion_enabled,"
             "scene_change_enabled=excluded.scene_change_enabled,person_enabled=excluded.person_enabled,"
             "allow_event_promotion=excluded.allow_event_promotion,force_analytics_always_on=excluded.force_analytics_always_on,"
             "promotion_threshold=excluded.promotion_threshold,promotion_hold_seconds=excluded.promotion_hold_seconds,"
-            "promotion_cooldown_seconds=excluded.promotion_cooldown_seconds,updated_at=excluded.updated_at",
+            "promotion_cooldown_seconds=excluded.promotion_cooldown_seconds,motion_sensitivity=excluded.motion_sensitivity,"
+            "motion_sample_fps=excluded.motion_sample_fps,motion_debounce_ms=excluded.motion_debounce_ms,motion_cooldown_ms=excluded.motion_cooldown_ms,"
+            "scene_change_threshold=excluded.scene_change_threshold,scene_change_confirm_frames=excluded.scene_change_confirm_frames,"
+            "scene_change_cooldown_ms=excluded.scene_change_cooldown_ms,person_confidence_threshold=excluded.person_confidence_threshold,"
+            "person_sample_fps=excluded.person_sample_fps,person_max_boxes=excluded.person_max_boxes,"
+            "person_execution_preference=excluded.person_execution_preference,person_allow_server_fallback=excluded.person_allow_server_fallback,"
+            "revision=analytics_policies.revision+1,updated_at=excluded.updated_at",
             normalized,
         )
+        database.execute("UPDATE analytics_metadata SET revision=revision+1,updated_at=? WHERE id=1", (int(time.time()),))
         keys = {(item[0], item[1]) for item in normalized}
         rows = database.execute("SELECT * FROM analytics_policies ORDER BY camera_id,profile_id").fetchall()
         return [analytics_policy_document(row) for row in rows if (row["camera_id"], row["profile_id"]) in keys]
+
+
+def analytics_revision() -> int:
+    with connect() as database:
+        row = database.execute("SELECT revision FROM analytics_metadata WHERE id=1").fetchone()
+        return int(row["revision"] if row else 1)
+
+
+def analytics_v3_policies(payload: dict, expected_revision: int | None = None) -> dict:
+    current = analytics_revision()
+    if expected_revision is not None and expected_revision != current:
+        raise RevisionConflict(str(current))
+    policies = save_analytics_policies(payload)
+    return {"schemaVersion": 2, "revision": analytics_revision(), "policies": policies}
+
+
+def analytics_runtime_plan(payload: dict) -> dict:
+    if not isinstance(payload, dict): raise ValueError("runtime plan must be an object")
+    camera_id, profile_id = payload.get("cameraId", ""), payload.get("profileId", "")
+    if not isinstance(camera_id, str) or not ID_RE.fullmatch(camera_id) or not isinstance(profile_id, str) or not ID_RE.fullmatch(profile_id):
+        raise ValueError("camera or profile id is invalid")
+    kinds = payload.get("kinds", ["motion", "scene-change", "person"])
+    if not isinstance(kinds, list) or not kinds or len(kinds) > 3 or any(item not in {"motion", "scene-change", "person"} for item in kinds):
+        raise ValueError("analytics kinds are invalid")
+    capabilities = payload.get("capabilities", {}) if isinstance(payload.get("capabilities", {}), dict) else {}
+    webgpu = capabilities.get("webgpu") is True; wasm = capabilities.get("wasm") is not False
+    with connect() as database:
+        row = database.execute(
+            "SELECT p.*, c.adapter FROM analytics_policies p JOIN cameras c ON c.id=p.camera_id "
+            "WHERE p.camera_id=? AND p.profile_id=?", (camera_id, profile_id)).fetchone()
+    if not row: raise KeyError("analytics policy not found")
+    expires = int(time.time()) + 600; session_id = secrets.token_urlsafe(32)
+    with ANALYTICS_SESSION_LOCK:
+        ANALYTICS_SESSIONS[session_id] = (expires, camera_id, profile_id)
+        ANALYTICS_SIGNAL_SEEN[session_id] = set()
+        ANALYTICS_SIGNAL_RATE[session_id] = (int(time.time() // 60), 0)
+    adapter = str(row["adapter"]).lower()
+    media_transport = adapter if adapter in {"whep", "hls", "mjpeg"} else "rtsp"
+    result = []
+    for kind in ("motion", "scene-change", "person"):
+        enabled = bool(row[{"motion": "motion_enabled", "scene-change": "scene_change_enabled", "person": "person_enabled"}[kind]])
+        if kind == "person":
+            execution = "browser-webgpu" if enabled and row["person_execution_preference"] != "worker" and webgpu else "browser-wasm" if enabled and row["person_execution_preference"] != "worker" and wasm else "worker" if enabled and row["person_allow_server_fallback"] and row["person_execution_preference"] in {"auto", "worker"} else "off" if not enabled else "unsupported"
+            owner = "browser" if execution.startswith("browser") else "worker" if execution == "worker" else "none"
+            sample = float(row["person_sample_fps"])
+        else:
+            execution = "native" if enabled and kind == "motion" and capabilities.get("onvifMotion") is True else "browser-wasm" if enabled and wasm else "unsupported" if enabled else "off"
+            owner = "camera" if execution == "native" else "browser" if execution.startswith("browser") else "none"
+            sample = float(row["motion_sample_fps"] if kind == "motion" else 1)
+        result.append({"contractVersion": 2, "planId": uuid.uuid4().hex, "cameraId": camera_id, "profileId": profile_id, "kind": kind,
+                   "execution": execution, "executionOwner": owner, "sampleFps": sample,
+                   "serverMediaExpected": execution == "worker", "reason": "" if execution not in {"unsupported"} else ("worker_not_allowed" if kind == "person" and row["person_execution_preference"] == "worker" else "runtime_unavailable"), "expiresAt": expires,
+                   "offlineConfigExpiresAt": int(time.time()) + 7 * 24 * 3600,
+                   "runtimeKind": "pwa", "mediaTransport": media_transport,
+                   "credentialExposure": "none"})
+    return {"contractVersion": 2, "sessionId": session_id, "expiresAt": expires, "plans": [item for item in result if item["kind"] in kinds]}
+
+
+def close_analytics_session(session_id: str) -> bool:
+    with ANALYTICS_SESSION_LOCK:
+        closed = ANALYTICS_SESSIONS.pop(session_id, None) is not None
+        ANALYTICS_SIGNAL_SEEN.pop(session_id, None)
+        ANALYTICS_SIGNAL_RATE.pop(session_id, None)
+        return closed
+
+
+def ingest_analytics_signals(payload: dict, session_id: str) -> dict:
+    with ANALYTICS_SESSION_LOCK:
+        session = ANALYTICS_SESSIONS.get(session_id)
+    if not session or session[0] <= int(time.time()):
+        close_analytics_session(session_id)
+        raise PermissionError("analytics runtime session is expired")
+    values = payload.get("signals") if isinstance(payload, dict) else None
+    if not isinstance(values, list) or not values or len(values) > 32:
+        raise ValueError("signals must contain 1 to 32 items")
+    now = int(time.time())
+    minute = now // 60
+    # Validate the entire batch before creating any event, so a malformed item
+    # cannot leave a partially accepted batch behind.
+    prepared: list[tuple[dict, dict]] = []
+    seen_ids: set[str] = set()
+    with connect() as database:
+        policy = database.execute(
+            "SELECT * FROM analytics_policies WHERE camera_id=? AND profile_id=?",
+            (session[1], session[2]),
+        ).fetchone()
+    if not policy:
+        raise PermissionError("analytics policy not found")
+    for value in values:
+        if not isinstance(value, dict): raise ValueError("signal must be an object")
+        camera_id, profile_id = value.get("cameraId"), value.get("profileId")
+        if camera_id != session[1] or profile_id != session[2] or value.get("kind") not in {"motion", "scene-change", "person"}:
+            raise PermissionError("signal scope does not match runtime session")
+        signal_id = value.get("signalId")
+        if not isinstance(signal_id, str) or not re.fullmatch(r"[A-Za-z0-9._:-]{8,128}", signal_id):
+            raise ValueError("signalId is invalid")
+        if signal_id in seen_ids:
+            raise ValueError("duplicate signalId in batch")
+        seen_ids.add(signal_id)
+        occurred = value.get("occurredAt", int(time.time() * 1000))
+        confidence = value.get("confidence", 0)
+        if isinstance(occurred, bool) or not isinstance(occurred, int) or abs(int(time.time() * 1000) - occurred) > 300_000:
+            raise ValueError("signal timestamp is invalid")
+        if isinstance(confidence, bool) or not isinstance(confidence, (int, float)) or not 0 <= confidence <= 1:
+            raise ValueError("signal confidence is invalid")
+        boxes = value.get("boxes", [])
+        if not isinstance(boxes, list) or len(boxes) > 16:
+            raise ValueError("signal boxes are invalid")
+        safe_boxes = []
+        for box in boxes:
+            if not isinstance(box, dict): raise ValueError("signal box is invalid")
+            safe = {key: box.get(key) for key in ("x", "y", "width", "height")}
+            if any(isinstance(item, bool) or not isinstance(item, (int, float)) or not 0 <= item <= 1 for item in safe.values()) or \
+                    safe["x"] + safe["width"] > 1 or safe["y"] + safe["height"] > 1:
+                raise ValueError("signal box is out of range")
+            safe_boxes.append(safe)
+        enabled_column = {"motion": "motion_enabled", "scene-change": "scene_change_enabled", "person": "person_enabled"}[value["kind"]]
+        if not bool(policy[enabled_column]):
+            raise PermissionError("analytics policy is disabled")
+        if value["kind"] != "person" and safe_boxes:
+            raise ValueError("boxes are only valid for person signals")
+        if value["kind"] == "person":
+            model_sha = value.get("modelSha256", "")
+            if not isinstance(model_sha, str) or not re.fullmatch(r"[a-f0-9]{64}", model_sha):
+                raise ValueError("person model hash is invalid")
+        prepared.append((value, {"cameraId": camera_id, "type": "object" if value["kind"] == "person" else value["kind"],
+                 "source": "browser-detector" if value["kind"] == "person" else "browser-motion",
+                 "occurredAt": occurred, "confidence": float(confidence), "label": "person" if value["kind"] == "person" else "",
+                 "properties": {"analytics": {"schemaVersion": 2, "signalId": signal_id, "boxes": safe_boxes, "runtime": "browser"}}}))
+    with ANALYTICS_SESSION_LOCK:
+        current_rate_minute, current_rate = ANALYTICS_SIGNAL_RATE.get(session_id, (minute, 0))
+        if current_rate_minute != minute:
+            current_rate = 0
+        profile_minute, profile_rate = ANALYTICS_PROFILE_RATE.get((session[1], session[2]), (minute, 0))
+        if profile_minute != minute:
+            profile_rate = 0
+        if current_rate + len(prepared) > 60 or profile_rate + len(prepared) > 12:
+            raise RuntimeError("analytics signal rate limit exceeded")
+        existing = ANALYTICS_SIGNAL_SEEN.setdefault(session_id, set())
+        if any(item[0]["signalId"] in existing for item in prepared):
+            raise PermissionError("analytics signal replay detected")
+        existing.update(item[0]["signalId"] for item in prepared)
+        ANALYTICS_SIGNAL_RATE[session_id] = (minute, current_rate + len(prepared))
+        ANALYTICS_PROFILE_RATE[(session[1], session[2])] = (minute, profile_rate + len(prepared))
+    accepted = []
+    for value, event in prepared:
+        if value["kind"] == "person":
+            event["properties"]["analytics"]["modelId"] = str(value.get("modelId", ""))[:64]
+            event["properties"]["analytics"]["modelVersion"] = str(value.get("modelVersion", ""))[:32]
+            event["properties"]["analytics"]["modelSha256"] = value["modelSha256"]
+        body = json.dumps(event, separators=(",", ":")).encode()
+        try:
+            request = Request("http://127.0.0.1:8093/events", data=body, headers={"Content-Type": "application/json"}, method="POST")
+            with urlopen(request, timeout=1) as response:
+                accepted.append(json.loads(response.read(64 * 1024)))
+        except (OSError, ValueError, json.JSONDecodeError) as error:
+            raise RuntimeError("event service unavailable") from error
+    return {"accepted": len(accepted), "events": accepted}
 
 
 def resolve_profile(database: sqlite3.Connection, camera_id: str, profile_id: str) -> dict:
@@ -2340,6 +2622,22 @@ class Handler(BaseHTTPRequestHandler):
                 "writable": ["defaultTransportMode", "probeTimeoutSeconds", "sourceRecoveryEnabled", "issueRetentionLimit"],
                 "deploymentReadOnly": ["tls", "ports", "secrets", "gpuDevice"],
             }); return
+        if path == "/analytics/policies":
+            self.respond(200, {"schemaVersion": 2, "revision": analytics_revision(), "policies": analytics_policies()}); return
+        if path == "/analytics/status":
+            policies = analytics_policies()
+            statuses = []
+            for policy in policies:
+                try:
+                    value = analytics_runtime_plan({"cameraId": policy["cameraId"], "profileId": policy["profileId"], "kinds": ["motion", "scene-change", "person"], "capabilities": {"wasm": True}})
+                    close_analytics_session(value["sessionId"])
+                    key_by_kind = {"motion": "motion", "scene-change": "sceneChange", "person": "person"}
+                    statuses.append({"cameraId": policy["cameraId"], "profileId": policy["profileId"], **{
+                        key_by_kind[item["kind"]]: item for item in value["plans"] if item["kind"] in key_by_kind
+                    }})
+                except (KeyError, ValueError, PermissionError):
+                    continue
+            self.respond(200, {"statuses": statuses}); return
         presets_match = re.fullmatch(r"/cameras/([a-zA-Z0-9._-]{1,64})/onvif/presets", path)
         if presets_match:
             try:
@@ -2382,6 +2680,15 @@ class Handler(BaseHTTPRequestHandler):
         try:
             if self.path == "/cameras":
                 self.respond(201, save_camera(validate_camera(self.payload()), False)); return
+            if self.path == "/analytics/runtime-plans":
+                self.respond(200, analytics_runtime_plan(self.payload())); return
+            if self.path == "/analytics/signals/batch":
+                session_id = self.headers.get("X-WebObs-Analytics-Session", "")
+                if not re.fullmatch(r"[A-Za-z0-9_-]{32,128}", session_id): raise PermissionError("analytics runtime session is missing")
+                self.respond(202, ingest_analytics_signals(self.payload(), session_id)); return
+            session_match = re.fullmatch(r"/analytics/runtime-sessions/([A-Za-z0-9_-]{32,128})", self.path)
+            if session_match:
+                self.respond(200, {"closed": close_analytics_session(session_match.group(1))}); return
             if self.path == "/detect":
                 payload = self.payload(); self.respond(200, classify(str(payload.get("address", "")))); return
             if self.path == "/onvif/discover":
@@ -2496,6 +2803,9 @@ class Handler(BaseHTTPRequestHandler):
         except ValueError as error:
             self.respond(428 if not self.headers.get("If-Match") else 400, {"error": str(error)}); return
         try:
+            if self.path == "/analytics/policies":
+                value = analytics_v3_policies(self.payload(), revision)
+                self.respond(200, value, {"ETag": f'"{value["revision"]}"'}); return
             catalog_match = re.fullmatch(r"/source-catalog/([a-zA-Z0-9._-]{1,64})", self.path)
             if catalog_match:
                 value = patch_source_catalog(catalog_match.group(1), self.payload(), revision)
@@ -2512,6 +2822,9 @@ class Handler(BaseHTTPRequestHandler):
             self.respond(400, {"error": str(error)})
 
     def do_DELETE(self) -> None:
+        session_match = re.fullmatch(r"/analytics/runtime-sessions/([A-Za-z0-9_-]{32,128})", self.path)
+        if session_match:
+            self.respond(200, {"closed": close_analytics_session(session_match.group(1))}); return
         if not self.path.startswith("/cameras/"):
             self.respond(404, {"error": "not_found"}); return
         camera_id = self.path.removeprefix("/cameras/")

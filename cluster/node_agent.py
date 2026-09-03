@@ -380,7 +380,7 @@ def main() -> None:
     parser.add_argument("--enrollment-id", default=os.environ.get("WEBOBS_NODE_ENROLLMENT_ID", ""))
     parser.add_argument("--enrollment-token", default=os.environ.get("WEBOBS_NODE_ENROLLMENT_TOKEN", ""))
     parser.add_argument("--node-name", default=os.environ.get("WEBOBS_NODE_NAME", "webobs-recorder"))
-    parser.add_argument("--version", default=os.environ.get("WEBOBS_BUILD_VERSION", "2.3.0-dev"))
+    parser.add_argument("--version", default=os.environ.get("WEBOBS_BUILD_VERSION", "3.1.0-dev"))
     args = parser.parse_args()
     if not args.controller or not pathlib.Path(args.ca_file).is_file():
         raise SystemExit("controller HTTPS authority and CA file are required")

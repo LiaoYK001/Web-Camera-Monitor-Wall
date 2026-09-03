@@ -2,7 +2,7 @@ FROM caddy:2.11.4-alpine@sha256:98eb57d882ccd5213d1688764db10c1ca2c58a1ca3a6717a
 
 FROM node:24.14.0-bookworm-slim@sha256:d8e448a56fc63242f70026718378bd4b00f8c82e78d20eefb199224a4d8e33d8 AS web-builder
 
-ARG WEBOBS_BUILD_VERSION=2.3.0-dev
+ARG WEBOBS_BUILD_VERSION=3.1.0-dev
 WORKDIR /src/web
 RUN corepack enable \
     && attempt=1 \
@@ -53,6 +53,8 @@ RUN apt-get -o Acquire::Retries=5 update \
 COPY v2/client_control_service.py /opt/webobs/bin/webobs-client-control
 COPY cluster/cluster_service.py /opt/webobs/bin/webobs-cluster
 COPY cluster/node_agent.py /opt/webobs/bin/webobs-node-agent
+COPY analytics/detector_worker.py /opt/webobs/bin/webobs-detector-worker
+COPY web/public/models/ssd_mobilenet_v1_12.onnx /tmp/webobs-person-model.onnx
 COPY archive/s3_archive.py /opt/webobs/bin/webobs-s3-archive
 COPY backup/encrypted_backup.py /opt/webobs/bin/webobs-encrypted-backup
 COPY backup/preupgrade_guard.py /opt/webobs/bin/webobs-preupgrade-guard
@@ -60,6 +62,7 @@ COPY nvr/nvr_service.py /opt/webobs/bin/webobs-nvr
 COPY tests/test_v2_client_control.py /tmp/test_v2_client_control.py
 COPY tests/test_cluster_service.py /tmp/test_cluster_service.py
 COPY tests/test_node_agent.py /tmp/test_node_agent.py
+COPY tests/test_detector_worker.py /tmp/test_detector_worker.py
 COPY tests/test_s3_archive.py /tmp/test_s3_archive.py
 COPY tests/test_encrypted_backup.py /tmp/test_encrypted_backup.py
 COPY tests/test_preupgrade_guard.py /tmp/test_preupgrade_guard.py
@@ -76,12 +79,14 @@ ENV WEBOBS_LIBSODIUM_LIBRARY=/opt/libsodium/lib/libsodium.so.26 \
     WEBOBS_TEST_PREUPGRADE_GUARD=/opt/webobs/bin/webobs-preupgrade-guard \
     WEBOBS_TEST_NVR_SERVICE=/opt/webobs/bin/webobs-nvr \
     PYTHONDONTWRITEBYTECODE=1
+RUN python3 /opt/webobs/bin/webobs-detector-worker --model /tmp/webobs-person-model.onnx
 RUN python3 -m py_compile /opt/webobs/bin/webobs-client-control /opt/webobs/bin/webobs-cluster \
-        /opt/webobs/bin/webobs-node-agent /opt/webobs/bin/webobs-s3-archive \
+        /opt/webobs/bin/webobs-node-agent /opt/webobs/bin/webobs-detector-worker /opt/webobs/bin/webobs-s3-archive \
         /opt/webobs/bin/webobs-encrypted-backup /opt/webobs/bin/webobs-preupgrade-guard /opt/webobs/bin/webobs-nvr \
     && python3 /tmp/test_v2_client_control.py \
     && python3 /tmp/test_cluster_service.py \
     && python3 /tmp/test_node_agent.py \
+    && python3 /tmp/test_detector_worker.py \
     && python3 /tmp/test_s3_archive.py \
     && python3 /tmp/test_encrypted_backup.py \
     && python3 /tmp/test_preupgrade_guard.py \
@@ -338,8 +343,8 @@ RUN cmake -S /src/obs -B /build/obs -G Ninja \
 
 FROM obs-builder AS core-builder
 
-ARG WEBOBS_BUILD_VERSION=2.3.0-dev
-ARG WEBOBS_BUILD_MILESTONE=v2-M7-dev
+ARG WEBOBS_BUILD_VERSION=3.1.0-dev
+ARG WEBOBS_BUILD_MILESTONE=v3-M2-dev
 
 RUN apt-get -o Acquire::Retries=5 update \
     && apt-get -o Acquire::Retries=5 install -y --no-install-recommends libssl-dev \
@@ -389,7 +394,7 @@ RUN cmake -S /src/webobs -B /build/webobs -G Ninja \
 FROM ubuntu:24.04 AS runtime
 
 ARG DEBIAN_FRONTEND=noninteractive
-ARG WEBOBS_BUILD_VERSION=2.3.0-dev
+ARG WEBOBS_BUILD_VERSION=3.1.0-dev
 ENV WEBOBS_BUILD_VERSION="${WEBOBS_BUILD_VERSION}"
 
 RUN apt-get -o Acquire::Retries=5 -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30 update \
@@ -465,6 +470,7 @@ COPY events/event_service.py /opt/webobs/bin/webobs-events
 COPY v2/client_control_service.py /opt/webobs/bin/webobs-client-control
 COPY cluster/cluster_service.py /opt/webobs/bin/webobs-cluster
 COPY cluster/node_agent.py /opt/webobs/bin/webobs-node-agent
+COPY analytics/detector_worker.py /opt/webobs/bin/webobs-detector-worker
 COPY archive/s3_archive.py /opt/webobs/bin/webobs-s3-archive
 COPY backup/encrypted_backup.py /opt/webobs/bin/webobs-encrypted-backup
 COPY backup/preupgrade_guard.py /opt/webobs/bin/webobs-preupgrade-guard
@@ -476,6 +482,7 @@ COPY tests/test_event_service.py /tmp/test_event_service.py
 COPY tests/test_v2_client_control.py /tmp/test_v2_client_control.py
 COPY tests/test_cluster_service.py /tmp/test_cluster_service.py
 COPY tests/test_node_agent.py /tmp/test_node_agent.py
+COPY tests/test_detector_worker.py /tmp/test_detector_worker.py
 COPY tests/test_s3_archive.py /tmp/test_s3_archive.py
 COPY tests/test_encrypted_backup.py /tmp/test_encrypted_backup.py
 COPY tests/test_preupgrade_guard.py /tmp/test_preupgrade_guard.py
@@ -501,8 +508,8 @@ RUN mkdir -p /assets /config/obs /config/webobs /recordings /usr/share/licenses/
     && test "$(head -n 1 /opt/webobs/bin/webobs-encrypted-backup)" = '#!/usr/bin/env python3' \
     && test "$(head -n 1 /opt/webobs/bin/webobs-preupgrade-guard)" = '#!/usr/bin/env python3' \
     && chmod 0700 /config/obs /config/webobs \
-    && chmod 0755 /opt/webobs/entrypoint.sh /opt/webobs/bin/caddy /opt/webobs/bin/mediamtx /opt/webobs/bin/transcode-on-demand /opt/webobs/bin/webobs-backup /opt/webobs/bin/webobs-nvrd /opt/webobs/bin/webobs-camera-registry /opt/webobs/bin/webobs-events /opt/webobs/bin/webobs-client-control /opt/webobs/bin/webobs-cluster /opt/webobs/bin/webobs-node-agent /opt/webobs/bin/webobs-s3-archive /opt/webobs/bin/webobs-encrypted-backup /opt/webobs/bin/webobs-preupgrade-guard \
-    && python3 -m py_compile /opt/webobs/bin/webobs-nvrd \
+    && chmod 0755 /opt/webobs/entrypoint.sh /opt/webobs/bin/caddy /opt/webobs/bin/mediamtx /opt/webobs/bin/transcode-on-demand /opt/webobs/bin/webobs-backup /opt/webobs/bin/webobs-nvrd /opt/webobs/bin/webobs-camera-registry /opt/webobs/bin/webobs-events /opt/webobs/bin/webobs-client-control /opt/webobs/bin/webobs-cluster /opt/webobs/bin/webobs-node-agent /opt/webobs/bin/webobs-detector-worker /opt/webobs/bin/webobs-s3-archive /opt/webobs/bin/webobs-encrypted-backup /opt/webobs/bin/webobs-preupgrade-guard \
+    && python3 -m py_compile /opt/webobs/bin/webobs-nvrd /opt/webobs/bin/webobs-detector-worker \
     && python3 -m py_compile /opt/webobs/bin/webobs-camera-registry \
     && python3 -m py_compile /opt/webobs/bin/webobs-events \
     && python3 -m py_compile /opt/webobs/bin/webobs-client-control \
@@ -522,6 +529,7 @@ RUN mkdir -p /assets /config/obs /config/webobs /recordings /usr/share/licenses/
        PYTHONDONTWRITEBYTECODE=1 python3 /tmp/test_cluster_service.py \
     && WEBOBS_TEST_NODE_AGENT=/opt/webobs/bin/webobs-node-agent \
        PYTHONDONTWRITEBYTECODE=1 python3 /tmp/test_node_agent.py \
+    && PYTHONDONTWRITEBYTECODE=1 python3 /tmp/test_detector_worker.py \
     && WEBOBS_TEST_NVR_SERVICE=/opt/webobs/bin/webobs-nvrd \
        PYTHONDONTWRITEBYTECODE=1 python3 /tmp/test_nvr_storage.py \
     && WEBOBS_TEST_ARCHIVE_SERVICE=/opt/webobs/bin/webobs-s3-archive \
@@ -530,7 +538,7 @@ RUN mkdir -p /assets /config/obs /config/webobs /recordings /usr/share/licenses/
        PYTHONDONTWRITEBYTECODE=1 python3 /tmp/test_encrypted_backup.py \
     && WEBOBS_TEST_PREUPGRADE_GUARD=/opt/webobs/bin/webobs-preupgrade-guard \
        PYTHONDONTWRITEBYTECODE=1 python3 /tmp/test_preupgrade_guard.py \
-    && rm -f /tmp/test_camera_registry.py /tmp/test_event_service.py /tmp/test_v2_client_control.py /tmp/test_cluster_service.py /tmp/test_node_agent.py /tmp/test_nvr_storage.py /tmp/test_s3_archive.py /tmp/test_encrypted_backup.py /tmp/test_preupgrade_guard.py \
+    && rm -f /tmp/test_camera_registry.py /tmp/test_event_service.py /tmp/test_v2_client_control.py /tmp/test_cluster_service.py /tmp/test_node_agent.py /tmp/test_detector_worker.py /tmp/test_nvr_storage.py /tmp/test_s3_archive.py /tmp/test_encrypted_backup.py /tmp/test_preupgrade_guard.py \
     && /opt/webobs/bin/caddy version \
     && /opt/webobs/bin/caddy adapt --config /opt/webobs/etc/Caddyfile --adapter caddyfile >/dev/null \
     && /opt/webobs/bin/mediamtx --version \

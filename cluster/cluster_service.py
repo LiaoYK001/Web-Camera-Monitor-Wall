@@ -59,16 +59,17 @@ PERMISSIONS = frozenset({
     "snapshot.create", "playback.view", "export.create", "recording.lock",
     "recording.delete", "event.ack", "device.manage", "storage.manage",
     "node.manage", "settings.manage", "user.manage", "audit.view", "metrics.view",
+    "analytics.view", "analytics.run", "analytics.manage",
 })
 
 ROLE_PERMISSIONS: dict[str, frozenset[str]] = {
     "admin": PERMISSIONS,
     "operator": frozenset({
         "live.view", "scene.read", "playback.view", "snapshot.create", "ptz.control",
-        "talk.control", "event.ack", "recording.lock",
+        "talk.control", "event.ack", "recording.lock", "analytics.view", "analytics.run",
     }),
-    "viewer": frozenset({"live.view", "scene.read", "playback.view"}),
-    "auditor": frozenset({"event.ack", "audit.view", "playback.view"}),
+    "viewer": frozenset({"live.view", "scene.read", "playback.view", "analytics.view", "analytics.run"}),
+    "auditor": frozenset({"event.ack", "audit.view", "playback.view", "analytics.view"}),
     "exporter": frozenset({"playback.view", "export.create"}),
 }
 
@@ -253,6 +254,13 @@ class ClusterStore:
                 camera_id TEXT NOT NULL,profile_id TEXT NOT NULL,node_id TEXT NOT NULL,generation INTEGER NOT NULL,
                 state TEXT NOT NULL,lease_expires_at INTEGER NOT NULL,isolation_deadline INTEGER NOT NULL,
                 updated_at INTEGER NOT NULL,PRIMARY KEY(camera_id,profile_id));
+              CREATE TABLE IF NOT EXISTS analytics_jobs(
+                id TEXT PRIMARY KEY,camera_id TEXT NOT NULL,profile_id TEXT NOT NULL,kind TEXT NOT NULL,
+                node_id TEXT NOT NULL,generation INTEGER NOT NULL,state TEXT NOT NULL,
+                lease_expires_at INTEGER NOT NULL,model_id TEXT NOT NULL,model_sha256 TEXT NOT NULL,
+                requested_resources_json TEXT NOT NULL,result_json TEXT NOT NULL,last_result_at INTEGER NOT NULL,
+                last_error_code TEXT NOT NULL,revision INTEGER NOT NULL,created_at INTEGER NOT NULL);
+              CREATE INDEX IF NOT EXISTS analytics_jobs_node_state ON analytics_jobs(node_id,state,created_at);
               CREATE TABLE IF NOT EXISTS resource_reports(
                 node_id TEXT PRIMARY KEY,cpu_cores INTEGER NOT NULL,memory_bytes INTEGER NOT NULL,
                 capabilities_json TEXT NOT NULL,reservations_json TEXT NOT NULL,rated INTEGER NOT NULL,updated_at INTEGER NOT NULL);
@@ -485,6 +493,29 @@ class ClusterStore:
                 database.close()
         group_id = row[0] if row else ""
         return group_id if isinstance(group_id, str) and IDENTIFIER.fullmatch(group_id) else ""
+
+    def _camera_profile_exists(self, camera_id: str, profile_id: str) -> bool:
+        """Bind detector jobs to the authoritative Camera Registry.
+
+        The cluster database deliberately does not copy Camera/Profile rows. A
+        read-only lookup prevents a stale or forged job from being scheduled
+        for an arbitrary identifier while keeping Registry secrets out of the
+        cluster service.
+        """
+        if not self.camera_registry_path.is_absolute():
+            return False
+        connection: sqlite3.Connection | None = None
+        try:
+            connection = sqlite3.connect(
+                f"file:{self.camera_registry_path.as_posix()}?mode=ro", uri=True, timeout=1)
+            return connection.execute(
+                "SELECT 1 FROM cameras c JOIN stream_profiles p ON p.camera_id=c.id "
+                "WHERE c.id=? AND p.id=? LIMIT 1", (camera_id, profile_id)).fetchone() is not None
+        except sqlite3.Error:
+            return False
+        finally:
+            if connection is not None:
+                connection.close()
 
     def principal(self, user_id: str) -> Principal:
         row = self.db.execute("SELECT * FROM users WHERE id=? AND enabled=1", (user_id,)).fetchone()
@@ -838,8 +869,8 @@ class ClusterStore:
           SELECT n.*,r.cpu_cores,r.memory_bytes,r.capabilities_json AS resources_capabilities,
                  r.reservations_json,r.rated
           FROM nodes n JOIN resource_reports r ON r.node_id=n.id
-          WHERE n.revoked=0 AND n.status='online'
-        """).fetchall()
+          WHERE n.revoked=0 AND n.status='online' AND (? <> 'detector-reserved' OR n.role='worker')
+        """, (task_type,)).fetchall()
         for row in rows:
             if required_node and row["id"] != required_node:
                 continue
@@ -862,6 +893,14 @@ class ClusterStore:
             for assignment in assignments:
                 with contextlib.suppress(json.JSONDecodeError, TypeError, ValueError):
                     reservation = json.loads(assignment["costs_json"])
+                    for field in scheduled:
+                        scheduled[field] += float(reservation.get(field, 0))
+            detector_jobs = self.db.execute(
+                "SELECT requested_resources_json FROM analytics_jobs WHERE node_id=? AND state='running' AND lease_expires_at>?",
+                (row["id"], timestamp)).fetchall()
+            for job in detector_jobs:
+                with contextlib.suppress(json.JSONDecodeError, TypeError, ValueError):
+                    reservation = json.loads(job["requested_resources_json"])
                     for field in scheduled:
                         scheduled[field] += float(reservation.get(field, 0))
             used = {field: max(reported[field], scheduled[field]) for field in costs}
@@ -913,6 +952,139 @@ class ClusterStore:
                             (lease_expires, isolation_deadline, timestamp, camera_id, profile_id))
         return {"leaseExpiresAt": lease_expires, "isolationDeadline": isolation_deadline,
                 "renewAfterSeconds": LEASE_RENEW_SECONDS}
+
+    def create_analytics_job(self, value: Any, timestamp: int | None = None) -> dict[str, Any]:
+        """Queue an explicitly requested detector job without touching recording ownership."""
+        value = require_exact_object(value, {"cameraId", "profileId", "kind", "modelId", "modelSha256", "requestedResources", "nodeId"},
+                                     {"cameraId", "profileId", "kind"})
+        camera_id = require_identifier(value["cameraId"], "camera_id")
+        profile_id = require_identifier(value["profileId"], "profile_id")
+        if value["kind"] != "person":
+            raise ApiError(400, "invalid_analytics_kind", "only person detector jobs are supported")
+        if not self._camera_profile_exists(camera_id, profile_id):
+            raise ApiError(404, "camera_profile_not_found", "the detector Camera/Profile is not registered")
+        model_id = value.get("modelId", "ssd-mobilenet-v1-12-person")
+        model_sha = value.get("modelSha256", "")
+        if not isinstance(model_id, str) or not IDENTIFIER.fullmatch(model_id) or \
+                not isinstance(model_sha, str) or not re.fullmatch(r"[0-9a-f]{64}", model_sha):
+            raise ApiError(400, "invalid_analytics_model", "model identity is invalid")
+        resources = value.get("requestedResources", {"cpuCores": .5, "memoryBytes": 128 * 1024 * 1024,
+                                                        "decodeSlots": 0, "encodeSlots": 0, "diskBytesPerSecond": 0})
+        require_exact_object(resources, {"cpuCores", "memoryBytes", "decodeSlots", "encodeSlots", "diskBytesPerSecond"})
+        if any(isinstance(resources.get(field), bool) or not isinstance(resources.get(field), (int, float)) or resources[field] < 0
+               for field in ("cpuCores", "memoryBytes", "decodeSlots", "encodeSlots", "diskBytesPerSecond")):
+            raise ApiError(400, "invalid_analytics_resources", "requested resources are invalid")
+        timestamp = timestamp or now_seconds()
+        node_id = value.get("nodeId", "")
+        with self.lock, self.db:
+            node_id = self._select_node(camera_id, profile_id, "detector-reserved", resources, timestamp, node_id)
+            current = self.db.execute("SELECT MAX(generation) FROM analytics_jobs WHERE camera_id=? AND profile_id=?",
+                                      (camera_id, profile_id)).fetchone()[0] or 0
+            job_id = secrets.token_hex(16)
+            self.db.execute("""INSERT INTO analytics_jobs
+                (id,camera_id,profile_id,kind,node_id,generation,state,lease_expires_at,model_id,model_sha256,
+                 requested_resources_json,result_json,last_result_at,last_error_code,revision,created_at)
+                VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                (job_id, camera_id, profile_id, "person", node_id, int(current) + 1, "queued", 0,
+                 model_id, model_sha, canonical_json(resources), "{}", 0, "", 1, timestamp))
+            revision = self._bump()
+            self._audit("analytics.job.created", "web-session", job_id, "queued")
+        return {"jobId": job_id, "cameraId": camera_id, "profileId": profile_id, "kind": "person",
+                "nodeId": node_id, "generation": int(current) + 1, "state": "queued", "leaseExpiresAt": 0,
+                "modelId": model_id, "modelSha256": model_sha, "lastResultAt": None, "lastErrorCode": None,
+                "revision": revision}
+
+    def list_analytics_jobs(self) -> dict[str, Any]:
+        with self.lock:
+            rows = self.db.execute("SELECT * FROM analytics_jobs ORDER BY created_at DESC,id DESC LIMIT ?", (MAX_PAGE,)).fetchall()
+        return {"jobs": [{"jobId": row["id"], "cameraId": row["camera_id"], "profileId": row["profile_id"],
+                          "kind": row["kind"], "nodeId": row["node_id"], "generation": row["generation"],
+                          "state": row["state"], "leaseExpiresAt": row["lease_expires_at"], "modelId": row["model_id"],
+                          "modelSha256": row["model_sha256"], "lastResultAt": row["last_result_at"] or None,
+                          "lastErrorCode": row["last_error_code"] or None, "revision": row["revision"]} for row in rows],
+                "revision": self.revision()}
+
+    def claim_analytics_job(self, node_id: str, timestamp: int | None = None) -> dict[str, Any]:
+        require_identifier(node_id, "node_id")
+        timestamp = timestamp or now_seconds()
+        with self.lock, self.db:
+            row = self.db.execute("SELECT * FROM analytics_jobs WHERE node_id=? AND state='queued' ORDER BY created_at,id LIMIT 1",
+                                  (node_id,)).fetchone()
+            if row is None:
+                return {"job": None}
+            lease = timestamp + LEASE_SECONDS
+            self.db.execute("UPDATE analytics_jobs SET state='running',lease_expires_at=?,revision=revision+1 WHERE id=? AND state='queued'",
+                            (lease, row["id"]))
+            return {"job": {"jobId": row["id"], "cameraId": row["camera_id"], "profileId": row["profile_id"],
+                             "kind": row["kind"], "nodeId": row["node_id"], "generation": row["generation"],
+                             "leaseExpiresAt": lease, "modelId": row["model_id"], "modelSha256": row["model_sha256"],
+                             "requestedResources": json.loads(row["requested_resources_json"])}}
+
+    def renew_analytics_job(self, node_id: str, value: Any, timestamp: int | None = None) -> dict[str, Any]:
+        value = require_exact_object(value, {"jobId", "generation"}, {"jobId", "generation"})
+        job_id = require_identifier(value["jobId"], "job_id")
+        generation = value["generation"]
+        if not isinstance(generation, int) or isinstance(generation, bool) or generation < 1:
+            raise ApiError(400, "invalid_generation", "analytics generation is invalid")
+        timestamp = timestamp or now_seconds()
+        with self.lock, self.db:
+            row = self.db.execute("SELECT * FROM analytics_jobs WHERE id=?", (job_id,)).fetchone()
+            if row is None or row["node_id"] != node_id or row["generation"] != generation or row["state"] != "running" or row["lease_expires_at"] < timestamp:
+                raise ApiError(409, "stale_analytics_job", "analytics job lease is stale")
+            lease = timestamp + LEASE_SECONDS
+            self.db.execute("UPDATE analytics_jobs SET lease_expires_at=?,revision=revision+1 WHERE id=?", (lease, job_id))
+        return {"jobId": job_id, "generation": generation, "leaseExpiresAt": lease, "renewAfterSeconds": LEASE_RENEW_SECONDS}
+
+    def report_analytics_job_result(self, node_id: str, value: Any, timestamp: int | None = None) -> dict[str, Any]:
+        value = require_exact_object(value, {"jobId", "generation", "state", "resultCode", "signals", "modelSha256"},
+                                     {"jobId", "generation", "state", "resultCode"})
+        job_id = require_identifier(value["jobId"], "job_id")
+        generation = value["generation"]
+        state = value["state"]
+        result_code = value.get("resultCode", "")
+        signals = value.get("signals", [])
+        model_sha = value.get("modelSha256", "")
+        timestamp = timestamp or now_seconds()
+        if not isinstance(generation, int) or isinstance(generation, bool) or generation < 1 or state not in {"completed", "failed"} or \
+                not isinstance(result_code, str) or len(result_code) > 64 or not re.fullmatch(r"[A-Za-z0-9._-]*", result_code) or \
+                not isinstance(signals, list) or len(signals) > 32 or \
+                (model_sha and (not isinstance(model_sha, str) or not re.fullmatch(r"[0-9a-f]{64}", model_sha))):
+            raise ApiError(400, "invalid_analytics_result", "analytics job result is invalid")
+        safe_signals = []
+        for signal in signals:
+            if not isinstance(signal, dict) or signal.get("kind") != "person":
+                raise ApiError(400, "invalid_analytics_result", "only person signals are accepted")
+            confidence = signal.get("confidence")
+            boxes = signal.get("boxes", [])
+            if isinstance(confidence, bool) or not isinstance(confidence, (int, float)) or not 0 <= confidence <= 1 or \
+                    not isinstance(boxes, list) or len(boxes) > 16:
+                raise ApiError(400, "invalid_analytics_result", "analytics signal values are invalid")
+            safe_boxes = []
+            for box in boxes:
+                if not isinstance(box, dict):
+                    raise ApiError(400, "invalid_analytics_result", "analytics box is invalid")
+                safe = {name: box.get(name) for name in ("x", "y", "width", "height")}
+                if any(isinstance(item, bool) or not isinstance(item, (int, float)) or not 0 <= item <= 1 for item in safe.values()) or \
+                        safe["x"] + safe["width"] > 1 or safe["y"] + safe["height"] > 1:
+                    raise ApiError(400, "invalid_analytics_result", "analytics box is out of range")
+                safe_boxes.append(safe)
+            occurred_at = signal.get("occurredAt", timestamp * 1000)
+            if isinstance(occurred_at, bool) or not isinstance(occurred_at, int) or \
+                    abs(timestamp * 1000 - occurred_at) > 300_000:
+                raise ApiError(400, "invalid_analytics_result", "analytics signal timestamp is invalid")
+            safe_signals.append({"kind": "person", "confidence": float(confidence), "boxes": safe_boxes,
+                                 "occurredAt": occurred_at})
+        with self.lock, self.db:
+            row = self.db.execute("SELECT * FROM analytics_jobs WHERE id=?", (job_id,)).fetchone()
+            if row is None or row["node_id"] != node_id or row["generation"] != generation or row["state"] != "running" or row["lease_expires_at"] < timestamp:
+                raise ApiError(409, "stale_analytics_job", "analytics job lease is stale")
+            if signals and (not model_sha or model_sha != row["model_sha256"]):
+                raise ApiError(400, "invalid_analytics_result", "analytics model digest does not match the job")
+            self.db.execute("UPDATE analytics_jobs SET state=?,lease_expires_at=0,result_json=?,last_result_at=?,last_error_code=?,revision=revision+1 WHERE id=?",
+                            (state, canonical_json({"signals": safe_signals}), timestamp, result_code if state == "failed" else "", job_id))
+            revision = self._bump()
+            self._audit("analytics.job.result", node_id, job_id, state)
+        return {"jobId": job_id, "state": state, "resultCode": result_code, "acceptedSignals": len(safe_signals), "revision": revision}
 
     def assignments_for(self, node_id: str) -> dict[str, Any]:
         require_identifier(node_id, "node_id")
@@ -1506,6 +1678,19 @@ class ClusterStore:
                 costs = json.loads(row["costs_json"])
                 for field in aggregate["costs"]:
                     aggregate["costs"][field] += float(costs.get(field, 0))
+        for row in self.db.execute("SELECT node_id,requested_resources_json FROM analytics_jobs WHERE state='running' AND lease_expires_at>?", (now_seconds(),)):
+            aggregate = scheduled.setdefault(row["node_id"], {
+                "taskCount": 0, "taskTypes": {}, "costs": {
+                    "cpuCores": 0.0, "memoryBytes": 0.0, "decodeSlots": 0.0,
+                    "encodeSlots": 0.0, "diskBytesPerSecond": 0.0,
+                },
+            })
+            aggregate["taskCount"] += 1
+            aggregate["taskTypes"]["detector-reserved"] = aggregate["taskTypes"].get("detector-reserved", 0) + 1
+            with contextlib.suppress(json.JSONDecodeError, TypeError, ValueError):
+                costs = json.loads(row["requested_resources_json"])
+                for field in aggregate["costs"]:
+                    aggregate["costs"][field] += float(costs.get(field, 0))
         reports = []
         for row in self.db.execute("SELECT * FROM resource_reports ORDER BY node_id LIMIT ?", (MAX_PAGE,)):
             reports.append({"nodeId": row["node_id"], "cpuCores": row["cpu_cores"],
@@ -1628,6 +1813,10 @@ class Handler(http.server.BaseHTTPRequestHandler):
             self.response(200, STORE.update_volume(parts[2], parts[3], self.read_json(), self.if_match()))
         elif path == "/resource-capacity" and self.command == "GET":
             self.response(200, STORE.capacity())
+        elif path == "/analytics-jobs" and self.command == "GET":
+            self.response(200, STORE.list_analytics_jobs())
+        elif path == "/analytics-jobs" and self.command == "POST":
+            self.response(202, STORE.create_analytics_job(self.read_json()))
         elif path == "/recording-placements" and self.command == "POST":
             value = self.read_json()
             require_exact_object(value, {"cameraId", "profileId", "nodeId", "taskType", "costs"},
@@ -1732,6 +1921,12 @@ class ClusterHandler(Handler):
             self.response(200, STORE.accept_catalog(node_id, self.read_json()))
         elif path == "/internal/v1/jobs/result" and self.command == "POST":
             self.response(200, STORE.report_job_result(node_id, self.read_json()))
+        elif path == "/internal/v1/analytics/jobs/claim" and self.command == "POST":
+            self.response(200, STORE.claim_analytics_job(node_id))
+        elif path == "/internal/v1/analytics/jobs/renew" and self.command == "POST":
+            self.response(200, STORE.renew_analytics_job(node_id, self.read_json()))
+        elif path == "/internal/v1/analytics/jobs/result" and self.command == "POST":
+            self.response(200, STORE.report_analytics_job_result(node_id, self.read_json()))
         else:
             raise ApiError(404, "not_found", "resource was not found")
 

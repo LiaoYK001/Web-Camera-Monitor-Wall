@@ -26,13 +26,31 @@ The full command creates `build/private-gates/windows.json` only after all requi
 
 完整命令只会在所有 Chrome/Edge 协议、离线/升级与资源释放必测项通过后生成 `build/private-gates/windows.json`。长时间负载测试属于可选资格证据，不进入 v2.2 发布契约。
 
-For the active `v2-M7 / v2.3` development line, run the additional synthetic administration gate from Windows. It creates `windows-m7-admin.json` only after both installed browsers pass RBAC scope, cluster UI, S3 playback integrity, session revocation and offline-shell checks. No self-hosted runner is used.
+For the active `v3-M1 / v3.0` and `v3-M2 / v3.1` development lines, run the corresponding private analytics gates from the local Windows host and WSL2 distribution. The gates create revision-bound receipts only after browser protocol, zero-server-media, model integrity and Worker resource checks have actually completed. No self-hosted runner is used by these local commands.
 
-当前 `v2-M7 / v2.3` 开发线还需在 Windows 执行额外的合成运维门禁。只有本机 Chrome 与 Edge 均通过 RBAC scope、集群 UI、S3 回放完整性、Session 撤销和离线应用壳检查后，才会生成 `windows-m7-admin.json`；该流程不使用 self-hosted Runner。
+当前 `v3-M1 / v3.0` 与 `v3-M2 / v3.1` 开发线需要在本机 Windows 与 WSL2 分别执行分析门禁。只有协议、零服务端媒体、模型完整性和 Worker 资源释放等检查真实完成后，才会生成绑定当前 revision 的收据；该流程不使用 self-hosted Runner。
 
 ```powershell
 .\tests\m7\run-windows-admin-gate.ps1 -Image webobs:m7-candidate -Browser both
 ```
+
+The repository does not fabricate v3 receipts. Use the private gate harness kept
+outside the checkout and write only its redacted receipts under
+`build/private-gates/`:
+
+```powershell
+# Windows host (Chrome + Edge)
+python scripts\run-private-pwa-gate.py --platform windows
+```
+
+```bash
+# WSL2 Linux (Chromium + Docker/Worker fixtures)
+python3 scripts/run-private-pwa-gate.py --platform linux-wsl2-chromium
+```
+
+The v3 release scripts then additionally require `v3-m1-*.json` for `v3.0` or
+`v3-m2-*.json` for `v3.1`; missing, stale, partial or differently revisioned
+receipts fail closed.
 
 ## WSL2 Linux / WSL2 Linux
 
@@ -62,7 +80,7 @@ After both receipts exist for the clean current revision and are less than 48 ho
 ```powershell
 python scripts\verify-local-gate-receipts.py
 .\scripts\release-image-local.ps1 `
-  -Image ghcr.io/owner/web-camera-monitor-wall -Version v2.0
+  -Image ghcr.io/owner/web-camera-monitor-wall -Version v3.0
 ```
 
 Both release scripts check the clean tree, public audit and both receipts before Buildx can push. They do not read or publish the private fixture output. `release-image-local.sh` remains available on Linux hosts that provide a native Docker/Buildx engine.

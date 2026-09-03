@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { createCamera, deleteCamera, detectCamera, discoverOnvif, fetchAnalyticsPolicies, fetchCameras, fetchOnvifPresets, fetchOnvifSnapshot, mutateOnvifPreset, probeOnvif, pullOnvifEvents, qualifyBrowserDirect, sendOnvifPtz, sendOnvifTalk, syncOnvifCamera, updateAnalyticsPolicies } from './api';
+import { ControlApiError, createCamera, deleteCamera, detectCamera, discoverOnvif, fetchAnalyticsPolicies, fetchCameras, fetchOnvifPresets, fetchOnvifSnapshot, fetchV3AnalyticsPolicies, mutateOnvifPreset, patchV3AnalyticsPolicies, probeOnvif, pullOnvifEvents, qualifyBrowserDirect, sendOnvifPtz, sendOnvifTalk, syncOnvifCamera, updateAnalyticsPolicies } from './api';
 import type { AnalyticsPolicy, CameraAdapter, CameraDetection, CameraRecord, OnvifPreset } from './types';
 import { loadSyncState } from './localRuntime';
 import { queueCameraPreference, synchronizeBrowserState } from './syncRuntime';
@@ -7,10 +7,20 @@ import { queueCameraPreference, synchronizeBrowserState } from './syncRuntime';
 type EditableAnalyticsPolicy = Omit<AnalyticsPolicy, 'updatedAt'>;
 type CameraPreference = { displayName: string; favorite: boolean; group: string };
 const policyKey = (cameraId: string, profileId: string) => `${cameraId}\u0000${profileId}`;
+function safeAddressDisplay(value: string): string {
+  try {
+    const parsed = new URL(value.includes('://') ? value : `https://${value}`);
+    const port = parsed.port ? `:${parsed.port}` : '';
+    return `${parsed.protocol}//${parsed.hostname}${port}${parsed.pathname === '/' ? '' : parsed.pathname}`;
+  } catch { return '地址不可用'; }
+}
 const defaultPolicy = (cameraId: string, profileId: string): EditableAnalyticsPolicy => ({
   cameraId, profileId, motionEnabled: false, sceneChangeEnabled: false, personEnabled: false,
   allowEventPromotion: false, promotionThreshold: .6, promotionHoldSeconds: 15,
   promotionCooldownSeconds: 30, forceAnalyticsAlwaysOn: false,
+  motion: { sensitivity: .15, sampleFps: 2, debounceMs: 500, cooldownMs: 5000 },
+  sceneChange: { threshold: .55, confirmFrames: 2, cooldownMs: 30000 },
+  person: { confidenceThreshold: .6, sampleFps: 1, maxBoxes: 16, executionPreference: 'auto', allowServerFallback: false },
 });
 
 function DeviceControls({ camera, busy, fail }: { camera: CameraRecord; busy: boolean; fail: (message: string) => void }) {
@@ -77,13 +87,23 @@ export default function CameraRegistry({ onBack }: { onBack: () => void }) {
   const [error, setError] = useState('');
   const [notice, setNotice] = useState('');
   const [policies, setPolicies] = useState<Map<string, EditableAnalyticsPolicy>>(new Map());
+  const [analyticsRevision, setAnalyticsRevision] = useState(1);
   const [preferences, setPreferences] = useState<Map<string, CameraPreference>>(new Map());
   const reload = async () => { try {
     const [cameraResult, policyResult, syncState] = await Promise.all([
       fetchCameras(), fetchAnalyticsPolicies(), loadSyncState(),
     ]);
+    let v3Revision = analyticsRevision;
+    let v3Policies = policyResult.policies;
+    try {
+      const v3 = await fetchV3AnalyticsPolicies();
+      v3Revision = v3.revision; v3Policies = v3.policies;
+    } catch {
+      // v1 remains the compatibility path while an older controller is upgraded.
+    }
     setCameras(cameraResult.cameras);
-    setPolicies(new Map(policyResult.policies.map((policy) => [policyKey(policy.cameraId, policy.profileId), policy])));
+    setAnalyticsRevision(v3Revision);
+    setPolicies(new Map(v3Policies.map((policy) => [policyKey(policy.cameraId, policy.profileId), policy])));
     setPreferences(new Map((syncState?.documents ?? []).filter((item) =>
       item.kind === 'camera-preference' && !item.deleted && item.document).map((item) => [item.id, {
         displayName: String(item.document?.displayName ?? ''), favorite: item.document?.favorite === true,
@@ -148,7 +168,14 @@ export default function CameraRegistry({ onBack }: { onBack: () => void }) {
   const savePolicySet = async (values: EditableAnalyticsPolicy[]) => {
     setBusy(true); setError('');
     try {
-      const saved = await updateAnalyticsPolicies(values);
+      let saved: { policies: AnalyticsPolicy[] };
+      try {
+        const result = await patchV3AnalyticsPolicies(analyticsRevision, values);
+        saved = result; setAnalyticsRevision(result.revision);
+      } catch (reason) {
+        if (!(reason instanceof ControlApiError) || ![404, 405].includes(reason.status)) throw reason;
+        saved = await updateAnalyticsPolicies(values);
+      }
       setPolicies((current) => {
         const next = new Map(current);
         saved.policies.forEach((policy) => next.set(policyKey(policy.cameraId, policy.profileId), policy));
@@ -196,7 +223,7 @@ export default function CameraRegistry({ onBack }: { onBack: () => void }) {
     </section>
     <section className="camera-list"><div className="section-title"><h2>Camera Registry</h2><span>{cameras.length} 台</span></div>
       <div className="analytics-batch"><span>当前列表分析开关</span><button className="ghost-button" disabled={busy || !cameras.length} onClick={() => setAllAnalytics(true)}>Select All</button><button className="ghost-button" disabled={busy || !cameras.length} onClick={() => setAllAnalytics(false)}>Unselect All</button><small>默认全部关闭；人物框为 v3-M2 预留接口。</small></div>
-      {cameras.length === 0 ? <div className="registry-empty"><h3>尚未添加摄像机</h3><p>使用自动检测，或通过 ONVIF WS-Discovery 查找局域网设备。</p></div> : cameras.map((camera) => <article className="camera-card" key={camera.id}><div><span className="adapter-pill">{camera.adapter}</span><h3>{preferences.get(camera.id)?.displayName || camera.name}{preferences.get(camera.id)?.favorite ? ' ★' : ''}</h3><p>{camera.address}</p><div className="camera-preference"><label>显示名称<input maxLength={128} value={preferences.get(camera.id)?.displayName ?? camera.name} onChange={(event) => editPreference(camera, { displayName: event.target.value })} /></label><label>分组<input maxLength={64} value={preferences.get(camera.id)?.group ?? ''} onChange={(event) => editPreference(camera, { group: event.target.value })} /></label><label><input type="checkbox" checked={preferences.get(camera.id)?.favorite ?? false} onChange={(event) => editPreference(camera, { favorite: event.target.checked })} />收藏</label><button className="ghost-button" onClick={() => void savePreference(camera)}>同步显示偏好</button></div></div><dl><div><dt>Profile</dt><dd>{camera.profiles.length}</dd></div><div><dt>硬解</dt><dd>{camera.hardwareDecode}</dd></div><div><dt>健康</dt><dd>{camera.health}</dd></div></dl><div className="profile-list">{camera.profiles.map((profile) => {
+      {cameras.length === 0 ? <div className="registry-empty"><h3>尚未添加摄像机</h3><p>使用自动检测，或通过 ONVIF WS-Discovery 查找局域网设备。</p></div> : cameras.map((camera) => <article className="camera-card" key={camera.id}><div><span className="adapter-pill">{camera.adapter}</span><h3>{preferences.get(camera.id)?.displayName || camera.name}{preferences.get(camera.id)?.favorite ? ' ★' : ''}</h3><p>{safeAddressDisplay(camera.address)}</p><div className="camera-preference"><label>显示名称<input maxLength={128} value={preferences.get(camera.id)?.displayName ?? camera.name} onChange={(event) => editPreference(camera, { displayName: event.target.value })} /></label><label>分组<input maxLength={64} value={preferences.get(camera.id)?.group ?? ''} onChange={(event) => editPreference(camera, { group: event.target.value })} /></label><label><input type="checkbox" checked={preferences.get(camera.id)?.favorite ?? false} onChange={(event) => editPreference(camera, { favorite: event.target.checked })} />收藏</label><button className="ghost-button" onClick={() => void savePreference(camera)}>同步显示偏好</button></div></div><dl><div><dt>Profile</dt><dd>{camera.profiles.length}</dd></div><div><dt>硬解</dt><dd>{camera.hardwareDecode}</dd></div><div><dt>健康</dt><dd>{camera.health}</dd></div></dl><div className="profile-list">{camera.profiles.map((profile) => {
         const proof = ((camera.capabilities.browserDirect as { profiles?: Record<string, { tlsVerified?: boolean; corsVerified?: boolean; reason?: string }> } | undefined)?.profiles?.[profile.id]);
         const policy = policies.get(policyKey(camera.id, profile.id)) ?? defaultPolicy(camera.id, profile.id);
         return <span key={profile.id}>{profile.role} · {profile.videoCodec || 'unknown'} {profile.width ? `${profile.width}×${profile.height}` : ''}

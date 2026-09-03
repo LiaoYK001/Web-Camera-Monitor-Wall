@@ -1,4 +1,4 @@
-# MonitorView v1 and analytics handoff / MonitorView v1 与分析交接
+# MonitorView and analytics runtime / MonitorView 与分析运行时
 
 > Status / 状态：v2-M5 is complete and published in stable v2.1 / v2-M5 已完成并随稳定版 v2.1 发布。
 
@@ -26,11 +26,11 @@ Deterministic browser tests cover every 1–16 landscape/portrait M/S combinatio
 
 ## Analytics versions / 分析版本
 
-- `v3-M1 / v3.0`: per Camera/Profile motion and scene-change switches, native ONVIF events first, then a downsampled browser Worker where same-origin/CORS pixel access permits. Cross-origin MJPEG that cannot be safely sampled remains unsupported and must not trigger a hidden server media path.
-- `v3-M2 / v3.1`: opt-in browser WebGPU/WASM person boxes and optional administrator-enabled server providers. Only the `person` class and normalized boxes are in scope; face identity, emotion inference and biometric databases are excluded.
+- `v3-M1 / v3.0`: per Camera/Profile motion and scene-change switches, native ONVIF events first, then a downsampled browser Worker where same-origin/CORS pixel access permits. Cross-origin MJPEG that cannot be safely sampled remains unsupported and must not trigger a hidden server media path. The implementation is tracked on `dev`; release requires revision-bound v3-M1 receipts.
+- `v3-M2 / v3.1`: opt-in browser WebGPU/WASM person boxes and optional administrator-enabled server providers. Only the `person` class and normalized boxes are in scope; face identity, emotion inference and biometric databases are excluded. The pinned ONNX model is served as a same-origin, hash-verified asset; the first-party Worker fails closed when its optional runtime is unavailable.
 
 - `v3-M1 / v3.0`：逐 Camera/Profile 运动与大范围画面变化开关，优先使用 ONVIF 原生事件；同源/CORS 像素访问允许时再使用浏览器降采样 Worker。不能安全采样的跨源 MJPEG 明确标记不支持，不能偷偷启动服务器媒体链。
-- `v3-M2 / v3.1`：选择加入的浏览器 WebGPU/WASM 人物框，以及管理员显式启用的可选服务端 Provider。范围只包含 `person` 类别和归一化框；不包含人脸身份、情绪推断或生物特征数据库。
+- `v3-M2 / v3.1`：选择加入的浏览器 WebGPU/WASM 人物框，以及管理员显式启用的可选服务端 Provider。范围只包含 `person` 类别和归一化框；不包含人脸身份、情绪推断或生物特征数据库。固定 ONNX 模型以同源、哈希校验资源提供；第一方 Worker 缺少可选运行时则安全失败。
 
 Camera Registry stores all three switches independently and defaults them off. Batch updates are one SQLite transaction, validate every Camera/Profile before writing, and are bounded to 256 records. `scene-change` is an additive event type; the existing v1 event schema remains compatible. Raw frames, model inputs, snapshots, endpoints and live telemetry remain outside logs and public evidence.
 

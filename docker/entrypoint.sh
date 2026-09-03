@@ -323,6 +323,8 @@ cluster_log_pipe=""
 node_agent_pid=""
 node_agent_filter_pid=""
 node_agent_log_pipe=""
+detector_worker_pid=""
+detector_worker_log=""
 archive_pid=""
 archive_filter_pid=""
 archive_log_pipe=""
@@ -349,6 +351,7 @@ shutdown_children() {
     terminate_child "$events_pid"
     terminate_child "$cluster_pid"
     terminate_child "$node_agent_pid"
+    terminate_child "$detector_worker_pid"
     terminate_child "$archive_pid"
     terminate_child "$encrypted_backup_pid"
     terminate_child "$xvfb_pid"
@@ -638,6 +641,13 @@ if [ "$node_agent_enabled" = "true" ]; then
     # atomic assignment state and controller node status.
     sleep 0.2
     kill -0 "$node_agent_pid" 2>/dev/null || fail "Node agent exited during startup"
+    if [ "$node_role" = worker ]; then
+        detector_worker_log="/tmp/webobs-detector-worker-log.$$"
+        python3 /opt/webobs/bin/webobs-detector-worker --serve > "$detector_worker_log" 2>&1 &
+        detector_worker_pid=$!
+        sleep 0.2
+        kill -0 "$detector_worker_pid" 2>/dev/null || fail "Detector worker exited during startup"
+    fi
 fi
 
 if [ "$archive_enabled" = "true" ]; then
@@ -762,6 +772,12 @@ while kill -0 "$webobsd_pid" 2>/dev/null; do
         terminate_child "$webobsd_pid"
         break
     fi
+    if [ "$shutdown_requested" -eq 0 ] && [ -n "$detector_worker_pid" ] && ! kill -0 "$detector_worker_pid" 2>/dev/null; then
+        echo "Detector worker exited while webobsd was running" >&2
+        exit_status=3
+        terminate_child "$webobsd_pid"
+        break
+    fi
     if [ "$shutdown_requested" -eq 0 ] && [ -n "$node_agent_filter_pid" ] && ! kill -0 "$node_agent_filter_pid" 2>/dev/null; then
         echo "Node agent log filter exited while webobsd was running" >&2
         exit_status=3
@@ -852,6 +868,9 @@ fi
 if [ -n "$node_agent_filter_pid" ]; then
     wait "$node_agent_filter_pid" 2>/dev/null || true
 fi
+if [ -n "$detector_worker_pid" ]; then
+    wait "$detector_worker_pid" 2>/dev/null || true
+fi
 if [ -n "$archive_pid" ]; then
     wait "$archive_pid" 2>/dev/null || true
 fi
@@ -872,6 +891,9 @@ if [ -n "$caddy_log_pipe" ]; then
 fi
 if [ -n "$nvr_log_pipe" ]; then
     rm -f -- "$nvr_log_pipe"
+fi
+if [ -n "$detector_worker_log" ]; then
+    rm -f -- "$detector_worker_log"
 fi
 if [ -n "$camera_registry_log_pipe" ]; then
     rm -f -- "$camera_registry_log_pipe"

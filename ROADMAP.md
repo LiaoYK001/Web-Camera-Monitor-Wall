@@ -1,6 +1,6 @@
 # Roadmap / 项目路线图
 
-> Last updated / 最后更新：2026-09-02
+> Last updated / 最后更新：2026-09-03
 
 This roadmap describes milestone order and acceptance gates, not promised release dates. Priorities may change based on validation results and maintainer capacity.
 
@@ -12,11 +12,11 @@ Canonical milestone names use `v<major>-M<number>`. Historical validation prose 
 
 ## Current position / 当前位置
 
-**✅ `v2-M7 / v2.3` 已完成并作为当前稳定版本发布：RBAC、Controller/Recorder、租约、多卷/S3、资源调度、外部集成与加密灾备。**
+**✅ `v2-M7 / v2.3` 已完成并作为当前稳定版本发布；🚧 v3-M1/M2 正在 `dev` 实现，尚未发布。**
 
-**✅ `v2-M7 / v2.3` is complete and published as the current stable release: RBAC, Controller/Recorder roles, leases, multi-volume/S3 storage, resource scheduling, integrations, and encrypted disaster recovery.**
+**✅ `v2-M7 / v2.3` is complete and published as the current stable release; 🚧 v3-M1/M2 are under implementation on `dev` and are not released yet.**
 
-`v2.3` is the current stable baseline. It preserves every v2.2 operations and True Direct boundary, adds optional scale-out while keeping `standalone` as the default one-image deployment, and does not restore native package publication. The next planned product line is v3 analytics; its per-stream switches remain off by default.
+`v2.3` is the current stable baseline. It preserves every v2.2 operations and True Direct boundary, adds optional scale-out while keeping `standalone` as the default one-image deployment, and does not restore native package publication. v3-M1/M2 implementation is now active on `dev`; analytics switches remain off by default until the corresponding release gates pass.
 
 `v2.3` 是当前稳定基线。它保留 v2.2 的全部运维能力与真直连边界，在默认单镜像 `standalone` 部署之外增加可选横向扩展，且不恢复原生包发布。下一条规划产品线为 v3 分析功能，其逐流开关仍默认关闭。
 
@@ -31,9 +31,9 @@ The `v1.0` series contains v1-M1 through v1-M6. The `v1.1` milestone family cont
 `v1.0` 系列包含 v1-M1 至 v1-M6，`v1.1` 里程碑族包含 v1-M7 至 v1-M11；`v1.2` 是 v1 的最终收口版本，不新增 v1-M12。`v2.0` 从 v2-M1 开始，以可测量的真直连契约为核心。
 
 ```text
-M0 + v1 complete -> v2-M1…M3 / v2.0 complete -> v2-M4/M5 / v2.1 complete -> v2-M6 / v2.2 complete -> v2-M7 / v2.3 complete -> v3 planned
-M0 + v1 已完成   -> v2-M1…M3 / v2.0 已完成    -> v2-M4/M5 / v2.1 已完成    -> v2-M6 / v2.2 已完成    -> v2-M7 / v2.3 已完成    -> v3 规划中
-✅                  ✅                              ✅                            ✅                         ✅                         ⏳
+M0 + v1 complete -> v2-M1…M3 / v2.0 complete -> v2-M4/M5 / v2.1 complete -> v2-M6 / v2.2 complete -> v2-M7 / v2.3 complete -> v3-M1 / v3.0 -> v3-M2 / v3.1
+M0 + v1 已完成   -> v2-M1…M3 / v2.0 已完成    -> v2-M4/M5 / v2.1 已完成    -> v2-M6 / v2.2 已完成    -> v2-M7 / v2.3 已完成    -> v3-M1 / v3.0 -> v3-M2 / v3.1
+✅                  ✅                              ✅                            ✅                         ✅                         🚧                  ⏳
 ```
 
 ### M0 acceptance / M0 验收
@@ -111,7 +111,23 @@ M0 已于 2026-08-11 在真实摄像头门禁通过后完成。后续修改采�
 | v2-M5 — Monitor Layout & Telemetry | ✅ Published in v2.1 / 已随 v2.1 发布 | Telemetry, 1–16 M/S layout/rotation, low power and analytics controls / 统计、1–16 M/S 布局轮换、低功耗与分析控制 | Layout, telemetry, lifecycle and policy regressions pass without inventing unavailable measurements / 布局、统计、生命周期与策略回归通过，不虚构不可测数据 |
 | v2-M6 — Operations Workspace | ✅ Published in v2.2 / 已随 v2.2 发布 | Source catalog, Profile preview, issues, settings and per-source audio / 来源目录、Profile 预览、问题、设置与逐源音频 | Registry v2 migration, truthful media/audio diagnostics and PWA regressions pass / Registry v2 迁移、真实媒体/音频诊断与 PWA 回归通过 |
 | v2-M7 — Scale | ✅ Published in v2.3 / 已随 v2.3 发布 | RBAC, Controller/Recorder leases, multi-volume/S3, resource scheduling, integrations and encrypted DR / RBAC、Controller/Recorder 租约、多卷/S3、资源调度、集成与加密灾备 | 8/16/32 synthetic scale, fault injection, security and private platform gates pass / 8/16/32 合成规模、故障注入、安全与私有平台门禁通过 |
-| v3-M1/M2 — Analytics | 🧭 Planned / 已规划 | Motion/scene change, then person boxes / 运动与画面变化，随后人物框 | Per-stream opt-in, local-first privacy and bounded resource gates / 逐流选择、本地优先隐私与有界资源门禁 |
+| v3-M1/M2 — Analytics | 🚧 In development / 开发中 | Motion/scene change, then person boxes / 运动与画面变化，随后人物框 | Browser Worker, hash-verified model, optional CPU Worker and bounded resource gates / 浏览器 Worker、摘要校验模型、可选 CPU Worker 与有界资源门禁 |
+
+### v3 analytics implementation status / v3 分析实现状态
+
+The v3 implementation is now present on `dev`, but neither `v3.0` nor `v3.1` is a release claim until revision-bound Windows and WSL2 private gates are executed. The following checklist records code that is implemented and the remaining release evidence; it intentionally does not turn local unit tests into platform acceptance.
+
+v3 实现已经进入 `dev`，但在绑定 revision 的 Windows 与 WSL2 私有门禁执行前，不将 `v3.0` 或 `v3.1` 表述为已发布。以下清单区分已实现代码与仍需取得的发布证据，不把本地单元测试冒充平台验收。
+
+- [x] Registry v2→v3 atomic analytics migration, nested motion/scene-change/person policies, bounded batch updates and legacy projections / Registry v2→v3 原子分析迁移、嵌套运动/画面变化/人物策略、有界批量更新与旧字段投影
+- [x] v3 runtime-plan/session/signal APIs with expiry, replay/rate/coordinate checks, server-trusted source and RBAC scope enforcement / v3 运行计划、会话、信号 API，包含过期、重放/速率/坐标检查、服务端可信来源及 RBAC 作用域校验
+- [x] Browser Worker motion and scene-change engine with include/exclude/privacy zones, low-power suppression and ONVIF-first execution / 带包含/排除/隐私区域、低功耗抑制及 ONVIF 优先策略的浏览器 Worker 运动和画面变化引擎
+- [x] Pinned, same-origin, SHA-256 verified person model with WebGPU→WASM fallback, letterbox mapping and person-only post-processing / 固定同源且 SHA-256 校验的人物模型，支持 WebGPU→WASM 回退、等比填充坐标映射及仅 person 后处理
+- [x] Optional CPU Detector Worker contract and generation/resource-aware job lifecycle; no implicit server media fallback / 可选 CPU Detector Worker 契约及带 generation/资源约束的任务生命周期；不隐式启用服务端媒体回退
+- [x] Analytics workspace, detection status/boxes, model integrity issues, release receipt verifiers and Docker model supply-chain probe / 分析工作区、检测状态/框、模型完整性问题、发布回执校验器及 Docker 模型供应链探针
+- [ ] Execute Windows Chrome/Edge and WSL2 Chromium v3-M1/v3-M2 private gates and bind receipts to one final commit / 执行 Windows Chrome/Edge 与 WSL2 Chromium 的 v3-M1/v3-M2 私有门禁，并将回执绑定到同一最终提交
+- [ ] Re-run v1–v2.3 regression and public audit on the release candidate, then merge `dev → main` / 在发布候选上重跑 v1–v2.3 回归与公开审计，然后合并 `dev → main`
+- [ ] Create immutable annotated `v3.0`/`v3.1` tags and publish GHCR images only after the corresponding receipt verifiers pass / 仅在对应回执校验通过后创建不可移动 annotated `v3.0`/`v3.1` 标签并发布 GHCR 镜像
 
 ## Milestone details / 里程碑详情
 

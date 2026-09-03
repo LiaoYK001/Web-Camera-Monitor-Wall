@@ -1,0 +1,11 @@
+{
+  "schemaVersion": 1,
+  "id": "ssd-mobilenet-v1-12-person",
+  "version": "onnx-model-zoo-main",
+  "file": "/models/ssd_mobilenet_v1_12.onnx",
+  "sha256": "b8fba5e404077d4048d27fcd1667e85e27e192eb9bf51e696c46a3acd7d21058",
+  "license": "MIT",
+  "source": "https://github.com/onnx/models/tree/main/validated/vision/object_detection_segmentation/ssd-mobilenetv1",
+  "input": { "width": 300, "height": 300, "layout": "NHWC", "type": "uint8" },
+  "class": "person"
+}

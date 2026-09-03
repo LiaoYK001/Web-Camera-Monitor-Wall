@@ -30,6 +30,12 @@ git diff --cached --quiet --ignore-submodules=none
 if [[ "$version" =~ ^v2\.3(\.|$) ]]; then
     "$python_command" ./scripts/verify-m7-gate-receipts.py
 fi
+if [[ "$version" =~ ^v3\.0(\.|$) ]]; then
+    "$python_command" ./scripts/verify-v3-m1-gate-receipts.py
+fi
+if [[ "$version" =~ ^v3\.1(\.|$) ]]; then
+    "$python_command" ./scripts/verify-v3-m2-gate-receipts.py
+fi
 
 revision="$(git rev-parse HEAD)"
 short_revision="$(git rev-parse --short=12 HEAD)"
@@ -40,25 +46,35 @@ rm -rf -- "$next_cache"
 tags=(--tag "${image}:sha-${short_revision}")
 if [ "$version" = dev ]; then
     tags+=(--tag "${image}:dev")
-    build_version="2.3.0-dev.${short_revision}"
-    build_milestone="v2-M7-dev"
+    build_milestone="${WEBOBS_TARGET_MILESTONE:-v3-M2-dev}"
+    case "$build_milestone" in
+        v3-M1-dev) default_dev_version="3.0.0-dev" ;;
+        v3-M2-dev) default_dev_version="3.1.0-dev" ;;
+        v2-M7-dev) default_dev_version="2.3.0-dev" ;;
+        v2-M6-dev) default_dev_version="2.2.0-dev" ;;
+        v2-M5-dev) default_dev_version="2.1.0-dev" ;;
+        *) echo "unsupported development milestone: ${build_milestone}" >&2; exit 64 ;;
+    esac
+    build_version="${WEBOBS_DEV_VERSION:-${default_dev_version}}.${short_revision}"
 else
     [ "$(git branch --show-current)" = main ] || { echo "stable publication must run from main" >&2; exit 65; }
-    [ "$(git rev-parse "${version}^{commit}")" = "$revision" ] || {
-        echo "release tag must resolve to HEAD" >&2; exit 65;
-    }
     remote_refs="$(git ls-remote --tags origin "refs/tags/${version}" "refs/tags/${version}^{}")"
     remote_revision="$(printf '%s\n' "$remote_refs" | awk -v tag="refs/tags/${version}^{}" '$2==tag {print $1}')"
     [ -n "$remote_revision" ] || remote_revision="$(printf '%s\n' "$remote_refs" | awk -v tag="refs/tags/${version}" '$2==tag {print $1}')"
-    [ "$remote_revision" = "$revision" ] || {
-        echo "the immutable release tag must exist on origin and resolve to HEAD" >&2; exit 65;
-    }
+    if [ -n "$remote_revision" ] && [ "$remote_revision" != "$revision" ]; then
+        echo "an existing release tag must resolve to HEAD; refusing to overwrite it" >&2
+        exit 65
+    fi
     : "${GITHUB_REPOSITORY:?GITHUB_REPOSITORY is required for a stable release}"
     : "${GH_TOKEN:?GH_TOKEN is required for a stable release}"
     command -v gh >/dev/null
     build_version="${version#v}"
     [[ "$build_version" =~ ^[0-9]+\.[0-9]+$ ]] && build_version="${build_version}.0"
-    if [[ "$version" =~ ^v2\.3(\.|$) ]]; then
+    if [[ "$version" =~ ^v3\.1(\.|$) ]]; then
+        build_milestone="v3-M2"
+    elif [[ "$version" =~ ^v3\.0(\.|$) ]]; then
+        build_milestone="v3-M1"
+    elif [[ "$version" =~ ^v2\.3(\.|$) ]]; then
         build_milestone="v2-M7"
     elif [[ "$version" =~ ^v2\.2(\.|$) ]]; then
         build_milestone="v2-M6"
@@ -66,6 +82,13 @@ else
         build_milestone="v2-M5"
     else
         build_milestone="v2-M3"
+    fi
+    # GitHub may create the tag named in a Draft immediately. Use a
+    # deterministic, non-release tag until the source assets are verified;
+    # an existing stable tag is reused only when it already points at HEAD.
+    draft_tag=""
+    if [ -z "$remote_revision" ]; then
+        draft_tag="release-draft-${version#v}-${short_revision}"
     fi
 fi
 
@@ -107,14 +130,40 @@ cat > "$notes" <<EOF
 The version and latest tags are promoted from this exact candidate digest only after this draft and its corresponding-source assets are published.
 EOF
 
-if ! gh release view "$version" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
-    gh release create "$version" --repo "$GITHUB_REPOSITORY" --verify-tag --draft \
-        --title "$version" --notes-file "$notes"
+release_lookup_tag="${draft_tag:-$version}"
+release_id="$(gh api "repos/$GITHUB_REPOSITORY/releases?per_page=100" --jq ".[] | select(.tag_name == \"$release_lookup_tag\") | .id" | head -n 1)"
+if [ -z "$release_id" ]; then
+    release_id="$(gh api --method POST "repos/$GITHUB_REPOSITORY/releases" \
+        -f "tag_name=$release_lookup_tag" -f "target_commitish=$revision" -f "name=$version" -f "body=$(<"$notes")" \
+        -F draft=true -F prerelease=false --jq .id)"
 fi
-is_draft="$(gh release view "$version" --repo "$GITHUB_REPOSITORY" --json isDraft --jq .isDraft)"
+[ "$release_id" =~ ^[0-9]+$ ] || { echo "could not resolve a GitHub Release database id" >&2; exit 65; }
+is_draft="$(gh api "repos/$GITHUB_REPOSITORY/releases/$release_id" --jq .draft)"
 [ "$is_draft" = true ] || { echo "refusing to mutate an already-published release" >&2; exit 65; }
-./scripts/upload-release-assets-immutable.sh "$version" "$source_archive" "${source_archive}.sha256"
-gh release edit "$version" --repo "$GITHUB_REPOSITORY" --draft=false
+./scripts/upload-release-assets-immutable.sh "$release_id" "$source_archive" "${source_archive}.sha256"
+if [ -n "$draft_tag" ]; then
+    # Create the immutable annotated release tag only after the Draft assets
+    # have been uploaded and re-verified. Never move or delete a stable tag.
+    if git show-ref --verify --quiet "refs/tags/$version"; then
+        [ "$(git rev-parse "${version}^{commit}")" = "$revision" ] || {
+            echo "local release tag already points at a different revision" >&2; exit 65;
+        }
+    else
+        git tag -a "$version" "$revision" -m "Web Camera Monitor Wall $version"
+    fi
+    git push origin "refs/tags/$version"
+    remote_release_revision="$(git ls-remote --tags origin "refs/tags/${version}^{}" | awk -v tag="refs/tags/${version}^{}" '$2==tag {print $1}')"
+    [ "$remote_release_revision" = "$revision" ] || {
+        echo "annotated release tag did not resolve to HEAD after push" >&2; exit 65;
+    }
+    gh api --method PATCH "repos/$GITHUB_REPOSITORY/releases/$release_id" \
+        -f "tag_name=$version" -f "target_commitish=$revision" >/dev/null
+    [ "$(gh api "repos/$GITHUB_REPOSITORY/releases/$release_id" --jq .tag_name)" = "$version" ] || {
+        echo "Draft release tag could not be switched to the stable tag" >&2; exit 65;
+    }
+    git push origin ":refs/tags/$draft_tag" >/dev/null 2>&1 || true
+fi
+gh api --method PATCH "repos/$GITHUB_REPOSITORY/releases/$release_id" -F draft=false >/dev/null
 
 docker buildx imagetools create \
     --tag "${image}:${version}" --tag "${image}:latest" "${image}@${digest}"
@@ -125,5 +174,5 @@ for promoted in "$version" latest; do
         echo "promoted ${promoted} tag does not match the candidate digest" >&2; exit 65;
     }
 done
-gh release edit "$version" --repo "$GITHUB_REPOSITORY" --latest
+gh api --method PATCH "repos/$GITHUB_REPOSITORY/releases/$release_id" -F make_latest=true >/dev/null
 echo "published ${version}, latest, and sha-${short_revision} from ${digest}"

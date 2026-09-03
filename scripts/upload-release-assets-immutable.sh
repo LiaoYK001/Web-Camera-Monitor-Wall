@@ -2,14 +2,14 @@
 set -euo pipefail
 
 if [[ $# -lt 2 ]]; then
-  echo "usage: upload-release-assets-immutable.sh TAG ASSET..." >&2
+  echo "usage: upload-release-assets-immutable.sh TAG|RELEASE_ID ASSET..." >&2
   exit 64
 fi
 
-tag=$1
+release_ref=$1
 shift
-[[ "$tag" =~ ^v[0-9]+\.[0-9]+(\.[0-9]+)?$ ]] || {
-  echo "release tag is invalid" >&2
+[[ "$release_ref" =~ ^v[0-9]+\.[0-9]+(\.[0-9]+)?$|^[0-9]+$ ]] || {
+  echo "release tag or numeric release id is invalid" >&2
   exit 64
 }
 : "${GITHUB_REPOSITORY:?GITHUB_REPOSITORY is required}"
@@ -19,6 +19,14 @@ shift
   exit 64
 }
 command -v gh >/dev/null
+
+release_id=""
+if [[ "$release_ref" =~ ^[0-9]+$ ]]; then
+  release_id="$release_ref"
+  release_api="repos/$GITHUB_REPOSITORY/releases/$release_id"
+else
+  release_api="repos/$GITHUB_REPOSITORY/releases/tags/$release_ref"
+fi
 
 temporary_root=$(mktemp -d)
 cleanup() {
@@ -45,20 +53,30 @@ for asset in "$@"; do
   }
   local_names[$name]=1
 
-  asset_count=$(gh api "repos/$GITHUB_REPOSITORY/releases/tags/$tag" \
+  asset_count=$(gh api "$release_api" \
     --jq "[.assets[] | select(.name == \"$name\")] | length")
   [[ "$asset_count" =~ ^[01]$ ]] || {
     echo "release contains duplicate immutable asset names" >&2
     exit 65
   }
   if [[ "$asset_count" == 0 ]]; then
-    gh release upload "$tag" "$asset"
+    if [ -n "$release_id" ]; then
+      gh api --method POST "${release_api}/assets?name=${name}" \
+        -H "Content-Type: application/octet-stream" --input "$asset" >/dev/null
+    else
+      gh release upload "$release_ref" "$asset"
+    fi
     continue
   fi
 
   existing_directory="$temporary_root/$name"
   mkdir "$existing_directory"
-  gh release download "$tag" --pattern "$name" --dir "$existing_directory"
+  if [ -n "$release_id" ]; then
+    asset_id=$(gh api "$release_api" --jq ".assets[] | select(.name == \"$name\") | .id")
+    gh api "repos/$GITHUB_REPOSITORY/releases/assets/$asset_id" --output "$existing_directory/$name"
+  else
+    gh release download "$release_ref" --pattern "$name" --dir "$existing_directory"
+  fi
   existing="$existing_directory/$name"
   [[ -f "$existing" && ! -L "$existing" ]] || {
     echo "existing release asset could not be verified" >&2

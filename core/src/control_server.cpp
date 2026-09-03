@@ -355,6 +355,10 @@ std::string permission_for_request(const HttpRequest &request)
     const std::string_view target = view(request.target());
     const bool mutating = request.method() == http::verb::post || request.method() == http::verb::put ||
                           request.method() == http::verb::patch || request.method() == http::verb::delete_;
+    if (target.starts_with("/api/v3/analytics/policies"))
+        return mutating ? "analytics.manage" : "analytics.view";
+    if (target.starts_with("/api/v3/analytics"))
+        return mutating ? "analytics.run" : "analytics.view";
     if (target.starts_with("/api/v2/users") || target == "/api/v2/roles")
         return "user.manage";
     if (target == "/api/v2/audit" || target.starts_with("/api/v2/audit?"))
@@ -364,6 +368,8 @@ std::string permission_for_request(const HttpRequest &request)
     if (target.starts_with("/api/v2/storage-volumes") || target.starts_with("/api/v2/recording-placements") ||
         target.starts_with("/api/v2/archive-targets") || target.starts_with("/api/v2/backup-jobs"))
         return "storage.manage";
+    if (target.starts_with("/api/v2/analytics-jobs"))
+        return "analytics.manage";
     if (target.starts_with("/api/v2/recordings"))
         return "playback.view";
     if (target == "/api/v2/resource-capacity" || target == "/metrics" ||
@@ -400,8 +406,81 @@ std::string permission_for_request(const HttpRequest &request)
     return "live.view";
 }
 
-std::string camera_scope_for_target(std::string_view target)
+std::string camera_scope_for_target(std::string_view target, std::string_view body = {})
 {
+    // v3 analytics resources carry their Camera/Profile scope in the JSON
+    // body.  Do not interpret the route segment "policies", "status", etc.
+    // as a camera identifier; doing so would reject scoped operators.
+    if (target.starts_with("/api/v3/analytics/") && !body.empty()) {
+        // Parse JSON instead of searching for a compact serialization.  A
+        // malformed or differently spaced body must fail closed, otherwise a
+        // scoped operator could accidentally be treated as globally scoped.
+        const auto valid_camera = [](json_t *value) -> std::optional<std::string> {
+            if (!json_is_string(value))
+                return std::nullopt;
+            const char *raw = json_string_value(value);
+            const std::string_view camera = raw ? std::string_view(raw) : std::string_view{};
+            if (camera.empty() || camera.size() > 64 ||
+                !std::all_of(camera.begin(), camera.end(), [](unsigned char character) {
+                    return std::isalnum(character) || character == '.' || character == '_' || character == '-';
+                }))
+                return std::nullopt;
+            return std::string(camera);
+        };
+        if (body.size() <= 256 * 1024) {
+            json_error_t error{};
+            json_t *root = json_loadb(body.data(), body.size(), JSON_REJECT_DUPLICATES, &error);
+            if (root && json_is_object(root)) {
+                const auto top_level_camera = valid_camera(json_object_get(root, "cameraId"));
+                std::optional<std::string> batch_camera;
+                bool saw_batch = false;
+                // Policy and signal batches carry the resource scope on each
+                // item rather than at the top level.  Validate every item and
+                // reject mixed-camera batches: otherwise a scoped operator
+                // could authorize the first item while mutating another one.
+                for (const char *batch_name : {"policies", "signals"}) {
+                    json_t *batch = json_object_get(root, batch_name);
+                    if (!batch)
+                        continue;
+                    saw_batch = true;
+                    if (!json_is_array(batch)) {
+                        json_decref(root);
+                        return "__invalid_scope__";
+                    }
+                    const size_t count = json_array_size(batch);
+                    for (size_t index = 0; index < count; ++index) {
+                        json_t *item = json_array_get(batch, index);
+                        if (!json_is_object(item)) {
+                            json_decref(root);
+                            return "__invalid_scope__";
+                        }
+                        const auto camera = valid_camera(json_object_get(item, "cameraId"));
+                        if (!camera || (batch_camera && *batch_camera != *camera)) {
+                            json_decref(root);
+                            return "__invalid_scope__";
+                        }
+                        batch_camera = *camera;
+                    }
+                }
+                if (saw_batch) {
+                    if (top_level_camera && batch_camera && *top_level_camera != *batch_camera) {
+                        json_decref(root);
+                        return "__invalid_scope__";
+                    }
+                    if (batch_camera) {
+                        json_decref(root);
+                        return *batch_camera;
+                    }
+                }
+                if (top_level_camera) {
+                    json_decref(root);
+                    return *top_level_camera;
+                }
+            }
+            json_decref(root);
+        }
+        return "__invalid_scope__";
+    }
     for (const std::string_view prefix : {std::string_view("/api/v1/cameras/"),
                                           std::string_view("/api/v2/source-catalog/")}) {
         if (!target.starts_with(prefix))
@@ -438,7 +517,7 @@ ClusterAuthorization cluster_authorize(std::string_view username, const HttpRequ
     if (!token_value)
         return ClusterAuthorization::unavailable;
     const std::string permission = permission_for_request(request);
-    const std::string camera_id = camera_scope_for_target(view(request.target()));
+    const std::string camera_id = camera_scope_for_target(view(request.target()), view(request.body()));
     const std::string body = "{\"cameraId\":\"" + json_escape(camera_id) +
                              "\",\"permission\":\"" + json_escape(permission) +
                              "\",\"username\":\"" + json_escape(username) + "\"}";
@@ -1521,6 +1600,7 @@ public:
         std::string suffix;
         int upstream_port = 8092;
         bool v2_client_service = false;
+        bool v3_analytics_service = false;
         bool cluster_service = false;
         bool provider_grant_service = false;
         if (target == "/api/v1/cameras" || target.starts_with("/api/v1/cameras/"))
@@ -1537,6 +1617,10 @@ public:
                  target == "/api/v2/operations/issues" || target.starts_with("/api/v2/operations/issues/") ||
                  target == "/api/v2/settings" || target == "/api/v2/settings/schema") {
             suffix = std::string(target.substr(std::string_view("/api/v2").size()));
+        }
+        else if (target == "/api/v3/analytics" || target.starts_with("/api/v3/analytics/")) {
+            suffix = std::string(target.substr(std::string_view("/api/v3").size()));
+            v3_analytics_service = true;
         }
         else if (target == "/api/v1/events" || target.starts_with("/api/v1/events?") ||
                  target.starts_with("/api/v1/events/")) {
@@ -1570,6 +1654,7 @@ public:
                    target.starts_with("/api/v2/recordings/") ||
                    target == "/api/v2/recordings/timeline" || target.starts_with("/api/v2/recordings/timeline?") ||
                    target == "/api/v2/resource-capacity" ||
+                   target == "/api/v2/analytics-jobs" || target.starts_with("/api/v2/analytics-jobs/") ||
                    target == "/api/v2/archive-targets" || target.starts_with("/api/v2/archive-targets/") ||
                    target == "/api/v2/backup-jobs" || target.starts_with("/api/v2/backup-jobs/")) {
             suffix = std::string(target.substr(std::string_view("/api/v2").size()));
@@ -1659,6 +1744,23 @@ public:
             if (administrator_route && !v2_internal_token_.empty()) {
                 internal_admin_header = "X-WebObs-Internal-Admin: " + v2_internal_token_;
                 headers = curl_slist_append(headers, internal_admin_header.c_str());
+            }
+        }
+        if (v3_analytics_service) {
+            std::optional<std::string_view> analytics_session;
+            std::size_t session_count = 0;
+            for (const auto &field : request.base()) {
+                if (field.name_string() == "X-WebObs-Analytics-Session") {
+                    ++session_count;
+                    analytics_session = view(field.value());
+                }
+            }
+            if (session_count == 1 && analytics_session && analytics_session->size() <= 128 &&
+                std::all_of(analytics_session->begin(), analytics_session->end(), [](unsigned char character) {
+                    return std::isalnum(character) || character == '_' || character == '-';
+                })) {
+                const std::string header = "X-WebObs-Analytics-Session: " + std::string(*analytics_session);
+                headers = curl_slist_append(headers, header.c_str());
             }
         }
         if (provider_grant_service) {
@@ -1897,6 +1999,8 @@ std::string static_content_type(std::string_view filename)
         return "image/svg+xml";
     if (filename.ends_with(".wasm"))
         return "application/wasm";
+    if (filename.ends_with(".onnx"))
+        return "application/octet-stream";
     if (filename.ends_with(".json"))
         return "application/json; charset=utf-8";
     if (filename.ends_with(".webmanifest"))
@@ -1927,14 +2031,18 @@ std::optional<HttpResponse> static_file_response(std::string_view target, unsign
     } else if (target == "/manifest.webmanifest" || target == "/sw.js" ||
                target == "/webobs-icon.svg" || target == "/offline.html") {
         filename = std::string(target.substr(1));
-    } else if (target.starts_with("/assets/")) {
-        const std::string_view asset = target.substr(std::string_view("/assets/").size());
+    } else if (target.starts_with("/assets/") || target.starts_with("/models/")) {
+        const std::string_view prefix = target.starts_with("/assets/") ? "/assets/" : "/models/";
+        const std::string_view asset = target.substr(prefix.size());
         if (asset.empty() || !std::all_of(asset.begin(), asset.end(), [](unsigned char character) {
                 return std::isalnum(character) || character == '.' || character == '_' || character == '-';
             }))
             return std::nullopt;
-        filename = "assets/" + std::string(asset);
-        immutable = hashed_static_asset(asset);
+        filename = std::string(prefix.substr(1)) + std::string(asset);
+        // Model bytes are verified by the browser against the signed-in
+        // manifest before being used.  Keep them out of the service-worker
+        // precache and avoid an immutable cache entry for a mutable manifest.
+        immutable = prefix == "/assets/" && hashed_static_asset(asset);
     } else {
         return std::nullopt;
     }
@@ -1945,7 +2053,8 @@ std::optional<HttpResponse> static_file_response(std::string_view target, unsign
         return response(http::status::not_found, version,
                         error_body("ui_not_installed", "Web editor asset is unavailable"));
     const std::uintmax_t size = std::filesystem::file_size(path, error);
-    if (error || size > (immutable ? 8 : 4) * 1024 * 1024)
+    const std::uintmax_t maximum = filename.starts_with("models/") ? 64 : (immutable ? 8 : 4);
+    if (error || size > maximum * 1024 * 1024)
         return response(http::status::internal_server_error, version,
                         error_body("ui_asset_invalid", "Web editor asset could not be served"));
 
@@ -2522,7 +2631,8 @@ HttpResponse handle_request(const HttpRequest &request, SceneController &control
         return result;
     }
 
-    const bool v2_target = target == "/api/v2/enrollments" || target.starts_with("/api/v2/enrollments/") ||
+    const bool v2_target = target.starts_with("/api/v3/analytics") ||
+                           target == "/api/v2/enrollments" || target.starts_with("/api/v2/enrollments/") ||
                            target == "/api/v2/clients" || target.starts_with("/api/v2/clients/") ||
                            target == "/api/v2/client/bootstrap" || target.starts_with("/api/v2/client/bootstrap?") ||
                            target == "/api/v2/media-plans" || target.starts_with("/api/v2/media-plans/") ||
@@ -2543,6 +2653,7 @@ HttpResponse handle_request(const HttpRequest &request, SceneController &control
                             target.starts_with("/api/v2/recordings/") ||
                            target == "/api/v2/recordings/timeline" || target.starts_with("/api/v2/recordings/timeline?") ||
                            target == "/api/v2/resource-capacity" ||
+                           target == "/api/v2/analytics-jobs" || target.starts_with("/api/v2/analytics-jobs/") ||
                            target == "/api/v2/archive-targets" || target.starts_with("/api/v2/archive-targets/") ||
                            target == "/api/v2/backup-jobs" || target.starts_with("/api/v2/backup-jobs/") ||
                            target == "/api/v2/providers" || target.starts_with("/api/v2/providers/") ||
@@ -2645,7 +2756,7 @@ HttpResponse handle_request(const HttpRequest &request, SceneController &control
                 whep_proxy.revoke_client(client_id);
         }
         if (result.result() == http::status::ok && request.method() != http::verb::get) {
-            if (target == "/api/v2/source-catalog/batch" ||
+            if (target.starts_with("/api/v3/analytics") || target == "/api/v2/source-catalog/batch" ||
                 target.starts_with("/api/v2/source-catalog/")) {
                 const bool probe = target.ends_with("/probe");
                 hub.broadcast(operational_event(
@@ -3019,7 +3130,8 @@ private:
         const std::string_view target = view(request.target());
         const bool basic_auth_enabled = authenticator_.enabled() && compatibility_basic_auth_enabled();
         const bool static_resource = !target.starts_with("/api/v1/") &&
-                                     !target.starts_with("/api/v2/") && target != "/metrics";
+                                     !target.starts_with("/api/v2/") &&
+                                     !target.starts_with("/api/v3/") && target != "/metrics";
         const bool login_request = target == "/api/v1/auth/login";
         const bool public_probe = request.method() == http::verb::get &&
                                   (target == "/api/v1/health" || target == "/api/v1/ready");

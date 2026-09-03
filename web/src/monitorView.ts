@@ -36,7 +36,7 @@ export interface LowPowerConfig {
 }
 
 export interface MonitorView {
-  schemaVersion: 2;
+  schemaVersion: 3;
   mode: 'auto' | 'manual';
   largeCount: number;
   largeSourceIds: string[];
@@ -46,10 +46,18 @@ export interface MonitorView {
   lowPower: LowPowerConfig;
   panels: { detailsOpen: boolean; issueCenterExpanded: boolean };
   localMonitorVolume: number;
+  analytics: {
+    showDetectionBoxes: boolean;
+    showDetectionLabels: boolean;
+    boxOpacity: number;
+    boxLineWidth: number;
+    showInferenceStatus: boolean;
+  };
 }
 
 export interface DetectionSignal {
-  schemaVersion: 1;
+  schemaVersion: 1 | 2;
+  signalId?: string;
   cameraId: string;
   profileId: string;
   kind: 'motion' | 'scene-change' | 'person';
@@ -57,6 +65,9 @@ export interface DetectionSignal {
   confidence: number;
   boxes?: Array<{ x: number; y: number; width: number; height: number }>;
   source: 'camera' | 'browser' | 'server' | 'external';
+  modelId?: string;
+  modelVersion?: string;
+  modelSha256?: string;
 }
 
 export const defaultTelemetryOverlay = (): TelemetryOverlayConfig => ({
@@ -73,7 +84,7 @@ export const defaultTelemetryOverlay = (): TelemetryOverlayConfig => ({
 });
 
 export const defaultMonitorView = (): MonitorView => ({
-  schemaVersion: 2,
+  schemaVersion: 3,
   mode: 'auto',
   largeCount: 0,
   largeSourceIds: [],
@@ -83,6 +94,7 @@ export const defaultMonitorView = (): MonitorView => ({
   lowPower: { enabled: false, targetFps: 2 },
   panels: { detailsOpen: false, issueCenterExpanded: false },
   localMonitorVolume: 1,
+  analytics: { showDetectionBoxes: true, showDetectionLabels: false, boxOpacity: .9, boxLineWidth: 2, showInferenceStatus: true },
 });
 
 const clamp = (value: number, minimum: number, maximum: number) => Math.min(maximum, Math.max(minimum, value));
@@ -94,8 +106,9 @@ export function normalizeMonitorView(value: Partial<MonitorView> | null | undefi
   const promotion = { ...defaults.promotion, ...(value?.promotion ?? {}) };
   const lowPower = { ...defaults.lowPower, ...(value?.lowPower ?? {}) };
   const panels = { ...defaults.panels, ...(value?.panels ?? {}) };
+  const analytics = { ...defaults.analytics, ...(value?.analytics ?? {}) };
   return {
-    schemaVersion: 2,
+    schemaVersion: 3,
     mode: value?.mode === 'manual' ? 'manual' : 'auto',
     largeCount: clamp(Math.trunc(value?.largeCount ?? 0), 0, clamp(sourceCount, 0, 16)),
     largeSourceIds: [...new Set(value?.largeSourceIds ?? [])].slice(0, 16),
@@ -126,6 +139,13 @@ export function normalizeMonitorView(value: Partial<MonitorView> | null | undefi
     lowPower: { ...lowPower, targetFps: clamp(Number(lowPower.targetFps), .5, 30) },
     panels: { detailsOpen: Boolean(panels.detailsOpen), issueCenterExpanded: Boolean(panels.issueCenterExpanded) },
     localMonitorVolume: clamp(Number(value?.localMonitorVolume ?? 1), 0, 1),
+    analytics: {
+      showDetectionBoxes: Boolean(analytics.showDetectionBoxes),
+      showDetectionLabels: Boolean(analytics.showDetectionLabels),
+      boxOpacity: clamp(Number(analytics.boxOpacity), 0, 1),
+      boxLineWidth: clamp(Number(analytics.boxLineWidth), 1, 8),
+      showInferenceStatus: Boolean(analytics.showInferenceStatus),
+    },
   };
 }
 
@@ -215,12 +235,16 @@ export function selectLowPowerProfile(profiles: CameraProfile[], targetFps: numb
 }
 
 export function validDetectionSignal(signal: DetectionSignal): boolean {
-  return signal.schemaVersion === 1 && /^[A-Za-z0-9._-]{1,64}$/.test(signal.cameraId) &&
+  return (signal.schemaVersion === 1 || signal.schemaVersion === 2) && /^[A-Za-z0-9._-]{1,64}$/.test(signal.cameraId) &&
     /^[A-Za-z0-9._-]{1,64}$/.test(signal.profileId) && ['motion', 'scene-change', 'person'].includes(signal.kind) &&
     Number.isFinite(signal.occurredAt) && signal.occurredAt > 0 && signal.confidence >= 0 && signal.confidence <= 1 &&
-    (!signal.boxes || signal.boxes.length <= 64 && signal.boxes.every((box) =>
+    (!signal.boxes || signal.boxes.length <= (signal.kind === 'person' ? 16 : 64) && signal.boxes.every((box) =>
       [box.x, box.y, box.width, box.height].every((value) => Number.isFinite(value) && value >= 0 && value <= 1) &&
-      box.x + box.width <= 1 && box.y + box.height <= 1));
+      box.x + box.width <= 1 && box.y + box.height <= 1)) &&
+    (!signal.signalId || /^[A-Za-z0-9._-]{1,96}$/.test(signal.signalId)) &&
+    (!signal.modelId || /^[A-Za-z0-9._-]{1,64}$/.test(signal.modelId)) &&
+    (!signal.modelVersion || /^[A-Za-z0-9._-]{1,32}$/.test(signal.modelVersion)) &&
+    (!signal.modelSha256 || /^[0-9a-f]{64}$/i.test(signal.modelSha256));
 }
 
 export interface PromotionPolicyInput {

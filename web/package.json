@@ -1,7 +1,7 @@
 {
   "name": "webobs-editor",
   "private": true,
-  "version": "2.3.0-dev",
+  "version": "3.1.0-dev",
   "type": "module",
   "packageManager": "pnpm@11.16.0",
   "scripts": {
@@ -17,14 +17,15 @@
   "dependencies": {
     "hls.js": "1.7.1",
     "libsodium-wrappers": "0.8.4",
+    "onnxruntime-web": "1.29.0",
     "react": "19.2.8",
     "react-dom": "19.2.8"
   },
   "devDependencies": {
+    "@playwright/test": "1.62.1",
     "@types/node": "22.19.7",
     "@types/react": "19.2.18",
     "@types/react-dom": "19.2.4",
-    "@playwright/test": "1.62.1",
     "@vitejs/plugin-react": "6.0.5",
     "typescript": "7.0.2",
     "vite": "8.1.5",

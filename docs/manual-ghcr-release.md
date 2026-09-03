@@ -6,9 +6,9 @@
 ghcr.io/liaoyk001/web-camera-monitor-wall:<version-or-digest>
 ```
 
-下文的发布命令不把任何个人用户名写死：`GHCR user` 是持有 PAT 的个人 GitHub 账号，`image owner` 是接收镜像的个人或组织 namespace，两者可以不同。示例版本使用 `v2.3`；版本标签应视为不可变，发布后不要用另一提交覆盖它，需要修复时发布 `v2.3.1`。`latest` 是可移动的稳定别名，`sha-<12位提交>` 用于精确追踪源码，生产部署最终应锁定 digest。
+下文的发布命令不把任何个人用户名写死：`GHCR user` 是持有 PAT 的个人 GitHub 账号，`image owner` 是接收镜像的个人或组织 namespace，两者可以不同。示例版本使用 `v2.3`；`v3.0`/`v3.1` 发布还必须先通过对应的 v3-M1/v3-M2 私有门禁。版本标签应视为不可变，发布后不要用另一提交覆盖它，需要修复时递增 patch 版本。`latest` 是可移动的稳定别名，`sha-<12位提交>` 用于精确追踪源码，生产部署最终应锁定 digest。
 
-稳定发布采用两阶段提升：脚本先只推送 `sha-*` 候选，创建并校验 Draft GitHub Release 与递归对应源码包；Draft 发布成功后，再从候选 manifest digest 创建 `v2.3` 和 `latest`。提升不会重建镜像，旧排队构建无法用另一份镜像覆盖已审查候选。仓库应启用 GitHub Immutable Releases；脚本同时拒绝覆盖同名但内容不同的 Release Asset。
+稳定发布采用两阶段提升：脚本先只推送 `sha-*` 候选，按 GitHub Release database ID 创建并校验 Draft 与递归对应源码包；当版本标签不存在时，Draft 使用一次性的 `release-draft-*` 标签，资产验证后才创建 annotated SemVer 标签并切换 Draft，最后发布 immutable Release，再从同一候选 manifest digest 提升版本标签和 `latest`。提升不会重建镜像，旧排队构建无法用另一份镜像覆盖已审查候选。仓库应启用 GitHub Immutable Releases；脚本同时拒绝覆盖同名但内容不同的 Release Asset。Draft 上传或验证失败会保留 Draft 供修复，不删除并重建同名 Release。
 
 ## 1. 共同前置条件
 
@@ -18,7 +18,7 @@ ghcr.io/liaoyk001/web-camera-monitor-wall:<version-or-digest>
 4. Docker/Buildx 必须能构建 `linux/amd64`，建议预留至少 8 GB 内存和 20 GB 空间。
 5. GHCR 登录使用 personal access token (classic)，至少授予 `write:packages`；私有依赖才需要额外 `repo`。组织启用 SSO 时还要为 token 授权 SSO。
 6. token 只通过标准输入交给 `docker login`，不要写入 `.env`、Compose、脚本参数、Dockerfile、Build Argument 或 shell history。
-7. 对本项目官方 v2 镜像，必须先按 [本机 Windows 与 WSL2 发布门禁](local-platform-gates.md) 生成同一提交的两份 48 小时内收据；`scripts/release-image-local.sh` 会 fail-closed 验证。Fork 维护者可保留自己的等价私有门禁，但不能把端点、凭据或原始证据提交到公开仓库。
+7. 对本项目官方镜像，必须先按 [本机 Windows 与 WSL2 发布门禁](local-platform-gates.md) 生成同一提交的两份 48 小时内收据；v3.0 还需 v3-M1 收据，v3.1 还需 v3-M2 收据，`scripts/release-image-local.sh` 会 fail-closed 验证。Fork 维护者可保留自己的等价私有门禁，但不能把端点、凭据或原始证据提交到公开仓库。
 
 每次发布先同步源码：
 

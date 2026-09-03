@@ -1,0 +1,6 @@
+The SSD MobileNetV1 model is redistributed under the MIT License.
+Source: https://github.com/onnx/models/tree/main/validated/vision/object_detection_segmentation/ssd-mobilenetv1
+Artifact: ssd_mobilenet_v1_12.onnx
+SHA-256: b8fba5e404077d4048d27fcd1667e85e27e192eb9bf51e696c46a3acd7d21058
+
+The Web Camera Monitor Wall application remains licensed under GPL-2.0-or-later.

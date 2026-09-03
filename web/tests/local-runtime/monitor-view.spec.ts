@@ -46,6 +46,33 @@ test('generates stable bounded Scene v5 layouts for every 1-16 and M/S combinati
   expect(result).toEqual([]);
 });
 
+test('keeps browser analytics bounded, zoned, and confirms scene cuts', async ({ page }) => {
+  await page.goto('/');
+  const result = await page.evaluate(async () => {
+    const { MotionSceneEngine } = await import('/src/analyticsEngine.ts');
+    const ids = { cameraId: 'cam-1', profileId: 'sub' };
+    const zoned = new MotionSceneEngine();
+    const base = new Uint8Array(16);
+    zoned.evaluate({ width: 4, height: 4, pixels: base, timestamp: 1000 }, ids, { sensitivity: .1, debounceMs: 0,
+      zones: [{ mode: 'include', polygon: [[0, 0], [0.5, 0], [0.5, 1], [0, 1]] }] });
+    const outside = base.slice(); outside[15] = 255;
+    const outsideResult = zoned.evaluate({ width: 4, height: 4, pixels: outside, timestamp: 2000 }, ids, { sensitivity: .1, debounceMs: 0,
+      zones: [{ mode: 'include', polygon: [[0, 0], [0.5, 0], [0.5, 1], [0, 1]] }] });
+    const inside = outside.slice(); inside[0] = 255;
+    const insideResult = zoned.evaluate({ width: 4, height: 4, pixels: inside, timestamp: 3000 }, ids, { sensitivity: .1, debounceMs: 0,
+      zones: [{ mode: 'include', polygon: [[0, 0], [0.5, 0], [0.5, 1], [0, 1]] }] });
+    const cut = new MotionSceneEngine();
+    cut.evaluate({ width: 4, height: 4, pixels: base, timestamp: 1000 }, ids);
+    cut.evaluate({ width: 4, height: 4, pixels: new Uint8Array(16).fill(255), timestamp: 2000 }, ids,
+      { sceneThreshold: .55, sceneConfirmFrames: 2, sceneCooldownMs: 0, sensitivity: 1 });
+    const confirmed = cut.evaluate({ width: 4, height: 4, pixels: new Uint8Array(16).fill(255), timestamp: 3000 }, ids,
+      { sceneThreshold: .55, sceneConfirmFrames: 2, sceneCooldownMs: 0, sensitivity: 1 });
+    return { outside: outsideResult.signals.length, inside: insideResult.signals.some((signal) => signal.kind === 'motion'),
+      scene: confirmed.signals.filter((signal) => signal.kind === 'scene-change').length };
+  });
+  expect(result).toEqual({ outside: 0, inside: true, scene: 1 });
+});
+
 test('keeps low-power selection and analytics signals fail-closed', async ({ page }) => {
   await page.goto('/');
   const result = await page.evaluate(async () => {
@@ -157,7 +184,7 @@ test('migrates MonitorView v1 safely and keeps operational details bounded', asy
       details: issue?.technicalDetails, silence: audio.amplitudeToDbfs(0), unity: audio.amplitudeToDbfs(1),
       half: audio.amplitudeToDbfs(.5) };
   });
-  expect({ ...result, half: undefined }).toEqual({ version: 2, largeCount: 4, localMonitorVolume: 1,
+  expect({ ...result, half: undefined }).toEqual({ version: 3, largeCount: 4, localMonitorVolume: 1,
     panels: { detailsOpen: false, issueCenterExpanded: false },
     details: { codec: 'h264', retryCount: 2 }, silence: -120, unity: 0,
     half: undefined });

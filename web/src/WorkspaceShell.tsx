@@ -2,13 +2,14 @@ import type { ReactNode } from 'react';
 import LocalRuntimeBadge from './LocalRuntimeBadge';
 import ProblemCenter from './ProblemCenter';
 
-export type ProductArea = 'monitor' | 'studio' | 'devices' | 'audio' | 'events' | 'archive' | 'storage' | 'settings' | 'admin' | 'clients';
+export type ProductArea = 'monitor' | 'studio' | 'devices' | 'audio' | 'analytics' | 'events' | 'archive' | 'storage' | 'settings' | 'admin' | 'clients';
 
 const entries: Array<{ id: ProductArea; label: string; short: string }> = [
   { id: 'monitor', label: '监看 Monitor', short: '监看' },
   { id: 'studio', label: 'Studio 画布', short: 'Studio' },
   { id: 'devices', label: '设备与来源', short: '设备' },
   { id: 'audio', label: '音频工作台', short: '音频' },
+  { id: 'analytics', label: '分析策略', short: '分析' },
   { id: 'events', label: '事件', short: '事件' },
   { id: 'archive', label: '录像回放', short: '回放' },
   { id: 'storage', label: '存储', short: '存储' },
