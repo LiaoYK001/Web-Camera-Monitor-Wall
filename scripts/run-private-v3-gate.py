@@ -93,7 +93,7 @@ def main() -> int:
         fail("command must be an existing absolute file")
     if inside(command, workspace):
         fail("command must be machine-local and outside the checkout")
-    if os.name != "nt" and not command.stat().st_mode & stat.S_IXUSR:
+    if os.name != "nt" and command.suffix.casefold() != ".py" and not command.stat().st_mode & stat.S_IXUSR:
         fail("machine-local command is not executable")
 
     with tempfile.TemporaryDirectory(prefix="webobs-private-v3-") as directory:
