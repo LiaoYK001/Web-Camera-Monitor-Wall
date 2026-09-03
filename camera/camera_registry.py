@@ -69,6 +69,9 @@ PROBE_LOCKS: dict[str, threading.Lock] = {}
 ONVIF_CLOCK_LOCK = threading.Lock()
 ONVIF_CLOCK_OFFSETS: dict[str, float] = {}
 ANALYTICS_SESSION_LOCK = threading.Lock()
+ANALYTICS_PERSON_MODEL_ID = "ssd-mobilenet-v1-12-person"
+ANALYTICS_PERSON_MODEL_VERSION = "onnx-model-zoo-main"
+ANALYTICS_PERSON_MODEL_SHA256 = "b8fba5e404077d4048d27fcd1667e85e27e192eb9bf51e696c46a3acd7d21058"
 ANALYTICS_SESSIONS: dict[str, tuple[int, str, str]] = {}
 # Bounded replay/rate state for browser analytics sessions.  Values contain no
 # frames or endpoint data and are discarded when a session expires/closes.
@@ -904,9 +907,12 @@ def ingest_analytics_signals(payload: dict, session_id: str) -> dict:
         if value["kind"] != "person" and safe_boxes:
             raise ValueError("boxes are only valid for person signals")
         if value["kind"] == "person":
+            model_id = value.get("modelId")
+            model_version = value.get("modelVersion")
             model_sha = value.get("modelSha256", "")
-            if not isinstance(model_sha, str) or not re.fullmatch(r"[a-f0-9]{64}", model_sha):
-                raise ValueError("person model hash is invalid")
+            if model_id != ANALYTICS_PERSON_MODEL_ID or model_version != ANALYTICS_PERSON_MODEL_VERSION or \
+                    model_sha != ANALYTICS_PERSON_MODEL_SHA256:
+                raise ValueError("person model is not approved")
         prepared.append((value, {"cameraId": camera_id, "type": "object" if value["kind"] == "person" else value["kind"],
                  "source": "browser-detector" if value["kind"] == "person" else "browser-motion",
                  "occurredAt": occurred, "confidence": float(confidence), "label": "person" if value["kind"] == "person" else "",

@@ -515,6 +515,14 @@ class CameraRegistryTests(unittest.TestCase):
             self.assertEqual(registry.ingest_analytics_signals({"signals": [signal]}, plan["sessionId"])["accepted"], 1)
             with self.assertRaises(PermissionError):
                 registry.ingest_analytics_signals({"signals": [signal]}, plan["sessionId"])
+            person = {"signalId": "person-0001", "cameraId": "v3-analytics", "profileId": "sub",
+                      "kind": "person", "occurredAt": int(time.time() * 1000), "confidence": .9,
+                      "boxes": [], "modelId": registry.ANALYTICS_PERSON_MODEL_ID,
+                      "modelVersion": registry.ANALYTICS_PERSON_MODEL_VERSION,
+                      "modelSha256": registry.ANALYTICS_PERSON_MODEL_SHA256}
+            self.assertEqual(registry.ingest_analytics_signals({"signals": [person]}, plan["sessionId"])["accepted"], 1)
+            with self.assertRaisesRegex(ValueError, "approved"):
+                registry.ingest_analytics_signals({"signals": [{**person, "modelSha256": "0" * 64}]}, plan["sessionId"])
         self.assertTrue(registry.close_analytics_session(plan["sessionId"]))
         with self.assertRaises(PermissionError):
             registry.ingest_analytics_signals({"signals": [signal]}, plan["sessionId"])
