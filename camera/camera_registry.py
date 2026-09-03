@@ -70,7 +70,7 @@ ONVIF_CLOCK_LOCK = threading.Lock()
 ONVIF_CLOCK_OFFSETS: dict[str, float] = {}
 ANALYTICS_SESSION_LOCK = threading.Lock()
 ANALYTICS_PERSON_MODEL_ID = "ssd-mobilenet-v1-12-person"
-ANALYTICS_PERSON_MODEL_VERSION = "onnx-model-zoo-main"
+ANALYTICS_PERSON_MODEL_VERSION = "onnx-model-zoo-4c46cd00"
 ANALYTICS_PERSON_MODEL_SHA256 = "b8fba5e404077d4048d27fcd1667e85e27e192eb9bf51e696c46a3acd7d21058"
 ANALYTICS_SESSIONS: dict[str, tuple[int, str, str]] = {}
 # Bounded replay/rate state for browser analytics sessions.  Values contain no
@@ -821,7 +821,24 @@ def analytics_runtime_plan(payload: dict) -> dict:
     for kind in ("motion", "scene-change", "person"):
         enabled = bool(row[{"motion": "motion_enabled", "scene-change": "scene_change_enabled", "person": "person_enabled"}[kind]])
         if kind == "person":
-            execution = "browser-webgpu" if enabled and row["person_execution_preference"] != "worker" and webgpu else "browser-wasm" if enabled and row["person_execution_preference"] != "worker" and wasm else "worker" if enabled and row["person_allow_server_fallback"] and row["person_execution_preference"] in {"auto", "worker"} else "off" if not enabled else "unsupported"
+            # ``worker`` is an explicit execution choice; ``allowServerFallback``
+            # permits the same server path only after the preferred browser
+            # providers are unavailable.  A ``browser`` preference therefore
+            # never expands the media chain unless that separate fallback
+            # switch is enabled.
+            preference = row["person_execution_preference"]
+            if not enabled:
+                execution = "off"
+            elif preference == "worker":
+                execution = "worker"
+            elif webgpu:
+                execution = "browser-webgpu"
+            elif wasm:
+                execution = "browser-wasm"
+            elif row["person_allow_server_fallback"]:
+                execution = "worker"
+            else:
+                execution = "unsupported"
             owner = "browser" if execution.startswith("browser") else "worker" if execution == "worker" else "none"
             sample = float(row["person_sample_fps"])
         else:
@@ -832,7 +849,7 @@ def analytics_runtime_plan(payload: dict) -> dict:
         reason = "" if direct_eligible else ("rtsp_gateway_required" if media_transport == "rtsp" else "browser_direct_not_qualified")
         plan_reason = ("" if execution in {"off", "native"} else
                        ("worker_not_allowed" if kind == "person" and execution == "unsupported" and
-                        row["person_execution_preference"] == "worker" else
+                        not row["person_allow_server_fallback"] and row["person_execution_preference"] != "worker" else
                         "runtime_unavailable" if execution == "unsupported" else reason))
         result.append({"contractVersion": 2, "planId": uuid.uuid4().hex, "cameraId": camera_id, "profileId": profile_id, "kind": kind,
                    "execution": execution, "executionOwner": owner, "sampleFps": sample,

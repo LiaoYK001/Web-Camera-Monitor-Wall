@@ -8,6 +8,7 @@ export interface PersonModelManifest {
   sha256: string;
   license: string;
   source: string;
+  sourceCommit: string;
   input: { width: number; height: number; layout: 'NHWC'; type: 'uint8' };
   class: 'person';
 }
@@ -19,9 +20,11 @@ const clamp = (value: number, min: number, max: number) => Math.min(max, Math.ma
 const MODEL_SIZE = 300;
 const APPROVED_MODEL = Object.freeze({
   id: 'ssd-mobilenet-v1-12-person',
-  version: 'onnx-model-zoo-main',
+  version: 'onnx-model-zoo-4c46cd00',
   file: '/models/ssd_mobilenet_v1_12.onnx',
   sha256: 'b8fba5e404077d4048d27fcd1667e85e27e192eb9bf51e696c46a3acd7d21058',
+  sourceCommit: '4c46cd00fbdb7cd30b6c1c17ab54f2e1f4f7b177',
+  source: 'https://media.githubusercontent.com/media/onnx/models/4c46cd00fbdb7cd30b6c1c17ab54f2e1f4f7b177/validated/vision/object_detection_segmentation/ssd-mobilenetv1/model/ssd_mobilenet_v1_12.onnx',
 });
 
 interface LetterboxTransform { scale: number; offsetX: number; offsetY: number; width: number; height: number; }
@@ -43,6 +46,7 @@ export async function loadVerifiedPersonModel(manifestUrl = '/models/person-mode
   const manifest = await manifestResponse.json() as PersonModelManifest;
   if (manifest.schemaVersion !== 1 || manifest.class !== 'person' || manifest.id !== APPROVED_MODEL.id ||
     manifest.version !== APPROVED_MODEL.version || manifest.file !== APPROVED_MODEL.file ||
+    manifest.sourceCommit !== APPROVED_MODEL.sourceCommit || manifest.source !== APPROVED_MODEL.source ||
     typeof manifest.sha256 !== 'string' || manifest.sha256.toLowerCase() !== APPROVED_MODEL.sha256 || manifest.input?.width !== 300 ||
     manifest.input?.height !== 300 || manifest.input?.layout !== 'NHWC' || manifest.input?.type !== 'uint8' ||
     !HEX.test(manifest.sha256) || manifest.license !== 'MIT') throw new Error('model_manifest_invalid');

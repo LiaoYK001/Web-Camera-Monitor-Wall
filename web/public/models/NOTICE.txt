@@ -1,5 +1,6 @@
 The SSD MobileNetV1 model is redistributed under the MIT License.
-Source: https://github.com/onnx/models/tree/main/validated/vision/object_detection_segmentation/ssd-mobilenetv1
+Source commit: onnx/models 4c46cd00fbdb7cd30b6c1c17ab54f2e1f4f7b177
+Source: https://media.githubusercontent.com/media/onnx/models/4c46cd00fbdb7cd30b6c1c17ab54f2e1f4f7b177/validated/vision/object_detection_segmentation/ssd-mobilenetv1/model/ssd_mobilenet_v1_12.onnx
 Artifact: ssd_mobilenet_v1_12.onnx
 SHA-256: b8fba5e404077d4048d27fcd1667e85e27e192eb9bf51e696c46a3acd7d21058
 

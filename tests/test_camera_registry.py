@@ -581,6 +581,37 @@ class CameraRegistryTests(unittest.TestCase):
         self.assertEqual(motion["reason"], "")
         registry.close_analytics_session(qualified["sessionId"])
 
+    def test_v3_person_worker_preference_is_explicit_and_fallback_is_separate(self) -> None:
+        camera = registry.validate_camera({
+            "id": "v3-worker-plan", "name": "Worker plan", "address": "rtsp://camera.example.invalid/live",
+            "adapter": "rtsp", "credentialsRef": "", "profiles": [{"id": "sub", "name": "Sub", "role": "sub",
+                "endpoint": "rtsp://camera.example.invalid/sub", "videoCodec": "h264", "audioCodec": "",
+                "width": 640, "height": 360, "fps": 15}],
+        })
+        registry.save_camera(camera, False)
+        registry.save_analytics_policies({"policies": [{"cameraId": "v3-worker-plan", "profileId": "sub",
+            "motionEnabled": False, "sceneChangeEnabled": False, "personEnabled": True,
+            "allowEventPromotion": False, "forceAnalyticsAlwaysOn": False,
+            "person": {"executionPreference": "worker", "allowServerFallback": False}}]})
+        forced = registry.analytics_runtime_plan({"cameraId": "v3-worker-plan", "profileId": "sub",
+                                                   "kinds": ["person"], "capabilities": {"wasm": True, "webgpu": True}})
+        person = forced["plans"][0]
+        self.assertEqual(person["execution"], "worker")
+        self.assertEqual(person["executionOwner"], "worker")
+        self.assertTrue(person["serverMediaExpected"])
+        registry.close_analytics_session(forced["sessionId"])
+
+        registry.save_analytics_policies({"policies": [{"cameraId": "v3-worker-plan", "profileId": "sub",
+            "motionEnabled": False, "sceneChangeEnabled": False, "personEnabled": True,
+            "allowEventPromotion": False, "forceAnalyticsAlwaysOn": False,
+            "person": {"executionPreference": "browser", "allowServerFallback": True}}]})
+        fallback = registry.analytics_runtime_plan({"cameraId": "v3-worker-plan", "profileId": "sub",
+                                                     "kinds": ["person"], "capabilities": {"wasm": False, "webgpu": False}})
+        person = fallback["plans"][0]
+        self.assertEqual(person["execution"], "worker")
+        self.assertEqual(person["reason"], "rtsp_gateway_required")
+        registry.close_analytics_session(fallback["sessionId"])
+
     def test_embedded_credentials_and_secret_queries_are_rejected(self) -> None:
         with self.assertRaises(ValueError):
             registry.safe_endpoint(

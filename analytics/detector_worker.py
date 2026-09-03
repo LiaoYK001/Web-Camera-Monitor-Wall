@@ -17,7 +17,7 @@ import time
 from typing import Any
 
 MODEL_ID = "ssd-mobilenet-v1-12-person"
-MODEL_VERSION = "onnx-model-zoo-main"
+MODEL_VERSION = "onnx-model-zoo-4c46cd00"
 MODEL_SHA256 = "b8fba5e404077d4048d27fcd1667e85e27e192eb9bf51e696c46a3acd7d21058"
 MAX_FRAME_BYTES = 160 * 90 * 4
 MAX_BOXES = 16
