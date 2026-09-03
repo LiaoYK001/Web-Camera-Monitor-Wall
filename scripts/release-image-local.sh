@@ -92,7 +92,9 @@ elif [ "$prerelease" = true ]; then
         exit 65
     }
     build_version="${WEBOBS_PRERELEASE_BUILD_VERSION:-3.0.0-pre.1}"
-    build_milestone="v3-M2-preview"
+    # Keep the public milestone contract valid; the pre-release SemVer below
+    # distinguishes this candidate from the eventual v3.1 stable release.
+    build_milestone="v3-M2"
     draft_tag="release-draft-${version#v}-${short_revision}"
 else
     [ "$(git branch --show-current)" = main ] || { echo "stable publication must run from main" >&2; exit 65; }

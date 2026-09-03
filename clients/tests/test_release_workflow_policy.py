@@ -110,7 +110,7 @@ class NativeReleaseWorkflowPolicyTests(unittest.TestCase):
         self.assertIn('release_mode" == --prerelease', release_script)
         self.assertIn('"$version" == v3.0', release_script)
         self.assertIn('build_version="${WEBOBS_PRERELEASE_BUILD_VERSION:-3.0.0-pre.1}"', release_script)
-        self.assertIn('build_milestone="v3-M2-preview"', release_script)
+        self.assertIn('build_milestone="v3-M2"', release_script)
         self.assertIn('-F "prerelease=$prerelease"', release_script)
         self.assertIn('latest was not changed', release_script)
         self.assertIn('[switch]$Prerelease', windows_release_script)
