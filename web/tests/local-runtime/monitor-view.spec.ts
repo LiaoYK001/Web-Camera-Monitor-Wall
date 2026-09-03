@@ -163,6 +163,27 @@ test('measures bounded telemetry and suspends only low-power invisible playback'
   expect(result.lowPowerRejected.reason).toBe('low_power_software_analytics_disabled');
 });
 
+test('shares bounded frame and person analysis budgets across monitor tiles', async ({ page }) => {
+  await page.goto('/');
+  const result = await page.evaluate(async () => {
+    const scheduler = await import('/src/analyticsScheduler.ts');
+    scheduler.resetAnalyticsScheduler();
+    const frame = Array.from({ length: 8 }, (_, index) => scheduler.requestAnalyticsSlot('frame', index === 0 ? 'focus' : 'normal', index * 10));
+    const person = Array.from({ length: 4 }, (_, index) => scheduler.requestAnalyticsSlot('person', index === 0 ? 'large' : 'normal', index * 10));
+    const rejectedFrame = scheduler.requestAnalyticsSlot('frame', 'normal', 100);
+    const rejectedPerson = scheduler.requestAnalyticsSlot('person', 'normal', 100);
+    const afterWindow = scheduler.requestAnalyticsSlot('frame', 'normal', 1101);
+    return { frame, person, rejectedFrame, rejectedPerson, afterWindow,
+      snapshot: scheduler.analyticsSchedulerSnapshot(1101) };
+  });
+  expect(result.frame).toEqual([true, true, true, true, true, true, true, true]);
+  expect(result.person).toEqual([true, true, true, true]);
+  expect(result.rejectedFrame).toBe(false);
+  expect(result.rejectedPerson).toBe(false);
+  expect(result.afterWindow).toBe(true);
+  expect(result.snapshot).toEqual({ frame: 1, person: 0, limits: { frame: 8, person: 4 } });
+});
+
 test('migrates MonitorView v1 safely and keeps operational details bounded', async ({ page }) => {
   await page.goto('/');
   const result = await page.evaluate(async () => {

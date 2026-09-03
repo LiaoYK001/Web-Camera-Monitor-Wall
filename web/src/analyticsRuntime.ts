@@ -1,5 +1,6 @@
 import type { AnalyticsPolicy } from './types';
 import type { DetectionSignal } from './monitorView';
+import { requestAnalyticsSlot, type AnalyticsPriority } from './analyticsScheduler';
 
 export type BrowserAnalyticsState = 'idle' | 'running' | 'unsupported' | 'error' | 'suspended';
 
@@ -15,6 +16,7 @@ export interface BrowserAnalyticsOptions {
   cameraId: string;
   profileId: string;
   policy: AnalyticsPolicy;
+  priority?: AnalyticsPriority;
   zones?: Array<{ mode: 'include' | 'exclude' | 'privacy'; polygon: number[][] }>;
   visible?: () => boolean;
   lowPower?: () => boolean;
@@ -131,6 +133,7 @@ export class BrowserAnalyticsRuntime {
       this.options.visible?.() === false || (this.options.lowPower?.() === true && !this.options.policy.forceAnalyticsAlwaysOn)) return;
     const now = performance.now();
     if (now - this.lastFrameAt < Math.max(50, this.captureIntervalMs - 4)) return;
+    if (!requestAnalyticsSlot('frame', this.options.priority)) return;
     this.lastFrameAt = now;
     const context = this.canvas.getContext('2d', { willReadFrequently: true });
     if (!context) { this.update('unsupported', 'canvas_unavailable'); return; }
@@ -157,6 +160,7 @@ export class BrowserAnalyticsRuntime {
         } }, [pixels.buffer]);
       const personInterval = 1000 / clamp(this.options.policy.person?.sampleFps ?? 1, .1, 5);
       if (this.personWorker && !this.personBusy && now - this.lastPersonFrameAt >= personInterval - 4) {
+        if (!requestAnalyticsSlot('person', this.options.priority)) return;
         this.personBusy = true;
         this.lastPersonFrameAt = now;
         const personPixels = new Uint8ClampedArray(rgba);
