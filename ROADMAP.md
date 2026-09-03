@@ -12,13 +12,13 @@ Canonical milestone names use `v<major>-M<number>`. Historical validation prose 
 
 ## Current position / 当前位置
 
-**✅ `v2-M7 / v2.3` 已完成并作为当前稳定版本发布；🚧 v3-M1/M2 正在 `dev` 实现，尚未发布。**
+**✅ `v2-M7 / v2.3.1` 已完成并作为当前稳定版本发布；🚧 v3-M1/M2 正在 `dev` 实现，尚未发布。**
 
-**✅ `v2-M7 / v2.3` is complete and published as the current stable release; 🚧 v3-M1/M2 are under implementation on `dev` and are not released yet.**
+**✅ `v2-M7 / v2.3.1` is complete and published as the current stable release; 🚧 v3-M1/M2 are under implementation on `dev` and are not released yet.**
 
-`v2.3` is the current stable baseline. It preserves every v2.2 operations and True Direct boundary, adds optional scale-out while keeping `standalone` as the default one-image deployment, and does not restore native package publication. v3-M1/M2 implementation is now active on `dev`; analytics switches remain off by default until the corresponding release gates pass.
+`v2.3.1` is the current stable carrier for v2-M7. It preserves every v2.2 operations and True Direct boundary, adds optional scale-out while keeping `standalone` as the default one-image deployment, and does not restore native package publication. v3-M1/M2 implementation is now active on `dev`; analytics switches remain off by default until the corresponding release gates pass.
 
-`v2.3` 是当前稳定基线。它保留 v2.2 的全部运维能力与真直连边界，在默认单镜像 `standalone` 部署之外增加可选横向扩展，且不恢复原生包发布。下一条规划产品线为 v3 分析功能，其逐流开关仍默认关闭。
+`v2.3.1` 是 v2-M7 的当前稳定载体。它保留 v2.2 的全部运维能力与真直连边界，在默认单镜像 `standalone` 部署之外增加可选横向扩展，且不恢复原生包发布。下一条规划产品线为 v3 分析功能，其逐流开关仍默认关闭。
 
 The Qt/GStreamer/Android implementation and its prior source gates remain in the repository for security maintenance and research. The native workflow has no tag trigger, requires an explicit frozen-candidate confirmation, and cannot publish v2.0 artifacts / Qt/GStreamer/Android 实现及既有源码门禁继续留在仓库供安全维护与研究；原生工作流没有 Tag 触发器，要求显式冻结候选确认，且不能发布 v2.0 产物。
 
