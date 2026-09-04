@@ -1,0 +1,74 @@
+# Local `dev` loop / `dev` 本地开发循环
+
+These helpers run the current protected `dev` checkout without publishing to
+GHCR. They keep a local image tag (`webobs:dev` by default), start the backend
+with Docker Compose, and optionally run the Vite frontend with hot reload.
+
+这两个入口脚本只针对当前 `dev` 工作树，不会创建 Tag、登录 GHCR 或执行
+`docker push`。默认使用本地镜像 `webobs:dev`，后端由 Docker Compose 运行，
+前端可选用 Vite 热更新。
+
+## Windows PowerShell
+
+From the repository root:
+
+```powershell
+.\scripts\dev-local.ps1 start -Frontend -Open
+```
+
+Open `http://127.0.0.1:5173/`. Vite proxies `/api` to the local backend at
+`http://127.0.0.1:8080`; the bundled-image UI is available at
+`http://127.0.0.1:8080/`.
+
+常用命令：
+
+```powershell
+.\scripts\dev-local.ps1 status
+.\scripts\dev-local.ps1 logs -Tail 200
+.\scripts\dev-local.ps1 debug
+.\scripts\dev-local.ps1 test
+.\scripts\dev-local.ps1 build
+.\scripts\dev-local.ps1 hotfix
+.\scripts\dev-local.ps1 stop
+```
+
+`hotfix` 重新构建本地镜像并强制重建 `webobs` 容器，但不会发布任何远程
+镜像。只改前端时保持 `start -Frontend` 运行即可；只改后端或 Dockerfile
+时执行 `hotfix`。
+
+## Linux / WSL2
+
+From the repository root:
+
+```bash
+./scripts/dev-local.sh start --frontend --open
+```
+
+如果 WSL2 没有图形化 `xdg-open`，直接在 Windows 浏览器打开
+`http://127.0.0.1:5173/`。常用命令：
+
+```bash
+./scripts/dev-local.sh status
+./scripts/dev-local.sh logs --tail 200
+./scripts/dev-local.sh debug
+./scripts/dev-local.sh test
+./scripts/dev-local.sh build
+./scripts/dev-local.sh hotfix
+./scripts/dev-local.sh stop
+```
+
+脚本要求当前分支为 `dev`。对于一次性实验可以显式增加
+`--allow-non-dev`（或 PowerShell 的 `-AllowNonDev`），但不要用它绕过发布
+脚本的受保护分支检查。
+
+## Test levels / 测试级别
+
+`test` 默认执行公开仓库审计、TypeScript 检查、IWA 类型检查和本地
+Playwright 测试；`test --full`（PowerShell 为 `test -Full`）调用现有平台
+运行时套件，耗时更长并要求对应浏览器和 Docker 环境。
+
+私有 RTSP、证书、账号、录像和浏览器 Profile 只能放在 Git 忽略的 `.env`
+或仓库之外；脚本不会打印 `.env` 内容，也不会把私有门禁原始结果上传。
+
+不要用 `docker compose down --volumes` 做日常停止操作，否则会删除本地
+Registry、Scene 和 Session 数据。

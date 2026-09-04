@@ -11,6 +11,8 @@ RTSP camera -> libobs ffmpeg_source -> OBS scene -> H.264/AAC MP4
 
 开发路线和门禁见 [ROADMAP.md](ROADMAP.md)。当前 API v1 的 `direct` 仍是媒体经过 Docker/MediaMTX 的“网关直通”；获批的 HTTPS WHEP/HLS/MJPEG 可 Camera→Browser，普通 RTSP 明确回退 Camera→Docker→Browser。HTTP 摄像机可由管理员逐 Profile 显式豁免并经 Docker Gateway/NVR 使用，但不会被误报为 HTTPS 浏览器真直连。v2.3 增加 deny-by-default RBAC、Controller/Recorder mTLS 与租约、多卷/S3、资源调度、MQTT/Home Assistant、外部 Provider 和加密灾备，同时保留默认单镜像 `standalone` 部署。Qt/GStreamer/Android 继续冻结，不新增 EXE/APK 发布门禁。详见 [v2.3 扩展与韧性](docs/scale-ecosystem-resilience-v2.3.md)、[v2.2 运维工作区](docs/operations-workspace-v2.2.md)、[API v2](docs/api-v2.md) 与 [真直连边界](docs/true-direct-v2.md)。
 
+针对 `dev` 的本地快速启动、Vite 热更新、调试、测试和本地 hotfix，请使用 [Local `dev` loop](docs/local-dev.md) 及 `scripts/dev-local.ps1` / `scripts/dev-local.sh`；它们只使用本地 Docker 镜像，不会发布 GHCR。
+
 `WEBOBS_SCENE_FILE` 默认指向 `/config/webobs/scene.json`。空配置首次启动会创建空 Scene/Camera Registry，直接在 WebUI 的“设备管理”中添加设备；`WEBOBS_RTSP_URL` 只保留为一次性兼容 bootstrap，不再是部署必填项。Scene v5 只保存 Camera/Profile ID，凭据通过未提交 Git 的 Secret 引用解析。
 
 ## 运行技术基线

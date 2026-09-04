@@ -14,6 +14,7 @@ scripts/verify-m7-gate-receipts.py
 scripts/verify-v3-m1-gate-receipts.py
 scripts/verify-v3-m2-gate-receipts.py
 scripts/test-web-runtime-wsl2.sh
+scripts/dev-local.sh
 scripts/upload-release-assets-immutable.sh
 scripts/verify-source-bundle.sh
 clients/packaging/finalize-artifacts.sh
