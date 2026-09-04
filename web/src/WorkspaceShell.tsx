@@ -1,6 +1,7 @@
-import type { ReactNode } from 'react';
+import { type DragEvent, type ReactNode, useEffect, useState } from 'react';
 import LocalRuntimeBadge from './LocalRuntimeBadge';
 import ProblemCenter from './ProblemCenter';
+import { loadWorkspaceLayout, saveWorkspaceLayout, type WorkspaceDock, type WorkspaceLayout } from './localRuntime';
 
 export type ProductArea = 'monitor' | 'studio' | 'devices' | 'audio' | 'analytics' | 'events' | 'archive' | 'storage' | 'settings' | 'admin' | 'clients';
 
@@ -17,6 +18,30 @@ const entries: Array<{ id: ProductArea; label: string; short: string }> = [
   { id: 'admin', label: '集群与权限', short: '管理' },
 ];
 
+const defaultDocks: WorkspaceDock[] = [
+  { id: 'canvas', kind: 'canvas', region: 'center', order: 0, size: 60, collapsed: false },
+  { id: 'scenes', kind: 'scenes', region: 'left', order: 1, size: 22, collapsed: false },
+  { id: 'sources', kind: 'sources', region: 'left', order: 2, size: 22, collapsed: false },
+  { id: 'audio', kind: 'audio', region: 'bottom', order: 3, size: 24, collapsed: false },
+  { id: 'transitions', kind: 'transitions', region: 'right', order: 4, size: 20, collapsed: true },
+  { id: 'properties', kind: 'properties', region: 'right', order: 5, size: 24, collapsed: true },
+  { id: 'issues', kind: 'issues', region: 'right', order: 6, size: 24, collapsed: true },
+];
+
+function validLayout(value: WorkspaceLayout | null): WorkspaceLayout {
+  if (!value || value.schemaVersion !== 1 || !['obs', 'classic'].includes(value.style)) return { schemaVersion: 1, style: 'obs', docks: defaultDocks };
+  const byId = new Map(value.docks.map((dock) => [dock.id, dock]));
+  const regions = new Set<WorkspaceDock['region']>(['left', 'right', 'bottom', 'center']);
+  const docks = defaultDocks.map((dock) => {
+    const candidate = byId.get(dock.id);
+    if (!candidate || candidate.kind !== dock.kind || !regions.has(candidate.region) ||
+      !Number.isFinite(candidate.size) || candidate.size < 10 || candidate.size > 80 ||
+      !Number.isInteger(candidate.order) || typeof candidate.collapsed !== 'boolean') return dock;
+    return { ...dock, region: candidate.region, order: candidate.order, size: candidate.size, collapsed: candidate.collapsed };
+  }).sort((left, right) => left.order - right.order).map((dock, order) => ({ ...dock, order }));
+  return { schemaVersion: 1, style: value.style, docks };
+}
+
 export function areaFromHash(hash = window.location.hash): ProductArea {
   const route = hash.replace(/^#\/?/, '').split(/[/?]/, 1)[0];
   if (entries.some((entry) => entry.id === route) || route === 'clients') return route as ProductArea;
@@ -28,15 +53,35 @@ export function areaFromHash(hash = window.location.hash): ProductArea {
 export default function WorkspaceShell({ area, onNavigate, connection, children }: {
   area: ProductArea; onNavigate: (area: ProductArea) => void; connection?: 'online' | 'offline' | 'connecting'; children: ReactNode;
 }) {
-  return <div className="workspace-shell">
+  const [layout, setLayout] = useState<WorkspaceLayout>({ schemaVersion: 1, style: 'obs', docks: defaultDocks });
+  const [layoutLoaded, setLayoutLoaded] = useState(false);
+  const [draggedDock, setDraggedDock] = useState<string | null>(null);
+  useEffect(() => { void loadWorkspaceLayout().then((value) => { setLayout(validLayout(value)); setLayoutLoaded(true); }); }, []);
+  useEffect(() => { if (layoutLoaded) void saveWorkspaceLayout(layout); }, [layout, layoutLoaded]);
+  const reorderDock = (targetId: string) => {
+    if (!draggedDock || draggedDock === targetId) return;
+    setLayout((current) => {
+      const docks = [...current.docks].sort((left, right) => left.order - right.order);
+      const from = docks.findIndex((dock) => dock.id === draggedDock); const to = docks.findIndex((dock) => dock.id === targetId);
+      if (from < 0 || to < 0) return current;
+      const [item] = docks.splice(from, 1); docks.splice(to, 0, item);
+      return { ...current, docks: docks.map((dock, order) => ({ ...dock, order })) };
+    });
+    setDraggedDock(null);
+  };
+  const dockLabels: Record<WorkspaceDock['kind'], string> = { canvas: '画布', scenes: '场景', sources: '来源', audio: '混音器', transitions: '转场', properties: '属性', issues: '问题' };
+  const updateDock = (dockId: string, change: Partial<WorkspaceDock>) => setLayout((value) => ({
+    ...value, docks: value.docks.map((dock) => dock.id === dockId ? { ...dock, ...change } : dock),
+  }));
+  return <div className={`workspace-shell workspace-style-${layout.style}`}>
     <aside className="workspace-navigation" aria-label="主导航">
       <div className="workspace-brand"><span className="brand-mark small">W</span><div><strong>WebOBS</strong><small>MONITOR WALL</small></div></div>
       <nav>{entries.map((entry) => <button type="button" className={area === entry.id ? 'active' : ''} aria-current={area === entry.id ? 'page' : undefined} key={entry.id} onClick={() => onNavigate(entry.id)}><span>{entry.label}</span><small>{entry.short}</small></button>)}</nav>
     </aside>
     <div className="workspace-frame">
-      <header className="workspace-global-bar">
+      <header className="workspace-global-bar" data-workspace-style={layout.style}>
         <div><strong>{entries.find((entry) => entry.id === area)?.label ?? 'WebOBS'}</strong>{connection && <span className={`connection ${connection}`}><i aria-hidden="true" />{connection === 'online' ? '在线' : connection === 'connecting' ? '连接中' : '离线'}</span>}</div>
-        <div><LocalRuntimeBadge /><ProblemCenter /></div>
+        <div><div className="workspace-style-switch" role="group" aria-label="工作区风格"><button type="button" className={layout.style === 'obs' ? 'active' : ''} onClick={() => setLayout((value) => ({ ...value, style: 'obs' }))}>OBS 风格</button><button type="button" className={layout.style === 'classic' ? 'active' : ''} onClick={() => setLayout((value) => ({ ...value, style: 'classic' }))}>经典</button></div><details className="workspace-dock-menu"><summary>面板</summary><div className="workspace-dock-config">{[...layout.docks].sort((a, b) => a.order - b.order).map((dock) => <div className="workspace-dock-item" draggable onDragStart={() => setDraggedDock(dock.id)} onDragOver={(event: DragEvent<HTMLDivElement>) => event.preventDefault()} onDrop={() => reorderDock(dock.id)} key={dock.id}><button type="button" onClick={() => updateDock(dock.id, { collapsed: !dock.collapsed })}>{dockLabels[dock.kind]} {dock.collapsed ? '显示' : '隐藏'}</button><select aria-label={`${dockLabels[dock.kind]} 区域`} value={dock.region} onChange={(event) => updateDock(dock.id, { region: event.target.value as WorkspaceDock['region'] })}><option value="left">左</option><option value="right">右</option><option value="bottom">底部</option><option value="center">中央</option></select><label><span className="sr-only">{dockLabels[dock.kind]} 大小</span><input aria-label={`${dockLabels[dock.kind]} 大小`} type="range" min="10" max="80" step="1" value={dock.size} onChange={(event) => updateDock(dock.id, { size: Number(event.target.value) })} /></label></div>)}<button type="button" onClick={() => setLayout({ schemaVersion: 1, style: 'obs', docks: defaultDocks })}>恢复默认布局</button></div></details><LocalRuntimeBadge /><ProblemCenter /></div>
       </header>
       <div className="workspace-content">{children}</div>
     </div>

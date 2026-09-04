@@ -12,8 +12,8 @@ if ($Image -cnotmatch '^ghcr\.io/[a-z0-9][a-z0-9._-]{0,127}/[a-z0-9][a-z0-9._-]{
 if ($Version -ne 'dev' -and $Version -cnotmatch '^v[0-9]+\.[0-9]+(?:\.[0-9]+)?$') {
     throw 'Version must be dev, vX.Y, or vX.Y.Z.'
 }
-if ($Prerelease -and $Version -cne 'v3.0') {
-    throw '-Prerelease is currently restricted to v3.0; publish v3.1 only as a stable release.'
+if ($Prerelease -and $Version -cnotin @('v3.0', 'v3.0.1')) {
+    throw '-Prerelease is currently restricted to v3.0 or v3.0.1; publish v3.1 only as a stable release.'
 }
 
 $repositoryRoot = (git rev-parse --show-toplevel).Trim()

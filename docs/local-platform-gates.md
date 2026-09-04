@@ -95,16 +95,16 @@ python scripts\verify-local-gate-receipts.py
   -Image ghcr.io/owner/web-camera-monitor-wall -Version v3.1
 ```
 
-For the v3.0 user-test preview, receipts are intentionally not required, but the
+For the v3.0.1 user-test preview, receipts are intentionally not required, but the
 preview flag is mandatory and the command must run from a `dev` HEAD that exactly
 matches `origin/dev`:
 
 ```powershell
 .\scripts\release-image-local.ps1 `
-  -Image ghcr.io/owner/web-camera-monitor-wall -Version v3.0 -Prerelease
+  -Image ghcr.io/owner/web-camera-monitor-wall -Version v3.0.1 -Prerelease
 ```
 
-The preview creates a GitHub `pre-release`, promotes only `v3.0` and `sha-*`, and
+The preview creates a GitHub `pre-release`, promotes only `v3.0.1` and `sha-*`, and
 never changes `latest`. Both release scripts still check the clean tree and public
 audit; they do not read or publish private fixture output. `release-image-local.sh`
 remains available on Linux hosts that provide a native Docker/Buildx engine.

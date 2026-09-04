@@ -17,7 +17,8 @@ Release series use `v<major>.<minor>`; implementation milestones use `v<major>-M
 | `v2.1` | `v2-M4` … `v2-M5` | Complete and published / 已完成并发布 |
 | `v2.2` | `v2-M6` | Complete and published: operations workspace / 已完成并发布：运维工作区 |
 | `v2.3` | `v2-M7` | Complete and published: scale, ecosystem and resilience / 已完成并发布：扩展、生态与韧性 |
-| `v3.0` | `v3-M1` | Motion and scene-change analytics / 运动与大范围画面变化分析 | In development / 开发中 |
+| `v3.0` (immutable preview carrier / 不可移动预览载体) | `v3-M1` | Motion and scene-change analytics / 运动与大范围画面变化分析 | Preview lineage retained; do not move / 保留预览血缘，不得移动 |
+| `v3.0.1` (pre-release correction / 预发布修正版) | `v3-M2` | Monitor workspace, telemetry/audio overlays and legacy-source migration / 监控工作区、统计音频叠层与旧来源迁移 | Pending explicit pre-release / 等待明确预发布 |
 | `v3.1` | `v3-M2` | Person boxes and analytics scheduling / 人物框与分析资源调度 | In development / 开发中 |
 
 A milestone name is an engineering gate, not a release date. A release may be cut only from completed, reviewed gates. Public SemVer tags may add a patch component such as `v1.1.1`; an existing tag is immutable.
@@ -50,6 +51,7 @@ Recommended protection:
 - `vX.Y` or `vX.Y.Z`: immutable release image / 不可变发布镜像。
 - `dev`: movable development image from reviewed `dev` builds / 来自已审查 `dev` 构建的可移动开发镜像。
 - `vX-MN`: immutable completed-milestone checkpoint, never a moving work-in-progress alias / 已完成里程碑的不可变检查点，不能作为持续移动的开发别名。
+- `v3.0.1` preview: immutable pre-release correction carrier from `dev`; it never moves `latest` / `v3.0.1` 预发布：来自 `dev` 的不可移动修正版载体，不得移动 `latest`。
 - `sha-xxxxxxxxxxxx`: immutable source identity for either branch / 任一分支的不可变源码身份。
 - `@sha256:...`: production deployment lock / 生产部署锁定方式。
 

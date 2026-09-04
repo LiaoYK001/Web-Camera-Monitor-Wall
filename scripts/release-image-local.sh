@@ -21,8 +21,8 @@ if [[ "$release_mode" == --prerelease || "${WEBOBS_PRERELEASE:-false}" == true ]
     prerelease=true
 fi
 if [ "$prerelease" = true ]; then
-    [[ "$version" == v3.0 ]] || {
-        echo "--prerelease is currently restricted to v3.0; publish v3.1 only as a stable release" >&2
+    [[ "$version" == v3.0 || "$version" == v3.0.1 ]] || {
+        echo "--prerelease is currently restricted to v3.0 or v3.0.1; publish v3.1 only as a stable release" >&2
         exit 64
     }
 fi
@@ -75,12 +75,12 @@ if [ "$version" = dev ]; then
     build_version="${WEBOBS_DEV_VERSION:-${default_dev_version}}.${short_revision}"
 elif [ "$prerelease" = true ]; then
     [ "$(git branch --show-current)" = dev ] || {
-        echo "v3.0 preview publication must run from dev" >&2
+        echo "${version} preview publication must run from dev" >&2
         exit 65
     }
     remote_dev_revision="$(git ls-remote origin refs/heads/dev | awk '$2=="refs/heads/dev" {print $1}')"
     [ "$remote_dev_revision" = "$revision" ] || {
-        echo "v3.0 preview requires HEAD to equal origin/dev" >&2
+        echo "${version} preview requires HEAD to equal origin/dev" >&2
         exit 65
     }
     : "${GITHUB_REPOSITORY:?GITHUB_REPOSITORY is required for a preview release}"
@@ -91,7 +91,12 @@ elif [ "$prerelease" = true ]; then
         echo "the immutable preview tag already exists; use a new preview version" >&2
         exit 65
     }
-    build_version="${WEBOBS_PRERELEASE_BUILD_VERSION:-3.0.0-pre.1}"
+    if [ "$version" = v3.0.1 ]; then
+        default_prerelease_version="3.0.1-pre.1"
+    else
+        default_prerelease_version="3.0.0-pre.1"
+    fi
+    build_version="${WEBOBS_PRERELEASE_BUILD_VERSION:-$default_prerelease_version}"
     # Keep the public milestone contract valid; the pre-release SemVer below
     # distinguishes this candidate from the eventual v3.1 stable release.
     build_milestone="v3-M2"
@@ -175,7 +180,7 @@ EOF
 if [ "$prerelease" = true ]; then
     cat >> "$notes" <<EOF
 This is a preview release for testing the v3-M1/v3-M2 analytics line. It is not the v3.1 stable release.
-The v3.0 tag is promoted from this exact candidate digest only after this pre-release draft and its corresponding source assets are published.
+The ${version} tag is promoted from this exact candidate digest only after this pre-release draft and its corresponding source assets are published.
 The latest tag is intentionally unchanged. Do not use this preview as a production stability claim.
 EOF
 else

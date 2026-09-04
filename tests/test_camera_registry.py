@@ -449,6 +449,37 @@ class CameraRegistryTests(unittest.TestCase):
             self.assertEqual(database.execute("SELECT COUNT(*) FROM cameras").fetchone()[0], 1)
         self.assertEqual(list(legacy.parent.glob(f".{legacy.name}.pre-v3-*")), [])
 
+    def test_legacy_studio_sources_import_idempotently_without_exposing_urls(self) -> None:
+        studio = Path(self.temporary.name) / "studio.json"
+        embedded_credentials_url = "rtsp://" + "user" + ":" + "pass@camera.example.invalid/live"
+        studio.write_text(json.dumps({"scenes": [{"sources": [
+            {"id": "old-front", "kind": "rtsp", "name": "Front", "rtspUrl": "rtsp://camera.example.invalid/live"},
+            {"id": "old-secret", "kind": "rtsp", "name": "Secret", "rtspUrl": embedded_credentials_url},
+            {"id": "old-token", "kind": "rtsp", "name": "Token", "rtspUrl": "rtsp://camera.example.invalid/live?token=hidden"},
+            {"id": "../unsafe", "kind": "rtsp", "name": "Ignored", "rtspUrl": "rtsp://camera.example.invalid/unsafe"},
+            {"id": "title", "kind": "text", "name": "Title", "text": "ignored"},
+        ]}]}), encoding="utf-8")
+        status = registry.legacy_import_status()
+        self.assertEqual({item["sourceId"]: item["state"] for item in status["items"]},
+                         {"old-front": "ready_to_import", "old-secret": "needs_configuration", "old-token": "needs_configuration"})
+        imported = registry.import_legacy_sources({"sourceIds": ["old-front"], "baseRevision": status["baseRevision"]})
+        self.assertEqual(imported["items"][0]["state"], "linked")
+        self.assertNotIn("camera.example.invalid", json.dumps(imported))
+        with self.assertRaises(registry.RevisionConflict):
+            registry.import_legacy_sources({"sourceIds": ["old-secret"], "baseRevision": status["baseRevision"]})
+        self.assertEqual(registry.source_catalog("limit=256")["total"], 1)
+        again_status = registry.legacy_import_status()
+        again = registry.import_legacy_sources({"sourceIds": ["old-front"], "baseRevision": again_status["baseRevision"]})
+        self.assertEqual(again["items"][0]["cameraId"], imported["items"][0]["cameraId"])
+        self.assertEqual(registry.source_catalog("limit=256")["total"], 1)
+        rejected = registry.import_legacy_sources({"sourceIds": ["old-secret"], "baseRevision": again_status["baseRevision"]})
+        self.assertEqual(rejected["items"][0]["state"], "needs_configuration")
+        self.assertNotIn("pass", json.dumps(rejected))
+        with self.assertRaises(ValueError):
+            registry.import_legacy_sources({"sourceIds": ["old-front", "old-front"], "baseRevision": again_status["baseRevision"]})
+        with self.assertRaises(ValueError):
+            registry.import_legacy_sources({"sourceIds": [{"sourceId": "old-front"}], "baseRevision": again_status["baseRevision"]})
+
     def test_analytics_policies_are_per_profile_atomic_and_default_off(self) -> None:
         camera = registry.validate_camera({
             "id": "analytics-fixture", "name": "Analytics fixture",

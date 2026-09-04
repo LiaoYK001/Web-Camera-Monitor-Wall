@@ -324,6 +324,14 @@ export const probeSourceProfile = (cameraId: string, profileId: string) =>
     `/source-catalog/${encodeURIComponent(cameraId)}/profiles/${encodeURIComponent(profileId)}/probe`, {
       method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}',
     });
+export interface LegacySourceImportItem { sourceId: string; state: 'linked' | 'ready_to_import' | 'needs_configuration'; reason?: string; cameraId?: string; profileId?: string; }
+export interface LegacySourceImportStatus { schemaVersion: 1; baseRevision: number; items: LegacySourceImportItem[]; count: number; }
+export const fetchLegacySourceImport = (signal?: AbortSignal) =>
+  clientAdminRequest<LegacySourceImportStatus>('/source-catalog/legacy-import', { signal });
+export const importLegacySources = (sourceIds: string[], baseRevision: number) =>
+  clientAdminRequest<{ schemaVersion: 1; baseRevision: number; items: LegacySourceImportItem[] }>('/source-catalog/legacy-import', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ sourceIds, baseRevision }),
+  });
 export const fetchOperationalIssues = (query = '', signal?: AbortSignal) =>
   clientAdminRequest<{ issues: OperationalIssue[] }>(`/operations/issues${query ? `?${query}` : ''}`, { signal });
 export const acknowledgeOperationalIssue = (issueId: string) =>

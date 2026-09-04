@@ -5,9 +5,9 @@ import { DirectAudioMixer, type DirectAudioSnapshot } from './directAudioMixer';
 import { clearPrivateRuntimeState, loadMonitorView, saveMonitorView } from './localRuntime';
 import { observeTileVisibility, shouldRunPlayback } from './mediaLifecycle';
 import { countRenderedFrames, formatTelemetry, sampleConnectionTelemetry, sampleElementTelemetry, unavailableTelemetry, type MediaTelemetry } from './mediaTelemetry';
-import { applyAutomaticLayout, defaultMonitorView, evaluatePromotion, mapDetectionBoxToTile, nextRotationWindow, normalizeMonitorView, selectLowPowerProfile, validDetectionSignal, type DetectionSignal, type MonitorView, type TelemetryOverlayConfig } from './monitorView';
+import { applyAutomaticLayout, defaultMonitorView, evaluatePromotion, mapDetectionBoxToTile, nextRotationWindow, normalizeMonitorView, selectLowPowerProfile, sourceDecoration, validDetectionSignal, type AudioMeterConfig, type DetectionSignal, type MonitorView, type TelemetryOverlayConfig } from './monitorView';
 import { BrowserAnalyticsRuntime, type BrowserAnalyticsStatus } from './analyticsRuntime';
-import { openIssueCenter, reportLocalIssue, resolveLocalIssue } from './issueRuntime';
+import { openIssueCenter, reportLocalIssue, reportMediaIssue, resolveLocalIssue } from './issueRuntime';
 import type { AnalyticsPolicy, CameraRecord, CameraSceneSource, MotionZone, SceneDocument, SceneItem, SceneSource, SourcePlaybackCapability } from './types';
 import { connectSource, type ProgramConnection, type ProgramConnectionState } from './whep';
 
@@ -52,27 +52,65 @@ function videoGeometry(item: SceneItem, width: number, height: number): CSSPrope
   };
 }
 
-function DirectTile({ item, source, capability, mixer }: {
+function DirectTile({ item, source, capability, mixer, telemetry, audioMeter, audioSnapshot }: {
   item: SceneItem;
   source: SceneSource;
   capability?: SourcePlaybackCapability;
   mixer: DirectAudioMixer | null;
+  telemetry?: TelemetryOverlayConfig;
+  audioMeter?: AudioMeterConfig;
+  audioSnapshot?: { rmsDbfs: number | null; peakDbfs: number | null };
 }) {
   const videoRef = useRef<HTMLVideoElement>(null);
+  const [videoElement, setVideoElement] = useState<HTMLVideoElement | null>(null);
   const [state, setState] = useState<ProgramConnectionState>(capability ? 'checking' : 'offline');
   const [dimensions, setDimensions] = useState({ width: 0, height: 0 });
+  const [activeConnection, setActiveConnection] = useState<ProgramConnection | null>(null);
+  const transport: 'whep' | 'gateway' = capability?.strategy === 'passthrough' ? 'whep' : 'gateway';
+  const [audioAlert, setAudioAlert] = useState(false);
+  const audioPeak = useRef<number | null>(null);
+  const audioAlertRef = useRef(false);
+  const audioAboveSince = useRef(0);
+  const audioBelowSince = useRef(0);
 
   useEffect(() => {
     if (source.kind === 'camera' || !videoRef.current || !mixer || !capability?.endpoint || capability.preferred !== 'direct') return undefined;
     const connection = connectSource(videoRef.current, capability.endpoint, setState,
       (stream) => mixer.bindStream(source.id, stream));
-    return connection.close;
+    setActiveConnection(connection);
+    return () => { connection.close(); setActiveConnection(null); };
   }, [capability, mixer, source.id]);
 
   useEffect(() => {
     if (source.kind === 'camera' || !mixer || !videoRef.current || !capability?.endpoint || capability.preferred !== 'direct') return undefined;
     return mixer.attach(source.id, videoRef.current);
   }, [capability, mixer, source.id]);
+
+  useEffect(() => { audioPeak.current = audioSnapshot?.peakDbfs ?? null; }, [audioSnapshot?.peakDbfs]);
+  useEffect(() => {
+    audioAlertRef.current = false; audioPeak.current = audioSnapshot?.peakDbfs ?? null;
+    if (!audioMeter?.enabled) { setAudioAlert(false); audioAboveSince.current = 0; audioBelowSince.current = 0; return undefined; }
+    const timer = window.setInterval(() => {
+      const now = Date.now();
+      const peak = audioPeak.current;
+      if (peak === null || peak === undefined) { audioAlertRef.current = false; setAudioAlert(false); audioAboveSince.current = 0; audioBelowSince.current = 0; return; }
+      const above = peak >= audioMeter.thresholdDbfs;
+      if (above) {
+        audioBelowSince.current = 0;
+        if (!audioAboveSince.current) audioAboveSince.current = now;
+        if (!audioAlertRef.current && now - audioAboveSince.current >= 250) {
+          audioAlertRef.current = true;
+          setAudioAlert(true);
+          window.dispatchEvent(new CustomEvent('webobs:audio-threshold', { detail: { sourceId: source.id, peakDbfs: peak, promote: false } }));
+        }
+      } else {
+        audioAboveSince.current = 0;
+        if (!audioBelowSince.current) audioBelowSince.current = now;
+        if (audioAlertRef.current && now - audioBelowSince.current >= 500) { audioAlertRef.current = false; setAudioAlert(false); }
+      }
+    }, 100);
+    return () => window.clearInterval(timer);
+  }, [audioMeter?.enabled, audioMeter?.thresholdDbfs, source.id]);
 
   const geometry = useMemo(
     () => videoGeometry(item, dimensions.width, dimensions.height),
@@ -89,7 +127,7 @@ function DirectTile({ item, source, capability, mixer }: {
       data-audio-sync-ms={source.syncOffsetMs}
     >
       <video
-        ref={videoRef}
+        ref={(element) => { videoRef.current = element; setVideoElement(element); }}
         autoPlay
         muted
         playsInline
@@ -103,11 +141,14 @@ function DirectTile({ item, source, capability, mixer }: {
       <span className="direct-tile-state"><i aria-hidden="true" />{labels[state]}</span>
       {capability && capability.strategy !== 'unknown' && <button
         className={`tile-status-button cost-${capability.serverCost ?? 'low'}`} type="button"
-        title={`${capability.deliveryMode ?? 'direct'} · ${capability.reason ?? '媒体链正常'}`}
+        title={`${capability.deliveryMode ?? 'direct'} · 详情见问题中心`}
         onClick={() => openIssueCenter(source.id)} aria-label={`${source.name} 媒体链详情`}>ⓘ</button>}
       {source.kind === 'browser'
         ? <span className="direct-tile-name">{source.name} · 仅服务端合成</span>
         : state !== 'live' && <span className="direct-tile-name">{source.name}</span>}
+      {audioAlert && audioMeter?.alertBorderEnabled && <span className="tile-audio-alert-border" style={{ borderColor: colorWithOpacity(audioMeter.alertBorderColor, audioMeter.alertBorderOpacity), borderWidth: `${audioMeter.alertBorderWidth}px` }} aria-label="音频超过阈值" />}
+      {audioMeter && <AudioMeterOverlay config={audioMeter} meter={audioSnapshot} />}
+      {telemetry && <TelemetryOverlay config={telemetry} transport={transport} video={videoElement} connection={activeConnection} />}
     </div>
   );
 }
@@ -160,11 +201,23 @@ function colorWithOpacity(color: string, opacity: number): string {
   return `rgba(${red},${green},${blue},${opacity})`;
 }
 
-function BrowserCameraTile({ item, source, mixer, telemetry, lowPower, documentVisible, analyticsPolicy, analyticsZones, showAnalytics }: {
+function AudioMeterOverlay({ config, meter }: { config: AudioMeterConfig; meter?: { rmsDbfs: number | null; peakDbfs: number | null } }) {
+  if (!config.enabled) return null;
+  const peak = meter?.peakDbfs ?? null;
+  const width = peak === null ? 0 : Math.max(0, Math.min(100, ((peak + 120) / 120) * 100));
+  return <div className={`tile-audio-meter position-${config.position}`} aria-label={peak === null ? '音频电平不可测' : `音频峰值 ${peak.toFixed(1)} dBFS`}>
+    <span className="tile-audio-meter-track"><i style={{ width: `${width}%` }} /></span><small>{peak === null ? '—' : `${peak.toFixed(1)} dBFS`}</small>
+  </div>;
+}
+
+function BrowserCameraTile({ item, source, mixer, telemetry, audioMeter, audioSnapshot, promotionKinds, lowPower, documentVisible, analyticsPolicy, analyticsZones, showAnalytics }: {
   item: SceneItem;
   source: CameraSceneSource;
   mixer: DirectAudioMixer | null;
   telemetry: TelemetryOverlayConfig;
+  audioMeter: AudioMeterConfig;
+  audioSnapshot?: { rmsDbfs: number | null; peakDbfs: number | null };
+  promotionKinds: { audio: boolean; motion: boolean; person: boolean };
   lowPower?: { targetFps: number; actualFps: number; targetMet: boolean };
   documentVisible: boolean;
   analyticsPolicy?: AnalyticsPolicy;
@@ -174,6 +227,7 @@ function BrowserCameraTile({ item, source, mixer, telemetry, lowPower, documentV
   const tileRef = useRef<HTMLDivElement>(null);
   const videoRef = useRef<HTMLVideoElement>(null);
   const imageRef = useRef<HTMLImageElement>(null);
+  const [videoElement, setVideoElement] = useState<HTMLVideoElement | null>(null);
   const [state, setState] = useState<ProgramConnectionState>('checking');
   const [transport, setTransport] = useState<'whep' | 'hls' | 'mjpeg' | 'gateway'>('gateway');
   const [plan, setPlan] = useState<BrowserTopologyPlan | null>(null);
@@ -182,12 +236,43 @@ function BrowserCameraTile({ item, source, mixer, telemetry, lowPower, documentV
   const [tileIntersecting, setTileIntersecting] = useState(true);
   const [analyticsStatus, setAnalyticsStatus] = useState<BrowserAnalyticsStatus>({ state: 'idle', reason: '', sampleFps: 0, lastSignalAt: 0 });
   const [detectionBoxes, setDetectionBoxes] = useState<Array<{ x: number; y: number; width: number; height: number; confidence?: number }>>([]);
+  const [audioAlert, setAudioAlert] = useState(false);
+  const audioPeak = useRef<number | null>(null);
+  const audioAlertRef = useRef(false);
+  const audioAboveSince = useRef(0);
+  const audioBelowSince = useRef(0);
   const analyticsSession = useRef<string | null>(null);
   // A per-profile forceAnalyticsAlwaysOn policy is the explicit exception to
   // the monitor-wide low-power suspension.  It must keep the media element
   // alive so the browser runtime can actually sample frames.
   const lowPowerForPlayback = Boolean(lowPower) && !Boolean(analyticsPolicy?.forceAnalyticsAlwaysOn);
   const playbackEnabled = shouldRunPlayback({ lowPowerEnabled: lowPowerForPlayback, documentVisible, tileIntersecting });
+
+  useEffect(() => { audioPeak.current = audioSnapshot?.peakDbfs ?? null; }, [audioSnapshot?.peakDbfs]);
+  useEffect(() => {
+    audioAlertRef.current = false; audioPeak.current = audioSnapshot?.peakDbfs ?? null;
+    if (!audioMeter.enabled) { setAudioAlert(false); audioAboveSince.current = 0; audioBelowSince.current = 0; return undefined; }
+    const timer = window.setInterval(() => {
+      const now = Date.now();
+      const peak = audioPeak.current;
+      if (peak === null || peak === undefined) { audioAlertRef.current = false; setAudioAlert(false); audioAboveSince.current = 0; audioBelowSince.current = 0; return; }
+      const above = peak >= audioMeter.thresholdDbfs;
+      if (above) {
+        audioBelowSince.current = 0;
+        if (!audioAboveSince.current) audioAboveSince.current = now;
+        if (!audioAlertRef.current && now - audioAboveSince.current >= 250) {
+          audioAlertRef.current = true;
+          setAudioAlert(true);
+          window.dispatchEvent(new CustomEvent('webobs:audio-threshold', { detail: { sourceId: source.id, peakDbfs: peak, promote: promotionKinds.audio } }));
+        }
+      } else {
+        audioAboveSince.current = 0;
+        if (!audioBelowSince.current) audioBelowSince.current = now;
+        if (audioAlertRef.current && now - audioBelowSince.current >= 500) { audioAlertRef.current = false; setAudioAlert(false); }
+      }
+    }, 100);
+    return () => window.clearInterval(timer);
+  }, [audioMeter.enabled, audioMeter.thresholdDbfs, promotionKinds.audio, source.id]);
 
   useEffect(() => tileRef.current ? observeTileVisibility(tileRef.current, setTileIntersecting) : undefined, []);
 
@@ -215,15 +300,33 @@ function BrowserCameraTile({ item, source, mixer, telemetry, lowPower, documentV
         if (!closed && videoRef.current) {
           connection = connectApprovedWhep(videoRef.current, gateway.endpoint, setState, {
           deviceToken: gateway.deviceToken, onRemoteStream: (stream) => mixer?.bindStream(source.id, stream),
-          onAuthorizationRejected: clearPrivateRuntimeState,
+          onAuthorizationRejected: () => {
+            reportMediaIssue({
+              code: 'MEDIA_AUTHORIZATION_REJECTED', scopeId: source.id, component: 'browser-media',
+              summary: `${source.name} 媒体授权已拒绝`, explanation: '当前设备或授权包已被拒绝，媒体连接已停止。',
+              recommendedActions: ['重新登录或重新配对设备。'], technicalDetails: { reason: 'authorization_rejected' },
+            });
+            return clearPrivateRuntimeState();
+          },
           });
           setActiveConnection(connection);
         }
       } catch (error) {
         if (error instanceof BrowserPlanError && error.kind === 'authorization') {
+          reportMediaIssue({
+            code: 'MEDIA_AUTHORIZATION_REJECTED', scopeId: source.id, component: 'browser-media',
+            summary: `${source.name} 媒体授权已拒绝`, explanation: '当前设备或授权包已被拒绝，媒体连接已停止。',
+            recommendedActions: ['重新登录或重新配对设备。'], technicalDetails: { reason: 'authorization_rejected' },
+          });
           authorizationCleared();
           return;
         }
+        reportMediaIssue({
+          code: 'MEDIA_GATEWAY_ACTIVATION_FAILED', scopeId: source.id, component: 'browser-media',
+          summary: `${source.name} 服务端媒体链启动失败`, explanation: '浏览器直连不可用，且受控 Gateway/Hybrid 会话未能启动。',
+          recommendedActions: ['检查 Gateway 状态和 Profile 配置。', '重新探测来源后再试。'],
+          technicalDetails: { reason: 'gateway_activation_failed' },
+        });
         setPlan({
           contractVersion: 2, planId: '', cameraId: source.cameraId, profileId: source.profileId,
           topology: 'gateway-direct', runtimeKind: 'pwa', executionOwner: 'docker', mediaTransport: 'rtsp',
@@ -378,16 +481,24 @@ function BrowserCameraTile({ item, source, mixer, telemetry, lowPower, documentV
   const geometry = useMemo(() => videoGeometry(item, dimensions.width, dimensions.height), [item, dimensions]);
   const trueDirect = plan?.topology === 'true-direct';
   useEffect(() => {
-    const code = 'MEDIA_TOPOLOGY_FALLBACK';
-    if (plan && !trueDirect) reportLocalIssue({
-      code, scopeKind: 'media-plan', scopeId: source.id, component: 'browser-media',
+    if (plan && !trueDirect) reportMediaIssue({
+      code: 'MEDIA_DIRECT_FALLBACK', scopeId: source.id, component: 'browser-media',
       summary: `${source.name} 正在使用服务端媒体链`,
       explanation: '浏览器真直连资格或首帧检查未通过，当前画面经 Docker Gateway/Hybrid 传输。',
       recommendedActions: ['检查 Profile 的 HTTPS、CORS 与浏览器直连资格。', '在设备预览中重新执行媒体探测。'],
       technicalDetails: { topology: plan.topology, reason: plan.fallbackReason ?? 'not_true_direct', transportMode: transport },
     });
-    else if (trueDirect) resolveLocalIssue(code, source.id, 'browser-media');
+    else if (trueDirect) resolveLocalIssue('MEDIA_DIRECT_FALLBACK', source.id, 'browser-media');
   }, [plan, source.id, source.name, transport, trueDirect]);
+  useEffect(() => {
+    if (state === 'offline' && plan && !trueDirect) reportMediaIssue({
+      code: 'MEDIA_FIRST_FRAME_TIMEOUT', scopeId: source.id, component: 'browser-media',
+      summary: `${source.name} 未收到首帧`, explanation: '媒体会话在限定时间内未建立可播放画面。',
+      recommendedActions: ['检查来源在线状态和网络路径。', '重新探测 Profile 或检查 Gateway 状态。'],
+      technicalDetails: { transport },
+    });
+    else if (state === 'live') resolveLocalIssue('MEDIA_FIRST_FRAME_TIMEOUT', source.id, 'browser-media');
+  }, [plan, source.id, source.name, state, transport, trueDirect]);
   useEffect(() => {
     window.dispatchEvent(new CustomEvent('webobs:media-topology', { detail: {
       sourceId: source.id,
@@ -411,17 +522,15 @@ function BrowserCameraTile({ item, source, mixer, telemetry, lowPower, documentV
   }, [lowPower, source.id, source.name]);
   return <div ref={tileRef} className={`direct-tile ${state}`} data-source-id={source.id}
     data-playback-suspended={playbackEnabled ? 'false' : 'true'}>
-    <video ref={videoRef} autoPlay muted playsInline style={{ ...geometry, display: transport === 'mjpeg' ? 'none' : undefined }}
+    <video ref={(element) => { videoRef.current = element; setVideoElement(element); }} autoPlay muted playsInline style={{ ...geometry, display: transport === 'mjpeg' ? 'none' : undefined }}
       aria-label={`${source.name} 浏览器媒体画面`} onLoadedMetadata={(event) => setDimensions({ width: event.currentTarget.videoWidth, height: event.currentTarget.videoHeight })} />
     <img ref={imageRef} alt={`${source.name} MJPEG 画面`} style={{ ...geometry, display: transport === 'mjpeg' ? undefined : 'none' }} />
     <span className="direct-tile-state"><i aria-hidden="true" />{labels[state]}</span>
     <button className={`tile-status-button ${trueDirect ? 'cost-low' : 'cost-medium'}`} type="button"
       aria-label={`${source.name} 媒体路径详情`} onClick={() => openIssueCenter(source.id)}
-      title={trueDirect ? `Camera → Browser · ${transport.toUpperCase()}` : `Camera → Docker → Browser · ${plan?.fallbackReason ?? '检查中'}`}>ⓘ</button>
+      title={trueDirect ? `Camera → Browser · ${transport.toUpperCase()}` : 'Camera → Docker → Browser · 详情见问题中心'}>ⓘ</button>
     {state !== 'live' && <span className="direct-tile-name">{source.name}</span>}
-    {showAnalytics.showInferenceStatus && analyticsStatus.state !== 'idle' && <span className={`analytics-runtime-status ${analyticsStatus.state}`} title={analyticsStatus.reason}>
-      {analyticsStatus.state === 'running' ? `分析 · ${analyticsStatus.sampleFps} FPS` : analyticsStatus.state === 'unsupported' ? '分析不可用' : analyticsStatus.state === 'suspended' ? '分析已暂停' : '分析错误'}
-    </span>}
+    {audioAlert && audioMeter.alertBorderEnabled && <span className="tile-audio-alert-border" style={{ borderColor: colorWithOpacity(audioMeter.alertBorderColor, audioMeter.alertBorderOpacity), borderWidth: `${audioMeter.alertBorderWidth}px` }} aria-label="音频超过阈值" />}
     {showAnalytics.showDetectionBoxes && detectionBoxes.map((box, index) => {
       const mapped = mapDetectionBoxToTile(box, item, dimensions.width, dimensions.height);
       if (mapped.width <= 0 || mapped.height <= 0) return null;
@@ -430,9 +539,8 @@ function BrowserCameraTile({ item, source, mixer, telemetry, lowPower, documentV
         opacity: showAnalytics.boxOpacity, borderWidth: `${showAnalytics.boxLineWidth}px`,
       }} aria-hidden="true">{showAnalytics.showDetectionLabels && <small>person</small>}</span>;
     })}
-    {lowPower && !lowPower.targetMet && <button className="low-power-status" type="button"
-      onClick={() => openIssueCenter(source.id)} title={`目标 ${lowPower.targetFps} FPS，实际 ${lowPower.actualFps || '—'} FPS`}>省电目标未达</button>}
-    <TelemetryOverlay config={telemetry} transport={transport} video={videoRef.current} connection={activeConnection} />
+    <AudioMeterOverlay config={audioMeter} meter={audioSnapshot} />
+    <TelemetryOverlay config={telemetry} transport={transport} video={videoElement} connection={activeConnection} />
   </div>;
 }
 
@@ -484,13 +592,13 @@ export default function DirectPreview({ scene, compact = false }: { scene: Scene
   }, []);
 
   useEffect(() => { void loadMonitorView().then((stored) => {
-    if (stored) setMonitorView(normalizeMonitorView(stored, scene.items.length));
+    if (stored) setMonitorView(normalizeMonitorView(stored, scene.items.length, scene.sources.map((source) => source.id)));
     setMonitorLoaded(true);
   }); }, []);
 
   useEffect(() => {
     if (!monitorLoaded) return;
-    const timer = window.setTimeout(() => void saveMonitorView(normalizeMonitorView(monitorView, scene.items.length)), 250);
+    const timer = window.setTimeout(() => void saveMonitorView(normalizeMonitorView(monitorView, scene.items.length, scene.sources.map((source) => source.id))), 250);
     return () => window.clearTimeout(timer);
   }, [monitorLoaded, monitorView, scene.items.length]);
 
@@ -521,6 +629,16 @@ export default function DirectPreview({ scene, compact = false }: { scene: Scene
     [capabilities],
   );
   const audioEnabled = audio.state === 'running';
+  const audioBySource = useMemo(() => new Map(audio.sources.map((value) => [value.sourceId, value])), [audio.sources]);
+  useEffect(() => {
+    if (audio.state === 'blocked') reportMediaIssue({
+      code: 'AUDIO_RUNTIME_UNAVAILABLE', scopeId: 'monitor', component: 'direct-audio',
+      summary: '浏览器音频运行时不可用', explanation: '浏览器未允许启动本地音频分析或监听，画面仍保持静音。',
+      recommendedActions: ['通过用户手势启用监听。', '检查浏览器音频权限和输出设备。'],
+      technicalDetails: { reason: 'audio_context_blocked' },
+    });
+    else if (audio.state === 'running') resolveLocalIssue('AUDIO_RUNTIME_UNAVAILABLE', 'monitor', 'direct-audio');
+  }, [audio.state]);
   const analyticsByProfile = useMemo(() => new Map(analyticsPolicies.map((policy) => [`${policy.cameraId}\u0000${policy.profileId}`, policy])), [analyticsPolicies]);
   const effectiveScene = useMemo(() => {
     let current = monitorView.mode === 'auto' && portrait && scene.canvas.width > scene.canvas.height
@@ -543,6 +661,16 @@ export default function DirectPreview({ scene, compact = false }: { scene: Scene
     const selected = selectLowPowerProfile(camera?.profiles ?? [], monitorView.lowPower.targetFps);
     return [[source.id, { targetFps: monitorView.lowPower.targetFps, actualFps: selected.profile?.fps ?? 0, targetMet: selected.targetMet }] as const];
   })), [cameras, effectiveScene.sources, monitorView.lowPower.enabled, monitorView.lowPower.targetFps]);
+
+  const updateSourceDecoration = (sourceId: string, change: Partial<ReturnType<typeof sourceDecoration>>) => {
+    setMonitorView((value) => {
+      const current = sourceDecoration(value, sourceId);
+      return normalizeMonitorView({ ...value, sourceDecorations: {
+        ...value.sourceDecorations,
+        [sourceId]: { ...current, ...change, telemetry: { ...current.telemetry, ...(change.telemetry ?? {}) }, audioMeter: { ...current.audioMeter, ...(change.audioMeter ?? {}) }, promotionKinds: { ...current.promotionKinds, ...(change.promotionKinds ?? {}) } },
+      } }, scene.items.length);
+    });
+  };
 
   useEffect(() => {
     const promote = (event: Event) => {
@@ -570,6 +698,26 @@ export default function DirectPreview({ scene, compact = false }: { scene: Scene
     return () => window.removeEventListener('webobs:detection-signal', promote);
   }, [analyticsPolicies, effectiveScene.sources, monitorView.largeCount, monitorView.largeSourceIds,
     monitorView.lowPower.enabled, monitorView.promotion]);
+
+  useEffect(() => {
+    const promoteAudio = (event: Event) => {
+      const detail = (event as CustomEvent<{ sourceId?: string; peakDbfs?: number; promote?: boolean }>).detail;
+      if (!detail?.sourceId || !detail.promote || !Number.isFinite(detail.peakDbfs) || monitorView.largeCount < 1) return;
+      const source = effectiveScene.sources.find((candidate) => candidate.id === detail.sourceId);
+      if (!source || !sourceDecoration(monitorView, source.id).promotionKinds.audio || monitorView.lowPower.enabled) return;
+      const now = Date.now(); const key = `audio/${source.id}`; const cooldownUntil = promotionCooldowns.current.get(key) ?? 0;
+      if (cooldownUntil > now || !monitorView.promotion.allowEventPromotion) return;
+      const decoration = sourceDecoration(monitorView, source.id);
+      if ((detail.peakDbfs ?? -120) < decoration.audioMeter.thresholdDbfs) return;
+      const previous = monitorView.largeSourceIds;
+      setMonitorView((value) => ({ ...value, largeSourceIds: [source.id, ...value.largeSourceIds.filter((id) => id !== source.id)].slice(0, value.largeCount) }));
+      const holdMs = Math.max(1, monitorView.promotion.holdSeconds) * 1000;
+      promotionTimers.current.push(window.setTimeout(() => setMonitorView((value) => ({ ...value, largeSourceIds: previous })), holdMs));
+      promotionCooldowns.current.set(key, now + holdMs + Math.max(0, monitorView.promotion.cooldownSeconds) * 1000);
+    };
+    window.addEventListener('webobs:audio-threshold', promoteAudio);
+    return () => window.removeEventListener('webobs:audio-threshold', promoteAudio);
+  }, [effectiveScene.sources, monitorView, monitorView.largeCount, monitorView.lowPower.enabled]);
 
   useEffect(() => {
     if (!monitorView.rotation.enabled || monitorView.mode !== 'auto' || monitorView.largeCount < 1) return undefined;
@@ -619,7 +767,7 @@ export default function DirectPreview({ scene, compact = false }: { scene: Scene
       </div>
       <div className="monitor-view-controls" aria-label="监控视图设置">
         <button type="button" onClick={() => setMonitorView((value) => ({ ...value, mode: value.mode === 'auto' ? 'manual' : 'auto' }))}>{monitorView.mode === 'auto' ? '脱离自动模式' : '恢复自动布局'}</button>
-        <label><input type="checkbox" checked={monitorView.telemetry.enabled} onChange={(event) => setMonitorView((value) => ({ ...value, telemetry: { ...value.telemetry, enabled: event.target.checked } }))} />统计叠层</label>
+        <label><input type="checkbox" checked={monitorView.telemetry.enabled} onChange={(event) => setMonitorView((value) => ({ ...value, telemetry: { ...value.telemetry, enabled: event.target.checked } }))} />统计叠层（默认）</label>
         <details><summary>统计字段</summary><div className="monitor-source-options">{(['fps', 'bitrate', 'codec', 'decoder'] as const).map((field) => <label key={field}><input type="checkbox" checked={monitorView.telemetry.fields.includes(field)} onChange={(event) => setMonitorView((value) => ({ ...value, telemetry: { ...value.telemetry, fields: event.target.checked ? [...new Set([...value.telemetry.fields, field])] : value.telemetry.fields.filter((item) => item !== field) } }))} />{field}</label>)}</div></details>
         <label>位置<select value={monitorView.telemetry.position} onChange={(event) => setMonitorView((value) => ({ ...value, telemetry: { ...value.telemetry, position: event.target.value as TelemetryOverlayConfig['position'] } }))}>
           <option value="top-left">左上</option><option value="top-right">右上</option><option value="bottom-left">左下</option><option value="bottom-right">右下</option><option value="custom">自定义</option>
@@ -641,6 +789,19 @@ export default function DirectPreview({ scene, compact = false }: { scene: Scene
         <label><input type="checkbox" checked={monitorView.lowPower.enabled} onChange={(event) => setMonitorView((value) => ({ ...value, lowPower: { ...value.lowPower, enabled: event.target.checked } }))} />低功耗</label>
         <label>目标 FPS<input list="low-power-fps" type="number" min="0.5" max="30" step="0.5" value={monitorView.lowPower.targetFps} onChange={(event) => setMonitorView((value) => normalizeMonitorView({ ...value, lowPower: { ...value.lowPower, targetFps: Number(event.target.value) } }, scene.items.length))} /><datalist id="low-power-fps"><option value="0.5" /><option value="1" /><option value="2" /><option value="5" /></datalist></label>
         {monitorView.lowPower.enabled && monitorView.lowPower.targetFps > 5 && <small className="power-warning">超过 5 FPS，节能效果可能有限。</small>}
+        <details><summary>逐路统计 / 音频告警</summary><div className="monitor-source-options monitor-decoration-options">{effectiveScene.sources.filter((source) => source.kind === 'camera').slice(0, 16).map((source) => {
+          const decoration = sourceDecoration(monitorView, source.id);
+          return <fieldset key={source.id}><legend>{source.name}</legend>
+            <label><input type="checkbox" checked={decoration.telemetry.enabled} onChange={(event) => updateSourceDecoration(source.id, { telemetry: { ...decoration.telemetry, enabled: event.target.checked } })} />统计</label>
+            {(['fps', 'bitrate', 'codec', 'decoder'] as const).map((field) => <label key={field}><input type="checkbox" checked={decoration.telemetry.fields.includes(field)} onChange={(event) => updateSourceDecoration(source.id, { telemetry: { ...decoration.telemetry, fields: event.target.checked ? [...new Set([...decoration.telemetry.fields, field])] : decoration.telemetry.fields.filter((item) => item !== field) } })} />{field}</label>)}
+            <label><input type="checkbox" checked={decoration.audioMeter.enabled} onChange={(event) => updateSourceDecoration(source.id, { audioMeter: { ...decoration.audioMeter, enabled: event.target.checked } })} />画面音频表</label>
+            <label>阈值 <input type="number" min="-120" max="0" step="1" value={decoration.audioMeter.thresholdDbfs} onChange={(event) => updateSourceDecoration(source.id, { audioMeter: { ...decoration.audioMeter, thresholdDbfs: Number(event.target.value) } })} /> dBFS</label>
+            <label><input type="checkbox" checked={decoration.audioMeter.alertBorderEnabled} onChange={(event) => updateSourceDecoration(source.id, { audioMeter: { ...decoration.audioMeter, alertBorderEnabled: event.target.checked } })} />超阈值边框</label>
+            <label><input type="checkbox" checked={decoration.promotionKinds.audio} onChange={(event) => updateSourceDecoration(source.id, { promotionKinds: { ...decoration.promotionKinds, audio: event.target.checked } })} />音频提升 M</label>
+            <label><input type="checkbox" checked={decoration.promotionKinds.motion} onChange={(event) => updateSourceDecoration(source.id, { promotionKinds: { ...decoration.promotionKinds, motion: event.target.checked } })} />Motion 提升（预留）</label>
+            <label><input type="checkbox" checked={decoration.promotionKinds.person} onChange={(event) => updateSourceDecoration(source.id, { promotionKinds: { ...decoration.promotionKinds, person: event.target.checked } })} />Person 提升（预留）</label>
+          </fieldset>;
+        })}</div></details>
       </div></>}
       <div
         className="direct-preview"
@@ -667,18 +828,24 @@ export default function DirectPreview({ scene, compact = false }: { scene: Scene
                 {source.kind === 'camera'
                   ? <BrowserCameraTile item={item} source={source} mixer={mixer}
                       telemetry={monitorView.lowPower.enabled
-                        ? { ...monitorView.telemetry, refreshIntervalMs: Math.max(5000, monitorView.telemetry.refreshIntervalMs) }
-                        : monitorView.telemetry}
+                        ? { ...sourceDecoration(monitorView, source.id).telemetry, refreshIntervalMs: Math.max(5000, sourceDecoration(monitorView, source.id).telemetry.refreshIntervalMs) }
+                        : sourceDecoration(monitorView, source.id).telemetry}
+                      audioMeter={sourceDecoration(monitorView, source.id).audioMeter}
+                      audioSnapshot={audioBySource.get(source.id)}
+                      promotionKinds={sourceDecoration(monitorView, source.id).promotionKinds}
                       lowPower={lowPowerBySource.get(source.id)}
                       documentVisible={pageVisible}
                       analyticsPolicy={analyticsByProfile.get(`${source.cameraId}\u0000${source.profileId}`)}
                       analyticsZones={analyticsZones}
                       showAnalytics={monitorView.analytics} />
-                  : <DirectTile item={item} source={source} capability={bySource.get(source.id)} mixer={mixer} />}
+                  : <DirectTile item={item} source={source} capability={bySource.get(source.id)} mixer={mixer}
+                      telemetry={monitorView.lowPower.enabled
+                        ? { ...sourceDecoration(monitorView, source.id).telemetry, refreshIntervalMs: Math.max(5000, sourceDecoration(monitorView, source.id).telemetry.refreshIntervalMs) }
+                        : sourceDecoration(monitorView, source.id).telemetry}
+                      audioMeter={sourceDecoration(monitorView, source.id).audioMeter} audioSnapshot={audioBySource.get(source.id)} />}
               </div>
             );
           })}
-        {!available && <div className="direct-preview-unavailable">Direct WebRTC 当前不可用；请检查网关状态或显式启用 Composite。</div>}
       </div>
     </div>
   );

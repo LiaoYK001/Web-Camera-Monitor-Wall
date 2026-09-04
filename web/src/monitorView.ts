@@ -16,6 +16,22 @@ export interface TelemetryOverlayConfig {
   refreshIntervalMs: number;
 }
 
+export interface AudioMeterConfig {
+  enabled: boolean;
+  position: OverlayPosition;
+  thresholdDbfs: number;
+  alertBorderEnabled: boolean;
+  alertBorderColor: string;
+  alertBorderOpacity: number;
+  alertBorderWidth: number;
+}
+
+export interface SourceDecoration {
+  telemetry: TelemetryOverlayConfig;
+  audioMeter: AudioMeterConfig;
+  promotionKinds: { audio: boolean; motion: boolean; person: boolean };
+}
+
 export interface RotationConfig {
   enabled: boolean;
   strategy: 'sequential' | 'random';
@@ -36,11 +52,12 @@ export interface LowPowerConfig {
 }
 
 export interface MonitorView {
-  schemaVersion: 3;
+  schemaVersion: 4;
   mode: 'auto' | 'manual';
   largeCount: number;
   largeSourceIds: string[];
   telemetry: TelemetryOverlayConfig;
+  sourceDecorations: Record<string, SourceDecoration>;
   rotation: RotationConfig;
   promotion: PromotionConfig;
   lowPower: LowPowerConfig;
@@ -125,12 +142,31 @@ export const defaultTelemetryOverlay = (): TelemetryOverlayConfig => ({
   refreshIntervalMs: 1000,
 });
 
+export const defaultAudioMeter = (): AudioMeterConfig => ({
+  enabled: false,
+  position: 'top-left',
+  thresholdDbfs: -12,
+  alertBorderEnabled: true,
+  alertBorderColor: '#ff2d2d',
+  alertBorderOpacity: 1,
+  alertBorderWidth: 3,
+});
+
+export function defaultSourceDecoration(): SourceDecoration {
+  return {
+    telemetry: defaultTelemetryOverlay(),
+    audioMeter: defaultAudioMeter(),
+    promotionKinds: { audio: false, motion: false, person: false },
+  };
+}
+
 export const defaultMonitorView = (): MonitorView => ({
-  schemaVersion: 3,
+  schemaVersion: 4,
   mode: 'auto',
   largeCount: 0,
   largeSourceIds: [],
   telemetry: defaultTelemetryOverlay(),
+  sourceDecorations: {},
   rotation: { enabled: false, strategy: 'sequential', intervalSeconds: 30, pinnedSourceIds: [] },
   promotion: { allowEventPromotion: false, threshold: .6, holdSeconds: 15, cooldownSeconds: 30 },
   lowPower: { enabled: false, targetFps: 2 },
@@ -139,9 +175,30 @@ export const defaultMonitorView = (): MonitorView => ({
   analytics: { showDetectionBoxes: true, showDetectionLabels: false, boxOpacity: .9, boxLineWidth: 2, showInferenceStatus: true },
 });
 
-const clamp = (value: number, minimum: number, maximum: number) => Math.min(maximum, Math.max(minimum, value));
+export function sourceDecoration(view: MonitorView, sourceId: string): SourceDecoration {
+  const fallback = defaultSourceDecoration();
+  const value = view.sourceDecorations[sourceId];
+  if (!value) return { ...fallback, telemetry: { ...view.telemetry, fields: [...view.telemetry.fields] } };
+  return {
+    telemetry: { ...view.telemetry, ...value.telemetry, fields: [...value.telemetry.fields] },
+    audioMeter: { ...fallback.audioMeter, ...value.audioMeter },
+    promotionKinds: { ...fallback.promotionKinds, ...value.promotionKinds },
+  };
+}
 
-export function normalizeMonitorView(value: Partial<MonitorView> | null | undefined, sourceCount: number): MonitorView {
+const clamp = (value: number, minimum: number, maximum: number) => Math.min(maximum, Math.max(minimum, value));
+const finite = (value: unknown, fallback: number) => {
+  const number = typeof value === 'number' ? value : Number(value);
+  return Number.isFinite(number) ? number : fallback;
+};
+const bounded = (value: unknown, fallback: number, minimum: number, maximum: number) =>
+  clamp(finite(value, fallback), minimum, maximum);
+const sourceIdentifier = (value: unknown): value is string => typeof value === 'string' && /^[A-Za-z0-9._:-]{1,128}$/.test(value);
+const telemetryFields = (value: unknown, fallback: TelemetryField[]) =>
+  [...new Set(Array.isArray(value) ? value : fallback)].filter((field): field is TelemetryField =>
+    ['fps', 'bitrate', 'codec', 'decoder'].includes(String(field)));
+
+export function normalizeMonitorView(value: Partial<MonitorView> | null | undefined, sourceCount: number, sourceIds?: string[]): MonitorView {
   const defaults = defaultMonitorView();
   const telemetry = { ...defaults.telemetry, ...(value?.telemetry ?? {}) };
   const rotation = { ...defaults.rotation, ...(value?.rotation ?? {}) };
@@ -149,28 +206,60 @@ export function normalizeMonitorView(value: Partial<MonitorView> | null | undefi
   const lowPower = { ...defaults.lowPower, ...(value?.lowPower ?? {}) };
   const panels = { ...defaults.panels, ...(value?.panels ?? {}) };
   const analytics = { ...defaults.analytics, ...(value?.analytics ?? {}) };
+  const allowedSourceIds = sourceIds ? new Set(sourceIds.filter(sourceIdentifier)) : null;
+  const sourceDecorations: Record<string, SourceDecoration> = {};
+  for (const [sourceId, raw] of Object.entries(value?.sourceDecorations ?? {})) {
+    if (!sourceIdentifier(sourceId) || (allowedSourceIds && !allowedSourceIds.has(sourceId)) || !raw || typeof raw !== 'object') continue;
+    const candidate = raw as Partial<SourceDecoration>;
+    const sourceTelemetry = { ...telemetry, ...(candidate.telemetry ?? {}) };
+    const sourceAudio = { ...defaultAudioMeter(), ...(candidate.audioMeter ?? {}) };
+    sourceDecorations[sourceId] = {
+      telemetry: {
+        ...sourceTelemetry,
+        fields: telemetryFields(sourceTelemetry.fields, defaults.telemetry.fields),
+        position: ['top-left', 'top-right', 'bottom-left', 'bottom-right', 'custom'].includes(sourceTelemetry.position) ? sourceTelemetry.position : 'bottom-left',
+        customX: bounded(sourceTelemetry.customX, defaults.telemetry.customX, 0, 1), customY: bounded(sourceTelemetry.customY, defaults.telemetry.customY, 0, 1),
+        textOpacity: bounded(sourceTelemetry.textOpacity, defaults.telemetry.textOpacity, 0, 1), backgroundOpacity: bounded(sourceTelemetry.backgroundOpacity, defaults.telemetry.backgroundOpacity, 0, 1),
+        refreshIntervalMs: bounded(Math.trunc(finite(sourceTelemetry.refreshIntervalMs, defaults.telemetry.refreshIntervalMs)), defaults.telemetry.refreshIntervalMs, 500, 10000),
+        backgroundColor: /^#[0-9a-f]{6}$/i.test(sourceTelemetry.backgroundColor) ? sourceTelemetry.backgroundColor : '#000000',
+      },
+      audioMeter: {
+        ...sourceAudio,
+        position: ['top-left', 'top-right', 'bottom-left', 'bottom-right', 'custom'].includes(sourceAudio.position) ? sourceAudio.position : 'top-left',
+        thresholdDbfs: bounded(sourceAudio.thresholdDbfs, -12, -120, 0),
+        alertBorderOpacity: bounded(sourceAudio.alertBorderOpacity, 1, 0, 1),
+        alertBorderWidth: bounded(Math.trunc(finite(sourceAudio.alertBorderWidth, 3)), 3, 1, 12),
+        alertBorderColor: /^#[0-9a-f]{6}$/i.test(sourceAudio.alertBorderColor) ? sourceAudio.alertBorderColor : '#ff2d2d',
+      },
+      promotionKinds: {
+        audio: Boolean(candidate.promotionKinds?.audio),
+        motion: Boolean(candidate.promotionKinds?.motion),
+        person: Boolean(candidate.promotionKinds?.person),
+      },
+    };
+  }
   return {
-    schemaVersion: 3,
+    schemaVersion: 4,
     mode: value?.mode === 'manual' ? 'manual' : 'auto',
     largeCount: clamp(Math.trunc(value?.largeCount ?? 0), 0, clamp(sourceCount, 0, 16)),
-    largeSourceIds: [...new Set(value?.largeSourceIds ?? [])].slice(0, 16),
+    largeSourceIds: [...new Set((Array.isArray(value?.largeSourceIds) ? value?.largeSourceIds : []).filter(sourceIdentifier))].slice(0, 16),
     telemetry: {
       ...telemetry,
-      fields: [...new Set(telemetry.fields)].filter((field): field is TelemetryField =>
-        ['fps', 'bitrate', 'codec', 'decoder'].includes(field)),
+      fields: telemetryFields(telemetry.fields, defaults.telemetry.fields),
       position: ['top-left', 'top-right', 'bottom-left', 'bottom-right', 'custom'].includes(telemetry.position)
         ? telemetry.position : 'bottom-left',
-      customX: clamp(Number(telemetry.customX), 0, 1), customY: clamp(Number(telemetry.customY), 0, 1),
-      textOpacity: clamp(Number(telemetry.textOpacity), 0, 1),
-      backgroundOpacity: clamp(Number(telemetry.backgroundOpacity), 0, 1),
-      refreshIntervalMs: clamp(Math.trunc(telemetry.refreshIntervalMs), 500, 10000),
+      customX: bounded(telemetry.customX, defaults.telemetry.customX, 0, 1), customY: bounded(telemetry.customY, defaults.telemetry.customY, 0, 1),
+      textOpacity: bounded(telemetry.textOpacity, defaults.telemetry.textOpacity, 0, 1),
+      backgroundOpacity: bounded(telemetry.backgroundOpacity, defaults.telemetry.backgroundOpacity, 0, 1),
+      refreshIntervalMs: bounded(Math.trunc(finite(telemetry.refreshIntervalMs, defaults.telemetry.refreshIntervalMs)), defaults.telemetry.refreshIntervalMs, 500, 10000),
       backgroundColor: /^#[0-9a-f]{6}$/i.test(telemetry.backgroundColor) ? telemetry.backgroundColor : '#000000',
     },
+    sourceDecorations,
     rotation: {
       ...rotation,
       strategy: rotation.strategy === 'random' ? 'random' : 'sequential',
       intervalSeconds: clamp(Math.trunc(rotation.intervalSeconds), 5, 24 * 60 * 60),
-      pinnedSourceIds: [...new Set(rotation.pinnedSourceIds)].slice(0, 16),
+      pinnedSourceIds: [...new Set((Array.isArray(rotation.pinnedSourceIds) ? rotation.pinnedSourceIds : []).filter(sourceIdentifier))].slice(0, 16),
     },
     promotion: {
       ...promotion,
@@ -180,7 +269,7 @@ export function normalizeMonitorView(value: Partial<MonitorView> | null | undefi
     },
     lowPower: { ...lowPower, targetFps: clamp(Number(lowPower.targetFps), .5, 30) },
     panels: { detailsOpen: Boolean(panels.detailsOpen), issueCenterExpanded: Boolean(panels.issueCenterExpanded) },
-    localMonitorVolume: clamp(Number(value?.localMonitorVolume ?? 1), 0, 1),
+    localMonitorVolume: bounded(value?.localMonitorVolume, 1, 0, 1),
     analytics: {
       showDetectionBoxes: Boolean(analytics.showDetectionBoxes),
       showDetectionLabels: Boolean(analytics.showDetectionLabels),
@@ -221,7 +310,7 @@ function candidatePlacement(sourceIds: string[], large: Set<string>, columns: nu
 export function applyAutomaticLayout(scene: SceneDocument, viewValue: Partial<MonitorView>): SceneDocument {
   const visible = scene.items.filter((item) => item.visible).slice(0, 16);
   if (!visible.length) return scene;
-  const view = normalizeMonitorView(viewValue, visible.length);
+  const view = normalizeMonitorView(viewValue, visible.length, scene.sources.map((source) => source.id));
   if (view.mode !== 'auto') return scene;
   const sourceIds = visible.map((item) => item.sourceId);
   const chosenLarge = view.largeSourceIds.filter((id) => sourceIds.includes(id)).slice(0, view.largeCount);

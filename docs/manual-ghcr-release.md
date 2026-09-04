@@ -6,7 +6,7 @@
 ghcr.io/liaoyk001/web-camera-monitor-wall:<version-or-digest>
 ```
 
-下文的发布命令不把任何个人用户名写死：`GHCR user` 是持有 PAT 的个人 GitHub 账号，`image owner` 是接收镜像的个人或组织 namespace，两者可以不同。示例版本使用 `v2.3`；`v3.1` 正式发布还必须先通过对应的 v3-M2 私有门禁。`v3.0` 可以通过下面明确标记的预发布流程供维护者和测试用户拉取验证，但它不是稳定版，也不会移动 `latest`。版本标签应视为不可变，发布后不要用另一提交覆盖它，需要修复时递增 patch 版本。`latest` 是可移动的稳定别名，`sha-<12位提交>` 用于精确追踪源码，生产部署最终应锁定 digest。
+下文的发布命令不把任何个人用户名写死：`GHCR user` 是持有 PAT 的个人 GitHub 账号，`image owner` 是接收镜像的个人或组织 namespace，两者可以不同。示例版本使用 `v2.3`；`v3.1` 正式发布还必须先通过对应的 v3-M2 私有门禁。`v3.0.1` 可以通过下面明确标记的预发布流程供维护者和测试用户拉取验证，但它不是稳定版，也不会移动 `latest`。版本标签应视为不可变，发布后不要用另一提交覆盖它，需要修复时递增 patch 版本。`latest` 是可移动的稳定别名，`sha-<12位提交>` 用于精确追踪源码，生产部署最终应锁定 digest。
 
 稳定发布采用两阶段提升：脚本先只推送 `sha-*` 候选，按 GitHub Release database ID 创建并校验 Draft 与递归对应源码包；当版本标签不存在时，Draft 使用一次性的 `release-draft-*` 标签，资产验证后才创建 annotated SemVer 标签并切换 Draft，最后发布 immutable Release，再从同一候选 manifest digest 提升版本标签和 `latest`。提升不会重建镜像，旧排队构建无法用另一份镜像覆盖已审查候选。仓库应启用 GitHub Immutable Releases；脚本同时拒绝覆盖同名但内容不同的 Release Asset。Draft 上传或验证失败会保留 Draft 供修复，不删除并重建同名 Release。
 
@@ -18,7 +18,7 @@ ghcr.io/liaoyk001/web-camera-monitor-wall:<version-or-digest>
 4. Docker/Buildx 必须能构建 `linux/amd64`，建议预留至少 8 GB 内存和 20 GB 空间。
 5. GHCR 登录使用 personal access token (classic)，至少授予 `write:packages`；私有依赖才需要额外 `repo`。组织启用 SSO 时还要为 token 授权 SSO。
 6. token 只通过标准输入交给 `docker login`，不要写入 `.env`、Compose、脚本参数、Dockerfile、Build Argument 或 shell history。
-7. 对本项目官方稳定镜像，必须先按 [本机 Windows 与 WSL2 发布门禁](local-platform-gates.md) 生成同一提交的两份 48 小时内收据；v3.1 还需 v3-M2 收据，`scripts/release-image-local.sh` 会 fail-closed 验证。`v3.0` 预发布是受限例外：只允许从远端同步的 `dev` 分支、只发布公开审计通过的候选，不读取或伪造平台门禁收据，并且必须显式传入 `--prerelease`。Fork 维护者可保留自己的等价私有门禁，但不能把端点、凭据或原始证据提交到公开仓库。
+7. 对本项目官方稳定镜像，必须先按 [本机 Windows 与 WSL2 发布门禁](local-platform-gates.md) 生成同一提交的两份 48 小时内收据；v3.1 还需 v3-M2 收据，`scripts/release-image-local.sh` 会 fail-closed 验证。`v3.0.1` 预发布是受限例外：只允许从远端同步的 `dev` 分支、只发布公开审计通过的候选，不读取或伪造平台门禁收据，并且必须显式传入 `--prerelease`。Fork 维护者可保留自己的等价私有门禁，但不能把端点、凭据或原始证据提交到公开仓库。
 
 每次发布先同步源码：
 
@@ -31,17 +31,17 @@ git submodule update --init --recursive
 git status --short
 ```
 
-上述稳定发布流程必须停留在 `main`。日常里程碑开发切换到 `dev`，不得把未完成的 `vX-MN` 构建标记为 `latest` 或 `vX.Y`；唯一例外是显式 `--prerelease` 的 `v3.0` 测试载体。
+上述稳定发布流程必须停留在 `main`。日常里程碑开发切换到 `dev`，不得把未完成的 `vX-MN` 构建标记为 `latest` 或 `vX.Y`；唯一例外是显式 `--prerelease` 的 `v3.0`/`v3.0.1` 测试载体。
 
-### v3.0 预发布（供 M1/M2 用户测试）
+### v3.0.1 预发布（供 M1/M2 用户测试）
 
 预发布使用与正式版相同的候选、源码包、SHA-256、SBOM 和 provenance 流程，但有三个刻意不同点：
 
-- 版本固定为 `v3.0`，必须从已推送且与 `origin/dev` 完全一致的 `dev` HEAD 执行。
-- GitHub Release 标记为 `pre-release`；镜像只提升 `v3.0` 和 `sha-<12位提交>`，绝不改动 `latest`。
-- 预发布构建内部版本默认为 `3.0.0-pre.1`、里程碑标记为 `v3-M2`，表示当前候选同时包含 M1 与 M2 实现；它不代表 v3.1 稳定门禁已经通过。
+- 版本固定为 `v3.0.1`，必须从已推送且与 `origin/dev` 完全一致的 `dev` HEAD 执行。
+- GitHub Release 标记为 `pre-release`；镜像只提升 `v3.0.1` 和 `sha-<12位提交>`，绝不改动 `latest`。
+- 预发布构建内部版本默认为 `3.0.1-pre.1`、里程碑标记为 `v3-M2`，表示当前候选同时包含 M1 与 M2 实现；它不代表 v3.1 稳定门禁已经通过。
 
-必须显式使用 `--prerelease`（PowerShell 使用 `-Prerelease`）。不带该标记时，`v3.0` 仍按稳定发布路径要求完整 v3-M1 收据，从而避免误把测试镜像当成正式版。
+必须显式使用 `--prerelease`（PowerShell 使用 `-Prerelease`）。不带该标记时，`v3.0.1` 仍按稳定发布路径要求完整 v3-M1 收据，从而避免误把测试镜像当成正式版。
 
 `git status --short` 必须没有输出。再确认远端没有同名版本：
 
@@ -125,14 +125,14 @@ docker image inspect "${Image}:${Version}" --format '{{json .RepoDigests}}'
 docker buildx imagetools inspect "${Image}:${Version}"
 ```
 
-### 2.4 发布 v3.0 预览镜像
+### 2.4 发布 v3.0.1 预览镜像
 
 在 `dev` 已推送到远端、且希望先让测试用户验证 v3-M1/v3-M2 时，使用显式预发布开关：
 
 ```powershell
 $env:GITHUB_REPOSITORY = "$ImageOwner/Web-Camera-Monitor-Wall"
 try {
-    ./scripts/release-image-local.ps1 -Image $Image -Version v3.0 -Prerelease
+    ./scripts/release-image-local.ps1 -Image $Image -Version v3.0.1 -Prerelease
     if ($LASTEXITCODE -ne 0) { throw 'Preview image publication failed' }
 }
 finally {
@@ -140,14 +140,14 @@ finally {
 }
 ```
 
-该命令不会要求或读取私有平台门禁收据，但仍会执行工作树、公开仓库审计和远端 `dev` 精确 HEAD 检查。GitHub Release 会保持 `pre-release` 状态，GHCR 只出现 `${Image}:v3.0` 与 `sha-*`；`latest` 保持原值。测试用户可按以下方式拉取：
+该命令不会要求或读取私有平台门禁收据，但仍会执行工作树、公开仓库审计和远端 `dev` 精确 HEAD 检查。GitHub Release 会保持 `pre-release` 状态，GHCR 只出现 `${Image}:v3.0.1` 与 `sha-*`；`latest` 保持原值。测试用户可按以下方式拉取：
 
 ```powershell
-docker pull "${Image}:v3.0"
-docker buildx imagetools inspect "${Image}:v3.0"
+docker pull "${Image}:v3.0.1"
+docker buildx imagetools inspect "${Image}:v3.0.1"
 ```
 
-预览反馈收集完毕后，不要在同一提交上把 `v3.0` 改写成稳定版；完成 v3-M2 全部门禁后，应按正式流程递增并发布 `v3.1`。
+预览反馈收集完毕后，不要改写 `v3.0` 或 `v3.0.1`；完成 v3-M2 全部门禁后，应按正式流程递增并发布 `v3.1`。
 
 ### 2.5 本地启动检查
 
@@ -209,15 +209,15 @@ docker image inspect "${image}:${version}" \
   --format '{{json .RepoDigests}}'
 ```
 
-WSL2 预发布只需把版本改为 `v3.0` 并传入第三个参数：
+WSL2 预发布只需把版本改为 `v3.0.1` 并传入第三个参数：
 
 ```bash
-version=v3.0
+version=v3.0.1
 ./scripts/release-image-local.sh "$image" "$version" --prerelease
 unset GH_TOKEN
 ```
 
-预发布必须在与 `origin/dev` 同步的 `dev` 分支运行；它会创建 GitHub `pre-release`，只提升 `v3.0`/`sha-*`，不会修改 `latest`。正式 `v3.1` 仍需切换到 `main` 并通过全部 v3-M2 收据。
+预发布必须在与 `origin/dev` 同步的 `dev` 分支运行；它会创建 GitHub `pre-release`，只提升 `v3.0.1`/`sha-*`，不会修改 `latest`。正式 `v3.1` 仍需切换到 `main` 并通过全部 v3-M2 收据。
 
 ## 4. Fedora Linux + Docker Engine
 
@@ -275,15 +275,15 @@ docker image inspect "${image}:${version}" \
   --format '{{json .RepoDigests}}'
 ```
 
-Fedora 上发布 v3.0 预览：
+Fedora 上发布 v3.0.1 预览：
 
 ```bash
-version=v3.0
+version=v3.0.1
 ./scripts/release-image-local.sh "$image" "$version" --prerelease
 unset GH_TOKEN
 ```
 
-预览发布不会移动 `latest`，测试用户可直接 `docker pull "${image}:v3.0"`。反馈收集完毕后，使用正式 `v3.1` 流程发布稳定版本；不要删除或重写已创建的 `v3.0` 标签。
+预览发布不会移动 `latest`，测试用户可直接 `docker pull "${image}:v3.0.1"`。反馈收集完毕后，使用正式 `v3.1` 流程发布稳定版本；不要删除或重写已创建的 `v3.0` 或 `v3.0.1` 标签。
 
 AMD 机器还应运行实际硬件检查：
 

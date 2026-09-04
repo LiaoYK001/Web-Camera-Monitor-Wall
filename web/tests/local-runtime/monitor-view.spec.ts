@@ -242,9 +242,48 @@ test('migrates MonitorView v1 safely and keeps operational details bounded', asy
       details: issue?.technicalDetails, silence: audio.amplitudeToDbfs(0), unity: audio.amplitudeToDbfs(1),
       half: audio.amplitudeToDbfs(.5) };
   });
-  expect({ ...result, half: undefined }).toEqual({ version: 3, largeCount: 4, localMonitorVolume: 1,
+  expect({ ...result, half: undefined }).toEqual({ version: 4, largeCount: 4, localMonitorVolume: 1,
     panels: { detailsOpen: false, issueCenterExpanded: false },
     details: { codec: 'h264', retryCount: 2 }, silence: -120, unity: 0,
     half: undefined });
   expect(result.half).toBeCloseTo(-6.0206, 3);
+});
+
+test('normalizes per-source decorations and removes stale overrides', async ({ page }) => {
+  await page.goto('/');
+  const result = await page.evaluate(async () => {
+    const monitor = await import('/src/monitorView.ts');
+    const normalized = monitor.normalizeMonitorView({
+      schemaVersion: 3,
+      telemetry: { enabled: true, fields: ['fps', 'not-a-field'] },
+      sourceDecorations: {
+        'camera-1': { telemetry: { enabled: true, textOpacity: 4, backgroundOpacity: -1 }, audioMeter: { enabled: true, thresholdDbfs: -999, alertBorderWidth: 99 }, promotionKinds: { audio: true } },
+        stale: { telemetry: { enabled: true } },
+      },
+    } as unknown as Partial<import('/src/monitorView.ts').MonitorView>, 2, ['camera-1']);
+    return { version: normalized.schemaVersion, ids: Object.keys(normalized.sourceDecorations),
+      telemetry: normalized.sourceDecorations['camera-1'].telemetry,
+      audio: normalized.sourceDecorations['camera-1'].audioMeter,
+      promotion: normalized.sourceDecorations['camera-1'].promotionKinds };
+  });
+  expect(result.version).toBe(4);
+  expect(result.ids).toEqual(['camera-1']);
+  expect(result.telemetry.textOpacity).toBe(1);
+  expect(result.telemetry.backgroundOpacity).toBe(0);
+  expect(result.audio.thresholdDbfs).toBe(-120);
+  expect(result.audio.alertBorderWidth).toBe(12);
+  expect(result.promotion).toEqual({ audio: true, motion: false, person: false });
+});
+
+test('persists the encrypted OBS workspace layout locally', async ({ page }) => {
+  await page.goto('/');
+  const result = await page.evaluate(async () => {
+    const runtime = await import('/src/localRuntime.ts');
+    await runtime.saveWorkspaceLayout({ schemaVersion: 1, style: 'classic', docks: [
+      { id: 'canvas', kind: 'canvas', region: 'center', order: 0, size: 55, collapsed: false },
+    ] });
+    const loaded = await runtime.loadWorkspaceLayout();
+    return loaded && { style: loaded.style, dock: loaded.docks[0] };
+  });
+  expect(result).toEqual({ style: 'classic', dock: { id: 'canvas', kind: 'canvas', region: 'center', order: 0, size: 55, collapsed: false } });
 });

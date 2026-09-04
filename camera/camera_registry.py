@@ -135,6 +135,11 @@ def connect() -> sqlite3.Connection:
     return connection
 
 
+def studio_path() -> Path:
+    configured = os.environ.get("WEBOBS_STUDIO_FILE", "").strip()
+    return Path(configured) if configured else DB_PATH.parent / "studio.json"
+
+
 def initialize() -> None:
     DB_PATH.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
     migration_backup: Path | None = None
@@ -282,6 +287,16 @@ def initialize() -> None:
               revision INTEGER NOT NULL,
               settings_json TEXT NOT NULL,
               updated_at INTEGER NOT NULL
+            );
+            CREATE TABLE IF NOT EXISTS studio_source_registry_links(
+              source_id TEXT PRIMARY KEY,
+              camera_id TEXT,
+              profile_id TEXT,
+              state TEXT NOT NULL,
+              reason TEXT NOT NULL DEFAULT '',
+              created_at INTEGER NOT NULL,
+              updated_at INTEGER NOT NULL,
+              FOREIGN KEY(camera_id,profile_id) REFERENCES stream_profiles(camera_id,id) ON DELETE SET NULL
             );
             """
         )
@@ -1161,6 +1176,10 @@ def save_camera(camera: dict, replace: bool) -> dict:
 
 
 ISSUE_TEMPLATES = {
+    "LEGACY_SOURCE_IMPORT_REQUIRED": (
+        "warning", "旧来源尚未关联设备目录", "Studio 中的旧摄像机来源没有安全映射到 Camera Registry。",
+        ["检查来源配置", "为来源配置受管 Profile 和 Secret 引用", "完成导入后重新打开监看"],
+    ),
     "AUDIO_TRACK_MISSING": (
         "warning", "要求的音频轨道不可用", "该 Profile 配置为要求音频，但最近的安全媒体信息中没有音频轨道。",
         ["检查摄像机音频是否启用", "重新探测该 Profile", "不需要音频时改为自动或禁用"],
@@ -1619,6 +1638,129 @@ def source_catalog(query: str) -> dict:
             "LIMIT ? OFFSET ?", (*arguments, limit, (page - 1) * limit)).fetchall()
         return {"schemaVersion": 2, "page": page, "limit": limit, "total": total,
                 "items": [source_catalog_document(database, row) for row in rows]}
+
+
+def _legacy_sources() -> list[dict[str, object]]:
+    path = studio_path()
+    try:
+        if not path.is_file() or path.is_symlink() or path.stat().st_size > MAX_BODY:
+            return []
+        document = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError, json.JSONDecodeError):
+        return []
+    result: list[dict[str, object]] = []
+    for scene in document.get("scenes", []) if isinstance(document, dict) else []:
+        if not isinstance(scene, dict):
+            continue
+        for source in scene.get("sources", []) if isinstance(scene.get("sources"), list) else []:
+            if not isinstance(source, dict) or source.get("kind") not in {"camera", "rtsp"}:
+                continue
+            source_id = source.get("id")
+            # Studio IDs are opaque identifiers, but still need a bounded
+            # alphabet before they are used as database keys, issue scopes or
+            # UI selectors.  Reject control characters and path-like values so
+            # a legacy document cannot smuggle unbounded data into responses.
+            if isinstance(source_id, str) and ID_RE.fullmatch(source_id):
+                result.append({"sourceId": source_id, "source": source})
+    by_id: dict[str, dict[str, object]] = {}
+    for item in result:
+        by_id[str(item["sourceId"])] = item
+    return list(by_id.values())[:256]
+
+
+def _registry_revision(database: sqlite3.Connection) -> int:
+    """Return a monotonic-enough catalog snapshot token without exposing data.
+
+    Camera revisions increment on every catalog mutation and the row count
+    changes on imports/deletes.  Combining both keeps legacy import batches
+    protected by one bounded optimistic-concurrency token while preserving the
+    existing per-camera revision contract.
+    """
+    row = database.execute("SELECT COALESCE(SUM(revision), 0) AS total, COUNT(*) AS count FROM cameras").fetchone()
+    total = int(row["total"] if row else 0); count = int(row["count"] if row else 0)
+    return total * 1_000_003 + count
+
+
+def legacy_import_status() -> dict[str, object]:
+    with connect() as database:
+        links = {row["source_id"]: row for row in database.execute("SELECT * FROM studio_source_registry_links").fetchall()}
+        output = []
+        for item in _legacy_sources():
+            source_id = str(item["sourceId"]); source = item["source"]
+            link = links.get(source_id)
+            if link:
+                state, reason = link["state"], link["reason"]
+            elif source.get("kind") == "camera" and ID_RE.fullmatch(str(source.get("cameraId", ""))) and ID_RE.fullmatch(str(source.get("profileId", ""))):
+                found = database.execute("SELECT 1 FROM stream_profiles WHERE camera_id=? AND id=?", (source["cameraId"], source["profileId"])).fetchone()
+                state, reason = ("linked", "") if found else ("needs_configuration", "camera_profile_not_found")
+            elif source.get("kind") == "rtsp" and isinstance(source.get("rtspUrl"), str):
+                endpoint = str(source.get("rtspUrl"))
+                parsed = urlsplit(endpoint)
+                if parsed.username is not None or parsed.password is not None:
+                    state, reason = "needs_configuration", "embedded_credentials_require_secret_reference"
+                else:
+                    try:
+                        safe_endpoint(endpoint, "rtsp")
+                    except (TypeError, ValueError):
+                        state, reason = "needs_configuration", "unsupported_or_invalid_source"
+                    else:
+                        state, reason = "ready_to_import", ""
+            else:
+                state, reason = "needs_configuration", "unsupported_or_invalid_source"
+            output.append({"sourceId": source_id, "state": state, "reason": reason})
+        return {"schemaVersion": 1, "baseRevision": _registry_revision(database), "items": output, "count": len(output)}
+
+
+def import_legacy_sources(payload: dict) -> dict[str, object]:
+    source_ids = payload.get("sourceIds")
+    if not isinstance(source_ids, list) or not 1 <= len(source_ids) <= 256 or \
+            any(not isinstance(value, str) or not ID_RE.fullmatch(value) for value in source_ids) or \
+            len(set(source_ids)) != len(source_ids):
+        raise ValueError("sourceIds must contain 1 to 256 valid identifiers")
+    base_revision = payload.get("baseRevision")
+    if isinstance(base_revision, bool) or not isinstance(base_revision, int) or base_revision < 0:
+        raise ValueError("baseRevision must be a non-negative integer")
+    requested = set(source_ids)
+    candidates = {str(item["sourceId"]): item["source"] for item in _legacy_sources() if str(item["sourceId"]) in requested}
+    if candidates.keys() != requested:
+        raise ValueError("one or more legacy sources were not found")
+    now = int(time.time()); result = []
+    with connect() as database:
+        database.execute("BEGIN IMMEDIATE")
+        current_revision = _registry_revision(database)
+        if current_revision != base_revision:
+            raise RevisionConflict(str(current_revision))
+        for source_id in source_ids:
+            source = candidates[source_id]
+            existing = database.execute("SELECT * FROM studio_source_registry_links WHERE source_id=?", (source_id,)).fetchone()
+            if existing and existing["state"] == "linked":
+                result.append({"sourceId": source_id, "state": "linked", "cameraId": existing["camera_id"], "profileId": existing["profile_id"]}); continue
+            camera_id = profile_id = None; state = "needs_configuration"; reason = ""
+            if source.get("kind") == "camera":
+                camera_id, profile_id = source.get("cameraId"), source.get("profileId")
+                if not isinstance(camera_id, str) or not ID_RE.fullmatch(camera_id) or not isinstance(profile_id, str) or not ID_RE.fullmatch(profile_id):
+                    reason = "camera_profile_not_found"
+                elif not database.execute("SELECT 1 FROM stream_profiles WHERE camera_id=? AND id=?", (camera_id, profile_id)).fetchone():
+                    reason = "camera_profile_not_found"
+                else: state = "linked"
+            elif source.get("kind") == "rtsp":
+                endpoint = source.get("rtspUrl", "")
+                if not isinstance(endpoint, str) or not endpoint or urlsplit(endpoint).username is not None or urlsplit(endpoint).password is not None:
+                    reason = "embedded_credentials_require_secret_reference"
+                else:
+                    endpoint = safe_endpoint(endpoint, "rtsp")
+                    camera_id = f"legacy-{hashlib.sha256(source_id.encode()).hexdigest()[:16]}"; profile_id = "main"
+                    name = str(source.get("name", source_id))[:128] or source_id
+                    database.execute("INSERT OR IGNORE INTO cameras(id,name,address,adapter,credentials_ref,hardware_decode,capabilities_json,health,created_at,updated_at,kind,enabled,group_id,tags_json,revision) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)", (camera_id, name, endpoint, "rtsp", "", "auto", "{}", "unknown", now, now, "network-stream", 1, "", "[]", 1))
+                    database.execute("INSERT OR IGNORE INTO stream_profiles(id,camera_id,name,role,endpoint,video_codec,audio_codec,width,height,fps,enabled,transport_mode,live_bitrate_cap_kbps,audio_expectation,allow_insecure_http,probe_state,last_probe_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)", (profile_id, camera_id, "Main", "main", endpoint, "unknown", "", 0, 0, 0, 1, "auto", None, "auto", 0, "legacy", 0))
+                    state = "linked"
+            scope = source_id if ID_RE.fullmatch(source_id) else f"legacy-{hashlib.sha256(source_id.encode()).hexdigest()[:16]}"
+            database.execute("INSERT INTO studio_source_registry_links(source_id,camera_id,profile_id,state,reason,created_at,updated_at) VALUES(?,?,?,?,?,?,?) ON CONFLICT(source_id) DO UPDATE SET camera_id=excluded.camera_id,profile_id=excluded.profile_id,state=excluded.state,reason=excluded.reason,updated_at=excluded.updated_at", (source_id, camera_id, profile_id, state, reason, now, now))
+            if state != "linked":
+                try: upsert_issue(database, "LEGACY_SOURCE_IMPORT_REQUIRED", "source", scope, "registry-import")
+                except ValueError: pass
+            result.append({"sourceId": source_id, "state": state, **({"cameraId": camera_id, "profileId": profile_id} if state == "linked" else {}), **({"reason": reason} if reason else {})})
+        return {"schemaVersion": 1, "baseRevision": _registry_revision(database), "items": result}
 
 
 def runtime_settings() -> dict:
@@ -2770,6 +2912,8 @@ class Handler(BaseHTTPRequestHandler):
             except ValueError as error:
                 self.respond(400, {"error": str(error)})
             return
+        if path == "/source-catalog/legacy-import":
+            self.respond(200, legacy_import_status()); return
         catalog_match = re.fullmatch(r"/source-catalog/([a-zA-Z0-9._-]{1,64})", path)
         if catalog_match:
             with connect() as database:
@@ -2915,6 +3059,8 @@ class Handler(BaseHTTPRequestHandler):
                 self.respond(200, onvif_probe(str(payload.get("address", "")), credentials_ref)); return
             if self.path == "/source-catalog/batch":
                 self.respond(200, {"items": batch_source_catalog(self.payload())}); return
+            if self.path == "/source-catalog/legacy-import":
+                self.respond(200, import_legacy_sources(self.payload())); return
             camera_probe_match = re.fullmatch(
                 r"/source-catalog/([a-zA-Z0-9._-]{1,64})/probe", self.path)
             if camera_probe_match:

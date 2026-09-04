@@ -60,6 +60,21 @@ export interface OfflineAuditEvent {
   createdAt: number;
 }
 
+export interface WorkspaceDock {
+  id: string;
+  kind: 'canvas' | 'scenes' | 'sources' | 'audio' | 'transitions' | 'properties' | 'issues';
+  region: 'left' | 'right' | 'bottom' | 'center';
+  order: number;
+  size: number;
+  collapsed: boolean;
+}
+
+export interface WorkspaceLayout {
+  schemaVersion: 1;
+  style: 'obs' | 'classic';
+  docks: WorkspaceDock[];
+}
+
 function requestResult<T>(request: IDBRequest<T>): Promise<T> {
   return new Promise((resolve, reject) => {
     request.onsuccess = () => resolve(request.result);
@@ -298,6 +313,20 @@ export async function saveMonitorView(view: MonitorView): Promise<void> {
   await put('runtimeMeta', 'monitor-view', await encrypt({ kind: 'monitor-view-v2', view }, expiresAt));
 }
 
+export async function saveWorkspaceLayout(layout: WorkspaceLayout): Promise<void> {
+  await put('runtimeMeta', 'workspace-layout', await encrypt(layout, Date.now() + LEASE_MS));
+}
+
+export async function loadWorkspaceLayout(): Promise<WorkspaceLayout | null> {
+  const record = await get<EncryptedRecord>('runtimeMeta', 'workspace-layout');
+  if (!record || record.expiresAt <= Date.now()) return null;
+  try {
+    const decoded = await decrypt<WorkspaceLayout>(record);
+    if (decoded.schemaVersion !== 1 || !['obs', 'classic'].includes(decoded.style) || !Array.isArray(decoded.docks)) return null;
+    return decoded;
+  } catch { return null; }
+}
+
 export async function loadMonitorView(): Promise<MonitorView | null> {
   const record = await get<EncryptedRecord>('runtimeMeta', 'monitor-view');
   if (!record || record.expiresAt <= Date.now()) return null;
@@ -349,6 +378,7 @@ export async function clearPrivateRuntimeState(): Promise<void> {
     for (const store of ['identity', 'snapshot', 'localScenes', 'auditQueue', 'syncQueue', 'syncState'] as const) transaction.objectStore(store).clear();
     transaction.objectStore('runtimeMeta').delete('lease');
     transaction.objectStore('runtimeMeta').delete('monitor-view');
+    transaction.objectStore('runtimeMeta').delete('workspace-layout');
     await transactionDone(transaction);
   } finally {
     db.close();

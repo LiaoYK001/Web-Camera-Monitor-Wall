@@ -12,13 +12,17 @@ Canonical milestone names use `v<major>-M<number>`. Historical validation prose 
 
 ## Current position / 当前位置
 
-**✅ `v2-M7 / v2.3.1` 已完成并作为当前稳定版本发布；🚧 v3-M1/M2 正在 `dev` 实现，尚未发布。**
+**✅ `v2-M7 / v2.3.1` 已完成并作为当前稳定版本发布；🚧 v3-M1/M2 与 v3.0.1 体验修正正在 `dev` 收口，尚未发布。**
 
-**✅ `v2-M7 / v2.3.1` is complete and published as the current stable release; 🚧 v3-M1/M2 are under implementation on `dev` and are not released yet.**
+**✅ `v2-M7 / v2.3.1` is complete and published as the current stable release; 🚧 v3-M1/M2 and the v3.0.1 experience correction slice are being finalized on `dev` and are not released yet.**
 
 `v2.3.1` is the current stable carrier for v2-M7. It preserves every v2.2 operations and True Direct boundary, adds optional scale-out while keeping `standalone` as the default one-image deployment, and does not restore native package publication. v3-M1/M2 implementation is now active on `dev`; analytics switches remain off by default until the corresponding release gates pass.
 
+The `v3.0.1` preview correction slice is implemented on `dev`: OBS/classic workspace preferences, per-source telemetry and audio threshold borders, centralized issue reporting, and safe idempotent import of legacy Studio camera/RTSP sources. Preview publication is restricted to `--prerelease`, uses build version `3.0.1-pre.1`, leaves `latest` unchanged, and accepts real endpoints only through process environment injection.
+
 `v2.3.1` 是 v2-M7 的当前稳定载体。它保留 v2.2 的全部运维能力与真直连边界，在默认单镜像 `standalone` 部署之外增加可选横向扩展，且不恢复原生包发布。下一条规划产品线为 v3 分析功能，其逐流开关仍默认关闭。
+
+本轮 `v3.0.1` 预发布修正已在 `dev` 实现：OBS 风格/经典工作区偏好、逐来源统计与音频阈值边框、问题中心归集，以及旧 Studio 摄像机/RTSP 来源的受管、幂等导入。预发布只允许使用 `--prerelease`，构建版本为 `3.0.1-pre.1`，不会移动 `latest`；真实端点仍只通过进程环境注入。
 
 The Qt/GStreamer/Android implementation and its prior source gates remain in the repository for security maintenance and research. The native workflow has no tag trigger, requires an explicit frozen-candidate confirmation, and cannot publish v2.0 artifacts / Qt/GStreamer/Android 实现及既有源码门禁继续留在仓库供安全维护与研究；原生工作流没有 Tag 触发器，要求显式冻结候选确认，且不能发布 v2.0 产物。
 

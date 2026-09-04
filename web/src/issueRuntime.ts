@@ -21,6 +21,20 @@ const emit = () => {
 const identifier = (code: string, scopeId: string, component: string) =>
   `local-${[code, scopeId, component].join('-').replace(/[^a-zA-Z0-9._-]/g, '-').slice(0, 110)}`;
 
+export const MEDIA_ISSUE_CODES = [
+  'MEDIA_DIRECT_FALLBACK', 'MEDIA_FIRST_FRAME_TIMEOUT', 'MEDIA_CODEC_INCOMPATIBLE',
+  'MEDIA_GATEWAY_ACTIVATION_FAILED', 'MEDIA_AUTHORIZATION_REJECTED', 'LOW_POWER_TARGET_UNMET',
+  'AUDIO_TRACK_MISSING', 'AUDIO_RUNTIME_UNAVAILABLE', 'ANALYTICS_RUNTIME_UNAVAILABLE',
+  'LEGACY_SOURCE_IMPORT_REQUIRED',
+] as const;
+
+export function reportMediaIssue(input: {
+  code: typeof MEDIA_ISSUE_CODES[number]; scopeId: string; component: string; summary: string;
+  explanation: string; recommendedActions?: string[]; technicalDetails?: Record<string, unknown>;
+}): void {
+  reportLocalIssue({ ...input, severity: input.code === 'MEDIA_AUTHORIZATION_REJECTED' ? 'error' : 'warning' });
+}
+
 export function reportLocalIssue(input: {
   code: string; severity?: OperationalIssue['severity']; scopeKind?: OperationalIssue['scopeKind'];
   scopeId: string; component: string; summary: string; explanation: string;

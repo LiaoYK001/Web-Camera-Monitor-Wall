@@ -1,6 +1,6 @@
 # Web Camera Monitor Wall
 
-一个基于 `libobs` 的无桌面 Web 监控墙、Gateway Direct WebRTC 网关、Local-first PWA 与 NVR 项目。当前稳定版本为 **v2.3.1**（v2-M7 载体），完成 v2-M7 扩展、生态与韧性底座；详见 [v2.3 发布说明](docs/release-notes-v2.3.md)。最终 v1 基线仍为 **v1.2.1**；请勿部署最初的 `v1.2` 镜像，详见 [v1.2.1 发布说明](docs/release-notes-v1.2.1.md)。`dev` 当前实现 v3-M1/v3-M2 浏览器本地分析与可选 Worker，尚未形成 v3.0/v3.1 稳定发布；边界见 [v3 分析运行时](docs/v3-analytics-runtime.md)。
+一个基于 `libobs` 的无桌面 Web 监控墙、Gateway Direct WebRTC 网关、Local-first PWA 与 NVR 项目。当前稳定版本为 **v2.3.1**（v2-M7 载体），完成 v2-M7 扩展、生态与韧性底座；详见 [v2.3 发布说明](docs/release-notes-v2.3.md)。最终 v1 基线仍为 **v1.2.1**；请勿部署最初的 `v1.2` 镜像，详见 [v1.2.1 发布说明](docs/release-notes-v1.2.1.md)。`dev` 当前实现 v3-M1/v3-M2 浏览器本地分析与可选 Worker，并包含待发布的 v3.0.1 监控工作台修正版；它尚未形成 v3.1 稳定发布。边界见 [v3 分析运行时](docs/v3-analytics-runtime.md)。
 
 ```text
 RTSP camera -> libobs ffmpeg_source -> OBS scene -> H.264/AAC MP4
