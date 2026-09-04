@@ -13,6 +13,12 @@ RTSP camera -> libobs ffmpeg_source -> OBS scene -> H.264/AAC MP4
 
 针对 `dev` 的本地快速启动、Vite 热更新、调试、测试和本地 hotfix，请使用 [Local `dev` loop](docs/local-dev.md) 及 `scripts/dev-local.ps1` / `scripts/dev-local.sh`；它们只使用本地 Docker 镜像，不会发布 GHCR。
 
+本地 `5173` 开发入口默认不需要用户名或密码：基础 Compose 仅绑定回环地址并关闭
+集群/RBAC 认证。只有显式使用认证/生产 overlay 或后续明确要求时才显示登录页；
+Vite 代理或后端重启时页面会显示“本地服务暂不可用”，不会误判为需要密码。配置不按
+用户名区分，工作区全局“配置”菜单可选择本机加密档案；“系统设置”支持保存、备份、
+导出 JSON、导入和恢复。导出包严格脱敏，不含凭据、Token、Secret、端点或文件路径。
+
 `WEBOBS_SCENE_FILE` 默认指向 `/config/webobs/scene.json`。空配置首次启动会创建空 Scene/Camera Registry，直接在 WebUI 的“设备管理”中添加设备；`WEBOBS_RTSP_URL` 只保留为一次性兼容 bootstrap，不再是部署必填项。Scene v5 只保存 Camera/Profile ID，凭据通过未提交 Git 的 Secret 引用解析。
 
 ## 运行技术基线

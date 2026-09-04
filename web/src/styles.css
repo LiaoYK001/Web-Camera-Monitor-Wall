@@ -1760,9 +1760,33 @@ select:focus-visible,
 .workspace-frame { min-width: 0; }
 .workspace-global-bar { position: sticky; top: 0; z-index: 25; min-height: 58px; padding: 10px 20px; display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid var(--line); background: rgba(9, 15, 23, .94); backdrop-filter: blur(14px); }
 .workspace-global-bar > div { display: flex; align-items: center; gap: 12px; }
+.config-profile-selector { display: flex; align-items: center; gap: 5px; color: var(--muted); font-size: 10px; }
+.config-profile-selector select { max-width: 150px; padding: 5px 7px; border: 1px solid var(--line); border-radius: 5px; color: var(--text); background: #0a0f17; font-size: 10px; }
+.config-profile-manage { padding: 5px 7px; border: 1px solid var(--line); border-radius: 5px; color: var(--muted); background: transparent; font-size: 10px; }
+.config-profile-manage:hover, .config-profile-manage:focus-visible { color: var(--accent); border-color: var(--accent); }
 .workspace-style-switch, .workspace-dock-menu { display:flex; align-items:center; gap:4px; }.workspace-style-switch button, .workspace-dock-menu summary { border:1px solid var(--line); background:transparent; color:var(--muted); border-radius:5px; padding:4px 7px; font-size:11px; cursor:pointer; }.workspace-style-switch button.active { color:var(--accent); border-color:var(--accent); }.workspace-dock-menu { position:relative; }.workspace-dock-menu summary { list-style:none; }.workspace-dock-menu summary::-webkit-details-marker { display:none; }.workspace-dock-menu > div { position:absolute; right:0; top:28px; z-index:100; display:grid; min-width:260px; padding:7px; border:1px solid var(--line); border-radius:8px; background:#0a111b; box-shadow:0 8px 28px rgba(0,0,0,.35); }.workspace-dock-item { display:grid; grid-template-columns:1fr 66px 70px; align-items:center; gap:5px; padding:3px; cursor:grab; }.workspace-dock-item button { border:0; background:transparent; color:var(--text); padding:6px 8px; text-align:left; font-size:11px; cursor:pointer; }.workspace-dock-item button:hover { background:rgba(48,165,255,.12); }.workspace-dock-item select { min-width:0; padding:4px; font-size:10px; }.workspace-dock-item input[type=range] { width:100%; }.sr-only { position:absolute; width:1px; height:1px; padding:0; margin:-1px; overflow:hidden; clip:rect(0,0,0,0); white-space:nowrap; border:0; }
 .workspace-content { min-width: 0; }
 .workspace-mobile-navigation { display: none; }
+.config-profile-panel { display: grid; gap: 14px; margin: 0 0 20px; padding: 18px; border: 1px solid var(--line); border-radius: 12px; background: var(--panel); }
+.config-profile-panel > header { display: flex; align-items: start; justify-content: space-between; gap: 14px; }
+.config-profile-panel h2 { margin: 0 0 5px; font-size: 16px; }
+.config-profile-panel p { margin: 0; color: var(--muted); line-height: 1.5; }
+.config-profile-count { color: var(--accent); font: 12px ui-monospace, monospace; }
+.config-profile-controls { display: flex; flex-wrap: wrap; align-items: end; gap: 8px; }
+.config-profile-controls label { display: grid; gap: 5px; color: var(--muted); font-size: 10px; }
+.config-profile-controls label:first-child { min-width: 220px; }
+.config-profile-controls input, .config-profile-controls select { min-height: 32px; padding: 6px 8px; border: 1px solid var(--line); border-radius: 5px; color: var(--text); background: #090d14; }
+.config-profile-controls button { min-height: 32px; padding: 6px 9px; border: 1px solid var(--line); border-radius: 5px; color: var(--text); background: #151b25; }
+.config-profile-controls button:hover, .config-profile-controls button:focus-visible { border-color: var(--accent); }
+.config-profile-controls button:disabled { cursor: not-allowed; opacity: .45; }
+.config-profile-notice { color: var(--accent) !important; font-size: 12px; }
+.config-profile-safety { padding: 10px; border-left: 2px solid var(--accent); background: rgba(185,255,79,.04); font-size: 11px; }
+.config-backups { display: grid; gap: 7px; color: var(--muted); font-size: 11px; }
+.config-backups summary { cursor: pointer; color: var(--text); }
+.config-backups > div { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 8px 10px; border: 1px solid var(--line-soft); background: var(--panel-raised); }
+.config-backups > div span { display: grid; gap: 3px; }
+.config-backups small { color: var(--muted); }
+.config-backups button { padding: 4px 8px; border: 1px solid var(--line); color: var(--accent); background: transparent; }
 .page-panel { padding: 24px; min-height: calc(100vh - 58px); }
 .page-heading, .monitor-heading { display: flex; justify-content: space-between; align-items: flex-start; gap: 20px; margin-bottom: 20px; }
 .page-heading h1, .monitor-heading h1 { margin: 4px 0; font-size: clamp(24px, 3vw, 38px); }

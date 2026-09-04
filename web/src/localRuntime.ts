@@ -75,6 +75,42 @@ export interface WorkspaceLayout {
   docks: WorkspaceDock[];
 }
 
+/**
+ * A browser-local configuration profile.  Profiles deliberately contain the
+ * redacted Scene v5 projection only: camera credentials, endpoints and file
+ * paths are never portable configuration.
+ */
+export interface LocalConfigProfile {
+  schemaVersion: 1;
+  id: string;
+  name: string;
+  createdAt: number;
+  updatedAt: number;
+  studio: StudioDocument;
+  workspaceLayout?: WorkspaceLayout;
+}
+
+export interface LocalConfigBackup {
+  schemaVersion: 1;
+  id: string;
+  name: string;
+  createdAt: number;
+  profile: LocalConfigProfile;
+}
+
+export interface LocalConfigBundle {
+  format: 'webobs-local-config-v1';
+  schemaVersion: 1;
+  exportedAt: number;
+  profile: LocalConfigProfile;
+}
+
+const LOCAL_CONFIG_EXPIRY = Date.now() + 100 * 365 * 24 * 60 * 60 * 1000;
+const MAX_LOCAL_CONFIG_PROFILES = 32;
+const MAX_LOCAL_CONFIG_BACKUPS = 20;
+const MAX_LOCAL_CONFIG_NAME = 64;
+const MAX_LOCAL_CONFIG_BUNDLE_BYTES = 2 * 1024 * 1024;
+
 function requestResult<T>(request: IDBRequest<T>): Promise<T> {
   return new Promise((resolve, reject) => {
     request.onsuccess = () => resolve(request.result);
@@ -325,6 +361,196 @@ export async function loadWorkspaceLayout(): Promise<WorkspaceLayout | null> {
     if (decoded.schemaVersion !== 1 || !['obs', 'classic'].includes(decoded.style) || !Array.isArray(decoded.docks)) return null;
     return decoded;
   } catch { return null; }
+}
+
+function localId(prefix: string): string {
+  const uuid = typeof crypto.randomUUID === 'function'
+    ? crypto.randomUUID().replace(/-/g, '')
+    : Array.from(crypto.getRandomValues(new Uint32Array(4)), (part) => part.toString(16).padStart(8, '0')).join('');
+  return `${prefix}-${uuid.slice(0, 32)}`;
+}
+
+function validLocalConfigName(value: unknown): value is string {
+  return typeof value === 'string' && value.trim().length >= 1 && value.trim().length <= MAX_LOCAL_CONFIG_NAME &&
+    !/[\u0000-\u001f\u007f]/.test(value);
+}
+
+function validLocalConfigId(value: unknown): value is string {
+  return typeof value === 'string' && /^[a-z0-9][a-z0-9._-]{0,63}$/i.test(value);
+}
+
+function validateProfileStudio(studio: unknown): studio is StudioDocument {
+  if (!studio || typeof studio !== 'object') return false;
+  const value = studio as Partial<StudioDocument>;
+  if (value.schemaVersion !== 1 || !Array.isArray(value.scenes) || value.scenes.length > 64) return false;
+  for (const scene of value.scenes) {
+    if (!scene || typeof scene !== 'object' || scene.schemaVersion !== 5 ||
+        typeof scene.id !== 'string' || !/^[A-Za-z0-9._-]{1,64}$/.test(scene.id) ||
+        !Array.isArray(scene.sources) || scene.sources.length > 256 ||
+        !Array.isArray(scene.items) || scene.items.length > 512) return false;
+    if (scene.sources.some((source) => !source || typeof source !== 'object' || typeof source.id !== 'string' ||
+      !/^[A-Za-z0-9._-]{1,64}$/.test(source.id))) return false;
+  }
+  return true;
+}
+
+function validateLocalConfigProfile(value: unknown): value is LocalConfigProfile {
+  if (!value || typeof value !== 'object') return false;
+  const profile = value as Partial<LocalConfigProfile>;
+  return profile.schemaVersion === 1 && validLocalConfigId(profile.id) && validLocalConfigName(profile.name) &&
+    typeof profile.createdAt === 'number' && Number.isFinite(profile.createdAt) &&
+    typeof profile.updatedAt === 'number' && Number.isFinite(profile.updatedAt) &&
+    validateProfileStudio(profile.studio) && (!profile.workspaceLayout || validateWorkspaceLayout(profile.workspaceLayout));
+}
+
+function validateWorkspaceLayout(value: unknown): value is WorkspaceLayout {
+  if (!value || typeof value !== 'object') return false;
+  const layout = value as Partial<WorkspaceLayout>;
+  return layout.schemaVersion === 1 && (layout.style === 'obs' || layout.style === 'classic') && Array.isArray(layout.docks) &&
+    layout.docks.length <= 16 && layout.docks.every((dock) => dock && typeof dock === 'object' &&
+      typeof dock.id === 'string' && /^[A-Za-z0-9._-]{1,64}$/.test(dock.id) &&
+      ['canvas', 'scenes', 'sources', 'audio', 'transitions', 'properties', 'issues'].includes(dock.kind) &&
+      ['left', 'right', 'bottom', 'center'].includes(dock.region) && Number.isInteger(dock.order) &&
+      Number.isFinite(dock.size) && dock.size >= 1 && dock.size <= 100 && typeof dock.collapsed === 'boolean');
+}
+
+async function loadEncryptedList<T>(key: string): Promise<T[]> {
+  const record = await get<EncryptedRecord>('runtimeMeta', key);
+  if (!record || record.expiresAt <= Date.now()) return [];
+  try {
+    const decoded = await decrypt<unknown>(record);
+    return Array.isArray(decoded) ? decoded as T[] : [];
+  } catch { return []; }
+}
+
+async function deleteRuntimeMeta(key: string): Promise<void> {
+  const db = await database();
+  try {
+    const transaction = db.transaction('runtimeMeta', 'readwrite');
+    transaction.objectStore('runtimeMeta').delete(key);
+    await transactionDone(transaction);
+  } finally { db.close(); }
+}
+
+function announceConfigProfiles(): void {
+  window.dispatchEvent(new CustomEvent('webobs:config-profile-updated'));
+}
+
+export async function listLocalConfigProfiles(): Promise<LocalConfigProfile[]> {
+  const profiles = await loadEncryptedList<LocalConfigProfile>('config-profiles');
+  return profiles.filter(validateLocalConfigProfile).sort((left, right) => right.updatedAt - left.updatedAt);
+}
+
+export async function hasLocalConfigProfiles(): Promise<boolean> {
+  return (await listLocalConfigProfiles()).length > 0;
+}
+
+export async function saveLocalConfigProfile(name: string, studio: StudioDocument, id?: string, workspaceLayout?: WorkspaceLayout): Promise<LocalConfigProfile> {
+  const trimmed = name.trim();
+  if (!validLocalConfigName(trimmed) || !validateProfileStudio(studio)) throw new Error('本地配置名称或场景格式无效');
+  const safeStudio = redactedStudio(studio);
+  assertRedacted(safeStudio);
+  const safeLayout = workspaceLayout ?? await loadWorkspaceLayout();
+  if (safeLayout && !validateWorkspaceLayout(safeLayout)) throw new Error('本机工作区布局格式无效');
+  const profiles = await listLocalConfigProfiles();
+  const existing = id ? profiles.find((profile) => profile.id === id) : undefined;
+  const profileId = id ?? localId('profile');
+  if (!validLocalConfigId(profileId)) throw new Error('本地配置 ID 无效');
+  if (!existing && profiles.length >= MAX_LOCAL_CONFIG_PROFILES) throw new Error('本地配置已达到 32 个上限');
+  const now = Date.now();
+  const profile: LocalConfigProfile = {
+    schemaVersion: 1, id: profileId, name: trimmed,
+    createdAt: existing?.createdAt ?? now, updatedAt: now,
+    studio: safeStudio,
+    ...(safeLayout ? { workspaceLayout: structuredClone(safeLayout) } : {}),
+  };
+  const next = profiles.filter((candidate) => candidate.id !== profileId);
+  next.push(profile);
+  await put('runtimeMeta', 'config-profiles', await encrypt(next, LOCAL_CONFIG_EXPIRY));
+  announceConfigProfiles();
+  return profile;
+}
+
+export async function deleteLocalConfigProfile(id: string): Promise<void> {
+  if (!validLocalConfigId(id)) throw new Error('本地配置 ID 无效');
+  const profiles = await listLocalConfigProfiles();
+  const next = profiles.filter((profile) => profile.id !== id);
+  if (next.length === profiles.length) return;
+  await put('runtimeMeta', 'config-profiles', await encrypt(next, LOCAL_CONFIG_EXPIRY));
+  const active = await get<EncryptedRecord>('runtimeMeta', 'active-config-profile');
+  if (active) {
+    try {
+      const selected = await decrypt<{ id: string }>(active);
+      if (selected.id === id) await deleteRuntimeMeta('active-config-profile');
+    } catch { await deleteRuntimeMeta('active-config-profile'); }
+  }
+  announceConfigProfiles();
+}
+
+export async function setActiveLocalConfigProfile(id: string | null): Promise<void> {
+  if (id === null) {
+    await deleteRuntimeMeta('active-config-profile');
+  } else {
+    const profile = (await listLocalConfigProfiles()).find((candidate) => candidate.id === id);
+    if (!profile) throw new Error('本地配置不存在');
+    await put('runtimeMeta', 'active-config-profile', await encrypt({ id }, LOCAL_CONFIG_EXPIRY));
+  }
+  window.dispatchEvent(new CustomEvent('webobs:config-profile-selected', { detail: id }));
+}
+
+export async function loadActiveLocalConfigProfile(): Promise<LocalConfigProfile | null> {
+  const record = await get<EncryptedRecord>('runtimeMeta', 'active-config-profile');
+  if (!record || record.expiresAt <= Date.now()) return null;
+  try {
+    const selected = await decrypt<{ id: string }>(record);
+    return (await listLocalConfigProfiles()).find((profile) => profile.id === selected.id) ?? null;
+  } catch { return null; }
+}
+
+export async function listLocalConfigBackups(): Promise<LocalConfigBackup[]> {
+  const backups = await loadEncryptedList<LocalConfigBackup>('config-backups');
+  return backups.filter((backup) => backup.schemaVersion === 1 && validLocalConfigId(backup.id) &&
+    validLocalConfigName(backup.name) && validateLocalConfigProfile(backup.profile))
+    .sort((left, right) => right.createdAt - left.createdAt);
+}
+
+export async function createLocalConfigBackup(name: string, studio: StudioDocument): Promise<LocalConfigBackup> {
+  const profile = await saveLocalConfigProfile(name, studio);
+  const backups = await listLocalConfigBackups();
+  const backup: LocalConfigBackup = { schemaVersion: 1, id: localId('backup'), name: profile.name, createdAt: Date.now(), profile };
+  const next = [backup, ...backups].slice(0, MAX_LOCAL_CONFIG_BACKUPS);
+  await put('runtimeMeta', 'config-backups', await encrypt(next, LOCAL_CONFIG_EXPIRY));
+  announceConfigProfiles();
+  return backup;
+}
+
+export async function restoreLocalConfigBackup(id: string): Promise<LocalConfigProfile | null> {
+  const backup = (await listLocalConfigBackups()).find((candidate) => candidate.id === id);
+  if (!backup) return null;
+  const profile = await saveLocalConfigProfile(backup.profile.name, backup.profile.studio, backup.profile.id, backup.profile.workspaceLayout);
+  await setActiveLocalConfigProfile(profile.id);
+  return profile;
+}
+
+export function makeLocalConfigBundle(profile: LocalConfigProfile): LocalConfigBundle {
+  if (!validateLocalConfigProfile(profile)) throw new Error('本地配置不可导出');
+  const bundle: LocalConfigBundle = { format: 'webobs-local-config-v1', schemaVersion: 1, exportedAt: Date.now(), profile };
+  const encoded = new TextEncoder().encode(JSON.stringify(bundle));
+  if (encoded.byteLength > MAX_LOCAL_CONFIG_BUNDLE_BYTES) throw new Error('配置导出文件超过 2 MiB 限制');
+  assertRedacted(bundle);
+  return bundle;
+}
+
+export async function importLocalConfigBundle(value: unknown): Promise<LocalConfigProfile> {
+  if (!value || typeof value !== 'object') throw new Error('配置导入格式无效');
+  const bundle = value as Partial<LocalConfigBundle>;
+  if (bundle.format !== 'webobs-local-config-v1' || bundle.schemaVersion !== 1 || !validateLocalConfigProfile(bundle.profile))
+    throw new Error('配置导入格式或版本不受支持');
+  assertRedacted(bundle);
+  const profiles = await listLocalConfigProfiles();
+  const requestedId = bundle.profile.id;
+  const id = profiles.some((profile) => profile.id === requestedId) ? localId('profile') : requestedId;
+  return saveLocalConfigProfile(bundle.profile.name, bundle.profile.studio, id, bundle.profile.workspaceLayout);
 }
 
 export async function loadMonitorView(): Promise<MonitorView | null> {

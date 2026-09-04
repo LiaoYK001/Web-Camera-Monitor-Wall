@@ -6,6 +6,34 @@ This roadmap describes milestone order and acceptance gates, not promised releas
 
 本路线图描述里程碑顺序和验收门禁，不承诺具体发布日期。优先级可能根据验证结果和维护能力调整。
 
+## Local development access and configuration policy / 本地开发访问与配置策略
+
+本项目当前及后续默认的本地开发入口（`http://127.0.0.1:5173` 的 Vite
+前端与回环 Docker API）**不要求用户名或密码**。基础 `compose.yaml` 固定关闭
+集群/RBAC 认证；只有维护者明确选择认证/生产 overlay、启用 HTTPS 远程部署或
+后续需求明确要求时，才启用登录 Session/Basic 兼容。网络故障、Vite 代理暂时
+不可用或后端重启不得被误报为“需要密码”，页面应显示服务不可用并允许重试。
+
+用户配置不按登录用户名分叉。Local-first PWA 使用浏览器本机加密的配置档案，
+用户可以在全局“配置”菜单选择、保存多个档案，并在“系统设置”中创建有界备份、
+导出 JSON、导入和恢复。档案只保存脱敏的 Scene v5、布局和本机偏好；导出/备份
+永远不包含密码、Token、Secret、RTSP/HTTP 端点、userinfo、文件路径或客户端地址。
+服务器生产配置仍由管理员 API/SQLite 管理，不会因为选择本机档案而被覆盖。
+
+The default local development entry (`http://127.0.0.1:5173` Vite frontend plus
+the loopback Docker API) **does not require a username or password**. The base
+`compose.yaml` keeps cluster/RBAC authentication disabled. Login Session/Basic
+compatibility is enabled only by an explicit authentication/production overlay,
+remote HTTPS deployment, or a later requirement. A proxy outage or backend
+restart must show an unavailable/retry state rather than a password form.
+
+Configuration is selected by browser-local profiles, not split by login user.
+Profiles are encrypted locally and can be selected from the global Config menu;
+Settings provides bounded backup, JSON export, import, and restore. Bundles contain
+only redacted Scene v5/layout/local preferences and never credentials, tokens,
+secrets, endpoints, userinfo, paths, or client addresses. Selecting a profile never
+overwrites the server configuration.
+
 Canonical milestone names use `v<major>-M<number>`. Historical validation prose may retain its original short `M<number>` label so prior evidence remains traceable; the mapping is defined in [docs/versioning-and-branches.md](docs/versioning-and-branches.md).
 
 规范里程碑名称使用 `v<主版本>-M<序号>`。历史验收段落可保留当时的短名称 `M<序号>` 以维持证据可追溯性；映射见 [docs/versioning-and-branches.md](docs/versioning-and-branches.md)。

@@ -9,6 +9,24 @@ with Docker Compose, and optionally run the Vite frontend with hot reload.
 前端可选用 Vite 热更新。基础 Compose 只绑定主机回环地址并关闭集群
 RBAC 认证，因此本地开发不会要求用户名和密码；不要把该基础配置暴露到局域网。
 
+如果浏览器曾经停留在旧的登录页面，刷新 `5173` 后会重新探测
+`/api/v1/auth/session`。探测失败只显示“本地服务暂不可用”，不会把网络错误当成
+需要密码；确认 `docker compose ps` 中的服务健康后点击重试即可。若页面仍显示登录
+表单，检查是否误用了 `compose.m6-auth.yaml` 或生产 overlay；它们是显式开启认证的
+测试/远程部署配置，基础本地开发不使用它们。
+
+### 本机配置档案与备份
+
+全局栏的“配置”选择器用于切换浏览器本机档案，不按用户名区分配置。进入“系统设置”
+可以保存当前场景、立即创建本机备份、导出 JSON、导入其他浏览器导出的档案并恢复历史
+备份。档案和备份使用本机 WebCrypto 加密的 IndexedDB 保存，最多 32 个档案和 20 个
+备份；选择档案只改变当前浏览器的 Scene/布局，不会覆盖服务器场景。
+
+导出的 JSON 是可迁移但严格脱敏的配置包，仅含 Scene v5 中可安全携带的 Camera ID、
+文字/色块/嵌套场景、布局和本机偏好。RTSP/HTTP 地址、userinfo、密码、Token、Secret
+引用、文件路径和客户端地址均被排除；带有这些字段的导入包会被拒绝。真实摄像机
+端点和凭据仍只能通过受信的设备目录与 Secret 配置管理。
+
 ## Windows PowerShell
 
 From the repository root:

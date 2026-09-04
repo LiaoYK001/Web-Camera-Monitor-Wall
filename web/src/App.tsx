@@ -21,7 +21,7 @@ import AudioWorkspace from './AudioWorkspace';
 import SettingsWorkspace from './SettingsWorkspace';
 import ClusterAdmin from './ClusterAdmin';
 import AnalyticsWorkspace from './AnalyticsWorkspace';
-import { loadOfflineStudio, queueOfflineAudit, saveLocalStudio, saveStudioSnapshot } from './localRuntime';
+import { loadActiveLocalConfigProfile, loadOfflineStudio, queueOfflineAudit, saveLocalConfigProfile, saveLocalStudio, saveStudioSnapshot, type LocalConfigProfile } from './localRuntime';
 import { queueStudioSync, synchronizeBrowserState } from './syncRuntime';
 import type { AudioMonitoring, CameraRecord, FilterKind, PlaybackMode, ScaleMode, SceneDocument, SceneFilter, SceneItem, SceneSource, StudioCapabilities, StudioDocument, Transport } from './types';
 
@@ -120,6 +120,7 @@ export default function App() {
   const [draft, setDraft] = useState<SceneDocument | null>(null);
   const [studioBaseline, setStudioBaseline] = useState<StudioDocument | null>(null);
   const [studioDraft, setStudioDraft] = useState<StudioDocument | null>(null);
+  const [activeLocalProfile, setActiveLocalProfile] = useState<LocalConfigProfile | null>(null);
   const [studioCapabilities, setStudioCapabilities] = useState<StudioCapabilities | null>(null);
   const [programScene, setProgramScene] = useState<SceneDocument | null>(null);
   const [selectedSceneId, setSelectedSceneId] = useState<string | null>(null);
@@ -178,6 +179,7 @@ export default function App() {
     setDraft(cloneScene(scene));
     setStudioBaseline(studio);
     setStudioDraft(JSON.parse(JSON.stringify(studio)) as StudioDocument);
+    setProgramScene(null);
     setSelectedSceneId(scene.id);
     setConflict('');
     setSelectedSourceId((current) =>
@@ -187,6 +189,13 @@ export default function App() {
     );
     setSelectedSourceIds(scene.sources[0] ? [scene.sources[0].id] : []);
   }, []);
+
+  const applyLocalProfile = useCallback((profile: LocalConfigProfile) => {
+    applyRemoteStudio(profile.studio);
+    setActiveLocalProfile(profile);
+    setNotice(`已载入本机配置“${profile.name}”；服务器场景不会被修改。`);
+    setLoadingError('');
+  }, [applyRemoteStudio]);
 
   const requestWakeLock = useCallback(async () => {
     if (!document.fullscreenElement || document.visibilityState !== 'visible') return;
@@ -241,9 +250,18 @@ export default function App() {
     setLoadingError('');
     try {
       const studio = await fetchStudio();
-      applyRemoteStudio(studio);
+      const active = await loadActiveLocalConfigProfile().catch(() => null);
+      if (active) applyLocalProfile(active);
+      else { setActiveLocalProfile(null); applyRemoteStudio(studio); }
       void saveStudioSnapshot(studio).catch(() => undefined);
     } catch (error) {
+      const active = await loadActiveLocalConfigProfile().catch(() => null);
+      if (active) {
+        applyLocalProfile(active);
+        setConnection('offline');
+        setNotice(`Docker 不可达，使用本机配置“${active.name}”；服务器场景不会被修改。`);
+        return;
+      }
       const offline = await loadOfflineStudio().catch(() => null);
       if (offline) {
         applyRemoteStudio(offline.studio);
@@ -251,7 +269,7 @@ export default function App() {
         setNotice(`已载入本机离线场景；授权有效至 ${new Date(offline.expiresAt).toLocaleString()}。`);
       } else setLoadingError(error instanceof Error ? error.message : '无法读取场景');
     }
-  }, [applyRemoteStudio]);
+  }, [applyLocalProfile, applyRemoteStudio]);
 
   useEffect(() => {
     if (!studioBaseline) return undefined;
@@ -262,21 +280,17 @@ export default function App() {
     return () => controller.abort();
   }, [studioBaseline]);
 
+  useEffect(() => { void reload(); }, [reload]);
+
   useEffect(() => {
-    const controller = new AbortController();
-    fetchStudio(controller.signal)
-      .then((studio) => { applyRemoteStudio(studio); void saveStudioSnapshot(studio).catch(() => undefined); })
-      .catch(async (error: unknown) => {
-        if (controller.signal.aborted) return;
-        const offline = await loadOfflineStudio().catch(() => null);
-        if (offline) {
-          applyRemoteStudio(offline.studio);
-          setConnection('offline');
-          setNotice(`Docker 不可达，使用本机离线场景至 ${new Date(offline.expiresAt).toLocaleString()}。`);
-        } else setLoadingError(error instanceof Error ? error.message : '无法读取场景');
-      });
-    return () => controller.abort();
-  }, [applyRemoteStudio]);
+    const profileSelected = (event: Event) => {
+      const id = (event as CustomEvent<string | null>).detail;
+      if (!id) { void reload(); return; }
+      void loadActiveLocalConfigProfile().then((profile) => { if (profile) applyLocalProfile(profile); }).catch(() => undefined);
+    };
+    window.addEventListener('webobs:config-profile-selected', profileSelected);
+    return () => window.removeEventListener('webobs:config-profile-selected', profileSelected);
+  }, [applyLocalProfile, reload]);
 
   useEffect(
     () => connectSceneEvents(
@@ -526,6 +540,13 @@ export default function App() {
     setSaving(true);
     setNotice('');
     try {
+      if (activeLocalProfile) {
+        const saved = await saveLocalConfigProfile(activeLocalProfile.name, studioDraft, activeLocalProfile.id);
+        setActiveLocalProfile(saved);
+        applyRemoteStudio(saved.studio);
+        setNotice(`本机配置“${saved.name}”已保存；服务器场景未修改。`);
+        return;
+      }
       if (connection === 'offline') {
         await saveLocalStudio(studioDraft);
         await queueStudioSync(studioDraft);
@@ -745,7 +766,7 @@ export default function App() {
     return <WorkspaceShell area={productArea} onNavigate={navigate} connection={connection}><ClientsPanel onBack={() => navigate('settings')} /></WorkspaceShell>;
   }
   if (productArea === 'settings') {
-    return <WorkspaceShell area={productArea} onNavigate={navigate} connection={connection}><SettingsWorkspace /><SystemStatus onBack={() => navigate('monitor')} /></WorkspaceShell>;
+    return <WorkspaceShell area={productArea} onNavigate={navigate} connection={connection}><SettingsWorkspace studio={studioDraft} onProfileSelected={applyLocalProfile} /><SystemStatus onBack={() => navigate('monitor')} /></WorkspaceShell>;
   }
   if (productArea === 'events') {
     return <WorkspaceShell area={productArea} onNavigate={navigate} connection={connection}><EventsPanel onBack={() => navigate('monitor')} /></WorkspaceShell>;
