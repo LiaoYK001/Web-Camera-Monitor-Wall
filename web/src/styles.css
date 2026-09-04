@@ -95,6 +95,9 @@
 .enrollment-card header span, .enrollment-card footer span, .client-list article span { color: var(--muted); font-size: 12px; }
 .enrollment-card header label, .credential-mode { display: grid; gap: 6px; }
 .enrollment-card header input { width: 150px; font-size: 20px; letter-spacing: .2em; }
+.enrollment-target { display: grid; gap: 6px; max-width: 620px; color: var(--muted); font-size: 12px; }
+.enrollment-target select { min-height: 36px; padding: 6px 9px; border: 1px solid var(--line); border-radius: 6px; color: var(--text); background: #0b1018; }
+.enrollment-target small { color: var(--muted); line-height: 1.45; }
 .grant-list { display: grid; gap: 10px; }
 .grant-camera { padding: 12px; border: 1px solid var(--line); opacity: .7; }
 .grant-camera.enabled { border-color: rgba(185,255,79,.4); opacity: 1; }

@@ -83,6 +83,7 @@ The signature covers deterministic CBOR containing purpose `webobs-client-enroll
 ```json
 {
   "pairingCode": "12345678",
+  "targetClientId": "<optional-existing-active-client-id>",
   "cameraGrants": [{
     "cameraId": "front-door",
     "profileIds": ["sub"],
@@ -91,6 +92,10 @@ The signature covers deterministic CBOR containing purpose `webobs-client-enroll
   }]
 }
 ```
+
+`targetClientId` is optional and must be an active client with the same platform as the pending enrollment. When omitted, approval creates a new paired device. When supplied, approval explicitly updates that existing device in one transaction: the stable client ID is preserved, signing/encryption keys and device token are replaced, Camera/Profile grants are replaced, active media plans are cleared, and prior enrollment tokens for that client are marked `superseded`. The old browser session/token is therefore invalid immediately after a successful update. Clients carrying managed dedicated credentials must be revoked before replacement so that a dedicated camera account is never orphaned. The API response includes `updated: true|false`.
+
+`targetClientId` 为可选字段，必须指向与待批准配对相同平台且仍为 active 的客户端。省略时创建新的已配对设备；提供时才会显式更新指定设备，并在一个事务中保留稳定客户端 ID、替换签名/加密密钥与设备令牌、替换 Camera/Profile 授权、清理活动媒体计划，同时将该设备之前的配对令牌标记为 `superseded`。更新成功后旧浏览器会话/令牌立即失效。包含托管专用摄像机凭据的客户端必须先撤销再替换，避免遗留专用账号。响应中的 `updated` 字段表示本次是更新还是新建。
 
 Permissions are `view`, `ptz`, `talk`, `snapshot`, and `record-local`; `view` is mandatory. `web` and `chromium-iwa` enrollments must use `credentialMode=none`; their grants never contain camera credentials. Frozen native platforms retain `existing|dedicated`: dedicated mode requires verified ONVIF user management and a distinct Secret reference.
 

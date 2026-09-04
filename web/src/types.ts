@@ -306,7 +306,7 @@ export interface OnvifPreset { token: string; name: string; }
 export interface OnvifEvent { topic: string; properties: Record<string, string>; }
 export interface DeviceOperation { id: number; operation: string; result: string; createdAt: number; }
 export type ClientPermission = 'view' | 'ptz' | 'talk' | 'snapshot' | 'record-local';
-export interface ClientEnrollment { id: string; name: string; platform: 'windows' | 'linux' | 'android' | 'web' | 'chromium-iwa'; state: 'pending' | 'approved'; createdAt: number; expiresAt: number; }
+export interface ClientEnrollment { id: string; name: string; platform: 'windows' | 'linux' | 'android' | 'web' | 'chromium-iwa'; state: 'pending' | 'approved' | 'superseded'; createdAt: number; expiresAt: number; }
 export interface EnrolledClient { id: string; name: string; platform: string; status: 'active' | 'revoked'; createdAt: number; lastSeen: number; grantExpiresAt: number; revision: number; revokedAt: number | null; cameraCount: number; weakRevocation: boolean; }
 export interface ClientCameraGrant { cameraId: string; profileIds: string[]; permissions: ClientPermission[]; credentialMode: 'none' | 'existing' | 'dedicated'; credentialsRef?: string; }
 export interface MonitorEvent { id: string; cameraId: string; type: string; source: string; topic: string; occurredAt: number; severity: string; confidence: number | null; zoneId: string; label: string; acknowledged: boolean; note: string; properties: Record<string, unknown>; segmentIds: string[]; }

@@ -313,6 +313,49 @@ class V2ClientControlTests(unittest.TestCase):
         self.assertTrue(plan["liveServerMediaExpected"])
         self.assertEqual(plan["credentialExposure"], "none")
 
+    def test_web_approval_can_update_existing_client_without_duplicate_and_invalidates_old_token(self):
+        first = service.start_enrollment(self.keys.enrollment(os.urandom(32), "web"))
+        first_approved = service.approve_enrollment(first["enrollmentId"], {
+            "pairingCode": first["pairingCode"], "cameraGrants": [{
+                "cameraId": "camera-test", "profileIds": ["sub"],
+                "permissions": ["view"], "credentialMode": "none",
+            }],
+        })
+        old_token = first["deviceToken"]
+        replacement_keys = DeviceKeys()
+        replacement = service.start_enrollment(
+            replacement_keys.enrollment(os.urandom(32), "web"))
+        updated = service.approve_enrollment(replacement["enrollmentId"], {
+            "pairingCode": replacement["pairingCode"], "targetClientId": first_approved["clientId"],
+            "cameraGrants": [{
+                "cameraId": "camera-test", "profileIds": ["sub"],
+                "permissions": ["view", "snapshot"], "credentialMode": "none",
+            }],
+        })
+        self.assertTrue(updated["updated"])
+        self.assertEqual(updated["clientId"], first_approved["clientId"])
+        with self.assertRaises(service.ApiError) as rejected:
+            service.authenticate_device(old_token)
+        self.assertEqual(rejected.exception.code, "device_token_rejected")
+        status, completed = service.complete_enrollment(
+            replacement["enrollmentId"], replacement["deviceToken"])
+        self.assertEqual(status, 200)
+        self.assertEqual(completed["client"]["id"], first_approved["clientId"])
+        clients = service.list_clients()["clients"]
+        self.assertEqual(len(clients), 1)
+        self.assertEqual(clients[0]["id"], first_approved["clientId"])
+        with service.connect() as database:
+            rows = database.execute(
+                "SELECT id,status FROM clients WHERE id=?", (first_approved["clientId"],)).fetchall()
+            grants = database.execute(
+                "SELECT permissions_json FROM grants WHERE client_id=?", (first_approved["clientId"],)).fetchall()
+            old_enrollment = database.execute(
+                "SELECT state FROM enrollments WHERE id=?", (first["enrollmentId"],)).fetchone()
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0]["status"], "active")
+        self.assertEqual(json.loads(grants[0]["permissions_json"]), ["snapshot", "view"])
+        self.assertEqual(old_enrollment["state"], "superseded")
+
     def prepare_managed_onvif_camera(self):
         (service.SECRET_ROOT / "client-device.json").write_text(json.dumps({
             "username": "webobs-client-device",

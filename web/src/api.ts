@@ -352,11 +352,11 @@ export const fetchClientEnrollments = (signal?: AbortSignal) =>
   clientAdminRequest<{ enrollments: ClientEnrollment[] }>('/enrollments', { signal });
 export const fetchEnrolledClients = (signal?: AbortSignal) =>
   clientAdminRequest<{ clients: EnrolledClient[] }>('/clients', { signal });
-export const approveClientEnrollment = (enrollmentId: string, pairingCode: string, cameraGrants: ClientCameraGrant[]) =>
-  clientAdminRequest<{ clientId: string; state: 'approved'; grantExpiresAt: number; revision: number }>(
+export const approveClientEnrollment = (enrollmentId: string, pairingCode: string, cameraGrants: ClientCameraGrant[], targetClientId?: string) =>
+  clientAdminRequest<{ clientId: string; state: 'approved'; grantExpiresAt: number; revision: number; updated: boolean }>(
     `/enrollments/${encodeURIComponent(enrollmentId)}/approve`, {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ pairingCode, cameraGrants }),
+      body: JSON.stringify({ pairingCode, cameraGrants, ...(targetClientId ? { targetClientId } : {}) }),
     });
 export const revokeEnrolledClient = (clientId: string) =>
   clientAdminRequest<{ clientId: string; status: 'revoked'; revokedAt: number;
