@@ -6,7 +6,8 @@ with Docker Compose, and optionally run the Vite frontend with hot reload.
 
 这两个入口脚本只针对当前 `dev` 工作树，不会创建 Tag、登录 GHCR 或执行
 `docker push`。默认使用本地镜像 `webobs:dev`，后端由 Docker Compose 运行，
-前端可选用 Vite 热更新。
+前端可选用 Vite 热更新。基础 Compose 只绑定主机回环地址并关闭集群
+RBAC 认证，因此本地开发不会要求用户名和密码；不要把该基础配置暴露到局域网。
 
 ## Windows PowerShell
 
@@ -84,6 +85,10 @@ Playwright 测试；`test --full`（PowerShell 为 `test -Full`）运行完整�
 
 私有 RTSP、证书、账号、录像和浏览器 Profile 只能放在 Git 忽略的 `.env`
 或仓库之外；脚本不会打印 `.env` 内容，也不会把私有门禁原始结果上传。
+
+若要在本机验证登录/Session/RBAC，请按部署文档创建 `secrets/` 下的凭据文件，
+并额外使用 `compose.m6-auth.yaml` 覆盖；该覆盖会重新启用集群认证。基础开发模式
+没有预置用户名或密码。
 
 不要用 `docker compose down --volumes` 做日常停止操作，否则会删除本地
 Registry、Scene 和 Session 数据。

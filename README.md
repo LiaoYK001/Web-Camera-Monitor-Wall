@@ -73,7 +73,7 @@ curl http://127.0.0.1:8080/api/v1/health
 curl http://127.0.0.1:8080/api/v1/scene
 ```
 
-基础 Compose 仍是仅回环、无认证的本机开发模式。不要直接把端口映射改为所有网卡；需要认证时，先在受 Git 忽略的 `secrets/` 中分别创建用户名文件和至少 16 字节的密码文件，再使用覆盖文件：
+基础 Compose 是仅回环、无认证的本机开发模式，并明确关闭集群/RBAC 认证；因此不会存在预置用户名或密码。不要直接把端口映射改为所有网卡；需要认证时，先在受 Git 忽略的 `secrets/` 中分别创建用户名文件和至少 16 字节的密码文件，再使用覆盖文件：
 
 ```bash
 docker compose -f compose.yaml -f compose.m6-auth.yaml up --build

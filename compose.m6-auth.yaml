@@ -2,6 +2,7 @@ services:
   webobs:
     environment:
       WEBOBS_ALLOW_INSECURE_REMOTE: "false"
+      WEBOBS_CLUSTER_ENABLED: "true"
       WEBOBS_AUTH_USERNAME_FILE: /run/secrets/webobs_auth_username
       WEBOBS_AUTH_PASSWORD_FILE: /run/secrets/webobs_auth_password
       WEBOBS_AUTH_FAILURE_LIMIT: ${WEBOBS_AUTH_FAILURE_LIMIT:-5}

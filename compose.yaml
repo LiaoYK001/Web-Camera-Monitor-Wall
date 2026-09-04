@@ -16,6 +16,10 @@ services:
       WEBOBS_WEBRTC_ENABLED: "true"
       WEBOBS_COMPOSITE_ENABLED: "false"
       WEBOBS_NVR_ENABLED: ${WEBOBS_NVR_ENABLED:-false}
+      # The base Compose file is loopback-only local development. Keep the
+      # cluster/RBAC listener disabled here; production and the auth overlay
+      # explicitly enable it.
+      WEBOBS_CLUSTER_ENABLED: ${WEBOBS_CLUSTER_ENABLED:-false}
       WEBOBS_PWA_MEDIA_ALLOWED_ORIGINS: ${WEBOBS_PWA_MEDIA_ALLOWED_ORIGINS:-}
       WEBOBS_PWA_PUBLIC_ORIGIN: ${WEBOBS_PWA_PUBLIC_ORIGIN:-}
       MTX_WEBRTCADDITIONALHOSTS: ${WEBOBS_WEBRTC_ADDITIONAL_HOSTS:-127.0.0.1}

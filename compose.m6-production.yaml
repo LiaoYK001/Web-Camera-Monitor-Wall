@@ -3,6 +3,7 @@ services:
     environment:
       WEBOBS_LISTEN_ADDRESS: 127.0.0.1
       WEBOBS_ALLOW_INSECURE_REMOTE: "false"
+      WEBOBS_CLUSTER_ENABLED: "true"
       WEBOBS_TLS_ENABLED: "true"
       WEBOBS_TLS_CERT_FILE: /run/secrets/webobs_tls_certificate
       WEBOBS_TLS_KEY_FILE: /run/secrets/webobs_tls_private_key
