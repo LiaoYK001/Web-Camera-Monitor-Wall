@@ -2,7 +2,7 @@ import { type CSSProperties, useEffect, useMemo, useRef, useState } from 'react'
 import { closeAnalyticsRuntimeSession, fetchAnalyticsPolicies, fetchCameras, fetchMotionZones, fetchPlaybackCapabilities, renewAnalyticsRuntimeSession, requestAnalyticsRuntimePlan, submitAnalyticsSignals } from './api';
 import { activateGateway, approvedBrowserProfile, BrowserPlanError, browserGrantProfile, connectApprovedWhep, connectHls, connectMjpeg, offlineSignedGrantPlan, requestBrowserPlan, type BrowserTopologyPlan } from './browserMedia';
 import { DirectAudioMixer, type DirectAudioSnapshot } from './directAudioMixer';
-import { clearPrivateRuntimeState, loadMonitorView, saveMonitorView } from './localRuntime';
+import { clearPrivateRuntimeState, loadBrowserIdentity, loadMonitorView, saveMonitorView } from './localRuntime';
 import { observeTileVisibility, shouldRunPlayback } from './mediaLifecycle';
 import { countRenderedFrames, formatTelemetry, sampleConnectionTelemetry, sampleElementTelemetry, unavailableTelemetry, type MediaTelemetry } from './mediaTelemetry';
 import { applyAutomaticLayout, defaultMonitorView, evaluatePromotion, mapDetectionBoxToTile, nextRotationWindow, normalizeMonitorView, selectLowPowerProfile, sourceDecoration, validDetectionSignal, type AudioMeterConfig, type DetectionSignal, type MonitorView, type TelemetryOverlayConfig } from './monitorView';
@@ -242,6 +242,8 @@ function BrowserCameraTile({ item, source, mixer, telemetry, audioMeter, audioSn
   const audioAboveSince = useRef(0);
   const audioBelowSince = useRef(0);
   const analyticsSession = useRef<string | null>(null);
+  const directAttemptedRef = useRef(false);
+  const gatewayActivationFailedRef = useRef(false);
   // A per-profile forceAnalyticsAlwaysOn policy is the explicit exception to
   // the monitor-wide low-power suspension.  It must keep the media element
   // alive so the browser runtime can actually sample frames.
@@ -281,6 +283,8 @@ function BrowserCameraTile({ item, source, mixer, telemetry, audioMeter, audioSn
     let closed = false;
     let fallbackStarted = false;
     let directConfirmed = false;
+    directAttemptedRef.current = false;
+    gatewayActivationFailedRef.current = false;
     if (!playbackEnabled) { setState('disabled'); return undefined; }
     const authorizationCleared = () => {
       closed = true;
@@ -312,6 +316,7 @@ function BrowserCameraTile({ item, source, mixer, telemetry, audioMeter, audioSn
           setActiveConnection(connection);
         }
       } catch (error) {
+        gatewayActivationFailedRef.current = true;
         if (error instanceof BrowserPlanError && error.kind === 'authorization') {
           reportMediaIssue({
             code: 'MEDIA_AUTHORIZATION_REJECTED', scopeId: source.id, component: 'browser-media',
@@ -321,11 +326,18 @@ function BrowserCameraTile({ item, source, mixer, telemetry, audioMeter, audioSn
           authorizationCleared();
           return;
         }
+        const identity = await loadBrowserIdentity().catch(() => null);
+        const needsPairing = !identity?.clientId;
         reportMediaIssue({
           code: 'MEDIA_GATEWAY_ACTIVATION_FAILED', scopeId: source.id, component: 'browser-media',
-          summary: `${source.name} 服务端媒体链启动失败`, explanation: '浏览器直连不可用，且受控 Gateway/Hybrid 会话未能启动。',
-          recommendedActions: ['检查 Gateway 状态和 Profile 配置。', '重新探测来源后再试。'],
-          technicalDetails: { reason: 'gateway_activation_failed' },
+          summary: needsPairing ? `${source.name} 尚未完成浏览器配对` : `${source.name} 服务端媒体链启动失败`,
+          explanation: needsPairing
+            ? '普通 RTSP 需要通过受控 Gateway 播放；此浏览器尚未取得对应的加密授权。'
+            : '浏览器直连不可用，且受控 Gateway/Hybrid 会话未能启动。',
+          recommendedActions: needsPairing
+            ? ['打开“本地客户端”创建浏览器配对。', '在管理员面板批准该 Camera/Profile 后点击完成配对。']
+            : ['检查客户端是否已获该 Camera/Profile 的观看权限。', '检查 Gateway 状态并重新探测来源。'],
+          technicalDetails: { reason: needsPairing ? 'browser_pairing_required' : 'gateway_activation_failed' },
         });
         setPlan({
           contractVersion: 2, planId: '', cameraId: source.cameraId, profileId: source.profileId,
@@ -342,6 +354,7 @@ function BrowserCameraTile({ item, source, mixer, telemetry, audioMeter, audioSn
         void startGateway(grantedProfile?.browserDirectReason ?? 'browser_profile_not_authorized');
         return;
       }
+      directAttemptedRef.current = true;
       setTransport(profile.adapter as 'whep' | 'hls' | 'mjpeg');
       const onState = (next: ProgramConnectionState) => {
         if (closed) return;
@@ -481,7 +494,7 @@ function BrowserCameraTile({ item, source, mixer, telemetry, audioMeter, audioSn
   const geometry = useMemo(() => videoGeometry(item, dimensions.width, dimensions.height), [item, dimensions]);
   const trueDirect = plan?.topology === 'true-direct';
   useEffect(() => {
-    if (plan && !trueDirect) reportMediaIssue({
+    if (plan && !trueDirect && directAttemptedRef.current) reportMediaIssue({
       code: 'MEDIA_DIRECT_FALLBACK', scopeId: source.id, component: 'browser-media',
       summary: `${source.name} 正在使用服务端媒体链`,
       explanation: '浏览器真直连资格或首帧检查未通过，当前画面经 Docker Gateway/Hybrid 传输。',
@@ -491,7 +504,7 @@ function BrowserCameraTile({ item, source, mixer, telemetry, audioMeter, audioSn
     else if (trueDirect) resolveLocalIssue('MEDIA_DIRECT_FALLBACK', source.id, 'browser-media');
   }, [plan, source.id, source.name, transport, trueDirect]);
   useEffect(() => {
-    if (state === 'offline' && plan && !trueDirect) reportMediaIssue({
+    if (state === 'offline' && plan && !trueDirect && !gatewayActivationFailedRef.current) reportMediaIssue({
       code: 'MEDIA_FIRST_FRAME_TIMEOUT', scopeId: source.id, component: 'browser-media',
       summary: `${source.name} 未收到首帧`, explanation: '媒体会话在限定时间内未建立可播放画面。',
       recommendedActions: ['检查来源在线状态和网络路径。', '重新探测 Profile 或检查 Gateway 状态。'],

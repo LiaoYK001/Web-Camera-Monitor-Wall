@@ -30,9 +30,9 @@ export const MEDIA_ISSUE_CODES = [
 
 export function reportMediaIssue(input: {
   code: typeof MEDIA_ISSUE_CODES[number]; scopeId: string; component: string; summary: string;
-  explanation: string; recommendedActions?: string[]; technicalDetails?: Record<string, unknown>;
+  explanation: string; severity?: OperationalIssue['severity']; recommendedActions?: string[]; technicalDetails?: Record<string, unknown>;
 }): void {
-  reportLocalIssue({ ...input, severity: input.code === 'MEDIA_AUTHORIZATION_REJECTED' ? 'error' : 'warning' });
+  reportLocalIssue({ ...input, severity: input.severity ?? (input.code === 'MEDIA_AUTHORIZATION_REJECTED' ? 'error' : 'warning') });
 }
 
 export function reportLocalIssue(input: {
