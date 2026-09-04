@@ -64,8 +64,23 @@ From the repository root:
 ## Test levels / 测试级别
 
 `test` 默认执行公开仓库审计、TypeScript 检查、IWA 类型检查和本地
-Playwright 测试；`test --full`（PowerShell 为 `test -Full`）调用现有平台
-运行时套件，耗时更长并要求对应浏览器和 Docker 环境。
+Playwright 测试；`test --full`（PowerShell 为 `test -Full`）运行完整的
+本地无产品镜像构建验收套件。它要求传入的产品镜像和测试夹具镜像已经存在，
+使用 `-Image`/`--image` 选择镜像，不会执行 Docker build、GHCR 登录或 push。
+
+例如使用现有本地候选镜像：
+
+```powershell
+.\scripts\dev-local.ps1 test -Full -Image webobs:v3.1-dev-current
+```
+
+```bash
+./scripts/dev-local.sh test --full --image webobs:v3.1-dev-current
+```
+
+完整套件会运行公开审计、依赖锁、Python 单元测试、PWA/Playwright、M0–M9
+确定性夹具、NVR、备份、TLS、权限、True Direct 和升级回归。`--long`/`-Long`
+额外运行 M7 的 8/16/32 路 900 秒和故障注入门禁。
 
 私有 RTSP、证书、账号、录像和浏览器 Profile 只能放在 Git 忽略的 `.env`
 或仓库之外；脚本不会打印 `.env` 内容，也不会把私有门禁原始结果上传。

@@ -9,6 +9,8 @@ action="start"
 no_build=false
 frontend=false
 full=false
+include_real_media=false
+long=false
 open_browser=false
 allow_non_dev=false
 image="${WEBOBS_DEV_IMAGE:-webobs:dev}"
@@ -24,7 +26,9 @@ Actions: start stop restart status logs debug frontend test build hotfix shell
 Options:
   --no-build          reuse the local image for start/restart
   --frontend          start Vite in the background with start/restart
-  --full              run the existing full WSL2 runtime script for test
+  --full              run the complete local no-build suite against --image
+  --include-real-media include private RTSP/MJPEG checks when env vars are set
+  --long              run M7 8/16/32 x 900-second and fault gates
   --open              open the local frontend URL when supported
   --allow-non-dev     allow an explicit experiment outside branch dev
   --image IMAGE       local image tag (default: webobs:dev)
@@ -40,6 +44,8 @@ while (($#)); do
     --no-build) no_build=true ;;
     --frontend) frontend=true ;;
     --full) full=true ;;
+    --include-real-media) include_real_media=true ;;
+    --long) long=true ;;
     --open) open_browser=true ;;
     --allow-non-dev) allow_non_dev=true ;;
     --image) shift; image="${1:?--image requires a value}" ;;
@@ -156,7 +162,10 @@ run_tests() {
   command -v pnpm >/dev/null || { echo 'required command is unavailable: pnpm' >&2; exit 69; }
   command -v python3 >/dev/null || { echo 'required command is unavailable: python3' >&2; exit 69; }
   if [[ "$full" = true ]]; then
-    ./scripts/test-web-runtime-wsl2.sh
+    full_args=(--image "$image")
+    [[ "$include_real_media" = true ]] && full_args+=(--include-real-media)
+    [[ "$long" = true ]] && full_args+=(--long)
+    ./scripts/test-local-full.sh "${full_args[@]}"
     return
   fi
   ./tests/run-public-audit.sh

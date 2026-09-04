@@ -6,6 +6,8 @@ param(
     [switch]$NoBuild,
     [switch]$Frontend,
     [switch]$Full,
+    [switch]$IncludeRealMedia,
+    [switch]$Long,
     [switch]$Open,
     [switch]$AllowNonDev,
     [string]$Image = 'webobs:dev',
@@ -31,7 +33,9 @@ Actions: start stop restart status logs debug frontend test build hotfix shell
 Options:
   -NoBuild          reuse the local image for start/restart
   -Frontend         start Vite in the background with start/restart
-  -Full             run the existing full Windows runtime script for test
+  -Full             run the complete local no-build suite against -Image
+  -IncludeRealMedia include private RTSP/MJPEG checks when env vars are set
+  -Long             run M7 8/16/32 x 900-second and fault gates
   -Open             open the local frontend URL after start
   -AllowNonDev      allow an explicit experiment outside branch dev
   -Image NAME       local image tag (default: webobs:dev)
@@ -182,7 +186,10 @@ function Run-Tests {
     Assert-Command 'pnpm'
     Assert-Command 'python'
     if ($Full) {
-        Invoke-Checked 'powershell.exe' @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', (Join-Path $Repository 'scripts/test-web-runtime-windows.ps1'))
+        $FullArguments = @('-NoProfile', '-File', (Join-Path $Repository 'scripts/test-local-full.ps1'), '-Image', $Image)
+        if ($IncludeRealMedia) { $FullArguments += '-IncludeRealMedia' }
+        if ($Long) { $FullArguments += '-Long' }
+        Invoke-Checked 'pwsh' $FullArguments
         return
     }
     & (Join-Path $Repository 'tests/run-public-audit.ps1')

@@ -1,5 +1,6 @@
 [CmdletBinding()]
 param(
+    [switch]$SkipBuild,
     [string]$Image = $(if ($env:WEBOBS_TEST_IMAGE) { $env:WEBOBS_TEST_IMAGE } else { 'webobs:v2-m1-dev' })
 )
 
@@ -12,7 +13,8 @@ $env:WEBOBS_TEST_IMAGE = $Image
 try {
     & docker image inspect $Image | Out-Null
     if ($LASTEXITCODE -ne 0) { throw "Test image '$Image' is unavailable." }
-    & docker compose -p $Project -f $ComposeFile up --detach --build
+    $BuildArguments = if ($SkipBuild) { @('--no-build') } else { @('--build') }
+    & docker compose -p $Project -f $ComposeFile up --detach @BuildArguments
     if ($LASTEXITCODE -ne 0) { throw 'Could not start the True Direct fixture.' }
 
     $ProbeServices = @('v2-probe', 'v2-fallback-probe', 'v2-nvr-coexist-probe',
