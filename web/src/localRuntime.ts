@@ -541,6 +541,17 @@ export function makeLocalConfigBundle(profile: LocalConfigProfile): LocalConfigB
   return bundle;
 }
 
+export function makeLocalConfigBundleForStudio(studio: StudioDocument, name = 'Studio', workspaceLayout?: WorkspaceLayout): LocalConfigBundle {
+  if (!validateProfileStudio(studio) || !validLocalConfigName(name)) throw new Error('Studio 配置不可导出');
+  const now = Date.now();
+  const profile: LocalConfigProfile = {
+    schemaVersion: 1, id: localId('export'), name: name.trim(), createdAt: now, updatedAt: now,
+    studio: redactedStudio(studio),
+    ...(workspaceLayout ? { workspaceLayout: structuredClone(workspaceLayout) } : {}),
+  };
+  return makeLocalConfigBundle(profile);
+}
+
 export async function importLocalConfigBundle(value: unknown): Promise<LocalConfigProfile> {
   if (!value || typeof value !== 'object') throw new Error('配置导入格式无效');
   const bundle = value as Partial<LocalConfigBundle>;

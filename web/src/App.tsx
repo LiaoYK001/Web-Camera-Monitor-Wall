@@ -21,7 +21,7 @@ import AudioWorkspace from './AudioWorkspace';
 import SettingsWorkspace from './SettingsWorkspace';
 import ClusterAdmin from './ClusterAdmin';
 import AnalyticsWorkspace from './AnalyticsWorkspace';
-import { loadActiveLocalConfigProfile, loadOfflineStudio, queueOfflineAudit, saveLocalConfigProfile, saveLocalStudio, saveStudioSnapshot, type LocalConfigProfile } from './localRuntime';
+import { loadActiveLocalConfigProfile, loadOfflineStudio, loadWorkspaceLayout, makeLocalConfigBundleForStudio, queueOfflineAudit, saveLocalConfigProfile, saveLocalStudio, saveStudioSnapshot, type LocalConfigProfile } from './localRuntime';
 import { queueStudioSync, synchronizeBrowserState } from './syncRuntime';
 import type { AudioMonitoring, CameraRecord, FilterKind, PlaybackMode, ScaleMode, SceneDocument, SceneFilter, SceneItem, SceneSource, StudioCapabilities, StudioDocument, Transport } from './types';
 
@@ -659,21 +659,33 @@ export default function App() {
     setBaseline(scene);
   };
 
-  const exportStudio = () => {
+  const exportStudio = async () => {
     if (!studioDraft) return;
-    const blob = new Blob([JSON.stringify(studioDraft, null, 2)], { type: 'application/json' });
-    const url = URL.createObjectURL(blob);
-    const anchor = document.createElement('a');
-    anchor.href = url;
-    anchor.download = `webobs-studio-s${studioDraft.revision}.json`;
-    anchor.click();
-    URL.revokeObjectURL(url);
+    try {
+      const layout = await loadWorkspaceLayout().catch(() => null);
+      const bundle = makeLocalConfigBundleForStudio(studioDraft, `Studio s${studioDraft.revision}`, layout ?? undefined);
+      const blob = new Blob([JSON.stringify(bundle, null, 2)], { type: 'application/json' });
+      const url = URL.createObjectURL(blob);
+      const anchor = document.createElement('a');
+      anchor.href = url;
+      anchor.download = `webobs-studio-s${studioDraft.revision}-redacted.json`;
+      anchor.click();
+      URL.revokeObjectURL(url);
+      setNotice('Studio 已导出为脱敏配置包；网络端点和凭据未包含。');
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : '导出失败');
+    }
   };
 
   const importStudio = async (file?: File) => {
     if (!file || !studioDraft) return;
     try {
-      const imported = JSON.parse(await file.text()) as StudioDocument;
+      const parsed = JSON.parse(await file.text()) as unknown;
+      const imported = parsed && typeof parsed === 'object' &&
+        (parsed as { format?: unknown }).format === 'webobs-local-config-v1' &&
+        (parsed as { profile?: { studio?: unknown } }).profile?.studio
+        ? (parsed as { profile: { studio: StudioDocument } }).profile.studio
+        : parsed as StudioDocument;
       if (imported.schemaVersion !== 1 || !Array.isArray(imported.scenes) || imported.scenes.length < 1 || imported.scenes.length > 64)
         throw new Error('不是受支持的 Studio 集合');
       imported.revision = studioDraft.revision;
