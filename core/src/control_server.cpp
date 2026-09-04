@@ -1613,7 +1613,8 @@ public:
             suffix = "/onvif/discover";
         else if (target == "/api/v1/onvif/probe")
             suffix = "/onvif/probe";
-        else if (target == "/api/v2/source-catalog" || target.starts_with("/api/v2/source-catalog/") ||
+        else if (target == "/api/v2/source-catalog" || target.starts_with("/api/v2/source-catalog?") ||
+                 target.starts_with("/api/v2/source-catalog/") ||
                  target == "/api/v2/operations/issues" || target.starts_with("/api/v2/operations/issues/") ||
                  target == "/api/v2/settings" || target == "/api/v2/settings/schema") {
             suffix = std::string(target.substr(std::string_view("/api/v2").size()));
@@ -2660,7 +2661,8 @@ HttpResponse handle_request(const HttpRequest &request, SceneController &control
                            target == "/api/v2/client/audit/batch" ||
                            target == "/api/v2/client/sync" ||
                            target.starts_with("/api/v2/client/cameras/") ||
-                           target == "/api/v2/source-catalog" || target.starts_with("/api/v2/source-catalog/") ||
+                           target == "/api/v2/source-catalog" || target.starts_with("/api/v2/source-catalog?") ||
+                           target.starts_with("/api/v2/source-catalog/") ||
                            target == "/api/v2/operations/issues" || target.starts_with("/api/v2/operations/issues/") ||
                            target == "/api/v2/settings" || target == "/api/v2/settings/schema" ||
                            target == "/api/v2/users" || target.starts_with("/api/v2/users/") ||
