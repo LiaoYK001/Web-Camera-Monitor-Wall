@@ -16,6 +16,7 @@ const entries: Array<{ id: ProductArea; label: string; short: string }> = [
   { id: 'storage', label: '存储', short: '存储' },
   { id: 'settings', label: '系统设置', short: '设置' },
   { id: 'admin', label: '集群与权限', short: '管理' },
+  { id: 'clients', label: '本地客户端', short: '配对' },
 ];
 
 const defaultDocks: WorkspaceDock[] = [
@@ -117,6 +118,6 @@ export default function WorkspaceShell({ area, onNavigate, connection, children 
       </div> : <div className="workspace-classic-strip" role="status">经典工作区 · 使用左侧导航和当前页面布局</div>}
       <div className="workspace-content">{children}</div>
     </div>
-    <nav className="workspace-mobile-navigation" aria-label="移动端主导航">{entries.slice(0, 5).map((entry) => <button type="button" className={area === entry.id ? 'active' : ''} key={entry.id} onClick={() => onNavigate(entry.id)}>{entry.short}</button>)}</nav>
+    <nav className="workspace-mobile-navigation" aria-label="移动端主导航">{entries.slice(0, 5).map((entry) => <button type="button" className={area === entry.id ? 'active' : ''} key={entry.id} onClick={() => onNavigate(entry.id)}>{entry.short}</button>)}<button type="button" className={area === 'clients' ? 'active' : ''} onClick={() => onNavigate('clients')}>配对</button></nav>
   </div>;
 }
