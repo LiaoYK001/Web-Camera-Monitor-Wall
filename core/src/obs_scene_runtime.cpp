@@ -14,8 +14,10 @@
 #include <chrono>
 #include <cmath>
 #include <cstring>
+#include <cstdlib>
 #include <memory>
 #include <mutex>
+#include <random>
 #include <new>
 #include <string>
 #include <string_view>
@@ -150,50 +152,183 @@ void on_source_started(void *parameter, calldata_t *)
 
 struct SourceEntry;
 
+std::string transcoder_executable()
+{
+    if (const char *value = std::getenv("WEBOBS_TRANSCODER_PATH"); value && *value)
+        return value;
+    return "/opt/webobs/bin/transcode-on-demand";
+}
+
+std::string random_token()
+{
+    static std::mutex mutex;
+    static std::mt19937_64 generator(std::random_device{}());
+    std::uint64_t high = 0;
+    std::uint64_t low = 0;
+    {
+        const std::lock_guard lock(mutex);
+        high = generator();
+        low = generator();
+    }
+    static constexpr char hexadecimal[] = "0123456789abcdef";
+    std::string token;
+    token.reserve(32);
+    for (const std::uint64_t value : {high, low}) {
+        for (int shift = 60; shift >= 0; shift -= 4)
+            token.push_back(hexadecimal[(value >> shift) & 0x0fU]);
+    }
+    return token;
+}
+
+/** Single-quote a value so MediaMTX's shell never interprets it. */
+std::string shell_quote(std::string_view value)
+{
+    std::string quoted = "'";
+    for (const char character : value) {
+        if (character == '\'')
+            quoted += "'\\''";
+        else
+            quoted.push_back(character);
+    }
+    quoted.push_back('\'');
+    return quoted;
+}
+
+bool media_path_request(std::string_view action, std::string_view path, std::string_view body)
+{
+    CURL *handle = curl_easy_init();
+    if (!handle)
+        return false;
+    const std::string url =
+        "http://127.0.0.1:9997/v3/config/paths/" + std::string(action) + "/" + std::string(path);
+    const std::string payload(body);
+    std::string response;
+    const auto write = [](char *data, std::size_t size, std::size_t count, void *context) -> std::size_t {
+        const std::size_t bytes = size * count;
+        auto &output = *static_cast<std::string *>(context);
+        if (bytes > 4096 || output.size() > 4096 - bytes)
+            return 0;
+        output.append(data, bytes);
+        return bytes;
+    };
+    curl_easy_setopt(handle, CURLOPT_URL, url.c_str());
+    curl_easy_setopt(handle, CURLOPT_PROTOCOLS_STR, "http");
+    curl_easy_setopt(handle, CURLOPT_CONNECTTIMEOUT_MS, 1500L);
+    curl_easy_setopt(handle, CURLOPT_TIMEOUT_MS, 4000L);
+    curl_easy_setopt(handle, CURLOPT_NOSIGNAL, 1L);
+    curl_easy_setopt(handle, CURLOPT_WRITEFUNCTION, +write);
+    curl_easy_setopt(handle, CURLOPT_WRITEDATA, &response);
+    curl_slist *headers = nullptr;
+    if (action == "delete") {
+        curl_easy_setopt(handle, CURLOPT_CUSTOMREQUEST, "DELETE");
+    } else {
+        headers = curl_slist_append(headers, "Content-Type: application/json");
+        curl_easy_setopt(handle, CURLOPT_HTTPHEADER, headers);
+        curl_easy_setopt(handle, CURLOPT_POST, 1L);
+        curl_easy_setopt(handle, CURLOPT_POSTFIELDS, payload.c_str());
+        curl_easy_setopt(handle, CURLOPT_POSTFIELDSIZE_LARGE, static_cast<curl_off_t>(payload.size()));
+    }
+    const CURLcode code = curl_easy_perform(handle);
+    long status = 0;
+    if (code == CURLE_OK)
+        curl_easy_getinfo(handle, CURLINFO_RESPONSE_CODE, &status);
+    if (headers)
+        curl_slist_free_all(headers);
+    curl_easy_cleanup(handle);
+    return code == CURLE_OK && (status == 200 || status == 201 || status == 204);
+}
+
+void delete_media_path(std::string_view path)
+{
+    if (!path.empty())
+        media_path_request("delete", path, {});
+}
+
+/** Create one audio-only path whose on-demand command extracts a single track. */
+std::optional<std::string> ensure_audio_only_path(std::string_view source_url, int track)
+{
+    if (source_url.empty() || track < 0 || track > maximum_audio_track_index)
+        return std::nullopt;
+    const std::string audio_path = "audio-" + random_token() + "-t" + std::to_string(track);
+    const std::string command = shell_quote(transcoder_executable()) + " " + shell_quote(source_url) + " " +
+                                shell_quote(audio_path) + " " + shell_quote("audio-track") + " " +
+                                shell_quote(std::to_string(track));
+    json_t *root = json_object();
+    if (!root)
+        return std::nullopt;
+    json_object_set_new(root, "source", json_string("publisher"));
+    json_object_set_new(root, "runOnDemand", json_string(command.c_str()));
+    json_object_set_new(root, "runOnDemandRestart", json_false());
+    json_object_set_new(root, "runOnDemandStartTimeout", json_string("10s"));
+    json_object_set_new(root, "runOnDemandCloseAfter", json_string("2s"));
+    char *dump = json_dumps(root, JSON_COMPACT);
+    json_decref(root);
+    if (!dump)
+        return std::nullopt;
+    const std::string body = dump;
+    free(dump);
+    if (!media_path_request("add", audio_path, body))
+        return std::nullopt;
+    return audio_path;
+}
+
 /**
- * Extra OBS source instance that decodes exactly one input track of a source.
- * Each instance feeds the program mixer on its own, with its own gain/mute, so
- * MediaMTX's single audio output still carries a real per-track mix.
+ * Extra OBS source instance fed by one extracted input track.  The engine cannot
+ * ask the Media Source for a specific track, so every input of a multi-input
+ * source is extracted by the gateway into its own audio-only path
+ * (`audio-<token>-t<index>`, exactly one Opus track per path) and this instance
+ * reads that path.  The path is deleted again when the instance goes away.
  */
 struct AudioInputInstance {
     int track = 0;
+    std::string path;
     SourcePtr source;
     bool active = false;
 
     AudioInputInstance() = default;
-    AudioInputInstance(int input_track, SourcePtr instance, bool is_active)
-        : track(input_track), source(std::move(instance)), active(is_active)
+    AudioInputInstance(int input_track, std::string audio_path, SourcePtr instance, bool is_active)
+        : track(input_track), path(std::move(audio_path)), source(std::move(instance)), active(is_active)
     {
     }
     AudioInputInstance(const AudioInputInstance &) = delete;
     AudioInputInstance &operator=(const AudioInputInstance &) = delete;
     AudioInputInstance(AudioInputInstance &&other) noexcept
-        : track(other.track), source(std::move(other.source)), active(other.active)
+        : track(other.track), path(std::move(other.path)), source(std::move(other.source)), active(other.active)
     {
         other.active = false;
+        other.path.clear();
     }
     AudioInputInstance &operator=(AudioInputInstance &&other) noexcept
     {
         if (this == &other)
             return *this;
-        if (source && active)
-            obs_source_dec_active(source.get());
+        release();
         track = other.track;
+        path = std::move(other.path);
         source = std::move(other.source);
         active = other.active;
         other.active = false;
+        other.path.clear();
         return *this;
     }
-    ~AudioInputInstance()
+    ~AudioInputInstance() { release(); }
+
+private:
+    void release()
     {
         if (source && active)
             obs_source_dec_active(source.get());
+        active = false;
+        if (!path.empty()) {
+            delete_media_path(path);
+            path.clear();
+        }
     }
 };
 
 bool is_ffmpeg_kind(std::string_view kind)
 {
-    return kind == "rtsp" || kind == "camera" || kind == "media";
+    return kind == "rtsp" || kind == "camera";
 }
 
 struct SourceEntry {
@@ -209,34 +344,57 @@ struct SourceEntry {
 };
 
 /**
- * Extra input tracks cannot be obtained by cloning the Media Source: the OBS
- * build compiled here exposes no audio-track selector for it (its property list
- * has no "track" entry, verified against obs-ffmpeg-source.c), so a clone would
- * silently decode the same default stream again and double the audio.
- *
- * Until each input is fed from the gateway's audio-only extraction path
- * (`audio-<token>-t<index>`, already implemented and verified via
- * transcode-on-demand.sh), extra inputs are reported as not mixed instead of
- * being faked.
+ * Multi-input sources cannot be served by the Media Source alone: this OBS build
+ * exposes no audio-track selector for it (verified against obs-ffmpeg-source.c),
+ * so cloning it would decode the same default stream again.  Every input is
+ * therefore extracted by the gateway into its own audio-only path and read back
+ * through a dedicated instance; the primary source stops contributing audio so
+ * the program carries exactly the configured inputs.
  */
-void attach_audio_input_instances(SourceEntry &entry, obs_data_t *settings,
+void attach_audio_input_instances(SourceEntry &entry, std::string_view source_url,
                                   const std::vector<SceneAudioInput> &inputs)
 {
-    if (inputs.size() <= 1 || !settings || !is_ffmpeg_kind(entry.configuration.kind))
+    if (inputs.size() <= 1 || source_url.empty() || !is_ffmpeg_kind(entry.configuration.kind))
         return;
-    std::string extra;
-    for (std::size_t index = 1; index < inputs.size(); ++index) {
-        if (!extra.empty())
-            extra += ",";
-        extra += std::to_string(inputs[index].track);
+    // Opt-in while the extraction channels are still being stabilised: the first
+    // runtime attempt crashed the engine with a glibc double free shortly after
+    // creating them, so the default Direct/Composite path stays unchanged.
+    if (std::getenv("WEBOBS_AUDIO_TRACK_EXTRACTION") == nullptr)
+        return;
+    const std::string base_name = "WebOBS " + entry.configuration.kind + " " + entry.configuration.id;
+    for (const SceneAudioInput &input : inputs) {
+        const auto audio_path = ensure_audio_only_path(source_url, input.track);
+        if (!audio_path) {
+            blog(LOG_WARNING, "Source '%s' input track %d could not be extracted; that track is not mixed",
+                 entry.configuration.id.c_str(), input.track);
+            continue;
+        }
+        DataPtr settings(obs_data_create());
+        if (!settings) {
+            delete_media_path(*audio_path);
+            continue;
+        }
+        const std::string url = "rtsp://127.0.0.1:8554/" + *audio_path;
+        obs_data_set_string(settings.get(), "input", url.c_str());
+        obs_data_set_string(settings.get(), "input_format", "rtsp");
+        obs_data_set_int(settings.get(), "reconnect_delay_sec", 2);
+        obs_data_set_bool(settings.get(), "close_when_inactive", false);
+        obs_data_set_bool(settings.get(), "restart_on_activate", true);
+        obs_data_set_string(settings.get(), "ffmpeg_options", "rtsp_transport=tcp timeout=20000000");
+        const std::string name = base_name + " audio track " + std::to_string(input.track + 1);
+        SourcePtr instance(obs_source_create_private("ffmpeg_source", name.c_str(), settings.get()));
+        if (!instance) {
+            delete_media_path(*audio_path);
+            continue;
+        }
+        obs_source_set_volume(instance.get(), 1.0f);
+        obs_source_set_muted(instance.get(), true);
+        obs_source_set_audio_mixers(instance.get(), 1U);
+        obs_source_set_monitoring_type(instance.get(), OBS_MONITORING_TYPE_NONE);
+        obs_source_inc_active(instance.get());
+        entry.audio_inputs.push_back(
+            AudioInputInstance{input.track, *audio_path, std::move(instance), true});
     }
-    static std::atomic<bool> reported{false};
-    if (!reported.exchange(true))
-        blog(LOG_WARNING,
-             "Source '%s' selects %zu audio inputs, but this OBS build has no Media Source audio-track "
-             "selector; the extra input track(s) [%s] are not mixed yet and need the gateway audio-only "
-             "extraction path",
-             entry.configuration.id.c_str(), inputs.size(), extra.c_str());
 }
 
 struct RuntimeState {
@@ -473,7 +631,12 @@ SourceEntry create_source_entry(const SceneSource &configuration, int connect_ti
             reused.status = existing->second.status;
             SourcePtr shared(obs_source_get_ref(existing->second.source.get()));
             reused.source = std::move(shared);
-            attach_audio_input_instances(reused, obs_source_get_settings(reused.source.get()), audio_inputs);
+            if (audio_inputs.size() > 1) {
+                DataPtr shared_settings(obs_source_get_settings(reused.source.get()));
+                const std::string url = shared_settings ? obs_data_get_string(shared_settings.get(), "input")
+                                                        : std::string{};
+                attach_audio_input_instances(reused, url, audio_inputs);
+            }
             return reused;
         }
     }
@@ -573,7 +736,19 @@ SourceEntry create_source_entry(const SceneSource &configuration, int connect_ti
     // program bus is mixer 1.  Mapping the input track onto the mixer bit (the
     // previous behaviour) silently dropped audio for audioTrack > 1.
     obs_source_set_audio_mixers(entry.source.get(), 1U);
-    attach_audio_input_instances(entry, settings.get(), audio_inputs);
+    if (audio_inputs.size() > 1) {
+        // Only multi-input sources need extraction; a single input keeps using
+        // the Media Source directly, as before.
+        std::string audio_source_url;
+        if (configuration.kind == "rtsp") {
+            audio_source_url = configuration.rtsp_url;
+        } else if (configuration.kind == "camera") {
+            const auto resolved = resolve_camera_source(configuration);
+            if (resolved)
+                audio_source_url = resolved->endpoint;
+        }
+        attach_audio_input_instances(entry, audio_source_url, audio_inputs);
+    }
     if (!attach_configured_filters(entry.source.get(), configuration, internal_name)) {
         entry.source.reset();
         entry.status.reset();
@@ -981,6 +1156,24 @@ std::optional<std::string> ObsSceneRuntime::prepare(const SceneDocument &documen
             return "could not add scene item " + item->id + " to the OBS program scene";
     }
 
+    // Extraction channels are not scene sources, but a source that is shown
+    // nowhere never starts its media playback (a hidden item decrements the
+    // showing count again).  Each instance therefore stays visible but is placed
+    // far outside the canvas, so the program renders nothing of it while its
+    // audio still reaches the program mixer.
+    for (auto &[id, entry] : candidate->sources) {
+        (void)id;
+        for (AudioInputInstance &instance : entry.audio_inputs) {
+            obs_sceneitem_t *audio_item = obs_scene_add(candidate->scene.get(), instance.source.get());
+            if (!audio_item)
+                return "could not add an extracted audio channel to the program scene";
+            struct vec2 off_canvas{-100000.0f, -100000.0f};
+            obs_sceneitem_set_pos(audio_item, &off_canvas);
+            obs_sceneitem_set_visible(audio_item, true);
+            obs_sceneitem_release(audio_item);
+        }
+    }
+
     const auto visible = visible_source_ids(candidate.get());
     for (const std::string &id : visible) {
         auto source = candidate->sources.find(id);
@@ -1074,7 +1267,12 @@ void ObsSceneRuntime::commit_prepared(std::string_view transition_kind, int dura
             obs_source_set_sync_offset(source,
                                        static_cast<std::int64_t>(entry.configuration.sync_offset_ms) * 1000000LL);
         };
-        if (inputs.empty()) {
+        if (inputs.size() > 1) {
+            // Every input is served by its own extracted channel, so the primary
+            // source must not add its own (default) decode on top.
+            obs_source_set_volume(entry.source.get(), 0.0f);
+            obs_source_set_muted(entry.source.get(), true);
+        } else if (inputs.empty()) {
             obs_source_set_volume(entry.source.get(), 0.0f);
             obs_source_set_muted(entry.source.get(), true);
         } else {
