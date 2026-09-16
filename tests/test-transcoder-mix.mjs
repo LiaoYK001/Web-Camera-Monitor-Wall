@@ -17,10 +17,11 @@ function run(args) {
   });
 }
 
-test('audio-mix accepts a per-track gain spec from a URL or a direct route', async () => {
+test('audio-mix accepts gain/mute specs with and without a sync delay', async () => {
   for (const args of [
     ['rtsp://127.0.0.1:8554/dual', mixPath, 'audio-mix', '0:1.0:0,1:0.4:0'],
     [source, mixPath, 'audio-mix', '0:1:0,1:0:1,3:0.25:0'],
+    [source, mixPath, 'audio-mix', '0:1.0:0:250,1:0.5:0:0'],
   ]) {
     const result = await run(args);
     assert.notEqual(result.code, 2, `${args.join(' ')} must pass validation`);
@@ -35,6 +36,9 @@ test('audio-mix rejects malformed specs, destinations and argument counts', asyn
     [source, mixPath, 'audio-mix', '0:1.0:2'],
     [source, mixPath, 'audio-mix', '0-1.0-0'],
     [source, mixPath, 'audio-mix', ''],
+    [source, mixPath, 'audio-mix', '0:1.0:0:12000'],
+    [source, mixPath, 'audio-mix', '0:1.0:0:abc'],
+    [source, mixPath, 'audio-mix', '0:1.0:0:250:7'],
     [source, mixPath, 'audio-mix', '0:1.0:0,1:1.0:0,2:1.0:0,3:1.0:0,4:1.0:0,5:1.0:0,6:1.0:0,7:1.0:0,8:1.0:0'],
     [source, `hybrid-${token}`, 'audio-mix', '0:1.0:0'],
     [source, mixPath, 'audio-mix'],

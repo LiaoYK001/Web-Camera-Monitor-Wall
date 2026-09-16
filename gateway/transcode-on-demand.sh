@@ -13,14 +13,26 @@ validate_mix_spec() {
     IFS=','
     for entry in $spec; do
         IFS="$old_ifs"
+        case "$entry" in
+        *:*:*) ;;
+        *) return 1 ;;
+        esac
         index="${entry%%:*}"
-        rest="${entry#*:}"
-        gain="${rest%%:*}"
-        muted="${rest##*:}"
-        [ "$rest" != "$entry" ] && [ "$gain" != "$rest" ] || return 1
+        remainder="${entry#*:}"
+        gain="${remainder%%:*}"
+        remainder="${remainder#*:}"
+        muted="${remainder%%:*}"
+        delay=""
+        if [ "$remainder" != "$muted" ]; then
+            delay="${remainder#*:}"
+        fi
         printf '%s' "$index" | grep -Eq '^([0-9]|1[0-9]|2[0-9]|3[01])$' || return 1
         printf '%s' "$gain" | grep -Eq '^(0(\.[0-9]{1,4})?|1(\.0{1,4})?)$' || return 1
         printf '%s' "$muted" | grep -Eq '^[01]$' || return 1
+        if [ -n "$delay" ]; then
+            printf '%s' "$delay" | grep -Eq '^(0|[1-9][0-9]{0,4})$' || return 1
+            [ "$delay" -le 10000 ] || return 1
+        fi
         count=$((count + 1))
         [ "$count" -le 8 ] || return 1
         IFS=','
@@ -87,11 +99,20 @@ if [ "$video_mode" = audio-mix ]; then
     for entry in $audio_mode; do
         IFS="$old_ifs"
         index="${entry%%:*}"
-        rest="${entry#*:}"
-        gain="${rest%%:*}"
-        muted="${rest##*:}"
+        remainder="${entry#*:}"
+        gain="${remainder%%:*}"
+        remainder="${remainder#*:}"
+        muted="${remainder%%:*}"
+        delay=""
+        if [ "$remainder" != "$muted" ]; then
+            delay="${remainder#*:}"
+        fi
         [ "$muted" = "1" ] && gain="0"
-        graph="$graph[0:a:$index]volume=$gain[m$count];"
+        filter="volume=$gain"
+        if [ -n "$delay" ] && [ "$delay" -gt 0 ]; then
+            filter="adelay=$delay|$delay,$filter"
+        fi
+        graph="$graph[0:a:$index]$filter[m$count];"
         inputs="$inputs[m$count]"
         count=$((count + 1))
         IFS=','
