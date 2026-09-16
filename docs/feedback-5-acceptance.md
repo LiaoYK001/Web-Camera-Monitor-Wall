@@ -63,7 +63,11 @@
 - 验证：`python3 scripts/dev-native.py --check --composite` 通过；`tests/test-dev-launcher.mjs` 7/7 通过（含 Composite 帮助与参数校验）；C++ 核心重新编译通过且单测全过（含新增字段的 control_server）。
 
 未在本轮实测 / not yet run（**不得视为已支持**）：
-- 实际执行 `-Setup -Composite` 的 OBS 插件构建：本轮已在 WSL 实测尝试，cmake 已生成 `obs-build-<rev>-composite` 配置树，但插件编译进展极慢（多轮后仅 4 个目标文件）且未完成，排查在“嵌套子模块/缺失依赖”处停止。结论：`obs-ffmpeg`/`obs-x264`/`obs-webrtc` 能否构建**仍未证实**；很可能需要补齐 OBS 子模块/开发包，并应经 `scripts/dev-native.sh --composite` 的 Linux 存储缓存路径构建（而非直接在 `/mnt/c` 源码上构建）。
+- 实际执行 `-Setup -Composite` 的 OBS 插件构建：本轮在 WSL 逐项复现出**具体阻塞点**（均为可执行的环境/脚本问题，非代码逻辑）：
+  1. `libx264-dev` 缺失导致 obs-x264 无 `x264.h` —— 已加入 `dev-native.py` 的依赖列表；
+  2. 仅加 `-DENABLE_PLUGINS=ON` 会在可选采集插件处配置失败（先 `LibAJANTV2`/aja，再 `XCB COMPOSITE`/linux-capture）—— 需显式 `-DENABLE_AJA=OFF -DENABLE_DECKLINK=OFF -DENABLE_VLC=OFF`（并可能补 `libxcb-composite0-dev`）；
+  3. `check_obs_browser()` 在 `ENABLE_PLUGINS=ON` 时无条件要求 obs-browser **子模块内容**，而 `dev-native.py` 的 WSL 快速路径用 `git archive` 生成 Linux 存储源码，**archive 不含子模块**，因此必然配置失败。
+  结论：`obs-ffmpeg`/`obs-x264`/`obs-webrtc` 能否构建**仍未证实**。下一步修复方向明确：composite 构建须使用含子模块的 OBS 源码（例如把 `git submodule status` 列出的子模块目录一并复制进 Linux 存储源码），并禁用上述 SDK-only 插件。
 - 真实五路来源 → OBS 合成 → H.264/Opus → MediaMTX → Program WHEP 的发布与浏览器持续解码；`/api/v1/program/status` 的运行时返回未在真实合成会话中抓取。
 
 ## F5-05 多音轨 / per-source audio tracks — 界面过滤已实现，真实多音轨通路未实现
