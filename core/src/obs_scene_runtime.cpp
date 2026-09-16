@@ -1355,15 +1355,6 @@ void ObsSceneRuntime::commit_prepared(std::string_view transition_kind, int dura
         obs_source_set_audio_mixers(entry.source.get(), 1U);
         obs_source_set_monitoring_type(entry.source.get(),
                                        monitoring_type(entry.configuration.monitoring));
-        for (const AudioInputInstance &instance : entry.audio_inputs) {
-            const auto match = std::find_if(inputs.begin(), inputs.end(),
-                                            [&instance](const SceneAudioInput &input) {
-                                                return input.track == instance.track;
-                                            });
-            if (match == inputs.end())
-                continue;
-            drive(instance.source.get(), *match);
-        }
     }
     bool fade_started = false;
     if (impl_->active && impl_->current && transition_kind == "fade" && duration_ms > 0) {
