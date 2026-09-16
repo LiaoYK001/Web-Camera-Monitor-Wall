@@ -298,6 +298,8 @@ def main():
         'WEBOBS_SESSION_COOKIE_SECURE': 'false', 'WEBOBS_LISTEN_ADDRESS': '127.0.0.1',
         'WEBOBS_HTTP_PORT': '8080', 'WEBOBS_ALLOW_INSECURE_REMOTE': 'false',
         'WEBOBS_WEBRTC_ENABLED': 'true', 'WEBOBS_COMPOSITE_ENABLED': 'true' if args.composite else 'false',
+        # Native dev keeps OBS config in the cache instead of the container's /config.
+        'WEBOBS_OBS_CONFIG_DIR': str(data / 'obs-config'),
         'WEBOBS_NVR_ENABLED': 'true',
         'WEBOBS_TRANSCODER_PATH': str(transcoder),
         'WEBOBS_CAMERA_REGISTRY_ENABLED': 'true', 'WEBOBS_NODE_ROLE': 'standalone',

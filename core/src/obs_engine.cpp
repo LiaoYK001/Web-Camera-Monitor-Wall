@@ -578,7 +578,12 @@ ExitCode run_obs_engine(const Config &config, const SceneDocument &document)
         return ExitCode::success;
     }
 
-    const std::filesystem::path config_directory = "/config/obs";
+    // Docker uses /config; native development can point this at a writable path.
+    const std::filesystem::path config_directory = [] {
+        if (const char *value = std::getenv("WEBOBS_OBS_CONFIG_DIR"); value && *value)
+            return std::filesystem::path(value);
+        return std::filesystem::path("/config/obs");
+    }();
     std::filesystem::create_directories(config_directory, path_error);
     if (path_error) {
         blog(LOG_ERROR, "Could not create OBS config directory: %s", path_error.message().c_str());
@@ -621,12 +626,32 @@ ExitCode run_obs_engine(const Config &config, const SceneDocument &document)
     }
 
     const std::filesystem::path obs_prefix = WEBOBS_OBS_PREFIX;
+    // Base modules are mandatory.  Source-type modules are only required when the
+    // scene actually uses that source type, so a pure camera scene never depends
+    // on CEF/obs-browser or the text/image plugins, and an unsupported source
+    // type is reported explicitly instead of silently degrading.
     if (!load_module(obs_prefix, "obs-ffmpeg") || !load_module(obs_prefix, "obs-x264") ||
-        !load_module(obs_prefix, "obs-browser") || !load_module(obs_prefix, "image-source") ||
-        !load_module(obs_prefix, "text-freetype2") || !load_module(obs_prefix, "obs-filters") ||
-        !load_module(obs_prefix, "obs-transitions") ||
         (config.webrtc_enabled && !load_module(obs_prefix, "obs-webrtc")))
         return ExitCode::obs_initialization_failed;
+    const auto has_source_kind = [&document](std::string_view kind) {
+        return std::any_of(document.sources.begin(), document.sources.end(),
+                           [kind](const SceneSource &source) { return source.kind == kind; });
+    };
+    const auto require_module = [&obs_prefix](const char *module, const char *source_kind) {
+        if (load_module(obs_prefix, module))
+            return true;
+        blog(LOG_ERROR, "Source type '%s' needs the OBS module '%s', which this build does not provide",
+             source_kind, module);
+        return false;
+    };
+    if ((has_source_kind("browser") && !require_module("obs-browser", "browser")) ||
+        (has_source_kind("image") && !require_module("image-source", "image")) ||
+        (has_source_kind("text") && !require_module("text-freetype2", "text")))
+        return ExitCode::obs_initialization_failed;
+    // Filters and transitions are additive: their absence only degrades those
+    // optional features and must never block composition.
+    load_module(obs_prefix, "obs-filters");
+    load_module(obs_prefix, "obs-transitions");
     obs_post_load_modules();
 
     VideoEncoderCapabilities encoder_capabilities = detect_video_encoder_capabilities(config);
