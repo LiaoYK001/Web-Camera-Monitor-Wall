@@ -6,7 +6,7 @@ export interface DirectAudioSnapshot {
   state: DirectAudioState;
   inputCount: number;
   level: number;
-  sources: Array<{ sourceId: string; rmsDbfs: number | null; peakDbfs: number | null; audioTracks?: number }>;
+  sources: Array<{ sourceId: string; rmsDbfs: number | null; peakDbfs: number | null; audioTracks?: number; streamBound?: boolean }>;
 }
 
 interface MixerEntry {
@@ -244,7 +244,9 @@ export class DirectAudioMixer {
     const snapshot: DirectAudioSnapshot = { state, inputCount, level: this.level,
       sources: [...this.entries.entries()].map(([sourceId, entry]) => ({ sourceId,
         rmsDbfs: entry.rmsDbfs ?? null, peakDbfs: entry.peakDbfs ?? null,
-        audioTracks: entry.stream?.getAudioTracks().length ?? 0 })) };
+        audioTracks: entry.stream?.getAudioTracks().length ?? 0,
+        // An attached element without a stream is "unknown", not "no audio".
+        streamBound: Boolean(entry.stream) })) };
     this.onSnapshot(snapshot);
     window.dispatchEvent(new CustomEvent('webobs:direct-audio-meters', { detail: snapshot }));
   }

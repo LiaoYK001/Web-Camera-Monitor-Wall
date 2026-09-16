@@ -79,3 +79,28 @@ test('exposes live large-picture controls, meter options and window preview', as
   expect(result.placeholders).toBe(2);
   expect(result.railButtons).toBe(2);
 });
+
+test('treats an unprobed camera as pending instead of no-audio', async ({ page }) => {
+  await page.goto('/');
+  const result = await page.evaluate(async () => {
+    const { mountWall } = await import('/tests/harness/wallMount.tsx');
+    const host = document.createElement('div');
+    document.body.appendChild(host);
+    const scene = { schemaVersion: 5, revision: 1, id: 'cam-scene', name: 'cam', canvas: { width: 1280, height: 720, backgroundColor: '#000' },
+      sources: [{ id: 'source-cam', kind: 'camera', name: 'Camera A', cameraId: 'cam-1', profileId: 'main', hardwareDecode: 'auto', muted: true, volume: 1, syncOffsetMs: 0, monitoring: 'off', audioTrack: 1, filters: [] }],
+      items: [{ id: 'item-cam', sourceId: 'source-cam', x: 0, y: 0, width: 1280, height: 720, scaleMode: 'contain', crop: { top: 0, right: 0, bottom: 0, left: 0 }, zIndex: 0, visible: true, locked: false, groupId: '', rotation: 0, opacity: 1, blendMode: 'normal' }] };
+    const wall = mountWall(scene as never, host);
+    const wait = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+    await wait(400);
+    const pending = Array.from(host.querySelectorAll('.audio-track-missing')).map((node) => node.textContent ?? '').join('|');
+    const reprobe = Array.from(host.querySelectorAll('button')).filter((button) => button.textContent === '重新探测').length;
+    const meterControls = Array.from(host.querySelectorAll('label')).filter((label) => (label.textContent ?? '').includes('画面电平表')).length;
+    const fieldsets = host.querySelectorAll('fieldset').length;
+    wall.unmount();
+    return { pending, reprobe, meterControls, fieldsets };
+  });
+  expect(result.fieldsets).toBe(1);
+  expect(result.pending).toContain('音频轨道待探测');
+  expect(result.reprobe).toBe(1);
+  expect(result.meterControls).toBe(0);
+});

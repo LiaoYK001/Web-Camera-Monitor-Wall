@@ -1,5 +1,5 @@
 import { type CSSProperties, type PointerEvent as ReactPointerEvent, useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { closeAnalyticsRuntimeSession, fetchAnalyticsPolicies, fetchCameras, fetchMotionZones, fetchPlaybackCapabilities, renewAnalyticsRuntimeSession, requestAnalyticsRuntimePlan, submitAnalyticsSignals } from './api';
+import { closeAnalyticsRuntimeSession, fetchAnalyticsPolicies, fetchCameras, fetchMotionZones, fetchPlaybackCapabilities, probeSourceProfile, renewAnalyticsRuntimeSession, requestAnalyticsRuntimePlan, submitAnalyticsSignals } from './api';
 import { activateGateway, approvedBrowserProfile, BrowserPlanError, browserGrantProfile, connectApprovedWhep, connectHls, connectMjpeg, offlineSignedGrantPlan, requestBrowserPlan, type BrowserTopologyPlan } from './browserMedia';
 import { DirectAudioMixer, type DirectAudioSnapshot } from './directAudioMixer';
 import { clearPrivateRuntimeState, loadBrowserIdentity, loadMonitorView, saveMonitorView } from './localRuntime';
@@ -768,11 +768,39 @@ export default function DirectPreview({ scene, compact = false }: { scene: Scene
 
   useEffect(() => () => promotionTimers.current.forEach((timer) => window.clearTimeout(timer)), []);
 
-  const sourceHasAudio = (source: SceneSource): boolean => {
+  // "confirmed none" is never guessed.  A live stream with zero audio tracks is
+  // definitive, a ready probe decides from its track list, and everything else
+  // stays "unprobed" so a silent source is never mislabelled as having no audio.
+  const audioTrackState = (source: SceneSource): 'available' | 'none' | 'unprobed' => {
     const meter = audioBySource.get(source.id);
-    if (meter?.audioTracks !== undefined) return meter.audioTracks > 0;
+    if (meter?.streamBound) return (meter.audioTracks ?? 0) > 0 ? 'available' : 'none';
+    if ((meter?.audioTracks ?? 0) > 0) return 'available';
+    if (['color', 'text', 'image', 'nested'].includes(source.kind)) return 'none';
     const capability = bySource.get(source.id);
-    return Boolean(capability?.audioCodec && capability.audioCodec !== 'none');
+    if (capability?.audioCodec && capability.audioCodec !== 'none') return 'available';
+    if (source.kind === 'camera') {
+      const camera = cameras.find((candidate) => candidate.id === source.cameraId);
+      const profile = camera?.profiles.find((candidate) => candidate.id === source.profileId);
+      if (profile) {
+        if (profile.probeState === 'ready')
+          return (profile.tracks ?? []).some((track) => track.kind === 'audio') ? 'available' : 'none';
+        return 'unprobed';
+      }
+    }
+    if (capability) return 'none';
+    return 'unprobed';
+  };
+
+  const reprobeAudioTracks = async (source: SceneSource) => {
+    if (source.kind !== 'camera') return;
+    try {
+      await probeSourceProfile(source.cameraId, source.profileId);
+      const controller = new AbortController();
+      const result = await fetchCameras(controller.signal);
+      setCameras(result.cameras);
+    } catch {
+      // The camera registry already records MEDIA_PROBE_FAILED for the profile.
+    }
   };
 
   const toggleLargeSource = (sourceId: string, checked: boolean) => setMonitorView((value) => {
@@ -871,14 +899,14 @@ export default function DirectPreview({ scene, compact = false }: { scene: Scene
         {monitorView.lowPower.enabled && monitorView.lowPower.targetFps > 5 && <small className="power-warning">超过 5 FPS，节能效果可能有限。</small>}
         <details><summary>逐路统计 / 声音告警</summary><div className="monitor-source-options monitor-decoration-options">{effectiveScene.sources.slice(0, 16).map((source) => {
           const decoration = sourceDecoration(monitorView, source.id);
-          const hasAudio = sourceHasAudio(source);
+          const trackState = audioTrackState(source);
           return <fieldset key={source.id}><legend>{source.name}</legend>
             <label><input type="checkbox" checked={decoration.telemetry.enabled} onChange={(event) => updateSourceDecoration(source.id, { telemetry: { ...decoration.telemetry, enabled: event.target.checked } })} />统计</label>
             {(['fps', 'bitrate', 'codec', 'decoder'] as const).map((field) => <label key={field}><input type="checkbox" checked={decoration.telemetry.fields.includes(field)} onChange={(event) => updateSourceDecoration(source.id, { telemetry: { ...decoration.telemetry, fields: event.target.checked ? [...new Set([...decoration.telemetry.fields, field])] : decoration.telemetry.fields.filter((item) => item !== field) } })} />{field}</label>)}
             <label>填充<select value={decoration.fill ?? ''} onChange={(event) => updateSourceDecoration(source.id, { fill: event.target.value ? event.target.value as VideoFillMode : undefined })}>
               <option value="">跟随监控</option><option value="stretch">拉伸铺满</option><option value="contain">完整显示</option><option value="cover">裁剪铺满</option>
             </select></label>
-            {hasAudio ? <>
+            {trackState === 'available' ? <>
               <label><input type="checkbox" checked={decoration.audioMeter.enabled} onChange={(event) => updateSourceDecoration(source.id, { audioMeter: { ...decoration.audioMeter, enabled: event.target.checked } })} />画面电平表</label>
               <label>方向<select value={decoration.audioMeter.orientation} onChange={(event) => updateSourceDecoration(source.id, { audioMeter: { ...decoration.audioMeter, orientation: event.target.value as 'vertical' | 'horizontal' } })}><option value="vertical">竖</option><option value="horizontal">横</option></select></label>
               <label>位置<select value={decoration.audioMeter.position} onChange={(event) => updateSourceDecoration(source.id, { audioMeter: { ...decoration.audioMeter, position: event.target.value as AudioMeterConfig['position'] } })}>
@@ -889,7 +917,9 @@ export default function DirectPreview({ scene, compact = false }: { scene: Scene
               <label>阈值 <input type="number" min="-120" max="0" step="1" value={decoration.audioMeter.thresholdDbfs} onChange={(event) => updateSourceDecoration(source.id, { audioMeter: { ...decoration.audioMeter, thresholdDbfs: Number(event.target.value) } })} /> dBFS</label>
               <label><input type="checkbox" checked={decoration.audioMeter.alertBorderEnabled} onChange={(event) => updateSourceDecoration(source.id, { audioMeter: { ...decoration.audioMeter, alertBorderEnabled: event.target.checked } })} />超阈值边框</label>
               <label><input type="checkbox" checked={decoration.promotionKinds.audio} onChange={(event) => updateSourceDecoration(source.id, { promotionKinds: { ...decoration.promotionKinds, audio: event.target.checked } })} />音频提升 M</label>
-            </> : <small className="audio-track-missing">该源没有音频轨道</small>}
+            </> : trackState === 'none'
+              ? <small className="audio-track-missing">该源没有音频轨道</small>
+              : <small className="audio-track-missing">音频轨道待探测 <button type="button" onClick={() => void reprobeAudioTracks(source)}>重新探测</button></small>}
             <label><input type="checkbox" checked={decoration.promotionKinds.motion} onChange={(event) => updateSourceDecoration(source.id, { promotionKinds: { ...decoration.promotionKinds, motion: event.target.checked } })} />Motion 提升（预留）</label>
             <label><input type="checkbox" checked={decoration.promotionKinds.person} onChange={(event) => updateSourceDecoration(source.id, { promotionKinds: { ...decoration.promotionKinds, person: event.target.checked } })} />Person 提升（预留）</label>
           </fieldset>;
