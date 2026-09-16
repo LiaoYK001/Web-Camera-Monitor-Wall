@@ -1069,5 +1069,53 @@ class CameraRegistryTests(unittest.TestCase):
             server.shutdown(); server.server_close(); thread.join(timeout=2)
 
 
+    def test_profile_probe_is_cached_coalesced_and_invalidated(self) -> None:
+        registry.save_camera(registry.validate_camera({
+            "id": "probe-cache-fixture", "name": "Probe Cache",
+            "address": "rtsp://probe.example.invalid/live", "adapter": "rtsp",
+            "credentialsRef": "",
+            "profiles": [{
+                "id": "main", "name": "Main", "role": "main",
+                "endpoint": "rtsp://probe.example.invalid/main",
+                "videoCodec": "h264", "audioCodec": "", "width": 1920, "height": 1080, "fps": 25,
+            }],
+        }), False)
+        payload = json.dumps({"streams": [
+            {"index": 0, "codec_type": "video", "codec_name": "h264", "bit_rate": "2000000",
+             "width": 1920, "height": 1080, "avg_frame_rate": "25/1"},
+            {"index": 1, "codec_type": "audio", "codec_name": "aac", "bit_rate": "128000",
+             "sample_rate": "48000", "channels": 2},
+        ]})
+        calls: list[float] = []
+
+        def slow_run(*args, **kwargs):
+            calls.append(time.time())
+            time.sleep(0.2)
+            return subprocess.CompletedProcess(args=args, returncode=0, stdout=payload, stderr="")
+
+        with patch.object(registry.subprocess, "run", side_effect=slow_run):
+            results: list[dict] = []
+
+            def probe() -> None:
+                results.append(registry.probe_source_profile("probe-cache-fixture", "main"))
+
+            threads = [threading.Thread(target=probe) for _ in range(2)]
+            for thread in threads:
+                thread.start()
+            for thread in threads:
+                thread.join()
+            # Two concurrent callers coalesce into one ffprobe.
+            self.assertEqual(len(calls), 1)
+            self.assertEqual(len(results), 2)
+            self.assertTrue(any(track["kind"] == "audio" for track in results[0]["tracks"]))
+            # A later call inside the TTL is served from the cache.
+            registry.probe_source_profile("probe-cache-fixture", "main")
+            self.assertEqual(len(calls), 1)
+            # A catalog mutation invalidates the cached result.
+            registry.patch_source_catalog("probe-cache-fixture", {"groupId": "Cache"}, 1)
+            registry.probe_source_profile("probe-cache-fixture", "main")
+            self.assertEqual(len(calls), 2)
+
+
 if __name__ == "__main__":
     unittest.main()

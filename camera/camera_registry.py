@@ -66,6 +66,11 @@ PROBE_OUTPUT_LIMIT = 1024 * 1024
 PROBE_SEMAPHORE = threading.BoundedSemaphore(4)
 PROBE_LOCKS_GUARD = threading.Lock()
 PROBE_LOCKS: dict[str, threading.Lock] = {}
+# Short-lived probe result cache.  Keys hash the endpoint so a raw RTSP URL is
+# never retained; a mutation or TTL expiry invalidates the entry.
+PROBE_RESULTS_GUARD = threading.Lock()
+PROBE_RESULTS: dict[str, tuple[float, dict]] = {}
+PROBE_RESULT_TTL_SECONDS = float(os.environ.get("WEBOBS_PROBE_CACHE_SECONDS", "15"))
 ONVIF_CLOCK_LOCK = threading.Lock()
 ONVIF_CLOCK_OFFSETS: dict[str, float] = {}
 ANALYTICS_SESSION_LOCK = threading.Lock()
@@ -1127,6 +1132,7 @@ def resolve_profile(database: sqlite3.Connection, camera_id: str, profile_id: st
 
 def save_camera(camera: dict, replace: bool) -> dict:
     now = int(time.time())
+    invalidate_probe_results(camera["id"])
     with connect() as database:
         current = database.execute(
             "SELECT created_at,capabilities_json,revision FROM cameras WHERE id=?", (camera["id"],)).fetchone()
@@ -1368,6 +1374,7 @@ def validate_catalog_patch(payload: dict, adapter: str) -> tuple[dict, list[dict
 
 
 def patch_source_catalog(camera_id: str, payload: dict, revision: int) -> dict:
+    invalidate_probe_results(camera_id)
     with connect() as database:
         row = database.execute("SELECT * FROM cameras WHERE id=?", (camera_id,)).fetchone()
         if not row:
@@ -1445,10 +1452,49 @@ def parse_rate(value: object) -> float:
         return 0
 
 
+def probe_result_key(camera_id: str, profile_id: str, endpoint: str, transport_mode: str) -> str:
+    digest = hashlib.sha256(endpoint.encode("utf-8", "surrogatepass")).hexdigest()[:32]
+    return f"{camera_id}|{profile_id}|{transport_mode}|{digest}"
+
+
+def cached_probe_result(key: str) -> dict | None:
+    with PROBE_RESULTS_GUARD:
+        entry = PROBE_RESULTS.get(key)
+        if not entry:
+            return None
+        stored_at, document = entry
+        if time.time() - stored_at > PROBE_RESULT_TTL_SECONDS:
+            PROBE_RESULTS.pop(key, None)
+            return None
+        # Hand callers their own copy so the cache can never be mutated in place.
+        return json.loads(json.dumps(document))
+
+
+def store_probe_result(key: str, document: dict) -> None:
+    with PROBE_RESULTS_GUARD:
+        PROBE_RESULTS[key] = (time.time(), json.loads(json.dumps(document)))
+        if len(PROBE_RESULTS) > 512:
+            oldest = min(PROBE_RESULTS, key=lambda name: PROBE_RESULTS[name][0])
+            PROBE_RESULTS.pop(oldest, None)
+
+
+def invalidate_probe_results(camera_id: str = "") -> None:
+    with PROBE_RESULTS_GUARD:
+        if not camera_id:
+            PROBE_RESULTS.clear()
+            return
+        prefix = camera_id + "|"
+        for key in [name for name in PROBE_RESULTS if name.startswith(prefix)]:
+            PROBE_RESULTS.pop(key, None)
+
+
 def probe_source_profile(camera_id: str, profile_id: str) -> dict:
     with PROBE_LOCKS_GUARD:
         lock = PROBE_LOCKS.setdefault(camera_id, threading.Lock())
-    if not lock.acquire(blocking=False):
+    # Wait for an in-flight probe of the same camera instead of failing, then
+    # re-check the result cache below: concurrent callers coalesce into one
+    # ffprobe instead of each spawning their own.
+    if not lock.acquire(timeout=max(5.0, PROBE_TIMEOUT_SECONDS * 2)):
         raise RuntimeError("camera probe is already running")
     if not PROBE_SEMAPHORE.acquire(blocking=False):
         lock.release()
@@ -1471,6 +1517,13 @@ def probe_source_profile(camera_id: str, profile_id: str) -> dict:
             endpoint, transport_mode = profile["endpoint"], profile["transport_mode"]
             if endpoint.startswith("http://") and not bool(profile["allow_insecure_http"]):
                 raise InsecureHttpDenied("insecure HTTP media requires explicit per-profile approval")
+            cache_key = probe_result_key(camera_id, profile_id, endpoint, transport_mode)
+            cached = cached_probe_result(cache_key)
+            if cached is not None:
+                database.execute(
+                    "UPDATE stream_profiles SET probe_state='cached',last_probe_at=? WHERE camera_id=? AND id=?",
+                    (int(time.time()), camera_id, profile_id))
+                return cached
             settings = database.execute("SELECT settings_json FROM runtime_settings WHERE id=1").fetchone()
             probe_timeout = int(json.loads(settings["settings_json"])["probeTimeoutSeconds"])
         command = ["ffprobe", "-v", "error", "-show_entries",
@@ -1541,7 +1594,9 @@ def probe_source_profile(camera_id: str, profile_id: str) -> dict:
                 resolve_issue(database, "LIVE_BITRATE_CAP_EXCEEDED", "profile",
                               f"{camera_id}.{profile_id}"[:64], "session-admission")
             reconcile_audio_issues(database, camera_id)
-            return profile_document(database, camera_id, refreshed, include_endpoint=False)
+            document = profile_document(database, camera_id, refreshed, include_endpoint=False)
+            store_probe_result(cache_key, document)
+            return document
     finally:
         PROBE_SEMAPHORE.release()
         lock.release()
