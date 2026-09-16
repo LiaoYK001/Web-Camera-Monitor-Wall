@@ -208,35 +208,35 @@ struct SourceEntry {
     std::chrono::steady_clock::time_point meter_requested_at{};
 };
 
-/** Create one audio-only instance per input track beyond the first. */
+/**
+ * Extra input tracks cannot be obtained by cloning the Media Source: the OBS
+ * build compiled here exposes no audio-track selector for it (its property list
+ * has no "track" entry, verified against obs-ffmpeg-source.c), so a clone would
+ * silently decode the same default stream again and double the audio.
+ *
+ * Until each input is fed from the gateway's audio-only extraction path
+ * (`audio-<token>-t<index>`, already implemented and verified via
+ * transcode-on-demand.sh), extra inputs are reported as not mixed instead of
+ * being faked.
+ */
 void attach_audio_input_instances(SourceEntry &entry, obs_data_t *settings,
                                   const std::vector<SceneAudioInput> &inputs)
 {
     if (inputs.size() <= 1 || !settings || !is_ffmpeg_kind(entry.configuration.kind))
         return;
-    const char *dump = obs_data_get_json(settings);
-    if (!dump)
-        return;
-    const std::string base_name = "WebOBS " + entry.configuration.kind + " " + entry.configuration.id;
+    std::string extra;
     for (std::size_t index = 1; index < inputs.size(); ++index) {
-        DataPtr track_settings(obs_data_create_from_json(dump));
-        if (!track_settings)
-            return;
-        obs_data_set_int(track_settings.get(), "track", inputs[index].track + 1);
-        const std::string name = base_name + " audio track " + std::to_string(inputs[index].track + 1);
-        SourcePtr instance(obs_source_create_private("ffmpeg_source", name.c_str(), track_settings.get()));
-        if (!instance)
-            continue;
-        obs_source_set_volume(instance.get(), 1.0f);
-        obs_source_set_muted(instance.get(), true);
-        // Every input instance feeds the program bus (mixer 1); the decoded
-        // input track is chosen by the ffmpeg `track` setting instead.
-        obs_source_set_audio_mixers(instance.get(), 1U);
-        obs_source_set_monitoring_type(instance.get(), OBS_MONITORING_TYPE_NONE);
-        obs_source_inc_active(instance.get());
-        entry.audio_inputs.push_back(
-            AudioInputInstance{inputs[index].track, std::move(instance), true});
+        if (!extra.empty())
+            extra += ",";
+        extra += std::to_string(inputs[index].track);
     }
+    static std::atomic<bool> reported{false};
+    if (!reported.exchange(true))
+        blog(LOG_WARNING,
+             "Source '%s' selects %zu audio inputs, but this OBS build has no Media Source audio-track "
+             "selector; the extra input track(s) [%s] are not mixed yet and need the gateway audio-only "
+             "extraction path",
+             entry.configuration.id.c_str(), inputs.size(), extra.c_str());
 }
 
 struct RuntimeState {
@@ -552,9 +552,6 @@ SourceEntry create_source_entry(const SceneSource &configuration, int connect_ti
     } else {
         return {};
     }
-
-    if (is_ffmpeg_kind(configuration.kind) && !audio_inputs.empty())
-        obs_data_set_int(settings.get(), "track", audio_inputs.front().track + 1);
 
     SourceEntry entry;
     entry.configuration = configuration;
