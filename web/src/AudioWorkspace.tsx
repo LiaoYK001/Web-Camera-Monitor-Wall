@@ -18,6 +18,8 @@ interface TrackSelection {
   selected: number[];
   gain: Record<number, number>;
   muted: Record<number, boolean>;
+  /** Per-track sync offset in milliseconds (applied by the gateway mix). */
+  offset: Record<number, number>;
   mode: 'merged' | 'independent';
 }
 
@@ -81,11 +83,16 @@ export default function AudioWorkspace({ studio, onCommitted }: { studio: Studio
             const saved = source.audioInputs?.filter((input) => value.tracks.some((track) => track.index === input.track)) ?? [];
             const gain: Record<number, number> = {};
             const muted: Record<number, boolean> = {};
-            for (const input of saved) { gain[input.track] = input.gain; muted[input.track] = input.muted; }
+            const offset: Record<number, number> = {};
+            for (const input of saved) {
+              gain[input.track] = input.gain;
+              muted[input.track] = input.muted;
+              offset[input.track] = input.syncOffsetMs ?? 0;
+            }
             const selected = saved.length > 0
               ? saved.map((input) => input.track).sort((left, right) => left - right)
               : defaultSelectedTracks(value.tracks);
-            return { ...current, [source.id]: { selected, gain, muted, mode: 'merged' } };
+            return { ...current, [source.id]: { selected, gain, muted, offset, mode: 'merged' } };
           });
         }
       });
@@ -157,7 +164,7 @@ export default function AudioWorkspace({ studio, onCommitted }: { studio: Studio
   const updateSelection = (sourceId: string, change: (current: TrackSelection) => TrackSelection) => {
     setAudioDirty(true);
     setSelection((current) => {
-      const fallback: TrackSelection = { selected: [], gain: {}, muted: {}, mode: 'merged' };
+      const fallback: TrackSelection = { selected: [], gain: {}, muted: {}, offset: {}, mode: 'merged' };
       return { ...current, [sourceId]: change(current[sourceId] ?? fallback) };
     });
   };
@@ -181,8 +188,9 @@ export default function AudioWorkspace({ studio, onCommitted }: { studio: Studio
         if (!state) return source;
         // Empty selection means "this source adds no audio"; otherwise the
         // legacy audioTrack mirrors the first input for older readers/engines.
-        const audioInputs = state.selected
-          .map((index) => ({ track: index, gain: state.gain[index] ?? 1, muted: state.muted[index] ?? false }));
+        const audioInputs = state.selected.map((index) => ({ track: index,
+          gain: state.gain[index] ?? 1, muted: state.muted[index] ?? false,
+          syncOffsetMs: state.offset[index] ?? 0 }));
         return { ...source, audioInputs,
           audioTrack: audioInputs.length > 0 ? audioInputs[0].track + 1 : source.audioTrack } as SceneSource;
       }),
@@ -256,6 +264,7 @@ export default function AudioWorkspace({ studio, onCommitted }: { studio: Studio
                   <span>{track.title || track.language || `轨道 ${track.index + 1}`}</span>
                   <label><input type="checkbox" checked={state?.muted[track.index] ?? false} onChange={(event) => updateSelection(source.id, (current) => ({ ...current, muted: { ...current.muted, [track.index]: event.target.checked } }))} />静音</label>
                   <label>增益 <input type="range" min="0" max="1" step="0.01" value={state?.gain[track.index] ?? 1} onChange={(event) => updateSelection(source.id, (current) => ({ ...current, gain: { ...current.gain, [track.index]: Number(event.target.value) } }))} /> {Math.round((state?.gain[track.index] ?? 1) * 100)}%</label>
+                  <label>偏移 <input type="number" min="-10000" max="10000" step="10" aria-label={`轨道 ${track.index + 1} 同步偏移`} value={state?.offset[track.index] ?? 0} onChange={(event) => updateSelection(source.id, (current) => ({ ...current, offset: { ...current.offset, [track.index]: Number(event.target.value) } }))} /> ms</label>
                 </div>)}</div>
                 <div><label><input type="checkbox" checked={source.muted} onChange={(event) => update(source.id, { muted: event.target.checked })} />来源静音</label><label>音量 <input type="range" min="0" max="1" step="0.01" value={source.volume} onChange={(event) => update(source.id, { volume: Number(event.target.value) })} /> {Math.round(source.volume * 100)}%</label></div>
                 <div><select value={source.monitoring} onChange={(event) => update(source.id, { monitoring: event.target.value as AudioMonitoring })}><option value="off">关闭监听</option><option value="monitor-only">仅监听</option><option value="monitor-and-output">监听并输出</option></select><label>偏移 <input type="number" min="-10000" max="10000" value={source.syncOffsetMs} onChange={(event) => update(source.id, { syncOffsetMs: Number(event.target.value) })} /> ms</label></div>

@@ -28,7 +28,7 @@ interface SceneSourceBase {
   /** Legacy single-track field; kept in sync with audioInputs[0] on save. */
   audioTrack: number;
   /** Schema 6 per-track Composite inputs, keyed by "source + input track". */
-  audioInputs?: Array<{ track: number; gain: number; muted: boolean }>;
+  audioInputs?: Array<{ track: number; gain: number; muted: boolean; syncOffsetMs?: number }>;
   filters: SceneFilter[];
 }
 

@@ -90,6 +90,7 @@ test('audio workspace groups real tracks per source and wires per-track channels
     // The saved schema 6 selection must be loaded into the controls.
     const firstControl = channel('Camera A')?.querySelector('.audio-track-control') as HTMLElement | null;
     const loadedGain = (firstControl?.querySelector('input[type="range"]') as HTMLInputElement | null)?.value;
+    const offsetControl = firstControl?.querySelector('input[type="number"]') as HTMLInputElement | null;
     const loadedMuted = (firstControl?.querySelector('input[type="checkbox"]') as HTMLInputElement | null)?.checked;
     const meterBefore = channel('Camera A')?.querySelector('.vu-section')?.textContent ?? '';
     const modeButton = channel('Camera A')?.querySelector('.audio-level-mode') as HTMLButtonElement | null;
@@ -120,7 +121,7 @@ test('audio workspace groups real tracks per source and wires per-track channels
     workspace.unmount();
     return { names, loaded, checkedA, controlsBefore, meterBefore, modeLabelBefore, modeLabelAfter,
       controlsAfter, controlsFinal, noAudio, unprobed, reprobe, hiddenAudio,
-      loadedGain, loadedMuted, saveEnabled, htmlSample: host.innerHTML.slice(0, 300) };
+      loadedGain, loadedMuted, offsetControl: Boolean(offsetControl), saveEnabled, htmlSample: host.innerHTML.slice(0, 300) };
   }, studio);
   expect(result.names, `html=${result.htmlSample} console=${consoleErrors.join(' || ')}`).toEqual(['Camera A', 'Camera B', 'Stream C']);
   expect(result.loaded).toBe(true);
@@ -138,12 +139,13 @@ test('audio workspace groups real tracks per source and wires per-track channels
   expect(gets.filter((url) => url.includes('source-c')).length).toBeGreaterThan(1);
   expect(result.loadedGain).toBe('0.25');
   expect(result.loadedMuted).toBe(true);
+  expect(result.offsetControl).toBe(true);
   expect(result.saveEnabled).toBe(true);
   const saved = JSON.parse(studioSaves[studioSaves.length - 1] ?? '{}') as {
     scenes?: Array<{ sources?: Array<{ id: string; audioTrack?: number; audioInputs?: Array<{ track: number; gain: number; muted: boolean }> }> }>;
   };
   const savedSource = saved.scenes?.[0]?.sources?.find((source) => source.id === 'source-a');
-  expect(savedSource?.audioInputs).toEqual([{ track: 1, gain: 1, muted: false }]);
+  expect(savedSource?.audioInputs).toEqual([{ track: 1, gain: 1, muted: false, syncOffsetMs: 0 }]);
   expect(savedSource?.audioTrack).toBe(2);
   expect(posts.some((url) => url.includes('/source-a/audio-tracks/0/whep'))).toBe(true);
   expect(posts.some((url) => url.includes('/source-a/audio-tracks/1/whep'))).toBe(true);
