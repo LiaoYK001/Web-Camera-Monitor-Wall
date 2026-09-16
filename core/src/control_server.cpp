@@ -656,9 +656,31 @@ public:
 
     HttpResponse status(unsigned int version) const
     {
+        // Staged native Composite status.  Each stage is reported separately so
+        // the console never collapses "not enabled", "transport off", "engine
+        // down" and "publish target not ready" into one generic message.
+        const bool engine_active = runtime_status_.engine_active.load();
+        const bool publish_ready = runtime_status_.webrtc_ready.load();
+        const char *configuration = !composite_enabled_ ? "disabled"
+            : (!enabled_ ? "incomplete" : "ready");
+        const char *engine = engine_active ? "ready" : "stopped";
+        const char *publish = (composite_enabled_ && publish_ready) ? "publishing" : "idle";
+        std::string reason;
+        if (!composite_enabled_)
+            reason = "composite_disabled";
+        else if (!enabled_)
+            reason = "webrtc_transport_disabled";
+        else if (!engine_active)
+            reason = "engine_not_active";
+        else if (!publish_ready)
+            reason = "whip_output_not_ready";
         return response(http::status::ok, version,
                         std::string("{\"enabled\":") + (enabled_ && composite_enabled_ ? "true" : "false") +
-                            ",\"endpoint\":\"/api/v1/program/whep\"}");
+                            ",\"endpoint\":\"/api/v1/program/whep\"" +
+                            ",\"configuration\":\"" + configuration + "\"" +
+                            ",\"engine\":\"" + engine + "\"" +
+                            ",\"publish\":\"" + publish + "\"" +
+                            ",\"reason\":\"" + json_escape(reason) + "\"}");
     }
 
     HttpResponse capabilities(unsigned int version)

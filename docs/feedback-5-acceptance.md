@@ -45,12 +45,12 @@
 - Composite 构建启用 OBS 插件但**显式排除 CEF/浏览器插件**，按需构建并校验 `obs-ffmpeg` / `obs-x264` / `obs-webrtc`，缺失时报具体模块名。
 - 启动前运行硬件探测并导出 `WEBOBS_NVIDIA_*`；`WEBOBS_COMPOSITE_ENABLED` 随参数切换。
 - 前端：分别显示未启用/依赖不完整/引擎失败/发布失败/浏览器连接失败，并给出 `.\scripts\dev.ps1 -Setup -Composite`、`.\scripts\dev.ps1 -Composite` 与日志目录。
-- 验证：`python3 scripts/dev-native.py --check --composite` 通过；`tests/test-dev-launcher.mjs` 7/7 通过（含 Composite 帮助与参数校验）。
+- 后端分阶段状态：`/api/v1/program/status` 新增 `configuration`（disabled/incomplete/ready）、`engine`（stopped/ready）、`publish`（idle/publishing）与 `reason`（composite_disabled / webrtc_transport_disabled / engine_not_active / whip_output_not_ready），由运行状态如实推导，不再让前端只能显示“未知”。
+- 验证：`python3 scripts/dev-native.py --check --composite` 通过；`tests/test-dev-launcher.mjs` 7/7 通过（含 Composite 帮助与参数校验）；C++ 核心重新编译通过且单测全过（含新增字段的 control_server）。
 
 未在本轮实测 / not yet run（**不得视为已支持**）：
 - 实际执行 `-Setup -Composite` 的 OBS 插件构建（可能需要额外开发包与较长时间）。
-- 真实五路来源 → OBS 合成 → H.264/Opus → MediaMTX → Program WHEP 的发布与浏览器持续解码。
-- 引擎就绪/Program 已发布的分阶段状态后端字段（当前 `/api/v1/program/status` 仍只返回 `enabled/endpoint`，前端已兼容可选字段）。
+- 真实五路来源 → OBS 合成 → H.264/Opus → MediaMTX → Program WHEP 的发布与浏览器持续解码；`/api/v1/program/status` 的运行时返回未在真实合成会话中抓取。
 
 ## F5-05 多音轨 / per-source audio tracks — 界面过滤已实现，真实多音轨通路未实现
 
