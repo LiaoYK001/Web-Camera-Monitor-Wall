@@ -115,11 +115,20 @@ cd web; node node_modules/@playwright/test/cli.js test -c playwright.local.confi
 # 启动器测试
 node --test tests/test-dev-launcher.mjs
 
-# 原生 Composite（首次构建较久；本轮未执行）
+# 原生 Composite（首次构建较久；本机已实测引擎启动与 WHIP 发布）
 .\scripts\dev.ps1 -Setup -Composite
 .\scripts\dev.ps1 -Composite
+
+# 无头环境复现（本机实测；Xvfb 软件渲染 + WEBOBS_OBS_CONFIG_DIR）
+# 1) 构建后启动 MediaMTX，再以 composite 核心启动 webobsd：
+#    xvfb-run -a -s "-screen 0 1280x720x24" <core-local-composite>/webobsd --scene-file <scene.json>
+#    env: WEBOBS_COMPOSITE_ENABLED=true WEBOBS_WEBRTC_ENABLED=true WEBOBS_OBS_CONFIG_DIR=<可写目录>
+# 2) 观察分阶段状态与控制面：
+#    curl -u admin:<pw> http://127.0.0.1:8080/api/v1/program/status   # engine=ready / publish=publishing
+# 3) 确认 MediaMTX 已收到节目媒体：
+#    curl http://127.0.0.1:9997/v3/paths/list   # program: ready=true, tracks=[Opus,H264]
 ```
 
 ## 结论 / Conclusion
 
-F5-01、F5-02、F5-06 状态机与探测缓存已实现并有自动化验证；F5-03 的探测根因已在本机复现并修复，C++/转码路径已编译与实测，但 OBS 侧 NVENC 与 Docker/vGPU 未验收；F5-04 启动与状态链路已实现、端到端合成未实测；F5-05 完成无音轨/待探测/有音轨三态过滤与重探入口，真实多音轨通路与 AudioWorkspace 分组仍未实现。**“画面干净且完整、加速状态真实”已达成；“五路持续出图、本地合成可用、多音轨实际可控”仍需在具备五路来源的环境中按上文命令继续实测。**
+F5-01、F5-02、F5-06 状态机与探测缓存已实现并有自动化验证；F5-03 的探测根因已在本机复现并修复，C++/转码路径已编译与实测，但 OBS 侧 NVENC 与 Docker/vGPU 未验收；F5-04 启动/构建/引擎/WHIP 发布链路已运行期实测（MediaMTX program 路径 ready 且含 H264+Opus），仅真实五路来源与浏览器长稳未实测；F5-05 完成无音轨/待探测/有音轨三态过滤与重探入口，真实多音轨通路与 AudioWorkspace 分组仍未实现。**“画面干净且完整、加速状态真实”已达成；“五路持续出图、本地合成可用、多音轨实际可控”仍需在具备五路来源的环境中按上文命令继续实测。**
