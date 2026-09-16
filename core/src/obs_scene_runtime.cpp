@@ -313,64 +313,6 @@ std::optional<std::string> ensure_audio_mix_path(std::string_view source_url,
  * record: measuring showed libobs never starts playback for these instances, so
  * multi-input sources use ensure_audio_mix_path() instead.
  */
-/**
- * Extra OBS source instance fed by one extracted input track.  The engine cannot
- * ask the Media Source for a specific track, so every input of a multi-input
- * source is extracted by the gateway into its own audio-only path
- * (`audio-<token>-t<index>`, exactly one Opus track per path) and this instance
- * reads that path.  The path is deleted again when the instance goes away.
- */
-struct AudioInputInstance {
-    int track = 0;
-    std::string path;
-    SourcePtr source;
-    bool active = false;
-
-    AudioInputInstance() = default;
-    AudioInputInstance(int input_track, std::string audio_path, SourcePtr instance, bool is_active)
-        : track(input_track), path(std::move(audio_path)), source(std::move(instance)), active(is_active)
-    {
-    }
-    AudioInputInstance(const AudioInputInstance &) = delete;
-    AudioInputInstance &operator=(const AudioInputInstance &) = delete;
-    AudioInputInstance(AudioInputInstance &&other) noexcept
-        : track(other.track), path(std::move(other.path)), source(std::move(other.source)), active(other.active)
-    {
-        other.active = false;
-        other.path.clear();
-    }
-    AudioInputInstance &operator=(AudioInputInstance &&other) noexcept
-    {
-        if (this == &other)
-            return *this;
-        release();
-        track = other.track;
-        path = std::move(other.path);
-        source = std::move(other.source);
-        active = other.active;
-        other.active = false;
-        other.path.clear();
-        return *this;
-    }
-    ~AudioInputInstance() { release(); }
-
-private:
-    void release()
-    {
-        if (source && active)
-            obs_source_dec_showing(source.get());
-        active = false;
-        if (!path.empty()) {
-            delete_media_path(path);
-            path.clear();
-        }
-    }
-};
-
-bool is_ffmpeg_kind(std::string_view kind)
-{
-    return kind == "rtsp" || kind == "camera";
-}
 
 struct SourceEntry {
     SceneSource configuration;
@@ -378,7 +320,6 @@ struct SourceEntry {
     SourcePtr source;
     /** Owns (and deletes) the MediaMTX mix path this source reads, if any. */
     MediaPathPtr audio_mix;
-    std::vector<AudioInputInstance> audio_inputs;
     bool prewarmed = false;
     bool frame_primed = false;
     std::shared_ptr<MeterStatus> meter_status;
