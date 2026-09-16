@@ -228,7 +228,10 @@ def main():
              '-DOBS_VERSION_OVERRIDE=32.1.2', '-DENABLE_UI=OFF', '-DENABLE_FRONTEND=OFF',
              '-DENABLE_SCRIPTING=OFF', '-DENABLE_WAYLAND=OFF', '-DENABLE_PULSEAUDIO=OFF', *plugin_flags,
              *prefix_flags], buildlog)
-    obs_targets = ['libobs', 'obs-ffmpeg', 'obs-x264', 'obs-webrtc'] if args.composite else ['libobs']
+    # libobs-opengl is the renderer the Composite engine needs; without it
+    # obs_reset_video fails with "libobs-opengl.so: cannot open shared object".
+    obs_targets = (['libobs', 'libobs-opengl', 'obs-ffmpeg', 'obs-x264', 'obs-webrtc']
+                   if args.composite else ['libobs'])
     command(['cmake', '--build', obs_build, '--target', *obs_targets, '--parallel', jobs], buildlog)
     if args.composite:
         plugins = [path.name for path in obs_build.rglob('*.so')]
