@@ -272,6 +272,74 @@ std::optional<std::string> ensure_audio_only_path(std::string_view source_url, i
     return audio_path;
 }
 
+/** Deletes a MediaMTX config path when the entry owning it goes away. */
+struct MediaPathGuard {
+    void operator()(std::string *path) const
+    {
+        if (path) {
+            delete_media_path(*path);
+            delete path;
+        }
+    }
+};
+using MediaPathPtr = std::shared_ptr<std::string>;
+
+MediaPathPtr make_media_path_guard(std::string path)
+{
+    return MediaPathPtr(new std::string(std::move(path)), MediaPathGuard{});
+}
+
+/**
+ * One already-mixed stream for a source with several selected input tracks:
+ * the gateway folds them together with their gain/mute, so the single OBS Media
+ * Source can consume the result (it has no audio-track selector, and extra OBS
+ * sources proved impossible, see docs).
+ */
+std::optional<std::string> ensure_audio_mix_path(std::string_view source_url,
+                                                 const std::vector<SceneAudioInput> &inputs)
+{
+    if (source_url.empty() || inputs.size() < 2 || inputs.size() > maximum_source_audio_inputs)
+        return std::nullopt;
+    std::string spec;
+    for (const SceneAudioInput &input : inputs) {
+        if (input.track < 0 || input.track > maximum_audio_track_index)
+            return std::nullopt;
+        const int milli = static_cast<int>(std::lround((input.muted ? 0.0 : input.gain) * 1000.0));
+        std::string gain_text = std::to_string(milli / 1000) + ".";
+        gain_text += static_cast<char>('0' + (milli % 1000) / 100);
+        gain_text += static_cast<char>('0' + ((milli % 1000) / 10) % 10);
+        gain_text += static_cast<char>('0' + (milli % 10));
+        if (!spec.empty())
+            spec += ",";
+        spec += std::to_string(input.track) + ":" + gain_text + ":" + (input.muted ? "1" : "0");
+    }
+    const std::string mix_path = "mix-" + random_token();
+    const std::string command = shell_quote(transcoder_executable()) + " " + shell_quote(source_url) + " " +
+                                shell_quote(mix_path) + " " + shell_quote("audio-mix") + " " + shell_quote(spec);
+    json_t *root = json_object();
+    if (!root)
+        return std::nullopt;
+    json_object_set_new(root, "source", json_string("publisher"));
+    json_object_set_new(root, "runOnDemand", json_string(command.c_str()));
+    json_object_set_new(root, "runOnDemandRestart", json_false());
+    json_object_set_new(root, "runOnDemandStartTimeout", json_string("10s"));
+    json_object_set_new(root, "runOnDemandCloseAfter", json_string("2s"));
+    char *dump = json_dumps(root, JSON_COMPACT);
+    json_decref(root);
+    if (!dump)
+        return std::nullopt;
+    const std::string body = dump;
+    free(dump);
+    if (!media_path_request("add", mix_path, body))
+        return std::nullopt;
+    return mix_path;
+}
+
+/**
+ * Extra OBS source instance fed by one extracted input track.  Kept for the
+ * record: measuring showed libobs never starts playback for these instances, so
+ * multi-input sources use ensure_audio_mix_path() instead.
+ */
 /**
  * Extra OBS source instance fed by one extracted input track.  The engine cannot
  * ask the Media Source for a specific track, so every input of a multi-input
@@ -335,6 +403,8 @@ struct SourceEntry {
     SceneSource configuration;
     std::shared_ptr<SourceStatus> status;
     SourcePtr source;
+    /** Owns (and deletes) the MediaMTX mix path this source reads, if any. */
+    MediaPathPtr audio_mix;
     std::vector<AudioInputInstance> audio_inputs;
     bool prewarmed = false;
     bool frame_primed = false;
@@ -628,6 +698,20 @@ SourceEntry create_source_entry(const SceneSource &configuration, int connect_ti
                                 const RuntimeState *current, bool hardware_decode_enabled)
 {
     const std::vector<SceneAudioInput> audio_inputs = resolved_audio_inputs(configuration);
+    MediaPathPtr audio_mix;
+    std::string audio_mix_url;
+    if (audio_inputs.size() > 1 && std::getenv("WEBOBS_AUDIO_TRACK_EXTRACTION") != nullptr) {
+        std::string source_url = configuration.kind == "rtsp" ? configuration.rtsp_url : std::string{};
+        if (configuration.kind == "camera") {
+            const auto resolved = resolve_camera_source(configuration);
+            if (resolved)
+                source_url = resolved->endpoint;
+        }
+        if (const auto mix_path = ensure_audio_mix_path(source_url, audio_inputs)) {
+            audio_mix_url = "rtsp://127.0.0.1:8554/" + *mix_path;
+            audio_mix = make_media_path_guard(*mix_path);
+        }
+    }
     if (current) {
         const auto existing = current->sources.find(configuration.id);
         const std::vector<SceneAudioInput> previous_inputs =
@@ -637,7 +721,7 @@ SourceEntry create_source_entry(const SceneSource &configuration, int connect_ti
         // or mute changes reuse the connection and only rebuild the extras.
         const bool same_first_track = previous_inputs.empty() || audio_inputs.empty() ||
                                       previous_inputs.front().track == audio_inputs.front().track;
-        if (existing != current->sources.end() && same_first_track &&
+        if (existing != current->sources.end() && audio_inputs.size() <= 1 && same_first_track &&
             connection_matches(existing->second.configuration, configuration)) {
             SourceEntry reused;
             reused.configuration = configuration;
@@ -676,6 +760,10 @@ SourceEntry create_source_entry(const SceneSource &configuration, int connect_ti
         // software decoder instead of failing the source outright.
         const bool source_hardware_decode = decode_override != "off" && hardware_decode_enabled;
         obs_data_set_bool(settings.get(), "is_local_file", false);
+        // Several selected input tracks arrive as one gateway-mixed stream, which
+        // the single Media Source consumes directly.
+        if (!audio_mix_url.empty())
+            input = audio_mix_url;
         obs_data_set_string(settings.get(), "input", input.c_str());
         if (adapter == "rtsp")
             obs_data_set_string(settings.get(), "input_format", "rtsp");
@@ -749,19 +837,7 @@ SourceEntry create_source_entry(const SceneSource &configuration, int connect_ti
     // program bus is mixer 1.  Mapping the input track onto the mixer bit (the
     // previous behaviour) silently dropped audio for audioTrack > 1.
     obs_source_set_audio_mixers(entry.source.get(), 1U);
-    if (audio_inputs.size() > 1) {
-        // Only multi-input sources need extraction; a single input keeps using
-        // the Media Source directly, as before.
-        std::string audio_source_url;
-        if (configuration.kind == "rtsp") {
-            audio_source_url = configuration.rtsp_url;
-        } else if (configuration.kind == "camera") {
-            const auto resolved = resolve_camera_source(configuration);
-            if (resolved)
-                audio_source_url = resolved->endpoint;
-        }
-        attach_audio_input_instances(entry, audio_source_url, audio_inputs);
-    }
+    entry.audio_mix = audio_mix;
     if (!attach_configured_filters(entry.source.get(), configuration, internal_name)) {
         entry.source.reset();
         entry.status.reset();
@@ -1265,12 +1341,10 @@ void ObsSceneRuntime::commit_prepared(std::string_view transition_kind, int dura
             obs_source_set_sync_offset(source,
                                        static_cast<std::int64_t>(entry.configuration.sync_offset_ms) * 1000000LL);
         };
-        if (inputs.size() > 1) {
-            // Every input is served by its own extracted channel, so the primary
-            // source must not add its own (default) decode on top.
-            obs_source_set_volume(entry.source.get(), 0.0f);
-            obs_source_set_muted(entry.source.get(), true);
-        } else if (inputs.empty()) {
+        // With several inputs the gateway already folded them (with their own
+        // gain/mute) into the single stream the primary source reads, so the
+        // primary must play normally; muting it here silenced the program.
+        if (inputs.empty()) {
             obs_source_set_volume(entry.source.get(), 0.0f);
             obs_source_set_muted(entry.source.get(), true);
         } else {
