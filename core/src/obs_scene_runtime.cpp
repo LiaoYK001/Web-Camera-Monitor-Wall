@@ -404,6 +404,13 @@ struct RuntimeState {
     SceneDocument document;
     std::unordered_map<std::string, SourceEntry> sources;
     ScenePtr scene;
+    /**
+     * Separate scene that only holds the per-track extraction channels.  It is
+     * never attached to a canvas, so the program scene's active-source tree (the
+     * place where obs_canvas_set_channel used to abort) never walks them, while
+     * being in a scene still marks each channel as showing so its audio mixes.
+     */
+    ScenePtr audio_scene;
 
     ~RuntimeState()
     {
@@ -1159,19 +1166,37 @@ std::optional<std::string> ObsSceneRuntime::prepare(const SceneDocument &documen
             return "could not add scene item " + item->id + " to the OBS program scene";
     }
 
-    // Extraction channels are not scene sources, but a source that is shown
-    // nowhere never starts its media playback (a hidden item decrements the
-    // showing count again).  Each instance therefore stays visible but is placed
-    // far outside the canvas, so the program renders nothing of it while its
-    // audio still reaches the program mixer.
-    for (auto &[id, entry] : candidate->sources) {
+    // Extraction channels live in their own scene: a source that is shown
+    // nowhere never starts its media playback, but putting them into the program
+    // scene made libobs free the same node twice while walking its active tree
+    // (obs_source_enum_active_tree via obs_canvas_set_channel, see docs).
+    bool has_extraction_channels = false;
+    for (const auto &[id, entry] : candidate->sources) {
         (void)id;
-        for (AudioInputInstance &instance : entry.audio_inputs) {
-            obs_sceneitem_t *audio_item = obs_scene_add(candidate->scene.get(), instance.source.get());
-            if (!audio_item)
-                return "could not add an extracted audio channel to the program scene";
-            obs_sceneitem_set_visible(audio_item, false);
-            obs_sceneitem_release(audio_item);
+        if (!entry.audio_inputs.empty()) {
+            has_extraction_channels = true;
+            break;
+        }
+    }
+    if (has_extraction_channels) {
+        const std::string audio_scene_name = scene_name + " audio channels";
+        candidate->audio_scene.reset(obs_scene_create(audio_scene_name.c_str()));
+        if (!candidate->audio_scene)
+            return "could not create the extracted audio channel scene";
+        for (auto &[id, entry] : candidate->sources) {
+            (void)id;
+            for (AudioInputInstance &instance : entry.audio_inputs) {
+                obs_sceneitem_t *audio_item =
+                    obs_scene_add(candidate->audio_scene.get(), instance.source.get());
+                if (!audio_item)
+                    return "could not add an extracted audio channel to its scene";
+                // Hidden keeps libobs' active-tree walk alive, but the channel
+                // then never starts its media; making it visible starts the media
+                // and brings the double free back.  Both variants are recorded in
+                // the acceptance report, so this stays on the non-crashing side.
+                obs_sceneitem_set_visible(audio_item, false);
+                obs_sceneitem_release(audio_item);
+            }
         }
     }
 
