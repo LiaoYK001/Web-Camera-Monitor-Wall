@@ -124,7 +124,15 @@
   - 本轮把这条正确路径补全并实测：`transcode-on-demand.sh` 的 `audio-track <index>` 模式**接受显式 RTSP(S) 源 URL**（不再只认 `direct-<32 hex>`），并用严格字符集限制（可打印 ASCII、无空格、≤2048 字节）防止通过该字段注入额外 ffmpeg 参数；新增自动化测试 `tests/test-transcoder.mjs`（3/3 通过）覆盖 URL 形式、`direct-` 形式、track/路径不匹配、超范围 track、用 audio-only 路径喂 hybrid、含空格与注入式 URL、参数个数错误等拒绝分支。
   - 运行期实测（在 MediaMTX `hybrid-cccc…` 上发布 a:0=440Hz / a:1=880Hz，两条 `audio-<token>-t0/t1` 路径的 `runOnDemand` 用显式源 URL 调用该模式）：抽取结果分别**只含 440Hz**（e440 1.676e7 / e880 1.59e4，+60 dB）与**只含 880Hz**（e880 1.677e7 / e440 1.35e4，−62 dB），两条路径 `tracks` 均为 `['Opus']` —— “一轨一路”同时绕开了 MediaMTX 单音频输出与 OBS 无音轨选择属性两个限制。
   - 引擎接线（本轮已实现，但**默认关闭且未验证通过**）：`obs_scene_runtime` 用同一个 `WEBOBS_TRANSCODER_PATH` 环境变量加 MediaMTX 控制 API（`/v3/config/paths/add|delete`）为每条输入轨建立 audio-only 路径（命令经单引号转义，避免 URL 里的 shell 元字符），把该轨的 OBS 源实例指向 `rtsp://127.0.0.1:8554/audio-<token>-t<index>`，并把它们作为**画面外**的场景项加入节目场景（否则源不会开始播放），同时静音主源以免重复默认音轨。
-  - **实测未通过**：第一次运行期验证时，引擎在创建抽取通道后不久以 glibc `free(): double free detected in tcache 2` 崩溃（日志顺序：媒体源 settings 输出 → double free → `Failed to open media`），节目因此全程静音（4 次抓取 peak=0），MediaMTX 侧也没有出现任何 `audio-*` 路径的 `runOnDemand command started`。崩溃点尚未定位（候选：抽取源的设置/生命周期与场景引用计数交互）。
+  - **实测未通过，已抓到崩溃栈**：引擎在创建抽取通道后不久以 glibc `free(): double free detected in tcache 2` 中止，节目全程静音（多次抓取 peak=0），MediaMTX 侧没有任何 `audio-*` 路径的 `runOnDemand command started`（抽取实例只打印了 `settings:`，从未连接）。沙箱内无 gdb、无 root（不能改 `core_pattern`、不能装调试器），因此在 `main.cpp` 增加了一个**默认关闭**的崩溃回栈钩子（`WEBOBS_BACKTRACE_ON_CRASH=1`，`backtrace_symbols_fd`），拿到真实栈：
+    ```
+    __libc_free → abort            (double free)
+    libobs.so.30(+0x70133)
+    libobs.so.30(obs_source_enum_active_tree+0x7b)
+    libobs.so.30(obs_canvas_set_channel+0x19d)
+    webobsd(+0x204b51) → webobsd(+0x1ee655) → webobsd(+0x1e5a80) → main
+    ```
+    即崩溃发生在**设置节目输出通道时 libobs 遍历活动源树**的阶段，触发点是抽取源与场景/活动树的交互，而不是 HTTP/JSON/路径创建代码。已排除的两个假设：① 抽取源作为隐藏场景项 → 仍崩；② 去掉 `obs_source_inc_active`（只靠场景项激活）→ 仍崩。下一步建议：把抽取通道放进**独立的私有场景**（不与节目场景共享活动树）、或改用常规（非 private）源注册方式，并确认实例能真正开始播放。
   - 因此该接线现在由环境变量 `WEBOBS_AUDIO_TRACK_EXTRACTION` **显式选入**：默认路径保持第 65 轮行为（主源音频 + 明确告警），不会把未验证的代码带进默认运行路径；下一轮应在该开关打开的情况下定位并修掉 double free，再恢复为默认。
   - 单元测试：`resolved_audio_inputs` 的显式优先与 legacy 回退；`webobs-unit-tests` 全绿。
 

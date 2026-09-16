@@ -391,9 +391,12 @@ void attach_audio_input_instances(SourceEntry &entry, std::string_view source_ur
         obs_source_set_muted(instance.get(), true);
         obs_source_set_audio_mixers(instance.get(), 1U);
         obs_source_set_monitoring_type(instance.get(), OBS_MONITORING_TYPE_NONE);
-        obs_source_inc_active(instance.get());
+        // Activation is expected to come from the scene item added below; the
+        // explicit obs_source_inc_active was dropped while chasing a crash in
+        // obs_canvas_set_channel's active-tree walk (see docs), but removing it
+        // did not fix it, so this is still an open hypothesis.
         entry.audio_inputs.push_back(
-            AudioInputInstance{input.track, *audio_path, std::move(instance), true});
+            AudioInputInstance{input.track, *audio_path, std::move(instance), false});
     }
 }
 
@@ -1167,9 +1170,7 @@ std::optional<std::string> ObsSceneRuntime::prepare(const SceneDocument &documen
             obs_sceneitem_t *audio_item = obs_scene_add(candidate->scene.get(), instance.source.get());
             if (!audio_item)
                 return "could not add an extracted audio channel to the program scene";
-            struct vec2 off_canvas{-100000.0f, -100000.0f};
-            obs_sceneitem_set_pos(audio_item, &off_canvas);
-            obs_sceneitem_set_visible(audio_item, true);
+            obs_sceneitem_set_visible(audio_item, false);
             obs_sceneitem_release(audio_item);
         }
     }

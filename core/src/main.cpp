@@ -5,13 +5,43 @@
 #include "webobs/scene_store.hpp"
 
 #include <curl/curl.h>
+#include <execinfo.h>
+#include <unistd.h>
 
+#include <csignal>
+#include <cstdio>
+#include <cstdlib>
 #include <iostream>
 #include <string>
 #include <utility>
 #include <vector>
 
 namespace {
+
+/**
+ * Optional crash backtrace.  The sandbox has no debugger and cannot install one,
+ * so a fatal signal prints raw addresses (resolved afterwards with addr2line)
+ * when WEBOBS_BACKTRACE_ON_CRASH is set.  Inert by default.
+ */
+void print_crash_backtrace(int signal_number)
+{
+    void *frames[64];
+    const int count = backtrace(frames, 64);
+    char header[64];
+    const int length = std::snprintf(header, sizeof(header), "fatal signal %d; backtrace:\n", signal_number);
+    if (length > 0)
+        (void)!write(STDERR_FILENO, header, static_cast<std::size_t>(length));
+    backtrace_symbols_fd(frames, count, STDERR_FILENO);
+    _exit(128 + signal_number);
+}
+
+void install_crash_backtrace()
+{
+    if (std::getenv("WEBOBS_BACKTRACE_ON_CRASH") == nullptr)
+        return;
+    for (const int signal_number : {SIGABRT, SIGSEGV, SIGBUS, SIGFPE})
+        std::signal(signal_number, print_crash_backtrace);
+}
 
 webobs::SceneDocument bootstrap_scene(const webobs::Config &config)
 {
@@ -45,6 +75,7 @@ webobs::SceneDocument bootstrap_scene(const webobs::Config &config)
 
 int main(int argc, char **argv)
 {
+    install_crash_backtrace();
     std::vector<std::string> arguments;
     arguments.reserve(argc > 1 ? static_cast<std::size_t>(argc - 1) : 0);
     for (int index = 1; index < argc; ++index)
