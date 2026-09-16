@@ -11,7 +11,8 @@
 | 套件 | 命令 | 结果 |
 |---|---|---|
 | 前端类型检查 | `web\node_modules\.bin\tsc.CMD --noEmit` | 0 错误 |
-| 前端运行时 | `playwright test -c playwright.local.config.ts --project=chrome`（monitor-view / wall-controls / playback-state） | 通过（含填充、几何、无音轨三态、首帧、退避、授权拒绝、编码探测） |
+| 前端运行时 | `playwright test -c <temp>.config.ts --project=chrome`（audio-tracks / monitor-view / wall-controls / playback-state） | 22/22 通过（含填充、几何、无音轨三态、首帧、退避、授权拒绝、逐轨勾选/持久化）
+| 转码器校验 | `node --test tests/test-transcoder.mjs` + `tests/test-transcoder-mix.mjs` | 3/3 + 2/2 通过（含 URL/路径注入与 audio-mix 规格校验）、编码探测） |
 | Camera Registry | `python3 -m unittest tests.test_camera_registry` | 26/26 通过（含探测缓存并发合并/失效） |
 | 启动器 | `node --test tests/test-dev-launcher.mjs` | 7/7 通过（含 Composite 参数与帮助） |
 | C++ 核心 | `ninja -C ~/.cache/webobs-dev/<hash>/core-local` + `webobs-unit-tests` | 编译通过、单测全过（含 NVENC 就绪与 Program 分阶段状态） |
