@@ -4,6 +4,20 @@
 > 本报告区分**已在本机复现并验证**与**已实现但未在本轮实测**两项，不以页面绿灯代替媒体验证。
 > Baseline: `5fec735` plus the uncommitted working tree. Each item is marked *verified* or *implemented, not yet run*.
 
+## 自动化验证快照 / Automated verification snapshot
+
+截至 `5d57d1a` 在 WSL2 Ubuntu-24.04 环境复现：
+
+| 套件 | 命令 | 结果 |
+|---|---|---|
+| 前端类型检查 | `web\node_modules\.bin\tsc.CMD --noEmit` | 0 错误 |
+| 前端运行时 | `playwright test -c playwright.local.config.ts --project=chrome`（monitor-view / wall-controls / playback-state） | 通过（含填充、几何、无音轨三态、首帧、退避、授权拒绝、编码探测） |
+| Camera Registry | `python3 -m unittest tests.test_camera_registry` | 26/26 通过（含探测缓存并发合并/失效） |
+| 启动器 | `node --test tests/test-dev-launcher.mjs` | 7/7 通过（含 Composite 参数与帮助） |
+| C++ 核心 | `ninja -C ~/.cache/webobs-dev/<hash>/core-local` + `webobs-unit-tests` | 编译通过、单测全过（含 NVENC 就绪与 Program 分阶段状态） |
+
+未列入上表的实测（真实五路长稳、端到端 Composite 发布、OBS 侧 NVENC、Docker/vGPU）仍需在具备来源的环境中执行，见文末“未在本轮实测”。
+
 ## 本机实测事实 / Verified on this machine
 
 - GPU：NVIDIA GeForce RTX 3090（driver 616.92），WSL2 Ubuntu-24.04；**只有 `/dev/dxg`，没有 `/dev/nvidia0` / `/dev/nvidiactl`**。
