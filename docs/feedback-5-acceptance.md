@@ -68,7 +68,8 @@
   2. 仅加 `-DENABLE_PLUGINS=ON` 会在可选采集插件处配置失败（先 `LibAJANTV2`/aja，再 `XCB COMPOSITE`/linux-capture）—— 需显式 `-DENABLE_AJA=OFF -DENABLE_DECKLINK=OFF -DENABLE_VLC=OFF`（并可能补 `libxcb-composite0-dev`）；
   3. `check_obs_browser()` 在 `ENABLE_PLUGINS=ON` 时无条件要求 obs-browser **子模块内容**，而 `dev-native.py` 的 WSL 快速路径用 `git archive` 生成 Linux 存储源码，**archive 不含子模块**，因此必然配置失败。
   4. 按上述修复后 configure 已能依次越过 aja→XCB→obs-browser→FFmpeg(avfilter/avdevice)→Libva→Libpci→MPEGTS(SRT/RIST)→SpeexDSP，最终停在 **`LibDataChannel` 缺失**（`plugins/obs-webrtc/CMakeLists.txt:9`）。obs-webrtc 是 Composite 发布到 MediaMTX 的 WHIP 输出所必需，而 `libdatachannel` **不是 Ubuntu 24.04 的 apt 包**，需要像 Docker 镜像那样单独构建/安装。
-  结论：`obs-ffmpeg`/`obs-x264` 的应用层配置已基本打通（依赖与开关已修入 `dev-native.py`），但 `obs-webrtc` 因 LibDataChannel 尚不可得，**Composite 端到端发布仍未证实**。下一步明确：**Ubuntu 24.04 的 apt 源（含 universe）没有 libdatachannel 包**（仅有 golang 实现），必须源码构建（例如 libdatachannel v0.22.x，依赖 OpenSSL/juice）后安装，再重跑 `-Composite` 构建。这是当前唯一剩余的 F5-04 前置条件。
+  结论（本轮已更新）：源码构建并安装 libdatachannel v0.22.6 后，`cmake` 配置成功生成 `build.ninja`，且 **`obs-ffmpeg.so` / `obs-x264.so` / `obs-webrtc.so` 三个插件全部编译链接成功**（位于 `rundir/Release/lib/obs-plugins/`），启动器的模块校验可通过。上述依赖与开关、子模块复制、libdatachannel 源码构建均已固化进 `dev-native.py`。
+  **仍未实测**：真正启动 OBS 合成引擎并把五路来源经 MediaMTX 发布为 Program WHEP（需要真实五路摄像头会话）。
 - 真实五路来源 → OBS 合成 → H.264/Opus → MediaMTX → Program WHEP 的发布与浏览器持续解码；`/api/v1/program/status` 的运行时返回未在真实合成会话中抓取。
 
 ## F5-05 多音轨 / per-source audio tracks — 界面过滤已实现，真实多音轨通路未实现
