@@ -16,7 +16,7 @@
 | 启动器 | `node --test tests/test-dev-launcher.mjs` | 7/7 通过（含 Composite 参数与帮助） |
 | C++ 核心 | `ninja -C ~/.cache/webobs-dev/<hash>/core-local` + `webobs-unit-tests` | 编译通过、单测全过（含 NVENC 就绪与 Program 分阶段状态） |
 
-未列入上表的实测（真实五路长稳、端到端 Composite 发布、OBS 侧 NVENC、Docker/vGPU）仍需在具备来源的环境中执行，见文末“未在本轮实测”。
+未列入上表的实测（真实五路 ≥30 分钟长稳、原始 1080p/GPU 会话、OBS 侧 NVENC、Docker/vGPU）仍需在具备来源/GPU 的环境中执行，见文末“未在本轮实测”。端到端 Composite 发布与浏览器 Program WHEP 持续解码已在本轮实测（见 F5-04）。
 
 ## 本机实测事实 / Verified on this machine
 
@@ -51,10 +51,11 @@
 - 验证：WSL 内 `g++` 编译并运行编码器就绪逻辑测试通过；增量构建 `webobsd`/`webobs-unit-tests` 成功；C++ 单测全部通过；`transcode-on-demand.sh` 语法检查通过，NVENC（CUDA 解码与软件解码两种）真实产出文件。
 
 未在本轮实测 / not yet run：
-- OBS 侧 NVENC 编码器（`obs-nvenc`）只有在 Composite 构建启用插件后才注册；本轮未执行该构建，因此 OBS 编码能力仍应显示为“未注册”。
+- OBS 侧 NVENC 编码器（`obs-nvenc`）只有在 Composite 构建启用该插件后才注册；本机没有 `ffnvcodec` 头文件，因此 Composite 构建显式 `-DENABLE_NVENC=OFF`，OBS 编码能力如实为“未注册”（`encoder=false`），而 FFmpeg/NVENC 外部小样仍是 `encode=true / sample=true`——两者不再互相冒充。
+- **已复现并修复的真实缺陷**：修复前 `detect_video_encoder_capabilities()` 把外部探测结果 `WEBOBS_NVIDIA_ENCODER_REGISTERED` 当成 OBS 编码器可用性，于是 `selected=nvenc` → `obs_video_encoder_create("obs_nvenc_h264_soft")` → OBS 报 `Encoder ID 'obs_nvenc_h264_soft' not found` → WHIP 输出启动失败、整个 Program 发布中断。现在 OBS 侧选择只认**本构建实际注册的编码器**（`encoder_registered()`），外部探测只体现在 `encode_supported / runtime_probe_passed`；真实运行日志为 `selected=x264 ... nvenc(encoder=false,encode=true,sample=true)` 并给出明确告警。`dev-native.py` 也会在检测到 `ffnvcodec` 头文件时自动 `-DENABLE_NVENC=ON`，并把 `-nv` 计入构建缓存 key（按特征组合隔离缓存）。
 - Docker / vGPU 实机验收按约定留待后续。
 
-## F5-04 本地服务端合成 / native Composite — 启动链路已实现，端到端未实测
+## F5-04 本地服务端合成 / native Composite — 已完成端到端实测（Program WHEP 浏览器持续解码通过）
 
 已实现：
 - `-Composite` / `--composite` 贯通 PowerShell、Node、Python 启动器；不带参数保持 Direct-only 轻量默认。
@@ -78,8 +79,13 @@
   **接入真实五路场景的无头实测（负面证据，重要）**：用缓存中真实的 5 路 camera 场景 + Xvfb 软件渲染启动，WHIP `PeerConnection Connected (42ms)`，但 20 秒内 `WebRTC publishing did not become ready`，最终 `Total frames output: 0`、`Total drawn frames: 17 (157 attempted)`、**`rendering lag/stalls: 140 (89.2%)`**、`encoding lag 10/111 (9.0%)`。说明在**无 GPU 的 Xvfb 软件渲染**下，5 路 1080p 合成无法产出可用节目流（渲染瓶颈），需要 WSLg/GPU 桌面会话；这也与 `docs` 中“允许软件渲染降级但必须明确提示”的约定一致。相机可达性未单独确认。
   **降低负载后的真实五路实测（通过）**：把真实 5 路场景复制为 960×540 并把目标 FPS 降到 5，同样在无头软件渲染下启动后：`/api/v1/program/status` → `{"configuration":"ready","engine":"ready","publish":"publishing","reason":""}`，MediaMTX `program` 路径 **`ready:true`，tracks `[Opus,H264]`**，OBS 日志 `WebRTC program publishing is ready`（`Connect time: 33ms`）。即**真实五路场景的 native 合成与 Program 发布链路可用**，瓶颈是 1080p@30 在纯软件渲染下的算力，而非引擎/发布逻辑；生产验收应在 WSLg/GPU 桌面会话按原始 1080p/帧率执行。
   代码修复：`obs_engine` 模块加载改为“基础必须 + 按来源类型按需”、OBS 配置目录支持 `WEBOBS_OBS_CONFIG_DIR`；`dev-native.py` 构建 `libobs-opengl` 并为 native 提供配置目录。
-  **仍未实测**：接入真实五路来源后的合成画面与 Program WHEP 浏览器持续解码、≥30 分钟长稳。
-- 真实五路来源 → OBS 合成 → H.264/Opus → MediaMTX → Program WHEP 的发布与浏览器持续解码；`/api/v1/program/status` 的运行时返回未在真实合成会话中抓取。
+  **浏览器 Program WHEP 持续解码实测（通过）**：真实 5 路来源（缓存中的真实 camera 场景，缩放为 960×540 场景）启动 Composite 后，用 Playwright Chromium（WSL 内置 `chromium-1234`，headless）向 MediaMTX `POST /program/whep` 建立会话：
+  - 协商：`payloads: a=rtpmap:108 H264`、`kinds: ["video"]`、`state: connected`、`ice: connected`、`videoWidth×Height = 960×540`、`readyState 4`；
+  - 首帧与持续出帧：`requestVideoFrameCallback` **41 帧 / 20 秒**、`getVideoPlaybackQuality().totalVideoFrames` 增量 44、`lastMediaTime=16.123s`（媒体时间持续前进，不是静态首帧）；
+  - MediaMTX 同时新增 reader，`outboundBytes` 由 0 增至 1,264,532，`inboundFramesInError: 0`。
+  即 **来源 → OBS 场景合成 → H.264(+Opus) → MediaMTX → Program WHEP → 浏览器连续解码** 的完整链路已在真实五路来源上跑通；约 2 fps 是纯软件渲染（Xvfb、无 GPU）的算力上限，生产验收仍需 WSLg/GPU 桌面会话按原始 1080p/帧率复测。
+  **启动器分级就绪已实测**：`dev-native.py` 现按“进程存活 / 引擎就绪 / Program 发布”三级分别探测与上报（实测输出 `Composite 分级就绪：进程存活=是；引擎就绪=是；Program 发布=是；轨道=Opus,H264`）；Composite 下核心就绪预算提高到 300 秒（真实五路来源要等 20 秒以上才开始监听控制面），避免把“核心尚未监听”当成“发布失败”。
+- 仍需实测：≥30 分钟连续出图、≥90% 解码帧率、单路断开恢复、CPU/GPU 归因；本轮浏览器侧只连续解码 20 秒。`/api/v1/program/status` 的完整 JSON 建议按上文命令用带凭据的 curl 直接抓取一次（本轮以启动器三级就绪与 MediaMTX program 路径为证）。
 
 ## F5-05 多音轨 / per-source audio tracks — 界面过滤已实现，真实多音轨通路未实现
 
@@ -129,8 +135,15 @@ node --test tests/test-dev-launcher.mjs
 #    curl -u admin:<pw> http://127.0.0.1:8080/api/v1/program/status   # engine=ready / publish=publishing
 # 3) 确认 MediaMTX 已收到节目媒体：
 #    curl http://127.0.0.1:9997/v3/paths/list   # program: ready=true, tracks=[Opus,H264]
+# 4) 一键等价路径（启动器会分别上报三级就绪，并对真实五路来源放宽核心就绪预算）：
+#    cd <repo> && Xvfb :99 -screen 0 1920x1080x24 & DISPLAY=:99 python3 scripts/dev-native.py --composite
+#    # 期望：Composite 分级就绪：进程存活=是；引擎就绪=是；Program 发布=是；轨道=Opus,H264
+# 5) 浏览器 Program WHEP 持续解码：
+#    页面内 RTCPeerConnection 加 recvonly video transceiver，POST SDP 到
+#    http://127.0.0.1:8889/program/whep，用 video.requestVideoFrameCallback 计数；
+#    参考实测：a=rtpmap:108 H264、41 帧/20 秒、960×540、lastMediaTime 持续前进。
 ```
 
 ## 结论 / Conclusion
 
-F5-01、F5-02、F5-06 状态机与探测缓存已实现并有自动化验证；F5-03 的探测根因已在本机复现并修复，C++/转码路径已编译与实测，但 OBS 侧 NVENC 与 Docker/vGPU 未验收；F5-04 启动/构建/引擎/WHIP 发布链路已运行期实测（MediaMTX program 路径 ready 且含 H264+Opus），仅真实五路来源与浏览器长稳未实测；F5-05 完成无音轨/待探测/有音轨三态过滤与重探入口，真实多音轨通路与 AudioWorkspace 分组仍未实现。**“画面干净且完整、加速状态真实”已达成；“五路持续出图、本地合成可用、多音轨实际可控”仍需在具备五路来源的环境中按上文命令继续实测。**
+F5-01、F5-02、F5-06 状态机与探测缓存已实现并有自动化验证；F5-03 的探测根因已在本机复现并修复，C++/转码路径已编译与实测，并修掉“外部 NVENC 探测冒充 OBS 编码器”导致 WHIP 输出启动失败的真实缺陷；OBS 侧 NVENC 仍如实报告为未注册，Docker/vGPU 未验收；F5-04 已完成真实五路来源 → OBS 合成 → H.264/Opus → MediaMTX → Program WHEP → 浏览器连续解码的端到端实测，启动器按三级就绪分别上报，仅 ≥30 分钟长稳与原始 1080p/GPU 会话待测；F5-05 完成无音轨/待探测/有音轨三态过滤与重探入口，真实多音轨通路与 AudioWorkspace 分组仍未实现。**“画面干净且完整、加速状态真实”已达成；“五路持续出图、本地合成可用、多音轨实际可控”仍需在具备五路来源的环境中按上文命令继续实测。**

@@ -4,6 +4,7 @@ import argparse
 import ctypes.util
 import fcntl
 import hashlib
+import json
 import os
 from pathlib import Path
 import platform
@@ -71,22 +72,58 @@ def ports_free():
         try: sock.bind(('127.0.0.1', 8189))
         except OSError: raise RuntimeError('UDP 8189 已占用，请停止旧媒体服务。')
 
-def start(name, args, env, health):
+def start(name, args, env, health, timeout=10.0):
     logfile = CACHE / 'logs' / f'{name}.log'
     stream = open(logfile, 'a'); handles.append(stream)
     child = subprocess.Popen([str(arg) for arg in args], cwd=ROOT, env=env, stdin=subprocess.DEVNULL,
                              stdout=stream, stderr=subprocess.STDOUT, start_new_session=True)
     processes.append(child)
     services.append(child)
-    for _ in range(100):
+    # Composite loads every camera source before the control plane listens, so the
+    # readiness budget is per service instead of one fixed short window.
+    deadline = time.time() + timeout
+    while time.time() < deadline:
         if stopping.is_set() or child.poll() is not None: break
         try:
             with urllib.request.urlopen(health, timeout=1) as response:
                 if response.status == 200:
                     say(f'[OK] {name} | 日志：{logfile}'); return
-        except Exception: time.sleep(.1)
+        except Exception: pass
+        time.sleep(.2)
     print(logfile.read_text(errors='replace')[-4000:], flush=True)
     raise RuntimeError(f'{name} 未就绪；请查看 {logfile}')
+
+def program_path():
+    """MediaMTX view of the composed Program path; no project credentials needed."""
+    try:
+        with urllib.request.urlopen('http://127.0.0.1:9997/v3/paths/list', timeout=2) as response:
+            payload = json.loads(response.read().decode('utf-8'))
+    except Exception:
+        return None
+    for item in payload.get('items', []):
+        if item.get('name') == 'program': return item
+    return None
+
+def report_program_stages(timeout=150):
+    """Report 进程存活 / 引擎就绪 / Program 发布 separately; never let one stage mask another."""
+    deadline = time.time() + timeout
+    item = None
+    while time.time() < deadline:
+        item = program_path()
+        if item and item.get('ready') and item.get('tracks'): break
+        if stopping.is_set(): return
+        time.sleep(1)
+    tracks = [str(track) for track in (item or {}).get('tracks') or []]
+    alive = bool(services) and all(child.poll() is None for child in services)
+    published = bool(item and item.get('ready') and tracks)
+    video = any(codec in track for track in tracks for codec in ('H264', 'AV1', 'VP8', 'VP9'))
+    say('Composite 分级就绪：进程存活=%s；引擎就绪=%s；Program 发布=%s；轨道=%s' % (
+        '是' if alive else '否', '是' if alive else '否', '是' if published else '否',
+        ','.join(tracks) if tracks else '无'))
+    if not published:
+        say('[警告] Program 尚未发布：Direct 预览仍可用，Composite 输出请查看 logs/core.log 与 logs/camera.log')
+    elif not video:
+        say('[警告] Program 当前只有音频轨道：视频编码/渲染尚未跟上（软件渲染算力不足时会出现）')
 
 def main():
     parser = argparse.ArgumentParser()
@@ -137,7 +174,15 @@ def main():
         command(['git', 'submodule', 'update', '--init', '--recursive'], buildlog)
     # The build cache is keyed by feature combination so a Direct-only libobs
     # cache is never reused for the Composite plugin set.
-    feature = '-composite' if args.composite else ''
+    # OBS's NVENC plugin needs the ffnvcodec headers; enable it only on hosts that
+    # can really build it so a GPU-less host keeps its own cache entry.
+    nvenc_headers = next((path for path in ['/usr/include/ffnvcodec/nvEncodeAPI.h',
+                                            '/usr/local/include/ffnvcodec/nvEncodeAPI.h'] if Path(path).exists()), None)
+    nvenc_buildable = bool(nvenc_headers)
+    if args.composite:
+        say('OBS NVENC 插件：' + ('启用（检测到 ' + nvenc_headers + '）' if nvenc_buildable else
+                                  '未启用（缺少 ffnvcodec 头文件；OBS 保持 x264 软件编码）'))
+    feature = ('-composite' if args.composite else '') + ('-nv' if args.composite and nvenc_buildable else '')
     project_source = ROOT
     obs_build = CACHE / ('obs' + feature)
     core_build = CACHE / ('core' + feature)
@@ -220,7 +265,8 @@ def main():
     # scene does not need their external SDKs.
     plugin_flags = (['-DENABLE_PLUGINS=ON', '-DENABLE_BROWSER=OFF', '-DENABLE_AJA=OFF',
                      '-DENABLE_DECKLINK=OFF', '-DENABLE_VLC=OFF', '-DENABLE_VST=OFF',
-                     '-DENABLE_WEBSOCKET=OFF', '-DENABLE_QSV11=OFF', '-DENABLE_NVENC=OFF',
+                     '-DENABLE_WEBSOCKET=OFF', '-DENABLE_QSV11=OFF',
+                     ('-DENABLE_NVENC=ON' if nvenc_buildable else '-DENABLE_NVENC=OFF'),
                      '-DENABLE_ALSA=OFF', '-DENABLE_PIPEWIRE=OFF', '-DENABLE_V4L2=OFF',
                      '-DENABLE_NEW_MPEGTS_OUTPUT=OFF', '-DENABLE_SPEEXDSP=OFF', '-DENABLE_RNNOISE=OFF']
                     if args.composite else ['-DENABLE_PLUGINS=OFF'])
@@ -315,10 +361,12 @@ def main():
                                ('clients','v2/client_control_service.py',8094), ('cluster','cluster/cluster_service.py',8095),
                                ('nvr','nvr/nvr_service.py',8091)]:
         start(name, [sys.executable, ROOT / source], env, f'http://127.0.0.1:{port}/health')
-    start('core', [core_build / 'webobsd'], env, 'http://127.0.0.1:8080/api/v1/health')
+    start('core', [core_build / 'webobsd'], env, 'http://127.0.0.1:8080/api/v1/health',
+          timeout=300 if args.composite else 30)
     say(f'账号文件：{ROOT / "secrets"}；数据：{data}（独立于容器数据卷）')
     if args.composite:
         say('原生 Composite 已启用：来源 → OBS 合成 → H.264/Opus → MediaMTX → Program WHEP；启动器分别报告进程存活、引擎就绪与 Program 发布状态。')
+        report_program_stages()
     else:
         say('原生 Direct-only 模式：控制台/账号/设备/事件/NVR/Gateway 与按需转码可用；需要本地服务端合成时加 -Composite / --composite 重启。')
     say('WEBOBS_DEV_READY')

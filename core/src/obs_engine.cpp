@@ -371,11 +371,20 @@ VideoEncoderCapabilities detect_video_encoder_capabilities(const Config &config,
         environment_true("WEBOBS_NVIDIA_DEVICE_PRESENT", nvidia_device_nodes);
     capabilities.nvenc.library_loaded =
         environment_true("WEBOBS_NVIDIA_LIBRARY_LOADED", false);
-    capabilities.nvenc.encoder_available =
-        environment_true("WEBOBS_NVIDIA_ENCODER_REGISTERED", false) ||
-        (modules_loaded &&
-         encoder_registered({"obs_nvenc_h264_tex", "obs_nvenc_h264_cuda", "obs_nvenc_h264_soft",
-                             "ffmpeg_nvenc"}));
+    // Creating an OBS encoder needs an encoder plugin registered inside *this*
+    // OBS build.  The external FFmpeg/NVENC probe is reported separately through
+    // encode_supported/runtime_probe_passed and must never fake OBS support.
+    const bool obs_nvenc_registered =
+        encoder_registered({"obs_nvenc_h264_tex", "obs_nvenc_h264_cuda", "obs_nvenc_h264_soft",
+                            "ffmpeg_nvenc"});
+    capabilities.nvenc.encoder_available = modules_loaded
+                                               ? obs_nvenc_registered
+                                               : environment_true("WEBOBS_NVIDIA_ENCODER_REGISTERED", false);
+    if (modules_loaded && !obs_nvenc_registered &&
+        environment_true("WEBOBS_NVIDIA_ENCODER_REGISTERED", false))
+        blog(LOG_WARNING,
+             "The runtime NVENC probe passed but this OBS build registers no NVENC encoder; "
+             "OBS compositing stays on x264 while the gateway keeps its NVENC transcode path");
     capabilities.nvenc.encode_supported =
         environment_true("WEBOBS_NVIDIA_H264_ENCODE", false) ||
         environment_true("WEBOBS_NVIDIA_ENCODE_SUPPORTED", false);
@@ -735,11 +744,24 @@ ExitCode run_obs_engine(const Config &config, const SceneDocument &document)
     }
 
     DataPtr video_settings = video_encoder_settings(config, encoder_capabilities.selected);
+    std::string video_encoder_id = video_encoder_identifier(encoder_capabilities.selected);
+    if (encoder_capabilities.selected != VideoEncoderKind::x264 &&
+        !encoder_registered({video_encoder_id})) {
+        // Never hand OBS an encoder id this build did not register: the output
+        // would fail to start and take the whole program publish down with it.
+        blog(LOG_WARNING,
+             "Selected %s encoder '%s' is not registered in this OBS build; using the x264 software encoder",
+             video_encoder_kind_name(encoder_capabilities.selected).data(), video_encoder_id.c_str());
+        encoder_capabilities.selected = VideoEncoderKind::x264;
+        encoder_capabilities.fallback = true;
+        encoder_capabilities.fallback_reason = "obs_encoder_not_registered";
+        video_settings = video_encoder_settings(config, encoder_capabilities.selected);
+        video_encoder_id = video_encoder_identifier(encoder_capabilities.selected);
+    }
     const std::string encoder_name =
         std::string("WebOBS ") + std::string(video_encoder_kind_name(encoder_capabilities.selected));
     EncoderPtr video_encoder(obs_video_encoder_create(
-        video_encoder_identifier(encoder_capabilities.selected), encoder_name.c_str(),
-        video_settings.get(), nullptr));
+        video_encoder_id.c_str(), encoder_name.c_str(), video_settings.get(), nullptr));
     if (!video_encoder && encoder_capabilities.selected != VideoEncoderKind::x264) {
         blog(LOG_WARNING, "Could not initialize the selected %s encoder; falling back to x264",
              video_encoder_kind_name(encoder_capabilities.selected).data());
