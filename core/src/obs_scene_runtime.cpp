@@ -477,13 +477,6 @@ struct RuntimeState {
     SceneDocument document;
     std::unordered_map<std::string, SourceEntry> sources;
     ScenePtr scene;
-    /**
-     * Separate scene that only holds the per-track extraction channels.  It is
-     * never attached to a canvas, so the program scene's active-source tree (the
-     * place where obs_canvas_set_channel used to abort) never walks them, while
-     * being in a scene still marks each channel as showing so its audio mixes.
-     */
-    ScenePtr audio_scene;
 
     ~RuntimeState()
     {
