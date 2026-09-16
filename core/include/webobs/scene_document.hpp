@@ -144,6 +144,12 @@ struct SceneSerializeResult {
     [[nodiscard]] bool ok() const { return !json.empty() && error.empty(); }
 };
 
+/**
+ * Inputs the Composite engine must mix for a source: the explicit schema 6
+ * `audioInputs` when present, otherwise the legacy single `audioTrack`.
+ */
+[[nodiscard]] std::vector<SceneAudioInput> resolved_audio_inputs(const SceneSource &source);
+
 std::optional<std::string> validate_scene_document(const SceneDocument &document);
 SceneParseResult parse_scene_json(std::string_view json);
 SceneSerializeResult serialize_scene_json(const SceneDocument &document, SceneJsonView view,

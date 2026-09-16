@@ -276,6 +276,14 @@ JsonPtr serialize_crop(const SceneCrop &crop)
 
 } // namespace
 
+std::vector<SceneAudioInput> resolved_audio_inputs(const SceneSource &source)
+{
+    if (!source.audio_inputs.empty())
+        return source.audio_inputs;
+    // Legacy schema 5 behaviour: audioTrack is 1-based and always audible.
+    return {SceneAudioInput{source.audio_track - 1, 1.0, false}};
+}
+
 std::optional<std::string> validate_scene_document(const SceneDocument &document)
 {
     if (document.schema_version != current_scene_schema_version &&

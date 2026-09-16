@@ -148,16 +148,96 @@ void on_source_started(void *parameter, calldata_t *)
     static_cast<SourceStatus *>(parameter)->started.store(true);
 }
 
+struct SourceEntry;
+
+/**
+ * Extra OBS source instance that decodes exactly one input track of a source.
+ * Each instance feeds the program mixer on its own, with its own gain/mute, so
+ * MediaMTX's single audio output still carries a real per-track mix.
+ */
+struct AudioInputInstance {
+    int track = 0;
+    SourcePtr source;
+    bool active = false;
+
+    AudioInputInstance() = default;
+    AudioInputInstance(int input_track, SourcePtr instance, bool is_active)
+        : track(input_track), source(std::move(instance)), active(is_active)
+    {
+    }
+    AudioInputInstance(const AudioInputInstance &) = delete;
+    AudioInputInstance &operator=(const AudioInputInstance &) = delete;
+    AudioInputInstance(AudioInputInstance &&other) noexcept
+        : track(other.track), source(std::move(other.source)), active(other.active)
+    {
+        other.active = false;
+    }
+    AudioInputInstance &operator=(AudioInputInstance &&other) noexcept
+    {
+        if (this == &other)
+            return *this;
+        if (source && active)
+            obs_source_dec_active(source.get());
+        track = other.track;
+        source = std::move(other.source);
+        active = other.active;
+        other.active = false;
+        return *this;
+    }
+    ~AudioInputInstance()
+    {
+        if (source && active)
+            obs_source_dec_active(source.get());
+    }
+};
+
+bool is_ffmpeg_kind(std::string_view kind)
+{
+    return kind == "rtsp" || kind == "camera" || kind == "media";
+}
+
 struct SourceEntry {
     SceneSource configuration;
     std::shared_ptr<SourceStatus> status;
     SourcePtr source;
+    std::vector<AudioInputInstance> audio_inputs;
     bool prewarmed = false;
     bool frame_primed = false;
     std::shared_ptr<MeterStatus> meter_status;
     VolmeterPtr meter;
     std::chrono::steady_clock::time_point meter_requested_at{};
 };
+
+/** Create one audio-only instance per input track beyond the first. */
+void attach_audio_input_instances(SourceEntry &entry, obs_data_t *settings,
+                                  const std::vector<SceneAudioInput> &inputs)
+{
+    if (inputs.size() <= 1 || !settings || !is_ffmpeg_kind(entry.configuration.kind))
+        return;
+    const char *dump = obs_data_get_json(settings);
+    if (!dump)
+        return;
+    const std::string base_name = "WebOBS " + entry.configuration.kind + " " + entry.configuration.id;
+    for (std::size_t index = 1; index < inputs.size(); ++index) {
+        DataPtr track_settings(obs_data_create_from_json(dump));
+        if (!track_settings)
+            return;
+        obs_data_set_int(track_settings.get(), "track", inputs[index].track + 1);
+        const std::string name = base_name + " audio track " + std::to_string(inputs[index].track + 1);
+        SourcePtr instance(obs_source_create_private("ffmpeg_source", name.c_str(), track_settings.get()));
+        if (!instance)
+            continue;
+        obs_source_set_volume(instance.get(), 1.0f);
+        obs_source_set_muted(instance.get(), true);
+        // Every input instance feeds the program bus (mixer 1); the decoded
+        // input track is chosen by the ffmpeg `track` setting instead.
+        obs_source_set_audio_mixers(instance.get(), 1U);
+        obs_source_set_monitoring_type(instance.get(), OBS_MONITORING_TYPE_NONE);
+        obs_source_inc_active(instance.get());
+        entry.audio_inputs.push_back(
+            AudioInputInstance{inputs[index].track, std::move(instance), true});
+    }
+}
 
 struct RuntimeState {
     SceneDocument document;
@@ -376,14 +456,24 @@ std::optional<std::string> validate_browser_destination(const SceneSource &sourc
 SourceEntry create_source_entry(const SceneSource &configuration, int connect_timeout_seconds,
                                 const RuntimeState *current, bool hardware_decode_enabled)
 {
+    const std::vector<SceneAudioInput> audio_inputs = resolved_audio_inputs(configuration);
     if (current) {
         const auto existing = current->sources.find(configuration.id);
-        if (existing != current->sources.end() &&
+        const std::vector<SceneAudioInput> previous_inputs =
+            existing == current->sources.end() ? std::vector<SceneAudioInput>{}
+                                               : resolved_audio_inputs(existing->second.configuration);
+        // A different decoded first track needs a fresh source; per-track gain
+        // or mute changes reuse the connection and only rebuild the extras.
+        const bool same_first_track = previous_inputs.empty() || audio_inputs.empty() ||
+                                      previous_inputs.front().track == audio_inputs.front().track;
+        if (existing != current->sources.end() && same_first_track &&
             connection_matches(existing->second.configuration, configuration)) {
             SourceEntry reused;
             reused.configuration = configuration;
             reused.status = existing->second.status;
-            reused.source.reset(obs_source_get_ref(existing->second.source.get()));
+            SourcePtr shared(obs_source_get_ref(existing->second.source.get()));
+            reused.source = std::move(shared);
+            attach_audio_input_instances(reused, obs_source_get_settings(reused.source.get()), audio_inputs);
             return reused;
         }
     }
@@ -463,6 +553,9 @@ SourceEntry create_source_entry(const SceneSource &configuration, int connect_ti
         return {};
     }
 
+    if (is_ffmpeg_kind(configuration.kind) && !audio_inputs.empty())
+        obs_data_set_int(settings.get(), "track", audio_inputs.front().track + 1);
+
     SourceEntry entry;
     entry.configuration = configuration;
     entry.status = std::make_shared<SourceStatus>();
@@ -479,6 +572,11 @@ SourceEntry create_source_entry(const SceneSource &configuration, int connect_ti
         return entry;
     }
     obs_source_set_muted(entry.source.get(), true);
+    // The decoded input track comes from the ffmpeg `track` setting above; the
+    // program bus is mixer 1.  Mapping the input track onto the mixer bit (the
+    // previous behaviour) silently dropped audio for audioTrack > 1.
+    obs_source_set_audio_mixers(entry.source.get(), 1U);
+    attach_audio_input_instances(entry, settings.get(), audio_inputs);
     if (!attach_configured_filters(entry.source.get(), configuration, internal_name)) {
         entry.source.reset();
         entry.status.reset();
@@ -970,14 +1068,33 @@ void ObsSceneRuntime::commit_prepared(std::string_view transition_kind, int dura
         return;
     for (const auto &[id, entry] : impl_->prepared->sources) {
         (void)id;
-        obs_source_set_volume(entry.source.get(), static_cast<float>(entry.configuration.volume));
-        obs_source_set_muted(entry.source.get(), entry.configuration.muted);
-        obs_source_set_sync_offset(entry.source.get(),
-                                   static_cast<std::int64_t>(entry.configuration.sync_offset_ms) * 1000000LL);
-        obs_source_set_audio_mixers(entry.source.get(),
-                                    1U << static_cast<unsigned int>(entry.configuration.audio_track - 1));
+        const std::vector<SceneAudioInput> inputs = resolved_audio_inputs(entry.configuration);
+        const auto drive = [&entry](obs_source_t *source, const SceneAudioInput &input) {
+            // Source volume/mute stay the master; each input scales on top.
+            const double gain = input.muted ? 0.0 : entry.configuration.volume * input.gain;
+            obs_source_set_volume(source, static_cast<float>(gain));
+            obs_source_set_muted(source, entry.configuration.muted || gain <= 0.0);
+            obs_source_set_sync_offset(source,
+                                       static_cast<std::int64_t>(entry.configuration.sync_offset_ms) * 1000000LL);
+        };
+        if (inputs.empty()) {
+            obs_source_set_volume(entry.source.get(), 0.0f);
+            obs_source_set_muted(entry.source.get(), true);
+        } else {
+            drive(entry.source.get(), inputs.front());
+        }
+        obs_source_set_audio_mixers(entry.source.get(), 1U);
         obs_source_set_monitoring_type(entry.source.get(),
                                        monitoring_type(entry.configuration.monitoring));
+        for (const AudioInputInstance &instance : entry.audio_inputs) {
+            const auto match = std::find_if(inputs.begin(), inputs.end(),
+                                            [&instance](const SceneAudioInput &input) {
+                                                return input.track == instance.track;
+                                            });
+            if (match == inputs.end())
+                continue;
+            drive(instance.source.get(), *match);
+        }
     }
     bool fade_started = false;
     if (impl_->active && impl_->current && transition_kind == "fade" && duration_ms > 0) {

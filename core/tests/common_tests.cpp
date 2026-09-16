@@ -1341,6 +1341,21 @@ void scene_audio_inputs_tests()
            "unsupported audioInputs fields must be rejected");
     reject(R"([{"track":0,"gain":1,"muted":false},{"track":1,"gain":1,"muted":false},{"track":2,"gain":1,"muted":false},{"track":3,"gain":1,"muted":false},{"track":4,"gain":1,"muted":false},{"track":5,"gain":1,"muted":false},{"track":6,"gain":1,"muted":false},{"track":7,"gain":1,"muted":false},{"track":8,"gain":1,"muted":false}])",
            "more than eight audioInputs must be rejected");
+
+    // The engine consumes explicit inputs, or the legacy audioTrack when absent.
+    webobs::SceneSource legacy_source;
+    legacy_source.audio_track = 3;
+    auto resolved = webobs::resolved_audio_inputs(legacy_source);
+    expect(resolved.size() == 1 && resolved.front().track == 2 && resolved.front().gain == 1.0 &&
+               !resolved.front().muted,
+           "a source without audioInputs must resolve to the legacy audioTrack input");
+    webobs::SceneSource explicit_source;
+    explicit_source.audio_track = 1;
+    explicit_source.audio_inputs = {{0, 0.25, false}, {2, 1.0, true}};
+    resolved = webobs::resolved_audio_inputs(explicit_source);
+    expect(resolved.size() == 2 && resolved[0].gain == 0.25 && resolved[1].track == 2 &&
+               resolved[1].muted,
+           "explicit audioInputs must win over the legacy audioTrack field");
 }
 
 int main()
