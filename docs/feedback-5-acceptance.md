@@ -74,6 +74,7 @@
   结论（本轮已更新）：源码构建并安装 libdatachannel v0.22.6 后，`cmake` 配置成功生成 `build.ninja`，且 **`obs-ffmpeg.so` / `obs-x264.so` / `obs-webrtc.so` 三个插件全部编译链接成功**（位于 `rundir/Release/lib/obs-plugins/`），启动器的模块校验可通过。上述依赖与开关、子模块复制、libdatachannel 源码构建均已固化进 `dev-native.py`。
   进一步实测：项目 C++ 后端以该 Composite OBS 构建重新配置并编译成功（`core-local-composite`：`webobsd` 与 `webobs-unit-tests` 链接通过），且 **`webobs-unit-tests` 全部通过**（`LD_LIBRARY_PATH` 指向该构建的 libobs）。
   **运行期已实测（引擎 + 发布）**：在 WSL + Xvfb 软件渲染下，以 Composite 核心 + Composite OBS 插件启动，OBS 成功加载 obs-ffmpeg/obs-x264（按场景来源按需加载模块，纯摄像头场景不再因缺 CEF/obs-browser 失败），创建 x264 + libopus 编码器并启动 WHIP 输出；启动 MediaMTX 后日志显示 `PeerConnection state is now: Connected`、`Connect time: 88ms`、`WebRTC program publishing is ready`，`/api/v1/program/status` 由 `publish:"idle", reason:"whip_output_not_ready"` 变为 `publish:"publishing", reason:""`。
+  MediaMTX 侧取证：`GET /v3/paths/list` 显示 **`program` 路径 `ready:true`，tracks 为 `["Opus","H264"]`，`bytesReceived` 约 1.2 MB**，即 OBS 合成确实在向 MediaMTX 推送真实 H.264 + Opus 媒体（默认空场景，尚未接入摄像头来源）。
   代码修复：`obs_engine` 模块加载改为“基础必须 + 按来源类型按需”、OBS 配置目录支持 `WEBOBS_OBS_CONFIG_DIR`；`dev-native.py` 构建 `libobs-opengl` 并为 native 提供配置目录。
   **仍未实测**：接入真实五路来源后的合成画面与 Program WHEP 浏览器持续解码、≥30 分钟长稳。
 - 真实五路来源 → OBS 合成 → H.264/Opus → MediaMTX → Program WHEP 的发布与浏览器持续解码；`/api/v1/program/status` 的运行时返回未在真实合成会话中抓取。
