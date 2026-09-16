@@ -141,6 +141,8 @@
   - **结论（已验证的四次否定）**：在本 OBS 构建下，凡是“为同一来源额外创建 OBS 媒体源来单独解一条输入轨”的做法都走不通——可见场景项能激活但触发活动树 double free，隐藏场景项与 `inc_showing`（含常规注册源）不崩但源永不开始播放。继续在激活/注册方式上试错已无收益。
   - **下一步的正确设计（已明确，尚未实现）**：不在引擎里加源，而是让**网关输出单路“已按要求混好”的音轨**，再让每个 scene source 只保留一个媒体源：新增 `transcode-on-demand.sh` 的 audio-mix 模式（`-map 0:v -filter_complex ... amix ...` 把选中的多条输入轨按各自 gain/mute 混成一路 Opus，视频 `copy`），产出 `mix-<token>` 路径；引擎在有 >1 输入轨时把该源的 `input` 指向这条路径。这样既保留逐轨可控（在网关侧完成），又完全避开“额外 OBS 源”这一被四次实测否定的路线。
   - 当前代码保留**不崩溃**的形态（常规注册源 + `inc_showing`），功能仍由 `WEBOBS_AUDIO_TRACK_EXTRACTION` 选入；默认路径不变，多输入来源仍打印明确的“额外音轨尚未混音”告警。
+  - **本轮已落地网关侧的第一步**：`transcode-on-demand.sh` 新增 `audio-mix` 模式（`<src> mix-<32hex> audio-mix <index:gain:muted,...>`，最多 8 条、index 0..31、gain 0..1、muted 0/1，逐条校验），用 `volume`+`amix(inputs=n,normalize=0)` 把选中的多条输入轨按各自 gain/静音混成**一路 Opus**，视频 `copy`；`gateway/mediamtx.yml` 同步开放 `mix-*` 的 publish/read 权限。
+  - 验证状态（诚实记录）：校验逻辑已实测——合法 spec 通过（继续进入 ffmpeg，因无媒体服务返回 145），`gain>1`、`index>31`、`muted` 非 0/1、分隔符错误、超过 8 条、目标不是 `mix-*` 均返回 2；既有 `tests/test-transcoder.mjs` 仍全绿。**但本轮的自动化用例追加与运行期抓取都因为我在 PowerShell 串联命令时的转义/引号问题失败**（追加内容被 PowerShell 的反引号转义破坏、抓取脚本的 JSON 引号被外层 shell 吃掉），因此“混音流真的同时含两路音轨且增益正确”这一条**还没有实测证据**，下一篇应先用文件写入（而不是 `bash -lc` 串联）重做这两步。
   - 因此该接线现在由环境变量 `WEBOBS_AUDIO_TRACK_EXTRACTION` **显式选入**：默认路径保持第 65 轮行为（主源音频 + 明确告警），不会把未验证的代码带进默认运行路径；下一轮应在该开关打开的情况下定位并修掉 double free，再恢复为默认。
   - 单元测试：`resolved_audio_inputs` 的显式优先与 legacy 回退；`webobs-unit-tests` 全绿。
 

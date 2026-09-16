@@ -6,9 +6,32 @@ set -eu
 # the engine extract one input track without a pre-existing direct route; it is
 # restricted to printable ASCII without spaces so a caller cannot smuggle extra
 # ffmpeg arguments through the same field.
+validate_mix_spec() {
+    spec="$1"
+    count=0
+    old_ifs="$IFS"
+    IFS=','
+    for entry in $spec; do
+        IFS="$old_ifs"
+        index="${entry%%:*}"
+        rest="${entry#*:}"
+        gain="${rest%%:*}"
+        muted="${rest##*:}"
+        [ "$rest" != "$entry" ] && [ "$gain" != "$rest" ] || return 1
+        printf '%s' "$index" | grep -Eq '^([0-9]|1[0-9]|2[0-9]|3[01])$' || return 1
+        printf '%s' "$gain" | grep -Eq '^(0(\.[0-9]{1,4})?|1(\.0{1,4})?)$' || return 1
+        printf '%s' "$muted" | grep -Eq '^[01]$' || return 1
+        count=$((count + 1))
+        [ "$count" -le 8 ] || return 1
+        IFS=','
+    done
+    IFS="$old_ifs"
+    [ "$count" -ge 1 ]
+}
+
 if [ "$#" -ne 4 ] ||
     ! printf '%s\n' "$1" | grep -Eq '^(direct-[a-f0-9]{32}|rtsps?://[!-~]{1,2048})$' ||
-    ! printf '%s\n' "$3" | grep -Eq '^(copy|transcode|audio-track)$'; then
+    ! printf '%s\n' "$3" | grep -Eq '^(copy|transcode|audio-track|audio-mix)$'; then
     echo "invalid internal transcoder path" >&2
     exit 2
 fi
@@ -20,6 +43,14 @@ audio-track)
         ! printf '%s\n' "$4" | grep -Eq '^([0-9]|1[0-9]|2[0-9]|3[01])$' ||
         ! printf '%s\n' "$2" | grep -Eq -- "-t$4$"; then
         echo "invalid internal audio-only track path" >&2
+        exit 2
+    fi
+    ;;
+audio-mix)
+    # Mix several input tracks into the single audio stream a scene source can
+    # consume: <src> <mix-dst> audio-mix <index:gain:muted,...>
+    if ! printf '%s\n' "$2" | grep -Eq '^mix-[a-f0-9]{32}$' || ! validate_mix_spec "$4"; then
+        echo "invalid internal audio-mix spec" >&2
         exit 2
     fi
     ;;
@@ -43,6 +74,35 @@ bitrate="${WEBOBS_HYBRID_BITRATE_KBPS:-4000}k"
 # MediaMTX 1.18.2 maps a single audio output per path, so every independently
 # controllable track gets its own audio-only path.  Only Opus/G.711 survive
 # WebRTC, therefore each track is transcoded (or re-encoded) to Opus.
+if [ "$video_mode" = audio-mix ]; then
+    case "$source_path" in
+    direct-*) input_url="rtsp://127.0.0.1:8554/$source_path" ;;
+    *) input_url="$source_path" ;;
+    esac
+    graph=""
+    inputs=""
+    count=0
+    old_ifs="$IFS"
+    IFS=','
+    for entry in $audio_mode; do
+        IFS="$old_ifs"
+        index="${entry%%:*}"
+        rest="${entry#*:}"
+        gain="${rest%%:*}"
+        muted="${rest##*:}"
+        [ "$muted" = "1" ] && gain="0"
+        graph="$graph[0:a:$index]volume=$gain[m$count];"
+        inputs="$inputs[m$count]"
+        count=$((count + 1))
+        IFS=','
+    done
+    IFS="$old_ifs"
+    exec ffmpeg -hide_banner -loglevel error -nostdin -rtsp_transport tcp -timeout 8000000 \
+        -i "$input_url" -filter_complex "${graph}${inputs}amix=inputs=$count:normalize=0[amixed]" \
+        -map 0:v -map "[amixed]" -c:v copy -c:a libopus -b:a "${WEBOBS_AUDIO_TRACK_BITRATE_KBPS:-96}k" \
+        -ar 48000 -ac 2 -rtsp_transport tcp -f rtsp "rtsp://127.0.0.1:8554/$target_path"
+fi
+
 if [ "$video_mode" = audio-track ]; then
     case "$source_path" in
     direct-*) input_url="rtsp://127.0.0.1:8554/$source_path" ;;
