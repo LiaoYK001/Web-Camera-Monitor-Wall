@@ -244,33 +244,6 @@ void delete_media_path(std::string_view path)
         media_path_request("delete", path, {});
 }
 
-/** Create one audio-only path whose on-demand command extracts a single track. */
-std::optional<std::string> ensure_audio_only_path(std::string_view source_url, int track)
-{
-    if (source_url.empty() || track < 0 || track > maximum_audio_track_index)
-        return std::nullopt;
-    const std::string audio_path = "audio-" + random_token() + "-t" + std::to_string(track);
-    const std::string command = shell_quote(transcoder_executable()) + " " + shell_quote(source_url) + " " +
-                                shell_quote(audio_path) + " " + shell_quote("audio-track") + " " +
-                                shell_quote(std::to_string(track));
-    json_t *root = json_object();
-    if (!root)
-        return std::nullopt;
-    json_object_set_new(root, "source", json_string("publisher"));
-    json_object_set_new(root, "runOnDemand", json_string(command.c_str()));
-    json_object_set_new(root, "runOnDemandRestart", json_false());
-    json_object_set_new(root, "runOnDemandStartTimeout", json_string("10s"));
-    json_object_set_new(root, "runOnDemandCloseAfter", json_string("2s"));
-    char *dump = json_dumps(root, JSON_COMPACT);
-    json_decref(root);
-    if (!dump)
-        return std::nullopt;
-    const std::string body = dump;
-    free(dump);
-    if (!media_path_request("add", audio_path, body))
-        return std::nullopt;
-    return audio_path;
-}
 
 /** Deletes a MediaMTX config path when the entry owning it goes away. */
 struct MediaPathGuard {
