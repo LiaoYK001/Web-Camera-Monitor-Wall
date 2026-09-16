@@ -18,7 +18,7 @@ import urllib.request
 
 ROOT = Path(__file__).resolve().parents[1]
 CACHE = Path.home() / '.cache/webobs-dev' / hashlib.sha256(str(ROOT).encode()).hexdigest()[:12]
-PACKAGES = "build-essential cmake ninja-build pkg-config git curl ca-certificates extra-cmake-modules libavcodec-dev libavformat-dev libavutil-dev libswresample-dev libswscale-dev libboost-dev libcurl4-openssl-dev libjansson-dev libssl-dev libsqlite3-dev libsimde-dev uthash-dev uuid-dev zlib1g-dev libx11-dev libx11-xcb-dev libxcb-randr0-dev libxcb-shm0-dev libxcb-xfixes0-dev libxcb-xinerama0-dev libxcomposite-dev libxinerama-dev libxkbcommon-dev libgl1-mesa-dev libegl1-mesa-dev libglvnd-dev libwayland-dev libdrm-dev libgbm-dev libglib2.0-dev libxcb-xinput-dev libxkbcommon-x11-dev libsodium23 libx264-dev libavfilter-dev libavdevice-dev libxcb-composite0-dev libva-dev ffmpeg python3".split()
+PACKAGES = "build-essential cmake ninja-build pkg-config git curl ca-certificates extra-cmake-modules libavcodec-dev libavformat-dev libavutil-dev libswresample-dev libswscale-dev libboost-dev libcurl4-openssl-dev libjansson-dev libssl-dev libsqlite3-dev libsimde-dev uthash-dev uuid-dev zlib1g-dev libx11-dev libx11-xcb-dev libxcb-randr0-dev libxcb-shm0-dev libxcb-xfixes0-dev libxcb-xinerama0-dev libxcomposite-dev libxinerama-dev libxkbcommon-dev libgl1-mesa-dev libegl1-mesa-dev libglvnd-dev libwayland-dev libdrm-dev libgbm-dev libglib2.0-dev libxcb-xinput-dev libxkbcommon-x11-dev libsodium23 libx264-dev libavfilter-dev libavdevice-dev libxcb-composite0-dev libva-dev libpci-dev libudev-dev ffmpeg python3".split()
 processes = []
 services = []
 handles = []
@@ -203,7 +203,9 @@ def main():
     # scene does not need their external SDKs.
     plugin_flags = (['-DENABLE_PLUGINS=ON', '-DENABLE_BROWSER=OFF', '-DENABLE_AJA=OFF',
                      '-DENABLE_DECKLINK=OFF', '-DENABLE_VLC=OFF', '-DENABLE_VST=OFF',
-                     '-DENABLE_WEBSOCKET=OFF', '-DENABLE_QSV11=OFF', '-DENABLE_NVENC=OFF']
+                     '-DENABLE_WEBSOCKET=OFF', '-DENABLE_QSV11=OFF', '-DENABLE_NVENC=OFF',
+                     '-DENABLE_ALSA=OFF', '-DENABLE_PIPEWIRE=OFF', '-DENABLE_V4L2=OFF',
+                     '-DENABLE_NEW_MPEGTS_OUTPUT=OFF', '-DENABLE_SPEEXDSP=OFF', '-DENABLE_RNNOISE=OFF']
                     if args.composite else ['-DENABLE_PLUGINS=OFF'])
     command(['cmake', '-S', obs, '-B', obs_build, '-G', 'Ninja', '-DCMAKE_BUILD_TYPE=Release',
              '-DOBS_VERSION_OVERRIDE=32.1.2', '-DENABLE_UI=OFF', '-DENABLE_FRONTEND=OFF',
