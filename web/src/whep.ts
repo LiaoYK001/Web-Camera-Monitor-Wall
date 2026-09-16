@@ -157,6 +157,7 @@ function connectWhep(
   let fallbackPollTimer: number | undefined;
   let frameCallbackId: number | undefined;
   let request: AbortController | undefined;
+  let authorizationRejected = false;
   let lastFrameAt = 0;
   let lastFrameCount = 0;
   let stage: PlaybackStage = {
@@ -281,6 +282,7 @@ function connectWhep(
   const connect = async () => {
     if (closed) return;
     const currentGeneration = ++generation;
+    authorizationRejected = false;
     onState(attempt === 0 ? 'checking' : 'reconnecting');
     request = new AbortController();
     try {
@@ -341,8 +343,10 @@ function connectWhep(
         signal: request.signal,
         redirect: 'error',
       });
-      if (offerResponse.status === 401 || offerResponse.status === 403)
+      if (offerResponse.status === 401 || offerResponse.status === 403) {
+        authorizationRejected = true;
         await onAuthorizationRejected?.();
+      }
       if (offerResponse.status !== 201) throw new Error('WHEP offer was rejected');
       if (offerResponse.headers.get('Content-Type')?.split(';', 1)[0].trim().toLowerCase() !== 'application/sdp')
         throw new Error('WHEP answer content type is invalid');
@@ -357,8 +361,18 @@ function connectWhep(
         if (!stage.iceConnected) scheduleReconnect('ice_timeout');
       }, HANDSHAKE_TIMEOUT_MS);
     } catch (error) {
-      if (!closed && currentGeneration === generation && !(error instanceof DOMException && error.name === 'AbortError'))
-        scheduleReconnect(error instanceof Error ? error.message : 'connect_failed');
+      if (closed || currentGeneration !== generation || (error instanceof DOMException && error.name === 'AbortError'))
+        return;
+      if (authorizationRejected) {
+        // Authorization failures go to re-pairing guidance instead of an
+        // unbounded reconnect loop.
+        releaseSession();
+        report({ signaling: false, iceConnected: false, mediaReceived: false, firstFrame: false,
+          playing: false, lastError: 'authorization_rejected' });
+        onState('disabled');
+        return;
+      }
+      scheduleReconnect(error instanceof Error ? error.message : 'connect_failed');
     }
   };
 

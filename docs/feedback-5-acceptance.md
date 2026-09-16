@@ -69,6 +69,7 @@
 - 探测缓存与并发合并：同一 Camera/Profile 的 ffprobe 结果按“端点哈希+传输方式”缓存（TTL 默认 15 秒，键不保留原始 URL），并发调用等待在途探测并复用结果（一次 ffprobe 服务多个调用者），Camera 保存/目录变更按来源失效。
 - 真实拓扑标注：状态区按 `webobs:media-topology` 区分真直连 / 网关转发 / Hybrid 转码 / Composite，不再把全部正常播放标成“直达”（未知时回退“播放中”）。
 - 浏览器能力运行时探测：媒体计划只声明本机 `MediaSource.isTypeSupported` 实际支持的编码（H.265/WebCodecs 不再无条件宣称，H.264 为基线兜底），避免规划出客户端无法解码的直连路径。
+- 授权失败不再无限重连：WHEP 收到 401/403 时记录 `authorization_rejected`、释放会话、进入重新配对指引并停止退避重试（`getStage().lastError` 可查），避免对未授权来源反复请求。
 - 验证：`playback-state.spec.ts` 用脚本化 `RTCPeerConnection` + stub rVFC 断言“ICE 连接不等于 live”，并验证 ICE 失败后的抖动重连；`test_camera_registry.py` 覆盖并发合并、TTL 命中与变更失效（26/26 通过）；`monitor-view.spec.ts` 覆盖拓扑标签映射。
 
 未在本轮实测 / not yet run：
