@@ -68,11 +68,12 @@
 - `whep.ts`：信令/ICE/媒体轨道/首帧/持续播放分开记录，**只有 `requestVideoFrameCallback` 呈现真实帧才进入 `live`**；20 秒首帧超时、6 秒帧停滞看门狗（后台暂停不误判）、带抖动的有界退避、连接代次校验、迟到响应释放；自动播放被阻止与媒体失败分开处理并提供 `resume()`。
 - 探测缓存与并发合并：同一 Camera/Profile 的 ffprobe 结果按“端点哈希+传输方式”缓存（TTL 默认 15 秒，键不保留原始 URL），并发调用等待在途探测并复用结果（一次 ffprobe 服务多个调用者），Camera 保存/目录变更按来源失效。
 - 真实拓扑标注：状态区按 `webobs:media-topology` 区分真直连 / 网关转发 / Hybrid 转码 / Composite，不再把全部正常播放标成“直达”（未知时回退“播放中”）。
+- 浏览器能力运行时探测：媒体计划只声明本机 `MediaSource.isTypeSupported` 实际支持的编码（H.265/WebCodecs 不再无条件宣称，H.264 为基线兜底），避免规划出客户端无法解码的直连路径。
 - 验证：`playback-state.spec.ts` 用脚本化 `RTCPeerConnection` + stub rVFC 断言“ICE 连接不等于 live”，并验证 ICE 失败后的抖动重连；`test_camera_registry.py` 覆盖并发合并、TTL 命中与变更失效（26/26 通过）；`monitor-view.spec.ts` 覆盖拓扑标签映射。
 
 未在本轮实测 / not yet run：
 - 真实五路 ≥30 分钟长稳、首帧 ≤20 秒统计、解码帧率 ≥90%、人为断开单路恢复、CPU/GPU 占用与慢读丢包归因。
-- 转码/路由创建的引用计数与长期闲置回收、脱敏诊断摘要导出、浏览器能力运行时探测（移除 H.265/WebCodecs 硬编码假设，改为运行时判断）。
+- 转码/路由创建的引用计数与长期闲置回收、脱敏诊断摘要导出。
 
 ## 运行与验证命令 / Commands
 

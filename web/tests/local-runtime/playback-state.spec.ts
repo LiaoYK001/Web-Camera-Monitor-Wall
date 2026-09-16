@@ -129,3 +129,15 @@ test('reconnects with bounded jittered backoff after an ICE failure', async ({ p
   expect(result.delayMs).toBeGreaterThan(500);
   expect(result.peers).toBeGreaterThanOrEqual(2);
 });
+test('claims only the video codecs this browser can actually decode', async ({ page }) => {
+  await page.goto('/');
+  const result = await page.evaluate(async () => {
+    const media = await import('/src/browserMedia.ts');
+    const capabilities = media.browserMediaCapabilities();
+    return { capabilities, webCodecsPresent: typeof (globalThis as { VideoDecoder?: unknown }).VideoDecoder !== 'undefined' };
+  });
+  expect(result.capabilities.videoCodecs).toContain('h264');
+  expect(result.capabilities.videoCodecs.every((codec: string) => ['h264', 'h265', 'mjpeg'].includes(codec))).toBe(true);
+  expect(result.capabilities.hardwareDecoders).toEqual(result.webCodecsPresent ? ['webcodecs'] : []);
+});
+
