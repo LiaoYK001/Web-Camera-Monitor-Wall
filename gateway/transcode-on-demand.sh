@@ -1,8 +1,13 @@
 #!/bin/sh
 set -eu
 
+# $1 is either a MediaMTX direct route (`direct-<32 hex>`) or, for the
+# audio-only per-track mode, an explicit RTSP(S) source URL.  The URL form lets
+# the engine extract one input track without a pre-existing direct route; it is
+# restricted to printable ASCII without spaces so a caller cannot smuggle extra
+# ffmpeg arguments through the same field.
 if [ "$#" -ne 4 ] ||
-    ! printf '%s\n' "$1" | grep -Eq '^direct-[a-f0-9]{32}$' ||
+    ! printf '%s\n' "$1" | grep -Eq '^(direct-[a-f0-9]{32}|rtsps?://[!-~]{1,2048})$' ||
     ! printf '%s\n' "$3" | grep -Eq '^(copy|transcode|audio-track)$'; then
     echo "invalid internal transcoder path" >&2
     exit 2
@@ -19,7 +24,8 @@ audio-track)
     fi
     ;;
 *)
-    if ! printf '%s\n' "$2" | grep -Eq '^hybrid-[a-f0-9]{32}$' ||
+    if ! printf '%s\n' "$1" | grep -Eq '^direct-[a-f0-9]{32}$' ||
+        ! printf '%s\n' "$2" | grep -Eq '^hybrid-[a-f0-9]{32}$' ||
         ! printf '%s\n' "$4" | grep -Eq '^(copy|transcode)$'; then
         echo "invalid internal transcoder path" >&2
         exit 2
@@ -38,8 +44,12 @@ bitrate="${WEBOBS_HYBRID_BITRATE_KBPS:-4000}k"
 # controllable track gets its own audio-only path.  Only Opus/G.711 survive
 # WebRTC, therefore each track is transcoded (or re-encoded) to Opus.
 if [ "$video_mode" = audio-track ]; then
+    case "$source_path" in
+    direct-*) input_url="rtsp://127.0.0.1:8554/$source_path" ;;
+    *) input_url="$source_path" ;;
+    esac
     exec ffmpeg -hide_banner -loglevel error -nostdin -rtsp_transport tcp -timeout 8000000 \
-        -i "rtsp://127.0.0.1:8554/$source_path" -map "0:a:$audio_mode" -vn \
+        -i "$input_url" -map "0:a:$audio_mode" -vn \
         -c:a libopus -b:a "${WEBOBS_AUDIO_TRACK_BITRATE_KBPS:-96}k" -ar 48000 -ac 2 \
         -rtsp_transport tcp -f rtsp "rtsp://127.0.0.1:8554/$target_path"
 fi

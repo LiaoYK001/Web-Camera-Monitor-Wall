@@ -121,7 +121,9 @@
   - **被实测否证的假设（重要）**：曾按“克隆 OBS 源实例 + `ffmpeg_source` 的 `track` 设置选择输入轨”实现逐轨混音，随后被证伪并已回退：本构建的 Media Source **没有音轨选择属性**（`plugins/obs-ffmpeg/obs-ffmpeg-source.c` 的属性表只有 input/inputFormat/reconnect/hw_decode/color_range/ffmpeg_options 等，全文没有 `"track"` 键），因此该设置被静默忽略。
   - 否证证据（合成双音轨来源 a:0=440Hz、a:1=880Hz，独立 8555 端口稳定发布后再启动引擎，排除来源健康重启干扰）：① 两个来源分别配置 `[{track:0}]` 与 `[{track:1}]` 时，节目里**只有 880Hz**（e880≈3.3e7，约为单源两倍），440Hz 始终在底噪（−61 dB）；② 单来源双输入 `[{track:0},{track:1}]` 三次抓取也**只有 880Hz**（e880≈1.68e7，440Hz≈1.5e4）；③ 方法学校准：直接从发布流抓 `a:0`/`a:1` 分别得到 440Hz(+64 dB) 与 880Hz(−61 dB)，说明来源本身两轨正常、分析可靠。
   - 因此当前实现**不再创建会被静默忽略的附属实例**，而是在配置了多条输入轨时明确记录一条告警（“该 OBS 构建没有 Media Source 音轨选择属性，额外输入轨尚未混音，需要走网关 audio-only 抽取通道”），避免用重复的默认音轨冒充逐轨混音。
-  - 下一轮的正确路径已经具备：第 61 轮实现并实测过的网关按轨抽取（`transcode-on-demand.sh audio-track <index>` → MediaMTX `audio-<token>-t<index>`，浏览器/引擎都可只取该轨），把 Composite 的每条输入轨改为指向该 audio-only 路径即可绕开“无音轨选择属性”的限制。
+  - 本轮把这条正确路径补全并实测：`transcode-on-demand.sh` 的 `audio-track <index>` 模式**接受显式 RTSP(S) 源 URL**（不再只认 `direct-<32 hex>`），并用严格字符集限制（可打印 ASCII、无空格、≤2048 字节）防止通过该字段注入额外 ffmpeg 参数；新增自动化测试 `tests/test-transcoder.mjs`（3/3 通过）覆盖 URL 形式、`direct-` 形式、track/路径不匹配、超范围 track、用 audio-only 路径喂 hybrid、含空格与注入式 URL、参数个数错误等拒绝分支。
+  - 运行期实测（在 MediaMTX `hybrid-cccc…` 上发布 a:0=440Hz / a:1=880Hz，两条 `audio-<token>-t0/t1` 路径的 `runOnDemand` 用显式源 URL 调用该模式）：抽取结果分别**只含 440Hz**（e440 1.676e7 / e880 1.59e4，+60 dB）与**只含 880Hz**（e880 1.677e7 / e440 1.35e4，−62 dB），两条路径 `tracks` 均为 `['Opus']` —— “一轨一路”同时绕开了 MediaMTX 单音频输出与 OBS 无音轨选择属性两个限制。
+  - 引擎接线（下一步，尚未完成）：`obs_scene_runtime` 用同一个 `WEBOBS_TRANSCODER_PATH` 环境变量加 MediaMTX 控制 API（`/v3/config/paths/add|delete`）为每条额外输入轨建立上述 audio-only 路径，再把该轨的 OBS 源实例指向 `rtsp://127.0.0.1:8554/audio-<token>-t<index>`；在此之前 Composite 仍只混第一条输入轨。
   - 单元测试：`resolved_audio_inputs` 的显式优先与 legacy 回退；`webobs-unit-tests` 全绿。
 
 未实现 / not implemented（明确列为后续项）：
