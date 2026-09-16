@@ -416,5 +416,22 @@ test('keeps detection boxes on the same geometry as the video element', async ({
   expect(result.tallContain.height).toBeCloseTo(1, 3);
   expect(result.tallCover.width).toBeCloseTo(1, 3);
 });
+test('labels the actual playback topology instead of a blanket direct label', async ({ page }) => {
+  await page.goto('/');
+  const result = await page.evaluate(async () => {
+    const monitor = await import('/src/monitorView.ts');
+    return {
+      direct: monitor.playbackTopologyLabel('true-direct'),
+      gateway: monitor.playbackTopologyLabel('gateway-direct'),
+      hybrid: monitor.playbackTopologyLabel('hybrid'),
+      composite: monitor.playbackTopologyLabel('composite'),
+      capability: monitor.playbackTopologyLabel(undefined, 'hybrid'),
+      unknown: monitor.playbackTopologyLabel(undefined, undefined),
+    };
+  });
+  expect(result).toEqual({ direct: '真直连', gateway: '网关转发', hybrid: 'Hybrid 转码',
+    composite: 'Composite', capability: 'Hybrid 转码', unknown: '' });
+});
+
 
 

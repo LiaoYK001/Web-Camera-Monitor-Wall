@@ -5,7 +5,7 @@ import { DirectAudioMixer, type DirectAudioSnapshot } from './directAudioMixer';
 import { clearPrivateRuntimeState, loadBrowserIdentity, loadMonitorView, saveMonitorView } from './localRuntime';
 import { observeTileVisibility, shouldRunPlayback } from './mediaLifecycle';
 import { countRenderedFrames, formatTelemetry, sampleConnectionTelemetry, sampleElementTelemetry, unavailableTelemetry, type MediaTelemetry } from './mediaTelemetry';
-import { applyAutomaticLayout, defaultMonitorView, evaluatePromotion, mapDetectionBoxToTile, nextRotationWindow, normalizeMonitorView, resolveFillMode, selectLowPowerProfile, sourceDecoration, tileTransform, validDetectionSignal, type AudioMeterConfig, type DetectionSignal, type MonitorView, type TelemetryOverlayConfig, type VideoFillMode } from './monitorView';
+import { applyAutomaticLayout, defaultMonitorView, evaluatePromotion, mapDetectionBoxToTile, nextRotationWindow, normalizeMonitorView, playbackTopologyLabel, resolveFillMode, selectLowPowerProfile, sourceDecoration, tileTransform, validDetectionSignal, type AudioMeterConfig, type DetectionSignal, type MonitorView, type TelemetryOverlayConfig, type VideoFillMode } from './monitorView';
 import { BrowserAnalyticsRuntime, type BrowserAnalyticsStatus } from './analyticsRuntime';
 import { openIssueCenter, reportLocalIssue, reportMediaIssue, resolveLocalIssue, subscribeLocalIssues } from './issueRuntime';
 import type { AnalyticsPolicy, CameraRecord, CameraSceneSource, MotionZone, OperationalIssue, SceneDocument, SceneItem, SceneSource, SourcePlaybackCapability } from './types';
@@ -564,6 +564,7 @@ export default function DirectPreview({ scene, compact = false }: { scene: Scene
   const [portrait, setPortrait] = useState(() => window.matchMedia('(orientation: portrait)').matches);
   const [pageVisible, setPageVisible] = useState(() => !document.hidden);
   const [sourceStates, setSourceStates] = useState<Record<string, ProgramConnectionState>>({});
+  const [topologies, setTopologies] = useState<Record<string, string>>({});
   const [issues, setIssues] = useState<OperationalIssue[]>([]);
   const [windowPreview, setWindowPreview] = useState(false);
   const [windowRect, setWindowRect] = useState({ x: 72, y: 96, width: 760, height: 428 });
@@ -627,6 +628,16 @@ export default function DirectPreview({ scene, compact = false }: { scene: Scene
   useEffect(() => { mixer?.setOutputEnabled(monitorView.audioOutput === 'speaker'); }, [mixer, monitorView.audioOutput]);
 
   useEffect(() => subscribeLocalIssues(setIssues), []);
+  useEffect(() => {
+    const receive = (event: Event) => {
+      const detail = (event as CustomEvent<{ sourceId?: string; topology?: string }>).detail;
+      if (!detail?.sourceId || !detail.topology) return;
+      setTopologies((current) => current[detail.sourceId!] === detail.topology
+        ? current : { ...current, [detail.sourceId!]: detail.topology! });
+    };
+    window.addEventListener('webobs:media-topology', receive);
+    return () => window.removeEventListener('webobs:media-topology', receive);
+  }, []);
   const handleSourceState = useCallback((sourceId: string, state: ProgramConnectionState) => {
     setSourceStates((current) => current[sourceId] === state ? current : { ...current, [sourceId]: state });
   }, []);
@@ -976,11 +987,14 @@ export default function DirectPreview({ scene, compact = false }: { scene: Scene
           if (!source) return null;
           const state = sourceStates[source.id] ?? 'checking';
           const count = openIssueCounts.get(source.id) ?? 0;
+          const label = state === 'live'
+            ? (playbackTopologyLabel(topologies[source.id], bySource.get(source.id)?.deliveryMode) || '播放中')
+            : labels[state];
           return <button type="button" key={item.id} className={`source-status status-${state}`} onClick={() => openIssueCenter(source.id)}
-            title={`${source.name} · ${labels[state]}${count ? ` · ${count} 个问题` : ''}`}>
+            title={`${source.name} · ${label}${count ? ` · ${count} 个问题` : ''}`}>
             <i aria-hidden="true" />
             <strong>{source.name}</strong>
-            <span>{labels[state]}</span>
+            <span>{label}</span>
             {count > 0 && <em aria-label={`${count} 个问题`}>{count}</em>}
           </button>;
         })}

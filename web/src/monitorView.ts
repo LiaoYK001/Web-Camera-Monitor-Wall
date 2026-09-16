@@ -266,6 +266,27 @@ export function resolveFillMode(view: MonitorView, sourceId: string, manualScale
   return view.mode === 'auto' ? view.fill : manualScaleMode;
 }
 
+/**
+ * Truthful playback label for a live source.  A normal picture is never
+ * blanket-labelled "直达"; the actual topology reported by the media plan wins,
+ * then the capability delivery mode, and an unknown live path stays generic.
+ */
+export function playbackTopologyLabel(topology: string | undefined, deliveryMode?: string): string {
+  switch (topology) {
+  case 'true-direct': return '真直连';
+  case 'hybrid': return 'Hybrid 转码';
+  case 'gateway-direct': return '网关转发';
+  case 'composite': return 'Composite';
+  default: break;
+  }
+  switch (deliveryMode) {
+  case 'direct': return '网关直通';
+  case 'hybrid': return 'Hybrid 转码';
+  case 'composite': return 'Composite';
+  default: return '';
+  }
+}
+
 const clamp = (value: number, minimum: number, maximum: number) => Math.min(maximum, Math.max(minimum, value));
 const finite = (value: unknown, fallback: number) => {
   const number = typeof value === 'number' ? value : Number(value);
