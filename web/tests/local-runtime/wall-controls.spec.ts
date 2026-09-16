@@ -43,6 +43,13 @@ test('exposes live large-picture controls, meter options and window preview', as
     const ratioLabel = host.querySelector('[data-large-ratio]')?.textContent;
     const noAudioHint = Array.from(host.querySelectorAll('.audio-track-missing')).map((node) => node.textContent);
     const outputSelect = host.querySelector('select[aria-label="声音输出模式"]');
+    // F5-02: no diagnostic button, state pill or name inside the picture; the
+    // status rail lives outside the canvas and lists every visible source.
+    const statusButtons = host.querySelectorAll('.tile-status-button').length;
+    const statePills = host.querySelectorAll('.direct-tile-state').length;
+    const tileNames = host.querySelectorAll('.direct-tile-name').length;
+    const placeholders = host.querySelectorAll('.direct-tile-placeholder').length;
+    const railButtons = host.querySelectorAll('.monitor-source-rail .source-status').length;
     const windowButton = Array.from(host.querySelectorAll('button')).find((button) => button.textContent === '窗口预览');
     windowButton?.click();
     await wait(120);
@@ -51,7 +58,8 @@ test('exposes live large-picture controls, meter options and window preview', as
     const barText = host.querySelector('.window-preview-bar')?.textContent ?? '';
     wall.unmount();
     return { before, afterCheck: { count: countInput?.value, largeChecked: largeMode?.checked }, positions, ratioLabel,
-      noAudioHint, hasOutputSelect: Boolean(outputSelect), windowMode, controlsHidden, barText };
+      noAudioHint, hasOutputSelect: Boolean(outputSelect), windowMode, controlsHidden, barText,
+      statusButtons, statePills, tileNames, placeholders, railButtons };
   }, sceneFixture);
 
   expect(result.before).toEqual({ count: '0', ratio: '0.5', largeChecked: false });
@@ -65,4 +73,9 @@ test('exposes live large-picture controls, meter options and window preview', as
   expect(result.windowMode).toBe(true);
   expect(result.controlsHidden).toBe(true);
   expect(result.barText).toContain('窗口预览');
+  expect(result.statusButtons).toBe(0);
+  expect(result.statePills).toBe(0);
+  expect(result.tileNames).toBe(0);
+  expect(result.placeholders).toBe(2);
+  expect(result.railButtons).toBe(2);
 });

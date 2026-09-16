@@ -309,7 +309,9 @@ test('honours the large/small ratio, OBS meter defaults and no-audio metadata', 
     const ratioOf = (ratio: number) => {
       const view = monitor.defaultMonitorView(); view.largeCount = 3; view.largeRatio = ratio;
       const laidOut = monitor.applyAutomaticLayout(scene, view);
-      return laidOut.items[3].width / laidOut.items[0].width;
+      const largeArea = laidOut.items[0].width * laidOut.items[0].height;
+      const smallArea = laidOut.items[3].width * laidOut.items[3].height;
+      return Math.sqrt(smallArea / largeArea);
     };
     const legacy = monitor.normalizeMonitorView({
       schemaVersion: 4,
@@ -337,4 +339,82 @@ test('honours the large/small ratio, OBS meter defaults and no-audio metadata', 
   expect(result.defaults).toEqual({ orientation: 'vertical', position: 'left', size: 1, opacity: 1 });
   expect(result.spans).toEqual([24, 13, 120]);
 });
+
+test('fills the canvas without black gaps and applies the fill policy', async ({ page }) => {
+  await page.goto('/');
+  const result = await page.evaluate(async () => {
+    const monitor = await import('/src/monitorView.ts');
+    const fixtures = [[1, 0], [2, 0], [4, 0], [5, 0], [9, 0], [16, 0], [5, 2], [3, 2]];
+    const coverage: number[] = [];
+    const failures: string[] = [];
+    for (const [count, large] of fixtures) {
+      const width = 1920; const height = 1080;
+      const scene = {
+        schemaVersion: 5 as const, revision: 1, id: 'fixture', name: 'fixture',
+        canvas: { width, height, backgroundColor: '#000000' },
+        sources: Array.from({ length: count }, (_, index) => ({
+          id: `source-${index}`, kind: 'color' as const, name: `Source ${index}`, color: '#000000',
+          muted: true, volume: 0, syncOffsetMs: 0, monitoring: 'off' as const, audioTrack: 1, filters: [],
+        })),
+        items: Array.from({ length: count }, (_, index) => ({
+          id: `item-${index}`, sourceId: `source-${index}`, x: 0, y: 0, width: 1, height: 1,
+          scaleMode: 'contain' as const, crop: { top: 0, right: 0, bottom: 0, left: 0 }, zIndex: index,
+          visible: true, locked: false, groupId: '', rotation: 0, opacity: 1, blendMode: 'normal' as const,
+        })),
+      };
+      const view = monitor.defaultMonitorView(); view.largeCount = large; view.largeRatio = .5;
+      const laidOut = monitor.applyAutomaticLayout(scene, view);
+      const area = laidOut.items.reduce((sum, item) => sum + item.width * item.height, 0);
+      const ratio = area / (width * height);
+      coverage.push(Math.round(ratio * 1000) / 1000);
+      if (ratio < .999) failures.push(`${count}/${large}:gap`);
+      if (laidOut.items.some((item) => item.scaleMode !== 'stretch')) failures.push(`${count}/${large}:fill`);
+    }
+    const single = { schemaVersion: 5 as const, revision: 1, id: 'single', name: 'single',
+      canvas: { width: 1600, height: 900, backgroundColor: '#000000' },
+      sources: [{ id: 's0', kind: 'color' as const, name: 'S', color: '#000', muted: true, volume: 0, syncOffsetMs: 0, monitoring: 'off' as const, audioTrack: 1, filters: [] }],
+      items: [{ id: 'i0', sourceId: 's0', x: 0, y: 0, width: 800, height: 450, scaleMode: 'contain' as const, crop: { top: 0, right: 0, bottom: 0, left: 0 }, zIndex: 0, visible: true, locked: false, groupId: '', rotation: 0, opacity: 1, blendMode: 'normal' as const }] };
+    const containView = monitor.defaultMonitorView(); containView.fill = 'contain';
+    const containMode = monitor.applyAutomaticLayout(single, containView).items[0].scaleMode;
+    const overrideView = monitor.defaultMonitorView();
+    overrideView.sourceDecorations = { s0: { telemetry: monitor.defaultTelemetryOverlay(), audioMeter: monitor.defaultAudioMeter(), promotionKinds: { audio: false, motion: false, person: false }, fill: 'cover' } };
+    const overrideMode = monitor.applyAutomaticLayout(single, overrideView).items[0].scaleMode;
+    const manualView = monitor.defaultMonitorView(); manualView.mode = 'manual';
+    const manualMode = monitor.resolveFillMode(manualView, 's0', single.items[0].scaleMode);
+    return { coverage, failures, containMode, overrideMode, manualMode };
+  });
+  expect(result.failures).toEqual([]);
+  expect(result.coverage).toEqual([1, 1, 1, 1, 1, 1, 1, 1]);
+  expect(result.containMode).toBe('contain');
+  expect(result.overrideMode).toBe('cover');
+  expect(result.manualMode).toBe('contain');
+});
+
+test('keeps detection boxes on the same geometry as the video element', async ({ page }) => {
+  await page.goto('/');
+  const result = await page.evaluate(async () => {
+    const monitor = await import('/src/monitorView.ts');
+    const base = { id: 'item', sourceId: 's', x: 0, y: 0, width: 800, height: 450,
+      crop: { top: 0, right: 0, bottom: 0, left: 0 }, zIndex: 0, visible: true, locked: false,
+      groupId: '', rotation: 0, opacity: 1, blendMode: 'normal' as const };
+    const corners = { x: 0, y: 0, width: 1, height: 1 };
+    const stretch = monitor.mapDetectionBoxToTile(corners, { ...base, scaleMode: 'stretch' as const }, 1920, 1080);
+    const contain = monitor.mapDetectionBoxToTile(corners, { ...base, scaleMode: 'contain' as const }, 1920, 1080);
+    const cover = monitor.mapDetectionBoxToTile(corners, { ...base, scaleMode: 'cover' as const }, 1920, 1080);
+    const tallContain = monitor.mapDetectionBoxToTile(corners, { ...base, scaleMode: 'contain' as const }, 640, 480);
+    const tallCover = monitor.mapDetectionBoxToTile(corners, { ...base, scaleMode: 'cover' as const }, 640, 480);
+    const tallStretch = monitor.mapDetectionBoxToTile(corners, { ...base, scaleMode: 'stretch' as const }, 640, 480);
+    return { stretch, contain, cover, tallContain, tallCover, tallStretch,
+      transform: monitor.tileTransform({ ...base, scaleMode: 'contain' as const }, 640, 480) };
+  });
+  expect(result.stretch).toEqual({ x: 0, y: 0, width: 1, height: 1 });
+  expect(result.contain).toEqual({ x: 0, y: 0, width: 1, height: 1 });
+  expect(result.cover).toEqual({ x: 0, y: 0, width: 1, height: 1 });
+  expect(result.tallStretch).toEqual({ x: 0, y: 0, width: 1, height: 1 });
+  expect(result.tallContain.x).toBeGreaterThan(.1);
+  expect(result.tallContain.width).toBeLessThan(.9);
+  expect(result.tallContain.height).toBeCloseTo(1, 3);
+  expect(result.tallCover.width).toBeCloseTo(1, 3);
+});
+
 

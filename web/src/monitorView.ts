@@ -16,6 +16,14 @@ export interface TelemetryOverlayConfig {
   refreshIntervalMs: number;
 }
 
+/**
+ * How a source is fitted into its Scene tile.  The monitor wall defaults to
+ * `stretch` so monitoring corners are never cropped away; `contain` keeps the
+ * full frame with possible letterboxing and `cover` crops to fill.
+ */
+export type VideoFillMode = 'stretch' | 'contain' | 'cover';
+export const videoFillModes: VideoFillMode[] = ['stretch', 'contain', 'cover'];
+
 export type AudioMeterOrientation = 'vertical' | 'horizontal';
 export type AudioMeterPosition = 'left' | 'right' | OverlayPosition;
 
@@ -41,6 +49,8 @@ export interface SourceDecoration {
   telemetry: TelemetryOverlayConfig;
   audioMeter: AudioMeterConfig;
   promotionKinds: { audio: boolean; motion: boolean; person: boolean };
+  /** Per-source fill override; when absent the monitor-level fill applies. */
+  fill?: VideoFillMode;
 }
 
 export interface RotationConfig {
@@ -70,6 +80,8 @@ export interface MonitorView {
   /** Small tile size as a share of the large tile, 0.1 - 0.9. */
   largeRatio: number;
   telemetry: TelemetryOverlayConfig;
+  /** Default tile fill for the automatic layout. */
+  fill: VideoFillMode;
   sourceDecorations: Record<string, SourceDecoration>;
   rotation: RotationConfig;
   promotion: PromotionConfig;
@@ -102,10 +114,53 @@ export interface DetectionSignal {
   modelSha256?: string;
 }
 
+export interface TileTransform {
+  /** Visible content box inside the Scene item, in item units. */
+  contentWidth: number;
+  contentHeight: number;
+  /** CSS element box; equals the content box except for stretch-with-crop. */
+  elementWidth: number;
+  elementHeight: number;
+  /** Element offset inside the Scene item, in item units. */
+  offsetX: number;
+  offsetY: number;
+  /** Source-pixel to Scene-item-unit scale, including crop and fill mode. */
+  scaleX: number;
+  scaleY: number;
+}
+
 /**
- * Map a source-normalized detection box onto a Scene v5 tile.  The same crop
- * and contain/cover/stretch math used by the video element is applied here so
- * boxes do not drift when a source is letterboxed or cropped.  Values are
+ * Single geometry source for the video element, detection boxes, masks and
+ * overlays.  The same crop + contain/cover/stretch math is applied everywhere
+ * so a box never drifts from the picture it marks.
+ */
+export function tileTransform(item: SceneItem, sourceWidth: number, sourceHeight: number): TileTransform {
+  const cropLeft = Math.max(0, item.crop.left);
+  const cropTop = Math.max(0, item.crop.top);
+  const croppedWidth = Math.max(1, sourceWidth - cropLeft - Math.max(0, item.crop.right));
+  const croppedHeight = Math.max(1, sourceHeight - cropTop - Math.max(0, item.crop.bottom));
+  const fitX = item.width / croppedWidth;
+  const fitY = item.height / croppedHeight;
+  const scale = item.scaleMode === 'contain' ? Math.min(fitX, fitY)
+    : item.scaleMode === 'cover' ? Math.max(fitX, fitY) : 0;
+  const scaleX = item.scaleMode === 'stretch' ? fitX : scale;
+  const scaleY = item.scaleMode === 'stretch' ? fitY : scale;
+  const contentWidth = item.scaleMode === 'stretch' ? item.width : croppedWidth * scale;
+  const contentHeight = item.scaleMode === 'stretch' ? item.height : croppedHeight * scale;
+  return {
+    contentWidth,
+    contentHeight,
+    elementWidth: item.scaleMode === 'stretch' ? sourceWidth * scaleX : contentWidth,
+    elementHeight: item.scaleMode === 'stretch' ? sourceHeight * scaleY : contentHeight,
+    offsetX: (item.width - contentWidth) / 2 - cropLeft * scaleX,
+    offsetY: (item.height - contentHeight) / 2 - cropTop * scaleY,
+    scaleX,
+    scaleY,
+  };
+}
+
+/**
+ * Map a source-normalized detection box onto a Scene v5 tile.  Values are
  * clamped to the tile; an entirely cropped-out box is returned with zero
  * extent and is safe for the caller to skip.
  */
@@ -117,21 +172,11 @@ export function mapDetectionBoxToTile(
 ): { x: number; y: number; width: number; height: number } {
   if (!Number.isFinite(sourceWidth) || !Number.isFinite(sourceHeight) || sourceWidth <= 0 || sourceHeight <= 0)
     return { x: clamp(box.x, 0, 1), y: clamp(box.y, 0, 1), width: clamp(box.width, 0, 1), height: clamp(box.height, 0, 1) };
-  const croppedWidth = Math.max(1, sourceWidth - Math.max(0, item.crop.left) - Math.max(0, item.crop.right));
-  const croppedHeight = Math.max(1, sourceHeight - Math.max(0, item.crop.top) - Math.max(0, item.crop.bottom));
-  const scaleX = item.width / croppedWidth;
-  const scaleY = item.height / croppedHeight;
-  const scale = item.scaleMode === 'contain' ? Math.min(scaleX, scaleY) : item.scaleMode === 'cover' ? Math.max(scaleX, scaleY) : 1;
-  const xScale = item.scaleMode === 'stretch' ? scaleX : scale;
-  const yScale = item.scaleMode === 'stretch' ? scaleY : scale;
-  const contentWidth = item.scaleMode === 'stretch' ? item.width : croppedWidth * scale;
-  const contentHeight = item.scaleMode === 'stretch' ? item.height : croppedHeight * scale;
-  const left = (item.width - contentWidth) / 2 - Math.max(0, item.crop.left) * xScale;
-  const top = (item.height - contentHeight) / 2 - Math.max(0, item.crop.top) * yScale;
-  const rawLeft = left + clamp(box.x, 0, 1) * sourceWidth * xScale;
-  const rawTop = top + clamp(box.y, 0, 1) * sourceHeight * yScale;
-  const rawRight = left + clamp(box.x + box.width, 0, 1) * sourceWidth * xScale;
-  const rawBottom = top + clamp(box.y + box.height, 0, 1) * sourceHeight * yScale;
+  const transform = tileTransform(item, sourceWidth, sourceHeight);
+  const rawLeft = transform.offsetX + clamp(box.x, 0, 1) * sourceWidth * transform.scaleX;
+  const rawTop = transform.offsetY + clamp(box.y, 0, 1) * sourceHeight * transform.scaleY;
+  const rawRight = transform.offsetX + clamp(box.x + box.width, 0, 1) * sourceWidth * transform.scaleX;
+  const rawBottom = transform.offsetY + clamp(box.y + box.height, 0, 1) * sourceHeight * transform.scaleY;
   const clippedLeft = clamp(Math.min(rawLeft, rawRight), 0, item.width);
   const clippedTop = clamp(Math.min(rawTop, rawBottom), 0, item.height);
   const clippedRight = clamp(Math.max(rawLeft, rawRight), 0, item.width);
@@ -187,6 +232,7 @@ export const defaultMonitorView = (): MonitorView => ({
   largeSourceIds: [],
   largeRatio: .5,
   telemetry: defaultTelemetryOverlay(),
+  fill: 'stretch',
   sourceDecorations: {},
   rotation: { enabled: false, strategy: 'sequential', intervalSeconds: 30, pinnedSourceIds: [] },
   promotion: { allowEventPromotion: false, threshold: .6, holdSeconds: 15, cooldownSeconds: 30 },
@@ -205,7 +251,19 @@ export function sourceDecoration(view: MonitorView, sourceId: string): SourceDec
     telemetry: { ...view.telemetry, ...value.telemetry, fields: [...value.telemetry.fields] },
     audioMeter: { ...fallback.audioMeter, ...value.audioMeter },
     promotionKinds: { ...fallback.promotionKinds, ...value.promotionKinds },
+    ...(value.fill ? { fill: value.fill } : {}),
   };
+}
+
+/**
+ * Effective fill for one tile.  An explicit per-source override always wins;
+ * otherwise automatic layouts use the monitor-level fill and manual scenes
+ * keep the Scene item's own explicit scale mode.
+ */
+export function resolveFillMode(view: MonitorView, sourceId: string, manualScaleMode: VideoFillMode): VideoFillMode {
+  const override = view.sourceDecorations[sourceId]?.fill;
+  if (override) return override;
+  return view.mode === 'auto' ? view.fill : manualScaleMode;
 }
 
 const clamp = (value: number, minimum: number, maximum: number) => Math.min(maximum, Math.max(minimum, value));
@@ -219,6 +277,8 @@ const sourceIdentifier = (value: unknown): value is string => typeof value === '
 const telemetryFields = (value: unknown, fallback: TelemetryField[]) =>
   [...new Set(Array.isArray(value) ? value : fallback)].filter((field): field is TelemetryField =>
     ['fps', 'bitrate', 'codec', 'decoder'].includes(String(field)));
+const fillMode = (value: unknown, fallback: VideoFillMode): VideoFillMode =>
+  videoFillModes.includes(value as VideoFillMode) ? value as VideoFillMode : fallback;
 
 export function normalizeMonitorView(value: Partial<MonitorView> | null | undefined, sourceCount: number, sourceIds?: string[]): MonitorView {
   const defaults = defaultMonitorView();
@@ -269,6 +329,7 @@ export function normalizeMonitorView(value: Partial<MonitorView> | null | undefi
         motion: Boolean(candidate.promotionKinds?.motion),
         person: Boolean(candidate.promotionKinds?.person),
       },
+      ...(candidate.fill ? { fill: fillMode(candidate.fill, defaults.fill) } : {}),
     };
   }
   return {
@@ -277,6 +338,7 @@ export function normalizeMonitorView(value: Partial<MonitorView> | null | undefi
     largeCount: clamp(Math.trunc(value?.largeCount ?? 0), 0, clamp(sourceCount, 0, 16)),
     largeSourceIds: [...new Set((Array.isArray(value?.largeSourceIds) ? value?.largeSourceIds : []).filter(sourceIdentifier))].slice(0, 16),
     largeRatio: bounded(value?.largeRatio, .5, .1, .9),
+    fill: fillMode(value?.fill, defaults.fill),
     telemetry: {
       ...telemetry,
       fields: telemetryFields(telemetry.fields, defaults.telemetry.fields),
@@ -316,7 +378,6 @@ export function normalizeMonitorView(value: Partial<MonitorView> | null | undefi
 }
 
 const LAYOUT_UNITS = 12;
-const TARGET_TILE_ASPECT = 16 / 9;
 
 /** Large tile span in fine layout units; small tiles always span LAYOUT_UNITS. */
 export function largeTileSpan(ratio: number): number {
@@ -324,32 +385,60 @@ export function largeTileSpan(ratio: number): number {
   return clamp(Math.round(LAYOUT_UNITS / safe), LAYOUT_UNITS, LAYOUT_UNITS * 10);
 }
 
-interface SkylinePlacement { x: number; y: number; span: number }
+export interface WallRectangle { x: number; y: number; width: number; height: number }
 
 /**
- * Bottom-left skyline packer for squares of at most two sizes.  Keeping the
- * large tiles first groups them into a compact focus block while the small
- * tiles wrap around it, which is the behaviour the wall layout is expected to
- * show.  It is a pure function of the span list and grid width, so laying out
- * an already-laid-out scene is a stable fixed point.
+ * Squarified treemap.  A shelf/skyline packer leaves an unused slot or a short
+ * trailing row whenever the tile count does not divide the grid, which reads as
+ * an unexplained black gap.  A treemap partitions the canvas exactly, so the
+ * wall is always fully covered while each tile keeps an area proportional to
+ * the requested large/small ratio.  It is a pure function of the areas and the
+ * canvas, so laying out an already-laid-out scene is a stable fixed point.
  */
-function packSkyline(gridWidth: number, spans: number[]): SkylinePlacement[] | null {
-  const skyline = new Int32Array(gridWidth);
-  const placements: SkylinePlacement[] = [];
-  for (const span of spans) {
-    if (span > gridWidth) return null;
-    let bestX = -1;
-    let bestY = Number.POSITIVE_INFINITY;
-    for (let x = 0; x + span <= gridWidth; x += 1) {
-      let y = 0;
-      for (let column = x; column < x + span; column += 1) if (skyline[column] > y) y = skyline[column];
-      if (y < bestY) { bestY = y; bestX = x; }
+export function squarifiedLayout(areas: number[], width: number, height: number): WallRectangle[] {
+  const total = areas.reduce((sum, area) => sum + Math.max(0, area), 0);
+  if (!areas.length) return [];
+  if (total <= 0 || width <= 0 || height <= 0) return areas.map(() => ({ x: 0, y: 0, width, height }));
+  const scaled = areas.map((area) => Math.max(0, area) * (width * height) / total);
+  const rectangles: WallRectangle[] = new Array(areas.length);
+  let x = 0;
+  let y = 0;
+  let availableWidth = width;
+  let availableHeight = height;
+  let start = 0;
+  while (start < scaled.length) {
+    const vertical = availableWidth >= availableHeight;
+    const shortSide = Math.max(1e-6, vertical ? availableHeight : availableWidth);
+    let rowSum = 0;
+    let end = start;
+    let bestWorst = Number.POSITIVE_INFINITY;
+    while (end < scaled.length) {
+      const candidateSum = rowSum + scaled[end];
+      const thickness = candidateSum / shortSide;
+      let worst = 0;
+      for (let index = start; index <= end; index += 1) {
+        const length = thickness > 0 ? scaled[index] / thickness : 0;
+        const ratio = length > 0 ? Math.max(thickness / length, length / thickness) : Number.POSITIVE_INFINITY;
+        if (ratio > worst) worst = ratio;
+      }
+      if (worst <= bestWorst) { bestWorst = worst; rowSum = candidateSum; end += 1; }
+      else break;
     }
-    if (bestX < 0) return null;
-    for (let column = bestX; column < bestX + span; column += 1) skyline[column] = bestY + span;
-    placements.push({ x: bestX, y: bestY, span });
+    if (end === start) { end = start + 1; rowSum = scaled[start]; }
+    const thickness = Math.max(1e-6, rowSum / shortSide);
+    let offset = 0;
+    for (let index = start; index < end; index += 1) {
+      const length = scaled[index] / thickness;
+      rectangles[index] = vertical
+        ? { x, y: y + offset, width: thickness, height: length }
+        : { x: x + offset, y, width: length, height: thickness };
+      offset += length;
+    }
+    if (vertical) { x += thickness; availableWidth -= thickness; }
+    else { y += thickness; availableHeight -= thickness; }
+    start = end;
   }
-  return placements;
+  return rectangles;
 }
 
 /** Generate ordinary Scene v5 item rectangles; MonitorView never becomes a second scene schema. */
@@ -364,48 +453,17 @@ export function applyAutomaticLayout(scene: SceneDocument, viewValue: Partial<Mo
   const large = new Set(chosenLarge);
   const smallIds = sourceIds.filter((id) => !large.has(id));
   const bigSpan = largeTileSpan(view.largeRatio);
-  const allSpans = [...chosenLarge.map(() => bigSpan), ...smallIds.map(() => LAYOUT_UNITS)];
-  const totalCells = allSpans.reduce((sum, span) => sum + span * span, 0);
-  const width = scene.canvas.width;
-  const height = scene.canvas.height;
-  const candidates = new Set<number>();
-  for (let k = 1; k <= 12; k += 1) candidates.add(k * LAYOUT_UNITS);
-  for (let k = 1; k <= 8; k += 1) {
-    candidates.add(k * bigSpan);
-    candidates.add(k * bigSpan + Math.floor(LAYOUT_UNITS / 2));
-  }
-  let best: { score: number; packed: SkylinePlacement[]; usedWidth: number; usedHeight: number } | null = null;
-  for (const gridWidth of candidates) {
-    if (gridWidth < bigSpan || gridWidth > 2400) continue;
-    const packed = packSkyline(gridWidth, allSpans);
-    if (!packed) continue;
-    let usedWidth = 0;
-    let usedHeight = 0;
-    for (const placement of packed) {
-      usedWidth = Math.max(usedWidth, placement.x + placement.span);
-      usedHeight = Math.max(usedHeight, placement.y + placement.span);
-    }
-    if (!usedWidth || !usedHeight) continue;
-    const fill = totalCells / (usedWidth * usedHeight);
-    const tileAspect = (width * usedHeight) / (height * usedWidth);
-    const score = (1 - fill) * 10 + Math.abs(Math.log(tileAspect / TARGET_TILE_ASPECT)) * 4;
-    if (!best || score < best.score) best = { score, packed, usedWidth, usedHeight };
-  }
-  if (!best) return scene;
   const ordered = [...chosenLarge, ...smallIds];
-  const rectangleBySource = new Map(ordered.map((sourceId, index) => {
-    const placement = best!.packed[index];
-    return [sourceId, {
-      x: placement.x * width / best!.usedWidth,
-      y: placement.y * height / best!.usedHeight,
-      width: placement.span * width / best!.usedWidth,
-      height: placement.span * height / best!.usedHeight,
-    }] as const;
-  }));
+  // Large tiles lead so the focus block lands in the top-left of the canvas.
+  const areas = [...chosenLarge.map(() => bigSpan * bigSpan), ...smallIds.map(() => LAYOUT_UNITS * LAYOUT_UNITS)];
+  const rectangles = squarifiedLayout(areas, scene.canvas.width, scene.canvas.height);
+  const rectangleBySource = new Map(ordered.map((sourceId, index) => [sourceId, rectangles[index]] as const));
   const items = scene.items.map((item): SceneItem => {
     const rectangle = rectangleBySource.get(item.sourceId);
     if (!rectangle) return item;
-    return { ...item, ...rectangle };
+    // Automatic layouts own the fill so Direct and Composite render the same
+    // effective scene; explicit per-source overrides still win.
+    return { ...item, ...rectangle, scaleMode: resolveFillMode(view, item.sourceId, item.scaleMode) };
   });
   return { ...scene, items };
 }

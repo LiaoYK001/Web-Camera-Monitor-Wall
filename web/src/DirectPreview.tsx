@@ -1,14 +1,14 @@
-import { type CSSProperties, type PointerEvent as ReactPointerEvent, useEffect, useMemo, useRef, useState } from 'react';
+import { type CSSProperties, type PointerEvent as ReactPointerEvent, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { closeAnalyticsRuntimeSession, fetchAnalyticsPolicies, fetchCameras, fetchMotionZones, fetchPlaybackCapabilities, renewAnalyticsRuntimeSession, requestAnalyticsRuntimePlan, submitAnalyticsSignals } from './api';
 import { activateGateway, approvedBrowserProfile, BrowserPlanError, browserGrantProfile, connectApprovedWhep, connectHls, connectMjpeg, offlineSignedGrantPlan, requestBrowserPlan, type BrowserTopologyPlan } from './browserMedia';
 import { DirectAudioMixer, type DirectAudioSnapshot } from './directAudioMixer';
 import { clearPrivateRuntimeState, loadBrowserIdentity, loadMonitorView, saveMonitorView } from './localRuntime';
 import { observeTileVisibility, shouldRunPlayback } from './mediaLifecycle';
 import { countRenderedFrames, formatTelemetry, sampleConnectionTelemetry, sampleElementTelemetry, unavailableTelemetry, type MediaTelemetry } from './mediaTelemetry';
-import { applyAutomaticLayout, defaultMonitorView, evaluatePromotion, mapDetectionBoxToTile, nextRotationWindow, normalizeMonitorView, selectLowPowerProfile, sourceDecoration, validDetectionSignal, type AudioMeterConfig, type DetectionSignal, type MonitorView, type TelemetryOverlayConfig } from './monitorView';
+import { applyAutomaticLayout, defaultMonitorView, evaluatePromotion, mapDetectionBoxToTile, nextRotationWindow, normalizeMonitorView, resolveFillMode, selectLowPowerProfile, sourceDecoration, tileTransform, validDetectionSignal, type AudioMeterConfig, type DetectionSignal, type MonitorView, type TelemetryOverlayConfig, type VideoFillMode } from './monitorView';
 import { BrowserAnalyticsRuntime, type BrowserAnalyticsStatus } from './analyticsRuntime';
-import { openIssueCenter, reportLocalIssue, reportMediaIssue, resolveLocalIssue } from './issueRuntime';
-import type { AnalyticsPolicy, CameraRecord, CameraSceneSource, MotionZone, SceneDocument, SceneItem, SceneSource, SourcePlaybackCapability } from './types';
+import { openIssueCenter, reportLocalIssue, reportMediaIssue, resolveLocalIssue, subscribeLocalIssues } from './issueRuntime';
+import type { AnalyticsPolicy, CameraRecord, CameraSceneSource, MotionZone, OperationalIssue, SceneDocument, SceneItem, SceneSource, SourcePlaybackCapability } from './types';
 import { connectSource, type ProgramConnection, type ProgramConnectionState } from './whep';
 
 const labels: Record<ProgramConnectionState, string> = {
@@ -32,27 +32,16 @@ function signalId(prefix: string): string {
 
 function videoGeometry(item: SceneItem, width: number, height: number): CSSProperties {
   if (width <= 0 || height <= 0) return { width: '100%', height: '100%', objectFit: item.scaleMode === 'stretch' ? 'fill' : item.scaleMode };
-  const croppedWidth = Math.max(1, width - item.crop.left - item.crop.right);
-  const croppedHeight = Math.max(1, height - item.crop.top - item.crop.bottom);
-  const scaleX = item.width / croppedWidth;
-  const scaleY = item.height / croppedHeight;
-  const scale = item.scaleMode === 'contain' ? Math.min(scaleX, scaleY)
-    : item.scaleMode === 'cover' ? Math.max(scaleX, scaleY) : 1;
-  const renderedWidth = item.scaleMode === 'stretch' ? width * scaleX : width * scale;
-  const renderedHeight = item.scaleMode === 'stretch' ? height * scaleY : height * scale;
-  const contentWidth = item.scaleMode === 'stretch' ? item.width : croppedWidth * scale;
-  const contentHeight = item.scaleMode === 'stretch' ? item.height : croppedHeight * scale;
-  const left = (item.width - contentWidth) / 2 - item.crop.left * (item.scaleMode === 'stretch' ? scaleX : scale);
-  const top = (item.height - contentHeight) / 2 - item.crop.top * (item.scaleMode === 'stretch' ? scaleY : scale);
+  const transform = tileTransform(item, width, height);
   return {
-    width: `${(renderedWidth / item.width) * 100}%`,
-    height: `${(renderedHeight / item.height) * 100}%`,
-    left: `${(left / item.width) * 100}%`,
-    top: `${(top / item.height) * 100}%`,
+    width: `${(transform.elementWidth / item.width) * 100}%`,
+    height: `${(transform.elementHeight / item.height) * 100}%`,
+    left: `${(transform.offsetX / item.width) * 100}%`,
+    top: `${(transform.offsetY / item.height) * 100}%`,
   };
 }
 
-function DirectTile({ item, source, capability, mixer, telemetry, audioMeter, audioSnapshot }: {
+function DirectTile({ item, source, capability, mixer, telemetry, audioMeter, audioSnapshot, onState }: {
   item: SceneItem;
   source: SceneSource;
   capability?: SourcePlaybackCapability;
@@ -60,6 +49,7 @@ function DirectTile({ item, source, capability, mixer, telemetry, audioMeter, au
   telemetry?: TelemetryOverlayConfig;
   audioMeter?: AudioMeterConfig;
   audioSnapshot?: { rmsDbfs: number | null; peakDbfs: number | null };
+  onState?: (sourceId: string, state: ProgramConnectionState) => void;
 }) {
   const videoRef = useRef<HTMLVideoElement>(null);
   const [videoElement, setVideoElement] = useState<HTMLVideoElement | null>(null);
@@ -112,6 +102,8 @@ function DirectTile({ item, source, capability, mixer, telemetry, audioMeter, au
     return () => window.clearInterval(timer);
   }, [audioMeter?.enabled, audioMeter?.thresholdDbfs, source.id]);
 
+  useEffect(() => { onState?.(source.id, state); }, [onState, source.id, state]);
+
   const geometry = useMemo(
     () => videoGeometry(item, dimensions.width, dimensions.height),
     [item, dimensions],
@@ -138,14 +130,7 @@ function DirectTile({ item, source, capability, mixer, telemetry, audioMeter, au
           height: event.currentTarget.videoHeight,
         })}
       />
-      <span className="direct-tile-state"><i aria-hidden="true" />{labels[state]}</span>
-      {capability && capability.strategy !== 'unknown' && <button
-        className={`tile-status-button cost-${capability.serverCost ?? 'low'}`} type="button"
-        title={`${capability.deliveryMode ?? 'direct'} · 详情见问题中心`}
-        onClick={() => openIssueCenter(source.id)} aria-label={`${source.name} 媒体链详情`}>ⓘ</button>}
-      {source.kind === 'browser'
-        ? <span className="direct-tile-name">{source.name} · 仅服务端合成</span>
-        : state !== 'live' && <span className="direct-tile-name">{source.name}</span>}
+      {state !== 'live' && <span className="direct-tile-placeholder" aria-hidden="true">{labels[state]}</span>}
       {audioAlert && audioMeter?.alertBorderEnabled && <span className="tile-audio-alert-border" style={{ borderColor: colorWithOpacity(audioMeter.alertBorderColor, audioMeter.alertBorderOpacity), borderWidth: `${audioMeter.alertBorderWidth}px` }} aria-label="音频超过阈值" />}
       {audioMeter && <AudioMeterOverlay config={audioMeter} meter={audioSnapshot} />}
       {telemetry && <TelemetryOverlay config={telemetry} transport={transport} video={videoElement} connection={activeConnection} />}
@@ -221,7 +206,7 @@ function AudioMeterOverlay({ config, meter }: { config: AudioMeterConfig; meter?
   </div>;
 }
 
-function BrowserCameraTile({ item, source, mixer, telemetry, audioMeter, audioSnapshot, promotionKinds, lowPower, documentVisible, analyticsPolicy, analyticsZones, showAnalytics }: {
+function BrowserCameraTile({ item, source, mixer, telemetry, audioMeter, audioSnapshot, promotionKinds, lowPower, documentVisible, analyticsPolicy, analyticsZones, showAnalytics, onState }: {
   item: SceneItem;
   source: CameraSceneSource;
   mixer: DirectAudioMixer | null;
@@ -234,6 +219,7 @@ function BrowserCameraTile({ item, source, mixer, telemetry, audioMeter, audioSn
   analyticsPolicy?: AnalyticsPolicy;
   analyticsZones?: MotionZone[];
   showAnalytics: MonitorView['analytics'];
+  onState?: (sourceId: string, state: ProgramConnectionState) => void;
 }) {
   const tileRef = useRef<HTMLDivElement>(null);
   const videoRef = useRef<HTMLVideoElement>(null);
@@ -544,16 +530,13 @@ function BrowserCameraTile({ item, source, mixer, telemetry, audioMeter, audioSn
     });
     else resolveLocalIssue(code, source.id, 'low-power');
   }, [lowPower, source.id, source.name]);
+  useEffect(() => { onState?.(source.id, state); }, [onState, source.id, state]);
   return <div ref={tileRef} className={`direct-tile ${state}`} data-source-id={source.id}
     data-playback-suspended={playbackEnabled ? 'false' : 'true'}>
     <video ref={(element) => { videoRef.current = element; setVideoElement(element); }} autoPlay muted playsInline style={{ ...geometry, display: transport === 'mjpeg' ? 'none' : undefined }}
       aria-label={`${source.name} 浏览器媒体画面`} onLoadedMetadata={(event) => setDimensions({ width: event.currentTarget.videoWidth, height: event.currentTarget.videoHeight })} />
     <img ref={imageRef} alt={`${source.name} MJPEG 画面`} style={{ ...geometry, display: transport === 'mjpeg' ? undefined : 'none' }} />
-    <span className="direct-tile-state"><i aria-hidden="true" />{labels[state]}</span>
-    <button className={`tile-status-button ${trueDirect ? 'cost-low' : 'cost-medium'}`} type="button"
-      aria-label={`${source.name} 媒体路径详情`} onClick={() => openIssueCenter(source.id)}
-      title={trueDirect ? `Camera → Browser · ${transport.toUpperCase()}` : 'Camera → Docker → Browser · 详情见问题中心'}>ⓘ</button>
-    {state !== 'live' && <span className="direct-tile-name">{source.name}</span>}
+    {state !== 'live' && <span className="direct-tile-placeholder" aria-hidden="true">{labels[state]}</span>}
     {audioAlert && audioMeter.alertBorderEnabled && <span className="tile-audio-alert-border" style={{ borderColor: colorWithOpacity(audioMeter.alertBorderColor, audioMeter.alertBorderOpacity), borderWidth: `${audioMeter.alertBorderWidth}px` }} aria-label="音频超过阈值" />}
     {showAnalytics.showDetectionBoxes && detectionBoxes.map((box, index) => {
       const mapped = mapDetectionBoxToTile(box, item, dimensions.width, dimensions.height);
@@ -580,6 +563,8 @@ export default function DirectPreview({ scene, compact = false }: { scene: Scene
   const [analyticsZones, setAnalyticsZones] = useState<MotionZone[]>([]);
   const [portrait, setPortrait] = useState(() => window.matchMedia('(orientation: portrait)').matches);
   const [pageVisible, setPageVisible] = useState(() => !document.hidden);
+  const [sourceStates, setSourceStates] = useState<Record<string, ProgramConnectionState>>({});
+  const [issues, setIssues] = useState<OperationalIssue[]>([]);
   const [windowPreview, setWindowPreview] = useState(false);
   const [windowRect, setWindowRect] = useState({ x: 72, y: 96, width: 760, height: 428 });
   const windowDrag = useRef<{ pointerId: number; offsetX: number; offsetY: number } | null>(null);
@@ -640,6 +625,16 @@ export default function DirectPreview({ scene, compact = false }: { scene: Scene
   useEffect(() => mixer?.configure(scene.sources), [mixer, scene.sources]);
   useEffect(() => mixer?.setMasterVolume(monitorView.localMonitorVolume), [mixer, monitorView.localMonitorVolume]);
   useEffect(() => { mixer?.setOutputEnabled(monitorView.audioOutput === 'speaker'); }, [mixer, monitorView.audioOutput]);
+
+  useEffect(() => subscribeLocalIssues(setIssues), []);
+  const handleSourceState = useCallback((sourceId: string, state: ProgramConnectionState) => {
+    setSourceStates((current) => current[sourceId] === state ? current : { ...current, [sourceId]: state });
+  }, []);
+  const openIssueCounts = useMemo(() => {
+    const counts = new Map<string, number>();
+    for (const issue of issues) if (issue.state !== 'resolved') counts.set(issue.scopeId, (counts.get(issue.scopeId) ?? 0) + 1);
+    return counts;
+  }, [issues]);
 
   useEffect(() => {
     const controller = new AbortController();
@@ -845,6 +840,9 @@ export default function DirectPreview({ scene, compact = false }: { scene: Scene
       </div>
       <div className="monitor-view-controls" aria-label="监控视图设置">
         <button type="button" onClick={() => setMonitorView((value) => ({ ...value, mode: value.mode === 'auto' ? 'manual' : 'auto' }))}>{monitorView.mode === 'auto' ? '脱离自动模式' : '恢复自动布局'}</button>
+        <label>画面填充<select aria-label="监控画面填充" value={monitorView.fill} onChange={(event) => setMonitorView((value) => normalizeMonitorView({ ...value, fill: event.target.value as VideoFillMode }, scene.items.length, scene.sources.map((source) => source.id)))}>
+          <option value="stretch">拉伸铺满</option><option value="contain">完整显示（允许黑边）</option><option value="cover">裁剪铺满</option>
+        </select></label>
         <label><input type="checkbox" checked={monitorView.telemetry.enabled} onChange={(event) => setMonitorView((value) => ({ ...value, telemetry: { ...value.telemetry, enabled: event.target.checked } }))} />统计叠层（默认）</label>
         <details><summary>统计字段</summary><div className="monitor-source-options">{(['fps', 'bitrate', 'codec', 'decoder'] as const).map((field) => <label key={field}><input type="checkbox" checked={monitorView.telemetry.fields.includes(field)} onChange={(event) => setMonitorView((value) => ({ ...value, telemetry: { ...value.telemetry, fields: event.target.checked ? [...new Set([...value.telemetry.fields, field])] : value.telemetry.fields.filter((item) => item !== field) } }))} />{field}</label>)}</div></details>
         <label>位置<select value={monitorView.telemetry.position} onChange={(event) => setMonitorView((value) => ({ ...value, telemetry: { ...value.telemetry, position: event.target.value as TelemetryOverlayConfig['position'] } }))}>
@@ -877,6 +875,9 @@ export default function DirectPreview({ scene, compact = false }: { scene: Scene
           return <fieldset key={source.id}><legend>{source.name}</legend>
             <label><input type="checkbox" checked={decoration.telemetry.enabled} onChange={(event) => updateSourceDecoration(source.id, { telemetry: { ...decoration.telemetry, enabled: event.target.checked } })} />统计</label>
             {(['fps', 'bitrate', 'codec', 'decoder'] as const).map((field) => <label key={field}><input type="checkbox" checked={decoration.telemetry.fields.includes(field)} onChange={(event) => updateSourceDecoration(source.id, { telemetry: { ...decoration.telemetry, fields: event.target.checked ? [...new Set([...decoration.telemetry.fields, field])] : decoration.telemetry.fields.filter((item) => item !== field) } })} />{field}</label>)}
+            <label>填充<select value={decoration.fill ?? ''} onChange={(event) => updateSourceDecoration(source.id, { fill: event.target.value ? event.target.value as VideoFillMode : undefined })}>
+              <option value="">跟随监控</option><option value="stretch">拉伸铺满</option><option value="contain">完整显示</option><option value="cover">裁剪铺满</option>
+            </select></label>
             {hasAudio ? <>
               <label><input type="checkbox" checked={decoration.audioMeter.enabled} onChange={(event) => updateSourceDecoration(source.id, { audioMeter: { ...decoration.audioMeter, enabled: event.target.checked } })} />画面电平表</label>
               <label>方向<select value={decoration.audioMeter.orientation} onChange={(event) => updateSourceDecoration(source.id, { audioMeter: { ...decoration.audioMeter, orientation: event.target.value as 'vertical' | 'horizontal' } })}><option value="vertical">竖</option><option value="horizontal">横</option></select></label>
@@ -905,6 +906,7 @@ export default function DirectPreview({ scene, compact = false }: { scene: Scene
           .map((item) => {
             const source = effectiveScene.sources.find((candidate) => candidate.id === item.sourceId);
             if (!source) return null;
+            const tile = { ...item, scaleMode: resolveFillMode(monitorView, item.sourceId, item.scaleMode) };
             const style = {
               left: `${(item.x / effectiveScene.canvas.width) * 100}%`,
               top: `${(item.y / effectiveScene.canvas.height) * 100}%`,
@@ -917,7 +919,7 @@ export default function DirectPreview({ scene, compact = false }: { scene: Scene
             return (
               <div className="direct-tile-position" style={style} key={item.id}>
                 {source.kind === 'camera'
-                  ? <BrowserCameraTile item={item} source={source} mixer={mixer}
+                  ? <BrowserCameraTile item={tile} source={source} mixer={mixer}
                       telemetry={monitorView.lowPower.enabled
                         ? { ...sourceDecoration(monitorView, source.id).telemetry, refreshIntervalMs: Math.max(5000, sourceDecoration(monitorView, source.id).telemetry.refreshIntervalMs) }
                         : sourceDecoration(monitorView, source.id).telemetry}
@@ -928,16 +930,31 @@ export default function DirectPreview({ scene, compact = false }: { scene: Scene
                       documentVisible={pageVisible}
                       analyticsPolicy={analyticsByProfile.get(`${source.cameraId}\u0000${source.profileId}`)}
                       analyticsZones={analyticsZones}
-                      showAnalytics={monitorView.analytics} />
-                  : <DirectTile item={item} source={source} capability={bySource.get(source.id)} mixer={mixer}
+                      showAnalytics={monitorView.analytics} onState={handleSourceState} />
+                  : <DirectTile item={tile} source={source} capability={bySource.get(source.id)} mixer={mixer}
                       telemetry={monitorView.lowPower.enabled
                         ? { ...sourceDecoration(monitorView, source.id).telemetry, refreshIntervalMs: Math.max(5000, sourceDecoration(monitorView, source.id).telemetry.refreshIntervalMs) }
                         : sourceDecoration(monitorView, source.id).telemetry}
-                      audioMeter={sourceDecoration(monitorView, source.id).audioMeter} audioSnapshot={audioBySource.get(source.id)} />}
+                      audioMeter={sourceDecoration(monitorView, source.id).audioMeter} audioSnapshot={audioBySource.get(source.id)} onState={handleSourceState} />}
               </div>
             );
           })}
       </div>
+      {!compact && <div className="monitor-source-rail" aria-label="来源播放状态">
+        {[...effectiveScene.items].filter((item) => item.visible).sort((left, right) => left.zIndex - right.zIndex).map((item) => {
+          const source = effectiveScene.sources.find((candidate) => candidate.id === item.sourceId);
+          if (!source) return null;
+          const state = sourceStates[source.id] ?? 'checking';
+          const count = openIssueCounts.get(source.id) ?? 0;
+          return <button type="button" key={item.id} className={`source-status status-${state}`} onClick={() => openIssueCenter(source.id)}
+            title={`${source.name} · ${labels[state]}${count ? ` · ${count} 个问题` : ''}`}>
+            <i aria-hidden="true" />
+            <strong>{source.name}</strong>
+            <span>{labels[state]}</span>
+            {count > 0 && <em aria-label={`${count} 个问题`}>{count}</em>}
+          </button>;
+        })}
+      </div>}
     </div>
   );
 }

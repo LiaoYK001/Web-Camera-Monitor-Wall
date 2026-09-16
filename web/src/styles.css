@@ -1124,6 +1124,49 @@ select:focus-visible,
   white-space: nowrap;
 }
 
+.direct-tile-placeholder {
+  position: absolute;
+  z-index: 2;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  color: rgba(255, 255, 255, .55);
+  background: rgba(5, 7, 10, .35);
+  font-size: clamp(7px, .8vw, 12px);
+  pointer-events: none;
+}
+
+.monitor-source-rail {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  padding: 7px 8px;
+  border: 1px solid #2b3340;
+  border-radius: 6px;
+  background: #0b0f15;
+}
+
+.source-status {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 8px;
+  border: 1px solid #343c4b;
+  border-radius: 999px;
+  color: #aeb7c5;
+  background: #0c1017;
+  font-size: 11px;
+  cursor: pointer;
+}
+
+.source-status i { width: 7px; height: 7px; border-radius: 50%; background: var(--warning); }
+.source-status.status-live i { background: var(--accent); box-shadow: 0 0 7px rgba(185, 255, 79, .6); }
+.source-status.status-offline i,
+.source-status.status-disabled i { background: var(--danger); }
+.source-status strong { color: #e6e9ef; font-weight: 600; }
+.source-status em { padding: 1px 6px; border-radius: 999px; color: #fff; background: var(--danger); font-size: 10px; font-style: normal; }
+.source-status:hover { border-color: rgba(185, 255, 79, .5); }
+
 .telemetry-overlay {
   position: absolute;
   z-index: 4;
@@ -1254,7 +1297,8 @@ select:focus-visible,
 :is(.stage-wrap:fullscreen, .monitor-surface:fullscreen, .direct-preview-shell.window-preview-mode)
   :is(.monitor-view-controls, .direct-audio-control, .monitor-overlay, .fullscreen-overlay,
       .tile-status-button, .low-power-status, .direct-tile-name, .direct-tile-state,
-      .delivery-diagnostic, .analytics-runtime-status) { display: none !important; }
+      .delivery-diagnostic, .analytics-runtime-status, .monitor-source-rail,
+      .direct-tile-placeholder) { display: none !important; }
 
 .direct-preview-shell.window-preview-mode {
   position: fixed;
