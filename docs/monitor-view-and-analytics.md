@@ -24,6 +24,20 @@ The default target is 2 FPS, with 0.5/1/2/5 shortcuts and a validated 0.5–30 r
 
 Deterministic browser tests cover every 1–16 landscape/portrait M/S combination, larger M area, stable re-layout, pinned sequential/random windows, unavailable MJPEG telemetry, WebRTC byte/frame/codec/decoder deltas, low-power visibility decisions and promotion threshold/cooldown behavior / 确定性浏览器测试覆盖 1–16 路横竖屏全部 M/S 组合、M 面积更大、稳定重排、固定顺序/随机窗口、MJPEG 不可测统计、WebRTC 字节/帧/编码/解码器差分、低功耗可见性决策及事件提升阈值/冷却行为。
 
+## Wall quick controls / 监控墙快捷控制
+
+The large-picture switch takes effect immediately: enabling it raises `largeCount` to at least one, checking an `M` row promotes that source, and the small/large ratio slider (10%–90%, default 50%) drives the auto layout so a small tile is the chosen share of a large tile while the canvas stays filled. The layout is a deterministic skyline packing over ordinary Scene v5 rectangles, so re-applying it is a stable fixed point.
+
+大画面开关即时生效：勾选后 `largeCount` 至少为 1，勾选 `M` 行即提升该来源；小/大画面比例滑块（10%–90%，默认 50%）驱动自动布局，在尽量填满画布的前提下让小画面为大画面的指定比例。布局是对普通 Scene v5 矩形的确定性 skyline 装箱，因此重复应用是稳定不动点。
+
+The per-source audio meter follows OBS: a vertical rail on the left edge by default, with direction (vertical/horizontal), corner or custom position, size and opacity, a dBFS threshold and an alert border. Sources whose profile or live stream carries no audio track show `该源没有音频轨道` instead of meter options. After enabling sound the operator picks `扬声器 + 电平表` or `仅电平表 / 阈值`; the latter mutes the speaker gain while keeping every analyser alive for meters and threshold promotion.
+
+逐源电平表遵循 OBS 习惯：默认在左侧竖放，可切换横/竖、四角或自定义位置、大小与透明度，并可设置 dBFS 阈值与超阈值边框。Profile 或实时流没有音频轨道的来源显示“该源没有音频轨道”，不再展示电平表选项。开启声音后可选择“扬声器 + 电平表”或“仅电平表 / 阈值”，后者把扬声器增益静音，同时保留全部分析器用于电平和阈值提升。
+
+True fullscreen and the resizable window preview keep only the picture, telemetry overlay, level meter, detection boxes and audio alerts; tile states, status buttons, names, sliders and the audio/control bars are hidden. The Studio add-source form accepts multiple Camera Registry profiles at once with checkboxes and appends every selection in one Scene update.
+
+真全屏与可缩放的窗口预览只保留画面、统计叠层、电平表、检测框和声音告警；画面状态、状态按钮、名称、滑块及音频/控制条一律隐藏。Studio 添加来源表单可用复选框一次选择多个 Camera Registry Profile，并在同一次 Scene 更新中批量添加。
+
 ## Analytics versions / 分析版本
 
 - `v3-M1 / v3.0`: per Camera/Profile motion and scene-change switches, native ONVIF events first, then a downsampled browser Worker where same-origin/CORS pixel access permits. Cross-origin MJPEG that cannot be safely sampled remains unsupported and must not trigger a hidden server media path. The implementation is tracked on `dev`; release requires revision-bound v3-M1 receipts.

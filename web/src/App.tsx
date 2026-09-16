@@ -138,6 +138,7 @@ export default function App() {
   const [newKind, setNewKind] = useState<AddSourceKind>('camera');
   const [newName, setNewName] = useState('新摄像头');
   const [newUrl, setNewUrl] = useState('');
+  const [newUrls, setNewUrls] = useState<string[]>([]);
   const [newTransport, setNewTransport] = useState<Transport>('tcp');
   const [registryCameras, setRegistryCameras] = useState<CameraRecord[]>([]);
   const stageRef = useRef<HTMLDivElement>(null);
@@ -439,75 +440,68 @@ export default function App() {
   };
 
   const addSource = () => {
-    const validValue = newKind === 'camera' ? /^[a-zA-Z0-9._-]{1,64}\/[a-zA-Z0-9._-]{1,64}$/.test(newUrl)
-      : newKind === 'rtsp' ? /^rtsps?:\/\/\S+$/i.test(newUrl)
+    const singleValid = newKind === 'rtsp' ? /^rtsps?:\/\/\S+$/i.test(newUrl)
       : newKind === 'browser' ? /^https?:\/\/\S+$/i.test(newUrl)
         : newKind === 'image' || newKind === 'media' ? /^\/(assets|recordings)\/[^.\/][^\r\n]*$/i.test(newUrl)
           : newKind === 'color' ? /^#[0-9a-f]{6}$/i.test(newUrl)
             : newKind === 'nested' ? Boolean(studioDraft?.scenes.some((scene) => scene.id === newUrl && scene.id !== draft?.id))
               : newUrl.trim().length > 0;
+    const cameraTargets = newKind === 'camera' ? newUrls : [];
+    const validValue = newKind === 'camera' ? cameraTargets.length > 0 : singleValid;
     const browserCount = draft?.sources.filter((source) => source.kind === 'browser').length ?? 0;
-    if (!draft || !newName.trim() || !validValue || draft.sources.length >= 64 ||
+    if (!draft || !validValue || (newKind !== 'camera' && !newName.trim()) || draft.sources.length >= 64 ||
         (newKind === 'browser' && browserCount >= 8)) return;
-    const suffix = Date.now().toString(36);
-    const sourceId = `${newKind}-${suffix}`;
-    const itemId = `item-${suffix}`;
-    const column = draft.items.length % 2;
-    const row = Math.floor(draft.items.length / 2) % 2;
+    const targets = newKind === 'camera'
+      ? cameraTargets.map((value) => {
+          const [cameraId] = value.split('/', 1);
+          const camera = registryCameras.find((candidate) => candidate.id === cameraId);
+          const profile = camera?.profiles.find((candidate) => `${camera.id}/${candidate.id}` === value);
+          const derived = camera ? `${camera.name}${profile ? ` ${profile.role}` : ''}` : '摄像头';
+          return { value, name: cameraTargets.length === 1 && newName.trim() ? newName.trim() : derived };
+        })
+      : [{ value: newUrl, name: newName.trim() }];
+    const fit = Math.min(targets.length, 64 - draft.sources.length);
+    const stamp = Date.now().toString(36);
     const width = Math.max(64, Math.floor(draft.canvas.width / 2));
     const height = Math.max(64, Math.floor(draft.canvas.height / 2));
-    const base = {
-      id: sourceId, name: newName.trim(), muted: true, volume: 1, syncOffsetMs: 0,
-      monitoring: 'off' as AudioMonitoring, audioTrack: 1, filters: [],
-    };
-    const source: SceneSource = newKind === 'camera' ? {
-      ...base,
-      kind: 'camera',
-      cameraId: newUrl.split('/', 2)[0],
-      profileId: newUrl.split('/', 2)[1],
-      hardwareDecode: 'auto',
-    } : newKind === 'rtsp' ? {
-      ...base,
-      id: sourceId,
-      kind: 'rtsp',
-      rtspUrl: newUrl,
-      transport: newTransport,
-    } : newKind === 'browser' ? {
-      ...base,
-      kind: 'browser',
-      url: newUrl,
-      width: 1280,
-      height: 720,
-      fps: 30,
-      customCss: '',
-      shutdownWhenHidden: true,
-      restartWhenActive: true,
-    } : newKind === 'image' ? { ...base, kind: 'image', filePath: newUrl }
-      : newKind === 'media' ? { ...base, kind: 'media', filePath: newUrl, loop: true }
-        : newKind === 'text' ? { ...base, kind: 'text', text: newUrl.trim(), color: '#ffffff' }
-          : newKind === 'color' ? { ...base, kind: 'color', color: newUrl.toLowerCase() }
-            : { ...base, kind: 'nested', sceneId: newUrl };
-    const item: SceneItem = {
-      id: itemId,
-      sourceId,
-      x: column * width,
-      y: row * height,
-      width,
-      height,
-      scaleMode: 'contain',
-      crop: { top: 0, right: 0, bottom: 0, left: 0 },
-      zIndex: draft.items.length,
-      visible: true,
-      locked: false,
-      groupId: '',
-      rotation: 0,
-      opacity: 1,
-      blendMode: 'normal',
-    };
-    updateDraft((scene) => ({ ...scene, sources: [...scene.sources, source], items: [...scene.items, item] }));
-    setSelectedSourceId(sourceId);
+    const sources: SceneSource[] = [];
+    const items: SceneItem[] = [];
+    targets.slice(0, fit).forEach((target, offset) => {
+      const suffix = `${stamp}${offset.toString(36)}`;
+      const sourceId = `${newKind}-${suffix}`;
+      const base = {
+        id: sourceId, name: target.name, muted: true, volume: 1, syncOffsetMs: 0,
+        monitoring: 'off' as AudioMonitoring, audioTrack: 1, filters: [],
+      };
+      const source: SceneSource = newKind === 'camera' ? {
+        ...base, kind: 'camera', cameraId: target.value.split('/', 2)[0], profileId: target.value.split('/', 2)[1], hardwareDecode: 'auto',
+      } : newKind === 'rtsp' ? {
+        ...base, id: sourceId, kind: 'rtsp', rtspUrl: target.value, transport: newTransport,
+      } : newKind === 'browser' ? {
+        ...base, kind: 'browser', url: target.value, width: 1280, height: 720, fps: 30,
+        customCss: '', shutdownWhenHidden: true, restartWhenActive: true,
+      } : newKind === 'image' ? { ...base, kind: 'image', filePath: target.value }
+        : newKind === 'media' ? { ...base, kind: 'media', filePath: target.value, loop: true }
+          : newKind === 'text' ? { ...base, kind: 'text', text: target.value.trim(), color: '#ffffff' }
+            : newKind === 'color' ? { ...base, kind: 'color', color: target.value.toLowerCase() }
+              : { ...base, kind: 'nested', sceneId: target.value };
+      const index = draft.items.length + offset;
+      const column = index % 2;
+      const row = Math.floor(index / 2) % 2;
+      const item: SceneItem = {
+        id: `item-${suffix}`, sourceId, x: column * width, y: row * height, width, height,
+        scaleMode: 'contain', crop: { top: 0, right: 0, bottom: 0, left: 0 }, zIndex: index,
+        visible: true, locked: false, groupId: '', rotation: 0, opacity: 1, blendMode: 'normal',
+      };
+      sources.push(source);
+      items.push(item);
+    });
+    if (!sources.length) return;
+    updateDraft((scene) => ({ ...scene, sources: [...scene.sources, ...sources], items: [...scene.items, ...items] }));
+    setSelectedSourceId(sources[sources.length - 1].id);
     setNewName(newKind === 'camera' || newKind === 'rtsp' ? '新摄像头' : '新来源');
     setNewUrl('');
+    setNewUrls([]);
     setNewTransport('tcp');
     setAdding(false);
   };
@@ -834,7 +828,7 @@ export default function App() {
     return (rightItem?.zIndex ?? -1) - (leftItem?.zIndex ?? -1);
   });
   const selectedCapability = studioCapabilities?.scenes.find((scene) => scene.sceneId === draft.id);
-  const newSourceValueValid = newKind === 'camera' ? /^[a-zA-Z0-9._-]{1,64}\/[a-zA-Z0-9._-]{1,64}$/.test(newUrl)
+  const newSourceValueValid = newKind === 'camera' ? newUrls.length > 0
     : newKind === 'rtsp' ? /^rtsps?:\/\/\S+$/i.test(newUrl)
     : newKind === 'browser' ? /^https?:\/\/\S+$/i.test(newUrl)
       : newKind === 'image' || newKind === 'media' ? /^\/(assets|recordings)\/[^.\/][^\r\n]*$/i.test(newUrl)
@@ -1012,6 +1006,7 @@ export default function App() {
                 <select value={newKind} onChange={(event) => {
                   const kind = event.target.value as AddSourceKind;
                   setNewKind(kind);
+                  setNewUrls([]);
                   setNewName(kind === 'camera' || kind === 'rtsp' ? '新摄像头' : `新${{ browser: '网页', image: '图片', media: '媒体', text: '文字', color: '色块', nested: '嵌套场景' }[kind]}`);
                   setNewUrl(kind === 'color' ? '#2563eb' : '');
                 }}>
@@ -1030,20 +1025,35 @@ export default function App() {
                 <input value={newName} maxLength={128} onChange={(event) => setNewName(event.target.value)} />
               </label>
               {newKind === 'camera' ? (
-                <label className="field"><span>设备与码流 Profile</span><select value={newUrl} onChange={(event) => {
-                  const value = event.target.value;
-                  setNewUrl(value);
-                  const [cameraId] = value.split('/', 1);
-                  const camera = registryCameras.find((candidate) => candidate.id === cameraId);
-                  if (camera) setNewName(camera.name);
-                }}>
-                  <option value="">选择已登记设备…</option>
-                  {registryCameras.flatMap((camera) => camera.profiles.map((profile) => (
-                    <option key={`${camera.id}/${profile.id}`} value={`${camera.id}/${profile.id}`}>
-                      {camera.name} · {profile.role} · {profile.videoCodec || 'unknown'} {profile.width ? `${profile.width}×${profile.height}` : ''}
-                    </option>
-                  )))}
-                </select>{registryCameras.length === 0 && <small>请先进入“设备管理”添加或发现摄像机。</small>}</label>
+                <div className="field camera-picker">
+                  <span>设备与码流 Profile（可多选，共 {newUrls.length} 项）</span>
+                  <div className="camera-picker-actions">
+                    <button className="ghost-button" type="button" onClick={() => setNewUrls(registryCameras.flatMap((camera) => camera.profiles.map((profile) => `${camera.id}/${profile.id}`)))}>全选</button>
+                    <button className="ghost-button" type="button" onClick={() => setNewUrls([])}>清空</button>
+                  </div>
+                  <div className="camera-picker-list">
+                    {registryCameras.length === 0 && <small>请先进入“设备管理”添加或发现摄像机。</small>}
+                    {registryCameras.map((camera) => (
+                      <fieldset key={camera.id}>
+                        <legend>{camera.name}</legend>
+                        {camera.profiles.map((profile) => {
+                          const value = `${camera.id}/${profile.id}`;
+                          return <label key={value}><input type="checkbox" checked={newUrls.includes(value)} onChange={(event) => {
+                            setNewUrls((current) => {
+                              const next = event.target.checked ? [...new Set([...current, value])] : current.filter((item) => item !== value);
+                              if (next.length === 1) {
+                                const [cameraId] = next[0].split('/', 1);
+                                const match = registryCameras.find((candidate) => candidate.id === cameraId);
+                                if (match) setNewName(match.name);
+                              }
+                              return next;
+                            });
+                          }} />{profile.role} · {profile.videoCodec || 'unknown'} {profile.width ? `${profile.width}×${profile.height}` : ''}</label>;
+                        })}
+                      </fieldset>
+                    ))}
+                  </div>
+                </div>
               ) : newKind === 'nested' ? (
                 <label className="field"><span>嵌套场景</span><select value={newUrl} onChange={(event) => setNewUrl(event.target.value)}>
                   <option value="">选择场景…</option>
@@ -1089,7 +1099,7 @@ export default function App() {
                 <button
                   className="primary-button"
                   type="button"
-                  disabled={!newName.trim() || !newSourceValueValid}
+                  disabled={(!newName.trim() && newKind !== 'camera') || !newSourceValueValid}
                   onClick={addSource}
                 >添加到画布</button>
               </div>

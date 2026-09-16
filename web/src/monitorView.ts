@@ -16,9 +16,20 @@ export interface TelemetryOverlayConfig {
   refreshIntervalMs: number;
 }
 
+export type AudioMeterOrientation = 'vertical' | 'horizontal';
+export type AudioMeterPosition = 'left' | 'right' | OverlayPosition;
+
 export interface AudioMeterConfig {
   enabled: boolean;
-  position: OverlayPosition;
+  /** OBS-style meter direction; the default is a vertical bar so it never covers tile labels. */
+  orientation: AudioMeterOrientation;
+  position: AudioMeterPosition;
+  /** Scale of the meter's long axis, 0.3 - 2. */
+  size: number;
+  /** Meter opacity, 0.1 - 1. */
+  opacity: number;
+  customX: number;
+  customY: number;
   thresholdDbfs: number;
   alertBorderEnabled: boolean;
   alertBorderColor: string;
@@ -56,6 +67,8 @@ export interface MonitorView {
   mode: 'auto' | 'manual';
   largeCount: number;
   largeSourceIds: string[];
+  /** Small tile size as a share of the large tile, 0.1 - 0.9. */
+  largeRatio: number;
   telemetry: TelemetryOverlayConfig;
   sourceDecorations: Record<string, SourceDecoration>;
   rotation: RotationConfig;
@@ -63,6 +76,8 @@ export interface MonitorView {
   lowPower: LowPowerConfig;
   panels: { detailsOpen: boolean; issueCenterExpanded: boolean };
   localMonitorVolume: number;
+  /** Speaker routing: full monitoring output or meter/threshold detection only. */
+  audioOutput: 'speaker' | 'meter-only';
   analytics: {
     showDetectionBoxes: boolean;
     showDetectionLabels: boolean;
@@ -144,7 +159,12 @@ export const defaultTelemetryOverlay = (): TelemetryOverlayConfig => ({
 
 export const defaultAudioMeter = (): AudioMeterConfig => ({
   enabled: false,
-  position: 'top-left',
+  orientation: 'vertical',
+  position: 'left',
+  size: 1,
+  opacity: 1,
+  customX: .04,
+  customY: .5,
   thresholdDbfs: -12,
   alertBorderEnabled: true,
   alertBorderColor: '#ff2d2d',
@@ -165,6 +185,7 @@ export const defaultMonitorView = (): MonitorView => ({
   mode: 'auto',
   largeCount: 0,
   largeSourceIds: [],
+  largeRatio: .5,
   telemetry: defaultTelemetryOverlay(),
   sourceDecorations: {},
   rotation: { enabled: false, strategy: 'sequential', intervalSeconds: 30, pinnedSourceIds: [] },
@@ -172,6 +193,7 @@ export const defaultMonitorView = (): MonitorView => ({
   lowPower: { enabled: false, targetFps: 2 },
   panels: { detailsOpen: false, issueCenterExpanded: false },
   localMonitorVolume: 1,
+  audioOutput: 'speaker',
   analytics: { showDetectionBoxes: true, showDetectionLabels: false, boxOpacity: .9, boxLineWidth: 2, showInferenceStatus: true },
 });
 
@@ -212,7 +234,11 @@ export function normalizeMonitorView(value: Partial<MonitorView> | null | undefi
     if (!sourceIdentifier(sourceId) || (allowedSourceIds && !allowedSourceIds.has(sourceId)) || !raw || typeof raw !== 'object') continue;
     const candidate = raw as Partial<SourceDecoration>;
     const sourceTelemetry = { ...telemetry, ...(candidate.telemetry ?? {}) };
-    const sourceAudio = { ...defaultAudioMeter(), ...(candidate.audioMeter ?? {}) };
+    const rawAudio = (candidate.audioMeter ?? {}) as Partial<AudioMeterConfig>;
+    const sourceAudio = { ...defaultAudioMeter(), ...rawAudio };
+    // Stored v4 meters defaulted to the top-left corner, which covered the
+    // "直达" tile label.  Migrate those to the OBS-style left rail once.
+    const legacyTopLeft = !('orientation' in rawAudio) && sourceAudio.position === 'top-left';
     sourceDecorations[sourceId] = {
       telemetry: {
         ...sourceTelemetry,
@@ -225,7 +251,14 @@ export function normalizeMonitorView(value: Partial<MonitorView> | null | undefi
       },
       audioMeter: {
         ...sourceAudio,
-        position: ['top-left', 'top-right', 'bottom-left', 'bottom-right', 'custom'].includes(sourceAudio.position) ? sourceAudio.position : 'top-left',
+        orientation: sourceAudio.orientation === 'horizontal' ? 'horizontal' : 'vertical',
+        position: legacyTopLeft ? 'left'
+          : (['left', 'right', 'top-left', 'top-right', 'bottom-left', 'bottom-right', 'custom'] as const)
+            .includes(sourceAudio.position) ? sourceAudio.position : 'left',
+        size: bounded(sourceAudio.size, 1, .3, 2),
+        opacity: bounded(sourceAudio.opacity, 1, .1, 1),
+        customX: bounded(sourceAudio.customX, .04, 0, 1),
+        customY: bounded(sourceAudio.customY, .5, 0, 1),
         thresholdDbfs: bounded(sourceAudio.thresholdDbfs, -12, -120, 0),
         alertBorderOpacity: bounded(sourceAudio.alertBorderOpacity, 1, 0, 1),
         alertBorderWidth: bounded(Math.trunc(finite(sourceAudio.alertBorderWidth, 3)), 3, 1, 12),
@@ -243,6 +276,7 @@ export function normalizeMonitorView(value: Partial<MonitorView> | null | undefi
     mode: value?.mode === 'manual' ? 'manual' : 'auto',
     largeCount: clamp(Math.trunc(value?.largeCount ?? 0), 0, clamp(sourceCount, 0, 16)),
     largeSourceIds: [...new Set((Array.isArray(value?.largeSourceIds) ? value?.largeSourceIds : []).filter(sourceIdentifier))].slice(0, 16),
+    largeRatio: bounded(value?.largeRatio, .5, .1, .9),
     telemetry: {
       ...telemetry,
       fields: telemetryFields(telemetry.fields, defaults.telemetry.fields),
@@ -270,6 +304,7 @@ export function normalizeMonitorView(value: Partial<MonitorView> | null | undefi
     lowPower: { ...lowPower, targetFps: clamp(Number(lowPower.targetFps), .5, 30) },
     panels: { detailsOpen: Boolean(panels.detailsOpen), issueCenterExpanded: Boolean(panels.issueCenterExpanded) },
     localMonitorVolume: bounded(value?.localMonitorVolume, 1, 0, 1),
+    audioOutput: value?.audioOutput === 'meter-only' ? 'meter-only' : 'speaker',
     analytics: {
       showDetectionBoxes: Boolean(analytics.showDetectionBoxes),
       showDetectionLabels: Boolean(analytics.showDetectionLabels),
@@ -280,30 +315,41 @@ export function normalizeMonitorView(value: Partial<MonitorView> | null | undefi
   };
 }
 
-interface CellPlacement { sourceId: string; column: number; row: number; columns: number; rows: number; large: boolean }
+const LAYOUT_UNITS = 12;
+const TARGET_TILE_ASPECT = 16 / 9;
 
-function candidatePlacement(sourceIds: string[], large: Set<string>, columns: number, rows: number, portrait: boolean): CellPlacement[] | null {
-  if (columns === 1 && large.size > 0 && large.size < sourceIds.length) return null;
-  const occupied = Array.from({ length: rows }, () => Array(columns).fill(false));
-  const result: CellPlacement[] = [];
-  const place = (sourceId: string, largeItem: boolean): boolean => {
-    const spanColumns = largeItem ? (portrait || columns <= 2 ? columns : 2) : 1;
-    const spanRows = largeItem ? (portrait || columns <= 2 ? 1 : 2) : 1;
-    for (let row = 0; row <= rows - spanRows; row += 1) for (let column = 0; column <= columns - spanColumns; column += 1) {
-      let free = true;
-      for (let y = row; y < row + spanRows; y += 1) for (let x = column; x < column + spanColumns; x += 1)
-        if (occupied[y][x]) free = false;
-      if (!free) continue;
-      for (let y = row; y < row + spanRows; y += 1) for (let x = column; x < column + spanColumns; x += 1)
-        occupied[y][x] = true;
-      result.push({ sourceId, column, row, columns: spanColumns, rows: spanRows, large: largeItem });
-      return true;
+/** Large tile span in fine layout units; small tiles always span LAYOUT_UNITS. */
+export function largeTileSpan(ratio: number): number {
+  const safe = clamp(Number.isFinite(ratio) ? ratio : .5, .1, .9);
+  return clamp(Math.round(LAYOUT_UNITS / safe), LAYOUT_UNITS, LAYOUT_UNITS * 10);
+}
+
+interface SkylinePlacement { x: number; y: number; span: number }
+
+/**
+ * Bottom-left skyline packer for squares of at most two sizes.  Keeping the
+ * large tiles first groups them into a compact focus block while the small
+ * tiles wrap around it, which is the behaviour the wall layout is expected to
+ * show.  It is a pure function of the span list and grid width, so laying out
+ * an already-laid-out scene is a stable fixed point.
+ */
+function packSkyline(gridWidth: number, spans: number[]): SkylinePlacement[] | null {
+  const skyline = new Int32Array(gridWidth);
+  const placements: SkylinePlacement[] = [];
+  for (const span of spans) {
+    if (span > gridWidth) return null;
+    let bestX = -1;
+    let bestY = Number.POSITIVE_INFINITY;
+    for (let x = 0; x + span <= gridWidth; x += 1) {
+      let y = 0;
+      for (let column = x; column < x + span; column += 1) if (skyline[column] > y) y = skyline[column];
+      if (y < bestY) { bestY = y; bestX = x; }
     }
-    return false;
-  };
-  for (const sourceId of sourceIds.filter((id) => large.has(id))) if (!place(sourceId, true)) return null;
-  for (const sourceId of sourceIds.filter((id) => !large.has(id))) if (!place(sourceId, false)) return null;
-  return result;
+    if (bestX < 0) return null;
+    for (let column = bestX; column < bestX + span; column += 1) skyline[column] = bestY + span;
+    placements.push({ x: bestX, y: bestY, span });
+  }
+  return placements;
 }
 
 /** Generate ordinary Scene v5 item rectangles; MonitorView never becomes a second scene schema. */
@@ -316,38 +362,50 @@ export function applyAutomaticLayout(scene: SceneDocument, viewValue: Partial<Mo
   const chosenLarge = view.largeSourceIds.filter((id) => sourceIds.includes(id)).slice(0, view.largeCount);
   for (const id of sourceIds) if (chosenLarge.length < view.largeCount && !chosenLarge.includes(id)) chosenLarge.push(id);
   const large = new Set(chosenLarge);
-  const portrait = scene.canvas.height > scene.canvas.width;
-  let best: { score: number; placements: CellPlacement[]; columns: number; rows: number } | null = null;
-  for (let columns = 1; columns <= Math.min(8, visible.length); columns += 1) {
-    for (let rows = 1; rows <= 16; rows += 1) {
-      const placements = candidatePlacement(sourceIds, large, columns, rows, portrait);
-      if (!placements) continue;
-      const used = placements.reduce((sum, item) => sum + item.columns * item.rows, 0);
-      const empty = columns * rows - used;
-      const cellRatio = (scene.canvas.width / columns) / (scene.canvas.height / rows);
-      const ratioError = Math.abs(Math.log(cellRatio / (16 / 9)));
-      const movement = placements.reduce((sum, placement) => {
-        const old = visible.find((item) => item.sourceId === placement.sourceId)!;
-        const x = placement.column * scene.canvas.width / columns;
-        const y = placement.row * scene.canvas.height / rows;
-        return sum + Math.abs(x - old.x) / scene.canvas.width + Math.abs(y - old.y) / scene.canvas.height;
-      }, 0);
-      const score = empty * 100 + ratioError * 10 + movement;
-      if (!best || score < best.score) best = { score, placements, columns, rows };
+  const smallIds = sourceIds.filter((id) => !large.has(id));
+  const bigSpan = largeTileSpan(view.largeRatio);
+  const allSpans = [...chosenLarge.map(() => bigSpan), ...smallIds.map(() => LAYOUT_UNITS)];
+  const totalCells = allSpans.reduce((sum, span) => sum + span * span, 0);
+  const width = scene.canvas.width;
+  const height = scene.canvas.height;
+  const candidates = new Set<number>();
+  for (let k = 1; k <= 12; k += 1) candidates.add(k * LAYOUT_UNITS);
+  for (let k = 1; k <= 8; k += 1) {
+    candidates.add(k * bigSpan);
+    candidates.add(k * bigSpan + Math.floor(LAYOUT_UNITS / 2));
+  }
+  let best: { score: number; packed: SkylinePlacement[]; usedWidth: number; usedHeight: number } | null = null;
+  for (const gridWidth of candidates) {
+    if (gridWidth < bigSpan || gridWidth > 2400) continue;
+    const packed = packSkyline(gridWidth, allSpans);
+    if (!packed) continue;
+    let usedWidth = 0;
+    let usedHeight = 0;
+    for (const placement of packed) {
+      usedWidth = Math.max(usedWidth, placement.x + placement.span);
+      usedHeight = Math.max(usedHeight, placement.y + placement.span);
     }
+    if (!usedWidth || !usedHeight) continue;
+    const fill = totalCells / (usedWidth * usedHeight);
+    const tileAspect = (width * usedHeight) / (height * usedWidth);
+    const score = (1 - fill) * 10 + Math.abs(Math.log(tileAspect / TARGET_TILE_ASPECT)) * 4;
+    if (!best || score < best.score) best = { score, packed, usedWidth, usedHeight };
   }
   if (!best) return scene;
-  const placementBySource = new Map(best.placements.map((placement) => [placement.sourceId, placement]));
+  const ordered = [...chosenLarge, ...smallIds];
+  const rectangleBySource = new Map(ordered.map((sourceId, index) => {
+    const placement = best!.packed[index];
+    return [sourceId, {
+      x: placement.x * width / best!.usedWidth,
+      y: placement.y * height / best!.usedHeight,
+      width: placement.span * width / best!.usedWidth,
+      height: placement.span * height / best!.usedHeight,
+    }] as const;
+  }));
   const items = scene.items.map((item): SceneItem => {
-    const placement = placementBySource.get(item.sourceId);
-    if (!placement) return item;
-    return {
-      ...item,
-      x: placement.column * scene.canvas.width / best!.columns,
-      y: placement.row * scene.canvas.height / best!.rows,
-      width: placement.columns * scene.canvas.width / best!.columns,
-      height: placement.rows * scene.canvas.height / best!.rows,
-    };
+    const rectangle = rectangleBySource.get(item.sourceId);
+    if (!rectangle) return item;
+    return { ...item, ...rectangle };
   });
   return { ...scene, items };
 }

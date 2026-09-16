@@ -1,4 +1,4 @@
-import { type CSSProperties, useEffect, useMemo, useRef, useState } from 'react';
+import { type CSSProperties, type PointerEvent as ReactPointerEvent, useEffect, useMemo, useRef, useState } from 'react';
 import { closeAnalyticsRuntimeSession, fetchAnalyticsPolicies, fetchCameras, fetchMotionZones, fetchPlaybackCapabilities, renewAnalyticsRuntimeSession, requestAnalyticsRuntimePlan, submitAnalyticsSignals } from './api';
 import { activateGateway, approvedBrowserProfile, BrowserPlanError, browserGrantProfile, connectApprovedWhep, connectHls, connectMjpeg, offlineSignedGrantPlan, requestBrowserPlan, type BrowserTopologyPlan } from './browserMedia';
 import { DirectAudioMixer, type DirectAudioSnapshot } from './directAudioMixer';
@@ -201,12 +201,23 @@ function colorWithOpacity(color: string, opacity: number): string {
   return `rgba(${red},${green},${blue},${opacity})`;
 }
 
-function AudioMeterOverlay({ config, meter }: { config: AudioMeterConfig; meter?: { rmsDbfs: number | null; peakDbfs: number | null } }) {
+function AudioMeterOverlay({ config, meter }: { config: AudioMeterConfig; meter?: { rmsDbfs: number | null; peakDbfs: number | null; audioTracks?: number } }) {
   if (!config.enabled) return null;
   const peak = meter?.peakDbfs ?? null;
-  const width = peak === null ? 0 : Math.max(0, Math.min(100, ((peak + 120) / 120) * 100));
-  return <div className={`tile-audio-meter position-${config.position}`} aria-label={peak === null ? '音频电平不可测' : `音频峰值 ${peak.toFixed(1)} dBFS`}>
-    <span className="tile-audio-meter-track"><i style={{ width: `${width}%` }} /></span><small>{peak === null ? '—' : `${peak.toFixed(1)} dBFS`}</small>
+  const level = peak === null ? 0 : Math.max(0, Math.min(100, ((peak + 120) / 120) * 100));
+  const vertical = config.orientation === 'vertical';
+  const scale = Math.max(.3, Math.min(2, config.size));
+  const style: CSSProperties = {
+    opacity: config.opacity,
+    ...(vertical
+      ? { height: `min(${Math.min(170, scale * 70)}%, calc(100% - 60px))` }
+      : { width: `min(${Math.min(180, scale * 60)}%, calc(100% - 60px))` }),
+    ...(config.position === 'custom' ? { left: `${config.customX * 100}%`, top: `${config.customY * 100}%` } : {}),
+  };
+  return <div className={`tile-audio-meter orientation-${config.orientation} position-${config.position}`} style={style}
+    aria-label={peak === null ? '音频电平不可测' : `音频峰值 ${peak.toFixed(1)} dBFS`}>
+    <span className="tile-audio-meter-track"><i style={vertical ? { height: `${level}%` } : { width: `${level}%` }} /></span>
+    <small>{peak === null ? '—' : `${peak.toFixed(1)}`}</small>
   </div>;
 }
 
@@ -569,6 +580,9 @@ export default function DirectPreview({ scene, compact = false }: { scene: Scene
   const [analyticsZones, setAnalyticsZones] = useState<MotionZone[]>([]);
   const [portrait, setPortrait] = useState(() => window.matchMedia('(orientation: portrait)').matches);
   const [pageVisible, setPageVisible] = useState(() => !document.hidden);
+  const [windowPreview, setWindowPreview] = useState(false);
+  const [windowRect, setWindowRect] = useState({ x: 72, y: 96, width: 760, height: 428 });
+  const windowDrag = useRef<{ pointerId: number; offsetX: number; offsetY: number } | null>(null);
   const promotionCooldowns = useRef(new Map<string, number>());
   const rotationBag = useRef<string[]>([]);
   const rotationBagSignature = useRef('');
@@ -625,6 +639,7 @@ export default function DirectPreview({ scene, compact = false }: { scene: Scene
 
   useEffect(() => mixer?.configure(scene.sources), [mixer, scene.sources]);
   useEffect(() => mixer?.setMasterVolume(monitorView.localMonitorVolume), [mixer, monitorView.localMonitorVolume]);
+  useEffect(() => { mixer?.setOutputEnabled(monitorView.audioOutput === 'speaker'); }, [mixer, monitorView.audioOutput]);
 
   useEffect(() => {
     const controller = new AbortController();
@@ -758,9 +773,52 @@ export default function DirectPreview({ scene, compact = false }: { scene: Scene
 
   useEffect(() => () => promotionTimers.current.forEach((timer) => window.clearTimeout(timer)), []);
 
+  const sourceHasAudio = (source: SceneSource): boolean => {
+    const meter = audioBySource.get(source.id);
+    if (meter?.audioTracks !== undefined) return meter.audioTracks > 0;
+    const capability = bySource.get(source.id);
+    return Boolean(capability?.audioCodec && capability.audioCodec !== 'none');
+  };
+
+  const toggleLargeSource = (sourceId: string, checked: boolean) => setMonitorView((value) => {
+    const largeSourceIds = checked
+      ? [...new Set([...value.largeSourceIds, sourceId])]
+      : value.largeSourceIds.filter((id) => id !== sourceId);
+    return normalizeMonitorView({
+      ...value, largeSourceIds,
+      largeCount: checked ? Math.max(value.largeCount, largeSourceIds.length) : value.largeCount,
+    }, scene.items.length, scene.sources.map((source) => source.id));
+  });
+
+  const beginWindowDrag = (event: ReactPointerEvent<HTMLDivElement>) => {
+    if ((event.target as HTMLElement).closest('button')) return;
+    windowDrag.current = { pointerId: event.pointerId, offsetX: event.clientX - windowRect.x, offsetY: event.clientY - windowRect.y };
+    event.currentTarget.setPointerCapture(event.pointerId);
+  };
+  const moveWindow = (event: ReactPointerEvent<HTMLDivElement>) => {
+    const drag = windowDrag.current;
+    if (!drag || drag.pointerId !== event.pointerId) return;
+    setWindowRect((rect) => ({
+      ...rect,
+      x: Math.max(0, Math.min(window.innerWidth - 160, event.clientX - drag.offsetX)),
+      y: Math.max(0, Math.min(window.innerHeight - 60, event.clientY - drag.offsetY)),
+    }));
+  };
+  const endWindowDrag = (event: ReactPointerEvent<HTMLDivElement>) => {
+    if (windowDrag.current?.pointerId === event.pointerId) windowDrag.current = null;
+  };
+
   return (
-    <div className="direct-preview-shell">
-      {!compact && <><div
+    <div
+      className={`direct-preview-shell${windowPreview ? ' window-preview-mode' : ''}`}
+      style={windowPreview ? { left: windowRect.x, top: windowRect.y, width: windowRect.width, height: windowRect.height } : undefined}
+    >
+      {windowPreview && <div className="window-preview-bar" onPointerDown={beginWindowDrag}
+        onPointerMove={moveWindow} onPointerUp={endWindowDrag} onPointerCancel={endWindowDrag}>
+        <span>窗口预览 · 拖动标题栏移动，右下角缩放</span>
+        <button type="button" onClick={() => setWindowPreview(false)}>关闭窗口预览</button>
+      </div>}
+      {!compact && !windowPreview && <><div
         className="direct-audio-control"
         data-audio-enabled={audioEnabled ? 'true' : 'false'}
         data-audio-state={audio.state}
@@ -774,9 +832,16 @@ export default function DirectPreview({ scene, compact = false }: { scene: Scene
         >{audioEnabled ? '关闭声音' : '启用声音'}</button>
         <label>本地音量 <input aria-label="本地监听主音量" type="range" min="0" max="1" step="0.01"
           value={monitorView.localMonitorVolume} onChange={(event) => setMonitorView((value) => ({ ...value, localMonitorVolume: Number(event.target.value) }))} /></label>
+        <label>输出<select aria-label="声音输出模式" value={monitorView.audioOutput}
+          onChange={(event) => setMonitorView((value) => ({ ...value, audioOutput: event.target.value as 'speaker' | 'meter-only' }))}>
+          <option value="speaker">扬声器 + 电平表</option>
+          <option value="meter-only">仅电平表 / 阈值</option>
+        </select></label>
         <span>{audio.state === 'blocked'
           ? '浏览器阻止了播放，请再次点击。'
-          : `Web Audio 混音 · ${audio.inputCount} 路 · 默认静音，点击后启用`}</span>
+          : monitorView.audioOutput === 'meter-only'
+            ? `Web Audio 混音 · ${audio.inputCount} 路 · 仅电平表与阈值检测，不输出到扬声器`
+            : `Web Audio 混音 · ${audio.inputCount} 路 · 默认静音，点击后启用`}</span>
       </div>
       <div className="monitor-view-controls" aria-label="监控视图设置">
         <button type="button" onClick={() => setMonitorView((value) => ({ ...value, mode: value.mode === 'auto' ? 'manual' : 'auto' }))}>{monitorView.mode === 'auto' ? '脱离自动模式' : '恢复自动布局'}</button>
@@ -789,10 +854,14 @@ export default function DirectPreview({ scene, compact = false }: { scene: Scene
         <label>文字透明度<input aria-label="统计文字透明度" type="range" min="0" max="1" step="0.05" value={monitorView.telemetry.textOpacity} onChange={(event) => setMonitorView((value) => ({ ...value, telemetry: { ...value.telemetry, textOpacity: Number(event.target.value) } }))} /></label>
         <label><input type="checkbox" checked={monitorView.telemetry.backgroundEnabled} onChange={(event) => setMonitorView((value) => ({ ...value, telemetry: { ...value.telemetry, backgroundEnabled: event.target.checked } }))} />文字框</label>
         {monitorView.telemetry.backgroundEnabled && <><input aria-label="统计文字框颜色" type="color" value={monitorView.telemetry.backgroundColor} onChange={(event) => setMonitorView((value) => ({ ...value, telemetry: { ...value.telemetry, backgroundColor: event.target.value } }))} /><label>背景透明度<input aria-label="统计背景透明度" type="range" min="0" max="1" step="0.05" value={monitorView.telemetry.backgroundOpacity} onChange={(event) => setMonitorView((value) => ({ ...value, telemetry: { ...value.telemetry, backgroundOpacity: Number(event.target.value) } }))} /></label></>}
-        <label>大画面<input type="number" min="0" max={Math.min(16, scene.items.length)} value={monitorView.largeCount} onChange={(event) => setMonitorView((value) => normalizeMonitorView({ ...value, largeCount: Number(event.target.value) }, scene.items.length))} /></label>
+        <button type="button" onClick={() => setWindowPreview(true)}>窗口预览</button>
+        <label><input type="checkbox" checked={monitorView.largeCount > 0} onChange={(event) => setMonitorView((value) => ({ ...value, largeCount: event.target.checked ? Math.max(1, value.largeSourceIds.length) : 0 }))} />大画面模式</label>
+        <label>大画面数量<input type="number" min="0" max={Math.min(16, scene.items.length)} value={monitorView.largeCount} onChange={(event) => setMonitorView((value) => normalizeMonitorView({ ...value, largeCount: Number(event.target.value) }, scene.items.length, scene.sources.map((source) => source.id)))} /></label>
+        <label>小画面比例<input aria-label="小画面与大画面比例" type="range" min="0.1" max="0.9" step="0.05" value={monitorView.largeRatio} onChange={(event) => setMonitorView((value) => normalizeMonitorView({ ...value, largeRatio: Number(event.target.value) }, scene.items.length, scene.sources.map((source) => source.id)))} /></label>
+        <span data-large-ratio>{Math.round(monitorView.largeRatio * 100)}%</span>
         <details><summary>选择 M / 固定</summary><div className="monitor-source-options">{scene.items.filter((item) => item.visible).slice(0, 16).map((item) => {
           const source = scene.sources.find((candidate) => candidate.id === item.sourceId); const large = monitorView.largeSourceIds.includes(item.sourceId); const pinned = monitorView.rotation.pinnedSourceIds.includes(item.sourceId);
-          return <span key={item.sourceId}><label><input type="checkbox" checked={large} onChange={(event) => setMonitorView((value) => ({ ...value, largeSourceIds: event.target.checked ? [...new Set([...value.largeSourceIds, item.sourceId])] : value.largeSourceIds.filter((id) => id !== item.sourceId) }))} />M {source?.name ?? item.sourceId}</label><label><input type="checkbox" checked={pinned} onChange={(event) => setMonitorView((value) => ({ ...value, rotation: { ...value.rotation, pinnedSourceIds: event.target.checked ? [...new Set([...value.rotation.pinnedSourceIds, item.sourceId])] : value.rotation.pinnedSourceIds.filter((id) => id !== item.sourceId) } }))} />固定</label></span>;
+          return <span key={item.sourceId}><label><input type="checkbox" checked={large} onChange={(event) => toggleLargeSource(item.sourceId, event.target.checked)} />M {source?.name ?? item.sourceId}</label><label><input type="checkbox" checked={pinned} onChange={(event) => setMonitorView((value) => ({ ...value, rotation: { ...value.rotation, pinnedSourceIds: event.target.checked ? [...new Set([...value.rotation.pinnedSourceIds, item.sourceId])] : value.rotation.pinnedSourceIds.filter((id) => id !== item.sourceId) } }))} />固定</label></span>;
         })}</div></details>
         <label><input type="checkbox" checked={monitorView.rotation.enabled} onChange={(event) => setMonitorView((value) => ({ ...value, rotation: { ...value.rotation, enabled: event.target.checked } }))} />大画面轮换</label>
         <select aria-label="轮换策略" value={monitorView.rotation.strategy} onChange={(event) => setMonitorView((value) => ({ ...value, rotation: { ...value.rotation, strategy: event.target.value as 'sequential' | 'random' } }))}><option value="sequential">顺序</option><option value="random">随机</option></select>
@@ -802,15 +871,24 @@ export default function DirectPreview({ scene, compact = false }: { scene: Scene
         <label><input type="checkbox" checked={monitorView.lowPower.enabled} onChange={(event) => setMonitorView((value) => ({ ...value, lowPower: { ...value.lowPower, enabled: event.target.checked } }))} />低功耗</label>
         <label>目标 FPS<input list="low-power-fps" type="number" min="0.5" max="30" step="0.5" value={monitorView.lowPower.targetFps} onChange={(event) => setMonitorView((value) => normalizeMonitorView({ ...value, lowPower: { ...value.lowPower, targetFps: Number(event.target.value) } }, scene.items.length))} /><datalist id="low-power-fps"><option value="0.5" /><option value="1" /><option value="2" /><option value="5" /></datalist></label>
         {monitorView.lowPower.enabled && monitorView.lowPower.targetFps > 5 && <small className="power-warning">超过 5 FPS，节能效果可能有限。</small>}
-        <details><summary>逐路统计 / 音频告警</summary><div className="monitor-source-options monitor-decoration-options">{effectiveScene.sources.filter((source) => source.kind === 'camera').slice(0, 16).map((source) => {
+        <details><summary>逐路统计 / 声音告警</summary><div className="monitor-source-options monitor-decoration-options">{effectiveScene.sources.slice(0, 16).map((source) => {
           const decoration = sourceDecoration(monitorView, source.id);
+          const hasAudio = sourceHasAudio(source);
           return <fieldset key={source.id}><legend>{source.name}</legend>
             <label><input type="checkbox" checked={decoration.telemetry.enabled} onChange={(event) => updateSourceDecoration(source.id, { telemetry: { ...decoration.telemetry, enabled: event.target.checked } })} />统计</label>
             {(['fps', 'bitrate', 'codec', 'decoder'] as const).map((field) => <label key={field}><input type="checkbox" checked={decoration.telemetry.fields.includes(field)} onChange={(event) => updateSourceDecoration(source.id, { telemetry: { ...decoration.telemetry, fields: event.target.checked ? [...new Set([...decoration.telemetry.fields, field])] : decoration.telemetry.fields.filter((item) => item !== field) } })} />{field}</label>)}
-            <label><input type="checkbox" checked={decoration.audioMeter.enabled} onChange={(event) => updateSourceDecoration(source.id, { audioMeter: { ...decoration.audioMeter, enabled: event.target.checked } })} />画面音频表</label>
-            <label>阈值 <input type="number" min="-120" max="0" step="1" value={decoration.audioMeter.thresholdDbfs} onChange={(event) => updateSourceDecoration(source.id, { audioMeter: { ...decoration.audioMeter, thresholdDbfs: Number(event.target.value) } })} /> dBFS</label>
-            <label><input type="checkbox" checked={decoration.audioMeter.alertBorderEnabled} onChange={(event) => updateSourceDecoration(source.id, { audioMeter: { ...decoration.audioMeter, alertBorderEnabled: event.target.checked } })} />超阈值边框</label>
-            <label><input type="checkbox" checked={decoration.promotionKinds.audio} onChange={(event) => updateSourceDecoration(source.id, { promotionKinds: { ...decoration.promotionKinds, audio: event.target.checked } })} />音频提升 M</label>
+            {hasAudio ? <>
+              <label><input type="checkbox" checked={decoration.audioMeter.enabled} onChange={(event) => updateSourceDecoration(source.id, { audioMeter: { ...decoration.audioMeter, enabled: event.target.checked } })} />画面电平表</label>
+              <label>方向<select value={decoration.audioMeter.orientation} onChange={(event) => updateSourceDecoration(source.id, { audioMeter: { ...decoration.audioMeter, orientation: event.target.value as 'vertical' | 'horizontal' } })}><option value="vertical">竖</option><option value="horizontal">横</option></select></label>
+              <label>位置<select value={decoration.audioMeter.position} onChange={(event) => updateSourceDecoration(source.id, { audioMeter: { ...decoration.audioMeter, position: event.target.value as AudioMeterConfig['position'] } })}>
+                <option value="left">左侧</option><option value="right">右侧</option><option value="top-left">左上</option><option value="top-right">右上</option><option value="bottom-left">左下</option><option value="bottom-right">右下</option><option value="custom">自定义</option>
+              </select></label>
+              <label>大小<input aria-label="电平表大小" type="range" min="0.3" max="2" step="0.1" value={decoration.audioMeter.size} onChange={(event) => updateSourceDecoration(source.id, { audioMeter: { ...decoration.audioMeter, size: Number(event.target.value) } })} /></label>
+              <label>透明度<input aria-label="电平表透明度" type="range" min="0.1" max="1" step="0.05" value={decoration.audioMeter.opacity} onChange={(event) => updateSourceDecoration(source.id, { audioMeter: { ...decoration.audioMeter, opacity: Number(event.target.value) } })} /></label>
+              <label>阈值 <input type="number" min="-120" max="0" step="1" value={decoration.audioMeter.thresholdDbfs} onChange={(event) => updateSourceDecoration(source.id, { audioMeter: { ...decoration.audioMeter, thresholdDbfs: Number(event.target.value) } })} /> dBFS</label>
+              <label><input type="checkbox" checked={decoration.audioMeter.alertBorderEnabled} onChange={(event) => updateSourceDecoration(source.id, { audioMeter: { ...decoration.audioMeter, alertBorderEnabled: event.target.checked } })} />超阈值边框</label>
+              <label><input type="checkbox" checked={decoration.promotionKinds.audio} onChange={(event) => updateSourceDecoration(source.id, { promotionKinds: { ...decoration.promotionKinds, audio: event.target.checked } })} />音频提升 M</label>
+            </> : <small className="audio-track-missing">该源没有音频轨道</small>}
             <label><input type="checkbox" checked={decoration.promotionKinds.motion} onChange={(event) => updateSourceDecoration(source.id, { promotionKinds: { ...decoration.promotionKinds, motion: event.target.checked } })} />Motion 提升（预留）</label>
             <label><input type="checkbox" checked={decoration.promotionKinds.person} onChange={(event) => updateSourceDecoration(source.id, { promotionKinds: { ...decoration.promotionKinds, person: event.target.checked } })} />Person 提升（预留）</label>
           </fieldset>;

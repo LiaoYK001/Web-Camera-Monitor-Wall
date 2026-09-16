@@ -6,7 +6,7 @@ export interface DirectAudioSnapshot {
   state: DirectAudioState;
   inputCount: number;
   level: number;
-  sources: Array<{ sourceId: string; rmsDbfs: number | null; peakDbfs: number | null }>;
+  sources: Array<{ sourceId: string; rmsDbfs: number | null; peakDbfs: number | null; audioTracks?: number }>;
 }
 
 interface MixerEntry {
@@ -34,6 +34,7 @@ export class DirectAudioMixer {
   private blocked = false;
   private level = 0;
   private masterVolume = 1;
+  private outputEnabled = true;
 
   constructor(private readonly onSnapshot: (snapshot: DirectAudioSnapshot) => void) {
     this.emit();
@@ -62,8 +63,23 @@ export class DirectAudioMixer {
 
   setMasterVolume(value: number): void {
     this.masterVolume = clamp(value, 0, 1);
-    if (this.master && this.context)
-      this.master.gain.setTargetAtTime(this.masterVolume, this.context.currentTime, .01);
+    this.applyMasterGain();
+  }
+
+  /**
+   * Meter-only mode keeps every analyser alive for the level meter and
+   * threshold detection while muting the speaker output, matching the OBS
+   * "monitor only" quick action.
+   */
+  setOutputEnabled(enabled: boolean): void {
+    this.outputEnabled = enabled;
+    this.applyMasterGain();
+  }
+
+  private applyMasterGain(): void {
+    if (!this.master || !this.context) return;
+    const target = this.outputEnabled ? this.masterVolume : 0;
+    this.master.gain.setTargetAtTime(target, this.context.currentTime, .01);
   }
 
   bindStream(sourceId: string, stream: MediaStream): void {
@@ -90,7 +106,7 @@ export class DirectAudioMixer {
     if (!this.context) {
       this.context = new AudioContext({ latencyHint: 'interactive', sampleRate: 48_000 });
       this.master = this.context.createGain();
-      this.master.gain.value = this.masterVolume;
+      this.master.gain.value = this.outputEnabled ? this.masterVolume : 0;
       this.analyser = this.context.createAnalyser();
       this.analyser.fftSize = 2048;
       this.master.connect(this.analyser).connect(this.context.destination);
@@ -227,7 +243,8 @@ export class DirectAudioMixer {
       .filter((entry) => (entry.stream?.getAudioTracks().length ?? 0) > 0).length;
     const snapshot: DirectAudioSnapshot = { state, inputCount, level: this.level,
       sources: [...this.entries.entries()].map(([sourceId, entry]) => ({ sourceId,
-        rmsDbfs: entry.rmsDbfs ?? null, peakDbfs: entry.peakDbfs ?? null })) };
+        rmsDbfs: entry.rmsDbfs ?? null, peakDbfs: entry.peakDbfs ?? null,
+        audioTracks: entry.stream?.getAudioTracks().length ?? 0 })) };
     this.onSnapshot(snapshot);
     window.dispatchEvent(new CustomEvent('webobs:direct-audio-meters', { detail: snapshot }));
   }

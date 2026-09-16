@@ -703,6 +703,14 @@ select:focus-visible,
   border-color: rgba(185, 255, 79, 0.7);
 }
 
+.camera-picker-actions { display: flex; gap: 6px; margin-bottom: 6px; }
+.camera-picker-actions button { padding: 3px 8px; font-size: 11px; }
+.camera-picker-list { display: grid; gap: 8px; max-height: 240px; overflow: auto; padding: 8px; border: 1px solid #2b3140; border-radius: 7px; background: #0c0f15; }
+.camera-picker-list fieldset { display: grid; gap: 4px; margin: 0; padding: 6px 8px; border: 1px solid #232b38; border-radius: 6px; }
+.camera-picker-list legend { padding: 0 4px; color: #cdd5e1; font-size: 11px; }
+.camera-picker-list label { display: flex; align-items: center; gap: 6px; color: #aeb7c5; font-size: 11px; }
+.camera-picker-list input[type='checkbox'] { width: auto; min-height: 0; margin: 0; }
+
 .security-note {
   margin: -3px 0 13px;
   color: #70798a;
@@ -1133,9 +1141,23 @@ select:focus-visible,
 .telemetry-overlay.position-bottom-left { bottom: 7px; left: 7px; }
 .telemetry-overlay.position-bottom-right { right: 7px; bottom: 7px; }
 .telemetry-overlay.position-custom { transform: translate(-50%, -50%); }
-.tile-audio-meter { position:absolute; z-index:7; display:flex; align-items:center; gap:5px; min-width:82px; padding:3px 5px; border-radius:4px; background:rgba(5,10,16,.62); color:#dce8f5; font-size:10px; pointer-events:none; }
-.tile-audio-meter.position-top-left { top:7px; left:7px; }.tile-audio-meter.position-top-right { top:7px; right:7px; }.tile-audio-meter.position-bottom-left { bottom:7px; left:7px; }.tile-audio-meter.position-bottom-right { right:7px; bottom:7px; }.tile-audio-meter.position-custom { left:50%; top:50%; transform:translate(-50%,-50%); }
-.tile-audio-meter-track { display:block; width:46px; height:6px; overflow:hidden; border-radius:3px; background:#111a23; }.tile-audio-meter-track i { display:block; height:100%; background:linear-gradient(90deg,#21c77a 0 68%,#ffcb66 82%,#ff6464); }
+.tile-audio-meter { position:absolute; z-index:7; display:flex; align-items:center; gap:4px; box-sizing:border-box; padding:3px 5px; border-radius:4px; background:rgba(5,10,16,.62); color:#dce8f5; font-size:10px; pointer-events:none; }
+.tile-audio-meter.orientation-horizontal { flex-direction:row; min-width:82px; }
+.tile-audio-meter.orientation-vertical { flex-direction:column; justify-content:flex-end; min-height:56px; }
+.tile-audio-meter.position-left { left:7px; top:50%; transform:translateY(-50%); }
+.tile-audio-meter.position-right { right:7px; top:50%; transform:translateY(-50%); }
+.tile-audio-meter.position-top-left { top:7px; left:7px; }
+.tile-audio-meter.position-top-right { top:7px; right:7px; }
+.tile-audio-meter.position-bottom-left { bottom:7px; left:7px; }
+.tile-audio-meter.position-bottom-right { right:7px; bottom:7px; }
+.tile-audio-meter.position-custom { transform:translate(-50%,-50%); }
+.tile-audio-meter-track { display:block; position:relative; overflow:hidden; border-radius:3px; background:#111a23; }
+.tile-audio-meter.orientation-horizontal .tile-audio-meter-track { flex:1; height:6px; min-width:26px; }
+.tile-audio-meter.orientation-vertical .tile-audio-meter-track { flex:1; width:6px; min-height:18px; }
+.tile-audio-meter-track i { display:block; }
+.tile-audio-meter.orientation-horizontal .tile-audio-meter-track i { width:0; height:100%; background:linear-gradient(90deg,#21c77a 0 68%,#ffcb66 82%,#ff6464); }
+.tile-audio-meter.orientation-vertical .tile-audio-meter-track i { position:absolute; right:0; bottom:0; left:0; height:0; background:linear-gradient(0deg,#21c77a 0 68%,#ffcb66 82%,#ff6464); }
+.audio-track-missing { color:var(--muted); font-size:11px; }
 .tile-audio-alert-border { position:absolute; inset:0; z-index:6; border-style:solid; pointer-events:none; animation:webobs-audio-pulse 1.2s ease-in-out infinite; }
 @keyframes webobs-audio-pulse { 50% { opacity:.72; } }
 .monitor-decoration-options { display:grid; grid-template-columns:repeat(auto-fit,minmax(260px,1fr)); gap:10px; }.monitor-decoration-options fieldset { border:1px solid var(--line); border-radius:8px; padding:8px; display:flex; flex-wrap:wrap; gap:7px; align-items:center; }.monitor-decoration-options legend { width:100%; color:var(--text); font-size:12px; }.monitor-decoration-options label { font-size:11px; }
@@ -1225,6 +1247,59 @@ select:focus-visible,
 .stage-wrap:fullscreen .direct-audio-control:focus-within { opacity: 1; }
 .stage-wrap:fullscreen .direct-preview,
 .stage-wrap:fullscreen .program-preview { width: 100vw; max-width: none; max-height: 100vh; border: 0; }
+
+/* Clean wall mode: fullscreen and the resizable window preview keep only the
+   picture, telemetry, the level meter, detection boxes and audio alerts.  All
+   selectors, sliders and per-tile status chips are hidden. */
+:is(.stage-wrap:fullscreen, .monitor-surface:fullscreen, .direct-preview-shell.window-preview-mode)
+  :is(.monitor-view-controls, .direct-audio-control, .monitor-overlay, .fullscreen-overlay,
+      .tile-status-button, .low-power-status, .direct-tile-name, .direct-tile-state,
+      .delivery-diagnostic, .analytics-runtime-status) { display: none !important; }
+
+.direct-preview-shell.window-preview-mode {
+  position: fixed;
+  z-index: 4500;
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+  width: auto;
+  min-width: 240px;
+  min-height: 160px;
+  overflow: hidden;
+  resize: both;
+  border: 1px solid rgba(185, 255, 79, .45);
+  border-radius: 8px;
+  background: #05070a;
+  box-shadow: 0 28px 70px rgba(0, 0, 0, .62);
+}
+
+.window-preview-bar {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 5px 8px;
+  border-bottom: 1px solid #232b38;
+  color: #aeb7c5;
+  background: #0b0f15;
+  font-size: 11px;
+  cursor: move;
+  touch-action: none;
+  user-select: none;
+}
+
+.window-preview-bar button { padding: 3px 8px; }
+.direct-preview-shell.window-preview-mode .direct-preview {
+  flex: 1;
+  width: 100%;
+  max-width: none;
+  max-height: none;
+  border: 0;
+  border-radius: 0;
+  box-shadow: none;
+  aspect-ratio: auto !important;
+}
 
 .monitor-overlay {
   position: absolute;

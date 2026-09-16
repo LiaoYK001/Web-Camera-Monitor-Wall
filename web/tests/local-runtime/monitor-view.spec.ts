@@ -287,3 +287,54 @@ test('persists the encrypted OBS workspace layout locally', async ({ page }) => 
   });
   expect(result).toEqual({ style: 'classic', dock: { id: 'canvas', kind: 'canvas', region: 'center', order: 0, size: 55, collapsed: false } });
 });
+
+test('honours the large/small ratio, OBS meter defaults and no-audio metadata', async ({ page }) => {
+  await page.goto('/');
+  const result = await page.evaluate(async () => {
+    const monitor = await import('/src/monitorView.ts');
+    const width = 1600; const height = 900;
+    const scene = {
+      schemaVersion: 5 as const, revision: 1, id: 'fixture', name: 'fixture',
+      canvas: { width, height, backgroundColor: '#000000' },
+      sources: Array.from({ length: 12 }, (_, index) => ({
+        id: `source-${index}`, kind: 'color' as const, name: `Source ${index}`, color: '#000000',
+        muted: true, volume: 0, syncOffsetMs: 0, monitoring: 'off' as const, audioTrack: 1, filters: [],
+      })),
+      items: Array.from({ length: 12 }, (_, index) => ({
+        id: `item-${index}`, sourceId: `source-${index}`, x: 0, y: 0, width: 1, height: 1,
+        scaleMode: 'contain' as const, crop: { top: 0, right: 0, bottom: 0, left: 0 }, zIndex: index,
+        visible: true, locked: false, groupId: '', rotation: 0, opacity: 1, blendMode: 'normal' as const,
+      })),
+    };
+    const ratioOf = (ratio: number) => {
+      const view = monitor.defaultMonitorView(); view.largeCount = 3; view.largeRatio = ratio;
+      const laidOut = monitor.applyAutomaticLayout(scene, view);
+      return laidOut.items[3].width / laidOut.items[0].width;
+    };
+    const legacy = monitor.normalizeMonitorView({
+      schemaVersion: 4,
+      sourceDecorations: { 'camera-1': { audioMeter: { enabled: true, position: 'top-left' } } },
+    } as unknown as Partial<import('/src/monitorView.ts').MonitorView>, 2, ['camera-1']);
+    const clamped = monitor.normalizeMonitorView({ largeRatio: 5, audioOutput: 'meter-only' } as unknown as Partial<import('/src/monitorView.ts').MonitorView>, 4);
+    const defaults = monitor.defaultAudioMeter();
+    return {
+      fifty: ratioOf(.5), thirty: ratioOf(.3), seventy: ratioOf(.7),
+      legacyPosition: legacy.sourceDecorations['camera-1'].audioMeter.position,
+      legacyOrientation: legacy.sourceDecorations['camera-1'].audioMeter.orientation,
+      clampedRatio: clamped.largeRatio, output: clamped.audioOutput,
+      defaults: { orientation: defaults.orientation, position: defaults.position, size: defaults.size, opacity: defaults.opacity },
+      spans: [monitor.largeTileSpan(.5), monitor.largeTileSpan(.9), monitor.largeTileSpan(.1)],
+    };
+  });
+  expect(result.fifty).toBeCloseTo(.5, 2);
+  expect(result.thirty).toBeCloseTo(.3, 2);
+  expect(result.seventy).toBeGreaterThan(.65);
+  expect(result.seventy).toBeLessThan(.75);
+  expect(result.legacyPosition).toBe('left');
+  expect(result.legacyOrientation).toBe('vertical');
+  expect(result.clampedRatio).toBe(.9);
+  expect(result.output).toBe('meter-only');
+  expect(result.defaults).toEqual({ orientation: 'vertical', position: 'left', size: 1, opacity: 1 });
+  expect(result.spans).toEqual([24, 13, 120]);
+});
+
