@@ -137,7 +137,10 @@
   - 把私有场景里的抽取项改为**可见**（该场景不渲染，理论上无副作用）后：媒体仍未启动统计（`audio track 1/2` 无 Reconnected），而 **double free 立即复现**。也就是说：可见 → 源被激活但触发活动树崩溃；隐藏 → 不崩但源永不启动。这指向 libobs 对“额外私有 ffmpeg_source 实例 + 场景激活”的处理本身，下一步需要换一种承载方式（例如常规 `obs_source_create` 注册的源、或让网关直接产出已混合好的单路音频供主源使用），而不是继续在场景项可见性上打转。
   - **本轮又试了第三种激活方式**：完全不建场景项，改用 `obs_source_inc_showing()` 直接把抽取实例标记为 showing（`dec_showing` 成对释放）。结果：**不崩溃**（`fatal signal` 计数 0），但抽取实例依旧不连接（`audio track 1/2` 无 `Reconnected`）、MediaMTX 没有新的 `audio-*` `runOnDemand command started`、节目音频 4 次抓取仍 peak=0。
   - 至此三种激活方式都已实测：场景项可见 → 源被激活但活动树 double free；场景项隐藏 → 不崩但源不启动；`inc_showing`（无场景项）→ 不崩但源同样不启动。结论：**libobs 不会为这些额外的私有 `ffmpeg_source` 实例启动媒体播放**，继续调整“激活方式”已无收益；下一步应改变承载方式（用常规 `obs_source_create` 注册的源，或让网关直接输出一路已混好的音频给主源）。
-  - 当前代码保留第三种（`inc_showing`、不建场景项）这一**不崩溃且最简**的形态，功能仍由 `WEBOBS_AUDIO_TRACK_EXTRACTION` 选入；默认路径不变，多输入来源仍打印明确的“额外音轨尚未混音”告警。
+  - **本轮再试第四种**：把抽取实例从 `obs_source_create_private` 换成**常规注册源** `obs_source_create`（配合 `inc_showing`、不建场景项）。结果：**不崩溃**，但仍无 `Reconnected`、无新的 `audio-*` `runOnDemand command started`、节目静音。即“私有/常规注册”也不是原因。
+  - **结论（已验证的四次否定）**：在本 OBS 构建下，凡是“为同一来源额外创建 OBS 媒体源来单独解一条输入轨”的做法都走不通——可见场景项能激活但触发活动树 double free，隐藏场景项与 `inc_showing`（含常规注册源）不崩但源永不开始播放。继续在激活/注册方式上试错已无收益。
+  - **下一步的正确设计（已明确，尚未实现）**：不在引擎里加源，而是让**网关输出单路“已按要求混好”的音轨**，再让每个 scene source 只保留一个媒体源：新增 `transcode-on-demand.sh` 的 audio-mix 模式（`-map 0:v -filter_complex ... amix ...` 把选中的多条输入轨按各自 gain/mute 混成一路 Opus，视频 `copy`），产出 `mix-<token>` 路径；引擎在有 >1 输入轨时把该源的 `input` 指向这条路径。这样既保留逐轨可控（在网关侧完成），又完全避开“额外 OBS 源”这一被四次实测否定的路线。
+  - 当前代码保留**不崩溃**的形态（常规注册源 + `inc_showing`），功能仍由 `WEBOBS_AUDIO_TRACK_EXTRACTION` 选入；默认路径不变，多输入来源仍打印明确的“额外音轨尚未混音”告警。
   - 因此该接线现在由环境变量 `WEBOBS_AUDIO_TRACK_EXTRACTION` **显式选入**：默认路径保持第 65 轮行为（主源音频 + 明确告警），不会把未验证的代码带进默认运行路径；下一轮应在该开关打开的情况下定位并修掉 double free，再恢复为默认。
   - 单元测试：`resolved_audio_inputs` 的显式优先与 legacy 回退；`webobs-unit-tests` 全绿。
 

@@ -382,7 +382,10 @@ void attach_audio_input_instances(SourceEntry &entry, std::string_view source_ur
         obs_data_set_bool(settings.get(), "restart_on_activate", true);
         obs_data_set_string(settings.get(), "ffmpeg_options", "rtsp_transport=tcp timeout=20000000");
         const std::string name = base_name + " audio track " + std::to_string(input.track + 1);
-        SourcePtr instance(obs_source_create_private("ffmpeg_source", name.c_str(), settings.get()));
+        // A regular (registered) source rather than a private one: libobs refused
+        // to start playback for private extraction instances no matter how they
+        // were activated (see docs).
+        SourcePtr instance(obs_source_create("ffmpeg_source", name.c_str(), settings.get(), nullptr));
         if (!instance) {
             delete_media_path(*audio_path);
             continue;
