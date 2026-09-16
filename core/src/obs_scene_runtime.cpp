@@ -700,7 +700,9 @@ SourceEntry create_source_entry(const SceneSource &configuration, int connect_ti
     const std::vector<SceneAudioInput> audio_inputs = resolved_audio_inputs(configuration);
     MediaPathPtr audio_mix;
     std::string audio_mix_url;
-    if (audio_inputs.size() > 1 && std::getenv("WEBOBS_AUDIO_TRACK_EXTRACTION") != nullptr) {
+    // Several selected input tracks are mixed by the gateway into one stream; the
+    // single Media Source consumes that (verified end to end).
+    if (audio_inputs.size() > 1) {
         std::string source_url = configuration.kind == "rtsp" ? configuration.rtsp_url : std::string{};
         if (configuration.kind == "camera") {
             const auto resolved = resolve_camera_source(configuration);
