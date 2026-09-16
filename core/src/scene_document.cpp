@@ -384,6 +384,8 @@ std::optional<std::string> validate_scene_document(const SceneDocument &document
                 return "source audioInputs gain must be between 0 and 1";
             if (!audio_tracks.insert(input.track).second)
                 return "source audioInputs must not repeat a track";
+        if (input.sync_offset_ms < -10000 || input.sync_offset_ms > 10000)
+            return "source audioInputs syncOffsetMs must be between -10000 and 10000";
         }
         if (source.filters.size() > maximum_source_filters)
             return "source has too many filters";
