@@ -24,6 +24,9 @@
 - `libcuda.so.1` / `libnvcuvid.so.1` / `libnvidia-encode.so.1` 均在 `/usr/lib/wsl/lib` 可加载。
 - ffmpeg 6.1.1：`h264_nvenc` / `hevc_nvenc` 编码小样与 `-hwaccel cuda` 解码小样**均通过**。
 - 结论：反馈截图中 “NVIDIA NVENC 不可用” 的根因是 C++ 探测只认 `/dev/nvidia0`，与真实能力无关。
+- **运行期抓取**（本机启动 `webobsd` 直连模式，端口 18080，Basic 认证）：
+  - `GET /api/v1/program/status` → `{"enabled":false,"endpoint":"/api/v1/program/whep","configuration":"disabled","engine":"stopped","publish":"idle","reason":"composite_disabled"}`，证明 F5-04 分阶段状态字段在运行期生效；
+  - `GET /api/v1/system/capabilities` → `videoEncoder.backends.nvenc.devicePresent = true`（仅凭 `/dev/dxg` 即判定设备存在），证明 F5-03 探测修复在运行期生效；由于该次启动未注入硬件探测环境变量，`libraryLoaded/encodeSupported/runtimeProbePassed` 仍为 false（如实反映）。
 
 ## F5-01 画面填充 / wall fill — 已实现并验证
 
