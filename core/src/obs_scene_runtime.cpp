@@ -413,65 +413,6 @@ struct SourceEntry {
     std::chrono::steady_clock::time_point meter_requested_at{};
 };
 
-/**
- * Multi-input sources cannot be served by the Media Source alone: this OBS build
- * exposes no audio-track selector for it (verified against obs-ffmpeg-source.c),
- * so cloning it would decode the same default stream again.  Every input is
- * therefore extracted by the gateway into its own audio-only path and read back
- * through a dedicated instance; the primary source stops contributing audio so
- * the program carries exactly the configured inputs.
- */
-void attach_audio_input_instances(SourceEntry &entry, std::string_view source_url,
-                                  const std::vector<SceneAudioInput> &inputs)
-{
-    if (inputs.size() <= 1 || source_url.empty() || !is_ffmpeg_kind(entry.configuration.kind))
-        return;
-    // Opt-in while the extraction channels are still being stabilised: the first
-    // runtime attempt crashed the engine with a glibc double free shortly after
-    // creating them, so the default Direct/Composite path stays unchanged.
-    if (std::getenv("WEBOBS_AUDIO_TRACK_EXTRACTION") == nullptr)
-        return;
-    const std::string base_name = "WebOBS " + entry.configuration.kind + " " + entry.configuration.id;
-    for (const SceneAudioInput &input : inputs) {
-        const auto audio_path = ensure_audio_only_path(source_url, input.track);
-        if (!audio_path) {
-            blog(LOG_WARNING, "Source '%s' input track %d could not be extracted; that track is not mixed",
-                 entry.configuration.id.c_str(), input.track);
-            continue;
-        }
-        DataPtr settings(obs_data_create());
-        if (!settings) {
-            delete_media_path(*audio_path);
-            continue;
-        }
-        const std::string url = "rtsp://127.0.0.1:8554/" + *audio_path;
-        obs_data_set_string(settings.get(), "input", url.c_str());
-        obs_data_set_string(settings.get(), "input_format", "rtsp");
-        obs_data_set_int(settings.get(), "reconnect_delay_sec", 2);
-        obs_data_set_bool(settings.get(), "close_when_inactive", false);
-        obs_data_set_bool(settings.get(), "restart_on_activate", true);
-        obs_data_set_string(settings.get(), "ffmpeg_options", "rtsp_transport=tcp timeout=20000000");
-        const std::string name = base_name + " audio track " + std::to_string(input.track + 1);
-        // A regular (registered) source rather than a private one: libobs refused
-        // to start playback for private extraction instances no matter how they
-        // were activated (see docs).
-        SourcePtr instance(obs_source_create("ffmpeg_source", name.c_str(), settings.get(), nullptr));
-        if (!instance) {
-            delete_media_path(*audio_path);
-            continue;
-        }
-        obs_source_set_volume(instance.get(), 1.0f);
-        obs_source_set_muted(instance.get(), true);
-        obs_source_set_audio_mixers(instance.get(), 1U);
-        obs_source_set_monitoring_type(instance.get(), OBS_MONITORING_TYPE_NONE);
-        // Mark the channel as showing without putting it into any scene: a scene
-        // item either never starts the media (hidden) or makes libobs' active-tree
-        // walk free the same node twice (visible), see docs.
-        obs_source_inc_showing(instance.get());
-        entry.audio_inputs.push_back(
-            AudioInputInstance{input.track, *audio_path, std::move(instance), true});
-    }
-}
 
 struct RuntimeState {
     SceneDocument document;
