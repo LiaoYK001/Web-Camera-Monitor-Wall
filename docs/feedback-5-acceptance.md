@@ -135,7 +135,9 @@
     即崩溃发生在**设置节目输出通道时 libobs 遍历活动源树**的阶段，触发点是抽取源与场景/活动树的交互，而不是 HTTP/JSON/路径创建代码。已排除的假设：① 抽取源作为隐藏场景项 → 仍崩；② 去掉 `obs_source_inc_active`（只靠场景项激活）→ 仍崩。
   - **本轮进展（已修掉崩溃，但通道仍未启动）**：把抽取通道放进**独立的私有场景**（`obs_scene_create` 创建、不挂到任何 canvas、隐藏项）后，**double free 消失**（`fatal signal` 计数 0），说明崩溃确实来自节目场景活动树对抽取源的遍历。但随后实测：抽取实例仍只打印 `settings:`，MediaMTX 侧没有 `audio-*` 路径的 `runOnDemand command started`，节目音频仍全程静音（4 次抓取 peak=0）——即**隐藏项不会让源进入 playing/shown 状态**。
   - 把私有场景里的抽取项改为**可见**（该场景不渲染，理论上无副作用）后：媒体仍未启动统计（`audio track 1/2` 无 Reconnected），而 **double free 立即复现**。也就是说：可见 → 源被激活但触发活动树崩溃；隐藏 → 不崩但源永不启动。这指向 libobs 对“额外私有 ffmpeg_source 实例 + 场景激活”的处理本身，下一步需要换一种承载方式（例如常规 `obs_source_create` 注册的源、或让网关直接产出已混合好的单路音频供主源使用），而不是继续在场景项可见性上打转。
-  - 当前代码保留**不崩溃**的那一侧（私有场景 + 隐藏项），功能仍由 `WEBOBS_AUDIO_TRACK_EXTRACTION` 选入；默认路径不变。
+  - **本轮又试了第三种激活方式**：完全不建场景项，改用 `obs_source_inc_showing()` 直接把抽取实例标记为 showing（`dec_showing` 成对释放）。结果：**不崩溃**（`fatal signal` 计数 0），但抽取实例依旧不连接（`audio track 1/2` 无 `Reconnected`）、MediaMTX 没有新的 `audio-*` `runOnDemand command started`、节目音频 4 次抓取仍 peak=0。
+  - 至此三种激活方式都已实测：场景项可见 → 源被激活但活动树 double free；场景项隐藏 → 不崩但源不启动；`inc_showing`（无场景项）→ 不崩但源同样不启动。结论：**libobs 不会为这些额外的私有 `ffmpeg_source` 实例启动媒体播放**，继续调整“激活方式”已无收益；下一步应改变承载方式（用常规 `obs_source_create` 注册的源，或让网关直接输出一路已混好的音频给主源）。
+  - 当前代码保留第三种（`inc_showing`、不建场景项）这一**不崩溃且最简**的形态，功能仍由 `WEBOBS_AUDIO_TRACK_EXTRACTION` 选入；默认路径不变，多输入来源仍打印明确的“额外音轨尚未混音”告警。
   - 因此该接线现在由环境变量 `WEBOBS_AUDIO_TRACK_EXTRACTION` **显式选入**：默认路径保持第 65 轮行为（主源音频 + 明确告警），不会把未验证的代码带进默认运行路径；下一轮应在该开关打开的情况下定位并修掉 double free，再恢复为默认。
   - 单元测试：`resolved_audio_inputs` 的显式优先与 legacy 回退；`webobs-unit-tests` 全绿。
 
