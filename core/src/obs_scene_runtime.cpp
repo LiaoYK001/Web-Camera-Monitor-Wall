@@ -730,12 +730,6 @@ SourceEntry create_source_entry(const SceneSource &configuration, int connect_ti
             reused.status = existing->second.status;
             SourcePtr shared(obs_source_get_ref(existing->second.source.get()));
             reused.source = std::move(shared);
-            if (audio_inputs.size() > 1) {
-                DataPtr shared_settings(obs_source_get_settings(reused.source.get()));
-                const std::string url = shared_settings ? obs_data_get_string(shared_settings.get(), "input")
-                                                        : std::string{};
-                attach_audio_input_instances(reused, url, audio_inputs);
-            }
             return reused;
         }
     }
