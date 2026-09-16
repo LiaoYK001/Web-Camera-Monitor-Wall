@@ -75,7 +75,7 @@
 
 未实现 / not implemented（本轮范围外，明确列为后续项）：
 - 同源多音轨的真实媒体通路：每条启用音轨独立 audio-only WHEP 通道、原始音轨索引到代理流索引的映射、按“来源+输入音轨”的 Gain/Analyser/Delay、Composite 逐轨混音、Scene v6 `audioInputs` 迁移。
-- AudioWorkspace 按来源分组的音轨复选框与“合并/独立电平”显示（当前仅 DirectPreview 逐源过滤）。
+- AudioWorkspace 已按共享三态规则隐藏“确认无音轨”来源的音量/监听/电平控制（未知来源保留控制，不误伤）；仍缺音轨复选框与“合并/独立电平”显示。
 
 ## F5-06 五路播放稳定性 / playback stability — 状态机已实现并验证
 

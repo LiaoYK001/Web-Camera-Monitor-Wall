@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { fetchAudioMeters, replaceStudio } from './api';
 import DirectPreview from './DirectPreview';
+import { sourceAudioTrackState } from './monitorView';
 import type { DirectAudioSnapshot } from './directAudioMixer';
 import type { AudioMonitoring, SceneSource, StudioDocument } from './types';
 
@@ -61,12 +62,21 @@ export default function AudioWorkspace({ studio, onCommitted }: { studio: Studio
     <div className="audio-mixer-list">{scene.sources.map((source) => {
       const meter = topology === 'direct' ? meterBySource.get(source.id) : undefined;
       const cameraProfile = source.kind === 'camera' ? `${source.cameraId} / ${source.profileId}` : source.kind;
-      return <article className="audio-channel" key={source.id}>
+      // Only a bound stream with zero audio tracks or a non-media source is
+      // "confirmed no audio"; unknown sources keep their controls.
+      const trackState = sourceAudioTrackState({
+        kind: source.kind, liveAudioTracks: meter?.audioTracks, streamBound: meter?.streamBound,
+      });
+      return <article className={`audio-channel ${trackState === 'none' ? 'no-audio' : ''}`} key={source.id}>
         <div><strong>{source.name}</strong><small>{cameraProfile}</small><span>{topology === 'direct' ? 'Browser Web Audio' : 'libobs Composite'}</span></div>
-        <div className="vu-section"><div className="vu-track"><i style={{ width: `${meterWidth(meter?.rmsDbfs)}%` }} /></div><span>RMS {dbLabel(meter?.rmsDbfs)}</span><span>Peak {dbLabel(meter?.peakDbfs)}</span></div>
-        <div><label><input type="checkbox" checked={source.muted} onChange={(event) => update(source.id, { muted: event.target.checked })} />静音</label><label>音量 <input type="range" min="0" max="1" step="0.01" value={source.volume} onChange={(event) => update(source.id, { volume: Number(event.target.value) })} /> {Math.round(source.volume * 100)}%</label></div>
-        <div><select value={source.monitoring} onChange={(event) => update(source.id, { monitoring: event.target.value as AudioMonitoring })}><option value="off">关闭监听</option><option value="monitor-only">仅监听</option><option value="monitor-and-output">监听并输出</option></select><label>偏移 <input type="number" min="-10000" max="10000" value={source.syncOffsetMs} onChange={(event) => update(source.id, { syncOffsetMs: Number(event.target.value) })} /> ms</label></div>
-        <div><label>输出 <select value={source.audioTrack} onChange={(event) => update(source.id, { audioTrack: Number(event.target.value) })}>{[1,2,3,4,5,6].map((value) => <option value={value} key={value}>{value}</option>)}</select></label><span className={meter ? 'meter-ready' : 'meter-unavailable'}>{meter ? '实时' : '— 不可测'}</span></div>
+        {trackState === 'none'
+          ? <div className="audio-track-missing">该源没有音频轨道，无需电平 / 音量 / 监听设置。</div>
+          : <>
+            <div className="vu-section"><div className="vu-track"><i style={{ width: `${meterWidth(meter?.rmsDbfs)}%` }} /></div><span>RMS {dbLabel(meter?.rmsDbfs)}</span><span>Peak {dbLabel(meter?.peakDbfs)}</span></div>
+            <div><label><input type="checkbox" checked={source.muted} onChange={(event) => update(source.id, { muted: event.target.checked })} />静音</label><label>音量 <input type="range" min="0" max="1" step="0.01" value={source.volume} onChange={(event) => update(source.id, { volume: Number(event.target.value) })} /> {Math.round(source.volume * 100)}%</label></div>
+            <div><select value={source.monitoring} onChange={(event) => update(source.id, { monitoring: event.target.value as AudioMonitoring })}><option value="off">关闭监听</option><option value="monitor-only">仅监听</option><option value="monitor-and-output">监听并输出</option></select><label>偏移 <input type="number" min="-10000" max="10000" value={source.syncOffsetMs} onChange={(event) => update(source.id, { syncOffsetMs: Number(event.target.value) })} /> ms</label></div>
+            <div><label>输出 <select value={source.audioTrack} onChange={(event) => update(source.id, { audioTrack: Number(event.target.value) })}>{[1,2,3,4,5,6].map((value) => <option value={value} key={value}>{value}</option>)}</select></label><span className={meter ? 'meter-ready' : 'meter-unavailable'}>{meter ? '实时' : '— 不可测'}</span></div>
+          </>}
       </article>;
     })}</div>
   </section>;
