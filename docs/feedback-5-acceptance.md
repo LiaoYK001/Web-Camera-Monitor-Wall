@@ -149,7 +149,9 @@
   - **引擎接线已实现并实测通过**：当来源选中 >1 条输入轨时，`obs_scene_runtime` 通过 MediaMTX 控制 API 创建 `mix-<token>` 路径（`runOnDemand` 调用 `audio-mix`，规格由各输入的 track/gain/muted 生成），把该源的 `input` 指向 `rtsp://127.0.0.1:8554/mix-<token>`，并用 `shared_ptr` 守卫在源销毁时删除该路径；多输入的源不走“复用旧连接”的分支。修复过程中发现并修掉一个真实缺陷：`commit_prepared` 里为旧“抽取通道”方案写的“多输入就静音主源”逻辑，会把已经由网关混好音的主源一起静音（首轮验证因此全程静音）；去掉该分支后主源正常播放。
   - 运行期实测（合成双音轨来源 a:0=440Hz、a:1=880Hz，场景 `audioInputs=[{track:0,gain:1},{track:1,gain:1}]`）：MediaMTX 日志显示 `mix-<token>` 路径 `stream is available and online, 2 tracks (H264, Opus)` 且被引擎读取；节目音频 4 次抓取**同时含两路音轨**：e440 2.35e6/1.61e6/2.84e6/2.83e6 与 e880 4.02e6/3.57e6/3.07e6/4.17e6（比值 −4.7/−6.9/−0.7/−3.4 dB），全程无崩溃（`fatal signal` 计数 0）。即 **Composite 逐轨混音链路（多输入轨 → 网关 `amix` → 单路 Opus → 单个 OBS 源 → 节目）已跑通**。
   - **本轮已默认开启**：去掉 `WEBOBS_AUDIO_TRACK_EXTRACTION` 开关后重跑同一实测——4 次抓取仍同时含 440Hz 与 880Hz（e440 2.08e6/3.27e6/2.87e6/1.98e6、e880 3.71e6/5.33e6/4.23e6/4.91e6，比值 −5.0/−4.2/−3.4/−7.9 dB）、`fatal signal` 计数 0、`mix-<token>` 路径 online 并被引擎读取。即多输入轨的 Composite 混音**在默认路径下可用**。
-  - 仍需收尾：删除已被证否的“额外 OBS 抽取源”死代码（`AudioInputInstance`、`attach_audio_input_instances`、`ensure_audio_only_path`、私有 `audio_scene` 字段）以及 `commit_prepared` 中对 `entry.audio_inputs` 的空循环；逐轨同步偏移仍按来源统一处理。
+  - 仍需收尾（**纯清理，不影响行为**）：删除已被证否的“额外 OBS 抽取源”死代码——`attach_audio_input_instances`、`ensure_audio_only_path`、`AudioInputInstance`、`SourceEntry::audio_inputs` 字段、`is_ffmpeg_kind`、私有 `RuntimeState::audio_scene` 字段。`commit_prepared` 的空循环（`1bf5f24`）与复用路径里不可达的重建块（`27096be`）已删除。
+  - 清理方法说明（供后续执行）：本文件**不能用脚本按大括号配对删除代码块**——`attach_audio_input_instances` 内部含有带大括号的字符串与初始化列表，脚本三次（标记法、括号配对、读后切片）都把块切错并导致编译失败（均已 `git checkout` 回滚，未进入历史）。可靠做法是：手工读取函数全文 → 用精确文本 `edit` 删除 → 编译 + 单元测试 → 仅在全绿时提交。
+  - 逐轨同步偏移仍按来源统一处理。
   - 因此该接线现在由环境变量 `WEBOBS_AUDIO_TRACK_EXTRACTION` **显式选入**：默认路径保持第 65 轮行为（主源音频 + 明确告警），不会把未验证的代码带进默认运行路径；下一轮应在该开关打开的情况下定位并修掉 double free，再恢复为默认。
   - 单元测试：`resolved_audio_inputs` 的显式优先与 legacy 回退；`webobs-unit-tests` 全绿。
 
