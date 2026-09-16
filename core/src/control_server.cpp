@@ -61,6 +61,13 @@ using HttpResponse = http::response<http::string_body>;
 #define WEBOBS_WEB_ROOT "/opt/webobs/ui"
 #endif
 
+std::string transcoder_executable()
+{
+    if (const char *value = std::getenv("WEBOBS_TRANSCODER_PATH"); value && *value)
+        return value;
+    return "/opt/webobs/bin/transcode-on-demand";
+}
+
 std::string_view view(beast::string_view value)
 {
     return {value.data(), value.size()};
@@ -689,7 +696,7 @@ public:
             const std::string reason = video_transcode ? "video_codec_incompatible" :
                                        audio_transcode ? "audio_codec_incompatible" : "";
             const std::string encoder = video_transcode
-                ? (video_encoder_backend_ready(runtime_status_.video_encoder.vaapi) ? "h264_vaapi" : "libx264")
+                ? (video_encoder_backend_ready(VideoEncoderKind::vaapi, runtime_status_.video_encoder.vaapi) ? "h264_vaapi" : "libx264")
                 : "none";
             body += "{\"sourceId\":\"" + json_escape(source.id) +
                     "\",\"endpoint\":\"/api/v1/sources/" + json_escape(source.id) +
@@ -1344,7 +1351,7 @@ private:
                     return entry.second.hybrid_path == route.hybrid_path;
                 }));
             }
-            const std::string command = "/opt/webobs/bin/transcode-on-demand " + route.path + " " +
+            const std::string command = transcoder_executable() + " " + route.path + " " +
                                         route.hybrid_path + " " +
                                         (route.video_transcode ? "transcode" : "copy") + " " +
                                         (route.audio_transcode ? "transcode" : "copy");
@@ -2299,11 +2306,11 @@ HttpResponse metrics_response(unsigned int version, const RuntimeStatus &status,
         "# TYPE webobs_video_encoder_available gauge\n"
         "webobs_video_encoder_available{backend=\"x264\"} 1\n"
         "webobs_video_encoder_available{backend=\"vaapi\"} " +
-        std::string(metric(video_encoder_backend_ready(status.video_encoder.vaapi))) + "\n" +
+        std::string(metric(video_encoder_backend_ready(VideoEncoderKind::vaapi, status.video_encoder.vaapi))) + "\n" +
         "webobs_video_encoder_available{backend=\"qsv\"} " +
-        std::string(metric(video_encoder_backend_ready(status.video_encoder.qsv))) + "\n" +
+        std::string(metric(video_encoder_backend_ready(VideoEncoderKind::qsv, status.video_encoder.qsv))) + "\n" +
         "webobs_video_encoder_available{backend=\"nvenc\"} " +
-        std::string(metric(video_encoder_backend_ready(status.video_encoder.nvenc))) + "\n" +
+        std::string(metric(video_encoder_backend_ready(VideoEncoderKind::nvenc, status.video_encoder.nvenc))) + "\n" +
         "# HELP webobs_http_requests_total Parsed HTTP requests since process start.\n"
         "# TYPE webobs_http_requests_total counter\nwebobs_http_requests_total " +
         std::to_string(metrics.http_requests.load()) + "\n" +
@@ -2314,15 +2321,16 @@ HttpResponse metrics_response(unsigned int version, const RuntimeStatus &status,
                     "text/plain; version=0.0.4; charset=utf-8");
 }
 
-std::string encoder_backend_json(const VideoEncoderBackend &backend)
+std::string encoder_backend_json(VideoEncoderKind kind, const VideoEncoderBackend &backend)
 {
     return std::string("{\"devicePresent\":") + (backend.device_present ? "true" : "false") +
            ",\"vaDriverLoaded\":" + (backend.va_driver_loaded ? "true" : "false") +
+           ",\"libraryLoaded\":" + (backend.library_loaded ? "true" : "false") +
            ",\"encoderAvailable\":" + (backend.encoder_available ? "true" : "false") +
            ",\"encodeSupported\":" + (backend.encode_supported ? "true" : "false") +
            ",\"decodeSupported\":" + (backend.decode_supported ? "true" : "false") +
            ",\"runtimeProbePassed\":" + (backend.runtime_probe_passed ? "true" : "false") +
-           ",\"ready\":" + (video_encoder_backend_ready(backend) ? "true" : "false") + "}";
+           ",\"ready\":" + (video_encoder_backend_ready(kind, backend) ? "true" : "false") + "}";
 }
 
 HttpResponse system_capabilities_response(unsigned int version, const RuntimeStatus &status)
@@ -2333,10 +2341,10 @@ HttpResponse system_capabilities_response(unsigned int version, const RuntimeSta
                        "\",\"selected\":\"" + std::string(video_encoder_kind_name(encoder.selected)) +
                        "\",\"fallback\":" + (encoder.fallback ? "true" : "false") +
                        ",\"fallbackReason\":\"" + json_escape(encoder.fallback_reason) + "\"" +
-                       ",\"backends\":{\"x264\":" + encoder_backend_json(encoder.x264) +
-                       ",\"vaapi\":" + encoder_backend_json(encoder.vaapi) +
-                       ",\"qsv\":" + encoder_backend_json(encoder.qsv) +
-                       ",\"nvenc\":" + encoder_backend_json(encoder.nvenc) + "}}," +
+                       ",\"backends\":{\"x264\":" + encoder_backend_json(VideoEncoderKind::x264, encoder.x264) +
+                       ",\"vaapi\":" + encoder_backend_json(VideoEncoderKind::vaapi, encoder.vaapi) +
+                       ",\"qsv\":" + encoder_backend_json(VideoEncoderKind::qsv, encoder.qsv) +
+                       ",\"nvenc\":" + encoder_backend_json(VideoEncoderKind::nvenc, encoder.nvenc) + "}}," +
                        "\"renderer\":{\"requested\":\"" + json_escape(status.renderer.requested) +
                        "\",\"selected\":\"" + json_escape(status.renderer.selected) +
                        "\",\"hardwareProbePassed\":" +
@@ -2345,7 +2353,7 @@ HttpResponse system_capabilities_response(unsigned int version, const RuntimeSta
                        ",\"fallbackReason\":\"" + json_escape(status.renderer.fallback_reason) + "\"}," +
                        "\"hardwareDecode\":{\"requested\":\"" +
                        json_escape(status.hardware_decode.requested) + "\",\"selected\":\"" +
-                       json_escape(status.hardware_decode.selected) + "\",\"fallback\":" +
+                       json_escape(status.hardware_decode.selected) + "\",\"backend\":\"" + json_escape(status.hardware_decode.backend) + "\",\"fallback\":" +
                        (status.hardware_decode.fallback ? "true" : "false") +
                        ",\"fallbackReason\":\"" +
                        json_escape(status.hardware_decode.fallback_reason) + "\"}}";

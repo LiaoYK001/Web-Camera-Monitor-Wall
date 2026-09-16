@@ -359,16 +359,30 @@ VideoEncoderCapabilities detect_video_encoder_capabilities(const Config &config,
     capabilities.qsv.decode_supported = capabilities.qsv.device_present;
     capabilities.qsv.runtime_probe_passed = capabilities.qsv.device_present;
 
-    capabilities.nvenc.device_present = access("/dev/nvidia0", R_OK | W_OK) == 0 &&
-                                          access("/dev/nvidiactl", R_OK | W_OK) == 0;
+    // NVIDIA: classic Linux exposes /dev/nvidia0 + /dev/nvidiactl; WSL exposes
+    // the /dev/dxg paravirtual device.  Either satisfies "device present"; the
+    // library load and the actual encode sample are reported separately and
+    // come from the runtime probe (scripts/hardware-probe.py).
+    const bool nvidia_device_nodes =
+        (access("/dev/nvidia0", R_OK | W_OK) == 0 && access("/dev/nvidiactl", R_OK | W_OK) == 0) ||
+        access("/dev/dxg", R_OK | W_OK) == 0;
+    capabilities.nvenc.va_driver_loaded = false; // NVENC is never a VA-API backend.
+    capabilities.nvenc.device_present =
+        environment_true("WEBOBS_NVIDIA_DEVICE_PRESENT", nvidia_device_nodes);
+    capabilities.nvenc.library_loaded =
+        environment_true("WEBOBS_NVIDIA_LIBRARY_LOADED", false);
     capabilities.nvenc.encoder_available =
-        modules_loaded &&
-        encoder_registered({"obs_nvenc_h264_soft", "obs_nvenc_h264_tex", "obs_nvenc_h264_cuda",
-                            "ffmpeg_nvenc"});
-    capabilities.nvenc.va_driver_loaded = capabilities.nvenc.device_present;
-    capabilities.nvenc.encode_supported = capabilities.nvenc.encoder_available;
-    capabilities.nvenc.decode_supported = capabilities.nvenc.device_present;
-    capabilities.nvenc.runtime_probe_passed = capabilities.nvenc.device_present;
+        environment_true("WEBOBS_NVIDIA_ENCODER_REGISTERED", false) ||
+        (modules_loaded &&
+         encoder_registered({"obs_nvenc_h264_tex", "obs_nvenc_h264_cuda", "obs_nvenc_h264_soft",
+                             "ffmpeg_nvenc"}));
+    capabilities.nvenc.encode_supported =
+        environment_true("WEBOBS_NVIDIA_H264_ENCODE", false) ||
+        environment_true("WEBOBS_NVIDIA_ENCODE_SUPPORTED", false);
+    capabilities.nvenc.decode_supported =
+        environment_true("WEBOBS_NVIDIA_DECODE_SUPPORTED", false);
+    capabilities.nvenc.runtime_probe_passed =
+        environment_true("WEBOBS_NVIDIA_SAMPLE_PASSED", false);
     return select_video_encoder(config.video_encoder, capabilities);
 }
 
@@ -389,17 +403,30 @@ HardwareDecodeCapabilities select_hardware_decode(const Config &config,
 {
     HardwareDecodeCapabilities result;
     result.requested = std::string(hardware_decode_preference_name(config.hardware_decode));
-    const bool ready = capabilities.vaapi.device_present && capabilities.vaapi.va_driver_loaded &&
-                       capabilities.vaapi.decode_supported && capabilities.vaapi.runtime_probe_passed;
-    if (config.hardware_decode == HardwareDecodePreference::off)
-        return result;
-    if (ready) {
-        result.selected = "vaapi";
+    const bool cuda_ready = capabilities.nvenc.device_present && capabilities.nvenc.library_loaded &&
+                            capabilities.nvenc.decode_supported && capabilities.nvenc.runtime_probe_passed;
+    const bool vaapi_ready = capabilities.vaapi.device_present && capabilities.vaapi.va_driver_loaded &&
+                             capabilities.vaapi.decode_supported && capabilities.vaapi.runtime_probe_passed;
+    if (config.hardware_decode == HardwareDecodePreference::off) {
+        result.backend = "software";
         return result;
     }
+    if (vaapi_ready) {
+        // OBS RTSP sources decode through VA-API inside the engine.
+        result.selected = "vaapi";
+        result.backend = "vaapi";
+        return result;
+    }
+    if (cuda_ready) {
+        // CUDA decode is consumed by the gateway/hybrid transcoder, not by the
+        // OBS source decode path, so `selected` intentionally stays off.
+        result.backend = "cuda";
+        return result;
+    }
+    result.backend = "software";
     if (config.hardware_decode == HardwareDecodePreference::on) {
         result.fallback = true;
-        result.fallback_reason = "vaapi_decode_runtime_not_ready";
+        result.fallback_reason = "hardware_decode_runtime_not_ready";
     }
     return result;
 }
@@ -414,6 +441,11 @@ const char *video_encoder_identifier(VideoEncoderKind kind)
     case VideoEncoderKind::qsv:
         return "obs_qsv11_soft_v2";
     case VideoEncoderKind::nvenc:
+        // Never assume one plugin name: pick the NVENC encoder OBS registered.
+        for (const char *candidate : {"obs_nvenc_h264_tex", "obs_nvenc_h264_cuda", "obs_nvenc_h264_soft",
+                                      "ffmpeg_nvenc"})
+            if (encoder_registered({candidate}))
+                return candidate;
         return "obs_nvenc_h264_soft";
     }
     return "obs_x264";
@@ -432,6 +464,12 @@ DataPtr video_encoder_settings(const Config &config, VideoEncoderKind kind)
         obs_data_set_string(settings.get(), "vaapi_device", config.vaapi_device.c_str());
         obs_data_set_int(settings.get(), "profile", 100);
         obs_data_set_int(settings.get(), "bf", 0);
+    } else if (kind == VideoEncoderKind::nvenc) {
+        // Low-latency NVENC: fastest preset, no B-frames, short keyframe interval.
+        obs_data_set_string(settings.get(), "preset", "p1");
+        obs_data_set_string(settings.get(), "tune", "ll");
+        obs_data_set_int(settings.get(), "bf", 0);
+        obs_data_set_int(settings.get(), "keyint_sec", 2);
     }
     return settings;
 }
@@ -602,7 +640,7 @@ ExitCode run_obs_engine(const Config &config, const SceneDocument &document)
     blog(LOG_INFO,
          "Video encoder capabilities: requested=%s selected=%s fallback=%s "
          "vaapi(device=%s,driver=%s,encode=%s,decode=%s,probe=%s,encoder=%s) qsv(device=%s,encoder=%s) "
-         "nvenc(device=%s,encoder=%s)",
+         "nvenc(device=%s,library=%s,encoder=%s,encode=%s,sample=%s)",
          video_encoder_preference_name(encoder_capabilities.requested).data(),
          video_encoder_kind_name(encoder_capabilities.selected).data(),
          encoder_capabilities.fallback ? "true" : "false",
@@ -615,7 +653,10 @@ ExitCode run_obs_engine(const Config &config, const SceneDocument &document)
          encoder_capabilities.qsv.device_present ? "true" : "false",
          encoder_capabilities.qsv.encoder_available ? "true" : "false",
          encoder_capabilities.nvenc.device_present ? "true" : "false",
-         encoder_capabilities.nvenc.encoder_available ? "true" : "false");
+         encoder_capabilities.nvenc.library_loaded ? "true" : "false",
+         encoder_capabilities.nvenc.encoder_available ? "true" : "false",
+         encoder_capabilities.nvenc.encode_supported ? "true" : "false",
+         encoder_capabilities.nvenc.runtime_probe_passed ? "true" : "false");
 
     ObsSceneRuntime scene_runtime(config.connect_timeout_seconds, config.browser_security,
                                   config.source_stale_seconds,

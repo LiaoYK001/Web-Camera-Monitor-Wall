@@ -318,33 +318,42 @@ void video_encoder_tests()
     expect(selected.selected == webobs::VideoEncoderKind::x264 && !selected.fallback,
            "automatic encoder selection must keep the software baseline without hardware");
 
-    capabilities.vaapi = {true, true, true, true, true, true};
+    // Field order: device, va_driver, library, encoder, encode, decode, probe.
+    capabilities.vaapi = {true, true, false, true, true, true, true};
     selected = webobs::select_video_encoder(webobs::VideoEncoderPreference::automatic,
                                             capabilities);
     expect(selected.selected == webobs::VideoEncoderKind::vaapi && !selected.fallback,
            "automatic encoder selection must use an available VAAPI backend");
 
-    capabilities.qsv = {true, true, true, true, true, true};
+    capabilities.qsv = {true, false, false, true, true, true, true};
     selected = webobs::select_video_encoder(webobs::VideoEncoderPreference::automatic,
                                             capabilities);
     expect(selected.selected == webobs::VideoEncoderKind::qsv,
            "automatic encoder selection must prefer QSV over generic VAAPI");
 
-    capabilities.nvenc = {true, true, true, true, true, true};
+    // WSL/classic NVIDIA: no VA-API driver at all, but device + library + sample pass.
+    capabilities.nvenc = {true, false, true, true, true, true, true};
     selected = webobs::select_video_encoder(webobs::VideoEncoderPreference::automatic,
                                             capabilities);
     expect(selected.selected == webobs::VideoEncoderKind::nvenc,
            "automatic encoder selection must prefer NVENC when it is ready");
+    expect(webobs::video_encoder_backend_ready(webobs::VideoEncoderKind::nvenc, capabilities.nvenc),
+           "NVENC readiness must not depend on the VA-API driver field");
 
-    capabilities.nvenc = {true, true, false, true, true, true};
+    capabilities.nvenc = {true, false, true, false, true, true, true};
     selected = webobs::select_video_encoder(webobs::VideoEncoderPreference::nvenc,
                                             capabilities);
     expect(selected.selected == webobs::VideoEncoderKind::x264 && selected.fallback,
            "an explicitly requested unavailable backend must fall back to x264");
-    expect(!webobs::video_encoder_backend_ready(capabilities.nvenc),
+    expect(!webobs::video_encoder_backend_ready(webobs::VideoEncoderKind::nvenc, capabilities.nvenc),
            "a hardware device without its encoder module must not be reported ready");
 
-    capabilities.vaapi = {true, false, true, true, true, false};
+    // Device present but libcuda not loadable: fail closed even though the node exists.
+    capabilities.nvenc = {true, false, false, true, true, true, true};
+    expect(!webobs::video_encoder_backend_ready(webobs::VideoEncoderKind::nvenc, capabilities.nvenc),
+           "NVENC without a loadable CUDA library must not be reported ready");
+
+    capabilities.vaapi = {true, false, false, true, true, true, false};
     selected = webobs::select_video_encoder(webobs::VideoEncoderPreference::vaapi,
                                             capabilities);
     expect(selected.selected == webobs::VideoEncoderKind::x264 && selected.fallback &&
