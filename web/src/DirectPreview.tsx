@@ -5,7 +5,7 @@ import { DirectAudioMixer, type DirectAudioSnapshot } from './directAudioMixer';
 import { clearPrivateRuntimeState, loadBrowserIdentity, loadMonitorView, saveMonitorView } from './localRuntime';
 import { observeTileVisibility, shouldRunPlayback } from './mediaLifecycle';
 import { countRenderedFrames, formatTelemetry, sampleConnectionTelemetry, sampleElementTelemetry, unavailableTelemetry, type MediaTelemetry } from './mediaTelemetry';
-import { applyAutomaticLayout, defaultMonitorView, evaluatePromotion, mapDetectionBoxToTile, nextRotationWindow, normalizeMonitorView, playbackTopologyLabel, resolveFillMode, selectLowPowerProfile, sourceDecoration, tileTransform, validDetectionSignal, type AudioMeterConfig, type DetectionSignal, type MonitorView, type TelemetryOverlayConfig, type VideoFillMode } from './monitorView';
+import { applyAutomaticLayout, defaultMonitorView, evaluatePromotion, mapDetectionBoxToTile, nextRotationWindow, normalizeMonitorView, playbackTopologyLabel, resolveFillMode, selectLowPowerProfile, sourceAudioTrackState, sourceDecoration, tileTransform, validDetectionSignal, type AudioMeterConfig, type DetectionSignal, type MonitorView, type SourceAudioTrackState, type TelemetryOverlayConfig, type VideoFillMode } from './monitorView';
 import { BrowserAnalyticsRuntime, type BrowserAnalyticsStatus } from './analyticsRuntime';
 import { openIssueCenter, reportLocalIssue, reportMediaIssue, resolveLocalIssue, subscribeLocalIssues } from './issueRuntime';
 import type { AnalyticsPolicy, CameraRecord, CameraSceneSource, MotionZone, OperationalIssue, SceneDocument, SceneItem, SceneSource, SourcePlaybackCapability } from './types';
@@ -782,24 +782,22 @@ export default function DirectPreview({ scene, compact = false }: { scene: Scene
   // "confirmed none" is never guessed.  A live stream with zero audio tracks is
   // definitive, a ready probe decides from its track list, and everything else
   // stays "unprobed" so a silent source is never mislabelled as having no audio.
-  const audioTrackState = (source: SceneSource): 'available' | 'none' | 'unprobed' => {
+  const audioTrackState = (source: SceneSource): SourceAudioTrackState => {
     const meter = audioBySource.get(source.id);
-    if (meter?.streamBound) return (meter.audioTracks ?? 0) > 0 ? 'available' : 'none';
-    if ((meter?.audioTracks ?? 0) > 0) return 'available';
-    if (['color', 'text', 'image', 'nested'].includes(source.kind)) return 'none';
     const capability = bySource.get(source.id);
-    if (capability?.audioCodec && capability.audioCodec !== 'none') return 'available';
-    if (source.kind === 'camera') {
-      const camera = cameras.find((candidate) => candidate.id === source.cameraId);
-      const profile = camera?.profiles.find((candidate) => candidate.id === source.profileId);
-      if (profile) {
-        if (profile.probeState === 'ready')
-          return (profile.tracks ?? []).some((track) => track.kind === 'audio') ? 'available' : 'none';
-        return 'unprobed';
-      }
-    }
-    if (capability) return 'none';
-    return 'unprobed';
+    const profile = source.kind === 'camera'
+      ? cameras.find((candidate) => candidate.id === source.cameraId)?.profiles
+          .find((candidate) => candidate.id === source.profileId)
+      : undefined;
+    return sourceAudioTrackState({
+      kind: source.kind,
+      liveAudioTracks: meter?.audioTracks,
+      streamBound: meter?.streamBound,
+      audioCodec: capability?.audioCodec,
+      probeState: profile?.probeState,
+      probeHasAudioTrack: profile ? (profile.tracks ?? []).some((track) => track.kind === 'audio') : undefined,
+      capabilityKnown: Boolean(capability),
+    });
   };
 
   const reprobeAudioTracks = async (source: SceneSource) => {

@@ -432,6 +432,29 @@ test('labels the actual playback topology instead of a blanket direct label', as
   expect(result).toEqual({ direct: '真直连', gateway: '网关转发', hybrid: 'Hybrid 转码',
     composite: 'Composite', capability: 'Hybrid 转码', unknown: '' });
 });
+test('classifies a source audio-track state without false no-audio claims', async ({ page }) => {
+  await page.goto('/');
+  const result = await page.evaluate(async () => {
+    const monitor = await import('/src/monitorView.ts');
+    const state = monitor.sourceAudioTrackState;
+    return {
+      color: state({ kind: 'color' }),
+      boundZero: state({ kind: 'camera', streamBound: true, liveAudioTracks: 0 }),
+      boundTwo: state({ kind: 'camera', streamBound: true, liveAudioTracks: 2 }),
+      // An attached element without a stream is unknown, not "no audio".
+      attached: state({ kind: 'camera', streamBound: false, liveAudioTracks: 0 }),
+      capability: state({ kind: 'rtsp', audioCodec: 'aac' }),
+      probeReadyAudio: state({ kind: 'camera', probeState: 'ready', probeHasAudioTrack: true }),
+      probeReadySilent: state({ kind: 'camera', probeState: 'ready', probeHasAudioTrack: false }),
+      probeFailed: state({ kind: 'camera', probeState: 'failed' }),
+      capabilityKnownEmpty: state({ kind: 'rtsp', audioCodec: '', capabilityKnown: true }),
+    };
+  });
+  expect(result).toEqual({ color: 'none', boundZero: 'none', boundTwo: 'available', attached: 'unprobed',
+    capability: 'available', probeReadyAudio: 'available', probeReadySilent: 'none',
+    probeFailed: 'unprobed', capabilityKnownEmpty: 'none' });
+});
+
 
 
 

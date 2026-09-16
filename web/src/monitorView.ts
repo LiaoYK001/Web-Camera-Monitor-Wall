@@ -287,6 +287,36 @@ export function playbackTopologyLabel(topology: string | undefined, deliveryMode
   }
 }
 
+export type SourceAudioTrackState = 'available' | 'none' | 'unprobed';
+
+export interface SourceAudioTrackInput {
+  kind: string;
+  liveAudioTracks?: number;
+  streamBound?: boolean;
+  audioCodec?: string;
+  probeState?: string;
+  probeHasAudioTrack?: boolean;
+  capabilityKnown?: boolean;
+}
+
+/**
+ * Truthful audio-track state shared by the wall and the audio workspace so a
+ * source is never mislabelled: only a bound stream with zero tracks or a ready
+ * probe without audio tracks means "no audio"; everything else is "unprobed".
+ */
+export function sourceAudioTrackState(input: SourceAudioTrackInput): SourceAudioTrackState {
+  if (input.streamBound) return (input.liveAudioTracks ?? 0) > 0 ? 'available' : 'none';
+  if ((input.liveAudioTracks ?? 0) > 0) return 'available';
+  if (['color', 'text', 'image', 'nested'].includes(input.kind)) return 'none';
+  if (input.audioCodec && input.audioCodec !== 'none') return 'available';
+  if (input.probeState !== undefined) {
+    if (input.probeState === 'ready') return input.probeHasAudioTrack ? 'available' : 'none';
+    return 'unprobed';
+  }
+  if (input.capabilityKnown) return 'none';
+  return 'unprobed';
+}
+
 const clamp = (value: number, minimum: number, maximum: number) => Math.min(maximum, Math.max(minimum, value));
 const finite = (value: unknown, fallback: number) => {
   const number = typeof value === 'number' ? value : Number(value);
