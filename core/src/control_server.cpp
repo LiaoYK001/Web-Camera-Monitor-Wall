@@ -1,6 +1,7 @@
 #include "webobs/control_server.hpp"
 
 #include "webobs/authentication.hpp"
+#include "webobs/audio_tracks.hpp"
 #include "webobs/audit_event.hpp"
 #include "webobs/scene_controller.hpp"
 #include "webobs/studio_controller.hpp"
@@ -874,6 +875,7 @@ private:
             return response(http::status::not_found, version, error_body("session_not_found", "session not found"));
         Session removed;
         bool remove_route = false;
+        bool remove_audio_route = false;
         {
             const std::lock_guard lock(session_mutex_);
             const auto session = sessions_.find(std::string(token));
@@ -882,10 +884,20 @@ private:
                                 error_body("session_not_found", "session not found"));
             removed = std::move(session->second);
             sessions_.erase(session);
-            remove_route = !removed.route_source_id.empty() &&
-                std::none_of(sessions_.begin(), sessions_.end(), [&removed](const auto &entry) {
-                    return entry.second.route_source_id == removed.route_source_id;
-                });
+            if (removed.audio_track >= 0) {
+                // An audio-only session owns just its own per-track path; it must
+                // never release the video route another viewer is still watching.
+                remove_audio_route = !removed.route_source_id.empty() &&
+                    std::none_of(sessions_.begin(), sessions_.end(), [&removed](const auto &entry) {
+                        return entry.second.route_source_id == removed.route_source_id &&
+                               entry.second.audio_track == removed.audio_track;
+                    });
+            } else {
+                remove_route = !removed.route_source_id.empty() &&
+                    std::none_of(sessions_.begin(), sessions_.end(), [&removed](const auto &entry) {
+                        return entry.second.route_source_id == removed.route_source_id;
+                    });
+            }
         }
         const UpstreamResponse upstream = request_http(removed.upstream_url, {}, "DELETE", {});
         if (!upstream.ok || (upstream.status != 200 && upstream.status != 204 && upstream.status != 404))
@@ -894,6 +906,10 @@ private:
         if (remove_route) {
             const std::lock_guard operation_lock(route_operation_mutex_);
             remove_source_route(removed.route_source_id);
+        }
+        if (remove_audio_route) {
+            const std::lock_guard operation_lock(route_operation_mutex_);
+            remove_audio_track_route(removed.route_source_id, removed.audio_track);
         }
         return response(http::status::no_content, version, {}, "application/json; charset=utf-8");
     }
@@ -912,6 +928,8 @@ private:
         std::string browser_prefix;
         std::string client_id;
         std::string route_source_id;
+        /** >= 0 for an audio-only per-track session (F5-05); -1 for video sessions. */
+        int audio_track = -1;
     };
 
     struct DirectRoute {
@@ -925,6 +943,12 @@ private:
         bool video_transcode = false;
         bool audio_transcode = false;
         std::string hybrid_path;
+        /** Per-track audio-only MediaMTX paths, keyed by 0:a:<index> (F5-05). */
+        std::unordered_map<int, std::string> audio_paths;
+        /** Probe cache of the real audio tracks of this source. */
+        std::vector<AudioTrackDescriptor> audio_tracks;
+        std::string audio_tracks_key;
+        bool audio_tracks_probed = false;
     };
 
     struct UpstreamResponse {
@@ -1050,7 +1074,8 @@ private:
     HttpResponse create_validated(const HttpRequest &request, std::string_view path,
                                   std::string_view browser_prefix,
                                   std::string_view client_id = {},
-                                  std::string_view route_source_id = {})
+                                  std::string_view route_source_id = {},
+                                  int audio_track = -1)
     {
         const unsigned int version = request.version();
         {
@@ -1085,7 +1110,7 @@ private:
                 } while (sessions_.contains(token));
                 sessions_.emplace(token, Session{*upstream_location, std::chrono::steady_clock::now(),
                                                  std::string(browser_prefix), std::string(client_id),
-                                                 std::string(route_source_id)});
+                                                 std::string(route_source_id), audio_track});
             }
         }
         if (capacity_exhausted) {
@@ -1101,8 +1126,14 @@ private:
         return result;
     }
 
-    static std::optional<std::string> run_capture(const std::vector<std::string> &arguments,
-                                                   std::chrono::seconds timeout)
+    /**
+     * Raw stdout of a short-lived probe process, trimmed and capped.  The codec
+     * helpers below need a single token, but JSON probes (audio tracks) are far
+     * larger, so the size policy is the caller's.
+     */
+    static std::optional<std::string> run_capture_text(const std::vector<std::string> &arguments,
+                                                       std::chrono::seconds timeout,
+                                                       std::size_t maximum_bytes)
     {
         if (arguments.empty())
             return std::nullopt;
@@ -1161,7 +1192,7 @@ private:
         std::array<char, 256> buffer{};
         for (;;) {
             const ssize_t count = read(output_pipe[0], buffer.data(), buffer.size());
-            if (count > 0 && output.size() < 4096)
+            if (count > 0 && output.size() < maximum_bytes)
                 output.append(buffer.data(), static_cast<std::size_t>(count));
             else if (count == 0)
                 break;
@@ -1175,12 +1206,21 @@ private:
         if (first == std::string::npos)
             return std::nullopt;
         output.erase(0, first);
-        if (output.size() > 32 ||
-            !std::all_of(output.begin(), output.end(), [](unsigned char character) {
+        return output;
+    }
+
+    /** Single-token probe output such as an ffprobe codec name. */
+    static std::optional<std::string> run_capture(const std::vector<std::string> &arguments,
+                                                  std::chrono::seconds timeout)
+    {
+        auto output = run_capture_text(arguments, timeout, 4096);
+        if (!output || output->size() > 32)
+            return std::nullopt;
+        if (!std::all_of(output->begin(), output->end(), [](unsigned char character) {
                 return std::isalnum(character) || character == '_';
             }))
             return std::nullopt;
-        return lowercase(output);
+        return lowercase(*output);
     }
 
     static bool browser_compatible_codec(std::string_view codec)
@@ -1213,6 +1253,8 @@ private:
             direct_routes_.erase(found);
         }
         delete_config_path(route.hybrid_path);
+        for (const auto &entry : route.audio_paths)
+            delete_config_path(entry.second);
         delete_config_path(route.path);
     }
 
@@ -1269,6 +1311,7 @@ private:
         DirectRoute route;
         bool adding = false;
         std::string previous_hybrid_path;
+        std::vector<std::string> previous_audio_paths;
         {
             const std::lock_guard lock(route_state_mutex_);
             const auto existing = direct_routes_.find(source.id);
@@ -1293,6 +1336,12 @@ private:
                 route.video_transcode = false;
                 route.audio_transcode = false;
                 route.hybrid_path.clear();
+                for (const auto &entry : route.audio_paths)
+                    previous_audio_paths.push_back(entry.second);
+                route.audio_paths.clear();
+                route.audio_tracks.clear();
+                route.audio_tracks_key.clear();
+                route.audio_tracks_probed = false;
             }
         }
         route.rtsp_url = effective_url;
@@ -1310,6 +1359,8 @@ private:
         if (!configured.ok || configured.status != 200)
             return std::nullopt;
         delete_config_path(previous_hybrid_path);
+        for (const std::string &audio_path : previous_audio_paths)
+            delete_config_path(audio_path);
         {
             const std::lock_guard lock(route_state_mutex_);
             direct_routes_[source.id] = route;
@@ -1394,6 +1445,223 @@ private:
         return route.hybrid_path;
     }
 
+    /**
+     * Real audio tracks of a source, probed once per route and cached (F5-05).
+     * A confirmed audio-free source returns an empty list, which is different
+     * from a failed probe (std::nullopt) and must stay distinguishable.
+     */
+    std::optional<std::vector<AudioTrackDescriptor>> ensure_audio_tracks(const SceneSource &source)
+    {
+        const auto direct_path = ensure_direct_route(source);
+        if (!direct_path)
+            return std::nullopt;
+        std::string source_key;
+        {
+            const std::lock_guard lock(route_state_mutex_);
+            const auto found = direct_routes_.find(source.id);
+            if (found == direct_routes_.end())
+                return std::nullopt;
+            const DirectRoute &route = found->second;
+            if (route.audio_tracks_probed && route.audio_tracks_key == route.source_key)
+                return route.audio_tracks;
+            source_key = route.source_key;
+        }
+        const std::string input = "rtsp://127.0.0.1:8554/" + *direct_path;
+        const auto probed = run_capture_text({"ffprobe", "-v", "error", "-rw_timeout", "8000000",
+                                         "-rtsp_transport", "tcp", "-select_streams", "a",
+                                         "-show_entries",
+                                         "stream=index,codec_name,channels,channel_layout,sample_rate:stream_tags=language,title",
+                                         "-of", "json", input},
+                                         std::chrono::seconds(12), 256 * 1024);
+        if (!probed)
+            return std::nullopt;
+        std::vector<AudioTrackDescriptor> tracks = parse_audio_tracks(*probed);
+        {
+            const std::lock_guard lock(route_state_mutex_);
+            const auto found = direct_routes_.find(source.id);
+            if (found != direct_routes_.end() && found->second.source_key == source_key) {
+                found->second.audio_tracks = tracks;
+                found->second.audio_tracks_key = source_key;
+                found->second.audio_tracks_probed = true;
+            }
+        }
+        return tracks;
+    }
+
+    static std::string audio_session_prefix(std::string_view source_id, int track_index)
+    {
+        return "/api/v1/sources/" + std::string(source_id) + "/audio-tracks/" +
+               std::to_string(track_index) + "/whep/session/";
+    }
+
+    /**
+     * Create the audio-only MediaMTX path for one track.  MediaMTX 1.18.2 maps a
+     * single audio output per path, so every independently controllable track
+     * gets its own on-demand path fed by the transcoder's audio-track mode.
+     */
+    std::optional<std::string> ensure_audio_track_route(const SceneSource &source, int track_index)
+    {
+        const auto direct_path = ensure_direct_route(source);
+        if (!direct_path)
+            return std::nullopt;
+        {
+            const std::lock_guard lock(route_state_mutex_);
+            const auto found = direct_routes_.find(source.id);
+            if (found == direct_routes_.end())
+                return std::nullopt;
+            const auto existing = found->second.audio_paths.find(track_index);
+            if (existing != found->second.audio_paths.end() && valid_audio_track_path(existing->second))
+                return existing->second;
+        }
+        std::string audio_path;
+        {
+            const std::lock_guard lock(route_state_mutex_);
+            do {
+                audio_path = audio_track_path_name(random_token(), track_index);
+            } while (audio_path.empty() ||
+                     std::any_of(direct_routes_.begin(), direct_routes_.end(),
+                                 [&audio_path](const auto &entry) {
+                                     return std::any_of(entry.second.audio_paths.begin(),
+                                                        entry.second.audio_paths.end(),
+                                                        [&audio_path](const auto &audio) {
+                                                            return audio.second == audio_path;
+                                                        });
+                                 }));
+        }
+        const std::string arguments = audio_track_route_arguments(*direct_path, audio_path, track_index);
+        if (arguments.empty())
+            return std::nullopt;
+        const std::string command = transcoder_executable() + " " + arguments;
+        const std::string body =
+            std::string("{\"source\":\"publisher\",\"overridePublisher\":false,\"maxReaders\":4,") +
+            "\"runOnDemand\":\"" + json_escape(command) +
+            "\",\"runOnDemandRestart\":false,\"runOnDemandStartTimeout\":\"10s\"," +
+            "\"runOnDemandCloseAfter\":\"2s\"}";
+        const std::string url = std::string(control_origin) + "/v3/config/paths/add/" + audio_path;
+        const UpstreamResponse configured = request_http(url, body, "POST", "application/json");
+        if (!configured.ok || configured.status != 200)
+            return std::nullopt;
+        {
+            const std::lock_guard lock(route_state_mutex_);
+            const auto found = direct_routes_.find(source.id);
+            if (found == direct_routes_.end())
+                return std::nullopt;
+            found->second.audio_paths[track_index] = audio_path;
+        }
+        return audio_path;
+    }
+
+    /** Release one per-track audio path as soon as its last session closes. */
+    void remove_audio_track_route(std::string_view source_id, int track_index)
+    {
+        std::string audio_path;
+        {
+            const std::lock_guard lock(route_state_mutex_);
+            const auto found = direct_routes_.find(std::string(source_id));
+            if (found == direct_routes_.end())
+                return;
+            const auto entry = found->second.audio_paths.find(track_index);
+            if (entry == found->second.audio_paths.end())
+                return;
+            audio_path = entry->second;
+            found->second.audio_paths.erase(entry);
+        }
+        delete_config_path(audio_path);
+    }
+
+public:
+    /** `GET /api/v1/sources/<id>/audio-tracks`: the real tracks of a source. */
+    HttpResponse audio_tracks(const HttpRequest &request, std::string_view source_id)
+    {
+        const unsigned int version = request.version();
+        const SceneDocument document = controller_.private_document_snapshot();
+        const auto source = std::find_if(document.sources.begin(), document.sources.end(),
+                                         [source_id](const SceneSource &candidate) {
+                                             return candidate.id == source_id;
+                                         });
+        if (source == document.sources.end())
+            return response(http::status::not_found, version,
+                            error_body("source_not_found", "source not found"));
+        if (source->kind != "rtsp" && source->kind != "camera")
+            return response(http::status::conflict, version,
+                            error_body("composite_only", "browser sources use composite playback"));
+        std::optional<std::vector<AudioTrackDescriptor>> tracks;
+        {
+            const std::lock_guard operation_lock(route_operation_mutex_);
+            tracks = ensure_audio_tracks(*source);
+        }
+        if (!tracks)
+            return response(http::status::bad_gateway, version,
+                            error_body("audio_tracks_unavailable", "audio track probing is unavailable"));
+        std::string body = "{\"sourceId\":\"" + json_escape(source->id) + "\",\"probed\":true,\"tracks\":[";
+        bool first = true;
+        for (const AudioTrackDescriptor &track : *tracks) {
+            if (!first)
+                body.push_back(',');
+            first = false;
+            const std::string endpoint = "/api/v1/sources/" + source->id + "/audio-tracks/" +
+                                         std::to_string(track.index) + "/whep";
+            body += "{\"index\":" + std::to_string(track.index) +
+                    ",\"streamIndex\":" + std::to_string(track.stream_index) +
+                    ",\"codec\":\"" + json_escape(track.codec) + "\"" +
+                    ",\"channels\":" + std::to_string(track.channels) +
+                    ",\"channelLayout\":\"" + json_escape(track.channel_layout) + "\"" +
+                    ",\"sampleRate\":" + std::to_string(track.sample_rate) +
+                    ",\"language\":\"" + json_escape(track.language) + "\"" +
+                    ",\"title\":\"" + json_escape(track.title) + "\"" +
+                    ",\"sourceCodecBrowserCompatible\":" + (track.browser_compatible ? "true" : "false") +
+                    ",\"audioOnly\":true,\"endpoint\":\"" + json_escape(endpoint) + "\"}";
+        }
+        body += "]}";
+        return response(http::status::ok, version, std::move(body));
+    }
+
+    HttpResponse create_audio_track(const HttpRequest &request, std::string_view source_id,
+                                    int track_index)
+    {
+        if (auto invalid = validate_offer(request))
+            return std::move(*invalid);
+        const SceneDocument document = controller_.private_document_snapshot();
+        const auto source = std::find_if(document.sources.begin(), document.sources.end(),
+                                         [source_id](const SceneSource &candidate) {
+                                             return candidate.id == source_id;
+                                         });
+        if (source == document.sources.end())
+            return response(http::status::not_found, request.version(),
+                            error_body("source_not_found", "source not found"));
+        if (source->kind != "rtsp" && source->kind != "camera")
+            return response(http::status::conflict, request.version(),
+                            error_body("composite_only", "browser sources use composite playback"));
+        std::optional<std::string> route;
+        {
+            const std::lock_guard operation_lock(route_operation_mutex_);
+            const auto tracks = ensure_audio_tracks(*source);
+            if (!tracks)
+                return response(http::status::bad_gateway, request.version(),
+                                error_body("audio_tracks_unavailable", "audio track probing is unavailable"));
+            const bool present = std::any_of(tracks->begin(), tracks->end(),
+                                             [track_index](const AudioTrackDescriptor &track) {
+                                                 return track.index == track_index;
+                                             });
+            if (!present)
+                return response(http::status::not_found, request.version(),
+                                error_body("audio_track_not_found", "the source has no such audio track"));
+            route = ensure_audio_track_route(*source, track_index);
+        }
+        if (!route)
+            return response(http::status::bad_gateway, request.version(),
+                            error_body("audio_route", "audio-only source routing is unavailable"));
+        return create_validated(request, *route, audio_session_prefix(source_id, track_index), {},
+                                source->id, track_index);
+    }
+
+    HttpResponse remove_audio_track(const HttpRequest &request, std::string_view source_id,
+                                    int track_index, std::string_view token)
+    {
+        return remove(request, token, audio_session_prefix(source_id, track_index));
+    }
+
+private:
     void reconcile(const SceneDocument &document)
     {
         std::vector<DirectRoute> removed;
@@ -1415,6 +1683,8 @@ private:
         }
         for (const DirectRoute &route : removed) {
             delete_config_path(route.hybrid_path);
+            for (const auto &entry : route.audio_paths)
+                delete_config_path(entry.second);
             delete_config_path(route.path);
         }
     }
@@ -2929,6 +3199,59 @@ HttpResponse handle_request(const HttpRequest &request, SceneController &control
                                            error_body("method_not_allowed", "use DELETE"));
             result.set(http::field::allow, "DELETE");
             return result;
+        }
+        constexpr std::string_view audio_tracks_operation = "/audio-tracks";
+        if (operation == audio_tracks_operation) {
+            if (request.method() == http::verb::get)
+                return whep_proxy.audio_tracks(request, source_id);
+            HttpResponse result = response(http::status::method_not_allowed, version,
+                                           error_body("method_not_allowed", "use GET"));
+            result.set(http::field::allow, "GET");
+            return result;
+        }
+        constexpr std::string_view audio_track_prefix = "/audio-tracks/";
+        if (operation.starts_with(audio_track_prefix)) {
+            const std::string_view remainder = operation.substr(audio_track_prefix.size());
+            const std::size_t audio_separator = remainder.find('/');
+            const std::string_view track_text = audio_separator == std::string_view::npos
+                                                    ? remainder
+                                                    : remainder.substr(0, audio_separator);
+            int track_index = -1;
+            if (!track_text.empty() && track_text.size() <= 2) {
+                bool digits = true;
+                int value = 0;
+                for (const char character : track_text) {
+                    if (character < '0' || character > '9') {
+                        digits = false;
+                        break;
+                    }
+                    value = value * 10 + (character - '0');
+                }
+                if (digits)
+                    track_index = value;
+            }
+            if (audio_separator == std::string_view::npos || track_index < 0 || track_index >= 32)
+                return response(http::status::not_found, version,
+                                error_body("not_found", "resource not found"));
+            const std::string_view audio_operation = remainder.substr(audio_separator + 1);
+            if (audio_operation == "whep") {
+                if (request.method() == http::verb::post)
+                    return whep_proxy.create_audio_track(request, source_id, track_index);
+                HttpResponse result = response(http::status::method_not_allowed, version,
+                                               error_body("method_not_allowed", "use POST"));
+                result.set(http::field::allow, "POST");
+                return result;
+            }
+            constexpr std::string_view audio_session = "whep/session/";
+            if (audio_operation.starts_with(audio_session)) {
+                if (request.method() == http::verb::delete_)
+                    return whep_proxy.remove_audio_track(request, source_id, track_index,
+                                                         audio_operation.substr(audio_session.size()));
+                HttpResponse result = response(http::status::method_not_allowed, version,
+                                               error_body("method_not_allowed", "use DELETE"));
+                result.set(http::field::allow, "DELETE");
+                return result;
+            }
         }
         return response(http::status::not_found, version, error_body("not_found", "resource not found"));
     }

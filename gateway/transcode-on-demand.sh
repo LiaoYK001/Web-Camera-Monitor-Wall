@@ -3,12 +3,29 @@ set -eu
 
 if [ "$#" -ne 4 ] ||
     ! printf '%s\n' "$1" | grep -Eq '^direct-[a-f0-9]{32}$' ||
-    ! printf '%s\n' "$2" | grep -Eq '^hybrid-[a-f0-9]{32}$' ||
-    ! printf '%s\n' "$3" | grep -Eq '^(copy|transcode)$' ||
-    ! printf '%s\n' "$4" | grep -Eq '^(copy|transcode)$'; then
+    ! printf '%s\n' "$3" | grep -Eq '^(copy|transcode|audio-track)$'; then
     echo "invalid internal transcoder path" >&2
     exit 2
 fi
+
+case "$3" in
+audio-track)
+    # Audio-only per-track route: <direct-src> <audio-dst> audio-track <index>.
+    if ! printf '%s\n' "$2" | grep -Eq '^audio-[a-f0-9]{32}-t([0-9]|1[0-9]|2[0-9]|3[01])$' ||
+        ! printf '%s\n' "$4" | grep -Eq '^([0-9]|1[0-9]|2[0-9]|3[01])$' ||
+        ! printf '%s\n' "$2" | grep -Eq -- "-t$4$"; then
+        echo "invalid internal audio-only track path" >&2
+        exit 2
+    fi
+    ;;
+*)
+    if ! printf '%s\n' "$2" | grep -Eq '^hybrid-[a-f0-9]{32}$' ||
+        ! printf '%s\n' "$4" | grep -Eq '^(copy|transcode)$'; then
+        echo "invalid internal transcoder path" >&2
+        exit 2
+    fi
+    ;;
+esac
 
 source_path="$1"
 target_path="$2"
@@ -16,6 +33,16 @@ video_mode="$3"
 audio_mode="$4"
 vaapi_device="${WEBOBS_VAAPI_DEVICE:-/dev/dri/renderD128}"
 bitrate="${WEBOBS_HYBRID_BITRATE_KBPS:-4000}k"
+
+# MediaMTX 1.18.2 maps a single audio output per path, so every independently
+# controllable track gets its own audio-only path.  Only Opus/G.711 survive
+# WebRTC, therefore each track is transcoded (or re-encoded) to Opus.
+if [ "$video_mode" = audio-track ]; then
+    exec ffmpeg -hide_banner -loglevel error -nostdin -rtsp_transport tcp -timeout 8000000 \
+        -i "rtsp://127.0.0.1:8554/$source_path" -map "0:a:$audio_mode" -vn \
+        -c:a libopus -b:a "${WEBOBS_AUDIO_TRACK_BITRATE_KBPS:-96}k" -ar 48000 -ac 2 \
+        -rtsp_transport tcp -f rtsp "rtsp://127.0.0.1:8554/$target_path"
+fi
 
 run_ffmpeg() {
     encoder="$1"

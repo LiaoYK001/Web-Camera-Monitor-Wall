@@ -29,6 +29,7 @@ find_package(Threads REQUIRED)
 pkg_check_modules(JANSSON REQUIRED IMPORTED_TARGET jansson)
 
 add_library(webobs-common
+    core/src/audio_tracks.cpp
     core/src/authentication.cpp
     core/src/audit_event.cpp
     core/src/browser_security.cpp

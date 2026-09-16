@@ -1,3 +1,4 @@
+#include "webobs/audio_tracks.hpp"
 #include "webobs/config.hpp"
 #include "webobs/authentication.hpp"
 #include "webobs/audit_event.hpp"
@@ -1192,6 +1193,82 @@ void studio_document_tests()
 
 } // namespace
 
+void audio_track_tests()
+{
+    // Real ffprobe shape for a camera with two audio tracks: the array position is
+    // the 0:a:<index> the per-track route extracts, "index" stays absolute.
+    const std::string probed = R"({
+  "streams": [
+    {"index": 1, "codec_name": "aac", "codec_type": "audio", "channels": 1,
+     "channel_layout": "mono", "sample_rate": "16000", "tags": {"language": "eng"}},
+    {"index": 3, "codec_name": "opus", "codec_type": "audio", "channels": 2,
+     "channel_layout": "stereo", "sample_rate": "48000", "tags": {"title": "talkdown"}}
+  ]
+})";
+    const auto tracks = webobs::parse_audio_tracks(probed);
+    expect(tracks.size() == 2, "a two-track probe must report two audio tracks");
+    if (tracks.size() == 2) {
+        expect(tracks[0].index == 0 && tracks[0].stream_index == 1,
+               "the first audio track must use the 0:a:0 relative index and keep the absolute index");
+        expect(tracks[0].codec == "aac" && tracks[0].channels == 1 &&
+                   tracks[0].channel_layout == "mono" && tracks[0].sample_rate == 16000 &&
+                   tracks[0].language == "eng" && !tracks[0].browser_compatible,
+               "an AAC mono track must be described and marked as needing a transcode");
+        expect(tracks[1].index == 1 && tracks[1].stream_index == 3 && tracks[1].title == "talkdown" &&
+                   tracks[1].browser_compatible,
+               "a second Opus track must keep its own index and be browser playable");
+    }
+
+    // A confirmed audio-free source is an empty list, not an error or a fake track.
+    expect(webobs::parse_audio_tracks(R"({"streams": []})").empty(),
+           "an empty stream list must report no audio tracks");
+    expect(webobs::parse_audio_tracks(R"({"streams": [{"index": 0, "codec_type": "video"}]})").empty(),
+           "a video-only stream list must not invent an audio track");
+    expect(webobs::parse_audio_tracks("").empty() && webobs::parse_audio_tracks("not json").empty(),
+           "empty or malformed probe output must not invent audio tracks");
+    expect(webobs::parse_audio_tracks(std::string(2 * 1024 * 1024, 'x')).empty(),
+           "oversized probe output must be rejected instead of parsed");
+
+    // One audio-only path per source+track, with the track recoverable from the path.
+    const std::string token(32, 'a');
+    const std::string path = webobs::audio_track_path_name(token, 2);
+    expect(path == "audio-" + token + "-t2",
+           "an audio-only path must encode the token and the track index");
+    expect(webobs::valid_audio_track_path(path) && webobs::audio_track_index_from_path(path) == 2,
+           "the track index must round-trip through the audio-only path");
+    expect(webobs::audio_track_path_name(token, -1).empty() &&
+               webobs::audio_track_path_name(token, 32).empty(),
+           "track indices outside 0..31 must not produce a path");
+    expect(webobs::audio_track_path_name("A" + token.substr(1), 0).empty() &&
+               webobs::audio_track_path_name("short", 0).empty(),
+           "a non-lowercase-hex or short token must not produce a path");
+    expect(!webobs::valid_audio_track_path("audio-" + token + "-t32") &&
+               !webobs::valid_audio_track_path("audio-" + token + "-x1") &&
+               !webobs::valid_audio_track_path("direct-" + token),
+           "only generated audio-only paths may be accepted");
+
+    // Route arguments reuse the on-demand transcoder and never mix source paths.
+    const std::string direct = "direct-" + token;
+    const std::string arguments = webobs::audio_track_route_arguments(direct, path, 2);
+    expect(arguments == direct + " " + path + " audio-track 2",
+           "the audio-only route arguments must reuse the direct source path");
+    expect(webobs::audio_track_route_arguments(direct, path, 1).empty() &&
+               webobs::audio_track_route_arguments(direct, path, 0).empty(),
+           "a path/track mismatch must be rejected");
+    expect(webobs::audio_track_route_arguments("hybrid-" + token, path, 2).empty() &&
+               webobs::audio_track_route_arguments("", path, 2).empty(),
+           "only a direct- source path may feed an audio-only route");
+
+    expect(webobs::audio_track_browser_compatible("opus") &&
+               webobs::audio_track_browser_compatible("pcm_alaw") &&
+               webobs::audio_track_browser_compatible("pcm_mulaw"),
+           "Opus and G.711 pass through WebRTC without transcoding");
+    expect(!webobs::audio_track_browser_compatible("aac") &&
+               !webobs::audio_track_browser_compatible("") &&
+               !webobs::audio_track_browser_compatible("g726"),
+           "AAC and unknown codecs must not be advertised as browser playable");
+}
+
 int main()
 {
     config_tests();
@@ -1205,6 +1282,7 @@ int main()
     scene_mutation_tests();
     studio_document_tests();
     video_encoder_tests();
+    audio_track_tests();
     if (failures == 0) {
         std::cout << "All webobs unit tests passed\n";
         return 0;
