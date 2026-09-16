@@ -6,16 +6,18 @@ const track = (index: number, streamIndex: number) => ({
   endpoint: `/api/v1/sources/source-a/audio-tracks/${index}/whep`,
 });
 
-const cameraSource = (id: string, name: string, cameraId: string) => ({
+const cameraSource = (id: string, name: string, cameraId: string, audioInputs?: Array<{ track: number; gain: number; muted: boolean }>) => ({
   id, kind: 'camera' as const, name, cameraId, profileId: 'main', hardwareDecode: 'auto',
   muted: true, volume: 1, syncOffsetMs: 0, monitoring: 'off' as const, audioTrack: 1, filters: [],
+  ...(audioInputs ? { audioInputs } : {}),
 });
 
 const scene = {
   schemaVersion: 5 as const, revision: 1, id: 'scene-1', name: 'Audio',
   canvas: { width: 1280, height: 720, backgroundColor: '#000000' },
   sources: [
-    cameraSource('source-a', 'Camera A', 'cam-a'),
+    // A saved schema 6 selection must win over the first-track default.
+    cameraSource('source-a', 'Camera A', 'cam-a', [{ track: 0, gain: 0.25, muted: true }]),
     cameraSource('source-b', 'Camera B', 'cam-b'),
     { id: 'source-c', kind: 'rtsp' as const, name: 'Stream C', rtspUrl: 'rtsp://127.0.0.1/live', transport: 'tcp',
       muted: true, volume: 1, syncOffsetMs: 0, monitoring: 'off' as const, audioTrack: 1, filters: [] },
@@ -36,6 +38,13 @@ test('audio workspace groups real tracks per source and wires per-track channels
   page.on('pageerror', (error) => consoleErrors.push(String(error)));
   page.on('console', (message) => { if (message.type() === 'error') consoleErrors.push(message.text()); });
   const gets: string[] = [];
+  const studioSaves: string[] = [];
+  await page.route('**/api/v1/studio', async (route) => {
+    if (route.request().method() !== 'PUT') return route.fulfill({ status: 404 });
+    const body = route.request().postData() ?? '{}';
+    studioSaves.push(body);
+    return route.fulfill({ status: 200, contentType: 'application/json', body });
+  });
   await page.route('**/api/v1/sources/**/audio-tracks', async (route) => {
     const url = route.request().url();
     gets.push(url);
@@ -78,6 +87,10 @@ test('audio workspace groups real tracks per source and wires per-track channels
     const tracksA = Array.from(channel('Camera A')?.querySelectorAll('.audio-track') ?? []);
     const checkedA = tracksA.map((node) => (node.querySelector('input') as HTMLInputElement | null)?.checked);
     const controlsBefore = channel('Camera A')?.querySelectorAll('.audio-track-control').length;
+    // The saved schema 6 selection must be loaded into the controls.
+    const firstControl = channel('Camera A')?.querySelector('.audio-track-control') as HTMLElement | null;
+    const loadedGain = (firstControl?.querySelector('input[type="range"]') as HTMLInputElement | null)?.value;
+    const loadedMuted = (firstControl?.querySelector('input[type="checkbox"]') as HTMLInputElement | null)?.checked;
     const meterBefore = channel('Camera A')?.querySelector('.vu-section')?.textContent ?? '';
     const modeButton = channel('Camera A')?.querySelector('.audio-level-mode') as HTMLButtonElement | null;
     const modeLabelBefore = modeButton?.textContent ?? '';
@@ -99,10 +112,15 @@ test('audio workspace groups real tracks per source and wires per-track channels
     reprobeButton?.click();
     await wait(400);
     const hiddenAudio = Array.from(document.querySelectorAll('audio[data-audio-track]')).length;
+    const saveButton = Array.from(host.querySelectorAll('button'))
+      .find((node) => (node.textContent ?? '').includes('保存音频配置')) as HTMLButtonElement | undefined;
+    const saveEnabled = saveButton ? !saveButton.disabled : false;
+    saveButton?.click();
+    await wait(500);
     workspace.unmount();
     return { names, loaded, checkedA, controlsBefore, meterBefore, modeLabelBefore, modeLabelAfter,
       controlsAfter, controlsFinal, noAudio, unprobed, reprobe, hiddenAudio,
-      htmlSample: host.innerHTML.slice(0, 300) };
+      loadedGain, loadedMuted, saveEnabled, htmlSample: host.innerHTML.slice(0, 300) };
   }, studio);
   expect(result.names, `html=${result.htmlSample} console=${consoleErrors.join(' || ')}`).toEqual(['Camera A', 'Camera B', 'Stream C']);
   expect(result.loaded).toBe(true);
@@ -118,6 +136,15 @@ test('audio workspace groups real tracks per source and wires per-track channels
   expect(result.unprobed).toContain('待探测');
   expect(result.reprobe).toBe(true);
   expect(gets.filter((url) => url.includes('source-c')).length).toBeGreaterThan(1);
+  expect(result.loadedGain).toBe('0.25');
+  expect(result.loadedMuted).toBe(true);
+  expect(result.saveEnabled).toBe(true);
+  const saved = JSON.parse(studioSaves[studioSaves.length - 1] ?? '{}') as {
+    scenes?: Array<{ sources?: Array<{ id: string; audioTrack?: number; audioInputs?: Array<{ track: number; gain: number; muted: boolean }> }> }>;
+  };
+  const savedSource = saved.scenes?.[0]?.sources?.find((source) => source.id === 'source-a');
+  expect(savedSource?.audioInputs).toEqual([{ track: 1, gain: 1, muted: false }]);
+  expect(savedSource?.audioTrack).toBe(2);
   expect(posts.some((url) => url.includes('/source-a/audio-tracks/0/whep'))).toBe(true);
   expect(posts.some((url) => url.includes('/source-a/audio-tracks/1/whep'))).toBe(true);
   expect(deletes.some((url) => url.includes('/source-a/audio-tracks/0/whep/session/'))).toBe(true);

@@ -9,12 +9,16 @@
 
 namespace webobs {
 
-inline constexpr int current_scene_schema_version = 5;
+inline constexpr int current_scene_schema_version = 6;
+/** Schema 5 kept a single `audioTrack`; it is migrated to `audioInputs` on read. */
+inline constexpr int legacy_scene_schema_version = 5;
+inline constexpr int maximum_audio_track_index = 31;
 inline constexpr std::size_t maximum_scene_json_bytes = 1024 * 1024;
 inline constexpr std::size_t maximum_scene_sources = 64;
 inline constexpr std::size_t maximum_browser_sources = 8;
 inline constexpr std::size_t maximum_scene_items = 256;
 inline constexpr std::size_t maximum_source_filters = 16;
+inline constexpr std::size_t maximum_source_audio_inputs = 8;
 
 struct SceneFilter {
     std::string id;
@@ -32,6 +36,16 @@ struct SceneCanvas {
     std::string background_color = "#000000";
 
     bool operator==(const SceneCanvas &) const = default;
+};
+
+/** One input track of a source that feeds the Composite program mix. */
+struct SceneAudioInput {
+    /** 0-based ffmpeg audio stream index (`0:a:<track>`). */
+    int track = 0;
+    double gain = 1.0;
+    bool muted = false;
+
+    bool operator==(const SceneAudioInput &) const = default;
 };
 
 struct SceneSource {
@@ -55,6 +69,11 @@ struct SceneSource {
     int sync_offset_ms = 0;
     std::string monitoring = "off";
     int audio_track = 1;
+    /**
+     * Per-track Composite mix inputs, keyed by "source + input track".  Empty
+     * means "not configured per track", so the engine keeps using audio_track.
+     */
+    std::vector<SceneAudioInput> audio_inputs;
     std::string file_path;
     std::string text;
     std::string color = "#000000";

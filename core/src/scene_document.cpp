@@ -132,6 +132,39 @@ bool read_number(const json_t *object, const char *key, double &target, std::str
     return true;
 }
 
+bool read_audio_inputs(const json_t *object, std::vector<SceneAudioInput> &target, std::string &error)
+{
+    json_t *value = json_object_get(object, "audioInputs");
+    if (!value)
+        return true;
+    if (!json_is_array(value) || json_array_size(value) > maximum_source_audio_inputs) {
+        error = "source audioInputs must be an array within the configured limit";
+        return false;
+    }
+    target.clear();
+    std::size_t index = 0;
+    json_t *entry = nullptr;
+    json_array_foreach(value, index, entry)
+    {
+        if (!json_is_object(entry)) {
+            error = "source audioInputs entry must be an object";
+            return false;
+        }
+        if (!has_only_fields(entry, {"track", "gain", "muted"})) {
+            error = "source audioInputs entry contains an unsupported field";
+            return false;
+        }
+        SceneAudioInput input;
+        if (!read_integer(entry, "track", 0, maximum_audio_track_index, input.track, error,
+                          "source audioInputs") ||
+            !read_number(entry, "gain", input.gain, error, "source audioInputs") ||
+            !read_boolean(entry, "muted", input.muted, error, "source audioInputs"))
+            return false;
+        target.push_back(input);
+    }
+    return true;
+}
+
 bool valid_identifier(std::string_view value)
 {
     if (value.empty() || value.size() > 64)
@@ -245,7 +278,8 @@ JsonPtr serialize_crop(const SceneCrop &crop)
 
 std::optional<std::string> validate_scene_document(const SceneDocument &document)
 {
-    if (document.schema_version != current_scene_schema_version)
+    if (document.schema_version != current_scene_schema_version &&
+        document.schema_version != legacy_scene_schema_version)
         return "scene schemaVersion is unsupported";
     if (document.revision > static_cast<std::uint64_t>(std::numeric_limits<std::int64_t>::max()))
         return "scene revision is out of range";
@@ -327,6 +361,17 @@ std::optional<std::string> validate_scene_document(const SceneDocument &document
             return "source monitoring must be off, monitor-only, or monitor-and-output";
         if (source.audio_track < 1 || source.audio_track > 6)
             return "source audioTrack must be between 1 and 6";
+        if (source.audio_inputs.size() > maximum_source_audio_inputs)
+            return "source has too many audioInputs";
+        std::unordered_set<int> audio_tracks;
+        for (const SceneAudioInput &input : source.audio_inputs) {
+            if (input.track < 0 || input.track > maximum_audio_track_index)
+                return "source audioInputs track must be between 0 and 31";
+            if (!std::isfinite(input.gain) || input.gain < 0.0 || input.gain > 1.0)
+                return "source audioInputs gain must be between 0 and 1";
+            if (!audio_tracks.insert(input.track).second)
+                return "source audioInputs must not repeat a track";
+        }
         if (source.filters.size() > maximum_source_filters)
             return "source has too many filters";
         std::unordered_set<std::string> filter_ids;
@@ -405,7 +450,7 @@ SceneParseResult parse_scene_json(std::string_view input)
 
     SceneDocument document;
     std::string error;
-    if (!read_integer(root.get(), "schemaVersion", current_scene_schema_version, current_scene_schema_version,
+    if (!read_integer(root.get(), "schemaVersion", legacy_scene_schema_version, current_scene_schema_version,
                       document.schema_version, error, "scene"))
         return parse_failure(std::move(error));
 
@@ -446,10 +491,21 @@ SceneParseResult parse_scene_json(std::string_view input)
             !read_string(source_object, "monitoring", source.monitoring, 24, error, "source") ||
             !read_integer(source_object, "audioTrack", 1, 6, source.audio_track, error, "source"))
             return parse_failure(std::move(error));
+        const bool has_audio_inputs = json_object_get(source_object, "audioInputs") != nullptr;
+        if (!read_audio_inputs(source_object, source.audio_inputs, error))
+            return parse_failure(std::move(error));
+        if (!has_audio_inputs) {
+            // Schema 5 migration: the single audioTrack becomes the first mix input.
+            source.audio_inputs.clear();
+            source.audio_inputs.push_back(SceneAudioInput{source.audio_track - 1, 1.0, false});
+        }
+        // audio_track is intentionally not derived from audio_inputs: the legacy
+        // field keeps its stored value (and stays the engine's current input)
+        // while audio_inputs carries the per-track selection written by the UI.
         if (source.kind == "rtsp") {
             if (!has_only_fields(source_object,
                                  {"id", "kind", "name", "rtspUrl", "transport", "muted", "volume",
-                                  "syncOffsetMs", "monitoring", "audioTrack", "filters"}))
+                                  "syncOffsetMs", "monitoring", "audioTrack", "audioInputs", "filters"}))
                 return parse_failure("RTSP source contains an unsupported field");
             if (!read_string(source_object, "rtspUrl", source.rtsp_url, 2048, error, "source") ||
                 !read_string(source_object, "transport", source.transport, 4, error, "source"))
@@ -457,7 +513,7 @@ SceneParseResult parse_scene_json(std::string_view input)
         } else if (source.kind == "camera") {
             if (!has_only_fields(source_object,
                                  {"id", "kind", "name", "cameraId", "profileId", "hardwareDecode",
-                                  "muted", "volume", "syncOffsetMs", "monitoring", "audioTrack", "filters"}))
+                                  "muted", "volume", "syncOffsetMs", "monitoring", "audioTrack", "audioInputs", "filters"}))
                 return parse_failure("camera source contains an unsupported field");
             source.transport.clear();
             if (!read_string(source_object, "cameraId", source.camera_id, 64, error, "source") ||
@@ -468,7 +524,7 @@ SceneParseResult parse_scene_json(std::string_view input)
             if (!has_only_fields(source_object,
                                  {"id", "kind", "name", "url", "width", "height", "fps", "customCss",
                                   "shutdownWhenHidden", "restartWhenActive", "muted", "volume",
-                                  "syncOffsetMs", "monitoring", "audioTrack", "filters"}))
+                                  "syncOffsetMs", "monitoring", "audioTrack", "audioInputs", "filters"}))
                 return parse_failure("browser source contains an unsupported field");
             source.transport.clear();
             if (!read_string(source_object, "url", source.browser_url, 2048, error, "source") ||
@@ -485,33 +541,33 @@ SceneParseResult parse_scene_json(std::string_view input)
         } else if (source.kind == "image") {
             if (!has_only_fields(source_object,
                                  {"id", "kind", "name", "filePath", "muted", "volume",
-                                  "syncOffsetMs", "monitoring", "audioTrack", "filters"}) ||
+                                  "syncOffsetMs", "monitoring", "audioTrack", "audioInputs", "filters"}) ||
                 !read_string(source_object, "filePath", source.file_path, 2048, error, "source"))
                 return parse_failure("image source is invalid or contains an unsupported field");
         } else if (source.kind == "media") {
             if (!has_only_fields(source_object,
                                  {"id", "kind", "name", "filePath", "loop", "muted", "volume",
-                                  "syncOffsetMs", "monitoring", "audioTrack", "filters"}) ||
+                                  "syncOffsetMs", "monitoring", "audioTrack", "audioInputs", "filters"}) ||
                 !read_string(source_object, "filePath", source.file_path, 2048, error, "source") ||
                 !read_boolean(source_object, "loop", source.loop, error, "source"))
                 return parse_failure("media source is invalid or contains an unsupported field");
         } else if (source.kind == "text") {
             if (!has_only_fields(source_object,
                                  {"id", "kind", "name", "text", "color", "muted", "volume",
-                                  "syncOffsetMs", "monitoring", "audioTrack", "filters"}) ||
+                                  "syncOffsetMs", "monitoring", "audioTrack", "audioInputs", "filters"}) ||
                 !read_string(source_object, "text", source.text, 8192, error, "source") ||
                 !read_string(source_object, "color", source.color, 7, error, "source"))
                 return parse_failure("text source is invalid or contains an unsupported field");
         } else if (source.kind == "color") {
             if (!has_only_fields(source_object,
                                  {"id", "kind", "name", "color", "muted", "volume",
-                                  "syncOffsetMs", "monitoring", "audioTrack", "filters"}) ||
+                                  "syncOffsetMs", "monitoring", "audioTrack", "audioInputs", "filters"}) ||
                 !read_string(source_object, "color", source.color, 7, error, "source"))
                 return parse_failure("color source is invalid or contains an unsupported field");
         } else if (source.kind == "nested") {
             if (!has_only_fields(source_object,
                                  {"id", "kind", "name", "sceneId", "muted", "volume",
-                                  "syncOffsetMs", "monitoring", "audioTrack", "filters"}) ||
+                                  "syncOffsetMs", "monitoring", "audioTrack", "audioInputs", "filters"}) ||
                 !read_string(source_object, "sceneId", source.nested_scene_id, 64, error, "source"))
                 return parse_failure("nested source is invalid or contains an unsupported field");
         } else {
@@ -594,6 +650,9 @@ SceneParseResult parse_scene_json(std::string_view input)
 
     if (const auto validation_error = validate_scene_document(document))
         return parse_failure(*validation_error);
+    // A legacy document is migrated in place, so parsing always yields the
+    // current schema version and the next save upgrades the stored file.
+    document.schema_version = current_scene_schema_version;
     SceneParseResult result;
     result.document = std::move(document);
     return result;
@@ -649,6 +708,20 @@ SceneSerializeResult serialize_scene_json(const SceneDocument &document, SceneJs
         }
         if (!set_new(object.get(), "filters", filters.release()))
             return serialize_failure("could not build source filter JSON");
+        JsonPtr audio_inputs(json_array());
+        if (!audio_inputs)
+            return serialize_failure("could not build source JSON");
+        for (const SceneAudioInput &input : source.audio_inputs) {
+            JsonPtr entry = make_object();
+            if (!entry ||
+                !set_new(entry.get(), "track", json_integer(input.track)) ||
+                !set_new(entry.get(), "gain", json_real(input.gain)) ||
+                !set_new(entry.get(), "muted", json_boolean(input.muted)) ||
+                json_array_append_new(audio_inputs.get(), entry.release()) != 0)
+                return serialize_failure("could not build source audio input JSON");
+        }
+        if (!set_new(object.get(), "audioInputs", audio_inputs.release()))
+            return serialize_failure("could not build source JSON");
         if (source.kind == "rtsp") {
             const std::string safe_url = view == SceneJsonView::public_api
                                              ? redact_rtsp_credentials(source.rtsp_url)

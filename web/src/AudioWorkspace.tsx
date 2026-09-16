@@ -34,6 +34,8 @@ export default function AudioWorkspace({ studio, onCommitted }: { studio: Studio
   const [selection, setSelection] = useState<Record<string, TrackSelection>>({});
   const [channelStates, setChannelStates] = useState<Record<string, AudioChannelState>>({});
   const [pending, setPending] = useState<StudioDocument | null>(null);
+  // Track selections are unsaved document changes even without a scene edit.
+  const [audioDirty, setAudioDirty] = useState(false);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
   const channels = useRef(new Map<string, ChannelEntry>());
@@ -72,9 +74,19 @@ export default function AudioWorkspace({ studio, onCommitted }: { studio: Studio
         if (cancelled) return;
         setTracksBySource((current) => ({ ...current, [source.id]: value }));
         if (value.status === 'available') {
-          // Default: the first real track, multi-select keeps the others available.
-          setSelection((current) => current[source.id] ? current : { ...current, [source.id]: {
-            selected: defaultSelectedTracks(value.tracks), gain: {}, muted: {}, mode: 'merged' } });
+          // A saved schema 6 selection wins; otherwise the first real track is
+          // selected by default and multi-select keeps the others available.
+          setSelection((current) => {
+            if (current[source.id]) return current;
+            const saved = source.audioInputs?.filter((input) => value.tracks.some((track) => track.index === input.track)) ?? [];
+            const gain: Record<number, number> = {};
+            const muted: Record<number, boolean> = {};
+            for (const input of saved) { gain[input.track] = input.gain; muted[input.track] = input.muted; }
+            const selected = saved.length > 0
+              ? saved.map((input) => input.track).sort((left, right) => left - right)
+              : defaultSelectedTracks(value.tracks);
+            return { ...current, [source.id]: { selected, gain, muted, mode: 'merged' } };
+          });
         }
       });
     }
@@ -143,6 +155,7 @@ export default function AudioWorkspace({ studio, onCommitted }: { studio: Studio
     }) });
   };
   const updateSelection = (sourceId: string, change: (current: TrackSelection) => TrackSelection) => {
+    setAudioDirty(true);
     setSelection((current) => {
       const fallback: TrackSelection = { selected: [], gain: {}, muted: {}, mode: 'merged' };
       return { ...current, [sourceId]: change(current[sourceId] ?? fallback) };
@@ -159,10 +172,30 @@ export default function AudioWorkspace({ studio, onCommitted }: { studio: Studio
       }
     });
   };
+  const withAudioInputs = (base: StudioDocument): StudioDocument => ({
+    ...base,
+    scenes: base.scenes.map((candidate) => candidate.id !== scene.id ? candidate : {
+      ...candidate,
+      sources: candidate.sources.map((source) => {
+        const state = selection[source.id];
+        if (!state) return source;
+        // Empty selection means "this source adds no audio"; otherwise the
+        // legacy audioTrack mirrors the first input for older readers/engines.
+        const audioInputs = state.selected
+          .map((index) => ({ track: index, gain: state.gain[index] ?? 1, muted: state.muted[index] ?? false }));
+        return { ...source, audioInputs,
+          audioTrack: audioInputs.length > 0 ? audioInputs[0].track + 1 : source.audioTrack } as SceneSource;
+      }),
+    }),
+  });
   const commit = async () => {
-    if (!pending) return;
     setSaving(true); setError('');
-    try { const committed = await replaceStudio(pending); setPending(null); onCommitted(committed); }
+    try {
+      const committed = await replaceStudio(withAudioInputs(pending ?? studio));
+      setPending(null);
+      setAudioDirty(false);
+      onCommitted(committed);
+    }
     catch (reason) { setError(reason instanceof Error ? reason.message : '音频配置保存失败'); }
     finally { setSaving(false); }
   };
@@ -173,7 +206,7 @@ export default function AudioWorkspace({ studio, onCommitted }: { studio: Studio
         <button type="button" className={topology === 'composite' ? 'active' : ''} onClick={() => setTopology('composite')}>Composite</button>
         <button type="button" onClick={() => window.dispatchEvent(new Event('webobs:audio-monitor-enable'))}>启用本地监听</button>
         <button type="button" onClick={() => window.dispatchEvent(new Event('webobs:audio-monitor-disable'))}>静音监听</button>
-        <button className="primary-button" type="button" disabled={!pending || saving} onClick={() => void commit()}>{saving ? '保存中…' : '保存音频配置'}</button></div></header>
+        <button className="primary-button" type="button" disabled={(!pending && !audioDirty) || saving} onClick={() => void commit()}>{saving ? '保存中…' : '保存音频配置'}</button></div></header>
     {error && <div className="alert conflict-alert">{error}</div>}
     <div className="audio-monitor-preview"><DirectPreview compact scene={scene} /></div>
     <div className="audio-mixer-head"><span>来源 / Profile</span><span>电平</span><span>静音 / 音量</span><span>监听 / 同步</span><span>音轨</span></div>
