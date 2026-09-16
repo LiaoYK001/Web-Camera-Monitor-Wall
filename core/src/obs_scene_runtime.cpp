@@ -284,7 +284,8 @@ std::optional<std::string> ensure_audio_mix_path(std::string_view source_url,
         gain_text += static_cast<char>('0' + (milli % 10));
         if (!spec.empty())
             spec += ",";
-        spec += std::to_string(input.track) + ":" + gain_text + ":" + (input.muted ? "1" : "0");
+        spec += std::to_string(input.track) + ":" + gain_text + ":" + (input.muted ? "1" : "0") + ":" +
+                std::to_string(input.sync_offset_ms);
     }
     const std::string mix_path = "mix-" + random_token();
     const std::string command = shell_quote(transcoder_executable()) + " " + shell_quote(source_url) + " " +

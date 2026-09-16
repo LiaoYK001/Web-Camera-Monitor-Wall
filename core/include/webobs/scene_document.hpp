@@ -44,6 +44,8 @@ struct SceneAudioInput {
     int track = 0;
     double gain = 1.0;
     bool muted = false;
+    /** Per-track sync offset relative to the source, in milliseconds. */
+    int sync_offset_ms = 0;
 
     bool operator==(const SceneAudioInput &) const = default;
 };

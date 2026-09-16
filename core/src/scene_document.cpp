@@ -150,7 +150,7 @@ bool read_audio_inputs(const json_t *object, std::vector<SceneAudioInput> &targe
             error = "source audioInputs entry must be an object";
             return false;
         }
-        if (!has_only_fields(entry, {"track", "gain", "muted"})) {
+        if (!has_only_fields(entry, {"track", "gain", "muted", "syncOffsetMs"})) {
             error = "source audioInputs entry contains an unsupported field";
             return false;
         }
@@ -159,6 +159,11 @@ bool read_audio_inputs(const json_t *object, std::vector<SceneAudioInput> &targe
                           "source audioInputs") ||
             !read_number(entry, "gain", input.gain, error, "source audioInputs") ||
             !read_boolean(entry, "muted", input.muted, error, "source audioInputs"))
+            return false;
+        // Optional so documents written before sync offsets existed still parse.
+        if (json_object_get(entry, "syncOffsetMs") != nullptr &&
+            !read_integer(entry, "syncOffsetMs", -10000, 10000, input.sync_offset_ms, error,
+                          "source audioInputs"))
             return false;
         target.push_back(input);
     }
@@ -725,6 +730,7 @@ SceneSerializeResult serialize_scene_json(const SceneDocument &document, SceneJs
                 !set_new(entry.get(), "track", json_integer(input.track)) ||
                 !set_new(entry.get(), "gain", json_real(input.gain)) ||
                 !set_new(entry.get(), "muted", json_boolean(input.muted)) ||
+                !set_new(entry.get(), "syncOffsetMs", json_integer(input.sync_offset_ms)) ||
                 json_array_append_new(audio_inputs.get(), entry.release()) != 0)
                 return serialize_failure("could not build source audio input JSON");
         }
