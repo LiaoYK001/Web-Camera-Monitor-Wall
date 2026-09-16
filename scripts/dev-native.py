@@ -18,7 +18,7 @@ import urllib.request
 
 ROOT = Path(__file__).resolve().parents[1]
 CACHE = Path.home() / '.cache/webobs-dev' / hashlib.sha256(str(ROOT).encode()).hexdigest()[:12]
-PACKAGES = "build-essential cmake ninja-build pkg-config git curl ca-certificates extra-cmake-modules libavcodec-dev libavformat-dev libavutil-dev libswresample-dev libswscale-dev libboost-dev libcurl4-openssl-dev libjansson-dev libssl-dev libsqlite3-dev libsimde-dev uthash-dev uuid-dev zlib1g-dev libx11-dev libx11-xcb-dev libxcb-randr0-dev libxcb-shm0-dev libxcb-xfixes0-dev libxcb-xinerama0-dev libxcomposite-dev libxinerama-dev libxkbcommon-dev libgl1-mesa-dev libegl1-mesa-dev libglvnd-dev libwayland-dev libdrm-dev libgbm-dev libglib2.0-dev libxcb-xinput-dev libxkbcommon-x11-dev libsodium23 libx264-dev libavfilter-dev libavdevice-dev libxcb-composite0-dev libva-dev libpci-dev libudev-dev ffmpeg python3".split()
+PACKAGES = "build-essential cmake ninja-build pkg-config git curl ca-certificates extra-cmake-modules libavcodec-dev libavformat-dev libavutil-dev libswresample-dev libswscale-dev libboost-dev libcurl4-openssl-dev libjansson-dev libssl-dev libsqlite3-dev libsimde-dev uthash-dev uuid-dev zlib1g-dev libx11-dev libx11-xcb-dev libxcb-randr0-dev libxcb-shm0-dev libxcb-xfixes0-dev libxcb-xinerama0-dev libxcomposite-dev libxinerama-dev libxkbcommon-dev libgl1-mesa-dev libegl1-mesa-dev libglvnd-dev libwayland-dev libdrm-dev libgbm-dev libglib2.0-dev libxcb-xinput-dev libxkbcommon-x11-dev libsodium23 libx264-dev libavfilter-dev libavdevice-dev libxcb-composite0-dev libva-dev libpci-dev libudev-dev libfreetype-dev libfontconfig1-dev ffmpeg python3".split()
 processes = []
 services = []
 handles = []
@@ -194,6 +194,23 @@ def main():
         obs = Path(os.environ['WEBOBS_DEV_OBS_SOURCE']).resolve()
         obs_build = CACHE / ('obs-custom-' + hashlib.sha256(str(obs).encode()).hexdigest()[:12] + feature)
     jobs = str(min(os.cpu_count() or 2, 4))
+    # obs-webrtc (the Composite WHIP output) needs libdatachannel, which has no
+    # Ubuntu apt package, so build it from source into the local prefix.
+    local_libs = CACHE / 'libs'
+    prefix_flags = []
+    if args.composite:
+        if not list((local_libs / 'lib').glob('libdatachannel.so*')):
+            say('构建 libdatachannel（obs-webrtc/WHIP 必需；Ubuntu 无 apt 包，首次较久）')
+            dc_source = CACHE / 'libdatachannel'
+            dc_build = CACHE / 'libdatachannel-build'
+            if not (dc_source / 'CMakeLists.txt').exists():
+                command(['git', 'clone', '--depth', '1', '--recurse-submodules', '--branch', 'v0.22.6',
+                         'https://github.com/paullouisageneau/libdatachannel.git', dc_source], buildlog)
+            command(['cmake', '-S', dc_source, '-B', dc_build, '-G', 'Ninja', '-DCMAKE_BUILD_TYPE=Release',
+                     '-DNO_EXAMPLES=ON', '-DNO_TESTS=ON', '-DUSE_GNUTLS=OFF',
+                     f'-DCMAKE_INSTALL_PREFIX={local_libs}'], buildlog)
+            command(['cmake', '--build', dc_build, '--parallel', jobs, '--target', 'install'], buildlog)
+        prefix_flags = [f'-DCMAKE_PREFIX_PATH={local_libs}']
     say(f'[1/4] 增量编译 OBS 核心（首次较久，不构建镜像）；日志：{buildlog}')
     # Composite needs the media-input, software-encoder and WHIP-output plugins;
     # the browser/CEF plugin is explicitly excluded so a pure camera scene never
@@ -209,7 +226,8 @@ def main():
                     if args.composite else ['-DENABLE_PLUGINS=OFF'])
     command(['cmake', '-S', obs, '-B', obs_build, '-G', 'Ninja', '-DCMAKE_BUILD_TYPE=Release',
              '-DOBS_VERSION_OVERRIDE=32.1.2', '-DENABLE_UI=OFF', '-DENABLE_FRONTEND=OFF',
-             '-DENABLE_SCRIPTING=OFF', '-DENABLE_WAYLAND=OFF', '-DENABLE_PULSEAUDIO=OFF', *plugin_flags], buildlog)
+             '-DENABLE_SCRIPTING=OFF', '-DENABLE_WAYLAND=OFF', '-DENABLE_PULSEAUDIO=OFF', *plugin_flags,
+             *prefix_flags], buildlog)
     obs_targets = ['libobs', 'obs-ffmpeg', 'obs-x264', 'obs-webrtc'] if args.composite else ['libobs']
     command(['cmake', '--build', obs_build, '--target', *obs_targets, '--parallel', jobs], buildlog)
     if args.composite:
