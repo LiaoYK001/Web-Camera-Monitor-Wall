@@ -1,7 +1,7 @@
 import { type CSSProperties, type PointerEvent as ReactPointerEvent, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { closeAnalyticsRuntimeSession, fetchAnalyticsPolicies, fetchCameras, fetchMotionZones, fetchPlaybackCapabilities, probeSourceProfile, renewAnalyticsRuntimeSession, requestAnalyticsRuntimePlan, submitAnalyticsSignals } from './api';
 import { activateGateway, approvedBrowserProfile, BrowserPlanError, browserGrantProfile, connectApprovedWhep, connectHls, connectMjpeg, offlineSignedGrantPlan, requestBrowserPlan, type BrowserTopologyPlan } from './browserMedia';
-import { DirectAudioMixer, type DirectAudioSnapshot } from './directAudioMixer';
+import { DirectAudioMixer, getDirectAudioMixer, subscribeDirectAudio, type DirectAudioSnapshot } from './directAudioMixer';
 import { clearPrivateRuntimeState, loadBrowserIdentity, loadMonitorView, saveMonitorView } from './localRuntime';
 import { observeTileVisibility, shouldRunPlayback } from './mediaLifecycle';
 import { countRenderedFrames, formatTelemetry, sampleConnectionTelemetry, sampleElementTelemetry, unavailableTelemetry, type MediaTelemetry } from './mediaTelemetry';
@@ -575,9 +575,11 @@ export default function DirectPreview({ scene, compact = false }: { scene: Scene
   const promotionTimers = useRef<number[]>([]);
 
   useEffect(() => {
-    const nextMixer = new DirectAudioMixer(setAudio);
-    setMixer(nextMixer);
-    return () => nextMixer.destroy();
+    // The audio workspace binds per-track channels into the same graph, so the
+    // preview and the workspace must share one mixer instance.
+    const sharedMixer: DirectAudioMixer = getDirectAudioMixer();
+    setMixer(sharedMixer);
+    return subscribeDirectAudio(setAudio);
   }, []);
 
   useEffect(() => {

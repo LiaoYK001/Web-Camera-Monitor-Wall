@@ -87,7 +87,7 @@
   **启动器分级就绪已实测**：`dev-native.py` 现按“进程存活 / 引擎就绪 / Program 发布”三级分别探测与上报（实测输出 `Composite 分级就绪：进程存活=是；引擎就绪=是；Program 发布=是；轨道=Opus,H264`）；Composite 下核心就绪预算提高到 300 秒（真实五路来源要等 20 秒以上才开始监听控制面），避免把“核心尚未监听”当成“发布失败”。
 - 仍需实测：≥30 分钟连续出图、≥90% 解码帧率、单路断开恢复、CPU/GPU 归因；本轮浏览器侧只连续解码 20 秒。`/api/v1/program/status` 的完整 JSON 建议按上文命令用带凭据的 curl 直接抓取一次（本轮以启动器三级就绪与 MediaMTX program 路径为证）。
 
-## F5-05 多音轨 / per-source audio tracks — 后端真实多音轨通路已实现并实测，前端分组/混音未实现
+## F5-05 多音轨 / per-source audio tracks — 后端与前端真实多音轨通路均已实现并实测
 
 已实现：
 - 音轨状态三态：只有**真正绑定媒体流且音轨数为 0** 才判定“该源没有音频轨道”（无 capability 不再误报）；已挂载未绑定流、Profile 未探测或探测失败显示“音频轨道待探测”并提供“重新探测”入口；纯色/文字/图片/嵌套来源直接判定无音轨。确认无音轨的来源隐藏电平/阈值/音量控制；有音轨来源可配置方向/位置/大小/透明度、阈值与告警边框。
@@ -102,10 +102,17 @@
   - 同一次实测确认了设计前提：MediaMTX 1.18.2 的 RTSP 路径可承载多路音轨（`tracks: ['H264','Opus','Opus']`），但单个 WHEP 会话只映射一路音频输出。
   - 本环境真实相机**没有任何音轨**（`/v3/paths/list` 为 `tracks: ['H265']`，API 返回 `tracks: []`），故多音轨用合成来源验证；相机“确认无音轨”状态本身也是实测结果。
 
+- **前端真实多音轨通路（本轮新增，已自动化实测）**：
+  - `web/src/sourceAudio.ts`：`GET /api/v1/sources/<id>/audio-tracks` 客户端，15 秒 TTL 缓存 + 并发去重，三态（有音轨 / 确认无音轨 / 探测失败）分别映射为可用 / `none` / 待探测；`invalidateSourceAudioTracks` 让“重新探测”真正失效缓存而不是重放旧结果。
+  - `web/src/directAudioMixer.ts`：混音条目按 **“来源+输入音轨”** 建键（`sourceId#trackIndex`），每条音轨独立的 GainNode/AnalyserNode，并按来源增加真实**合并**测量节点（各路增益求和后再测 RMS/Peak），快照同时给出合并值与逐轨值；video 元素始终 `muted`，多轨时不会从视频元素重复出声。
+  - `web/src/audioTrackChannel.ts`：每条选中音轨一路 audio-only WHEP（只 `addTransceiver('audio')`），无“首帧”概念，改用**真实 RTP 包数进展**判定存活（6 秒无进展即重连），带抖动有界退避，401/403 直接停止，关闭时 DELETE 会话。
+  - `web/src/AudioWorkspace.tsx`：按来源分组，列出真实音轨复选框（默认第一条、可多选）、每轨静音与增益、合并/独立电平切换；取消勾选/切换来源/卸载都会释放该轨通道与 Web Audio 节点。
+  - 测试：新增 `web/tests/local-runtime/audio-tracks.spec.ts`（含 `tests/harness/audioWorkspaceMount.tsx`）断言来源分组、默认选中第一轨、多轨控件数量、合并/独立切换、无音轨与待探测两种状态、重新探测触发第二次请求，并断言每轨 `POST .../audio-tracks/<i>/whep` 与取消勾选后的 `DELETE .../session/` 真实发生。本轮聚焦套件 **22/22 通过**（原 21 项 + 新增 1 项），`tsc --noEmit` 0 错误。
+  - 测试还暴露并修复了一个真实缺陷：控制面返回的是**相对**端点，而会话 Location 校验此前按绝对 URL 解析，导致 audio-only 通道永远拿不到会话地址（现在以页面 origin 为基准解析）。
+
 未实现 / not implemented（明确列为后续项）：
-- 前端：AudioWorkspace 仍缺按来源分组的音轨复选框与每轨静音/增益，也没有“合并/独立电平”切换；`directAudioMixer` 仍以来源为单位（尚未按“来源+输入音轨”建键、也尚未为每条启用音轨各建一路 audio-only WHEP 会话），多轨时尚未强制静音 video 元素自带音频。
-- Composite 侧逐轨混音（Scene v6 `audioInputs` 迁移）与逐轨同步偏移仍按来源单一 `audioTrack` 处理。
-- 真实相机多音轨未实测（本环境相机无音轨；已用合成双音轨来源做等价验证）；WSLg/GPU 桌面会话与 Docker/vGPU 验收仍需后续执行。
+- Composite 侧逐轨混音（Scene v6 `audioInputs` 迁移）与逐轨同步偏移仍按来源单一 `audioTrack` 处理；音轨勾选/增益目前是会话内状态，尚未写回 Scene 文档。
+- 真实相机多音轨未实测（本环境相机无音轨；已用合成双音轨来源完成后端等价验证与浏览器双会话取流）；WSLg/GPU 桌面会话与 Docker/vGPU 验收仍需后续执行。
 
 ## F5-06 五路播放稳定性 / playback stability — 状态机已实现并验证
 
@@ -155,4 +162,4 @@ node --test tests/test-dev-launcher.mjs
 
 ## 结论 / Conclusion
 
-F5-01、F5-02、F5-06 状态机与探测缓存已实现并有自动化验证；F5-03 的探测根因已在本机复现并修复，C++/转码路径已编译与实测，并修掉“外部 NVENC 探测冒充 OBS 编码器”导致 WHIP 输出启动失败的真实缺陷；OBS 侧 NVENC 仍如实报告为未注册，Docker/vGPU 未验收；F5-04 已完成真实五路来源 → OBS 合成 → H.264/Opus → MediaMTX → Program WHEP → 浏览器连续解码的端到端实测，启动器按三级就绪分别上报，仅 ≥30 分钟长稳与原始 1080p/GPU 会话待测；F5-05 在原有“无音轨/待探测/有音轨”三态过滤之外，补齐了后端真实多音轨通路（逐轨探测 API、每轨 audio-only 路径与 WHEP 会话、会话级资源释放）并已实测双轨同时出流，仅剩前端 AudioWorkspace 分组/逐轨混音与 Composite 逐轨混音。**“画面干净且完整、加速状态真实”已达成；“五路持续出图、本地合成可用、多音轨实际可控”仍需在具备五路来源的环境中按上文命令继续实测。**
+F5-01、F5-02、F5-06 状态机与探测缓存已实现并有自动化验证；F5-03 的探测根因已在本机复现并修复，C++/转码路径已编译与实测，并修掉“外部 NVENC 探测冒充 OBS 编码器”导致 WHIP 输出启动失败的真实缺陷；OBS 侧 NVENC 仍如实报告为未注册，Docker/vGPU 未验收；F5-04 已完成真实五路来源 → OBS 合成 → H.264/Opus → MediaMTX → Program WHEP → 浏览器连续解码的端到端实测，启动器按三级就绪分别上报，仅 ≥30 分钟长稳与原始 1080p/GPU 会话待测；F5-05 在原有“无音轨/待探测/有音轨”三态过滤之外，补齐了后端与前端真实多音轨通路（逐轨探测 API + 每轨 audio-only 路径与 WHEP 会话 + 会话级资源释放；前端按来源分组、逐轨勾选/静音/增益、合并与独立电平、按“来源+音轨”建键的混音图），后端已实测双轨同时出流、前端已由 22/22 聚焦测试覆盖，仅剩 Composite 逐轨混音与 Scene v6 `audioInputs` 写入。**“画面干净且完整、加速状态真实”已达成；“五路持续出图、本地合成可用、多音轨实际可控”仍需在具备五路来源的环境中按上文命令继续实测。**
