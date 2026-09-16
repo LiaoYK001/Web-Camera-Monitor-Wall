@@ -18,7 +18,7 @@ import urllib.request
 
 ROOT = Path(__file__).resolve().parents[1]
 CACHE = Path.home() / '.cache/webobs-dev' / hashlib.sha256(str(ROOT).encode()).hexdigest()[:12]
-PACKAGES = "build-essential cmake ninja-build pkg-config git curl ca-certificates extra-cmake-modules libavcodec-dev libavformat-dev libavutil-dev libswresample-dev libswscale-dev libboost-dev libcurl4-openssl-dev libjansson-dev libssl-dev libsqlite3-dev libsimde-dev uthash-dev uuid-dev zlib1g-dev libx11-dev libx11-xcb-dev libxcb-randr0-dev libxcb-shm0-dev libxcb-xfixes0-dev libxcb-xinerama0-dev libxcomposite-dev libxinerama-dev libxkbcommon-dev libgl1-mesa-dev libegl1-mesa-dev libglvnd-dev libwayland-dev libdrm-dev libgbm-dev libglib2.0-dev libxcb-xinput-dev libxkbcommon-x11-dev libsodium23 ffmpeg python3".split()
+PACKAGES = "build-essential cmake ninja-build pkg-config git curl ca-certificates extra-cmake-modules libavcodec-dev libavformat-dev libavutil-dev libswresample-dev libswscale-dev libboost-dev libcurl4-openssl-dev libjansson-dev libssl-dev libsqlite3-dev libsimde-dev uthash-dev uuid-dev zlib1g-dev libx11-dev libx11-xcb-dev libxcb-randr0-dev libxcb-shm0-dev libxcb-xfixes0-dev libxcb-xinerama0-dev libxcomposite-dev libxinerama-dev libxkbcommon-dev libgl1-mesa-dev libegl1-mesa-dev libglvnd-dev libwayland-dev libdrm-dev libgbm-dev libglib2.0-dev libxcb-xinput-dev libxkbcommon-x11-dev libsodium23 libx264-dev ffmpeg python3".split()
 processes = []
 services = []
 handles = []
