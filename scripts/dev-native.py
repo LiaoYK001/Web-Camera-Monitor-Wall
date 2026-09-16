@@ -18,7 +18,7 @@ import urllib.request
 
 ROOT = Path(__file__).resolve().parents[1]
 CACHE = Path.home() / '.cache/webobs-dev' / hashlib.sha256(str(ROOT).encode()).hexdigest()[:12]
-PACKAGES = "build-essential cmake ninja-build pkg-config git curl ca-certificates extra-cmake-modules libavcodec-dev libavformat-dev libavutil-dev libswresample-dev libswscale-dev libboost-dev libcurl4-openssl-dev libjansson-dev libssl-dev libsqlite3-dev libsimde-dev uthash-dev uuid-dev zlib1g-dev libx11-dev libx11-xcb-dev libxcb-randr0-dev libxcb-shm0-dev libxcb-xfixes0-dev libxcb-xinerama0-dev libxcomposite-dev libxinerama-dev libxkbcommon-dev libgl1-mesa-dev libegl1-mesa-dev libglvnd-dev libwayland-dev libdrm-dev libgbm-dev libglib2.0-dev libxcb-xinput-dev libxkbcommon-x11-dev libsodium23 libx264-dev ffmpeg python3".split()
+PACKAGES = "build-essential cmake ninja-build pkg-config git curl ca-certificates extra-cmake-modules libavcodec-dev libavformat-dev libavutil-dev libswresample-dev libswscale-dev libboost-dev libcurl4-openssl-dev libjansson-dev libssl-dev libsqlite3-dev libsimde-dev uthash-dev uuid-dev zlib1g-dev libx11-dev libx11-xcb-dev libxcb-randr0-dev libxcb-shm0-dev libxcb-xfixes0-dev libxcb-xinerama0-dev libxcomposite-dev libxinerama-dev libxkbcommon-dev libgl1-mesa-dev libegl1-mesa-dev libglvnd-dev libwayland-dev libdrm-dev libgbm-dev libglib2.0-dev libxcb-xinput-dev libxkbcommon-x11-dev libsodium23 libx264-dev libavfilter-dev libavdevice-dev libxcb-composite0-dev libva-dev ffmpeg python3".split()
 processes = []
 services = []
 handles = []
@@ -154,6 +154,23 @@ def main():
             command(['tar', '-xf', archive, '-C', local_obs], buildlog)
             ready.touch()
             archive.unlink()
+        if args.composite:
+            # git archive excludes submodule contents, but the OBS plugin set
+            # (for example check_obs_browser()) requires them, so copy the
+            # checked-out submodule trees into the Linux-storage source.
+            submodules = subprocess.check_output(
+                ['git', '-C', str(ROOT / 'obs/obs-studio'), 'submodule', 'status', '--recursive'],
+                text=True).splitlines()
+            for line in submodules:
+                parts = line.split()
+                if len(parts) < 2: continue
+                relative = parts[1]
+                source = ROOT / 'obs/obs-studio' / relative
+                if not source.is_dir(): continue
+                destination = local_obs / relative
+                if destination.exists(): shutil.rmtree(destination)
+                destination.parent.mkdir(parents=True, exist_ok=True)
+                shutil.copytree(source, destination, symlinks=True)
         obs = local_obs
         obs_build = CACHE / ('obs-build-' + revision + feature)
         project_source = CACHE / 'source'
@@ -181,7 +198,13 @@ def main():
     # Composite needs the media-input, software-encoder and WHIP-output plugins;
     # the browser/CEF plugin is explicitly excluded so a pure camera scene never
     # depends on it.
-    plugin_flags = ['-DENABLE_PLUGINS=ON', '-DBUILD_BROWSER=OFF'] if args.composite else ['-DENABLE_PLUGINS=OFF']
+    # -DBUILD_BROWSER is not an OBS option; ENABLE_BROWSER is.  SDK-only capture
+    # plugins (aja/decklink/vlc/qsv/websocket/vst) are disabled so a pure camera
+    # scene does not need their external SDKs.
+    plugin_flags = (['-DENABLE_PLUGINS=ON', '-DENABLE_BROWSER=OFF', '-DENABLE_AJA=OFF',
+                     '-DENABLE_DECKLINK=OFF', '-DENABLE_VLC=OFF', '-DENABLE_VST=OFF',
+                     '-DENABLE_WEBSOCKET=OFF', '-DENABLE_QSV11=OFF', '-DENABLE_NVENC=OFF']
+                    if args.composite else ['-DENABLE_PLUGINS=OFF'])
     command(['cmake', '-S', obs, '-B', obs_build, '-G', 'Ninja', '-DCMAKE_BUILD_TYPE=Release',
              '-DOBS_VERSION_OVERRIDE=32.1.2', '-DENABLE_UI=OFF', '-DENABLE_FRONTEND=OFF',
              '-DENABLE_SCRIPTING=OFF', '-DENABLE_WAYLAND=OFF', '-DENABLE_PULSEAUDIO=OFF', *plugin_flags], buildlog)
