@@ -271,7 +271,7 @@ MediaPathPtr make_media_path_guard(std::string path)
 std::optional<std::string> ensure_audio_mix_path(std::string_view source_url,
                                                  const std::vector<SceneAudioInput> &inputs)
 {
-    if (source_url.empty() || inputs.size() < 2 || inputs.size() > maximum_source_audio_inputs)
+    if (source_url.empty() || inputs.empty() || inputs.size() > maximum_source_audio_inputs)
         return std::nullopt;
     std::string spec;
     for (const SceneAudioInput &input : inputs) {
