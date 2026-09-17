@@ -90,7 +90,9 @@
   - 复现配方（长稳，已用一次成功、后续失败的经验）：① 确认无残留（`pgrep -af 'dev-native|webobsd|mediamtx|Xvfb'` 为空，必要时先等待数秒让上次监听器释放端口）；② 用降负载场景（`cp /tmp/scene-small.json <cache>/data/scene.json`，即真实五路 960×540@5）；③ 单次启动 `tail -f /dev/null | python3 scripts/dev-native.py --composite`（stdin 必须保持打开，否则启动器会在 stdin EOF 时自我终止）；④ **运行期间不要执行任何 `pkill`/`kill` 清理命令**，也不要在同一窗口重复启动——本会话的多次失败均表现为启动器在 `[1/4]` 之前静默消失（无 `[ERROR]` 行），而单独运行 `mediamtx` 一切正常；⑤ 每分钟采样 `/v3/paths/list` 的 program 就绪/轨道/bytesReceived、`webobsd` 存活、core 日志中的 `source_recovery`/崩溃计数。
 - 仍需实测：浏览器侧 ≥30 分钟连续解码与 ≥90% 解码帧率、单路断开恢复、CPU/GPU 归因，以及原始 1080p/GPU（WSLg）会话下的长稳；浏览器侧目前仅连续解码 20 秒。`/api/v1/program/status` 的完整 JSON 建议按上文命令用带凭据的 curl 直接抓取一次（本轮以启动器三级就绪与 MediaMTX program 路径为证）。
 
-## F5-05 多音轨 / per-source audio tracks — 逐轨探测/通道/前端混音/Scene v6 持久化已实现；引擎逐轨混音路径已查明但未达成
+## F5-05 多音轨 / per-source audio tracks — 全部已实现（Composite 逐轨混音默认启用并实测通过）
+
+**最终结论（唯一结论，取代本章下方所有中间状态）**：Composite 逐轨混音**已实现、默认启用、实测通过**。引擎不创建任何额外 OBS 源（该方案已被六次实测否定，见下方历史记录）；当来源选中 >1 条输入轨时，`obs_scene_runtime` 经 MediaMTX 控制 API 建立 `mix-<token>` 路径（`runOnDemand` 调用网关 `audio-mix`，规格 `track:gain:muted:delay`），把该来源唯一的媒体源指向这条"已按各自增益/静音/延迟混好"的流，并用 `shared_ptr` 守卫在源销毁时删除该路径。网关 `transcode-on-demand.sh` 的 `audio-mix` 用 `volume`+`adelay`+`amix` 合成一路 Opus（视频 `copy`），`gateway/mediamtx.yml` 开放 `mix-*` 的 publish/read。实测：①`tests/test-transcoder-mix.mjs` 全绿；②双音轨来源（a:0=440Hz、a:1=880Hz）经该链路后，节目音频 4 次抓取**同时含两路音轨**（e440 2.08e6/3.27e6/2.87e6/1.98e6、e880 3.71e6/5.33e6/4.23e6/4.91e6，比值 −5.0/−4.2/−3.4/−7.9 dB，无崩溃）；③逐轨延迟 `0:1.0:0:0,1:1.0:0:2000` 时前两个 1 秒窗口只有 440Hz，第 3 秒起两路并存；④以上均为**默认路径**（不设置任何环境变量），旧开关 `WEBOBS_AUDIO_TRACK_EXTRACTION` **已删除**。前端逐轨勾选/增益/静音/同步偏移/合并-独立电平保持可用；废弃的额外 OBS 抽取源代码（`attach_audio_input_instances`、`ensure_audio_only_path`、`AudioInputInstance`、`SourceEntry::audio_inputs`、`is_ffmpeg_kind`、私有 `audio_scene`）已全部删除。以下为历史记录（含被否证的假设），仅供追溯。
 
 已实现：
 - 音轨状态三态：只有**真正绑定媒体流且音轨数为 0** 才判定“该源没有音频轨道”（无 capability 不再误报）；已挂载未绑定流、Profile 未探测或探测失败显示“音频轨道待探测”并提供“重新探测”入口；纯色/文字/图片/嵌套来源直接判定无音轨。确认无音轨的来源隐藏电平/阈值/音量控制；有音轨来源可配置方向/位置/大小/透明度、阈值与告警边框。

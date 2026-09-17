@@ -309,12 +309,6 @@ std::optional<std::string> ensure_audio_mix_path(std::string_view source_url,
     return mix_path;
 }
 
-/**
- * Extra OBS source instance fed by one extracted input track.  Kept for the
- * record: measuring showed libobs never starts playback for these instances, so
- * multi-input sources use ensure_audio_mix_path() instead.
- */
-
 struct SourceEntry {
     SceneSource configuration;
     std::shared_ptr<SourceStatus> status;
@@ -1090,8 +1084,6 @@ std::optional<std::string> ObsSceneRuntime::prepare(const SceneDocument &documen
             return "could not add scene item " + item->id + " to the OBS program scene";
     }
 
-    // Extraction channels are deliberately not added to any scene; they are kept
-    // alive with obs_source_inc_showing (see attach_audio_input_instances).
 
     const auto visible = visible_source_ids(candidate.get());
     for (const std::string &id : visible) {
