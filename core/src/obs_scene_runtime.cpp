@@ -543,9 +543,12 @@ SourceEntry create_source_entry(const SceneSource &configuration, int connect_ti
     const std::vector<SceneAudioInput> audio_inputs = resolved_audio_inputs(configuration);
     MediaPathPtr audio_mix;
     std::string audio_mix_url;
-    // Several selected input tracks are mixed by the gateway into one stream; the
-    // single Media Source consumes that (verified end to end).
-    if (audio_inputs.size() > 1) {
+    // Whenever the document configures input tracks explicitly, the gateway mixes
+    // exactly those tracks into one stream and the single Media Source consumes
+    // it — this is also what makes a single *non-default* track selectable, since
+    // the OBS Media Source itself has no audio-track selector.  Sources without
+    // audioInputs keep the legacy direct behaviour.
+    if (!configuration.audio_inputs.empty()) {
         std::string source_url = configuration.kind == "rtsp" ? configuration.rtsp_url : std::string{};
         if (configuration.kind == "camera") {
             const auto resolved = resolve_camera_source(configuration);
