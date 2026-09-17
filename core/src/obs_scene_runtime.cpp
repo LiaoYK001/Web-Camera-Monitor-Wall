@@ -569,7 +569,10 @@ SourceEntry create_source_entry(const SceneSource &configuration, int connect_ti
         // or mute changes reuse the connection and only rebuild the extras.
         const bool same_first_track = previous_inputs.empty() || audio_inputs.empty() ||
                                       previous_inputs.front().track == audio_inputs.front().track;
-        if (existing != current->sources.end() && audio_inputs.size() <= 1 && same_first_track &&
+        // A gateway-mixed source is never reused: its input URL embeds a
+        // per-creation mix path whose ownership lives in the old entry.
+        if (existing != current->sources.end() && configuration.audio_inputs.empty() &&
+            audio_inputs.size() <= 1 && same_first_track &&
             connection_matches(existing->second.configuration, configuration)) {
             SourceEntry reused;
             reused.configuration = configuration;
@@ -1181,10 +1184,16 @@ void ObsSceneRuntime::commit_prepared(std::string_view transition_kind, int dura
             obs_source_set_sync_offset(source,
                                        static_cast<std::int64_t>(entry.configuration.sync_offset_ms) * 1000000LL);
         };
-        // With several inputs the gateway already folded them (with their own
-        // gain/mute) into the single stream the primary source reads, so the
-        // primary must play normally; muting it here silenced the program.
-        if (inputs.empty()) {
+        // When the gateway mixed this source, every per-track gain/mute/delay is
+        // already baked into the stream the primary reads.  Applying the first
+        // input again multiplied the gain a second time and let a muted first
+        // track silence the whole source, so only the source master applies here.
+        if (entry.audio_mix) {
+            obs_source_set_volume(entry.source.get(), static_cast<float>(entry.configuration.volume));
+            obs_source_set_muted(entry.source.get(), entry.configuration.muted);
+            obs_source_set_sync_offset(entry.source.get(),
+                                       static_cast<std::int64_t>(entry.configuration.sync_offset_ms) * 1000000LL);
+        } else if (inputs.empty()) {
             obs_source_set_volume(entry.source.get(), 0.0f);
             obs_source_set_muted(entry.source.get(), true);
         } else {
