@@ -25,6 +25,19 @@ services = []
 handles = []
 stopping = threading.Event()
 
+# Distinct exit codes so a failed start says which phase failed and nothing is
+# left half-started (see the finally block in main()).
+EXIT_CODES = {'lock': 3, 'ports': 4, 'mediamtx': 5, 'services': 6, 'obs_build': 7, 'core': 8, 'generic': 9}
+
+
+class StageError(RuntimeError):
+    """A start-up failure with the phase it happened in."""
+
+    def __init__(self, stage, message):
+        super().__init__(message)
+        self.stage = stage
+        self.exit_code = EXIT_CODES.get(stage, EXIT_CODES['generic'])
+
 def say(message):
     print(f"[native] {message}", flush=True)
 
@@ -67,12 +80,12 @@ def ports_free():
         with socket.socket() as sock:
             sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
             try: sock.bind(('127.0.0.1', port))
-            except OSError: raise RuntimeError(f'后端端口 {port} 已占用。请先停止旧原生服务/本项目容器；脚本不会结束其他进程。')
+            except OSError: raise StageError('ports', f'后端端口 {port} 已占用。请先停止旧原生服务/本项目容器；脚本不会结束其他进程。')
     with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as sock:
         try: sock.bind(('127.0.0.1', 8189))
-        except OSError: raise RuntimeError('UDP 8189 已占用，请停止旧媒体服务。')
+        except OSError: raise StageError('ports', 'UDP 8189 已占用，请停止旧媒体服务。')
 
-def start(name, args, env, health, timeout=10.0):
+def start(name, args, env, health, timeout=10.0, stage=None):
     logfile = CACHE / 'logs' / f'{name}.log'
     stream = open(logfile, 'a'); handles.append(stream)
     child = subprocess.Popen([str(arg) for arg in args], cwd=ROOT, env=env, stdin=subprocess.DEVNULL,
@@ -91,7 +104,7 @@ def start(name, args, env, health, timeout=10.0):
         except Exception: pass
         time.sleep(.2)
     print(logfile.read_text(errors='replace')[-4000:], flush=True)
-    raise RuntimeError(f'{name} 未就绪；请查看 {logfile}')
+    raise StageError(stage or name, f'{name} 阶段未就绪；请查看 {logfile}')
 
 def program_path():
     """MediaMTX view of the composed Program path; no project credentials needed."""
@@ -131,6 +144,8 @@ def main():
     parser.add_argument('--install-deps', action='store_true')
     # Explicit opt-in: without it the lightweight Direct-only native default is unchanged.
     parser.add_argument('--composite', action='store_true')
+    # Long-run/background mode: do not stop when the parent closes stdin.
+    parser.add_argument('--soak', action='store_true')
     parser.add_argument('--frontend-port', type=int, default=5173)
     args = parser.parse_args()
     if args.install_deps:
@@ -157,14 +172,21 @@ def main():
     lock = open(CACHE.parent / 'native.lock', 'a')
     handles.append(lock)
     try: fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
-    except BlockingIOError: raise RuntimeError('已有原生开发会话正在编译或运行，请先停止原会话。')
+    except BlockingIOError: raise StageError('lock', '已有原生开发会话正在编译或运行，请先停止原会话。')
     ports_free()
     signal.signal(signal.SIGTERM, shutdown); signal.signal(signal.SIGINT, shutdown)
-    def watch_parent():
-        while os.read(sys.stdin.fileno(), 4096):
-            pass
-        shutdown()
-    threading.Thread(target=watch_parent, daemon=True).start()
+    if not args.soak:
+        def watch_parent():
+            try:
+                while os.read(sys.stdin.fileno(), 4096):
+                    pass
+            except OSError:
+                pass
+            say('父进程 stdin 已关闭：按设计停止本次会话；长稳测试请使用 --soak（不监听 stdin）。')
+            shutdown()
+        threading.Thread(target=watch_parent, daemon=True).start()
+    else:
+        say('长稳模式：不监听 stdin（--soak），退出请用 Ctrl+C 或 SIGTERM。')
     for name in ['logs', 'data', 'data/keys', 'data/camera-secrets', 'data/notification-secrets', 'recordings', 'bin']:
         (CACHE / name).mkdir(parents=True, exist_ok=True)
     buildlog = CACHE / 'logs/build.log'
@@ -284,8 +306,8 @@ def main():
         required = {'obs-ffmpeg': '媒体输入/编码', 'obs-x264': '软件编码', 'obs-webrtc': 'WHIP 输出'}
         missing = [name for name in required if not any(name in plugin for plugin in plugins)]
         if missing:
-            raise RuntimeError('Composite 构建不完整，缺少模块：' + ', '.join(missing) +
-                               '。纯摄像头场景至少需要 obs-ffmpeg 与 obs-x264；请查看 ' + str(buildlog))
+            raise StageError('obs_build', 'Composite 构建不完整，缺少模块：' + ', '.join(missing) +
+                             '。纯摄像头场景至少需要 obs-ffmpeg 与 obs-x264；请查看 ' + str(buildlog))
         say('Composite 模块检查通过：' + ', '.join(required))
     say('[2/4] 增量编译项目 C++ 后端')
     command(['cmake', '-S', project_source, '-B', core_build, '-G', 'Ninja', '-DCMAKE_BUILD_TYPE=Debug',
@@ -356,13 +378,14 @@ def main():
     })
     # Prevent inherited production options from accidentally turning on Composite/recording.
     env.pop('WEBOBS_OUTPUT', None); env.pop('WEBOBS_RTSP_URL', None)
-    start('mediamtx', [media, ROOT / 'gateway/mediamtx.yml'], env, 'http://127.0.0.1:9997/v3/config/global/get')
+    start('mediamtx', [media, ROOT / 'gateway/mediamtx.yml'], env,
+          'http://127.0.0.1:9997/v3/config/global/get', stage='mediamtx')
     for name, source, port in [('camera','camera/camera_registry.py',8092), ('events','events/event_service.py',8093),
                                ('clients','v2/client_control_service.py',8094), ('cluster','cluster/cluster_service.py',8095),
                                ('nvr','nvr/nvr_service.py',8091)]:
         start(name, [sys.executable, ROOT / source], env, f'http://127.0.0.1:{port}/health')
     start('core', [core_build / 'webobsd'], env, 'http://127.0.0.1:8080/api/v1/health',
-          timeout=300 if args.composite else 30)
+          timeout=300 if args.composite else 30, stage='core')
     say(f'账号文件：{ROOT / "secrets"}；数据：{data}（独立于容器数据卷）')
     if args.composite:
         say('原生 Composite 已启用：来源 → OBS 合成 → H.264/Opus → MediaMTX → Program WHEP；启动器分别报告进程存活、引擎就绪与 Program 发布状态。')
@@ -380,8 +403,16 @@ if __name__ == '__main__':
     try: main()
     except InterruptedError:
         pass
+    except StageError as error:
+        print(f'[ERROR][阶段 {error.stage}] {error}', file=sys.stderr, flush=True)
+        import traceback; traceback.print_exc()
+        print(f'[ERROR] 日志目录：{CACHE / "logs"}；请查看该阶段的日志文件。', file=sys.stderr, flush=True)
+        status = error.exit_code
     except Exception as error:
-        print(f'[ERROR] {error}', file=sys.stderr, flush=True); status = 1
+        print(f'[ERROR][阶段 unknown] {error}', file=sys.stderr, flush=True)
+        import traceback; traceback.print_exc()
+        print(f'[ERROR] 日志目录：{CACHE / "logs"}', file=sys.stderr, flush=True)
+        status = EXIT_CODES['generic']
     finally:
         shutdown()
         for child in processes:
