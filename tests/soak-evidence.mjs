@@ -273,7 +273,9 @@ function renderMarkdown(summary, options) {
 async function main() {
   const options = parseArguments(process.argv.slice(2));
   const revision = git('rev-parse', 'HEAD');
-  const dirty = git('status', '--porcelain').length > 0;
+  // Only tracked modifications invalidate the evidence; the repository keeps
+  // unrelated untracked files that the acceptance must not depend on.
+  const dirty = git('status', '--porcelain', '--untracked-files=no').length > 0;
   const stamp = new Date().toISOString().replace(/[:.]/g, '-');
   const runId = `${stamp}-${options.label}-${revision.slice(0, 7)}`;
   const directory = path.join(options.out, runId);

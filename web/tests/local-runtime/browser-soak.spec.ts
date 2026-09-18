@@ -69,9 +69,17 @@ test.describe('feedback-5 soak', () => {
     }
     await expect(page.getByRole('button', { name: '退出登录' })).toBeVisible({ timeout: 30_000 });
 
-    // Switch to the playback mode under test through the real UI controls.
-    const modeButton = page.getByRole('button', { name: mode === 'composite' ? '服务端合成' : '网关直通' });
-    if (await modeButton.count()) await modeButton.first().click();
+    // Switch to the playback mode under test through the real UI controls.  The
+    // monitor workspace and the studio workspace label the same choice
+    // differently, so both spellings are accepted.
+    const modeLabels = mode === 'composite' ? ['服务端合成', '服务端 Program'] : ['网关直通', '浏览器媒体'];
+    for (const label of modeLabels) {
+      const button = page.getByRole('button', { name: label, exact: true });
+      if (await button.count()) {
+        await button.first().click();
+        break;
+      }
+    }
 
     await page.evaluate(() => {
       const state = { startedAt: Date.now(), entries: {} as Record<string, unknown> };
@@ -108,13 +116,15 @@ test.describe('feedback-5 soak', () => {
         tick();
       };
       const scan = () => {
+        // Composite measures the single program player; direct/hybrid measures
+        // every tile the wall renders.
+        const program = document.querySelector('video[aria-label="实时合成节目画面"]');
+        if (program) attach('program', program as HTMLVideoElement);
         document.querySelectorAll('.direct-tile[data-source-id]').forEach((tile) => {
           const video = tile.querySelector('video');
           const id = tile.getAttribute('data-source-id');
           if (video && id) attach(id, video as HTMLVideoElement);
         });
-        const program = document.querySelector('video[aria-label="实时合成节目画面"]');
-        if (program) attach('program', program as HTMLVideoElement);
       };
       scan();
       window.setInterval(scan, 2000);
