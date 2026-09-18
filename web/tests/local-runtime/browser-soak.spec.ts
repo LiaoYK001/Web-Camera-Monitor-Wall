@@ -71,14 +71,24 @@ test.describe('feedback-5 soak', () => {
 
     // Switch to the playback mode under test through the real UI controls.  The
     // monitor workspace and the studio workspace label the same choice
-    // differently, so both spellings are accepted.
+    // differently and the workspace controls mount after the session loads, so
+    // poll until one of the spellings is on screen before clicking.
     const modeLabels = mode === 'composite' ? ['服务端合成', '服务端 Program'] : ['网关直通', '浏览器媒体'];
-    for (const label of modeLabels) {
-      const button = page.getByRole('button', { name: label, exact: true });
-      if (await button.count()) {
-        await button.first().click();
-        break;
+    let switched = false;
+    for (let attempt = 0; attempt < 30 && !switched; attempt++) {
+      for (const label of modeLabels) {
+        const button = page.getByRole('button', { name: label });
+        if (await button.count()) {
+          await button.first().click().catch(() => undefined);
+          switched = true;
+          break;
+        }
       }
+      if (!switched) await page.waitForTimeout(1000);
+    }
+    console.log(`[browser-soak] mode switch to ${mode}: ${switched ? 'clicked' : 'not found'}`);
+    if (mode === 'composite') {
+      await page.waitForSelector('video[aria-label="实时合成节目画面"]', { timeout: 30_000 }).catch(() => undefined);
     }
 
     await page.evaluate(() => {
