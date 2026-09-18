@@ -9,7 +9,7 @@ const root = fileURLToPath(new URL('../', import.meta.url));
 const web = path.join(root, 'web');
 const win = process.platform === 'win32';
 const options = { mode: 'native', api: 'http://127.0.0.1:8080', port: '5173', distro: 'Ubuntu-24.04', engine: 'docker' };
-const flags = new Set(['setup', 'check', 'build', 'help', 'stop', 'composite']);
+const flags = new Set(['setup', 'check', 'build', 'help', 'stop', 'composite', 'soak']);
 const children = new Set();
 let stopping = false;
 let controlServer; let stateFile;
@@ -75,7 +75,7 @@ try {
     else { if (!args[i + 1] || args[i + 1].startsWith('--')) throw new Error(`参数 ${args[i]} 缺少值`); options[key] = args[++i]; }
   }
   if (options.help) {
-    console.log(`WebOBS 本地开发\n\nWindows: .\\scripts\\dev.ps1 [-Setup] [-Check] [-Composite] [-Mode native|frontend|container] [-Api URL] [-Port 5173]\nLinux:   bash scripts/dev.sh [--setup] [--check] [--composite] [--mode native|frontend|container] [--api URL] [--port 5173]\n\nnative    默认：原生 C++/Python 后端 + Vite；Windows 后端运行在 WSL2。首次加 --setup / -Setup 安装 Ubuntu 24.04 依赖。\n--composite / -Composite\n          显式启用本地服务端合成（OBS 图形/媒体输入/编码与 WHIP 输出模块）。\n          首次使用：.\\scripts\\dev.ps1 -Setup -Composite；日常：.\\scripts\\dev.ps1 -Composite。\n          不带参数时保持轻量 native 默认行为（不构建合成模块）。\nfrontend  仅启动 Vite，连接 --api / -Api 指定的已有后端。\ncontainer 可选兼容模式；需要已启动 Docker/Podman，仅显式 --build / -Build 时构建镜像。\n--check   只检查环境，不安装、不构建、不启动。\n--distro  Windows WSL 发行版，默认 Ubuntu-24.04。\n--engine  docker 或 podman（仅 container）。--builder 为 Docker 构建器。\n\nCtrl+C 结束本次原生服务和前端；容器模式保留后端。详见 docs/development.md。`);
+    console.log(`WebOBS 本地开发\n\nWindows: .\\scripts\\dev.ps1 [-Setup] [-Check] [-Composite] [-Soak] [-Mode native|frontend|container] [-Api URL] [-Port 5173]\nLinux:   bash scripts/dev.sh [--setup] [--check] [--composite] [--soak] [--mode native|frontend|container] [--api URL] [--port 5173]\n\nnative    默认：原生 C++/Python 后端 + Vite；Windows 后端运行在 WSL2。首次加 --setup / -Setup 安装 Ubuntu 24.04 依赖。\n--composite / -Composite\n          显式启用本地服务端合成（OBS 图形/媒体输入/编码与 WHIP 输出模块）。\n          首次使用：.\\scripts\\dev.ps1 -Setup -Composite；日常：.\\scripts\\dev.ps1 -Composite。\n          不带参数时保持轻量 native 默认行为（不构建合成模块）。\nfrontend  仅启动 Vite，连接 --api / -Api 指定的已有后端。\ncontainer 可选兼容模式；需要已启动 Docker/Podman，仅显式 --build / -Build 时构建镜像。\n--soak / -Soak\n          耐久/长稳模式：后端不监听父进程 stdin，父终端关闭也不会停止本次会话；\n          供 30 分钟验收与持续采样使用。退出用 Ctrl+C 或 SIGTERM。仅 native 模式生效。\n--check   只检查环境，不安装、不构建、不启动。\n--distro  Windows WSL 发行版，默认 Ubuntu-24.04。\n--engine  docker 或 podman（仅 container）。--builder 为 Docker 构建器。\n\nCtrl+C 结束本次原生服务和前端；容器模式保留后端。详见 docs/development.md。`);
     process.exit(0);
   }
   if (!/^\d+$/.test(options.port) || Number(options.port) < 1024 || Number(options.port) > 65535) throw new Error('前端端口须为 1024–65535');
@@ -156,7 +156,7 @@ try {
   if (options.mode === 'native') {
     credentials();
     log('启动原生后端：首次编译较久；后续复用本机缓存，不使用镜像。');
-    const backend = launch(nativeCommand[0], [...nativeCommand[1], '--frontend-port', options.port, ...(options.composite ? ['--composite'] : [])], root, true);
+    const backend = launch(nativeCommand[0], [...nativeCommand[1], '--frontend-port', options.port, ...(options.composite ? ['--composite'] : []), ...(options.soak ? ['--soak'] : [])], root, true);
     let output = ''; let started = false;
     backend.stdout.on('data', (chunk) => { process.stdout.write(chunk); output = (output + chunk).slice(-4096); if (!started && output.includes('WEBOBS_DEV_READY')) { started = true; frontend(); } });
   } else if (options.mode === 'container') {

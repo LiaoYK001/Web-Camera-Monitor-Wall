@@ -37,6 +37,20 @@ test('help documents the explicit Composite opt-in for both shells', async () =>
   assert.match(result.output, /--composite/);
   assert.match(result.output, /dev\.ps1 -Setup -Composite/);
 });
+test('help documents the Windows and Linux soak flags', async () => {
+  const result = await execute(['--help']);
+  assert.equal(result.code, 0);
+  assert.match(result.output, /-Soak/);
+  assert.match(result.output, /--soak/);
+});
+
+test('the soak flag is accepted and validated with the rest of the arguments', async () => {
+  const result = await execute(['--soak', '--port', 'oops']);
+  assert.equal(result.code, 1);
+  assert.match(result.output, /1024–65535/);
+  assert.doesNotMatch(result.output, /未知参数/);
+});
+
 test('the composite flag is accepted and validated with the rest of the arguments', async () => {
   const result = await execute(['--composite', '--port', 'oops']);
   assert.equal(result.code, 1);
