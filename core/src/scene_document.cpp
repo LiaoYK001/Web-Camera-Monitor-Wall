@@ -292,6 +292,24 @@ std::vector<SceneAudioInput> resolved_audio_inputs(const SceneSource &source)
     return {SceneAudioInput{source.audio_track - 1, 1.0, false}};
 }
 
+bool audio_routing_matches(const SceneSource &left, const SceneSource &right)
+{
+    if (left.audio_inputs_explicit != right.audio_inputs_explicit)
+        return false;
+    const std::vector<SceneAudioInput> left_inputs = resolved_audio_inputs(left);
+    const std::vector<SceneAudioInput> right_inputs = resolved_audio_inputs(right);
+    if (left_inputs.size() != right_inputs.size())
+        return false;
+    for (std::size_t index = 0; index < left_inputs.size(); ++index) {
+        const SceneAudioInput &a = left_inputs[index];
+        const SceneAudioInput &b = right_inputs[index];
+        if (a.track != b.track || a.gain != b.gain || a.muted != b.muted ||
+            a.sync_offset_ms != b.sync_offset_ms)
+            return false;
+    }
+    return true;
+}
+
 std::optional<std::string> validate_scene_document(const SceneDocument &document)
 {
     if (document.schema_version != current_scene_schema_version &&

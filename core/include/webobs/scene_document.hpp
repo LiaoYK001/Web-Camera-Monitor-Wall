@@ -158,6 +158,17 @@ struct SceneSerializeResult {
  */
 [[nodiscard]] std::vector<SceneAudioInput> resolved_audio_inputs(const SceneSource &source);
 
+/**
+ * True when two configurations describe the same effective audio routing, i.e.
+ * the gateway would build exactly the same mix stream for both.  This decides
+ * whether a re-published document may keep its live source and its existing
+ * gateway mix route.  Source master volume/mute and the output bus are applied
+ * on the OBS side when the document is committed, so they are excluded; the
+ * explicit flag is included because "never configured" and "cleared every
+ * track" resolve to different audio.
+ */
+[[nodiscard]] bool audio_routing_matches(const SceneSource &left, const SceneSource &right);
+
 std::optional<std::string> validate_scene_document(const SceneDocument &document);
 SceneParseResult parse_scene_json(std::string_view json);
 SceneSerializeResult serialize_scene_json(const SceneDocument &document, SceneJsonView view,

@@ -1360,6 +1360,48 @@ void scene_audio_inputs_tests()
     expect(resolved.size() == 2 && resolved[0].gain == 0.25 && resolved[1].track == 2 &&
                resolved[1].muted,
            "explicit audioInputs must win over the legacy audioTrack field");
+
+    // Batch B: a re-published document may keep the live source *and* its
+    // existing gateway mix route exactly when the effective routing is equal.
+    expect(webobs::audio_routing_matches(explicit_source, explicit_source),
+           "an unchanged explicit selection must reuse the running source and mix route");
+    webobs::SceneSource layout_only = explicit_source;
+    layout_only.name = "Renamed";
+    layout_only.audio_track = 4;
+    layout_only.volume = 0.2;
+    layout_only.muted = true;
+    expect(webobs::audio_routing_matches(explicit_source, layout_only),
+           "a rename, the output bus or master volume/mute must not force an audio rebuild");
+    webobs::SceneSource gain_changed = explicit_source;
+    gain_changed.audio_inputs[0].gain = 0.5;
+    expect(!webobs::audio_routing_matches(explicit_source, gain_changed),
+           "a per-track gain change must prepare a new gateway mix");
+    webobs::SceneSource offset_changed = explicit_source;
+    offset_changed.audio_inputs[1].sync_offset_ms = -500;
+    expect(!webobs::audio_routing_matches(explicit_source, offset_changed),
+           "a per-track sync offset change must prepare a new gateway mix");
+    webobs::SceneSource reordered = explicit_source;
+    reordered.audio_inputs = {explicit_source.audio_inputs[1], explicit_source.audio_inputs[0]};
+    expect(!webobs::audio_routing_matches(explicit_source, reordered),
+           "a reordered selection must prepare a new gateway mix");
+    webobs::SceneSource fewer = explicit_source;
+    fewer.audio_inputs.pop_back();
+    expect(!webobs::audio_routing_matches(explicit_source, fewer),
+           "dropping a track must prepare a new gateway mix");
+    webobs::SceneSource cleared = explicit_source;
+    cleared.audio_inputs.clear();
+    expect(!webobs::audio_routing_matches(explicit_source, cleared),
+           "clearing every track must prepare a silent route instead of reusing the mix");
+    expect(webobs::audio_routing_matches(cleared, cleared),
+           "an explicit empty selection stays stable across repeated saves");
+    webobs::SceneSource legacy_other;
+    legacy_other.audio_track = 1;
+    expect(!webobs::audio_routing_matches(cleared, legacy_other),
+           "an explicit empty selection must never equal a legacy selection");
+    expect(!webobs::audio_routing_matches(legacy_source, legacy_other),
+           "legacy sources selecting different input tracks must not reuse one route");
+    expect(webobs::audio_routing_matches(legacy_source, legacy_source),
+           "identical legacy sources must reuse the live connection");
 }
 
 int main()

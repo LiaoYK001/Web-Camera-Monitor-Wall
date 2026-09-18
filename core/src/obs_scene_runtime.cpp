@@ -221,6 +221,8 @@ bool media_path_request(std::string_view action, std::string_view path, std::str
     curl_slist *headers = nullptr;
     if (action == "delete") {
         curl_easy_setopt(handle, CURLOPT_CUSTOMREQUEST, "DELETE");
+    } else if (action == "get") {
+        curl_easy_setopt(handle, CURLOPT_HTTPGET, 1L);
     } else {
         headers = curl_slist_append(headers, "Content-Type: application/json");
         curl_easy_setopt(handle, CURLOPT_HTTPHEADER, headers);
@@ -242,6 +244,12 @@ void delete_media_path(std::string_view path)
 {
     if (!path.empty())
         media_path_request("delete", path, {});
+}
+
+/** Confirms a prepared MediaMTX route really exists before a source points at it. */
+bool media_path_exists(std::string_view path)
+{
+    return !path.empty() && media_path_request("get", path, {});
 }
 
 
@@ -306,6 +314,11 @@ std::optional<std::string> ensure_audio_mix_path(std::string_view source_url,
     free(dump);
     if (!media_path_request("add", mix_path, body))
         return std::nullopt;
+    // Read the route back: a half-created path must never become a source input.
+    if (!media_path_exists(mix_path)) {
+        delete_media_path(mix_path);
+        return std::nullopt;
+    }
     return mix_path;
 }
 
@@ -315,6 +328,12 @@ struct SourceEntry {
     SourcePtr source;
     /** Owns (and deletes) the MediaMTX mix path this source reads, if any. */
     MediaPathPtr audio_mix;
+    /**
+     * Set when the entry could not be prepared.  prepare() reports it instead of
+     * silently playing another audio track, so a failed update leaves the
+     * running program untouched.
+     */
+    std::string error;
     bool prewarmed = false;
     bool frame_primed = false;
     std::shared_ptr<MeterStatus> meter_status;
@@ -541,6 +560,27 @@ SourceEntry create_source_entry(const SceneSource &configuration, int connect_ti
                                 const RuntimeState *current, bool hardware_decode_enabled)
 {
     const std::vector<SceneAudioInput> audio_inputs = resolved_audio_inputs(configuration);
+    if (current) {
+        const auto existing = current->sources.find(configuration.id);
+        // An unchanged media connection *and* unchanged effective audio routing
+        // reuse the live source together with the gateway mix path it already
+        // owns.  A layout-only save, a repeated save or a rename therefore no
+        // longer rebuilds the pipeline or orphans the previous mix route.
+        if (existing != current->sources.end() &&
+            connection_matches(existing->second.configuration, configuration) &&
+            audio_routing_matches(existing->second.configuration, configuration)) {
+            SourceEntry reused;
+            reused.configuration = configuration;
+            reused.status = existing->second.status;
+            SourcePtr shared(obs_source_get_ref(existing->second.source.get()));
+            reused.source = std::move(shared);
+            // Shared ownership keeps the route alive until the commit retires the
+            // old entry, so the source is never left reading a deleted path.
+            reused.audio_mix = existing->second.audio_mix;
+            return reused;
+        }
+    }
+
     MediaPathPtr audio_mix;
     std::string audio_mix_url;
     // Whenever the document configures input tracks explicitly, the gateway mixes
@@ -555,32 +595,17 @@ SourceEntry create_source_entry(const SceneSource &configuration, int connect_ti
             if (resolved)
                 source_url = resolved->endpoint;
         }
-        if (const auto mix_path = ensure_audio_mix_path(source_url, audio_inputs)) {
-            audio_mix_url = "rtsp://127.0.0.1:8554/" + *mix_path;
-            audio_mix = make_media_path_guard(*mix_path);
+        // Prepare the replacement route before anything is switched.  Reporting a
+        // failure keeps the running program on its current audio instead of
+        // quietly falling back to the default track.
+        const auto mix_path = ensure_audio_mix_path(source_url, audio_inputs);
+        if (!mix_path) {
+            SourceEntry failed;
+            failed.error = "could not prepare the gateway audio mix for source " + configuration.id;
+            return failed;
         }
-    }
-    if (current) {
-        const auto existing = current->sources.find(configuration.id);
-        const std::vector<SceneAudioInput> previous_inputs =
-            existing == current->sources.end() ? std::vector<SceneAudioInput>{}
-                                               : resolved_audio_inputs(existing->second.configuration);
-        // A different decoded first track needs a fresh source; per-track gain
-        // or mute changes reuse the connection and only rebuild the extras.
-        const bool same_first_track = previous_inputs.empty() || audio_inputs.empty() ||
-                                      previous_inputs.front().track == audio_inputs.front().track;
-        // A gateway-mixed source is never reused: its input URL embeds a
-        // per-creation mix path whose ownership lives in the old entry.
-        if (existing != current->sources.end() && configuration.audio_inputs.empty() &&
-            audio_inputs.size() <= 1 && same_first_track &&
-            connection_matches(existing->second.configuration, configuration)) {
-            SourceEntry reused;
-            reused.configuration = configuration;
-            reused.status = existing->second.status;
-            SourcePtr shared(obs_source_get_ref(existing->second.source.get()));
-            reused.source = std::move(shared);
-            return reused;
-        }
+        audio_mix_url = "rtsp://127.0.0.1:8554/" + *mix_path;
+        audio_mix = make_media_path_guard(*mix_path);
     }
 
     DataPtr settings(obs_data_create());
@@ -1072,7 +1097,9 @@ std::optional<std::string> ObsSceneRuntime::prepare(const SceneDocument &documen
             create_source_entry(source, impl_->connect_timeout_seconds, impl_->current.get(),
                                 impl_->hardware_decode_enabled);
         if (!entry.source)
-            return "could not create OBS " + source.kind + " source " + source.id;
+            return entry.error.empty()
+                       ? "could not create OBS " + source.kind + " source " + source.id
+                       : entry.error;
         candidate->sources.emplace(source.id, std::move(entry));
     }
 
