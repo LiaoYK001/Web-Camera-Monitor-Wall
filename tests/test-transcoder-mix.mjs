@@ -29,6 +29,28 @@ test('audio-mix accepts gain/mute specs with and without a sync delay', async ()
   }
 });
 
+test('audio-mix accepts signed per-track offsets across the whole documented range', async () => {
+  for (const spec of [
+    '0:1.0:0:-2000,1:1.0:0:0',
+    '0:1.0:0:-10000,1:1.0:0:10000',
+    '0:1.0:0:10000',
+    '0:1.0:0:-0',
+  ]) {
+    const result = await run([source, mixPath, 'audio-mix', spec]);
+    assert.notEqual(result.code, 2, `${spec} must pass validation`);
+    assert.doesNotMatch(result.stderr, /invalid internal/);
+  }
+});
+
+test('negative offsets are normalised and the added end-to-end delay is reported', async () => {
+  const negative = await run([source, mixPath, 'audio-mix', '0:1.0:0:-2000,1:1.0:0:0']);
+  assert.match(negative.stderr, /新增端到端延迟: 2000ms/);
+  const mixed = await run([source, mixPath, 'audio-mix', '0:1.0:0:-500,1:1.0:0:2500']);
+  assert.match(mixed.stderr, /新增端到端延迟: 500ms/);
+  const positive_only = await run([source, mixPath, 'audio-mix', '0:1.0:0:250,1:0.5:0:0']);
+  assert.doesNotMatch(positive_only.stderr, /normalised/);
+});
+
 test('audio-mix rejects malformed specs, destinations and argument counts', async () => {
   const cases = [
     [source, mixPath, 'audio-mix', '0:2.0:0'],
@@ -37,7 +59,12 @@ test('audio-mix rejects malformed specs, destinations and argument counts', asyn
     [source, mixPath, 'audio-mix', '0-1.0-0'],
     [source, mixPath, 'audio-mix', ''],
     [source, mixPath, 'audio-mix', '0:1.0:0:12000'],
+    [source, mixPath, 'audio-mix', '0:1.0:0:-12000'],
+    [source, mixPath, 'audio-mix', '0:1.0:0:10001'],
+    [source, mixPath, 'audio-mix', '0:1.0:0:-10001'],
     [source, mixPath, 'audio-mix', '0:1.0:0:abc'],
+    [source, mixPath, 'audio-mix', '0:1.0:0:-abc'],
+    [source, mixPath, 'audio-mix', '0:1.0:0:--500'],
     [source, mixPath, 'audio-mix', '0:1.0:0:250:7'],
     [source, mixPath, 'audio-mix', '0:1.0:0,1:1.0:0,2:1.0:0,3:1.0:0,4:1.0:0,5:1.0:0,6:1.0:0,7:1.0:0,8:1.0:0'],
     [source, `hybrid-${token}`, 'audio-mix', '0:1.0:0'],

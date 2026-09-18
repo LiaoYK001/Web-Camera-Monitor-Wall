@@ -30,8 +30,10 @@ validate_mix_spec() {
         printf '%s' "$gain" | grep -Eq '^(0(\.[0-9]{1,4})?|1(\.0{1,4})?)$' || return 1
         printf '%s' "$muted" | grep -Eq '^[01]$' || return 1
         if [ -n "$delay" ]; then
-            printf '%s' "$delay" | grep -Eq '^(0|[1-9][0-9]{0,4})$' || return 1
-            [ "$delay" -le 10000 ] || return 1
+            # Per-track sync offsets are signed (+/-10000ms): a negative value
+            # means the track must lead the video and is normalised later.
+            printf '%s' "$delay" | grep -Eq '^-?(0|[1-9][0-9]{0,4})$' || return 1
+            [ "$delay" -ge -10000 ] && [ "$delay" -le 10000 ] || return 1
         fi
         count=$((count + 1))
         [ "$count" -le 8 ] || return 1
@@ -39,6 +41,21 @@ validate_mix_spec() {
     done
     IFS="$old_ifs"
     [ "$count" -ge 1 ]
+}
+
+# Splits one already-validated spec entry into spec_index / spec_gain /
+# spec_muted / spec_delay.  A missing offset means "no offset" (0).
+split_mix_entry() {
+    spec_index="${1%%:*}"
+    remainder="${1#*:}"
+    spec_gain="${remainder%%:*}"
+    remainder="${remainder#*:}"
+    spec_muted="${remainder%%:*}"
+    spec_delay=""
+    if [ "$remainder" != "$spec_muted" ]; then
+        spec_delay="${remainder#*:}"
+    fi
+    [ -n "$spec_delay" ] || spec_delay=0
 }
 
 if [ "$#" -ne 4 ] ||
@@ -91,37 +108,65 @@ if [ "$video_mode" = audio-mix ]; then
     direct-*) input_url="rtsp://127.0.0.1:8554/$source_path" ;;
     *) input_url="$source_path" ;;
     esac
-    graph=""
-    inputs=""
-    count=0
+    # Signed per-track offsets cannot be applied literally: a negative delay is
+    # not expressible.  Normalise with B = max(0, -min(d_i)); every track is then
+    # delayed by B + d_i (always >= 0) and the video is delayed by the same B, so
+    # each track keeps its exact offset relative to the video.
+    normalization=0
     old_ifs="$IFS"
     IFS=','
     for entry in $audio_mode; do
         IFS="$old_ifs"
-        index="${entry%%:*}"
-        remainder="${entry#*:}"
-        gain="${remainder%%:*}"
-        remainder="${remainder#*:}"
-        muted="${remainder%%:*}"
-        delay=""
-        if [ "$remainder" != "$muted" ]; then
-            delay="${remainder#*:}"
+        split_mix_entry "$entry"
+        if [ "$spec_delay" -lt 0 ] && [ "$((0 - spec_delay))" -gt "$normalization" ]; then
+            normalization=$((0 - spec_delay))
         fi
-        [ "$muted" = "1" ] && gain="0"
+        IFS=','
+    done
+    IFS="$old_ifs"
+    # B <= 10000 and B + d_i <= 20000 hold because every d_i is within +/-10000.
+    if [ "$normalization" -gt 10000 ]; then
+        echo "audio-mix normalisation exceeds the internal 20000ms budget" >&2
+        exit 2
+    fi
+    if [ "$normalization" -gt 0 ]; then
+        echo "audio-mix: negative per-track offsets normalised; added end-to-end delay / 新增端到端延迟: ${normalization}ms (video and every track)" >&2
+    fi
+    graph=""
+    inputs=""
+    count=0
+    IFS=','
+    for entry in $audio_mode; do
+        IFS="$old_ifs"
+        split_mix_entry "$entry"
+        gain="$spec_gain"
+        [ "$spec_muted" = "1" ] && gain="0"
+        delay=$((normalization + spec_delay))
+        if [ "$delay" -gt 20000 ]; then
+            echo "audio-mix delay exceeds the internal 20000ms budget" >&2
+            exit 2
+        fi
         filter="volume=$gain"
-        if [ -n "$delay" ] && [ "$delay" -gt 0 ]; then
-            filter="adelay=$delay|$delay,$filter"
+        if [ "$delay" -gt 0 ]; then
+            filter="adelay=delays=$delay:all=1,$filter"
         fi
-        graph="$graph[0:a:$index]$filter[m$count];"
+        graph="$graph[0:a:$spec_index]$filter[m$count];"
         inputs="$inputs[m$count]"
         count=$((count + 1))
         IFS=','
     done
     IFS="$old_ifs"
-    exec ffmpeg -hide_banner -loglevel error -nostdin -rtsp_transport tcp -timeout 8000000 \
+    set -- ffmpeg -hide_banner -loglevel error -nostdin -rtsp_transport tcp -timeout 8000000 \
         -i "$input_url" -filter_complex "${graph}${inputs}amix=inputs=$count:normalize=0[amixed]" \
-        -map 0:v -map "[amixed]" -c:v copy -c:a libopus -b:a "${WEBOBS_AUDIO_TRACK_BITRATE_KBPS:-96}k" \
+        -map 0:v -map "[amixed]" -c:v copy
+    if [ "$normalization" -gt 0 ]; then
+        # TS is expressed in the input stream timebase, so this stays correct for
+        # any source timebase (verified against 1/1000 and 1/90000).
+        set -- "$@" -bsf:v "setts=ts=TS+${normalization}/(1000*TB)"
+    fi
+    set -- "$@" -c:a libopus -b:a "${WEBOBS_AUDIO_TRACK_BITRATE_KBPS:-96}k" \
         -ar 48000 -ac 2 -rtsp_transport tcp -f rtsp "rtsp://127.0.0.1:8554/$target_path"
+    exec "$@"
 fi
 
 if [ "$video_mode" = audio-track ]; then
