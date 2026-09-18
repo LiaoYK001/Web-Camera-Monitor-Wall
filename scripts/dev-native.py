@@ -138,6 +138,101 @@ def report_program_stages(timeout=150):
     elif not video:
         say('[警告] Program 当前只有音频轨道：视频编码/渲染尚未跟上（软件渲染算力不足时会出现）')
 
+def probe_gl_renderer():
+    """Returns the GL_RENDERER string of a real EGL/OpenGL context, or None.
+
+    No external tool is required: libEGL/libGL are addressed through ctypes, so
+    the probe also works on a host without glxinfo (mesa-utils).
+    """
+    import ctypes
+
+    try:
+        egl = ctypes.CDLL('libEGL.so.1')
+        gl = ctypes.CDLL('libGL.so.1')
+    except OSError:
+        return None
+    try:
+        egl.eglGetDisplay.restype = ctypes.c_void_p
+        egl.eglGetDisplay.argtypes = [ctypes.c_void_p]
+        egl.eglInitialize.argtypes = [ctypes.c_void_p, ctypes.POINTER(ctypes.c_int),
+                                      ctypes.POINTER(ctypes.c_int)]
+        egl.eglBindAPI.argtypes = [ctypes.c_uint]
+        egl.eglChooseConfig.argtypes = [ctypes.c_void_p, ctypes.POINTER(ctypes.c_int),
+                                        ctypes.POINTER(ctypes.c_void_p), ctypes.c_int,
+                                        ctypes.POINTER(ctypes.c_int)]
+        egl.eglCreateContext.restype = ctypes.c_void_p
+        egl.eglCreateContext.argtypes = [ctypes.c_void_p, ctypes.c_void_p, ctypes.c_void_p,
+                                         ctypes.POINTER(ctypes.c_int)]
+        egl.eglMakeCurrent.argtypes = [ctypes.c_void_p, ctypes.c_void_p, ctypes.c_void_p,
+                                       ctypes.c_void_p]
+        gl.glGetString.restype = ctypes.c_char_p
+        gl.glGetString.argtypes = [ctypes.c_uint]
+
+        display = egl.eglGetDisplay(None)
+        if not display:
+            return None
+        major, minor = ctypes.c_int(), ctypes.c_int()
+        if not egl.eglInitialize(ctypes.c_void_p(display), ctypes.byref(major), ctypes.byref(minor)):
+            return None
+        egl.eglBindAPI(0x30A2)  # EGL_OPENGL_API
+        # EGL_SURFACE_TYPE=PBUFFER_BIT, EGL_RENDERABLE_TYPE=OPENGL_BIT, EGL_NONE.
+        # Mesa may report no match for this pbuffer set while still serving a
+        # context from the default config, so the result is not treated as fatal.
+        config_attributes = (ctypes.c_int * 5)(0x3033, 0x0008, 0x3040, 0x0001, 0x3038)
+        config = ctypes.c_void_p()
+        count = ctypes.c_int()
+        egl.eglChooseConfig(ctypes.c_void_p(display), config_attributes,
+                            ctypes.byref(config), 1, ctypes.byref(count))
+        # EGL_CONTEXT_MAJOR_VERSION=4, EGL_CONTEXT_MINOR_VERSION=5, EGL_NONE
+        context_attributes = (ctypes.c_int * 5)(0x3098, 4, 0x30FB, 5, 0x3038)
+        context = egl.eglCreateContext(ctypes.c_void_p(display), config, None, context_attributes)
+        if not context:
+            return None
+        if not egl.eglMakeCurrent(ctypes.c_void_p(display), None, None, ctypes.c_void_p(context)):
+            return None
+        value = gl.glGetString(0x1F01)  # GL_RENDERER
+        return value.decode('utf-8', 'replace') if value else None
+    except (AttributeError, OSError, ValueError):
+        return None
+
+
+SOFTWARE_RENDERER_MARKERS = ('llvmpipe', 'softpipe', 'swrast', 'software rasterizer')
+
+
+def configure_renderer():
+    """Chooses the OBS OpenGL renderer from a real probe instead of an assumption.
+
+    Mirrors docker/entrypoint.sh: WSL2 exposes the GPU through /dev/dxg and Mesa's
+    d3d12 driver, but Mesa silently falls back to llvmpipe unless GALLIUM_DRIVER is
+    pinned, so a hardware context is only claimed after the probe actually reports
+    a non-software adapter.  Returns (selected, fallback, reason).
+    """
+    requested = os.environ.get('WEBOBS_RENDERER', 'auto').strip().lower()
+    if requested not in ('auto', 'hardware', 'software'):
+        raise StageError('renderer', 'WEBOBS_RENDERER must be auto, hardware or software')
+    if requested == 'software':
+        os.environ['LIBGL_ALWAYS_SOFTWARE'] = '1'
+        os.environ['GALLIUM_DRIVER'] = 'llvmpipe'
+        return 'software', False, ''
+    if (os.environ.get('WSL_DISTRO_NAME') and Path('/dev/dxg').exists()
+            and not os.environ.get('GALLIUM_DRIVER')
+            and next(Path('/usr/lib/x86_64-linux-gnu/dri').glob('d3d12_dri.so'), None)):
+        os.environ['GALLIUM_DRIVER'] = 'd3d12'
+    renderer = probe_gl_renderer()
+    hardware = bool(renderer) and not any(
+        marker in renderer.lower() for marker in SOFTWARE_RENDERER_MARKERS)
+    if hardware:
+        say(f'图形渲染器探测：硬件路径可用（{renderer}）')
+        return 'hardware', False, ''
+    if requested == 'hardware':
+        raise StageError('renderer',
+                         f'已要求硬件渲染，但 EGL 探测返回 {renderer or "没有可用的 GL 上下文"}')
+    say(f'图形渲染器探测：回退软件渲染（探测结果：{renderer or "没有可用的 GL 上下文"}）')
+    os.environ['LIBGL_ALWAYS_SOFTWARE'] = '1'
+    os.environ['GALLIUM_DRIVER'] = 'llvmpipe'
+    return 'software', True, 'hardware_renderer_probe_failed'
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('--check', action='store_true')
@@ -199,8 +294,18 @@ def main():
     # OBS's NVENC plugin needs the ffnvcodec headers; enable it only on hosts that
     # can really build it so a GPU-less host keeps its own cache entry.
     nvenc_headers = next((path for path in ['/usr/include/ffnvcodec/nvEncodeAPI.h',
-                                            '/usr/local/include/ffnvcodec/nvEncodeAPI.h'] if Path(path).exists()), None)
+                                            '/usr/local/include/ffnvcodec/nvEncodeAPI.h',
+                                            str(CACHE / 'libs/include/ffnvcodec/nvEncodeAPI.h')]
+                          if Path(path).exists()), None)
     nvenc_buildable = bool(nvenc_headers)
+    if nvenc_buildable:
+        # Ubuntu 24.04 has no ffnvcodec package, so the headers can live in the
+        # user build prefix; pkg-config must see that prefix for OBS's
+        # FindFFnvcodec module to accept them.
+        pkgconfig = str(CACHE / 'libs/lib/pkgconfig')
+        existing = [part for part in os.environ.get('PKG_CONFIG_PATH', '').split(':') if part]
+        if pkgconfig not in existing:
+            os.environ['PKG_CONFIG_PATH'] = ':'.join([pkgconfig, *existing])
     if args.composite:
         say('OBS NVENC 插件：' + ('启用（检测到 ' + nvenc_headers + '）' if nvenc_buildable else
                                   '未启用（缺少 ffnvcodec 头文件；OBS 保持 x264 软件编码）'))
@@ -298,7 +403,10 @@ def main():
              *prefix_flags], buildlog)
     # libobs-opengl is the renderer the Composite engine needs; without it
     # obs_reset_video fails with "libobs-opengl.so: cannot open shared object".
-    obs_targets = (['libobs', 'libobs-opengl', 'obs-ffmpeg', 'obs-x264', 'obs-webrtc']
+    # obs-nvenc ships a helper executable (obs-nvenc-test) that the plugin runs
+    # to verify the driver; without it the module refuses to load.
+    obs_targets = (['libobs', 'libobs-opengl', 'obs-ffmpeg', 'obs-x264', 'obs-webrtc',
+                    *(['obs-nvenc', 'obs-nvenc-test'] if nvenc_buildable else [])]
                    if args.composite else ['libobs'])
     command(['cmake', '--build', obs_build, '--target', *obs_targets, '--parallel', jobs], buildlog)
     if args.composite:
@@ -315,6 +423,16 @@ def main():
              f'-DWEBOBS_OBS_PREFIX={obs_build / "rundir/Release"}', f'-DWEBOBS_WEB_ROOT={ROOT / "web/dist"}'], buildlog)
     command(['cmake', '--build', core_build, '--parallel', jobs], buildlog)
     command(['ctest', '--test-dir', core_build, '--output-on-failure'], buildlog)
+    # libobs resolves the obs-nvenc helper next to the running executable, so the
+    # plugin can only verify the driver when the binary sits beside webobsd.
+    if nvenc_buildable:
+        helper = next((path for path in (obs_build / 'rundir/Release/bin/obs-nvenc-test',
+                                         obs_build / 'plugins/obs-nvenc/obs-nvenc-test/obs-nvenc-test')
+                       if path.exists()), None)
+        if helper:
+            destination = core_build / helper.name
+            shutil.copy2(helper, destination)
+            destination.chmod(0o755)
     media = CACHE / 'bin/mediamtx'
     if not media.exists():
         say('[3/4] 下载并校验 MediaMTX 1.18.2（仅首次）')
@@ -347,9 +465,18 @@ def main():
             say(f'硬件探测失败，按软件回退处理：{error}')
             os.environ['WEBOBS_NVIDIA_ENCODE_SUPPORTED'] = 'false'
             os.environ['WEBOBS_NVIDIA_SAMPLE_PASSED'] = 'false'
+    renderer_selected, renderer_fallback, renderer_fallback_reason = configure_renderer()
     env = dict(os.environ)
     env.update({
-        'LD_LIBRARY_PATH': str(obs_build / 'libobs') + ':' + str(obs_build / 'rundir/Release/lib'),
+        # The core reports what the probe above actually measured, so the UI
+        # never claims hardware rendering the machine is not using.
+        'WEBOBS_RENDERER_SELECTED': renderer_selected,
+        'WEBOBS_RENDERER_FALLBACK': 'true' if renderer_fallback else 'false',
+        'WEBOBS_RENDERER_FALLBACK_REASON': renderer_fallback_reason,
+        # libobs-opengl.so only gets its unversioned name in its own build
+        # directory, so that directory has to be on the loader path.
+        'LD_LIBRARY_PATH': ':'.join([str(obs_build / 'libobs'), str(obs_build / 'libobs-opengl'),
+                                     str(obs_build / 'rundir/Release/lib')]),
         'WEBOBS_SCENE_FILE': str(data / 'scene.json'), 'WEBOBS_SESSION_DATABASE': str(data / 'auth-sessions.db'),
         'WEBOBS_CAMERA_DATABASE': str(data / 'cameras.db'), 'WEBOBS_EVENT_DATABASE': str(data / 'events.db'),
         'WEBOBS_CLUSTER_DATABASE': str(data / 'cluster.sqlite3'), 'WEBOBS_V2_DATABASE': str(data / 'v2-clients.db'),

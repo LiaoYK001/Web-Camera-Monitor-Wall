@@ -661,6 +661,10 @@ ExitCode run_obs_engine(const Config &config, const SceneDocument &document)
     // optional features and must never block composition.
     load_module(obs_prefix, "obs-filters");
     load_module(obs_prefix, "obs-transitions");
+    // NVENC is additive as well.  A build that ships the plugin registers the
+    // hardware encoder here; without it the reported capability stays
+    // nvenc(encoder=false) and compositing keeps using x264.
+    load_module(obs_prefix, "obs-nvenc");
     obs_post_load_modules();
 
     VideoEncoderCapabilities encoder_capabilities = detect_video_encoder_capabilities(config);
