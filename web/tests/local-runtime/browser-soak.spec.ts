@@ -1,6 +1,7 @@
 import { expect, test } from '@playwright/test';
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 
 /**
  * Feedback-5 playback soak against the real product page.
@@ -20,7 +21,7 @@ const minutes = Number(process.env.WEBOBS_SOAK_MINUTES ?? '30');
 const mode = process.env.WEBOBS_SOAK_MODE === 'composite' ? 'composite' : 'direct';
 const targetFps = Number(process.env.WEBOBS_SOAK_TARGET_FPS ?? '30');
 const baseUrl = process.env.WEBOBS_SOAK_BASE_URL ?? 'http://127.0.0.1:5173';
-const repositoryRoot = path.resolve(__dirname, '../../..');
+const repositoryRoot = fileURLToPath(new URL('../../..', import.meta.url));
 const evidenceRoot = process.env.WEBOBS_SOAK_EVIDENCE
   ?? path.join(repositoryRoot, 'tests/artifacts/browser-soak');
 const targetFpsMap = process.env.WEBOBS_SOAK_TARGET_FPS_MAP
