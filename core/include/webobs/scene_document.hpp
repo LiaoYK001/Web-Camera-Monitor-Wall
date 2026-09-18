@@ -76,6 +76,12 @@ struct SceneSource {
      * means "not configured per track", so the engine keeps using audio_track.
      */
     std::vector<SceneAudioInput> audio_inputs;
+    /**
+     * True when the document carried an explicit `audioInputs` array - even an
+     * empty one, which means "this source contributes no audio".  Legacy scenes
+     * leave it false and keep using audioTrack, which stays the OBS output bus.
+     */
+    bool audio_inputs_explicit = false;
     std::string file_path;
     std::string text;
     std::string color = "#000000";

@@ -1280,9 +1280,12 @@ void scene_audio_inputs_tests()
         const webobs::SceneSource &source = migrated.document->sources.front();
         expect(migrated.document->schema_version == webobs::current_scene_schema_version,
                "parsing a legacy scene must yield the current schema version");
-        expect(source.audio_inputs.size() == 1 && source.audio_inputs.front().track == 1 &&
-                   source.audio_inputs.front().gain == 1.0 && !source.audio_inputs.front().muted,
-               "audioTrack 2 must migrate to input track index 1 at full gain");
+        const auto resolved = webobs::resolved_audio_inputs(source);
+        expect(!source.audio_inputs_explicit && source.audio_inputs.empty(),
+               "a legacy scene without audioInputs must not look like an explicit empty selection");
+        expect(resolved.size() == 1 && resolved.front().track == 1 && resolved.front().gain == 1.0 &&
+                   !resolved.front().muted && source.audio_track == 2,
+               "audioTrack 2 keeps its output bus while the first input track plays at full gain");
     }
 
     // Schema 6 carries per-track gains/mutes and keeps audioTrack consistent.
@@ -1352,6 +1355,7 @@ void scene_audio_inputs_tests()
     webobs::SceneSource explicit_source;
     explicit_source.audio_track = 1;
     explicit_source.audio_inputs = {{0, 0.25, false}, {2, 1.0, true}};
+    explicit_source.audio_inputs_explicit = true;
     resolved = webobs::resolved_audio_inputs(explicit_source);
     expect(resolved.size() == 2 && resolved[0].gain == 0.25 && resolved[1].track == 2 &&
                resolved[1].muted,

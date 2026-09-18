@@ -548,7 +548,7 @@ SourceEntry create_source_entry(const SceneSource &configuration, int connect_ti
     // it — this is also what makes a single *non-default* track selectable, since
     // the OBS Media Source itself has no audio-track selector.  Sources without
     // audioInputs keep the legacy direct behaviour.
-    if (!configuration.audio_inputs.empty()) {
+    if (configuration.audio_inputs_explicit && !audio_inputs.empty()) {
         std::string source_url = configuration.kind == "rtsp" ? configuration.rtsp_url : std::string{};
         if (configuration.kind == "camera") {
             const auto resolved = resolve_camera_source(configuration);
@@ -681,7 +681,11 @@ SourceEntry create_source_entry(const SceneSource &configuration, int connect_ti
     // The decoded input track comes from the ffmpeg `track` setting above; the
     // program bus is mixer 1.  Mapping the input track onto the mixer bit (the
     // previous behaviour) silently dropped audio for audioTrack > 1.
-    obs_source_set_audio_mixers(entry.source.get(), 1U);
+    // audioTrack is the OBS output bus (1..6), an existing contract; the input
+    // selection must not collapse it onto bus 1.
+    obs_source_set_audio_mixers(
+        entry.source.get(),
+        1U << static_cast<unsigned int>(std::clamp(entry.configuration.audio_track, 1, 6) - 1));
     entry.audio_mix = audio_mix;
     if (!attach_configured_filters(entry.source.get(), configuration, internal_name)) {
         entry.source.reset();
@@ -1199,7 +1203,9 @@ void ObsSceneRuntime::commit_prepared(std::string_view transition_kind, int dura
         } else {
             drive(entry.source.get(), inputs.front());
         }
-        obs_source_set_audio_mixers(entry.source.get(), 1U);
+        obs_source_set_audio_mixers(
+            entry.source.get(),
+            1U << static_cast<unsigned int>(std::clamp(entry.configuration.audio_track, 1, 6) - 1));
         obs_source_set_monitoring_type(entry.source.get(),
                                        monitoring_type(entry.configuration.monitoring));
     }

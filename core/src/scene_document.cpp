@@ -283,9 +283,12 @@ JsonPtr serialize_crop(const SceneCrop &crop)
 
 std::vector<SceneAudioInput> resolved_audio_inputs(const SceneSource &source)
 {
-    if (!source.audio_inputs.empty())
+    // An explicit list - including an empty one - is the document's decision:
+    // empty means this source contributes no audio at all.
+    if (source.audio_inputs_explicit)
         return source.audio_inputs;
-    // Legacy schema 5 behaviour: audioTrack is 1-based and always audible.
+    // Legacy scenes only carry audioTrack (the output bus), so play the first
+    // available input track and leave that bus untouched.
     return {SceneAudioInput{source.audio_track - 1, 1.0, false}};
 }
 
@@ -509,11 +512,11 @@ SceneParseResult parse_scene_json(std::string_view input)
         const bool has_audio_inputs = json_object_get(source_object, "audioInputs") != nullptr;
         if (!read_audio_inputs(source_object, source.audio_inputs, error))
             return parse_failure(std::move(error));
-        if (!has_audio_inputs) {
-            // Schema 5 migration: the single audioTrack becomes the first mix input.
+        // Presence is what distinguishes "nothing saved yet" from "the user
+        // cleared every track"; an explicit empty array is a real decision.
+        source.audio_inputs_explicit = has_audio_inputs;
+        if (!has_audio_inputs)
             source.audio_inputs.clear();
-            source.audio_inputs.push_back(SceneAudioInput{source.audio_track - 1, 1.0, false});
-        }
         // audio_track is intentionally not derived from audio_inputs: the legacy
         // field keeps its stored value (and stays the engine's current input)
         // while audio_inputs carries the per-track selection written by the UI.
@@ -736,7 +739,10 @@ SceneSerializeResult serialize_scene_json(const SceneDocument &document, SceneJs
                 json_array_append_new(audio_inputs.get(), entry.release()) != 0)
                 return serialize_failure("could not build source audio input JSON");
         }
-        if (!set_new(object.get(), "audioInputs", audio_inputs.release()))
+        // Only an explicit selection (including an explicit empty one) is stored;
+        // legacy sources keep writing just audioTrack so they still round-trip.
+        if (source.audio_inputs_explicit &&
+            !set_new(object.get(), "audioInputs", audio_inputs.release()))
             return serialize_failure("could not build source JSON");
         if (source.kind == "rtsp") {
             const std::string safe_url = view == SceneJsonView::public_api

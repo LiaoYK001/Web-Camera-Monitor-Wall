@@ -191,8 +191,9 @@ export default function AudioWorkspace({ studio, onCommitted }: { studio: Studio
         const audioInputs = state.selected.map((index) => ({ track: index,
           gain: state.gain[index] ?? 1, muted: state.muted[index] ?? false,
           syncOffsetMs: state.offset[index] ?? 0 }));
-        return { ...source, audioInputs,
-          audioTrack: audioInputs.length > 0 ? audioInputs[0].track + 1 : source.audioTrack } as SceneSource;
+        // audioTrack stays the user's output bus: selecting input tracks must
+        // never rewrite it.
+        return { ...source, audioInputs } as SceneSource;
       }),
     }),
   });

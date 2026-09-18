@@ -146,7 +146,8 @@ test('audio workspace groups real tracks per source and wires per-track channels
   };
   const savedSource = saved.scenes?.[0]?.sources?.find((source) => source.id === 'source-a');
   expect(savedSource?.audioInputs).toEqual([{ track: 1, gain: 1, muted: false, syncOffsetMs: 0 }]);
-  expect(savedSource?.audioTrack).toBe(2);
+  // Selecting input tracks must not rewrite the output bus.
+  expect(savedSource?.audioTrack).toBe(1);
   expect(posts.some((url) => url.includes('/source-a/audio-tracks/0/whep'))).toBe(true);
   expect(posts.some((url) => url.includes('/source-a/audio-tracks/1/whep'))).toBe(true);
   expect(deletes.some((url) => url.includes('/source-a/audio-tracks/0/whep/session/'))).toBe(true);
