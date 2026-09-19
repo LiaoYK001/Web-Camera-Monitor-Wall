@@ -303,6 +303,12 @@ void update_source_runtime_status(RuntimeStatus &status, const SourceHealthSnaps
 
 bool encoder_registered(std::initializer_list<std::string_view> identifiers)
 {
+    // obs_enum_encoder_types dereferences libobs' encoder registry, which only
+    // exists after obs_startup.  The gateway Direct-only path deliberately skips
+    // obs_startup and module loading, so asking here used to segfault the whole
+    // process before the control plane could even listen.
+    if (!obs_initialized())
+        return false;
     const char *identifier = nullptr;
     for (std::size_t index = 0; obs_enum_encoder_types(index, &identifier); ++index) {
         if (!identifier)
@@ -374,7 +380,7 @@ VideoEncoderCapabilities detect_video_encoder_capabilities(const Config &config,
     // Creating an OBS encoder needs an encoder plugin registered inside *this*
     // OBS build.  The external FFmpeg/NVENC probe is reported separately through
     // encode_supported/runtime_probe_passed and must never fake OBS support.
-    const bool obs_nvenc_registered =
+    const bool obs_nvenc_registered = modules_loaded &&
         encoder_registered({"obs_nvenc_h264_tex", "obs_nvenc_h264_cuda", "obs_nvenc_h264_soft",
                             "ffmpeg_nvenc"});
     capabilities.nvenc.encoder_available = modules_loaded
