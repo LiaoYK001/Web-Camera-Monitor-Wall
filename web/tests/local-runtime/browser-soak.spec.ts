@@ -1,5 +1,5 @@
 import { expect, test } from '@playwright/test';
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { appendFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -58,8 +58,18 @@ test.describe('feedback-5 soak', () => {
     mkdirSync(directory, { recursive: true });
 
     await page.goto(baseUrl);
-    const loginHeading = page.getByRole('heading', { name: '登录监控工作台' });
-    if (await loginHeading.isVisible().catch(() => false)) {
+    // The session probe resolves asynchronously, so wait for the gate *or* the
+    // workspace before deciding whether a login is needed.
+    let gateVisible = false;
+    for (let attempt = 0; attempt < 30; attempt++) {
+      if (await page.getByRole('button', { name: '退出登录' }).isVisible().catch(() => false)) break;
+      if (await page.getByRole('heading', { name: '登录监控工作台' }).isVisible().catch(() => false)) {
+        gateVisible = true;
+        break;
+      }
+      await page.waitForTimeout(1000);
+    }
+    if (gateVisible) {
       const user = process.env.WEBOBS_DEV_USERNAME || secret('webobs-dev-username.txt');
       const password = process.env.WEBOBS_DEV_PASSWORD || secret('webobs-dev-password.txt');
       expect(user, 'a development username must be available for the real login path').not.toBe('');
@@ -68,6 +78,38 @@ test.describe('feedback-5 soak', () => {
       await page.getByRole('button', { name: '登录', exact: true }).click();
     }
     await expect(page.getByRole('button', { name: '退出登录' })).toBeVisible({ timeout: 30_000 });
+
+    // The Direct/Hybrid path needs a paired browser: a real RTSP source only
+    // plays through a granted device token, not through an anonymous session.
+    // WEBOBS_SOAK_PAIR=1 walks the product's own enrollment flow (create, approve
+    // from the admin session, complete) instead of stubbing authorization.
+    if (process.env.WEBOBS_SOAK_PAIR === '1') {
+      const pairing = await page.evaluate(async () => {
+        const enrollment = await import('/src/browserEnrollment.ts');
+        const current = await enrollment.currentBrowserPairing().catch(() => null);
+        if (current?.state === 'approved') return { skipped: true as const, state: current.state };
+        const began = await enrollment.beginBrowserEnrollment('soak-browser');
+        const registry = await (await fetch('/api/v1/cameras', { credentials: 'same-origin' })).json();
+        const cameraGrants = (registry.cameras ?? []).map((camera: { id: string; profiles?: Array<{ id: string }> }) => ({
+          cameraId: camera.id,
+          profileIds: (camera.profiles ?? []).map((profile) => profile.id),
+          permissions: ['view'],
+          credentialMode: 'none',
+        }));
+        const response = await fetch(`/api/v2/enrollments/${began.enrollmentId}/approve`, {
+          method: 'POST', credentials: 'same-origin',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ pairingCode: began.pairingCode, cameraGrants }),
+        });
+        if (!response.ok) return { error: `approve failed HTTP ${response.status}` };
+        const completed = await enrollment.completeBrowserEnrollment();
+        return { state: completed?.state ?? 'unknown', grants: cameraGrants.length };
+      });
+      console.log(`[browser-soak] pairing: ${JSON.stringify(pairing)}`);
+      expect(pairing, 'the browser must be paired for the direct/hybrid path').not.toHaveProperty('error');
+      await page.reload();
+      await expect(page.getByRole('button', { name: '退出登录' })).toBeVisible({ timeout: 30_000 });
+    }
 
     // Switch to the playback mode under test through the real UI controls.  The
     // monitor workspace and the studio workspace label the same choice
@@ -155,6 +197,10 @@ test.describe('feedback-5 soak', () => {
         }));
       });
       timeline.push({ at: Date.now() - startedAt, entries: snapshot });
+      // Append as we go: a long soak can be interrupted, and the samples taken so
+      // far are still evidence.
+      appendFileSync(path.join(directory, 'browser-soak-timeline.jsonl'),
+        JSON.stringify(timeline.at(-1)) + '\n');
       console.log(`[browser-soak] ${Math.round((Date.now() - startedAt) / 1000)}s ` +
         snapshot.map((entry) => `${entry.id}=${entry.frames}f/${entry.lastMediaTime.toFixed(1)}s`).join(' '));
     }
