@@ -84,29 +84,41 @@ test.describe('feedback-5 soak', () => {
     // WEBOBS_SOAK_PAIR=1 walks the product's own enrollment flow (create, approve
     // from the admin session, complete) instead of stubbing authorization.
     if (process.env.WEBOBS_SOAK_PAIR === '1') {
-      const pairing = await page.evaluate(async () => {
-        const enrollment = await import('/src/browserEnrollment.ts');
-        const current = await enrollment.currentBrowserPairing().catch(() => null);
-        if (current?.state === 'approved') return { skipped: true as const, state: current.state };
-        const began = await enrollment.beginBrowserEnrollment('soak-browser');
-        const registry = await (await fetch('/api/v1/cameras', { credentials: 'same-origin' })).json();
-        const cameraGrants = (registry.cameras ?? []).map((camera: { id: string; profiles?: Array<{ id: string }> }) => ({
-          cameraId: camera.id,
-          profileIds: (camera.profiles ?? []).map((profile) => profile.id),
-          permissions: ['view'],
-          credentialMode: 'none',
-        }));
-        const response = await fetch(`/api/v2/enrollments/${began.enrollmentId}/approve`, {
-          method: 'POST', credentials: 'same-origin',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ pairingCode: began.pairingCode, cameraGrants }),
+      // The app's own local runtime also touches the same IndexedDB and can clear
+      // private state between the create and complete steps, so the sequence is
+      // retried as a whole instead of being treated as a one-shot.
+      let pairing: { state?: string; skipped?: boolean; grants?: number; error?: string } = { error: 'not attempted' };
+      for (let attempt = 1; attempt <= 3; attempt++) {
+        pairing = await page.evaluate(async () => {
+          try {
+            const enrollment = await import('/src/browserEnrollment.ts');
+            const current = await enrollment.currentBrowserPairing().catch(() => null);
+            if (current?.state === 'approved') return { skipped: true, state: current.state };
+            const began = await enrollment.beginBrowserEnrollment('soak-browser');
+            const registry = await (await fetch('/api/v1/cameras', { credentials: 'same-origin' })).json();
+            const cameraGrants = (registry.cameras ?? []).map((camera: { id: string; profiles?: Array<{ id: string }> }) => ({
+              cameraId: camera.id,
+              profileIds: (camera.profiles ?? []).map((profile) => profile.id),
+              permissions: ['view'],
+              credentialMode: 'none',
+            }));
+            const response = await fetch(`/api/v2/enrollments/${began.enrollmentId}/approve`, {
+              method: 'POST', credentials: 'same-origin',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ pairingCode: began.pairingCode, cameraGrants }),
+            });
+            if (!response.ok) return { error: `approve failed HTTP ${response.status}` };
+            const completed = await enrollment.completeBrowserEnrollment();
+            return { state: completed?.state ?? 'unknown', grants: cameraGrants.length };
+          } catch (error) {
+            return { error: String((error as Error)?.message ?? error) };
+          }
         });
-        if (!response.ok) return { error: `approve failed HTTP ${response.status}` };
-        const completed = await enrollment.completeBrowserEnrollment();
-        return { state: completed?.state ?? 'unknown', grants: cameraGrants.length };
-      });
-      console.log(`[browser-soak] pairing: ${JSON.stringify(pairing)}`);
-      expect(pairing, 'the browser must be paired for the direct/hybrid path').not.toHaveProperty('error');
+        console.log(`[browser-soak] pairing attempt ${attempt}: ${JSON.stringify(pairing)}`);
+        if (!pairing.error) break;
+        await page.waitForTimeout(2000);
+      }
+      expect(pairing.error, 'the browser must be paired for the direct/hybrid path').toBeUndefined();
       await page.reload();
       await expect(page.getByRole('button', { name: '退出登录' })).toBeVisible({ timeout: 30_000 });
     }

@@ -183,24 +183,29 @@ function summarize(options, meta, samples) {
   const routeEvidence = options.mode === 'composite'
     ? routes.filter((route) => route.name === 'program' && route.readySamples === route.samples && route.bytesGrowing).length === 1
     : routes.filter((route) => route.bytesGrowing && route.readySamples > 0).length >= 1;
+  // Direct/Hybrid runs never start libobs, so the engine reports no sources at
+  // all; the per-tile frames come from the browser soak instead of from here.
+  const engineSampled = visible > 0;
+  const notApplicable = 'engine sources are not applicable in this mode (Direct/Hybrid runs without libobs); tiles are measured by the browser soak';
 
   const checks = [
     {
       name: 'every visible source kept producing frames',
-      passed: visible > 0 && stalls.length === 0 && sources.every((source) => source.samples === samples.length),
-      detail: stalls.length
+      passed: engineSampled && stalls.length === 0 && sources.every((source) => source.samples === samples.length),
+      detail: !engineSampled ? notApplicable : (stalls.length
         ? `frame age exceeded ${THRESHOLDS.maxUnexpectedStallMs}ms: ${stalls.map((s) => `${s.id}=${s.maxFrameAgeMs}ms`).join(', ')}`
-        : `${sources.length} sources sampled, visible=${visible}`,
+        : `${sources.length} sources sampled, visible=${visible}`),
     },
     {
       name: 'no source restarted during the run',
-      passed: recovered,
-      detail: sources.filter((source) => source.restarts > 0).map((source) => `${source.id}:${source.restarts}`).join(', ') || 'restartCount stayed 0',
+      passed: engineSampled && recovered,
+      detail: !engineSampled ? notApplicable
+        : (sources.filter((source) => source.restarts > 0).map((source) => `${source.id}:${source.restarts}`).join(', ') || 'restartCount stayed 0'),
     },
     {
       name: 'no sample reported unhealthy sources',
-      passed: unhealthy === 0,
-      detail: `${unhealthy} of ${samples.length} samples had unhealthy>0`,
+      passed: engineSampled && unhealthy === 0,
+      detail: !engineSampled ? notApplicable : `${unhealthy} of ${samples.length} samples had unhealthy>0`,
     },
     {
       name: 'media routes stayed ready and kept growing',
