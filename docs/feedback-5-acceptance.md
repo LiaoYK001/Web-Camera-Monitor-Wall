@@ -135,6 +135,26 @@ Historical notes (previous conclusions, disproved hypotheses, the step-by-step i
 
 **建议修复（下一轮，需用本探针复测）**：不要跨“等待路由就绪”持有全局 `route_operation_mutex_`（改为按来源加锁），并且不要让该等待阻塞唯一的 io_context 线程（移到工作线程，或先返回 WHEP 会话、媒流就绪后再开始转发）。
 
+#### 4.3.2 已实施的第一步修复与残余等待 / First fix applied and the residual wait
+
+**已实施（本轮）**：`ensure_playback_route()` 原先对每条新路由执行**两次 ffprobe（各 12 秒超时）**来发现编解码器。相机注册表其实已经探测并存储了这些信息（`stream_profiles.video_codec`/`audio_codec`），现在 `/resolve/<camera>/<profile>` 会一并返回 `videoCodec`/`audioCodec`，控制面优先使用它们、仅在缺失或为 `unknown` 时才回落到实测。
+
+效果（同一探针、真实五路相机）：
+
+| 瓦片 | 修复前 live@ms | 修复后 live@ms |
+|---|---|---|
+| 第 1 路 | 12 800 | 41 570（该路先返回 502 后重试） |
+| 第 2 路 | 23 559 | 14 359 |
+| 第 3 路 | 32 793 | 19 519 |
+| 第 4 路 | 44 584 | 26 176 |
+| 第 5 路 | 52 789 | 31 801 |
+
+五个 WHEP 调用的服务端耗时由 14.99/25.13/32.89/45.41/54.40 秒降为约 10/17/22/29/35 秒，**串行间隔由约 11 秒降到约 6.5 秒**——即 ffprobe 的成本已消除，但串行化本身仍在。
+
+**残余等待（已定位）**：`create_validated()`（`core/src/control_server.cpp:1087`）在 1103 行对 MediaMTX 发起**阻塞的** `request_http(..., "POST", "application/sdp")`；按需路由的 `runOnDemand` 要等相机出帧后 MediaMTX 才会应答 WHEP 信令（约 6 秒/路），而整个 handler 跑在**唯一的 io_context 线程**上，于是五路又串成约 5×6.5 秒。
+
+**下一步**：让这个上游 WHEP 调用不再占用唯一的 io_context 线程（工作线程 + `net::post` 回投，或按会话使用 strand 后多线程运行 io_context）。这属于核心 HTTP 线程模型改动，必须改完用 `web/tests/direct-latency-probe.mjs` 复测并重跑 Direct/Hybrid 验收。
+
 ### 4.4.1 健康来源对照实验 / Healthy-source control
 
 为区分“产品管线上限”与“本轮来源欠佳”，用 5 路本地 1920×1080@30 的 `media` 源（同一 H.264 文件循环、无网络丢包）临时替换场景来源（副本，测量后已按 `build/scratch/scene.original.json` 还原并校验 sha256 `87fcca32…` 一致），其余配置不变，同一环境各测量 60 秒 program 输出：

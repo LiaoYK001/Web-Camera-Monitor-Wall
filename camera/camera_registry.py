@@ -1125,9 +1125,14 @@ def resolve_profile(database: sqlite3.Connection, camera_id: str, profile_id: st
     if credentials_ref:
         username, password = load_credentials(credentials_ref)
         endpoint = endpoint_with_credentials(endpoint, username, password)
+    # The codec is already stored by the registry's own probe.  Exposing it lets
+    # the control plane skip a live ffprobe against a just-started on-demand
+    # route, which on slow cameras took most of the probe timeout.
     return {"endpoint": endpoint, "adapter": camera["adapter"],
             "hardwareDecode": camera["hardware_decode"], "cameraId": camera_id, "profileId": profile_id,
-            "transportMode": profile["transport_mode"] if profile else "auto"}
+            "transportMode": profile["transport_mode"] if profile else "auto",
+            "videoCodec": (profile["video_codec"] if profile else "") or "",
+            "audioCodec": (profile["audio_codec"] if profile else "") or ""}
 
 
 def save_camera(camera: dict, replace: bool) -> dict:

@@ -606,7 +606,14 @@ HttpResponse response(http::status status, unsigned int version, std::string bod
     return result;
 }
 
-struct ResolvedCameraEndpoint { std::string endpoint; std::string adapter; };
+struct ResolvedCameraEndpoint {
+    std::string endpoint;
+    std::string adapter;
+    // Codecs the camera registry already probed and stored, so the playback
+    // route does not have to rediscover them by reading the live stream.
+    std::string video_codec;
+    std::string audio_codec;
+};
 
 std::optional<ResolvedCameraEndpoint> resolve_camera_endpoint(std::string_view camera_id,
                                                               std::string_view profile_id)
@@ -638,9 +645,15 @@ std::optional<ResolvedCameraEndpoint> resolve_camera_endpoint(std::string_view c
     if (!root || !json_is_object(root)) { json_decref(root); return std::nullopt; }
     json_t *endpoint = json_object_get(root, "endpoint");
     json_t *adapter = json_object_get(root, "adapter");
+    json_t *video_codec = json_object_get(root, "videoCodec");
+    json_t *audio_codec = json_object_get(root, "audioCodec");
     std::optional<ResolvedCameraEndpoint> result;
-    if (json_is_string(endpoint) && json_is_string(adapter))
-        result = ResolvedCameraEndpoint{json_string_value(endpoint), json_string_value(adapter)};
+    if (json_is_string(endpoint) && json_is_string(adapter)) {
+        result = ResolvedCameraEndpoint{
+            json_string_value(endpoint), json_string_value(adapter),
+            json_is_string(video_codec) ? json_string_value(video_codec) : "",
+            json_is_string(audio_codec) ? json_string_value(audio_codec) : ""};
+    }
     json_decref(root);
     return result;
 }
@@ -1378,6 +1391,28 @@ private:
         {
             const std::lock_guard lock(route_state_mutex_);
             route = direct_routes_.at(source.id);
+        }
+        if (route.codec.empty() && source.kind == "camera") {
+            // Fast path: the camera registry already probed and stored the codecs,
+            // so the two live ffprobe calls below can be skipped.  Reading the
+            // just-started on-demand route took most of their 12s timeout on slow
+            // cameras and, because the control server runs a single io_context
+            // thread, serialized every tile behind it (see
+            // docs/feedback-5-acceptance.md section 4.3.1).
+            const auto resolved = resolve_camera_endpoint(source.camera_id, source.profile_id);
+            if (resolved && !resolved->video_codec.empty() && resolved->video_codec != "unknown") {
+                route.codec = resolved->video_codec;
+                route.audio_codec = resolved->audio_codec == "unknown" ? "" : resolved->audio_codec;
+                route.video_transcode = !browser_compatible_codec(route.codec);
+                route.audio_transcode = !browser_compatible_audio_codec(route.audio_codec);
+                route.transcode = route.video_transcode || route.audio_transcode;
+                const std::lock_guard lock(route_state_mutex_);
+                direct_routes_.at(source.id).codec = route.codec;
+                direct_routes_.at(source.id).audio_codec = route.audio_codec;
+                direct_routes_.at(source.id).transcode = route.transcode;
+                direct_routes_.at(source.id).video_transcode = route.video_transcode;
+                direct_routes_.at(source.id).audio_transcode = route.audio_transcode;
+            }
         }
         if (route.codec.empty()) {
             const std::string input = "rtsp://127.0.0.1:8554/" + route.path;
