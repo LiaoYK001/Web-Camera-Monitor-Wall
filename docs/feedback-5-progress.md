@@ -1,34 +1,33 @@
 # 反馈5 持续执行检查点 / Feedback 5 progress checkpoint
 
-更新 / Updated: 2026-09-19（持续执行第 11 轮 / continuous-execution round 11）
+更新 / Updated: 2026-09-19（持续执行第 12 轮 / continuous-execution round 12）
 
 ## 当前代码 / Current code
 
-- 上一提交 `85d8a89`。本轮提交 `241e8ea`（播放路由优先使用注册表已存编解码器；`core/src/control_server.cpp`、`camera/camera_registry.py`、报告 4.3.2）。
+- 上一提交 `97dfb31`。本轮提交 `091942c`（音频回归驱动两处自身缺陷修复 + 报告第 5 节）。
 - 用户场景保持原始 5 路相机（sha256 `87fcca32…`）。
 - 未跟踪文件保持原样。
 
-## 本轮进展：Direct/Hybrid 首帧串行化的第一步修复 / First fix for the serialized Direct/Hybrid first frame
+## 本轮完成：音频回归驱动三项全绿 / Audio-regression driver now passes all three checks
 
-**做了什么**：`ensure_playback_route()` 原先对每条新路由跑两次 ffprobe（各 12 秒超时）来发现编解码器；相机注册表其实早已把 `video_codec`/`audio_codec` 存在 `stream_profiles` 里。现在 `/resolve/<camera>/<profile>` 一并返回这两个字段（`resolve_profile()` 增加 `videoCodec`/`audioCodec`），`ResolvedCameraEndpoint` 与解析逻辑相应扩展，控制面优先使用注册表值，仅在缺失或 `unknown` 时回落实测。
+修正驱动自身两处缺陷后，`node tests/audio-regression.mjs` **全部通过**：
 
-**效果**（同一探针、真实五路相机）：
-
-| 指标 | 修复前 | 修复后 |
+| 用例 | 实测 | 判据 |
 |---|---|---|
-| 五个 WHEP 服务端耗时 | 14.99 / 25.13 / 32.89 / 45.41 / 54.40 s | 约 10 / 17 / 22 / 29 / 35 s |
-| 串行间隔 | 约 11 s | 约 6.5 s |
-| 末路 live | 52.8 s | 31.8 s |
+| 首轨静音 | e880=0.0625、e440=0.0000 | 第二轨仍可听且 440Hz 被移除 |
+| 0.25 增益只应用一次 | 12.04 dB | 与理论 −12.04 dB 相符（±3 dB） |
+| 负偏移归一化 | 首轨立即出现（e440=0.0626），第二轨延后加入；stderr 上报 2000ms | 与 `B=max(0,-min(d_i))` 一致 |
 
-**残余等待（已定位）**：`create_validated()`（`control_server.cpp:1087`）在 1103 行对 MediaMTX 发起阻塞的 WHEP 信令请求；按需路由要等相机出帧后 MediaMTX 才应答（约 6 秒/路），而 handler 跑在唯一的 io_context 线程上，五路因此仍串成约 5×6.5 秒。
+修正内容：(1) 捕获与转码器首帧的竞争改为“必须含信号，否则重试（≤3 次）”，静音捕获报告为重试而非产品失败；(2) 频率能量函数改为均值幅度 DFT 后，判据仍用旧 Goertzel 的 1e6 尺度，把正确结果判为失败——阈值已改为幅度量级。
+
+**测量限制（如实记录）**：从 RTSP 客户端一次读取视频与音频的 PTS，得到相差约 **−76 ms**，即所施加的 2000 ms 视频位移**无法从客户端观测**（接收端把每条流重新归零到自己的 RTP 时间线，`-copyts` 录制同样如此）。该位移目前只由构造保证（`setts=ts=TS+B/(1000*TB)` 已在 1/1000 与 1/90000 两种时间基上单独实测精确平移 100 ms）；端到端确认需要“闪光 + 同步音脉冲”素材。
 
 ## 下一条具体动作 / Next concrete steps
 
-1. 让上游 WHEP 调用不再占用唯一 io_context 线程（工作线程 + `net::post` 回投，或按会话加 strand 后多线程跑 io_context）；改完用 `node web/tests/direct-latency-probe.mjs` 复测并重跑 Direct/Hybrid 验收。
-2. 用健康来源复测 Direct/Hybrid 的最大帧间隔。
-3. “零来源重启”判据：用健康来源复测确认产品在来源健康时零重启。
+1. 制作“闪光 + 同步音脉冲”素材，端到端验证视频位移确实保持音视频相对偏移。
+2. Direct/Hybrid 首帧：让上游 WHEP 调用不再占用唯一 io_context 线程（工作线程 + `net::post` 回投，或按会话加 strand 后多线程跑 io_context）；改完用 `node web/tests/direct-latency-probe.mjs` 复测并重跑验收。
+3. 用健康来源复测 Direct/Hybrid 的最大帧间隔与“零来源重启”判据。
 4. 受控单路断开/恢复注入。
-5. 修正 `tests/audio-regression.mjs` 的启动空档与负偏移 PTS 测量。
 
 ## 六项状态 / Status
 
@@ -38,11 +37,11 @@
 | F5-02 干净画面 | 已实现并自动化验证 | 聚焦套件 22/22 |
 | F5-03 硬件加速 | 渲染 D3D12 已验证；NVENC 吞吐低于 x264，已按实测默认回退 | 报告第 2、4.4.2 节 |
 | F5-04 本地合成 | 原始规格 30 分钟验收通过 | `tests/artifacts/soak/2026-09-19T12-53-07-152Z-composite-1080p-x264-3d281e4/` |
-| F5-05 音频管理 | 批次 A/B/C 已提交并有单测；端到端音频驱动部分通过 | 报告第 5 节 |
-| F5-06 播放稳定 | 合成模式四项门槛全过；Direct/Hybrid 首帧串行化已减弱但未消除 | 报告 4.2.1、4.3.1、4.3.2 |
+| F5-05 音频管理 | 批次 A/B/C 已提交并有单测；音频回归驱动**三项全绿**；音视频相对偏移的端到端确认待做 | 报告第 5 节 |
+| F5-06 播放稳定 | 合成模式四项门槛全过；Direct/Hybrid 首帧串行化已减弱（11s→6.5s）但未消除 | 报告 4.2.1、4.3.1、4.3.2 |
 
 ## 环境与阻塞 / Environment and blockers
 
 - 后台作业不跨轮次存活；长稳被中断时用 `tests/soak-derive.mjs` 从增量证据重建结论。
-- 探针 `web/tests/direct-latency-probe.mjs` 需要后端与 Vite 在跑；未配对时会先走产品自身配对流程。
-- 真实相机首帧本身较慢，修改后需继续区分“服务端等待”与“来源首帧”。
+- 音频回归自建 MediaMTX（占用 8554/9997），运行前需停止开发会话。
+- 真实相机首帧本身较慢，Direct/Hybrid 复测时需继续区分“服务端等待”与“来源首帧”。
