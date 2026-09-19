@@ -93,11 +93,20 @@ export async function requestBrowserPlan(
 ): Promise<BrowserTopologyPlan> {
   if (!['whep', 'hls', 'mjpeg', 'rtsp'].includes(protocol)) throw new Error('浏览器媒体协议无效');
   const capabilities = browserMediaCapabilities();
+  // Resolve the device headers first: an unpaired browser has no device token at
+  // all, and folding that into the fetch below reported it as an unreachable
+  // control plane, which sent operators looking at the wrong component.
+  let deviceHeaders: Record<string, string>;
+  try {
+    deviceHeaders = await browserDeviceHeaders();
+  } catch {
+    throw new BrowserPlanError('unavailable', '此浏览器尚未完成配对');
+  }
   let response: Response;
   try {
     response = await fetch('/api/v2/media-plans', {
       method: 'POST', cache: 'no-store', credentials: 'same-origin',
-      headers: { 'Content-Type': 'application/json', ...await browserDeviceHeaders() },
+      headers: { 'Content-Type': 'application/json', ...deviceHeaders },
       body: JSON.stringify({
         cameraId, profileId, policy: 'auto', receiverKind: 'browser', networkClass: 'lan', reachability,
         protocols: ['whep', 'hls', 'mjpeg'], videoCodecs: capabilities.videoCodecs,
