@@ -38,7 +38,7 @@ Historical notes (previous conclusions, disproved hypotheses, the step-by-step i
 | F5-03 硬件加速 | **OBS 渲染与编码均已在真实运行中启用并取证**；网关 NVENC/CUDA 转码沿用既有实现 | 本文件第 2 节 + `nvidia-smi` |
 | F5-04 本地合成 | **真实五路 1920×1080 Composite 30 分钟持续发布**（30/30 采样 ready、track=[Opus,H264]、`inboundFramesInError=0`） | `tests/artifacts/soak/…-composite-1080p-4200576/` |
 | F5-05 音频管理 | 批次 A/B/C 已提交并有自动化验证；路由复用/先备后切有单测；有符号偏移有转码器用例；端到端音频驱动部分通过 | 见第 5 节 |
-| F5-06 播放稳定 | **合成模式 30 分钟正式验收通过**（`3d281e4`，x264）：呈现 29.18 fps（0.973）、首帧 3542 ms、最大帧间隔 0 ms、媒体推进 1800 s；服务端 30/30 采样健康、路由持续 ready。唯一未通过的是“零来源重启”（4 次，集中在两路已知不稳定相机）。Direct/Hybrid 五路持续出图 1787.8s，但首帧 31.7–74.4s、最大帧间隔 3.07–6.70s 仍超门槛 | `tests/artifacts/browser-soak/2026-09-19T12-53-10-550Z-composite/`、`tests/artifacts/soak/2026-09-19T12-53-07-152Z-composite-1080p-x264-3d281e4/`、`…/2026-09-19T09-49-57-510Z-direct/` |
+| F5-06 播放稳定 | **合成模式 30 分钟正式验收通过**（`3d281e4`，x264）：呈现 29.18 fps（0.973）、首帧 3542 ms、最大帧间隔 0 ms、媒体推进 1800 s；服务端 30/30 采样健康。唯一未通过的是“零来源重启”（4 次，集中在两路已知不稳定相机）。**Direct/Hybrid 已用健康来源完成对照（4.3.3）**：首帧 5.75–7.56 s、最大帧间隔 0 ms 均达标，说明此前的 31.7–74.4 s 与 3.07–6.70 s 由来源造成；剩余每路约 14.4 fps（对 25 fps 目标 0.57）经 5 个并发 RTSP 读取者验证为**浏览器侧**并发接收瓶颈 | `tests/artifacts/browser-soak/2026-09-19T12-53-10-550Z-composite/`、`.../2026-09-19T13-56-41-567Z-direct/` |
 
 ## 4. 长稳实测数据 / Measured soak data
 
@@ -155,6 +155,35 @@ Historical notes (previous conclusions, disproved hypotheses, the step-by-step i
 
 **下一步**：让这个上游 WHEP 调用不再占用唯一的 io_context 线程（工作线程 + `net::post` 回投，或按会话使用 strand 后多线程运行 io_context）。这属于核心 HTTP 线程模型改动，必须改完用 `web/tests/direct-latency-probe.mjs` 复测并重跑 Direct/Hybrid 验收。
 
+### 4.3.3 健康来源对照：Direct/Hybrid 的门槛归因 / Healthy-source control for Direct/Hybrid
+
+把 5 台相机的注册表端点临时指向本地 720p25 合成源（`rtsp://127.0.0.1:8654/synth-N`，自建 MediaMTX；`cameras.db` 先备份、测后按 sha256 校验还原），其余不变。
+
+首帧分解探针（同一工具，真实相机 vs 健康来源）：
+
+| 瓦片 | 真实相机 live@ms | 健康来源 live@ms |
+|---|---|---|
+| camera-mu2uub8u | 12 800 | 522 |
+| camera-mu2uuez4 | 23 559 | 522 |
+| camera-mu2ux4qk | 32 793 | 2 060 |
+| camera-mu2ux73u | 44 584 | 1 549 |
+| camera-mu2ux99i | 52 789 | 1 549 |
+
+对应的 WHEP 服务端耗时也从 14.99/25.13/32.89/45.41/54.40 秒降到 0.24/0.40/0.41/0.50/0.61 秒——**串行化本身只在来源慢时才显现**（每个请求要等按需路由出帧）。
+
+3 分钟浏览器长稳（健康来源，目标 25 fps）：
+
+| 项 | 实测 | 门槛 | 结果 |
+|---|---|---|---|
+| 首帧 | 5 752–7 559 ms | ≤ 20 000 ms | **PASS** |
+| 最大帧间隔 | 0 ms（五路全部） | ≤ 3 000 ms | **PASS** |
+| 媒体时间推进 | 173.0–174.9 s | 持续出图 | **PASS** |
+| 解码帧率 | 14.01–14.60 fps | ≥ 22.5 fps（目标 90%） | **FAIL（0.56–0.58）** |
+
+**帧率缺口的归因（本轮已分离）**：同一时刻用 5 个并发 RTSP 读取者直接读那 5 条 `direct-*` 路由，各拿到 **501 帧/20 s = 25.05 fps**（即来源全速）。而在浏览器里，5 条 WebRTC 连接的 `framesReceived` 只有约 14.4 fps/路（合计约 72 fps），且 `framesDropped≈0`、`packetsLost=0`、`nackCount=0`、`freezeCount=0`。**因此服务端与传输链可提供满速，瓶颈在浏览器侧同时接收/解码 5 路 720p 的能力**（丢包为零说明是接收端驱动的拥塞控制降速，而非丢帧）。
+
+结论：Direct/Hybrid 此前的“首帧 31.7–74.4 s、最大帧间隔 3.07–6.70 s”**是来源造成的**（真实相机首帧本身要 10–50 秒）；换成健康来源后这两项均达标。剩下的每路约 14.4 fps（对 25 fps 目标 0.57）属浏览器侧并发接收能力，需要在验收口径上明确：这是无头 Chrome 单页 5 路 720p 的能力上限，还是可通过降低单页并发/提高码率策略改善，尚待进一步实验。
+
 ### 4.4.1 健康来源对照实验 / Healthy-source control
 
 为区分“产品管线上限”与“本轮来源欠佳”，用 5 路本地 1920×1080@30 的 `media` 源（同一 H.264 文件循环、无网络丢包）临时替换场景来源（副本，测量后已按 `build/scratch/scene.original.json` 还原并校验 sha256 `87fcca32…` 一致），其余配置不变，同一环境各测量 60 秒 program 输出：
@@ -223,7 +252,7 @@ Historical notes (previous conclusions, disproved hypotheses, the step-by-step i
 ## 7. 仍未完成 / Still open
 
 1. **“零来源重启”判据**：合成模式 30 分钟只剩这一项未通过（全场 4 次，camera-mu2ux4qk 与 camera-mu2ux99i 各 2 次），来自两路已知不稳定的真实相机。需要判断这是否应作为来源健康前提下的绝对门槛，或用健康来源复测以确认产品在来源健康时零重启。
-2. **Direct/Hybrid 的首帧与帧间隔**：首帧已定位到服务端串行等待（第 4.3.1 节：单 io_context 线程 + 全局 `route_operation_mutex_` 跨 `ensure_playback_route()` 的 10 秒等待），需要按建议修改并用 `tests/direct-latency-probe.mjs` 复测；最大帧间隔（3.07–6.70s）与来源停顿相关，可用健康来源复测。
+2. **Direct/Hybrid 的每路帧率**：健康来源下首帧与帧间隔已达标（第 4.3.3 节），服务端与传输链也验证可对 5 个并发读取者提供满速 25 fps，瓶颈在浏览器侧同时接收/解码 5 路。下一步需要确定这是无头 Chrome 单页的并发上限，还是可通过降低单页并发或调整码率/编码参数改善；另外服务端 `/activate` 仍以约 2.57 秒/路串行（单 io_context 线程 + 全局路由锁），来源慢时仍会放大首帧。
 2. **单路断开/恢复的受控故障注入**：本轮只有真实来源的自发 stall/recover 观测，没有受控注入，因此“其余四路不被一起重建、15 秒内出图”尚无证据。
 3. **音视频相对偏移的客户端侧确认**：转码器施加的 +2.000 s 视频位移已用文件输出精确验证，但浏览器是否通过 RTCP SR 恢复该相对关系尚未实测，需要“闪光 + 同步音脉冲”素材在页面内用同一时基同时检测（见第 5 节）。
 4. **Docker / vGPU** 与跨设备音视频组合（按用户已确认范围留待后续）。
