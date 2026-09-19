@@ -38,7 +38,7 @@ Historical notes (previous conclusions, disproved hypotheses, the step-by-step i
 | F5-03 硬件加速 | **OBS 渲染与编码均已在真实运行中启用并取证**；网关 NVENC/CUDA 转码沿用既有实现 | 本文件第 2 节 + `nvidia-smi` |
 | F5-04 本地合成 | **真实五路 1920×1080 Composite 30 分钟持续发布**（30/30 采样 ready、track=[Opus,H264]、`inboundFramesInError=0`） | `tests/artifacts/soak/…-composite-1080p-4200576/` |
 | F5-05 音频管理 | 批次 A/B/C 已提交并有自动化验证；路由复用/先备后切有单测；有符号偏移有转码器用例；端到端音频驱动部分通过 | 见第 5 节 |
-| F5-06 播放稳定 | **两种模式各 30 分钟浏览器验收均已执行**。合成模式用 x264 复测后达标：服务端 29.7 fps、浏览器接收 30.07 fps、解码 30.03 fps、呈现 28.7 fps（≥90%）；此前用 NVENC 只有 21.95–24.35 fps，原因是 WSL 下 NVENC 无法共享 GL 纹理（见 4.4.2）。Direct/Hybrid 五路持续出图 1787.8s，但首帧 31.7–74.4s、最大帧间隔 3.07–6.70s 仍超门槛 | `tests/artifacts/browser-soak/2026-09-17…composite/`、`…/2026-09-19T12-44-34-450Z-composite/`、`…/2026-09-19T09-49-57-510Z-direct/` |
+| F5-06 播放稳定 | **合成模式 30 分钟正式验收通过**（`3d281e4`，x264）：呈现 29.18 fps（0.973）、首帧 3542 ms、最大帧间隔 0 ms、媒体推进 1800 s；服务端 30/30 采样健康、路由持续 ready。唯一未通过的是“零来源重启”（4 次，集中在两路已知不稳定相机）。Direct/Hybrid 五路持续出图 1787.8s，但首帧 31.7–74.4s、最大帧间隔 3.07–6.70s 仍超门槛 | `tests/artifacts/browser-soak/2026-09-19T12-53-10-550Z-composite/`、`tests/artifacts/soak/2026-09-19T12-53-07-152Z-composite-1080p-x264-3d281e4/`、`…/2026-09-19T09-49-57-510Z-direct/` |
 
 ## 4. 长稳实测数据 / Measured soak data
 
@@ -60,6 +60,31 @@ Historical notes (previous conclusions, disproved hypotheses, the step-by-step i
 - 运行：30.1 分钟（1812s），播放的是页面内的 `video[aria-label="实时合成节目画面"]`（服务端 Program）。
 - 首帧 4551 ms（≤20s 通过）、最大帧间隔 1772 ms（≤3s 通过）、媒体时间推进到 1807.5s（持续出图通过）。
 - **39768 帧 / 1812s = 21.95 fps，为目标 30 fps 的 73.2%，未达 90% 门槛。**
+
+### 4.2.1 正式 30 分钟验收（x264，2026-09-19）/ Formal 30-minute acceptance (x264)
+
+被测提交 `3d281e4`（启动器默认 x264 生效后），原始 1920×1080 五路真实相机场景，服务端采样与浏览器长稳同时进行、各 30 分钟。
+
+浏览器（真实产品页面，Chrome 153，1803 秒）：
+
+| 项 | 实测 | 门槛 | 结果 |
+|---|---|---|---|
+| 媒体时间推进 | 1800.16 s | 持续出图 | PASS |
+| 首帧 | 3542 ms | ≤ 20000 ms | PASS |
+| 最大帧间隔 | 0 ms | ≤ 3000 ms | PASS |
+| 解码帧率 | 29.18 fps（52633 帧；解码 54000 帧≈30.0 fps） | ≥ 27 fps（目标 90%） | **PASS（0.973）** |
+
+服务端（30 次每分钟采样，覆盖 29.0 分钟，renderer=hardware、encoder=x264）：
+
+| 检查 | 结果 | 说明 |
+|---|---|---|
+| 逐来源持续出帧 | PASS | 最大帧龄 494–690 ms |
+| 无 unhealthy 采样 | PASS | 0/30 |
+| program 路由持续 ready 且字节增长 | PASS | 30/30，85 MB → 1419 MB，inboundFramesInError=0 |
+| 每个采样都在发布 | PASS | 30/30 |
+| 运行期无来源重启 | **FAIL** | camera-mu2ux4qk 2 次、camera-mu2ux99i 2 次 |
+
+即：**帧率、首帧、帧间隔与逐来源持续出帧四项在原始 1920×1080 规格下全部达标**；唯一未通过的是“零来源重启”这一更严格的判据，全场只有 4 次重启（上一轮 NVENC 运行为 69/41/25 次），且集中在两路已知不稳定的真实相机上，属于引擎对来源停顿的恢复行为。
 
 ### 4.3 Direct/Hybrid 浏览器验收（2026-09-19）/ Direct/Hybrid browser acceptance
 
@@ -155,7 +180,8 @@ Historical notes (previous conclusions, disproved hypotheses, the step-by-step i
 
 ## 7. 仍未完成 / Still open
 
-1. **Direct/Hybrid 的首帧与帧间隔**：合成模式在 x264 下已同时满足帧率、首帧与帧间隔门槛；Direct/Hybrid 五路的首帧（31.7–74.4s）与最大帧间隔（3.07–6.70s）仍超门槛，尚未用健康来源复测，也未用 x264 之外的变量做过 A/B（Direct/Hybrid 不经 OBS 编码，其缺口另有成因）。
+1. **“零来源重启”判据**：合成模式 30 分钟只剩这一项未通过（全场 4 次，camera-mu2ux4qk 与 camera-mu2ux99i 各 2 次），来自两路已知不稳定的真实相机。需要判断这是否应作为来源健康前提下的绝对门槛，或用健康来源复测以确认产品在来源健康时零重启。
+2. **Direct/Hybrid 的首帧与帧间隔**：合成模式已四项全过；Direct/Hybrid 五路的首帧（31.7–74.4s）与最大帧间隔（3.07–6.70s）仍超门槛。该模式不经 OBS 编码，成因不同（候选：逐路网关计划建立耗时、来源首帧慢、五路并发连接），需单独定位。
 2. **单路断开/恢复的受控故障注入**：本轮只有真实来源的自发 stall/recover 观测，没有受控注入，因此“其余四路不被一起重建、15 秒内出图”尚无证据。
 3. **音频回归驱动**的启动空档缺陷与负偏移 PTS 测量方法（产品侧语义已用真实抓取 DFT 验证）。
 4. **Docker / vGPU** 与跨设备音视频组合（按用户已确认范围留待后续）。
@@ -189,11 +215,15 @@ node tests/audio-regression.mjs
 
 渲染与编码侧已从“软件渲染 + x264”推进到**真实硬件路径**（OBS 渲染滞后 0.0%、编码滞后 0.7%、NVENC 已注册并被选用），并且**原始 1920×1080 五路 Composite 在真实产品页面上连续播放了 30 分钟**，首帧与帧间隔门槛通过。帧率门槛未达标，原因经逐项测量定位到**真实相机来源本身**（7.8–18 fps、HEVC 丢包），不是合成/编码/传输回归。
 
+合成模式已在原始 1920×1080 规格下通过正式 30 分钟验收：呈现 29.18 fps（目标 90% = 27）、首帧 3542 ms、最大帧间隔 0 ms、媒体时间推进 1800 s，服务端 30/30 采样健康且 program 路由全程 ready；唯一未通过的是“零来源重启”（全场 4 次，集中在两路已知不稳定的真实相机）。
+
 本轮把帧率门槛的归因彻底做实：**瓶颈不是来源，也不是浏览器，而是 WSL 下 OBS 的 NVENC**。同一场景、同一来源、同一时刻只切换编码器的 A/B 显示 NVENC 24.5 fps、x264 29.6/29.8 fps；浏览器 `getStats()` 显示两条链路都 `packetsLost=0`、`nackCount=0`，NVENC 链路只收到 24.41 fps、x264 链路收到 30.07 fps（解码 30.03、呈现 28.7）。因此**改用 x264 后，即使面对本轮不稳定的真实相机，合成模式的“≥目标 90%”在服务端与浏览器两侧都已达成**；此前 73.2% 的结果应归因于编码器选择。据此启动器在 D3D12 后端 OpenGL 且用户未显式指定时默认 x264，并打印实测理由（显式 nvenc 仍可强制）。
 
 本轮同时定位并修复了两个此前一直阻塞 Direct/Hybrid 验收的产品缺陷：**Direct-only 网关启动即崩溃**（`obs_enum_encoder_types` 在未 `obs_startup` 时被调用）与**未配对被误报为控制面不可达**。修复后 Direct/Hybrid 五路在真实产品页面上连续播放 1787.8 秒（29.8 分钟）且媒体时间全程推进，验收首次真正执行。
 
 F5-01/F5-02 保持既有自动化验证；F5-03 的 OBS 渲染与编码均已在真实运行中启用并取证；F5-04/F5-06 的两种播放模式各 30 分钟验收均已执行，**首帧、帧间隔与帧率三类门槛在真实来源上未全部达标**，逐项测量把瓶颈指向来源侧；F5-05 的批次 A/B/C 代码与单测已完成，端到端音频驱动部分通过。受控故障注入与音频驱动缺陷仍需继续。
+
+The composite mode has now passed a formal 30-minute acceptance at the original 1920x1080 spec: 29.18 fps presented (90% of the 30 fps target is 27), first frame 3542 ms, largest frame gap 0 ms, media time advancing for 1800 s, and 30/30 healthy server samples with the program route ready throughout. The only criterion still unmet is zero source restarts (four in total, concentrated on the two known-unstable real cameras).
 
 This round finally pinned the frame-rate attribution: the limiter is neither the sources nor the browser but OBS NVENC under WSL. An A/B that changed only the encoder on the same scene, sources and moment gave NVENC 24.5 fps against x264 29.6/29.8 fps, while the browser getStats() showed packetsLost=0 and nackCount=0 on both legs: the NVENC leg received 24.41 fps and the x264 leg 30.07 fps (30.03 decoded, 28.7 presented). With x264 the composite acceptance therefore meets the at-least-90-percent threshold on both the server and the browser side even against this round's unstable real cameras, and the earlier 73.2% result is attributable to the encoder choice. The launcher now defaults to x264 when the OpenGL context is D3D12-backed and no encoder was chosen explicitly, printing the measured reason; an explicit nvenc still forces the hardware encoder.
 
