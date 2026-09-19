@@ -45,6 +45,8 @@ interface SourceSample {
   lastMediaTime: number;
   maxGapMs: number;
   gaps: number[];
+  decodedFrames?: number | null;
+  droppedFrames?: number | null;
 }
 
 type InstrumentedWindow = Window & { __webobsSoak?: { startedAt: number } };
@@ -203,10 +205,28 @@ test.describe('feedback-5 soak', () => {
         const state = (window as InstrumentedWindow).__webobsSoak as unknown as {
           entries: Record<string, SourceSample>;
         };
-        return Object.values(state?.entries ?? {}).map((entry) => ({
-          id: entry.id, frames: entry.frames, firstFrameMs: entry.firstFrameMs,
-          lastMediaTime: entry.lastMediaTime, maxGapMs: entry.maxGapMs, gaps: entry.gaps.slice(-20),
-        }));
+        // Decoded frames come from the element's own playback-quality counters;
+        // comparing them with the presented-frame count separates "the pipeline
+        // did not deliver" from "this headless surface did not present".
+        const videos: Record<string, HTMLVideoElement> = {};
+        const program = document.querySelector('video[aria-label="实时合成节目画面"]');
+        if (program) videos.program = program as HTMLVideoElement;
+        document.querySelectorAll('.direct-tile[data-source-id]').forEach((tile) => {
+          const video = tile.querySelector('video');
+          const id = tile.getAttribute('data-source-id');
+          if (video && id) videos[id] = video as HTMLVideoElement;
+        });
+        return Object.values(state?.entries ?? {}).map((entry) => {
+          const video = videos[entry.id];
+          const quality = video && typeof video.getVideoPlaybackQuality === 'function'
+            ? video.getVideoPlaybackQuality() : null;
+          return {
+            id: entry.id, frames: entry.frames, firstFrameMs: entry.firstFrameMs,
+            lastMediaTime: entry.lastMediaTime, maxGapMs: entry.maxGapMs, gaps: entry.gaps.slice(-20),
+            decodedFrames: quality ? quality.totalVideoFrames : null,
+            droppedFrames: quality ? quality.droppedVideoFrames : null,
+          };
+        });
       });
       timeline.push({ at: Date.now() - startedAt, entries: snapshot });
       // Append as we go: a long soak can be interrupted, and the samples taken so
@@ -214,7 +234,7 @@ test.describe('feedback-5 soak', () => {
       appendFileSync(path.join(directory, 'browser-soak-timeline.jsonl'),
         JSON.stringify(timeline.at(-1)) + '\n');
       console.log(`[browser-soak] ${Math.round((Date.now() - startedAt) / 1000)}s ` +
-        snapshot.map((entry) => `${entry.id}=${entry.frames}f/${entry.lastMediaTime.toFixed(1)}s`).join(' '));
+        snapshot.map((entry) => `${entry.id}=${entry.frames}f(presented)/${entry.decodedFrames ?? '?'}f(decoded)/${entry.lastMediaTime.toFixed(1)}s`).join(' '));
     }
 
     const durationSeconds = (Date.now() - startedAt) / 1000;
@@ -222,10 +242,15 @@ test.describe('feedback-5 soak', () => {
     const measured = final.map((entry) => {
       const target = targetFpsMap[entry.id] ?? targetFps;
       const fps = entry.frames / durationSeconds;
+      const decodedFps = entry.decodedFrames === null || entry.decodedFrames === undefined
+        ? null : Number((entry.decodedFrames / durationSeconds).toFixed(2));
       return {
         id: entry.id,
         frames: entry.frames,
         measuredFps: Number(fps.toFixed(2)),
+        decodedFps,
+        decodedFrames: entry.decodedFrames ?? null,
+        droppedFrames: entry.droppedFrames ?? null,
         targetFps: target,
         fpsRatio: Number((fps / target).toFixed(3)),
         firstFrameMs: entry.firstFrameMs,
