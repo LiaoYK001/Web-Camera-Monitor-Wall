@@ -117,6 +117,24 @@ Historical notes (previous conclusions, disproved hypotheses, the step-by-step i
 | overview_c4 | 15 | 216（≈18 fps） | 同上 |
 | hik_ch1_main / hik_ch2_main | 25 | 大量 `PPS id out of range` | 解码告警持续 |
 
+### 4.3.1 Direct/Hybrid 首帧耗时的分解（本轮定位）/ Decomposing the Direct/Hybrid first frame
+
+用 `web/tests/direct-latency-probe.mjs`（本轮新增并提交）逐瓦片记录状态迁移与每个 HTTP 调用的耗时，120 秒窗口、真实五路相机：
+
+| 瓦片 | 进入 connecting | 进入 live（首个呈现帧） |
+|---|---|---|
+| camera-mu2uub8u | 507 ms | 12 800 ms |
+| camera-mu2uuez4 | 507 ms | 23 559 ms |
+| camera-mu2ux4qk | 507 ms | 32 793 ms |
+| camera-mu2ux73u | 507 ms | 44 584 ms |
+| camera-mu2ux99i | 507 ms | 52 789 ms |
+
+五块瓦片在 507 ms 时**同时**进入 connecting（挂载与配对都不是瓶颈），但随后以约 11 秒的固定间隔**依次**进入 live。对应的 HTTP 计时显示五个 `POST /api/v2/media-plans/<id>/whep` 在 30 毫秒内**同时发出**，耗时却分别是 14.99 / 25.13 / 32.89 / 45.41 / 54.40 秒——即服务端把它们串行化了，每个约 11 秒。
+
+**根因（已定位到代码）**：`ControlServer` 只用一个 io_context 线程（`core/src/control_server.cpp:3890`），而 `create_direct()`（754 行）与 `create_client_plan()`（781 行）都在**全局 `route_operation_mutex_`** 保护下执行完整的 `ensure_playback_route()`；该调用会等待按需 MediaMTX 路由就绪（路由 JSON 里 `runOnDemandStartTimeout` 为 10 秒），在本轮这些慢相机上要吃掉接近整个超时。单线程 + 全局锁叠加，使 N 路来源的等待串成 N×约 11 秒，Direct/Hybrid 的首帧因此被推到 13–53 秒。
+
+**建议修复（下一轮，需用本探针复测）**：不要跨“等待路由就绪”持有全局 `route_operation_mutex_`（改为按来源加锁），并且不要让该等待阻塞唯一的 io_context 线程（移到工作线程，或先返回 WHEP 会话、媒流就绪后再开始转发）。
+
 ### 4.4.1 健康来源对照实验 / Healthy-source control
 
 为区分“产品管线上限”与“本轮来源欠佳”，用 5 路本地 1920×1080@30 的 `media` 源（同一 H.264 文件循环、无网络丢包）临时替换场景来源（副本，测量后已按 `build/scratch/scene.original.json` 还原并校验 sha256 `87fcca32…` 一致），其余配置不变，同一环境各测量 60 秒 program 输出：
@@ -181,7 +199,7 @@ Historical notes (previous conclusions, disproved hypotheses, the step-by-step i
 ## 7. 仍未完成 / Still open
 
 1. **“零来源重启”判据**：合成模式 30 分钟只剩这一项未通过（全场 4 次，camera-mu2ux4qk 与 camera-mu2ux99i 各 2 次），来自两路已知不稳定的真实相机。需要判断这是否应作为来源健康前提下的绝对门槛，或用健康来源复测以确认产品在来源健康时零重启。
-2. **Direct/Hybrid 的首帧与帧间隔**：合成模式已四项全过；Direct/Hybrid 五路的首帧（31.7–74.4s）与最大帧间隔（3.07–6.70s）仍超门槛。该模式不经 OBS 编码，成因不同（候选：逐路网关计划建立耗时、来源首帧慢、五路并发连接），需单独定位。
+2. **Direct/Hybrid 的首帧与帧间隔**：首帧已定位到服务端串行等待（第 4.3.1 节：单 io_context 线程 + 全局 `route_operation_mutex_` 跨 `ensure_playback_route()` 的 10 秒等待），需要按建议修改并用 `tests/direct-latency-probe.mjs` 复测；最大帧间隔（3.07–6.70s）与来源停顿相关，可用健康来源复测。
 2. **单路断开/恢复的受控故障注入**：本轮只有真实来源的自发 stall/recover 观测，没有受控注入，因此“其余四路不被一起重建、15 秒内出图”尚无证据。
 3. **音频回归驱动**的启动空档缺陷与负偏移 PTS 测量方法（产品侧语义已用真实抓取 DFT 验证）。
 4. **Docker / vGPU** 与跨设备音视频组合（按用户已确认范围留待后续）。
