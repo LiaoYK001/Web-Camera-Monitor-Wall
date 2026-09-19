@@ -1,12 +1,11 @@
 # 反馈5 持续执行检查点 / Feedback 5 progress checkpoint
 
-更新 / Updated: 2026-09-19（持续执行轮次结束状态 / end of the continuous-execution round）
+更新 / Updated: 2026-09-19（持续执行第 5 轮 / continuous-execution round 5）
 
 ## 当前代码 / Current code
 
-- HEAD：`ed70313`（长稳驱动匹配真实页面）。被测服务端内容等价于 `93f790a`：其上 `367c2ab`、`37f12bb`、`4200576`、`ed70313` 只改验收驱动与文档。
-- 本轮提交顺序：`587e329`（批次 B）→ `425d5df`（批次 C）→ `f09dcaf`（批次 D 启动器）→ `93f790a`（渲染器真实探测 + OBS NVENC）→ `367c2ab`、`37f12bb`、`4200576`、`ed70313`（验收驱动）。
-- 未跟踪文件保持原样，不随本轮提交：`.github/`、`docs/development*.md`、`scripts/dev*.sh`、`scripts/stop-dev.*`、`compose.dev.yaml`、`web/pnpm-workspace.yaml`、`web/tests/local-runtime/login-gate.spec.ts`、`web/tests/local-runtime/workspace-shell.spec.ts`。
+- HEAD：`fa84b2f`（长稳驱动：配对重试 + 采样器模式感知）。本轮新增 `185197b`（Direct-only 启动崩溃修复）、`0a1026b`（未配对误报修复）、`4ab704f`（真实配对流程 + 中途证据）、`fa84b2f`。
+- 未跟踪文件保持原样，不随本轮提交。
 
 ## 六项状态 / Status
 
@@ -14,30 +13,29 @@
 |---|---|---|
 | F5-01 画面填充 | 已实现并自动化验证 | 聚焦套件 22/22 |
 | F5-02 干净画面 | 已实现并自动化验证 | 聚焦套件 22/22 |
-| F5-03 硬件加速 | OBS 渲染 D3D12 + NVENC 已注册并实测使用 | 报告第 2 节 |
-| F5-04 本地合成 | 真实五路 1920×1080 30 分钟持续发布（30/30 采样） | `tests/artifacts/soak/…composite-1080p-4200576/` |
-| F5-05 音频管理 | 批次 A/B/C 已提交；音频回归驱动部分通过 | 报告第 5 节 |
-| F5-06 播放稳定 | 合成模式 30 分钟浏览器验收完成；帧率 73.2% 未达标（来源限速）；Direct/Hybrid 被阻塞 | `tests/artifacts/browser-soak/…composite/` |
+| F5-03 硬件加速 | OBS 渲染 D3D12（滞后 0.0%）+ NVENC 已注册并被选用 | 报告第 2 节 |
+| F5-04 本地合成 | 真实五路 1920×1080 Composite 30 分钟持续发布（30/30 采样） | `tests/artifacts/soak/…composite-1080p-4200576/` |
+| F5-05 音频管理 | 批次 A/B/C 已提交并有单测；端到端音频驱动部分通过 | 报告第 5 节 |
+| F5-06 播放稳定 | 两种模式各 30 分钟浏览器验收均**已执行**：合成 73.2% 帧率；Direct/Hybrid 1787.8s、五路持续出图、帧率 0.671–1.093、首帧与帧间隔超门槛 | `tests/artifacts/browser-soak/2026-09-18T18-04-45-516Z-composite/`、`…/2026-09-19T09-49-57-510Z-direct/` |
 
-## 本轮已完成 / Completed this round
+## 本轮完成 / Completed this round
 
-- 批次 B `587e329`：等效混音路由复用（共享守卫）、先备后切 + 回读校验、失败保留旧节目；11 条新单测，core 构建与单测全绿。
-- 批次 C `425d5df`：`B=max(0,-min(d_i))` 归一化、`setts` 视频后移；±10000ms 校验；转码器用例 7/7。
-- 批次 D `f09dcaf` + `367c2ab`：`-Soak` 贯通到 Python；`tests/soak-evidence.mjs`、`tests/audio-regression.mjs`、`web/tests/local-runtime/browser-soak.spec.ts`；启动器用例 9/9。
-- `93f790a`：真实 EGL 渲染器探测（WSLg + d3d12）、用户前缀 ffnvcodec/MbedTLS、构建并放置 `obs-nvenc` 及其 `obs-nvenc-test` 辅助程序、core 加载 obs-nvenc；渲染滞后 39–84% → 0.0%。
-- 真实 1920×1080 五路 Composite 30 分钟服务端采样 + 30 分钟真实页面浏览器长稳。
-- 帧率未达标的归因测量（来源 7.8–18 fps、HEVC 丢包；渲染 0.0%、编码 0.7%）。
+- **修复 Direct-only 网关启动即崩溃**（`361cada` 引入）：`encoder_registered()` 在 `!obs_initialized()` 时返回 false，NVENC 调用按 `modules_loaded` 短路。修复前 `core-local/webobsd` 直接 SIGSEGV（栈顶 `obs_enum_encoder_types+0xd`），修复后正常启动并返回 `configuration=disabled`。这是 Direct/Hybrid 验收长期缺失的直接原因。
+- **修复未配对被误报为控制面不可达**：`requestBrowserPlan()` 先单独解析设备头，未配对时抛「此浏览器尚未完成配对」，走 needsPairing 分支。
+- **打通 Direct/Hybrid 浏览器验收**：`WEBOBS_SOAK_PAIR=1` 走产品自身配对流程（创建 → 管理会话批准 5 路授权 → 完成），实测五路瓦片全部出图；并修掉登录竞态、增加配对重试与中途证据写入。
+- **完成 Direct/Hybrid 30 分钟验收**（1787.8s，因轮次边界未写自身汇总，由增量时间线重新计算并生成 `derived-browser-summary.md`）。
+- 采样器改为模式感知：Direct/Hybrid 无 libobs 时不再把逐来源检查判为失败。
 
 ## 下一条具体动作 / Next concrete steps
 
-1. 定位 Direct/Hybrid 瓦片“离线且不发任何请求”：从 `web/src/DirectPreview.tsx` 的 `CameraDirectTile` effect 入口（`loadBrowserIdentity`/IndexedDB）与 `web/src/localRuntime.ts` 的本地运行时状态入手，确认 effect 是否执行、Promise 是否悬挂。
-2. 修正 `tests/audio-regression.mjs`：录制与转码器首帧的竞争（等待首个非静音窗口后再计时）与负偏移测量改用相对 PTS。
-3. 受控故障注入（代理/测试路由断开一路），验收“其余四路不重建、15 秒内出图”。
-4. 修订报告与证据；仍未达成的门槛按来源限速如实记录。
+1. 用**健康的合成来源**（例如测试 RTSP 发布）重跑一次 30 分钟，验证“来源健康时”首帧/帧间隔/帧率能否达标——用以区分“产品管线上限”与“本轮来源欠佳”。现有失败的归因已很明确，但缺少健康来源的对照。
+2. 受控故障注入（代理/测试路由断开一路），验收“其余四路不重建、15 秒内出图”。
+3. 修正 `tests/audio-regression.mjs` 的启动空档与负偏移 PTS 测量。
+4. 让长稳驱动在结束时也能从中断中恢复：把 `summary` 也按周期写入，而不是只在末尾写一次。
 
 ## 环境与阻塞 / Environment and blockers
 
-- WSLg 可用、`GALLIUM_DRIVER=d3d12` 下 OBS 使用 D3D12 硬件渲染；OBS NVENC 偶发加载失败（测试子进程偶发拿不到 NVENC），此时回退 x264。
-- `sudo` 需要密码，无法 apt 安装；`ffnvcodec`、MbedTLS、libdatachannel 均构建在 `~/.cache/webobs-dev/<hash>/libs`。
-- Windows `dev.mjs` 经 corepack 使用 pnpm 11.16.0，`node scripts/dev.mjs --check` 通过；Playwright 的 `webServer` 里那条裸 `pnpm` 命令在本机独立安装损坏，改由 `node node_modules/vite/bin/vite.js` 启动前端。
-- 真实相机 `camera-mu2uub8u`、`camera-mu2uuez4`、`camera-mu2ux73u` 在 30 分钟内反复 stall（7.8–18 fps、HEVC 丢包），是本轮帧率门槛未达成的直接原因。
+- 后台作业不跨轮次存活：30 分钟长稳若跨越轮次边界会在末尾被中止（本轮 Direct/Hybrid 运行正是如此）；浏览器长稳已改为增量写入时间线，采样器本身也逐条写 `samples.jsonl`，因此证据可恢复。
+- 真实相机 `camera-mu2uub8u`、`camera-mu2ux73u`、`camera-mu2ux4qk` 稳定性差（12 秒直读 7.8–18 fps、HEVC 丢包；Direct 模式 21 条路由中 11 条从未 ready）。
+- `sudo` 需要密码；`ffnvcodec`/MbedTLS/libdatachannel 均构建在用户缓存前缀。
+- Windows 侧 Vite 由 `node node_modules/vite/bin/vite.js` 启动（Playwright 的 `webServer` 里那条裸 `pnpm` 在本机独立安装损坏）。

@@ -38,7 +38,7 @@ Historical notes (previous conclusions, disproved hypotheses, the step-by-step i
 | F5-03 硬件加速 | **OBS 渲染与编码均已在真实运行中启用并取证**；网关 NVENC/CUDA 转码沿用既有实现 | 本文件第 2 节 + `nvidia-smi` |
 | F5-04 本地合成 | **真实五路 1920×1080 Composite 30 分钟持续发布**（30/30 采样 ready、track=[Opus,H264]、`inboundFramesInError=0`） | `tests/artifacts/soak/…-composite-1080p-4200576/` |
 | F5-05 音频管理 | 批次 A/B/C 已提交并有自动化验证；路由复用/先备后切有单测；有符号偏移有转码器用例；端到端音频驱动部分通过 | 见第 5 节 |
-| F5-06 播放稳定 | 合成模式 30 分钟浏览器验收**已完成**：首帧 4.55s、最大帧间隔 1.77s、媒体时间推进 1807s；**帧率 21.95/30 = 73.2%，未达 90% 门槛**，瓶颈已归因到来源 | `tests/artifacts/browser-soak/2026-09-18T18-04-45-516Z-composite/` |
+| F5-06 播放稳定 | **两种模式各 30 分钟浏览器验收均已执行**。合成模式：首帧 4.55s、最大帧间隔 1.77s、媒体推进 1807s，帧率 21.95/30 = 73.2%（未达 90%）。Direct/Hybrid 模式：五路瓦片全部持续出图 1787.8s，帧率 16.4–19.0 fps（对名义目标 0.671–1.093），但首帧 31.7–74.4s、最大帧间隔 3.07–6.70s 均超门槛——瓶颈同样是真实来源 | `tests/artifacts/browser-soak/2026-09-18T18-04-45-516Z-composite/`、`tests/artifacts/browser-soak/2026-09-19T09-49-57-510Z-direct/` |
 
 ## 4. 长稳实测数据 / Measured soak data
 
@@ -61,7 +61,25 @@ Historical notes (previous conclusions, disproved hypotheses, the step-by-step i
 - 首帧 4551 ms（≤20s 通过）、最大帧间隔 1772 ms（≤3s 通过）、媒体时间推进到 1807.5s（持续出图通过）。
 - **39768 帧 / 1812s = 21.95 fps，为目标 30 fps 的 73.2%，未达 90% 门槛。**
 
-### 4.3 瓶颈归因 / Bottleneck attribution
+### 4.3 Direct/Hybrid 浏览器验收（2026-09-19）/ Direct/Hybrid browser acceptance
+
+真实产品页面、真实 Chrome，先按产品自身的配对流程完成浏览器授权（创建配对 → 管理会话批准 5 路相机授权 → 完成配对，无任何桩授权），再切换到“网关直通/浏览器媒体”。
+
+- 运行：`2026-09-19T09-49-57-510Z-direct`，**1787.8 秒（29.8 分钟）**、119 次采样。该运行在轮次边界被中止，未能写下自身汇总，数据由增量写入的 `browser-soak-timeline.jsonl` 重新计算（见同目录 `derived-browser-summary.md`）。
+
+| 来源 | 帧数 | 实测 fps | 名义目标 | 比值 | 首帧 | 媒体时间 | 最大帧间隔 |
+|---|---|---|---|---|---|---|---|
+| camera-mu2uub8u | 30149 | 16.86 | 20 | 0.843 | 74.4 s | 1713.2 s | 3067 ms |
+| camera-mu2uuez4 | 33960 | 19.00 | 20 | 0.950 | 31.7 s | 1756.2 s | 4016 ms |
+| camera-mu2ux4qk | 29995 | 16.78 | 25 | 0.671 | 39.3 s | 1285.7 s | 5236 ms |
+| camera-mu2ux73u | 33110 | 18.52 | 25 | 0.741 | 47.9 s | 1740.0 s | 3663 ms |
+| camera-mu2ux99i | 29317 | 16.40 | 15 | 1.093 | 56.6 s | 1264.8 s | 6697 ms |
+
+- 通过：五路媒体时间全部推进（无冻结）、无崩溃、持续播放近 30 分钟。
+- 未通过：首帧（31.7–74.4s，预算 20s；瓦片是逐路建立网关计划后连接，且来源本身出图慢）、最大帧间隔（3.07–6.70s，预算 3s）、3 路的解码帧率未达名义目标 90%。
+- 服务端同时刻采样（30 次，29.1 分钟）显示 21 条路由中仅 6 条持续 ready 且字节增长，**11 条从未 ready**——与“来源侧不稳定”一致。
+
+### 4.4 瓶颈归因 / Bottleneck attribution
 
 渲染与编码不是瓶颈：OBS 日志的渲染滞后为 **1/8247（0.0%）**、编码滞后 **59/8247（0.7%）**，`nvidia-smi` GPU 15%、encoder 8%。
 
@@ -92,11 +110,16 @@ Historical notes (previous conclusions, disproved hypotheses, the step-by-step i
 
 驱动当前缺陷（已在脚本头部注明）：录制进程与转码器首帧存在竞争，个别用例会抓到启动空档而得到全零窗口；本次已因此产生一次误报。该驱动**尚不能单独作为验收判据**。
 
-## 6. 仍未完成 / Still open
+## 6. 本轮发现并修复的两个产品缺陷 / Two product defects found and fixed this round
 
-1. **Direct/Hybrid 五路浏览器 30 分钟验收**：真实页面的五路瓦片全部显示“离线”，且经 Playwright 跟踪，瓦片**没有发出任何 API 请求**（无 `browserGrantProfile`/`requestBrowserPlan`），因此浏览器媒体路径根本没有启动。已在 HEAD `ed70313` 上复现两次（登录成功、`data-playback-suspended="false"`、能力接口对 5 路均返回 `preferred=direct`）。这是需要继续定位的产品级问题，不是环境问题。
+1. **Direct-only 网关启动即崩溃（`185197b`）**：`detect_video_encoder_capabilities(config, false)` 无条件调用 `encoder_registered()`，后者遍历 `obs_enum_encoder_types`；Direct-only 路径刻意跳过 `obs_startup`，于是在控制面监听之前 SIGSEGV（栈顶 `libobs.so.30(obs_enum_encoder_types+0xd)`，两个构建同样崩溃）。由 `361cada` 引入。修复后 Direct-only 可正常启动并返回如实的 `configuration=disabled`。**这是 Direct/Hybrid 验收长期缺失的直接原因。**
+2. **未配对被误报为控制面不可达（`0a1026b`）**：`requestBrowserPlan()` 把 `browserDeviceHeaders()` 与 fetch 放在同一个 try 中，未配对时抛出的「此浏览器尚未完成配对」被改写成「控制面当前不可达」，把排查方向引向网关/网络。现在未配对会走 `DirectPreview` 的 needsPairing 分支并给出配对操作。
+
+## 7. 仍未完成 / Still open
+
+1. **性能门槛**：两种模式的帧率都未达“≥目标 90%”（合成 73.2%；Direct/Hybrid 0.671–1.093），且 Direct/Hybrid 首帧（31.7–74.4s）与最大帧间隔（3.07–6.70s）超门槛。逐项测量指向真实相机来源（7.8–18 fps、HEVC 丢包、21 条路由中 11 条从未 ready），但“来源健康时能否达标”尚未用健康来源验证过。
 2. **单路断开/恢复的受控故障注入**：本轮只有真实来源的自发 stall/recover 观测，没有受控注入，因此“其余四路不被一起重建、15 秒内出图”尚无证据。
-3. **音频回归驱动**的启动空档缺陷与负偏移 PTS 测量方法。
+3. **音频回归驱动**的启动空档缺陷与负偏移 PTS 测量方法（产品侧语义已用真实抓取 DFT 验证）。
 4. **Docker / vGPU** 与跨设备音视频组合（按用户已确认范围留待后续）。
 
 ## 7. 命令 / Commands
@@ -114,8 +137,10 @@ node --test tests/test-transcoder-mix.mjs tests/test-transcoder.mjs
 $env:WEBOBS_SCENE_FILE='build\scratch\scene.original.json'
 node tests/soak-evidence.mjs --label composite-1080p --mode composite --target-fps 30 --minutes 30
 
-# 浏览器长稳（真实产品页面）
-$env:WEBOBS_SOAK='1'; $env:WEBOBS_SOAK_MODE='composite'; $env:WEBOBS_SOAK_MINUTES='30'
+# 浏览器长稳（真实产品页面）。Direct/Hybrid 必须加 WEBOBS_SOAK_PAIR=1：
+# 普通 RTSP 需要浏览器配对后的授权令牌，未配对时瓦片会如实显示离线。
+$env:WEBOBS_SOAK='1'; $env:WEBOBS_SOAK_MODE='direct'; $env:WEBOBS_SOAK_PAIR='1'; $env:WEBOBS_SOAK_MINUTES='30'
+$env:WEBOBS_SOAK_TARGET_FPS_MAP='{"camera-mu2uub8u":20,"camera-mu2uuez4":20,"camera-mu2ux4qk":25,"camera-mu2ux73u":25,"camera-mu2ux99i":15}'
 node node_modules/@playwright/test/cli.js test -c <config> --project=chrome -g "feedback-5 soak"
 
 # 音频回归（需先停止开发会话，占用 8554/9997）
@@ -126,6 +151,8 @@ node tests/audio-regression.mjs
 
 渲染与编码侧已从“软件渲染 + x264”推进到**真实硬件路径**（OBS 渲染滞后 0.0%、编码滞后 0.7%、NVENC 已注册并被选用），并且**原始 1920×1080 五路 Composite 在真实产品页面上连续播放了 30 分钟**，首帧与帧间隔门槛通过。帧率门槛未达标，原因经逐项测量定位到**真实相机来源本身**（7.8–18 fps、HEVC 丢包），不是合成/编码/传输回归。
 
-F5-01/F5-02 保持既有自动化验证；F5-05 的批次 A/B/C 代码与单测已完成，端到端音频驱动部分通过；F5-06 的合成模式 30 分钟验收已完成而 Direct/Hybrid 一项被“瓦片不发请求”的未定位问题阻塞，故障注入与音频驱动缺陷仍需继续。
+本轮同时定位并修复了两个此前一直阻塞 Direct/Hybrid 验收的产品缺陷：**Direct-only 网关启动即崩溃**（`obs_enum_encoder_types` 在未 `obs_startup` 时被调用）与**未配对被误报为控制面不可达**。修复后 Direct/Hybrid 五路在真实产品页面上连续播放 1787.8 秒（29.8 分钟）且媒体时间全程推进，验收首次真正执行。
 
-The rendering and encoding side moved from software-only to a real hardware path (0.0% rendering lag, 0.7% encoding lag, NVENC registered and selected), and the original 1920x1080 five-source Composite played for a full 30 minutes inside the real product page with the first-frame and stall thresholds met. The frame-rate threshold is not met, and per-item measurement attributes that to the real camera feeds themselves (7.8-18 fps with HEVC packet loss) rather than to compositing, encoding or transport. F5-01/F5-02 keep their existing automated verification, F5-05 has batches A/B/C implemented with unit tests and a partially passing end-to-end audio driver, and F5-06 has the composite 30-minute acceptance while Direct/Hybrid is blocked by the undiagnosed "tiles issue no request" defect; fault injection and the audio driver defect remain open.
+F5-01/F5-02 保持既有自动化验证；F5-03 的 OBS 渲染与编码均已在真实运行中启用并取证；F5-04/F5-06 的两种播放模式各 30 分钟验收均已执行，**首帧、帧间隔与帧率三类门槛在真实来源上未全部达标**，逐项测量把瓶颈指向来源侧；F5-05 的批次 A/B/C 代码与单测已完成，端到端音频驱动部分通过。受控故障注入与音频驱动缺陷仍需继续。
+
+The rendering and encoding side moved from software-only to a real hardware path (0.0% rendering lag, 0.7% encoding lag, NVENC registered and selected), and the original 1920x1080 five-source Composite played for a full 30 minutes inside the real product page with the first-frame and stall thresholds met. The frame-rate threshold is not met, and per-item measurement attributes that to the real camera feeds themselves (7.8-18 fps with HEVC packet loss) rather than to compositing, encoding or transport. This round also located and fixed the two product defects that had been blocking the Direct/Hybrid acceptance all along: the Direct-only gateway crashed on startup (obs_enum_encoder_types called before obs_startup) and an unpaired browser was misreported as an unreachable control plane. With both fixed, the Direct/Hybrid wall played for 1787.8 seconds (29.8 minutes) in the real product page with media time advancing throughout, so that acceptance finally ran. F5-01/F5-02 keep their existing automated verification, F5-03 has OBS rendering and encoding enabled and evidenced in a real run, F5-04/F5-06 have a 30-minute acceptance in each playback mode while the first-frame, stall and frame-rate thresholds are not all met against the real sources (attributed by measurement to the sources), and F5-05 has batches A/B/C implemented with unit tests and a partially passing end-to-end audio driver. Controlled fault injection and the audio-driver defect remain open.
