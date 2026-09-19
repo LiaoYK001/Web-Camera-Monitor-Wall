@@ -59,6 +59,22 @@ test.describe('feedback-5 soak', () => {
     const directory = path.join(evidenceRoot, runId);
     mkdirSync(directory, { recursive: true });
 
+    // Track every RTCPeerConnection the player creates so the WebRTC receive
+    // path can be attributed (received vs decoded vs dropped, NACKs, loss)
+    // instead of guessing whether the gap is transport or presentation.
+    await page.addInitScript(() => {
+      const Original = window.RTCPeerConnection;
+      const tracked: RTCPeerConnection[] = [];
+      (window as unknown as { __webobsPeerConnections: RTCPeerConnection[] }).__webobsPeerConnections = tracked;
+      class TrackedPeerConnection extends Original {
+        constructor(...args: ConstructorParameters<typeof Original>) {
+          super(...args);
+          tracked.push(this);
+        }
+      }
+      window.RTCPeerConnection = TrackedPeerConnection as unknown as typeof RTCPeerConnection;
+    });
+
     await page.goto(baseUrl);
     // The session probe resolves asynchronously, so wait for the gate *or* the
     // workspace before deciding whether a login is needed.
@@ -198,7 +214,7 @@ test.describe('feedback-5 soak', () => {
 
     const startedAt = Date.now();
     const deadline = startedAt + minutes * 60_000;
-    const timeline: Array<{ at: number; entries: SourceSample[] }> = [];
+    const timeline: Array<{ at: number; entries: SourceSample[]; rtc?: Array<Record<string, number | string>> }> = [];
     while (Date.now() < deadline) {
       await page.waitForTimeout(15_000);
       const snapshot = await page.evaluate(() => {
@@ -228,7 +244,35 @@ test.describe('feedback-5 soak', () => {
           };
         });
       });
-      timeline.push({ at: Date.now() - startedAt, entries: snapshot });
+      const rtc = await page.evaluate(async () => {
+        const connections = (window as unknown as { __webobsPeerConnections?: RTCPeerConnection[] })
+          .__webobsPeerConnections ?? [];
+        const inbound: Array<Record<string, number | string>> = [];
+        for (const connection of connections) {
+          try {
+            const report = await connection.getStats();
+            report.forEach((entry: Record<string, unknown>) => {
+              if (entry.type !== 'inbound-rtp' || entry.kind !== 'video') return;
+              inbound.push({
+                id: String(entry.id ?? ''),
+                framesReceived: Number(entry.framesReceived ?? 0),
+                framesDecoded: Number(entry.framesDecoded ?? 0),
+                framesDropped: Number(entry.framesDropped ?? 0),
+                keyFramesDecoded: Number(entry.keyFramesDecoded ?? 0),
+                packetsLost: Number(entry.packetsLost ?? 0),
+                nackCount: Number(entry.nackCount ?? 0),
+                pliCount: Number(entry.pliCount ?? 0),
+                freezeCount: Number(entry.freezeCount ?? 0),
+                totalFreezesDuration: Number(entry.totalFreezesDuration ?? 0),
+                jitterBufferDelay: Number(entry.jitterBufferDelay ?? 0),
+                jitterBufferEmittedCount: Number(entry.jitterBufferEmittedCount ?? 0),
+              });
+            });
+          } catch { /* stats unavailable for this connection */ }
+        }
+        return inbound;
+      });
+      timeline.push({ at: Date.now() - startedAt, entries: snapshot, rtc });
       // Append as we go: a long soak can be interrupted, and the samples taken so
       // far are still evidence.
       appendFileSync(path.join(directory, 'browser-soak-timeline.jsonl'),

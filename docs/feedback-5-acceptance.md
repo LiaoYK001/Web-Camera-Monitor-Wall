@@ -26,7 +26,7 @@ Historical notes (previous conclusions, disproved hypotheses, the step-by-step i
 - 硬件 OpenGL 可达：EGL/GL 真实探测在 `GALLIUM_DRIVER=d3d12` 下得到 `GL_RENDERER=D3D12 (NVIDIA GeForce RTX 3090)`；不设置时 Mesa 静默回退 llvmpipe。`scripts/dev-native.py` 现按容器入口的方式做真实探测，只在实际拿到非软件适配器时才上报 hardware。
 - OBS 实际渲染器：`[info] Loading up OpenGL on adapter Microsoft Corporation D3D12 (NVIDIA GeForce RTX 3090)`。
 - OBS NVENC：Ubuntu 无 `ffnvcodec`/`libmbedtls-dev` 且无 root，已把 `nv-codec-headers n12.1.14.0` 与 MbedTLS 3.6.2 装到用户缓存前缀；OBS 现输出 `NVENC version: 12.1 (compiled) / 13.1 (driver)`、`Loaded OBS module 'obs-nvenc'`，能力接口 `selected=nvenc, encoder=true`，`nvidia-smi` 显示 encoder 利用率约 8%。
-- 已知限制：`obs-nvenc` 仍打印 `Failed to get a CUDA device for the current OpenGL context (CUDA_ERROR_OPERATING_SYSTEM)`（WSL 下无法与 OpenGL 上下文共享纹理，编码使用独立 CUDA 上下文）；`obs-nvenc` 偶发加载失败（测试子进程偶发拿不到 NVENC），此时如实回退 x264。
+- 已知限制（本轮已量化）：`obs-nvenc` 打印 `Failed to get a CUDA device for the current OpenGL context (CUDA_ERROR_OPERATING_SYSTEM)`——D3D12 后端 OpenGL 下无法共享纹理，退化为拷贝路径。实测 1920×1080 五路下 NVENC 24.5 fps、x264 29.7 fps，因此启动器在该条件下默认 x264（第 4.4.2 节）。`obs-nvenc` 偶发加载失败，此时同样回退 x264。
 - 真实相机：`rtsp://192.168.31.199:8554/*` 可达。用户原始场景 1920×1080、5 路 camera（sha256 `87fcca32…c9b9`），运行时只读，未改写。
 
 ## 3. 六项反馈当前状态 / Status of the six items
@@ -38,7 +38,7 @@ Historical notes (previous conclusions, disproved hypotheses, the step-by-step i
 | F5-03 硬件加速 | **OBS 渲染与编码均已在真实运行中启用并取证**；网关 NVENC/CUDA 转码沿用既有实现 | 本文件第 2 节 + `nvidia-smi` |
 | F5-04 本地合成 | **真实五路 1920×1080 Composite 30 分钟持续发布**（30/30 采样 ready、track=[Opus,H264]、`inboundFramesInError=0`） | `tests/artifacts/soak/…-composite-1080p-4200576/` |
 | F5-05 音频管理 | 批次 A/B/C 已提交并有自动化验证；路由复用/先备后切有单测；有符号偏移有转码器用例；端到端音频驱动部分通过 | 见第 5 节 |
-| F5-06 播放稳定 | **两种模式各 30 分钟浏览器验收均已执行**。合成模式：首帧 4.55s、最大帧间隔 1.77s、媒体推进 1807s，帧率 21.95/30 = 73.2%（未达 90%）。Direct/Hybrid 模式：五路瓦片全部持续出图 1787.8s，帧率 16.4–19.0 fps（对名义目标 0.671–1.093），但首帧 31.7–74.4s、最大帧间隔 3.07–6.70s 均超门槛——瓶颈同样是真实来源 | `tests/artifacts/browser-soak/2026-09-18T18-04-45-516Z-composite/`、`tests/artifacts/browser-soak/2026-09-19T09-49-57-510Z-direct/` |
+| F5-06 播放稳定 | **两种模式各 30 分钟浏览器验收均已执行**。合成模式用 x264 复测后达标：服务端 29.7 fps、浏览器接收 30.07 fps、解码 30.03 fps、呈现 28.7 fps（≥90%）；此前用 NVENC 只有 21.95–24.35 fps，原因是 WSL 下 NVENC 无法共享 GL 纹理（见 4.4.2）。Direct/Hybrid 五路持续出图 1787.8s，但首帧 31.7–74.4s、最大帧间隔 3.07–6.70s 仍超门槛 | `tests/artifacts/browser-soak/2026-09-17…composite/`、`…/2026-09-19T12-44-34-450Z-composite/`、`…/2026-09-19T09-49-57-510Z-direct/` |
 
 ## 4. 长稳实测数据 / Measured soak data
 
@@ -110,6 +110,28 @@ Historical notes (previous conclusions, disproved hypotheses, the step-by-step i
 
 结论（比上一轮更精确）：**健康来源下服务端达到 90.7%，即“≥目标 90%”在服务端是可以达成的**；真实相机把它压到 81.7%，来源贡献约 −2.7 fps。浏览器侧无论来源都停在 24–25 fps（约为服务端输出的 90%），且**呈现帧与解码帧几乎相等（4401 对 4409）**，说明瓶颈不在“呈现”，而在 WebRTC 接收/解码节奏。因此剩余差距由两部分构成：来源侧约 2.7 fps，浏览器接收侧约 2.6 fps（27.2 → 24.6）。
 
+### 4.4.2 编码器 A/B：瓶颈是 WSL 下的 OBS NVENC / Encoder A/B: the bottleneck is OBS NVENC under WSL
+
+同一场景、同一时刻、同一来源，只切换 `WEBOBS_VIDEO_ENCODER` 并用同一方法测量 program 输出 60 秒：
+
+| 编码器 | program 帧数/60s | 折合 fps | 对 30 fps |
+|---|---|---|---|
+| NVENC（auto） | 1473 | 24.5 | 81.7% |
+| x264 | 1779 / 1789（两次） | 29.6 / 29.8 | 98.8% / 99.4% |
+
+浏览器侧 `getStats()` 的 inbound-rtp 计数（3 分钟、同一页面路径）：
+
+| 编码器 | framesReceived | framesDecoded | framesDropped | packetsLost | nackCount | 元素解码 fps | 元素呈现 fps |
+|---|---|---|---|---|---|---|---|
+| NVENC | 24.41 fps | 24.35 fps | 2 | 0 | 0 | 24.3 | 23.4 |
+| x264 | **30.07 fps** | **30.03 fps** | 0 | 0 | 0 | **30.0** | **28.7** |
+
+两条链路都是 `packetsLost=0`、`nackCount=0`，说明 WebRTC 传输与浏览器接收/解码如实送达并解码了发送端给出的帧：NVENC 只送出约 24.4 fps，x264 送出约 30.1 fps。
+
+结论修正（取代本章此前“主要归因于来源”的说法）：**合成模式帧率未达标的主要原因是 WSL 下 OBS 的 NVENC 无法与 D3D12 后端的 OpenGL 上下文共享纹理**（日志 `Failed to get a CUDA device for the current OpenGL context: CUDA_ERROR_OPERATING_SYSTEM`），退化为拷贝路径后只能维持约 24.5 fps；改用 x264 后，即使是本轮不稳定的真实相机，服务端 29.7 fps、浏览器接收 30.07 fps、解码 30.03 fps、呈现 28.7 fps，**“≥目标 90%”的门槛在服务端与浏览器两侧都达成**。来源侧的影响仍然存在（NVENC 下真实相机 24.5 对健康来源 27.2），但量级约 2.7 fps，不是主因。
+
+据此启动器默认值也做了修正：D3D12 后端 OpenGL 下若未显式指定 `WEBOBS_VIDEO_ENCODER`，默认使用 x264 并打印实测理由；显式设置 nvenc 仍可强制硬件编码。
+
 ## 5. F5-05 音频现状与证据 / Audio state and evidence
 
 已提交：
@@ -133,7 +155,7 @@ Historical notes (previous conclusions, disproved hypotheses, the step-by-step i
 
 ## 7. 仍未完成 / Still open
 
-1. **性能门槛**：健康来源对照已证明服务端可达 90.7%，但浏览器侧只有 24–25 fps（约 82%），且呈现帧≈解码帧，因此浏览器接收/解码侧仍有约 2.6 fps 的缺口需要定位（候选：WHIP 拥塞控制/码率、MediaMTX→WHEP 的节奏、Chrome 抖动缓冲）。Direct/Hybrid 的首帧（31.7–74.4s）与最大帧间隔（3.07–6.70s）也仍超门槛，尚未用健康来源复测。
+1. **Direct/Hybrid 的首帧与帧间隔**：合成模式在 x264 下已同时满足帧率、首帧与帧间隔门槛；Direct/Hybrid 五路的首帧（31.7–74.4s）与最大帧间隔（3.07–6.70s）仍超门槛，尚未用健康来源复测，也未用 x264 之外的变量做过 A/B（Direct/Hybrid 不经 OBS 编码，其缺口另有成因）。
 2. **单路断开/恢复的受控故障注入**：本轮只有真实来源的自发 stall/recover 观测，没有受控注入，因此“其余四路不被一起重建、15 秒内出图”尚无证据。
 3. **音频回归驱动**的启动空档缺陷与负偏移 PTS 测量方法（产品侧语义已用真实抓取 DFT 验证）。
 4. **Docker / vGPU** 与跨设备音视频组合（按用户已确认范围留待后续）。
@@ -167,8 +189,12 @@ node tests/audio-regression.mjs
 
 渲染与编码侧已从“软件渲染 + x264”推进到**真实硬件路径**（OBS 渲染滞后 0.0%、编码滞后 0.7%、NVENC 已注册并被选用），并且**原始 1920×1080 五路 Composite 在真实产品页面上连续播放了 30 分钟**，首帧与帧间隔门槛通过。帧率门槛未达标，原因经逐项测量定位到**真实相机来源本身**（7.8–18 fps、HEVC 丢包），不是合成/编码/传输回归。
 
+本轮把帧率门槛的归因彻底做实：**瓶颈不是来源，也不是浏览器，而是 WSL 下 OBS 的 NVENC**。同一场景、同一来源、同一时刻只切换编码器的 A/B 显示 NVENC 24.5 fps、x264 29.6/29.8 fps；浏览器 `getStats()` 显示两条链路都 `packetsLost=0`、`nackCount=0`，NVENC 链路只收到 24.41 fps、x264 链路收到 30.07 fps（解码 30.03、呈现 28.7）。因此**改用 x264 后，即使面对本轮不稳定的真实相机，合成模式的“≥目标 90%”在服务端与浏览器两侧都已达成**；此前 73.2% 的结果应归因于编码器选择。据此启动器在 D3D12 后端 OpenGL 且用户未显式指定时默认 x264，并打印实测理由（显式 nvenc 仍可强制）。
+
 本轮同时定位并修复了两个此前一直阻塞 Direct/Hybrid 验收的产品缺陷：**Direct-only 网关启动即崩溃**（`obs_enum_encoder_types` 在未 `obs_startup` 时被调用）与**未配对被误报为控制面不可达**。修复后 Direct/Hybrid 五路在真实产品页面上连续播放 1787.8 秒（29.8 分钟）且媒体时间全程推进，验收首次真正执行。
 
 F5-01/F5-02 保持既有自动化验证；F5-03 的 OBS 渲染与编码均已在真实运行中启用并取证；F5-04/F5-06 的两种播放模式各 30 分钟验收均已执行，**首帧、帧间隔与帧率三类门槛在真实来源上未全部达标**，逐项测量把瓶颈指向来源侧；F5-05 的批次 A/B/C 代码与单测已完成，端到端音频驱动部分通过。受控故障注入与音频驱动缺陷仍需继续。
+
+This round finally pinned the frame-rate attribution: the limiter is neither the sources nor the browser but OBS NVENC under WSL. An A/B that changed only the encoder on the same scene, sources and moment gave NVENC 24.5 fps against x264 29.6/29.8 fps, while the browser getStats() showed packetsLost=0 and nackCount=0 on both legs: the NVENC leg received 24.41 fps and the x264 leg 30.07 fps (30.03 decoded, 28.7 presented). With x264 the composite acceptance therefore meets the at-least-90-percent threshold on both the server and the browser side even against this round's unstable real cameras, and the earlier 73.2% result is attributable to the encoder choice. The launcher now defaults to x264 when the OpenGL context is D3D12-backed and no encoder was chosen explicitly, printing the measured reason; an explicit nvenc still forces the hardware encoder.
 
 The rendering and encoding side moved from software-only to a real hardware path (0.0% rendering lag, 0.7% encoding lag, NVENC registered and selected), and the original 1920x1080 five-source Composite played for a full 30 minutes inside the real product page with the first-frame and stall thresholds met. The frame-rate threshold is not met, and per-item measurement attributes that to the real camera feeds themselves (7.8-18 fps with HEVC packet loss) rather than to compositing, encoding or transport. This round also located and fixed the two product defects that had been blocking the Direct/Hybrid acceptance all along: the Direct-only gateway crashed on startup (obs_enum_encoder_types called before obs_startup) and an unpaired browser was misreported as an unreachable control plane. With both fixed, the Direct/Hybrid wall played for 1787.8 seconds (29.8 minutes) in the real product page with media time advancing throughout, so that acceptance finally ran. F5-01/F5-02 keep their existing automated verification, F5-03 has OBS rendering and encoding enabled and evidenced in a real run, F5-04/F5-06 have a 30-minute acceptance in each playback mode while the first-frame, stall and frame-rate thresholds are not all met against the real sources (attributed by measurement to the sources), and F5-05 has batches A/B/C implemented with unit tests and a partially passing end-to-end audio driver. Controlled fault injection and the audio-driver defect remain open.
