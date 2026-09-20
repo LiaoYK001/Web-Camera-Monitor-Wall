@@ -7,6 +7,16 @@ Baseline: commit `93f790a` (renderer probe + OBS NVENC) plus `587e329`, `425d5df
 历史记录（旧结论、被否证的假设、逐步排查过程）见 `docs/feedback-5-acceptance-history.md`。本文件只描述当前状态。
 Historical notes (previous conclusions, disproved hypotheses, the step-by-step investigation) moved to `docs/feedback-5-acceptance-history.md`. This file states the current state only.
 
+## 0. 总体结论（2026-09-20 证据复核后）/ Overall status after the evidence review
+
+**已实现，且受控来源（健康合成源）的性能验证通过；原始部署（五路真实相机）的最终验收尚待关闭。**
+
+- 复核发现验收判定器存在漏判（尾部断流不计入帧间隔、`maxGapMs` 只记录 >1000ms 的已结束间隔、把呈现帧率当成解码帧率、不校验预期来源集合与目标、提前结束仍可派生成 PASS）。本轮已修复并抽出可测试的纯判定模块，用尾部断流/提前结束/缺少一路/播放器替换/计数代次归零/超 3 秒后恢复等反例回归（19/19 通过，见 1.1 节）。
+- 按修复后的判定器重新派生历史长稳：`2026-09-19T12-53-10-550Z-composite` 与 `2026-09-20T11-01-11-166Z-direct` 的派生结论均为 **INCOMPLETE**，不再是“全部检查通过”。它们能证明的范围是：**呈现**帧率与首帧在受控来源下达标；**不能**证明正式 30 分钟验收通过。
+- 特别是 `2026-09-20T11-01-11-166Z-direct`：最后两个采样（`at` 1790222ms → 1805262ms，间隔 **15.04 秒**）五路帧数与媒体时间**完全不变**，且最后一个采样没有再写出自身汇总；旧判定器仍判 PASS。真实有效观测在约 **1782.4 秒**（最后一帧）就结束了，不足 1800 秒，且尾部无帧时间已超过 3 秒门槛。
+- 历史受控来源结果**不替换**为真实相机结果；真实场景 Direct/Hybrid 的首帧（31.7–74.4 秒）与停顿（3.07–6.70 秒）仍未关闭，控制面串行激活（约 2.57 秒/路）尚未修复。
+
+**English.** Implemented, with performance verified on controlled (healthy synthetic) sources; the final acceptance on the original deployment (five real cameras) is still open. The review found the acceptance oracle could mis-judge a run, and it is now fixed and regression-tested (19/19). Re-derived with the fixed oracle, the historical composite and Direct/Hybrid soaks are INCOMPLETE rather than "all checks passed": in the Direct/Hybrid recording the last two samples are 15.04 s apart with every frame count and media time frozen, so the valid observation ended at about 1782.4 s, yet the old oracle still printed PASS. Controlled-source results are not substituted for the real-camera deployment, whose Direct/Hybrid first frame (31.7-74.4 s) and stalls (3.07-6.70 s) remain open.
 ## 1. 本轮自动化验证 / Automated verification this round
 
 | 套件 | 命令 | 结果 |
@@ -16,9 +26,37 @@ Historical notes (previous conclusions, disproved hypotheses, the step-by-step i
 | 转码器与 audio-mix | `node --test tests/test-transcoder-mix.mjs tests/test-transcoder.mjs` | **7/7 通过**（含 ±10000ms 边界、越界拒绝、归一化延迟上报） |
 | 转码器编码参数（本轮新增） | `node --test tests/test-transcoder-encoder.mjs tests/test-transcoder-mix.mjs` | **6/6 通过**（libx264 分支必须显式 `sliced-threads=0`，见第 4.5 节） |
 | 启动器 | `node --test tests/test-dev-launcher.mjs` | **9/9 通过**（含 `-Soak`/`--soak`） |
+| 验收判定器（本轮新增） | `node --test tests/test-soak-verdict.mjs` | **19/19 通过**（尾部断流、提前结束、缺少一路、播放器替换、缺 target、代次归零、超 3 秒恢复、派生路径四种输入） |
 | C++ 核心 | `cmake --build <core-local>` + `ctest` | 编译通过，`webobs-unit-tests` 全过（含新增 11 条混音路由等价断言） |
 | OBS Composite 构建 | `python3 scripts/dev-native.py --composite --soak` | `obs-ffmpeg`/`obs-x264`/`obs-webrtc`/`obs-nvenc` 全部产出并通过模块校验 |
 
+### 1.1 验收判定器修复（本轮，先于任何长稳）/ Acceptance oracle fixed first (this round)
+
+判定逻辑抽成 `tests/soak-verdict.mjs`（纯函数，无 I/O），正式驱动 `browser-soak.spec.ts` 与派生工具 `tests/soak-derive.mjs` 都调用它，两者不可能一个判过、一个判不过。规则与它们要防的历史缺陷一一对应：
+
+| 规则 | 防的漏判 |
+|---|---|
+| 预期来源集合、来源类型、每路目标都是显式输入；缺流/缺目标/模式切换失败不可 PASS | 旧版不校验预期集合，少一路也判过；派生工具目标缺失时直接跳过帧率检查 |
+| 采样在启动操作**之前**安装并记录操作时刻，首帧覆盖计划/排队/激活/ICE/播放等待 | 旧版在点击模式切换之后才装观察器 |
+| 同时测已结束帧间隔与**进行中的无帧年龄**（单调时钟），并记录真实最大间隔、长停顿单列字段 | 旧版只有下一帧到来才算间隔，尾部永久断流贡献 0；且只记录 >1000ms 的间隔，0 被当成“最大间隔 0ms” |
+| 观察器按来源 ID 与 video 代次管理，元素被替换时重新挂接、按代次累计指标 | 旧版只绑定一次，播放器换元素后不再计数 |
+| 结束顺序固定为：有效观察 → 最终快照与结论落盘 → 关闭播放器 | 旧版可能在拆页之后才读计数（最终 `decodedFrames` 变 0） |
+| received / decoded / presented 分别报告，解码未知写 unknown；呈现帧率不标成解码帧率；达标用解码帧率，呈现流畅度单列 | 旧版用 rVFC 呈现次数当“解码帧率” |
+| 正式判定需 ≥1800 秒、来源齐全、目标有效、观测完整；短运行只能是 smoke，永远不能是正式 PASS | 旧版短运行/不完整记录也能派生 PASS |
+| 派生报告执行同样规则；记录里没有的字段标为“无法追溯验证”，不根据低频采样补造 | 旧版从旧 JSONL 也能派生出 PASS |
+
+回归测试 `tests/test-soak-verdict.mjs`（`node --test tests/test-soak-verdict.mjs`，**19/19 通过**）覆盖：正常 25 fps；最后 20 秒完全断流；中途替换 video 元素；五路缺一路；1790 秒提前结束；缺 target；计数代次归零（累计不重置）；大于 3 秒后恢复；故障注入窗口内的停顿被记录但豁免；最终快照前被拆卸判 INCOMPLETE；解码未知不得判过；派生路径的完整/中断/旧格式/短记录四种输入。
+
+对历史记录的重新判定（`node tests/soak-derive.mjs --browser <run> --targets <targets.json> --mode ...`）：
+
+| 历史运行 | 旧结论 | 修复后派生结论 | 依据 |
+|---|---|---|---|
+| `2026-09-19T12-53-10-550Z-composite`（1812 s） | 全部通过 | **INCOMPLETE** | 无 final 标记（观测未按规则收尾）；停顿/解码/代次/采样起点均无记录，标为无法追溯验证；per-input 健康未记录 |
+| `2026-09-20T11-01-11-166Z-direct`（1805.3 s） | 全部通过 | **INCOMPLETE** | 同上；且最后 15.04 秒无任何帧推进，有效观测仅约 1782.4 s |
+
+两张表里仍可确认的是：受控来源下 **presented** 24.63–24.65 fps（0.985–0.986，目标 25）与 composite 29.18 fps（0.973，目标 30）、首帧 3542–6213 ms。
+
+**English.** The acceptance logic is now a pure module (`tests/soak-verdict.mjs`) that both the long-run driver and `tests/soak-derive.mjs` call, so a run cannot pass one path and fail the other. It requires an explicit expected-source set, source type and per-source target; installs sampling before the start action; measures both completed gaps and the in-progress frame age on a monotonic clock (so a stream that stops for good still fails); rebinds observers per video generation and accumulates counters across generations; reports received/decoded/presented separately (unknown when not recorded) and uses the decoded rate as the acceptance metric; fixes the end order (observe -> final snapshot -> evidence -> teardown); and only issues a formal PASS for at least 1800 s of complete observation, with short runs limited to a smoke result. A recording that never captured a field is marked unverifiable rather than recomputed into a pass. `node --test tests/test-soak-verdict.mjs` is 19/19, covering the review's counter-examples. Re-derived with the fixed oracle the historical composite and Direct/Hybrid soaks are INCOMPLETE; what they still establish is the presented frame rate (24.63-24.65 fps of a 25 fps target; 29.18 fps of a 30 fps target) and the first frame (3542-6213 ms) on controlled sources.
 ## 2. 环境结论（本轮重新探测）/ Environment, re-probed this round
 
 旧报告的“本沙箱没有 WSLg 图形会话、只能用 Xvfb 软件渲染”**不再成立**。
@@ -39,7 +77,7 @@ Historical notes (previous conclusions, disproved hypotheses, the step-by-step i
 | F5-03 硬件加速 | **OBS 渲染与编码均已在真实运行中启用并取证**；网关 NVENC/CUDA 转码沿用既有实现 | 本文件第 2 节 + `nvidia-smi` |
 | F5-04 本地合成 | **真实五路 1920×1080 Composite 30 分钟持续发布**（30/30 采样 ready、track=[Opus,H264]、`inboundFramesInError=0`） | `tests/artifacts/soak/…-composite-1080p-4200576/` |
 | F5-05 音频管理 | 批次 A/B/C 已提交并有自动化验证；路由复用/先备后切有单测；有符号偏移有转码器用例；端到端音频驱动部分通过 | 见第 5 节 |
-| F5-06 播放稳定 | **两种模式各 30 分钟验收均已通过**。合成模式（`3d281e4`，x264）：呈现 29.18 fps（0.973）、首帧 3542 ms、最大帧间隔 0 ms、媒体推进 1800 s、服务端 30/30 采样健康。**Direct/Hybrid（`c416785` 修复后，健康合成来源）**：1805.3 s、每路呈现 24.63–24.65 fps（目标 25，比值 0.985–0.986）、首帧 4.1–6.2 s、最大帧间隔 0 ms，**四项判据全部通过**（4.3.6）。真实相机场景下首帧 31.7–74.4 s、帧间隔 3.07–6.70 s 仍由来源本身决定（4.3、4.4） | `tests/artifacts/browser-soak/2026-09-19T12-53-10-550Z-composite/`、`.../2026-09-20T11-01-11-166Z-direct/` |
+| F5-06 播放稳定 | **受控来源性能验证通过；原始场景最终验收尚待关闭**。合成模式（`3d281e4`，x264，真实相机）：presented 29.18 fps（0.973）、首帧 3542 ms、服务端 30/30 采样健康。Direct/Hybrid（`c416785`，健康合成源）：presented 24.63–24.65 fps（0.985–0.986）、首帧 4.1–6.2 s。**两次历史长稳按修复后的判定器均为 INCOMPLETE**（无 final 标记、无进行中无帧年龄、无代次计数，且 Direct 运行最后 15.04 秒零帧推进，有效观测仅约 1782 秒）——见 1.1、4.2.1、4.3.6 的复核修正 | `.../2026-09-19T12-53-10-550Z-composite/`、`.../2026-09-20T11-01-11-166Z-direct/`（均为历史记录，见复核修正） |
 
 ## 4. 长稳实测数据 / Measured soak data
 
@@ -87,6 +125,8 @@ Historical notes (previous conclusions, disproved hypotheses, the step-by-step i
 
 即：**帧率、首帧、帧间隔与逐来源持续出帧四项在原始 1920×1080 规格下全部达标**；唯一未通过的是“零来源重启”这一更严格的判据，全场只有 4 次重启（上一轮 NVENC 运行为 69/41/25 次），且集中在两路已知不稳定的真实相机上，属于引擎对来源停顿的恢复行为。
 
+**⚠ 复核修正（2026-09-20）**：本节结论按当时的判定器写成，该判定器无法识别尾部断流、不校验观测完整性，也没有记录停顿与呈现/解码的区别。用修复后的判定器对同一条记录重新派生（1.1 节），本运行的状态是 **INCOMPLETE**：记录里没有 final 标记、没有进行中无帧年龄、没有代次计数，停顿与解码两项**无法追溯验证**；per-input 引擎健康也没有记录。因此本运行**只能**用来证明：受控（真实相机）1920×1080 规格下 **presented 29.18 fps（0.973）** 与首帧 3542 ms，以及服务端 30/30 采样健康；**不能**再作为“正式 30 分钟验收全部通过”的证据。
+
 ### 4.3 Direct/Hybrid 浏览器验收（2026-09-19）/ Direct/Hybrid browser acceptance
 
 真实产品页面、真实 Chrome，先按产品自身的配对流程完成浏览器授权（创建配对 → 管理会话批准 5 路相机授权 → 完成配对，无任何桩授权），再切换到“网关直通/浏览器媒体”。
@@ -119,7 +159,13 @@ Historical notes (previous conclusions, disproved hypotheses, the step-by-step i
 | camera-mu2ux73u | 44483 | 24.64 | 25 | 0.986 | 6212 ms | 1780.37 s | 0 ms |
 | camera-mu2ux99i | 44471 | 24.63 | 25 | 0.985 | 6211 ms | 1780.36 s | 0 ms |
 
-**四项判据全部通过**（`passed: true`）：媒体时间持续推进、无超过 3 秒的帧停滞（全部 0 ms）、首帧 ≤20 秒（4.1–6.2 秒）、解码帧率 ≥目标 90%（0.985–0.986）。
+**当时的判定器报四项全部通过**（`passed: true`）：媒体时间持续推进、帧停滞 0 ms、首帧 4.1–6.2 秒、帧率 0.985–0.986。
+
+**⚠ 复核修正（2026-09-20）**：按修复后的判定器对同一条记录重新派生（1.1 节），本运行状态为 **INCOMPLETE**：
+
+- **尾部断流未被计入**：最后两个采样 `at` 1790222ms → 1805262ms 相隔 **15.04 秒**，五路帧数与媒体时间完全不变；有效观测在约 **1782.4 秒**结束，不足 1800 秒，尾部无帧时间也已超过 3 秒门槛。旧判定器因为没有“下一帧”而把它算成 0 ms。
+- 记录里没有最终 final 标记、没有进行中无帧年龄、没有代次计数，停顿与**解码**帧率无法追溯验证；当时的 0.985–0.986 是 **presented**（rVFC 呈现）比值，不是解码帧率。
+- 因此本运行**只能**证明：受控（健康合成源）五路在 25 fps 目标下 presented 24.63–24.65 fps（0.985–0.986）、首帧 4.1–6.2 秒、媒体时间推进 1780 秒。
 
 与修复前同类健康来源对照：每路由 **14.0–14.6 fps（0.56–0.58）** 提升到 **24.6 fps（0.985–0.986）**，首帧与帧间隔保持达标。这就是第 4.5 节根因在真实产品页面上的闭环。
 
@@ -372,6 +418,11 @@ web\node_modules\.bin\tsc.CMD --noEmit    # 工作目录 web
 node --test tests/test-dev-launcher.mjs
 node --test tests/test-transcoder-mix.mjs tests/test-transcoder.mjs
 node --test tests/test-transcoder-encoder.mjs tests/test-transcoder-mix.mjs
+node --test tests/test-soak-verdict.mjs
+
+# 用修复后的判定器重新派生一条历史长稳（不覆盖原始证据）
+node tests/soak-derive.mjs --browser tests/artifacts/browser-soak/<run> \
+  --targets build/scratch/targets-direct.json --mode direct
 
 # WHEP 速率探针（第 4.5 节的隔离实验；需一个 MediaMTX：rtsp 8554 / webrtc 8889）
 # WSL 内 Chromium 走 ICE/UDP；WHEP_PROBE_CHANNEL=chrome 用已安装的 Chrome（ICE/TCP）
@@ -405,10 +456,10 @@ node tests/audio-regression.mjs
 
 本轮同时定位并修复了两个此前一直阻塞 Direct/Hybrid 验收的产品缺陷：**Direct-only 网关启动即崩溃**（`obs_enum_encoder_types` 在未 `obs_startup` 时被调用）与**未配对被误报为控制面不可达**。修复后 Direct/Hybrid 五路在真实产品页面上连续播放 1787.8 秒（29.8 分钟）且媒体时间全程推进，验收首次真正执行。
 
-F5-01/F5-02 保持既有自动化验证；F5-03 的 OBS 渲染与编码均已在真实运行中启用并取证；**F5-04/F5-06 的两种播放模式各 30 分钟验收均已通过全部四项判据**——合成模式用真实相机（帧率受来源限制，见 4.4），Direct/Hybrid 用健康合成来源（24.6 fps，0.986）；真实相机场景下的 Direct/Hybrid 首帧 31.7–74.4 s 与帧间隔 3.07–6.70 s 仍由来源本身决定（4.3、4.4）。F5-05 的批次 A/B/C 代码与单测已完成，端到端音频驱动通过。剩余：真实相机场景下的单路故障注入复测、`/activate` 的 io_context 串行化、以及 NVENC/VA-API 转码分支的同类 slice 行为确认。
+**总体状态（复核后）：已实现，受控来源的性能验证通过，原始部署的最终验收尚待关闭。** F5-01/F5-02 保持既有自动化验证；F5-03 的 OBS 渲染与编码均已在真实运行中启用并取证；F5-04/F5-06 在受控来源下的**呈现**帧率与首帧达标（Direct/Hybrid 24.63–24.65 fps／目标 25，composite 29.18 fps／目标 30，首帧 3.5–6.2 s），但这两次历史长稳按修复后的判定器均为 **INCOMPLETE**（1.1 节），不能作为正式验收通过；真实相机场景下的 Direct/Hybrid 首帧 31.7–74.4 s 与停顿 3.07–6.70 s 仍未关闭。F5-05 的批次 A/B/C 代码与单测已完成，端到端音频驱动通过。剩余：受控来源与真实来源各自的 1800 秒正式长稳（判定器修复后）、控制面串行激活修复、真实来源单路故障注入、NVENC/VA-API 转码分支的同类 slice 行为确认、以及真实来源的输入质量测量。
 
 The composite mode has now passed a formal 30-minute acceptance at the original 1920x1080 spec: 29.18 fps presented (90% of the 30 fps target is 27), first frame 3542 ms, largest frame gap 0 ms, media time advancing for 1800 s, and 30/30 healthy server samples with the program route ready throughout. The only criterion still unmet is zero source restarts (four in total, concentrated on the two known-unstable real cameras).
 
 This round finally pinned the frame-rate attribution: the limiter is neither the sources nor the browser but OBS NVENC under WSL. An A/B that changed only the encoder on the same scene, sources and moment gave NVENC 24.5 fps against x264 29.6/29.8 fps, while the browser getStats() showed packetsLost=0 and nackCount=0 on both legs: the NVENC leg received 24.41 fps and the x264 leg 30.07 fps (30.03 decoded, 28.7 presented). With x264 the composite acceptance therefore meets the at-least-90-percent threshold on both the server and the browser side even against this round's unstable real cameras, and the earlier 73.2% result is attributable to the encoder choice. The launcher now defaults to x264 when the OpenGL context is D3D12-backed and no encoder was chosen explicitly, printing the measured reason; an explicit nvenc still forces the hardware encoder.
 
-The rendering and encoding side moved from software-only to a real hardware path (0.0% rendering lag, 0.7% encoding lag, NVENC registered and selected), and the original 1920x1080 five-source Composite played for a full 30 minutes inside the real product page with the first-frame and stall thresholds met. The frame-rate threshold is not met, and per-item measurement attributes that to the real camera feeds themselves (7.8-18 fps with HEVC packet loss) rather than to compositing, encoding or transport. This round also located and fixed the two product defects that had been blocking the Direct/Hybrid acceptance all along: the Direct-only gateway crashed on startup (obs_enum_encoder_types called before obs_startup) and an unpaired browser was misreported as an unreachable control plane. With both fixed, the Direct/Hybrid wall played for 1787.8 seconds (29.8 minutes) in the real product page with media time advancing throughout, so that acceptance finally ran. F5-01/F5-02 keep their existing automated verification, F5-03 has OBS rendering and encoding enabled and evidenced in a real run, F5-04/F5-06 have a 30-minute acceptance in each playback mode while the first-frame, stall and frame-rate thresholds are not all met against the real sources, with the frame-rate gap now root-caused to the encoder rather than to the sources or the browser (section 4.5), and both playback modes now pass all four 30-minute criteria, the composite run against the real cameras (frame rate limited by the sources, section 4.4) and Direct/Hybrid against healthy synthetic sources at 24.6 fps (0.986) after the encoder fix (sections 4.3.6 and 4.5); F5-05 has batches A/B/C implemented with unit tests and a passing end-to-end audio driver. Still open: repeating the single-route fault injection against the real cameras, moving the blocking upstream WHEP call off the single io_context thread, and checking the NVENC/VA-API transcode branches for the same slice behaviour.
+The rendering and encoding side moved from software-only to a real hardware path (0.0% rendering lag, 0.7% encoding lag, NVENC registered and selected), and the original 1920x1080 five-source Composite played for a full 30 minutes inside the real product page with the first-frame and stall thresholds met. The frame-rate threshold is not met, and per-item measurement attributes that to the real camera feeds themselves (7.8-18 fps with HEVC packet loss) rather than to compositing, encoding or transport. This round also located and fixed the two product defects that had been blocking the Direct/Hybrid acceptance all along: the Direct-only gateway crashed on startup (obs_enum_encoder_types called before obs_startup) and an unpaired browser was misreported as an unreachable control plane. With both fixed, the Direct/Hybrid wall played for 1787.8 seconds (29.8 minutes) in the real product page with media time advancing throughout, so that acceptance finally ran. F5-01/F5-02 keep their existing automated verification, F5-03 has OBS rendering and encoding enabled and evidenced in a real run, F5-04/F5-06 have a 30-minute acceptance in each playback mode while the first-frame, stall and frame-rate thresholds are not all met against the real sources, with the frame-rate gap now root-caused to the encoder rather than to the sources or the browser (section 4.5), and the controlled-source results hold for presented frame rate and first frame (Direct/Hybrid 24.63-24.65 fps of a 25 fps target, composite 29.18 fps of 30, first frame 3.5-6.2 s), while both historical soaks are INCOMPLETE under the fixed oracle (section 1.1) and therefore do not constitute a formal acceptance; F5-05 has batches A/B/C implemented with unit tests and a passing end-to-end audio driver. Overall: implemented, with performance verified on controlled sources, and the original deployment's final acceptance still open. Still open: a formal 1800 s soak on controlled and on real sources under the fixed oracle, the control-plane serial-activation fix, single-route fault injection against a real source, the same-slice check for the NVENC/VA-API branches, and an input-quality measurement of the real sources.

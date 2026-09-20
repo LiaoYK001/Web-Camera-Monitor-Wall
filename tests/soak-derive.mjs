@@ -6,18 +6,24 @@
  * writes its own summary.  Both drivers append as they go, so the samples that
  * were taken are still evidence: the browser soak writes
  * browser-soak-timeline.jsonl and the server sampler writes samples.jsonl.
- * This tool turns those into the same tables the drivers would have produced and
- * writes derived-summary.json / derived-browser-summary.{json,md} next to them.
+ *
+ * The derived browser verdict runs through the same rules as the driver
+ * (tests/soak-verdict.mjs) and it never fills a gap with a guess: a recording
+ * that lacks the in-progress frame age, the sampling start or a final snapshot is
+ * reported as unverifiable/incomplete rather than recomputed into a PASS.
  *
  * Usage:
  *   node tests/soak-derive.mjs --browser tests/artifacts/browser-soak/<run> \
- *     [--soak tests/artifacts/soak/<run>] [--targets targets.json] [--mode direct]
+ *     --targets targets.json --expected a,b,c --mode direct --source-type real
+ *   node tests/soak-derive.mjs --soak tests/artifacts/soak/<run>
  *
- * A targets file maps source id to its nominal frame rate, e.g.
- *   { "camera-abc": 25 }
+ * A targets file maps source id to its nominal frame rate, e.g. { "camera-abc": 25 }.
  */
 import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
+import {
+  MIN_FORMAL_SECONDS, buildVerdict,
+} from './soak-verdict.mjs';
 
 const THRESHOLDS = {
   firstFrameMs: 20_000,
@@ -26,7 +32,10 @@ const THRESHOLDS = {
 };
 
 function parseArguments(argv) {
-  const options = { browser: '', soak: '', targets: '', mode: '' };
+  const options = {
+    browser: '', soak: '', targets: '', mode: '', sourceType: 'unknown',
+    expected: '', smoke: false,
+  };
   for (let index = 0; index < argv.length; index++) {
     const key = argv[index];
     const value = argv[index + 1];
@@ -35,6 +44,9 @@ function parseArguments(argv) {
     else if (key === '--soak') options.soak = take();
     else if (key === '--targets') options.targets = take();
     else if (key === '--mode') options.mode = take();
+    else if (key === '--source-type') options.sourceType = take();
+    else if (key === '--expected') options.expected = take();
+    else if (key === '--smoke') options.smoke = true;
     else throw new Error(`unknown argument ${key}`);
   }
   if (!options.browser && !options.soak) throw new Error('at least one of --browser or --soak is required');
@@ -45,67 +57,113 @@ function readJsonLines(file) {
   return readFileSync(file, 'utf8').split('\n').filter(Boolean).map((line) => JSON.parse(line));
 }
 
-function deriveBrowser(directory, targets) {
+function has(entry, key) {
+  return entry !== undefined && entry !== null && entry[key] !== undefined && entry[key] !== null;
+}
+
+function deriveBrowser(directory, targets, options) {
   const timelineFile = path.join(directory, 'browser-soak-timeline.jsonl');
   if (!existsSync(timelineFile)) return null;
   const samples = readJsonLines(timelineFile);
+  if (!samples.length) return null;
   const last = samples.at(-1);
-  const durationSeconds = last.at / 1000;
+  const durationSeconds = Number(last.at ?? 0) / 1000;
 
-  const measured = last.entries.map((entry) => {
-    const perSample = samples.map((sample) => sample.entries.find((item) => item.id === entry.id)).filter(Boolean);
-    const final = perSample.at(-1);
-    const fps = final.frames / durationSeconds;
-    const decodedFps = final.decodedFrames === null || final.decodedFrames === undefined
-      ? null : Number((final.decodedFrames / durationSeconds).toFixed(2));
-    const target = targets[entry.id] ?? null;
-    return {
-      id: entry.id,
-      frames: final.frames,
-      measuredFps: Number(fps.toFixed(2)),
-      decodedFps,
-      decodedFrames: final.decodedFrames ?? null,
-      droppedFrames: final.droppedFrames ?? null,
-      targetFps: target,
-      fpsRatio: target ? Number((fps / target).toFixed(3)) : null,
-      firstFrameMs: final.firstFrameMs,
-      lastMediaTime: Number(final.lastMediaTime.toFixed(1)),
-      maxGapMs: Math.max(0, ...perSample.map((item) => item.maxGapMs ?? 0)),
-    };
+  // The expected set must come from outside the recording: a set read back from
+  // the recording itself could never notice that a source never appeared.
+  const expectedIds = options.expected
+    ? options.expected.split(',').map((value) => value.trim()).filter(Boolean)
+    : Object.keys(targets);
+  const expected = expectedIds.map((id) => ({ id, targetFps: targets[id] ?? undefined }));
+
+  // Recordings made before the harness fix use the older field names.  Reading a
+  // measurement under its old name is not fabrication; inventing one that was
+  // never captured would be, and the legacy decoded counter is exactly that: it
+  // was a single-element snapshot (0 after teardown), not a per-generation total.
+  const legacy = (last.entries ?? []).every((entry) => entry.presentedFrames === undefined);
+  const observed = (last.entries ?? []).map((entry) => ({
+    id: entry.id,
+    presentedFrames: entry.presentedFrames ?? entry.frames ?? null,
+    decodedFrames: legacy ? null : (entry.decodedFrames ?? null),
+    receivedFrames: entry.receivedFrames ?? null,
+    firstFrameMs: entry.firstFrameMs ?? null,
+    endedMaxGapMs: entry.endedMaxGapMs ?? entry.maxGapMs ?? null,
+    inProgressGapMsAtEnd: entry.inProgressGapMsAtEnd ?? null,
+    longStalls: entry.longStalls ?? [],
+    mediaTimeSeconds: entry.mediaTimeSeconds ?? entry.lastMediaTime ?? null,
+    generations: entry.generations ?? null,
+    counterResets: entry.counterResets ?? null,
+    teardownCount: entry.teardownCount ?? null,
+  }));
+
+  // Anything the recording never captured is unverifiable, not passing.
+  const unverifiableChecks = [];
+  if (!(last.entries ?? []).every((entry) => has(entry, 'inProgressGapMsAtEnd'))) unverifiableChecks.push('frame-stall');
+  if (last.actionAtMs === undefined || last.actionAtMs === null
+    || last.instrumentedAtMs === undefined || last.instrumentedAtMs === null) unverifiableChecks.push('sampling-before-action');
+  if (!(last.entries ?? []).every((entry) => has(entry, 'generations'))) unverifiableChecks.push('counter-integrity');
+  if (legacy) unverifiableChecks.push('decoded-frame-rate');
+  if (!expectedIds.length) unverifiableChecks.push('expected-sources');
+
+  const programEntry = (last.entries ?? []).find((entry) => entry.id === 'program');
+  const inputs = (last.sources?.sources ?? []).map((source) => ({ id: source.id, state: String(source.state ?? 'unknown') }));
+  const unhealthySamples = samples.filter((sample) =>
+    (sample.sources?.sources ?? []).some((source) => source.state !== 'healthy')).length;
+
+  const verdict = buildVerdict({
+    runId: path.basename(directory),
+    mode: options.mode || 'direct',
+    sourceType: options.sourceType,
+    expected,
+    observed,
+    observation: {
+      installedBeforeAction: (last.actionAtMs !== undefined && last.actionAtMs !== null
+        && last.instrumentedAtMs !== undefined && last.instrumentedAtMs !== null
+        && last.instrumentedAtMs <= last.actionAtMs) || null,
+      modeSwitch: 'ok',
+      allExpectedReady: null,
+      // Only a run whose last sample is marked final closed its observation
+      // window in the right order; anything else is incomplete.
+      complete: last.final === true,
+      earlyTeardown: last.final !== true,
+      durationSeconds,
+      smoke: options.smoke,
+      finalSnapshotWritten: last.final === true,
+    },
+    program: (options.mode === 'composite' && programEntry) ? {
+      ...programEntry,
+      targetFps: targets.program ?? null,
+      inputsHealthy: inputs,
+      unhealthySamples,
+    } : undefined,
+    unverifiableChecks,
+    limitations: [
+      'derived from browser-soak-timeline.jsonl because the run did not write its own summary',
+      last.final === true ? null : 'the recording has no final sample: the run was interrupted',
+    ].filter(Boolean),
   });
 
-  const checks = [
-    { name: 'every tile advanced its media time', passed: measured.length > 0 && measured.every((m) => m.lastMediaTime > 1) },
-    { name: 'no unexpected frame gap beyond 3s', passed: measured.every((m) => m.maxGapMs <= THRESHOLDS.maxUnexpectedStallMs) },
-    { name: 'first frame within 20s', passed: measured.every((m) => m.firstFrameMs !== null && m.firstFrameMs <= THRESHOLDS.firstFrameMs) },
-    {
-      name: `decoded frame rate at least ${THRESHOLDS.decodedFpsRatio * 100}% of the nominal target`,
-      passed: measured.every((m) => m.fpsRatio === null || m.fpsRatio >= THRESHOLDS.decodedFpsRatio),
-    },
-  ];
-
   const report = {
-    runId: path.basename(directory),
+    ...verdict,
     derived: true,
-    note: 'recomputed from browser-soak-timeline.jsonl because the run did not write its own summary',
-    durationSeconds: Number(durationSeconds.toFixed(1)),
+    note: 'recomputed from browser-soak-timeline.jsonl; the original samples are left untouched',
     samples: samples.length,
-    measured,
-    checks,
-    passed: checks.every((check) => check.passed) && measured.length > 0,
   };
   writeFileSync(path.join(directory, 'derived-browser-summary.json'), JSON.stringify(report, null, 2));
   writeFileSync(path.join(directory, 'derived-browser-summary.md'), [
     `# Browser soak (derived) — ${report.runId}`, '',
-    `- duration: ${durationSeconds.toFixed(0)}s over ${samples.length} samples`, '',
-    '| source | frames | fps | decoded fps | target | ratio | first frame ms | last media time | max gap ms |',
+    `- duration: ${durationSeconds.toFixed(0)}s over ${samples.length} samples (formal window ${MIN_FORMAL_SECONDS}s)`,
+    `- derived verdict: ${report.status}`, '',
+    '| source | decoded fps | target | ratio | presented fps | first frame ms | ended max gap ms | in-progress gap ms | last media time |',
     '|---|---|---|---|---|---|---|---|---|',
-    ...measured.map((m) => `| ${m.id} | ${m.frames} | ${m.measuredFps} | ${m.decodedFps ?? 'n/a'} | ${m.targetFps ?? 'n/a'} | ${m.fpsRatio ?? 'n/a'} | ${m.firstFrameMs ?? 'n/a'} | ${m.lastMediaTime} | ${m.maxGapMs} |`),
+    ...report.measured.map((row) => `| ${row.id} | ${row.decodedFps ?? 'unknown'} | ${row.targetFps ?? 'none'} | ${row.decodedRatio ?? 'n/a'} | ${row.presentedFps ?? 'unknown'} | ${row.firstFrameMs ?? 'never'} | ${row.endedMaxGapMs} | ${row.inProgressGapMsAtEnd ?? 'unknown'} | ${row.mediaTimeSeconds ?? 'n/a'} |`),
     '',
-    ...checks.map((check) => `- ${check.passed ? 'PASS' : 'FAIL'} — ${check.name}`),
-    '', report.passed ? 'Verdict: PASS' : 'Verdict: FAIL', '',
+    ...report.checks.map((item) => `- ${item.passed ? 'PASS' : (item.unverifiable ? 'UNVERIFIABLE' : 'FAIL')}${item.blocking ? '' : ' (reported)'} — ${item.name}: ${item.detail}`),
+    '',
+    ...report.notes.map((note) => `- note: ${note}`),
+    '', `Verdict: ${report.status}`, '',
   ].join('\n'));
-  return report;
+  return { report, thresholds: THRESHOLDS };
 }
 
 function deriveSoak(directory) {
@@ -127,12 +185,29 @@ function deriveSoak(directory) {
       tracks: [...new Set(seen.flatMap((r) => r.tracks))].sort(),
     };
   });
+  const sourceSamples = samples.map((entry) => entry.sources?.sources ?? []);
+  const sourceIds = [...new Set(sourceSamples.flat().map((source) => source.id))];
+  const sources = sourceIds.map((id) => {
+    const seen = sourceSamples.flat().filter((source) => source.id === id);
+    const ages = seen.map((source) => source.last_frame_age_ms ?? source.lastFrameAgeMs ?? -1)
+      .filter((age) => Number.isFinite(age) && age >= 0);
+    return {
+      id,
+      samples: seen.length,
+      states: [...new Set(seen.map((source) => source.state))].sort(),
+      maxFrameAgeMs: ages.length ? Math.max(...ages) : null,
+      restarts: Math.max(0, ...seen.map((source) => source.restart_count ?? source.restartCount ?? 0)),
+    };
+  });
+  const unhealthySamples = samples.filter((entry) => (entry.sources?.unhealthy ?? 0) > 0).length;
   const summary = {
     derived: true,
     samples: samples.length,
     first: samples[0].timestamp,
     last: samples.at(-1).timestamp,
     routes,
+    sources,
+    unhealthySamples,
     routesReadyAndGrowing: routes.filter((r) => r.readySamples >= r.samples - 1 && r.growing).length,
     routesNeverReady: routes.filter((r) => r.readySamples === 0).length,
   };
@@ -145,15 +220,18 @@ const targets = options.targets && existsSync(options.targets)
   ? JSON.parse(readFileSync(options.targets, 'utf8')) : {};
 
 if (options.browser) {
-  const report = deriveBrowser(options.browser, targets);
-  if (!report) console.error(`no browser-soak-timeline.jsonl under ${options.browser}`);
+  const derived = deriveBrowser(options.browser, targets, options);
+  if (!derived) console.error(`no browser-soak-timeline.jsonl under ${options.browser}`);
   else {
-    console.log(`browser: ${report.samples} samples over ${report.durationSeconds}s — ${report.passed ? 'PASS' : 'FAIL'}`);
-    console.table(report.measured);
+    const { report } = derived;
+    console.log(`browser: ${report.samples} samples over ${report.durationSeconds}s — ${report.status}`);
+    for (const item of report.checks) {
+      console.log(`  ${item.passed ? 'PASS' : (item.unverifiable ? 'UNVERIFIABLE' : 'FAIL')} ${item.id}: ${item.detail}`);
+    }
   }
 }
 if (options.soak) {
   const summary = deriveSoak(options.soak);
   if (!summary) console.error(`no samples.jsonl under ${options.soak}`);
-  else console.log(`server: ${summary.samples} samples, ${summary.routes.length} routes, ${summary.routesReadyAndGrowing} ready+growing, ${summary.routesNeverReady} never ready`);
+  else console.log(`server: ${summary.samples} samples, ${summary.routes.length} routes, ${summary.routesReadyAndGrowing} ready+growing, ${summary.routesNeverReady} never ready, ${summary.unhealthySamples} unhealthy samples`);
 }
