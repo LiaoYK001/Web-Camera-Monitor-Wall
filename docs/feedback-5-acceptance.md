@@ -394,7 +394,34 @@ Historical notes (previous conclusions, disproved hypotheses, the step-by-step i
 
 驱动现状：已修正两个缺陷——(1) 录制与转码器首帧的竞争改为“捕获必须含信号，否则重试（最多 3 次）”，静音捕获现在报告为重试而不是产品失败；(2) 频率能量函数改回均值幅度并同步修正被判据（旧阈值 1e6 属于已被替换的 Goertzel 尺度，曾把正确结果判为失败）。修正后 `node tests/audio-regression.mjs` **三项全部通过**：首轨静音后第二轨仍可听（e880=0.0625、e440=0.0000）、0.25 增益只应用一次（12.04 dB）、负偏移归一化与逐轨延迟符合预期。
 
-## 6. 本轮发现并修复的两个产品缺陷 / Two product defects found and fixed this round
+## 6. 本轮发现并修复的产品缺陷 / Product defects found and fixed
+
+### 6.1 控制面串行激活：唯一 io_context 线程 + 全局路由锁 / Control-plane serial activation: one io_context thread behind one global route lock
+
+**问题（已实测）**：`ControlServer` 只有唯一一个 io_context 线程，而 `create_direct()`/`create_client_plan()` 在**全局** `route_operation_mutex_` 保护下执行会阻塞的上游 I/O（MediaMTX 路由建立、按需等待、上游 WHEP 信令）。用一个**受控慢来源**复现——本地 TCP 端点接受连接但永不回应，只把其中一路相机端点临时改到它上面，用户设备不受影响：
+
+| 指标（任意时刻只有一个慢来源） | 修复前 | 修复后 |
+|---|---|---|
+| `GET /api/v1/scene`（纯内存读）耗时 >1 s 的采样 | **16 / 102（最大 10.12 s）** | **0 / 248（最大 0.103 s）** |
+| 五个并发 WHEP 调用耗时 | 10.2 / 10.3 / 20.3 / 20.4 / 20.4 s | 四路健康 **0.157 / 0.371 / 0.380 / 0.382 s**，只有慢来源自己 10.1 s 并重试 |
+| 五路瓦片出图 | 2–3 路 live，其余被拖住 | **4 路在 515 ms 全部 live**，慢来源自己停在 connecting |
+| 重复 activate 是否产生重复路由 | — | 5 路相机 = 5 条 `direct-` 路由（同一计划重试 7 次后仍是 5 条），1 条 `hybrid-` |
+
+**修复**：
+
+1. 请求处理移到**有界工作池**（`RequestPool`，默认 4 个工作线程，`WEBOBS_CONTROL_WORKERS` 可调，队列上限 256 条；满载时在调用线程内联处理而不是丢请求）。只有响应写回被 `net::post` 回会话自己的 executor，socket 仍只在单一 io_context 线程上操作。
+2. 全局 `route_operation_mutex_` → **按来源**的路由锁（`route_lock_for(source_id)`）：不同来源互不阻塞，锁内不做网络等待，同一来源的重复请求因此复用它已建立的路由。整篇文档的 `reconcile_sources()` 改用独立的 `reconcile_mutex_`，不再挡住任何激活。
+3. **共享状态审计**（把 handler 移出 io_context 线程的前置条件）：`ControlMetrics`/`RuntimeStatus` 已是原子；`BasicAuthenticator`、`SessionStore`、`SceneController`、`StudioController`、`WhepProxy` 已有各自互斥量；`NvrProxy`/`CameraProxy` 只有构造期常量；**`WebSocketHub` 原先没有锁**（`join` 在 io_context 线程、`broadcast` 现在在工作线程），已补锁并在锁外发送。
+4. **关闭顺序**：停止接受新连接 → 工作池排空在途任务（此时 io_context 仍在运行，响应能真正写出）→ `context.poll()` → 停止 io_context → join。实测优雅停止 **5.31 s** 完成，无挂起。
+
+**回归**：`ctest`（`webobs-unit-tests`）通过；受控慢来源对照（上表）；同一来源重复激活不产生重复路由/转码；认证路径不变（认证在派发**之前**于 io_context 线程完成，工作池不接触凭证判定）；关闭无挂起。
+
+**未覆盖**：真实相机下的同一对照（本轮用受控端点隔离变量）、授权撤销与客户端断开的专项用例。
+
+**English.** The control server has a single io_context thread, and `create_direct()`/`create_client_plan()` performed their blocking upstream I/O (MediaMTX route setup, on-demand waiting, upstream WHEP signalling) while holding the global `route_operation_mutex_`. Reproduced with a controlled slow source - a local TCP endpoint that accepts and never answers, temporarily used for one camera endpoint only: before the fix the trivial in-memory `GET /api/v1/scene` took over one second in 16 of 102 samples (max 10.12 s), the five concurrent WHEP calls took 10.2/10.3/20.3/20.4/20.4 s, and only two or three tiles ever went live. After the fix no sample exceeded 103 ms, the four healthy plans completed in 0.157-0.382 s while only the slow plan waited out its own timeout, and the four healthy tiles were live at 515 ms. The fix moves request handling onto a bounded worker pool (4 workers by default, `WEBOBS_CONTROL_WORKERS` configurable, 256-deep queue, served inline rather than dropped when saturated) and posts only the response write back to the session's executor, so sockets stay single-threaded; replaces the global route lock with per-source route locks taken without holding them across network waits; audits the shared state the handlers touch (`WebSocketHub` had no lock and now has one; the controllers, authenticator, session store, metrics and status were already safe); and fixes the shutdown order (stop accepting, drain the pool while the io_context still runs, then stop it) which measured 5.31 s with no hang. Repeated activations of one source still produce exactly five `direct-` routes and one `hybrid-` route, and the authentication path is unchanged because authorization runs before dispatch, on the io_context thread. Not covered: the same comparison against a real camera (this used a controlled endpoint to isolate the variable), and dedicated revoke/disconnect cases.
+
+
+### 6.2 此前轮次修复的两个缺陷（保留记录）/ Two defects fixed in earlier rounds (kept for the record)
 
 1. **Direct-only 网关启动即崩溃（`185197b`）**：`detect_video_encoder_capabilities(config, false)` 无条件调用 `encoder_registered()`，后者遍历 `obs_enum_encoder_types`；Direct-only 路径刻意跳过 `obs_startup`，于是在控制面监听之前 SIGSEGV（栈顶 `libobs.so.30(obs_enum_encoder_types+0xd)`，两个构建同样崩溃）。由 `361cada` 引入。修复后 Direct-only 可正常启动并返回如实的 `configuration=disabled`。**这是 Direct/Hybrid 验收长期缺失的直接原因。**
 2. **未配对被误报为控制面不可达（`0a1026b`）**：`requestBrowserPlan()` 把 `browserDeviceHeaders()` 与 fetch 放在同一个 try 中，未配对时抛出的「此浏览器尚未完成配对」被改写成「控制面当前不可达」，把排查方向引向网关/网络。现在未配对会走 `DirectPreview` 的 needsPairing 分支并给出配对操作。

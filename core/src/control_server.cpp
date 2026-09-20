@@ -28,9 +28,11 @@
 #include <charconv>
 #include <cctype>
 #include <chrono>
+#include <condition_variable>
 #include <cstdint>
 #include <cstdlib>
 #include <deque>
+#include <functional>
 #include <filesystem>
 #include <fstream>
 #include <memory>
@@ -781,7 +783,8 @@ public:
                             error_body("composite_only", "browser sources use composite playback"));
         std::optional<std::string> route;
         {
-            const std::lock_guard operation_lock(route_operation_mutex_);
+            const auto route_lock = route_lock_for(source->id);
+            const std::lock_guard operation_lock(*route_lock);
             route = ensure_playback_route(*source);
         }
         if (!route)
@@ -816,7 +819,8 @@ public:
         source.transport = "tcp";
         std::optional<std::string> route;
         {
-            const std::lock_guard operation_lock(route_operation_mutex_);
+            const auto route_lock = route_lock_for(source.id);
+            const std::lock_guard operation_lock(*route_lock);
             route = ensure_playback_route(source, topology == "hybrid");
         }
         if (!route)
@@ -825,6 +829,15 @@ public:
         return create_validated(request, *route, prefix, client_id, source.id);
     }
 
+    /** Lock for one source's route operations, created on first use. */
+    std::shared_ptr<std::mutex> route_lock_for(std::string_view source_id)
+    {
+        const std::lock_guard lock(route_locks_mutex_);
+        std::shared_ptr<std::mutex> &entry = route_locks_[std::string(source_id)];
+        if (!entry)
+            entry = std::make_shared<std::mutex>();
+        return entry;
+    }
     HttpResponse remove_program(const HttpRequest &request, std::string_view token)
     {
         return remove(request, token, session_prefix);
@@ -871,7 +884,10 @@ public:
 
     void reconcile_sources()
     {
-        const std::lock_guard operation_lock(route_operation_mutex_);
+        // Reconciliation removes routes for sources that left the document; it
+        // stays off the per-source locks so it cannot stall an activation, and the
+        // route map itself is already serialized by route_state_mutex_.
+        const std::lock_guard operation_lock(reconcile_mutex_);
         reconcile(controller_.private_document_snapshot());
     }
 
@@ -917,11 +933,13 @@ private:
             return response(http::status::bad_gateway, version,
                             error_body("whep_upstream", "WebRTC signaling could not close the session"));
         if (remove_route) {
-            const std::lock_guard operation_lock(route_operation_mutex_);
+            const auto route_lock = route_lock_for(removed.route_source_id);
+            const std::lock_guard operation_lock(*route_lock);
             remove_source_route(removed.route_source_id);
         }
         if (remove_audio_route) {
-            const std::lock_guard operation_lock(route_operation_mutex_);
+            const auto route_lock = route_lock_for(removed.route_source_id);
+            const std::lock_guard operation_lock(*route_lock);
             remove_audio_track_route(removed.route_source_id, removed.audio_track);
         }
         return response(http::status::no_content, version, {}, "application/json; charset=utf-8");
@@ -1303,9 +1321,11 @@ private:
                             route_sources.end());
         for (const std::string &url : upstream_sessions)
             request_http(url, {}, "DELETE", {});
-        const std::lock_guard operation_lock(route_operation_mutex_);
-        for (const std::string &source : route_sources)
+        for (const std::string &source : route_sources) {
+            const auto route_lock = route_lock_for(source);
+            const std::lock_guard operation_lock(*route_lock);
             remove_source_route(source);
+        }
     }
 
     std::optional<std::string> ensure_direct_route(const SceneSource &source)
@@ -1622,7 +1642,8 @@ public:
                             error_body("composite_only", "browser sources use composite playback"));
         std::optional<std::vector<AudioTrackDescriptor>> tracks;
         {
-            const std::lock_guard operation_lock(route_operation_mutex_);
+            const auto route_lock = route_lock_for(source->id);
+            const std::lock_guard operation_lock(*route_lock);
             tracks = ensure_audio_tracks(*source);
         }
         if (!tracks)
@@ -1669,7 +1690,8 @@ public:
                             error_body("composite_only", "browser sources use composite playback"));
         std::optional<std::string> route;
         {
-            const std::lock_guard operation_lock(route_operation_mutex_);
+            const auto route_lock = route_lock_for(source->id);
+            const std::lock_guard operation_lock(*route_lock);
             const auto tracks = ensure_audio_tracks(*source);
             if (!tracks)
                 return response(http::status::bad_gateway, request.version(),
@@ -1752,7 +1774,15 @@ private:
     const std::vector<std::string> &allowed_origins_;
     const RuntimeStatus &runtime_status_;
     std::mutex session_mutex_;
-    std::mutex route_operation_mutex_;
+    // Route operations are keyed per source: a slow or unresponsive camera used
+    // to hold one global lock across its blocking upstream I/O, which serialized
+    // every other source behind it (measured: five concurrent WHEP calls at
+    // 10.2/10.3/20.3/20.4/20.4 s against one controlled slow source).
+    std::mutex route_locks_mutex_;
+    std::unordered_map<std::string, std::shared_ptr<std::mutex>> route_locks_;
+    // Whole-document reconciliation takes every source lock it touches instead
+    // of this one, so it cannot stall unrelated sources either.
+    std::mutex reconcile_mutex_;
     std::mutex route_state_mutex_;
     std::unordered_map<std::string, Session> sessions_;
     std::unordered_map<std::string, DirectRoute> direct_routes_;
@@ -2463,12 +2493,114 @@ std::string scene_event(std::string_view type, std::string scene_json)
 
 class WebSocketSession;
 
+
+/**
+ * Bounded worker pool for HTTP request handling.
+ *
+ * Handlers perform synchronous upstream media I/O: MediaMTX route setup, the
+ * blocking WHEP signalling POST to the upstream, and the service proxies.  All
+ * of it used to run on the single io_context thread, so one unresponsive source
+ * stalled everything: measured against a controlled slow source, the trivial
+ * in-memory `GET /api/v1/scene` took about 10 s in 16 of 102 samples, the five
+ * concurrent WHEP calls serialised at 10.2/10.3/20.3/20.4/20.4 s, and healthy
+ * tiles stayed offline while the slow route waited out its timeout.
+ *
+ * Handlers now run here, bounded by the worker count, and only the response write
+ * is posted back to the session's executor, so the socket is still touched from
+ * one thread.  A saturated pool refuses the work and the caller serves the
+ * request inline rather than dropping it.
+ */
+class RequestPool {
+public:
+    explicit RequestPool(std::size_t workers, std::size_t capacity = 256)
+        : capacity_(capacity)
+    {
+        workers_.reserve(workers);
+        for (std::size_t index = 0; index < workers; ++index)
+            workers_.emplace_back([this] { run(); });
+    }
+
+    ~RequestPool() { stop(); }
+
+    RequestPool(const RequestPool &) = delete;
+    RequestPool &operator=(const RequestPool &) = delete;
+
+    bool post(std::function<void()> task)
+    {
+        {
+            const std::lock_guard lock(mutex_);
+            if (stopping_ || queue_.size() >= capacity_)
+                return false;
+            queue_.push_back(std::move(task));
+        }
+        ready_.notify_one();
+        return true;
+    }
+
+    /** Finishes the queued work and refuses anything new. */
+    void stop()
+    {
+        {
+            const std::lock_guard lock(mutex_);
+            if (stopping_) return;
+            stopping_ = true;
+        }
+        ready_.notify_all();
+        for (std::thread &worker : workers_) {
+            if (worker.joinable()) worker.join();
+        }
+        workers_.clear();
+    }
+
+private:
+    void run()
+    {
+        for (;;) {
+            std::function<void()> task;
+            {
+                std::unique_lock lock(mutex_);
+                ready_.wait(lock, [this] { return stopping_ || !queue_.empty(); });
+                // Drain what was already accepted even while stopping, so an
+                // in-flight request still gets its response.
+                if (queue_.empty()) {
+                    if (stopping_) return;
+                    continue;
+                }
+                task = std::move(queue_.front());
+                queue_.pop_front();
+            }
+            task();
+        }
+    }
+
+    std::mutex mutex_;
+    std::condition_variable ready_;
+    std::deque<std::function<void()>> queue_;
+    std::vector<std::thread> workers_;
+    std::size_t capacity_;
+    bool stopping_{false};
+};
+
+std::size_t control_worker_count()
+{
+    if (const char *value = std::getenv("WEBOBS_CONTROL_WORKERS")) {
+        const std::string_view text(value);
+        unsigned int parsed = 0;
+        const auto result = std::from_chars(text.data(), text.data() + text.size(), parsed);
+        if (result.ec == std::errc{} && result.ptr == text.data() + text.size() && parsed >= 1 && parsed <= 32)
+            return parsed;
+    }
+    return 4;
+}
 class WebSocketHub {
 public:
     void join(const std::shared_ptr<WebSocketSession> &session);
     void broadcast(const std::string &message);
 
 private:
+    // Handlers now run on the request pool while joins happen on the io_context
+    // thread, so the session list needs a lock of its own.
+    std::mutex mutex_;
     std::vector<std::weak_ptr<WebSocketSession>> sessions_;
 };
 
@@ -2555,6 +2687,7 @@ private:
 
 void WebSocketHub::join(const std::shared_ptr<WebSocketSession> &session)
 {
+    const std::lock_guard lock(mutex_);
     sessions_.erase(std::remove_if(sessions_.begin(), sessions_.end(),
                                    [](const auto &entry) { return entry.expired(); }),
                     sessions_.end());
@@ -2563,15 +2696,24 @@ void WebSocketHub::join(const std::shared_ptr<WebSocketSession> &session)
 
 void WebSocketHub::broadcast(const std::string &message)
 {
-    auto iterator = sessions_.begin();
-    while (iterator != sessions_.end()) {
-        if (const auto session = iterator->lock()) {
-            session->send(message);
-            ++iterator;
-        } else {
-            iterator = sessions_.erase(iterator);
+    // Copy the live sessions out under the lock and send outside it: send() only
+    // posts to each session's own executor and must not run while the list is
+    // locked against a concurrent join.
+    std::vector<std::shared_ptr<WebSocketSession>> live;
+    {
+        const std::lock_guard lock(mutex_);
+        auto iterator = sessions_.begin();
+        while (iterator != sessions_.end()) {
+            if (const auto session = iterator->lock()) {
+                live.push_back(session);
+                ++iterator;
+            } else {
+                iterator = sessions_.erase(iterator);
+            }
         }
     }
+    for (const auto &session : live)
+        session->send(message);
 }
 
 struct ControlMetrics {
@@ -3486,12 +3628,12 @@ HttpResponse handle_request(const HttpRequest &request, SceneController &control
 
 class HttpSession : public std::enable_shared_from_this<HttpSession> {
 public:
-    HttpSession(tcp::socket socket, SceneController &controller, StudioController &studio,
+    HttpSession(tcp::socket socket, RequestPool &pool, SceneController &controller, StudioController &studio,
                 WebSocketHub &hub, WhepProxy &whep_proxy, NvrProxy &nvr_proxy, CameraProxy &camera_proxy,
                 BasicAuthenticator &authenticator, SessionStore &session_store,
                 ControlMetrics &metrics, RuntimeStatus &runtime_status,
                 const std::vector<std::string> &allowed_origins)
-        : stream_(std::move(socket)), controller_(controller), studio_(studio), hub_(hub), whep_proxy_(whep_proxy),
+        : stream_(std::move(socket)), pool_(pool), controller_(controller), studio_(studio), hub_(hub), whep_proxy_(whep_proxy),
           nvr_proxy_(nvr_proxy),
           camera_proxy_(camera_proxy),
           authenticator_(authenticator), session_store_(session_store), metrics_(metrics), runtime_status_(runtime_status),
@@ -3744,6 +3886,26 @@ private:
                 ->run(std::move(request), scene_event("scene.snapshot", snapshot.public_json));
             return;
         }
+        // The handler does synchronous upstream media I/O, so it runs on the
+        // request pool and only the response write comes back to this executor.
+        auto self = shared_from_this();
+        std::optional<std::string> cookie_token;
+        if (session_token && session_record)
+            cookie_token = *session_token;
+        HttpRequest queued = request;
+        const bool dispatched = pool_.post(
+            [this, self, request = std::move(queued), cookie_token]() mutable {
+                HttpResponse result = handle_request(request, controller_, studio_, hub_, whep_proxy_,
+                                                     nvr_proxy_, camera_proxy_, allowed_origins_,
+                                                     runtime_status_, metrics_, authenticator_);
+                if (cookie_token)
+                    result.set(http::field::set_cookie, session_store_.set_cookie_header(*cookie_token));
+                net::post(stream_.get_executor(),
+                          [self, result = std::move(result)]() mutable { self->send(std::move(result)); });
+            });
+        if (dispatched)
+            return;
+        // Pool saturated: serve the request here instead of dropping it.
         HttpResponse result = handle_request(request, controller_, studio_, hub_, whep_proxy_, nvr_proxy_, camera_proxy_,
                                              allowed_origins_, runtime_status_, metrics_, authenticator_);
         if (session_token && session_record)
@@ -3769,6 +3931,7 @@ private:
     beast::tcp_stream stream_;
     beast::flat_buffer buffer_;
     std::optional<http::request_parser<http::string_body>> parser_;
+    RequestPool &pool_;
     SceneController &controller_;
     StudioController &studio_;
     WebSocketHub &hub_;
@@ -3786,13 +3949,13 @@ private:
 
 class Listener : public std::enable_shared_from_this<Listener> {
 public:
-    Listener(net::io_context &context, const tcp::endpoint &endpoint, SceneController &controller,
+    Listener(net::io_context &context, const tcp::endpoint &endpoint, RequestPool &pool, SceneController &controller,
              StudioController &studio,
              WebSocketHub &hub, WhepProxy &whep_proxy, NvrProxy &nvr_proxy, CameraProxy &camera_proxy,
              BasicAuthenticator &authenticator, SessionStore &session_store,
              ControlMetrics &metrics, RuntimeStatus &runtime_status,
              const std::vector<std::string> &allowed_origins)
-        : acceptor_(net::make_strand(context)), controller_(controller), studio_(studio), hub_(hub), whep_proxy_(whep_proxy),
+        : acceptor_(net::make_strand(context)), pool_(pool), controller_(controller), studio_(studio), hub_(hub), whep_proxy_(whep_proxy),
           nvr_proxy_(nvr_proxy),
           camera_proxy_(camera_proxy),
           authenticator_(authenticator), session_store_(session_store), metrics_(metrics), runtime_status_(runtime_status),
@@ -3834,13 +3997,14 @@ private:
     void on_accept(beast::error_code error, tcp::socket socket)
     {
         if (!error)
-            std::make_shared<HttpSession>(std::move(socket), controller_, studio_, hub_, whep_proxy_, nvr_proxy_, camera_proxy_, authenticator_, session_store_,
+            std::make_shared<HttpSession>(std::move(socket), pool_, controller_, studio_, hub_, whep_proxy_, nvr_proxy_, camera_proxy_, authenticator_, session_store_,
                                           metrics_, runtime_status_, allowed_origins_)->run();
         if (acceptor_.is_open())
             do_accept();
     }
 
     tcp::acceptor acceptor_;
+    RequestPool &pool_;
     SceneController &controller_;
     StudioController &studio_;
     WebSocketHub &hub_;
@@ -3880,6 +4044,7 @@ struct ControlServer::Impl {
     StudioController &studio;
     RuntimeStatus &status;
     net::io_context context{1};
+    RequestPool requests{control_worker_count()};
     WebSocketHub hub;
     BasicAuthenticator authenticator;
     SessionStore session_store;
@@ -3916,7 +4081,7 @@ std::optional<std::string> ControlServer::start()
         return "HTTP listen address is invalid";
     impl_->listener = std::make_shared<Listener>(
         impl_->context, tcp::endpoint(address, static_cast<unsigned short>(impl_->config.http_port)),
-        impl_->controller, impl_->studio, impl_->hub, impl_->whep_proxy, impl_->nvr_proxy, impl_->camera_proxy,
+        impl_->requests, impl_->controller, impl_->studio, impl_->hub, impl_->whep_proxy, impl_->nvr_proxy, impl_->camera_proxy,
         impl_->authenticator, impl_->session_store, impl_->metrics,
         impl_->status, impl_->config.control_allowed_origins);
     if (!impl_->listener->error().empty())
@@ -3930,6 +4095,13 @@ void ControlServer::stop()
 {
     if (!impl_ || !impl_->thread.joinable())
         return;
+    // Order matters for in-flight work: stop accepting new connections, let the
+    // pool drain what it already accepted (the io_context is still running, so
+    // those responses are actually written), then stop the io_context.
+    if (impl_->listener)
+        impl_->listener->close();
+    impl_->requests.stop();
+    impl_->context.poll();
     impl_->context.stop();
     impl_->thread.join();
     impl_->listener.reset();
