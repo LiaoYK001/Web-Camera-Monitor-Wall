@@ -9,12 +9,12 @@ Historical notes (previous conclusions, disproved hypotheses, the step-by-step i
 
 ## 0. 总体结论（2026-09-20 证据复核后）/ Overall status after the evidence review
 
-**已实现，且受控来源（健康合成源）的性能验证通过；原始部署（五路真实相机）的最终验收尚待关闭。**
+**已实现；受控来源性能验证通过；原始五路真实相机的 1800 秒验收已执行，9 项判据中 8 项通过，唯一未关闭项是一路相机的冷启动首帧（4.3.7）。**
 
 - 复核发现验收判定器存在漏判（尾部断流不计入帧间隔、`maxGapMs` 只记录 >1000ms 的已结束间隔、把呈现帧率当成解码帧率、不校验预期来源集合与目标、提前结束仍可派生成 PASS）。本轮已修复并抽出可测试的纯判定模块，用尾部断流/提前结束/缺少一路/播放器替换/计数代次归零/超 3 秒后恢复等反例回归（19/19 通过，见 1.1 节）。
 - 按修复后的判定器重新派生历史长稳：`2026-09-19T12-53-10-550Z-composite` 与 `2026-09-20T11-01-11-166Z-direct` 的派生结论均为 **INCOMPLETE**，不再是“全部检查通过”。它们能证明的范围是：**呈现**帧率与首帧在受控来源下达标；**不能**证明正式 30 分钟验收通过。
 - 特别是 `2026-09-20T11-01-11-166Z-direct`：最后两个采样（`at` 1790222ms → 1805262ms，间隔 **15.04 秒**）五路帧数与媒体时间**完全不变**，且最后一个采样没有再写出自身汇总；旧判定器仍判 PASS。真实有效观测在约 **1782.4 秒**（最后一帧）就结束了，不足 1800 秒，且尾部无帧时间已超过 3 秒门槛。
-- 历史受控来源结果**不替换**为真实相机结果；真实场景 Direct/Hybrid 的首帧（31.7–74.4 秒）与停顿（3.07–6.70 秒）仍未关闭，控制面串行激活（约 2.57 秒/路）尚未修复。
+- 历史受控来源结果**不替换**为真实相机结果。控制面串行激活已修复（6.1），修复后真实五路 1800 秒（4.3.7）中帧率（0.928–0.999）与停顿（1058–2377 ms）两类门槛**已全部通过**，首帧从 31.7–74.4 秒降到 10.8–23.9 秒，唯一未过的是 back_3 一路 23945 ms（预算 20000 ms），来源侧冷启动；受控五路 1800 秒、原始 Composite 1800 秒与真实来源故障注入尚待执行。
 
 **English.** Implemented, with performance verified on controlled (healthy synthetic) sources; the final acceptance on the original deployment (five real cameras) is still open. The review found the acceptance oracle could mis-judge a run, and it is now fixed and regression-tested (19/19). Re-derived with the fixed oracle, the historical composite and Direct/Hybrid soaks are INCOMPLETE rather than "all checks passed": in the Direct/Hybrid recording the last two samples are 15.04 s apart with every frame count and media time frozen, so the valid observation ended at about 1782.4 s, yet the old oracle still printed PASS. Controlled-source results are not substituted for the real-camera deployment, whose Direct/Hybrid first frame (31.7-74.4 s) and stalls (3.07-6.70 s) remain open.
 ## 1. 本轮自动化验证 / Automated verification this round
@@ -77,7 +77,7 @@ Historical notes (previous conclusions, disproved hypotheses, the step-by-step i
 | F5-03 硬件加速 | **OBS 渲染与编码均已在真实运行中启用并取证**；网关 NVENC/CUDA 转码沿用既有实现 | 本文件第 2 节 + `nvidia-smi` |
 | F5-04 本地合成 | **真实五路 1920×1080 Composite 30 分钟持续发布**（30/30 采样 ready、track=[Opus,H264]、`inboundFramesInError=0`） | `tests/artifacts/soak/…-composite-1080p-4200576/` |
 | F5-05 音频管理 | 批次 A/B/C 已提交并有自动化验证；路由复用/先备后切有单测；有符号偏移有转码器用例；端到端音频驱动部分通过 | 见第 5 节 |
-| F5-06 播放稳定 | **受控来源性能验证通过；原始场景最终验收尚待关闭**。合成模式（`3d281e4`，x264，真实相机）：presented 29.18 fps（0.973）、首帧 3542 ms、服务端 30/30 采样健康。Direct/Hybrid（`c416785`，健康合成源）：presented 24.63–24.65 fps（0.985–0.986）、首帧 4.1–6.2 s。**两次历史长稳按修复后的判定器均为 INCOMPLETE**（无 final 标记、无进行中无帧年龄、无代次计数，且 Direct 运行最后 15.04 秒零帧推进，有效观测仅约 1782 秒）——见 1.1、4.2.1、4.3.6 的复核修正 | `.../2026-09-19T12-53-10-550Z-composite/`、`.../2026-09-20T11-01-11-166Z-direct/`（均为历史记录，见复核修正） |
+| F5-06 播放稳定 | **真实五路 1800 秒：9 项判据中 8 项通过**（`2c8c7b0`，4.3.7）——解码帧率 0.928–0.999、最大停顿 1058–2377 ms、有效观测 1800.2 s；**唯一未通过：back_3 首帧 23945 ms（预算 20000 ms）**，来源侧冷启动。历史两次长稳按修复后判定器为 INCOMPLETE（1.1）；受控五路 1800 秒、原始 Composite 1800 秒与真实来源故障注入尚待执行 | `.../2026-09-20T13-03-54-051Z-direct/` |
 
 ## 4. 长稳实测数据 / Measured soak data
 
@@ -172,6 +172,38 @@ Historical notes (previous conclusions, disproved hypotheses, the step-by-step i
 口径说明：最终样本里的 `decodedFrames` 读数为 0，是因为最后一次 15 秒采样时页面已开始拆卸播放器；整个运行期间 `getVideoPlaybackQuality()` 的解码计数与呈现实时计数同步增长（例如 1790 秒时解码 44559 / 呈现 44501），逐 15 秒的原始记录在 `browser-soak-timeline.jsonl`。
 
 **English.** After the root-cause fix (section 4.5) the formal 30-minute Direct/Hybrid acceptance was re-run against healthy synthetic 720p25 H.264 cameras (published with `libx264 -preset ultrafast -g 50 -bf 0` and **without** `-tune zerolatency`, i.e. without slice threads) through a standalone MediaMTX on 8654, with `cameras.db` backed up first and restored and hash-verified afterwards (`ac028d59…`), and the scene and studio documents restored as well, at a 25 fps target. Run `2026-09-20T11-01-11-166Z-direct` lasted 1805.3 seconds (30.1 minutes) in the real product page with Chrome 153 and the product's own pairing flow (`state=approved, grants=5`). All four criteria passed: media time advanced continuously, no frame stall exceeded 3 seconds (all 0 ms), the first frame arrived within 20 seconds (4.1-6.2 s) and the decoded frame rate reached 0.985-0.986 of the target. Against the earlier healthy-source control on the unfixed code this is 14.0-14.6 fps (0.56-0.58) rising to 24.6 fps (0.985-0.986) per tile, which closes the loop on the section 4.5 root cause inside the real product page. The zero `decodedFrames` in the final sample is an artefact of the last 15-second tick running while the page tore its players down: throughout the run the decode counter tracked the presentation counter (44559 decoded against 44501 presented at 1790 s), and the raw per-tick records are in `browser-soak-timeline.jsonl`.
+### 4.3.7 原始五路真实相机 1800 秒（判定器修复 + 控制面修复后）/ Original five real cameras, 1800 s, after the oracle and control-plane fixes
+
+运行 `tests/artifacts/browser-soak/2026-09-20T13-03-54-051Z-direct`（commit `2c8c7b0`），Direct-only 启动（不并发运行合成负载），真实产品页面 + Chrome 153 + 产品自身配对流程，逐路名义目标 20/20/25/15/25 fps（按相机标称帧率），**有效观测 1800.2 秒**。
+
+| 判据 | 结果 | 明细 |
+|---|---|---|
+| 预期来源齐全 / 目标有效 | PASS | 五路全部观测到 |
+| 采样先于启动 / 模式切换 | PASS | 首帧含计划、排队、激活、ICE 与播放等待 |
+| 观测完整 / 时长 | PASS | `final` 快照先落盘，1800.2 s |
+| **首帧 ≤20 s** | **FAIL** | **23945 / 11326 / 10832 / 18737 / 12829 ms**（仅 back_3 超过预算约 4 s） |
+| 无 >3 s 非预期停顿 | PASS | 逐路最大间隔 1058–2377 ms |
+| **解码帧率 ≥ 目标 90%** | **PASS** | 19.96/20（0.998）、19.95/20（0.998）、23.21/25（0.928）、14.99/15（0.999）、23.23/25（0.929） |
+| 呈现流畅度（报告项） | PASS | 0.904–0.996 |
+| 代次/计数完整性 | PASS | 每路 1 代、0 重置、0 拆卸 |
+
+与修复前同场景的真实相机运行（首帧 31.7–74.4 s、最大帧间隔 3.07–6.70 s、三路帧率不达标）相比：**帧率与停顿两类门槛已全部通过**，首帧从 31.7–74.4 s 降到 10.8–23.9 s（五路激活不再串行，各自只受自身相机冷启动限制），只剩 back_3 一路超出 20 s 预算。
+
+同一批相机的低竞争单读者实测（`build/scratch/real-source-measure.sh`，TCP、20 s 窗口、只读）说明这属于**来源侧**问题，且比此前报告更精确：
+
+| 相机 | 编码/分辨率/标称 | 单读者实测 | 关键帧间隔 | 解码告警 |
+|---|---|---|---|---|
+| back_3 | HEVC Main 2960×1666 / 20 | **10.05 fps** | 60 帧（3 s） | `Could not find ref with POC` ×2 |
+| front_3 | HEVC Main 2960×1666 / 20 | 14.80 fps | 60 帧 | POC ×2 |
+| hik_ch1_main | HEVC Main 2560×1440 / 25 | **25.00 fps** | 50 帧（2 s） | POC ×1、`PPS id out of range` ×1 |
+| hik_ch2_main | HEVC Main 2560×1440 / 25 | **25.00 fps** | 50 帧 | POC ×1、PPS ×1 |
+| overview_c4 | HEVC Main 3200×1800 / 15 | 15.25 fps | 45 帧（3 s） | POC ×1 |
+
+即：五路中三路在低竞争下**达到标称帧率**，两路（back_3、front_3）明显不足并伴随参考帧丢失；应用链路（持续拉流）下 back_3 反而能到约 20 fps，说明短期一次性探测会低估来源能力。back_3 的冷启动首帧（约 24 s）与它的参考帧丢失同时出现，符合来源侧问题，而不是控制面排队。
+
+经网关的对照（同一真实输入，`build/scratch/real-hybrid-e2e.sh`）：`back_3` 经 MediaMTX 直通路由读回 **10.07 fps**（与直连 10.05 一致，网关不增损失）；再经**真实 `transcode-on-demand.sh` 的 HEVC→H264 转码**后由浏览器读 WHEP：接收 15.24 fps、解码 14.28 fps、呈现 14.28 fps、`packetsLost=0`、`nackCount=0`——**真实相机所走的 Hybrid 链路确实覆盖了 x264 slice-thread 修复**（若该缺陷仍存在，这里应只剩约 60%）。同时记录到一个真实部署约束：转码保持 2960×1666 原始分辨率，单路约 9.2 Mbps。
+
+**English.** Run `2026-09-20T13-03-54-051Z-direct` (commit `2c8c7b0`) covered 1800.2 s of valid observation on the five real cameras through the real product page with pairing, with per-source targets of 20/20/25/15/25 fps taken from each camera's nominal rate. Eight of the nine criteria pass: sources present, targets defined, sampling installed before the action, mode switch, complete observation, duration, no stall beyond 3 s (1058-2377 ms), decoded frame rate at 0.928-0.999 of target, and counter integrity. The only failure is the first-frame budget on one camera: 23945 ms for back_3 against the 20 s budget, with the other four at 10.8-18.7 s. Compared with the pre-fix real-camera run (first frames 31.7-74.4 s, stalls 3.07-6.70 s, three sources below the frame-rate floor), the frame-rate and stall criteria now all pass and the first frame dropped to 10.8-23.9 s because the five activations no longer serialise. A low-contention single-reader measurement of the same cameras (TCP, 20 s windows, read-only) shows three of them at their nominal rate and two - back_3 at 10.05 fps and front_3 at 14.80 fps - clearly below it with missing-reference decode warnings, so the remaining first-frame miss is a source-side cold start rather than control-plane queueing. Measured through the gateway, a MediaMTX direct route returns the same 10.07 fps for back_3, and the real `transcode-on-demand.sh` HEVC-to-H264 hybrid path delivers 14.28 fps decoded over WHEP with no packet loss, which confirms the slice-thread fix covers the path the real cameras use (the defect would have left about 60% of that). The transcoded stream keeps the camera's native 2960x1666 at about 9.2 Mbps per tile, which is a deployment constraint worth recording.
 ### 4.4 瓶颈归因 / Bottleneck attribution
 
 渲染与编码不是瓶颈：OBS 日志的渲染滞后为 **1/8247（0.0%）**、编码滞后 **59/8247（0.7%）**，`nvidia-smi` GPU 15%、encoder 8%。
