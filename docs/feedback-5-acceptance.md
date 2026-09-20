@@ -9,7 +9,7 @@ Historical notes (previous conclusions, disproved hypotheses, the step-by-step i
 
 ## 0. 总体结论（2026-09-20 证据复核后）/ Overall status after the evidence review
 
-**已实现；三种 1800 秒长稳均已执行——原始 Composite 13/13 通过（4.2.2）、受控五路 12/12 通过（4.3.8）、真实五路 9 项中 8 项通过（4.3.7，唯一未关闭项是 back_3 的冷启动首帧）；真实来源单路故障注入尚未执行。**
+**已实现；三种 1800 秒长稳均已执行——原始 Composite 13/13 通过（4.2.2）、受控五路 12/12 通过（4.3.8）、真实五路 9 项中 8 项通过（4.3.7，唯一未关闭项是 back_3 的冷启动首帧）；真实来源单路故障注入已完成（4.3.9：注入 30 秒，其余四路不受影响，被注入一路自行恢复）。**
 
 - 复核发现验收判定器存在漏判（尾部断流不计入帧间隔、`maxGapMs` 只记录 >1000ms 的已结束间隔、把呈现帧率当成解码帧率、不校验预期来源集合与目标、提前结束仍可派生成 PASS）。本轮已修复并抽出可测试的纯判定模块，用尾部断流/提前结束/缺少一路/播放器替换/计数代次归零/超 3 秒后恢复等反例回归（19/19 通过，见 1.1 节）。
 - 按修复后的判定器重新派生历史长稳：`2026-09-19T12-53-10-550Z-composite` 与 `2026-09-20T11-01-11-166Z-direct` 的派生结论均为 **INCOMPLETE**，不再是“全部检查通过”。它们能证明的范围是：**呈现**帧率与首帧在受控来源下达标；**不能**证明正式 30 分钟验收通过。
@@ -243,6 +243,43 @@ Historical notes (previous conclusions, disproved hypotheses, the step-by-step i
 即：**十二项判据全部通过**，这是判定器修复后的第一个正式 PASS，也是与 4.3.7 真实五路运行可直接对照的“软件链路”上限（25.00 fps 对 25 fps 目标）。与同一受控来源在修复前的 14.0–14.6 fps（0.56–0.58）相比，链路上的帧率缺口已彻底关闭。
 
 **English.** Run `2026-09-20T13-41-33-419Z-direct` (commit `2c8c7b0` or a successor) ran Direct-only against healthy synthetic 720p25 H.264 sources (`libx264 -preset ultrafast -g 50 -bf 0`, no `-tune zerolatency`) at a 25 fps target, with `cameras.db` backed up and temporarily pointed at the fixture. All twelve checks pass: expected sources, valid targets, sampling before the action, mode switch, complete observation, 1800.0 s of valid observation over 121 samples, media time advancing 1801.70-1801.74 s, first frames of 6302-6682 ms, largest completed gaps of 94-133 ms with 3-19 ms in progress at the end, decoded frame rates of exactly 25.00 fps (ratio 1.000) and presented rates of 24.58-24.97 fps, with one player generation and no counter resets per source. This is the first formal PASS under the fixed oracle and the software-link ceiling to compare the real-camera run (4.3.7) against; the same fixture measured 14.0-14.6 fps (0.56-0.58) before the encoder fix.
+### 4.3.9 真实来源单路故障注入（测试代理，注入窗口与正常重启分开判定）/ Single-route fault injection on a real source, judged separately from normal restarts
+
+方法：用一个本地 TCP 测试代理（`build/scratch/rtsp-relay.py`）包住**一路真实相机**（hik_ch2_main），把它指向 `rtsp://127.0.0.1:8656/hik_ch2_main`；代理在预定时点**关闭全部连接并在 30 秒内拒绝新连接**，然后恢复。相机与相机配置未被触碰，仅这一台相机的注册端点临时改到代理上，测后按备份还原校验。
+
+注入时刻（代理自报，wall clock）：`PAUSE-BEGIN 1789916144.366` → `PAUSE-END 1789916174.373`，即**注入时长 30.0 秒**。运行 `tests/artifacts/browser-soak/2026-09-20T14-52-02-172Z-direct`（真实五路，600 秒观察，判定器用 `WEBOBS_SOAK_EXCUSED_WINDOWS` 把该注入窗口列为**已知豁免**）：**SMOKE_PASS**。
+
+逐 15 秒窗口的**呈现帧增量**（关键段）：
+
+| 窗口结束 t(s) | mu2uub8u | mu2uuez4 | mu2ux4qk | mu2ux73u | **mu2ux99i（被注入）** |
+|---|---|---|---|---|---|
+| 196 | 300 | 293 | 395 | 225 | 355 |
+| 211 | 293 | 278 | 366 | 223 | **47**（窗口内断开） |
+| 226 | 300 | 288 | 355 | 225 | **0**（全程无帧） |
+| 241 | 295 | 287 | 359 | 224 | **31**（窗口内恢复） |
+| 256 | 302 | 284 | 370 | 226 | 407 |
+| 271 | 293 | 251 | 340 | 200 | 391 |
+
+结论：
+
+- **其余四路未被一起重建**：在被注入那一路连续无帧的整段时间里，另外四路的窗口增量与基线一致（2uub8u 293–300、2uuez4 278–288、2ux4qk 355–366、2ux73u 223–225）。
+- **被注入的一路自行恢复**：断开持续了注入的 30 秒（约一个完整采样窗口为 0，两侧为部分窗口），恢复发生在随后的采样窗口内；该路媒体时间在恢复时归零（新会话），说明是重新建立而非继续旧会话。**恢复判定受 15 秒采样粒度限制**（≤15 秒；媒体报道的新会话时间显示约为恢复后 1–2 秒），满足“来源恢复后 15 秒内出图”。
+- **注入与正常重启分开判定**：注入窗口通过 `WEBOBS_SOAK_EXCUSED_WINDOWS` 显式豁免，因此该窗口内的停顿既不被计为失败，也不会掩盖窗口外的异常停顿（窗口外仍按 3 秒门槛判定，本次全部通过）。
+
+**English.** A local TCP test proxy (`build/scratch/rtsp-relay.py`) was put in front of one real camera (hik_ch2_main) by pointing that camera's registered endpoint at `rtsp://127.0.0.1:8656/hik_ch2_main`; the proxy closes every live connection and refuses new ones for 30 seconds, then resumes. Neither the camera nor its configuration was touched, and the endpoint was restored from backup and hash-verified afterwards. The proxy reported `PAUSE-BEGIN 1789916144.366` and `PAUSE-END 1789916174.373`, a 30.0 s injection. Run `2026-09-20T14-52-02-172Z-direct` (real five sources, 600 s observation) reported **SMOKE_PASS**, with the injected interval declared as an excused window so it is judged separately from normal restarts. The per-15-second presented-frame increments show the injected source at 47, then 0, then 31 frames across the outage windows while the other four kept their baseline increments (293-300, 278-288, 355-366, 223-225), so the other four were not rebuilt together with it; the injected source's media time reset when it returned, indicating a fresh session, and it produced frames again inside the next sampling window (recovery is bounded by the 15 s sampling granularity, with the media time suggesting 1-2 s). The excused window covers only the injected interval, so stalls outside it are still judged against the 3 s budget, which passed.
+### 4.3.10 来源限制与可选的设备侧调整（需用户决定，未经确认不改）/ Source limits and optional device-side changes (user decision, nothing changed)
+
+测量依据见 4.3.7 与 4.3.9。需要用户决定的只有一件事：**是否调整 back_3 / front_3 这两路相机的参数**（4.2.2 的 13/13 与 4.3.8 的 12/12 说明软件链路本身没有剩余缺口）。
+
+| 现象 | 证据 | 可能的设备侧原因 | 建议动作（供确认） | 预期收益 | 影响/风险 |
+|---|---|---|---|---|---|
+| back_3 单读者 10.05 fps（标称 20）、首帧 23.9 s | `Could not find ref with POC`，2960×1666 | 该路编码/上行带宽不足或丢包 | 提高该路码率上限或改用较低分辨率/子码流；确认传输链路质量 | 首帧与帧率进入门槛 | 需改相机或 NVR 配置；画质/带宽取舍由用户定 |
+| front_3 单读者 14.80 fps（标称 20） | 同上，2960×1666 | 同上 | 同上 | 同上 | 同上 |
+| Hybrid 转码保持 2960×1666、单路约 9.2 Mbps | 4.3.7 的 WHEP 实测 | 转码未缩放，浏览器需解码五路原始分辨率 | 若浏览器侧压力大，可让相机提供较低分辨率的上行，或后续增加转码缩放选项 | 降低浏览器解码与带宽压力 | 改缩放会改变画面细节，属产品行为变更，需用户确认 |
+
+三路 Hikvision（2560×1440，标称 25 fps）在同样条件下达到 25.00 fps，说明当前配置本身没有问题；上述建议只针对那两路弱来源。**未经用户确认，本轮未修改任何相机、NVR 或流配置**，也未放宽验收门槛。
+
+**English.** The measurement basis is in 4.3.7 and 4.3.9, and only one decision needs the user: whether to adjust the two weak cameras. Sections 4.2.2 (13/13) and 4.3.8 (12/12) show the software link has no remaining gap. back_3 measured 10.05 fps against a nominal 20 with missing-reference warnings and a 23.9 s first frame, front_3 measured 14.80 against 20, while the three 2560x1440 Hikvision streams reached exactly 25.00 fps under the same conditions - so the two weak ones are a device-side matter (encoding or upstream bandwidth). Suggested, not performed: raise their bitrate ceiling or use a lower-resolution/sub stream and verify the link, which should bring first frame and frame rate inside the budget at a quality/bandwidth trade-off the user owns. Separately, the hybrid transcode keeps the camera's native 2960x1666 at about 9.2 Mbps per tile, so a lower-resolution upstream (or a future transcode scaling option, which would change picture detail and needs explicit approval) would reduce browser decode and bandwidth pressure. No camera, NVR or stream configuration was modified in this round and no acceptance threshold was relaxed.
 ### 4.4 瓶颈归因 / Bottleneck attribution
 
 渲染与编码不是瓶颈：OBS 日志的渲染滞后为 **1/8247（0.0%）**、编码滞后 **59/8247（0.7%）**，`nvidia-smi` GPU 15%、encoder 8%。
