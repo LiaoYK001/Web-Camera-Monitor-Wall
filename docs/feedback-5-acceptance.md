@@ -9,7 +9,7 @@ Historical notes (previous conclusions, disproved hypotheses, the step-by-step i
 
 ## 0. 总体结论（2026-09-20 证据复核后）/ Overall status after the evidence review
 
-**已实现；受控来源性能验证通过；原始五路真实相机的 1800 秒验收已执行，9 项判据中 8 项通过，唯一未关闭项是一路相机的冷启动首帧（4.3.7）。**
+**已实现；三种 1800 秒长稳均已执行——原始 Composite 13/13 通过（4.2.2）、受控五路 12/12 通过（4.3.8）、真实五路 9 项中 8 项通过（4.3.7，唯一未关闭项是 back_3 的冷启动首帧）；真实来源单路故障注入尚未执行。**
 
 - 复核发现验收判定器存在漏判（尾部断流不计入帧间隔、`maxGapMs` 只记录 >1000ms 的已结束间隔、把呈现帧率当成解码帧率、不校验预期来源集合与目标、提前结束仍可派生成 PASS）。本轮已修复并抽出可测试的纯判定模块，用尾部断流/提前结束/缺少一路/播放器替换/计数代次归零/超 3 秒后恢复等反例回归（19/19 通过，见 1.1 节）。
 - 按修复后的判定器重新派生历史长稳：`2026-09-19T12-53-10-550Z-composite` 与 `2026-09-20T11-01-11-166Z-direct` 的派生结论均为 **INCOMPLETE**，不再是“全部检查通过”。它们能证明的范围是：**呈现**帧率与首帧在受控来源下达标；**不能**证明正式 30 分钟验收通过。
@@ -77,7 +77,7 @@ Historical notes (previous conclusions, disproved hypotheses, the step-by-step i
 | F5-03 硬件加速 | **OBS 渲染与编码均已在真实运行中启用并取证**；网关 NVENC/CUDA 转码沿用既有实现 | 本文件第 2 节 + `nvidia-smi` |
 | F5-04 本地合成 | **真实五路 1920×1080 Composite 30 分钟持续发布**（30/30 采样 ready、track=[Opus,H264]、`inboundFramesInError=0`） | `tests/artifacts/soak/…-composite-1080p-4200576/` |
 | F5-05 音频管理 | 批次 A/B/C 已提交并有自动化验证；路由复用/先备后切有单测；有符号偏移有转码器用例；端到端音频驱动部分通过 | 见第 5 节 |
-| F5-06 播放稳定 | **受控五路 1800 秒 12/12 全部通过**（4.3.8：解码 25.00 fps、首帧 6.3–6.7 s、最大间隔 ≤133 ms）；**真实五路 1800 秒：9 项判据中 8 项通过**（`2c8c7b0`，4.3.7）——解码帧率 0.928–0.999、最大停顿 1058–2377 ms、有效观测 1800.2 s；**唯一未通过：back_3 首帧 23945 ms（预算 20000 ms）**，来源侧冷启动。历史两次长稳按修复后判定器为 INCOMPLETE（1.1）；受控五路 1800 秒、原始 Composite 1800 秒与真实来源故障注入尚待执行 | `.../2026-09-20T13-03-54-051Z-direct/` |
+| F5-06 播放稳定 | **原始 Composite 1800 秒 13/13 全部通过**（4.2.2：解码 30.00 fps、首帧 7446 ms、最大间隔 415 ms、逐输入全程 healthy）；**受控五路 1800 秒 12/12 全部通过**（4.3.8：解码 25.00 fps、首帧 6.3–6.7 s、最大间隔 ≤133 ms）；**真实五路 1800 秒：9 项判据中 8 项通过**（`2c8c7b0`，4.3.7）——解码帧率 0.928–0.999、最大停顿 1058–2377 ms、有效观测 1800.2 s；**唯一未通过：back_3 首帧 23945 ms（预算 20000 ms）**，来源侧冷启动。历史两次长稳按修复后判定器为 INCOMPLETE（1.1）；受控五路 1800 秒、原始 Composite 1800 秒与真实来源故障注入尚待执行 | `.../2026-09-20T13-03-54-051Z-direct/` |
 
 ## 4. 长稳实测数据 / Measured soak data
 
@@ -127,6 +127,27 @@ Historical notes (previous conclusions, disproved hypotheses, the step-by-step i
 
 **⚠ 复核修正（2026-09-20）**：本节结论按当时的判定器写成，该判定器无法识别尾部断流、不校验观测完整性，也没有记录停顿与呈现/解码的区别。用修复后的判定器对同一条记录重新派生（1.1 节），本运行的状态是 **INCOMPLETE**：记录里没有 final 标记、没有进行中无帧年龄、没有代次计数，停顿与解码两项**无法追溯验证**；per-input 引擎健康也没有记录。因此本运行**只能**用来证明：受控（真实相机）1920×1080 规格下 **presented 29.18 fps（0.973）** 与首帧 3542 ms，以及服务端 30/30 采样健康；**不能**再作为“正式 30 分钟验收全部通过”的证据。
 
+### 4.2.2 判定器修复后的原始 1920×1080 Composite 1800 秒（PASS）/ Original 1920x1080 Composite 1800 s under the fixed oracle (PASS)
+
+运行 `tests/artifacts/browser-soak/2026-09-20T14-16-38-047Z-composite`，Composite 栈（`--composite`），原始五路真实相机场景，目标 30 fps，**十三项判据全部通过**：
+
+| 判据 | 结果 |
+|---|---|
+| 预期来源 / 目标 / 采样先于启动 / 模式切换 / 观测完整 | PASS |
+| 有效观测时长 | 1800.1 秒（121 采样） |
+| 媒体时间推进 | 1801.00 s |
+| 首帧 ≤20 s | **7446 ms** |
+| 无 >3 s 非预期停顿 | **最大 415 ms**（进行中无帧 4 ms） |
+| 解码帧率 ≥ 目标 90% | **30.00/30 fps（比值 1.000）** |
+| 呈现流畅度 | 29.08 fps（0.969） |
+| 代次/计数完整性 | 1 代、0 重置、0 拆卸 |
+| **program-and-inputs**（新增：Program 与逐输入健康同时判定） | PASS：五路输入全程 `healthy`，`samples reporting unhealthy: 0` |
+
+服务端同步采样（`tests/artifacts/soak/2026-09-20T14-16-32-052Z-composite-1080p-fixed-f7f039d`，证据绑定提交 `f7f039d`）：30 分钟每个采样均为 `routes=1 visible=5 healthy=5 publish=publishing`，该套件自身判定 **PASS**。
+
+这取代了 4.2.1 的历史结论：原始规格 Composite 在**判定器修复后**重新验收通过，且这一次 Program 帧率不再是唯一证据——逐输入健康与逐来源状态同时被记录与判定。**唯一保留的历史遗留**是 4.2.1 中“零来源重启”一项：本轮采样全程 `healthy` 且未出现重启，故该项在本轮通过。
+
+**English.** Run `2026-09-20T14-16-38-047Z-composite` used the composite stack against the original five-camera scene at a 30 fps target, and all thirteen checks pass: expected sources, valid targets, sampling before the action, mode switch, complete observation, 1800.1 s of valid observation over 121 samples, media time advancing 1801.00 s, a 7446 ms first frame, a largest completed gap of 415 ms with 4 ms in progress at the end, a decoded frame rate of exactly 30.00 fps (ratio 1.000), 29.08 fps presented, one generation per source, and the new `program-and-inputs` check confirming all five engine inputs healthy with zero unhealthy samples. The server-side sampler (evidence bound to commit `f7f039d`) reported `routes=1 visible=5 healthy=5 publish=publishing` on every sample and passed its own criteria. This supersedes the historical conclusion in 4.2.1: the original-spec composite acceptance now passes under the fixed oracle, and the program frame rate is no longer the only evidence, since per-input health is recorded and judged alongside it.
 ### 4.3 Direct/Hybrid 浏览器验收（2026-09-19）/ Direct/Hybrid browser acceptance
 
 真实产品页面、真实 Chrome，先按产品自身的配对流程完成浏览器授权（创建配对 → 管理会话批准 5 路相机授权 → 完成配对，无任何桩授权），再切换到“网关直通/浏览器媒体”。
