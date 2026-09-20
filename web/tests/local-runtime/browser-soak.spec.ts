@@ -412,7 +412,12 @@ test.describe('feedback-5 soak', () => {
             const completed = await enrollment.completeBrowserEnrollment();
             return { state: completed?.state ?? 'unknown', grants: cameraGrants.length };
           } catch (error) {
-            return { error: String((error as Error)?.message ?? error) };
+            // An exception whose message is empty stringified to "", which made a
+            // pairing failure undiagnosable; keep the name and where it happened.
+            const detail = error instanceof Error
+              ? `${error.name}: ${error.message || '(no message)'} @ ${(error.stack ?? '').split('\\n')[1]?.trim() ?? ''}`
+              : String(error);
+            return { error: detail };
           }
         });
         console.log(`[browser-soak] pairing attempt ${attempt}: ${JSON.stringify(pairing)}`);

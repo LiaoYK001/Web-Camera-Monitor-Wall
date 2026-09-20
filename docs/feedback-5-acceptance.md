@@ -77,7 +77,7 @@ Historical notes (previous conclusions, disproved hypotheses, the step-by-step i
 | F5-03 硬件加速 | **OBS 渲染与编码均已在真实运行中启用并取证**；网关 NVENC/CUDA 转码沿用既有实现 | 本文件第 2 节 + `nvidia-smi` |
 | F5-04 本地合成 | **真实五路 1920×1080 Composite 30 分钟持续发布**（30/30 采样 ready、track=[Opus,H264]、`inboundFramesInError=0`） | `tests/artifacts/soak/…-composite-1080p-4200576/` |
 | F5-05 音频管理 | 批次 A/B/C 已提交并有自动化验证；路由复用/先备后切有单测；有符号偏移有转码器用例；端到端音频驱动部分通过 | 见第 5 节 |
-| F5-06 播放稳定 | **真实五路 1800 秒：9 项判据中 8 项通过**（`2c8c7b0`，4.3.7）——解码帧率 0.928–0.999、最大停顿 1058–2377 ms、有效观测 1800.2 s；**唯一未通过：back_3 首帧 23945 ms（预算 20000 ms）**，来源侧冷启动。历史两次长稳按修复后判定器为 INCOMPLETE（1.1）；受控五路 1800 秒、原始 Composite 1800 秒与真实来源故障注入尚待执行 | `.../2026-09-20T13-03-54-051Z-direct/` |
+| F5-06 播放稳定 | **受控五路 1800 秒 12/12 全部通过**（4.3.8：解码 25.00 fps、首帧 6.3–6.7 s、最大间隔 ≤133 ms）；**真实五路 1800 秒：9 项判据中 8 项通过**（`2c8c7b0`，4.3.7）——解码帧率 0.928–0.999、最大停顿 1058–2377 ms、有效观测 1800.2 s；**唯一未通过：back_3 首帧 23945 ms（预算 20000 ms）**，来源侧冷启动。历史两次长稳按修复后判定器为 INCOMPLETE（1.1）；受控五路 1800 秒、原始 Composite 1800 秒与真实来源故障注入尚待执行 | `.../2026-09-20T13-03-54-051Z-direct/` |
 
 ## 4. 长稳实测数据 / Measured soak data
 
@@ -204,6 +204,24 @@ Historical notes (previous conclusions, disproved hypotheses, the step-by-step i
 经网关的对照（同一真实输入，`build/scratch/real-hybrid-e2e.sh`）：`back_3` 经 MediaMTX 直通路由读回 **10.07 fps**（与直连 10.05 一致，网关不增损失）；再经**真实 `transcode-on-demand.sh` 的 HEVC→H264 转码**后由浏览器读 WHEP：接收 15.24 fps、解码 14.28 fps、呈现 14.28 fps、`packetsLost=0`、`nackCount=0`——**真实相机所走的 Hybrid 链路确实覆盖了 x264 slice-thread 修复**（若该缺陷仍存在，这里应只剩约 60%）。同时记录到一个真实部署约束：转码保持 2960×1666 原始分辨率，单路约 9.2 Mbps。
 
 **English.** Run `2026-09-20T13-03-54-051Z-direct` (commit `2c8c7b0`) covered 1800.2 s of valid observation on the five real cameras through the real product page with pairing, with per-source targets of 20/20/25/15/25 fps taken from each camera's nominal rate. Eight of the nine criteria pass: sources present, targets defined, sampling installed before the action, mode switch, complete observation, duration, no stall beyond 3 s (1058-2377 ms), decoded frame rate at 0.928-0.999 of target, and counter integrity. The only failure is the first-frame budget on one camera: 23945 ms for back_3 against the 20 s budget, with the other four at 10.8-18.7 s. Compared with the pre-fix real-camera run (first frames 31.7-74.4 s, stalls 3.07-6.70 s, three sources below the frame-rate floor), the frame-rate and stall criteria now all pass and the first frame dropped to 10.8-23.9 s because the five activations no longer serialise. A low-contention single-reader measurement of the same cameras (TCP, 20 s windows, read-only) shows three of them at their nominal rate and two - back_3 at 10.05 fps and front_3 at 14.80 fps - clearly below it with missing-reference decode warnings, so the remaining first-frame miss is a source-side cold start rather than control-plane queueing. Measured through the gateway, a MediaMTX direct route returns the same 10.07 fps for back_3, and the real `transcode-on-demand.sh` HEVC-to-H264 hybrid path delivers 14.28 fps decoded over WHEP with no packet loss, which confirms the slice-thread fix covers the path the real cameras use (the defect would have left about 60% of that). The transcoded stream keeps the camera's native 2960x1666 at about 9.2 Mbps per tile, which is a deployment constraint worth recording.
+### 4.3.8 受控五路 1800 秒（判定器修复后首个正式 PASS）/ Controlled five sources, 1800 s: the first formal PASS under the fixed oracle
+
+运行 `tests/artifacts/browser-soak/2026-09-20T13-41-33-419Z-direct`（commit `2c8c7b0` 或其后继），Direct-only 启动，健康合成来源（720p25 H.264，`libx264 -preset ultrafast -g 50 -bf 0`，**不使用** `-tune zerolatency`），逐路目标 25 fps，`cameras.db` 先备份后临时指向合成源：
+
+| 判据 | 结果 | 明细 |
+|---|---|---|
+| 预期来源 / 目标 / 采样先于启动 / 模式切换 | PASS | 五路全部观测到 |
+| 观测完整 / 时长 | PASS | 1800.0 秒有效观测，121 个采样 |
+| 媒体时间推进 | PASS | 1801.70–1801.74 s |
+| 首帧 ≤20 s | PASS | 6302 / 6491 / 6491 / 6560 / 6682 ms |
+| 无 >3 s 非预期停顿 | PASS | 逐路最大间隔 **94–133 ms**，进行中无帧年龄 3–19 ms |
+| **解码帧率 ≥ 目标 90%** | **PASS** | 五路均为 **25.00/25 fps（比值 1.000）** |
+| 呈现流畅度 | PASS | 24.58–24.97 fps |
+| 代次/计数完整性 | PASS | 每路 1 代、0 重置、0 拆卸 |
+
+即：**十二项判据全部通过**，这是判定器修复后的第一个正式 PASS，也是与 4.3.7 真实五路运行可直接对照的“软件链路”上限（25.00 fps 对 25 fps 目标）。与同一受控来源在修复前的 14.0–14.6 fps（0.56–0.58）相比，链路上的帧率缺口已彻底关闭。
+
+**English.** Run `2026-09-20T13-41-33-419Z-direct` (commit `2c8c7b0` or a successor) ran Direct-only against healthy synthetic 720p25 H.264 sources (`libx264 -preset ultrafast -g 50 -bf 0`, no `-tune zerolatency`) at a 25 fps target, with `cameras.db` backed up and temporarily pointed at the fixture. All twelve checks pass: expected sources, valid targets, sampling before the action, mode switch, complete observation, 1800.0 s of valid observation over 121 samples, media time advancing 1801.70-1801.74 s, first frames of 6302-6682 ms, largest completed gaps of 94-133 ms with 3-19 ms in progress at the end, decoded frame rates of exactly 25.00 fps (ratio 1.000) and presented rates of 24.58-24.97 fps, with one player generation and no counter resets per source. This is the first formal PASS under the fixed oracle and the software-link ceiling to compare the real-camera run (4.3.7) against; the same fixture measured 14.0-14.6 fps (0.56-0.58) before the encoder fix.
 ### 4.4 瓶颈归因 / Bottleneck attribution
 
 渲染与编码不是瓶颈：OBS 日志的渲染滞后为 **1/8247（0.0%）**、编码滞后 **59/8247（0.7%）**，`nvidia-smi` GPU 15%、encoder 8%。
