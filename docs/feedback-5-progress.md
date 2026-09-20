@@ -1,31 +1,42 @@
 # 反馈5 持续执行检查点 / Feedback 5 progress checkpoint
 
-更新 / Updated: 2026-09-19（持续执行第 17 轮 / continuous-execution round 17）
+更新 / Updated: 2026-09-20（持续执行第 20 轮 / continuous-execution round 20）
 
 ## 当前代码 / Current code
 
-- 上一提交 `d039840`。本轮只改文档（报告 4.3.5、仍未完成、本检查点），无产品代码改动。
-- 用户数据：`cameras.db`（sha256 `ac028d59…`）、`studio.json`（节目场景 5 路）与场景（`87fcca32…`）均已还原校验；合成源与栈已停止，端口全部关闭。
-- 未跟踪文件保持原样。
+- 上一提交 `3563780`。本轮修复 `gateway/transcode-on-demand.sh`（Direct/Hybrid 帧率缺口的根因）并新增回归测试与速率探针；报告 4.5 节记录了完整证据链。
+- 用户数据未改动：本轮只在自建 MediaMTX（8554/8889/9997）与 `/tmp` 合成源上做隔离实验，未启动开发栈、未触碰 `cameras.db`/`scene.json`/`studio.json`。
+- 未跟踪文件保持原样（`.github/`、`docs/development*.md`、`docs/feedback-5-*.md`、`scripts/dev*.sh`、`web/pnpm-workspace.yaml` 等）。
 
-## 本轮完成：并发上限对照 / Concurrency-ceiling control
+## 本轮完成：Direct/Hybrid 帧率缺口的根因与修复 / Root cause and fix
 
-通过产品自身的 `PUT /api/v1/studio` 把节目场景临时改成只引用 2 路来源（前端以 studio 文档为准，改 scene 文件无效），健康合成源与目标 25 fps 不变：
+**根因**：x264 的 `sliced-threads`（由 `-tune zerolatency` 自动开启）会把一帧切成多个 slice，MediaMTX 在这些流上的 H264 access unit 组装随之只把约 60% 的帧交给 WebRTC 输出。整个 Direct/Hybrid 帧率缺口由此产生，与本项目代码、浏览器、传输都无关。
 
-| 瓦片数 | 每路解码帧率 |
+隔离实验（`web/tests/whep-rate-probe.mjs` 直接对 MediaMTX 发 WHEP，应用不参与）：
+
+| 编码参数 | 浏览器接收 / 解码 / 呈现 fps |
 |---|---|
-| 5 | 14.0–14.6 fps |
-| 2 | **15.2–15.6 fps** |
+| `ultrafast -tune zerolatency` | 15.99 / 15.99 / 15.99 |
+| 同上 + `-x264-params sliced-threads=0` | **24.99 / 24.99 / 24.99** |
+| `ultrafast -x264-params sliced-threads=1` | 14.95 / 14.95 / 14.95 |
+| 离线编码后 `-c copy` 发布 | 25.02 / 24.99 / 24.99 |
 
-瓦片数减到 2/5，每路只从约 14.4 升到约 15.4 fps——**几乎不变**。因此不是单页并发总量上限，而是**每条直连流自身的速率上限（约 15 fps）**。
+已排除的变量：码率（700k 与 2500k 相同）、并发（1 路与 5 路每路约 15 fps）、传输（WSL 内 ICE/UDP 与 Windows Chrome ICE/TCP 相同）、浏览器解码（本地 720p25 = 25.00 fps、1080p30 = 30.13 fps）。
 
-已知边界：服务端对 5 个并发 RTSP 读取者能给满 25 fps；合成模式单条 1080p30 program 流在浏览器能到 30 fps。所以缺口在“每来源 WHEP 直连”这条链路上，下一步需要浏览器播放时读取 MediaMTX 逐 reader 发送统计，区分 MediaMTX WebRTC 输出限速与浏览器接收/解码节奏。
+**修复**：`gateway/transcode-on-demand.sh` 的 libx264 分支保留 `-tune zerolatency`，加 `-x264-params sliced-threads=0`。
+
+**端到端验证**（真实脚本 + 真实 MediaMTX `runOnDemand`，同一条 25 fps 来源）：修复前 17.00 fps、修复后 **24.99 fps**。
+
+**回归测试**：新增 `tests/test-transcoder-encoder.mjs`；`node --test tests/test-transcoder-encoder.mjs tests/test-transcoder-mix.mjs` → **6/6 通过**。
+
+**纠正**：报告 4.3.3/4.3.5 曾把缺口归因于“浏览器侧并发接收能力 / 每条流自身约 15 fps”，该结论已被推翻，并在原处标注修正。
 
 ## 下一条具体动作 / Next concrete steps
 
-1. 浏览器播放时读取 MediaMTX 逐 reader 发送统计（或 `/v3/paths/list` 的 bytesSent 增量），区分 WHEP 直连约 15 fps 的上限来自服务端还是浏览器。
-2. 上游 WHEP 调用不再占用唯一 io_context 线程；`/activate` 仍约 2.57 秒/路串行（来源慢时会放大首帧）。
+1. 让健康合成源不再使用 `-tune zerolatency`（或改为离线 copy/x265），在修复后的代码上重跑 **Direct/Hybrid 30 分钟浏览器验收**，判定 F5-06 帧率门槛。
+2. 上游 WHEP 调用不再占用唯一 io_context 线程；`/activate` 仍约 2.57 秒/路串行。
 3. 在真实相机场景下复测单路故障注入。
+4. 判断 NVENC/VA-API 两条转码分支是否存在同类 slice 行为（本环境未触发）。
 
 ## 六项状态 / Status
 
@@ -35,11 +46,11 @@
 | F5-02 干净画面 | 已实现并自动化验证 | 聚焦套件 22/22 |
 | F5-03 硬件加速 | 渲染 D3D12 已验证；NVENC 吞吐低于 x264，已按实测默认回退 | 报告第 2、4.4.2 节 |
 | F5-04 本地合成 | 原始规格 30 分钟验收通过 | `tests/artifacts/soak/2026-09-19T12-53-07-152Z-composite-1080p-x264-3d281e4/` |
-| F5-05 音频管理 | 批次 A/B/C 已提交并有单测；音频回归三项全绿；视频位移与客户端侧相对偏移均实测通过 | 报告第 5 节、`tests/verify-video-shift.sh`、`web/tests/av-sync-probe.mjs` |
-| F5-06 播放稳定 | 合成模式四项门槛全过；Direct/Hybrid 首帧与帧间隔在健康来源下达标；帧率缺口收敛到“每条直连流约 15 fps”；单路故障注入已完成 | 报告 4.2.1、4.3.1–4.3.5 |
+| F5-05 音频管理 | 批次 A/B/C 已提交并有单测；音频回归三项全绿；视频位移与客户端侧相对偏移均实测通过 | 报告第 5 节 |
+| F5-06 播放稳定 | 合成模式四项门槛全过；**Direct/Hybrid 帧率缺口的根因已定位并修复（4.5 节）**，修复后端到端 24.99 fps，尚待在修复后的代码上重跑 30 分钟 | 报告 4.2.1、4.3.1–4.3.5、4.5 |
 
 ## 环境与阻塞 / Environment and blockers
 
-- 后台作业不跨轮次存活，且从 WSL 调用里 `nohup` 出来的夹具会随该次调用被回收；夹具必须放在持续运行的后台作业里（本轮用 `synth-hold.sh`）。
-- 改 `scene.json` 对前端无效（前端以 studio 文档为准）；studio 的 `PUT` 会因 revision 竞争失败，直接改写 `studio.json` 需先停止栈。
-- 真实相机首帧本身 10–50 秒，是 Direct/Hybrid 首帧门槛的唯一成因。
+- 本轮新增可用工具：`web/tests/whep-rate-probe.mjs`（WHEP 速率探针，`WHEP_PROBE_CHANNEL=chrome` 可切 Windows Chrome）、`web/tests/local-play-probe.mjs`（本地文件播放速率，用于排除浏览器解码能力）。
+- 复现隔离实验的要点：自建 MediaMTX 必须设 `webrtcLocalTCPAddress`（Windows 浏览器 ICE/TCP）与 `webrtcLocalUDPAddress`；`pkill` 必须写在脚本文件里，否则会匹配到调用它的 shell 自身。
+- 报告纠正记录：4.3.3 的“瓶颈在浏览器侧”、4.3.5 的“每条流自身约 15 fps”均已在原处标注为**错误**，正确根因见 4.5 节。

@@ -14,6 +14,7 @@ Historical notes (previous conclusions, disproved hypotheses, the step-by-step i
 | 前端类型检查 | `web\node_modules\.bin\tsc.CMD --noEmit`（工作目录 `web`） | 0 错误 / 0 errors |
 | 前端运行时（真实 Chrome 153） | `playwright test -c <config> --project=chrome -g "monitor-view\|playback-state\|audio-tracks\|wall-controls"` | **22/22 通过** |
 | 转码器与 audio-mix | `node --test tests/test-transcoder-mix.mjs tests/test-transcoder.mjs` | **7/7 通过**（含 ±10000ms 边界、越界拒绝、归一化延迟上报） |
+| 转码器编码参数（本轮新增） | `node --test tests/test-transcoder-encoder.mjs tests/test-transcoder-mix.mjs` | **6/6 通过**（libx264 分支必须显式 `sliced-threads=0`，见第 4.5 节） |
 | 启动器 | `node --test tests/test-dev-launcher.mjs` | **9/9 通过**（含 `-Soak`/`--soak`） |
 | C++ 核心 | `cmake --build <core-local>` + `ctest` | 编译通过，`webobs-unit-tests` 全过（含新增 11 条混音路由等价断言） |
 | OBS Composite 构建 | `python3 scripts/dev-native.py --composite --soak` | `obs-ffmpeg`/`obs-x264`/`obs-webrtc`/`obs-nvenc` 全部产出并通过模块校验 |
@@ -180,7 +181,7 @@ Historical notes (previous conclusions, disproved hypotheses, the step-by-step i
 | 媒体时间推进 | 173.0–174.9 s | 持续出图 | **PASS** |
 | 解码帧率 | 14.01–14.60 fps | ≥ 22.5 fps（目标 90%） | **FAIL（0.56–0.58）** |
 
-**帧率缺口的归因（本轮已分离）**：同一时刻用 5 个并发 RTSP 读取者直接读那 5 条 `direct-*` 路由，各拿到 **501 帧/20 s = 25.05 fps**（即来源全速）。而在浏览器里，5 条 WebRTC 连接的 `framesReceived` 只有约 14.4 fps/路（合计约 72 fps），且 `framesDropped≈0`、`packetsLost=0`、`nackCount=0`、`freezeCount=0`。**因此服务端与传输链可提供满速，瓶颈在浏览器侧同时接收/解码 5 路 720p 的能力**（丢包为零说明是接收端驱动的拥塞控制降速，而非丢帧）。
+**帧率缺口的归因（本轮已分离，结论在第 4.5 节被修正）**：同一时刻用 5 个并发 RTSP 读取者直接读那 5 条 `direct-*` 路由，各拿到 **501 帧/20 s = 25.05 fps**（即来源全速）。而在浏览器里，5 条 WebRTC 连接的 `framesReceived` 只有约 14.4 fps/路（合计约 72 fps），且 `framesDropped≈0`、`packetsLost=0`、`nackCount=0`、`freezeCount=0`。本节当时据此判断“瓶颈在浏览器侧”，**该判断是错的**：第 4.5 节用隔离实验证明，同一个 720p25 流只要用 x264 slice threads 编码，MediaMTX 的 WebRTC 输出就只送出约 60% 的帧；本节的合成相机正是用 `-tune zerolatency`（即开启 slice threads）发布的，因此浏览器拿到的确实是服务端只发出的那些帧，接收端并无丢帧。
 
 结论：Direct/Hybrid 此前的“首帧 31.7–74.4 s、最大帧间隔 3.07–6.70 s”**是来源造成的**（真实相机首帧本身要 10–50 秒）；换成健康来源后这两项均达标。剩下的每路约 14.4 fps（对 25 fps 目标 0.57）属浏览器侧并发接收能力，需要在验收口径上明确：这是无头 Chrome 单页 5 路 720p 的能力上限，还是可通过降低单页并发/提高码率策略改善，尚待进一步实验。
 
@@ -218,8 +219,46 @@ Historical notes (previous conclusions, disproved hypotheses, the step-by-step i
 
 把瓦片数减到 2/5 之后每路只从约 14.4 fps 升到约 15.4 fps——**几乎不变**。所以这不是单页并发总量上限，而是**每条直连流自身的速率上限**（约 15 fps），与瓦片数基本无关。
 
-已知的边界与下一步：服务端侧对 5 个并发 RTSP 读取者能给满 25 fps（4.3.3），而合成模式单条 1080p30 的 program 流在浏览器里能到 30 fps，说明浏览器并非整体只能 15 fps。因此缺口位于**每来源的 WHEP 直连那条链路**上，需要在浏览器播放的同时读取 MediaMTX 的逐 reader 发送统计，以区分是 MediaMTX 的 WebRTC 输出限速还是浏览器侧的接收/解码节奏。
+已知的边界与下一步：服务端侧对 5 个并发 RTSP 读取者能给满 25 fps（4.3.3），而合成模式单条 1080p30 的 program 流在浏览器里能到 30 fps，说明浏览器并非整体只能 15 fps。本节当时把缺口归到“每条直连流自身的速率上限”，**该归因同样被第 4.5 节推翻**：逐 reader 发送统计显示 MediaMTX 的 `outboundFramesDiscarded` 始终为 0，而隔离实验把变量收敛到**编码器的 slice threads**——同一来源、同一 MediaMTX、同一浏览器，只改这一个编码参数就从约 15 fps 变为 25 fps。
 
+### 4.5 Direct/Hybrid 帧率缺口的根因与修复：x264 slice threads × MediaMTX WebRTC 输出 / Root cause and fix: x264 slice threads vs MediaMTX WebRTC output
+
+**结论（先给出）**：不是浏览器、不是网关控制面、不是传输、也不是媒体来源，而是**编码器的一个参数**。x264 的 `sliced-threads`（由 `-tune zerolatency` 自动开启）会把一帧切成多个 slice，MediaMTX 在这些流上的 H264 access unit 组装随之只把**约 60% 的帧**交给 WebRTC 输出。浏览器侧 `packetsLost=0`、`nackCount=0`、`framesDropped≈0`——因为它确实只收到这些帧。去掉 slice threads 后，同一路流立刻恢复满帧率。
+
+**隔离实验**（新增 `web/tests/whep-rate-probe.mjs`：直接对 MediaMTX 发 WHEP 并读取 `framesReceived`/`framesDecoded`/`getVideoPlaybackQuality()`，应用、鉴权与计划激活都不在链路里）。同一台 MediaMTX、同一个 Chromium，只改编码参数：
+
+| 编码参数 | 浏览器接收 / 解码 / 呈现 fps |
+|---|---|
+| `ultrafast -tune zerolatency`（slice threads 开） | **15.99 / 15.99 / 15.99** |
+| `ultrafast -tune zerolatency -x264-params sliced-threads=0` | **24.99 / 24.99 / 24.99** |
+| `ultrafast -x264-params sliced-threads=1`（不开 tune） | **14.95 / 14.95 / 14.95** |
+| `ultrafast`（两者都不设） | **24.99 / 24.99 / 24.99** |
+| 离线编码后 `-c copy` 发布（对照） | **25.02 / 24.99 / 24.99** |
+
+同一轮排除的其它变量：**码率**（700 kbps 与 2500 kbps 结果相同）、**并发**（1 路与 5 路，每路都是约 15 fps）、**传输**（WSL 内 Chromium 走 ICE/UDP 与 Windows Chrome 走 ICE/TCP，结果相同）、**浏览器解码能力**（新增 `web/tests/local-play-probe.mjs`：同一浏览器播放本地文件，720p25 为 25.00 fps、1080p30 为 30.13 fps）。
+
+必须记录的负结果：MediaMTX 自己的 API 在这段时间内始终报告 `outboundFramesDiscarded: 0`，且 MediaMTX 日志里 `grep -i -E 'too slow|discarding'` **没有任何输出**。该计数器只覆盖“读取者太慢导致 ring buffer 丢弃”（`internal/stream/reader.go` 的 `push`），覆盖不到 H264 access unit 组装这一层，**因此不能用它排除服务端**。
+
+**修复**：`gateway/transcode-on-demand.sh` 的 libx264 分支保留 `-tune zerolatency`（低延迟特性仍然需要），显式关闭 slice threads：
+
+```sh
+-c:v libx264 -preset veryfast -tune zerolatency -profile:v high \
+    -x264-params sliced-threads=0 \
+    -pix_fmt yuv420p -bf 0 -sc_threshold 0 -force_key_frames 'expr:gte(t,n_forced*2)'
+```
+
+**端到端验证**（真实脚本 + 真实 MediaMTX `runOnDemand` 接线，与 `control_server.cpp` 注册 `hybrid-*` 的方式一致）：同一条 25 fps 来源（离线编码后 `-c copy` 发布，排除来源自身因素）、同一条 `direct-` 路由，注册两条 `hybrid-` 路由，一条运行已提交的脚本、一条运行把该参数删掉的同一脚本：
+
+| 路由 | 编码器参数 | 浏览器解码 fps |
+|---|---|---|
+| `hybrid-aaa…` | 修复前（删掉 `sliced-threads=0`） | **17.00** |
+| `hybrid-bbb…` | 已提交脚本 | **24.99** |
+
+**回归测试**：新增 `tests/test-transcoder-encoder.mjs`——用会打印 argv 的 ffmpeg 桩断言 libx264 分支必须带 `-x264-params sliced-threads=0`、不得出现 `sliced-threads=1`、同时仍保留 `-tune zerolatency`/`-bf 0`/`-sc_threshold 0`，并断言 `copy` 分支不出现 x264 参数。`node --test tests/test-transcoder-encoder.mjs tests/test-transcoder-mix.mjs` → **6/6 通过**。
+
+同样的问题存在于仓库自带的相机夹具 `tests/rtsp-fixture/publish.sh`（H264 分支同样带 `-tune zerolatency`），已一并加上该参数；`publish-hevc.sh` 用 x265（无 slice-threads 语义），且 HEVC 只能经转码路径进入浏览器，保持原样。**尚未验证**：NVENC（`-tune ll`）与 VA-API 两条转码分支是否有同类行为——本环境默认走 x264，这两条路径没有实际触发。
+
+**English.** The Direct/Hybrid frame-rate gap was neither the browser, nor the control plane, nor the transport, nor the sources: it was one encoder setting. x264's `sliced-threads`, which `-tune zerolatency` enables, splits every frame into several slices, and MediaMTX then hands only about 60% of that stream's frames to its WebRTC output (15.99 fps against 24.99 fps on the very same 720p25 source, with `packetsLost=0` and `nackCount=0` because the browser genuinely receives only those frames). Bitrate (700 kbps vs 2500 kbps), concurrency (1 vs 5 sessions), transport (ICE/UDP inside WSL vs ICE/TCP from Windows) and the browser's own decode capability (25.00 fps for a local 720p25 file, 30.13 fps for 1080p30) were eliminated in the same session. MediaMTX's `outboundFramesDiscarded` counter stayed at 0 and its log never printed a slow-reader warning, because that counter only covers ring-buffer drops for slow readers, not H264 access-unit assembly, so it must not be used to clear the server side. The fix keeps `-tune zerolatency` and adds `-x264-params sliced-threads=0` to the gateway's libx264 branch; end to end, through the real script and the real MediaMTX runOnDemand wiring on one shared 25 fps source, the committed script delivered 24.99 fps where the same script with the flag removed delivered 17.00 fps. `tests/test-transcoder-encoder.mjs` locks the flags in (6/6 passing together with the audio-mix suite). Not yet verified: whether the NVENC (`-tune ll`) and VA-API branches behave the same way; this environment defaults to x264 and neither branch was exercised.
 ### 4.4.1 健康来源对照实验 / Healthy-source control
 
 为区分“产品管线上限”与“本轮来源欠佳”，用 5 路本地 1920×1080@30 的 `media` 源（同一 H.264 文件循环、无网络丢包）临时替换场景来源（副本，测量后已按 `build/scratch/scene.original.json` 还原并校验 sha256 `87fcca32…` 一致），其余配置不变，同一环境各测量 60 秒 program 输出：
@@ -296,7 +335,7 @@ Historical notes (previous conclusions, disproved hypotheses, the step-by-step i
 ## 7. 仍未完成 / Still open
 
 1. **“零来源重启”判据**：合成模式 30 分钟只剩这一项未通过（全场 4 次，camera-mu2ux4qk 与 camera-mu2ux99i 各 2 次），来自两路已知不稳定的真实相机。需要判断这是否应作为来源健康前提下的绝对门槛，或用健康来源复测以确认产品在来源健康时零重启。
-2. **每来源 WHEP 直连的速率上限**：两瓦片对照已排除“单页总量上限”（第 4.3.5 节：5 路 14.0–14.6 fps、2 路 15.2–15.6 fps，几乎不变），缺口在每条直连流本身（约 15 fps）。下一步需要在浏览器播放的同时读取 MediaMTX 的逐 reader 发送统计，区分是 MediaMTX 的 WebRTC 输出限速还是浏览器侧接收/解码节奏。另外服务端 `/activate` 仍以约 2.57 秒/路串行（单 io_context 线程 + 全局路由锁），来源慢时仍会放大首帧。
+2. ~~每来源 WHEP 直连的速率上限~~：**已定位并修复**（第 4.5 节）——根因是 x264 的 `sliced-threads`（`-tune zerolatency` 默认开启）与 MediaMTX WebRTC 输出的组合，修复为 `gateway/transcode-on-demand.sh` 显式 `-x264-params sliced-threads=0`，端到端由 17.00 fps 提升到 24.99 fps。**仍需在修复后的代码上重跑 Direct/Hybrid 30 分钟验收**（并让健康合成源不再使用 `-tune zerolatency`），才能判定 F5-06 的帧率门槛。另有独立项：服务端 `/activate` 仍以约 2.57 秒/路串行（单 io_context 线程 + 全局路由锁），来源慢时仍会放大首帧。
 2. ~~单路断开/恢复的受控故障注入~~：**已完成**（第 4.3.4 节）——其余四路全程不受影响（最大帧间隔 0/0/1626/0 ms），被断开的一路在来源恢复后约 12–13 秒内重新出图。剩余：在真实相机场景下同样复测一次（本轮用健康合成源以隔离变量）。
 3. ~~音视频相对偏移的客户端侧确认~~：**已完成**（第 5 节）——闪光+同步音脉冲素材在 Chrome 内实测，规格 `0:1.0:0:0` 中位 −16 ms、规格 `0:1.0:0:-2000` 中位 **1996 ms**，与 `B` 一致。
 4. **Docker / vGPU** 与跨设备音视频组合（按用户已确认范围留待后续）。
@@ -311,6 +350,11 @@ Historical notes (previous conclusions, disproved hypotheses, the step-by-step i
 web\node_modules\.bin\tsc.CMD --noEmit    # 工作目录 web
 node --test tests/test-dev-launcher.mjs
 node --test tests/test-transcoder-mix.mjs tests/test-transcoder.mjs
+node --test tests/test-transcoder-encoder.mjs tests/test-transcoder-mix.mjs
+
+# WHEP 速率探针（第 4.5 节的隔离实验；需一个 MediaMTX：rtsp 8554 / webrtc 8889）
+# WSL 内 Chromium 走 ICE/UDP；WHEP_PROBE_CHANNEL=chrome 用已安装的 Chrome（ICE/TCP）
+node tests/whep-rate-probe.mjs http://127.0.0.1:8889 path-a,path-b 30
 
 # 长稳采样（Windows 侧，读取 WSL 里的后端）
 $env:WEBOBS_SCENE_FILE='build\scratch\scene.original.json'
@@ -334,6 +378,10 @@ node tests/audio-regression.mjs
 
 本轮把帧率门槛的归因彻底做实：**瓶颈不是来源，也不是浏览器，而是 WSL 下 OBS 的 NVENC**。同一场景、同一来源、同一时刻只切换编码器的 A/B 显示 NVENC 24.5 fps、x264 29.6/29.8 fps；浏览器 `getStats()` 显示两条链路都 `packetsLost=0`、`nackCount=0`，NVENC 链路只收到 24.41 fps、x264 链路收到 30.07 fps（解码 30.03、呈现 28.7）。因此**改用 x264 后，即使面对本轮不稳定的真实相机，合成模式的“≥目标 90%”在服务端与浏览器两侧都已达成**；此前 73.2% 的结果应归因于编码器选择。据此启动器在 D3D12 后端 OpenGL 且用户未显式指定时默认 x264，并打印实测理由（显式 nvenc 仍可强制）。
 
+**本轮的决定性进展：Direct/Hybrid 帧率缺口的根因已找到并修复（第 4.5 节）。** 缺口既不在浏览器、也不在网关控制面或传输，而是 x264 的一个参数：`-tune zerolatency` 会开启 `sliced-threads`，MediaMTX 随后只把约 60% 的帧交给它的 WebRTC 输出。隔离实验（`web/tests/whep-rate-probe.mjs` 直接对 MediaMTX 发 WHEP）里，同一路 720p25 来源开 slice threads 为 15.99 fps、关掉为 24.99 fps；码率（700k/2500k）、并发（1/5 路）、传输（ICE/UDP 与 ICE/TCP）、浏览器解码能力（本地文件 720p25=25.00、1080p30=30.13 fps）都被逐一排除。修复后，用真实 `transcode-on-demand.sh` 与真实 MediaMTX `runOnDemand` 接线、同一条 25 fps 来源做 A/B：修复前 17.00 fps、修复后 **24.99 fps**。因此**此前把 Direct/Hybrid 帧率缺口归因于浏览器侧并发接收能力（4.3.3/4.3.5）是错的**，正确结论是编码器侧的 slice threads；这也意味着 F5-06 的 Direct/Hybrid 帧率门槛需要在修复后的代码上重跑 30 分钟才能定论。
+
+**This round's decisive result: the Direct/Hybrid frame-rate gap is root-caused and fixed (section 4.5).** The gap was neither the browser nor the control plane nor the transport but one x264 parameter: `-tune zerolatency` enables `sliced-threads`, after which MediaMTX hands only about 60% of the frames to its WebRTC output. In the isolated experiment (`web/tests/whep-rate-probe.mjs` speaking WHEP straight to MediaMTX) the same 720p25 source measured 15.99 fps with slice threads and 24.99 fps without them, while bitrate (700k vs 2500k), concurrency (1 vs 5 sessions), transport (ICE/UDP vs ICE/TCP) and the browser's own decode capability (local files: 720p25 = 25.00 fps, 1080p30 = 30.13 fps) were all eliminated. With the fix in place, the real `transcode-on-demand.sh` behind the real MediaMTX runOnDemand wiring delivered **24.99 fps against 17.00 fps** for the same script without the flag on one shared 25 fps source. The earlier attribution of the Direct/Hybrid gap to the browser's concurrent receive capability (sections 4.3.3 and 4.3.5) is therefore wrong; the true cause is the encoder-side slice threads, and the Direct/Hybrid frame-rate criterion now has to be re-run for 30 minutes on the fixed code before it can be judged.
+
 本轮同时定位并修复了两个此前一直阻塞 Direct/Hybrid 验收的产品缺陷：**Direct-only 网关启动即崩溃**（`obs_enum_encoder_types` 在未 `obs_startup` 时被调用）与**未配对被误报为控制面不可达**。修复后 Direct/Hybrid 五路在真实产品页面上连续播放 1787.8 秒（29.8 分钟）且媒体时间全程推进，验收首次真正执行。
 
 F5-01/F5-02 保持既有自动化验证；F5-03 的 OBS 渲染与编码均已在真实运行中启用并取证；F5-04/F5-06 的两种播放模式各 30 分钟验收均已执行，**首帧、帧间隔与帧率三类门槛在真实来源上未全部达标**，逐项测量把瓶颈指向来源侧；F5-05 的批次 A/B/C 代码与单测已完成，端到端音频驱动部分通过。受控故障注入与音频驱动缺陷仍需继续。
@@ -342,4 +390,4 @@ The composite mode has now passed a formal 30-minute acceptance at the original 
 
 This round finally pinned the frame-rate attribution: the limiter is neither the sources nor the browser but OBS NVENC under WSL. An A/B that changed only the encoder on the same scene, sources and moment gave NVENC 24.5 fps against x264 29.6/29.8 fps, while the browser getStats() showed packetsLost=0 and nackCount=0 on both legs: the NVENC leg received 24.41 fps and the x264 leg 30.07 fps (30.03 decoded, 28.7 presented). With x264 the composite acceptance therefore meets the at-least-90-percent threshold on both the server and the browser side even against this round's unstable real cameras, and the earlier 73.2% result is attributable to the encoder choice. The launcher now defaults to x264 when the OpenGL context is D3D12-backed and no encoder was chosen explicitly, printing the measured reason; an explicit nvenc still forces the hardware encoder.
 
-The rendering and encoding side moved from software-only to a real hardware path (0.0% rendering lag, 0.7% encoding lag, NVENC registered and selected), and the original 1920x1080 five-source Composite played for a full 30 minutes inside the real product page with the first-frame and stall thresholds met. The frame-rate threshold is not met, and per-item measurement attributes that to the real camera feeds themselves (7.8-18 fps with HEVC packet loss) rather than to compositing, encoding or transport. This round also located and fixed the two product defects that had been blocking the Direct/Hybrid acceptance all along: the Direct-only gateway crashed on startup (obs_enum_encoder_types called before obs_startup) and an unpaired browser was misreported as an unreachable control plane. With both fixed, the Direct/Hybrid wall played for 1787.8 seconds (29.8 minutes) in the real product page with media time advancing throughout, so that acceptance finally ran. F5-01/F5-02 keep their existing automated verification, F5-03 has OBS rendering and encoding enabled and evidenced in a real run, F5-04/F5-06 have a 30-minute acceptance in each playback mode while the first-frame, stall and frame-rate thresholds are not all met against the real sources (attributed by measurement to the sources), and F5-05 has batches A/B/C implemented with unit tests and a partially passing end-to-end audio driver. Controlled fault injection and the audio-driver defect remain open.
+The rendering and encoding side moved from software-only to a real hardware path (0.0% rendering lag, 0.7% encoding lag, NVENC registered and selected), and the original 1920x1080 five-source Composite played for a full 30 minutes inside the real product page with the first-frame and stall thresholds met. The frame-rate threshold is not met, and per-item measurement attributes that to the real camera feeds themselves (7.8-18 fps with HEVC packet loss) rather than to compositing, encoding or transport. This round also located and fixed the two product defects that had been blocking the Direct/Hybrid acceptance all along: the Direct-only gateway crashed on startup (obs_enum_encoder_types called before obs_startup) and an unpaired browser was misreported as an unreachable control plane. With both fixed, the Direct/Hybrid wall played for 1787.8 seconds (29.8 minutes) in the real product page with media time advancing throughout, so that acceptance finally ran. F5-01/F5-02 keep their existing automated verification, F5-03 has OBS rendering and encoding enabled and evidenced in a real run, F5-04/F5-06 have a 30-minute acceptance in each playback mode while the first-frame, stall and frame-rate thresholds are not all met against the real sources, with the frame-rate gap now root-caused to the encoder rather than to the sources or the browser (section 4.5), and F5-05 has batches A/B/C implemented with unit tests and a partially passing end-to-end audio driver. Controlled fault injection and the audio-driver defect remain open.

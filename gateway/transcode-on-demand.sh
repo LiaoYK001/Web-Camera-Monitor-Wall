@@ -204,7 +204,15 @@ run_ffmpeg() {
         set -- "$@" -vf scale_vaapi=format=nv12 -c:v h264_vaapi -profile:v high -rc_mode CBR \
             -b:v "$bitrate" -maxrate "$bitrate" -bufsize "$bitrate" -bf 0 -g 60
     else
+        # `-tune zerolatency` also turns on x264 slice threads, which makes the
+        # encoder emit several slices per frame.  MediaMTX's H264 access-unit
+        # assembly turns that into a partially delivered stream: measured over
+        # WHEP, a 720p25 source produced with slice threads arrives at ~15 fps
+        # while the very same source without them arrives at 25 fps, with no
+        # packet loss on either side.  Keep the rest of the low-latency tune
+        # (no lookahead, no B-frames) but force frame-level threading.
         set -- "$@" -c:v libx264 -preset veryfast -tune zerolatency -profile:v high \
+            -x264-params sliced-threads=0 \
             -pix_fmt yuv420p -bf 0 -sc_threshold 0 -force_key_frames 'expr:gte(t,n_forced*2)'
     fi
     if [ "$audio_mode" = copy ]; then
