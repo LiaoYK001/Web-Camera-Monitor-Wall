@@ -1,11 +1,12 @@
 # 反馈5 持续执行检查点 / Feedback 5 progress checkpoint
 
-更新 / Updated: 2026-09-20（持续执行第 20 轮 / continuous-execution round 20）
+更新 / Updated: 2026-09-20（持续执行第 21 轮 / continuous-execution round 21）
 
 ## 当前代码 / Current code
 
-- 上一提交 `3563780`。本轮修复 `gateway/transcode-on-demand.sh`（Direct/Hybrid 帧率缺口的根因）并新增回归测试与速率探针；报告 4.5 节记录了完整证据链。
-- 用户数据未改动：本轮只在自建 MediaMTX（8554/8889/9997）与 `/tmp` 合成源上做隔离实验，未启动开发栈、未触碰 `cameras.db`/`scene.json`/`studio.json`。
+- 上一提交 `c416785`：修复 `gateway/transcode-on-demand.sh`（Direct/Hybrid 帧率缺口的根因 x264 slice threads）、新增 `tests/test-transcoder-encoder.mjs` 回归测试与 `web/tests/whep-rate-probe.mjs`、`web/tests/local-play-probe.mjs` 两个诊断工具；报告第 4.5 节记录完整证据链。
+- **本轮完成 Direct/Hybrid 30 分钟正式验收（第 4.3.6 节）**：四项判据全部通过。
+- 用户数据已还原并校验：`cameras.db` sha256 `ac028d59…`、`scene.json` sha256 `87fcca32…`、`studio.json` 节目场景 5 来源 5 项（revision 5）；合成源、开发栈与 Vite 全部停止，端口 8554/9997/8889/8080/8092–8095/5173/8654/9998 全部关闭。
 - 未跟踪文件保持原样（`.github/`、`docs/development*.md`、`docs/feedback-5-*.md`、`scripts/dev*.sh`、`web/pnpm-workspace.yaml` 等）。
 
 ## 本轮完成：Direct/Hybrid 帧率缺口的根因与修复 / Root cause and fix
@@ -31,12 +32,21 @@
 
 **纠正**：报告 4.3.3/4.3.5 曾把缺口归因于“浏览器侧并发接收能力 / 每条流自身约 15 fps”，该结论已被推翻，并在原处标注修正。
 
+## 本轮结果：Direct/Hybrid 30 分钟验收通过 / 30-minute Direct/Hybrid acceptance passes
+
+健康合成来源（720p25 H.264，**不带** `-tune zerolatency`，经自建 MediaMTX 8654 发布），目标 25 fps，真实产品页面 + Chrome 153 + 产品自身配对流程：
+
+- 运行 `2026-09-20T11-01-11-166Z-direct`，**1805.3 秒（30.1 分钟）**，`passed: true`。
+- 每路呈现 **24.63–24.65 fps**（目标 25，比值 **0.985–0.986**）、首帧 **4123–6213 ms**、最大帧间隔 **0 ms**、媒体时间推进 1780 s。
+- 与修复前同类健康来源对照：每路 14.0–14.6 fps（0.56–0.58）→ 24.6 fps（0.985–0.986）。
+- 口径说明：最终样本的 `decodedFrames` 为 0，是最后一次 15 秒采样时页面已在拆卸播放器；整轮 `getVideoPlaybackQuality()` 解码计数与呈现计数同步（1790 s 时解码 44559 / 呈现 44501），原始记录在 `browser-soak-timeline.jsonl`。
+
 ## 下一条具体动作 / Next concrete steps
 
-1. 让健康合成源不再使用 `-tune zerolatency`（或改为离线 copy/x265），在修复后的代码上重跑 **Direct/Hybrid 30 分钟浏览器验收**，判定 F5-06 帧率门槛。
+1. 在真实相机场景下复测单路故障注入（4.3.4 目前用健康合成源完成）。
 2. 上游 WHEP 调用不再占用唯一 io_context 线程；`/activate` 仍约 2.57 秒/路串行。
-3. 在真实相机场景下复测单路故障注入。
-4. 判断 NVENC/VA-API 两条转码分支是否存在同类 slice 行为（本环境未触发）。
+3. 判断 NVENC/VA-API 两条转码分支是否存在同类 slice 行为（本环境未触发）。
+4. 真实相机场景下 Direct/Hybrid 的首帧 31.7–74.4 s 仍由来源决定；如需达标需来源侧改善或放宽该场景口径。
 
 ## 六项状态 / Status
 
@@ -47,7 +57,7 @@
 | F5-03 硬件加速 | 渲染 D3D12 已验证；NVENC 吞吐低于 x264，已按实测默认回退 | 报告第 2、4.4.2 节 |
 | F5-04 本地合成 | 原始规格 30 分钟验收通过 | `tests/artifacts/soak/2026-09-19T12-53-07-152Z-composite-1080p-x264-3d281e4/` |
 | F5-05 音频管理 | 批次 A/B/C 已提交并有单测；音频回归三项全绿；视频位移与客户端侧相对偏移均实测通过 | 报告第 5 节 |
-| F5-06 播放稳定 | 合成模式四项门槛全过；**Direct/Hybrid 帧率缺口的根因已定位并修复（4.5 节）**，修复后端到端 24.99 fps，尚待在修复后的代码上重跑 30 分钟 | 报告 4.2.1、4.3.1–4.3.5、4.5 |
+| F5-06 播放稳定 | **两种模式各 30 分钟验收均通过**：合成模式呈现 29.18 fps（0.973）；Direct/Hybrid（修复后）每路 24.63–24.65 fps（0.985–0.986）、首帧 4.1–6.2 s、最大帧间隔 0 ms | 报告 4.2.1、4.3.6、4.5；`.../2026-09-20T11-01-11-166Z-direct/` |
 
 ## 环境与阻塞 / Environment and blockers
 
