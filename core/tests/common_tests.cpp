@@ -1,3 +1,4 @@
+#include "webobs/audio_tracks.hpp"
 #include "webobs/config.hpp"
 #include "webobs/authentication.hpp"
 #include "webobs/audit_event.hpp"
@@ -318,33 +319,42 @@ void video_encoder_tests()
     expect(selected.selected == webobs::VideoEncoderKind::x264 && !selected.fallback,
            "automatic encoder selection must keep the software baseline without hardware");
 
-    capabilities.vaapi = {true, true, true, true, true, true};
+    // Field order: device, va_driver, library, encoder, encode, decode, probe.
+    capabilities.vaapi = {true, true, false, true, true, true, true};
     selected = webobs::select_video_encoder(webobs::VideoEncoderPreference::automatic,
                                             capabilities);
     expect(selected.selected == webobs::VideoEncoderKind::vaapi && !selected.fallback,
            "automatic encoder selection must use an available VAAPI backend");
 
-    capabilities.qsv = {true, true, true, true, true, true};
+    capabilities.qsv = {true, false, false, true, true, true, true};
     selected = webobs::select_video_encoder(webobs::VideoEncoderPreference::automatic,
                                             capabilities);
     expect(selected.selected == webobs::VideoEncoderKind::qsv,
            "automatic encoder selection must prefer QSV over generic VAAPI");
 
-    capabilities.nvenc = {true, true, true, true, true, true};
+    // WSL/classic NVIDIA: no VA-API driver at all, but device + library + sample pass.
+    capabilities.nvenc = {true, false, true, true, true, true, true};
     selected = webobs::select_video_encoder(webobs::VideoEncoderPreference::automatic,
                                             capabilities);
     expect(selected.selected == webobs::VideoEncoderKind::nvenc,
            "automatic encoder selection must prefer NVENC when it is ready");
+    expect(webobs::video_encoder_backend_ready(webobs::VideoEncoderKind::nvenc, capabilities.nvenc),
+           "NVENC readiness must not depend on the VA-API driver field");
 
-    capabilities.nvenc = {true, true, false, true, true, true};
+    capabilities.nvenc = {true, false, true, false, true, true, true};
     selected = webobs::select_video_encoder(webobs::VideoEncoderPreference::nvenc,
                                             capabilities);
     expect(selected.selected == webobs::VideoEncoderKind::x264 && selected.fallback,
            "an explicitly requested unavailable backend must fall back to x264");
-    expect(!webobs::video_encoder_backend_ready(capabilities.nvenc),
+    expect(!webobs::video_encoder_backend_ready(webobs::VideoEncoderKind::nvenc, capabilities.nvenc),
            "a hardware device without its encoder module must not be reported ready");
 
-    capabilities.vaapi = {true, false, true, true, true, false};
+    // Device present but libcuda not loadable: fail closed even though the node exists.
+    capabilities.nvenc = {true, false, false, true, true, true, true};
+    expect(!webobs::video_encoder_backend_ready(webobs::VideoEncoderKind::nvenc, capabilities.nvenc),
+           "NVENC without a loadable CUDA library must not be reported ready");
+
+    capabilities.vaapi = {true, false, false, true, true, true, false};
     selected = webobs::select_video_encoder(webobs::VideoEncoderPreference::vaapi,
                                             capabilities);
     expect(selected.selected == webobs::VideoEncoderKind::x264 && selected.fallback &&
@@ -705,10 +715,10 @@ void scene_document_tests()
     expect(!webobs::parse_scene_json(unsupported_field).ok(), "unknown scene fields must be rejected");
 
     std::string future_schema = compact.json;
-    const std::string schema_five = "\"schemaVersion\":5";
-    const std::size_t schema_position = future_schema.find(schema_five);
+    const std::string schema_current = "\"schemaVersion\":6";
+    const std::size_t schema_position = future_schema.find(schema_current);
     if (schema_position != std::string::npos)
-        future_schema.replace(schema_position, schema_five.size(), "\"schemaVersion\":6");
+        future_schema.replace(schema_position, schema_current.size(), "\"schemaVersion\":7");
     expect(schema_position != std::string::npos && !webobs::parse_scene_json(future_schema).ok(),
            "future scene schema versions must be rejected");
 
@@ -798,7 +808,7 @@ void scene_store_tests()
     if (!compact.ok())
         return;
     std::string legacy_json = compact.json;
-    const std::string current_version = "\"schemaVersion\":5";
+    const std::string current_version = "\"schemaVersion\":6";
     const std::size_t version_position = legacy_json.find(current_version);
     const std::string revision = "\"revision\":7,";
     const std::size_t revision_position = legacy_json.find(revision);
@@ -818,20 +828,20 @@ void scene_store_tests()
     }
     const auto version_two_migration = webobs::migrate_scene_json(version_two_json);
     expect(version_two_migration.ok() && version_two_migration.migrated &&
-               version_two_migration.document->schema_version == 5 &&
+               version_two_migration.document->schema_version == 6 &&
                version_two_migration.document->sources.front().sync_offset_ms == 0 &&
                version_two_migration.document->sources.front().monitoring == "off" &&
                version_two_migration.document->sources.front().audio_track == 1,
-            "schemaVersion 2 must migrate to schemaVersion 5 with safe defaults");
+            "schemaVersion 2 must migrate to schemaVersion 6 with safe defaults");
 
     std::string version_one_json = version_two_json;
     version_one_json.replace(version_one_json.find("\"schemaVersion\":2"), current_version.size(),
                              "\"schemaVersion\":1");
     const auto version_one_migration = webobs::migrate_scene_json(version_one_json);
     expect(version_one_migration.ok() && version_one_migration.migrated &&
-               version_one_migration.document->schema_version == 5 &&
+               version_one_migration.document->schema_version == 6 &&
                version_one_migration.document->revision == document.revision,
-            "schemaVersion 1 must migrate to schemaVersion 5 without changing revision");
+            "schemaVersion 1 must migrate to schemaVersion 6 without changing revision");
 
     legacy_json = version_two_json;
     legacy_json.replace(legacy_json.find("\"schemaVersion\":2"), current_version.size(),
@@ -847,7 +857,7 @@ void scene_store_tests()
     expect(write_test_file(legacy_path, legacy_json, 0644), "legacy scene fixture must be written");
     const auto migrated_file = webobs::load_scene_file(legacy_path);
     expect(migrated_file.ok() && migrated_file.status == webobs::SceneFileStatus::migrated &&
-                migrated_file.document && migrated_file.document->schema_version == 5 &&
+                migrated_file.document && migrated_file.document->schema_version == 6 &&
                migrated_file.document->revision == 0,
            "legacy scene file must migrate and load");
     expect(file_mode(legacy_path) == 0600, "loaded legacy scene permissions must be tightened to 0600");
@@ -861,7 +871,7 @@ void scene_store_tests()
            "migrated scene must be atomically rewritten as current JSON");
 
     std::string future_json = compact.json;
-    future_json.replace(future_json.find(current_version), current_version.size(), "\"schemaVersion\":6");
+    future_json.replace(future_json.find(current_version), current_version.size(), "\"schemaVersion\":7");
     const std::filesystem::path future_path = scene_path.parent_path() / "future.json";
     expect(write_test_file(future_path, future_json, 0600), "future scene fixture must be written");
     const auto future = webobs::load_scene_file(future_path);
@@ -1183,6 +1193,217 @@ void studio_document_tests()
 
 } // namespace
 
+void audio_track_tests()
+{
+    // Real ffprobe shape for a camera with two audio tracks: the array position is
+    // the 0:a:<index> the per-track route extracts, "index" stays absolute.
+    const std::string probed = R"({
+  "streams": [
+    {"index": 1, "codec_name": "aac", "codec_type": "audio", "channels": 1,
+     "channel_layout": "mono", "sample_rate": "16000", "tags": {"language": "eng"}},
+    {"index": 3, "codec_name": "opus", "codec_type": "audio", "channels": 2,
+     "channel_layout": "stereo", "sample_rate": "48000", "tags": {"title": "talkdown"}}
+  ]
+})";
+    const auto tracks = webobs::parse_audio_tracks(probed);
+    expect(tracks.size() == 2, "a two-track probe must report two audio tracks");
+    if (tracks.size() == 2) {
+        expect(tracks[0].index == 0 && tracks[0].stream_index == 1,
+               "the first audio track must use the 0:a:0 relative index and keep the absolute index");
+        expect(tracks[0].codec == "aac" && tracks[0].channels == 1 &&
+                   tracks[0].channel_layout == "mono" && tracks[0].sample_rate == 16000 &&
+                   tracks[0].language == "eng" && !tracks[0].browser_compatible,
+               "an AAC mono track must be described and marked as needing a transcode");
+        expect(tracks[1].index == 1 && tracks[1].stream_index == 3 && tracks[1].title == "talkdown" &&
+                   tracks[1].browser_compatible,
+               "a second Opus track must keep its own index and be browser playable");
+    }
+
+    // A confirmed audio-free source is an empty list, not an error or a fake track.
+    expect(webobs::parse_audio_tracks(R"({"streams": []})").empty(),
+           "an empty stream list must report no audio tracks");
+    expect(webobs::parse_audio_tracks(R"({"streams": [{"index": 0, "codec_type": "video"}]})").empty(),
+           "a video-only stream list must not invent an audio track");
+    expect(webobs::parse_audio_tracks("").empty() && webobs::parse_audio_tracks("not json").empty(),
+           "empty or malformed probe output must not invent audio tracks");
+    expect(webobs::parse_audio_tracks(std::string(2 * 1024 * 1024, 'x')).empty(),
+           "oversized probe output must be rejected instead of parsed");
+
+    // One audio-only path per source+track, with the track recoverable from the path.
+    const std::string token(32, 'a');
+    const std::string path = webobs::audio_track_path_name(token, 2);
+    expect(path == "audio-" + token + "-t2",
+           "an audio-only path must encode the token and the track index");
+    expect(webobs::valid_audio_track_path(path) && webobs::audio_track_index_from_path(path) == 2,
+           "the track index must round-trip through the audio-only path");
+    expect(webobs::audio_track_path_name(token, -1).empty() &&
+               webobs::audio_track_path_name(token, 32).empty(),
+           "track indices outside 0..31 must not produce a path");
+    expect(webobs::audio_track_path_name("A" + token.substr(1), 0).empty() &&
+               webobs::audio_track_path_name("short", 0).empty(),
+           "a non-lowercase-hex or short token must not produce a path");
+    expect(!webobs::valid_audio_track_path("audio-" + token + "-t32") &&
+               !webobs::valid_audio_track_path("audio-" + token + "-x1") &&
+               !webobs::valid_audio_track_path("direct-" + token),
+           "only generated audio-only paths may be accepted");
+
+    // Route arguments reuse the on-demand transcoder and never mix source paths.
+    const std::string direct = "direct-" + token;
+    const std::string arguments = webobs::audio_track_route_arguments(direct, path, 2);
+    expect(arguments == direct + " " + path + " audio-track 2",
+           "the audio-only route arguments must reuse the direct source path");
+    expect(webobs::audio_track_route_arguments(direct, path, 1).empty() &&
+               webobs::audio_track_route_arguments(direct, path, 0).empty(),
+           "a path/track mismatch must be rejected");
+    expect(webobs::audio_track_route_arguments("hybrid-" + token, path, 2).empty() &&
+               webobs::audio_track_route_arguments("", path, 2).empty(),
+           "only a direct- source path may feed an audio-only route");
+
+    expect(webobs::audio_track_browser_compatible("opus") &&
+               webobs::audio_track_browser_compatible("pcm_alaw") &&
+               webobs::audio_track_browser_compatible("pcm_mulaw"),
+           "Opus and G.711 pass through WebRTC without transcoding");
+    expect(!webobs::audio_track_browser_compatible("aac") &&
+               !webobs::audio_track_browser_compatible("") &&
+               !webobs::audio_track_browser_compatible("g726"),
+           "AAC and unknown codecs must not be advertised as browser playable");
+}
+
+void scene_audio_inputs_tests()
+{
+    // Schema 5 keeps a single audioTrack; reading it must migrate to audioInputs.
+    const std::string legacy =
+        R"({"schemaVersion":5,"revision":3,"id":"main","name":"Wall","canvas":{"width":640,"height":360,"backgroundColor":"#000000"},"sources":[{"id":"cam","kind":"rtsp","name":"Cam","rtspUrl":"rtsp://camera/live","transport":"tcp","muted":false,"volume":0.5,"syncOffsetMs":0,"monitoring":"off","audioTrack":2}],"items":[{"id":"item","sourceId":"cam","x":0,"y":0,"width":640,"height":360,"scaleMode":"contain","crop":{"top":0,"right":0,"bottom":0,"left":0},"zIndex":0,"visible":true}]})";
+    const auto migrated = webobs::parse_scene_json(legacy);
+    expect(migrated.ok() && migrated.document, "a schemaVersion 5 scene must still parse");
+    if (migrated.document) {
+        const webobs::SceneSource &source = migrated.document->sources.front();
+        expect(migrated.document->schema_version == webobs::current_scene_schema_version,
+               "parsing a legacy scene must yield the current schema version");
+        const auto resolved = webobs::resolved_audio_inputs(source);
+        expect(!source.audio_inputs_explicit && source.audio_inputs.empty(),
+               "a legacy scene without audioInputs must not look like an explicit empty selection");
+        expect(resolved.size() == 1 && resolved.front().track == 1 && resolved.front().gain == 1.0 &&
+                   !resolved.front().muted && source.audio_track == 2,
+               "audioTrack 2 keeps its output bus while the first input track plays at full gain");
+    }
+
+    // Schema 6 carries per-track gains/mutes and keeps audioTrack consistent.
+    const std::string current =
+        R"({"schemaVersion":6,"revision":4,"id":"main","name":"Wall","canvas":{"width":640,"height":360,"backgroundColor":"#000000"},"sources":[{"id":"cam","kind":"camera","name":"Cam","cameraId":"camera-1","profileId":"main","hardwareDecode":"auto","muted":false,"volume":1,"syncOffsetMs":0,"monitoring":"off","audioTrack":1,"audioInputs":[{"track":0,"gain":0.5,"muted":false},{"track":3,"gain":1,"muted":true}]}],"items":[{"id":"item","sourceId":"cam","x":0,"y":0,"width":640,"height":360,"scaleMode":"contain","crop":{"top":0,"right":0,"bottom":0,"left":0},"zIndex":0,"visible":true}]})";
+    const std::string inputs_field =
+        "[{\"track\":0,\"gain\":0.5,\"muted\":false},{\"track\":3,\"gain\":1,\"muted\":true}]";
+    const auto parsed = webobs::parse_scene_json(current);
+    expect(parsed.ok() && parsed.document, "a schemaVersion 6 scene with audioInputs must parse");
+    if (parsed.document) {
+        const webobs::SceneSource &source = parsed.document->sources.front();
+        expect(source.audio_inputs.size() == 2 && source.audio_inputs[1].track == 3 &&
+                   source.audio_inputs[1].muted && source.audio_inputs[0].gain == 0.5,
+               "audioInputs must keep per-track gain and mute");
+        expect(source.audio_track == 1, "audioTrack must mirror the first input track for older readers");
+        const auto serialized =
+            webobs::serialize_scene_json(*parsed.document, webobs::SceneJsonView::persistence, false);
+        // Serialization sorts keys, so match on the value pair, not field order.
+        expect(serialized.ok() && serialized.json.find("\"audioInputs\":[{\"gain\":0.5") != std::string::npos &&
+                   serialized.json.find("\"track\":3") != std::string::npos,
+               "audioInputs must be serialized so a per-track selection survives a save");
+        const auto round_trip = webobs::parse_scene_json(serialized.json);
+        expect(round_trip.ok() && round_trip.document && *round_trip.document == *parsed.document,
+               "schemaVersion 6 documents with audioInputs must round-trip");
+    }
+
+    // An explicitly empty list means "this source adds no audio", not "migrate".
+    std::string silent = current;
+    const std::size_t inputs_position = silent.find("\"audioInputs\":[");
+    if (inputs_position != std::string::npos) {
+        const std::size_t inputs_end = silent.find(']', inputs_position);
+        if (inputs_end != std::string::npos)
+            silent.replace(inputs_position, inputs_end - inputs_position + 1, "\"audioInputs\":[]");
+    }
+    const auto silent_parsed = webobs::parse_scene_json(silent);
+    expect(silent_parsed.ok() && silent_parsed.document &&
+               silent_parsed.document->sources.front().audio_inputs.empty(),
+           "an explicitly empty audioInputs list must stay empty");
+
+    // Rejections: out-of-range track/gain, duplicates, unknown fields and overflow.
+    const auto reject = [&](const std::string &replacement, std::string_view message) {
+        std::string candidate = current;
+        const std::size_t position = candidate.find(inputs_field);
+        if (position == std::string::npos) {
+            expect(false, "audioInputs fixture must be present");
+            return;
+        }
+        candidate.replace(position, inputs_field.size(), replacement);
+        expect(!webobs::parse_scene_json(candidate).ok(), message);
+    };
+    reject(R"([{"track":32,"gain":1,"muted":false}])", "an audioInputs track above 31 must be rejected");
+    reject(R"([{"track":0,"gain":1.5,"muted":false}])", "an audioInputs gain above 1 must be rejected");
+    reject(R"([{"track":2,"gain":1,"muted":false},{"track":2,"gain":1,"muted":false}])",
+           "duplicate audioInputs tracks must be rejected");
+    reject(R"([{"track":0,"gain":1,"muted":false,"extra":1}])",
+           "unsupported audioInputs fields must be rejected");
+    reject(R"([{"track":0,"gain":1,"muted":false},{"track":1,"gain":1,"muted":false},{"track":2,"gain":1,"muted":false},{"track":3,"gain":1,"muted":false},{"track":4,"gain":1,"muted":false},{"track":5,"gain":1,"muted":false},{"track":6,"gain":1,"muted":false},{"track":7,"gain":1,"muted":false},{"track":8,"gain":1,"muted":false}])",
+           "more than eight audioInputs must be rejected");
+
+    // The engine consumes explicit inputs, or the legacy audioTrack when absent.
+    webobs::SceneSource legacy_source;
+    legacy_source.audio_track = 3;
+    auto resolved = webobs::resolved_audio_inputs(legacy_source);
+    expect(resolved.size() == 1 && resolved.front().track == 2 && resolved.front().gain == 1.0 &&
+               !resolved.front().muted,
+           "a source without audioInputs must resolve to the legacy audioTrack input");
+    webobs::SceneSource explicit_source;
+    explicit_source.audio_track = 1;
+    explicit_source.audio_inputs = {{0, 0.25, false}, {2, 1.0, true}};
+    explicit_source.audio_inputs_explicit = true;
+    resolved = webobs::resolved_audio_inputs(explicit_source);
+    expect(resolved.size() == 2 && resolved[0].gain == 0.25 && resolved[1].track == 2 &&
+               resolved[1].muted,
+           "explicit audioInputs must win over the legacy audioTrack field");
+
+    // Batch B: a re-published document may keep the live source *and* its
+    // existing gateway mix route exactly when the effective routing is equal.
+    expect(webobs::audio_routing_matches(explicit_source, explicit_source),
+           "an unchanged explicit selection must reuse the running source and mix route");
+    webobs::SceneSource layout_only = explicit_source;
+    layout_only.name = "Renamed";
+    layout_only.audio_track = 4;
+    layout_only.volume = 0.2;
+    layout_only.muted = true;
+    expect(webobs::audio_routing_matches(explicit_source, layout_only),
+           "a rename, the output bus or master volume/mute must not force an audio rebuild");
+    webobs::SceneSource gain_changed = explicit_source;
+    gain_changed.audio_inputs[0].gain = 0.5;
+    expect(!webobs::audio_routing_matches(explicit_source, gain_changed),
+           "a per-track gain change must prepare a new gateway mix");
+    webobs::SceneSource offset_changed = explicit_source;
+    offset_changed.audio_inputs[1].sync_offset_ms = -500;
+    expect(!webobs::audio_routing_matches(explicit_source, offset_changed),
+           "a per-track sync offset change must prepare a new gateway mix");
+    webobs::SceneSource reordered = explicit_source;
+    reordered.audio_inputs = {explicit_source.audio_inputs[1], explicit_source.audio_inputs[0]};
+    expect(!webobs::audio_routing_matches(explicit_source, reordered),
+           "a reordered selection must prepare a new gateway mix");
+    webobs::SceneSource fewer = explicit_source;
+    fewer.audio_inputs.pop_back();
+    expect(!webobs::audio_routing_matches(explicit_source, fewer),
+           "dropping a track must prepare a new gateway mix");
+    webobs::SceneSource cleared = explicit_source;
+    cleared.audio_inputs.clear();
+    expect(!webobs::audio_routing_matches(explicit_source, cleared),
+           "clearing every track must prepare a silent route instead of reusing the mix");
+    expect(webobs::audio_routing_matches(cleared, cleared),
+           "an explicit empty selection stays stable across repeated saves");
+    webobs::SceneSource legacy_other;
+    legacy_other.audio_track = 1;
+    expect(!webobs::audio_routing_matches(cleared, legacy_other),
+           "an explicit empty selection must never equal a legacy selection");
+    expect(!webobs::audio_routing_matches(legacy_source, legacy_other),
+           "legacy sources selecting different input tracks must not reuse one route");
+    expect(webobs::audio_routing_matches(legacy_source, legacy_source),
+           "identical legacy sources must reuse the live connection");
+}
+
 int main()
 {
     config_tests();
@@ -1196,6 +1417,8 @@ int main()
     scene_mutation_tests();
     studio_document_tests();
     video_encoder_tests();
+    audio_track_tests();
+    scene_audio_inputs_tests();
     if (failures == 0) {
         std::cout << "All webobs unit tests passed\n";
         return 0;

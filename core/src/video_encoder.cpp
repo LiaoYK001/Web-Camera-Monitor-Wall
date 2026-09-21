@@ -34,10 +34,24 @@ std::string_view video_encoder_kind_name(VideoEncoderKind kind)
     return "unknown";
 }
 
-bool video_encoder_backend_ready(const VideoEncoderBackend &backend)
+bool video_encoder_backend_ready(VideoEncoderKind kind, const VideoEncoderBackend &backend)
 {
-    return backend.device_present && backend.va_driver_loaded && backend.encoder_available &&
-           backend.encode_supported && backend.runtime_probe_passed;
+    switch (kind) {
+    case VideoEncoderKind::x264:
+        return backend.encoder_available;
+    case VideoEncoderKind::vaapi:
+        return backend.device_present && backend.va_driver_loaded && backend.encoder_available &&
+               backend.encode_supported && backend.runtime_probe_passed;
+    case VideoEncoderKind::qsv:
+        return backend.device_present && backend.encoder_available && backend.runtime_probe_passed;
+    case VideoEncoderKind::nvenc:
+        // NVIDIA never exposes a VA-API driver; it needs a device node
+        // (/dev/nvidia* or WSL /dev/dxg), a loadable CUDA/NVENC library and a
+        // passing NVENC sample.
+        return backend.device_present && backend.library_loaded && backend.encoder_available &&
+               backend.encode_supported && backend.runtime_probe_passed;
+    }
+    return false;
 }
 
 VideoEncoderCapabilities select_video_encoder(VideoEncoderPreference preference,
@@ -50,7 +64,7 @@ VideoEncoderCapabilities select_video_encoder(VideoEncoderPreference preference,
 
     const auto select_if_ready = [&capabilities](VideoEncoderKind kind,
                                                  const VideoEncoderBackend &backend) {
-        if (!video_encoder_backend_ready(backend))
+        if (!video_encoder_backend_ready(kind, backend))
             return false;
         capabilities.selected = kind;
         return true;

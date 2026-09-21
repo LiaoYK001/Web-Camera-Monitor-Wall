@@ -303,6 +303,12 @@ void update_source_runtime_status(RuntimeStatus &status, const SourceHealthSnaps
 
 bool encoder_registered(std::initializer_list<std::string_view> identifiers)
 {
+    // obs_enum_encoder_types dereferences libobs' encoder registry, which only
+    // exists after obs_startup.  The gateway Direct-only path deliberately skips
+    // obs_startup and module loading, so asking here used to segfault the whole
+    // process before the control plane could even listen.
+    if (!obs_initialized())
+        return false;
     const char *identifier = nullptr;
     for (std::size_t index = 0; obs_enum_encoder_types(index, &identifier); ++index) {
         if (!identifier)
@@ -359,16 +365,39 @@ VideoEncoderCapabilities detect_video_encoder_capabilities(const Config &config,
     capabilities.qsv.decode_supported = capabilities.qsv.device_present;
     capabilities.qsv.runtime_probe_passed = capabilities.qsv.device_present;
 
-    capabilities.nvenc.device_present = access("/dev/nvidia0", R_OK | W_OK) == 0 &&
-                                          access("/dev/nvidiactl", R_OK | W_OK) == 0;
-    capabilities.nvenc.encoder_available =
-        modules_loaded &&
-        encoder_registered({"obs_nvenc_h264_soft", "obs_nvenc_h264_tex", "obs_nvenc_h264_cuda",
+    // NVIDIA: classic Linux exposes /dev/nvidia0 + /dev/nvidiactl; WSL exposes
+    // the /dev/dxg paravirtual device.  Either satisfies "device present"; the
+    // library load and the actual encode sample are reported separately and
+    // come from the runtime probe (scripts/hardware-probe.py).
+    const bool nvidia_device_nodes =
+        (access("/dev/nvidia0", R_OK | W_OK) == 0 && access("/dev/nvidiactl", R_OK | W_OK) == 0) ||
+        access("/dev/dxg", R_OK | W_OK) == 0;
+    capabilities.nvenc.va_driver_loaded = false; // NVENC is never a VA-API backend.
+    capabilities.nvenc.device_present =
+        environment_true("WEBOBS_NVIDIA_DEVICE_PRESENT", nvidia_device_nodes);
+    capabilities.nvenc.library_loaded =
+        environment_true("WEBOBS_NVIDIA_LIBRARY_LOADED", false);
+    // Creating an OBS encoder needs an encoder plugin registered inside *this*
+    // OBS build.  The external FFmpeg/NVENC probe is reported separately through
+    // encode_supported/runtime_probe_passed and must never fake OBS support.
+    const bool obs_nvenc_registered = modules_loaded &&
+        encoder_registered({"obs_nvenc_h264_tex", "obs_nvenc_h264_cuda", "obs_nvenc_h264_soft",
                             "ffmpeg_nvenc"});
-    capabilities.nvenc.va_driver_loaded = capabilities.nvenc.device_present;
-    capabilities.nvenc.encode_supported = capabilities.nvenc.encoder_available;
-    capabilities.nvenc.decode_supported = capabilities.nvenc.device_present;
-    capabilities.nvenc.runtime_probe_passed = capabilities.nvenc.device_present;
+    capabilities.nvenc.encoder_available = modules_loaded
+                                               ? obs_nvenc_registered
+                                               : environment_true("WEBOBS_NVIDIA_ENCODER_REGISTERED", false);
+    if (modules_loaded && !obs_nvenc_registered &&
+        environment_true("WEBOBS_NVIDIA_ENCODER_REGISTERED", false))
+        blog(LOG_WARNING,
+             "The runtime NVENC probe passed but this OBS build registers no NVENC encoder; "
+             "OBS compositing stays on x264 while the gateway keeps its NVENC transcode path");
+    capabilities.nvenc.encode_supported =
+        environment_true("WEBOBS_NVIDIA_H264_ENCODE", false) ||
+        environment_true("WEBOBS_NVIDIA_ENCODE_SUPPORTED", false);
+    capabilities.nvenc.decode_supported =
+        environment_true("WEBOBS_NVIDIA_DECODE_SUPPORTED", false);
+    capabilities.nvenc.runtime_probe_passed =
+        environment_true("WEBOBS_NVIDIA_SAMPLE_PASSED", false);
     return select_video_encoder(config.video_encoder, capabilities);
 }
 
@@ -389,17 +418,30 @@ HardwareDecodeCapabilities select_hardware_decode(const Config &config,
 {
     HardwareDecodeCapabilities result;
     result.requested = std::string(hardware_decode_preference_name(config.hardware_decode));
-    const bool ready = capabilities.vaapi.device_present && capabilities.vaapi.va_driver_loaded &&
-                       capabilities.vaapi.decode_supported && capabilities.vaapi.runtime_probe_passed;
-    if (config.hardware_decode == HardwareDecodePreference::off)
-        return result;
-    if (ready) {
-        result.selected = "vaapi";
+    const bool cuda_ready = capabilities.nvenc.device_present && capabilities.nvenc.library_loaded &&
+                            capabilities.nvenc.decode_supported && capabilities.nvenc.runtime_probe_passed;
+    const bool vaapi_ready = capabilities.vaapi.device_present && capabilities.vaapi.va_driver_loaded &&
+                             capabilities.vaapi.decode_supported && capabilities.vaapi.runtime_probe_passed;
+    if (config.hardware_decode == HardwareDecodePreference::off) {
+        result.backend = "software";
         return result;
     }
+    if (vaapi_ready) {
+        // OBS RTSP sources decode through VA-API inside the engine.
+        result.selected = "vaapi";
+        result.backend = "vaapi";
+        return result;
+    }
+    if (cuda_ready) {
+        // CUDA decode is consumed by the gateway/hybrid transcoder, not by the
+        // OBS source decode path, so `selected` intentionally stays off.
+        result.backend = "cuda";
+        return result;
+    }
+    result.backend = "software";
     if (config.hardware_decode == HardwareDecodePreference::on) {
         result.fallback = true;
-        result.fallback_reason = "vaapi_decode_runtime_not_ready";
+        result.fallback_reason = "hardware_decode_runtime_not_ready";
     }
     return result;
 }
@@ -414,6 +456,11 @@ const char *video_encoder_identifier(VideoEncoderKind kind)
     case VideoEncoderKind::qsv:
         return "obs_qsv11_soft_v2";
     case VideoEncoderKind::nvenc:
+        // Never assume one plugin name: pick the NVENC encoder OBS registered.
+        for (const char *candidate : {"obs_nvenc_h264_tex", "obs_nvenc_h264_cuda", "obs_nvenc_h264_soft",
+                                      "ffmpeg_nvenc"})
+            if (encoder_registered({candidate}))
+                return candidate;
         return "obs_nvenc_h264_soft";
     }
     return "obs_x264";
@@ -432,6 +479,12 @@ DataPtr video_encoder_settings(const Config &config, VideoEncoderKind kind)
         obs_data_set_string(settings.get(), "vaapi_device", config.vaapi_device.c_str());
         obs_data_set_int(settings.get(), "profile", 100);
         obs_data_set_int(settings.get(), "bf", 0);
+    } else if (kind == VideoEncoderKind::nvenc) {
+        // Low-latency NVENC: fastest preset, no B-frames, short keyframe interval.
+        obs_data_set_string(settings.get(), "preset", "p1");
+        obs_data_set_string(settings.get(), "tune", "ll");
+        obs_data_set_int(settings.get(), "bf", 0);
+        obs_data_set_int(settings.get(), "keyint_sec", 2);
     }
     return settings;
 }
@@ -540,7 +593,12 @@ ExitCode run_obs_engine(const Config &config, const SceneDocument &document)
         return ExitCode::success;
     }
 
-    const std::filesystem::path config_directory = "/config/obs";
+    // Docker uses /config; native development can point this at a writable path.
+    const std::filesystem::path config_directory = [] {
+        if (const char *value = std::getenv("WEBOBS_OBS_CONFIG_DIR"); value && *value)
+            return std::filesystem::path(value);
+        return std::filesystem::path("/config/obs");
+    }();
     std::filesystem::create_directories(config_directory, path_error);
     if (path_error) {
         blog(LOG_ERROR, "Could not create OBS config directory: %s", path_error.message().c_str());
@@ -583,12 +641,36 @@ ExitCode run_obs_engine(const Config &config, const SceneDocument &document)
     }
 
     const std::filesystem::path obs_prefix = WEBOBS_OBS_PREFIX;
+    // Base modules are mandatory.  Source-type modules are only required when the
+    // scene actually uses that source type, so a pure camera scene never depends
+    // on CEF/obs-browser or the text/image plugins, and an unsupported source
+    // type is reported explicitly instead of silently degrading.
     if (!load_module(obs_prefix, "obs-ffmpeg") || !load_module(obs_prefix, "obs-x264") ||
-        !load_module(obs_prefix, "obs-browser") || !load_module(obs_prefix, "image-source") ||
-        !load_module(obs_prefix, "text-freetype2") || !load_module(obs_prefix, "obs-filters") ||
-        !load_module(obs_prefix, "obs-transitions") ||
         (config.webrtc_enabled && !load_module(obs_prefix, "obs-webrtc")))
         return ExitCode::obs_initialization_failed;
+    const auto has_source_kind = [&document](std::string_view kind) {
+        return std::any_of(document.sources.begin(), document.sources.end(),
+                           [kind](const SceneSource &source) { return source.kind == kind; });
+    };
+    const auto require_module = [&obs_prefix](const char *module, const char *source_kind) {
+        if (load_module(obs_prefix, module))
+            return true;
+        blog(LOG_ERROR, "Source type '%s' needs the OBS module '%s', which this build does not provide",
+             source_kind, module);
+        return false;
+    };
+    if ((has_source_kind("browser") && !require_module("obs-browser", "browser")) ||
+        (has_source_kind("image") && !require_module("image-source", "image")) ||
+        (has_source_kind("text") && !require_module("text-freetype2", "text")))
+        return ExitCode::obs_initialization_failed;
+    // Filters and transitions are additive: their absence only degrades those
+    // optional features and must never block composition.
+    load_module(obs_prefix, "obs-filters");
+    load_module(obs_prefix, "obs-transitions");
+    // NVENC is additive as well.  A build that ships the plugin registers the
+    // hardware encoder here; without it the reported capability stays
+    // nvenc(encoder=false) and compositing keeps using x264.
+    load_module(obs_prefix, "obs-nvenc");
     obs_post_load_modules();
 
     VideoEncoderCapabilities encoder_capabilities = detect_video_encoder_capabilities(config);
@@ -602,7 +684,7 @@ ExitCode run_obs_engine(const Config &config, const SceneDocument &document)
     blog(LOG_INFO,
          "Video encoder capabilities: requested=%s selected=%s fallback=%s "
          "vaapi(device=%s,driver=%s,encode=%s,decode=%s,probe=%s,encoder=%s) qsv(device=%s,encoder=%s) "
-         "nvenc(device=%s,encoder=%s)",
+         "nvenc(device=%s,library=%s,encoder=%s,encode=%s,sample=%s)",
          video_encoder_preference_name(encoder_capabilities.requested).data(),
          video_encoder_kind_name(encoder_capabilities.selected).data(),
          encoder_capabilities.fallback ? "true" : "false",
@@ -615,7 +697,10 @@ ExitCode run_obs_engine(const Config &config, const SceneDocument &document)
          encoder_capabilities.qsv.device_present ? "true" : "false",
          encoder_capabilities.qsv.encoder_available ? "true" : "false",
          encoder_capabilities.nvenc.device_present ? "true" : "false",
-         encoder_capabilities.nvenc.encoder_available ? "true" : "false");
+         encoder_capabilities.nvenc.library_loaded ? "true" : "false",
+         encoder_capabilities.nvenc.encoder_available ? "true" : "false",
+         encoder_capabilities.nvenc.encode_supported ? "true" : "false",
+         encoder_capabilities.nvenc.runtime_probe_passed ? "true" : "false");
 
     ObsSceneRuntime scene_runtime(config.connect_timeout_seconds, config.browser_security,
                                   config.source_stale_seconds,
@@ -669,11 +754,24 @@ ExitCode run_obs_engine(const Config &config, const SceneDocument &document)
     }
 
     DataPtr video_settings = video_encoder_settings(config, encoder_capabilities.selected);
+    std::string video_encoder_id = video_encoder_identifier(encoder_capabilities.selected);
+    if (encoder_capabilities.selected != VideoEncoderKind::x264 &&
+        !encoder_registered({video_encoder_id})) {
+        // Never hand OBS an encoder id this build did not register: the output
+        // would fail to start and take the whole program publish down with it.
+        blog(LOG_WARNING,
+             "Selected %s encoder '%s' is not registered in this OBS build; using the x264 software encoder",
+             video_encoder_kind_name(encoder_capabilities.selected).data(), video_encoder_id.c_str());
+        encoder_capabilities.selected = VideoEncoderKind::x264;
+        encoder_capabilities.fallback = true;
+        encoder_capabilities.fallback_reason = "obs_encoder_not_registered";
+        video_settings = video_encoder_settings(config, encoder_capabilities.selected);
+        video_encoder_id = video_encoder_identifier(encoder_capabilities.selected);
+    }
     const std::string encoder_name =
         std::string("WebOBS ") + std::string(video_encoder_kind_name(encoder_capabilities.selected));
     EncoderPtr video_encoder(obs_video_encoder_create(
-        video_encoder_identifier(encoder_capabilities.selected), encoder_name.c_str(),
-        video_settings.get(), nullptr));
+        video_encoder_id.c_str(), encoder_name.c_str(), video_settings.get(), nullptr));
     if (!video_encoder && encoder_capabilities.selected != VideoEncoderKind::x264) {
         blog(LOG_WARNING, "Could not initialize the selected %s encoder; falling back to x264",
              video_encoder_kind_name(encoder_capabilities.selected).data());

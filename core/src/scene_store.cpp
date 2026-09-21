@@ -329,7 +329,7 @@ SceneMigrationResult migrate_scene_json(std::string_view input)
         result.document = std::move(parsed.document);
         return result;
     }
-    if (version > 4)
+    if (version > current_scene_schema_version)
         return migration_failure("scene schemaVersion is unsupported");
     if (version == 0 && json_object_get(root.get(), "revision") != nullptr)
         return migration_failure("schemaVersion 0 scene must not contain revision");

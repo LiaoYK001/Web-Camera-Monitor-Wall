@@ -1,0 +1,21 @@
+{
+  "schemaVersion": 1,
+  "python": "3.12",
+  "platform": "manylinux_2_28_x86_64",
+  "artifacts": [
+    {
+      "name": "numpy",
+      "version": "2.2.4",
+      "url": "https://files.pythonhosted.org/packages/02/e2/e2cbb8d634151aab9528ef7b8bab52ee4ab10e076509285602c2a3a686e0/numpy-2.2.4-cp312-cp312-manylinux_2_17_x86_64.manylinux2014_x86_64.whl",
+      "sha256": "4f92084defa704deadd4e0a5ab1dc52d8ac9e8a8ef617f3fbb853e79b0ea3592",
+      "license": "BSD-3-Clause"
+    },
+    {
+      "name": "onnxruntime",
+      "version": "1.29.0",
+      "url": "https://files.pythonhosted.org/packages/96/eb/e6968f5e41aac3125f2ff5708855f09cb0b70d85ed3115b625b0b58305ba/onnxruntime-1.29.0-cp312-cp312-manylinux_2_28_x86_64.whl",
+      "sha256": "2b80d8c7ec2cc7438e4da3760b88c24568cba72c9ace96d668800a6c79419acb",
+      "license": "MIT"
+    }
+  ]
+}

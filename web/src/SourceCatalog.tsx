@@ -2,9 +2,10 @@ import { useEffect, useMemo, useState } from 'react';
 import CameraRegistry from './CameraRegistry';
 import DirectPreview from './DirectPreview';
 import {
-  batchSourceCatalog, fetchSourceCatalog, patchSourceCatalogItem, probeSourceProfile,
+  batchSourceCatalog, fetchLegacySourceImport, fetchSourceCatalog, importLegacySources, patchSourceCatalogItem, probeSourceProfile,
 } from './api';
 import type { SceneDocument, SourceCatalogItem, SourceCatalogProfile, TransportMode } from './types';
+import type { LegacySourceImportItem } from './api';
 
 interface PreviewTopology {
   sourceId: string; topology: string; executionOwner: string; mediaTransport: string;
@@ -101,6 +102,9 @@ export default function SourceCatalog() {
   const [previewTopology, setPreviewTopology] = useState<PreviewTopology | null>(null);
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(true);
+  const [legacyItems, setLegacyItems] = useState<LegacySourceImportItem[]>([]);
+  const [legacyRevision, setLegacyRevision] = useState(0);
+  const [legacyBusy, setLegacyBusy] = useState(false);
   const reload = () => {
     setLoading(true);
     void fetchSourceCatalog({ q: query, adapter, enabled: enabled === '' ? undefined : enabled === 'true', limit: 256, sort: 'name' })
@@ -109,6 +113,16 @@ export default function SourceCatalog() {
       .finally(() => setLoading(false));
   };
   useEffect(reload, [adapter, enabled, query]);
+  const inspectLegacy = () => {
+    setLegacyBusy(true);
+    void fetchLegacySourceImport().then((value) => { setLegacyItems(value.items); setLegacyRevision(value.baseRevision); setError(''); }).catch((reason: unknown) => setError(reason instanceof Error ? reason.message : '旧来源检查失败')).finally(() => setLegacyBusy(false));
+  };
+  const importReadyLegacy = () => {
+    const ids = legacyItems.filter((item) => item.state === 'ready_to_import').map((item) => item.sourceId);
+    if (!ids.length) return;
+    setLegacyBusy(true);
+    void importLegacySources(ids, legacyRevision).then(() => { inspectLegacy(); reload(); }).catch((reason: unknown) => setError(reason instanceof Error ? reason.message : '旧来源导入失败')).finally(() => setLegacyBusy(false));
+  };
   useEffect(() => {
     const changed = (event: Event) => {
       const detail = (event as CustomEvent<PreviewTopology>).detail;
@@ -133,7 +147,8 @@ export default function SourceCatalog() {
   if (showLegacyRegistry) return <CameraRegistry onBack={() => { setShowLegacyRegistry(false); reload(); }} />;
   return <section className="source-catalog page-panel">
     <header className="page-heading"><div><span className="eyebrow">Camera → Profile → Track</span><h1>设备与来源</h1><p>共 {total} 台；地址仅显示脱敏值，凭据由 Secret 引用保管。</p></div>
-      <button className="primary-button" type="button" onClick={() => setShowLegacyRegistry(true)}>添加 / ONVIF 发现</button></header>
+      <div><button className="primary-button" type="button" onClick={() => setShowLegacyRegistry(true)}>添加 / ONVIF 发现</button><button type="button" disabled={legacyBusy} onClick={inspectLegacy}>检查旧 Studio 来源</button></div></header>
+    {legacyItems.length > 0 && <div className="legacy-import-panel" role="status"><strong>旧 Studio 来源</strong><span>已关联 {legacyItems.filter((item) => item.state === 'linked').length}</span><span>可导入 {legacyItems.filter((item) => item.state === 'ready_to_import').length}</span><span>需配置 {legacyItems.filter((item) => item.state === 'needs_configuration').length}</span><button type="button" disabled={legacyBusy || !legacyItems.some((item) => item.state === 'ready_to_import')} onClick={importReadyLegacy}>导入可安全关联项</button></div>}
     <div className="catalog-toolbar">
       <input aria-label="搜索设备" placeholder="搜索名称、标签或分组" value={query} onChange={(event) => setQuery(event.target.value.slice(0, 128))} />
       <select aria-label="协议筛选" value={adapter} onChange={(event) => setAdapter(event.target.value)}><option value="">全部协议</option>{['onvif','rtsp','whep','hls','mjpeg','snapshot','http-flv','srt','rtp','v4l2'].map((value) => <option key={value}>{value}</option>)}</select>

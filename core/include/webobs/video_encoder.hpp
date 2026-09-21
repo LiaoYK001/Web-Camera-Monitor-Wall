@@ -22,7 +22,10 @@ enum class VideoEncoderKind {
 
 struct VideoEncoderBackend {
     bool device_present = false;
+    /** VA-API user-space driver.  NVENC and QSV never depend on this field. */
     bool va_driver_loaded = false;
+    /** CUDA/NVENC runtime library is loadable (libcuda / libnvidia-encode). */
+    bool library_loaded = false;
     bool encoder_available = false;
     bool encode_supported = false;
     bool decode_supported = false;
@@ -51,13 +54,16 @@ struct RendererCapabilities {
 struct HardwareDecodeCapabilities {
     std::string requested = "auto";
     std::string selected = "off";
+    /** "cuda", "vaapi" or "software"; the backend actually selected at runtime. */
+    std::string backend = "software";
     bool fallback = false;
     std::string fallback_reason;
 };
 
 [[nodiscard]] std::string_view video_encoder_preference_name(VideoEncoderPreference preference);
 [[nodiscard]] std::string_view video_encoder_kind_name(VideoEncoderKind kind);
-[[nodiscard]] bool video_encoder_backend_ready(const VideoEncoderBackend &backend);
+/** Readiness is per encoder kind: NVENC is not a VA-API backend. */
+[[nodiscard]] bool video_encoder_backend_ready(VideoEncoderKind kind, const VideoEncoderBackend &backend);
 [[nodiscard]] VideoEncoderCapabilities select_video_encoder(VideoEncoderPreference preference,
                                                              VideoEncoderCapabilities capabilities);
 

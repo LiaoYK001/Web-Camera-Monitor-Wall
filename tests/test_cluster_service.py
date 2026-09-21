@@ -4,7 +4,9 @@
 from __future__ import annotations
 
 import hashlib
+import base64
 import datetime as dt
+import http.server
 import importlib.machinery
 import importlib.util
 import json
@@ -12,6 +14,9 @@ import pathlib
 import sqlite3
 import sys
 import tempfile
+import threading
+import time
+from unittest import mock
 import unittest
 
 
@@ -74,7 +79,25 @@ class ClusterTests(unittest.TestCase):
         self.camera_registry = self.root / "cameras.sqlite3"
         camera_database = sqlite3.connect(self.camera_registry)
         camera_database.execute("CREATE TABLE cameras(id TEXT PRIMARY KEY,group_id TEXT NOT NULL)")
-        camera_database.execute("INSERT INTO cameras VALUES('camera-grouped','group-1')")
+        camera_database.executemany("INSERT INTO cameras VALUES(?,?)", [
+            ("camera-grouped", "group-1"), ("camera-1", ""),
+        ])
+        camera_database.execute("CREATE TABLE stream_profiles(id TEXT NOT NULL,camera_id TEXT NOT NULL,PRIMARY KEY(camera_id,id))")
+        camera_database.executemany("INSERT INTO stream_profiles VALUES(?,?)", [
+            ("main", "camera-1"), ("profile-1", "camera-1"), ("sub", "camera-1"),
+            ("main", "camera-grouped"),
+        ])
+        camera_database.execute("""CREATE TABLE analytics_policies(
+            camera_id TEXT NOT NULL, profile_id TEXT NOT NULL,
+            person_enabled INTEGER NOT NULL DEFAULT 0,
+            person_execution_preference TEXT NOT NULL DEFAULT 'auto',
+            person_allow_server_fallback INTEGER NOT NULL DEFAULT 0,
+            PRIMARY KEY(camera_id, profile_id))""")
+        camera_database.execute(
+            "INSERT INTO analytics_policies(camera_id,profile_id,person_enabled,person_execution_preference,"
+            "person_allow_server_fallback) VALUES(?,?,?,?,?)",
+            ("camera-1", "sub", 1, "worker", 0),
+        )
         camera_database.commit()
         camera_database.close()
         self.store = cluster.ClusterStore(self.root / "cluster.sqlite3",
@@ -92,8 +115,8 @@ class ClusterTests(unittest.TestCase):
             "scopes": [{"kind": "camera", "id": "camera-1"}],
         })
 
-    def enroll(self, name: str = "Recorder A") -> tuple[str, str, str]:
-        created = self.store.create_enrollment({"name": name, "role": "recorder"})
+    def enroll(self, name: str = "Recorder A", role: str = "recorder") -> tuple[str, str, str]:
+        created = self.store.create_enrollment({"name": name, "role": role})
         csr = "-----BEGIN CERTIFICATE REQUEST-----\nfixture\n-----END CERTIFICATE REQUEST-----"
         submitted = self.store.submit_enrollment({"id": created["id"], "token": created["token"], "csr": csr})
         self.assertEqual(submitted["state"], "submitted")
@@ -122,9 +145,9 @@ class ClusterTests(unittest.TestCase):
             "admin": cluster.PERMISSIONS,
             "operator": frozenset({"live.view", "scene.read", "playback.view",
                                     "snapshot.create", "ptz.control", "talk.control",
-                                    "event.ack", "recording.lock"}),
-            "viewer": frozenset({"live.view", "scene.read", "playback.view"}),
-            "auditor": frozenset({"event.ack", "audit.view", "playback.view"}),
+                                    "event.ack", "recording.lock", "analytics.view", "analytics.run"}),
+            "viewer": frozenset({"live.view", "scene.read", "playback.view", "analytics.view", "analytics.run"}),
+            "auditor": frozenset({"event.ack", "audit.view", "playback.view", "analytics.view"}),
             "exporter": frozenset({"playback.view", "export.create"}),
         }
         self.assertEqual(cluster.ROLE_PERMISSIONS, expected)
@@ -455,6 +478,151 @@ class ClusterTests(unittest.TestCase):
                 "state": "completed", "resultCode": "unexpected-detail",
             })
 
+    def test_detector_job_is_worker_only_and_fenced_without_recording_assignment(self) -> None:
+        worker, _, _ = self.enroll("Person detector", role="worker")
+        self.store.heartbeat(worker, heartbeat(1000), timestamp=1000)
+        job = self.store.create_analytics_job({
+            "cameraId": "camera-1", "profileId": "sub", "kind": "person",
+            "modelId": cluster.ANALYTICS_MODEL_ID, "modelSha256": cluster.ANALYTICS_MODEL_SHA256,
+        }, timestamp=1000)
+        self.assertEqual(job["nodeId"], worker)
+        self.assertEqual(job["state"], "queued")
+        self.assertEqual(self.store.assignments_for(worker)["assignments"], [])
+        claimed = self.store.claim_analytics_job(worker, timestamp=1001)["job"]
+        self.assertEqual(claimed["jobId"], job["jobId"])
+        renewed = self.store.renew_analytics_job(worker, {
+            "jobId": job["jobId"], "generation": job["generation"],
+        }, timestamp=1010)
+        self.assertEqual(renewed["generation"], job["generation"])
+        result = self.store.report_analytics_job_result(worker, {
+            "jobId": job["jobId"], "generation": job["generation"],
+            "state": "completed", "resultCode": "", "modelSha256": cluster.ANALYTICS_MODEL_SHA256, "signals": [{
+                "kind": "person", "confidence": .91,
+                "boxes": [{"x": .1, "y": .2, "width": .3, "height": .4}],
+                "occurredAt": 1_011_000,
+            }],
+        }, timestamp=1011)
+        self.assertEqual(result["acceptedSignals"], 1)
+        listed = self.store.list_analytics_jobs()["jobs"][0]
+        self.assertEqual(listed["state"], "completed")
+        self.assertEqual(self.store.capacity()["nodes"][0]["scheduledReservations"]["taskCount"], 0)
+        with self.assertRaisesRegex(cluster.ApiError, "stale"):
+            self.store.renew_analytics_job(worker, {"jobId": job["jobId"], "generation": 1}, timestamp=1012)
+
+    def test_detector_job_rejects_model_digest_mismatch(self) -> None:
+        worker, _, _ = self.enroll("Digest detector", role="worker")
+        self.store.heartbeat(worker, heartbeat(1000), timestamp=1000)
+        job = self.store.create_analytics_job({
+            "cameraId": "camera-1", "profileId": "sub", "kind": "person",
+            "modelId": cluster.ANALYTICS_MODEL_ID, "modelSha256": cluster.ANALYTICS_MODEL_SHA256,
+        }, timestamp=1000)
+        self.store.claim_analytics_job(worker, timestamp=1001)
+        with self.assertRaisesRegex(cluster.ApiError, "digest"):
+            self.store.report_analytics_job_result(worker, {
+                "jobId": job["jobId"], "generation": job["generation"],
+                "state": "completed", "resultCode": "", "modelSha256": "d" * 64,
+                "signals": [{"kind": "person", "confidence": .8, "boxes": []}],
+            }, timestamp=1001)
+
+    def test_detector_job_rejects_non_worker_or_unapproved_model(self) -> None:
+        recorder, _, _ = self.enroll("Recorder only", role="recorder")
+        self.store.heartbeat(recorder, heartbeat(1000), timestamp=1000)
+        with self.assertRaisesRegex(cluster.ApiError, "model"):
+            self.store.create_analytics_job({
+                "cameraId": "camera-1", "profileId": "sub", "kind": "person",
+                "modelId": "../../unsafe", "modelSha256": cluster.ANALYTICS_MODEL_SHA256,
+                "nodeId": recorder,
+            }, timestamp=1000)
+        with self.assertRaisesRegex(cluster.ApiError, "node"):
+            self.store.create_analytics_job({
+                "cameraId": "camera-1", "profileId": "sub", "kind": "person",
+                "modelId": cluster.ANALYTICS_MODEL_ID, "modelSha256": cluster.ANALYTICS_MODEL_SHA256,
+                "nodeId": recorder,
+            }, timestamp=1000)
+
+    def test_detector_job_requires_explicit_registry_worker_opt_in(self) -> None:
+        worker, _, _ = self.enroll("Policy-gated detector", role="worker")
+        self.store.heartbeat(worker, heartbeat(1000), timestamp=1000)
+        database = sqlite3.connect(self.camera_registry)
+        try:
+            database.execute(
+                "UPDATE analytics_policies SET person_enabled=0, person_execution_preference='auto', "
+                "person_allow_server_fallback=0 WHERE camera_id=? AND profile_id=?",
+                ("camera-1", "sub"),
+            )
+            database.commit()
+        finally:
+            database.close()
+        with self.assertRaisesRegex(cluster.ApiError, "not authorized"):
+            self.store.create_analytics_job({
+                "cameraId": "camera-1", "profileId": "sub", "kind": "person",
+                "modelId": cluster.ANALYTICS_MODEL_ID, "modelSha256": cluster.ANALYTICS_MODEL_SHA256,
+            }, timestamp=1000)
+
+        database = sqlite3.connect(self.camera_registry)
+        try:
+            database.execute(
+                "UPDATE analytics_policies SET person_enabled=1, person_execution_preference='auto', "
+                "person_allow_server_fallback=1 WHERE camera_id=? AND profile_id=?",
+                ("camera-1", "sub"),
+            )
+            database.commit()
+        finally:
+            database.close()
+        job = self.store.create_analytics_job({
+            "cameraId": "camera-1", "profileId": "sub", "kind": "person",
+            "modelId": cluster.ANALYTICS_MODEL_ID, "modelSha256": cluster.ANALYTICS_MODEL_SHA256,
+        }, timestamp=1001)
+        self.assertEqual(job["state"], "queued")
+
+    def test_detector_claim_mints_bounded_media_grant_and_reads_loopback_frame(self) -> None:
+        worker, _, _ = self.enroll("Frame worker", role="worker")
+        current = int(time.time())
+        self.store.heartbeat(worker, heartbeat(current), timestamp=current)
+        job = self.store.create_analytics_job({
+            "cameraId": "camera-1", "profileId": "sub", "kind": "person",
+            "modelId": cluster.ANALYTICS_MODEL_ID, "modelSha256": cluster.ANALYTICS_MODEL_SHA256,
+        }, timestamp=current)
+        frame = {"width": 2, "height": 2,
+                 "rgbaBase64": base64.b64encode(bytes(range(16))).decode("ascii"),
+                 "capturedAt": current * 1000}
+
+        class FrameHandler(http.server.BaseHTTPRequestHandler):
+            def do_GET(self) -> None:  # noqa: N802
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json")
+                body = json.dumps(frame, separators=(",", ":")).encode("ascii")
+                self.send_header("Content-Length", str(len(body)))
+                self.end_headers()
+                self.wfile.write(body)
+
+            def log_message(self, *_args: object) -> None:
+                return
+
+        server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), FrameHandler)
+        thread = threading.Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+        try:
+            with mock.patch.dict(__import__("os").environ, {
+                "WEBOBS_ANALYTICS_MEDIA_ENDPOINT": f"http://127.0.0.1:{server.server_port}/frame",
+            }, clear=False):
+                claimed = self.store.claim_analytics_job(worker, timestamp=current + 1)["job"]
+                grant = claimed["mediaGrant"]
+                self.assertEqual(grant["maxRequests"], 60)
+                packet = self.store.consume_analytics_media_frame(worker, job["jobId"], grant["token"])
+                self.assertEqual(packet["width"], 2)
+                self.assertEqual(packet["remainingRequests"], 59)
+                with self.assertRaisesRegex(cluster.ApiError, "rejected"):
+                    self.store.consume_analytics_media_frame("0" * 32, job["jobId"], grant["token"])
+                self.store.report_analytics_job_result(worker, {
+                    "jobId": job["jobId"], "generation": job["generation"], "state": "completed",
+                    "resultCode": "", "modelSha256": cluster.ANALYTICS_MODEL_SHA256, "signals": [],
+                }, timestamp=current + 2)
+                with self.assertRaisesRegex(cluster.ApiError, "rejected"):
+                    self.store.consume_analytics_media_frame(worker, job["jobId"], grant["token"])
+        finally:
+            server.shutdown()
+            server.server_close()
     def test_scheduler_is_stable_capacity_aware_and_never_silently_uses_cpu(self) -> None:
         first, _, _ = self.enroll("Recorder A")
         second, _, _ = self.enroll("Recorder B")

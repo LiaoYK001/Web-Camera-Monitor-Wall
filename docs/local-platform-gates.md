@@ -26,13 +26,43 @@ The full command creates `build/private-gates/windows.json` only after all requi
 
 完整命令只会在所有 Chrome/Edge 协议、离线/升级与资源释放必测项通过后生成 `build/private-gates/windows.json`。长时间负载测试属于可选资格证据，不进入 v2.2 发布契约。
 
-For the active `v2-M7 / v2.3` development line, run the additional synthetic administration gate from Windows. It creates `windows-m7-admin.json` only after both installed browsers pass RBAC scope, cluster UI, S3 playback integrity, session revocation and offline-shell checks. No self-hosted runner is used.
+For the active `v3-M1 / v3.0` and `v3-M2 / v3.1` development lines, run the corresponding private analytics gates from the local Windows host and WSL2 distribution. The gates create revision-bound receipts only after browser protocol, zero-server-media, model integrity and Worker resource checks have actually completed. No self-hosted runner is used by these local commands.
 
-当前 `v2-M7 / v2.3` 开发线还需在 Windows 执行额外的合成运维门禁。只有本机 Chrome 与 Edge 均通过 RBAC scope、集群 UI、S3 回放完整性、Session 撤销和离线应用壳检查后，才会生成 `windows-m7-admin.json`；该流程不使用 self-hosted Runner。
+当前 `v3-M1 / v3.0` 与 `v3-M2 / v3.1` 开发线需要在本机 Windows 与 WSL2 分别执行分析门禁。只有协议、零服务端媒体、模型完整性和 Worker 资源释放等检查真实完成后，才会生成绑定当前 revision 的收据；该流程不使用 self-hosted Runner。
+
+The repository does not fabricate v3 receipts. Use the private gate harness kept
+outside the checkout together with the public adapter below. The private command
+must perform the actual browser/media checks and write only this bounded result
+to `WEBOBS_PRIVATE_GATE_RESULT`:
+
+```json
+{"contract":"webobs-v3-m1-gate-v1","milestone":"v3-M1","platform":"windows","checks":{"windowsMotionScene":true}}
+```
+
+The adapter validates the exact check set, binds a redacted receipt to the current
+revision, and discards the raw private result/log:
 
 ```powershell
-.\tests\m7\run-windows-admin-gate.ps1 -Image webobs:m7-candidate -Browser both
+$env:WEBOBS_PRIVATE_V3_GATE_COMMAND = 'D:\webobs-private-gates\run-v3-gate.cmd'
+.\scripts\test-web-runtime-windows.ps1 -V3Milestone v3-M1 -PrivateV3GateCommand $env:WEBOBS_PRIVATE_V3_GATE_COMMAND
+.\scripts\test-web-runtime-windows.ps1 -V3Milestone v3-M2 -PrivateV3GateCommand $env:WEBOBS_PRIVATE_V3_GATE_COMMAND
 ```
+
+```bash
+export WEBOBS_PRIVATE_V3_GATE_COMMAND=/opt/webobs-gates/run-v3-gate.sh
+./scripts/test-web-runtime-wsl2.sh --v3-milestone v3-M1 --private-v3-gate-command "$WEBOBS_PRIVATE_V3_GATE_COMMAND"
+./scripts/test-web-runtime-wsl2.sh --v3-milestone v3-M2 --private-v3-gate-command "$WEBOBS_PRIVATE_V3_GATE_COMMAND"
+```
+
+The M2 model and historical-regression checks may run on either trusted local
+host, using `--platform model` and `--platform regression`. The adapter emits
+`build/private-gates/v3-m1-*.json` or `v3-m2-*.json`; the release verifiers then
+require every exact receipt for the target version. Missing, stale, partial or
+differently revisioned receipts fail closed. Keep the private command, browser
+profiles, credentials, endpoints, recordings and raw results outside the
+checkout.
+
+仓库不会伪造 v3 收据。请把真实浏览器/媒体夹具放在检出目录之外，并通过上面的公开适配器运行。私有命令必须执行实际检查，只向 `WEBOBS_PRIVATE_GATE_RESULT` 写入有界结果；适配器会校验精确检查集合、绑定当前 Git revision，并丢弃原始日志与结果。`model` 和 `regression` 收据可在任一可信本机执行。凭据、端点、浏览器 Profile、录像及原始证据始终留在仓库之外。
 
 ## WSL2 Linux / WSL2 Linux
 
@@ -55,16 +85,30 @@ The full command creates `build/private-gates/linux-wsl2-chromium.json` only aft
 
 ## Local OCI publication / 本地 OCI 发布
 
-After both receipts exist for the clean current revision and are less than 48 hours old:
+Stable v3.1 publication requires both platform receipts for the clean current revision and they must be less than 48 hours old:
 
-当两份收据均对应当前干净提交且生成时间不超过 48 小时后：
+正式 v3.1 发布要求两份收据均对应当前干净提交且生成时间不超过 48 小时：
 
 ```powershell
 python scripts\verify-local-gate-receipts.py
 .\scripts\release-image-local.ps1 `
-  -Image ghcr.io/owner/web-camera-monitor-wall -Version v2.0
+  -Image ghcr.io/owner/web-camera-monitor-wall -Version v3.1
 ```
 
-Both release scripts check the clean tree, public audit and both receipts before Buildx can push. They do not read or publish the private fixture output. `release-image-local.sh` remains available on Linux hosts that provide a native Docker/Buildx engine.
+For the v3.0.1 user-test preview, receipts are intentionally not required, but the
+preview flag is mandatory and the command must run from a `dev` HEAD that exactly
+matches `origin/dev`:
 
-两个发布脚本都会在 Buildx 推送前检查干净工作树、公开审计和两份收据；它们不会读取或发布私有夹具原始输出。具备原生 Docker/Buildx 的 Linux 主机仍可使用 `release-image-local.sh`。
+```powershell
+.\scripts\release-image-local.ps1 `
+  -Image ghcr.io/owner/web-camera-monitor-wall -Version v3.0.1 -Prerelease
+```
+
+The preview creates a GitHub `pre-release`, promotes only `v3.0.1` and `sha-*`, and
+never changes `latest`. Both release scripts still check the clean tree and public
+audit; they do not read or publish private fixture output. `release-image-local.sh`
+remains available on Linux hosts that provide a native Docker/Buildx engine.
+
+正式版发布脚本会在 Buildx 推送前检查干净工作树、公开审计和两份收据；预览
+脚本只跳过私有收据并保留同样的公开审计边界。脚本不会读取或发布私有夹具原始
+输出。具备原生 Docker/Buildx 的 Linux 主机仍可使用 `release-image-local.sh`。

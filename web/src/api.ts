@@ -1,4 +1,4 @@
-import type { AnalyticsPolicy, ApiErrorEnvelope, ArchiveTarget, AudioMeterSnapshot, BackupJob, CameraDetection, CameraRecord, ClientCameraGrant, ClientEnrollment, ClusterNode, ClusterRecordingTimeline, ClusterRole, ClusterUser, DeviceOperation, EnrolledClient, EventRule, ExternalProvider, MonitorEvent, MotionZone, NvrExport, NvrStatus, NvrTimeline, OnvifEvent, OnvifPreset, OperationalIssue, PlaybackCapabilities, ProcessDiagnostics, RecordingPlacement, ResourceCapacity, RuntimeSettings, SceneDocument, SceneEvent, SourceCatalogItem, SourceCatalogPage, StorageVolume, StudioCapabilities, StudioDocument, SystemCapabilities } from './types';
+import type { AnalyticsJob, AnalyticsPolicy, AnalyticsRuntimePlan, AnalyticsStatus, ApiErrorEnvelope, ArchiveTarget, AudioMeterSnapshot, BackupJob, CameraDetection, CameraRecord, ClientCameraGrant, ClientEnrollment, ClusterNode, ClusterRecordingTimeline, ClusterRole, ClusterUser, DeviceOperation, EnrolledClient, EventRule, ExternalProvider, MonitorEvent, MotionZone, NvrExport, NvrStatus, NvrTimeline, OnvifEvent, OnvifPreset, OperationalIssue, PlaybackCapabilities, ProcessDiagnostics, RecordingPlacement, ResourceCapacity, RuntimeSettings, SceneDocument, SceneEvent, SourceCatalogItem, SourceCatalogPage, StorageVolume, StudioCapabilities, StudioDocument, SystemCapabilities } from './types';
 
 export class ControlApiError extends Error {
   readonly status: number;
@@ -236,6 +236,33 @@ export const updateAnalyticsPolicies = (policies: Array<Omit<AnalyticsPolicy, 'u
   cameraRequest<{ policies: AnalyticsPolicy[] }>('/cameras/analytics-policies', {
     method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ policies }),
   });
+const analyticsRequest = async <T>(path: string, init?: RequestInit): Promise<T> => {
+  const response = await fetch(`/api/v3${path}`, { cache: 'no-store', credentials: 'same-origin', ...init });
+  if (!response.ok) throw await parseError(response);
+  return (await response.json()) as T;
+};
+export const fetchV3AnalyticsPolicies = (signal?: AbortSignal) => analyticsRequest<{ schemaVersion: 2; revision: number; policies: AnalyticsPolicy[] }>('/analytics/policies', { signal });
+export const patchV3AnalyticsPolicies = (baseRevision: number, policies: Array<Omit<AnalyticsPolicy, 'updatedAt'>>) => analyticsRequest<{ schemaVersion: 2; revision: number; policies: AnalyticsPolicy[] }>('/analytics/policies', {
+  method: 'PATCH', headers: { 'Content-Type': 'application/json', 'If-Match': `"${baseRevision}"` }, body: JSON.stringify({ baseRevision, policies }),
+});
+export const requestAnalyticsRuntimePlan = (cameraId: string, profileId: string, kinds: Array<'motion' | 'scene-change' | 'person'>, capabilities: Record<string, unknown>) => analyticsRequest<{ sessionId: string; expiresAt: number; plans: AnalyticsRuntimePlan[] }>('/analytics/runtime-plans', {
+  method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ cameraId, profileId, kinds, capabilities }),
+});
+export const fetchAnalyticsStatus = (signal?: AbortSignal) => analyticsRequest<{ statuses: AnalyticsStatus[] }>('/analytics/status', { signal });
+export const submitAnalyticsSignals = (sessionId: string, signals: Array<Record<string, unknown>>) => analyticsRequest<{ accepted: number; events: MonitorEvent[] }>('/analytics/signals/batch', {
+  method: 'POST', headers: { 'Content-Type': 'application/json', 'X-WebObs-Analytics-Session': sessionId }, body: JSON.stringify({ signals }),
+});
+export const renewAnalyticsRuntimeSession = (sessionId: string, cameraId?: string, profileId?: string) => analyticsRequest<{ sessionId: string; cameraId: string; profileId: string; expiresAt: number }>(`/analytics/runtime-sessions/${encodeURIComponent(sessionId)}/renew`, {
+  method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ...(cameraId ? { cameraId } : {}), ...(profileId ? { profileId } : {}) }),
+});
+export const closeAnalyticsRuntimeSession = (sessionId: string, cameraId?: string, profileId?: string) => analyticsRequest<{ closed: boolean }>(`/analytics/runtime-sessions/${encodeURIComponent(sessionId)}`, {
+  method: 'DELETE',
+  ...(cameraId && profileId ? { headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ cameraId, profileId }) } : {}),
+});
+export const fetchAnalyticsJobs = () => clientAdminRequest<{ jobs: AnalyticsJob[]; revision: number }>('/analytics-jobs');
+export const createAnalyticsJob = (value: { cameraId: string; profileId: string; modelId: string; modelSha256: string; nodeId?: string }) => clientAdminRequest<AnalyticsJob>('/analytics-jobs', {
+  method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ kind: 'person', ...value }),
+});
 export const detectCamera = (address: string) => cameraRequest<CameraDetection>('/camera-detect', {
   method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ address }),
 });
@@ -297,6 +324,14 @@ export const probeSourceProfile = (cameraId: string, profileId: string) =>
     `/source-catalog/${encodeURIComponent(cameraId)}/profiles/${encodeURIComponent(profileId)}/probe`, {
       method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}',
     });
+export interface LegacySourceImportItem { sourceId: string; state: 'linked' | 'ready_to_import' | 'needs_configuration'; reason?: string; cameraId?: string; profileId?: string; }
+export interface LegacySourceImportStatus { schemaVersion: 1; baseRevision: number; items: LegacySourceImportItem[]; count: number; }
+export const fetchLegacySourceImport = (signal?: AbortSignal) =>
+  clientAdminRequest<LegacySourceImportStatus>('/source-catalog/legacy-import', { signal });
+export const importLegacySources = (sourceIds: string[], baseRevision: number) =>
+  clientAdminRequest<{ schemaVersion: 1; baseRevision: number; items: LegacySourceImportItem[] }>('/source-catalog/legacy-import', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ sourceIds, baseRevision }),
+  });
 export const fetchOperationalIssues = (query = '', signal?: AbortSignal) =>
   clientAdminRequest<{ issues: OperationalIssue[] }>(`/operations/issues${query ? `?${query}` : ''}`, { signal });
 export const acknowledgeOperationalIssue = (issueId: string) =>
@@ -317,11 +352,11 @@ export const fetchClientEnrollments = (signal?: AbortSignal) =>
   clientAdminRequest<{ enrollments: ClientEnrollment[] }>('/enrollments', { signal });
 export const fetchEnrolledClients = (signal?: AbortSignal) =>
   clientAdminRequest<{ clients: EnrolledClient[] }>('/clients', { signal });
-export const approveClientEnrollment = (enrollmentId: string, pairingCode: string, cameraGrants: ClientCameraGrant[]) =>
-  clientAdminRequest<{ clientId: string; state: 'approved'; grantExpiresAt: number; revision: number }>(
+export const approveClientEnrollment = (enrollmentId: string, pairingCode: string, cameraGrants: ClientCameraGrant[], targetClientId?: string) =>
+  clientAdminRequest<{ clientId: string; state: 'approved'; grantExpiresAt: number; revision: number; updated: boolean }>(
     `/enrollments/${encodeURIComponent(enrollmentId)}/approve`, {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ pairingCode, cameraGrants }),
+      body: JSON.stringify({ pairingCode, cameraGrants, ...(targetClientId ? { targetClientId } : {}) }),
     });
 export const revokeEnrolledClient = (clientId: string) =>
   clientAdminRequest<{ clientId: string; status: 'revoked'; revokedAt: number;
@@ -408,7 +443,7 @@ export const fetchExternalProviders = (signal?: AbortSignal) =>
 export const fetchEvents = (query = '') => cameraRequest<{ events: MonitorEvent[] }>(`/events${query ? `?${query}` : ''}`);
 export const createEvent = (event: Record<string, unknown>) => cameraRequest<MonitorEvent>('/events', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(event) });
 export const acknowledgeEvent = (eventId: string, acknowledged: boolean, note: string) => cameraRequest<{ id: string; acknowledged: boolean }>(`/events/${encodeURIComponent(eventId)}/acknowledgement`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ acknowledged, note }) });
-export const fetchMotionZones = () => cameraRequest<{ zones: MotionZone[] }>('/motion-zones');
+export const fetchMotionZones = (signal?: AbortSignal) => cameraRequest<{ zones: MotionZone[] }>('/motion-zones', { signal });
 export const createMotionZone = (zone: Record<string, unknown>) => cameraRequest<MotionZone>('/motion-zones', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(zone) });
 export const fetchEventRules = () => cameraRequest<{ rules: EventRule[] }>('/event-rules');
 export const createEventRule = (rule: Record<string, unknown>) => cameraRequest<{ id: string }>('/event-rules', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(rule) });

@@ -5,6 +5,10 @@ repository_root="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
 compose_file="$repository_root/tests/compose.v2-true-direct.yaml"
 project="webobsv2direct$$"
 export COMPOSE_PROJECT_NAME="$project"
+build_option="--build"
+if [ "${WEBOBS_SKIP_BUILD:-0}" = "1" ]; then
+  build_option="--no-build"
+fi
 
 cleanup() {
   docker compose -f "$compose_file" down --volumes --remove-orphans >/dev/null 2>&1 || true
@@ -12,7 +16,7 @@ cleanup() {
 trap cleanup EXIT
 
 docker image inspect "${WEBOBS_TEST_IMAGE:-webobs:v2-m1-dev}" >/dev/null
-docker compose -f "$compose_file" up --detach --build
+docker compose -f "$compose_file" up --detach "$build_option"
 
 webobs_id="$(docker compose -f "$compose_file" ps --all --quiet webobs)"
 fallback_id="$(docker compose -f "$compose_file" ps --all --quiet webobs-fallback)"

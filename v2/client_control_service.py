@@ -599,7 +599,9 @@ def approve_enrollment(enrollment_id: str, payload: object) -> dict[str, object]
 
 
 def _approve_enrollment_locked(enrollment_id: str, payload: object) -> dict[str, object]:
-    if not isinstance(payload, dict) or set(payload) != {"pairingCode", "cameraGrants"}:
+    allowed_fields = {"pairingCode", "cameraGrants", "targetClientId"}
+    if not isinstance(payload, dict) or not {"pairingCode", "cameraGrants"}.issubset(payload) or \
+            not set(payload).issubset(allowed_fields):
         raise ApiError(400, "invalid_approval", "approval fields are invalid")
     code = payload.get("pairingCode")
     if not isinstance(code, str) or not re.fullmatch(r"[0-9]{8}", code):
@@ -615,18 +617,53 @@ def _approve_enrollment_locked(enrollment_id: str, payload: object) -> dict[str,
             raise ApiError(409, "enrollment_state", "enrollment is not pending")
         if not pairing_matches(row["pairing_code_hash"], code):
             raise ApiError(403, "pairing_code_rejected", "pairing code does not match")
+        target_client_id = payload.get("targetClientId")
+        target = None
+        if target_client_id is not None:
+            if not isinstance(target_client_id, str) or not ID_RE.fullmatch(target_client_id):
+                raise ApiError(400, "invalid_target_client", "targetClientId is invalid")
+            target = database.execute("SELECT * FROM clients WHERE id=?", (target_client_id,)).fetchone()
+            if target is None:
+                raise ApiError(404, "target_client_not_found", "target client is unknown")
+            if target["status"] != "active":
+                raise ApiError(409, "target_client_inactive", "only an active client can be updated")
+            if target["platform"] != row["platform"]:
+                raise ApiError(409, "target_client_platform_mismatch",
+                               "target client platform does not match enrollment")
+            old_dedicated = database.execute(
+                "SELECT 1 FROM grants WHERE client_id=? AND credential_mode='dedicated' LIMIT 1",
+                (target_client_id,)).fetchone()
+            if old_dedicated is not None:
+                raise ApiError(409, "target_client_requires_revoke",
+                               "clients with managed dedicated credentials must be revoked before replacement")
         grants = _validate_grants(payload["cameraGrants"], row["platform"])
         _provision_dedicated_grants(grants)
-        client_id = uuid.uuid4().hex
         next_revision = revision(database, True)
         expires = now + grant_seconds_for(row["platform"])
-        database.execute(
-            "INSERT INTO clients(id,name,platform,signing_public_key,encryption_public_key,"
-            "device_token_hash,status,created_at,last_seen,grant_expires_at,revision) "
-            "VALUES(?,?,?,?,?,?,'active',?,?,?,?)",
-            (client_id, row["name"], row["platform"], row["signing_public_key"],
-             row["encryption_public_key"], row["device_token_hash"], now, now, expires, next_revision),
-        )
+        updated = target is not None
+        client_id = target["id"] if target is not None else uuid.uuid4().hex
+        if updated:
+            database.execute(
+                "UPDATE clients SET name=?,platform=?,signing_public_key=?,encryption_public_key=?,"
+                "device_token_hash=?,status='active',last_seen=?,grant_expires_at=?,revision=?,revoked_at=NULL "
+                "WHERE id=?",
+                (row["name"], row["platform"], row["signing_public_key"], row["encryption_public_key"],
+                 row["device_token_hash"], now, expires, next_revision, client_id),
+            )
+            database.execute("DELETE FROM media_plans WHERE client_id=?", (client_id,))
+            database.execute("DELETE FROM grants WHERE client_id=?", (client_id,))
+            # Invalidate all previously issued enrollment tokens for this device.  The
+            # current enrollment remains approved and is the only one that can complete.
+            database.execute("UPDATE enrollments SET state='superseded' WHERE client_id=? AND id<>?",
+                             (client_id, enrollment_id))
+        else:
+            database.execute(
+                "INSERT INTO clients(id,name,platform,signing_public_key,encryption_public_key,"
+                "device_token_hash,status,created_at,last_seen,grant_expires_at,revision) "
+                "VALUES(?,?,?,?,?,?,'active',?,?,?,?)",
+                (client_id, row["name"], row["platform"], row["signing_public_key"],
+                 row["encryption_public_key"], row["device_token_hash"], now, now, expires, next_revision),
+            )
         for grant in grants:
             database.execute(
                 "INSERT INTO grants(client_id,camera_id,profile_ids_json,permissions_json,"
@@ -639,7 +676,7 @@ def _approve_enrollment_locked(enrollment_id: str, payload: object) -> dict[str,
         database.execute("UPDATE enrollments SET state='approved',client_id=? WHERE id=?",
                          (client_id, enrollment_id))
     return {"clientId": client_id, "state": "approved", "grantExpiresAt": expires,
-            "revision": next_revision}
+            "revision": next_revision, "updated": updated}
 
 
 def _browser_profile_reason(camera: sqlite3.Row, profile: sqlite3.Row,

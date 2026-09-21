@@ -27,6 +27,7 @@ import subprocess
 import tempfile
 import threading
 import time
+import urllib.request
 from dataclasses import dataclass
 from typing import Any, Callable
 from urllib.parse import parse_qs, quote, urlencode, urlsplit
@@ -45,9 +46,15 @@ ISOLATION_GRACE_SECONDS = 120
 MAX_CLOCK_SKEW_SECONDS = 5
 ARCHIVE_TICKET_SECONDS = 60
 MAX_BROWSER_ARCHIVE_BYTES = 512 * 1024 * 1024
+ANALYTICS_MEDIA_GRANT_SECONDS = 60
+MAX_ANALYTICS_FRAME_BYTES = 160 * 90 * 4
+MAX_ANALYTICS_FRAME_REQUESTS = 60
 ENROLLMENT_SECONDS = 600
 CERTIFICATE_SECONDS = 30 * 24 * 60 * 60
 CERTIFICATE_RENEW_SECONDS = 7 * 24 * 60 * 60
+ANALYTICS_MODEL_ID = "ssd-mobilenet-v1-12-person"
+ANALYTICS_MODEL_VERSION = "onnx-model-zoo-4c46cd00"
+ANALYTICS_MODEL_SHA256 = "b8fba5e404077d4048d27fcd1667e85e27e192eb9bf51e696c46a3acd7d21058"
 IDENTIFIER = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$")
 USERNAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{2,63}$")
 VOLUME_ID = re.compile(r"^[a-z0-9][a-z0-9-]{0,62}$")
@@ -59,16 +66,17 @@ PERMISSIONS = frozenset({
     "snapshot.create", "playback.view", "export.create", "recording.lock",
     "recording.delete", "event.ack", "device.manage", "storage.manage",
     "node.manage", "settings.manage", "user.manage", "audit.view", "metrics.view",
+    "analytics.view", "analytics.run", "analytics.manage",
 })
 
 ROLE_PERMISSIONS: dict[str, frozenset[str]] = {
     "admin": PERMISSIONS,
     "operator": frozenset({
         "live.view", "scene.read", "playback.view", "snapshot.create", "ptz.control",
-        "talk.control", "event.ack", "recording.lock",
+        "talk.control", "event.ack", "recording.lock", "analytics.view", "analytics.run",
     }),
-    "viewer": frozenset({"live.view", "scene.read", "playback.view"}),
-    "auditor": frozenset({"event.ack", "audit.view", "playback.view"}),
+    "viewer": frozenset({"live.view", "scene.read", "playback.view", "analytics.view", "analytics.run"}),
+    "auditor": frozenset({"event.ack", "audit.view", "playback.view", "analytics.view"}),
     "exporter": frozenset({"playback.view", "export.create"}),
 }
 
@@ -253,6 +261,19 @@ class ClusterStore:
                 camera_id TEXT NOT NULL,profile_id TEXT NOT NULL,node_id TEXT NOT NULL,generation INTEGER NOT NULL,
                 state TEXT NOT NULL,lease_expires_at INTEGER NOT NULL,isolation_deadline INTEGER NOT NULL,
                 updated_at INTEGER NOT NULL,PRIMARY KEY(camera_id,profile_id));
+              CREATE TABLE IF NOT EXISTS analytics_jobs(
+                id TEXT PRIMARY KEY,camera_id TEXT NOT NULL,profile_id TEXT NOT NULL,kind TEXT NOT NULL,
+                node_id TEXT NOT NULL,generation INTEGER NOT NULL,state TEXT NOT NULL,
+                lease_expires_at INTEGER NOT NULL,model_id TEXT NOT NULL,model_sha256 TEXT NOT NULL,
+                requested_resources_json TEXT NOT NULL,result_json TEXT NOT NULL,last_result_at INTEGER NOT NULL,
+                last_error_code TEXT NOT NULL,revision INTEGER NOT NULL,created_at INTEGER NOT NULL);
+              CREATE INDEX IF NOT EXISTS analytics_jobs_node_state ON analytics_jobs(node_id,state,created_at);
+              CREATE TABLE IF NOT EXISTS analytics_media_grants(
+                token_hash TEXT PRIMARY KEY,job_id TEXT NOT NULL,camera_id TEXT NOT NULL,
+                profile_id TEXT NOT NULL,node_id TEXT NOT NULL,expires_at INTEGER NOT NULL,
+                request_count INTEGER NOT NULL DEFAULT 0,max_requests INTEGER NOT NULL DEFAULT 60,
+                revoked INTEGER NOT NULL DEFAULT 0,created_at INTEGER NOT NULL);
+              CREATE INDEX IF NOT EXISTS analytics_media_grants_job ON analytics_media_grants(job_id,expires_at);
               CREATE TABLE IF NOT EXISTS resource_reports(
                 node_id TEXT PRIMARY KEY,cpu_cores INTEGER NOT NULL,memory_bytes INTEGER NOT NULL,
                 capabilities_json TEXT NOT NULL,reservations_json TEXT NOT NULL,rated INTEGER NOT NULL,updated_at INTEGER NOT NULL);
@@ -485,6 +506,63 @@ class ClusterStore:
                 database.close()
         group_id = row[0] if row else ""
         return group_id if isinstance(group_id, str) and IDENTIFIER.fullmatch(group_id) else ""
+
+    def _camera_profile_exists(self, camera_id: str, profile_id: str) -> bool:
+        """Bind detector jobs to the authoritative Camera Registry.
+
+        The cluster database deliberately does not copy Camera/Profile rows. A
+        read-only lookup prevents a stale or forged job from being scheduled
+        for an arbitrary identifier while keeping Registry secrets out of the
+        cluster service.
+        """
+        if not self.camera_registry_path.is_absolute():
+            return False
+        connection: sqlite3.Connection | None = None
+        try:
+            connection = sqlite3.connect(
+                f"file:{self.camera_registry_path.as_posix()}?mode=ro", uri=True, timeout=1)
+            return connection.execute(
+                "SELECT 1 FROM cameras c JOIN stream_profiles p ON p.camera_id=c.id "
+                "WHERE c.id=? AND p.id=? LIMIT 1", (camera_id, profile_id)).fetchone() is not None
+        except sqlite3.Error:
+            return False
+        finally:
+            if connection is not None:
+                connection.close()
+
+    def _analytics_worker_authorized(self, camera_id: str, profile_id: str) -> bool:
+        """Return whether this Camera/Profile explicitly permits server inference.
+
+        Detector jobs are a media-chain expansion and therefore must never be
+        created merely because a caller has ``analytics.run`` or because the
+        approved model is available.  The authoritative Registry policy must
+        opt the stream into person analytics and either select the worker
+        execution preference or explicitly permit a server fallback.  Missing
+        tables, rows, or malformed values fail closed so an older/corrupt
+        Registry cannot silently start a detector ingest.
+        """
+        if not self.camera_registry_path.is_absolute():
+            return False
+        connection: sqlite3.Connection | None = None
+        try:
+            connection = sqlite3.connect(
+                f"file:{self.camera_registry_path.as_posix()}?mode=ro", uri=True, timeout=1)
+            row = connection.execute(
+                "SELECT person_enabled, person_execution_preference, person_allow_server_fallback "
+                "FROM analytics_policies WHERE camera_id=? AND profile_id=? LIMIT 1",
+                (camera_id, profile_id),
+            ).fetchone()
+            if row is None:
+                return False
+            enabled, preference, fallback = row
+            return bool(enabled) and (
+                preference == "worker" or bool(fallback)
+            )
+        except (sqlite3.Error, TypeError, ValueError):
+            return False
+        finally:
+            if connection is not None:
+                connection.close()
 
     def principal(self, user_id: str) -> Principal:
         row = self.db.execute("SELECT * FROM users WHERE id=? AND enabled=1", (user_id,)).fetchone()
@@ -838,8 +916,8 @@ class ClusterStore:
           SELECT n.*,r.cpu_cores,r.memory_bytes,r.capabilities_json AS resources_capabilities,
                  r.reservations_json,r.rated
           FROM nodes n JOIN resource_reports r ON r.node_id=n.id
-          WHERE n.revoked=0 AND n.status='online'
-        """).fetchall()
+          WHERE n.revoked=0 AND n.status='online' AND (? <> 'detector-reserved' OR n.role='worker')
+        """, (task_type,)).fetchall()
         for row in rows:
             if required_node and row["id"] != required_node:
                 continue
@@ -862,6 +940,14 @@ class ClusterStore:
             for assignment in assignments:
                 with contextlib.suppress(json.JSONDecodeError, TypeError, ValueError):
                     reservation = json.loads(assignment["costs_json"])
+                    for field in scheduled:
+                        scheduled[field] += float(reservation.get(field, 0))
+            detector_jobs = self.db.execute(
+                "SELECT requested_resources_json FROM analytics_jobs WHERE node_id=? AND state='running' AND lease_expires_at>?",
+                (row["id"], timestamp)).fetchall()
+            for job in detector_jobs:
+                with contextlib.suppress(json.JSONDecodeError, TypeError, ValueError):
+                    reservation = json.loads(job["requested_resources_json"])
                     for field in scheduled:
                         scheduled[field] += float(reservation.get(field, 0))
             used = {field: max(reported[field], scheduled[field]) for field in costs}
@@ -913,6 +999,326 @@ class ClusterStore:
                             (lease_expires, isolation_deadline, timestamp, camera_id, profile_id))
         return {"leaseExpiresAt": lease_expires, "isolationDeadline": isolation_deadline,
                 "renewAfterSeconds": LEASE_RENEW_SECONDS}
+
+    def create_analytics_job(self, value: Any, timestamp: int | None = None) -> dict[str, Any]:
+        """Queue an explicitly requested detector job without touching recording ownership."""
+        value = require_exact_object(value, {"cameraId", "profileId", "kind", "modelId", "modelSha256", "requestedResources", "nodeId"},
+                                     {"cameraId", "profileId", "kind"})
+        camera_id = require_identifier(value["cameraId"], "camera_id")
+        profile_id = require_identifier(value["profileId"], "profile_id")
+        if value["kind"] != "person":
+            raise ApiError(400, "invalid_analytics_kind", "only person detector jobs are supported")
+        if not self._camera_profile_exists(camera_id, profile_id):
+            raise ApiError(404, "camera_profile_not_found", "the detector Camera/Profile is not registered")
+        model_id = value.get("modelId", ANALYTICS_MODEL_ID)
+        model_sha = value.get("modelSha256", "")
+        if model_id != ANALYTICS_MODEL_ID or model_sha != ANALYTICS_MODEL_SHA256:
+            raise ApiError(400, "invalid_analytics_model", "model is not approved")
+        if not self._analytics_worker_authorized(camera_id, profile_id):
+            raise ApiError(409, "analytics_not_authorized",
+                           "server detector execution is not authorized for this Camera/Profile")
+        resources = value.get("requestedResources", {"cpuCores": .5, "memoryBytes": 128 * 1024 * 1024,
+                                                        "decodeSlots": 0, "encodeSlots": 0, "diskBytesPerSecond": 0})
+        require_exact_object(resources, {"cpuCores", "memoryBytes", "decodeSlots", "encodeSlots", "diskBytesPerSecond"})
+        if any(isinstance(resources.get(field), bool) or not isinstance(resources.get(field), (int, float)) or resources[field] < 0
+               for field in ("cpuCores", "memoryBytes", "decodeSlots", "encodeSlots", "diskBytesPerSecond")):
+            raise ApiError(400, "invalid_analytics_resources", "requested resources are invalid")
+        timestamp = timestamp or now_seconds()
+        node_id = value.get("nodeId", "")
+        with self.lock, self.db:
+            node_id = self._select_node(camera_id, profile_id, "detector-reserved", resources, timestamp, node_id)
+            current = self.db.execute("SELECT MAX(generation) FROM analytics_jobs WHERE camera_id=? AND profile_id=?",
+                                      (camera_id, profile_id)).fetchone()[0] or 0
+            job_id = secrets.token_hex(16)
+            self.db.execute("""INSERT INTO analytics_jobs
+                (id,camera_id,profile_id,kind,node_id,generation,state,lease_expires_at,model_id,model_sha256,
+                 requested_resources_json,result_json,last_result_at,last_error_code,revision,created_at)
+                VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                (job_id, camera_id, profile_id, "person", node_id, int(current) + 1, "queued", 0,
+                 model_id, model_sha, canonical_json(resources), "{}", 0, "", 1, timestamp))
+            revision = self._bump()
+            self._audit("analytics.job.created", "web-session", job_id, "queued")
+        return {"jobId": job_id, "cameraId": camera_id, "profileId": profile_id, "kind": "person",
+                "nodeId": node_id, "generation": int(current) + 1, "state": "queued", "leaseExpiresAt": 0,
+                "modelId": model_id, "modelSha256": model_sha, "lastResultAt": None, "lastErrorCode": None,
+                "revision": revision}
+
+    def _analytics_media_source(self) -> tuple[str, int, str] | None:
+        """Return the explicitly configured loopback frame source.
+
+        The controller never resolves Camera URLs for detector jobs.  A
+        recorder/gateway may expose one bounded RGBA frame at a time through a
+        loopback HTTP endpoint.  Requiring a loopback authority and a fixed
+        path prevents a job from turning this service into an SSRF proxy.
+        """
+        authority = os.environ.get("WEBOBS_ANALYTICS_MEDIA_ENDPOINT", "")
+        try:
+            parsed = urlsplit(authority)
+            if parsed.scheme not in {"http", "https"} or parsed.username or parsed.password or \
+                    parsed.query or parsed.fragment or not parsed.hostname or parsed.path in {"", "/"} or \
+                    "\r" in parsed.path or "\n" in parsed.path or any(part == ".." for part in parsed.path.split("/")):
+                return None
+            if parsed.hostname not in {"127.0.0.1", "localhost", "::1"}:
+                return None
+            return parsed.hostname, parsed.port or (443 if parsed.scheme == "https" else 80), parsed.path
+        except ValueError:
+            return None
+
+    @staticmethod
+    def _validate_analytics_frame(value: Any) -> dict[str, Any]:
+        """Validate the private one-frame JSON protocol without persisting it."""
+        import base64
+        if not isinstance(value, dict) or set(value) - {"width", "height", "rgbaBase64", "capturedAt"} or \
+                not {"width", "height", "rgbaBase64"}.issubset(value):
+            raise ApiError(502, "analytics_frame_invalid", "analytics frame is invalid")
+        width, height, encoded = value["width"], value["height"], value["rgbaBase64"]
+        if isinstance(width, bool) or not isinstance(width, int) or not 2 <= width <= 160 or \
+                isinstance(height, bool) or not isinstance(height, int) or not 2 <= height <= 90 or \
+                not isinstance(encoded, str) or len(encoded) > MAX_ANALYTICS_FRAME_BYTES * 2:
+            raise ApiError(502, "analytics_frame_invalid", "analytics frame dimensions are invalid")
+        try:
+            rgba = base64.b64decode(encoded.encode("ascii"), validate=True)
+        except (ValueError, UnicodeEncodeError):
+            raise ApiError(502, "analytics_frame_invalid", "analytics frame encoding is invalid") from None
+        if len(rgba) != width * height * 4 or len(rgba) > MAX_ANALYTICS_FRAME_BYTES:
+            raise ApiError(502, "analytics_frame_invalid", "analytics frame size is invalid")
+        captured_at = value.get("capturedAt", now_seconds() * 1000)
+        if isinstance(captured_at, bool) or not isinstance(captured_at, int) or \
+                abs(now_seconds() * 1000 - captured_at) > 300_000:
+            raise ApiError(502, "analytics_frame_invalid", "analytics frame timestamp is invalid")
+        return {"width": width, "height": height, "rgbaBase64": encoded, "capturedAt": captured_at}
+
+    def consume_analytics_media_frame(self, node_id: str, job_id: str, token: str) -> dict[str, Any]:
+        """Consume one bounded frame from an approved, short-lived Worker grant.
+
+        The grant is reusable for at most 60 requests/seconds and is revoked
+        as soon as its analytics job completes.  Only the mTLS node identity
+        and exact job binding are trusted; the client cannot supply a URL.
+        """
+        import http.client
+        require_identifier(node_id, "node_id")
+        require_identifier(job_id, "job_id")
+        if not isinstance(token, str) or not re.fullmatch(r"[A-Za-z0-9_-]{32,128}", token):
+            raise ApiError(401, "analytics_grant_rejected", "analytics media grant was rejected")
+        token_hash = hashlib.sha256(token.encode()).hexdigest()
+        current = now_seconds()
+        with self.lock:
+            grant = self.db.execute(
+                "SELECT * FROM analytics_media_grants WHERE token_hash=? AND job_id=?",
+                (token_hash, job_id)).fetchone()
+            job = self.db.execute("SELECT * FROM analytics_jobs WHERE id=?", (job_id,)).fetchone()
+            if grant is None or job is None or grant["node_id"] != node_id or job["node_id"] != node_id or \
+                    job["state"] != "running" or job["generation"] <= 0 or grant["revoked"] or \
+                    grant["expires_at"] <= current or grant["request_count"] >= grant["max_requests"] or \
+                    job["lease_expires_at"] < current:
+                raise ApiError(401, "analytics_grant_rejected", "analytics media grant was rejected")
+        source = self._analytics_media_source()
+        if source is None:
+            raise ApiError(503, "analytics_media_unavailable", "no approved detector media source is configured")
+        host, port, path = source
+        headers = {
+            "Accept": "application/vnd.webobs.analytics-frame+json",
+            "X-WebObs-Analytics-Job": job_id,
+            "X-WebObs-Analytics-Camera": job["camera_id"],
+            "X-WebObs-Analytics-Profile": job["profile_id"],
+            "X-WebObs-Analytics-Grant": token,
+        }
+        connection: http.client.HTTPConnection | http.client.HTTPSConnection
+        if os.environ.get("WEBOBS_ANALYTICS_MEDIA_ENDPOINT", "").startswith("https://"):
+            context = ssl.create_default_context()
+            connection = http.client.HTTPSConnection(host, port, context=context, timeout=3)
+        else:
+            connection = http.client.HTTPConnection(host, port, timeout=3)
+        try:
+            connection.request("GET", path, headers=headers)
+            response = connection.getresponse()
+            if response.getheader("Location") or response.status != 200 or \
+                    response.getheader("Content-Type", "").split(";", 1)[0].lower() != "application/json":
+                raise ApiError(503, "analytics_media_unavailable", "detector media source rejected the frame request")
+            body = response.read(MAX_BODY + 1)
+            if len(body) > MAX_BODY:
+                raise ApiError(502, "analytics_frame_invalid", "analytics frame response exceeded one MiB")
+            try:
+                value = json.loads(body)
+            except (UnicodeDecodeError, json.JSONDecodeError):
+                raise ApiError(502, "analytics_frame_invalid", "analytics frame response is invalid") from None
+        except ApiError:
+            raise
+        except (OSError, ssl.SSLError, http.client.HTTPException):
+            raise ApiError(503, "analytics_media_unavailable", "detector media source is unavailable") from None
+        finally:
+            connection.close()
+        frame = self._validate_analytics_frame(value)
+        # Count only a successfully validated frame.  A simultaneous result or
+        # revocation still wins the compare-and-update below.
+        with self.lock, self.db:
+            updated = self.db.execute(
+                "UPDATE analytics_media_grants SET request_count=request_count+1 "
+                "WHERE token_hash=? AND job_id=? AND revoked=0 AND expires_at>? AND request_count<max_requests",
+                (token_hash, job_id, current)).rowcount
+            if updated != 1:
+                raise ApiError(401, "analytics_grant_rejected", "analytics media grant was revoked")
+        # Keep the token out of the returned frame and any persisted metadata.
+        frame["grantExpiresAt"] = grant["expires_at"]
+        frame["remainingRequests"] = max(0, grant["max_requests"] - grant["request_count"] - 1)
+        return frame
+
+    def list_analytics_jobs(self) -> dict[str, Any]:
+        with self.lock, self.db:
+            self.db.execute("DELETE FROM analytics_media_grants WHERE expires_at<=? OR revoked=1", (now_seconds(),))
+            rows = self.db.execute("SELECT * FROM analytics_jobs ORDER BY created_at DESC,id DESC LIMIT ?", (MAX_PAGE,)).fetchall()
+        return {"jobs": [{"jobId": row["id"], "cameraId": row["camera_id"], "profileId": row["profile_id"],
+                          "kind": row["kind"], "nodeId": row["node_id"], "generation": row["generation"],
+                          "state": row["state"], "leaseExpiresAt": row["lease_expires_at"], "modelId": row["model_id"],
+                          "modelSha256": row["model_sha256"], "lastResultAt": row["last_result_at"] or None,
+                          "lastErrorCode": row["last_error_code"] or None, "revision": row["revision"]} for row in rows],
+                "revision": self.revision()}
+
+    def claim_analytics_job(self, node_id: str, timestamp: int | None = None) -> dict[str, Any]:
+        require_identifier(node_id, "node_id")
+        timestamp = timestamp or now_seconds()
+        with self.lock, self.db:
+            node = self.db.execute("SELECT role,status,revoked,clock_offset_ms FROM nodes WHERE id=?", (node_id,)).fetchone()
+            if node is None or node["role"] != "worker" or node["status"] != "online" or node["revoked"] or \
+                    abs(node["clock_offset_ms"]) > MAX_CLOCK_SKEW_SECONDS * 1000:
+                raise ApiError(409, "node_not_eligible", "only a healthy worker node may claim detector jobs")
+            self.db.execute("DELETE FROM analytics_media_grants WHERE expires_at<=? OR revoked=1", (timestamp,))
+            row = self.db.execute("SELECT * FROM analytics_jobs WHERE node_id=? AND state='queued' ORDER BY created_at,id LIMIT 1",
+                                  (node_id,)).fetchone()
+            if row is None:
+                return {"job": None}
+            lease = timestamp + LEASE_SECONDS
+            self.db.execute("UPDATE analytics_jobs SET state='running',lease_expires_at=?,revision=revision+1 WHERE id=? AND state='queued'",
+                            (lease, row["id"]))
+            token = secrets.token_urlsafe(48)
+            grant_expires = timestamp + ANALYTICS_MEDIA_GRANT_SECONDS
+            self.db.execute("INSERT INTO analytics_media_grants(token_hash,job_id,camera_id,profile_id,node_id,expires_at,request_count,max_requests,revoked,created_at) VALUES(?,?,?,?,?,?,?,?,?,?)",
+                            (hashlib.sha256(token.encode()).hexdigest(), row["id"], row["camera_id"], row["profile_id"],
+                             node_id, grant_expires, 0, MAX_ANALYTICS_FRAME_REQUESTS, 0, timestamp))
+            return {"job": {"jobId": row["id"], "cameraId": row["camera_id"], "profileId": row["profile_id"],
+                             "kind": row["kind"], "nodeId": row["node_id"], "generation": row["generation"],
+                             "leaseExpiresAt": lease, "modelId": row["model_id"], "modelSha256": row["model_sha256"],
+                             "requestedResources": json.loads(row["requested_resources_json"]),
+                             "mediaGrant": {"method": "GET", "path": f"/internal/v1/analytics/jobs/{row['id']}/frame",
+                                             "token": token, "expiresAt": grant_expires,
+                                             "maxRequests": MAX_ANALYTICS_FRAME_REQUESTS}}}
+
+    def renew_analytics_job(self, node_id: str, value: Any, timestamp: int | None = None) -> dict[str, Any]:
+        value = require_exact_object(value, {"jobId", "generation"}, {"jobId", "generation"})
+        job_id = require_identifier(value["jobId"], "job_id")
+        generation = value["generation"]
+        if not isinstance(generation, int) or isinstance(generation, bool) or generation < 1:
+            raise ApiError(400, "invalid_generation", "analytics generation is invalid")
+        timestamp = timestamp or now_seconds()
+        with self.lock, self.db:
+            row = self.db.execute("SELECT * FROM analytics_jobs WHERE id=?", (job_id,)).fetchone()
+            if row is None or row["node_id"] != node_id or row["generation"] != generation or row["state"] != "running" or row["lease_expires_at"] < timestamp:
+                raise ApiError(409, "stale_analytics_job", "analytics job lease is stale")
+            lease = timestamp + LEASE_SECONDS
+            self.db.execute("UPDATE analytics_jobs SET lease_expires_at=?,revision=revision+1 WHERE id=?", (lease, job_id))
+            self.db.execute("UPDATE analytics_media_grants SET expires_at=? WHERE job_id=? AND node_id=? AND revoked=0 AND expires_at>?",
+                            (timestamp + ANALYTICS_MEDIA_GRANT_SECONDS, job_id, node_id, timestamp))
+        return {"jobId": job_id, "generation": generation, "leaseExpiresAt": lease, "renewAfterSeconds": LEASE_RENEW_SECONDS}
+
+    def report_analytics_job_result(self, node_id: str, value: Any, timestamp: int | None = None) -> dict[str, Any]:
+        value = require_exact_object(value, {"jobId", "generation", "state", "resultCode", "signals", "modelId", "modelVersion", "modelSha256"},
+                                     {"jobId", "generation", "state", "resultCode"})
+        job_id = require_identifier(value["jobId"], "job_id")
+        generation = value["generation"]
+        state = value["state"]
+        result_code = value.get("resultCode", "")
+        signals = value.get("signals", [])
+        model_id = value.get("modelId", "")
+        model_version = value.get("modelVersion", "")
+        model_sha = value.get("modelSha256", "")
+        timestamp = timestamp or now_seconds()
+        if not isinstance(generation, int) or isinstance(generation, bool) or generation < 1 or state not in {"completed", "failed"} or \
+                not isinstance(result_code, str) or len(result_code) > 64 or not re.fullmatch(r"[A-Za-z0-9._-]*", result_code) or \
+                not isinstance(signals, list) or len(signals) > 32 or \
+                (model_id and (not isinstance(model_id, str) or not re.fullmatch(r"[A-Za-z0-9._-]{1,64}", model_id) or model_id != ANALYTICS_MODEL_ID)) or \
+                (model_version and (not isinstance(model_version, str) or not re.fullmatch(r"[A-Za-z0-9._-]{1,64}", model_version) or model_version != ANALYTICS_MODEL_VERSION)) or \
+                (model_sha and (not isinstance(model_sha, str) or not re.fullmatch(r"[0-9a-f]{64}", model_sha))) or \
+                (state == "failed" and signals):
+            raise ApiError(400, "invalid_analytics_result", "analytics job result is invalid")
+        safe_signals = []
+        for signal in signals:
+            if not isinstance(signal, dict) or signal.get("kind") != "person":
+                raise ApiError(400, "invalid_analytics_result", "only person signals are accepted")
+            signal_id = signal.get("signalId", "")
+            if signal_id and (not isinstance(signal_id, str) or not re.fullmatch(r"[A-Za-z0-9._:-]{8,128}", signal_id)):
+                raise ApiError(400, "invalid_analytics_result", "analytics signal id is invalid")
+            confidence = signal.get("confidence")
+            boxes = signal.get("boxes", [])
+            if isinstance(confidence, bool) or not isinstance(confidence, (int, float)) or not 0 <= confidence <= 1 or \
+                    not isinstance(boxes, list) or len(boxes) > 16:
+                raise ApiError(400, "invalid_analytics_result", "analytics signal values are invalid")
+            safe_boxes = []
+            for box in boxes:
+                if not isinstance(box, dict):
+                    raise ApiError(400, "invalid_analytics_result", "analytics box is invalid")
+                safe = {name: box.get(name) for name in ("x", "y", "width", "height")}
+                if any(isinstance(item, bool) or not isinstance(item, (int, float)) or not 0 <= item <= 1 for item in safe.values()) or \
+                        safe["x"] + safe["width"] > 1 or safe["y"] + safe["height"] > 1:
+                    raise ApiError(400, "invalid_analytics_result", "analytics box is out of range")
+                safe_boxes.append(safe)
+            occurred_at = signal.get("occurredAt", timestamp * 1000)
+            if isinstance(occurred_at, bool) or not isinstance(occurred_at, int) or \
+                    abs(timestamp * 1000 - occurred_at) > 300_000:
+                raise ApiError(400, "invalid_analytics_result", "analytics signal timestamp is invalid")
+            # Agents before v3-M2 did not include a signal id.  Keep the wire
+            # contract backwards compatible while deriving a deterministic,
+            # job-bound id for event deduplication.
+            safe_signal_id = signal_id or f"worker-{job_id}-{occurred_at}"
+            safe_signals.append({"signalId": safe_signal_id, "kind": "person", "confidence": float(confidence),
+                                 "boxes": safe_boxes, "occurredAt": occurred_at})
+        with self.lock, self.db:
+            row = self.db.execute("SELECT * FROM analytics_jobs WHERE id=?", (job_id,)).fetchone()
+            if row is None or row["node_id"] != node_id or row["generation"] != generation or row["state"] != "running" or row["lease_expires_at"] < timestamp:
+                raise ApiError(409, "stale_analytics_job", "analytics job lease is stale")
+            if signals and (model_id not in {"", ANALYTICS_MODEL_ID} or
+                            model_version not in {"", ANALYTICS_MODEL_VERSION} or
+                            not model_sha or model_sha != row["model_sha256"] or
+                            row["model_id"] != ANALYTICS_MODEL_ID):
+                raise ApiError(400, "invalid_analytics_result", "analytics model digest does not match the job")
+            self.db.execute("UPDATE analytics_jobs SET state=?,lease_expires_at=0,result_json=?,last_result_at=?,last_error_code=?,revision=revision+1 WHERE id=?",
+                            (state, canonical_json({"modelId": row["model_id"],
+                             "modelVersion": ANALYTICS_MODEL_VERSION,
+                             "modelSha256": row["model_sha256"], "signals": safe_signals}),
+                             timestamp, result_code if state == "failed" else "", job_id))
+            self.db.execute("UPDATE analytics_media_grants SET revoked=1 WHERE job_id=?", (job_id,))
+            revision = self._bump()
+            self._audit("analytics.job.result", node_id, job_id, state)
+        # Analytics must not block recording or gateway media if the optional
+        # event service is restarting.  The bounded job result remains durable.
+        if state == "completed" and safe_signals:
+            self._forward_detector_events(row["camera_id"], row["profile_id"], job_id,
+                                          safe_signals, row["model_id"], ANALYTICS_MODEL_VERSION,
+                                          row["model_sha256"])
+        return {"jobId": job_id, "state": state, "resultCode": result_code, "acceptedSignals": len(safe_signals), "revision": revision}
+
+    @staticmethod
+    def _forward_detector_events(camera_id: str, profile_id: str, job_id: str,
+                                 signals: list[dict[str, Any]], model_id: str,
+                                 model_version: str, model_sha256: str) -> None:
+        """Forward only bounded, server-authored person metadata to events."""
+        for signal in signals[:32]:
+            body = canonical_json({
+                "cameraId": camera_id, "type": "object", "source": "detector-v1",
+                "occurredAt": signal["occurredAt"], "confidence": signal["confidence"],
+                "label": "person", "dedupeKey": f"analytics:{job_id}:{signal['signalId']}",
+                "properties": {"analytics": {"schemaVersion": 2, "signalId": signal["signalId"],
+                    "boxes": signal["boxes"], "runtime": "worker", "cameraId": camera_id,
+                    "profileId": profile_id, "modelId": model_id,
+                    "modelVersion": model_version, "modelSha256": model_sha256}},
+            }).encode("utf-8")
+            try:
+                request = urllib.request.Request(
+                    "http://127.0.0.1:8093/events", data=body,
+                    headers={"Content-Type": "application/json"}, method="POST")
+                with urllib.request.urlopen(request, timeout=1) as response:
+                    response.read(64 * 1024)
+            except (OSError, ValueError):
+                continue
 
     def assignments_for(self, node_id: str) -> dict[str, Any]:
         require_identifier(node_id, "node_id")
@@ -1506,6 +1912,19 @@ class ClusterStore:
                 costs = json.loads(row["costs_json"])
                 for field in aggregate["costs"]:
                     aggregate["costs"][field] += float(costs.get(field, 0))
+        for row in self.db.execute("SELECT node_id,requested_resources_json FROM analytics_jobs WHERE state='running' AND lease_expires_at>?", (now_seconds(),)):
+            aggregate = scheduled.setdefault(row["node_id"], {
+                "taskCount": 0, "taskTypes": {}, "costs": {
+                    "cpuCores": 0.0, "memoryBytes": 0.0, "decodeSlots": 0.0,
+                    "encodeSlots": 0.0, "diskBytesPerSecond": 0.0,
+                },
+            })
+            aggregate["taskCount"] += 1
+            aggregate["taskTypes"]["detector-reserved"] = aggregate["taskTypes"].get("detector-reserved", 0) + 1
+            with contextlib.suppress(json.JSONDecodeError, TypeError, ValueError):
+                costs = json.loads(row["requested_resources_json"])
+                for field in aggregate["costs"]:
+                    aggregate["costs"][field] += float(costs.get(field, 0))
         reports = []
         for row in self.db.execute("SELECT * FROM resource_reports ORDER BY node_id LIMIT ?", (MAX_PAGE,)):
             reports.append({"nodeId": row["node_id"], "cpuCores": row["cpu_cores"],
@@ -1628,6 +2047,10 @@ class Handler(http.server.BaseHTTPRequestHandler):
             self.response(200, STORE.update_volume(parts[2], parts[3], self.read_json(), self.if_match()))
         elif path == "/resource-capacity" and self.command == "GET":
             self.response(200, STORE.capacity())
+        elif path == "/analytics-jobs" and self.command == "GET":
+            self.response(200, STORE.list_analytics_jobs())
+        elif path == "/analytics-jobs" and self.command == "POST":
+            self.response(202, STORE.create_analytics_job(self.read_json()))
         elif path == "/recording-placements" and self.command == "POST":
             value = self.read_json()
             require_exact_object(value, {"cameraId", "profileId", "nodeId", "taskType", "costs"},
@@ -1730,8 +2153,19 @@ class ClusterHandler(Handler):
             self.response(200, STORE.renew(node_id, self.read_json()))
         elif path == "/internal/v1/catalog/batch" and self.command == "POST":
             self.response(200, STORE.accept_catalog(node_id, self.read_json()))
+        elif self.command == "GET" and re.fullmatch(
+                r"/internal/v1/analytics/jobs/[A-Za-z0-9][A-Za-z0-9._-]{0,63}/frame", path):
+            token = self.headers.get("X-WebObs-Analytics-Grant", "")
+            job_id = path.split("/")[5]
+            self.response(200, STORE.consume_analytics_media_frame(node_id, job_id, token))
         elif path == "/internal/v1/jobs/result" and self.command == "POST":
             self.response(200, STORE.report_job_result(node_id, self.read_json()))
+        elif path == "/internal/v1/analytics/jobs/claim" and self.command == "POST":
+            self.response(200, STORE.claim_analytics_job(node_id))
+        elif path == "/internal/v1/analytics/jobs/renew" and self.command == "POST":
+            self.response(200, STORE.renew_analytics_job(node_id, self.read_json()))
+        elif path == "/internal/v1/analytics/jobs/result" and self.command == "POST":
+            self.response(200, STORE.report_analytics_job_result(node_id, self.read_json()))
         else:
             raise ApiError(404, "not_found", "resource was not found")
 

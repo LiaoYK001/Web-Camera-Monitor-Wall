@@ -25,7 +25,10 @@ interface SceneSourceBase {
   volume: number;
   syncOffsetMs: number;
   monitoring: AudioMonitoring;
+  /** Legacy single-track field; kept in sync with audioInputs[0] on save. */
   audioTrack: number;
+  /** Schema 6 per-track Composite inputs, keyed by "source + input track". */
+  audioInputs?: Array<{ track: number; gain: number; muted: boolean; syncOffsetMs?: number }>;
   filters: SceneFilter[];
 }
 
@@ -268,7 +271,30 @@ export interface AnalyticsPolicy {
   motionEnabled: boolean; sceneChangeEnabled: boolean; personEnabled: boolean;
   allowEventPromotion: boolean; promotionThreshold: number;
   promotionHoldSeconds: number; promotionCooldownSeconds: number;
-  forceAnalyticsAlwaysOn: boolean; updatedAt: number;
+  forceAnalyticsAlwaysOn: boolean; updatedAt: number; revision?: number;
+  motion?: { sensitivity: number; sampleFps: number; debounceMs: number; cooldownMs: number };
+  sceneChange?: { threshold: number; confirmFrames: number; cooldownMs: number };
+  person?: { confidenceThreshold: number; sampleFps: number; maxBoxes: number; executionPreference: 'auto' | 'browser' | 'worker'; allowServerFallback: boolean };
+}
+export type AnalyticsExecution = 'native' | 'browser-webgpu' | 'browser-wasm' | 'worker' | 'unsupported' | 'off';
+export interface AnalyticsRuntimePlan {
+  contractVersion?: 2; planId: string; cameraId: string; profileId: string; kind: 'motion' | 'scene-change' | 'person';
+  topology?: 'true-direct' | 'gateway-direct' | 'hybrid' | 'composite';
+  receiverKind?: 'native' | 'browser'; archiveTopology?: 'off' | 'server-copy' | 'server-transcode' | 'local-manual';
+  decoder?: string; renderer?: string; encoder?: string; upstreamOwner?: 'camera' | 'docker';
+  execution: AnalyticsExecution; executionOwner: 'camera' | 'browser' | 'worker' | 'none';
+  sampleFps: number; serverMediaExpected: boolean; liveServerMediaExpected?: boolean; reason: string; fallbackReason?: string; expiresAt: number;
+  runtimeKind?: 'pwa' | 'chromium-iwa'; mediaTransport?: 'whep' | 'hls' | 'mjpeg' | 'rtsp' | 'onvif' | 'browser' | 'worker';
+  credentialExposure?: 'none' | 'ephemeral'; offlineConfigExpiresAt?: number;
+  model?: { id: string; version: string; sha256: string };
+}
+export interface AnalyticsStatus {
+  cameraId: string; profileId: string; motion: AnalyticsRuntimePlan; sceneChange: AnalyticsRuntimePlan; person: AnalyticsRuntimePlan;
+}
+export interface AnalyticsJob {
+  jobId: string; cameraId: string; profileId: string; kind: 'person'; nodeId: string; generation: number;
+  state: 'queued' | 'running' | 'completed' | 'failed'; leaseExpiresAt: number; modelId: string; modelSha256: string;
+  lastResultAt: number | null; lastErrorCode: string | null; revision: number;
 }
 export interface CameraDetection {
   address: string;
@@ -283,7 +309,7 @@ export interface OnvifPreset { token: string; name: string; }
 export interface OnvifEvent { topic: string; properties: Record<string, string>; }
 export interface DeviceOperation { id: number; operation: string; result: string; createdAt: number; }
 export type ClientPermission = 'view' | 'ptz' | 'talk' | 'snapshot' | 'record-local';
-export interface ClientEnrollment { id: string; name: string; platform: 'windows' | 'linux' | 'android' | 'web' | 'chromium-iwa'; state: 'pending' | 'approved'; createdAt: number; expiresAt: number; }
+export interface ClientEnrollment { id: string; name: string; platform: 'windows' | 'linux' | 'android' | 'web' | 'chromium-iwa'; state: 'pending' | 'approved' | 'superseded'; createdAt: number; expiresAt: number; }
 export interface EnrolledClient { id: string; name: string; platform: string; status: 'active' | 'revoked'; createdAt: number; lastSeen: number; grantExpiresAt: number; revision: number; revokedAt: number | null; cameraCount: number; weakRevocation: boolean; }
 export interface ClientCameraGrant { cameraId: string; profileIds: string[]; permissions: ClientPermission[]; credentialMode: 'none' | 'existing' | 'dedicated'; credentialsRef?: string; }
 export interface MonitorEvent { id: string; cameraId: string; type: string; source: string; topic: string; occurredAt: number; severity: string; confidence: number | null; zoneId: string; label: string; acknowledged: boolean; note: string; properties: Record<string, unknown>; segmentIds: string[]; }

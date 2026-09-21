@@ -46,6 +46,69 @@ test('generates stable bounded Scene v5 layouts for every 1-16 and M/S combinati
   expect(result).toEqual([]);
 });
 
+test('keeps browser analytics bounded, zoned, and confirms scene cuts', async ({ page }) => {
+  await page.goto('/');
+  const result = await page.evaluate(async () => {
+    const { MotionSceneEngine } = await import('/src/analyticsEngine.ts');
+    const ids = { cameraId: 'cam-1', profileId: 'sub' };
+    const zoned = new MotionSceneEngine();
+    const base = new Uint8Array(16);
+    zoned.evaluate({ width: 4, height: 4, pixels: base, timestamp: 1000 }, ids, { sensitivity: .1, debounceMs: 0,
+      zones: [{ mode: 'include', polygon: [[0, 0], [0.5, 0], [0.5, 1], [0, 1]] }] });
+    const outside = base.slice(); outside[15] = 255;
+    const outsideResult = zoned.evaluate({ width: 4, height: 4, pixels: outside, timestamp: 2000 }, ids, { sensitivity: .1, debounceMs: 0,
+      zones: [{ mode: 'include', polygon: [[0, 0], [0.5, 0], [0.5, 1], [0, 1]] }] });
+    const inside = outside.slice(); inside[0] = 255;
+    const insideResult = zoned.evaluate({ width: 4, height: 4, pixels: inside, timestamp: 3000 }, ids, { sensitivity: .1, debounceMs: 0,
+      zones: [{ mode: 'include', polygon: [[0, 0], [0.5, 0], [0.5, 1], [0, 1]] }] });
+    const cut = new MotionSceneEngine();
+    cut.evaluate({ width: 4, height: 4, pixels: base, timestamp: 1000 }, ids);
+    cut.evaluate({ width: 4, height: 4, pixels: new Uint8Array(16).fill(255), timestamp: 2000 }, ids,
+      { sceneThreshold: .55, sceneConfirmFrames: 2, sceneCooldownMs: 0, sensitivity: 1 });
+    const confirmed = cut.evaluate({ width: 4, height: 4, pixels: new Uint8Array(16).fill(255), timestamp: 3000 }, ids,
+      { sceneThreshold: .55, sceneConfirmFrames: 2, sceneCooldownMs: 0, sensitivity: 1 });
+    return { outside: outsideResult.signals.length, inside: insideResult.signals.some((signal) => signal.kind === 'motion'),
+      scene: confirmed.signals.filter((signal) => signal.kind === 'scene-change').length };
+  });
+  expect(result).toEqual({ outside: 0, inside: true, scene: 1 });
+});
+
+test('keeps scene-change histogram baselines scoped to the active zones', async ({ page }) => {
+  await page.goto('/');
+  const result = await page.evaluate(async () => {
+    const { MotionSceneEngine } = await import('/src/analyticsEngine.ts');
+    const ids = { cameraId: 'cam-zone', profileId: 'sub' };
+    const zone = [{ mode: 'include' as const, polygon: [[0, 0], [0.5, 0], [0.5, 1], [0, 1]] }];
+    const engine = new MotionSceneEngine();
+    const left = new Uint8Array(16); const rightCut = left.slice();
+    for (let index = 2; index < rightCut.length; index += 4) rightCut[index] = 255;
+    engine.evaluate({ width: 4, height: 4, pixels: left, timestamp: 1000 }, ids, { zones: zone });
+    const stable = engine.evaluate({ width: 4, height: 4, pixels: rightCut, timestamp: 2000 }, ids, {
+      zones: zone, sceneThreshold: .55, sceneConfirmFrames: 1, sceneCooldownMs: 0,
+    });
+    return { sceneSignals: stable.signals.filter((signal) => signal.kind === 'scene-change').length, sceneChange: stable.sceneChange };
+  });
+  expect(result).toEqual({ sceneSignals: 0, sceneChange: 0 });
+});
+
+test('maps person boxes through Scene v5 crop and scale transforms', async ({ page }) => {
+  await page.goto('/');
+  const result = await page.evaluate(async () => {
+    const { mapDetectionBoxToTile } = await import('/src/monitorView.ts');
+    const base = { id: 'item', sourceId: 'source', x: 0, y: 0, width: 1000, height: 1000,
+      scaleMode: 'contain' as const, crop: { top: 0, right: 400, bottom: 0, left: 400 }, zIndex: 0,
+      visible: true, locked: false, groupId: '', rotation: 0, opacity: 1, blendMode: 'normal' as const };
+    const mapped = mapDetectionBoxToTile({ x: .2, y: .25, width: .5, height: .5 }, base, 2000, 1000);
+    const clipped = mapDetectionBoxToTile({ x: 0, y: 0, width: .1, height: .1 }, base, 2000, 1000);
+    return { mapped, clipped };
+  });
+  expect(result.mapped.x).toBeGreaterThanOrEqual(0);
+  expect(result.mapped.x).toBeLessThan(.01);
+  expect(result.mapped.width).toBeGreaterThan(.8);
+  expect(result.mapped.width).toBeLessThan(.85);
+  expect(result.clipped.width).toBe(0);
+});
+
 test('keeps low-power selection and analytics signals fail-closed', async ({ page }) => {
   await page.goto('/');
   const result = await page.evaluate(async () => {
@@ -60,18 +123,19 @@ test('keeps low-power selection and analytics signals fail-closed', async ({ pag
     const unmet = monitor.selectLowPowerProfile(profiles.slice(0, 2), 2);
     const valid = monitor.validDetectionSignal({ schemaVersion: 1, cameraId: 'cam-1', profileId: 'sub', kind: 'motion', occurredAt: Date.now(), confidence: .8, source: 'browser' });
     const invalid = monitor.validDetectionSignal({ schemaVersion: 1, cameraId: 'cam-1', profileId: 'sub', kind: 'person', occurredAt: Date.now(), confidence: 2, boxes: [{ x: .9, y: 0, width: .2, height: 1 }], source: 'browser' });
+    const motionWithBoxes = monitor.validDetectionSignal({ schemaVersion: 1, cameraId: 'cam-1', profileId: 'sub', kind: 'motion', occurredAt: Date.now(), confidence: .8, boxes: [{ x: 0, y: 0, width: .1, height: .1 }], source: 'browser' });
     const sources = ['a', 'b', 'c', 'd', 'e']; let bag: string[] = [];
     const first = monitor.nextRotationWindow(sources, [], 3, ['a'], 'random', bag, () => 0); bag = first.bag;
     const second = monitor.nextRotationWindow(sources, first.selection, 3, ['a'], 'random', bag, () => 0);
     const sequential = monitor.nextRotationWindow(sources, ['a', 'b'], 2, ['a'], 'sequential');
     return { met: met.profile?.id, metOk: met.targetMet, unmet: unmet.profile?.id, unmetOk: unmet.targetMet,
-      reason: unmet.reason, valid, invalid, first: first.selection, second: second.selection,
+      reason: unmet.reason, valid, invalid, motionWithBoxes, first: first.selection, second: second.selection,
       randomUnique: new Set([...first.selection.slice(1), ...second.selection.slice(1)]).size,
       sequential: sequential.selection, overlay: monitor.defaultTelemetryOverlay(),
       unavailableText: telemetry.formatTelemetry({ fps: null, bytesPerSecond: null, codec: 'MJPEG', decoder: 'Unknown' }, ['fps', 'bitrate', 'codec', 'decoder']) };
   });
   expect(result).toEqual({ met: 'snapshot', metOk: true, unmet: 'sub', unmetOk: false,
-    reason: 'no_low_frame_rate_profile', valid: true, invalid: false,
+    reason: 'no_low_frame_rate_profile', valid: true, invalid: false, motionWithBoxes: false,
     first: ['a', 'c', 'd'], second: ['a', 'e', 'b'], randomUnique: 4, sequential: ['a', 'c'],
     overlay: { enabled: false, fields: ['fps', 'bitrate', 'codec', 'decoder'], position: 'bottom-left', customX: 0,
       customY: 1, textOpacity: .9, backgroundEnabled: true, backgroundColor: '#000000', backgroundOpacity: .45,
@@ -136,6 +200,27 @@ test('measures bounded telemetry and suspends only low-power invisible playback'
   expect(result.lowPowerRejected.reason).toBe('low_power_software_analytics_disabled');
 });
 
+test('shares bounded frame and person analysis budgets across monitor tiles', async ({ page }) => {
+  await page.goto('/');
+  const result = await page.evaluate(async () => {
+    const scheduler = await import('/src/analyticsScheduler.ts');
+    scheduler.resetAnalyticsScheduler();
+    const frame = Array.from({ length: 8 }, (_, index) => scheduler.requestAnalyticsSlot('frame', index === 0 ? 'focus' : 'normal', index * 10));
+    const person = Array.from({ length: 4 }, (_, index) => scheduler.requestAnalyticsSlot('person', index === 0 ? 'large' : 'normal', index * 10));
+    const rejectedFrame = scheduler.requestAnalyticsSlot('frame', 'normal', 100);
+    const rejectedPerson = scheduler.requestAnalyticsSlot('person', 'normal', 100);
+    const afterWindow = scheduler.requestAnalyticsSlot('frame', 'normal', 1101);
+    return { frame, person, rejectedFrame, rejectedPerson, afterWindow,
+      snapshot: scheduler.analyticsSchedulerSnapshot(1101) };
+  });
+  expect(result.frame).toEqual([true, true, true, true, true, true, true, true]);
+  expect(result.person).toEqual([true, true, true, true]);
+  expect(result.rejectedFrame).toBe(false);
+  expect(result.rejectedPerson).toBe(false);
+  expect(result.afterWindow).toBe(true);
+  expect(result.snapshot).toEqual({ frame: 1, person: 0, limits: { frame: 8, person: 4 } });
+});
+
 test('migrates MonitorView v1 safely and keeps operational details bounded', async ({ page }) => {
   await page.goto('/');
   const result = await page.evaluate(async () => {
@@ -157,9 +242,219 @@ test('migrates MonitorView v1 safely and keeps operational details bounded', asy
       details: issue?.technicalDetails, silence: audio.amplitudeToDbfs(0), unity: audio.amplitudeToDbfs(1),
       half: audio.amplitudeToDbfs(.5) };
   });
-  expect({ ...result, half: undefined }).toEqual({ version: 2, largeCount: 4, localMonitorVolume: 1,
+  expect({ ...result, half: undefined }).toEqual({ version: 4, largeCount: 4, localMonitorVolume: 1,
     panels: { detailsOpen: false, issueCenterExpanded: false },
     details: { codec: 'h264', retryCount: 2 }, silence: -120, unity: 0,
     half: undefined });
   expect(result.half).toBeCloseTo(-6.0206, 3);
 });
+
+test('normalizes per-source decorations and removes stale overrides', async ({ page }) => {
+  await page.goto('/');
+  const result = await page.evaluate(async () => {
+    const monitor = await import('/src/monitorView.ts');
+    const normalized = monitor.normalizeMonitorView({
+      schemaVersion: 3,
+      telemetry: { enabled: true, fields: ['fps', 'not-a-field'] },
+      sourceDecorations: {
+        'camera-1': { telemetry: { enabled: true, textOpacity: 4, backgroundOpacity: -1 }, audioMeter: { enabled: true, thresholdDbfs: -999, alertBorderWidth: 99 }, promotionKinds: { audio: true } },
+        stale: { telemetry: { enabled: true } },
+      },
+    } as unknown as Partial<import('/src/monitorView.ts').MonitorView>, 2, ['camera-1']);
+    return { version: normalized.schemaVersion, ids: Object.keys(normalized.sourceDecorations),
+      telemetry: normalized.sourceDecorations['camera-1'].telemetry,
+      audio: normalized.sourceDecorations['camera-1'].audioMeter,
+      promotion: normalized.sourceDecorations['camera-1'].promotionKinds };
+  });
+  expect(result.version).toBe(4);
+  expect(result.ids).toEqual(['camera-1']);
+  expect(result.telemetry.textOpacity).toBe(1);
+  expect(result.telemetry.backgroundOpacity).toBe(0);
+  expect(result.audio.thresholdDbfs).toBe(-120);
+  expect(result.audio.alertBorderWidth).toBe(12);
+  expect(result.promotion).toEqual({ audio: true, motion: false, person: false });
+});
+
+test('persists the encrypted OBS workspace layout locally', async ({ page }) => {
+  await page.goto('/');
+  const result = await page.evaluate(async () => {
+    const runtime = await import('/src/localRuntime.ts');
+    await runtime.saveWorkspaceLayout({ schemaVersion: 1, style: 'classic', docks: [
+      { id: 'canvas', kind: 'canvas', region: 'center', order: 0, size: 55, collapsed: false },
+    ] });
+    const loaded = await runtime.loadWorkspaceLayout();
+    return loaded && { style: loaded.style, dock: loaded.docks[0] };
+  });
+  expect(result).toEqual({ style: 'classic', dock: { id: 'canvas', kind: 'canvas', region: 'center', order: 0, size: 55, collapsed: false } });
+});
+
+test('honours the large/small ratio, OBS meter defaults and no-audio metadata', async ({ page }) => {
+  await page.goto('/');
+  const result = await page.evaluate(async () => {
+    const monitor = await import('/src/monitorView.ts');
+    const width = 1600; const height = 900;
+    const scene = {
+      schemaVersion: 5 as const, revision: 1, id: 'fixture', name: 'fixture',
+      canvas: { width, height, backgroundColor: '#000000' },
+      sources: Array.from({ length: 12 }, (_, index) => ({
+        id: `source-${index}`, kind: 'color' as const, name: `Source ${index}`, color: '#000000',
+        muted: true, volume: 0, syncOffsetMs: 0, monitoring: 'off' as const, audioTrack: 1, filters: [],
+      })),
+      items: Array.from({ length: 12 }, (_, index) => ({
+        id: `item-${index}`, sourceId: `source-${index}`, x: 0, y: 0, width: 1, height: 1,
+        scaleMode: 'contain' as const, crop: { top: 0, right: 0, bottom: 0, left: 0 }, zIndex: index,
+        visible: true, locked: false, groupId: '', rotation: 0, opacity: 1, blendMode: 'normal' as const,
+      })),
+    };
+    const ratioOf = (ratio: number) => {
+      const view = monitor.defaultMonitorView(); view.largeCount = 3; view.largeRatio = ratio;
+      const laidOut = monitor.applyAutomaticLayout(scene, view);
+      const largeArea = laidOut.items[0].width * laidOut.items[0].height;
+      const smallArea = laidOut.items[3].width * laidOut.items[3].height;
+      return Math.sqrt(smallArea / largeArea);
+    };
+    const legacy = monitor.normalizeMonitorView({
+      schemaVersion: 4,
+      sourceDecorations: { 'camera-1': { audioMeter: { enabled: true, position: 'top-left' } } },
+    } as unknown as Partial<import('/src/monitorView.ts').MonitorView>, 2, ['camera-1']);
+    const clamped = monitor.normalizeMonitorView({ largeRatio: 5, audioOutput: 'meter-only' } as unknown as Partial<import('/src/monitorView.ts').MonitorView>, 4);
+    const defaults = monitor.defaultAudioMeter();
+    return {
+      fifty: ratioOf(.5), thirty: ratioOf(.3), seventy: ratioOf(.7),
+      legacyPosition: legacy.sourceDecorations['camera-1'].audioMeter.position,
+      legacyOrientation: legacy.sourceDecorations['camera-1'].audioMeter.orientation,
+      clampedRatio: clamped.largeRatio, output: clamped.audioOutput,
+      defaults: { orientation: defaults.orientation, position: defaults.position, size: defaults.size, opacity: defaults.opacity },
+      spans: [monitor.largeTileSpan(.5), monitor.largeTileSpan(.9), monitor.largeTileSpan(.1)],
+    };
+  });
+  expect(result.fifty).toBeCloseTo(.5, 2);
+  expect(result.thirty).toBeCloseTo(.3, 2);
+  expect(result.seventy).toBeGreaterThan(.65);
+  expect(result.seventy).toBeLessThan(.75);
+  expect(result.legacyPosition).toBe('left');
+  expect(result.legacyOrientation).toBe('vertical');
+  expect(result.clampedRatio).toBe(.9);
+  expect(result.output).toBe('meter-only');
+  expect(result.defaults).toEqual({ orientation: 'vertical', position: 'left', size: 1, opacity: 1 });
+  expect(result.spans).toEqual([24, 13, 120]);
+});
+
+test('fills the canvas without black gaps and applies the fill policy', async ({ page }) => {
+  await page.goto('/');
+  const result = await page.evaluate(async () => {
+    const monitor = await import('/src/monitorView.ts');
+    const fixtures = [[1, 0], [2, 0], [4, 0], [5, 0], [9, 0], [16, 0], [5, 2], [3, 2]];
+    const coverage: number[] = [];
+    const failures: string[] = [];
+    for (const [count, large] of fixtures) {
+      const width = 1920; const height = 1080;
+      const scene = {
+        schemaVersion: 5 as const, revision: 1, id: 'fixture', name: 'fixture',
+        canvas: { width, height, backgroundColor: '#000000' },
+        sources: Array.from({ length: count }, (_, index) => ({
+          id: `source-${index}`, kind: 'color' as const, name: `Source ${index}`, color: '#000000',
+          muted: true, volume: 0, syncOffsetMs: 0, monitoring: 'off' as const, audioTrack: 1, filters: [],
+        })),
+        items: Array.from({ length: count }, (_, index) => ({
+          id: `item-${index}`, sourceId: `source-${index}`, x: 0, y: 0, width: 1, height: 1,
+          scaleMode: 'contain' as const, crop: { top: 0, right: 0, bottom: 0, left: 0 }, zIndex: index,
+          visible: true, locked: false, groupId: '', rotation: 0, opacity: 1, blendMode: 'normal' as const,
+        })),
+      };
+      const view = monitor.defaultMonitorView(); view.largeCount = large; view.largeRatio = .5;
+      const laidOut = monitor.applyAutomaticLayout(scene, view);
+      const area = laidOut.items.reduce((sum, item) => sum + item.width * item.height, 0);
+      const ratio = area / (width * height);
+      coverage.push(Math.round(ratio * 1000) / 1000);
+      if (ratio < .999) failures.push(`${count}/${large}:gap`);
+      if (laidOut.items.some((item) => item.scaleMode !== 'stretch')) failures.push(`${count}/${large}:fill`);
+    }
+    const single = { schemaVersion: 5 as const, revision: 1, id: 'single', name: 'single',
+      canvas: { width: 1600, height: 900, backgroundColor: '#000000' },
+      sources: [{ id: 's0', kind: 'color' as const, name: 'S', color: '#000', muted: true, volume: 0, syncOffsetMs: 0, monitoring: 'off' as const, audioTrack: 1, filters: [] }],
+      items: [{ id: 'i0', sourceId: 's0', x: 0, y: 0, width: 800, height: 450, scaleMode: 'contain' as const, crop: { top: 0, right: 0, bottom: 0, left: 0 }, zIndex: 0, visible: true, locked: false, groupId: '', rotation: 0, opacity: 1, blendMode: 'normal' as const }] };
+    const containView = monitor.defaultMonitorView(); containView.fill = 'contain';
+    const containMode = monitor.applyAutomaticLayout(single, containView).items[0].scaleMode;
+    const overrideView = monitor.defaultMonitorView();
+    overrideView.sourceDecorations = { s0: { telemetry: monitor.defaultTelemetryOverlay(), audioMeter: monitor.defaultAudioMeter(), promotionKinds: { audio: false, motion: false, person: false }, fill: 'cover' } };
+    const overrideMode = monitor.applyAutomaticLayout(single, overrideView).items[0].scaleMode;
+    const manualView = monitor.defaultMonitorView(); manualView.mode = 'manual';
+    const manualMode = monitor.resolveFillMode(manualView, 's0', single.items[0].scaleMode);
+    return { coverage, failures, containMode, overrideMode, manualMode };
+  });
+  expect(result.failures).toEqual([]);
+  expect(result.coverage).toEqual([1, 1, 1, 1, 1, 1, 1, 1]);
+  expect(result.containMode).toBe('contain');
+  expect(result.overrideMode).toBe('cover');
+  expect(result.manualMode).toBe('contain');
+});
+
+test('keeps detection boxes on the same geometry as the video element', async ({ page }) => {
+  await page.goto('/');
+  const result = await page.evaluate(async () => {
+    const monitor = await import('/src/monitorView.ts');
+    const base = { id: 'item', sourceId: 's', x: 0, y: 0, width: 800, height: 450,
+      crop: { top: 0, right: 0, bottom: 0, left: 0 }, zIndex: 0, visible: true, locked: false,
+      groupId: '', rotation: 0, opacity: 1, blendMode: 'normal' as const };
+    const corners = { x: 0, y: 0, width: 1, height: 1 };
+    const stretch = monitor.mapDetectionBoxToTile(corners, { ...base, scaleMode: 'stretch' as const }, 1920, 1080);
+    const contain = monitor.mapDetectionBoxToTile(corners, { ...base, scaleMode: 'contain' as const }, 1920, 1080);
+    const cover = monitor.mapDetectionBoxToTile(corners, { ...base, scaleMode: 'cover' as const }, 1920, 1080);
+    const tallContain = monitor.mapDetectionBoxToTile(corners, { ...base, scaleMode: 'contain' as const }, 640, 480);
+    const tallCover = monitor.mapDetectionBoxToTile(corners, { ...base, scaleMode: 'cover' as const }, 640, 480);
+    const tallStretch = monitor.mapDetectionBoxToTile(corners, { ...base, scaleMode: 'stretch' as const }, 640, 480);
+    return { stretch, contain, cover, tallContain, tallCover, tallStretch,
+      transform: monitor.tileTransform({ ...base, scaleMode: 'contain' as const }, 640, 480) };
+  });
+  expect(result.stretch).toEqual({ x: 0, y: 0, width: 1, height: 1 });
+  expect(result.contain).toEqual({ x: 0, y: 0, width: 1, height: 1 });
+  expect(result.cover).toEqual({ x: 0, y: 0, width: 1, height: 1 });
+  expect(result.tallStretch).toEqual({ x: 0, y: 0, width: 1, height: 1 });
+  expect(result.tallContain.x).toBeGreaterThan(.1);
+  expect(result.tallContain.width).toBeLessThan(.9);
+  expect(result.tallContain.height).toBeCloseTo(1, 3);
+  expect(result.tallCover.width).toBeCloseTo(1, 3);
+});
+test('labels the actual playback topology instead of a blanket direct label', async ({ page }) => {
+  await page.goto('/');
+  const result = await page.evaluate(async () => {
+    const monitor = await import('/src/monitorView.ts');
+    return {
+      direct: monitor.playbackTopologyLabel('true-direct'),
+      gateway: monitor.playbackTopologyLabel('gateway-direct'),
+      hybrid: monitor.playbackTopologyLabel('hybrid'),
+      composite: monitor.playbackTopologyLabel('composite'),
+      capability: monitor.playbackTopologyLabel(undefined, 'hybrid'),
+      unknown: monitor.playbackTopologyLabel(undefined, undefined),
+    };
+  });
+  expect(result).toEqual({ direct: '真直连', gateway: '网关转发', hybrid: 'Hybrid 转码',
+    composite: 'Composite', capability: 'Hybrid 转码', unknown: '' });
+});
+test('classifies a source audio-track state without false no-audio claims', async ({ page }) => {
+  await page.goto('/');
+  const result = await page.evaluate(async () => {
+    const monitor = await import('/src/monitorView.ts');
+    const state = monitor.sourceAudioTrackState;
+    return {
+      color: state({ kind: 'color' }),
+      boundZero: state({ kind: 'camera', streamBound: true, liveAudioTracks: 0 }),
+      boundTwo: state({ kind: 'camera', streamBound: true, liveAudioTracks: 2 }),
+      // An attached element without a stream is unknown, not "no audio".
+      attached: state({ kind: 'camera', streamBound: false, liveAudioTracks: 0 }),
+      capability: state({ kind: 'rtsp', audioCodec: 'aac' }),
+      probeReadyAudio: state({ kind: 'camera', probeState: 'ready', probeHasAudioTrack: true }),
+      probeReadySilent: state({ kind: 'camera', probeState: 'ready', probeHasAudioTrack: false }),
+      probeFailed: state({ kind: 'camera', probeState: 'failed' }),
+      capabilityKnownEmpty: state({ kind: 'rtsp', audioCodec: '', capabilityKnown: true }),
+    };
+  });
+  expect(result).toEqual({ color: 'none', boundZero: 'none', boundTwo: 'available', attached: 'unprobed',
+    capability: 'available', probeReadyAudio: 'available', probeReadySilent: 'none',
+    probeFailed: 'unprobed', capabilityKnownEmpty: 'none' });
+});
+
+
+
+

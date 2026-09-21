@@ -1,4 +1,4 @@
-# MonitorView v1 and analytics handoff / MonitorView v1 与分析交接
+# MonitorView and analytics runtime / MonitorView 与分析运行时
 
 > Status / 状态：v2-M5 is complete and published in stable v2.1 / v2-M5 已完成并随稳定版 v2.1 发布。
 
@@ -24,13 +24,27 @@ The default target is 2 FPS, with 0.5/1/2/5 shortcuts and a validated 0.5–30 r
 
 Deterministic browser tests cover every 1–16 landscape/portrait M/S combination, larger M area, stable re-layout, pinned sequential/random windows, unavailable MJPEG telemetry, WebRTC byte/frame/codec/decoder deltas, low-power visibility decisions and promotion threshold/cooldown behavior / 确定性浏览器测试覆盖 1–16 路横竖屏全部 M/S 组合、M 面积更大、稳定重排、固定顺序/随机窗口、MJPEG 不可测统计、WebRTC 字节/帧/编码/解码器差分、低功耗可见性决策及事件提升阈值/冷却行为。
 
+## Wall quick controls / 监控墙快捷控制
+
+The large-picture switch takes effect immediately: enabling it raises `largeCount` to at least one, checking an `M` row promotes that source, and the small/large ratio slider (10%–90%, default 50%) drives the auto layout so a small tile is the chosen share of a large tile while the canvas stays filled. The layout is a deterministic skyline packing over ordinary Scene v5 rectangles, so re-applying it is a stable fixed point.
+
+大画面开关即时生效：勾选后 `largeCount` 至少为 1，勾选 `M` 行即提升该来源；小/大画面比例滑块（10%–90%，默认 50%）驱动自动布局，在尽量填满画布的前提下让小画面为大画面的指定比例。布局是对普通 Scene v5 矩形的确定性 skyline 装箱，因此重复应用是稳定不动点。
+
+The per-source audio meter follows OBS: a vertical rail on the left edge by default, with direction (vertical/horizontal), corner or custom position, size and opacity, a dBFS threshold and an alert border. Sources whose profile or live stream carries no audio track show `该源没有音频轨道` instead of meter options. After enabling sound the operator picks `扬声器 + 电平表` or `仅电平表 / 阈值`; the latter mutes the speaker gain while keeping every analyser alive for meters and threshold promotion.
+
+逐源电平表遵循 OBS 习惯：默认在左侧竖放，可切换横/竖、四角或自定义位置、大小与透明度，并可设置 dBFS 阈值与超阈值边框。Profile 或实时流没有音频轨道的来源显示“该源没有音频轨道”，不再展示电平表选项。开启声音后可选择“扬声器 + 电平表”或“仅电平表 / 阈值”，后者把扬声器增益静音，同时保留全部分析器用于电平和阈值提升。
+
+True fullscreen and the resizable window preview keep only the picture, telemetry overlay, level meter, detection boxes and audio alerts; tile states, status buttons, names, sliders and the audio/control bars are hidden. The Studio add-source form accepts multiple Camera Registry profiles at once with checkboxes and appends every selection in one Scene update.
+
+真全屏与可缩放的窗口预览只保留画面、统计叠层、电平表、检测框和声音告警；画面状态、状态按钮、名称、滑块及音频/控制条一律隐藏。Studio 添加来源表单可用复选框一次选择多个 Camera Registry Profile，并在同一次 Scene 更新中批量添加。
+
 ## Analytics versions / 分析版本
 
-- `v3-M1 / v3.0`: per Camera/Profile motion and scene-change switches, native ONVIF events first, then a downsampled browser Worker where same-origin/CORS pixel access permits. Cross-origin MJPEG that cannot be safely sampled remains unsupported and must not trigger a hidden server media path.
-- `v3-M2 / v3.1`: opt-in browser WebGPU/WASM person boxes and optional administrator-enabled server providers. Only the `person` class and normalized boxes are in scope; face identity, emotion inference and biometric databases are excluded.
+- `v3-M1 / v3.0`: per Camera/Profile motion and scene-change switches, native ONVIF events first, then a downsampled browser Worker where same-origin/CORS pixel access permits. Cross-origin MJPEG that cannot be safely sampled remains unsupported and must not trigger a hidden server media path. The implementation is tracked on `dev`; release requires revision-bound v3-M1 receipts.
+- `v3-M2 / v3.1`: opt-in browser WebGPU/WASM person boxes and optional administrator-enabled server providers. Only the `person` class and normalized boxes are in scope; face identity, emotion inference and biometric databases are excluded. The pinned ONNX model is served as a same-origin, hash-verified asset; the first-party Worker fails closed when its optional runtime is unavailable.
 
 - `v3-M1 / v3.0`：逐 Camera/Profile 运动与大范围画面变化开关，优先使用 ONVIF 原生事件；同源/CORS 像素访问允许时再使用浏览器降采样 Worker。不能安全采样的跨源 MJPEG 明确标记不支持，不能偷偷启动服务器媒体链。
-- `v3-M2 / v3.1`：选择加入的浏览器 WebGPU/WASM 人物框，以及管理员显式启用的可选服务端 Provider。范围只包含 `person` 类别和归一化框；不包含人脸身份、情绪推断或生物特征数据库。
+- `v3-M2 / v3.1`：选择加入的浏览器 WebGPU/WASM 人物框，以及管理员显式启用的可选服务端 Provider。范围只包含 `person` 类别和归一化框；不包含人脸身份、情绪推断或生物特征数据库。固定 ONNX 模型以同源、哈希校验资源提供；第一方 Worker 缺少可选运行时则安全失败。
 
 Camera Registry stores all three switches independently and defaults them off. Batch updates are one SQLite transaction, validate every Camera/Profile before writing, and are bounded to 256 records. `scene-change` is an additive event type; the existing v1 event schema remains compatible. Raw frames, model inputs, snapshots, endpoints and live telemetry remain outside logs and public evidence.
 

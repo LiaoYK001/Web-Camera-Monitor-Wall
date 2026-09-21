@@ -9,12 +9,16 @@
 
 namespace webobs {
 
-inline constexpr int current_scene_schema_version = 5;
+inline constexpr int current_scene_schema_version = 6;
+/** Schema 5 kept a single `audioTrack`; it is migrated to `audioInputs` on read. */
+inline constexpr int legacy_scene_schema_version = 5;
+inline constexpr int maximum_audio_track_index = 31;
 inline constexpr std::size_t maximum_scene_json_bytes = 1024 * 1024;
 inline constexpr std::size_t maximum_scene_sources = 64;
 inline constexpr std::size_t maximum_browser_sources = 8;
 inline constexpr std::size_t maximum_scene_items = 256;
 inline constexpr std::size_t maximum_source_filters = 16;
+inline constexpr std::size_t maximum_source_audio_inputs = 8;
 
 struct SceneFilter {
     std::string id;
@@ -32,6 +36,18 @@ struct SceneCanvas {
     std::string background_color = "#000000";
 
     bool operator==(const SceneCanvas &) const = default;
+};
+
+/** One input track of a source that feeds the Composite program mix. */
+struct SceneAudioInput {
+    /** 0-based ffmpeg audio stream index (`0:a:<track>`). */
+    int track = 0;
+    double gain = 1.0;
+    bool muted = false;
+    /** Per-track sync offset relative to the source, in milliseconds. */
+    int sync_offset_ms = 0;
+
+    bool operator==(const SceneAudioInput &) const = default;
 };
 
 struct SceneSource {
@@ -55,6 +71,17 @@ struct SceneSource {
     int sync_offset_ms = 0;
     std::string monitoring = "off";
     int audio_track = 1;
+    /**
+     * Per-track Composite mix inputs, keyed by "source + input track".  Empty
+     * means "not configured per track", so the engine keeps using audio_track.
+     */
+    std::vector<SceneAudioInput> audio_inputs;
+    /**
+     * True when the document carried an explicit `audioInputs` array - even an
+     * empty one, which means "this source contributes no audio".  Legacy scenes
+     * leave it false and keep using audioTrack, which stays the OBS output bus.
+     */
+    bool audio_inputs_explicit = false;
     std::string file_path;
     std::string text;
     std::string color = "#000000";
@@ -124,6 +151,23 @@ struct SceneSerializeResult {
 
     [[nodiscard]] bool ok() const { return !json.empty() && error.empty(); }
 };
+
+/**
+ * Inputs the Composite engine must mix for a source: the explicit schema 6
+ * `audioInputs` when present, otherwise the legacy single `audioTrack`.
+ */
+[[nodiscard]] std::vector<SceneAudioInput> resolved_audio_inputs(const SceneSource &source);
+
+/**
+ * True when two configurations describe the same effective audio routing, i.e.
+ * the gateway would build exactly the same mix stream for both.  This decides
+ * whether a re-published document may keep its live source and its existing
+ * gateway mix route.  Source master volume/mute and the output bus are applied
+ * on the OBS side when the document is committed, so they are excluded; the
+ * explicit flag is included because "never configured" and "cleared every
+ * track" resolve to different audio.
+ */
+[[nodiscard]] bool audio_routing_matches(const SceneSource &left, const SceneSource &right);
 
 std::optional<std::string> validate_scene_document(const SceneDocument &document);
 SceneParseResult parse_scene_json(std::string_view json);

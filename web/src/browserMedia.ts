@@ -59,19 +59,58 @@ export async function approvedBrowserProfile(cameraId: string, profileId: string
   return profile;
 }
 
+export interface BrowserMediaCapabilities {
+  videoCodecs: string[];
+  hardwareDecoders: string[];
+}
+
+/**
+ * Runtime browser decode capabilities.  H.265 and WebCodecs are only claimed
+ * when this browser can actually decode them, so the media plan never selects a
+ * direct path the client cannot render.  H.264 stays the baseline fallback.
+ */
+export function browserMediaCapabilities(): BrowserMediaCapabilities {
+  const sourceSupported = (type: string): boolean => {
+    try {
+      return typeof MediaSource !== 'undefined' && MediaSource.isTypeSupported(type);
+    } catch {
+      return false;
+    }
+  };
+  const videoCodecs: string[] = [];
+  if (sourceSupported('video/mp4; codecs="avc1.42E01E"')) videoCodecs.push('h264');
+  if (sourceSupported('video/mp4; codecs="hvc1.1.6.L93.B0"') ||
+      sourceSupported('video/mp4; codecs="hev1.1.6.L93.B0"')) videoCodecs.push('h265');
+  if (sourceSupported('video/mp4; codecs="mjpeg"') || sourceSupported('video/x-motion-jpeg')) videoCodecs.push('mjpeg');
+  if (!videoCodecs.includes('h264')) videoCodecs.unshift('h264');
+  const hardwareDecoders = typeof (globalThis as { VideoDecoder?: unknown }).VideoDecoder !== 'undefined'
+    ? ['webcodecs'] : [];
+  return { videoCodecs, hardwareDecoders };
+}
+
 export async function requestBrowserPlan(
   cameraId: string, profileId: string, reachability: 'reachable' | 'unreachable', protocol: string,
 ): Promise<BrowserTopologyPlan> {
   if (!['whep', 'hls', 'mjpeg', 'rtsp'].includes(protocol)) throw new Error('浏览器媒体协议无效');
+  const capabilities = browserMediaCapabilities();
+  // Resolve the device headers first: an unpaired browser has no device token at
+  // all, and folding that into the fetch below reported it as an unreachable
+  // control plane, which sent operators looking at the wrong component.
+  let deviceHeaders: Record<string, string>;
+  try {
+    deviceHeaders = await browserDeviceHeaders();
+  } catch {
+    throw new BrowserPlanError('unavailable', '此浏览器尚未完成配对');
+  }
   let response: Response;
   try {
     response = await fetch('/api/v2/media-plans', {
       method: 'POST', cache: 'no-store', credentials: 'same-origin',
-      headers: { 'Content-Type': 'application/json', ...await browserDeviceHeaders() },
+      headers: { 'Content-Type': 'application/json', ...deviceHeaders },
       body: JSON.stringify({
         cameraId, profileId, policy: 'auto', receiverKind: 'browser', networkClass: 'lan', reachability,
-        protocols: ['whep', 'hls', 'mjpeg'], videoCodecs: ['h264', 'h265', 'mjpeg'],
-        hardwareDecoders: ['webcodecs'], requiresComposite: false,
+        protocols: ['whep', 'hls', 'mjpeg'], videoCodecs: capabilities.videoCodecs,
+        hardwareDecoders: capabilities.hardwareDecoders, requiresComposite: false,
       }),
     });
   } catch {

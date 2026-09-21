@@ -4,7 +4,7 @@
 >
 > Last updated / 最后更新：2026-09-02
 >
-> Current position / 当前位置：`v2.3` is stable and v2-M7 is complete; v3 analytics is next. Native Windows/Linux/Android sources remain frozen / `v2.3` 是当前稳定版且 v2-M7 已完成；下一阶段为 v3 分析。Windows/Linux/Android 原生源码继续冻结。
+> Current position / 当前位置：`v2.3.1` is the stable carrier and v2-M7 is complete; v3 analytics is next. Native Windows/Linux/Android sources remain frozen / `v2.3.1` 是当前稳定载体且 v2-M7 已完成；下一阶段为 v3 分析。Windows/Linux/Android 原生源码继续冻结。
 
 This document expands the project from a web camera compositor into a self-hosted and local-first monitoring workspace with three first-class capabilities: an OBS-inspired customizable canvas, an NVR workflow inspired by mainstream monitoring applications such as tinyCam Monitor, and v2 True Direct local clients that keep Docker outside the media data plane. It is a capability plan, not a compatibility or UI-cloning claim, and it does not promise release dates.
 

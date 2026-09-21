@@ -1,6 +1,6 @@
 # Web Camera Monitor Wall
 
-一个基于 `libobs` 的无桌面 Web 监控墙、Gateway Direct WebRTC 网关、Local-first PWA 与 NVR 项目。当前稳定版本为 **v2.3**，完成 v2-M7 扩展、生态与韧性底座；详见 [v2.3 发布说明](docs/release-notes-v2.3.md)。最终 v1 基线仍为 **v1.2.1**；请勿部署最初的 `v1.2` 镜像，详见 [v1.2.1 发布说明](docs/release-notes-v1.2.1.md)。
+一个基于 `libobs` 的无桌面 Web 监控墙、Gateway Direct WebRTC 网关、Local-first PWA 与 NVR 项目。当前稳定版本为 **v2.3.1**（v2-M7 载体），完成 v2-M7 扩展、生态与韧性底座；详见 [v2.3 发布说明](docs/release-notes-v2.3.md)。最终 v1 基线仍为 **v1.2.1**；请勿部署最初的 `v1.2` 镜像，详见 [v1.2.1 发布说明](docs/release-notes-v1.2.1.md)。`dev` 当前实现 v3-M1/v3-M2 浏览器本地分析与可选 Worker，并包含待发布的 v3.0.1 监控工作台修正版；它尚未形成 v3.1 稳定发布。边界见 [v3 分析运行时](docs/v3-analytics-runtime.md)。
 
 ```text
 RTSP camera -> libobs ffmpeg_source -> OBS scene -> H.264/AAC MP4
@@ -10,6 +10,14 @@ RTSP camera -> libobs ffmpeg_source -> OBS scene -> H.264/AAC MP4
 当前版本新增 SQLite WAL Camera Registry、受控 ONVIF PTZ/预置位/快照/事件/对讲，以及隔离的事件、移动检测区/隐私遮罩、Detector Provider、规则和有界通知发件箱。默认 Gateway Direct-only 运行完全不初始化 OBS 解码、合成或编码；只有录制或启用 Composite 才启动 libobs。VA-API 会分别报告设备、驱动、编解码能力和真实运行探测，失败时明确回退；Hybrid 只转码不兼容轨道。
 
 开发路线和门禁见 [ROADMAP.md](ROADMAP.md)。当前 API v1 的 `direct` 仍是媒体经过 Docker/MediaMTX 的“网关直通”；获批的 HTTPS WHEP/HLS/MJPEG 可 Camera→Browser，普通 RTSP 明确回退 Camera→Docker→Browser。HTTP 摄像机可由管理员逐 Profile 显式豁免并经 Docker Gateway/NVR 使用，但不会被误报为 HTTPS 浏览器真直连。v2.3 增加 deny-by-default RBAC、Controller/Recorder mTLS 与租约、多卷/S3、资源调度、MQTT/Home Assistant、外部 Provider 和加密灾备，同时保留默认单镜像 `standalone` 部署。Qt/GStreamer/Android 继续冻结，不新增 EXE/APK 发布门禁。详见 [v2.3 扩展与韧性](docs/scale-ecosystem-resilience-v2.3.md)、[v2.2 运维工作区](docs/operations-workspace-v2.2.md)、[API v2](docs/api-v2.md) 与 [真直连边界](docs/true-direct-v2.md)。
+
+针对 `dev` 的本地快速启动、Vite 热更新、调试、测试和本地 hotfix，请使用 [Local `dev` loop](docs/local-dev.md) 及 `scripts/dev-local.ps1` / `scripts/dev-local.sh`；它们只使用本地 Docker 镜像，不会发布 GHCR。
+
+本地 `5173` 开发入口默认不需要用户名或密码：基础 Compose 仅绑定回环地址并关闭
+集群/RBAC 认证。只有显式使用认证/生产 overlay 或后续明确要求时才显示登录页；
+Vite 代理或后端重启时页面会显示“本地服务暂不可用”，不会误判为需要密码。配置不按
+用户名区分，工作区全局“配置”菜单可选择本机加密档案；“系统设置”支持保存、备份、
+导出 JSON、导入和恢复。导出包严格脱敏，不含凭据、Token、Secret、端点或文件路径。
 
 `WEBOBS_SCENE_FILE` 默认指向 `/config/webobs/scene.json`。空配置首次启动会创建空 Scene/Camera Registry，直接在 WebUI 的“设备管理”中添加设备；`WEBOBS_RTSP_URL` 只保留为一次性兼容 bootstrap，不再是部署必填项。Scene v5 只保存 Camera/Profile ID，凭据通过未提交 Git 的 Secret 引用解析。
 
@@ -71,7 +79,7 @@ curl http://127.0.0.1:8080/api/v1/health
 curl http://127.0.0.1:8080/api/v1/scene
 ```
 
-基础 Compose 仍是仅回环、无认证的本机开发模式。不要直接把端口映射改为所有网卡；需要认证时，先在受 Git 忽略的 `secrets/` 中分别创建用户名文件和至少 16 字节的密码文件，再使用覆盖文件：
+基础 Compose 是仅回环、无认证的本机开发模式，并明确关闭集群/RBAC 认证；因此不会存在预置用户名或密码。不要直接把端口映射改为所有网卡；需要认证时，先在受 Git 忽略的 `secrets/` 中分别创建用户名文件和至少 16 字节的密码文件，再使用覆盖文件：
 
 ```bash
 docker compose -f compose.yaml -f compose.m6-auth.yaml up --build

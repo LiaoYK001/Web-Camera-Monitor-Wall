@@ -1,11 +1,12 @@
 import { type FormEvent, type ReactNode, useEffect, useState } from 'react';
 import { fetchAuthSession, login, logout, type AuthSession } from './api';
-import { clearPrivateRuntimeState, localConfigState } from './localRuntime';
+import { clearPrivateRuntimeState, hasLocalConfigProfiles, localConfigState } from './localRuntime';
 
-type GateSession = AuthSession & { offlineAuthorized?: boolean };
+type GateSession = AuthSession & { offlineAuthorized?: boolean; unavailable?: boolean };
 
 export default function LoginGate({ children }: { children: ReactNode }) {
   const [session, setSession] = useState<GateSession | null>(null);
+  const [checkAttempt, setCheckAttempt] = useState(0);
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
   const [error, setError] = useState('');
@@ -15,12 +16,26 @@ export default function LoginGate({ children }: { children: ReactNode }) {
     const controller = new AbortController();
     fetchAuthSession(controller.signal)
       .then(setSession)
-      .catch(() => void localConfigState().then((state) => setSession({
-        authenticated: state === 'offline-valid', authenticationEnabled: true,
-        offlineAuthorized: state === 'offline-valid',
-      })));
+      .catch(() => {
+        if (controller.signal.aborted) return;
+        void Promise.all([
+          localConfigState().catch(() => 'empty' as const),
+          hasLocalConfigProfiles().catch(() => false),
+        ]).then(([state, hasProfiles]) => {
+          if (controller.signal.aborted) return;
+          setSession({
+            // A failed session probe is a connectivity state, not evidence that
+            // credentials are required. Showing a password form here used to
+            // trap local development whenever the backend briefly restarted.
+            authenticated: state === 'offline-valid',
+            authenticationEnabled: false,
+            offlineAuthorized: state === 'offline-valid',
+            unavailable: state !== 'offline-valid' && !hasProfiles,
+          });
+        });
+      });
     return () => controller.abort();
-  }, []);
+  }, [checkAttempt]);
 
   const submit = async (event: FormEvent) => {
     event.preventDefault();
@@ -37,6 +52,12 @@ export default function LoginGate({ children }: { children: ReactNode }) {
   };
 
   if (!session) return <main className="login-screen"><div className="login-card"><p>正在检查安全会话…</p></div></main>;
+  if (session.unavailable) return <main className="login-screen"><div className="login-card">
+    <span className="eyebrow">Web Camera Monitor Wall</span>
+    <h1>本地服务暂不可用</h1>
+    <p>未检测到可用的控制服务。请确认 Docker/Vite 后端正在运行后重试；当前不会要求输入用户名或密码。</p>
+    <button className="primary-button" type="button" onClick={() => { setSession(null); setCheckAttempt((value) => value + 1); }}>重新检查</button>
+  </div></main>;
   if (session.authenticationEnabled === false || session.authenticated) return (
     <>
       {children}

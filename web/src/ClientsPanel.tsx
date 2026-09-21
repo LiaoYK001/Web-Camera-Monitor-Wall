@@ -28,6 +28,7 @@ export default function ClientsPanel({ onBack }: { onBack: () => void }) {
   const [clients, setClients] = useState<EnrolledClient[]>([]);
   const [cameras, setCameras] = useState<CameraRecord[]>([]);
   const [codes, setCodes] = useState<Record<string, string>>({});
+  const [updateTargets, setUpdateTargets] = useState<Record<string, string>>({});
   const [drafts, setDrafts] = useState<Record<string, Record<string, GrantDraft>>>({});
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
@@ -76,8 +77,11 @@ export default function ClientsPanel({ onBack }: { onBack: () => void }) {
     }
     setBusy(true); setError(''); setNotice('');
     try {
-      await approveClientEnrollment(enrollment.id, codes[enrollment.id], cameraGrants);
-      setNotice(`已批准 ${enrollment.name}；设备将在下次轮询时取得加密授权包。`);
+      const targetClientId = updateTargets[enrollment.id] || undefined;
+      const result = await approveClientEnrollment(enrollment.id, codes[enrollment.id], cameraGrants, targetClientId);
+      setNotice(result.updated
+        ? `已更新 ${enrollment.name} 的配对设备；旧设备令牌已失效，浏览器请点击“批准后完成配对”。`
+        : `已批准 ${enrollment.name}；设备将在下次轮询时取得加密授权包。`);
       await reload();
     } catch (reason) { setError(reason instanceof Error ? reason.message : '批准失败'); }
     finally { setBusy(false); }
@@ -117,9 +121,10 @@ export default function ClientsPanel({ onBack }: { onBack: () => void }) {
         {!window.isSecureContext && <small>当前不是受信任 HTTPS Secure Context，浏览器配对已禁用。</small>}
       </div>
     </section>
-    <section className="client-section"><div className="section-title"><div><h2>待批准配对</h2><p>配对码十分钟有效。只授权实际需要的 Camera、Profile 和操作。</p></div><span>{enrollments.filter((item) => item.state === 'pending').length}</span></div>
+    <section className="client-section"><div className="section-title"><div><h2>待批准配对</h2><p>配对码十分钟有效。只授权实际需要的 Camera、Profile 和操作；可选择创建新设备，或明确更新同平台的已有设备。</p></div><span>{enrollments.filter((item) => item.state === 'pending').length}</span></div>
       {enrollments.filter((item) => item.state === 'pending').length === 0 ? <div className="registry-empty">暂无待批准客户端</div> : enrollments.filter((item) => item.state === 'pending').map((enrollment) => <article className="enrollment-card" key={enrollment.id}>
         <header><div><strong>{enrollment.name}</strong><span>{enrollment.platform} · {Math.max(0, Math.ceil((enrollment.expiresAt * 1000 - Date.now()) / 60000))} 分钟后过期</span></div><label><span>配对码</span><input inputMode="numeric" autoComplete="one-time-code" maxLength={8} value={codes[enrollment.id] ?? ''} onChange={(event) => setCodes((current) => ({ ...current, [enrollment.id]: event.target.value.replace(/\D/g, '') }))} /></label></header>
+        <label className="enrollment-target"><span>设备处理方式</span><select value={updateTargets[enrollment.id] ?? ''} onChange={(event) => setUpdateTargets((current) => ({ ...current, [enrollment.id]: event.target.value }))}><option value="">创建新的已配对设备</option>{clients.filter((client) => client.status === 'active' && client.platform === enrollment.platform).map((client) => <option key={client.id} value={client.id}>更新：{client.name} · {client.cameraCount} 台摄像机</option>)}</select><small>默认创建新设备；如果这是同一浏览器/客户端的重新配对，请选择对应的“更新”。更新会保留设备 ID、替换旧令牌并原子替换 Camera/Profile 授权；旧浏览器会话立即失效。</small></label>
         <div className="grant-list">{cameras.map((camera) => {
           const grant = drafts[enrollment.id]?.[camera.id] ?? freshGrant(camera, enrollment.platform);
           return <div className={`grant-camera ${grant.enabled ? 'enabled' : ''}`} key={camera.id}>

@@ -21,6 +21,7 @@ import sqlite3
 import subprocess
 import threading
 import time
+import tempfile
 import uuid
 import xml.etree.ElementTree as ET
 from datetime import datetime, timezone
@@ -65,8 +66,26 @@ PROBE_OUTPUT_LIMIT = 1024 * 1024
 PROBE_SEMAPHORE = threading.BoundedSemaphore(4)
 PROBE_LOCKS_GUARD = threading.Lock()
 PROBE_LOCKS: dict[str, threading.Lock] = {}
+# Short-lived probe result cache.  Keys hash the endpoint so a raw RTSP URL is
+# never retained; a mutation or TTL expiry invalidates the entry.
+PROBE_RESULTS_GUARD = threading.Lock()
+PROBE_RESULTS: dict[str, tuple[float, dict]] = {}
+PROBE_RESULT_TTL_SECONDS = float(os.environ.get("WEBOBS_PROBE_CACHE_SECONDS", "15"))
 ONVIF_CLOCK_LOCK = threading.Lock()
 ONVIF_CLOCK_OFFSETS: dict[str, float] = {}
+ANALYTICS_SESSION_LOCK = threading.Lock()
+ANALYTICS_PERSON_MODEL_ID = "ssd-mobilenet-v1-12-person"
+ANALYTICS_PERSON_MODEL_VERSION = "onnx-model-zoo-4c46cd00"
+ANALYTICS_PERSON_MODEL_SHA256 = "b8fba5e404077d4048d27fcd1667e85e27e192eb9bf51e696c46a3acd7d21058"
+ANALYTICS_SESSIONS: dict[str, tuple[int, str, str, str]] = {}
+ANALYTICS_PRINCIPAL_RE = re.compile(r"^[A-Za-z0-9._-]{1,64}$")
+# Bounded replay/rate state for browser analytics sessions.  Values contain no
+# frames or endpoint data.  The signal rate bucket is keyed by authenticated
+# principal (not just a runtime session), so opening multiple sessions cannot
+# bypass the per-client ceiling.
+ANALYTICS_SIGNAL_SEEN: dict[str, set[str]] = {}
+ANALYTICS_SIGNAL_RATE: dict[str, tuple[int, int]] = {}
+ANALYTICS_PROFILE_RATE: dict[tuple[str, str], tuple[int, int]] = {}
 
 
 class OnvifError(RuntimeError):
@@ -121,9 +140,46 @@ def connect() -> sqlite3.Connection:
     return connection
 
 
+def studio_path() -> Path:
+    configured = os.environ.get("WEBOBS_STUDIO_FILE", "").strip()
+    return Path(configured) if configured else DB_PATH.parent / "studio.json"
+
+
 def initialize() -> None:
     DB_PATH.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
-    with connect() as database:
+    migration_backup: Path | None = None
+    # A SQLite online backup captures a consistent pre-migration snapshot,
+    # including databases currently using WAL.  Keep it beside the database
+    # with restrictive permissions and remove it after a successful startup.
+    # If any DDL/default backfill fails, restore the exact old bytes and let
+    # the caller continue on the previous schema instead of a half-migrated
+    # registry.
+    if DB_PATH.is_file():
+        try:
+            source = sqlite3.connect(DB_PATH)
+            try:
+                user_version = int(source.execute("PRAGMA user_version").fetchone()[0])
+                if user_version > 3:
+                    raise RuntimeError("camera registry schema is newer than this runtime")
+                if user_version < 3:
+                    descriptor, temporary_name = tempfile.mkstemp(
+                        prefix=f".{DB_PATH.name}.pre-v3-", dir=DB_PATH.parent)
+                    os.close(descriptor)
+                    migration_backup = Path(temporary_name)
+                    os.chmod(migration_backup, 0o600)
+                    destination = sqlite3.connect(migration_backup)
+                    try:
+                        source.backup(destination)
+                    finally:
+                        destination.close()
+            finally:
+                source.close()
+        except Exception:
+            if migration_backup:
+                migration_backup.unlink(missing_ok=True)
+            raise
+    try:
+      with connect() as database:
         database.execute("PRAGMA journal_mode=WAL")
         database.execute("PRAGMA synchronous=NORMAL")
         database.executescript(
@@ -165,6 +221,19 @@ def initialize() -> None:
               promotion_hold_seconds INTEGER NOT NULL DEFAULT 15,
               promotion_cooldown_seconds INTEGER NOT NULL DEFAULT 30,
               force_analytics_always_on INTEGER NOT NULL DEFAULT 0,
+              motion_sensitivity REAL NOT NULL DEFAULT 0.15,
+              motion_sample_fps REAL NOT NULL DEFAULT 2,
+              motion_debounce_ms INTEGER NOT NULL DEFAULT 500,
+              motion_cooldown_ms INTEGER NOT NULL DEFAULT 5000,
+              scene_change_threshold REAL NOT NULL DEFAULT 0.55,
+              scene_change_confirm_frames INTEGER NOT NULL DEFAULT 2,
+              scene_change_cooldown_ms INTEGER NOT NULL DEFAULT 30000,
+              person_confidence_threshold REAL NOT NULL DEFAULT 0.6,
+              person_sample_fps REAL NOT NULL DEFAULT 1,
+              person_max_boxes INTEGER NOT NULL DEFAULT 16,
+              person_execution_preference TEXT NOT NULL DEFAULT 'auto',
+              person_allow_server_fallback INTEGER NOT NULL DEFAULT 0,
+              revision INTEGER NOT NULL DEFAULT 1,
               updated_at INTEGER NOT NULL,
               PRIMARY KEY(camera_id,profile_id)
             );
@@ -224,6 +293,16 @@ def initialize() -> None:
               settings_json TEXT NOT NULL,
               updated_at INTEGER NOT NULL
             );
+            CREATE TABLE IF NOT EXISTS studio_source_registry_links(
+              source_id TEXT PRIMARY KEY,
+              camera_id TEXT,
+              profile_id TEXT,
+              state TEXT NOT NULL,
+              reason TEXT NOT NULL DEFAULT '',
+              created_at INTEGER NOT NULL,
+              updated_at INTEGER NOT NULL,
+              FOREIGN KEY(camera_id,profile_id) REFERENCES stream_profiles(camera_id,id) ON DELETE SET NULL
+            );
             """
         )
         camera_columns = {row["name"] for row in database.execute("PRAGMA table_info(cameras)")}
@@ -248,6 +327,28 @@ def initialize() -> None:
         ):
             if name not in profile_columns:
                 database.execute(f"ALTER TABLE stream_profiles ADD COLUMN {name} {definition}")
+        policy_columns = {row["name"] for row in database.execute("PRAGMA table_info(analytics_policies)")}
+        for name, definition in (
+            ("motion_sensitivity", "REAL NOT NULL DEFAULT 0.15"),
+            ("motion_sample_fps", "REAL NOT NULL DEFAULT 2"),
+            ("motion_debounce_ms", "INTEGER NOT NULL DEFAULT 500"),
+            ("motion_cooldown_ms", "INTEGER NOT NULL DEFAULT 5000"),
+            ("scene_change_threshold", "REAL NOT NULL DEFAULT 0.55"),
+            ("scene_change_confirm_frames", "INTEGER NOT NULL DEFAULT 2"),
+            ("scene_change_cooldown_ms", "INTEGER NOT NULL DEFAULT 30000"),
+            ("person_confidence_threshold", "REAL NOT NULL DEFAULT 0.6"),
+            ("person_sample_fps", "REAL NOT NULL DEFAULT 1"),
+            ("person_max_boxes", "INTEGER NOT NULL DEFAULT 16"),
+            ("person_execution_preference", "TEXT NOT NULL DEFAULT 'auto'"),
+            ("person_allow_server_fallback", "INTEGER NOT NULL DEFAULT 0"),
+            ("revision", "INTEGER NOT NULL DEFAULT 1"),
+        ):
+            if name not in policy_columns:
+                database.execute(f"ALTER TABLE analytics_policies ADD COLUMN {name} {definition}")
+        database.execute("""CREATE TABLE IF NOT EXISTS analytics_metadata(
+            id INTEGER PRIMARY KEY CHECK(id=1), revision INTEGER NOT NULL DEFAULT 1,
+            updated_at INTEGER NOT NULL)""")
+        database.execute("INSERT OR IGNORE INTO analytics_metadata(id,revision,updated_at) VALUES(1,1,?)", (int(time.time()),))
         defaults = {
             "defaultTransportMode": "auto", "probeTimeoutSeconds": PROBE_TIMEOUT_SECONDS,
             "sourceRecoveryEnabled": True, "issueRetentionLimit": MAX_OPERATIONAL_ISSUES,
@@ -256,7 +357,16 @@ def initialize() -> None:
             "INSERT OR IGNORE INTO runtime_settings(id,revision,settings_json,updated_at) VALUES(1,1,?,?)",
             (json.dumps(defaults, separators=(",", ":"), sort_keys=True), int(time.time())),
         )
-        database.execute("PRAGMA user_version=2")
+        database.execute("PRAGMA user_version=3")
+    except Exception:
+        if migration_backup and migration_backup.is_file():
+            for suffix in ("", "-wal", "-shm"):
+                Path(f"{DB_PATH}{suffix}").unlink(missing_ok=True)
+            os.replace(migration_backup, DB_PATH)
+        raise
+    finally:
+        if migration_backup:
+            migration_backup.unlink(missing_ok=True)
 
 
 def audit_device_operation(camera_id: str, operation: str, result: str) -> None:
@@ -561,6 +671,14 @@ def analytics_policy_document(row: sqlite3.Row) -> dict:
         "promotionHoldSeconds": row["promotion_hold_seconds"],
         "promotionCooldownSeconds": row["promotion_cooldown_seconds"],
         "forceAnalyticsAlwaysOn": bool(row["force_analytics_always_on"]),
+        "revision": row["revision"],
+        "motion": {"sensitivity": row["motion_sensitivity"], "sampleFps": row["motion_sample_fps"],
+                    "debounceMs": row["motion_debounce_ms"], "cooldownMs": row["motion_cooldown_ms"]},
+        "sceneChange": {"threshold": row["scene_change_threshold"], "confirmFrames": row["scene_change_confirm_frames"],
+                        "cooldownMs": row["scene_change_cooldown_ms"]},
+        "person": {"confidenceThreshold": row["person_confidence_threshold"], "sampleFps": row["person_sample_fps"],
+                   "maxBoxes": row["person_max_boxes"], "executionPreference": row["person_execution_preference"],
+                   "allowServerFallback": bool(row["person_allow_server_fallback"])},
         "updatedAt": row["updated_at"],
     }
 
@@ -571,7 +689,7 @@ def analytics_policies() -> list[dict]:
         return [analytics_policy_document(row) for row in rows]
 
 
-def save_analytics_policies(payload: dict) -> list[dict]:
+def save_analytics_policies(payload: dict, *, preserve_v3_tuning: bool = False) -> list[dict]:
     values = payload.get("policies") if isinstance(payload, dict) else None
     if not isinstance(values, list) or not values or len(values) > 256:
         raise ValueError("policies must contain 1 to 256 items")
@@ -596,28 +714,394 @@ def save_analytics_policies(payload: dict) -> list[dict]:
         if isinstance(hold, bool) or not isinstance(hold, int) or not 1 <= hold <= 3600 or \
                 isinstance(cooldown, bool) or not isinstance(cooldown, int) or not 0 <= cooldown <= 86400:
             raise ValueError("promotion timing is out of range")
-        normalized.append((camera_id, profile_id, *[int(item) for item in booleans],
-                           float(threshold), hold, cooldown, int(time.time())))
+        motion = value.get("motion") if isinstance(value.get("motion"), dict) else {}
+        scene = value.get("sceneChange") if isinstance(value.get("sceneChange"), dict) else {}
+        person = value.get("person") if isinstance(value.get("person"), dict) else {}
+        motion_sensitivity = motion.get("sensitivity", .15); motion_fps = motion.get("sampleFps", 2)
+        motion_debounce = motion.get("debounceMs", 500); motion_cooldown = motion.get("cooldownMs", 5000)
+        scene_threshold = scene.get("threshold", .55); scene_confirm = scene.get("confirmFrames", 2); scene_cooldown = scene.get("cooldownMs", 30000)
+        person_threshold = person.get("confidenceThreshold", .6); person_fps = person.get("sampleFps", 1); person_boxes = person.get("maxBoxes", 16)
+        person_execution = person.get("executionPreference", "auto"); person_fallback = person.get("allowServerFallback", False)
+        if (isinstance(motion_sensitivity, bool) or not isinstance(motion_sensitivity, (int, float)) or not .01 <= motion_sensitivity <= 1 or
+            isinstance(motion_fps, bool) or not isinstance(motion_fps, (int, float)) or not .1 <= motion_fps <= 5 or
+            any(isinstance(item, bool) or not isinstance(item, int) or not 0 <= item <= 3_600_000 for item in (motion_debounce, motion_cooldown))):
+            raise ValueError("motion analytics settings are out of range")
+        if (isinstance(scene_threshold, bool) or not isinstance(scene_threshold, (int, float)) or not .05 <= scene_threshold <= 1 or
+            isinstance(scene_confirm, bool) or not isinstance(scene_confirm, int) or not 1 <= scene_confirm <= 5 or
+            isinstance(scene_cooldown, bool) or not isinstance(scene_cooldown, int) or not 0 <= scene_cooldown <= 3_600_000):
+            raise ValueError("scene change settings are out of range")
+        if (isinstance(person_threshold, bool) or not isinstance(person_threshold, (int, float)) or not .05 <= person_threshold <= 1 or
+            isinstance(person_fps, bool) or not isinstance(person_fps, (int, float)) or not .1 <= person_fps <= 5 or
+            isinstance(person_boxes, bool) or not isinstance(person_boxes, int) or not 1 <= person_boxes <= 16 or
+            person_execution not in {"auto", "browser", "worker"} or not isinstance(person_fallback, bool)):
+            raise ValueError("person analytics settings are out of range")
+        updated_at = int(time.time())
+        if preserve_v3_tuning:
+            # The compatibility projection accepts the legacy top-level
+            # values but deliberately discards any nested v3 tuning supplied
+            # by an old client.  Existing rows therefore retain their tuning;
+            # a first legacy write receives the documented v3 defaults.
+            normalized.append((camera_id, profile_id, *[int(item) for item in booleans], float(threshold), hold, cooldown,
+                               .15, 2, 500, 5000, .55, 2, 30000, .6, 1, 16, "auto", 0, updated_at))
+        else:
+            normalized.append((camera_id, profile_id, *[int(item) for item in booleans], float(threshold), hold, cooldown,
+                               float(motion_sensitivity), float(motion_fps), motion_debounce, motion_cooldown,
+                               float(scene_threshold), scene_confirm, scene_cooldown, float(person_threshold), float(person_fps),
+                               person_boxes, person_execution, int(person_fallback), updated_at))
     with connect() as database:
         for camera_id, profile_id, *_ in normalized:
             exists = database.execute(
                 "SELECT 1 FROM stream_profiles WHERE camera_id=? AND id=?", (camera_id, profile_id)).fetchone()
             if not exists:
                 raise KeyError("camera profile not found")
+        conflict_update = (
+            "motion_enabled=excluded.motion_enabled,scene_change_enabled=excluded.scene_change_enabled,"
+            "person_enabled=excluded.person_enabled,allow_event_promotion=excluded.allow_event_promotion,"
+            "force_analytics_always_on=excluded.force_analytics_always_on,"
+            "promotion_threshold=excluded.promotion_threshold,promotion_hold_seconds=excluded.promotion_hold_seconds,"
+            "promotion_cooldown_seconds=excluded.promotion_cooldown_seconds,"
+            "revision=analytics_policies.revision+1,updated_at=excluded.updated_at"
+            if preserve_v3_tuning else
+            "motion_enabled=excluded.motion_enabled,scene_change_enabled=excluded.scene_change_enabled,person_enabled=excluded.person_enabled,"
+            "allow_event_promotion=excluded.allow_event_promotion,force_analytics_always_on=excluded.force_analytics_always_on,"
+            "promotion_threshold=excluded.promotion_threshold,promotion_hold_seconds=excluded.promotion_hold_seconds,"
+            "promotion_cooldown_seconds=excluded.promotion_cooldown_seconds,motion_sensitivity=excluded.motion_sensitivity,"
+            "motion_sample_fps=excluded.motion_sample_fps,motion_debounce_ms=excluded.motion_debounce_ms,motion_cooldown_ms=excluded.motion_cooldown_ms,"
+            "scene_change_threshold=excluded.scene_change_threshold,scene_change_confirm_frames=excluded.scene_change_confirm_frames,"
+            "scene_change_cooldown_ms=excluded.scene_change_cooldown_ms,person_confidence_threshold=excluded.person_confidence_threshold,"
+            "person_sample_fps=excluded.person_sample_fps,person_max_boxes=excluded.person_max_boxes,"
+            "person_execution_preference=excluded.person_execution_preference,person_allow_server_fallback=excluded.person_allow_server_fallback,"
+            "revision=analytics_policies.revision+1,updated_at=excluded.updated_at"
+        )
         database.executemany(
             "INSERT INTO analytics_policies(camera_id,profile_id,motion_enabled,scene_change_enabled,person_enabled,"
             "allow_event_promotion,force_analytics_always_on,promotion_threshold,promotion_hold_seconds,"
-            "promotion_cooldown_seconds,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?) "
-            "ON CONFLICT(camera_id,profile_id) DO UPDATE SET motion_enabled=excluded.motion_enabled,"
-            "scene_change_enabled=excluded.scene_change_enabled,person_enabled=excluded.person_enabled,"
-            "allow_event_promotion=excluded.allow_event_promotion,force_analytics_always_on=excluded.force_analytics_always_on,"
-            "promotion_threshold=excluded.promotion_threshold,promotion_hold_seconds=excluded.promotion_hold_seconds,"
-            "promotion_cooldown_seconds=excluded.promotion_cooldown_seconds,updated_at=excluded.updated_at",
+            "promotion_cooldown_seconds,motion_sensitivity,motion_sample_fps,motion_debounce_ms,motion_cooldown_ms,"
+            "scene_change_threshold,scene_change_confirm_frames,scene_change_cooldown_ms,person_confidence_threshold,"
+            "person_sample_fps,person_max_boxes,person_execution_preference,person_allow_server_fallback,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?) "
+            "ON CONFLICT(camera_id,profile_id) DO UPDATE SET " + conflict_update,
             normalized,
         )
+        database.execute("UPDATE analytics_metadata SET revision=revision+1,updated_at=? WHERE id=1", (int(time.time()),))
         keys = {(item[0], item[1]) for item in normalized}
         rows = database.execute("SELECT * FROM analytics_policies ORDER BY camera_id,profile_id").fetchall()
         return [analytics_policy_document(row) for row in rows if (row["camera_id"], row["profile_id"]) in keys]
+
+
+def analytics_revision() -> int:
+    with connect() as database:
+        row = database.execute("SELECT revision FROM analytics_metadata WHERE id=1").fetchone()
+        return int(row["revision"] if row else 1)
+
+
+def analytics_v3_policies(payload: dict, expected_revision: int | None = None) -> dict:
+    current = analytics_revision()
+    if expected_revision is not None and expected_revision != current:
+        raise RevisionConflict(str(current))
+    policies = save_analytics_policies(payload)
+    return {"schemaVersion": 2, "revision": analytics_revision(), "policies": policies}
+
+
+def _analytics_principal(value: object) -> str:
+    """Validate the control-plane principal propagated by webobsd.
+
+    The loopback Registry is not internet-facing, but accepting an unbounded
+    value here would still make it possible to persist or log identity data by
+    accident.  An absent principal is retained for direct unit/test callers;
+    authenticated requests through webobsd always provide one.
+    """
+    if value in (None, ""):
+        return ""
+    if not isinstance(value, str) or not ANALYTICS_PRINCIPAL_RE.fullmatch(value):
+        raise PermissionError("analytics principal is invalid")
+    return value
+
+
+def analytics_runtime_plan(payload: dict, principal: str = "") -> dict:
+    if not isinstance(payload, dict): raise ValueError("runtime plan must be an object")
+    camera_id, profile_id = payload.get("cameraId", ""), payload.get("profileId", "")
+    if not isinstance(camera_id, str) or not ID_RE.fullmatch(camera_id) or not isinstance(profile_id, str) or not ID_RE.fullmatch(profile_id):
+        raise ValueError("camera or profile id is invalid")
+    kinds = payload.get("kinds", ["motion", "scene-change", "person"])
+    if not isinstance(kinds, list) or not kinds or len(kinds) > 3 or any(item not in {"motion", "scene-change", "person"} for item in kinds):
+        raise ValueError("analytics kinds are invalid")
+    # Runtime capabilities are split deliberately: browser feature flags are
+    # advisory input, while camera/native adapter capabilities must come from
+    # the server-owned registry record.  Never let a client assert
+    # ``onvifMotion`` (or any equivalent native capability) in the request.
+    principal = _analytics_principal(principal)
+    capabilities = payload.get("capabilities", {}) if isinstance(payload.get("capabilities", {}), dict) else {}
+    webgpu = capabilities.get("webgpu") is True; wasm = capabilities.get("wasm") is not False
+    with connect() as database:
+        row = database.execute(
+            "SELECT p.*, c.adapter, c.credentials_ref, c.capabilities_json, c.enabled AS camera_enabled, "
+            "s.enabled AS profile_enabled, s.endpoint, s.allow_insecure_http "
+            "FROM analytics_policies p JOIN cameras c ON c.id=p.camera_id "
+            "JOIN stream_profiles s ON s.camera_id=p.camera_id AND s.id=p.profile_id "
+            "WHERE p.camera_id=? AND p.profile_id=?", (camera_id, profile_id)).fetchone()
+    if not row: raise KeyError("analytics policy not found")
+    if not bool(row["camera_enabled"]) or not bool(row["profile_enabled"]):
+        raise PermissionError("camera profile is disabled")
+
+    try:
+        registry_capabilities = json.loads(row["capabilities_json"] or "{}")
+    except (TypeError, json.JSONDecodeError):
+        registry_capabilities = {}
+    onvif_capabilities = registry_capabilities.get("onvif", {})
+    adapter = str(row["adapter"]).lower()
+    native_motion_available = (
+        adapter == "onvif"
+        and isinstance(onvif_capabilities, dict)
+        and onvif_capabilities.get("events") is True
+    )
+
+    # Browser True Direct is a server-computed qualification.  A client may
+    # report its capabilities, but it cannot assert that a profile is safe to
+    # load directly.  Reuse only the proof written by browser_direct_probe:
+    # HTTPS, no URL credentials/query, no Camera Secret, and a recent
+    # TLS/CORS check bound to the configured PWA origin.  HTTP exemptions and
+    # RTSP therefore remain Gateway/Hybrid media paths.
+    media_transport = adapter if adapter in {"whep", "hls", "mjpeg"} else "rtsp"
+    direct_eligible = False
+    if media_transport in {"whep", "hls", "mjpeg"}:
+        try:
+            parsed_endpoint = urlsplit(str(row["endpoint"]))
+            capabilities_json = json.loads(row["capabilities_json"] or "{}")
+            proof = (((capabilities_json.get("browserDirect") or {}).get("profiles") or {}).get(profile_id) or {})
+            origin = configured_pwa_origin()
+            checked_at = int(proof.get("checkedAt", 0))
+            direct_eligible = (
+                parsed_endpoint.scheme.lower() == "https"
+                and not parsed_endpoint.username and not parsed_endpoint.password
+                and not parsed_endpoint.query and not parsed_endpoint.fragment
+                and not str(row["credentials_ref"])
+                and not bool(row["allow_insecure_http"])
+                and proof.get("tlsVerified") is True
+                and proof.get("corsVerified") is True
+                and proof.get("pwaOriginSha256") == hashlib.sha256(origin.encode()).hexdigest()
+                and checked_at >= int(time.time()) - 48 * 3600
+            )
+        except (ValueError, TypeError, KeyError, json.JSONDecodeError):
+            direct_eligible = False
+
+    expires = int(time.time()) + 600; session_id = secrets.token_urlsafe(32)
+    with ANALYTICS_SESSION_LOCK:
+        ANALYTICS_SESSIONS[session_id] = (expires, camera_id, profile_id, principal)
+        ANALYTICS_SIGNAL_SEEN[session_id] = set()
+        # Unauthenticated test callers get an isolated session bucket.  For
+        # authenticated browser clients use the principal bucket so opening
+        # multiple runtime sessions cannot bypass the 60/minute client limit.
+        ANALYTICS_SIGNAL_RATE[principal or f"session:{session_id}"] = (int(time.time() // 60), 0)
+    result = []
+    for kind in ("motion", "scene-change", "person"):
+        enabled = bool(row[{"motion": "motion_enabled", "scene-change": "scene_change_enabled", "person": "person_enabled"}[kind]])
+        if kind == "person":
+            # ``worker`` is an explicit execution choice; ``allowServerFallback``
+            # permits the same server path only after the preferred browser
+            # providers are unavailable.  A ``browser`` preference therefore
+            # never expands the media chain unless that separate fallback
+            # switch is enabled.
+            preference = row["person_execution_preference"]
+            if not enabled:
+                execution = "off"
+            elif preference == "worker":
+                execution = "worker"
+            elif webgpu:
+                execution = "browser-webgpu"
+            elif wasm:
+                execution = "browser-wasm"
+            elif row["person_allow_server_fallback"]:
+                execution = "worker"
+            else:
+                execution = "unsupported"
+            owner = "browser" if execution.startswith("browser") else "worker" if execution == "worker" else "none"
+            sample = float(row["person_sample_fps"])
+        else:
+            execution = "native" if enabled and kind == "motion" and native_motion_available else "browser-wasm" if enabled and wasm else "unsupported" if enabled else "off"
+            owner = "camera" if execution == "native" else "browser" if execution.startswith("browser") else "none"
+            sample = float(row["motion_sample_fps"] if kind == "motion" else 1)
+        server_media_expected = execution == "worker" or (execution.startswith("browser") and not direct_eligible)
+        reason = "" if direct_eligible else ("rtsp_gateway_required" if media_transport == "rtsp" else "browser_direct_not_qualified")
+        plan_reason = ("" if execution in {"off", "native"} else
+                       ("worker_not_allowed" if kind == "person" and execution == "unsupported" and
+                        not row["person_allow_server_fallback"] and row["person_execution_preference"] != "worker" else
+                        "runtime_unavailable" if execution == "unsupported" else reason))
+        # Keep the common TopologyPlan vocabulary on analytics plans as well.
+        # Consumers can therefore render one media-chain diagnostic for a
+        # regular preview and an analytics runtime without inferring topology
+        # from the execution string.  A detector Worker is a hybrid path: the
+        # browser may still be viewing a direct stream while Docker owns the
+        # short-lived detector ingest.
+        topology = ("hybrid" if execution == "worker" else
+                    "true-direct" if media_transport in {"whep", "hls", "mjpeg"} and not server_media_expected else
+                    "gateway-direct")
+        receiver_kind = "native" if execution == "worker" else "browser"
+        decoder = ("browser" if execution.startswith("browser") else
+                   "camera" if execution == "native" else
+                   "server" if execution == "worker" else "none")
+        renderer = "browser" if receiver_kind == "browser" else "server" if execution == "worker" else "none"
+        upstream_owner = "docker" if server_media_expected else "camera"
+        result.append({"contractVersion": 2, "planId": uuid.uuid4().hex, "cameraId": camera_id, "profileId": profile_id, "kind": kind,
+                   "topology": topology, "receiverKind": receiver_kind, "archiveTopology": "off",
+                   "decoder": decoder, "renderer": renderer, "encoder": "none", "upstreamOwner": upstream_owner,
+                   "execution": execution, "executionOwner": owner, "sampleFps": sample,
+                   "serverMediaExpected": server_media_expected, "liveServerMediaExpected": server_media_expected,
+                   "reason": plan_reason, "fallbackReason": plan_reason, "expiresAt": expires,
+                   "offlineConfigExpiresAt": int(time.time()) + 7 * 24 * 3600,
+                   "runtimeKind": "pwa", "mediaTransport": media_transport,
+                   "credentialExposure": "none"})
+    return {"contractVersion": 2, "sessionId": session_id, "expiresAt": expires, "plans": [item for item in result if item["kind"] in kinds]}
+
+
+def close_analytics_session(session_id: str, principal: str = "", camera_id: str = "", profile_id: str = "") -> bool:
+    principal = _analytics_principal(principal)
+    with ANALYTICS_SESSION_LOCK:
+        session = ANALYTICS_SESSIONS.get(session_id)
+        if session is None:
+            closed = False
+        else:
+            if session[3] and session[3] != principal:
+                raise PermissionError("analytics runtime session owner mismatch")
+            if ((camera_id and camera_id != session[1]) or
+                    (profile_id and profile_id != session[2])):
+                raise PermissionError("analytics runtime session scope mismatch")
+            ANALYTICS_SESSIONS.pop(session_id, None)
+            if not session[3]:
+                ANALYTICS_SIGNAL_RATE.pop(f"session:{session_id}", None)
+            closed = True
+        ANALYTICS_SIGNAL_SEEN.pop(session_id, None)
+        return closed
+
+
+def renew_analytics_session(session_id: str, principal: str = "", camera_id: str = "", profile_id: str = "") -> dict:
+    """Slide an active analytics session forward by ten minutes.
+
+    Renewal is scoped and owner-bound like ingestion and close. It never
+    changes the Camera/Profile or grants new capabilities.
+    """
+    principal = _analytics_principal(principal)
+    with ANALYTICS_SESSION_LOCK:
+        session = ANALYTICS_SESSIONS.get(session_id)
+        if session is None or session[0] <= int(time.time()):
+            raise PermissionError("analytics runtime session is expired")
+        if session[3] and session[3] != principal:
+            raise PermissionError("analytics runtime session owner mismatch")
+        if ((camera_id and camera_id != session[1]) or
+                (profile_id and profile_id != session[2])):
+            raise PermissionError("analytics runtime session scope mismatch")
+        expires = int(time.time()) + 600
+        ANALYTICS_SESSIONS[session_id] = (expires, session[1], session[2], session[3])
+        return {"sessionId": session_id, "cameraId": session[1], "profileId": session[2], "expiresAt": expires}
+
+
+def ingest_analytics_signals(payload: dict, session_id: str, principal: str = "") -> dict:
+    principal = _analytics_principal(principal)
+    with ANALYTICS_SESSION_LOCK:
+        session = ANALYTICS_SESSIONS.get(session_id)
+    if not session or session[0] <= int(time.time()):
+        # Expiry cleanup is an internal operation and must not depend on the
+        # caller still presenting the original principal.
+        if session:
+            close_analytics_session(session_id, session[3])
+        raise PermissionError("analytics runtime session is expired")
+    if session[3] and session[3] != principal:
+        raise PermissionError("analytics runtime session owner mismatch")
+    values = payload.get("signals") if isinstance(payload, dict) else None
+    if not isinstance(values, list) or not values or len(values) > 32:
+        raise ValueError("signals must contain 1 to 32 items")
+    now = int(time.time())
+    minute = now // 60
+    # Validate the entire batch before creating any event, so a malformed item
+    # cannot leave a partially accepted batch behind.
+    prepared: list[tuple[dict, dict]] = []
+    seen_ids: set[str] = set()
+    with connect() as database:
+        policy = database.execute(
+            "SELECT * FROM analytics_policies WHERE camera_id=? AND profile_id=?",
+            (session[1], session[2]),
+        ).fetchone()
+    if not policy:
+        raise PermissionError("analytics policy not found")
+    for value in values:
+        if not isinstance(value, dict): raise ValueError("signal must be an object")
+        camera_id, profile_id = value.get("cameraId"), value.get("profileId")
+        if camera_id != session[1] or profile_id != session[2] or value.get("kind") not in {"motion", "scene-change", "person"}:
+            raise PermissionError("signal scope does not match runtime session")
+        signal_id = value.get("signalId")
+        if not isinstance(signal_id, str) or not re.fullmatch(r"[A-Za-z0-9._:-]{8,128}", signal_id):
+            raise ValueError("signalId is invalid")
+        if signal_id in seen_ids:
+            raise ValueError("duplicate signalId in batch")
+        seen_ids.add(signal_id)
+        occurred = value.get("occurredAt", int(time.time() * 1000))
+        confidence = value.get("confidence", 0)
+        if isinstance(occurred, bool) or not isinstance(occurred, int) or abs(int(time.time() * 1000) - occurred) > 300_000:
+            raise ValueError("signal timestamp is invalid")
+        if isinstance(confidence, bool) or not isinstance(confidence, (int, float)) or not 0 <= confidence <= 1:
+            raise ValueError("signal confidence is invalid")
+        boxes = value.get("boxes", [])
+        if not isinstance(boxes, list) or len(boxes) > 16:
+            raise ValueError("signal boxes are invalid")
+        safe_boxes = []
+        for box in boxes:
+            if not isinstance(box, dict): raise ValueError("signal box is invalid")
+            safe = {key: box.get(key) for key in ("x", "y", "width", "height")}
+            if any(isinstance(item, bool) or not isinstance(item, (int, float)) or not 0 <= item <= 1 for item in safe.values()) or \
+                    safe["x"] + safe["width"] > 1 or safe["y"] + safe["height"] > 1:
+                raise ValueError("signal box is out of range")
+            safe_boxes.append(safe)
+        enabled_column = {"motion": "motion_enabled", "scene-change": "scene_change_enabled", "person": "person_enabled"}[value["kind"]]
+        if not bool(policy[enabled_column]):
+            raise PermissionError("analytics policy is disabled")
+        if value["kind"] != "person" and safe_boxes:
+            raise ValueError("boxes are only valid for person signals")
+        if value["kind"] == "person":
+            model_id = value.get("modelId")
+            model_version = value.get("modelVersion")
+            model_sha = value.get("modelSha256", "")
+            if model_id != ANALYTICS_PERSON_MODEL_ID or model_version != ANALYTICS_PERSON_MODEL_VERSION or \
+                    model_sha != ANALYTICS_PERSON_MODEL_SHA256:
+                raise ValueError("person model is not approved")
+        prepared.append((value, {"cameraId": camera_id, "type": "object" if value["kind"] == "person" else value["kind"],
+                 "source": "browser-detector" if value["kind"] == "person" else "browser-motion",
+                 "occurredAt": occurred, "confidence": float(confidence), "label": "person" if value["kind"] == "person" else "",
+                 "properties": {"analytics": {"schemaVersion": 2, "signalId": signal_id, "boxes": safe_boxes, "runtime": "browser"}}}))
+    with ANALYTICS_SESSION_LOCK:
+        rate_key = principal or f"session:{session_id}"
+        current_rate_minute, current_rate = ANALYTICS_SIGNAL_RATE.get(rate_key, (minute, 0))
+        if current_rate_minute != minute:
+            current_rate = 0
+        profile_minute, profile_rate = ANALYTICS_PROFILE_RATE.get((session[1], session[2]), (minute, 0))
+        if profile_minute != minute:
+            profile_rate = 0
+        if current_rate + len(prepared) > 60 or profile_rate + len(prepared) > 12:
+            raise RuntimeError("analytics signal rate limit exceeded")
+        existing = ANALYTICS_SIGNAL_SEEN.setdefault(session_id, set())
+        if any(item[0]["signalId"] in existing for item in prepared):
+            raise PermissionError("analytics signal replay detected")
+        existing.update(item[0]["signalId"] for item in prepared)
+        ANALYTICS_SIGNAL_RATE[rate_key] = (minute, current_rate + len(prepared))
+        # Keep principal buckets bounded without retaining identity details:
+        # stale counters are safe to discard at the next minute boundary.
+        if len(ANALYTICS_SIGNAL_RATE) > 4096:
+            for key, (bucket, _) in list(ANALYTICS_SIGNAL_RATE.items()):
+                if bucket != minute:
+                    ANALYTICS_SIGNAL_RATE.pop(key, None)
+        ANALYTICS_PROFILE_RATE[(session[1], session[2])] = (minute, profile_rate + len(prepared))
+    accepted = []
+    for value, event in prepared:
+        if value["kind"] == "person":
+            event["properties"]["analytics"]["modelId"] = str(value.get("modelId", ""))[:64]
+            event["properties"]["analytics"]["modelVersion"] = str(value.get("modelVersion", ""))[:32]
+            event["properties"]["analytics"]["modelSha256"] = value["modelSha256"]
+        body = json.dumps(event, separators=(",", ":")).encode()
+        try:
+            request = Request("http://127.0.0.1:8093/events", data=body, headers={"Content-Type": "application/json"}, method="POST")
+            with urlopen(request, timeout=1) as response:
+                accepted.append(json.loads(response.read(64 * 1024)))
+        except (OSError, ValueError, json.JSONDecodeError) as error:
+            raise RuntimeError("event service unavailable") from error
+    return {"accepted": len(accepted), "events": accepted}
 
 
 def resolve_profile(database: sqlite3.Connection, camera_id: str, profile_id: str) -> dict:
@@ -641,13 +1125,19 @@ def resolve_profile(database: sqlite3.Connection, camera_id: str, profile_id: st
     if credentials_ref:
         username, password = load_credentials(credentials_ref)
         endpoint = endpoint_with_credentials(endpoint, username, password)
+    # The codec is already stored by the registry's own probe.  Exposing it lets
+    # the control plane skip a live ffprobe against a just-started on-demand
+    # route, which on slow cameras took most of the probe timeout.
     return {"endpoint": endpoint, "adapter": camera["adapter"],
             "hardwareDecode": camera["hardware_decode"], "cameraId": camera_id, "profileId": profile_id,
-            "transportMode": profile["transport_mode"] if profile else "auto"}
+            "transportMode": profile["transport_mode"] if profile else "auto",
+            "videoCodec": (profile["video_codec"] if profile else "") or "",
+            "audioCodec": (profile["audio_codec"] if profile else "") or ""}
 
 
 def save_camera(camera: dict, replace: bool) -> dict:
     now = int(time.time())
+    invalidate_probe_results(camera["id"])
     with connect() as database:
         current = database.execute(
             "SELECT created_at,capabilities_json,revision FROM cameras WHERE id=?", (camera["id"],)).fetchone()
@@ -697,6 +1187,10 @@ def save_camera(camera: dict, replace: bool) -> dict:
 
 
 ISSUE_TEMPLATES = {
+    "LEGACY_SOURCE_IMPORT_REQUIRED": (
+        "warning", "旧来源尚未关联设备目录", "Studio 中的旧摄像机来源没有安全映射到 Camera Registry。",
+        ["检查来源配置", "为来源配置受管 Profile 和 Secret 引用", "完成导入后重新打开监看"],
+    ),
     "AUDIO_TRACK_MISSING": (
         "warning", "要求的音频轨道不可用", "该 Profile 配置为要求音频，但最近的安全媒体信息中没有音频轨道。",
         ["检查摄像机音频是否启用", "重新探测该 Profile", "不需要音频时改为自动或禁用"],
@@ -885,6 +1379,7 @@ def validate_catalog_patch(payload: dict, adapter: str) -> tuple[dict, list[dict
 
 
 def patch_source_catalog(camera_id: str, payload: dict, revision: int) -> dict:
+    invalidate_probe_results(camera_id)
     with connect() as database:
         row = database.execute("SELECT * FROM cameras WHERE id=?", (camera_id,)).fetchone()
         if not row:
@@ -962,10 +1457,49 @@ def parse_rate(value: object) -> float:
         return 0
 
 
+def probe_result_key(camera_id: str, profile_id: str, endpoint: str, transport_mode: str) -> str:
+    digest = hashlib.sha256(endpoint.encode("utf-8", "surrogatepass")).hexdigest()[:32]
+    return f"{camera_id}|{profile_id}|{transport_mode}|{digest}"
+
+
+def cached_probe_result(key: str) -> dict | None:
+    with PROBE_RESULTS_GUARD:
+        entry = PROBE_RESULTS.get(key)
+        if not entry:
+            return None
+        stored_at, document = entry
+        if time.time() - stored_at > PROBE_RESULT_TTL_SECONDS:
+            PROBE_RESULTS.pop(key, None)
+            return None
+        # Hand callers their own copy so the cache can never be mutated in place.
+        return json.loads(json.dumps(document))
+
+
+def store_probe_result(key: str, document: dict) -> None:
+    with PROBE_RESULTS_GUARD:
+        PROBE_RESULTS[key] = (time.time(), json.loads(json.dumps(document)))
+        if len(PROBE_RESULTS) > 512:
+            oldest = min(PROBE_RESULTS, key=lambda name: PROBE_RESULTS[name][0])
+            PROBE_RESULTS.pop(oldest, None)
+
+
+def invalidate_probe_results(camera_id: str = "") -> None:
+    with PROBE_RESULTS_GUARD:
+        if not camera_id:
+            PROBE_RESULTS.clear()
+            return
+        prefix = camera_id + "|"
+        for key in [name for name in PROBE_RESULTS if name.startswith(prefix)]:
+            PROBE_RESULTS.pop(key, None)
+
+
 def probe_source_profile(camera_id: str, profile_id: str) -> dict:
     with PROBE_LOCKS_GUARD:
         lock = PROBE_LOCKS.setdefault(camera_id, threading.Lock())
-    if not lock.acquire(blocking=False):
+    # Wait for an in-flight probe of the same camera instead of failing, then
+    # re-check the result cache below: concurrent callers coalesce into one
+    # ffprobe instead of each spawning their own.
+    if not lock.acquire(timeout=max(5.0, PROBE_TIMEOUT_SECONDS * 2)):
         raise RuntimeError("camera probe is already running")
     if not PROBE_SEMAPHORE.acquire(blocking=False):
         lock.release()
@@ -988,6 +1522,13 @@ def probe_source_profile(camera_id: str, profile_id: str) -> dict:
             endpoint, transport_mode = profile["endpoint"], profile["transport_mode"]
             if endpoint.startswith("http://") and not bool(profile["allow_insecure_http"]):
                 raise InsecureHttpDenied("insecure HTTP media requires explicit per-profile approval")
+            cache_key = probe_result_key(camera_id, profile_id, endpoint, transport_mode)
+            cached = cached_probe_result(cache_key)
+            if cached is not None:
+                database.execute(
+                    "UPDATE stream_profiles SET probe_state='cached',last_probe_at=? WHERE camera_id=? AND id=?",
+                    (int(time.time()), camera_id, profile_id))
+                return cached
             settings = database.execute("SELECT settings_json FROM runtime_settings WHERE id=1").fetchone()
             probe_timeout = int(json.loads(settings["settings_json"])["probeTimeoutSeconds"])
         command = ["ffprobe", "-v", "error", "-show_entries",
@@ -1058,7 +1599,9 @@ def probe_source_profile(camera_id: str, profile_id: str) -> dict:
                 resolve_issue(database, "LIVE_BITRATE_CAP_EXCEEDED", "profile",
                               f"{camera_id}.{profile_id}"[:64], "session-admission")
             reconcile_audio_issues(database, camera_id)
-            return profile_document(database, camera_id, refreshed, include_endpoint=False)
+            document = profile_document(database, camera_id, refreshed, include_endpoint=False)
+            store_probe_result(cache_key, document)
+            return document
     finally:
         PROBE_SEMAPHORE.release()
         lock.release()
@@ -1155,6 +1698,129 @@ def source_catalog(query: str) -> dict:
             "LIMIT ? OFFSET ?", (*arguments, limit, (page - 1) * limit)).fetchall()
         return {"schemaVersion": 2, "page": page, "limit": limit, "total": total,
                 "items": [source_catalog_document(database, row) for row in rows]}
+
+
+def _legacy_sources() -> list[dict[str, object]]:
+    path = studio_path()
+    try:
+        if not path.is_file() or path.is_symlink() or path.stat().st_size > MAX_BODY:
+            return []
+        document = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError, json.JSONDecodeError):
+        return []
+    result: list[dict[str, object]] = []
+    for scene in document.get("scenes", []) if isinstance(document, dict) else []:
+        if not isinstance(scene, dict):
+            continue
+        for source in scene.get("sources", []) if isinstance(scene.get("sources"), list) else []:
+            if not isinstance(source, dict) or source.get("kind") not in {"camera", "rtsp"}:
+                continue
+            source_id = source.get("id")
+            # Studio IDs are opaque identifiers, but still need a bounded
+            # alphabet before they are used as database keys, issue scopes or
+            # UI selectors.  Reject control characters and path-like values so
+            # a legacy document cannot smuggle unbounded data into responses.
+            if isinstance(source_id, str) and ID_RE.fullmatch(source_id):
+                result.append({"sourceId": source_id, "source": source})
+    by_id: dict[str, dict[str, object]] = {}
+    for item in result:
+        by_id[str(item["sourceId"])] = item
+    return list(by_id.values())[:256]
+
+
+def _registry_revision(database: sqlite3.Connection) -> int:
+    """Return a monotonic-enough catalog snapshot token without exposing data.
+
+    Camera revisions increment on every catalog mutation and the row count
+    changes on imports/deletes.  Combining both keeps legacy import batches
+    protected by one bounded optimistic-concurrency token while preserving the
+    existing per-camera revision contract.
+    """
+    row = database.execute("SELECT COALESCE(SUM(revision), 0) AS total, COUNT(*) AS count FROM cameras").fetchone()
+    total = int(row["total"] if row else 0); count = int(row["count"] if row else 0)
+    return total * 1_000_003 + count
+
+
+def legacy_import_status() -> dict[str, object]:
+    with connect() as database:
+        links = {row["source_id"]: row for row in database.execute("SELECT * FROM studio_source_registry_links").fetchall()}
+        output = []
+        for item in _legacy_sources():
+            source_id = str(item["sourceId"]); source = item["source"]
+            link = links.get(source_id)
+            if link:
+                state, reason = link["state"], link["reason"]
+            elif source.get("kind") == "camera" and ID_RE.fullmatch(str(source.get("cameraId", ""))) and ID_RE.fullmatch(str(source.get("profileId", ""))):
+                found = database.execute("SELECT 1 FROM stream_profiles WHERE camera_id=? AND id=?", (source["cameraId"], source["profileId"])).fetchone()
+                state, reason = ("linked", "") if found else ("needs_configuration", "camera_profile_not_found")
+            elif source.get("kind") == "rtsp" and isinstance(source.get("rtspUrl"), str):
+                endpoint = str(source.get("rtspUrl"))
+                parsed = urlsplit(endpoint)
+                if parsed.username is not None or parsed.password is not None:
+                    state, reason = "needs_configuration", "embedded_credentials_require_secret_reference"
+                else:
+                    try:
+                        safe_endpoint(endpoint, "rtsp")
+                    except (TypeError, ValueError):
+                        state, reason = "needs_configuration", "unsupported_or_invalid_source"
+                    else:
+                        state, reason = "ready_to_import", ""
+            else:
+                state, reason = "needs_configuration", "unsupported_or_invalid_source"
+            output.append({"sourceId": source_id, "state": state, "reason": reason})
+        return {"schemaVersion": 1, "baseRevision": _registry_revision(database), "items": output, "count": len(output)}
+
+
+def import_legacy_sources(payload: dict) -> dict[str, object]:
+    source_ids = payload.get("sourceIds")
+    if not isinstance(source_ids, list) or not 1 <= len(source_ids) <= 256 or \
+            any(not isinstance(value, str) or not ID_RE.fullmatch(value) for value in source_ids) or \
+            len(set(source_ids)) != len(source_ids):
+        raise ValueError("sourceIds must contain 1 to 256 valid identifiers")
+    base_revision = payload.get("baseRevision")
+    if isinstance(base_revision, bool) or not isinstance(base_revision, int) or base_revision < 0:
+        raise ValueError("baseRevision must be a non-negative integer")
+    requested = set(source_ids)
+    candidates = {str(item["sourceId"]): item["source"] for item in _legacy_sources() if str(item["sourceId"]) in requested}
+    if candidates.keys() != requested:
+        raise ValueError("one or more legacy sources were not found")
+    now = int(time.time()); result = []
+    with connect() as database:
+        database.execute("BEGIN IMMEDIATE")
+        current_revision = _registry_revision(database)
+        if current_revision != base_revision:
+            raise RevisionConflict(str(current_revision))
+        for source_id in source_ids:
+            source = candidates[source_id]
+            existing = database.execute("SELECT * FROM studio_source_registry_links WHERE source_id=?", (source_id,)).fetchone()
+            if existing and existing["state"] == "linked":
+                result.append({"sourceId": source_id, "state": "linked", "cameraId": existing["camera_id"], "profileId": existing["profile_id"]}); continue
+            camera_id = profile_id = None; state = "needs_configuration"; reason = ""
+            if source.get("kind") == "camera":
+                camera_id, profile_id = source.get("cameraId"), source.get("profileId")
+                if not isinstance(camera_id, str) or not ID_RE.fullmatch(camera_id) or not isinstance(profile_id, str) or not ID_RE.fullmatch(profile_id):
+                    reason = "camera_profile_not_found"
+                elif not database.execute("SELECT 1 FROM stream_profiles WHERE camera_id=? AND id=?", (camera_id, profile_id)).fetchone():
+                    reason = "camera_profile_not_found"
+                else: state = "linked"
+            elif source.get("kind") == "rtsp":
+                endpoint = source.get("rtspUrl", "")
+                if not isinstance(endpoint, str) or not endpoint or urlsplit(endpoint).username is not None or urlsplit(endpoint).password is not None:
+                    reason = "embedded_credentials_require_secret_reference"
+                else:
+                    endpoint = safe_endpoint(endpoint, "rtsp")
+                    camera_id = f"legacy-{hashlib.sha256(source_id.encode()).hexdigest()[:16]}"; profile_id = "main"
+                    name = str(source.get("name", source_id))[:128] or source_id
+                    database.execute("INSERT OR IGNORE INTO cameras(id,name,address,adapter,credentials_ref,hardware_decode,capabilities_json,health,created_at,updated_at,kind,enabled,group_id,tags_json,revision) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)", (camera_id, name, endpoint, "rtsp", "", "auto", "{}", "unknown", now, now, "network-stream", 1, "", "[]", 1))
+                    database.execute("INSERT OR IGNORE INTO stream_profiles(id,camera_id,name,role,endpoint,video_codec,audio_codec,width,height,fps,enabled,transport_mode,live_bitrate_cap_kbps,audio_expectation,allow_insecure_http,probe_state,last_probe_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)", (profile_id, camera_id, "Main", "main", endpoint, "unknown", "", 0, 0, 0, 1, "auto", None, "auto", 0, "legacy", 0))
+                    state = "linked"
+            scope = source_id if ID_RE.fullmatch(source_id) else f"legacy-{hashlib.sha256(source_id.encode()).hexdigest()[:16]}"
+            database.execute("INSERT INTO studio_source_registry_links(source_id,camera_id,profile_id,state,reason,created_at,updated_at) VALUES(?,?,?,?,?,?,?) ON CONFLICT(source_id) DO UPDATE SET camera_id=excluded.camera_id,profile_id=excluded.profile_id,state=excluded.state,reason=excluded.reason,updated_at=excluded.updated_at", (source_id, camera_id, profile_id, state, reason, now, now))
+            if state != "linked":
+                try: upsert_issue(database, "LEGACY_SOURCE_IMPORT_REQUIRED", "source", scope, "registry-import")
+                except ValueError: pass
+            result.append({"sourceId": source_id, "state": state, **({"cameraId": camera_id, "profileId": profile_id} if state == "linked" else {}), **({"reason": reason} if reason else {})})
+        return {"schemaVersion": 1, "baseRevision": _registry_revision(database), "items": result}
 
 
 def runtime_settings() -> dict:
@@ -2306,6 +2972,8 @@ class Handler(BaseHTTPRequestHandler):
             except ValueError as error:
                 self.respond(400, {"error": str(error)})
             return
+        if path == "/source-catalog/legacy-import":
+            self.respond(200, legacy_import_status()); return
         catalog_match = re.fullmatch(r"/source-catalog/([a-zA-Z0-9._-]{1,64})", path)
         if catalog_match:
             with connect() as database:
@@ -2340,6 +3008,22 @@ class Handler(BaseHTTPRequestHandler):
                 "writable": ["defaultTransportMode", "probeTimeoutSeconds", "sourceRecoveryEnabled", "issueRetentionLimit"],
                 "deploymentReadOnly": ["tls", "ports", "secrets", "gpuDevice"],
             }); return
+        if path == "/analytics/policies":
+            self.respond(200, {"schemaVersion": 2, "revision": analytics_revision(), "policies": analytics_policies()}); return
+        if path == "/analytics/status":
+            policies = analytics_policies()
+            statuses = []
+            for policy in policies:
+                try:
+                    value = analytics_runtime_plan({"cameraId": policy["cameraId"], "profileId": policy["profileId"], "kinds": ["motion", "scene-change", "person"], "capabilities": {"wasm": True}})
+                    close_analytics_session(value["sessionId"])
+                    key_by_kind = {"motion": "motion", "scene-change": "sceneChange", "person": "person"}
+                    statuses.append({"cameraId": policy["cameraId"], "profileId": policy["profileId"], **{
+                        key_by_kind[item["kind"]]: item for item in value["plans"] if item["kind"] in key_by_kind
+                    }})
+                except (KeyError, ValueError, PermissionError):
+                    continue
+            self.respond(200, {"statuses": statuses}); return
         presets_match = re.fullmatch(r"/cameras/([a-zA-Z0-9._-]{1,64})/onvif/presets", path)
         if presets_match:
             try:
@@ -2382,6 +3066,43 @@ class Handler(BaseHTTPRequestHandler):
         try:
             if self.path == "/cameras":
                 self.respond(201, save_camera(validate_camera(self.payload()), False)); return
+            if self.path == "/analytics/runtime-plans":
+                self.respond(200, analytics_runtime_plan(
+                    self.payload(), self.headers.get("X-WebObs-Analytics-Principal", ""))); return
+            if self.path == "/analytics/signals/batch":
+                session_id = self.headers.get("X-WebObs-Analytics-Session", "")
+                if not re.fullmatch(r"[A-Za-z0-9_-]{32,128}", session_id): raise PermissionError("analytics runtime session is missing")
+                self.respond(202, ingest_analytics_signals(
+                    self.payload(), session_id,
+                    self.headers.get("X-WebObs-Analytics-Principal", ""))); return
+            renew_match = re.fullmatch(r"/analytics/runtime-sessions/([A-Za-z0-9_-]{32,128})/renew", self.path)
+            if renew_match:
+                body = self.payload() if int(self.headers.get("Content-Length", "0")) else {}
+                camera_id = body.get("cameraId", "")
+                profile_id = body.get("profileId", "")
+                if camera_id and (not isinstance(camera_id, str) or not ID_RE.fullmatch(camera_id)):
+                    raise ValueError("cameraId is invalid")
+                if profile_id and (not isinstance(profile_id, str) or not ID_RE.fullmatch(profile_id)):
+                    raise ValueError("profileId is invalid")
+                self.respond(200, renew_analytics_session(
+                    renew_match.group(1), self.headers.get("X-WebObs-Analytics-Principal", ""), camera_id, profile_id)); return
+            session_match = re.fullmatch(r"/analytics/runtime-sessions/([A-Za-z0-9_-]{32,128})", self.path)
+            if session_match:
+                # Keep the historical POST alias for older clients, but apply
+                # the same authenticated owner and optional Camera/Profile
+                # scope checks as the canonical DELETE endpoint.  Without the
+                # principal a bound session must not be closable by an
+                # unauthenticated loopback caller.
+                body = self.payload() if int(self.headers.get("Content-Length", "0")) else {}
+                camera_id = body.get("cameraId", "")
+                profile_id = body.get("profileId", "")
+                if camera_id and (not isinstance(camera_id, str) or not ID_RE.fullmatch(camera_id)):
+                    raise ValueError("cameraId is invalid")
+                if profile_id and (not isinstance(profile_id, str) or not ID_RE.fullmatch(profile_id)):
+                    raise ValueError("profileId is invalid")
+                self.respond(200, {"closed": close_analytics_session(
+                    session_match.group(1), self.headers.get("X-WebObs-Analytics-Principal", ""),
+                    camera_id, profile_id)}); return
             if self.path == "/detect":
                 payload = self.payload(); self.respond(200, classify(str(payload.get("address", "")))); return
             if self.path == "/onvif/discover":
@@ -2398,6 +3119,8 @@ class Handler(BaseHTTPRequestHandler):
                 self.respond(200, onvif_probe(str(payload.get("address", "")), credentials_ref)); return
             if self.path == "/source-catalog/batch":
                 self.respond(200, {"items": batch_source_catalog(self.payload())}); return
+            if self.path == "/source-catalog/legacy-import":
+                self.respond(200, import_legacy_sources(self.payload())); return
             camera_probe_match = re.fullmatch(
                 r"/source-catalog/([a-zA-Z0-9._-]{1,64})/probe", self.path)
             if camera_probe_match:
@@ -2478,7 +3201,11 @@ class Handler(BaseHTTPRequestHandler):
     def do_PUT(self) -> None:
         if self.path == "/cameras/analytics-policies":
             try:
-                self.respond(200, {"policies": save_analytics_policies(self.payload())})
+                # API v1 is intentionally a compatibility projection.  It may
+                # update the legacy top-level switches/timing values, but must
+                # not reset v3 motion/scene/person tuning that newer clients
+                # stored in the nested policy fields.
+                self.respond(200, {"policies": save_analytics_policies(self.payload(), preserve_v3_tuning=True)})
             except KeyError as error: self.respond(404, {"error": str(error)})
             except (ValueError, TypeError, json.JSONDecodeError) as error: self.respond(400, {"error": str(error)})
             return
@@ -2496,6 +3223,9 @@ class Handler(BaseHTTPRequestHandler):
         except ValueError as error:
             self.respond(428 if not self.headers.get("If-Match") else 400, {"error": str(error)}); return
         try:
+            if self.path == "/analytics/policies":
+                value = analytics_v3_policies(self.payload(), revision)
+                self.respond(200, value, {"ETag": f'"{value["revision"]}"'}); return
             catalog_match = re.fullmatch(r"/source-catalog/([a-zA-Z0-9._-]{1,64})", self.path)
             if catalog_match:
                 value = patch_source_catalog(catalog_match.group(1), self.payload(), revision)
@@ -2512,6 +3242,23 @@ class Handler(BaseHTTPRequestHandler):
             self.respond(400, {"error": str(error)})
 
     def do_DELETE(self) -> None:
+        session_match = re.fullmatch(r"/analytics/runtime-sessions/([A-Za-z0-9_-]{32,128})", self.path)
+        if session_match:
+            try:
+                body = self.payload() if int(self.headers.get("Content-Length", "0")) else {}
+                camera_id = body.get("cameraId", "")
+                profile_id = body.get("profileId", "")
+                if camera_id and (not isinstance(camera_id, str) or not ID_RE.fullmatch(camera_id)):
+                    raise ValueError("cameraId is invalid")
+                if profile_id and (not isinstance(profile_id, str) or not ID_RE.fullmatch(profile_id)):
+                    raise ValueError("profileId is invalid")
+                self.respond(200, {"closed": close_analytics_session(
+                    session_match.group(1), self.headers.get("X-WebObs-Analytics-Principal", ""),
+                    camera_id, profile_id)}); return
+            except PermissionError as error:
+                self.respond(403, {"error": str(error)}); return
+            except (ValueError, TypeError, json.JSONDecodeError) as error:
+                self.respond(400, {"error": str(error)}); return
         if not self.path.startswith("/cameras/"):
             self.respond(404, {"error": "not_found"}); return
         camera_id = self.path.removeprefix("/cameras/")

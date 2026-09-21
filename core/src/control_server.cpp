@@ -1,6 +1,7 @@
 #include "webobs/control_server.hpp"
 
 #include "webobs/authentication.hpp"
+#include "webobs/audio_tracks.hpp"
 #include "webobs/audit_event.hpp"
 #include "webobs/scene_controller.hpp"
 #include "webobs/studio_controller.hpp"
@@ -27,9 +28,11 @@
 #include <charconv>
 #include <cctype>
 #include <chrono>
+#include <condition_variable>
 #include <cstdint>
 #include <cstdlib>
 #include <deque>
+#include <functional>
 #include <filesystem>
 #include <fstream>
 #include <memory>
@@ -60,6 +63,13 @@ using HttpResponse = http::response<http::string_body>;
 #ifndef WEBOBS_WEB_ROOT
 #define WEBOBS_WEB_ROOT "/opt/webobs/ui"
 #endif
+
+std::string transcoder_executable()
+{
+    if (const char *value = std::getenv("WEBOBS_TRANSCODER_PATH"); value && *value)
+        return value;
+    return "/opt/webobs/bin/transcode-on-demand";
+}
 
 std::string_view view(beast::string_view value)
 {
@@ -355,6 +365,10 @@ std::string permission_for_request(const HttpRequest &request)
     const std::string_view target = view(request.target());
     const bool mutating = request.method() == http::verb::post || request.method() == http::verb::put ||
                           request.method() == http::verb::patch || request.method() == http::verb::delete_;
+    if (target.starts_with("/api/v3/analytics/policies"))
+        return mutating ? "analytics.manage" : "analytics.view";
+    if (target.starts_with("/api/v3/analytics"))
+        return mutating ? "analytics.run" : "analytics.view";
     if (target.starts_with("/api/v2/users") || target == "/api/v2/roles")
         return "user.manage";
     if (target == "/api/v2/audit" || target.starts_with("/api/v2/audit?"))
@@ -364,6 +378,8 @@ std::string permission_for_request(const HttpRequest &request)
     if (target.starts_with("/api/v2/storage-volumes") || target.starts_with("/api/v2/recording-placements") ||
         target.starts_with("/api/v2/archive-targets") || target.starts_with("/api/v2/backup-jobs"))
         return "storage.manage";
+    if (target.starts_with("/api/v2/analytics-jobs"))
+        return "analytics.manage";
     if (target.starts_with("/api/v2/recordings"))
         return "playback.view";
     if (target == "/api/v2/resource-capacity" || target == "/metrics" ||
@@ -400,8 +416,81 @@ std::string permission_for_request(const HttpRequest &request)
     return "live.view";
 }
 
-std::string camera_scope_for_target(std::string_view target)
+std::string camera_scope_for_target(std::string_view target, std::string_view body = {})
 {
+    // v3 analytics resources carry their Camera/Profile scope in the JSON
+    // body.  Do not interpret the route segment "policies", "status", etc.
+    // as a camera identifier; doing so would reject scoped operators.
+    if (target.starts_with("/api/v3/analytics/") && !body.empty()) {
+        // Parse JSON instead of searching for a compact serialization.  A
+        // malformed or differently spaced body must fail closed, otherwise a
+        // scoped operator could accidentally be treated as globally scoped.
+        const auto valid_camera = [](json_t *value) -> std::optional<std::string> {
+            if (!json_is_string(value))
+                return std::nullopt;
+            const char *raw = json_string_value(value);
+            const std::string_view camera = raw ? std::string_view(raw) : std::string_view{};
+            if (camera.empty() || camera.size() > 64 ||
+                !std::all_of(camera.begin(), camera.end(), [](unsigned char character) {
+                    return std::isalnum(character) || character == '.' || character == '_' || character == '-';
+                }))
+                return std::nullopt;
+            return std::string(camera);
+        };
+        if (body.size() <= 256 * 1024) {
+            json_error_t error{};
+            json_t *root = json_loadb(body.data(), body.size(), JSON_REJECT_DUPLICATES, &error);
+            if (root && json_is_object(root)) {
+                const auto top_level_camera = valid_camera(json_object_get(root, "cameraId"));
+                std::optional<std::string> batch_camera;
+                bool saw_batch = false;
+                // Policy and signal batches carry the resource scope on each
+                // item rather than at the top level.  Validate every item and
+                // reject mixed-camera batches: otherwise a scoped operator
+                // could authorize the first item while mutating another one.
+                for (const char *batch_name : {"policies", "signals"}) {
+                    json_t *batch = json_object_get(root, batch_name);
+                    if (!batch)
+                        continue;
+                    saw_batch = true;
+                    if (!json_is_array(batch)) {
+                        json_decref(root);
+                        return "__invalid_scope__";
+                    }
+                    const size_t count = json_array_size(batch);
+                    for (size_t index = 0; index < count; ++index) {
+                        json_t *item = json_array_get(batch, index);
+                        if (!json_is_object(item)) {
+                            json_decref(root);
+                            return "__invalid_scope__";
+                        }
+                        const auto camera = valid_camera(json_object_get(item, "cameraId"));
+                        if (!camera || (batch_camera && *batch_camera != *camera)) {
+                            json_decref(root);
+                            return "__invalid_scope__";
+                        }
+                        batch_camera = *camera;
+                    }
+                }
+                if (saw_batch) {
+                    if (top_level_camera && batch_camera && *top_level_camera != *batch_camera) {
+                        json_decref(root);
+                        return "__invalid_scope__";
+                    }
+                    if (batch_camera) {
+                        json_decref(root);
+                        return *batch_camera;
+                    }
+                }
+                if (top_level_camera) {
+                    json_decref(root);
+                    return *top_level_camera;
+                }
+            }
+            json_decref(root);
+        }
+        return "__invalid_scope__";
+    }
     for (const std::string_view prefix : {std::string_view("/api/v1/cameras/"),
                                           std::string_view("/api/v2/source-catalog/")}) {
         if (!target.starts_with(prefix))
@@ -438,7 +527,7 @@ ClusterAuthorization cluster_authorize(std::string_view username, const HttpRequ
     if (!token_value)
         return ClusterAuthorization::unavailable;
     const std::string permission = permission_for_request(request);
-    const std::string camera_id = camera_scope_for_target(view(request.target()));
+    const std::string camera_id = camera_scope_for_target(view(request.target()), view(request.body()));
     const std::string body = "{\"cameraId\":\"" + json_escape(camera_id) +
                              "\",\"permission\":\"" + json_escape(permission) +
                              "\",\"username\":\"" + json_escape(username) + "\"}";
@@ -519,7 +608,14 @@ HttpResponse response(http::status status, unsigned int version, std::string bod
     return result;
 }
 
-struct ResolvedCameraEndpoint { std::string endpoint; std::string adapter; };
+struct ResolvedCameraEndpoint {
+    std::string endpoint;
+    std::string adapter;
+    // Codecs the camera registry already probed and stored, so the playback
+    // route does not have to rediscover them by reading the live stream.
+    std::string video_codec;
+    std::string audio_codec;
+};
 
 std::optional<ResolvedCameraEndpoint> resolve_camera_endpoint(std::string_view camera_id,
                                                               std::string_view profile_id)
@@ -551,9 +647,15 @@ std::optional<ResolvedCameraEndpoint> resolve_camera_endpoint(std::string_view c
     if (!root || !json_is_object(root)) { json_decref(root); return std::nullopt; }
     json_t *endpoint = json_object_get(root, "endpoint");
     json_t *adapter = json_object_get(root, "adapter");
+    json_t *video_codec = json_object_get(root, "videoCodec");
+    json_t *audio_codec = json_object_get(root, "audioCodec");
     std::optional<ResolvedCameraEndpoint> result;
-    if (json_is_string(endpoint) && json_is_string(adapter))
-        result = ResolvedCameraEndpoint{json_string_value(endpoint), json_string_value(adapter)};
+    if (json_is_string(endpoint) && json_is_string(adapter)) {
+        result = ResolvedCameraEndpoint{
+            json_string_value(endpoint), json_string_value(adapter),
+            json_is_string(video_codec) ? json_string_value(video_codec) : "",
+            json_is_string(audio_codec) ? json_string_value(audio_codec) : ""};
+    }
     json_decref(root);
     return result;
 }
@@ -570,9 +672,31 @@ public:
 
     HttpResponse status(unsigned int version) const
     {
+        // Staged native Composite status.  Each stage is reported separately so
+        // the console never collapses "not enabled", "transport off", "engine
+        // down" and "publish target not ready" into one generic message.
+        const bool engine_active = runtime_status_.engine_active.load();
+        const bool publish_ready = runtime_status_.webrtc_ready.load();
+        const char *configuration = !composite_enabled_ ? "disabled"
+            : (!enabled_ ? "incomplete" : "ready");
+        const char *engine = engine_active ? "ready" : "stopped";
+        const char *publish = (composite_enabled_ && publish_ready) ? "publishing" : "idle";
+        std::string reason;
+        if (!composite_enabled_)
+            reason = "composite_disabled";
+        else if (!enabled_)
+            reason = "webrtc_transport_disabled";
+        else if (!engine_active)
+            reason = "engine_not_active";
+        else if (!publish_ready)
+            reason = "whip_output_not_ready";
         return response(http::status::ok, version,
                         std::string("{\"enabled\":") + (enabled_ && composite_enabled_ ? "true" : "false") +
-                            ",\"endpoint\":\"/api/v1/program/whep\"}");
+                            ",\"endpoint\":\"/api/v1/program/whep\"" +
+                            ",\"configuration\":\"" + configuration + "\"" +
+                            ",\"engine\":\"" + engine + "\"" +
+                            ",\"publish\":\"" + publish + "\"" +
+                            ",\"reason\":\"" + json_escape(reason) + "\"}");
     }
 
     HttpResponse capabilities(unsigned int version)
@@ -610,7 +734,7 @@ public:
             const std::string reason = video_transcode ? "video_codec_incompatible" :
                                        audio_transcode ? "audio_codec_incompatible" : "";
             const std::string encoder = video_transcode
-                ? (video_encoder_backend_ready(runtime_status_.video_encoder.vaapi) ? "h264_vaapi" : "libx264")
+                ? (video_encoder_backend_ready(VideoEncoderKind::vaapi, runtime_status_.video_encoder.vaapi) ? "h264_vaapi" : "libx264")
                 : "none";
             body += "{\"sourceId\":\"" + json_escape(source.id) +
                     "\",\"endpoint\":\"/api/v1/sources/" + json_escape(source.id) +
@@ -659,7 +783,8 @@ public:
                             error_body("composite_only", "browser sources use composite playback"));
         std::optional<std::string> route;
         {
-            const std::lock_guard operation_lock(route_operation_mutex_);
+            const auto route_lock = route_lock_for(source->id);
+            const std::lock_guard operation_lock(*route_lock);
             route = ensure_playback_route(*source);
         }
         if (!route)
@@ -694,7 +819,8 @@ public:
         source.transport = "tcp";
         std::optional<std::string> route;
         {
-            const std::lock_guard operation_lock(route_operation_mutex_);
+            const auto route_lock = route_lock_for(source.id);
+            const std::lock_guard operation_lock(*route_lock);
             route = ensure_playback_route(source, topology == "hybrid");
         }
         if (!route)
@@ -703,6 +829,15 @@ public:
         return create_validated(request, *route, prefix, client_id, source.id);
     }
 
+    /** Lock for one source's route operations, created on first use. */
+    std::shared_ptr<std::mutex> route_lock_for(std::string_view source_id)
+    {
+        const std::lock_guard lock(route_locks_mutex_);
+        std::shared_ptr<std::mutex> &entry = route_locks_[std::string(source_id)];
+        if (!entry)
+            entry = std::make_shared<std::mutex>();
+        return entry;
+    }
     HttpResponse remove_program(const HttpRequest &request, std::string_view token)
     {
         return remove(request, token, session_prefix);
@@ -749,7 +884,10 @@ public:
 
     void reconcile_sources()
     {
-        const std::lock_guard operation_lock(route_operation_mutex_);
+        // Reconciliation removes routes for sources that left the document; it
+        // stays off the per-source locks so it cannot stall an activation, and the
+        // route map itself is already serialized by route_state_mutex_.
+        const std::lock_guard operation_lock(reconcile_mutex_);
         reconcile(controller_.private_document_snapshot());
     }
 
@@ -766,6 +904,7 @@ private:
             return response(http::status::not_found, version, error_body("session_not_found", "session not found"));
         Session removed;
         bool remove_route = false;
+        bool remove_audio_route = false;
         {
             const std::lock_guard lock(session_mutex_);
             const auto session = sessions_.find(std::string(token));
@@ -774,18 +913,34 @@ private:
                                 error_body("session_not_found", "session not found"));
             removed = std::move(session->second);
             sessions_.erase(session);
-            remove_route = !removed.route_source_id.empty() &&
-                std::none_of(sessions_.begin(), sessions_.end(), [&removed](const auto &entry) {
-                    return entry.second.route_source_id == removed.route_source_id;
-                });
+            if (removed.audio_track >= 0) {
+                // An audio-only session owns just its own per-track path; it must
+                // never release the video route another viewer is still watching.
+                remove_audio_route = !removed.route_source_id.empty() &&
+                    std::none_of(sessions_.begin(), sessions_.end(), [&removed](const auto &entry) {
+                        return entry.second.route_source_id == removed.route_source_id &&
+                               entry.second.audio_track == removed.audio_track;
+                    });
+            } else {
+                remove_route = !removed.route_source_id.empty() &&
+                    std::none_of(sessions_.begin(), sessions_.end(), [&removed](const auto &entry) {
+                        return entry.second.route_source_id == removed.route_source_id;
+                    });
+            }
         }
         const UpstreamResponse upstream = request_http(removed.upstream_url, {}, "DELETE", {});
         if (!upstream.ok || (upstream.status != 200 && upstream.status != 204 && upstream.status != 404))
             return response(http::status::bad_gateway, version,
                             error_body("whep_upstream", "WebRTC signaling could not close the session"));
         if (remove_route) {
-            const std::lock_guard operation_lock(route_operation_mutex_);
+            const auto route_lock = route_lock_for(removed.route_source_id);
+            const std::lock_guard operation_lock(*route_lock);
             remove_source_route(removed.route_source_id);
+        }
+        if (remove_audio_route) {
+            const auto route_lock = route_lock_for(removed.route_source_id);
+            const std::lock_guard operation_lock(*route_lock);
+            remove_audio_track_route(removed.route_source_id, removed.audio_track);
         }
         return response(http::status::no_content, version, {}, "application/json; charset=utf-8");
     }
@@ -804,6 +959,8 @@ private:
         std::string browser_prefix;
         std::string client_id;
         std::string route_source_id;
+        /** >= 0 for an audio-only per-track session (F5-05); -1 for video sessions. */
+        int audio_track = -1;
     };
 
     struct DirectRoute {
@@ -817,6 +974,12 @@ private:
         bool video_transcode = false;
         bool audio_transcode = false;
         std::string hybrid_path;
+        /** Per-track audio-only MediaMTX paths, keyed by 0:a:<index> (F5-05). */
+        std::unordered_map<int, std::string> audio_paths;
+        /** Probe cache of the real audio tracks of this source. */
+        std::vector<AudioTrackDescriptor> audio_tracks;
+        std::string audio_tracks_key;
+        bool audio_tracks_probed = false;
     };
 
     struct UpstreamResponse {
@@ -942,7 +1105,8 @@ private:
     HttpResponse create_validated(const HttpRequest &request, std::string_view path,
                                   std::string_view browser_prefix,
                                   std::string_view client_id = {},
-                                  std::string_view route_source_id = {})
+                                  std::string_view route_source_id = {},
+                                  int audio_track = -1)
     {
         const unsigned int version = request.version();
         {
@@ -977,7 +1141,7 @@ private:
                 } while (sessions_.contains(token));
                 sessions_.emplace(token, Session{*upstream_location, std::chrono::steady_clock::now(),
                                                  std::string(browser_prefix), std::string(client_id),
-                                                 std::string(route_source_id)});
+                                                 std::string(route_source_id), audio_track});
             }
         }
         if (capacity_exhausted) {
@@ -993,8 +1157,14 @@ private:
         return result;
     }
 
-    static std::optional<std::string> run_capture(const std::vector<std::string> &arguments,
-                                                   std::chrono::seconds timeout)
+    /**
+     * Raw stdout of a short-lived probe process, trimmed and capped.  The codec
+     * helpers below need a single token, but JSON probes (audio tracks) are far
+     * larger, so the size policy is the caller's.
+     */
+    static std::optional<std::string> run_capture_text(const std::vector<std::string> &arguments,
+                                                       std::chrono::seconds timeout,
+                                                       std::size_t maximum_bytes)
     {
         if (arguments.empty())
             return std::nullopt;
@@ -1053,7 +1223,7 @@ private:
         std::array<char, 256> buffer{};
         for (;;) {
             const ssize_t count = read(output_pipe[0], buffer.data(), buffer.size());
-            if (count > 0 && output.size() < 4096)
+            if (count > 0 && output.size() < maximum_bytes)
                 output.append(buffer.data(), static_cast<std::size_t>(count));
             else if (count == 0)
                 break;
@@ -1067,12 +1237,21 @@ private:
         if (first == std::string::npos)
             return std::nullopt;
         output.erase(0, first);
-        if (output.size() > 32 ||
-            !std::all_of(output.begin(), output.end(), [](unsigned char character) {
+        return output;
+    }
+
+    /** Single-token probe output such as an ffprobe codec name. */
+    static std::optional<std::string> run_capture(const std::vector<std::string> &arguments,
+                                                  std::chrono::seconds timeout)
+    {
+        auto output = run_capture_text(arguments, timeout, 4096);
+        if (!output || output->size() > 32)
+            return std::nullopt;
+        if (!std::all_of(output->begin(), output->end(), [](unsigned char character) {
                 return std::isalnum(character) || character == '_';
             }))
             return std::nullopt;
-        return lowercase(output);
+        return lowercase(*output);
     }
 
     static bool browser_compatible_codec(std::string_view codec)
@@ -1105,6 +1284,8 @@ private:
             direct_routes_.erase(found);
         }
         delete_config_path(route.hybrid_path);
+        for (const auto &entry : route.audio_paths)
+            delete_config_path(entry.second);
         delete_config_path(route.path);
     }
 
@@ -1140,9 +1321,11 @@ private:
                             route_sources.end());
         for (const std::string &url : upstream_sessions)
             request_http(url, {}, "DELETE", {});
-        const std::lock_guard operation_lock(route_operation_mutex_);
-        for (const std::string &source : route_sources)
+        for (const std::string &source : route_sources) {
+            const auto route_lock = route_lock_for(source);
+            const std::lock_guard operation_lock(*route_lock);
             remove_source_route(source);
+        }
     }
 
     std::optional<std::string> ensure_direct_route(const SceneSource &source)
@@ -1161,6 +1344,7 @@ private:
         DirectRoute route;
         bool adding = false;
         std::string previous_hybrid_path;
+        std::vector<std::string> previous_audio_paths;
         {
             const std::lock_guard lock(route_state_mutex_);
             const auto existing = direct_routes_.find(source.id);
@@ -1185,6 +1369,12 @@ private:
                 route.video_transcode = false;
                 route.audio_transcode = false;
                 route.hybrid_path.clear();
+                for (const auto &entry : route.audio_paths)
+                    previous_audio_paths.push_back(entry.second);
+                route.audio_paths.clear();
+                route.audio_tracks.clear();
+                route.audio_tracks_key.clear();
+                route.audio_tracks_probed = false;
             }
         }
         route.rtsp_url = effective_url;
@@ -1202,6 +1392,8 @@ private:
         if (!configured.ok || configured.status != 200)
             return std::nullopt;
         delete_config_path(previous_hybrid_path);
+        for (const std::string &audio_path : previous_audio_paths)
+            delete_config_path(audio_path);
         {
             const std::lock_guard lock(route_state_mutex_);
             direct_routes_[source.id] = route;
@@ -1219,6 +1411,28 @@ private:
         {
             const std::lock_guard lock(route_state_mutex_);
             route = direct_routes_.at(source.id);
+        }
+        if (route.codec.empty() && source.kind == "camera") {
+            // Fast path: the camera registry already probed and stored the codecs,
+            // so the two live ffprobe calls below can be skipped.  Reading the
+            // just-started on-demand route took most of their 12s timeout on slow
+            // cameras and, because the control server runs a single io_context
+            // thread, serialized every tile behind it (see
+            // docs/feedback-5-acceptance.md section 4.3.1).
+            const auto resolved = resolve_camera_endpoint(source.camera_id, source.profile_id);
+            if (resolved && !resolved->video_codec.empty() && resolved->video_codec != "unknown") {
+                route.codec = resolved->video_codec;
+                route.audio_codec = resolved->audio_codec == "unknown" ? "" : resolved->audio_codec;
+                route.video_transcode = !browser_compatible_codec(route.codec);
+                route.audio_transcode = !browser_compatible_audio_codec(route.audio_codec);
+                route.transcode = route.video_transcode || route.audio_transcode;
+                const std::lock_guard lock(route_state_mutex_);
+                direct_routes_.at(source.id).codec = route.codec;
+                direct_routes_.at(source.id).audio_codec = route.audio_codec;
+                direct_routes_.at(source.id).transcode = route.transcode;
+                direct_routes_.at(source.id).video_transcode = route.video_transcode;
+                direct_routes_.at(source.id).audio_transcode = route.audio_transcode;
+            }
         }
         if (route.codec.empty()) {
             const std::string input = "rtsp://127.0.0.1:8554/" + route.path;
@@ -1265,7 +1479,7 @@ private:
                     return entry.second.hybrid_path == route.hybrid_path;
                 }));
             }
-            const std::string command = "/opt/webobs/bin/transcode-on-demand " + route.path + " " +
+            const std::string command = transcoder_executable() + " " + route.path + " " +
                                         route.hybrid_path + " " +
                                         (route.video_transcode ? "transcode" : "copy") + " " +
                                         (route.audio_transcode ? "transcode" : "copy");
@@ -1286,6 +1500,225 @@ private:
         return route.hybrid_path;
     }
 
+    /**
+     * Real audio tracks of a source, probed once per route and cached (F5-05).
+     * A confirmed audio-free source returns an empty list, which is different
+     * from a failed probe (std::nullopt) and must stay distinguishable.
+     */
+    std::optional<std::vector<AudioTrackDescriptor>> ensure_audio_tracks(const SceneSource &source)
+    {
+        const auto direct_path = ensure_direct_route(source);
+        if (!direct_path)
+            return std::nullopt;
+        std::string source_key;
+        {
+            const std::lock_guard lock(route_state_mutex_);
+            const auto found = direct_routes_.find(source.id);
+            if (found == direct_routes_.end())
+                return std::nullopt;
+            const DirectRoute &route = found->second;
+            if (route.audio_tracks_probed && route.audio_tracks_key == route.source_key)
+                return route.audio_tracks;
+            source_key = route.source_key;
+        }
+        const std::string input = "rtsp://127.0.0.1:8554/" + *direct_path;
+        const auto probed = run_capture_text({"ffprobe", "-v", "error", "-rw_timeout", "8000000",
+                                         "-rtsp_transport", "tcp", "-select_streams", "a",
+                                         "-show_entries",
+                                         "stream=index,codec_name,channels,channel_layout,sample_rate:stream_tags=language,title",
+                                         "-of", "json", input},
+                                         std::chrono::seconds(12), 256 * 1024);
+        if (!probed)
+            return std::nullopt;
+        std::vector<AudioTrackDescriptor> tracks = parse_audio_tracks(*probed);
+        {
+            const std::lock_guard lock(route_state_mutex_);
+            const auto found = direct_routes_.find(source.id);
+            if (found != direct_routes_.end() && found->second.source_key == source_key) {
+                found->second.audio_tracks = tracks;
+                found->second.audio_tracks_key = source_key;
+                found->second.audio_tracks_probed = true;
+            }
+        }
+        return tracks;
+    }
+
+    static std::string audio_session_prefix(std::string_view source_id, int track_index)
+    {
+        return "/api/v1/sources/" + std::string(source_id) + "/audio-tracks/" +
+               std::to_string(track_index) + "/whep/session/";
+    }
+
+    /**
+     * Create the audio-only MediaMTX path for one track.  MediaMTX 1.18.2 maps a
+     * single audio output per path, so every independently controllable track
+     * gets its own on-demand path fed by the transcoder's audio-track mode.
+     */
+    std::optional<std::string> ensure_audio_track_route(const SceneSource &source, int track_index)
+    {
+        const auto direct_path = ensure_direct_route(source);
+        if (!direct_path)
+            return std::nullopt;
+        {
+            const std::lock_guard lock(route_state_mutex_);
+            const auto found = direct_routes_.find(source.id);
+            if (found == direct_routes_.end())
+                return std::nullopt;
+            const auto existing = found->second.audio_paths.find(track_index);
+            if (existing != found->second.audio_paths.end() && valid_audio_track_path(existing->second))
+                return existing->second;
+        }
+        std::string audio_path;
+        {
+            const std::lock_guard lock(route_state_mutex_);
+            do {
+                audio_path = audio_track_path_name(random_token(), track_index);
+            } while (audio_path.empty() ||
+                     std::any_of(direct_routes_.begin(), direct_routes_.end(),
+                                 [&audio_path](const auto &entry) {
+                                     return std::any_of(entry.second.audio_paths.begin(),
+                                                        entry.second.audio_paths.end(),
+                                                        [&audio_path](const auto &audio) {
+                                                            return audio.second == audio_path;
+                                                        });
+                                 }));
+        }
+        const std::string arguments = audio_track_route_arguments(*direct_path, audio_path, track_index);
+        if (arguments.empty())
+            return std::nullopt;
+        const std::string command = transcoder_executable() + " " + arguments;
+        const std::string body =
+            std::string("{\"source\":\"publisher\",\"overridePublisher\":false,\"maxReaders\":4,") +
+            "\"runOnDemand\":\"" + json_escape(command) +
+            "\",\"runOnDemandRestart\":false,\"runOnDemandStartTimeout\":\"10s\"," +
+            "\"runOnDemandCloseAfter\":\"2s\"}";
+        const std::string url = std::string(control_origin) + "/v3/config/paths/add/" + audio_path;
+        const UpstreamResponse configured = request_http(url, body, "POST", "application/json");
+        if (!configured.ok || configured.status != 200)
+            return std::nullopt;
+        {
+            const std::lock_guard lock(route_state_mutex_);
+            const auto found = direct_routes_.find(source.id);
+            if (found == direct_routes_.end())
+                return std::nullopt;
+            found->second.audio_paths[track_index] = audio_path;
+        }
+        return audio_path;
+    }
+
+    /** Release one per-track audio path as soon as its last session closes. */
+    void remove_audio_track_route(std::string_view source_id, int track_index)
+    {
+        std::string audio_path;
+        {
+            const std::lock_guard lock(route_state_mutex_);
+            const auto found = direct_routes_.find(std::string(source_id));
+            if (found == direct_routes_.end())
+                return;
+            const auto entry = found->second.audio_paths.find(track_index);
+            if (entry == found->second.audio_paths.end())
+                return;
+            audio_path = entry->second;
+            found->second.audio_paths.erase(entry);
+        }
+        delete_config_path(audio_path);
+    }
+
+public:
+    /** `GET /api/v1/sources/<id>/audio-tracks`: the real tracks of a source. */
+    HttpResponse audio_tracks(const HttpRequest &request, std::string_view source_id)
+    {
+        const unsigned int version = request.version();
+        const SceneDocument document = controller_.private_document_snapshot();
+        const auto source = std::find_if(document.sources.begin(), document.sources.end(),
+                                         [source_id](const SceneSource &candidate) {
+                                             return candidate.id == source_id;
+                                         });
+        if (source == document.sources.end())
+            return response(http::status::not_found, version,
+                            error_body("source_not_found", "source not found"));
+        if (source->kind != "rtsp" && source->kind != "camera")
+            return response(http::status::conflict, version,
+                            error_body("composite_only", "browser sources use composite playback"));
+        std::optional<std::vector<AudioTrackDescriptor>> tracks;
+        {
+            const auto route_lock = route_lock_for(source->id);
+            const std::lock_guard operation_lock(*route_lock);
+            tracks = ensure_audio_tracks(*source);
+        }
+        if (!tracks)
+            return response(http::status::bad_gateway, version,
+                            error_body("audio_tracks_unavailable", "audio track probing is unavailable"));
+        std::string body = "{\"sourceId\":\"" + json_escape(source->id) + "\",\"probed\":true,\"tracks\":[";
+        bool first = true;
+        for (const AudioTrackDescriptor &track : *tracks) {
+            if (!first)
+                body.push_back(',');
+            first = false;
+            const std::string endpoint = "/api/v1/sources/" + source->id + "/audio-tracks/" +
+                                         std::to_string(track.index) + "/whep";
+            body += "{\"index\":" + std::to_string(track.index) +
+                    ",\"streamIndex\":" + std::to_string(track.stream_index) +
+                    ",\"codec\":\"" + json_escape(track.codec) + "\"" +
+                    ",\"channels\":" + std::to_string(track.channels) +
+                    ",\"channelLayout\":\"" + json_escape(track.channel_layout) + "\"" +
+                    ",\"sampleRate\":" + std::to_string(track.sample_rate) +
+                    ",\"language\":\"" + json_escape(track.language) + "\"" +
+                    ",\"title\":\"" + json_escape(track.title) + "\"" +
+                    ",\"sourceCodecBrowserCompatible\":" + (track.browser_compatible ? "true" : "false") +
+                    ",\"audioOnly\":true,\"endpoint\":\"" + json_escape(endpoint) + "\"}";
+        }
+        body += "]}";
+        return response(http::status::ok, version, std::move(body));
+    }
+
+    HttpResponse create_audio_track(const HttpRequest &request, std::string_view source_id,
+                                    int track_index)
+    {
+        if (auto invalid = validate_offer(request))
+            return std::move(*invalid);
+        const SceneDocument document = controller_.private_document_snapshot();
+        const auto source = std::find_if(document.sources.begin(), document.sources.end(),
+                                         [source_id](const SceneSource &candidate) {
+                                             return candidate.id == source_id;
+                                         });
+        if (source == document.sources.end())
+            return response(http::status::not_found, request.version(),
+                            error_body("source_not_found", "source not found"));
+        if (source->kind != "rtsp" && source->kind != "camera")
+            return response(http::status::conflict, request.version(),
+                            error_body("composite_only", "browser sources use composite playback"));
+        std::optional<std::string> route;
+        {
+            const auto route_lock = route_lock_for(source->id);
+            const std::lock_guard operation_lock(*route_lock);
+            const auto tracks = ensure_audio_tracks(*source);
+            if (!tracks)
+                return response(http::status::bad_gateway, request.version(),
+                                error_body("audio_tracks_unavailable", "audio track probing is unavailable"));
+            const bool present = std::any_of(tracks->begin(), tracks->end(),
+                                             [track_index](const AudioTrackDescriptor &track) {
+                                                 return track.index == track_index;
+                                             });
+            if (!present)
+                return response(http::status::not_found, request.version(),
+                                error_body("audio_track_not_found", "the source has no such audio track"));
+            route = ensure_audio_track_route(*source, track_index);
+        }
+        if (!route)
+            return response(http::status::bad_gateway, request.version(),
+                            error_body("audio_route", "audio-only source routing is unavailable"));
+        return create_validated(request, *route, audio_session_prefix(source_id, track_index), {},
+                                source->id, track_index);
+    }
+
+    HttpResponse remove_audio_track(const HttpRequest &request, std::string_view source_id,
+                                    int track_index, std::string_view token)
+    {
+        return remove(request, token, audio_session_prefix(source_id, track_index));
+    }
+
+private:
     void reconcile(const SceneDocument &document)
     {
         std::vector<DirectRoute> removed;
@@ -1307,6 +1740,8 @@ private:
         }
         for (const DirectRoute &route : removed) {
             delete_config_path(route.hybrid_path);
+            for (const auto &entry : route.audio_paths)
+                delete_config_path(entry.second);
             delete_config_path(route.path);
         }
     }
@@ -1339,7 +1774,15 @@ private:
     const std::vector<std::string> &allowed_origins_;
     const RuntimeStatus &runtime_status_;
     std::mutex session_mutex_;
-    std::mutex route_operation_mutex_;
+    // Route operations are keyed per source: a slow or unresponsive camera used
+    // to hold one global lock across its blocking upstream I/O, which serialized
+    // every other source behind it (measured: five concurrent WHEP calls at
+    // 10.2/10.3/20.3/20.4/20.4 s against one controlled slow source).
+    std::mutex route_locks_mutex_;
+    std::unordered_map<std::string, std::shared_ptr<std::mutex>> route_locks_;
+    // Whole-document reconciliation takes every source lock it touches instead
+    // of this one, so it cannot stall unrelated sources either.
+    std::mutex reconcile_mutex_;
     std::mutex route_state_mutex_;
     std::unordered_map<std::string, Session> sessions_;
     std::unordered_map<std::string, DirectRoute> direct_routes_;
@@ -1521,6 +1964,7 @@ public:
         std::string suffix;
         int upstream_port = 8092;
         bool v2_client_service = false;
+        bool v3_analytics_service = false;
         bool cluster_service = false;
         bool provider_grant_service = false;
         if (target == "/api/v1/cameras" || target.starts_with("/api/v1/cameras/"))
@@ -1533,10 +1977,15 @@ public:
             suffix = "/onvif/discover";
         else if (target == "/api/v1/onvif/probe")
             suffix = "/onvif/probe";
-        else if (target == "/api/v2/source-catalog" || target.starts_with("/api/v2/source-catalog/") ||
+        else if (target == "/api/v2/source-catalog" || target.starts_with("/api/v2/source-catalog?") ||
+                 target.starts_with("/api/v2/source-catalog/") ||
                  target == "/api/v2/operations/issues" || target.starts_with("/api/v2/operations/issues/") ||
                  target == "/api/v2/settings" || target == "/api/v2/settings/schema") {
             suffix = std::string(target.substr(std::string_view("/api/v2").size()));
+        }
+        else if (target == "/api/v3/analytics" || target.starts_with("/api/v3/analytics/")) {
+            suffix = std::string(target.substr(std::string_view("/api/v3").size()));
+            v3_analytics_service = true;
         }
         else if (target == "/api/v1/events" || target.starts_with("/api/v1/events?") ||
                  target.starts_with("/api/v1/events/")) {
@@ -1570,6 +2019,7 @@ public:
                    target.starts_with("/api/v2/recordings/") ||
                    target == "/api/v2/recordings/timeline" || target.starts_with("/api/v2/recordings/timeline?") ||
                    target == "/api/v2/resource-capacity" ||
+                   target == "/api/v2/analytics-jobs" || target.starts_with("/api/v2/analytics-jobs/") ||
                    target == "/api/v2/archive-targets" || target.starts_with("/api/v2/archive-targets/") ||
                    target == "/api/v2/backup-jobs" || target.starts_with("/api/v2/backup-jobs/")) {
             suffix = std::string(target.substr(std::string_view("/api/v2").size()));
@@ -1659,6 +2109,44 @@ public:
             if (administrator_route && !v2_internal_token_.empty()) {
                 internal_admin_header = "X-WebObs-Internal-Admin: " + v2_internal_token_;
                 headers = curl_slist_append(headers, internal_admin_header.c_str());
+            }
+        }
+        if (v3_analytics_service) {
+            std::optional<std::string_view> analytics_session;
+            std::size_t session_count = 0;
+            for (const auto &field : request.base()) {
+                if (field.name_string() == "X-WebObs-Analytics-Session") {
+                    ++session_count;
+                    analytics_session = view(field.value());
+                }
+            }
+            if (session_count == 1 && analytics_session && analytics_session->size() <= 128 &&
+                std::all_of(analytics_session->begin(), analytics_session->end(), [](unsigned char character) {
+                    return std::isalnum(character) || character == '_' || character == '-';
+                })) {
+                const std::string header = "X-WebObs-Analytics-Session: " + std::string(*analytics_session);
+                headers = curl_slist_append(headers, header.c_str());
+            }
+            // The browser session principal is attached by HttpSession after
+            // authentication.  Forward only a bounded, validated value to
+            // the loopback Registry so runtime sessions are user-bound; an
+            // arbitrary client header is never trusted as an identity.
+            std::optional<std::string_view> analytics_principal;
+            std::size_t principal_count = 0;
+            for (const auto &field : request.base()) {
+                if (field.name_string() == "X-WebObs-Analytics-Principal") {
+                    ++principal_count;
+                    analytics_principal = view(field.value());
+                }
+            }
+            if (principal_count == 1 && analytics_principal &&
+                analytics_principal->size() <= 64 &&
+                !analytics_principal->empty() &&
+                std::all_of(analytics_principal->begin(), analytics_principal->end(), [](unsigned char character) {
+                    return std::isalnum(character) || character == '.' || character == '_' || character == '-';
+                })) {
+                const std::string header = "X-WebObs-Analytics-Principal: " + std::string(*analytics_principal);
+                headers = curl_slist_append(headers, header.c_str());
             }
         }
         if (provider_grant_service) {
@@ -1897,6 +2385,8 @@ std::string static_content_type(std::string_view filename)
         return "image/svg+xml";
     if (filename.ends_with(".wasm"))
         return "application/wasm";
+    if (filename.ends_with(".onnx"))
+        return "application/octet-stream";
     if (filename.ends_with(".json"))
         return "application/json; charset=utf-8";
     if (filename.ends_with(".webmanifest"))
@@ -1927,14 +2417,18 @@ std::optional<HttpResponse> static_file_response(std::string_view target, unsign
     } else if (target == "/manifest.webmanifest" || target == "/sw.js" ||
                target == "/webobs-icon.svg" || target == "/offline.html") {
         filename = std::string(target.substr(1));
-    } else if (target.starts_with("/assets/")) {
-        const std::string_view asset = target.substr(std::string_view("/assets/").size());
+    } else if (target.starts_with("/assets/") || target.starts_with("/models/")) {
+        const std::string_view prefix = target.starts_with("/assets/") ? "/assets/" : "/models/";
+        const std::string_view asset = target.substr(prefix.size());
         if (asset.empty() || !std::all_of(asset.begin(), asset.end(), [](unsigned char character) {
                 return std::isalnum(character) || character == '.' || character == '_' || character == '-';
             }))
             return std::nullopt;
-        filename = "assets/" + std::string(asset);
-        immutable = hashed_static_asset(asset);
+        filename = std::string(prefix.substr(1)) + std::string(asset);
+        // Model bytes are verified by the browser against the signed-in
+        // manifest before being used.  Keep them out of the service-worker
+        // precache and avoid an immutable cache entry for a mutable manifest.
+        immutable = prefix == "/assets/" && hashed_static_asset(asset);
     } else {
         return std::nullopt;
     }
@@ -1945,7 +2439,8 @@ std::optional<HttpResponse> static_file_response(std::string_view target, unsign
         return response(http::status::not_found, version,
                         error_body("ui_not_installed", "Web editor asset is unavailable"));
     const std::uintmax_t size = std::filesystem::file_size(path, error);
-    if (error || size > (immutable ? 8 : 4) * 1024 * 1024)
+    const std::uintmax_t maximum = filename.starts_with("models/") ? 64 : (immutable ? 8 : 4);
+    if (error || size > maximum * 1024 * 1024)
         return response(http::status::internal_server_error, version,
                         error_body("ui_asset_invalid", "Web editor asset could not be served"));
 
@@ -1998,12 +2493,114 @@ std::string scene_event(std::string_view type, std::string scene_json)
 
 class WebSocketSession;
 
+
+/**
+ * Bounded worker pool for HTTP request handling.
+ *
+ * Handlers perform synchronous upstream media I/O: MediaMTX route setup, the
+ * blocking WHEP signalling POST to the upstream, and the service proxies.  All
+ * of it used to run on the single io_context thread, so one unresponsive source
+ * stalled everything: measured against a controlled slow source, the trivial
+ * in-memory `GET /api/v1/scene` took about 10 s in 16 of 102 samples, the five
+ * concurrent WHEP calls serialised at 10.2/10.3/20.3/20.4/20.4 s, and healthy
+ * tiles stayed offline while the slow route waited out its timeout.
+ *
+ * Handlers now run here, bounded by the worker count, and only the response write
+ * is posted back to the session's executor, so the socket is still touched from
+ * one thread.  A saturated pool refuses the work and the caller serves the
+ * request inline rather than dropping it.
+ */
+class RequestPool {
+public:
+    explicit RequestPool(std::size_t workers, std::size_t capacity = 256)
+        : capacity_(capacity)
+    {
+        workers_.reserve(workers);
+        for (std::size_t index = 0; index < workers; ++index)
+            workers_.emplace_back([this] { run(); });
+    }
+
+    ~RequestPool() { stop(); }
+
+    RequestPool(const RequestPool &) = delete;
+    RequestPool &operator=(const RequestPool &) = delete;
+
+    bool post(std::function<void()> task)
+    {
+        {
+            const std::lock_guard lock(mutex_);
+            if (stopping_ || queue_.size() >= capacity_)
+                return false;
+            queue_.push_back(std::move(task));
+        }
+        ready_.notify_one();
+        return true;
+    }
+
+    /** Finishes the queued work and refuses anything new. */
+    void stop()
+    {
+        {
+            const std::lock_guard lock(mutex_);
+            if (stopping_) return;
+            stopping_ = true;
+        }
+        ready_.notify_all();
+        for (std::thread &worker : workers_) {
+            if (worker.joinable()) worker.join();
+        }
+        workers_.clear();
+    }
+
+private:
+    void run()
+    {
+        for (;;) {
+            std::function<void()> task;
+            {
+                std::unique_lock lock(mutex_);
+                ready_.wait(lock, [this] { return stopping_ || !queue_.empty(); });
+                // Drain what was already accepted even while stopping, so an
+                // in-flight request still gets its response.
+                if (queue_.empty()) {
+                    if (stopping_) return;
+                    continue;
+                }
+                task = std::move(queue_.front());
+                queue_.pop_front();
+            }
+            task();
+        }
+    }
+
+    std::mutex mutex_;
+    std::condition_variable ready_;
+    std::deque<std::function<void()>> queue_;
+    std::vector<std::thread> workers_;
+    std::size_t capacity_;
+    bool stopping_{false};
+};
+
+std::size_t control_worker_count()
+{
+    if (const char *value = std::getenv("WEBOBS_CONTROL_WORKERS")) {
+        const std::string_view text(value);
+        unsigned int parsed = 0;
+        const auto result = std::from_chars(text.data(), text.data() + text.size(), parsed);
+        if (result.ec == std::errc{} && result.ptr == text.data() + text.size() && parsed >= 1 && parsed <= 32)
+            return parsed;
+    }
+    return 4;
+}
 class WebSocketHub {
 public:
     void join(const std::shared_ptr<WebSocketSession> &session);
     void broadcast(const std::string &message);
 
 private:
+    // Handlers now run on the request pool while joins happen on the io_context
+    // thread, so the session list needs a lock of its own.
+    std::mutex mutex_;
     std::vector<std::weak_ptr<WebSocketSession>> sessions_;
 };
 
@@ -2090,6 +2687,7 @@ private:
 
 void WebSocketHub::join(const std::shared_ptr<WebSocketSession> &session)
 {
+    const std::lock_guard lock(mutex_);
     sessions_.erase(std::remove_if(sessions_.begin(), sessions_.end(),
                                    [](const auto &entry) { return entry.expired(); }),
                     sessions_.end());
@@ -2098,15 +2696,24 @@ void WebSocketHub::join(const std::shared_ptr<WebSocketSession> &session)
 
 void WebSocketHub::broadcast(const std::string &message)
 {
-    auto iterator = sessions_.begin();
-    while (iterator != sessions_.end()) {
-        if (const auto session = iterator->lock()) {
-            session->send(message);
-            ++iterator;
-        } else {
-            iterator = sessions_.erase(iterator);
+    // Copy the live sessions out under the lock and send outside it: send() only
+    // posts to each session's own executor and must not run while the list is
+    // locked against a concurrent join.
+    std::vector<std::shared_ptr<WebSocketSession>> live;
+    {
+        const std::lock_guard lock(mutex_);
+        auto iterator = sessions_.begin();
+        while (iterator != sessions_.end()) {
+            if (const auto session = iterator->lock()) {
+                live.push_back(session);
+                ++iterator;
+            } else {
+                iterator = sessions_.erase(iterator);
+            }
         }
     }
+    for (const auto &session : live)
+        session->send(message);
 }
 
 struct ControlMetrics {
@@ -2168,11 +2775,11 @@ HttpResponse metrics_response(unsigned int version, const RuntimeStatus &status,
         "# TYPE webobs_video_encoder_available gauge\n"
         "webobs_video_encoder_available{backend=\"x264\"} 1\n"
         "webobs_video_encoder_available{backend=\"vaapi\"} " +
-        std::string(metric(video_encoder_backend_ready(status.video_encoder.vaapi))) + "\n" +
+        std::string(metric(video_encoder_backend_ready(VideoEncoderKind::vaapi, status.video_encoder.vaapi))) + "\n" +
         "webobs_video_encoder_available{backend=\"qsv\"} " +
-        std::string(metric(video_encoder_backend_ready(status.video_encoder.qsv))) + "\n" +
+        std::string(metric(video_encoder_backend_ready(VideoEncoderKind::qsv, status.video_encoder.qsv))) + "\n" +
         "webobs_video_encoder_available{backend=\"nvenc\"} " +
-        std::string(metric(video_encoder_backend_ready(status.video_encoder.nvenc))) + "\n" +
+        std::string(metric(video_encoder_backend_ready(VideoEncoderKind::nvenc, status.video_encoder.nvenc))) + "\n" +
         "# HELP webobs_http_requests_total Parsed HTTP requests since process start.\n"
         "# TYPE webobs_http_requests_total counter\nwebobs_http_requests_total " +
         std::to_string(metrics.http_requests.load()) + "\n" +
@@ -2183,15 +2790,16 @@ HttpResponse metrics_response(unsigned int version, const RuntimeStatus &status,
                     "text/plain; version=0.0.4; charset=utf-8");
 }
 
-std::string encoder_backend_json(const VideoEncoderBackend &backend)
+std::string encoder_backend_json(VideoEncoderKind kind, const VideoEncoderBackend &backend)
 {
     return std::string("{\"devicePresent\":") + (backend.device_present ? "true" : "false") +
            ",\"vaDriverLoaded\":" + (backend.va_driver_loaded ? "true" : "false") +
+           ",\"libraryLoaded\":" + (backend.library_loaded ? "true" : "false") +
            ",\"encoderAvailable\":" + (backend.encoder_available ? "true" : "false") +
            ",\"encodeSupported\":" + (backend.encode_supported ? "true" : "false") +
            ",\"decodeSupported\":" + (backend.decode_supported ? "true" : "false") +
            ",\"runtimeProbePassed\":" + (backend.runtime_probe_passed ? "true" : "false") +
-           ",\"ready\":" + (video_encoder_backend_ready(backend) ? "true" : "false") + "}";
+           ",\"ready\":" + (video_encoder_backend_ready(kind, backend) ? "true" : "false") + "}";
 }
 
 HttpResponse system_capabilities_response(unsigned int version, const RuntimeStatus &status)
@@ -2202,10 +2810,10 @@ HttpResponse system_capabilities_response(unsigned int version, const RuntimeSta
                        "\",\"selected\":\"" + std::string(video_encoder_kind_name(encoder.selected)) +
                        "\",\"fallback\":" + (encoder.fallback ? "true" : "false") +
                        ",\"fallbackReason\":\"" + json_escape(encoder.fallback_reason) + "\"" +
-                       ",\"backends\":{\"x264\":" + encoder_backend_json(encoder.x264) +
-                       ",\"vaapi\":" + encoder_backend_json(encoder.vaapi) +
-                       ",\"qsv\":" + encoder_backend_json(encoder.qsv) +
-                       ",\"nvenc\":" + encoder_backend_json(encoder.nvenc) + "}}," +
+                       ",\"backends\":{\"x264\":" + encoder_backend_json(VideoEncoderKind::x264, encoder.x264) +
+                       ",\"vaapi\":" + encoder_backend_json(VideoEncoderKind::vaapi, encoder.vaapi) +
+                       ",\"qsv\":" + encoder_backend_json(VideoEncoderKind::qsv, encoder.qsv) +
+                       ",\"nvenc\":" + encoder_backend_json(VideoEncoderKind::nvenc, encoder.nvenc) + "}}," +
                        "\"renderer\":{\"requested\":\"" + json_escape(status.renderer.requested) +
                        "\",\"selected\":\"" + json_escape(status.renderer.selected) +
                        "\",\"hardwareProbePassed\":" +
@@ -2214,7 +2822,7 @@ HttpResponse system_capabilities_response(unsigned int version, const RuntimeSta
                        ",\"fallbackReason\":\"" + json_escape(status.renderer.fallback_reason) + "\"}," +
                        "\"hardwareDecode\":{\"requested\":\"" +
                        json_escape(status.hardware_decode.requested) + "\",\"selected\":\"" +
-                       json_escape(status.hardware_decode.selected) + "\",\"fallback\":" +
+                       json_escape(status.hardware_decode.selected) + "\",\"backend\":\"" + json_escape(status.hardware_decode.backend) + "\",\"fallback\":" +
                        (status.hardware_decode.fallback ? "true" : "false") +
                        ",\"fallbackReason\":\"" +
                        json_escape(status.hardware_decode.fallback_reason) + "\"}}";
@@ -2522,14 +3130,16 @@ HttpResponse handle_request(const HttpRequest &request, SceneController &control
         return result;
     }
 
-    const bool v2_target = target == "/api/v2/enrollments" || target.starts_with("/api/v2/enrollments/") ||
+    const bool v2_target = target.starts_with("/api/v3/analytics") ||
+                           target == "/api/v2/enrollments" || target.starts_with("/api/v2/enrollments/") ||
                            target == "/api/v2/clients" || target.starts_with("/api/v2/clients/") ||
                            target == "/api/v2/client/bootstrap" || target.starts_with("/api/v2/client/bootstrap?") ||
                            target == "/api/v2/media-plans" || target.starts_with("/api/v2/media-plans/") ||
                            target == "/api/v2/client/audit/batch" ||
                            target == "/api/v2/client/sync" ||
                            target.starts_with("/api/v2/client/cameras/") ||
-                           target == "/api/v2/source-catalog" || target.starts_with("/api/v2/source-catalog/") ||
+                           target == "/api/v2/source-catalog" || target.starts_with("/api/v2/source-catalog?") ||
+                           target.starts_with("/api/v2/source-catalog/") ||
                            target == "/api/v2/operations/issues" || target.starts_with("/api/v2/operations/issues/") ||
                            target == "/api/v2/settings" || target == "/api/v2/settings/schema" ||
                            target == "/api/v2/users" || target.starts_with("/api/v2/users/") ||
@@ -2543,6 +3153,7 @@ HttpResponse handle_request(const HttpRequest &request, SceneController &control
                             target.starts_with("/api/v2/recordings/") ||
                            target == "/api/v2/recordings/timeline" || target.starts_with("/api/v2/recordings/timeline?") ||
                            target == "/api/v2/resource-capacity" ||
+                           target == "/api/v2/analytics-jobs" || target.starts_with("/api/v2/analytics-jobs/") ||
                            target == "/api/v2/archive-targets" || target.starts_with("/api/v2/archive-targets/") ||
                            target == "/api/v2/backup-jobs" || target.starts_with("/api/v2/backup-jobs/") ||
                            target == "/api/v2/providers" || target.starts_with("/api/v2/providers/") ||
@@ -2645,7 +3256,7 @@ HttpResponse handle_request(const HttpRequest &request, SceneController &control
                 whep_proxy.revoke_client(client_id);
         }
         if (result.result() == http::status::ok && request.method() != http::verb::get) {
-            if (target == "/api/v2/source-catalog/batch" ||
+            if (target.starts_with("/api/v3/analytics") || target == "/api/v2/source-catalog/batch" ||
                 target.starts_with("/api/v2/source-catalog/")) {
                 const bool probe = target.ends_with("/probe");
                 hub.broadcast(operational_event(
@@ -2765,6 +3376,59 @@ HttpResponse handle_request(const HttpRequest &request, SceneController &control
                                            error_body("method_not_allowed", "use DELETE"));
             result.set(http::field::allow, "DELETE");
             return result;
+        }
+        constexpr std::string_view audio_tracks_operation = "/audio-tracks";
+        if (operation == audio_tracks_operation) {
+            if (request.method() == http::verb::get)
+                return whep_proxy.audio_tracks(request, source_id);
+            HttpResponse result = response(http::status::method_not_allowed, version,
+                                           error_body("method_not_allowed", "use GET"));
+            result.set(http::field::allow, "GET");
+            return result;
+        }
+        constexpr std::string_view audio_track_prefix = "/audio-tracks/";
+        if (operation.starts_with(audio_track_prefix)) {
+            const std::string_view remainder = operation.substr(audio_track_prefix.size());
+            const std::size_t audio_separator = remainder.find('/');
+            const std::string_view track_text = audio_separator == std::string_view::npos
+                                                    ? remainder
+                                                    : remainder.substr(0, audio_separator);
+            int track_index = -1;
+            if (!track_text.empty() && track_text.size() <= 2) {
+                bool digits = true;
+                int value = 0;
+                for (const char character : track_text) {
+                    if (character < '0' || character > '9') {
+                        digits = false;
+                        break;
+                    }
+                    value = value * 10 + (character - '0');
+                }
+                if (digits)
+                    track_index = value;
+            }
+            if (audio_separator == std::string_view::npos || track_index < 0 || track_index >= 32)
+                return response(http::status::not_found, version,
+                                error_body("not_found", "resource not found"));
+            const std::string_view audio_operation = remainder.substr(audio_separator + 1);
+            if (audio_operation == "whep") {
+                if (request.method() == http::verb::post)
+                    return whep_proxy.create_audio_track(request, source_id, track_index);
+                HttpResponse result = response(http::status::method_not_allowed, version,
+                                               error_body("method_not_allowed", "use POST"));
+                result.set(http::field::allow, "POST");
+                return result;
+            }
+            constexpr std::string_view audio_session = "whep/session/";
+            if (audio_operation.starts_with(audio_session)) {
+                if (request.method() == http::verb::delete_)
+                    return whep_proxy.remove_audio_track(request, source_id, track_index,
+                                                         audio_operation.substr(audio_session.size()));
+                HttpResponse result = response(http::status::method_not_allowed, version,
+                                               error_body("method_not_allowed", "use DELETE"));
+                result.set(http::field::allow, "DELETE");
+                return result;
+            }
         }
         return response(http::status::not_found, version, error_body("not_found", "resource not found"));
     }
@@ -2964,12 +3628,12 @@ HttpResponse handle_request(const HttpRequest &request, SceneController &control
 
 class HttpSession : public std::enable_shared_from_this<HttpSession> {
 public:
-    HttpSession(tcp::socket socket, SceneController &controller, StudioController &studio,
+    HttpSession(tcp::socket socket, RequestPool &pool, SceneController &controller, StudioController &studio,
                 WebSocketHub &hub, WhepProxy &whep_proxy, NvrProxy &nvr_proxy, CameraProxy &camera_proxy,
                 BasicAuthenticator &authenticator, SessionStore &session_store,
                 ControlMetrics &metrics, RuntimeStatus &runtime_status,
                 const std::vector<std::string> &allowed_origins)
-        : stream_(std::move(socket)), controller_(controller), studio_(studio), hub_(hub), whep_proxy_(whep_proxy),
+        : stream_(std::move(socket)), pool_(pool), controller_(controller), studio_(studio), hub_(hub), whep_proxy_(whep_proxy),
           nvr_proxy_(nvr_proxy),
           camera_proxy_(camera_proxy),
           authenticator_(authenticator), session_store_(session_store), metrics_(metrics), runtime_status_(runtime_status),
@@ -3019,7 +3683,8 @@ private:
         const std::string_view target = view(request.target());
         const bool basic_auth_enabled = authenticator_.enabled() && compatibility_basic_auth_enabled();
         const bool static_resource = !target.starts_with("/api/v1/") &&
-                                     !target.starts_with("/api/v2/") && target != "/metrics";
+                                     !target.starts_with("/api/v2/") &&
+                                     !target.starts_with("/api/v3/") && target != "/metrics";
         const bool login_request = target == "/api/v1/auth/login";
         const bool public_probe = request.method() == http::verb::get &&
                                   (target == "/api/v1/health" || target == "/api/v1/ready");
@@ -3192,6 +3857,17 @@ private:
                 return;
             }
         }
+        if (target.starts_with("/api/v3/analytics")) {
+            // Bind every analytics runtime request to the already-authenticated
+            // browser principal.  This header is internal-only and is added
+            // after auth, replacing any user-supplied value before the proxy
+            // forwards the request to the loopback Registry.
+            const std::string principal = session_record ? session_record->user :
+                basic_authenticated ? std::string(authenticator_.configured_username()) : std::string{};
+            request.erase("X-WebObs-Analytics-Principal");
+            if (!principal.empty())
+                request.set("X-WebObs-Analytics-Principal", principal);
+        }
         if (websocket::is_upgrade(request)) {
             if (request.method() != http::verb::get || view(request.target()) != "/api/v1/ws" ||
                 !control_authority_allowed(host, allowed_origins_) ||
@@ -3210,6 +3886,26 @@ private:
                 ->run(std::move(request), scene_event("scene.snapshot", snapshot.public_json));
             return;
         }
+        // The handler does synchronous upstream media I/O, so it runs on the
+        // request pool and only the response write comes back to this executor.
+        auto self = shared_from_this();
+        std::optional<std::string> cookie_token;
+        if (session_token && session_record)
+            cookie_token = *session_token;
+        HttpRequest queued = request;
+        const bool dispatched = pool_.post(
+            [this, self, request = std::move(queued), cookie_token]() mutable {
+                HttpResponse result = handle_request(request, controller_, studio_, hub_, whep_proxy_,
+                                                     nvr_proxy_, camera_proxy_, allowed_origins_,
+                                                     runtime_status_, metrics_, authenticator_);
+                if (cookie_token)
+                    result.set(http::field::set_cookie, session_store_.set_cookie_header(*cookie_token));
+                net::post(stream_.get_executor(),
+                          [self, result = std::move(result)]() mutable { self->send(std::move(result)); });
+            });
+        if (dispatched)
+            return;
+        // Pool saturated: serve the request here instead of dropping it.
         HttpResponse result = handle_request(request, controller_, studio_, hub_, whep_proxy_, nvr_proxy_, camera_proxy_,
                                              allowed_origins_, runtime_status_, metrics_, authenticator_);
         if (session_token && session_record)
@@ -3235,6 +3931,7 @@ private:
     beast::tcp_stream stream_;
     beast::flat_buffer buffer_;
     std::optional<http::request_parser<http::string_body>> parser_;
+    RequestPool &pool_;
     SceneController &controller_;
     StudioController &studio_;
     WebSocketHub &hub_;
@@ -3252,13 +3949,13 @@ private:
 
 class Listener : public std::enable_shared_from_this<Listener> {
 public:
-    Listener(net::io_context &context, const tcp::endpoint &endpoint, SceneController &controller,
+    Listener(net::io_context &context, const tcp::endpoint &endpoint, RequestPool &pool, SceneController &controller,
              StudioController &studio,
              WebSocketHub &hub, WhepProxy &whep_proxy, NvrProxy &nvr_proxy, CameraProxy &camera_proxy,
              BasicAuthenticator &authenticator, SessionStore &session_store,
              ControlMetrics &metrics, RuntimeStatus &runtime_status,
              const std::vector<std::string> &allowed_origins)
-        : acceptor_(net::make_strand(context)), controller_(controller), studio_(studio), hub_(hub), whep_proxy_(whep_proxy),
+        : acceptor_(net::make_strand(context)), pool_(pool), controller_(controller), studio_(studio), hub_(hub), whep_proxy_(whep_proxy),
           nvr_proxy_(nvr_proxy),
           camera_proxy_(camera_proxy),
           authenticator_(authenticator), session_store_(session_store), metrics_(metrics), runtime_status_(runtime_status),
@@ -3300,13 +3997,14 @@ private:
     void on_accept(beast::error_code error, tcp::socket socket)
     {
         if (!error)
-            std::make_shared<HttpSession>(std::move(socket), controller_, studio_, hub_, whep_proxy_, nvr_proxy_, camera_proxy_, authenticator_, session_store_,
+            std::make_shared<HttpSession>(std::move(socket), pool_, controller_, studio_, hub_, whep_proxy_, nvr_proxy_, camera_proxy_, authenticator_, session_store_,
                                           metrics_, runtime_status_, allowed_origins_)->run();
         if (acceptor_.is_open())
             do_accept();
     }
 
     tcp::acceptor acceptor_;
+    RequestPool &pool_;
     SceneController &controller_;
     StudioController &studio_;
     WebSocketHub &hub_;
@@ -3346,6 +4044,7 @@ struct ControlServer::Impl {
     StudioController &studio;
     RuntimeStatus &status;
     net::io_context context{1};
+    RequestPool requests{control_worker_count()};
     WebSocketHub hub;
     BasicAuthenticator authenticator;
     SessionStore session_store;
@@ -3382,7 +4081,7 @@ std::optional<std::string> ControlServer::start()
         return "HTTP listen address is invalid";
     impl_->listener = std::make_shared<Listener>(
         impl_->context, tcp::endpoint(address, static_cast<unsigned short>(impl_->config.http_port)),
-        impl_->controller, impl_->studio, impl_->hub, impl_->whep_proxy, impl_->nvr_proxy, impl_->camera_proxy,
+        impl_->requests, impl_->controller, impl_->studio, impl_->hub, impl_->whep_proxy, impl_->nvr_proxy, impl_->camera_proxy,
         impl_->authenticator, impl_->session_store, impl_->metrics,
         impl_->status, impl_->config.control_allowed_origins);
     if (!impl_->listener->error().empty())
@@ -3396,6 +4095,13 @@ void ControlServer::stop()
 {
     if (!impl_ || !impl_->thread.joinable())
         return;
+    // Order matters for in-flight work: stop accepting new connections, let the
+    // pool drain what it already accepted (the io_context is still running, so
+    // those responses are actually written), then stop the io_context.
+    if (impl_->listener)
+        impl_->listener->close();
+    impl_->requests.stop();
+    impl_->context.poll();
     impl_->context.stop();
     impl_->thread.join();
     impl_->listener.reset();

@@ -352,7 +352,7 @@ class CameraRegistryTests(unittest.TestCase):
         with self.assertRaises(registry.RevisionConflict):
             registry.patch_source_catalog("catalog-fixture", {"enabled": False}, item["revision"])
         with registry.connect() as database:
-            self.assertEqual(database.execute("PRAGMA user_version").fetchone()[0], 2)
+            self.assertEqual(database.execute("PRAGMA user_version").fetchone()[0], 3)
             issues = database.execute(
                 "SELECT * FROM operational_issues WHERE code='AUDIO_TRACK_MISSING'").fetchall()
             self.assertEqual(len(issues), 1)
@@ -445,8 +445,40 @@ class CameraRegistryTests(unittest.TestCase):
         self.assertTrue(page["items"][0]["enabled"])
         self.assertEqual(page["items"][0]["profiles"][0]["transportMode"], "auto")
         with registry.connect() as database:
-            self.assertEqual(database.execute("PRAGMA user_version").fetchone()[0], 2)
+            self.assertEqual(database.execute("PRAGMA user_version").fetchone()[0], 3)
             self.assertEqual(database.execute("SELECT COUNT(*) FROM cameras").fetchone()[0], 1)
+        self.assertEqual(list(legacy.parent.glob(f".{legacy.name}.pre-v3-*")), [])
+
+    def test_legacy_studio_sources_import_idempotently_without_exposing_urls(self) -> None:
+        studio = Path(self.temporary.name) / "studio.json"
+        embedded_credentials_url = "rtsp://" + "user" + ":" + "pass@camera.example.invalid/live"
+        studio.write_text(json.dumps({"scenes": [{"sources": [
+            {"id": "old-front", "kind": "rtsp", "name": "Front", "rtspUrl": "rtsp://camera.example.invalid/live"},
+            {"id": "old-secret", "kind": "rtsp", "name": "Secret", "rtspUrl": embedded_credentials_url},
+            {"id": "old-token", "kind": "rtsp", "name": "Token", "rtspUrl": "rtsp://camera.example.invalid/live?token=hidden"},
+            {"id": "../unsafe", "kind": "rtsp", "name": "Ignored", "rtspUrl": "rtsp://camera.example.invalid/unsafe"},
+            {"id": "title", "kind": "text", "name": "Title", "text": "ignored"},
+        ]}]}), encoding="utf-8")
+        status = registry.legacy_import_status()
+        self.assertEqual({item["sourceId"]: item["state"] for item in status["items"]},
+                         {"old-front": "ready_to_import", "old-secret": "needs_configuration", "old-token": "needs_configuration"})
+        imported = registry.import_legacy_sources({"sourceIds": ["old-front"], "baseRevision": status["baseRevision"]})
+        self.assertEqual(imported["items"][0]["state"], "linked")
+        self.assertNotIn("camera.example.invalid", json.dumps(imported))
+        with self.assertRaises(registry.RevisionConflict):
+            registry.import_legacy_sources({"sourceIds": ["old-secret"], "baseRevision": status["baseRevision"]})
+        self.assertEqual(registry.source_catalog("limit=256")["total"], 1)
+        again_status = registry.legacy_import_status()
+        again = registry.import_legacy_sources({"sourceIds": ["old-front"], "baseRevision": again_status["baseRevision"]})
+        self.assertEqual(again["items"][0]["cameraId"], imported["items"][0]["cameraId"])
+        self.assertEqual(registry.source_catalog("limit=256")["total"], 1)
+        rejected = registry.import_legacy_sources({"sourceIds": ["old-secret"], "baseRevision": again_status["baseRevision"]})
+        self.assertEqual(rejected["items"][0]["state"], "needs_configuration")
+        self.assertNotIn("pass", json.dumps(rejected))
+        with self.assertRaises(ValueError):
+            registry.import_legacy_sources({"sourceIds": ["old-front", "old-front"], "baseRevision": again_status["baseRevision"]})
+        with self.assertRaises(ValueError):
+            registry.import_legacy_sources({"sourceIds": [{"sourceId": "old-front"}], "baseRevision": again_status["baseRevision"]})
 
     def test_analytics_policies_are_per_profile_atomic_and_default_off(self) -> None:
         camera = registry.validate_camera({
@@ -469,6 +501,28 @@ class CameraRegistryTests(unittest.TestCase):
         }]})
         self.assertTrue(saved[0]["motionEnabled"] and saved[0]["sceneChangeEnabled"])
         self.assertFalse(saved[0]["personEnabled"] or saved[0]["forceAnalyticsAlwaysOn"])
+        # The v1 compatibility projection must not reset v3 tuning fields when
+        # an older client sends only the legacy top-level switches.
+        tuned = registry.save_analytics_policies({"policies": [{
+            "cameraId": "analytics-fixture", "profileId": "sub",
+            "motionEnabled": True, "sceneChangeEnabled": True, "personEnabled": False,
+            "allowEventPromotion": True, "promotionThreshold": .42,
+            "promotionHoldSeconds": 7, "promotionCooldownSeconds": 19,
+            "forceAnalyticsAlwaysOn": False,
+            "motion": {"sensitivity": .33, "sampleFps": 1.5, "debounceMs": 123, "cooldownMs": 456},
+            "sceneChange": {"threshold": .71, "confirmFrames": 4, "cooldownMs": 789},
+            "person": {"confidenceThreshold": .81, "sampleFps": .75, "maxBoxes": 4,
+                        "executionPreference": "browser", "allowServerFallback": False},
+        }]})[0]
+        legacy = registry.save_analytics_policies({"policies": [{
+            "cameraId": "analytics-fixture", "profileId": "sub",
+            "motionEnabled": False, "sceneChangeEnabled": False, "personEnabled": False,
+            "allowEventPromotion": False, "forceAnalyticsAlwaysOn": False,
+        }]}, preserve_v3_tuning=True)[0]
+        self.assertFalse(legacy["motionEnabled"])
+        self.assertEqual(legacy["motion"], tuned["motion"])
+        self.assertEqual(legacy["sceneChange"], tuned["sceneChange"])
+        self.assertEqual(legacy["person"], tuned["person"])
         with self.assertRaises(KeyError):
             registry.save_analytics_policies({"policies": [{
                 "cameraId": "analytics-fixture", "profileId": "missing",
@@ -480,6 +534,197 @@ class CameraRegistryTests(unittest.TestCase):
         self.assertEqual(len(registry.analytics_policies()), 1)
         registry.save_camera(registry.validate_camera({**camera, "profiles": []}, "analytics-fixture"), True)
         self.assertEqual(registry.analytics_policies(), [])
+
+    def test_v3_runtime_plan_and_signal_contract_is_fail_closed(self) -> None:
+        camera = registry.validate_camera({
+            "id": "v3-analytics", "name": "v3 analytics", "address": "rtsp://camera.example.invalid/live",
+            "adapter": "rtsp", "credentialsRef": "", "profiles": [{"id": "sub", "name": "Sub", "role": "sub",
+                "endpoint": "rtsp://camera.example.invalid/sub", "videoCodec": "h264", "audioCodec": "",
+                "width": 640, "height": 360, "fps": 15}],
+        })
+        registry.save_camera(camera, False)
+        registry.save_analytics_policies({"policies": [{"cameraId": "v3-analytics", "profileId": "sub",
+            "motionEnabled": True, "sceneChangeEnabled": False, "personEnabled": True,
+            "allowEventPromotion": False, "forceAnalyticsAlwaysOn": False,
+            "person": {"executionPreference": "browser", "allowServerFallback": False}}]})
+        plan = registry.analytics_runtime_plan({"cameraId": "v3-analytics", "profileId": "sub",
+                                                "capabilities": {"wasm": True, "webgpu": False}})
+        self.assertEqual(plan["contractVersion"], 2)
+        self.assertEqual({item["kind"] for item in plan["plans"]}, {"motion", "scene-change", "person"})
+        self.assertEqual(next(item for item in plan["plans"] if item["kind"] == "motion")["execution"], "browser-wasm")
+        self.assertTrue(all(item["mediaTransport"] == "rtsp" for item in plan["plans"]))
+        self.assertEqual(next(item for item in plan["plans"] if item["kind"] == "scene-change")["execution"], "off")
+        self.assertEqual(next(item for item in plan["plans"] if item["kind"] == "person")["execution"], "browser-wasm")
+        with self.assertRaises(PermissionError):
+            registry.ingest_analytics_signals({"signals": [{"signalId": "disabled-01", "cameraId": "v3-analytics",
+                "profileId": "sub", "kind": "scene-change", "occurredAt": int(time.time() * 1000), "confidence": .9}]}, plan["sessionId"])
+        class EventResponse:
+            def __enter__(self): return self
+            def __exit__(self, *_): return False
+            def read(self, _limit): return b'{"id":"event-1"}'
+        with patch.object(registry, "urlopen", return_value=EventResponse()):
+            signal = {"signalId": "motion-0001", "cameraId": "v3-analytics", "profileId": "sub", "kind": "motion",
+                      "occurredAt": int(time.time() * 1000), "confidence": .8}
+            self.assertEqual(registry.ingest_analytics_signals({"signals": [signal]}, plan["sessionId"])["accepted"], 1)
+            with self.assertRaises(PermissionError):
+                registry.ingest_analytics_signals({"signals": [signal]}, plan["sessionId"])
+            person = {"signalId": "person-0001", "cameraId": "v3-analytics", "profileId": "sub",
+                      "kind": "person", "occurredAt": int(time.time() * 1000), "confidence": .9,
+                      "boxes": [], "modelId": registry.ANALYTICS_PERSON_MODEL_ID,
+                      "modelVersion": registry.ANALYTICS_PERSON_MODEL_VERSION,
+                      "modelSha256": registry.ANALYTICS_PERSON_MODEL_SHA256}
+            self.assertEqual(registry.ingest_analytics_signals({"signals": [person]}, plan["sessionId"])["accepted"], 1)
+            with self.assertRaisesRegex(ValueError, "approved"):
+                registry.ingest_analytics_signals({"signals": [{**person, "modelSha256": "0" * 64}]}, plan["sessionId"])
+        self.assertTrue(registry.close_analytics_session(plan["sessionId"]))
+        with self.assertRaises(PermissionError):
+            registry.ingest_analytics_signals({"signals": [signal]}, plan["sessionId"])
+
+    def test_v3_runtime_plan_reuses_direct_probe_and_marks_gateway_media(self) -> None:
+        camera = registry.validate_camera({
+            "id": "v3-gateway-plan", "name": "Gateway plan", "address": "rtsp://camera.example.invalid/live",
+            "adapter": "rtsp", "credentialsRef": "", "profiles": [{"id": "main", "name": "Main", "role": "main",
+                "endpoint": "rtsp://camera.example.invalid/main", "videoCodec": "h264", "audioCodec": "",
+                "width": 640, "height": 360, "fps": 15}],
+        })
+        registry.save_camera(camera, False)
+        registry.save_analytics_policies({"policies": [{"cameraId": "v3-gateway-plan", "profileId": "main",
+            "motionEnabled": True, "sceneChangeEnabled": False, "personEnabled": False,
+            "allowEventPromotion": False, "forceAnalyticsAlwaysOn": False}]})
+        plan = registry.analytics_runtime_plan({"cameraId": "v3-gateway-plan", "profileId": "main",
+                                                "capabilities": {"wasm": True}})
+        motion = next(item for item in plan["plans"] if item["kind"] == "motion")
+        self.assertEqual(motion["execution"], "browser-wasm")
+        self.assertTrue(motion["serverMediaExpected"])
+        self.assertEqual(motion["reason"], "rtsp_gateway_required")
+        registry.close_analytics_session(plan["sessionId"])
+
+        direct_endpoint = "https://media.example.invalid/live"
+        direct = registry.validate_camera({
+            "id": "v3-direct-plan", "name": "Direct plan", "address": direct_endpoint,
+            "adapter": "whep", "credentialsRef": "", "profiles": [{"id": "main", "name": "Main", "role": "main",
+                "endpoint": direct_endpoint, "videoCodec": "h264", "audioCodec": "",
+                "width": 640, "height": 360, "fps": 15}],
+        })
+        registry.save_camera(direct, False)
+        registry.save_analytics_policies({"policies": [{"cameraId": "v3-direct-plan", "profileId": "main",
+            "motionEnabled": True, "sceneChangeEnabled": False, "personEnabled": False,
+            "allowEventPromotion": False, "forceAnalyticsAlwaysOn": False}]})
+        with patch.dict(os.environ, {"WEBOBS_PWA_PUBLIC_ORIGIN": "https://pwa.example.invalid"}):
+            unqualified = registry.analytics_runtime_plan({"cameraId": "v3-direct-plan", "profileId": "main",
+                                                            "capabilities": {"wasm": True}})
+        motion = next(item for item in unqualified["plans"] if item["kind"] == "motion")
+        self.assertTrue(motion["serverMediaExpected"])
+        self.assertEqual(motion["reason"], "browser_direct_not_qualified")
+        registry.close_analytics_session(unqualified["sessionId"])
+
+        with registry.connect() as database:
+            capabilities = {"browserDirect": {"profiles": {"main": {
+                "tlsVerified": True, "corsVerified": True,
+                "pwaOriginSha256": hashlib.sha256(b"https://pwa.example.invalid").hexdigest(),
+                "checkedAt": int(time.time()),
+            }}}}
+            database.execute("UPDATE cameras SET capabilities_json=? WHERE id=?", (
+                json.dumps(capabilities, separators=(",", ":")), "v3-direct-plan"))
+        with patch.dict(os.environ, {"WEBOBS_PWA_PUBLIC_ORIGIN": "https://pwa.example.invalid"}):
+            qualified = registry.analytics_runtime_plan({"cameraId": "v3-direct-plan", "profileId": "main",
+                                                         "capabilities": {"wasm": True}})
+        motion = next(item for item in qualified["plans"] if item["kind"] == "motion")
+        self.assertFalse(motion["serverMediaExpected"])
+        self.assertEqual(motion["reason"], "")
+        registry.close_analytics_session(qualified["sessionId"])
+
+    def test_v3_native_motion_uses_server_onvif_capability_not_client_claim(self) -> None:
+        camera = registry.validate_camera({
+            "id": "v3-onvif-capability", "name": "ONVIF capability", "address": "http://camera.example.invalid/onvif/device_service",
+            "adapter": "onvif", "credentialsRef": "", "capabilities": {
+                "onvif": {"events": True},
+            },
+            "profiles": [{"id": "sub", "name": "Sub", "role": "sub",
+                "endpoint": "rtsp://camera.example.invalid/sub", "videoCodec": "h264", "audioCodec": "",
+                "width": 640, "height": 360, "fps": 15}],
+        })
+        registry.save_camera(camera, False)
+        registry.save_analytics_policies({"policies": [{"cameraId": "v3-onvif-capability", "profileId": "sub",
+            "motionEnabled": True, "sceneChangeEnabled": False, "personEnabled": False,
+            "allowEventPromotion": False, "forceAnalyticsAlwaysOn": False}]})
+
+        # The client cannot grant or revoke native ONVIF execution.  The
+        # authoritative registry capability enables it even when the request
+        # claims the opposite.
+        native = registry.analytics_runtime_plan({"cameraId": "v3-onvif-capability", "profileId": "sub",
+                                                   "capabilities": {"wasm": True, "onvifMotion": False}})
+        self.assertEqual(native["plans"][0]["execution"], "native")
+        registry.close_analytics_session(native["sessionId"])
+
+        with registry.connect() as database:
+            database.execute("UPDATE cameras SET capabilities_json=? WHERE id=?", (
+                json.dumps({"onvif": {"events": False}}, separators=(",", ":")), "v3-onvif-capability"))
+        browser = registry.analytics_runtime_plan({"cameraId": "v3-onvif-capability", "profileId": "sub",
+                                                   "capabilities": {"wasm": True, "onvifMotion": True}})
+        self.assertEqual(browser["plans"][0]["execution"], "browser-wasm")
+        registry.close_analytics_session(browser["sessionId"])
+
+    def test_v3_runtime_session_is_bound_to_authenticated_principal(self) -> None:
+        camera = registry.validate_camera({
+            "id": "v3-session-owner", "name": "Session owner", "address": "rtsp://camera.example.invalid/live",
+            "adapter": "rtsp", "credentialsRef": "", "profiles": [{"id": "main", "name": "Main", "role": "main",
+                "endpoint": "rtsp://camera.example.invalid/main", "videoCodec": "h264", "audioCodec": "",
+                "width": 640, "height": 360, "fps": 15}],
+        })
+        registry.save_camera(camera, False)
+        registry.save_analytics_policies({"policies": [{"cameraId": "v3-session-owner", "profileId": "main",
+            "motionEnabled": True, "sceneChangeEnabled": False, "personEnabled": False,
+            "allowEventPromotion": False, "forceAnalyticsAlwaysOn": False}]})
+        plan = registry.analytics_runtime_plan({"cameraId": "v3-session-owner", "profileId": "main",
+                                                "capabilities": {"wasm": True}}, "operator-one")
+        motion_plan = next(item for item in plan["plans"] if item["kind"] == "motion")
+        self.assertEqual(motion_plan["topology"], "gateway-direct")
+        self.assertEqual(motion_plan["receiverKind"], "browser")
+        self.assertEqual(motion_plan["archiveTopology"], "off")
+        self.assertEqual(motion_plan["fallbackReason"], "rtsp_gateway_required")
+        renewed = registry.renew_analytics_session(plan["sessionId"], "operator-one", "v3-session-owner", "main")
+        self.assertGreaterEqual(renewed["expiresAt"], plan["expiresAt"])
+        with self.assertRaisesRegex(PermissionError, "owner"):
+            registry.renew_analytics_session(plan["sessionId"], "operator-two")
+        with self.assertRaisesRegex(PermissionError, "owner"):
+            registry.ingest_analytics_signals({"signals": [{"signalId": "owner-test", "cameraId": "v3-session-owner",
+                "profileId": "main", "kind": "motion", "occurredAt": int(time.time() * 1000), "confidence": .5}]},
+                plan["sessionId"], "operator-two")
+        with self.assertRaisesRegex(PermissionError, "owner"):
+            registry.close_analytics_session(plan["sessionId"], "operator-two", "v3-session-owner", "main")
+        self.assertTrue(registry.close_analytics_session(plan["sessionId"], "operator-one", "v3-session-owner", "main"))
+
+    def test_v3_person_worker_preference_is_explicit_and_fallback_is_separate(self) -> None:
+        camera = registry.validate_camera({
+            "id": "v3-worker-plan", "name": "Worker plan", "address": "rtsp://camera.example.invalid/live",
+            "adapter": "rtsp", "credentialsRef": "", "profiles": [{"id": "sub", "name": "Sub", "role": "sub",
+                "endpoint": "rtsp://camera.example.invalid/sub", "videoCodec": "h264", "audioCodec": "",
+                "width": 640, "height": 360, "fps": 15}],
+        })
+        registry.save_camera(camera, False)
+        registry.save_analytics_policies({"policies": [{"cameraId": "v3-worker-plan", "profileId": "sub",
+            "motionEnabled": False, "sceneChangeEnabled": False, "personEnabled": True,
+            "allowEventPromotion": False, "forceAnalyticsAlwaysOn": False,
+            "person": {"executionPreference": "worker", "allowServerFallback": False}}]})
+        forced = registry.analytics_runtime_plan({"cameraId": "v3-worker-plan", "profileId": "sub",
+                                                   "kinds": ["person"], "capabilities": {"wasm": True, "webgpu": True}})
+        person = forced["plans"][0]
+        self.assertEqual(person["execution"], "worker")
+        self.assertEqual(person["executionOwner"], "worker")
+        self.assertTrue(person["serverMediaExpected"])
+        registry.close_analytics_session(forced["sessionId"])
+
+        registry.save_analytics_policies({"policies": [{"cameraId": "v3-worker-plan", "profileId": "sub",
+            "motionEnabled": False, "sceneChangeEnabled": False, "personEnabled": True,
+            "allowEventPromotion": False, "forceAnalyticsAlwaysOn": False,
+            "person": {"executionPreference": "browser", "allowServerFallback": True}}]})
+        fallback = registry.analytics_runtime_plan({"cameraId": "v3-worker-plan", "profileId": "sub",
+                                                     "kinds": ["person"], "capabilities": {"wasm": False, "webgpu": False}})
+        person = fallback["plans"][0]
+        self.assertEqual(person["execution"], "worker")
+        self.assertEqual(person["reason"], "rtsp_gateway_required")
+        registry.close_analytics_session(fallback["sessionId"])
 
     def test_embedded_credentials_and_secret_queries_are_rejected(self) -> None:
         with self.assertRaises(ValueError):
@@ -822,6 +1067,54 @@ class CameraRegistryTests(unittest.TestCase):
             self.assertEqual(probe["profileVersion"], "T")
         finally:
             server.shutdown(); server.server_close(); thread.join(timeout=2)
+
+
+    def test_profile_probe_is_cached_coalesced_and_invalidated(self) -> None:
+        registry.save_camera(registry.validate_camera({
+            "id": "probe-cache-fixture", "name": "Probe Cache",
+            "address": "rtsp://probe.example.invalid/live", "adapter": "rtsp",
+            "credentialsRef": "",
+            "profiles": [{
+                "id": "main", "name": "Main", "role": "main",
+                "endpoint": "rtsp://probe.example.invalid/main",
+                "videoCodec": "h264", "audioCodec": "", "width": 1920, "height": 1080, "fps": 25,
+            }],
+        }), False)
+        payload = json.dumps({"streams": [
+            {"index": 0, "codec_type": "video", "codec_name": "h264", "bit_rate": "2000000",
+             "width": 1920, "height": 1080, "avg_frame_rate": "25/1"},
+            {"index": 1, "codec_type": "audio", "codec_name": "aac", "bit_rate": "128000",
+             "sample_rate": "48000", "channels": 2},
+        ]})
+        calls: list[float] = []
+
+        def slow_run(*args, **kwargs):
+            calls.append(time.time())
+            time.sleep(0.2)
+            return subprocess.CompletedProcess(args=args, returncode=0, stdout=payload, stderr="")
+
+        with patch.object(registry.subprocess, "run", side_effect=slow_run):
+            results: list[dict] = []
+
+            def probe() -> None:
+                results.append(registry.probe_source_profile("probe-cache-fixture", "main"))
+
+            threads = [threading.Thread(target=probe) for _ in range(2)]
+            for thread in threads:
+                thread.start()
+            for thread in threads:
+                thread.join()
+            # Two concurrent callers coalesce into one ffprobe.
+            self.assertEqual(len(calls), 1)
+            self.assertEqual(len(results), 2)
+            self.assertTrue(any(track["kind"] == "audio" for track in results[0]["tracks"]))
+            # A later call inside the TTL is served from the cache.
+            registry.probe_source_profile("probe-cache-fixture", "main")
+            self.assertEqual(len(calls), 1)
+            # A catalog mutation invalidates the cached result.
+            registry.patch_source_catalog("probe-cache-fixture", {"groupId": "Cache"}, 1)
+            registry.probe_source_profile("probe-cache-fixture", "main")
+            self.assertEqual(len(calls), 2)
 
 
 if __name__ == "__main__":

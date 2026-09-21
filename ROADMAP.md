@@ -1,10 +1,38 @@
 # Roadmap / 项目路线图
 
-> Last updated / 最后更新：2026-09-02
+> Last updated / 最后更新：2026-09-21
 
 This roadmap describes milestone order and acceptance gates, not promised release dates. Priorities may change based on validation results and maintainer capacity.
 
 本路线图描述里程碑顺序和验收门禁，不承诺具体发布日期。优先级可能根据验证结果和维护能力调整。
+
+## Local development access and configuration policy / 本地开发访问与配置策略
+
+本项目当前及后续默认的本地开发入口（`http://127.0.0.1:5173` 的 Vite
+前端与回环 Docker API）**不要求用户名或密码**。基础 `compose.yaml` 固定关闭
+集群/RBAC 认证；只有维护者明确选择认证/生产 overlay、启用 HTTPS 远程部署或
+后续需求明确要求时，才启用登录 Session/Basic 兼容。网络故障、Vite 代理暂时
+不可用或后端重启不得被误报为“需要密码”，页面应显示服务不可用并允许重试。
+
+用户配置不按登录用户名分叉。Local-first PWA 使用浏览器本机加密的配置档案，
+用户可以在全局“配置”菜单选择、保存多个档案，并在“系统设置”中创建有界备份、
+导出 JSON、导入和恢复。档案只保存脱敏的 Scene v5、布局和本机偏好；导出/备份
+永远不包含密码、Token、Secret、RTSP/HTTP 端点、userinfo、文件路径或客户端地址。
+服务器生产配置仍由管理员 API/SQLite 管理，不会因为选择本机档案而被覆盖。
+
+The default local development entry (`http://127.0.0.1:5173` Vite frontend plus
+the loopback Docker API) **does not require a username or password**. The base
+`compose.yaml` keeps cluster/RBAC authentication disabled. Login Session/Basic
+compatibility is enabled only by an explicit authentication/production overlay,
+remote HTTPS deployment, or a later requirement. A proxy outage or backend
+restart must show an unavailable/retry state rather than a password form.
+
+Configuration is selected by browser-local profiles, not split by login user.
+Profiles are encrypted locally and can be selected from the global Config menu;
+Settings provides bounded backup, JSON export, import, and restore. Bundles contain
+only redacted Scene v5/layout/local preferences and never credentials, tokens,
+secrets, endpoints, userinfo, paths, or client addresses. Selecting a profile never
+overwrites the server configuration.
 
 Canonical milestone names use `v<major>-M<number>`. Historical validation prose may retain its original short `M<number>` label so prior evidence remains traceable; the mapping is defined in [docs/versioning-and-branches.md](docs/versioning-and-branches.md).
 
@@ -12,13 +40,31 @@ Canonical milestone names use `v<major>-M<number>`. Historical validation prose 
 
 ## Current position / 当前位置
 
-**✅ `v2-M7 / v2.3` 已完成并作为当前稳定版本发布：RBAC、Controller/Recorder、租约、多卷/S3、资源调度、外部集成与加密灾备。**
+### Feedback 5 main integration / 反馈 5 主线集成（2026-09-21）
 
-**✅ `v2-M7 / v2.3` is complete and published as the current stable release: RBAC, Controller/Recorder roles, leases, multi-volume/S3 storage, resource scheduling, integrations, and encrypted disaster recovery.**
+本轮将反馈 5 的 `dev` 实现集成到 `main`，构建 linux/amd64 GHCR 快照（`main` 与 `sha-<12位提交>`），不提升稳定版本、不移动 `latest`。下方早期版本说明为历史背景；本节覆盖其中“仅在 dev、尚未集成”的状态。镜像上传状态以实际构建及远端 digest 核验为准，路线图本身不代表发布成功。
 
-`v2.3` is the current stable baseline. It preserves every v2.2 operations and True Direct boundary, adds optional scale-out while keeping `standalone` as the default one-image deployment, and does not restore native package publication. The next planned product line is v3 analytics; its per-stream switches remain off by default.
+This integration brings the Feedback 5 implementation from `dev` to `main` and targets a linux/amd64 GHCR snapshot (`main` and `sha-<12-character revision>`), not a stable release or a `latest` promotion. Earlier dev-only statements below are historical context superseded by this section. Publication requires a successful build and remote digest verification; this roadmap is not a publication receipt.
 
-`v2.3` 是当前稳定基线。它保留 v2.2 的全部运维能力与真直连边界，在默认单镜像 `standalone` 部署之外增加可选横向扩展，且不恢复原生包发布。下一条规划产品线为 v3 分析功能，其逐流开关仍默认关闭。
+- 已实现 / Implemented: F5-01 铺满优先级、逐格覆盖与统一检测框坐标；F5-02 画布外诊断与干净全屏；F5-03 能力实测和已注册编码器选择；F5-04 原生 Composite 启动链路；F5-05 多音轨与 Scene v6；F5-06 首帧/停顿/恢复状态机。另包含控制面异步激活、x264 `sliced-threads=0` 修复及验收判定器修正。 / Fill geometry and overlays, out-of-canvas diagnostics, runtime encoder capability checks, native Composite startup, multitrack audio and Scene v6, first-frame/stall/recovery handling, asynchronous activation, the x264 slice-thread workaround, and corrected acceptance instrumentation.
+- 历史实测 / Historical evidence: 受控 Direct/Hybrid 12/12、真实 Direct/Hybrid 8/9、真实 Composite 13/13，真实单路断流恢复已有记录。唯一未通过项为 `back_3` 冷启动首帧 **23,945 ms > 20,000 ms**；不能宣称真实五路全部达标。 / Controlled Direct/Hybrid passed 12/12, real Direct/Hybrid 8/9, real Composite 13/13, with a real-source recovery observation. The remaining cold-first-frame failure prevents an unconditional real-camera acceptance claim.
+- 本次构建例外 / This build's exception: 按用户明确要求，取消本次所有长测（包括 30 分钟稳态、长时真实相机及 GPU 验收），仅运行短回归、静态检查与构建校验。不伪造同 SHA 长测回执，不将历史结果计作本次镜像的重新验收；常规稳定版门禁保持不变。 / Explicit user authorization skips long-running tests for this snapshot, including 30-minute soaks and extended camera/GPU acceptance. Short regressions, static checks and build verification remain. Historical evidence is not a fresh same-revision acceptance; normal stable-release gates remain unchanged.
+- 后续 P1 / Next P1: 复核 `back_3` 冷启动的相机→网关上游行为，保留并发/排队边界；链路丢包、设备负载和冷启动机制尚未定因。任何设备配置、码率或验收预算调整须另行决定，不能以冷启动 20 秒采样推断持续帧率上限。 / Investigate source-to-gateway cold-start behavior without treating an upstream symptom as proof of a specific network/device cause or a short probe as a steady-state capacity limit. Device settings and acceptance budgets require a separate decision.
+- 后续 P2 / Next P2: 按实际可用硬件补 NVENC/VA-API、Docker/vGPU 运行验收，并整理可移植、脱敏证据；镜像构建成功不代表这些运行路径已认证。 / Complete hardware-specific runtime qualification and portable redacted evidence when suitable hardware is available. An image build does not certify NVENC, VA-API or Docker/vGPU operation.
+
+依据 / References: [验收报告 / Acceptance](docs/feedback-5-acceptance.md)、[来源限制报告 / Source limitation](docs/feedback-5-source-limitation-report.md)、[进度 / Progress](docs/feedback-5-progress.md)。来源限制报告提交为 `2e9266e`；保留原始测量边界和未确立假设。 / Source-limitation report revision: `2e9266e`; its measurement boundaries and unresolved hypotheses remain applicable.
+
+**✅ `v2-M7 / v2.3.1` 已完成并作为当前稳定版本发布；🚧 v3-M1/M2 与 v3.0.1 体验修正正在 `dev` 收口，尚未发布。**
+
+**✅ `v2-M7 / v2.3.1` is complete and published as the current stable release; 🚧 v3-M1/M2 and the v3.0.1 experience correction slice are being finalized on `dev` and are not released yet.**
+
+`v2.3.1` is the current stable carrier for v2-M7. It preserves every v2.2 operations and True Direct boundary, adds optional scale-out while keeping `standalone` as the default one-image deployment, and does not restore native package publication. v3-M1/M2 implementation is now active on `dev`; analytics switches remain off by default until the corresponding release gates pass.
+
+The `v3.0.1` preview correction slice is implemented on `dev`: OBS/classic workspace preferences, per-source telemetry and audio threshold borders, centralized issue reporting, and safe idempotent import of legacy Studio camera/RTSP sources. Preview publication is restricted to `--prerelease`, uses build version `3.0.1-pre.1`, leaves `latest` unchanged, and accepts real endpoints only through process environment injection.
+
+`v2.3.1` 是 v2-M7 的当前稳定载体。它保留 v2.2 的全部运维能力与真直连边界，在默认单镜像 `standalone` 部署之外增加可选横向扩展，且不恢复原生包发布。下一条规划产品线为 v3 分析功能，其逐流开关仍默认关闭。
+
+本轮 `v3.0.1` 预发布修正已在 `dev` 实现：OBS 风格/经典工作区偏好、逐来源统计与音频阈值边框、问题中心归集，以及旧 Studio 摄像机/RTSP 来源的受管、幂等导入。预发布只允许使用 `--prerelease`，构建版本为 `3.0.1-pre.1`，不会移动 `latest`；真实端点仍只通过进程环境注入。
 
 The Qt/GStreamer/Android implementation and its prior source gates remain in the repository for security maintenance and research. The native workflow has no tag trigger, requires an explicit frozen-candidate confirmation, and cannot publish v2.0 artifacts / Qt/GStreamer/Android 实现及既有源码门禁继续留在仓库供安全维护与研究；原生工作流没有 Tag 触发器，要求显式冻结候选确认，且不能发布 v2.0 产物。
 
@@ -31,9 +77,9 @@ The `v1.0` series contains v1-M1 through v1-M6. The `v1.1` milestone family cont
 `v1.0` 系列包含 v1-M1 至 v1-M6，`v1.1` 里程碑族包含 v1-M7 至 v1-M11；`v1.2` 是 v1 的最终收口版本，不新增 v1-M12。`v2.0` 从 v2-M1 开始，以可测量的真直连契约为核心。
 
 ```text
-M0 + v1 complete -> v2-M1…M3 / v2.0 complete -> v2-M4/M5 / v2.1 complete -> v2-M6 / v2.2 complete -> v2-M7 / v2.3 complete -> v3 planned
-M0 + v1 已完成   -> v2-M1…M3 / v2.0 已完成    -> v2-M4/M5 / v2.1 已完成    -> v2-M6 / v2.2 已完成    -> v2-M7 / v2.3 已完成    -> v3 规划中
-✅                  ✅                              ✅                            ✅                         ✅                         ⏳
+M0 + v1 complete -> v2-M1…M3 / v2.0 complete -> v2-M4/M5 / v2.1 complete -> v2-M6 / v2.2 complete -> v2-M7 / v2.3 complete -> v3-M1 / v3.0 -> v3-M2 / v3.1
+M0 + v1 已完成   -> v2-M1…M3 / v2.0 已完成    -> v2-M4/M5 / v2.1 已完成    -> v2-M6 / v2.2 已完成    -> v2-M7 / v2.3 已完成    -> v3-M1 / v3.0 -> v3-M2 / v3.1
+✅                  ✅                              ✅                            ✅                         ✅                         🚧                  ⏳
 ```
 
 ### M0 acceptance / M0 验收
@@ -111,7 +157,23 @@ M0 已于 2026-08-11 在真实摄像头门禁通过后完成。后续修改采�
 | v2-M5 — Monitor Layout & Telemetry | ✅ Published in v2.1 / 已随 v2.1 发布 | Telemetry, 1–16 M/S layout/rotation, low power and analytics controls / 统计、1–16 M/S 布局轮换、低功耗与分析控制 | Layout, telemetry, lifecycle and policy regressions pass without inventing unavailable measurements / 布局、统计、生命周期与策略回归通过，不虚构不可测数据 |
 | v2-M6 — Operations Workspace | ✅ Published in v2.2 / 已随 v2.2 发布 | Source catalog, Profile preview, issues, settings and per-source audio / 来源目录、Profile 预览、问题、设置与逐源音频 | Registry v2 migration, truthful media/audio diagnostics and PWA regressions pass / Registry v2 迁移、真实媒体/音频诊断与 PWA 回归通过 |
 | v2-M7 — Scale | ✅ Published in v2.3 / 已随 v2.3 发布 | RBAC, Controller/Recorder leases, multi-volume/S3, resource scheduling, integrations and encrypted DR / RBAC、Controller/Recorder 租约、多卷/S3、资源调度、集成与加密灾备 | 8/16/32 synthetic scale, fault injection, security and private platform gates pass / 8/16/32 合成规模、故障注入、安全与私有平台门禁通过 |
-| v3-M1/M2 — Analytics | 🧭 Planned / 已规划 | Motion/scene change, then person boxes / 运动与画面变化，随后人物框 | Per-stream opt-in, local-first privacy and bounded resource gates / 逐流选择、本地优先隐私与有界资源门禁 |
+| v3-M1/M2 — Analytics | 🚧 In development / 开发中 | Motion/scene change, then person boxes / 运动与画面变化，随后人物框 | Browser Worker, hash-verified model, optional CPU Worker and bounded resource gates / 浏览器 Worker、摘要校验模型、可选 CPU Worker 与有界资源门禁 |
+
+### v3 analytics implementation status / v3 分析实现状态
+
+The v3 implementation is now present on `dev`, but neither `v3.0` nor `v3.1` is a release claim until revision-bound Windows and WSL2 private gates are executed. The following checklist records code that is implemented and the remaining release evidence; it intentionally does not turn local unit tests into platform acceptance.
+
+v3 实现已经进入 `dev`，但在绑定 revision 的 Windows 与 WSL2 私有门禁执行前，不将 `v3.0` 或 `v3.1` 表述为已发布。以下清单区分已实现代码与仍需取得的发布证据，不把本地单元测试冒充平台验收。
+
+- [x] Registry v2→v3 atomic analytics migration, nested motion/scene-change/person policies, bounded batch updates and legacy projections / Registry v2→v3 原子分析迁移、嵌套运动/画面变化/人物策略、有界批量更新与旧字段投影
+- [x] v3 runtime-plan/session/signal APIs with expiry, replay/rate/coordinate checks, server-trusted source and RBAC scope enforcement / v3 运行计划、会话、信号 API，包含过期、重放/速率/坐标检查、服务端可信来源及 RBAC 作用域校验
+- [x] Browser Worker motion and scene-change engine with include/exclude/privacy zones, low-power suppression and ONVIF-first execution / 带包含/排除/隐私区域、低功耗抑制及 ONVIF 优先策略的浏览器 Worker 运动和画面变化引擎
+- [x] Pinned, same-origin, SHA-256 verified person model with WebGPU→WASM fallback, letterbox mapping and person-only post-processing / 固定同源且 SHA-256 校验的人物模型，支持 WebGPU→WASM 回退、等比填充坐标映射及仅 person 后处理
+- [x] Optional CPU Detector Worker contract and generation/resource-aware job lifecycle; no implicit server media fallback / 可选 CPU Detector Worker 契约及带 generation/资源约束的任务生命周期；不隐式启用服务端媒体回退
+- [x] Analytics workspace, detection status/boxes, model integrity issues, release receipt verifiers and Docker model supply-chain probe / 分析工作区、检测状态/框、模型完整性问题、发布回执校验器及 Docker 模型供应链探针
+- [ ] Execute Windows Chrome/Edge and WSL2 Chromium v3-M1/v3-M2 private gates and bind receipts to one final commit / 执行 Windows Chrome/Edge 与 WSL2 Chromium 的 v3-M1/v3-M2 私有门禁，并将回执绑定到同一最终提交
+- [ ] Re-run v1–v2.3 regression and public audit on the release candidate, then merge `dev → main` / 在发布候选上重跑 v1–v2.3 回归与公开审计，然后合并 `dev → main`
+- [ ] Create immutable annotated `v3.0`/`v3.1` tags and publish GHCR images only after the corresponding receipt verifiers pass / 仅在对应回执校验通过后创建不可移动 annotated `v3.0`/`v3.1` 标签并发布 GHCR 镜像
 
 ## Milestone details / 里程碑详情
 

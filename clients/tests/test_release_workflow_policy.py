@@ -73,10 +73,10 @@ class NativeReleaseWorkflowPolicyTests(unittest.TestCase):
                       self.image_text)
         self.assertIn('[[ "$remote_sha" == "$GITHUB_SHA" ]]', self.image_text)
 
-    def test_local_image_release_uses_v23_scale_metadata_and_normalizes_semver(self) -> None:
+    def test_local_image_release_uses_v3_analytics_metadata_and_normalizes_semver(self) -> None:
         release_script = (ROOT / "scripts" / "release-image-local.sh").read_text(encoding="utf-8")
         windows_release_script = (ROOT / "scripts" / "release-image-local.ps1").read_text(encoding="utf-8")
-        for marker in ("2.3.0-dev", "v2-M7-dev", "v2-M7", "v2-M6", "v2-M5"):
+        for marker in ("3.1.0-dev", "v3-M2-dev", "v3-M2", "v3-M1", "v2-M7", "v2-M6", "v2-M5"):
             self.assertIn(marker, release_script)
         self.assertIn("build_version", release_script)
         self.assertIn('build_version="${build_version}.0"', release_script)
@@ -98,9 +98,23 @@ class NativeReleaseWorkflowPolicyTests(unittest.TestCase):
         self.assertIn('sha-${short_revision}', build)
         self.assertNotIn('${image}:${version}', build)
         self.assertNotIn('${image}:latest', build)
-        self.assertIn('gh release create "$version"', release_script)
-        self.assertIn('gh release edit "$version"', release_script)
+        self.assertIn('gh api --method POST "repos/$GITHUB_REPOSITORY/releases"', release_script)
+        self.assertIn('gh api --method PATCH "repos/$GITHUB_REPOSITORY/releases/$release_id" -F draft=false', release_script)
+        self.assertNotIn('gh release create', release_script)
         self.assertIn('"${image}@${digest}"', release_script)
+
+    def test_v3_preview_is_explicit_and_never_promotes_latest(self) -> None:
+        release_script = (ROOT / "scripts" / "release-image-local.sh").read_text(encoding="utf-8")
+        windows_release_script = (ROOT / "scripts" / "release-image-local.ps1").read_text(encoding="utf-8")
+        self.assertIn('release_mode="${3:-}"', release_script)
+        self.assertIn('release_mode" == --prerelease', release_script)
+        self.assertIn('"$version" == v3.0', release_script)
+        self.assertIn('build_version="${WEBOBS_PRERELEASE_BUILD_VERSION:-3.0.0-pre.1}"', release_script)
+        self.assertIn('build_milestone="v3-M2"', release_script)
+        self.assertIn('-F "prerelease=$prerelease"', release_script)
+        self.assertIn('latest was not changed', release_script)
+        self.assertIn('[switch]$Prerelease', windows_release_script)
+        self.assertIn('-Prerelease is currently restricted to v3.0', windows_release_script)
 
     def test_candidate_windows_packages_cannot_skip_authenticode(self) -> None:
         self.assertIn("if ($env:CERTIFICATE_SHA1 -notmatch '^[0-9A-Fa-f]{40}$')", self.text)

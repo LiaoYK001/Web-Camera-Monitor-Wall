@@ -20,7 +20,8 @@ import SourceCatalog from './SourceCatalog';
 import AudioWorkspace from './AudioWorkspace';
 import SettingsWorkspace from './SettingsWorkspace';
 import ClusterAdmin from './ClusterAdmin';
-import { loadOfflineStudio, queueOfflineAudit, saveLocalStudio, saveStudioSnapshot } from './localRuntime';
+import AnalyticsWorkspace from './AnalyticsWorkspace';
+import { loadActiveLocalConfigProfile, loadOfflineStudio, loadWorkspaceLayout, makeLocalConfigBundleForStudio, queueOfflineAudit, saveLocalConfigProfile, saveLocalStudio, saveStudioSnapshot, type LocalConfigProfile } from './localRuntime';
 import { queueStudioSync, synchronizeBrowserState } from './syncRuntime';
 import type { AudioMonitoring, CameraRecord, FilterKind, PlaybackMode, ScaleMode, SceneDocument, SceneFilter, SceneItem, SceneSource, StudioCapabilities, StudioDocument, Transport } from './types';
 
@@ -119,6 +120,7 @@ export default function App() {
   const [draft, setDraft] = useState<SceneDocument | null>(null);
   const [studioBaseline, setStudioBaseline] = useState<StudioDocument | null>(null);
   const [studioDraft, setStudioDraft] = useState<StudioDocument | null>(null);
+  const [activeLocalProfile, setActiveLocalProfile] = useState<LocalConfigProfile | null>(null);
   const [studioCapabilities, setStudioCapabilities] = useState<StudioCapabilities | null>(null);
   const [programScene, setProgramScene] = useState<SceneDocument | null>(null);
   const [selectedSceneId, setSelectedSceneId] = useState<string | null>(null);
@@ -136,6 +138,7 @@ export default function App() {
   const [newKind, setNewKind] = useState<AddSourceKind>('camera');
   const [newName, setNewName] = useState('新摄像头');
   const [newUrl, setNewUrl] = useState('');
+  const [newUrls, setNewUrls] = useState<string[]>([]);
   const [newTransport, setNewTransport] = useState<Transport>('tcp');
   const [registryCameras, setRegistryCameras] = useState<CameraRecord[]>([]);
   const stageRef = useRef<HTMLDivElement>(null);
@@ -177,6 +180,7 @@ export default function App() {
     setDraft(cloneScene(scene));
     setStudioBaseline(studio);
     setStudioDraft(JSON.parse(JSON.stringify(studio)) as StudioDocument);
+    setProgramScene(null);
     setSelectedSceneId(scene.id);
     setConflict('');
     setSelectedSourceId((current) =>
@@ -186,6 +190,13 @@ export default function App() {
     );
     setSelectedSourceIds(scene.sources[0] ? [scene.sources[0].id] : []);
   }, []);
+
+  const applyLocalProfile = useCallback((profile: LocalConfigProfile) => {
+    applyRemoteStudio(profile.studio);
+    setActiveLocalProfile(profile);
+    setNotice(`已载入本机配置“${profile.name}”；服务器场景不会被修改。`);
+    setLoadingError('');
+  }, [applyRemoteStudio]);
 
   const requestWakeLock = useCallback(async () => {
     if (!document.fullscreenElement || document.visibilityState !== 'visible') return;
@@ -240,9 +251,18 @@ export default function App() {
     setLoadingError('');
     try {
       const studio = await fetchStudio();
-      applyRemoteStudio(studio);
+      const active = await loadActiveLocalConfigProfile().catch(() => null);
+      if (active) applyLocalProfile(active);
+      else { setActiveLocalProfile(null); applyRemoteStudio(studio); }
       void saveStudioSnapshot(studio).catch(() => undefined);
     } catch (error) {
+      const active = await loadActiveLocalConfigProfile().catch(() => null);
+      if (active) {
+        applyLocalProfile(active);
+        setConnection('offline');
+        setNotice(`Docker 不可达，使用本机配置“${active.name}”；服务器场景不会被修改。`);
+        return;
+      }
       const offline = await loadOfflineStudio().catch(() => null);
       if (offline) {
         applyRemoteStudio(offline.studio);
@@ -250,7 +270,7 @@ export default function App() {
         setNotice(`已载入本机离线场景；授权有效至 ${new Date(offline.expiresAt).toLocaleString()}。`);
       } else setLoadingError(error instanceof Error ? error.message : '无法读取场景');
     }
-  }, [applyRemoteStudio]);
+  }, [applyLocalProfile, applyRemoteStudio]);
 
   useEffect(() => {
     if (!studioBaseline) return undefined;
@@ -261,21 +281,17 @@ export default function App() {
     return () => controller.abort();
   }, [studioBaseline]);
 
+  useEffect(() => { void reload(); }, [reload]);
+
   useEffect(() => {
-    const controller = new AbortController();
-    fetchStudio(controller.signal)
-      .then((studio) => { applyRemoteStudio(studio); void saveStudioSnapshot(studio).catch(() => undefined); })
-      .catch(async (error: unknown) => {
-        if (controller.signal.aborted) return;
-        const offline = await loadOfflineStudio().catch(() => null);
-        if (offline) {
-          applyRemoteStudio(offline.studio);
-          setConnection('offline');
-          setNotice(`Docker 不可达，使用本机离线场景至 ${new Date(offline.expiresAt).toLocaleString()}。`);
-        } else setLoadingError(error instanceof Error ? error.message : '无法读取场景');
-      });
-    return () => controller.abort();
-  }, [applyRemoteStudio]);
+    const profileSelected = (event: Event) => {
+      const id = (event as CustomEvent<string | null>).detail;
+      if (!id) { void reload(); return; }
+      void loadActiveLocalConfigProfile().then((profile) => { if (profile) applyLocalProfile(profile); }).catch(() => undefined);
+    };
+    window.addEventListener('webobs:config-profile-selected', profileSelected);
+    return () => window.removeEventListener('webobs:config-profile-selected', profileSelected);
+  }, [applyLocalProfile, reload]);
 
   useEffect(
     () => connectSceneEvents(
@@ -424,75 +440,68 @@ export default function App() {
   };
 
   const addSource = () => {
-    const validValue = newKind === 'camera' ? /^[a-zA-Z0-9._-]{1,64}\/[a-zA-Z0-9._-]{1,64}$/.test(newUrl)
-      : newKind === 'rtsp' ? /^rtsps?:\/\/\S+$/i.test(newUrl)
+    const singleValid = newKind === 'rtsp' ? /^rtsps?:\/\/\S+$/i.test(newUrl)
       : newKind === 'browser' ? /^https?:\/\/\S+$/i.test(newUrl)
         : newKind === 'image' || newKind === 'media' ? /^\/(assets|recordings)\/[^.\/][^\r\n]*$/i.test(newUrl)
           : newKind === 'color' ? /^#[0-9a-f]{6}$/i.test(newUrl)
             : newKind === 'nested' ? Boolean(studioDraft?.scenes.some((scene) => scene.id === newUrl && scene.id !== draft?.id))
               : newUrl.trim().length > 0;
+    const cameraTargets = newKind === 'camera' ? newUrls : [];
+    const validValue = newKind === 'camera' ? cameraTargets.length > 0 : singleValid;
     const browserCount = draft?.sources.filter((source) => source.kind === 'browser').length ?? 0;
-    if (!draft || !newName.trim() || !validValue || draft.sources.length >= 64 ||
+    if (!draft || !validValue || (newKind !== 'camera' && !newName.trim()) || draft.sources.length >= 64 ||
         (newKind === 'browser' && browserCount >= 8)) return;
-    const suffix = Date.now().toString(36);
-    const sourceId = `${newKind}-${suffix}`;
-    const itemId = `item-${suffix}`;
-    const column = draft.items.length % 2;
-    const row = Math.floor(draft.items.length / 2) % 2;
+    const targets = newKind === 'camera'
+      ? cameraTargets.map((value) => {
+          const [cameraId] = value.split('/', 1);
+          const camera = registryCameras.find((candidate) => candidate.id === cameraId);
+          const profile = camera?.profiles.find((candidate) => `${camera.id}/${candidate.id}` === value);
+          const derived = camera ? `${camera.name}${profile ? ` ${profile.role}` : ''}` : '摄像头';
+          return { value, name: cameraTargets.length === 1 && newName.trim() ? newName.trim() : derived };
+        })
+      : [{ value: newUrl, name: newName.trim() }];
+    const fit = Math.min(targets.length, 64 - draft.sources.length);
+    const stamp = Date.now().toString(36);
     const width = Math.max(64, Math.floor(draft.canvas.width / 2));
     const height = Math.max(64, Math.floor(draft.canvas.height / 2));
-    const base = {
-      id: sourceId, name: newName.trim(), muted: true, volume: 1, syncOffsetMs: 0,
-      monitoring: 'off' as AudioMonitoring, audioTrack: 1, filters: [],
-    };
-    const source: SceneSource = newKind === 'camera' ? {
-      ...base,
-      kind: 'camera',
-      cameraId: newUrl.split('/', 2)[0],
-      profileId: newUrl.split('/', 2)[1],
-      hardwareDecode: 'auto',
-    } : newKind === 'rtsp' ? {
-      ...base,
-      id: sourceId,
-      kind: 'rtsp',
-      rtspUrl: newUrl,
-      transport: newTransport,
-    } : newKind === 'browser' ? {
-      ...base,
-      kind: 'browser',
-      url: newUrl,
-      width: 1280,
-      height: 720,
-      fps: 30,
-      customCss: '',
-      shutdownWhenHidden: true,
-      restartWhenActive: true,
-    } : newKind === 'image' ? { ...base, kind: 'image', filePath: newUrl }
-      : newKind === 'media' ? { ...base, kind: 'media', filePath: newUrl, loop: true }
-        : newKind === 'text' ? { ...base, kind: 'text', text: newUrl.trim(), color: '#ffffff' }
-          : newKind === 'color' ? { ...base, kind: 'color', color: newUrl.toLowerCase() }
-            : { ...base, kind: 'nested', sceneId: newUrl };
-    const item: SceneItem = {
-      id: itemId,
-      sourceId,
-      x: column * width,
-      y: row * height,
-      width,
-      height,
-      scaleMode: 'contain',
-      crop: { top: 0, right: 0, bottom: 0, left: 0 },
-      zIndex: draft.items.length,
-      visible: true,
-      locked: false,
-      groupId: '',
-      rotation: 0,
-      opacity: 1,
-      blendMode: 'normal',
-    };
-    updateDraft((scene) => ({ ...scene, sources: [...scene.sources, source], items: [...scene.items, item] }));
-    setSelectedSourceId(sourceId);
+    const sources: SceneSource[] = [];
+    const items: SceneItem[] = [];
+    targets.slice(0, fit).forEach((target, offset) => {
+      const suffix = `${stamp}${offset.toString(36)}`;
+      const sourceId = `${newKind}-${suffix}`;
+      const base = {
+        id: sourceId, name: target.name, muted: true, volume: 1, syncOffsetMs: 0,
+        monitoring: 'off' as AudioMonitoring, audioTrack: 1, filters: [],
+      };
+      const source: SceneSource = newKind === 'camera' ? {
+        ...base, kind: 'camera', cameraId: target.value.split('/', 2)[0], profileId: target.value.split('/', 2)[1], hardwareDecode: 'auto',
+      } : newKind === 'rtsp' ? {
+        ...base, id: sourceId, kind: 'rtsp', rtspUrl: target.value, transport: newTransport,
+      } : newKind === 'browser' ? {
+        ...base, kind: 'browser', url: target.value, width: 1280, height: 720, fps: 30,
+        customCss: '', shutdownWhenHidden: true, restartWhenActive: true,
+      } : newKind === 'image' ? { ...base, kind: 'image', filePath: target.value }
+        : newKind === 'media' ? { ...base, kind: 'media', filePath: target.value, loop: true }
+          : newKind === 'text' ? { ...base, kind: 'text', text: target.value.trim(), color: '#ffffff' }
+            : newKind === 'color' ? { ...base, kind: 'color', color: target.value.toLowerCase() }
+              : { ...base, kind: 'nested', sceneId: target.value };
+      const index = draft.items.length + offset;
+      const column = index % 2;
+      const row = Math.floor(index / 2) % 2;
+      const item: SceneItem = {
+        id: `item-${suffix}`, sourceId, x: column * width, y: row * height, width, height,
+        scaleMode: 'contain', crop: { top: 0, right: 0, bottom: 0, left: 0 }, zIndex: index,
+        visible: true, locked: false, groupId: '', rotation: 0, opacity: 1, blendMode: 'normal',
+      };
+      sources.push(source);
+      items.push(item);
+    });
+    if (!sources.length) return;
+    updateDraft((scene) => ({ ...scene, sources: [...scene.sources, ...sources], items: [...scene.items, ...items] }));
+    setSelectedSourceId(sources[sources.length - 1].id);
     setNewName(newKind === 'camera' || newKind === 'rtsp' ? '新摄像头' : '新来源');
     setNewUrl('');
+    setNewUrls([]);
     setNewTransport('tcp');
     setAdding(false);
   };
@@ -525,6 +534,13 @@ export default function App() {
     setSaving(true);
     setNotice('');
     try {
+      if (activeLocalProfile) {
+        const saved = await saveLocalConfigProfile(activeLocalProfile.name, studioDraft, activeLocalProfile.id);
+        setActiveLocalProfile(saved);
+        applyRemoteStudio(saved.studio);
+        setNotice(`本机配置“${saved.name}”已保存；服务器场景未修改。`);
+        return;
+      }
       if (connection === 'offline') {
         await saveLocalStudio(studioDraft);
         await queueStudioSync(studioDraft);
@@ -637,21 +653,33 @@ export default function App() {
     setBaseline(scene);
   };
 
-  const exportStudio = () => {
+  const exportStudio = async () => {
     if (!studioDraft) return;
-    const blob = new Blob([JSON.stringify(studioDraft, null, 2)], { type: 'application/json' });
-    const url = URL.createObjectURL(blob);
-    const anchor = document.createElement('a');
-    anchor.href = url;
-    anchor.download = `webobs-studio-s${studioDraft.revision}.json`;
-    anchor.click();
-    URL.revokeObjectURL(url);
+    try {
+      const layout = await loadWorkspaceLayout().catch(() => null);
+      const bundle = makeLocalConfigBundleForStudio(studioDraft, `Studio s${studioDraft.revision}`, layout ?? undefined);
+      const blob = new Blob([JSON.stringify(bundle, null, 2)], { type: 'application/json' });
+      const url = URL.createObjectURL(blob);
+      const anchor = document.createElement('a');
+      anchor.href = url;
+      anchor.download = `webobs-studio-s${studioDraft.revision}-redacted.json`;
+      anchor.click();
+      URL.revokeObjectURL(url);
+      setNotice('Studio 已导出为脱敏配置包；网络端点和凭据未包含。');
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : '导出失败');
+    }
   };
 
   const importStudio = async (file?: File) => {
     if (!file || !studioDraft) return;
     try {
-      const imported = JSON.parse(await file.text()) as StudioDocument;
+      const parsed = JSON.parse(await file.text()) as unknown;
+      const imported = parsed && typeof parsed === 'object' &&
+        (parsed as { format?: unknown }).format === 'webobs-local-config-v1' &&
+        (parsed as { profile?: { studio?: unknown } }).profile?.studio
+        ? (parsed as { profile: { studio: StudioDocument } }).profile.studio
+        : parsed as StudioDocument;
       if (imported.schemaVersion !== 1 || !Array.isArray(imported.scenes) || imported.scenes.length < 1 || imported.scenes.length > 64)
         throw new Error('不是受支持的 Studio 集合');
       imported.revision = studioDraft.revision;
@@ -744,10 +772,13 @@ export default function App() {
     return <WorkspaceShell area={productArea} onNavigate={navigate} connection={connection}><ClientsPanel onBack={() => navigate('settings')} /></WorkspaceShell>;
   }
   if (productArea === 'settings') {
-    return <WorkspaceShell area={productArea} onNavigate={navigate} connection={connection}><SettingsWorkspace /><SystemStatus onBack={() => navigate('monitor')} /></WorkspaceShell>;
+    return <WorkspaceShell area={productArea} onNavigate={navigate} connection={connection}><SettingsWorkspace studio={studioDraft} onProfileSelected={applyLocalProfile} /><SystemStatus onBack={() => navigate('monitor')} /></WorkspaceShell>;
   }
   if (productArea === 'events') {
     return <WorkspaceShell area={productArea} onNavigate={navigate} connection={connection}><EventsPanel onBack={() => navigate('monitor')} /></WorkspaceShell>;
+  }
+  if (productArea === 'analytics') {
+    return <WorkspaceShell area={productArea} onNavigate={navigate} connection={connection}><AnalyticsWorkspace /></WorkspaceShell>;
   }
 
   if (!draft || !studioDraft) {
@@ -797,7 +828,7 @@ export default function App() {
     return (rightItem?.zIndex ?? -1) - (leftItem?.zIndex ?? -1);
   });
   const selectedCapability = studioCapabilities?.scenes.find((scene) => scene.sceneId === draft.id);
-  const newSourceValueValid = newKind === 'camera' ? /^[a-zA-Z0-9._-]{1,64}\/[a-zA-Z0-9._-]{1,64}$/.test(newUrl)
+  const newSourceValueValid = newKind === 'camera' ? newUrls.length > 0
     : newKind === 'rtsp' ? /^rtsps?:\/\/\S+$/i.test(newUrl)
     : newKind === 'browser' ? /^https?:\/\/\S+$/i.test(newUrl)
       : newKind === 'image' || newKind === 'media' ? /^\/(assets|recordings)\/[^.\/][^\r\n]*$/i.test(newUrl)
@@ -975,6 +1006,7 @@ export default function App() {
                 <select value={newKind} onChange={(event) => {
                   const kind = event.target.value as AddSourceKind;
                   setNewKind(kind);
+                  setNewUrls([]);
                   setNewName(kind === 'camera' || kind === 'rtsp' ? '新摄像头' : `新${{ browser: '网页', image: '图片', media: '媒体', text: '文字', color: '色块', nested: '嵌套场景' }[kind]}`);
                   setNewUrl(kind === 'color' ? '#2563eb' : '');
                 }}>
@@ -993,20 +1025,35 @@ export default function App() {
                 <input value={newName} maxLength={128} onChange={(event) => setNewName(event.target.value)} />
               </label>
               {newKind === 'camera' ? (
-                <label className="field"><span>设备与码流 Profile</span><select value={newUrl} onChange={(event) => {
-                  const value = event.target.value;
-                  setNewUrl(value);
-                  const [cameraId] = value.split('/', 1);
-                  const camera = registryCameras.find((candidate) => candidate.id === cameraId);
-                  if (camera) setNewName(camera.name);
-                }}>
-                  <option value="">选择已登记设备…</option>
-                  {registryCameras.flatMap((camera) => camera.profiles.map((profile) => (
-                    <option key={`${camera.id}/${profile.id}`} value={`${camera.id}/${profile.id}`}>
-                      {camera.name} · {profile.role} · {profile.videoCodec || 'unknown'} {profile.width ? `${profile.width}×${profile.height}` : ''}
-                    </option>
-                  )))}
-                </select>{registryCameras.length === 0 && <small>请先进入“设备管理”添加或发现摄像机。</small>}</label>
+                <div className="field camera-picker">
+                  <span>设备与码流 Profile（可多选，共 {newUrls.length} 项）</span>
+                  <div className="camera-picker-actions">
+                    <button className="ghost-button" type="button" onClick={() => setNewUrls(registryCameras.flatMap((camera) => camera.profiles.map((profile) => `${camera.id}/${profile.id}`)))}>全选</button>
+                    <button className="ghost-button" type="button" onClick={() => setNewUrls([])}>清空</button>
+                  </div>
+                  <div className="camera-picker-list">
+                    {registryCameras.length === 0 && <small>请先进入“设备管理”添加或发现摄像机。</small>}
+                    {registryCameras.map((camera) => (
+                      <fieldset key={camera.id}>
+                        <legend>{camera.name}</legend>
+                        {camera.profiles.map((profile) => {
+                          const value = `${camera.id}/${profile.id}`;
+                          return <label key={value}><input type="checkbox" checked={newUrls.includes(value)} onChange={(event) => {
+                            setNewUrls((current) => {
+                              const next = event.target.checked ? [...new Set([...current, value])] : current.filter((item) => item !== value);
+                              if (next.length === 1) {
+                                const [cameraId] = next[0].split('/', 1);
+                                const match = registryCameras.find((candidate) => candidate.id === cameraId);
+                                if (match) setNewName(match.name);
+                              }
+                              return next;
+                            });
+                          }} />{profile.role} · {profile.videoCodec || 'unknown'} {profile.width ? `${profile.width}×${profile.height}` : ''}</label>;
+                        })}
+                      </fieldset>
+                    ))}
+                  </div>
+                </div>
               ) : newKind === 'nested' ? (
                 <label className="field"><span>嵌套场景</span><select value={newUrl} onChange={(event) => setNewUrl(event.target.value)}>
                   <option value="">选择场景…</option>
@@ -1052,7 +1099,7 @@ export default function App() {
                 <button
                   className="primary-button"
                   type="button"
-                  disabled={!newName.trim() || !newSourceValueValid}
+                  disabled={(!newName.trim() && newKind !== 'camera') || !newSourceValueValid}
                   onClick={addSource}
                 >添加到画布</button>
               </div>

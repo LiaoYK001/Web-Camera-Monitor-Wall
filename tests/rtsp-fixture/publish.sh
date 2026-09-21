@@ -14,6 +14,7 @@ while true; do
         -c:v libx264 \
         -preset ultrafast \
         -tune zerolatency \
+        -x264-params sliced-threads=0 \
         -profile:v high \
         -pix_fmt yuv420p \
         -g 20 \
