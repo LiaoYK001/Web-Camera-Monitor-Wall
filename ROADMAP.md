@@ -1,6 +1,6 @@
 # Roadmap / 项目路线图
 
-> Last updated / 最后更新：2026-09-03
+> Last updated / 最后更新：2026-09-21
 
 This roadmap describes milestone order and acceptance gates, not promised release dates. Priorities may change based on validation results and maintainer capacity.
 
@@ -39,6 +39,20 @@ Canonical milestone names use `v<major>-M<number>`. Historical validation prose 
 规范里程碑名称使用 `v<主版本>-M<序号>`。历史验收段落可保留当时的短名称 `M<序号>` 以维持证据可追溯性；映射见 [docs/versioning-and-branches.md](docs/versioning-and-branches.md)。
 
 ## Current position / 当前位置
+
+### Feedback 5 main integration / 反馈 5 主线集成（2026-09-21）
+
+本轮将反馈 5 的 `dev` 实现集成到 `main`，构建 linux/amd64 GHCR 快照（`main` 与 `sha-<12位提交>`），不提升稳定版本、不移动 `latest`。下方早期版本说明为历史背景；本节覆盖其中“仅在 dev、尚未集成”的状态。镜像上传状态以实际构建及远端 digest 核验为准，路线图本身不代表发布成功。
+
+This integration brings the Feedback 5 implementation from `dev` to `main` and targets a linux/amd64 GHCR snapshot (`main` and `sha-<12-character revision>`), not a stable release or a `latest` promotion. Earlier dev-only statements below are historical context superseded by this section. Publication requires a successful build and remote digest verification; this roadmap is not a publication receipt.
+
+- 已实现 / Implemented: F5-01 铺满优先级、逐格覆盖与统一检测框坐标；F5-02 画布外诊断与干净全屏；F5-03 能力实测和已注册编码器选择；F5-04 原生 Composite 启动链路；F5-05 多音轨与 Scene v6；F5-06 首帧/停顿/恢复状态机。另包含控制面异步激活、x264 `sliced-threads=0` 修复及验收判定器修正。 / Fill geometry and overlays, out-of-canvas diagnostics, runtime encoder capability checks, native Composite startup, multitrack audio and Scene v6, first-frame/stall/recovery handling, asynchronous activation, the x264 slice-thread workaround, and corrected acceptance instrumentation.
+- 历史实测 / Historical evidence: 受控 Direct/Hybrid 12/12、真实 Direct/Hybrid 8/9、真实 Composite 13/13，真实单路断流恢复已有记录。唯一未通过项为 `back_3` 冷启动首帧 **23,945 ms > 20,000 ms**；不能宣称真实五路全部达标。 / Controlled Direct/Hybrid passed 12/12, real Direct/Hybrid 8/9, real Composite 13/13, with a real-source recovery observation. The remaining cold-first-frame failure prevents an unconditional real-camera acceptance claim.
+- 本次构建例外 / This build's exception: 按用户明确要求，取消本次所有长测（包括 30 分钟稳态、长时真实相机及 GPU 验收），仅运行短回归、静态检查与构建校验。不伪造同 SHA 长测回执，不将历史结果计作本次镜像的重新验收；常规稳定版门禁保持不变。 / Explicit user authorization skips long-running tests for this snapshot, including 30-minute soaks and extended camera/GPU acceptance. Short regressions, static checks and build verification remain. Historical evidence is not a fresh same-revision acceptance; normal stable-release gates remain unchanged.
+- 后续 P1 / Next P1: 复核 `back_3` 冷启动的相机→网关上游行为，保留并发/排队边界；链路丢包、设备负载和冷启动机制尚未定因。任何设备配置、码率或验收预算调整须另行决定，不能以冷启动 20 秒采样推断持续帧率上限。 / Investigate source-to-gateway cold-start behavior without treating an upstream symptom as proof of a specific network/device cause or a short probe as a steady-state capacity limit. Device settings and acceptance budgets require a separate decision.
+- 后续 P2 / Next P2: 按实际可用硬件补 NVENC/VA-API、Docker/vGPU 运行验收，并整理可移植、脱敏证据；镜像构建成功不代表这些运行路径已认证。 / Complete hardware-specific runtime qualification and portable redacted evidence when suitable hardware is available. An image build does not certify NVENC, VA-API or Docker/vGPU operation.
+
+依据 / References: [验收报告 / Acceptance](docs/feedback-5-acceptance.md)、[来源限制报告 / Source limitation](docs/feedback-5-source-limitation-report.md)、[进度 / Progress](docs/feedback-5-progress.md)。来源限制报告提交为 `2e9266e`；保留原始测量边界和未确立假设。 / Source-limitation report revision: `2e9266e`; its measurement boundaries and unresolved hypotheses remain applicable.
 
 **✅ `v2-M7 / v2.3.1` 已完成并作为当前稳定版本发布；🚧 v3-M1/M2 与 v3.0.1 体验修正正在 `dev` 收口，尚未发布。**
 
