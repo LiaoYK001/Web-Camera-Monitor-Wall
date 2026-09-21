@@ -40,6 +40,18 @@ Canonical milestone names use `v<major>-M<number>`. Historical validation prose 
 
 ## Current position / 当前位置
 
+### v3.1 official baseline / v3.1 正式基底（2026-09-21）
+
+当前最新正式版本统一为 **v3.1**，发布标签固定在 `5ab5da0fa4d2ac67af2ac52c7ee3d64f75ae82cc`。按用户追加决定，将本日已构建的原镜像提升为 `v3.1` 和 `latest`；这覆盖下方快照阶段“不移动 latest”的历史决定。镜像 digest 为 `sha256:1bbb0c2608c977b2e04386846dcb11674d9f6996a4c8e0b01bb6f1be58999953`，没有重新构建。后续开发以此为基底，本轮不开始下一版本。
+
+The latest official release is **v3.1**, tagged at `5ab5da0fa4d2ac67af2ac52c7ee3d64f75ae82cc`. The user's subsequent decision promotes today's existing image to `v3.1` and `latest`, superseding the historical snapshot-only decision below. The unchanged image digest is `sha256:1bbb0c2608c977b2e04386846dcb11674d9f6996a4c8e0b01bb6f1be58999953`. Subsequent development will use this baseline; no next version is started here.
+
+本次正式发布沿用用户指定的免长测例外；已知 `back_3` 首帧限制和 GPU 路径待验收项不因此关闭。原镜像内嵌版本仍为 `3.1.0-dev.5ab5da0fa4d2`，milestone 仍为 `v3-M2-dev`，它们是保留的构建标识。下方早期“当前稳定版 v2.3.1”“v3 尚未发布”等文字仅作为历史里程碑背景，不再代表当前发布状态。
+
+This official release retains the user-authorized long-test exception; the `back_3` first-frame limitation and outstanding GPU qualification remain open. Embedded version `3.1.0-dev.5ab5da0fa4d2` and milestone `v3-M2-dev` identify the preserved build. Earlier v2.3.1-current/v3-unreleased statements below are historical milestone context, not current release status.
+
+[v3.1 正式发布 / Official release](https://github.com/LiaoYK001/Web-Camera-Monitor-Wall/releases/tag/v3.1)
+
 ### Feedback 5 main integration / 反馈 5 主线集成（2026-09-21）
 
 本轮将反馈 5 的 `dev` 实现集成到 `main`，构建 linux/amd64 GHCR 快照（`main` 与 `sha-<12位提交>`），不提升稳定版本、不移动 `latest`。下方早期版本说明为历史背景；本节覆盖其中“仅在 dev、尚未集成”的状态。镜像上传状态以实际构建及远端 digest 核验为准，路线图本身不代表发布成功。
