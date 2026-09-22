@@ -4,6 +4,22 @@
 
 ## Version and milestone names / 版本与里程碑命名
 
+### Unavailable release numbers / 发布编号不可用时顺位递增（2026-09-22）
+
+发布 `vB.A` 时，如果该编号已被其他发布占用、不可变 Release 保留或存在仅针对该编号的限制，不覆盖、删除或强推旧 Tag；改用 `vB.(A+1)`，仍不可用则继续递增次版本号，直到首个可用编号。例如 `v3.1 → v3.2 → v3.3`，`v3.9 → v3.10`，主版本不变。不因跳号而新增功能、改变里程碑、放宽验收或重新构建已指定的镜像。
+
+When `vB.A` is occupied by another release, reserved by an immutable release, or subject to a version-specific restriction, do not overwrite/delete/force-push the old tag. Advance to `vB.(A+1)` and continue until the first available minor version, keeping the major unchanged (`v3.9 → v3.10`). Renumbering does not add features, change milestones, relax acceptance or rebuild a specifically selected image.
+
+先查询远端 Tag、Release（含草稿）及 GHCR 标签；同一次发布的同提交/同 digest 草稿可继续，已成功发布的同一产物视为幂等完成，不无故跳号。其他已占用编号按上述顺位跳过。保留冲突原因及最终编号记录；统一最终 Git Tag、Release 名称、源码附件版本、GHCR 版本标签、README 和 roadmap，发布成功后将 `latest` 指向同一 digest。保留旧 SHA 标签；复用镜像时明确披露不变的内嵌构建标识。
+
+Check remote tags, releases (including drafts), and GHCR tags first. Resume the same attempt's matching commit/digest draft; treat an already-published identical artifact as idempotently complete instead of skipping a number. Record conflicts and the final version. Align the Git tag, Release, source archive version, GHCR version tag, README and roadmap; after publication promote `latest` to the same digest. Preserve SHA tags and disclose unchanged embedded build identifiers when reusing an image.
+
+网络/TLS 错误、身份失效、通用权限不足、全仓库规则限制、构建/测试失败不是“编号不可用”：按原因排查，必要时停止请求维护者处理，禁止用跳号绕过访问控制或无限重试。正式发布时间记录实际时间；历史版本日期另列，不回填 published_at。跳号本身不豁免门禁，任何例外必须由用户明确授权并写入发布说明。
+
+Network/TLS failures, invalid credentials, generic permission/repository-rule failures and failed builds/tests are not unavailable numbers: diagnose them and stop for maintainer action when needed. Never use renumbering to bypass access controls or retry indefinitely. Record actual publication time separately from any historical version date. Gate exceptions require explicit user authorization and release-note disclosure.
+
+本次记录 / This release: `v3.1` 因不可变发布标签冲突未能完成，改为 `v3.2`，沿用源码 `5ab5da0fa4d2` 及原镜像，保留已披露的免长测例外和已知限制。 / `v3.1` could not be completed due to the immutable-release tag conflict; use `v3.2` with source `5ab5da0fa4d2`, the original image, and the disclosed long-test exception and limitations.
+
 Release series use `v<major>.<minor>`; implementation milestones use `v<major>-M<number>`. Examples are `v1.1` and `v1-M10`. The milestone number is written as an integer without padding. Historical `M0` remains the pre-version headless proof and is not renamed into a release milestone.
 
 发布系列使用 `v<主版本>.<次版本>`，实施里程碑使用 `v<主版本>-M<序号>`，例如 `v1.1` 与 `v1-M10`。里程碑序号不补零。历史 `M0` 保留为版本化之前的无头闭环验证，不改名为发布里程碑。
@@ -19,7 +35,8 @@ Release series use `v<major>.<minor>`; implementation milestones use `v<major>-M
 | `v2.3` | `v2-M7` | Complete and published: scale, ecosystem and resilience / 已完成并发布：扩展、生态与韧性 |
 | `v3.0` (immutable preview carrier / 不可移动预览载体) | `v3-M1` | Motion and scene-change analytics / 运动与大范围画面变化分析 | Preview lineage retained; do not move / 保留预览血缘，不得移动 |
 | `v3.0.1` (pre-release correction / 预发布修正版) | `v3-M2` | Monitor workspace, telemetry/audio overlays and legacy-source migration / 监控工作区、统计音频叠层与旧来源迁移 | Pending explicit pre-release / 等待明确预发布 |
-| `v3.1` | `v3-M2` | Person boxes and analytics scheduling / 人物框与分析资源调度 | In development / 开发中 |
+| `v3.1` | `v3-M2` | Unavailable immutable-release number; superseded by v3.2 / 不可用编号，顺位改用 v3.2 |
+| `v3.2` | `v3-M2` + Feedback 5 / 反馈 5 | Current official baseline; disclosed long-test exception and source limitation retained / 当前正式基底，保留已披露的免长测例外和来源限制 |
 
 A milestone name is an engineering gate, not a release date. A release may be cut only from completed, reviewed gates. Public SemVer tags may add a patch component such as `v1.1.1`; an existing tag is immutable.
 

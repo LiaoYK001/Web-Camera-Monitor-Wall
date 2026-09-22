@@ -347,3 +347,8 @@ image: ghcr.io/your-user-or-organization/web-camera-monitor-wall@sha256:<manifes
 ```
 
 同时记录源码 revision、版本、发布时间和 digest。若发布失败，不要删除或覆盖已经被部署引用的版本；修复问题后创建新版本。若 token 疑似泄漏，立即在 GitHub 撤销 token、执行 `docker logout ghcr.io`，检查 package 活动和本地 Docker credential store。
+## 发布编号顺位规则 / Sequential release-number fallback
+
+版本编号不可用时按 `vB.A → vB.(A+1)` 顺位递增，例如 `v3.1 → v3.2`；必须同步 Git Tag、Release、附件及 GHCR 版本标签。详见 [版本策略](versioning-and-branches.md#unavailable-release-numbers--发布编号不可用时顺位递增2026-09-22)。网络、权限或通用仓库规则失败不触发跳号；不得覆盖旧版本或绕过门禁。先确认最终版本可用，再执行本手册中对应发布步骤；脚本若不支持该编号，应显式调整并审查，不能冒充其他版本通过检查。
+
+For unavailable version numbers, advance `vB.A → vB.(A+1)` and align tags, Release, assets and GHCR naming. See the version policy above. Network, permission or generic repository-rule failures do not trigger renumbering. Do not overwrite old versions or bypass gates; review any required script version support explicitly.

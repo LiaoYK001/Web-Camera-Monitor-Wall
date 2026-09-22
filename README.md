@@ -1,8 +1,10 @@
 # Web Camera Monitor Wall
 
-一个基于 `libobs` 的无桌面 Web 监控墙、Gateway Direct WebRTC 网关、Local-first PWA 与 NVR 项目。当前最新正式版本为 **v3.1（2026-09-21）**，集成反馈 5 修正及 v3 分析实现；详见 [v3.1 Release](https://github.com/LiaoYK001/Web-Camera-Monitor-Wall/releases/tag/v3.1) 与 [ROADMAP](ROADMAP.md)。GHCR 的 `v3.1`、`latest` 和 `sha-5ab5da0fa4d2` 使用同一镜像；保留的内嵌构建标识为 `3.1.0-dev.5ab5da0fa4d2`。本次按用户要求不重跑长稳测试，`back_3` 首帧超时仍为已知限制，详见 [来源限制报告](docs/feedback-5-source-limitation-report.md)。后续开发以本版本为基底，本轮不启动下一版本。最终 v1 基线仍为 **v1.2.1**；请勿部署最初的 `v1.2` 镜像。分析能力边界见 [v3 分析运行时](docs/v3-analytics-runtime.md)。
+版本日期为 2026-09-21，GitHub 实际正式发布时间为 2026-09-22。 / Version date: 2026-09-21; actual GitHub publication: 2026-09-22.
 
-The latest official release is **v3.1 (2026-09-21)**, integrating Feedback 5 fixes and the v3 analytics implementation. GHCR tags `v3.1`, `latest`, and `sha-5ab5da0fa4d2` reference the same image, retaining embedded build identifier `3.1.0-dev.5ab5da0fa4d2`. Long-running tests were not repeated by explicit user request; the known `back_3` first-frame limitation remains. Future development will start from this baseline; no next version is started in this release.
+一个基于 `libobs` 的无桌面 Web 监控墙、Gateway Direct WebRTC 网关、Local-first PWA 与 NVR 项目。当前最新正式版本为 **v3.2（2026-09-21）**，集成反馈 5 修正及 v3 分析实现；详见 [v3.2 Release](https://github.com/LiaoYK001/Web-Camera-Monitor-Wall/releases/tag/v3.2) 与 [ROADMAP](ROADMAP.md)。GHCR 的 `v3.2`、`latest` 和 `sha-5ab5da0fa4d2` 使用同一镜像；保留的内嵌构建标识为 `3.1.0-dev.5ab5da0fa4d2`。本次按用户要求不重跑长稳测试，`back_3` 首帧超时仍为已知限制，详见 [来源限制报告](docs/feedback-5-source-limitation-report.md)。后续开发以本版本为基底，本轮不启动下一版本。最终 v1 基线仍为 **v1.2.1**；请勿部署最初的 `v1.2` 镜像。分析能力边界见 [v3 分析运行时](docs/v3-analytics-runtime.md)。
+
+The latest official release is **v3.2 (2026-09-21)**, integrating Feedback 5 fixes and the v3 analytics implementation. GHCR tags `v3.2`, `latest`, and `sha-5ab5da0fa4d2` reference the same image, retaining embedded build identifier `3.1.0-dev.5ab5da0fa4d2`. Long-running tests were not repeated by explicit user request; the known `back_3` first-frame limitation remains. Future development will start from this baseline; no next version is started in this release.
 
 ```text
 RTSP camera -> libobs ffmpeg_source -> OBS scene -> H.264/AAC MP4
