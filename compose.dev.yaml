@@ -1,0 +1,28 @@
+# Development image: temporary unit-test databases use memory, avoiding WSL2
+# virtual-disk fsync latency. This does not qualify production disk performance.
+services:
+  webobs:
+    image: webobs:dev
+    build:
+      args:
+        UBUNTU_IMAGE: ubuntu:24.04@sha256:33ceb71981b602c1a7443a53469e4dba065f7503eab3078a2d7a57a2ab987517
+        WEBOBS_TEST_TMPDIR: /dev/shm
+    environment:
+      WEBOBS_ALLOW_INSECURE_REMOTE: "false"
+      WEBOBS_CLUSTER_ENABLED: "true"
+      WEBOBS_REGISTRATION_ENABLED: "true"
+      WEBOBS_AUTH_USERNAME_FILE: /run/secrets/webobs_dev_username
+      WEBOBS_AUTH_PASSWORD_FILE: /run/secrets/webobs_dev_password
+      WEBOBS_SESSION_COOKIE_SECURE: "false"
+      WEBOBS_CONTROL_ALLOWED_ORIGINS: ${WEBOBS_DEV_ALLOWED_ORIGINS:-http://127.0.0.1:5173,http://localhost:5173,http://127.0.0.1:8080,http://localhost:8080}
+    ports: !override
+      - "127.0.0.1:8080:8080"
+      - "127.0.0.1:8189:8189/udp"
+    secrets:
+      - webobs_dev_username
+      - webobs_dev_password
+secrets:
+  webobs_dev_username:
+    file: ./secrets/webobs-dev-username.txt
+  webobs_dev_password:
+    file: ./secrets/webobs-dev-password.txt
