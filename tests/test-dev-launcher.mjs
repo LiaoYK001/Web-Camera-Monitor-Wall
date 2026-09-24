@@ -82,3 +82,25 @@ test('occupied frontend port is preserved and explains how to choose another por
     assert.equal((await fetch(url)).status, 200);
   } finally { server.close(); }
 });
+
+test('help documents the LAN port-forward entry points', async () => {
+  const result = await execute(['--help']);
+  assert.equal(result.code, 0);
+  assert.match(result.output, /dev-lan-environment\.ps1/);
+  assert.match(result.output, /dev-lan-environment\.sh/);
+  assert.match(result.output, /--lan/);
+  assert.match(result.output, /--lan-host/);
+});
+
+test('the lan flag is accepted and validated with the rest of the arguments', async () => {
+  const result = await execute(['--lan', '--port', 'oops']);
+  assert.equal(result.code, 1);
+  assert.match(result.output, /1024–65535/);
+  assert.doesNotMatch(result.output, /未知参数/);
+});
+
+test('lan mode rejects a non-IPv4 lan host before starting anything', async () => {
+  const result = await execute(['--lan', '--lan-host', 'not-an-ip', '--check']);
+  assert.equal(result.code, 1);
+  assert.match(result.output, /IPv4|lan-host|未能确定局域网/);
+});

@@ -4,16 +4,26 @@ import { fileURLToPath } from 'node:url';
 import path from 'node:path';
 import net from 'node:net';
 import http from 'node:http';
+import os from 'node:os';
 import { createHash, randomBytes } from 'node:crypto';
 const root = fileURLToPath(new URL('../', import.meta.url));
 const web = path.join(root, 'web');
 const win = process.platform === 'win32';
-const options = { mode: 'native', api: 'http://127.0.0.1:8080', port: '5173', distro: 'Ubuntu-24.04', engine: 'docker' };
-const flags = new Set(['setup', 'check', 'build', 'help', 'stop', 'composite', 'soak']);
+const options = { mode: 'native', api: 'http://127.0.0.1:8080', port: '5173', distro: 'Ubuntu-24.04', engine: 'docker', lanHost: '' };
+const flags = new Set(['setup', 'check', 'build', 'help', 'stop', 'composite', 'soak', 'lan']);
 const children = new Set();
 let stopping = false;
 let controlServer; let stateFile;
 const log = (message) => console.log(`\n[WebOBS] ${message}`);
+function detectLanIPv4() {
+  // Prefer a non-internal IPv4 that is not link-local (169.254/16).
+  for (const entries of Object.values(os.networkInterfaces())) {
+    for (const entry of entries ?? []) {
+      if (entry.family === 'IPv4' && !entry.internal && !entry.address.startsWith('169.254.')) return entry.address;
+    }
+  }
+  return '';
+}
 function run(command, args, capture = false, cwd = root) {
   const result = spawnSync(command, args, { cwd, encoding: 'utf8', stdio: capture ? 'pipe' : 'inherit', windowsHide: true, ...(capture ? { timeout: 30000 } : {}) });
   if (result.error || result.status !== 0) throw new Error(`${command} 执行失败。${result.error?.message ?? (result.stderr ?? '').trim()}`);
@@ -46,7 +56,9 @@ async function freePort(port) {
   await new Promise((resolve, reject) => {
     const server = net.createServer();
     server.once('error', () => reject(new Error(`端口 ${port} 已被占用。请停止旧开发终端，或用 --port / -Port 指定其他前端端口；不会自动结束其他进程。`)));
-    server.listen(port, '127.0.0.1', () => server.close(resolve));
+    // LAN mode binds 0.0.0.0; probe that address so a conflicting listener is caught.
+    const host = options.lan ? '0.0.0.0' : '127.0.0.1';
+    server.listen(port, host, () => server.close(resolve));
   });
 }
 function pnpmArgs(args) {
@@ -69,13 +81,14 @@ function credentials() {
 try {
   const args = process.argv.slice(2);
   for (let i = 0; i < args.length; i++) {
-    const key = args[i].replace(/^--/, '');
+    // Accept both --lan-host and --lanHost (dev.mjs options use camelCase).
+    const key = args[i].replace(/^--/, '').replace(/-([a-z])/g, (_, letter) => letter.toUpperCase());
     if (!args[i].startsWith('--') || (!flags.has(key) && !Object.hasOwn(options, key) && key !== 'builder')) throw new Error(`未知参数：${args[i]}`);
     if (flags.has(key)) options[key] = true;
     else { if (!args[i + 1] || args[i + 1].startsWith('--')) throw new Error(`参数 ${args[i]} 缺少值`); options[key] = args[++i]; }
   }
   if (options.help) {
-    console.log(`WebOBS 本地开发\n\nWindows: .\\scripts\\dev.ps1 [-Setup] [-Check] [-Composite] [-Soak] [-Mode native|frontend|container] [-Api URL] [-Port 5173]\nLinux:   bash scripts/dev.sh [--setup] [--check] [--composite] [--soak] [--mode native|frontend|container] [--api URL] [--port 5173]\n\nnative    默认：原生 C++/Python 后端 + Vite；Windows 后端运行在 WSL2。首次加 --setup / -Setup 安装 Ubuntu 24.04 依赖。\n--composite / -Composite\n          显式启用本地服务端合成（OBS 图形/媒体输入/编码与 WHIP 输出模块）。\n          首次使用：.\\scripts\\dev.ps1 -Setup -Composite；日常：.\\scripts\\dev.ps1 -Composite。\n          不带参数时保持轻量 native 默认行为（不构建合成模块）。\nfrontend  仅启动 Vite，连接 --api / -Api 指定的已有后端。\ncontainer 可选兼容模式；需要已启动 Docker/Podman，仅显式 --build / -Build 时构建镜像。\n--soak / -Soak\n          耐久/长稳模式：后端不监听父进程 stdin，父终端关闭也不会停止本次会话；\n          供 30 分钟验收与持续采样使用。退出用 Ctrl+C 或 SIGTERM。仅 native 模式生效。\n--check   只检查环境，不安装、不构建、不启动。\n--distro  Windows WSL 发行版，默认 Ubuntu-24.04。\n--engine  docker 或 podman（仅 container）。--builder 为 Docker 构建器。\n\nCtrl+C 结束本次原生服务和前端；容器模式保留后端。详见 docs/development.md。`);
+    console.log(`WebOBS 本地开发\n\nWindows: .\\scripts\\dev.ps1 [-Setup] [-Check] [-Composite] [-Soak] [-Mode native|frontend|container] [-Api URL] [-Port 5173]\nLinux:   bash scripts/dev.sh [--setup] [--check] [--composite] [--soak] [--mode native|frontend|container] [--api URL] [--port 5173]\n\nLAN:     .\\scripts\\dev-lan-environment.ps1 [-LanHost IP] [-Port 5173] ...\n         bash scripts/dev-lan-environment.sh [--lan-host IP] [--port 5173] ...\n\nnative    默认：原生 C++/Python 后端 + Vite；Windows 后端运行在 WSL2。首次加 --setup / -Setup 安装 Ubuntu 24.04 依赖。\n--composite / -Composite\n          显式启用本地服务端合成（OBS 图形/媒体输入/编码与 WHIP 输出模块）。\n          首次使用：.\\scripts\\dev.ps1 -Setup -Composite；日常：.\\scripts\\dev.ps1 -Composite。\n          不带参数时保持轻量 native 默认行为（不构建合成模块）。\nfrontend  仅启动 Vite，连接 --api / -Api 指定的已有后端。\ncontainer 可选兼容模式；需要已启动 Docker/Podman，仅显式 --build / -Build 时构建镜像。\n--soak / -Soak\n          耐久/长稳模式：后端不监听父进程 stdin，父终端关闭也不会停止本次会话；\n          供 30 分钟验收与持续采样使用。退出用 Ctrl+C 或 SIGTERM。仅 native 模式生效。\n--lan     局域网开发模式（dev-lan-environment）：Vite 监听 0.0.0.0，/api 代理把\n          Host/Origin 改写回 127.0.0.1，后端仍只绑定本机回环（端口转发语义）。\n          局域网成员用 http://<本机IPv4>:<端口>/ 访问。仅限受信任局域网，不是公网部署。\n--lan-host 指定对外 IPv4（默认自动探测第一个非链路本地 IPv4）。\n--check   只检查环境，不安装、不构建、不启动。\n--distro  Windows WSL 发行版，默认 Ubuntu-24.04。\n--engine  docker 或 podman（仅 container）。--builder 为 Docker 构建器。\n\nCtrl+C 结束本次原生服务和前端；容器模式保留后端。详见 docs/development.md。`);
     process.exit(0);
   }
   if (!/^\d+$/.test(options.port) || Number(options.port) < 1024 || Number(options.port) > 65535) throw new Error('前端端口须为 1024–65535');
@@ -93,7 +106,17 @@ try {
   const api = new URL(options.api);
   if (!['http:', 'https:'].includes(api.protocol) || api.username || api.password) throw new Error('API 地址必须是无内嵌凭据的 HTTP(S) 地址');
   if (options.build && options.mode !== 'container') throw new Error('-Build / --build 仅用于 --mode container；原生模式启动时自动增量编译。');
-  log(`模式：${options.mode} | Node ${process.versions.node} | 前端端口 ${options.port}`);
+  log(`模式：${options.mode}${options.lan ? ' | LAN 局域网共享' : ''} | Node ${process.versions.node} | 前端端口 ${options.port}`);
+  if (options.lan) {
+    const lanHost = options.lanHost || detectLanIPv4();
+    if (!lanHost || !/^\d{1,3}(\.\d{1,3}){3}$/.test(lanHost)) {
+      throw new Error('未能确定局域网 IPv4。请用 --lan-host / -LanHost 指定本机局域网地址。');
+    }
+    options.lanHost = lanHost;
+    log(`LAN 端口转发：http://${lanHost}:${options.port}/  →  127.0.0.1:${options.port}\n  后端仍只监听 127.0.0.1:8080；/api 代理改写 Host/Origin 为回环。\n  [安全] 仅限受信任局域网联调，不要对公网暴露；防火墙请只放行 ${options.port}/tcp${options.mode === 'native' ? ' 与 8189/udp、8190/tcp（WebRTC）' : ''}。`);
+    process.env.WEBOBS_LAN = '1';
+    process.env.WEBOBS_LAN_HOST = lanHost;
+  }
   const pnpm = pnpmArgs(['--version']);
   let pnpmVersion;
   for (let attempt = 1; attempt <= 3; attempt++) {
@@ -148,10 +171,16 @@ try {
   stateFile = path.join(root, 'build', `dev-session-${options.port}.json`);
   writeFileSync(stateFile, JSON.stringify({ controlPort: controlServer.address().port, token }), { mode: 0o600 });
   process.env.WEBOBS_API_PROXY_TARGET = options.api;
-  process.env.WEBOBS_DEV_ALLOWED_ORIGINS = ['127.0.0.1', 'localhost'].flatMap(host => [8080, options.port].map(port => `http://${host}:${port}`)).join(',');
+  const originHosts = options.lan
+    ? ['127.0.0.1', 'localhost', options.lanHost]
+    : ['127.0.0.1', 'localhost'];
+  process.env.WEBOBS_DEV_ALLOWED_ORIGINS = originHosts.flatMap(host => [8080, options.port].map(port => `http://${host}:${port}`)).join(',');
+  const viteHost = options.lan ? '0.0.0.0' : '127.0.0.1';
   const frontend = () => {
-    log(`就绪： http://127.0.0.1:${options.port}\n  后端：${options.api}\n  Ctrl+C 停止本次开发进程。修改 C++/Python 后 Ctrl+C 再运行；前端自动热更新。`);
-    launch(process.execPath, pnpmArgs(['dev', '--host', '127.0.0.1', '--port', options.port, '--strictPort']), web);
+    const localUrl = `http://127.0.0.1:${options.port}`;
+    const lanUrl = options.lan ? `http://${options.lanHost}:${options.port}` : '';
+    log(`就绪： ${localUrl}${lanUrl ? `\n  局域网： ${lanUrl}（同事可访问）` : ''}\n  后端：${options.api}\n  Ctrl+C 停止本次开发进程。修改 C++/Python 后 Ctrl+C 再运行；前端自动热更新。`);
+    launch(process.execPath, pnpmArgs(['dev', '--host', viteHost, '--port', options.port, '--strictPort']), web);
   };
   if (options.mode === 'native') {
     credentials();

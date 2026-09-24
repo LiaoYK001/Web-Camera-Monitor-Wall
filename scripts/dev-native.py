@@ -85,6 +85,28 @@ def ports_free():
         try: sock.bind(('127.0.0.1', 8189))
         except OSError: raise StageError('ports', 'UDP 8189 已占用，请停止旧媒体服务。')
 
+
+def write_lan_mediamtx_config(lan_host: str) -> Path:
+    """Dev-only MediaMTX config for a trusted LAN (dev-lan-environment).
+
+    Widens WebRTC bind/ICE and allows RFC1918 clients so LAN browsers can pull
+    WHEP media. The product gateway/mediamtx.yml is unchanged.
+    """
+    source = (ROOT / 'gateway/mediamtx.yml').read_text(encoding='utf-8')
+    text = source
+    text = text.replace('ips: [127.0.0.1, ::1]',
+                        'ips: [127.0.0.1, ::1, 10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16]')
+    text = text.replace('webrtcAddress: 127.0.0.1:8889', 'webrtcAddress: 0.0.0.0:8889')
+    text = text.replace('webrtcLocalUDPAddress: :8189', 'webrtcLocalUDPAddress: 0.0.0.0:8189')
+    text = text.replace("webrtcLocalTCPAddress: ''", "webrtcLocalTCPAddress: '0.0.0.0:8190'")
+    text = text.replace('webrtcAdditionalHosts: [127.0.0.1]',
+                        f'webrtcAdditionalHosts: [127.0.0.1, {lan_host}]')
+    text = text.replace('webrtcIPsFromInterfaces: false', 'webrtcIPsFromInterfaces: true')
+    out = CACHE / f'mediamtx-lan-{lan_host.replace(":", "_")}.yml'
+    out.parent.mkdir(parents=True, exist_ok=True)
+    out.write_text(text, encoding='utf-8')
+    return out
+
 def start(name, args, env, health, timeout=10.0, stage=None):
     logfile = CACHE / 'logs' / f'{name}.log'
     stream = open(logfile, 'a'); handles.append(stream)
@@ -513,9 +535,21 @@ def main():
         # WSL localhost forwarding carries TCP; provide ICE/TCP for Windows browsers.
         'MTX_WEBRTCLOCALTCPADDRESS': '127.0.0.1:8190',
     })
+    # LAN dev (dev-lan-environment): MediaMTX WebRTC must be reachable from other
+    # machines. The control plane itself stays on 127.0.0.1 and is reached through
+    # the Vite port-forward, so this only widens media ports for a trusted LAN.
+    lan_host = os.environ.get('WEBOBS_LAN_HOST', '').strip()
+    mediamtx_config = ROOT / 'gateway/mediamtx.yml'
+    if lan_host:
+        mediamtx_config = write_lan_mediamtx_config(lan_host)
+        env.update({
+            'MTX_WEBRTCLOCALUDPADDRESS': '0.0.0.0:8189',
+            'MTX_WEBRTCLOCALTCPADDRESS': '0.0.0.0:8190',
+        })
+        say(f'LAN 媒体：MediaMTX WebRTC 监听 0.0.0.0:8189/udp 与 8190/tcp，附加 ICE 主机 {lan_host}')
     # Prevent inherited production options from accidentally turning on Composite/recording.
     env.pop('WEBOBS_OUTPUT', None); env.pop('WEBOBS_RTSP_URL', None)
-    start('mediamtx', [media, ROOT / 'gateway/mediamtx.yml'], env,
+    start('mediamtx', [media, mediamtx_config], env,
           'http://127.0.0.1:9997/v3/config/global/get', stage='mediamtx')
     for name, source, port in [('camera','camera/camera_registry.py',8092), ('events','events/event_service.py',8093),
                                ('clients','v2/client_control_service.py',8094), ('cluster','cluster/cluster_service.py',8095),
