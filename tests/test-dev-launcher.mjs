@@ -1,17 +1,21 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { spawn } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
 import http from 'node:http';
 import { fileURLToPath } from 'node:url';
 const script = fileURLToPath(new URL('../scripts/dev.mjs', import.meta.url));
 function execute(args) {
   return new Promise((resolve, reject) => {
-    const child = spawn(process.execPath, [script, ...args], { windowsHide: true });
+    const child = spawn(process.execPath, [script, ...args], { windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'] });
     let output = '';
+    const timer = setTimeout(() => {
+      child.kill();
+      reject(new Error(`dev.mjs ${args.join(' ')} timed out\n${output}`));
+    }, 30000);
     child.stdout.on('data', chunk => output += chunk);
     child.stderr.on('data', chunk => output += chunk);
-    child.once('error', reject);
-    child.once('exit', code => resolve({ code, output }));
+    child.once('error', (error) => { clearTimeout(timer); reject(error); });
+    child.once('exit', code => { clearTimeout(timer); resolve({ code, output }); });
   });
 }
 async function fixture(status = 200) {
@@ -90,6 +94,9 @@ test('help documents the LAN port-forward entry points', async () => {
   assert.match(result.output, /dev-lan-environment\.sh/);
   assert.match(result.output, /--lan/);
   assert.match(result.output, /--lan-host/);
+  // F6 follow-up: LAN must be HTTPS so Secure Context enables pairing + camera playback.
+  assert.match(result.output, /https:\/\//);
+  assert.match(result.output, /自签|Secure Context|证书/);
 });
 
 test('the lan flag is accepted and validated with the rest of the arguments', async () => {
@@ -103,4 +110,31 @@ test('lan mode rejects a non-IPv4 lan host before starting anything', async () =
   const result = await execute(['--lan', '--lan-host', 'not-an-ip', '--check']);
   assert.equal(result.code, 1);
   assert.match(result.output, /IPv4|lan-host|未能确定局域网/);
+});
+
+test('lan mode generates a self-signed HTTPS cert with the LAN IP in the SAN', async () => {
+  const { server, url } = await fixture();
+  const lanHost = '192.0.2.10';
+  const tlsDir = fileURLToPath(new URL('../build/dev-lan-tls/', import.meta.url));
+  try {
+    const result = await execute(['--lan', '--lan-host', lanHost, '--mode', 'frontend', '--api', url, '--check']);
+    assert.equal(result.code, 0, result.output);
+    assert.match(result.output, new RegExp(`https://${lanHost.replace(/\./g, '\\.')}:`));
+    assert.match(result.output, /自签|self-signed/);
+    assert.match(result.output, /Secure Context|证书|trust/i);
+    const { readFileSync, existsSync } = await import('node:fs');
+    const certPath = `${tlsDir}cert.pem`;
+    const keyPath = `${tlsDir}key.pem`;
+    assert.ok(existsSync(certPath), certPath);
+    assert.ok(existsSync(keyPath), keyPath);
+    const text = readFileSync(certPath, 'utf8');
+    assert.match(text, /BEGIN CERTIFICATE/);
+    assert.match(readFileSync(keyPath, 'utf8'), /BEGIN (RSA )?PRIVATE KEY/);
+    const details = spawnSync('openssl', ['x509', '-in', certPath, '-noout', '-text'], { encoding: 'utf8', timeout: 10000, input: '' });
+    if (details.status === 0) {
+      assert.match(details.stdout, new RegExp(lanHost.replace(/\./g, '\\.')));
+      assert.match(details.stdout, /IP Address:127\.0\.0\.1/);
+      assert.match(details.stdout, /DNS:localhost/);
+    }
+  } finally { server.close(); }
 });

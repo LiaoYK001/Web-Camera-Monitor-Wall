@@ -1,12 +1,14 @@
 #!/usr/bin/env bash
 # dev-lan-environment.sh — 局域网联调入口 / LAN co-dev entry.
-# 与 scripts/dev.sh 相同流程，额外开启 LAN 端口转发：
-#   Vite 监听 0.0.0.0，/api 代理把 Host/Origin 改写回 127.0.0.1；
-#   后端仍只绑定本机回环。局域网成员访问 http://<本机IPv4>:<端口>/。
-# Same pipeline as scripts/dev.sh, plus a LAN port-forward:
-#   Vite binds 0.0.0.0 and the /api proxy rewrites Host/Origin back to
-#   loopback so the backend stays local-only. LAN peers use
-#   http://<host-IPv4>:<port>/.
+# 与 scripts/dev.sh 相同流程，额外开启 LAN HTTPS 端口转发：
+#   Vite 监听 0.0.0.0 并使用自签证书（SAN 含本机 IPv4），/api 代理把
+#   Host/Origin 改写回 127.0.0.1；
+#   后端仍只绑定本机回环。局域网成员访问 https://<本机IPv4>:<端口>/，首次需信任自签证书。
+# Same pipeline as scripts/dev.sh, plus a LAN HTTPS port-forward:
+#   Vite binds 0.0.0.0 with a self-signed cert (SAN includes the LAN IP) and
+#   the /api proxy rewrites Host/Origin back to 127.0.0.1 so the backend stays
+#   loopback-only. LAN peers use https://<host-IPv4>:<port>/ and must trust
+#   the cert once so window.isSecureContext enables pairing and camera playback.
 set -euo pipefail
 command -v node >/dev/null || { echo '[ERROR] 请先安装 Node.js 24 LTS，再重新打开终端。' >&2; exit 1; }
 
@@ -34,7 +36,7 @@ if [ -n "$lan_host" ] && ! printf '%s' "$lan_host" | grep -Eq '^[0-9]{1,3}(\.[0-
   exit 1
 fi
 
-echo '[WebOBS] LAN mode：仅限受信任局域网联调，不要对公网暴露 / Trusted LAN only; never expose to the public Internet.' >&2
+echo '[WebOBS] LAN mode (HTTPS): trusted LAN only; never expose to the public Internet. Trust the self-signed cert once per browser.' >&2
 
 script_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 launch_args=(--lan)

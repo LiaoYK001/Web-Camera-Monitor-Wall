@@ -10,9 +10,11 @@ param(
     [switch]$Help
 )
 # dev-lan-environment.ps1 -- LAN co-dev entry (same pipeline as scripts/dev.ps1).
-# Enables a LAN port-forward: Vite binds 0.0.0.0 and the /api proxy rewrites
-# Host/Origin back to 127.0.0.1 so the backend stays loopback-only. LAN peers
-# use http://<host-IPv4>:<Port>/.
+# Enables a LAN HTTPS port-forward: Vite binds 0.0.0.0 with a self-signed cert
+# (SAN includes the LAN IP) and the /api proxy rewrites Host/Origin back to
+# 127.0.0.1 so the backend stays loopback-only. LAN peers use
+# https://<host-IPv4>:<Port>/ and must trust the cert once so
+# window.isSecureContext enables browser pairing and camera playback.
 # Keep Write-Host strings ASCII-only: Windows PowerShell 5.1 parses a BOM-less
 # .ps1 as ANSI and would garble UTF-8 Chinese here. Bilingual notes live in
 # scripts/dev.mjs.
@@ -25,7 +27,7 @@ if ($LanHost -and $LanHost -notmatch '^\d{1,3}(\.\d{1,3}){3}$') {
     Write-Host '[ERROR] -LanHost must be a dotted IPv4 address (e.g. 192.168.1.20).' -ForegroundColor Red
     exit 1
 }
-Write-Host '[WebOBS] LAN mode: trusted LAN only; never expose to the public Internet.' -ForegroundColor Yellow
+Write-Host '[WebOBS] LAN mode (HTTPS): trusted LAN only; never expose to the public Internet. Trust the self-signed cert once per browser.' -ForegroundColor Yellow
 $arguments = @((Join-Path $PSScriptRoot 'dev.mjs'), '--lan', '--mode', $Mode, '--api', $Api, '--port', "$Port", '--distro', $Distro, '--engine', $Engine)
 if ($LanHost) { $arguments += @('--lan-host', $LanHost) }
 if ($Setup) { $arguments += '--setup' }

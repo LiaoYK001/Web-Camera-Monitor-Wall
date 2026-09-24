@@ -24,9 +24,74 @@ function detectLanIPv4() {
   }
   return '';
 }
+
+/**
+ * LAN co-dev needs an HTTPS Secure Context: browser pairing (WebCrypto,
+ * libsodium) and camera media plans are disabled on plain http://<LAN-IP>.
+ * Generate or reuse a self-signed cert whose SAN covers the LAN IP so Vite can
+ * terminate TLS. Colleagues accept the warning once; the backend stays HTTP
+ * loopback behind the Vite proxy.
+ */
+function ensureLanCertificate(lanHost) {
+  const dir = path.join(root, 'build', 'dev-lan-tls');
+  const certPath = path.join(dir, 'cert.pem');
+  const keyPath = path.join(dir, 'key.pem');
+  const metaPath = path.join(dir, 'meta.json');
+  const san = `IP:${lanHost},IP:127.0.0.1,DNS:localhost`;
+  if (existsSync(certPath) && existsSync(keyPath) && existsSync(metaPath)) {
+    try {
+      const meta = JSON.parse(readFileSync(metaPath, 'utf8'));
+      if (meta.lanHost === lanHost && meta.san === san) return { certPath, keyPath, reused: true };
+    } catch { /* regenerate below */ }
+  }
+  mkdirSync(dir, { recursive: true });
+  // Windows OpenSSL often has no system openssl.cnf; always pass a minimal one.
+  const configPath = path.join(dir, 'openssl.cnf');
+  writeFileSync(configPath, [
+    '[req]',
+    'distinguished_name = req_distinguished_name',
+    'x509_extensions = v3_req',
+    'prompt = no',
+    '[req_distinguished_name]',
+    `CN = ${lanHost}`,
+    '[v3_req]',
+    'basicConstraints = CA:FALSE',
+    'keyUsage = digitalSignature, keyEncipherment',
+    'extendedKeyUsage = serverAuth',
+    `subjectAltName = ${san}`,
+    '',
+  ].join('\n'), { mode: 0o600 });
+  try {
+    // -batch + closed stdin: never block on a passphrase/DN prompt (Windows
+    // openssl can open the console and wedge the whole launcher).
+    run('openssl', [
+      'req', '-batch', '-x509', '-newkey', 'rsa:2048', '-nodes', '-days', '365',
+      '-keyout', keyPath, '-out', certPath,
+      '-config', configPath,
+      '-subj', `/CN=${lanHost}`,
+    ], true, dir);
+  } catch (error) {
+    throw new Error(`LAN HTTPS 自签证书生成失败（需要 openssl）。请安装 OpenSSL 后重试。${String(error.message ?? error).slice(0, 300)}`);
+  }
+  writeFileSync(metaPath, JSON.stringify({ lanHost, san, createdAt: Date.now() }, null, 2), { mode: 0o600 });
+  return { certPath, keyPath, reused: false };
+}
 function run(command, args, capture = false, cwd = root) {
-  const result = spawnSync(command, args, { cwd, encoding: 'utf8', stdio: capture ? 'pipe' : 'inherit', windowsHide: true, ...(capture ? { timeout: 30000 } : {}) });
-  if (result.error || result.status !== 0) throw new Error(`${command} 执行失败。${result.error?.message ?? (result.stderr ?? '').trim()}`);
+  // Always timeout + empty stdin: a child that prompts or never exits must not
+  // wedge the launcher (and the agent session driving it).
+  const result = spawnSync(command, args, {
+    cwd,
+    encoding: 'utf8',
+    stdio: capture ? 'pipe' : 'inherit',
+    windowsHide: true,
+    timeout: capture ? 30000 : 600000,
+    input: '',
+  });
+  if (result.error || result.status !== 0) {
+    const detail = result.error?.message ?? (result.stderr ?? result.stdout ?? '').trim() ?? '';
+    const timedOut = result.error?.code === 'ETIMEDOUT' || result.signal;
+    throw new Error(`${command} 执行失败${timedOut ? '（超时）' : ''}。${detail}`.slice(0, 500));
+  }
   return (result.stdout ?? '').trim();
 }
 function launch(command, args, cwd = root, piped = false) {
@@ -88,7 +153,7 @@ try {
     else { if (!args[i + 1] || args[i + 1].startsWith('--')) throw new Error(`参数 ${args[i]} 缺少值`); options[key] = args[++i]; }
   }
   if (options.help) {
-    console.log(`WebOBS 本地开发\n\nWindows: .\\scripts\\dev.ps1 [-Setup] [-Check] [-Composite] [-Soak] [-Mode native|frontend|container] [-Api URL] [-Port 5173]\nLinux:   bash scripts/dev.sh [--setup] [--check] [--composite] [--soak] [--mode native|frontend|container] [--api URL] [--port 5173]\n\nLAN:     .\\scripts\\dev-lan-environment.ps1 [-LanHost IP] [-Port 5173] ...\n         bash scripts/dev-lan-environment.sh [--lan-host IP] [--port 5173] ...\n\nnative    默认：原生 C++/Python 后端 + Vite；Windows 后端运行在 WSL2。首次加 --setup / -Setup 安装 Ubuntu 24.04 依赖。\n--composite / -Composite\n          显式启用本地服务端合成（OBS 图形/媒体输入/编码与 WHIP 输出模块）。\n          首次使用：.\\scripts\\dev.ps1 -Setup -Composite；日常：.\\scripts\\dev.ps1 -Composite。\n          不带参数时保持轻量 native 默认行为（不构建合成模块）。\nfrontend  仅启动 Vite，连接 --api / -Api 指定的已有后端。\ncontainer 可选兼容模式；需要已启动 Docker/Podman，仅显式 --build / -Build 时构建镜像。\n--soak / -Soak\n          耐久/长稳模式：后端不监听父进程 stdin，父终端关闭也不会停止本次会话；\n          供 30 分钟验收与持续采样使用。退出用 Ctrl+C 或 SIGTERM。仅 native 模式生效。\n--lan     局域网开发模式（dev-lan-environment）：Vite 监听 0.0.0.0，/api 代理把\n          Host/Origin 改写回 127.0.0.1，后端仍只绑定本机回环（端口转发语义）。\n          局域网成员用 http://<本机IPv4>:<端口>/ 访问。仅限受信任局域网，不是公网部署。\n--lan-host 指定对外 IPv4（默认自动探测第一个非链路本地 IPv4）。\n--check   只检查环境，不安装、不构建、不启动。\n--distro  Windows WSL 发行版，默认 Ubuntu-24.04。\n--engine  docker 或 podman（仅 container）。--builder 为 Docker 构建器。\n\nCtrl+C 结束本次原生服务和前端；容器模式保留后端。详见 docs/development.md。`);
+    console.log(`WebOBS 本地开发\n\nWindows: .\\scripts\\dev.ps1 [-Setup] [-Check] [-Composite] [-Soak] [-Mode native|frontend|container] [-Api URL] [-Port 5173]\nLinux:   bash scripts/dev.sh [--setup] [--check] [--composite] [--soak] [--mode native|frontend|container] [--api URL] [--port 5173]\n\nLAN:     .\\scripts\\dev-lan-environment.ps1 [-LanHost IP] [-Port 5173] ...\n         bash scripts/dev-lan-environment.sh [--lan-host IP] [--port 5173] ...\n\nnative    默认：原生 C++/Python 后端 + Vite；Windows 后端运行在 WSL2。首次加 --setup / -Setup 安装 Ubuntu 24.04 依赖。\n--composite / -Composite\n          显式启用本地服务端合成（OBS 图形/媒体输入/编码与 WHIP 输出模块）。\n          首次使用：.\\scripts\\dev.ps1 -Setup -Composite；日常：.\\scripts\\dev.ps1 -Composite。\n          不带参数时保持轻量 native 默认行为（不构建合成模块）。\nfrontend  仅启动 Vite，连接 --api / -Api 指定的已有后端。\ncontainer 可选兼容模式；需要已启动 Docker/Podman，仅显式 --build / -Build 时构建镜像。\n--soak / -Soak\n          耐久/长稳模式：后端不监听父进程 stdin，父终端关闭也不会停止本次会话；\n          供 30 分钟验收与持续采样使用。退出用 Ctrl+C 或 SIGTERM。仅 native 模式生效。\n--lan     局域网开发模式（dev-lan-environment）：Vite 监听 0.0.0.0 并启用自签 HTTPS，\n          /api 代理把 Host/Origin 改写回 127.0.0.1，后端仍只绑定本机回环（端口转发语义）。\n          局域网成员用 https://<本机IPv4>:<端口>/ 访问；首次需信任自签证书，否则\n          浏览器配对与 camera 播放不可用（非 Secure Context）。仅限受信任局域网。\n--lan-host 指定对外 IPv4（默认自动探测）。SAN 含该 IP 与 127.0.0.1/localhost。\n--check   只检查环境，不安装、不构建、不启动。\n--distro  Windows WSL 发行版，默认 Ubuntu-24.04。\n--engine  docker 或 podman（仅 container）。--builder 为 Docker 构建器。\n\nCtrl+C 结束本次原生服务和前端；容器模式保留后端。详见 docs/development.md。`);
     process.exit(0);
   }
   if (!/^\d+$/.test(options.port) || Number(options.port) < 1024 || Number(options.port) > 65535) throw new Error('前端端口须为 1024–65535');
@@ -116,7 +181,13 @@ try {
     // Bilingual safety notice lives here (not in .ps1): PowerShell 5.1 would
     // garble UTF-8 Chinese in a BOM-less .ps1, while Node always emits UTF-8.
     log('LAN 模式 / LAN mode：仅限受信任局域网联调，不要对公网暴露 / Trusted LAN only; never expose to the public Internet.');
-    log(`LAN 端口转发 / port-forward：http://${lanHost}:${options.port}/  →  127.0.0.1:${options.port}\n  后端仍只监听 127.0.0.1:8080；/api 代理改写 Host/Origin 为回环。\n  Backend stays loopback-only; the /api proxy rewrites Host/Origin to 127.0.0.1.\n  [安全 / Security] 防火墙请只放行 / open firewall only for ${options.port}/tcp${options.mode === 'native' ? ' 与 8189/udp、8190/tcp（WebRTC） / WebRTC' : ''}。`);
+    // Self-signed HTTPS is required: window.isSecureContext is false on
+    // http://<LAN-IP>, which disables browser pairing and camera media plans.
+    const certificate = ensureLanCertificate(lanHost);
+    process.env.WEBOBS_VITE_HTTPS_CERT = certificate.certPath;
+    process.env.WEBOBS_VITE_HTTPS_KEY = certificate.keyPath;
+    log(`LAN HTTPS 端口转发 / port-forward：https://${lanHost}:${options.port}/  →  127.0.0.1:${options.port}\n  后端仍只监听 127.0.0.1:8080；/api 代理改写 Host/Origin 为回环。\n  Backend stays loopback-only; the /api proxy rewrites Host/Origin to 127.0.0.1.\n  [安全 / Security] 防火墙请只放行 / open firewall only for ${options.port}/tcp${options.mode === 'native' ? ' 与 8189/udp、8190/tcp（WebRTC） / WebRTC' : ''}。`);
+    log(`LAN 自签证书 / self-signed cert：${certificate.reused ? '复用已有' : '已生成'}（SAN 含 ${lanHost}、127.0.0.1、localhost）\n  浏览器首次访问请信任该证书警告；否则配对与 camera 播放不可用。\n  Trust the certificate warning once in each browser, or pairing and camera playback stay disabled.`);
     process.env.WEBOBS_LAN = '1';
     process.env.WEBOBS_LAN_HOST = lanHost;
   }
@@ -174,15 +245,19 @@ try {
   stateFile = path.join(root, 'build', `dev-session-${options.port}.json`);
   writeFileSync(stateFile, JSON.stringify({ controlPort: controlServer.address().port, token }), { mode: 0o600 });
   process.env.WEBOBS_API_PROXY_TARGET = options.api;
+  const originScheme = options.lan ? 'https' : 'http';
   const originHosts = options.lan
     ? ['127.0.0.1', 'localhost', options.lanHost]
     : ['127.0.0.1', 'localhost'];
-  process.env.WEBOBS_DEV_ALLOWED_ORIGINS = originHosts.flatMap(host => [8080, options.port].map(port => `http://${host}:${port}`)).join(',');
+  process.env.WEBOBS_DEV_ALLOWED_ORIGINS = originHosts.flatMap(host => [8080, options.port].map(port => `${originScheme}://${host}:${port}`)).join(',');
   const viteHost = options.lan ? '0.0.0.0' : '127.0.0.1';
   const frontend = () => {
-    const localUrl = `http://127.0.0.1:${options.port}`;
-    const lanUrl = options.lan ? `http://${options.lanHost}:${options.port}` : '';
-    log(`就绪： ${localUrl}${lanUrl ? `\n  局域网： ${lanUrl}（同事可访问）` : ''}\n  后端：${options.api}\n  Ctrl+C 停止本次开发进程。修改 C++/Python 后 Ctrl+C 再运行；前端自动热更新。`);
+    // LAN mode is always HTTPS so window.isSecureContext enables pairing + WebCrypto.
+    const localUrl = options.lan
+      ? `https://127.0.0.1:${options.port}`
+      : `http://127.0.0.1:${options.port}`;
+    const lanUrl = options.lan ? `https://${options.lanHost}:${options.port}` : '';
+    log(`就绪： ${localUrl}${lanUrl ? `\n  局域网： ${lanUrl}（同事可访问；首次请信任自签证书）` : ''}\n  后端：${options.api}\n  Ctrl+C 停止本次开发进程。修改 C++/Python 后 Ctrl+C 再运行；前端自动热更新。`);
     launch(process.execPath, pnpmArgs(['dev', '--host', viteHost, '--port', options.port, '--strictPort']), web);
   };
   if (options.mode === 'native') {
