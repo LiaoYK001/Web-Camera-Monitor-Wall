@@ -94,8 +94,10 @@ def write_lan_mediamtx_config(lan_host: str) -> Path:
     """
     source = (ROOT / 'gateway/mediamtx.yml').read_text(encoding='utf-8')
     text = source
+    # Include CGNAT/VPN (100.64/10 Tailscale) and the advertised LAN host so
+    # auth does not reject peers that are not classic RFC1918.
     text = text.replace('ips: [127.0.0.1, ::1]',
-                        'ips: [127.0.0.1, ::1, 10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16]')
+                        f'ips: [127.0.0.1, ::1, 10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16, 100.64.0.0/10, {lan_host}]')
     text = text.replace('webrtcAddress: 127.0.0.1:8889', 'webrtcAddress: 0.0.0.0:8889')
     text = text.replace('webrtcLocalUDPAddress: :8189', 'webrtcLocalUDPAddress: 0.0.0.0:8189')
     text = text.replace("webrtcLocalTCPAddress: ''", "webrtcLocalTCPAddress: '0.0.0.0:8190'")
@@ -274,6 +276,9 @@ def main():
     # Long-run/background mode: do not stop when the parent closes stdin.
     parser.add_argument('--soak', action='store_true')
     parser.add_argument('--frontend-port', type=int, default=5173)
+    # argv, not env: Windows environment variables do not cross `wsl.exe --exec`.
+    parser.add_argument('--lan-host', default='',
+                        help='LAN IPv4 to advertise in WebRTC ICE (dev-lan-environment).')
     args = parser.parse_args()
     if args.install_deps:
         release = platform.freedesktop_os_release()
@@ -538,7 +543,7 @@ def main():
     # LAN dev (dev-lan-environment): MediaMTX WebRTC must be reachable from other
     # machines. The control plane itself stays on 127.0.0.1 and is reached through
     # the Vite port-forward, so this only widens media ports for a trusted LAN.
-    lan_host = os.environ.get('WEBOBS_LAN_HOST', '').strip()
+    lan_host = (getattr(args, 'lan_host', '') or os.environ.get('WEBOBS_LAN_HOST', '')).strip()
     mediamtx_config = ROOT / 'gateway/mediamtx.yml'
     if lan_host:
         mediamtx_config = write_lan_mediamtx_config(lan_host)
@@ -546,7 +551,7 @@ def main():
             'MTX_WEBRTCLOCALUDPADDRESS': '0.0.0.0:8189',
             'MTX_WEBRTCLOCALTCPADDRESS': '0.0.0.0:8190',
         })
-        say(f'LAN 媒体：MediaMTX WebRTC 监听 0.0.0.0:8189/udp 与 8190/tcp，附加 ICE 主机 {lan_host}')
+        say(f'LAN 媒体：MediaMTX WebRTC ICE 主机 {lan_host}；ICE/TCP 8190 需从 Windows 中继（WSL2 不转发远端 UDP/TCP）')
     # Prevent inherited production options from accidentally turning on Composite/recording.
     env.pop('WEBOBS_OUTPUT', None); env.pop('WEBOBS_RTSP_URL', None)
     start('mediamtx', [media, mediamtx_config], env,
