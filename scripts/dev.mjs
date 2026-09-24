@@ -113,7 +113,10 @@ try {
       throw new Error('未能确定局域网 IPv4。请用 --lan-host / -LanHost 指定本机局域网地址。');
     }
     options.lanHost = lanHost;
-    log(`LAN 端口转发：http://${lanHost}:${options.port}/  →  127.0.0.1:${options.port}\n  后端仍只监听 127.0.0.1:8080；/api 代理改写 Host/Origin 为回环。\n  [安全] 仅限受信任局域网联调，不要对公网暴露；防火墙请只放行 ${options.port}/tcp${options.mode === 'native' ? ' 与 8189/udp、8190/tcp（WebRTC）' : ''}。`);
+    // Bilingual safety notice lives here (not in .ps1): PowerShell 5.1 would
+    // garble UTF-8 Chinese in a BOM-less .ps1, while Node always emits UTF-8.
+    log('LAN 模式 / LAN mode：仅限受信任局域网联调，不要对公网暴露 / Trusted LAN only; never expose to the public Internet.');
+    log(`LAN 端口转发 / port-forward：http://${lanHost}:${options.port}/  →  127.0.0.1:${options.port}\n  后端仍只监听 127.0.0.1:8080；/api 代理改写 Host/Origin 为回环。\n  Backend stays loopback-only; the /api proxy rewrites Host/Origin to 127.0.0.1.\n  [安全 / Security] 防火墙请只放行 / open firewall only for ${options.port}/tcp${options.mode === 'native' ? ' 与 8189/udp、8190/tcp（WebRTC） / WebRTC' : ''}。`);
     process.env.WEBOBS_LAN = '1';
     process.env.WEBOBS_LAN_HOST = lanHost;
   }
