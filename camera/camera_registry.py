@@ -29,7 +29,7 @@ from http.cookiejar import CookieJar
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.error import HTTPError, URLError
-from urllib.parse import parse_qs, urljoin, urlsplit
+from urllib.parse import parse_qs, unquote, urljoin, urlsplit
 from urllib.parse import quote, urlunsplit
 from urllib.request import (
     HTTPBasicAuthHandler, HTTPDigestAuthHandler, HTTPPasswordMgrWithDefaultRealm,
@@ -409,17 +409,123 @@ def safe_endpoint(value: str, adapter: str) -> str:
     return value if "://" in value else "http://" + value
 
 
+def managed_secret_root() -> Path:
+    """Writable sibling of SECRET_ROOT for UI-created credentials (F6-01)."""
+    override = os.environ.get("WEBOBS_CAMERA_SECRET_WRITE_ROOT")
+    if override:
+        return Path(override)
+    try:
+        SECRET_ROOT.mkdir(parents=True, exist_ok=True)
+        if os.access(SECRET_ROOT, os.W_OK):
+            return SECRET_ROOT
+    except OSError:
+        pass
+    return DB_PATH.parent / "webobs-camera-credentials"
+
+
+def split_url_credentials(value: str) -> tuple[str, str, str]:
+    """Extract userinfo from a URL. Returns (clean_url, username, password).
+
+    Stored endpoints must never retain userinfo; F6-01 accepts it only as an
+    import convenience and immediately moves it into the credential store.
+    """
+    if not isinstance(value, str) or "://" not in value:
+        return value, "", ""
+    parsed = urlsplit(value)
+    if parsed.username is None and parsed.password is None:
+        return value, "", ""
+    username = unquote(parsed.username or "")
+    password = unquote(parsed.password or "")
+    host = parsed.hostname or ""
+    if not host:
+        raise ValueError("URL host is required when extracting credentials")
+    if ":" in host and not host.startswith("["):
+        host = f"[{host}]"
+    if parsed.port:
+        host = f"{host}:{parsed.port}"
+    clean = urlunsplit((parsed.scheme, host, parsed.path, parsed.query, ""))
+    return clean, username, password
+
+
+def validate_credential_pair(username: str, password: str) -> tuple[str, str]:
+    if not isinstance(username, str) or not isinstance(password, str):
+        raise ValueError("username and password must be strings")
+    if not (1 <= len(username.encode("utf-8")) <= 256) or any(ord(c) < 32 for c in username) or ":" in username:
+        raise ValueError("username must be 1-256 printable bytes without colon")
+    if not (1 <= len(password.encode("utf-8")) <= 512) or any(ord(c) < 32 for c in password):
+        raise ValueError("password must be 1-512 bytes without control characters")
+    return username, password
+
+
+def write_credentials(credentials_ref: str, username: str, password: str) -> str:
+    """Persist camera credentials as a 0600 secret file. Never returns the secret."""
+    username, password = validate_credential_pair(username, password)
+    if not isinstance(credentials_ref, str) or not SECRET_REF_RE.fullmatch(credentials_ref) or \
+            not credentials_ref or ".." in credentials_ref.split("/"):
+        raise PermissionError("camera credential reference is invalid")
+    root = managed_secret_root()
+    root.mkdir(parents=True, exist_ok=True)
+    try:
+        os.chmod(root, 0o700)
+    except OSError:
+        pass
+    secret_path = (root / f"{credentials_ref}.json").resolve()
+    if root.resolve() not in secret_path.parents:
+        raise PermissionError("camera credential reference is invalid")
+    payload = json.dumps({"username": username, "password": password}, separators=(",", ":"))
+    fd = os.open(secret_path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    try:
+        os.write(fd, payload.encode("utf-8"))
+    finally:
+        os.close(fd)
+    try:
+        os.chmod(secret_path, 0o600)
+    except OSError:
+        pass
+    return credentials_ref
+
+
+def generate_credentials_ref(camera_id: str) -> str:
+    safe = re.sub(r"[^a-zA-Z0-9._-]", "-", camera_id)[:40] or "camera"
+    return f"ui-{safe}-{secrets.token_hex(4)}"
+
+
+def set_camera_credentials(camera_id: str, username: str, password: str) -> dict:
+    """Create or rotate credentials for one camera (F6-01 change-password)."""
+    with connect() as database:
+        row = database.execute("SELECT * FROM cameras WHERE id=?", (camera_id,)).fetchone()
+        if not row:
+            raise KeyError("camera not found")
+        ref = row["credentials_ref"] or generate_credentials_ref(camera_id)
+        write_credentials(ref, username, password)
+        if row["credentials_ref"] != ref:
+            now = int(time.time())
+            database.execute(
+                "UPDATE cameras SET credentials_ref=?,updated_at=?,revision=revision+1 WHERE id=?",
+                (ref, now, camera_id))
+        row = database.execute("SELECT * FROM cameras WHERE id=?", (camera_id,)).fetchone()
+        invalidate_probe_results(camera_id)
+        return camera_document(database, row)
+
+
 def load_credentials(credentials_ref: str) -> tuple[str, str]:
     if not credentials_ref:
         return "", ""
     if not SECRET_REF_RE.fullmatch(credentials_ref) or ".." in credentials_ref.split("/"):
         raise PermissionError("camera credential reference is invalid")
-    secret_root = SECRET_ROOT.resolve()
-    secret_path = (secret_root / f"{credentials_ref}.json").resolve()
-    if secret_root not in secret_path.parents or not secret_path.is_file():
+    candidates = []
+    for root in (SECRET_ROOT, managed_secret_root()):
+        try:
+            secret_root = root.resolve()
+        except OSError:
+            continue
+        secret_path = (secret_root / f"{credentials_ref}.json").resolve()
+        if secret_root in secret_path.parents and secret_path.is_file():
+            candidates.append(secret_path)
+    if not candidates:
         raise PermissionError("camera credential reference is unavailable")
     try:
-        secret = json.loads(secret_path.read_text(encoding="utf-8"))
+        secret = json.loads(candidates[0].read_text(encoding="utf-8"))
     except (OSError, ValueError, json.JSONDecodeError) as error:
         raise PermissionError("camera credential secret is invalid") from error
     username, password = secret.get("username", ""), secret.get("password", "")
@@ -522,7 +628,27 @@ def validate_camera(payload: dict, existing_id: str | None = None) -> dict:
         raise ValueError("camera name must contain 1 to 128 characters")
     if adapter not in ADAPTERS:
         raise ValueError("camera adapter is unsupported")
-    address = safe_endpoint(payload.get("address", ""), adapter)
+    # F6-01: accept userinfo in the submitted URL as an import convenience;
+    # credentials are split out immediately and the stored address is clean.
+    raw_address = payload.get("address", "")
+    if not isinstance(raw_address, str):
+        raise ValueError("address must be a string")
+    address, url_username, url_password = split_url_credentials(raw_address)
+    address = safe_endpoint(address, adapter)
+    for profile in payload.get("profiles", []) if isinstance(payload.get("profiles"), list) else []:
+        if isinstance(profile, dict) and isinstance(profile.get("endpoint"), str):
+            endpoint, p_user, p_pass = split_url_credentials(profile["endpoint"])
+            if p_user or p_pass:
+                if url_username or url_password:
+                    if (p_user, p_pass) != (url_username, url_password):
+                        raise ValueError("all endpoints must use the same credentials")
+                else:
+                    url_username, url_password = p_user, p_pass
+            profile["endpoint"] = endpoint
+    username = payload.get("username", url_username)
+    password = payload.get("password", url_password)
+    if username or password:
+        validate_credential_pair(username, password)
     credentials_ref = payload.get("credentialsRef", "")
     if not isinstance(credentials_ref, str) or not SECRET_REF_RE.fullmatch(credentials_ref) or ".." in credentials_ref.split("/"):
         raise ValueError("credentialsRef is invalid")
@@ -551,12 +677,16 @@ def validate_camera(payload: dict, existing_id: str | None = None) -> dict:
     revision = payload.get("revision", 1)
     if isinstance(revision, bool) or not isinstance(revision, int) or revision < 1:
         raise ValueError("camera revision must be a positive integer")
-    return {
+    result = {
         "id": camera_id, "name": name.strip(), "address": address, "adapter": adapter,
         "credentialsRef": credentials_ref, "hardwareDecode": hardware_decode,
         "capabilities": capabilities, "profiles": profiles, "kind": kind,
         "enabled": enabled, "groupId": group_id.strip(), "tags": tags, "revision": revision,
     }
+    # Pending secrets are written by save_camera; never persisted inside the document.
+    if username and password:
+        result["__pendingCredentials"] = (username, password)
+    return result
 
 
 def track_documents(database: sqlite3.Connection, camera_id: str, profile: sqlite3.Row) -> list[dict]:
@@ -608,7 +738,9 @@ def camera_document(database: sqlite3.Connection, row: sqlite3.Row) -> dict:
     profiles = [profile_document(database, row["id"], profile) for profile in profile_rows]
     return {
         "id": row["id"], "name": row["name"], "address": row["address"],
+        "addressDisplay": sanitized_endpoint(row["address"], bool(row["credentials_ref"])),
         "adapter": row["adapter"], "credentialsRef": row["credentials_ref"],
+        "credentialsConfigured": bool(row["credentials_ref"]),
         "hardwareDecode": row["hardware_decode"], "capabilities": json.loads(row["capabilities_json"]),
         "health": row["health"], "profiles": profiles, "createdAt": row["created_at"],
         "updatedAt": row["updated_at"], "kind": row["kind"], "enabled": bool(row["enabled"]),
@@ -616,7 +748,7 @@ def camera_document(database: sqlite3.Connection, row: sqlite3.Row) -> dict:
     }
 
 
-def sanitized_endpoint(value: str) -> str:
+def sanitized_endpoint(value: str, has_credentials: bool = False) -> str:
     try:
         parsed = urlsplit(value)
         host = parsed.hostname or ""
@@ -624,7 +756,9 @@ def sanitized_endpoint(value: str) -> str:
             host = f"[{host}]"
         if parsed.port:
             host = f"{host}:{parsed.port}"
-        return urlunsplit((parsed.scheme, host, parsed.path, "", ""))
+        # F6-01 display form: rtsp://*****:*****@host/path when credentials exist.
+        authority = f"*****:*****@{host}" if has_credentials else host
+        return urlunsplit((parsed.scheme, authority, parsed.path, "", ""))
     except ValueError:
         return "unavailable"
 
@@ -637,7 +771,7 @@ def source_catalog_document(database: sqlite3.Connection, row: sqlite3.Row) -> d
     total_tracks = 0
     for profile in profile_rows:
         value = profile_document(database, row["id"], profile, include_endpoint=False)
-        value["endpointDisplay"] = sanitized_endpoint(profile["endpoint"])
+        value["endpointDisplay"] = sanitized_endpoint(profile["endpoint"], bool(row["credentials_ref"]))
         total_tracks += len(value["tracks"])
         profiles.append(value)
     try:
@@ -652,7 +786,8 @@ def source_catalog_document(database: sqlite3.Connection, row: sqlite3.Row) -> d
     return {
         "schemaVersion": 2, "id": row["id"], "name": row["name"], "kind": row["kind"],
         "adapter": row["adapter"], "enabled": bool(row["enabled"]), "groupId": row["group_id"],
-        "tags": json.loads(row["tags_json"]), "addressDisplay": sanitized_endpoint(row["address"]),
+        "tags": json.loads(row["tags_json"]), "addressDisplay": sanitized_endpoint(row["address"], bool(row["credentials_ref"])),
+        "credentialsConfigured": bool(row["credentials_ref"]),
         "health": row["health"], "hardwareDecode": row["hardware_decode"],
         "deviceCapabilities": safe_capabilities,
         "profileCount": len(profiles), "trackCount": total_tracks, "profiles": profiles,
@@ -1137,7 +1272,13 @@ def resolve_profile(database: sqlite3.Connection, camera_id: str, profile_id: st
 
 def save_camera(camera: dict, replace: bool) -> dict:
     now = int(time.time())
+    pending = camera.pop("__pendingCredentials", None)
     invalidate_probe_results(camera["id"])
+    if pending:
+        username, password = pending
+        credentials_ref = camera.get("credentialsRef") or generate_credentials_ref(camera["id"])
+        write_credentials(credentials_ref, username, password)
+        camera["credentialsRef"] = credentials_ref
     with connect() as database:
         current = database.execute(
             "SELECT created_at,capabilities_json,revision FROM cameras WHERE id=?", (camera["id"],)).fetchone()
@@ -2826,10 +2967,11 @@ def device_audit(camera_id: str) -> list[dict]:
 
 
 def classify(address: str) -> dict:
-    normalized = address if "://" in address else "http://" + address
+    normalized, extracted_user, extracted_pass = split_url_credentials(
+        address if "://" in address else "http://" + address)
     parsed = urlsplit(normalized)
     if parsed.username or parsed.password:
-        raise ValueError("embedded credentials are forbidden")
+        raise ValueError("embedded credentials are forbidden after extraction")
     scheme, path = parsed.scheme.lower(), parsed.path.lower()
     adapter = "onvif"
     if scheme in ("rtsp", "rtsps"): adapter = "rtsp"
@@ -2841,7 +2983,12 @@ def classify(address: str) -> dict:
     elif ("mjpeg" in path or "mjpg" in path or
           path.endswith("/-wvhttp-01-/video.cgi")): adapter = "mjpeg"
     elif "whep" in path: adapter = "whep"
-    result = {"address": normalized, "adapter": adapter, "profiles": [], "probe": "classified"}
+    result = {"address": normalized, "adapter": adapter, "profiles": [], "probe": "classified",
+              "credentialsExtracted": bool(extracted_user or extracted_pass),
+              "authRequired": bool(extracted_user or extracted_pass)}
+    # Username may be echoed for form prefill; the password never leaves the server.
+    if extracted_user:
+        result["username"] = extracted_user
     if adapter in {"rtsp", "hls", "http-flv", "srt", "rtp"}:
         result["profiles"] = [{
             "id": "main", "name": "Main", "role": "main", "endpoint": normalized,
@@ -3116,6 +3263,26 @@ class Handler(BaseHTTPRequestHandler):
                 credentials_ref = payload.get("credentialsRef", "")
                 if not isinstance(credentials_ref, str):
                     raise ValueError("credentialsRef is invalid")
+                address = str(payload.get("address", ""))
+                username = payload.get("username", "")
+                password = payload.get("password", "")
+                if username or password:
+                    probe_address, url_user, url_pass = split_url_credentials(address)
+                    if not username:
+                        username, password = url_user, url_pass
+                    validate_credential_pair(username, password)
+                    temp_ref = generate_credentials_ref("probe")
+                    write_credentials(temp_ref, username, password)
+                    try:
+                        result = onvif_probe(probe_address, temp_ref)
+                    finally:
+                        try:
+                            (managed_secret_root() / f"{temp_ref}.json").unlink(missing_ok=True)
+                        except OSError:
+                            pass
+                    result["username"] = username
+                    result["credentialsExtracted"] = True
+                    self.respond(200, result); return
                 self.respond(200, onvif_probe(str(payload.get("address", "")), credentials_ref)); return
             if self.path == "/source-catalog/batch":
                 self.respond(200, {"items": batch_source_catalog(self.payload())}); return
@@ -3207,6 +3374,16 @@ class Handler(BaseHTTPRequestHandler):
                 # stored in the nested policy fields.
                 self.respond(200, {"policies": save_analytics_policies(self.payload(), preserve_v3_tuning=True)})
             except KeyError as error: self.respond(404, {"error": str(error)})
+            except (ValueError, TypeError, json.JSONDecodeError) as error: self.respond(400, {"error": str(error)})
+            return
+        credentials_match = re.fullmatch(r"/cameras/([a-zA-Z0-9._-]{1,64})/credentials", self.path)
+        if credentials_match:
+            try:
+                body = self.payload()
+                self.respond(200, set_camera_credentials(
+                    credentials_match.group(1), body.get("username", ""), body.get("password", "")))
+            except KeyError as error: self.respond(404, {"error": str(error)})
+            except PermissionError as error: self.respond(500, {"error": str(error)})
             except (ValueError, TypeError, json.JSONDecodeError) as error: self.respond(400, {"error": str(error)})
             return
         if not self.path.startswith("/cameras/"):

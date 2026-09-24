@@ -260,7 +260,7 @@ ParseResult parse_config(const std::vector<std::string> &arguments, const Enviro
         {"session_inactivity", "604800"}, {"session_cookie_secure", "true"},
         {"control_allowed_origins", ""},
         {"pwa_media_allowed_origins", ""},
-        {"source_stale_seconds", "10"}, {"source_recovery_base", "5"},
+        {"source_stale_seconds", "10"}, {"source_recovery_base", "3"},
         {"source_recovery_max", "60"},
         {"webrtc_enabled", "false"}, {"composite_enabled", "false"}, {"nvr_enabled", "false"},
         {"camera_registry_enabled", "true"},

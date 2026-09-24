@@ -7,9 +7,10 @@ export interface AudioTrackConnection {
   getState: () => AudioChannelState;
 }
 
+import { reconnectDelayMs } from './whep';
+
 const HANDSHAKE_TIMEOUT_MS = 15_000;
 const STALL_MS = 6_000;
-const MAX_BACKOFF_MS = 15_000;
 
 /**
  * The control plane hands out relative endpoints (for example
@@ -86,12 +87,11 @@ export function connectAudioTrack(
   const scheduleReconnect = (): void => {
     if (closed) return;
     release();
-    attempt += 1;
-    if (attempt > 6) { report('disabled'); return; }
+    // F6-10: never permanently give up on recoverable failures; only 401/403 disables.
     report('reconnecting');
-    const base = Math.min(MAX_BACKOFF_MS, 500 * 2 ** Math.min(attempt, 5));
-    const jitter = 0.7 + Math.random() * 0.6;
-    retryTimer = window.setTimeout(() => void connect(), base * jitter);
+    const delay = reconnectDelayMs(attempt);
+    attempt += 1;
+    retryTimer = window.setTimeout(() => void connect(), delay);
   };
 
   const connect = async (): Promise<void> => {
@@ -134,7 +134,10 @@ export function connectAudioTrack(
         if (closed || !peer) return;
         if (peer.connectionState !== 'connected') return;
         if (handshakeTimer !== undefined) { window.clearTimeout(handshakeTimer); handshakeTimer = undefined; }
-        if (state !== 'connected') report('connected');
+        if (state !== 'connected') {
+          attempt = 0;
+          report('connected');
+        }
         void peer.getStats().then((stats) => {
           let packets = -1;
           stats.forEach((entry) => { if (entry.type === 'inbound-rtp' && entry.kind === 'audio') packets = Number(entry.packetsReceived ?? -1); });

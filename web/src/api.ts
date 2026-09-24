@@ -263,17 +263,20 @@ export const fetchAnalyticsJobs = () => clientAdminRequest<{ jobs: AnalyticsJob[
 export const createAnalyticsJob = (value: { cameraId: string; profileId: string; modelId: string; modelSha256: string; nodeId?: string }) => clientAdminRequest<AnalyticsJob>('/analytics-jobs', {
   method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ kind: 'person', ...value }),
 });
-export const detectCamera = (address: string) => cameraRequest<CameraDetection>('/camera-detect', {
-  method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ address }),
+export const detectCamera = (address: string, credentials?: { username: string; password: string }) => cameraRequest<CameraDetection & { credentialsExtracted?: boolean; username?: string; password?: string; authRequired?: boolean }>('/camera-detect', {
+  method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ address, ...(credentials ?? {}) }),
 });
 export const discoverOnvif = () => cameraRequest<{ devices: Array<{ address: string; host: string; adapter: 'onvif' }> }>('/onvif/discover', {
   method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}',
 });
-export const probeOnvif = (address: string, credentialsRef: string) => cameraRequest<CameraDetection>('/onvif/probe', {
-  method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ address, credentialsRef }),
+export const probeOnvif = (address: string, credentialsRef: string, credentials?: { username: string; password: string }) => cameraRequest<CameraDetection & { credentialsExtracted?: boolean; username?: string; password?: string }>('/onvif/probe', {
+  method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ address, credentialsRef, ...(credentials ?? {}) }),
 });
-export const createCamera = (camera: Partial<CameraRecord>) => cameraRequest<CameraRecord>('/cameras', {
+export const createCamera = (camera: Partial<CameraRecord> & { username?: string; password?: string }) => cameraRequest<CameraRecord>('/cameras', {
   method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(camera),
+});
+export const updateCameraCredentials = (cameraId: string, username: string, password: string) => cameraRequest<CameraRecord>(`/cameras/${encodeURIComponent(cameraId)}/credentials`, {
+  method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ username, password }),
 });
 export const syncOnvifCamera = (cameraId: string) => cameraRequest<CameraRecord>(`/cameras/${encodeURIComponent(cameraId)}/onvif/sync`, {
   method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}',

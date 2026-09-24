@@ -2003,3 +2003,28 @@ select:focus-visible,
 
 /* A confirmed no-audio source keeps its row but spans the note across it. */
 .audio-channel.no-audio .audio-track-missing { grid-column: 1 / -1; align-self: center; }
+
+/* F6-05/F6-06 homepage audio hero + OBS-style mixer */
+.hero-audio-control { gap: 12px; padding: 10px 12px; border: 1px solid var(--line); border-radius: 10px; background: linear-gradient(180deg, #141a12, #0f1219); }
+.hero-audio-control .audio-master-toggle { font-size: 15px; font-weight: 700; padding: 10px 18px; min-height: 40px; }
+.quick-bar { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; padding: 8px 0; }
+.canvas-size-readout { color: var(--muted); font-variant-numeric: tabular-nums; }
+.audio-mixer-bar { margin: 8px 0; border: 1px solid var(--line); border-radius: 10px; background: var(--panel); padding: 8px 10px; }
+.audio-mixer-bar.collapsed .audio-mixer-columns { display: none; }
+.audio-mixer-bar-head { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; margin-bottom: 8px; }
+.audio-mixer-master { display: inline-flex; align-items: center; gap: 6px; }
+.audio-mixer-columns { display: flex; gap: 10px; overflow-x: auto; padding-bottom: 4px; }
+.audio-mixer-channel { flex: 0 0 120px; display: grid; gap: 6px; padding: 8px; border: 1px solid var(--line-soft); border-radius: 8px; background: var(--panel-raised); }
+.audio-mixer-channel header { display: flex; justify-content: space-between; gap: 4px; font-size: 12px; font-weight: 600; }
+.audio-mixer-channel header span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.audio-mixer-meter { position: relative; height: 72px; border-radius: 4px; background: #0a0d12; overflow: hidden; border: 1px solid var(--line-soft); }
+.audio-mixer-meter-fill { position: absolute; left: 0; right: 0; bottom: 0; background: linear-gradient(180deg, #ffcb66, #7ddb5a 40%, #3d9a2f); transition: height 80ms linear; }
+.audio-mixer-meter-peak { position: absolute; left: 0; right: 0; height: 2px; background: #fff; }
+.audio-mixer-db { font-size: 11px; color: var(--muted); font-variant-numeric: tabular-nums; }
+.audio-mixer-fader { width: 100%; }
+.audio-mixer-actions { display: flex; gap: 4px; }
+.audio-mixer-actions button { min-width: 32px; min-height: 28px; }
+.audio-mixer-actions button.active { background: var(--accent); color: #111; }
+.audio-mixer-tracks { display: grid; gap: 2px; font-size: 11px; }
+.device-login { display: grid; gap: 8px; padding: 12px; margin-top: 10px; border: 1px dashed var(--line); border-radius: 8px; background: #0c1016; }
+.device-login label { display: grid; gap: 4px; }

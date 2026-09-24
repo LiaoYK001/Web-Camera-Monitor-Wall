@@ -133,6 +133,19 @@ const HANDSHAKE_TIMEOUT_MS = 15_000;
 const FIRST_FRAME_TIMEOUT_MS = 20_000;
 const STALL_MS = 6_000;
 
+/** F6-10 progressive reconnect ladder: 3s → 5s → 10s → 20s → 40s → 60s cap. */
+export const RECONNECT_BASE_DELAYS_MS = [3_000, 5_000, 10_000, 20_000, 40_000, 60_000] as const;
+export const RECONNECT_MAX_DELAY_MS = 60_000;
+
+/** Deterministic ladder position for `attempt` (0-based), with ±25% jitter applied by callers. */
+export function reconnectDelayMs(attempt: number, random: () => number = Math.random): number {
+  const index = Math.max(0, Math.floor(attempt));
+  const base = index < RECONNECT_BASE_DELAYS_MS.length
+    ? RECONNECT_BASE_DELAYS_MS[index]
+    : RECONNECT_MAX_DELAY_MS;
+  return Math.round(base * (0.85 + random() * 0.3));
+}
+
 function connectWhep(
   video: HTMLVideoElement,
   resolveEndpoint: EndpointResolver,
@@ -219,9 +232,9 @@ function connectWhep(
     report({ signaling: false, iceConnected: false, mediaReceived: false, firstFrame: false, playing: false,
       reconnects: stage.reconnects + 1, lastError: reason });
     onState(attempt === 0 ? 'offline' : 'reconnecting');
-    // Bounded exponential backoff with jitter: five tiles must not reconnect in lockstep.
-    const delay = Math.round(Math.min(1000 * (2 ** attempt), 15_000) * (0.7 + Math.random() * 0.6));
-    attempt = Math.min(attempt + 1, 4);
+    // F6-10: progressive 3→5→10→20→40→60s ladder, never stops on recoverable errors.
+    const delay = reconnectDelayMs(attempt);
+    attempt += 1;
     retryTimer = window.setTimeout(() => {
       retryTimer = undefined;
       void connect();

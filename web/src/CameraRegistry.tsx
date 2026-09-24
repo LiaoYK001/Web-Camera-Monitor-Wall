@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { ControlApiError, createCamera, deleteCamera, detectCamera, discoverOnvif, fetchAnalyticsPolicies, fetchCameras, fetchOnvifPresets, fetchOnvifSnapshot, fetchV3AnalyticsPolicies, mutateOnvifPreset, patchV3AnalyticsPolicies, probeOnvif, pullOnvifEvents, qualifyBrowserDirect, sendOnvifPtz, sendOnvifTalk, syncOnvifCamera, updateAnalyticsPolicies } from './api';
+import { ControlApiError, createCamera, deleteCamera, detectCamera, discoverOnvif, fetchAnalyticsPolicies, fetchCameras, fetchOnvifPresets, fetchOnvifSnapshot, fetchV3AnalyticsPolicies, mutateOnvifPreset, patchV3AnalyticsPolicies, probeOnvif, pullOnvifEvents, qualifyBrowserDirect, sendOnvifPtz, sendOnvifTalk, syncOnvifCamera, updateAnalyticsPolicies, updateCameraCredentials } from './api';
 import type { AnalyticsPolicy, CameraAdapter, CameraDetection, CameraRecord, OnvifPreset } from './types';
 import { loadSyncState } from './localRuntime';
 import { queueCameraPreference, synchronizeBrowserState } from './syncRuntime';
@@ -7,12 +7,24 @@ import { queueCameraPreference, synchronizeBrowserState } from './syncRuntime';
 type EditableAnalyticsPolicy = Omit<AnalyticsPolicy, 'updatedAt'>;
 type CameraPreference = { displayName: string; favorite: boolean; group: string };
 const policyKey = (cameraId: string, profileId: string) => `${cameraId}\u0000${profileId}`;
-function safeAddressDisplay(value: string): string {
+function safeAddressDisplay(value: string, hasCredentials = false): string {
   try {
     const parsed = new URL(value.includes('://') ? value : `https://${value}`);
     const port = parsed.port ? `:${parsed.port}` : '';
-    return `${parsed.protocol}//${parsed.hostname}${port}${parsed.pathname === '/' ? '' : parsed.pathname}`;
+    const auth = hasCredentials || parsed.username || parsed.password ? '*****:*****@' : '';
+    return `${parsed.protocol}//${auth}${parsed.hostname}${port}${parsed.pathname === '/' ? '' : parsed.pathname}`;
   } catch { return '地址不可用'; }
+}
+
+function extractUserinfo(value: string): { username: string; password: string } | null {
+  try {
+    const parsed = new URL(value.includes('://') ? value : `https://${value}`);
+    if (!parsed.username && !parsed.password) return null;
+    return {
+      username: decodeURIComponent(parsed.username),
+      password: decodeURIComponent(parsed.password),
+    };
+  } catch { return null; }
 }
 const defaultPolicy = (cameraId: string, profileId: string): EditableAnalyticsPolicy => ({
   cameraId, profileId, motionEnabled: false, sceneChangeEnabled: false, personEnabled: false,
@@ -81,6 +93,13 @@ export default function CameraRegistry({ onBack }: { onBack: () => void }) {
   const [address, setAddress] = useState('');
   const [name, setName] = useState('');
   const [credentialsRef, setCredentialsRef] = useState('');
+  const [loginUsername, setLoginUsername] = useState('');
+  const [loginPassword, setLoginPassword] = useState('');
+  const [pendingCredentials, setPendingCredentials] = useState<{ username: string; password: string } | null>(null);
+  const [credentialsNotice, setCredentialsNotice] = useState('');
+  const [editingCredentials, setEditingCredentials] = useState<string | null>(null);
+  const [editUsername, setEditUsername] = useState('');
+  const [editPassword, setEditPassword] = useState('');
   const [detection, setDetection] = useState<CameraDetection | null>(null);
   const [discovered, setDiscovered] = useState<Array<{ address: string; host: string }>>([]);
   const [busy, setBusy] = useState(false);
@@ -112,12 +131,26 @@ export default function CameraRegistry({ onBack }: { onBack: () => void }) {
   } catch (reason) { setError(reason instanceof Error ? reason.message : '无法读取摄像机'); } };
   useEffect(() => { void reload(); }, []);
 
-  const detect = async () => {
-    setBusy(true); setError('');
+  const detect = async (credentials?: { username: string; password: string }) => {
+    setBusy(true); setError(''); setCredentialsNotice('');
     try {
-      const result = await detectCamera(address.trim());
+      const result = await detectCamera(address.trim(), credentials);
       setDetection(result);
       if (!name) setName(result.address.split('/').filter(Boolean).at(-1) ?? '新摄像机');
+      if (result.credentialsExtracted || credentials) {
+        // Password stays in this form only (from the typed URL or login fields);
+        // the detect response never returns it.
+        const fromUrl = extractUserinfo(address.trim());
+        const pair = credentials ?? fromUrl;
+        if (pair) {
+          setPendingCredentials(pair);
+          setLoginUsername(pair.username);
+          setLoginPassword('');
+          setCredentialsNotice('已从链接解析账号密码，保存时将加密写入凭据库；链接不会保存明文账密。');
+        }
+      } else if (result.probe === 'unreachable-or-auth-required' || result.probe === 'unreachable-or-unsupported') {
+        setCredentialsNotice('若设备需要登录，请在下方输入账号密码后重试（不会写入链接）。');
+      }
     } catch (reason) { setError(reason instanceof Error ? reason.message : '自动检测失败'); }
     finally { setBusy(false); }
   };
@@ -125,19 +158,39 @@ export default function CameraRegistry({ onBack }: { onBack: () => void }) {
     if (!detection) return;
     setBusy(true); setError('');
     try {
+      const credentials = pendingCredentials ?? (loginUsername && loginPassword
+        ? { username: loginUsername, password: loginPassword } : undefined);
       await createCamera({ name: name.trim(), address: detection.address, adapter: detection.adapter,
         credentialsRef: credentialsRef.trim(), hardwareDecode: 'auto', profiles: detection.profiles,
-        capabilities: detection.capabilities ?? { probe: detection.probe, contentType: detection.contentType ?? '' } });
-      setAddress(''); setName(''); setCredentialsRef(''); setDetection(null); await reload();
+        capabilities: detection.capabilities ?? { probe: detection.probe, contentType: detection.contentType ?? '' },
+        ...(credentials ?? {}) });
+      setAddress(''); setName(''); setCredentialsRef(''); setDetection(null);
+      setLoginUsername(''); setLoginPassword(''); setPendingCredentials(null); setCredentialsNotice('');
+      await reload();
     } catch (reason) { setError(reason instanceof Error ? reason.message : '添加失败'); }
     finally { setBusy(false); }
   };
-  const readOnvifProfiles = async () => {
+  const rotateCredentials = async (cameraId: string) => {
+    if (!editUsername || !editPassword) { setError('请输入完整的账号与密码'); return; }
     setBusy(true); setError('');
     try {
-      const result = await probeOnvif(address.trim(), credentialsRef.trim());
+      await updateCameraCredentials(cameraId, editUsername, editPassword);
+      setEditingCredentials(null); setEditUsername(''); setEditPassword('');
+      setNotice('账号密码已加密保存并生效。');
+      await reload();
+    } catch (reason) { setError(reason instanceof Error ? reason.message : '账号密码保存失败'); }
+    finally { setBusy(false); }
+  };
+  const readOnvifProfiles = async (credentials?: { username: string; password: string }) => {
+    setBusy(true); setError('');
+    try {
+      const result = await probeOnvif(address.trim(), credentialsRef.trim(), credentials);
       setDetection(result);
       if (!name) setName('ONVIF 摄像机');
+      if (result.credentialsExtracted || credentials) {
+        const pair = credentials ?? extractUserinfo(address.trim());
+        if (pair) setPendingCredentials(pair);
+      }
     } catch (reason) { setError(reason instanceof Error ? reason.message : 'ONVIF Profile 读取失败'); }
     finally { setBusy(false); }
   };
@@ -215,15 +268,33 @@ export default function CameraRegistry({ onBack }: { onBack: () => void }) {
     {error && <div className="alert" role="alert">{error}</div>}
     {notice && <div className="notice" role="status">{notice}</div>}
     <section className="registry-add">
-      <div><h2>添加设备</h2><p>输入 IP、主机名或 URL。地址中禁止明文账号密码；凭据通过 Secret 引用绑定。</p></div>
-      <label><span>地址</span><input value={address} placeholder="camera.example.invalid 或 rtsp://camera.example.invalid/live" onChange={(event) => { setAddress(event.target.value); setDetection(null); }} /></label>
+      <div><h2>添加设备</h2><p>可粘贴含账号密码的链接（会自动加密保存并脱敏显示），或在下方「设备登录」中单独填写。数据库与链接均不保存明文账密。</p></div>
+      <label><span>地址</span><input value={address} placeholder="rtsp://*****:*****@10.99.99.135:554/Streaming/Channels/201 或 rtsp://10.99.99.135:554/..." onChange={(event) => { setAddress(event.target.value); setDetection(null); }} /></label>
       <div className="registry-actions"><button className="primary-button" disabled={busy || !address.trim()} type="button" onClick={() => void detect()}>自动检测</button><button className="ghost-button" disabled={busy} type="button" onClick={() => void discoverOnvif().then((result) => setDiscovered(result.devices)).catch((reason: unknown) => setError(reason instanceof Error ? reason.message : '发现失败'))}>ONVIF 发现</button></div>
-      {detection && <div className="detection-result"><strong>{detection.adapter.toUpperCase()} · {detection.probe}{detection.profileVersion ? ` · Profile ${detection.profileVersion}` : ''}</strong><span>{detection.profiles.length ? `${detection.profiles.length} 个码流 Profile` : '等待设备授权后读取 Profile'}</span><label><span>设备名称</span><input value={name} maxLength={128} onChange={(event) => setName(event.target.value)} /></label><label><span>凭据 Secret 引用（可选）</span><input value={credentialsRef} maxLength={256} placeholder="front-door" onChange={(event) => setCredentialsRef(event.target.value.replace(/[^a-zA-Z0-9._/-]/g, ''))} /></label><small>引用 /run/secrets/webobs-camera-credentials/&lt;名称&gt;.json；数据库不保存密码。</small>{detection.adapter === 'onvif' && <button className="ghost-button" disabled={busy || !address.trim()} type="button" onClick={() => void readOnvifProfiles()}>读取 ONVIF Profile</button>}<button className="primary-button" disabled={!name.trim() || (detection.adapter === 'onvif' && detection.profiles.length === 0)} type="button" onClick={() => void add()}>保存到 Registry</button></div>}
+      {credentialsNotice && <div className="notice" role="status">{credentialsNotice}</div>}
+      {!pendingCredentials && <div className="device-login" aria-label="设备登录">
+        <h3>设备登录（可选）</h3>
+        <p>链接无法携带账密、或设备需要登录时，在此输入并保存（密文写入凭据库）。</p>
+        <label><span>用户名</span><input autoComplete="username" value={loginUsername} maxLength={256} onChange={(event) => setLoginUsername(event.target.value)} /></label>
+        <label><span>密码</span><input type="password" autoComplete="current-password" value={loginPassword} maxLength={512} onChange={(event) => setLoginPassword(event.target.value)} /></label>
+        <button type="button" className="ghost-button" disabled={busy || !loginUsername || !loginPassword} onClick={() => {
+          setPendingCredentials({ username: loginUsername, password: loginPassword });
+          setCredentialsNotice('账号密码已暂存，保存设备时加密写入。');
+        }}>记住并加密保存</button>
+      </div>}
+      {pendingCredentials && <div className="notice" role="status">已暂存账号密码（显示为掩码），保存设备后仅以 Secret 引用绑定。</div>}
+      {detection && <div className="detection-result"><strong>{detection.adapter.toUpperCase()} · {detection.probe}{detection.profileVersion ? ` · Profile ${detection.profileVersion}` : ''}</strong><span>{detection.profiles.length ? `${detection.profiles.length} 个码流 Profile` : '等待设备授权后读取 Profile'}</span><label><span>设备名称</span><input value={name} maxLength={128} onChange={(event) => setName(event.target.value)} /></label><label><span>凭据 Secret 引用（可选）</span><input value={credentialsRef} maxLength={256} placeholder="front-door" onChange={(event) => setCredentialsRef(event.target.value.replace(/[^a-zA-Z0-9._/-]/g, ''))} /></label><small>引用 /run/secrets/webobs-camera-credentials/&lt;名称&gt;.json；数据库不保存密码。</small>{detection.adapter === 'onvif' && <button className="ghost-button" disabled={busy || !address.trim()} type="button" onClick={() => void readOnvifProfiles(pendingCredentials ?? (loginUsername && loginPassword ? { username: loginUsername, password: loginPassword } : undefined))}>读取 ONVIF Profile</button>}<button className="primary-button" disabled={!name.trim() || (detection.adapter === 'onvif' && detection.profiles.length === 0)} type="button" onClick={() => void add()}>保存到 Registry</button></div>}
       {discovered.length > 0 && <div className="discovery-list">{discovered.map((device) => <button type="button" key={device.address} onClick={() => { setAddress(device.address); setDetection(null); }}><strong>{device.host}</strong><span>{device.address}</span></button>)}</div>}
     </section>
     <section className="camera-list"><div className="section-title"><h2>Camera Registry</h2><span>{cameras.length} 台</span></div>
       <div className="analytics-batch"><span>当前列表分析开关</span><button className="ghost-button" disabled={busy || !cameras.length} onClick={() => setAllAnalytics(true)}>Select All</button><button className="ghost-button" disabled={busy || !cameras.length} onClick={() => setAllAnalytics(false)}>Unselect All</button><small>默认全部关闭；人物框为 v3-M2 预留接口。</small></div>
-      {cameras.length === 0 ? <div className="registry-empty"><h3>尚未添加摄像机</h3><p>使用自动检测，或通过 ONVIF WS-Discovery 查找局域网设备。</p></div> : cameras.map((camera) => <article className="camera-card" key={camera.id}><div><span className="adapter-pill">{camera.adapter}</span><h3>{preferences.get(camera.id)?.displayName || camera.name}{preferences.get(camera.id)?.favorite ? ' ★' : ''}</h3><p>{safeAddressDisplay(camera.address)}</p><div className="camera-preference"><label>显示名称<input maxLength={128} value={preferences.get(camera.id)?.displayName ?? camera.name} onChange={(event) => editPreference(camera, { displayName: event.target.value })} /></label><label>分组<input maxLength={64} value={preferences.get(camera.id)?.group ?? ''} onChange={(event) => editPreference(camera, { group: event.target.value })} /></label><label><input type="checkbox" checked={preferences.get(camera.id)?.favorite ?? false} onChange={(event) => editPreference(camera, { favorite: event.target.checked })} />收藏</label><button className="ghost-button" onClick={() => void savePreference(camera)}>同步显示偏好</button></div></div><dl><div><dt>Profile</dt><dd>{camera.profiles.length}</dd></div><div><dt>硬解</dt><dd>{camera.hardwareDecode}</dd></div><div><dt>健康</dt><dd>{camera.health}</dd></div></dl><div className="profile-list">{camera.profiles.map((profile) => {
+      {cameras.length === 0 ? <div className="registry-empty"><h3>尚未添加摄像机</h3><p>使用自动检测，或通过 ONVIF WS-Discovery 查找局域网设备。</p></div> : cameras.map((camera) => <article className="camera-card" key={camera.id}><div><span className="adapter-pill">{camera.adapter}</span><h3>{preferences.get(camera.id)?.displayName || camera.name}{preferences.get(camera.id)?.favorite ? ' ★' : ''}</h3><p>{camera.addressDisplay ?? safeAddressDisplay(camera.address, camera.credentialsConfigured)}</p><div className="camera-preference"><label>显示名称<input maxLength={128} value={preferences.get(camera.id)?.displayName ?? camera.name} onChange={(event) => editPreference(camera, { displayName: event.target.value })} /></label><label>分组<input maxLength={64} value={preferences.get(camera.id)?.group ?? ''} onChange={(event) => editPreference(camera, { group: event.target.value })} /></label><label><input type="checkbox" checked={preferences.get(camera.id)?.favorite ?? false} onChange={(event) => editPreference(camera, { favorite: event.target.checked })} />收藏</label><button className="ghost-button" onClick={() => void savePreference(camera)}>同步显示偏好</button><button className="ghost-button" type="button" onClick={() => { setEditingCredentials(camera.id); setEditUsername(''); setEditPassword(''); }}>{camera.credentialsConfigured ? '修改账号密码' : '设置账号密码'}</button></div>
+      {editingCredentials === camera.id && <div className="device-login" aria-label="修改账号密码">
+        <label><span>用户名</span><input autoComplete="username" value={editUsername} maxLength={256} onChange={(event) => setEditUsername(event.target.value)} /></label>
+        <label><span>新密码</span><input type="password" autoComplete="new-password" value={editPassword} maxLength={512} onChange={(event) => setEditPassword(event.target.value)} /></label>
+        <div className="registry-actions"><button className="primary-button" disabled={busy} type="button" onClick={() => void rotateCredentials(camera.id)}>加密保存</button><button className="ghost-button" type="button" onClick={() => setEditingCredentials(null)}>取消</button></div>
+      </div>}
+      </div><dl><div><dt>Profile</dt><dd>{camera.profiles.length}</dd></div><div><dt>硬解</dt><dd>{camera.hardwareDecode}</dd></div><div><dt>健康</dt><dd>{camera.health}</dd></div><div><dt>凭据</dt><dd>{camera.credentialsConfigured ? '已配置' : '无'}</dd></div></dl><div className="profile-list">{camera.profiles.map((profile) => {
         const proof = ((camera.capabilities.browserDirect as { profiles?: Record<string, { tlsVerified?: boolean; corsVerified?: boolean; reason?: string }> } | undefined)?.profiles?.[profile.id]);
         const policy = policies.get(policyKey(camera.id, profile.id)) ?? defaultPolicy(camera.id, profile.id);
         return <span key={profile.id}>{profile.role} · {profile.videoCodec || 'unknown'} {profile.width ? `${profile.width}×${profile.height}` : ''}

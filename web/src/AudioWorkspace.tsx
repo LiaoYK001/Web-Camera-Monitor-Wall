@@ -209,7 +209,7 @@ export default function AudioWorkspace({ studio, onCommitted }: { studio: Studio
     finally { setSaving(false); }
   };
   return <section className="audio-workspace page-panel">
-    <header className="page-heading"><div><span className="eyebrow">Per-source audio</span><h1>音频工作台</h1><p>Direct 按真实音轨在浏览器本地测量，每条选中音轨使用独立 audio-only 通道；Composite 仅在 libobs 返回真实电平时显示数值。</p></div>
+    <header className="page-heading"><div><span className="eyebrow">Per-source audio</span><h1>音频工作台</h1><p>仅展示含音轨的源。Direct 按真实音轨在浏览器本地测量，每条选中音轨使用独立 audio-only 通道；Composite 仅在 libobs 返回真实电平时显示数值。多轨支持多选、合并/独立与逐轨电平。</p></div>
       <div className="audio-actions"><select aria-label="Scene" value={scene.id} onChange={(event) => setSceneId(event.target.value)}>{studio.scenes.map((value) => <option value={value.id} key={value.id}>{value.name}</option>)}</select>
         <button type="button" className={topology === 'direct' ? 'active' : ''} onClick={() => setTopology('direct')}>Direct</button>
         <button type="button" className={topology === 'composite' ? 'active' : ''} onClick={() => setTopology('composite')}>Composite</button>
@@ -229,13 +229,13 @@ export default function AudioWorkspace({ studio, onCommitted }: { studio: Studio
           : probed.status === 'none' ? 'none'
             : probed.status === 'loading' ? 'loading' : 'unprobed')
         : sourceAudioTrackState({ kind: source.kind, liveAudioTracks: meter?.audioTracks, streamBound: meter?.streamBound });
+      // F6-02: video-only sources are omitted from the audio workspace entirely.
+      if (trackState === 'none') return null;
       const state = selection[source.id];
       const mode = state?.mode ?? 'merged';
-      return <article className={`audio-channel ${trackState === 'none' ? 'no-audio' : ''}`} key={source.id}>
+      return <article className="audio-channel" key={source.id}>
         <div><strong>{source.name}</strong><small>{cameraProfile}</small><span>{topology === 'direct' ? 'Browser Web Audio' : 'libobs Composite'}</span></div>
-        {trackState === 'none'
-          ? <div className="audio-track-missing">该源没有音频轨道，无需电平 / 音量 / 监听设置。</div>
-          : trackState === 'unprobed'
+        {trackState === 'unprobed'
             ? <div className="audio-track-missing">音频轨道待探测<button type="button" onClick={() => reprobe(source.id)}>重新探测</button></div>
             : trackState === 'loading'
               ? <div className="audio-track-missing">音轨探测中…</div>

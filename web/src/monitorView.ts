@@ -27,6 +27,28 @@ export const videoFillModes: VideoFillMode[] = ['stretch', 'contain', 'cover'];
 export type AudioMeterOrientation = 'vertical' | 'horizontal';
 export type AudioMeterPosition = 'left' | 'right' | OverlayPosition;
 
+/** F6-03 canvas placement modes. */
+export type CanvasMode = 'manual-pixels' | 'manual-aspect' | 'auto-fit';
+export const canvasModes: CanvasMode[] = ['auto-fit', 'manual-aspect', 'manual-pixels'];
+
+/** F6-03 pixel presets (long edge); max is 8K per the feedback. */
+export const canvasPixelPresets = [
+  { id: 'fhd', label: 'FHD 1080p', longEdge: 1920 },
+  { id: '2k', label: '2K', longEdge: 2560 },
+  { id: '4k', label: '4K', longEdge: 3840 },
+  { id: '8k', label: '8K', longEdge: 7680 },
+] as const;
+export type CanvasPixelPresetId = typeof canvasPixelPresets[number]['id'];
+export const CANVAS_MAX_LONG_EDGE = 7680;
+
+/** F6-08 default monitoring quality ladder. */
+export type StreamQuality = 'low' | 'medium' | 'high';
+export const streamQualityPresets: Record<StreamQuality, { maxWidth: number; maxHeight: number; bitrateKbps: number; label: string }> = {
+  low: { maxWidth: 1280, maxHeight: 720, bitrateKbps: 1024, label: '低（720p · 约 1 Mbps）' },
+  medium: { maxWidth: 1920, maxHeight: 1080, bitrateKbps: 3072, label: '中（1080p · 约 3 Mbps）' },
+  high: { maxWidth: 3840, maxHeight: 2160, bitrateKbps: 8192, label: '高（原画/更高码率）' },
+};
+
 export interface AudioMeterConfig {
   enabled: boolean;
   /** OBS-style meter direction; the default is a vertical bar so it never covers tile labels. */
@@ -73,7 +95,7 @@ export interface LowPowerConfig {
 }
 
 export interface MonitorView {
-  schemaVersion: 4;
+  schemaVersion: 5;
   mode: 'auto' | 'manual';
   largeCount: number;
   largeSourceIds: string[];
@@ -90,6 +112,16 @@ export interface MonitorView {
   localMonitorVolume: number;
   /** Speaker routing: full monitoring output or meter/threshold detection only. */
   audioOutput: 'speaker' | 'meter-only';
+  /** F6-05: keep the homepage monitor switch visible without reopening settings. */
+  monitorSwitchProminent: boolean;
+  /** F6-03 canvas placement. */
+  canvasMode: CanvasMode;
+  canvasAspect: number;
+  canvasPixelPreset: CanvasPixelPresetId;
+  /** F6-08 stream quality ladder (default 1080p medium). */
+  streamQuality: StreamQuality;
+  /** F6-06: dock the OBS-style mixer on the monitor wall. */
+  showAudioMixer: boolean;
   analytics: {
     showDetectionBoxes: boolean;
     showDetectionLabels: boolean;
@@ -226,7 +258,7 @@ export function defaultSourceDecoration(): SourceDecoration {
 }
 
 export const defaultMonitorView = (): MonitorView => ({
-  schemaVersion: 4,
+  schemaVersion: 5,
   mode: 'auto',
   largeCount: 0,
   largeSourceIds: [],
@@ -240,8 +272,46 @@ export const defaultMonitorView = (): MonitorView => ({
   panels: { detailsOpen: false, issueCenterExpanded: false },
   localMonitorVolume: 1,
   audioOutput: 'speaker',
+  monitorSwitchProminent: true,
+  canvasMode: 'auto-fit',
+  canvasAspect: 16 / 9,
+  canvasPixelPreset: 'fhd',
+  streamQuality: 'medium',
+  showAudioMixer: true,
   analytics: { showDetectionBoxes: true, showDetectionLabels: false, boxOpacity: .9, boxLineWidth: 2, showInferenceStatus: true },
 });
+
+/** F6-03: resolve concrete canvas pixels from mode + preset + source ratios. */
+export function resolveCanvasSize(
+  view: Pick<MonitorView, 'canvasMode' | 'canvasAspect' | 'canvasPixelPreset'>,
+  sources: Array<{ width?: number; height?: number }>,
+  fallbackWidth = 1920,
+  fallbackHeight = 1080,
+): { width: number; height: number } {
+  const preset = canvasPixelPresets.find((item) => item.id === view.canvasPixelPreset) ?? canvasPixelPresets[0];
+  const even = (value: number) => Math.max(16, Math.min(CANVAS_MAX_LONG_EDGE, Math.round(value / 2) * 2));
+  if (view.canvasMode === 'manual-pixels') {
+    return { width: even(fallbackWidth), height: even(fallbackHeight) };
+  }
+  let ratio = view.canvasAspect;
+  if (view.canvasMode === 'auto-fit') {
+    const usable = sources.filter((source) => (source.width ?? 0) > 0 && (source.height ?? 0) > 0);
+    if (usable.length) {
+      // Geometric mean of source aspect ratios keeps mixed 16:9 + 4:3 + portrait walls full.
+      const sum = usable.reduce((acc, source) => acc + Math.log((source.width ?? 16) / (source.height ?? 9)), 0);
+      ratio = Math.exp(sum / usable.length);
+    }
+    if (!Number.isFinite(ratio) || ratio <= 0) ratio = 16 / 9;
+    ratio = Math.min(Math.max(ratio, 9 / 16), 32 / 9);
+  }
+  if (!Number.isFinite(ratio) || ratio <= 0) ratio = 16 / 9;
+  const longEdge = preset.longEdge;
+  let width: number;
+  let height: number;
+  if (ratio >= 1) { width = longEdge; height = longEdge / ratio; }
+  else { height = longEdge; width = longEdge * ratio; }
+  return { width: even(width), height: even(height) };
+}
 
 export function sourceDecoration(view: MonitorView, sourceId: string): SourceDecoration {
   const fallback = defaultSourceDecoration();
@@ -384,7 +454,7 @@ export function normalizeMonitorView(value: Partial<MonitorView> | null | undefi
     };
   }
   return {
-    schemaVersion: 4,
+    schemaVersion: 5,
     mode: value?.mode === 'manual' ? 'manual' : 'auto',
     largeCount: clamp(Math.trunc(value?.largeCount ?? 0), 0, clamp(sourceCount, 0, 16)),
     largeSourceIds: [...new Set((Array.isArray(value?.largeSourceIds) ? value?.largeSourceIds : []).filter(sourceIdentifier))].slice(0, 16),
@@ -418,6 +488,15 @@ export function normalizeMonitorView(value: Partial<MonitorView> | null | undefi
     panels: { detailsOpen: Boolean(panels.detailsOpen), issueCenterExpanded: Boolean(panels.issueCenterExpanded) },
     localMonitorVolume: bounded(value?.localMonitorVolume, 1, 0, 1),
     audioOutput: value?.audioOutput === 'meter-only' ? 'meter-only' : 'speaker',
+    monitorSwitchProminent: value?.monitorSwitchProminent !== false,
+    canvasMode: (value?.canvasMode && (canvasModes as string[]).includes(value.canvasMode))
+      ? value.canvasMode as CanvasMode : 'auto-fit',
+    canvasAspect: bounded(value?.canvasAspect, 16 / 9, 9 / 16, 32 / 9),
+    canvasPixelPreset: (value?.canvasPixelPreset && canvasPixelPresets.some((item) => item.id === value.canvasPixelPreset))
+      ? value.canvasPixelPreset as CanvasPixelPresetId : 'fhd',
+    streamQuality: (value?.streamQuality === 'low' || value?.streamQuality === 'medium' || value?.streamQuality === 'high')
+      ? value.streamQuality : 'medium',
+    showAudioMixer: value?.showAudioMixer !== false,
     analytics: {
       showDetectionBoxes: Boolean(analytics.showDetectionBoxes),
       showDetectionLabels: Boolean(analytics.showDetectionLabels),
@@ -521,12 +600,21 @@ export function applyAutomaticLayout(scene: SceneDocument, viewValue: Partial<Mo
 
 export interface LowPowerSelection { profile: CameraProfile | null; targetMet: boolean; reason: string }
 
-export function selectLowPowerProfile(profiles: CameraProfile[], targetFps: number): LowPowerSelection {
+export function selectLowPowerProfile(
+  profiles: CameraProfile[],
+  targetFps: number,
+  quality: StreamQuality = 'medium',
+): LowPowerSelection {
   if (!profiles.length) return { profile: null, targetMet: false, reason: 'no_profile' };
   const target = clamp(targetFps, .5, 30);
+  const cap = streamQualityPresets[quality];
   const cost = (profile: CameraProfile) => (profile.width || 1) * (profile.height || 1) * Math.max(profile.fps, .1);
-  const suitable = profiles.filter((profile) => profile.fps > 0 && profile.fps <= target)
-    .sort((a, b) => cost(a) - cost(b));
+  // F6-08: prefer profiles under the quality ladder resolution cap when available.
+  const underCap = profiles.filter((profile) =>
+    profile.fps > 0 && (profile.width || 0) <= cap.maxWidth * 1.15 && (profile.height || 0) <= cap.maxHeight * 1.15);
+  const pool = underCap.length ? underCap : profiles;
+  const suitable = pool.filter((profile) => profile.fps > 0 && profile.fps <= target)
+    .sort((a, b) => cost(b) - cost(a));
   if (suitable.length) return { profile: suitable[0], targetMet: true, reason: '' };
   const lowest = [...profiles].sort((a, b) => (a.fps || 999) - (b.fps || 999) || cost(a) - cost(b))[0];
   return { profile: lowest, targetMet: false, reason: 'no_low_frame_rate_profile' };
