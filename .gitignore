@@ -40,3 +40,4 @@ __pycache__/
 /.vite/
 /test-results/
 /tmp
+/.mimocode
