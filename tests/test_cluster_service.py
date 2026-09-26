@@ -203,6 +203,20 @@ class ClusterTests(unittest.TestCase):
         self.assertEqual(self.store.account_preference("viewer-one", "workspace-layout"),
                          {"value": None, "revision": 0})
 
+    def test_self_profile_acl_and_password_change(self) -> None:
+        self.create_user("profile-user", ["viewer"])
+        initial = self.store.account_profile("profile-user")
+        self.assertEqual(initial["displayName"], "profile-user")
+        self.assertTrue(next(item for item in initial["acl"] if item["permission"] == "live.view")["allowed"])
+        self.assertFalse(next(item for item in initial["acl"] if item["permission"] == "user.manage")["allowed"])
+        updated = self.store.update_account_profile("profile-user", {"displayName": "监看平板", "avatar": "camera"})
+        self.assertEqual((updated["displayName"], updated["avatar"]), ("监看平板", "camera"))
+        with self.assertRaises(cluster.ApiError):
+            self.store.change_own_password("profile-user", {"currentPassword": "incorrect-password", "newPassword": "new-correct-password"})
+        self.assertEqual(self.store.change_own_password("profile-user", {
+            "currentPassword": "correct-horse-battery", "newPassword": "new-correct-password"}), {"changed": True})
+        self.assertIsNotNone(self.store.authenticate("profile-user", "new-correct-password"))
+
     def test_rbac_audit_is_bounded_paginated_and_redacted(self) -> None:
         first = self.create_user(username="audit-user-one")
         second = self.create_user(username="audit-user-two")

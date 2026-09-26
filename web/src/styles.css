@@ -2094,3 +2094,23 @@ select:focus-visible,
 .audio-mixer-tracks { display: grid; gap: 2px; font-size: 11px; }
 .device-login { display: grid; gap: 8px; padding: 12px; margin-top: 10px; border: 1px dashed var(--line); border-radius: 8px; background: #0c1016; }
 .device-login label { display: grid; gap: 4px; }
+.bulk-source-panel, .account-workspace form, .account-acl {
+  border: 1px solid var(--border, #334155); border-radius: 12px; padding: 18px;
+  background: var(--panel, #101827); margin: 14px 0;
+}
+.bulk-source-panel textarea { display: block; width: 100%; min-height: 160px; margin: 12px 0; font: inherit; }
+.bulk-source-panel code { overflow-wrap: anywhere; }
+.account-badge { display: inline-flex; gap: 8px; align-items: center; text-align: left; }
+.account-badge > span:last-child { display: grid; }
+.account-badge small { font-size: 11px; opacity: .75; }
+.account-avatar { display: grid; place-items: center; min-width: 28px; height: 28px;
+  border-radius: 50%; background: #2563eb; color: #fff; font-size: 18px; }
+.account-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(270px, 1fr)); gap: 16px; }
+.account-grid form { display: grid; align-content: start; gap: 14px; }
+.account-grid form label { display: grid; gap: 5px; }
+.account-grid input { min-width: 0; }
+.avatar-options { display: flex; flex-wrap: wrap; gap: 10px; }
+.avatar-options label { display: inline-flex !important; align-items: center; gap: 5px; }
+.acl-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 8px; }
+.acl-grid > div { display: flex; gap: 9px; align-items: center; padding: 7px; border: 1px solid #334155; border-radius: 6px; }
+.acl-grid code { margin-left: auto; font-size: 11px; opacity: .65; }

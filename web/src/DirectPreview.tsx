@@ -520,16 +520,16 @@ export default function DirectPreview({ scene, compact = false }: { scene: Scene
     return () => document.removeEventListener('visibilitychange', changed);
   }, []);
 
-  useEffect(() => { void loadMonitorView().then((stored) => {
+  useEffect(() => { if (compact) { setMonitorLoaded(true); return; } void loadMonitorView().then((stored) => {
     if (stored) setMonitorView(normalizeMonitorView(stored, scene.items.length, scene.sources.map((source) => source.id)));
     setMonitorLoaded(true);
-  }); }, []);
+  }); }, [compact]);
 
   useEffect(() => {
-    if (!monitorLoaded) return;
+    if (!monitorLoaded || compact) return;
     const timer = window.setTimeout(() => void saveMonitorView(normalizeMonitorView(monitorView, scene.items.length, scene.sources.map((source) => source.id))), 250);
     return () => window.clearTimeout(timer);
-  }, [monitorLoaded, monitorView, scene.items.length]);
+  }, [compact, monitorLoaded, monitorView, scene.items.length]);
 
   useEffect(() => {
     const controller = new AbortController();
@@ -591,6 +591,7 @@ export default function DirectPreview({ scene, compact = false }: { scene: Scene
   }, [audio.state]);
   const analyticsByProfile = useMemo(() => new Map(analyticsPolicies.map((policy) => [`${policy.cameraId}\u0000${policy.profileId}`, policy])), [analyticsPolicies]);
   const effectiveScene = useMemo(() => {
+    if (compact) return scene;
     let current = monitorView.mode === 'auto' && portrait && scene.canvas.width > scene.canvas.height
       ? { ...scene, canvas: { ...scene.canvas, width: scene.canvas.height, height: scene.canvas.width } }
       : scene;
@@ -604,7 +605,7 @@ export default function DirectPreview({ scene, compact = false }: { scene: Scene
       }),
     };
     return applyAutomaticLayout(current, monitorView);
-  }, [cameras, monitorView, portrait, scene]);
+  }, [cameras, compact, monitorView, portrait, scene]);
   const lowPowerBySource = useMemo(() => new Map(effectiveScene.sources.flatMap((source) => {
     if (!monitorView.lowPower.enabled || source.kind !== 'camera') return [];
     const camera = cameras.find((candidate) => candidate.id === source.cameraId);
@@ -793,10 +794,18 @@ export default function DirectPreview({ scene, compact = false }: { scene: Scene
     })),
     effectiveScene.canvas.width, effectiveScene.canvas.height),
   [monitorView, effectiveScene]);
-  const displayScene = useMemo(() => monitorView.canvasMode === 'manual-pixels'
+  const displayScene = useMemo(() => compact || monitorView.canvasMode === 'manual-pixels'
     ? effectiveScene
-    : { ...effectiveScene, canvas: { ...effectiveScene.canvas, width: resolvedCanvas.width, height: resolvedCanvas.height } },
-  [effectiveScene, resolvedCanvas, monitorView.canvasMode]);
+    : { ...effectiveScene,
+      canvas: { ...effectiveScene.canvas, width: resolvedCanvas.width, height: resolvedCanvas.height },
+      items: effectiveScene.items.map((item) => ({ ...item,
+        x: item.x * resolvedCanvas.width / effectiveScene.canvas.width,
+        y: item.y * resolvedCanvas.height / effectiveScene.canvas.height,
+        width: item.width * resolvedCanvas.width / effectiveScene.canvas.width,
+        height: item.height * resolvedCanvas.height / effectiveScene.canvas.height,
+      })),
+    },
+  [compact, effectiveScene, resolvedCanvas, monitorView.canvasMode]);
 
   const audioMixerChannels = useMemo((): AudioMixerChannel[] => effectiveScene.sources.map((source) => {
     const decoration = sourceDecoration(monitorView, source.id);

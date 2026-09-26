@@ -2,8 +2,9 @@ import { useEffect, useMemo, useState } from 'react';
 import CameraRegistry from './CameraRegistry';
 import DirectPreview from './DirectPreview';
 import {
-  batchSourceCatalog, fetchLegacySourceImport, fetchSourceCatalog, importLegacySources, patchSourceCatalogItem, probeSourceProfile,
+  batchSourceCatalog, createCamera, fetchLegacySourceImport, fetchSourceCatalog, importLegacySources, patchSourceCatalogItem, probeSourceProfile,
 } from './api';
+import { parseBulkSourceLines } from './bulkSourceImport';
 import type { SceneDocument, SourceCatalogItem, SourceCatalogProfile, TransportMode } from './types';
 import type { LegacySourceImportItem } from './api';
 
@@ -62,7 +63,8 @@ function ProfileEditor({ camera, profile, onChanged, onPreview }: {
       <div><button type="button" onClick={onPreview}>独立预览</button><button type="button" disabled={busy} onClick={() => {
         setBusy(true); setError('');
         void probeSourceProfile(camera.id, profile.id).then((value) => onChanged({ ...camera,
-          profiles: camera.profiles.map((candidate) => candidate.id === profile.id ? value.profile : candidate) }))
+          profiles: camera.profiles.map((candidate) => candidate.id === profile.id
+            ? { ...candidate, ...value.profile, endpointDisplay: candidate.endpointDisplay } : candidate) }))
           .catch((reason: unknown) => setError(reason instanceof Error ? reason.message : '探测失败')).finally(() => setBusy(false));
       }}>探测轨道</button></div></header>
     <div className="profile-settings">
@@ -77,7 +79,7 @@ function ProfileEditor({ camera, profile, onChanged, onPreview }: {
         }} /></label>
       <label><span>音频预期</span><select value={profile.audioExpectation} disabled={busy}
         onChange={(event) => void patch({ audioExpectation: event.target.value })}><option value="auto">自动</option><option value="required">必须有</option><option value="disabled">禁用</option></select></label>
-      {profile.endpointDisplay.startsWith('http://') && <label className="insecure-http-opt-in"><span>允许 HTTP 明文媒体</span>
+      {profile.endpointDisplay?.startsWith('http://') && <label className="insecure-http-opt-in"><span>允许 HTTP 明文媒体</span>
         <input type="checkbox" checked={profile.allowInsecureHttp} disabled={busy}
           onChange={(event) => void patch({ allowInsecureHttp: event.target.checked })} />
         <small>仅允许 Docker Gateway/NVR 拉取；HTTPS 浏览器不会将其视为真直连。</small></label>}
@@ -105,6 +107,10 @@ export default function SourceCatalog() {
   const [legacyItems, setLegacyItems] = useState<LegacySourceImportItem[]>([]);
   const [legacyRevision, setLegacyRevision] = useState(0);
   const [legacyBusy, setLegacyBusy] = useState(false);
+  const [showBulkImport, setShowBulkImport] = useState(false);
+  const [bulkText, setBulkText] = useState('');
+  const [bulkBusy, setBulkBusy] = useState(false);
+  const [bulkMessage, setBulkMessage] = useState('');
   const reload = () => {
     setLoading(true);
     void fetchSourceCatalog({ q: query, adapter, enabled: enabled === '' ? undefined : enabled === 'true', limit: 256, sort: 'name' })
@@ -144,10 +150,40 @@ export default function SourceCatalog() {
       result.items.forEach(replace); setSelected([]); setError('');
     } catch (reason) { setError(reason instanceof Error ? reason.message : '批量更新失败，未修改任何设备'); }
   };
+  const parsedBulk = useMemo(() => parseBulkSourceLines(bulkText), [bulkText]);
+  const importBulk = async () => {
+    if (!parsedBulk.entries.length || parsedBulk.errors.length) return;
+    setBulkBusy(true); setBulkMessage('');
+    const failures: string[] = [];
+    const failedLines = new Set<number>();
+    for (const entry of parsedBulk.entries) {
+      try {
+        await createCamera({ name: entry.name, address: entry.url, adapter: entry.adapter,
+          kind: 'network-stream', hardwareDecode: 'auto', credentialsRef: '', capabilities: {},
+          profiles: [{ id: 'main', name: '主码流', role: 'main', endpoint: entry.url,
+            videoCodec: 'unknown', audioCodec: '', width: 0, height: 0, fps: 0 }] });
+      } catch (reason) {
+        failedLines.add(entry.line);
+        failures.push(`第 ${entry.line} 行（${entry.name}）：${reason instanceof Error ? reason.message : '导入失败'}`);
+      }
+    }
+    const count = parsedBulk.entries.length - failedLines.size;
+    setBulkText((current) => current.split(/\r?\n/).filter((_, index) => failedLines.has(index + 1)).join('\n'));
+    setBulkMessage(`已导入 ${count} 项；失败 ${failedLines.size} 项。${failures.length ? ` ${failures.join('；')}` : '可在列表中点击“探测轨道”检查媒体信息。'}`);
+    setBulkBusy(false); reload();
+  };
   if (showLegacyRegistry) return <CameraRegistry onBack={() => { setShowLegacyRegistry(false); reload(); }} />;
   return <section className="source-catalog page-panel">
     <header className="page-heading"><div><span className="eyebrow">Camera → Profile → Track</span><h1>设备与来源</h1><p>共 {total} 台；地址仅显示脱敏值，凭据由 Secret 引用保管。</p></div>
-      <div><button className="primary-button" type="button" onClick={() => setShowLegacyRegistry(true)}>添加 / ONVIF 发现</button><button type="button" disabled={legacyBusy} onClick={inspectLegacy}>检查旧 Studio 来源</button></div></header>
+      <div><button className="primary-button" type="button" onClick={() => setShowLegacyRegistry(true)}>添加 / ONVIF 发现</button><button type="button" onClick={() => setShowBulkImport((value) => !value)}>批量添加</button><button type="button" disabled={legacyBusy} onClick={inspectLegacy}>检查旧 Studio 来源</button></div></header>
+    {showBulkImport && <div className="bulk-source-panel"><h2>批量添加视频源</h2>
+      <p>每行一项：<code>名称 | 链接</code>，也可用“名称: 链接”。空行和以 # 开头的行会跳过。示例：<code>门口 | rtsp://user:password@192.168.1.20:554/stream1</code></p>
+      <p>支持 RTSP/RTSPS，以及后缀为 .m3u8、.flv、.mjpg、.mjpeg、.jpg、.jpeg、.png 的 HTTPS 链接。账号密码会从链接拆出并写入服务端凭据库；未探测的源可在导入后逐项探测。当前格式不清楚的链接请通过单项添加。批量导入允许部分成功，失败行会保留以便修改重试。</p>
+      <textarea aria-label="批量视频源" rows={8} value={bulkText} onChange={(event) => setBulkText(event.target.value)} placeholder={'门口 | rtsp://user:password@192.168.1.20:554/stream1\n仓库 | rtsp://192.168.1.21:554/stream2'} />
+      <p role="status">待导入 {parsedBulk.entries.length} 项{parsedBulk.errors.length ? `；格式问题：${parsedBulk.errors.join('；')}` : ''}</p>
+      <button type="button" className="primary-button" disabled={bulkBusy || !parsedBulk.entries.length || !!parsedBulk.errors.length} onClick={() => void importBulk()}>{bulkBusy ? '正在添加…' : `添加 ${parsedBulk.entries.length} 项`}</button>
+      {bulkMessage && <p role="status">{bulkMessage}</p>}
+    </div>}
     {legacyItems.length > 0 && <div className="legacy-import-panel" role="status"><strong>旧 Studio 来源</strong><span>已关联 {legacyItems.filter((item) => item.state === 'linked').length}</span><span>可导入 {legacyItems.filter((item) => item.state === 'ready_to_import').length}</span><span>需配置 {legacyItems.filter((item) => item.state === 'needs_configuration').length}</span><button type="button" disabled={legacyBusy || !legacyItems.some((item) => item.state === 'ready_to_import')} onClick={importReadyLegacy}>导入可安全关联项</button></div>}
     <div className="catalog-toolbar">
       <input aria-label="搜索设备" placeholder="搜索名称、标签或分组" value={query} onChange={(event) => setQuery(event.target.value.slice(0, 128))} />

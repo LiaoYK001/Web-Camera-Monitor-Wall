@@ -358,6 +358,23 @@ class CameraRegistryTests(unittest.TestCase):
             self.assertEqual(len(issues), 1)
             self.assertNotIn("camera.example.invalid", json.dumps(registry.issue_document(issues[0])))
 
+    def test_credentialed_profile_probe_uses_secret_without_exposing_endpoint(self) -> None:
+        camera = registry.validate_camera({
+            "id": "credential-probe", "name": "Credential probe", "adapter": "rtsp",
+            "address": "rtsp://test-user:test-pass@camera.example.invalid/live",
+            "profiles": [{"id": "main", "endpoint": "rtsp://camera.example.invalid/live"}],
+        })
+        registry.save_camera(camera, False)
+        payload = json.dumps({"streams": [{"index": 0, "codec_type": "video", "codec_name": "h264",
+                                        "width": 640, "height": 360, "avg_frame_rate": "15/1"}]}).encode()
+        with patch.object(registry.subprocess, "run", return_value=subprocess.CompletedProcess(
+                args=[], returncode=0, stdout=payload, stderr=b"")) as runner:
+            result = registry.probe_source_profile("credential-probe", "main")
+        self.assertEqual(result["probeState"], "ready")
+        self.assertEqual(result["width"], 640)
+        self.assertNotIn("endpoint", result)
+        self.assertIn("test-user:test-pass@", runner.call_args.args[0][-1])
+
     def test_registry_v2_batch_is_atomic_on_revision_conflict(self) -> None:
         for camera_id in ("batch-one", "batch-two"):
             registry.save_camera(registry.validate_camera({

@@ -1652,15 +1652,18 @@ def probe_source_profile(camera_id: str, profile_id: str) -> dict:
                 "SELECT * FROM stream_profiles WHERE camera_id=? AND id=?", (camera_id, profile_id)).fetchone()
             if not camera or not profile:
                 raise KeyError("camera or profile not found")
-            if camera["credentials_ref"]:
-                database.execute(
-                    "UPDATE stream_profiles SET probe_state='cached',last_probe_at=? WHERE camera_id=? AND id=?",
-                    (int(time.time()), camera_id, profile_id))
-                reconcile_audio_issues(database, camera_id)
-                refreshed = database.execute(
-                    "SELECT * FROM stream_profiles WHERE camera_id=? AND id=?", (camera_id, profile_id)).fetchone()
-                return profile_document(database, camera_id, refreshed, include_endpoint=False)
             endpoint, transport_mode = profile["endpoint"], profile["transport_mode"]
+            if camera["credentials_ref"]:
+                try:
+                    username, password = load_credentials(camera["credentials_ref"])
+                except PermissionError:
+                    database.execute(
+                        "UPDATE stream_profiles SET probe_state='failed',last_probe_at=? WHERE camera_id=? AND id=?",
+                        (int(time.time()), camera_id, profile_id))
+                    refreshed = database.execute(
+                        "SELECT * FROM stream_profiles WHERE camera_id=? AND id=?", (camera_id, profile_id)).fetchone()
+                    return profile_document(database, camera_id, refreshed, include_endpoint=False)
+                endpoint = endpoint_with_credentials(endpoint, username, password)
             if endpoint.startswith("http://") and not bool(profile["allow_insecure_http"]):
                 raise InsecureHttpDenied("insecure HTTP media requires explicit per-profile approval")
             cache_key = probe_result_key(camera_id, profile_id, endpoint, transport_mode)

@@ -1,9 +1,11 @@
 import { type CSSProperties, type DragEvent, type ReactNode, useEffect, useMemo, useState } from 'react';
 import LocalRuntimeBadge from './LocalRuntimeBadge';
+import { fetchAccountProfile, type AccountProfile } from './api';
+import { avatarChoices, roleLabel } from './AccountWorkspace';
 import ProblemCenter from './ProblemCenter';
 import { listLocalConfigProfiles, loadActiveLocalConfigProfile, loadWorkspaceLayout, saveWorkspaceLayout, setActiveLocalConfigProfile, type LocalConfigProfile, type WorkspaceDock, type WorkspaceLayout } from './localRuntime';
 
-export type ProductArea = 'monitor' | 'studio' | 'devices' | 'audio' | 'analytics' | 'events' | 'archive' | 'storage' | 'settings' | 'admin';
+export type ProductArea = 'monitor' | 'studio' | 'devices' | 'audio' | 'analytics' | 'events' | 'archive' | 'storage' | 'settings' | 'admin' | 'account';
 
 const entries: Array<{ id: ProductArea; label: string; short: string }> = [
   { id: 'monitor', label: '监看 Monitor', short: '监看' },
@@ -45,6 +47,7 @@ function validLayout(value: WorkspaceLayout | null): WorkspaceLayout {
 export function areaFromHash(hash = window.location.hash): ProductArea {
   const route = hash.replace(/^#\/?/, '').split(/[/?]/, 1)[0];
   if (entries.some((entry) => entry.id === route)) return route as ProductArea;
+  if (route === 'account') return 'account';
   if (route === 'clients') return 'settings';
   if (route === 'system') return 'settings';
   if (route === 'composite') return 'monitor';
@@ -59,6 +62,13 @@ export default function WorkspaceShell({ area, onNavigate, connection, children 
   const [draggedDock, setDraggedDock] = useState<string | null>(null);
   const [profiles, setProfiles] = useState<LocalConfigProfile[]>([]);
   const [activeProfileId, setActiveProfileId] = useState('');
+  const [accountProfile, setAccountProfile] = useState<AccountProfile | null>(null);
+  useEffect(() => {
+    const controller = new AbortController();
+    const refresh = () => { void fetchAccountProfile(controller.signal).then(setAccountProfile).catch(() => undefined); };
+    refresh(); window.addEventListener('webobs:account-profile-updated', refresh);
+    return () => { controller.abort(); window.removeEventListener('webobs:account-profile-updated', refresh); };
+  }, []);
   useEffect(() => { void Promise.all([loadWorkspaceLayout(), loadActiveLocalConfigProfile()]).then(([value, active]) => { setLayout(validLayout(active?.workspaceLayout ?? value)); setLayoutLoaded(true); }); }, []);
   useEffect(() => { if (layoutLoaded) void saveWorkspaceLayout(layout); }, [layout, layoutLoaded]);
   useEffect(() => {
@@ -106,8 +116,8 @@ export default function WorkspaceShell({ area, onNavigate, connection, children 
     </aside>
     <div className="workspace-frame">
       <header className="workspace-global-bar" data-workspace-style={layout.style}>
-        <div><strong>{entries.find((entry) => entry.id === area)?.label ?? 'WebOBS'}</strong>{connection && <span className={`connection ${connection}`}><i aria-hidden="true" />{connection === 'online' ? '在线' : connection === 'connecting' ? '连接中' : '离线'}</span>}</div>
-        <div><label className="config-profile-selector"><span>配置</span><select aria-label="选择账号配置" value={activeProfileId} onChange={(event) => void chooseProfile(event.target.value)}><option value="">服务器默认</option>{profiles.map((profile) => <option key={profile.id} value={profile.id}>{profile.name}</option>)}</select></label><button type="button" className="config-profile-manage" onClick={() => onNavigate('settings')}>管理配置</button><div className="workspace-style-switch" role="group" aria-label="工作区风格"><button type="button" aria-pressed={layout.style === 'obs'} className={layout.style === 'obs' ? 'active' : ''} onClick={() => setLayout((value) => ({ ...value, style: 'obs' }))}>OBS 风格</button><button type="button" aria-pressed={layout.style === 'classic'} className={layout.style === 'classic' ? 'active' : ''} onClick={() => setLayout((value) => ({ ...value, style: 'classic' }))}>经典</button></div>{layout.style === 'obs' && <details className="workspace-dock-menu"><summary>面板</summary><div className="workspace-dock-config">{orderedDocks.map((dock) => <div className="workspace-dock-item" draggable onDragStart={() => setDraggedDock(dock.id)} onDragOver={(event: DragEvent<HTMLDivElement>) => event.preventDefault()} onDrop={() => reorderDock(dock.id)} key={dock.id}><button type="button" onClick={() => updateDock(dock.id, { collapsed: !dock.collapsed })}>{dockLabels[dock.kind]} {dock.collapsed ? '显示' : '隐藏'}</button><select aria-label={`${dockLabels[dock.kind]} 区域`} value={dock.region} onChange={(event) => updateDock(dock.id, { region: event.target.value as WorkspaceDock['region'] })}><option value="left">左</option><option value="right">右</option><option value="bottom">底部</option><option value="center">中央</option></select><label><span className="sr-only">{dockLabels[dock.kind]} 大小</span><input aria-label={`${dockLabels[dock.kind]} 大小`} type="range" min="10" max="80" step="1" value={dock.size} onChange={(event) => updateDock(dock.id, { size: Number(event.target.value) })} /></label></div>)}<button type="button" onClick={() => setLayout({ schemaVersion: 1, style: 'obs', docks: defaultDocks })}>恢复默认布局</button></div></details>}<LocalRuntimeBadge /><ProblemCenter /></div>
+        <div><strong>{area === 'account' ? '我的账号' : entries.find((entry) => entry.id === area)?.label ?? 'WebOBS'}</strong>{connection && <span className={`connection ${connection}`}><i aria-hidden="true" />{connection === 'online' ? '在线' : connection === 'connecting' ? '连接中' : '离线'}</span>}</div>
+        <div><label className="config-profile-selector"><span>配置</span><select aria-label="选择账号配置" value={activeProfileId} onChange={(event) => void chooseProfile(event.target.value)}><option value="">服务器默认</option>{profiles.map((profile) => <option key={profile.id} value={profile.id}>{profile.name}</option>)}</select></label><button type="button" className="config-profile-manage" onClick={() => onNavigate('settings')}>管理配置</button><div className="workspace-style-switch" role="group" aria-label="工作区风格"><button type="button" aria-pressed={layout.style === 'obs'} className={layout.style === 'obs' ? 'active' : ''} onClick={() => setLayout((value) => ({ ...value, style: 'obs' }))}>OBS 风格</button><button type="button" aria-pressed={layout.style === 'classic'} className={layout.style === 'classic' ? 'active' : ''} onClick={() => setLayout((value) => ({ ...value, style: 'classic' }))}>经典</button></div>{layout.style === 'obs' && <details className="workspace-dock-menu"><summary>面板</summary><div className="workspace-dock-config">{orderedDocks.map((dock) => <div className="workspace-dock-item" draggable onDragStart={() => setDraggedDock(dock.id)} onDragOver={(event: DragEvent<HTMLDivElement>) => event.preventDefault()} onDrop={() => reorderDock(dock.id)} key={dock.id}><button type="button" onClick={() => updateDock(dock.id, { collapsed: !dock.collapsed })}>{dockLabels[dock.kind]} {dock.collapsed ? '显示' : '隐藏'}</button><select aria-label={`${dockLabels[dock.kind]} 区域`} value={dock.region} onChange={(event) => updateDock(dock.id, { region: event.target.value as WorkspaceDock['region'] })}><option value="left">左</option><option value="right">右</option><option value="bottom">底部</option><option value="center">中央</option></select><label><span className="sr-only">{dockLabels[dock.kind]} 大小</span><input aria-label={`${dockLabels[dock.kind]} 大小`} type="range" min="10" max="80" step="1" value={dock.size} onChange={(event) => updateDock(dock.id, { size: Number(event.target.value) })} /></label></div>)}<button type="button" onClick={() => setLayout({ schemaVersion: 1, style: 'obs', docks: defaultDocks })}>恢复默认布局</button></div></details>}<LocalRuntimeBadge /><ProblemCenter />{accountProfile && <button type="button" className="account-badge" onClick={() => onNavigate('account')} aria-label={`我的账号 ${accountProfile.displayName} ${accountProfile.roles.map(roleLabel).join('、')}`}><span className="account-avatar">{avatarChoices.find((choice) => choice.id === accountProfile.avatar)?.icon ?? '●'}</span><span><strong>{accountProfile.displayName}</strong><small>{accountProfile.roles.map(roleLabel).join('、')}</small></span></button>}</div>
       </header>
       {layout.style === 'obs' ? <div className="workspace-obs-dockbar" aria-label="OBS 面板概览">
         <strong>OBS 工作区</strong>

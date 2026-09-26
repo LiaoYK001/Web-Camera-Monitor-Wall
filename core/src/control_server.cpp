@@ -2116,7 +2116,8 @@ public:
             upstream_port = 8095;
             cluster_service = true;
         }
-        else if (target == "/api/v2/account/preferences/monitor-view" ||
+        else if (target == "/api/v2/account/me" || target == "/api/v2/account/password" ||
+                 target == "/api/v2/account/preferences/monitor-view" ||
                  target == "/api/v2/account/preferences/workspace-layout" ||
                  target == "/api/v2/account/preferences/config-profiles" ||
                  target == "/api/v2/account/preferences/active-profile" ||
@@ -2281,7 +2282,7 @@ public:
             }
             internal_admin_header = "X-WebObs-Internal-Admin: " + cluster_internal_token_;
             headers = curl_slist_append(headers, internal_admin_header.c_str());
-            if (suffix.starts_with("/account/preferences/")) {
+            if (suffix.starts_with("/account/")) {
                 const std::string_view principal = view(request["X-WebObs-Principal"]);
                 if (principal.empty() || principal.size() > 64 ||
                     !std::all_of(principal.begin(), principal.end(), [](unsigned char character) {
@@ -3239,7 +3240,7 @@ HttpResponse handle_request(const HttpRequest &request, SceneController &control
     }
 
     const bool v2_target = target.starts_with("/api/v3/analytics") ||
-                           target.starts_with("/api/v2/account/preferences/") ||
+                           target.starts_with("/api/v2/account/") ||
                            target == "/api/v2/enrollments" || target.starts_with("/api/v2/enrollments/") ||
                            target == "/api/v2/clients" || target.starts_with("/api/v2/clients/") ||
                            target == "/api/v2/client/bootstrap" || target.starts_with("/api/v2/client/bootstrap?") ||
@@ -3987,7 +3988,8 @@ private:
             return;
         }
         if (session_record && !public_probe && !device_request && !static_resource &&
-            target != "/api/v1/auth/session" && cluster_authentication_enabled()) {
+            target != "/api/v1/auth/session" && !target.starts_with("/api/v2/account/") &&
+            cluster_authentication_enabled()) {
             const ClusterAuthorization authorization = cluster_authorize(session_record->user, request);
             const bool legacy_admin = basic_auth_enabled &&
                 session_record->user == authenticator_.configured_username();
@@ -4010,7 +4012,7 @@ private:
                 return;
             }
         }
-        if (target.starts_with("/api/v2/account/preferences/")) {
+        if (target.starts_with("/api/v2/account/")) {
             request.erase("X-WebObs-Principal");
             if (session_record)
                 request.set("X-WebObs-Principal", session_record->user);

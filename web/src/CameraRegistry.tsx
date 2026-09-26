@@ -108,30 +108,33 @@ export default function CameraRegistry({ onBack }: { onBack: () => void }) {
   const [analyticsRevision, setAnalyticsRevision] = useState(1);
   const [preferences, setPreferences] = useState<Map<string, CameraPreference>>(new Map());
   const reload = async () => { try {
-    const [cameraResult, policyResult, syncState, accountPreferences] = await Promise.all([
-      fetchCameras(), fetchAnalyticsPolicies(), loadSyncState(), fetchCameraPreferences().catch(() => null),
-    ]);
-    let v3Revision = analyticsRevision;
-    let v3Policies = policyResult.policies;
-    try {
-      const v3 = await fetchV3AnalyticsPolicies();
-      v3Revision = v3.revision; v3Policies = v3.policies;
-    } catch {
-      // v1 remains the compatibility path while an older controller is upgraded.
-    }
+    const cameraResult = await fetchCameras();
     setCameras(cameraResult.cameras);
-    setAnalyticsRevision(v3Revision);
-    setPolicies(new Map(v3Policies.map((policy) => [policyKey(policy.cameraId, policy.profileId), policy])));
-    const legacyPreferences = new Map((syncState?.documents ?? []).filter((item) =>
-      item.kind === 'camera-preference' && !item.deleted && item.document).map((item) => [item.id, {
-        displayName: String(item.document?.displayName ?? ''), favorite: item.document?.favorite === true,
-        group: String(item.document?.group ?? ''),
-      }]));
-    if (accountPreferences) setPreferences(new Map(Object.entries(accountPreferences)));
-    else {
-      setPreferences(legacyPreferences);
-      if (legacyPreferences.size) void saveCameraPreferences(Object.fromEntries(legacyPreferences)).catch(() => undefined);
-    }
+    setError('');
+    // Camera rows should become visible before slower analytics and preference requests finish.
+    void Promise.all([fetchAnalyticsPolicies(), loadSyncState(), fetchCameraPreferences().catch(() => null)])
+      .then(async ([policyResult, syncState, accountPreferences]) => {
+        let v3Revision = analyticsRevision;
+        let v3Policies = policyResult.policies;
+        try {
+          const v3 = await fetchV3AnalyticsPolicies();
+          v3Revision = v3.revision; v3Policies = v3.policies;
+        } catch {
+          // v1 remains the compatibility path while an older controller is upgraded.
+        }
+        setAnalyticsRevision(v3Revision);
+        setPolicies(new Map(v3Policies.map((policy) => [policyKey(policy.cameraId, policy.profileId), policy])));
+        const legacyPreferences = new Map((syncState?.documents ?? []).filter((item) =>
+          item.kind === 'camera-preference' && !item.deleted && item.document).map((item) => [item.id, {
+            displayName: String(item.document?.displayName ?? ''), favorite: item.document?.favorite === true,
+            group: String(item.document?.group ?? ''),
+          }]));
+        if (accountPreferences) setPreferences(new Map(Object.entries(accountPreferences)));
+        else {
+          setPreferences(legacyPreferences);
+          if (legacyPreferences.size) void saveCameraPreferences(Object.fromEntries(legacyPreferences)).catch(() => undefined);
+        }
+      }).catch(() => undefined);
   } catch (reason) { setError(reason instanceof Error ? reason.message : '无法读取摄像机'); } };
   useEffect(() => { void reload(); }, []);
 

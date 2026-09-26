@@ -38,6 +38,31 @@ export async function login(username: string, password: string): Promise<AuthSes
   return (await response.json()) as AuthSession;
 }
 
+export interface AccountProfile {
+  username: string; displayName: string; avatar: 'person' | 'camera' | 'shield' | 'eye' | 'star' | 'sun';
+  roles: string[]; permissions: string[]; scopes: Array<{ kind: string; id: string }>;
+  acl: Array<{ permission: string; allowed: boolean }>;
+}
+
+export async function fetchAccountProfile(signal?: AbortSignal): Promise<AccountProfile> {
+  const response = await fetch('/api/v2/account/me', { cache: 'no-store', credentials: 'same-origin', signal });
+  if (!response.ok) throw await parseError(response);
+  return await response.json() as AccountProfile;
+}
+
+export async function updateAccountProfile(value: { displayName?: string; avatar?: AccountProfile['avatar'] }): Promise<AccountProfile> {
+  const response = await fetch('/api/v2/account/me', { method: 'PATCH', credentials: 'same-origin',
+    headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(value) });
+  if (!response.ok) throw await parseError(response);
+  return await response.json() as AccountProfile;
+}
+
+export async function changeAccountPassword(currentPassword: string, newPassword: string): Promise<void> {
+  const response = await fetch('/api/v2/account/password', { method: 'POST', credentials: 'same-origin',
+    headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ currentPassword, newPassword }) });
+  if (!response.ok) throw await parseError(response);
+}
+
 export async function fetchFirstRunStatus(): Promise<{ registrationOpen: boolean }> {
   const response = await fetch('/api/v1/auth/setup', { cache: 'no-store', credentials: 'same-origin' });
   if (!response.ok) throw await parseError(response);

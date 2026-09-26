@@ -19,6 +19,7 @@ import SourceCatalog from './SourceCatalog';
 import AudioWorkspace from './AudioWorkspace';
 import SettingsWorkspace from './SettingsWorkspace';
 import ClusterAdmin from './ClusterAdmin';
+import AccountWorkspace from './AccountWorkspace';
 import AnalyticsWorkspace from './AnalyticsWorkspace';
 import { loadActiveLocalConfigProfile, loadOfflineStudio, loadWorkspaceLayout, makeLocalConfigBundleForStudio, queueOfflineAudit, saveLocalConfigProfile, saveLocalStudio, saveStudioSnapshot, type LocalConfigProfile } from './localRuntime';
 import type { AudioMonitoring, CameraRecord, FilterKind, PlaybackMode, ScaleMode, SceneDocument, SceneFilter, SceneItem, SceneSource, StudioCapabilities, StudioDocument, Transport } from './types';
@@ -763,6 +764,9 @@ export default function App() {
   }
   if (productArea === 'devices') {
     return <WorkspaceShell area={productArea} onNavigate={navigate} connection={connection}><SourceCatalog /></WorkspaceShell>;
+  }
+  if (productArea === 'account') {
+    return <WorkspaceShell area={productArea} onNavigate={navigate} connection={connection}><AccountWorkspace onAdmin={() => navigate('admin')} /></WorkspaceShell>;
   }
   if (productArea === 'settings') {
     return <WorkspaceShell area={productArea} onNavigate={navigate} connection={connection}><SettingsWorkspace studio={studioDraft} onProfileSelected={applyLocalProfile} /><SystemStatus onBack={() => navigate('monitor')} /></WorkspaceShell>;
