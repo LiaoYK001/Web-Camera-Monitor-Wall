@@ -1,6 +1,6 @@
 # 交接手册 / Handover Manual — Web Camera Monitor Wall
 
-> 适用基线 / Baseline：**v3.2**（正式发布 2026-09-22），提交 `fc6fe71`，`main` 与 `dev` 同点。
+> 适用版本 / Version：**v3.2**（正式发布 2026-09-22）。本手册在 `dev` 的 `bf996ce` 上维护；`main` 停在发布提交 `fc6fe71`。
 > 读者 / Audience：接手本项目的开发者与运维。
 > 约定 / Convention：文中「未提交」= 存在于工作区但**不在 Git 索引**中，新克隆不会携带。引用文件均给出仓库内路径。
 
@@ -17,7 +17,7 @@
 | 3 | `docs/local-platform-gates.md` | 本机 Windows + WSL2 私有门禁与收据（receipt）契约 |
 | 4 | `ROADMAP.md` | 里程碑、当前进度、验收证据、未关闭项 |
 
-建议顺序：§1 → §2 → §3（工作区风险）→ §4（Day 1）→ §5/§6（架构）→ §7（契约）→ §8（开发）→ §9/§10（分支与提交规范）→ §11（测试）→ §12（发布）→ §13（路线图）→ §14（陷阱与待决项）。
+建议顺序：§1 → §2 → §3（工作区与移交清单）→ §4（Day 1）→ §5/§6（架构）→ §7（契约）→ §8（开发）→ §9/§10（分支与提交规范）→ §11（测试）→ §12（发布）→ §13（路线图）→ §14（陷阱与待决项）。
 
 ---
 
@@ -52,7 +52,7 @@ RTSP camera -> libobs ffmpeg_source -> OBS scene -> H.264/AAC MP4
 | 当前正式版本 | **v3.2**（GitHub Release `Latest`，`published_at` 2026-09-22T04:32:47Z，immutable） |
 | 版本日期 vs 实际发布 | 版本日期 2026-09-21；实际发布 2026-09-22（`published_at` 不回填） |
 | 发布 Tag 提交 | `5ab5da0fa4d2ac67af2ac52c7ee3d64f75ae82cc` |
-| 分支 | `main` = `dev` = `fc6fe71`（"顺位发布v3.2并规范版本递增"） |
+| 分支 | `main` = `fc6fe71`（v3.2 发布提交）；`dev` = `bf996ce`，**领先 `origin/dev` 3 个提交**（反馈6、局域网联调、投影窗口修复） |
 | 镜像 | `ghcr.io/liaoyk001/web-camera-monitor-wall` |
 | OCI index digest | `sha256:1bbb0c2608c977b2e04386846dcb11674d9f6996a4c8e0b01bb6f1be58999953` |
 | 指向该 digest 的标签 | `v3.2`、`latest`、`v3.1`、`sha-5ab5da0fa4d2`（**同一镜像，未重建**） |
@@ -67,28 +67,22 @@ RTSP camera -> libobs ffmpeg_source -> OBS scene -> H.264/AAC MP4
 
 ---
 
-## 3. 工作区状态与移交清单 / Working-tree state ⚠️
+## 3. 工作区状态与移交清单 / Working-tree state
 
-`git status` 有 **17 个未跟踪且未被 `.gitignore` 忽略**的文件。**新克隆不会包含它们**，其中含**当前主推的开发指南和 Linux 启动器**。移交时必须一并打包，或先按 §10 规范提交。
+**当前工作树完全干净**：`git status --porcelain` 为空，既无未提交改动，也无未跟踪文件。
 
-| 文件 | 说明 | 影响 |
-| --- | --- | --- |
-| `docs/development.md` | **新的统一开发指南**（native/frontend/container） | 🔴 高：没它无法按现行流程上手 |
-| `docs/development-windows-wsl2.md` | 旧 WSL2 说明，已指向 `development.md` | 中 |
-| `compose.dev.yaml` | 开发镜像 overlay（`/dev/shm` 测试库、8080 回环、`WEBOBS_REGISTRATION_ENABLED`） | 中：容器模式依赖 |
-| `scripts/dev.sh` | Linux/WSL 启动入口（调用 `dev.mjs`） | 🔴 高：Linux 侧唯一入口，而 `dev.ps1` 已入库 |
-| `scripts/dev-native.sh` | 直接调用 `dev-native.py` | 中 |
-| `scripts/stop-dev.sh` / `stop-dev.ps1` | 停止会话脚本（§8 的停止方式） | 中 |
-| `web/pnpm-workspace.yaml` | `allowBuilds: protobufjs` | 中：pnpm 安装行为 |
-| `web/.playwright-temp.config.ts` | 复用已运行 Vite 的临时 Playwright 配置 | 低 |
-| `web/tests/local-runtime/login-gate.spec.ts` | 登录门禁/注册规格（**后端未实现，见 §14**） | 中 |
-| `web/tests/local-runtime/workspace-shell.spec.ts` | 工作区外壳规格 | 低 |
-| `.github/copilot-instructions.md`、`.github/instructions/` | Mermaid 工具说明（与产品无关） | 低 |
-| `docs/feedback-5-{continuous-execution-2026-09-19,evidence-review-2026-09-20,followup-2026-09-18,next-plan}.md` | 反馈 5 过程计划与协作协议（**§10 规范原文**） | 中 |
+> 历史提醒 / History：本手册首版撰写时曾有 **17 个未跟踪文件**（含当时的统一开发指南 `docs/development.md` 与 Linux 启动器 `scripts/dev.sh`）。它们已由 `e056376 manual-1` 一并提交入库，该风险已消除。若你检出的分支早于该提交，请先确认这批文件存在。
 
-**已确认干净**：所有**已跟踪**文件无未提交改动。`secrets/`、`build/`、`recordings/`、`tests/artifacts/`、`gate/` 均被忽略。
+**仍需手工移交的内容**（都不在 Git 中，且被 `.gitignore` 覆盖）：
 
-**移交动作**：① 一并交付上述文件（压缩包/分支）；② 或先提交（`docs:`/`chore:`，双语，见 §10）；③ 移交 `secrets/` 内容与生产凭据来源（生产凭据是**宿主机明文文件**，见 §12）。
+| 内容 | 说明 |
+| --- | --- |
+| `secrets/` | 开发凭据（`webobs-dev-username.txt` = `admin`、`webobs-dev-password.txt`）与生产 TLS/认证文件来源（生产凭据是**宿主机明文文件**，见 §12） |
+| `recordings/`、`tests/artifacts/` | 录像与门禁证据（含私有端点，禁止上传公开 Issue） |
+| `build/` | 发布产物（`build/release-assets/**`）、原生缓存与临时日志 |
+| `gate/` | 私有门禁夹具；必须在检出目录之外使用 |
+
+**待办**：`dev` 领先 `origin/dev` 3 个提交且尚未 push（按 §9/§10：不自动 push，需维护者确认）。
 
 ---
 
@@ -399,7 +393,7 @@ English: <The same problem and resulting behavior>
 
 **实际统计（近 400 条）**：`feat` 90、`fix` 76、`docs` 53、`test` 19、`chore` 12、`ci` 7、`refactor` 7、`diag` 4；**231/278 条标题含 ` / ` 双语**；92 条正文含 `验证/Validation`、57 条含 `限制/Limitations`；**无 `Co-authored-by`**；合并提交用 `merge:` 前缀。常用 scope：`composite`、`acceptance`、`audio`、`gateway`、`dev`、`soak`、`release`、`scene`、`web`、`core`。
 
-**提交纪律**：按**主题**分批提交；不改写旧历史；**不自动 push、不自动发布**；**不把无关未跟踪文件塞进提交**（本仓库现有 17 个，极易误加）；测试证据必须**注明实际被测提交**，旧提交的测试数字不能复制给新 HEAD；每次提交后**继续下一项**。
+**提交纪律**：按**主题**分批提交；不改写旧历史；**不自动 push、不自动发布**；**不把无关文件塞进提交**（不要用 `git add -A`，按路径显式添加）；测试证据必须**注明实际被测提交**，旧提交的测试数字不能复制给新 HEAD；每次提交后**继续下一项**。
 
 **持续执行协议（若沿用原协作方式）**：按「取未完成项 → 实现 → 针对性测试 → 修复 → 提交 → 下一项」循环；每约 60 秒给简短进度；同一症状复现两次且无新证据时先补日志/缩小实验，而非盲目重试；不使用全局 `pkill`、不重启整个 WSL/系统来回避诊断；清理只限本次拥有的进程/路由，**原始相机配置与用户场景必须保留**。维护 `docs/feedback-5-progress.md` 检查点。
 
@@ -584,7 +578,7 @@ node tests/soak-evidence.mjs --label composite-1080p --mode composite --target-f
 5. **开放注册未实现，但开关与文档都在**：`compose.dev.yaml` 与 `scripts/dev-native.py` 设置 `WEBOBS_REGISTRATION_ENABLED=true`，`docs/development.md` §5 声称"登录页支持开放注册"——但**全仓库没有任何代码读取该变量**（`core/src` 0 命中），`/api/v1/auth/options` 与 `/api/v1/auth/register` **只存在于未提交的 Playwright 规格** `web/tests/local-runtime/login-gate.spec.ts`（用 `page.route` mock 后端），`web/src` 无注册 UI。**当前只有 login / session / logout 三个端点。**
 6. **Scene schema 文档滞后**：实现 current=**6**（`audioInputs` 取代单 `audioTrack`，legacy=5），文档仍以 v5 为当前契约；按文档写死 5 会失败。
 7. **IndexedDB 文档滞后**：文档写 5 个 store，代码已是 7 个（+syncQueue/syncState，DB version 2）。
-8. **17 个未跟踪文件**（§3），含主推开发指南与 Linux 启动器。
+8. **`dev` 有 3 个提交未推送**（反馈6、局域网联调、投影窗口修复），`main` 仍停在 v3.2 发布提交 `fc6fe71`；推送与是否合入 `main` 需维护者决定（见 §3/§10）。
 
 **工程陷阱**
 
@@ -600,7 +594,7 @@ node tests/soak-evidence.mjs --label composite-1080p --mode composite --target-f
 **待决（需维护者/用户决定）**
 
 17. `back_3`/`front_3` 的设备侧调整（报告列了选项，**未经确认不得改相机/NVR**）。
-18. 是否提交 §3 的 17 个文件、是否补齐开放注册、是否启动 v3-M2 之后的下一版本。
+18. 是否补齐开放注册（§14-5）、是否把 §3 待推送的 3 个提交推送到 `origin/dev` 或合入 `main`、是否启动 v3-M2 之后的下一版本。
 19. v3.1 被保留的 Tag 名是否请 GitHub Support 清理（当前以 v3.2 顺位规避）。
 20. 是否把 `v3.2` 支持补进发布脚本与收据校验器（**建议在任何下一次发布前完成**）。
 21. 是否补齐"Direct/Hybrid 下服务端 summary 恒 FAIL、浏览器证据需手工合并"的单一发布判据（§11.7-2）。
