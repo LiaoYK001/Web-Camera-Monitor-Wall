@@ -1294,7 +1294,7 @@ select:focus-visible,
 /* Clean wall mode: fullscreen and the resizable window preview keep only the
    picture, telemetry, the level meter, detection boxes and audio alerts.  All
    selectors, sliders and per-tile status chips are hidden. */
-:is(.stage-wrap:fullscreen, .monitor-surface:fullscreen, .direct-preview-shell.window-preview-mode)
+:is(.stage-wrap:fullscreen, .monitor-surface:fullscreen, .direct-preview-shell.window-preview-mode, .projector-shell)
   :is(.monitor-view-controls, .direct-audio-control, .monitor-overlay, .fullscreen-overlay,
       .tile-status-button, .low-power-status, .direct-tile-name, .direct-tile-state,
       .delivery-diagnostic, .analytics-runtime-status, .monitor-source-rail,
@@ -1344,6 +1344,72 @@ select:focus-visible,
   box-shadow: none;
   aspect-ratio: auto !important;
 }
+
+/* F6-07 projector window: the detached window renders the final picture only,
+   like "Scenes -> Open Scene Projector -> New Window" in OBS.  Chrome inside it
+   is hidden by the clean-wall rule above; these rules make the stage fill the
+   window instead of the wall's 1100px column. */
+.projector-shell {
+  position: fixed;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  overflow: hidden;
+  background: #000;
+}
+
+.projector-shell .direct-preview-shell,
+.projector-shell .program-preview-shell {
+  width: 100vw;
+  max-width: none;
+  height: 100vh;
+  gap: 0;
+  place-items: center;
+}
+
+.projector-shell .direct-preview,
+.projector-shell .direct-preview-shell.compact .direct-preview,
+.projector-shell .program-preview {
+  width: 100vw;
+  max-width: none;
+  max-height: 100vh;
+  border: 0;
+  border-radius: 0;
+  box-shadow: none;
+}
+
+/* The picture is the product here; the offline diagnostics panel stays on the
+   wall, while the in-frame status chip keeps explaining a dark projector. */
+.projector-shell .program-diagnostics { display: none; }
+
+.projector-waiting {
+  margin: 0;
+  color: #4b5565;
+  font-size: 13px;
+  letter-spacing: .08em;
+}
+
+.projector-hint {
+  position: fixed;
+  z-index: 10;
+  bottom: 18px;
+  left: 50%;
+  display: flex;
+  gap: 12px;
+  padding: 7px 12px;
+  border: 1px solid rgba(255, 255, 255, .14);
+  border-radius: 999px;
+  color: #aeb7c5;
+  background: rgba(4, 7, 11, .78);
+  font-size: 11px;
+  transform: translateX(-50%);
+  pointer-events: none;
+}
+
+/* LoginGate renders its session affordances as siblings of the page.  A
+   projector must never show them over the picture. */
+.projector-shell ~ .session-logout,
+.projector-shell ~ .offline-session { display: none; }
 
 .monitor-overlay {
   position: absolute;

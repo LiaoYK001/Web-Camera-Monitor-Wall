@@ -10,6 +10,7 @@ import { applyAutomaticLayout, canvasModes, canvasPixelPresets, defaultMonitorVi
 import { BrowserAnalyticsRuntime, type BrowserAnalyticsStatus } from './analyticsRuntime';
 import { openIssueCenter, reportLocalIssue, reportMediaIssue, resolveLocalIssue, subscribeLocalIssues } from './issueRuntime';
 import type { AnalyticsPolicy, CameraRecord, CameraSceneSource, MotionZone, OperationalIssue, SceneDocument, SceneItem, SceneSource, SourcePlaybackCapability } from './types';
+import { openProjectorWindow } from './projector';
 import { connectSource, type ProgramConnection, type ProgramConnectionState } from './whep';
 
 const labels: Record<ProgramConnectionState, string> = {
@@ -571,7 +572,6 @@ export default function DirectPreview({ scene, compact = false }: { scene: Scene
   const [windowRect, setWindowRect] = useState({ x: 72, y: 96, width: 760, height: 428 });
   const windowDrag = useRef<{ pointerId: number; offsetX: number; offsetY: number } | null>(null);
   const [popoutWindow, setPopoutWindow] = useState<Window | null>(null);
-  const [popoutPip, setPopoutPip] = useState<Window | null>(null);
   const previewHostRef = useRef<HTMLDivElement | null>(null);
   const promotionCooldowns = useRef(new Map<string, number>());
   const rotationBag = useRef<string[]>([]);
@@ -846,27 +846,26 @@ export default function DirectPreview({ scene, compact = false }: { scene: Scene
     if (windowDrag.current?.pointerId === event.pointerId) windowDrag.current = null;
   };
 
-  /** F6-07: detachable small window that can live on a secondary display. */
-  const openPopout = async () => {
-    const pip = (window as unknown as { documentPictureInPicture?: { requestWindow: (options?: { width?: number; height?: number }) => Promise<Window> } }).documentPictureInPicture;
-    if (pip?.requestWindow) {
-      try {
-        const win = await pip.requestWindow({ width: 640, height: 400 });
-        setPopoutPip(win);
-        win.addEventListener('pagehide', () => setPopoutPip(null), { once: true });
-        return;
-      } catch { /* fall through to window.open */ }
-    }
-    const win = window.open(`${window.location.pathname}#monitor`, 'webobs-monitor-popout', 'popup=yes,width=720,height=420');
+  /**
+   * F6-07: the detachable window is a scene projector, not a second workspace.
+   * It opens on the projector route, shows the final picture only, and stays
+   * open when the wall navigates elsewhere - close it with its own window
+   * button, Esc, or the "关闭小窗" control.
+   */
+  const openPopout = () => {
+    const win = openProjectorWindow('direct');
     if (win) setPopoutWindow(win);
   };
   const closePopout = () => {
-    popoutPip?.close();
     popoutWindow?.close();
-    setPopoutPip(null);
     setPopoutWindow(null);
   };
-  useEffect(() => () => { popoutPip?.close(); popoutWindow?.close(); }, [popoutPip, popoutWindow]);
+  // Track a window the user closed with its own title-bar button.
+  useEffect(() => {
+    if (!popoutWindow) return undefined;
+    const timer = window.setInterval(() => { if (popoutWindow.closed) setPopoutWindow(null); }, 1000);
+    return () => window.clearInterval(timer);
+  }, [popoutWindow]);
 
   const applyCanvasPreset = (mode: CanvasMode, aspect: number, preset: CanvasPixelPresetId) => {
     const size = resolveCanvasSize({ canvasMode: mode, canvasAspect: aspect, canvasPixelPreset: preset },
@@ -975,8 +974,8 @@ export default function DirectPreview({ scene, compact = false }: { scene: Scene
         <div className="quick-bar">
           <button type="button" className="primary-button" onClick={() => { if (audioEnabled) void mixer?.disable(); else void mixer?.enable(); }}>{audioEnabled ? '监听中' : '启用监听'}</button>
           <button type="button" onClick={() => setWindowPreview(true)}>窗口预览</button>
-          <button type="button" onClick={() => void openPopout()}>独立小窗</button>
-          {(popoutWindow || popoutPip) && <button type="button" onClick={closePopout}>关闭小窗</button>}
+          <button type="button" onClick={openPopout}>独立小窗</button>
+          {popoutWindow && <button type="button" onClick={closePopout}>关闭小窗</button>}
           <label>画质<select aria-label="监控画质" value={monitorView.streamQuality} onChange={(event) => setMonitorView((value) => ({ ...value, streamQuality: event.target.value as StreamQuality }))}>
             {(Object.keys(streamQualityPresets) as StreamQuality[]).map((key) => <option key={key} value={key}>{streamQualityPresets[key].label}</option>)}
           </select></label>

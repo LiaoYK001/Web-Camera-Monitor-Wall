@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
+import { openProjectorWindow } from './projector';
 import { connectProgram, type PlaybackStage, type ProgramConnection, type ProgramConnectionState, type ProgramStatus } from './whep';
 
 const labels: Record<ProgramConnectionState, string> = {
@@ -79,6 +80,7 @@ export default function ProgramPreview({ aspectRatio }: { aspectRatio: string })
         <button type="button" aria-pressed={audioEnabled} onClick={() => void toggleAudio()}>
           {audioEnabled ? '关闭节目声音' : '启用节目声音'}
         </button>
+        <button type="button" onClick={() => { openProjectorWindow('composite'); }}>独立小窗</button>
         <span>{audioBlocked ? '浏览器阻止了播放，请再次点击。' : 'Composite Opus 默认静音，点击后启用。'}</span>
       </div>
       <div className={`program-preview ${state}`} style={{ aspectRatio }}>
