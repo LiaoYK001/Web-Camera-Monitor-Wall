@@ -307,6 +307,7 @@ def main():
     except BlockingIOError: raise StageError('lock', '已有原生开发会话正在编译或运行，请先停止原会话。')
     ports_free()
     signal.signal(signal.SIGTERM, shutdown); signal.signal(signal.SIGINT, shutdown)
+    say(f'WEBOBS_NATIVE_SUPERVISOR_PID={os.getpid()}')
     if not args.soak:
         def watch_parent():
             try:
@@ -524,9 +525,7 @@ def main():
         'WEBOBS_NVR_CONFIG': str(data / 'nvr.json'), 'WEBOBS_NVR_STORAGE': str(CACHE / 'recordings'),
         'WEBOBS_NVR_DATABASE': str(CACHE / 'recordings/catalog.sqlite3'),
         'WEBOBS_CLUSTER_INTERNAL_TOKEN': os.urandom(32).hex(), 'WEBOBS_V2_INTERNAL_TOKEN': os.urandom(32).hex(),
-        'WEBOBS_REGISTRATION_ENABLED': 'true', 'WEBOBS_COMPAT_BASIC_AUTH': 'true',
-        'WEBOBS_AUTH_USERNAME_FILE': str(ROOT / 'secrets/webobs-dev-username.txt'),
-        'WEBOBS_AUTH_PASSWORD_FILE': str(ROOT / 'secrets/webobs-dev-password.txt'),
+        'WEBOBS_REGISTRATION_ENABLED': 'true', 'WEBOBS_COMPAT_BASIC_AUTH': 'false',
         'WEBOBS_SESSION_COOKIE_SECURE': 'false', 'WEBOBS_LISTEN_ADDRESS': '127.0.0.1',
         'WEBOBS_HTTP_PORT': '8080', 'WEBOBS_ALLOW_INSECURE_REMOTE': 'false',
         'WEBOBS_WEBRTC_ENABLED': 'true', 'WEBOBS_COMPOSITE_ENABLED': 'true' if args.composite else 'false',
@@ -548,6 +547,7 @@ def main():
     if lan_host:
         mediamtx_config = write_lan_mediamtx_config(lan_host)
         env.update({
+            'WEBOBS_SESSION_COOKIE_SECURE': 'true',
             'MTX_WEBRTCLOCALUDPADDRESS': '0.0.0.0:8189',
             'MTX_WEBRTCLOCALTCPADDRESS': '0.0.0.0:8190',
         })
@@ -562,7 +562,7 @@ def main():
         start(name, [sys.executable, ROOT / source], env, f'http://127.0.0.1:{port}/health')
     start('core', [core_build / 'webobsd'], env, 'http://127.0.0.1:8080/api/v1/health',
           timeout=300 if args.composite else 30, stage='core')
-    say(f'账号文件：{ROOT / "secrets"}；数据：{data}（独立于容器数据卷）')
+    say(f'账号数据库：{data / "cluster.sqlite3"}；首次访问请在登录页创建管理员账号')
     if args.composite:
         say('原生 Composite 已启用：来源 → OBS 合成 → H.264/Opus → MediaMTX → Program WHEP；启动器分别报告进程存活、引擎就绪与 Program 发布状态。')
         report_program_stages()

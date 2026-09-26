@@ -13,7 +13,7 @@ const options = { mode: 'native', api: 'http://127.0.0.1:8080', port: '5173', di
 const flags = new Set(['setup', 'check', 'build', 'help', 'stop', 'composite', 'soak', 'lan']);
 const children = new Set();
 let stopping = false;
-let controlServer; let stateFile; let mediaRelay;
+let controlServer; let stateFile; let mediaRelay; let nativeSupervisorPid = 0;
 const log = (message) => console.log(`\n[WebOBS] ${message}`);
 function detectLanIPv4() {
   // Prefer a real RFC1918 LAN over CGNAT/VPN (Tailscale 100.64/10) and WSL
@@ -37,8 +37,7 @@ function detectLanIPv4() {
 }
 
 /**
- * LAN co-dev needs an HTTPS Secure Context: browser pairing (WebCrypto,
- * libsodium) and camera media plans are disabled on plain http://<LAN-IP>.
+ * LAN co-dev needs an HTTPS Secure Context for PWA and browser media APIs.
  * Generate or reuse a self-signed cert whose SAN covers the LAN IP so Vite can
  * terminate TLS. Colleagues accept the warning once; the backend stays HTTP
  * loopback behind the Vite proxy.
@@ -150,6 +149,13 @@ function stop(code = 0, message = '') {
   controlServer?.close();
   mediaRelay?.close();
   if (stateFile && existsSync(stateFile)) unlinkSync(stateFile);
+  if (win && options.mode === 'native' && nativeSupervisorPid > 0) {
+    // Stopping wsl.exe itself can orphan a --soak supervisor and its services.
+    // Signal only the PID reported by this launch, after checking its cmdline.
+    const script = 'import os,signal,sys; p=int(sys.argv[1]); c=open(f"/proc/{p}/cmdline","rb").read(); os.kill(p,signal.SIGTERM) if b"scripts/dev-native.py" in c else None';
+    spawnSync('wsl.exe', ['-d', options.distro, '--exec', 'python3', '-c', script, String(nativeSupervisorPid)],
+      { stdio: 'ignore', windowsHide: true, timeout: 3000 });
+  }
   for (const child of children) {
     child.stdin?.end();
     // Closing stdin asks the Linux supervisor to stop only its own services.
@@ -179,13 +185,6 @@ function pnpmArgs(args) {
   if (!entry) throw new Error('未找到 Corepack。请运行 npm install -g corepack 后重试。');
   return [entry, 'pnpm', ...args];
 }
-function credentials() {
-  mkdirSync(path.join(root, 'secrets'), { recursive: true });
-  for (const [name, value] of [['username', 'admin'], ['password', randomBytes(24).toString('base64')]]) {
-    const file = path.join(root, `secrets/webobs-dev-${name}.txt`);
-    if (!existsSync(file)) writeFileSync(file, value, { mode: 0o600 });
-  }
-}
 try {
   const args = process.argv.slice(2);
   for (let i = 0; i < args.length; i++) {
@@ -196,7 +195,7 @@ try {
     else { if (!args[i + 1] || args[i + 1].startsWith('--')) throw new Error(`参数 ${args[i]} 缺少值`); options[key] = args[++i]; }
   }
   if (options.help) {
-    console.log(`WebOBS 本地开发\n\nWindows: .\\scripts\\dev.ps1 [-Setup] [-Check] [-Composite] [-Soak] [-Mode native|frontend|container] [-Api URL] [-Port 5173]\nLinux:   bash scripts/dev.sh [--setup] [--check] [--composite] [--soak] [--mode native|frontend|container] [--api URL] [--port 5173]\n\nLAN:     .\\scripts\\dev-lan-environment.ps1 [-LanHost IP] [-Port 5173] ...\n         bash scripts/dev-lan-environment.sh [--lan-host IP] [--port 5173] ...\n\nnative    默认：原生 C++/Python 后端 + Vite；Windows 后端运行在 WSL2。首次加 --setup / -Setup 安装 Ubuntu 24.04 依赖。\n--composite / -Composite\n          显式启用本地服务端合成（OBS 图形/媒体输入/编码与 WHIP 输出模块）。\n          首次使用：.\\scripts\\dev.ps1 -Setup -Composite；日常：.\\scripts\\dev.ps1 -Composite。\n          不带参数时保持轻量 native 默认行为（不构建合成模块）。\nfrontend  仅启动 Vite，连接 --api / -Api 指定的已有后端。\ncontainer 可选兼容模式；需要已启动 Docker/Podman，仅显式 --build / -Build 时构建镜像。\n--soak / -Soak\n          耐久/长稳模式：后端不监听父进程 stdin，父终端关闭也不会停止本次会话；\n          供 30 分钟验收与持续采样使用。退出用 Ctrl+C 或 SIGTERM。仅 native 模式生效。\n--lan     局域网开发模式（dev-lan-environment）：Vite 监听 0.0.0.0 并启用自签 HTTPS，\n          /api 代理把 Host/Origin 改写回 127.0.0.1，后端仍只绑定本机回环（端口转发语义）。\n          局域网成员用 https://<本机IPv4>:<端口>/ 访问；首次需信任自签证书，否则\n          浏览器配对与 camera 播放不可用（非 Secure Context）。仅限受信任局域网。\n          Windows 下额外启动 8190/tcp ICE/TCP 中继，供远端浏览器拉 WebRTC 流。\n--lan-host 指定对外 IPv4（默认优先 192.168/10/172.16-31 真实局域网，避开 Tailscale/WSL）。SAN 含该 IP 与 127.0.0.1/localhost。\n--check   只检查环境，不安装、不构建、不启动。\n--distro  Windows WSL 发行版，默认 Ubuntu-24.04。\n--engine  docker 或 podman（仅 container）。--builder 为 Docker 构建器。\n\nCtrl+C 结束本次原生服务和前端；容器模式保留后端。详见 docs/development.md。`);
+    console.log(`WebOBS 本地开发\n\nWindows: .\\scripts\\dev.ps1 [-Setup] [-Check] [-Composite] [-Soak] [-Mode native|frontend|container] [-Api URL] [-Port 5173]\nLinux:   bash scripts/dev.sh [--setup] [--check] [--composite] [--soak] [--mode native|frontend|container] [--api URL] [--port 5173]\n\nLAN:     .\\scripts\\dev-lan-environment.ps1 [-LanHost IP] [-Port 5173] ...\n         bash scripts/dev-lan-environment.sh [--lan-host IP] [--port 5173] ...\n\nnative    默认：原生 C++/Python 后端 + Vite；Windows 后端运行在 WSL2。首次加 --setup / -Setup 安装 Ubuntu 24.04 依赖。\n--composite / -Composite\n          显式启用本地服务端合成（OBS 图形/媒体输入/编码与 WHIP 输出模块）。\n          首次使用：.\\scripts\\dev.ps1 -Setup -Composite；日常：.\\scripts\\dev.ps1 -Composite。\n          不带参数时保持轻量 native 默认行为（不构建合成模块）。\nfrontend  仅启动 Vite，连接 --api / -Api 指定的已有后端。\ncontainer 可选兼容模式；需要已启动 Docker/Podman，仅显式 --build / -Build 时构建镜像。\n--soak / -Soak\n          耐久/长稳模式：后端不监听父进程 stdin，父终端关闭也不会停止本次会话；\n          供 30 分钟验收与持续采样使用。退出用 Ctrl+C 或 SIGTERM。仅 native 模式生效。\n--lan     局域网开发模式（dev-lan-environment）：Vite 监听 0.0.0.0 并启用自签 HTTPS，\n          /api 代理把 Host/Origin 改写回 127.0.0.1，后端仍只绑定本机回环（端口转发语义）。\n          局域网成员用 https://<本机IPv4>:<端口>/ 访问；首次需信任自签证书，否则\n          PWA 与浏览器媒体 API 不可用（非 Secure Context）。仅限受信任局域网。\n          Windows 下额外启动 8190/tcp ICE/TCP 中继，供远端浏览器拉 WebRTC 流。\n--lan-host 指定对外 IPv4（默认优先 192.168/10/172.16-31 真实局域网，避开 Tailscale/WSL）。SAN 含该 IP 与 127.0.0.1/localhost。\n--check   只检查环境，不安装、不构建、不启动。\n--distro  Windows WSL 发行版，默认 Ubuntu-24.04。\n--engine  docker 或 podman（仅 container）。--builder 为 Docker 构建器。\n\nCtrl+C 结束本次原生服务和前端；容器模式保留后端。详见 docs/development.md。`);
     process.exit(0);
   }
   if (!/^\d+$/.test(options.port) || Number(options.port) < 1024 || Number(options.port) > 65535) throw new Error('前端端口须为 1024–65535');
@@ -224,13 +223,12 @@ try {
     // Bilingual safety notice lives here (not in .ps1): PowerShell 5.1 would
     // garble UTF-8 Chinese in a BOM-less .ps1, while Node always emits UTF-8.
     log('LAN 模式 / LAN mode：仅限受信任局域网联调，不要对公网暴露 / Trusted LAN only; never expose to the public Internet.');
-    // Self-signed HTTPS is required: window.isSecureContext is false on
-    // http://<LAN-IP>, which disables browser pairing and camera media plans.
+    // Self-signed HTTPS keeps PWA and browser media APIs available on LAN.
     const certificate = ensureLanCertificate(lanHost);
     process.env.WEBOBS_VITE_HTTPS_CERT = certificate.certPath;
     process.env.WEBOBS_VITE_HTTPS_KEY = certificate.keyPath;
     log(`LAN HTTPS 端口转发 / port-forward：https://${lanHost}:${options.port}/  →  127.0.0.1:${options.port}\n  后端仍只监听 127.0.0.1:8080；/api 代理改写 Host/Origin 为回环。\n  Backend stays loopback-only; the /api proxy rewrites Host/Origin to 127.0.0.1.\n  [安全 / Security] 防火墙请只放行 / open firewall only for ${options.port}/tcp${options.mode === 'native' ? ' 与 8190/tcp（WebRTC ICE/TCP） / WebRTC ICE/TCP' : ''}。`);
-    log(`LAN 自签证书 / self-signed cert：${certificate.reused ? '复用已有' : '已生成'}（SAN 含 ${lanHost}、127.0.0.1、localhost）\n  浏览器首次访问请信任该证书警告；否则配对与 camera 播放不可用。\n  Trust the certificate warning once in each browser, or pairing and camera playback stay disabled.`);
+    log(`LAN 自签证书 / self-signed cert：${certificate.reused ? '复用已有' : '已生成'}（SAN 含 ${lanHost}、127.0.0.1、localhost）\n  浏览器首次访问请信任该证书警告，以启用 PWA 和媒体 API。\n  Trust the certificate warning once in each browser to enable PWA and media APIs.`);
     process.env.WEBOBS_LAN = '1';
     process.env.WEBOBS_LAN_HOST = lanHost;
   }
@@ -295,7 +293,7 @@ try {
   process.env.WEBOBS_DEV_ALLOWED_ORIGINS = originHosts.flatMap(host => [8080, options.port].map(port => `${originScheme}://${host}:${port}`)).join(',');
   const viteHost = options.lan ? '0.0.0.0' : '127.0.0.1';
   const frontend = () => {
-    // LAN mode is always HTTPS so window.isSecureContext enables pairing + WebCrypto.
+    // LAN mode is always HTTPS so browser media APIs have a secure context.
     const localUrl = options.lan
       ? `https://127.0.0.1:${options.port}`
       : `http://127.0.0.1:${options.port}`;
@@ -304,7 +302,6 @@ try {
     launch(process.execPath, pnpmArgs(['dev', '--host', viteHost, '--port', options.port, '--strictPort']), web);
   };
   if (options.mode === 'native') {
-    credentials();
     log('启动原生后端：首次编译较久；后续复用本机缓存，不使用镜像。');
     // Pass --lan-host as argv: Windows env vars do not cross wsl.exe --exec.
     const backend = launch(nativeCommand[0], [...nativeCommand[1], '--frontend-port', options.port,
@@ -312,9 +309,14 @@ try {
       ...(options.composite ? ['--composite'] : []), ...(options.soak ? ['--soak'] : [])], root, true);
     if (options.lan && win) startLanIceTcpRelay(options.lanHost);
     let output = ''; let started = false;
-    backend.stdout.on('data', (chunk) => { process.stdout.write(chunk); output = (output + chunk).slice(-4096); if (!started && output.includes('WEBOBS_DEV_READY')) { started = true; frontend(); } });
+    backend.stdout.on('data', (chunk) => {
+      process.stdout.write(chunk);
+      output = (output + chunk).slice(-4096);
+      const supervisor = output.match(/WEBOBS_NATIVE_SUPERVISOR_PID=(\d+)/);
+      if (supervisor) nativeSupervisorPid = Number(supervisor[1]);
+      if (!started && output.includes('WEBOBS_DEV_READY')) { started = true; frontend(); }
+    });
   } else if (options.mode === 'container') {
-    credentials();
     const compose = ['compose', '-f', 'compose.yaml', '-f', 'compose.dev.yaml'];
     if (options.build) run(options.engine, [...compose, 'build', ...(options.builder ? ['--builder', options.builder] : [])]);
     else { try { run(options.engine, ['image', 'inspect', 'webobs:dev'], true); } catch { throw new Error('本机没有 webobs:dev。需要容器时显式加 -Mode container -Build / --mode container --build；或使用默认原生模式。'); } }

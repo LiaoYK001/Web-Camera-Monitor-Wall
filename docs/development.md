@@ -10,9 +10,9 @@
 | `frontend` | 只修改 Web，连接已有测试后端 | Node 24 + Corepack | 否 |
 | `container` | 完整媒体功能/已有镜像的兼容联调 | Node 24 + 已启动的 Docker/Podman + Compose | 仅显式 `-Build` / `--build` |
 
-原生模式运行仓库中的 C++ 核心和 Python 服务，数据库持久化。为缩短首次准备时间，原生模式只构建 libobs 核心，不构建 OBS 插件/CEF。**服务端 Composite、OBS 浏览器源、GPU 和跨机器媒体连通性需在完整镜像中验证**，不能用原生启动成功代替发布验收。RTSP 的兼容轨道由 Gateway 转发，不兼容轨道通过 FFmpeg 按需转为 H.264/Opus。
+原生模式运行仓库中的 C++ 核心和 Python 服务，数据库持久化。为缩短首次准备时间，原生模式只构建 libobs 核心，不构建 OBS 插件/CEF。服务端 Composite、OBS 浏览器源和发布部署仍需在完整镜像中验收。RTSP 的兼容轨道由 Gateway 转发，不兼容轨道通过 FFmpeg 按需转为 H.264/Opus。
 
-在 `http://127.0.0.1:5173` 登录后，已加入当前节目场景的摄像机通过受认证的网关播放，无需额外完成浏览器配对。顶部“同步：未配对”指离线配置同步功能，不影响在线网关播放。普通 RTSP 需要网关，不能通过重新探测变成浏览器 HTTPS 真直连。Windows/WSL2 原生启动器提供回环 TCP 8190 媒体入口，支持 Windows 浏览器通过 WSL localhost 转发连接；无需关闭登录验证或证书检查。
+首次打开 `http://127.0.0.1:5173` 时在页面创建管理员账号。之后在任何浏览器用同一账号登录即可读取服务器上的摄像机、场景、监看设置和配置预设，不再需要八位浏览器配对码。登录 Cookie 在每次正常访问后续期，连续 7 天未访问才会过期。摄像机通过受认证的同源网关播放。Windows/WSL2 局域网模式会启用 TCP 8190 媒体入口和 Windows 侧中继；其他设备访问 `https://<本机局域网 IP>:5173/`，首次打开需信任开发自签证书。
 
 ## 2. Windows 首次准备
 
@@ -83,24 +83,13 @@ Ctrl+C 停止本次原生服务和前端，保留数据。停止脚本通过本�
 
 ## 5. 账号、数据和日志
 
-- 默认开发管理员用户名/密码分别存于 `secrets/webobs-dev-username.txt`、`secrets/webobs-dev-password.txt`。只在文件缺失时生成，启动不重置密码。不要提交这些文件。
-- 登录页支持开放注册，注册后直接登录，新账号为 viewer；不会开放管理员自注册。密码至少 16 字节。
+- 首次启动或旧数据库尚无管理员时，登录页开放一次管理员注册。密码至少 16 字节。管理员可在“集群与权限”中添加其他账号；之后注册入口关闭。
 - 原生数据与编译产物位于 Linux 用户的 `~/.cache/webobs-dev/<仓库路径摘要>/`。Windows 也在 WSL 的 Linux 文件系统保存源码缓存和编译产物，避免跨 NTFS 扫描大量小文件。Windows 工作副本的 C++ 修改在每次启动时同步；OBS 依赖按子模块提交缓存，不包含其未提交修改。若需修改 OBS 本身，请在 Linux checkout 开发，或在 Linux 启动环境中指定 `WEBOBS_DEV_OBS_SOURCE` 为待调试源码的绝对路径。实际路径在每次启动中显示。
 - `data/` 保存账号、会话、设备和场景；`recordings/` 保存本地录像；`logs/` 按服务保存日志；`obs*`、`core*` 保存依赖源码快照及增量编译产物；`source/` 是 Windows C++ 源码的自动同步副本，不要在这里编辑。
-- 原生数据库与 Docker Compose 数据卷**相互独立**。切换模式不会迁移原容器中的注册账号和设备；相同 checkout 的开发管理员凭据文件可复用。更换仓库路径会使用新的缓存/数据库目录。
+- 原生数据库与 Docker Compose 数据卷**相互独立**。切换模式不会自动迁移账号和设备。更换仓库路径会使用新的缓存/数据库目录。
 - 此模式固定监听本机回环，启用本机 HTTP Cookie 设置与开放注册。不要将该开发配置直接作为公网部署配置。
 
-读取开发账号：
-
-```powershell
-Get-Content .\secrets\webobs-dev-username.txt
-Get-Content .\secrets\webobs-dev-password.txt
-```
-
-```bash
-cat secrets/webobs-dev-username.txt
-cat secrets/webobs-dev-password.txt
-```
+旧版本的 `secrets/webobs-dev-*.txt` 不再用于新登录。升级已有开发数据时，如账号库里只有普通用户且没有管理员，页面会开放一次管理员注册。
 
 ## 6. 只开发 Web / 使用已有后端
 

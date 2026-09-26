@@ -1,9 +1,9 @@
 import { type CSSProperties, type PointerEvent as ReactPointerEvent, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import AudioMixerBar, { type AudioMixerChannel } from './AudioMixerBar';
 import { closeAnalyticsRuntimeSession, fetchAnalyticsPolicies, fetchCameras, fetchMotionZones, fetchPlaybackCapabilities, probeSourceProfile, renewAnalyticsRuntimeSession, requestAnalyticsRuntimePlan, submitAnalyticsSignals } from './api';
-import { activateGateway, approvedBrowserProfile, BrowserPlanError, browserGrantProfile, connectApprovedWhep, connectHls, connectMjpeg, offlineSignedGrantPlan, requestBrowserPlan, type BrowserTopologyPlan } from './browserMedia';
+import type { BrowserTopologyPlan } from './browserMedia';
 import { DirectAudioMixer, getDirectAudioMixer, subscribeDirectAudio, type DirectAudioSnapshot } from './directAudioMixer';
-import { clearPrivateRuntimeState, loadBrowserIdentity, loadMonitorView, saveMonitorView } from './localRuntime';
+import { loadMonitorView, saveMonitorView } from './localRuntime';
 import { observeTileVisibility, shouldRunPlayback } from './mediaLifecycle';
 import { countRenderedFrames, formatTelemetry, sampleConnectionTelemetry, sampleElementTelemetry, unavailableTelemetry, type MediaTelemetry } from './mediaTelemetry';
 import { applyAutomaticLayout, canvasModes, canvasPixelPresets, defaultMonitorView, evaluatePromotion, mapDetectionBoxToTile, nextRotationWindow, normalizeMonitorView, playbackTopologyLabel, resolveCanvasSize, resolveFillMode, selectLowPowerProfile, sourceAudioTrackState, sourceDecoration, streamQualityPresets, tileTransform, validDetectionSignal, type AudioMeterConfig, type CanvasMode, type CanvasPixelPresetId, type DetectionSignal, type MonitorView, type SourceAudioTrackState, type StreamQuality, type TelemetryOverlayConfig, type VideoFillMode } from './monitorView';
@@ -279,115 +279,25 @@ function BrowserCameraTile({ item, source, mixer, telemetry, audioMeter, audioSn
 
   useEffect(() => {
     let connection: ProgramConnection | undefined;
-    let closed = false;
-    let fallbackStarted = false;
-    let directConfirmed = false;
     directAttemptedRef.current = false;
     gatewayActivationFailedRef.current = false;
     if (!playbackEnabled) { setState('disabled'); return undefined; }
-    const authorizationCleared = () => {
-      closed = true;
-      connection?.close(); connection = undefined;
-      setState('offline');
-    };
-    window.addEventListener('webobs:browser-authorization-cleared', authorizationCleared);
-    const startGateway = async (reason: string) => {
-      if (closed || fallbackStarted) return;
-      fallbackStarted = true;
-      connection?.close(); connection = undefined;
-      setTransport('gateway'); setState('connecting');
-      try {
-        const fallbackPlan = await requestBrowserPlan(source.cameraId, source.profileId, 'unreachable', 'rtsp');
-        setPlan(fallbackPlan);
-        const gateway = await activateGateway(fallbackPlan.planId);
-        if (!closed && videoRef.current) {
-          connection = connectApprovedWhep(videoRef.current, gateway.endpoint, setState, {
-          deviceToken: gateway.deviceToken, onRemoteStream: (stream) => mixer?.bindStream(source.id, stream),
-          onAuthorizationRejected: () => {
-            reportMediaIssue({
-              code: 'MEDIA_AUTHORIZATION_REJECTED', scopeId: source.id, component: 'browser-media',
-              summary: `${source.name} 媒体授权已拒绝`, explanation: '当前设备或授权包已被拒绝，媒体连接已停止。',
-              recommendedActions: ['重新登录或重新配对设备。'], technicalDetails: { reason: 'authorization_rejected' },
-            });
-            return clearPrivateRuntimeState();
-          },
-          });
-          setActiveConnection(connection);
-        }
-      } catch (error) {
-        gatewayActivationFailedRef.current = true;
-        if (error instanceof BrowserPlanError && error.kind === 'authorization') {
-          reportMediaIssue({
-            code: 'MEDIA_AUTHORIZATION_REJECTED', scopeId: source.id, component: 'browser-media',
-            summary: `${source.name} 媒体授权已拒绝`, explanation: '当前设备或授权包已被拒绝，媒体连接已停止。',
-            recommendedActions: ['重新登录或重新配对设备。'], technicalDetails: { reason: 'authorization_rejected' },
-          });
-          authorizationCleared();
-          return;
-        }
-        const identity = await loadBrowserIdentity().catch(() => null);
-        const needsPairing = !identity?.clientId;
-        reportMediaIssue({
-          code: 'MEDIA_GATEWAY_ACTIVATION_FAILED', scopeId: source.id, component: 'browser-media',
-          summary: needsPairing ? `${source.name} 尚未完成浏览器配对` : `${source.name} 服务端媒体链启动失败`,
-          explanation: needsPairing
-            ? '普通 RTSP 需要通过受控 Gateway 播放；此浏览器尚未取得对应的加密授权。'
-            : '浏览器直连不可用，且受控 Gateway/Hybrid 会话未能启动。',
-          recommendedActions: needsPairing
-            ? ['打开“本地客户端”创建浏览器配对。', '在管理员面板批准该 Camera/Profile 后点击完成配对。']
-            : ['检查客户端是否已获该 Camera/Profile 的观看权限。', '检查 Gateway 状态并重新探测来源。'],
-          technicalDetails: { reason: needsPairing ? 'browser_pairing_required' : 'gateway_activation_failed' },
-        });
-        setPlan({
-          contractVersion: 2, planId: '', cameraId: source.cameraId, profileId: source.profileId,
-          topology: 'gateway-direct', runtimeKind: 'pwa', executionOwner: 'docker', mediaTransport: 'rtsp',
-          credentialExposure: 'none', decoder: 'browser', renderer: 'browser', encoder: 'none',
-          liveServerMediaExpected: true, fallbackReason: reason, offlineConfigExpiresAt: 0,
-        });
-        if (!closed) setState('offline');
-      }
-    };
-    void browserGrantProfile(source.cameraId, source.profileId).then(async (grantedProfile) => {
-      const profile = await approvedBrowserProfile(source.cameraId, source.profileId);
-      if (closed || !profile?.endpoint) {
-        void startGateway(grantedProfile?.browserDirectReason ?? 'browser_profile_not_authorized');
-        return;
-      }
-      directAttemptedRef.current = true;
-      setTransport(profile.adapter as 'whep' | 'hls' | 'mjpeg');
-      const onState = (next: ProgramConnectionState) => {
-        if (closed) return;
-        setState(next);
-        if (next === 'live' && !directConfirmed) {
-          directConfirmed = true;
-          void requestBrowserPlan(source.cameraId, source.profileId, 'reachable', profile.adapter)
-            .then((value) => setPlan(value)).catch((reason: unknown) => {
-              if (reason instanceof BrowserPlanError && reason.kind === 'unavailable')
-                void offlineSignedGrantPlan(source.cameraId, source.profileId, profile.adapter as 'whep' | 'hls' | 'mjpeg')
-                  .then(setPlan).catch(authorizationCleared);
-              else authorizationCleared();
-            });
-        }
-        if (next === 'offline') void startGateway('direct_first_frame_timeout');
-      };
-      if (profile.adapter === 'whep' && videoRef.current) {
-        connection = connectApprovedWhep(videoRef.current, profile.endpoint, onState, {
-          onRemoteStream: (stream) => mixer?.bindStream(source.id, stream),
-        });
-        setActiveConnection(connection);
-      } else if (profile.adapter === 'hls' && videoRef.current) {
-        connection = connectHls(videoRef.current, profile.endpoint, onState);
-        setActiveConnection(connection);
-      } else if (profile.adapter === 'mjpeg' && imageRef.current) {
-        connection = connectMjpeg(imageRef.current, profile.endpoint, onState);
-        setActiveConnection(connection);
-      } else void startGateway('protocol_not_supported');
-    }).catch(() => startGateway('browser_identity_unavailable'));
-    return () => {
-      closed = true;
-      window.removeEventListener('webobs:browser-authorization-cleared', authorizationCleared);
-      connection?.close();
-    };
+    // The account session authorizes this camera directly, including sources
+    // in the preview scene that are not part of the current Program scene.
+    setTransport('gateway');
+    setPlan({
+      contractVersion: 2, planId: '', cameraId: source.cameraId, profileId: source.profileId,
+      topology: 'gateway-direct', runtimeKind: 'pwa', executionOwner: 'docker',
+      mediaTransport: 'whep', credentialExposure: 'none', decoder: 'browser',
+      renderer: 'browser', encoder: 'none', liveServerMediaExpected: true,
+      fallbackReason: '', offlineConfigExpiresAt: 0,
+    });
+    if (videoRef.current) {
+      connection = connectSource(videoRef.current, `/api/v1/account-cameras/${encodeURIComponent(source.cameraId)}/${encodeURIComponent(source.profileId)}/whep`,
+        setState, (stream) => mixer?.bindStream(source.id, stream));
+      setActiveConnection(connection);
+    }
+    return () => { connection?.close(); setActiveConnection(null); };
   }, [mixer, playbackEnabled, source.cameraId, source.id, source.profileId]);
 
   useEffect(() => {

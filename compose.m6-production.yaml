@@ -10,8 +10,7 @@ services:
       WEBOBS_TLS_SERVER_NAME: ${WEBOBS_TLS_SERVER_NAME:?set WEBOBS_TLS_SERVER_NAME}
       WEBOBS_TLS_PUBLIC_AUTHORITY: ${WEBOBS_TLS_PUBLIC_AUTHORITY:?set WEBOBS_TLS_PUBLIC_AUTHORITY}
       WEBOBS_HTTPS_PORT: ${WEBOBS_HTTPS_PORT:-8443}
-      WEBOBS_AUTH_USERNAME_FILE: /run/secrets/webobs_auth_username
-      WEBOBS_AUTH_PASSWORD_FILE: /run/secrets/webobs_auth_password
+      WEBOBS_COMPAT_BASIC_AUTH: "false"
       WEBOBS_SESSION_COOKIE_SECURE: "true"
       WEBOBS_CONTROL_ALLOWED_ORIGINS: ${WEBOBS_CONTROL_ALLOWED_ORIGINS:?set WEBOBS_CONTROL_ALLOWED_ORIGINS}
       WEBOBS_TURN_URL: ${WEBOBS_TURN_URL:?set WEBOBS_TURN_URL}
@@ -22,8 +21,6 @@ services:
     secrets:
       - webobs_tls_certificate
       - webobs_tls_private_key
-      - webobs_auth_username
-      - webobs_auth_password
       - webobs_turn_username
       - webobs_turn_password
     ports: !override
@@ -35,10 +32,6 @@ secrets:
     file: ${WEBOBS_TLS_CERTIFICATE_SOURCE:?set WEBOBS_TLS_CERTIFICATE_SOURCE}
   webobs_tls_private_key:
     file: ${WEBOBS_TLS_PRIVATE_KEY_SOURCE:?set WEBOBS_TLS_PRIVATE_KEY_SOURCE}
-  webobs_auth_username:
-    file: ${WEBOBS_AUTH_USERNAME_SOURCE:?set WEBOBS_AUTH_USERNAME_SOURCE}
-  webobs_auth_password:
-    file: ${WEBOBS_AUTH_PASSWORD_SOURCE:?set WEBOBS_AUTH_PASSWORD_SOURCE}
   webobs_turn_username:
     file: ${WEBOBS_TURN_USERNAME_SOURCE:?set WEBOBS_TURN_USERNAME_SOURCE}
   webobs_turn_password:

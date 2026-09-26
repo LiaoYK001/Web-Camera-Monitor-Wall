@@ -13,7 +13,6 @@ import NvrTimeline from './NvrTimeline';
 import ProgramPreview from './ProgramPreview';
 import SystemStatus from './SystemStatus';
 import EventsPanel from './EventsPanel';
-import ClientsPanel from './ClientsPanel';
 import LocalRuntimeBadge from './LocalRuntimeBadge';
 import WorkspaceShell, { areaFromHash, type ProductArea } from './WorkspaceShell';
 import SourceCatalog from './SourceCatalog';
@@ -22,7 +21,6 @@ import SettingsWorkspace from './SettingsWorkspace';
 import ClusterAdmin from './ClusterAdmin';
 import AnalyticsWorkspace from './AnalyticsWorkspace';
 import { loadActiveLocalConfigProfile, loadOfflineStudio, loadWorkspaceLayout, makeLocalConfigBundleForStudio, queueOfflineAudit, saveLocalConfigProfile, saveLocalStudio, saveStudioSnapshot, type LocalConfigProfile } from './localRuntime';
-import { queueStudioSync, synchronizeBrowserState } from './syncRuntime';
 import type { AudioMonitoring, CameraRecord, FilterKind, PlaybackMode, ScaleMode, SceneDocument, SceneFilter, SceneItem, SceneSource, StudioCapabilities, StudioDocument, Transport } from './types';
 
 type ConnectionState = 'connecting' | 'online' | 'offline';
@@ -194,7 +192,7 @@ export default function App() {
   const applyLocalProfile = useCallback((profile: LocalConfigProfile) => {
     applyRemoteStudio(profile.studio);
     setActiveLocalProfile(profile);
-    setNotice(`已载入本机配置“${profile.name}”；服务器场景不会被修改。`);
+    setNotice(`已载入配置“${profile.name}”；服务器默认场景不会被修改。`);
     setLoadingError('');
   }, [applyRemoteStudio]);
 
@@ -260,7 +258,7 @@ export default function App() {
       if (active) {
         applyLocalProfile(active);
         setConnection('offline');
-        setNotice(`Docker 不可达，使用本机配置“${active.name}”；服务器场景不会被修改。`);
+        setNotice(`服务器暂不可达，使用缓存配置“${active.name}”；服务器场景不会被修改。`);
         return;
       }
       const offline = await loadOfflineStudio().catch(() => null);
@@ -538,23 +536,21 @@ export default function App() {
         const saved = await saveLocalConfigProfile(activeLocalProfile.name, studioDraft, activeLocalProfile.id);
         setActiveLocalProfile(saved);
         applyRemoteStudio(saved.studio);
-        setNotice(`本机配置“${saved.name}”已保存；服务器场景未修改。`);
+        setNotice(`配置“${saved.name}”已保存；同步状态见顶部提示。服务器默认场景未修改。`);
         return;
       }
       if (connection === 'offline') {
         await saveLocalStudio(studioDraft);
-        await queueStudioSync(studioDraft);
         await queueOfflineAudit('scene.local-save', 'completed');
         applyRemoteStudio(studioDraft);
-        setNotice('本地 Scene 已保存并进入加密同步队列；恢复在线后按字段检测冲突。');
+        setNotice('场景仅保存在本机；连接恢复后请重新保存到账号服务器。');
         return;
       }
       const committed = await replaceStudio(studioDraft);
       applyRemoteStudio(committed);
       void saveStudioSnapshot(committed).catch(() => undefined);
-      void queueStudioSync(committed).then(() => synchronizeBrowserState()).catch(() => undefined);
       void queueOfflineAudit('scene.server-save', 'completed').catch(() => undefined);
-      setNotice(`Studio s${committed.revision} 已保存；共享 Scene 同步将按字段检测冲突。`);
+      setNotice(`Studio s${committed.revision} 已保存到服务器。`);
     } catch (error) {
       if (error instanceof ControlApiError && error.status === 412) {
         setConflict(`保存冲突：服务器当前为 r${error.revision ?? '未知'}，请重新载入。`);
@@ -768,9 +764,6 @@ export default function App() {
   if (productArea === 'devices') {
     return <WorkspaceShell area={productArea} onNavigate={navigate} connection={connection}><SourceCatalog /></WorkspaceShell>;
   }
-  if (productArea === 'clients') {
-    return <WorkspaceShell area={productArea} onNavigate={navigate} connection={connection}><ClientsPanel onBack={() => navigate('settings')} /></WorkspaceShell>;
-  }
   if (productArea === 'settings') {
     return <WorkspaceShell area={productArea} onNavigate={navigate} connection={connection}><SettingsWorkspace studio={studioDraft} onProfileSelected={applyLocalProfile} /><SystemStatus onBack={() => navigate('monitor')} /></WorkspaceShell>;
   }
@@ -864,10 +857,6 @@ export default function App() {
             window.history.replaceState(null, '', '#devices');
             setProductArea('devices');
           }}>设备管理</button>
-          <button className="ghost-button" type="button" onClick={() => {
-            window.history.replaceState(null, '', '#clients');
-            setProductArea('clients');
-          }}>本地客户端</button>
           <button className="ghost-button" type="button" onClick={() => {
             window.history.replaceState(null, '', '#events');
             setProductArea('events');

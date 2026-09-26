@@ -14,7 +14,7 @@ param(
 # (SAN includes the LAN IP) and the /api proxy rewrites Host/Origin back to
 # 127.0.0.1 so the backend stays loopback-only. LAN peers use
 # https://<host-IPv4>:<Port>/ and must trust the cert once so
-# window.isSecureContext enables browser pairing and camera playback.
+# window.isSecureContext enables browser media and PWA features.
 # Keep Write-Host strings ASCII-only: Windows PowerShell 5.1 parses a BOM-less
 # .ps1 as ANSI and would garble UTF-8 Chinese here. Bilingual notes live in
 # scripts/dev.mjs.

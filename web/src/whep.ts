@@ -56,6 +56,7 @@ const validEndpoint = (value: string): URL | null => {
   if (endpoint.origin !== window.location.origin || endpoint.search || endpoint.hash) return null;
   if (endpoint.pathname === '/api/v1/program/whep') return endpoint;
   if (/^\/api\/v1\/sources\/[A-Za-z0-9._-]{1,64}\/whep$/.test(endpoint.pathname)) return endpoint;
+  if (/^\/api\/v1\/account-cameras\/[A-Za-z0-9._-]{1,64}\/[A-Za-z0-9._-]{1,64}\/whep$/.test(endpoint.pathname)) return endpoint;
   if (/^\/api\/v2\/media-plans\/[a-f0-9]{32}\/whep$/.test(endpoint.pathname)) return endpoint;
   return null;
 };

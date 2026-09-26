@@ -1,8 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
-import { ControlApiError, createCamera, deleteCamera, detectCamera, discoverOnvif, fetchAnalyticsPolicies, fetchCameras, fetchOnvifPresets, fetchOnvifSnapshot, fetchV3AnalyticsPolicies, mutateOnvifPreset, patchV3AnalyticsPolicies, probeOnvif, pullOnvifEvents, qualifyBrowserDirect, sendOnvifPtz, sendOnvifTalk, syncOnvifCamera, updateAnalyticsPolicies, updateCameraCredentials } from './api';
+import { ControlApiError, createCamera, deleteCamera, detectCamera, discoverOnvif, fetchAnalyticsPolicies, fetchCameraPreferences, fetchCameras, fetchOnvifPresets, fetchOnvifSnapshot, fetchV3AnalyticsPolicies, mutateOnvifPreset, patchV3AnalyticsPolicies, probeOnvif, pullOnvifEvents, qualifyBrowserDirect, saveCameraPreferences, sendOnvifPtz, sendOnvifTalk, syncOnvifCamera, updateAnalyticsPolicies, updateCameraCredentials } from './api';
 import type { AnalyticsPolicy, CameraAdapter, CameraDetection, CameraRecord, OnvifPreset } from './types';
 import { loadSyncState } from './localRuntime';
-import { queueCameraPreference, synchronizeBrowserState } from './syncRuntime';
 
 type EditableAnalyticsPolicy = Omit<AnalyticsPolicy, 'updatedAt'>;
 type CameraPreference = { displayName: string; favorite: boolean; group: string };
@@ -109,8 +108,8 @@ export default function CameraRegistry({ onBack }: { onBack: () => void }) {
   const [analyticsRevision, setAnalyticsRevision] = useState(1);
   const [preferences, setPreferences] = useState<Map<string, CameraPreference>>(new Map());
   const reload = async () => { try {
-    const [cameraResult, policyResult, syncState] = await Promise.all([
-      fetchCameras(), fetchAnalyticsPolicies(), loadSyncState(),
+    const [cameraResult, policyResult, syncState, accountPreferences] = await Promise.all([
+      fetchCameras(), fetchAnalyticsPolicies(), loadSyncState(), fetchCameraPreferences().catch(() => null),
     ]);
     let v3Revision = analyticsRevision;
     let v3Policies = policyResult.policies;
@@ -123,11 +122,16 @@ export default function CameraRegistry({ onBack }: { onBack: () => void }) {
     setCameras(cameraResult.cameras);
     setAnalyticsRevision(v3Revision);
     setPolicies(new Map(v3Policies.map((policy) => [policyKey(policy.cameraId, policy.profileId), policy])));
-    setPreferences(new Map((syncState?.documents ?? []).filter((item) =>
+    const legacyPreferences = new Map((syncState?.documents ?? []).filter((item) =>
       item.kind === 'camera-preference' && !item.deleted && item.document).map((item) => [item.id, {
         displayName: String(item.document?.displayName ?? ''), favorite: item.document?.favorite === true,
         group: String(item.document?.group ?? ''),
-      }])));
+      }]));
+    if (accountPreferences) setPreferences(new Map(Object.entries(accountPreferences)));
+    else {
+      setPreferences(legacyPreferences);
+      if (legacyPreferences.size) void saveCameraPreferences(Object.fromEntries(legacyPreferences)).catch(() => undefined);
+    }
   } catch (reason) { setError(reason instanceof Error ? reason.message : '无法读取摄像机'); } };
   useEffect(() => { void reload(); }, []);
 
@@ -253,13 +257,12 @@ export default function CameraRegistry({ onBack }: { onBack: () => void }) {
   const savePreference = async (camera: CameraRecord) => {
     const preference = preferences.get(camera.id) ?? { displayName: camera.name, favorite: false, group: '' };
     try {
-      await queueCameraPreference(camera.id, preference);
-      await synchronizeBrowserState();
-      setNotice('摄像机显示偏好已进入加密双向同步。');
+      const next = new Map(preferences);
+      next.set(camera.id, preference);
+      await saveCameraPreferences(Object.fromEntries(next));
+      setNotice('摄像机显示偏好已保存到当前账号。');
     } catch (reason) {
-      setNotice(reason instanceof Error && reason.message.includes('尚未完成配对')
-        ? '显示偏好已保存在加密离线队列；浏览器配对后同步。'
-        : (reason instanceof Error ? reason.message : '显示偏好同步失败'));
+      setNotice(reason instanceof Error ? reason.message : '显示偏好同步失败');
     }
   };
 

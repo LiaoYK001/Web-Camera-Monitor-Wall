@@ -1,8 +1,16 @@
 import { type FormEvent, type ReactNode, useEffect, useState } from 'react';
-import { fetchAuthSession, login, logout, type AuthSession } from './api';
-import { clearPrivateRuntimeState, hasLocalConfigProfiles, localConfigState } from './localRuntime';
+import { fetchAuthSession, fetchFirstRunStatus, login, logout, registerFirstAdmin, type AuthSession } from './api';
+import { clearPrivateRuntimeState } from './localRuntime';
 
 type GateSession = AuthSession & { offlineAuthorized?: boolean; unavailable?: boolean };
+const ACTIVE_ACCOUNT_KEY = 'webobs-active-account';
+
+async function activateAccount(session: AuthSession): Promise<void> {
+  if (!session.authenticated || !session.user) return;
+  const previous = window.localStorage.getItem(ACTIVE_ACCOUNT_KEY);
+  if (previous && previous !== session.user) await clearPrivateRuntimeState();
+  window.localStorage.setItem(ACTIVE_ACCOUNT_KEY, session.user);
+}
 
 export default function LoginGate({ children }: { children: ReactNode }) {
   const [session, setSession] = useState<GateSession | null>(null);
@@ -11,28 +19,19 @@ export default function LoginGate({ children }: { children: ReactNode }) {
   const [password, setPassword] = useState('');
   const [error, setError] = useState('');
   const [submitting, setSubmitting] = useState(false);
+  const [registrationOpen, setRegistrationOpen] = useState(false);
 
   useEffect(() => {
     const controller = new AbortController();
-    fetchAuthSession(controller.signal)
-      .then(setSession)
+    Promise.all([fetchAuthSession(controller.signal), fetchFirstRunStatus()])
+      .then(async ([current, setup]) => {
+        if (controller.signal.aborted) return;
+        await activateAccount(current);
+        if (!controller.signal.aborted) { setSession(current); setRegistrationOpen(setup.registrationOpen); }
+      })
       .catch(() => {
         if (controller.signal.aborted) return;
-        void Promise.all([
-          localConfigState().catch(() => 'empty' as const),
-          hasLocalConfigProfiles().catch(() => false),
-        ]).then(([state, hasProfiles]) => {
-          if (controller.signal.aborted) return;
-          setSession({
-            // A failed session probe is a connectivity state, not evidence that
-            // credentials are required. Showing a password form here used to
-            // trap local development whenever the backend briefly restarted.
-            authenticated: state === 'offline-valid',
-            authenticationEnabled: false,
-            offlineAuthorized: state === 'offline-valid',
-            unavailable: state !== 'offline-valid' && !hasProfiles,
-          });
-        });
+        setSession({ authenticated: false, authenticationEnabled: true, unavailable: true });
       });
     return () => controller.abort();
   }, [checkAttempt]);
@@ -42,7 +41,11 @@ export default function LoginGate({ children }: { children: ReactNode }) {
     setSubmitting(true);
     setError('');
     try {
-      setSession(await login(username, password));
+      if (registrationOpen) await registerFirstAdmin(username, password);
+      const current = await login(username, password);
+      await activateAccount(current);
+      setSession(current);
+      setRegistrationOpen(false);
       setPassword('');
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : '登录失败');
@@ -55,7 +58,7 @@ export default function LoginGate({ children }: { children: ReactNode }) {
   if (session.unavailable) return <main className="login-screen"><div className="login-card">
     <span className="eyebrow">Web Camera Monitor Wall</span>
     <h1>本地服务暂不可用</h1>
-    <p>未检测到可用的控制服务。请确认 Docker/Vite 后端正在运行后重试；当前不会要求输入用户名或密码。</p>
+    <p>未检测到可用的控制服务。请确认开发后端正在运行后重试。</p>
     <button className="primary-button" type="button" onClick={() => { setSession(null); setCheckAttempt((value) => value + 1); }}>重新检查</button>
   </div></main>;
   if (session.authenticationEnabled === false || session.authenticated) return (
@@ -75,13 +78,13 @@ export default function LoginGate({ children }: { children: ReactNode }) {
     <main className="login-screen">
       <form className="login-card" onSubmit={(event) => void submit(event)}>
         <span className="eyebrow">Web Camera Monitor Wall</span>
-        <h1>登录监控工作台</h1>
-        <p>会话在每次正常访问后续期；连续 7 天未访问才会失效。</p>
-        <label><span>用户名</span><input autoComplete="username" maxLength={64} value={username} onChange={(event) => setUsername(event.target.value)} /></label>
-        <label><span>密码</span><input type="password" autoComplete="current-password" maxLength={256} value={password} onChange={(event) => setPassword(event.target.value)} /></label>
+        <h1>{registrationOpen ? '创建管理员账号' : '登录监控工作台'}</h1>
+        <p>{registrationOpen ? '首次部署请设置管理员用户名和密码。之后可在“管理”中添加其他账号。' : '会话在每次正常访问后续期；连续 7 天未访问才会失效。'}</p>
+        <label><span>用户名</span><input autoComplete="username" minLength={registrationOpen ? 3 : undefined} maxLength={64} value={username} onChange={(event) => setUsername(event.target.value)} /></label>
+        <label><span>密码</span><input type="password" autoComplete={registrationOpen ? 'new-password' : 'current-password'} minLength={registrationOpen ? 16 : undefined} maxLength={128} value={password} onChange={(event) => setPassword(event.target.value)} /></label>
         {error && <div className="alert" role="alert">{error}</div>}
-        <button className="primary-button" disabled={submitting || !username || !password} type="submit">{submitting ? '登录中…' : '登录'}</button>
-        <small>Cookie 使用 HttpOnly、Secure、SameSite=Strict；页面脚本无法读取 token。</small>
+        <button className="primary-button" disabled={submitting || !username || (registrationOpen ? password.length < 16 : !password)} type="submit">{submitting ? '处理中…' : registrationOpen ? '创建并登录' : '登录'}</button>
+        <small>登录 Cookie 使用 HttpOnly 和 SameSite=Strict；{window.location.protocol === 'https:' ? 'HTTPS 下启用 Secure 属性。' : '本机 HTTP 开发模式下由会话服务器保护。'}</small>
       </form>
     </main>
   );

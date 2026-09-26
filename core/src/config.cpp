@@ -351,13 +351,18 @@ ParseResult parse_config(const std::vector<std::string> &arguments, const Enviro
             return failure(std::move(secret_error));
         config.authentication = BasicAuthCredentials{*username, *password};
     }
+    const auto cluster_token = environment("WEBOBS_CLUSTER_INTERNAL_TOKEN");
+    const bool cluster_authentication = cluster_token && cluster_token->size() == 64 &&
+        std::all_of(cluster_token->begin(), cluster_token->end(), [](unsigned char character) {
+            return std::isdigit(character) || (character >= 'a' && character <= 'f');
+        });
     if (!values["control_allowed_origins"].empty()) {
         std::string origin_error;
         if (!parse_origins(values["control_allowed_origins"], "control-allowed-origins",
                            config.control_allowed_origins, origin_error))
             return failure(std::move(origin_error));
-        if (!config.authentication)
-            return failure("control-allowed-origins requires file-based authentication");
+        if (!config.authentication && !cluster_authentication)
+            return failure("control-allowed-origins requires account authentication");
         for (const std::string &origin : config.control_allowed_origins) {
             if (!origin.starts_with("https://") && !loopback_control_origin(origin))
                 return failure("non-loopback control origins must use HTTPS");
@@ -373,7 +378,8 @@ ParseResult parse_config(const std::vector<std::string> &arguments, const Enviro
                 return failure("PWA media origins must use HTTPS");
         }
     }
-    if (config.http_port != 0 && !loopback && !config.allow_insecure_remote && !config.authentication)
+    if (config.http_port != 0 && !loopback && !config.allow_insecure_remote &&
+        !config.authentication && !cluster_authentication)
         return failure("non-loopback HTTP listening requires authentication or --allow-insecure-remote true");
 
     if (!parse_integer(values["source_stale_seconds"], 2, 300, config.source_stale_seconds))

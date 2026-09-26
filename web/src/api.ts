@@ -38,6 +38,35 @@ export async function login(username: string, password: string): Promise<AuthSes
   return (await response.json()) as AuthSession;
 }
 
+export async function fetchFirstRunStatus(): Promise<{ registrationOpen: boolean }> {
+  const response = await fetch('/api/v1/auth/setup', { cache: 'no-store', credentials: 'same-origin' });
+  if (!response.ok) throw await parseError(response);
+  return await response.json() as { registrationOpen: boolean };
+}
+
+export async function registerFirstAdmin(username: string, password: string): Promise<void> {
+  const response = await fetch('/api/v1/auth/setup', {
+    method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ username, password }),
+  });
+  if (!response.ok) throw await parseError(response);
+}
+
+export async function fetchCameraPreferences(): Promise<Record<string, { displayName: string; favorite: boolean; group: string }> | null> {
+  const response = await fetch('/api/v2/account/preferences/camera-preferences', { cache: 'no-store', credentials: 'same-origin' });
+  if (!response.ok) throw await parseError(response);
+  const result = await response.json() as { value: { cameras?: Record<string, { displayName: string; favorite: boolean; group: string }> } | null };
+  return result.value?.cameras ?? null;
+}
+
+export async function saveCameraPreferences(cameras: Record<string, { displayName: string; favorite: boolean; group: string }>): Promise<void> {
+  const response = await fetch('/api/v2/account/preferences/camera-preferences', {
+    method: 'PUT', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ value: { cameras } }),
+  });
+  if (!response.ok) throw await parseError(response);
+}
+
 export async function logout(): Promise<void> {
   const response = await fetch('/api/v1/auth/logout', { method: 'POST', credentials: 'same-origin' });
   if (!response.ok && response.status !== 204) throw await parseError(response);
