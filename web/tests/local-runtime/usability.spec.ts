@@ -100,3 +100,129 @@ test('preserves the latest layout when returning to the original choice during a
   expect((await metrics(page)).saves.at(-1).style).toBe('obs');
   expect((await metrics(page)).maxConcurrentSaves).toBe(1);
 });
+
+test('validates and saves runtime settings together, preserving edits after a failed save', async ({ page }) => {
+  await page.goto(`${fixture}?area=settings&settings-fail=1`);
+  const form = page.getByRole('form', { name: '运行设置' });
+  const timeout = form.getByRole('spinbutton', { name: '探测超时（秒）' });
+  const save = form.getByRole('button', { name: '保存设置', exact: true });
+  await expect(timeout).toHaveValue('8');
+  await expect(save).toBeDisabled();
+  await timeout.fill(''); await expect(save).toBeDisabled();
+  await timeout.fill('31'); await expect(save).toBeDisabled();
+  await timeout.fill('12');
+  await form.getByRole('combobox', { name: '默认传输方式' }).selectOption('rtsp-tcp');
+  expect((await metrics(page)).settingsPatches).toHaveLength(0);
+  await save.click(); await expect(timeout).toBeDisabled();
+  await expect(form.getByRole('alert')).toContainText('输入已保留');
+  await expect(timeout).toHaveValue('12');
+  await save.click();
+  await expect(form.getByRole('status')).toContainText('系统设置已保存');
+  expect((await metrics(page)).settingsPatches).toEqual([
+    { defaultTransportMode: 'rtsp-tcp', probeTimeoutSeconds: 12 },
+    { defaultTransportMode: 'rtsp-tcp', probeTimeoutSeconds: 12 },
+  ]);
+  await expect(save).toBeDisabled();
+});
+
+test('keeps unsaved settings when navigation is cancelled and supports undo', async ({ page }) => {
+  await page.goto(`${fixture}?area=settings`);
+  const timeout = page.getByRole('spinbutton', { name: '探测超时（秒）' });
+  await timeout.fill('15');
+  page.once('dialog', (dialog) => dialog.dismiss());
+  await page.getByRole('complementary', { name: '主导航', exact: true }).getByRole('button', { name: '设备与来源' }).click();
+  await expect(timeout).toHaveValue('15');
+  await page.getByRole('button', { name: '撤销修改', exact: true }).click();
+  await expect(timeout).toHaveValue('8');
+  expect((await metrics(page)).settingsPatches).toHaveLength(0);
+});
+
+test('handles issue failures and keyboard dismissal without losing focus', async ({ page }) => {
+  await page.addInitScript(() => Object.defineProperty(navigator, 'clipboard', { configurable: true, value: { writeText: () => Promise.reject(new Error('denied')) } }));
+  await page.goto(`${fixture}?issues=1&issues-fail=1`);
+  const toggle = page.getByRole('button', { name: /问题中心/ });
+  await toggle.click();
+  const dialog = page.getByRole('dialog', { name: '问题中心' });
+  await expect(dialog.locator('.problem-card')).toHaveCount(1);
+  await dialog.getByRole('button', { name: '确认', exact: true }).click();
+  await expect(dialog.getByRole('button', { name: '确认中…', exact: true })).toBeDisabled();
+  await expect(dialog.getByRole('alert')).toContainText('失败');
+  await dialog.getByRole('button', { name: '确认', exact: true }).click();
+  await expect(dialog.getByRole('status')).toContainText('问题已确认');
+  expect((await metrics(page)).acknowledgments).toBe(2);
+  await dialog.getByRole('button', { name: '复制脱敏诊断' }).click();
+  await expect(dialog.getByRole('alert')).toContainText('手动选择并复制');
+  await dialog.getByRole('combobox', { name: '问题状态' }).selectOption('resolved');
+  await expect(dialog.locator('.problem-card')).toContainText('已恢复的测试摄像机');
+  await page.keyboard.press('Escape'); await expect(toggle).toBeFocused();
+});
+
+test('does not rewrite monitor preferences on entry and preserves decorations from another scene', async ({ page }) => {
+  await page.goto(`${fixture}?area=monitor`);
+  const quality = page.getByRole('combobox', { name: '监控画质' });
+  await expect(quality).toHaveValue('medium');
+  await page.waitForTimeout(600);
+  expect((await metrics(page)).monitorSaves).toHaveLength(0);
+  await quality.selectOption('high');
+  await page.getByRole('combobox', { name: '监控画面填充', exact: true }).selectOption('contain');
+  await expect.poll(async () => (await metrics(page)).monitorSaves.length).toBe(1);
+  expect((await metrics(page)).monitorSaves[0].sourceDecorations['other-scene-source'].audioMeter.opacity).toBe(.6);
+});
+
+test('flushes monitor edits on navigation and serializes successive changes', async ({ page }) => {
+  await page.goto(`${fixture}?area=monitor`);
+  const quality = page.getByRole('combobox', { name: '监控画质' });
+  await quality.selectOption('low');
+  await expect.poll(async () => (await metrics(page)).activeSaves).toBe(1);
+  await quality.selectOption('high');
+  await page.getByRole('complementary', { name: '主导航', exact: true }).getByRole('button', { name: '设备与来源' }).click();
+  await expect.poll(async () => (await metrics(page)).monitorSaves.length).toBe(2);
+  expect((await metrics(page)).monitorSaves.map((view: { streamQuality: string }) => view.streamQuality)).toEqual(['low', 'high']);
+  expect((await metrics(page)).maxConcurrentSaves).toBe(1);
+  await page.getByRole('complementary', { name: '主导航', exact: true }).getByRole('button', { name: /监看 Monitor/ }).click();
+  await expect(quality).toHaveValue('high');
+});
+
+test('deletes an active account profile and clears its shared selection', async ({ page }) => {
+  await page.goto(`${fixture}?area=settings&profile=1`);
+  await expect(page.getByRole('combobox', { name: '当前档案' })).toHaveValue('fixture-profile');
+  page.once('dialog', (dialog) => dialog.accept());
+  await page.getByRole('button', { name: '删除档案', exact: true }).click();
+  await expect(page.getByRole('button', { name: '导入 JSON', exact: true })).toBeDisabled();
+  await expect(page.getByText('账号配置已删除。', { exact: true })).toBeVisible();
+  await expect(page.getByRole('combobox', { name: '当前档案' })).toHaveValue('');
+  expect((await metrics(page)).preferenceWrites).toContainEqual({ path: '/api/v2/account/preferences/active-profile', value: { id: null } });
+});
+
+test('keeps settings and the issue drawer within a narrow mobile viewport', async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.goto(`${fixture}?area=settings&issues=1`);
+  await expect(page.getByRole('heading', { name: '运行设置', exact: true })).toBeVisible();
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
+  await page.getByRole('button', { name: /问题中心/ }).click();
+  const dialog = page.getByRole('dialog', { name: '问题中心' });
+  const bounds = await dialog.boundingBox();
+  expect(bounds!.x).toBeGreaterThanOrEqual(0);
+  expect(bounds!.x + bounds!.width).toBeLessThanOrEqual(390);
+  await expect(dialog.getByRole('button', { name: '关闭', exact: true })).toBeInViewport();
+});
+
+test('cancels pending monitor writes when the account is cleared', async ({ page }) => {
+  await page.goto(`${fixture}?area=monitor`);
+  const quality = page.getByRole('combobox', { name: '监控画质' });
+  await quality.selectOption('low');
+  await expect.poll(async () => (await metrics(page)).activeSaves).toBe(1);
+  await quality.selectOption('high');
+  await page.getByRole('button', { name: '模拟退出清理', exact: true }).click();
+  await expect(page.getByRole('heading', { name: '设备与来源', exact: true })).toBeVisible();
+  await page.waitForTimeout(700);
+  expect((await metrics(page)).monitorSaves).toHaveLength(0);
+});
+
+test('recovers the monitor from a stalled preference read without writing defaults back', async ({ page }) => {
+  await page.goto(`${fixture}?area=monitor&monitor-timeout=1`);
+  await expect(page.getByText('正在读取监控偏好…', { exact: true })).toBeVisible();
+  await expect(page.getByRole('combobox', { name: '监控画质' })).toHaveValue('medium', { timeout: 12000 });
+  await expect(page.getByText('账号配置：待连接服务器', { exact: true })).toBeVisible();
+  expect((await metrics(page)).monitorSaves).toHaveLength(0);
+});

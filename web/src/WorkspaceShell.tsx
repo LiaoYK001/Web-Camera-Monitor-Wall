@@ -4,6 +4,7 @@ import { fetchAccountProfile, type AccountProfile } from './api';
 import { avatarChoices, roleLabel } from './accountPresentation';
 import ProblemCenter from './ProblemCenter';
 import Modal from './Modal';
+import { canLeaveWorkspace } from './navigationGuard';
 import { listLocalConfigProfiles, loadActiveLocalConfigProfile, loadWorkspaceLayout, saveWorkspaceLayout, setActiveLocalConfigProfile, type LocalConfigProfile, type WorkspaceDock, type WorkspaceLayout } from './localRuntime';
 
 export type ProductArea = 'monitor' | 'studio' | 'devices' | 'audio' | 'analytics' | 'events' | 'archive' | 'storage' | 'settings' | 'admin' | 'account';
@@ -55,9 +56,10 @@ export function areaFromHash(hash = window.location.hash): ProductArea {
   return 'monitor';
 }
 
-export default function WorkspaceShell({ area, onNavigate, connection, children }: {
+export default function WorkspaceShell({ area, onNavigate: navigate, connection, children }: {
   area: ProductArea; onNavigate: (area: ProductArea) => void; connection?: 'online' | 'offline' | 'connecting'; children: ReactNode;
 }) {
+  const onNavigate = (next: ProductArea) => { if (next !== area && canLeaveWorkspace()) navigate(next); };
   const [layout, setLayout] = useState<WorkspaceLayout>({ schemaVersion: 1, style: 'obs', docks: defaultDocks });
   const [layoutLoaded, setLayoutLoaded] = useState(false);
   const [navigationOpen, setNavigationOpen] = useState(false);

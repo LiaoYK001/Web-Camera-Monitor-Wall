@@ -26,6 +26,12 @@ Deterministic browser tests cover every 1–16 landscape/portrait M/S combinatio
 
 ## Wall quick controls / 监控墙快捷控制
 
+### Account preference saving / 账号偏好保存
+
+当前开发版按账号保存监控偏好。打开监控页只读取配置；调整后约 250 毫秒合并保存，连续写入按顺序执行。切换到其他页面或隐藏浏览器时，会提交尚未发送的调整；退出账号时取消待写入操作。保存当前场景的设置会保留其他场景的逐源电平表与统计外观配置。独立来源预览不写回监控偏好。网络故障时仍保留加密本机副本，以界面同步状态为准；浏览器被强制关闭时无法保证尚未完成的请求送达。
+
+The current development version stores monitor preferences per account. Opening the monitor only reads preferences; edits are combined after about 250 ms and written in order. Navigating to another page or hiding the browser submits pending edits; clearing the account cancels pending writes. Saving the current scene preserves per-source meter and telemetry decorations from other scenes. Independent source previews do not write monitor preferences. Network failures retain an encrypted local copy; check the sync indicator. Forced browser termination cannot guarantee delivery of unfinished requests.
+
 The large-picture switch takes effect immediately: enabling it raises `largeCount` to at least one, checking an `M` row promotes that source, and the small/large ratio slider (10%–90%, default 50%) drives the auto layout so a small tile is the chosen share of a large tile while the canvas stays filled. The layout is a deterministic skyline packing over ordinary Scene v5 rectangles, so re-applying it is a stable fixed point.
 
 大画面开关即时生效：勾选后 `largeCount` 至少为 1，勾选 `M` 行即提升该来源；小/大画面比例滑块（10%–90%，默认 50%）驱动自动布局，在尽量填满画布的前提下让小画面为大画面的指定比例。布局是对普通 Scene v5 矩形的确定性 skyline 装箱，因此重复应用是稳定不动点。

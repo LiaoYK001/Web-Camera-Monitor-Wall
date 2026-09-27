@@ -12,26 +12,35 @@ function reportAccountSync(state: 'saved' | 'offline'): void {
 }
 
 async function readAccountPreference<T>(kind: AccountPreferenceKind): Promise<T | null | undefined> {
+  const controller = new AbortController();
+  const timer = window.setTimeout(() => controller.abort(), 8000);
   try {
-    const response = await fetch(`/api/v2/account/preferences/${kind}`, { cache: 'no-store', credentials: 'same-origin' });
+    const response = await fetch(`/api/v2/account/preferences/${kind}`, { cache: 'no-store', credentials: 'same-origin', signal: controller.signal });
     if (!response.ok) { reportAccountSync('offline'); return undefined; }
     reportAccountSync('saved');
     const result = await response.json() as { value: T | null };
     return result.value;
   } catch { reportAccountSync('offline'); return undefined; }
+  finally { window.clearTimeout(timer); }
 }
 
-async function writeAccountPreference(kind: AccountPreferenceKind, value: object): Promise<void> {
+async function writeAccountPreference(kind: AccountPreferenceKind, value: object, signal?: AbortSignal): Promise<void> {
+  const controller = new AbortController();
+  const abort = () => controller.abort();
+  if (signal?.aborted) controller.abort();
+  else signal?.addEventListener('abort', abort, { once: true });
+  const timer = window.setTimeout(abort, 8000);
   try {
     const response = await fetch(`/api/v2/account/preferences/${kind}`, {
       method: 'PUT', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ value }),
+      body: JSON.stringify({ value }), signal: controller.signal,
     });
     if (response.ok) {
       window.localStorage.setItem(`${PREFERENCE_MIGRATION_KEY}:${kind}`, '1');
       reportAccountSync('saved');
     } else reportAccountSync('offline');
   } catch { reportAccountSync('offline'); /* Keep the encrypted local copy for temporary network failures. */ }
+  finally { window.clearTimeout(timer); signal?.removeEventListener('abort', abort); }
 }
 type StoreName = typeof STORES[number];
 
@@ -372,10 +381,21 @@ export async function cacheSyncedScenes(documents: SyncDocument[]): Promise<void
   }, false);
 }
 
-export async function saveMonitorView(view: MonitorView): Promise<void> {
-  const expiresAt = Date.now() + LEASE_MS;
-  await put('runtimeMeta', 'monitor-view', await encrypt({ kind: 'monitor-view-v2', view }, expiresAt));
-  await writeAccountPreference('monitor-view', view);
+let monitorViewWrites: Promise<void> = Promise.resolve();
+let monitorWriteController = new AbortController();
+export function saveMonitorView(view: MonitorView): Promise<void> {
+  const snapshot = structuredClone(view);
+  const signal = monitorWriteController.signal;
+  // Keep local encryption and remote writes in the same order, including across page changes.
+  monitorViewWrites = monitorViewWrites.catch(() => undefined).then(async () => {
+    if (signal.aborted) return;
+    const expiresAt = Date.now() + LEASE_MS;
+    const encrypted = await encrypt({ kind: 'monitor-view-v2', view: snapshot }, expiresAt);
+    if (signal.aborted) return;
+    await put('runtimeMeta', 'monitor-view', encrypted);
+    if (!signal.aborted) await writeAccountPreference('monitor-view', snapshot, signal);
+  });
+  return monitorViewWrites;
 }
 
 export async function saveWorkspaceLayout(layout: WorkspaceLayout): Promise<void> {
@@ -522,13 +542,15 @@ export async function deleteLocalConfigProfile(id: string): Promise<void> {
   if (next.length === profiles.length) return;
   await put('runtimeMeta', 'config-profiles', await encrypt(next, LOCAL_CONFIG_EXPIRY));
   await writeAccountPreference('config-profiles', { profiles: next });
-  const active = await get<EncryptedRecord>('runtimeMeta', 'active-config-profile');
-  if (active) {
-    try {
-      const selected = await decrypt<{ id: string }>(active);
-      if (selected.id === id) await deleteRuntimeMeta('active-config-profile');
-    } catch { await deleteRuntimeMeta('active-config-profile'); }
+  const active = await readAccountPreference<{ id: string | null }>('active-profile');
+  const localActive = await get<EncryptedRecord>('runtimeMeta', 'active-config-profile');
+  let localId: string | null = null;
+  if (localActive) {
+    try { localId = (await decrypt<{ id: string }>(localActive)).id; }
+    catch { await deleteRuntimeMeta('active-config-profile'); }
   }
+  if (active?.id === id || (!active && localId === id)) await setActiveLocalConfigProfile(null);
+  else if (localId === id) await deleteRuntimeMeta('active-config-profile');
   announceConfigProfiles();
 }
 
@@ -616,6 +638,7 @@ export async function importLocalConfigBundle(value: unknown): Promise<LocalConf
 }
 
 export async function loadMonitorView(): Promise<MonitorView | null> {
+  await monitorViewWrites.catch(() => undefined);
   const remote = await readAccountPreference<MonitorView>('monitor-view');
   if (remote) return remote;
   if (remote === null && window.localStorage.getItem(`${PREFERENCE_MIGRATION_KEY}:monitor-view`)) return null;
@@ -665,6 +688,10 @@ export async function loadOfflineStudio(): Promise<{ studio: StudioDocument; sta
 }
 
 export async function clearPrivateRuntimeState(): Promise<void> {
+  window.dispatchEvent(new Event('webobs:account-clearing'));
+  monitorWriteController.abort();
+  await monitorViewWrites.catch(() => undefined);
+  monitorWriteController = new AbortController();
   const db = await database();
   try {
     const transaction = db.transaction(['identity', 'snapshot', 'localScenes', 'auditQueue', 'runtimeMeta', 'syncQueue', 'syncState'], 'readwrite');

@@ -13,6 +13,7 @@ import DirectPreview from './DirectPreview';
 import ProgramPreview from './ProgramPreview';
 import LocalRuntimeBadge from './LocalRuntimeBadge';
 import WorkspaceShell, { areaFromHash, type ProductArea } from './WorkspaceShell';
+import { canLeaveWorkspace } from './navigationGuard';
 import { loadActiveLocalConfigProfile, loadOfflineStudio, loadWorkspaceLayout, makeLocalConfigBundleForStudio, queueOfflineAudit, saveLocalConfigProfile, saveLocalStudio, saveStudioSnapshot, type LocalConfigProfile } from './localRuntime';
 import type { AudioMonitoring, CameraRecord, FilterKind, PlaybackMode, ScaleMode, SceneDocument, SceneFilter, SceneItem, SceneSource, StudioCapabilities, StudioDocument, Transport } from './types';
 
@@ -306,12 +307,15 @@ export default function App() {
 
   useEffect(() => {
     const changed = () => {
+      if (areaFromHash() !== productArea && !canLeaveWorkspace()) {
+        window.history.replaceState(null, '', `#/${productArea}`); return;
+      }
       setPlaybackMode(initialPlaybackMode());
       setProductArea(areaFromHash());
     };
     window.addEventListener('hashchange', changed);
     return () => window.removeEventListener('hashchange', changed);
-  }, []);
+  }, [productArea]);
 
   const navigate = (area: ProductArea) => {
     window.history.replaceState(null, '', `#/${area}`);

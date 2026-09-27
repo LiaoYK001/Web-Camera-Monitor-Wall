@@ -3,10 +3,10 @@ import AudioMixerBar, { type AudioMixerChannel } from './AudioMixerBar';
 import { closeAnalyticsRuntimeSession, fetchAnalyticsPolicies, fetchCameras, fetchMotionZones, fetchPlaybackCapabilities, probeSourceProfile, renewAnalyticsRuntimeSession, requestAnalyticsRuntimePlan, submitAnalyticsSignals } from './api';
 import type { BrowserTopologyPlan } from './browserMedia';
 import { DirectAudioMixer, getDirectAudioMixer, subscribeDirectAudio, type DirectAudioSnapshot } from './directAudioMixer';
-import { loadMonitorView, saveMonitorView } from './localRuntime';
+import { useMonitorPreferences } from './useMonitorPreferences';
 import { observeTileVisibility, shouldRunPlayback } from './mediaLifecycle';
 import { countRenderedFrames, formatTelemetry, sampleConnectionTelemetry, sampleElementTelemetry, unavailableTelemetry, type MediaTelemetry } from './mediaTelemetry';
-import { applyAutomaticLayout, canvasModes, canvasPixelPresets, defaultMonitorView, evaluatePromotion, mapDetectionBoxToTile, nextRotationWindow, normalizeMonitorView, playbackTopologyLabel, resolveCanvasSize, resolveFillMode, selectLowPowerProfile, sourceAudioTrackState, sourceDecoration, streamQualityPresets, tileTransform, validDetectionSignal, type AudioMeterConfig, type CanvasMode, type CanvasPixelPresetId, type DetectionSignal, type MonitorView, type SourceAudioTrackState, type StreamQuality, type TelemetryOverlayConfig, type VideoFillMode } from './monitorView';
+import { applyAutomaticLayout, canvasModes, canvasPixelPresets, evaluatePromotion, mapDetectionBoxToTile, nextRotationWindow, normalizeMonitorView, playbackTopologyLabel, resolveCanvasSize, resolveFillMode, selectLowPowerProfile, sourceAudioTrackState, sourceDecoration, streamQualityPresets, tileTransform, validDetectionSignal, type AudioMeterConfig, type CanvasMode, type CanvasPixelPresetId, type DetectionSignal, type MonitorView, type SourceAudioTrackState, type StreamQuality, type TelemetryOverlayConfig, type VideoFillMode } from './monitorView';
 import { BrowserAnalyticsRuntime, type BrowserAnalyticsStatus } from './analyticsRuntime';
 import { openIssueCenter, reportLocalIssue, reportMediaIssue, resolveLocalIssue, subscribeLocalIssues } from './issueRuntime';
 import type { AnalyticsPolicy, CameraRecord, CameraSceneSource, MotionZone, OperationalIssue, SceneDocument, SceneItem, SceneSource, SourcePlaybackCapability } from './types';
@@ -472,8 +472,7 @@ export default function DirectPreview({ scene, compact = false }: { scene: Scene
   const [available, setAvailable] = useState(true);
   const [mixer, setMixer] = useState<DirectAudioMixer | null>(null);
   const [audio, setAudio] = useState<DirectAudioSnapshot>({ state: 'disabled', inputCount: 0, level: 0, sources: [] });
-  const [monitorView, setMonitorView] = useState<MonitorView>(defaultMonitorView);
-  const [monitorLoaded, setMonitorLoaded] = useState(false);
+  const { view: monitorView, setView: setMonitorView, loaded: monitorLoaded, error: monitorError, retry: retryMonitor } = useMonitorPreferences(compact);
   const [cameras, setCameras] = useState<CameraRecord[]>([]);
   const [analyticsPolicies, setAnalyticsPolicies] = useState<AnalyticsPolicy[]>([]);
   const [analyticsZones, setAnalyticsZones] = useState<MotionZone[]>([]);
@@ -523,17 +522,6 @@ export default function DirectPreview({ scene, compact = false }: { scene: Scene
     document.addEventListener('visibilitychange', changed);
     return () => document.removeEventListener('visibilitychange', changed);
   }, []);
-
-  useEffect(() => { if (compact) { setMonitorLoaded(true); return; } void loadMonitorView().then((stored) => {
-    if (stored) setMonitorView(normalizeMonitorView(stored, scene.items.length, scene.sources.map((source) => source.id)));
-    setMonitorLoaded(true);
-  }); }, [compact]);
-
-  useEffect(() => {
-    if (!monitorLoaded || compact) return;
-    const timer = window.setTimeout(() => void saveMonitorView(normalizeMonitorView(monitorView, scene.items.length, scene.sources.map((source) => source.id))), 250);
-    return () => window.clearTimeout(timer);
-  }, [compact, monitorLoaded, monitorView, scene.items.length]);
 
   useEffect(() => {
     const controller = new AbortController();
@@ -740,7 +728,7 @@ export default function DirectPreview({ scene, compact = false }: { scene: Scene
     return normalizeMonitorView({
       ...value, largeSourceIds,
       largeCount: checked ? Math.max(value.largeCount, largeSourceIds.length) : value.largeCount,
-    }, scene.items.length, scene.sources.map((source) => source.id));
+    }, scene.items.length);
   });
 
   const beginWindowDrag = (event: ReactPointerEvent<HTMLDivElement>) => {
@@ -835,11 +823,14 @@ export default function DirectPreview({ scene, compact = false }: { scene: Scene
     };
   }), [effectiveScene.sources, monitorView, audioBySource, audioTrackState]);
 
+  if (!monitorLoaded) return <div className="monitor-preferences-loading" role="status">{monitorError || '正在读取监控偏好…'}{monitorError && <button type="button" onClick={retryMonitor}>重试</button>}</div>;
+
   return (
     <div
       className={`direct-preview-shell${windowPreview ? ' window-preview-mode' : ''}`}
       style={windowPreview ? { left: windowRect.x, top: windowRect.y, width: windowRect.width, height: windowRect.height } : undefined}
     >
+      {monitorError && <p role="alert">{monitorError}</p>}
       {windowPreview && <div className="window-preview-bar" onPointerDown={beginWindowDrag}
         onPointerMove={moveWindow} onPointerUp={endWindowDrag} onPointerCancel={endWindowDrag}>
         <span>窗口预览 · 拖动标题栏移动，右下角缩放</span>
@@ -918,7 +909,7 @@ export default function DirectPreview({ scene, compact = false }: { scene: Scene
           <small className="canvas-size-readout">{resolvedCanvas.width} × {resolvedCanvas.height}</small>
         </div>
         <button type="button" onClick={() => setMonitorView((value) => ({ ...value, mode: value.mode === 'auto' ? 'manual' : 'auto' }))}>{monitorView.mode === 'auto' ? '脱离自动模式' : '恢复自动布局'}</button>
-        <label>画面填充<select aria-label="监控画面填充" value={monitorView.fill} onChange={(event) => setMonitorView((value) => normalizeMonitorView({ ...value, fill: event.target.value as VideoFillMode }, scene.items.length, scene.sources.map((source) => source.id)))}>
+        <label>画面填充<select aria-label="监控画面填充" value={monitorView.fill} onChange={(event) => setMonitorView((value) => normalizeMonitorView({ ...value, fill: event.target.value as VideoFillMode }, scene.items.length))}>
           <option value="stretch">拉伸铺满</option><option value="contain">完整显示（允许黑边）</option><option value="cover">裁剪铺满</option>
         </select></label>
         <label><input type="checkbox" checked={monitorView.telemetry.enabled} onChange={(event) => setMonitorView((value) => ({ ...value, telemetry: { ...value.telemetry, enabled: event.target.checked } }))} />统计叠层（默认）</label>
@@ -933,8 +924,8 @@ export default function DirectPreview({ scene, compact = false }: { scene: Scene
         <button type="button" onClick={() => setWindowPreview(true)}>窗口预览</button>
         <label><input type="checkbox" checked={monitorView.showAudioMixer} onChange={(event) => setMonitorView((value) => ({ ...value, showAudioMixer: event.target.checked }))} />Audio Mixer 栏</label>
         <label><input type="checkbox" checked={monitorView.largeCount > 0} onChange={(event) => setMonitorView((value) => ({ ...value, largeCount: event.target.checked ? Math.max(1, value.largeSourceIds.length) : 0 }))} />大画面模式</label>
-        <label>大画面数量<input type="number" min="0" max={Math.min(16, scene.items.length)} value={monitorView.largeCount} onChange={(event) => setMonitorView((value) => normalizeMonitorView({ ...value, largeCount: Number(event.target.value) }, scene.items.length, scene.sources.map((source) => source.id)))} /></label>
-        <label>小画面比例<input aria-label="小画面与大画面比例" type="range" min="0.1" max="0.9" step="0.05" value={monitorView.largeRatio} onChange={(event) => setMonitorView((value) => normalizeMonitorView({ ...value, largeRatio: Number(event.target.value) }, scene.items.length, scene.sources.map((source) => source.id)))} /></label>
+        <label>大画面数量<input type="number" min="0" max={Math.min(16, scene.items.length)} value={monitorView.largeCount} onChange={(event) => setMonitorView((value) => normalizeMonitorView({ ...value, largeCount: Number(event.target.value) }, scene.items.length))} /></label>
+        <label>小画面比例<input aria-label="小画面与大画面比例" type="range" min="0.1" max="0.9" step="0.05" value={monitorView.largeRatio} onChange={(event) => setMonitorView((value) => normalizeMonitorView({ ...value, largeRatio: Number(event.target.value) }, scene.items.length))} /></label>
         <span data-large-ratio>{Math.round(monitorView.largeRatio * 100)}%</span>
         <details><summary>选择 M / 固定</summary><div className="monitor-source-options">{scene.items.filter((item) => item.visible).slice(0, 16).map((item) => {
           const source = scene.sources.find((candidate) => candidate.id === item.sourceId); const large = monitorView.largeSourceIds.includes(item.sourceId); const pinned = monitorView.rotation.pinnedSourceIds.includes(item.sourceId);
