@@ -133,8 +133,13 @@ export function connectAudioTrack(
       if (response.status !== 201) throw new Error('audio-only WHEP offer was rejected');
       const nextLocation = sessionLocation(response.headers.get('Location'), track.endpoint);
       if (!nextLocation) throw new Error('audio-only WHEP session location is invalid');
+      if (closed || peer !== next) {
+        void fetch(nextLocation, { method: 'DELETE', keepalive: true, cache: 'no-store' }).catch(() => undefined);
+        return;
+      }
       location = nextLocation;
       await next.setRemoteDescription({ type: 'answer', sdp: await response.text() });
+      if (closed || peer !== next) return;
       handshakeTimer = window.setTimeout(() => { if (!closed) scheduleReconnect(); }, HANDSHAKE_TIMEOUT_MS);
       lastPackets = -1;
       lastProgressAt = Date.now();

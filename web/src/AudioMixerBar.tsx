@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useMemo, useState } from 'react';
 import type { DirectAudioSnapshot } from './directAudioMixer';
 
 export interface AudioMixerChannel {
@@ -19,14 +19,13 @@ export interface AudioMixerBarProps {
   masterVolume: number;
   output: 'speaker' | 'meter-only';
   compact?: boolean;
+  showAll?: boolean;
   onToggleAudio: () => void;
   onMasterVolume: (value: number) => void;
   onOutput: (value: 'speaker' | 'meter-only') => void;
   onSourceGain: (sourceId: string, gain: number) => void;
   onSourceMute: (sourceId: string, muted: boolean) => void;
   onSourceMonitor: (sourceId: string, monitor: boolean) => void;
-  onToggleTrack: (sourceId: string, trackIndex: number) => void;
-  onToggleMerge: (sourceId: string) => void;
 }
 
 function meterPercent(dbfs: number | null | undefined): number {
@@ -39,9 +38,8 @@ function meterPercent(dbfs: number | null | undefined): number {
  * audio tracks get a channel (F6-02); video-only tiles never pollute the strip.
  */
 export default function AudioMixerBar({
-  channels, snapshot, audioEnabled, masterVolume, output, compact,
+  channels, snapshot, audioEnabled, masterVolume, output, showAll,
   onToggleAudio, onMasterVolume, onOutput, onSourceGain, onSourceMute, onSourceMonitor,
-  onToggleTrack, onToggleMerge,
 }: AudioMixerBarProps) {
   const [collapsed, setCollapsed] = useState(false);
   const levels = useMemo(() => {
@@ -54,7 +52,7 @@ export default function AudioMixerBar({
     }
     return map;
   }, [snapshot]);
-  const audible = channels.filter((channel) => channel.hasAudio);
+  const audible = channels.filter((channel) => showAll || channel.hasAudio);
   if (!audible.length) return null;
   return (
     <section className={`audio-mixer-bar${collapsed ? ' collapsed' : ''}`} aria-label="Audio Mixer">
@@ -73,14 +71,14 @@ export default function AudioMixerBar({
         </select>
         <button type="button" className="ghost-button" onClick={() => setCollapsed((value) => !value)}>{collapsed ? '展开' : '收起'}</button>
       </header>
+      {!collapsed && <small> M：静音；🎧：送至本地扬声器。启用声音后生效；逐轨设置请前往音频工作台。</small>}
       {!collapsed && <div className="audio-mixer-columns">
         {audible.map((channel) => {
           const level = levels.get(channel.sourceId) ?? { rms: null, peak: null };
           return <article key={channel.sourceId} className="audio-mixer-channel" data-source-id={channel.sourceId}>
             <header>
               <span title={channel.name}>{channel.name}</span>
-              <button type="button" className="ghost-button" aria-pressed={channel.merged} title="合并输出 / 独立电平"
-                onClick={() => onToggleMerge(channel.sourceId)}>{channel.merged ? '合并' : '独立'}</button>
+              {!channel.hasAudio && <small>无已确认音轨</small>}
             </header>
             <div className="audio-mixer-meter" aria-label={`${channel.name} 电平`}>
               <div className="audio-mixer-meter-fill" style={{ height: `${meterPercent(level.rms)}%` }} />
@@ -88,19 +86,14 @@ export default function AudioMixerBar({
             </div>
             <output className="audio-mixer-db">{level.peak === null ? '—' : `${level.peak.toFixed(1)} dB`}</output>
             <input className="audio-mixer-fader" type="range" min="0" max="1.5" step="0.01" aria-label={`${channel.name} 音量`}
-              value={channel.gain} onChange={(event) => onSourceGain(channel.sourceId, Number(event.target.value))} />
+              disabled={!channel.hasAudio} value={channel.gain} onChange={(event) => onSourceGain(channel.sourceId, Number(event.target.value))} />
             <div className="audio-mixer-actions">
               <button type="button" className={channel.muted ? 'active' : ''} aria-pressed={channel.muted}
+                disabled={!channel.hasAudio} aria-label={`${channel.name} 静音`} title="静音此来源"
                 onClick={() => onSourceMute(channel.sourceId, !channel.muted)}>M</button>
               <button type="button" className={channel.monitor ? 'active' : ''} aria-pressed={channel.monitor}
-                title="监听输出" onClick={() => onSourceMonitor(channel.sourceId, !channel.monitor)}>🎧</button>
+                disabled={!channel.hasAudio} aria-label={`${channel.name} 本地监听`} title="开启或关闭此来源的本地扬声器输出" onClick={() => onSourceMonitor(channel.sourceId, !channel.monitor)}>🎧</button>
             </div>
-            {!compact && channel.tracks.length > 1 && <div className="audio-mixer-tracks">
-              {channel.tracks.map((track) => <label key={track.index}>
-                <input type="checkbox" checked={track.selected} onChange={() => onToggleTrack(channel.sourceId, track.index)} />
-                {track.label}
-              </label>)}
-            </div>}
           </article>;
         })}
       </div>}

@@ -91,6 +91,16 @@ export class DirectAudioMixer {
   private level = 0;
   private masterVolume = 1;
   private outputEnabled = true;
+  private readonly sampleBuffers = new WeakMap<AnalyserNode, Float32Array<ArrayBuffer>>();
+
+  private samplesFor(analyser: AnalyserNode): Float32Array<ArrayBuffer> {
+    let samples = this.sampleBuffers.get(analyser);
+    if (!samples || samples.length !== analyser.fftSize) {
+      samples = new Float32Array(analyser.fftSize);
+      this.sampleBuffers.set(analyser, samples);
+    }
+    return samples;
+  }
   private latest: DirectAudioSnapshot = { state: 'disabled', inputCount: 0, level: 0, sources: [] };
 
   constructor(private readonly onSnapshot: (snapshot: DirectAudioSnapshot) => void) {
@@ -105,6 +115,7 @@ export class DirectAudioMixer {
     element.muted = true;
     if (this.context) this.materialize(sourceId);
     this.applyConfiguration();
+    if (this.enabled) this.startMeter();
     this.emit();
     return () => {
       const entry = this.entries.get(sourceId);
@@ -117,6 +128,7 @@ export class DirectAudioMixer {
   configure(sources: SceneSource[]): void {
     this.configuration.clear();
     for (const source of sources) this.configuration.set(source.id, source);
+    for (const id of this.trackConfiguration.keys()) if (!this.configuration.has(id)) this.trackConfiguration.delete(id);
     this.applyConfiguration();
   }
 
@@ -135,8 +147,7 @@ export class DirectAudioMixer {
       if (entry.sourceId !== sourceId || wanted.has(entry.trackIndex)) continue;
       this.releaseTrack(key);
     }
-    this.applyTrackGains();
-    this.emit();
+    this.applyConfiguration();
   }
 
   /** Bind the audio-only stream of one source+track (from its own WHEP channel). */
@@ -156,20 +167,22 @@ export class DirectAudioMixer {
     };
     this.trackEntries.set(key, entry);
     if (this.context) this.materializeTrack(key);
-    this.applyTrackGains();
-    this.emit();
+    this.applyConfiguration();
+    if (this.enabled) this.startMeter();
   }
 
   unbindTrack(sourceId: string, trackIndex: number): void {
     this.releaseTrack(trackKey(sourceId, trackIndex));
-    this.emit();
+    this.applyConfiguration();
+    if (!this.entries.size && !this.trackEntries.size) this.stopMeter();
   }
 
   unbindSourceTracks(sourceId: string): void {
     for (const [key, entry] of [...this.trackEntries]) {
       if (entry.sourceId === sourceId) this.releaseTrack(key);
     }
-    this.emit();
+    this.applyConfiguration();
+    if (!this.entries.size && !this.trackEntries.size) this.stopMeter();
   }
 
   /** Bound audio-only track channels of one source. */
@@ -241,9 +254,10 @@ export class DirectAudioMixer {
     this.applyConfiguration();
     this.applyTrackGains();
 
-    const playback = [...this.entries.values()].map(({ element }) => element.play());
+    // An offline video's pending play() must not hold the entire mixer hostage.
+    for (const { element } of this.entries.values()) void element.play().catch(() => undefined);
     try {
-      await Promise.all([this.context.resume(), ...playback]);
+      await this.context.resume();
       if (this.context.state !== 'running') throw new Error('audio context did not start');
       this.startMeter();
       this.emit();
@@ -361,6 +375,8 @@ export class DirectAudioMixer {
     for (const [key, track] of [...this.trackEntries]) {
       if (track.sourceId === sourceId) this.releaseTrack(key);
     }
+    this.trackConfiguration.delete(sourceId);
+    if (!this.entries.size && !this.trackEntries.size) this.stopMeter();
   }
 
   private disconnectEntry(entry: MixerEntry): void {
@@ -384,13 +400,15 @@ export class DirectAudioMixer {
     const now = this.context?.currentTime ?? 0;
     for (const [sourceId, entry] of this.entries) {
       const source = this.configuration.get(sourceId);
-      const gain = source && !source.muted ? clamp(source.volume, 0, 1) : 0;
+      const hasTrackChannels = [...this.trackEntries.values()].some((track) => track.sourceId === sourceId && (track.stream?.getAudioTracks().length ?? 0) > 0);
+      const gain = source && !source.muted && source.monitoring !== 'off' && !hasTrackChannels ? clamp(source.volume, 0, 1.5) : 0;
       const delay = clamp(((source?.syncOffsetMs ?? 0) - baseline) / 1000, 0, 20);
       entry.gainNode?.gain.setTargetAtTime(gain, now, 0.01);
       entry.delayNode?.delayTime.setTargetAtTime(delay, now, 0.01);
       entry.element.muted = true;
       entry.element.volume = 1;
     }
+    this.applyTrackGains();
     this.emit();
   }
 
@@ -404,20 +422,24 @@ export class DirectAudioMixer {
       }
       entry.gainNode?.gain.setTargetAtTime(entry.muted ? 0 : entry.gain, now, 0.01);
     }
+    for (const [sourceId, merge] of this.mergeEntries) {
+      const source = this.configuration.get(sourceId);
+      merge.gainNode.gain.setTargetAtTime(source && !source.muted && source.monitoring !== 'off' ? clamp(source.volume, 0, 1.5) : 0, now, .01);
+    }
   }
 
   private startMeter(): void {
-    this.stopMeter();
+    if (this.meterTimer !== undefined || (!this.entries.size && !this.trackEntries.size)) return;
     this.meterTimer = window.setInterval(() => {
       if (!this.analyser || !this.enabled) return;
-      const samples = new Float32Array(this.analyser.fftSize);
+      const samples = this.samplesFor(this.analyser);
       this.analyser.getFloatTimeDomainData(samples);
       let sum = 0;
       for (const sample of samples) sum += sample * sample;
       this.level = Math.sqrt(sum / samples.length);
       for (const entry of this.entries.values()) {
         if (!entry.analyserNode) { entry.rmsDbfs = undefined; entry.peakDbfs = undefined; continue; }
-        const sourceSamples = new Float32Array(entry.analyserNode.fftSize);
+        const sourceSamples = this.samplesFor(entry.analyserNode);
         entry.analyserNode.getFloatTimeDomainData(sourceSamples);
         let sourceSum = 0; let peak = 0;
         for (const sample of sourceSamples) { sourceSum += sample * sample; peak = Math.max(peak, Math.abs(sample)); }
@@ -426,7 +448,7 @@ export class DirectAudioMixer {
       }
       for (const entry of this.trackEntries.values()) {
         if (!entry.analyserNode) { entry.rmsDbfs = undefined; entry.peakDbfs = undefined; continue; }
-        const trackSamples = new Float32Array(entry.analyserNode.fftSize);
+        const trackSamples = this.samplesFor(entry.analyserNode);
         entry.analyserNode.getFloatTimeDomainData(trackSamples);
         let trackSum = 0; let peak = 0;
         for (const sample of trackSamples) { trackSum += sample * sample; peak = Math.max(peak, Math.abs(sample)); }
@@ -434,7 +456,7 @@ export class DirectAudioMixer {
         entry.peakDbfs = amplitudeToDbfs(peak);
       }
       for (const merge of this.mergeEntries.values()) {
-        const merged = new Float32Array(merge.analyserNode.fftSize);
+        const merged = this.samplesFor(merge.analyserNode);
         merge.analyserNode.getFloatTimeDomainData(merged);
         let mergedSum = 0; let peak = 0;
         for (const sample of merged) { mergedSum += sample * sample; peak = Math.max(peak, Math.abs(sample)); }

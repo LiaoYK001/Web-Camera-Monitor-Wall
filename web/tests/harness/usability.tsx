@@ -6,6 +6,7 @@ import SourceCatalog from '../../src/SourceCatalog';
 import AccountWorkspace from '../../src/AccountWorkspace';
 import SettingsWorkspace from '../../src/SettingsWorkspace';
 import DirectPreview from '../../src/DirectPreview';
+import App from '../../src/App';
 import { clearPrivateRuntimeState } from '../../src/localRuntime';
 import { defaultMonitorView, defaultSourceDecoration } from '../../src/monitorView';
 import type { OperationalIssue, RuntimeSettings, SceneDocument, SourceCatalogItem, StudioDocument } from '../../src/types';
@@ -29,7 +30,41 @@ const scene: SceneDocument = {
   items: [{ id: 'item-one', sourceId: 'color-one', x: 0, y: 0, width: 1920, height: 1080, scaleMode: 'contain', crop: { top: 0, right: 0, bottom: 0, left: 0 }, zIndex: 0, visible: true, locked: false, groupId: '', rotation: 0, opacity: 1, blendMode: 'normal' }],
 };
 const studio: StudioDocument = { schemaVersion: 1, revision: 1, previewSceneId: scene.id, programSceneId: scene.id, scenes: [scene], transition: { kind: 'cut', durationMs: 0 } };
+if (fixtureOptions.has('mixer') || fixtureOptions.has('layout')) {
+  scene.sources = [0, 1].map((index) => ({ id: `audio-source-${index}`, kind: 'camera', name: index ? '有声音的摄像机' : '无音轨摄像机',
+    cameraId: `fixture-${index}`, profileId: 'main', hardwareDecode: 'auto', muted: true, volume: 1, syncOffsetMs: 0,
+    monitoring: 'off', audioTrack: 1, filters: [] }));
+  scene.items = scene.sources.map((source, index) => ({ ...scene.items[0], id: `audio-item-${index}`, sourceId: source.id, x: index * 960, width: 960 }));
+  cameras[1].profiles[0].audioCodec = 'pcm_alaw';
+  cameras[1].profiles[0].tracks = [{ index: 1, kind: 'audio', codec: 'pcm_alaw', bitrateKbps: null, width: 0, height: 0, fps: 0, channels: 1, sampleRate: 8000, source: 'probe' }];
+}
 const monitorView = { ...defaultMonitorView(), sourceDecorations: { 'other-scene-source': { ...defaultSourceDecoration(), audioMeter: { ...defaultSourceDecoration().audioMeter, enabled: true, opacity: .6 } } } };
+if (fixtureOptions.has('layout')) {
+  const canvas = document.createElement('canvas'); canvas.width = 640; canvas.height = 360;
+  const context = canvas.getContext('2d')!;
+  let frame = 0;
+  window.setInterval(() => {
+    context.fillStyle = '#14384a'; context.fillRect(0, 0, 640, 360);
+    context.fillStyle = '#baff50'; context.fillRect((frame++ * 3) % 540, 80, 100, 100);
+    context.font = '28px sans-serif'; context.fillText('LIVE LAYOUT FIXTURE', 50, 290);
+  }, 80);
+  const stream = canvas.captureStream(12);
+  class FixturePeer {
+    iceGatheringState = 'complete'; connectionState = 'new'; localDescription: RTCSessionDescriptionInit | null = null;
+    ontrack?: (event: { track: MediaStreamTrack }) => void; onconnectionstatechange?: () => void;
+    track?: MediaStreamTrack;
+    addTransceiver() {}
+    async createOffer() { return { type: 'offer', sdp: 'v=0\r\n' }; }
+    async setLocalDescription(value: RTCSessionDescriptionInit) { this.localDescription = value; }
+    async setRemoteDescription() {
+      this.track = stream.getVideoTracks()[0].clone(); this.ontrack?.({ track: this.track });
+      this.connectionState = 'connected'; this.onconnectionstatechange?.();
+    }
+    async getStats() { return new Map(); }
+    close() { this.track?.stop(); this.connectionState = 'closed'; }
+  }
+  window.RTCPeerConnection = FixturePeer as unknown as typeof RTCPeerConnection;
+}
 preferences.set('/api/v2/account/preferences/monitor-view', monitorView);
 if (fixtureOptions.has('profile')) {
   preferences.set('/api/v2/account/preferences/config-profiles', { profiles: [{ schemaVersion: 1, id: 'fixture-profile', name: '值班布局', createdAt: 1, updatedAt: 1, studio }] });
@@ -41,10 +76,18 @@ const metrics = { queries: [] as string[], saves: [] as unknown[], monitorSaves:
 const updateMetrics = () => document.documentElement.setAttribute('data-fixture-metrics', JSON.stringify(metrics));
 updateMetrics();
 const originalFetch = window.fetch.bind(window);
+let fixtureOffers = 0;
 window.fetch = async (input, init) => {
   const url = new URL(typeof input === 'string' ? input : input instanceof URL ? input.href : input.url, location.href);
   if (!url.pathname.startsWith('/api/')) return originalFetch(input, init);
   const reply = (data: unknown, status = 200) => new Response(JSON.stringify(data), { status, headers: { 'Content-Type': 'application/json' } });
+  if (url.pathname === '/api/v1/studio') return reply(studio);
+  if (fixtureOptions.has('layout') && url.pathname.includes('/account-cameras/')) {
+    if (init?.method === 'DELETE') return new Response(null, { status: 204 });
+    fixtureOffers++; document.documentElement.dataset.fixtureOffers = String(fixtureOffers);
+    return new Response('v=0\r\no=- 0 0 IN IP4 127.0.0.1\r\ns=-\r\nt=0 0\r\nm=video 9 UDP/TLS/RTP/SAVPF 96\r\na=mid:0\r\na=fingerprint:sha-256 AA:BB\r\n',
+      { status: 201, headers: { 'Content-Type': 'application/sdp', Location: url.pathname + '/session/fixture-session' } });
+  }
   const wait = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
   if (url.pathname === '/api/v2/account/me') return reply({ username: 'demo', displayName: '值班管理员', avatar: 'camera', roles: ['admin'], permissions: ['user.manage'], scopes: [], acl: [{ permission: 'live.view', allowed: true }] });
   if (url.pathname.startsWith('/api/v2/account/preferences/')) {
@@ -117,7 +160,7 @@ window.fetch = async (input, init) => {
     if (fixtureOptions.has('issues-fail') && metrics.acknowledgments === 1) return reply({ error: { code: 'TEMPORARY_FAILURE', message: '确认暂时失败，请重试' } }, 503);
     issue.state = 'acknowledged'; return reply(issue);
   }
-  if (url.pathname === '/api/v1/cameras') return reply({ cameras: [] });
+  if (url.pathname === '/api/v1/cameras') return reply({ cameras: fixtureOptions.has('mixer') || fixtureOptions.has('layout') ? cameras.slice(0, 2) : [] });
   if (url.pathname === '/api/v1/playback/capabilities') return reply({ modes: { direct: { enabled: true } }, sources: [] });
   if (url.pathname.includes('analytics')) return reply({ policies: [] });
   if (url.pathname.includes('motion-zones')) return reply({ zones: [] });
@@ -126,9 +169,11 @@ window.fetch = async (input, init) => {
 
 function Fixture() {
   const [area, setArea] = useState<ProductArea>((fixtureOptions.get('area') ?? 'devices') as ProductArea);
+  if (fixtureOptions.has('layout')) return <App />;
   return <WorkspaceShell area={area} onNavigate={setArea} connection="online">
     {area === 'devices' ? <SourceCatalog /> : area === 'account' ? <AccountWorkspace onAdmin={() => setArea('admin')} />
-      : area === 'settings' ? <SettingsWorkspace studio={studio} /> : area === 'monitor' ? <><button onClick={() => void clearPrivateRuntimeState().then(() => setArea('devices'))}>模拟退出清理</button><DirectPreview scene={scene} /></>
+      : area === 'settings' ? <SettingsWorkspace studio={studio} /> : area === 'monitor' ? <><button onClick={() => void clearPrivateRuntimeState().then(() => setArea('devices'))}>模拟退出清理</button>
+        <section className="monitor-surface"><button onClick={(event) => void event.currentTarget.parentElement!.requestFullscreen()}>测试真全屏</button><DirectPreview scene={scene} /></section></>
       : <section className="page-panel"><h1>{area}</h1><button onClick={() => setArea('devices')}>返回设备列表</button></section>}
   </WorkspaceShell>;
 }

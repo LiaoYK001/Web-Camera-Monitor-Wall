@@ -137,6 +137,7 @@ export default function App() {
   const [workspaceMode, setWorkspaceMode] = useState<WorkspaceMode>('program');
   const [playbackMode, setPlaybackMode] = useState<PlaybackMode>(initialPlaybackMode);
   const [canvasZoom, setCanvasZoom] = useState(1);
+  const [liveLayoutPreview, setLiveLayoutPreview] = useState(true);
   const [newKind, setNewKind] = useState<AddSourceKind>('camera');
   const [newName, setNewName] = useState('新摄像头');
   const [newUrl, setNewUrl] = useState('');
@@ -1130,6 +1131,7 @@ export default function App() {
             </div>
           )}
           {workspaceMode === 'layout' && <div className="canvas-tools" aria-label="画布工具">
+            <label><input type="checkbox" checked={liveLayoutPreview} onChange={(event) => setLiveLayoutPreview(event.target.checked)} />实时画面</label>
             <span>缩放 {Math.round(canvasZoom * 100)}%</span>
             <button type="button" onClick={() => setCanvasZoom((value) => clamp(value - 0.1, 0.5, 1.5))}>−</button>
             <button type="button" onClick={() => setCanvasZoom(1)}>适屏</button>
@@ -1154,11 +1156,12 @@ export default function App() {
                 : <DirectPreview scene={programScene ?? baseline ?? draft} />
             ) : draft.items.length === 0 ? <EmptyState onAdd={() => setAdding(true)} /> : (
               <div
-                className="stage"
+                className={`stage${liveLayoutPreview ? ' stage-live' : ''}`}
                 ref={stageRef}
                 style={{ aspectRatio: `${draft.canvas.width} / ${draft.canvas.height}`, backgroundColor: draft.canvas.backgroundColor, transform: `scale(${canvasZoom})` }}
                 onPointerDown={() => { setSelectedSourceId(null); setSelectedSourceIds([]); }}
               >
+                {liveLayoutPreview && <DirectPreview compact layoutPreview scene={draft} />}
                 <div className="stage-grid" aria-hidden="true" />
                 <div className="stage-safe-area" aria-hidden="true" />
                 {[...draft.items].sort((left, right) => left.zIndex - right.zIndex).map((item) => {
@@ -1187,7 +1190,7 @@ export default function App() {
                       onKeyDown={(event) => { if (event.key === 'Enter' || event.key === ' ') selectSource(source.id, event.shiftKey || event.ctrlKey || event.metaKey); }}
                       onPointerDown={(event) => beginPointer(event, item, 'move')}
                     >
-                      <div className="tile-noise" aria-hidden="true" />
+                      {!liveLayoutPreview && <div className="tile-noise" aria-hidden="true" />}
                       <span className="tile-tag">{source.kind === 'rtsp'
                         ? `RTSP · ${source.transport.toUpperCase()}`
                         : source.kind === 'camera' ? `CAMERA · ${source.profileId}`

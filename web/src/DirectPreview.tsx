@@ -471,7 +471,7 @@ function BrowserCameraTile({ item, source, mixer, telemetry, audioMeter, audioSn
   </div>;
 }
 
-export default function DirectPreview({ scene, compact = false }: { scene: SceneDocument; compact?: boolean }) {
+export default function DirectPreview({ scene, compact = false, layoutPreview = false }: { scene: SceneDocument; compact?: boolean; layoutPreview?: boolean }) {
   const [capabilities, setCapabilities] = useState<SourcePlaybackCapability[]>([]);
   const [available, setAvailable] = useState(true);
   const [mixer, setMixer] = useState<DirectAudioMixer | null>(null);
@@ -493,17 +493,23 @@ export default function DirectPreview({ scene, compact = false }: { scene: Scene
   const promotionCooldowns = useRef(new Map<string, number>());
   const rotationBag = useRef<string[]>([]);
   const rotationBagSignature = useRef('');
-  const promotionTimers = useRef<number[]>([]);
+  const promotionTimers = useRef(new Set<number>());
 
   useEffect(() => {
     // The audio workspace binds per-track channels into the same graph, so the
     // preview and the workspace must share one mixer instance.
+    if (layoutPreview) {
+      const previewMixer = new DirectAudioMixer(() => undefined);
+      setMixer(previewMixer);
+      return () => previewMixer.destroy();
+    }
     const sharedMixer: DirectAudioMixer = getDirectAudioMixer();
     setMixer(sharedMixer);
     return subscribeDirectAudio(setAudio);
-  }, []);
+  }, [layoutPreview]);
 
   useEffect(() => {
+    if (layoutPreview) return;
     const enable = () => void mixer?.enable();
     const disable = () => void mixer?.disable();
     window.addEventListener('webobs:audio-monitor-enable', enable);
@@ -512,7 +518,7 @@ export default function DirectPreview({ scene, compact = false }: { scene: Scene
       window.removeEventListener('webobs:audio-monitor-enable', enable);
       window.removeEventListener('webobs:audio-monitor-disable', disable);
     };
-  }, [mixer]);
+  }, [mixer, layoutPreview]);
 
   useEffect(() => {
     const media = window.matchMedia('(orientation: portrait)');
@@ -535,7 +541,6 @@ export default function DirectPreview({ scene, compact = false }: { scene: Scene
     return () => controller.abort();
   }, [scene.revision]);
 
-  useEffect(() => mixer?.configure(scene.sources), [mixer, scene.sources]);
   useEffect(() => mixer?.setMasterVolume(monitorView.localMonitorVolume), [mixer, monitorView.localMonitorVolume]);
   useEffect(() => { mixer?.setOutputEnabled(monitorView.audioOutput === 'speaker'); }, [mixer, monitorView.audioOutput]);
 
@@ -602,6 +607,21 @@ export default function DirectPreview({ scene, compact = false }: { scene: Scene
     };
     return applyAutomaticLayout(current, monitorView);
   }, [cameras, compact, monitorView, portrait, scene]);
+  const mixedSources = useMemo(() => effectiveScene.sources.map((source) => {
+    if (layoutPreview) return { ...source, muted: true };
+    if (compact) return source;
+    const control = monitorView.sourceAudio[source.id];
+    return { ...source, volume: control?.volume ?? source.volume, muted: control?.muted ?? source.muted,
+      monitoring: (control?.monitor === false ? 'off' : 'monitor-and-output') as SceneSource['monitoring'] };
+  }), [effectiveScene.sources, monitorView.sourceAudio, compact, layoutPreview]);
+  useEffect(() => mixer?.configure(mixedSources), [mixer, mixedSources]);
+  const updateAudioSource = (sourceId: string, change: Partial<MonitorView['sourceAudio'][string]>) => {
+    const source = effectiveScene.sources.find((candidate) => candidate.id === sourceId);
+    if (!source) return;
+    setMonitorView((value) => ({ ...value, sourceAudio: { ...value.sourceAudio, [sourceId]: {
+      ...(value.sourceAudio[sourceId] ?? { volume: source.volume, muted: source.muted, monitor: true }), ...change,
+    } } }));
+  };
   const lowPowerBySource = useMemo(() => new Map(effectiveScene.sources.flatMap((source) => {
     if (!monitorView.lowPower.enabled || source.kind !== 'camera') return [];
     const camera = cameras.find((candidate) => candidate.id === source.cameraId);
@@ -638,7 +658,8 @@ export default function DirectPreview({ scene, compact = false }: { scene: Scene
       const previous = monitorView.largeSourceIds;
       setMonitorView((value) => ({ ...value, largeSourceIds: [source.id, ...value.largeSourceIds.filter((id) => id !== source.id)].slice(0, value.largeCount) }));
       const hold = Math.max(1, (decision.holdUntil - now) / 1000);
-      promotionTimers.current.push(window.setTimeout(() => setMonitorView((value) => ({ ...value, largeSourceIds: previous })), hold * 1000));
+      const timer = window.setTimeout(() => { promotionTimers.current.delete(timer); setMonitorView((value) => ({ ...value, largeSourceIds: previous })); }, hold * 1000);
+      promotionTimers.current.add(timer);
       promotionCooldowns.current.set(key, decision.cooldownUntil);
     };
     window.addEventListener('webobs:detection-signal', promote);
@@ -659,7 +680,8 @@ export default function DirectPreview({ scene, compact = false }: { scene: Scene
       const previous = monitorView.largeSourceIds;
       setMonitorView((value) => ({ ...value, largeSourceIds: [source.id, ...value.largeSourceIds.filter((id) => id !== source.id)].slice(0, value.largeCount) }));
       const holdMs = Math.max(1, monitorView.promotion.holdSeconds) * 1000;
-      promotionTimers.current.push(window.setTimeout(() => setMonitorView((value) => ({ ...value, largeSourceIds: previous })), holdMs));
+      const timer = window.setTimeout(() => { promotionTimers.current.delete(timer); setMonitorView((value) => ({ ...value, largeSourceIds: previous })); }, holdMs);
+      promotionTimers.current.add(timer);
       promotionCooldowns.current.set(key, now + holdMs + Math.max(0, monitorView.promotion.cooldownSeconds) * 1000);
     };
     window.addEventListener('webobs:audio-threshold', promoteAudio);
@@ -803,7 +825,7 @@ export default function DirectPreview({ scene, compact = false }: { scene: Scene
     },
   [compact, effectiveScene, resolvedCanvas, monitorView.canvasMode]);
 
-  const audioMixerChannels = useMemo((): AudioMixerChannel[] => effectiveScene.sources.map((source) => {
+  const audioMixerChannels = useMemo((): AudioMixerChannel[] => mixedSources.map((source) => {
     const decoration = sourceDecoration(monitorView, source.id);
     const trackState = audioTrackState(source);
     const live = audioBySource.get(source.id);
@@ -825,13 +847,13 @@ export default function DirectPreview({ scene, compact = false }: { scene: Scene
         peakDbfs: track.peakDbfs,
       })),
     };
-  }), [effectiveScene.sources, monitorView, audioBySource, audioTrackState]);
+  }), [mixedSources, monitorView, audioBySource, audioTrackState]);
 
   if (!monitorLoaded) return <div className="monitor-preferences-loading" role="status">{monitorError || '正在读取监控偏好…'}{monitorError && <button type="button" onClick={retryMonitor}>重试</button>}</div>;
 
   return (
     <div
-      className={`direct-preview-shell${windowPreview ? ' window-preview-mode' : ''}`}
+      className={`direct-preview-shell${windowPreview ? ' window-preview-mode' : ''}${layoutPreview ? ' layout-live-preview' : ''}`}
       style={windowPreview ? { left: windowRect.x, top: windowRect.y, width: windowRect.width, height: windowRect.height } : undefined}
     >
       {monitorError && <p role="alert">{monitorError}</p>}
@@ -872,21 +894,19 @@ export default function DirectPreview({ scene, compact = false }: { scene: Scene
         audioEnabled={audioEnabled}
         masterVolume={monitorView.localMonitorVolume}
         output={monitorView.audioOutput}
+        showAll={monitorView.showAllAudioSources}
         onToggleAudio={() => { if (audioEnabled) void mixer?.disable(); else void mixer?.enable(); }}
         onMasterVolume={(value) => setMonitorView((current) => ({ ...current, localMonitorVolume: value }))}
         onOutput={(value) => setMonitorView((current) => ({ ...current, audioOutput: value }))}
         onSourceGain={(sourceId, gain) => {
-          mixer?.configure(effectiveScene.sources.map((source) => source.id === sourceId ? { ...source, volume: gain } : source));
+          updateAudioSource(sourceId, { volume: gain });
         }}
         onSourceMute={(sourceId, muted) => {
-          mixer?.configure(effectiveScene.sources.map((source) => source.id === sourceId ? { ...source, muted } : source));
+          updateAudioSource(sourceId, { muted });
         }}
         onSourceMonitor={(sourceId, monitor) => {
-          mixer?.configure(effectiveScene.sources.map((source) => source.id === sourceId
-            ? { ...source, monitoring: monitor ? 'monitor-and-output' : 'off' } : source));
+          updateAudioSource(sourceId, { monitor });
         }}
-        onToggleTrack={() => undefined}
-        onToggleMerge={() => undefined}
       />}
       <div className="monitor-view-controls" aria-label="监控视图设置">
         <div className="quick-bar">
@@ -927,6 +947,7 @@ export default function DirectPreview({ scene, compact = false }: { scene: Scene
         {monitorView.telemetry.backgroundEnabled && <><input aria-label="统计文字框颜色" type="color" value={monitorView.telemetry.backgroundColor} onChange={(event) => setMonitorView((value) => ({ ...value, telemetry: { ...value.telemetry, backgroundColor: event.target.value } }))} /><label>背景透明度<input aria-label="统计背景透明度" type="range" min="0" max="1" step="0.05" value={monitorView.telemetry.backgroundOpacity} onChange={(event) => setMonitorView((value) => ({ ...value, telemetry: { ...value.telemetry, backgroundOpacity: Number(event.target.value) } }))} /></label></>}
         <button type="button" onClick={() => setWindowPreview(true)}>窗口预览</button>
         <label><input type="checkbox" checked={monitorView.showAudioMixer} onChange={(event) => setMonitorView((value) => ({ ...value, showAudioMixer: event.target.checked }))} />Audio Mixer 栏</label>
+        <label><input type="checkbox" checked={monitorView.showAllAudioSources} onChange={(event) => setMonitorView((value) => ({ ...value, showAllAudioSources: event.target.checked }))} />显示全部来源（包括无音轨）</label>
         <label><input type="checkbox" checked={monitorView.largeCount > 0} onChange={(event) => setMonitorView((value) => ({ ...value, largeCount: event.target.checked ? Math.max(1, value.largeSourceIds.length) : 0 }))} />大画面模式</label>
         <label>大画面数量<input type="number" min="0" max={Math.min(16, scene.items.length)} value={monitorView.largeCount} onChange={(event) => setMonitorView((value) => normalizeMonitorView({ ...value, largeCount: Number(event.target.value) }, scene.items.length))} /></label>
         <label>小画面比例<input aria-label="小画面与大画面比例" type="range" min="0.1" max="0.9" step="0.05" value={monitorView.largeRatio} onChange={(event) => setMonitorView((value) => normalizeMonitorView({ ...value, largeRatio: Number(event.target.value) }, scene.items.length))} /></label>
@@ -943,7 +964,7 @@ export default function DirectPreview({ scene, compact = false }: { scene: Scene
         <label><input type="checkbox" checked={monitorView.lowPower.enabled} onChange={(event) => setMonitorView((value) => ({ ...value, lowPower: { ...value.lowPower, enabled: event.target.checked } }))} />低功耗</label>
         <label>目标 FPS<input list="low-power-fps" type="number" min="0.5" max="30" step="0.5" value={monitorView.lowPower.targetFps} onChange={(event) => setMonitorView((value) => normalizeMonitorView({ ...value, lowPower: { ...value.lowPower, targetFps: Number(event.target.value) } }, scene.items.length))} /><datalist id="low-power-fps"><option value="0.5" /><option value="1" /><option value="2" /><option value="5" /></datalist></label>
         {monitorView.lowPower.enabled && monitorView.lowPower.targetFps > 5 && <small className="power-warning">超过 5 FPS，节能效果可能有限。</small>}
-        <details><summary>逐路统计 / 声音告警</summary><div className="monitor-source-options monitor-decoration-options">{effectiveScene.sources.slice(0, 16).map((source) => {
+        <details><summary>逐路统计 / 声音告警</summary><div className="monitor-source-options monitor-decoration-options">{effectiveScene.sources.filter((source) => monitorView.showAllAudioSources || audioTrackState(source) === 'available').slice(0, 16).map((source) => {
           const decoration = sourceDecoration(monitorView, source.id);
           const trackState = audioTrackState(source);
           return <fieldset key={source.id}><legend>{source.name}</legend>
@@ -983,7 +1004,7 @@ export default function DirectPreview({ scene, compact = false }: { scene: Scene
           .map((item) => {
             const source = displayScene.sources.find((candidate) => candidate.id === item.sourceId);
             if (!source) return null;
-            const tile = { ...item, scaleMode: resolveFillMode(monitorView, item.sourceId, item.scaleMode) };
+            const tile = { ...item, scaleMode: compact ? item.scaleMode : resolveFillMode(monitorView, item.sourceId, item.scaleMode) };
             const style = {
               left: `${(item.x / displayScene.canvas.width) * 100}%`,
               top: `${(item.y / displayScene.canvas.height) * 100}%`,
@@ -997,22 +1018,22 @@ export default function DirectPreview({ scene, compact = false }: { scene: Scene
               <div className="direct-tile-position" style={style} key={item.id}>
                 {source.kind === 'camera'
                   ? <BrowserCameraTile item={tile} source={source} mixer={mixer}
-                      telemetry={monitorView.lowPower.enabled
+                      telemetry={layoutPreview ? { ...sourceDecoration(monitorView, source.id).telemetry, enabled: false } : monitorView.lowPower.enabled
                         ? { ...sourceDecoration(monitorView, source.id).telemetry, refreshIntervalMs: Math.max(5000, sourceDecoration(monitorView, source.id).telemetry.refreshIntervalMs) }
                         : sourceDecoration(monitorView, source.id).telemetry}
-                      audioMeter={sourceDecoration(monitorView, source.id).audioMeter}
+                      audioMeter={layoutPreview ? { ...sourceDecoration(monitorView, source.id).audioMeter, enabled: false } : sourceDecoration(monitorView, source.id).audioMeter}
                       audioSnapshot={audioBySource.get(source.id)}
                       promotionKinds={sourceDecoration(monitorView, source.id).promotionKinds}
                       lowPower={lowPowerBySource.get(source.id)}
                       documentVisible={pageVisible}
-                      analyticsPolicy={analyticsByProfile.get(`${source.cameraId}\u0000${source.profileId}`)}
+                      analyticsPolicy={layoutPreview ? undefined : analyticsByProfile.get(`${source.cameraId}\u0000${source.profileId}`)}
                       analyticsZones={analyticsZones}
-                      showAnalytics={monitorView.analytics} onState={handleSourceState} />
+                      showAnalytics={layoutPreview ? { ...monitorView.analytics, showDetectionBoxes: false, showDetectionLabels: false, showInferenceStatus: false } : monitorView.analytics} onState={handleSourceState} />
                   : <DirectTile item={tile} source={source} capability={bySource.get(source.id)} mixer={mixer}
-                      telemetry={monitorView.lowPower.enabled
+                      telemetry={layoutPreview ? { ...sourceDecoration(monitorView, source.id).telemetry, enabled: false } : monitorView.lowPower.enabled
                         ? { ...sourceDecoration(monitorView, source.id).telemetry, refreshIntervalMs: Math.max(5000, sourceDecoration(monitorView, source.id).telemetry.refreshIntervalMs) }
                         : sourceDecoration(monitorView, source.id).telemetry}
-                      audioMeter={sourceDecoration(monitorView, source.id).audioMeter} audioSnapshot={audioBySource.get(source.id)} onState={handleSourceState} />}
+                      audioMeter={layoutPreview ? { ...sourceDecoration(monitorView, source.id).audioMeter, enabled: false } : sourceDecoration(monitorView, source.id).audioMeter} audioSnapshot={audioBySource.get(source.id)} onState={handleSourceState} />}
               </div>
             );
           })}

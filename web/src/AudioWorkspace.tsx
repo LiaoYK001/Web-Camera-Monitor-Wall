@@ -104,7 +104,20 @@ export default function AudioWorkspace({ studio, onCommitted }: { studio: Studio
 
   // Keep the mixer and the audio-only WHEP channels in sync with the selection.
   useEffect(() => {
+    const activeSources = new Set(scene.sources.map((source) => source.id));
+    for (const [key, entry] of [...channels.current]) {
+      const [sourceId, index] = key.split('#');
+      const probed = tracksBySource[sourceId];
+      if (activeSources.has(sourceId) && probed?.status === 'available' &&
+          probed.tracks.some((track) => track.index === Number(index)) && selection[sourceId]?.selected.includes(Number(index))) continue;
+      entry.connection.close();
+      entry.element.srcObject = null;
+      entry.element.remove();
+      mixer.unbindTrack(sourceId, Number(index));
+      channels.current.delete(key);
+    }
     for (const [sourceId, state] of Object.entries(selection)) {
+      if (!activeSources.has(sourceId)) continue;
       const tracks = tracksBySource[sourceId]?.status === 'available' ? tracksBySource[sourceId].tracks : [];
       const selections: DirectAudioTrackSelection[] = state.selected.map((index) => ({
         index, gain: state.gain[index] ?? 1, muted: state.muted[index] ?? false,
@@ -119,6 +132,7 @@ export default function AudioWorkspace({ studio, onCommitted }: { studio: Studio
         // never double-plays: audio arrives only through these channels.
         const element = document.createElement('audio');
         element.autoplay = true;
+        element.muted = true;
         element.dataset.audioTrack = key;
         element.style.display = 'none';
         document.body.appendChild(element);
@@ -140,7 +154,7 @@ export default function AudioWorkspace({ studio, onCommitted }: { studio: Studio
         channels.current.delete(key);
       }
     }
-  }, [selection, tracksBySource, mixer]);
+  }, [scene.id, sourceIds, selection, tracksBySource, mixer]);
 
   useEffect(() => {
     const open = channels.current;

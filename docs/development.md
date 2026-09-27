@@ -180,6 +180,22 @@ RTSP `auto` defaults to TCP when the system default is also `auto`; explicitly s
 | 切换原生模式后账号/设备不见 | 原生数据与容器数据卷独立；使用开发管理员登录，需迁移时先备份数据库。 |
 | 停止脚本找不到会话 | 确认端口参数；旧版启动器用原终端 Ctrl+C。脚本不会强杀其他进程。 |
 
+## 监控混音与实时布局 / Monitor audio and live layout
+
+- 真全屏、独立投影和窗口预览会隐藏 Audio Mixer 与操作栏，保留监控画面。
+- 主监控页的 M 控制该来源静音，耳机按钮控制该来源的本地扬声器监听；先点击“启用声音”，并选择“扬声器 + 电平表”才能听到声音。音量、静音和监听选择随账号监控偏好保存。浏览器要求的首次启用声音操作仍需在每台设备上完成。
+- 混音器和逐路声音设置默认只列出有音轨的来源；勾选“显示全部来源（包括无音轨）”可显示其余来源，并重试未知音轨。已确认无音轨的设备不会因网关附带的兼容静音轨而显示为有声音。逐轨选择和混音在“音频工作台”操作。
+- Studio → 布局编辑默认开启“实时画面”：拖动和缩放时直接显示视频，不会因移动或调整尺寸重新建立连接。选中框的操作手柄位于其他交互框之上。可关闭“实时画面”减少解码开销；保存与 TAKE 流程保持原有语义。
+- 长期运行优化包括复用电平采样缓冲区、空闲时停止采样、清理已完成的提升计时器和旧场景音轨、释放关闭后才返回的媒体会话，以及避免离线来源阻塞整个混音器启用。视频音轨与独立音频轨不会重复输出。
+
+True fullscreen, projector and window preview hide the mixer and controls. On the monitor page, M mutes a source and the headphones button controls local speaker monitoring. Enable audio and select speaker output to hear it. Gain, mute and monitoring selections persist in account monitor preferences; each device still requires the browser's initial audio activation gesture. The mixer and per-source audio settings show audio-bearing sources by default. Enable “显示全部来源（包括无音轨）” to show other sources and retry unknown audio. Confirmed video-only cameras are not misclassified by silent gateway compatibility tracks. Manage individual audio tracks in the Audio workspace.
+
+Studio layout editing now displays live video while moving and resizing items, without renegotiating their connections. Selected interaction handles stay above other interaction frames. Disable “实时画面” to reduce decoding work. Saving and TAKE keep their existing semantics. Long-running resource improvements reuse meter buffers, stop idle sampling, remove completed promotion timers and old scene tracks, release media sessions returned after closure, prevent offline play requests from blocking mixer activation, and avoid duplicate video/standalone audio output.
+
+验证使用浏览器合成视频和模拟音频图，覆盖实时布局拖放、连接数量、全屏隐藏、偏好保存和资源释放；不能替代真实摄像机的长时间耐久测试。
+
+Verification uses browser-generated video and a simulated audio graph to cover live drag/resize, connection counts, fullscreen hiding, preference persistence and resource cleanup. It does not replace a long-duration test with real cameras.
+
 ## 本次验证记录
 
 - Windows PowerShell 5.1：默认原生启动、环境检查、管理员登录、注册、刷新会话、热更新、停止与增量重启通过；注册账号重启后仍可登录。

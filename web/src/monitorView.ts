@@ -122,6 +122,8 @@ export interface MonitorView {
   streamQuality: StreamQuality;
   /** F6-06: dock the OBS-style mixer on the monitor wall. */
   showAudioMixer: boolean;
+  showAllAudioSources: boolean;
+  sourceAudio: Record<string, { volume: number; muted: boolean; monitor: boolean }>;
   analytics: {
     showDetectionBoxes: boolean;
     showDetectionLabels: boolean;
@@ -278,6 +280,8 @@ export const defaultMonitorView = (): MonitorView => ({
   canvasPixelPreset: 'fhd',
   streamQuality: 'medium',
   showAudioMixer: true,
+  showAllAudioSources: false,
+  sourceAudio: {},
   analytics: { showDetectionBoxes: true, showDetectionLabels: false, boxOpacity: .9, boxLineWidth: 2, showInferenceStatus: true },
 });
 
@@ -375,6 +379,10 @@ export interface SourceAudioTrackInput {
  * probe without audio tracks means "no audio"; everything else is "unprobed".
  */
 export function sourceAudioTrackState(input: SourceAudioTrackInput): SourceAudioTrackState {
+  // Gateways can publish a silent compatibility audio track for video-only
+  // cameras. The registry describes the actual source, so prefer its probe.
+  if (input.probeState === 'ready' || input.probeState === 'cached')
+    return input.probeHasAudioTrack ? 'available' : 'none';
   if (input.streamBound) return (input.liveAudioTracks ?? 0) > 0 ? 'available' : 'none';
   if ((input.liveAudioTracks ?? 0) > 0) return 'available';
   if (['color', 'text', 'image', 'nested'].includes(input.kind)) return 'none';
@@ -497,6 +505,11 @@ export function normalizeMonitorView(value: Partial<MonitorView> | null | undefi
     streamQuality: (value?.streamQuality === 'low' || value?.streamQuality === 'medium' || value?.streamQuality === 'high')
       ? value.streamQuality : 'medium',
     showAudioMixer: value?.showAudioMixer !== false,
+    showAllAudioSources: value?.showAllAudioSources === true,
+    sourceAudio: Object.fromEntries(Object.entries(value?.sourceAudio ?? {}).filter(([id, entry]) =>
+      sourceIdentifier(id) && entry && typeof entry === 'object').slice(0, 256).map(([id, entry]) => [id, {
+      volume: bounded(entry.volume, 1, 0, 1.5), muted: entry.muted === true, monitor: entry.monitor !== false,
+    }])),
     analytics: {
       showDetectionBoxes: Boolean(analytics.showDetectionBoxes),
       showDetectionLabels: Boolean(analytics.showDetectionLabels),

@@ -1297,7 +1297,7 @@ select:focus-visible,
    picture, telemetry, the level meter, detection boxes and audio alerts.  All
    selectors, sliders and per-tile status chips are hidden. */
 :is(.stage-wrap:fullscreen, .monitor-surface:fullscreen, .direct-preview-shell.window-preview-mode, .projector-shell)
-  :is(.monitor-view-controls, .direct-audio-control, .monitor-overlay, .fullscreen-overlay,
+  :is(.monitor-view-controls, .direct-audio-control, .audio-mixer-bar, .monitor-overlay, .fullscreen-overlay,
       .tile-status-button, .low-power-status, .direct-tile-name, .direct-tile-state,
       .delivery-diagnostic, .analytics-runtime-status, .monitor-source-rail,
       .direct-tile-placeholder) { display: none !important; }
@@ -1486,6 +1486,16 @@ select:focus-visible,
   filter: grayscale(0.75);
 }
 .camera-tile.locked { cursor: not-allowed; }
+
+.stage-live > .layout-live-preview { position: absolute; inset: 0; pointer-events: none; }
+.stage-live > .layout-live-preview .direct-preview { width: 100%; height: 100%; max-height: none; border: 0; border-radius: 0; }
+.stage-live .camera-tile { background: transparent; box-shadow: none; }
+.stage-live .camera-tile.selected { z-index: 10000 !important; }
+.stage-live .camera-tile:not(.selected):not(:hover) { border-color: transparent; }
+.stage-live .camera-tile:not(.selected):not(:hover) :is(.tile-tag, .tile-caption, .resize-handle) { opacity: 0; }
+.stage-live .tile-caption { background: #000a; }
+.stage-live .stage-grid { opacity: .15; }
+.layout-live-preview :is(.telemetry-overlay, .tile-audio-meter, .tile-status-button, .direct-tile-name) { display: none; }
 
 .tile-noise {
   position: absolute;

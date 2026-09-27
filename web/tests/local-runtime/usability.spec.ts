@@ -3,6 +3,63 @@ import { expect, test, type Page } from '@playwright/test';
 const fixture = '/tests/harness/usability.html';
 const metrics = async (page: Page) => JSON.parse(await page.locator('html').getAttribute('data-fixture-metrics') ?? '{}');
 
+test('edits the real Studio canvas over live video without renegotiating on drag or resize', async ({ page }) => {
+  await page.setViewportSize({ width: 1600, height: 1000 });
+  await page.goto(`${fixture}?layout#/studio`);
+  await page.getByRole('button', { name: '布局编辑', exact: true }).click();
+  const stage = page.locator('.stage-live');
+  await expect(stage.locator('video')).toHaveCount(2);
+  await expect.poll(() => stage.locator('video').first().evaluate((video: HTMLVideoElement) => video.videoWidth)).toBe(640);
+  const offers = await page.locator('html').getAttribute('data-fixture-offers');
+  const tile = stage.locator('.camera-tile').first();
+  const before = await tile.boundingBox();
+  await page.mouse.move(before!.x + 50, before!.y + 50); await page.mouse.down();
+  await page.mouse.move(before!.x + 90, before!.y + 80, { steps: 8 }); await page.mouse.up();
+  await expect.poll(async () => (await tile.boundingBox())!.x).toBeGreaterThan(before!.x + 15);
+  const handle = tile.getByRole('button', { name: /调整.*尺寸/ });
+  await handle.scrollIntoViewIfNeeded();
+  const grip = await handle.boundingBox();
+  const width = (await tile.boundingBox())!.width;
+  await page.mouse.move(grip!.x + grip!.width / 2, grip!.y + grip!.height / 2); await page.mouse.down();
+  await page.mouse.move(grip!.x + 35, grip!.y + 25, { steps: 6 }); await page.mouse.up();
+  await expect.poll(async () => (await tile.boundingBox())!.width).toBeGreaterThan(width + 10);
+  expect(await page.locator('html').getAttribute('data-fixture-offers')).toBe(offers);
+  await expect.poll(() => stage.locator('video').first().evaluate((video: HTMLVideoElement) => video.currentTime)).toBeGreaterThan(0);
+  await page.getByRole('checkbox', { name: '实时画面', exact: true }).uncheck();
+  await expect(page.locator('.stage video')).toHaveCount(0);
+  await page.getByRole('checkbox', { name: '实时画面', exact: true }).check();
+  await expect(page.locator('.stage video')).toHaveCount(2);
+});
+
+test('persists mixer controls, filters video-only cameras and hides the mixer in true fullscreen', async ({ page }) => {
+  await page.goto(`${fixture}?area=monitor&mixer`);
+  const mixer = page.getByRole('region', { name: 'Audio Mixer', exact: true });
+  await expect(mixer.locator('.audio-mixer-channel')).toHaveCount(1);
+  await expect(mixer).toContainText('有声音的摄像机');
+  const mute = mixer.getByRole('button', { name: '有声音的摄像机 静音' });
+  await mute.click(); await expect(mute).toHaveAttribute('aria-pressed', 'false');
+  const monitor = mixer.getByRole('button', { name: '有声音的摄像机 本地监听' });
+  await monitor.click(); await expect(monitor).toHaveAttribute('aria-pressed', 'false');
+  await mixer.getByRole('slider', { name: '有声音的摄像机 音量' }).fill('0.42');
+  await expect.poll(async () => (await metrics(page)).monitorSaves.at(-1)?.sourceAudio?.['audio-source-1']).toEqual({ volume: .42, muted: false, monitor: false });
+  await page.getByText('逐路统计 / 声音告警', { exact: true }).click();
+  await expect(page.locator('.monitor-decoration-options fieldset')).toHaveCount(1);
+  await page.getByRole('checkbox', { name: '显示全部来源（包括无音轨）', exact: true }).check();
+  await expect(mixer.locator('.audio-mixer-channel')).toHaveCount(2);
+  await expect(page.locator('.monitor-decoration-options fieldset')).toHaveCount(2);
+  await expect(mixer.getByRole('button', { name: '无音轨摄像机 静音' })).toBeDisabled();
+  await page.getByRole('button', { name: '测试真全屏', exact: true }).click();
+  await expect.poll(() => page.evaluate(() => Boolean(document.fullscreenElement))).toBe(true);
+  await expect(mixer).toBeHidden();
+  await page.evaluate(() => document.exitFullscreen());
+  await expect(mixer).toBeVisible();
+  // Leaving and returning exercises account preference readback, without reloading the in-memory fixture.
+  await page.getByRole('button', { name: '设备与来源', exact: true }).click();
+  await page.getByRole('button', { name: '监看 Monitor', exact: true }).click();
+  await expect(page.getByRole('button', { name: '有声音的摄像机 静音' })).toHaveAttribute('aria-pressed', 'false');
+  await expect(page.getByRole('slider', { name: '有声音的摄像机 音量' })).toHaveValue('0.42');
+});
+
 test('shows bounded probe failure, supports manual-only mode and refreshes recovered health', async ({ page }) => {
   await page.goto(`${fixture}?probe-fail`);
   const row = page.locator('.catalog-record').first();

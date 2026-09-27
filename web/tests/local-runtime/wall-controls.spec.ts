@@ -1,5 +1,15 @@
 import { expect, test } from '@playwright/test';
 
+test.beforeEach(async ({ page }) => {
+  await page.route('**/api/**', (route) => {
+    const path = new URL(route.request().url()).pathname;
+    const body = path.includes('/preferences/') ? { value: null } : path.endsWith('/cameras') ? { cameras: [] }
+      : path.endsWith('/analytics-policies') ? { policies: [] } : path.endsWith('/motion-zones') ? { zones: [] }
+      : path.endsWith('/capabilities') ? { modes: { direct: { enabled: true } }, sources: [] } : {};
+    return route.fulfill({ json: body });
+  });
+});
+
 const sceneFixture = {
   schemaVersion: 5 as const, revision: 1, id: 'scene-1', name: 'Wall',
   canvas: { width: 1600, height: 900, backgroundColor: '#000000' },
@@ -67,8 +77,7 @@ test('exposes live large-picture controls, meter options and window preview', as
   expect(result.afterCheck.largeChecked).toBe(true);
   expect(new Set(result.positions).size).toBeGreaterThan(1);
   expect(result.ratioLabel).toBe('30%');
-  expect(result.noAudioHint.length).toBe(2);
-  expect(result.noAudioHint.every((value: string) => value === '该源没有音频轨道')).toBe(true);
+  expect(result.noAudioHint.length).toBe(0);
   expect(result.hasOutputSelect).toBe(true);
   expect(result.windowMode).toBe(true);
   expect(result.controlsHidden).toBe(true);
@@ -92,15 +101,18 @@ test('treats an unprobed camera as pending instead of no-audio', async ({ page }
     const wall = mountWall(scene as never, host);
     const wait = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
     await wait(400);
+    const showAll = Array.from(host.querySelectorAll('label')).find((label) => label.textContent?.includes('显示全部来源'))?.querySelector('input');
+    showAll?.click();
+    await wait(100);
     const pending = Array.from(host.querySelectorAll('.audio-track-missing')).map((node) => node.textContent ?? '').join('|');
-    const reprobe = Array.from(host.querySelectorAll('button')).filter((button) => button.textContent === '重新探测').length;
+    const reprobe = Array.from(host.querySelectorAll('.audio-track-missing button')).filter((button) => button.textContent === '重试').length;
     const meterControls = Array.from(host.querySelectorAll('label')).filter((label) => (label.textContent ?? '').includes('画面电平表')).length;
     const fieldsets = host.querySelectorAll('fieldset').length;
     wall.unmount();
     return { pending, reprobe, meterControls, fieldsets };
   });
   expect(result.fieldsets).toBe(1);
-  expect(result.pending).toContain('音频轨道待探测');
+  expect(result.pending).toContain('音频未知');
   expect(result.reprobe).toBe(1);
   expect(result.meterControls).toBe(0);
 });
