@@ -156,16 +156,20 @@ function TelemetryOverlay({ config, transport, video, connection }: {
   useEffect(() => {
     if (!config.enabled) return undefined;
     let closed = false;
+    let pending = false;
     let previous: { at: number; frames: number; bytes: number } | undefined;
     const sample = async () => {
+      if (closed || pending || document.hidden) return;
       if (closed || !connection) { setValue(unavailableTelemetry()); return; }
       if (transport === 'mjpeg') { setValue({ ...unavailableTelemetry(), codec: 'MJPEG' }); return; }
       try {
+        pending = true;
         const result = connection.getStats
           ? await sampleConnectionTelemetry(connection, previous)
           : video ? sampleElementTelemetry(video, connection, previous, renderedFrames.current) : { telemetry: unavailableTelemetry() };
         if (!closed) { setValue(result.telemetry); previous = result.previous; }
       } catch { if (!closed) setValue(unavailableTelemetry()); }
+      finally { pending = false; }
     };
     void sample();
     const timer = window.setInterval(() => void sample(), config.refreshIntervalMs);
@@ -533,9 +537,9 @@ export default function DirectPreview({ scene, compact = false }: { scene: Scene
 
   useEffect(() => {
     const controller = new AbortController();
-    void Promise.all([fetchCameras(controller.signal), fetchAnalyticsPolicies(controller.signal), fetchMotionZones(controller.signal)])
-      .then(([cameraResult, policyResult, zoneResult]) => { setCameras(cameraResult.cameras); setAnalyticsPolicies(policyResult.policies); setAnalyticsZones(zoneResult.zones); })
-      .catch(() => undefined);
+    void fetchCameras(controller.signal).then((value) => { if (!controller.signal.aborted) setCameras(value.cameras); }).catch(() => undefined);
+    void fetchAnalyticsPolicies(controller.signal).then((value) => { if (!controller.signal.aborted) setAnalyticsPolicies(value.policies); }).catch(() => undefined);
+    void fetchMotionZones(controller.signal).then((value) => { if (!controller.signal.aborted) setAnalyticsZones(value.zones); }).catch(() => undefined);
     return () => controller.abort();
   }, [scene.revision]);
 

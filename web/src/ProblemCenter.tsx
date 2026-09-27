@@ -24,9 +24,18 @@ export default function ProblemCenter() {
   const reload = () => fetchOperationalIssues().then((value) => { setServer(value.issues); setError(''); })
     .catch(() => setError('服务端问题列表暂时不可用'));
   useEffect(() => {
-    void reload();
-    const timer = window.setInterval(reload, 10_000);
-    return () => window.clearInterval(timer);
+    let active = true;
+    let pending = false;
+    const poll = async () => {
+      if (!active || pending || document.hidden) return;
+      pending = true;
+      try { await reload(); } finally { pending = false; }
+    };
+    void poll();
+    const visible = () => { if (!document.hidden) void poll(); };
+    const timer = window.setInterval(() => void poll(), 10_000);
+    document.addEventListener('visibilitychange', visible);
+    return () => { active = false; window.clearInterval(timer); document.removeEventListener('visibilitychange', visible); };
   }, []);
   useEffect(() => subscribeLocalIssues(setLocal), []);
   useEffect(() => {

@@ -1,8 +1,9 @@
-import { type CSSProperties, type DragEvent, type ReactNode, useEffect, useMemo, useState } from 'react';
+import { type CSSProperties, type DragEvent, type ReactNode, Suspense, useEffect, useMemo, useRef, useState } from 'react';
 import LocalRuntimeBadge from './LocalRuntimeBadge';
 import { fetchAccountProfile, type AccountProfile } from './api';
-import { avatarChoices, roleLabel } from './AccountWorkspace';
+import { avatarChoices, roleLabel } from './accountPresentation';
 import ProblemCenter from './ProblemCenter';
+import Modal from './Modal';
 import { listLocalConfigProfiles, loadActiveLocalConfigProfile, loadWorkspaceLayout, saveWorkspaceLayout, setActiveLocalConfigProfile, type LocalConfigProfile, type WorkspaceDock, type WorkspaceLayout } from './localRuntime';
 
 export type ProductArea = 'monitor' | 'studio' | 'devices' | 'audio' | 'analytics' | 'events' | 'archive' | 'storage' | 'settings' | 'admin' | 'account';
@@ -59,6 +60,13 @@ export default function WorkspaceShell({ area, onNavigate, connection, children 
 }) {
   const [layout, setLayout] = useState<WorkspaceLayout>({ schemaVersion: 1, style: 'obs', docks: defaultDocks });
   const [layoutLoaded, setLayoutLoaded] = useState(false);
+  const [navigationOpen, setNavigationOpen] = useState(false);
+  const [layoutError, setLayoutError] = useState('');
+  const savedLayout = useRef('');
+  const layoutWrites = useRef(Promise.resolve());
+  const queuedLayoutWrites = useRef(0);
+  const latestLayout = useRef(layout);
+  useEffect(() => setNavigationOpen(false), [area]);
   const [draggedDock, setDraggedDock] = useState<string | null>(null);
   const [profiles, setProfiles] = useState<LocalConfigProfile[]>([]);
   const [activeProfileId, setActiveProfileId] = useState('');
@@ -69,12 +77,42 @@ export default function WorkspaceShell({ area, onNavigate, connection, children 
     refresh(); window.addEventListener('webobs:account-profile-updated', refresh);
     return () => { controller.abort(); window.removeEventListener('webobs:account-profile-updated', refresh); };
   }, []);
-  useEffect(() => { void Promise.all([loadWorkspaceLayout(), loadActiveLocalConfigProfile()]).then(([value, active]) => { setLayout(validLayout(active?.workspaceLayout ?? value)); setLayoutLoaded(true); }); }, []);
-  useEffect(() => { if (layoutLoaded) void saveWorkspaceLayout(layout); }, [layout, layoutLoaded]);
+  useEffect(() => {
+    let cancelled = false;
+    void Promise.all([loadWorkspaceLayout(), loadActiveLocalConfigProfile()]).then(([value, active]) => {
+      if (cancelled) return;
+      const next = validLayout(active?.workspaceLayout ?? value);
+      savedLayout.current = JSON.stringify(next);
+      setLayout(next); setLayoutLoaded(true);
+    }).catch(() => { if (!cancelled) setLayoutError('工作区布局读取失败，请刷新重试。'); });
+    return () => { cancelled = true; };
+  }, []);
+  useEffect(() => {
+    latestLayout.current = layout;
+    const encoded = JSON.stringify(layout);
+    if (!layoutLoaded || (encoded === savedLayout.current && queuedLayoutWrites.current === 0)) return;
+    const timer = window.setTimeout(() => {
+      queuedLayoutWrites.current += 1;
+      layoutWrites.current = layoutWrites.current.catch(() => undefined).then(async () => {
+        const next = latestLayout.current;
+        const serialized = JSON.stringify(next);
+        if (serialized !== savedLayout.current) {
+          await saveWorkspaceLayout(next);
+          savedLayout.current = serialized;
+        }
+      }).catch(() => setLayoutError('工作区布局保存失败，请稍后重试。'))
+        .finally(() => { queuedLayoutWrites.current -= 1; });
+    }, 350);
+    return () => window.clearTimeout(timer);
+  }, [layout, layoutLoaded]);
   useEffect(() => {
     const reloadProfiles = () => { void Promise.all([listLocalConfigProfiles(), loadActiveLocalConfigProfile()]).then(([next, active]) => {
       setProfiles(next); setActiveProfileId(active?.id ?? '');
-      if (active?.workspaceLayout) setLayout(validLayout(active.workspaceLayout));
+      if (active?.workspaceLayout) {
+        const next = validLayout(active.workspaceLayout);
+        savedLayout.current = JSON.stringify(next);
+        setLayout(next);
+      }
     }).catch(() => undefined); };
     reloadProfiles();
     window.addEventListener('webobs:config-profile-updated', reloadProfiles);
@@ -110,6 +148,7 @@ export default function WorkspaceShell({ area, onNavigate, connection, children 
     } catch { /* The settings panel reports detailed profile errors. */ }
   };
   return <div className={`workspace-shell workspace-style-${layout.style}`} style={workspaceStyle} data-workspace-style={layout.style}>
+    <a className="skip-navigation" href="#workspace-main" onClick={(event) => { event.preventDefault(); document.getElementById('workspace-main')?.focus(); }}>跳到主要内容</a>
     <aside className="workspace-navigation" aria-label="主导航">
       <div className="workspace-brand"><span className="brand-mark small">W</span><div><strong>WebOBS</strong><small>MONITOR WALL</small></div></div>
       <nav>{entries.map((entry) => <button type="button" className={area === entry.id ? 'active' : ''} aria-current={area === entry.id ? 'page' : undefined} key={entry.id} onClick={() => onNavigate(entry.id)}><span>{entry.label}</span><small>{entry.short}</small></button>)}</nav>
@@ -119,15 +158,21 @@ export default function WorkspaceShell({ area, onNavigate, connection, children 
         <div><strong>{area === 'account' ? '我的账号' : entries.find((entry) => entry.id === area)?.label ?? 'WebOBS'}</strong>{connection && <span className={`connection ${connection}`}><i aria-hidden="true" />{connection === 'online' ? '在线' : connection === 'connecting' ? '连接中' : '离线'}</span>}</div>
         <div><label className="config-profile-selector"><span>配置</span><select aria-label="选择账号配置" value={activeProfileId} onChange={(event) => void chooseProfile(event.target.value)}><option value="">服务器默认</option>{profiles.map((profile) => <option key={profile.id} value={profile.id}>{profile.name}</option>)}</select></label><button type="button" className="config-profile-manage" onClick={() => onNavigate('settings')}>管理配置</button><div className="workspace-style-switch" role="group" aria-label="工作区风格"><button type="button" aria-pressed={layout.style === 'obs'} className={layout.style === 'obs' ? 'active' : ''} onClick={() => setLayout((value) => ({ ...value, style: 'obs' }))}>OBS 风格</button><button type="button" aria-pressed={layout.style === 'classic'} className={layout.style === 'classic' ? 'active' : ''} onClick={() => setLayout((value) => ({ ...value, style: 'classic' }))}>经典</button></div>{layout.style === 'obs' && <details className="workspace-dock-menu"><summary>面板</summary><div className="workspace-dock-config">{orderedDocks.map((dock) => <div className="workspace-dock-item" draggable onDragStart={() => setDraggedDock(dock.id)} onDragOver={(event: DragEvent<HTMLDivElement>) => event.preventDefault()} onDrop={() => reorderDock(dock.id)} key={dock.id}><button type="button" onClick={() => updateDock(dock.id, { collapsed: !dock.collapsed })}>{dockLabels[dock.kind]} {dock.collapsed ? '显示' : '隐藏'}</button><select aria-label={`${dockLabels[dock.kind]} 区域`} value={dock.region} onChange={(event) => updateDock(dock.id, { region: event.target.value as WorkspaceDock['region'] })}><option value="left">左</option><option value="right">右</option><option value="bottom">底部</option><option value="center">中央</option></select><label><span className="sr-only">{dockLabels[dock.kind]} 大小</span><input aria-label={`${dockLabels[dock.kind]} 大小`} type="range" min="10" max="80" step="1" value={dock.size} onChange={(event) => updateDock(dock.id, { size: Number(event.target.value) })} /></label></div>)}<button type="button" onClick={() => setLayout({ schemaVersion: 1, style: 'obs', docks: defaultDocks })}>恢复默认布局</button></div></details>}<LocalRuntimeBadge /><ProblemCenter />{accountProfile && <button type="button" className="account-badge" onClick={() => onNavigate('account')} aria-label={`我的账号 ${accountProfile.displayName} ${accountProfile.roles.map(roleLabel).join('、')}`}><span className="account-avatar">{avatarChoices.find((choice) => choice.id === accountProfile.avatar)?.icon ?? '●'}</span><span><strong>{accountProfile.displayName}</strong><small>{accountProfile.roles.map(roleLabel).join('、')}</small></span></button>}</div>
       </header>
-      {layout.style === 'obs' ? <div className="workspace-obs-dockbar" aria-label="OBS 面板概览">
+      {area === 'studio' && (layout.style === 'obs' ? <div className="workspace-obs-dockbar" aria-label="OBS 面板概览">
         <strong>OBS 工作区</strong>
         <div>{orderedDocks.map((dock) => <button type="button" key={dock.id} className={dock.collapsed ? 'collapsed' : 'visible'} aria-pressed={!dock.collapsed} onClick={() => updateDock(dock.id, { collapsed: !dock.collapsed })}>
           {dockLabels[dock.kind]} <small>{dock.collapsed ? '隐藏' : dock.region}</small>
         </button>)}</div>
         <span>{visibleDocks.length} 个面板可见 · 可从“面板”拖动排序、调整区域和尺寸</span>
-      </div> : <div className="workspace-classic-strip" role="status">经典工作区 · 使用左侧导航和当前页面布局</div>}
-      <div className="workspace-content">{children}</div>
+      </div> : <div className="workspace-classic-strip" role="status">经典工作区 · 使用左侧导航和当前页面布局</div>)}
+      <div id="workspace-main" className="workspace-content" tabIndex={-1}>{layoutError && <p className="inline-error" role="alert">{layoutError}</p>}<Suspense fallback={<div className="page-panel" role="status">正在加载页面…</div>}>{children}</Suspense></div>
     </div>
-    <nav className="workspace-mobile-navigation" aria-label="移动端主导航">{entries.slice(0, 5).map((entry) => <button type="button" className={area === entry.id ? 'active' : ''} key={entry.id} onClick={() => onNavigate(entry.id)}>{entry.short}</button>)}</nav>
+    <nav className="workspace-mobile-navigation" aria-label="移动端主导航">{entries.slice(0, 4).map((entry) => <button type="button" className={area === entry.id ? 'active' : ''} key={entry.id} aria-current={area === entry.id ? 'page' : undefined} onClick={() => onNavigate(entry.id)}>{entry.short}</button>)}<button type="button" aria-haspopup="dialog" aria-expanded={navigationOpen} className={entries.slice(4).some((entry) => entry.id === area) || area === 'account' ? 'active' : ''} onClick={() => setNavigationOpen(true)}>更多</button></nav>
+    {navigationOpen && <Modal label="全部页面" className="navigation-modal" onClose={() => setNavigationOpen(false)}>
+      <header><h2>全部页面</h2><button type="button" onClick={() => setNavigationOpen(false)}>关闭</button></header>
+      <div className="mobile-style-picker" role="group" aria-label="移动端工作区风格"><button type="button" aria-pressed={layout.style === 'obs'} onClick={() => setLayout((value) => ({ ...value, style: 'obs' }))}>OBS 风格</button><button type="button" aria-pressed={layout.style === 'classic'} onClick={() => setLayout((value) => ({ ...value, style: 'classic' }))}>经典</button></div>
+      <nav aria-label="全部页面">{[...entries, { id: 'account' as const, label: '我的账号', short: '账号' }].map((entry) =>
+        <button type="button" key={entry.id} aria-current={area === entry.id ? 'page' : undefined} onClick={() => { setNavigationOpen(false); onNavigate(entry.id); }}>{entry.label}</button>)}</nav>
+    </Modal>}
   </div>;
 }

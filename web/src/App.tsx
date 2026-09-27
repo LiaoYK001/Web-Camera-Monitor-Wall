@@ -1,6 +1,7 @@
 import {
   type CSSProperties,
   type PointerEvent as ReactPointerEvent,
+  lazy,
   useCallback,
   useEffect,
   useMemo,
@@ -9,20 +10,21 @@ import {
 } from 'react';
 import { connectSceneEvents, ControlApiError, fetchCameras, fetchStudio, fetchStudioCapabilities, replaceStudio, studioAction } from './api';
 import DirectPreview from './DirectPreview';
-import NvrTimeline from './NvrTimeline';
 import ProgramPreview from './ProgramPreview';
-import SystemStatus from './SystemStatus';
-import EventsPanel from './EventsPanel';
 import LocalRuntimeBadge from './LocalRuntimeBadge';
 import WorkspaceShell, { areaFromHash, type ProductArea } from './WorkspaceShell';
-import SourceCatalog from './SourceCatalog';
-import AudioWorkspace from './AudioWorkspace';
-import SettingsWorkspace from './SettingsWorkspace';
-import ClusterAdmin from './ClusterAdmin';
-import AccountWorkspace from './AccountWorkspace';
-import AnalyticsWorkspace from './AnalyticsWorkspace';
 import { loadActiveLocalConfigProfile, loadOfflineStudio, loadWorkspaceLayout, makeLocalConfigBundleForStudio, queueOfflineAudit, saveLocalConfigProfile, saveLocalStudio, saveStudioSnapshot, type LocalConfigProfile } from './localRuntime';
 import type { AudioMonitoring, CameraRecord, FilterKind, PlaybackMode, ScaleMode, SceneDocument, SceneFilter, SceneItem, SceneSource, StudioCapabilities, StudioDocument, Transport } from './types';
+
+const NvrTimeline = lazy(() => import('./NvrTimeline'));
+const SystemStatus = lazy(() => import('./SystemStatus'));
+const EventsPanel = lazy(() => import('./EventsPanel'));
+const SourceCatalog = lazy(() => import('./SourceCatalog'));
+const AudioWorkspace = lazy(() => import('./AudioWorkspace'));
+const SettingsWorkspace = lazy(() => import('./SettingsWorkspace'));
+const ClusterAdmin = lazy(() => import('./ClusterAdmin'));
+const AccountWorkspace = lazy(() => import('./AccountWorkspace'));
+const AnalyticsWorkspace = lazy(() => import('./AnalyticsWorkspace'));
 
 type ConnectionState = 'connecting' | 'online' | 'offline';
 type WorkspaceMode = 'program' | 'layout';
