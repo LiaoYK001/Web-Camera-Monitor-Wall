@@ -31,10 +31,18 @@ function sessionLocation(header: string | null, endpoint: string): string | null
 
 async function gatherIce(peer: RTCPeerConnection): Promise<void> {
   if (peer.iceGatheringState === 'complete') return;
-  await new Promise<void>((resolve) => {
-    const done = () => { if (peer.iceGatheringState === 'complete') { peer.removeEventListener('icegatheringstatechange', done); resolve(); } };
+  await new Promise<void>((resolve, reject) => {
+    const timer = window.setTimeout(() => {
+      peer.removeEventListener('icegatheringstatechange', done);
+      reject(new Error('Audio ICE gathering timed out'));
+    }, 10_000);
+    const done = () => {
+      if (peer.iceGatheringState !== 'complete') return;
+      window.clearTimeout(timer);
+      peer.removeEventListener('icegatheringstatechange', done);
+      resolve();
+    };
     peer.addEventListener('icegatheringstatechange', done);
-    window.setTimeout(done, 3_000);
   });
 }
 

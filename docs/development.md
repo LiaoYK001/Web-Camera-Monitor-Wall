@@ -157,6 +157,16 @@ bash scripts/dev.sh --mode container --engine podman
 
 ## 8. 常见错误速查
 
+### 来源与音轨探测 / Source and audio probing
+
+- RTSP 的 `auto` 在系统默认也是 `auto` 时使用 TCP，适用于 WSL、NAT 和 VPN 链路；需要 UDP 时可在 Profile 中显式选择。使用 Tailscale 地址的设备仍需先建立 VPN 连接。
+- 开启系统“来源自动恢复”后，注册表会自动探测已启用、尚未成功的媒体 Profile。失败后间隔至少 30 秒重试，连续 10 次失败后停止；成功后停止周期探测。状态与尝试次数保存在数据库，刷新网页不会重置。设备目录可见时每 30 秒刷新一次状态。
+- 设备详情中的“自动探测”可切换为仅手动。网络恢复后点击“探测轨道”可以立即重试，即使此前已达到 10 次上限。成功会清除失败计数并更新设备在线状态。
+- 音频工作台使用账号摄像机接口查询与播放音轨，不依赖旧全局场景。已有成功探测结果会直接复用；“重新探测”会先重新探测对应 Profile。“已确认无音轨”与“探测失败”分别显示，失败不会被当作无音频。
+- 一个设备有任意已启用 Profile 探测成功时显示在线；所有已启用 Profile 探测失败时显示离线。这里表示最近的探测结果，持续播放期间的断流由播放器自身检测和重连。
+
+RTSP `auto` defaults to TCP when the system default is also `auto`; explicitly select UDP if required. VPN-addressed cameras still require an active VPN connection. With source recovery enabled, the registry retries enabled, unsuccessful media profiles at least 30 seconds apart, stops after 10 consecutive failures, and stops polling after success. Attempts persist across restarts. The visible catalog refreshes every 30 seconds. Disable a profile's automatic probing for manual-only operation; a manual probe remains available after the retry limit. Successful probing clears the failure count and updates device health. Audio discovery and playback use account camera routes and reuse successful registry metadata; manual audio retry probes the profile again. Confirmed absence of audio is distinct from probe failure. Device health reflects the latest probe results; the player detects and reconnects interrupted playback separately.
+
 | 提示 | 原因与处理 |
 | --- | --- |
 | `dockerDesktopLinuxEngine ... file specified` | 旧脚本强制访问未启动的 Docker 引擎。现在默认原生模式不访问 Docker；显式容器模式需先启动 Docker Desktop。 |

@@ -417,14 +417,18 @@ function BrowserCameraTile({ item, source, mixer, telemetry, audioMeter, audioSn
     else if (trueDirect) resolveLocalIssue('MEDIA_DIRECT_FALLBACK', source.id, 'browser-media');
   }, [plan, source.id, source.name, transport, trueDirect]);
   useEffect(() => {
+    const stage = activeConnection?.getStage?.();
+    const failure = stage?.lastError;
     if (state === 'offline' && plan && !trueDirect && !gatewayActivationFailedRef.current) reportMediaIssue({
       code: 'MEDIA_FIRST_FRAME_TIMEOUT', scopeId: source.id, component: 'browser-media',
       summary: `${source.name} 未收到首帧`, explanation: '媒体会话在限定时间内未建立可播放画面。',
       recommendedActions: ['检查来源在线状态和网络路径。', '重新探测 Profile 或检查 Gateway 状态。'],
-      technicalDetails: { transport },
+      technicalDetails: { transportMode: transport,
+        reason: failure && ['ice_timeout', 'first_frame_timeout', 'media_stalled'].includes(failure) ? failure : 'connection_failed',
+        retryCount: stage?.reconnects ?? 0 },
     });
     else if (state === 'live') resolveLocalIssue('MEDIA_FIRST_FRAME_TIMEOUT', source.id, 'browser-media');
-  }, [plan, source.id, source.name, state, transport, trueDirect]);
+  }, [activeConnection, plan, source.id, source.name, state, transport, trueDirect]);
   useEffect(() => {
     window.dispatchEvent(new CustomEvent('webobs:media-topology', { detail: {
       sourceId: source.id,

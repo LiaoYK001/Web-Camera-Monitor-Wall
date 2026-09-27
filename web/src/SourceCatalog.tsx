@@ -3,7 +3,7 @@ import CameraRegistry from './CameraRegistry';
 import DirectPreview from './DirectPreview';
 import Modal from './Modal';
 import {
-  batchSourceCatalog, createCamera, fetchLegacySourceImport, fetchSourceCatalog, importLegacySources, patchSourceCatalogItem, probeSourceProfile,
+  batchSourceCatalog, createCamera, fetchLegacySourceImport, fetchSourceCatalog, fetchSourceCatalogItem, importLegacySources, patchSourceCatalogItem, probeSourceProfile,
 } from './api';
 import { parseBulkSourceLines } from './bulkSourceImport';
 import type { SceneDocument, SourceCatalogItem, SourceCatalogProfile, TransportMode } from './types';
@@ -19,6 +19,16 @@ const transportOptions: Record<string, TransportMode[]> = {
   onvif: ['auto', 'rtsp-tcp', 'rtsp-udp', 'rtsp-udp-multicast'],
   mjpeg: ['auto', 'http', 'https'], snapshot: ['auto', 'http', 'https'],
   hls: ['auto', 'http', 'https'], whep: ['auto', 'https'], 'http-flv': ['auto', 'http', 'https'],
+};
+
+const probeErrorLabels: Record<string, string> = {
+  authentication_failed: '摄像机拒绝了账号密码，请检查凭据。',
+  credentials_unavailable: '服务器无法读取摄像机凭据，请重新保存账号密码。',
+  stream_not_found: '视频流路径不存在，请检查链接。',
+  timeout: '探测超时，请检查设备网络、VPN 和传输方式。',
+  network_unreachable: '无法连接摄像机，请检查网络或 Tailscale。',
+  probe_unavailable: '服务器探测工具不可用。',
+  invalid_media: '没有读到有效媒体轨道，请检查视频流地址与设备状态。',
 };
 
 function previewScene(camera: SourceCatalogItem, profile: SourceCatalogProfile): SceneDocument {
@@ -63,14 +73,20 @@ function ProfileEditor({ camera, profile, onChanged, onPreview }: {
     <header><div><strong>{profile.name}</strong><span>{profile.role} · {profile.videoCodec || 'unknown'}{profile.audioCodec ? ` + ${profile.audioCodec}` : ''}</span></div>
       <div><button type="button" onClick={onPreview}>独立预览</button><button type="button" disabled={busy} onClick={() => {
         setBusy(true); setError('');
-        void probeSourceProfile(camera.id, profile.id).then((value) => onChanged({ ...camera,
-          profiles: camera.profiles.map((candidate) => candidate.id === profile.id
-            ? { ...candidate, ...value.profile, endpointDisplay: candidate.endpointDisplay } : candidate) }))
-          .catch((reason: unknown) => setError(reason instanceof Error ? reason.message : '探测失败')).finally(() => setBusy(false));
-      }}>探测轨道</button></div></header>
+        void probeSourceProfile(camera.id, profile.id).then((value) => {
+          if (value.profile.probeState === 'failed') throw new Error('探测失败，请检查网络与账号凭据。');
+        }).catch((reason: unknown) => setError(reason instanceof Error ? reason.message : '探测失败'))
+          .finally(async () => {
+            try { onChanged(await fetchSourceCatalogItem(camera.id)); }
+            catch { setError((current) => current || '状态刷新失败，请稍后重试。'); }
+            finally { setBusy(false); }
+          });
+      }}>{busy ? '处理中…' : '探测轨道'}</button></div></header>
     <div className="profile-settings">
       <label><span>启用</span><input type="checkbox" checked={profile.enabled} disabled={busy}
         onChange={(event) => void patch({ enabled: event.target.checked })} /></label>
+      <label><span>自动探测</span><input type="checkbox" checked={profile.autoProbe !== false} disabled={busy}
+        onChange={(event) => void patch({ autoProbe: event.target.checked })} /></label>
       <label><span>传输</span><select value={profile.transportMode} disabled={busy}
         onChange={(event) => void patch({ transportMode: event.target.value })}>{transports.map((value) => <option key={value}>{value}</option>)}</select></label>
       <label><span>实时码率上限 kbps</span><input type="number" min="32" max="1000000" placeholder="不限制"
@@ -86,7 +102,12 @@ function ProfileEditor({ camera, profile, onChanged, onPreview }: {
         <small>仅允许 Docker Gateway/NVR 拉取；HTTPS 浏览器不会将其视为真直连。</small></label>}
     </div>
     <div className="profile-facts"><span>{profile.width || '—'}×{profile.height || '—'}</span><span>{profile.fps || '—'} fps</span><span>{profile.endpointDisplay || '地址已保护'}</span><span>Probe: {profile.probeState}</span></div>
+    <p className="muted-copy">{profile.probeState === 'ready' || profile.probeState === 'cached' ? '探测成功，已停止自动重试。'
+      : profile.autoProbe === false ? '仅手动探测。'
+        : (profile.probeAttempts ?? 0) >= 10 ? '连续探测失败 10 次，已停止自动重试；网络恢复后请手动探测。'
+          : `自动探测每 30 秒重试一次，已失败 ${profile.probeAttempts ?? 0}/10 次（需开启系统的来源自动恢复）。`}</p>
     <TrackList profile={profile} />{error && <p className="inline-error" role="alert">{error}</p>}
+    {!error && profile.probeState === 'failed' && <p className="inline-error" role="status">{probeErrorLabels[profile.probeError ?? ''] ?? '探测失败，可检查来源后手动重试。'}</p>}
   </article>;
 }
 
@@ -137,6 +158,12 @@ export default function SourceCatalog() {
     }, query === appliedQuery.current ? 0 : 250);
     return () => { window.clearTimeout(timer); controller.abort(); };
   }, [adapter, enabled, query, page, reloadVersion]);
+  useEffect(() => {
+    const timer = window.setInterval(() => {
+      if (!document.hidden && !loading && !batchBusy && !bulkBusy) reload();
+    }, 30_000);
+    return () => window.clearInterval(timer);
+  }, [loading, batchBusy, bulkBusy]);
   useEffect(() => { setSelected([]); setExpanded([]); }, [adapter, enabled, query, page]);
   const resetFilters = () => { setQuery(''); setAdapter(''); setEnabled(''); setPage(1); };
   const previewDocument = useMemo(() => preview ? previewScene(preview.camera, preview.profile) : null, [preview]);

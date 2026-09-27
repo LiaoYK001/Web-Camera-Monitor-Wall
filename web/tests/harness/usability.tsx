@@ -91,6 +91,26 @@ window.fetch = async (input, init) => {
     }
     return reply(settings);
   }
+  const catalogItem = url.pathname.match(/^\/api\/v2\/source-catalog\/(fixture-\d+)(\/profiles\/main\/probe)?$/);
+  if (catalogItem) {
+    const camera = cameras.find((value) => value.id === catalogItem[1])!;
+    if (catalogItem[2]) {
+      await wait(250);
+      const profile = camera.profiles[0];
+      if (fixtureOptions.has('probe-fail') && !profile.probeAttempts) {
+        profile.probeState = 'failed'; profile.probeAttempts = 10; camera.health = 'offline';
+        return reply({ error: { code: 'MEDIA_PROBE_FAILED', message: '探测连接超时' } }, 502);
+      }
+      profile.probeState = 'ready'; profile.probeAttempts = 0; camera.health = 'online';
+      return reply({ cameraId: camera.id, profile });
+    }
+    if (init?.method === 'PATCH') {
+      const update = JSON.parse(String(init.body));
+      if (update.profiles?.[0]) Object.assign(camera.profiles[0], update.profiles[0]);
+      camera.revision += 1;
+    }
+    return reply(camera);
+  }
   if (url.pathname === '/api/v2/operations/issues') return reply({ issues: fixtureOptions.has('issues') ? [issue, { ...issue, id: 'fixture-resolved', state: 'resolved', summary: '已恢复的测试摄像机' }] : [] });
   if (url.pathname.endsWith('/fixture-issue/acknowledge')) {
     metrics.acknowledgments++; updateMetrics(); await wait(500);

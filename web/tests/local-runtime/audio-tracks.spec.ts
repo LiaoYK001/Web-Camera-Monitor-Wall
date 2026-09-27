@@ -3,7 +3,7 @@ import { expect, test } from '@playwright/test';
 const track = (index: number, streamIndex: number) => ({
   index, streamIndex, codec: 'aac', channels: 1, channelLayout: 'mono', sampleRate: 16000,
   language: 'eng', title: `Track ${index}`, sourceCodecBrowserCompatible: false,
-  endpoint: `/api/v1/sources/source-a/audio-tracks/${index}/whep`,
+  endpoint: `/api/v1/account-cameras/cam-a/main/audio-tracks/${index}/whep`,
 });
 
 const cameraSource = (id: string, name: string, cameraId: string, audioInputs?: Array<{ track: number; gain: number; muted: boolean }>) => ({
@@ -31,6 +31,32 @@ const scene = {
 
 const studio = { revision: 1, programSceneId: 'scene-1', previewSceneId: 'scene-1', scenes: [scene] };
 
+test('manual camera retry probes its account profile and distinguishes confirmed silence from failure', async ({ page }) => {
+  let probes = 0;
+  const audioUrls: string[] = [];
+  await page.route('**/api/v2/source-catalog/cam-a/profiles/main/probe', async (route) => {
+    probes++;
+    await new Promise((resolve) => setTimeout(resolve, 250));
+    await route.fulfill({ json: { cameraId: 'cam-a', profile: { probeState: 'ready' } } });
+  });
+  await page.route('**/api/v1/account-cameras/cam-a/main/audio-tracks', async (route) => {
+    audioUrls.push(route.request().url());
+    await route.fulfill(probes ? { json: { probed: true, tracks: [] } } : { status: 502, json: { error: 'probe_failed' } });
+  });
+  await page.goto('/');
+  await page.evaluate(async (document) => {
+    const { mountAudioWorkspace } = await import('/tests/harness/audioWorkspaceMount.tsx');
+    const host = window.document.createElement('div'); window.document.body.appendChild(host);
+    mountAudioWorkspace(document as never, host);
+  }, { ...studio, scenes: [{ ...scene, sources: [scene.sources[0]], items: [] }] });
+  await expect(page.locator('.audio-track-missing')).toContainText('音轨探测失败');
+  await page.getByRole('button', { name: '重新探测', exact: true }).click();
+  await expect(page.locator('.audio-track-missing')).toContainText('音轨探测中');
+  await expect(page.getByText('已确认无音轨：Camera A', { exact: false })).toBeVisible();
+  expect(probes).toBe(1);
+  expect(audioUrls).toHaveLength(2);
+});
+
 test('audio workspace groups real tracks per source and wires per-track channels', async ({ page }) => {
   const posts: string[] = [];
   const deletes: string[] = [];
@@ -45,14 +71,14 @@ test('audio workspace groups real tracks per source and wires per-track channels
     studioSaves.push(body);
     return route.fulfill({ status: 200, contentType: 'application/json', body });
   });
-  await page.route('**/api/v1/sources/**/audio-tracks', async (route) => {
+  await page.route('**/api/v1/**/audio-tracks', async (route) => {
     const url = route.request().url();
     gets.push(url);
-    if (url.includes('source-a')) {
+    if (url.includes('cam-a/main')) {
       return route.fulfill({ status: 200, contentType: 'application/json',
         body: JSON.stringify({ sourceId: 'source-a', probed: true, tracks: [track(0, 1), track(1, 2)] }) });
     }
-    if (url.includes('source-b')) {
+    if (url.includes('cam-b/main')) {
       return route.fulfill({ status: 200, contentType: 'application/json',
         body: JSON.stringify({ sourceId: 'source-b', probed: true, tracks: [] }) });
     }
@@ -105,7 +131,7 @@ test('audio workspace groups real tracks per source and wires per-track channels
     (tracksA[0]?.querySelector('input') as HTMLInputElement | undefined)?.click();
     await wait(300);
     const controlsFinal = channel('Camera A')?.querySelectorAll('.audio-track-control').length;
-    const noAudio = channel('Camera B')?.querySelector('.audio-track-missing')?.textContent ?? '';
+    const noAudio = host.querySelector('[role="status"]')?.textContent ?? '';
     const unprobed = channel('Stream C')?.querySelector('.audio-track-missing')?.textContent ?? '';
     const reprobeButton = channel('Stream C')?.querySelector('.audio-track-missing button') as HTMLButtonElement | null;
     const reprobe = Boolean(reprobeButton);
@@ -123,7 +149,7 @@ test('audio workspace groups real tracks per source and wires per-track channels
       controlsAfter, controlsFinal, noAudio, unprobed, reprobe, hiddenAudio,
       loadedGain, loadedMuted, offsetControl: Boolean(offsetControl), saveEnabled, htmlSample: host.innerHTML.slice(0, 300) };
   }, studio);
-  expect(result.names, `html=${result.htmlSample} console=${consoleErrors.join(' || ')}`).toEqual(['Camera A', 'Camera B', 'Stream C']);
+  expect(result.names, `html=${result.htmlSample} console=${consoleErrors.join(' || ')}`).toEqual(['Camera A', 'Stream C']);
   expect(result.loaded).toBe(true);
   // The first real track is selected by default; multi-select keeps the rest available.
   expect(result.checkedA).toEqual([true, false]);
@@ -133,8 +159,8 @@ test('audio workspace groups real tracks per source and wires per-track channels
   expect(result.modeLabelAfter).toContain('切换合并电平');
   expect(result.controlsAfter).toBe(2);
   expect(result.controlsFinal).toBe(1);
-  expect(result.noAudio).toContain('没有音频轨道');
-  expect(result.unprobed).toContain('待探测');
+  expect(result.noAudio).toContain('已确认无音轨：Camera B');
+  expect(result.unprobed).toContain('音轨探测失败');
   expect(result.reprobe).toBe(true);
   expect(gets.filter((url) => url.includes('source-c')).length).toBeGreaterThan(1);
   expect(result.loadedGain).toBe('0.25');
@@ -148,7 +174,7 @@ test('audio workspace groups real tracks per source and wires per-track channels
   expect(savedSource?.audioInputs).toEqual([{ track: 1, gain: 1, muted: false, syncOffsetMs: 0 }]);
   // Selecting input tracks must not rewrite the output bus.
   expect(savedSource?.audioTrack).toBe(1);
-  expect(posts.some((url) => url.includes('/source-a/audio-tracks/0/whep'))).toBe(true);
-  expect(posts.some((url) => url.includes('/source-a/audio-tracks/1/whep'))).toBe(true);
-  expect(deletes.some((url) => url.includes('/source-a/audio-tracks/0/whep/session/'))).toBe(true);
+  expect(posts.some((url) => url.includes('/cam-a/main/audio-tracks/0/whep'))).toBe(true);
+  expect(posts.some((url) => url.includes('/cam-a/main/audio-tracks/1/whep'))).toBe(true);
+  expect(deletes.some((url) => url.includes('/cam-a/main/audio-tracks/0/whep/session/'))).toBe(true);
 });

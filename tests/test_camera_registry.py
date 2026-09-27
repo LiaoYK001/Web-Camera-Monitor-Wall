@@ -374,6 +374,64 @@ class CameraRegistryTests(unittest.TestCase):
         self.assertEqual(result["width"], 640)
         self.assertNotIn("endpoint", result)
         self.assertIn("test-user:test-pass@", runner.call_args.args[0][-1])
+        command = runner.call_args.args[0]
+        self.assertEqual(command[command.index("-rtsp_transport") + 1], "tcp")
+        self.assertEqual(registry.source_catalog("")["items"][0]["health"], "online")
+        with registry.connect() as database:
+            resolved = registry.resolve_profile(database, "credential-probe", "main")
+        self.assertTrue(resolved["tracksProbed"])
+        self.assertEqual(resolved["audioTracks"], [])
+
+    def test_automatic_probe_retry_limit_health_and_manual_recovery(self) -> None:
+        registry.invalidate_probe_results()
+        registry.save_camera(registry.validate_camera({
+            "id": "auto-probe", "name": "Auto probe", "adapter": "rtsp",
+            "address": "rtsp://camera.example.invalid/live",
+            "profiles": [{"id": "main", "endpoint": "rtsp://camera.example.invalid/live"}],
+        }), False)
+        self.assertEqual(registry.automatic_probe_candidates(), [("auto-probe", "main")])
+        failure = subprocess.CompletedProcess([], 1, b"", b"rtsp://user:secret@example.invalid: Connection refused")
+        with patch.object(registry.subprocess, "run", return_value=failure):
+            for attempt in range(10):
+                with self.assertRaisesRegex(ValueError, "network_unreachable"):
+                    registry.probe_source_profile("auto-probe", "main")
+                item = registry.source_catalog("")["items"][0]
+                self.assertEqual(item["health"], "offline")
+                self.assertEqual(item["profiles"][0]["probeAttempts"], attempt + 1)
+                self.assertEqual(registry.automatic_probe_candidates(), [])
+                self.assertEqual(registry.automatic_probe_candidates(int(time.time()) + 31),
+                                 [("auto-probe", "main")] if attempt < 9 else [])
+        self.assertNotIn("secret", json.dumps(item))
+        payload = json.dumps({"streams": [
+            {"index": 0, "codec_type": "video", "codec_name": "hevc"},
+            {"index": 1, "codec_type": "audio", "codec_name": "pcm_alaw", "channels": 1, "sample_rate": "8000"},
+        ]}).encode()
+        with patch.object(registry.subprocess, "run", return_value=subprocess.CompletedProcess([], 0, payload, b"")):
+            result = registry.probe_source_profile("auto-probe", "main")
+        self.assertEqual(result["probeAttempts"], 0)
+        self.assertEqual(result["probeError"], "")
+        self.assertEqual(registry.source_catalog("")["items"][0]["health"], "online")
+        self.assertEqual(registry.automatic_probe_candidates(int(time.time()) + 60), [])
+        with registry.connect() as database:
+            resolved = registry.resolve_profile(database, "auto-probe", "main")
+        self.assertEqual(resolved["audioTracks"][0]["codec_name"], "pcm_alaw")
+        item = registry.patch_source_catalog("auto-probe", {"profiles": [{"id": "main", "autoProbe": False}]}, 1)
+        self.assertFalse(item["profiles"][0]["autoProbe"])
+        registry.patch_source_catalog("auto-probe", {"profiles": [{"id": "main", "transportMode": "rtsp-udp"}]}, 2)
+        self.assertEqual(registry.automatic_probe_candidates(), [])
+        registry.patch_source_catalog("auto-probe", {"profiles": [{"id": "main", "autoProbe": True}]}, 3)
+        self.assertEqual(registry.automatic_probe_candidates(), [("auto-probe", "main")])
+
+    def test_missing_credentials_persists_failed_probe_and_offline_health(self) -> None:
+        registry.save_camera(registry.validate_camera({
+            "id": "missing-secret", "name": "Missing secret", "adapter": "rtsp",
+            "address": "rtsp://camera.example.invalid/live", "credentialsRef": "absent",
+            "profiles": [{"id": "main", "endpoint": "rtsp://camera.example.invalid/live"}],
+        }), False)
+        result = registry.probe_source_profile("missing-secret", "main")
+        self.assertEqual(result["probeError"], "credentials_unavailable")
+        self.assertEqual(result["probeAttempts"], 1)
+        self.assertEqual(registry.source_catalog("")["items"][0]["health"], "offline")
 
     def test_registry_v2_batch_is_atomic_on_revision_conflict(self) -> None:
         for camera_id in ("batch-one", "batch-two"):

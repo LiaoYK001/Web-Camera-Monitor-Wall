@@ -3,6 +3,21 @@ import { expect, test, type Page } from '@playwright/test';
 const fixture = '/tests/harness/usability.html';
 const metrics = async (page: Page) => JSON.parse(await page.locator('html').getAttribute('data-fixture-metrics') ?? '{}');
 
+test('shows bounded probe failure, supports manual-only mode and refreshes recovered health', async ({ page }) => {
+  await page.goto(`${fixture}?probe-fail`);
+  const row = page.locator('.catalog-record').first();
+  await row.getByRole('button', { name: '详情', exact: true }).click();
+  await row.getByRole('button', { name: '探测轨道', exact: true }).click();
+  await expect(row.getByRole('alert')).toContainText('探测连接超时');
+  await expect(row).toContainText('连续探测失败 10 次');
+  await row.getByRole('checkbox', { name: '自动探测' }).uncheck();
+  await expect(row).toContainText('仅手动探测');
+  await row.getByRole('button', { name: '探测轨道', exact: true }).click();
+  await expect(row.locator('.catalog-health')).toContainText('在线');
+  await expect(row).toContainText('探测成功');
+  await expect(row.getByRole('alert')).toHaveCount(0);
+});
+
 test('debounces search and ignores an earlier response arriving after the current result', async ({ page }) => {
   await page.goto(fixture);
   await expect(page.locator('.catalog-record')).toHaveCount(24);

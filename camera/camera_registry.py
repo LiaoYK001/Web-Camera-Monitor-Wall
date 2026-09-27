@@ -71,6 +71,8 @@ PROBE_LOCKS: dict[str, threading.Lock] = {}
 PROBE_RESULTS_GUARD = threading.Lock()
 PROBE_RESULTS: dict[str, tuple[float, dict]] = {}
 PROBE_RESULT_TTL_SECONDS = float(os.environ.get("WEBOBS_PROBE_CACHE_SECONDS", "15"))
+AUTO_PROBE_INTERVAL_SECONDS = 30
+AUTO_PROBE_MAX_ATTEMPTS = 10
 ONVIF_CLOCK_LOCK = threading.Lock()
 ONVIF_CLOCK_OFFSETS: dict[str, float] = {}
 ANALYTICS_SESSION_LOCK = threading.Lock()
@@ -324,6 +326,9 @@ def initialize() -> None:
             ("allow_insecure_http", "INTEGER NOT NULL DEFAULT 0"),
             ("probe_state", "TEXT NOT NULL DEFAULT 'legacy'"),
             ("last_probe_at", "INTEGER NOT NULL DEFAULT 0"),
+            ("auto_probe", "INTEGER NOT NULL DEFAULT 1"),
+            ("probe_attempts", "INTEGER NOT NULL DEFAULT 0"),
+            ("probe_error", "TEXT NOT NULL DEFAULT ''"),
         ):
             if name not in profile_columns:
                 database.execute(f"ALTER TABLE stream_profiles ADD COLUMN {name} {definition}")
@@ -725,6 +730,8 @@ def profile_document(database: sqlite3.Connection, camera_id: str, profile: sqli
         "audioExpectation": profile["audio_expectation"],
         "allowInsecureHttp": bool(profile["allow_insecure_http"]), "probeState": profile["probe_state"],
         "lastProbeAt": profile["last_probe_at"], "tracks": track_documents(database, camera_id, profile),
+        "autoProbe": bool(profile["auto_probe"]), "probeAttempts": profile["probe_attempts"],
+        "probeError": profile["probe_error"],
     }
     if include_endpoint:
         result["endpoint"] = profile["endpoint"]
@@ -1267,7 +1274,12 @@ def resolve_profile(database: sqlite3.Connection, camera_id: str, profile_id: st
             "hardwareDecode": camera["hardware_decode"], "cameraId": camera_id, "profileId": profile_id,
             "transportMode": profile["transport_mode"] if profile else "auto",
             "videoCodec": (profile["video_codec"] if profile else "") or "",
-            "audioCodec": (profile["audio_codec"] if profile else "") or ""}
+            "audioCodec": (profile["audio_codec"] if profile else "") or "",
+            "tracksProbed": bool(profile and profile["probe_state"] in {"ready", "cached"}),
+            "audioTracks": [{"index": track["index"], "codec_name": track["codec"],
+                             "channels": track["channels"], "sample_rate": track["sampleRate"]}
+                            for track in track_documents(database, camera_id, profile)
+                            if track["kind"] == "audio"] if profile else []}
 
 
 def save_camera(camera: dict, replace: bool) -> dict:
@@ -1363,7 +1375,7 @@ def upsert_issue(database: sqlite3.Connection, code: str, scope_kind: str, scope
     severity, summary, explanation, actions = ISSUE_TEMPLATES[code]
     safe_details = {}
     for key, value in (details or {}).items():
-        if key in {"adapter", "transportMode", "codec", "httpStatus", "retryCount", "lastFrameAgeMs"} and \
+        if key in {"adapter", "transportMode", "codec", "httpStatus", "retryCount", "lastFrameAgeMs", "reason"} and \
                 isinstance(value, (str, int, float, bool)):
             safe_details[key] = value
     fingerprint = issue_fingerprint(code, scope_kind, scope_id, component)
@@ -1487,12 +1499,16 @@ def validate_catalog_patch(payload: dict, adapter: str) -> tuple[dict, list[dict
     normalized_profiles = []
     for value in profile_updates:
         if not isinstance(value, dict) or set(value) - {
-                "id", "enabled", "transportMode", "liveBitrateCapKbps", "audioExpectation", "allowInsecureHttp"}:
+                "id", "enabled", "transportMode", "liveBitrateCapKbps", "audioExpectation", "allowInsecureHttp", "autoProbe"}:
             raise ValueError("profile patch contains an unsupported field")
         profile_id = value.get("id")
         if not isinstance(profile_id, str) or not ID_RE.fullmatch(profile_id):
             raise ValueError("profile id is invalid")
         update: dict[str, object] = {"id": profile_id}
+        if "autoProbe" in value:
+            if not isinstance(value["autoProbe"], bool):
+                raise ValueError("autoProbe must be boolean")
+            update["auto_probe"] = int(value["autoProbe"])
         if "enabled" in value:
             if not isinstance(value["enabled"], bool):
                 raise ValueError("profile enabled must be boolean")
@@ -1545,9 +1561,12 @@ def patch_source_catalog(camera_id: str, payload: dict, revision: int) -> dict:
         for profile in profile_updates:
             values = {key: value for key, value in profile.items() if key != "id"}
             if values:
+                if "transport_mode" in values or values.get("auto_probe") == 1 or values.get("enabled") == 1:
+                    values.update(probe_state="unknown", probe_attempts=0, probe_error="", last_probe_at=0)
                 assignments = ",".join(f"{field}=?" for field in values)
                 database.execute(f"UPDATE stream_profiles SET {assignments} WHERE camera_id=? AND id=?",
                                  (*values.values(), camera_id, profile["id"]))
+        update_camera_probe_health(database, camera_id)
         reconcile_audio_issues(database, camera_id)
         updated = database.execute("SELECT * FROM cameras WHERE id=?", (camera_id,)).fetchone()
         return source_catalog_document(database, updated)
@@ -1634,6 +1653,77 @@ def invalidate_probe_results(camera_id: str = "") -> None:
             PROBE_RESULTS.pop(key, None)
 
 
+def classify_probe_failure(stderr: bytes | str) -> str:
+    # Only persist a category: ffprobe stderr can contain credentialed URLs.
+    message = (stderr.decode("utf-8", "replace") if isinstance(stderr, bytes) else stderr).lower()
+    for reason, terms in (
+        ("authentication_failed", ("401", "403", "unauthorized")),
+        ("stream_not_found", ("404", "not found")),
+        ("timeout", ("timeout", "timed out")),
+        ("network_unreachable", ("connection refused", "network is unreachable", "no route to host")),
+    ):
+        if any(term in message for term in terms):
+            return reason
+    return "invalid_media"
+
+
+def update_camera_probe_health(database: sqlite3.Connection, camera_id: str) -> None:
+    states = [row[0] for row in database.execute(
+        "SELECT probe_state FROM stream_profiles WHERE camera_id=? AND enabled=1", (camera_id,))]
+    health = "online" if any(state in {"ready", "cached"} for state in states) else (
+        "offline" if states and all(state == "failed" for state in states) else "unknown")
+    database.execute("UPDATE cameras SET health=? WHERE id=?", (health, camera_id))
+
+
+def automatic_probe_candidates(now: int | None = None) -> list[tuple[str, str]]:
+    with connect() as database:
+        settings = json.loads(database.execute("SELECT settings_json FROM runtime_settings WHERE id=1").fetchone()[0])
+        if not settings["sourceRecoveryEnabled"]:
+            return []
+        rows = database.execute(
+            "SELECT p.camera_id,p.id FROM stream_profiles p JOIN cameras c ON c.id=p.camera_id "
+            "WHERE c.enabled=1 AND p.enabled=1 AND p.auto_probe=1 "
+            "AND p.probe_state NOT IN ('ready','cached') AND p.probe_attempts<? AND p.last_probe_at<=? "
+            "AND c.adapter IN ('rtsp','onvif','hls','http-flv','srt','rtp') "
+            "AND (p.endpoint NOT LIKE 'http://%' OR p.allow_insecure_http=1) "
+            "ORDER BY p.last_probe_at,p.camera_id,p.id LIMIT 64",
+            (AUTO_PROBE_MAX_ATTEMPTS, (int(time.time()) if now is None else now) - AUTO_PROBE_INTERVAL_SECONDS),
+        ).fetchall()
+        return [(row[0], row[1]) for row in rows]
+
+
+def automatic_probe_worker() -> None:
+    active: set[str] = set()
+    guard = threading.Lock()
+
+    def run(camera_id: str, profile_id: str) -> None:
+        try:
+            probe_source_profile(camera_id, profile_id)
+        except (ValueError, PermissionError, KeyError, RuntimeError, OSError, sqlite3.Error):
+            pass  # Persisted probe results and sanitized issues are the public status.
+        finally:
+            with guard:
+                active.discard(camera_id)
+
+    # Reconcile older databases whose successful probes never updated camera health.
+    with connect() as database:
+        for row in database.execute("SELECT DISTINCT camera_id FROM stream_profiles WHERE probe_state IN ('ready','cached','failed')").fetchall():
+            update_camera_probe_health(database, row[0])
+    while True:
+        try:
+            for camera_id, profile_id in automatic_probe_candidates():
+                with guard:
+                    if len(active) >= 4:
+                        break
+                    if camera_id in active:
+                        continue
+                    active.add(camera_id)
+                threading.Thread(target=run, args=(camera_id, profile_id), daemon=True).start()
+        except (OSError, sqlite3.Error):
+            pass
+        time.sleep(5)
+
+
 def probe_source_profile(camera_id: str, profile_id: str) -> dict:
     with PROBE_LOCKS_GUARD:
         lock = PROBE_LOCKS.setdefault(camera_id, threading.Lock())
@@ -1652,14 +1742,18 @@ def probe_source_profile(camera_id: str, profile_id: str) -> dict:
                 "SELECT * FROM stream_profiles WHERE camera_id=? AND id=?", (camera_id, profile_id)).fetchone()
             if not camera or not profile:
                 raise KeyError("camera or profile not found")
+            if not camera["enabled"] or not profile["enabled"]:
+                raise ValueError("camera profile is disabled")
             endpoint, transport_mode = profile["endpoint"], profile["transport_mode"]
             if camera["credentials_ref"]:
                 try:
                     username, password = load_credentials(camera["credentials_ref"])
                 except PermissionError:
                     database.execute(
-                        "UPDATE stream_profiles SET probe_state='failed',last_probe_at=? WHERE camera_id=? AND id=?",
+                        "UPDATE stream_profiles SET probe_state='failed',probe_error='credentials_unavailable',probe_attempts=probe_attempts+1,last_probe_at=? WHERE camera_id=? AND id=?",
                         (int(time.time()), camera_id, profile_id))
+                    update_camera_probe_health(database, camera_id)
+                    upsert_issue(database, "MEDIA_PROBE_FAILED", "profile", f"{camera_id}.{profile_id}"[:64], "media-probe", {"reason": "credentials_unavailable"})
                     refreshed = database.execute(
                         "SELECT * FROM stream_profiles WHERE camera_id=? AND id=?", (camera_id, profile_id)).fetchone()
                     return profile_document(database, camera_id, refreshed, include_endpoint=False)
@@ -1670,21 +1764,26 @@ def probe_source_profile(camera_id: str, profile_id: str) -> dict:
             cached = cached_probe_result(cache_key)
             if cached is not None:
                 database.execute(
-                    "UPDATE stream_profiles SET probe_state='cached',last_probe_at=? WHERE camera_id=? AND id=?",
+                    "UPDATE stream_profiles SET probe_state='ready',probe_attempts=0,probe_error='',last_probe_at=? WHERE camera_id=? AND id=?",
                     (int(time.time()), camera_id, profile_id))
+                update_camera_probe_health(database, camera_id)
                 return cached
             settings = database.execute("SELECT settings_json FROM runtime_settings WHERE id=1").fetchone()
             probe_timeout = int(json.loads(settings["settings_json"])["probeTimeoutSeconds"])
         command = ["ffprobe", "-v", "error", "-show_entries",
                    "stream=index,codec_type,codec_name,bit_rate,width,height,avg_frame_rate,sample_rate,channels",
                    "-of", "json"]
-        if endpoint.startswith(("rtsp://", "rtsps://")) and transport_mode in {"rtsp-tcp", "rtsp-udp", "rtsp-udp-multicast"}:
-            command += ["-rtsp_transport", "tcp" if transport_mode == "rtsp-tcp" else "udp"]
+        if endpoint.startswith(("rtsp://", "rtsps://")):
+            # Interleaved TCP also works across NAT, VPN and WSL; UDP stays an explicit option.
+            effective_transport = transport_mode if transport_mode != "auto" else json.loads(settings["settings_json"])["defaultTransportMode"]
+            command += ["-rtsp_transport", {"rtsp-udp": "udp", "rtsp-udp-multicast": "udp_multicast"}.get(effective_transport, "tcp")]
         command.append(endpoint)
+        failure_reason = "invalid_media"
         try:
             result = subprocess.run(command, capture_output=True, timeout=probe_timeout,
                                     check=False, env={**os.environ, "LC_ALL": "C"})
             if result.returncode or len(result.stdout) > PROBE_OUTPUT_LIMIT or len(result.stderr) > PROBE_OUTPUT_LIMIT:
+                failure_reason = classify_probe_failure(result.stderr)
                 raise ValueError("probe_failed")
             parsed = json.loads(result.stdout)
             streams = parsed.get("streams", [])
@@ -1706,14 +1805,17 @@ def probe_source_profile(camera_id: str, profile_id: str) -> dict:
                 })
             if not tracks:
                 raise ValueError("probe_tracks_invalid")
-        except (OSError, subprocess.TimeoutExpired, ValueError, TypeError, json.JSONDecodeError):
+        except (OSError, subprocess.TimeoutExpired, ValueError, TypeError, json.JSONDecodeError) as error:
+            if isinstance(error, subprocess.TimeoutExpired): failure_reason = "timeout"
+            elif isinstance(error, OSError): failure_reason = "probe_unavailable"
             with connect() as database:
                 database.execute(
-                    "UPDATE stream_profiles SET probe_state='failed',last_probe_at=? WHERE camera_id=? AND id=?",
-                    (int(time.time()), camera_id, profile_id))
+                    "UPDATE stream_profiles SET probe_state='failed',probe_attempts=probe_attempts+1,probe_error=?,last_probe_at=? WHERE camera_id=? AND id=?",
+                    (failure_reason, int(time.time()), camera_id, profile_id))
+                update_camera_probe_health(database, camera_id)
                 upsert_issue(database, "MEDIA_PROBE_FAILED", "profile",
-                             f"{camera_id}.{profile_id}"[:64], "media-probe", {"transportMode": transport_mode})
-            raise ValueError("media probe failed")
+                             f"{camera_id}.{profile_id}"[:64], "media-probe", {"transportMode": transport_mode, "reason": failure_reason})
+            raise ValueError(f"media probe failed: {failure_reason}")
         with connect() as database:
             database.execute("DELETE FROM profile_tracks WHERE camera_id=? AND profile_id=?", (camera_id, profile_id))
             database.executemany(
@@ -1726,13 +1828,14 @@ def probe_source_profile(camera_id: str, profile_id: str) -> dict:
             video = next((item for item in tracks if item["kind"] == "video"), None)
             audio = next((item for item in tracks if item["kind"] == "audio"), None)
             database.execute(
-                "UPDATE stream_profiles SET video_codec=?,audio_codec=?,width=?,height=?,fps=?,probe_state='ready',last_probe_at=? "
+                "UPDATE stream_profiles SET video_codec=?,audio_codec=?,width=?,height=?,fps=?,probe_state='ready',probe_attempts=0,probe_error='',last_probe_at=? "
                 "WHERE camera_id=? AND id=?",
                 (video["codec"] if video else "", audio["codec"] if audio else "",
                  video["width"] if video else 0, video["height"] if video else 0,
                  video["fps"] if video else 0, int(time.time()), camera_id, profile_id),
             )
             resolve_issue(database, "MEDIA_PROBE_FAILED", "profile", f"{camera_id}.{profile_id}"[:64], "media-probe")
+            update_camera_probe_health(database, camera_id)
             refreshed = database.execute(
                 "SELECT * FROM stream_profiles WHERE camera_id=? AND id=?", (camera_id, profile_id)).fetchone()
             measured = sum(track["bitrateKbps"] or 0 for track in tracks)
@@ -3450,5 +3553,6 @@ class Handler(BaseHTTPRequestHandler):
 
 if __name__ == "__main__":
     initialize()
+    threading.Thread(target=automatic_probe_worker, daemon=True).start()
     threading.Thread(target=onvif_event_worker, daemon=True).start()
     ThreadingHTTPServer(LISTEN, Handler).serve_forever()

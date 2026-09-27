@@ -380,7 +380,7 @@ export function sourceAudioTrackState(input: SourceAudioTrackInput): SourceAudio
   if (['color', 'text', 'image', 'nested'].includes(input.kind)) return 'none';
   if (input.audioCodec && input.audioCodec !== 'none') return 'available';
   if (input.probeState !== undefined) {
-    if (input.probeState === 'ready') return input.probeHasAudioTrack ? 'available' : 'none';
+    if (input.probeState === 'ready' || input.probeState === 'cached') return input.probeHasAudioTrack ? 'available' : 'none';
     return 'unprobed';
   }
   if (input.capabilityKnown) return 'none';

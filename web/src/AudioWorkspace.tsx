@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { fetchAudioMeters, replaceStudio } from './api';
+import { fetchAudioMeters, probeSourceProfile, replaceStudio } from './api';
 import DirectPreview from './DirectPreview';
 import { connectAudioTrack, type AudioChannelState, type AudioTrackConnection } from './audioTrackChannel';
 import { getDirectAudioMixer, type DirectAudioSnapshot, type DirectAudioTrackSelection } from './directAudioMixer';
@@ -41,10 +41,11 @@ export default function AudioWorkspace({ studio, onCommitted }: { studio: Studio
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
   const channels = useRef(new Map<string, ChannelEntry>());
+  const probeGeneration = useRef(0);
   const mixer = useMemo(() => getDirectAudioMixer(), []);
   const scene = (pending ?? studio).scenes.find((candidate) => candidate.id === sceneId)
     ?? (pending ?? studio).scenes[0];
-  const sourceIds = scene ? scene.sources.map((source) => `${source.id}:${source.kind}`).join(',') : '';
+  const sourceIds = scene ? scene.sources.map((source) => `${source.id}:${source.kind}:${source.kind === 'camera' ? `${source.cameraId}/${source.profileId}` : ''}`).join(',') : '';
 
   useEffect(() => {
     const receive = (event: Event) => setSnapshot((event as CustomEvent<DirectAudioSnapshot>).detail);
@@ -69,10 +70,11 @@ export default function AudioWorkspace({ studio, onCommitted }: { studio: Studio
   useEffect(() => {
     const controller = new AbortController();
     let cancelled = false;
+    probeGeneration.current += 1;
     for (const source of scene.sources) {
       if (source.kind !== 'camera' && source.kind !== 'rtsp') continue;
       setTracksBySource((current) => current[source.id] ? current : { ...current, [source.id]: { status: 'loading' } });
-      void fetchSourceAudioTracks(source.id, controller.signal).then((value) => {
+      void fetchSourceAudioTracks(source.id, controller.signal, source.kind === 'camera' ? source : undefined).then((value) => {
         if (cancelled) return;
         setTracksBySource((current) => ({ ...current, [source.id]: value }));
         if (value.status === 'available') {
@@ -97,7 +99,7 @@ export default function AudioWorkspace({ studio, onCommitted }: { studio: Studio
         }
       });
     }
-    return () => { cancelled = true; controller.abort(); };
+    return () => { cancelled = true; probeGeneration.current += 1; controller.abort(); };
   }, [scene.id, sourceIds]);
 
   // Keep the mixer and the audio-only WHEP channels in sync with the selection.
@@ -168,16 +170,27 @@ export default function AudioWorkspace({ studio, onCommitted }: { studio: Studio
       return { ...current, [sourceId]: change(current[sourceId] ?? fallback) };
     });
   };
-  const reprobe = (sourceId: string) => {
+  const reprobe = async (sourceId: string) => {
+    const generation = probeGeneration.current;
+    const source = scene.sources.find((candidate) => candidate.id === sourceId);
     invalidateSourceAudioTracks(sourceId);
     setChannelStates({});
     setTracksBySource((current) => ({ ...current, [sourceId]: { status: 'loading' } }));
-    void fetchSourceAudioTracks(sourceId).then((value) => {
+    try {
+      if (source?.kind === 'camera') {
+        const result = await probeSourceProfile(source.cameraId, source.profileId);
+        if (result.profile.probeState === 'failed') throw new Error('probe_failed');
+      }
+      const value = await fetchSourceAudioTracks(sourceId, undefined, source?.kind === 'camera' ? source : undefined);
+      if (generation !== probeGeneration.current) return;
       setTracksBySource((current) => ({ ...current, [sourceId]: value }));
       if (value.status === 'available') {
         updateSelection(sourceId, (current) => ({ ...current, selected: current.selected.length > 0 ? current.selected : defaultSelectedTracks(value.tracks) }));
       }
-    });
+    } catch {
+      if (generation === probeGeneration.current) setTracksBySource((current) => ({ ...current,
+        [sourceId]: { status: 'unavailable', reason: 'probe_failed' } }));
+    }
   };
   const withAudioInputs = (base: StudioDocument): StudioDocument => ({
     ...base,
@@ -218,6 +231,7 @@ export default function AudioWorkspace({ studio, onCommitted }: { studio: Studio
         <button className="primary-button" type="button" disabled={(!pending && !audioDirty) || saving} onClick={() => void commit()}>{saving ? '保存中…' : '保存音频配置'}</button></div></header>
     {error && <div className="alert conflict-alert">{error}</div>}
     <div className="audio-monitor-preview"><DirectPreview compact scene={scene} /></div>
+    {scene.sources.some((source) => tracksBySource[source.id]?.status === 'none') && <p role="status">已确认无音轨：{scene.sources.filter((source) => tracksBySource[source.id]?.status === 'none').map((source) => source.name).join('、')}。这些来源不显示音频控制。</p>}
     <div className="audio-mixer-head"><span>来源 / Profile</span><span>电平</span><span>静音 / 音量</span><span>监听 / 同步</span><span>音轨</span></div>
     <div className="audio-mixer-list">{scene.sources.map((source) => {
       const meter = topology === 'direct' ? meterBySource.get(source.id) : undefined;
@@ -236,7 +250,7 @@ export default function AudioWorkspace({ studio, onCommitted }: { studio: Studio
       return <article className="audio-channel" key={source.id}>
         <div><strong>{source.name}</strong><small>{cameraProfile}</small><span>{topology === 'direct' ? 'Browser Web Audio' : 'libobs Composite'}</span></div>
         {trackState === 'unprobed'
-            ? <div className="audio-track-missing">音频轨道待探测<button type="button" onClick={() => reprobe(source.id)}>重新探测</button></div>
+            ? <div className="audio-track-missing"><span role="status">{probed?.status === 'unavailable' ? '音轨探测失败，请检查源连接、VPN 和访问权限后重试。' : '音频轨道待探测'}</span><button type="button" onClick={() => void reprobe(source.id)}>重新探测</button></div>
             : trackState === 'loading'
               ? <div className="audio-track-missing">音轨探测中…</div>
               : <>

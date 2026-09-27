@@ -666,6 +666,8 @@ struct ResolvedCameraEndpoint {
     // route does not have to rediscover them by reading the live stream.
     std::string video_codec;
     std::string audio_codec;
+    std::string transport_mode;
+    std::optional<std::vector<AudioTrackDescriptor>> probed_audio_tracks;
 };
 
 std::optional<ResolvedCameraEndpoint> resolve_camera_endpoint(std::string_view camera_id,
@@ -705,7 +707,19 @@ std::optional<ResolvedCameraEndpoint> resolve_camera_endpoint(std::string_view c
         result = ResolvedCameraEndpoint{
             json_string_value(endpoint), json_string_value(adapter),
             json_is_string(video_codec) ? json_string_value(video_codec) : "",
-            json_is_string(audio_codec) ? json_string_value(audio_codec) : ""};
+            json_is_string(audio_codec) ? json_string_value(audio_codec) : "", "auto", std::nullopt};
+        if (json_t *transport = json_object_get(root, "transportMode"); json_is_string(transport))
+            result->transport_mode = json_string_value(transport);
+        if (json_is_true(json_object_get(root, "tracksProbed")) && json_is_array(json_object_get(root, "audioTracks"))) {
+            json_t *probe = json_object();
+            json_object_set(probe, "streams", json_object_get(root, "audioTracks"));
+            char *encoded = json_dumps(probe, JSON_COMPACT);
+            if (encoded) {
+                result->probed_audio_tracks = parse_audio_tracks(encoded);
+                free(encoded);
+            }
+            json_decref(probe);
+        }
     }
     json_decref(root);
     return result;
@@ -1416,16 +1430,18 @@ private:
     std::optional<std::string> ensure_direct_route(const SceneSource &source)
     {
         std::string effective_url = source.rtsp_url;
+        std::string source_transport = source.kind == "rtsp" ? source.transport : "tcp";
         if (source.kind == "camera") {
             const auto resolved = resolve_camera_endpoint(source.camera_id, source.profile_id);
             if (!resolved)
                 return std::nullopt;
             effective_url = resolved->endpoint;
+            if (resolved->transport_mode == "rtsp-udp") source_transport = "udp";
+            else if (resolved->transport_mode == "rtsp-udp-multicast") source_transport = "multicast";
         }
         const std::string source_key = source.kind == "camera"
                                            ? source.camera_id + "/" + source.profile_id
                                            : source.rtsp_url;
-        const std::string source_transport = source.kind == "rtsp" ? source.transport : "tcp";
         DirectRoute route;
         bool adding = false;
         std::string previous_hybrid_path;
@@ -1435,6 +1451,7 @@ private:
             const auto existing = direct_routes_.find(source.id);
             adding = existing == direct_routes_.end();
             if (!adding && existing->second.source_key == source_key &&
+                existing->second.rtsp_url == effective_url &&
                 existing->second.transport == source_transport)
                 return existing->second.path;
             if (adding) {
@@ -1592,6 +1609,13 @@ private:
      */
     std::optional<std::vector<AudioTrackDescriptor>> ensure_audio_tracks(const SceneSource &source)
     {
+        // Reuse the registry's latest successful probe, including confirmed
+        // absence of audio. A manual re-probe must supersede the route cache.
+        if (source.kind == "camera") {
+            const auto resolved = resolve_camera_endpoint(source.camera_id, source.profile_id);
+            if (!resolved) return std::nullopt;
+            if (resolved->probed_audio_tracks) return resolved->probed_audio_tracks;
+        }
         const auto direct_path = ensure_direct_route(source);
         if (!direct_path)
             return std::nullopt;
@@ -1710,16 +1734,37 @@ private:
     }
 
 public:
+    std::optional<SceneSource> audio_source(std::string_view source_id, std::string_view camera_id,
+                                           std::string_view profile_id)
+    {
+        if (!camera_id.empty()) {
+            SceneSource source;
+            source.id = "account-" + std::to_string(camera_id.size()) + "-" + std::string(camera_id) + "-" + std::string(profile_id);
+            source.kind = "camera";
+            source.camera_id = camera_id;
+            source.profile_id = profile_id;
+            source.transport = "tcp";
+            return source;
+        }
+        const auto document = controller_.private_document_snapshot();
+        for (const auto &source : document.sources)
+            if (source.id == source_id) return source;
+        return std::nullopt;
+    }
+
+    static std::string audio_base(std::string_view source_id, std::string_view camera_id, std::string_view profile_id)
+    {
+        return camera_id.empty() ? "/api/v1/sources/" + std::string(source_id) :
+            "/api/v1/account-cameras/" + std::string(camera_id) + "/" + std::string(profile_id);
+    }
+
     /** `GET /api/v1/sources/<id>/audio-tracks`: the real tracks of a source. */
-    HttpResponse audio_tracks(const HttpRequest &request, std::string_view source_id)
+    HttpResponse audio_tracks(const HttpRequest &request, std::string_view source_id,
+                              std::string_view camera_id = {}, std::string_view profile_id = {})
     {
         const unsigned int version = request.version();
-        const SceneDocument document = controller_.private_document_snapshot();
-        const auto source = std::find_if(document.sources.begin(), document.sources.end(),
-                                         [source_id](const SceneSource &candidate) {
-                                             return candidate.id == source_id;
-                                         });
-        if (source == document.sources.end())
+        const auto source = audio_source(source_id, camera_id, profile_id);
+        if (!source)
             return response(http::status::not_found, version,
                             error_body("source_not_found", "source not found"));
         if (source->kind != "rtsp" && source->kind != "camera")
@@ -1740,7 +1785,7 @@ public:
             if (!first)
                 body.push_back(',');
             first = false;
-            const std::string endpoint = "/api/v1/sources/" + source->id + "/audio-tracks/" +
+            const std::string endpoint = audio_base(source->id, camera_id, profile_id) + "/audio-tracks/" +
                                          std::to_string(track.index) + "/whep";
             body += "{\"index\":" + std::to_string(track.index) +
                     ",\"streamIndex\":" + std::to_string(track.stream_index) +
@@ -1758,16 +1803,12 @@ public:
     }
 
     HttpResponse create_audio_track(const HttpRequest &request, std::string_view source_id,
-                                    int track_index)
+                                    int track_index, std::string_view camera_id = {}, std::string_view profile_id = {})
     {
         if (auto invalid = validate_offer(request))
             return std::move(*invalid);
-        const SceneDocument document = controller_.private_document_snapshot();
-        const auto source = std::find_if(document.sources.begin(), document.sources.end(),
-                                         [source_id](const SceneSource &candidate) {
-                                             return candidate.id == source_id;
-                                         });
-        if (source == document.sources.end())
+        const auto source = audio_source(source_id, camera_id, profile_id);
+        if (!source)
             return response(http::status::not_found, request.version(),
                             error_body("source_not_found", "source not found"));
         if (source->kind != "rtsp" && source->kind != "camera")
@@ -1793,14 +1834,16 @@ public:
         if (!route)
             return response(http::status::bad_gateway, request.version(),
                             error_body("audio_route", "audio-only source routing is unavailable"));
-        return create_validated(request, *route, audio_session_prefix(source_id, track_index), {},
+        const auto prefix = audio_base(source->id, camera_id, profile_id) + "/audio-tracks/" + std::to_string(track_index) + "/whep/session/";
+        return create_validated(request, *route, prefix, {},
                                 source->id, track_index);
     }
 
     HttpResponse remove_audio_track(const HttpRequest &request, std::string_view source_id,
-                                    int track_index, std::string_view token)
+                                    int track_index, std::string_view token,
+                                    std::string_view camera_id = {}, std::string_view profile_id = {})
     {
-        return remove(request, token, audio_session_prefix(source_id, track_index));
+        return remove(request, token, audio_base(source_id, camera_id, profile_id) + "/audio-tracks/" + std::to_string(track_index) + "/whep/session/");
     }
 
 private:
@@ -3473,6 +3516,26 @@ HttpResponse handle_request(const HttpRequest &request, SceneController &control
         if (!valid_id(camera_id) || !valid_id(profile_id))
             return response(http::status::not_found, version, error_body("not_found", "resource not found"));
         const std::string_view operation = route.substr(profile_end);
+        if (operation == "/audio-tracks" && request.method() == http::verb::get)
+            return whep_proxy.audio_tracks(request, {}, camera_id, profile_id);
+        constexpr std::string_view audio_prefix = "/audio-tracks/";
+        if (operation.starts_with(audio_prefix)) {
+            const auto remainder = operation.substr(audio_prefix.size());
+            const auto separator = remainder.find('/');
+            const auto number = remainder.substr(0, separator);
+            if (separator == std::string_view::npos || number.empty() || number.size() > 2 ||
+                !std::all_of(number.begin(), number.end(), [](char c) { return c >= '0' && c <= '9'; }))
+                return response(http::status::not_found, version, error_body("not_found", "resource not found"));
+            const int index = std::stoi(std::string(number));
+            if (index >= 32)
+                return response(http::status::not_found, version, error_body("not_found", "resource not found"));
+            const auto action = remainder.substr(separator + 1);
+            if (action == "whep" && request.method() == http::verb::post)
+                return whep_proxy.create_audio_track(request, {}, index, camera_id, profile_id);
+            constexpr std::string_view audio_session = "whep/session/";
+            if (action.starts_with(audio_session) && request.method() == http::verb::delete_)
+                return whep_proxy.remove_audio_track(request, {}, index, action.substr(audio_session.size()), camera_id, profile_id);
+        }
         if (operation == "/whep" && request.method() == http::verb::post)
             return whep_proxy.create_account_camera(request, camera_id, profile_id);
         constexpr std::string_view session_operation = "/whep/session/";
