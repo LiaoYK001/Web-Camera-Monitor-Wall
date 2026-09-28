@@ -2305,9 +2305,8 @@ def ws_security_header(username: str, password: str, offset_seconds: float = 0) 
     created = datetime.fromtimestamp(time.time() + offset_seconds, timezone.utc).isoformat(
         timespec="seconds").replace("+00:00", "Z")
     # WS-Security UsernameToken PasswordDigest requires this per-request digest; it is not a stored password verifier.
-    digest = base64.b64encode(
-        hashlib.sha1(nonce + created.encode() + password.encode()).digest()  # lgtm[py/weak-sensitive-data-hashing]
-    ).decode()
+    password_digest = hashlib.sha1(nonce + created.encode() + password.encode()).digest()  # codeql[py/weak-sensitive-data-hashing]
+    digest = base64.b64encode(password_digest).decode()
     encoded_nonce = base64.b64encode(nonce).decode()
     return (
         '<s:Header><wsse:Security s:mustUnderstand="true" '
