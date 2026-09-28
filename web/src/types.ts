@@ -303,6 +303,7 @@ export interface CameraDetection {
   adapter: CameraAdapter;
   probe: string;
   contentType?: string;
+  discoveryHint?: string;
   profileVersion?: 'T' | 'S';
   capabilities?: Record<string, unknown>;
   profiles: CameraProfile[];

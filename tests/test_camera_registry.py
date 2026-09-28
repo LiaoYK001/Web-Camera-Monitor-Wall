@@ -210,6 +210,14 @@ class ServerPushMjpegHandler(BaseHTTPRequestHandler):
         self.end_headers()
 
     def do_GET(self) -> None:
+        if self.path in {"/", "/index.html"}:
+            body = b"<html><title>Network Camera VB-C60</title></html>"
+            self.send_response(200)
+            self.send_header("Content-Type", "text/html")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+            return
         if not self.path.startswith("/-wvhttp-01-/video.cgi?"):
             self.send_response(404); self.send_header("Content-Length", "0"); self.end_headers(); return
         jpeg = b"\xff\xd8\xff\xe0webobs-mjpeg-fixture\xff\xd9"
@@ -962,6 +970,21 @@ class CameraRegistryTests(unittest.TestCase):
                 "adapter": detected["adapter"], "contentType": detected["contentType"],
                 "probe": detected["probe"],
             }))
+        finally:
+            server.shutdown(); server.server_close(); thread.join(timeout=2)
+
+    def test_canon_landing_page_discovers_same_origin_media(self) -> None:
+        server = HTTPServer(("127.0.0.1", 0), ServerPushMjpegHandler)
+        thread = threading.Thread(target=server.serve_forever, daemon=True); thread.start()
+        try:
+            address = f"127.0.0.1:{server.server_address[1]}"
+            detected = registry.classify(address)
+            self.assertEqual(detected["adapter"], "mjpeg")
+            self.assertEqual(detected["probe"], "http-server-push-mjpeg")
+            self.assertEqual(detected["profiles"][0]["endpoint"],
+                             f"http://{address}/-wvhttp-01-/video.cgi?v=jpg:640x480")
+            self.assertIn("go2rtc", detected["discoveryHint"])
+            self.assertNotIn("allowInsecureHttp", detected["profiles"][0])
         finally:
             server.shutdown(); server.server_close(); thread.join(timeout=2)
 

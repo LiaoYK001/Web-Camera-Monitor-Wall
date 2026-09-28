@@ -159,6 +159,8 @@ bash scripts/dev.sh --mode container --engine podman
 
 ### 来源与音轨探测 / Source and audio probing
 
+HTTP 摄像机首页、Canon WV-HTTP/MJPEG 与可选转换服务的接入方法见 [go2rtc 协议转换指南 / go2rtc bridge guide](go2rtc-integration.md)。
+
 - RTSP 的 `auto` 在系统默认也是 `auto` 时使用 TCP，适用于 WSL、NAT 和 VPN 链路；需要 UDP 时可在 Profile 中显式选择。使用 Tailscale 地址的设备仍需先建立 VPN 连接。
 - 开启系统“来源自动恢复”后，注册表会自动探测已启用、尚未成功的媒体 Profile。失败后间隔至少 30 秒重试，连续 10 次失败后停止；成功后停止周期探测。状态与尝试次数保存在数据库，刷新网页不会重置。设备目录可见时每 30 秒刷新一次状态。
 - 设备详情中的“自动探测”可切换为仅手动。网络恢复后点击“探测轨道”可以立即重试，即使此前已达到 10 次上限。成功会清除失败计数并更新设备在线状态。

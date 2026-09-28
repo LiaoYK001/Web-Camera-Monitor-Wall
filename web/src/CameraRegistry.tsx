@@ -275,9 +275,12 @@ export default function CameraRegistry({ onBack }: { onBack: () => void }) {
     {notice && <div className="notice" role="status">{notice}</div>}
     <section className="registry-add">
       <div><h2>添加设备</h2><p>可粘贴含账号密码的链接（会自动加密保存并脱敏显示），或在下方「设备登录」中单独填写。数据库与链接均不保存明文账密。</p></div>
+      <p>HTTP 网页首页不是视频流。请使用完整的 RTSP、HLS 或 MJPEG 地址；go2rtc 转换后可填写 <code>rtsp://转换服务地址:18554/流名称</code>。</p>
       <label><span>地址</span><input value={address} placeholder="rtsp://*****:*****@10.99.99.135:554/Streaming/Channels/201 或 rtsp://10.99.99.135:554/..." onChange={(event) => { setAddress(event.target.value); setDetection(null); }} /></label>
       <div className="registry-actions"><button className="primary-button" disabled={busy || !address.trim()} type="button" onClick={() => void detect()}>自动检测</button><button className="ghost-button" disabled={busy} type="button" onClick={() => void discoverOnvif().then((result) => setDiscovered(result.devices)).catch((reason: unknown) => setError(reason instanceof Error ? reason.message : '发现失败'))}>ONVIF 发现</button></div>
       {credentialsNotice && <div className="notice" role="status">{credentialsNotice}</div>}
+      {detection?.discoveryHint && <p role="status">{detection.discoveryHint}</p>}
+      {detection?.adapter === 'mjpeg' && <p>当前 Web 监控的网关入口不直接拉取 HTTP MJPEG。可先用 go2rtc + FFmpeg 转为 H.264 RTSP，再检测并保存转换后的地址。</p>}
       {!pendingCredentials && <div className="device-login" aria-label="设备登录">
         <h3>设备登录（可选）</h3>
         <p>链接无法携带账密、或设备需要登录时，在此输入并保存（密文写入凭据库）。</p>
