@@ -84,10 +84,23 @@ class NativeReleaseWorkflowPolicyTests(unittest.TestCase):
     def test_release_flow_is_documented_and_gates_are_optional(self) -> None:
         flow = (ROOT / "docs" / "release-flow.md").read_text(encoding="utf-8")
         gates = (ROOT / "docs" / "local-platform-gates.md").read_text(encoding="utf-8")
+        release_notes = (ROOT / "docs" / "release-notes-v3.3.md").read_text(encoding="utf-8")
         for marker in ("Windows", "WSL", "Linux", "GHCR", "local-platform-gates.md"):
             self.assertIn(marker, flow)
         self.assertIn("release-flow.md", gates)
         self.assertIn("不参与发布", gates)
+        self.assertIn("不要求本机门禁收据", release_notes)
+        self.assertIn("no local gate receipt requirement", release_notes)
+        self.assertNotIn("稳定发布还必须", release_notes)
+        self.assertNotIn("Stable publication still requires", release_notes)
+
+    def test_windows_release_wrapper_prefers_git_for_windows_bash(self) -> None:
+        wrapper = (ROOT / "scripts" / "release-image-local.ps1").read_text(encoding="utf-8")
+        git_lookup = wrapper.index("Get-Command git.exe")
+        bash_lookup = wrapper.index("Get-Command bash.exe")
+        self.assertLess(git_lookup, bash_lookup)
+        self.assertIn(r"'..\bin\bash.exe'", wrapper)
+        self.assertIn("WindowsApps\\bash", wrapper)
 
     def test_local_image_release_uses_v3_analytics_metadata_and_normalizes_semver(self) -> None:
         release_script = (ROOT / "scripts" / "release-image-local.sh").read_text(encoding="utf-8")
