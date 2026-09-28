@@ -59,7 +59,7 @@ Recommended protection:
 建议保护规则：
 
 - Require pull requests, successful public audit/tests and review for `main`; disallow direct pushes except an explicitly governed emergency / `main` 要求 PR、公开审计/测试成功及审查；除受控紧急流程外禁止直推。
-- Require public audit/tests for `dev`; private platform/media gates run only from a reviewed checkout on the maintainer's WSL2 and Windows hosts / `dev` 要求公开审计与测试；私有平台/媒体门禁只从维护者 WSL2 与 Windows 主机上的已审查检出运行。
+- Require public audit/tests for `dev`; platform and container verification is a manual step owned by the releaser and described in [Release flow](release-flow.md) / `dev` 要求公开审计与测试；平台与容器验证是由发布者负责的人工步骤，见[发布流程](release-flow.md)。
 - Restrict release workflow and package write permission to immutable release tags reachable from `main`, or reviewed manual dispatches / 发布工作流与包写权限只允许用于可从 `main` 到达的不可变发布 Tag，或经过审查的手工触发。
 - Delete short-lived feature branches after merge; never place credentials, real camera endpoints, recordings or private acceptance artifacts in any branch / 合并后删除短期功能分支；任何分支都不得包含凭据、真实摄像机端点、录像或私有验收产物。
 
@@ -73,6 +73,6 @@ Recommended protection:
 - `sha-xxxxxxxxxxxx`: immutable source identity for either branch / 任一分支的不可变源码身份。
 - `@sha256:...`: production deployment lock / 生产部署锁定方式。
 
-Stable publication remains tag-driven. The v2 and v3 series publish only the GHCR image containing the PWA, corresponding source, checksums, SBOM, provenance and attestation. The frozen native-client workflow has no tag trigger and requires an explicit confirmation phrase against the protected `dev` tip; it cannot create a Release or stable alias. WSL2 Linux and local Windows browser/analytics gates must pass before image publication.
+Stable publication remains tag-driven. The v2 and v3 series publish only the GHCR image containing the PWA, corresponding source, checksums, SBOM, provenance and attestation. The frozen native-client workflow has no tag trigger and requires an explicit confirmation phrase against the protected `dev` tip; it cannot create a Release or stable alias. Platform and container verification is a documented manual step owned by the releaser ([Release flow](release-flow.md)); the release path itself runs only automatic, secret-free checks.
 
-稳定发布继续由 Tag 驱动。v2 与 v3 系列只发布包含 PWA 的 GHCR 镜像、对应源码、校验和、SBOM、provenance 与 attestation。冻结的原生客户端工作流没有 Tag 触发器，且要求对受保护 `dev` 精确 HEAD 输入显式确认短语；它不能创建 Release 或稳定别名。WSL2 Linux 与本机 Windows 浏览器/分析门禁全部通过后才允许发布镜像。
+稳定发布继续由 Tag 驱动。v2 与 v3 系列只发布包含 PWA 的 GHCR 镜像、对应源码、校验和、SBOM、provenance 与 attestation。冻结的原生客户端工作流没有 Tag 触发器，且要求对受保护 `dev` 精确 HEAD 输入显式确认短语；它不能创建 Release 或稳定别名。平台与容器验证是由发布者负责、并记录在[发布流程](release-flow.md)中的人工步骤；发布路径本身只运行自动、无 Secret 的检查。

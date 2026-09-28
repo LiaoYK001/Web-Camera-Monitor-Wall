@@ -29,30 +29,25 @@ fi
 
 repository_root="$(git rev-parse --show-toplevel)"
 cd "$repository_root"
-python_command="python3"
-if ! python3 --version >/dev/null 2>&1; then
-    command -v python >/dev/null 2>&1 || {
-        echo "Python 3 is required for release receipt verification" >&2
-        exit 69
-    }
-    python_command="python"
-fi
 git diff --quiet --ignore-submodules=none
 git diff --cached --quiet --ignore-submodules=none
 ./scripts/check-executable-bits.sh
 ./tests/run-public-audit.sh
-if [ "$prerelease" = false ]; then
-    "$python_command" ./scripts/verify-local-gate-receipts.py
-    if [[ "$version" =~ ^v2\.3(\.|$) ]]; then
-        "$python_command" ./scripts/verify-m7-gate-receipts.py
-    fi
-    if [[ "$version" =~ ^v3\.0(\.|$) ]]; then
-        "$python_command" ./scripts/verify-v3-m1-gate-receipts.py
-    fi
-    if [[ "$version" =~ ^v3\.[1-9][0-9]*(\.|$) ]]; then
-        "$python_command" ./scripts/verify-v3-m2-gate-receipts.py
-    fi
-fi
+# Release flow v3.3: platform and container verification is a manual step owned
+# by the releaser (docs/release-flow.md).  It is deliberately no longer a
+# machine-checked receipt gate, so nothing outside this checkout can block a
+# publication.  Every remaining check below is automatic and secret-free.
+cat <<'CHECKLIST'
+发布前人工清单 / Manual pre-release checklist (docs/release-flow.md):
+  1. dev 开发已在 Windows 和/或 Linux 上验证
+     dev development verified on Windows and/or Linux
+  2. Windows 装有 WSL 时，已在 WSL 中复验
+     re-verified inside WSL when WSL is installed
+  3. Linux 主机已原生验证
+     verified natively on the Linux host
+  4. 已在 Docker Desktop(WSL2) 或 Podman/Linux 完成容器基本测试
+     basic container check done on Docker Desktop (WSL2) or Podman/Linux
+CHECKLIST
 
 revision="$(git rev-parse HEAD)"
 short_revision="$(git rev-parse --short=12 HEAD)"

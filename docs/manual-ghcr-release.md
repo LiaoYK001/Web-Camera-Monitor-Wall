@@ -6,7 +6,7 @@
 ghcr.io/liaoyk001/web-camera-monitor-wall:<version-or-digest>
 ```
 
-下文的发布命令不把任何个人用户名写死：`GHCR user` 是持有 PAT 的个人 GitHub 账号，`image owner` 是接收镜像的个人或组织 namespace，两者可以不同。示例版本使用 `v2.3`；当前可用的 v3 候选为 `v3.3`，正式发布须先通过对应的 v3-M2 私有门禁。`v3.0.1` 预发布流程仅用于维护者和测试用户验证，不是稳定版，也不会移动 `latest`。版本标签应视为不可变，发布后不要用另一提交覆盖它，需要修复时递增 patch 版本。`latest` 是可移动的稳定别名，`sha-<12位提交>` 用于精确追踪源码，生产部署最终应锁定 digest。
+下文的发布命令不把任何个人用户名写死：`GHCR user` 是持有 PAT 的个人 GitHub 账号，`image owner` 是接收镜像的个人或组织 namespace，两者可以不同。示例版本使用 `v2.3`；当前可用的 v3 候选为 `v3.3`，正式发布前请按[发布流程](release-flow.md)完成平台与容器验证。`v3.0.1` 预发布流程仅用于维护者和测试用户验证，不是稳定版，也不会移动 `latest`。版本标签应视为不可变，发布后不要用另一提交覆盖它，需要修复时递增 patch 版本。`latest` 是可移动的稳定别名，`sha-<12位提交>` 用于精确追踪源码，生产部署最终应锁定 digest。
 
 稳定发布采用两阶段提升：脚本先只推送 `sha-*` 候选，按 GitHub Release database ID 创建并校验 Draft 与递归对应源码包；当版本标签不存在时，Draft 使用一次性的 `release-draft-*` 标签，资产验证后才创建 annotated SemVer 标签并切换 Draft，最后发布 immutable Release，再从同一候选 manifest digest 提升版本标签和 `latest`。提升不会重建镜像，旧排队构建无法用另一份镜像覆盖已审查候选。仓库应启用 GitHub Immutable Releases；脚本同时拒绝覆盖同名但内容不同的 Release Asset。Draft 上传或验证失败会保留 Draft 供修复，不删除并重建同名 Release。
 
@@ -18,7 +18,7 @@ ghcr.io/liaoyk001/web-camera-monitor-wall:<version-or-digest>
 4. Docker/Buildx 必须能构建 `linux/amd64`，建议预留至少 8 GB 内存和 20 GB 空间。
 5. GHCR 登录使用 personal access token (classic)，至少授予 `write:packages`；私有依赖才需要额外 `repo`。组织启用 SSO 时还要为 token 授权 SSO。
 6. token 只通过标准输入交给 `docker login`，不要写入 `.env`、Compose、脚本参数、Dockerfile、Build Argument 或 shell history。
-7. 对本项目官方稳定镜像，必须先按 [本机 Windows 与 WSL2 发布门禁](local-platform-gates.md) 生成绑定同一提交且不超过 48 小时的两份收据；v3-M2 稳定版本（v3.1 及之后）还需四份 v3-M2 收据，`scripts/release-image-local.sh` 会 fail-closed 验证。`v3.0.1` 预发布是受限例外：只允许从远端同步的 `dev` 分支、只发布公开审计通过的候选，不读取或伪造平台门禁收据，并且必须显式传入 `--prerelease`。Fork 维护者可保留自己的等价私有门禁，但不能把端点、凭据或原始证据提交到公开仓库。
+7. 对本项目官方稳定镜像，发布路径只运行自动、无 Secret 的检查（干净工作树、Git 执行位、公开审计、构建、SBOM/provenance、递归源码包）；平台（Windows / WSL / Linux）与容器基本测试由发布者人工完成，见[发布流程](release-flow.md)。历史上要求的「48 小时内两份平台收据 + v3-M2 四份收据」自 v3.3 起**不再要求**，相关脚本保留为可选自查工具（[可选本机门禁](local-platform-gates.md)）。`v3.0.1` 预发布是受限例外：只允许从远端同步的 `dev` 分支、只发布公开审计通过的候选，并且必须显式传入 `--prerelease`。Fork 维护者可保留自己的等价私有门禁，但不能把端点、凭据或原始证据提交到公开仓库。
 
 每次发布先同步源码：
 
@@ -117,7 +117,7 @@ finally {
 }
 ```
 
-脚本验证干净工作树、本机 Windows/WSL2 收据、公开审计、Tag 与 `main`/远端身份，然后执行候选构建、SBOM/provenance、递归源码包、Draft Release、不可变 Asset 和 digest 提升。Buildx 的 registry 输出不一定把镜像加载进本地 Docker image store；需要本地运行时再显式拉取：
+脚本验证干净工作树、公开审计、Tag 与 `main`/远端身份，并打印人工验证清单，然后执行候选构建、SBOM/provenance、递归源码包、Draft Release、不可变 Asset 和 digest 提升。Buildx 的 registry 输出不一定把镜像加载进本地 Docker image store；需要本地运行时再显式拉取：
 
 ```powershell
 docker pull "${Image}:${Version}"
@@ -140,7 +140,7 @@ finally {
 }
 ```
 
-该命令不会要求或读取私有平台门禁收据，但仍会执行工作树、公开仓库审计和远端 `dev` 精确 HEAD 检查。GitHub Release 会保持 `pre-release` 状态，GHCR 只出现 `${Image}:v3.0.1` 与 `sha-*`；`latest` 保持原值。测试用户可按以下方式拉取：
+该命令同样只执行工作树、公开仓库审计和远端 `dev` 精确 HEAD 检查（发布路径本身也不再读取任何私有收据）。GitHub Release 会保持 `pre-release` 状态，GHCR 只出现 `${Image}:v3.0.1` 与 `sha-*`；`latest` 保持原值。测试用户可按以下方式拉取：
 
 ```powershell
 docker pull "${Image}:v3.0.1"
@@ -217,7 +217,7 @@ version=v3.0.1
 unset GH_TOKEN
 ```
 
-预发布必须在与 `origin/dev` 同步的 `dev` 分支运行；它会创建 GitHub `pre-release`，只提升 `v3.0.1`/`sha-*`，不会修改 `latest`。正式 v3-M2 版本需切换到 `main` 并通过全部 v3-M2 收据。
+预发布必须在与 `origin/dev` 同步的 `dev` 分支运行；它会创建 GitHub `pre-release`，只提升 `v3.0.1`/`sha-*`，不会修改 `latest`。正式 v3-M2 版本需切换到 `main`，并按[发布流程](release-flow.md)完成平台与容器验证。
 
 ## 4. Fedora Linux + Docker Engine
 

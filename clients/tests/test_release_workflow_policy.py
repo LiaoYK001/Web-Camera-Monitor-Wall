@@ -65,13 +65,29 @@ class NativeReleaseWorkflowPolicyTests(unittest.TestCase):
         release_script = (ROOT / "scripts" / "release-image-local.sh").read_text(encoding="utf-8")
         windows_release_script = (ROOT / "scripts" / "release-image-local.ps1").read_text(encoding="utf-8")
         gate_script = (ROOT / "scripts" / "run-private-pwa-gate.py").read_text(encoding="utf-8")
-        self.assertIn("verify-local-gate-receipts.py", release_script)
+        # Release flow v3.3: the stable path runs only automatic, secret-free
+        # checks; platform and container verification is a documented manual step
+        # (docs/release-flow.md), so a machine-checked receipt gate must not come
+        # back silently.
+        self.assertIn("./tests/run-public-audit.sh", release_script)
+        self.assertIn("./scripts/create-source-bundle.sh", release_script)
+        self.assertNotIn("verify-local-gate-receipts.py", release_script)
+        self.assertNotIn("verify-v3-m2-gate-receipts.py", release_script)
+        self.assertNotIn("verify-m7-gate-receipts.py", release_script)
         self.assertIn("release-image-local.sh", windows_release_script)
         self.assertIn('"linux-wsl2-chromium"', gate_script)
         self.assertIn('"windows"', gate_script)
         self.assertIn('[[ "$REF_TYPE" == branch && ("$REF_NAME" == dev || "$REF_NAME" == main) ]]',
                       self.image_text)
         self.assertIn('[[ "$remote_sha" == "$GITHUB_SHA" ]]', self.image_text)
+
+    def test_release_flow_is_documented_and_gates_are_optional(self) -> None:
+        flow = (ROOT / "docs" / "release-flow.md").read_text(encoding="utf-8")
+        gates = (ROOT / "docs" / "local-platform-gates.md").read_text(encoding="utf-8")
+        for marker in ("Windows", "WSL", "Linux", "GHCR", "local-platform-gates.md"):
+            self.assertIn(marker, flow)
+        self.assertIn("release-flow.md", gates)
+        self.assertIn("不参与发布", gates)
 
     def test_local_image_release_uses_v3_analytics_metadata_and_normalizes_semver(self) -> None:
         release_script = (ROOT / "scripts" / "release-image-local.sh").read_text(encoding="utf-8")

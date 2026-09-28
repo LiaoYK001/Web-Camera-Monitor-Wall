@@ -441,14 +441,15 @@ English: <The same problem and resulting behavior>
 - `tests/soak-derive.mjs`：从证据重算，缺字段进 `unverifiableChecks`（不判过），不覆盖原始证据。
 - **证据目录**（`/tests/artifacts/*` 全部 gitignore）：`soak/<ISO>-<label>-<短commit>/{meta.json,samples.jsonl,summary.json,summary.md}`；`browser-soak/<ISO>-<mode>/{browser-soak.json,.md,browser-soak-timeline.json,.jsonl,derived-*.json,.md}`；`audio-regression/{case1-3.wav,result.json}`。
 
-### 11.5 平台门禁与收据（receipt）
+### 11.5 可选私有门禁（receipt）——**不参与发布**
+
+自 v3.3 起发布路径只运行自动、无 Secret 的检查，平台与容器验证改为**人工**（见 §12 与 `docs/release-flow.md`）。下列收据工具**保留但可选**，供需要更严格本地证据时自查：
 
 - 目录 `build/private-gates/`（`/build/` 已忽略，收据不公开）。
-- 契约与文件：`windows.json`、`linux-wsl2-chromium.json` = `webobs-local-gate-receipt-v2`；`v3-m1-{windows,linux,regression}.json`；`v3-m2-{windows,linux,model,regression}.json`；`m7-scale-{8,16,32}.json`、`m7-faults.json`、`windows-m7-admin.json` = `webobs-m7-gate-receipt-v1`。
-- 校验强度：逐文件**非符号链接、≤64 KB、UTF-8 JSON、字段集合精确相等**、contract/name/platform/kind 匹配、`revision == git rev-parse HEAD`、checks **集合与数量**精确相等（防重复）、`completedAt` 带时区且 **48 h 内**（不得超前 5 分钟）；m7 另校 `cameraCount` 与时长下限（≥900 s）。
-- 生成：`scripts/run-private-pwa-gate.py`、`run-private-v3-gate.py`（调用**检出目录之外**的私有 harness，只接受 `WEBOBS_PRIVATE_GATE_RESULT` 的精确检查集合并全为 true，随后丢弃原始日志/端点/录像）；m7 由 `tests/m7/verify-scale.py --write-receipt`、`tests/m7/write-windows-receipt.py` 写。
-- 校验器：`scripts/verify-local-gate-receipts.py`、`verify-v3-m1-gate-receipts.py`、`verify-v3-m2-gate-receipts.py`、`verify-m7-gate-receipts.py`；策略本身在 CI 有回归测试（`clients/tests/test_local_gate_receipts.py`、`test_release_workflow_policy.py`）。
-- **分工**：GitHub-hosted Actions 只做公开、无 Secret 的审计/typecheck/build；私有平台门禁与 OCI 发布在维护者 Windows + WSL2 本机交互执行。**不得伪造同 revision 回执。**
+- 文件与契约：`windows.json`、`linux-wsl2-chromium.json` = `webobs-local-gate-receipt-v2`；`v3-m1-*`/`v3-m2-*` = `webobs-v3-*-gate-receipt-v1`；`m7-*`、`windows-m7-admin.json` = `webobs-m7-gate-receipt-v1`。
+- 校验强度（若选择运行）：非符号链接、≤64 KB、UTF-8 JSON、字段集合精确相等、`revision == HEAD`、checks 集合与数量精确相等、`completedAt` 48 h 内。
+- 生成/校验脚本：`scripts/run-private-pwa-gate.py`、`run-private-v3-gate.py`、`scripts/verify-*-gate-receipts.py`；用法见 `docs/local-platform-gates.md`。
+- **分工**：GitHub-hosted Actions 只做公开、无 Secret 的审计/typecheck/build；OCI 发布在维护者本机执行。**不得伪造同 revision 回执。**
 
 ### 11.6 命令清单
 
@@ -494,23 +495,24 @@ node tests/soak-evidence.mjs --label composite-1080p --mode composite --target-f
 
 ## 12. 发布流程 / Release procedure
 
-> 权威：`docs/versioning-and-branches.md`、`docs/local-platform-gates.md`、`docs/docker-deployment.md`、`docs/ghcr.md`、`docs/manual-ghcr-release.md`。
+> 权威：**`docs/release-flow.md`（发布流程，唯一权威）**、`docs/versioning-and-branches.md`（编号与分支）、`docs/docker-deployment.md`、`docs/ghcr.md`、`docs/manual-ghcr-release.md`。
+> 可选自查：`docs/local-platform-gates.md`（本机私有门禁，自 v3.3 起不参与发布）。
 > 脚本：`scripts/release-image-local.sh`（权威实现）/ `.ps1`（Windows 包装，需 Git for Windows `bash.exe`）。
 
-**前置**：干净工作树 → `scripts/check-executable-bits.sh` → `tests/run-public-audit.sh` → **收据校验**（Windows + WSL2 两份、精确绑定当前提交、**48 h 内**）→ 按版本追加 `verify-v3-m2`/`verify-v3-m1`/`verify-m7`。环境变量 `GITHUB_REPOSITORY` 与 `GH_TOKEN`（classic PAT，需 `write:packages`）。
+**前置**：干净工作树 → `scripts/check-executable-bits.sh` → `tests/run-public-audit.sh` → 脚本打印**人工验证清单**（Windows/WSL/Linux + 容器，由发布者负责）。环境变量 `GITHUB_REPOSITORY` 与 `GH_TOKEN`（classic PAT，需 `write:packages`）。
 
 **正式版步骤**（`release-image-local.sh`）：
 
 1. 参数校验（镜像必须 `^ghcr\.io/…` 小写；版本 `dev|vX.Y|vX.Y.Z`；第三参数只能 `--prerelease`）。
 2. **必须从 `main` 运行**；远端已有同名 Tag 且不指向 HEAD → **拒绝覆盖**。
-3. 公开审计 + 收据校验。
+3. 公开审计 + 打印人工验证清单。
 4. `docker buildx build --platform linux/amd64`，注入 `WEBOBS_BUILD_VERSION`/`WEBOBS_BUILD_MILESTONE` 与 `org.opencontainers.image.revision`/`.version`，`--provenance=mode=max --sbom=true`，推 `sha-<12位>`；`imagetools inspect` 取并校验 digest。
 5. `create-source-bundle.sh` 生成 **`webobs-source-<version>.tar.gz` + `.sha256`**：校验 OBS submodule pin、递归 submodule 完整、确定性 tar（`--sort=name --mtime=@epoch --owner=0 --group=0 --numeric-owner` + `gzip -n`）、写 `SOURCE-REVISION`，拒绝 `.git/.env/secrets`；再由 `verify-source-bundle.sh` 校验。
 6. 创建/复用 **Draft Release**（tag 名先用 `release-draft-<版本去v>-<sha12>`），用 `upload-release-assets-immutable.sh` **幂等**上传附件（同名同内容通过，同名异内容失败；Draft 资产必须走 `uploads.github.com`）。
 7. 附件核验通过后创建并推送**不可变 annotated Tag**，Draft 的 `tag_name` 切到正式 Tag，尽力删除临时 `release-draft-*`。
 8. `draft=false` → 9. `imagetools create --tag <image>:vX.Y --tag <image>:latest <image>@<digest>`，**逐标签复验 digest** → 10. `make_latest=true`。
 
-**预览版（`--prerelease`）**：仅允许 `v3.0`/`v3.0.1`；**必须从 `dev` 运行且 HEAD 精确等于 `origin/dev`**；跳过私有收据但保留公开审计；只提升版本与 `sha-*`，**绝不移动 `latest`**。
+**预览版（`--prerelease`）**：仅允许 `v3.0`/`v3.0.1`；**必须从 `dev` 运行且 HEAD 精确等于 `origin/dev`**；只执行公开审计；只提升版本与 `sha-*`，**绝不移动 `latest`**。
 
 **🔴 不可变 Release 的硬约束（v3.1 事故根因）**：GitHub Immutable Releases 一旦发布，Release 不可改（含 `tag_name`），且**被不可变 Release 用过的 Tag 名会被保留、无法重新创建**（`GH013 Cannot create ref due to creations being restricted`，连管理员 push 也可能被拒）。另外**已发布的不可变 Release 无法再上传附件**（`422 Cannot upload assets to an immutable release`）。因此：
 
@@ -519,13 +521,7 @@ node tests/soak-evidence.mjs --label composite-1080p --mode composite --target-f
 - 编号不可用时按 §9 **顺位递增**，并按脚本幂等语义复用同一 digest，**不重建镜像**；
 - 复用原镜像时，必须在 Release 说明中披露**未改变的内嵌构建标识**。
 
-**🔴 发布脚本尚未支持 `v3.2`（动手前必须改）**：`scripts/release-image-local.sh` 中
-
-- 收据分支只有 `^v2\.3`、`^v3\.0`、`^v3\.1`（第 44–55 行）→ **`v3.2` 不匹配任何一个，会跳过 v3-M2 收据校验**；
-- milestone 映射同样只有 `^v3\.1` → `v3-M2`（第 118–129 行）→ **`v3.2` 落到 `else` 被标成 `v2-M3`**；
-- `--prerelease` 仍限 `v3.0`/`v3.0.1`。
-
-**本次 v3.2 是"原镜像提升"而非脚本构建**，所以没有触发这两个缺陷。**下一个用脚本构建的 v3.2+ 版本必须先扩展这些正则（如 `^v3\.[12](\.|$)`）。**
+**✅ 版本正则与门禁已在 `b15a597` 一并修复**：v3 里程碑分支扩为 `^v3\.[1-9][0-9]*(\.|$)`，`v3.2`/`v3.3`/`v3.10` 都能命中 `v3-M2`（此前 `v3.2` 会落到 `else` 被标成 `v2-M3`）；**同一提交之后的发布路径已移除收据校验**，改为打印人工验证清单（见 `docs/release-flow.md`）。`--prerelease` 仍限 `v3.0`/`v3.0.1`。
 
 **GHCR/凭据要点**：PAT classic 需 `write:packages`；新 package 默认 private 需手工改 public；package 未关联仓库时 Actions 无推送权；构建参数会进入镜像历史与 **public provenance**，**禁止**把相机地址/凭据放进 build arg 或提交 `.env`。
 
