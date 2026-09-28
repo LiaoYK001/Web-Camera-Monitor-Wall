@@ -13,6 +13,10 @@ Fallback:                 Camera -> software decode -> llvmpipe -> x264 -> Progr
 
 Hybrid 会分别判断视频和音频：兼容轨道使用 copy，不兼容轨道才转码。AMD 路径使用 VAAPI decode 与 `h264_vaapi`；真实 probe 或运行失败时回落 `libx264`，日志不包含来源 URL。
 
+当前 Windows + RTX 3090 的 `dev-lan` 默认采用 Direct/WHEP 转发时，MediaMTX 处理网络包而不做视频编解码；服务端 NVIDIA Encoder/Decoder 显示 0% 并不代表没有使用浏览器的硬件解码。开启另一个监控页、Studio 实时布局预览或独立投影会增加读者和浏览器解码负载。先在“系统状态 / 视频加速”查看 MediaMTX、FFmpeg、OBS 的 CPU 与实例数，再按实际转码原因选择硬件路径；不要为了让 GPU 数字上升而把能直通的来源强制转码。Fedora/Podman 的 AMD 核显仅在 VA-API render node、容器设备挂载和运行探测同时通过时承担 Hybrid/Composite 编解码，Direct 转发同样不会消耗服务端视频编码器。
+
+In Windows dev-lan, a compatible Direct/WHEP source is relayed by MediaMTX; server NVIDIA encoder/decoder activity may correctly remain at zero while the viewing browser decodes video. Extra monitor tabs, Studio live layout previews, and projector windows add readers and client decode work. Inspect MediaMTX, FFmpeg, and OBS CPU/instance counts before changing an encoder. On Fedora/Podman, the AMD iGPU is used for Hybrid/Composite only after the VA-API render node, device mapping, and runtime probe pass; Direct relay does not require server video encoding.
+
 ## 2. AMD VA-API 部署
 
 宿主先确认 render node 和驱动：

@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { connectSceneEvents, fetchScene } from './api';
 import DirectPreview from './DirectPreview';
+import { loadActiveLocalConfigProfile } from './localRuntime';
 import ProgramPreview from './ProgramPreview';
 import type { ProjectorMode } from './projector';
 import type { SceneDocument } from './types';
@@ -22,10 +23,16 @@ export default function ProjectorView({ mode }: { mode: ProjectorMode }) {
 
   useEffect(() => {
     const controller = new AbortController();
-    fetchScene(controller.signal).then(setScene).catch(() => undefined);
+    let usesProfile = false;
+    void fetchScene(controller.signal).then((value) => { if (!controller.signal.aborted && !usesProfile) setScene(value); }).catch(() => undefined);
+    void loadActiveLocalConfigProfile().then((profile) => {
+      if (controller.signal.aborted) return;
+      const selected = profile?.studio.scenes.find((candidate) => candidate.id === profile.studio.programSceneId);
+      if (selected) { usesProfile = true; setScene(selected); }
+    }).catch(() => undefined);
     // The wall publishes committed scenes over the same WebSocket; the
     // projector follows them so a second display never shows a stale picture.
-    const disconnect = connectSceneEvents((event) => setScene(event.scene), () => undefined);
+    const disconnect = connectSceneEvents((event) => { if (!usesProfile) setScene(event.scene); }, () => undefined);
     return () => { controller.abort(); disconnect(); };
   }, []);
 

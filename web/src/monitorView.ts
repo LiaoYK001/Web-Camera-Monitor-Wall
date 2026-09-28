@@ -123,6 +123,8 @@ export interface MonitorView {
   /** F6-06: dock the OBS-style mixer on the monitor wall. */
   showAudioMixer: boolean;
   showAllAudioSources: boolean;
+  /** Projector defaults to the fully decorated monitoring picture. */
+  projectorOutput: 'full' | 'picture';
   sourceAudio: Record<string, { volume: number; muted: boolean; monitor: boolean }>;
   analytics: {
     showDetectionBoxes: boolean;
@@ -281,6 +283,7 @@ export const defaultMonitorView = (): MonitorView => ({
   streamQuality: 'medium',
   showAudioMixer: true,
   showAllAudioSources: false,
+  projectorOutput: 'full',
   sourceAudio: {},
   analytics: { showDetectionBoxes: true, showDetectionLabels: false, boxOpacity: .9, boxLineWidth: 2, showInferenceStatus: true },
 });
@@ -326,6 +329,19 @@ export function sourceDecoration(view: MonitorView, sourceId: string): SourceDec
     audioMeter: { ...fallback.audioMeter, ...value.audioMeter },
     promotionKinds: { ...fallback.promotionKinds, ...value.promotionKinds },
     ...(value.fill ? { fill: value.fill } : {}),
+  };
+}
+
+/** A change in the default telemetry controls applies to every existing tile.
+ * Source-specific toggles made afterwards can still override that value. */
+export function updateDefaultTelemetry(view: MonitorView, change: Partial<TelemetryOverlayConfig>): MonitorView {
+  return {
+    ...view,
+    telemetry: { ...view.telemetry, ...change },
+    sourceDecorations: Object.fromEntries(Object.entries(view.sourceDecorations).map(([id, decoration]) => [id, {
+      ...decoration,
+      telemetry: { ...decoration.telemetry, ...change },
+    }])),
   };
 }
 
@@ -506,6 +522,7 @@ export function normalizeMonitorView(value: Partial<MonitorView> | null | undefi
       ? value.streamQuality : 'medium',
     showAudioMixer: value?.showAudioMixer !== false,
     showAllAudioSources: value?.showAllAudioSources === true,
+    projectorOutput: value?.projectorOutput === 'picture' ? 'picture' : 'full',
     sourceAudio: Object.fromEntries(Object.entries(value?.sourceAudio ?? {}).filter(([id, entry]) =>
       sourceIdentifier(id) && entry && typeof entry === 'object').slice(0, 256).map(([id, entry]) => [id, {
       volume: bounded(entry.volume, 1, 0, 1.5), muted: entry.muted === true, monitor: entry.monitor !== false,

@@ -1,5 +1,13 @@
 # MonitorView and analytics runtime / MonitorView 与分析运行时
 
+## Studio layers and projector / Studio 层级与投影
+
+Studio 的来源列表按从上到下的画面层级排列；拖动来源或按 `Alt+↑/↓` 可改层级，属性栏的“上移一层 / 下移一层”执行同一操作。修改属于草稿，点击保存 Studio 后生效。OBS 面板菜单中的来源和属性侧栏可以显示、隐藏、调整左右位置及宽度；画布固定在二者之间。
+
+监看设置里的“统计叠层（全部来源）”及位置、文字框和透明度控件会更新已配置电平表的来源；逐路设置仍可随后单独修改。投影默认采用“完整画面”，包含统计、电平表、超阈值边框及检测框；“投影内容”可选“仅画面”。独立投影窗口读取同一账号的监控偏好。浏览器若阻止独立窗口的自动音频分析，可点击“启用电平检测（静音）”。服务端 Composite Program 是单路合成媒体，浏览器逐源叠层只在 Direct 投影中呈现。
+
+The Studio source list is ordered from front to back. Drag a source or press `Alt+Up/Down` to change its layer; the property panel uses the same operation. Save Studio to commit the draft. The OBS panel menu controls the real source and property sidebars; the canvas stays between them. Global telemetry controls update existing source decorations, including sources with meters. Direct projectors default to the complete picture and can be switched to picture-only output. If browser autoplay blocks meter analysis in a detached window, use the silent meter-enable button. Browser per-source decorations are not part of the server Composite Program feed.
+
 > Status / 状态：v2-M5 is complete and published in stable v2.1 / v2-M5 已完成并随稳定版 v2.1 发布。
 
 ## View contract / 视图契约

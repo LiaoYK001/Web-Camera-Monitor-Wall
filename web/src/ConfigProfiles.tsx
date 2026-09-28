@@ -142,6 +142,8 @@ export default function ConfigProfiles({ studio, onProfileSelected }: {
       <button type="button" className="danger-button" onClick={() => void run('正在删除档案…', remove)} disabled={!selected}>删除档案</button>
       <input ref={importRef} className="visually-hidden" type="file" accept="application/json,.json" onChange={(event) => { const file = event.target.files?.[0]; void run('正在导入配置…', () => importFile(file)); }} />
     </fieldset>
+    {!studio && <p className="config-profile-notice" role="status">场景仍在加载，保存和备份会在加载完成后可用。</p>}
+    {!selected && <p className="config-profile-notice" role="status">先点击“保存当前配置”建立档案，之后才能导出或删除。导入 JSON 会打开文件选择器。</p>}
     {busy && <p role="status">{busy}</p>}
     {error && <div className="alert" role="alert">{error}</div>}
     {notice && <p className="config-profile-notice" role="status">{notice}</p>}

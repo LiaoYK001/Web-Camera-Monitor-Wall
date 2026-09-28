@@ -19,6 +19,11 @@ const sceneFixture = {
 
 /** Keeps the projector tests off the media plane and free of real negotiation. */
 async function mockBackend(page: import('@playwright/test').Page) {
+  await page.route('**/api/v2/account/preferences/*', (route) => route.fulfill({ json: { value: route.request().url().endsWith('/monitor-view') ? {
+    telemetry: { enabled: true },
+    sourceDecorations: { 'source-0': { audioMeter: { enabled: true } } },
+    projectorOutput: 'full',
+  } : null } }));
   await page.route('**/api/v1/auth/session', (route) => route.fulfill({
     json: { authenticated: true, user: 'projector-fixture', via: 'session' },
   }));
@@ -43,6 +48,22 @@ test('projector route shows the final picture without the workspace shell', asyn
   await expect(page.locator('.workspace-shell')).toHaveCount(0);
   await expect(projector.locator('.monitor-view-controls')).toHaveCount(0);
   await expect(projector.locator('.monitor-source-rail')).toHaveCount(0);
+  await expect(projector.locator('.telemetry-overlay')).toBeVisible();
+  await expect(projector.locator('.tile-audio-meter')).toBeVisible();
+});
+
+test('picture-only projector choice hides in-frame decorations', async ({ page }) => {
+  await mockBackend(page);
+  await page.route('**/api/v2/account/preferences/monitor-view', (route) => route.fulfill({ json: { value: {
+    telemetry: { enabled: true },
+    sourceDecorations: { 'source-0': { audioMeter: { enabled: true } } },
+    projectorOutput: 'picture',
+  } } }));
+  await page.goto('/#projector');
+  const projector = page.locator('.projector-shell');
+  await expect(projector.locator('.direct-preview')).toBeVisible();
+  await expect(projector.locator('.telemetry-overlay')).toBeHidden();
+  await expect(projector.locator('.tile-audio-meter')).toBeHidden();
 });
 
 test('composite projector shows only the program picture', async ({ page }) => {

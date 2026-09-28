@@ -128,6 +128,8 @@ export default function App() {
   const [selectedSceneId, setSelectedSceneId] = useState<string | null>(null);
   const [selectedSourceId, setSelectedSourceId] = useState<string | null>(null);
   const [selectedSourceIds, setSelectedSourceIds] = useState<string[]>([]);
+  const [draggedSourceId, setDraggedSourceId] = useState<string | null>(null);
+  const draggedSourceIdRef = useRef<string | null>(null);
   const [connection, setConnection] = useState<ConnectionState>('connecting');
   const [loadingError, setLoadingError] = useState('');
   const [notice, setNotice] = useState('');
@@ -524,14 +526,31 @@ export default function App() {
     setSelectedSourceIds(fallback ? [fallback] : []);
   };
 
-  const moveLayer = (direction: -1 | 1) => {
-    if (!draft || !selectedSourceId) return;
+  const moveLayer = (sourceId: string, direction: -1 | 1) => {
+    if (!draft) return;
     const ordered = [...draft.items].sort((left, right) => left.zIndex - right.zIndex);
-    const index = ordered.findIndex((item) => item.sourceId === selectedSourceId);
+    const index = ordered.findIndex((item) => item.sourceId === sourceId);
     const target = index + direction;
     if (index < 0 || target < 0 || target >= ordered.length) return;
     [ordered[index], ordered[target]] = [ordered[target], ordered[index]];
-    updateDraft((scene) => ({ ...scene, items: normalizeZIndexes(ordered) }));
+    updateDraft((scene) => ({ ...scene, items: ordered.map((item, zIndex) => ({ ...item, zIndex })) }));
+    setNotice(`${draft.sources.find((source) => source.id === sourceId)?.name ?? '来源'}已${direction > 0 ? '上移' : '下移'}一层；保存 Studio 后生效。`);
+  };
+
+  const dropLayer = (targetSourceId: string, sourceId: string) => {
+    if (!draft || !sourceId || sourceId === targetSourceId) { setDraggedSourceId(null); return; }
+    const ordered = [...draft.items].sort((left, right) => right.zIndex - left.zIndex);
+    const from = ordered.findIndex((item) => item.sourceId === sourceId);
+    const to = ordered.findIndex((item) => item.sourceId === targetSourceId);
+    if (from < 0 || to < 0) { setDraggedSourceId(null); return; }
+    const [moved] = ordered.splice(from, 1);
+    ordered.splice(to, 0, moved);
+    updateDraft((scene) => ({ ...scene, items: ordered.reverse().map((item, zIndex) => ({ ...item, zIndex })) }));
+    setSelectedSourceId(sourceId);
+    setSelectedSourceIds([sourceId]);
+    draggedSourceIdRef.current = null;
+    setDraggedSourceId(null);
+    setNotice('来源层级已调整；保存 Studio 后生效。');
   };
 
   const save = async () => {
@@ -826,6 +845,7 @@ export default function App() {
 
   const selectedSource = draft.sources.find((source) => source.id === selectedSourceId) ?? null;
   const selectedItem = draft.items.find((item) => item.sourceId === selectedSourceId) ?? null;
+  const selectedLayerIndex = selectedItem ? [...draft.items].sort((left, right) => left.zIndex - right.zIndex).findIndex((item) => item.id === selectedItem.id) : -1;
   const orderedSources = [...draft.sources].sort((left, right) => {
     const leftItem = draft.items.find((item) => item.sourceId === left.id);
     const rightItem = draft.items.find((item) => item.sourceId === right.id);
@@ -977,16 +997,24 @@ export default function App() {
             <span className="count-badge">{draft.sources.length}/64</span>
           </div>
 
-          <div className="source-list">
+          <div className="source-list" aria-label="来源层级，顶部覆盖底部；拖动来源可调整顺序">
             {orderedSources.map((source, index) => {
               const item = draft.items.find((candidate) => candidate.sourceId === source.id);
               const selected = selectedSourceIds.includes(source.id);
               return (
                 <button
-                  className={`source-card ${selected ? 'selected' : ''}`}
+                  className={`source-card ${selected ? 'selected' : ''}${draggedSourceId === source.id ? ' dragging' : ''}`}
                   type="button"
                   key={source.id}
+                  data-layer-source={source.id}
+                  draggable={!!item}
+                  onDragStart={(event) => { draggedSourceIdRef.current = source.id; setDraggedSourceId(source.id); event.dataTransfer.effectAllowed = 'move'; event.dataTransfer.setData('text/plain', source.id); }}
+                  onDragOver={(event) => { if (draggedSourceIdRef.current !== source.id) { event.preventDefault(); event.dataTransfer.dropEffect = 'move'; } }}
+                  onDrop={(event) => { event.preventDefault(); dropLayer(source.id, event.dataTransfer.getData('text/plain') || draggedSourceIdRef.current || ''); }}
+                  onDragEnd={() => { draggedSourceIdRef.current = null; setDraggedSourceId(null); }}
+                  onKeyDown={(event) => { if (event.altKey && (event.key === 'ArrowUp' || event.key === 'ArrowDown')) { event.preventDefault(); setSelectedSourceId(source.id); setSelectedSourceIds([source.id]); moveLayer(source.id, event.key === 'ArrowUp' ? 1 : -1); } }}
                   onClick={(event) => selectSource(source.id, event.shiftKey || event.ctrlKey || event.metaKey)}
+                  title="拖动调整层级；也可按 Alt+↑/↓"
                 >
                   <span className="source-index">{String(index + 1).padStart(2, '0')}</span>
                   <span className="source-copy">
@@ -1404,9 +1432,9 @@ export default function App() {
                   <section className="property-section">
                     <h3>层级</h3>
                     <div className="layer-actions">
-                      <button className="ghost-button" type="button" disabled={selectedItem.zIndex === 0} onClick={() => moveLayer(-1)}>下移一层</button>
-                      <span>{selectedItem.zIndex + 1} / {draft.items.length}</span>
-                      <button className="ghost-button" type="button" disabled={selectedItem.zIndex === draft.items.length - 1} onClick={() => moveLayer(1)}>上移一层</button>
+                      <button className="ghost-button" type="button" disabled={selectedLayerIndex <= 0} onClick={() => moveLayer(selectedItem.sourceId, -1)}>下移一层</button>
+                      <span>{selectedLayerIndex + 1} / {draft.items.length}</span>
+                      <button className="ghost-button" type="button" disabled={selectedLayerIndex >= draft.items.length - 1} onClick={() => moveLayer(selectedItem.sourceId, 1)}>上移一层</button>
                     </div>
                   </section>
                 </>

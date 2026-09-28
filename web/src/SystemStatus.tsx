@@ -32,6 +32,9 @@ export default function SystemStatus({ onBack }: { onBack: () => void }) {
     <header className="registry-header"><div><span className="eyebrow">Runtime diagnostics</span><h1>系统状态 / 视频加速</h1></div><button className="ghost-button" type="button" onClick={onBack}>返回 Studio</button></header>
     {error && <div className="alert" role="alert">{error}</div>}
     {capabilities && <>
+      <p className="runtime-explanation" role="status">{processes?.engineActive
+        ? 'Composite 正在合成画面；下面的编码器与渲染器状态反映服务端 GPU 路径。'
+        : 'OBS 合成器未运行。可直通的 Direct 来源只由网关转发，服务端编码器空闲属正常；Hybrid 来源才可能使用硬件转码，浏览器解码则由观看设备决定。'}</p>
       <section className="system-summary"><article><span>编码器</span><strong>{capabilities.videoEncoder.selected.toUpperCase()}</strong><small>请求 {capabilities.videoEncoder.requested}{capabilities.videoEncoder.fallback ? ` · FALLBACK: ${capabilities.videoEncoder.fallbackReason}` : ''}</small></article>
         <article><span>场景渲染</span><strong>{capabilities.renderer.selected.toUpperCase()}</strong><small>请求 {capabilities.renderer.requested}{capabilities.renderer.fallback ? ` · FALLBACK: ${capabilities.renderer.fallbackReason}` : ''}</small></article>
         <article><span>来源硬解</span><strong>{capabilities.hardwareDecode.selected.toUpperCase()}</strong><small>请求 {capabilities.hardwareDecode.requested}{capabilities.hardwareDecode.fallback ? ` · FALLBACK: ${capabilities.hardwareDecode.fallbackReason}` : ''}</small></article></section>

@@ -28,20 +28,27 @@ const defaultDocks: WorkspaceDock[] = [
   { id: 'sources', kind: 'sources', region: 'left', order: 2, size: 22, collapsed: false },
   { id: 'audio', kind: 'audio', region: 'bottom', order: 3, size: 24, collapsed: false },
   { id: 'transitions', kind: 'transitions', region: 'right', order: 4, size: 20, collapsed: true },
-  { id: 'properties', kind: 'properties', region: 'right', order: 5, size: 24, collapsed: true },
+  { id: 'properties', kind: 'properties', region: 'right', order: 5, size: 24, collapsed: false },
   { id: 'issues', kind: 'issues', region: 'right', order: 6, size: 24, collapsed: true },
 ];
 
 function validLayout(value: WorkspaceLayout | null): WorkspaceLayout {
   if (!value || value.schemaVersion !== 1 || !['obs', 'classic'].includes(value.style)) return { schemaVersion: 1, style: 'obs', docks: defaultDocks };
   const byId = new Map(value.docks.map((dock) => [dock.id, dock]));
+  const legacyUntouchedDocks = defaultDocks.every((dock) => {
+    const saved = byId.get(dock.id);
+    return saved && saved.region === dock.region && saved.order === dock.order && saved.size === dock.size &&
+      saved.collapsed === (dock.kind === 'properties' ? true : dock.collapsed);
+  });
   const regions = new Set<WorkspaceDock['region']>(['left', 'right', 'bottom', 'center']);
   const docks = defaultDocks.map((dock) => {
     const candidate = byId.get(dock.id);
     if (!candidate || candidate.kind !== dock.kind || !regions.has(candidate.region) ||
       !Number.isFinite(candidate.size) || candidate.size < 10 || candidate.size > 80 ||
       !Number.isInteger(candidate.order) || typeof candidate.collapsed !== 'boolean') return dock;
-    return { ...dock, region: candidate.region, order: candidate.order, size: candidate.size, collapsed: candidate.collapsed };
+    return { ...dock,
+      region: (dock.kind === 'sources' || dock.kind === 'properties') && candidate.region !== 'left' && candidate.region !== 'right' ? dock.region : candidate.region,
+      order: candidate.order, size: candidate.size, collapsed: dock.kind === 'canvas' || (dock.kind === 'properties' && legacyUntouchedDocks) ? false : candidate.collapsed };
   }).sort((left, right) => left.order - right.order).map((dock, order) => ({ ...dock, order }));
   return { schemaVersion: 1, style: value.style, docks };
 }
@@ -64,6 +71,7 @@ export default function WorkspaceShell({ area, onNavigate: navigate, connection,
   const [layoutLoaded, setLayoutLoaded] = useState(false);
   const [navigationOpen, setNavigationOpen] = useState(false);
   const [layoutError, setLayoutError] = useState('');
+  const [profileStatus, setProfileStatus] = useState('');
   const savedLayout = useRef('');
   const layoutWrites = useRef(Promise.resolve());
   const queuedLayoutWrites = useRef(0);
@@ -134,22 +142,37 @@ export default function WorkspaceShell({ area, onNavigate: navigate, connection,
   };
   const dockLabels: Record<WorkspaceDock['kind'], string> = { canvas: '画布', scenes: '场景', sources: '来源', audio: '混音器', transitions: '转场', properties: '属性', issues: '问题' };
   const orderedDocks = useMemo(() => [...layout.docks].sort((left, right) => left.order - right.order), [layout.docks]);
-  const visibleDocks = orderedDocks.filter((dock) => !dock.collapsed);
+  const studioDocks = orderedDocks.filter((dock) => ['canvas', 'sources', 'properties'].includes(dock.kind));
+  const visibleDocks = studioDocks.filter((dock) => !dock.collapsed);
+  const sourceDock = studioDocks.find((dock) => dock.kind === 'sources')!;
+  const propertyDock = studioDocks.find((dock) => dock.kind === 'properties')!;
+  const positionOrder = [
+    ...[sourceDock, propertyDock].filter((dock) => dock.region === 'left').sort((left, right) => left.order - right.order),
+    studioDocks.find((dock) => dock.kind === 'canvas')!,
+    ...[sourceDock, propertyDock].filter((dock) => dock.region !== 'left').sort((left, right) => left.order - right.order),
+  ];
   const workspaceStyle = {
     '--workspace-visible-docks': visibleDocks.length,
     '--workspace-left-docks': visibleDocks.filter((dock) => dock.region === 'left').length,
     '--workspace-right-docks': visibleDocks.filter((dock) => dock.region === 'right').length,
+    '--studio-source-order': positionOrder.findIndex((dock) => dock.kind === 'sources'),
+    '--studio-canvas-order': positionOrder.findIndex((dock) => dock.kind === 'canvas'),
+    '--studio-property-order': positionOrder.findIndex((dock) => dock.kind === 'properties'),
+    '--studio-source-width': `${Math.max(180, Math.min(420, sourceDock.size * 12))}px`,
+    '--studio-property-width': `${Math.max(180, Math.min(420, propertyDock.size * 12))}px`,
   } as CSSProperties;
   const updateDock = (dockId: string, change: Partial<WorkspaceDock>) => setLayout((value) => ({
     ...value, docks: value.docks.map((dock) => dock.id === dockId ? { ...dock, ...change } : dock),
   }));
   const chooseProfile = async (id: string) => {
     try {
+      setProfileStatus('正在切换账号配置…');
       await setActiveLocalConfigProfile(id || null);
       setActiveProfileId(id);
-    } catch { /* The settings panel reports detailed profile errors. */ }
+      setProfileStatus(id ? '账号配置已切换，场景正在载入。' : '已切回服务器默认配置。');
+    } catch (reason) { setProfileStatus(reason instanceof Error ? reason.message : '切换账号配置失败'); }
   };
-  return <div className={`workspace-shell workspace-style-${layout.style}`} style={workspaceStyle} data-workspace-style={layout.style}>
+  return <div className={`workspace-shell workspace-style-${layout.style}`} style={workspaceStyle} data-workspace-style={layout.style} data-studio-sources={sourceDock.collapsed ? 'hidden' : 'visible'} data-studio-properties={propertyDock.collapsed ? 'hidden' : 'visible'}>
     <a className="skip-navigation" href="#workspace-main" onClick={(event) => { event.preventDefault(); document.getElementById('workspace-main')?.focus(); }}>跳到主要内容</a>
     <aside className="workspace-navigation" aria-label="主导航">
       <div className="workspace-brand"><span className="brand-mark small">W</span><div><strong>WebOBS</strong><small>MONITOR WALL</small></div></div>
@@ -158,16 +181,16 @@ export default function WorkspaceShell({ area, onNavigate: navigate, connection,
     <div className="workspace-frame">
       <header className="workspace-global-bar" data-workspace-style={layout.style}>
         <div><strong>{area === 'account' ? '我的账号' : entries.find((entry) => entry.id === area)?.label ?? 'WebOBS'}</strong>{connection && <span className={`connection ${connection}`}><i aria-hidden="true" />{connection === 'online' ? '在线' : connection === 'connecting' ? '连接中' : '离线'}</span>}</div>
-        <div><label className="config-profile-selector"><span>配置</span><select aria-label="选择账号配置" value={activeProfileId} onChange={(event) => void chooseProfile(event.target.value)}><option value="">服务器默认</option>{profiles.map((profile) => <option key={profile.id} value={profile.id}>{profile.name}</option>)}</select></label><button type="button" className="config-profile-manage" onClick={() => onNavigate('settings')}>管理配置</button><div className="workspace-style-switch" role="group" aria-label="工作区风格"><button type="button" aria-pressed={layout.style === 'obs'} className={layout.style === 'obs' ? 'active' : ''} onClick={() => setLayout((value) => ({ ...value, style: 'obs' }))}>OBS 风格</button><button type="button" aria-pressed={layout.style === 'classic'} className={layout.style === 'classic' ? 'active' : ''} onClick={() => setLayout((value) => ({ ...value, style: 'classic' }))}>经典</button></div>{layout.style === 'obs' && <details className="workspace-dock-menu"><summary>面板</summary><div className="workspace-dock-config">{orderedDocks.map((dock) => <div className="workspace-dock-item" draggable onDragStart={() => setDraggedDock(dock.id)} onDragOver={(event: DragEvent<HTMLDivElement>) => event.preventDefault()} onDrop={() => reorderDock(dock.id)} key={dock.id}><button type="button" onClick={() => updateDock(dock.id, { collapsed: !dock.collapsed })}>{dockLabels[dock.kind]} {dock.collapsed ? '显示' : '隐藏'}</button><select aria-label={`${dockLabels[dock.kind]} 区域`} value={dock.region} onChange={(event) => updateDock(dock.id, { region: event.target.value as WorkspaceDock['region'] })}><option value="left">左</option><option value="right">右</option><option value="bottom">底部</option><option value="center">中央</option></select><label><span className="sr-only">{dockLabels[dock.kind]} 大小</span><input aria-label={`${dockLabels[dock.kind]} 大小`} type="range" min="10" max="80" step="1" value={dock.size} onChange={(event) => updateDock(dock.id, { size: Number(event.target.value) })} /></label></div>)}<button type="button" onClick={() => setLayout({ schemaVersion: 1, style: 'obs', docks: defaultDocks })}>恢复默认布局</button></div></details>}<LocalRuntimeBadge /><ProblemCenter />{accountProfile && <button type="button" className="account-badge" onClick={() => onNavigate('account')} aria-label={`我的账号 ${accountProfile.displayName} ${accountProfile.roles.map(roleLabel).join('、')}`}><span className="account-avatar">{avatarChoices.find((choice) => choice.id === accountProfile.avatar)?.icon ?? '●'}</span><span><strong>{accountProfile.displayName}</strong><small>{accountProfile.roles.map(roleLabel).join('、')}</small></span></button>}</div>
+        <div><label className="config-profile-selector"><span>配置</span><select aria-label="选择账号配置" value={activeProfileId} onChange={(event) => void chooseProfile(event.target.value)}><option value="">服务器默认</option>{profiles.map((profile) => <option key={profile.id} value={profile.id}>{profile.name}</option>)}</select></label><button type="button" className="config-profile-manage" onClick={() => onNavigate('settings')}>管理配置</button><div className="workspace-style-switch" role="group" aria-label="工作区风格"><button type="button" aria-pressed={layout.style === 'obs'} className={layout.style === 'obs' ? 'active' : ''} onClick={() => setLayout((value) => ({ ...value, style: 'obs' }))}>OBS 风格</button><button type="button" aria-pressed={layout.style === 'classic'} className={layout.style === 'classic' ? 'active' : ''} onClick={() => setLayout((value) => ({ ...value, style: 'classic' }))}>经典</button></div>{layout.style === 'obs' && <details className="workspace-dock-menu"><summary>面板</summary><div className="workspace-dock-config">{studioDocks.filter((dock) => dock.kind !== 'canvas').map((dock) => <div className="workspace-dock-item" draggable onDragStart={() => setDraggedDock(dock.id)} onDragOver={(event: DragEvent<HTMLDivElement>) => event.preventDefault()} onDrop={() => reorderDock(dock.id)} key={dock.id}><button type="button" onClick={() => updateDock(dock.id, { collapsed: !dock.collapsed })}>{dockLabels[dock.kind]} {dock.collapsed ? '显示' : '隐藏'}</button><select aria-label={`${dockLabels[dock.kind]} 区域`} value={dock.region} onChange={(event) => updateDock(dock.id, { region: event.target.value as WorkspaceDock['region'] })}><option value="left">左</option><option value="right">右</option></select><label><span className="sr-only">{dockLabels[dock.kind]} 大小</span><input aria-label={`${dockLabels[dock.kind]} 大小`} type="range" min="10" max="80" step="1" value={dock.size} onChange={(event) => updateDock(dock.id, { size: Number(event.target.value) })} /></label></div>)}<button type="button" onClick={() => setLayout({ schemaVersion: 1, style: 'obs', docks: defaultDocks })}>恢复默认布局</button></div></details>}<LocalRuntimeBadge /><ProblemCenter />{accountProfile && <button type="button" className="account-badge" onClick={() => onNavigate('account')} aria-label={`我的账号 ${accountProfile.displayName} ${accountProfile.roles.map(roleLabel).join('、')}`}><span className="account-avatar">{avatarChoices.find((choice) => choice.id === accountProfile.avatar)?.icon ?? '●'}</span><span><strong>{accountProfile.displayName}</strong><small>{accountProfile.roles.map(roleLabel).join('、')}</small></span></button>}</div>
       </header>
       {area === 'studio' && (layout.style === 'obs' ? <div className="workspace-obs-dockbar" aria-label="OBS 面板概览">
         <strong>OBS 工作区</strong>
-        <div>{orderedDocks.map((dock) => <button type="button" key={dock.id} className={dock.collapsed ? 'collapsed' : 'visible'} aria-pressed={!dock.collapsed} onClick={() => updateDock(dock.id, { collapsed: !dock.collapsed })}>
+        <div>{studioDocks.filter((dock) => dock.kind !== 'canvas').map((dock) => <button type="button" key={dock.id} className={dock.collapsed ? 'collapsed' : 'visible'} aria-pressed={!dock.collapsed} onClick={() => updateDock(dock.id, { collapsed: !dock.collapsed })}>
           {dockLabels[dock.kind]} <small>{dock.collapsed ? '隐藏' : dock.region}</small>
         </button>)}</div>
-        <span>{visibleDocks.length} 个面板可见 · 可从“面板”拖动排序、调整区域和尺寸</span>
+        <span>画布固定居中 · {visibleDocks.length - 1} 个侧栏可见 · 从“面板”调整区域和尺寸</span>
       </div> : <div className="workspace-classic-strip" role="status">经典工作区 · 使用左侧导航和当前页面布局</div>)}
-      <div id="workspace-main" className="workspace-content" tabIndex={-1}>{layoutError && <p className="inline-error" role="alert">{layoutError}</p>}<Suspense fallback={<div className="page-panel" role="status">正在加载页面…</div>}>{children}</Suspense></div>
+      <div id="workspace-main" className="workspace-content" tabIndex={-1}>{layoutError && <p className="inline-error" role="alert">{layoutError}</p>}{profileStatus && <p className="config-profile-notice" role="status">{profileStatus}</p>}<Suspense fallback={<div className="page-panel" role="status">正在加载页面…</div>}>{children}</Suspense></div>
     </div>
     <nav className="workspace-mobile-navigation" aria-label="移动端主导航">{entries.slice(0, 4).map((entry) => <button type="button" className={area === entry.id ? 'active' : ''} key={entry.id} aria-current={area === entry.id ? 'page' : undefined} onClick={() => onNavigate(entry.id)}>{entry.short}</button>)}<button type="button" aria-haspopup="dialog" aria-expanded={navigationOpen} className={entries.slice(4).some((entry) => entry.id === area) || area === 'account' ? 'active' : ''} onClick={() => setNavigationOpen(true)}>更多</button></nav>
     {navigationOpen && <Modal label="全部页面" className="navigation-modal" onClose={() => setNavigationOpen(false)}>

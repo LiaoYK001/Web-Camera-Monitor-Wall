@@ -540,6 +540,16 @@ select:focus-visible,
   grid-template-columns: 280px minmax(420px, 1fr) 330px;
 }
 
+.workspace-shell.workspace-style-obs[data-studio-sources="hidden"] .editor-grid > .source-panel,
+.workspace-shell.workspace-style-obs[data-studio-properties="hidden"] .editor-grid > .inspector-panel { display: none; }
+
+@media (min-width: 901px) {
+  .workspace-shell.workspace-style-obs .editor-grid { display: flex; }
+  .workspace-shell.workspace-style-obs .editor-grid > .source-panel { order: var(--studio-source-order); flex: 0 0 var(--studio-source-width); }
+  .workspace-shell.workspace-style-obs .editor-grid > .workspace { order: var(--studio-canvas-order); flex: 1 1 300px; }
+  .workspace-shell.workspace-style-obs .editor-grid > .inspector-panel { order: var(--studio-property-order); flex: 0 0 var(--studio-property-width); }
+}
+
 .source-panel,
 .inspector-panel {
   display: flex;
@@ -596,8 +606,13 @@ select:focus-visible,
   color: inherit;
   background: transparent;
   text-align: left;
-  cursor: pointer;
+  cursor: grab;
+  user-select: none;
 }
+
+.source-card:active { cursor: grabbing; }
+.source-card.dragging { opacity: .55; }
+.source-card:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 
 .source-card:hover {
   background: #141923;
@@ -1384,6 +1399,21 @@ select:focus-visible,
    wall, while the in-frame status chip keeps explaining a dark projector. */
 .projector-shell .program-diagnostics { display: none; }
 
+.projector-shell .projector-output-picture :is(.telemetry-overlay, .tile-audio-meter, .tile-audio-alert-border, .detection-box) { display: none !important; }
+.projector-meter-enable {
+  position: fixed;
+  z-index: 20;
+  right: 16px;
+  bottom: 16px;
+  padding: 8px 12px;
+  border: 1px solid rgba(185, 255, 79, .55);
+  border-radius: 8px;
+  background: rgba(9, 14, 20, .85);
+  color: #e7f4d3;
+}
+
+.runtime-explanation { margin: 10px 0; padding: 10px 12px; border: 1px solid var(--line); border-radius: 7px; color: var(--muted); background: rgba(20, 27, 38, .7); font-size: 12px; }
+
 .projector-waiting {
   margin: 0;
   color: #4b5565;
@@ -1490,7 +1520,6 @@ select:focus-visible,
 .stage-live > .layout-live-preview { position: absolute; inset: 0; pointer-events: none; }
 .stage-live > .layout-live-preview .direct-preview { width: 100%; height: 100%; max-height: none; border: 0; border-radius: 0; }
 .stage-live .camera-tile { background: transparent; box-shadow: none; }
-.stage-live .camera-tile.selected { z-index: 10000 !important; }
 .stage-live .camera-tile:not(.selected):not(:hover) { border-color: transparent; }
 .stage-live .camera-tile:not(.selected):not(:hover) :is(.tile-tag, .tile-caption, .resize-handle) { opacity: 0; }
 .stage-live .tile-caption { background: #000a; }

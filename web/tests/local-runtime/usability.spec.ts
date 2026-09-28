@@ -3,6 +3,61 @@ import { expect, test, type Page } from '@playwright/test';
 const fixture = '/tests/harness/usability.html';
 const metrics = async (page: Page) => JSON.parse(await page.locator('html').getAttribute('data-fixture-metrics') ?? '{}');
 
+test('reorders Studio source layers with buttons and drag and drop', async ({ page }) => {
+  await page.goto(`${fixture}?layout#/studio`);
+  await page.getByRole('button', { name: '布局编辑', exact: true }).click();
+  const cards = page.locator('.source-card');
+  await expect(cards.first()).toContainText('无音轨摄像机');
+  await cards.first().click();
+  await page.getByRole('button', { name: '上移一层' }).click();
+  await expect(page.locator('.notice-alert')).toContainText('已上移一层');
+  await page.getByRole('button', { name: '下移一层' }).click();
+  await expect(cards.first()).toContainText('有声音的摄像机');
+  await expect(page.locator('.notice-alert')).toContainText('已下移一层');
+  await page.evaluate(() => {
+    const [target, source] = document.querySelectorAll('.source-card');
+    const transfer = new DataTransfer();
+    source.dispatchEvent(new DragEvent('dragstart', { bubbles: true, cancelable: true, dataTransfer: transfer }));
+    target.dispatchEvent(new DragEvent('dragover', { bubbles: true, cancelable: true, dataTransfer: transfer }));
+    target.dispatchEvent(new DragEvent('drop', { bubbles: true, cancelable: true, dataTransfer: transfer }));
+    source.dispatchEvent(new DragEvent('dragend', { bubbles: true, cancelable: true, dataTransfer: transfer }));
+  });
+  await expect(page.locator('.notice-alert')).toContainText('来源层级已调整');
+  await expect(cards.first()).toContainText('无音轨摄像机');
+});
+
+test('default telemetry changes reach sources that already have meter settings', async ({ page }) => {
+  await page.goto(`${fixture}?area=monitor&mixer`);
+  await page.getByText('逐路统计 / 声音告警', { exact: true }).click();
+  const audioSource = page.locator('.monitor-decoration-options fieldset').filter({ hasText: '有声音的摄像机' });
+  await audioSource.getByRole('checkbox', { name: '画面电平表' }).check();
+  await page.getByRole('checkbox', { name: '统计叠层（全部来源）' }).check();
+  const overlay = page.locator('.direct-tile[data-source-id="audio-source-1"] .telemetry-overlay');
+  await expect(overlay).toBeVisible();
+  await page.getByRole('slider', { name: '统计文字透明度' }).fill('0.5');
+  await page.getByLabel('统计文字框颜色').fill('#123456');
+  await expect(overlay).toHaveCSS('color', 'rgba(255, 255, 255, 0.5)');
+  await expect(overlay).toHaveCSS('background-color', 'rgba(18, 52, 86, 0.45)');
+});
+
+test('OBS panel controls change the actual Studio layout', async ({ page }) => {
+  await page.setViewportSize({ width: 1600, height: 900 });
+  await page.goto(`${fixture}?layout#/studio`);
+  await page.locator('.workspace-dock-menu summary').click();
+  const sources = page.locator('.editor-grid > .source-panel');
+  const canvas = page.locator('.editor-grid > .workspace');
+  const menu = page.locator('.workspace-dock-menu');
+  await menu.getByRole('button', { name: '来源 隐藏' }).click();
+  await expect(sources).toBeHidden();
+  await menu.getByRole('button', { name: '来源 显示' }).click();
+  await expect(sources).toBeVisible();
+  await menu.getByRole('combobox', { name: '来源 区域' }).selectOption('right');
+  await expect.poll(async () => (await sources.boundingBox())!.x).toBeGreaterThan((await canvas.boundingBox())!.x);
+  const initialWidth = (await sources.boundingBox())!.width;
+  await menu.getByRole('slider', { name: '来源 大小' }).fill('30');
+  await expect.poll(async () => (await sources.boundingBox())!.width).toBeGreaterThan(initialWidth + 40);
+});
+
 test('edits the real Studio canvas over live video without renegotiating on drag or resize', async ({ page }) => {
   await page.setViewportSize({ width: 1600, height: 1000 });
   await page.goto(`${fixture}?layout#/studio`);

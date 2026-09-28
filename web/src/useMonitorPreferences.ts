@@ -3,9 +3,9 @@ import { loadMonitorView, saveMonitorView } from './localRuntime';
 import { defaultMonitorView, normalizeMonitorView, type MonitorView } from './monitorView';
 
 /** Account preferences outlive the current scene and must not be trimmed to its sources. */
-export function useMonitorPreferences(compact: boolean) {
+export function useMonitorPreferences(compact: boolean, skipLoad = false) {
   const [view, setView] = useState<MonitorView>(defaultMonitorView);
-  const [loaded, setLoaded] = useState(compact);
+  const [loaded, setLoaded] = useState(skipLoad);
   const [error, setError] = useState('');
   const [retry, setRetry] = useState(0);
   const latest = useRef(view);
@@ -15,7 +15,7 @@ export function useMonitorPreferences(compact: boolean) {
   const clearing = useRef(false);
   useEffect(() => {
     let active = true; mounted.current = true;
-    if (compact) { setLoaded(true); return () => { active = false; mounted.current = false; }; }
+    if (skipLoad) { setLoaded(true); return () => { active = false; mounted.current = false; }; }
     setLoaded(false);
     void loadMonitorView().then((stored) => {
       if (!active) return;
@@ -24,7 +24,7 @@ export function useMonitorPreferences(compact: boolean) {
       setView(next); setLoaded(true); setError('');
     }).catch(() => { if (active) setError('监控偏好读取失败，请重试。'); });
     return () => { active = false; mounted.current = false; };
-  }, [compact, retry]);
+  }, [compact, skipLoad, retry]);
   const persist = useCallback(() => {
     if (clearing.current) return;
     const next = normalizeMonitorView(latest.current, 16);
