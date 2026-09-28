@@ -20,15 +20,24 @@ $repositoryRoot = (git rev-parse --show-toplevel).Trim()
 if ($LASTEXITCODE -ne 0 -or -not $repositoryRoot) { throw 'Not inside a Git repository.' }
 Set-Location (Resolve-Path -LiteralPath $repositoryRoot).Path
 
-$bash = Get-Command bash.exe -ErrorAction SilentlyContinue
-if (-not $bash) {
-    $git = Get-Command git.exe -ErrorAction Stop
+# Prefer Git for Windows Bash: WindowsApps\bash.exe forwards to WSL and cannot
+# resolve the Windows linked-worktree .git path used by the release checkout.
+$git = Get-Command git.exe -ErrorAction SilentlyContinue
+$gitBashPath = $null
+if ($git) {
     $candidate = [IO.Path]::GetFullPath((Join-Path (Split-Path -Parent $git.Source) '..\bin\bash.exe'))
-    if (-not (Test-Path -LiteralPath $candidate -PathType Leaf)) {
+    if (Test-Path -LiteralPath $candidate -PathType Leaf) { $gitBashPath = $candidate }
+}
+if ($gitBashPath) {
+    $bashPath = $gitBashPath
+} else {
+    $bash = Get-Command bash.exe -ErrorAction SilentlyContinue
+    if (-not $bash) {
         throw 'Git for Windows bash.exe is required by the deterministic source-bundle publisher.'
     }
-    $bashPath = $candidate
-} else {
+    if ($bash.Source -match '\\Microsoft\\WindowsApps\\bash(?:\.exe)?$') {
+        throw 'Git for Windows Bash is required; the WindowsApps bash.exe alias launches WSL and cannot read the linked release worktree.'
+    }
     $bashPath = $bash.Source
 }
 
