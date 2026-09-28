@@ -122,6 +122,12 @@ tests/test_event_service.py|user:password
 tests/run-contracts.sh|test-user:supersecret
 tests/run-contracts.sh|***:***
 tests/test_v2_client_control.py|fixture-user:fixture-password
+tests/test_camera_registry.py|user:password
+tests/test_camera_registry.py|user:pass
+tests/test_camera_registry.py|*****:*****
+docs/bulk-source-import.md|user:password
+web/src/CameraRegistry.tsx|user:password
+web/src/SourceCatalog.tsx|user:password
 tests/run-real-camera.ps1|user:password
 tests/run-real-camera.sh|user:password'
 allowed_rtsp_references="${allowed_rtsp_references# }"

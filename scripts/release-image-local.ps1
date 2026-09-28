@@ -13,7 +13,7 @@ if ($Version -ne 'dev' -and $Version -cnotmatch '^v[0-9]+\.[0-9]+(?:\.[0-9]+)?$'
     throw 'Version must be dev, vX.Y, or vX.Y.Z.'
 }
 if ($Prerelease -and $Version -cnotin @('v3.0', 'v3.0.1')) {
-    throw '-Prerelease is currently restricted to v3.0 or v3.0.1; publish v3.1 only as a stable release.'
+    throw '-Prerelease is restricted to v3.0 and v3.0.1; v3.1 and later are stable releases.'
 }
 
 $repositoryRoot = (git rev-parse --show-toplevel).Trim()

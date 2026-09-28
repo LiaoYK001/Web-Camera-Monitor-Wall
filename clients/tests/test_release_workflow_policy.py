@@ -78,6 +78,7 @@ class NativeReleaseWorkflowPolicyTests(unittest.TestCase):
         windows_release_script = (ROOT / "scripts" / "release-image-local.ps1").read_text(encoding="utf-8")
         for marker in ("3.1.0-dev", "v3-M2-dev", "v3-M2", "v3-M1", "v2-M7", "v2-M6", "v2-M5"):
             self.assertIn(marker, release_script)
+        self.assertIn(r'^v3\.[1-9][0-9]*(\.|$)', release_script)
         self.assertIn("build_version", release_script)
         self.assertIn('build_version="${build_version}.0"', release_script)
         self.assertIn("release-image-local.sh", windows_release_script)
@@ -117,7 +118,7 @@ class NativeReleaseWorkflowPolicyTests(unittest.TestCase):
         self.assertIn('-F "prerelease=$prerelease"', release_script)
         self.assertIn('latest was not changed', release_script)
         self.assertIn('[switch]$Prerelease', windows_release_script)
-        self.assertIn('-Prerelease is currently restricted to v3.0', windows_release_script)
+        self.assertIn('-Prerelease is restricted to v3.0 and v3.0.1', windows_release_script)
 
     def test_candidate_windows_packages_cannot_skip_authenticode(self) -> None:
         self.assertIn("if ($env:CERTIFICATE_SHA1 -notmatch '^[0-9A-Fa-f]{40}$')", self.text)

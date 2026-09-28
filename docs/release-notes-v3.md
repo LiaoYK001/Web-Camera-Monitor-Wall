@@ -1,6 +1,8 @@
 # v3 analytics release line / v3 分析发布线
 
-Status / 状态：implementation and the `v3.0.1` preview correction slice are on `dev`; `v3.0`/`v3.0.1` and `v3.1` remain unreleased until their publication checks are intentionally run / 实现及 `v3.0.1` 预发布修正已进入 `dev`；`v3.0`/`v3.0.1` 与 `v3.1` 仍需在明确执行发布检查后发布。
+Status / 状态：the `v3.0.1` preview correction slice remains on `dev`; `v3.0`/`v3.0.1` and `v3.1` are not stable releases. The next available stable candidate is `v3.3`, pending its release gates / `v3.0.1` 预发布修正仍在 `dev`；`v3.0`/`v3.0.1` 与 `v3.1` 均非稳定版。下一个可用稳定候选为 `v3.3`，仍待发布门禁通过。
+
+See the current bilingual release candidate notes in [release-notes-v3.3.md](release-notes-v3.3.md). / 当前双语发布候选说明见 [release-notes-v3.3.md](release-notes-v3.3.md)。
 
 ## v3.0.1 preview correction / v3.0.1 预发布修正
 

@@ -763,7 +763,7 @@ def sanitized_endpoint(value: str, has_credentials: bool = False) -> str:
             host = f"[{host}]"
         if parsed.port:
             host = f"{host}:{parsed.port}"
-        # F6-01 display form: rtsp://*****:*****@host/path when credentials exist.
+        # Credentialed endpoints use a fixed display mask; never echo URL userinfo.
         authority = f"*****:*****@{host}" if has_credentials else host
         return urlunsplit((parsed.scheme, authority, parsed.path, "", ""))
     except ValueError:
