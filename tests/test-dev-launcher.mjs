@@ -119,7 +119,7 @@ test('lan mode generates a self-signed HTTPS cert with the LAN IP in the SAN', a
   try {
     const result = await execute(['--lan', '--lan-host', lanHost, '--mode', 'frontend', '--api', url, '--check']);
     assert.equal(result.code, 0, result.output);
-    assert.match(result.output, new RegExp(`https://${lanHost.replace(/\./g, '\\.')}:`));
+    assert.ok(result.output.includes(`https://${lanHost}:`));
     assert.match(result.output, /自签|self-signed/);
     assert.match(result.output, /Secure Context|证书|trust/i);
     const { readFileSync, existsSync } = await import('node:fs');
@@ -132,7 +132,7 @@ test('lan mode generates a self-signed HTTPS cert with the LAN IP in the SAN', a
     assert.match(readFileSync(keyPath, 'utf8'), /BEGIN (RSA )?PRIVATE KEY/);
     const details = spawnSync('openssl', ['x509', '-in', certPath, '-noout', '-text'], { encoding: 'utf8', timeout: 10000, input: '' });
     if (details.status === 0) {
-      assert.match(details.stdout, new RegExp(lanHost.replace(/\./g, '\\.')));
+      assert.ok(details.stdout.includes(lanHost));
       assert.match(details.stdout, /IP Address:127\.0\.0\.1/);
       assert.match(details.stdout, /DNS:localhost/);
     }

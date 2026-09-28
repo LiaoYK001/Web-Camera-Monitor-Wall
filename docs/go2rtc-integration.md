@@ -2,11 +2,11 @@
 
 ## 何时使用 / When to use it
 
-摄像机网页首页不是媒体地址。Canon VB-C60 使用 WV-HTTP；其 `/-wvhttp-01-/video.cgi?v=jpg:640x480` 是 MJPEG 视频入口，`/-wvhttp-01-/GetOneShot` 是快照。自动检测现在能识别该型号首页并验证同一设备的视频入口；其他普通网页会提示提供媒体地址。
+摄像机网页首页不是媒体地址。Canon VB-C60 使用 WV-HTTP；其 `/-wvhttp-01-/video.cgi?v=jpg:640x480` 是 MJPEG 视频入口，`/-wvhttp-01-/GetOneShot` 是快照。出于 SSRF 防护，服务器不会抓取用户提供的网页首页，也不会扫描 HTML 推断视频入口。首页地址会标为未验证；请手动填写明确的视频流路径，或在 go2rtc 配置中使用该路径。
 
 当前账号 Web 监控的网关入口通过 MediaMTX 拉流，不能直接把 HTTP MJPEG 当成 RTSP。可以先用 go2rtc 调用 FFmpeg 转为 H.264，再把 RTSP 输出作为普通视频源添加。这样继续使用项目现有的账号权限、布局同步、监控播放器和 OBS 合成能力。
 
-A camera landing page is not a media URL. Canon VB-C60 uses WV-HTTP: `/-wvhttp-01-/video.cgi?v=jpg:640x480` serves MJPEG, while `/-wvhttp-01-/GetOneShot` supplies a snapshot. Detection recognizes this model's landing page and validates its same-origin stream. Other HTML pages prompt for an actual media URL. The current account Web playback gateway cannot ingest HTTP MJPEG as RTSP. Use go2rtc with FFmpeg to convert it to H.264 RTSP, retaining the project's account permissions, layout synchronization, player and OBS composition.
+A camera landing page is not a media URL. Canon VB-C60 uses WV-HTTP: `/-wvhttp-01-/video.cgi?v=jpg:640x480` serves MJPEG, while `/-wvhttp-01-/GetOneShot` supplies a snapshot. For SSRF protection, the server does not fetch user-provided homepages or inspect HTML to infer a stream path. A homepage is marked unverified; enter a known media path manually or place it in the go2rtc configuration. The current account Web playback gateway cannot ingest HTTP MJPEG as RTSP. Use go2rtc with FFmpeg to convert it to H.264 RTSP, retaining the project's account permissions, layout synchronization, player and OBS composition.
 
 ## 配置 / Configuration
 

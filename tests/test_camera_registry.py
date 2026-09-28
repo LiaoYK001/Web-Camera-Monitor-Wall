@@ -366,6 +366,13 @@ class CameraRegistryTests(unittest.TestCase):
             self.assertEqual(len(issues), 1)
             self.assertNotIn("camera.example.invalid", json.dumps(registry.issue_document(issues[0])))
 
+    def test_http_homepage_classification_never_fetches_user_controlled_url(self) -> None:
+        with patch.object(registry, "build_opener") as opener:
+            result = registry.classify("http://camera.example.invalid/")
+        opener.assert_not_called()
+        self.assertEqual(result["probe"], "homepage-unverified")
+        self.assertIn("服务器不会抓取", result["discoveryHint"])
+
     def test_credentialed_profile_probe_uses_secret_without_exposing_endpoint(self) -> None:
         camera = registry.validate_camera({
             "id": "credential-probe", "name": "Credential probe", "adapter": "rtsp",
@@ -864,6 +871,8 @@ class CameraRegistryTests(unittest.TestCase):
             registry.write_credentials("bad", "user:colon", "x" * 16)
         with self.assertRaises(PermissionError):
             registry.write_credentials("../escape", "user", "password-value")
+        with self.assertRaises(PermissionError):
+            registry.write_credentials("nested/ref", "user", "password-value")
 
     def test_browser_direct_proof_is_tls_cors_bound_and_not_user_forgeable(self) -> None:
         openssl = shutil.which("openssl")
@@ -973,18 +982,15 @@ class CameraRegistryTests(unittest.TestCase):
         finally:
             server.shutdown(); server.server_close(); thread.join(timeout=2)
 
-    def test_canon_landing_page_discovers_same_origin_media(self) -> None:
+    def test_canon_stream_path_can_be_added_explicitly(self) -> None:
         server = HTTPServer(("127.0.0.1", 0), ServerPushMjpegHandler)
         thread = threading.Thread(target=server.serve_forever, daemon=True); thread.start()
         try:
-            address = f"127.0.0.1:{server.server_address[1]}"
+            address = f"127.0.0.1:{server.server_address[1]}/-wvhttp-01-/video.cgi?v=jpg:640x480"
             detected = registry.classify(address)
             self.assertEqual(detected["adapter"], "mjpeg")
             self.assertEqual(detected["probe"], "http-server-push-mjpeg")
-            self.assertEqual(detected["profiles"][0]["endpoint"],
-                             f"http://{address}/-wvhttp-01-/video.cgi?v=jpg:640x480")
-            self.assertIn("go2rtc", detected["discoveryHint"])
-            self.assertNotIn("allowInsecureHttp", detected["profiles"][0])
+            self.assertEqual(detected["profiles"][0]["endpoint"], f"http://{address}")
         finally:
             server.shutdown(); server.server_close(); thread.join(timeout=2)
 

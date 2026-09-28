@@ -51,7 +51,7 @@ ADAPTERS = {
     "srt", "rtp", "v4l2",
 }
 ID_RE = re.compile(r"^[a-zA-Z0-9._-]{1,64}$")
-SECRET_REF_RE = re.compile(r"^[a-zA-Z0-9._/-]{0,256}$")
+SECRET_REF_RE = re.compile(r"^[a-zA-Z0-9._-]{0,128}$")
 PTZ_RATE_LOCK = threading.Lock()
 PTZ_LAST_COMMAND: dict[str, float] = {}
 PTZ_STOP_TIMERS: dict[str, threading.Timer] = {}
@@ -2297,6 +2297,9 @@ def ws_security_header(username: str, password: str, offset_seconds: float = 0) 
     nonce = secrets.token_bytes(16)
     created = datetime.fromtimestamp(time.time() + offset_seconds, timezone.utc).isoformat(
         timespec="seconds").replace("+00:00", "Z")
+    # WS-Security UsernameToken PasswordDigest requires this SHA-1 construction.
+    # It is a per-request protocol digest, not a stored password verifier.
+    # codeql[py/weak-sensitive-data-hashing]
     digest = base64.b64encode(hashlib.sha1(nonce + created.encode() + password.encode()).digest()).decode()
     encoded_nonce = base64.b64encode(nonce).decode()
     return (
@@ -3095,35 +3098,15 @@ def classify(address: str) -> dict:
     # Username may be echoed for form prefill; the password never leaves the server.
     if extracted_user:
         result["username"] = extracted_user
-    # A camera's landing page is not an ONVIF endpoint. Recognize the legacy
-    # Canon viewer before asking for ONVIF profiles; keep discovery to one
-    # same-origin, known read-only media path rather than crawling arbitrary HTML.
+    # Never fetch a user-provided HTTP homepage from the server. The origin may
+    # resolve to loopback, cloud metadata, or another internal service.
     if adapter == "onvif" and scheme in {"http", "https"} and path in {"", "/", "/index.html"}:
-        try:
-            opener = build_opener(SameOriginRedirect())
-            request = Request(normalized, headers={"User-Agent": "webobs-camera-probe/1"})
-            with opener.open(request, timeout=3) as response:
-                content_type = response.headers.get_content_type().lower()
-                page = response.read1(65536)
-            if content_type == "text/html":
-                result["probe"] = "html-page-not-media"
-                result["contentType"] = content_type
-                result["discoveryHint"] = "这是设备网页，不是视频流。请提供完整媒体地址；网页地址不能直接交给 go2rtc 转换。"
-                if re.search(rb"network\s+camera\s+vb-c60\b", page, re.IGNORECASE):
-                    endpoint = urlunsplit((parsed.scheme, parsed.netloc,
-                                           "/-wvhttp-01-/video.cgi", "v=jpg:640x480", ""))
-                    media = classify(endpoint)
-                    if media["probe"] == "http-server-push-mjpeg":
-                        media["discoveryHint"] = "已从 Canon VB-C60 网页识别 MJPEG 视频入口。Web 监控请通过 go2rtc 转为 H.264 RTSP 后添加。"
-                        media["credentialsExtracted"] = result["credentialsExtracted"]
-                        media["authRequired"] = result["authRequired"]
-                        if extracted_user:
-                            media["username"] = extracted_user
-                        return media
-                return result
-        except (OSError, ValueError, OnvifError):
-            result["probe"] = "unreachable-or-auth-required"
-            return result
+        result["probe"] = "homepage-unverified"
+        result["discoveryHint"] = (
+            "这是 HTTP 首页地址，服务器不会抓取用户提供的网页。"
+            "请填写摄像机的完整视频流地址，或先配置 go2rtc 转换后再添加。"
+        )
+        return result
     if adapter in {"rtsp", "hls", "http-flv", "srt", "rtp"}:
         result["profiles"] = [{
             "id": "main", "name": "Main", "role": "main", "endpoint": normalized,
