@@ -22,7 +22,7 @@ if [[ "$release_mode" == --prerelease || "${WEBOBS_PRERELEASE:-false}" == true ]
 fi
 if [ "$prerelease" = true ]; then
     [[ "$version" == v3.0 || "$version" == v3.0.1 ]] || {
-        echo "--prerelease is currently restricted to v3.0 or v3.0.1; publish v3.1 only as a stable release" >&2
+        echo "--prerelease is restricted to v3.0 and v3.0.1; v3.1 and later are stable releases" >&2
         exit 64
     }
 fi
@@ -49,7 +49,7 @@ if [ "$prerelease" = false ]; then
     if [[ "$version" =~ ^v3\.0(\.|$) ]]; then
         "$python_command" ./scripts/verify-v3-m1-gate-receipts.py
     fi
-    if [[ "$version" =~ ^v3\.1(\.|$) ]]; then
+    if [[ "$version" =~ ^v3\.[1-9][0-9]*(\.|$) ]]; then
         "$python_command" ./scripts/verify-v3-m2-gate-receipts.py
     fi
 fi
@@ -115,7 +115,7 @@ else
     command -v gh >/dev/null
     build_version="${version#v}"
     [[ "$build_version" =~ ^[0-9]+\.[0-9]+$ ]] && build_version="${build_version}.0"
-    if [[ "$version" =~ ^v3\.1(\.|$) ]]; then
+    if [[ "$version" =~ ^v3\.[1-9][0-9]*(\.|$) ]]; then
         build_milestone="v3-M2"
     elif [[ "$version" =~ ^v3\.0(\.|$) ]]; then
         build_milestone="v3-M1"
@@ -171,21 +171,25 @@ notes="${release_root}/RELEASE-NOTES.md"
 cat > "$notes" <<EOF
 # Web Camera Monitor Wall ${version}
 
-- Source revision: \`${revision}\`
-- OCI candidate: \`${image}:sha-${short_revision}\`
+- 源码提交 / Source revision: \`${revision}\`
+- OCI 候选镜像 / OCI candidate: \`${image}:sha-${short_revision}\`
 - OCI digest: \`${digest}\`
-- Milestone: \`${build_milestone}\`
+- 里程碑 / Milestone: \`${build_milestone}\`
 
 EOF
+release_scope_notes="docs/release-notes-${version}.md"
+if [ -f "$release_scope_notes" ]; then
+    cat "$release_scope_notes" >> "$notes"
+fi
 if [ "$prerelease" = true ]; then
     cat >> "$notes" <<EOF
-This is a preview release for testing the v3-M1/v3-M2 analytics line. It is not the v3.1 stable release.
-The ${version} tag is promoted from this exact candidate digest only after this pre-release draft and its corresponding source assets are published.
-The latest tag is intentionally unchanged. Do not use this preview as a production stability claim.
+这是 v3-M1/v3-M2 分析功能的预览版，并非 v3.1 稳定版。 / This is a preview release for the v3-M1/v3-M2 analytics line, not the v3.1 stable release.
+只有预发布草稿及源码附件发布后，才会从该候选 digest 提升 ${version} 标签。 / The ${version} tag is promoted from this candidate digest only after the pre-release draft and source assets are published.
+latest 保持不变；此预览版不代表生产稳定性验收。 / The latest tag is unchanged; this preview does not claim production stability.
 EOF
 else
     cat >> "$notes" <<EOF
-The version and latest tags are promoted from this exact candidate digest only after this draft and its corresponding-source assets are published.
+版本标签与 latest 只有在草稿及对应源码附件发布后才会提升到此候选 digest。 / The version and latest tags are promoted to this candidate digest only after the draft and corresponding source assets are published.
 EOF
 fi
 

@@ -38,6 +38,60 @@ export async function login(username: string, password: string): Promise<AuthSes
   return (await response.json()) as AuthSession;
 }
 
+export interface AccountProfile {
+  username: string; displayName: string; avatar: 'person' | 'camera' | 'shield' | 'eye' | 'star' | 'sun';
+  roles: string[]; permissions: string[]; scopes: Array<{ kind: string; id: string }>;
+  acl: Array<{ permission: string; allowed: boolean }>;
+}
+
+export async function fetchAccountProfile(signal?: AbortSignal): Promise<AccountProfile> {
+  const response = await fetch('/api/v2/account/me', { cache: 'no-store', credentials: 'same-origin', signal });
+  if (!response.ok) throw await parseError(response);
+  return await response.json() as AccountProfile;
+}
+
+export async function updateAccountProfile(value: { displayName?: string; avatar?: AccountProfile['avatar'] }): Promise<AccountProfile> {
+  const response = await fetch('/api/v2/account/me', { method: 'PATCH', credentials: 'same-origin',
+    headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(value) });
+  if (!response.ok) throw await parseError(response);
+  return await response.json() as AccountProfile;
+}
+
+export async function changeAccountPassword(currentPassword: string, newPassword: string): Promise<void> {
+  const response = await fetch('/api/v2/account/password', { method: 'POST', credentials: 'same-origin',
+    headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ currentPassword, newPassword }) });
+  if (!response.ok) throw await parseError(response);
+}
+
+export async function fetchFirstRunStatus(): Promise<{ registrationOpen: boolean }> {
+  const response = await fetch('/api/v1/auth/setup', { cache: 'no-store', credentials: 'same-origin' });
+  if (!response.ok) throw await parseError(response);
+  return await response.json() as { registrationOpen: boolean };
+}
+
+export async function registerFirstAdmin(username: string, password: string): Promise<void> {
+  const response = await fetch('/api/v1/auth/setup', {
+    method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ username, password }),
+  });
+  if (!response.ok) throw await parseError(response);
+}
+
+export async function fetchCameraPreferences(): Promise<Record<string, { displayName: string; favorite: boolean; group: string }> | null> {
+  const response = await fetch('/api/v2/account/preferences/camera-preferences', { cache: 'no-store', credentials: 'same-origin' });
+  if (!response.ok) throw await parseError(response);
+  const result = await response.json() as { value: { cameras?: Record<string, { displayName: string; favorite: boolean; group: string }> } | null };
+  return result.value?.cameras ?? null;
+}
+
+export async function saveCameraPreferences(cameras: Record<string, { displayName: string; favorite: boolean; group: string }>): Promise<void> {
+  const response = await fetch('/api/v2/account/preferences/camera-preferences', {
+    method: 'PUT', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ value: { cameras } }),
+  });
+  if (!response.ok) throw await parseError(response);
+}
+
 export async function logout(): Promise<void> {
   const response = await fetch('/api/v1/auth/logout', { method: 'POST', credentials: 'same-origin' });
   if (!response.ok && response.status !== 204) throw await parseError(response);
@@ -263,17 +317,20 @@ export const fetchAnalyticsJobs = () => clientAdminRequest<{ jobs: AnalyticsJob[
 export const createAnalyticsJob = (value: { cameraId: string; profileId: string; modelId: string; modelSha256: string; nodeId?: string }) => clientAdminRequest<AnalyticsJob>('/analytics-jobs', {
   method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ kind: 'person', ...value }),
 });
-export const detectCamera = (address: string) => cameraRequest<CameraDetection>('/camera-detect', {
-  method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ address }),
+export const detectCamera = (address: string, credentials?: { username: string; password: string }) => cameraRequest<CameraDetection & { credentialsExtracted?: boolean; username?: string; password?: string; authRequired?: boolean }>('/camera-detect', {
+  method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ address, ...(credentials ?? {}) }),
 });
 export const discoverOnvif = () => cameraRequest<{ devices: Array<{ address: string; host: string; adapter: 'onvif' }> }>('/onvif/discover', {
   method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}',
 });
-export const probeOnvif = (address: string, credentialsRef: string) => cameraRequest<CameraDetection>('/onvif/probe', {
-  method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ address, credentialsRef }),
+export const probeOnvif = (address: string, credentialsRef: string, credentials?: { username: string; password: string }) => cameraRequest<CameraDetection & { credentialsExtracted?: boolean; username?: string; password?: string }>('/onvif/probe', {
+  method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ address, credentialsRef, ...(credentials ?? {}) }),
 });
-export const createCamera = (camera: Partial<CameraRecord>) => cameraRequest<CameraRecord>('/cameras', {
+export const createCamera = (camera: Partial<CameraRecord> & { username?: string; password?: string }) => cameraRequest<CameraRecord>('/cameras', {
   method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(camera),
+});
+export const updateCameraCredentials = (cameraId: string, username: string, password: string) => cameraRequest<CameraRecord>(`/cameras/${encodeURIComponent(cameraId)}/credentials`, {
+  method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ username, password }),
 });
 export const syncOnvifCamera = (cameraId: string) => cameraRequest<CameraRecord>(`/cameras/${encodeURIComponent(cameraId)}/onvif/sync`, {
   method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}',

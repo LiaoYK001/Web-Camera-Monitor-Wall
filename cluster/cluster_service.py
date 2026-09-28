@@ -33,7 +33,7 @@ from typing import Any, Callable
 from urllib.parse import parse_qs, quote, urlencode, urlsplit
 
 
-MAX_BODY = 1024 * 1024
+MAX_BODY = 3 * 1024 * 1024
 MAX_PAGE = 256
 MAX_AUDIT = 8192
 MAX_NODES = 256
@@ -240,6 +240,10 @@ class ClusterStore:
               CREATE TABLE IF NOT EXISTS user_scopes(
                 user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,scope_kind TEXT NOT NULL,scope_id TEXT NOT NULL,
                 PRIMARY KEY(user_id,scope_kind,scope_id));
+              CREATE TABLE IF NOT EXISTS account_preferences(
+                user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+                kind TEXT NOT NULL,body_json TEXT NOT NULL,revision INTEGER NOT NULL,updated_at INTEGER NOT NULL,
+                PRIMARY KEY(user_id,kind));
               CREATE TABLE IF NOT EXISTS rbac_audit(
                 id INTEGER PRIMARY KEY AUTOINCREMENT,event TEXT NOT NULL,actor_id TEXT NOT NULL,
                 subject_id TEXT NOT NULL,result TEXT NOT NULL,created_at INTEGER NOT NULL);
@@ -590,6 +594,91 @@ class ClusterStore:
             return self.db.execute("""SELECT 1 FROM users u
                 JOIN user_roles r ON r.user_id=u.id
                 WHERE u.enabled=1 AND r.role='admin' LIMIT 1""").fetchone() is not None
+
+    def setup_status(self) -> dict[str, bool]:
+        return {"registrationOpen": not self.has_enabled_admin()}
+
+    def register_first_admin(self, value: Any) -> dict[str, Any]:
+        value = require_exact_object(value, {"username", "password"}, {"username", "password"})
+        # Hold the same lock across the check and creation. Registration also
+        # recovers older installations that have users but no administrator.
+        with self.lock:
+            if self.has_enabled_admin():
+                raise ApiError(409, "registration_closed", "administrator registration is closed")
+            return self.create_user({**value, "roles": ["admin"]}, actor="first-run-setup")
+
+    def account_preference(self, username: str, kind: str, value: Any = None,
+                           write: bool = False) -> dict[str, Any]:
+        if kind not in {"monitor-view", "workspace-layout", "config-profiles", "active-profile", "camera-preferences", "profile"}:
+            raise ApiError(404, "preference_not_found", "account preference is unknown")
+        with self.lock, self.db:
+            user = self.db.execute("SELECT id FROM users WHERE username=? AND enabled=1", (username,)).fetchone()
+            if user is None:
+                raise ApiError(401, "account_rejected", "account is unavailable")
+            if write:
+                body = require_exact_object(value, {"value"}, {"value"})["value"]
+                if not isinstance(body, dict):
+                    raise ApiError(400, "invalid_preference", "preference must be an object")
+                encoded = canonical_json(body)
+                if len(encoded.encode("utf-8")) > 2 * 1024 * 1024:
+                    raise ApiError(413, "preference_too_large", "preference exceeds 2 MiB")
+                self.db.execute("""INSERT INTO account_preferences VALUES(?,?,?,?,?)
+                    ON CONFLICT(user_id,kind) DO UPDATE SET body_json=excluded.body_json,
+                    revision=account_preferences.revision+1,updated_at=excluded.updated_at""",
+                    (user["id"], kind, encoded, 1, now_seconds()))
+            row = self.db.execute("SELECT body_json,revision FROM account_preferences WHERE user_id=? AND kind=?",
+                                  (user["id"], kind)).fetchone()
+        return {"value": json.loads(row["body_json"]) if row else None,
+                "revision": row["revision"] if row else 0}
+
+    def account_profile(self, username: str) -> dict[str, Any]:
+        with self.lock:
+            row = self.db.execute("SELECT id FROM users WHERE username=? AND enabled=1", (username,)).fetchone()
+            if row is None:
+                raise ApiError(401, "account_rejected", "account is unavailable")
+            principal = self.principal(row["id"])
+            stored = self.account_preference(username, "profile")["value"] or {}
+        return {"username": username, "displayName": stored.get("displayName", username),
+                "avatar": stored.get("avatar", "person"), "roles": list(principal.roles),
+                "permissions": sorted(principal.permissions),
+                "scopes": [{"kind": kind, "id": identifier} for kind, identifier in principal.scopes],
+                "acl": [{"permission": name, "allowed": name in principal.permissions}
+                        for name in sorted(PERMISSIONS)]}
+
+    def update_account_profile(self, username: str, value: Any) -> dict[str, Any]:
+        value = require_exact_object(value, {"displayName", "avatar"})
+        if not value:
+            raise ApiError(400, "empty_patch", "at least one profile field is required")
+        current = self.account_preference(username, "profile")["value"] or {}
+        if "displayName" in value:
+            name = value["displayName"]
+            if not isinstance(name, str) or not 1 <= len(name.strip()) <= 64 or any(ord(c) < 32 for c in name):
+                raise ApiError(400, "invalid_display_name", "display name is invalid")
+            current["displayName"] = name.strip()
+        if "avatar" in value:
+            if not isinstance(value["avatar"], str) or value["avatar"] not in {"person", "camera", "shield", "eye", "star", "sun"}:
+                raise ApiError(400, "invalid_avatar", "avatar is invalid")
+            current["avatar"] = value["avatar"]
+        with self.lock, self.db:
+            self.account_preference(username, "profile", {"value": current}, write=True)
+            row = self.db.execute("SELECT id FROM users WHERE username=?", (username,)).fetchone()
+            self._audit("account.profile.updated", username, row["id"], "completed")
+        return self.account_profile(username)
+
+    def change_own_password(self, username: str, value: Any) -> dict[str, bool]:
+        value = require_exact_object(value, {"currentPassword", "newPassword"},
+                                     {"currentPassword", "newPassword"})
+        if not isinstance(value["currentPassword"], str) or not isinstance(value["newPassword"], str):
+            raise ApiError(400, "invalid_password", "password must be a string")
+        with self.lock, self.db:
+            row = self.db.execute("SELECT * FROM users WHERE username=? AND enabled=1", (username,)).fetchone()
+            if row is None or not self.hasher.verify(row["password_hash"], value["currentPassword"]):
+                raise ApiError(401, "invalid_credentials", "current password was rejected")
+            encoded = self.hasher.hash(value["newPassword"])
+            self.db.execute("UPDATE users SET password_hash=?,revision=revision+1,updated_at=? WHERE id=?",
+                            (encoded, now_seconds(), row["id"]))
+            self._audit("account.password.changed", username, row["id"], "completed")
+        return {"changed": True}
 
     def update_user(self, user_id: str, value: Any, expected_revision: int,
                     actor: str = "web-session") -> dict[str, Any]:
@@ -1990,6 +2079,12 @@ class Handler(http.server.BaseHTTPRequestHandler):
         if self.command == "GET" and path == "/health":
             self.response(200, {"status": "ok", "revision": STORE.revision()})
             return
+        if path == "/auth/setup" and self.command == "GET":
+            self.response(200, STORE.setup_status())
+            return
+        if path == "/auth/setup" and self.command == "POST":
+            self.response(201, STORE.register_first_admin(self.read_json()))
+            return
         if path == "/auth/login" and self.command == "POST":
             value = self.read_json()
             require_exact_object(value, {"username", "password", "clientKey"}, {"username", "password", "clientKey"})
@@ -2018,6 +2113,26 @@ class Handler(http.server.BaseHTTPRequestHandler):
                                  {"username", "permission"})
             self.response(200, STORE.authorize(value["username"], value["permission"],
                                                 value.get("cameraId", ""), value.get("groupId", "")))
+        elif path == "/account/me" and self.command in {"GET", "PATCH"}:
+            username = self.headers.get("X-WebObs-Principal", "")
+            if not USERNAME.fullmatch(username):
+                raise ApiError(401, "account_rejected", "account is unavailable")
+            self.response(200, STORE.account_profile(username) if self.command == "GET" else
+                          STORE.update_account_profile(username, self.read_json()))
+        elif path == "/account/password" and self.command == "POST":
+            username = self.headers.get("X-WebObs-Principal", "")
+            if not USERNAME.fullmatch(username):
+                raise ApiError(401, "account_rejected", "account is unavailable")
+            self.response(200, STORE.change_own_password(username, self.read_json()))
+        elif path in {"/account/preferences/monitor-view", "/account/preferences/workspace-layout",
+                      "/account/preferences/config-profiles", "/account/preferences/active-profile",
+                      "/account/preferences/camera-preferences"} and self.command in {"GET", "PUT"}:
+            username = self.headers.get("X-WebObs-Principal", "")
+            if not USERNAME.fullmatch(username):
+                raise ApiError(401, "account_rejected", "account is unavailable")
+            self.response(200, STORE.account_preference(username, path.rsplit("/", 1)[-1],
+                                                        self.read_json() if self.command == "PUT" else None,
+                                                        self.command == "PUT"))
         elif path == "/roles" and self.command == "GET":
             self.response(200, {"roles": [{"id": role, "permissions": sorted(permissions)}
                                            for role, permissions in ROLE_PERMISSIONS.items()]})
@@ -2102,6 +2217,9 @@ class Handler(http.server.BaseHTTPRequestHandler):
     def do_PATCH(self) -> None:  # noqa: N802
         self.dispatch()
 
+    def do_PUT(self) -> None:  # noqa: N802
+        self.dispatch()
+
     def do_DELETE(self) -> None:  # noqa: N802
         self.dispatch()
 
@@ -2173,9 +2291,6 @@ class ClusterHandler(Handler):
 def validate_compatibility_auth(value: str, store: ClusterStore) -> None:
     if value not in {"true", "false"}:
         raise RuntimeError("WEBOBS_COMPAT_BASIC_AUTH must be true or false")
-    if value == "false" and not store.has_enabled_admin():
-        raise RuntimeError(
-            "compatibility Basic Auth cannot be disabled before an enabled database administrator exists")
 
 
 def main() -> None:

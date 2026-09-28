@@ -232,12 +232,14 @@ export interface CameraProfile {
   audioExpectation?: AudioExpectation; probeState?: string; lastProbeAt?: number; tracks?: TrackDescriptor[];
 }
 export interface CameraRecord {
-  id: string; name: string; address: string; adapter: CameraAdapter; credentialsRef: string;
+  id: string; name: string; address: string; addressDisplay?: string; adapter: CameraAdapter; credentialsRef: string;
+  credentialsConfigured?: boolean;
   hardwareDecode: 'auto' | 'on' | 'off'; capabilities: Record<string, unknown>; health: string;
   profiles: CameraProfile[]; createdAt: number; updatedAt: number; kind?: CameraKind; enabled?: boolean;
   groupId?: string; tags?: string[]; revision?: number;
 }
 export interface SourceCatalogProfile extends Omit<CameraProfile, 'endpoint'> {
+  autoProbe?: boolean; probeAttempts?: number; probeError?: string;
   endpointDisplay: string; enabled: boolean; transportMode: TransportMode; liveBitrateCapKbps: number | null;
   audioExpectation: AudioExpectation; probeState: string; lastProbeAt: number; tracks: TrackDescriptor[];
   allowInsecureHttp: boolean;
@@ -301,9 +303,15 @@ export interface CameraDetection {
   adapter: CameraAdapter;
   probe: string;
   contentType?: string;
+  discoveryHint?: string;
   profileVersion?: 'T' | 'S';
   capabilities?: Record<string, unknown>;
   profiles: CameraProfile[];
+  /** F6-01: userinfo was split out of the submitted URL. */
+  credentialsExtracted?: boolean;
+  username?: string;
+  password?: string;
+  authRequired?: boolean;
 }
 export interface OnvifPreset { token: string; name: string; }
 export interface OnvifEvent { topic: string; properties: Record<string, string>; }

@@ -242,7 +242,7 @@ test('migrates MonitorView v1 safely and keeps operational details bounded', asy
       details: issue?.technicalDetails, silence: audio.amplitudeToDbfs(0), unity: audio.amplitudeToDbfs(1),
       half: audio.amplitudeToDbfs(.5) };
   });
-  expect({ ...result, half: undefined }).toEqual({ version: 4, largeCount: 4, localMonitorVolume: 1,
+  expect({ ...result, half: undefined }).toEqual({ version: 5, largeCount: 4, localMonitorVolume: 1,
     panels: { detailsOpen: false, issueCenterExpanded: false },
     details: { codec: 'h264', retryCount: 2 }, silence: -120, unity: 0,
     half: undefined });
@@ -266,7 +266,7 @@ test('normalizes per-source decorations and removes stale overrides', async ({ p
       audio: normalized.sourceDecorations['camera-1'].audioMeter,
       promotion: normalized.sourceDecorations['camera-1'].promotionKinds };
   });
-  expect(result.version).toBe(4);
+  expect(result.version).toBe(5);
   expect(result.ids).toEqual(['camera-1']);
   expect(result.telemetry.textOpacity).toBe(1);
   expect(result.telemetry.backgroundOpacity).toBe(0);

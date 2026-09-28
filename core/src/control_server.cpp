@@ -360,6 +360,56 @@ ClusterLoginResult cluster_login(std::string_view username, std::string_view pas
     return result;
 }
 
+HttpResponse response(http::status status, unsigned int version, std::string body,
+                      std::string_view content_type = "application/json; charset=utf-8",
+                      std::string_view cache_control = "no-store");
+
+HttpResponse cluster_first_run_setup(const HttpRequest &request)
+{
+    const unsigned int version = request.version();
+    if (!cluster_authentication_enabled())
+        return response(http::status::service_unavailable, version,
+                        error_body("registration_unavailable", "account service is unavailable"));
+    CURL *handle = curl_easy_init();
+    if (!handle)
+        return response(http::status::service_unavailable, version,
+                        error_body("registration_unavailable", "account service is unavailable"));
+    std::string body;
+    curl_slist *headers = nullptr;
+    if (request.method() == http::verb::post)
+        headers = curl_slist_append(headers, "Content-Type: application/json");
+    curl_easy_setopt(handle, CURLOPT_URL, "http://127.0.0.1:8095/auth/setup");
+    curl_easy_setopt(handle, CURLOPT_PROTOCOLS_STR, "http");
+    curl_easy_setopt(handle, CURLOPT_CONNECTTIMEOUT_MS, 500L);
+    curl_easy_setopt(handle, CURLOPT_TIMEOUT_MS, 3000L);
+    curl_easy_setopt(handle, CURLOPT_NOSIGNAL, 1L);
+    curl_easy_setopt(handle, CURLOPT_FOLLOWLOCATION, 0L);
+    curl_easy_setopt(handle, CURLOPT_HTTPHEADER, headers);
+    if (request.method() == http::verb::post) {
+        curl_easy_setopt(handle, CURLOPT_POSTFIELDS, request.body().data());
+        curl_easy_setopt(handle, CURLOPT_POSTFIELDSIZE_LARGE, static_cast<curl_off_t>(request.body().size()));
+    }
+    curl_easy_setopt(handle, CURLOPT_WRITEFUNCTION,
+        +[](char *data, std::size_t size, std::size_t count, void *context) -> std::size_t {
+            const std::size_t bytes = size * count;
+            auto &destination = *static_cast<std::string *>(context);
+            if (bytes > 16 * 1024 || destination.size() > 16 * 1024 - bytes)
+                return 0;
+            destination.append(data, bytes);
+            return bytes;
+        });
+    curl_easy_setopt(handle, CURLOPT_WRITEDATA, &body);
+    long status = 0;
+    if (curl_easy_perform(handle) == CURLE_OK)
+        curl_easy_getinfo(handle, CURLINFO_RESPONSE_CODE, &status);
+    curl_slist_free_all(headers);
+    curl_easy_cleanup(handle);
+    if (status < 200 || status > 499)
+        return response(http::status::service_unavailable, version,
+                        error_body("registration_unavailable", "account service is unavailable"));
+    return response(static_cast<http::status>(status), version, body);
+}
+
 std::string permission_for_request(const HttpRequest &request)
 {
     const std::string_view target = view(request.target());
@@ -492,6 +542,7 @@ std::string camera_scope_for_target(std::string_view target, std::string_view bo
         return "__invalid_scope__";
     }
     for (const std::string_view prefix : {std::string_view("/api/v1/cameras/"),
+                                          std::string_view("/api/v1/account-cameras/"),
                                           std::string_view("/api/v2/source-catalog/")}) {
         if (!target.starts_with(prefix))
             continue;
@@ -597,8 +648,8 @@ void set_security_headers(HttpResponse &response, std::string_view content_type,
 }
 
 HttpResponse response(http::status status, unsigned int version, std::string body,
-                      std::string_view content_type = "application/json; charset=utf-8",
-                      std::string_view cache_control = "no-store")
+                      std::string_view content_type,
+                      std::string_view cache_control)
 {
     HttpResponse result(status, version);
     set_security_headers(result, content_type, cache_control);
@@ -615,6 +666,8 @@ struct ResolvedCameraEndpoint {
     // route does not have to rediscover them by reading the live stream.
     std::string video_codec;
     std::string audio_codec;
+    std::string transport_mode;
+    std::optional<std::vector<AudioTrackDescriptor>> probed_audio_tracks;
 };
 
 std::optional<ResolvedCameraEndpoint> resolve_camera_endpoint(std::string_view camera_id,
@@ -654,7 +707,19 @@ std::optional<ResolvedCameraEndpoint> resolve_camera_endpoint(std::string_view c
         result = ResolvedCameraEndpoint{
             json_string_value(endpoint), json_string_value(adapter),
             json_is_string(video_codec) ? json_string_value(video_codec) : "",
-            json_is_string(audio_codec) ? json_string_value(audio_codec) : ""};
+            json_is_string(audio_codec) ? json_string_value(audio_codec) : "", "auto", std::nullopt};
+        if (json_t *transport = json_object_get(root, "transportMode"); json_is_string(transport))
+            result->transport_mode = json_string_value(transport);
+        if (json_is_true(json_object_get(root, "tracksProbed")) && json_is_array(json_object_get(root, "audioTracks"))) {
+            json_t *probe = json_object();
+            json_object_set(probe, "streams", json_object_get(root, "audioTracks"));
+            char *encoded = json_dumps(probe, JSON_COMPACT);
+            if (encoded) {
+                result->probed_audio_tracks = parse_audio_tracks(encoded);
+                free(encoded);
+            }
+            json_decref(probe);
+        }
     }
     json_decref(root);
     return result;
@@ -794,6 +859,32 @@ public:
         return create_validated(request, *route, browser_prefix);
     }
 
+    HttpResponse create_account_camera(const HttpRequest &request, std::string_view camera_id,
+                                       std::string_view profile_id)
+    {
+        if (auto invalid = validate_offer(request))
+            return std::move(*invalid);
+        SceneSource source;
+        source.id = "account-" + std::to_string(camera_id.size()) + "-" +
+                    std::string(camera_id) + "-" + std::string(profile_id);
+        source.kind = "camera";
+        source.camera_id = std::string(camera_id);
+        source.profile_id = std::string(profile_id);
+        source.transport = "tcp";
+        std::optional<std::string> route;
+        {
+            const auto route_lock = route_lock_for(source.id);
+            const std::lock_guard operation_lock(*route_lock);
+            route = ensure_playback_route(source);
+        }
+        if (!route)
+            return response(http::status::bad_gateway, request.version(),
+                            error_body("camera_route", "camera playback route is unavailable"));
+        const std::string prefix = "/api/v1/account-cameras/" + std::string(camera_id) + "/" +
+                                   std::string(profile_id) + "/whep/session/";
+        return create_validated(request, *route, prefix, {}, source.id);
+    }
+
     HttpResponse create_client_plan(const HttpRequest &request, std::string_view plan_id,
                                     std::string_view client_id, std::string_view camera_id,
                                     std::string_view profile_id, std::string_view topology)
@@ -847,6 +938,14 @@ public:
     {
         const std::string browser_prefix = "/api/v1/sources/" + std::string(source_id) + "/whep/session/";
         return remove(request, token, browser_prefix);
+    }
+
+    HttpResponse remove_account_camera(const HttpRequest &request, std::string_view camera_id,
+                                       std::string_view profile_id, std::string_view token)
+    {
+        const std::string prefix = "/api/v1/account-cameras/" + std::string(camera_id) + "/" +
+                                   std::string(profile_id) + "/whep/session/";
+        return remove(request, token, prefix);
     }
 
     HttpResponse remove_client_plan(const HttpRequest &request, std::string_view plan_id,
@@ -1331,16 +1430,18 @@ private:
     std::optional<std::string> ensure_direct_route(const SceneSource &source)
     {
         std::string effective_url = source.rtsp_url;
+        std::string source_transport = source.kind == "rtsp" ? source.transport : "tcp";
         if (source.kind == "camera") {
             const auto resolved = resolve_camera_endpoint(source.camera_id, source.profile_id);
             if (!resolved)
                 return std::nullopt;
             effective_url = resolved->endpoint;
+            if (resolved->transport_mode == "rtsp-udp") source_transport = "udp";
+            else if (resolved->transport_mode == "rtsp-udp-multicast") source_transport = "multicast";
         }
         const std::string source_key = source.kind == "camera"
                                            ? source.camera_id + "/" + source.profile_id
                                            : source.rtsp_url;
-        const std::string source_transport = source.kind == "rtsp" ? source.transport : "tcp";
         DirectRoute route;
         bool adding = false;
         std::string previous_hybrid_path;
@@ -1350,6 +1451,7 @@ private:
             const auto existing = direct_routes_.find(source.id);
             adding = existing == direct_routes_.end();
             if (!adding && existing->second.source_key == source_key &&
+                existing->second.rtsp_url == effective_url &&
                 existing->second.transport == source_transport)
                 return existing->second.path;
             if (adding) {
@@ -1507,6 +1609,13 @@ private:
      */
     std::optional<std::vector<AudioTrackDescriptor>> ensure_audio_tracks(const SceneSource &source)
     {
+        // Reuse the registry's latest successful probe, including confirmed
+        // absence of audio. A manual re-probe must supersede the route cache.
+        if (source.kind == "camera") {
+            const auto resolved = resolve_camera_endpoint(source.camera_id, source.profile_id);
+            if (!resolved) return std::nullopt;
+            if (resolved->probed_audio_tracks) return resolved->probed_audio_tracks;
+        }
         const auto direct_path = ensure_direct_route(source);
         if (!direct_path)
             return std::nullopt;
@@ -1625,16 +1734,37 @@ private:
     }
 
 public:
+    std::optional<SceneSource> audio_source(std::string_view source_id, std::string_view camera_id,
+                                           std::string_view profile_id)
+    {
+        if (!camera_id.empty()) {
+            SceneSource source;
+            source.id = "account-" + std::to_string(camera_id.size()) + "-" + std::string(camera_id) + "-" + std::string(profile_id);
+            source.kind = "camera";
+            source.camera_id = camera_id;
+            source.profile_id = profile_id;
+            source.transport = "tcp";
+            return source;
+        }
+        const auto document = controller_.private_document_snapshot();
+        for (const auto &source : document.sources)
+            if (source.id == source_id) return source;
+        return std::nullopt;
+    }
+
+    static std::string audio_base(std::string_view source_id, std::string_view camera_id, std::string_view profile_id)
+    {
+        return camera_id.empty() ? "/api/v1/sources/" + std::string(source_id) :
+            "/api/v1/account-cameras/" + std::string(camera_id) + "/" + std::string(profile_id);
+    }
+
     /** `GET /api/v1/sources/<id>/audio-tracks`: the real tracks of a source. */
-    HttpResponse audio_tracks(const HttpRequest &request, std::string_view source_id)
+    HttpResponse audio_tracks(const HttpRequest &request, std::string_view source_id,
+                              std::string_view camera_id = {}, std::string_view profile_id = {})
     {
         const unsigned int version = request.version();
-        const SceneDocument document = controller_.private_document_snapshot();
-        const auto source = std::find_if(document.sources.begin(), document.sources.end(),
-                                         [source_id](const SceneSource &candidate) {
-                                             return candidate.id == source_id;
-                                         });
-        if (source == document.sources.end())
+        const auto source = audio_source(source_id, camera_id, profile_id);
+        if (!source)
             return response(http::status::not_found, version,
                             error_body("source_not_found", "source not found"));
         if (source->kind != "rtsp" && source->kind != "camera")
@@ -1655,7 +1785,7 @@ public:
             if (!first)
                 body.push_back(',');
             first = false;
-            const std::string endpoint = "/api/v1/sources/" + source->id + "/audio-tracks/" +
+            const std::string endpoint = audio_base(source->id, camera_id, profile_id) + "/audio-tracks/" +
                                          std::to_string(track.index) + "/whep";
             body += "{\"index\":" + std::to_string(track.index) +
                     ",\"streamIndex\":" + std::to_string(track.stream_index) +
@@ -1673,16 +1803,12 @@ public:
     }
 
     HttpResponse create_audio_track(const HttpRequest &request, std::string_view source_id,
-                                    int track_index)
+                                    int track_index, std::string_view camera_id = {}, std::string_view profile_id = {})
     {
         if (auto invalid = validate_offer(request))
             return std::move(*invalid);
-        const SceneDocument document = controller_.private_document_snapshot();
-        const auto source = std::find_if(document.sources.begin(), document.sources.end(),
-                                         [source_id](const SceneSource &candidate) {
-                                             return candidate.id == source_id;
-                                         });
-        if (source == document.sources.end())
+        const auto source = audio_source(source_id, camera_id, profile_id);
+        if (!source)
             return response(http::status::not_found, request.version(),
                             error_body("source_not_found", "source not found"));
         if (source->kind != "rtsp" && source->kind != "camera")
@@ -1708,14 +1834,16 @@ public:
         if (!route)
             return response(http::status::bad_gateway, request.version(),
                             error_body("audio_route", "audio-only source routing is unavailable"));
-        return create_validated(request, *route, audio_session_prefix(source_id, track_index), {},
+        const auto prefix = audio_base(source->id, camera_id, profile_id) + "/audio-tracks/" + std::to_string(track_index) + "/whep/session/";
+        return create_validated(request, *route, prefix, {},
                                 source->id, track_index);
     }
 
     HttpResponse remove_audio_track(const HttpRequest &request, std::string_view source_id,
-                                    int track_index, std::string_view token)
+                                    int track_index, std::string_view token,
+                                    std::string_view camera_id = {}, std::string_view profile_id = {})
     {
-        return remove(request, token, audio_session_prefix(source_id, track_index));
+        return remove(request, token, audio_base(source_id, camera_id, profile_id) + "/audio-tracks/" + std::to_string(track_index) + "/whep/session/");
     }
 
 private:
@@ -2031,6 +2159,16 @@ public:
             upstream_port = 8095;
             cluster_service = true;
         }
+        else if (target == "/api/v2/account/me" || target == "/api/v2/account/password" ||
+                 target == "/api/v2/account/preferences/monitor-view" ||
+                 target == "/api/v2/account/preferences/workspace-layout" ||
+                 target == "/api/v2/account/preferences/config-profiles" ||
+                 target == "/api/v2/account/preferences/active-profile" ||
+                 target == "/api/v2/account/preferences/camera-preferences") {
+            suffix = std::string(target.substr(std::string_view("/api/v2").size()));
+            upstream_port = 8095;
+            cluster_service = true;
+        }
         else if (request.method() == http::verb::get &&
                  target.starts_with("/api/v2/provider-media/") &&
                  hex_identifier(target.substr(std::string_view("/api/v2/provider-media/").size()))) {
@@ -2187,6 +2325,20 @@ public:
             }
             internal_admin_header = "X-WebObs-Internal-Admin: " + cluster_internal_token_;
             headers = curl_slist_append(headers, internal_admin_header.c_str());
+            if (suffix.starts_with("/account/")) {
+                const std::string_view principal = view(request["X-WebObs-Principal"]);
+                if (principal.empty() || principal.size() > 64 ||
+                    !std::all_of(principal.begin(), principal.end(), [](unsigned char character) {
+                        return std::isalnum(character) || character == '.' || character == '_' || character == '-';
+                    })) {
+                    curl_slist_free_all(headers);
+                    curl_easy_cleanup(handle);
+                    return response(http::status::unauthorized, request.version(),
+                                    error_body("account_rejected", "account session is unavailable"));
+                }
+                const std::string principal_header = "X-WebObs-Principal: " + std::string(principal);
+                headers = curl_slist_append(headers, principal_header.c_str());
+            }
         }
         curl_easy_setopt(handle, CURLOPT_URL, url.c_str());
         curl_easy_setopt(handle, CURLOPT_PROTOCOLS_STR, "http");
@@ -3131,6 +3283,7 @@ HttpResponse handle_request(const HttpRequest &request, SceneController &control
     }
 
     const bool v2_target = target.starts_with("/api/v3/analytics") ||
+                           target.starts_with("/api/v2/account/") ||
                            target == "/api/v2/enrollments" || target.starts_with("/api/v2/enrollments/") ||
                            target == "/api/v2/clients" || target.starts_with("/api/v2/clients/") ||
                            target == "/api/v2/client/bootstrap" || target.starts_with("/api/v2/client/bootstrap?") ||
@@ -3342,6 +3495,54 @@ HttpResponse handle_request(const HttpRequest &request, SceneController &control
                                        error_body("method_not_allowed", "use DELETE"));
         result.set(http::field::allow, "DELETE");
         return result;
+    }
+
+    constexpr std::string_view account_camera_prefix = "/api/v1/account-cameras/";
+    if (target.starts_with(account_camera_prefix)) {
+        const std::string_view route = target.substr(account_camera_prefix.size());
+        const std::size_t camera_end = route.find('/');
+        const std::size_t profile_end = camera_end == std::string_view::npos
+                                            ? std::string_view::npos : route.find('/', camera_end + 1);
+        if (camera_end == std::string_view::npos || profile_end == std::string_view::npos)
+            return response(http::status::not_found, version, error_body("not_found", "resource not found"));
+        const std::string_view camera_id = route.substr(0, camera_end);
+        const std::string_view profile_id = route.substr(camera_end + 1, profile_end - camera_end - 1);
+        const auto valid_id = [](std::string_view value) {
+            return !value.empty() && value.size() <= 64 &&
+                   std::all_of(value.begin(), value.end(), [](unsigned char character) {
+                       return std::isalnum(character) || character == '.' || character == '_' || character == '-';
+                   });
+        };
+        if (!valid_id(camera_id) || !valid_id(profile_id))
+            return response(http::status::not_found, version, error_body("not_found", "resource not found"));
+        const std::string_view operation = route.substr(profile_end);
+        if (operation == "/audio-tracks" && request.method() == http::verb::get)
+            return whep_proxy.audio_tracks(request, {}, camera_id, profile_id);
+        constexpr std::string_view audio_prefix = "/audio-tracks/";
+        if (operation.starts_with(audio_prefix)) {
+            const auto remainder = operation.substr(audio_prefix.size());
+            const auto separator = remainder.find('/');
+            const auto number = remainder.substr(0, separator);
+            if (separator == std::string_view::npos || number.empty() || number.size() > 2 ||
+                !std::all_of(number.begin(), number.end(), [](char c) { return c >= '0' && c <= '9'; }))
+                return response(http::status::not_found, version, error_body("not_found", "resource not found"));
+            const int index = std::stoi(std::string(number));
+            if (index >= 32)
+                return response(http::status::not_found, version, error_body("not_found", "resource not found"));
+            const auto action = remainder.substr(separator + 1);
+            if (action == "whep" && request.method() == http::verb::post)
+                return whep_proxy.create_audio_track(request, {}, index, camera_id, profile_id);
+            constexpr std::string_view audio_session = "whep/session/";
+            if (action.starts_with(audio_session) && request.method() == http::verb::delete_)
+                return whep_proxy.remove_audio_track(request, {}, index, action.substr(audio_session.size()), camera_id, profile_id);
+        }
+        if (operation == "/whep" && request.method() == http::verb::post)
+            return whep_proxy.create_account_camera(request, camera_id, profile_id);
+        constexpr std::string_view session_operation = "/whep/session/";
+        if (operation.starts_with(session_operation) && request.method() == http::verb::delete_)
+            return whep_proxy.remove_account_camera(request, camera_id, profile_id,
+                                                    operation.substr(session_operation.size()));
+        return response(http::status::not_found, version, error_body("not_found", "resource not found"));
     }
 
     constexpr std::string_view source_prefix = "/api/v1/sources/";
@@ -3688,6 +3889,22 @@ private:
         const bool login_request = target == "/api/v1/auth/login";
         const bool public_probe = request.method() == http::verb::get &&
                                   (target == "/api/v1/health" || target == "/api/v1/ready");
+        if (target == "/api/v1/auth/setup") {
+            if (request.method() != http::verb::get && request.method() != http::verb::post) {
+                send(response(http::status::method_not_allowed, version,
+                              error_body("method_not_allowed", "use GET or POST")));
+                return;
+            }
+            if (request.method() == http::verb::post &&
+                (!request_origin_allowed(request, false, allowed_origins_) ||
+                 !parse_login_body(request))) {
+                send(response(http::status::bad_request, version,
+                              error_body("registration_rejected", "valid same-origin credentials are required")));
+                return;
+            }
+            send(cluster_first_run_setup(request));
+            return;
+        }
         if (login_request) {
             if (request.method() != http::verb::post) {
                 HttpResponse result = response(http::status::method_not_allowed, version,
@@ -3834,7 +4051,8 @@ private:
             return;
         }
         if (session_record && !public_probe && !device_request && !static_resource &&
-            target != "/api/v1/auth/session" && cluster_authentication_enabled()) {
+            target != "/api/v1/auth/session" && !target.starts_with("/api/v2/account/") &&
+            cluster_authentication_enabled()) {
             const ClusterAuthorization authorization = cluster_authorize(session_record->user, request);
             const bool legacy_admin = basic_auth_enabled &&
                 session_record->user == authenticator_.configured_username();
@@ -3856,6 +4074,11 @@ private:
                               error_body("authorization_unavailable", "RBAC authorization is unavailable")));
                 return;
             }
+        }
+        if (target.starts_with("/api/v2/account/")) {
+            request.erase("X-WebObs-Principal");
+            if (session_record)
+                request.set("X-WebObs-Principal", session_record->user);
         }
         if (target.starts_with("/api/v3/analytics")) {
             // Bind every analytics runtime request to the already-authenticated

@@ -85,14 +85,14 @@ The full command creates `build/private-gates/linux-wsl2-chromium.json` only aft
 
 ## Local OCI publication / 本地 OCI 发布
 
-Stable v3.1 publication requires both platform receipts for the clean current revision and they must be less than 48 hours old:
+Stable v3 publication requires both platform receipts for the clean release revision and they must be less than 48 hours old. Every stable v3-M2 release from v3.1 onward also requires the four v3-M2 receipts. The current available candidate is v3.3; v3.1 is retained by an earlier immutable package and v3.2 is already the official release:
 
-正式 v3.1 发布要求两份收据均对应当前干净提交且生成时间不超过 48 小时：
+正式 v3 发布要求两份收据均对应最终干净提交且生成时间不超过 48 小时；v3.1 及之后的 M2 版本还需完整 v3-M2 收据：
 
 ```powershell
 python scripts\verify-local-gate-receipts.py
 .\scripts\release-image-local.ps1 `
-  -Image ghcr.io/owner/web-camera-monitor-wall -Version v3.1
+  -Image ghcr.io/owner/web-camera-monitor-wall -Version v3.3
 ```
 
 For the v3.0.1 user-test preview, receipts are intentionally not required, but the

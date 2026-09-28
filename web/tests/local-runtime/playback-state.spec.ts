@@ -70,7 +70,7 @@ test('reports live only after a presented frame and recovers from a stall', asyn
   expect(result.afterFrame.stage.playing).toBe(true);
 });
 
-test('reconnects with bounded jittered backoff after an ICE failure', async ({ page }) => {
+test('reconnects on the F6-10 3→5→10→20→60s ladder after an ICE failure', async ({ page }) => {
   await page.goto('/');
   const result = await page.evaluate(async () => {
     const answer = ['v=0', 'o=- 0 0 IN IP4 127.0.0.1', 's=-', 't=0 0',
@@ -102,7 +102,8 @@ test('reconnects with bounded jittered backoff after an ICE failure', async ({ p
       if (method === 'DELETE') return new Response(null, { status: 200 });
       return originalFetch(input, init);
     };
-    const { connectSource } = await import('/src/whep.ts');
+    const { connectSource, reconnectDelayMs } = await import('/src/whep.ts');
+    const ladder = [0, 1, 2, 3, 4, 5, 6, 20].map((attempt) => reconnectDelayMs(attempt, () => 0.5));
     const video = document.createElement('video');
     const states: string[] = [];
     const connection = connectSource(video, '/api/v1/sources/cam-2/whep', (state) => states.push(state));
@@ -117,17 +118,26 @@ test('reconnects with bounded jittered backoff after an ICE failure', async ({ p
     const started = performance.now();
     first.connectionState = 'failed';
     first.onconnectionstatechange?.();
-    await wait(2_500);
+    await wait(3_500);
     connection.close();
     return { liveState, states, reconnects: connection.getStage?.().reconnects, peers: peers.length,
-      delayMs: Math.round(performance.now() - started) };
+      delayMs: Math.round(performance.now() - started), ladder };
   });
   expect(result.liveState).toBe('live');
   expect(result.states).toContain('reconnecting');
   expect(result.reconnects).toBeGreaterThanOrEqual(1);
-  // A retry must be scheduled after the first backoff window, not immediately.
-  expect(result.delayMs).toBeGreaterThan(500);
+  // First rung is ~3s (± jitter), never an immediate retry.
+  expect(result.delayMs).toBeGreaterThan(2_000);
   expect(result.peers).toBeGreaterThanOrEqual(2);
+  // F6-10 ladder: 3,5,10,20,40,60 then stay at 60.
+  expect(result.ladder[0]).toBe(3_000);
+  expect(result.ladder[1]).toBe(5_000);
+  expect(result.ladder[2]).toBe(10_000);
+  expect(result.ladder[3]).toBe(20_000);
+  expect(result.ladder[4]).toBe(40_000);
+  expect(result.ladder[5]).toBe(60_000);
+  expect(result.ladder[6]).toBe(60_000);
+  expect(result.ladder[7]).toBe(60_000);
 });
 test('claims only the video codecs this browser can actually decode', async ({ page }) => {
   await page.goto('/');

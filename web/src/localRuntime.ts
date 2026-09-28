@@ -5,6 +5,43 @@ const DATABASE = 'webobs-local-v1';
 const VERSION = 2;
 const LEASE_MS = 7 * 24 * 60 * 60 * 1000;
 const STORES = ['identity', 'snapshot', 'localScenes', 'auditQueue', 'runtimeMeta', 'syncQueue', 'syncState'] as const;
+type AccountPreferenceKind = 'monitor-view' | 'workspace-layout' | 'config-profiles' | 'active-profile';
+const PREFERENCE_MIGRATION_KEY = 'webobs-account-preferences-migrated';
+function reportAccountSync(state: 'saved' | 'offline'): void {
+  window.dispatchEvent(new CustomEvent('webobs:account-sync', { detail: state }));
+}
+
+async function readAccountPreference<T>(kind: AccountPreferenceKind): Promise<T | null | undefined> {
+  const controller = new AbortController();
+  const timer = window.setTimeout(() => controller.abort(), 8000);
+  try {
+    const response = await fetch(`/api/v2/account/preferences/${kind}`, { cache: 'no-store', credentials: 'same-origin', signal: controller.signal });
+    if (!response.ok) { reportAccountSync('offline'); return undefined; }
+    reportAccountSync('saved');
+    const result = await response.json() as { value: T | null };
+    return result.value;
+  } catch { reportAccountSync('offline'); return undefined; }
+  finally { window.clearTimeout(timer); }
+}
+
+async function writeAccountPreference(kind: AccountPreferenceKind, value: object, signal?: AbortSignal): Promise<void> {
+  const controller = new AbortController();
+  const abort = () => controller.abort();
+  if (signal?.aborted) controller.abort();
+  else signal?.addEventListener('abort', abort, { once: true });
+  const timer = window.setTimeout(abort, 8000);
+  try {
+    const response = await fetch(`/api/v2/account/preferences/${kind}`, {
+      method: 'PUT', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ value }), signal: controller.signal,
+    });
+    if (response.ok) {
+      window.localStorage.setItem(`${PREFERENCE_MIGRATION_KEY}:${kind}`, '1');
+      reportAccountSync('saved');
+    } else reportAccountSync('offline');
+  } catch { reportAccountSync('offline'); /* Keep the encrypted local copy for temporary network failures. */ }
+  finally { window.clearTimeout(timer); signal?.removeEventListener('abort', abort); }
+}
 type StoreName = typeof STORES[number];
 
 interface EncryptedRecord {
@@ -344,21 +381,38 @@ export async function cacheSyncedScenes(documents: SyncDocument[]): Promise<void
   }, false);
 }
 
-export async function saveMonitorView(view: MonitorView): Promise<void> {
-  const expiresAt = Date.now() + LEASE_MS;
-  await put('runtimeMeta', 'monitor-view', await encrypt({ kind: 'monitor-view-v2', view }, expiresAt));
+let monitorViewWrites: Promise<void> = Promise.resolve();
+let monitorWriteController = new AbortController();
+export function saveMonitorView(view: MonitorView): Promise<void> {
+  const snapshot = structuredClone(view);
+  const signal = monitorWriteController.signal;
+  // Keep local encryption and remote writes in the same order, including across page changes.
+  monitorViewWrites = monitorViewWrites.catch(() => undefined).then(async () => {
+    if (signal.aborted) return;
+    const expiresAt = Date.now() + LEASE_MS;
+    const encrypted = await encrypt({ kind: 'monitor-view-v2', view: snapshot }, expiresAt);
+    if (signal.aborted) return;
+    await put('runtimeMeta', 'monitor-view', encrypted);
+    if (!signal.aborted) await writeAccountPreference('monitor-view', snapshot, signal);
+  });
+  return monitorViewWrites;
 }
 
 export async function saveWorkspaceLayout(layout: WorkspaceLayout): Promise<void> {
   await put('runtimeMeta', 'workspace-layout', await encrypt(layout, Date.now() + LEASE_MS));
+  await writeAccountPreference('workspace-layout', layout);
 }
 
 export async function loadWorkspaceLayout(): Promise<WorkspaceLayout | null> {
+  const remote = await readAccountPreference<WorkspaceLayout>('workspace-layout');
+  if (remote) return remote;
+  if (remote === null && window.localStorage.getItem(`${PREFERENCE_MIGRATION_KEY}:workspace-layout`)) return null;
   const record = await get<EncryptedRecord>('runtimeMeta', 'workspace-layout');
   if (!record || record.expiresAt <= Date.now()) return null;
   try {
     const decoded = await decrypt<WorkspaceLayout>(record);
     if (decoded.schemaVersion !== 1 || !['obs', 'classic'].includes(decoded.style) || !Array.isArray(decoded.docks)) return null;
+    if (remote === null) await writeAccountPreference('workspace-layout', decoded);
     return decoded;
   } catch { return null; }
 }
@@ -437,8 +491,17 @@ function announceConfigProfiles(): void {
 }
 
 export async function listLocalConfigProfiles(): Promise<LocalConfigProfile[]> {
+  const remote = await readAccountPreference<{ profiles: LocalConfigProfile[] }>('config-profiles');
+  if (remote && Array.isArray(remote.profiles)) {
+    const profiles = remote.profiles.filter(validateLocalConfigProfile).sort((left, right) => right.updatedAt - left.updatedAt);
+    await put('runtimeMeta', 'config-profiles', await encrypt(profiles, LOCAL_CONFIG_EXPIRY));
+    return profiles;
+  }
+  if (remote === null && window.localStorage.getItem(`${PREFERENCE_MIGRATION_KEY}:config-profiles`)) return [];
   const profiles = await loadEncryptedList<LocalConfigProfile>('config-profiles');
-  return profiles.filter(validateLocalConfigProfile).sort((left, right) => right.updatedAt - left.updatedAt);
+  const valid = profiles.filter(validateLocalConfigProfile).sort((left, right) => right.updatedAt - left.updatedAt);
+  if (remote === null && valid.length) await writeAccountPreference('config-profiles', { profiles: valid });
+  return valid;
 }
 
 export async function hasLocalConfigProfiles(): Promise<boolean> {
@@ -467,6 +530,7 @@ export async function saveLocalConfigProfile(name: string, studio: StudioDocumen
   const next = profiles.filter((candidate) => candidate.id !== profileId);
   next.push(profile);
   await put('runtimeMeta', 'config-profiles', await encrypt(next, LOCAL_CONFIG_EXPIRY));
+  await writeAccountPreference('config-profiles', { profiles: next });
   announceConfigProfiles();
   return profile;
 }
@@ -477,13 +541,16 @@ export async function deleteLocalConfigProfile(id: string): Promise<void> {
   const next = profiles.filter((profile) => profile.id !== id);
   if (next.length === profiles.length) return;
   await put('runtimeMeta', 'config-profiles', await encrypt(next, LOCAL_CONFIG_EXPIRY));
-  const active = await get<EncryptedRecord>('runtimeMeta', 'active-config-profile');
-  if (active) {
-    try {
-      const selected = await decrypt<{ id: string }>(active);
-      if (selected.id === id) await deleteRuntimeMeta('active-config-profile');
-    } catch { await deleteRuntimeMeta('active-config-profile'); }
+  await writeAccountPreference('config-profiles', { profiles: next });
+  const active = await readAccountPreference<{ id: string | null }>('active-profile');
+  const localActive = await get<EncryptedRecord>('runtimeMeta', 'active-config-profile');
+  let localId: string | null = null;
+  if (localActive) {
+    try { localId = (await decrypt<{ id: string }>(localActive)).id; }
+    catch { await deleteRuntimeMeta('active-config-profile'); }
   }
+  if (active?.id === id || (!active && localId === id)) await setActiveLocalConfigProfile(null);
+  else if (localId === id) await deleteRuntimeMeta('active-config-profile');
   announceConfigProfiles();
 }
 
@@ -495,15 +562,21 @@ export async function setActiveLocalConfigProfile(id: string | null): Promise<vo
     if (!profile) throw new Error('本地配置不存在');
     await put('runtimeMeta', 'active-config-profile', await encrypt({ id }, LOCAL_CONFIG_EXPIRY));
   }
+  await writeAccountPreference('active-profile', { id });
   window.dispatchEvent(new CustomEvent('webobs:config-profile-selected', { detail: id }));
 }
 
 export async function loadActiveLocalConfigProfile(): Promise<LocalConfigProfile | null> {
+  const remote = await readAccountPreference<{ id: string | null }>('active-profile');
+  if (remote) return (await listLocalConfigProfiles()).find((profile) => profile.id === remote.id) ?? null;
+  if (remote === null && window.localStorage.getItem(`${PREFERENCE_MIGRATION_KEY}:active-profile`)) return null;
   const record = await get<EncryptedRecord>('runtimeMeta', 'active-config-profile');
   if (!record || record.expiresAt <= Date.now()) return null;
   try {
     const selected = await decrypt<{ id: string }>(record);
-    return (await listLocalConfigProfiles()).find((profile) => profile.id === selected.id) ?? null;
+    const profile = (await listLocalConfigProfiles()).find((candidate) => candidate.id === selected.id) ?? null;
+    if (remote === null && profile) await writeAccountPreference('active-profile', { id: profile.id });
+    return profile;
   } catch { return null; }
 }
 
@@ -565,11 +638,17 @@ export async function importLocalConfigBundle(value: unknown): Promise<LocalConf
 }
 
 export async function loadMonitorView(): Promise<MonitorView | null> {
+  await monitorViewWrites.catch(() => undefined);
+  const remote = await readAccountPreference<MonitorView>('monitor-view');
+  if (remote) return remote;
+  if (remote === null && window.localStorage.getItem(`${PREFERENCE_MIGRATION_KEY}:monitor-view`)) return null;
   const record = await get<EncryptedRecord>('runtimeMeta', 'monitor-view');
   if (!record || record.expiresAt <= Date.now()) return null;
   try {
     const decoded = await decrypt<{ kind: 'monitor-view-v1' | 'monitor-view-v2'; view: MonitorView }>(record);
-    return decoded.kind === 'monitor-view-v1' || decoded.kind === 'monitor-view-v2' ? decoded.view : null;
+    if (decoded.kind !== 'monitor-view-v1' && decoded.kind !== 'monitor-view-v2') return null;
+    if (remote === null) await writeAccountPreference('monitor-view', decoded.view);
+    return decoded.view;
   } catch {
     return null;
   }
@@ -609,6 +688,10 @@ export async function loadOfflineStudio(): Promise<{ studio: StudioDocument; sta
 }
 
 export async function clearPrivateRuntimeState(): Promise<void> {
+  window.dispatchEvent(new Event('webobs:account-clearing'));
+  monitorWriteController.abort();
+  await monitorViewWrites.catch(() => undefined);
+  monitorWriteController = new AbortController();
   const db = await database();
   try {
     const transaction = db.transaction(['identity', 'snapshot', 'localScenes', 'auditQueue', 'runtimeMeta', 'syncQueue', 'syncState'], 'readwrite');
@@ -616,6 +699,8 @@ export async function clearPrivateRuntimeState(): Promise<void> {
     transaction.objectStore('runtimeMeta').delete('lease');
     transaction.objectStore('runtimeMeta').delete('monitor-view');
     transaction.objectStore('runtimeMeta').delete('workspace-layout');
+    transaction.objectStore('runtimeMeta').delete('config-profiles');
+    transaction.objectStore('runtimeMeta').delete('active-config-profile');
     await transactionDone(transaction);
   } finally {
     db.close();

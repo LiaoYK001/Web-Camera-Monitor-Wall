@@ -210,6 +210,14 @@ class ServerPushMjpegHandler(BaseHTTPRequestHandler):
         self.end_headers()
 
     def do_GET(self) -> None:
+        if self.path in {"/", "/index.html"}:
+            body = b"<html><title>Network Camera VB-C60</title></html>"
+            self.send_response(200)
+            self.send_header("Content-Type", "text/html")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+            return
         if not self.path.startswith("/-wvhttp-01-/video.cgi?"):
             self.send_response(404); self.send_header("Content-Length", "0"); self.end_headers(); return
         jpeg = b"\xff\xd8\xff\xe0webobs-mjpeg-fixture\xff\xd9"
@@ -333,7 +341,7 @@ class CameraRegistryTests(unittest.TestCase):
         self.assertEqual(page["schemaVersion"], 2)
         self.assertEqual(page["total"], 1)
         item = page["items"][0]
-        self.assertEqual(item["addressDisplay"], "rtsp://camera.example.invalid/live")
+        self.assertEqual(item["addressDisplay"], "rtsp://*****:*****@camera.example.invalid/live")
         self.assertNotIn("channel=", json.dumps(item))
         self.assertEqual(item["deviceCapabilities"], {
             "ptz": True, "snapshot": True, "talk": False,
@@ -357,6 +365,88 @@ class CameraRegistryTests(unittest.TestCase):
                 "SELECT * FROM operational_issues WHERE code='AUDIO_TRACK_MISSING'").fetchall()
             self.assertEqual(len(issues), 1)
             self.assertNotIn("camera.example.invalid", json.dumps(registry.issue_document(issues[0])))
+
+    def test_http_homepage_classification_never_fetches_user_controlled_url(self) -> None:
+        with patch.object(registry, "build_opener") as opener:
+            result = registry.classify("http://camera.example.invalid/")
+        opener.assert_not_called()
+        self.assertEqual(result["probe"], "homepage-unverified")
+        self.assertIn("服务器不会抓取", result["discoveryHint"])
+
+    def test_credentialed_profile_probe_uses_secret_without_exposing_endpoint(self) -> None:
+        camera = registry.validate_camera({
+            "id": "credential-probe", "name": "Credential probe", "adapter": "rtsp",
+            "address": "rtsp://user:pass@camera.example.invalid/live",
+            "profiles": [{"id": "main", "endpoint": "rtsp://camera.example.invalid/live"}],
+        })
+        registry.save_camera(camera, False)
+        payload = json.dumps({"streams": [{"index": 0, "codec_type": "video", "codec_name": "h264",
+                                        "width": 640, "height": 360, "avg_frame_rate": "15/1"}]}).encode()
+        with patch.object(registry.subprocess, "run", return_value=subprocess.CompletedProcess(
+                args=[], returncode=0, stdout=payload, stderr=b"")) as runner:
+            result = registry.probe_source_profile("credential-probe", "main")
+        self.assertEqual(result["probeState"], "ready")
+        self.assertEqual(result["width"], 640)
+        self.assertNotIn("endpoint", result)
+        self.assertIn("user:pass@", runner.call_args.args[0][-1])
+        command = runner.call_args.args[0]
+        self.assertEqual(command[command.index("-rtsp_transport") + 1], "tcp")
+        self.assertEqual(registry.source_catalog("")["items"][0]["health"], "online")
+        with registry.connect() as database:
+            resolved = registry.resolve_profile(database, "credential-probe", "main")
+        self.assertTrue(resolved["tracksProbed"])
+        self.assertEqual(resolved["audioTracks"], [])
+
+    def test_automatic_probe_retry_limit_health_and_manual_recovery(self) -> None:
+        registry.invalidate_probe_results()
+        registry.save_camera(registry.validate_camera({
+            "id": "auto-probe", "name": "Auto probe", "adapter": "rtsp",
+            "address": "rtsp://camera.example.invalid/live",
+            "profiles": [{"id": "main", "endpoint": "rtsp://camera.example.invalid/live"}],
+        }), False)
+        self.assertEqual(registry.automatic_probe_candidates(), [("auto-probe", "main")])
+        failure = subprocess.CompletedProcess([], 1, b"", b"RTSP connection refused")
+        with patch.object(registry.subprocess, "run", return_value=failure):
+            for attempt in range(10):
+                with self.assertRaisesRegex(ValueError, "network_unreachable"):
+                    registry.probe_source_profile("auto-probe", "main")
+                item = registry.source_catalog("")["items"][0]
+                self.assertEqual(item["health"], "offline")
+                self.assertEqual(item["profiles"][0]["probeAttempts"], attempt + 1)
+                self.assertEqual(registry.automatic_probe_candidates(), [])
+                self.assertEqual(registry.automatic_probe_candidates(int(time.time()) + 31),
+                                 [("auto-probe", "main")] if attempt < 9 else [])
+        self.assertNotIn("secret", json.dumps(item))
+        payload = json.dumps({"streams": [
+            {"index": 0, "codec_type": "video", "codec_name": "hevc"},
+            {"index": 1, "codec_type": "audio", "codec_name": "pcm_alaw", "channels": 1, "sample_rate": "8000"},
+        ]}).encode()
+        with patch.object(registry.subprocess, "run", return_value=subprocess.CompletedProcess([], 0, payload, b"")):
+            result = registry.probe_source_profile("auto-probe", "main")
+        self.assertEqual(result["probeAttempts"], 0)
+        self.assertEqual(result["probeError"], "")
+        self.assertEqual(registry.source_catalog("")["items"][0]["health"], "online")
+        self.assertEqual(registry.automatic_probe_candidates(int(time.time()) + 60), [])
+        with registry.connect() as database:
+            resolved = registry.resolve_profile(database, "auto-probe", "main")
+        self.assertEqual(resolved["audioTracks"][0]["codec_name"], "pcm_alaw")
+        item = registry.patch_source_catalog("auto-probe", {"profiles": [{"id": "main", "autoProbe": False}]}, 1)
+        self.assertFalse(item["profiles"][0]["autoProbe"])
+        registry.patch_source_catalog("auto-probe", {"profiles": [{"id": "main", "transportMode": "rtsp-udp"}]}, 2)
+        self.assertEqual(registry.automatic_probe_candidates(), [])
+        registry.patch_source_catalog("auto-probe", {"profiles": [{"id": "main", "autoProbe": True}]}, 3)
+        self.assertEqual(registry.automatic_probe_candidates(), [("auto-probe", "main")])
+
+    def test_missing_credentials_persists_failed_probe_and_offline_health(self) -> None:
+        registry.save_camera(registry.validate_camera({
+            "id": "missing-secret", "name": "Missing secret", "adapter": "rtsp",
+            "address": "rtsp://camera.example.invalid/live", "credentialsRef": "absent",
+            "profiles": [{"id": "main", "endpoint": "rtsp://camera.example.invalid/live"}],
+        }), False)
+        result = registry.probe_source_profile("missing-secret", "main")
+        self.assertEqual(result["probeError"], "credentials_unavailable")
+        self.assertEqual(result["probeAttempts"], 1)
+        self.assertEqual(registry.source_catalog("")["items"][0]["health"], "offline")
 
     def test_registry_v2_batch_is_atomic_on_revision_conflict(self) -> None:
         for camera_id in ("batch-one", "batch-two"):
@@ -739,6 +829,53 @@ class CameraRegistryTests(unittest.TestCase):
                 "adapter": "rtsp", "credentialsRef": "../escape", "profiles": [],
             })
 
+    def test_f6_01_embedded_credentials_are_split_stored_and_redacted(self) -> None:
+        """F6-01: URL userinfo is accepted once, stored as a secret, never persisted."""
+        camera = registry.validate_camera({
+            "id": "hik-201", "name": "Hik 201",
+            "address": "rtsp://user:pass@camera.example.invalid:554/Streaming/Channels/201",
+            "adapter": "rtsp", "profiles": [{
+                "id": "main", "name": "Main", "role": "main",
+                "endpoint": "rtsp://user:pass@camera.example.invalid:554/Streaming/Channels/201",
+                "videoCodec": "h264", "audioCodec": "aac", "width": 1920, "height": 1080, "fps": 25,
+            }],
+        })
+        self.assertNotIn("__pendingCredentials", camera["address"])
+        self.assertNotIn("pass", camera["address"])
+        self.assertEqual(camera["__pendingCredentials"], ("user", "pass"))
+        stored = registry.save_camera(camera, False)
+        self.assertEqual(stored["address"], "rtsp://camera.example.invalid:554/Streaming/Channels/201")
+        self.assertNotIn("user", stored["address"])
+        self.assertNotIn("pass", stored["address"])
+        self.assertTrue(stored["credentialsConfigured"])
+        self.assertIn("*****:*****@", stored["addressDisplay"])
+        self.assertNotIn("pass", str(stored).lower())
+        self.assertNotIn("password", str(stored).lower())
+        self.assertEqual(registry.load_credentials(stored["credentialsRef"]), ("user", "pass"))
+        rotated = registry.set_camera_credentials(stored["id"], "admin", "new-secret")
+        self.assertEqual(registry.load_credentials(rotated["credentialsRef"]), ("admin", "new-secret"))
+
+    def test_f6_01_classify_extracts_credentials_without_echoing_password(self) -> None:
+        result = registry.classify("rtsp://user:pass@camera.example.invalid/live")
+        self.assertEqual(result["address"], "rtsp://camera.example.invalid/live")
+        self.assertTrue(result["credentialsExtracted"])
+        self.assertNotIn("password", result)
+        self.assertNotIn("top-secret", json.dumps(result))
+        clean = registry.classify("rtsp://camera.example.invalid/live")
+        self.assertFalse(clean["credentialsExtracted"])
+
+    def test_f6_01_write_credentials_rejects_bad_pairs(self) -> None:
+        with self.assertRaises(ValueError):
+            registry.write_credentials("bad", "", "x" * 16)
+        with self.assertRaises(ValueError):
+            registry.write_credentials("bad", "user:colon", "x" * 16)
+        with self.assertRaises(PermissionError):
+            registry.write_credentials("../escape", "user", "password-value")
+        with self.assertRaises(PermissionError):
+            registry.write_credentials("nested/ref", "user", "password-value")
+        with self.assertRaises(PermissionError):
+            registry.write_credentials("..", "user", "password-value")
+
     def test_browser_direct_proof_is_tls_cors_bound_and_not_user_forgeable(self) -> None:
         openssl = shutil.which("openssl")
         if not openssl: self.skipTest("OpenSSL CLI is required for the TLS fixture")
@@ -844,6 +981,18 @@ class CameraRegistryTests(unittest.TestCase):
                 "adapter": detected["adapter"], "contentType": detected["contentType"],
                 "probe": detected["probe"],
             }))
+        finally:
+            server.shutdown(); server.server_close(); thread.join(timeout=2)
+
+    def test_canon_stream_path_can_be_added_explicitly(self) -> None:
+        server = HTTPServer(("127.0.0.1", 0), ServerPushMjpegHandler)
+        thread = threading.Thread(target=server.serve_forever, daemon=True); thread.start()
+        try:
+            address = f"127.0.0.1:{server.server_address[1]}/-wvhttp-01-/video.cgi?v=jpg:640x480"
+            detected = registry.classify(address)
+            self.assertEqual(detected["adapter"], "mjpeg")
+            self.assertEqual(detected["probe"], "http-server-push-mjpeg")
+            self.assertEqual(detected["profiles"][0]["endpoint"], f"http://{address}")
         finally:
             server.shutdown(); server.server_close(); thread.join(timeout=2)
 

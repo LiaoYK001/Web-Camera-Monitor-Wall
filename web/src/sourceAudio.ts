@@ -31,7 +31,7 @@ const inflight = new Map<string, Promise<SourceAudioTracks>>();
 
 export function invalidateSourceAudioTracks(sourceId?: string): void {
   if (sourceId === undefined) cache.clear();
-  else cache.delete(sourceId);
+  else for (const key of cache.keys()) if (key === sourceId || key.startsWith(`${sourceId}|`)) cache.delete(key);
 }
 
 export function cachedSourceAudioTracks(sourceId: string, now = Date.now()): SourceAudioTracks | undefined {
@@ -49,40 +49,44 @@ function isTrack(value: unknown): value is SourceAudioTrack {
   const track = value as Partial<SourceAudioTrack>;
   return Number.isInteger(track.index) && (track.index ?? -1) >= 0 &&
     typeof track.codec === 'string' &&
-    typeof track.endpoint === 'string' && track.endpoint.startsWith('/api/v1/sources/') &&
+    typeof track.endpoint === 'string' && /^\/api\/v1\/(?:sources\/[A-Za-z0-9._-]+|account-cameras\/[A-Za-z0-9._-]+\/[A-Za-z0-9._-]+)\/audio-tracks\/[0-9]+\/whep$/.test(track.endpoint) &&
     track.endpoint.endsWith('/whep');
 }
 
 /** Probe one source, deduplicating concurrent callers and reusing the TTL cache. */
-export function fetchSourceAudioTracks(sourceId: string, signal?: AbortSignal): Promise<SourceAudioTracks> {
-  const cached = cachedSourceAudioTracks(sourceId);
+export function fetchSourceAudioTracks(sourceId: string, signal?: AbortSignal, camera?: { cameraId: string; profileId: string }): Promise<SourceAudioTracks> {
+  const cacheKey = camera ? `${sourceId}|${camera.cameraId}/${camera.profileId}` : sourceId;
+  const cached = cachedSourceAudioTracks(cacheKey);
   if (cached && cached.status !== 'loading') return Promise.resolve(cached);
-  const pending = inflight.get(sourceId);
+  const pending = inflight.get(cacheKey);
   if (pending) return pending;
   const request = (async (): Promise<SourceAudioTracks> => {
     try {
-      const response = await fetch(`/api/v1/sources/${encodeURIComponent(sourceId)}/audio-tracks`,
+      const base = camera ? `/api/v1/account-cameras/${encodeURIComponent(camera.cameraId)}/${encodeURIComponent(camera.profileId)}` : `/api/v1/sources/${encodeURIComponent(sourceId)}`;
+      const response = await fetch(`${base}/audio-tracks`,
         { cache: 'no-store', signal });
       if (!response.ok) {
         const value: SourceAudioTracks = { status: 'unavailable', reason: response.status === 502 ? 'probe_failed' : `http_${response.status}` };
-        cache.set(sourceId, { at: Date.now(), value });
+        cache.set(cacheKey, { at: Date.now(), value });
         return value;
       }
       const payload = await response.json() as { tracks?: unknown };
-      const tracks = Array.isArray(payload.tracks) ? payload.tracks.filter(isTrack) : [];
+      if (!Array.isArray(payload.tracks) || !payload.tracks.every(isTrack))
+        return { status: 'unavailable', reason: 'invalid_response' };
+      const tracks = payload.tracks.filter(isTrack);
       const value: SourceAudioTracks = tracks.length > 0 ? { status: 'available', tracks } : { status: 'none' };
-      cache.set(sourceId, { at: Date.now(), value });
+      cache.set(cacheKey, { at: Date.now(), value });
       return value;
     } catch (error) {
       const aborted = error instanceof DOMException && error.name === 'AbortError';
       const value: SourceAudioTracks = { status: 'unavailable', reason: aborted ? 'aborted' : 'network' };
-      if (!aborted) cache.set(sourceId, { at: Date.now(), value });
+      if (!aborted) cache.set(cacheKey, { at: Date.now(), value });
       return value;
     } finally {
-      inflight.delete(sourceId);
+      inflight.delete(cacheKey);
     }
   })();
-  inflight.set(sourceId, request);
+  inflight.set(cacheKey, request);
   return request;
 }
 

@@ -85,6 +85,30 @@ def ports_free():
         try: sock.bind(('127.0.0.1', 8189))
         except OSError: raise StageError('ports', 'UDP 8189 已占用，请停止旧媒体服务。')
 
+
+def write_lan_mediamtx_config(lan_host: str) -> Path:
+    """Dev-only MediaMTX config for a trusted LAN (dev-lan-environment).
+
+    Widens WebRTC bind/ICE and allows RFC1918 clients so LAN browsers can pull
+    WHEP media. The product gateway/mediamtx.yml is unchanged.
+    """
+    source = (ROOT / 'gateway/mediamtx.yml').read_text(encoding='utf-8')
+    text = source
+    # Include CGNAT/VPN (100.64/10 Tailscale) and the advertised LAN host so
+    # auth does not reject peers that are not classic RFC1918.
+    text = text.replace('ips: [127.0.0.1, ::1]',
+                        f'ips: [127.0.0.1, ::1, 10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16, 100.64.0.0/10, {lan_host}]')
+    text = text.replace('webrtcAddress: 127.0.0.1:8889', 'webrtcAddress: 0.0.0.0:8889')
+    text = text.replace('webrtcLocalUDPAddress: :8189', 'webrtcLocalUDPAddress: 0.0.0.0:8189')
+    text = text.replace("webrtcLocalTCPAddress: ''", "webrtcLocalTCPAddress: '0.0.0.0:8190'")
+    text = text.replace('webrtcAdditionalHosts: [127.0.0.1]',
+                        f'webrtcAdditionalHosts: [127.0.0.1, {lan_host}]')
+    text = text.replace('webrtcIPsFromInterfaces: false', 'webrtcIPsFromInterfaces: true')
+    out = CACHE / f'mediamtx-lan-{lan_host.replace(":", "_")}.yml'
+    out.parent.mkdir(parents=True, exist_ok=True)
+    out.write_text(text, encoding='utf-8')
+    return out
+
 def start(name, args, env, health, timeout=10.0, stage=None):
     logfile = CACHE / 'logs' / f'{name}.log'
     stream = open(logfile, 'a'); handles.append(stream)
@@ -252,6 +276,9 @@ def main():
     # Long-run/background mode: do not stop when the parent closes stdin.
     parser.add_argument('--soak', action='store_true')
     parser.add_argument('--frontend-port', type=int, default=5173)
+    # argv, not env: Windows environment variables do not cross `wsl.exe --exec`.
+    parser.add_argument('--lan-host', default='',
+                        help='LAN IPv4 to advertise in WebRTC ICE (dev-lan-environment).')
     args = parser.parse_args()
     if args.install_deps:
         release = platform.freedesktop_os_release()
@@ -280,6 +307,7 @@ def main():
     except BlockingIOError: raise StageError('lock', '已有原生开发会话正在编译或运行，请先停止原会话。')
     ports_free()
     signal.signal(signal.SIGTERM, shutdown); signal.signal(signal.SIGINT, shutdown)
+    say(f'WEBOBS_NATIVE_SUPERVISOR_PID={os.getpid()}')
     if not args.soak:
         def watch_parent():
             try:
@@ -497,9 +525,7 @@ def main():
         'WEBOBS_NVR_CONFIG': str(data / 'nvr.json'), 'WEBOBS_NVR_STORAGE': str(CACHE / 'recordings'),
         'WEBOBS_NVR_DATABASE': str(CACHE / 'recordings/catalog.sqlite3'),
         'WEBOBS_CLUSTER_INTERNAL_TOKEN': os.urandom(32).hex(), 'WEBOBS_V2_INTERNAL_TOKEN': os.urandom(32).hex(),
-        'WEBOBS_REGISTRATION_ENABLED': 'true', 'WEBOBS_COMPAT_BASIC_AUTH': 'true',
-        'WEBOBS_AUTH_USERNAME_FILE': str(ROOT / 'secrets/webobs-dev-username.txt'),
-        'WEBOBS_AUTH_PASSWORD_FILE': str(ROOT / 'secrets/webobs-dev-password.txt'),
+        'WEBOBS_REGISTRATION_ENABLED': 'true', 'WEBOBS_COMPAT_BASIC_AUTH': 'false',
         'WEBOBS_SESSION_COOKIE_SECURE': 'false', 'WEBOBS_LISTEN_ADDRESS': '127.0.0.1',
         'WEBOBS_HTTP_PORT': '8080', 'WEBOBS_ALLOW_INSECURE_REMOTE': 'false',
         'WEBOBS_WEBRTC_ENABLED': 'true', 'WEBOBS_COMPOSITE_ENABLED': 'true' if args.composite else 'false',
@@ -513,9 +539,22 @@ def main():
         # WSL localhost forwarding carries TCP; provide ICE/TCP for Windows browsers.
         'MTX_WEBRTCLOCALTCPADDRESS': '127.0.0.1:8190',
     })
+    # LAN dev (dev-lan-environment): MediaMTX WebRTC must be reachable from other
+    # machines. The control plane itself stays on 127.0.0.1 and is reached through
+    # the Vite port-forward, so this only widens media ports for a trusted LAN.
+    lan_host = (getattr(args, 'lan_host', '') or os.environ.get('WEBOBS_LAN_HOST', '')).strip()
+    mediamtx_config = ROOT / 'gateway/mediamtx.yml'
+    if lan_host:
+        mediamtx_config = write_lan_mediamtx_config(lan_host)
+        env.update({
+            'WEBOBS_SESSION_COOKIE_SECURE': 'true',
+            'MTX_WEBRTCLOCALUDPADDRESS': '0.0.0.0:8189',
+            'MTX_WEBRTCLOCALTCPADDRESS': '0.0.0.0:8190',
+        })
+        say(f'LAN 媒体：MediaMTX WebRTC ICE 主机 {lan_host}；ICE/TCP 8190 需从 Windows 中继（WSL2 不转发远端 UDP/TCP）')
     # Prevent inherited production options from accidentally turning on Composite/recording.
     env.pop('WEBOBS_OUTPUT', None); env.pop('WEBOBS_RTSP_URL', None)
-    start('mediamtx', [media, ROOT / 'gateway/mediamtx.yml'], env,
+    start('mediamtx', [media, mediamtx_config], env,
           'http://127.0.0.1:9997/v3/config/global/get', stage='mediamtx')
     for name, source, port in [('camera','camera/camera_registry.py',8092), ('events','events/event_service.py',8093),
                                ('clients','v2/client_control_service.py',8094), ('cluster','cluster/cluster_service.py',8095),
@@ -523,7 +562,7 @@ def main():
         start(name, [sys.executable, ROOT / source], env, f'http://127.0.0.1:{port}/health')
     start('core', [core_build / 'webobsd'], env, 'http://127.0.0.1:8080/api/v1/health',
           timeout=300 if args.composite else 30, stage='core')
-    say(f'账号文件：{ROOT / "secrets"}；数据：{data}（独立于容器数据卷）')
+    say(f'账号数据库：{data / "cluster.sqlite3"}；首次访问请在登录页创建管理员账号')
     if args.composite:
         say('原生 Composite 已启用：来源 → OBS 合成 → H.264/Opus → MediaMTX → Program WHEP；启动器分别报告进程存活、引擎就绪与 Program 发布状态。')
         report_program_stages()

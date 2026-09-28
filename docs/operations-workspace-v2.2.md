@@ -26,6 +26,24 @@ The stable Hash routes are `#/monitor`, `#/studio`, `#/devices`, `#/audio`, `#/e
 
 ## Problem Center / 问题中心
 
+当前开发版的问题中心使用可键盘操作的侧栏弹窗，默认显示未解决的问题。可筛选待确认、已确认、已解决或全部状态，并手动刷新。确认请求执行期间禁用重复提交；失败时显示原因并允许重试。复制诊断失败时可展开技术详情手动复制。按 Esc 或“关闭”退出后，焦点回到打开侧栏的按钮。
+
+The current development version uses a keyboard-accessible drawer dialog, showing unresolved issues by default. Filter open, acknowledged, resolved, or all issues and refresh manually. Acknowledgment disables duplicate submissions and displays failures for retry. If copying fails, expand technical details and copy manually. Esc or Close returns focus to the opener.
+
+## Current settings workflow / 当前设置操作
+
+“系统设置 → 运行设置”支持集中编辑后点击“保存设置”。只提交发生变化的字段；探测超时限定 2–30 秒，问题保留上限限定 128–4096 条。保存失败保留输入；“撤销修改”恢复已载入的值。遇到版本冲突时使用“重新读取设置”，重新读取或离开页面前会提醒未保存的修改。
+
+账号配置档案及当前档案选择供同一账号的其他设备使用；本机备份仍保留在当前浏览器。保存、切换、导入、删除和恢复操作执行期间禁用重复操作。删除当前档案同时清除服务端的档案选择。
+
+Under **Settings → Runtime settings**, edit fields and choose **Save settings**. Only changed fields are sent. Probe timeout accepts 2–30 seconds; issue retention accepts 128–4096 entries. Failed saves retain edits; Undo restores the loaded values. On a revision conflict, reload settings. Reloading or leaving warns about unsaved changes.
+
+Account profiles and the active selection are available on other devices using the same account; local backups remain in the current browser. Save, switch, import, delete, and restore operations prevent duplicate actions while in progress. Deleting the active profile also clears its server-side selection.
+
+交互回归 / Interaction regression: 在 `web` 目录运行 / Run from `web`: `npx playwright test -c playwright.usability.config.ts`。内存模拟接口覆盖失败、慢请求与窄屏操作，不替代真实局域网媒体验证。 / In-memory fixtures cover failures, slow requests, and narrow screens; they do not replace real LAN media validation.
+
+## Issue data contract / 问题数据契约
+
 Server issues are deduplicated by `code + scopeKind + scopeId + component`; browser issues retain only stable IDs and an allowlist of technical fields. The UI supports severity/component/scope filters, acknowledge/resolved state, occurrence count, recommended actions and a redacted copy operation. Raw endpoints, credentials, response bodies, command lines, paths, PIDs and client addresses are forbidden.
 
 服务端问题按 `code + scopeKind + scopeId + component` 去重；浏览器问题只保留稳定 ID 和技术字段白名单。界面支持级别/组件/范围筛选、确认/解决状态、发生次数、处理建议和脱敏复制。原始端点、凭据、响应正文、命令行、路径、PID 与客户端地址禁止进入问题记录。

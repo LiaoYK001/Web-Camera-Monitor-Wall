@@ -1,5 +1,13 @@
 # MonitorView and analytics runtime / MonitorView 与分析运行时
 
+## Studio layers and projector / Studio 层级与投影
+
+Studio 的来源列表按从上到下的画面层级排列；拖动来源或按 `Alt+↑/↓` 可改层级，属性栏的“上移一层 / 下移一层”执行同一操作。修改属于草稿，点击保存 Studio 后生效。OBS 面板菜单中的来源和属性侧栏可以显示、隐藏、调整左右位置及宽度；画布固定在二者之间。
+
+监看设置里的“统计叠层（全部来源）”及位置、文字框和透明度控件会更新已配置电平表的来源；逐路设置仍可随后单独修改。投影默认采用“完整画面”，包含统计、电平表、超阈值边框及检测框；“投影内容”可选“仅画面”。独立投影窗口读取同一账号的监控偏好。浏览器若阻止独立窗口的自动音频分析，可点击“启用电平检测（静音）”。服务端 Composite Program 是单路合成媒体，浏览器逐源叠层只在 Direct 投影中呈现。
+
+The Studio source list is ordered from front to back. Drag a source or press `Alt+Up/Down` to change its layer; the property panel uses the same operation. Save Studio to commit the draft. The OBS panel menu controls the real source and property sidebars; the canvas stays between them. Global telemetry controls update existing source decorations, including sources with meters. Direct projectors default to the complete picture and can be switched to picture-only output. If browser autoplay blocks meter analysis in a detached window, use the silent meter-enable button. Browser per-source decorations are not part of the server Composite Program feed.
+
 > Status / 状态：v2-M5 is complete and published in stable v2.1 / v2-M5 已完成并随稳定版 v2.1 发布。
 
 ## View contract / 视图契约
@@ -25,6 +33,12 @@ The default target is 2 FPS, with 0.5/1/2/5 shortcuts and a validated 0.5–30 r
 Deterministic browser tests cover every 1–16 landscape/portrait M/S combination, larger M area, stable re-layout, pinned sequential/random windows, unavailable MJPEG telemetry, WebRTC byte/frame/codec/decoder deltas, low-power visibility decisions and promotion threshold/cooldown behavior / 确定性浏览器测试覆盖 1–16 路横竖屏全部 M/S 组合、M 面积更大、稳定重排、固定顺序/随机窗口、MJPEG 不可测统计、WebRTC 字节/帧/编码/解码器差分、低功耗可见性决策及事件提升阈值/冷却行为。
 
 ## Wall quick controls / 监控墙快捷控制
+
+### Account preference saving / 账号偏好保存
+
+当前开发版按账号保存监控偏好。打开监控页只读取配置；调整后约 250 毫秒合并保存，连续写入按顺序执行。切换到其他页面或隐藏浏览器时，会提交尚未发送的调整；退出账号时取消待写入操作。保存当前场景的设置会保留其他场景的逐源电平表与统计外观配置。独立来源预览不写回监控偏好。网络故障时仍保留加密本机副本，以界面同步状态为准；浏览器被强制关闭时无法保证尚未完成的请求送达。
+
+The current development version stores monitor preferences per account. Opening the monitor only reads preferences; edits are combined after about 250 ms and written in order. Navigating to another page or hiding the browser submits pending edits; clearing the account cancels pending writes. Saving the current scene preserves per-source meter and telemetry decorations from other scenes. Independent source previews do not write monitor preferences. Network failures retain an encrypted local copy; check the sync indicator. Forced browser termination cannot guarantee delivery of unfinished requests.
 
 The large-picture switch takes effect immediately: enabling it raises `largeCount` to at least one, checking an `M` row promotes that source, and the small/large ratio slider (10%–90%, default 50%) drives the auto layout so a small tile is the chosen share of a large tile while the canvas stays filled. The layout is a deterministic skyline packing over ordinary Scene v5 rectangles, so re-applying it is a stable fixed point.
 

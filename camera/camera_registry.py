@@ -29,7 +29,7 @@ from http.cookiejar import CookieJar
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.error import HTTPError, URLError
-from urllib.parse import parse_qs, urljoin, urlsplit
+from urllib.parse import parse_qs, unquote, urljoin, urlsplit
 from urllib.parse import quote, urlunsplit
 from urllib.request import (
     HTTPBasicAuthHandler, HTTPDigestAuthHandler, HTTPPasswordMgrWithDefaultRealm,
@@ -51,7 +51,7 @@ ADAPTERS = {
     "srt", "rtp", "v4l2",
 }
 ID_RE = re.compile(r"^[a-zA-Z0-9._-]{1,64}$")
-SECRET_REF_RE = re.compile(r"^[a-zA-Z0-9._/-]{0,256}$")
+SECRET_REF_RE = re.compile(r"^[a-zA-Z0-9._-]{0,128}$")
 PTZ_RATE_LOCK = threading.Lock()
 PTZ_LAST_COMMAND: dict[str, float] = {}
 PTZ_STOP_TIMERS: dict[str, threading.Timer] = {}
@@ -71,6 +71,8 @@ PROBE_LOCKS: dict[str, threading.Lock] = {}
 PROBE_RESULTS_GUARD = threading.Lock()
 PROBE_RESULTS: dict[str, tuple[float, dict]] = {}
 PROBE_RESULT_TTL_SECONDS = float(os.environ.get("WEBOBS_PROBE_CACHE_SECONDS", "15"))
+AUTO_PROBE_INTERVAL_SECONDS = 30
+AUTO_PROBE_MAX_ATTEMPTS = 10
 ONVIF_CLOCK_LOCK = threading.Lock()
 ONVIF_CLOCK_OFFSETS: dict[str, float] = {}
 ANALYTICS_SESSION_LOCK = threading.Lock()
@@ -324,6 +326,9 @@ def initialize() -> None:
             ("allow_insecure_http", "INTEGER NOT NULL DEFAULT 0"),
             ("probe_state", "TEXT NOT NULL DEFAULT 'legacy'"),
             ("last_probe_at", "INTEGER NOT NULL DEFAULT 0"),
+            ("auto_probe", "INTEGER NOT NULL DEFAULT 1"),
+            ("probe_attempts", "INTEGER NOT NULL DEFAULT 0"),
+            ("probe_error", "TEXT NOT NULL DEFAULT ''"),
         ):
             if name not in profile_columns:
                 database.execute(f"ALTER TABLE stream_profiles ADD COLUMN {name} {definition}")
@@ -409,17 +414,130 @@ def safe_endpoint(value: str, adapter: str) -> str:
     return value if "://" in value else "http://" + value
 
 
+def managed_secret_root() -> Path:
+    """Writable sibling of SECRET_ROOT for UI-created credentials (F6-01)."""
+    override = os.environ.get("WEBOBS_CAMERA_SECRET_WRITE_ROOT")
+    if override:
+        return Path(override)
+    try:
+        SECRET_ROOT.mkdir(parents=True, exist_ok=True)
+        if os.access(SECRET_ROOT, os.W_OK):
+            return SECRET_ROOT
+    except OSError:
+        pass
+    return DB_PATH.parent / "webobs-camera-credentials"
+
+
+def split_url_credentials(value: str) -> tuple[str, str, str]:
+    """Extract userinfo from a URL. Returns (clean_url, username, password).
+
+    Stored endpoints must never retain userinfo; F6-01 accepts it only as an
+    import convenience and immediately moves it into the credential store.
+    """
+    if not isinstance(value, str) or "://" not in value:
+        return value, "", ""
+    parsed = urlsplit(value)
+    if parsed.username is None and parsed.password is None:
+        return value, "", ""
+    username = unquote(parsed.username or "")
+    password = unquote(parsed.password or "")
+    host = parsed.hostname or ""
+    if not host:
+        raise ValueError("URL host is required when extracting credentials")
+    if ":" in host and not host.startswith("["):
+        host = f"[{host}]"
+    if parsed.port:
+        host = f"{host}:{parsed.port}"
+    clean = urlunsplit((parsed.scheme, host, parsed.path, parsed.query, ""))
+    return clean, username, password
+
+
+def validate_credential_pair(username: str, password: str) -> tuple[str, str]:
+    if not isinstance(username, str) or not isinstance(password, str):
+        raise ValueError("username and password must be strings")
+    if not (1 <= len(username.encode("utf-8")) <= 256) or any(ord(c) < 32 for c in username) or ":" in username:
+        raise ValueError("username must be 1-256 printable bytes without colon")
+    if not (1 <= len(password.encode("utf-8")) <= 512) or any(ord(c) < 32 for c in password):
+        raise ValueError("password must be 1-512 bytes without control characters")
+    return username, password
+
+
+def credential_secret_path(root: Path, credentials_ref: str) -> Path:
+    """Resolve a credential filename and prove it stays below its secret root."""
+    if (not isinstance(credentials_ref, str) or not SECRET_REF_RE.fullmatch(credentials_ref) or
+            not credentials_ref or ".." in credentials_ref):
+        raise PermissionError("camera credential reference is invalid")
+    safe_root = os.path.realpath(os.fspath(root))
+    safe_path = os.path.realpath(os.path.join(safe_root, f"{credentials_ref}.json"))
+    root_prefix = safe_root if safe_root.endswith(os.sep) else safe_root + os.sep
+    if not safe_path.startswith(root_prefix):
+        raise PermissionError("camera credential reference is invalid")
+    return Path(safe_path)
+
+
+def write_credentials(credentials_ref: str, username: str, password: str) -> str:
+    """Persist camera credentials as a 0600 secret file. Never returns the secret."""
+    username, password = validate_credential_pair(username, password)
+    root = managed_secret_root()
+    root.mkdir(parents=True, exist_ok=True)
+    try:
+        os.chmod(root, 0o700)
+    except OSError:
+        pass
+    secret_path = credential_secret_path(root, credentials_ref)
+    payload = json.dumps({"username": username, "password": password}, separators=(",", ":"))
+    fd = os.open(secret_path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    try:
+        os.write(fd, payload.encode("utf-8"))
+    finally:
+        os.close(fd)
+    try:
+        os.chmod(secret_path, 0o600)
+    except OSError:
+        pass
+    return credentials_ref
+
+
+def generate_credentials_ref(camera_id: str) -> str:
+    safe = re.sub(r"[^a-zA-Z0-9._-]", "-", camera_id)[:40] or "camera"
+    return f"ui-{safe}-{secrets.token_hex(4)}"
+
+
+def set_camera_credentials(camera_id: str, username: str, password: str) -> dict:
+    """Create or rotate credentials for one camera (F6-01 change-password)."""
+    with connect() as database:
+        row = database.execute("SELECT * FROM cameras WHERE id=?", (camera_id,)).fetchone()
+        if not row:
+            raise KeyError("camera not found")
+        ref = row["credentials_ref"] or generate_credentials_ref(camera_id)
+        write_credentials(ref, username, password)
+        if row["credentials_ref"] != ref:
+            now = int(time.time())
+            database.execute(
+                "UPDATE cameras SET credentials_ref=?,updated_at=?,revision=revision+1 WHERE id=?",
+                (ref, now, camera_id))
+        row = database.execute("SELECT * FROM cameras WHERE id=?", (camera_id,)).fetchone()
+        invalidate_probe_results(camera_id)
+        return camera_document(database, row)
+
+
 def load_credentials(credentials_ref: str) -> tuple[str, str]:
     if not credentials_ref:
         return "", ""
-    if not SECRET_REF_RE.fullmatch(credentials_ref) or ".." in credentials_ref.split("/"):
-        raise PermissionError("camera credential reference is invalid")
-    secret_root = SECRET_ROOT.resolve()
-    secret_path = (secret_root / f"{credentials_ref}.json").resolve()
-    if secret_root not in secret_path.parents or not secret_path.is_file():
+    candidates = []
+    for root in (SECRET_ROOT, managed_secret_root()):
+        try:
+            secret_path = credential_secret_path(root, credentials_ref)
+        except PermissionError:
+            raise
+        except OSError:
+            continue
+        if secret_path.is_file():
+            candidates.append(secret_path)
+    if not candidates:
         raise PermissionError("camera credential reference is unavailable")
     try:
-        secret = json.loads(secret_path.read_text(encoding="utf-8"))
+        secret = json.loads(candidates[0].read_text(encoding="utf-8"))
     except (OSError, ValueError, json.JSONDecodeError) as error:
         raise PermissionError("camera credential secret is invalid") from error
     username, password = secret.get("username", ""), secret.get("password", "")
@@ -522,7 +640,27 @@ def validate_camera(payload: dict, existing_id: str | None = None) -> dict:
         raise ValueError("camera name must contain 1 to 128 characters")
     if adapter not in ADAPTERS:
         raise ValueError("camera adapter is unsupported")
-    address = safe_endpoint(payload.get("address", ""), adapter)
+    # F6-01: accept userinfo in the submitted URL as an import convenience;
+    # credentials are split out immediately and the stored address is clean.
+    raw_address = payload.get("address", "")
+    if not isinstance(raw_address, str):
+        raise ValueError("address must be a string")
+    address, url_username, url_password = split_url_credentials(raw_address)
+    address = safe_endpoint(address, adapter)
+    for profile in payload.get("profiles", []) if isinstance(payload.get("profiles"), list) else []:
+        if isinstance(profile, dict) and isinstance(profile.get("endpoint"), str):
+            endpoint, p_user, p_pass = split_url_credentials(profile["endpoint"])
+            if p_user or p_pass:
+                if url_username or url_password:
+                    if (p_user, p_pass) != (url_username, url_password):
+                        raise ValueError("all endpoints must use the same credentials")
+                else:
+                    url_username, url_password = p_user, p_pass
+            profile["endpoint"] = endpoint
+    username = payload.get("username", url_username)
+    password = payload.get("password", url_password)
+    if username or password:
+        validate_credential_pair(username, password)
     credentials_ref = payload.get("credentialsRef", "")
     if not isinstance(credentials_ref, str) or not SECRET_REF_RE.fullmatch(credentials_ref) or ".." in credentials_ref.split("/"):
         raise ValueError("credentialsRef is invalid")
@@ -551,12 +689,16 @@ def validate_camera(payload: dict, existing_id: str | None = None) -> dict:
     revision = payload.get("revision", 1)
     if isinstance(revision, bool) or not isinstance(revision, int) or revision < 1:
         raise ValueError("camera revision must be a positive integer")
-    return {
+    result = {
         "id": camera_id, "name": name.strip(), "address": address, "adapter": adapter,
         "credentialsRef": credentials_ref, "hardwareDecode": hardware_decode,
         "capabilities": capabilities, "profiles": profiles, "kind": kind,
         "enabled": enabled, "groupId": group_id.strip(), "tags": tags, "revision": revision,
     }
+    # Pending secrets are written by save_camera; never persisted inside the document.
+    if username and password:
+        result["__pendingCredentials"] = (username, password)
+    return result
 
 
 def track_documents(database: sqlite3.Connection, camera_id: str, profile: sqlite3.Row) -> list[dict]:
@@ -595,6 +737,8 @@ def profile_document(database: sqlite3.Connection, camera_id: str, profile: sqli
         "audioExpectation": profile["audio_expectation"],
         "allowInsecureHttp": bool(profile["allow_insecure_http"]), "probeState": profile["probe_state"],
         "lastProbeAt": profile["last_probe_at"], "tracks": track_documents(database, camera_id, profile),
+        "autoProbe": bool(profile["auto_probe"]), "probeAttempts": profile["probe_attempts"],
+        "probeError": profile["probe_error"],
     }
     if include_endpoint:
         result["endpoint"] = profile["endpoint"]
@@ -608,7 +752,9 @@ def camera_document(database: sqlite3.Connection, row: sqlite3.Row) -> dict:
     profiles = [profile_document(database, row["id"], profile) for profile in profile_rows]
     return {
         "id": row["id"], "name": row["name"], "address": row["address"],
+        "addressDisplay": sanitized_endpoint(row["address"], bool(row["credentials_ref"])),
         "adapter": row["adapter"], "credentialsRef": row["credentials_ref"],
+        "credentialsConfigured": bool(row["credentials_ref"]),
         "hardwareDecode": row["hardware_decode"], "capabilities": json.loads(row["capabilities_json"]),
         "health": row["health"], "profiles": profiles, "createdAt": row["created_at"],
         "updatedAt": row["updated_at"], "kind": row["kind"], "enabled": bool(row["enabled"]),
@@ -616,7 +762,7 @@ def camera_document(database: sqlite3.Connection, row: sqlite3.Row) -> dict:
     }
 
 
-def sanitized_endpoint(value: str) -> str:
+def sanitized_endpoint(value: str, has_credentials: bool = False) -> str:
     try:
         parsed = urlsplit(value)
         host = parsed.hostname or ""
@@ -624,7 +770,9 @@ def sanitized_endpoint(value: str) -> str:
             host = f"[{host}]"
         if parsed.port:
             host = f"{host}:{parsed.port}"
-        return urlunsplit((parsed.scheme, host, parsed.path, "", ""))
+        # Credentialed endpoints use a fixed display mask; never echo URL userinfo.
+        authority = f"*****:*****@{host}" if has_credentials else host
+        return urlunsplit((parsed.scheme, authority, parsed.path, "", ""))
     except ValueError:
         return "unavailable"
 
@@ -637,7 +785,7 @@ def source_catalog_document(database: sqlite3.Connection, row: sqlite3.Row) -> d
     total_tracks = 0
     for profile in profile_rows:
         value = profile_document(database, row["id"], profile, include_endpoint=False)
-        value["endpointDisplay"] = sanitized_endpoint(profile["endpoint"])
+        value["endpointDisplay"] = sanitized_endpoint(profile["endpoint"], bool(row["credentials_ref"]))
         total_tracks += len(value["tracks"])
         profiles.append(value)
     try:
@@ -652,7 +800,8 @@ def source_catalog_document(database: sqlite3.Connection, row: sqlite3.Row) -> d
     return {
         "schemaVersion": 2, "id": row["id"], "name": row["name"], "kind": row["kind"],
         "adapter": row["adapter"], "enabled": bool(row["enabled"]), "groupId": row["group_id"],
-        "tags": json.loads(row["tags_json"]), "addressDisplay": sanitized_endpoint(row["address"]),
+        "tags": json.loads(row["tags_json"]), "addressDisplay": sanitized_endpoint(row["address"], bool(row["credentials_ref"])),
+        "credentialsConfigured": bool(row["credentials_ref"]),
         "health": row["health"], "hardwareDecode": row["hardware_decode"],
         "deviceCapabilities": safe_capabilities,
         "profileCount": len(profiles), "trackCount": total_tracks, "profiles": profiles,
@@ -1132,12 +1281,23 @@ def resolve_profile(database: sqlite3.Connection, camera_id: str, profile_id: st
             "hardwareDecode": camera["hardware_decode"], "cameraId": camera_id, "profileId": profile_id,
             "transportMode": profile["transport_mode"] if profile else "auto",
             "videoCodec": (profile["video_codec"] if profile else "") or "",
-            "audioCodec": (profile["audio_codec"] if profile else "") or ""}
+            "audioCodec": (profile["audio_codec"] if profile else "") or "",
+            "tracksProbed": bool(profile and profile["probe_state"] in {"ready", "cached"}),
+            "audioTracks": [{"index": track["index"], "codec_name": track["codec"],
+                             "channels": track["channels"], "sample_rate": track["sampleRate"]}
+                            for track in track_documents(database, camera_id, profile)
+                            if track["kind"] == "audio"] if profile else []}
 
 
 def save_camera(camera: dict, replace: bool) -> dict:
     now = int(time.time())
+    pending = camera.pop("__pendingCredentials", None)
     invalidate_probe_results(camera["id"])
+    if pending:
+        username, password = pending
+        credentials_ref = camera.get("credentialsRef") or generate_credentials_ref(camera["id"])
+        write_credentials(credentials_ref, username, password)
+        camera["credentialsRef"] = credentials_ref
     with connect() as database:
         current = database.execute(
             "SELECT created_at,capabilities_json,revision FROM cameras WHERE id=?", (camera["id"],)).fetchone()
@@ -1222,7 +1382,7 @@ def upsert_issue(database: sqlite3.Connection, code: str, scope_kind: str, scope
     severity, summary, explanation, actions = ISSUE_TEMPLATES[code]
     safe_details = {}
     for key, value in (details or {}).items():
-        if key in {"adapter", "transportMode", "codec", "httpStatus", "retryCount", "lastFrameAgeMs"} and \
+        if key in {"adapter", "transportMode", "codec", "httpStatus", "retryCount", "lastFrameAgeMs", "reason"} and \
                 isinstance(value, (str, int, float, bool)):
             safe_details[key] = value
     fingerprint = issue_fingerprint(code, scope_kind, scope_id, component)
@@ -1346,12 +1506,16 @@ def validate_catalog_patch(payload: dict, adapter: str) -> tuple[dict, list[dict
     normalized_profiles = []
     for value in profile_updates:
         if not isinstance(value, dict) or set(value) - {
-                "id", "enabled", "transportMode", "liveBitrateCapKbps", "audioExpectation", "allowInsecureHttp"}:
+                "id", "enabled", "transportMode", "liveBitrateCapKbps", "audioExpectation", "allowInsecureHttp", "autoProbe"}:
             raise ValueError("profile patch contains an unsupported field")
         profile_id = value.get("id")
         if not isinstance(profile_id, str) or not ID_RE.fullmatch(profile_id):
             raise ValueError("profile id is invalid")
         update: dict[str, object] = {"id": profile_id}
+        if "autoProbe" in value:
+            if not isinstance(value["autoProbe"], bool):
+                raise ValueError("autoProbe must be boolean")
+            update["auto_probe"] = int(value["autoProbe"])
         if "enabled" in value:
             if not isinstance(value["enabled"], bool):
                 raise ValueError("profile enabled must be boolean")
@@ -1404,9 +1568,12 @@ def patch_source_catalog(camera_id: str, payload: dict, revision: int) -> dict:
         for profile in profile_updates:
             values = {key: value for key, value in profile.items() if key != "id"}
             if values:
+                if "transport_mode" in values or values.get("auto_probe") == 1 or values.get("enabled") == 1:
+                    values.update(probe_state="unknown", probe_attempts=0, probe_error="", last_probe_at=0)
                 assignments = ",".join(f"{field}=?" for field in values)
                 database.execute(f"UPDATE stream_profiles SET {assignments} WHERE camera_id=? AND id=?",
                                  (*values.values(), camera_id, profile["id"]))
+        update_camera_probe_health(database, camera_id)
         reconcile_audio_issues(database, camera_id)
         updated = database.execute("SELECT * FROM cameras WHERE id=?", (camera_id,)).fetchone()
         return source_catalog_document(database, updated)
@@ -1493,6 +1660,77 @@ def invalidate_probe_results(camera_id: str = "") -> None:
             PROBE_RESULTS.pop(key, None)
 
 
+def classify_probe_failure(stderr: bytes | str) -> str:
+    # Only persist a category: ffprobe stderr can contain credentialed URLs.
+    message = (stderr.decode("utf-8", "replace") if isinstance(stderr, bytes) else stderr).lower()
+    for reason, terms in (
+        ("authentication_failed", ("401", "403", "unauthorized")),
+        ("stream_not_found", ("404", "not found")),
+        ("timeout", ("timeout", "timed out")),
+        ("network_unreachable", ("connection refused", "network is unreachable", "no route to host")),
+    ):
+        if any(term in message for term in terms):
+            return reason
+    return "invalid_media"
+
+
+def update_camera_probe_health(database: sqlite3.Connection, camera_id: str) -> None:
+    states = [row[0] for row in database.execute(
+        "SELECT probe_state FROM stream_profiles WHERE camera_id=? AND enabled=1", (camera_id,))]
+    health = "online" if any(state in {"ready", "cached"} for state in states) else (
+        "offline" if states and all(state == "failed" for state in states) else "unknown")
+    database.execute("UPDATE cameras SET health=? WHERE id=?", (health, camera_id))
+
+
+def automatic_probe_candidates(now: int | None = None) -> list[tuple[str, str]]:
+    with connect() as database:
+        settings = json.loads(database.execute("SELECT settings_json FROM runtime_settings WHERE id=1").fetchone()[0])
+        if not settings["sourceRecoveryEnabled"]:
+            return []
+        rows = database.execute(
+            "SELECT p.camera_id,p.id FROM stream_profiles p JOIN cameras c ON c.id=p.camera_id "
+            "WHERE c.enabled=1 AND p.enabled=1 AND p.auto_probe=1 "
+            "AND p.probe_state NOT IN ('ready','cached') AND p.probe_attempts<? AND p.last_probe_at<=? "
+            "AND c.adapter IN ('rtsp','onvif','hls','http-flv','srt','rtp') "
+            "AND (p.endpoint NOT LIKE 'http://%' OR p.allow_insecure_http=1) "
+            "ORDER BY p.last_probe_at,p.camera_id,p.id LIMIT 64",
+            (AUTO_PROBE_MAX_ATTEMPTS, (int(time.time()) if now is None else now) - AUTO_PROBE_INTERVAL_SECONDS),
+        ).fetchall()
+        return [(row[0], row[1]) for row in rows]
+
+
+def automatic_probe_worker() -> None:
+    active: set[str] = set()
+    guard = threading.Lock()
+
+    def run(camera_id: str, profile_id: str) -> None:
+        try:
+            probe_source_profile(camera_id, profile_id)
+        except (ValueError, PermissionError, KeyError, RuntimeError, OSError, sqlite3.Error):
+            pass  # Persisted probe results and sanitized issues are the public status.
+        finally:
+            with guard:
+                active.discard(camera_id)
+
+    # Reconcile older databases whose successful probes never updated camera health.
+    with connect() as database:
+        for row in database.execute("SELECT DISTINCT camera_id FROM stream_profiles WHERE probe_state IN ('ready','cached','failed')").fetchall():
+            update_camera_probe_health(database, row[0])
+    while True:
+        try:
+            for camera_id, profile_id in automatic_probe_candidates():
+                with guard:
+                    if len(active) >= 4:
+                        break
+                    if camera_id in active:
+                        continue
+                    active.add(camera_id)
+                threading.Thread(target=run, args=(camera_id, profile_id), daemon=True).start()
+        except (OSError, sqlite3.Error):
+            pass
+        time.sleep(5)
+
+
 def probe_source_profile(camera_id: str, profile_id: str) -> dict:
     with PROBE_LOCKS_GUARD:
         lock = PROBE_LOCKS.setdefault(camera_id, threading.Lock())
@@ -1511,36 +1749,48 @@ def probe_source_profile(camera_id: str, profile_id: str) -> dict:
                 "SELECT * FROM stream_profiles WHERE camera_id=? AND id=?", (camera_id, profile_id)).fetchone()
             if not camera or not profile:
                 raise KeyError("camera or profile not found")
-            if camera["credentials_ref"]:
-                database.execute(
-                    "UPDATE stream_profiles SET probe_state='cached',last_probe_at=? WHERE camera_id=? AND id=?",
-                    (int(time.time()), camera_id, profile_id))
-                reconcile_audio_issues(database, camera_id)
-                refreshed = database.execute(
-                    "SELECT * FROM stream_profiles WHERE camera_id=? AND id=?", (camera_id, profile_id)).fetchone()
-                return profile_document(database, camera_id, refreshed, include_endpoint=False)
+            if not camera["enabled"] or not profile["enabled"]:
+                raise ValueError("camera profile is disabled")
             endpoint, transport_mode = profile["endpoint"], profile["transport_mode"]
+            if camera["credentials_ref"]:
+                try:
+                    username, password = load_credentials(camera["credentials_ref"])
+                except PermissionError:
+                    database.execute(
+                        "UPDATE stream_profiles SET probe_state='failed',probe_error='credentials_unavailable',probe_attempts=probe_attempts+1,last_probe_at=? WHERE camera_id=? AND id=?",
+                        (int(time.time()), camera_id, profile_id))
+                    update_camera_probe_health(database, camera_id)
+                    upsert_issue(database, "MEDIA_PROBE_FAILED", "profile", f"{camera_id}.{profile_id}"[:64], "media-probe", {"reason": "credentials_unavailable"})
+                    refreshed = database.execute(
+                        "SELECT * FROM stream_profiles WHERE camera_id=? AND id=?", (camera_id, profile_id)).fetchone()
+                    return profile_document(database, camera_id, refreshed, include_endpoint=False)
+                endpoint = endpoint_with_credentials(endpoint, username, password)
             if endpoint.startswith("http://") and not bool(profile["allow_insecure_http"]):
                 raise InsecureHttpDenied("insecure HTTP media requires explicit per-profile approval")
             cache_key = probe_result_key(camera_id, profile_id, endpoint, transport_mode)
             cached = cached_probe_result(cache_key)
             if cached is not None:
                 database.execute(
-                    "UPDATE stream_profiles SET probe_state='cached',last_probe_at=? WHERE camera_id=? AND id=?",
+                    "UPDATE stream_profiles SET probe_state='ready',probe_attempts=0,probe_error='',last_probe_at=? WHERE camera_id=? AND id=?",
                     (int(time.time()), camera_id, profile_id))
+                update_camera_probe_health(database, camera_id)
                 return cached
             settings = database.execute("SELECT settings_json FROM runtime_settings WHERE id=1").fetchone()
             probe_timeout = int(json.loads(settings["settings_json"])["probeTimeoutSeconds"])
         command = ["ffprobe", "-v", "error", "-show_entries",
                    "stream=index,codec_type,codec_name,bit_rate,width,height,avg_frame_rate,sample_rate,channels",
                    "-of", "json"]
-        if endpoint.startswith(("rtsp://", "rtsps://")) and transport_mode in {"rtsp-tcp", "rtsp-udp", "rtsp-udp-multicast"}:
-            command += ["-rtsp_transport", "tcp" if transport_mode == "rtsp-tcp" else "udp"]
+        if endpoint.startswith(("rtsp://", "rtsps://")):
+            # Interleaved TCP also works across NAT, VPN and WSL; UDP stays an explicit option.
+            effective_transport = transport_mode if transport_mode != "auto" else json.loads(settings["settings_json"])["defaultTransportMode"]
+            command += ["-rtsp_transport", {"rtsp-udp": "udp", "rtsp-udp-multicast": "udp_multicast"}.get(effective_transport, "tcp")]
         command.append(endpoint)
+        failure_reason = "invalid_media"
         try:
             result = subprocess.run(command, capture_output=True, timeout=probe_timeout,
                                     check=False, env={**os.environ, "LC_ALL": "C"})
             if result.returncode or len(result.stdout) > PROBE_OUTPUT_LIMIT or len(result.stderr) > PROBE_OUTPUT_LIMIT:
+                failure_reason = classify_probe_failure(result.stderr)
                 raise ValueError("probe_failed")
             parsed = json.loads(result.stdout)
             streams = parsed.get("streams", [])
@@ -1562,14 +1812,17 @@ def probe_source_profile(camera_id: str, profile_id: str) -> dict:
                 })
             if not tracks:
                 raise ValueError("probe_tracks_invalid")
-        except (OSError, subprocess.TimeoutExpired, ValueError, TypeError, json.JSONDecodeError):
+        except (OSError, subprocess.TimeoutExpired, ValueError, TypeError, json.JSONDecodeError) as error:
+            if isinstance(error, subprocess.TimeoutExpired): failure_reason = "timeout"
+            elif isinstance(error, OSError): failure_reason = "probe_unavailable"
             with connect() as database:
                 database.execute(
-                    "UPDATE stream_profiles SET probe_state='failed',last_probe_at=? WHERE camera_id=? AND id=?",
-                    (int(time.time()), camera_id, profile_id))
+                    "UPDATE stream_profiles SET probe_state='failed',probe_attempts=probe_attempts+1,probe_error=?,last_probe_at=? WHERE camera_id=? AND id=?",
+                    (failure_reason, int(time.time()), camera_id, profile_id))
+                update_camera_probe_health(database, camera_id)
                 upsert_issue(database, "MEDIA_PROBE_FAILED", "profile",
-                             f"{camera_id}.{profile_id}"[:64], "media-probe", {"transportMode": transport_mode})
-            raise ValueError("media probe failed")
+                             f"{camera_id}.{profile_id}"[:64], "media-probe", {"transportMode": transport_mode, "reason": failure_reason})
+            raise ValueError(f"media probe failed: {failure_reason}")
         with connect() as database:
             database.execute("DELETE FROM profile_tracks WHERE camera_id=? AND profile_id=?", (camera_id, profile_id))
             database.executemany(
@@ -1582,13 +1835,14 @@ def probe_source_profile(camera_id: str, profile_id: str) -> dict:
             video = next((item for item in tracks if item["kind"] == "video"), None)
             audio = next((item for item in tracks if item["kind"] == "audio"), None)
             database.execute(
-                "UPDATE stream_profiles SET video_codec=?,audio_codec=?,width=?,height=?,fps=?,probe_state='ready',last_probe_at=? "
+                "UPDATE stream_profiles SET video_codec=?,audio_codec=?,width=?,height=?,fps=?,probe_state='ready',probe_attempts=0,probe_error='',last_probe_at=? "
                 "WHERE camera_id=? AND id=?",
                 (video["codec"] if video else "", audio["codec"] if audio else "",
                  video["width"] if video else 0, video["height"] if video else 0,
                  video["fps"] if video else 0, int(time.time()), camera_id, profile_id),
             )
             resolve_issue(database, "MEDIA_PROBE_FAILED", "profile", f"{camera_id}.{profile_id}"[:64], "media-probe")
+            update_camera_probe_health(database, camera_id)
             refreshed = database.execute(
                 "SELECT * FROM stream_profiles WHERE camera_id=? AND id=?", (camera_id, profile_id)).fetchone()
             measured = sum(track["bitrateKbps"] or 0 for track in tracks)
@@ -2826,10 +3080,11 @@ def device_audit(camera_id: str) -> list[dict]:
 
 
 def classify(address: str) -> dict:
-    normalized = address if "://" in address else "http://" + address
+    normalized, extracted_user, extracted_pass = split_url_credentials(
+        address if "://" in address else "http://" + address)
     parsed = urlsplit(normalized)
     if parsed.username or parsed.password:
-        raise ValueError("embedded credentials are forbidden")
+        raise ValueError("embedded credentials are forbidden after extraction")
     scheme, path = parsed.scheme.lower(), parsed.path.lower()
     adapter = "onvif"
     if scheme in ("rtsp", "rtsps"): adapter = "rtsp"
@@ -2841,7 +3096,21 @@ def classify(address: str) -> dict:
     elif ("mjpeg" in path or "mjpg" in path or
           path.endswith("/-wvhttp-01-/video.cgi")): adapter = "mjpeg"
     elif "whep" in path: adapter = "whep"
-    result = {"address": normalized, "adapter": adapter, "profiles": [], "probe": "classified"}
+    result = {"address": normalized, "adapter": adapter, "profiles": [], "probe": "classified",
+              "credentialsExtracted": bool(extracted_user or extracted_pass),
+              "authRequired": bool(extracted_user or extracted_pass)}
+    # Username may be echoed for form prefill; the password never leaves the server.
+    if extracted_user:
+        result["username"] = extracted_user
+    # Never fetch a user-provided HTTP homepage from the server. The origin may
+    # resolve to loopback, cloud metadata, or another internal service.
+    if adapter == "onvif" and scheme in {"http", "https"} and path in {"", "/", "/index.html"}:
+        result["probe"] = "homepage-unverified"
+        result["discoveryHint"] = (
+            "这是 HTTP 首页地址，服务器不会抓取用户提供的网页。"
+            "请填写摄像机的完整视频流地址，或先配置 go2rtc 转换后再添加。"
+        )
+        return result
     if adapter in {"rtsp", "hls", "http-flv", "srt", "rtp"}:
         result["profiles"] = [{
             "id": "main", "name": "Main", "role": "main", "endpoint": normalized,
@@ -3116,6 +3385,26 @@ class Handler(BaseHTTPRequestHandler):
                 credentials_ref = payload.get("credentialsRef", "")
                 if not isinstance(credentials_ref, str):
                     raise ValueError("credentialsRef is invalid")
+                address = str(payload.get("address", ""))
+                username = payload.get("username", "")
+                password = payload.get("password", "")
+                if username or password:
+                    probe_address, url_user, url_pass = split_url_credentials(address)
+                    if not username:
+                        username, password = url_user, url_pass
+                    validate_credential_pair(username, password)
+                    temp_ref = generate_credentials_ref("probe")
+                    write_credentials(temp_ref, username, password)
+                    try:
+                        result = onvif_probe(probe_address, temp_ref)
+                    finally:
+                        try:
+                            (managed_secret_root() / f"{temp_ref}.json").unlink(missing_ok=True)
+                        except OSError:
+                            pass
+                    result["username"] = username
+                    result["credentialsExtracted"] = True
+                    self.respond(200, result); return
                 self.respond(200, onvif_probe(str(payload.get("address", "")), credentials_ref)); return
             if self.path == "/source-catalog/batch":
                 self.respond(200, {"items": batch_source_catalog(self.payload())}); return
@@ -3209,6 +3498,16 @@ class Handler(BaseHTTPRequestHandler):
             except KeyError as error: self.respond(404, {"error": str(error)})
             except (ValueError, TypeError, json.JSONDecodeError) as error: self.respond(400, {"error": str(error)})
             return
+        credentials_match = re.fullmatch(r"/cameras/([a-zA-Z0-9._-]{1,64})/credentials", self.path)
+        if credentials_match:
+            try:
+                body = self.payload()
+                self.respond(200, set_camera_credentials(
+                    credentials_match.group(1), body.get("username", ""), body.get("password", "")))
+            except KeyError as error: self.respond(404, {"error": str(error)})
+            except PermissionError as error: self.respond(500, {"error": str(error)})
+            except (ValueError, TypeError, json.JSONDecodeError) as error: self.respond(400, {"error": str(error)})
+            return
         if not self.path.startswith("/cameras/"):
             self.respond(404, {"error": "not_found"}); return
         camera_id = self.path.removeprefix("/cameras/")
@@ -3270,5 +3569,6 @@ class Handler(BaseHTTPRequestHandler):
 
 if __name__ == "__main__":
     initialize()
+    threading.Thread(target=automatic_probe_worker, daemon=True).start()
     threading.Thread(target=onvif_event_worker, daemon=True).start()
     ThreadingHTTPServer(LISTEN, Handler).serve_forever()

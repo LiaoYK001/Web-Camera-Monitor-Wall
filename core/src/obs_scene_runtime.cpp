@@ -1390,12 +1390,14 @@ void ObsSceneRuntime::maintain_source_health()
         ++impl_->total_restarts;
         ++entry.status->consecutive_restarts;
         entry.status->recovering = true;
-        int backoff = impl_->source_recovery_base_seconds;
-        for (unsigned int attempt = 1; attempt < entry.status->consecutive_restarts &&
-                                       backoff < impl_->source_recovery_max_seconds;
-             ++attempt) {
-            backoff = std::min(backoff * 2, impl_->source_recovery_max_seconds);
-        }
+        // F6-10 progressive ladder: 3s → 5s → 10s → 20s → 40s → 60s (cap).
+        static constexpr int kReconnectLadder[] = {3, 5, 10, 20, 40, 60};
+        const unsigned int ladder_index =
+            entry.status->consecutive_restarts > 0 ? entry.status->consecutive_restarts - 1 : 0;
+        int backoff = ladder_index < (sizeof(kReconnectLadder) / sizeof(kReconnectLadder[0]))
+                          ? kReconnectLadder[ladder_index]
+                          : 60;
+        backoff = std::clamp(backoff, impl_->source_recovery_base_seconds, impl_->source_recovery_max_seconds);
         entry.status->next_recovery_at = now + std::chrono::seconds(backoff);
         const std::string restart_count = std::to_string(entry.status->restart_count);
         const std::string retry_seconds = std::to_string(backoff);

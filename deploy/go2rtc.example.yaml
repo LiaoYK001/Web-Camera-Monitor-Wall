@@ -1,0 +1,16 @@
+# Optional HTTP MJPEG -> H.264 RTSP bridge, alongside the existing MediaMTX.
+# 可选 HTTP MJPEG 转 H.264 RTSP；与现有 MediaMTX 共存，需安装 FFmpeg。
+# Run on the backend host / 在后端所在系统运行：go2rtc -config /private/go2rtc.yaml
+api:
+  listen: "127.0.0.1:11984"
+rtsp:
+  listen: "127.0.0.1:18554"
+webrtc:
+  listen: ""
+streams:
+  legacy_camera:
+    # Replace with the actual media URL, not a camera HTML viewer page.
+    # 替换为真实媒体地址，而非摄像机 HTML 查看页面；不要提交含密码的配置。
+    - "ffmpeg:http://192.0.2.20:8000/-wvhttp-01-/video.cgi?v=jpg:640x480#video=h264"
+log:
+  level: error

@@ -39,3 +39,5 @@ __pycache__/
 /gate/
 /.vite/
 /test-results/
+/tmp
+/.mimocode

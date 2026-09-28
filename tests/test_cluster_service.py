@@ -171,8 +171,7 @@ class ClusterTests(unittest.TestCase):
     def test_user_validation_and_unique_name(self) -> None:
         self.assertFalse(self.store.has_enabled_admin())
         cluster.validate_compatibility_auth("true", self.store)
-        with self.assertRaisesRegex(RuntimeError, "database administrator"):
-            cluster.validate_compatibility_auth("false", self.store)
+        cluster.validate_compatibility_auth("false", self.store)
         with self.assertRaisesRegex(RuntimeError, "true or false"):
             cluster.validate_compatibility_auth("disabled", self.store)
         self.create_user()
@@ -187,6 +186,36 @@ class ClusterTests(unittest.TestCase):
         self.create_user("database-admin", ["admin"])
         self.assertTrue(self.store.has_enabled_admin())
         cluster.validate_compatibility_auth("false", self.store)
+
+    def test_first_run_registration_closes_and_preferences_are_account_scoped(self) -> None:
+        self.assertEqual(self.store.setup_status(), {"registrationOpen": True})
+        first = self.store.register_first_admin({"username": "first-admin", "password": "correct-horse-battery"})
+        self.assertEqual(first["roles"], ["admin"])
+        self.assertEqual(self.store.setup_status(), {"registrationOpen": False})
+        with self.assertRaisesRegex(cluster.ApiError, "registration is closed"):
+            self.store.register_first_admin({"username": "second-admin", "password": "correct-horse-battery"})
+        self.create_user("viewer-one", ["viewer"])
+        value = {"schemaVersion": 1, "docks": [], "style": "obs"}
+        self.assertEqual(self.store.account_preference("first-admin", "workspace-layout", {"value": value}, True),
+                         {"value": value, "revision": 1})
+        self.assertEqual(self.store.account_preference("first-admin", "workspace-layout"),
+                         {"value": value, "revision": 1})
+        self.assertEqual(self.store.account_preference("viewer-one", "workspace-layout"),
+                         {"value": None, "revision": 0})
+
+    def test_self_profile_acl_and_password_change(self) -> None:
+        self.create_user("profile-user", ["viewer"])
+        initial = self.store.account_profile("profile-user")
+        self.assertEqual(initial["displayName"], "profile-user")
+        self.assertTrue(next(item for item in initial["acl"] if item["permission"] == "live.view")["allowed"])
+        self.assertFalse(next(item for item in initial["acl"] if item["permission"] == "user.manage")["allowed"])
+        updated = self.store.update_account_profile("profile-user", {"displayName": "监看平板", "avatar": "camera"})
+        self.assertEqual((updated["displayName"], updated["avatar"]), ("监看平板", "camera"))
+        with self.assertRaises(cluster.ApiError):
+            self.store.change_own_password("profile-user", {"currentPassword": "incorrect-password", "newPassword": "new-correct-password"})
+        self.assertEqual(self.store.change_own_password("profile-user", {
+            "currentPassword": "correct-horse-battery", "newPassword": "new-correct-password"}), {"changed": True})
+        self.assertIsNotNone(self.store.authenticate("profile-user", "new-correct-password"))
 
     def test_rbac_audit_is_bounded_paginated_and_redacted(self) -> None:
         first = self.create_user(username="audit-user-one")
