@@ -376,7 +376,7 @@ class CameraRegistryTests(unittest.TestCase):
     def test_credentialed_profile_probe_uses_secret_without_exposing_endpoint(self) -> None:
         camera = registry.validate_camera({
             "id": "credential-probe", "name": "Credential probe", "adapter": "rtsp",
-            "address": "rtsp://user:password@camera.example.invalid/live",
+            "address": "rtsp://user:pass@camera.example.invalid/live",
             "profiles": [{"id": "main", "endpoint": "rtsp://camera.example.invalid/live"}],
         })
         registry.save_camera(camera, False)
@@ -388,7 +388,7 @@ class CameraRegistryTests(unittest.TestCase):
         self.assertEqual(result["probeState"], "ready")
         self.assertEqual(result["width"], 640)
         self.assertNotIn("endpoint", result)
-        self.assertIn("user:password@", runner.call_args.args[0][-1])
+        self.assertIn("user:pass@", runner.call_args.args[0][-1])
         command = runner.call_args.args[0]
         self.assertEqual(command[command.index("-rtsp_transport") + 1], "tcp")
         self.assertEqual(registry.source_catalog("")["items"][0]["health"], "online")
@@ -833,10 +833,10 @@ class CameraRegistryTests(unittest.TestCase):
         """F6-01: URL userinfo is accepted once, stored as a secret, never persisted."""
         camera = registry.validate_camera({
             "id": "hik-201", "name": "Hik 201",
-            "address": "rtsp://user:pass@10.99.99.135:554/Streaming/Channels/201",
+            "address": "rtsp://user:pass@camera.example.invalid:554/Streaming/Channels/201",
             "adapter": "rtsp", "profiles": [{
                 "id": "main", "name": "Main", "role": "main",
-                "endpoint": "rtsp://user:pass@10.99.99.135:554/Streaming/Channels/201",
+                "endpoint": "rtsp://user:pass@camera.example.invalid:554/Streaming/Channels/201",
                 "videoCodec": "h264", "audioCodec": "aac", "width": 1920, "height": 1080, "fps": 25,
             }],
         })
@@ -844,7 +844,7 @@ class CameraRegistryTests(unittest.TestCase):
         self.assertNotIn("pass", camera["address"])
         self.assertEqual(camera["__pendingCredentials"], ("user", "pass"))
         stored = registry.save_camera(camera, False)
-        self.assertEqual(stored["address"], "rtsp://10.99.99.135:554/Streaming/Channels/201")
+        self.assertEqual(stored["address"], "rtsp://camera.example.invalid:554/Streaming/Channels/201")
         self.assertNotIn("user", stored["address"])
         self.assertNotIn("pass", stored["address"])
         self.assertTrue(stored["credentialsConfigured"])
@@ -856,7 +856,7 @@ class CameraRegistryTests(unittest.TestCase):
         self.assertEqual(registry.load_credentials(rotated["credentialsRef"]), ("admin", "new-secret"))
 
     def test_f6_01_classify_extracts_credentials_without_echoing_password(self) -> None:
-        result = registry.classify("rtsp://user:password@camera.example.invalid/live")
+        result = registry.classify("rtsp://user:pass@camera.example.invalid/live")
         self.assertEqual(result["address"], "rtsp://camera.example.invalid/live")
         self.assertTrue(result["credentialsExtracted"])
         self.assertNotIn("password", result)
@@ -873,6 +873,8 @@ class CameraRegistryTests(unittest.TestCase):
             registry.write_credentials("../escape", "user", "password-value")
         with self.assertRaises(PermissionError):
             registry.write_credentials("nested/ref", "user", "password-value")
+        with self.assertRaises(PermissionError):
+            registry.write_credentials("..", "user", "password-value")
 
     def test_browser_direct_proof_is_tls_cors_bound_and_not_user_forgeable(self) -> None:
         openssl = shutil.which("openssl")

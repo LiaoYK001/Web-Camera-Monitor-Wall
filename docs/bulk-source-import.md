@@ -4,8 +4,8 @@
 
 ```text
 # 楼层一
-门口 | rtsp://user:password@192.168.1.20:554/stream1
-仓库: rtsp://192.168.1.21:554/stream2
+门口 | rtsp://camera-1.example.invalid:554/stream1
+仓库: rtsp://camera-2.example.invalid:554/stream2
 ```
 
 推荐使用竖线 `|`，因为链接中的协议、端口、路径可能包含冒号。输入区会在提交前显示有效条数和格式错误。支持 RTSP/RTSPS，以及可从文件后缀识别的 HTTPS HLS (`.m3u8`)、FLV (`.flv`)、MJPEG (`.mjpg`/`.mjpeg`) 和静态图片 (`.jpg`/`.jpeg`/`.png`)。其他链接可通过单项添加进行协议探测。

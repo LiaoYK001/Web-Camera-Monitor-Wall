@@ -135,6 +135,10 @@ try {
         'tests/run-contracts.sh'      = @('test-user:supersecret', '***:***')
         'tests/run-real-camera.ps1'   = @('user:password')
         'tests/run-real-camera.sh'    = @('user:password')
+        'tests/test_camera_registry.py' = @('user:password', 'user:pass', '*****:*****')
+        'docs/bulk-source-import.md'   = @('user:password')
+        'web/src/CameraRegistry.tsx'   = @('user:password')
+        'web/src/SourceCatalog.tsx'    = @('user:password')
     }
     $rtspPattern = 'rtsps?://[^[:space:]/@]+(:[^[:space:]/@]*)?@'
     $rtspResult = Invoke-GitCapture -Arguments @('grep', '--cached', '-I', '-n', '-o', '-E', '--', $rtspPattern, '--', '.') -AllowedExitCodes @(0, 1)

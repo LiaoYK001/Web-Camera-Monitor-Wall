@@ -462,21 +462,29 @@ def validate_credential_pair(username: str, password: str) -> tuple[str, str]:
     return username, password
 
 
+def credential_secret_path(root: Path, credentials_ref: str) -> Path:
+    """Resolve a credential filename and prove it stays below its secret root."""
+    if (not isinstance(credentials_ref, str) or not SECRET_REF_RE.fullmatch(credentials_ref) or
+            not credentials_ref or ".." in credentials_ref):
+        raise PermissionError("camera credential reference is invalid")
+    safe_root = os.path.realpath(os.fspath(root))
+    safe_path = os.path.realpath(os.path.join(safe_root, f"{credentials_ref}.json"))
+    root_prefix = safe_root if safe_root.endswith(os.sep) else safe_root + os.sep
+    if not safe_path.startswith(root_prefix):
+        raise PermissionError("camera credential reference is invalid")
+    return Path(safe_path)
+
+
 def write_credentials(credentials_ref: str, username: str, password: str) -> str:
     """Persist camera credentials as a 0600 secret file. Never returns the secret."""
     username, password = validate_credential_pair(username, password)
-    if not isinstance(credentials_ref, str) or not SECRET_REF_RE.fullmatch(credentials_ref) or \
-            not credentials_ref or ".." in credentials_ref.split("/"):
-        raise PermissionError("camera credential reference is invalid")
     root = managed_secret_root()
     root.mkdir(parents=True, exist_ok=True)
     try:
         os.chmod(root, 0o700)
     except OSError:
         pass
-    secret_path = (root / f"{credentials_ref}.json").resolve()
-    if root.resolve() not in secret_path.parents:
-        raise PermissionError("camera credential reference is invalid")
+    secret_path = credential_secret_path(root, credentials_ref)
     payload = json.dumps({"username": username, "password": password}, separators=(",", ":"))
     fd = os.open(secret_path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
     try:
@@ -516,16 +524,15 @@ def set_camera_credentials(camera_id: str, username: str, password: str) -> dict
 def load_credentials(credentials_ref: str) -> tuple[str, str]:
     if not credentials_ref:
         return "", ""
-    if not SECRET_REF_RE.fullmatch(credentials_ref) or ".." in credentials_ref.split("/"):
-        raise PermissionError("camera credential reference is invalid")
     candidates = []
     for root in (SECRET_ROOT, managed_secret_root()):
         try:
-            secret_root = root.resolve()
+            secret_path = credential_secret_path(root, credentials_ref)
+        except PermissionError:
+            raise
         except OSError:
             continue
-        secret_path = (secret_root / f"{credentials_ref}.json").resolve()
-        if secret_root in secret_path.parents and secret_path.is_file():
+        if secret_path.is_file():
             candidates.append(secret_path)
     if not candidates:
         raise PermissionError("camera credential reference is unavailable")
@@ -2297,10 +2304,10 @@ def ws_security_header(username: str, password: str, offset_seconds: float = 0) 
     nonce = secrets.token_bytes(16)
     created = datetime.fromtimestamp(time.time() + offset_seconds, timezone.utc).isoformat(
         timespec="seconds").replace("+00:00", "Z")
-    # WS-Security UsernameToken PasswordDigest requires this SHA-1 construction.
-    # It is a per-request protocol digest, not a stored password verifier.
-    # codeql[py/weak-sensitive-data-hashing]
-    digest = base64.b64encode(hashlib.sha1(nonce + created.encode() + password.encode()).digest()).decode()
+    # WS-Security UsernameToken PasswordDigest requires this per-request digest; it is not a stored password verifier.
+    digest = base64.b64encode(
+        hashlib.sha1(nonce + created.encode() + password.encode()).digest()  # lgtm[py/weak-sensitive-data-hashing]
+    ).decode()
     encoded_nonce = base64.b64encode(nonce).decode()
     return (
         '<s:Header><wsse:Security s:mustUnderstand="true" '

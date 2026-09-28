@@ -276,7 +276,7 @@ export default function CameraRegistry({ onBack }: { onBack: () => void }) {
     <section className="registry-add">
       <div><h2>添加设备</h2><p>可粘贴含账号密码的链接（会自动加密保存并脱敏显示），或在下方「设备登录」中单独填写。数据库与链接均不保存明文账密。</p></div>
       <p>HTTP 网页首页不是视频流。请使用完整的 RTSP、HLS 或 MJPEG 地址；go2rtc 转换后可填写 <code>rtsp://转换服务地址:18554/流名称</code>。</p>
-      <label><span>地址</span><input value={address} placeholder="rtsp://user:password@camera.example.invalid/stream 或 rtsp://camera.example.invalid/stream" onChange={(event) => { setAddress(event.target.value); setDetection(null); }} /></label>
+      <label><span>地址</span><input value={address} placeholder="rtsp://camera.example.invalid/stream 或 rtsp://camera.example.invalid/stream" onChange={(event) => { setAddress(event.target.value); setDetection(null); }} /></label>
       <div className="registry-actions"><button className="primary-button" disabled={busy || !address.trim()} type="button" onClick={() => void detect()}>自动检测</button><button className="ghost-button" disabled={busy} type="button" onClick={() => void discoverOnvif().then((result) => setDiscovered(result.devices)).catch((reason: unknown) => setError(reason instanceof Error ? reason.message : '发现失败'))}>ONVIF 发现</button></div>
       {credentialsNotice && <div className="notice" role="status">{credentialsNotice}</div>}
       {detection?.discoveryHint && <p role="status">{detection.discoveryHint}</p>}

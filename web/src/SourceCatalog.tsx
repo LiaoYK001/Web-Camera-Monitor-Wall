@@ -239,9 +239,9 @@ export default function SourceCatalog() {
     <header className="page-heading"><div><span className="eyebrow">设备管理</span><h1>设备与来源</h1><p>管理摄像机与网络视频源，查看状态并快速预览。</p></div>
       <div><button className="primary-button" type="button" disabled={bulkBusy} onClick={() => setShowLegacyRegistry(true)}>添加 / ONVIF 发现</button><button type="button" disabled={bulkBusy} aria-expanded={showBulkImport} onClick={() => setShowBulkImport((value) => !value)}>批量添加</button><button type="button" disabled={legacyBusy} onClick={inspectLegacy}>检查旧 Studio 来源</button></div></header>
     {showBulkImport && <div className="bulk-source-panel"><h2>批量添加视频源</h2>
-      <p>每行一项：<code>名称 | 链接</code>，也可用“名称: 链接”。空行和以 # 开头的行会跳过。示例：<code>门口 | rtsp://user:password@192.168.1.20:554/stream1</code></p>
+      <p>每行一项：<code>名称 | 链接</code>，也可用“名称: 链接”。空行和以 # 开头的行会跳过。示例：<code>门口 | rtsp://camera-1.example.invalid:554/stream1</code></p>
       <p>支持 RTSP/RTSPS，以及后缀为 .m3u8、.flv、.mjpg、.mjpeg、.jpg、.jpeg、.png 的 HTTPS 链接。账号密码会从链接拆出并写入服务端凭据库；未探测的源可在导入后逐项探测。当前格式不清楚的链接请通过单项添加。批量导入允许部分成功，失败行会保留以便修改重试。</p>
-      <textarea aria-label="批量视频源" disabled={bulkBusy} rows={8} value={bulkText} onChange={(event) => setBulkText(event.target.value)} placeholder={'门口 | rtsp://user:password@192.168.1.20:554/stream1\n仓库 | rtsp://192.168.1.21:554/stream2'} />
+      <textarea aria-label="批量视频源" disabled={bulkBusy} rows={8} value={bulkText} onChange={(event) => setBulkText(event.target.value)} placeholder={'门口 | rtsp://camera-1.example.invalid:554/stream1\n仓库 | rtsp://camera-2.example.invalid:554/stream2'} />
       <p role="status">待导入 {parsedBulk.entries.length} 项{parsedBulk.errors.length ? `；格式问题：${parsedBulk.errors.join('；')}` : ''}</p>
       <button type="button" className="primary-button" disabled={bulkBusy || !parsedBulk.entries.length || !!parsedBulk.errors.length} onClick={() => void importBulk()}>{bulkBusy ? `正在添加 ${bulkProgress.done} / ${bulkProgress.total}` : `添加 ${parsedBulk.entries.length} 项`}</button>
       {bulkBusy && <><progress aria-label="批量添加进度" value={bulkProgress.done} max={bulkProgress.total} /><button type="button" onClick={() => { stopBulk.current = true; setBulkMessage('将在当前项处理结束后停止，其余内容会保留。'); }}>停止后续添加</button></>}
