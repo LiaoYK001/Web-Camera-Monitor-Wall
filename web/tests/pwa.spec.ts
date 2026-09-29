@@ -4,7 +4,8 @@ test('installs a local-first app shell without caching private routes', async ({
   await page.route(/\/(?:api\/private-gate|recordings\/private\.mp4|api\/v1\/program\/whep)$/, (route) =>
     route.fulfill({ status: 200, contentType: 'application/octet-stream', body: 'private-fixture' }));
   await page.goto('/');
-  await expect(page.locator('body')).toContainText(/WebOBS|登录|离线/);
+  await expect(page.locator('body')).toContainText(/本地服务暂不可用|WebOBS|登录|离线/);
+  await expect(page.getByRole('navigation', { name: '主导航' })).toHaveCount(0);
   await page.evaluate(async () => {
     const registration = await navigator.serviceWorker.ready;
     if (!navigator.serviceWorker.controller) await new Promise<void>((resolve) => {

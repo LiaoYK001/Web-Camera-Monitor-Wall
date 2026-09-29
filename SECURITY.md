@@ -1,5 +1,11 @@
 # Security Policy
 
+## Active advisory / 当前安全公告
+
+The v3.3 upgrade path has a stale-PWA offline access issue: a v3.2-or-earlier service worker can keep an old client open under a valid local offline grant after the server is upgraded. This can expose that browser profile's locally cached workspace to someone with access to the device. Server-side protected APIs remain authenticated when authentication is enabled and the server is reachable. See the [full advisory](docs/security-advisory-v3.3.md) for scope and v3.3 workarounds. A forced service-worker update and client reload are planned for v3.4 and are not yet released.
+
+v3.3 升级路径存在旧 PWA 离线访问问题：服务器升级后，v3.2 或更早版本的 Service Worker 仍可能凭有效的本机离线授权打开旧客户端，使有设备访问权的人看到该浏览器配置文件中的本地缓存工作区。认证开启且服务器可达时，受保护 API 仍由服务端校验。范围与 v3.3 临时处理方式见[完整安全公告](docs/security-advisory-v3.3.md)。强制更新 Service Worker 并重新加载客户端的修复计划随 v3.4 发布，目前尚未发布。
+
 ## Reporting a vulnerability / 漏洞报告
 
 Please avoid opening a public issue for a suspected vulnerability. Use the repository's private vulnerability reporting option under **Security → Advisories → Report a vulnerability** when available. If that option is unavailable, contact the maintainer privately through the contact method listed on the maintainer's GitHub profile. Include reproduction steps and affected versions, but never include live camera credentials, private RTSP URLs, recordings, or unredacted logs.
