@@ -1,4 +1,5 @@
 import type { CameraProfile, SceneDocument, SceneItem } from './types';
+import { defaultPlaybackOptimization, normalizePlaybackOptimization, type PlaybackOptimization } from './playbackOptimization';
 
 export type TelemetryField = 'fps' | 'bitrate' | 'codec' | 'decoder';
 export type OverlayPosition = 'top-left' | 'top-right' | 'bottom-left' | 'bottom-right' | 'custom';
@@ -113,6 +114,7 @@ export interface MonitorView {
   /** Account intent; browser autoplay permission is a separate runtime state. */
   audioMonitorEnabled: boolean;
   audioMixerCollapsed: boolean;
+  playbackOptimization: PlaybackOptimization;
   /** Speaker routing: full monitoring output or meter/threshold detection only. */
   audioOutput: 'speaker' | 'meter-only';
   /** F6-05: keep the homepage monitor switch visible without reopening settings. */
@@ -280,6 +282,7 @@ export const defaultMonitorView = (): MonitorView => ({
   localMonitorVolume: 1,
   audioMonitorEnabled: false,
   audioMixerCollapsed: false,
+  playbackOptimization: defaultPlaybackOptimization(),
   audioOutput: 'speaker',
   monitorSwitchProminent: true,
   canvasMode: 'auto-fit',
@@ -518,6 +521,7 @@ export function normalizeMonitorView(value: Partial<MonitorView> | null | undefi
     localMonitorVolume: bounded(value?.localMonitorVolume, 1, 0, 1),
     audioMonitorEnabled: value?.audioMonitorEnabled === true,
     audioMixerCollapsed: value?.audioMixerCollapsed === true,
+    playbackOptimization: normalizePlaybackOptimization(value?.playbackOptimization),
     audioOutput: value?.audioOutput === 'meter-only' ? 'meter-only' : 'speaker',
     monitorSwitchProminent: value?.monitorSwitchProminent !== false,
     canvasMode: (value?.canvasMode && (canvasModes as string[]).includes(value.canvasMode))

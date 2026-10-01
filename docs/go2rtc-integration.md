@@ -71,3 +71,13 @@ pnpm test:local -- go2rtc.spec.ts
 MJPEG 示例：摄像机网页首页不是媒体地址。Canon VB-C60 WV-HTTP 可按 [配置示例](../deploy/go2rtc.example.yaml)，把已确认的媒体 URL 加入 `streams` 并按需转为 H.264，再将内部 RTSP 加入项目；该示例仅转换视频，不虚构音轨。
 
 参考：[上游仓库](https://github.com/AlexxIT/go2rtc)、[API/子路径](https://github.com/AlexxIT/go2rtc/blob/v1.9.14/internal/api/README.md)、[FFmpeg](https://github.com/AlexxIT/go2rtc/blob/v1.9.14/internal/ffmpeg/README.md)。
+## 命名流与正式设备的联动
+
+go2rtc 页面、设备目录和“添加设备”页自动列出已配置命名流（每 15 秒及页面重新获得焦点时刷新）。读取仍通过 `/api/v1/go2rtc/api/streams` 和现有 `settings.manage` 权限；列表只展示流名和本产品的内部 RTSP 地址，不展示上游 URL、producer 详情或摄像机凭据。
+
+1. 在 go2rtc 中添加命名流，保存配置，并使用官方 WebUI 测试播放。
+2. 返回“设备与来源”，在“从 go2rtc 接入设备”刷新列表，点击“检测并添加设备”。系统检测 `rtsp://127.0.0.1:18554/<流名>`、创建设备与 Profile，然后探测轨道。已有相同内部地址的设备显示“已在设备目录”，避免再次导入。
+3. 在设备详情检查轨道和状态；失败时先检查 go2rtc，再重试探测。流建档后即便轨道暂不可用，设备仍保留并显示重试提示。
+4. 在 Studio 新建或右键场景 → 选择场景来源，选择设备、调整位置并保存；不同 Scenes 可分别打开投影。
+
+命名流不是需要重新进行 ONVIF 扫描的实体设备；仅经 RTSP 中转时不继承 PTZ/ONVIF 控制。流名变更或删除需同步调整已建档设备地址。自动枚举支持最多 256 个由字母、数字、空格、点、下划线和连字符组成的命名流；其他名称可通过手动设备地址接入。

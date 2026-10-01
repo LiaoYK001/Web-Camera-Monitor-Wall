@@ -10,12 +10,17 @@
 export type ProjectorMode = 'direct' | 'composite';
 
 /** Browser window name; re-opening the same mode reuses the existing window. */
-export function projectorWindowName(mode: ProjectorMode): string {
-  return `webobs-projector-${mode}`;
+export function projectorWindowName(mode: ProjectorMode, sceneId?: string): string {
+  return `webobs-projector-${mode}${sceneId ? `-scene-${encodeURIComponent(sceneId)}` : ''}`;
 }
 
-export function projectorHash(mode: ProjectorMode): string {
-  return mode === 'composite' ? '#projector-composite' : '#projector';
+export function projectorHash(mode: ProjectorMode, sceneId?: string): string {
+  return (mode === 'composite' ? '#projector-composite' : '#projector') + (sceneId ? `?scene=${encodeURIComponent(sceneId)}` : '');
+}
+
+export function projectorSceneFromHash(hash: string): string | null {
+  const id = new URLSearchParams(hash.split('?')[1] ?? '').get('scene');
+  return id && /^[a-zA-Z0-9._-]{1,128}$/.test(id) ? id : null;
 }
 
 /** Resolves the projector route; `null` means "render the normal workspace". */
@@ -30,12 +35,12 @@ export function projectorModeFromHash(hash: string): ProjectorMode | null {
  * Same-origin and same-path so the session cookie, CSP and media origin keep
  * matching the wall; the query string is dropped on purpose.
  */
-export function projectorUrl(mode: ProjectorMode, location: Pick<Location, 'pathname'> = window.location): string {
-  return `${location.pathname}${projectorHash(mode)}`;
+export function projectorUrl(mode: ProjectorMode, location: Pick<Location, 'pathname'> = window.location, sceneId?: string): string {
+  return `${location.pathname}${projectorHash(mode, sceneId)}`;
 }
 
 const projectorFeatures = 'popup=yes,width=960,height=540,menubar=no,toolbar=no,location=no,status=no';
 
-export function openProjectorWindow(mode: ProjectorMode): Window | null {
-  return window.open(projectorUrl(mode), projectorWindowName(mode), projectorFeatures);
+export function openProjectorWindow(mode: ProjectorMode, sceneId?: string): Window | null {
+  return window.open(projectorUrl(mode, window.location, sceneId), projectorWindowName(mode, sceneId), projectorFeatures);
 }

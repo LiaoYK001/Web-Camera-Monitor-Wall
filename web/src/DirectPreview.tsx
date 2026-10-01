@@ -12,6 +12,7 @@ import { openIssueCenter, reportLocalIssue, reportMediaIssue, resolveLocalIssue,
 import type { AnalyticsPolicy, CameraRecord, CameraSceneSource, MotionZone, OperationalIssue, SceneDocument, SceneItem, SceneSource, SourcePlaybackCapability } from './types';
 import { openProjectorWindow } from './projector';
 import { connectSource, type ProgramConnection, type ProgramConnectionState } from './whep';
+import { lowerBandwidthProfile, type PlaybackOptimization } from './playbackOptimization';
 
 const labels: Record<ProgramConnectionState, string> = {
   checking: '检查中',
@@ -43,9 +44,10 @@ function videoGeometry(item: SceneItem, width: number, height: number): CSSPrope
   };
 }
 
-function DirectTile({ item, source, capability, mixer, telemetry, audioMeter, audioSnapshot, onState }: {
+function DirectTile({ item, source, capability, mixer, telemetry, audioMeter, audioSnapshot, onState, optimization }: {
   item: SceneItem;
   source: SceneSource;
+  optimization: PlaybackOptimization;
   capability?: SourcePlaybackCapability;
   mixer: DirectAudioMixer | null;
   telemetry?: TelemetryOverlayConfig;
@@ -68,10 +70,10 @@ function DirectTile({ item, source, capability, mixer, telemetry, audioMeter, au
   useEffect(() => {
     if (source.kind === 'camera' || !videoRef.current || !mixer || !capability?.endpoint || capability.preferred !== 'direct') return undefined;
     const connection = connectSource(videoRef.current, capability.endpoint, setState,
-      (stream) => mixer.bindStream(source.id, stream));
+      (stream) => mixer.bindStream(source.id, stream), undefined, { optimization });
     setActiveConnection(connection);
     return () => { connection.close(); setActiveConnection(null); };
-  }, [capability, mixer, source.id]);
+  }, [capability, mixer, source.id, optimization.enabled, optimization.slowStreamTolerance, optimization.adaptiveProfiles, optimization.catchUp]);
 
   useEffect(() => {
     if (source.kind === 'camera' || !mixer || !videoRef.current || !capability?.endpoint || capability.preferred !== 'direct') return undefined;
@@ -212,9 +214,11 @@ function AudioMeterOverlay({ config, meter }: { config: AudioMeterConfig; meter?
   </div>;
 }
 
-function BrowserCameraTile({ item, source, mixer, telemetry, audioMeter, audioSnapshot, promotionKinds, lowPower, documentVisible, analyticsPolicy, analyticsZones, showAnalytics, onState }: {
+function BrowserCameraTile({ item, source, mixer, telemetry, audioMeter, audioSnapshot, promotionKinds, lowPower, documentVisible, analyticsPolicy, analyticsZones, showAnalytics, onState, optimization, onQuality }: {
   item: SceneItem;
   source: CameraSceneSource;
+  optimization: PlaybackOptimization;
+  onQuality: (sourceId: string, profileId: string, weak: boolean) => void;
   mixer: DirectAudioMixer | null;
   telemetry: TelemetryOverlayConfig;
   audioMeter: AudioMeterConfig;
@@ -228,6 +232,7 @@ function BrowserCameraTile({ item, source, mixer, telemetry, audioMeter, audioSn
   onState?: (sourceId: string, state: ProgramConnectionState) => void;
 }) {
   const tileRef = useRef<HTMLDivElement>(null);
+  const qualityCallback = useRef(onQuality); qualityCallback.current = onQuality;
   const videoRef = useRef<HTMLVideoElement>(null);
   const imageRef = useRef<HTMLImageElement>(null);
   const [videoElement, setVideoElement] = useState<HTMLVideoElement | null>(null);
@@ -298,11 +303,13 @@ function BrowserCameraTile({ item, source, mixer, telemetry, audioMeter, audioSn
     });
     if (videoRef.current) {
       connection = connectSource(videoRef.current, `/api/v1/account-cameras/${encodeURIComponent(source.cameraId)}/${encodeURIComponent(source.profileId)}/whep`,
-        setState, (stream) => mixer?.bindStream(source.id, stream));
+        setState, (stream) => mixer?.bindStream(source.id, stream), undefined,
+        { optimization, onQuality: (weak) => qualityCallback.current(source.id, source.profileId, weak) });
       setActiveConnection(connection);
     }
     return () => { connection?.close(); setActiveConnection(null); };
-  }, [mixer, playbackEnabled, source.cameraId, source.id, source.profileId]);
+  }, [mixer, playbackEnabled, source.cameraId, source.id, source.profileId,
+    optimization.enabled, optimization.slowStreamTolerance, optimization.adaptiveProfiles, optimization.catchUp]);
 
   useEffect(() => {
     if (!mixer || !videoRef.current || transport === 'mjpeg') return undefined;
@@ -471,13 +478,14 @@ function BrowserCameraTile({ item, source, mixer, telemetry, audioMeter, audioSn
   </div>;
 }
 
-export default function DirectPreview({ scene, compact = false, layoutPreview = false, audioWorkspace = false }: { scene: SceneDocument; compact?: boolean; layoutPreview?: boolean; audioWorkspace?: boolean }) {
+export default function DirectPreview({ scene, compact = false, layoutPreview = false, audioWorkspace = false, sceneLayout = false }: { scene: SceneDocument; compact?: boolean; layoutPreview?: boolean; audioWorkspace?: boolean; sceneLayout?: boolean }) {
   const [capabilities, setCapabilities] = useState<SourcePlaybackCapability[]>([]);
   const [available, setAvailable] = useState(true);
   const [mixer, setMixer] = useState<DirectAudioMixer | null>(null);
   const [audio, setAudio] = useState<DirectAudioSnapshot>({ state: 'disabled', inputCount: 0, level: 0, sources: [] });
   const { view: monitorView, setView: setMonitorView, loaded: monitorLoaded, error: monitorError, retry: retryMonitor } = useMonitorPreferences(compact && !audioWorkspace, layoutPreview);
   const [cameras, setCameras] = useState<CameraRecord[]>([]);
+  const [adaptiveProfiles, setAdaptiveProfiles] = useState<Record<string, { profileId: string; changedAt: number }>>({});
   const [analyticsPolicies, setAnalyticsPolicies] = useState<AnalyticsPolicy[]>([]);
   const [analyticsZones, setAnalyticsZones] = useState<MotionZone[]>([]);
   const [portrait, setPortrait] = useState(() => window.matchMedia('(orientation: portrait)').matches);
@@ -618,7 +626,7 @@ export default function DirectPreview({ scene, compact = false, layoutPreview = 
   const analyticsByProfile = useMemo(() => new Map(analyticsPolicies.map((policy) => [`${policy.cameraId}\u0000${policy.profileId}`, policy])), [analyticsPolicies]);
   const effectiveScene = useMemo(() => {
     if (layoutPreview) return scene;
-    let current = monitorView.mode === 'auto' && portrait && scene.canvas.width > scene.canvas.height
+    let current = !sceneLayout && monitorView.mode === 'auto' && portrait && scene.canvas.width > scene.canvas.height
       ? { ...scene, canvas: { ...scene.canvas, width: scene.canvas.height, height: scene.canvas.width } }
       : scene;
     if (monitorView.lowPower.enabled && cameras.length) current = {
@@ -630,8 +638,33 @@ export default function DirectPreview({ scene, compact = false, layoutPreview = 
         return selected.profile ? { ...source, profileId: selected.profile.id } : source;
       }),
     };
-    return applyAutomaticLayout(current, monitorView);
-  }, [cameras, layoutPreview, monitorView, portrait, scene]);
+    else if (monitorView.playbackOptimization.enabled && monitorView.playbackOptimization.adaptiveProfiles) current = {
+      ...current, sources: current.sources.map((source) => source.kind === 'camera' && adaptiveProfiles[source.id]
+        ? { ...source, profileId: adaptiveProfiles[source.id].profileId } : source),
+    };
+    return sceneLayout ? current : applyAutomaticLayout(current, monitorView);
+  }, [cameras, layoutPreview, sceneLayout, monitorView, portrait, scene, adaptiveProfiles]);
+  const networkQuality = useCallback((sourceId: string, profileId: string, weak: boolean) => {
+    if (!monitorView.playbackOptimization.enabled || !monitorView.playbackOptimization.adaptiveProfiles || monitorView.lowPower.enabled || layoutPreview) return;
+    const source = scene.sources.find((value) => value.id === sourceId);
+    if (!source || source.kind !== 'camera') return;
+    const camera = cameras.find((value) => value.id === source.cameraId);
+    const profile = camera?.profiles.find((value) => value.id === profileId);
+    if (!camera || !profile) return;
+    setAdaptiveProfiles((values) => {
+      const now = Date.now(), current = values[sourceId];
+      if (current && now - current.changedAt < 60000) return values;
+      if (weak) {
+        const lower = lowerBandwidthProfile(profile, camera.profiles);
+        return lower ? { ...values, [sourceId]: { profileId: lower.id, changedAt: now } } : values;
+      }
+      if (!current) return values;
+      const next = { ...values }; delete next[sourceId]; return next;
+    });
+  }, [cameras, scene.sources, layoutPreview, monitorView.lowPower.enabled, monitorView.playbackOptimization.enabled, monitorView.playbackOptimization.adaptiveProfiles]);
+  useEffect(() => {
+    setAdaptiveProfiles({});
+  }, [scene.id, monitorView.playbackOptimization.enabled, monitorView.playbackOptimization.adaptiveProfiles]);
   const mixedSources = useMemo(() => effectiveScene.sources.map((source) => {
     if (layoutPreview) return { ...source, muted: true };
     if (layoutPreview) return source;
@@ -844,7 +877,7 @@ export default function DirectPreview({ scene, compact = false, layoutPreview = 
     })),
     effectiveScene.canvas.width, effectiveScene.canvas.height),
   [monitorView, effectiveScene]);
-  const displayScene = useMemo(() => layoutPreview || monitorView.canvasMode === 'manual-pixels'
+  const displayScene = useMemo(() => layoutPreview || sceneLayout || monitorView.canvasMode === 'manual-pixels'
     ? effectiveScene
     : { ...effectiveScene,
       canvas: { ...effectiveScene.canvas, width: resolvedCanvas.width, height: resolvedCanvas.height },
@@ -855,7 +888,7 @@ export default function DirectPreview({ scene, compact = false, layoutPreview = 
         height: item.height * resolvedCanvas.height / effectiveScene.canvas.height,
       })),
     },
-  [layoutPreview, effectiveScene, resolvedCanvas, monitorView.canvasMode]);
+  [layoutPreview, sceneLayout, effectiveScene, resolvedCanvas, monitorView.canvasMode]);
 
   const audioMixerChannels = useMemo((): AudioMixerChannel[] => mixedSources.map((source) => {
     const decoration = sourceDecoration(monitorView, source.id);
@@ -889,6 +922,7 @@ export default function DirectPreview({ scene, compact = false, layoutPreview = 
       style={windowPreview ? { left: windowRect.x, top: windowRect.y, width: windowRect.width, height: windowRect.height } : undefined}
     >
       {monitorError && <p role="alert">{monitorError}</p>}
+      {!compact && monitorView.playbackOptimization.enabled && Object.keys(adaptiveProfiles).length > 0 && <p className="playback-adaptation-notice" role="status">弱网优化：{Object.entries(adaptiveProfiles).map(([id, value]) => `${scene.sources.find((source) => source.id === id)?.name ?? id} → ${value.profileId}`).join('；')}。稳定后自动恢复原 Profile；可在系统设置中关闭。</p>}
       {projectorNeedsMeters && !audioEnabled && <button className="projector-meter-enable" type="button" onClick={() => { mixer?.setOutputEnabled(false); void mixer?.enable(); }}>启用电平检测（静音）</button>}
       {windowPreview && <div className="window-preview-bar" onPointerDown={beginWindowDrag}
         onPointerMove={moveWindow} onPointerUp={endWindowDrag} onPointerCancel={endWindowDrag}>
@@ -1041,7 +1075,7 @@ export default function DirectPreview({ scene, compact = false, layoutPreview = 
           .map((item) => {
             const source = displayScene.sources.find((candidate) => candidate.id === item.sourceId);
             if (!source) return null;
-            const tile = { ...item, scaleMode: layoutPreview ? item.scaleMode : resolveFillMode(monitorView, item.sourceId, item.scaleMode) };
+            const tile = { ...item, scaleMode: layoutPreview || sceneLayout ? item.scaleMode : resolveFillMode(monitorView, item.sourceId, item.scaleMode) };
             const style = {
               left: `${(item.x / displayScene.canvas.width) * 100}%`,
               top: `${(item.y / displayScene.canvas.height) * 100}%`,
@@ -1055,6 +1089,7 @@ export default function DirectPreview({ scene, compact = false, layoutPreview = 
               <div className="direct-tile-position" style={style} key={item.id}>
                 {source.kind === 'camera'
                   ? <BrowserCameraTile item={tile} source={source} mixer={mixer}
+                      optimization={monitorView.playbackOptimization} onQuality={networkQuality}
                       telemetry={layoutPreview ? { ...sourceDecoration(monitorView, source.id).telemetry, enabled: false } : monitorView.lowPower.enabled
                         ? { ...sourceDecoration(monitorView, source.id).telemetry, refreshIntervalMs: Math.max(5000, sourceDecoration(monitorView, source.id).telemetry.refreshIntervalMs) }
                         : sourceDecoration(monitorView, source.id).telemetry}
@@ -1067,6 +1102,7 @@ export default function DirectPreview({ scene, compact = false, layoutPreview = 
                       analyticsZones={analyticsZones}
                       showAnalytics={layoutPreview ? { ...monitorView.analytics, showDetectionBoxes: false, showDetectionLabels: false, showInferenceStatus: false } : monitorView.analytics} onState={handleSourceState} />
                   : <DirectTile item={tile} source={source} capability={bySource.get(source.id)} mixer={mixer}
+                      optimization={monitorView.playbackOptimization}
                       telemetry={layoutPreview ? { ...sourceDecoration(monitorView, source.id).telemetry, enabled: false } : monitorView.lowPower.enabled
                         ? { ...sourceDecoration(monitorView, source.id).telemetry, refreshIntervalMs: Math.max(5000, sourceDecoration(monitorView, source.id).telemetry.refreshIntervalMs) }
                         : sourceDecoration(monitorView, source.id).telemetry}

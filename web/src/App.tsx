@@ -11,6 +11,8 @@ import {
 import { connectSceneEvents, ControlApiError, fetchCameras, fetchStudio, fetchStudioCapabilities, replaceStudio, studioAction } from './api';
 import DirectPreview from './DirectPreview';
 import ProgramPreview from './ProgramPreview';
+import SceneCollection, { arrangeSceneGrid, cameraSourceId, type SceneOperation } from './SceneCollection';
+import { openProjectorWindow } from './projector';
 import LocalRuntimeBadge from './LocalRuntimeBadge';
 import WorkspaceShell, { areaFromHash, type ProductArea } from './WorkspaceShell';
 import { canLeaveWorkspace } from './navigationGuard';
@@ -164,13 +166,13 @@ export default function App() {
   );
 
   useEffect(() => {
-    if (!adding) return;
+    if (!adding && productArea !== 'studio') return;
     const controller = new AbortController();
     fetchCameras(controller.signal)
       .then((result) => setRegistryCameras(result.cameras))
       .catch(() => setRegistryCameras([]));
     return () => controller.abort();
-  }, [adding]);
+  }, [adding, productArea]);
 
   useEffect(() => {
     baselineRef.current = baseline;
@@ -614,12 +616,12 @@ export default function App() {
     }
   };
 
-  const duplicateScene = () => {
-    if (!studioDraft || !draft || studioDraft.scenes.length >= 64) return;
-    const suffix = Date.now().toString(36);
-    const copy = cloneScene(draft);
-    copy.id = `scene-${suffix}`;
-    copy.name = `${draft.name} 副本`;
+  const duplicateScene = (sceneId = selectedSceneId) => {
+    const original = studioDraft?.scenes.find((scene) => scene.id === sceneId);
+    if (!studioDraft || !original || studioDraft.scenes.length >= 64) return;
+    const copy = cloneScene(original);
+    copy.id = `scene-${crypto.randomUUID()}`;
+    copy.name = `${original.name.slice(0, 125)} 副本`;
     copy.revision = 0;
     const next = { ...studioDraft, previewSceneId: copy.id, scenes: [...studioDraft.scenes, copy] };
     dirtyRef.current = true;
@@ -645,6 +647,11 @@ export default function App() {
   const removeScene = () => {
     if (!studioDraft || !selectedSceneId || studioDraft.scenes.length <= 1 ||
         studioDraft.programSceneId === selectedSceneId) return;
+    if (studioDraft.scenes.some((scene) => scene.id !== selectedSceneId &&
+        scene.sources.some((source) => source.kind === 'nested' && source.sceneId === selectedSceneId))) {
+      setNotice('此场景被其他场景嵌套引用，请先解除引用再删除。');
+      return;
+    }
     const scenes = studioDraft.scenes.filter((scene) => scene.id !== selectedSceneId);
     const nextScene = scenes[0];
     dirtyRef.current = true;
@@ -654,6 +661,49 @@ export default function App() {
     setBaseline(studioBaseline?.scenes.find((scene) => scene.id === nextScene.id) ?? nextScene);
     setSelectedSourceId(nextScene.sources[0]?.id ?? null);
     setSelectedSourceIds(nextScene.sources[0] ? [nextScene.sources[0].id] : []);
+  };
+
+  const updateCollectionScene = (scene: SceneDocument) => {
+    if (!studioDraft) return;
+    dirtyRef.current = true;
+    setStudioDraft({ ...studioDraft, scenes: studioDraft.scenes.map((value) => value.id === scene.id ? scene : value) });
+    if (scene.id === selectedSceneId) setDraft(cloneScene(scene));
+    setNotice('场景预设已更新，保存 Studio 后生效。');
+  };
+  const createCollectionScene = (scene: SceneDocument) => {
+    if (!studioDraft || studioDraft.scenes.length >= 64) return;
+    dirtyRef.current = true;
+    setStudioDraft({ ...studioDraft, scenes: [...studioDraft.scenes, scene], previewSceneId: scene.id });
+    setSelectedSceneId(scene.id); setDraft(scene); setBaseline(scene);
+    setSelectedSourceId(scene.sources[0]?.id ?? null); setSelectedSourceIds(scene.sources[0] ? [scene.sources[0].id] : []);
+    setNotice('场景预设已创建，保存 Studio 后可投影。');
+  };
+  const operateCollectionScene = (id: string, operation: SceneOperation) => {
+    if (!studioDraft) return;
+    const scene = studioDraft.scenes.find((value) => value.id === id);
+    if (!scene) return;
+    if (operation === 'projector') {
+      if (JSON.stringify(scene) !== JSON.stringify(studioBaseline?.scenes.find((value) => value.id === id))) { setNotice('请先保存此场景，再打开场景投影。'); return; }
+      if (!openProjectorWindow('direct', id)) setNotice('投影窗口被浏览器阻止，请允许本站弹出窗口。');
+      return;
+    }
+    if (operation === 'duplicate') { duplicateScene(id); return; }
+    if (operation === 'grid') { updateCollectionScene(arrangeSceneGrid(scene)); return; }
+    if (operation === 'lock' || operation === 'unlock') { updateCollectionScene({ ...scene, items: scene.items.map((item) => ({ ...item, locked: operation === 'lock' })) }); return; }
+    if (operation === 'delete') {
+      if (studioDraft.scenes.length <= 1 || studioDraft.programSceneId === id || studioDraft.scenes.some((value) => value.id !== id && value.sources.some((source) => source.kind === 'nested' && source.sceneId === id))) return;
+      const scenes = studioDraft.scenes.filter((value) => value.id !== id);
+      dirtyRef.current = true;
+      setStudioDraft({ ...studioDraft, scenes, previewSceneId: studioDraft.previewSceneId === id ? scenes[0].id : studioDraft.previewSceneId });
+      if (selectedSceneId === id) { const next = scenes[0]; setSelectedSceneId(next.id); setDraft(cloneScene(next));
+        setBaseline(studioBaseline?.scenes.find((value) => value.id === next.id) ?? next);
+        setSelectedSourceId(next.sources[0]?.id ?? null); setSelectedSourceIds(next.sources[0] ? [next.sources[0].id] : []); }
+      return;
+    }
+    const scenes = [...studioDraft.scenes]; const index = scenes.findIndex((value) => value.id === id);
+    const target = operation === 'top' ? 0 : operation === 'bottom' ? scenes.length - 1 : index + (operation === 'up' ? -1 : 1);
+    if (target < 0 || target >= scenes.length || target === index) return;
+    scenes.splice(index, 1); scenes.splice(target, 0, scene); dirtyRef.current = true; setStudioDraft({ ...studioDraft, scenes });
   };
 
   const addTemplate = (template: 'grid' | 'focus') => {
@@ -939,30 +989,19 @@ export default function App() {
             <strong>{draft.name}</strong>
           </div>
         </div>
-        <div className="scene-collection" role="list" aria-label="命名场景">
-          {studioDraft.scenes.map((scene) => (
-            <button
-              className={`scene-chip ${scene.id === selectedSceneId ? 'selected' : ''}`}
-              type="button"
-              role="listitem"
-              key={scene.id}
-              onClick={() => selectScene(scene.id)}
-            >
-              <span className="scene-thumb" style={{ backgroundColor: scene.canvas.backgroundColor }}>
-                {scene.items.slice(0, 6).map((item) => <i key={item.id} style={{
-                  left: `${item.x / scene.canvas.width * 100}%`, top: `${item.y / scene.canvas.height * 100}%`,
-                  width: `${item.width / scene.canvas.width * 100}%`, height: `${item.height / scene.canvas.height * 100}%`,
-                }} />)}
-              </span>
-              <strong>{scene.name}</strong>
-              <small>{scene.id === studioDraft.programSceneId ? 'PGM' : ''}{scene.id === studioDraft.previewSceneId ? ' PVW' : ''}</small>
-            </button>
-          ))}
-        </div>
+        <SceneCollection studio={studioDraft} selected={selectedSceneId ?? draft.id}
+          savedSceneIds={studioDraft.scenes.filter((scene) => JSON.stringify(scene) === JSON.stringify(studioBaseline?.scenes.find((value) => value.id === scene.id))).map((scene) => scene.id)}
+          sources={[...new Map([...studioDraft.scenes.flatMap((scene) => scene.sources), ...registryCameras.filter((camera) => camera.enabled !== false && !studioDraft.scenes.some((value) => value.sources.some((source) => source.kind === 'camera' && source.cameraId === camera.id))).flatMap((camera) => {
+            const profile = camera.profiles.find((value) => value.enabled !== false);
+            return profile ? [{ id: cameraSourceId(camera.id, profile.id), kind: 'camera' as const, name: camera.name,
+              cameraId: camera.id, profileId: profile.id, hardwareDecode: 'auto' as const, muted: true, volume: 1,
+              monitoring: 'off' as const, syncOffsetMs: 0, audioTrack: 1, filters: [] }] : [];
+          })].map((source) => [source.id, source])).values()]}
+          onSelect={selectScene} onOperation={operateCollectionScene} onUpdate={updateCollectionScene} onCreate={createCollectionScene} />
         <div className="studio-tools">
           <button className="ghost-button" type="button" onClick={() => moveScene(-1)}>←</button>
           <button className="ghost-button" type="button" onClick={() => moveScene(1)}>→</button>
-          <button className="ghost-button" type="button" disabled={studioDraft.scenes.length >= 64} onClick={duplicateScene}>复制场景</button>
+          <button className="ghost-button" type="button" disabled={studioDraft.scenes.length >= 64} onClick={() => duplicateScene()}>复制场景</button>
           <button className="ghost-button" type="button" disabled={studioDraft.scenes.length >= 64} onClick={() => addTemplate('grid')}>四宫格模板</button>
           <button className="ghost-button" type="button" disabled={studioDraft.scenes.length >= 64} onClick={() => addTemplate('focus')}>主画面模板</button>
           <button className="ghost-button" type="button" disabled={studioDraft.scenes.length <= 1 || studioDraft.programSceneId === selectedSceneId} onClick={removeScene}>删除场景</button>
@@ -1185,7 +1224,7 @@ export default function App() {
             {workspaceMode === 'program' ? (
               playbackMode === 'composite'
                 ? <ProgramPreview aspectRatio={`${draft.canvas.width} / ${draft.canvas.height}`} />
-                : <DirectPreview scene={programScene ?? baseline ?? draft} />
+                : <DirectPreview sceneLayout scene={programScene ?? baseline ?? draft} />
             ) : draft.items.length === 0 ? <EmptyState onAdd={() => setAdding(true)} /> : (
               <div
                 className={`stage${liveLayoutPreview ? ' stage-live' : ''}`}

@@ -34,10 +34,10 @@ export default function ProgramPreview({ aspectRatio, silent = false }: { aspect
 
   useEffect(() => {
     if (!videoRef.current) return undefined;
-    const connection = connectProgram(videoRef.current, setState, setStage);
+    const connection = connectProgram(videoRef.current, setState, setStage, { optimization: view.playbackOptimization });
     connectionRef.current = connection;
     return () => { connection.close(); connectionRef.current = null; };
-  }, []);
+  }, [view.playbackOptimization.enabled, view.playbackOptimization.slowStreamTolerance, view.playbackOptimization.adaptiveProfiles, view.playbackOptimization.catchUp]);
 
   useEffect(() => {
     const controller = new AbortController();

@@ -205,10 +205,12 @@ export function connectSceneEvents(
     const scheme = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
     socket = new WebSocket(`${scheme}//${window.location.host}/api/v1/ws`);
     socket.addEventListener('open', () => {
+      if (closed) return;
       retryDelay = 500;
       onState(true);
     });
     socket.addEventListener('message', (message) => {
+      if (closed) return;
       try {
         const event = JSON.parse(String(message.data)) as SceneEvent;
         if (event.type === 'scene.snapshot' || event.type === 'scene.updated') onEvent(event);
@@ -217,8 +219,8 @@ export function connectSceneEvents(
       }
     });
     socket.addEventListener('close', () => {
-      onState(false);
       if (closed) return;
+      onState(false);
       retryTimer = window.setTimeout(connect, retryDelay);
       retryDelay = Math.min(retryDelay * 2, 8000);
     });

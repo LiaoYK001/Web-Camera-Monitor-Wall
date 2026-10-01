@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import Go2rtcStreams from './Go2rtcStreams';
 
 const base = '/api/v1/go2rtc/';
 const pages = [
@@ -46,6 +47,7 @@ export default function Go2rtcWorkspace({ onDevices }: { onDevices: () => void }
       <p>先在 go2rtc 中配置来源，再在“设备与来源”添加 <code>rtsp://127.0.0.1:18554/流名称</code>。这里的地址指后端所在环境；普通 RTSP 也可直接接入。</p>
       <p>配置与日志可能包含设备凭据，仅供管理员使用。修改流名称时，需要同步更新监控墙中的来源。</p>
     </div>
+    <Go2rtcStreams />
     <nav className="go2rtc-tabs" aria-label="go2rtc 页面">{pages.map((page) => <button type="button" key={page.id} aria-pressed={selected === page.id}
       className={selected === page.id ? 'active' : ''} onClick={() => setSelected(page.id)}>{page.label}</button>)}</nav>
     <p className="go2rtc-description">{pages.find((page) => page.id === selected)?.description}</p>

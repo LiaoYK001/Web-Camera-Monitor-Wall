@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { ControlApiError, createCamera, deleteCamera, detectCamera, discoverOnvif, fetchAnalyticsPolicies, fetchCameraPreferences, fetchCameras, fetchOnvifPresets, fetchOnvifSnapshot, fetchV3AnalyticsPolicies, mutateOnvifPreset, patchV3AnalyticsPolicies, probeOnvif, pullOnvifEvents, qualifyBrowserDirect, saveCameraPreferences, sendOnvifPtz, sendOnvifTalk, syncOnvifCamera, updateAnalyticsPolicies, updateCameraCredentials } from './api';
 import type { AnalyticsPolicy, CameraAdapter, CameraDetection, CameraRecord, OnvifPreset } from './types';
 import { loadSyncState } from './localRuntime';
+import Go2rtcStreams from './Go2rtcStreams';
 
 type EditableAnalyticsPolicy = Omit<AnalyticsPolicy, 'updatedAt'>;
 type CameraPreference = { displayName: string; favorite: boolean; group: string };
@@ -273,6 +274,7 @@ export default function CameraRegistry({ onBack }: { onBack: () => void }) {
     <header className="registry-header"><div><span className="eyebrow">Camera Source Adapter</span><h1>设备与码流</h1></div><button className="ghost-button" type="button" onClick={onBack}>返回 Studio</button></header>
     {error && <div className="alert" role="alert">{error}</div>}
     {notice && <div className="notice" role="status">{notice}</div>}
+    <Go2rtcStreams onImported={() => void reload()} />
     <section className="registry-add">
       <div><h2>添加设备</h2><p>可粘贴含账号密码的链接（会自动加密保存并脱敏显示），或在下方「设备登录」中单独填写。数据库与链接均不保存明文账密。</p></div>
       <p>HTTP 网页首页不是视频流。请使用完整的 RTSP、HLS 或 MJPEG 地址；go2rtc 转换后可填写 <code>rtsp://转换服务地址:18554/流名称</code>。</p>

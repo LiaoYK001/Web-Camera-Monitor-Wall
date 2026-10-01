@@ -1,3 +1,5 @@
+import { FrameCadence, congested, normalizePlaybackOptimization, type NetworkSample, type PlaybackOptimization } from './playbackOptimization';
+export interface PlaybackOptions { optimization?: Partial<PlaybackOptimization>; onQuality?: (weak: boolean) => void }
 export type ProgramConnectionState = 'checking' | 'connecting' | 'live' | 'reconnecting' | 'offline' | 'disabled';
 
 export type CompositeConfiguration = 'disabled' | 'incomplete' | 'ready' | 'unknown';
@@ -132,7 +134,6 @@ export interface PlaybackStage {
 
 const HANDSHAKE_TIMEOUT_MS = 15_000;
 const FIRST_FRAME_TIMEOUT_MS = 20_000;
-const STALL_MS = 6_000;
 
 /** F6-10 progressive reconnect ladder: 3s → 5s → 10s → 20s → 40s → 60s cap. */
 export const RECONNECT_BASE_DELAYS_MS = [3_000, 5_000, 10_000, 20_000, 40_000, 60_000] as const;
@@ -157,7 +158,13 @@ function connectWhep(
   requestHeaders: Record<string, string> = {},
   onAuthorizationRejected?: AuthorizationRejected,
   onStage?: (stage: PlaybackStage) => void,
+  options: PlaybackOptions = {},
 ): ProgramConnection {
+  const optimization = normalizePlaybackOptimization(options.optimization);
+  const cadence = new FrameCadence();
+  let previousNetwork: NetworkSample | undefined;
+  let weakSamples = 0, healthySamples = 0, lastNetworkAt = 0, sampling = false;
+  let lastVideoTime = 0;
   let closed = false;
   let attempt = 0;
   let generation = 0;
@@ -209,6 +216,8 @@ function connectWhep(
 
   const releaseSession = () => {
     stopFrameTracking();
+    cadence.reset(); previousNetwork = undefined; weakSamples = 0; healthySamples = 0;
+    lastVideoTime = 0; lastFrameCount = 0;
     request?.abort();
     request = undefined;
     if (peer) {
@@ -244,6 +253,7 @@ function connectWhep(
 
   const markFrame = (currentGeneration: number) => {
     if (closed || currentGeneration !== generation) return;
+    cadence.observe(performance.now());
     stage.frames += 1;
     lastFrameAt = performance.now();
     if (!stage.firstFrame) {
@@ -271,7 +281,8 @@ function connectWhep(
       if (closed || currentGeneration !== generation) return;
       const quality = (video as HTMLVideoElement & { getVideoPlaybackQuality?: () => { totalVideoFrames: number } }).getVideoPlaybackQuality?.();
       const frames = quality?.totalVideoFrames ?? 0;
-      if (frames > lastFrameCount || (!video.paused && video.currentTime > 0)) {
+      if (frames > lastFrameCount || (!video.paused && video.currentTime > lastVideoTime)) {
+        lastVideoTime = video.currentTime;
         lastFrameCount = Math.max(lastFrameCount, frames);
         markFrame(currentGeneration);
       }
@@ -289,7 +300,30 @@ function connectWhep(
         });
         return;
       }
-      if (lastFrameAt && performance.now() - lastFrameAt > STALL_MS) scheduleReconnect('frame_stall');
+      const now = performance.now();
+      if (lastFrameAt && now - lastFrameAt > cadence.stallAfterMs(optimization.enabled && optimization.slowStreamTolerance)) { scheduleReconnect('frame_stall'); return; }
+      if (!optimization.enabled || sampling || !peer || typeof peer.getStats !== 'function' || now - lastNetworkAt < 3000) return;
+      lastNetworkAt = now; sampling = true;
+      const currentPeer = peer;
+      void currentPeer.getStats().then((stats) => {
+        if (closed || generation !== currentGeneration || currentPeer !== peer) return;
+        stats.forEach((report) => {
+          if (report.type !== 'inbound-rtp' || (report.kind ?? report.mediaType) !== 'video') return;
+          const sample: NetworkSample = { received: report.packetsReceived ?? 0, lost: report.packetsLost ?? 0,
+            jitter: report.jitter ?? 0, freezes: report.freezeCount ?? 0, timestamp: report.timestamp };
+          if (previousNetwork) {
+            const weak = congested(previousNetwork, sample);
+            weakSamples = weak ? weakSamples + 1 : 0; healthySamples = weak ? 0 : healthySamples + 1;
+            if (optimization.adaptiveProfiles && (weakSamples === 3 || (weakSamples >= 10 && weakSamples % 10 === 0))) options.onQuality?.(true);
+            if (optimization.adaptiveProfiles && healthySamples === 20) options.onQuality?.(false);
+          }
+          previousNetwork = sample;
+          if (optimization.catchUp) for (const receiver of currentPeer.getReceivers()) {
+            if (receiver.track.kind !== 'video' || !('jitterBufferTarget' in receiver)) continue;
+            try { (receiver as RTCRtpReceiver & { jitterBufferTarget: number }).jitterBufferTarget = Math.min(800, Math.max(120, sample.jitter * 3000)); } catch { /* Optional browser API. */ }
+          }
+        });
+      }).catch(() => undefined).finally(() => { sampling = false; });
     }, 1000);
   };
 
@@ -335,7 +369,7 @@ function connectWhep(
           if (!stage.firstFrame && firstFrameTimer === undefined)
             firstFrameTimer = window.setTimeout(() => {
               if (!stage.firstFrame) scheduleReconnect('first_frame_timeout');
-            }, FIRST_FRAME_TIMEOUT_MS);
+            }, optimization.enabled && optimization.slowStreamTolerance ? 45000 : FIRST_FRAME_TIMEOUT_MS);
         } else if (nextPeer.connectionState === 'failed') {
           scheduleReconnect('ice_failed');
         } else if (nextPeer.connectionState === 'disconnected' && disconnectedTimer === undefined) {
@@ -419,13 +453,14 @@ export function connectProgram(
   video: HTMLVideoElement,
   onState: (state: ProgramConnectionState) => void,
   onStage?: (stage: PlaybackStage) => void,
+  options: PlaybackOptions = {},
 ): ProgramConnection {
   return connectWhep(video, async (signal) => {
     const statusResponse = await fetch('/api/v1/program/status', { cache: 'no-store', signal });
     if (!statusResponse.ok) throw new Error('Program status is unavailable');
     const status = (await statusResponse.json()) as ProgramStatus;
     return status.enabled ? status.endpoint : null;
-  }, onState, true, undefined, undefined, {}, undefined, onStage);
+  }, onState, true, undefined, undefined, {}, undefined, onStage, options);
 }
 
 export function connectSource(
@@ -434,8 +469,9 @@ export function connectSource(
   onState: (state: ProgramConnectionState) => void,
   onRemoteStream?: (stream: MediaStream) => void,
   onStage?: (stage: PlaybackStage) => void,
+  options: PlaybackOptions = {},
 ): ProgramConnection {
-  return connectWhep(video, async () => endpoint, onState, true, onRemoteStream, undefined, {}, undefined, onStage);
+  return connectWhep(video, async () => endpoint, onState, true, onRemoteStream, undefined, {}, undefined, onStage, options);
 }
 
 export function connectApprovedWhep(
@@ -447,6 +483,8 @@ export function connectApprovedWhep(
     onRemoteStream?: (stream: MediaStream) => void;
     onAuthorizationRejected?: AuthorizationRejected;
     onStage?: (stage: PlaybackStage) => void;
+    optimization?: Partial<PlaybackOptimization>;
+    onQuality?: (weak: boolean) => void;
   } = {},
 ): ProgramConnection {
   const approved = new URL(endpoint);
@@ -459,5 +497,5 @@ export function connectApprovedWhep(
     return candidate;
   };
   return connectWhep(video, async () => endpoint, onState, true, options.onRemoteStream, validate,
-    options.deviceToken ? { 'Authorization': `Bearer ${options.deviceToken}` } : {}, options.onAuthorizationRejected, options.onStage);
+    options.deviceToken ? { 'Authorization': `Bearer ${options.deviceToken}` } : {}, options.onAuthorizationRejected, options.onStage, options);
 }

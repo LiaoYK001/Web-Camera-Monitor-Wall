@@ -22,7 +22,7 @@
 
 ## Validation
 
-- Frontend: `cd web; pnpm typecheck; pnpm build`; focused Playwright tests use `pnpm test:local -- <spec>`.
+- Frontend: `cd web; pnpm typecheck; pnpm build`; focused Playwright tests use `pnpm exec playwright test -c playwright.local.config.ts --project=chromium <spec>` (pnpm script `--` can prevent spec filtering).
 - go2rtc assets: `cd web; pnpm go2rtc:ui` assembles the complete upstream UI with locally packaged third-party dependencies.
 - C++: CMake builds and CTest inside the Linux/WSL or Docker build environment. The production core is Linux, not Windows C++.
 - Run `tests/test_go2rtc_runtime.py` for private configuration/lifecycle contracts and the dedicated proxy integration test for HTTP/WebSocket streaming.

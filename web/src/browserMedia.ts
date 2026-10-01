@@ -1,4 +1,6 @@
 import Hls from 'hls.js';
+import { normalizePlaybackOptimization, type PlaybackOptimization } from './playbackOptimization';
+import { reconnectDelayMs } from './whep';
 import { browserDeviceHeaders, browserDeviceToken } from './browserEnrollment';
 import { clearPrivateRuntimeState, loadBrowserIdentity, type BrowserGrantProfile } from './localRuntime';
 import { connectApprovedWhep, type ProgramConnection, type ProgramConnectionState } from './whep';
@@ -172,7 +174,9 @@ export function hlsXhrSetup(xhr: XMLHttpRequest, requestUrl: string, baseUrl: UR
 
 export function connectHls(
   video: HTMLVideoElement, endpoint: string, onState: (state: ProgramConnectionState) => void,
+  preferences?: Partial<PlaybackOptimization>,
 ): ProgramConnection {
+  const optimization = normalizePlaybackOptimization(preferences);
   const url = new URL(endpoint);
   if (url.protocol !== 'https:' || url.username || url.password || url.search || url.hash)
     throw new Error('HLS endpoint is not approved');
@@ -180,11 +184,15 @@ export function connectHls(
   let closed = false;
   let receivedBytes = 0;
   let codec = 'Unknown';
-  const timeout = window.setTimeout(() => { if (!closed) onState('offline'); }, 20_000);
+  let retryTimer: number | undefined, attempts = 0, mediaRecoveries = 0;
+  const timeout = window.setTimeout(() => { if (!closed) onState('offline'); }, optimization.enabled && optimization.slowStreamTolerance ? 45000 : 20000);
   onState('connecting');
   if (Hls.isSupported()) {
     hls = new Hls({
-      enableWorker: true, lowLatencyMode: true, maxBufferLength: 12, maxMaxBufferLength: 20,
+      enableWorker: true, lowLatencyMode: !optimization.enabled, maxBufferLength: optimization.enabled ? 30 : 12, maxMaxBufferLength: optimization.enabled ? 60 : 20,
+      liveSyncDurationCount: 3, liveMaxLatencyDurationCount: optimization.enabled && optimization.catchUp ? 8 : Infinity,
+      maxLiveSyncPlaybackRate: optimization.enabled && optimization.catchUp ? 1.08 : 1,
+      ...(optimization.enabled && optimization.adaptiveProfiles ? { abrEwmaDefaultEstimate: 500000, capLevelToPlayerSize: true } : {}),
       xhrSetup(xhr, requestUrl) { hlsXhrSetup(xhr, requestUrl, url); },
     });
     hls.on(Hls.Events.MANIFEST_PARSED, () => void video.play().catch(() => undefined));
@@ -194,15 +202,22 @@ export function connectHls(
       const advertised = level?.videoCodec || level?.codecSet || '';
       if (advertised) codec = advertised.split('.')[0].replace(/^avc1$/i, 'H264').replace(/^hvc1|hev1$/i, 'H265').toUpperCase();
     });
-    hls.on(Hls.Events.ERROR, (_event, data) => { if (data.fatal && !closed) onState('offline'); });
+    hls.on(Hls.Events.ERROR, (_event, data) => {
+      if (!data.fatal || closed) return;
+      onState('offline');
+      if (!optimization.enabled || data.response?.code === 401 || data.response?.code === 403) return;
+      if (data.type === Hls.ErrorTypes.MEDIA_ERROR && mediaRecoveries++ < 2) { hls?.recoverMediaError(); return; }
+      if (data.type !== Hls.ErrorTypes.NETWORK_ERROR || retryTimer !== undefined) return;
+      retryTimer = window.setTimeout(() => { retryTimer = undefined; if (!closed) { onState('reconnecting'); hls?.startLoad(); } }, reconnectDelayMs(attempts++));
+    });
     hls.loadSource(url.href); hls.attachMedia(video);
   } else if (video.canPlayType('application/vnd.apple.mpegurl')) {
     video.src = url.href; void video.play().catch(() => undefined);
   } else onState('offline');
-  const live = () => { window.clearTimeout(timeout); onState('live'); };
+  const live = () => { window.clearTimeout(timeout); attempts = 0; mediaRecoveries = 0; onState('live'); };
   video.addEventListener('playing', live);
   return {
-    close: () => { closed = true; window.clearTimeout(timeout); video.removeEventListener('playing', live); hls?.destroy(); video.removeAttribute('src'); video.load(); },
+    close: () => { closed = true; window.clearTimeout(timeout); if (retryTimer !== undefined) window.clearTimeout(retryTimer); video.removeEventListener('playing', live); hls?.destroy(); video.removeAttribute('src'); video.load(); },
     getReceivedBytes: () => receivedBytes,
     getCodec: () => codec,
   };
