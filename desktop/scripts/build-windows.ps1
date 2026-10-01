@@ -119,6 +119,7 @@ if (-not $SkipPackage) {
     try {
         Invoke-Checked 'pnpm' @('--dir',$desktopRoot,'exec','electron-builder','--win','nsis','--x64','--publish','never','--config','builder.config.cjs',"--config.extraMetadata.version=$Version")
     } finally { [IO.File]::WriteAllBytes($distributionPath,$savedDistribution) }
+    Invoke-Checked 'pnpm' @('--dir',$desktopRoot,'test:package')
     Invoke-Checked 'node' @((Join-Path $PSScriptRoot 'release-assets.mjs'),$Version)
 }
 Write-Output "Built WebOBS $Version. Runtime: $runtimeRoot. Windows 10/11 installation and actual camera checks remain separate qualification steps."

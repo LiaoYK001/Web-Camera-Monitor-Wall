@@ -27,6 +27,8 @@
 
 开发构建仅生成 `dev.yml`，正式构建生成 `latest.yml`。electron-builder 签名主程序与 NSIS 安装包，排除已纳入运行文件摘要的嵌套 `.exe`；保留捆绑组件原有签名，打包后再次验证完整运行目录。
 
+签名过滤器明确包含 `WebOBS.exe`、当前版本 NSIS 安装器和卸载器，再排除其他 `.exe`，并通过固定 electron-builder 的实际过滤实现回归。正式构建强制签名，打包后再次检查主程序发布者。
+
 ```powershell
 $env:CSC_LINK = '签名证书路径或维护者配置的凭据'
 $env:CSC_KEY_PASSWORD = '通过私密环境设置，不写入仓库'
@@ -42,6 +44,8 @@ GitHub `Build full Windows desktop` 是手动候选构建，不发布 Release。
 
 主控制入口固定 `http://127.0.0.1:18080`，内部端口首次分配后保存在 `ports.json`；冲突报错，不结束其他应用。受认证的 `/api/v1/runtime/info` 返回平台与 go2rtc 建档地址，设备导入使用该地址。服务 URL 的环境映射在根目录 `runtime_support.py` 与 C++ `platform_runtime` 中保持一致。
 
+同步 CommonJS 启动入口在 Electron ready 之前配置用户与会话目录，然后加载桌面模块，避免打包入口等待 ready 时阻塞启动。模块导入失败会保存 `logs/desktop-startup.log` 并显示日志位置；成功启动也保留简短启动记录。
+
 配置、账号数据库、密钥、桌面设置与浏览器会话位于 `%LOCALAPPDATA%\WebOBS`。私密目录仅当前 Windows 用户访问，备份主密钥由 Electron safeStorage/Windows DPAPI 保护；客户端授权签名密钥也使用 DPAPI。运行期间备份进程使用私密 `run` 目录中的临时密钥，停服删除。录像默认位于用户 Videos 下的 WebOBS，可在设置中选择新目录；已有录像不会自动移动。
 
 Windows 写入授权密钥使用二进制文件模式，避免 CRT 把随机密文中的换行字节改写为 CRLF。回归测试同时检查实际文件字节与重新载入后的密钥身份。
@@ -55,6 +59,8 @@ Windows 工具保留固定原生入口；需要导入 Python 实现的 S3 备份
 Scene 右键菜单可打开不同固定 Scene 的独立投影，选择显示器与全屏，Esc 退出全屏。关闭主窗口不会关闭投影。同 Scene、模式和显示器组合复用其窗口。
 
 系统设置中的 Windows 客户端区提供更新开关、托盘、开机启动、录像目录、局域网设置与服务重启。共享开启后，Caddy 只监听私有 IPv4 地址，生成内部 CA，禁止自动修改系统证书信任。UI 列出 HTTPS 地址、根证书路径与当前用户信任步骤，并列出管理员可自行执行的 Private / LocalSubnet 防火墙命令，涵盖产品和 go2rtc WebRTC 的媒体端口。其他局域网电脑只复制 `root.crt` 公钥证书，按界面步骤导入当前用户的受信任根证书存储；不分发 CA 私钥或整个数据目录。go2rtc 仅在共享开启时提供局域网 ICE 地址；上游管理端口保持 loopback，所有管理请求经过产品认证代理。共享和录像目录设置在重启服务后生效。
+
+Caddy 运行配置由主进程保存，关闭其默认配置 autosave，避免在 `%APPDATA%\Caddy` 额外写入产品配置。
 
 “创建完整配置备份”暂时正常停服，创建一致性快照和加密 `.wobk` 备份，然后恢复运行。录像媒体不复制进配置备份。Docker/WSL 数据通过“从备份恢复”明确选择 `.wobk` 及原始 32 字节密钥导入，先保存当前数据快照，不自动搬移部署。含绝对路径的外部来源、存储卷和 Secret 引用需在恢复后改为本机路径；它们不会被猜测或静默重写。
 
@@ -80,3 +86,5 @@ Windows 10、11 各自记录实际安装、媒体、LAN 与两版更新结果。
 ## 当前验证边界
 
 已通过 Windows 原生 C++/OBS 编译与 CTest、完整 NSIS 开发包构建、桌面逻辑与真实 Electron 检查。本机 Windows 11 的捆绑服务已通过首个账号、认证 go2rtc、快照和重启后会话恢复；RTX 3060 Ti 实际通过 NVENC 样本探测及 OBS Program 编码。完整构建必须通过 `pnpm --dir desktop test:runtime` 和 `pnpm --dir desktop test:main`，后者使用真实桌面入口检查两个固定 Scene 投影、共享登录、关闭主窗口保留服务及正常退出。均使用临时数据目录，不覆盖真实摄像机。Windows 10/11 干净安装、真实摄像机播放、LAN 与两个签名安装版本的更新故障测试仍须分别记录；没有完成这些实际检查前，不宣称阶段一达到生产验收。
+
+打包后还必须通过 `pnpm --dir desktop test:package`：启动真正的 `win-unpacked/WebOBS.exe`，验证 ASAR、生产依赖、独立账号和 go2rtc，并检查主进程异常退出后 Job 收束所有后代。本机另已验证真实 Caddy 的 HTTPS、显式 CA、认证与 go2rtc 代理；未修改系统信任和防火墙，不等于其他设备的浏览器及媒体验收。

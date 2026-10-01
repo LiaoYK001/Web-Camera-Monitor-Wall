@@ -23,7 +23,7 @@ const pause = ms => new Promise(resolve => setTimeout(resolve, ms));
   dialog.showErrorBox = (_title, message) => errors.push(new Error(message));
   let exitCode = 0;
   try {
-    await import('../src/main.mjs');
+    await require('../src/bootstrap.cjs');
     const main = BrowserWindow.getAllWindows()[0];
     assert.ok(main);
     const state = await main.webContents.executeJavaScript('window.webobsDesktop.status()');

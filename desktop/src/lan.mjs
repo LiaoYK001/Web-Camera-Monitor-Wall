@@ -10,7 +10,8 @@ export function lanAddresses() {
 export function caddyConfiguration(addresses, port, controlPort, storage) {
   if (!addresses.length || addresses.some(ip => !privateIPv4(ip))) throw new Error('No private LAN address is available');
   return {
-    admin: { disabled: true }, storage: { module: 'file_system', root: storage },
+    // The supervisor owns run/caddy.json; never write a second copy to roaming AppData.
+    admin: { disabled: true, config: { persist: false } }, storage: { module: 'file_system', root: storage },
     apps: {
       pki: { certificate_authorities: { local: { name: 'WebOBS Local CA', install_trust: false } } },
       tls: { certificates: { automate: addresses }, automation: { policies: [{ subjects: addresses, issuers: [{ module: 'internal' }] }] } },

@@ -14,7 +14,6 @@ import { launchVerifiedInstaller } from './installer.mjs';
 
 const source = path.dirname(fileURLToPath(import.meta.url));
 const root = path.join(process.env.LOCALAPPDATA || app.getPath('appData'),'WebOBS');
-app.setPath('userData',root);app.setPath('sessionData',path.join(root,'browser'));
 if(!app.requestSingleInstanceLock())app.quit();
 else {
   let main, tray, supervisor, updates, settings, quitting=false, operating=false, recovery;
