@@ -7,6 +7,8 @@ $PSNativeCommandUseErrorActionPreference = $false
 $RepositoryRoot = (Resolve-Path (Join-Path $PSScriptRoot '..')).Path
 $ExpectedObsCommit = 'fb4d98bf88fae5fc85cb11fc57f7c5e309282194'
 $ExpectedObsUrl = 'https://github.com/obsproject/obs-studio.git'
+$ExpectedGo2rtcCommit = 'b5948cfb25404cc5cb37b166ecaa2dca20b11d4b'
+$ExpectedGo2rtcUrl = 'https://github.com/AlexxIT/go2rtc.git'
 
 function Invoke-GitCapture {
     param(
@@ -136,6 +138,9 @@ try {
         'tests/run-real-camera.ps1'   = @('user:password')
         'tests/run-real-camera.sh'    = @('user:password')
         'tests/test_camera_registry.py' = @('user:password', 'user:pass', '*****:*****')
+        'tests/test_event_service.py'  = @('user:password')
+        'tests/test_v2_client_control.py' = @('fixture-user:fixture-password')
+        'web/tests/local-runtime/scenes-go2rtc-optimization.spec.ts' = @('private:do-not-display')
         'docs/bulk-source-import.md'   = @('user:password')
         'web/src/CameraRegistry.tsx'   = @('user:password')
         'web/src/SourceCatalog.tsx'    = @('user:password')
@@ -168,9 +173,9 @@ try {
     $indexResult = Invoke-GitCapture -Arguments @('ls-files', '--stage')
     $indexEntries = @($indexResult.Output | ForEach-Object { $_.ToString() })
     $submoduleEntries = @($indexEntries | Where-Object { $_ -like '160000 *' })
-    $expectedEntry = "160000 $ExpectedObsCommit 0`tobs/obs-studio"
-    if ($submoduleEntries.Count -ne 1 -or $submoduleEntries[0] -cne $expectedEntry) {
-        throw 'Public-repository audit failed: OBS must be the only root submodule and remain pinned to the approved commit.'
+    $expectedEntries = @("160000 $ExpectedGo2rtcCommit 0`tgo2rtc/go2rtc", "160000 $ExpectedObsCommit 0`tobs/obs-studio")
+    if ($submoduleEntries.Count -ne 2 -or @((Compare-Object -CaseSensitive $expectedEntries $submoduleEntries)).Count -ne 0) {
+        throw 'Public-repository audit failed: OBS and go2rtc must remain the two approved pinned root submodules.'
     }
 
     foreach ($executablePath in @(
@@ -196,8 +201,10 @@ try {
     $gitmodulesResult = Invoke-GitCapture -Arguments @('show', ':.gitmodules')
     $gitmodulesLines = @($gitmodulesResult.Output | ForEach-Object { $_.ToString().Trim() })
     if ($gitmodulesLines -cnotcontains 'path = obs/obs-studio' -or
-        $gitmodulesLines -cnotcontains "url = $ExpectedObsUrl") {
-        throw 'Public-repository audit failed: the OBS submodule path or public upstream URL changed.'
+        $gitmodulesLines -cnotcontains "url = $ExpectedObsUrl" -or
+        $gitmodulesLines -cnotcontains 'path = go2rtc/go2rtc' -or
+        $gitmodulesLines -cnotcontains "url = $ExpectedGo2rtcUrl") {
+        throw 'Public-repository audit failed: approved submodule paths or public upstream URLs changed.'
     }
 
     $checkoutResult = Invoke-GitCapture -Arguments @('submodule', 'status', '--recursive')

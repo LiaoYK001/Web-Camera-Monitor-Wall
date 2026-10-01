@@ -21,6 +21,21 @@ private_directory=module('desktop_private_directory',ROOT/'desktop/python/privat
 headless=module('desktop_headless',ROOT/'desktop/scripts/prepare-obs-headless.py')
 
 class SnapshotTests(unittest.TestCase):
+    def test_signing_key_file_preserves_binary_ciphertext_on_restart(self):
+        from unittest.mock import patch, Mock
+        service=module('desktop_signing_persistence',ROOT/'v2/client_control_service.py')
+        public,secret=b'p'*32,b's'*64
+        protected=b'WEBOBSDPAPI1\nprotected\x00\xff\r\n'
+        def protect(value,decrypt=False):
+            self.assertEqual(value,protected if decrypt else public+secret)
+            return public+secret if decrypt else protected
+        with tempfile.TemporaryDirectory() as temp:
+            key=pathlib.Path(temp)/'grant.key'
+            with patch.object(service,'KEY_PATH',key),patch.object(service,'sodium',return_value=Mock(signing_keypair=Mock(return_value=(public,secret)))),patch.object(service,'protect_local_key',side_effect=protect):
+                self.assertEqual(service.load_or_create_signing_key(),(public,secret))
+                self.assertEqual(key.read_bytes(),protected)
+                self.assertEqual(service.load_or_create_signing_key(),(public,secret))
+
     @unittest.skipUnless(os.name=='nt' and (ROOT/'desktop/runtime/bin/ffmpeg.exe').exists(),'requires bundled Windows media tools')
     def test_windows_recording_stop_finalizes_a_playable_media_file(self):
         nvr=module('desktop_nvr_flush',ROOT/'nvr/nvr_service.py')

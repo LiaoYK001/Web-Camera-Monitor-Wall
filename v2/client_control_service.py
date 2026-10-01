@@ -381,7 +381,7 @@ def load_or_create_signing_key() -> tuple[bytes, bytes]:
     else:
         public, secret = sodium().signing_keypair()
     temporary = KEY_PATH.with_name(f".{KEY_PATH.name}.{os.getpid()}.{secrets.token_hex(4)}")
-    descriptor = os.open(temporary, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+    descriptor = os.open(temporary, os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_BINARY", 0), 0o600)
     try:
         os.write(descriptor, protect_local_key(public + secret))
         os.fsync(descriptor)

@@ -112,6 +112,7 @@ Invoke-Checked 'pnpm' @('--dir',$desktopRoot,'test')
 Invoke-Checked 'pnpm' @('--dir',$desktopRoot,'test:electron')
 Invoke-Checked 'python' @((Join-Path $repoRoot 'desktop\tests\test_native_runtime.py'))
 Invoke-Checked 'pnpm' @('--dir',$desktopRoot,'test:runtime')
+Invoke-Checked 'pnpm' @('--dir',$desktopRoot,'test:main')
 if (-not $SkipPackage) {
     $distributionPath = Join-Path $desktopRoot 'src\distribution.json'
     $savedDistribution = [IO.File]::ReadAllBytes($distributionPath)

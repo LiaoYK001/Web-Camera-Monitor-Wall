@@ -24,8 +24,9 @@ else {
   const broadcast=()=>{for(const win of BrowserWindow.getAllWindows())if(!win.isDestroyed())win.webContents.send('webobs:desktop-status',status());};
   const securePreferences={preload:path.join(source,'preload.cjs'),contextIsolation:true,nodeIntegration:false,sandbox:true,webSecurity:true,partition:'persist:webobs-desktop'};
   function configureWindow(win,desktop=true) {
-    if(desktop)knownContents.add(win.webContents.id);
-    win.on('closed',()=>{knownContents.delete(win.webContents.id);work.delete(win.webContents.id);});
+    const contentsId=win.webContents.id;
+    if(desktop)knownContents.add(contentsId);
+    win.on('closed',()=>{knownContents.delete(contentsId);work.delete(contentsId);});
     win.webContents.on('will-navigate',(event,url)=>{try{if(new URL(url).origin!==supervisor?.origin && url!==diagnosticUrl)event.preventDefault();}catch{event.preventDefault();}});
     win.webContents.setWindowOpenHandler(({url})=>{
       try {
@@ -80,7 +81,6 @@ else {
     const trayIcon=createTrayIcon(nativeImage);
     tray=new Tray(trayIcon);tray.setToolTip('WebOBS · 本机监控墙');tray.on('double-click',showMain);
     tray.setContextMenu(Menu.buildFromTemplate([{label:'显示主窗口',click:showMain},{label:'检查更新',click:()=>{showMain();void updates?.check();}},{type:'separator'},{label:'退出并停止服务',click:()=>void quit()}]));
-    await main.loadFile(path.join(source,'diagnostics.html'));
     const desktopSession=session.fromPartition('persist:webobs-desktop');
     desktopSession.setPermissionRequestHandler((contents,permission,callback)=>{
       let trusted=false;try{trusted=knownContents.has(contents.id) && new URL(contents.getURL()).origin===supervisor?.origin;}catch{}
@@ -167,6 +167,8 @@ else {
         throw new Error('Unknown desktop operation');
       } finally {operating=false;broadcast();}
     });
+    // The diagnostics page invokes status immediately; register IPC before loading it.
+    await main.loadFile(path.join(source,'diagnostics.html'));
     try {
       settings=await loadSettings(root);app.setLoginItemSettings({openAtLogin:settings.startAtLogin});const runtime=app.isPackaged?path.join(process.resourcesPath,'runtime'):path.resolve(source,'..','runtime');
       await verifyRuntime(runtime);

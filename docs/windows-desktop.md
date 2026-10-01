@@ -44,6 +44,8 @@ GitHub `Build full Windows desktop` 是手动候选构建，不发布 Release。
 
 配置、账号数据库、密钥、桌面设置与浏览器会话位于 `%LOCALAPPDATA%\WebOBS`。私密目录仅当前 Windows 用户访问，备份主密钥由 Electron safeStorage/Windows DPAPI 保护；客户端授权签名密钥也使用 DPAPI。运行期间备份进程使用私密 `run` 目录中的临时密钥，停服删除。录像默认位于用户 Videos 下的 WebOBS，可在设置中选择新目录；已有录像不会自动移动。
 
+Windows 写入授权密钥使用二进制文件模式，避免 CRT 把随机密文中的换行字节改写为 CRLF。回归测试同时检查实际文件字节与重新载入后的密钥身份。
+
 OBS 使用 D3D11，外部 FFmpeg 与 OBS 插件能力分别实测。CUDA 设备与驱动通过 Windows CUDA API 检测，NVENC/QSV 编解码以限时样本探测为准；没有通过探测的硬件不会报告为就绪。部分 Linux 专用指标在 Windows 显示不可读取。
 
 Windows 工具保留固定原生入口；需要导入 Python 实现的 S3 备份和分析任务使用包内固定源码路径，避免把 `.exe` 当作 Python 模块读取。运行文件清单、SBOM 与许可证同时覆盖 WebUI、go2rtc 页面依赖和 Electron/Chromium。
@@ -77,4 +79,4 @@ Windows 10、11 各自记录实际安装、媒体、LAN 与两版更新结果。
 
 ## 当前验证边界
 
-源码包含 Windows 原生移植、Electron 生命周期、完整依赖打包与更新/恢复实现。可在本机运行桌面逻辑测试、真实 Electron 沙箱/IPC/共享会话/托盘测试、快照/转码参数测试、Web 构建及 Linux 回归。完整构建还必须通过 `pnpm --dir desktop test:runtime`，在独立临时数据目录中验证所有捆绑服务启动、首个账号、登录、认证 go2rtc、快照和重启后会话恢复；该检查不使用开发机 PATH，也不覆盖真实摄像机。实际 Windows 编译、NSIS 安装、真实摄像机播放、Windows 10/11 和两个签名安装版本的更新故障测试必须分别记录。没有完成这些实际检查前，不宣称阶段一达到生产验收。
+已通过 Windows 原生 C++/OBS 编译与 CTest、完整 NSIS 开发包构建、桌面逻辑与真实 Electron 检查。本机 Windows 11 的捆绑服务已通过首个账号、认证 go2rtc、快照和重启后会话恢复；RTX 3060 Ti 实际通过 NVENC 样本探测及 OBS Program 编码。完整构建必须通过 `pnpm --dir desktop test:runtime` 和 `pnpm --dir desktop test:main`，后者使用真实桌面入口检查两个固定 Scene 投影、共享登录、关闭主窗口保留服务及正常退出。均使用临时数据目录，不覆盖真实摄像机。Windows 10/11 干净安装、真实摄像机播放、LAN 与两个签名安装版本的更新故障测试仍须分别记录；没有完成这些实际检查前，不宣称阶段一达到生产验收。
