@@ -25,6 +25,8 @@
 
 缺少签名凭据只能生成带 `DEVELOPMENT-UNSIGNED` 的开发测试包，不能连接正式更新源。正式候选：
 
+开发构建仅生成 `dev.yml`，正式构建生成 `latest.yml`。electron-builder 签名主程序与 NSIS 安装包，排除已纳入运行文件摘要的嵌套 `.exe`；保留捆绑组件原有签名，打包后再次验证完整运行目录。
+
 ```powershell
 $env:CSC_LINK = '签名证书路径或维护者配置的凭据'
 $env:CSC_KEY_PASSWORD = '通过私密环境设置，不写入仓库'
