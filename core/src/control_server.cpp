@@ -3416,7 +3416,8 @@ HttpResponse handle_request(const HttpRequest &request, SceneController &control
 #endif
         return response(http::status::ok, version,
             "{\"schemaVersion\":1,\"platform\":\"" + std::string(platform) +
-            "\",\"go2rtcRtspBase\":\"" + runtime_rtsp(18554, "/") + "\"}");
+            "\",\"go2rtcRtspBase\":\"" + runtime_rtsp(18554, "/") +
+            "\",\"capabilities\":" + system_capabilities_response(version, runtime_status).body() + "}");
     }
     if (request.method() == http::verb::get && target == "/api/v1/system/capabilities")
         return system_capabilities_response(version, runtime_status);

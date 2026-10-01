@@ -76,6 +76,7 @@ jobs:
             desktop/.cache/*.zip
             desktop/.cache/vcpkg-binaries
           key: windows-2022-desktop-${{ hashFiles('desktop/dependencies.lock.json', 'desktop/vcpkg.json') }}
+          restore-keys: windows-2022-desktop-
       - name: Compile, test and package complete runtime
         shell: pwsh
         env:

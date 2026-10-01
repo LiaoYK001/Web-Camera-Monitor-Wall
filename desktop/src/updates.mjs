@@ -28,7 +28,10 @@ export class UpdateController extends EventEmitter {
     });
     updater.on('download-progress',progress=>this.announce('downloading','正在下载',Math.round(progress.percent)));
     updater.on('update-downloaded',info=>{this.downloaded=info; this.announce('downloaded','下载完成，点击“重启更新”后才安装。');});
-    updater.on('error',()=>this.announce('error','更新检测、下载、摘要或签名验证失败。当前版本继续运行，可稍后重试。'));
+    updater.on('error',error=>{
+      if(this.installing)this.installLaunchError=error || new Error('Installer launch failed');
+      this.announce('error','更新检测、下载、摘要或签名验证失败。当前版本继续运行，可稍后重试。');
+    });
   }
   status() {
     const notes = this.info?.releaseNotes;
@@ -66,6 +69,7 @@ export class UpdateController extends EventEmitter {
   async install() {
     if(!this.enabled || this.installing || this.state.phase!=='downloaded')return this.status();
     this.installing=true;
+    this.installLaunchError=null;
     let stopped=false, pending=false;
     try {
       await this.verifyDownloaded();
@@ -89,6 +93,7 @@ export class UpdateController extends EventEmitter {
       // Revalidate after the snapshot, including a package changed on disk during preparation.
       await this.verifyDownloaded();
       this.beforeInstall(); this.updater.quitAndInstall(false,true);
+      if(this.installLaunchError)throw this.installLaunchError;
       return this.status();
     } catch {
       if(pending)await rm(path.join(this.root,'pending-update.json'),{force:true}).catch(()=>{});

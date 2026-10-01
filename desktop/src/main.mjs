@@ -1,4 +1,4 @@
-import { app, BrowserWindow, Tray, Menu, ipcMain, dialog, screen, session, nativeImage, powerMonitor, safeStorage, shell } from 'electron';
+import { app, BrowserWindow, Tray, Menu, ipcMain, dialog, screen, session, nativeImage, powerMonitor, safeStorage, shell, autoUpdater as nativeAutoUpdater } from 'electron';
 import { createTrayIcon } from './tray-icon.mjs';
 import electronUpdater from 'electron-updater';
 import { readFile, writeFile, rename, rm, cp, stat, mkdir } from 'node:fs/promises';
@@ -71,6 +71,8 @@ else {
   app.on('second-instance',showMain);
   app.on('window-all-closed',()=>{});
   app.on('before-quit',event=>{if(!quitting){event.preventDefault();void quit();}});
+  // electron-updater emits this only after accepting the explicit installer launch.
+  nativeAutoUpdater.on('before-quit-for-update',()=>{quitting=true;updates?.dispose();});
   await app.whenReady();
   if(process.platform!=='win32' || process.arch!=='x64'){dialog.showErrorBox('WebOBS','阶段一桌面客户端仅支持 Windows 10/11 x64。');quitting=true;app.quit();}
   else {
@@ -178,7 +180,7 @@ else {
       autoUpdater.verifyUpdateCodeSignature=verifyPublisher;
       updates=new UpdateController({updater:autoUpdater,official:distribution.official,publisher:distribution.publisher,packaged:app.isPackaged,settings,root,supervisor,version:app.getVersion(),
         windowWork:()=>[...work.values()],confirmStop:async()=>{const result=await dialog.showMessageBox(main,{type:'question',buttons:['停止任务并更新','稍后'],defaultId:1,cancelId:1,message:'更新需要正常停止当前录像和媒体发布。',detail:'已完成的录像与账号配置会保留，未保存草稿和正在导出的任务会阻止安装。'});return result.response===0;},
-        verifySignature:verifyPublisher,beforeInstall:()=>{quitting=true;updates.dispose();}});
+        verifySignature:verifyPublisher,beforeInstall:()=>{}});
       updates.on('status',broadcast);updates.start();
       if(recovery){await atomicJson(path.join(root,'installed-version.json'),{version:app.getVersion(),installer:recovery.installer,installerSha256:recovery.installerSha256});await rm(path.join(root,'pending-update.json'),{force:true});recovery=null;}
       await main.loadURL(supervisor.origin);broadcast();

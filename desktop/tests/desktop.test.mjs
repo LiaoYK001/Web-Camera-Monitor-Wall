@@ -93,6 +93,13 @@ test('checksum and wrong-publisher failures leave current services running',asyn
 test('normal-stop failure aborts install and restarts current version',async t=>{
   const f=await updaterFixture(t,{supervisor:{async stop(){throw new Error('busy');}}});await f.controller.install();assert.equal(f.updater.installs,undefined);assert.deepEqual(f.calls,['start']);
 });
+test('installer launch rejection restores running services and removes pending recovery',async t=>{
+  const f=await updaterFixture(t);
+  f.updater.quitAndInstall=()=>f.updater.emit('error',new Error('installer is locked'));
+  await f.controller.install();assert.deepEqual(f.calls,['stop','snapshot','install','start']);
+  assert.equal(f.controller.state.phase,'error');
+  await assert.rejects(readFile(path.join(f.root,'pending-update.json')),error=>error.code==='ENOENT');
+});
 test('changed installer during preparation never leaves an installable recovery marker',async t=>{
   const f=await updaterFixture(t);
   let verified=0; const original=f.controller.verifyDownloaded.bind(f.controller);
