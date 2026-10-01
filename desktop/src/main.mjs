@@ -1,4 +1,4 @@
-import { app, BrowserWindow, Tray, Menu, ipcMain, dialog, screen, session, nativeImage, powerMonitor, safeStorage, shell, autoUpdater as nativeAutoUpdater } from 'electron';
+import { app, BrowserWindow, Tray, Menu, ipcMain, dialog, screen, session, nativeImage, powerMonitor, safeStorage, shell } from 'electron';
 import { createTrayIcon } from './tray-icon.mjs';
 import electronUpdater from 'electron-updater';
 import { readFile, writeFile, rename, rm, cp, stat, mkdir } from 'node:fs/promises';
@@ -10,6 +10,7 @@ import { loadSettings, validateSettings, atomicJson } from './settings.mjs';
 import { verifyRuntime, digestFile } from './runtime-integrity.mjs';
 import { trustedFrame, projectorOptions } from './ipc-policy.mjs';
 import { verifyPublisher } from './signature.mjs';
+import { launchVerifiedInstaller } from './installer.mjs';
 
 const source = path.dirname(fileURLToPath(import.meta.url));
 const root = path.join(process.env.LOCALAPPDATA || app.getPath('appData'),'WebOBS');
@@ -60,7 +61,7 @@ else {
     return {id:win.id};
   }
   async function quit() {
-    if(operating || quitting)return;
+    if(operating || quitting || updates?.installing)return;
     const dirty=[...work.values()].some(item=>item.dirty || item.exporting);
     if(dirty){showMain();await dialog.showMessageBox(main,{type:'info',message:'先保存草稿或完成导出，再退出并停止服务。'});return;}
     operating=true;
@@ -71,8 +72,6 @@ else {
   app.on('second-instance',showMain);
   app.on('window-all-closed',()=>{});
   app.on('before-quit',event=>{if(!quitting){event.preventDefault();void quit();}});
-  // electron-updater emits this only after accepting the explicit installer launch.
-  nativeAutoUpdater.on('before-quit-for-update',()=>{quitting=true;updates?.dispose();});
   await app.whenReady();
   if(process.platform!=='win32' || process.arch!=='x64'){dialog.showErrorBox('WebOBS','阶段一桌面客户端仅支持 Windows 10/11 x64。');quitting=true;app.quit();}
   else {
@@ -100,7 +99,10 @@ else {
       if(operation==='projector'){if(supervisor.state.phase!=='ready')throw new Error('Services are unavailable');return openProjector(value);}
       if(operation==='update.check')return updates?.check();
       if(operation==='update.download'){await updates?.download();return status();}
-      if(operation==='update.install')return updates?.install();
+      if(operation==='update.install'){
+        if(operating)throw new Error('Another desktop operation is running');
+        return updates?.install();
+      }
       if(operating || updates?.installing)throw new Error('Another desktop operation is running');
       operating=true;
       try {
@@ -180,7 +182,7 @@ else {
       autoUpdater.verifyUpdateCodeSignature=verifyPublisher;
       updates=new UpdateController({updater:autoUpdater,official:distribution.official,publisher:distribution.publisher,packaged:app.isPackaged,settings,root,supervisor,version:app.getVersion(),
         windowWork:()=>[...work.values()],confirmStop:async()=>{const result=await dialog.showMessageBox(main,{type:'question',buttons:['停止任务并更新','稍后'],defaultId:1,cancelId:1,message:'更新需要正常停止当前录像和媒体发布。',detail:'已完成的录像与账号配置会保留，未保存草稿和正在导出的任务会阻止安装。'});return result.response===0;},
-        verifySignature:verifyPublisher,beforeInstall:()=>{}});
+        verifySignature:verifyPublisher,launchInstaller:launchVerifiedInstaller,beforeInstall:()=>{quitting=true;updates?.dispose();app.quit();}});
       updates.on('status',broadcast);updates.start();
       if(recovery){await atomicJson(path.join(root,'installed-version.json'),{version:app.getVersion(),installer:recovery.installer,installerSha256:recovery.installerSha256});await rm(path.join(root,'pending-update.json'),{force:true});recovery=null;}
       await main.loadURL(supervisor.origin);broadcast();

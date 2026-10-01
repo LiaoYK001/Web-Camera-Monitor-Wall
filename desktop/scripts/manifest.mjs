@@ -2,6 +2,7 @@ import { writeFile, readFile, realpath, readdir, mkdir, cp } from 'node:fs/promi
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';
 import { execFileSync } from 'node:child_process';
+import { createRequire } from 'node:module';
 import { inventory, verifyRuntime, digestFile } from '../src/runtime-integrity.mjs';
 import { dependencyLock } from './lock.mjs';
 const root=path.resolve(path.dirname(fileURLToPath(import.meta.url)),'..','..');
@@ -42,7 +43,8 @@ for(const name of await readdir(path.join(directory,'go2rtc-www','vendor'))) {
   if(!components.some(component=>component.name===item.name && component.version===item.version))
     components.push({type:'library',name:item.name,version:item.version,purl:`pkg:npm/${item.name}@${item.version}`,licenses:[{expression:license}]});
 }
-const electronDist=path.join(root,'desktop','node_modules','electron','dist');
+// Electron 44 downloads its distribution lazily on the first require/CLI run.
+const electronDist=path.dirname(createRequire(path.join(root,'desktop','package.json'))('electron'));
 for(const file of ['LICENSE','LICENSES.chromium.html']) {
   const target=path.join(directory,'licenses','electron');await mkdir(target,{recursive:true});
   await cp(path.join(electronDist,file),path.join(target,file));

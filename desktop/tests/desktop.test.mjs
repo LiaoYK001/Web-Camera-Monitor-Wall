@@ -14,6 +14,7 @@ import { dependencyLock } from '../scripts/lock.mjs';
 import { cleanEnvironment } from '../src/supervisor.mjs';
 import { qualificationReceipts } from '../scripts/qualification.mjs';
 import { verifyPublisher } from '../src/signature.mjs';
+import { launchVerifiedInstaller } from '../src/installer.mjs';
 
 async function temporary(t) {const directory=await mkdtemp(path.join(os.tmpdir(),'webobs-desktop-'));t.after(()=>rm(directory,{recursive:true,force:true}));return directory;}
 test('desktop defaults and settings reject unbounded or unknown IPC values',()=>{
@@ -66,6 +67,26 @@ test('Authenticode verification rejects missing, timed-out or mismatched verifie
   await assert.rejects(verifyPublisher(['Example publisher'],file,async()=>{throw new Error('timeout');}),/timeout/);
   await assert.rejects(verifyPublisher(['Example publisher'],file,()=>signature('Valid','Example publisher',file+'.other')),/different file/);
   await assert.rejects(verifyPublisher(['Example publisher'],file,async()=>({stdout:'',stderr:'unavailable'})),/verifier failed/);
+});
+test('installer launch waits for the Windows spawn event and rejects asynchronous failure',async t=>{
+  const child=new EventEmitter();let detached=false;child.unref=()=>{detached=true;};
+  let accepted=false;
+  const pending=launchVerifiedInstaller('D:/verified/update.exe',(file,args,options)=>{
+    assert.deepEqual(args,['--updated','--force-run']);assert.equal(options.shell,false);return child;
+  }).then(()=>{accepted=true;});
+  await Promise.resolve();assert.equal(accepted,false);assert.equal(detached,false);
+  child.emit('spawn');await pending;assert.equal(accepted,true);assert.equal(detached,true);
+  await assert.rejects(launchVerifiedInstaller('D:/verified/update.exe',()=>{
+    const failed=new EventEmitter();queueMicrotask(()=>failed.emit('error',new Error('file locked')));return failed;
+  }),/file locked/);
+  await assert.rejects(launchVerifiedInstaller(path.join(await temporary(t),'missing.exe')),error=>error.code==='ENOENT');
+});
+test('asynchronous installer rejection retains the current services and data',async t=>{
+  let accepted=false;
+  const f=await updaterFixture(t,{launchInstaller:async()=>{await Promise.resolve();throw new Error('file locked');},beforeInstall:()=>{accepted=true;}});
+  await f.controller.install();assert.equal(accepted,false);assert.equal(f.updater.installs,undefined);
+  assert.deepEqual(f.calls,['stop','snapshot','start']);
+  await assert.rejects(readFile(path.join(f.root,'pending-update.json')),error=>error.code==='ENOENT');
 });
 test('build fixtures and incomplete Windows installation evidence cannot authorize release',()=>{assert.throws(()=>qualificationReceipts([],'revision','3.1.0'),/actual installation evidence/);assert.throws(()=>qualificationReceipts([{platform:'windows-10-x64',schema:1,revision:'revision',version:'3.1.0',installerSha256:'a'.repeat(64),operator:'test',evidenceUrl:'test',installedFrom:'3.0.0',updatedTo:'3.1.0',checks:{}}],'revision','3.1.0'),/Unqualified/);});
 

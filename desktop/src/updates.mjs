@@ -13,8 +13,8 @@ export function updateBlockers(windowWork, workload) {
   return reasons;
 }
 export class UpdateController extends EventEmitter {
-  constructor({ updater, official, publisher, packaged, settings, root, supervisor, windowWork, confirmStop, beforeInstall, verifySignature, version }) {
-    super(); Object.assign(this,{ updater,official,publisher,packaged,settings,root,supervisor,windowWork,confirmStop,beforeInstall,verifySignature,version });
+  constructor({ updater, official, publisher, packaged, settings, root, supervisor, windowWork, confirmStop, beforeInstall, launchInstaller, verifySignature, version }) {
+    super(); Object.assign(this,{ updater,official,publisher,packaged,settings,root,supervisor,windowWork,confirmStop,beforeInstall,launchInstaller,verifySignature,version });
     this.enabled = official && packaged && typeof publisher === 'string' && publisher.length > 0;
     this.state = { phase: this.enabled ? 'idle':'disabled', message:this.enabled ? '' : '开发测试包不连接正式更新源。' };
     this.installing=false; this.checking=false;
@@ -92,7 +92,10 @@ export class UpdateController extends EventEmitter {
       pending=true;
       // Revalidate after the snapshot, including a package changed on disk during preparation.
       await this.verifyDownloaded();
-      this.beforeInstall(); this.updater.quitAndInstall(false,true);
+      if(this.launchInstaller) {
+        await this.launchInstaller(this.downloaded.downloadedFile);
+        this.beforeInstall();
+      } else { this.beforeInstall(); this.updater.quitAndInstall(false,true); }
       if(this.installLaunchError)throw this.installLaunchError;
       return this.status();
     } catch {
