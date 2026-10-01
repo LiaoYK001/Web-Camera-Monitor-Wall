@@ -27,6 +27,6 @@ export default function DesktopSettings() {
       <p>恢复需备份的原始密钥，不会自动搬移或覆盖其他部署。默认卸载和更新保留本机用户数据。</p>
     </fieldset>}
     {state?.runtime.lan?.enabled && <article><h3>局域网访问与证书</h3>{state.runtime.lan.addresses?.map(address => <p key={address}><a href={address} target="_blank" rel="noreferrer">{address}</a></p>)}
-      <p>{state.runtime.lan.trustSteps}</p><code>{state.runtime.lan.certificate}</code><details><summary>Windows 防火墙操作（管理员自行执行）</summary><p>只允许受信任私有网络，管理 API 继续经产品登录认证。关闭共享后可删除这些命名规则。</p><pre>{state.runtime.lan.firewallCommands?.join('\n')}</pre></details></article>}
+      <code>{state.runtime.lan.certificate}</code><p style={{ whiteSpace: 'pre-line' }}>{state.runtime.lan.trustSteps}</p><details><summary>Windows 防火墙操作（管理员自行执行）</summary><p>只允许受信任私有网络，管理 API 继续经产品登录认证。关闭共享后可删除这些命名规则。</p><pre>{state.runtime.lan.firewallCommands?.join('\n')}</pre></details></article>}
   </section>;
 }

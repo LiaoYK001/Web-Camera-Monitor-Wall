@@ -12,6 +12,7 @@ export function caddyConfiguration(addresses, port, controlPort, storage) {
   return {
     admin: { disabled: true }, storage: { module: 'file_system', root: storage },
     apps: {
+      pki: { certificate_authorities: { local: { name: 'WebOBS Local CA', install_trust: false } } },
       tls: { certificates: { automate: addresses }, automation: { policies: [{ subjects: addresses, issuers: [{ module: 'internal' }] }] } },
       http: { servers: { lan: { listen: addresses.map(ip => `${ip}:${port}`), automatic_https: { disable_redirects: true },
         routes: [{ match: [{ host: addresses }], handle: [{ handler: 'reverse_proxy', upstreams: [{ dial: `127.0.0.1:${controlPort}` }],

@@ -103,7 +103,7 @@ export class Supervisor extends EventEmitter {
       await atomicJson(run('caddy.json'), caddyConfiguration(this.lanIPs,this.settings.lanPort,this.ports.control,path.join(this.root,'caddy')));
       this.lanInfo = { enabled:true, addresses:this.lanIPs.map(ip=>`https://${ip}:${this.settings.lanPort}`),
         certificate:path.join(this.root,'caddy','pki','authorities','local','root.crt'),
-        trustSteps:'在本机和每个访问设备的当前用户“受信任的根证书颁发机构”中导入此 root.crt。确认来源为本机 WebOBS 后再信任。',
+        trustSteps:'1. 从此 WebOBS 电脑复制上方 root.crt 到每个访问设备，重命名为 WebOBS-root.crt。只复制证书文件。\n2. 在 Windows 双击证书，选择“安装证书”→“当前用户”→“将所有证书放入下列存储”→“受信任的根证书颁发机构”，核对 WebOBS Local CA 后完成。\n3. 完全关闭并重新打开浏览器，再访问上方 HTTPS 地址。其他系统请通过本机的证书设置导入同一根证书。\n4. 本机网络设为“专用”。需要允许其他设备访问时，由管理员执行下方局域网防火墙命令。',
         firewallCommands:firewallInstructions(this.settings.lanPort,this.ports.iceTcp,this.ports.iceUdp,this.lanIPs,this.ports.go2rtcWebrtc) };
     }
     try {

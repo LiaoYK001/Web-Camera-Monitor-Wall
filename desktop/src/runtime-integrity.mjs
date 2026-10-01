@@ -6,6 +6,7 @@ import path from 'node:path';
 export const requiredFiles = ['bin/webobsd.exe', 'bin/webobs-job.exe', 'bin/webobs-transcoder.exe', 'bin/webobs-scene-tool.exe',
   'bin/ffmpeg.exe', 'bin/ffprobe.exe', 'bin/openssl.exe', 'bin/go2rtc.exe', 'bin/mediamtx.exe', 'bin/caddy.exe',
   'python/python.exe', 'obs/bin/64bit/obs.dll', 'obs/bin/64bit/libobs-d3d11.dll',
+  'obs/data/libobs/default.effect', 'obs/data/libobs/format_conversion.effect',
   'obs/obs-plugins/64bit/obs-ffmpeg.dll', 'obs/obs-plugins/64bit/obs-x264.dll', 'obs/obs-plugins/64bit/obs-webrtc.dll',
   'obs/obs-plugins/64bit/image-source.dll', 'obs/obs-plugins/64bit/obs-text.dll',
   'obs/obs-plugins/64bit/obs-browser.dll', 'obs/obs-plugins/64bit/obs-browser-page.exe',

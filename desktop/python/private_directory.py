@@ -41,8 +41,15 @@ def protect(directory):
             try:
                 advapi.SetFileSecurityW.argtypes = [wintypes.LPCWSTR, wintypes.DWORD, ctypes.c_void_p]
                 for target in [directory, *directory.rglob('*')]:
-                    if getattr(target.lstat(), 'st_file_attributes', 0) & 0x400: raise ValueError('private directory contains a reparse point')
-                    if not advapi.SetFileSecurityW(str(target), 0x80000005, descriptor): raise ctypes.WinError(ctypes.get_last_error())
+                    try:attributes=target.lstat()
+                    except FileNotFoundError:
+                        if target==directory:raise
+                        continue  # Browser cache entries may disappear during startup.
+                    if getattr(attributes, 'st_file_attributes', 0) & 0x400: raise ValueError('private directory contains a reparse point')
+                    if not advapi.SetFileSecurityW(str(target), 0x80000005, descriptor):
+                        error=ctypes.get_last_error()
+                        if target!=directory and error in (2,3):continue
+                        raise ctypes.WinError(error)
             finally: kernel.LocalFree(descriptor)
         finally: kernel.LocalFree(ctypes.cast(sid_text, ctypes.c_void_p))
     finally: kernel.CloseHandle(token)

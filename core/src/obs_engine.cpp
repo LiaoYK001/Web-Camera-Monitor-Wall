@@ -635,7 +635,8 @@ ExitCode run_obs_engine(const Config &config, const SceneDocument &document)
     core.initialized = true;
 #ifdef _WIN32
     const std::filesystem::path desktop_obs_prefix = runtime_path("WEBOBS_OBS_PREFIX", WEBOBS_OBS_PREFIX);
-    const std::string obs_data_directory = (desktop_obs_prefix / "data" / "libobs").string();
+    // libobs appends the filename directly; registered directories need a separator.
+    const std::string obs_data_directory = (desktop_obs_prefix / "data" / "libobs").generic_string() + "/";
     obs_add_data_path(obs_data_directory.c_str());
     const std::string graphics_module = (desktop_obs_prefix / "bin" / "64bit" / "libobs-d3d11.dll").string();
 #endif

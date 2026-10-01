@@ -37,6 +37,7 @@ test('LAN config has no upstream management listener and only admits private hos
   assert.equal(privateIPv4('192.168.1.7'),true);assert.equal(privateIPv4('8.8.8.8'),false);assert.equal(privateIPv4('172.32.1.2'),false);
   const config=caddyConfiguration(['192.168.1.7'],18443,18080,'D:/data/caddy');
   assert.equal(config.admin.disabled,true);assert.deepEqual(config.apps.http.servers.lan.listen,['192.168.1.7:18443']);
+  assert.equal(config.apps.pki.certificate_authorities.local.install_trust,false);
   assert.equal(config.apps.http.servers.lan.routes[0].handle[0].upstreams[0].dial,'127.0.0.1:18080');
   assert.throws(()=>caddyConfiguration(['8.8.8.8'],18443,18080,'x'));
   assert.ok(firewallInstructions(18443,18190,18189,['192.168.1.7']).every(line=>line.includes('-Profile Private')));
