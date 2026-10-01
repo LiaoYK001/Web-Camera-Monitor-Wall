@@ -244,7 +244,7 @@ export default function AudioWorkspace({ studio, onCommitted }: { studio: Studio
         <button type="button" onClick={() => window.dispatchEvent(new Event('webobs:audio-monitor-disable'))}>静音监听</button>
         <button className="primary-button" type="button" disabled={(!pending && !audioDirty) || saving} onClick={() => void commit()}>{saving ? '保存中…' : '保存音频配置'}</button></div></header>
     {error && <div className="alert conflict-alert">{error}</div>}
-    <div className="audio-monitor-preview"><DirectPreview compact scene={scene} /></div>
+    <div className="audio-monitor-preview"><DirectPreview compact audioWorkspace scene={scene} /></div>
     {scene.sources.some((source) => tracksBySource[source.id]?.status === 'none') && <p role="status">已确认无音轨：{scene.sources.filter((source) => tracksBySource[source.id]?.status === 'none').map((source) => source.name).join('、')}。这些来源不显示音频控制。</p>}
     <div className="audio-mixer-head"><span>来源 / Profile</span><span>电平</span><span>静音 / 音量</span><span>监听 / 同步</span><span>音轨</span></div>
     <div className="audio-mixer-list">{scene.sources.map((source) => {

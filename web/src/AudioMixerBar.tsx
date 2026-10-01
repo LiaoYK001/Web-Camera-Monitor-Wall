@@ -20,6 +20,8 @@ export interface AudioMixerBarProps {
   output: 'speaker' | 'meter-only';
   compact?: boolean;
   showAll?: boolean;
+  collapsed?: boolean;
+  onCollapsed?: (value: boolean) => void;
   onToggleAudio: () => void;
   onMasterVolume: (value: number) => void;
   onOutput: (value: 'speaker' | 'meter-only') => void;
@@ -38,10 +40,11 @@ function meterPercent(dbfs: number | null | undefined): number {
  * audio tracks get a channel (F6-02); video-only tiles never pollute the strip.
  */
 export default function AudioMixerBar({
-  channels, snapshot, audioEnabled, masterVolume, output, showAll,
+  channels, snapshot, audioEnabled, masterVolume, output, showAll, collapsed: savedCollapsed, onCollapsed,
   onToggleAudio, onMasterVolume, onOutput, onSourceGain, onSourceMute, onSourceMonitor,
 }: AudioMixerBarProps) {
-  const [collapsed, setCollapsed] = useState(false);
+  const [localCollapsed, setCollapsed] = useState(false);
+  const collapsed = savedCollapsed ?? localCollapsed;
   const levels = useMemo(() => {
     const map = new Map<string, { rms: number | null; peak: number | null }>();
     for (const source of snapshot.sources) {
@@ -69,7 +72,7 @@ export default function AudioMixerBar({
           <option value="speaker">扬声器 + 电平表</option>
           <option value="meter-only">仅电平表 / 阈值</option>
         </select>
-        <button type="button" className="ghost-button" onClick={() => setCollapsed((value) => !value)}>{collapsed ? '展开' : '收起'}</button>
+        <button type="button" className="ghost-button" onClick={() => { setCollapsed(!collapsed); onCollapsed?.(!collapsed); }}>{collapsed ? '展开' : '收起'}</button>
       </header>
       {!collapsed && <small> M：静音；🎧：送至本地扬声器。启用声音后生效；逐轨设置请前往音频工作台。</small>}
       {!collapsed && <div className="audio-mixer-columns">

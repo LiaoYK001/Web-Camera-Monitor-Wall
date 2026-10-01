@@ -12,6 +12,9 @@ The Studio source list is ordered from front to back. Drag a source or press `Al
 
 ## View contract / 视图契约
 
+监看音频偏好自动保存到当前账号：总监听开关、扬声器/仅电平表输出、主音量、逐来源音量/静音/监听和调音台收起状态。刷新、重开浏览器或在另一浏览器登录同一账号后会恢复；已打开的页面在重新获得焦点或每 5 秒读取账号的最新偏好。保存失败会提示并保留加密的本地待同步副本，恢复连接后重试；关闭页面前使用 keepalive 请求提交最新设置。浏览器自动播放许可单独判定，被阻止时保留监听开启的设置，并提示点击恢复。独立投影默认静音，不会自动复制主窗口的扬声器输出。音频工作台的 Scene/音轨配置仍通过“保存音频配置”提交到 Studio。
+
+
 `MonitorView v1` stores only view-generation rules: auto/manual mode, M source identities, telemetry appearance, rotation, promotion and low-power preferences. Auto layout accepts 1–16 visible items and emits ordinary Scene v5 `x/y/width/height` values. It does not create a second canvas format. Moving a tile in Studio remains a Scene edit; the operator may switch MonitorView to manual mode or regenerate the automatic layout.
 
 `MonitorView v1` 只保存视图生成规则：自动/手工模式、M 来源身份、统计外观、轮换、事件提升和低功耗偏好。自动布局接受 1–16 个可见项并输出普通 Scene v5 `x/y/width/height`；它不创建第二种画布格式。在 Studio 移动画面仍属于 Scene 编辑；值守员可切到手工模式或重新生成自动布局。

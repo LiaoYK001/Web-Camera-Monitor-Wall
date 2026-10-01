@@ -110,6 +110,9 @@ export interface MonitorView {
   lowPower: LowPowerConfig;
   panels: { detailsOpen: boolean; issueCenterExpanded: boolean };
   localMonitorVolume: number;
+  /** Account intent; browser autoplay permission is a separate runtime state. */
+  audioMonitorEnabled: boolean;
+  audioMixerCollapsed: boolean;
   /** Speaker routing: full monitoring output or meter/threshold detection only. */
   audioOutput: 'speaker' | 'meter-only';
   /** F6-05: keep the homepage monitor switch visible without reopening settings. */
@@ -275,6 +278,8 @@ export const defaultMonitorView = (): MonitorView => ({
   lowPower: { enabled: false, targetFps: 2 },
   panels: { detailsOpen: false, issueCenterExpanded: false },
   localMonitorVolume: 1,
+  audioMonitorEnabled: false,
+  audioMixerCollapsed: false,
   audioOutput: 'speaker',
   monitorSwitchProminent: true,
   canvasMode: 'auto-fit',
@@ -511,6 +516,8 @@ export function normalizeMonitorView(value: Partial<MonitorView> | null | undefi
     lowPower: { ...lowPower, targetFps: clamp(Number(lowPower.targetFps), .5, 30) },
     panels: { detailsOpen: Boolean(panels.detailsOpen), issueCenterExpanded: Boolean(panels.issueCenterExpanded) },
     localMonitorVolume: bounded(value?.localMonitorVolume, 1, 0, 1),
+    audioMonitorEnabled: value?.audioMonitorEnabled === true,
+    audioMixerCollapsed: value?.audioMixerCollapsed === true,
     audioOutput: value?.audioOutput === 'meter-only' ? 'meter-only' : 'speaker',
     monitorSwitchProminent: value?.monitorSwitchProminent !== false,
     canvasMode: (value?.canvasMode && (canvasModes as string[]).includes(value.canvasMode))

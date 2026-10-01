@@ -471,12 +471,12 @@ function BrowserCameraTile({ item, source, mixer, telemetry, audioMeter, audioSn
   </div>;
 }
 
-export default function DirectPreview({ scene, compact = false, layoutPreview = false }: { scene: SceneDocument; compact?: boolean; layoutPreview?: boolean }) {
+export default function DirectPreview({ scene, compact = false, layoutPreview = false, audioWorkspace = false }: { scene: SceneDocument; compact?: boolean; layoutPreview?: boolean; audioWorkspace?: boolean }) {
   const [capabilities, setCapabilities] = useState<SourcePlaybackCapability[]>([]);
   const [available, setAvailable] = useState(true);
   const [mixer, setMixer] = useState<DirectAudioMixer | null>(null);
   const [audio, setAudio] = useState<DirectAudioSnapshot>({ state: 'disabled', inputCount: 0, level: 0, sources: [] });
-  const { view: monitorView, setView: setMonitorView, loaded: monitorLoaded, error: monitorError, retry: retryMonitor } = useMonitorPreferences(compact, layoutPreview);
+  const { view: monitorView, setView: setMonitorView, loaded: monitorLoaded, error: monitorError, retry: retryMonitor } = useMonitorPreferences(compact && !audioWorkspace, layoutPreview);
   const [cameras, setCameras] = useState<CameraRecord[]>([]);
   const [analyticsPolicies, setAnalyticsPolicies] = useState<AnalyticsPolicy[]>([]);
   const [analyticsZones, setAnalyticsZones] = useState<MotionZone[]>([]);
@@ -510,15 +510,31 @@ export default function DirectPreview({ scene, compact = false, layoutPreview = 
 
   useEffect(() => {
     if (layoutPreview) return;
-    const enable = () => void mixer?.enable();
-    const disable = () => void mixer?.disable();
+    if (compact && !audioWorkspace) return;
+    const enable = () => {
+      setMonitorView((view) => ({ ...view, audioMonitorEnabled: true }));
+      void mixer?.enable();
+    };
+    const disable = () => {
+      setMonitorView((view) => ({ ...view, audioMonitorEnabled: false }));
+      void mixer?.disable();
+    };
+    const clear = () => void mixer?.disable();
     window.addEventListener('webobs:audio-monitor-enable', enable);
     window.addEventListener('webobs:audio-monitor-disable', disable);
+    window.addEventListener('webobs:account-clearing', clear);
     return () => {
       window.removeEventListener('webobs:audio-monitor-enable', enable);
       window.removeEventListener('webobs:audio-monitor-disable', disable);
+      window.removeEventListener('webobs:account-clearing', clear);
     };
-  }, [mixer, layoutPreview]);
+  }, [mixer, layoutPreview, compact, audioWorkspace, setMonitorView]);
+
+  useEffect(() => {
+    if (!monitorLoaded || !mixer || layoutPreview || (compact && !audioWorkspace)) return;
+    if (monitorView.audioMonitorEnabled) void mixer.enable();
+    else void mixer.disable();
+  }, [monitorLoaded, monitorView.audioMonitorEnabled, mixer, layoutPreview, compact, audioWorkspace]);
 
   useEffect(() => {
     const media = window.matchMedia('(orientation: portrait)');
@@ -582,7 +598,7 @@ export default function DirectPreview({ scene, compact = false, layoutPreview = 
   );
   const audioEnabled = audio.state === 'running';
   const audioBySource = useMemo(() => new Map(audio.sources.map((value) => [value.sourceId, value])), [audio.sources]);
-  const projectorNeedsMeters = compact && !layoutPreview && monitorView.projectorOutput === 'full' &&
+  const projectorNeedsMeters = compact && !audioWorkspace && !layoutPreview && monitorView.projectorOutput === 'full' &&
     scene.sources.some((source) => sourceDecoration(monitorView, source.id).audioMeter.enabled);
   useEffect(() => {
     if (!projectorNeedsMeters || !monitorLoaded || !mixer) return;
@@ -630,6 +646,11 @@ export default function DirectPreview({ scene, compact = false, layoutPreview = 
     setMonitorView((value) => ({ ...value, sourceAudio: { ...value.sourceAudio, [sourceId]: {
       ...(value.sourceAudio[sourceId] ?? { volume: source.volume, muted: source.muted, monitor: true }), ...change,
     } } }));
+  };
+  const toggleAudio = () => {
+    const enabled = !audioEnabled;
+    setMonitorView((view) => ({ ...view, audioMonitorEnabled: enabled }));
+    if (enabled) void mixer?.enable(); else void mixer?.disable();
   };
   const lowPowerBySource = useMemo(() => new Map(effectiveScene.sources.flatMap((source) => {
     if (!monitorView.lowPower.enabled || source.kind !== 'camera') return [];
@@ -877,6 +898,7 @@ export default function DirectPreview({ scene, compact = false, layoutPreview = 
       {!compact && !windowPreview && <><div
         className="direct-audio-control hero-audio-control"
         data-audio-enabled={audioEnabled ? 'true' : 'false'}
+        data-audio-requested={monitorView.audioMonitorEnabled ? 'true' : 'false'}
         data-audio-state={audio.state}
         data-audio-inputs={audio.inputCount}
         data-audio-level={audio.level.toFixed(4)}
@@ -885,8 +907,8 @@ export default function DirectPreview({ scene, compact = false, layoutPreview = 
           type="button"
           className={audioEnabled ? 'primary-button audio-master-toggle' : 'audio-master-toggle'}
           aria-pressed={audioEnabled}
-          onClick={() => { if (audioEnabled) void mixer?.disable(); else void mixer?.enable(); }}
-        >{audioEnabled ? '监听中 · 点击关闭' : '🔊 启用声音监听'}</button>
+          onClick={toggleAudio}
+        >{audioEnabled ? '监听中 · 点击关闭' : monitorView.audioMonitorEnabled ? '🔊 恢复声音监听' : '🔊 启用声音监听'}</button>
         <label>本地音量 <input aria-label="本地监听主音量" type="range" min="0" max="1" step="0.01"
           value={monitorView.localMonitorVolume} onChange={(event) => setMonitorView((value) => ({ ...value, localMonitorVolume: Number(event.target.value) }))} /></label>
         <label>输出<select aria-label="声音输出模式" value={monitorView.audioOutput}
@@ -895,10 +917,10 @@ export default function DirectPreview({ scene, compact = false, layoutPreview = 
           <option value="meter-only">仅电平表 / 阈值</option>
         </select></label>
         <span>{audio.state === 'blocked'
-          ? '浏览器阻止了播放，请再次点击。'
+          ? '监听设置已保留；浏览器需要点击一次恢复声音。'
           : monitorView.audioOutput === 'meter-only'
             ? `Web Audio 混音 · ${audio.inputCount} 路 · 仅电平表与阈值检测，不输出到扬声器`
-            : `Web Audio 混音 · ${audio.inputCount} 路 · 默认静音，点击后启用`}</span>
+            : `Web Audio 混音 · ${audio.inputCount} 路 · ${monitorView.audioMonitorEnabled ? '按账号设置恢复监听' : '监听已关闭'}`}</span>
       </div>
       {monitorView.showAudioMixer && <AudioMixerBar
         channels={audioMixerChannels}
@@ -907,7 +929,9 @@ export default function DirectPreview({ scene, compact = false, layoutPreview = 
         masterVolume={monitorView.localMonitorVolume}
         output={monitorView.audioOutput}
         showAll={monitorView.showAllAudioSources}
-        onToggleAudio={() => { if (audioEnabled) void mixer?.disable(); else void mixer?.enable(); }}
+        onToggleAudio={toggleAudio}
+        collapsed={monitorView.audioMixerCollapsed}
+        onCollapsed={(value) => setMonitorView((current) => ({ ...current, audioMixerCollapsed: value }))}
         onMasterVolume={(value) => setMonitorView((current) => ({ ...current, localMonitorVolume: value }))}
         onOutput={(value) => setMonitorView((current) => ({ ...current, audioOutput: value }))}
         onSourceGain={(sourceId, gain) => {
@@ -922,7 +946,7 @@ export default function DirectPreview({ scene, compact = false, layoutPreview = 
       />}
       <div className="monitor-view-controls" aria-label="监控视图设置">
         <div className="quick-bar">
-          <button type="button" className="primary-button" onClick={() => { if (audioEnabled) void mixer?.disable(); else void mixer?.enable(); }}>{audioEnabled ? '监听中' : '启用监听'}</button>
+          <button type="button" className="primary-button" onClick={toggleAudio}>{audioEnabled ? '监听中' : monitorView.audioMonitorEnabled ? '恢复监听' : '启用监听'}</button>
           <button type="button" onClick={() => setWindowPreview(true)}>窗口预览</button>
           <button type="button" onClick={openPopout}>独立小窗</button>
           {popoutWindow && <button type="button" onClick={closePopout}>关闭小窗</button>}

@@ -66,7 +66,7 @@ export default function ProjectorView({ mode }: { mode: ProjectorMode }) {
       title="双击全屏 · Esc 关闭"
     >
       {mode === 'composite'
-        ? <ProgramPreview aspectRatio={scene ? `${scene.canvas.width} / ${scene.canvas.height}` : DEFAULT_ASPECT} />
+        ? <ProgramPreview silent aspectRatio={scene ? `${scene.canvas.width} / ${scene.canvas.height}` : DEFAULT_ASPECT} />
         : scene
           ? <DirectPreview compact scene={scene} />
           : <p className="projector-waiting" role="status">正在连接节目画面…</p>}
