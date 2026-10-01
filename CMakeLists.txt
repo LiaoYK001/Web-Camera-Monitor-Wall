@@ -20,13 +20,29 @@ if(NOT WEBOBS_MILESTONE_OVERRIDE MATCHES "^v[0-9]+-M[0-9]+(-dev)?$")
     message(FATAL_ERROR "WEBOBS_MILESTONE_OVERRIDE is invalid")
 endif()
 
-find_package(PkgConfig REQUIRED)
+if(NOT WIN32)
+    find_package(PkgConfig REQUIRED)
+endif()
 find_package(Boost 1.83 REQUIRED)
 find_package(CURL REQUIRED)
 find_package(OpenSSL REQUIRED)
 find_package(SQLite3 REQUIRED)
 find_package(Threads REQUIRED)
-pkg_check_modules(JANSSON REQUIRED IMPORTED_TARGET jansson)
+if(WIN32)
+    find_package(jansson CONFIG REQUIRED)
+    set(WEBOBS_JANSSON_TARGET jansson::jansson)
+    add_compile_definitions(WIN32_LEAN_AND_MEAN NOMINMAX _WIN32_WINNT=0x0A00)
+else()
+    pkg_check_modules(JANSSON REQUIRED IMPORTED_TARGET jansson)
+    set(WEBOBS_JANSSON_TARGET PkgConfig::JANSSON)
+endif()
+function(webobs_warnings target)
+    if(MSVC)
+        target_compile_options(${target} PRIVATE /W4 /utf-8 /permissive- /Zc:__cplusplus)
+    else()
+        target_compile_options(${target} PRIVATE -Wall -Wextra -Wpedantic)
+    endif()
+endfunction()
 
 add_library(webobs-common
     core/src/audio_tracks.cpp
@@ -41,16 +57,25 @@ add_library(webobs-common
     core/src/studio_document.cpp
     core/src/studio_store.cpp
     core/src/video_encoder.cpp
+    core/src/platform_runtime.cpp
+    core/src/windows_private_file.cpp
 )
 target_include_directories(webobs-common PUBLIC core/include)
-target_link_libraries(webobs-common PUBLIC PkgConfig::JANSSON OpenSSL::Crypto SQLite::SQLite3)
+target_link_libraries(webobs-common PUBLIC ${WEBOBS_JANSSON_TARGET} OpenSSL::Crypto SQLite::SQLite3 Threads::Threads)
+if(WIN32)
+    target_link_libraries(webobs-common PUBLIC advapi32 ws2_32 psapi)
+endif()
 target_compile_features(webobs-common PUBLIC cxx_std_20)
-target_compile_options(webobs-common PRIVATE -Wall -Wextra -Wpedantic)
+webobs_warnings(webobs-common)
 target_compile_definitions(webobs-common PUBLIC
     WEBOBS_VERSION="${WEBOBS_VERSION_OVERRIDE}"
     WEBOBS_MILESTONE="${WEBOBS_MILESTONE_OVERRIDE}"
 )
 
+if(WIN32)
+    find_package(libobs CONFIG REQUIRED HINTS "${WEBOBS_OBS_PREFIX}/cmake" "${WEBOBS_OBS_PREFIX}/lib/cmake")
+    add_library(webobs-libobs ALIAS OBS::libobs)
+else()
 set(_obs_library "${WEBOBS_OBS_BUILD_DIR}/libobs/libobs.so")
 set(_obs_config_header "${WEBOBS_OBS_BUILD_DIR}/config/obsconfig.h")
 if(NOT EXISTS "${_obs_library}")
@@ -65,6 +90,7 @@ set_target_properties(webobs-libobs PROPERTIES
     IMPORTED_LOCATION "${_obs_library}"
     INTERFACE_INCLUDE_DIRECTORIES "${WEBOBS_OBS_SOURCE_DIR}/libobs;${WEBOBS_OBS_BUILD_DIR}/config"
 )
+endif()
 
 add_executable(webobsd
     core/src/control_server.cpp
@@ -76,7 +102,10 @@ add_executable(webobsd
     core/src/studio_controller.cpp
 )
 target_link_libraries(webobsd PRIVATE webobs-common webobs-libobs Boost::headers CURL::libcurl Threads::Threads)
-target_compile_options(webobsd PRIVATE -Wall -Wextra -Wpedantic)
+webobs_warnings(webobsd)
+if(WIN32)
+    target_sources(webobsd PRIVATE desktop/native/utf8.manifest)
+endif()
 target_compile_definitions(webobsd PRIVATE
     WEBOBS_OBS_PREFIX="${WEBOBS_OBS_PREFIX}"
     WEBOBS_WEB_ROOT="${WEBOBS_WEB_ROOT}"
@@ -95,18 +124,31 @@ add_executable(webobs-log-filter
 )
 target_include_directories(webobs-log-filter PRIVATE core/include)
 target_compile_features(webobs-log-filter PRIVATE cxx_std_20)
-target_compile_options(webobs-log-filter PRIVATE -Wall -Wextra -Wpedantic)
+webobs_warnings(webobs-log-filter)
 install(TARGETS webobs-log-filter RUNTIME DESTINATION bin)
 
 add_executable(webobs-scene-tool core/src/scene_tool.cpp)
 target_link_libraries(webobs-scene-tool PRIVATE webobs-common)
-target_compile_options(webobs-scene-tool PRIVATE -Wall -Wextra -Wpedantic)
+webobs_warnings(webobs-scene-tool)
 install(TARGETS webobs-scene-tool RUNTIME DESTINATION bin)
+
+if(WIN32)
+    foreach(tool webobs-job webobs-transcoder webobs-s3-archive webobs-encrypted-backup webobs-detector-worker)
+        add_executable(${tool} desktop/native/job_host.cpp desktop/native/utf8.manifest)
+        target_link_libraries(${tool} PRIVATE shell32)
+        webobs_warnings(${tool})
+        install(TARGETS ${tool} RUNTIME DESTINATION bin)
+    endforeach()
+endif()
 
 if(WEBOBS_BUILD_TESTS)
     include(CTest)
-    add_executable(webobs-unit-tests core/tests/common_tests.cpp)
+    if(WIN32)
+        add_executable(webobs-unit-tests core/tests/windows_tests.cpp)
+    else()
+        add_executable(webobs-unit-tests core/tests/common_tests.cpp)
+    endif()
     target_link_libraries(webobs-unit-tests PRIVATE webobs-common)
-    target_compile_options(webobs-unit-tests PRIVATE -Wall -Wextra -Wpedantic)
+    webobs_warnings(webobs-unit-tests)
     add_test(NAME webobs-unit-tests COMMAND webobs-unit-tests)
 endif()

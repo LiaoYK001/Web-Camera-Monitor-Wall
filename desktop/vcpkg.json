@@ -1,0 +1,6 @@
+{
+  "name": "webobs-native-runtime",
+  "version-string": "3.4.0",
+  "builtin-baseline": "eb2d3a3279fd019cb7733072d86900d0ad2a1aef",
+  "dependencies": ["boost-headers", "curl", "sqlite3", "jansson", "libsodium", {"name":"openssl","features":["tools"]}]
+}

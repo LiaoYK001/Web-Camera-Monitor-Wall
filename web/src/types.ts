@@ -336,7 +336,7 @@ export interface SystemCapabilities {
 }
 export interface ProcessDiagnostics {
   processes: Array<{ name: string; instances: number; rssKiB: number; cpuPercent: number }>;
-  rtspSessions: number; gpuBusyPercent: number; controlPlaneActive: boolean; engineActive: boolean; compositePublisherActive: boolean;
+    rtspSessions: number; rtspSessionProbeAvailable?: boolean; gpuBusyPercent: number; controlPlaneActive: boolean; engineActive: boolean; compositePublisherActive: boolean;
 }
 
 export type ClusterRole = 'admin' | 'operator' | 'viewer' | 'auditor' | 'exporter';

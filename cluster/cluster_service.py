@@ -8,6 +8,11 @@ No camera endpoint, credential, private key, or host path is stored here.
 
 from __future__ import annotations
 
+import sys as _runtime_sys
+from pathlib import Path as _RuntimePath
+_runtime_sys.path.insert(0, str(_RuntimePath(__file__).resolve().parents[1]))
+from runtime_support import service_port, service_http, service_rtsp, install_owner_shutdown, serve_owned, STOP, sync_directory
+
 import argparse
 import contextlib
 import ctypes
@@ -178,15 +183,17 @@ class CertificateSigner:
             root = pathlib.Path(directory)
             csr = root / "node.csr"
             cert = root / "node.crt"
+            extension_file = root / "extensions.cnf"
             serial = secrets.token_hex(16)
             csr.write_text(csr_pem, encoding="ascii")
             command = [
                 "openssl", "x509", "-req", "-in", str(csr), "-CA", str(self.ca_cert),
                 "-CAkey", str(self.ca_key), "-set_serial", f"0x{serial}", "-days", "30",
-                "-sha256", "-out", str(cert), "-extfile", "/dev/stdin",
+                "-sha256", "-out", str(cert), "-extfile", str(extension_file),
             ]
             extensions = f"basicConstraints=CA:FALSE\nkeyUsage=digitalSignature\nextendedKeyUsage=clientAuth\nsubjectAltName=URI:webobs-node:{node_id}\n"
-            completed = subprocess.run(command, input=extensions, text=True, capture_output=True,
+            extension_file.write_text(extensions, encoding="ascii")
+            completed = subprocess.run(command, text=True, capture_output=True,
                                        timeout=10, check=False)
             if completed.returncode != 0:
                 raise ApiError(400, "csr_signing_failed", "node CSR could not be signed")
@@ -1402,7 +1409,7 @@ class ClusterStore:
             }).encode("utf-8")
             try:
                 request = urllib.request.Request(
-                    "http://127.0.0.1:8093/events", data=body,
+                    service_http(8093, '/events'), data=body,
                     headers={"Content-Type": "application/json"}, method="POST")
                 with urllib.request.urlopen(request, timeout=1) as response:
                     response.read(64 * 1024)
@@ -2338,7 +2345,7 @@ def main() -> None:
         servers.append(cluster_server)
         threading.Thread(target=cluster_server.serve_forever, daemon=True).start()
     try:
-        admin_server.serve_forever()
+        serve_owned(admin_server)
     finally:
         for server in servers:
             server.shutdown()

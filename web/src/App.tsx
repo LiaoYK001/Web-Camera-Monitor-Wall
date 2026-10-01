@@ -16,6 +16,7 @@ import { openProjectorWindow } from './projector';
 import LocalRuntimeBadge from './LocalRuntimeBadge';
 import WorkspaceShell, { areaFromHash, type ProductArea } from './WorkspaceShell';
 import { canLeaveWorkspace } from './navigationGuard';
+import { useDesktopWork } from './desktopRuntime';
 import { loadActiveLocalConfigProfile, loadOfflineStudio, loadWorkspaceLayout, makeLocalConfigBundleForStudio, queueOfflineAudit, saveLocalConfigProfile, saveLocalStudio, saveStudioSnapshot, type LocalConfigProfile } from './localRuntime';
 import type { AudioMonitoring, CameraRecord, FilterKind, PlaybackMode, ScaleMode, SceneDocument, SceneFilter, SceneItem, SceneSource, StudioCapabilities, StudioDocument, Transport } from './types';
 
@@ -164,6 +165,7 @@ export default function App() {
     () => Boolean(studioBaseline && studioDraft && JSON.stringify(studioBaseline) !== JSON.stringify(studioDraft)),
     [studioBaseline, studioDraft],
   );
+  useDesktopWork('studio', dirty || adding, saving);
 
   useEffect(() => {
     if (!adding && productArea !== 'studio') return;
@@ -684,7 +686,8 @@ export default function App() {
     if (!scene) return;
     if (operation === 'projector') {
       if (JSON.stringify(scene) !== JSON.stringify(studioBaseline?.scenes.find((value) => value.id === id))) { setNotice('请先保存此场景，再打开场景投影。'); return; }
-      if (!openProjectorWindow('direct', id)) setNotice('投影窗口被浏览器阻止，请允许本站弹出窗口。');
+      const projector = openProjectorWindow('direct', id);
+      if (!projector && !window.webobsDesktop) setNotice('投影窗口被浏览器阻止，请允许本站弹出窗口。');
       return;
     }
     if (operation === 'duplicate') { duplicateScene(id); return; }

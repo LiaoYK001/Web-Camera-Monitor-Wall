@@ -1,0 +1,100 @@
+name: Build full Windows desktop
+
+on:
+  workflow_call:
+    inputs:
+      version: { type: string, default: '3.4.0-dev.0' }
+      official: { type: boolean, default: false }
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Development version X.Y.Z-dev.* or stable version X.Y.Z'
+        required: true
+        default: '3.4.0-dev.0'
+        type: string
+      official:
+        description: 'Build a signed candidate (does not publish a Release)'
+        default: false
+        type: boolean
+
+permissions:
+  contents: read
+
+concurrency:
+  group: webobs-windows-desktop-build
+  cancel-in-progress: false
+
+jobs:
+  audit:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          submodules: recursive
+          persist-credentials: false
+      - name: Audit public source and existing deployment boundary
+        run: |
+          ./tests/run-public-audit.sh
+          ./scripts/check-executable-bits.sh
+          python3 clients/tests/test_release_workflow_policy.py
+          ./tests/test-immutable-release-assets.sh
+          python3 desktop/tests/test_native_runtime.py
+
+  windows:
+    needs: audit
+    runs-on: windows-2022
+    environment: windows-desktop-build
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          submodules: recursive
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Select existing VS compiler
+        shell: pwsh
+        run: |
+          $vswhere = Join-Path ${env:ProgramFiles(x86)} 'Microsoft Visual Studio\Installer\vswhere.exe'
+          $vs = & $vswhere -latest -products '*' -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath
+          if (-not $vs) { throw 'MSVC x64 not available on runner' }
+          Import-Module (Join-Path $vs 'Common7\Tools\Microsoft.VisualStudio.DevShell.dll')
+          Enter-VsDevShell -VsInstallPath $vs -SkipAutomaticLocation -DevCmdArguments '-arch=x64 -host_arch=x64'
+          Get-ChildItem Env: | Where-Object Name -In @('PATH','INCLUDE','LIB','LIBPATH','VCToolsInstallDir','VSINSTALLDIR','WindowsSdkDir','WindowsSDKVersion') | ForEach-Object { "$($_.Name)=$($_.Value)" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8 }
+      - name: Use locked Node and pnpm
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: 24.19.0
+      - name: Install locked pnpm
+        shell: pwsh
+        run: |
+          if ([version](& node -p 'process.versions.node') -lt [version]'24.0.0') { throw 'Windows desktop runner requires preinstalled Node 24 or newer.' }
+          npm install --global pnpm@11.16.0
+      - name: Compile, test and package complete runtime
+        shell: pwsh
+        env:
+          DESKTOP_VERSION: ${{ inputs.version }}
+          DESKTOP_OFFICIAL: ${{ inputs.official }}
+          CSC_LINK: ${{ secrets.WEBOBS_WINDOWS_CSC_LINK }}
+          CSC_KEY_PASSWORD: ${{ secrets.WEBOBS_WINDOWS_CSC_KEY_PASSWORD }}
+          WEBOBS_SIGNING_PUBLISHER: ${{ vars.WEBOBS_WINDOWS_SIGNING_PUBLISHER }}
+        run: |
+          $parameters = @{Version=$env:DESKTOP_VERSION}
+          if ($env:DESKTOP_OFFICIAL -eq 'true') {$parameters.Release=$true}
+          ./desktop/scripts/build-windows.ps1 @parameters
+          if ($env:DESKTOP_OFFICIAL -eq 'true') {
+            Get-ChildItem "desktop/out/$env:DESKTOP_VERSION" -Filter '*.exe' | ForEach-Object {
+              $signature = Get-AuthenticodeSignature -LiteralPath $_.FullName
+              if ($signature.Status -ne 'Valid' -or $signature.SignerCertificate.GetNameInfo([Security.Cryptography.X509Certificates.X509NameType]::SimpleName,$false) -ne $env:WEBOBS_SIGNING_PUBLISHER) {throw 'Installer signature validation failed'}
+            }
+          }
+      - name: Record actual build identity (does not count as camera qualification)
+        shell: pwsh
+        env:
+          DESKTOP_VERSION: ${{ inputs.version }}
+        run: |
+          @{schema=1;revision=$env:GITHUB_SHA;version=$env:DESKTOP_VERSION;buildOS=(Get-CimInstance Win32_OperatingSystem).Caption;qualification='not-performed-on-build-runner'} | ConvertTo-Json | Set-Content "desktop/out/$env:DESKTOP_VERSION/windows-build-evidence.json"
+      - name: Retain candidate artifacts without publishing
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: webobs-windows-${{ inputs.version }}
+          path: desktop/out/*/*
+          if-no-files-found: error

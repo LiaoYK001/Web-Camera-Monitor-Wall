@@ -44,7 +44,7 @@ export default function SystemStatus({ onBack }: { onBack: () => void }) {
     </>}
     {processes && <section className="process-panel"><div className="section-title"><h2>服务端执行链</h2><span>每 5 秒刷新</span></div>
       <div className="process-grid">{processes.processes.map((process) => <article key={process.name}><strong>{process.name}</strong><span>{process.cpuPercent.toFixed(1)}% CPU · {process.instances} 个进程</span><small>{(process.rssKiB / 1024).toFixed(1)} MiB RSS</small></article>)}</div>
-      <dl className="runtime-facts"><div><dt>RTSP TCP sessions</dt><dd>{processes.rtspSessions}</dd></div><div><dt>AMD GFX busy</dt><dd>{processes.gpuBusyPercent >= 0 ? `${processes.gpuBusyPercent}%` : '不可读取'}</dd></div><div><dt>Control plane</dt><dd>{processes.controlPlaneActive ? 'ACTIVE' : 'IDLE'}</dd></div><div><dt>OBS engine</dt><dd>{processes.engineActive ? 'ACTIVE' : 'IDLE'}</dd></div><div><dt>Composite publisher</dt><dd>{processes.compositePublisherActive ? 'ACTIVE' : 'IDLE'}</dd></div></dl>
+      <dl className="runtime-facts"><div><dt>RTSP TCP sessions</dt><dd>{processes.rtspSessionProbeAvailable === false ? '不可读取' : processes.rtspSessions}</dd></div><div><dt>AMD GFX busy</dt><dd>{processes.gpuBusyPercent >= 0 ? `${processes.gpuBusyPercent}%` : '不可读取'}</dd></div><div><dt>Control plane</dt><dd>{processes.controlPlaneActive ? 'ACTIVE' : 'IDLE'}</dd></div><div><dt>OBS engine</dt><dd>{processes.engineActive ? 'ACTIVE' : 'IDLE'}</dd></div><div><dt>Composite publisher</dt><dd>{processes.compositePublisherActive ? 'ACTIVE' : 'IDLE'}</dd></div></dl>
     </section>}
   </main>;
 }

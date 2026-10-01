@@ -1,0 +1,26 @@
+[
+  {
+    "schema": 1,
+    "platform": "windows-10-x64",
+    "revision": "REPLACE_WITH_TESTED_COMMIT",
+    "version": "3.4.0",
+    "installerSha256": "REPLACE_WITH_ACTUAL_INSTALLER_SHA256",
+    "operator": "REPLACE_WITH_TEST_OPERATOR",
+    "evidenceUrl": "REPLACE_WITH_RECORDED_EVIDENCE",
+    "installedFrom": "REPLACE_WITH_FIRST_INSTALLED_VERSION",
+    "updatedTo": "REPLACE_WITH_SECOND_INSTALLED_VERSION",
+    "checks": {}
+  },
+  {
+    "schema": 1,
+    "platform": "windows-11-x64",
+    "revision": "REPLACE_WITH_TESTED_COMMIT",
+    "version": "3.4.0",
+    "installerSha256": "REPLACE_WITH_ACTUAL_INSTALLER_SHA256",
+    "operator": "REPLACE_WITH_TEST_OPERATOR",
+    "evidenceUrl": "REPLACE_WITH_RECORDED_EVIDENCE",
+    "installedFrom": "REPLACE_WITH_FIRST_INSTALLED_VERSION",
+    "updatedTo": "REPLACE_WITH_SECOND_INSTALLED_VERSION",
+    "checks": {}
+  }
+]

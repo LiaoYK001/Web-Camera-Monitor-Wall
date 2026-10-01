@@ -1,5 +1,7 @@
 # Web Camera Monitor Wall
 
+Windows 10/11 x64 Electron 完整客户端的实现、构建、签名更新与验收要求见 [Windows 桌面客户端](docs/windows-desktop.md)。容器部署继续保留；Windows 安装与实际媒体验收状态在该文档中单独记录。
+
 > **安全提示 / Security notice:** v3.3 升级后，仍由 v3.2 或更早 Service Worker 控制的旧 PWA 可能凭本机离线授权继续显示缓存工作区。请查看[安全公告](docs/security-advisory-v3.3.md)，在共享设备上刷新或清除旧 PWA。自动强制更新修复计划随 v3.4 发布。
 > After upgrading to v3.3, an old PWA still controlled by a v3.2 or earlier service worker may show its cached workspace under a local offline grant. See the [security advisory](docs/security-advisory-v3.3.md); refresh or clear old PWAs on shared devices. Automatic forced updates are planned for v3.4.
 

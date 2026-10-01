@@ -5,6 +5,11 @@ on:
   push:
     branches: [dev, main]
   workflow_dispatch:
+    inputs:
+      windows_desktop:
+        description: 'Also compile the full unsigned Windows desktop candidate'
+        default: false
+        type: boolean
 
 permissions:
   contents: read
@@ -14,6 +19,12 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  windows-desktop-candidate:
+    if: github.event_name == 'workflow_dispatch' && inputs.windows_desktop
+    uses: ./.github/workflows/windows-desktop.yaml
+    with:
+      version: '3.4.0-dev.0'
+      official: false
   public-audit:
     runs-on: ubuntu-24.04
     steps:

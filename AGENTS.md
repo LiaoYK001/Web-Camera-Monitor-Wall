@@ -8,6 +8,7 @@
 - `go2rtc/go2rtc/`: complete upstream go2rtc submodule pinned to v1.9.14 (`b5948cfb25404cc5cb37b166ecaa2dca20b11d4b`). Protocol adaptation and optional FFmpeg conversion happen here; MediaMTX remains the existing distribution gateway; OBS composes scenes.
 - `obs/obs-studio/`: pinned upstream OBS submodule. Do not edit upstream checkouts to implement product behavior. Keep integration patches/build helpers outside them.
 - `docker/Dockerfile`, `docker/entrypoint.sh`, `compose*.yaml`: one product image, service supervision and deployment. `scripts/dev.mjs` + `scripts/dev-native.py` provide local development.
+- `desktop/`: full native Windows x64 Electron product, Job Object ownership, complete NSIS runtime and explicit GitHub update installation. Keep it separate from `clients/` Qt products. Dependency and distribution contracts are described in `docs/windows-desktop.md`.
 
 ## Working rules
 
@@ -24,6 +25,7 @@
 
 - Frontend: `cd web; pnpm typecheck; pnpm build`; focused Playwright tests use `pnpm exec playwright test -c playwright.local.config.ts --project=chromium <spec>` (pnpm script `--` can prevent spec filtering).
 - go2rtc assets: `cd web; pnpm go2rtc:ui` assembles the complete upstream UI with locally packaged third-party dependencies.
-- C++: CMake builds and CTest inside the Linux/WSL or Docker build environment. The production core is Linux, not Windows C++.
+- C++: CMake/CTest in Linux/WSL or Docker; Windows uses MSVC x64 and the pinned OBS/vcpkg builds via `desktop/scripts/build-windows.ps1`. Windows source support does not imply completed installation/media qualification.
+- Desktop: `cd desktop; pnpm test`; `python desktop/tests/test_native_runtime.py` includes snapshot/transcoder tests and a Job lifecycle test only when a real Windows runtime is built. Keep automatic install-on-quit disabled. Never attach an unsigned development package to the stable updater feed.
 - Run `tests/test_go2rtc_runtime.py` for private configuration/lifecycle contracts and the dedicated proxy integration test for HTTP/WebSocket streaming.
 - Distinguish browser fixtures and synthetic protocol tests from real camera qualification. Report any full-image or device checks that could not run.

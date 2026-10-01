@@ -8,6 +8,11 @@ that is signed with Ed25519 and sealed to an enrolled X25519 public key.
 
 from __future__ import annotations
 
+import sys as _runtime_sys
+from pathlib import Path as _RuntimePath
+_runtime_sys.path.insert(0, str(_RuntimePath(__file__).resolve().parents[1]))
+from runtime_support import service_port, service_http, service_rtsp, install_owner_shutdown, serve_owned, STOP, sync_directory, protect_local_key
+
 import base64
 import ctypes
 import ctypes.util
@@ -31,7 +36,7 @@ from urllib.parse import parse_qs, urlsplit
 from urllib.request import Request, urlopen
 
 
-LISTEN = ("127.0.0.1", 8094)
+LISTEN = ("127.0.0.1", service_port(8094))
 DB_PATH = Path(os.environ.get("WEBOBS_V2_DATABASE", "/config/webobs/v2-clients.db"))
 CAMERA_DB_PATH = Path(os.environ.get("WEBOBS_CAMERA_DATABASE", "/config/webobs/cameras.db"))
 NVR_CONFIG_PATH = Path(os.environ.get("WEBOBS_NVR_CONFIG", "/config/webobs/nvr.json"))
@@ -364,7 +369,7 @@ def load_or_create_signing_key() -> tuple[bytes, bytes]:
     if KEY_PATH.exists():
         if KEY_PATH.is_symlink() or not KEY_PATH.is_file():
             raise RuntimeError("client grant signing key must be a regular file")
-        data = KEY_PATH.read_bytes()
+        data = protect_local_key(KEY_PATH.read_bytes(), decrypt=True)
         if len(data) != 96:
             raise RuntimeError("client grant signing key length is invalid")
         return data[:32], data[32:]
@@ -372,7 +377,7 @@ def load_or_create_signing_key() -> tuple[bytes, bytes]:
     temporary = KEY_PATH.with_name(f".{KEY_PATH.name}.{os.getpid()}.{secrets.token_hex(4)}")
     descriptor = os.open(temporary, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
     try:
-        os.write(descriptor, public + secret)
+        os.write(descriptor, protect_local_key(public + secret))
         os.fsync(descriptor)
     finally:
         os.close(descriptor)
@@ -1357,7 +1362,7 @@ def registry_request(method: str, camera_id: str, operation: str,
     path = f"/cameras/{camera_id}/onvif/{operation}"
     body = None if payload is None else json.dumps(
         payload, separators=(",", ":"), allow_nan=False).encode("utf-8")
-    request = Request(f"http://127.0.0.1:8092{path}", data=body, method=method,
+    request = Request(service_http(8092, f'{path}'), data=body, method=method,
                       headers={"Accept": "application/json", **(
                           {"Content-Type": "application/json"} if body is not None else {})})
     try:

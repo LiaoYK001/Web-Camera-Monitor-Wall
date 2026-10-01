@@ -7,6 +7,11 @@ checks, and response hardening remain the responsibility of webobsd.
 
 from __future__ import annotations
 
+import sys as _runtime_sys
+from pathlib import Path as _RuntimePath
+_runtime_sys.path.insert(0, str(_RuntimePath(__file__).resolve().parents[1]))
+from runtime_support import service_port, service_http, service_rtsp, install_owner_shutdown, serve_owned, STOP, sync_directory
+
 import argparse
 import contextlib
 import datetime as dt
@@ -25,6 +30,7 @@ import time
 import urllib.parse
 import urllib.request
 import uuid
+import functools
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -43,6 +49,19 @@ class ConfigError(ValueError):
     pass
 
 
+def export_operation(function):
+    @functools.wraps(function)
+    def wrapped(self, *args, **kwargs):
+        with self.config_lock:
+            self.active_exports += 1
+        try:
+            return function(self, *args, **kwargs)
+        finally:
+            with self.config_lock:
+                self.active_exports -= 1
+    return wrapped
+
+
 def utc_ms() -> int:
     return time.time_ns() // 1_000_000
 
@@ -58,11 +77,7 @@ def atomic_json(path: pathlib.Path, value: Any) -> None:
             output.flush()
             os.fsync(output.fileno())
         os.replace(temporary, path)
-        directory = os.open(path.parent, os.O_RDONLY | os.O_DIRECTORY)
-        try:
-            os.fsync(directory)
-        finally:
-            os.close(directory)
+        sync_directory(path.parent)
     finally:
         with contextlib.suppress(FileNotFoundError):
             temporary.unlink()
@@ -211,7 +226,7 @@ def resolve_registry_source(camera: dict[str, Any]) -> str:
     path = "/resolve/{}/{}".format(
         urllib.parse.quote(camera["cameraId"], safe=""), urllib.parse.quote(profile_id, safe="")
     )
-    request = urllib.request.Request("http://127.0.0.1:8092" + path, method="GET")
+    request = urllib.request.Request(service_http(8092, '') + path, method="GET")
     with urllib.request.urlopen(request, timeout=3) as response:
         body = response.read(MAX_BODY + 1)
     if len(body) > MAX_BODY:
@@ -457,6 +472,7 @@ class NvrService:
         self.assignment_path = pathlib.Path(os.environ.get(
             "WEBOBS_NODE_ASSIGNMENTS_FILE", "/config/webobs/node/assignments.json"))
         self.config_lock = threading.RLock()
+        self.active_exports = 0
         self.config = self._load_or_default()
         self.catalog.sync_cameras(self.config)
         self.stop_event = threading.Event()
@@ -529,6 +545,11 @@ class NvrService:
         threading.Thread(target=self._maintenance_loop, name="nvr-maintenance", daemon=True).start()
 
     def shutdown(self) -> None:
+        deadline = time.monotonic() + 20
+        while self.active_exports and time.monotonic() < deadline:
+            time.sleep(0.1)
+        if self.active_exports:
+            raise RuntimeError("active evidence export did not finish before shutdown")
         self.stop_event.set()
         self._stop_workers()
 
@@ -1033,6 +1054,7 @@ class NvrService:
             })
         return {
             "status": "degraded" if self.stats.disk_pressure or any(item["state"] == "degraded" for item in cameras) else "ok",
+            "activeExports": self.active_exports,
             "uptimeSeconds": int(time.monotonic() - self.stats.started_monotonic),
             "freeBytes": sum(item["freeBytes"] for item in inventories),
             "volumes": inventories, "diskPressure": self.stats.disk_pressure,
@@ -1243,6 +1265,7 @@ class NvrService:
             if path.stat().st_mtime < cutoff:
                 path.unlink(missing_ok=True)
 
+    @export_operation
     def snapshot(self, value: Any) -> dict[str, Any]:
         if not isinstance(value, dict) or set(value) != {"segmentId", "offsetMs"}:
             raise ConfigError("snapshot requires segmentId and offsetMs")
@@ -1267,6 +1290,7 @@ class NvrService:
                 digest.update(block)
         return digest.hexdigest()
 
+    @export_operation
     def export_clip(self, value: Any) -> dict[str, Any]:
         allowed = {"cameraIds", "fromUtcMs", "toUtcMs", "mode", "lock", "programRecordingId"}
         if not isinstance(value, dict) or set(value) - allowed:
@@ -1626,6 +1650,7 @@ def main() -> int:
     def stop(_signum: int, _frame: Any) -> None:
         threading.Thread(target=server.shutdown, daemon=True).start()
 
+    install_owner_shutdown(lambda: stop(0, None))
     signal.signal(signal.SIGTERM, stop)
     signal.signal(signal.SIGINT, stop)
     service.audit("nvr.started", camera_count=len(service.config["cameras"]))

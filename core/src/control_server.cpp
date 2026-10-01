@@ -1,3 +1,4 @@
+#include "webobs/platform_runtime.hpp"
 #include "webobs/control_server.hpp"
 
 #include "webobs/authentication.hpp"
@@ -17,10 +18,13 @@
 #include <util/base.h>
 
 #include <csignal>
-#include <fcntl.h>
-#include <spawn.h>
-#include <sys/wait.h>
+#ifndef _WIN32
 #include <unistd.h>
+#else
+#include <windows.h>
+#include <tlhelp32.h>
+#include <psapi.h>
+#endif
 
 #include <algorithm>
 #include <array>
@@ -48,7 +52,7 @@
 #include <utility>
 #include <vector>
 
-extern char **environ;
+
 
 namespace webobs {
 namespace {
@@ -318,7 +322,7 @@ ClusterLoginResult cluster_login(std::string_view username, std::string_view pas
                              "\",\"password\":\"" + json_escape(password) +
                              "\",\"username\":\"" + json_escape(username) + "\"}";
     curl_slist *headers = curl_slist_append(nullptr, "Content-Type: application/json");
-    curl_easy_setopt(handle, CURLOPT_URL, "http://127.0.0.1:8095/auth/login");
+    curl_easy_setopt(handle, CURLOPT_URL, runtime_http(8095, "/auth/login").c_str());
     curl_easy_setopt(handle, CURLOPT_PROTOCOLS_STR, "http");
     curl_easy_setopt(handle, CURLOPT_CONNECTTIMEOUT_MS, 500L);
     curl_easy_setopt(handle, CURLOPT_TIMEOUT_MS, 3000L);
@@ -379,7 +383,7 @@ HttpResponse cluster_first_run_setup(const HttpRequest &request)
     curl_slist *headers = nullptr;
     if (request.method() == http::verb::post)
         headers = curl_slist_append(headers, "Content-Type: application/json");
-    curl_easy_setopt(handle, CURLOPT_URL, "http://127.0.0.1:8095/auth/setup");
+    curl_easy_setopt(handle, CURLOPT_URL, runtime_http(8095, "/auth/setup").c_str());
     curl_easy_setopt(handle, CURLOPT_PROTOCOLS_STR, "http");
     curl_easy_setopt(handle, CURLOPT_CONNECTTIMEOUT_MS, 500L);
     curl_easy_setopt(handle, CURLOPT_TIMEOUT_MS, 3000L);
@@ -592,7 +596,7 @@ ClusterAuthorization cluster_authorize(std::string_view username, const HttpRequ
     const std::string token_header = "X-WebObs-Internal-Admin: " + std::string(token_value);
     curl_slist *headers = curl_slist_append(nullptr, "Content-Type: application/json");
     headers = curl_slist_append(headers, token_header.c_str());
-    curl_easy_setopt(handle, CURLOPT_URL, "http://127.0.0.1:8095/auth/authorize");
+    curl_easy_setopt(handle, CURLOPT_URL, runtime_http(8095, "/auth/authorize").c_str());
     curl_easy_setopt(handle, CURLOPT_PROTOCOLS_STR, "http");
     curl_easy_setopt(handle, CURLOPT_CONNECTTIMEOUT_MS, 500L);
     curl_easy_setopt(handle, CURLOPT_TIMEOUT_MS, 2000L);
@@ -679,7 +683,7 @@ std::optional<ResolvedCameraEndpoint> resolve_camera_endpoint(std::string_view c
     std::string body;
     CURL *handle = curl_easy_init();
     if (!handle) return std::nullopt;
-    const std::string url = "http://127.0.0.1:8092/resolve/" + std::string(camera_id) + "/" + std::string(profile_id);
+    const std::string url = runtime_http(8092, "/resolve/") + std::string(camera_id) + "/" + std::string(profile_id);
     const auto write = [](char *data, std::size_t size, std::size_t count, void *context) -> std::size_t {
         const std::size_t bytes = size * count;
         auto &output = *static_cast<std::string *>(context);
@@ -1051,8 +1055,8 @@ private:
     static constexpr std::size_t maximum_sessions = 64;
     static constexpr auto session_retention = std::chrono::minutes(10);
     static constexpr std::size_t token_length = 32;
-    static constexpr std::string_view upstream_origin = "http://127.0.0.1:8889";
-    static constexpr std::string_view control_origin = "http://127.0.0.1:9997";
+    inline static const std::string upstream_origin = runtime_http(8889, "");
+    inline static const std::string control_origin = runtime_http(9997, "");
     static constexpr std::string_view session_prefix = "/api/v1/program/whep/session/";
 
     struct Session {
@@ -1268,77 +1272,10 @@ private:
                                                        std::chrono::seconds timeout,
                                                        std::size_t maximum_bytes)
     {
-        if (arguments.empty())
-            return std::nullopt;
-        int output_pipe[2] = {-1, -1};
-        if (pipe(output_pipe) != 0)
-            return std::nullopt;
-        std::vector<char *> raw;
-        raw.reserve(arguments.size() + 1);
-        for (const std::string &argument : arguments)
-            raw.push_back(const_cast<char *>(argument.c_str()));
-        raw.push_back(nullptr);
-
-        posix_spawn_file_actions_t actions;
-        if (posix_spawn_file_actions_init(&actions) != 0) {
-            close(output_pipe[0]);
-            close(output_pipe[1]);
-            return std::nullopt;
-        }
-        posix_spawn_file_actions_addopen(&actions, STDIN_FILENO, "/dev/null", O_RDONLY, 0);
-        posix_spawn_file_actions_addopen(&actions, STDERR_FILENO, "/dev/null", O_WRONLY, 0);
-        posix_spawn_file_actions_adddup2(&actions, output_pipe[1], STDOUT_FILENO);
-        posix_spawn_file_actions_addclose(&actions, output_pipe[0]);
-        posix_spawn_file_actions_addclose(&actions, output_pipe[1]);
-        pid_t child = -1;
-        const int spawn_result = posix_spawnp(&child, raw.front(), &actions, nullptr, raw.data(), environ);
-        posix_spawn_file_actions_destroy(&actions);
-        close(output_pipe[1]);
-        if (spawn_result != 0) {
-            close(output_pipe[0]);
-            return std::nullopt;
-        }
-
-        int status = 0;
-        bool finished = false;
-        const auto deadline = std::chrono::steady_clock::now() + timeout;
-        while (std::chrono::steady_clock::now() < deadline) {
-            const pid_t waited = waitpid(child, &status, WNOHANG);
-            if (waited == child) {
-                finished = true;
-                break;
-            }
-            if (waited < 0 && errno == ECHILD) {
-                finished = true;
-                break;
-            }
-            if (waited < 0 && errno != EINTR)
-                break;
-            std::this_thread::sleep_for(std::chrono::milliseconds(50));
-        }
-        if (!finished) {
-            kill(child, SIGKILL);
-            while (waitpid(child, &status, 0) < 0 && errno == EINTR) {
-            }
-        }
-        std::string output;
-        std::array<char, 256> buffer{};
-        for (;;) {
-            const ssize_t count = read(output_pipe[0], buffer.data(), buffer.size());
-            if (count > 0 && output.size() < maximum_bytes)
-                output.append(buffer.data(), static_cast<std::size_t>(count));
-            else if (count == 0)
-                break;
-            else if (count < 0 && errno != EINTR)
-                break;
-        }
-        close(output_pipe[0]);
-        while (!output.empty() && std::isspace(static_cast<unsigned char>(output.back())))
-            output.pop_back();
-        const std::size_t first = output.find_first_not_of(" \t\r\n");
-        if (first == std::string::npos)
-            return std::nullopt;
-        output.erase(0, first);
+        auto captured = capture_process(arguments, timeout, maximum_bytes);
+        if (captured.code != 0 || captured.timed_out) return std::nullopt;
+        auto& output = captured.output;
+        while (!output.empty() && std::isspace(static_cast<unsigned char>(output.back()))) output.pop_back();
         return output;
     }
 
@@ -1540,7 +1477,7 @@ private:
             }
         }
         if (route.codec.empty()) {
-            const std::string input = "rtsp://127.0.0.1:8554/" + route.path;
+            const std::string input = runtime_rtsp(8554, "/") + route.path;
             const auto codec = run_capture({"ffprobe", "-v", "error", "-rw_timeout", "8000000",
                                             "-rtsp_transport", "tcp", "-select_streams", "v:0",
                                             "-show_entries", "stream=codec_name", "-of",
@@ -1584,7 +1521,7 @@ private:
                     return entry.second.hybrid_path == route.hybrid_path;
                 }));
             }
-            const std::string command = transcoder_executable() + " " + route.path + " " +
+            const std::string command = command_quote(transcoder_executable()) + " " + route.path + " " +
                                         route.hybrid_path + " " +
                                         (route.video_transcode ? "transcode" : "copy") + " " +
                                         (route.audio_transcode ? "transcode" : "copy");
@@ -1633,7 +1570,7 @@ private:
                 return route.audio_tracks;
             source_key = route.source_key;
         }
-        const std::string input = "rtsp://127.0.0.1:8554/" + *direct_path;
+        const std::string input = runtime_rtsp(8554, "/") + *direct_path;
         const auto probed = run_capture_text({"ffprobe", "-v", "error", "-rw_timeout", "8000000",
                                          "-rtsp_transport", "tcp", "-select_streams", "a",
                                          "-show_entries",
@@ -1698,7 +1635,7 @@ private:
         const std::string arguments = audio_track_route_arguments(*direct_path, audio_path, track_index);
         if (arguments.empty())
             return std::nullopt;
-        const std::string command = transcoder_executable() + " " + arguments;
+        const std::string command = command_quote(transcoder_executable()) + " " + arguments;
         const std::string body =
             std::string("{\"source\":\"publisher\",\"overridePublisher\":false,\"maxReaders\":4,") +
             "\"runOnDemand\":\"" + json_escape(command) +
@@ -1953,7 +1890,7 @@ public:
         std::string content_type = "application/json; charset=utf-8";
         std::string content_range;
         std::string accept_ranges;
-        const std::string url = "http://127.0.0.1:8091" + std::string(suffix);
+        const std::string url = runtime_http(8091, "") + std::string(suffix);
         CURL *handle = curl_easy_init();
         if (!handle)
             return unavailable(request.version());
@@ -2200,7 +2137,7 @@ public:
         CURL *handle = curl_easy_init();
         if (!handle)
             return unavailable(request.version());
-        const std::string url = "http://127.0.0.1:" + std::to_string(upstream_port) + suffix;
+        const std::string url = "http://127.0.0.1:" + std::to_string(runtime_port(upstream_port)) + suffix;
         curl_slist *headers = nullptr;
         if (mutating)
             headers = curl_slist_append(headers, "Content-Type: application/json");
@@ -2588,7 +2525,7 @@ std::optional<HttpResponse> static_file_response(std::string_view target, unsign
         return std::nullopt;
     }
 
-    const std::filesystem::path path = std::filesystem::path(WEBOBS_WEB_ROOT) / filename;
+    const std::filesystem::path path = std::filesystem::path(runtime_path("WEBOBS_WEB_ROOT", WEBOBS_WEB_ROOT)) / filename;
     std::error_code error;
     if (!std::filesystem::is_regular_file(path, error) || error)
         return response(http::status::not_found, version,
@@ -2999,6 +2936,43 @@ HttpResponse process_diagnostics_response(unsigned int version, const RuntimeSta
     static std::unordered_map<std::string, CpuSample> previous_samples;
     const std::lock_guard sample_lock(sample_mutex);
     const auto captured_at = std::chrono::steady_clock::now();
+#ifdef _WIN32
+    std::unordered_map<std::string, ProcessTotal> totals;
+    HANDLE snapshot = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
+    if (snapshot != INVALID_HANDLE_VALUE) {
+        PROCESSENTRY32W entry{}; entry.dwSize = sizeof(entry);
+        if (Process32FirstW(snapshot, &entry)) do {
+            std::wstring executable(entry.szExeFile);
+            std::string role;
+            if (executable == L"webobsd.exe") role = "webobsd";
+            else if (executable == L"mediamtx.exe") role = "mediamtx";
+            else if (executable == L"ffmpeg.exe") role = "ffmpeg";
+            else if (executable == L"caddy.exe") role = "caddy";
+            if (role.empty()) continue;
+            HANDLE process = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION|PROCESS_VM_READ, FALSE, entry.th32ProcessID);
+            PROCESS_MEMORY_COUNTERS memory{};
+            auto& total = totals[role]; ++total.instances;
+            if (process) {
+                if (GetProcessMemoryInfo(process, &memory, sizeof(memory))) total.rss_kib += memory.WorkingSetSize/1024;
+                FILETIME created, exited, kernel, user;
+                if (GetProcessTimes(process, &created, &exited, &kernel, &user)) {
+                    const auto ticks = (static_cast<std::uint64_t>(kernel.dwHighDateTime)<<32|kernel.dwLowDateTime)+(static_cast<std::uint64_t>(user.dwHighDateTime)<<32|user.dwLowDateTime);
+                    const auto key = std::to_string(entry.th32ProcessID);
+                    const auto previous = previous_samples.find(key);
+                    if (previous != previous_samples.end() && ticks >= previous->second.ticks) {
+                        const double elapsed = std::chrono::duration<double>(captured_at-previous->second.captured_at).count();
+                        if (elapsed > 0) total.cpu_percent += static_cast<double>(ticks-previous->second.ticks)/10000000.0/elapsed*100.0;
+                    }
+                    previous_samples[key] = {ticks, captured_at};
+                }
+                CloseHandle(process);
+            }
+        } while (Process32NextW(snapshot, &entry));
+        CloseHandle(snapshot);
+    }
+    std::uint64_t rtsp_sessions = 0;
+    int gpu_busy_percent = -1;
+#else
     const long clock_ticks = std::max<long>(1, sysconf(_SC_CLK_TCK));
     std::unordered_map<std::string, ProcessTotal> totals;
     const auto recognized = [](std::string_view name) -> std::string_view {
@@ -3092,6 +3066,7 @@ HttpResponse process_diagnostics_response(unsigned int version, const RuntimeSta
             break;
     }
 
+#endif
     std::string body = "{\"processes\":[";
     bool first = true;
     for (const std::string_view role : {"webobsd", "mediamtx", "ffmpeg", "caddy", "obs-browser"}) {
@@ -3103,7 +3078,13 @@ HttpResponse process_diagnostics_response(unsigned int version, const RuntimeSta
                 std::to_string(total.instances) + ",\"rssKiB\":" + std::to_string(total.rss_kib) +
                 ",\"cpuPercent\":" + std::to_string(total.cpu_percent) + "}";
     }
-    body += "],\"rtspSessions\":" + std::to_string(rtsp_sessions) +
+    body += "],\"rtspSessionProbeAvailable\":"
+#ifdef _WIN32
+            "false"
+#else
+            "true"
+#endif
+            ",\"rtspSessions\":" + std::to_string(rtsp_sessions) +
             ",\"gpuBusyPercent\":" + std::to_string(gpu_busy_percent) +
             ",\"controlPlaneActive\":" + (status.control_plane_active.load() ? "true" : "false") +
             ",\"engineActive\":" + (status.engine_active.load() ? "true" : "false") +
@@ -3427,6 +3408,16 @@ HttpResponse handle_request(const HttpRequest &request, SceneController &control
     }
     if (request.method() == http::verb::get && target == "/api/v1/sources/status")
         return source_health_response(version, controller);
+    if (request.method() == http::verb::get && target == "/api/v1/runtime/info") {
+#ifdef _WIN32
+        const char* platform = "windows";
+#else
+        const char* platform = "linux";
+#endif
+        return response(http::status::ok, version,
+            "{\"schemaVersion\":1,\"platform\":\"" + std::string(platform) +
+            "\",\"go2rtcRtspBase\":\"" + runtime_rtsp(18554, "/") + "\"}");
+    }
     if (request.method() == http::verb::get && target == "/api/v1/system/capabilities")
         return system_capabilities_response(version, runtime_status);
     if (request.method() == http::verb::get && target == "/api/v1/system/processes")

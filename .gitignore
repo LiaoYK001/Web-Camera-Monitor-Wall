@@ -41,4 +41,10 @@ __pycache__/
 /.vite/
 /test-results/
 /tmp
+/desktop/node_modules/
+/desktop/dist/
+/desktop/out/
+/desktop/runtime/
+/desktop/.cache/
+/desktop/runtime-sbom.cdx.json
 /.mimocode

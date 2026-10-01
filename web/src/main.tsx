@@ -21,7 +21,7 @@ window.trustedTypes?.createPolicy('default', {
   },
 });
 
-void registerPwaRuntime();
+if (!window.webobsDesktop) void registerPwaRuntime();
 
 // F6-07: the projector route mounts the picture surface only, so the detached
 // window never boots a second copy of the workspace shell.

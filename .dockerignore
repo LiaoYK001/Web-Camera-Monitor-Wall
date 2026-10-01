@@ -12,6 +12,11 @@ build-*
 web/node_modules
 web/dist
 web/go2rtc-dist
+desktop/node_modules
+desktop/runtime
+desktop/out
+desktop/.cache
+desktop/runtime-sbom.cdx.json
 web/test-results
 web/playwright-report
 clients/build

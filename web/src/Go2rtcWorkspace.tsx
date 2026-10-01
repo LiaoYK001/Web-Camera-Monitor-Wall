@@ -1,4 +1,5 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
+import { fetchRuntimeInfo, useDesktopWork } from './desktopRuntime';
 import Go2rtcStreams from './Go2rtcStreams';
 
 const base = '/api/v1/go2rtc/';
@@ -15,6 +16,25 @@ export default function Go2rtcWorkspace({ onDevices }: { onDevices: () => void }
   const [error, setError] = useState('');
   const [version, setVersion] = useState('');
   const [generation, setGeneration] = useState(0);
+  const [rtspBase, setRtspBase] = useState('rtsp://127.0.0.1:18554/');
+  const [configDirty, setConfigDirty] = useState(false);
+  const frame = useRef<HTMLIFrameElement>(null);
+  useDesktopWork('go2rtc-config', configDirty);
+  useEffect(() => { void fetchRuntimeInfo().then(info => setRtspBase(info.go2rtcRtspBase)).catch(() => undefined); }, []);
+  useEffect(() => {
+    if (!window.webobsDesktop || selected !== 'config.html') { setConfigDirty(false); return; }
+    let cancelled = false;
+    const inspect = async () => {
+      type MonacoWindow = Window & { monaco?: { editor: { getModels(): { getValue(): string }[] } } };
+      const model = (frame.current?.contentWindow as MonacoWindow | null)?.monaco?.editor.getModels()[0];
+      if (!model) return;
+      try { const response = await fetch(`${base}api/config`, { credentials: 'same-origin', cache: 'no-store' }); if (!response.ok) return;
+        const saved = await response.text(); if (!cancelled) setConfigDirty(model.getValue() !== saved);
+      } catch { if (!cancelled) setConfigDirty(true); }
+    };
+    const timer = window.setInterval(() => void inspect(), 1500);
+    return () => { cancelled = true; window.clearInterval(timer); };
+  }, [selected, state]);
 
   useEffect(() => {
     const controller = new AbortController();
@@ -44,7 +64,7 @@ export default function Go2rtcWorkspace({ onDevices }: { onDevices: () => void }
       </div>
     </header>
     <div className="go2rtc-guide"><strong>来源 → go2rtc → 监控墙 / OBS</strong>
-      <p>先在 go2rtc 中配置来源，再在“设备与来源”添加 <code>rtsp://127.0.0.1:18554/流名称</code>。这里的地址指后端所在环境；普通 RTSP 也可直接接入。</p>
+      <p>先在 go2rtc 中配置来源，再在“设备与来源”添加 <code>{rtspBase}流名称</code>。这里的地址指后端所在环境；普通 RTSP 也可直接接入。</p>
       <p>配置与日志可能包含设备凭据，仅供管理员使用。修改流名称时，需要同步更新监控墙中的来源。</p>
     </div>
     <Go2rtcStreams />
@@ -53,7 +73,7 @@ export default function Go2rtcWorkspace({ onDevices }: { onDevices: () => void }
     <p className="go2rtc-description">{pages.find((page) => page.id === selected)?.description}</p>
     {state === 'loading' && <p role="status">正在检查 go2rtc 服务…</p>}
     {state === 'error' && <div role="alert" className="inline-error">{error}</div>}
-    {state === 'ready' && <iframe key={`${selected}:${generation}`} className="go2rtc-frame" title="go2rtc 官方 WebUI"
+    {state === 'ready' && <iframe ref={frame} key={`${selected}:${generation}`} className="go2rtc-frame" title="go2rtc 官方 WebUI"
       src={`${base}${selected}`} allow="camera; microphone; fullscreen" />}
   </section>;
 }

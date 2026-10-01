@@ -1,3 +1,4 @@
+#include "webobs/platform_runtime.hpp"
 #include "webobs/go2rtc_proxy.hpp"
 
 #include <boost/beast/core.hpp>
@@ -53,7 +54,7 @@ public:
     void run()
     {
         upstream_.expires_after(std::chrono::seconds(5));
-        upstream_.async_connect(tcp::endpoint(net::ip::make_address("127.0.0.1"), 11984),
+        upstream_.async_connect(tcp::endpoint(net::ip::make_address("127.0.0.1"), static_cast<unsigned short>(runtime_port(11984))),
             [self = shared_from_this()](beast::error_code error) {
                 if (error) return self->unavailable();
                 http::async_write(self->upstream_, self->request_,

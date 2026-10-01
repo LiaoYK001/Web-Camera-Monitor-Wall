@@ -76,6 +76,8 @@ RUN apt-get -o Acquire::Retries=5 update \
     && apt-get -o Acquire::Retries=5 install -y --no-install-recommends python3 \
     && rm -rf /var/lib/apt/lists/*
 COPY v2/client_control_service.py /opt/webobs/bin/webobs-client-control
+COPY runtime_support.py /opt/webobs/runtime_support.py
+COPY runtime_support.py /tmp/runtime_support.py
 COPY cluster/cluster_service.py /opt/webobs/bin/webobs-cluster
 COPY cluster/node_agent.py /opt/webobs/bin/webobs-node-agent
 COPY analytics/detector_worker.py /opt/webobs/bin/webobs-detector-worker
@@ -506,6 +508,8 @@ COPY --from=web-builder /src/web/go2rtc-dist /opt/webobs/go2rtc-www
 COPY --from=go2rtc-builder /out/go2rtc /opt/webobs/bin/go2rtc
 COPY --from=go2rtc-builder /out/LICENSE /out/go.mod /out/go.sum /out/go-module-licenses.tar.gz /usr/share/licenses/go2rtc/
 COPY go2rtc/runtime.py /opt/webobs/bin/webobs-go2rtc
+COPY runtime_support.py /opt/webobs/runtime_support.py
+COPY runtime_support.py /tmp/runtime_support.py
 COPY go2rtc/runtime.py go2rtc/go2rtc.yaml /tmp/go2rtc/
 COPY tests/test_go2rtc_runtime.py /tmp/test_go2rtc_runtime.py
 COPY go2rtc/go2rtc.yaml /opt/webobs/etc/go2rtc.yaml

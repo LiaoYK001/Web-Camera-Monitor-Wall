@@ -1,8 +1,9 @@
 import { useEffect, useRef, useState } from 'react';
 import { createCamera, detectCamera, fetchCameras, probeSourceProfile } from './api';
 import type { CameraRecord } from './types';
+import { fetchRuntimeInfo } from './desktopRuntime';
 
-export const go2rtcStreamAddress = (name: string) => `rtsp://127.0.0.1:18554/${encodeURIComponent(name)}`;
+export const go2rtcStreamAddress = (name: string, base = 'rtsp://127.0.0.1:18554/') => `${base}${encodeURIComponent(name)}`;
 // Only stream names leave this parser; producer URLs and diagnostics can contain secrets.
 export function go2rtcStreamNames(value: unknown): string[] {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return [];
@@ -10,6 +11,7 @@ export function go2rtcStreamNames(value: unknown): string[] {
 }
 export default function Go2rtcStreams({ onImported }: { onImported?: () => void }) {
   const [names, setNames] = useState<string[]>([]);
+  const [rtspBase, setRtspBase] = useState('rtsp://127.0.0.1:18554/');
   const [cameras, setCameras] = useState<CameraRecord[]>([]);
   const [status, setStatus] = useState('正在读取 go2rtc 流…');
   const [error, setError] = useState('');
@@ -31,6 +33,8 @@ export default function Go2rtcStreams({ onImported }: { onImported?: () => void 
           return;
         }
         const names = go2rtcStreamNames(await response.json());
+        const runtime = await fetchRuntimeInfo(controller.signal).catch(() => null);
+        if (!controller.signal.aborted && runtime) setRtspBase(runtime.go2rtcRtspBase);
         const registry = await fetchCameras(controller.signal);
         if (!controller.signal.aborted) { setNames(names); setCameras(registry.cameras); setError(''); setStatus(names.length ? `发现 ${names.length} 个命名流` : '暂无命名流，请先在 go2rtc 中添加并保存。'); }
       } catch { if (!controller.signal.aborted) setStatus('go2rtc 流读取失败，请刷新重试。'); }
@@ -42,15 +46,18 @@ export default function Go2rtcStreams({ onImported }: { onImported?: () => void 
     return () => { controller.abort(); window.clearInterval(timer); window.removeEventListener('focus', focus); };
   }, [generation]);
   const existing = (name: string) => imported.current.get(name) ?? cameras.find((camera) =>
-    camera.address === go2rtcStreamAddress(name) || camera.addressDisplay === go2rtcStreamAddress(name) ||
-    camera.profiles.some((profile) => profile.endpoint === go2rtcStreamAddress(name)))?.id;
+    camera.address === go2rtcStreamAddress(name, rtspBase) || camera.addressDisplay === go2rtcStreamAddress(name, rtspBase) ||
+    camera.profiles.some((profile) => profile.endpoint === go2rtcStreamAddress(name, rtspBase)))?.id;
   const add = async (name: string) => {
     if (importing.current || existing(name)) return;
     importing.current = true; setBusy(name); setError(''); setStatus(`正在检测 ${name}…`);
     try {
-      const detected = await detectCamera(go2rtcStreamAddress(name));
+      const runtime = await fetchRuntimeInfo().catch(() => null);
+      if (window.webobsDesktop && !runtime) throw new Error('无法读取本机 go2rtc 建档地址，请检查服务后重试。');
+      const address = go2rtcStreamAddress(name, runtime?.go2rtcRtspBase || rtspBase);
+      const detected = await detectCamera(address);
       if (detected.adapter !== 'rtsp' || !detected.profiles.length) throw new Error('流尚未就绪，请先在 go2rtc 中测试播放后重试。');
-      const camera = await createCamera({ name, address: go2rtcStreamAddress(name), adapter: 'rtsp', hardwareDecode: 'auto', credentialsRef: '',
+      const camera = await createCamera({ name, address, adapter: 'rtsp', hardwareDecode: 'auto', credentialsRef: '',
         profiles: detected.profiles.map((profile) => ({ ...profile, transportMode: 'rtsp-tcp' })),
         capabilities: { bridge: 'go2rtc' } });
       imported.current.set(name, camera.id); setCameras((values) => [...values, camera]); onImported?.();
@@ -69,7 +76,7 @@ export default function Go2rtcStreams({ onImported }: { onImported?: () => void 
       <li>返回这里，刷新列表，点击对应流的“检测并添加设备”。系统使用后端内部 RTSP 地址检测并建档，摄像机密码继续保存在 go2rtc 配置中。</li>
       <li>在“设备与来源”查看刚添加的设备；轨道探测失败时，可在详情中重试，检查 go2rtc 源的编码与连接状态。</li>
       <li>前往 Studio，新建或右键场景 → 选择场景来源，勾选设备，调整画布位置并保存 Studio。可分别打开多个场景投影。</li>
-    </ol><p>内部地址是后端环境的 <code>rtsp://127.0.0.1:18554/流名称</code>。命名流无需再次做 ONVIF 发现；设备建档后使用稳定设备 ID。更改或删除 go2rtc 流名后，请同步调整设备地址。仅中转视频的流不具备原摄像机的 PTZ/ONVIF 功能。</p></details>
+    </ol><p>内部地址是后端环境的 <code>{rtspBase}流名称</code>。命名流无需再次做 ONVIF 发现；设备建档后使用稳定设备 ID。更改或删除 go2rtc 流名后，请同步调整设备地址。仅中转视频的流不具备原摄像机的 PTZ/ONVIF 功能。</p></details>
     {names.length > 0 && <><label>筛选 go2rtc 流<input value={search} onChange={(event) => setSearch(event.target.value)} maxLength={128} /></label>
       <div className="go2rtc-stream-list">{names.filter((name) => name.toLowerCase().includes(search.toLowerCase())).map((name) => <div key={name}>
         <strong>{name}</strong><code>{go2rtcStreamAddress(name)}</code><button type="button" disabled={Boolean(busy) || Boolean(existing(name))}

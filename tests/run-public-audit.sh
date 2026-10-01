@@ -5,6 +5,8 @@ script_directory="$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)"
 repository_root="$(CDPATH= cd -- "$script_directory/.." && pwd)"
 expected_obs_commit="fb4d98bf88fae5fc85cb11fc57f7c5e309282194"
 expected_obs_url="https://github.com/obsproject/obs-studio.git"
+expected_go2rtc_commit="b5948cfb25404cc5cb37b166ecaa2dca20b11d4b"
+expected_go2rtc_url="https://github.com/AlexxIT/go2rtc.git"
 
 command -v git >/dev/null 2>&1
 cd "$repository_root"
@@ -125,6 +127,7 @@ tests/test_v2_client_control.py|fixture-user:fixture-password
 tests/test_camera_registry.py|user:password
 tests/test_camera_registry.py|user:pass
 tests/test_camera_registry.py|*****:*****
+web/tests/local-runtime/scenes-go2rtc-optimization.spec.ts|private:do-not-display
 docs/bulk-source-import.md|user:password
 web/src/CameraRegistry.tsx|user:password
 web/src/SourceCatalog.tsx|user:password
@@ -162,9 +165,10 @@ case "$rtsp_status" in
 esac
 
 submodule_entries="$(git ls-files --stage | awk '$1 == "160000" { print $1 " " $2 " " $3 " " $4 }')"
-expected_submodule_entry="160000 $expected_obs_commit 0 obs/obs-studio"
+expected_submodule_entry="160000 $expected_go2rtc_commit 0 go2rtc/go2rtc
+160000 $expected_obs_commit 0 obs/obs-studio"
 if [ "$submodule_entries" != "$expected_submodule_entry" ]; then
-    echo "Public-repository audit failed: OBS must be the only root submodule and remain pinned to the approved commit." >&2
+    echo "Public-repository audit failed: OBS and go2rtc must remain the two approved pinned root submodules." >&2
     exit 1
 fi
 for executable_path in \
@@ -187,9 +191,11 @@ do
     fi
 done
 if ! git show ':.gitmodules' | sed 's/^[[:space:]]*//' | grep -F -x 'path = obs/obs-studio' >/dev/null ||
-    ! git show ':.gitmodules' | sed 's/^[[:space:]]*//' | grep -F -x "url = $expected_obs_url" >/dev/null
+    ! git show ':.gitmodules' | sed 's/^[[:space:]]*//' | grep -F -x "url = $expected_obs_url" >/dev/null ||
+    ! git show ':.gitmodules' | sed 's/^[[:space:]]*//' | grep -F -x 'path = go2rtc/go2rtc' >/dev/null ||
+    ! git show ':.gitmodules' | sed 's/^[[:space:]]*//' | grep -F -x "url = $expected_go2rtc_url" >/dev/null
 then
-    echo "Public-repository audit failed: the OBS submodule path or public upstream URL changed." >&2
+    echo "Public-repository audit failed: approved submodule paths or public upstream URLs changed." >&2
     exit 1
 fi
 

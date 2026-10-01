@@ -42,5 +42,9 @@ export function projectorUrl(mode: ProjectorMode, location: Pick<Location, 'path
 const projectorFeatures = 'popup=yes,width=960,height=540,menubar=no,toolbar=no,location=no,status=no';
 
 export function openProjectorWindow(mode: ProjectorMode, sceneId?: string): Window | null {
+  if (window.webobsDesktop) {
+    void window.webobsDesktop.projector({ mode, sceneId }).catch((error: unknown) => window.alert(error instanceof Error ? error.message : '投影窗口无法打开'));
+    return null;
+  }
   return window.open(projectorUrl(mode, window.location, sceneId), projectorWindowName(mode, sceneId), projectorFeatures);
 }

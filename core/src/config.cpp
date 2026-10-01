@@ -471,12 +471,14 @@ ParseResult parse_config(const std::vector<std::string> &arguments, const Enviro
     config.vaapi_device = values["vaapi_device"];
     const std::filesystem::path vaapi_path(config.vaapi_device);
     const std::string vaapi_filename = vaapi_path.filename().string();
+#ifndef _WIN32
     if (!vaapi_path.is_absolute() || vaapi_path.parent_path() != "/dev/dri" ||
         !vaapi_filename.starts_with("renderD") || vaapi_filename.size() <= 7 ||
         vaapi_filename.size() > 16 ||
         !std::all_of(vaapi_filename.begin() + 7, vaapi_filename.end(),
                      [](unsigned char character) { return std::isdigit(character); }))
         return failure("vaapi-device must be an absolute /dev/dri/renderD<n> path");
+#endif
     if (!parse_integer(values["connect_timeout"], 1, 300, config.connect_timeout_seconds))
         return failure("connect-timeout-seconds must be between 1 and 300");
 

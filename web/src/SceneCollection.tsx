@@ -1,4 +1,5 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
+import type { DesktopDisplay } from './desktopRuntime';
 import Modal from './Modal';
 import type { SceneDocument, SceneSource, StudioDocument } from './types';
 
@@ -31,6 +32,11 @@ export default function SceneCollection({ studio, selected, sources, savedSceneI
   const [editing, setEditing] = useState<SceneDocument | null>(null);
   const [mode, setMode] = useState<'rename' | 'canvas' | 'sources' | 'new' | 'delete'>('rename');
   const [checked, setChecked] = useState<string[]>([]);
+  const [displays, setDisplays] = useState<DesktopDisplay[]>([]);
+  const [displayId, setDisplayId] = useState('');
+  const [fullscreen, setFullscreen] = useState(false);
+  const [projectorError, setProjectorError] = useState('');
+  useEffect(() => { if (menu && window.webobsDesktop) void window.webobsDesktop.displays().then(setDisplays).catch(() => setProjectorError('无法读取显示器，请刷新后重试')); }, [menu]);
   const scene = studio.scenes.find((value) => value.id === menu);
   const open = (target: SceneDocument, next: typeof mode) => {
     setMenu(null); setMode(next); setEditing(structuredClone(target)); setChecked(target.sources.map((source) => source.id));
@@ -91,6 +97,10 @@ export default function SceneCollection({ studio, selected, sources, savedSceneI
           disabled={studio.scenes.findIndex((value) => value.id === scene.id) === (index % 2 ? studio.scenes.length - 1 : 0)}
           onClick={() => operation(action)}>{['向前移动', '向后移动', '移到首位', '移到末位'][index]}</button>)}
         <button role="menuitem" disabled={!savedSceneIds.includes(scene.id)} onClick={() => operation('projector')}>打开场景投影 · 新窗口</button>
+        {window.webobsDesktop && <><label>投影显示器<select value={displayId} onChange={event => setDisplayId(event.target.value)}><option value="">独立窗口</option>{displays.map(display => <option key={display.id} value={display.id}>{display.label}{display.primary ? '（主显示器）' : ''}</option>)}</select></label>
+          <label><input type="checkbox" checked={fullscreen} onChange={event => setFullscreen(event.target.checked)} />全屏投影（Esc 退出全屏）</label>
+          <button role="menuitem" disabled={!savedSceneIds.includes(scene.id)} onClick={() => { void window.webobsDesktop!.projector({ mode: 'direct', sceneId: scene.id, displayId: displayId ? Number(displayId) : undefined, fullscreen }).then(() => setMenu(null)).catch((reason: unknown) => setProjectorError(reason instanceof Error ? reason.message : '无法打开投影')); }}>投影到所选显示器</button>
+          {projectorError && <p role="alert">{projectorError}</p>}</>}
         <button role="menuitem" disabled={studio.scenes.length <= 1 || scene.id === studio.programSceneId || referenced(scene.id)} onClick={() => open(scene, 'delete')}>删除场景</button>
       </div><p>{!savedSceneIds.includes(scene.id) ? '此场景有未保存修改，请保存 Studio 后再打开投影。' : '不同场景使用不同窗口，可同时投影；同一场景重复打开会复用窗口。'}</p>
       <p>Program 场景和被嵌套引用的场景需先解除使用才能删除。</p><button onClick={() => setMenu(null)}>关闭</button>

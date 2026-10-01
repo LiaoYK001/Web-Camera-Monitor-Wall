@@ -6,7 +6,7 @@ const scene = (id: string, count: number): SceneDocument => ({ schemaVersion: 5,
   sources: Array.from({ length: count }, (_, index) => ({ id: `color-${index}`, kind: 'color', name: `来源 ${index + 1}`, color: '#214f75', muted: true, volume: 0, syncOffsetMs: 0, monitoring: 'off', audioTrack: 1, filters: [] })),
   items: Array.from({ length: count }, (_, index) => ({ id: `item-${index}`, sourceId: `color-${index}`, x: index * 200, y: 100, width: 200, height: 200, scaleMode: 'contain', crop: { top: 0, right: 0, bottom: 0, left: 0 }, zIndex: index, visible: true, locked: false, groupId: '', rotation: 0, opacity: 1, blendMode: 'normal' })),
 });
-async function backend(context: BrowserContext) {
+async function backend(context: BrowserContext, rtspPort = 18554) {
   let studio: StudioDocument = { schemaVersion: 1, revision: 1, programSceneId: 'main', previewSceneId: 'main', transition: { kind: 'cut', durationMs: 0 }, scenes: [scene('main', 6)] };
   const preferences = new Map<string, any>(); const cameras: CameraRecord[] = []; const creates: any[] = [];
   await context.routeWebSocket('**/api/v1/ws', (socket) => {
@@ -17,6 +17,7 @@ async function backend(context: BrowserContext) {
     const reply = (json: unknown, status = 200) => route.fulfill({ status, json });
     if (path === '/api/v1/auth/session') return reply({ authenticated: true, user: 'test-user', via: 'session' });
     if (path === '/api/v1/auth/setup') return reply({ registrationOpen: false });
+    if (path === '/api/v1/runtime/info' && rtspPort !== 18554) return reply({ schema: 1, platform: 'windows', go2rtcRtspBase: `rtsp://127.0.0.1:${rtspPort}/` });
     if (path === '/api/v2/account/me') return reply({ username: 'test-user', displayName: 'Test', avatar: 'camera', roles: ['admin'], permissions: ['settings.manage', 'scene.manage'], scopes: [], acl: [] });
     if (path.startsWith('/api/v2/account/preferences/')) {
       if (method === 'PUT') preferences.set(path, route.request().postDataJSON().value);
@@ -44,6 +45,35 @@ const sceneMenu = async (page: Page, name: string) => {
   await page.getByRole('button', { name: `选择场景 ${name}`, exact: true }).click({ button: 'right' });
   return page.getByRole('dialog', { name: `${name} 场景选项`, exact: true });
 };
+
+test('desktop reuses settings, pinned projectors and runtime-assigned go2rtc ports without a PWA worker', async ({ page, context }) => {
+  const server = await backend(context, 28554);
+  await context.addInitScript(() => {
+    const w = window as any;
+    let settings = JSON.parse(localStorage.getItem('desktop-fixture') || 'null') || { autoCheck: true, autoDownload: true, startAtLogin: false, minimizeToTray: true, lanEnabled: false, lanPort: 18443, recordingDirectory: '' };
+    const state = () => ({ runtime: { phase: 'ready' }, update: { phase: 'disabled' }, settings, recovery: null });
+    w.projectorCalls = [];
+    w.webobsDesktop = { version: 1, status: async () => state(), settings: async () => settings,
+      saveSettings: async (values: any) => { settings = { ...settings, ...values }; localStorage.setItem('desktop-fixture', JSON.stringify(settings)); return settings; },
+      onStatus: () => () => {}, reportWork: async () => {}, displays: async () => [{ id: 7, label: '测试副屏', primary: false, bounds: { x: 1920, y: 0, width: 1920, height: 1080 } }],
+      projector: async (options: any) => { w.projectorCalls.push(options); return { id: 2 }; } };
+  });
+  await page.goto('/#settings');
+  const desktop = page.getByRole('region', { name: 'Windows 客户端设置' });
+  await expect(desktop.getByRole('checkbox', { name: '自动下载更新（安装前仍需确认）' })).toBeChecked();
+  await expect(desktop.getByRole('checkbox', { name: '开启局域网 HTTPS 共享' })).not.toBeChecked();
+  await desktop.getByRole('checkbox', { name: '自动下载更新（安装前仍需确认）' }).uncheck();
+  await page.reload(); await expect(desktop.getByRole('checkbox', { name: '自动下载更新（安装前仍需确认）' })).not.toBeChecked();
+  expect(await page.evaluate(async () => (await navigator.serviceWorker.getRegistrations()).length)).toBe(0);
+  await page.goto('/#studio'); const menu = await sceneMenu(page, '主场景');
+  await menu.getByLabel('投影显示器').selectOption('7'); await menu.getByRole('checkbox', { name: '全屏投影（Esc 退出全屏）' }).check();
+  await menu.getByRole('menuitem', { name: '投影到所选显示器', exact: true }).click();
+  await expect.poll(() => page.evaluate(() => (window as any).projectorCalls)).toEqual([{ mode: 'direct', sceneId: 'main', displayId: 7, fullscreen: true }]);
+  await page.goto('/#devices');
+  const row = page.getByRole('region', { name: 'go2rtc 流接入' }).locator('.go2rtc-stream-list > div').filter({ hasText: 'entrance' });
+  await row.getByRole('button', { name: '检测并添加设备', exact: true }).click();
+  await expect.poll(() => server.creates[0]?.address).toBe('rtsp://127.0.0.1:28554/entrance');
+});
 
 test('creates four- and six-source presets, renames them and retains layouts on reload', async ({ page, context }) => {
   const server = await backend(context); await page.goto('/#studio');

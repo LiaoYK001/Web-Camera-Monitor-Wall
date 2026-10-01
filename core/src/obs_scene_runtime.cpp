@@ -1,3 +1,4 @@
+#include "webobs/platform_runtime.hpp"
 #include "webobs/obs_scene_runtime.hpp"
 
 #include "webobs/audit_event.hpp"
@@ -27,9 +28,14 @@
 #include <utility>
 #include <vector>
 
+#ifdef _WIN32
+#include <winsock2.h>
+#include <ws2tcpip.h>
+#else
 #include <arpa/inet.h>
 #include <netdb.h>
 #include <sys/socket.h>
+#endif
 
 namespace webobs {
 namespace {
@@ -182,17 +188,7 @@ std::string random_token()
 
 /** Single-quote a value so MediaMTX's shell never interprets it. */
 std::string shell_quote(std::string_view value)
-{
-    std::string quoted = "'";
-    for (const char character : value) {
-        if (character == '\'')
-            quoted += "'\\''";
-        else
-            quoted.push_back(character);
-    }
-    quoted.push_back('\'');
-    return quoted;
-}
+{ return command_quote(value); }
 
 bool media_path_request(std::string_view action, std::string_view path, std::string_view body)
 {
@@ -200,7 +196,7 @@ bool media_path_request(std::string_view action, std::string_view path, std::str
     if (!handle)
         return false;
     const std::string url =
-        "http://127.0.0.1:9997/v3/config/paths/" + std::string(action) + "/" + std::string(path);
+        runtime_http(9997, "/v3/config/paths/") + std::string(action) + "/" + std::string(path);
     const std::string payload(body);
     std::string response;
     const auto write = [](char *data, std::size_t size, std::size_t count, void *context) -> std::size_t {
@@ -392,7 +388,7 @@ std::optional<ResolvedCameraSource> resolve_camera_source(const SceneSource &sou
     CURL *handle = curl_easy_init();
     if (!handle)
         return std::nullopt;
-    const std::string url = "http://127.0.0.1:8092/resolve/" + source.camera_id + "/" + source.profile_id;
+    const std::string url = runtime_http(8092, "/resolve/") + source.camera_id + "/" + source.profile_id;
     const auto write = [](char *data, std::size_t size, std::size_t count, void *context) -> std::size_t {
         const std::size_t bytes = size * count;
         auto &output = *static_cast<std::string *>(context);
@@ -604,7 +600,7 @@ SourceEntry create_source_entry(const SceneSource &configuration, int connect_ti
             failed.error = "could not prepare the gateway audio mix for source " + configuration.id;
             return failed;
         }
-        audio_mix_url = "rtsp://127.0.0.1:8554/" + *mix_path;
+        audio_mix_url = runtime_rtsp(8554, "/") + *mix_path;
         audio_mix = make_media_path_guard(*mix_path);
     }
 
@@ -678,7 +674,13 @@ SourceEntry create_source_entry(const SceneSource &configuration, int connect_ti
         DataPtr font(obs_data_create());
         if (!font)
             return {};
-        obs_data_set_string(font.get(), "face", "Liberation Sans");
+        obs_data_set_string(font.get(), "face",
+#ifdef _WIN32
+            "Segoe UI"
+#else
+            "Liberation Sans"
+#endif
+        );
         obs_data_set_string(font.get(), "style", "Regular");
         obs_data_set_int(font.get(), "size", 48);
         obs_data_set_int(font.get(), "flags", 0);
@@ -696,7 +698,12 @@ SourceEntry create_source_entry(const SceneSource &configuration, int connect_ti
                               : configuration.kind == "browser" ? "browser_source"
                               : configuration.kind == "image"   ? "image_source"
                               : configuration.kind == "color"   ? "color_source"
-                                                                : "text_ft2_source";
+                                                                :
+#ifdef _WIN32
+        "text_gdiplus";
+#else
+        "text_ft2_source";
+#endif
     entry.source.reset(obs_source_create_private(source_type, internal_name.c_str(), settings.get()));
     if (!entry.source) {
         entry.status.reset();
