@@ -7,6 +7,7 @@ import shutil
 import sqlite3
 import os
 import uuid
+from contextlib import closing
 
 def inventory(root):
     result = []
@@ -29,11 +30,11 @@ def snapshot(data, recordings, destination, version):
         # NVR metadata is separate from large recordings; do not copy live video files.
         catalog = recordings / "catalog.sqlite3"
         if catalog.exists():
-            with sqlite3.connect(f"{catalog.as_uri()}?mode=ro", uri=True) as source, sqlite3.connect(temporary / "catalog.sqlite3") as target:
+            with closing(sqlite3.connect(f"{catalog.as_uri()}?mode=ro", uri=True)) as source, closing(sqlite3.connect(temporary / "catalog.sqlite3")) as target:
                 source.backup(target)
         for file in (temporary / "config").rglob("*"):
             if file.is_file() and file.suffix in {".db", ".sqlite3"}:
-                with sqlite3.connect(file) as connection:
+                with closing(sqlite3.connect(file)) as connection:
                     if connection.execute("PRAGMA integrity_check").fetchone()[0] != "ok": raise ValueError("database integrity check failed")
         manifest = {"schema": 1, "version": version, "recordingDirectory": str(recordings), "files": inventory(temporary)}
         (temporary / "snapshot.json").write_text(json.dumps(manifest, ensure_ascii=False), encoding="utf-8")
@@ -53,7 +54,7 @@ def restore(snapshot_root, data, recordings):
         temporary = recordings / ("catalog.sqlite3.restore." + uuid.uuid4().hex)
         try:
             shutil.copyfile(snapshot_root / "catalog.sqlite3", temporary)
-            with sqlite3.connect(temporary) as connection:
+            with closing(sqlite3.connect(temporary)) as connection:
                 if connection.execute("PRAGMA integrity_check").fetchone()[0] != "ok": raise ValueError("catalog integrity check failed")
             existing = recordings / "catalog.sqlite3"
             if existing.exists(): shutil.copyfile(existing, recordings / ("catalog.sqlite3.before-restore." + uuid.uuid4().hex))

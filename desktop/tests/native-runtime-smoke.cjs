@@ -60,7 +60,7 @@ app.on('window-all-closed', () => {});
     exitCode = 1; console.error(error.stack);
     if (supervisor) {
       await supervisor.stop().catch(() => {});
-      for (const name of ['core', 'go2rtc', 'clients', 'cluster']) {
+      for (const name of ['native-tools', 'core', 'go2rtc', 'clients', 'cluster']) {
         const log = await fs.readFile(path.join(supervisor.root, 'logs', `${name}.log`), 'utf8').catch(() => '');
         if (log) console.error(`${name} diagnostic tail:\n${log.slice(-6000)}`);
       }

@@ -8,6 +8,8 @@ import sys
 import tempfile
 import time
 import unittest
+import sqlite3
+from contextlib import closing
 
 ROOT=pathlib.Path(__file__).resolve().parents[2]
 sys.path.insert(0,str(ROOT))
@@ -84,9 +86,18 @@ class SnapshotTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temp:
             root=pathlib.Path(temp);data=root/'config';recordings=root/'recordings';data.mkdir();recordings.mkdir()
             (data/'scene.json').write_text('{"name":"场景"}',encoding='utf-8')
+            # SQLite's transaction context does not close the database handle;
+            # Windows forbids renaming the snapshot while those handles are open.
+            for database in (data/'auth-sessions.db',recordings/'catalog.sqlite3'):
+                with closing(sqlite3.connect(database)) as connection:
+                    connection.execute('CREATE TABLE fixture (value TEXT)')
+                    connection.execute("INSERT INTO fixture VALUES ('preserved')");connection.commit()
             target=root/'snapshot';snapshot.snapshot(data,recordings,target,'3.1.0')
             restored=root/'restored';snapshot.restore(target,restored,recordings)
             self.assertEqual((restored/'scene.json').read_text(encoding='utf-8'),'{"name":"场景"}')
+            for database in (restored/'auth-sessions.db',recordings/'catalog.sqlite3'):
+                with closing(sqlite3.connect(database)) as connection:
+                    self.assertEqual(connection.execute('SELECT value FROM fixture').fetchone()[0],'preserved')
             (target/'config/scene.json').write_text('bad')
             with self.assertRaises(ValueError):snapshot.restore(target,root/'bad-restore',recordings)
             self.assertFalse((root/'bad-restore').exists());self.assertIn('场景',(data/'scene.json').read_text(encoding='utf-8'))

@@ -26,11 +26,19 @@ export class Supervisor extends EventEmitter {
     const command = this.python(script, ...args);
     return new Promise((resolve,reject) => {
       const child = spawn(this.executable('webobs-job'), ['--stdio', ...command], { env: { ...(this.env || cleanEnvironment(process.env)), WEBOBS_OWNER_STDIN: 'false' }, windowsHide: true, stdio: ['pipe','pipe','pipe'] });
-      let output = ''; const timer = setTimeout(() => { child.kill(); reject(new Error('Native tool timed out')); }, timeout);
+      let output = '', errors = ''; const timer = setTimeout(() => { child.kill(); reject(new Error('Native tool timed out')); }, timeout);
       child.stdout.on('data', chunk => { if (output.length < 1024*1024) output += chunk.toString('utf8'); });
-      child.stderr.resume();
+      child.stderr.on('data', chunk => { if(errors.length < 64*1024)errors += chunk.toString('utf8'); });
       child.on('error', error => { clearTimeout(timer); reject(error); });
-      child.on('exit', code => { clearTimeout(timer); if (code === 0) resolve(output); else reject(new Error(`Native tool failed (${code}): ${script}`)); });
+      child.on('exit', async code => {
+        clearTimeout(timer);
+        if(code === 0)resolve(output);
+        else {
+          const log=path.join(this.root,'logs','native-tools.log');
+          await writeFile(log,`${script} (${code})\n${errors.slice(-64000)}\n`,{mode:0o600}).catch(()=>{});
+          reject(new Error(`Native tool failed (${code}): ${script}. 查看 ${log}`));
+        }
+      });
     });
   }
   async prepare() {
