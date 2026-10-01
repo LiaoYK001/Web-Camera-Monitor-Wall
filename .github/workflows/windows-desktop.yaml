@@ -106,6 +106,7 @@ jobs:
         with:
           name: webobs-windows-${{ inputs.version }}
           path: desktop/out/*/*
+          include-hidden-files: true
           if-no-files-found: error
       - name: Preserve verified build dependencies after a failed candidate
         if: always() && !cancelled() && steps.windows-cache.outputs.cache-hit != 'true'
@@ -121,6 +122,7 @@ jobs:
         with:
           name: webobs-windows-runtime-diagnostics-${{ inputs.version }}
           path: desktop/runtime/
+          include-hidden-files: true
           retention-days: 3
           compression-level: 0
           if-no-files-found: ignore
