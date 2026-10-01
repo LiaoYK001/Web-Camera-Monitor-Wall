@@ -30,6 +30,7 @@ if ((& git -C (Join-Path $repoRoot 'go2rtc\go2rtc') rev-parse HEAD).Trim() -ne $
 foreach ($artifact in $lock.artifacts) {
     $download = Join-Path $cacheRoot ($artifact.id + '.zip')
     if (-not (Test-Path -LiteralPath $download) -or (Get-FileHash -LiteralPath $download -Algorithm SHA256).Hash.ToLowerInvariant() -ne $artifact.sha256) {
+        Write-Output "Downloading locked dependency: $($artifact.id) $($artifact.version)"
         $temporary = $download + '.partial'
         Invoke-WebRequest -Uri $artifact.url -OutFile $temporary -MaximumRetryCount 4
         if ((Get-FileHash -LiteralPath $temporary -Algorithm SHA256).Hash.ToLowerInvariant() -ne $artifact.sha256) { throw "Dependency checksum failed: $($artifact.id)" }
@@ -61,6 +62,7 @@ if (-not (Test-Path -LiteralPath (Join-Path $obsSource 'CMakeLists.txt'))) {
     # Copy the upstream checkout; configure/build never modifies the submodule.
     Invoke-Checked 'python' @('-c','import shutil,sys; shutil.copytree(sys.argv[1],sys.argv[2],ignore=shutil.ignore_patterns(".git",".deps","build","build_*","build-*","__pycache__"))',(Join-Path $repoRoot 'obs\obs-studio'),$obsSource)
 }
+Invoke-Checked 'python' @((Join-Path $PSScriptRoot 'prepare-obs-headless.py'),$obsSource)
 $obsDeps = Join-Path $obsSource '.deps'
 New-Item -ItemType Directory -Force $obsDeps | Out-Null
 foreach ($item in @(@('obs-deps','windows-deps-2025-08-23-x64.zip'),@('obs-qt','windows-deps-qt6-2025-08-23-x64.zip'),@('obs-cef','cef_binary_6533_windows_x64_v2.zip'))) {

@@ -1,5 +1,5 @@
 import { EventEmitter } from 'node:events';
-import { cp, mkdir, readFile, statfs, stat } from 'node:fs/promises';
+import { cp, mkdir, readFile, statfs, stat, rm } from 'node:fs/promises';
 import path from 'node:path';
 import { digestFile } from './runtime-integrity.mjs';
 import { atomicJson } from './settings.mjs';
@@ -56,8 +56,7 @@ export class UpdateController extends EventEmitter {
     } catch { this.announce('error','下载失败，附件不完整或磁盘空间不足。当前版本继续运行。'); }
     finally { this.downloading=false; }
   }
-  async verifyDownloaded() {
-    const file=this.downloaded?.downloadedFile;
+  async verifyDownloaded(file=this.downloaded?.downloadedFile) {
     if(!file || !(await stat(file)).isFile()) throw new Error('Downloaded installer missing');
     const item=this.info?.files?.find(item=>String(item.url).endsWith('.exe'));
     if(!item?.sha512 || await digestFile(file,'sha512','base64')!==item.sha512)throw new Error('Installer SHA-512 mismatch');
@@ -67,7 +66,7 @@ export class UpdateController extends EventEmitter {
   async install() {
     if(!this.enabled || this.installing || this.state.phase!=='downloaded')return this.status();
     this.installing=true;
-    let stopped=false;
+    let stopped=false, pending=false;
     try {
       await this.verifyDownloaded();
       const workload=await this.supervisor.workload();
@@ -82,14 +81,17 @@ export class UpdateController extends EventEmitter {
       const installers=path.join(this.root,'installers');await mkdir(installers,{recursive:true});
       const nextInstaller=path.join(installers,`WebOBS-${this.info.version}-windows-x64.exe`);
       await cp(this.downloaded.downloadedFile,nextInstaller,{force:true});
+      await this.verifyDownloaded(nextInstaller);
       let previous;
       try {previous=JSON.parse(await readFile(path.join(this.root,'installed-version.json'),'utf8'));}catch{}
       await atomicJson(path.join(this.root,'pending-update.json'),{schema:1,from:this.version,to:this.info.version,snapshot,previousInstaller:previous?.installer || null,installer:nextInstaller,installerSha256:await digestFile(nextInstaller),previousInstallerSha256:previous?.installerSha256 || null});
+      pending=true;
       // Revalidate after the snapshot, including a package changed on disk during preparation.
       await this.verifyDownloaded();
       this.beforeInstall(); this.updater.quitAndInstall(false,true);
       return this.status();
     } catch {
+      if(pending)await rm(path.join(this.root,'pending-update.json'),{force:true}).catch(()=>{});
       this.announce('error','更新准备或正常停服失败，未安装。正在恢复当前版本；请检查本机日志与磁盘空间。');
       if(stopped) {try {await this.supervisor.start();}catch{this.announce('error','当前服务恢复失败。请进入恢复界面查看诊断与数据快照。');}}
     } finally {this.installing=false;}

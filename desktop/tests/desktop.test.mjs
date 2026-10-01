@@ -93,6 +93,13 @@ test('checksum and wrong-publisher failures leave current services running',asyn
 test('normal-stop failure aborts install and restarts current version',async t=>{
   const f=await updaterFixture(t,{supervisor:{async stop(){throw new Error('busy');}}});await f.controller.install();assert.equal(f.updater.installs,undefined);assert.deepEqual(f.calls,['start']);
 });
+test('changed installer during preparation never leaves an installable recovery marker',async t=>{
+  const f=await updaterFixture(t);
+  let verified=0; const original=f.controller.verifyDownloaded.bind(f.controller);
+  f.controller.verifyDownloaded=async(file)=>{verified++;if(verified===3)throw new Error('changed package');return original(file);};
+  await f.controller.install();assert.equal(f.updater.installs,undefined);assert.deepEqual(f.calls,['stop','snapshot','start']);
+  await assert.rejects(readFile(path.join(f.root,'pending-update.json')),error=>error.code==='ENOENT');
+});
 test('explicit install stops writers before snapshot and records a recovery mapping',async t=>{
   const f=await updaterFixture(t);await f.controller.install();assert.deepEqual(f.calls,['stop','snapshot','install']);assert.equal(f.updater.installs,1);
   const recovery=JSON.parse(await readFile(path.join(f.root,'pending-update.json'),'utf8'));assert.equal(recovery.from,'3.1.0');assert.equal(recovery.to,'3.2.0');assert.equal(recovery.previousInstaller,null);

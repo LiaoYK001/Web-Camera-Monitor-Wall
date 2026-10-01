@@ -16,6 +16,26 @@ std::vector<unsigned char> user_token() {
     if (!GetTokenInformation(token.value, TokenUser, data.data(), length, &length)) return {};
     return data;
 }
+struct UserSecurity {
+    std::vector<unsigned char> token = user_token();
+    PACL acl = nullptr;
+    SECURITY_DESCRIPTOR descriptor{};
+    SECURITY_ATTRIBUTES attributes{sizeof(SECURITY_ATTRIBUTES), &descriptor, FALSE};
+    bool valid = false;
+    UserSecurity() {
+        if (token.empty()) return;
+        const auto sid = reinterpret_cast<const TOKEN_USER*>(token.data())->User.Sid;
+        EXPLICIT_ACCESSW entry{}; entry.grfAccessPermissions = FILE_ALL_ACCESS;
+        entry.grfAccessMode = SET_ACCESS; entry.grfInheritance = SUB_CONTAINERS_AND_OBJECTS_INHERIT;
+        entry.Trustee.TrusteeForm = TRUSTEE_IS_SID; entry.Trustee.ptstrName = reinterpret_cast<LPWSTR>(sid);
+        valid = SetEntriesInAclW(1, &entry, nullptr, &acl) == ERROR_SUCCESS &&
+            InitializeSecurityDescriptor(&descriptor, SECURITY_DESCRIPTOR_REVISION) &&
+            SetSecurityDescriptorOwner(&descriptor, sid, FALSE) &&
+            SetSecurityDescriptorDacl(&descriptor, TRUE, acl, FALSE) &&
+            SetSecurityDescriptorControl(&descriptor, SE_DACL_PROTECTED, SE_DACL_PROTECTED);
+    }
+    ~UserSecurity() { if (acl) LocalFree(acl); }
+};
 bool owned_regular(HANDLE handle, bool directory) {
     BY_HANDLE_FILE_INFORMATION info{};
     if (!GetFileInformationByHandle(handle, &info) || (info.dwFileAttributes & FILE_ATTRIBUTE_REPARSE_POINT) ||
@@ -39,14 +59,21 @@ bool restrict_handle(HANDLE handle, bool directory) {
 }
 std::optional<std::string> parent(const std::filesystem::path& path, bool create) {
     if (!path.is_absolute() || path.filename().empty() || path.parent_path().empty()) return "storage path must be absolute";
-    std::error_code error;
-    if (create) std::filesystem::create_directories(path.parent_path(), error);
-    if (error) return "could not create private storage";
+    std::vector<std::filesystem::path> missing;
     for (auto check = path.parent_path(); !check.empty() && check != check.root_path(); check = check.parent_path()) {
         const DWORD attributes = GetFileAttributesW(check.c_str());
-        if (attributes == INVALID_FILE_ATTRIBUTES) return "storage directory unavailable";
+        if (attributes == INVALID_FILE_ATTRIBUTES) {
+            const auto error = GetLastError();
+            if (create && (error == ERROR_PATH_NOT_FOUND || error == ERROR_FILE_NOT_FOUND)) { missing.push_back(check); continue; }
+            return "storage directory unavailable";
+        }
         if (attributes & FILE_ATTRIBUTE_REPARSE_POINT) return "reparse points are forbidden in private storage";
+        if (!(attributes & FILE_ATTRIBUTE_DIRECTORY)) return "storage parent is not a directory";
     }
+    UserSecurity security;
+    if (!security.valid) return "could not create current-user security descriptor";
+    for (auto directory = missing.rbegin(); directory != missing.rend(); ++directory)
+        if (!CreateDirectoryW(directory->c_str(), &security.attributes)) return "could not create private storage";
     Handle directory{CreateFileW(path.parent_path().c_str(), READ_CONTROL|WRITE_DAC|FILE_READ_ATTRIBUTES,
         FILE_SHARE_READ|FILE_SHARE_WRITE|FILE_SHARE_DELETE, nullptr, OPEN_EXISTING, FILE_FLAG_BACKUP_SEMANTICS|FILE_FLAG_OPEN_REPARSE_POINT, nullptr)};
     if (directory.value == INVALID_HANDLE_VALUE || !owned_regular(directory.value, true) || !restrict_handle(directory.value, true)) return "private storage must be owned by the current Windows user";
@@ -77,7 +104,9 @@ std::optional<std::string> windows_private_write(const std::filesystem::path& pa
     if (!current.error.empty()) return current.error;
     static std::atomic_uint64_t serial = 0;
     const auto temporary = path.parent_path() / (L".webobs-"+std::to_wstring(GetCurrentProcessId())+L"-"+std::to_wstring(serial.fetch_add(1))+L".tmp");
-    Handle file{CreateFileW(temporary.c_str(), GENERIC_WRITE|READ_CONTROL|WRITE_DAC, 0, nullptr, CREATE_NEW, FILE_FLAG_OPEN_REPARSE_POINT|FILE_FLAG_WRITE_THROUGH, nullptr)};
+    UserSecurity security;
+    if (!security.valid) return "could not create current-user security descriptor";
+    Handle file{CreateFileW(temporary.c_str(), GENERIC_WRITE|READ_CONTROL|WRITE_DAC, 0, &security.attributes, CREATE_NEW, FILE_FLAG_OPEN_REPARSE_POINT|FILE_FLAG_WRITE_THROUGH, nullptr)};
     if (file.value == INVALID_HANDLE_VALUE) return "private temporary file creation failed";
     DWORD written = 0;
     const bool ok = owned_regular(file.value, false) && restrict_handle(file.value, false) &&
