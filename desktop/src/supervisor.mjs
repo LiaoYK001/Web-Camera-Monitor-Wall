@@ -9,7 +9,7 @@ import { caddyConfiguration, lanAddresses, firewallInstructions } from './lan.mj
 
 const delay = ms => new Promise(resolve => setTimeout(resolve, ms));
 export function cleanEnvironment(environment) {
-  return Object.fromEntries(Object.entries(environment).filter(([key]) => !/^(WEBOBS_|MTX_|GO2RTC_|PYTHON|PATH$|NODE_OPTIONS$|ELECTRON_RUN_AS_NODE$)/i.test(key)));
+  return Object.fromEntries(Object.entries(environment).filter(([key]) => !/^(WEBOBS_|MTX_|GO2RTC_|PYTHON|CSC_|GH_TOKEN$|GITHUB_TOKEN$|PATH$|NODE_OPTIONS$|ELECTRON_RUN_AS_NODE$)/i.test(key)));
 }
 export class Supervisor extends EventEmitter {
   constructor({ runtime, root, videos, settings, version, safeStorage }) {

@@ -23,6 +23,14 @@ def prepare(source):
     source_file = browser / 'obs-browser-source.cpp'
     text = source_file.read_text(encoding='utf-8')
     text = text.replace('#include <QApplication>\n', '')
+    # CEF expects integral frame rates; OBS exposes the canvas rate as a double.
+    # Keep the upstream truncation behavior explicit for MSVC /WX builds.
+    for old, new in (
+        ('(fps_custom) ? fps : canvas_fps;', '(fps_custom) ? fps : static_cast<int>(canvas_fps);'),
+        ('SetWindowlessFrameRate(video_fps)', 'SetWindowlessFrameRate(static_cast<int>(video_fps))'),
+    ):
+        if old in text: text = text.replace(old, new)
+        elif new not in text: raise ValueError('pinned browser frame rate conversion changed')
     source_file.write_text(text, encoding='utf-8')
 
 if __name__ == '__main__':

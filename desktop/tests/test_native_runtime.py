@@ -16,8 +16,22 @@ def module(name, file):
 snapshot=module('desktop_snapshot',ROOT/'desktop/python/snapshot.py')
 transcoder=module('desktop_transcoder',ROOT/'desktop/python/transcoder.py')
 private_directory=module('desktop_private_directory',ROOT/'desktop/python/private_directory.py')
+headless=module('desktop_headless',ROOT/'desktop/scripts/prepare-obs-headless.py')
 
 class SnapshotTests(unittest.TestCase):
+    def test_headless_patch_matches_pinned_sources_and_never_changes_the_submodule(self):
+        from unittest.mock import patch
+        import shutil
+        upstream=ROOT/'obs/obs-studio/plugins/obs-browser'
+        before=(upstream/'browser-client.cpp').read_bytes()
+        with self.assertRaises(ValueError):headless.prepare(upstream.parent.parent)
+        with tempfile.TemporaryDirectory() as temp:
+            root=pathlib.Path(temp);source=root/'build/desktop-windows/obs-source';browser=source/'plugins/obs-browser';browser.mkdir(parents=True)
+            for file in ('browser-client.cpp','obs-browser-source.cpp'):shutil.copyfile(upstream/file,browser/file)
+            with patch.object(headless,'ROOT',root):headless.prepare(source);headless.prepare(source)
+            self.assertNotIn('QCoreApplication::instance()->thread()', (browser/'browser-client.cpp').read_text())
+        self.assertEqual((upstream/'browser-client.cpp').read_bytes(),before)
+
     @unittest.skipUnless(os.name=='nt','requires Windows DPAPI and ACL')
     def test_windows_keys_and_unicode_private_directory(self):
         from runtime_support import protect_local_key

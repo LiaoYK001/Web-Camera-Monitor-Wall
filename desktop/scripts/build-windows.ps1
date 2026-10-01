@@ -103,6 +103,7 @@ $env:WEBOBS_RELEASE_BUILD=if($Release){'true'}else{'false'}
 $env:WEBOBS_PACKAGE_SUFFIX=if($Release){''}else{'-DEVELOPMENT-UNSIGNED'}
 Invoke-Checked 'node' @((Join-Path $PSScriptRoot 'manifest.mjs'))
 Invoke-Checked 'pnpm' @('--dir',$desktopRoot,'test')
+Invoke-Checked 'pnpm' @('--dir',$desktopRoot,'test:electron')
 Invoke-Checked 'python' @((Join-Path $repoRoot 'desktop\tests\test_native_runtime.py'))
 if (-not $SkipPackage) {
     $distributionPath = Join-Path $desktopRoot 'src\distribution.json'

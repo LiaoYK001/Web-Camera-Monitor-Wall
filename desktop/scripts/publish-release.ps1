@@ -24,15 +24,25 @@ if (-not $env:WEBOBS_SIGNING_PUBLISHER -or $signature.Status -ne 'Valid' -or $si
 $receipts = Get-Content -LiteralPath $QualificationReceipts -Raw | ConvertFrom-Json
 $installerDigest = (Get-FileHash -LiteralPath $installer -Algorithm SHA256).Hash.ToLowerInvariant()
 foreach ($receipt in $receipts) { if ($receipt.installerSha256 -ne $installerDigest) { throw 'Installation evidence used a different installer.' } }
-foreach ($file in @('latest.yml',"WebOBS-$version-windows-x64.exe.blockmap","webobs-windows-$version-sbom.cdx.json","webobs-windows-$version-licenses.tar.gz","webobs-windows-$version-SHA256SUMS.txt")) { if (-not (Test-Path -LiteralPath (Join-Path $artifacts $file) -PathType Leaf)) { throw "Required release asset missing: $file" } }
+$approvedAssets = @("WebOBS-$version-windows-x64.exe",'latest.yml',"WebOBS-$version-windows-x64.exe.blockmap","webobs-windows-$version-runtime-manifest.json","webobs-windows-$version-dependencies.lock.json","webobs-windows-$version-sbom.cdx.json","webobs-windows-$version-licenses.tar.gz","webobs-windows-$version-SHA256SUMS.txt")
+foreach ($file in $approvedAssets) { if (-not (Test-Path -LiteralPath (Join-Path $artifacts $file) -PathType Leaf)) { throw "Required release asset missing: $file" } }
+$checkedAssets = @()
+foreach ($line in Get-Content -LiteralPath (Join-Path $artifacts "webobs-windows-$version-SHA256SUMS.txt")) {
+    if ($line -notmatch '^([a-f0-9]{64})  ([A-Za-z0-9][A-Za-z0-9._-]{0,199})$') { throw 'Malformed asset checksum list.' }
+    $expectedDigest=$Matches[1];$file=$Matches[2]
+    if ($file -notin $approvedAssets -or $file -in $checkedAssets -or (Get-FileHash -LiteralPath (Join-Path $artifacts $file) -Algorithm SHA256).Hash.ToLowerInvariant() -ne $expectedDigest) { throw 'Release attachment digest mismatch.' }
+    $checkedAssets += $file
+}
+foreach ($file in $approvedAssets | Where-Object {$_ -notlike '*-SHA256SUMS.txt'}) { if ($file -notin $checkedAssets) {throw 'Required attachment missing from checksum list.'} }
 $sourceRoot = (Resolve-Path -LiteralPath $CorrespondingThirdPartySourceDirectory).Path
 $sourceManifest = Get-Content -LiteralPath (Join-Path $sourceRoot 'SOURCE-MANIFEST.json') -Raw | ConvertFrom-Json
 if ($sourceManifest.revision -ne $revision -or $sourceManifest.version -ne $version -or $sourceManifest.reviewed -ne $true -or $sourceManifest.files.Count -lt 1) { throw 'Reviewed matching bundled third-party sources are required for redistribution.' }
 foreach ($file in $sourceManifest.files) {
-    if ($file.name -notmatch '^[A-Za-z0-9][A-Za-z0-9._-]{0,199}$' -or $file.sha256 -notmatch '^[a-f0-9]{64}$') { throw 'Unsafe third-party source manifest.' }
+    if ($file.name -notmatch '^[A-Za-z0-9][A-Za-z0-9._-]{0,199}\.(?:tar\.gz|tar\.xz|zip)$' -or $file.name -in $approvedAssets -or $file.sha256 -notmatch '^[a-f0-9]{64}$') { throw 'Unsafe or colliding third-party source manifest.' }
     $source = Join-Path $sourceRoot $file.name
     if ((Get-FileHash -LiteralPath $source -Algorithm SHA256).Hash.ToLowerInvariant() -ne $file.sha256) { throw 'Third-party source checksum mismatch.' }
     Copy-Item -LiteralPath $source -Destination (Join-Path $artifacts $file.name)
+    $approvedAssets += $file.name
 }
 # Reuse the product's existing source and immutable attachment protocol.
 $savedLocation = Get-Location
@@ -42,10 +52,11 @@ try {
     $posixArtifacts = (& bash -c 'cygpath -u "$1"' _ $artifacts).Trim()
     if ($LASTEXITCODE -ne 0 -or -not $posixArtifacts.StartsWith('/')) { throw 'Git Bash could not resolve the artifact directory.' }
     & bash './scripts/create-source-bundle.sh' $version $posixArtifacts; if ($LASTEXITCODE -ne 0) { throw 'Corresponding product source bundle failed.' }
+    $approvedAssets += "webobs-source-$version.tar.gz","webobs-source-$version.tar.gz.sha256"
     $env:GITHUB_REPOSITORY = 'LiaoYK001/Web-Camera-Monitor-Wall'
     # The existing Release is shared with the container and must have this exact tag.
     & gh release view $Tag --repo $env:GITHUB_REPOSITORY --json tagName,targetCommitish; if ($LASTEXITCODE -ne 0) { throw 'Create the product/container Release through the existing reviewed release flow first.' }
-    $assets = Get-ChildItem -LiteralPath $artifacts -File | Where-Object { $_.Name -match '^[A-Za-z0-9][A-Za-z0-9._-]{0,199}$' } | ForEach-Object { $_.FullName -replace '\\','/' }
+    $assets = $approvedAssets | ForEach-Object { (Join-Path $artifacts $_) -replace '\\','/' }
     if (-not $env:GH_TOKEN) { throw 'Use a maintainer GH_TOKEN only on the publishing host; it is never included in the client.' }
     & bash './scripts/upload-release-assets-immutable.sh' $Tag @assets
     if ($LASTEXITCODE -ne 0) { throw 'Immutable asset upload failed; already existing different assets were not overwritten.' }

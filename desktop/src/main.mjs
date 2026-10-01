@@ -1,4 +1,5 @@
 import { app, BrowserWindow, Tray, Menu, ipcMain, dialog, screen, session, nativeImage, powerMonitor, safeStorage, shell } from 'electron';
+import { createTrayIcon } from './tray-icon.mjs';
 import electronUpdater from 'electron-updater';
 import { readFile, writeFile, rename, rm, cp, stat, mkdir } from 'node:fs/promises';
 import path from 'node:path';
@@ -39,6 +40,7 @@ else {
           if(target.pathname.endsWith('/config.html'))work.set(child.webContents.id,{dirty:true,exporting:false});
           void child.loadURL(url);return {action:'deny'};
         }
+        if(target.protocol==='https:' && !target.username && !target.password && target.pathname==='/' && supervisor?.lanInfo?.addresses.includes(target.origin))void shell.openExternal(target.href);
         if(target.protocol==='https:' && !target.username && !target.password && ['github.com','www.electron.build','docs.webobs.org'].includes(target.hostname))void shell.openExternal(target.href);
       }catch{}
       return {action:'deny'};
@@ -74,7 +76,7 @@ else {
   else {
     main=new BrowserWindow({title:'WebOBS',width:1440,height:950,minWidth:900,minHeight:600,backgroundColor:'#0b0d12',autoHideMenuBar:true,webPreferences:securePreferences});configureWindow(main);
     main.on('close',event=>{if(!quitting && settings?.minimizeToTray!==false){event.preventDefault();main.hide();}else if(!quitting){event.preventDefault();void quit();}});
-    const trayIcon=nativeImage.createFromDataURL('data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABAAAAAQCAYAAAAf8/9hAAAAHklEQVQ4T2P8/5/hPwMlgImBQjBqAMGogTEDmRkwAACMVgQdCmNoVQAAAABJRU5ErkJggg==');
+    const trayIcon=createTrayIcon(nativeImage);
     tray=new Tray(trayIcon);tray.setToolTip('WebOBS · 本机监控墙');tray.on('double-click',showMain);
     tray.setContextMenu(Menu.buildFromTemplate([{label:'显示主窗口',click:showMain},{label:'检查更新',click:()=>{showMain();void updates?.check();}},{type:'separator'},{label:'退出并停止服务',click:()=>void quit()}]));
     await main.loadFile(path.join(source,'diagnostics.html'));

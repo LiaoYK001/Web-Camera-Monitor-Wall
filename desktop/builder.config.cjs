@@ -23,4 +23,8 @@ module.exports = {
       throw new Error('Unsigned builds must use a -dev.* version.');
     fs.writeFileSync(path.join(__dirname, 'src', 'distribution.json'), JSON.stringify({ official, publisher: official ? process.env.WEBOBS_SIGNING_PUBLISHER : null }));
   },
+  afterSign: async context => {
+    const { verifyRuntime } = await import('./src/runtime-integrity.mjs');
+    await verifyRuntime(path.join(context.appOutDir, 'resources', 'runtime'));
+  },
 };

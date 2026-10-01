@@ -15,7 +15,8 @@ await cp(path.join(root,'desktop','runtime-sbom.cdx.json'),path.join(out,`webobs
 await cp(path.join(root,'desktop','runtime','manifest.json'),path.join(out,`webobs-windows-${version}-runtime-manifest.json`));
 await cp(path.join(root,'desktop','dependencies.lock.json'),path.join(out,`webobs-windows-${version}-dependencies.lock.json`));
 execFileSync('tar',['-czf',path.join(out,`webobs-windows-${version}-licenses.tar.gz`),'-C',path.join(root,'desktop','runtime'),'licenses']);
-const assets=(await readdir(out)).filter(name=>!name.endsWith('.txt') && !name.endsWith('.yml') || name==='latest.yml');
+const prefix=`webobs-windows-${version}`;
+const assets=[...files,`${prefix}-sbom.cdx.json`,`${prefix}-runtime-manifest.json`,`${prefix}-dependencies.lock.json`,`${prefix}-licenses.tar.gz`];
 const checksums=[];
 for(const name of assets.sort()) {
   if(!/^[A-Za-z0-9][A-Za-z0-9._-]{0,199}$/.test(name))continue;

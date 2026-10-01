@@ -50,7 +50,7 @@ test('IPC admits only known top frames, scene identifiers and available displays
   assert.equal(projectorOptions({mode:'direct',sceneId:'scene-1',displayId:1,fullscreen:true},[{id:1}]).fullscreen,true);
 });
 test('runtime discards inherited service, Python and PATH overrides',()=>{
-  assert.deepEqual(cleanEnvironment({SystemRoot:'C:/Windows',PATH:'evil',Path:'evil',WEBOBS_HTTP_PORT:'80',MTX_APIADDRESS:'0.0.0.0:9997',PYTHONPATH:'evil',NODE_OPTIONS:'--require evil'}),{SystemRoot:'C:/Windows'});
+  assert.deepEqual(cleanEnvironment({SystemRoot:'C:/Windows',PATH:'evil',Path:'evil',WEBOBS_HTTP_PORT:'80',MTX_APIADDRESS:'0.0.0.0:9997',PYTHONPATH:'evil',NODE_OPTIONS:'--require evil',GH_TOKEN:'fixture',CSC_KEY_PASSWORD:'fixture'}),{SystemRoot:'C:/Windows'});
 });
 test('every dependency has an immutable HTTPS identity and digest',async()=>{assert.equal((await dependencyLock()).artifacts.length,11);});
 test('Authenticode verification rejects missing, timed-out or mismatched verifiers',async t=>{
