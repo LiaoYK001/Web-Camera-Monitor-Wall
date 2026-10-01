@@ -15,6 +15,10 @@
 #include <obs.h>
 #include <callback/calldata.h>
 #include <util/base.h>
+#ifdef _WIN32
+#include <d3d11.h>
+#include <dxgi.h>
+#endif
 
 #include <algorithm>
 #include <atomic>
@@ -393,6 +397,37 @@ RendererCapabilities detect_renderer_capabilities(const Config &config)
     result.hardware_probe_passed = result.selected == "hardware";
     result.fallback = process_environment("WEBOBS_RENDERER_FALLBACK").value_or("false") == "true";
     result.fallback_reason = process_environment("WEBOBS_RENDERER_FALLBACK_REASON").value_or("");
+#ifdef _WIN32
+    // Query the device OBS actually initialized. A D3D11 module name alone
+    // cannot distinguish a hardware adapter from Microsoft's software adapter.
+    result.selected = "inactive";
+    result.hardware_probe_passed = false;
+    if (obs_initialized() && obs_get_video()) {
+        result.selected = "d3d11";
+        obs_enter_graphics();
+        auto* device = static_cast<ID3D11Device*>(gs_get_device_obj());
+        IDXGIDevice* dxgi_device = nullptr;
+        IDXGIAdapter* adapter = nullptr;
+        IDXGIAdapter1* adapter1 = nullptr;
+        if (device && SUCCEEDED(device->QueryInterface(__uuidof(IDXGIDevice), reinterpret_cast<void**>(&dxgi_device))) &&
+            SUCCEEDED(dxgi_device->GetAdapter(&adapter)) &&
+            SUCCEEDED(adapter->QueryInterface(__uuidof(IDXGIAdapter1), reinterpret_cast<void**>(&adapter1)))) {
+            DXGI_ADAPTER_DESC1 description{};
+            if (SUCCEEDED(adapter1->GetDesc1(&description))) {
+                result.hardware_probe_passed = !(description.Flags & DXGI_ADAPTER_FLAG_SOFTWARE);
+                if (!result.hardware_probe_passed) {
+                    result.selected = "d3d11-software";
+                    result.fallback = config.renderer == RendererPreference::hardware;
+                    if (result.fallback) result.fallback_reason = "OBS initialized a software D3D11 adapter";
+                }
+            }
+        }
+        if (adapter1) adapter1->Release();
+        if (adapter) adapter->Release();
+        if (dxgi_device) dxgi_device->Release();
+        obs_leave_graphics();
+    }
+#endif
     return result;
 }
 

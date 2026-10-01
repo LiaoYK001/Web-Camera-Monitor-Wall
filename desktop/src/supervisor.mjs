@@ -21,7 +21,7 @@ export class Supervisor extends EventEmitter {
     lan: this.lanInfo || { enabled: false } }; }
   announce(phase, detail = '') { this.state = { phase, detail, services: this.children.map(child => ({ name: child.name, running: child.process.exitCode === null && !child.exited })) }; this.emit('status', this.status()); }
   executable(name) { return path.join(this.runtime, 'bin', name + '.exe'); }
-  python(script, ...args) { return [path.join(this.runtime, 'python', 'python.exe'), path.join(this.runtime, 'services', script), ...args]; }
+  python(script, ...args) { return [path.join(this.runtime, 'python', 'python.exe'), '-B', path.join(this.runtime, 'services', script), ...args]; }
   async tool(script, args = [], timeout = 120000) {
     const command = this.python(script, ...args);
     return new Promise((resolve,reject) => {

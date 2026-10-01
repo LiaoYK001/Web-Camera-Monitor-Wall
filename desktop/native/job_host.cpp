@@ -30,7 +30,7 @@ int wmain(int argc, wchar_t** argv) {
         for (int i = 2; i < argc; ++i) command.emplace_back(argv[i]);
     } else {
         const auto root = self.parent_path().parent_path();
-        command = {(root / L"python/python.exe").wstring(), (root / L"services/desktop-tools/tool_dispatch.py").wstring(), self.stem().wstring()};
+        command = {(root / L"python/python.exe").wstring(), L"-B", (root / L"services/desktop-tools/tool_dispatch.py").wstring(), self.stem().wstring()};
         for (int i = 1; i < argc; ++i) command.emplace_back(argv[i]);
     }
     std::wstring line;

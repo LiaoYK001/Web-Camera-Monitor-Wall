@@ -59,6 +59,9 @@ def stage(args):
         if file.name.lower().startswith(("msvcp", "vcruntime", "concrt")): shutil.copy2(file, output / "python" / file.name)
     site = output / "python" / "Lib" / "site-packages"; site.mkdir(parents=True)
     for name in ["numpy", "onnxruntime", "flatbuffers", "packaging", "protobuf"]: copy_tree(unpack / name, site)
+    # The embeddable interpreter ignores PYTHON* environment variables. Keep
+    # the signed, inventoried program directory immutable after imports.
+    (site / 'sitecustomize.py').write_text('import sys\nsys.dont_write_bytecode = True\n', encoding='ascii')
     pth = output / "python" / "python312._pth"
     pth.write_text("python312.zip\n.\nLib/site-packages\n../services\nimport site\n", encoding="ascii")
     for name in ["camera", "events", "nvr", "cluster", "v2", "analytics", "archive", "backup"]:

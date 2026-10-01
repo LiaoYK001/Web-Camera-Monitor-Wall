@@ -1,4 +1,4 @@
-const { app, safeStorage } = require('electron');
+const { app, safeStorage, BrowserWindow } = require('electron');
 const assert = require('node:assert/strict');
 const fs = require('node:fs/promises');
 const path = require('node:path');
@@ -8,10 +8,14 @@ app.on('window-all-closed', () => {});
 
 (async () => {
   const temporary = await fs.mkdtemp(path.join(os.tmpdir(), 'webobs-native-smoke-'));
-  app.setPath('userData', path.join(temporary, 'browser'));
-  let supervisor, exitCode = 0;
+  const dataRoot = path.join(temporary, 'WebOBS');
+  app.setPath('userData', dataRoot);
+  app.setPath('sessionData', path.join(dataRoot, 'browser'));
+  let supervisor, window, exitCode = 0;
   try {
     await app.whenReady();
+    window = new BrowserWindow({ show: false, webPreferences: { sandbox: true, contextIsolation: true, nodeIntegration: false, partition: 'persist:webobs-desktop' } });
+    await window.loadURL('data:text/html,<title>Native runtime startup fixture</title>');
     const { Supervisor } = await import('../src/supervisor.mjs');
     const { defaults } = await import('../src/settings.mjs');
     const { verifyRuntime } = await import('../src/runtime-integrity.mjs');
@@ -19,7 +23,7 @@ app.on('window-all-closed', () => {});
     const manifest = await verifyRuntime(runtime);
     // A fresh isolated profile exercises bundled dependencies without developer PATH.
     process.env.PATH = path.join(process.env.SystemRoot, 'System32');
-    supervisor = new Supervisor({ runtime, root: path.join(temporary, 'WebOBS'), videos: path.join(temporary, 'Videos'), settings: { ...defaults }, version: manifest.version, safeStorage });
+    supervisor = new Supervisor({ runtime, root: dataRoot, videos: path.join(temporary, 'Videos'), settings: { ...defaults }, version: manifest.version, safeStorage });
     supervisor.on('status', status => console.log(`Native startup: ${status.phase} ${status.detail}`));
     await supervisor.start();
     assert.equal(supervisor.state.phase, 'ready');
@@ -62,6 +66,7 @@ app.on('window-all-closed', () => {});
       }
     }
   } finally {
+    if (window && !window.isDestroyed()) window.destroy();
     if (temporary.startsWith(path.resolve(os.tmpdir()) + path.sep + 'webobs-native-smoke-')) await fs.rm(temporary, { recursive: true, force: true }).catch(() => {});
   }
   app.exit(exitCode);

@@ -23,7 +23,7 @@ class SnapshotTests(unittest.TestCase):
     def test_bundled_inference_dependencies_import_without_developer_path(self):
         runtime=ROOT/'desktop/runtime';env={key:value for key,value in os.environ.items() if not key.upper().startswith(('PATH','PYTHON'))}
         env['PATH']=str(runtime/'bin')+os.pathsep+str(pathlib.Path(os.environ['SystemRoot'])/'System32')
-        probe=subprocess.run([str(runtime/'python/python.exe'),'-c','import numpy,onnxruntime,flatbuffers,packaging,google.protobuf; print(onnxruntime.__version__)'],capture_output=True,text=True,timeout=30,env=env,creationflags=subprocess.CREATE_NO_WINDOW)
+        probe=subprocess.run([str(runtime/'python/python.exe'),'-c','import sys,numpy,onnxruntime,flatbuffers,packaging,google.protobuf; assert sys.dont_write_bytecode; print(onnxruntime.__version__)'],capture_output=True,text=True,timeout=30,env=env,creationflags=subprocess.CREATE_NO_WINDOW)
         self.assertEqual(probe.returncode,0,probe.stderr)
         self.assertEqual(probe.stdout.strip(),'1.29.0')
 
@@ -80,6 +80,22 @@ class SnapshotTests(unittest.TestCase):
             self.assertIn('setts=ts=TS+150/(1000*TB)',args)
             for values in [['rtsp://a b','mix-'+'b'*32,'audio-mix','0:1:0'],['direct-'+'a'*32,'hybrid-'+'b'*32,'transcode','; calc']]:
                 with self.assertRaises(ValueError):transcoder.arguments(values)
+
+    @unittest.skipUnless(os.name=='nt' and (ROOT/'desktop/runtime/bin/webobs-job.exe').exists(),'requires a built Windows runtime')
+    def test_console_stop_reaches_owned_child_and_preserves_normal_exit(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root=pathlib.Path(temp);ready=root/'ready';script=root/'console.py'
+            script.write_text('import signal,time,pathlib,sys\nrunning=[True]\nsignal.signal(signal.SIGBREAK,lambda *_:running.__setitem__(0,False))\npathlib.Path(sys.argv[1]).write_text("ready")\nwhile running[0]:time.sleep(.05)\n')
+            python=ROOT/'desktop/runtime/python/python.exe';job=ROOT/'desktop/runtime/bin/webobs-job.exe'
+            child=subprocess.Popen([str(job),'--console',str(python),str(script),str(ready)],stdin=subprocess.PIPE,stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL,creationflags=subprocess.CREATE_NO_WINDOW)
+            try:
+                deadline=time.monotonic()+10
+                while not ready.exists() and time.monotonic()<deadline:time.sleep(.05)
+                self.assertTrue(ready.exists());child.stdin.write(b'shutdown\n');child.stdin.flush()
+                self.assertEqual(child.wait(timeout=8),0)
+            finally:
+                if child.stdin:child.stdin.close()
+                if child.poll() is None:child.kill();child.wait()
 
     @unittest.skipUnless(os.name=='nt' and (ROOT/'desktop/runtime/bin/webobs-job.exe').exists(),'requires a built Windows runtime')
     def test_job_kills_descendant_after_owner_disappears(self):
