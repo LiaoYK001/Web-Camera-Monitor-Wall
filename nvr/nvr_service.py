@@ -35,6 +35,23 @@ from dataclasses import dataclass, field
 from typing import Any
 
 MAX_BODY = 1024 * 1024
+
+def request_capture_stop(process: subprocess.Popen[bytes]) -> None:
+    if process.poll() is not None:
+        return
+    if os.name == 'nt':
+        # terminate() uses TerminateProcess on Windows and cannot flush MP4.
+        # This private pipe accepts FFmpeg's bounded normal-quit command only.
+        if process.stdin is None:
+            raise RuntimeError('recording shutdown pipe is unavailable')
+        try:
+            process.stdin.write(b'q\n')
+            process.stdin.flush()
+        except (BrokenPipeError, OSError, ValueError):
+            if process.poll() is None:raise RuntimeError('recording normal shutdown failed')
+    else:
+        process.terminate()
+
 CAMERA_ID = re.compile(r"^[A-Za-z0-9._-]{1,64}$")
 SEGMENT_ID = re.compile(r"^[a-f0-9]{32}$")
 ARTIFACT_ID = re.compile(r"^[a-f0-9]{32}$")
@@ -445,6 +462,7 @@ class WorkerState:
     failures: int = 0
     write_latency_ms: int = 0
     process: subprocess.Popen[bytes] | None = None
+    shutdown_failed: bool = False
     event_active: bool = False
 
 
@@ -559,9 +577,12 @@ class NvrService:
         for _, worker_stop, state in workers:
             worker_stop.set()
             if state.process and state.process.poll() is None:
-                state.process.terminate()
+                request_capture_stop(state.process)
+        deadline = time.monotonic() + 25
         for thread, _, _ in workers:
-            thread.join(timeout=10)
+            thread.join(timeout=max(0, deadline - time.monotonic()))
+        if any(thread.is_alive() or state.shutdown_failed for thread, _, state in workers):
+            raise RuntimeError('recording writers did not finish before shutdown')
 
     def restart_workers(self) -> None:
         self._stop_workers()
@@ -576,8 +597,9 @@ class NvrService:
                 thread, worker_stop, state = self.workers.pop(camera_id)
                 worker_stop.set()
                 if state.process and state.process.poll() is None:
-                    state.process.terminate()
-                thread.join(timeout=5)
+                    request_capture_stop(state.process)
+                thread.join(timeout=25)
+                if thread.is_alive() or state.shutdown_failed:raise RuntimeError('recording writer did not stop')
         for camera_id in cameras:
             if camera_id not in self.workers:
                 worker_stop = threading.Event()
@@ -721,6 +743,9 @@ class NvrService:
         commands: list[list[str]] = []
         common = [self.ffmpeg, "-hide_banner", "-loglevel", "error", "-nostdin", "-rtsp_transport",
                   camera["transport"], "-i", source_url, "-t", str(camera["segmentSeconds"])]
+        if os.name == 'nt':
+            common.remove('-nostdin')
+            common[common.index('-i'):common.index('-i')] = ['-timeout','8000000']
         if use_copy:
             commands.append(common + ["-map", "0", "-c", "copy", "-movflags",
                                       "+frag_keyframe+empty_moov+default_base_moof", "-f", "mp4", str(partial)])
@@ -733,14 +758,25 @@ class NvrService:
         for command in commands:
             with contextlib.suppress(FileNotFoundError):
                 partial.unlink()
-            state.process = subprocess.Popen(command, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            state.process = subprocess.Popen(command, stdin=subprocess.PIPE if os.name == 'nt' else subprocess.DEVNULL,
+                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                creationflags=subprocess.CREATE_NO_WINDOW if os.name == 'nt' else 0)
             while state.process.poll() is None and not self.stop_event.is_set() and not worker_stop.is_set():
                 time.sleep(0.1)
             if (self.stop_event.is_set() or worker_stop.is_set()) and state.process.poll() is None:
-                state.process.terminate()
-            return_code = state.process.wait(timeout=10)
+                request_capture_stop(state.process)
+            try:
+                return_code = state.process.wait(timeout=10)
+            except subprocess.TimeoutExpired:
+                state.shutdown_failed = True
+                state.process.kill()
+                state.process.wait(timeout=5)
+                raise RuntimeError('recording normal shutdown timed out')
+            finally:
+                if state.process.stdin:state.process.stdin.close()
             state.process = None
-            if return_code == 0 and partial.exists() and partial.stat().st_size > 0:
+            stopped = self.stop_event.is_set() or worker_stop.is_set()
+            if (return_code == 0 or (stopped and return_code == 255)) and partial.exists() and partial.stat().st_size > 0:
                 succeeded = True
                 break
         if not succeeded:

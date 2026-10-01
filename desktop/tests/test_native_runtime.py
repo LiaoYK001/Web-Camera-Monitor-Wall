@@ -12,18 +12,38 @@ import unittest
 ROOT=pathlib.Path(__file__).resolve().parents[2]
 sys.path.insert(0,str(ROOT))
 def module(name, file):
-    spec=importlib.util.spec_from_file_location(name,file);result=importlib.util.module_from_spec(spec);spec.loader.exec_module(result);return result
+    spec=importlib.util.spec_from_file_location(name,file);result=importlib.util.module_from_spec(spec);sys.modules[name]=result;spec.loader.exec_module(result);return result
 snapshot=module('desktop_snapshot',ROOT/'desktop/python/snapshot.py')
 transcoder=module('desktop_transcoder',ROOT/'desktop/python/transcoder.py')
 private_directory=module('desktop_private_directory',ROOT/'desktop/python/private_directory.py')
 headless=module('desktop_headless',ROOT/'desktop/scripts/prepare-obs-headless.py')
 
 class SnapshotTests(unittest.TestCase):
+    @unittest.skipUnless(os.name=='nt' and (ROOT/'desktop/runtime/bin/ffmpeg.exe').exists(),'requires bundled Windows media tools')
+    def test_windows_recording_stop_finalizes_a_playable_media_file(self):
+        nvr=module('desktop_nvr_flush',ROOT/'nvr/nvr_service.py')
+        runtime=ROOT/'desktop/runtime'
+        with tempfile.TemporaryDirectory() as temp:
+            output=pathlib.Path(temp)/'last-segment.mp4'
+            process=subprocess.Popen([str(runtime/'bin/ffmpeg.exe'),'-hide_banner','-loglevel','error','-re','-f','lavfi','-i','testsrc2=size=160x90:rate=5','-c:v','mpeg4','-movflags','+frag_keyframe+empty_moov+default_base_moof',str(output)],stdin=subprocess.PIPE,stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL,creationflags=subprocess.CREATE_NO_WINDOW)
+            try:
+                deadline=time.monotonic()+10
+                while not output.exists() and process.poll() is None and time.monotonic()<deadline:time.sleep(.05)
+                self.assertTrue(output.exists());time.sleep(1)
+                nvr.request_capture_stop(process);self.assertEqual(process.wait(timeout=10),0)
+                probe=subprocess.run([str(runtime/'bin/ffprobe.exe'),'-v','error','-show_entries','format=duration:stream=codec_type','-of','json',str(output)],capture_output=True,text=True,timeout=15,creationflags=subprocess.CREATE_NO_WINDOW)
+                self.assertEqual(probe.returncode,0,probe.stderr);media=json.loads(probe.stdout)
+                self.assertGreater(float(media['format']['duration']),0)
+                self.assertTrue(any(stream['codec_type']=='video' for stream in media['streams']))
+            finally:
+                if process.stdin:process.stdin.close()
+                if process.poll() is None:process.kill();process.wait()
+
     @unittest.skipUnless(os.name=='nt' and (ROOT/'desktop/runtime/python/python.exe').exists(),'requires a built Windows runtime')
     def test_bundled_inference_dependencies_import_without_developer_path(self):
         runtime=ROOT/'desktop/runtime';env={key:value for key,value in os.environ.items() if not key.upper().startswith(('PATH','PYTHON'))}
         env['PATH']=str(runtime/'bin')+os.pathsep+str(pathlib.Path(os.environ['SystemRoot'])/'System32')
-        probe=subprocess.run([str(runtime/'python/python.exe'),'-c','import sys,numpy,onnxruntime,flatbuffers,packaging,google.protobuf; assert sys.dont_write_bytecode; print(onnxruntime.__version__)'],capture_output=True,text=True,timeout=30,env=env,creationflags=subprocess.CREATE_NO_WINDOW)
+        probe=subprocess.run([str(runtime/'python/python.exe'),'-B','-c','import sys,numpy,onnxruntime,flatbuffers,packaging,google.protobuf; assert sys.dont_write_bytecode; print(onnxruntime.__version__)'],capture_output=True,text=True,timeout=30,env=env,creationflags=subprocess.CREATE_NO_WINDOW)
         self.assertEqual(probe.returncode,0,probe.stderr)
         self.assertEqual(probe.stdout.strip(),'1.29.0')
 

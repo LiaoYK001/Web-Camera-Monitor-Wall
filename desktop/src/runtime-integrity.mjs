@@ -48,6 +48,7 @@ export async function verifyRuntime(root) {
   }
   for (const name of requiredFiles) if (!names.has(name)) throw new Error(`Required native component missing: ${name}`);
   const actual = await inventory(root);
-  if (actual.length !== names.size || actual.some(item => !names.has(item.path))) throw new Error('Untracked runtime file; rebuild the complete package');
+  const untracked=actual.filter(item=>!names.has(item.path));
+  if (actual.length !== names.size || untracked.length) throw new Error(`Untracked runtime file; rebuild the complete package (${untracked.slice(0,8).map(item=>item.path).join(', ')})`);
   return manifest;
 }
