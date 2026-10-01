@@ -44,6 +44,8 @@ GitHub `Build full Windows desktop` 是手动候选构建，不发布 Release。
 
 OBS 使用 D3D11，外部 FFmpeg 与 OBS 插件能力分别实测。CUDA 设备与驱动通过 Windows CUDA API 检测，NVENC/QSV 编解码以限时样本探测为准；没有通过探测的硬件不会报告为就绪。部分 Linux 专用指标在 Windows 显示不可读取。
 
+Windows 工具保留固定原生入口；需要导入 Python 实现的 S3 备份和分析任务使用包内固定源码路径，避免把 `.exe` 当作 Python 模块读取。运行文件清单、SBOM 与许可证同时覆盖 WebUI、go2rtc 页面依赖和 Electron/Chromium。
+
 ## 投影、局域网与备份恢复
 
 Scene 右键菜单可打开不同固定 Scene 的独立投影，选择显示器与全屏，Esc 退出全屏。关闭主窗口不会关闭投影。同 Scene、模式和显示器组合复用其窗口。

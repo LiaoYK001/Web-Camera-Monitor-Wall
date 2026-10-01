@@ -313,7 +313,7 @@ def catalog_batch(catalog_path: pathlib.Path, assignments: list[dict[str, Any]])
 
 def _load_detector_module() -> Any:
     """Load the image-baked detector without importing arbitrary workspace code."""
-    module_path = pathlib.Path(os.environ.get(
+    module_path = pathlib.Path(os.environ.get("WEBOBS_DETECTOR_PYTHON_MODULE") or os.environ.get(
         "WEBOBS_DETECTOR_WORKER", "/opt/webobs/bin/webobs-detector-worker"))
     if not module_path.is_absolute() or module_path.is_symlink() or not module_path.is_file():
         raise AgentError("detector runtime is unavailable")

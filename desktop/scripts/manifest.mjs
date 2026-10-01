@@ -17,8 +17,9 @@ const components=lock.artifacts.map(item=>({type:'library',name:item.id,version:
 components.push({type:'library',name:'OBS Studio',version:"32.1.2",properties:[{name:'git:commit',value:lock.obsCommit}],licenses:[{license:{id:'GPL-2.0-or-later'}}]});
 const desktopPackage=JSON.parse(await readFile(path.join(root,'desktop','package.json'),'utf8'));
 for(const [name,version] of Object.entries({...desktopPackage.dependencies,...desktopPackage.devDependencies}))components.push({type:'library',name,version,purl:`pkg:npm/${name}@${version}`});
-const npmLicenses=JSON.parse((await readFile(path.join(root,'desktop','.cache','npm-licenses.json'),'utf8')).replace(/^\uFEFF/,''));
-const npmRoot=await realpath(path.join(root,'desktop','node_modules'));
+for(const [project,receipt] of [['desktop','npm-licenses.json'],['web','web-npm-licenses.json']]) {
+const npmLicenses=JSON.parse((await readFile(path.join(root,'desktop','.cache',receipt),'utf8')).replace(/^\uFEFF/,''));
+const npmRoot=await realpath(path.join(root,project,'node_modules'));
 for(const [license,packages] of Object.entries(npmLicenses))for(const item of packages) {
   for(const version of item.versions) {
     const existing=components.find(component=>component.name===item.name && component.version===version);
@@ -28,9 +29,23 @@ for(const [license,packages] of Object.entries(npmLicenses))for(const item of pa
   for(const packagePath of item.paths) {
     const actual=await realpath(packagePath);
     if(!actual.startsWith(npmRoot+path.sep))throw new Error('npm license path escapes installed dependencies');
-    const target=path.join(directory,'licenses','npm',encodeURIComponent(item.name));await mkdir(target,{recursive:true});
+    const target=path.join(directory,'licenses',project+'-npm',encodeURIComponent(item.name));await mkdir(target,{recursive:true});
     for(const file of await readdir(actual))if(/^(license|copying|notice)([._-]|$)/i.test(file))await cp(path.join(actual,file),path.join(target,file),{recursive:true});
   }
+}
+await cp(path.join(root,project,'pnpm-lock.yaml'),path.join(directory,'licenses',project+'-pnpm-lock.yaml'));
+}
+for(const name of await readdir(path.join(directory,'go2rtc-www','vendor'))) {
+  const item=JSON.parse(await readFile(path.join(directory,'go2rtc-www','vendor',name,'package.json'),'utf8'));
+  const license=typeof item.license==='string'?item.license:item.licenses?.map(value=>value.type).join(' OR ');
+  if(!license)throw new Error(`Missing bundled go2rtc vendor license: ${name}`);
+  if(!components.some(component=>component.name===item.name && component.version===item.version))
+    components.push({type:'library',name:item.name,version:item.version,purl:`pkg:npm/${item.name}@${item.version}`,licenses:[{expression:license}]});
+}
+const electronDist=path.join(root,'desktop','node_modules','electron','dist');
+for(const file of ['LICENSE','LICENSES.chromium.html']) {
+  const target=path.join(directory,'licenses','electron');await mkdir(target,{recursive:true});
+  await cp(path.join(electronDist,file),path.join(target,file));
 }
 try {
   const installed=await readFile(path.join(root,'build','desktop-windows','vcpkg-installed','vcpkg','status'),'utf8');
@@ -40,8 +55,6 @@ try {
   }
 } catch(error) { if(error.code!=='ENOENT')throw error; }
 // npm dependency identities and integrity values are included without credentials.
-const npmLock=await readFile(path.join(root,'desktop','pnpm-lock.yaml'),'utf8');
-await writeFile(path.join(directory,'licenses','desktop-pnpm-lock.yaml'),npmLock);
 await writeFile(path.join(root,'desktop','runtime-sbom.cdx.json'),JSON.stringify({bomFormat:'CycloneDX',specVersion:'1.6',version:1,metadata:{component:{type:'application',name:'WebOBS',version},properties:[{name:'webobs:revision',value:revision},{name:'webobs:obs-commit',value:lock.obsCommit}]},components},null,2));
 // Manifest must include the copied lockfile as well.
 manifest.files=await inventory(directory);await writeFile(path.join(directory,'manifest.json'),JSON.stringify(manifest,null,2));

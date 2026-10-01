@@ -101,6 +101,9 @@ Invoke-Checked 'pnpm' @('--dir',$desktopRoot,'install','--frozen-lockfile')
 $npmLicenses = & pnpm --dir $desktopRoot licenses list --prod --json
 if ($LASTEXITCODE -ne 0) { throw 'Bundled npm license inventory failed.' }
 $npmLicenses | Set-Content -LiteralPath (Join-Path $cacheRoot 'npm-licenses.json') -Encoding utf8
+$webLicenses = & pnpm --dir (Join-Path $repoRoot 'web') licenses list --prod --json
+if ($LASTEXITCODE -ne 0) { throw 'Bundled WebUI license inventory failed.' }
+$webLicenses | Set-Content -LiteralPath (Join-Path $cacheRoot 'web-npm-licenses.json') -Encoding utf8
 $env:WEBOBS_DESKTOP_VERSION=$Version
 $env:WEBOBS_RELEASE_BUILD=if($Release){'true'}else{'false'}
 $env:WEBOBS_PACKAGE_SUFFIX=if($Release){''}else{'-DEVELOPMENT-UNSIGNED'}

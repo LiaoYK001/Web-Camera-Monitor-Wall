@@ -78,7 +78,9 @@ export class Supervisor extends EventEmitter {
       WEBOBS_WHIP_URL: `http://127.0.0.1:${this.ports.whep}/program/whip`, WEBOBS_RENDERER_SELECTED: 'd3d11',
       WEBOBS_FFMPEG_PATH: this.executable('ffmpeg'), WEBOBS_TRANSCODER_PATH: this.executable('webobs-transcoder'),
       WEBOBS_DETECTOR_WORKER: this.executable('webobs-detector-worker'), WEBOBS_DETECTOR_MODEL: path.join(this.runtime,'web','models','ssd_mobilenet_v1_12.onnx'),
+      WEBOBS_DETECTOR_PYTHON_MODULE: path.join(this.runtime,'services','analytics','detector_worker.py'),
       WEBOBS_ARCHIVE_COMMAND: this.executable('webobs-s3-archive'), WEBOBS_ARCHIVE_CONFIG: config('archive.json'),
+      WEBOBS_ARCHIVE_PYTHON_MODULE: path.join(this.runtime,'services','archive','s3_archive.py'),
       WEBOBS_ARCHIVE_QUEUE: config('archive-queue.sqlite3'), WEBOBS_NVR_STORAGE_ROOT: this.recordings,
       WEBOBS_RESTORE_CONFIRM: 'replace-config',
       WEBOBS_LIBSODIUM_LIBRARY: this.executable('libsodium').replace(/\.exe$/,'.dll'),
@@ -157,20 +159,20 @@ export class Supervisor extends EventEmitter {
   }
   async stop() {
     this.stopping=true; this.announce('stopping');
-    let failed=false;
+    const failed=[];
     for(const entry of [...this.children].reverse()) {
       const child=entry.process;
-      if(entry.exited || child.exitCode !== null) { if(entry.code !== 0) failed=true; continue; }
+      if(entry.exited || child.exitCode !== null) { if(entry.code !== 0) failed.push(entry.name); continue; }
       const exit=new Promise(resolve=>child.once('exit',code=>resolve(code)));
       if(!child.stdin.destroyed)child.stdin.write('shutdown\n');
-      else {failed=true;child.kill();}
+      else {failed.push(entry.name);child.kill();}
       const code=await Promise.race([exit,delay(35000).then(()=>Symbol.for('timeout'))]);
-      if(typeof code !== 'number' || code !== 0) { failed=true; if(!entry.exited) { child.kill(); await Promise.race([exit,delay(5000)]); } }
+      if(typeof code !== 'number' || code !== 0) { failed.push(entry.name); if(!entry.exited) { child.kill(); await Promise.race([exit,delay(5000)]); } }
     }
     this.children=[];
     await rm(path.join(this.root,'run','backup.key'),{force:true});
     this.announce('stopped');
-    if(failed) throw new Error('部分服务未正常关闭；更新安装已暂停。请检查日志并恢复当前版本。');
+    if(failed.length) throw new Error(`以下服务未正常关闭：${[...new Set(failed)].join('、')}。更新安装已暂停，请检查日志并恢复当前版本。`);
   }
   async snapshot(version = this.version) {
     if(this.children.length) throw new Error('Snapshot requires all writers to stop');

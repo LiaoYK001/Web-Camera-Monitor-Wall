@@ -115,3 +115,12 @@ jobs:
             desktop/.cache/*.zip
             desktop/.cache/vcpkg-binaries
           key: windows-2022-desktop-${{ hashFiles('desktop/dependencies.lock.json', 'desktop/vcpkg.json') }}
+      - name: Retain failed runtime for isolated native diagnostics
+        if: failure() && hashFiles('desktop/runtime/manifest.json') != ''
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: webobs-windows-runtime-diagnostics-${{ inputs.version }}
+          path: desktop/runtime/
+          retention-days: 3
+          compression-level: 0
+          if-no-files-found: ignore

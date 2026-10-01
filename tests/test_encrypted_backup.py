@@ -96,6 +96,15 @@ class BackupTests(unittest.TestCase):
             self.assertEqual(digest, backup.file_sha256(archive))
             self.assertEqual(marker.read_text(encoding="ascii"),
                              f"backups/{digest[:2]}/{digest}.wobk|{digest}|17")
+            executable = root / "webobs-s3-archive.exe"
+            executable.write_bytes(b"MZ native entrypoint, not Python source")
+            with mock.patch.dict(os.environ, {
+                "WEBOBS_BACKUP_S3_TARGET_ID": "archive-main",
+                "WEBOBS_BACKUP_S3_CONFIG": str(config),
+                "WEBOBS_ARCHIVE_COMMAND": str(executable),
+                "WEBOBS_ARCHIVE_PYTHON_MODULE": str(implementation),
+            }, clear=False):
+                self.assertEqual(backup.upload_s3(archive, "archive-main"), digest)
             with self.assertRaisesRegex(backup.BackupError, "nonlocal_target_unavailable"):
                 backup.upload_s3(archive, "archive-other")
 

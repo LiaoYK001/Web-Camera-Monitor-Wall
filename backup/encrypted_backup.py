@@ -305,7 +305,7 @@ def upload_s3(path: pathlib.Path, target_id: str) -> str:
     """Upload a completed encrypted backup through the pinned S3 implementation."""
     configured_target = os.environ.get("WEBOBS_BACKUP_S3_TARGET_ID", "")
     config_path = pathlib.Path(os.environ.get("WEBOBS_BACKUP_S3_CONFIG", "/config/webobs/archive.json"))
-    archive_program = pathlib.Path(os.environ.get(
+    archive_program = pathlib.Path(os.environ.get("WEBOBS_ARCHIVE_PYTHON_MODULE") or os.environ.get(
         "WEBOBS_ARCHIVE_COMMAND", "/opt/webobs/bin/webobs-s3-archive"))
     if not configured_target or target_id != configured_target or not config_path.is_absolute() or \
             not archive_program.is_absolute() or not archive_program.is_file():

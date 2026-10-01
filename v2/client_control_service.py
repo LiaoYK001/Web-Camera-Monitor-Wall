@@ -1823,6 +1823,7 @@ def main() -> None:
     server.daemon_threads = True
     print(json.dumps({"event": "v2.client_control.ready", "contractVersion": 1},
                      separators=(",", ":"), sort_keys=True), flush=True)
+    install_owner_shutdown(server.shutdown)
     try:
         server.serve_forever(poll_interval=0.25)
     except KeyboardInterrupt:
