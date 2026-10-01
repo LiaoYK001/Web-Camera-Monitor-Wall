@@ -325,7 +325,7 @@ export interface MotionZone { id: string; cameraId: string; name: string; mode: 
 export interface EventRule { id: string; name: string; enabled: number; conditions: Record<string, unknown>; actions: Array<Record<string, unknown>>; cooldown_ms: number; }
 
 export interface VideoBackendCapability {
-  devicePresent: boolean; vaDriverLoaded: boolean; encoderAvailable: boolean;
+  devicePresent: boolean; vaDriverLoaded: boolean; libraryLoaded: boolean; encoderAvailable: boolean;
   encodeSupported: boolean; decodeSupported: boolean; runtimeProbePassed: boolean; ready: boolean;
 }
 export interface SystemCapabilities {
