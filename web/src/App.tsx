@@ -21,6 +21,7 @@ const NvrTimeline = lazy(() => import('./NvrTimeline'));
 const SystemStatus = lazy(() => import('./SystemStatus'));
 const EventsPanel = lazy(() => import('./EventsPanel'));
 const SourceCatalog = lazy(() => import('./SourceCatalog'));
+const Go2rtcWorkspace = lazy(() => import('./Go2rtcWorkspace'));
 const AudioWorkspace = lazy(() => import('./AudioWorkspace'));
 const SettingsWorkspace = lazy(() => import('./SettingsWorkspace'));
 const ClusterAdmin = lazy(() => import('./ClusterAdmin'));
@@ -790,6 +791,9 @@ export default function App() {
   }
   if (productArea === 'devices') {
     return <WorkspaceShell area={productArea} onNavigate={navigate} connection={connection}><SourceCatalog /></WorkspaceShell>;
+  }
+  if (productArea === 'go2rtc') {
+    return <WorkspaceShell area={productArea} onNavigate={navigate} connection={connection}><Go2rtcWorkspace onDevices={() => navigate('devices')} /></WorkspaceShell>;
   }
   if (productArea === 'account') {
     return <WorkspaceShell area={productArea} onNavigate={navigate} connection={connection}><AccountWorkspace onAdmin={() => navigate('admin')} /></WorkspaceShell>;

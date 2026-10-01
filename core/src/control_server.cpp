@@ -1,6 +1,7 @@
 #include "webobs/control_server.hpp"
 
 #include "webobs/authentication.hpp"
+#include "webobs/go2rtc_proxy.hpp"
 #include "webobs/audio_tracks.hpp"
 #include "webobs/audit_event.hpp"
 #include "webobs/scene_controller.hpp"
@@ -415,6 +416,8 @@ std::string permission_for_request(const HttpRequest &request)
     const std::string_view target = view(request.target());
     const bool mutating = request.method() == http::verb::post || request.method() == http::verb::put ||
                           request.method() == http::verb::patch || request.method() == http::verb::delete_;
+    if (target == "/api/v1/go2rtc" || target.starts_with(go2rtc_prefix))
+        return "settings.manage";
     if (target.starts_with("/api/v3/analytics/policies"))
         return mutating ? "analytics.manage" : "analytics.view";
     if (target.starts_with("/api/v3/analytics"))
@@ -637,13 +640,13 @@ void set_security_headers(HttpResponse &response, std::string_view content_type,
                  "default-src 'none'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self'; img-src 'self' data: blob:" +
                  media_origins + "; media-src 'self' blob:" + media_origins +
                  "; connect-src 'self' ws://localhost:* ws://127.0.0.1:*" + media_origins +
-                 "; worker-src 'self' blob:; manifest-src 'self'; base-uri 'none'; form-action 'self'; "
+                 "; worker-src 'self' blob:; frame-src 'self'; manifest-src 'self'; base-uri 'none'; form-action 'self'; "
                  "frame-ancestors 'none'; object-src 'none'; require-trusted-types-for 'script'; trusted-types default");
     response.set("X-Content-Type-Options", "nosniff");
     response.set("X-Frame-Options", "DENY");
     response.set("Referrer-Policy", "no-referrer");
     response.set("Permissions-Policy",
-                 "camera=(), microphone=(), geolocation=(), fullscreen=(self), screen-wake-lock=(self)");
+                 "camera=(self), microphone=(self), geolocation=(), fullscreen=(self), screen-wake-lock=(self)");
     response.set("Cross-Origin-Resource-Policy", "same-origin");
 }
 
@@ -4090,6 +4093,31 @@ private:
             request.erase("X-WebObs-Analytics-Principal");
             if (!principal.empty())
                 request.set("X-WebObs-Analytics-Principal", principal);
+        }
+        if (target == "/api/v1/go2rtc" || target.starts_with(go2rtc_prefix)) {
+            if (!go2rtc_enabled()) {
+                send(response(http::status::service_unavailable, version,
+                              error_body("go2rtc_disabled", "go2rtc is disabled")));
+                return;
+            }
+            if (target == "/api/v1/go2rtc" && request.method() == http::verb::get) {
+                auto result = response(http::status::temporary_redirect, version, {});
+                result.set(http::field::location, std::string(go2rtc_prefix));
+                send(std::move(result));
+                return;
+            }
+            const bool unsafe_method = request.method() != http::verb::get && request.method() != http::verb::head;
+            if (!go2rtc_target_allowed(target) ||
+                (websocket::is_upgrade(request) &&
+                 target.substr(0, target.find('?')) != "/api/v1/go2rtc/api/ws") ||
+                !request_origin_allowed(request, websocket::is_upgrade(request) || unsafe_method, allowed_origins_) ||
+                request["Sec-Fetch-Site"] == "cross-site") {
+                send(response(http::status::forbidden, version,
+                              error_body("go2rtc_request_rejected", "go2rtc requires a valid same-origin request")));
+                return;
+            }
+            start_go2rtc_proxy(stream_.release_socket(), std::move(request));
+            return;
         }
         if (websocket::is_upgrade(request)) {
             if (request.method() != http::verb::get || view(request.target()) != "/api/v1/ws" ||

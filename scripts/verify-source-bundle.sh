@@ -37,6 +37,8 @@ printf '%s\n' "$listing" | grep -Fx "$bundle_root/SOURCE-REVISION" >/dev/null
 printf '%s\n' "$listing" | grep -Fx "$bundle_root/LICENSE" >/dev/null
 printf '%s\n' "$listing" | grep -Fx "$bundle_root/docker/Dockerfile" >/dev/null
 printf '%s\n' "$listing" | grep -Fx "$bundle_root/obs/obs-studio/libobs/obs.c" >/dev/null
+printf '%s\n' "$listing" | grep -Fx "$bundle_root/go2rtc/go2rtc/main.go" >/dev/null
+printf '%s\n' "$listing" | grep -Fx "$bundle_root/go2rtc/go2rtc/LICENSE" >/dev/null
 if printf '%s\n' "$listing" | grep -Eq '(^|/)\.git(/|$)|(^|/)\.env$|(^|/)secrets(/|$)|(^|/)\.\.?(/|$)'; then
     echo "Source archive contains an unsafe or private path" >&2
     exit 65

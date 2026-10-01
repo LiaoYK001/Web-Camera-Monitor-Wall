@@ -1,0 +1,13 @@
+# Private persistent configuration. The supervisor fixes API/RTSP addresses and
+# the UI path through a final runtime overlay, leaving all other modules editable.
+api:
+  listen: "127.0.0.1:11984"
+  base_path: "/api/v1/go2rtc"
+rtsp:
+  listen: "127.0.0.1:18554"
+webrtc:
+  listen: ":18555"
+  candidates: ["127.0.0.1:18555"]
+streams: {}
+log:
+  level: info

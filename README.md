@@ -26,6 +26,8 @@ Vite 代理或后端重启时页面会显示“本地服务暂不可用”，不
 
 `WEBOBS_SCENE_FILE` 默认指向 `/config/webobs/scene.json`。空配置首次启动会创建空 Scene/Camera Registry，直接在 WebUI 的“设备管理”中添加设备；`WEBOBS_RTSP_URL` 只保留为一次性兼容 bootstrap，不再是部署必填项。Scene v5 只保存 Camera/Profile ID，凭据通过未提交 Git 的 Secret 引用解析。
 
+项目内置完整 **go2rtc + 官方 WebUI**：各类来源可先整理为内部 RTSP，再接入现有监控墙、MediaMTX、NVR 和 OBS；普通 RTSP 也可直接接入。左侧“go2rtc 管理”支持流管理、设备发现、播放测试、完整配置和日志，服务与 UI 统一打包和启动，配置随已有私有卷保存。详见 [go2rtc 集成与部署](docs/go2rtc-integration.md)。
+
 ## 运行技术基线
 
 - OBS Studio `32.1.2`，固定 submodule 提交 `fb4d98bf88fae5fc85cb11fc57f7c5e309282194`
@@ -35,6 +37,7 @@ Vite 代理或后端重启时页面会显示“本地服务暂不可用”，不
 - RTSP 默认 TCP，硬件解码支持全局与逐摄像机 `auto|on|off`
 - 产品运行时只有一个 Docker 镜像；M1 Compose 仅向主机回环地址发布控制端口
 - MediaMTX `1.18.2` 固定版本与 SHA-256 校验后打包进产品镜像，内部信令仅监听容器回环地址
+- go2rtc `1.9.14` 完整源码固定子模块提交 `b5948cfb25404cc5cb37b166ecaa2dca20b11d4b`，官方 WebUI 与离线依赖统一打包；管理 API/RTSP 保持回环，WebRTC 媒体使用 `18555` TCP/UDP
 - libdatachannel `0.21.0` 固定到审核提交并使用 Ubuntu OpenSSL 3 后端，避免与系统 FFmpeg 的 Mbed TLS 2.x ABI 冲突
 - `obs-browser` 固定到 OBS 32.1.2 的递归 submodule 状态，CEF 固定为 6533 revision 6 并校验精确 SHA-256
 

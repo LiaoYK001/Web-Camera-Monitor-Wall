@@ -1,3 +1,6 @@
 [submodule "obs/obs-studio"]
 	path = obs/obs-studio
 	url = https://github.com/obsproject/obs-studio.git
+[submodule "go2rtc/go2rtc"]
+	path = go2rtc/go2rtc
+	url = https://github.com/AlexxIT/go2rtc.git

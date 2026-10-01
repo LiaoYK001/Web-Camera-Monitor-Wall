@@ -1,0 +1,10 @@
+{
+  "version": "1.9.14",
+  "repository": "https://github.com/AlexxIT/go2rtc",
+  "commit": "b5948cfb25404cc5cb37b166ecaa2dca20b11d4b",
+  "license": "MIT",
+  "linux_amd64": {
+    "url": "https://github.com/AlexxIT/go2rtc/releases/download/v1.9.14/go2rtc_linux_amd64",
+    "sha256": "32d616af226bd731678ffde328b94cfb94e30339bfefc469cfb76323144615a6"
+  }
+}

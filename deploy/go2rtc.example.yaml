@@ -1,8 +1,10 @@
-# Optional HTTP MJPEG -> H.264 RTSP bridge, alongside the existing MediaMTX.
+# HTTP MJPEG -> H.264 RTSP bridge, alongside the existing MediaMTX.
+# Integrated mode: copy streams into the go2rtc workspace configuration.
 # 可选 HTTP MJPEG 转 H.264 RTSP；与现有 MediaMTX 共存，需安装 FFmpeg。
 # Run on the backend host / 在后端所在系统运行：go2rtc -config /private/go2rtc.yaml
 api:
   listen: "127.0.0.1:11984"
+  base_path: "/api/v1/go2rtc"
 rtsp:
   listen: "127.0.0.1:18554"
 webrtc:

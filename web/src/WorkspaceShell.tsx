@@ -7,13 +7,14 @@ import Modal from './Modal';
 import { canLeaveWorkspace } from './navigationGuard';
 import { listLocalConfigProfiles, loadActiveLocalConfigProfile, loadWorkspaceLayout, saveWorkspaceLayout, setActiveLocalConfigProfile, type LocalConfigProfile, type WorkspaceDock, type WorkspaceLayout } from './localRuntime';
 
-export type ProductArea = 'monitor' | 'studio' | 'devices' | 'audio' | 'analytics' | 'events' | 'archive' | 'storage' | 'settings' | 'admin' | 'account';
+export type ProductArea = 'monitor' | 'studio' | 'devices' | 'go2rtc' | 'audio' | 'analytics' | 'events' | 'archive' | 'storage' | 'settings' | 'admin' | 'account';
 
 const entries: Array<{ id: ProductArea; label: string; short: string }> = [
   { id: 'monitor', label: '监看 Monitor', short: '监看' },
   { id: 'studio', label: 'Studio 画布', short: 'Studio' },
   { id: 'devices', label: '设备与来源', short: '设备' },
   { id: 'audio', label: '音频工作台', short: '音频' },
+  { id: 'go2rtc', label: 'go2rtc 管理', short: 'go2rtc' },
   { id: 'analytics', label: '分析策略', short: '分析' },
   { id: 'events', label: '事件', short: '事件' },
   { id: 'archive', label: '录像回放', short: '回放' },

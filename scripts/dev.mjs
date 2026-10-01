@@ -277,6 +277,7 @@ try {
     writeFileSync(stamp, lock);
   }
   const token = randomBytes(32).toString('hex');
+  if (options.mode === 'native') run(process.execPath, [path.join(root, 'scripts/prepare-go2rtc-ui.mjs')], false, root);
   controlServer = http.createServer((request, response) => {
     if (request.method !== 'POST' || request.url !== '/stop' || request.headers.authorization !== token) { response.writeHead(403).end(); return; }
     response.writeHead(200).end('stopping'); setTimeout(() => stop(), 50);
