@@ -98,6 +98,9 @@ if (Test-Path -LiteralPath $runtimeRoot) {
 }
 Invoke-Checked 'python' @((Join-Path $PSScriptRoot 'stage-runtime.py'),'--cache',$cacheRoot,'--core',$coreInstall,'--obs',$obsInstall,'--vcpkg',(Join-Path $vcpkgInstalled 'x64-windows'),'--output',$runtimeRoot)
 Invoke-Checked 'pnpm' @('--dir',$desktopRoot,'install','--frozen-lockfile')
+$npmLicenses = & pnpm --dir $desktopRoot licenses list --prod --json
+if ($LASTEXITCODE -ne 0) { throw 'Bundled npm license inventory failed.' }
+$npmLicenses | Set-Content -LiteralPath (Join-Path $cacheRoot 'npm-licenses.json') -Encoding utf8
 $env:WEBOBS_DESKTOP_VERSION=$Version
 $env:WEBOBS_RELEASE_BUILD=if($Release){'true'}else{'false'}
 $env:WEBOBS_PACKAGE_SUFFIX=if($Release){''}else{'-DEVELOPMENT-UNSIGNED'}

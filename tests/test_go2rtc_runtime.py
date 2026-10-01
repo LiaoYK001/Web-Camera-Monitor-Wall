@@ -46,7 +46,7 @@ class RuntimeTests(unittest.TestCase):
         self.assertEqual(overlay['api']['tls_listen'], '')
         self.assertEqual(overlay['api']['static_dir'], str(Path('/private/www')))
         self.assertEqual(overlay['rtsp']['listen'], '127.0.0.1:18554')
-        self.assertEqual(overlay['webrtc']['listen'], ':18555')
+        self.assertEqual(overlay['webrtc']['listen'], '127.0.0.1:18555' if os.name == 'nt' else ':18555')
         self.assertNotIn('streams', overlay)
 
 

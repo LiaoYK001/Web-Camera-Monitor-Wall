@@ -1,4 +1,4 @@
-import { writeFile, readFile } from 'node:fs/promises';
+import { writeFile, readFile, realpath, readdir, mkdir, cp } from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';
 import { execFileSync } from 'node:child_process';
@@ -13,10 +13,25 @@ const revision=execFileSync('git',['rev-parse','HEAD'],{cwd:root,encoding:'utf8'
 const manifest={schema:1,platform:'windows-x64',version,revision,obsCommit:lock.obsCommit,go2rtcCommit:lock.go2rtcCommit,files};
 await writeFile(path.join(directory,'manifest.json'),JSON.stringify(manifest,null,2));
 await verifyRuntime(directory);
-const components=lock.artifacts.map(item=>({type:'library',name:item.id,version:item.version,hashes:[{alg:'SHA-256',content:item.sha256}],licenses:[{license:{id:item.license.startsWith('LicenseRef-')?'NOASSERTION':item.license}}],externalReferences:[{type:'distribution',url:item.url}]}));
+const components=lock.artifacts.map(item=>({type:'library',name:item.id,version:item.version,hashes:[{alg:'SHA-256',content:item.sha256}],licenses:[item.license.includes(' OR ')?{expression:item.license}:{license:{id:item.license.startsWith('LicenseRef-')?'NOASSERTION':item.license}}],externalReferences:[{type:'distribution',url:item.url}]}));
 components.push({type:'library',name:'OBS Studio',version:"32.1.2",properties:[{name:'git:commit',value:lock.obsCommit}],licenses:[{license:{id:'GPL-2.0-or-later'}}]});
 const desktopPackage=JSON.parse(await readFile(path.join(root,'desktop','package.json'),'utf8'));
 for(const [name,version] of Object.entries({...desktopPackage.dependencies,...desktopPackage.devDependencies}))components.push({type:'library',name,version,purl:`pkg:npm/${name}@${version}`});
+const npmLicenses=JSON.parse((await readFile(path.join(root,'desktop','.cache','npm-licenses.json'),'utf8')).replace(/^\uFEFF/,''));
+const npmRoot=await realpath(path.join(root,'desktop','node_modules'));
+for(const [license,packages] of Object.entries(npmLicenses))for(const item of packages) {
+  for(const version of item.versions) {
+    const existing=components.find(component=>component.name===item.name && component.version===version);
+    if(existing)existing.licenses=[{expression:license}];
+    else components.push({type:'library',name:item.name,version,purl:`pkg:npm/${item.name}@${version}`,licenses:[{expression:license}]});
+  }
+  for(const packagePath of item.paths) {
+    const actual=await realpath(packagePath);
+    if(!actual.startsWith(npmRoot+path.sep))throw new Error('npm license path escapes installed dependencies');
+    const target=path.join(directory,'licenses','npm',encodeURIComponent(item.name));await mkdir(target,{recursive:true});
+    for(const file of await readdir(actual))if(/^(license|copying|notice)([._-]|$)/i.test(file))await cp(path.join(actual,file),path.join(target,file),{recursive:true});
+  }
+}
 try {
   const installed=await readFile(path.join(root,'build','desktop-windows','vcpkg-installed','vcpkg','status'),'utf8');
   for(const entry of installed.split(/\r?\n\r?\n/)) {

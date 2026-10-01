@@ -40,6 +40,9 @@ test('LAN config has no upstream management listener and only admits private hos
   assert.equal(config.apps.http.servers.lan.routes[0].handle[0].upstreams[0].dial,'127.0.0.1:18080');
   assert.throws(()=>caddyConfiguration(['8.8.8.8'],18443,18080,'x'));
   assert.ok(firewallInstructions(18443,18190,18189,['192.168.1.7']).every(line=>line.includes('-Profile Private')));
+  const rules=firewallInstructions(18443,18190,18189,['192.168.1.7'],28555);
+  assert.equal(rules.length,5);assert.ok(rules.every(line=>line.includes('-RemoteAddress LocalSubnet')));
+  assert.ok(rules.filter(line=>line.includes('go2rtc')).every(line=>line.includes('-LocalPort 28555')));
 });
 test('IPC admits only known top frames, scene identifiers and available displays',()=>{
   const frame={url:'http://127.0.0.1:18080/'};const sender={id:1,mainFrame:frame};const event={sender,senderFrame:frame};
@@ -52,7 +55,7 @@ test('IPC admits only known top frames, scene identifiers and available displays
 test('runtime discards inherited service, Python and PATH overrides',()=>{
   assert.deepEqual(cleanEnvironment({SystemRoot:'C:/Windows',PATH:'evil',Path:'evil',WEBOBS_HTTP_PORT:'80',MTX_APIADDRESS:'0.0.0.0:9997',PYTHONPATH:'evil',NODE_OPTIONS:'--require evil',GH_TOKEN:'fixture',CSC_KEY_PASSWORD:'fixture'}),{SystemRoot:'C:/Windows'});
 });
-test('every dependency has an immutable HTTPS identity and digest',async()=>{assert.equal((await dependencyLock()).artifacts.length,11);});
+test('every dependency has an immutable HTTPS identity and digest',async()=>{assert.equal((await dependencyLock()).artifacts.length,14);});
 test('Authenticode verification rejects missing, timed-out or mismatched verifiers',async t=>{
   const file=path.join(await temporary(t),"up'date.exe");
   const signature=async(status,publisher='Example publisher',verified=file)=>({stdout:JSON.stringify({status,publisher,path:verified}),stderr:''});

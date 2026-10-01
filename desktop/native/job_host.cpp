@@ -8,6 +8,8 @@
 #include <atomic>
 #include <vector>
 
+static BOOL WINAPI ignore_owned_console_signal(DWORD) { return TRUE; }
+
 static std::wstring quote(const std::wstring& text) {
     std::wstring result = L"\""; size_t slash = 0;
     for (wchar_t character : text) {
@@ -63,7 +65,12 @@ int wmain(int argc, wchar_t** argv) {
         ReadFile(GetStdHandle(STD_INPUT_HANDLE), buffer, sizeof(buffer), &count, nullptr);
         if (console_stop) {
             FreeConsole();
-            if (AttachConsole(child.dwProcessId)) { SetConsoleCtrlHandler(nullptr, TRUE); GenerateConsoleCtrlEvent(CTRL_BREAK_EVENT, child.dwProcessId); }
+            if (AttachConsole(child.dwProcessId)) {
+                SetConsoleCtrlHandler(ignore_owned_console_signal, TRUE);
+                // CREATE_NEW_CONSOLE ignores CREATE_NEW_PROCESS_GROUP. This
+                // console belongs only to our child and the attached job host.
+                GenerateConsoleCtrlEvent(CTRL_BREAK_EVENT, 0);
+            }
         } else { DWORD written = 0; WriteFile(input_write, "shutdown\n", 9, &written, nullptr); }
         requested.store(true);
     }).detach();

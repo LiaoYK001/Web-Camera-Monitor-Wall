@@ -58,7 +58,7 @@ def stage(args):
     for file in (output / "bin").glob("*.dll"):
         if file.name.lower().startswith(("msvcp", "vcruntime", "concrt")): shutil.copy2(file, output / "python" / file.name)
     site = output / "python" / "Lib" / "site-packages"; site.mkdir(parents=True)
-    for name in ["numpy", "onnxruntime"]: copy_tree(unpack / name, site)
+    for name in ["numpy", "onnxruntime", "flatbuffers", "packaging", "protobuf"]: copy_tree(unpack / name, site)
     pth = output / "python" / "python312._pth"
     pth.write_text("python312.zip\n.\nLib/site-packages\n../services\nimport site\n", encoding="ascii")
     for name in ["camera", "events", "nvr", "cluster", "v2", "analytics", "archive", "backup"]:

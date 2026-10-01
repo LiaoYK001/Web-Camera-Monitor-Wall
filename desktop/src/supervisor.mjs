@@ -37,6 +37,9 @@ export class Supervisor extends EventEmitter {
     await mkdir(this.root, { recursive: true });
     await this.tool('desktop-tools/private_directory.py', [this.root]);
     for (const directory of [this.data, this.recordings, path.join(this.root,'logs'), path.join(this.root,'run'), path.join(this.root,'snapshots')]) await mkdir(directory, { recursive: true });
+    // Elevated build/test tokens can default new directory owners to Administrators.
+    // The core requires the actual current user to own its configuration parent.
+    await this.tool('desktop-tools/private_directory.py', [this.data]);
     await this.tool('desktop-tools/private_directory.py', [this.recordings]);
     this.ports = await allocatePorts(this.root, this.settings.lanEnabled);
     this.origin = `http://127.0.0.1:${this.ports.control}`;
@@ -82,7 +85,8 @@ export class Supervisor extends EventEmitter {
       WEBOBS_BACKUP_CONFIG_ROOT: this.data, WEBOBS_BACKUP_ROOT: path.join(this.root,'backups'), WEBOBS_BACKUP_KEY_FILE: run('backup.key'),
       WEBOBS_BACKUP_S3_CONFIG: config('archive.json'), WEBOBS_GO2RTC_ENABLED: 'true', WEBOBS_GO2RTC_BINARY: this.executable('go2rtc'),
       WEBOBS_GO2RTC_CONFIG: config('go2rtc','go2rtc.yaml'), WEBOBS_GO2RTC_TEMPLATE: path.join(this.runtime,'etc','go2rtc.yaml'),
-      WEBOBS_GO2RTC_WEB_ROOT: path.join(this.runtime,'go2rtc-www'), WEBOBS_GO2RTC_WEBRTC_BIND: '127.0.0.1',
+      WEBOBS_GO2RTC_WEB_ROOT: path.join(this.runtime,'go2rtc-www'), WEBOBS_GO2RTC_WEBRTC_BIND: this.settings.lanEnabled ? '0.0.0.0' : '127.0.0.1',
+      WEBOBS_GO2RTC_WEBRTC_HOSTS: this.settings.lanEnabled ? this.lanIPs.join(',') : '',
     };
     const names = { nvr:'NVR_INTERNAL',camera:'CAMERA_INTERNAL',events:'EVENTS_INTERNAL',clients:'V2_INTERNAL',cluster:'CLUSTER_INTERNAL',
       rtsp:'MEDIAMTX_RTSP',gatewayApi:'MEDIAMTX_API',whep:'MEDIAMTX_WEBRTC',go2rtcApi:'GO2RTC_API',go2rtcRtsp:'GO2RTC_RTSP',go2rtcWebrtc:'GO2RTC_WEBRTC' };
@@ -100,7 +104,7 @@ export class Supervisor extends EventEmitter {
       this.lanInfo = { enabled:true, addresses:this.lanIPs.map(ip=>`https://${ip}:${this.settings.lanPort}`),
         certificate:path.join(this.root,'caddy','pki','authorities','local','root.crt'),
         trustSteps:'在本机和每个访问设备的当前用户“受信任的根证书颁发机构”中导入此 root.crt。确认来源为本机 WebOBS 后再信任。',
-        firewallCommands:firewallInstructions(this.settings.lanPort,this.ports.iceTcp,this.ports.iceUdp,this.lanIPs) };
+        firewallCommands:firewallInstructions(this.settings.lanPort,this.ports.iceTcp,this.ports.iceUdp,this.lanIPs,this.ports.go2rtcWebrtc) };
     }
     try {
       const probe = await this.tool('scripts/hardware-probe.py',['--env','--cache',run('hardware.json')],180000);

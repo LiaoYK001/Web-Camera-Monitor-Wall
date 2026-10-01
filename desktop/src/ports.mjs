@@ -23,9 +23,9 @@ export async function allocatePorts(root, lan = false) {
       const previous = saved?.[key];
       if (saved && (!Number.isInteger(previous) || previous < 1024 || previous > 65535)) throw new Error('Invalid saved port allocation');
       const udp = key === 'iceUdp';
-      const lease = await bindPort(previous || 0, udp, lan && (udp || key === 'iceTcp') ? '0.0.0.0' : '127.0.0.1');
+      const lease = await bindPort(previous || 0, udp, lan && (udp || key === 'iceTcp' || key === 'go2rtcWebrtc') ? '0.0.0.0' : '127.0.0.1');
       held.push(lease); ports[key] = lease.port;
-      if (key === 'go2rtcWebrtc') held.push(await bindPort(lease.port, true));
+      if (key === 'go2rtcWebrtc') held.push(await bindPort(lease.port, true, lan ? '0.0.0.0' : '127.0.0.1'));
     }
     await atomicJson(path.join(root, 'ports.json'), ports);
     return ports;

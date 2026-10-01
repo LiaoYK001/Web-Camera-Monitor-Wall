@@ -19,6 +19,14 @@ private_directory=module('desktop_private_directory',ROOT/'desktop/python/privat
 headless=module('desktop_headless',ROOT/'desktop/scripts/prepare-obs-headless.py')
 
 class SnapshotTests(unittest.TestCase):
+    @unittest.skipUnless(os.name=='nt' and (ROOT/'desktop/runtime/python/python.exe').exists(),'requires a built Windows runtime')
+    def test_bundled_inference_dependencies_import_without_developer_path(self):
+        runtime=ROOT/'desktop/runtime';env={key:value for key,value in os.environ.items() if not key.upper().startswith(('PATH','PYTHON'))}
+        env['PATH']=str(runtime/'bin')+os.pathsep+str(pathlib.Path(os.environ['SystemRoot'])/'System32')
+        probe=subprocess.run([str(runtime/'python/python.exe'),'-c','import numpy,onnxruntime,flatbuffers,packaging,google.protobuf; print(onnxruntime.__version__)'],capture_output=True,text=True,timeout=30,env=env,creationflags=subprocess.CREATE_NO_WINDOW)
+        self.assertEqual(probe.returncode,0,probe.stderr)
+        self.assertEqual(probe.stdout.strip(),'1.29.0')
+
     def test_headless_patch_matches_pinned_sources_and_never_changes_the_submodule(self):
         from unittest.mock import patch
         import shutil
@@ -90,6 +98,7 @@ class SnapshotTests(unittest.TestCase):
                 if handle:
                     code=ctypes.c_ulong();kernel.GetExitCodeProcess.argtypes=[ctypes.c_void_p,ctypes.POINTER(ctypes.c_ulong)];kernel.GetExitCodeProcess(handle,ctypes.byref(code));kernel.CloseHandle.argtypes=[ctypes.c_void_p];kernel.CloseHandle(handle);self.assertNotEqual(code.value,259)
             finally:
+                if child.stdin:child.stdin.close()
                 if child.poll() is None:child.kill();child.wait()
 
 if __name__=='__main__':unittest.main()

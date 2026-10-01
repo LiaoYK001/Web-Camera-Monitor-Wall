@@ -19,12 +19,13 @@ export function caddyConfiguration(addresses, port, controlPort, storage) {
     },
   };
 }
-export function firewallInstructions(port, iceTcp, iceUdp, addresses) {
-  if (![port,iceTcp,iceUdp].every(p => Number.isInteger(p) && p >= 1024 && p <= 65535) || addresses.some(ip => !privateIPv4(ip))) throw new Error('Invalid firewall configuration');
+export function firewallInstructions(port, iceTcp, iceUdp, addresses, go2rtcWebrtc) {
+  if (![port,iceTcp,iceUdp,...(go2rtcWebrtc===undefined?[]:[go2rtcWebrtc])].every(p => Number.isInteger(p) && p >= 1024 && p <= 65535) || addresses.some(ip => !privateIPv4(ip))) throw new Error('Invalid firewall configuration');
   // Display only; the administrator chooses whether to execute the commands.
   return [
-    `New-NetFirewallRule -DisplayName 'WebOBS LAN HTTPS' -Direction Inbound -Action Allow -Profile Private -LocalAddress ${addresses.join(',')} -Protocol TCP -LocalPort ${port}`,
+    `New-NetFirewallRule -DisplayName 'WebOBS LAN HTTPS' -Direction Inbound -Action Allow -Profile Private -LocalAddress ${addresses.join(',')} -Protocol TCP -LocalPort ${port} -RemoteAddress LocalSubnet`,
     `New-NetFirewallRule -DisplayName 'WebOBS LAN media TCP' -Direction Inbound -Action Allow -Profile Private -Protocol TCP -LocalPort ${iceTcp} -RemoteAddress LocalSubnet`,
     `New-NetFirewallRule -DisplayName 'WebOBS LAN media UDP' -Direction Inbound -Action Allow -Profile Private -Protocol UDP -LocalPort ${iceUdp} -RemoteAddress LocalSubnet`,
+    ...(go2rtcWebrtc===undefined?[]:['TCP','UDP'].map(protocol=>`New-NetFirewallRule -DisplayName 'WebOBS LAN go2rtc ${protocol}' -Direction Inbound -Action Allow -Profile Private -Protocol ${protocol} -LocalPort ${go2rtcWebrtc} -RemoteAddress LocalSubnet`)),
   ];
 }
