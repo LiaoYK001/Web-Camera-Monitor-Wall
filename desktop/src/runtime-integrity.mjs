@@ -7,8 +7,9 @@ export const requiredFiles = ['bin/webobsd.exe', 'bin/webobs-job.exe', 'bin/webo
   'bin/ffmpeg.exe', 'bin/ffprobe.exe', 'bin/openssl.exe', 'bin/go2rtc.exe', 'bin/mediamtx.exe', 'bin/caddy.exe',
   'python/python.exe', 'obs/bin/64bit/obs.dll', 'obs/bin/64bit/libobs-d3d11.dll',
   'obs/obs-plugins/64bit/obs-ffmpeg.dll', 'obs/obs-plugins/64bit/obs-x264.dll', 'obs/obs-plugins/64bit/obs-webrtc.dll',
-  'obs/obs-plugins/64bit/image-source.dll', 'obs/obs-plugins/64bit/text-gdiplus.dll',
-  'obs/obs-plugins/64bit/obs-browser.dll', 'web/index.html', 'go2rtc-www/index.html',
+  'obs/obs-plugins/64bit/image-source.dll', 'obs/obs-plugins/64bit/obs-text.dll',
+  'obs/obs-plugins/64bit/obs-browser.dll', 'obs/obs-plugins/64bit/obs-browser-page.exe',
+  'bin/msvcp140.dll', 'bin/vcruntime140.dll', 'web/index.html', 'go2rtc-www/index.html',
   'services/runtime_support.py', 'services/desktop-tools/tool_dispatch.py', 'licenses/THIRD-PARTY-NOTICES.md'];
 export function containedPath(root, name) {
   if (typeof name !== 'string' || !name || name.includes('\\') || name.includes(':') || path.posix.isAbsolute(name) || name.split('/').some(p => !p || p === '.' || p === '..'))

@@ -369,11 +369,17 @@ def load_or_create_signing_key() -> tuple[bytes, bytes]:
     if KEY_PATH.exists():
         if KEY_PATH.is_symlink() or not KEY_PATH.is_file():
             raise RuntimeError("client grant signing key must be a regular file")
-        data = protect_local_key(KEY_PATH.read_bytes(), decrypt=True)
+        stored = KEY_PATH.read_bytes()
+        data = protect_local_key(stored, decrypt=True)
         if len(data) != 96:
             raise RuntimeError("client grant signing key length is invalid")
-        return data[:32], data[32:]
-    public, secret = sodium().signing_keypair()
+        if os.name != 'nt' or stored.startswith(b'WEBOBSDPAPI1'):
+            return data[:32], data[32:]
+        # An explicitly restored Linux key is immediately protected for this
+        # Windows user, while preserving its signing identity.
+        public, secret = data[:32], data[32:]
+    else:
+        public, secret = sodium().signing_keypair()
     temporary = KEY_PATH.with_name(f".{KEY_PATH.name}.{os.getpid()}.{secrets.token_hex(4)}")
     descriptor = os.open(temporary, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
     try:

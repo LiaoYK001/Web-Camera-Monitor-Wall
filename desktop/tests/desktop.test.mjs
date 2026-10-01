@@ -13,6 +13,7 @@ import { UpdateController, updateBlockers } from '../src/updates.mjs';
 import { dependencyLock } from '../scripts/lock.mjs';
 import { cleanEnvironment } from '../src/supervisor.mjs';
 import { qualificationReceipts } from '../scripts/qualification.mjs';
+import { verifyPublisher } from '../src/signature.mjs';
 
 async function temporary(t) {const directory=await mkdtemp(path.join(os.tmpdir(),'webobs-desktop-'));t.after(()=>rm(directory,{recursive:true,force:true}));return directory;}
 test('desktop defaults and settings reject unbounded or unknown IPC values',()=>{
@@ -52,6 +53,16 @@ test('runtime discards inherited service, Python and PATH overrides',()=>{
   assert.deepEqual(cleanEnvironment({SystemRoot:'C:/Windows',PATH:'evil',Path:'evil',WEBOBS_HTTP_PORT:'80',MTX_APIADDRESS:'0.0.0.0:9997',PYTHONPATH:'evil',NODE_OPTIONS:'--require evil'}),{SystemRoot:'C:/Windows'});
 });
 test('every dependency has an immutable HTTPS identity and digest',async()=>{assert.equal((await dependencyLock()).artifacts.length,11);});
+test('Authenticode verification rejects missing, timed-out or mismatched verifiers',async t=>{
+  const file=path.join(await temporary(t),"up'date.exe");
+  const signature=async(status,publisher='Example publisher',verified=file)=>({stdout:JSON.stringify({status,publisher,path:verified}),stderr:''});
+  assert.equal(await verifyPublisher(['Example publisher'],file,()=>signature('Valid')),null);
+  assert.notEqual(await verifyPublisher(['Example publisher'],file,()=>signature('Valid','Wrong publisher')),null);
+  assert.notEqual(await verifyPublisher(['Example publisher'],file,()=>signature('NotSigned')),null);
+  await assert.rejects(verifyPublisher(['Example publisher'],file,async()=>{throw new Error('timeout');}),/timeout/);
+  await assert.rejects(verifyPublisher(['Example publisher'],file,()=>signature('Valid','Example publisher',file+'.other')),/different file/);
+  await assert.rejects(verifyPublisher(['Example publisher'],file,async()=>({stdout:'',stderr:'unavailable'})),/verifier failed/);
+});
 test('build fixtures and incomplete Windows installation evidence cannot authorize release',()=>{assert.throws(()=>qualificationReceipts([],'revision','3.1.0'),/actual installation evidence/);assert.throws(()=>qualificationReceipts([{platform:'windows-10-x64',schema:1,revision:'revision',version:'3.1.0',installerSha256:'a'.repeat(64),operator:'test',evidenceUrl:'test',installedFrom:'3.0.0',updatedTo:'3.1.0',checks:{}}],'revision','3.1.0'),/Unqualified/);});
 
 async function updaterFixture(t, overrides={}) {

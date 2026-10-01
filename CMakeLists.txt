@@ -64,6 +64,10 @@ target_include_directories(webobs-common PUBLIC core/include)
 target_link_libraries(webobs-common PUBLIC ${WEBOBS_JANSSON_TARGET} OpenSSL::Crypto SQLite::SQLite3 Threads::Threads)
 if(WIN32)
     target_link_libraries(webobs-common PUBLIC advapi32 ws2_32 psapi)
+    # Full installers carry the compiler CRT; clean Windows hosts need no
+    # separately installed Visual C++ development/runtime environment.
+    set(CMAKE_INSTALL_SYSTEM_RUNTIME_DESTINATION bin)
+    include(InstallRequiredSystemLibraries)
 endif()
 target_compile_features(webobs-common PUBLIC cxx_std_20)
 webobs_warnings(webobs-common)

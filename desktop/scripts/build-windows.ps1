@@ -52,6 +52,9 @@ if (-not (Test-Path -LiteralPath (Join-Path $vcpkgRoot '.git'))) {
 }
 Invoke-Checked (Join-Path $vcpkgRoot 'bootstrap-vcpkg.bat') @('-disableMetrics')
 $vcpkgInstalled = Join-Path $buildRoot 'vcpkg-installed'
+$vcpkgBinaryCache = Join-Path $cacheRoot 'vcpkg-binaries'
+New-Item -ItemType Directory -Force $vcpkgBinaryCache | Out-Null
+$env:VCPKG_BINARY_SOURCES = "clear;files,$vcpkgBinaryCache,readwrite"
 Invoke-Checked (Join-Path $vcpkgRoot 'vcpkg.exe') @('install','--triplet=x64-windows',"--x-manifest-root=$desktopRoot","--x-install-root=$vcpkgInstalled",'--disable-metrics')
 $obsSource = Join-Path $buildRoot 'obs-source'
 if (-not (Test-Path -LiteralPath (Join-Path $obsSource 'CMakeLists.txt'))) {
@@ -67,7 +70,9 @@ $obsBuild = Join-Path $buildRoot 'obs-build'
 $obsInstall = Join-Path $buildRoot 'obs-install'
 Invoke-Checked 'cmake' @('-S',$obsSource,'-B',$obsBuild,'-G','Visual Studio 17 2022','-A','x64','-DENABLE_UI=OFF','-DENABLE_FRONTEND=OFF','-DENABLE_SCRIPTING=OFF','-DENABLE_BROWSER=ON','-DENABLE_BROWSER_PANELS=OFF','-DENABLE_VST=OFF','-DENABLE_AJA=OFF','-DENABLE_DECKLINK=OFF','-DENABLE_VLC=OFF','-DENABLE_WEBSOCKET=OFF','-DOBS_VERSION_OVERRIDE=32.1.2',"-DCMAKE_INSTALL_PREFIX=$obsInstall")
 Invoke-Checked 'cmake' @('--build',$obsBuild,'--config','Release','--parallel','4')
+Invoke-Checked 'cmake' @('--build',$obsBuild,'--config','Release','--target','obs-browser-helper','--parallel','4')
 Invoke-Checked 'cmake' @('--install',$obsBuild,'--config','Release')
+Invoke-Checked 'cmake' @('--install',$obsBuild,'--config','Release','--component','Development')
 $coreBuild = Join-Path $buildRoot 'core-build'
 $coreInstall = Join-Path $buildRoot 'core-install'
 $corePrefix = "$obsInstall;$vcpkgInstalled\x64-windows;$obsSource\.deps\obs-deps-2025-08-23-x64"

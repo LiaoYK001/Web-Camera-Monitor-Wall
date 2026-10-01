@@ -68,6 +68,13 @@ jobs:
         run: |
           if ([version](& node -p 'process.versions.node') -lt [version]'24.0.0') { throw 'Windows desktop runner requires preinstalled Node 24 or newer.' }
           npm install --global pnpm@11.16.0
+      - name: Cache verified archives and vcpkg binary builds
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830
+        with:
+          path: |
+            desktop/.cache/*.zip
+            desktop/.cache/vcpkg-binaries
+          key: windows-2022-desktop-${{ hashFiles('desktop/dependencies.lock.json', 'desktop/vcpkg.json') }}
       - name: Compile, test and package complete runtime
         shell: pwsh
         env:

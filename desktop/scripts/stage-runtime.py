@@ -55,6 +55,8 @@ def stage(args):
     for file in ffmpeg_bin.iterdir():
         if file.is_file(): shutil.copy2(file, output / "bin" / file.name)
     copy_tree(unpack / "python", output / "python")
+    for file in (output / "bin").glob("*.dll"):
+        if file.name.lower().startswith(("msvcp", "vcruntime", "concrt")): shutil.copy2(file, output / "python" / file.name)
     site = output / "python" / "Lib" / "site-packages"; site.mkdir(parents=True)
     for name in ["numpy", "onnxruntime"]: copy_tree(unpack / name, site)
     pth = output / "python" / "python312._pth"

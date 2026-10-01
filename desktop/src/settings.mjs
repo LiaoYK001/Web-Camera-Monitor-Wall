@@ -1,5 +1,6 @@
-import { readFile, writeFile, rename, mkdir } from 'node:fs/promises';
+import { readFile, open, rename, mkdir, rm } from 'node:fs/promises';
 import path from 'node:path';
+import { randomUUID } from 'node:crypto';
 export const defaults = Object.freeze({ autoCheck: true, autoDownload: true, startAtLogin: false, lanEnabled: false,
   lanPort: 18443, recordingDirectory: '', minimizeToTray: true });
 export function validateSettings(input, current = defaults) {
@@ -16,9 +17,13 @@ export function validateSettings(input, current = defaults) {
 }
 export async function atomicJson(file, data) {
   await mkdir(path.dirname(file), { recursive: true });
-  const temporary = `${file}.${process.pid}.tmp`;
-  await writeFile(temporary, `${JSON.stringify(data, null, 2)}\n`, { mode: 0o600, flag: 'w' });
-  await rename(temporary, file);
+  const temporary = `${file}.${randomUUID()}.tmp`;
+  try {
+    const handle = await open(temporary, 'wx', 0o600);
+    try { await handle.writeFile(`${JSON.stringify(data, null, 2)}\n`); await handle.sync(); }
+    finally { await handle.close(); }
+    await rename(temporary, file);
+  } finally { await rm(temporary, { force: true }); }
 }
 export async function loadSettings(root) {
   try { return validateSettings(JSON.parse(await readFile(path.join(root, 'desktop.json'), 'utf8'))); }

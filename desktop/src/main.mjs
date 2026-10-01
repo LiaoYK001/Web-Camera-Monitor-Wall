@@ -8,6 +8,7 @@ import { UpdateController } from './updates.mjs';
 import { loadSettings, validateSettings, atomicJson } from './settings.mjs';
 import { verifyRuntime, digestFile } from './runtime-integrity.mjs';
 import { trustedFrame, projectorOptions } from './ipc-policy.mjs';
+import { verifyPublisher } from './signature.mjs';
 
 const source = path.dirname(fileURLToPath(import.meta.url));
 const root = path.join(process.env.LOCALAPPDATA || app.getPath('appData'),'WebOBS');
@@ -152,7 +153,7 @@ else {
             const expected=path.join(root,'installers',`WebOBS-${recovery.from}-windows-x64.exe`);
             if(recovery.previousInstaller!==expected || !/^[a-f0-9]{64}$/.test(recovery.previousInstallerSha256) || await digestFile(expected)!==recovery.previousInstallerSha256)throw new Error('上一版本安装包路径或摘要不匹配，请从对应 Release 重新下载。');
             const distribution=JSON.parse(await readFile(path.join(source,'distribution.json'),'utf8'));
-            if(!distribution.official || !distribution.publisher || await electronUpdater.autoUpdater.verifyUpdateCodeSignature([distribution.publisher],expected)!==null)throw new Error('上一版本安装包发布者签名验证失败。');
+            if(!distribution.official || !distribution.publisher || await verifyPublisher([distribution.publisher],expected)!==null)throw new Error('上一版本安装包发布者签名验证失败。');
             const error=await shell.openPath(expected);if(error)throw new Error(error);
           }
           return status();
@@ -172,9 +173,10 @@ else {
       await desktopSession.clearStorageData({storages:['serviceworkers','cachestorage']});
       const distribution=JSON.parse(await readFile(path.join(source,'distribution.json'),'utf8'));
       const {autoUpdater}=electronUpdater;
+      autoUpdater.verifyUpdateCodeSignature=verifyPublisher;
       updates=new UpdateController({updater:autoUpdater,official:distribution.official,publisher:distribution.publisher,packaged:app.isPackaged,settings,root,supervisor,version:app.getVersion(),
         windowWork:()=>[...work.values()],confirmStop:async()=>{const result=await dialog.showMessageBox(main,{type:'question',buttons:['停止任务并更新','稍后'],defaultId:1,cancelId:1,message:'更新需要正常停止当前录像和媒体发布。',detail:'已完成的录像与账号配置会保留，未保存草稿和正在导出的任务会阻止安装。'});return result.response===0;},
-        verifySignature:(publishers,file)=>autoUpdater.verifyUpdateCodeSignature(publishers,file),beforeInstall:()=>{quitting=true;updates.dispose();}});
+        verifySignature:verifyPublisher,beforeInstall:()=>{quitting=true;updates.dispose();}});
       updates.on('status',broadcast);updates.start();
       if(recovery){await atomicJson(path.join(root,'installed-version.json'),{version:app.getVersion(),installer:recovery.installer,installerSha256:recovery.installerSha256});await rm(path.join(root,'pending-update.json'),{force:true});recovery=null;}
       await main.loadURL(supervisor.origin);broadcast();

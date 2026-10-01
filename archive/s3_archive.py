@@ -54,7 +54,7 @@ def load_config(path: pathlib.Path) -> dict[str, Any]:
     try:
         secret.relative_to(os.environ.get("WEBOBS_SECRETS_ROOT", "/run/secrets"))
     except ValueError as error:
-        raise ArchiveError("archive credentials must be mounted below /run/secrets") from error
+        raise ArchiveError("archive credentials must be stored below the configured private secrets root") from error
     if not secret.is_file() or secret.is_symlink() or secret.stat().st_size > 4096:
         raise ArchiveError("archive credentials are unavailable")
     credentials = json.loads(secret.read_text(encoding="utf-8"))

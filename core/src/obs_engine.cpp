@@ -644,10 +644,12 @@ ExitCode run_obs_engine(const Config &config, const SceneDocument &document)
     if (!load_module(obs_prefix, "obs-ffmpeg") || !load_module(obs_prefix, "obs-x264") ||
         (config.webrtc_enabled && !load_module(obs_prefix, "obs-webrtc")))
         return ExitCode::obs_initialization_failed;
+#ifndef _WIN32
     const auto has_source_kind = [&document](std::string_view kind) {
         return std::any_of(document.sources.begin(), document.sources.end(),
                            [kind](const SceneSource &source) { return source.kind == kind; });
     };
+#endif
     const auto require_module = [&obs_prefix](const char *module, const char *source_kind) {
         if (load_module(obs_prefix, module))
             return true;
@@ -658,17 +660,11 @@ ExitCode run_obs_engine(const Config &config, const SceneDocument &document)
 #ifdef _WIN32
     // New desktop source types must work without restarting an initially empty scene.
     if (!require_module("obs-browser", "browser") || !require_module("image-source", "image") ||
-        !require_module("text-gdiplus", "text")) return ExitCode::obs_initialization_failed;
+        !require_module("obs-text", "text")) return ExitCode::obs_initialization_failed;
 #else
     if ((has_source_kind("browser") && !require_module("obs-browser", "browser")) ||
         (has_source_kind("image") && !require_module("image-source", "image")) ||
-        (has_source_kind("text") && !require_module(
-#ifdef _WIN32
-            "text-gdiplus",
-#else
-            "text-freetype2",
-#endif
-            "text")))
+        (has_source_kind("text") && !require_module("text-freetype2", "text")))
         return ExitCode::obs_initialization_failed;
 #endif
     // Filters and transitions are additive: their absence only degrades those

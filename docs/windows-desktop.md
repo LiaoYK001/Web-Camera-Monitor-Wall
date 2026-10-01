@@ -19,7 +19,7 @@
 ./desktop/scripts/build-windows.ps1 -Version 3.4.0-dev.0
 ```
 
-缓存与构建在仓库所在磁盘的 `desktop/.cache` 与 `build/desktop-windows`。固定依赖来自 `desktop/dependencies.lock.json`；vcpkg 固定提交和 baseline。上游 OBS 构建在副本中，原 submodule 不变。构建、C++/桌面测试、完整运行目录校验通过后，NSIS 完整安装包位于 `desktop/out`。
+缓存与构建在仓库所在磁盘的 `desktop/.cache` 与 `build/desktop-windows`。固定依赖来自 `desktop/dependencies.lock.json`；vcpkg 固定提交和 baseline。上游 OBS 构建在副本中，原 submodule 不变。构建、C++/桌面测试、完整运行目录校验通过后，NSIS 完整安装包位于 `desktop/out/<版本>`，随包包含所需 VC++ 运行库。不同版本输出分目录保存。
 
 缺少签名凭据只能生成带 `DEVELOPMENT-UNSIGNED` 的开发测试包，不能连接正式更新源。正式候选：
 
