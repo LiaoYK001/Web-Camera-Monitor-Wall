@@ -74,6 +74,6 @@ python android/tests/test_emulator.py --serial 127.0.0.1:16384 --adb $adb --dock
 
 The emulator probe uses the real installed APK, real account APIs, official go2rtc UI and real synthetic H.264 media. It is not a desktop-browser fixture. This does not qualify physical cameras, ARM devices, microphone hardware, private CA setup, downloads/exports, battery consumption or long-running recovery. Record actual passed checks in the local receipt; do not infer them from source support.
 
-2026-10-02：MuMu Android 15 / API 35（x86_64）已实测安装与覆盖安装、真实账号登录、Scenes 建档、声音输出模式/主音量和弱网开关持久化、官方 go2rtc/本地 Monaco、160×90 H.264 MSE 持续解码、HOME/前台恢复、原生关于页、进程重启后会话与偏好恢复。实际设备或摄像机验证仍待进行。
+2026-10-02：MuMu Android 15 / API 35（x86_64）已实测安装与覆盖安装、真实账号登录、Scenes 建档与共享登录投影、横竖屏切换、声音输出模式/主音量和弱网开关持久化、官方 go2rtc/本地 Monaco、160×90 H.264 MSE 持续解码、HOME/前台恢复、原生关于页、进程重启后会话与偏好恢复。实际设备或摄像机验证仍待进行。后台连接释放需后端部署本次新增生命周期适配的 WebUI；旧 WebUI 不保证该行为。
 
 2026-10-02 emulator qualification covers installation, real login, scene persistence, account audio/optimization settings, official go2rtc UI, live synthetic H.264 decoding, background/foreground lifecycle, native About and process restart. This is development qualification, not a formal APK release or physical-device qualification.

@@ -27,6 +27,7 @@ jobs:
         shell: pwsh
         run: ./android/scripts/build-android.ps1 -JavaHome $env:JAVA_HOME_17_X64 -SdkRoot $env:ANDROID_HOME
       - name: Upload disposable development APK and test reports
+        if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
           name: webobs-android-development
@@ -34,5 +35,6 @@ jobs:
             build/android/out/*
             android/app/build/reports/tests/**
             android/app/build/reports/lint-results-debug.*
+            android/build/reports/dependency-verification/**
           if-no-files-found: error
           retention-days: 7
