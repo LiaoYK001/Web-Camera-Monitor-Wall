@@ -1,5 +1,7 @@
 !include "FileFunc.nsh"
 
+!ifndef BUILD_UNINSTALLER
+
 Var WebOBSUpdateTemp
 
 ; electron-builder's upgrade uninstaller atomically renames files into its
@@ -75,3 +77,5 @@ Var WebOBSUpdateTemp
     RMDir "$WebOBSUpdateTemp"
   ${EndIf}
 !macroend
+
+!endif
