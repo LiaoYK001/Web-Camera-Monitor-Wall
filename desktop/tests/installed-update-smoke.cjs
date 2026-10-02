@@ -62,7 +62,8 @@ const pause=ms=>new Promise(resolve=>setTimeout(resolve,ms));
     controller=new UpdateController({updater,official:true,publisher:null,packaged:true,settings,root:data,supervisor,version:from,
       windowWork:()=>[],confirmStop:async()=>true,beforeInstall:()=>{installed=true;},launchInstaller:file=>new Promise((resolve,reject)=>{
         const child=spawn(file,['/S',`/D=${installation}`],{windowsHide:true,windowsVerbatimArguments:true,stdio:'ignore'});
-        child.once('error',reject);child.once('exit',code=>code===0?resolve():reject(new Error(`NSIS update failed (${code})`)));
+        const timeout=setTimeout(()=>{child.kill();reject(new Error('NSIS upgrade exceeded five minutes'));},300000);
+        child.once('error',error=>{clearTimeout(timeout);reject(error);});child.once('exit',code=>{clearTimeout(timeout);code===0?resolve():reject(new Error(`NSIS update failed (${code})`));});
       })});
     controller.start();
     const deadline=Date.now()+180000;

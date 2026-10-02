@@ -23,7 +23,9 @@ Var WebOBSUpdateTemp
     GetTempFileName $2 "$1"
     Delete "$2"
     ${GetFileName} "$2" $2
-    StrCpy $WebOBSUpdateTemp "$1\.WebOBS-update-$2"
+    ; Keep this prefix short: NSIS adds another plugin/old-install directory,
+    ; and older payloads may contain deeply nested Monaco source paths.
+    StrCpy $WebOBSUpdateTemp "$1\.w-$2"
     ClearErrors
     CreateDirectory "$WebOBSUpdateTemp"
     ${If} ${Errors}
