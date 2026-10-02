@@ -1,17 +1,17 @@
 # Web Camera Monitor Wall
 
-Windows 10/11 x64 Electron 完整客户端的实现、构建、签名更新与验收要求见 [Windows 桌面客户端](docs/windows-desktop.md)，签名申请及凭据配置见 [Windows 代码签名](docs/windows-signing.md)。容器部署继续保留；Windows 安装与实际媒体验收状态在该文档中单独记录。
+Windows 10/11 x64 Electron 完整客户端的实现、构建、自动更新与验收要求见 [Windows 桌面客户端](docs/windows-desktop.md)。当前发行版暂不签名；未来可选签名步骤见 [Windows 代码签名](docs/windows-signing.md)。容器部署继续保留；Windows 安装与实际媒体验收状态在该文档中单独记录。
 
 > **安全提示 / Security notice:** v3.3 升级后，仍由 v3.2 或更早 Service Worker 控制的旧 PWA 可能凭本机离线授权继续显示缓存工作区。v3.4 已实现自动替换旧 Worker 并重新加载，以及认证不可用时关闭入口；未联网更新的旧 PWA 仍需按[安全公告](docs/security-advisory-v3.3.md)处理。
 > After upgrading to v3.3, an old PWA controlled by an earlier worker may show a cached workspace under a local offline grant. v3.4 implements automatic worker replacement/reload and fails closed when authentication is unavailable. Disconnected old clients still need the [security advisory](docs/security-advisory-v3.3.md).
 
-一个基于 `libobs` 的 Web 监控墙、Gateway Direct WebRTC 网关、Local-first PWA 与 NVR 项目。当前最新产品版本为 **v3.4**；详见 [v3.4 Release](https://github.com/LiaoYK001/Web-Camera-Monitor-Wall/releases/tag/v3.4)、[v3.4 发布说明](docs/release-notes-v3.4.md) 与 [ROADMAP](ROADMAP.md)。
+一个基于 `libobs` 的 Web 监控墙、Gateway Direct WebRTC 网关、Local-first PWA 与 NVR 项目。当前最新产品版本为 **v3.5**；详见 [v3.5 Release](https://github.com/LiaoYK001/Web-Camera-Monitor-Wall/releases/tag/v3.5)、[v3.5 发布说明](docs/release-notes-v3.5.md) 与 [ROADMAP](ROADMAP.md)。
 
-The latest product release is **v3.4**; see the [GitHub release](https://github.com/LiaoYK001/Web-Camera-Monitor-Wall/releases/tag/v3.4), [release notes](docs/release-notes-v3.4.md), and [ROADMAP](ROADMAP.md).
+The latest product release is **v3.5**; see the [GitHub release](https://github.com/LiaoYK001/Web-Camera-Monitor-Wall/releases/tag/v3.5), [release notes](docs/release-notes-v3.5.md), and [ROADMAP](ROADMAP.md).
 
-**下载 Windows x64 安装包：** [WebOBS 3.4.0-dev.0 DEVELOPMENT-UNSIGNED](https://github.com/LiaoYK001/Web-Camera-Monitor-Wall/releases/download/v3.4/WebOBS-3.4.0-dev.0-windows-x64-DEVELOPMENT-UNSIGNED.exe)。本次按维护者选择发布未签名测试版，需手动下载安装，不进入正式自动更新源。容器镜像为 `ghcr.io/liaoyk001/web-camera-monitor-wall:v3.4`；`latest` 当前指向同一镜像。
+**下载 Windows x64 安装包：** [WebOBS 3.5.0 UNSIGNED](https://github.com/LiaoYK001/Web-Camera-Monitor-Wall/releases/download/v3.5/WebOBS-3.5.0-windows-x64-UNSIGNED.exe)。按维护者选择暂不签名，完整自动更新已启用：默认检测并下载，用户确认后安装；设置中可关闭。v3.4 开发测试版需手动安装 v3.5 一次。容器镜像为 `ghcr.io/liaoyk001/web-camera-monitor-wall:v3.5`；`latest` 指向同一镜像。
 
-The Windows x64 download is an unsigned **3.4.0-dev.0** test installer and requires manual installation. It has no stable updater metadata. The container is available as `ghcr.io/liaoyk001/web-camera-monitor-wall:v3.4` and currently `latest`; publication details and validation boundaries are recorded in the [v3.4 notes](docs/release-notes-v3.4.md).
+The unsigned Windows x64 **3.5.0** installer supports complete automatic updates: check/download by default, explicit installation and user-controlled settings. Existing v3.4 development installations require one manual upgrade. The container is available as `ghcr.io/liaoyk001/web-camera-monitor-wall:v3.5` and `latest`; validation boundaries are recorded in the [v3.5 notes](docs/release-notes-v3.5.md).
 
 ```text
 RTSP camera -> libobs ffmpeg_source -> OBS scene -> H.264/AAC MP4

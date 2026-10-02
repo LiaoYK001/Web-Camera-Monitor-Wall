@@ -31,14 +31,14 @@ GitHub 仓库的 `windows-desktop-build` Environment 中配置：
 
 私钥、PFX、密码和访问 Token 只放在私密凭据存储中，不发送到聊天、不提交 Git、不附加到 Release。GitHub Token 用于发布附件，与代码签名证书分别配置。
 
-本地正式候选构建：
+未来可选的本地签名候选构建：
 
 ```powershell
 # 在私密环境中事先设置上述三个构建变量。
-./desktop/scripts/build-windows.ps1 -Version 3.4.0 -Release
-Get-AuthenticodeSignature -LiteralPath 'desktop/out/3.4.0/WebOBS-3.4.0-windows-x64.exe'
+./desktop/scripts/build-windows.ps1 -Version 3.5.0 -Release -Sign
+Get-AuthenticodeSignature -LiteralPath 'desktop/out/3.5.0/WebOBS-3.5.0-windows-x64.exe'
 ```
 
-检查 `Status=Valid`、发布者名称、SHA 摘要及签名时间戳。正式构建强制签名，并验证主程序与安装器；保留捆绑依赖原有签名和运行文件摘要。安装包发生任何变化后都需重新签名和生成更新摘要，不覆盖已经发布的不可变版本。
+显式 `-Sign` 构建检查 `Status=Valid`、发布者名称、SHA 摘要及签名时间戳，并验证主程序与安装器；保留捆绑依赖原有签名和运行文件摘要。签名包发生任何变化后都需重新签名和生成更新摘要，不覆盖已经发布的不可变版本。默认 `-Release` 不要求签名。
 
 当前维护者选择暂不签名：正式稳定 NSIS 包标记 `UNSIGNED`，发布 `latest.yml`，启用完整自动更新，以 GitHub HTTPS 与完整安装包 SHA-512/大小校验为验证方式。用户确认、正常停服与一致性备份继续保留。`-dev.*` 开发测试包仍保留 `DEVELOPMENT-UNSIGNED` 标记并关闭正式更新源。本文的证书步骤是未来可选方案，签名构建需显式追加 `-Sign`；Windows 媒体与更新验证边界见 [桌面发布流程](windows-desktop.md)。

@@ -40,11 +40,17 @@ Canonical milestone names use `v<major>-M<number>`. Historical validation prose 
 
 ## Current position / 当前位置
 
-### v3.4 published / v3.4 已发布（2026-10-02）
+### v3.5 published / v3.5 已发布（2026-10-02）
 
-最新产品版本为 [v3.4](https://github.com/LiaoYK001/Web-Camera-Monitor-Wall/releases/tag/v3.4)，不可变标签固定在 `4b2ab5f09b485a9f9cd870c918295df4315ab442`。完整 go2rtc、Scenes 与多投影、账号声音偏好、可关闭的自动弱网恢复、PWA 安全更新及原生 Windows x64 客户端已集成；验证详情见 [v3.4 发布说明](docs/release-notes-v3.4.md)。容器单镜像回归和公开 GHCR `v3.4` / `latest` 摘要核验通过，digest 为 `sha256:a1f2f5cee8df794d8cae04b4a8cf01b68a6ba562ee1ddedacc219063f4e4cdbc`。Release 附带 13 个已核验附件，含按维护者选择发布的 Windows `3.4.0-dev.0 DEVELOPMENT-UNSIGNED` 安装包。正式签名与干净系统/真实摄像机/两版升级验收仍待完成；没有发布 `latest.yml` 或 `dev.yml`。下面的 v3.2 及更早章节是历史记录。
+最新产品版本为 [v3.5](https://github.com/LiaoYK001/Web-Camera-Monitor-Wall/releases/tag/v3.5)，不可变标签固定在 `e7b6a2ad5f87b37ea933b8fd9e5d7a885e12cb03`。Windows `3.5.0 UNSIGNED` 正式安装包启用完整 GitHub 自动更新：默认检测与下载、用户确认安装、正常停服、快照与恢复。Release 附带 14 个核验附件，包含 `latest.yml`、blockmap、摘要、源码、SBOM 与许可证。公开 GHCR `v3.5` / `latest` digest 均为 `sha256:7d55187025db3850d9c9aa839bcdc05d9cd4a217683cbca2f66ed4e2052236c4`。本机 Windows 11 首次安装、两版真实 NSIS 升级、账号偏好保留与正常停服验证通过；真实 GitHub provider 无 Token 下载完整 EXE 并校验 SHA-512/SHA-256 通过。干净 Windows 10/11、真实摄像机和跨设备 LAN 仍待验收。签名按维护者决定暂不采用。详情见 [v3.5 发布说明](docs/release-notes-v3.5.md)。
 
-The latest product release is v3.4, pinned to the revision above. Public container aliases and all 13 Release attachments have been verified. Windows is distributed as the unsigned 3.4.0-dev.0 test installer with manual installation and no updater metadata; signing and clean-system/real-camera/two-version update qualification remain outstanding. The v3.2 and earlier sections below are historical records.
+The latest release is v3.5, with an unsigned stable Windows 3.5.0 installer and complete automatic updates. All 14 attachments, public updater metadata and both GHCR aliases are verified. Actual local NSIS upgrade/data retention and public GitHub installer download passed; clean-system, real-camera and cross-device qualification remain separate.
+
+### Historical v3.4 / 历史 v3.4（2026-10-02）
+
+历史产品版本 [v3.4](https://github.com/LiaoYK001/Web-Camera-Monitor-Wall/releases/tag/v3.4)，不可变标签固定在 `4b2ab5f09b485a9f9cd870c918295df4315ab442`。完整 go2rtc、Scenes 与多投影、账号声音偏好、可关闭的自动弱网恢复、PWA 安全更新及原生 Windows x64 客户端已集成；验证详情见 [v3.4 发布说明](docs/release-notes-v3.4.md)。容器单镜像回归和公开 GHCR `v3.4` / `latest` 摘要核验通过，digest 为 `sha256:a1f2f5cee8df794d8cae04b4a8cf01b68a6ba562ee1ddedacc219063f4e4cdbc`。Release 附带 13 个已核验附件，含按维护者选择发布的 Windows `3.4.0-dev.0 DEVELOPMENT-UNSIGNED` 安装包。正式签名与干净系统/真实摄像机/两版升级验收仍待完成；没有发布 `latest.yml` 或 `dev.yml`。下面的 v3.2 及更早章节是历史记录。
+
+The historical v3.4 release is pinned to the revision above. Public container aliases and all 13 Release attachments have been verified. Windows is distributed as the unsigned 3.4.0-dev.0 test installer with manual installation and no updater metadata; signing and clean-system/real-camera/two-version update qualification remain outstanding. The v3.2 and earlier sections below are historical records.
 
 ### Historical v3.2 official baseline / 历史 v3.2 正式基底（版本日期 2026-09-21，实际发布 2026-09-22）
 
