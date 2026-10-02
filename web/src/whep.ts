@@ -1,3 +1,4 @@
+import { isPageVisible } from './pageVisibility';
 import { FrameCadence, congested, normalizePlaybackOptimization, type NetworkSample, type PlaybackOptimization } from './playbackOptimization';
 export interface PlaybackOptions { optimization?: Partial<PlaybackOptimization>; onQuality?: (weak: boolean) => void }
 export type ProgramConnectionState = 'checking' | 'connecting' | 'live' | 'reconnecting' | 'offline' | 'disabled';
@@ -293,7 +294,7 @@ function connectWhep(
     if (watchdogTimer !== undefined) return;
     watchdogTimer = window.setInterval(() => {
       if (closed || currentGeneration !== generation) return;
-      if (document.hidden) return; // a background tab pause is not a stall
+      if (!isPageVisible()) return; // a background tab pause is not a stall
       if (video.paused) {
         void video.play().catch((error: unknown) => {
           if (error instanceof DOMException && error.name === 'NotAllowedError') report({ autoplayBlocked: true, playing: false });

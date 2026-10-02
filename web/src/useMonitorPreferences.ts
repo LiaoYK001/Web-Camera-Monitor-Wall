@@ -1,3 +1,4 @@
+import { isPageVisible, subscribePageVisibility } from './pageVisibility';
 import { useCallback, useEffect, useRef, useState, type SetStateAction } from 'react';
 import { flushMonitorView, loadMonitorView, saveMonitorView } from './localRuntime';
 import { defaultMonitorView, normalizeMonitorView, type MonitorView } from './monitorView';
@@ -63,7 +64,7 @@ export function useMonitorPreferences(compact: boolean, skipLoad = false) {
       if (timer.current === null) return;
       window.clearTimeout(timer.current); timer.current = null; persist();
     };
-    const hidden = () => { if (document.hidden) flush(); };
+    const hidden = () => { if (!isPageVisible()) flush(); };
     const pagehide = () => {
       if (clearing.current || !writable.current || JSON.stringify(latest.current) === lastSaved.current) return;
       if (timer.current !== null) window.clearTimeout(timer.current);
@@ -72,16 +73,16 @@ export function useMonitorPreferences(compact: boolean, skipLoad = false) {
       void flushMonitorView(latest.current).catch(() => undefined);
     };
     const clear = () => { clearing.current = true; if (timer.current !== null) window.clearTimeout(timer.current); timer.current = null; };
-    document.addEventListener('visibilitychange', hidden);
+    const unlistenHidden = subscribePageVisibility(hidden);
     window.addEventListener('pagehide', pagehide);
     window.addEventListener('webobs:account-clearing', clear);
-    return () => { document.removeEventListener('visibilitychange', hidden); window.removeEventListener('pagehide', pagehide); window.removeEventListener('webobs:account-clearing', clear); flush(); };
+    return () => { unlistenHidden(); window.removeEventListener('pagehide', pagehide); window.removeEventListener('webobs:account-clearing', clear); flush(); };
   }, [persist]);
   useEffect(() => {
     if (!loaded || skipLoad) return;
     let active = true; let reading = false;
     const refresh = async () => {
-      if (!active || clearing.current || reading || document.hidden) return;
+      if (!active || clearing.current || reading || !isPageVisible()) return;
       const before = JSON.stringify(latest.current);
       if (before !== lastSaved.current) { if (lastQueued.current === '') persist(); return; }
       reading = true;
@@ -94,11 +95,11 @@ export function useMonitorPreferences(compact: boolean, skipLoad = false) {
       } catch { /* Keep the current preference while the server is unavailable. */ }
       finally { reading = false; }
     };
-    const visible = () => { if (!document.hidden) void refresh(); };
+    const visible = () => { if (isPageVisible()) void refresh(); };
     const interval = window.setInterval(() => void refresh(), 5000);
     window.addEventListener('focus', visible); window.addEventListener('online', visible);
-    document.addEventListener('visibilitychange', visible);
-    return () => { active = false; window.clearInterval(interval); window.removeEventListener('focus', visible); window.removeEventListener('online', visible); document.removeEventListener('visibilitychange', visible); };
+    const unlistenVisible = subscribePageVisibility(visible);
+    return () => { active = false; window.clearInterval(interval); window.removeEventListener('focus', visible); window.removeEventListener('online', visible); unlistenVisible(); };
   }, [loaded, skipLoad, persist]);
   return { view, setView, loaded, error, retry: () => setRetry((value) => value + 1) };
 }

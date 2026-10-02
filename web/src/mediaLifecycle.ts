@@ -2,11 +2,12 @@ export interface PlaybackVisibility {
   lowPowerEnabled: boolean;
   documentVisible: boolean;
   tileIntersecting: boolean;
+  nativeForeground?: boolean;
 }
 
 /** Low-power mode owns suspension; normal monitoring must not stop just because the page is partially occluded. */
 export function shouldRunPlayback(state: PlaybackVisibility): boolean {
-  return !state.lowPowerEnabled || (state.documentVisible && state.tileIntersecting);
+  return state.nativeForeground !== false && (!state.lowPowerEnabled || (state.documentVisible && state.tileIntersecting));
 }
 
 export function observeTileVisibility(element: Element, changed: (visible: boolean) => void): () => void {

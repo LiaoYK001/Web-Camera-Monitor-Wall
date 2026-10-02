@@ -48,3 +48,10 @@ __pycache__/
 /desktop/.cache/
 /desktop/runtime-sbom.cdx.json
 /.mimocode
+/android/.gradle/
+/android/build/
+/android/app/build/
+/android/local.properties
+/android/.cache/
+*.keystore
+*.jks

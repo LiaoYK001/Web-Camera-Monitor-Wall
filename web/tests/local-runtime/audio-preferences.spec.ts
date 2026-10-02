@@ -35,6 +35,19 @@ async function account(context: BrowserContext, server: Map<string, Preferences>
 const ready = async (page: Page) => expect(page.getByRole('slider', { name: '本地监听主音量' })).toBeVisible();
 const output = (page: Page) => page.locator('.hero-audio-control').getByRole('combobox', { name: '声音输出模式' });
 
+test('flushes pending account audio changes on the Android lifecycle signal without losing the workspace', async ({ page, context }) => {
+  const server = new Map<string, Preferences>();
+  await account(context, server, 'android-user');
+  await page.goto(fixture); await ready(page);
+  await page.getByRole('slider', { name: '本地监听主音量' }).fill('0.42');
+  await page.evaluate(() => { window.webobsAndroidForeground = false; window.dispatchEvent(new Event('webobs:visibility')); });
+  await expect.poll(() => server.get('android-user')?.localMonitorVolume).toBe(.42);
+  await expect(page.getByRole('slider', { name: '本地监听主音量' })).toHaveValue('0.42');
+  await page.evaluate(() => { window.webobsAndroidForeground = true; window.dispatchEvent(new Event('webobs:visibility')); });
+  await page.reload(); await ready(page);
+  await expect(page.getByRole('slider', { name: '本地监听主音量' })).toHaveValue('0.42');
+});
+
 test('restores listening, output, master and source controls after refresh and a fresh browser login', async ({ browser }) => {
   const server = new Map<string, Preferences>();
   let context = await browser.newContext();

@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
+import { subscribePageVisibility } from './pageVisibility';
 import { fetchAudioMeters, probeSourceProfile, replaceStudio } from './api';
 import DirectPreview from './DirectPreview';
 import { connectAudioTrack, type AudioChannelState, type AudioTrackConnection } from './audioTrackChannel';
@@ -29,6 +30,8 @@ interface ChannelEntry {
 }
 
 export default function AudioWorkspace({ studio, onCommitted }: { studio: StudioDocument; onCommitted: (studio: StudioDocument) => void }) {
+  const [nativeForeground, setNativeForeground] = useState(window.webobsAndroidForeground !== false);
+  useEffect(() => subscribePageVisibility(() => setNativeForeground(window.webobsAndroidForeground !== false)), []);
   const [sceneId, setSceneId] = useState(studio.previewSceneId);
   const [topology, setTopology] = useState<'direct' | 'composite'>('direct');
   const [snapshot, setSnapshot] = useState<DirectAudioSnapshot>({ state: 'disabled', inputCount: 0, level: 0, sources: [] });
@@ -104,7 +107,7 @@ export default function AudioWorkspace({ studio, onCommitted }: { studio: Studio
 
   // Keep the mixer and the audio-only WHEP channels in sync with the selection.
   useEffect(() => {
-    const activeSources = new Set(scene.sources.map((source) => source.id));
+    const activeSources = new Set(nativeForeground ? scene.sources.map((source) => source.id) : []);
     for (const [key, entry] of [...channels.current]) {
       const [sourceId, index] = key.split('#');
       const probed = tracksBySource[sourceId];
@@ -154,7 +157,7 @@ export default function AudioWorkspace({ studio, onCommitted }: { studio: Studio
         channels.current.delete(key);
       }
     }
-  }, [scene.id, sourceIds, selection, tracksBySource, mixer]);
+  }, [scene.id, sourceIds, selection, tracksBySource, mixer, nativeForeground]);
 
   useEffect(() => {
     const open = channels.current;
