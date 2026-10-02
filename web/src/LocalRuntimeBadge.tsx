@@ -18,7 +18,7 @@ export default function LocalRuntimeBadge() {
       window.removeEventListener('webobs:account-sync', accountChanged);
     };
   }, []);
-  return <div className="local-runtime-badge">
+  return <div className="local-runtime-badge" data-attention={accountSync === 'offline' || pwa === 'error'}>
     <span>账号配置：{accountSync === 'saved' ? '已同步' : accountSync === 'offline' ? '待连接服务器' : '检查中'}</span>
     <span>应用：{pwa === 'cached' ? '本地缓存运行' : pwa === 'unsupported' ? '需要受信任 HTTPS' : pwa === 'error' ? '缓存失败' : '正在缓存或更新'}</span>
     <span>安装：{install === 'installed' ? '已安装' : install === 'installable' ? '可安装' : '浏览器模式'}</span>

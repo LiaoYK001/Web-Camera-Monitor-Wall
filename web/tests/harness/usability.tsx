@@ -11,6 +11,7 @@ import { clearPrivateRuntimeState } from '../../src/localRuntime';
 import { defaultMonitorView, defaultSourceDecoration } from '../../src/monitorView';
 import type { OperationalIssue, RuntimeSettings, SceneDocument, SourceCatalogItem, StudioDocument } from '../../src/types';
 import '../../src/styles.css';
+import '../../src/interactions.css';
 
 const cameras: SourceCatalogItem[] = Array.from({ length: 53 }, (_, index) => ({
   schemaVersion: 2, id: `fixture-${index}`, name: `${index === 0 ? '大门入口' : index === 1 ? '仓库通道' : '办公区域'} ${String(index + 1).padStart(2, '0')}`,
@@ -72,7 +73,7 @@ if (fixtureOptions.has('profile')) {
 }
 let settings: RuntimeSettings = { schemaVersion: 1, revision: 1, values: { defaultTransportMode: 'auto', probeTimeoutSeconds: 8, sourceRecoveryEnabled: true, issueRetentionLimit: 256 }, deployment: { tls: 'read-only', ports: 'read-only', secrets: 'read-only', gpuDevice: 'read-only' } };
 const issue: OperationalIssue = { id: 'fixture-issue', code: 'FIXTURE_OFFLINE', severity: 'warning', state: 'open', scopeKind: 'device', scopeId: 'camera-fixture', component: 'playback', firstSeenAt: 1720000000, lastSeenAt: 1720000000, occurrences: 2, summary: '测试摄像机连接中断', explanation: '模拟网络断开，供界面验证。', recommendedActions: ['检查设备网络后重试。'], technicalDetails: { retryCount: 2 } };
-const metrics = { queries: [] as string[], saves: [] as unknown[], monitorSaves: [] as unknown[], preferenceWrites: [] as Array<{ path: string; value: unknown }>, settingsPatches: [] as unknown[], acknowledgments: 0, imports: 0, activeSaves: 0, maxConcurrentSaves: 0 };
+const metrics = { queries: [] as string[], saves: [] as unknown[], monitorSaves: [] as unknown[], preferenceWrites: [] as Array<{ path: string; value: unknown }>, settingsPatches: [] as unknown[], catalogPatches: [] as unknown[], acknowledgments: 0, imports: 0, activeSaves: 0, maxConcurrentSaves: 0 };
 const updateMetrics = () => document.documentElement.setAttribute('data-fixture-metrics', JSON.stringify(metrics));
 updateMetrics();
 const originalFetch = window.fetch.bind(window);
@@ -150,7 +151,12 @@ window.fetch = async (input, init) => {
     }
     if (init?.method === 'PATCH') {
       const update = JSON.parse(String(init.body));
+      metrics.catalogPatches.push(update); updateMetrics();
+      if (fixtureOptions.has('catalog-delay')) await wait(400);
+      if (fixtureOptions.has('catalog-fail')) return reply({ error: { code: 'TEMPORARY_FAILURE', message: '设备更新暂时失败' } }, 503);
       if (update.profiles?.[0]) Object.assign(camera.profiles[0], update.profiles[0]);
+      const { profiles: _profiles, ...metadata } = update;
+      Object.assign(camera, metadata);
       camera.revision += 1;
     }
     return reply(camera);

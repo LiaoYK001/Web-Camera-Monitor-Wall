@@ -8,6 +8,20 @@ v2.2 将 Local-first PWA 重组为日常监控运维工作区。v2.1 的媒体�
 
 ## Workspaces / 工作区
 
+### Current interaction refinements / 当前交互优化
+
+主导航按工作台、媒体与数据、系统分组，图标配合文字。桌面点击“快速切换”或按 Ctrl+K（macOS 为 Cmd+K），可以按页面名称或用途搜索；↑/↓ 选择，Enter 打开，Esc 关闭。移动端“更多”显示页面用途，滚动菜单后关闭按钮仍可触达。切换页面或账号配置前保留现有未保存修改检查；取消后继续编辑。
+
+Navigation groups workspaces with icons and labels. Quick Switch supports Ctrl+K/Cmd+K, purpose-based search, arrow selection, Enter and Esc. Mobile More describes each destination and keeps Close reachable. Navigation and account-profile switching respect unsaved edits.
+
+系统设置的分区入口可直达账号配置、客户端设置、播放优化、运行设置、关于与更新。播放优化标记为“按账号立即保存”；运行设置标记手动保存与待保存状态。普通页面使用文档滚动，桌面 Studio 保留画布工作区内滚动。弹窗阻止背景滚动，Esc 关闭并恢复焦点；从弹窗内拖到背景不会误关闭。系统选择减少动态效果时关闭进入动画及循环动效。
+
+Settings section shortcuts distinguish immediate account preference saving from explicitly saved runtime settings. Ordinary pages scroll in the document, while desktop Studio keeps its canvas workspace scroll. Dialogs lock background scrolling, restore focus and ignore drags that end on the backdrop. Reduced-motion preferences disable entrance and looping animations.
+
+场景卡区分 Program、Preview、待保存状态；选项按管理、布局与顺序、投影、删除分组，可用方向键浏览。F2 重命名。来源搜索保留已勾选项，也可清空选择。应用到草稿后仍需“保存并应用”。重叠来源的缩放手柄使用独立编辑覆盖层，不改变节目画面的来源层级。设备列表翻页回到顶部，保存时避免重复提交，批量导入完成或停止前提示等待；未改变或无效的码率上限不会写入。
+
+Scene cards distinguish Program, Preview and pending saves. Grouped actions support keyboard navigation and F2 rename; source search retains selection. Drafts still require Save and Apply. Resize handles use an independent editing overlay without changing program layers. Catalog paging returns to the top, mutations prevent repeat submissions, bulk import guards navigation, and unchanged or invalid bitrate caps are not written.
+
 The stable Hash routes are `#/monitor`, `#/studio`, `#/devices`, `#/audio`, `#/events`, `#/archive`, `#/storage`, and `#/settings`. Desktop uses a collapsible side-oriented information architecture; narrow PWA windows use bottom navigation and drawers. Monitor video contains only the source name, compact connection/problem status, and telemetry explicitly enabled by the operator. Full error text lives in Problem Center.
 
 稳定 Hash 路由为 `#/monitor`、`#/studio`、`#/devices`、`#/audio`、`#/events`、`#/archive`、`#/storage` 与 `#/settings`。桌面使用侧边信息架构，窄屏 PWA 使用底部导航和抽屉。监看画面只保留来源名、小型连接/问题状态以及操作员主动启用的统计；完整错误文本统一进入问题中心。

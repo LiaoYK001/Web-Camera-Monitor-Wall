@@ -71,7 +71,7 @@ test('edits the real Studio canvas over live video without renegotiating on drag
   await page.mouse.move(before!.x + 50, before!.y + 50); await page.mouse.down();
   await page.mouse.move(before!.x + 90, before!.y + 80, { steps: 8 }); await page.mouse.up();
   await expect.poll(async () => (await tile.boundingBox())!.x).toBeGreaterThan(before!.x + 15);
-  const handle = tile.getByRole('button', { name: /调整.*尺寸/ });
+  const handle = stage.getByRole('button', { name: /调整.*尺寸/ });
   await handle.scrollIntoViewIfNeeded();
   const grip = await handle.boundingBox();
   const width = (await tile.boundingBox())!.width;

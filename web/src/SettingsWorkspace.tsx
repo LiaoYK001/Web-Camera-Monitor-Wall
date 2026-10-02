@@ -21,6 +21,11 @@ export default function SettingsWorkspace({ studio, onProfileSelected }: {
   const [busy, setBusy] = useState(false);
   const [loading, setLoading] = useState(true);
   const [reload, setReload] = useState(0);
+  const jumpTo = (id: string) => {
+    const target = document.getElementById(id);
+    target?.focus({ preventScroll: true });
+    target?.scrollIntoView({ block: 'start', behavior: window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 'instant' : 'smooth' });
+  };
   useEffect(() => {
     const controller = new AbortController();
     setLoading(true);
@@ -66,11 +71,17 @@ export default function SettingsWorkspace({ studio, onProfileSelected }: {
     setNotice(''); setReload((value) => value + 1);
   };
   return <section className="settings-workspace page-panel">
-    <header className="page-heading"><div><span className="eyebrow">Settings</span><h1>系统设置</h1><p>管理账号配置档案和服务端运行设置。修改运行设置后，点击保存生效。</p></div></header>
-    <ConfigProfiles studio={studio ?? null} onProfileSelected={onProfileSelected} />
-    <DesktopSettings />
-    <AboutSettings />
-    <section className="playback-optimization-settings" aria-label="自动播放优化"><h2>弱网与慢速流自动优化</h2>
+    <header className="page-heading"><div><span className="eyebrow">Settings</span><h1>系统设置</h1><p>播放偏好按账号立即保存；服务端运行设置需点击“保存设置”。</p></div></header>
+    <nav className="settings-section-nav" aria-label="设置分区">
+      <button type="button" onClick={() => jumpTo('settings-profiles')}>账号配置</button>
+      {window.webobsDesktop && <button type="button" onClick={() => jumpTo('settings-desktop')}>Windows 客户端</button>}
+      <button type="button" onClick={() => jumpTo('settings-playback')}>播放优化</button>
+      <button type="button" onClick={() => jumpTo('settings-runtime')}>运行设置{dirty && <i aria-label="有未保存修改" />}</button>
+      <button type="button" onClick={() => jumpTo('settings-about')}>关于与更新</button>
+    </nav>
+    <div id="settings-profiles" className="settings-section-target" tabIndex={-1}><ConfigProfiles studio={studio ?? null} onProfileSelected={onProfileSelected} /></div>
+    {window.webobsDesktop && <div id="settings-desktop" className="settings-section-target" tabIndex={-1}><DesktopSettings /></div>}
+    <section id="settings-playback" tabIndex={-1} className="playback-optimization-settings settings-section-target" aria-label="自动播放优化"><header className="settings-section-heading"><h2>弱网与慢速流自动优化</h2><span className="save-mode-badge">按账号立即保存</span></header>
       <p>默认开启，按当前账号自动保存。适应低帧率来源，减少误判重连；持续丢包或抖动时优先使用设备已有子码流，网络稳定后恢复。不会为此修改设备配置或强制转码。</p>
       {preferenceError && <p role="alert">{preferenceError}</p>}
       <fieldset disabled={!preferencesLoaded}>
@@ -79,8 +90,8 @@ export default function SettingsWorkspace({ studio, onProfileSelected }: {
           <input type="checkbox" disabled={!view.playbackOptimization.enabled} checked={view.playbackOptimization[key]} onChange={(event) => setView((value) => ({ ...value, playbackOptimization: { ...value.playbackOptimization, [key]: event.target.checked } }))} />{label}</label>)}
       </fieldset><small>设置立即保存。关闭总开关后保留所选 Profile 和常规连接恢复；画面源本身的帧率、编码和带宽仍决定可展示的效果。</small>
     </section>
-    <form className="runtime-settings-form" onSubmit={(event) => void save(event)} aria-label="运行设置" aria-busy={loading || busy}>
-      <header><h2>运行设置</h2><button type="button" disabled={busy || loading} onClick={reloadSettings}>重新读取设置</button></header>
+    <form id="settings-runtime" tabIndex={-1} className="runtime-settings-form settings-section-target" onSubmit={(event) => void save(event)} aria-label="运行设置" aria-busy={loading || busy}>
+      <header><h2>运行设置</h2><span className={`save-mode-badge ${dirty ? 'unsaved' : ''}`}>{dirty ? '有未保存修改' : '手动保存生效'}</span><button type="button" disabled={busy || loading} onClick={reloadSettings}>重新读取设置</button></header>
       {error && <div className="alert conflict-alert" role="alert">{error}</div>}
       {loading && <p role="status">正在读取运行设置…</p>}
       {draft && <fieldset disabled={busy || loading}>
@@ -97,12 +108,13 @@ export default function SettingsWorkspace({ studio, onProfileSelected }: {
             <p>问题记录保留 128–4096 条。</p>
           </article>
         </div>
-        <footer className="settings-save-bar"><span role="status">{busy ? '正在保存…' : dirty ? '有未保存的修改' : notice || '设置已载入'}</span>
+        <footer className={`settings-save-bar ${dirty ? 'has-changes' : ''}`}><span role="status">{busy ? '正在保存…' : dirty ? '有未保存的修改' : notice || '设置已载入'}</span>
           <button type="button" disabled={!dirty} onClick={() => { setDraft(settings!.values); setError(''); setNotice('已撤销未保存的修改'); }}>撤销修改</button>
           <button className="primary-button" type="submit" disabled={!dirty || !valid}>保存设置</button>
         </footer>
       </fieldset>}
     </form>
     {settings && <article className="deployment-readonly"><h2>部署配置（只读）</h2><p>TLS、端口、Secret 路径和 GPU 设备通过部署配置修改并重启。</p><div>{Object.keys(settings.deployment).map((key) => <span key={key}>{key} · 只读</span>)}</div></article>}
+    <div id="settings-about" className="settings-section-target" tabIndex={-1}><AboutSettings /></div>
   </section>;
 }
