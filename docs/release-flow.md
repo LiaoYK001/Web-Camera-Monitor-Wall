@@ -54,9 +54,9 @@ docker compose -f compose.yaml up --build          # 或 podman compose
 
 ## 4. 打包发布 / Package and publish
 
-容器和 Windows 等多个产品附件需要一次性发布时，可先使用 PowerShell 的 `-PrepareOnly`（Bash 设置 `WEBOBS_RELEASE_PREPARE_ONLY=true`）。它仍从干净 `main` 构建并推送 `sha-<提交>` 候选，生成并核验对应源码，上传到 Draft 后停止；不创建正式 Git 标签、不发布 Release、不提升版本或 `latest`。通过既有不可变附件工具核验其他获准附件后，在**同一提交**取消此选项并重新执行完成发布。未签名 Windows 开发附件始终不能包含正式更新元数据；正式 Windows 仍遵循其签名、源码和验收检查。Draft 准备不代表正式发行成功。
+容器和 Windows 等多个产品附件需要一次性发布时，可先使用 PowerShell 的 `-PrepareOnly`（Bash 设置 `WEBOBS_RELEASE_PREPARE_ONLY=true`）。它仍从干净 `main` 构建并推送 `sha-<提交>` 候选，生成并核验对应源码，上传到 Draft 后停止；不创建正式 Git 标签、不发布 Release、不提升版本或 `latest`。通过既有不可变附件工具核验其他获准附件后，在**同一提交**取消此选项并重新执行完成发布。未签名 Windows 开发附件始终不能包含正式更新元数据；正式 Windows 可按维护者选择发布带完整更新元数据的 UNSIGNED 安装包；签名为可选，源码、摘要、实际安装证据及验收边界检查继续保留。Draft 准备不代表正式发行成功。
 
-For a combined immutable release, `-PrepareOnly` / `WEBOBS_RELEASE_PREPARE_ONLY=true` prepares the candidate and source Draft without publishing the Release or moving stable/version/latest tags. Verify all approved attachments, then resume the normal publisher from the same revision. Existing Windows signing, source and qualification requirements still apply.
+For a combined immutable release, `-PrepareOnly` / `WEBOBS_RELEASE_PREPARE_ONLY=true` prepares the candidate and source Draft without publishing the Release or moving stable/version/latest tags. Verify all approved attachments, then resume the normal publisher from the same revision. Stable Windows packages may be explicitly labeled UNSIGNED with complete updater metadata; signing is optional. Source, digest, actual-install evidence and disclosed qualification boundaries still apply.
 
 在 **`main`** 上执行（发布从稳定基线出）：
 

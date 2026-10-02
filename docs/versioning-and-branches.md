@@ -39,6 +39,7 @@ Release series use `v<major>.<minor>`; implementation milestones use `v<major>-M
 | `v3.2` | `v3-M2` + Feedback 5 / 反馈 5 | Historical official baseline; disclosed long-test exception and source limitation retained / 历史正式基底，保留已披露的免长测例外和来源限制 |
 | `v3.3` | `v3-M2` + Feedback 6 and account, LAN, and monitor fixes / 反馈 6、账户、局域网与监控修复 | Published historical baseline / 已发布的历史基底 |
 | `v3.4` | `v3-M2` + go2rtc, Scenes, account audio, playback recovery and Windows x64 / go2rtc、Scenes、账号声音、播放恢复与 Windows x64 | Published at `4b2ab5f09b48`; Windows 3.4.0-dev.0 is an explicitly unsigned test installer with no updater metadata / 已发布；Windows 为明确标记的未签名测试安装包，不含更新元数据 |
+| `v3.5` | `v3-M2` + full unsigned Windows updates / 完整未签名 Windows 自动更新 | Published at `e7b6a2ad5f87`; Windows 3.5.0 UNSIGNED, latest.yml, two-version local NSIS upgrade and public GitHub download verified; clean-system/camera qualification separate / 已发布，实际本机升级与公开下载通过，干净系统/摄像机验收另列 |
 
 A milestone name is an engineering gate, not a release date. A release may be cut only from completed, reviewed gates. Public SemVer tags may add a patch component such as `v1.1.1`; an existing tag is immutable.
 

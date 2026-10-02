@@ -4,7 +4,7 @@
 
 ## 当前可下载版本
 
-[v3.4 Release](https://github.com/LiaoYK001/Web-Camera-Monitor-Wall/releases/tag/v3.4) 已于 2026-10-02 附带 [Windows x64 安装包](https://github.com/LiaoYK001/Web-Camera-Monitor-Wall/releases/download/v3.4/WebOBS-3.4.0-dev.0-windows-x64-DEVELOPMENT-UNSIGNED.exe)。版本为 `3.4.0-dev.0 DEVELOPMENT-UNSIGNED`，按维护者选择先提供未签名测试版，需手动下载安装；开发包不启用下述正式更新流程。Release 未上传 `latest.yml` 或 `dev.yml`。摘要与验证边界见 [v3.4 发布说明](release-notes-v3.4.md)。
+[v3.5 Release](https://github.com/LiaoYK001/Web-Camera-Monitor-Wall/releases/tag/v3.5) 已于 2026-10-02 附带 [Windows x64 安装包](https://github.com/LiaoYK001/Web-Camera-Monitor-Wall/releases/download/v3.5/WebOBS-3.5.0-windows-x64-UNSIGNED.exe)。版本为 `3.5.0 UNSIGNED`，按维护者选择暂不签名；完整正式自动更新已启用，附带 `latest.yml` 与 blockmap。v3.4 开发版需手动安装 v3.5 一次，此后可使用内置更新。摘要与验证边界见 [v3.5 发布说明](release-notes-v3.5.md)。
 
 ## 默认行为
 
@@ -89,7 +89,7 @@ NSIS 自定义初始化仅修改安装器及其子进程的 TEMP/TMP：在现有
 Windows 10、11 各自记录实际安装、媒体、LAN 与两版更新结果。`desktop/qualification.example.json` 只是格式示例，不能作为通过证明；完整检查名见 `desktop/scripts/qualification.mjs`。维护者还需收集匹配第三方二进制的完整对应源码（包括 FFmpeg 及其启用的 GPL 组件），提供已审核 `SOURCE-MANIFEST.json`，其字段为 `revision`、`version`、`reviewed: true`、`files: [{name, sha256}]`。
 
 ```powershell
-./desktop/scripts/publish-release.ps1 -Tag v3.4 `
+./desktop/scripts/publish-release.ps1 -Tag v3.5 `
   -ArtifactDirectory 'D:/release/webobs-windows' `
   -QualificationReceipts 'D:/private/windows-qualification.json' `
   -CorrespondingThirdPartySourceDirectory 'D:/release/matching-third-party-sources'
@@ -99,7 +99,7 @@ Windows 10、11 各自记录实际安装、媒体、LAN 与两版更新结果。
 
 ## 当前验证边界
 
-已通过 Windows 原生 C++/OBS 编译与 CTest、完整 NSIS 开发包构建、桌面逻辑与真实 Electron 检查。本机 Windows 11 的捆绑服务已通过首个账号、认证 go2rtc、快照和重启后会话恢复；RTX 3060 Ti 实际通过 NVENC 样本探测及 OBS Program 编码。完整构建必须通过 `pnpm --dir desktop test:runtime` 和 `pnpm --dir desktop test:main`，后者使用真实桌面入口检查两个固定 Scene 投影、共享登录、关闭主窗口保留服务及正常退出。均使用临时数据目录，不覆盖真实摄像机。Windows 10/11 干净安装、真实摄像机播放、LAN 与两个签名安装版本的更新故障测试仍须分别记录；没有完成这些实际检查前，不宣称阶段一达到生产验收。
+已通过 Windows 原生 C++/OBS 编译与 CTest、完整 NSIS 开发包构建、桌面逻辑与真实 Electron 检查。本机 Windows 11 的捆绑服务已通过首个账号、认证 go2rtc、快照和重启后会话恢复；RTX 3060 Ti 实际通过 NVENC 样本探测及 OBS Program 编码。完整构建必须通过 `pnpm --dir desktop test:runtime` 和 `pnpm --dir desktop test:main`，后者使用真实桌面入口检查两个固定 Scene 投影、共享登录、关闭主窗口保留服务及正常退出。均使用临时数据目录，不覆盖真实摄像机。Windows 10/11 干净安装、真实摄像机播放与跨设备 LAN 仍须分别记录。v3.5 已验证本机两版真实未签名 NSIS 升级和公开 GitHub 下载；后续公开源两版安装及更新故障验收仍须记录；没有完成这些实际检查前，不宣称阶段一达到生产验收。
 
 打包后还必须通过 `pnpm --dir desktop test:package`：启动真正的 `win-unpacked/WebOBS.exe`，验证 ASAR、生产依赖、独立账号和 go2rtc，并检查主进程异常退出后 Job 收束所有后代。本机另已验证真实 Caddy 的 HTTPS、显式 CA、认证与 go2rtc 代理；未修改系统信任和防火墙，不等于其他设备的浏览器及媒体验收。
 

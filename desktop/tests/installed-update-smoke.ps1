@@ -11,7 +11,9 @@ if((ProductEntries).Count){throw 'Existing WebOBS installation must remain untou
 $shortcuts=@((Join-Path ([Environment]::GetFolderPath('Desktop')) 'WebOBS.lnk'),(Join-Path ([Environment]::GetFolderPath('Programs')) 'WebOBS.lnk'))
 if(@($shortcuts|Where-Object {Test-Path -LiteralPath $_}).Count){throw 'Existing shortcuts must remain untouched'}
 $build=(Join-Path $repo 'build')
-$root=Join-Path $build ('upgrade-'+[Guid]::NewGuid().ToString('N').Substring(0,8))
+# Older packages contain deep Monaco paths; keep the harness path within NSIS
+# MAX_PATH while still testing Unicode directories on the installation volume.
+$root=Join-Path $build ('u-'+[Guid]::NewGuid().ToString('N').Substring(0,8))
 $installation=Join-Path $root '客户端 安装'
 New-Item -ItemType Directory -Path $root -Force|Out-Null
 $old=Join-Path $repo "desktop/out/$PreviousVersion/WebOBS-$PreviousVersion-windows-x64-UNSIGNED.exe"
@@ -38,5 +40,5 @@ try {
     }
     $env:LOCALAPPDATA=$savedProfile
     Remove-Item Env:WEBOBS_UPGRADE_SMOKE_ROOT,Env:WEBOBS_UPGRADE_SMOKE_INSTALL,Env:WEBOBS_UPGRADE_SMOKE_ARTIFACTS,Env:WEBOBS_UPGRADE_SMOKE_FROM,Env:WEBOBS_UPGRADE_SMOKE_VERSION -ErrorAction SilentlyContinue
-    if(-not (ProductEntries).Count -and $root.StartsWith($build+[IO.Path]::DirectorySeparatorChar+'upgrade-',[StringComparison]::OrdinalIgnoreCase) -and -not (Get-Item -LiteralPath $root).Attributes.HasFlag([IO.FileAttributes]::ReparsePoint)){Remove-Item -LiteralPath $root -Recurse -Force}
+    if(-not (ProductEntries).Count -and $root.StartsWith($build+[IO.Path]::DirectorySeparatorChar+'u-',[StringComparison]::OrdinalIgnoreCase) -and -not (Get-Item -LiteralPath $root).Attributes.HasFlag([IO.FileAttributes]::ReparsePoint)){Remove-Item -LiteralPath $root -Recurse -Force}
 }
