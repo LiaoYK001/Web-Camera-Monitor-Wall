@@ -1,4 +1,24 @@
-import { expect, test } from '@playwright/test';
+import { expect, test, type Page } from '@playwright/test';
+
+const preferencesLayoutSaved = (page: Page) => page.evaluate(async () => {
+  const response = await fetch('/api/v2/account/preferences/workspace-layout');
+  return (await response.json()).value?.style;
+});
+
+test.beforeEach(async ({ page }) => {
+  const preferences = new Map<string, unknown>();
+  await page.route('**/api/**', async (route) => {
+    const path = new URL(route.request().url()).pathname;
+    if (path === '/api/v1/auth/setup') return route.fulfill({ json: { registrationOpen: false } });
+    if (path === '/api/v2/account/me') return route.fulfill({ json: { username: 'workspace-fixture', displayName: 'Test', avatar: 'camera', roles: ['admin'], permissions: ['settings.manage'], scopes: [], acl: [] } });
+    if (path.startsWith('/api/v2/account/preferences/')) {
+      if (route.request().method() === 'PUT') preferences.set(path, route.request().postDataJSON().value);
+      return route.fulfill({ json: { value: preferences.get(path) ?? null } });
+    }
+    if (path === '/api/v2/operations/issues') return route.fulfill({ json: { issues: [] } });
+    return route.fulfill({ status: 404, json: {} });
+  });
+});
 
 test('shows the global OBS/classic mode picker and switches workspace style', async ({ page }) => {
   await page.route('**/api/v1/auth/session', (route) => route.fulfill({
@@ -16,6 +36,7 @@ test('shows the global OBS/classic mode picker and switches workspace style', as
   await expect(classicButton).toHaveAttribute('aria-pressed', 'true');
   await expect(page.locator('.workspace-shell')).toHaveAttribute('data-workspace-style', 'classic');
   await expect.poll(() => page.evaluate(() => window.location.hash)).toBe('');
+  await expect.poll(() => preferencesLayoutSaved(page)).toBe('classic');
 
   await page.reload();
   await expect(page.locator('.workspace-shell')).toHaveAttribute('data-workspace-style', 'classic');
@@ -74,6 +95,7 @@ test('allows the device catalog to scroll past the first viewport', async ({ pag
   await expect(page.getByRole('heading', { name: '设备与来源' })).toBeVisible();
 
   const before = await page.evaluate(() => window.scrollY);
+  await page.locator('.source-catalog h1').hover();
   await page.mouse.wheel(0, 900);
   await expect.poll(() => page.evaluate(() => window.scrollY)).toBeGreaterThan(before);
 });
@@ -104,8 +126,8 @@ test('offers a guided import for sources that still live in the legacy Studio fi
   });
   await page.goto('/#/devices');
   await page.getByRole('button', { name: '检查旧 Studio 来源' }).click();
-  await expect(page.getByRole('status')).toContainText('可导入 1');
-  await expect(page.getByRole('status')).toContainText('需配置 1');
+  await expect(page.locator('.legacy-import-panel')).toContainText('可导入 1');
+  await expect(page.locator('.legacy-import-panel')).toContainText('需配置 1');
   await page.getByRole('button', { name: '导入可安全关联项' }).click();
-  await expect(page.getByRole('status')).toContainText('已关联 1');
+  await expect(page.locator('.legacy-import-panel')).toContainText('已关联 1');
 });

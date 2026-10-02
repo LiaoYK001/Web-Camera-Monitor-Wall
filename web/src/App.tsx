@@ -1275,15 +1275,14 @@ export default function App() {
                         <span>{item.width} × {item.height}{item.locked ? ' · 锁定' : ''}</span>
                       </div>
                       {!item.visible && <span className="hidden-label">已隐藏</span>}
-                      <button
-                        className="resize-handle"
-                        type="button"
-                        aria-label={`调整 ${source.name} 的尺寸`}
-                        onPointerDown={(event) => beginPointer(event, item, 'resize')}
-                      />
                     </div>
                   );
                 })}
+                {draft.items.filter((item) => selectedSourceIds.includes(item.sourceId) && !item.locked).map((item) => <div key={`selection-${item.id}`} className="tile-selection-overlay" style={{
+                  left: `${item.x / draft.canvas.width * 100}%`, top: `${item.y / draft.canvas.height * 100}%`,
+                  width: `${item.width / draft.canvas.width * 100}%`, height: `${item.height / draft.canvas.height * 100}%`, transform: `rotate(${item.rotation}deg)`,
+                }}><button className="resize-handle" type="button" aria-label={`调整 ${draft.sources.find((source) => source.id === item.sourceId)?.name ?? '来源'} 的尺寸`}
+                  onPointerDown={(event) => beginPointer(event, item, 'resize')} /></div>)}
               </div>
             )}
           </div>

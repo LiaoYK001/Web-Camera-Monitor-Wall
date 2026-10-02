@@ -6,6 +6,7 @@ import ProjectorView from './ProjectorView';
 import { projectorModeFromHash } from './projector';
 import { registerPwaRuntime } from './pwaRuntime';
 import './styles.css';
+import './interactions.css';
 
 window.trustedTypes?.createPolicy('default', {
   createHTML: (input) => {

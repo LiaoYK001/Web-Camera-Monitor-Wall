@@ -3,6 +3,7 @@ import CameraRegistry from './CameraRegistry';
 import Go2rtcStreams from './Go2rtcStreams';
 import DirectPreview from './DirectPreview';
 import Modal from './Modal';
+import { useDesktopWork } from './desktopRuntime';
 import {
   batchSourceCatalog, createCamera, fetchLegacySourceImport, fetchSourceCatalog, fetchSourceCatalogItem, importLegacySources, patchSourceCatalogItem, probeSourceProfile,
 } from './api';
@@ -63,12 +64,16 @@ function ProfileEditor({ camera, profile, onChanged, onPreview }: {
 }) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
-  const patch = async (change: Record<string, unknown>) => {
-    setBusy(true); setError('');
+  const [pending, setPending] = useState<Partial<SourceCatalogProfile>>({});
+  const shown = { ...profile, ...pending };
+  const patch = async (change: Partial<SourceCatalogProfile>) => {
+    if (busy) return;
+    setBusy(true); setPending(change); setError('');
     try { onChanged(await patchSourceCatalogItem(camera.id, camera.revision, { profiles: [{ id: profile.id, ...change }] })); }
     catch (reason) { setError(reason instanceof Error ? reason.message : 'Profile 更新失败'); }
-    finally { setBusy(false); }
+    finally { setBusy(false); setPending({}); }
   };
+  useDesktopWork(`source-profile-${camera.id}-${profile.id}`, false, busy);
   const transports = transportOptions[camera.adapter] ?? ['auto'];
   return <article className="catalog-profile">
     <header><div><strong>{profile.name}</strong><span>{profile.role} · {profile.videoCodec || 'unknown'}{profile.audioCodec ? ` + ${profile.audioCodec}` : ''}</span></div>
@@ -84,21 +89,23 @@ function ProfileEditor({ camera, profile, onChanged, onPreview }: {
           });
       }}>{busy ? '处理中…' : '探测轨道'}</button></div></header>
     <div className="profile-settings">
-      <label><span>启用</span><input type="checkbox" checked={profile.enabled} disabled={busy}
+      <label><span>启用</span><input type="checkbox" checked={shown.enabled} disabled={busy}
         onChange={(event) => void patch({ enabled: event.target.checked })} /></label>
-      <label><span>自动探测</span><input type="checkbox" checked={profile.autoProbe !== false} disabled={busy}
+      <label><span>自动探测</span><input type="checkbox" checked={shown.autoProbe !== false} disabled={busy}
         onChange={(event) => void patch({ autoProbe: event.target.checked })} /></label>
-      <label><span>传输</span><select value={profile.transportMode} disabled={busy}
-        onChange={(event) => void patch({ transportMode: event.target.value })}>{transports.map((value) => <option key={value}>{value}</option>)}</select></label>
+      <label><span>传输</span><select value={shown.transportMode} disabled={busy}
+        onChange={(event) => void patch({ transportMode: event.target.value as TransportMode })}>{transports.map((value) => <option key={value}>{value}</option>)}</select></label>
       <label><span>实时码率上限 kbps</span><input type="number" min="32" max="1000000" placeholder="不限制"
         key={`${profile.id}-${profile.liveBitrateCapKbps ?? 'none'}`} defaultValue={profile.liveBitrateCapKbps ?? ''} disabled={busy} onBlur={(event) => {
           const value = event.currentTarget.value === '' ? null : Number(event.currentTarget.value);
-          void patch({ liveBitrateCapKbps: value });
+          if (!event.currentTarget.validity.valid || (value !== null && !Number.isInteger(value))) { setError('码率上限需为 32–1000000 的整数 kbps，留空表示不限制。'); return; }
+          setError((current) => current.startsWith('码率上限需为') ? '' : current);
+          if (value !== (profile.liveBitrateCapKbps ?? null)) void patch({ liveBitrateCapKbps: value });
         }} /></label>
-      <label><span>音频预期</span><select value={profile.audioExpectation} disabled={busy}
-        onChange={(event) => void patch({ audioExpectation: event.target.value })}><option value="auto">自动</option><option value="required">必须有</option><option value="disabled">禁用</option></select></label>
+      <label><span>音频预期</span><select value={shown.audioExpectation} disabled={busy}
+        onChange={(event) => void patch({ audioExpectation: event.target.value as SourceCatalogProfile['audioExpectation'] })}><option value="auto">自动</option><option value="required">必须有</option><option value="disabled">禁用</option></select></label>
       {profile.endpointDisplay?.startsWith('http://') && <label className="insecure-http-opt-in"><span>允许 HTTP 明文媒体</span>
-        <input type="checkbox" checked={profile.allowInsecureHttp} disabled={busy}
+        <input type="checkbox" checked={shown.allowInsecureHttp} disabled={busy}
           onChange={(event) => void patch({ allowInsecureHttp: event.target.checked })} />
         <small>仅允许 Docker Gateway/NVR 拉取；HTTPS 浏览器不会将其视为真直连。</small></label>}
     </div>
@@ -141,6 +148,21 @@ export default function SourceCatalog() {
   const [bulkMessage, setBulkMessage] = useState('');
   const [bulkProgress, setBulkProgress] = useState({ done: 0, total: 0 });
   const stopBulk = useRef(false);
+  const pendingUpdates = useRef(new Set<string>());
+  const [updating, setUpdating] = useState<string[]>([]);
+  const [notice, setNotice] = useState('');
+  const toolbarRef = useRef<HTMLDivElement>(null);
+  useDesktopWork('source-catalog-operations', false, bulkBusy || batchBusy || updating.length > 0);
+  useEffect(() => {
+    if (!bulkBusy && !batchBusy && !updating.length) return;
+    const warn = (event: BeforeUnloadEvent) => { event.preventDefault(); event.returnValue = ''; };
+    const leave = (event: Event) => {
+      event.preventDefault(); setNotice(bulkBusy ? '正在批量添加，请等待完成，或先点击“停止后续添加”。' : '正在更新设备，请稍候再切换页面。');
+    };
+    window.addEventListener('beforeunload', warn);
+    window.addEventListener('webobs:before-navigate', leave);
+    return () => { window.removeEventListener('beforeunload', warn); window.removeEventListener('webobs:before-navigate', leave); };
+  }, [bulkBusy, batchBusy, updating.length]);
   useEffect(() => () => { stopBulk.current = true; }, []);
   const reload = () => setReloadVersion((value) => value + 1);
   useEffect(() => {
@@ -161,7 +183,7 @@ export default function SourceCatalog() {
   }, [adapter, enabled, query, page, reloadVersion]);
   useEffect(() => {
     const timer = window.setInterval(() => {
-      if (!document.hidden && !loading && !batchBusy && !bulkBusy) reload();
+      if (!document.hidden && !loading && !batchBusy && !bulkBusy && !pendingUpdates.current.size) reload();
     }, 30_000);
     return () => window.clearInterval(timer);
   }, [loading, batchBusy, bulkBusy]);
@@ -193,7 +215,7 @@ export default function SourceCatalog() {
       profile: next.profiles.find((profile) => profile.id === current.profile.id) ?? current.profile } : current);
   };
   const batch = async (change: Record<string, unknown> | ((item: SourceCatalogItem) => Record<string, unknown>)) => {
-    if (!selectedItems.length || batchBusy) return;
+    if (!selectedItems.length || batchBusy || pendingUpdates.current.size) return;
     setBatchBusy(true); setError('');
     try {
       const result = await batchSourceCatalog(selectedItems.map((item) => ({ cameraId: item.id, revision: item.revision,
@@ -203,8 +225,11 @@ export default function SourceCatalog() {
     finally { setBatchBusy(false); }
   };
   const updateCamera = async (camera: SourceCatalogItem, change: Record<string, unknown>) => {
-    try { replace(await patchSourceCatalogItem(camera.id, camera.revision, change)); setError(''); }
+    if (pendingUpdates.current.has(camera.id) || batchBusy) return;
+    pendingUpdates.current.add(camera.id); setUpdating([...pendingUpdates.current]); setNotice('');
+    try { replace(await patchSourceCatalogItem(camera.id, camera.revision, change)); setError(''); setNotice(`“${camera.name}”已更新。`); }
     catch (reason) { setError(reason instanceof Error ? reason.message : '更新失败，请刷新后重试'); }
+    finally { pendingUpdates.current.delete(camera.id); setUpdating([...pendingUpdates.current]); }
   };
   const parsedBulk = useMemo(() => parseBulkSourceLines(bulkText), [bulkText]);
   const importBulk = async () => {
@@ -250,15 +275,15 @@ export default function SourceCatalog() {
       {bulkMessage && <p role="status">{bulkMessage}</p>}
     </div>}
     {legacyItems.length > 0 && <div className="legacy-import-panel" role="status"><strong>旧 Studio 来源</strong><span>已关联 {legacyItems.filter((item) => item.state === 'linked').length}</span><span>可导入 {legacyItems.filter((item) => item.state === 'ready_to_import').length}</span><span>需配置 {legacyItems.filter((item) => item.state === 'needs_configuration').length}</span><button type="button" disabled={legacyBusy || !legacyItems.some((item) => item.state === 'ready_to_import')} onClick={importReadyLegacy}>导入可安全关联项</button></div>}
-    <div className="catalog-toolbar">
+    <div className="catalog-toolbar" ref={toolbarRef}>
       <input aria-label="搜索设备" placeholder="搜索名称、标签或分组" value={query} onChange={(event) => { setQuery(event.target.value.slice(0, 128)); setPage(1); }} />
       <select aria-label="协议筛选" value={adapter} onChange={(event) => { setAdapter(event.target.value); setPage(1); }}><option value="">全部协议</option>{['onvif','rtsp','whep','hls','mjpeg','snapshot','http-flv','srt','rtp','v4l2'].map((value) => <option key={value}>{value}</option>)}</select>
       <select aria-label="启用状态" value={enabled} onChange={(event) => { setEnabled(event.target.value); setPage(1); }}><option value="">全部状态</option><option value="true">已启用</option><option value="false">已停用</option></select>
-      <button type="button" disabled={loading} onClick={reload}>刷新列表</button>
+      <button type="button" aria-label="刷新列表" disabled={loading} onClick={reload}>{loading ? '刷新中…' : '刷新列表'}</button>
       {(query || adapter || enabled) && <button type="button" onClick={resetFilters}>清除筛选</button>}
     </div>
     <div className="catalog-summary"><label className="catalog-select-page"><input type="checkbox" aria-label="全选当前页" disabled={loading || batchBusy || !items.length} checked={items.length > 0 && items.every((item) => selected.includes(item.id))} onChange={(event) => setSelected(event.target.checked ? items.map((item) => item.id) : [])} />全选本页</label><span>共 {total} 台 · 当前显示 {items.length} 台</span><span aria-live="polite">{loading ? '正在更新…' : `第 ${page} / ${Math.max(1, Math.ceil(total / pageSize))} 页`}</span></div>
-    {selectedItems.length > 0 && <fieldset className="catalog-batch-bar" disabled={batchBusy || loading}>
+    {selectedItems.length > 0 && <fieldset className="catalog-batch-bar" disabled={batchBusy || loading || updating.length > 0}>
       <legend>已选 {selectedItems.length} 台</legend>
       <button type="button" onClick={() => setSelected([])}>取消选择</button>
       <button type="button" onClick={() => void batch({ enabled: true })}>批量启用</button>
@@ -270,11 +295,13 @@ export default function SourceCatalog() {
       <button type="button" disabled={!batchTag.trim()} onClick={() => void batch((item) => ({ tags: item.tags.filter((tag) => tag !== batchTag.trim()) }))}>移除标签</button>
     </fieldset>}
     {error && <div className="alert conflict-alert" role="alert">{error}</div>}
+    {notice && <p className="catalog-operation-notice" role="status">{notice}</p>}
     {loading && !items.length ? <p className="catalog-loading">正在读取设备列表…</p> : <div className="catalog-table" role="table" aria-busy={loading} aria-label="设备与来源">
       <div className="catalog-row catalog-head" role="row"><input type="checkbox" aria-label="选择本页全部设备" disabled={loading || batchBusy || !items.length} checked={items.length > 0 && items.every((item) => selected.includes(item.id))} onChange={(event) => setSelected(event.target.checked ? items.map((item) => item.id) : [])} /><span>名称 / 类型</span><span>协议 / 地址</span><span>状态</span><span>Profiles / 轨道</span><span>标签 / 分组</span><span>操作</span></div>
       {items.map((camera) => {
         const opened = expanded.includes(camera.id);
-        return <div className="catalog-record" key={camera.id}>
+        const saving = updating.includes(camera.id);
+        return <div className="catalog-record" key={camera.id} aria-busy={saving} data-expanded={opened}>
           <div className="catalog-row" role="row">
             <input aria-label={`选择 ${camera.name}`} disabled={loading || batchBusy} type="checkbox" checked={selected.includes(camera.id)} onChange={(event) => setSelected((value) => event.target.checked ? [...value, camera.id] : value.filter((id) => id !== camera.id))} />
             <span className="catalog-name"><strong>{camera.name}</strong><small>{camera.kind === 'camera' ? '摄像机' : '网络流'}</small></span>
@@ -283,17 +310,17 @@ export default function SourceCatalog() {
             <span>{camera.profileCount} / {camera.trackCount}</span>
             <span><small>{camera.groupId || '未分组'}</small><span className="tag-line">{camera.tags.map((tag) => <i key={tag}>{tag}</i>)}</span></span>
             <span className="row-actions"><button type="button" disabled={!camera.enabled || !camera.profiles.length} onClick={() => setPreview({ camera, profile: camera.profiles.find((profile) => profile.enabled) ?? camera.profiles[0] })}>预览</button><button type="button" aria-expanded={opened} onClick={() => setExpanded((value) => opened ? value.filter((id) => id !== camera.id) : [...value, camera.id])}>{opened ? '收起' : '详情'}</button>
-              <button type="button" onClick={() => void updateCamera(camera, { enabled: !camera.enabled })}>{camera.enabled ? '停用' : '启用'}</button></span>
+              <button type="button" disabled={saving || batchBusy} onClick={() => void updateCamera(camera, { enabled: !camera.enabled })}>{saving ? '保存中…' : camera.enabled ? '停用' : '启用'}</button></span>
           </div>
           {opened && <div className="catalog-details"><div className="device-meta-editor">
-            <label>分组<input maxLength={64} defaultValue={camera.groupId} onBlur={(event) => { if (event.currentTarget.value !== camera.groupId) void updateCamera(camera, { groupId: event.currentTarget.value }); }} /></label>
-            <label>标签（逗号分隔）<input defaultValue={camera.tags.join(', ')} onBlur={(event) => { const tags = event.currentTarget.value.split(',').map((value) => value.trim()).filter(Boolean); if (JSON.stringify(tags) !== JSON.stringify(camera.tags)) void updateCamera(camera, { tags }); }} /></label>
+            <label>分组<input disabled={saving || batchBusy} maxLength={64} defaultValue={camera.groupId} onBlur={(event) => { if (event.currentTarget.value !== camera.groupId) void updateCamera(camera, { groupId: event.currentTarget.value }); }} /></label>
+            <label>标签（逗号分隔）<input disabled={saving || batchBusy} defaultValue={camera.tags.join(', ')} onBlur={(event) => { const tags = event.currentTarget.value.split(',').map((value) => value.trim()).filter(Boolean); if (JSON.stringify(tags) !== JSON.stringify(camera.tags)) void updateCamera(camera, { tags }); }} /></label>
           </div>{camera.profiles.map((profile) => <ProfileEditor key={profile.id} camera={camera} profile={profile} onChanged={replace} onPreview={() => setPreview({ camera, profile })} />)}</div>}
         </div>;
       })}
     </div>}
     {!loading && !items.length && !error && <div className="catalog-empty"><h2>{query || adapter || enabled ? '没有匹配的设备' : '还没有添加视频源'}</h2><p>{query || adapter || enabled ? '尝试调整关键词或清除筛选。' : '添加第一台摄像机，或粘贴多个链接批量导入。'}</p><button type="button" onClick={query || adapter || enabled ? resetFilters : () => setShowBulkImport(true)}>{query || adapter || enabled ? '重置筛选条件' : '批量添加视频源'}</button></div>}
-    <nav className="catalog-pagination" aria-label="设备列表分页"><button type="button" disabled={loading || page <= 1} onClick={() => setPage((value) => value - 1)}>上一页</button><span>第 {page} / {Math.max(1, Math.ceil(total / pageSize))} 页</span><button type="button" disabled={loading || page * pageSize >= total} onClick={() => setPage((value) => value + 1)}>下一页</button></nav>
+    <nav className="catalog-pagination" aria-label="设备列表分页"><button type="button" disabled={loading || page <= 1} onClick={() => { setPage((value) => value - 1); toolbarRef.current?.scrollIntoView({ block: 'start', behavior: 'instant' }); }}>上一页</button><span>第 {page} / {Math.max(1, Math.ceil(total / pageSize))} 页</span><button type="button" disabled={loading || page * pageSize >= total} onClick={() => { setPage((value) => value + 1); toolbarRef.current?.scrollIntoView({ block: 'start', behavior: 'instant' }); }}>下一页</button></nav>
     {preview && previewDocument && <Modal className="source-preview-dialog" label="独立来源预览" onClose={() => { setPreview(null); setPreviewTopology(null); }}><div className="profile-preview-card">
       <header><div><span className="eyebrow">Profile preview</span><h2>{preview.camera.name} · {preview.profile.name}</h2></div><button type="button" onClick={() => { setPreview(null); setPreviewTopology(null); }}>关闭并释放</button></header>
       <DirectPreview compact scene={previewDocument} />
