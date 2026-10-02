@@ -55,6 +55,8 @@ jobs:
           cd web
           pnpm install --frozen-lockfile
           pnpm audit --audit-level=low
+          pnpm go2rtc:ui
+          pnpm test:go2rtc-assets
           pnpm typecheck
           pnpm test:iwa
           pnpm build

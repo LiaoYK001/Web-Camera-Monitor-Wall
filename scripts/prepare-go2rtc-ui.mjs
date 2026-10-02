@@ -1,6 +1,7 @@
 import { cpSync, mkdirSync, readFileSync, readdirSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { patchMonacoSanitizer } from './patch-monaco-sanitizer.mjs';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const output = path.join(root, 'web/go2rtc-dist');
@@ -8,7 +9,7 @@ const output = path.join(root, 'web/go2rtc-dist');
 if (path.resolve(output) !== path.resolve(root, 'web', 'go2rtc-dist')) throw new Error('Unsafe generated asset path');
 rmSync(output, { recursive: true, force: true });
 mkdirSync(output, { recursive: true });
-const packages = ['monaco-editor', 'js-yaml', 'vis-network', 'qrcodejs', 'hls.js'];
+const packages = ['monaco-editor', 'dompurify', 'js-yaml', 'vis-network', 'qrcodejs', 'hls.js'];
 for (const name of packages) {
   // Read the installed package root directly: recent Monaco exports intentionally
   // hide package.json. pnpm's direct dependency symlink still identifies the
@@ -21,6 +22,7 @@ for (const name of packages) {
   cpSync(packageRoot, path.join(output, 'vendor', name), { recursive: true, dereference: true,
     filter: source => name !== 'monaco-editor' || !['esm', 'dev'].includes(path.relative(packageRoot, source).split(path.sep)[0]) });
 }
+patchMonacoSanitizer(path.join(output, 'vendor/monaco-editor'), path.join(output, 'vendor/dompurify'));
 const replacements = [
   ['https://cdn.jsdelivr.net/npm/monaco-editor@0.55.1/min', 'vendor/monaco-editor/min'],
   ['https://cdn.jsdelivr.net/npm/js-yaml@4.1.0/dist/js-yaml.min.js', 'vendor/js-yaml/dist/js-yaml.min.js'],
