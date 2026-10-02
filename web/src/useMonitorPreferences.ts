@@ -90,8 +90,12 @@ export function useMonitorPreferences(compact: boolean, skipLoad = false) {
         const stored = await loadMonitorView(true);
         if (!active || clearing.current || JSON.stringify(latest.current) !== before) return;
         const next = normalizeMonitorView(stored, 16);
-        latest.current = next; lastQueued.current = lastSaved.current = JSON.stringify(next);
-        applyView(next); setError('');
+        const encoded = JSON.stringify(next);
+        // Retain object identity when another window has not changed the account.
+        // Replacing it needlessly rebuilds layouts, rotation timers and media props.
+        if (encoded !== before) { latest.current = next; applyView(next); }
+        lastQueued.current = lastSaved.current = encoded;
+        setError('');
       } catch { /* Keep the current preference while the server is unavailable. */ }
       finally { reading = false; }
     };

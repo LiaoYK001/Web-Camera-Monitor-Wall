@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { subscribePageVisibility } from './pageVisibility';
+import { isPageVisible, subscribePageVisibility } from './pageVisibility';
 import { fetchAudioMeters, probeSourceProfile, replaceStudio } from './api';
 import DirectPreview from './DirectPreview';
 import { connectAudioTrack, type AudioChannelState, type AudioTrackConnection } from './audioTrackChannel';
@@ -51,23 +51,47 @@ export default function AudioWorkspace({ studio, onCommitted }: { studio: Studio
   const sourceIds = scene ? scene.sources.map((source) => `${source.id}:${source.kind}:${source.kind === 'camera' ? `${source.cameraId}/${source.profileId}` : ''}`).join(',') : '';
 
   useEffect(() => {
+    if (topology !== 'direct') return;
+    setSnapshot(mixer.getSnapshot());
     const receive = (event: Event) => setSnapshot((event as CustomEvent<DirectAudioSnapshot>).detail);
     window.addEventListener('webobs:direct-audio-meters', receive);
     return () => window.removeEventListener('webobs:direct-audio-meters', receive);
-  }, []);
+  }, [topology, mixer]);
   useEffect(() => { setPending(null); }, [studio.revision]);
   useEffect(() => {
-    if (topology !== 'composite') return undefined;
-    const controller = new AbortController();
-    const poll = () => void fetchAudioMeters(scene.id, 'composite', controller.signal)
-      .then((value) => setSnapshot((current) => ({ ...current,
-        // Composite meters come from libobs and are per source, not per track.
-        sources: value.sources.map((source) => ({ ...source, merged: null, independent: [] })) })))
-      .catch(() => undefined);
-    poll();
-    const timer = window.setInterval(poll, 250);
-    return () => { controller.abort(); window.clearInterval(timer); };
-  }, [scene.id, topology]);
+    if (topology !== 'composite' || !scene) return;
+    let active = true;
+    let timer: number | undefined;
+    let request: AbortController | null = null;
+    setSnapshot((current) => ({ ...current, sources: [] }));
+    const poll = async () => {
+      if (!active || request || !isPageVisible()) return;
+      const controller = new AbortController(); request = controller;
+      try {
+        const value = await fetchAudioMeters(scene.id, 'composite', controller.signal);
+        if (active && request === controller && !controller.signal.aborted && isPageVisible()) {
+          setSnapshot((current) => ({ ...current,
+            // Composite meters come from libobs and are per source, not per track.
+            sources: value.sources.map((source) => ({ ...source,
+              merged: { rmsDbfs: source.rmsDbfs, peakDbfs: source.peakDbfs }, independent: [] })) }));
+        }
+      } catch { /* Keep the last measured level while the backend is unavailable. */ }
+      finally {
+        if (request === controller) {
+          request = null;
+          if (active && isPageVisible()) timer = window.setTimeout(() => void poll(), 250);
+        }
+      }
+    };
+    const visibility = () => {
+      window.clearTimeout(timer); timer = undefined;
+      if (!isPageVisible()) { request?.abort(); request = null; }
+      else void poll();
+    };
+    const unsubscribe = subscribePageVisibility(visibility);
+    void poll();
+    return () => { active = false; unsubscribe(); window.clearTimeout(timer); request?.abort(); request = null; };
+  }, [scene?.id, topology]);
 
   // Probe the real audio tracks of every media source (cached + deduplicated).
   useEffect(() => {
@@ -251,7 +275,7 @@ export default function AudioWorkspace({ studio, onCommitted }: { studio: Studio
     {scene.sources.some((source) => tracksBySource[source.id]?.status === 'none') && <p role="status">已确认无音轨：{scene.sources.filter((source) => tracksBySource[source.id]?.status === 'none').map((source) => source.name).join('、')}。这些来源不显示音频控制。</p>}
     <div className="audio-mixer-head"><span>来源 / Profile</span><span>电平</span><span>静音 / 音量</span><span>监听 / 同步</span><span>音轨</span></div>
     <div className="audio-mixer-list">{scene.sources.map((source) => {
-      const meter = topology === 'direct' ? meterBySource.get(source.id) : undefined;
+      const meter = meterBySource.get(source.id);
       const cameraProfile = source.kind === 'camera' ? `${source.cameraId} / ${source.profileId}` : source.kind;
       const probed = tracksBySource[source.id];
       const apiTracks = probed?.status === 'available' ? probed.tracks : [];

@@ -90,10 +90,18 @@ export class BrowserAnalyticsRuntime {
     };
     if (typeof video.requestVideoFrameCallback === 'function') {
       this.videoFrameCallback = true;
+      // Ask for one fresh frame per analysis sample, rather than waking JS on
+      // every decoded frame just to discard most of them in capture().
       const queue = () => {
-        if (this.stopped || !this.videoFrameCallback) return;
+        if (this.stopped || !this.videoFrameCallback || this.frameCallback) return;
+        if (this.options.visible?.() === false) {
+          this.timer = window.setTimeout(queue, interval);
+          return;
+        }
         this.frameCallback = video.requestVideoFrameCallback(() => {
-          void this.capture().finally(queue);
+          this.frameCallback = 0;
+          void this.capture();
+          if (!this.stopped) this.timer = window.setTimeout(queue, interval);
         });
       };
       queue();

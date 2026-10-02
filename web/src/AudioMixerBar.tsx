@@ -1,5 +1,5 @@
 import { useMemo, useState } from 'react';
-import type { DirectAudioSnapshot } from './directAudioMixer';
+import { useDirectAudioMeters } from './directAudioState';
 
 export interface AudioMixerChannel {
   sourceId: string;
@@ -14,7 +14,6 @@ export interface AudioMixerChannel {
 
 export interface AudioMixerBarProps {
   channels: AudioMixerChannel[];
-  snapshot: DirectAudioSnapshot;
   audioEnabled: boolean;
   masterVolume: number;
   output: 'speaker' | 'meter-only';
@@ -40,11 +39,12 @@ function meterPercent(dbfs: number | null | undefined): number {
  * audio tracks get a channel (F6-02); video-only tiles never pollute the strip.
  */
 export default function AudioMixerBar({
-  channels, snapshot, audioEnabled, masterVolume, output, showAll, collapsed: savedCollapsed, onCollapsed,
+  channels, audioEnabled, masterVolume, output, showAll, collapsed: savedCollapsed, onCollapsed,
   onToggleAudio, onMasterVolume, onOutput, onSourceGain, onSourceMute, onSourceMonitor,
 }: AudioMixerBarProps) {
   const [localCollapsed, setCollapsed] = useState(false);
   const collapsed = savedCollapsed ?? localCollapsed;
+  const snapshot = useDirectAudioMeters(!collapsed);
   const levels = useMemo(() => {
     const map = new Map<string, { rms: number | null; peak: number | null }>();
     for (const source of snapshot.sources) {

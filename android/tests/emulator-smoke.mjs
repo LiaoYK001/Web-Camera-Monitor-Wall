@@ -21,6 +21,8 @@ const checks = [];
 const browsers = new Set();
 const initialRotation = adb('shell', 'settings', 'get', 'system', 'user_rotation').toString().trim();
 const initialAutoRotation = adb('shell', 'settings', 'get', 'system', 'accelerometer_rotation').toString().trim();
+const initialRotationMode = adb('shell', 'wm', 'user-rotation').toString().trim();
+assert(/^(free|lock(?: [0-3])?)$/.test(initialRotationMode), 'Unrecognized window-manager rotation mode');
 const tapNative = async selector => {
   if (selector.res === `${pkg}:id/app_menu`) { adb('shell', 'input', 'keyevent', 'KEYCODE_MENU'); return; }
   const { bounds } = await device.info(selector);
@@ -74,9 +76,15 @@ try {
   await tapNative({ text: '关闭投影 / 子窗口' });
   adb('shell', 'settings', 'put', 'system', 'accelerometer_rotation', '0');
   adb('shell', 'settings', 'put', 'system', 'user_rotation', '0');
+  // MuMu may retain a free-rotation WindowManager override despite settings writes.
+  // Set the actual display rotation and restore its original mode during cleanup.
+  adb('shell', 'wm', 'user-rotation', 'lock', '0');
   await expect.poll(() => page.evaluate(() => matchMedia('(orientation: portrait)').matches), { timeout: 10000 }).toBe(true);
-  await page.screenshot({ path: fileURLToPath(new URL('portrait.png', output)) });
+  // Capture the actual Android surface. Older WebView CDP screenshot targets
+  // can stall after a display rotation while the live page remains responsive.
+  await writeFile(new URL('portrait.png', output), adb('exec-out', 'screencap', '-p'));
   adb('shell', 'settings', 'put', 'system', 'user_rotation', '1');
+  adb('shell', 'wm', 'user-rotation', 'lock', '1');
   await expect.poll(() => page.evaluate(() => matchMedia('(orientation: landscape)').matches), { timeout: 10000 }).toBe(true);
   checks.push('portrait/landscape rotation without losing the session or scene');
   await page.goto(`${base}/#settings`);
@@ -101,7 +109,7 @@ try {
   await expect.poll(() => page.locator('video').evaluate(video => video.currentTime), { timeout: 15000 }).toBeGreaterThan(start + .25);
   checks.push('actual Android WebView decoded live H.264 MSE frames');
   console.log('PASS: actual live H.264 frame playback');
-  await page.screenshot({ path: fileURLToPath(new URL('mse.png', output)) });
+  await writeFile(new URL('mse.png', output), adb('exec-out', 'screencap', '-p'));
   // Playwright enables focus emulation by default, which masks real Page
   // Visibility changes even in an Android WebView. Disable it for this check.
   const cdp = await page.context().newCDPSession(page);
@@ -143,6 +151,7 @@ try {
   for (const [key, value] of [['user_rotation', initialRotation], ['accelerometer_rotation', initialAutoRotation]]) {
     adb('shell', 'settings', value === 'null' ? 'delete' : 'put', 'system', key, ...(value === 'null' ? [] : [value]));
   }
+  adb('shell', 'wm', 'user-rotation', ...initialRotationMode.split(' '));
   // Return to connection selection; do not leave a dead test endpoint on screen.
   await tapNative({ res: `${pkg}:id/app_menu` }).catch(() => {});
   await device.wait({ text: '客户端菜单' }).catch(() => {});

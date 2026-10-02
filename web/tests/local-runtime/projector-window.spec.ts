@@ -19,6 +19,11 @@ const sceneFixture = {
 
 /** Keeps the projector tests off the media plane and free of real negotiation. */
 async function mockBackend(page: import('@playwright/test').Page) {
+  await page.route('**/api/**', (route) => route.fulfill({ status: 404, json: {} }));
+  await page.route('**/api/v1/auth/setup', (route) => route.fulfill({ json: { registrationOpen: false } }));
+  await page.route('**/api/v2/account/me', (route) => route.fulfill({ json: {
+    username: 'projector-fixture', displayName: 'Test', avatar: 'camera', roles: ['admin'], permissions: ['settings.manage'], scopes: [], acl: [],
+  } }));
   await page.route('**/api/v2/account/preferences/*', (route) => route.fulfill({ json: { value: route.request().url().endsWith('/monitor-view') ? {
     telemetry: { enabled: true },
     sourceDecorations: { 'source-0': { audioMeter: { enabled: true } } },
@@ -30,7 +35,7 @@ async function mockBackend(page: import('@playwright/test').Page) {
   await page.route('**/api/v1/scene', (route) => route.fulfill({ json: sceneFixture }));
   await page.route('**/api/v1/program/status', (route) => route.fulfill({ json: { enabled: false } }));
   await page.route('**/api/v1/program/whep', (route) => route.fulfill({ status: 503, json: {} }));
-  await page.route('**/api/v1/playback/capabilities', (route) => route.fulfill({ json: { sources: [] } }));
+  await page.route('**/api/v1/playback/capabilities', (route) => route.fulfill({ json: { modes: { direct: { enabled: true } }, sources: [] } }));
   await page.route('**/api/v1/cameras', (route) => route.fulfill({ json: { cameras: [] } }));
   await page.route('**/api/v2/source-catalog*', (route) => route.fulfill({
     json: { schemaVersion: 2, page: 1, limit: 256, total: 0, items: [] },
