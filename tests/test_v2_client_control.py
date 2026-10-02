@@ -187,11 +187,14 @@ class V2ClientControlTests(unittest.TestCase):
 
     def test_secret_references_are_bounded_basenames_and_files_are_bounded(self):
         for reference in (None, "", "../camera-test", "/camera-test", "nested/camera-test",
-                          "nested\\camera-test", ".hidden", "x" * 129):
+                          "nested\\camera-test", "..hidden", "x" * 129):
             with self.subTest(reference=reference), self.assertRaises(service.ApiError) as rejected:
                 service._load_secret(reference)
             self.assertEqual(rejected.exception.code, "invalid_credentials_ref")
         self.assertEqual(service._load_secret("camera-test")["username"], "fixture-viewer")
+        # Leading-dot references already supported by the camera registry remain valid.
+        (service.SECRET_ROOT / "camera-test.json").rename(service.SECRET_ROOT / ".camera-test.json")
+        self.assertEqual(service._load_secret(".camera-test")["username"], "fixture-viewer")
         (service.SECRET_ROOT / "oversized.json").write_bytes(b" " * 16_385)
         with self.assertRaises(service.ApiError) as rejected:
             service._load_secret("oversized")

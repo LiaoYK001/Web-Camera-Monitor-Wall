@@ -499,7 +499,7 @@ def _safe_reference(value: object, field: str) -> str:
 def _load_secret(reference: str) -> dict[str, str]:
     # Validate at the filesystem boundary as well as at grant creation. Stored
     # database values and bootstrap requests must pass the same check.
-    if not isinstance(reference, str) or not re.fullmatch(r"[A-Za-z0-9_-][A-Za-z0-9._-]{0,127}", reference):
+    if not isinstance(reference, str) or ".." in reference or not re.fullmatch(r"[A-Za-z0-9._-]{1,128}", reference):
         raise ApiError(400, "invalid_credentials_ref", "credentialsRef is invalid")
     try:
         root = os.path.realpath(SECRET_ROOT)
