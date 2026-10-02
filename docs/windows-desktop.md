@@ -27,19 +27,23 @@
 
 固定版本的 obs-browser 在关闭 Qt 面板时仍包含原生 Qt tooltip 调用。`prepare-obs-headless.py` 仅修改隔离的构建副本，移除该原生 tooltip 和对应无条件 Qt 头文件，保留 CEF 浏览器来源与网页自身的交互；上游 submodule 不变。
 
-缺少签名凭据只能生成带 `DEVELOPMENT-UNSIGNED` 的开发测试包，不能连接正式更新源。正式候选：
+正式构建默认不签名，生成 `WebOBS-X.Y.Z-windows-x64-UNSIGNED.exe`、blockmap 和 `latest.yml`，启用完整 GitHub Release 自动更新。开发 `-dev.*` 包仍为 `DEVELOPMENT-UNSIGNED`，不连接正式更新源。正式未签名构建：
+
+```powershell
+./desktop/scripts/build-windows.ps1 -Version 3.5.0 -Release
+```
 
 受信任 CA 与微软 Azure Artifact Signing 的申请区别、地区限制及当前构建入口的凭据配置见 [Windows 代码签名](windows-signing.md)。
 
-开发构建仅生成 `dev.yml`，正式构建生成 `latest.yml`。electron-builder 签名主程序与 NSIS 安装包，排除已纳入运行文件摘要的嵌套 `.exe`；保留捆绑组件原有签名，打包后再次验证完整运行目录。
+开发构建仅生成 `dev.yml`，正式构建生成 `latest.yml`。未签名构建不配置发布者或 Authenticode 更新校验，仍验证完整安装包的 SHA-512 和大小，并在停服、复制与启动安装前再次校验；安装需用户确认。若以后显式选择 `-Sign`，electron-builder 签名主程序与 NSIS 安装包，排除已纳入运行文件摘要的嵌套 `.exe`，并启用发布者验证。保留捆绑组件原有签名，打包后再次验证完整运行目录。
 
-签名过滤器明确包含 `WebOBS.exe`、当前版本 NSIS 安装器和卸载器，再排除其他 `.exe`，并通过固定 electron-builder 的实际过滤实现回归。正式构建强制签名，打包后再次检查主程序发布者。
+可选签名过滤器明确包含 `WebOBS.exe`、当前版本 NSIS 安装器和卸载器，再排除其他 `.exe`，并通过固定 electron-builder 的实际过滤实现回归。仅显式签名构建强制签名，打包后再次检查主程序发布者。
 
 ```powershell
 $env:CSC_LINK = '签名证书路径或维护者配置的凭据'
 $env:CSC_KEY_PASSWORD = '通过私密环境设置，不写入仓库'
 $env:WEBOBS_SIGNING_PUBLISHER = '证书中的正式发布者名称'
-./desktop/scripts/build-windows.ps1 -Version 3.4.0 -Release
+./desktop/scripts/build-windows.ps1 -Version 3.5.0 -Release -Sign
 ```
 
 GitHub `Build full Windows desktop` 是手动候选构建，不发布 Release。也可在现有 `Web runtime public CI` 手动选择 `windows_desktop`，从 dev 分支执行无签名候选。编译机测试不等于 Windows 10/11 实际安装及摄像机验收。
@@ -72,13 +76,13 @@ Caddy 运行配置由主进程保存，关闭其默认配置 autosave，避免�
 
 “创建完整配置备份”暂时正常停服，创建一致性快照和加密 `.wobk` 备份，然后恢复运行。录像媒体不复制进配置备份。Docker/WSL 数据通过“从备份恢复”明确选择 `.wobk` 及原始 32 字节密钥导入，先保存当前数据快照，不自动搬移部署。含绝对路径的外部来源、存储卷和 Secret 引用需在恢复后改为本机路径；它们不会被猜测或静默重写。
 
-更新安装检查草稿、前端导出和后端证据导出；存在未保存/未完成工作时暂停。录像/媒体仍运行时用户明确选择停止任务并更新。更新前正常停服、创建配置和 NVR 目录数据库快照，记录版本与快照映射。启动失败显示诊断和恢复入口：先安装对应旧版本，再恢复匹配快照。首次手动安装没有缓存旧包时，从相应 Release 下载已签名包；之后更新保留已安装版本的安装包。损坏快照不会激活。
+更新安装检查草稿、前端导出和后端证据导出；存在未保存/未完成工作时暂停。录像/媒体仍运行时用户明确选择停止任务并更新。更新前正常停服、创建配置和 NVR 目录数据库快照，记录版本与快照映射。启动失败显示诊断和恢复入口：先安装对应旧版本，再恢复匹配快照。首次手动安装没有缓存旧包时，从相应 Release 下载对应安装包；之后更新保留已安装版本的安装包。恢复包路径与 SHA-256 必须匹配升级记录，只有显式签名发行版额外验证发布者。损坏快照不会激活。
 
 GitHub 检测和下载使用 electron-updater。显式安装等待 Windows 确认已启动经过二次摘要及签名校验的完整 NSIS 包后才退出；异步启动失败会删除待升级标记并恢复当前服务。安装向导仍由用户操作，不申请提权回落。
 
 ## 正式发布与验收
 
-产品标签 `vX.Y` 对应客户端 `X.Y.0`，`vX.Y.Z` 对应 `X.Y.Z`。容器与 Windows 共用已审计的产品 Release。候选附件包含安装包、blockmap、`latest.yml`（仅正式包）、SHA-256 摘要、运行文件清单、CycloneDX SBOM 与许可证归档。Electron updater 校验 SHA-512 与 Authenticode 发布者，准备安装时再次校验；客户端不包含 GitHub Token。
+产品标签 `vX.Y` 对应客户端 `X.Y.0`，`vX.Y.Z` 对应 `X.Y.Z`。容器与 Windows 共用已审计的产品 Release。候选附件包含安装包、blockmap、`latest.yml`（仅正式包）、SHA-256 摘要、运行文件清单、CycloneDX SBOM 与许可证归档。Electron updater 校验 SHA-512 与大小，准备安装时再次校验；可选签名构建额外验证 Authenticode 发布者。客户端不包含 GitHub Token。
 
 Windows 10、11 各自记录实际安装、媒体、LAN 与两版更新结果。`desktop/qualification.example.json` 只是格式示例，不能作为通过证明；完整检查名见 `desktop/scripts/qualification.mjs`。维护者还需收集匹配第三方二进制的完整对应源码（包括 FFmpeg 及其启用的 GPL 组件），提供已审核 `SOURCE-MANIFEST.json`，其字段为 `revision`、`version`、`reviewed: true`、`files: [{name, sha256}]`。
 
@@ -89,7 +93,7 @@ Windows 10、11 各自记录实际安装、媒体、LAN 与两版更新结果。
   -CorrespondingThirdPartySourceDirectory 'D:/release/matching-third-party-sources'
 ```
 
-发布器验证实际安装包摘要、签名、版本与源码身份，复用 `scripts/create-source-bundle.sh` 和 `scripts/upload-release-assets-immutable.sh`；缺少证据、签名或对应源码时拒绝正式上传。维护者发布机需要 Git Bash/gh；Token 仅用于附件上传。不要把开发包的元数据上传到正式更新源。
+发布器验证实际安装包摘要、版本、`latest.yml` 与源码身份，复用 `scripts/create-source-bundle.sh` 和 `scripts/upload-release-assets-immutable.sh`。默认允许明确标记 `UNSIGNED` 的正式包；显式签名包仍需匹配发布者。没有完整平台验收回执时，必须提供绑定安装包摘要的实际 `windows-install-smoke.json`，并在 Release 如实披露干净系统/摄像机等待验收项；主机冒烟检查不等于全平台验收。对应源码仍需审核。维护者发布机需要 Git Bash/gh；Token 仅用于附件上传。不要把开发包的元数据上传到正式更新源。
 
 ## 当前验证边界
 
@@ -98,3 +102,5 @@ Windows 10、11 各自记录实际安装、媒体、LAN 与两版更新结果。
 打包后还必须通过 `pnpm --dir desktop test:package`：启动真正的 `win-unpacked/WebOBS.exe`，验证 ASAR、生产依赖、独立账号和 go2rtc，并检查主进程异常退出后 Job 收束所有后代。本机另已验证真实 Caddy 的 HTTPS、显式 CA、认证与 go2rtc 代理；未修改系统信任和防火墙，不等于其他设备的浏览器及媒体验收。
 
 完整构建还运行 `pnpm --dir desktop test:install`，实际执行当前版本的 NSIS 安装与卸载：使用包含中文及空格的独立安装目录、私密测试账号和独立录像目录，检查运行文件摘要、清空 PATH 后启动、认证 go2rtc、Job 清理、默认卸载保留数据，以及注册项和快捷方式清理。已有 WebOBS 注册项或快捷方式时拒绝运行，避免覆盖用户安装。通过后将系统版本、已测运行清单提交和安装包摘要写入 `desktop/out/<版本>/windows-install-smoke.json`；该检查不会更新正式验收记录，也不代替干净系统和两个签名版本的升级测试。本机 Windows 11 已通过该安装与卸载流程。
+
+`pnpm --dir desktop test:updates` 使用真实 electron-updater 和本机小型协议夹具验证检测、下载、损坏摘要拒绝、重新校验和断网状态；不安装夹具。两版实际未签名 NSIS 包可通过 `pwsh desktop/tests/installed-update-smoke.ps1 -PreviousVersion <旧稳定版本> -Version <新稳定版本>` 进行隔离安装、真实完整包下载、确认调用、正常停服/快照、升级启动与账号数据保留检查。该检查使用本机更新源及静默测试安装器，不能冒充 GitHub 下载、交互向导或全平台验收；已有安装或快捷方式时拒绝运行。

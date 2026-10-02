@@ -3,6 +3,7 @@
 param(
     [string]$Version = '3.4.0-dev.0',
     [switch]$Release,
+    [switch]$Sign,
     [switch]$SkipPackage
 )
 $ErrorActionPreference = 'Stop'
@@ -14,8 +15,10 @@ $runtimeRoot = Join-Path $desktopRoot 'runtime'
 if (-not $IsWindows -and $PSVersionTable.PSEdition -eq 'Core') { throw 'Windows x64 is required.' }
 if (-not [Environment]::Is64BitOperatingSystem) { throw 'x64 Windows is required.' }
 if ($Version -notmatch '^\d+\.\d+\.\d+(-dev\.[0-9A-Za-z.-]+)?$') { throw 'Use a stable X.Y.Z or X.Y.Z-dev.* version.' }
-if ($Release -and ($Version -match '-' -or -not $env:CSC_LINK -or -not $env:WEBOBS_SIGNING_PUBLISHER)) { throw 'Official builds require stable version, CSC_LINK, CSC_KEY_PASSWORD and WEBOBS_SIGNING_PUBLISHER.' }
-if (-not $Release -and $Version -notmatch '-dev\.') { throw 'Unsigned builds require a -dev.* version.' }
+if ($Release -and $Version -match '-') { throw 'Release builds require a stable X.Y.Z version.' }
+if ($Sign -and (-not $Release -or -not $env:CSC_LINK -or -not $env:WEBOBS_SIGNING_PUBLISHER)) { throw 'Signing requires -Release, CSC_LINK and WEBOBS_SIGNING_PUBLISHER.' }
+if (-not $Release -and $Version -notmatch '-dev\.') { throw 'Development builds require a -dev.* version.' }
+if (-not $Sign) {$env:CSC_IDENTITY_AUTO_DISCOVERY='false';Remove-Item Env:CSC_LINK,Env:CSC_KEY_PASSWORD -ErrorAction SilentlyContinue}
 foreach ($tool in @('cmake','git','python','node','pnpm')) { if (-not (Get-Command $tool -ErrorAction SilentlyContinue)) { throw "Build dependency missing: $tool. Run in a VS 2022 x64 Developer PowerShell with CMake >= 3.28 and Node 24." } }
 if (-not (Get-Command cl -ErrorAction SilentlyContinue)) { throw 'No MSVC x64 compiler. Open VS 2022 x64 Developer PowerShell; desktop builds do not install compilers automatically.' }
 function Invoke-Checked([string]$Program, [string[]]$Arguments) {
@@ -106,10 +109,11 @@ if ($LASTEXITCODE -ne 0) { throw 'Bundled WebUI license inventory failed.' }
 $webLicenses | Set-Content -LiteralPath (Join-Path $cacheRoot 'web-npm-licenses.json') -Encoding utf8
 $env:WEBOBS_DESKTOP_VERSION=$Version
 $env:WEBOBS_RELEASE_BUILD=if($Release){'true'}else{'false'}
-$env:WEBOBS_PACKAGE_SUFFIX=if($Release){''}else{'-DEVELOPMENT-UNSIGNED'}
+$env:WEBOBS_SIGN_BUILD=if($Sign){'true'}else{'false'}
 Invoke-Checked 'node' @((Join-Path $PSScriptRoot 'manifest.mjs'))
 Invoke-Checked 'pnpm' @('--dir',$desktopRoot,'test')
 Invoke-Checked 'pnpm' @('--dir',$desktopRoot,'test:electron')
+Invoke-Checked 'pnpm' @('--dir',$desktopRoot,'test:updates')
 Invoke-Checked 'python' @((Join-Path $repoRoot 'desktop\tests\test_native_runtime.py'))
 Invoke-Checked 'pnpm' @('--dir',$desktopRoot,'test:runtime')
 Invoke-Checked 'pnpm' @('--dir',$desktopRoot,'test:main')

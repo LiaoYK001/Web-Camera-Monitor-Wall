@@ -3,7 +3,7 @@
 param(
     [Parameter(Mandatory)][string]$Tag,
     [Parameter(Mandatory)][string]$ArtifactDirectory,
-    [Parameter(Mandatory)][string]$QualificationReceipts,
+    [string]$QualificationReceipts,
     [Parameter(Mandatory)][string]$CorrespondingThirdPartySourceDirectory
 )
 $ErrorActionPreference = 'Stop'
@@ -14,17 +14,28 @@ $artifacts = (Resolve-Path -LiteralPath $ArtifactDirectory).Path
 $revision = (& git -C $repoRoot rev-parse "$Tag^{commit}").Trim()
 if ($LASTEXITCODE -ne 0) { throw 'Use an existing reviewed product/container release tag.' }
 if ((& git -C $repoRoot rev-parse HEAD).Trim() -ne $revision) { throw 'Checkout must match the release tag exactly.' }
-& node (Join-Path $PSScriptRoot 'qualification.mjs') $QualificationReceipts $revision $version
-if ($LASTEXITCODE -ne 0) { throw 'Actual Windows 10 and 11 installation/media/update evidence is required.' }
+if ($QualificationReceipts) {
+    & node (Join-Path $PSScriptRoot 'qualification.mjs') $QualificationReceipts $revision $version
+    if ($LASTEXITCODE -ne 0) { throw 'Actual Windows 10 and 11 installation/media/update evidence did not pass.' }
+} else {
+    $smoke=Get-Content -LiteralPath (Join-Path $artifacts 'windows-install-smoke.json') -Raw | ConvertFrom-Json
+    if ($smoke.schema -ne 1 -or $smoke.revision -ne $revision -or $smoke.version -ne $version -or @($smoke.checks.PSObject.Properties | Where-Object Value -ne 'passed').Count -or $smoke.checks.nsisInstall -ne 'passed' -or $smoke.checks.defaultUninstallDataRetention -ne 'passed') {throw 'Matching actual NSIS host smoke evidence is required.'}
+    Write-Warning 'Host smoke only: clean Windows 10/11, real cameras and platform qualification remain outstanding; disclose this in the Release.'
+}
 $manifest = Get-Content -LiteralPath (Join-Path $artifacts "webobs-windows-$version-runtime-manifest.json") -Raw | ConvertFrom-Json
 if ($manifest.revision -ne $revision -or $manifest.version -ne $version) { throw 'Runtime manifest does not match release identity.' }
-$installer = Join-Path $artifacts "WebOBS-$version-windows-x64.exe"
+$metadata=& node (Join-Path $PSScriptRoot 'update-metadata.mjs') $artifacts $version
+if ($LASTEXITCODE -ne 0) {throw 'Stable NSIS update metadata failed verification.'}
+$installerName=($metadata | ConvertFrom-Json).installer
+$installer = Join-Path $artifacts $installerName
 $signature = Get-AuthenticodeSignature -LiteralPath $installer
-if (-not $env:WEBOBS_SIGNING_PUBLISHER -or $signature.Status -ne 'Valid' -or $signature.SignerCertificate.GetNameInfo([Security.Cryptography.X509Certificates.X509NameType]::SimpleName,$false) -ne $env:WEBOBS_SIGNING_PUBLISHER) { throw 'Official installer must have the configured valid Authenticode publisher.' }
-$receipts = Get-Content -LiteralPath $QualificationReceipts -Raw | ConvertFrom-Json
+if ($installerName.EndsWith('-UNSIGNED.exe')) {
+    if ($signature.Status -ne 'NotSigned') {throw 'Unsigned release label does not match installer signature status.'}
+} elseif (-not $env:WEBOBS_SIGNING_PUBLISHER -or $signature.Status -ne 'Valid' -or $signature.SignerCertificate.GetNameInfo([Security.Cryptography.X509Certificates.X509NameType]::SimpleName,$false) -ne $env:WEBOBS_SIGNING_PUBLISHER) { throw 'Signed installer must have the configured valid Authenticode publisher.' }
+$receipts = if($QualificationReceipts){Get-Content -LiteralPath $QualificationReceipts -Raw | ConvertFrom-Json}else{@($smoke)}
 $installerDigest = (Get-FileHash -LiteralPath $installer -Algorithm SHA256).Hash.ToLowerInvariant()
 foreach ($receipt in $receipts) { if ($receipt.installerSha256 -ne $installerDigest) { throw 'Installation evidence used a different installer.' } }
-$approvedAssets = @("WebOBS-$version-windows-x64.exe",'latest.yml',"WebOBS-$version-windows-x64.exe.blockmap","webobs-windows-$version-runtime-manifest.json","webobs-windows-$version-dependencies.lock.json","webobs-windows-$version-sbom.cdx.json","webobs-windows-$version-licenses.tar.gz","webobs-windows-$version-SHA256SUMS.txt")
+$approvedAssets = @($installerName,'latest.yml',"$installerName.blockmap","webobs-windows-$version-runtime-manifest.json","webobs-windows-$version-dependencies.lock.json","webobs-windows-$version-sbom.cdx.json","webobs-windows-$version-licenses.tar.gz","webobs-windows-$version-SHA256SUMS.txt")
 foreach ($file in $approvedAssets) { if (-not (Test-Path -LiteralPath (Join-Path $artifacts $file) -PathType Leaf)) { throw "Required release asset missing: $file" } }
 $checkedAssets = @()
 foreach ($line in Get-Content -LiteralPath (Join-Path $artifacts "webobs-windows-$version-SHA256SUMS.txt")) {

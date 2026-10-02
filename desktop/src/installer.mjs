@@ -1,6 +1,6 @@
 import { spawn } from 'node:child_process';
 
-// The controller supplies only a freshly verified, signed NSIS download.
+// The controller supplies only a freshly size/digest-verified NSIS download.
 // Wait for Windows to accept it before quitting: electron-updater's synchronous
 // quitAndInstall return value precedes asynchronous spawn errors.
 export function launchVerifiedInstaller(file, spawnInstaller = spawn) {

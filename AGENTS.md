@@ -19,6 +19,7 @@
 - Keep request buffers bounded, reject nonmatching Origin and unsafe paths, and strip product credentials when proxying upstream.
 - Persist go2rtc configuration with the existing private configuration volume. Preserve user configuration on restart and upgrade.
 - Update integration/deployment docs when lifecycle, packaging, ports or configuration change. Record upstream commit and licenses in source bundles.
+- Stable Windows NSIS releases are unsigned by default and include verified `latest.yml`; signing is optional via explicit `-Sign`. Keep SHA-512/size validation, user-confirmed installation, backups and normal service shutdown. Development `-dev.*` packages remain outside the stable feed.
 - Use `rg` for searches; exclude upstream source/build dependencies when exploring product code. No automatic delegation is required.
 
 ## Validation

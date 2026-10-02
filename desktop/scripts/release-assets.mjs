@@ -3,6 +3,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { execFileSync } from 'node:child_process';
 import { digestFile } from '../src/runtime-integrity.mjs';
+import { verifyUpdateMetadata } from './update-metadata.mjs';
 const root=path.resolve(path.dirname(fileURLToPath(import.meta.url)),'..','..');
 const version=process.argv[2];
 if(!/^\d+\.\d+\.\d+(?:-dev\.[0-9A-Za-z.-]+)?$/.test(version))throw new Error('Invalid release version');
@@ -10,6 +11,7 @@ const out=path.join(root,'desktop','out',version),official=process.env.WEBOBS_RE
 const files=(await readdir(out)).filter(name=>name.endsWith('.exe') || name.endsWith('.blockmap') || name==='latest.yml');
 if(files.filter(name=>name.endsWith('.exe') && name.startsWith(`WebOBS-${version}-windows-x64`)).length!==1)throw new Error('Expected exactly one complete installer');
 if(official && (!files.includes('latest.yml') || !files.some(name=>name.endsWith('.blockmap'))))throw new Error('Update metadata or blockmap missing');
+if(official)await verifyUpdateMetadata(out,version);
 if(!official && files.includes('latest.yml'))throw new Error('Development packages must not enter the stable update feed');
 await cp(path.join(root,'desktop','runtime-sbom.cdx.json'),path.join(out,`webobs-windows-${version}-sbom.cdx.json`));
 await cp(path.join(root,'desktop','runtime','manifest.json'),path.join(out,`webobs-windows-${version}-runtime-manifest.json`));

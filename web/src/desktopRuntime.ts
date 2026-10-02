@@ -3,7 +3,7 @@ import { useEffect } from 'react';
 export interface DesktopSettings { autoCheck: boolean; autoDownload: boolean; startAtLogin: boolean; lanEnabled: boolean; lanPort: number; recordingDirectory: string; minimizeToTray: boolean }
 export interface DesktopStatus {
   runtime: { phase: string; detail?: string; recordings?: string; lan?: { enabled: boolean; addresses?: string[]; certificate?: string; trustSteps?: string; firewallCommands?: string[] } };
-  update: { phase: string; message?: string; version?: string; releaseNotes?: string; percent?: number };
+  update: { phase: string; message?: string; version?: string; releaseNotes?: string; percent?: number; signed?: boolean };
   settings: DesktopSettings;
   recovery: { from: string; to: string; hasInstaller: boolean; snapshot: string } | null;
 }
