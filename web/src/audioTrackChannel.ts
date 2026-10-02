@@ -1,4 +1,5 @@
 import type { SourceAudioTrack } from './sourceAudio';
+import { forgetPeerStats, readPeerStats } from './peerStats';
 
 export type AudioChannelState = 'connecting' | 'connected' | 'reconnecting' | 'disabled';
 
@@ -65,6 +66,7 @@ export function connectAudioTrack(
   let stallTimer: number | undefined;
   let retryTimer: number | undefined;
   let lastPackets = -1;
+  let samplingPeer: RTCPeerConnection | undefined;
   let lastProgressAt = Date.now();
   let state: AudioChannelState = 'connecting';
 
@@ -79,7 +81,9 @@ export function connectAudioTrack(
 
   const release = () => {
     clearTimers();
+    samplingPeer = undefined;
     if (peer) {
+      forgetPeerStats(peer);
       peer.ontrack = null;
       peer.onconnectionstatechange = null;
       peer.close();
@@ -151,12 +155,16 @@ export function connectAudioTrack(
           attempt = 0;
           report('connected');
         }
-        void peer.getStats().then((stats) => {
+        const currentPeer = peer;
+        if (samplingPeer === currentPeer) return;
+        samplingPeer = currentPeer;
+        void readPeerStats(currentPeer).then((stats) => {
+          if (!stats || closed || peer !== currentPeer) return;
           let packets = -1;
           stats.forEach((entry) => { if (entry.type === 'inbound-rtp' && entry.kind === 'audio') packets = Number(entry.packetsReceived ?? -1); });
           if (packets > lastPackets) { lastPackets = packets; lastProgressAt = Date.now(); return; }
           if (Date.now() - lastProgressAt > STALL_MS) scheduleReconnect();
-        }).catch(() => undefined);
+        }).catch(() => undefined).finally(() => { if (samplingPeer === currentPeer) samplingPeer = undefined; });
       }, 1_000);
     } catch (error) {
       if (closed || (error instanceof DOMException && error.name === 'AbortError')) return;

@@ -1,6 +1,7 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useMemo, useState } from 'react';
 import { fetchAnalyticsStatus, fetchV3AnalyticsPolicies, patchV3AnalyticsPolicies } from './api';
 import type { AnalyticsPolicy, AnalyticsRuntimePlan, AnalyticsStatus } from './types';
+import { useVisiblePolling } from './useVisiblePolling';
 
 const executionLabel: Record<AnalyticsRuntimePlan['execution'], string> = {
   native: 'Camera event', 'browser-webgpu': 'Browser WebGPU', 'browser-wasm': 'Browser WASM',
@@ -25,22 +26,15 @@ export default function AnalyticsWorkspace() {
   const [bulkKind, setBulkKind] = useState<'motionEnabled' | 'sceneChangeEnabled' | 'personEnabled'>('motionEnabled');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
+  const [readError, setReadError] = useState('');
 
-  const reload = useCallback(() => {
-    const controller = new AbortController();
-    void Promise.all([fetchV3AnalyticsPolicies(controller.signal), fetchAnalyticsStatus(controller.signal)])
-      .then(([policyResult, statusResult]) => {
-        setPolicies(policyResult.policies); setRevision(policyResult.revision); setStatuses(statusResult.statuses); setError('');
-      })
-      .catch((reason: unknown) => { if (!controller.signal.aborted) setError(reason instanceof Error ? reason.message : '分析状态暂时不可用'); });
-    return () => controller.abort();
+  const read = useCallback(async (signal: AbortSignal) => {
+    try {
+      const [policyResult, statusResult] = await Promise.all([fetchV3AnalyticsPolicies(signal), fetchAnalyticsStatus(signal)]);
+      if (!signal.aborted) { setPolicies(policyResult.policies); setRevision(policyResult.revision); setStatuses(statusResult.statuses); setReadError(''); }
+    } catch (reason) { if (!signal.aborted) setReadError(reason instanceof Error ? reason.message : '分析状态暂时不可用'); }
   }, []);
-
-  useEffect(() => {
-    const cancel = reload();
-    const timer = window.setInterval(() => { cancel(); reload(); }, 10_000);
-    return () => { cancel(); window.clearInterval(timer); };
-  }, [reload]);
+  const polling = useVisiblePolling(read, 10_000);
 
   const statusMap = useMemo(() => new Map(statuses.map((value) => [`${value.cameraId}/${value.profileId}`, value])), [statuses]);
   const visible = policies.filter((policy) => {
@@ -53,6 +47,7 @@ export default function AnalyticsWorkspace() {
   });
 
   const update = async (policy: AnalyticsPolicy, key: 'motionEnabled' | 'sceneChangeEnabled' | 'personEnabled', value: boolean) => {
+    polling.pause();
     setBusy(true); setError('');
     try {
       // Send only the changed Camera/Profile.  Besides reducing the request,
@@ -61,11 +56,12 @@ export default function AnalyticsWorkspace() {
       const result = await patchV3AnalyticsPolicies(revision, [{ ...policy, [key]: value }]);
       setPolicies((current) => mergePolicies(current, result.policies)); setRevision(result.revision);
     } catch (reason) { setError(reason instanceof Error ? reason.message : '策略更新失败，请刷新后重试'); }
-    finally { setBusy(false); }
+    finally { setBusy(false); void polling.resume(); }
   };
 
   const updateBulk = async (value: boolean) => {
     if (visible.length === 0) return;
+    polling.pause();
     setBusy(true); setError('');
     try {
       // The API keeps the batch atomic and enforces the caller's Camera scope.
@@ -76,13 +72,13 @@ export default function AnalyticsWorkspace() {
       const result = await patchV3AnalyticsPolicies(revision, visible.map((policy) => ({ ...policy, [bulkKind]: value })));
       setPolicies((current) => mergePolicies(current, result.policies)); setRevision(result.revision);
     } catch (reason) { setError(reason instanceof Error ? reason.message : '批量策略更新失败，请刷新后重试'); }
-    finally { setBusy(false); }
+    finally { setBusy(false); void polling.resume(); }
   };
 
   return <section className="page-panel analytics-workspace">
-    <header className="page-heading"><div><span className="eyebrow">v3-M1 / v3-M2</span><h1>分析策略</h1><p>按 Camera/Profile 独立控制。默认关闭；帧只在浏览器本地内存处理。</p></div><button type="button" onClick={() => { reload(); }}>刷新</button></header>
+    <header className="page-heading"><div><span className="eyebrow">v3-M1 / v3-M2</span><h1>分析策略</h1><p>按 Camera/Profile 独立控制。默认关闭；帧只在浏览器本地内存处理。</p></div><button type="button" disabled={busy} onClick={() => void polling.refresh()}>刷新</button></header>
     <div className="analytics-toolbar"><span>策略 revision {revision}</span><select aria-label="分析状态筛选" value={selected} onChange={(event) => setSelected(event.target.value as typeof selected)}><option value="all">全部 Profile</option><option value="enabled">已启用</option><option value="unsupported">运行时不支持</option></select><select aria-label="批量分析类型" value={bulkKind} disabled={busy} onChange={(event) => setBulkKind(event.target.value as typeof bulkKind)}><option value="motionEnabled">运动</option><option value="sceneChangeEnabled">画面变化</option><option value="personEnabled">人物框</option></select><button type="button" disabled={busy || visible.length === 0} onClick={() => void updateBulk(true)}>Select All</button><button type="button" disabled={busy || visible.length === 0} onClick={() => void updateBulk(false)}>Unselect All</button><span className="muted-copy">当前 {visible.length} 个 Profile · 浏览器优先 · Worker 仅管理员显式允许</span></div>
-    {error && <div className="alert conflict-alert" role="alert">{error}</div>}
+    {(error || readError) && <div className="alert conflict-alert" role="alert">{error || readError}</div>}
     {visible.length === 0 ? <div className="empty-state"><h2>暂无分析策略</h2><p>请先在设备与来源中添加并探测 Profile。</p></div> : <div className="analytics-policy-list">{visible.map((policy) => {
       const status = statusMap.get(`${policy.cameraId}/${policy.profileId}`);
       return <article className="analytics-policy-card" key={`${policy.cameraId}/${policy.profileId}`}>

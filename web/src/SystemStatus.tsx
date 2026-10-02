@@ -1,4 +1,5 @@
-import { useEffect, useState } from 'react';
+import { useCallback, useState } from 'react';
+import { useVisiblePolling } from './useVisiblePolling';
 import { fetchProcessDiagnostics, fetchSystemCapabilities } from './api';
 import type { ProcessDiagnostics, SystemCapabilities, VideoBackendCapability } from './types';
 
@@ -21,15 +22,13 @@ export default function SystemStatus({ onBack }: { onBack: () => void }) {
   const [capabilities, setCapabilities] = useState<SystemCapabilities | null>(null);
   const [processes, setProcesses] = useState<ProcessDiagnostics | null>(null);
   const [error, setError] = useState('');
-  useEffect(() => {
-    let active = true;
-    const refresh = () => Promise.all([fetchSystemCapabilities(), fetchProcessDiagnostics()])
-      .then(([nextCapabilities, nextProcesses]) => { if (active) { setCapabilities(nextCapabilities); setProcesses(nextProcesses); setError(''); } })
-      .catch((reason: unknown) => { if (active) setError(reason instanceof Error ? reason.message : '读取系统状态失败'); });
-    void refresh();
-    const timer = window.setInterval(() => void refresh(), 5000);
-    return () => { active = false; window.clearInterval(timer); };
+  const refresh = useCallback(async (signal: AbortSignal) => {
+    try {
+      const [nextCapabilities, nextProcesses] = await Promise.all([fetchSystemCapabilities(signal), fetchProcessDiagnostics(signal)]);
+      if (!signal.aborted) { setCapabilities(nextCapabilities); setProcesses(nextProcesses); setError(''); }
+    } catch (reason) { if (!signal.aborted) setError(reason instanceof Error ? reason.message : '读取系统状态失败'); }
   }, []);
+  useVisiblePolling(refresh, 5000);
   return <main className="system-page">
     <header className="registry-header"><div><span className="eyebrow">Runtime diagnostics</span><h1>系统状态 / 视频加速</h1></div><button className="ghost-button" type="button" onClick={onBack}>返回 Studio</button></header>
     {error && <div className="alert" role="alert">{error}</div>}

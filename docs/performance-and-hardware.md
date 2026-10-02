@@ -88,3 +88,22 @@ pnpm exec playwright test -c playwright.local.config.ts --project=chromium perfo
 该开发夹具使用 12 路 canvas 视频和变化的合成音频分析数据，记录 React Profiler 耗时、场景字段读取、连接建档次数与播放时间。一次本机 4 秒对比中，React 渲染累计耗时由约 376 ms 降至 16–21 ms，音频采样期间的布局读取由 4,960 次降至 0；12 个既有连接保持不变。时间值只作开发模式的局部性能证据，回归门禁使用无重复布局、持续播放与无额外连接等行为约束，不设置不稳定的耗时阈值。
 
 The fixture uses 12 canvas video streams and changing synthetic analyser values. It records React Profiler duration, scene reads, session creation and playback progress. A local four-second comparison reduced accumulated React render time from approximately 376 ms to 16–21 ms and scene reads from 4,960 to zero, preserving all 12 connections. Timings describe this development fixture, not total CPU usage or physical-camera performance. Regression gates use stable behavioral checks rather than timing thresholds. Windows/Android protocol smoke tests and physical-camera qualification must be reported separately.
+
+## 6. 后台读取与统计 / Background reads and statistics
+
+系统状态、客户端授权、分析策略、节目诊断与固定 Scene 投影使用同一轮询生命周期：每页最多一个读取批次，完成后再等待原有间隔；浏览器隐藏或 Android Activity 进入后台时取消读取，返回前台、聚焦或网络恢复时立即刷新。最后成功结果保留在页面中。保存分析策略、批准/完成配对或撤销设备会取消先前读取，并在操作结束后重新读取；过期响应不能覆盖新结果，自动刷新也不会清除操作失败的提示。固定场景内容相同时保留对象，避免重算投影布局。这些规则仅适用于上述只读界面；账号同步、录像租约、播放连接及后台声音仍遵循各自生命周期。
+
+System status, client authorization, analytics policies, program diagnostics and fixed Scene projectors allow one read batch per page, waiting the existing interval after completion. Reads are canceled when the browser or Android Activity is hidden, retaining the last successful result; visibility, focus and network recovery trigger a fresh read. Policy and client mutations invalidate prior reads and refresh afterward. Late responses cannot overwrite the result and polling cannot erase action failures. Identical fixed scenes retain object identity. Account synchronization, recording leases, media connections and background listening keep their own lifecycles.
+
+每个 WebRTC peer 的诊断与弱网检测共享一个进行中的 `getStats()`，已完成的报告最多复用 200 ms（从请求发起时计时）；只留在内存中，连接关闭/替换时立即失效。帧率与速率使用报告自身时间戳，重复样本或计数器重置显示暂不可用，避免误报为零。音频存活检测也限制一个进行中的统计读取，并拒绝旧连接的晚到报告；原有弱网优化开关、拥塞阈值、抖动缓冲上限与音频后台存活策略保留。
+
+Telemetry and congestion detection share one pending native `getStats()` per WebRTC peer, reusing completed reports for at most 200 ms from request start. Reports remain in memory and are invalidated on peer disposal. Rates use report timestamps; duplicate samples and counter resets are unavailable rather than misleading zeroes. Audio liveness allows one pending read and rejects old-peer results. Existing optimization controls, congestion thresholds, buffer bounds and background audio liveness remain active.
+
+```powershell
+cd web
+pnpm exec playwright test -c playwright.local.config.ts --project=chromium polling-performance.spec.ts peer-stats-performance.spec.ts playback-optimization-runtime.spec.ts
+```
+
+测试用受控慢响应验证每端点最多一个请求、隐藏期间零新增读取、恢复立即读取、卸载取消最新请求、保存与读取的竞态，以及 12 个诊断读取加一个 watchdog 检查只触发一次原生统计。它们是合成浏览器回归，不代表真实摄像机、整机 CPU 或带宽的性能测量。
+
+Controlled slow-response tests cover bounded reads, no new hidden-page requests, immediate resume, current-request cancellation on unmount, mutation races and one native sample for 12 telemetry consumers plus the watchdog. These are synthetic browser regressions, not physical-camera, whole-system CPU or bandwidth benchmarks.

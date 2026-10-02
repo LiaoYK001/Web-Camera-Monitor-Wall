@@ -1,4 +1,5 @@
-import { useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
+import { useVisiblePolling } from './useVisiblePolling';
 import { useMonitorPreferences } from './useMonitorPreferences';
 import { openProjectorWindow } from './projector';
 import { connectProgram, type PlaybackStage, type ProgramConnection, type ProgramConnectionState, type ProgramStatus } from './whep';
@@ -39,16 +40,12 @@ export default function ProgramPreview({ aspectRatio, silent = false }: { aspect
     return () => { connection.close(); connectionRef.current = null; };
   }, [view.playbackOptimization.enabled, view.playbackOptimization.slowStreamTolerance, view.playbackOptimization.adaptiveProfiles, view.playbackOptimization.catchUp]);
 
-  useEffect(() => {
-    const controller = new AbortController();
-    const load = () => void fetch('/api/v1/program/status', { cache: 'no-store', signal: controller.signal })
-      .then((response) => response.ok ? response.json() as Promise<ProgramStatus> : null)
-      .then((value) => { if (value) setStatus(value); })
-      .catch(() => undefined);
-    load();
-    const timer = window.setInterval(load, 5000);
-    return () => { controller.abort(); window.clearInterval(timer); };
+  const readStatus = useCallback(async (signal: AbortSignal) => {
+    const response = await fetch('/api/v1/program/status', { cache: 'no-store', signal });
+    const value = response.ok ? await response.json() as ProgramStatus : null;
+    if (value && !signal.aborted) setStatus((current) => JSON.stringify(current) === JSON.stringify(value) ? current : value);
   }, []);
+  useVisiblePolling(readStatus, 5000);
 
   useEffect(() => {
     const video = videoRef.current;
