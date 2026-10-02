@@ -11,7 +11,7 @@ RUN corepack enable \
         attempt=$((attempt + 1)); \
         sleep 5; \
     done
-COPY web/package.json web/pnpm-lock.yaml ./
+COPY web/package.json web/pnpm-lock.yaml web/pnpm-workspace.yaml ./
 RUN pnpm config set fetch-retries 5 \
     && pnpm install --frozen-lockfile --ignore-scripts
 COPY web/ ./
