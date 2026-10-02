@@ -1,13 +1,17 @@
 # Web Camera Monitor Wall
 
-Windows 10/11 x64 Electron 完整客户端的实现、构建、签名更新与验收要求见 [Windows 桌面客户端](docs/windows-desktop.md)。容器部署继续保留；Windows 安装与实际媒体验收状态在该文档中单独记录。
+Windows 10/11 x64 Electron 完整客户端的实现、构建、签名更新与验收要求见 [Windows 桌面客户端](docs/windows-desktop.md)，签名申请及凭据配置见 [Windows 代码签名](docs/windows-signing.md)。容器部署继续保留；Windows 安装与实际媒体验收状态在该文档中单独记录。
 
-> **安全提示 / Security notice:** v3.3 升级后，仍由 v3.2 或更早 Service Worker 控制的旧 PWA 可能凭本机离线授权继续显示缓存工作区。请查看[安全公告](docs/security-advisory-v3.3.md)，在共享设备上刷新或清除旧 PWA。自动强制更新修复计划随 v3.4 发布。
-> After upgrading to v3.3, an old PWA still controlled by a v3.2 or earlier service worker may show its cached workspace under a local offline grant. See the [security advisory](docs/security-advisory-v3.3.md); refresh or clear old PWAs on shared devices. Automatic forced updates are planned for v3.4.
+> **安全提示 / Security notice:** v3.3 升级后，仍由 v3.2 或更早 Service Worker 控制的旧 PWA 可能凭本机离线授权继续显示缓存工作区。v3.4 已实现自动替换旧 Worker 并重新加载，以及认证不可用时关闭入口；未联网更新的旧 PWA 仍需按[安全公告](docs/security-advisory-v3.3.md)处理。
+> After upgrading to v3.3, an old PWA controlled by an earlier worker may show a cached workspace under a local offline grant. v3.4 implements automatic worker replacement/reload and fails closed when authentication is unavailable. Disconnected old clients still need the [security advisory](docs/security-advisory-v3.3.md).
 
 一个基于 `libobs` 的无桌面 Web 监控墙、Gateway Direct WebRTC 网关、Local-first PWA 与 NVR 项目。当前最新正式版本为 **v3.3**；详见 [v3.3 Release](https://github.com/LiaoYK001/Web-Camera-Monitor-Wall/releases/tag/v3.3)、[v3.3 发布说明](docs/release-notes-v3.3.md) 与 [ROADMAP](ROADMAP.md)。
 
 The latest official release is **v3.3**; see the [GitHub release](https://github.com/LiaoYK001/Web-Camera-Monitor-Wall/releases/tag/v3.3), [release notes](docs/release-notes-v3.3.md), and [ROADMAP](ROADMAP.md).
+
+本轮发布目标为 **v3.4**，功能与实际验证见 [v3.4 发布说明](docs/release-notes-v3.4.md)。发布成功以 [GitHub Release](https://github.com/LiaoYK001/Web-Camera-Monitor-Wall/releases) 及其实际附件为准；未签名 Windows 测试候选不会进入正式自动更新源。
+
+The current release target is **v3.4**; see its [scope and validation](docs/release-notes-v3.4.md). Publication is confirmed by the actual GitHub Release and attachments. Unsigned Windows test candidates never enter the stable updater feed.
 
 ```text
 RTSP camera -> libobs ffmpeg_source -> OBS scene -> H.264/AAC MP4

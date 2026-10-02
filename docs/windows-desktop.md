@@ -25,6 +25,8 @@
 
 缺少签名凭据只能生成带 `DEVELOPMENT-UNSIGNED` 的开发测试包，不能连接正式更新源。正式候选：
 
+受信任 CA 与微软 Azure Artifact Signing 的申请区别、地区限制及当前构建入口的凭据配置见 [Windows 代码签名](windows-signing.md)。
+
 开发构建仅生成 `dev.yml`，正式构建生成 `latest.yml`。electron-builder 签名主程序与 NSIS 安装包，排除已纳入运行文件摘要的嵌套 `.exe`；保留捆绑组件原有签名，打包后再次验证完整运行目录。
 
 签名过滤器明确包含 `WebOBS.exe`、当前版本 NSIS 安装器和卸载器，再排除其他 `.exe`，并通过固定 electron-builder 的实际过滤实现回归。正式构建强制签名，打包后再次检查主程序发布者。
