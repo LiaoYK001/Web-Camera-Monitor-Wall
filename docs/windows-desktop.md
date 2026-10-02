@@ -2,6 +2,10 @@
 
 `desktop/` 是 Electron 安装版，和 `clients/` 中的 Qt 客户端分别构建。Docker/Podman 仍使用现有镜像。Windows 安装版包含原生 C++ 后端、libobs/D3D11 与来源插件、Python 3.12、go2rtc、MediaMTX、FFmpeg、OpenSSL、Caddy 和 WebUI；日常运行无需 Docker、WSL、系统 Python 或系统 PATH。
 
+## 当前可下载版本
+
+[v3.4 Release](https://github.com/LiaoYK001/Web-Camera-Monitor-Wall/releases/tag/v3.4) 已于 2026-10-02 附带 [Windows x64 安装包](https://github.com/LiaoYK001/Web-Camera-Monitor-Wall/releases/download/v3.4/WebOBS-3.4.0-dev.0-windows-x64-DEVELOPMENT-UNSIGNED.exe)。版本为 `3.4.0-dev.0 DEVELOPMENT-UNSIGNED`，按维护者选择先提供未签名测试版，需手动下载安装；开发包不启用下述正式更新流程。Release 未上传 `latest.yml` 或 `dev.yml`。摘要与验证边界见 [v3.4 发布说明](release-notes-v3.4.md)。
+
 ## 默认行为
 
 - 自动检查正式更新，启动时一次，此后每 6 小时检查；默认自动下载。

@@ -5,13 +5,13 @@ Windows 10/11 x64 Electron 完整客户端的实现、构建、签名更新与�
 > **安全提示 / Security notice:** v3.3 升级后，仍由 v3.2 或更早 Service Worker 控制的旧 PWA 可能凭本机离线授权继续显示缓存工作区。v3.4 已实现自动替换旧 Worker 并重新加载，以及认证不可用时关闭入口；未联网更新的旧 PWA 仍需按[安全公告](docs/security-advisory-v3.3.md)处理。
 > After upgrading to v3.3, an old PWA controlled by an earlier worker may show a cached workspace under a local offline grant. v3.4 implements automatic worker replacement/reload and fails closed when authentication is unavailable. Disconnected old clients still need the [security advisory](docs/security-advisory-v3.3.md).
 
-一个基于 `libobs` 的无桌面 Web 监控墙、Gateway Direct WebRTC 网关、Local-first PWA 与 NVR 项目。当前最新正式版本为 **v3.3**；详见 [v3.3 Release](https://github.com/LiaoYK001/Web-Camera-Monitor-Wall/releases/tag/v3.3)、[v3.3 发布说明](docs/release-notes-v3.3.md) 与 [ROADMAP](ROADMAP.md)。
+一个基于 `libobs` 的 Web 监控墙、Gateway Direct WebRTC 网关、Local-first PWA 与 NVR 项目。当前最新产品版本为 **v3.4**；详见 [v3.4 Release](https://github.com/LiaoYK001/Web-Camera-Monitor-Wall/releases/tag/v3.4)、[v3.4 发布说明](docs/release-notes-v3.4.md) 与 [ROADMAP](ROADMAP.md)。
 
-The latest official release is **v3.3**; see the [GitHub release](https://github.com/LiaoYK001/Web-Camera-Monitor-Wall/releases/tag/v3.3), [release notes](docs/release-notes-v3.3.md), and [ROADMAP](ROADMAP.md).
+The latest product release is **v3.4**; see the [GitHub release](https://github.com/LiaoYK001/Web-Camera-Monitor-Wall/releases/tag/v3.4), [release notes](docs/release-notes-v3.4.md), and [ROADMAP](ROADMAP.md).
 
-本轮发布目标为 **v3.4**，功能与实际验证见 [v3.4 发布说明](docs/release-notes-v3.4.md)。发布成功以 [GitHub Release](https://github.com/LiaoYK001/Web-Camera-Monitor-Wall/releases) 及其实际附件为准；未签名 Windows 测试候选不会进入正式自动更新源。
+**下载 Windows x64 安装包：** [WebOBS 3.4.0-dev.0 DEVELOPMENT-UNSIGNED](https://github.com/LiaoYK001/Web-Camera-Monitor-Wall/releases/download/v3.4/WebOBS-3.4.0-dev.0-windows-x64-DEVELOPMENT-UNSIGNED.exe)。本次按维护者选择发布未签名测试版，需手动下载安装，不进入正式自动更新源。容器镜像为 `ghcr.io/liaoyk001/web-camera-monitor-wall:v3.4`；`latest` 当前指向同一镜像。
 
-The current release target is **v3.4**; see its [scope and validation](docs/release-notes-v3.4.md). Publication is confirmed by the actual GitHub Release and attachments. Unsigned Windows test candidates never enter the stable updater feed.
+The Windows x64 download is an unsigned **3.4.0-dev.0** test installer and requires manual installation. It has no stable updater metadata. The container is available as `ghcr.io/liaoyk001/web-camera-monitor-wall:v3.4` and currently `latest`; publication details and validation boundaries are recorded in the [v3.4 notes](docs/release-notes-v3.4.md).
 
 ```text
 RTSP camera -> libobs ffmpeg_source -> OBS scene -> H.264/AAC MP4

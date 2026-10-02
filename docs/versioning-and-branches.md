@@ -36,8 +36,9 @@ Release series use `v<major>.<minor>`; implementation milestones use `v<major>-M
 | `v3.0` (immutable preview carrier / 不可移动预览载体) | `v3-M1` | Motion and scene-change analytics / 运动与大范围画面变化分析 | Preview lineage retained; do not move / 保留预览血缘，不得移动 |
 | `v3.0.1` (pre-release correction / 预发布修正版) | `v3-M2` | Monitor workspace, telemetry/audio overlays and legacy-source migration / 监控工作区、统计音频叠层与旧来源迁移 | Pending explicit pre-release / 等待明确预发布 |
 | `v3.1` | `v3-M2` | Unavailable immutable-release number; superseded by v3.2 / 不可用编号，顺位改用 v3.2 |
-| `v3.2` | `v3-M2` + Feedback 5 / 反馈 5 | Current official baseline; disclosed long-test exception and source limitation retained / 当前正式基底，保留已披露的免长测例外和来源限制 |
-| `v3.3` (candidate / 候选) | `v3-M2` + Feedback 6 and account, LAN, and monitor fixes / 反馈 6、账户、局域网与监控修复 | Candidate only; public CI and exact-commit local gates must pass before publication / 仅为候选版本；发布前须通过公开 CI 与绑定最终提交的本机门禁 |
+| `v3.2` | `v3-M2` + Feedback 5 / 反馈 5 | Historical official baseline; disclosed long-test exception and source limitation retained / 历史正式基底，保留已披露的免长测例外和来源限制 |
+| `v3.3` | `v3-M2` + Feedback 6 and account, LAN, and monitor fixes / 反馈 6、账户、局域网与监控修复 | Published historical baseline / 已发布的历史基底 |
+| `v3.4` | `v3-M2` + go2rtc, Scenes, account audio, playback recovery and Windows x64 / go2rtc、Scenes、账号声音、播放恢复与 Windows x64 | Published at `4b2ab5f09b48`; Windows 3.4.0-dev.0 is an explicitly unsigned test installer with no updater metadata / 已发布；Windows 为明确标记的未签名测试安装包，不含更新元数据 |
 
 A milestone name is an engineering gate, not a release date. A release may be cut only from completed, reviewed gates. Public SemVer tags may add a patch component such as `v1.1.1`; an existing tag is immutable.
 
