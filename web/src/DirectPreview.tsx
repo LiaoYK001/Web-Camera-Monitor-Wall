@@ -1,3 +1,4 @@
+import { isPageVisible, subscribePageVisibility } from './pageVisibility';
 import { type CSSProperties, type PointerEvent as ReactPointerEvent, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import AudioMixerBar, { type AudioMixerChannel } from './AudioMixerBar';
 import { closeAnalyticsRuntimeSession, fetchAnalyticsPolicies, fetchCameras, fetchMotionZones, fetchPlaybackCapabilities, probeSourceProfile, renewAnalyticsRuntimeSession, requestAnalyticsRuntimePlan, submitAnalyticsSignals } from './api';
@@ -161,7 +162,7 @@ function TelemetryOverlay({ config, transport, video, connection }: {
     let pending = false;
     let previous: { at: number; frames: number; bytes: number } | undefined;
     const sample = async () => {
-      if (closed || pending || document.hidden) return;
+      if (closed || pending || !isPageVisible()) return;
       if (closed || !connection) { setValue(unavailableTelemetry()); return; }
       if (transport === 'mjpeg') { setValue({ ...unavailableTelemetry(), codec: 'MJPEG' }); return; }
       try {
@@ -256,7 +257,7 @@ function BrowserCameraTile({ item, source, mixer, telemetry, audioMeter, audioSn
   // the monitor-wide low-power suspension.  It must keep the media element
   // alive so the browser runtime can actually sample frames.
   const lowPowerForPlayback = Boolean(lowPower) && !Boolean(analyticsPolicy?.forceAnalyticsAlwaysOn);
-  const playbackEnabled = shouldRunPlayback({ lowPowerEnabled: lowPowerForPlayback, documentVisible, tileIntersecting });
+  const playbackEnabled = shouldRunPlayback({ lowPowerEnabled: lowPowerForPlayback, documentVisible, tileIntersecting, nativeForeground: window.webobsAndroidForeground });
 
   useEffect(() => { audioPeak.current = audioSnapshot?.peakDbfs ?? null; }, [audioSnapshot?.peakDbfs]);
   useEffect(() => {
@@ -489,7 +490,7 @@ export default function DirectPreview({ scene, compact = false, layoutPreview = 
   const [analyticsPolicies, setAnalyticsPolicies] = useState<AnalyticsPolicy[]>([]);
   const [analyticsZones, setAnalyticsZones] = useState<MotionZone[]>([]);
   const [portrait, setPortrait] = useState(() => window.matchMedia('(orientation: portrait)').matches);
-  const [pageVisible, setPageVisible] = useState(() => !document.hidden);
+  const [pageVisible, setPageVisible] = useState(() => isPageVisible());
   const [sourceStates, setSourceStates] = useState<Record<string, ProgramConnectionState>>({});
   const [topologies, setTopologies] = useState<Record<string, string>>({});
   const [issues, setIssues] = useState<OperationalIssue[]>([]);
@@ -540,9 +541,9 @@ export default function DirectPreview({ scene, compact = false, layoutPreview = 
 
   useEffect(() => {
     if (!monitorLoaded || !mixer || layoutPreview || (compact && !audioWorkspace)) return;
-    if (monitorView.audioMonitorEnabled) void mixer.enable();
+    if (monitorView.audioMonitorEnabled && window.webobsAndroidForeground !== false) void mixer.enable();
     else void mixer.disable();
-  }, [monitorLoaded, monitorView.audioMonitorEnabled, mixer, layoutPreview, compact, audioWorkspace]);
+  }, [monitorLoaded, monitorView.audioMonitorEnabled, mixer, layoutPreview, compact, audioWorkspace, pageVisible]);
 
   useEffect(() => {
     const media = window.matchMedia('(orientation: portrait)');
@@ -552,9 +553,8 @@ export default function DirectPreview({ scene, compact = false, layoutPreview = 
   }, []);
 
   useEffect(() => {
-    const changed = () => setPageVisible(!document.hidden);
-    document.addEventListener('visibilitychange', changed);
-    return () => document.removeEventListener('visibilitychange', changed);
+    const changed = () => setPageVisible(isPageVisible());
+    return subscribePageVisibility(changed);
   }, []);
 
   useEffect(() => {
@@ -756,7 +756,7 @@ export default function DirectPreview({ scene, compact = false, layoutPreview = 
   useEffect(() => {
     if (!monitorView.rotation.enabled || monitorView.mode !== 'auto' || monitorView.largeCount < 1) return undefined;
     const rotate = () => {
-      if (document.hidden || !navigator.onLine) return;
+      if (!isPageVisible() || !navigator.onLine) return;
       const sourceIds = effectiveScene.items.filter((item) => item.visible).map((item) => item.sourceId);
       const candidates = sourceIds.filter((id) => !monitorView.rotation.pinnedSourceIds.includes(id));
       if (monitorView.rotation.strategy === 'random') {

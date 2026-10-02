@@ -1,0 +1,4 @@
+<resources>
+    <string name="certificate_error">证书验证失败。请在 Android 系统安装服务器 CA，核对地址和证书；不会绕过证书验证。</string>
+    <string name="check_updates">检查 GitHub 更新</string>
+</resources>

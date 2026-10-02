@@ -178,6 +178,7 @@ test('measures bounded telemetry and suspends only low-power invisible playback'
       lowPowerDocumentHidden: lifecycle.shouldRunPlayback({ lowPowerEnabled: true, documentVisible: false, tileIntersecting: true }),
       lowPowerTileHidden: lifecycle.shouldRunPlayback({ lowPowerEnabled: true, documentVisible: true, tileIntersecting: false }),
       lowPowerVisible: lifecycle.shouldRunPlayback({ lowPowerEnabled: true, documentVisible: true, tileIntersecting: true }),
+      androidBackground: lifecycle.shouldRunPlayback({ lowPowerEnabled: false, documentVisible: true, tileIntersecting: true, nativeForeground: false }),
       promoted, lowPowerRejected,
     };
   });
@@ -196,6 +197,7 @@ test('measures bounded telemetry and suspends only low-power invisible playback'
   expect(result.lowPowerDocumentHidden).toBe(false);
   expect(result.lowPowerTileHidden).toBe(false);
   expect(result.lowPowerVisible).toBe(true);
+  expect(result.androidBackground).toBe(false);
   expect(result.promoted).toEqual({ accepted: true, reason: '', holdUntil: 11000, cooldownUntil: 31000 });
   expect(result.lowPowerRejected.reason).toBe('low_power_software_analytics_disabled');
 });

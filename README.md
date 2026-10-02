@@ -2,6 +2,8 @@
 
 Windows 10/11 x64 Electron 完整客户端的实现、构建、自动更新与验收要求见 [Windows 桌面客户端](docs/windows-desktop.md)。当前发行版暂不签名；未来可选签名步骤见 [Windows 代码签名](docs/windows-signing.md)。容器部署继续保留；Windows 安装与实际媒体验收状态在该文档中单独记录。
 
+Android 开发版现在位于 `android/`，复用 WebUI 并连接现有 Windows／容器后端。安装、MuMu/ADB 实测与本机开发自签密钥见 [Android 客户端](docs/android-client.md)。The Android development client reuses the backend WebUI; see the linked documentation for build, installation and emulator validation. It remains separate from the existing Qt client.
+
 > **安全提示 / Security notice:** v3.3 升级后，仍由 v3.2 或更早 Service Worker 控制的旧 PWA 可能凭本机离线授权继续显示缓存工作区。v3.4 已实现自动替换旧 Worker 并重新加载，以及认证不可用时关闭入口；未联网更新的旧 PWA 仍需按[安全公告](docs/security-advisory-v3.3.md)处理。
 > After upgrading to v3.3, an old PWA controlled by an earlier worker may show a cached workspace under a local offline grant. v3.4 implements automatic worker replacement/reload and fails closed when authentication is unavailable. Disconnected old clients still need the [security advisory](docs/security-advisory-v3.3.md).
 
@@ -20,7 +22,7 @@ RTSP camera -> libobs ffmpeg_source -> OBS scene -> H.264/AAC MP4
 
 当前版本新增 SQLite WAL Camera Registry、受控 ONVIF PTZ/预置位/快照/事件/对讲，以及隔离的事件、移动检测区/隐私遮罩、Detector Provider、规则和有界通知发件箱。默认 Gateway Direct-only 运行完全不初始化 OBS 解码、合成或编码；只有录制或启用 Composite 才启动 libobs。VA-API 会分别报告设备、驱动、编解码能力和真实运行探测，失败时明确回退；Hybrid 只转码不兼容轨道。
 
-开发路线和门禁见 [ROADMAP.md](ROADMAP.md)。当前 API v1 的 `direct` 仍是媒体经过 Docker/MediaMTX 的“网关直通”；获批的 HTTPS WHEP/HLS/MJPEG 可 Camera→Browser，普通 RTSP 明确回退 Camera→Docker→Browser。HTTP 摄像机可由管理员逐 Profile 显式豁免并经 Docker Gateway/NVR 使用，但不会被误报为 HTTPS 浏览器真直连。v2.3 增加 deny-by-default RBAC、Controller/Recorder mTLS 与租约、多卷/S3、资源调度、MQTT/Home Assistant、外部 Provider 和加密灾备，同时保留默认单镜像 `standalone` 部署。Qt/GStreamer/Android 继续冻结，不新增 EXE/APK 发布门禁。详见 [v2.3 扩展与韧性](docs/scale-ecosystem-resilience-v2.3.md)、[v2.2 运维工作区](docs/operations-workspace-v2.2.md)、[API v2](docs/api-v2.md) 与 [真直连边界](docs/true-direct-v2.md)。
+开发路线和门禁见 [ROADMAP.md](ROADMAP.md)。当前 API v1 的 `direct` 仍是媒体经过 Docker/MediaMTX 的“网关直通”；获批的 HTTPS WHEP/HLS/MJPEG 可 Camera→Browser，普通 RTSP 明确回退 Camera→Docker→Browser。HTTP 摄像机可由管理员逐 Profile 显式豁免并经 Docker Gateway/NVR 使用，但不会被误报为 HTTPS 浏览器真直连。v2.3 增加 deny-by-default RBAC、Controller/Recorder mTLS 与租约、多卷/S3、资源调度、MQTT/Home Assistant、外部 Provider 和加密灾备，同时保留默认单镜像 `standalone` 部署。Qt/GStreamer 参考客户端继续冻结；独立 Android WebUI 开发版见 [Android 客户端](docs/android-client.md)，不改动 Qt 产品的发布门禁。详见 [v2.3 扩展与韧性](docs/scale-ecosystem-resilience-v2.3.md)、[v2.2 运维工作区](docs/operations-workspace-v2.2.md)、[API v2](docs/api-v2.md) 与 [真直连边界](docs/true-direct-v2.md)。
 
 针对 `dev` 的本地快速启动、Vite 热更新、调试、测试和本地 hotfix，请使用 [Local `dev` loop](docs/local-dev.md) 及 `scripts/dev-local.ps1` / `scripts/dev-local.sh`；它们只使用本地 Docker 镜像，不会发布 GHCR。
 

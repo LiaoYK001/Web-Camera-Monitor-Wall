@@ -1,0 +1,40 @@
+name: Android WebUI development APK
+on:
+  pull_request:
+    paths: ['android/**', 'docs/android-client.md', '.github/workflows/android-webui.yaml']
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: android-webui-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  build:
+    runs-on: windows-2022
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with: { persist-credentials: false }
+      - name: Install locked SDK components
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $env:JAVA_HOME = $env:JAVA_HOME_17_X64
+          New-Item -ItemType Directory -Force build | Out-Null
+          @('platforms;android-35', 'build-tools;35.0.0', 'platform-tools') | Set-Content build/android-packages.txt
+          & "$env:ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager.bat" "--package_file=$PWD/build/android-packages.txt"
+          if ($LASTEXITCODE -ne 0) { throw 'SDK installation failed' }
+      - name: Verify dependencies, unit tests, lint and development APK
+        shell: pwsh
+        run: ./android/scripts/build-android.ps1 -JavaHome $env:JAVA_HOME_17_X64 -SdkRoot $env:ANDROID_HOME
+      - name: Upload disposable development APK and test reports
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: webobs-android-development
+          path: |
+            build/android/out/*
+            android/app/build/reports/tests/**
+            android/app/build/reports/lint-results-debug.*
+            android/build/reports/dependency-verification/**
+          if-no-files-found: error
+          retention-days: 7

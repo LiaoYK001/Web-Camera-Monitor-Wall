@@ -31,3 +31,10 @@ assets/*
 !assets/.gitkeep
 tests/artifacts/*
 !tests/artifacts/.gitkeep
+android/.gradle
+android/build
+android/app/build
+android/local.properties
+android/.cache
+**/*.keystore
+**/*.jks

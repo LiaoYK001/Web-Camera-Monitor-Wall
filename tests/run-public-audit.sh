@@ -29,7 +29,7 @@ path_violations="$(
             build/*|build-*/*|web/node_modules/*|web/dist/*) printf '%s\n' "$path" ;;
             recordings/*) [ "$path" = "recordings/.gitkeep" ] || printf '%s\n' "$path" ;;
             tests/artifacts/*) [ "$path" = "tests/artifacts/.gitkeep" ] || printf '%s\n' "$path" ;;
-            *.key|*.pem|*.p12|*.pfx|*.mp4|*.mkv|*.mov|*.avi|*.m4v|*.log) printf '%s\n' "$path" ;;
+            *.key|*.pem|*.p12|*.pfx|*.keystore|*.jks|*.mp4|*.mkv|*.mov|*.avi|*.m4v|*.log) printf '%s\n' "$path" ;;
         esac
     done
 )"

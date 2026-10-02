@@ -9,6 +9,7 @@
 - `obs/obs-studio/`: pinned upstream OBS submodule. Do not edit upstream checkouts to implement product behavior. Keep integration patches/build helpers outside them.
 - `docker/Dockerfile`, `docker/entrypoint.sh`, `compose*.yaml`: one product image, service supervision and deployment. `scripts/dev.mjs` + `scripts/dev-native.py` provide local development.
 - `desktop/`: full native Windows x64 Electron product, Job Object ownership, complete NSIS runtime and explicit GitHub update installation. Keep it separate from `clients/` Qt products. Dependency and distribution contracts are described in `docs/windows-desktop.md`.
+- `android/`: independent Java/WebView Android client for existing product backends; keep it separate from Qt. Build/signing and emulator validation are described in `docs/android-client.md`. APKs require a local signature; preserve the development key outside Git and never claim a development APK is a stable release.
 
 ## Working rules
 
@@ -33,3 +34,4 @@
 - Run `tests/test_go2rtc_runtime.py` for private configuration/lifecycle contracts and the dedicated proxy integration test for HTTP/WebSocket streaming.
 - `cd desktop; pnpm test:install` validates the actual NSIS install/uninstall in an isolated Unicode path and retains data on default uninstall. It refuses an existing WebOBS installation or shortcuts; it does not qualify clean Windows systems, cameras or signed updates.
 - Distinguish browser fixtures and synthetic protocol tests from real camera qualification. Report any full-image or device checks that could not run.
+- Android: `android/scripts/build-android.ps1` runs JUnit, lint, APK build and signature verification. `android/tests/test_emulator.py --serial <explicit-device> ...` exercises the actual installed debug APK through ADB against an isolated complete product image. It does not qualify physical cameras/ARM devices or APK automatic updates; do not clear existing device data.
