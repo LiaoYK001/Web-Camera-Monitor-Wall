@@ -13,7 +13,7 @@ on:
         default: '3.4.0-dev.0'
         type: string
       official:
-        description: 'Build a signed candidate (does not publish a Release)'
+        description: 'Build a stable auto-updatable candidate (unsigned by default; does not publish)'
         default: false
         type: boolean
 
@@ -82,19 +82,10 @@ jobs:
         env:
           DESKTOP_VERSION: ${{ inputs.version }}
           DESKTOP_OFFICIAL: ${{ inputs.official }}
-          CSC_LINK: ${{ secrets.WEBOBS_WINDOWS_CSC_LINK }}
-          CSC_KEY_PASSWORD: ${{ secrets.WEBOBS_WINDOWS_CSC_KEY_PASSWORD }}
-          WEBOBS_SIGNING_PUBLISHER: ${{ vars.WEBOBS_WINDOWS_SIGNING_PUBLISHER }}
         run: |
           $parameters = @{Version=$env:DESKTOP_VERSION}
           if ($env:DESKTOP_OFFICIAL -eq 'true') {$parameters.Release=$true}
           ./desktop/scripts/build-windows.ps1 @parameters
-          if ($env:DESKTOP_OFFICIAL -eq 'true') {
-            Get-ChildItem "desktop/out/$env:DESKTOP_VERSION" -Filter '*.exe' | ForEach-Object {
-              $signature = Get-AuthenticodeSignature -LiteralPath $_.FullName
-              if ($signature.Status -ne 'Valid' -or $signature.SignerCertificate.GetNameInfo([Security.Cryptography.X509Certificates.X509NameType]::SimpleName,$false) -ne $env:WEBOBS_SIGNING_PUBLISHER) {throw 'Installer signature validation failed'}
-            }
-          }
       - name: Record actual build identity (does not count as camera qualification)
         shell: pwsh
         env:

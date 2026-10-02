@@ -41,4 +41,4 @@ Get-AuthenticodeSignature -LiteralPath 'desktop/out/3.4.0/WebOBS-3.4.0-windows-x
 
 检查 `Status=Valid`、发布者名称、SHA 摘要及签名时间戳。正式构建强制签名，并验证主程序与安装器；保留捆绑依赖原有签名和运行文件摘要。安装包发生任何变化后都需重新签名和生成更新摘要，不覆盖已经发布的不可变版本。
 
-只有正式签名、对应源码、Windows 验收结果和更新验证满足 [桌面发布流程](windows-desktop.md) 后，才上传 `latest.yml` 并启用正式自动更新。未签名开发测试附件可按维护者明确选择分发，仍保留 `DEVELOPMENT-UNSIGNED` 标记和关闭更新源的行为。
+当前维护者选择暂不签名：正式稳定 NSIS 包标记 `UNSIGNED`，发布 `latest.yml`，启用完整自动更新，以 GitHub HTTPS 与完整安装包 SHA-512/大小校验为验证方式。用户确认、正常停服与一致性备份继续保留。`-dev.*` 开发测试包仍保留 `DEVELOPMENT-UNSIGNED` 标记并关闭正式更新源。本文的证书步骤是未来可选方案，签名构建需显式追加 `-Sign`；Windows 媒体与更新验证边界见 [桌面发布流程](windows-desktop.md)。

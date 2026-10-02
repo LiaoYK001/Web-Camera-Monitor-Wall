@@ -104,6 +104,26 @@ async function updaterFixture(t, overrides={}) {
 test('updates never install on quit and development packages never query production',async t=>{
   const {controller,updater}=await updaterFixture(t,{official:false});assert.equal(controller.enabled,false);assert.equal(updater.autoInstallOnAppQuit,false);assert.equal(updater.allowPrerelease,false);await controller.install();assert.equal(updater.installs,undefined);
 });
+
+test('unsigned release updates retain digest verification, explicit installation and recovery snapshots',async t=>{
+  let signatureCalls=0;
+  const f=await updaterFixture(t,{publisher:null,verifySignature:async()=>{signatureCalls++;throw new Error('Unexpected signature gate');}});
+  assert.equal(f.controller.enabled,true);assert.equal(f.controller.status().signed,false);
+  assert.equal(f.updater.autoInstallOnAppQuit,false);
+  await f.controller.install();assert.equal(signatureCalls,0);
+  assert.deepEqual(f.calls,['stop','snapshot','install']);assert.equal(f.updater.installs,1);
+  const recovery=JSON.parse(await readFile(path.join(f.root,'pending-update.json'),'utf8'));
+  assert.equal(recovery.installerSha256,await digestFile(f.file));
+  const corrupt=await updaterFixture(t,{publisher:null});await writeFile(corrupt.file,'corrupted fixture');
+  await corrupt.controller.install();assert.deepEqual(corrupt.calls,[]);assert.equal(corrupt.updater.installs,undefined);
+});
+
+test('unpackaged releases cannot update and manual checking respects disabled automatic checking',async t=>{
+  const f=await updaterFixture(t,{publisher:null,packaged:false});assert.equal(f.controller.enabled,false);
+  const manual=await updaterFixture(t,{publisher:null,settings:{...defaults,autoCheck:false,autoDownload:false}});
+  let checks=0;manual.updater.checkForUpdates=async()=>{checks++;};
+  manual.controller.start();assert.equal(checks,0);await manual.controller.check();assert.equal(checks,1);manual.controller.dispose();
+});
 test('unpublished drafts and backend exports pause installation',async t=>{
   const f=await updaterFixture(t,{windowWork:()=>[{dirty:true,exporting:false}]});await f.controller.install();assert.deepEqual(f.calls,[]);assert.equal(f.updater.installs,undefined);assert.match(f.controller.state.message,/草稿/);
   assert.ok(updateBlockers([],{recording:false,streaming:false,exporting:true}).some(item=>item.includes('导出')));

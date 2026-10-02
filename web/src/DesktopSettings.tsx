@@ -11,6 +11,7 @@ export default function DesktopSettings() {
   const save = (values: Partial<Settings>) => void run(() => bridge.saveSettings(values));
   return <section className="desktop-settings" aria-label="Windows 客户端设置"><h2>Windows 客户端</h2>
     <p>服务：{state?.runtime.phase} · 更新：{state?.update.message || state?.update.phase}</p>
+    {state?.update.phase !== 'disabled' && state?.update.signed === false && <p>当前发行版未签名，更新使用 GitHub Release 和文件摘要校验；安装仍需确认。</p>}
     {state?.runtime.detail && <p role="status">{state.runtime.detail}</p>}{error && <p role="alert">{error}</p>}
     {state && <fieldset disabled={busy}>
       {([['autoCheck', '自动检查正式版本更新（每 6 小时）'], ['autoDownload', '自动下载更新（安装前仍需确认）'], ['startAtLogin', '登录 Windows 时启动'], ['minimizeToTray', '关闭主窗口时保留在托盘'], ['lanEnabled', '开启局域网 HTTPS 共享']] as const).map(([key, label]) => <label key={key} className="settings-checkbox"><input type="checkbox" checked={state.settings[key]} onChange={event => save({ [key]: event.target.checked })} />{label}</label>)}

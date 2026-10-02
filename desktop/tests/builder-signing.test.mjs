@@ -19,19 +19,27 @@ test('actual builder signs product and NSIS executables while preserving invento
   for (const file of ['resources/runtime/bin/webobsd.exe', 'resources/runtime/bin/ffmpeg.exe', 'resources/runtime/bin/go2rtc.exe', 'resources/runtime/python/python.exe', 'resources/runtime/obs-plugins/64bit/obs-browser-page.exe']) assert.equal(matches(file), false, file);
 });
 
-test('official configuration requires signatures and includes stable installer signing', () => {
-  const originalOfficial = process.env.WEBOBS_RELEASE_BUILD, originalVersion = process.env.WEBOBS_DESKTOP_VERSION;
+test('unsigned releases publish latest without imposing Authenticode verification', () => {
+  const originalOfficial = process.env.WEBOBS_RELEASE_BUILD, originalVersion = process.env.WEBOBS_DESKTOP_VERSION, originalSigned = process.env.WEBOBS_SIGN_BUILD, originalPublisher = process.env.WEBOBS_SIGNING_PUBLISHER;
   try {
     process.env.WEBOBS_RELEASE_BUILD='true'; process.env.WEBOBS_DESKTOP_VERSION='3.4.0';
+    process.env.WEBOBS_SIGN_BUILD='false';
     delete require.cache[configPath];
     const official = require(configPath);
-    assert.equal(official.forceCodeSigning, true);
+    assert.equal(official.forceCodeSigning, false);
+    assert.equal(official.win.verifyUpdateCodeSignature, false);
+    assert.equal(official.win.signtoolOptions, undefined);
     assert.equal(official.publish[0].channel, 'latest');
     const packager = { platformSpecificBuildOptions: official.win };
-    for (const file of ['WebOBS.exe','WebOBS-3.4.0-windows-x64.exe','WebOBS-3.4.0-windows-x64.__uninstaller.exe']) assert.equal(WinPackager.prototype.shouldSignFile.call(packager,file,true),true,file);
+    for (const file of ['WebOBS.exe','WebOBS-3.4.0-windows-x64-UNSIGNED.exe','WebOBS-3.4.0-windows-x64-UNSIGNED.__uninstaller.exe']) assert.equal(WinPackager.prototype.shouldSignFile.call(packager,file,true),true,file);
     assert.equal(WinPackager.prototype.shouldSignFile.call(packager,'resources/runtime/bin/webobsd.exe',true),false);
+    process.env.WEBOBS_SIGN_BUILD='true';process.env.WEBOBS_SIGNING_PUBLISHER='Example publisher';
+    delete require.cache[configPath];
+    const signed = require(configPath);
+    assert.equal(signed.forceCodeSigning,true);assert.equal(signed.win.verifyUpdateCodeSignature,true);
+    assert.equal(signed.win.signtoolOptions.publisherName,'Example publisher');
   } finally {
-    for (const [name,value] of [['WEBOBS_RELEASE_BUILD',originalOfficial],['WEBOBS_DESKTOP_VERSION',originalVersion]]) {
+    for (const [name,value] of [['WEBOBS_RELEASE_BUILD',originalOfficial],['WEBOBS_DESKTOP_VERSION',originalVersion],['WEBOBS_SIGN_BUILD',originalSigned],['WEBOBS_SIGNING_PUBLISHER',originalPublisher]]) {
       if(value===undefined) delete process.env[name]; else process.env[name]=value;
     }
     delete require.cache[configPath];

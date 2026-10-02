@@ -15,7 +15,8 @@ export function updateBlockers(windowWork, workload) {
 export class UpdateController extends EventEmitter {
   constructor({ updater, official, publisher, packaged, settings, root, supervisor, windowWork, confirmStop, beforeInstall, launchInstaller, verifySignature, version }) {
     super(); Object.assign(this,{ updater,official,publisher,packaged,settings,root,supervisor,windowWork,confirmStop,beforeInstall,launchInstaller,verifySignature,version });
-    this.enabled = official && packaged && typeof publisher === 'string' && publisher.length > 0;
+    this.signed = typeof publisher === 'string' && publisher.length > 0;
+    this.enabled = official === true && packaged === true && (publisher === null || this.signed);
     this.state = { phase: this.enabled ? 'idle':'disabled', message:this.enabled ? '' : '开发测试包不连接正式更新源。' };
     this.installing=false; this.checking=false;
     updater.autoInstallOnAppQuit=false; updater.autoDownload=false; updater.allowPrerelease=false; updater.allowDowngrade=false; updater.disableWebInstaller=true;
@@ -30,12 +31,12 @@ export class UpdateController extends EventEmitter {
     updater.on('update-downloaded',info=>{this.downloaded=info; this.announce('downloaded','下载完成，点击“重启更新”后才安装。');});
     updater.on('error',error=>{
       if(this.installing)this.installLaunchError=error || new Error('Installer launch failed');
-      this.announce('error','更新检测、下载、摘要或签名验证失败。当前版本继续运行，可稍后重试。');
+      this.announce('error','更新检测、下载或文件验证失败。当前版本继续运行，可稍后重试。');
     });
   }
   status() {
     const notes = this.info?.releaseNotes;
-    return {...this.state,version:this.info?.version,releaseNotes:typeof notes==='string'?notes.slice(0,16000):Array.isArray(notes)?notes.map(item=>String(item.note||'')).join('\n').slice(0,16000):''};
+    return {...this.state,signed:this.signed,version:this.info?.version,releaseNotes:typeof notes==='string'?notes.slice(0,16000):Array.isArray(notes)?notes.map(item=>String(item.note||'')).join('\n').slice(0,16000):''};
   }
   announce(phase,message='',percent) { this.state={phase,message,percent}; this.emit('status',this.status()); }
   start() { this.timer=setInterval(()=>{if(this.settings.autoCheck)void this.check();},6*60*60*1000);this.timer.unref?.();if(this.settings.autoCheck)void this.check(); }
@@ -62,8 +63,8 @@ export class UpdateController extends EventEmitter {
   async verifyDownloaded(file=this.downloaded?.downloadedFile) {
     if(!file || !(await stat(file)).isFile()) throw new Error('Downloaded installer missing');
     const item=this.info?.files?.find(item=>String(item.url).endsWith('.exe'));
-    if(!item?.sha512 || await digestFile(file,'sha512','base64')!==item.sha512)throw new Error('Installer SHA-512 mismatch');
-    if(await this.verifySignature([this.publisher],file)!==null)throw new Error('Installer publisher or Authenticode signature mismatch');
+    if(!item?.sha512 || (await stat(file)).size!==item.size || await digestFile(file,'sha512','base64')!==item.sha512)throw new Error('Installer size or SHA-512 mismatch');
+    if(this.signed && await this.verifySignature([this.publisher],file)!==null)throw new Error('Installer publisher or Authenticode signature mismatch');
     return file;
   }
   async install() {

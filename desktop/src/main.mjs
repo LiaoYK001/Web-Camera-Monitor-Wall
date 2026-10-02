@@ -152,13 +152,14 @@ else {
           await rm(path.join(root,'pending-update.json'),{force:true});recovery=null;await supervisor.start();await main.loadURL(supervisor.origin);return status();
         }
         if(operation==='recovery.installer'){
-          if(!recovery?.previousInstaller)throw new Error('首个安装版本无缓存旧包，请从对应 GitHub Release 下载签名安装包。');
+          if(!recovery?.previousInstaller)throw new Error('首个安装版本无缓存旧包，请从对应 GitHub Release 下载对应版本安装包。');
           const result=await dialog.showMessageBox(main,{type:'question',buttons:['打开上一版本安装包','取消'],defaultId:1,cancelId:1,message:'安装旧版本后重新打开恢复界面，再恢复匹配数据快照。'});
           if(result.response===0){
             const expected=path.join(root,'installers',`WebOBS-${recovery.from}-windows-x64.exe`);
             if(recovery.previousInstaller!==expected || !/^[a-f0-9]{64}$/.test(recovery.previousInstallerSha256) || await digestFile(expected)!==recovery.previousInstallerSha256)throw new Error('上一版本安装包路径或摘要不匹配，请从对应 Release 重新下载。');
             const distribution=JSON.parse(await readFile(path.join(source,'distribution.json'),'utf8'));
-            if(!distribution.official || !distribution.publisher || await verifyPublisher([distribution.publisher],expected)!==null)throw new Error('上一版本安装包发布者签名验证失败。');
+            if(!distribution.official)throw new Error('开发测试包不能安装正式恢复包。');
+            if(distribution.publisher && await verifyPublisher([distribution.publisher],expected)!==null)throw new Error('上一版本安装包发布者签名验证失败。');
             const error=await shell.openPath(expected);if(error)throw new Error(error);
           }
           return status();
