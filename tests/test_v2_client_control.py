@@ -147,7 +147,7 @@ class V2ClientControlTests(unittest.TestCase):
         (service.SECRET_ROOT / "camera-test.json").write_text(json.dumps({
             "username": "fixture-viewer", "password": "fixture-password",
         }), encoding="utf-8")
-        with sqlite3.connect(service.CAMERA_DB_PATH) as database:
+        with service.connect(service.CAMERA_DB_PATH) as database:
             database.executescript("""
               CREATE TABLE cameras(id TEXT PRIMARY KEY,name TEXT,address TEXT,adapter TEXT,
                 credentials_ref TEXT,hardware_decode TEXT,capabilities_json TEXT,health TEXT,
@@ -185,6 +185,28 @@ class V2ClientControlTests(unittest.TestCase):
     def tearDown(self):
         self.temporary.cleanup()
 
+    def test_secret_references_are_bounded_basenames_and_files_are_bounded(self):
+        for reference in (None, "", "../camera-test", "/camera-test", "nested/camera-test",
+                          "nested\\camera-test", ".hidden", "x" * 129):
+            with self.subTest(reference=reference), self.assertRaises(service.ApiError) as rejected:
+                service._load_secret(reference)
+            self.assertEqual(rejected.exception.code, "invalid_credentials_ref")
+        self.assertEqual(service._load_secret("camera-test")["username"], "fixture-viewer")
+        (service.SECRET_ROOT / "oversized.json").write_bytes(b" " * 16_385)
+        with self.assertRaises(service.ApiError) as rejected:
+            service._load_secret("oversized")
+        self.assertEqual(rejected.exception.code, "credentials_unavailable")
+
+    def test_secret_symlinks_are_rejected_even_within_private_root(self):
+        link = service.SECRET_ROOT / "linked.json"
+        try:
+            link.symlink_to(service.SECRET_ROOT / "camera-test.json")
+        except OSError:
+            self.skipTest("symlink creation unavailable for this Windows account")
+        with self.assertRaises(service.ApiError) as rejected:
+            service._load_secret("linked")
+        self.assertEqual(rejected.exception.code, "credentials_unavailable")
+
     def enroll_and_approve(self):
         enrollment = service.start_enrollment(self.keys.enrollment(os.urandom(32)))
         approved = service.approve_enrollment(enrollment["enrollmentId"], {
@@ -214,7 +236,7 @@ class V2ClientControlTests(unittest.TestCase):
                     "pwaOriginSha256": hashlib.sha256(b"https://monitor.invalid").hexdigest(),
                     "checkedAt": int(time.time())},
         }}}
-        with sqlite3.connect(service.CAMERA_DB_PATH) as database:
+        with service.connect(service.CAMERA_DB_PATH) as database:
             database.execute(
                 "UPDATE cameras SET adapter='whep',credentials_ref='',capabilities_json=? "
                 "WHERE id='camera-test'", (json.dumps(capabilities),))
@@ -268,7 +290,7 @@ class V2ClientControlTests(unittest.TestCase):
         self.assertEqual(rejected["fallbackReason"], "browser_origin_not_allowed")
 
     def test_browser_profile_rejects_malformed_port_without_server_error(self):
-        with sqlite3.connect(service.CAMERA_DB_PATH) as database:
+        with service.connect(service.CAMERA_DB_PATH) as database:
             database.execute(
                 "UPDATE cameras SET adapter='whep',credentials_ref='' WHERE id='camera-test'")
             database.execute(
@@ -279,7 +301,7 @@ class V2ClientControlTests(unittest.TestCase):
             service._browser_profile_reason(camera, profiles[0], "web"), "endpoint_invalid")
 
     def test_web_http_profile_is_gateway_only_and_grant_hides_endpoint(self):
-        with sqlite3.connect(service.CAMERA_DB_PATH) as database:
+        with service.connect(service.CAMERA_DB_PATH) as database:
             database.execute(
                 "UPDATE cameras SET adapter='mjpeg',credentials_ref='' WHERE id='camera-test'")
             database.execute(
@@ -361,7 +383,7 @@ class V2ClientControlTests(unittest.TestCase):
             "username": "webobs-client-device",
             "password": "fixture-dedicated-password-32",
         }), encoding="utf-8")
-        with sqlite3.connect(service.CAMERA_DB_PATH) as database:
+        with service.connect(service.CAMERA_DB_PATH) as database:
             database.execute(
                 "UPDATE cameras SET adapter='onvif',capabilities_json=? WHERE id='camera-test'",
                 (json.dumps({"onvif": {"userManagement": True}}),),

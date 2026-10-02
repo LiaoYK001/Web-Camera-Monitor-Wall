@@ -16,6 +16,7 @@ from runtime_support import service_port, service_http, service_rtsp, install_ow
 import json
 import base64
 import hashlib
+import http.client
 import ipaddress
 import os
 import re
@@ -38,7 +39,8 @@ from urllib.parse import parse_qs, unquote, urljoin, urlsplit
 from urllib.parse import quote, urlunsplit
 from urllib.request import (
     HTTPBasicAuthHandler, HTTPDigestAuthHandler, HTTPPasswordMgrWithDefaultRealm,
-    HTTPSHandler, HTTPCookieProcessor, HTTPRedirectHandler, Request, build_opener, urlopen,
+    HTTPHandler, HTTPSHandler, HTTPCookieProcessor, HTTPRedirectHandler, ProxyHandler,
+    Request, build_opener, urlopen,
 )
 from xml.sax.saxutils import escape
 
@@ -49,6 +51,7 @@ MAX_ONVIF_XML = 2 * 1024 * 1024
 ONVIF_TIMEOUT_SECONDS = 6
 TLS_CONTEXT = ssl.create_default_context(
     cafile=os.environ.get("WEBOBS_CAMERA_TLS_CA") or None)
+TLS_CONTEXT.minimum_version = ssl.TLSVersion.TLSv1_2
 SECRET_ROOT = Path(os.environ.get(
     "WEBOBS_CAMERA_SECRET_ROOT", "/run/secrets/webobs-camera-credentials"))
 ADAPTERS = {
@@ -109,6 +112,90 @@ class RevisionConflict(RuntimeError):
 
 class InsecureHttpDenied(PermissionError):
     """A cleartext media endpoint was used without explicit Profile approval."""
+
+
+def camera_connection(address, timeout, source_address=None, *, allow_test_loopback=False):
+    """Resolve once, validate every result, then connect to the checked numeric IP.
+
+    RFC1918/ULA camera networks remain supported. Loopback, metadata/link-local,
+    multicast and reserved destinations cannot be reached through camera HTTP.
+    TLS still uses the original hostname for SNI and certificate verification.
+    """
+    host, port = address
+    entries = socket.getaddrinfo(host, port, type=socket.SOCK_STREAM)
+    if not entries or len(entries) > 8:
+        raise OSError("camera endpoint resolution is unbounded")
+    test_loopback = allow_test_loopback and \
+        os.environ.get("WEBOBS_CAMERA_ALLOW_TEST_ENDPOINTS") == "true"
+    metadata_addresses = {ipaddress.ip_address(value) for value in (
+        "100.100.100.200", "192.0.0.192", "fd00:ec2::254")}
+    for family, _, _, _, destination in entries:
+        value = ipaddress.ip_address(destination[0].split("%", 1)[0])
+        if isinstance(value, ipaddress.IPv6Address) and value.ipv4_mapped:
+            value = value.ipv4_mapped
+        if family not in (socket.AF_INET, socket.AF_INET6) or value in metadata_addresses or value.is_unspecified or \
+                value.is_multicast or value.is_link_local or (value.is_reserved and not value.is_loopback) or \
+                (value.is_loopback and not test_loopback):
+            raise OSError("camera endpoint address is forbidden")
+    deadline = time.monotonic() + timeout
+    for family, kind, protocol, _, destination in entries:
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            break
+        channel = socket.socket(family, kind, protocol)
+        try:
+            channel.settimeout(remaining)
+            if source_address:
+                channel.bind(source_address)
+            # No second DNS lookup: a hostname cannot rebind after validation.
+            channel.connect(destination)
+            return channel
+        except OSError:
+            channel.close()
+    raise OSError("camera endpoint is unavailable")
+
+
+class CameraHTTPConnection(http.client.HTTPConnection):
+    def __init__(self, *args, allow_test_loopback=False, **kwargs):
+        super().__init__(*args, **kwargs)
+        self._create_connection = lambda address, timeout, source_address=None: camera_connection(
+            address, timeout, source_address, allow_test_loopback=allow_test_loopback)
+
+
+class CameraHTTPSConnection(http.client.HTTPSConnection):
+    def __init__(self, *args, allow_test_loopback=False, **kwargs):
+        super().__init__(*args, **kwargs)
+        self._create_connection = lambda address, timeout, source_address=None: camera_connection(
+            address, timeout, source_address, allow_test_loopback=allow_test_loopback)
+
+
+class CameraHTTPHandler(HTTPHandler):
+    def __init__(self, allow_test_loopback):
+        super().__init__()
+        self.allow_test_loopback = allow_test_loopback
+
+    def http_open(self, request):
+        return self.do_open(lambda *args, **kwargs: CameraHTTPConnection(
+            *args, allow_test_loopback=self.allow_test_loopback, **kwargs), request)
+
+
+class CameraHTTPSHandler(HTTPSHandler):
+    def __init__(self, allow_test_loopback):
+        super().__init__(context=TLS_CONTEXT)
+        self.allow_test_loopback = allow_test_loopback
+
+    def https_open(self, request):
+        return self.do_open(lambda *args, **kwargs: CameraHTTPSConnection(
+            *args, allow_test_loopback=self.allow_test_loopback, **kwargs), request,
+            context=self._context)
+
+
+def camera_http_opener(*handlers, browser=False):
+    test_loopback = not browser or \
+        os.environ.get("WEBOBS_BROWSER_PROBE_ALLOW_LOOPBACK") == "true"
+    # System proxies can resolve a hostname elsewhere and bypass the IP guard.
+    return build_opener(ProxyHandler({}), CameraHTTPHandler(test_loopback),
+                        CameraHTTPSHandler(test_loopback), *handlers)
 
 
 class NoRedirect(HTTPRedirectHandler):
@@ -2120,24 +2207,9 @@ def configured_pwa_origin() -> str:
 
 def browser_probe_request(endpoint: str, origin: str, method: str = "GET",
                           headers: dict[str, str] | None = None, opener=None):
-    try:
-        parsed = urlsplit(endpoint)
-        addresses = {entry[4][0] for entry in socket.getaddrinfo(
-            parsed.hostname, parsed.port or 443, type=socket.SOCK_STREAM)}
-    except (ValueError, OSError, TypeError) as error:
-        raise BrowserDirectProbeError("endpoint_resolution_failed") from error
-    allow_test_loopback = os.environ.get("WEBOBS_CAMERA_ALLOW_TEST_ENDPOINTS") == "true" and \
-        os.environ.get("WEBOBS_BROWSER_PROBE_ALLOW_LOOPBACK") == "true"
-    if not addresses or len(addresses) > 8:
-        raise BrowserDirectProbeError("endpoint_resolution_unbounded")
-    for address in addresses:
-        value = ipaddress.ip_address(address.split("%", 1)[0])
-        if value.is_unspecified or value.is_multicast or value.is_link_local or \
-                (value.is_loopback and not allow_test_loopback):
-            raise BrowserDirectProbeError("endpoint_address_forbidden")
     request_headers = {"Origin": origin, "User-Agent": "WebOBS-Browser-Qualification/1"}
     request_headers.update(headers or {})
-    opener = opener or build_opener(SameOriginRedirect(), HTTPSHandler(context=TLS_CONTEXT))
+    opener = opener or camera_http_opener(SameOriginRedirect(), browser=True)
     try:
         response = opener.open(Request(endpoint, method=method, headers=request_headers),
                                timeout=ONVIF_TIMEOUT_SECONDS)
@@ -2173,8 +2245,8 @@ def bounded_http_prefix(response, limit: int) -> bytes:
 def qualify_hls(endpoint: str, origin: str) -> None:
     current = endpoint
     cookies = CookieJar()
-    opener = build_opener(
-        SameOriginRedirect(), HTTPCookieProcessor(cookies), HTTPSHandler(context=TLS_CONTEXT))
+    opener = camera_http_opener(
+        SameOriginRedirect(), HTTPCookieProcessor(cookies), browser=True)
     for depth in range(2):
         response = browser_probe_request(
             current, origin, headers={"Accept": "application/vnd.apple.mpegurl"}, opener=opener)
@@ -2334,11 +2406,10 @@ def onvif_soap(endpoint: str, action: str, body: str, username: str, password: s
     password_manager = HTTPPasswordMgrWithDefaultRealm()
     if username:
         password_manager.add_password(None, endpoint, username, password)
-    opener = build_opener(
+    opener = camera_http_opener(
         NoRedirect(),
         HTTPDigestAuthHandler(password_manager),
         HTTPBasicAuthHandler(password_manager),
-        HTTPSHandler(context=TLS_CONTEXT),
     )
     request = Request(endpoint, data=envelope, method="POST", headers={
         "Content-Type": f'application/soap+xml; charset=utf-8; action="{action}"',
@@ -2912,8 +2983,8 @@ def onvif_snapshot(camera_id: str) -> dict:
     password_manager = HTTPPasswordMgrWithDefaultRealm()
     if username:
         password_manager.add_password(None, endpoint, username, password)
-    opener = build_opener(NoRedirect(), HTTPDigestAuthHandler(password_manager),
-                          HTTPBasicAuthHandler(password_manager), HTTPSHandler(context=TLS_CONTEXT))
+    opener = camera_http_opener(NoRedirect(), HTTPDigestAuthHandler(password_manager),
+                                HTTPBasicAuthHandler(password_manager))
     try:
         with opener.open(Request(endpoint, headers={"User-Agent": "webobs-snapshot/1"}),
                          timeout=ONVIF_TIMEOUT_SECONDS) as response:
@@ -3145,7 +3216,7 @@ def classify(address: str) -> dict:
             # camera stream or buffer an unbounded multipart response.
             method = "GET" if adapter == "mjpeg" else "HEAD"
             request = Request(normalized, method=method, headers={"User-Agent": "webobs-camera-probe/1"})
-            with urlopen(request, timeout=3) as response:
+            with camera_http_opener(NoRedirect()).open(request, timeout=3) as response:
                 content_type = response.headers.get_content_type().lower()
                 result["contentType"] = content_type
                 if method == "GET":

@@ -62,7 +62,18 @@ test('encrypts offline Scene mutations and performs incremental field-safe synch
     };
     await runtime.saveStudioSnapshot(studio);
     await sync.queueStudioSync(studio);
-    await runtime.queueOfflineAudit('scene.local-save', 'completed');
+    const originalRandomValues = crypto.getRandomValues.bind(crypto);
+    let suffixSamples = 0;
+    crypto.getRandomValues = ((array: Uint16Array) => {
+      if (array instanceof Uint16Array && array.length === 1) {
+        array[0] = suffixSamples++ === 0 ? 65535 : 64999;
+        return array;
+      }
+      return originalRandomValues(array);
+    }) as typeof crypto.getRandomValues;
+    try { await runtime.queueOfflineAudit('scene.local-save', 'completed'); }
+    finally { crypto.getRandomValues = originalRandomValues; }
+    const auditSuffix = (await runtime.loadAuditQueue())[0].sequence % 1000;
     const db = await new Promise<IDBDatabase>((resolve, reject) => {
       const request = indexedDB.open('webobs-local-v1');
       request.onsuccess = () => resolve(request.result); request.onerror = () => reject(request.error);
@@ -74,7 +85,7 @@ test('encrypts offline Scene mutations and performs incremental field-safe synch
     db.close();
     const synchronized = await sync.synchronizeBrowserState();
     return {
-      rawQueue: JSON.stringify(rawQueue), revision: synchronized?.revision,
+      rawQueue: JSON.stringify(rawQueue), revision: synchronized?.revision, suffixSamples, auditSuffix,
       name: synchronized?.documents.find((document) => document.id === 'scene-main')?.document?.name,
       queue: await runtime.loadSyncQueue(), conflicts: synchronized?.conflicts.length,
       audit: await runtime.loadAuditQueue(),
@@ -82,6 +93,7 @@ test('encrypts offline Scene mutations and performs incremental field-safe synch
   });
   expect(result.rawQueue).not.toContain('Offline private edit');
   expect(result).toMatchObject({ revision: 5, name: 'Synced fixture', queue: null, conflicts: 0, audit: [] });
+  expect(result).toMatchObject({ suffixSamples: 2, auditSuffix: 999 });
   expect(bootstrapCalls).toBe(2);
   expect(auditCalls).toBe(1);
 });

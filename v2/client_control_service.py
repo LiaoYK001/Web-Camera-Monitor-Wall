@@ -497,12 +497,21 @@ def _safe_reference(value: object, field: str) -> str:
 
 
 def _load_secret(reference: str) -> dict[str, str]:
-    root = SECRET_ROOT.resolve()
-    path = (root / f"{reference}.json").resolve()
-    if root not in path.parents or not path.is_file() or path.is_symlink():
-        raise ApiError(409, "credentials_unavailable", "camera credentials are unavailable")
+    # Validate at the filesystem boundary as well as at grant creation. Stored
+    # database values and bootstrap requests must pass the same check.
+    if not isinstance(reference, str) or not re.fullmatch(r"[A-Za-z0-9_-][A-Za-z0-9._-]{0,127}", reference):
+        raise ApiError(400, "invalid_credentials_ref", "credentialsRef is invalid")
     try:
-        value = unique_json(path.read_text(encoding="utf-8"))
+        root = SECRET_ROOT.resolve()
+        candidate = root / f"{reference}.json"
+        path = candidate.resolve()
+        if candidate.is_symlink() or path.parent != root or not path.is_file():
+            raise ValueError("invalid secret file")
+        with path.open("rb") as source:
+            data = source.read(16_385)
+        if len(data) > 16_384:
+            raise ValueError("secret file exceeds limit")
+        value = unique_json(data.decode("utf-8"))
     except (OSError, ValueError) as error:
         raise ApiError(409, "credentials_unavailable", "camera credentials are unavailable") from error
     if not isinstance(value, dict) or set(value) != {"username", "password"} or not all(

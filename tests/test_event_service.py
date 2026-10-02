@@ -5,6 +5,7 @@ from __future__ import annotations
 import importlib.util
 import json
 import os
+import ssl
 import sqlite3
 import time
 import tempfile
@@ -37,6 +38,18 @@ class EventServiceTests(unittest.TestCase):
         events.MOTION_STATE.clear(); events.initialize()
 
     def tearDown(self) -> None: self.temporary.cleanup()
+
+    def test_notification_tls_requires_modern_protocol_and_hostname_validation(self) -> None:
+        context = ssl.create_default_context()
+        with patch.object(events, "public_destination", return_value=(events.socket.AF_INET, ("93.184.216.34", 443))), \
+                patch.object(events.socket, "socket") as connect, \
+                patch.object(events.ssl, "create_default_context", return_value=context), \
+                patch.object(context, "wrap_socket") as wrap:
+            events.tls_channel("notification.invalid", 443)
+            self.assertGreaterEqual(context.minimum_version, ssl.TLSVersion.TLSv1_2)
+            self.assertTrue(context.check_hostname)
+            self.assertEqual(context.verify_mode, ssl.CERT_REQUIRED)
+            wrap.assert_called_once_with(connect.return_value, server_hostname="notification.invalid")
 
     def test_normalization_deduplication_search_and_ack_audit(self) -> None:
         timestamp = events.now_ms()

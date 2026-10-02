@@ -38,6 +38,12 @@ test('unsigned releases publish latest without imposing Authenticode verificatio
     const signed = require(configPath);
     assert.equal(signed.forceCodeSigning,true);assert.equal(signed.win.verifyUpdateCodeSignature,true);
     assert.equal(signed.win.signtoolOptions.publisherName,'Example publisher');
+    process.env.WEBOBS_RELEASE_BUILD='false';process.env.WEBOBS_DESKTOP_VERSION='3.4.0-dev.0';
+    process.env.WEBOBS_SIGN_BUILD='false';
+    delete require.cache[configPath];
+    const development = require(configPath);
+    assert.equal(development.publish[0].channel,'dev');
+    assert.match(development.artifactName,/DEVELOPMENT-UNSIGNED/);
   } finally {
     for (const [name,value] of [['WEBOBS_RELEASE_BUILD',originalOfficial],['WEBOBS_DESKTOP_VERSION',originalVersion],['WEBOBS_SIGN_BUILD',originalSigned],['WEBOBS_SIGNING_PUBLISHER',originalPublisher]]) {
       if(value===undefined) delete process.env[name]; else process.env[name]=value;

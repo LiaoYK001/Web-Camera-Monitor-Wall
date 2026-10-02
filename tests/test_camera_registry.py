@@ -24,6 +24,7 @@ import xml.etree.ElementTree as ET
 from datetime import datetime, timedelta, timezone
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from pathlib import Path
+from urllib.request import parse_http_list, parse_keqv_list
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -87,17 +88,16 @@ class OnvifEmulatorHandler(BaseHTTPRequestHandler):
 
     def digest_authenticated(self) -> bool:
         authorization = self.headers.get("Authorization", "")
-        if not authorization.startswith("Digest "):
+        if len(authorization) > 8192 or not authorization.startswith("Digest "):
             return False
-        values = {key: quoted or plain for key, quoted, plain in
-                  re.findall(r'(\w+)=(?:"([^"]*)"|([^,\s]+))', authorization[7:])}
         try:
+            values = parse_keqv_list(parse_http_list(authorization[7:]))
             ha1 = hashlib.md5(f'{self.username}:webobs-fixture:{self.password}'.encode()).hexdigest()
             ha2 = hashlib.md5(f'POST:{values["uri"]}'.encode()).hexdigest()
             expected = hashlib.md5(
                 f'{ha1}:fixture-nonce:{values["nc"]}:{values["cnonce"]}:auth:{ha2}'.encode()).hexdigest()
             return values.get("username") == self.username and values.get("response") == expected
-        except KeyError:
+        except (KeyError, ValueError):
             return False
 
     def do_GET(self) -> None:
@@ -112,7 +112,14 @@ class OnvifEmulatorHandler(BaseHTTPRequestHandler):
         self.send_response(404); self.send_header("Content-Length", "0"); self.end_headers()
 
     def do_POST(self) -> None:
-        request_body = self.rfile.read(int(self.headers.get("Content-Length", "0")))
+        try:
+            length = int(self.headers.get("Content-Length", "0"))
+            if not 0 < length <= registry.MAX_ONVIF_XML:
+                raise ValueError("invalid fixture request size")
+            root = registry.parse_onvif_xml(self.rfile.read(length))
+        except (ValueError, registry.OnvifError):
+            self.send_error(400)
+            return
         action = self.headers.get("SOAPAction", "") + " " + self.headers.get("Content-Type", "")
         if "GetSystemDateAndTime" in action:
             current = datetime.now(timezone.utc) + timedelta(seconds=self.device_clock_offset)
@@ -130,7 +137,6 @@ class OnvifEmulatorHandler(BaseHTTPRequestHandler):
             self.end_headers()
             self.close_connection = True
             return
-        root = ET.fromstring(request_body)
         if not self.authenticated(root):
             self.soap('<s:Fault xmlns:s="http://www.w3.org/2003/05/soap-envelope"/>', 403)
             return
@@ -289,6 +295,9 @@ class BrowserHlsCookieHandler(BaseHTTPRequestHandler):
 
 class CameraRegistryTests(unittest.TestCase):
     def setUp(self) -> None:
+        self.endpoint_environment = patch.dict(os.environ, {"WEBOBS_CAMERA_ALLOW_TEST_ENDPOINTS": "true"})
+        self.endpoint_environment.start()
+        self.addCleanup(self.endpoint_environment.stop)
         self.temporary = tempfile.TemporaryDirectory(prefix="webobs-camera-tests-")
         registry.DB_PATH = Path(self.temporary.name) / "cameras.db"
         registry.SECRET_ROOT = Path(self.temporary.name) / "secrets"
@@ -299,6 +308,43 @@ class CameraRegistryTests(unittest.TestCase):
 
     def tearDown(self) -> None:
         self.temporary.cleanup()
+
+    def test_camera_http_blocks_special_addresses_before_connecting(self) -> None:
+        for address in ("127.0.0.1", "0.0.0.0", "169.254.169.254", "224.0.0.1",
+                        "255.255.255.255", "::1", "fe80::1", "::ffff:127.0.0.1",
+                        "100.100.100.200", "192.0.0.192", "fd00:ec2::254"):
+            family = registry.socket.AF_INET6 if ":" in address else registry.socket.AF_INET
+            entries = [(family, registry.socket.SOCK_STREAM, 6, "", (address, 80))]
+            with self.subTest(address=address), patch.object(registry.socket, "getaddrinfo", return_value=entries), \
+                    patch.object(registry.socket, "socket") as socket_factory:
+                with self.assertRaisesRegex(OSError, "forbidden"):
+                    registry.camera_connection(("fixture.invalid", 80), 1)
+                socket_factory.assert_not_called()
+
+    def test_camera_http_pins_private_destination_and_rejects_mixed_dns(self) -> None:
+        private = (registry.socket.AF_INET, registry.socket.SOCK_STREAM, 6, "", ("192.168.1.50", 80))
+        metadata = (registry.socket.AF_INET, registry.socket.SOCK_STREAM, 6, "", ("169.254.169.254", 80))
+        with patch.object(registry.socket, "getaddrinfo", side_effect=[[private], [metadata]]) as resolver, \
+                patch.object(registry.socket, "socket") as socket_factory:
+            channel = registry.camera_connection(("fixture.invalid", 80), 1)
+            resolver.assert_called_once()
+            self.assertIs(channel, socket_factory.return_value)
+            channel.connect.assert_called_once_with(("192.168.1.50", 80))
+        with patch.object(registry.socket, "getaddrinfo", return_value=[private, metadata]), \
+                patch.object(registry.socket, "socket") as socket_factory:
+            with self.assertRaisesRegex(OSError, "forbidden"):
+                registry.camera_connection(("fixture.invalid", 80), 1)
+            socket_factory.assert_not_called()
+
+    def test_camera_http_disables_proxies_and_forbids_discovery_redirects(self) -> None:
+        with patch.dict(os.environ, {"http_proxy": "http://proxy.invalid:8080"}):
+            opener = registry.camera_http_opener(registry.NoRedirect())
+        self.assertFalse(any(isinstance(handler, registry.ProxyHandler) and handler.proxies
+                             for handler in opener.handlers))
+        request = registry.Request("http://192.168.1.50/snapshot.jpg")
+        with self.assertRaises(registry.OnvifError):
+            registry.NoRedirect().redirect_request(
+                request, None, 302, "Found", {}, "http://127.0.0.1/private")
 
     def test_sqlite_wal_and_stable_profile_contract(self) -> None:
         camera = registry.validate_camera({
@@ -886,7 +932,9 @@ class CameraRegistryTests(unittest.TestCase):
                         "-addext", "subjectAltName=IP:127.0.0.1"], check=True,
                        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         server = HTTPServer(("127.0.0.1", 0), BrowserWhepHandler)
-        context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER); context.load_cert_chain(certificate, private_key)
+        context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+        context.minimum_version = ssl.TLSVersion.TLSv1_2
+        context.load_cert_chain(certificate, private_key)
         server.socket = context.wrap_socket(server.socket, server_side=True)
         thread = threading.Thread(target=server.serve_forever, daemon=True); thread.start()
         try:
@@ -938,6 +986,7 @@ class CameraRegistryTests(unittest.TestCase):
                        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         server = HTTPServer(("127.0.0.1", 0), BrowserHlsCookieHandler)
         context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+        context.minimum_version = ssl.TLSVersion.TLSv1_2
         context.load_cert_chain(certificate, private_key)
         server.socket = context.wrap_socket(server.socket, server_side=True)
         thread = threading.Thread(target=server.serve_forever, daemon=True)
@@ -1039,7 +1088,9 @@ class CameraRegistryTests(unittest.TestCase):
             "profile_kind": "T", "scheme": "https",
             "users": {OnvifEmulatorHandler.username: "Administrator"}})
         server = HTTPServer(("127.0.0.1", 0), handler)
-        context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER); context.load_cert_chain(certificate, private_key)
+        context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+        context.minimum_version = ssl.TLSVersion.TLSv1_2
+        context.load_cert_chain(certificate, private_key)
         server.socket = context.wrap_socket(server.socket, server_side=True)
         thread = threading.Thread(target=server.serve_forever, daemon=True); thread.start()
         return server, thread, certificate

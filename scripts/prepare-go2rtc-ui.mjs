@@ -1,10 +1,8 @@
-import { cpSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
+import { cpSync, mkdirSync, readFileSync, readdirSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
-import { createRequire } from 'node:module';
 import { fileURLToPath } from 'node:url';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
-const resolveWeb = createRequire(path.join(root, 'web/package.json'));
 const output = path.join(root, 'web/go2rtc-dist');
 // Recreate this generated directory so obsolete development files are not shipped.
 if (path.resolve(output) !== path.resolve(root, 'web', 'go2rtc-dist')) throw new Error('Unsafe generated asset path');
@@ -12,7 +10,12 @@ rmSync(output, { recursive: true, force: true });
 mkdirSync(output, { recursive: true });
 const packages = ['monaco-editor', 'js-yaml', 'vis-network', 'qrcodejs', 'hls.js'];
 for (const name of packages) {
-  const packageRoot = path.dirname(resolveWeb.resolve(`${name}/package.json`));
+  // Read the installed package root directly: recent Monaco exports intentionally
+  // hide package.json. pnpm's direct dependency symlink still identifies the
+  // complete package, including the AMD editor and worker assets.
+  const packageRoot = realpathSync(path.join(root, 'web/node_modules', name));
+  if (JSON.parse(readFileSync(path.join(packageRoot, 'package.json'), 'utf8')).name !== name)
+    throw new Error(`Unexpected installed package: ${name}`);
   // Monaco's complete min/ tree includes its workers. esm/ and dev/ are not
   // used by the upstream UI; their deep paths also exceed NSIS rename limits.
   cpSync(packageRoot, path.join(output, 'vendor', name), { recursive: true, dereference: true,
