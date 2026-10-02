@@ -12,6 +12,8 @@
 
 ## Working rules
 
+- Write commit messages, PR titles/descriptions and merge messages in both Chinese and English. Use a concise bilingual subject such as `fix: 修复更新检查 / fix update checking`; include both languages in any substantive body. Override GitHub's English-only default merge message when merging.
+- 提交信息、PR 标题/说明及合并信息必须包含中英文双语。标题简洁，正文有实质说明时也提供双语；合并时显式设置双语信息，不沿用 GitHub 的纯英文默认标题。
 - Inspect related code and documentation before changing behavior. Keep unrelated working-tree edits.
 - Preserve Direct-only operation: enabling go2rtc does not require OBS composition or continuous transcoding.
 - All go2rtc UI/API/media requests use `/api/v1/go2rtc/`, the product authentication gate and `settings.manage`. Its complete configuration and diagnostics belong to administrators and can contain credentials.
