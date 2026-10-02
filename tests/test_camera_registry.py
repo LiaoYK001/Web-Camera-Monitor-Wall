@@ -346,6 +346,29 @@ class CameraRegistryTests(unittest.TestCase):
             registry.NoRedirect().redirect_request(
                 request, None, 302, "Found", {}, "http://127.0.0.1/private")
 
+    def test_actual_camera_http_handlers_block_metadata_without_opening_socket(self) -> None:
+        entries = [(registry.socket.AF_INET, registry.socket.SOCK_STREAM, 6, "",
+                    ("169.254.169.254", 80))]
+        for scheme in ("http", "https"):
+            with self.subTest(scheme=scheme), \
+                    patch.object(registry.socket, "getaddrinfo", return_value=entries), \
+                    patch.object(registry.socket, "socket") as socket_factory:
+                with self.assertRaisesRegex(registry.URLError, "forbidden"):
+                    registry.camera_http_opener(registry.NoRedirect()).open(
+                        registry.Request(f"{scheme}://camera.example.invalid/snapshot.jpg"), timeout=1)
+                socket_factory.assert_not_called()
+
+    def test_onvif_xml_rejects_dtd_in_all_encodings_but_keeps_valid_utf16(self) -> None:
+        for encoding in ("utf-8", "utf-16", "utf-16-le", "utf-16-be"):
+            declaration = "UTF-8" if encoding == "utf-8" else "UTF-16"
+            text = (f'<?xml version="1.0" encoding="{declaration}"?>'
+                    '<!DOCTYPE root [<!ENTITY fixture "expanded-fixture">]>'
+                    '<root>&fixture;</root>')
+            with self.subTest(encoding=encoding), self.assertRaises(registry.OnvifError):
+                registry.parse_onvif_xml(text.encode(encoding))
+        valid = '<?xml version="1.0" encoding="UTF-16"?><root>valid-fixture</root>'.encode("utf-16")
+        self.assertEqual(registry.parse_onvif_xml(valid).text, "valid-fixture")
+
     def test_sqlite_wal_and_stable_profile_contract(self) -> None:
         camera = registry.validate_camera({
             "id": "front-door",

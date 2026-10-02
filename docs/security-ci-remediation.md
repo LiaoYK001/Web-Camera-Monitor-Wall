@@ -40,11 +40,25 @@ Neither flag is enabled in normal product startup. TLS camera/notification
 connections require TLS 1.2 or later and validate certificates. Client credential
 references are bounded basenames; symlinks, traversal and oversized secret files
 are rejected at the read boundary.
+The XML parser rejects DTD declarations at the parser callback, including UTF-16
+input which can bypass an ASCII byte search, while preserving valid UTF-16 XML.
 
 回环 ONVIF 模拟器需要显式设置 `WEBOBS_CAMERA_ALLOW_TEST_ENDPOINTS=true`，
 浏览器探测还需 `WEBOBS_BROWSER_PROBE_ALLOW_LOOPBACK=true`。正常产品启动不
 设置这些测试开关。摄像机与通知 TLS 连接要求 TLS 1.2 或更高版本并验证证书。
 客户端凭据引用限定为长度受限的文件名；读取时拒绝符号链接、目录穿越与超限文件。
+XML 解析器通过解析回调拒绝 DTD，覆盖能够绕过 ASCII 字节搜索的 UTF-16 输入，
+并保留正常 UTF-16 XML 的兼容性。
+
+CodeQL may retain an SSRF alert at `opener.open` because it does not model the
+custom HTTP/HTTPS connection classes. The actual opener regression rejects
+metadata destinations before creating a socket, in addition to the mixed-DNS,
+numeric connection and redirect tests. Review this guard evidence individually;
+do not suppress or dismiss an unguarded network call.
+
+CodeQL 可能因未建模自定义 HTTP/HTTPS 连接类而继续提示 `opener.open` 的 SSRF。
+实际 Opener 回归测试验证：元数据地址在创建 Socket 前即被拒绝；另有混合 DNS、
+数字地址直连和重定向测试。逐条依照这些校验证据复核，不能忽略无校验的网络调用。
 
 ## Alert review and Windows CI / 告警复核与 Windows CI
 

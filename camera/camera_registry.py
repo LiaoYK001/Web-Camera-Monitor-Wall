@@ -2360,6 +2360,13 @@ def xml_text(element: ET.Element | None, names: tuple[str, ...]) -> str:
     return ""
 
 
+class NoDTDTreeBuilder(ET.TreeBuilder):
+    def doctype(self, name, public_id, system_id):
+        # The XML parser recognizes declarations in every supported encoding;
+        # an ASCII byte search alone misses UTF-16/UTF-32 declarations.
+        raise OnvifError("ONVIF response contains forbidden XML declarations")
+
+
 def parse_onvif_xml(data: bytes) -> ET.Element:
     if len(data) > MAX_ONVIF_XML:
         raise OnvifError("ONVIF response exceeds the size limit")
@@ -2367,7 +2374,7 @@ def parse_onvif_xml(data: bytes) -> ET.Element:
     if b"<!doctype" in lowered or b"<!entity" in lowered:
         raise OnvifError("ONVIF response contains forbidden XML declarations")
     try:
-        root = ET.fromstring(data)
+        root = ET.fromstring(data, parser=ET.XMLParser(target=NoDTDTreeBuilder()))
     except ET.ParseError as error:
         raise OnvifError("ONVIF response is malformed XML") from error
     if any(xml_local_name(node.tag) == "Fault" for node in root.iter()):
