@@ -78,6 +78,41 @@ class SnapshotTests(unittest.TestCase):
         self.assertEqual((upstream/'browser-client.cpp').read_bytes(),before)
 
     @unittest.skipUnless(os.name=='nt','requires Windows DPAPI and ACL')
+    def test_owned_modify_only_profile_can_be_secured_without_write_owner(self):
+        import ctypes
+        from ctypes import wintypes
+        advapi=ctypes.WinDLL('advapi32',use_last_error=True)
+        kernel=ctypes.WinDLL('kernel32',use_last_error=True)
+        kernel.LocalFree.argtypes=[ctypes.c_void_p]
+        advapi.GetFileSecurityW.argtypes=[wintypes.LPCWSTR,wintypes.DWORD,ctypes.c_void_p,wintypes.DWORD,ctypes.POINTER(wintypes.DWORD)]
+        advapi.GetSecurityDescriptorOwner.argtypes=[ctypes.c_void_p,ctypes.POINTER(ctypes.c_void_p),ctypes.POINTER(wintypes.BOOL)]
+        advapi.ConvertSidToStringSidW.argtypes=[ctypes.c_void_p,ctypes.POINTER(wintypes.LPWSTR)]
+        advapi.ConvertStringSecurityDescriptorToSecurityDescriptorW.argtypes=[wintypes.LPCWSTR,wintypes.DWORD,ctypes.POINTER(ctypes.c_void_p),ctypes.c_void_p]
+        advapi.SetFileSecurityW.argtypes=[wintypes.LPCWSTR,wintypes.DWORD,ctypes.c_void_p]
+        with tempfile.TemporaryDirectory() as temp:
+            root=pathlib.Path(temp)/'owned-modify-profile';root.mkdir()
+            private_directory.protect(root)
+            needed=wintypes.DWORD();advapi.GetFileSecurityW(str(root),1,None,0,ctypes.byref(needed))
+            buffer=ctypes.create_string_buffer(needed.value)
+            self.assertTrue(advapi.GetFileSecurityW(str(root),1,buffer,needed,ctypes.byref(needed)))
+            owner=ctypes.c_void_p();defaulted=wintypes.BOOL();owner_text=wintypes.LPWSTR()
+            self.assertTrue(advapi.GetSecurityDescriptorOwner(buffer,ctypes.byref(owner),ctypes.byref(defaulted)))
+            self.assertTrue(advapi.ConvertSidToStringSidW(owner,ctypes.byref(owner_text)))
+            descriptor=ctypes.c_void_p()
+            try:
+                # Modify omits WRITE_OWNER and WRITE_DAC; the current owner has
+                # implicit WRITE_DAC and can secure this directory without elevation.
+                sddl=f'D:P(A;OICI;0x1301bf;;;{owner_text.value})'
+                self.assertTrue(advapi.ConvertStringSecurityDescriptorToSecurityDescriptorW(sddl,1,ctypes.byref(descriptor),None))
+                self.assertTrue(advapi.SetFileSecurityW(str(root),0x80000004,descriptor))
+                private_directory.protect(root)
+                (root/'new-private-file').write_text('can write after securing')
+                private_directory.protect(root)
+            finally:
+                if descriptor:kernel.LocalFree(descriptor)
+                kernel.LocalFree(ctypes.cast(owner_text,ctypes.c_void_p))
+
+    @unittest.skipUnless(os.name=='nt','requires Windows DPAPI and ACL')
     def test_windows_keys_and_unicode_private_directory(self):
         from runtime_support import protect_local_key
         import ctypes

@@ -25,7 +25,7 @@ export class Supervisor extends EventEmitter {
   async tool(script, args = [], timeout = 120000) {
     const command = this.python(script, ...args);
     return new Promise((resolve,reject) => {
-      const child = spawn(this.executable('webobs-job'), ['--stdio', ...command], { env: { ...(this.env || cleanEnvironment(process.env)), WEBOBS_OWNER_STDIN: 'false' }, windowsHide: true, stdio: ['pipe','pipe','pipe'] });
+      const child = spawn(this.executable('webobs-job'), ['--stdio', ...command], { env: { ...(this.env || cleanEnvironment(process.env)), PYTHONUTF8:'1', PYTHONIOENCODING:'utf-8', WEBOBS_OWNER_STDIN: 'false' }, windowsHide: true, stdio: ['pipe','pipe','pipe'] });
       let output = '', errors = ''; const timer = setTimeout(() => { child.kill(); reject(new Error('Native tool timed out')); }, timeout);
       child.stdout.on('data', chunk => { if (output.length < 1024*1024) output += chunk.toString('utf8'); });
       child.stderr.on('data', chunk => { if(errors.length < 64*1024)errors += chunk.toString('utf8'); });

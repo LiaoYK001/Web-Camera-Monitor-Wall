@@ -40,16 +40,34 @@ def protect(directory):
             if not advapi.ConvertStringSecurityDescriptorToSecurityDescriptorW(sddl, 1, ctypes.byref(descriptor), None): raise ctypes.WinError(ctypes.get_last_error())
             try:
                 advapi.SetFileSecurityW.argtypes = [wintypes.LPCWSTR, wintypes.DWORD, ctypes.c_void_p]
+                advapi.GetFileSecurityW.argtypes = [wintypes.LPCWSTR, wintypes.DWORD, ctypes.c_void_p, wintypes.DWORD, ctypes.POINTER(wintypes.DWORD)]
+                advapi.GetSecurityDescriptorOwner.argtypes = [ctypes.c_void_p, ctypes.POINTER(ctypes.c_void_p), ctypes.POINTER(wintypes.BOOL)]
+                advapi.EqualSid.argtypes = [ctypes.c_void_p, ctypes.c_void_p]
                 for target in [directory, *directory.rglob('*')]:
                     try:attributes=target.lstat()
                     except FileNotFoundError:
                         if target==directory:raise
                         continue  # Browser cache entries may disappear during startup.
                     if getattr(attributes, 'st_file_attributes', 0) & 0x400: raise ValueError('private directory contains a reparse point')
-                    if not advapi.SetFileSecurityW(str(target), 0x80000005, descriptor):
+                    needed=wintypes.DWORD()
+                    advapi.GetFileSecurityW(str(target),1,None,0,ctypes.byref(needed))
+                    owner_buffer=ctypes.create_string_buffer(needed.value)
+                    owner=ctypes.c_void_p(); defaulted=wintypes.BOOL()
+                    if not advapi.GetFileSecurityW(str(target),1,owner_buffer,needed,ctypes.byref(needed)) or not advapi.GetSecurityDescriptorOwner(owner_buffer,ctypes.byref(owner),ctypes.byref(defaulted)):
                         error=ctypes.get_last_error()
                         if target!=directory and error in (2,3):continue
-                        raise ctypes.WinError(error)
+                        failure=ctypes.WinError(error);failure.filename=str(target);raise failure
+                    # Ownership already grants WRITE_DAC, not WRITE_OWNER. A
+                    # Modify-only D: profile can be secured without reassigning
+                    # its existing owner; include OWNER only when it must change.
+                    information=0x80000004
+                    if not advapi.EqualSid(owner,sid):information|=1
+                    if not advapi.SetFileSecurityW(str(target), information, descriptor):
+                        error=ctypes.get_last_error()
+                        if target!=directory and error in (2,3):continue
+                        failure=ctypes.WinError(error)
+                        failure.filename=str(target)
+                        raise failure
             finally: kernel.LocalFree(descriptor)
         finally: kernel.LocalFree(ctypes.cast(sid_text, ctypes.c_void_p))
     finally: kernel.CloseHandle(token)

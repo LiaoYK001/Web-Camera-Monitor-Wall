@@ -50,6 +50,8 @@ GitHub `Build full Windows desktop` 是手动候选构建，不发布 Release。
 
 Windows 写入授权密钥使用二进制文件模式，避免 CRT 把随机密文中的换行字节改写为 CRLF。回归测试同时检查实际文件字节与重新载入后的密钥身份。
 
+私密目录已属于当前用户时，只设置受保护的 DACL，不重复申请更改所有者。这样拥有“修改”权限的 D 盘目录也可正常初始化；需要修复其他所有者时仍要求实际权限，不静默忽略拒绝访问。
+
 OBS 使用 D3D11，外部 FFmpeg 与 OBS 插件能力分别实测。CUDA 设备与驱动通过 Windows CUDA API 检测，NVENC/QSV 编解码以限时样本探测为准；没有通过探测的硬件不会报告为就绪。部分 Linux 专用指标在 Windows 显示不可读取。
 
 Windows 工具保留固定原生入口；需要导入 Python 实现的 S3 备份和分析任务使用包内固定源码路径，避免把 `.exe` 当作 Python 模块读取。运行文件清单、SBOM 与许可证同时覆盖 WebUI、go2rtc 页面依赖和 Electron/Chromium。
