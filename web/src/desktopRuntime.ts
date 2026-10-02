@@ -2,8 +2,9 @@ import { useEffect } from 'react';
 
 export interface DesktopSettings { autoCheck: boolean; autoDownload: boolean; startAtLogin: boolean; lanEnabled: boolean; lanPort: number; recordingDirectory: string; minimizeToTray: boolean }
 export interface DesktopStatus {
+  app?: { version: string; platform: string; architecture: string; packaged: boolean };
   runtime: { phase: string; detail?: string; recordings?: string; lan?: { enabled: boolean; addresses?: string[]; certificate?: string; trustSteps?: string; firewallCommands?: string[] } };
-  update: { phase: string; message?: string; version?: string; releaseNotes?: string; percent?: number; signed?: boolean };
+  update: { phase: string; message?: string; version?: string; releaseNotes?: string; percent?: number; signed?: boolean; lastCheckedAt?: string };
   settings: DesktopSettings;
   recovery: { from: string; to: string; hasInstaller: boolean; snapshot: string } | null;
 }

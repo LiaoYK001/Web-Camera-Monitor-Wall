@@ -21,10 +21,10 @@ export class UpdateController extends EventEmitter {
     this.installing=false; this.checking=false;
     updater.autoInstallOnAppQuit=false; updater.autoDownload=false; updater.allowPrerelease=false; updater.allowDowngrade=false; updater.disableWebInstaller=true;
     updater.on('checking-for-update',()=>this.announce('checking'));
-    updater.on('update-not-available',()=>this.announce('current'));
+    updater.on('update-not-available',()=>{this.lastCheckedAt=new Date().toISOString();this.announce('current');});
     updater.on('update-available',info=>{
       if (!/^\d+\.\d+\.\d+$/.test(info.version)) { this.announce('error','仅接受正式版本'); return; }
-      this.info=info; this.announce('available','有新版本');
+      this.lastCheckedAt=new Date().toISOString();this.info=info; this.announce('available','有新版本');
       if(this.settings.autoDownload) void this.download();
     });
     updater.on('download-progress',progress=>this.announce('downloading','正在下载',Math.round(progress.percent)));
@@ -36,7 +36,7 @@ export class UpdateController extends EventEmitter {
   }
   status() {
     const notes = this.info?.releaseNotes;
-    return {...this.state,signed:this.signed,version:this.info?.version,releaseNotes:typeof notes==='string'?notes.slice(0,16000):Array.isArray(notes)?notes.map(item=>String(item.note||'')).join('\n').slice(0,16000):''};
+    return {...this.state,signed:this.signed,version:this.info?.version,lastCheckedAt:this.lastCheckedAt,releaseNotes:typeof notes==='string'?notes.slice(0,16000):Array.isArray(notes)?notes.map(item=>String(item.note||'')).join('\n').slice(0,16000):''};
   }
   announce(phase,message='',percent) { this.state={phase,message,percent}; this.emit('status',this.status()); }
   start() { this.timer=setInterval(()=>{if(this.settings.autoCheck)void this.check();},6*60*60*1000);this.timer.unref?.();if(this.settings.autoCheck)void this.check(); }

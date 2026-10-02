@@ -64,3 +64,11 @@ export async function registerPwaRuntime(): Promise<void> {
     announce('error');
   }
 }
+
+export async function checkPwaUpdate(): Promise<'checked' | 'unsupported' | 'unavailable'> {
+  if (window.webobsDesktop || !('serviceWorker' in navigator) || !window.isSecureContext) return 'unsupported';
+  const registration = await navigator.serviceWorker.getRegistration('/');
+  if (!registration) return 'unavailable';
+  await registration.update();
+  return 'checked';
+}
