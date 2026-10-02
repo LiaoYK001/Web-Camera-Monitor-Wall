@@ -11,6 +11,9 @@ Var WebOBSUpdateTemp
   Push $2
   Push $3
   Push $4
+  Push $5
+  Push $6
+  Push $7
   ReadRegStr $0 HKCU "${INSTALL_REGISTRY_KEY}" "InstallLocation"
   ${If} $0 != ""
   ${AndIf} ${FileExists} "$0\${APP_EXECUTABLE_FILENAME}"
@@ -29,7 +32,17 @@ Var WebOBSUpdateTemp
     ; contains public program bytes only; account data remains in LOCALAPPDATA.
     System::Call 'advapi32::ConvertStringSecurityDescriptorToSecurityDescriptorW(w "D:P(A;OICI;FA;;;OW)(A;OICI;FA;;;SY)", i 1, *p .r3, p 0) i .r4'
     ${If} $4 != 0
-      System::Call 'advapi32::SetFileSecurityW(w "$WebOBSUpdateTemp", i 4, p r3) i .r4'
+      System::Call 'advapi32::GetSecurityDescriptorDacl(p r3, *i .r4, *p .r5, *i .r6) i .r7'
+      ${If} $7 != 0
+      ${AndIf} $4 != 0
+        System::Call 'advapi32::SetNamedSecurityInfoW(w "$WebOBSUpdateTemp", i 1, i 0x80000004, p 0, p 0, p r5, p 0) i .r7'
+        StrCpy $4 0
+        ${If} $7 == 0
+          StrCpy $4 1
+        ${EndIf}
+      ${Else}
+        StrCpy $4 0
+      ${EndIf}
       System::Call 'kernel32::LocalFree(p r3)'
     ${EndIf}
     ${If} $4 == 0
@@ -45,6 +58,9 @@ Var WebOBSUpdateTemp
       Abort "Cannot set the temporary update directory."
     ${EndIf}
   ${EndIf}
+  Pop $7
+  Pop $6
+  Pop $5
   Pop $4
   Pop $3
   Pop $2
