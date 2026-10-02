@@ -25,6 +25,7 @@ module.exports = {
     signExts: ['WebOBS.exe', installerName, installerName.slice(0,-3)+'__uninstaller.exe', '!.exe'],
     ...(signed ? {signtoolOptions: { publisherName: process.env.WEBOBS_SIGNING_PUBLISHER }} : {}) },
   nsis: { oneClick: false, perMachine: false, allowElevation: false, allowToChangeInstallationDirectory: true,
+    include: 'assets/installer.nsh',
     deleteAppDataOnUninstall: false, createDesktopShortcut: true, createStartMenuShortcut: true, runAfterFinish: true },
   beforePack: async () => {
     const { verifyRuntime } = await import('./src/runtime-integrity.mjs');
