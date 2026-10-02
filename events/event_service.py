@@ -347,7 +347,9 @@ def tls_channel(host: str, port: int):
                 raise ValueError("notification CA must be stored below the configured private secrets root") from error
             if not ca_path.is_file() or ca_path.is_symlink() or ca_path.stat().st_size > 1024 * 1024:
                 raise ValueError("notification CA is unavailable")
-        return ssl.create_default_context(cafile=ca_file or None).wrap_socket(raw, server_hostname=host)
+        context = ssl.create_default_context(cafile=ca_file or None)
+        context.minimum_version = ssl.TLSVersion.TLSv1_2
+        return context.wrap_socket(raw, server_hostname=host)
     except Exception:
         raw.close(); raise
 

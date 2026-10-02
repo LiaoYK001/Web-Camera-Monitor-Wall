@@ -31,7 +31,17 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with: { persist-credentials: false, submodules: recursive }
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v5.0.0
-        with: { node-version: 24.14.0 }
+        with: { node-version: 24.19.0 }
+      - name: Camera HTTP, credentials and notification security regressions
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y libsodium23
+          python3 tests/test_camera_registry.py
+          python3 tests/test_event_service.py
+          python3 tests/test_v2_client_control.py
+          python3 tests/test_cluster_service.py
       - name: Audit and build the public PWA
         shell: bash
         run: |
@@ -44,6 +54,7 @@ jobs:
           python3 ./clients/tests/test_local_gate_receipts.py
           cd web
           pnpm install --frozen-lockfile
+          pnpm audit --audit-level=low
           pnpm typecheck
           pnpm test:iwa
           pnpm build

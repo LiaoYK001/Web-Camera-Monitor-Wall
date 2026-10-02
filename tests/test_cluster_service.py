@@ -35,7 +35,8 @@ class FakeHasher:
     def hash(self, password: str) -> str:
         if len(password.encode()) < 16:
             raise cluster.ApiError(400, "invalid_password", "password too short")
-        return "fixture$" + hashlib.sha256(password.encode()).hexdigest()
+        return "fixture$" + hashlib.pbkdf2_hmac(
+            "sha256", password.encode(), b"webobs-test-fixture-only", 600_000).hex()
 
     def verify(self, encoded: str, password: str) -> bool:
         return encoded == self.hash(password)
