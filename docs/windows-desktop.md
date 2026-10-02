@@ -80,6 +80,8 @@ Caddy 运行配置由主进程保存，关闭其默认配置 autosave，避免�
 
 GitHub 检测和下载使用 electron-updater。显式安装等待 Windows 确认已启动经过二次摘要及签名校验的完整 NSIS 包后才退出；异步启动失败会删除待升级标记并恢复当前服务。安装向导仍由用户操作，不申请提权回落。
 
+NSIS 自定义初始化仅修改安装器及其子进程的 TEMP/TMP：在现有安装目录所在盘创建私密临时目录，供旧卸载器原子移动旧程序文件，避免跨盘 rename 失败。完成后仅删除该空临时目录，不递归删除未知路径，不修改系统环境变量；账号、录像与快照仍在独立数据目录。
+
 ## 正式发布与验收
 
 产品标签 `vX.Y` 对应客户端 `X.Y.0`，`vX.Y.Z` 对应 `X.Y.Z`。容器与 Windows 共用已审计的产品 Release。候选附件包含安装包、blockmap、`latest.yml`（仅正式包）、SHA-256 摘要、运行文件清单、CycloneDX SBOM 与许可证归档。Electron updater 校验 SHA-512 与大小，准备安装时再次校验；可选签名构建额外验证 Authenticode 发布者。客户端不包含 GitHub Token。

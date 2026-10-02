@@ -61,7 +61,7 @@ const pause=ms=>new Promise(resolve=>setTimeout(resolve,ms));
     let installed=false;
     controller=new UpdateController({updater,official:true,publisher:null,packaged:true,settings,root:data,supervisor,version:from,
       windowWork:()=>[],confirmStop:async()=>true,beforeInstall:()=>{installed=true;},launchInstaller:file=>new Promise((resolve,reject)=>{
-        const child=spawn(file,['/S',`/D=${installation}`],{windowsHide:true,stdio:'ignore'});
+        const child=spawn(file,['/S',`/D=${installation}`],{windowsHide:true,windowsVerbatimArguments:true,stdio:'ignore'});
         child.once('error',reject);child.once('exit',code=>code===0?resolve():reject(new Error(`NSIS update failed (${code})`)));
       })});
     controller.start();
