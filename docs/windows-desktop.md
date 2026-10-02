@@ -8,6 +8,10 @@
 
 ## 默认行为
 
+系统设置中的“关于与更新”显示 Electron 实际安装版本、Windows x64 运行方式与 WebUI 构建号，并提供 GitHub 源码、Release、问题反馈、使用说明和 GPL 许可证入口。客户端可手动检查更新，查看最近成功检查时间、下载进度与纯文本发布说明，下载完成后选择“重启更新”。浏览器/PWA 的“检查页面更新”仅检查当前服务器的 Service Worker，服务器镜像仍由部署维护者更新。开发包显示开发通道说明，不连接正式更新源。
+
+The Settings “About and updates” card displays the actual Electron installation version, Windows x64 runtime and WebUI build, with source, Releases, issues, documentation and GPL links. Desktop users can check updates manually, see the last successful check, download progress and plain-text release notes, then explicitly restart to install. The browser/PWA button checks only its current server's Service Worker; maintainers still update the server image. Development packages remain outside the stable updater feed.
+
 - 自动检查正式更新，启动时一次，此后每 6 小时检查；默认自动下载。
 - 下载完成后用户选择“重启更新”才安装，退出应用不自动安装。
 - 主窗口关闭进入托盘；投影与服务保留。“退出并停止服务”正常停服并收束 Windows Job Object 中的后代。

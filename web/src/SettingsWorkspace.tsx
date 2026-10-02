@@ -2,6 +2,7 @@ import { useEffect, useState, type FormEvent } from 'react';
 import { fetchRuntimeSettings, patchRuntimeSettings } from './api';
 import ConfigProfiles from './ConfigProfiles';
 import DesktopSettings from './DesktopSettings';
+import AboutSettings from './AboutSettings';
 import { useDesktopWork } from './desktopRuntime';
 import { useMonitorPreferences } from './useMonitorPreferences';
 import type { RuntimeSettings } from './types';
@@ -68,6 +69,7 @@ export default function SettingsWorkspace({ studio, onProfileSelected }: {
     <header className="page-heading"><div><span className="eyebrow">Settings</span><h1>系统设置</h1><p>管理账号配置档案和服务端运行设置。修改运行设置后，点击保存生效。</p></div></header>
     <ConfigProfiles studio={studio ?? null} onProfileSelected={onProfileSelected} />
     <DesktopSettings />
+    <AboutSettings />
     <section className="playback-optimization-settings" aria-label="自动播放优化"><h2>弱网与慢速流自动优化</h2>
       <p>默认开启，按当前账号自动保存。适应低帧率来源，减少误判重连；持续丢包或抖动时优先使用设备已有子码流，网络稳定后恢复。不会为此修改设备配置或强制转码。</p>
       {preferenceError && <p role="alert">{preferenceError}</p>}

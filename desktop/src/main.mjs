@@ -19,7 +19,7 @@ else {
   let main, tray, supervisor, updates, settings, quitting=false, operating=false, recovery;
   const knownContents=new Set(), projectors=new Map(), work=new Map();
   const diagnosticUrl=pathToFileURL(path.join(source,'diagnostics.html')).href;
-  const status=()=>({runtime:supervisor?.status() || {phase:'starting'},update:updates?.status() || {phase:'disabled'},settings,recovery:recovery?{from:recovery.from,to:recovery.to,hasInstaller:Boolean(recovery.previousInstaller),snapshot:recovery.snapshot}:null});
+  const status=()=>({app:{version:app.getVersion(),platform:process.platform,architecture:process.arch,packaged:app.isPackaged},runtime:supervisor?.status() || {phase:'starting'},update:updates?.status() || {phase:'disabled'},settings,recovery:recovery?{from:recovery.from,to:recovery.to,hasInstaller:Boolean(recovery.previousInstaller),snapshot:recovery.snapshot}:null});
   const broadcast=()=>{for(const win of BrowserWindow.getAllWindows())if(!win.isDestroyed())win.webContents.send('webobs:desktop-status',status());};
   const securePreferences={preload:path.join(source,'preload.cjs'),contextIsolation:true,nodeIntegration:false,sandbox:true,webSecurity:true,partition:'persist:webobs-desktop'};
   function configureWindow(win,desktop=true) {

@@ -124,6 +124,17 @@ test('unpackaged releases cannot update and manual checking respects disabled au
   let checks=0;manual.updater.checkForUpdates=async()=>{checks++;};
   manual.controller.start();assert.equal(checks,0);await manual.controller.check();assert.equal(checks,1);manual.controller.dispose();
 });
+test('last successful update check is reported without treating a failed check as success',async t=>{
+  const f=await updaterFixture(t,{publisher:null,settings:{...defaults,autoDownload:false}});
+  assert.equal(f.controller.status().lastCheckedAt,undefined);
+  f.updater.emit('update-not-available');
+  const timestamp=f.controller.status().lastCheckedAt;
+  assert.ok(Number.isFinite(Date.parse(timestamp)));
+  f.updater.checkForUpdates=async()=>{throw new Error('offline');};
+  await f.controller.check();
+  assert.equal(f.controller.status().phase,'error');
+  assert.equal(f.controller.status().lastCheckedAt,timestamp);
+});
 test('unpublished drafts and backend exports pause installation',async t=>{
   const f=await updaterFixture(t,{windowWork:()=>[{dirty:true,exporting:false}]});await f.controller.install();assert.deepEqual(f.calls,[]);assert.equal(f.updater.installs,undefined);assert.match(f.controller.state.message,/草稿/);
   assert.ok(updateBlockers([],{recording:false,streaming:false,exporting:true}).some(item=>item.includes('导出')));
