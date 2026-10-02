@@ -8,6 +8,7 @@ signature so every source does not re-run the probes.
 """
 import argparse
 import ctypes.util
+import ctypes
 import hashlib
 import json
 import os
@@ -65,7 +66,18 @@ def driver_version():
 
 
 def node_signature():
+    if os.name == 'nt':
+        return f'windows-cuda:{windows_cuda()[0]}'
     return ','.join(f'{node}:{os.path.exists(node)}' for node in NVIDIA_NODES)
+
+
+def windows_cuda():
+    try:
+        cuda = ctypes.WinDLL('nvcuda.dll')
+        count = ctypes.c_int()
+        return cuda.cuInit(0) == 0 and cuda.cuDeviceGetCount(ctypes.byref(count)) == 0 and count.value > 0, True
+    except (OSError, AttributeError):
+        return False, False
 
 
 def cache_key(ffmpeg, driver, nodes):
@@ -81,10 +93,10 @@ def probe_nvenc_sample(encoder, timeout=DEFAULT_TIMEOUT):
     return {'code': code, 'passed': code == 0, 'detail': output.strip()[:240]}
 
 
-def probe_cuda_decode(codec, timeout=DEFAULT_TIMEOUT):
+def probe_cuda_decode(codec, timeout=DEFAULT_TIMEOUT, backend='cuda'):
     """Encode a tiny clip with the software encoder, then try a CUDA decode."""
-    decoder = {'h264': 'h264_cuvid', 'hevc': 'hevc_cuvid'}.get(codec)
-    source = Path(tempfile.gettempdir()) / f'webobs-probe-{codec}.mp4'
+    decoder = {'h264': 'h264_cuvid', 'hevc': 'hevc_cuvid'}.get(codec) if backend == 'cuda' else f'{codec}_qsv'
+    source = Path(tempfile.gettempdir()) / f'webobs-probe-{codec}-{backend}-{os.getpid()}.mp4'
     try:
         encode_code, encode_detail = run([
             'ffmpeg', '-hide_banner', '-loglevel', 'error', '-nostdin', '-y',
@@ -94,7 +106,7 @@ def probe_cuda_decode(codec, timeout=DEFAULT_TIMEOUT):
         if encode_code != 0:
             return {'code': encode_code, 'passed': False, 'detail': f'fixture encode failed: {encode_detail.strip()[:160]}'}
         code, output = run([
-            'ffmpeg', '-hide_banner', '-loglevel', 'error', '-nostdin', '-hwaccel', 'cuda',
+            'ffmpeg', '-hide_banner', '-loglevel', 'error', '-nostdin', '-hwaccel', backend,
             '-i', str(source), '-f', 'null', '-',
         ], timeout=timeout)
         if code == 0 and decoder:
@@ -115,6 +127,8 @@ def probe():
 
     device_present = any(os.path.exists(node) for node in NVIDIA_NODES)
     library_loaded = bool(ctypes.util.find_library('cuda')) or os.path.exists('/usr/lib/wsl/lib/libcuda.so.1')
+    if os.name == 'nt':
+        device_present, library_loaded = windows_cuda()
     encode_registered = {'h264': 'h264_nvenc' in encoders, 'hevc': 'hevc_nvenc' in encoders}
     decode_registered = {'h264': 'h264_cuvid' in decoders, 'hevc': 'hevc_cuvid' in decoders}
 
@@ -145,6 +159,8 @@ def probe():
         reasons.append('cuda_decode_sample_failed')
 
     vaapi_devices = sorted(str(path) for path in Path('/dev/dri').glob('renderD*')) if Path('/dev/dri').exists() else []
+    qsv_encode = probe_nvenc_sample('h264_qsv') if os.name == 'nt' and 'h264_qsv' in encoders else {'passed': False}
+    qsv_decode = probe_cuda_decode('h264', backend='qsv') if os.name == 'nt' and qsv_encode['passed'] else {'passed': False}
     result = {
         'schemaVersion': SCHEMA,
         'generatedAt': int(time.time()),
@@ -176,6 +192,7 @@ def probe():
             'decoderRegistered': 'h264_vaapi' in decoders,
         },
         'software': {'x264': 'libx264' in encoders},
+        'qsv': {'encodeSample': qsv_encode, 'decodeSample': qsv_decode},
     }
     return result
 
@@ -198,6 +215,12 @@ def env_lines(result):
         'WEBOBS_NVIDIA_DECODE_BACKEND': nvidia['decodeBackend'],
         'WEBOBS_NVIDIA_ACCELERATION': nvidia['acceleration'],
     }
+    if os.name == 'nt':
+        qsv = result.get('qsv', {})
+        values.update({'WEBOBS_QSV_DEVICE_PRESENT': qsv.get('encodeSample', {}).get('passed', False),
+                       'WEBOBS_QSV_ENCODE_SUPPORTED': qsv.get('encodeSample', {}).get('passed', False),
+                       'WEBOBS_QSV_DECODE_SUPPORTED': qsv.get('decodeSample', {}).get('passed', False),
+                       'WEBOBS_QSV_SAMPLE_PASSED': qsv.get('encodeSample', {}).get('passed', False)})
     return [f'{name}={"true" if value is True else "false" if value is False else value}' for name, value in values.items()]
 
 

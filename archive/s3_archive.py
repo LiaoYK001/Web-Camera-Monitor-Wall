@@ -3,6 +3,11 @@
 
 from __future__ import annotations
 
+import sys as _runtime_sys
+from pathlib import Path as _RuntimePath
+_runtime_sys.path.insert(0, str(_RuntimePath(__file__).resolve().parents[1]))
+from runtime_support import service_port, service_http, service_rtsp, install_owner_shutdown, serve_owned, STOP, sync_directory
+
 import argparse
 import contextlib
 import datetime as dt
@@ -47,9 +52,9 @@ def load_config(path: pathlib.Path) -> dict[str, Any]:
         raise ArchiveError("archive bucket is invalid")
     secret = pathlib.Path(value["credentialsFile"])
     try:
-        secret.relative_to("/run/secrets")
+        secret.relative_to(os.environ.get("WEBOBS_SECRETS_ROOT", "/run/secrets"))
     except ValueError as error:
-        raise ArchiveError("archive credentials must be mounted below /run/secrets") from error
+        raise ArchiveError("archive credentials must be stored below the configured private secrets root") from error
     if not secret.is_file() or secret.is_symlink() or secret.stat().st_size > 4096:
         raise ArchiveError("archive credentials are unavailable")
     credentials = json.loads(secret.read_text(encoding="utf-8"))
@@ -309,6 +314,7 @@ def main() -> None:
             raise SystemExit("archive retrieval destination must be absolute")
         service.retrieve(args.retrieve_segment, destination)
         return
+    install_owner_shutdown(service.stop.set)
     service.run()
 
 

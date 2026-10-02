@@ -6,6 +6,11 @@ and notification failures cannot stop the NVR data plane.
 """
 from __future__ import annotations
 
+import sys as _runtime_sys
+from pathlib import Path as _RuntimePath
+_runtime_sys.path.insert(0, str(_RuntimePath(__file__).resolve().parents[1]))
+from runtime_support import service_port, service_http, service_rtsp, install_owner_shutdown, serve_owned, STOP, sync_directory
+
 import hashlib
 import hmac
 import http.client
@@ -28,7 +33,7 @@ from urllib.parse import parse_qs, urlsplit
 DB_PATH = Path(os.environ.get("WEBOBS_EVENT_DATABASE", "/config/webobs/events.db"))
 NVR_DB_PATH = Path(os.environ.get("WEBOBS_NVR_DATABASE", "/config/webobs/nvr.db"))
 SECRET_ROOT = Path(os.environ.get("WEBOBS_NOTIFICATION_SECRET_ROOT", "/run/secrets/webobs-notifications"))
-LISTEN = ("127.0.0.1", 8093)
+LISTEN = ("127.0.0.1", service_port(8093))
 MAX_BODY = 1024 * 1024
 MAX_EVENTS = 100_000
 MAX_OUTBOX = 4096
@@ -182,7 +187,7 @@ def matches_rule(event: dict, conditions: dict) -> bool:
 def post_nvr_state(camera_id: str, active: bool) -> None:
     try:
         data = json.dumps({"active": active}, separators=(",", ":")).encode()
-        request = urllib.request.Request(f"http://127.0.0.1:8091/events/{camera_id}", data,
+        request = urllib.request.Request(service_http(8091, f'/events/{camera_id}'), data,
                                          {"Content-Type": "application/json"}, method="POST")
         with urllib.request.urlopen(request, timeout=.5) as response: response.read(1024)
     except Exception:
@@ -337,9 +342,9 @@ def tls_channel(host: str, port: int):
         if ca_file:
             ca_path = Path(ca_file)
             try:
-                ca_path.resolve().relative_to("/run/secrets")
+                ca_path.resolve().relative_to(os.environ.get("WEBOBS_SECRETS_ROOT", "/run/secrets"))
             except ValueError as error:
-                raise ValueError("notification CA must be mounted below /run/secrets") from error
+                raise ValueError("notification CA must be stored below the configured private secrets root") from error
             if not ca_path.is_file() or ca_path.is_symlink() or ca_path.stat().st_size > 1024 * 1024:
                 raise ValueError("notification CA is unavailable")
         return ssl.create_default_context(cafile=ca_file or None).wrap_socket(raw, server_hostname=host)
@@ -574,4 +579,4 @@ class Handler(BaseHTTPRequestHandler):
 if __name__ == "__main__":
     initialize()
     threading.Thread(target=outbox_worker, daemon=True).start()
-    ThreadingHTTPServer(LISTEN, Handler).serve_forever()
+    serve_owned(ThreadingHTTPServer(LISTEN, Handler))

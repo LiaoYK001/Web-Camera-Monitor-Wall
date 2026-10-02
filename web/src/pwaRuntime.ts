@@ -1,4 +1,4 @@
-export type PwaUpdateState = 'unsupported' | 'installing' | 'cached' | 'update-ready' | 'error';
+export type PwaUpdateState = 'unsupported' | 'installing' | 'cached' | 'error';
 export type PwaInstallState = 'installed' | 'installable' | 'browser-only';
 
 interface InstallPromptEvent extends Event {
@@ -6,7 +6,6 @@ interface InstallPromptEvent extends Event {
   userChoice: Promise<{ outcome: 'accepted' | 'dismissed' }>;
 }
 
-let waitingWorker: ServiceWorker | null = null;
 let installPrompt: InstallPromptEvent | null = null;
 
 function announce(state: PwaUpdateState) {
@@ -58,21 +57,10 @@ export async function registerPwaRuntime(): Promise<void> {
         registration.addEventListener('updatefound', () => announce('installing'));
       },
       onOfflineReady() { announce('cached'); },
-      onNeedRefresh() {
-        void navigator.serviceWorker.getRegistration().then((registration) => {
-          waitingWorker = registration?.waiting ?? null;
-          announce('update-ready');
-        });
-      },
+      onNeedRefresh() { announce('installing'); },
       onRegisterError() { announce('error'); },
     });
   } catch {
     announce('error');
   }
-}
-
-export function activatePwaUpdate(): void {
-  waitingWorker?.postMessage('WEBOBS_ACTIVATE_UPDATE');
-  waitingWorker = null;
-  navigator.serviceWorker.addEventListener('controllerchange', () => window.location.reload(), { once: true });
 }

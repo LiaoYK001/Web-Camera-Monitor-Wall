@@ -1,0 +1,28 @@
+import { readdir, readFile, writeFile, cp } from 'node:fs/promises';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { execFileSync } from 'node:child_process';
+import { digestFile } from '../src/runtime-integrity.mjs';
+const root=path.resolve(path.dirname(fileURLToPath(import.meta.url)),'..','..');
+const version=process.argv[2];
+if(!/^\d+\.\d+\.\d+(?:-dev\.[0-9A-Za-z.-]+)?$/.test(version))throw new Error('Invalid release version');
+const out=path.join(root,'desktop','out',version),official=process.env.WEBOBS_RELEASE_BUILD==='true';
+const files=(await readdir(out)).filter(name=>name.endsWith('.exe') || name.endsWith('.blockmap') || name==='latest.yml');
+if(files.filter(name=>name.endsWith('.exe') && name.startsWith(`WebOBS-${version}-windows-x64`)).length!==1)throw new Error('Expected exactly one complete installer');
+if(official && (!files.includes('latest.yml') || !files.some(name=>name.endsWith('.blockmap'))))throw new Error('Update metadata or blockmap missing');
+if(!official && files.includes('latest.yml'))throw new Error('Development packages must not enter the stable update feed');
+await cp(path.join(root,'desktop','runtime-sbom.cdx.json'),path.join(out,`webobs-windows-${version}-sbom.cdx.json`));
+await cp(path.join(root,'desktop','runtime','manifest.json'),path.join(out,`webobs-windows-${version}-runtime-manifest.json`));
+await cp(path.join(root,'desktop','dependencies.lock.json'),path.join(out,`webobs-windows-${version}-dependencies.lock.json`));
+execFileSync('tar',['-czf',path.join(out,`webobs-windows-${version}-licenses.tar.gz`),'-C',path.join(root,'desktop','runtime'),'licenses']);
+const prefix=`webobs-windows-${version}`;
+const assets=[...files,`${prefix}-sbom.cdx.json`,`${prefix}-runtime-manifest.json`,`${prefix}-dependencies.lock.json`,`${prefix}-licenses.tar.gz`];
+const checksums=[];
+for(const name of assets.sort()) {
+  if(!/^[A-Za-z0-9][A-Za-z0-9._-]{0,199}$/.test(name))continue;
+  const file=path.join(out,name);
+  const {stat}=await import('node:fs/promises');if(!(await stat(file)).isFile())continue;
+  checksums.push(`${await digestFile(file)}  ${name}`);
+}
+await writeFile(path.join(out,`webobs-windows-${version}-SHA256SUMS.txt`),checksums.join('\n')+'\n');
+console.log(`Prepared ${checksums.length} immutable Windows release attachments; official=${official}`);

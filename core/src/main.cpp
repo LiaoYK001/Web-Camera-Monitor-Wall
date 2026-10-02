@@ -5,8 +5,10 @@
 #include "webobs/scene_store.hpp"
 
 #include <curl/curl.h>
+#ifndef _WIN32
 #include <execinfo.h>
 #include <unistd.h>
+#endif
 
 #include <csignal>
 #include <cstdio>
@@ -23,6 +25,7 @@ namespace {
  * so a fatal signal prints raw addresses (resolved afterwards with addr2line)
  * when WEBOBS_BACKTRACE_ON_CRASH is set.  Inert by default.
  */
+#ifndef _WIN32
 void print_crash_backtrace(int signal_number)
 {
     void *frames[64];
@@ -42,6 +45,10 @@ void install_crash_backtrace()
     for (const int signal_number : {SIGABRT, SIGSEGV, SIGBUS, SIGFPE})
         std::signal(signal_number, print_crash_backtrace);
 }
+
+#else
+void install_crash_backtrace() {}
+#endif
 
 webobs::SceneDocument bootstrap_scene(const webobs::Config &config)
 {

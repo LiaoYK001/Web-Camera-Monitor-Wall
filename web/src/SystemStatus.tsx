@@ -4,11 +4,13 @@ import type { ProcessDiagnostics, SystemCapabilities, VideoBackendCapability } f
 
 const state = (value: boolean) => value ? '就绪' : '不可用';
 
-function Backend({ name, value }: { name: string; value: VideoBackendCapability }) {
+function Backend({ name, kind, value }: { name: string; kind: 'vaapi' | 'qsv' | 'nvenc'; value: VideoBackendCapability }) {
+  // NVENC uses CUDA/NVENC libraries; a VA-API driver is not part of that path.
+  const driverLoaded = kind === 'nvenc' ? value.libraryLoaded : value.vaDriverLoaded;
   return <article className={`hardware-card ${value.ready ? 'ready' : 'fallback'}`}>
     <header><h3>{name}</h3><strong>{state(value.ready)}</strong></header>
     <dl><div><dt>设备节点</dt><dd>{state(value.devicePresent)}</dd></div>
-      <div><dt>驱动加载</dt><dd>{state(value.vaDriverLoaded)}</dd></div>
+      <div><dt title={kind === 'nvenc' ? 'CUDA/NVENC 运行库' : 'VA-API 驱动'}>驱动加载</dt><dd>{state(driverLoaded)}</dd></div>
       <div><dt>编码能力</dt><dd>{state(value.encodeSupported && value.encoderAvailable)}</dd></div>
       <div><dt>解码能力</dt><dd>{state(value.decodeSupported)}</dd></div>
       <div><dt>运行探测</dt><dd>{state(value.runtimeProbePassed)}</dd></div></dl>
@@ -38,11 +40,11 @@ export default function SystemStatus({ onBack }: { onBack: () => void }) {
       <section className="system-summary"><article><span>编码器</span><strong>{capabilities.videoEncoder.selected.toUpperCase()}</strong><small>请求 {capabilities.videoEncoder.requested}{capabilities.videoEncoder.fallback ? ` · FALLBACK: ${capabilities.videoEncoder.fallbackReason}` : ''}</small></article>
         <article><span>场景渲染</span><strong>{capabilities.renderer.selected.toUpperCase()}</strong><small>请求 {capabilities.renderer.requested}{capabilities.renderer.fallback ? ` · FALLBACK: ${capabilities.renderer.fallbackReason}` : ''}</small></article>
         <article><span>来源硬解</span><strong>{capabilities.hardwareDecode.selected.toUpperCase()}</strong><small>请求 {capabilities.hardwareDecode.requested}{capabilities.hardwareDecode.fallback ? ` · FALLBACK: ${capabilities.hardwareDecode.fallbackReason}` : ''}</small></article></section>
-      <section className="hardware-grid"><Backend name="AMD VA-API" value={capabilities.videoEncoder.backends.vaapi} /><Backend name="Intel QSV" value={capabilities.videoEncoder.backends.qsv} /><Backend name="NVIDIA NVENC" value={capabilities.videoEncoder.backends.nvenc} /></section>
+      <section className="hardware-grid"><Backend name="AMD VA-API" kind="vaapi" value={capabilities.videoEncoder.backends.vaapi} /><Backend name="Intel QSV" kind="qsv" value={capabilities.videoEncoder.backends.qsv} /><Backend name="NVIDIA NVENC" kind="nvenc" value={capabilities.videoEncoder.backends.nvenc} /></section>
     </>}
     {processes && <section className="process-panel"><div className="section-title"><h2>服务端执行链</h2><span>每 5 秒刷新</span></div>
       <div className="process-grid">{processes.processes.map((process) => <article key={process.name}><strong>{process.name}</strong><span>{process.cpuPercent.toFixed(1)}% CPU · {process.instances} 个进程</span><small>{(process.rssKiB / 1024).toFixed(1)} MiB RSS</small></article>)}</div>
-      <dl className="runtime-facts"><div><dt>RTSP TCP sessions</dt><dd>{processes.rtspSessions}</dd></div><div><dt>AMD GFX busy</dt><dd>{processes.gpuBusyPercent >= 0 ? `${processes.gpuBusyPercent}%` : '不可读取'}</dd></div><div><dt>Control plane</dt><dd>{processes.controlPlaneActive ? 'ACTIVE' : 'IDLE'}</dd></div><div><dt>OBS engine</dt><dd>{processes.engineActive ? 'ACTIVE' : 'IDLE'}</dd></div><div><dt>Composite publisher</dt><dd>{processes.compositePublisherActive ? 'ACTIVE' : 'IDLE'}</dd></div></dl>
+      <dl className="runtime-facts"><div><dt>RTSP TCP sessions</dt><dd>{processes.rtspSessionProbeAvailable === false ? '不可读取' : processes.rtspSessions}</dd></div><div><dt>AMD GFX busy</dt><dd>{processes.gpuBusyPercent >= 0 ? `${processes.gpuBusyPercent}%` : '不可读取'}</dd></div><div><dt>Control plane</dt><dd>{processes.controlPlaneActive ? 'ACTIVE' : 'IDLE'}</dd></div><div><dt>OBS engine</dt><dd>{processes.engineActive ? 'ACTIVE' : 'IDLE'}</dd></div><div><dt>Composite publisher</dt><dd>{processes.compositePublisherActive ? 'ACTIVE' : 'IDLE'}</dd></div></dl>
     </section>}
   </main>;
 }

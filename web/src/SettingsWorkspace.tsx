@@ -1,6 +1,9 @@
 import { useEffect, useState, type FormEvent } from 'react';
 import { fetchRuntimeSettings, patchRuntimeSettings } from './api';
 import ConfigProfiles from './ConfigProfiles';
+import DesktopSettings from './DesktopSettings';
+import { useDesktopWork } from './desktopRuntime';
+import { useMonitorPreferences } from './useMonitorPreferences';
 import type { RuntimeSettings } from './types';
 import type { LocalConfigProfile } from './localRuntime';
 import type { StudioDocument } from './types';
@@ -9,6 +12,7 @@ export default function SettingsWorkspace({ studio, onProfileSelected }: {
   studio?: StudioDocument | null;
   onProfileSelected?: (profile: LocalConfigProfile) => void;
 }) {
+  const { view, setView, loaded: preferencesLoaded, error: preferenceError } = useMonitorPreferences(false);
   const [settings, setSettings] = useState<RuntimeSettings | null>(null);
   const [draft, setDraft] = useState<RuntimeSettings['values'] | null>(null);
   const [error, setError] = useState('');
@@ -28,6 +32,7 @@ export default function SettingsWorkspace({ studio, onProfileSelected }: {
     return () => controller.abort();
   }, [reload]);
   const dirty = Boolean(settings && draft && JSON.stringify(settings.values) !== JSON.stringify(draft));
+  useDesktopWork('runtime-settings', dirty, busy);
   const valid = draft && Number.isInteger(draft.probeTimeoutSeconds) && draft.probeTimeoutSeconds >= 2 && draft.probeTimeoutSeconds <= 30
     && Number.isInteger(draft.issueRetentionLimit) && draft.issueRetentionLimit >= 128 && draft.issueRetentionLimit <= 4096;
   useEffect(() => {
@@ -62,6 +67,16 @@ export default function SettingsWorkspace({ studio, onProfileSelected }: {
   return <section className="settings-workspace page-panel">
     <header className="page-heading"><div><span className="eyebrow">Settings</span><h1>系统设置</h1><p>管理账号配置档案和服务端运行设置。修改运行设置后，点击保存生效。</p></div></header>
     <ConfigProfiles studio={studio ?? null} onProfileSelected={onProfileSelected} />
+    <DesktopSettings />
+    <section className="playback-optimization-settings" aria-label="自动播放优化"><h2>弱网与慢速流自动优化</h2>
+      <p>默认开启，按当前账号自动保存。适应低帧率来源，减少误判重连；持续丢包或抖动时优先使用设备已有子码流，网络稳定后恢复。不会为此修改设备配置或强制转码。</p>
+      {preferenceError && <p role="alert">{preferenceError}</p>}
+      <fieldset disabled={!preferencesLoaded}>
+        <label><input type="checkbox" checked={view.playbackOptimization.enabled} onChange={(event) => setView((value) => ({ ...value, playbackOptimization: { ...value.playbackOptimization, enabled: event.target.checked } }))} />自动优化视频播放（默认开启）</label>
+        {([['slowStreamTolerance', '自动检测慢速流，调整卡顿等待时间'], ['adaptiveProfiles', '弱网时自动选择已有低带宽 Profile'], ['catchUp', '自动调整缓冲并追赶实时画面']] as const).map(([key, label]) => <label key={key}>
+          <input type="checkbox" disabled={!view.playbackOptimization.enabled} checked={view.playbackOptimization[key]} onChange={(event) => setView((value) => ({ ...value, playbackOptimization: { ...value.playbackOptimization, [key]: event.target.checked } }))} />{label}</label>)}
+      </fieldset><small>设置立即保存。关闭总开关后保留所选 Profile 和常规连接恢复；画面源本身的帧率、编码和带宽仍决定可展示的效果。</small>
+    </section>
     <form className="runtime-settings-form" onSubmit={(event) => void save(event)} aria-label="运行设置" aria-busy={loading || busy}>
       <header><h2>运行设置</h2><button type="button" disabled={busy || loading} onClick={reloadSettings}>重新读取设置</button></header>
       {error && <div className="alert conflict-alert" role="alert">{error}</div>}

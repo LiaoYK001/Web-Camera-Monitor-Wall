@@ -1,3 +1,4 @@
+#include "webobs/platform_runtime.hpp"
 #include "webobs/obs_engine.hpp"
 
 #include "webobs/control_server.hpp"
@@ -8,10 +9,16 @@
 #include "webobs/studio_store.hpp"
 #include "webobs/video_encoder.hpp"
 
+#ifndef _WIN32
 #include <obs-nix-platform.h>
+#endif
 #include <obs.h>
 #include <callback/calldata.h>
 #include <util/base.h>
+#ifdef _WIN32
+#include <d3d11.h>
+#include <dxgi.h>
+#endif
 
 #include <algorithm>
 #include <atomic>
@@ -28,15 +35,15 @@
 #include <mutex>
 #include <string>
 #include <string_view>
-#include <sys/wait.h>
+
 #include <thread>
-#include <unistd.h>
+
 #include <vector>
 
 namespace webobs {
 namespace {
 
-volatile std::sig_atomic_t stop_requested = 0;
+std::atomic_bool stop_requested = false;
 
 void handle_stop_signal(int)
 {
@@ -150,10 +157,15 @@ void on_output_stopped(void *parameter, calldata_t *data)
 bool load_module(const std::filesystem::path &prefix, std::string_view module_name)
 {
     const std::string name(module_name);
+#ifdef _WIN32
+    const std::filesystem::path binary = prefix / "obs-plugins" / "64bit" / (name + ".dll");
+    const std::filesystem::path data = prefix / "data" / "obs-plugins" / name;
+#else
     const std::filesystem::path binary = prefix / "lib" / "obs-plugins" / (name + ".so");
     const std::filesystem::path data = prefix / "share" / "obs" / "obs-plugins" / name;
+#endif
     obs_module_t *module = nullptr;
-    const int result = obs_open_module(&module, binary.c_str(), data.c_str());
+    const int result = obs_open_module(&module, binary.string().c_str(), data.string().c_str());
     if (result != MODULE_SUCCESS) {
         blog(LOG_ERROR, "Could not open OBS module '%s' (code %d)", name.c_str(), result);
         return false;
@@ -170,25 +182,25 @@ bool prepare_output_paths(const std::filesystem::path &output, const std::filesy
 {
     std::error_code error;
     if (std::filesystem::exists(output, error)) {
-        blog(LOG_ERROR, "Refusing to overwrite existing output file '%s'", output.c_str());
+        blog(LOG_ERROR, "Refusing to overwrite existing output file '%s'", output.string().c_str());
         return false;
     }
     if (std::filesystem::exists(temporary, error)) {
-        blog(LOG_ERROR, "Temporary recording file already exists: '%s'", temporary.c_str());
+        blog(LOG_ERROR, "Temporary recording file already exists: '%s'", temporary.string().c_str());
         return false;
     }
 
     const std::filesystem::path parent = output.parent_path();
     if (parent.empty() || !std::filesystem::is_directory(parent, error)) {
-        blog(LOG_ERROR, "Output directory does not exist: '%s'", parent.c_str());
+        blog(LOG_ERROR, "Output directory does not exist: '%s'", parent.string().c_str());
         return false;
     }
 
-    const std::filesystem::path probe = parent / (".webobs-write-test-" + std::to_string(getpid()));
+    const std::filesystem::path probe = parent / (".webobs-write-test-" + std::to_string(process_id()));
     {
         std::ofstream stream(probe, std::ios::binary | std::ios::trunc);
         if (!stream) {
-            blog(LOG_ERROR, "Output directory is not writable: '%s'", parent.c_str());
+            blog(LOG_ERROR, "Output directory is not writable: '%s'", parent.string().c_str());
             return false;
         }
     }
@@ -197,36 +209,11 @@ bool prepare_output_paths(const std::filesystem::path &output, const std::filesy
 }
 
 int run_process(const std::vector<std::string> &arguments)
-{
-    if (arguments.empty())
-        return -1;
-
-    const pid_t child = fork();
-    if (child < 0)
-        return -1;
-    if (child == 0) {
-        std::vector<char *> raw_arguments;
-        raw_arguments.reserve(arguments.size() + 1);
-        for (const std::string &argument : arguments)
-            raw_arguments.push_back(const_cast<char *>(argument.c_str()));
-        raw_arguments.push_back(nullptr);
-        execvp(raw_arguments.front(), raw_arguments.data());
-        _exit(127);
-    }
-
-    int status = 0;
-    while (waitpid(child, &status, 0) < 0) {
-        if (errno != EINTR)
-            return -1;
-    }
-    if (WIFEXITED(status))
-        return WEXITSTATUS(status);
-    return -1;
-}
+{ return capture_process(arguments, std::chrono::seconds(120), 1024*1024).code; }
 
 bool remux_recording(const std::filesystem::path &temporary, const std::filesystem::path &output)
 {
-    blog(LOG_INFO, "Finalizing H.264/AAC MP4 '%s'", output.c_str());
+    blog(LOG_INFO, "Finalizing H.264/AAC MP4 '%s'", output.string().c_str());
     const std::vector<std::string> arguments = {
         "ffmpeg", "-hide_banner", "-loglevel", "error", "-n", "-i", temporary.string(),
         "-map", "0:v:0", "-map", "0:a:0", "-c", "copy", "-movflags", "+faststart", output.string(),
@@ -347,7 +334,7 @@ VideoEncoderCapabilities detect_video_encoder_capabilities(const Config &config,
         return *value == "true" || *value == "1";
     };
     capabilities.vaapi.device_present = environment_true(
-        "WEBOBS_VAAPI_DEVICE_PRESENT", access(vaapi_device.c_str(), R_OK | W_OK) == 0);
+        "WEBOBS_VAAPI_DEVICE_PRESENT", readable_device(vaapi_device));
     capabilities.vaapi.va_driver_loaded = environment_true("WEBOBS_VAAPI_DRIVER_LOADED", false);
     capabilities.vaapi.encoder_available = !modules_loaded ||
         encoder_registered({"ffmpeg_vaapi", "ffmpeg_vaapi_tex"});
@@ -356,22 +343,22 @@ VideoEncoderCapabilities detect_video_encoder_capabilities(const Config &config,
     capabilities.vaapi.runtime_probe_passed =
         environment_true("WEBOBS_VAAPI_RUNTIME_PROBE_PASSED", false);
 
-    capabilities.qsv.device_present = capabilities.vaapi.device_present && intel_render_device(vaapi_device);
+    capabilities.qsv.device_present = environment_true("WEBOBS_QSV_DEVICE_PRESENT", capabilities.vaapi.device_present && intel_render_device(vaapi_device));
     capabilities.qsv.encoder_available =
         modules_loaded &&
         encoder_registered({"obs_qsv11_soft_v2", "obs_qsv11_v2", "obs_qsv11_soft", "obs_qsv11"});
     capabilities.qsv.va_driver_loaded = capabilities.qsv.device_present;
-    capabilities.qsv.encode_supported = capabilities.qsv.encoder_available;
-    capabilities.qsv.decode_supported = capabilities.qsv.device_present;
-    capabilities.qsv.runtime_probe_passed = capabilities.qsv.device_present;
+    capabilities.qsv.encode_supported = environment_true("WEBOBS_QSV_ENCODE_SUPPORTED", capabilities.qsv.encoder_available);
+    capabilities.qsv.decode_supported = environment_true("WEBOBS_QSV_DECODE_SUPPORTED", capabilities.qsv.device_present);
+    capabilities.qsv.runtime_probe_passed = environment_true("WEBOBS_QSV_SAMPLE_PASSED", capabilities.qsv.device_present);
 
     // NVIDIA: classic Linux exposes /dev/nvidia0 + /dev/nvidiactl; WSL exposes
     // the /dev/dxg paravirtual device.  Either satisfies "device present"; the
     // library load and the actual encode sample are reported separately and
     // come from the runtime probe (scripts/hardware-probe.py).
     const bool nvidia_device_nodes =
-        (access("/dev/nvidia0", R_OK | W_OK) == 0 && access("/dev/nvidiactl", R_OK | W_OK) == 0) ||
-        access("/dev/dxg", R_OK | W_OK) == 0;
+        (readable_device("/dev/nvidia0") && readable_device("/dev/nvidiactl")) ||
+        readable_device("/dev/dxg");
     capabilities.nvenc.va_driver_loaded = false; // NVENC is never a VA-API backend.
     capabilities.nvenc.device_present =
         environment_true("WEBOBS_NVIDIA_DEVICE_PRESENT", nvidia_device_nodes);
@@ -381,7 +368,7 @@ VideoEncoderCapabilities detect_video_encoder_capabilities(const Config &config,
     // OBS build.  The external FFmpeg/NVENC probe is reported separately through
     // encode_supported/runtime_probe_passed and must never fake OBS support.
     const bool obs_nvenc_registered = modules_loaded &&
-        encoder_registered({"obs_nvenc_h264_tex", "obs_nvenc_h264_cuda", "obs_nvenc_h264_soft",
+        encoder_registered({"obs_nvenc_h264_tex", "obs_nvenc_h264", "obs_nvenc_h264_cuda", "obs_nvenc_h264_soft",
                             "ffmpeg_nvenc"});
     capabilities.nvenc.encoder_available = modules_loaded
                                                ? obs_nvenc_registered
@@ -410,6 +397,37 @@ RendererCapabilities detect_renderer_capabilities(const Config &config)
     result.hardware_probe_passed = result.selected == "hardware";
     result.fallback = process_environment("WEBOBS_RENDERER_FALLBACK").value_or("false") == "true";
     result.fallback_reason = process_environment("WEBOBS_RENDERER_FALLBACK_REASON").value_or("");
+#ifdef _WIN32
+    // Query the device OBS actually initialized. A D3D11 module name alone
+    // cannot distinguish a hardware adapter from Microsoft's software adapter.
+    result.selected = "inactive";
+    result.hardware_probe_passed = false;
+    if (obs_initialized() && obs_get_video()) {
+        result.selected = "d3d11";
+        obs_enter_graphics();
+        auto* device = static_cast<ID3D11Device*>(gs_get_device_obj());
+        IDXGIDevice* dxgi_device = nullptr;
+        IDXGIAdapter* adapter = nullptr;
+        IDXGIAdapter1* adapter1 = nullptr;
+        if (device && SUCCEEDED(device->QueryInterface(__uuidof(IDXGIDevice), reinterpret_cast<void**>(&dxgi_device))) &&
+            SUCCEEDED(dxgi_device->GetAdapter(&adapter)) &&
+            SUCCEEDED(adapter->QueryInterface(__uuidof(IDXGIAdapter1), reinterpret_cast<void**>(&adapter1)))) {
+            DXGI_ADAPTER_DESC1 description{};
+            if (SUCCEEDED(adapter1->GetDesc1(&description))) {
+                result.hardware_probe_passed = !(description.Flags & DXGI_ADAPTER_FLAG_SOFTWARE);
+                if (!result.hardware_probe_passed) {
+                    result.selected = "d3d11-software";
+                    result.fallback = config.renderer == RendererPreference::hardware;
+                    if (result.fallback) result.fallback_reason = "OBS initialized a software D3D11 adapter";
+                }
+            }
+        }
+        if (adapter1) adapter1->Release();
+        if (adapter) adapter->Release();
+        if (dxgi_device) dxgi_device->Release();
+        obs_leave_graphics();
+    }
+#endif
     return result;
 }
 
@@ -457,7 +475,7 @@ const char *video_encoder_identifier(VideoEncoderKind kind)
         return "obs_qsv11_soft_v2";
     case VideoEncoderKind::nvenc:
         // Never assume one plugin name: pick the NVENC encoder OBS registered.
-        for (const char *candidate : {"obs_nvenc_h264_tex", "obs_nvenc_h264_cuda", "obs_nvenc_h264_soft",
+        for (const char *candidate : {"obs_nvenc_h264_tex", "obs_nvenc_h264", "obs_nvenc_h264_cuda", "obs_nvenc_h264_soft",
                                       "ffmpeg_nvenc"})
             if (encoder_registered({candidate}))
                 return candidate;
@@ -496,6 +514,7 @@ ExitCode run_obs_engine(const Config &config, const SceneDocument &document)
     stop_requested = 0;
     std::signal(SIGINT, handle_stop_signal);
     std::signal(SIGTERM, handle_stop_signal);
+    install_owner_shutdown([] { stop_requested.store(true); });
 
     LoggingState logging(static_cast<int>(config.log_level));
     base_set_log_handler(obs_log_handler, &logging);
@@ -514,7 +533,7 @@ ExitCode run_obs_engine(const Config &config, const SceneDocument &document)
         }
         const auto temporary_nonce = std::chrono::steady_clock::now().time_since_epoch().count();
         temporary_path = output_path.parent_path() /
-            ("." + output_path.filename().string() + ".webobsd-" + std::to_string(getpid()) + "-" +
+            ("." + output_path.filename().string() + ".webobsd-" + std::to_string(process_id()) + "-" +
              std::to_string(temporary_nonce) + ".mkv");
     }
     TemporaryFileGuard temporary_guard{temporary_path};
@@ -605,15 +624,28 @@ ExitCode run_obs_engine(const Config &config, const SceneDocument &document)
         return ExitCode::obs_initialization_failed;
     }
 
+#ifndef _WIN32
     obs_set_nix_platform(OBS_NIX_PLATFORM_X11_EGL);
+#endif
     ObsCoreGuard core;
-    if (!obs_startup("en-US", config_directory.c_str(), nullptr)) {
+    if (!obs_startup("en-US", config_directory.string().c_str(), nullptr)) {
         blog(LOG_ERROR, "obs_startup failed");
         return ExitCode::obs_initialization_failed;
     }
     core.initialized = true;
+#ifdef _WIN32
+    const std::filesystem::path desktop_obs_prefix = runtime_path("WEBOBS_OBS_PREFIX", WEBOBS_OBS_PREFIX);
+    // libobs appends the filename directly; registered directories need a separator.
+    const std::string obs_data_directory = (desktop_obs_prefix / "data" / "libobs").generic_string() + "/";
+    obs_add_data_path(obs_data_directory.c_str());
+    const std::string graphics_module = (desktop_obs_prefix / "bin" / "64bit" / "libobs-d3d11.dll").string();
+#endif
     obs_video_info video_info{};
+#ifdef _WIN32
+    video_info.graphics_module = graphics_module.c_str();
+#else
     video_info.graphics_module = "libobs-opengl";
+#endif
     video_info.fps_num = static_cast<uint32_t>(config.fps);
     video_info.fps_den = 1;
     video_info.base_width = static_cast<uint32_t>(document.canvas.width);
@@ -640,7 +672,7 @@ ExitCode run_obs_engine(const Config &config, const SceneDocument &document)
         return ExitCode::obs_initialization_failed;
     }
 
-    const std::filesystem::path obs_prefix = WEBOBS_OBS_PREFIX;
+    const std::filesystem::path obs_prefix = runtime_path("WEBOBS_OBS_PREFIX", WEBOBS_OBS_PREFIX);
     // Base modules are mandatory.  Source-type modules are only required when the
     // scene actually uses that source type, so a pure camera scene never depends
     // on CEF/obs-browser or the text/image plugins, and an unsupported source
@@ -648,10 +680,12 @@ ExitCode run_obs_engine(const Config &config, const SceneDocument &document)
     if (!load_module(obs_prefix, "obs-ffmpeg") || !load_module(obs_prefix, "obs-x264") ||
         (config.webrtc_enabled && !load_module(obs_prefix, "obs-webrtc")))
         return ExitCode::obs_initialization_failed;
+#ifndef _WIN32
     const auto has_source_kind = [&document](std::string_view kind) {
         return std::any_of(document.sources.begin(), document.sources.end(),
                            [kind](const SceneSource &source) { return source.kind == kind; });
     };
+#endif
     const auto require_module = [&obs_prefix](const char *module, const char *source_kind) {
         if (load_module(obs_prefix, module))
             return true;
@@ -659,10 +693,16 @@ ExitCode run_obs_engine(const Config &config, const SceneDocument &document)
              source_kind, module);
         return false;
     };
+#ifdef _WIN32
+    // New desktop source types must work without restarting an initially empty scene.
+    if (!require_module("obs-browser", "browser") || !require_module("image-source", "image") ||
+        !require_module("obs-text", "text")) return ExitCode::obs_initialization_failed;
+#else
     if ((has_source_kind("browser") && !require_module("obs-browser", "browser")) ||
         (has_source_kind("image") && !require_module("image-source", "image")) ||
         (has_source_kind("text") && !require_module("text-freetype2", "text")))
         return ExitCode::obs_initialization_failed;
+#endif
     // Filters and transitions are additive: their absence only degrades those
     // optional features and must never block composition.
     load_module(obs_prefix, "obs-filters");
@@ -671,6 +711,9 @@ ExitCode run_obs_engine(const Config &config, const SceneDocument &document)
     // hardware encoder here; without it the reported capability stays
     // nvenc(encoder=false) and compositing keeps using x264.
     load_module(obs_prefix, "obs-nvenc");
+#ifdef _WIN32
+    load_module(obs_prefix, "obs-qsv11");
+#endif
     obs_post_load_modules();
 
     VideoEncoderCapabilities encoder_capabilities = detect_video_encoder_capabilities(config);
@@ -829,7 +872,7 @@ ExitCode run_obs_engine(const Config &config, const SceneDocument &document)
     OutputPtr output;
     if (recording_enabled) {
         DataPtr output_settings(obs_data_create());
-        obs_data_set_string(output_settings.get(), "path", temporary_path.c_str());
+        obs_data_set_string(output_settings.get(), "path", temporary_path.string().c_str());
         obs_data_set_bool(output_settings.get(), "allow_overwrite", true);
         output.reset(obs_output_create("ffmpeg_muxer", "WebOBS file output", output_settings.get(), nullptr));
         if (!output) {
@@ -1026,9 +1069,9 @@ ExitCode run_obs_engine(const Config &config, const SceneDocument &document)
 
     std::filesystem::remove(temporary_path, path_error);
     if (path_error)
-        blog(LOG_WARNING, "Could not remove temporary recording '%s': %s", temporary_path.c_str(),
+        blog(LOG_WARNING, "Could not remove temporary recording '%s': %s", temporary_path.string().c_str(),
              path_error.message().c_str());
-    blog(LOG_INFO, "Recording complete: '%s'", output_path.c_str());
+    blog(LOG_INFO, "Recording complete: '%s'", output_path.string().c_str());
     return ExitCode::success;
 }
 

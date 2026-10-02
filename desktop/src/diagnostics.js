@@ -1,0 +1,4 @@
+const desktop=window.webobsDesktop;
+function show(state){document.getElementById('phase').textContent=state.runtime.phase;document.getElementById('detail').textContent=state.runtime.detail||'';document.getElementById('services').textContent=(state.runtime.services||[]).map(item=>`${item.name}: ${item.running?'运行中':'已停止'}`).join('\n');document.getElementById('recovery').hidden=!state.recovery;document.getElementById('snapshot').textContent=state.recovery?`${state.recovery.from} → ${state.recovery.to}\n${state.recovery.snapshot}`:'';}
+desktop.onStatus(show);void desktop.status().then(show);
+for(const [id,action] of [['restart','restartServices'],['installer','openPreviousInstaller'],['restore','restorePrevious']])document.getElementById(id).addEventListener('click',()=>{void desktop[action]().then(show).catch(error=>{document.getElementById('error').textContent=error.message;});});

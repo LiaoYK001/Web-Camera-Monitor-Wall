@@ -9,6 +9,11 @@ tokens, certificates, storage paths, or camera identifiers.
 
 from __future__ import annotations
 
+import sys as _runtime_sys
+from pathlib import Path as _RuntimePath
+_runtime_sys.path.insert(0, str(_RuntimePath(__file__).resolve().parents[1]))
+from runtime_support import service_port, service_http, service_rtsp, install_owner_shutdown, sync_directory
+
 import argparse
 import base64
 import contextlib
@@ -50,7 +55,8 @@ def atomic_json(path: pathlib.Path, value: Any) -> None:
     descriptor, temporary_name = tempfile.mkstemp(prefix=f".{path.name}.", dir=path.parent)
     temporary = pathlib.Path(temporary_name)
     try:
-        os.fchmod(descriptor, 0o600)
+        if os.name != "nt":
+            os.fchmod(descriptor, 0o600)
         with os.fdopen(descriptor, "wb") as output:
             output.write(canonical_json(value) + b"\n")
             output.flush()
@@ -66,7 +72,8 @@ def atomic_private_text(path: pathlib.Path, value: str) -> None:
     descriptor, temporary_name = tempfile.mkstemp(prefix=f".{path.name}.", dir=path.parent)
     temporary = pathlib.Path(temporary_name)
     try:
-        os.fchmod(descriptor, 0o600)
+        if os.name != "nt":
+            os.fchmod(descriptor, 0o600)
         with os.fdopen(descriptor, "w", encoding="ascii", newline="\n") as output:
             output.write(value)
             output.flush()
@@ -306,7 +313,7 @@ def catalog_batch(catalog_path: pathlib.Path, assignments: list[dict[str, Any]])
 
 def _load_detector_module() -> Any:
     """Load the image-baked detector without importing arbitrary workspace code."""
-    module_path = pathlib.Path(os.environ.get(
+    module_path = pathlib.Path(os.environ.get("WEBOBS_DETECTOR_PYTHON_MODULE") or os.environ.get(
         "WEBOBS_DETECTOR_WORKER", "/opt/webobs/bin/webobs-detector-worker"))
     if not module_path.is_absolute() or module_path.is_symlink() or not module_path.is_file():
         raise AgentError("detector runtime is unavailable")
@@ -494,6 +501,7 @@ def main() -> None:
     global STOP
     signal.signal(signal.SIGTERM, lambda *_: globals().__setitem__("STOP", True))
     signal.signal(signal.SIGINT, lambda *_: globals().__setitem__("STOP", True))
+    install_owner_shutdown(lambda *_: globals().__setitem__("STOP", True))
     run(args)
 
 

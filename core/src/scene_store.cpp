@@ -1,3 +1,4 @@
+#include "webobs/platform_runtime.hpp"
 #include "webobs/scene_store.hpp"
 
 #include <jansson.h>
@@ -16,10 +17,12 @@
 #include <system_error>
 #include <utility>
 
+#ifndef _WIN32
 #include <fcntl.h>
 #include <sys/stat.h>
 #include <sys/types.h>
 #include <unistd.h>
+#endif
 
 namespace webobs {
 namespace {
@@ -30,6 +33,21 @@ struct JsonDeleter {
 
 using JsonPtr = std::unique_ptr<json_t, JsonDeleter>;
 
+SceneMigrationResult migration_failure(std::string message)
+{
+    SceneMigrationResult result;
+    result.error = std::move(message);
+    return result;
+}
+
+SceneFileLoadResult load_failure(std::string message)
+{
+    SceneFileLoadResult result;
+    result.error = std::move(message);
+    return result;
+}
+
+#ifndef _WIN32
 class FileDescriptor {
 public:
     FileDescriptor() = default;
@@ -78,20 +96,6 @@ struct PrivateDirectoryResult {
 
     [[nodiscard]] bool ok() const { return descriptor && error.empty(); }
 };
-
-SceneMigrationResult migration_failure(std::string message)
-{
-    SceneMigrationResult result;
-    result.error = std::move(message);
-    return result;
-}
-
-SceneFileLoadResult load_failure(std::string message)
-{
-    SceneFileLoadResult result;
-    result.error = std::move(message);
-    return result;
-}
 
 std::string system_failure(std::string_view operation, int error_number = errno)
 {
@@ -204,6 +208,8 @@ std::optional<std::string> read_limited(int descriptor, std::string &content)
     }
 }
 
+#endif
+
 bool set_default_integer(json_t *object, const char *key, json_int_t value)
 {
     if (json_object_get(object, key) != nullptr)
@@ -246,10 +252,11 @@ bool set_default_array(json_t *object, const char *key)
 
 std::string make_temporary_name(std::string_view filename, std::uint64_t sequence)
 {
-    return "." + std::string(filename) + ".tmp." + std::to_string(static_cast<long long>(getpid())) + "." +
+    return "." + std::string(filename) + ".tmp." + std::to_string(process_id()) + "." +
            std::to_string(sequence);
 }
 
+#ifndef _WIN32
 std::optional<std::string> write_private_content_atomic(const std::filesystem::path &path,
                                                         std::string_view content)
 {
@@ -299,6 +306,11 @@ std::optional<std::string> write_private_content_atomic(const std::filesystem::p
         return system_failure("synchronizing the scene storage directory");
     return std::nullopt;
 }
+#else
+std::optional<std::string> write_private_content_atomic(const std::filesystem::path &path,
+                                                        std::string_view content)
+{ return windows_private_write(path, content); }
+#endif
 
 } // namespace
 
@@ -409,6 +421,12 @@ std::optional<std::string> save_scene_file_atomic(const std::filesystem::path &p
 
 SceneFileLoadResult load_scene_file(const std::filesystem::path &path)
 {
+#ifdef _WIN32
+    const auto loaded = windows_private_read(path, maximum_scene_json_bytes);
+    if (!loaded.error.empty()) return load_failure(loaded.error);
+    if (loaded.missing) return {};
+    const std::string& content = loaded.content;
+#else
     PrivateDirectoryResult directory = open_private_directory(path, false);
     if (!directory.ok()) {
         if (directory.missing) {
@@ -449,6 +467,8 @@ SceneFileLoadResult load_scene_file(const std::filesystem::path &path)
     if (const auto read_error = read_limited(file.get(), content))
         return load_failure(*read_error);
     file.reset();
+
+#endif
 
     SceneMigrationResult migrated = migrate_scene_json(content);
     if (!migrated.ok())

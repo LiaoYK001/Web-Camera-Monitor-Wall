@@ -3,6 +3,11 @@
 
 from __future__ import annotations
 
+import sys as _runtime_sys
+from pathlib import Path as _RuntimePath
+_runtime_sys.path.insert(0, str(_RuntimePath(__file__).resolve().parents[1]))
+from runtime_support import service_port, service_http, service_rtsp, install_owner_shutdown, serve_owned, STOP, sync_directory
+
 import argparse
 import contextlib
 import ctypes
@@ -300,7 +305,7 @@ def upload_s3(path: pathlib.Path, target_id: str) -> str:
     """Upload a completed encrypted backup through the pinned S3 implementation."""
     configured_target = os.environ.get("WEBOBS_BACKUP_S3_TARGET_ID", "")
     config_path = pathlib.Path(os.environ.get("WEBOBS_BACKUP_S3_CONFIG", "/config/webobs/archive.json"))
-    archive_program = pathlib.Path(os.environ.get(
+    archive_program = pathlib.Path(os.environ.get("WEBOBS_ARCHIVE_PYTHON_MODULE") or os.environ.get(
         "WEBOBS_ARCHIVE_COMMAND", "/opt/webobs/bin/webobs-s3-archive"))
     if not configured_target or target_id != configured_target or not config_path.is_absolute() or \
             not archive_program.is_absolute() or not archive_program.is_file():
@@ -327,7 +332,7 @@ def schedule(config_root: pathlib.Path, backup_root: pathlib.Path, key_file: pat
     token = os.environ.get("WEBOBS_CLUSTER_INTERNAL_TOKEN", "")
     port = int(os.environ.get("WEBOBS_CLUSTER_INTERNAL_PORT", "8095"))
     next_scheduled = time.monotonic() + 15 * 60
-    while True:
+    while not STOP.is_set():
         job: dict | None = None
         with contextlib.suppress(BackupError):
             job = cluster_request(port, token, "/backup-jobs/claim", {}).get("job")
@@ -349,7 +354,7 @@ def schedule(config_root: pathlib.Path, backup_root: pathlib.Path, key_file: pat
         if time.monotonic() >= next_scheduled:
             create(config_root, backup_root, key_file, sodium)
             next_scheduled = time.monotonic() + 15 * 60
-        time.sleep(2)
+        STOP.wait(2)
 
 
 def main() -> None:
@@ -372,6 +377,7 @@ def main() -> None:
         restore(config_root, pathlib.Path(args.archive), key_file, sodium,
                 os.environ.get("WEBOBS_RESTORE_CONFIRM") == "replace-config")
     else:
+        install_owner_shutdown(STOP.set)
         schedule(config_root, backup_root, key_file, sodium)
 
 

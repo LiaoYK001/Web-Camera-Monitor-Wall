@@ -2,7 +2,7 @@ import { type FormEvent, type ReactNode, useEffect, useState } from 'react';
 import { fetchAuthSession, fetchFirstRunStatus, login, logout, registerFirstAdmin, type AuthSession } from './api';
 import { clearPrivateRuntimeState } from './localRuntime';
 
-type GateSession = AuthSession & { offlineAuthorized?: boolean; unavailable?: boolean };
+type GateSession = AuthSession & { unavailable?: boolean };
 const ACTIVE_ACCOUNT_KEY = 'webobs-active-account';
 
 async function activateAccount(session: AuthSession): Promise<void> {
@@ -64,14 +64,13 @@ export default function LoginGate({ children }: { children: ReactNode }) {
   if (session.authenticationEnabled === false || session.authenticated) return (
     <>
       {children}
-      {session.authenticated && !session.offlineAuthorized && (
+      {session.authenticated && (
         <button className="session-logout" type="button" onClick={() => void logout()
           .finally(() => clearPrivateRuntimeState())
           .finally(() => setSession({ authenticated: false, authenticationEnabled: true }))}>
           退出登录
         </button>
       )}
-      {session.offlineAuthorized && <span className="offline-session">离线授权模式 · 修改只保存在本机</span>}
     </>
   );
   return (

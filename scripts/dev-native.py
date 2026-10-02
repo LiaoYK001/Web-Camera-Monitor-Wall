@@ -76,14 +76,15 @@ def check():
     say(f'工具检查通过。源码：{ROOT}；原生缓存/数据：{CACHE}')
 
 def ports_free():
-    for port in [8080, 8091, 8092, 8093, 8094, 8095, 8190, 8554, 8889, 9997]:
+    for port in [8080, 8091, 8092, 8093, 8094, 8095, 8190, 8554, 8889, 9997, 11984, 18554, 18555]:
         with socket.socket() as sock:
             sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
             try: sock.bind(('127.0.0.1', port))
             except OSError: raise StageError('ports', f'后端端口 {port} 已占用。请先停止旧原生服务/本项目容器；脚本不会结束其他进程。')
-    with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as sock:
-        try: sock.bind(('127.0.0.1', 8189))
-        except OSError: raise StageError('ports', 'UDP 8189 已占用，请停止旧媒体服务。')
+    for port in [8189, 18555]:
+        with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as sock:
+            try: sock.bind(('127.0.0.1', port))
+            except OSError: raise StageError('ports', f'UDP {port} 已占用，请停止旧媒体服务。')
 
 
 def write_lan_mediamtx_config(lan_host: str) -> Path:
@@ -480,7 +481,19 @@ def main():
         if hashlib.sha256(archive.read_bytes()).hexdigest() != '73ed27c292e05ceb4990dcb34531f01872dfff5374b7515c45a202e0abf47706':
             raise RuntimeError('MediaMTX 校验失败；未执行下载内容')
         command(['tar', '-xzf', archive, '-C', CACHE / 'bin', 'mediamtx'], buildlog)
-    say('[4/4] 启动真实 Python 服务、媒体网关和 C++ API')
+    bridge = CACHE / 'bin/go2rtc'
+    bridge_lock = json.loads((ROOT / 'go2rtc/dependencies.lock.json').read_text())['linux_amd64']
+    if not bridge.exists() or hashlib.sha256(bridge.read_bytes()).hexdigest() != bridge_lock['sha256']:
+        say('下载并校验固定版本 go2rtc 1.9.14（仅首次）')
+        download = CACHE / 'bin/go2rtc.download'
+        command(['curl', '--fail', '--location', '--retry', '3', '--retry-all-errors',
+                 '--connect-timeout', '20', '--max-time', '180', '-o', download, bridge_lock['url']], buildlog)
+        if hashlib.sha256(download.read_bytes()).hexdigest() != bridge_lock['sha256']:
+            download.unlink(missing_ok=True)
+            raise RuntimeError('go2rtc 校验失败；未执行下载内容')
+        download.chmod(0o700)
+        download.replace(bridge)
+    say('[4/4] 启动真实 Python 服务、go2rtc、媒体网关和 C++ API')
     transcoder = CACHE / 'bin/transcode-on-demand'
     transcoder.write_text((ROOT / 'gateway/transcode-on-demand.sh').read_text(), encoding='utf-8')
     transcoder.chmod(0o700)
@@ -532,6 +545,11 @@ def main():
         # Native dev keeps OBS config in the cache instead of the container's /config.
         'WEBOBS_OBS_CONFIG_DIR': str(data / 'obs-config'),
         'WEBOBS_NVR_ENABLED': 'true',
+        'WEBOBS_GO2RTC_ENABLED': os.environ.get('WEBOBS_GO2RTC_ENABLED', 'true'),
+        'WEBOBS_GO2RTC_BINARY': str(bridge),
+        'WEBOBS_GO2RTC_CONFIG': str(data / 'go2rtc/go2rtc.yaml'),
+        'WEBOBS_GO2RTC_TEMPLATE': str(ROOT / 'go2rtc/go2rtc.yaml'),
+        'WEBOBS_GO2RTC_WEB_ROOT': str(ROOT / 'web/go2rtc-dist'),
         'WEBOBS_TRANSCODER_PATH': str(transcoder),
         'WEBOBS_CAMERA_REGISTRY_ENABLED': 'true', 'WEBOBS_NODE_ROLE': 'standalone',
         'WEBOBS_CONTROL_ALLOWED_ORIGINS': ','.join(f'http://{host}:{port}' for host in ['127.0.0.1','localhost'] for port in [8080,args.frontend_port]),
@@ -554,6 +572,9 @@ def main():
         say(f'LAN 媒体：MediaMTX WebRTC ICE 主机 {lan_host}；ICE/TCP 8190 需从 Windows 中继（WSL2 不转发远端 UDP/TCP）')
     # Prevent inherited production options from accidentally turning on Composite/recording.
     env.pop('WEBOBS_OUTPUT', None); env.pop('WEBOBS_RTSP_URL', None)
+    if env['WEBOBS_GO2RTC_ENABLED'] == 'true':
+        start('go2rtc', [sys.executable, ROOT / 'go2rtc/runtime.py'], env,
+              'http://127.0.0.1:11984/api/v1/go2rtc/api', timeout=20)
     start('mediamtx', [media, mediamtx_config], env,
           'http://127.0.0.1:9997/v3/config/global/get', stage='mediamtx')
     for name, source, port in [('camera','camera/camera_registry.py',8092), ('events','events/event_service.py',8093),

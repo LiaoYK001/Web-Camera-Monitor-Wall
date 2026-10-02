@@ -80,6 +80,7 @@ let fixtureOffers = 0;
 window.fetch = async (input, init) => {
   const url = new URL(typeof input === 'string' ? input : input instanceof URL ? input.href : input.url, location.href);
   if (!url.pathname.startsWith('/api/')) return originalFetch(input, init);
+  if (fixtureOptions.has('account-server') && url.pathname === '/api/v2/account/preferences/monitor-view') return originalFetch(input, init);
   const reply = (data: unknown, status = 200) => new Response(JSON.stringify(data), { status, headers: { 'Content-Type': 'application/json' } });
   if (url.pathname === '/api/v1/studio') return reply(studio);
   if (fixtureOptions.has('layout') && url.pathname.includes('/account-cameras/')) {

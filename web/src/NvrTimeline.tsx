@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { desktopTask } from './desktopRuntime';
 import {
   createNvrExport,
   createNvrSnapshot,
@@ -162,12 +163,14 @@ export default function NvrTimeline({ onBack }: { onBack: () => void }) {
     if (!selectedSegment) return;
     const end = Math.min(selectedSegment.endUtcMs, cursor + 10_000);
     if (end <= cursor) return;
+    const completed = desktopTask(`nvr-export-${crypto.randomUUID()}`);
     try {
       setNotice('正在生成证据导出…');
       const result = await createNvrExport(cameraIds, cursor, end, mode);
       setLatestExport(result);
       setNotice(`${mode === 'fast' ? '快速' : '精确'}导出完成，审计 ID ${result.auditId.slice(0, 12)}…`);
     } catch (error) { setNotice(error instanceof Error ? error.message : '导出失败'); }
+    finally { completed(); }
   };
 
   return (

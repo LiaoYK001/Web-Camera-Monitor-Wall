@@ -46,6 +46,8 @@ esac
 export WEBOBS_NODE_ROLE="$node_role"
 mediamtx_enabled="${WEBOBS_WEBRTC_ENABLED:-$role_mediamtx_default}"
 mediamtx_config="${WEBOBS_MEDIAMTX_CONFIG:-/opt/webobs/etc/mediamtx.yml}"
+go2rtc_enabled="${WEBOBS_GO2RTC_ENABLED:-$role_registry_default}"
+export WEBOBS_GO2RTC_ENABLED="$go2rtc_enabled"
 tls_enabled="${WEBOBS_TLS_ENABLED:-false}"
 nvr_enabled="${WEBOBS_NVR_ENABLED:-$role_nvr_default}"
 camera_registry_enabled="${WEBOBS_CAMERA_REGISTRY_ENABLED:-$role_registry_default}"
@@ -123,6 +125,10 @@ trap cleanup_browser_cache EXIT
 case "$mediamtx_enabled" in
     true|false) ;;
     *) fail "WEBOBS_WEBRTC_ENABLED must be true or false" ;;
+esac
+case "$go2rtc_enabled" in
+    true|false) ;;
+    *) fail "WEBOBS_GO2RTC_ENABLED must be true or false" ;;
 esac
 case "$nvr_enabled" in
     true|false) ;;
@@ -300,6 +306,9 @@ weston_pid=""
 weston_runtime=""
 weston_log=""
 mediamtx_pid=""
+go2rtc_pid=""
+go2rtc_filter_pid=""
+go2rtc_log_pipe=""
 mediamtx_filter_pid=""
 mediamtx_log_pipe=""
 caddy_pid=""
@@ -345,6 +354,7 @@ shutdown_children() {
     terminate_child "$webobsd_pid"
     terminate_child "$caddy_pid"
     terminate_child "$mediamtx_pid"
+    terminate_child "$go2rtc_pid"
     terminate_child "$nvr_pid"
     terminate_child "$camera_registry_pid"
     terminate_child "$v2_client_control_pid"
@@ -384,7 +394,7 @@ upgrade_exit() {
             upgrade_alive=false
             for upgrade_pid in "$webobsd_pid" "$nvr_pid" "$camera_registry_pid" \
                     "$v2_client_control_pid" "$events_pid" "$cluster_pid" "$node_agent_pid" \
-                    "$archive_pid" "$encrypted_backup_pid"; do
+                    "$archive_pid" "$encrypted_backup_pid" "$go2rtc_pid"; do
                 if [ -n "$upgrade_pid" ] && kill -0 "$upgrade_pid" 2>/dev/null; then
                     upgrade_alive=true
                     break
@@ -500,6 +510,27 @@ export WEBOBS_RENDERER_REQUESTED="$renderer_requested"
 export WEBOBS_RENDERER_SELECTED="$renderer_selected"
 export WEBOBS_RENDERER_FALLBACK="$renderer_fallback"
 export WEBOBS_RENDERER_FALLBACK_REASON="$renderer_fallback_reason"
+
+if [ "$go2rtc_enabled" = "true" ]; then
+    go2rtc_log_pipe="/tmp/webobs-go2rtc-log.$$"
+    mkfifo "$go2rtc_log_pipe"
+    /opt/obs/bin/webobs-log-filter < "$go2rtc_log_pipe" &
+    go2rtc_filter_pid=$!
+    python3 /opt/webobs/bin/webobs-go2rtc > "$go2rtc_log_pipe" 2>&1 &
+    go2rtc_pid=$!
+    go2rtc_ready=0
+    go2rtc_attempt=0
+    while [ "$go2rtc_attempt" -lt 100 ]; do
+        kill -0 "$go2rtc_pid" 2>/dev/null || fail "go2rtc exited during startup"
+        if curl --fail --silent --max-time 1 http://127.0.0.1:11984/api/v1/go2rtc/api >/dev/null; then
+            go2rtc_ready=1
+            break
+        fi
+        go2rtc_attempt=$((go2rtc_attempt + 1))
+        sleep 0.1
+    done
+    [ "$go2rtc_ready" -eq 1 ] || fail "Timed out waiting for go2rtc"
+fi
 
 if [ "$mediamtx_enabled" = "true" ]; then
     mediamtx_log_pipe="/tmp/webobs-mediamtx-log.$$"
@@ -675,6 +706,18 @@ python3 "$upgrade_guard" commit --config-root /config/webobs || fail "v2-M7 migr
 
 exit_status=0
 while kill -0 "$webobsd_pid" 2>/dev/null; do
+    if [ "$shutdown_requested" -eq 0 ] && [ -n "$go2rtc_pid" ] && ! kill -0 "$go2rtc_pid" 2>/dev/null; then
+        echo "go2rtc supervisor exited while webobsd was running" >&2
+        exit_status=3
+        terminate_child "$webobsd_pid"
+        break
+    fi
+    if [ "$shutdown_requested" -eq 0 ] && [ -n "$go2rtc_filter_pid" ] && ! kill -0 "$go2rtc_filter_pid" 2>/dev/null; then
+        echo "go2rtc log filter exited while webobsd was running" >&2
+        exit_status=3
+        terminate_child "$webobsd_pid"
+        break
+    fi
     if [ "$shutdown_requested" -eq 0 ] && [ -n "$mediamtx_pid" ] && ! kill -0 "$mediamtx_pid" 2>/dev/null; then
         echo "MediaMTX exited while webobsd was running" >&2
         exit_status=3
@@ -813,6 +856,15 @@ if [ "$exit_status" -eq 0 ]; then
 fi
 
 shutdown_children
+if [ -n "$go2rtc_pid" ]; then
+    wait "$go2rtc_pid" 2>/dev/null || true
+fi
+if [ -n "$go2rtc_filter_pid" ]; then
+    wait "$go2rtc_filter_pid" 2>/dev/null || true
+fi
+if [ -n "$go2rtc_log_pipe" ]; then
+    rm -f -- "$go2rtc_log_pipe"
+fi
 if [ -n "$mediamtx_pid" ]; then
     wait "$mediamtx_pid" 2>/dev/null || true
 fi

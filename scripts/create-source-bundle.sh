@@ -39,6 +39,12 @@ git diff --cached --quiet --ignore-submodules=none
 
 expected_obs_commit="fb4d98bf88fae5fc85cb11fc57f7c5e309282194"
 actual_obs_commit="$(git -C obs/obs-studio rev-parse HEAD)"
+expected_go2rtc_commit="b5948cfb25404cc5cb37b166ecaa2dca20b11d4b"
+actual_go2rtc_commit="$(git -C go2rtc/go2rtc rev-parse HEAD)"
+[ "$actual_go2rtc_commit" = "$expected_go2rtc_commit" ] || {
+    echo "go2rtc submodule pin does not match the reviewed commit" >&2
+    exit 65
+}
 [ "$actual_obs_commit" = "$expected_obs_commit" ] || {
     echo "OBS submodule pin does not match the reviewed commit" >&2
     exit 65
@@ -70,6 +76,7 @@ source_epoch="$(git show -s --format=%ct HEAD)"
     echo "version=$version"
     echo "revision=$root_revision"
     echo "obs_revision=$actual_obs_commit"
+    echo "go2rtc_revision=$actual_go2rtc_commit"
     echo "source_date_epoch=$source_epoch"
 } > "$staging_directory/SOURCE-REVISION"
 
@@ -88,6 +95,8 @@ tar -tzf "$archive_path" | grep -Fx "$bundle_name/SOURCE-REVISION" >/dev/null
 tar -tzf "$archive_path" | grep -Fx "$bundle_name/LICENSE" >/dev/null
 tar -tzf "$archive_path" | grep -Fx "$bundle_name/docker/Dockerfile" >/dev/null
 tar -tzf "$archive_path" | grep -Fx "$bundle_name/obs/obs-studio/libobs/obs.c" >/dev/null
+tar -tzf "$archive_path" | grep -Fx "$bundle_name/go2rtc/go2rtc/main.go" >/dev/null
+tar -tzf "$archive_path" | grep -Fx "$bundle_name/go2rtc/go2rtc/LICENSE" >/dev/null
 if tar -tzf "$archive_path" | grep -Eq '(^|/)\.git(/|$)|(^|/)\.env$|(^|/)secrets(/|$)'; then
     echo "Source bundle contains forbidden repository metadata or private paths" >&2
     exit 65

@@ -8,6 +8,11 @@ secrets.
 
 from __future__ import annotations
 
+import sys as _runtime_sys
+from pathlib import Path as _RuntimePath
+_runtime_sys.path.insert(0, str(_RuntimePath(__file__).resolve().parents[1]))
+from runtime_support import service_port, service_http, service_rtsp, install_owner_shutdown, serve_owned, STOP, sync_directory
+
 import json
 import base64
 import hashlib
@@ -38,7 +43,7 @@ from urllib.request import (
 from xml.sax.saxutils import escape
 
 DB_PATH = Path(os.environ.get("WEBOBS_CAMERA_DATABASE", "/config/webobs/cameras.db"))
-LISTEN = ("127.0.0.1", 8092)
+LISTEN = ("127.0.0.1", service_port(8092))
 MAX_BODY = 1024 * 1024
 MAX_ONVIF_XML = 2 * 1024 * 1024
 ONVIF_TIMEOUT_SECONDS = 6
@@ -1245,7 +1250,7 @@ def ingest_analytics_signals(payload: dict, session_id: str, principal: str = ""
             event["properties"]["analytics"]["modelSha256"] = value["modelSha256"]
         body = json.dumps(event, separators=(",", ":")).encode()
         try:
-            request = Request("http://127.0.0.1:8093/events", data=body, headers={"Content-Type": "application/json"}, method="POST")
+            request = Request(service_http(8093, '/events'), data=body, headers={"Content-Type": "application/json"}, method="POST")
             with urlopen(request, timeout=1) as response:
                 accepted.append(json.loads(response.read(64 * 1024)))
         except (OSError, ValueError, json.JSONDecodeError) as error:
@@ -3042,7 +3047,7 @@ def onvif_pull_events(camera_id: str) -> dict:
             payload = json.dumps({"cameraId": camera_id, "type": event_type, "source": "onvif",
                                   "topic": event["topic"], "properties": event["properties"]},
                                  separators=(",", ":")).encode()
-            request = Request("http://127.0.0.1:8093/events", data=payload, method="POST",
+            request = Request(service_http(8093, '/events'), data=payload, method="POST",
                               headers={"Content-Type": "application/json"})
             with urlopen(request, timeout=.5) as response:
                 response.read(1024)
@@ -3571,4 +3576,4 @@ if __name__ == "__main__":
     initialize()
     threading.Thread(target=automatic_probe_worker, daemon=True).start()
     threading.Thread(target=onvif_event_worker, daemon=True).start()
-    ThreadingHTTPServer(LISTEN, Handler).serve_forever()
+    serve_owned(ThreadingHTTPServer(LISTEN, Handler))

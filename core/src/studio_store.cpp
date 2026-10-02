@@ -1,3 +1,4 @@
+#include "webobs/platform_runtime.hpp"
 #include "webobs/studio_store.hpp"
 
 #include <array>
@@ -8,14 +9,17 @@
 #include <system_error>
 #include <utility>
 
+#ifndef _WIN32
 #include <fcntl.h>
 #include <sys/stat.h>
 #include <sys/types.h>
 #include <unistd.h>
+#endif
 
 namespace webobs {
 namespace {
 
+#ifndef _WIN32
 class FileDescriptor {
 public:
     explicit FileDescriptor(int value = -1) : value_(value) {}
@@ -212,6 +216,12 @@ ReadResult read_private_json(const std::filesystem::path &path)
         result.content.append(buffer.data(), static_cast<std::size_t>(count));
     }
 }
+
+#else
+using ReadResult = PrivateRead;
+std::optional<std::string> write_private_json(const std::filesystem::path &path, std::string_view content) { return windows_private_write(path, content); }
+ReadResult read_private_json(const std::filesystem::path &path) { return windows_private_read(path, maximum_scene_json_bytes); }
+#endif
 
 std::filesystem::path backup_path(const std::filesystem::path &path)
 {

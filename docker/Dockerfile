@@ -11,11 +11,36 @@ RUN corepack enable \
         attempt=$((attempt + 1)); \
         sleep 5; \
     done
-COPY web/package.json web/pnpm-lock.yaml ./
+COPY web/package.json web/pnpm-lock.yaml web/pnpm-workspace.yaml ./
 RUN pnpm config set fetch-retries 5 \
     && pnpm install --frozen-lockfile --ignore-scripts
 COPY web/ ./
 RUN WEBOBS_BUILD_VERSION="${WEBOBS_BUILD_VERSION}" pnpm run build
+
+COPY go2rtc/go2rtc/www /src/go2rtc/go2rtc/www
+COPY go2rtc/go2rtc/LICENSE /src/go2rtc/go2rtc/LICENSE
+COPY go2rtc/dependencies.lock.json /src/go2rtc/dependencies.lock.json
+COPY scripts/prepare-go2rtc-ui.mjs /src/scripts/prepare-go2rtc-ui.mjs
+RUN pnpm go2rtc:ui
+
+# Build the complete pinned upstream module, including every source adapter.
+FROM golang:1.25.8-bookworm@sha256:4557cf171e3cdf5053a298d5171b1a5f5734d920260c25f22c79e94760eb2084 AS go2rtc-builder
+WORKDIR /src/go2rtc
+COPY go2rtc/go2rtc/go.mod go2rtc/go2rtc/go.sum ./
+RUN attempt=1 \
+    && until go mod download; do \
+        if [ "$attempt" -ge 5 ]; then exit 1; fi; \
+        attempt=$((attempt + 1)); sleep 3; \
+    done \
+    && go mod verify
+COPY go2rtc/go2rtc/ ./
+RUN mkdir -p /out \
+    && CGO_ENABLED=0 go build -mod=readonly -trimpath -buildvcs=false -ldflags="-s -w" -o /out/go2rtc . \
+    && /out/go2rtc -version \
+    && cp LICENSE go.mod go.sum /out/ \
+    && cd /go/pkg/mod \
+    && find . -type f \( -iname '*license*' -o -iname '*copying*' \) -print0 \
+        | tar --null -T - -czf /out/go-module-licenses.tar.gz
 
 FROM ubuntu:24.04 AS sodium-builder
 
@@ -51,6 +76,8 @@ RUN apt-get -o Acquire::Retries=5 update \
     && apt-get -o Acquire::Retries=5 install -y --no-install-recommends python3 \
     && rm -rf /var/lib/apt/lists/*
 COPY v2/client_control_service.py /opt/webobs/bin/webobs-client-control
+COPY runtime_support.py /opt/webobs/runtime_support.py
+COPY runtime_support.py /tmp/runtime_support.py
 COPY cluster/cluster_service.py /opt/webobs/bin/webobs-cluster
 COPY cluster/node_agent.py /opt/webobs/bin/webobs-node-agent
 COPY analytics/detector_worker.py /opt/webobs/bin/webobs-detector-worker
@@ -477,6 +504,16 @@ COPY --from=sodium-builder /opt/libsodium/lib /opt/webobs/lib
 COPY --from=sodium-builder /opt/libsodium/share/licenses/libsodium /usr/share/licenses/libsodium
 COPY --from=detector-runtime /opt/webobs/venv /opt/webobs/venv
 COPY --from=web-builder /src/web/dist /opt/webobs/ui
+COPY --from=web-builder /src/web/go2rtc-dist /opt/webobs/go2rtc-www
+COPY --from=go2rtc-builder /out/go2rtc /opt/webobs/bin/go2rtc
+COPY --from=go2rtc-builder /out/LICENSE /out/go.mod /out/go.sum /out/go-module-licenses.tar.gz /usr/share/licenses/go2rtc/
+COPY go2rtc/runtime.py /opt/webobs/bin/webobs-go2rtc
+COPY runtime_support.py /opt/webobs/runtime_support.py
+COPY runtime_support.py /tmp/runtime_support.py
+COPY go2rtc/runtime.py go2rtc/go2rtc.yaml /tmp/go2rtc/
+COPY tests/test_go2rtc_runtime.py /tmp/test_go2rtc_runtime.py
+COPY go2rtc/go2rtc.yaml /opt/webobs/etc/go2rtc.yaml
+COPY go2rtc/dependencies.lock.json /usr/share/licenses/go2rtc/dependencies.lock.json
 COPY --from=mediamtx-downloader /opt/mediamtx/mediamtx /opt/webobs/bin/mediamtx
 COPY --from=mediamtx-downloader /opt/mediamtx/LICENSE /usr/share/licenses/mediamtx/LICENSE
 COPY --from=caddy-runtime /usr/bin/caddy /opt/webobs/bin/caddy
@@ -516,7 +553,9 @@ ENV PATH=/opt/webobs/venv/bin:$PATH \
     DISPLAY=:99 \
     EGL_PLATFORM=x11
 
-RUN mkdir -p /assets /config/obs /config/webobs /recordings /usr/share/licenses/caddy \
+RUN WEBOBS_TEST_GO2RTC_ROOT=/tmp/go2rtc PYTHONDONTWRITEBYTECODE=1 python3 /tmp/test_go2rtc_runtime.py \
+    && rm -rf /tmp/go2rtc /tmp/test_go2rtc_runtime.py \
+    && mkdir -p /assets /config/obs /config/webobs /recordings /usr/share/licenses/caddy \
     && cp /usr/share/common-licenses/Apache-2.0 /usr/share/licenses/caddy/LICENSE \
     && sed -i 's/\r$//' /opt/webobs/bin/webobs-nvrd /opt/webobs/bin/webobs-camera-registry /opt/webobs/bin/webobs-events /opt/webobs/bin/webobs-client-control /opt/webobs/bin/webobs-cluster /opt/webobs/bin/webobs-node-agent /opt/webobs/bin/webobs-detector-worker /opt/webobs/bin/webobs-s3-archive /opt/webobs/bin/webobs-encrypted-backup /opt/webobs/bin/webobs-preupgrade-guard \
     && test "$(head -n 1 /opt/webobs/bin/webobs-nvrd)" = '#!/usr/bin/env python3' \
@@ -591,7 +630,7 @@ RUN mkdir -p /assets /config/obs /config/webobs /recordings /usr/share/licenses/
 
 WORKDIR /opt/obs
 VOLUME ["/config/webobs", "/recordings"]
-EXPOSE 8080 8443 9443 8189/udp
+EXPOSE 8080 8443 9443 8189/udp 18555/tcp 18555/udp
 
 HEALTHCHECK --interval=15s --timeout=3s --start-period=30s --retries=3 \
     CMD ["sh", "-c", "if [ \"${WEBOBS_HTTP_PORT:-8080}\" = 0 ]; then exit 0; elif [ \"${WEBOBS_TLS_ENABLED:-false}\" = true ]; then curl --fail --silent --show-error --cacert \"${WEBOBS_TLS_CA_FILE:-${WEBOBS_TLS_CERT_FILE}}\" --resolve \"${WEBOBS_TLS_SERVER_NAME:-localhost}:${WEBOBS_HTTPS_PORT:-8443}:127.0.0.1\" --header \"Host: ${WEBOBS_TLS_PUBLIC_AUTHORITY:-${WEBOBS_TLS_SERVER_NAME:-localhost}:${WEBOBS_HTTPS_PORT:-8443}}\" \"https://${WEBOBS_TLS_SERVER_NAME:-localhost}:${WEBOBS_HTTPS_PORT:-8443}/api/v1/ready\" >/dev/null; else curl --fail --silent --show-error \"http://127.0.0.1:${WEBOBS_HTTP_PORT:-8080}/api/v1/ready\" >/dev/null; fi"]

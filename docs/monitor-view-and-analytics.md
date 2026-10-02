@@ -2,6 +2,18 @@
 
 ## Studio layers and projector / Studio 层级与投影
 
+Scenes 支持最多 64 个独立预设。点击“新建场景”选择已建档设备或已有来源，可创建四路、六路等不同集合；新建时自动生成网格，后续位置、裁剪、缩放、声音及画布尺寸属于各场景自己的 Scene 文档。右键场景、点击省略号、按 Shift+F10 或 F2 可打开管理操作：复制、重命名、选择来源、画布属性、排列、锁定/解锁、排序和删除。删除只移除场景，不删除设备；Program 场景和被嵌套引用的场景须先解除使用。修改后点击“保存 Studio”。
+
+右键已保存场景 → “打开场景投影 · 新窗口”使用 `#projector?scene=<id>`。每个场景使用独立窗口名，因此可同时投影多个场景，重复打开同一场景会复用窗口。窗口固定到场景 ID，保持保存的画布、来源位置与缩放，不跟随 Program/Preview 切换或全局自动布局；保存后的更新通过场景事件与每 5 秒读取刷新，场景被删除时显示明确状态。普通 `#projector` 仍跟随 Program。独立投影默认静音，双击全屏，Esc 关闭。浏览器需允许本站弹出窗口。
+
+### Automatic playback optimization / 自动播放优化
+
+“系统设置 → 弱网与慢速流自动优化”默认开启，账号中缺少新字段时也采用开启值。总开关、慢速流容错、低带宽 Profile 选择、缓冲与实时追赶均可独立选择，立即按账号保存。关闭总开关会恢复所选 Profile 和原有连接恢复行为。该策略调整浏览器播放，不更改摄像机或 Studio 配置，也不为优化自动创建转码服务。
+
+WHEP/WebRTC 根据最近 16 个实际帧间隔调整卡顿判定，等待上限 90 秒，并延长首次帧等待；固定低帧率本身不触发低带宽 Profile 切换。每 3 秒观察视频丢包、抖动和冻结，连续三次恶化才请求更低成本且已启用的 Profile，切换后至少等待 60 秒，持续稳定后恢复原 Profile。保留音频能力，排除 Snapshot、停用和无有效媒体尺寸的候选；显式低功耗 Profile 优先。没有子码流时保留当前来源，不能凭空增加网络带宽。支持 `jitterBufferTarget` 的浏览器可在 120–800 ms 范围调整缓冲；不支持的浏览器继续使用自身控制。
+
+HLS 提供有界缓冲、已有多码率的 ABR、自适应实时追赶以及致命网络错误的退避恢复；401/403 不自动反复重试。实际设备的网络、编码和码率仍需现场验证，自动化测试使用模拟流与协议状态。
+
 Studio 的来源列表按从上到下的画面层级排列；拖动来源或按 `Alt+↑/↓` 可改层级，属性栏的“上移一层 / 下移一层”执行同一操作。修改属于草稿，点击保存 Studio 后生效。OBS 面板菜单中的来源和属性侧栏可以显示、隐藏、调整左右位置及宽度；画布固定在二者之间。
 
 监看设置里的“统计叠层（全部来源）”及位置、文字框和透明度控件会更新已配置电平表的来源；逐路设置仍可随后单独修改。投影默认采用“完整画面”，包含统计、电平表、超阈值边框及检测框；“投影内容”可选“仅画面”。独立投影窗口读取同一账号的监控偏好。浏览器若阻止独立窗口的自动音频分析，可点击“启用电平检测（静音）”。服务端 Composite Program 是单路合成媒体，浏览器逐源叠层只在 Direct 投影中呈现。
@@ -11,6 +23,9 @@ The Studio source list is ordered from front to back. Drag a source or press `Al
 > Status / 状态：v2-M5 is complete and published in stable v2.1 / v2-M5 已完成并随稳定版 v2.1 发布。
 
 ## View contract / 视图契约
+
+监看音频偏好自动保存到当前账号：总监听开关、扬声器/仅电平表输出、主音量、逐来源音量/静音/监听和调音台收起状态。刷新、重开浏览器或在另一浏览器登录同一账号后会恢复；已打开的页面在重新获得焦点或每 5 秒读取账号的最新偏好。保存失败会提示并保留加密的本地待同步副本，恢复连接后重试；关闭页面前使用 keepalive 请求提交最新设置。浏览器自动播放许可单独判定，被阻止时保留监听开启的设置，并提示点击恢复。独立投影默认静音，不会自动复制主窗口的扬声器输出。音频工作台的 Scene/音轨配置仍通过“保存音频配置”提交到 Studio。
+
 
 `MonitorView v1` stores only view-generation rules: auto/manual mode, M source identities, telemetry appearance, rotation, promotion and low-power preferences. Auto layout accepts 1–16 visible items and emits ordinary Scene v5 `x/y/width/height` values. It does not create a second canvas format. Moving a tile in Studio remains a Scene edit; the operator may switch MonitorView to manual mode or regenerate the automatic layout.
 

@@ -27,6 +27,15 @@ SPEC.loader.exec_module(nvr)
 
 
 class NvrStorageTests(unittest.TestCase):
+    def test_incomplete_recording_shutdown_cannot_report_clean_stop(self) -> None:
+        import threading
+        with tempfile.TemporaryDirectory() as directory:
+            service=self.service(pathlib.Path(directory));worker=mock.Mock();worker.is_alive.return_value=False
+            service.workers['test']=(worker,threading.Event(),nvr.WorkerState(shutdown_failed=True))
+            try:
+                with self.assertRaisesRegex(RuntimeError,'writers did not finish'):service._stop_workers()
+            finally:service.catalog.connection.close()
+
     @staticmethod
     def service(root: pathlib.Path) -> object:
         config = root / "nvr.json"

@@ -10,6 +10,11 @@ deliberately omits that optional image layer, the caller receives the stable
 """
 from __future__ import annotations
 
+import sys as _runtime_sys
+from pathlib import Path as _RuntimePath
+_runtime_sys.path.insert(0, str(_RuntimePath(__file__).resolve().parents[1]))
+from runtime_support import service_port, service_http, service_rtsp, install_owner_shutdown, serve_owned, STOP, sync_directory
+
 import hashlib
 import importlib
 import json
@@ -206,6 +211,7 @@ if __name__ == "__main__":
             nonlocal_stop[0] = True
         signal.signal(signal.SIGTERM, request_stop)
         signal.signal(signal.SIGINT, request_stop)
+        install_owner_shutdown(request_stop)
         while not nonlocal_stop[0]:
             import time
             time.sleep(1)

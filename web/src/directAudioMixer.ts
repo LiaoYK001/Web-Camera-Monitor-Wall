@@ -87,6 +87,7 @@ export class DirectAudioMixer {
   private analyser?: AnalyserNode;
   private meterTimer?: number;
   private enabled = false;
+  private enableGeneration = 0;
   private blocked = false;
   private level = 0;
   private masterVolume = 1;
@@ -239,6 +240,8 @@ export class DirectAudioMixer {
   }
 
   async enable(): Promise<boolean> {
+    const generation = ++this.enableGeneration;
+    let resumeTimer: number | undefined;
     this.enabled = true;
     this.blocked = false;
     if (!this.context) {
@@ -257,22 +260,27 @@ export class DirectAudioMixer {
     // An offline video's pending play() must not hold the entire mixer hostage.
     for (const { element } of this.entries.values()) void element.play().catch(() => undefined);
     try {
-      await this.context.resume();
+      await Promise.race([this.context.resume(), new Promise<never>((_resolve, reject) => {
+        resumeTimer = window.setTimeout(() => reject(new Error('audio context needs a user gesture')), 1500);
+      })]);
+      if (generation !== this.enableGeneration) return false;
       if (this.context.state !== 'running') throw new Error('audio context did not start');
       this.startMeter();
       this.emit();
       return true;
     } catch {
+      if (generation !== this.enableGeneration) return false;
       this.blocked = true;
       this.enabled = false;
-      await this.context.suspend().catch(() => undefined);
+      void this.context.suspend().catch(() => undefined);
       this.stopMeter();
       this.emit();
       return false;
-    }
+    } finally { if (resumeTimer !== undefined) window.clearTimeout(resumeTimer); }
   }
 
   async disable(): Promise<void> {
+    this.enableGeneration++;
     this.enabled = false;
     this.blocked = false;
     if (this.context) await this.context.suspend().catch(() => undefined);
@@ -281,6 +289,7 @@ export class DirectAudioMixer {
   }
 
   destroy(): void {
+    this.enableGeneration++;
     this.enabled = false;
     this.stopMeter();
     for (const sourceId of [...this.entries.keys()]) this.detach(sourceId);

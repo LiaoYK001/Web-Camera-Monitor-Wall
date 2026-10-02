@@ -1,0 +1,25 @@
+{
+  "name": "webobs-desktop",
+  "version": "3.4.0-dev.0",
+  "private": true,
+  "description": "WebOBS full native Windows desktop client",
+  "author": "WebOBS contributors",
+  "license": "GPL-2.0-or-later",
+  "type": "module",
+  "main": "src/bootstrap.cjs",
+  "packageManager": "pnpm@11.16.0",
+  "scripts": {
+    "start": "electron .",
+    "test": "node --test tests/*.test.mjs",
+    "test:electron": "electron tests/electron-smoke.cjs",
+    "test:runtime": "electron tests/native-runtime-smoke.cjs",
+    "test:main": "electron tests/native-main-smoke.cjs",
+    "test:package": "node tests/packaged-runtime-smoke.mjs",
+    "test:install": "pwsh -NoProfile -File tests/nsis-install-smoke.ps1",
+    "verify": "node scripts/verify-runtime.mjs runtime",
+    "package:dev": "electron-builder --win nsis --x64 --publish never --config builder.config.cjs",
+    "package:release": "electron-builder --win nsis --x64 --publish never --config builder.config.cjs"
+  },
+  "dependencies": { "electron-updater": "6.8.9" },
+  "devDependencies": { "electron": "44.5.1", "electron-builder": "26.15.3" }
+}

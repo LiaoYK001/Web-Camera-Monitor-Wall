@@ -1,6 +1,6 @@
 # Roadmap / 项目路线图
 
-> Last updated / 最后更新：2026-09-21
+> Last updated / 最后更新：2026-10-02
 
 This roadmap describes milestone order and acceptance gates, not promised release dates. Priorities may change based on validation results and maintainer capacity.
 
@@ -40,7 +40,13 @@ Canonical milestone names use `v<major>-M<number>`. Historical validation prose 
 
 ## Current position / 当前位置
 
-### v3.2 official baseline / v3.2 正式基底（版本日期 2026-09-21，实际发布 2026-09-22）
+### v3.4 release preparation / v3.4 发布准备（2026-10-02）
+
+最新已发布版本为 v3.3，本轮目标为 v3.4。完整 go2rtc、Scenes 与多投影、账号声音偏好、可关闭的自动弱网恢复、PWA 安全更新及原生 Windows x64 客户端已在 dev 实现；验证详情见 [v3.4 发布说明](docs/release-notes-v3.4.md)。当前容器的单镜像回归已通过，最终 GHCR 发布仍需远端 digest 核验。Windows 为未签名开发候选，正式签名与实际系统/媒体/升级验收仍待完成；不向正式更新源分发测试元数据。下面的 v3.2 及更早章节是历史记录。
+
+The latest published release is v3.3; this round targets v3.4. Implementation and current-image validation are documented in the [v3.4 notes](docs/release-notes-v3.4.md). GHCR publication requires remote digest verification. Windows remains an unsigned development candidate pending signing and system/media/update qualification. The v3.2 and earlier sections below are historical records.
+
+### Historical v3.2 official baseline / 历史 v3.2 正式基底（版本日期 2026-09-21，实际发布 2026-09-22）
 
 当前最新正式版本统一为 **v3.2**，发布标签固定在 `5ab5da0fa4d2ac67af2ac52c7ee3d64f75ae82cc`。按用户追加决定，将本日已构建的原镜像提升为 `v3.2` 和 `latest`；这覆盖下方快照阶段“不移动 latest”的历史决定。镜像 digest 为 `sha256:1bbb0c2608c977b2e04386846dcb11674d9f6996a4c8e0b01bb6f1be58999953`，没有重新构建。后续开发以此为基底，本轮不开始下一版本。
 

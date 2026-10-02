@@ -1,5 +1,8 @@
 # v3.3 release notes / v3.3 发布说明
 
+> **安全提示 / Security notice:** v3.3 升级后，仍由 v3.2 或更早 Service Worker 控制的旧 PWA 可能凭本机离线授权继续显示缓存工作区。请在共享设备上刷新或清除旧 PWA；完整修复计划随 v3.4 发布。详情见[安全公告](security-advisory-v3.3.md)。
+> After upgrading to v3.3, an old PWA still controlled by a v3.2 or earlier service worker may show its cached workspace under a local offline grant. Refresh or clear old PWAs on shared devices; the full fix is planned for v3.4. See the [security advisory](security-advisory-v3.3.md).
+
 ## 中文
 
 - 账户与跨设备体验：以账户会话替代浏览器配对码；账户下的视频源、预设和监控工作区设置可以在登录设备间同步。

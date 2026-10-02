@@ -1,0 +1,23 @@
+{
+  "schemaVersion": 1,
+  "platform": "windows-x64",
+  "obsCommit": "fb4d98bf88fae5fc85cb11fc57f7c5e309282194",
+  "go2rtcCommit": "b5948cfb25404cc5cb37b166ecaa2dca20b11d4b",
+  "vcpkgCommit": "eb2d3a3279fd019cb7733072d86900d0ad2a1aef",
+  "artifacts": [
+    {"id":"python","version":"3.12.10","url":"https://www.python.org/ftp/python/3.12.10/python-3.12.10-embed-amd64.zip","sha256":"4acbed6dd1c744b0376e3b1cf57ce906f9dc9e95e68824584c8099a63025a3c3","license":"PSF-2.0"},
+    {"id":"go2rtc","version":"1.9.14","url":"https://github.com/AlexxIT/go2rtc/releases/download/v1.9.14/go2rtc_win64.zip","sha256":"dd4167d75cb04abe618855b7c71f8658bd009f60c1a71835d134d2c11c939907","license":"MIT"},
+    {"id":"mediamtx","version":"1.18.2","url":"https://github.com/bluenviron/mediamtx/releases/download/v1.18.2/mediamtx_v1.18.2_windows_amd64.zip","sha256":"945ab46c5fc6d2802ad18e2f1d7e49245ca5609657d85e310aa6eda4cdd72eec","license":"MIT"},
+    {"id":"caddy","version":"2.11.4","url":"https://github.com/caddyserver/caddy/releases/download/v2.11.4/caddy_2.11.4_windows_amd64.zip","sha256":"1708333f79e274c7697285afe6d592ab39314e0b131e9ec6bea08ad27df62ebf","license":"Apache-2.0"},
+    {"id":"ffmpeg","version":"8.1.3-9-g29e619e767","url":"https://github.com/BtbN/FFmpeg-Builds/releases/download/autobuild-2026-09-30-13-08/ffmpeg-n8.1.3-9-g29e619e767-win64-gpl-shared-8.1.zip","sha256":"dfe81c3aa0a546ee81980b1b824486dd0fe0a1d452f00cb55135379a74be7bcf","license":"GPL-3.0-or-later"},
+    {"id":"obs-deps","version":"2025-08-23","url":"https://github.com/obsproject/obs-deps/releases/download/2025-08-23/windows-deps-2025-08-23-x64.zip","sha256":"8de229cff6f1981508c0eb646b35e644633a5855787b9f5d3b90ae2aeb87ffc1","license":"LicenseRef-OBS-dependencies"},
+    {"id":"obs-qt","version":"2025-08-23","url":"https://github.com/obsproject/obs-deps/releases/download/2025-08-23/windows-deps-qt6-2025-08-23-x64.zip","sha256":"c62e82483bc7c0bf199e8ac3220c66a85a6e8a0cd69a05b6d44f873b830e415f","license":"LGPL-3.0-only"},
+    {"id":"obs-cef","version":"6533-v2","url":"https://cdn-fastly.obsproject.com/downloads/cef_binary_6533_windows_x64_v2.zip","sha256":"922efbda1f2f8be9e5b2754d878a14d90afc81f04e94fc9101a7513e2b5cecc1","license":"BSD-3-Clause"},
+    {"id":"vcpkg","version":"eb2d3a3279fd019cb7733072d86900d0ad2a1aef","url":"https://codeload.github.com/microsoft/vcpkg/zip/eb2d3a3279fd019cb7733072d86900d0ad2a1aef","sha256":"8d5fd5554dc492d8a884129d0e0cfef033b5a24ceac74658aa8165ff1533ac7e","license":"MIT"},
+    {"id":"numpy","version":"2.2.4","url":"https://files.pythonhosted.org/packages/46/69/8c4f928741c2a8efa255fdc7e9097527c6dc4e4df147e3cadc5d9357ce85/numpy-2.2.4-cp312-cp312-win_amd64.whl","sha256":"2aad3c17ed2ff455b8eaafe06bcdae0062a1db77cb99f4b9cbb5f4ecb13c5146","license":"BSD-3-Clause"},
+    {"id":"onnxruntime","version":"1.29.0","url":"https://files.pythonhosted.org/packages/b4/80/5b28f1f1111210fc4a336ddbc6950f468ebf9a6a265420568f4f43fa33ce/onnxruntime-1.29.0-cp312-cp312-win_amd64.whl","sha256":"4acf2b4948b7ede87221ca6332344b8facdc8059d6ac751a7d367d04532b02dd","license":"MIT"},
+    {"id":"flatbuffers","version":"25.12.19","url":"https://files.pythonhosted.org/packages/e8/2d/d2a548598be01649e2d46231d151a6c56d10b964d94043a335ae56ea2d92/flatbuffers-25.12.19-py2.py3-none-any.whl","sha256":"7634f50c427838bb021c2d66a3d1168e9d199b0607e6329399f04846d42e20b4","license":"Apache-2.0"},
+    {"id":"packaging","version":"26.3","url":"https://files.pythonhosted.org/packages/63/34/ba1c580383c9eada3711951fef0795c80b829a078d72188184bcab9dd527/packaging-26.3-py3-none-any.whl","sha256":"d7193f7c8e4e93f444fde0262bf90af30e16fa0ad0ad44cb553c87339b23cd1c","license":"Apache-2.0 OR BSD-2-Clause"},
+    {"id":"protobuf","version":"7.36.2","url":"https://files.pythonhosted.org/packages/8a/55/b77bda4e5e5f5971fb51b07663694690e9afdb9402136c16a522bd621cad/protobuf-7.36.2-cp310-abi3-win_amd64.whl","sha256":"a300819d441e078a5608c0d3c709796bb548136058fda017ae51d425b44fd353","license":"BSD-3-Clause"}
+  ]
+}

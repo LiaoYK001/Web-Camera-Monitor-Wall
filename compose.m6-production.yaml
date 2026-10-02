@@ -26,6 +26,8 @@ services:
     ports: !override
       - "${WEBOBS_BIND_ADDRESS:-0.0.0.0}:${WEBOBS_HTTPS_PORT:-8443}:${WEBOBS_HTTPS_PORT:-8443}"
       - "${WEBOBS_BIND_ADDRESS:-0.0.0.0}:${WEBOBS_WEBRTC_UDP_PORT:-8189}:8189/udp"
+      - "${WEBOBS_BIND_ADDRESS:-0.0.0.0}:18555:18555/tcp"
+      - "${WEBOBS_BIND_ADDRESS:-0.0.0.0}:18555:18555/udp"
 
 secrets:
   webobs_tls_certificate:

@@ -27,3 +27,12 @@ test('first administrator registration enters the authenticated workspace', asyn
   await page.getByRole('button', { name: '创建并登录' }).click();
   await expect(page.getByRole('button', { name: '退出登录' })).toBeVisible();
 });
+
+test('fails closed when the account service cannot verify the session', async ({ page }) => {
+  await page.route('**/api/v1/auth/session', (route) => route.abort());
+  await page.route('**/api/v1/auth/setup', (route) => route.abort());
+  await page.goto('/');
+  await expect(page.getByRole('heading', { name: '本地服务暂不可用' })).toBeVisible();
+  await expect(page.getByRole('navigation', { name: '主导航' })).toHaveCount(0);
+  await expect(page.getByRole('button', { name: '退出登录' })).toHaveCount(0);
+});

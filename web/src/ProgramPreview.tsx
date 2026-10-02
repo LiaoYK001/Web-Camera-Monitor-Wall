@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
+import { useMonitorPreferences } from './useMonitorPreferences';
 import { openProjectorWindow } from './projector';
 import { connectProgram, type PlaybackStage, type ProgramConnection, type ProgramConnectionState, type ProgramStatus } from './whep';
 
@@ -21,7 +22,7 @@ const publishLabels: Record<string, string> = {
   publishing: '已发布', idle: '未发布', failed: '发布失败', unknown: '未知',
 };
 
-export default function ProgramPreview({ aspectRatio }: { aspectRatio: string }) {
+export default function ProgramPreview({ aspectRatio, silent = false }: { aspectRatio: string; silent?: boolean }) {
   const videoRef = useRef<HTMLVideoElement>(null);
   const connectionRef = useRef<ProgramConnection | null>(null);
   const [state, setState] = useState<ProgramConnectionState>('checking');
@@ -29,13 +30,14 @@ export default function ProgramPreview({ aspectRatio }: { aspectRatio: string })
   const [status, setStatus] = useState<ProgramStatus | null>(null);
   const [audioEnabled, setAudioEnabled] = useState(false);
   const [audioBlocked, setAudioBlocked] = useState(false);
+  const { view, setView, loaded, error: preferenceError } = useMonitorPreferences(silent);
 
   useEffect(() => {
     if (!videoRef.current) return undefined;
-    const connection = connectProgram(videoRef.current, setState, setStage);
+    const connection = connectProgram(videoRef.current, setState, setStage, { optimization: view.playbackOptimization });
     connectionRef.current = connection;
     return () => { connection.close(); connectionRef.current = null; };
-  }, []);
+  }, [view.playbackOptimization.enabled, view.playbackOptimization.slowStreamTolerance, view.playbackOptimization.adaptiveProfiles, view.playbackOptimization.catchUp]);
 
   useEffect(() => {
     const controller = new AbortController();
@@ -48,15 +50,35 @@ export default function ProgramPreview({ aspectRatio }: { aspectRatio: string })
     return () => { controller.abort(); window.clearInterval(timer); };
   }, []);
 
+  useEffect(() => {
+    const video = videoRef.current;
+    if (!video || !loaded) return;
+    video.volume = view.localMonitorVolume;
+    if (silent || !view.audioMonitorEnabled || view.audioOutput !== 'speaker') {
+      video.muted = true; setAudioEnabled(false); setAudioBlocked(false); return;
+    }
+    if (state !== 'live') return;
+    let active = true;
+    video.muted = false;
+    void (connectionRef.current?.resume?.() ?? video.play()).then(() => {
+      if (active) { setAudioEnabled(true); setAudioBlocked(false); }
+    }).catch(() => {
+      if (active) { video.muted = true; setAudioEnabled(false); setAudioBlocked(true); }
+    });
+    return () => { active = false; };
+  }, [loaded, view.audioMonitorEnabled, view.audioOutput, view.localMonitorVolume, state, silent]);
+
   const toggleAudio = async () => {
     const video = videoRef.current;
     if (!video) return;
     if (audioEnabled) {
+      if (!silent) setView((current) => ({ ...current, audioMonitorEnabled: false }));
       video.muted = true;
       setAudioEnabled(false);
       setAudioBlocked(false);
       return;
     }
+    if (!silent) setView((current) => ({ ...current, audioMonitorEnabled: true, audioOutput: 'speaker' }));
     video.muted = false;
     try {
       await (connectionRef.current?.resume?.() ?? video.play());
@@ -77,11 +99,12 @@ export default function ProgramPreview({ aspectRatio }: { aspectRatio: string })
         data-audio-enabled={audioEnabled ? 'true' : 'false'}
         data-audio-state={audioBlocked ? 'blocked' : audioEnabled ? 'running' : 'disabled'}
       >
+        {preferenceError && <span role="alert">{preferenceError}</span>}
         <button type="button" aria-pressed={audioEnabled} onClick={() => void toggleAudio()}>
           {audioEnabled ? '关闭节目声音' : '启用节目声音'}
         </button>
         <button type="button" onClick={() => { openProjectorWindow('composite'); }}>独立小窗</button>
-        <span>{audioBlocked ? '浏览器阻止了播放，请再次点击。' : 'Composite Opus 默认静音，点击后启用。'}</span>
+        <span>{audioBlocked ? '监听设置已保留；浏览器需要点击一次恢复声音。' : view.audioMonitorEnabled && !silent ? 'Composite 声音按账号设置恢复。' : 'Composite 声音监听已关闭。'}</span>
       </div>
       <div className={`program-preview ${state}`} style={{ aspectRatio }}>
         <video ref={videoRef} autoPlay muted={!audioEnabled} playsInline aria-label="实时合成节目画面" />
