@@ -17,6 +17,13 @@ release_mode="${3:-}"
   exit 64
 }
 prerelease=false
+prepare_only="${WEBOBS_RELEASE_PREPARE_ONLY:-false}"
+[[ "$prepare_only" == true || "$prepare_only" == false ]] || {
+    echo "WEBOBS_RELEASE_PREPARE_ONLY must be true or false" >&2; exit 64;
+}
+[ "$version" != dev ] || [ "$prepare_only" = false ] || {
+    echo "prepare-only requires a versioned release" >&2; exit 64;
+}
 if [[ "$release_mode" == --prerelease || "${WEBOBS_PRERELEASE:-false}" == true ]]; then
     prerelease=true
 fi
@@ -211,6 +218,11 @@ fi
 is_draft="$(gh api "repos/$GITHUB_REPOSITORY/releases/$release_id" --jq .draft)"
 [ "$is_draft" = true ] || { echo "refusing to mutate an already-published release" >&2; exit 65; }
 ./scripts/upload-release-assets-immutable.sh "$release_id" "$source_archive" "${source_archive}.sha256"
+if [ "$prepare_only" = true ]; then
+    echo "prepared Draft release $release_id ($release_lookup_tag), candidate ${image}:sha-${short_revision} at ${digest}"
+    echo "Release remains unpublished; version/latest and the stable Git tag are unchanged. Resume from this same revision without prepare-only after all attachments are verified."
+    exit 0
+fi
 if [ -n "$draft_tag" ]; then
     # Create the immutable annotated release tag only after the Draft assets
     # have been uploaded and re-verified. Never move or delete a stable tag.

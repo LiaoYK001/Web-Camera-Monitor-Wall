@@ -2,7 +2,8 @@
 param(
     [Parameter(Mandatory = $true)][string]$Image,
     [Parameter(Mandatory = $true)][string]$Version,
-    [switch]$Prerelease
+    [switch]$Prerelease,
+    [switch]$PrepareOnly
 )
 
 $ErrorActionPreference = 'Stop'
@@ -43,9 +44,16 @@ if ($gitBashPath) {
 
 # Positional parameters avoid command-string interpolation of image, tag, or
 # token values. GH_TOKEN remains process-local and is never put on argv.
-if ($Prerelease) {
-    & $bashPath -c './scripts/release-image-local.sh "$1" "$2" --prerelease' -- $Image $Version
-} else {
-    & $bashPath -c './scripts/release-image-local.sh "$1" "$2"' -- $Image $Version
+$previousPrepareOnly = $env:WEBOBS_RELEASE_PREPARE_ONLY
+try {
+    if ($PrepareOnly) { $env:WEBOBS_RELEASE_PREPARE_ONLY = 'true' }
+    if ($Prerelease) {
+        & $bashPath -c './scripts/release-image-local.sh "$1" "$2" --prerelease' -- $Image $Version
+    } else {
+        & $bashPath -c './scripts/release-image-local.sh "$1" "$2"' -- $Image $Version
+    }
+    $publicationExitCode = $LASTEXITCODE
+} finally {
+    $env:WEBOBS_RELEASE_PREPARE_ONLY = $previousPrepareOnly
 }
-if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+if ($publicationExitCode -ne 0) { exit $publicationExitCode }

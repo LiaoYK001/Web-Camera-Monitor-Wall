@@ -28,7 +28,7 @@
     "@types/react": "19.2.18",
     "@types/react-dom": "19.2.4",
     "@vitejs/plugin-react": "6.0.5",
-    "js-yaml": "4.1.0",
+    "js-yaml": "4.3.2",
     "monaco-editor": "0.55.1",
     "qrcodejs": "1.0.0",
     "typescript": "7.0.2",

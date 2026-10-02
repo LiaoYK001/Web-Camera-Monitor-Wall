@@ -8,7 +8,7 @@
 - Windows 10/11 x64 完整客户端：原生 C++/OBS D3D11、Python、go2rtc、MediaMTX、FFmpeg、OpenSSL、Caddy 和 WebUI 一并打包；默认关闭局域网共享及开机启动，关闭主窗口进入托盘。程序和数据分离，私密目录 ACL/DPAPI、Job Object 停服、多个投影共享会话和备份恢复已接入。
 - Windows 发布边界：目前为明确标记 `DEVELOPMENT-UNSIGNED` 的 `3.4.0-dev.0` 测试候选。只有附件实际存在时才代表该候选已分发；无 `latest.yml`，开发包不连接正式自动更新源。正式签名、干净 Windows 10/11、真实摄像机、两个签名版本更新及故障恢复仍需另行验收。
 - PWA 安全修复：更新 Service Worker 自动激活并重新加载旧页面；认证服务无法验证访问时关闭工作区入口。未联网完成更新的旧客户端仍应按 [v3.3 安全公告](security-advisory-v3.3.md) 清理或更新。
-- 构建依赖：固定前端间接依赖 `fast-uri` 为已修复的 `3.1.8`，容器构建同时加载 pnpm 工作区配置，确保冻结锁定安装使用相同修复版本。
+- 依赖修复：固定 `fast-uri` 为 `3.1.8`、`js-yaml` 为 `4.3.2`；go2rtc 本地配置编辑器也使用更新后的 YAML 库。容器构建同时加载 pnpm 工作区配置，确保冻结锁定安装使用相同修复版本。
 - 已有验证：Windows MSVC/OBS 编译及 CTest、21 项桌面逻辑测试、10 项原生测试、真实 Electron 和打包 ASAR 检查通过。本机 Windows 11 通过中文及空格路径的 NSIS 安装、清空 PATH 后启动、首次登录、认证 go2rtc、Job 清理、默认卸载保留数据；两个固定 Scene 投影和共享登录通过。RTX 3060 Ti 的 NVENC 样本和 OBS 编码检查通过。这些结果不代表真实摄像机或干净系统验收。
 - 本次 `3.4.0` 镜像已完成 Linux C++/CTest 和捆绑服务测试；Docker Desktop 单镜像回归通过首次登录、权限/Origin、完整 go2rtc UI/本地 Monaco、WebSocket/MSE 与 HTTP/MP4 播放、RTSP、配置重启持久化及正常停服。媒体使用合成测试源，不代表真实摄像机验收。
 - 前端类型检查与生产构建、19 项 Chromium 账号/声音/Scenes/go2rtc/弱网回归、旧 PWA 自动更新回归，以及 WSL 原生运行、go2rtc 配置和公开仓库审计通过。最终发布镜像的远端 digest 在 Release 正文中记录。
