@@ -1,5 +1,6 @@
 import { chromium } from '@playwright/test';
 import assert from 'node:assert/strict';
+import { createHash } from 'node:crypto';
 
 const base = process.env.WEBOBS_GO2RTC_TEST_ORIGIN;
 assert(base, 'run this probe through tests/test_go2rtc_integration.py');
@@ -24,6 +25,34 @@ try {
   await frame.locator('.monaco-editor').waitFor();
   await frame.getByRole('button', { name: 'Save & Restart' }).waitFor();
   assert.equal(externalScripts.length, 0, 'official editor attempted CDN scripts');
+  const vendor = `${base}/api/v1/go2rtc/vendor/monaco-editor/`;
+  const evidenceResponse = await context.request.get(`${vendor}webobs-sanitizer.json`);
+  assert.equal(evidenceResponse.status(), 200);
+  const evidence = await evidenceResponse.json();
+  assert.equal(evidence.dompurifyVersion, '3.4.16');
+  const actualSource = await (await context.request.get(`${vendor}${evidence.file}`)).body();
+  assert.equal(createHash('sha256').update(actualSource).digest('hex'), evidence.packagedSha256);
+  const sanitizerPage = await context.newPage();
+  await sanitizerPage.goto(`${base}/api/v1/go2rtc/`);
+  await sanitizerPage.addScriptTag({ url: `${base}/api/v1/go2rtc/vendor/dompurify/dist/purify.min.js` });
+  const hooks = await sanitizerPage.evaluate(() => {
+    const results = [];
+    for (const hook of ['afterSanitizeElements', 'afterSanitizeAttributes']) {
+      const purifier = window.DOMPurify(window);
+      const root = document.createElement('div');
+      root.innerHTML = '<section id="hook-fixture"><img src="data:," onerror="window.fixtureExecuted=true"></section>';
+      const image = root.querySelector('img');
+      document.body.append(root);
+      purifier.addHook(hook, node => { if (node.id === 'hook-fixture') node.remove(); });
+      purifier.sanitize(root, { IN_PLACE: true });
+      results.push({ hook, version: purifier.version, armed: image.hasAttribute('onerror') });
+      root.remove();
+    }
+    return results;
+  });
+  assert(hooks.every(result => result.version === '3.4.16' && !result.armed), JSON.stringify(hooks));
+  await sanitizerPage.close();
+  console.log('PASS: packaged sanitizer SHA-256 and afterSanitize detached-subtree XSS regressions');
   await page.screenshot({ path: '../tests/artifacts/go2rtc/workspace.png', fullPage: true });
   // MSE uses the real product WebSocket route and should display live frames.
   await page.goto(`${base}${'/api/v1/go2rtc/'}stream.html?src=synthetic&mode=mse`);

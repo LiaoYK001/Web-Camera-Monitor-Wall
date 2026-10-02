@@ -3,16 +3,25 @@
 ## Dependency coverage / 依赖覆盖
 
 The web workspace pins DOMPurify 3.4.16 and brace-expansion 2.1.7/5.0.12.
-Monaco is upgraded to 0.57.0 because its prebuilt editor bundles DOMPurify
-3.4.15 internally; overriding the npm dependency alone would leave the old
-sanitizer in go2rtc's configuration editor. The complete local editor and its
-workers remain packaged, without loading scripts from a CDN. Public CI runs
-`pnpm audit --audit-level=low` against the frozen lockfile.
+Monaco is upgraded to 0.57.0, but its prebuilt editor still embeds DOMPurify
+3.4.15, affected by [GHSA-p98j-92pf-mc4p](https://github.com/advisories/GHSA-p98j-92pf-mc4p).
+Overriding the npm dependency alone leaves that old sanitizer in go2rtc's editor.
+`scripts/patch-monaco-sanitizer.mjs` parses the generated AMD asset and replaces
+the complete sanitizer constructor with the official locked DOMPurify 3.4.16
+UMD factory, including all its helpers. It records source/package hashes and
+updates the generated vendor manifest. Upstream checkouts and installed npm
+sources retain their original bytes. Unexpected vendor layouts fail the build.
+The complete editor and workers remain local. Public CI builds these assets,
+executes the actual packaged constructor and runs dependency auditing; the
+real-image browser test covers both afterSanitize detached-subtree regressions.
 
 Web 工作区锁定 DOMPurify 3.4.16 与 brace-expansion 2.1.7/5.0.12。
-Monaco 升级为 0.57.0，其预编译编辑器内置 DOMPurify 3.4.15；仅覆盖 npm
-依赖无法替换旧版编辑器内的代码。go2rtc 继续完整打包本地编辑器及 Worker，
-不从 CDN 加载脚本。公开 CI 对冻结锁文件执行 `pnpm audit --audit-level=low`。
+Monaco 升级为 0.57.0，但预编译编辑器仍内置受上述告警影响的 DOMPurify 3.4.15；
+仅覆盖 npm 依赖无法替换该代码。资源生成时通过 AST 定位，将完整净化器构造函数
+替换为锁定的官方 DOMPurify 3.4.16 UMD 工厂及全部辅助实现，记录前后摘要并更新
+生成的 Vendor 清单。上游库和已安装 npm 源码保留原始字节；上游结构不符则构建
+失败。保留完整的本地编辑器和 Worker。公开 CI 增加资源生成、实际打包构造函数
+执行及依赖审计；真实镜像浏览器测试覆盖两类 afterSanitize 移除子树漏洞回归。
 
 ## Camera and credential boundaries / 摄像机与凭据边界
 

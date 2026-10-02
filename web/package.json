@@ -13,7 +13,8 @@
     "test:pwa": "playwright test",
     "test:local": "playwright test -c playwright.local.config.ts --project=chromium",
     "test:local:chrome": "playwright test -c playwright.local.config.ts --project=chrome",
-    "test:iwa": "tsc -p experiments/iwa/tsconfig.worker.json && tsc -p experiments/iwa/tsconfig.runtime.json"
+    "test:iwa": "tsc -p experiments/iwa/tsconfig.worker.json && tsc -p experiments/iwa/tsconfig.runtime.json",
+    "test:go2rtc-assets": "node --test tests/go2rtc-assets.test.mjs"
   },
   "dependencies": {
     "hls.js": "1.7.1",
@@ -28,6 +29,8 @@
     "@types/react": "19.2.18",
     "@types/react-dom": "19.2.4",
     "@vitejs/plugin-react": "6.0.5",
+    "acorn": "8.18.0",
+    "dompurify": "3.4.16",
     "js-yaml": "4.3.2",
     "monaco-editor": "0.57.0",
     "qrcodejs": "1.0.0",
