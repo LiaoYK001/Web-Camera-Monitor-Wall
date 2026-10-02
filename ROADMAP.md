@@ -40,11 +40,11 @@ Canonical milestone names use `v<major>-M<number>`. Historical validation prose 
 
 ## Current position / 当前位置
 
-### v3.4 release preparation / v3.4 发布准备（2026-10-02）
+### v3.4 published / v3.4 已发布（2026-10-02）
 
-最新已发布版本为 v3.3，本轮目标为 v3.4。完整 go2rtc、Scenes 与多投影、账号声音偏好、可关闭的自动弱网恢复、PWA 安全更新及原生 Windows x64 客户端已在 dev 实现；验证详情见 [v3.4 发布说明](docs/release-notes-v3.4.md)。当前容器的单镜像回归已通过，最终 GHCR 发布仍需远端 digest 核验。Windows 为未签名开发候选，正式签名与实际系统/媒体/升级验收仍待完成；不向正式更新源分发测试元数据。下面的 v3.2 及更早章节是历史记录。
+最新产品版本为 [v3.4](https://github.com/LiaoYK001/Web-Camera-Monitor-Wall/releases/tag/v3.4)，不可变标签固定在 `4b2ab5f09b485a9f9cd870c918295df4315ab442`。完整 go2rtc、Scenes 与多投影、账号声音偏好、可关闭的自动弱网恢复、PWA 安全更新及原生 Windows x64 客户端已集成；验证详情见 [v3.4 发布说明](docs/release-notes-v3.4.md)。容器单镜像回归和公开 GHCR `v3.4` / `latest` 摘要核验通过，digest 为 `sha256:a1f2f5cee8df794d8cae04b4a8cf01b68a6ba562ee1ddedacc219063f4e4cdbc`。Release 附带 13 个已核验附件，含按维护者选择发布的 Windows `3.4.0-dev.0 DEVELOPMENT-UNSIGNED` 安装包。正式签名与干净系统/真实摄像机/两版升级验收仍待完成；没有发布 `latest.yml` 或 `dev.yml`。下面的 v3.2 及更早章节是历史记录。
 
-The latest published release is v3.3; this round targets v3.4. Implementation and current-image validation are documented in the [v3.4 notes](docs/release-notes-v3.4.md). GHCR publication requires remote digest verification. Windows remains an unsigned development candidate pending signing and system/media/update qualification. The v3.2 and earlier sections below are historical records.
+The latest product release is v3.4, pinned to the revision above. Public container aliases and all 13 Release attachments have been verified. Windows is distributed as the unsigned 3.4.0-dev.0 test installer with manual installation and no updater metadata; signing and clean-system/real-camera/two-version update qualification remain outstanding. The v3.2 and earlier sections below are historical records.
 
 ### Historical v3.2 official baseline / 历史 v3.2 正式基底（版本日期 2026-09-21，实际发布 2026-09-22）
 

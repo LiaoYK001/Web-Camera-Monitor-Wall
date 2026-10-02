@@ -1,5 +1,15 @@
 # v3.4 release notes / v3.4 发布说明
 
+## Published artifacts / 已发布附件（2026-10-02）
+
+[GitHub Release v3.4](https://github.com/LiaoYK001/Web-Camera-Monitor-Wall/releases/tag/v3.4) 固定源码提交 `4b2ab5f09b485a9f9cd870c918295df4315ab442`，共 13 个附件，上传状态与 SHA-256 均已核验。
+
+- Windows x64：[3.4.0-dev.0 DEVELOPMENT-UNSIGNED 安装包](https://github.com/LiaoYK001/Web-Camera-Monitor-Wall/releases/download/v3.4/WebOBS-3.4.0-dev.0-windows-x64-DEVELOPMENT-UNSIGNED.exe)，418,250,597 字节，SHA-256 `c3a54c081808f9214b6cc72f94fc506484abb5363bc639aac2d482f5b7e8f658`。按维护者选择分发未签名测试版，手动下载安装，没有 `latest.yml` 或 `dev.yml`。
+- Docker/Podman：`ghcr.io/liaoyk001/web-camera-monitor-wall:v3.4`，公开 `latest` 当前指向相同 OCI index digest：`sha256:a1f2f5cee8df794d8cae04b4a8cf01b68a6ba562ee1ddedacc219063f4e4cdbc`，包含 linux/amd64 镜像、SBOM 与 provenance attestation。
+- 对应产品/OBS/go2rtc 源码归档、FFmpeg `29e619e767` 源码与固定 FFmpeg 构建脚本、依赖锁定清单、运行文件清单、CycloneDX SBOM、许可证和摘要随 Release 提供。
+
+The immutable v3.4 tag, public container digests, public installer download, and all 13 attachment digests were verified. The Windows installer remains an unsigned development build with manual installation; this publication does not complete the signed Windows qualification described below.
+
 ## 中文
 
 - go2rtc 与产品统一打包：包含固定版本的完整官方 WebUI 和本地依赖，流、配置、诊断和媒体经过产品认证代理；设备管理可识别 go2rtc Streams 并引导建档。保留普通 RTSP 和 Direct-only 使用方式。
