@@ -16,6 +16,8 @@ $installation=Join-Path $root '客户端 安装'
 New-Item -ItemType Directory -Path $root -Force|Out-Null
 $old=Join-Path $repo "desktop/out/$PreviousVersion/WebOBS-$PreviousVersion-windows-x64-UNSIGNED.exe"
 $savedProfile=$env:LOCALAPPDATA
+$electronPath=(& node -e "process.stdout.write(require(require('node:path').join(process.argv[1],'desktop/node_modules/electron')))" $repo).Trim()
+if($LASTEXITCODE -ne 0 -or -not (Test-Path -LiteralPath $electronPath -PathType Leaf)){throw 'Pinned Electron runtime unavailable'}
 $installed=$false
 try {
     $env:LOCALAPPDATA=Join-Path $root 'profile'
@@ -25,7 +27,7 @@ try {
     $env:WEBOBS_UPGRADE_SMOKE_ROOT=$root;$env:WEBOBS_UPGRADE_SMOKE_INSTALL=$installation
     $env:WEBOBS_UPGRADE_SMOKE_ARTIFACTS=Join-Path $repo "desktop/out/$Version"
     $env:WEBOBS_UPGRADE_SMOKE_FROM=$PreviousVersion;$env:WEBOBS_UPGRADE_SMOKE_VERSION=$Version
-    & pnpm --dir (Join-Path $repo 'desktop') exec electron tests/installed-update-smoke.cjs
+    & $electronPath (Join-Path $PSScriptRoot 'installed-update-smoke.cjs')
     if($LASTEXITCODE -ne 0){throw 'Actual unsigned update smoke failed'}
 } finally {
     if($installed -and (Test-Path -LiteralPath (Join-Path $installation 'Uninstall WebOBS.exe'))){
