@@ -5,6 +5,7 @@ import { loadActiveLocalConfigProfile } from './localRuntime';
 import ProgramPreview from './ProgramPreview';
 import { projectorSceneFromHash, type ProjectorMode } from './projector';
 import type { SceneDocument } from './types';
+import { startVisiblePolling } from './visiblePolling';
 
 const DEFAULT_ASPECT = '16 / 9';
 const HINT_VISIBLE_MS = 3200;
@@ -26,25 +27,18 @@ export default function ProjectorView({ mode }: { mode: ProjectorMode }) {
   useEffect(() => {
     const controller = new AbortController();
     if (sceneId) {
-      let reading = false;
-      const refresh = async () => {
-        if (reading || controller.signal.aborted) return;
-        reading = true;
-        try {
-          const [remote, profile] = await Promise.all([fetchStudio(controller.signal).catch(() => null), loadActiveLocalConfigProfile().catch(() => null)]);
-          if (controller.signal.aborted) return;
-          const studio = profile?.studio ?? remote;
-          if (!studio) { setSceneError('场景暂时无法读取，正在重试。'); return; }
-          const selected = studio.scenes.find((value) => value.id === sceneId);
-          setScene(selected ?? null); setSceneError(selected ? '' : '此场景已删除或不在当前配置中。');
-          if (selected) document.title = `${selected.name} · 场景投影`;
-        } finally { reading = false; }
-      };
-      void refresh();
-      const timer = window.setInterval(() => void refresh(), 5000);
-      const disconnect = connectSceneEvents(() => void refresh(), () => undefined);
-      const focus = () => void refresh(); window.addEventListener('focus', focus);
-      return () => { controller.abort(); window.clearInterval(timer); disconnect(); window.removeEventListener('focus', focus); };
+      const polling = startVisiblePolling(async (signal) => {
+        const [remote, profile] = await Promise.all([fetchStudio(signal).catch(() => null), loadActiveLocalConfigProfile().catch(() => null)]);
+        if (signal.aborted) return;
+        const studio = profile?.studio ?? remote;
+        if (!studio) { setSceneError('场景暂时无法读取，正在重试。'); return; }
+        const selected = studio.scenes.find((value) => value.id === sceneId);
+        setScene((current) => JSON.stringify(current) === JSON.stringify(selected ?? null) ? current : selected ?? null);
+        setSceneError(selected ? '' : '此场景已删除或不在当前配置中。');
+        if (selected) document.title = `${selected.name} · 场景投影`;
+      }, 5000);
+      const disconnect = connectSceneEvents(() => void polling.refresh(), () => undefined);
+      return () => { polling.stop(); disconnect(); };
     }
     let usesProfile = false;
     void fetchScene(controller.signal).then((value) => { if (!controller.signal.aborted && !usesProfile) setScene(value); }).catch(() => undefined);

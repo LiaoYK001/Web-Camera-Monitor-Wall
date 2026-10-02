@@ -1,4 +1,5 @@
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
+import { useVisiblePolling } from './useVisiblePolling';
 import { approveClientEnrollment, fetchCameras, fetchClientEnrollments, fetchEnrolledClients, revokeEnrolledClient } from './api';
 import { beginBrowserEnrollment, completeBrowserEnrollment, currentBrowserPairing, type BrowserPairingState } from './browserEnrollment';
 import type { CameraRecord, ClientCameraGrant, ClientEnrollment, ClientPermission, EnrolledClient } from './types';
@@ -32,15 +33,18 @@ export default function ClientsPanel({ onBack }: { onBack: () => void }) {
   const [drafts, setDrafts] = useState<Record<string, Record<string, GrantDraft>>>({});
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
+  const [readError, setReadError] = useState('');
   const [notice, setNotice] = useState('');
   const [browserName, setBrowserName] = useState('本机浏览器');
   const [browserPairing, setBrowserPairing] = useState<BrowserPairingState | null>(null);
 
-  const reload = async () => {
+  const read = useCallback(async (signal: AbortSignal) => {
     try {
       const [pending, enrolled, registry] = await Promise.all([
-        fetchClientEnrollments(), fetchEnrolledClients(), fetchCameras(),
+        fetchClientEnrollments(signal), fetchEnrolledClients(signal), fetchCameras(signal),
       ]);
+      if (signal.aborted) return;
+      setReadError('');
       setEnrollments(pending.enrollments);
       setClients(enrolled.clients);
       setCameras(registry.cameras);
@@ -51,14 +55,14 @@ export default function ClientsPanel({ onBack }: { onBack: () => void }) {
         });
         return next;
       });
-    } catch (reason) { setError(reason instanceof Error ? reason.message : '无法读取本地客户端'); }
-  };
+    } catch (reason) { if (!signal.aborted) setReadError(reason instanceof Error ? reason.message : '无法读取本地客户端'); }
+  }, []);
+  const polling = useVisiblePolling(read, 5000);
 
   useEffect(() => {
-    void reload();
-    void currentBrowserPairing().then(setBrowserPairing).catch(() => undefined);
-    const timer = window.setInterval(() => void reload(), 5000);
-    return () => window.clearInterval(timer);
+    let active = true;
+    void currentBrowserPairing().then((value) => { if (active) setBrowserPairing(value); }).catch(() => undefined);
+    return () => { active = false; };
   }, []);
 
   const updateGrant = (enrollment: ClientEnrollment, cameraId: string, update: Partial<GrantDraft>) =>
@@ -75,43 +79,50 @@ export default function ClientsPanel({ onBack }: { onBack: () => void }) {
           (grant.credentialMode === 'dedicated' && !grant.credentialsRef))) {
       setError('请输入客户端显示的八位配对码，并至少选择一个摄像机 Profile。'); return;
     }
-    setBusy(true); setError(''); setNotice('');
+    polling.pause(); setBusy(true); setError(''); setNotice('');
     try {
       const targetClientId = updateTargets[enrollment.id] || undefined;
       const result = await approveClientEnrollment(enrollment.id, codes[enrollment.id], cameraGrants, targetClientId);
       setNotice(result.updated
         ? `已更新 ${enrollment.name} 的配对设备；旧设备令牌已失效，浏览器请点击“批准后完成配对”。`
         : `已批准 ${enrollment.name}；设备将在下次轮询时取得加密授权包。`);
-      await reload();
     } catch (reason) { setError(reason instanceof Error ? reason.message : '批准失败'); }
-    finally { setBusy(false); }
+    finally { setBusy(false); void polling.resume(); }
   };
 
   const pairBrowser = async () => {
-    setBusy(true); setError('');
+    polling.pause(); setBusy(true); setError('');
     try {
       const state = await beginBrowserEnrollment(browserName);
       setBrowserPairing(state);
       setNotice('一次性配对身份只以加密形式保存在此 Origin 的 IndexedDB 中。');
-      await reload();
     } catch (reason) { setError(reason instanceof Error ? reason.message : '无法创建浏览器配对'); }
-    finally { setBusy(false); }
+    finally { setBusy(false); void polling.resume(); }
   };
 
   const finishBrowserPairing = async () => {
-    setBusy(true); setError('');
+    polling.pause(); setBusy(true); setError('');
     try {
       const state = await completeBrowserEnrollment();
       setBrowserPairing(state);
       setNotice(state?.state === 'approved' ? '此浏览器已取得签名、加密且不含摄像机凭据的 7 天授权。' : '管理员尚未批准此配对。');
-      await reload();
     } catch (reason) { setError(reason instanceof Error ? reason.message : '无法完成浏览器配对'); }
-    finally { setBusy(false); }
+    finally { setBusy(false); void polling.resume(); }
+  };
+
+  const revoke = async (client: EnrolledClient) => {
+    if (!window.confirm(`撤销 ${client.name}？在线播放与同步会在十秒内停止。`)) return;
+    polling.pause(); setBusy(true); setError(''); setNotice('');
+    try {
+      const result = await revokeEnrolledClient(client.id);
+      setNotice(result.weakRevocation ? `客户端已撤销，但摄像机凭据仍需人工轮换；现有 Grant 最迟于 ${new Date(result.offlineEffectiveNoLaterThan * 1000).toLocaleString()} 失效。` : '客户端已撤销，ONVIF 托管专用账号已清理。');
+    } catch (reason) { setError(reason instanceof Error ? reason.message : '撤销失败'); }
+    finally { setBusy(false); void polling.resume(); }
   };
 
   return <main className="clients-page">
     <header className="registry-header"><div><span className="eyebrow">v2 True Direct</span><h1>本地客户端与授权</h1></div><button className="ghost-button" type="button" onClick={onBack}>返回 Studio</button></header>
-    {error && <div className="alert" role="alert">{error}</div>}
+    {(error || readError) && <div className="alert" role="alert">{error || readError}</div>}
     {notice && <div className="notice" role="status">{notice}</div>}
     <section className="client-section"><div className="section-title"><div><h2>此浏览器</h2><p>PWA 使用 WebCrypto 包装密钥和本地打包的 libsodium；不会取得长期摄像机密码。</p></div><span>7 天</span></div>
       <div className="browser-pairing"><label><span>设备名称</span><input value={browserName} maxLength={64} onChange={(event) => setBrowserName(event.target.value)} /></label>
@@ -141,7 +152,7 @@ export default function ClientsPanel({ onBack }: { onBack: () => void }) {
       </article>)}
     </section>
     <section className="client-section"><div className="section-title"><h2>已配对设备</h2><span>{clients.length}</span></div>
-      {clients.length === 0 ? <div className="registry-empty">尚无已配对设备</div> : <div className="client-list">{clients.map((client) => <article key={client.id}><div><strong>{client.name}</strong><span>{client.platform} · {client.cameraCount} 台摄像机</span></div><dl><div><dt>状态</dt><dd>{client.status}</dd></div><div><dt>最近在线</dt><dd>{new Date(client.lastSeen * 1000).toLocaleString()}</dd></div><div><dt>离线授权到期</dt><dd>{new Date(client.grantExpiresAt * 1000).toLocaleString()}</dd></div></dl>{client.weakRevocation && <p>⚠ 存在复用凭据或专用账号清理失败；彻底撤销可能还需轮换摄像机密码。</p>}<button className="danger-button" disabled={busy || client.status === 'revoked'} onClick={() => { if (window.confirm(`撤销 ${client.name}？在线播放与同步会在十秒内停止。`)) void revokeEnrolledClient(client.id).then((result) => { setNotice(result.weakRevocation ? `客户端已撤销，但摄像机凭据仍需人工轮换；现有 Grant 最迟于 ${new Date(result.offlineEffectiveNoLaterThan * 1000).toLocaleString()} 失效。` : '客户端已撤销，ONVIF 托管专用账号已清理。'); return reload(); }).catch((reason: unknown) => setError(reason instanceof Error ? reason.message : '撤销失败')); }}>撤销</button></article>)}</div>}
+      {clients.length === 0 ? <div className="registry-empty">尚无已配对设备</div> : <div className="client-list">{clients.map((client) => <article key={client.id}><div><strong>{client.name}</strong><span>{client.platform} · {client.cameraCount} 台摄像机</span></div><dl><div><dt>状态</dt><dd>{client.status}</dd></div><div><dt>最近在线</dt><dd>{new Date(client.lastSeen * 1000).toLocaleString()}</dd></div><div><dt>离线授权到期</dt><dd>{new Date(client.grantExpiresAt * 1000).toLocaleString()}</dd></div></dl>{client.weakRevocation && <p>⚠ 存在复用凭据或专用账号清理失败；彻底撤销可能还需轮换摄像机密码。</p>}<button className="danger-button" disabled={busy || client.status === 'revoked'} onClick={() => void revoke(client)}>撤销</button></article>)}</div>}
     </section>
   </main>;
 }

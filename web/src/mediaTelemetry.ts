@@ -30,14 +30,15 @@ export async function sampleConnectionTelemetry(connection: ProgramConnection, p
   if (!inbound) return { telemetry: unavailableTelemetry() };
   const codecReport = inbound.codecId ? reports.get(inbound.codecId) as { mimeType?: string } | undefined : undefined;
   const implementation = boundedImplementation((inbound as RTCInboundRtpStreamStats & { decoderImplementation?: string }).decoderImplementation);
-  const at = performance.now();
+  const at = Number.isFinite(inbound.timestamp) ? inbound.timestamp : performance.now();
   const frames = inbound.framesRendered ?? inbound.framesDecoded ?? 0;
   const bytes = inbound.bytesReceived ?? 0;
-  const seconds = previous ? Math.max((at - previous.at) / 1000, .001) : 0;
+  const comparable = previous && at > previous.at && frames >= previous.frames && bytes >= previous.bytes;
+  const seconds = comparable ? (at - previous.at) / 1000 : 0;
   return {
     telemetry: {
-      fps: previous ? Math.max(0, (frames - previous.frames) / seconds) : null,
-      bytesPerSecond: previous ? Math.max(0, (bytes - previous.bytes) / seconds) : null,
+      fps: comparable ? (frames - previous.frames) / seconds : null,
+      bytesPerSecond: comparable ? (bytes - previous.bytes) / seconds : null,
       codec: codecReport?.mimeType?.split('/', 2)[1]?.toUpperCase() ?? 'Unknown',
       decoder: decoderKind(implementation), implementation,
     },

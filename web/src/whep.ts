@@ -1,4 +1,5 @@
 import { isPageVisible } from './pageVisibility';
+import { forgetPeerStats, readPeerStats } from './peerStats';
 import { FrameCadence, congested, normalizePlaybackOptimization, type NetworkSample, type PlaybackOptimization } from './playbackOptimization';
 export interface PlaybackOptions { optimization?: Partial<PlaybackOptimization>; onQuality?: (weak: boolean) => void }
 export type ProgramConnectionState = 'checking' | 'connecting' | 'live' | 'reconnecting' | 'offline' | 'disabled';
@@ -217,11 +218,12 @@ function connectWhep(
 
   const releaseSession = () => {
     stopFrameTracking();
-    cadence.reset(); previousNetwork = undefined; weakSamples = 0; healthySamples = 0;
+    cadence.reset(); previousNetwork = undefined; weakSamples = 0; healthySamples = 0; sampling = false; lastNetworkAt = 0;
     lastVideoTime = 0; lastFrameCount = 0;
     request?.abort();
     request = undefined;
     if (peer) {
+      forgetPeerStats(peer);
       peer.ontrack = null;
       peer.onconnectionstatechange = null;
       peer.close();
@@ -306,8 +308,8 @@ function connectWhep(
       if (!optimization.enabled || sampling || !peer || typeof peer.getStats !== 'function' || now - lastNetworkAt < 3000) return;
       lastNetworkAt = now; sampling = true;
       const currentPeer = peer;
-      void currentPeer.getStats().then((stats) => {
-        if (closed || generation !== currentGeneration || currentPeer !== peer) return;
+      void readPeerStats(currentPeer).then((stats) => {
+        if (!stats || closed || generation !== currentGeneration || currentPeer !== peer) return;
         stats.forEach((report) => {
           if (report.type !== 'inbound-rtp' || (report.kind ?? report.mediaType) !== 'video') return;
           const sample: NetworkSample = { received: report.packetsReceived ?? 0, lost: report.packetsLost ?? 0,
@@ -324,7 +326,7 @@ function connectWhep(
             try { (receiver as RTCRtpReceiver & { jitterBufferTarget: number }).jitterBufferTarget = Math.min(800, Math.max(120, sample.jitter * 3000)); } catch { /* Optional browser API. */ }
           }
         });
-      }).catch(() => undefined).finally(() => { sampling = false; });
+      }).catch(() => undefined).finally(() => { if (currentPeer === peer) sampling = false; });
     }, 1000);
   };
 
@@ -447,7 +449,7 @@ function connectWhep(
 
   window.addEventListener('pagehide', close);
   void connect();
-  return { close, getStats: () => peer?.getStats() ?? Promise.resolve(null), getStage: () => ({ ...stage }), resume };
+  return { close, getStats: () => peer ? readPeerStats(peer) : Promise.resolve(null), getStage: () => ({ ...stage }), resume };
 }
 
 export function connectProgram(
