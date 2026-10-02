@@ -27,8 +27,10 @@ try {
     $env:WEBOBS_UPGRADE_SMOKE_ROOT=$root;$env:WEBOBS_UPGRADE_SMOKE_INSTALL=$installation
     $env:WEBOBS_UPGRADE_SMOKE_ARTIFACTS=Join-Path $repo "desktop/out/$Version"
     $env:WEBOBS_UPGRADE_SMOKE_FROM=$PreviousVersion;$env:WEBOBS_UPGRADE_SMOKE_VERSION=$Version
-    & $electronPath (Join-Path $PSScriptRoot 'installed-update-smoke.cjs')
-    if($LASTEXITCODE -ne 0){throw 'Actual unsigned update smoke failed'}
+    $stdout=Join-Path $root 'upgrade.stdout.log';$stderr=Join-Path $root 'upgrade.stderr.log'
+    $run=Start-Process -FilePath $electronPath -ArgumentList ('"'+(Join-Path $PSScriptRoot 'installed-update-smoke.cjs')+'"') -WindowStyle Hidden -Wait -PassThru -RedirectStandardOutput $stdout -RedirectStandardError $stderr
+    Get-Content -LiteralPath $stdout,$stderr
+    if($run.ExitCode -ne 0 -or -not (Test-Path -LiteralPath (Join-Path $env:WEBOBS_UPGRADE_SMOKE_ARTIFACTS 'windows-update-smoke.json'))){throw 'Actual unsigned update smoke failed'}
 } finally {
     if($installed -and (Test-Path -LiteralPath (Join-Path $installation 'Uninstall WebOBS.exe'))){
         $removed=Start-Process -FilePath (Join-Path $installation 'Uninstall WebOBS.exe') -ArgumentList '/S' -WindowStyle Hidden -Wait -PassThru
