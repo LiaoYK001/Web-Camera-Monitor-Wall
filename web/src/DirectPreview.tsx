@@ -1,9 +1,10 @@
 import { isPageVisible, subscribePageVisibility } from './pageVisibility';
-import { type CSSProperties, type PointerEvent as ReactPointerEvent, useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { type CSSProperties, type ReactNode, type PointerEvent as ReactPointerEvent, memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import AudioMixerBar, { type AudioMixerChannel } from './AudioMixerBar';
 import { closeAnalyticsRuntimeSession, fetchAnalyticsPolicies, fetchCameras, fetchMotionZones, fetchPlaybackCapabilities, probeSourceProfile, renewAnalyticsRuntimeSession, requestAnalyticsRuntimePlan, submitAnalyticsSignals } from './api';
 import type { BrowserTopologyPlan } from './browserMedia';
-import { DirectAudioMixer, getDirectAudioMixer, subscribeDirectAudio, type DirectAudioSnapshot } from './directAudioMixer';
+import { DirectAudioMixer, getDirectAudioMixer } from './directAudioMixer';
+import { useDirectAudioMeters, useDirectAudioPeak, useDirectAudioSourceLevel, useDirectAudioTopology } from './directAudioState';
 import { useMonitorPreferences } from './useMonitorPreferences';
 import { observeTileVisibility, shouldRunPlayback } from './mediaLifecycle';
 import { countRenderedFrames, formatTelemetry, sampleConnectionTelemetry, sampleElementTelemetry, unavailableTelemetry, type MediaTelemetry } from './mediaTelemetry';
@@ -45,7 +46,7 @@ function videoGeometry(item: SceneItem, width: number, height: number): CSSPrope
   };
 }
 
-function DirectTile({ item, source, capability, mixer, telemetry, audioMeter, audioSnapshot, onState, optimization }: {
+function DirectTile({ item, source, capability, mixer, telemetry, audioMeter, onState, optimization }: {
   item: SceneItem;
   source: SceneSource;
   optimization: PlaybackOptimization;
@@ -53,17 +54,17 @@ function DirectTile({ item, source, capability, mixer, telemetry, audioMeter, au
   mixer: DirectAudioMixer | null;
   telemetry?: TelemetryOverlayConfig;
   audioMeter?: AudioMeterConfig;
-  audioSnapshot?: { rmsDbfs: number | null; peakDbfs: number | null };
   onState?: (sourceId: string, state: ProgramConnectionState) => void;
 }) {
   const videoRef = useRef<HTMLVideoElement>(null);
   const [videoElement, setVideoElement] = useState<HTMLVideoElement | null>(null);
+  const bindVideo = useCallback((element: HTMLVideoElement | null) => { videoRef.current = element; setVideoElement(element); }, []);
   const [state, setState] = useState<ProgramConnectionState>(capability ? 'checking' : 'offline');
   const [dimensions, setDimensions] = useState({ width: 0, height: 0 });
   const [activeConnection, setActiveConnection] = useState<ProgramConnection | null>(null);
   const transport: 'whep' | 'gateway' = capability?.strategy === 'passthrough' ? 'whep' : 'gateway';
   const [audioAlert, setAudioAlert] = useState(false);
-  const audioPeak = useRef<number | null>(null);
+  const audioPeak = useDirectAudioPeak(source.id, audioMeter?.enabled === true);
   const audioAlertRef = useRef(false);
   const audioAboveSince = useRef(0);
   const audioBelowSince = useRef(0);
@@ -81,9 +82,8 @@ function DirectTile({ item, source, capability, mixer, telemetry, audioMeter, au
     return mixer.attach(source.id, videoRef.current);
   }, [capability, mixer, source.id]);
 
-  useEffect(() => { audioPeak.current = audioSnapshot?.peakDbfs ?? null; }, [audioSnapshot?.peakDbfs]);
   useEffect(() => {
-    audioAlertRef.current = false; audioPeak.current = audioSnapshot?.peakDbfs ?? null;
+    audioAlertRef.current = false;
     if (!audioMeter?.enabled) { setAudioAlert(false); audioAboveSince.current = 0; audioBelowSince.current = 0; return undefined; }
     const timer = window.setInterval(() => {
       const now = Date.now();
@@ -124,7 +124,7 @@ function DirectTile({ item, source, capability, mixer, telemetry, audioMeter, au
       data-audio-sync-ms={source.syncOffsetMs}
     >
       <video
-        ref={(element) => { videoRef.current = element; setVideoElement(element); }}
+        ref={bindVideo}
         autoPlay
         muted
         playsInline
@@ -137,7 +137,7 @@ function DirectTile({ item, source, capability, mixer, telemetry, audioMeter, au
       />
       {state !== 'live' && <span className="direct-tile-placeholder" aria-hidden="true">{labels[state]}</span>}
       {audioAlert && audioMeter?.alertBorderEnabled && <span className="tile-audio-alert-border" style={{ borderColor: colorWithOpacity(audioMeter.alertBorderColor, audioMeter.alertBorderOpacity), borderWidth: `${audioMeter.alertBorderWidth}px` }} aria-label="音频超过阈值" />}
-      {audioMeter && <AudioMeterOverlay config={audioMeter} meter={audioSnapshot} />}
+      {audioMeter && <AudioMeterOverlay config={audioMeter} sourceId={source.id} />}
       {telemetry && <TelemetryOverlay config={telemetry} transport={transport} video={videoElement} connection={activeConnection} />}
     </div>
   );
@@ -195,7 +195,8 @@ function colorWithOpacity(color: string, opacity: number): string {
   return `rgba(${red},${green},${blue},${opacity})`;
 }
 
-function AudioMeterOverlay({ config, meter }: { config: AudioMeterConfig; meter?: { rmsDbfs: number | null; peakDbfs: number | null; audioTracks?: number } }) {
+function AudioMeterOverlay({ config, sourceId }: { config: AudioMeterConfig; sourceId: string }) {
+  const meter = useDirectAudioSourceLevel(sourceId, config.enabled);
   if (!config.enabled) return null;
   const peak = meter?.peakDbfs ?? null;
   const level = peak === null ? 0 : Math.max(0, Math.min(100, ((peak + 120) / 120) * 100));
@@ -215,7 +216,7 @@ function AudioMeterOverlay({ config, meter }: { config: AudioMeterConfig; meter?
   </div>;
 }
 
-function BrowserCameraTile({ item, source, mixer, telemetry, audioMeter, audioSnapshot, promotionKinds, lowPower, documentVisible, analyticsPolicy, analyticsZones, showAnalytics, onState, optimization, onQuality }: {
+function BrowserCameraTile({ item, source, mixer, telemetry, audioMeter, promotionKinds, lowPower, documentVisible, analyticsPolicy, analyticsZones, showAnalytics, onState, optimization, onQuality }: {
   item: SceneItem;
   source: CameraSceneSource;
   optimization: PlaybackOptimization;
@@ -223,7 +224,6 @@ function BrowserCameraTile({ item, source, mixer, telemetry, audioMeter, audioSn
   mixer: DirectAudioMixer | null;
   telemetry: TelemetryOverlayConfig;
   audioMeter: AudioMeterConfig;
-  audioSnapshot?: { rmsDbfs: number | null; peakDbfs: number | null };
   promotionKinds: { audio: boolean; motion: boolean; person: boolean };
   lowPower?: { targetFps: number; actualFps: number; targetMet: boolean };
   documentVisible: boolean;
@@ -237,6 +237,7 @@ function BrowserCameraTile({ item, source, mixer, telemetry, audioMeter, audioSn
   const videoRef = useRef<HTMLVideoElement>(null);
   const imageRef = useRef<HTMLImageElement>(null);
   const [videoElement, setVideoElement] = useState<HTMLVideoElement | null>(null);
+  const bindVideo = useCallback((element: HTMLVideoElement | null) => { videoRef.current = element; setVideoElement(element); }, []);
   const [state, setState] = useState<ProgramConnectionState>('checking');
   const [transport, setTransport] = useState<'whep' | 'hls' | 'mjpeg' | 'gateway'>('gateway');
   const [plan, setPlan] = useState<BrowserTopologyPlan | null>(null);
@@ -246,7 +247,7 @@ function BrowserCameraTile({ item, source, mixer, telemetry, audioMeter, audioSn
   const [analyticsStatus, setAnalyticsStatus] = useState<BrowserAnalyticsStatus>({ state: 'idle', reason: '', sampleFps: 0, lastSignalAt: 0 });
   const [detectionBoxes, setDetectionBoxes] = useState<Array<{ x: number; y: number; width: number; height: number; confidence?: number }>>([]);
   const [audioAlert, setAudioAlert] = useState(false);
-  const audioPeak = useRef<number | null>(null);
+  const audioPeak = useDirectAudioPeak(source.id, audioMeter.enabled);
   const audioAlertRef = useRef(false);
   const audioAboveSince = useRef(0);
   const audioBelowSince = useRef(0);
@@ -259,9 +260,8 @@ function BrowserCameraTile({ item, source, mixer, telemetry, audioMeter, audioSn
   const lowPowerForPlayback = Boolean(lowPower) && !Boolean(analyticsPolicy?.forceAnalyticsAlwaysOn);
   const playbackEnabled = shouldRunPlayback({ lowPowerEnabled: lowPowerForPlayback, documentVisible, tileIntersecting, nativeForeground: window.webobsAndroidForeground });
 
-  useEffect(() => { audioPeak.current = audioSnapshot?.peakDbfs ?? null; }, [audioSnapshot?.peakDbfs]);
   useEffect(() => {
-    audioAlertRef.current = false; audioPeak.current = audioSnapshot?.peakDbfs ?? null;
+    audioAlertRef.current = false;
     if (!audioMeter.enabled) { setAudioAlert(false); audioAboveSince.current = 0; audioBelowSince.current = 0; return undefined; }
     const timer = window.setInterval(() => {
       const now = Date.now();
@@ -461,7 +461,7 @@ function BrowserCameraTile({ item, source, mixer, telemetry, audioMeter, audioSn
   useEffect(() => { onState?.(source.id, state); }, [onState, source.id, state]);
   return <div ref={tileRef} className={`direct-tile ${state}`} data-source-id={source.id}
     data-playback-suspended={playbackEnabled ? 'false' : 'true'}>
-    <video ref={(element) => { videoRef.current = element; setVideoElement(element); }} autoPlay muted playsInline style={{ ...geometry, display: transport === 'mjpeg' ? 'none' : undefined }}
+    <video ref={bindVideo} autoPlay muted playsInline style={{ ...geometry, display: transport === 'mjpeg' ? 'none' : undefined }}
       aria-label={`${source.name} 浏览器媒体画面`} onLoadedMetadata={(event) => setDimensions({ width: event.currentTarget.videoWidth, height: event.currentTarget.videoHeight })} />
     <img ref={imageRef} alt={`${source.name} MJPEG 画面`} style={{ ...geometry, display: transport === 'mjpeg' ? undefined : 'none' }} />
     {state !== 'live' && <span className="direct-tile-placeholder" aria-hidden="true">{labels[state]}</span>}
@@ -474,16 +474,23 @@ function BrowserCameraTile({ item, source, mixer, telemetry, audioMeter, audioSn
         opacity: showAnalytics.boxOpacity, borderWidth: `${showAnalytics.boxLineWidth}px`,
       }} aria-hidden="true">{showAnalytics.showDetectionLabels && <small>person</small>}</span>;
     })}
-    <AudioMeterOverlay config={audioMeter} meter={audioSnapshot} />
+    <AudioMeterOverlay config={audioMeter} sourceId={source.id} />
     <TelemetryOverlay config={telemetry} transport={transport} video={videoElement} connection={activeConnection} />
   </div>;
 }
 
-export default function DirectPreview({ scene, compact = false, layoutPreview = false, audioWorkspace = false, sceneLayout = false }: { scene: SceneDocument; compact?: boolean; layoutPreview?: boolean; audioWorkspace?: boolean; sceneLayout?: boolean }) {
+function AudioControlSurface({ requested, children }: { requested: boolean; children: ReactNode }) {
+  const audio = useDirectAudioMeters();
+  return <div className="direct-audio-control hero-audio-control" data-audio-enabled={audio.state === 'running' ? 'true' : 'false'}
+    data-audio-requested={requested ? 'true' : 'false'} data-audio-state={audio.state} data-audio-inputs={audio.inputCount}
+    data-audio-level={audio.level.toFixed(4)}>{children}</div>;
+}
+
+function DirectPreview({ scene, compact = false, layoutPreview = false, audioWorkspace = false, sceneLayout = false }: { scene: SceneDocument; compact?: boolean; layoutPreview?: boolean; audioWorkspace?: boolean; sceneLayout?: boolean }) {
   const [capabilities, setCapabilities] = useState<SourcePlaybackCapability[]>([]);
   const [available, setAvailable] = useState(true);
   const [mixer, setMixer] = useState<DirectAudioMixer | null>(null);
-  const [audio, setAudio] = useState<DirectAudioSnapshot>({ state: 'disabled', inputCount: 0, level: 0, sources: [] });
+  const audio = useDirectAudioTopology(!layoutPreview);
   const { view: monitorView, setView: setMonitorView, loaded: monitorLoaded, error: monitorError, retry: retryMonitor } = useMonitorPreferences(compact && !audioWorkspace, layoutPreview);
   const [cameras, setCameras] = useState<CameraRecord[]>([]);
   const [adaptiveProfiles, setAdaptiveProfiles] = useState<Record<string, { profileId: string; changedAt: number }>>({});
@@ -514,7 +521,6 @@ export default function DirectPreview({ scene, compact = false, layoutPreview = 
     }
     const sharedMixer: DirectAudioMixer = getDirectAudioMixer();
     setMixer(sharedMixer);
-    return subscribeDirectAudio(setAudio);
   }, [layoutPreview]);
 
   useEffect(() => {
@@ -929,14 +935,7 @@ export default function DirectPreview({ scene, compact = false, layoutPreview = 
         <span>窗口预览 · 拖动标题栏移动，右下角缩放</span>
         <button type="button" onClick={() => setWindowPreview(false)}>关闭窗口预览</button>
       </div>}
-      {!compact && !windowPreview && <><div
-        className="direct-audio-control hero-audio-control"
-        data-audio-enabled={audioEnabled ? 'true' : 'false'}
-        data-audio-requested={monitorView.audioMonitorEnabled ? 'true' : 'false'}
-        data-audio-state={audio.state}
-        data-audio-inputs={audio.inputCount}
-        data-audio-level={audio.level.toFixed(4)}
-      >
+      {!compact && !windowPreview && <><AudioControlSurface requested={monitorView.audioMonitorEnabled}>
         <button
           type="button"
           className={audioEnabled ? 'primary-button audio-master-toggle' : 'audio-master-toggle'}
@@ -955,10 +954,9 @@ export default function DirectPreview({ scene, compact = false, layoutPreview = 
           : monitorView.audioOutput === 'meter-only'
             ? `Web Audio 混音 · ${audio.inputCount} 路 · 仅电平表与阈值检测，不输出到扬声器`
             : `Web Audio 混音 · ${audio.inputCount} 路 · ${monitorView.audioMonitorEnabled ? '按账号设置恢复监听' : '监听已关闭'}`}</span>
-      </div>
+      </AudioControlSurface>
       {monitorView.showAudioMixer && <AudioMixerBar
         channels={audioMixerChannels}
-        snapshot={audio}
         audioEnabled={audioEnabled}
         masterVolume={monitorView.localMonitorVolume}
         output={monitorView.audioOutput}
@@ -1094,7 +1092,6 @@ export default function DirectPreview({ scene, compact = false, layoutPreview = 
                         ? { ...sourceDecoration(monitorView, source.id).telemetry, refreshIntervalMs: Math.max(5000, sourceDecoration(monitorView, source.id).telemetry.refreshIntervalMs) }
                         : sourceDecoration(monitorView, source.id).telemetry}
                       audioMeter={layoutPreview ? { ...sourceDecoration(monitorView, source.id).audioMeter, enabled: false } : sourceDecoration(monitorView, source.id).audioMeter}
-                      audioSnapshot={audioBySource.get(source.id)}
                       promotionKinds={sourceDecoration(monitorView, source.id).promotionKinds}
                       lowPower={lowPowerBySource.get(source.id)}
                       documentVisible={pageVisible}
@@ -1106,7 +1103,7 @@ export default function DirectPreview({ scene, compact = false, layoutPreview = 
                       telemetry={layoutPreview ? { ...sourceDecoration(monitorView, source.id).telemetry, enabled: false } : monitorView.lowPower.enabled
                         ? { ...sourceDecoration(monitorView, source.id).telemetry, refreshIntervalMs: Math.max(5000, sourceDecoration(monitorView, source.id).telemetry.refreshIntervalMs) }
                         : sourceDecoration(monitorView, source.id).telemetry}
-                      audioMeter={layoutPreview ? { ...sourceDecoration(monitorView, source.id).audioMeter, enabled: false } : sourceDecoration(monitorView, source.id).audioMeter} audioSnapshot={audioBySource.get(source.id)} onState={handleSourceState} />}
+                      audioMeter={layoutPreview ? { ...sourceDecoration(monitorView, source.id).audioMeter, enabled: false } : sourceDecoration(monitorView, source.id).audioMeter} onState={handleSourceState} />}
               </div>
             );
           })}
@@ -1132,3 +1129,5 @@ export default function DirectPreview({ scene, compact = false, layoutPreview = 
     </div>
   );
 }
+
+export default memo(DirectPreview);

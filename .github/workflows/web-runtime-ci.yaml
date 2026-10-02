@@ -61,6 +61,14 @@ jobs:
           pnpm test:iwa
           pnpm build
 
+      - name: Browser performance and audio regressions / 浏览器性能与音频回归
+        shell: bash
+        working-directory: web
+        run: |
+          set -euo pipefail
+          pnpm exec playwright install --with-deps chromium
+          pnpm exec playwright test -c playwright.local.config.ts --project=chromium performance.spec.ts mixer-runtime.spec.ts audio-preferences.spec.ts playback-optimization-runtime.spec.ts
+
       - name: Explain private platform gates
         shell: bash
         run: |

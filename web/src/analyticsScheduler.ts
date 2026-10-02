@@ -14,7 +14,7 @@ function clock(): number {
  * Process-wide browser budget. Each Monitor tile shares this window, so a
  * 16-camera scene cannot create an unbounded number of canvas reads or model
  * inferences. A denied request is intentionally dropped; the next video frame
- * will retry and no frame backlog is retained.
+ * sample will retry and no frame backlog is retained.
  */
 export function requestAnalyticsSlot(work: AnalyticsWork, priority: AnalyticsPriority = 'normal', at = clock()): boolean {
   const window = starts[work];

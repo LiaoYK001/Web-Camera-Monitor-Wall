@@ -407,9 +407,11 @@ export class DirectAudioMixer {
       .map(([sourceId]) => this.configuration.get(sourceId)?.syncOffsetMs ?? 0);
     const baseline = Math.min(0, ...offsets);
     const now = this.context?.currentTime ?? 0;
+    const separateAudioSources = new Set([...this.trackEntries.values()]
+      .filter((track) => (track.stream?.getAudioTracks().length ?? 0) > 0).map((track) => track.sourceId));
     for (const [sourceId, entry] of this.entries) {
       const source = this.configuration.get(sourceId);
-      const hasTrackChannels = [...this.trackEntries.values()].some((track) => track.sourceId === sourceId && (track.stream?.getAudioTracks().length ?? 0) > 0);
+      const hasTrackChannels = separateAudioSources.has(sourceId);
       const gain = source && !source.muted && source.monitoring !== 'off' && !hasTrackChannels ? clamp(source.volume, 0, 1.5) : 0;
       const delay = clamp(((source?.syncOffsetMs ?? 0) - baseline) / 1000, 0, 20);
       entry.gainNode?.gain.setTargetAtTime(gain, now, 0.01);
@@ -492,12 +494,16 @@ export class DirectAudioMixer {
     const sourceIds = new Set<string>([...this.entries.keys(), ...this.trackEntries.values()].map((value) =>
       typeof value === 'string' ? value : (value as TrackEntry).sourceId));
     const sources: DirectAudioSourceSnapshot[] = [];
+    const tracksBySource = new Map<string, TrackEntry[]>();
+    for (const track of this.trackEntries.values()) {
+      const tracks = tracksBySource.get(track.sourceId);
+      if (tracks) tracks.push(track); else tracksBySource.set(track.sourceId, [track]);
+    }
     let inputCount = 0;
     for (const sourceId of sourceIds) {
       const entry = this.entries.get(sourceId);
       const videoTracks = entry?.stream?.getAudioTracks().length ?? 0;
-      const independent: DirectAudioTrackMeter[] = [...this.trackEntries.values()]
-        .filter((track) => track.sourceId === sourceId)
+      const independent: DirectAudioTrackMeter[] = (tracksBySource.get(sourceId) ?? [])
         .sort((left, right) => left.trackIndex - right.trackIndex)
         .map((track) => ({ sourceId, trackIndex: track.trackIndex, rmsDbfs: track.rmsDbfs ?? null,
           peakDbfs: track.peakDbfs ?? null, gain: track.gain, muted: track.muted,

@@ -67,3 +67,24 @@ Renderer 使用 `WEBOBS_RENDERER=auto|hardware|software`。`auto` 在 VAAPI prob
 CSV 记录容器 CPU、内存/网络、逐进程 CPU/RSS、FFmpeg 进程数、RTSP session 与 GPU busy。另用 `radeontop`、`amdgpu_top` 或宿主等价工具记录 GFX、VCN Decode、VCN Encode，并记录端到端延迟。结果属于本地测试产物，不应提交 Git。
 
 Gateway Direct 验收不绑定一个不可靠的固定百分比，而要求：浏览器兼容 H.264/Opus 或 G.711 来源不出现 FFmpeg transcoder；`engineActive=false`、`compositePublisherActive=false`；增加摄像机时 CPU 不出现接近软件解码/编码的线性增长。它仍会产生 Docker 网络流量和 MediaMTX 上游会话。若失败，依次检查 Hybrid 原因、Program reader、FFmpeg 进程、RTSP session 重复和浏览器是否仍持有旧 WHEP session。v2 True Direct 的独立零媒体数据面门禁见 [true-direct-v2.md](true-direct-v2.md)。
+
+## 5. 浏览器更新开销 / Browser update cost
+
+音频运行状态、音轨增减和增益/静音变化仍立即更新监控墙；100 ms 电平采样由电平表与音频状态组件单独订阅。阈值检测读取最新采样，不依赖视频组件重新渲染。隐藏页面暂停电平表绘制，返回时读取最新快照；普通浏览器的后台声音监听继续遵循用户设置，Android 的暂停/恢复仍由原生生命周期控制。收起混音器会停止该面板的电平订阅。
+
+Runtime and track changes still update the wall immediately. Meter components subscribe separately to the 100 ms audio samples; threshold checks read fresh samples without rendering video tiles. Hidden pages pause meter rendering and refresh from the current snapshot on return. Browser background listening follows the user's setting; Android audio follows its native lifecycle. Collapsing the mixer removes its meter subscription.
+
+账号偏好保留每 5 秒及重新聚焦时的同步，但相同的归一化配置保留对象引用，避免重复布局计算与重建轮播计时器。分析任务按配置采样率请求新视频帧，最多保留一个待处理帧回调；暂停后取消采样计时器和回调。音频工作台的 Composite 电平请求完成后等待 250 ms 再发起下一次，隐藏时取消请求，恢复时立即读取；过期响应和 Direct 电平事件不能覆盖 Composite 数据。
+
+Account synchronization remains active every five seconds and on focus. Identical normalized preferences retain their object identity. Analytics requests fresh frames at the configured sample rate with at most one pending frame callback and cancels work on stop. Composite meters wait 250 ms after each completed request, cancel on hide, and refresh immediately on return. Stale responses and Direct meter events cannot overwrite Composite values.
+
+可复现回归 / Reproducible regression:
+
+```powershell
+cd web
+pnpm exec playwright test -c playwright.local.config.ts --project=chromium performance.spec.ts
+```
+
+该开发夹具使用 12 路 canvas 视频和变化的合成音频分析数据，记录 React Profiler 耗时、场景字段读取、连接建档次数与播放时间。一次本机 4 秒对比中，React 渲染累计耗时由约 376 ms 降至 16–21 ms，音频采样期间的布局读取由 4,960 次降至 0；12 个既有连接保持不变。时间值只作开发模式的局部性能证据，回归门禁使用无重复布局、持续播放与无额外连接等行为约束，不设置不稳定的耗时阈值。
+
+The fixture uses 12 canvas video streams and changing synthetic analyser values. It records React Profiler duration, scene reads, session creation and playback progress. A local four-second comparison reduced accumulated React render time from approximately 376 ms to 16–21 ms and scene reads from 4,960 to zero, preserving all 12 connections. Timings describe this development fixture, not total CPU usage or physical-camera performance. Regression gates use stable behavioral checks rather than timing thresholds. Windows/Android protocol smoke tests and physical-camera qualification must be reported separately.
