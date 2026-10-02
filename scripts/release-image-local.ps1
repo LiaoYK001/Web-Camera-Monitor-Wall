@@ -44,7 +44,7 @@ if ($gitBashPath) {
 
 # Positional parameters avoid command-string interpolation of image, tag, or
 # token values. GH_TOKEN remains process-local and is never put on argv.
- $previousPrepareOnly = $env:WEBOBS_RELEASE_PREPARE_ONLY
+$previousPrepareOnly = $env:WEBOBS_RELEASE_PREPARE_ONLY
 try {
     if ($PrepareOnly) { $env:WEBOBS_RELEASE_PREPARE_ONLY = 'true' }
     if ($Prerelease) {
