@@ -90,3 +90,5 @@ Windows 10、11 各自记录实际安装、媒体、LAN 与两版更新结果。
 已通过 Windows 原生 C++/OBS 编译与 CTest、完整 NSIS 开发包构建、桌面逻辑与真实 Electron 检查。本机 Windows 11 的捆绑服务已通过首个账号、认证 go2rtc、快照和重启后会话恢复；RTX 3060 Ti 实际通过 NVENC 样本探测及 OBS Program 编码。完整构建必须通过 `pnpm --dir desktop test:runtime` 和 `pnpm --dir desktop test:main`，后者使用真实桌面入口检查两个固定 Scene 投影、共享登录、关闭主窗口保留服务及正常退出。均使用临时数据目录，不覆盖真实摄像机。Windows 10/11 干净安装、真实摄像机播放、LAN 与两个签名安装版本的更新故障测试仍须分别记录；没有完成这些实际检查前，不宣称阶段一达到生产验收。
 
 打包后还必须通过 `pnpm --dir desktop test:package`：启动真正的 `win-unpacked/WebOBS.exe`，验证 ASAR、生产依赖、独立账号和 go2rtc，并检查主进程异常退出后 Job 收束所有后代。本机另已验证真实 Caddy 的 HTTPS、显式 CA、认证与 go2rtc 代理；未修改系统信任和防火墙，不等于其他设备的浏览器及媒体验收。
+
+完整构建还运行 `pnpm --dir desktop test:install`，实际执行当前版本的 NSIS 安装与卸载：使用包含中文及空格的独立安装目录、私密测试账号和独立录像目录，检查运行文件摘要、清空 PATH 后启动、认证 go2rtc、Job 清理、默认卸载保留数据，以及注册项和快捷方式清理。已有 WebOBS 注册项或快捷方式时拒绝运行，避免覆盖用户安装。通过后将系统版本、已测运行清单提交和安装包摘要写入 `desktop/out/<版本>/windows-install-smoke.json`；该检查不会更新正式验收记录，也不代替干净系统和两个签名版本的升级测试。本机 Windows 11 已通过该安装与卸载流程。

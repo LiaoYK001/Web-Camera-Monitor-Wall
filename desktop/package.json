@@ -15,6 +15,7 @@
     "test:runtime": "electron tests/native-runtime-smoke.cjs",
     "test:main": "electron tests/native-main-smoke.cjs",
     "test:package": "node tests/packaged-runtime-smoke.mjs",
+    "test:install": "pwsh -NoProfile -File tests/nsis-install-smoke.ps1",
     "verify": "node scripts/verify-runtime.mjs runtime",
     "package:dev": "electron-builder --win nsis --x64 --publish never --config builder.config.cjs",
     "package:release": "electron-builder --win nsis --x64 --publish never --config builder.config.cjs"
