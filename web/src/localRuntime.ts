@@ -346,9 +346,13 @@ export async function queueOfflineAudit(
     throw new Error('Offline audit event is invalid');
   const queue = await loadAuditQueue();
   // Rejection sampling keeps all 1,000 suffixes equally likely.
-  let sample: number;
-  do { sample = crypto.getRandomValues(new Uint16Array(1))[0]; } while (sample >= 65000);
-  const random = Math.floor(sample / 65);
+  let random: number;
+  for (;;) {
+    const sample = crypto.getRandomValues(new Uint16Array(1))[0];
+    if (sample >= 65000) continue;
+    random = sample % 1000;
+    break;
+  }
   queue.push({ sequence: Date.now() * 1000 + random, type, outcome, cameraId, createdAt: Date.now() });
   if (queue.length > 512) queue.splice(0, queue.length - 512);
   await put('auditQueue', 'events', await encrypt(queue, Date.now() + LEASE_MS));

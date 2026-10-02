@@ -502,12 +502,17 @@ def _load_secret(reference: str) -> dict[str, str]:
     if not isinstance(reference, str) or not re.fullmatch(r"[A-Za-z0-9_-][A-Za-z0-9._-]{0,127}", reference):
         raise ApiError(400, "invalid_credentials_ref", "credentialsRef is invalid")
     try:
-        root = SECRET_ROOT.resolve()
-        candidate = root / f"{reference}.json"
-        path = candidate.resolve()
-        if candidate.is_symlink() or path.parent != root or not path.is_file():
+        root = os.path.realpath(SECRET_ROOT)
+        prefix = root.rstrip(os.sep) + os.sep
+        candidate = os.path.abspath(os.path.join(root, f"{reference}.json"))
+        if not candidate.startswith(prefix):
+            raise ValueError("invalid secret path")
+        path = os.path.realpath(candidate)
+        # Check the normalized boundary before probing or opening any file.
+        # A different real path also rejects symlinks within the private root.
+        if not path.startswith(prefix) or path != candidate:
             raise ValueError("invalid secret file")
-        with path.open("rb") as source:
+        with open(path, "rb") as source:
             data = source.read(16_385)
         if len(data) > 16_384:
             raise ValueError("secret file exceeds limit")
