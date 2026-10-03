@@ -10,9 +10,17 @@ M9 将 M8 UTC 归档目录转化为值守工作流。React 工作区可通过“
 
 `GET /api/v1/nvr/timeline?from=<utc-ms>&to=<utc-ms>&cameraId=<id>` 接受最长 31 天的正向范围，并且只返回调用方选择的已知摄像机 ID。存储始终为 UTC。逐路结果包含有序片段、明确的离线/缺失/损坏断档、最早保留边界和已录主/辅码流。显示转换使用浏览器 `Intl` 时区数据库；操作者切换显示时区时，UTC 键和查询边界不会改变。
 
-The UI opens one to four fragmented MP4 players with HTTP Range. One player is the clock master; every 250 ms the others are compared in global UTC and corrected only when drift exceeds 250 ms. Play, pause, seek, 0.25×–4× speed, and 30 FPS frame-step operate on the shared UTC cursor. A missing or corrupt segment becomes a visible gap and playback advances to the next available segment. The UI obtains 40-second playback leases and renews them every 20 seconds; transfer reader locks and unexpired leases both keep retention from deleting active media.
+The UI opens one to four fragmented MP4 players with HTTP Range. One player is the clock master; every 250 ms the others are compared in global UTC and corrected only when drift exceeds 250 ms. Play, pause, seek, 0.25×–4× speed, and a 1/30-second time step operate on the shared UTC cursor. The time step is not a source-frame accuracy guarantee. A missing or corrupt segment becomes a visible gap and playback advances to the next available segment. The UI obtains 40-second playback leases and renews them every 20 seconds; transfer reader locks and unexpired leases both keep retention from deleting active media.
 
-界面可打开 1–4 个支持 HTTP Range 的 fragmented MP4 播放器。一路作为时钟主控；每 250 ms 以全局 UTC 比较其他播放器，仅在偏差超过 250 ms 时纠正。播放、暂停、跳转、0.25×–4× 倍速和 30 FPS 逐帧均作用于共享 UTC 游标。缺失或损坏片段显示为明确断档，并在下一可用片段恢复。UI 获取 40 秒回放租约并每 20 秒续租；传输读锁和未过期租约都会阻止保留任务删除活动媒体。
+界面可打开 1–4 个支持 HTTP Range 的 fragmented MP4 播放器。一路作为时钟主控；每 250 ms 以全局 UTC 比较其他播放器，仅在偏差超过 250 ms 时纠正。播放、暂停、跳转、0.25×–4× 倍速和 1/30 秒步进均作用于共享 UTC 游标；时间步进不保证与源视频逐帧对应。缺失或损坏片段显示为明确断档，并在下一可用片段恢复。UI 获取 40 秒回放租约并每 20 秒续租；传输读锁和未过期租约都会阻止保留任务删除活动媒体。
+
+Changing UTC day or camera selection pauses playback, invalidates pending play promises and immediately removes the previous selection's media and evidence controls. Queries are bound to their exact selection and have a 12-second deadline; a late response cannot restore another day's media. Catalog/timeline failures have separate retry actions. Refresh preserves a deliberate empty selection. The UTC ruler, rails and playhead use one geometry on phone/desktop, and camera labels do not seek. Display-zone changes only reformat timestamps.
+
+切换 UTC 日期或摄像机时暂停回放、撤销待完成播放并立即移除旧选择的媒体与证据操作。查询绑定具体选择且最多等待 12 秒，延迟响应不能恢复其他日期的录像；摄像机列表与时间线失败分别提供重试。刷新保留用户主动清空的选择。手机与桌面的 UTC 刻度、录像条和游标采用同一坐标，点击摄像机名称不跳转时间；显示时区只改变时间文字。
+
+Snapshot/lock/delete actions have a 35-second client deadline and block selection changes until resolved. A timeout reports an unconfirmed result; mutations are never retried automatically. Playback lease acquisition/release has an eight-second request deadline, so a failed renewal cannot block deletion forever. Deletion unmounts the media player before releasing leases, closing browser reader connections; a protected-segment conflict explains recovery and restores the player. Other clients' readers/leases and evidence locks still prevent deletion.
+
+截图、锁定和删除设置 35 秒客户端时限，完成前禁止更换目标；超时显示“结果尚未确认”，不会自动重试修改。回放租约获取/释放单次最多八秒，续租失败不再无限阻碍删除。删除先卸载媒体播放器，关闭浏览器读取连接，再释放租约；仍受保护时解释处理方式并恢复播放器。其他客户端的读取/租约及证据锁仍会阻止删除。
 
 ## Bounded derived media / 有界派生媒体
 

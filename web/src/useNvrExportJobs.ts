@@ -18,7 +18,6 @@ export function exportError(error: unknown): string {
     export_duration_mismatch: '视频实际长度与时间范围不符，导出已取消。请检查录像完整性。',
     export_source_changed: '源录像与原始摘要不符，导出已停止。请检查录像完整性。',
     export_range_too_large: '范围内片段过多，请缩短导出时间。',
-    export_file_too_large: '单个文件超过当前 64 MiB 下载上限，请缩短导出时间。大文件流式下载仍在完善。',
     export_scope_rejected: '导出权限或摄像机权限已变更，请联系管理员。',
     export_queue_full: '导出队列已满或服务正在停止，请稍后重试。',
     permission_rejected: '当前账号没有证据导出权限，请联系管理员分配 exporter 角色或导出权限。',
