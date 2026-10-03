@@ -298,6 +298,72 @@ class ClusterTests(unittest.TestCase):
             'value': {'sourceAudio': {'one': {'volume': .9, 'muted': False, 'monitor': True}}}}, True)
         self.assertEqual(second['value']['sourceAudio']['one'], {'volume': .4, 'muted': False, 'monitor': True})
 
+    def test_compact_monitor_pairs_match_full_edits_and_keep_peer_and_inherited_fields(self) -> None:
+        for user in ['full-pair-owner', 'compact-pair-owner']:
+            self.create_user(user, ['viewer'])
+        initial = {'schemaVersion': 5, 'localMonitorVolume': 1, 'archiveAudioCameraId': 'one',
+                   'largeSourceIds': [], 'sourceAudio': {'old': {'volume': .5}, 'untouched': {'volume': 1}},
+                   'sourceDecorations': {}, 'futureSetting': {'enabled': True}}
+        base = {**initial, 'sourceAudio': {**initial['sourceAudio'], '__proto__': {'volume': .9, 'muted': True, 'monitor': True}},
+                'sourceDecorations': {'first': {'telemetry': {'enabled': True, 'textOpacity': .9}, 'fill': 'contain'}}}
+        edit = {**base, 'localMonitorVolume': .31, 'archiveAudioCameraId': None, 'largeSourceIds': ['__proto__'],
+                'sourceAudio': {'untouched': {'volume': 1}, '__proto__': {'volume': .4, 'muted': True, 'monitor': True}},
+                'sourceDecorations': {'first': {'telemetry': {'enabled': True, 'textOpacity': .2}, 'fill': 'contain'}}}
+        current = {**initial, 'sourceAudio': {**initial['sourceAudio'], 'peer-new': {'volume': .7}, 'untouched': {'volume': .6}}}
+        compact_base = {'localMonitorVolume': 1, 'archiveAudioCameraId': 'one', 'largeSourceIds': [],
+                        'sourceAudio': {'old': {'volume': .5}, '__proto__': base['sourceAudio']['__proto__']},
+                        'sourceDecorations': base['sourceDecorations']}
+        compact_edit = {'localMonitorVolume': .31, 'archiveAudioCameraId': None, 'largeSourceIds': ['__proto__'],
+                        'sourceAudio': {'__proto__': edit['sourceAudio']['__proto__']},
+                        'sourceDecorations': edit['sourceDecorations']}
+        results = []
+        for user, original, changed in [('full-pair-owner', base, edit), ('compact-pair-owner', compact_base, compact_edit)]:
+            self.store.account_preference(user, 'monitor-view', {'value': current}, True)
+            results.append(self.store.account_preference(user, 'monitor-view', {'baseValue': original, 'value': changed}, True)['value'])
+        self.assertEqual(results[0], results[1])
+        self.assertEqual(results[1]['sourceAudio'], {'untouched': {'volume': .6}, 'peer-new': {'volume': .7},
+                         '__proto__': {'volume': .4, 'muted': True, 'monitor': True}})
+        self.assertEqual(results[1]['sourceDecorations']['first'],
+                         {'telemetry': {'enabled': True, 'textOpacity': .2}, 'fill': 'contain'})
+        self.assertEqual(results[1]['futureSetting'], {'enabled': True})
+
+    def test_partial_monitor_updates_and_removals_are_atomic_and_retain_full_inherited_controls(self) -> None:
+        self.create_user('partial-owner', ['viewer'])
+        initial = {'localMonitorVolume': 1, 'archiveAudioCameraId': 'old',
+                   'sourceAudio': {'removed': {'volume': .5}, 'peer': {'volume': .7}},
+                   'sourceDecorations': {}, 'futureSetting': {'enabled': True}}
+        self.store.account_preference('partial-owner', 'monitor-view', {'value': initial}, True)
+        base = {'localMonitorVolume': 1, 'archiveAudioCameraId': 'old',
+                'sourceAudio': {'removed': {'volume': .5}, '__proto__': {'volume': .9, 'muted': True, 'monitor': True}},
+                'sourceDecorations': {'first': {'telemetry': {'enabled': True, 'textOpacity': .9}, 'fill': 'contain'}}}
+        request = {'baseValue': base, 'value': {'localMonitorVolume': .31, 'archiveAudioCameraId': None,
+                   'sourceAudio': {'__proto__': {'volume': .4}}, 'sourceDecorations': {'first': {'telemetry': {'textOpacity': .2}}}},
+                   'partial': True, 'removedPaths': [['sourceAudio', 'removed']]}
+        saved = self.store.account_preference('partial-owner', 'monitor-view', request, True)
+        self.assertEqual(saved['revision'], 2)
+        self.assertEqual(saved['value'], {**initial, 'localMonitorVolume': .31, 'archiveAudioCameraId': None,
+            'sourceAudio': {'peer': {'volume': .7}, '__proto__': {'volume': .4, 'muted': True, 'monitor': True}},
+            'sourceDecorations': {'first': {'telemetry': {'enabled': True, 'textOpacity': .2}, 'fill': 'contain'}}})
+        for invalid in [None, {}, [['missing']], [[]], [['sourceAudio', 1]], [['x'] * 33],
+                        [['sourceAudio', 'removed']] * 4097, [['futureSetting', 'enabled', 'nested']]]:
+            with self.assertRaises(cluster.ApiError):
+                self.store.account_preference('partial-owner', 'monitor-view', {**request, 'removedPaths': invalid}, True)
+            self.assertEqual(self.store.account_preference('partial-owner', 'monitor-view'), saved)
+        for invalid in [{'value': {}, 'partial': True}, {'value': {}, 'baseValue': {}, 'partial': 1},
+                        {'value': {}, 'baseValue': {}, 'partial': False}, {'value': {}, 'baseValue': {}, 'removedPaths': []}]:
+            with self.assertRaises(cluster.ApiError):
+                self.store.account_preference('partial-owner', 'monitor-view', invalid, True)
+        with self.assertRaises(cluster.ApiError):
+            self.store.account_preference('partial-owner', 'workspace-layout', {'value': {}, 'baseValue': {}, 'partial': True}, True)
+        inherited = {'sourceDecorations': {'first': {'telemetry': {'enabled': True, 'fields': ['fps']}, 'fill': 'contain'}}}
+        original = json.loads(json.dumps(inherited))
+        self.store.account_preference('partial-owner', 'monitor-view', {'value': {'sourceDecorations': {}}}, True)
+        deleted = self.store.account_preference('partial-owner', 'monitor-view', {
+            'baseValue': inherited, 'value': {'sourceDecorations': {'first': {}}}, 'partial': True,
+            'removedPaths': [['sourceDecorations', 'first', 'telemetry', 'fields']]}, True)['value']
+        self.assertEqual(inherited, original)
+        self.assertEqual(deleted['sourceDecorations']['first'], {'telemetry': {'enabled': True}, 'fill': 'contain'})
+
     def test_self_profile_acl_and_password_change(self) -> None:
         self.create_user("profile-user", ["viewer"])
         initial = self.store.account_profile("profile-user")

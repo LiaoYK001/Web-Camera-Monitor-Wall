@@ -1,11 +1,12 @@
 import { expect, test, type BrowserContext, type Page } from '@playwright/test';
+import { savePreferenceFixture } from '../harness/preferenceServer';
 
 const fixture = '/tests/harness/usability.html?area=monitor&mixer&account-server';
 type Preferences = Record<string, any>;
 
 // Separate browser contexts have no shared IndexedDB, cookies or storage.
 // This fixture acts as the account server, shared only by the selected user.
-async function account(context: BrowserContext, server: Map<string, Preferences>, user: string, blocked = false, atomic = false) {
+async function account(context: BrowserContext, server: Map<string, Preferences>, user: string, blocked = false) {
   await context.addInitScript(({ blocked }) => {
     let allowResume = !blocked;
     window.addEventListener('pointerdown', () => { allowResume = true; }, { capture: true });
@@ -30,32 +31,70 @@ async function account(context: BrowserContext, server: Map<string, Preferences>
   await context.route('**/api/v2/account/preferences/monitor-view', async (route) => {
     if (route.request().method() === 'PUT') {
       const request = route.request().postDataJSON();
-      if (atomic && request.baseValue) {
-        // The stub accepts only changed audio fields. Real recursive/atomic
-        // merging is qualified separately through the cluster store and image.
-        const next = { ...server.get(user) };
-        for (const field of ['localMonitorVolume', 'audioOutput']) {
-          if (request.value[field] !== request.baseValue[field]) next[field] = request.value[field];
-        }
-        const sources = { ...next.sourceAudio };
-        for (const [id, control] of Object.entries(request.value.sourceAudio ?? {})) {
-          const base = request.baseValue.sourceAudio?.[id];
-          if (!base) { sources[id] = control; continue; }
-          const edited = { ...base, ...sources[id] };
-          for (const field of ['volume', 'muted', 'monitor']) {
-            if ((control as Preferences)[field] !== base[field]) edited[field] = (control as Preferences)[field];
-          }
-          sources[id] = edited;
-        }
-        if (Object.keys(sources).length) next.sourceAudio = sources;
-        server.set(user, next);
-      } else server.set(user, request.value);
+      server.set(user, savePreferenceFixture(server.get(user), request));
     }
     await route.fulfill({ json: { value: server.get(user) ?? null } });
   });
 }
 const ready = async (page: Page) => expect(page.getByRole('slider', { name: '本地监听主音量' })).toBeEnabled();
 const output = (page: Page) => page.locator('.hero-audio-control').getByRole('combobox', { name: '声音输出模式' });
+
+test('a one-field edit in a large multi-scene account uses a small keepalive body and retains unrelated sources', async ({ page, context }) => {
+  const server = new Map<string, Preferences>(); await account(context, server, 'large-account', false);
+  await page.goto(fixture.replace('area=monitor', 'area=devices'));
+  const base = await page.evaluate(async () => {
+    const { defaultMonitorView, defaultSourceDecoration, normalizeMonitorView } = await import('/src/monitorView.ts');
+    return normalizeMonitorView({ ...defaultMonitorView(), sourceDecorations: Object.fromEntries(Array.from({ length: 1000 }, (_, index) =>
+      [`other-scene-${index}`, defaultSourceDecoration()])) }, 16);
+  });
+  const fullPairBytes = Buffer.byteLength(JSON.stringify({ baseValue: base, value: { ...base, localMonitorVolume: .31 } }));
+  console.log('LARGE_PREFERENCE_BASELINE', { sources: 1000, fullPairBytes });
+  expect(fullPairBytes).toBeGreaterThan(1024 * 1024);
+  server.set('large-account', base);
+  await context.addInitScript(() => {
+    const original = window.fetch;
+    window.fetch = (input, init) => {
+      if (String(input).endsWith('/account/preferences/monitor-view') && init?.method === 'PUT')
+        (window as any).preferenceWire = { bytes: new TextEncoder().encode(String(init.body)).byteLength, keepalive: init.keepalive };
+      return original(input, init);
+    };
+  });
+  await page.goto(fixture); await ready(page); await page.clock.install();
+  await page.getByRole('slider', { name: '本地监听主音量' }).fill('0.31');
+  await page.evaluate(() => window.dispatchEvent(new Event('pagehide')));
+  await expect.poll(() => server.get('large-account')?.localMonitorVolume).toBe(.31);
+  const wire = await page.evaluate(() => (window as any).preferenceWire);
+  expect(wire.bytes).toBeLessThan(1024); expect(wire.keepalive).toBe(true);
+  expect(server.get('large-account')?.sourceDecorations).toEqual(base.sourceDecorations);
+  console.log('LARGE_PREFERENCE_COMPACT', wire);
+  await page.getByRole('checkbox', { name: '统计叠层（全部来源）', exact: true }).check();
+  await page.clock.runFor(400);
+  await expect.poll(() => server.get('large-account')?.sourceDecorations?.['other-scene-999']?.telemetry.enabled).toBe(true);
+  const bulk = await page.evaluate(() => (window as any).preferenceWire);
+  expect(bulk.bytes).toBeLessThan(1024 * 1024);
+  expect(Object.values(server.get('large-account')!.sourceDecorations).every((value: any) => value.telemetry.enabled)).toBe(true);
+  expect(server.get('large-account')?.sourceDecorations?.['other-scene-999'].audioMeter).toEqual(base.sourceDecorations['other-scene-999'].audioMeter);
+  console.log('LARGE_PREFERENCE_BULK', bulk);
+});
+
+test('compact source pairs retain inherited controls, deletion, arrays, null and own property names', async ({ page }) => {
+  await page.goto(fixture.replace('area=monitor', 'area=devices'));
+  const pairJson = await page.evaluate(async () => {
+    const { defaultMonitorView } = await import('/src/monitorView.ts');
+    const { compactMonitorPreference } = await import('/src/monitorPreferenceMerge.ts');
+    const base = { ...defaultMonitorView(), archiveAudioCameraId: 'old-camera',
+      sourceAudio: JSON.parse('{"__proto__":{"volume":0.9,"muted":true,"monitor":true},"untouched":{"volume":1,"muted":false,"monitor":true},"removed":{"volume":0.5,"muted":true,"monitor":false}}') };
+    const value = { ...base, archiveAudioCameraId: null, largeSourceIds: ['__proto__'],
+      sourceAudio: Object.fromEntries([['__proto__', { volume: .4, muted: true, monitor: true }], ['untouched', base.sourceAudio.untouched]]) };
+    return JSON.stringify(compactMonitorPreference(value, base));
+  });
+  const pair = JSON.parse(pairJson); // Exercise JSON transport, including __proto__, without the test driver's object serializer.
+  expect(pair).toEqual({
+    baseValue: { archiveAudioCameraId: 'old-camera', largeSourceIds: [], sourceAudio: JSON.parse('{"__proto__":{"volume":0.9,"muted":true,"monitor":true},"removed":{"volume":0.5,"muted":true,"monitor":false}}') },
+    value: { archiveAudioCameraId: null, largeSourceIds: ['__proto__'], sourceAudio: JSON.parse('{"__proto__":{"volume":0.4}}') },
+    partial: true, removedPaths: [['sourceAudio', 'removed']],
+  });
+});
 
 test('a failed fresh preference read keeps decoded fixture pictures muted until account recovery', async ({ page, context }) => {
   const server = new Map<string, Preferences>([['alice', { localMonitorVolume: .18, audioMonitorEnabled: true, audioOutput: 'meter-only' }]]);
@@ -149,7 +188,7 @@ test('a valid encrypted private cache restores account controls while the server
 test('a stale same-account window edits only its field and adopts the merged acknowledgement', async ({ browser }) => {
   const server = new Map<string, Preferences>();
   const a = await browser.newContext(), b = await browser.newContext();
-  await account(a, server, 'alice', false, true); await account(b, server, 'alice', false, true);
+  await account(a, server, 'alice', false); await account(b, server, 'alice', false);
   const first = await a.newPage(), second = await b.newPage();
   for (const page of [first, second]) { await page.goto(fixture); await ready(page); await page.clock.install(); }
   await first.getByRole('slider', { name: '本地监听主音量' }).fill('0.41'); await first.clock.runFor(400);
@@ -165,7 +204,7 @@ test('a stale same-account window edits only its field and adopts the merged ack
 test('a failed pending edit keeps its baseline through reload and merges after another device saves', async ({ browser }) => {
   const server = new Map<string, Preferences>();
   const a = await browser.newContext(), b = await browser.newContext();
-  await account(a, server, 'alice', false, true); await account(b, server, 'alice', false, true);
+  await account(a, server, 'alice', false); await account(b, server, 'alice', false);
   let failing = true;
   await a.route('**/api/v2/account/preferences/monitor-view', route => route.request().method() === 'PUT' && failing
     ? route.fulfill({ status: 503, json: {} }) : route.fallback());
@@ -185,7 +224,7 @@ test('a failed pending edit keeps its baseline through reload and merges after a
 test('two stale windows creating the first source controls keep inherited mute and the other volume edit', async ({ browser }) => {
   const server = new Map<string, Preferences>();
   const a = await browser.newContext(), b = await browser.newContext();
-  await account(a, server, 'alice', false, true); await account(b, server, 'alice', false, true);
+  await account(a, server, 'alice', false); await account(b, server, 'alice', false);
   const first = await a.newPage(), second = await b.newPage();
   for (const page of [first, second]) { await page.goto(fixture); await ready(page); await page.clock.install(); }
   await first.getByRole('slider', { name: '有声音的摄像机 音量' }).fill('0.63'); await first.clock.runFor(400);
@@ -197,7 +236,7 @@ test('two stale windows creating the first source controls keep inherited mute a
 });
 
 test('a merged acknowledgement preserves a newer local input before its debounce submits', async ({ page, context }) => {
-  const server = new Map<string, Preferences>(); await account(context, server, 'alice', false, true);
+  const server = new Map<string, Preferences>(); await account(context, server, 'alice', false);
   await page.goto(fixture); await ready(page); await page.clock.install();
   let arrived!: () => void, release!: () => void;
   const requested = new Promise<void>(resolve => { arrived = resolve; });
@@ -206,7 +245,7 @@ test('a merged acknowledgement preserves a newer local input before its debounce
   await page.route('**/api/v2/account/preferences/monitor-view', async route => {
     if (!once || route.request().method() !== 'PUT') return route.fallback();
     once = false;
-    const value = { ...route.request().postDataJSON().value, localMonitorVolume: .41 };
+    const value = { ...savePreferenceFixture(server.get('alice'), route.request().postDataJSON()), localMonitorVolume: .41 };
     server.set('alice', value); arrived(); await held;
     await route.fulfill({ json: { value } });
   });

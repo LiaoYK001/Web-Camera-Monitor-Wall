@@ -1,4 +1,5 @@
 import { expect, test, type Page } from '@playwright/test';
+import { savePreferenceFixture } from '../harness/preferenceServer';
 import type { NvrExportJob, NvrSegment } from '../../src/types';
 
 const fixture = '/tests/harness/nvr-evidence.html';
@@ -33,7 +34,7 @@ async function protocol(page: Page, options: { catalogFailure?: boolean; prefere
     if(path==='/api/v1/auth/session') return reply({authenticated:true,user:'fixture-admin'});
     if(path==='/api/v2/account/preferences/monitor-view') {
       if(state.preferences.failed)return reply({error:{code:'service_unavailable',message:'unavailable'}},503);
-      if(request.method()==='PUT'){state.preferences.value=request.postDataJSON().value;state.preferences.writes++;}
+      if(request.method()==='PUT'){state.preferences.value=savePreferenceFixture(state.preferences.value,request.postDataJSON());state.preferences.writes++;}
       return reply({value:state.preferences.value});
     }
     if(path==='/api/v1/nvr/status') return state.catalogFailure ? reply({error:{code:'service_unavailable',message:'录像服务暂不可用'}},503) : reply({status:'ok',freeBytes:1e9,diskPressure:false,

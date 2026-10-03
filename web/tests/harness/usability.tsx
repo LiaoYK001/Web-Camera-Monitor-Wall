@@ -9,6 +9,7 @@ import DirectPreview from '../../src/DirectPreview';
 import App from '../../src/App';
 import { clearPrivateRuntimeState } from '../../src/localRuntime';
 import { defaultMonitorView, defaultSourceDecoration } from '../../src/monitorView';
+import { savePreferenceFixture } from './preferenceServer';
 import type { OperationalIssue, RuntimeSettings, SceneDocument, SourceCatalogItem, StudioDocument } from '../../src/types';
 import '../../src/styles.css';
 import '../../src/interactions.css';
@@ -107,7 +108,8 @@ window.fetch = async (input, init) => {
       metrics.activeSaves++; metrics.maxConcurrentSaves = Math.max(metrics.maxConcurrentSaves, metrics.activeSaves);
       updateMetrics(); await wait(650);
       if (init.signal?.aborted) { metrics.activeSaves--; updateMetrics(); throw new DOMException('Aborted', 'AbortError'); }
-      const value = JSON.parse(String(init.body)).value;
+      const request = JSON.parse(String(init.body));
+      const value = url.pathname.endsWith('/monitor-view') ? savePreferenceFixture(preferences.get(url.pathname), request) : request.value;
       preferences.set(url.pathname, value);
       if (url.pathname.endsWith('/workspace-layout')) metrics.saves.push(value);
       if (url.pathname.endsWith('/monitor-view')) metrics.monitorSaves.push(value);
