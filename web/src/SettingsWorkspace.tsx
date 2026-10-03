@@ -3,6 +3,7 @@ import { fetchRuntimeSettings, patchRuntimeSettings } from './api';
 import ConfigProfiles from './ConfigProfiles';
 import DesktopSettings from './DesktopSettings';
 import AboutSettings from './AboutSettings';
+import DeveloperDiagnostics from './DeveloperDiagnostics';
 import { useDesktopWork } from './desktopRuntime';
 import { useMonitorPreferences } from './useMonitorPreferences';
 import type { RuntimeSettings } from './types';
@@ -78,6 +79,7 @@ export default function SettingsWorkspace({ studio, onProfileSelected }: {
       <button type="button" onClick={() => jumpTo('settings-playback')}>播放优化</button>
       <button type="button" onClick={() => jumpTo('settings-runtime')}>运行设置{dirty && <i aria-label="有未保存修改" />}</button>
       <button type="button" onClick={() => jumpTo('settings-about')}>关于与更新</button>
+      <button type="button" onClick={() => jumpTo('settings-diagnostics')}>开发者诊断</button>
     </nav>
     <div id="settings-profiles" className="settings-section-target" tabIndex={-1}><ConfigProfiles studio={studio ?? null} onProfileSelected={onProfileSelected} /></div>
     {window.webobsDesktop && <div id="settings-desktop" className="settings-section-target" tabIndex={-1}><DesktopSettings /></div>}
@@ -116,5 +118,6 @@ export default function SettingsWorkspace({ studio, onProfileSelected }: {
     </form>
     {settings && <article className="deployment-readonly"><h2>部署配置（只读）</h2><p>TLS、端口、Secret 路径和 GPU 设备通过部署配置修改并重启。</p><div>{Object.keys(settings.deployment).map((key) => <span key={key}>{key} · 只读</span>)}</div></article>}
     <div id="settings-about" className="settings-section-target" tabIndex={-1}><AboutSettings /></div>
+    <div id="settings-diagnostics" className="settings-section-target" tabIndex={-1}><DeveloperDiagnostics /></div>
   </section>;
 }

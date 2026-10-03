@@ -128,6 +128,15 @@ try {
   await expect.poll(() => page.evaluate(() => window.webobsAndroidForeground)).toBe(true);
   checks.push('actual HOME/resume native lifecycle signal + background video pause');
   await page.goto(`${base}/#settings`);
+  const diagnostics = page.getByRole('region', { name: '开发者诊断', exact: true });
+  await diagnostics.getByRole('checkbox').check();
+  await expect(diagnostics.getByRole('heading', { name: /场景同步正常/ })).toBeVisible();
+  const oldAttempts = await diagnostics.locator('pre').evaluate(element => JSON.parse(element.textContent).connections[0].attempts);
+  await diagnostics.getByRole('button', { name: '重新连接场景同步', exact: true }).click();
+  await expect.poll(() => diagnostics.locator('pre').evaluate(element => {
+    const state = JSON.parse(element.textContent).connections[0]; return state.phase === 'online' ? state.attempts : 0;
+  })).toBeGreaterThan(oldAttempts);
+  checks.push('actual authenticated scene delivery, opt-in diagnostics and manual control reconnect');
   await tapNative({ res: `${pkg}:id/app_menu` });
   await device.wait({ text: '客户端菜单' });
   await tapNative({ text: '关于与检查更新' });

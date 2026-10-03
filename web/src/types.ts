@@ -88,7 +88,7 @@ export interface SceneItem {
 }
 
 export interface SceneDocument {
-  schemaVersion: 5;
+  schemaVersion: 5 | 6;
   revision: number;
   id: string;
   name: string;

@@ -191,49 +191,7 @@ export async function studioAction(
   return (await response.json()) as StudioDocument;
 }
 
-export function connectSceneEvents(
-  onEvent: (event: SceneEvent) => void,
-  onState: (connected: boolean) => void,
-): () => void {
-  let closed = false;
-  let socket: WebSocket | undefined;
-  let retryTimer: number | undefined;
-  let retryDelay = 500;
-
-  const connect = () => {
-    if (closed) return;
-    const scheme = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-    socket = new WebSocket(`${scheme}//${window.location.host}/api/v1/ws`);
-    socket.addEventListener('open', () => {
-      if (closed) return;
-      retryDelay = 500;
-      onState(true);
-    });
-    socket.addEventListener('message', (message) => {
-      if (closed) return;
-      try {
-        const event = JSON.parse(String(message.data)) as SceneEvent;
-        if (event.type === 'scene.snapshot' || event.type === 'scene.updated') onEvent(event);
-      } catch {
-        // Ignore malformed unsolicited events and keep the last valid scene.
-      }
-    });
-    socket.addEventListener('close', () => {
-      if (closed) return;
-      onState(false);
-      retryTimer = window.setTimeout(connect, retryDelay);
-      retryDelay = Math.min(retryDelay * 2, 8000);
-    });
-    socket.addEventListener('error', () => socket?.close());
-  };
-
-  connect();
-  return () => {
-    closed = true;
-    if (retryTimer !== undefined) window.clearTimeout(retryTimer);
-    socket?.close();
-  };
-}
+export { connectSceneEvents } from './sceneEvents';
 
 async function nvrRequest<T>(path: string, init?: RequestInit): Promise<T> {
   const response = await fetch(`/api/v1/nvr${path}`, { cache: 'no-store', ...init });
