@@ -134,6 +134,33 @@ let created = false, browser;
     const bulkWire = await wide.evaluate(() => JSON.parse(sessionStorage.getItem('preference-test-wire')).at(-1));
     assert.ok(bulkWire.bytes < 1024 * 1024);
     console.log(`PASS actual atomic bulk update: 1000 source telemetry preferences saved with ${bulkWire.bytes} bytes; unrelated audio meter controls retained.`);
+    await wide.close();
+    for (const identity of ['constructor', '__proto__']) {
+      const currentStudio = await (await context.request.get(base + '/api/v1/studio')).json();
+      const currentScene = currentStudio.scenes.find(value => value.id === currentStudio.previewSceneId);
+      currentScene.sources[0].id = identity; currentScene.items[0].sourceId = identity;
+      assert.equal((await context.request.put(base + '/api/v1/studio', {
+        headers: { ...headers, 'If-Match': `"${currentStudio.revision}"` }, data: currentStudio })).status(), 200);
+      const identityPreferences = { ...preferences, audioMonitorEnabled: false,
+        sourceDecorations: Object.fromEntries([[identity, { fill: 'contain', telemetry: { enabled: true, fields: ['fps'] } }]]) };
+      assert.equal((await context.request.put(base + '/api/v2/account/preferences/monitor-view', { headers, data: { value: identityPreferences } })).status(), 200);
+      const identityPage = await context.newPage();
+      await identityPage.goto(base + '/#monitor');
+      await expect(identityPage.getByRole('slider', { name: '本地监听主音量' })).toBeEnabled();
+      await identityPage.waitForFunction(() => document.querySelector('.direct-preview video')?.getVideoPlaybackQuality().totalVideoFrames >= 10,
+        null, { timeout: 60000 });
+      await identityPage.getByRole('slider', { name: '本地监听主音量' }).fill('0.22');
+      await identityPage.reload();
+      await expect(identityPage.getByRole('slider', { name: '本地监听主音量' })).toHaveValue('0.22');
+      await identityPage.waitForFunction(() => document.querySelector('.direct-preview video')?.getVideoPlaybackQuality().totalVideoFrames >= 10,
+        null, { timeout: 60000 });
+      const identitySaved = (await (await context.request.get(base + '/api/v2/account/preferences/monitor-view')).json()).value;
+      assert.ok(Object.hasOwn(identitySaved.sourceDecorations, identity));
+      assert.equal(identitySaved.sourceDecorations[identity].fill, 'contain');
+      assert.deepEqual(identitySaved.sourceDecorations[identity].telemetry.fields, ['fps']);
+      await identityPage.close();
+    }
+    console.log('PASS actual accepted Scene identities constructor/__proto__: real Direct H264 frames before and after preference save/reload, with own source decorations retained. No API/media mocks.');
   } finally {
     await browser?.close();
     if (created) run('rm', '--force', '--volumes', name);

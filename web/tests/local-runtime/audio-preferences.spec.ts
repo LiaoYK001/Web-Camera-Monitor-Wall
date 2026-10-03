@@ -39,6 +39,20 @@ async function account(context: BrowserContext, server: Map<string, Preferences>
 const ready = async (page: Page) => expect(page.getByRole('slider', { name: '本地监听主音量' })).toBeEnabled();
 const output = (page: Page) => page.locator('.hero-audio-control').getByRole('combobox', { name: '声音输出模式' });
 
+for (const identity of ['constructor', '__proto__']) test(`prototype-named ${identity} source displays and preserves inherited audio through save and reload`, async ({ page, context }) => {
+  const server = new Map<string, Preferences>(); await account(context, server, 'identity-account');
+  await page.goto(`${fixture}&source-identities=${identity}`); await ready(page); await page.clock.install();
+  const gain = page.getByRole('slider', { name: '有声音的摄像机 音量' });
+  await expect(gain).toHaveValue('1');
+  await expect(page.getByRole('button', { name: '有声音的摄像机 静音', exact: true })).toHaveAttribute('aria-pressed', 'true');
+  await gain.fill('0.63'); await page.clock.runFor(400);
+  await expect.poll(() => server.get('identity-account')?.sourceAudio?.[identity]).toEqual({ volume: .63, muted: true, monitor: true });
+  await page.reload(); await ready(page);
+  await expect(gain).toHaveValue('0.63');
+  await expect(page.getByRole('button', { name: '有声音的摄像机 静音', exact: true })).toHaveAttribute('aria-pressed', 'true');
+  expect(Object.hasOwn(server.get('identity-account')!.sourceAudio, identity)).toBe(true);
+});
+
 test('a one-field edit in a large multi-scene account uses a small keepalive body and retains unrelated sources', async ({ page, context }) => {
   const server = new Map<string, Preferences>(); await account(context, server, 'large-account', false);
   await page.goto(fixture.replace('area=monitor', 'area=devices'));

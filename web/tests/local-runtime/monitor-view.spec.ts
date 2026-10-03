@@ -1,5 +1,31 @@
 import { expect, test } from '@playwright/test';
 
+test('prototype-named source identities retain ordinary default and stored decorations', async ({ page }) => {
+  await page.goto('/');
+  const result = await page.evaluate(async () => {
+    const monitor = await import('/src/monitorView.ts');
+    const fresh = monitor.defaultMonitorView();
+    const defaults = ['constructor', '__proto__', 'toString', 'hasOwnProperty'].map(id => ({
+      id, telemetry: monitor.sourceDecoration(fresh, id).telemetry,
+      fill: monitor.resolveFillMode(fresh, id, 'cover'),
+    }));
+    const persisted = JSON.parse('{"__proto__":{"fill":"contain","telemetry":{"enabled":true,"fields":["fps"]}},"constructor":{"audioMeter":{"enabled":true,"opacity":0.4}}}');
+    const normalized = monitor.normalizeMonitorView({ ...fresh, sourceDecorations: persisted }, 2);
+    const restored = monitor.normalizeMonitorView(JSON.parse(JSON.stringify(normalized)), 2);
+    return { defaults, ids: Object.keys(restored.sourceDecorations),
+      ownProto: Object.hasOwn(restored.sourceDecorations, '__proto__'),
+      standardPrototype: Object.getPrototypeOf(restored.sourceDecorations) === Object.prototype,
+      inherited: Object.hasOwn(restored.sourceDecorations, 'toString'),
+      telemetry: monitor.sourceDecoration(restored, '__proto__').telemetry,
+      fill: monitor.resolveFillMode(restored, '__proto__', 'cover'),
+      meter: monitor.sourceDecoration(restored, 'constructor').audioMeter };
+  });
+  expect(result.defaults.every(row => row.fill === 'stretch' && row.telemetry.enabled === false)).toBe(true);
+  expect(result.ids).toEqual(['__proto__', 'constructor']);
+  expect(result).toMatchObject({ ownProto: true, standardPrototype: true, inherited: false,
+    telemetry: { enabled: true, fields: ['fps'] }, fill: 'contain', meter: { enabled: true, opacity: .4 } });
+});
+
 test('generates stable bounded Scene v5 layouts for every 1-16 and M/S combination', async ({ page }) => {
   await page.goto('/');
   const result = await page.evaluate(async () => {
