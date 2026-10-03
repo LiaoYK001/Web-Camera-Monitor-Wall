@@ -72,7 +72,11 @@ python android/tests/test_emulator.py --serial 127.0.0.1:16384 --adb $adb --dock
 
 测试在独立完整产品容器中创建一次性账号和 FFmpeg 合成源，通过 ADB reverse 在 **实际 APK 的 WebView** 中操作。结束后移除测试容器/卷及 reverse，不清空模拟器、不使用现有摄像机密码；截图与结果只保存在忽略的 `tests/artifacts/android/`。WebUI 使用当前 `web/dist` 的只读挂载。
 
-The emulator probe uses the real installed APK, real account APIs, official go2rtc UI and real synthetic H.264 media. It is not a desktop-browser fixture. This does not qualify physical cameras, ARM devices, microphone hardware, private CA setup, downloads/exports, battery consumption or long-running recovery. Record actual passed checks in the local receipt; do not infer them from source support.
+The emulator probe uses the real installed APK, real account APIs, official go2rtc UI, live synthetic H.264 and a stopped recorder's actual H.264/AAC archive. It checks archive play/pause, thumbnails, an authenticated snapshot response/hash and date-switch cleanup. It is not a desktop-browser fixture. This does not qualify physical cameras, ARM devices, microphone hardware, private CA setup, Android DownloadManager/long exports, battery consumption or long-running recovery. Record actual passed checks in the local receipt; do not infer them from source support.
+
+2026-10-03：同一 MuMu Android 15 / API 35 开发 APK 搭配当前生产 WebUI 和隔离完整 Linux 产品镜像，新增真实 H.264/AAC 归档播放/暂停、缩略图、账号截图响应及 SHA-256、切换日期后的旧播放器清理；已有账号、Scenes、投影、官方 go2rtc、声音/优化偏好、HOME/恢复及重启回归全部通过。未构建或发布新 APK；未验收 Android 原生下载管理器、长导出或真机。
+
+2026-10-03: The installed MuMu Android 15/API 35 development APK passed the added archive checks and all existing account/Scenes/projector/go2rtc/audio/optimization/HOME/restart regressions using the current production WebUI and isolated complete Linux product image. No new APK was built or released; native downloads, long exports and physical-device qualification remain open.
 
 2026-10-02：MuMu Android 15 / API 35（x86_64）已实测安装与覆盖安装、真实账号登录、Scenes 建档与共享登录投影、横竖屏切换、声音输出模式/主音量和弱网开关持久化、官方 go2rtc/本地 Monaco、160×90 H.264 MSE 持续解码、HOME/前台恢复、原生关于页、进程重启后会话与偏好恢复。实际设备或摄像机验证仍待进行。后台连接释放需后端部署本次新增生命周期适配的 WebUI；旧 WebUI 不保证该行为。
 

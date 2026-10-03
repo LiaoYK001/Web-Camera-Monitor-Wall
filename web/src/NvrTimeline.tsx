@@ -1,16 +1,16 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useNvrExportJobs } from './useNvrExportJobs';
 import { NvrExportPanel } from './NvrExportPanel';
+import { archiveError, useNvrArchiveQuery } from './useNvrArchiveQuery';
+import { withRequestTimeout } from './requestTimeout';
 import {
   createNvrSnapshot,
   createPlaybackLease,
   deleteNvrSegment,
-  fetchNvrStatus,
-  fetchNvrTimeline,
   setNvrLock,
   releasePlaybackLease,
 } from './api';
-import type { NvrSegment, NvrTimeline as TimelineDocument, NvrTimelineCamera } from './types';
+import type { NvrSegment, NvrTimelineCamera } from './types';
 
 const DAY_MS = 86_400_000;
 const clamp = (value: number, minimum: number, maximum: number) => Math.min(Math.max(value, minimum), maximum);
@@ -31,9 +31,6 @@ function playable(camera: NvrTimelineCamera, cursor: number): NvrSegment | undef
 export default function NvrTimeline({ onBack }: { onBack: () => void }) {
   const [day, setDay] = useState(todayUtc());
   const [timeZone, setTimeZone] = useState(Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC');
-  const [cameraIds, setCameraIds] = useState<string[]>([]);
-  const [availableIds, setAvailableIds] = useState<string[]>([]);
-  const [timeline, setTimeline] = useState<TimelineDocument | null>(null);
   const [cursor, setCursor] = useState(utcDay(todayUtc()));
   const [speed, setSpeed] = useState(1);
   const [playing, setPlaying] = useState(false);
@@ -42,53 +39,33 @@ export default function NvrTimeline({ onBack }: { onBack: () => void }) {
   const playLock = useRef(false);
   const videoIntents = useRef(new WeakMap<HTMLVideoElement, number>());
   const [notice, setNotice] = useState('');
-  const [loading, setLoading] = useState(true);
   const exports = useNvrExportJobs();
   const [duration, setDuration] = useState(10);
   const [busy, setBusy] = useState(false);
   const [deleting, setDeleting] = useState(false);
   const [snapshotLink, setSnapshotLink] = useState<{ downloadUrl: string; sha256: string } | null>(null);
-  const [diskPressure, setDiskPressure] = useState(false);
   const actionLock = useRef(false);
   const mounted = useRef(true);
-  const query = useRef<AbortController | null>(null);
+  const lifecycle = useRef<AbortController | null>(null);
   const releaseLeases = useRef<() => Promise<void>>(async () => {});
-  useEffect(() => { mounted.current = true; return () => { mounted.current = false; query.current?.abort(); }; }, []);
+  useEffect(() => {
+    const owner = new AbortController(); lifecycle.current = owner; mounted.current = true;
+    return () => { mounted.current = false; ++playIntent.current; owner.abort(); };
+  }, []);
   const videos = useRef<Record<string, HTMLVideoElement | null>>({});
   const rangeStart = utcDay(day);
   const rangeEnd = rangeStart + DAY_MS;
+  const archive = useNvrArchiveQuery(rangeStart, rangeEnd);
+  const { cameraIds, setCameraIds, availableIds, diskPressure, timeline, loading, reload } = archive;
 
   useEffect(() => {
-    const controller = new AbortController();
-    fetchNvrStatus(controller.signal).then((status) => {
-      const ids = status.cameras.map((camera) => camera.id);
-      if (controller.signal.aborted) return;
-      setDiskPressure(status.diskPressure);
-      setAvailableIds(ids);
-      setCameraIds((current) => current.length ? current.filter((id) => ids.includes(id)).slice(0, 4) : ids.slice(0, 4));
-    }).catch((error: Error) => { if (!controller.signal.aborted) setNotice(error.message); });
-    return () => controller.abort();
-  }, []);
-
-  const reload = useCallback(() => {
-    query.current?.abort();
-    if (!cameraIds.length) { setTimeline(null); setLoading(false); return; }
-    const controller = new AbortController(); query.current = controller;
-    setLoading(true);
-    fetchNvrTimeline(rangeStart, rangeEnd, cameraIds, controller.signal)
-      .then((document) => {
-        if (controller.signal.aborted) return;
-        setTimeline(document);
-        const first = document.cameras.flatMap((camera) => camera.segments)
-          .sort((left, right) => left.startUtcMs - right.startUtcMs)[0];
-        setCursor((current) => current > rangeStart && current < rangeEnd ? current : clamp(first?.startUtcMs ?? rangeStart, rangeStart, rangeEnd - 1));
-      })
-      .catch((error: Error) => { if (!controller.signal.aborted) setNotice(error.message); })
-      .finally(() => { if (!controller.signal.aborted) setLoading(false); });
-    return () => controller.abort();
-  }, [cameraIds, rangeEnd, rangeStart]);
-
-  useEffect(() => reload(), [reload]);
+    if (!timeline) return;
+    const first = timeline.cameras.flatMap(camera => camera.segments)
+      .filter(segment => !['missing', 'corrupt', 'deleted'].includes(segment.integrity))
+      .sort((left, right) => left.startUtcMs - right.startUtcMs)[0];
+    setCursor(current => current > rangeStart && current < rangeEnd ? current
+      : clamp(first?.startUtcMs ?? rangeStart, rangeStart, rangeEnd - 1));
+  }, [timeline, rangeStart, rangeEnd]);
 
   const active = useMemo(() => timeline?.cameras.map((camera) => ({ camera, segment: playable(camera, cursor) })) ?? [], [timeline, cursor]);
   const master = active.find((entry) => entry.segment);
@@ -99,17 +76,18 @@ export default function NvrTimeline({ onBack }: { onBack: () => void }) {
     let leaseIds: string[] = [];
     let inFlight: Promise<void> | null = null;
     const release = async (ids: string[]) => {
-      await Promise.all(ids.map(id => releasePlaybackLease(id).catch(() => undefined)));
+      await Promise.all(ids.map(id => withRequestTimeout(8000, signal => releasePlaybackLease(id, signal)).catch(() => undefined)));
     };
     const renew = async () => {
       if (closed || inFlight || deleting || !activeSegmentKey) return;
       inFlight = (async () => {
-        const acquired = await Promise.all(activeSegmentKey.split(',').map(id => createPlaybackLease(id, 40).catch(() => null)));
+        const acquired = await Promise.all(activeSegmentKey.split(',').map(id =>
+          withRequestTimeout(8000, signal => createPlaybackLease(id, 40, signal)).catch(() => null)));
         const next = acquired.flatMap(lease => lease ? [lease.id] : []);
         if (closed) { await release(next); return; }
         const previous = leaseIds; leaseIds = next;
         await release(previous);
-        if (acquired.some(lease => !lease) && mounted.current) setNotice('部分录像保护续期失败，片段可能已被清理。请刷新时间线。');
+        if (!closed && acquired.some(lease => !lease) && mounted.current) setNotice('部分录像保护续期失败，片段可能已被清理。请刷新时间线。');
       })();
       try { await inFlight; } finally { inFlight = null; }
     };
@@ -162,7 +140,8 @@ export default function NvrTimeline({ onBack }: { onBack: () => void }) {
     return () => window.clearInterval(timer);
   }, [playing, seekAll, timeline, rangeEnd]);
 
-  const pauseAll = () => { ++playIntent.current; playLock.current = false; setStarting(false); setPlaying(false); Object.values(videos.current).forEach(video => video?.pause()); };
+  const pauseAll = useCallback(() => { ++playIntent.current; playLock.current = false; setStarting(false); setPlaying(false); Object.values(videos.current).forEach(video => video?.pause()); }, []);
+  useEffect(() => { pauseAll(); }, [archive.selectionKey, pauseAll]);
   const playVideo = async (video: HTMLVideoElement, intent: number) => {
     videoIntents.current.set(video, intent);
     await video.play();
@@ -185,24 +164,26 @@ export default function NvrTimeline({ onBack }: { onBack: () => void }) {
   };
 
   const selectedSegment = master?.segment;
-  const perform = async (operation: () => Promise<void>) => {
+  const perform = async (operation: (signal: AbortSignal) => Promise<void>) => {
     if (actionLock.current) return;
+    const owner = lifecycle.current;
+    if (!owner || owner.signal.aborted) return;
     actionLock.current = true; setBusy(true);
-    try { await operation(); }
-    catch (error) { if (mounted.current) setNotice(error instanceof Error ? error.message : '操作失败'); }
+    try { await withRequestTimeout(35_000, operation, owner.signal); }
+    catch (error) { if (!owner.signal.aborted) setNotice(error instanceof Error && error.name === 'TimeoutError'
+      ? '操作超时，结果尚未确认。请刷新时间线核对后再操作；截图可稍后重新生成。'
+      : archiveError(error)); }
     finally { actionLock.current = false; if (mounted.current) { setBusy(false); setDeleting(false); } }
   };
   const mutateSegment = (action: 'lock' | 'unlock' | 'delete') => {
-    if (!selectedSegment) return;
+    if (!selectedSegment || actionLock.current) return;
     if (action === 'delete' && !window.confirm('删除当前片段将暂停回放，此操作不可撤销。确定继续？')) return;
-    void perform(async () => {
+    void perform(async signal => {
       if (action === 'delete') {
         pauseAll(); setDeleting(true); await releaseLeases.current();
-        await deleteNvrSegment(selectedSegment.id);
-        if (mounted.current) setTimeline(current => current && ({ ...current, cameras: current.cameras.map(camera => ({
-          ...camera, segments: camera.segments.filter(segment => segment.id !== selectedSegment.id),
-        })) }));
-      } else await setNvrLock(selectedSegment.id, action === 'lock');
+        if (signal.aborted) throw signal.reason;
+        await deleteNvrSegment(selectedSegment.id, signal);
+      } else await setNvrLock(selectedSegment.id, action === 'lock', signal);
       if (!mounted.current) return;
       setNotice(action === 'delete' ? '片段已删除并写入审计。' : `证据已${action === 'lock' ? '锁定' : '解锁'}。`);
       reload();
@@ -210,8 +191,8 @@ export default function NvrTimeline({ onBack }: { onBack: () => void }) {
   };
   const snapshot = () => {
     if (!selectedSegment) return;
-    void perform(async () => {
-      const result = await createNvrSnapshot(selectedSegment.id, Math.max(0, Math.round(cursor - selectedSegment.startUtcMs)));
+    void perform(async signal => {
+      const result = await createNvrSnapshot(selectedSegment.id, Math.max(0, Math.round(cursor - selectedSegment.startUtcMs)), signal);
       if (mounted.current) { setSnapshotLink(result); setNotice('截图已生成，可使用下方链接下载。'); }
     });
   };
@@ -230,25 +211,28 @@ export default function NvrTimeline({ onBack }: { onBack: () => void }) {
       </header>
 
       <section className="nvr-controls">
-        <label>UTC 日期<input type="date" value={day} onChange={(event) => { if (Number.isFinite(utcDay(event.target.value))) { pauseAll(); setDay(event.target.value); setCursor(utcDay(event.target.value)); } }} /></label>
+        <label>UTC 日期<input type="date" value={day} disabled={busy} onChange={(event) => { if (Number.isFinite(utcDay(event.target.value))) { pauseAll(); setNotice(''); setDay(event.target.value); setCursor(utcDay(event.target.value)); } }} /></label>
         <label>显示时区<select value={timeZone} onChange={(event) => setTimeZone(event.target.value)}>
           {[Intl.DateTimeFormat().resolvedOptions().timeZone, 'UTC', 'Asia/Shanghai', 'America/New_York', 'Europe/Berlin'].filter((value, index, values) => values.indexOf(value) === index).map((zone) => <option key={zone}>{zone}</option>)}
         </select></label>
         <div className="camera-picker" aria-label="回放摄像机">
-          {availableIds.map((id) => <label key={id}><input type="checkbox" checked={cameraIds.includes(id)} disabled={!cameraIds.includes(id) && cameraIds.length >= 4} onChange={(event) => setCameraIds((current) => event.target.checked ? [...current, id].slice(0, 4) : current.filter((item) => item !== id))} />{id}</label>)}
+          {availableIds.map((id) => <label key={id}><input type="checkbox" checked={cameraIds.includes(id)} disabled={busy || (!cameraIds.includes(id) && cameraIds.length >= 4)} onChange={(event) => { pauseAll(); setNotice(''); setCameraIds((current) => event.target.checked ? [...current, id].slice(0, 4) : current.filter((item) => item !== id)); }} />{id}</label>)}
         </div>
-        <span className="nvr-query-stat">{loading ? '查询中…' : `${timeline?.queryDurationMs ?? 0} ms · ${formatTime(cursor, timeZone)}`}</span>
+        <button type="button" disabled={busy || loading || archive.catalogLoading} onClick={() => { pauseAll(); setNotice(''); archive.reloadCatalog(); reload(); }}>刷新时间线</button>
+        <span className="nvr-query-stat" role="status">{loading || archive.catalogLoading ? '查询中…' : timeline ? `${timeline.queryDurationMs} ms · ${formatTime(cursor, timeZone)}` : '暂无可用时间线'}</span>
       </section>
 
+      {archive.catalogError && <div className="alert notice-alert" role="alert">无法读取回放摄像机：{archive.catalogError}<button type="button" onClick={archive.reloadCatalog} disabled={archive.catalogLoading}>重试摄像机列表</button></div>}
+      {archive.error && <div className="alert notice-alert" role="alert">时间线查询失败：{archive.error}<button type="button" onClick={reload} disabled={loading || busy}>重试时间线</button></div>}
       {diskPressure && <div className="alert notice-alert" role="status">录像存储空间不足，清理策略可能正在运行。请检查存储；证据导出会保留磁盘空间下限。</div>}
       {notice && <div className="alert notice-alert" role="status">{notice}</div>}
 
       <main className="nvr-content">
         {snapshotLink && <div className="export-result"><a href={snapshotLink.downloadUrl} download>下载最近截图</a><span>SHA-256 {snapshotLink.sha256}</span></div>}
-        <section className="playback-grid" data-count={active.length}>
+        <section className="playback-grid" data-count={active.length} aria-busy={loading || archive.catalogLoading}>
           {active.map(({ camera, segment }) => <article className="archive-player" key={camera.cameraId}>
             <header><strong>{camera.cameraId}</strong><span>{camera.recordedStream.toUpperCase()} · {segment?.integrity ?? 'GAP'}</span></header>
-            {segment ? <video
+            {segment && !deleting ? <video
               key={segment.id}
               ref={(node) => { videos.current[camera.cameraId] = node; }}
               src={segment.mediaUrl}
@@ -265,28 +249,36 @@ export default function NvrTimeline({ onBack }: { onBack: () => void }) {
               }}
               onError={() => { pauseAll(); setNotice('录像无法加载或解码，请刷新时间线并检查片段完整性。'); }}
               onEnded={() => { if (camera.cameraId === master?.camera.cameraId) seekAll(segment.endUtcMs); }}
-            /> : <div className="gap-player"><strong>录像断档</strong><span>播放器将在下一片段自动恢复</span></div>}
+            /> : <div className="gap-player"><strong>{deleting ? '正在释放回放保护…' : '录像断档'}</strong><span>{deleting ? '确认删除后将刷新时间线' : '播放器将在下一片段自动恢复'}</span></div>}
             {segment && <img className="archive-thumb" alt="片段缩略图" src={`/api/v1/nvr/thumbnails/${segment.id}?offsetMs=${Math.min(1000, segment.durationMs - 1)}`} />}
           </article>)}
-          {!active.length && <div className="nvr-empty">启用 NVR 并选择 1–4 路摄像机后查看归档。</div>}
+          {!active.length && <div className="nvr-empty">{loading || archive.catalogLoading ? '正在读取所选日期的录像…'
+            : archive.error || archive.catalogError ? '查询未完成，请使用上方重试按钮。'
+            : availableIds.length ? '选择 1–4 路摄像机查看归档。' : '暂无可回放摄像机。请先在设置中配置 NVR 录像。'}</div>}
         </section>
 
         <section className="transport-bar">
-          <button type="button" onClick={togglePlayback}>{starting ? '取消等待播放' : playing ? '暂停' : '播放'}</button>
-          <button type="button" onClick={() => { pauseAll(); seekAll(cursor + 1000 / 30); }}>逐帧 +1</button>
+          <button type="button" disabled={(!timeline || loading || busy) && !playing && !starting} onClick={togglePlayback}>{starting ? '取消等待播放' : playing ? '暂停' : '播放'}</button>
+          <button type="button" disabled={!timeline || loading || busy} onClick={() => { pauseAll(); seekAll(cursor + 1000 / 30); }}>前进 1/30 秒</button>
           <label>速度<select value={speed} onChange={(event) => { const value = Number(event.target.value); setSpeed(value); Object.values(videos.current).forEach((video) => { if (video) video.playbackRate = value; }); }}>{[0.25, 0.5, 1, 2, 4].map((value) => <option key={value} value={value}>{value}×</option>)}</select></label>
           <button type="button" disabled={!selectedSegment || busy} onClick={snapshot}>截图</button>
           <label>导出时长（秒）<input type="number" min="1" max="3600" value={duration} onChange={event => setDuration(Number(event.target.value))} /></label>
-          <button type="button" disabled={!cameraIds.length || !exports.ready || !exports.allowed || exports.busy || !!exports.pending || !Number.isInteger(duration) || duration < 1 || duration > 3600} onClick={() => exportClip('fast')}>快速导出</button>
-          <button type="button" disabled={!cameraIds.length || !exports.ready || !exports.allowed || exports.busy || !!exports.pending || !Number.isInteger(duration) || duration < 1 || duration > 3600} onClick={() => exportClip('exact')}>精确导出</button>
+          <button type="button" disabled={!timeline || loading || !cameraIds.length || !exports.ready || !exports.allowed || exports.busy || !!exports.pending || !Number.isInteger(duration) || duration < 1 || duration > 3600} onClick={() => exportClip('fast')}>快速导出</button>
+          <button type="button" disabled={!timeline || loading || !cameraIds.length || !exports.ready || !exports.allowed || exports.busy || !!exports.pending || !Number.isInteger(duration) || duration < 1 || duration > 3600} onClick={() => exportClip('exact')}>精确导出</button>
           <button type="button" disabled={!selectedSegment || busy} onClick={() => mutateSegment(selectedSegment?.locked ? 'unlock' : 'lock')}>{selectedSegment?.locked ? '解锁证据' : '锁定证据'}</button>
           <button className="danger-button" type="button" disabled={!selectedSegment || selectedSegment.locked || busy} onClick={() => mutateSegment('delete')}>删除</button>
         </section>
 
         <p className="nvr-help">从当前游标导出已选摄像机。快速导出保留完整片段，实际边界可能扩大；精确导出保留声音，要求每路摄像机连续录制。大文件按块下载，导出前会检查磁盘余量。支持从游标向后导出最多 1 小时；需要更长范围时请分次导出。</p>
-        <label className="nvr-seek">回放时间<input aria-label="回放时间游标" type="range" min={rangeStart} max={rangeEnd - 1} step="1000" value={cursor} onChange={event => seekAll(Number(event.target.value))} /></label>
-        <section className="timeline-panel" onClick={(event) => { const bounds = event.currentTarget.getBoundingClientRect(); seekAll(rangeStart + clamp((event.clientX - bounds.left) / bounds.width, 0, 1) * DAY_MS); }}>
-          <div className="time-ruler">{[0, 6, 12, 18, 24].map((hour) => <span key={hour} style={{ left: `${hour / 24 * 100}%` }}>{String(hour).padStart(2, '0')}:00</span>)}</div>
+        <label className="nvr-seek">回放时间<input aria-label="回放时间游标" type="range" disabled={!timeline || loading || busy} min={rangeStart} max={rangeEnd - 1} step="1000" value={cursor} onChange={event => seekAll(Number(event.target.value))} /></label>
+        <section className="timeline-panel" aria-label="UTC 录像时间线" onClick={(event) => {
+          if (!timeline || loading || busy || !(event.target instanceof Element)) return;
+          const rail = event.target.closest('.track-rail, .time-ruler');
+          if (!rail) return;
+          const bounds = rail.getBoundingClientRect();
+          if (bounds.width > 0) seekAll(rangeStart + clamp((event.clientX - bounds.left) / bounds.width, 0, 1) * DAY_MS);
+        }}>
+          <div className="time-ruler" title="UTC 时间刻度">{[0, 6, 12, 18, 24].map((hour) => <span key={hour} style={{ left: `${hour / 24 * 100}%` }}>{String(hour).padStart(2, '0')}:00</span>)}</div>
           {timeline?.cameras.map((camera) => <div className="timeline-track" key={camera.cameraId}>
             <strong>{camera.cameraId}</strong>
             <div className="track-rail">
@@ -294,7 +286,7 @@ export default function NvrTimeline({ onBack }: { onBack: () => void }) {
               {camera.gaps.map((gap, index) => <i key={`${gap.fromUtcMs}-${index}`} className={`gap-block reason-${gap.reason}`} style={{ left: `${(gap.fromUtcMs - rangeStart) / DAY_MS * 100}%`, width: `${Math.max(.08, (gap.toUtcMs - gap.fromUtcMs) / DAY_MS * 100)}%` }} title={`断档：${gap.reason}`} />)}
             </div>
           </div>)}
-          <div className="playhead" style={{ left: `${(cursor - rangeStart) / DAY_MS * 100}%` }} />
+          <div className="timeline-playhead-rail"><div className="playhead" style={{ left: `${(cursor - rangeStart) / DAY_MS * 100}%` }} /></div>
         </section>
 
         <NvrExportPanel exports={exports} />

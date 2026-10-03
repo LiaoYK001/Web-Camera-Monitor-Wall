@@ -185,16 +185,17 @@ body {
 .timeline-panel { position: relative; min-height: 150px; padding: 35px 10px 12px 100px; overflow: hidden; border: 1px solid var(--line); border-radius: 8px; background: #0d1016; cursor: crosshair; }
 .time-ruler { position: absolute; top: 9px; right: 10px; left: 100px; height: 20px; color: var(--muted); font: 9px ui-monospace, monospace; }
 .time-ruler span { position: absolute; transform: translateX(-50%); }
-.timeline-track { display: grid; height: 24px; grid-template-columns: 86px 1fr; align-items: center; gap: 4px; }
-.timeline-track > strong { overflow: hidden; color: #aeb6c4; font-size: 9px; text-overflow: ellipsis; white-space: nowrap; }
-.track-rail { position: relative; height: 10px; overflow: hidden; border-radius: 2px; background: #171b23; }
+.timeline-track { position: relative; display: flex; height: 24px; align-items: center; }
+.timeline-track > strong { position: absolute; left: -90px; width: 86px; overflow: hidden; color: #aeb6c4; font-size: 9px; text-overflow: ellipsis; white-space: nowrap; }
+.track-rail { position: relative; width: 100%; height: 10px; overflow: hidden; border-radius: 2px; background: #171b23; }
 .segment-block, .gap-block { position: absolute; top: 0; height: 100%; }
 .segment-block { z-index: 2; min-width: 2px; background: #68a7ff; }
 .kind-event, .kind-pre-event { background: #ffb34f; }
 .kind-manual { background: #d586ff; }
 .integrity-corrupt, .integrity-missing { background: var(--danger); }
 .gap-block { z-index: 1; min-width: 2px; background: repeating-linear-gradient(90deg, #4d252d 0 3px, transparent 3px 6px); opacity: .8; }
-.playhead { position: absolute; z-index: 5; top: 27px; bottom: 5px; width: 1px; background: var(--accent); box-shadow: 0 0 8px var(--accent); pointer-events: none; }
+.timeline-playhead-rail { position: absolute; top: 27px; bottom: 5px; left: 100px; right: 10px; pointer-events: none; }
+.playhead { position: absolute; z-index: 5; top: 0; bottom: 0; width: 1px; background: var(--accent); box-shadow: 0 0 8px var(--accent); pointer-events: none; }
 .export-result { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; padding: 10px 12px; border: 1px solid #35552d; border-radius: 8px; background: #10180f; font: 10px ui-monospace, monospace; }
 .export-result span { overflow-wrap: anywhere; color: #b5c2b0; }
 .export-result a { color: var(--accent); }

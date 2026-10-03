@@ -43,6 +43,7 @@ def main():
                '-e', 'WEBOBS_LISTEN_ADDRESS=0.0.0.0', '-e', 'WEBOBS_ALLOW_INSECURE_REMOTE=true',
                '-e', 'WEBOBS_GO2RTC_ENABLED=true', '-e', 'WEBOBS_WEBRTC_ENABLED=false',
                '-e', 'WEBOBS_COMPOSITE_ENABLED=false', '-e', 'WEBOBS_CLUSTER_ENABLED=true',
+               '-e', 'WEBOBS_NVR_ENABLED=true',
                '-e', 'WEBOBS_COMPAT_BASIC_AUTH=false', '-e', 'WEBOBS_SESSION_COOKIE_SECURE=false',
                '-e', 'WEBOBS_REGISTRATION_ENABLED=true', args.image)
         created = True
@@ -70,6 +71,19 @@ def main():
                 time.sleep(.25)
         else:
             raise AssertionError('go2rtc restart did not recover')
+        client.expect('/api/v1/nvr/config', body={'schemaVersion': 1, 'minFreeBytes': 0, 'cameras': [
+            {'id': 'android-archive', 'name': 'Synthetic archive', 'policy': 'off',
+             'mainUrl': 'rtsp://camera.invalid/live'}]}, method='PUT')
+        # A stopped recorder's real H.264/AAC archive in this disposable image.
+        # Never imports user recordings or enables a physical camera.
+        stamp = int(time.time() * 1000) // 86400000 * 86400000 + 3600000
+        docker('exec', name, 'python3', '-c', '''import pathlib,subprocess,sqlite3,uuid
+root=pathlib.Path('/recordings/nvr');target=root/'android-archive.mp4'
+subprocess.run(['ffmpeg','-v','error','-nostdin','-f','lavfi','-i','color=c=blue:s=160x90:r=25','-f','lavfi','-i','sine=frequency=440:sample_rate=48000','-t','3','-c:v','libx264','-pix_fmt','yuv420p','-c:a','aac','-movflags','+faststart','-y',str(target)],check=True,timeout=20,stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL)
+db=sqlite3.connect(root/'catalog.sqlite3')
+db.execute("INSERT INTO segments(id,camera_id,start_utc_ms,end_utc_ms,duration_ms,storage_key,kind,video_codec,audio_codec,size_bytes,integrity,locked,created_utc_ms) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)",(uuid.uuid4().hex,'android-archive',STAMP,STAMP+3000,3000,target.name,'continuous','h264','aac',target.stat().st_size,'ok',0,STAMP))
+db.commit()
+'''.replace('STAMP', str(stamp)))
         port = base.rsplit(':', 1)[1]
         adb('reverse', 'tcp:' + port, 'tcp:' + port)
         print('Isolated backend and authenticated go2rtc ready; probing actual Android WebView', flush=True)

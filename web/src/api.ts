@@ -208,17 +208,17 @@ export const fetchNvrTimeline = (fromUtcMs: number, toUtcMs: number, cameraIds: 
   return nvrRequest<NvrTimeline>(`/timeline?${query}`, { signal });
 };
 
-export const setNvrLock = (segmentId: string, locked: boolean) =>
+export const setNvrLock = (segmentId: string, locked: boolean, signal?: AbortSignal) =>
   nvrRequest<{ id: string; locked: boolean }>(`/locks/${segmentId}`, {
-    method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ locked }),
+    method: 'PUT', signal, headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ locked }),
   });
 
-export const deleteNvrSegment = (segmentId: string) =>
-  nvrRequest<{ id: string; deleted: boolean }>(`/segments/${segmentId}`, { method: 'DELETE' });
+export const deleteNvrSegment = (segmentId: string, signal?: AbortSignal) =>
+  nvrRequest<{ id: string; deleted: boolean }>(`/segments/${segmentId}`, { method: 'DELETE', signal });
 
-export const createNvrSnapshot = (segmentId: string, offsetMs: number) =>
+export const createNvrSnapshot = (segmentId: string, offsetMs: number, signal?: AbortSignal) =>
   nvrRequest<{ id: string; sha256: string; downloadUrl: string }>('/snapshots', {
-    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    method: 'POST', signal, headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ segmentId, offsetMs }),
   });
 
@@ -229,14 +229,14 @@ export const createNvrExport = (
   body: JSON.stringify({ cameraIds, fromUtcMs, toUtcMs, mode, lock: true }),
 });
 
-export const createPlaybackLease = (segmentId: string, ttlSeconds = 30) =>
+export const createPlaybackLease = (segmentId: string, ttlSeconds = 30, signal?: AbortSignal) =>
   nvrRequest<{ id: string; segmentId: string; expiresUtcMs: number }>('/playback-leases', {
-    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    method: 'POST', signal, headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ segmentId, ttlSeconds }),
   });
 
-export const releasePlaybackLease = (leaseId: string) =>
-  nvrRequest<{ id: string; released: boolean }>(`/playback-leases/${leaseId}`, { method: 'DELETE' });
+export const releasePlaybackLease = (leaseId: string, signal?: AbortSignal) =>
+  nvrRequest<{ id: string; released: boolean }>(`/playback-leases/${leaseId}`, { method: 'DELETE', signal });
 
 export const fetchNvrExportJobs = (signal?: AbortSignal) =>
   nvrRequest<{ jobs: import('./types').NvrExportJob[] }>('/exports/jobs', { signal });

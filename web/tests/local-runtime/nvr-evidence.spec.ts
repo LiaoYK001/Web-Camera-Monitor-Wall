@@ -8,9 +8,10 @@ const segment: NvrSegment = { id: 'a'.repeat(32), cameraId: 'cam', startUtcMs: s
   durationMs: 30000, kind:'continuous', videoCodec:'h264', audioCodec:'aac', sizeBytes:1024, integrity:'ok', locked:false,
   mediaUrl:'/api/v1/nvr/media/'+ 'a'.repeat(32) };
 
-async function protocol(page: Page) {
+async function protocol(page: Page, options: { catalogFailure?: boolean } = {}) {
   const state = { jobs: [] as NvrExportJob[], submitted: 0, cancelled: 0, lost: false, delay: 0, denied:false,
-    segments: [structuredClone(segment)], leases:0, released:0, deleted:0 };
+    segments: [structuredClone(segment)], leases:0, released:0, deleted:0,
+    timelineDelay: 0, timelineFailure: false, catalogFailure: !!options.catalogFailure, queries: 0 };
   await page.addInitScript(() => {
     Object.defineProperty(HTMLMediaElement.prototype,'duration',{get:()=>30});
     Object.defineProperty(HTMLMediaElement.prototype,'readyState',{get:()=>2});
@@ -27,11 +28,17 @@ async function protocol(page: Page) {
     const request=route.request(); const url=new URL(request.url()); const path=url.pathname;
     const reply=(body:unknown,status=200)=>route.fulfill({status,contentType:'application/json',body:JSON.stringify(body)});
     if(path==='/api/v1/auth/session') return reply({authenticated:true,user:'fixture-admin'});
-    if(path==='/api/v1/nvr/status') return reply({status:'ok',freeBytes:1e9,diskPressure:false,
+    if(path==='/api/v1/nvr/status') return state.catalogFailure ? reply({error:{code:'service_unavailable',message:'录像服务暂不可用'}},503) : reply({status:'ok',freeBytes:1e9,diskPressure:false,
       cameras:['cam','two','three','four','five'].map(id=>({id,policy:'continuous',state:'idle',segments:1,eventActive:false}))});
-    if(path==='/api/v1/nvr/timeline') return reply({fromUtcMs:dayStart,toUtcMs:dayStart+86400000,storageTimeZone:'UTC',queryDurationMs:2,
-      cameras:url.searchParams.getAll('cameraId').map(cameraId=>({cameraId,recordedStream:'main',retentionBoundaryUtcMs:null,
-        segments:cameraId==='cam'?state.segments:[],gaps:[]}))});
+    if(path==='/api/v1/nvr/timeline') {
+      state.queries++;
+      const fail=state.timelineFailure;
+      const document={fromUtcMs:dayStart,toUtcMs:dayStart+86400000,storageTimeZone:'UTC',queryDurationMs:2,
+        cameras:url.searchParams.getAll('cameraId').map(cameraId=>({cameraId,recordedStream:'main',retentionBoundaryUtcMs:null,
+          segments:cameraId==='cam'?state.segments:[],gaps:[]}))};
+      if(state.timelineDelay)await new Promise(resolve=>setTimeout(resolve,state.timelineDelay));
+      return fail ? reply({error:{code:'service_unavailable',message:'录像服务暂不可用'}},503) : reply(document);
+    }
     if(path==='/api/v1/nvr/exports/jobs' && request.method()==='GET') return state.denied
       ? reply({error:{code:'permission_rejected',message:'role rejected'}},403) : reply({jobs:state.jobs});
     if(path==='/api/v1/nvr/exports/jobs' && request.method()==='POST') {
@@ -52,6 +59,7 @@ async function protocol(page: Page) {
     return route.fulfill({status:404,body:''});
   });
   await page.goto(fixture);
+  if (options.catalogFailure) { await expect(page.getByRole('button',{name:'重试摄像机列表'})).toBeVisible(); return state; }
   await expect(page.getByRole('button',{name:'精确导出',exact:true})).toBeEnabled();
   await expect(page.locator('video')).toHaveCount(1);
   return state;
@@ -63,6 +71,119 @@ test('duplicate clicks create one durable task and reload recovers it',async({pa
   await expect(page.getByText('等待处理 · 精确')).toBeVisible();expect(state.submitted).toBe(1);
   await page.reload();await expect(page.getByText('等待处理 · 精确')).toBeVisible();expect(state.submitted).toBe(1);
   await page.getByRole('button',{name:'取消导出',exact:true}).click();await expect(page.getByText('已取消 · 精确')).toBeVisible();expect(state.cancelled).toBe(1);
+});
+
+test('camera changes discard stale playback and offer an explicit retry after query failure',async({page})=>{
+  const state=await protocol(page);state.timelineDelay=350;state.timelineFailure=true;
+  await page.getByRole('checkbox',{name:'two',exact:true}).uncheck();
+  await expect(page.locator('video')).toHaveCount(0);
+  await expect(page.getByRole('button',{name:'截图',exact:true})).toBeDisabled();
+  await expect(page.getByRole('button',{name:'精确导出',exact:true})).toBeDisabled();
+  await expect(page.getByRole('button',{name:'重试时间线'})).toBeVisible();
+  await expect(page.getByRole('alert')).toContainText('时间线查询失败');
+  state.timelineDelay=0;state.timelineFailure=false;
+  await page.getByRole('button',{name:'重试时间线'}).click();
+  await expect(page.locator('video')).toHaveCount(1);
+  await expect(page.getByRole('button',{name:'精确导出',exact:true})).toBeEnabled();
+});
+
+test('an initial camera catalog failure can recover without reloading or resetting an empty selection',async({page})=>{
+  const state=await protocol(page,{catalogFailure:true});state.catalogFailure=false;
+  await expect(page.getByRole('button',{name:'播放',exact:true})).toBeDisabled();
+  await page.getByRole('button',{name:'重试摄像机列表'}).click();
+  await expect(page.locator('video')).toHaveCount(1);
+  for(const camera of ['cam','two','three','four'])await page.getByRole('checkbox',{name:camera,exact:true}).uncheck();
+  await page.getByRole('button',{name:'刷新时间线',exact:true}).click();
+  await expect(page.getByRole('checkbox',{name:'cam',exact:true})).not.toBeChecked();
+  await expect(page.locator('video')).toHaveCount(0);
+  await expect(page.getByText('选择 1–4 路摄像机查看归档。')).toBeVisible();
+});
+
+test('a late old-day response cannot replace the current day or restart a pending play',async({page})=>{
+  await protocol(page);
+  await page.evaluate(()=>{(window as unknown as {holdPlayback:boolean}).holdPlayback=true;});
+  await page.getByRole('button',{name:'播放',exact:true}).click();
+  await expect(page.getByRole('button',{name:'取消等待播放',exact:true})).toBeVisible();
+  let resolveOld!:()=>void;const old=new Promise<void>(resolve=>{resolveOld=resolve;});let requested=false;
+  const yesterday=new Date(dayStart-86400000).toISOString().slice(0,10);
+  await page.route('**/api/v1/nvr/timeline?**',async route=>{
+    const from=Number(new URL(route.request().url()).searchParams.get('from'));
+    const previous=from===dayStart-86400000;
+    if(previous){requested=true;await old;}
+    await route.fulfill({status:200,contentType:'application/json',body:JSON.stringify({fromUtcMs:from,toUtcMs:from+86400000,queryDurationMs:2,
+      storageTimeZone:'UTC',cameras:[{cameraId:'cam',recordedStream:'main',gaps:[],retentionBoundaryUtcMs:null,
+        segments:[{...segment,id:previous?'e'.repeat(32):segment.id,startUtcMs:from+3600000,endUtcMs:from+3630000,
+          mediaUrl:'/api/v1/nvr/media/'+(previous?'e'.repeat(32):segment.id)}]}]})}).catch(()=>{});
+  });
+  await page.getByLabel('UTC 日期').fill(yesterday);await expect.poll(()=>requested).toBe(true);
+  await page.getByLabel('UTC 日期').fill(new Date(dayStart).toISOString().slice(0,10));
+  await expect(page.locator('video')).toHaveAttribute('src',segment.mediaUrl);
+  resolveOld();await page.evaluate(()=>{(window as unknown as {releasePlayback:()=>void}).releasePlayback();});
+  await expect(page.getByRole('button',{name:'播放',exact:true})).toBeVisible();
+  await expect(page.getByRole('button',{name:'暂停',exact:true})).toHaveCount(0);
+  await expect(page.locator('video')).toHaveAttribute('src',segment.mediaUrl);
+});
+
+test('a hung timeline query times out and remains retryable',async({page})=>{
+  await protocol(page);await page.clock.install();
+  let arrived=false;
+  await page.route('**/api/v1/nvr/timeline?**',route=>{arrived=true;void route;});
+  await page.getByRole('button',{name:'刷新时间线',exact:true}).click();await expect.poll(()=>arrived).toBe(true);
+  await page.clock.runFor(12_001);
+  await expect(page.getByRole('alert')).toContainText('查询超时');
+  await expect(page.getByRole('button',{name:'重试时间线'})).toBeEnabled();
+  await expect(page.locator('video')).toHaveCount(0);
+  await page.unroute('**/api/v1/nvr/timeline?**');
+  await page.getByRole('button',{name:'重试时间线'}).click();await expect(page.locator('video')).toHaveCount(1);
+});
+
+test('an unconfirmed snapshot timeout restores controls without an automatic retry',async({page})=>{
+  await protocol(page);await page.clock.install();let requests=0;
+  await page.route('**/api/v1/nvr/snapshots',route=>{requests++;void route;});
+  await page.getByRole('button',{name:'截图',exact:true}).click();await expect.poll(()=>requests).toBe(1);
+  await expect(page.getByLabel('UTC 日期')).toBeDisabled();
+  await page.clock.runFor(35_001);
+  await expect(page.getByText(/操作超时，结果尚未确认/)).toBeVisible();
+  await expect(page.getByRole('button',{name:'截图',exact:true})).toBeEnabled();
+  await expect(page.getByLabel('UTC 日期')).toBeEnabled();expect(requests).toBe(1);
+});
+
+test('delete unloads its media reader and restores the player after a protected-segment rejection',async({page})=>{
+  // This fixture tests delete/recovery; its media URLs do not contain real MP4.
+  await page.addInitScript(()=>document.addEventListener('error',event=>{
+    if(event.target instanceof HTMLMediaElement)event.stopImmediatePropagation();
+  },true));
+  await protocol(page);page.on('dialog',dialog=>dialog.accept());
+  let resolveDelete!:()=>void;const pending=new Promise<void>(resolve=>{resolveDelete=resolve;});let arrived=false;
+  await page.route('**/api/v1/nvr/segments/**',async route=>{
+    arrived=true;await pending;
+    await route.fulfill({status:409,contentType:'application/json',body:JSON.stringify({error:{code:'segment_conflict',message:'protected'}})});
+  });
+  await page.getByRole('button',{name:'删除',exact:true}).click();await expect.poll(()=>arrived).toBe(true);
+  await expect(page.locator('video')).toHaveCount(0);
+  await expect(page.getByText('正在释放回放保护…').first()).toBeVisible();
+  resolveDelete();
+  await expect(page.getByText(/片段已锁定，或仍被回放、导出使用/)).toBeVisible();
+  await expect(page.locator('video')).toHaveAttribute('src',segment.mediaUrl);
+  await expect(page.getByRole('button',{name:'删除',exact:true})).toBeEnabled();
+});
+
+for(const width of [390,1280])test(`timeline ruler, rail and playhead align at ${width}px without label seeks`,async({page})=>{
+  await page.setViewportSize({width,height:844});await protocol(page);
+  const rail=page.locator('.track-rail').first();const bounds=await rail.boundingBox();expect(bounds).not.toBeNull();
+  await rail.click({position:{x:bounds!.width/2,y:5}});
+  const seek=page.getByRole('slider',{name:'回放时间游标'});
+  await expect.poll(async()=>Math.abs(Number(await seek.inputValue())-(dayStart+43200000))).toBeLessThan(864000);
+  const before=await seek.inputValue();await page.locator('.timeline-track > strong').first().click();await expect(seek).toHaveValue(before);
+  const alignment=await page.evaluate(()=>{
+    const rail=document.querySelector('.track-rail')!.getBoundingClientRect();
+    const ruler=document.querySelector('.time-ruler')!.getBoundingClientRect();
+    const marker=document.querySelector('.playhead')!.getBoundingClientRect();
+    const input=document.querySelector('input[type=range]') as HTMLInputElement;
+    const fraction=(Number(input.value)-Number(input.min))/(Number(input.max)-Number(input.min)+1);
+    return {left:Math.abs(ruler.left-rail.left),width:Math.abs(ruler.width-rail.width),marker:Math.abs(marker.left-(rail.left+rail.width*fraction))};
+  });
+  expect(alignment.left).toBeLessThan(1);expect(alignment.width).toBeLessThan(1);expect(alignment.marker).toBeLessThan(1);
 });
 
 test('lost submit response is reconciled from history without a second POST',async({page})=>{
