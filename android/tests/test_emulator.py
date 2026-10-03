@@ -79,9 +79,9 @@ def main():
         stamp = int(time.time() * 1000) // 86400000 * 86400000 + 3600000
         docker('exec', name, 'python3', '-c', '''import pathlib,subprocess,sqlite3,uuid
 root=pathlib.Path('/recordings/nvr');target=root/'android-archive.mp4'
-subprocess.run(['ffmpeg','-v','error','-nostdin','-f','lavfi','-i','color=c=blue:s=160x90:r=25','-f','lavfi','-i','sine=frequency=440:sample_rate=48000','-t','3','-c:v','libx264','-pix_fmt','yuv420p','-c:a','aac','-movflags','+faststart','-y',str(target)],check=True,timeout=20,stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL)
+subprocess.run(['ffmpeg','-v','error','-nostdin','-f','lavfi','-i','color=c=blue:s=160x90:r=25','-f','lavfi','-i','sine=frequency=440:sample_rate=48000','-t','6','-c:v','libx264','-pix_fmt','yuv420p','-c:a','aac','-movflags','+faststart','-y',str(target)],check=True,timeout=20,stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL)
 db=sqlite3.connect(root/'catalog.sqlite3')
-db.execute("INSERT INTO segments(id,camera_id,start_utc_ms,end_utc_ms,duration_ms,storage_key,kind,video_codec,audio_codec,size_bytes,integrity,locked,created_utc_ms) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)",(uuid.uuid4().hex,'android-archive',STAMP,STAMP+3000,3000,target.name,'continuous','h264','aac',target.stat().st_size,'ok',0,STAMP))
+db.execute("INSERT INTO segments(id,camera_id,start_utc_ms,end_utc_ms,duration_ms,storage_key,kind,video_codec,audio_codec,size_bytes,integrity,locked,created_utc_ms) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)",(uuid.uuid4().hex,'android-archive',STAMP,STAMP+6000,6000,target.name,'continuous','h264','aac',target.stat().st_size,'ok',0,STAMP))
 db.commit()
 '''.replace('STAMP', str(stamp)))
         port = base.rsplit(':', 1)[1]

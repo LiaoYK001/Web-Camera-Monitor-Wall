@@ -727,7 +727,7 @@ export async function importLocalConfigBundle(value: unknown): Promise<LocalConf
   return saveLocalConfigProfile(bundle.profile.name, bundle.profile.studio, id, bundle.profile.workspaceLayout);
 }
 
-export async function loadMonitorView(remoteOnly = false): Promise<MonitorView | null> {
+export async function loadMonitorView(remoteOnly = false, requireAccount = false): Promise<MonitorView | null> {
   await monitorViewWrites.catch(() => undefined);
   let cached: { kind: string; view: MonitorView; pending?: boolean } | null = null;
   try {
@@ -745,6 +745,9 @@ export async function loadMonitorView(remoteOnly = false): Promise<MonitorView |
   }
   const remote = await readAccountPreference<MonitorView>('monitor-view');
   if (remote) return remote;
+  // A fresh account-dependent control must not save temporary defaults over
+  // settings it failed to read. A valid private cache can still be restored.
+  if (requireAccount && remote === undefined && !cached) throw new Error('账号偏好读取失败');
   if (remoteOnly) {
     if (remote === undefined) throw new Error('账号偏好读取失败');
     return null;
