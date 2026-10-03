@@ -76,6 +76,8 @@ private:
         QString group_id;
         QString nested_scene_id;
         QJsonArray filters;
+        // Retain audio settings when the independent Qt editor changes geometry.
+        QJsonObject audio;
         qreal x = 0;
         qreal y = 0;
         qreal width = 320;
@@ -96,6 +98,7 @@ private:
     QString id_ = QStringLiteral("local-monitor");
     QString name_ = QStringLiteral("Local Monitor");
     qint64 revision_ = 0;
+    int schema_version_ = 6;
     int canvas_width_ = 1920;
     int canvas_height_ = 1080;
     QList<Item> items_;

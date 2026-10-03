@@ -21,6 +21,10 @@ The Settings “About and updates” card displays the actual Electron installat
 
 ## 构建完整安装包
 
+`pnpm --dir desktop test:runtime` 还检查真实认证代理下的两个签名设备配对、多音轨 schema-v6 保存、重复提交幂等、冲突与正常重启后保留。来源为未激活的合成 Camera，仅验证配置与控制链，不代表真实摄像机音频播放或干净系统安装验收。
+
+The native runtime test also covers two signed device enrollments through the real authentication proxy, schema-v6 multi-track persistence, idempotent retries, conflicts and normal service restart. Its synthetic Camera is never activated; this qualifies the configuration/control path, not camera audio playback or clean-system installation.
+
 开发构建机需要 VS 2022 的 MSVC x64、Windows SDK、CMake >= 3.28、Python、Node 24 和 pnpm 11.16.0。使用 PowerShell 7.2+ 的 VS x64 Developer PowerShell：
 
 ```powershell

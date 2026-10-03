@@ -892,14 +892,15 @@ def _shared_scene_valid(scene: object) -> bool:
     source_fields = {
         "id", "kind", "name", "cameraId", "profileId", "hardwareDecode",
         "text", "color", "filePath", "muted", "volume", "syncOffsetMs",
-        "monitoring", "audioTrack", "filters", "sceneId",
+        "monitoring", "audioTrack", "audioInputs", "filters", "sceneId",
     }
     item_fields = {
         "id", "sourceId", "x", "y", "width", "height", "scaleMode", "crop",
         "zIndex", "visible", "locked", "groupId", "rotation", "opacity", "blendMode",
     }
-    if not isinstance(scene, dict) or set(scene) != root_fields or scene.get("schemaVersion") != 5 or \
-            not isinstance(scene.get("revision"), int) or scene["revision"] < 0 or \
+    if not isinstance(scene, dict) or set(scene) != root_fields or \
+            type(scene.get("schemaVersion")) is not int or scene["schemaVersion"] not in {5, 6} or \
+            type(scene.get("revision")) is not int or scene["revision"] < 0 or \
             not isinstance(scene.get("id"), str) or not ID_RE.fullmatch(scene["id"]) or \
             not isinstance(scene.get("name"), str) or not 1 <= len(scene["name"].encode("utf-8")) <= 128:
         return False
@@ -954,6 +955,28 @@ def _shared_scene_valid(scene: object) -> bool:
         if "audioTrack" in source and (not isinstance(source["audioTrack"], int) or
                 isinstance(source["audioTrack"], bool) or not 1 <= source["audioTrack"] <= 6):
             return False
+        # Match Core's schema v6 input contract; absence and [] are distinct.
+        if "audioInputs" in source:
+            inputs = source["audioInputs"]
+            if not isinstance(inputs, list) or len(inputs) > 8:
+                return False
+            tracks: set[int] = set()
+            for audio_input in inputs:
+                if not isinstance(audio_input, dict) or \
+                        not {"track", "gain", "muted"}.issubset(audio_input) or \
+                        set(audio_input) - {"track", "gain", "muted", "syncOffsetMs"}:
+                    return False
+                track, gain = audio_input["track"], audio_input["gain"]
+                if type(track) is not int or not 0 <= track <= 31 or track in tracks or \
+                        not isinstance(gain, (int, float)) or isinstance(gain, bool) or \
+                        not math.isfinite(gain) or not 0 <= gain <= 1 or \
+                        not isinstance(audio_input["muted"], bool):
+                    return False
+                if "syncOffsetMs" in audio_input and (
+                        type(audio_input["syncOffsetMs"]) is not int or
+                        not -10000 <= audio_input["syncOffsetMs"] <= 10000):
+                    return False
+                tracks.add(track)
         filters = source.get("filters", [])
         if not isinstance(filters, list) or len(filters) > 16:
             return False
@@ -1182,7 +1205,7 @@ def _initial_sync_document(kind: str, document_id: str) -> dict[str, object]:
         existing = next((scene for scene in shared_scenes() if scene["id"] == document_id), None)
         if existing is not None:
             return json.loads(json.dumps(existing))
-        return {"schemaVersion": 5, "revision": 0, "id": document_id}
+        return {"schemaVersion": 6, "revision": 0, "id": document_id}
     return {"schemaVersion": 1, "cameraId": document_id,
             "displayName": "", "favorite": False, "group": ""}
 
@@ -1253,7 +1276,13 @@ def sync_mutations(client_id: str, payload: object) -> tuple[int, dict[str, obje
             next_document = dict(current_document)
             next_document.update(fields)
             if kind == "scene":
-                next_document.update({"schemaVersion": 5, "id": document_id})
+                # Preserve v5 for existing legacy documents, promote explicit input
+                # selections to v6, and never downgrade an already migrated scene.
+                scene_sources = next_document.get("sources")
+                has_audio_inputs = isinstance(scene_sources, list) and any(
+                    isinstance(source, dict) and "audioInputs" in source for source in scene_sources)
+                next_document.update({"schemaVersion": 6 if has_audio_inputs else
+                                      current_document["schemaVersion"], "id": document_id})
             else:
                 next_document.update({"schemaVersion": 1, "cameraId": document_id})
             if not _sync_document_valid(kind, next_document, scope):
@@ -1271,7 +1300,7 @@ def sync_mutations(client_id: str, payload: object) -> tuple[int, dict[str, obje
                 "VALUES(?,?,?,?,?,?,?,?) ON CONFLICT(kind,document_id) DO UPDATE SET "
                 "body_json=excluded.body_json,schema_version=excluded.schema_version,revision=excluded.revision,"
                 "deleted=excluded.deleted,updated_at=excluded.updated_at,updated_by=excluded.updated_by",
-                (kind, document_id, body_json, 5 if kind == "scene" else 1, next_revision,
+                (kind, document_id, body_json, next_document["schemaVersion"], next_revision,
                  1 if operation == "delete" else 0, now, client_id))
             for field in changed_fields:
                 database.execute(

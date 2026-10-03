@@ -122,7 +122,7 @@ bool StudioWorkspace::addScene(const QString &name)
         scenes_.first().toObject().value("canvas").toObject().value("width").toInt(1920);
     const int height = scenes_.isEmpty() ? 1080 :
         scenes_.first().toObject().value("canvas").toObject().value("height").toInt(1080);
-    QJsonObject scene{{"schemaVersion", 5}, {"revision", 0}, {"id", id},
+    QJsonObject scene{{"schemaVersion", 6}, {"revision", 0}, {"id", id},
         {"name", name.trimmed()},
         {"canvas", QJsonObject{{"width", width}, {"height", height},
                                 {"backgroundColor", "#000000"}}},

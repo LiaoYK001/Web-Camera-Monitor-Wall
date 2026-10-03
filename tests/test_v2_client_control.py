@@ -652,6 +652,117 @@ class V2ClientControlTests(unittest.TestCase):
         self.assertTrue(changes[-1]["deleted"])
         self.assertIsNone(changes[-1]["document"])
 
+    def test_multitrack_scenes_preserve_versions_and_explicit_empty_selection(self):
+        wrapper = json.loads(service.SCENES_PATH.read_text(encoding="utf-8"))
+        scene = wrapper["scenes"][0]
+        # Existing v5 documents keep their fallback rather than acquiring [].
+        self.assertNotIn("audioInputs", service.shared_scenes()[0]["sources"][0])
+        scene["schemaVersion"] = 6
+        selections = [
+            [],
+            [{"track": 0, "gain": 0, "muted": True}],
+            [{"track": index, "gain": 0.37, "muted": False, "syncOffsetMs": -10000}
+             for index in (0, 1, 2, 3, 4, 5, 6, 31)],
+        ]
+        for selection in selections:
+            with self.subTest(selection=selection):
+                scene["sources"][0]["audioInputs"] = selection
+                service.SCENES_PATH.write_text(json.dumps(wrapper), encoding="utf-8")
+                source = service.shared_scenes()[0]["sources"][0]
+                self.assertEqual(source["audioInputs"], selection)
+                self.assertEqual(source["audioTrack"], 1)
+
+    def test_multitrack_scene_validation_is_bounded_and_fail_closed(self):
+        original = service.SCENES_PATH.read_text(encoding="utf-8")
+        valid = {"track": 0, "gain": 0.5, "muted": False}
+        invalid = [None, {}, "0", [None], [dict(valid, track=True)],
+                   [dict(valid, track=0.5)], [dict(valid, track=-1)], [dict(valid, track=32)],
+                   [dict(valid, gain=True)], [dict(valid, gain=-0.01)], [dict(valid, gain=1.01)],
+                   [dict(valid, gain=float("nan"))], [dict(valid, gain=float("inf"))],
+                   [dict(valid, muted=0)], [dict(valid, syncOffsetMs=True)],
+                   [dict(valid, syncOffsetMs=0.5)], [dict(valid, syncOffsetMs=10001)],
+                   [dict(valid, syncOffsetMs=-10001)], [valid, valid],
+                   [dict(valid, track=index) for index in range(9)],
+                   [{"track": 0, "gain": 0.5}], [dict(valid, secret="forbidden")]]
+        for selection in invalid:
+            with self.subTest(selection=selection):
+                wrapper = json.loads(original)
+                wrapper["scenes"][0]["schemaVersion"] = 6
+                wrapper["scenes"][0]["sources"][0]["audioInputs"] = selection
+                service.SCENES_PATH.write_text(json.dumps(wrapper), encoding="utf-8")
+                with self.assertRaises(service.ApiError) as rejected:
+                    service.shared_scenes()
+                self.assertEqual(rejected.exception.status, 503)
+        for schema in (True, 5.0, 7):
+            wrapper = json.loads(original)
+            wrapper["scenes"][0]["schemaVersion"] = schema
+            service.SCENES_PATH.write_text(json.dumps(wrapper), encoding="utf-8")
+            with self.assertRaises(service.ApiError):
+                service.shared_scenes()
+
+    def test_multitrack_sync_survives_retry_restart_conflict_and_clear(self):
+        first_enrollment, _ = self.enroll_and_approve()
+        second_enrollment, _ = self.enroll_and_approve()
+        first = service.authenticate_device(first_enrollment["deviceToken"])
+        second = service.authenticate_device(second_enrollment["deviceToken"])
+        base = service.bootstrap(first, 0)["revision"]
+        original = json.loads(service.SCENES_PATH.read_text(encoding="utf-8"))["scenes"][0]
+        source = original["sources"][0]
+        source.update({"muted": False, "volume": 0.37, "monitoring": "monitor-and-output",
+                       "syncOffsetMs": 120, "audioTrack": 6, "audioInputs": [
+                           {"track": 0, "gain": 0.4, "muted": False, "syncOffsetMs": -120},
+                           {"track": 31, "gain": 0.8, "muted": True}]})
+        mutation = {"kind": "scene", "id": original["id"], "operation": "upsert",
+                    "fields": {"sources": original["sources"]}}
+        request = {"schemaVersion": 1, "baseRevision": base, "mutations": [mutation]}
+        status, accepted = service.sync_mutations(first["id"], request)
+        self.assertEqual(status, 200)
+        status, repeated = service.sync_mutations(first["id"], request)
+        self.assertEqual(status, 200)
+        self.assertEqual(repeated["revision"], accepted["revision"])
+        self.assertTrue(repeated["accepted"][0]["unchanged"])
+        # Re-open persisted state through normal initialization and another device.
+        service.initialize()
+        document = service.bootstrap(second, 0)["sync"]["documents"][0]["document"]
+        self.assertEqual(document["schemaVersion"], 6)
+        self.assertEqual(document["sources"], original["sources"])
+        with service.connect() as database:
+            self.assertEqual(database.execute("SELECT schema_version FROM sync_documents").fetchone()[0], 6)
+        changed_source = dict(source, audioInputs=[])
+        conflict_request = {"schemaVersion": 1, "baseRevision": base, "mutations": [
+            {**mutation, "fields": {"sources": [changed_source]}}]}
+        status, conflict = service.sync_mutations(second["id"], conflict_request)
+        self.assertEqual(status, 409)
+        self.assertEqual(conflict["conflicts"][0]["fields"][0]["serverValue"], [source])
+        conflict_request["baseRevision"] = accepted["revision"]
+        self.assertEqual(service.sync_mutations(second["id"], conflict_request)[0], 200)
+        cleared = service.bootstrap(first, 0)["sync"]["documents"][0]["document"]
+        self.assertEqual(cleared["schemaVersion"], 6)
+        self.assertEqual(cleared["sources"][0]["audioInputs"], [])
+        # A later metadata-only edit must preserve the explicit clear.
+        service.sync_mutations(first["id"], {"schemaVersion": 1, "baseRevision": conflict["revision"],
+            "mutations": [{**mutation, "fields": {"name": "Renamed"}}]})
+        self.assertEqual(service.bootstrap(first, 0)["sync"]["documents"][0]["document"]
+                         ["sources"][0]["audioInputs"], [])
+        for bad_sources in (None, [dict(source, profileId="not-granted")],
+                            [dict(source, audioInputs=[{"track": True, "gain": 1, "muted": False}])]):
+            with self.subTest(bad_sources=bad_sources), self.assertRaises(service.ApiError) as rejected:
+                service.sync_mutations(first["id"], {"schemaVersion": 1,
+                    "baseRevision": service.bootstrap(first, 0)["revision"], "mutations": [
+                        {**mutation, "fields": {"sources": bad_sources}}]})
+            self.assertEqual(rejected.exception.status, 400)
+
+    def test_legacy_scene_metadata_sync_does_not_invent_audio_inputs(self):
+        enrollment, _ = self.enroll_and_approve()
+        client = service.authenticate_device(enrollment["deviceToken"])
+        service.sync_mutations(client["id"], {"schemaVersion": 1,
+            "baseRevision": service.bootstrap(client, 0)["revision"], "mutations": [{
+                "kind": "scene", "id": "shared-grid", "operation": "upsert",
+                "fields": {"name": "Legacy rename"}}]})
+        scene = service.bootstrap(client, 0)["sync"]["documents"][0]["document"]
+        self.assertEqual(scene["schemaVersion"], 5)
+        self.assertNotIn("audioInputs", scene["sources"][0])
+
     def test_shared_scenes_reject_non_finite_and_invalid_transforms(self):
         original = service.SCENES_PATH.read_text(encoding="utf-8")
         document = json.loads(original)
