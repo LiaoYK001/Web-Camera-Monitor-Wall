@@ -2311,6 +2311,17 @@ select:focus-visible,
 .go2rtc-frame { display: block; width: 100%; height: 72vh; min-height: 500px; border: 1px solid #28313f; border-radius: .5rem; background: white; }
 @media (max-width: 700px) { .go2rtc-frame { min-height: 420px; height: 65vh; } }
 /* Scene presets and protocol bridge: keyboard, touch and context-menu controls. */
+.developer-diagnostics { margin: 1rem 0; padding: 1.25rem; border: 1px solid var(--line); background: var(--panel); border-radius: 14px; min-width: 0; }
+.developer-diagnostics > .settings-checkbox { display: flex; align-items: center; gap: .6rem; }
+.developer-diagnostics > .settings-checkbox input { width: 16px; height: 16px; flex: 0 0 16px; }
+.developer-diagnostics p { overflow-wrap: anywhere; }
+.control-diagnostics { display: grid; gap: .75rem; }
+.control-diagnostics article { padding: 1rem; border: 1px solid var(--line); border-radius: 10px; }
+.control-diagnostics dl { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(200px, 100%), 1fr)); gap: .75rem; }
+.control-diagnostics dt { color: var(--muted); }
+.control-diagnostics dd { margin: .2rem 0 0; }
+.control-diagnostics-actions { display: flex; flex-wrap: wrap; gap: .6rem; }
+.control-diagnostics pre { white-space: pre-wrap; overflow-wrap: anywhere; max-height: 320px; overflow: auto; }
 .scene-manager { min-width: 0; }
 .app-shell > .topbar { display: flex; flex-wrap: wrap; gap: 12px; padding: 12px 16px; }
 .app-shell > .topbar .brand-block { flex: 0 0 160px; }

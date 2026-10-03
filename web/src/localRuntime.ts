@@ -1,4 +1,5 @@
 import type { StudioDocument } from './types';
+import { isSupportedSceneSchema } from './sceneSchema';
 import type { MonitorView } from './monitorView';
 
 const DATABASE = 'webobs-local-v1';
@@ -384,7 +385,7 @@ export async function cacheSyncedScenes(documents: SyncDocument[]): Promise<void
   const byId = new Map(studio.scenes.map((scene) => [scene.id, scene]));
   for (const item of sceneDocuments) {
     if (item.deleted) byId.delete(item.id);
-    else if (item.document?.schemaVersion === 5) byId.set(item.id, item.document as unknown as StudioDocument['scenes'][number]);
+    else if (isSupportedSceneSchema(item.document?.schemaVersion)) byId.set(item.id, item.document as unknown as StudioDocument['scenes'][number]);
   }
   const scenes = [...byId.values()];
   if (!scenes.length) return;
@@ -487,7 +488,7 @@ function validateProfileStudio(studio: unknown): studio is StudioDocument {
   const value = studio as Partial<StudioDocument>;
   if (value.schemaVersion !== 1 || !Array.isArray(value.scenes) || value.scenes.length > 64) return false;
   for (const scene of value.scenes) {
-    if (!scene || typeof scene !== 'object' || scene.schemaVersion !== 5 ||
+    if (!scene || typeof scene !== 'object' || !isSupportedSceneSchema(scene.schemaVersion) ||
         typeof scene.id !== 'string' || !/^[A-Za-z0-9._-]{1,64}$/.test(scene.id) ||
         !Array.isArray(scene.sources) || scene.sources.length > 256 ||
         !Array.isArray(scene.items) || scene.items.length > 512) return false;

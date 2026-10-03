@@ -1,5 +1,9 @@
 # v1.1–v2 product roadmap / v1.1–v2 产品路线
 
+This document preserves the historical v1/v2 implementation roadmap. For current cross-client maturity work and remaining release gates, see [v4.0 readiness](v4-readiness.md).
+
+本文件保留 v1/v2 历史实施路线。当前多客户端成熟度工作及尚需验收项见 [v4.0 验收矩阵](v4-readiness.md)。
+
 > Status / 状态：v2 execution baseline / v2 实施基线
 >
 > Last updated / 最后更新：2026-09-02

@@ -60,10 +60,14 @@ const pause = ms => new Promise(resolve => setTimeout(resolve, ms));
         scripts: document.scripts.length,
         bodyChildren: document.body.children.length,
         inputKinds: [...document.querySelectorAll('input')].map(input=>({type:input.type,autocomplete:input.autocomplete})),
-        title: document.querySelector('h1')?.textContent
+        title: document.querySelector('h1')?.textContent,
+        control: document.querySelector('.control-diagnostics pre') ? JSON.parse(document.querySelector('.control-diagnostics pre').textContent).connections : null,
+        visible: !document.hidden
       })`);
       const auth = await main.webContents.executeJavaScript('fetch("/api/v1/auth/session").then(async response=>({status:response.status,authenticated:(await response.json()).authenticated}))');
       summary.auth = auth;
+      summary.profile = await main.webContents.executeJavaScript('({busy:document.querySelector(".config-profile-controls")?.disabled, notices:[...document.querySelectorAll(".config-profile-panel [role=status],.config-profile-panel [role=alert]")].map(element=>element.textContent)})');
+      summary.sceneShape = await main.webContents.executeJavaScript('fetch("/api/v1/scene").then(response=>response.json()).then(scene=>({schemaVersion:scene.schemaVersion,revision:scene.revision,idValid:typeof scene.id==="string"&&/^[A-Za-z0-9._-]{1,64}$/.test(scene.id),nameLength:scene.name?.length,canvas:scene.canvas,sources:scene.sources?.map(source=>({kind:source.kind,filters:Array.isArray(source.filters)})),items:scene.items?.map(item=>({sourceId:typeof item.sourceId,crop:Boolean(item.crop)}))}))');
       throw new Error('Desktop settings UI did not reach the expected state: ' + JSON.stringify(summary));
     };
     // Cookie injection does not update LoginGate's initial unauthenticated
@@ -101,6 +105,31 @@ const pause = ms => new Promise(resolve => setTimeout(resolve, ms));
     await main.webContents.executeJavaScript("[...document.querySelectorAll('.desktop-settings button')].find(button=>button.textContent==='应用并重启服务').click()");
     await waitForUi('document.querySelector(".desktop-settings").textContent.includes("服务状态已刷新")');
     assert.equal(await main.webContents.executeJavaScript('Boolean(document.querySelector(".desktop-settings [role=alert]"))'), false);
+    // Windows may mark a window covered by the emulator as hidden. Exercise
+    // actual foreground resume instead of faking Page Visibility for this gate.
+    main.show(); main.restore(); main.focus();
+    await waitForUi('!document.hidden');
+    await main.webContents.executeJavaScript("document.querySelector('.developer-diagnostics input[type=checkbox]').click()");
+    await waitForUi('document.querySelector(".control-diagnostics h3")?.textContent.includes("场景同步正常")');
+    const controlStatus = () => main.webContents.executeJavaScript('JSON.parse(document.querySelector(".control-diagnostics pre").textContent).connections[0]');
+    const firstControl = await controlStatus();
+    assert.ok(firstControl.messages > 0);
+    await main.webContents.executeJavaScript("[...document.querySelectorAll('.control-diagnostics button')].find(button=>button.textContent==='重新连接场景同步').click()");
+    await waitForUi('JSON.parse(document.querySelector(".control-diagnostics pre").textContent).connections[0].phase === "online" && JSON.parse(document.querySelector(".control-diagnostics pre").textContent).connections[0].attempts > ' + firstControl.attempts);
+    const diagnosticText = await main.webContents.executeJavaScript('document.querySelector(".control-diagnostics pre").textContent');
+    assert.equal(diagnosticText.includes(origin), false);
+    assert.equal(diagnosticText.includes(credentials.username), false);
+    await waitForUi('[...document.querySelectorAll(".config-profile-panel button")].some(button => button.textContent === "保存当前配置" && !button.disabled)');
+    await main.webContents.executeJavaScript("[...document.querySelectorAll('.config-profile-panel button')].find(button=>button.textContent==='保存当前配置').click()");
+    await waitForUi('document.querySelector(".config-profile-panel").textContent.includes("已保存")');
+    const savedProfile = await (await fetch(`${origin}/api/v2/account/preferences/config-profiles`, { headers })).json();
+    assert.equal(savedProfile.value.profiles[0].studio.scenes[0].schemaVersion, 6);
+    await main.webContents.executeJavaScript(`{
+      const select=document.querySelector('.config-profile-panel select');
+      Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype,'value').set.call(select,'');
+      select.dispatchEvent(new Event('change',{bubbles:true}));
+    }`);
+    await waitForUi('document.querySelector(".config-profile-panel select").value === "" && !document.querySelector(".config-profile-controls").disabled');
     const studio = await (await fetch(`${origin}/api/v1/studio`, { headers })).json();
     const second = { ...structuredClone(studio.scenes[0]), id: 'native-main-second', name: 'Second fixed projector' };
     studio.scenes.push(second);
@@ -138,7 +167,7 @@ const pause = ms => new Promise(resolve => setTimeout(resolve, ms));
     for (const window of BrowserWindow.getAllWindows()) window.destroy();
     await pause(100);
     assert.deepEqual(errors.map(error => String(error)), []);
-    console.log('Actual desktop entry: first login, account UI save, port UI persistence, canceled native restart, two fixed Scene projectors, shared session, tray hide and normal exit passed. Camera and clean-install qualification remain separate.');
+    console.log('Actual desktop entry: first login, account UI save, port UI persistence, canceled native restart, authenticated scene synchronization and manual reconnect diagnostics, two fixed Scene projectors, shared session, tray hide and normal exit passed. Camera and clean-install qualification remain separate.');
   } catch (error) {
     exitCode = 1; console.error(error.stack);
     for (const name of ['native-tools', 'core', 'clients']) {
