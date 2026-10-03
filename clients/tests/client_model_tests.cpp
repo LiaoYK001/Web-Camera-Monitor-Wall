@@ -9,6 +9,9 @@
 #include <QDateTime>
 #include <QJsonArray>
 #include <QJsonObject>
+#include <QJsonDocument>
+#include <QFile>
+#include <QTemporaryDir>
 #include <QtTest>
 
 #include <type_traits>
@@ -57,6 +60,82 @@ class ClientModelTests final : public QObject {
     Q_OBJECT
 
 private slots:
+    void scene_geometry_and_local_save_preserve_audio_selection()
+    {
+        for (const bool explicit_inputs : {false, true}) {
+            for (const QJsonArray &inputs : {QJsonArray{}, QJsonArray{
+                QJsonObject{{"track", 0}, {"gain", 0.37}, {"muted", false}, {"syncOffsetMs", -120}},
+                QJsonObject{{"track", 31}, {"gain", 1}, {"muted", true}}}}) {
+                QJsonObject scene = fixture_scene();
+                scene.insert("schemaVersion", explicit_inputs ? 6 : 5);
+                QJsonObject source = scene.value("sources").toArray().first().toObject();
+                source.insert("muted", false); source.insert("volume", 0.37);
+                source.insert("syncOffsetMs", 120); source.insert("monitoring", "monitor-and-output");
+                source.insert("audioTrack", 6);
+                if (explicit_inputs) source.insert("audioInputs", inputs);
+                scene.insert("sources", QJsonArray{source});
+                SceneModel model;
+                QVERIFY(model.load(scene));
+                model.moveItem(0, 100, 200);
+                model.setItemVisible(1, false);
+                const QJsonObject encoded = model.toJson();
+                QCOMPARE(encoded.value("schemaVersion"), scene.value("schemaVersion"));
+                const QJsonObject saved_source = encoded.value("sources").toArray().first().toObject();
+                for (const QString &field : {QStringLiteral("muted"), QStringLiteral("volume"),
+                     QStringLiteral("syncOffsetMs"), QStringLiteral("monitoring"), QStringLiteral("audioTrack")})
+                    QCOMPARE(saved_source.value(field), source.value(field));
+                QCOMPARE(saved_source.contains("audioInputs"), explicit_inputs);
+                if (explicit_inputs) QCOMPARE(saved_source.value("audioInputs").toArray(), inputs);
+                QCOMPARE(encoded.value("sources").toArray().size(), 1);
+                QTemporaryDir directory;
+                QVERIFY(directory.isValid());
+                const QString path = directory.filePath(QStringLiteral("scene.json"));
+                QVERIFY(model.saveLocal(path));
+                QFile file(path);
+                QVERIFY(file.open(QIODevice::ReadOnly));
+                SceneModel restored;
+                QVERIFY(restored.load(QJsonDocument::fromJson(file.readAll()).object()));
+                QCOMPARE(restored.toJson(), encoded);
+                StudioWorkspace studio;
+                QVERIFY(studio.load(QJsonArray{scene}));
+                studio.preview()->moveItem(0, 20, 40);
+                QVERIFY(studio.take(QStringLiteral("cut"), 0));
+                QCOMPARE(studio.program()->toJson().value("sources"), studio.preview()->toJson().value("sources"));
+            }
+        }
+    }
+
+    void scene_audio_validation_rejects_invalid_inputs_without_replacing_state()
+    {
+        SceneModel model;
+        QVERIFY(model.load(fixture_scene()));
+        const QJsonObject before = model.toJson();
+        const QJsonObject input{{"track", 0}, {"gain", 0.5}, {"muted", false}};
+        QJsonArray too_many;
+        for (int track = 0; track < 9; ++track) {
+            QJsonObject next = input; next.insert("track", track); too_many.append(next);
+        }
+        QList<QJsonValue> invalid{QJsonValue::Null, QJsonObject{}, QJsonArray{input, input}, too_many};
+        for (const auto &field : QList<QPair<QString, QJsonValue>>{
+            {"track", true}, {"track", 0.5}, {"track", -1}, {"track", 32},
+            {"gain", true}, {"gain", -0.1}, {"gain", 1.1}, {"muted", 0},
+            {"syncOffsetMs", true}, {"syncOffsetMs", 0.5}, {"syncOffsetMs", 10001},
+            {"unexpected", 1}}) {
+            QJsonObject next = input; next.insert(field.first, field.second);
+            invalid.append(QJsonArray{next});
+        }
+        for (const QJsonValue &value : invalid) {
+            QJsonObject scene = fixture_scene(); scene.insert("schemaVersion", 6);
+            QJsonObject source = scene.value("sources").toArray().first().toObject();
+            source.insert("audioInputs", value); scene.insert("sources", QJsonArray{source});
+            QVERIFY(!model.load(scene));
+            QCOMPARE(model.toJson(), before);
+        }
+        QJsonObject future = fixture_scene(); future.insert("schemaVersion", 7);
+        QVERIFY(!model.load(future));
+        QCOMPARE(model.toJson(), before);
+    }
+
     void device_identity_is_move_only_and_explicitly_wipes_secret_fields()
     {
         static_assert(!std::is_copy_constructible_v<DeviceIdentity>);

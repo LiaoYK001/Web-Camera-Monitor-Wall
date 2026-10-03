@@ -14,6 +14,47 @@
 namespace webobs::client {
 namespace {
 
+const QStringList audio_fields{"muted", "volume", "syncOffsetMs", "monitoring", "audioTrack", "audioInputs"};
+
+bool bounded_number(const QJsonValue &value, double minimum, double maximum, bool integer = false)
+{
+    if (!value.isDouble()) return false;
+    const double number = value.toDouble();
+    return std::isfinite(number) && number >= minimum && number <= maximum &&
+           (!integer || std::floor(number) == number);
+}
+
+bool valid_source_audio(const QJsonObject &source)
+{
+    if ((source.contains("muted") && !source.value("muted").isBool()) ||
+        (source.contains("volume") && !bounded_number(source.value("volume"), 0, 1)) ||
+        (source.contains("syncOffsetMs") && !bounded_number(source.value("syncOffsetMs"), -10000, 10000, true)) ||
+        (source.contains("audioTrack") && !bounded_number(source.value("audioTrack"), 1, 6, true)) ||
+        (source.contains("monitoring") && !QStringList{"off", "monitor-only", "monitor-and-output"}
+            .contains(source.value("monitoring").toString())))
+        return false;
+    if (!source.contains("audioInputs")) return true;
+    if (!source.value("audioInputs").isArray()) return false;
+    const QJsonArray inputs = source.value("audioInputs").toArray();
+    if (inputs.size() > 8) return false;
+    QSet<int> tracks;
+    for (const QJsonValue &value : inputs) {
+        if (!value.isObject()) return false;
+        const QJsonObject input = value.toObject();
+        for (const QString &key : input.keys())
+            if (!QStringList{"track", "gain", "muted", "syncOffsetMs"}.contains(key)) return false;
+        if (!bounded_number(input.value("track"), 0, 31, true) ||
+            !bounded_number(input.value("gain"), 0, 1) || !input.value("muted").isBool() ||
+            (input.contains("syncOffsetMs") &&
+             !bounded_number(input.value("syncOffsetMs"), -10000, 10000, true)))
+            return false;
+        const int track = input.value("track").toInt();
+        if (tracks.contains(track)) return false;
+        tracks.insert(track);
+    }
+    return true;
+}
+
 bool valid_identifier(const QString &value)
 {
     static const QRegularExpression expression(QStringLiteral("^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$"));
@@ -174,6 +215,10 @@ QHash<int, QByteArray> SceneModel::roleNames() const
 
 bool SceneModel::load(const QJsonObject &scene)
 {
+    if (!bounded_number(scene.value("schemaVersion"), 5, 6, true)) {
+        emit errorOccurred(QStringLiteral("Unsupported Scene schema; use a compatible client"));
+        return false;
+    }
     const QJsonObject canvas = scene.value("canvas").toObject();
     const QJsonArray sources = scene.value("sources").toArray();
     const QJsonArray items = scene.value("items").toArray();
@@ -186,8 +231,8 @@ bool SceneModel::load(const QJsonObject &scene)
     for (const QJsonValue &value : sources) {
         const QJsonObject source = value.toObject();
         const QString source_id = source.value("id").toString();
-        if (source_id.isEmpty() || source_by_id.contains(source_id)) {
-            emit errorOccurred(QStringLiteral("Scene contains an invalid or duplicate source ID"));
+        if (source_id.isEmpty() || source_by_id.contains(source_id) || !valid_source_audio(source)) {
+            emit errorOccurred(QStringLiteral("Scene contains invalid source IDs or audio settings"));
             return false;
         }
         source_by_id.insert(source_id, source);
@@ -208,6 +253,8 @@ bool SceneModel::load(const QJsonObject &scene)
         item.file_path = source.value("filePath").toString();
         item.nested_scene_id = source.value("sceneId").toString();
         item.filters = source.value("filters").toArray();
+        for (const QString &field : audio_fields)
+            if (source.contains(field)) item.audio.insert(field, source.value(field));
         item.x = object.value("x").toDouble(); item.y = object.value("y").toDouble();
         item.width = object.value("width").toDouble(320); item.height = object.value("height").toDouble(180);
         item.rotation = object.value("rotation").toDouble();
@@ -239,6 +286,7 @@ bool SceneModel::load(const QJsonObject &scene)
     id_ = scene.value("id").toString(QStringLiteral("local-monitor"));
     name_ = scene.value("name").toString(QStringLiteral("Local Monitor"));
     revision_ = scene.value("revision").toInteger();
+    schema_version_ = scene.value("schemaVersion").toInt();
     canvas_width_ = canvas.value("width").toInt(1920);
     canvas_height_ = canvas.value("height").toInt(1080);
     endResetModel();
@@ -255,6 +303,8 @@ QJsonObject SceneModel::toJson() const
         QJsonObject source{{"id", item.source_id}, {"kind", item.kind}, {"name", item.name},
             {"muted", true}, {"volume", 1}, {"syncOffsetMs", 0}, {"monitoring", "off"},
             {"audioTrack", 1}, {"filters", QJsonArray{}}};
+        for (auto field = item.audio.begin(); field != item.audio.end(); ++field)
+            source.insert(field.key(), field.value());
         if (item.kind == QStringLiteral("camera")) {
             source.insert("cameraId", item.camera_id);
             source.insert("profileId", item.profile_id);
@@ -284,7 +334,7 @@ QJsonObject SceneModel::toJson() const
                                   {"bottom", item.crop_bottom}, {"left", item.crop_left}}},
             {"blendMode", "normal"}});
     }
-    return {{"schemaVersion", 5}, {"revision", revision_}, {"id", id_}, {"name", name_},
+    return {{"schemaVersion", schema_version_}, {"revision", revision_}, {"id", id_}, {"name", name_},
             {"canvas", QJsonObject{{"width", canvas_width_}, {"height", canvas_height_},
                                     {"backgroundColor", "#000000"}}},
             {"sources", sources}, {"items", items}};

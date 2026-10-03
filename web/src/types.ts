@@ -25,7 +25,7 @@ interface SceneSourceBase {
   volume: number;
   syncOffsetMs: number;
   monitoring: AudioMonitoring;
-  /** Legacy single-track field; kept in sync with audioInputs[0] on save. */
+  /** Legacy OBS output mixer slot (1–6), independent of the input track indices. */
   audioTrack: number;
   /** Schema 6 per-track Composite inputs, keyed by "source + input track". */
   audioInputs?: Array<{ track: number; gain: number; muted: boolean; syncOffsetMs?: number }>;

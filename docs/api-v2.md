@@ -111,12 +111,12 @@ For contract-v2 browser clients, bootstrap also returns `sync.resetRequired`, `s
 
 `POST /api/v2/client/sync` accepts schema-v1 batches with one base revision and at most 64 mutations. Supported document kinds are:
 
-- `scene`: the safe Camera/text/color/nested Scene v5 subset, addressed by stable Scene ID; fields are `name`, `canvas`, `sources`, and `items`.
+- `scene`: the safe Camera/text/color/nested Scene v5/v6 subset, addressed by stable Scene ID; fields are `name`, `canvas`, `sources`, and `items`. See [schema v6](scene-schema-v6.md) for bounded audio inputs and legacy compatibility.
 - `camera-preference`: a non-secret display overlay with `displayName`, `favorite`, and `group`, addressed by an already granted Camera ID.
 
 Each mutation is `upsert` or `delete`. The service validates the complete resulting document, client Camera/Profile scope, nested Scene graph, bounds and secret-free representation inside one SQLite transaction. A field changed after `baseRevision` returns `409` with only that field's safe server value and revision; unrelated stale fields can still commit. Deletes create tombstones, and retries with identical values are idempotent. The PWA retains conflicting encrypted mutations until the operator chooses “采用服务端” or rebases them with “保留本地”.
 
-`POST /api/v2/client/sync` 接收 schema-v1、携带一个基础 revision、最多 64 个 mutation 的批次。`scene` 只允许安全的 Camera/文字/纯色/嵌套 Scene v5 子集；`camera-preference` 只允许已授权 Camera ID 的显示名称、收藏与分组。服务在同一 SQLite 事务中校验完整结果、授权范围、嵌套图、边界和脱敏表示。基础 revision 之后被修改的字段返回 `409`，互不相关的旧字段仍可提交；删除使用墓碑，等值重试保持幂等。PWA 在操作员选择采用服务端或保留本地前，会继续以密文保留冲突 mutation。
+`POST /api/v2/client/sync` 接收 schema-v1、携带一个基础 revision、最多 64 个 mutation 的批次。`scene` 只允许安全的 Camera/文字/纯色/嵌套 Scene v5/v6 子集，音轨与旧版兼容见 v6 文档；`camera-preference` 只允许已授权 Camera ID 的显示名称、收藏与分组。服务在同一 SQLite 事务中校验完整结果、授权范围、嵌套图、边界和脱敏表示。基础 revision 之后被修改的字段返回 `409`，互不相关的旧字段仍可提交；删除使用墓碑，等值重试保持幂等。PWA 在操作员选择采用服务端或保留本地前，会继续以密文保留冲突 mutation。
 
 `GET /api/v2/clients` lists at most 256 clients and reports `cameraCount` and `weakRevocation`. `DELETE /api/v2/clients/{id}` immediately revokes online API access, deletes active plans, removes managed ONVIF dedicated accounts in a bounded parallel cleanup, and returns `offlineEffectiveNoLaterThan`, `weakRevocation`, and `cameraCredentialCleanup`. If any camera is unreachable or refuses account removal, that Grant is atomically changed to weak revocation and the UI requires camera-password rotation. A disconnected client cannot learn server-token revocation before the already issued Grant expires; the UI always displays this boundary.
 
@@ -205,4 +205,6 @@ Direct meters are produced locally by per-source Web Audio analysers. Composite 
 
 ## Shared Scene boundary / 共享场景边界
 
-`/config/webobs/shared-scenes-v2.json` is a wrapper with schema version 1 and at most 64 Scene v5 documents. The local subset accepts Camera, text, color, image and two-level nested Scene sources; stable IDs; bounded transforms/crop/grouping; and the standardized ordered filter records. LUT/mask paths are constrained to `/assets/` or `/recordings/`, scaling uses bounded `WIDTHxHEIGHT`, and nested references must exist, remain acyclic and stop at two levels. Raw URLs, endpoint/credential/secret/token fields, unknown fields and unsupported source kinds remain rejected. Local-only layouts serialize the same Scene v5 shape and do not create a second canvas schema.
+`/config/webobs/shared-scenes-v2.json` is a wrapper with schema version 1 and at most 64 Scene v5/v6 documents. The local subset accepts Camera, text, color, image and two-level nested Scene sources; stable IDs; bounded transforms/crop/grouping; standardized ordered filter records; and validated optional audio inputs. LUT/mask paths are constrained to `/assets/` or `/recordings/`, scaling uses bounded `WIDTHxHEIGHT`, and nested references must exist, remain acyclic and stop at two levels. Raw URLs, endpoint/credential/secret/token fields, unknown fields and unsupported source kinds remain rejected. Local-only layouts preserve the supported scene version and audio settings and do not create a second canvas schema.
+
+共享场景文件采用 schema-v1 集合，最多 64 个 v5/v6 场景。保留安全来源、稳定 ID、布局、滤镜与可选音轨边界；原始端点、凭据字段、未知字段及不支持的来源仍被拒绝。本地布局保留支持的场景版本与音频设置，不另建画布契约。

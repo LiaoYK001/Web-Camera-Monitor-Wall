@@ -48,14 +48,17 @@ app.on('window-all-closed', () => {});
       assert.ok(result.ok, `authenticated native route failed (${route}, ${result.status})`);
       await result.arrayBuffer();
     }
+    const { exerciseNativeSync } = require('./native-sync-contract.cjs');
+    const assertSyncPersisted = await exerciseNativeSync(origin, headers);
     await supervisor.stop();
     const snapshot = await supervisor.snapshot();
     assert.ok((await fs.stat(path.join(snapshot, 'snapshot.json'))).isFile());
     await supervisor.start();
     const restoredSession = await fetch(`${origin}/api/v1/auth/session`, { headers });
     assert.equal(restoredSession.status, 200, 'account session must survive service restart');
+    await assertSyncPersisted();
     await supervisor.stop();
-    console.log('Bundled Windows services, first login, authenticated go2rtc, snapshot and restart passed. Camera/media qualification remains separate.');
+    console.log('Bundled Windows services, first login, authenticated go2rtc, two-device multi-track sync/conflict, snapshot and restart persistence passed. Camera/media qualification remains separate.');
   } catch (error) {
     exitCode = 1; console.error(error.stack);
     if (supervisor) {
