@@ -1,5 +1,5 @@
-import { useEffect, useState } from 'react';
-import type { DesktopStatus } from './desktopRuntime';
+import { useRef, useState } from 'react';
+import { useDesktopStatus } from './useDesktopStatus';
 import { checkPwaUpdate } from './pwaRuntime';
 
 const repository = 'https://github.com/LiaoYK001/Web-Camera-Monitor-Wall';
@@ -10,24 +10,18 @@ const updateLabels: Record<string, string> = {
 };
 
 export default function AboutSettings() {
-  const bridge = window.webobsDesktop;
-  const [state, setState] = useState<DesktopStatus | null>(null);
+  const { bridge, state, error: readError, refresh } = useDesktopStatus();
+  const running = useRef(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   const [notice, setNotice] = useState('');
-  useEffect(() => {
-    if (!bridge) return;
-    let active = true;
-    void bridge.status().then(value => { if (active) setState(value); }).catch(() => { if (active) setError('无法读取客户端信息，请稍后重试。'); });
-    const unsubscribe = bridge.onStatus(value => { if (active) setState(value); });
-    return () => { active = false; unsubscribe(); };
-  }, [bridge]);
-  const run = async (action: () => Promise<unknown>) => {
-    if (busy) return;
+  const run = async (action: () => Promise<unknown>, refreshAfter = true) => {
+    if (running.current) return;
+    running.current = true;
     setBusy(true); setError(''); setNotice('');
-    try { await action(); if (bridge) setState(await bridge.status()); }
+    try { await action(); if (bridge && refreshAfter) await refresh(); }
     catch (reason) { setError(reason instanceof Error ? reason.message : '更新检查失败，请稍后重试。'); }
-    finally { setBusy(false); }
+    finally { running.current = false; setBusy(false); }
   };
   const checkPage = async () => {
     let result: Awaited<ReturnType<typeof checkPwaUpdate>>;
@@ -51,7 +45,7 @@ export default function AboutSettings() {
     </dl>
     <div className="about-update" aria-busy={busy || update?.phase === 'checking'}>
       {bridge ? <>
-        <div className="about-update-heading"><strong role="status">{state ? updateLabels[update?.phase || ''] || '更新状态暂不可用' : '正在读取更新状态…'}</strong><button type="button" disabled={pending} onClick={() => void run(() => state ? bridge.checkUpdate() : bridge.status())}>{update?.phase === 'checking' ? '正在检查…' : state ? '检查更新' : '重新读取更新状态'}</button></div>
+        <div className="about-update-heading"><strong role="status">{state ? updateLabels[update?.phase || ''] || '更新状态暂不可用' : readError ? '更新状态暂不可用' : '正在读取更新状态…'}</strong><button type="button" disabled={pending} onClick={() => void run(() => state ? bridge.checkUpdate() : refresh(), Boolean(state))}>{update?.phase === 'checking' ? '正在检查…' : state ? '检查更新' : '重新读取更新状态'}</button></div>
         {update?.message && <p>{update.message}</p>}
         {lastChecked && !Number.isNaN(lastChecked.getTime()) && <small>最近成功检查：{lastChecked.toLocaleString()}</small>}
         {update?.version && ['available', 'downloading', 'downloaded', 'preparing'].includes(update.phase) && <p>可更新至 <strong>{update.version}</strong></p>}
@@ -64,7 +58,7 @@ export default function AboutSettings() {
         <div className="about-update-heading"><strong>页面更新</strong><button type="button" disabled={busy} onClick={() => void run(checkPage)}>{busy ? '正在检查…' : '检查页面更新'}</button></div>
         <p>页面随当前服务器更新。Docker / Podman 部署需由维护者更新镜像；Windows 客户端可通过正式安装包自动更新。</p>
       </>}
-      {notice && <p role="status">{notice}</p>}{error && <p role="alert">{error}</p>}
+      {notice && <p role="status">{notice}</p>}{(error || readError) && <p role="alert">{error || readError}</p>}
     </div>
     <nav className="about-links" aria-label="开源项目链接">
       {[[repository, 'GitHub 开源仓库'], [`${repository}/releases`, '版本发布与更新记录'], [`${repository}/issues`, '反馈问题'], [`${repository}/blob/main/README.md`, '使用说明']].map(([href, label]) => <a key={href} href={href} target="_blank" rel="noopener noreferrer">{label}<span aria-hidden="true"> ↗</span></a>)}

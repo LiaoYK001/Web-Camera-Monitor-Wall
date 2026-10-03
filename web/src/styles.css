@@ -2195,6 +2195,21 @@ select:focus-visible,
   border-radius: 50%; background: #2563eb; color: #fff; font-size: 18px; }
 .account-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(270px, 1fr)); gap: 16px; }
 .account-grid form { display: grid; align-content: start; gap: 14px; }
+.account-form-fields { display: grid; min-width: 0; gap: 14px; margin: 0; padding: 0; border: 0; }
+.account-form-fields small { color: var(--muted); overflow-wrap: anywhere; }
+.account-form-fields .save-mode-badge { justify-self: start; }
+.desktop-settings { display: grid; gap: 14px; padding: 20px; border: 1px solid var(--line); border-radius: 12px; background: var(--panel); }
+.desktop-settings > h2, .desktop-settings p { margin: 0; line-height: 1.6; overflow-wrap: anywhere; }
+.desktop-controls { display: grid; min-width: 0; gap: 12px; margin: 0; padding: 0; border: 0; }
+.desktop-controls > .settings-checkbox { display: flex; align-items: flex-start; gap: 8px; line-height: 1.5; }
+.desktop-controls > .settings-checkbox input { flex-shrink: 0; width: 16px; height: 16px; margin: 3px 0 0; }
+.desktop-settings > [role="status"]:empty { display: none; }
+.desktop-port-editor { display: grid; gap: 8px; margin: 14px 0; }
+.desktop-port-editor label { display: grid; gap: 6px; }
+.desktop-port-editor input { width: min(100%, 240px); }
+.desktop-port-editor small { color: var(--muted); overflow-wrap: anywhere; }
+.desktop-port-editor input[aria-invalid="true"] { border-color: var(--danger); }
+.desktop-port-editor > div { display: flex; flex-wrap: wrap; gap: 8px; }
 .account-grid form label { display: grid; gap: 5px; }
 .account-grid input { min-width: 0; }
 .avatar-options { display: flex; flex-wrap: wrap; gap: 10px; }
