@@ -453,6 +453,8 @@ std::string permission_for_request(const HttpRequest &request)
     if (target.find("/snapshot") != std::string_view::npos)
         return "snapshot.create";
     if (target.starts_with("/api/v1/nvr")) {
+        if (target.starts_with("/api/v1/nvr/playback-leases"))
+            return "playback.view";
         if (request.method() == http::verb::delete_)
             return "recording.delete";
         if (target.find("/exports") != std::string_view::npos)
@@ -1897,6 +1899,12 @@ public:
         struct curl_slist *headers = nullptr;
         if (mutating)
             headers = curl_slist_append(headers, "Content-Type: application/json");
+        const std::string principal(view(request["X-WebObs-Nvr-Principal"]));
+        if (!principal.empty() && principal.size() <= 64 &&
+            std::all_of(principal.begin(), principal.end(), [](unsigned char c) {
+                return std::isalnum(c) || c == '.' || c == '_' || c == '-';
+            }))
+            headers = curl_slist_append(headers, ("X-WebObs-Nvr-Principal: " + principal).c_str());
         const auto range = request.find(http::field::range);
         if (range != request.end()) {
             const std::string value(view(range->value()));
@@ -4074,6 +4082,12 @@ private:
             request.erase("X-WebObs-Principal");
             if (session_record)
                 request.set("X-WebObs-Principal", session_record->user);
+        }
+        if (target.starts_with("/api/v1/nvr")) {
+            request.erase("X-WebObs-Nvr-Principal");
+            const std::string principal = session_record ? session_record->user :
+                basic_authenticated ? std::string(authenticator_.configured_username()) : "local-only";
+            request.set("X-WebObs-Nvr-Principal", principal);
         }
         if (target.starts_with("/api/v3/analytics")) {
             // Bind every analytics runtime request to the already-authenticated

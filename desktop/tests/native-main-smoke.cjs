@@ -121,7 +121,9 @@ const pause = ms => new Promise(resolve => setTimeout(resolve, ms));
     assert.equal(diagnosticText.includes(credentials.username), false);
     await waitForUi('[...document.querySelectorAll(".config-profile-panel button")].some(button => button.textContent === "保存当前配置" && !button.disabled)');
     await main.webContents.executeJavaScript("[...document.querySelectorAll('.config-profile-panel button')].find(button=>button.textContent==='保存当前配置').click()");
-    await waitForUi('document.querySelector(".config-profile-panel").textContent.includes("已保存")');
+    // The saved notice appears before profile reload and the operation's
+    // finally block. Wait for the same enabled state a user needs to switch.
+    await waitForUi('document.querySelector(".config-profile-panel").textContent.includes("已保存") && !document.querySelector(".config-profile-controls").disabled');
     const savedProfile = await (await fetch(`${origin}/api/v2/account/preferences/config-profiles`, { headers })).json();
     assert.equal(savedProfile.value.profiles[0].studio.scenes[0].schemaVersion, 6);
     await main.webContents.executeJavaScript(`{

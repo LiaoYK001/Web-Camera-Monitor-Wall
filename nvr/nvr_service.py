@@ -11,6 +11,8 @@ import sys as _runtime_sys
 from pathlib import Path as _RuntimePath
 _runtime_sys.path.insert(0, str(_RuntimePath(__file__).resolve().parents[1]))
 from runtime_support import service_port, service_http, service_rtsp, install_owner_shutdown, serve_owned, STOP, sync_directory
+_runtime_sys.path.insert(0, str(_RuntimePath(__file__).resolve().parent))
+from evidence import EvidenceError, ExportJobs, export_evidence
 
 import argparse
 import contextlib
@@ -69,6 +71,8 @@ class ConfigError(ValueError):
 def export_operation(function):
     @functools.wraps(function)
     def wrapped(self, *args, **kwargs):
+        if not self.export_slots.acquire(blocking=False):
+            raise EvidenceError("export_capacity", "Evidence processing is busy; try later", 503)
         with self.config_lock:
             self.active_exports += 1
         try:
@@ -76,6 +80,7 @@ def export_operation(function):
         finally:
             with self.config_lock:
                 self.active_exports -= 1
+            self.export_slots.release()
     return wrapped
 
 
@@ -338,6 +343,10 @@ class Catalog:
                 for name, declaration in migrations.items():
                     if name not in columns:
                         self.connection.execute(f"ALTER TABLE segments ADD COLUMN {name} {declaration}")
+                export_columns = {row[1] for row in self.connection.execute("PRAGMA table_info(exports)")}
+                for name, declaration in {"owner": "TEXT NOT NULL DEFAULT ''", "request_json": "TEXT NOT NULL DEFAULT '{}'"}.items():
+                    if name not in export_columns:
+                        self.connection.execute(f"ALTER TABLE exports ADD COLUMN {name} {declaration}")
                 self.connection.execute("PRAGMA user_version=2")
                 if self.connection.execute("PRAGMA integrity_check").fetchone()[0] != "ok":
                     raise ConfigError("migrated catalog failed integrity validation")
@@ -491,6 +500,7 @@ class NvrService:
             "WEBOBS_NODE_ASSIGNMENTS_FILE", "/config/webobs/node/assignments.json"))
         self.config_lock = threading.RLock()
         self.active_exports = 0
+        self.export_slots = threading.BoundedSemaphore(2)
         self.config = self._load_or_default()
         self.catalog.sync_cameras(self.config)
         self.stop_event = threading.Event()
@@ -520,6 +530,7 @@ class NvrService:
                           self.thumbnail_root, self.snapshot_root):
             directory.mkdir(mode=0o700, parents=True, exist_ok=True)
         self.reconcile()
+        self.jobs = ExportJobs(self)
 
     def _load_or_default(self) -> dict[str, Any]:
         if not self.config_path.exists():
@@ -559,10 +570,12 @@ class NvrService:
         print(json.dumps(record, separators=(",", ":"), sort_keys=True), flush=True)
 
     def start(self) -> None:
+        self.jobs.start()
         self.reconcile_workers()
         threading.Thread(target=self._maintenance_loop, name="nvr-maintenance", daemon=True).start()
 
     def shutdown(self) -> None:
+        self.jobs.drain()
         deadline = time.monotonic() + 20
         while self.active_exports and time.monotonic() < deadline:
             time.sleep(0.1)
@@ -708,7 +721,7 @@ class NvrService:
         command = [self.ffprobe, "-v", "error"]
         if transport:
             command += ["-rtsp_transport", transport]
-        command += ["-show_entries", "format=duration:stream=codec_type,codec_name", "-of", "json", path_or_url]
+        command += ["-show_entries", "format=duration:stream=codec_type,codec_name,avg_frame_rate,duration", "-of", "json", path_or_url]
         completed = subprocess.run(command, capture_output=True, timeout=15, check=False)
         if completed.returncode != 0 or len(completed.stdout) > MAX_BODY:
             raise RuntimeError("media probe failed")
@@ -954,9 +967,9 @@ class NvrService:
             with self.reader_lock:
                 if self._segment_active(segment_id):
                     continue
-            with contextlib.suppress(OSError):
-                path.unlink()
-                total -= size
+                with contextlib.suppress(OSError):
+                    path.unlink()
+                    total -= size
 
     def migrate_under_pressure(self) -> bool:
         policies = self.volume_policies()
@@ -984,30 +997,34 @@ class NvrService:
                 with self.reader_lock:
                     if self._segment_active(row["id"]):
                         continue
-                try:
-                    source = self.volumes.path(volume_id, row["storage_key"])
-                    target = self.volumes.path(target_id, row["storage_key"])
-                    target.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
-                    temporary = target.with_name(f".{target.name}.{uuid.uuid4().hex}.migrating")
-                    shutil.copyfile(source, temporary)
-                    digest = file_sha256(temporary)
-                    expected = row["sha256"] or file_sha256(source)
-                    if digest != expected or temporary.stat().st_size != row["size_bytes"]:
-                        raise RuntimeError("migrated segment digest mismatch")
-                    os.replace(temporary, target)
-                    self.catalog.execute("UPDATE segments SET volume_id=?,sha256=? WHERE id=?",
-                                         (target_id, digest, row["id"]))
-                    with contextlib.suppress(OSError):
-                        source.unlink()
-                    self.audit("nvr.segment.migrated", segment_id=row["id"],
-                               source_volume=volume_id, target_volume=target_id)
-                    return True
-                except (OSError, RuntimeError):
-                    with contextlib.suppress(UnboundLocalError, OSError):
-                        temporary.unlink()
-                    self.catalog.execute("UPDATE segments SET integrity='migration-failed' WHERE id=?",
-                                         (row["id"],))
-                    return False
+                with self.reader_lock:
+                    current = self.catalog.query("SELECT locked FROM segments WHERE id=?", (row["id"],))
+                    if self._segment_active(row["id"]) or not current or current[0]["locked"]:
+                        continue
+                    try:
+                        source = self.volumes.path(volume_id, row["storage_key"])
+                        target = self.volumes.path(target_id, row["storage_key"])
+                        target.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+                        temporary = target.with_name(f".{target.name}.{uuid.uuid4().hex}.migrating")
+                        shutil.copyfile(source, temporary)
+                        digest = file_sha256(temporary)
+                        expected = row["sha256"] or file_sha256(source)
+                        if digest != expected or temporary.stat().st_size != row["size_bytes"]:
+                            raise RuntimeError("migrated segment digest mismatch")
+                        os.replace(temporary, target)
+                        self.catalog.execute("UPDATE segments SET volume_id=?,sha256=? WHERE id=?",
+                                             (target_id, digest, row["id"]))
+                        with contextlib.suppress(OSError):
+                            source.unlink()
+                        self.audit("nvr.segment.migrated", segment_id=row["id"],
+                                   source_volume=volume_id, target_volume=target_id)
+                        return True
+                    except (OSError, RuntimeError):
+                        with contextlib.suppress(UnboundLocalError, OSError):
+                            temporary.unlink()
+                        self.catalog.execute("UPDATE segments SET integrity='migration-failed' WHERE id=?",
+                                             (row["id"],))
+                        return False
         return False
 
     def scrub_once(self, limit: int = 128) -> dict[str, int]:
@@ -1060,14 +1077,18 @@ class NvrService:
             global_over = config["maxBytes"] > 0 and total > config["maxBytes"]
             if not (expired or camera_over or global_over or pressure):
                 continue
-            try:
-                path = self.volumes.path(row["volume_id"], row["storage_key"])
-            except RuntimeError:
-                self.catalog.execute("UPDATE segments SET integrity='missing' WHERE id=?", (row["id"],))
-                continue
-            with contextlib.suppress(FileNotFoundError):
-                path.unlink()
-            self.catalog.execute("UPDATE segments SET integrity='deleted',size_bytes=0 WHERE id=?", (row["id"],))
+            with self.reader_lock:
+                current = self.catalog.query("SELECT locked,integrity FROM segments WHERE id=?", (row["id"],))
+                if self._segment_active(row["id"]) or not current or current[0]["locked"] or current[0]["integrity"] == "deleted":
+                    continue
+                try:
+                    path = self.volumes.path(row["volume_id"], row["storage_key"])
+                except RuntimeError:
+                    self.catalog.execute("UPDATE segments SET integrity='missing' WHERE id=?", (row["id"],))
+                    continue
+                with contextlib.suppress(FileNotFoundError):
+                    path.unlink()
+                self.catalog.execute("UPDATE segments SET integrity='deleted',size_bytes=0 WHERE id=?", (row["id"],))
             total -= row["size_bytes"]
             camera_totals[row["camera_id"]] -= row["size_bytes"]
             self.stats.retention_deletes += 1
@@ -1091,6 +1112,7 @@ class NvrService:
         return {
             "status": "degraded" if self.stats.disk_pressure or any(item["state"] == "degraded" for item in cameras) else "ok",
             "activeExports": self.active_exports,
+            "queuedExports": self.jobs.outstanding(),
             "uptimeSeconds": int(time.monotonic() - self.stats.started_monotonic),
             "freeBytes": sum(item["freeBytes"] for item in inventories),
             "volumes": inventories, "diskPressure": self.stats.disk_pressure,
@@ -1168,9 +1190,10 @@ class NvrService:
                 "queryDurationMs": max(0, (time.monotonic_ns() - started) // 1_000_000)}
 
     def set_lock(self, segment_id: str, locked: bool) -> None:
-        cursor = self.catalog.execute("UPDATE segments SET locked=? WHERE id=? AND integrity!='deleted'", (int(locked), segment_id))
-        if cursor.rowcount != 1:
-            raise KeyError(segment_id)
+        with self.reader_lock:
+            cursor = self.catalog.execute("UPDATE segments SET locked=? WHERE id=? AND integrity!='deleted'", (int(locked), segment_id))
+            if cursor.rowcount != 1:
+                raise KeyError(segment_id)
         self.audit("nvr.segment.lock", segment_id=segment_id, locked=locked)
 
     def segment_row(self, segment_id: str) -> sqlite3.Row:
@@ -1218,20 +1241,29 @@ class NvrService:
         return destination
 
     @contextlib.contextmanager
-    def playback_reader(self, segment_id: str):
-        path = self.media_path(segment_id)
+    def pin_segments(self, segment_ids: list[str]):
         with self.reader_lock:
-            self.active_readers[segment_id] = self.active_readers.get(segment_id, 0) + 1
-        self.audit("nvr.playback.opened", segment_id=segment_id)
+            for segment_id in segment_ids:
+                self.segment_row(segment_id)
+            for segment_id in segment_ids:
+                self.active_readers[segment_id] = self.active_readers.get(segment_id, 0) + 1
         try:
-            yield path
+            yield
         finally:
             with self.reader_lock:
-                remaining = self.active_readers.get(segment_id, 1) - 1
-                if remaining > 0:
-                    self.active_readers[segment_id] = remaining
-                else:
-                    self.active_readers.pop(segment_id, None)
+                for segment_id in segment_ids:
+                    remaining = self.active_readers.get(segment_id, 1) - 1
+                    if remaining > 0:
+                        self.active_readers[segment_id] = remaining
+                    else:
+                        self.active_readers.pop(segment_id, None)
+
+    @contextlib.contextmanager
+    def playback_reader(self, segment_id: str):
+        with self.pin_segments([segment_id]):
+            path = self.media_path(segment_id)
+            self.audit("nvr.playback.opened", segment_id=segment_id)
+            yield path
 
     def _expire_playback_leases(self) -> None:
         now = time.monotonic()
@@ -1319,25 +1351,26 @@ class NvrService:
                 "sha256": digest, "downloadUrl": f"/api/v1/nvr/downloads/{snapshot_id}.jpg"}
 
     @staticmethod
-    def _sha256(path: pathlib.Path) -> str:
+    def _sha256(path: pathlib.Path, cancel=None) -> str:
         digest = hashlib.sha256()
         with path.open("rb") as source:
             for block in iter(lambda: source.read(1024 * 1024), b""):
+                if cancel is not None and cancel.is_set():
+                    raise EvidenceError("export_cancelled", "Export cancelled")
                 digest.update(block)
         return digest.hexdigest()
 
-    @export_operation
-    def export_clip(self, value: Any) -> dict[str, Any]:
+    def validate_export(self, value: Any) -> dict[str, Any]:
         allowed = {"cameraIds", "fromUtcMs", "toUtcMs", "mode", "lock", "programRecordingId"}
         if not isinstance(value, dict) or set(value) - allowed:
             raise ConfigError("export request contains unsupported fields")
         camera_ids = value.get("cameraIds")
         if (not isinstance(camera_ids, list) or not 1 <= len(camera_ids) <= 4 or
-                len(set(camera_ids)) != len(camera_ids) or
-                any(not isinstance(item, str) or not CAMERA_ID.fullmatch(item) for item in camera_ids)):
+                any(not isinstance(item, str) or not CAMERA_ID.fullmatch(item) for item in camera_ids) or
+                len(set(camera_ids)) != len(camera_ids)):
             raise ConfigError("export cameraIds must contain one to four unique ids")
-        start = bounded_int(value.get("fromUtcMs"), 0, (1 << 63) - 1, "fromUtcMs")
-        end = bounded_int(value.get("toUtcMs"), 1, (1 << 63) - 1, "toUtcMs")
+        start = bounded_int(value.get("fromUtcMs"), 0, 8_640_000_000_000_000, "fromUtcMs")
+        end = bounded_int(value.get("toUtcMs"), 1, 8_640_000_000_000_000, "toUtcMs")
         if start >= end or end - start > 24 * 3600 * 1000:
             raise ConfigError("export range must be positive and at most 24 hours")
         mode = value.get("mode", "fast")
@@ -1351,84 +1384,48 @@ class NvrService:
             not isinstance(program_recording_id, str) or not re.fullmatch(r"[A-Za-z0-9._-]{1,128}", program_recording_id)
         ):
             raise ConfigError("programRecordingId must be a safe stable identifier")
-        export_id = uuid.uuid4().hex
-        audit_id = uuid.uuid4().hex
-        export_dir = self.exports_root / export_id
-        export_dir.mkdir(mode=0o700)
-        files: list[dict[str, Any]] = []
-        effective_start, effective_end = end, start
-        source_segment_ids: list[str] = []
-        try:
-            for camera_id in camera_ids:
-                rows = self.catalog.query(
-                    "SELECT * FROM segments WHERE camera_id=? AND end_utc_ms>=? AND start_utc_ms<=? "
-                    "AND integrity NOT IN ('deleted','missing','corrupt') ORDER BY start_utc_ms",
-                    (camera_id, start, end),
-                )
-                if not rows:
-                    raise ConfigError(f"no playable segments for camera {camera_id}")
-                source_segment_ids.extend(row["id"] for row in rows)
-                concat = export_dir / f".{camera_id}.concat.txt"
-                with concat.open("w", encoding="utf-8") as output:
-                    for row in rows:
-                        path = self.media_path(row["id"])
-                        output.write(f"file '{path.as_posix()}'\n")
-                os.chmod(concat, 0o600)
-                target = export_dir / f"{camera_id}.mp4"
-                if mode == "fast":
-                    command = [self.ffmpeg, "-hide_banner", "-loglevel", "error", "-nostdin", "-f", "concat",
-                               "-safe", "0", "-i", str(concat), "-c", "copy", "-movflags", "+faststart", "-y", str(target)]
-                    camera_start, camera_end = rows[0]["start_utc_ms"], rows[-1]["end_utc_ms"]
-                else:
-                    offset = max(0, start - rows[0]["start_utc_ms"])
-                    duration = end - start
-                    command = [self.ffmpeg, "-hide_banner", "-loglevel", "error", "-nostdin", "-f", "concat",
-                               "-safe", "0", "-i", str(concat), "-ss", f"{offset / 1000:.3f}",
-                               "-t", f"{duration / 1000:.3f}", "-map", "0:v:0", "-an", "-c:v", "libx264",
-                               "-preset", "veryfast", "-profile:v", "high", "-pix_fmt", "yuv420p",
-                               "-movflags", "+faststart", "-y", str(target)]
-                    camera_start, camera_end = start, end
-                completed = subprocess.run(command, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-                                           timeout=300, check=False)
-                concat.unlink(missing_ok=True)
-                if completed.returncode != 0 or not target.is_file() or target.stat().st_size == 0:
-                    raise RuntimeError("clip export failed")
-                media = self._probe(str(target))
-                streams = [{"type": item.get("codec_type", ""), "codec": item.get("codec_name", "")}
-                           for item in media.get("streams", [])]
-                digest = self._sha256(target)
-                files.append({"cameraId": camera_id, "name": target.name, "sizeBytes": target.stat().st_size,
-                              "sha256": digest, "tracks": streams,
-                              "downloadUrl": f"/api/v1/nvr/downloads/{export_id}/{target.name}"})
-                effective_start = min(effective_start, camera_start)
-                effective_end = max(effective_end, camera_end)
-            manifest = {"schemaVersion": 1, "exportId": export_id, "auditId": audit_id,
-                        "softwareVersion": "webobsd-0.1.0-M10-foundation", "mode": mode,
-                        "requestedRange": {"fromUtcMs": start, "toUtcMs": end},
-                        "effectiveRange": {"fromUtcMs": effective_start, "toUtcMs": effective_end},
-                        "cameraIds": camera_ids, "sourceSegmentIds": source_segment_ids, "files": files,
-                        "programRecordingId": program_recording_id,
-                        "createdUtcMs": utc_ms(), "storageTimeZone": "UTC"}
-            manifest_path = export_dir / "manifest.json"
-            atomic_json(manifest_path, manifest)
-            manifest_hash = self._sha256(manifest_path)
-            if lock:
-                for segment_id in source_segment_ids:
-                    self.catalog.execute("UPDATE segments SET locked=1 WHERE id=?", (segment_id,))
-            self.catalog.execute(
-                "INSERT INTO exports(id,audit_id,created_utc_ms,storage_key,manifest_key,mode) VALUES(?,?,?,?,?,?)",
-                (export_id, audit_id, utc_ms(), f"exports/{export_id}",
-                 f"exports/{export_id}/manifest.json", mode),
-            )
-            self.audit("nvr.export.created", export_id=export_id, audit_id=audit_id,
-                       camera_count=len(camera_ids), mode=mode)
-            return {**manifest, "manifestSha256": manifest_hash,
-                    "manifestUrl": f"/api/v1/nvr/downloads/{export_id}/manifest.json"}
-        except Exception:
-            shutil.rmtree(export_dir, ignore_errors=True)
-            raise
+        return {"cameraIds": camera_ids, "fromUtcMs": start, "toUtcMs": end, "mode": mode,
+                "lock": lock, "programRecordingId": program_recording_id}
 
-    def download_path(self, relative: str) -> tuple[pathlib.Path, str]:
+    def authorize_export(self, owner: str, value: dict[str, Any], *, checked=None, deadline=None) -> None:
+        token = os.environ.get("WEBOBS_CLUSTER_INTERNAL_TOKEN", "")
+        if not token and os.environ.get("WEBOBS_CLUSTER_ENABLED", "false") != "true":
+            return
+        if not re.fullmatch(r"[a-f0-9]{64}", token):
+            raise EvidenceError("authorization_unavailable", "Export authorization is unavailable", 503)
+        for camera_id in value["cameraIds"]:
+            camera = self.camera(camera_id)
+            scope = (camera.get("cameraId") or camera_id) if camera else camera_id
+            if checked is not None and scope in checked:
+                continue
+            timeout = min(2, deadline - time.monotonic()) if deadline is not None else 2
+            if timeout <= 0:
+                raise EvidenceError("authorization_unavailable", "Export authorization is unavailable", 503)
+            payload = json.dumps({"username": owner, "permission": "export.create", "cameraId": scope}).encode()
+            request = urllib.request.Request(service_http(8095, "/auth/authorize"), data=payload,
+                headers={"Content-Type": "application/json", "X-WebObs-Internal-Admin": token})
+            try:
+                with urllib.request.urlopen(request, timeout=timeout) as response:
+                    if response.status != 200 or len(response.read(4097)) > 4096:
+                        raise EvidenceError("authorization_unavailable", "Export authorization is unavailable", 503)
+                    if checked is not None:
+                        checked.add(scope)
+            except urllib.error.HTTPError as error:
+                status = error.code
+                error.close()
+                if status in {403, 404}:
+                    raise EvidenceError("export_scope_rejected", "Export permission or camera scope was revoked", 403) from None
+                raise EvidenceError("authorization_unavailable", "Export authorization is unavailable", 503) from None
+            except (OSError, urllib.error.URLError):
+                raise EvidenceError("authorization_unavailable", "Export authorization is unavailable", 503) from None
+
+    write_evidence_manifest = staticmethod(atomic_json)
+
+    @export_operation
+    def export_clip(self, value: Any, *, job_id=None, cancel=None, owner="local-only") -> dict[str, Any]:
+        return export_evidence(self, value, job_id=job_id, cancel=cancel, owner=owner)
+
+    def download_path(self, relative: str, owner: str = "local-only") -> tuple[pathlib.Path, str]:
         parts = relative.split("/")
         if len(parts) == 1 and SAFE_ARTIFACT_NAME.fullmatch(parts[0]) and parts[0].endswith(".jpg"):
             artifact_id = parts[0][:-4]
@@ -1438,6 +1435,13 @@ class NvrService:
             content_type = "image/jpeg"
         elif (len(parts) == 2 and ARTIFACT_ID.fullmatch(parts[0]) and
               SAFE_ARTIFACT_NAME.fullmatch(parts[1]) and parts[1].endswith((".mp4", ".json"))):
+            exports = self.catalog.query("SELECT owner,request_json FROM exports WHERE id=?", (parts[0],))
+            if not exports:
+                raise KeyError(relative)
+            if exports[0]["owner"]:
+                if exports[0]["owner"] != owner:
+                    raise KeyError(relative)
+                self.authorize_export(owner, json.loads(exports[0]["request_json"]))
             path = self.exports_root / parts[0] / parts[1]
             content_type = "video/mp4" if parts[1].endswith(".mp4") else "application/json; charset=utf-8"
         else:
@@ -1448,15 +1452,15 @@ class NvrService:
         return resolved, content_type
 
     def delete_segment(self, segment_id: str) -> None:
-        row = self.segment_row(segment_id)
-        if row["locked"]:
-            raise ConfigError("locked evidence cannot be deleted")
         with self.reader_lock:
+            row = self.segment_row(segment_id)
+            if row["locked"]:
+                raise ConfigError("locked evidence cannot be deleted")
             self._expire_playback_leases()
             if self._segment_active(segment_id):
                 raise ConfigError("segment is active in playback")
-        self.media_path(segment_id).unlink()
-        self.catalog.execute("UPDATE segments SET integrity='deleted',size_bytes=0 WHERE id=?", (segment_id,))
+            self.media_path(segment_id).unlink()
+            self.catalog.execute("UPDATE segments SET integrity='deleted',size_bytes=0 WHERE id=?", (segment_id,))
         self.audit("nvr.segment.deleted", segment_id=segment_id, camera_id=row["camera_id"])
 
 
@@ -1469,6 +1473,13 @@ class Handler(http.server.BaseHTTPRequestHandler):
 
     def log_message(self, _format: str, *_args: Any) -> None:
         return
+
+    @property
+    def principal(self) -> str:
+        value = self.headers.get("X-WebObs-Nvr-Principal", "local-only")
+        if not CAMERA_ID.fullmatch(value):
+            raise EvidenceError("invalid_principal", "Export principal is invalid", 403)
+        return value
 
     def send_json(self, status: int, value: Any) -> None:
         encoded = json.dumps(value, separators=(",", ":"), sort_keys=True).encode()
@@ -1582,13 +1593,19 @@ class Handler(http.server.BaseHTTPRequestHandler):
                     raise KeyError(segment_id)
                 with self.service.playback_reader(segment_id) as path:
                     self.send_file(path, "video/mp4")
+            elif parsed.path == "/exports/jobs":
+                self.send_json(200, self.service.jobs.list(self.principal))
+            elif parsed.path.startswith("/exports/jobs/"):
+                self.send_json(200, self.service.jobs.get(self.principal, parsed.path.removeprefix("/exports/jobs/")))
             elif parsed.path.startswith("/downloads/"):
                 relative = parsed.path.removeprefix("/downloads/")
-                path, content_type = self.service.download_path(relative)
+                path, content_type = self.service.download_path(relative, self.principal)
                 self.service.audit("nvr.artifact.downloaded", artifact_id=relative.split("/", 1)[0])
                 self.send_file(path, content_type)
             else:
                 self.send_json(404, {"error": {"code": "not_found", "message": "NVR resource not found"}})
+        except EvidenceError as error:
+            self.send_json(error.status, {"error": {"code": error.code, "message": str(error)}})
         except ConfigError as error:
             self.send_json(422, {"error": {"code": "invalid_request", "message": str(error)}})
         except (KeyError, FileNotFoundError):
@@ -1621,7 +1638,16 @@ class Handler(http.server.BaseHTTPRequestHandler):
             if self.path == "/snapshots":
                 self.send_json(201, self.service.snapshot(self.body()))
             elif self.path == "/exports":
-                self.send_json(201, self.service.export_clip(self.body()))
+                value = self.service.validate_export(self.body())
+                self.service.authorize_export(self.principal, value)
+                self.send_json(201, self.service.export_clip(value, owner=self.principal))
+            elif self.path == "/exports/jobs":
+                self.send_json(202, self.service.jobs.submit(self.principal, self.body()))
+            elif self.path.startswith("/exports/jobs/") and self.path.endswith("/cancel"):
+                if self.body() != {}:
+                    raise ConfigError("cancel requires an empty object")
+                job_id = self.path.removeprefix("/exports/jobs/").removesuffix("/cancel")
+                self.send_json(200, self.service.jobs.cancel(self.principal, job_id))
             elif self.path == "/playback-leases":
                 self.send_json(201, self.service.create_playback_lease(self.body()))
             elif self.path.startswith("/events/"):
@@ -1635,10 +1661,14 @@ class Handler(http.server.BaseHTTPRequestHandler):
                 self.send_json(200, {"cameraId": camera_id, "active": body["active"]})
             else:
                 self.send_json(404, {"error": {"code": "not_found", "message": "NVR resource not found"}})
+        except EvidenceError as error:
+            self.send_json(error.status, {"error": {"code": error.code, "message": str(error)}})
         except ConfigError as error:
             self.send_json(422, {"error": {"code": "invalid_request", "message": str(error)}})
         except KeyError:
             self.send_json(404, {"error": {"code": "not_found", "message": "NVR resource not found"}})
+        except Exception:
+            self.send_json(500, {"error": {"code": "nvr_error", "message": "Evidence processing failed; check source availability and storage"}})
 
     def do_DELETE(self) -> None:  # noqa: N802
         try:

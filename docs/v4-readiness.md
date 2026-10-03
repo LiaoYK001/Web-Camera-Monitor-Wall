@@ -6,6 +6,10 @@ v4.0 is a maturity release for the complete monitoring product: coherent workflo
 
 v4.0 面向整个监控产品的成熟度：操作逻辑、多客户端响应式界面、播放性能、基本安全、鲁棒性、直观报错和持续开发诊断。已有功能或单元测试通过不能单独证明可发布；Windows、Android、浏览器/PWA 与 Linux 容器均在范围内。
 
+The evidence workflow now has durable owner-bound export jobs, response-loss idempotency, explicit cancellation/restart recovery, per-camera export authorization, verified source digests, gap-aware manifests, exact audio preservation and atomic publication/locking. Focused validation uses real synthetic FFmpeg media, complete isolated Linux product services and fixture-based browser workflows; see [timeline evidence](timeline-evidence.md). This does not close large-file streaming, exhaustive playback-resource authorization, physical-camera/ARM/long-run qualification or the fresh Windows native-core gate.
+
+证据工作流已新增持久化账号任务、响应丢失去重、显式取消/重启恢复、逐路导出权限、来源摘要校验、断档清单、精确音轨保留，以及发布/锁定事务。专项验证包含真实 FFmpeg 合成媒体、隔离完整 Linux 产品服务及浏览器夹具工作流，见[时间线与证据](timeline-evidence.md)。大文件流式下载、完整回放资源权限、真实摄像机/ARM/长期验证及重新构建的 Windows 原生核心门禁仍未完成。
+
 Use [OBS projectors](https://obsproject.com/kb/power-of-projectors) and [scene/source workflows](https://obsproject.com/kb/sources-guide) as references for deliberate scene selection, editing and separate outputs. Use [tinyCam settings](https://www.tinycammonitor.com/manual/app_settings.html) and [background/DVR behavior](https://www.tinycammonitor.com/manual/background_mode.html) as references for everyday camera monitoring and lifecycle behavior. These are workflow references; this product keeps independent NVR recording and does not turn Android into an unannounced recorder.
 
 参考 OBS 的场景编排与独立投影，以及 tinyCam 的日常监控和生命周期操作。参考其用户操作逻辑；本产品继续采用独立 NVR 采集，Android 不会隐式开始后台录像。

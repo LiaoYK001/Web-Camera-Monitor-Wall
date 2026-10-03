@@ -50,6 +50,8 @@ app.on('window-all-closed', () => {});
     }
     const { exerciseNativeSync } = require('./native-sync-contract.cjs');
     const assertSyncPersisted = await exerciseNativeSync(origin, headers);
+    const { exerciseNativeEvidence } = require('./native-evidence-contract.cjs');
+    const assertEvidencePersisted = await exerciseNativeEvidence(supervisor, runtime, headers);
     await supervisor.stop();
     const snapshot = await supervisor.snapshot();
     assert.ok((await fs.stat(path.join(snapshot, 'snapshot.json'))).isFile());
@@ -57,8 +59,9 @@ app.on('window-all-closed', () => {});
     const restoredSession = await fetch(`${origin}/api/v1/auth/session`, { headers });
     assert.equal(restoredSession.status, 200, 'account session must survive service restart');
     await assertSyncPersisted();
+    await assertEvidencePersisted();
     await supervisor.stop();
-    console.log('Bundled Windows services, first login, authenticated go2rtc, two-device multi-track sync/conflict, snapshot and restart persistence passed. Camera/media qualification remains separate.');
+    console.log('Bundled Windows services, first login, authenticated go2rtc, multi-track sync/conflict, real synthetic H264/AAC evidence export, snapshot and restart persistence passed. Camera/media qualification remains separate.');
   } catch (error) {
     exitCode = 1; console.error(error.stack);
     if (supervisor) {

@@ -198,6 +198,17 @@ body {
 .export-result { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; padding: 10px 12px; border: 1px solid #35552d; border-radius: 8px; background: #10180f; font: 10px ui-monospace, monospace; }
 .export-result span { overflow-wrap: anywhere; color: #b5c2b0; }
 .export-result a { color: var(--accent); }
+.nvr-export-panel { min-width: 0; padding: 16px; border: 1px solid var(--line); border-radius: 8px; background: var(--panel); }
+.nvr-export-panel > header, .nvr-export-job > header { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 10px; }
+.nvr-export-panel h2 { margin: 0; font-size: 16px; }
+.nvr-export-panel p, .nvr-help { color: var(--muted); font-size: 12px; line-height: 1.6; overflow-wrap: anywhere; }
+.nvr-export-panel button { min-height: 36px; padding: 7px 12px; }
+.nvr-export-job { min-width: 0; padding: 14px 0; border-top: 1px solid var(--line); }
+.nvr-export-job .export-result > div { width: 100%; overflow-wrap: anywhere; }
+.nvr-export-job[data-state="failed"], .nvr-export-job[data-state="interrupted"] { border-color: #7a3240; }
+.nvr-seek { display: grid; gap: 6px; font-size: 12px; color: var(--muted); }
+.nvr-seek input { width: 100%; accent-color: var(--accent); }
+.transport-bar input { max-width: 90px; padding: 6px; background: var(--panel); color: var(--text); border: 1px solid var(--line); }
 
 @media (max-width: 800px) {
   .nvr-header { grid-template-columns: 1fr auto; }
