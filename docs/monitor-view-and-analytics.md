@@ -55,6 +55,22 @@ Deterministic browser tests cover every 1–16 landscape/portrait M/S combinatio
 
 The current development version stores monitor preferences per account. Opening the monitor only reads preferences; edits are combined after about 250 ms and written in order. Navigating to another page or hiding the browser submits pending edits; clearing the account cancels pending writes. Saving the current scene preserves per-source meter and telemetry decorations from other scenes. Independent source previews do not write monitor preferences. Network failures retain an encrypted local copy; check the sync indicator. Forced browser termination cannot guarantee delivery of unfinished requests.
 
+当前 WebUI 的 `PUT /api/v2/account/preferences/monitor-view` 附带 `value` 与 `baseValue`（本次编辑所基于的偏好）。后端在账号锁和数据库事务内只合并两者之间改变的字段；嵌套对象逐字段合并、数组整体处理、`null` 是有效值，删除字段保留删除意图。不同窗口分别修改声音输出、主音量或不同来源时互不覆盖；重叠字段按后端最后接受的编辑生效。返回的账号值会合入前端，同时保留请求期间产生的新输入。新加密待同步记录 `monitor-view-v4` 保存原基准，断网/刷新后的重试仍只提交原有编辑；退出账号清除记录。
+
+Current WebUI monitor writes include `value` and `baseValue`, the preference the edit was based on. The backend merges only changed fields under the account lock/database transaction: objects merge by field, arrays are atomic, null remains a valid value, and field removal retains deletion intent. Different windows changing output, volume or different sources preserve one another's edits; overlapping fields use the last accepted edit. The returned account value is reconciled with newer inputs made during the request. Encrypted `monitor-view-v4` pending records retain the original baseline, so retries after network failure/reload still apply only the original edits; account clearing removes them.
+
+此契约需要同时部署新版 WebUI 与 cluster 服务；只允许 `monitor-view` 使用 `baseValue`，既有认证/Origin/账号隔离不变。合并对象最多 32 层、65,536 项、2 MiB；产品入口请求仍受既有 1 MiB 总体上限约束，cluster 内部 HTTP 上限为 3 MiB。旧客户端和没有基准的旧版待同步副本继续使用既有整份保存协议，不具备新协议的多窗口合并保证；其他偏好接口未改变。
+
+Deploy the updated WebUI and cluster service together. Only `monitor-view` accepts `baseValue`; authentication, Origin and account isolation remain enforced. Merge documents are bounded to 32 levels, 65,536 items and 2 MiB; the product entry retains its existing 1 MiB total request limit, within the cluster's internal 3 MiB HTTP bound. Legacy clients and pending records lacking a baseline retain the existing whole-document protocol and do not gain the new multi-window merge guarantee; other preference APIs are unchanged.
+
+首次保存的逐路声音控件以实际 Scene 音量、静音与监听默认值作为编辑基准；逐路外观采用当时继承的全局默认值。创建第一份逐路设置时也只保存本次调整，不把其他继承值当作编辑覆盖另一窗口。
+
+First source audio controls use their effective Scene volume/mute and monitoring defaults as the edit baseline; decorations use inherited global defaults. Creating the first source preference still saves only the selected adjustment instead of treating other inherited values as edits that overwrite another window.
+
+2026-10-03：35 项 cluster 服务测试（含八个线程修改不同来源与首次逐路设置）、46 项 Chromium 故障回归通过；当前生产 WebUI 对隔离完整 Linux 产品的两个独立浏览器验证了旧视图分别修改音量/输出以及失败保存、刷新、联网后的原基准重试，保留另一窗口的新音量。失败注入关闭 Service Worker，仅拦截失败的客户端请求，成功响应均来自真实后端；不代表 PWA 离线验收。已安装 MuMu 开发 APK 对更新后端及生产 UI 的 16 项实测仍通过，未新增 APK 安装或正式发布。
+
+2026-10-03: 35 cluster tests (including eight concurrent source editors and first-source controls) and 46 Chromium regressions passed. Two independent browsers against the isolated complete Linux product/current production WebUI preserved stale-view volume/output edits and retried a failed, reloaded edit using its original baseline while retaining the other window's new volume. Failure injection blocked Service Workers and intercepted only failed client requests; successful responses came from the real backend, so this does not qualify PWA offline behavior. The installed MuMu development APK retained all 16 checks with the updated backend/production UI; no new APK was installed or formally released.
+
 The large-picture switch takes effect immediately: enabling it raises `largeCount` to at least one, checking an `M` row promotes that source, and the small/large ratio slider (10%–90%, default 50%) drives the auto layout so a small tile is the chosen share of a large tile while the canvas stays filled. The layout is a deterministic skyline packing over ordinary Scene v5 rectangles, so re-applying it is a stable fixed point.
 
 大画面开关即时生效：勾选后 `largeCount` 至少为 1，勾选 `M` 行即提升该来源；小/大画面比例滑块（10%–90%，默认 50%）驱动自动布局，在尽量填满画布的前提下让小画面为大画面的指定比例。布局是对普通 Scene v5 矩形的确定性 skyline 装箱，因此重复应用是稳定不动点。

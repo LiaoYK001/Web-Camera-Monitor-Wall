@@ -5,7 +5,7 @@ type Preferences = Record<string, any>;
 
 // Separate browser contexts have no shared IndexedDB, cookies or storage.
 // This fixture acts as the account server, shared only by the selected user.
-async function account(context: BrowserContext, server: Map<string, Preferences>, user: string, blocked = false) {
+async function account(context: BrowserContext, server: Map<string, Preferences>, user: string, blocked = false, atomic = false) {
   await context.addInitScript(({ blocked }) => {
     let allowResume = !blocked;
     window.addEventListener('pointerdown', () => { allowResume = true; }, { capture: true });
@@ -28,12 +28,106 @@ async function account(context: BrowserContext, server: Map<string, Preferences>
     window.AudioContext = Context as unknown as typeof AudioContext;
   }, { blocked });
   await context.route('**/api/v2/account/preferences/monitor-view', async (route) => {
-    if (route.request().method() === 'PUT') server.set(user, route.request().postDataJSON().value);
+    if (route.request().method() === 'PUT') {
+      const request = route.request().postDataJSON();
+      if (atomic && request.baseValue) {
+        // The stub accepts only changed audio fields. Real recursive/atomic
+        // merging is qualified separately through the cluster store and image.
+        const next = { ...server.get(user) };
+        for (const field of ['localMonitorVolume', 'audioOutput']) {
+          if (request.value[field] !== request.baseValue[field]) next[field] = request.value[field];
+        }
+        const sources = { ...next.sourceAudio };
+        for (const [id, control] of Object.entries(request.value.sourceAudio ?? {})) {
+          const base = request.baseValue.sourceAudio?.[id];
+          if (!base) { sources[id] = control; continue; }
+          const edited = { ...base, ...sources[id] };
+          for (const field of ['volume', 'muted', 'monitor']) {
+            if ((control as Preferences)[field] !== base[field]) edited[field] = (control as Preferences)[field];
+          }
+          sources[id] = edited;
+        }
+        if (Object.keys(sources).length) next.sourceAudio = sources;
+        server.set(user, next);
+      } else server.set(user, request.value);
+    }
     await route.fulfill({ json: { value: server.get(user) ?? null } });
   });
 }
 const ready = async (page: Page) => expect(page.getByRole('slider', { name: '本地监听主音量' })).toBeVisible();
 const output = (page: Page) => page.locator('.hero-audio-control').getByRole('combobox', { name: '声音输出模式' });
+
+test('a stale same-account window edits only its field and adopts the merged acknowledgement', async ({ browser }) => {
+  const server = new Map<string, Preferences>();
+  const a = await browser.newContext(), b = await browser.newContext();
+  await account(a, server, 'alice', false, true); await account(b, server, 'alice', false, true);
+  const first = await a.newPage(), second = await b.newPage();
+  for (const page of [first, second]) { await page.goto(fixture); await ready(page); await page.clock.install(); }
+  await first.getByRole('slider', { name: '本地监听主音量' }).fill('0.41'); await first.clock.runFor(400);
+  await expect.poll(() => server.get('alice')?.localMonitorVolume).toBe(.41);
+  await output(second).selectOption('meter-only'); await second.clock.runFor(400);
+  await expect.poll(() => server.get('alice')).toMatchObject({ localMonitorVolume: .41, audioOutput: 'meter-only' });
+  await expect(second.getByRole('slider', { name: '本地监听主音量' })).toHaveValue('0.41');
+  await first.evaluate(() => window.dispatchEvent(new Event('focus')));
+  await expect(output(first)).toHaveValue('meter-only');
+  await a.close(); await b.close();
+});
+
+test('a failed pending edit keeps its baseline through reload and merges after another device saves', async ({ browser }) => {
+  const server = new Map<string, Preferences>();
+  const a = await browser.newContext(), b = await browser.newContext();
+  await account(a, server, 'alice', false, true); await account(b, server, 'alice', false, true);
+  let failing = true;
+  await a.route('**/api/v2/account/preferences/monitor-view', route => route.request().method() === 'PUT' && failing
+    ? route.fulfill({ status: 503, json: {} }) : route.fallback());
+  const first = await a.newPage(), second = await b.newPage();
+  await first.goto(fixture); await ready(first); await output(first).selectOption('meter-only');
+  await expect(first.locator('.direct-preview-shell').getByRole('alert')).toContainText('保存失败');
+  await second.goto(fixture); await ready(second);
+  await second.getByRole('slider', { name: '本地监听主音量' }).fill('0.44');
+  await expect.poll(() => server.get('alice')?.localMonitorVolume).toBe(.44);
+  await first.reload(); await ready(first); await expect(output(first)).toHaveValue('meter-only');
+  failing = false; await first.evaluate(() => window.dispatchEvent(new Event('online')));
+  await expect.poll(() => server.get('alice')).toMatchObject({ localMonitorVolume: .44, audioOutput: 'meter-only' });
+  await expect(first.getByRole('slider', { name: '本地监听主音量' })).toHaveValue('0.44');
+  await a.close(); await b.close();
+});
+
+test('two stale windows creating the first source controls keep inherited mute and the other volume edit', async ({ browser }) => {
+  const server = new Map<string, Preferences>();
+  const a = await browser.newContext(), b = await browser.newContext();
+  await account(a, server, 'alice', false, true); await account(b, server, 'alice', false, true);
+  const first = await a.newPage(), second = await b.newPage();
+  for (const page of [first, second]) { await page.goto(fixture); await ready(page); await page.clock.install(); }
+  await first.getByRole('slider', { name: '有声音的摄像机 音量' }).fill('0.63'); await first.clock.runFor(400);
+  await expect.poll(() => server.get('alice')?.sourceAudio?.['audio-source-1']).toMatchObject({ volume: .63, muted: true });
+  await second.getByRole('button', { name: '有声音的摄像机 静音', exact: true }).click(); await second.clock.runFor(400);
+  await expect.poll(() => server.get('alice')?.sourceAudio?.['audio-source-1']).toMatchObject({ volume: .63, muted: false, monitor: true });
+  await expect(second.getByRole('slider', { name: '有声音的摄像机 音量' })).toHaveValue('0.63');
+  await a.close(); await b.close();
+});
+
+test('a merged acknowledgement preserves a newer local input before its debounce submits', async ({ page, context }) => {
+  const server = new Map<string, Preferences>(); await account(context, server, 'alice', false, true);
+  await page.goto(fixture); await ready(page); await page.clock.install();
+  let arrived!: () => void, release!: () => void;
+  const requested = new Promise<void>(resolve => { arrived = resolve; });
+  const held = new Promise<void>(resolve => { release = resolve; });
+  let once = true;
+  await page.route('**/api/v2/account/preferences/monitor-view', async route => {
+    if (!once || route.request().method() !== 'PUT') return route.fallback();
+    once = false;
+    const value = { ...route.request().postDataJSON().value, localMonitorVolume: .41 };
+    server.set('alice', value); arrived(); await held;
+    await route.fulfill({ json: { value } });
+  });
+  await output(page).selectOption('meter-only'); await page.clock.runFor(400); await requested;
+  await page.getByRole('slider', { name: '本地监听主音量' }).fill('0.62'); release();
+  await expect(page.getByRole('slider', { name: '本地监听主音量' })).toHaveValue('0.62');
+  await page.clock.runFor(400);
+  await expect.poll(() => server.get('alice')).toMatchObject({ localMonitorVolume: .62, audioOutput: 'meter-only' });
+  await expect(output(page)).toHaveValue('meter-only');
+});
 
 test('flushes pending account audio changes on the Android lifecycle signal without losing the workspace', async ({ page, context }) => {
   const server = new Map<string, Preferences>();

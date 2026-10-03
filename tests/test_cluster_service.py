@@ -218,6 +218,86 @@ class ClusterTests(unittest.TestCase):
         self.assertEqual(self.store.account_preference("viewer-one", "workspace-layout"),
                          {"value": None, "revision": 0})
 
+    def test_stale_monitor_clients_merge_fields_atomically_and_preserve_unknown_settings(self) -> None:
+        self.create_user('monitor-owner', ['viewer'])
+        self.create_user('other-monitor-owner', ['viewer'])
+        initial = {'localMonitorVolume': 1, 'audioOutput': 'speaker',
+                   'sourceAudio': {'one': {'volume': 1, 'muted': False}, 'two': {'volume': .5}},
+                   'futureSetting': {'enabled': True}}
+        self.store.account_preference('monitor-owner', 'monitor-view', {'value': initial}, True)
+        a = {**initial, 'localMonitorVolume': .41,
+             'sourceAudio': {**initial['sourceAudio'], 'one': {'volume': .2, 'muted': False}}}
+        b = {**initial, 'audioOutput': 'meter-only',
+             'sourceAudio': {**initial['sourceAudio'], 'one': {'volume': 1, 'muted': True}}}
+        del b['futureSetting']  # A legacy normalizer's unknown field is absent from both base and edit.
+        b_base = {key: value for key, value in initial.items() if key != 'futureSetting'}
+        self.store.account_preference('monitor-owner', 'monitor-view', {'value': a, 'baseValue': initial}, True)
+        merged = self.store.account_preference('monitor-owner', 'monitor-view', {'value': b, 'baseValue': b_base}, True)
+        self.assertEqual(merged['value'], {**initial, 'localMonitorVolume': .41, 'audioOutput': 'meter-only',
+                                          'sourceAudio': {'one': {'volume': .2, 'muted': True}, 'two': {'volume': .5}}})
+        self.assertEqual(merged['revision'], 3)
+        self.assertIsNone(self.store.account_preference('other-monitor-owner', 'monitor-view')['value'])
+        last = self.store.account_preference('monitor-owner', 'monitor-view',
+                    {'baseValue': initial, 'value': {**initial, 'localMonitorVolume': .7}}, True)
+        self.assertEqual(last['value']['localMonitorVolume'], .7)
+        self.assertEqual(last['value']['audioOutput'], 'meter-only')
+
+    def test_monitor_merge_preserves_null_deletion_arrays_and_rejects_invalid_bases(self) -> None:
+        self.create_user('merge-owner', ['viewer'])
+        initial = {'archiveAudioCameraId': 'one', 'rotation': ['one', 'two'],
+                   'sourceAudio': {'one': {'volume': .5, 'muted': False}}}
+        self.store.account_preference('merge-owner', 'monitor-view', {'value': initial}, True)
+        edit = {'archiveAudioCameraId': None, 'rotation': ['two'], 'sourceAudio': {}}
+        merged = self.store.account_preference('merge-owner', 'monitor-view', {'baseValue': initial, 'value': edit}, True)
+        self.assertEqual(merged['value'], edit)
+        for base in [None, [], {'bad': float('nan')}, {'nested': {'n': float('inf')}}]:
+            with self.assertRaises(cluster.ApiError):
+                self.store.account_preference('merge-owner', 'monitor-view', {'baseValue': base, 'value': {}}, True)
+        nested = {}
+        for _ in range(34):
+            nested = {'nested': nested}
+        with self.assertRaises(cluster.ApiError):
+            self.store.account_preference('merge-owner', 'monitor-view', {'baseValue': nested, 'value': {}}, True)
+        with self.assertRaises(cluster.ApiError):
+            self.store.account_preference('merge-owner', 'workspace-layout', {'baseValue': {}, 'value': {}}, True)
+
+    def test_concurrent_monitor_edits_do_not_lose_other_source_changes(self) -> None:
+        self.create_user('concurrent-owner', ['viewer'])
+        initial = {'sourceAudio': {str(index): {'volume': 1, 'muted': False} for index in range(8)}}
+        self.store.account_preference('concurrent-owner', 'monitor-view', {'value': initial}, True)
+        barrier = threading.Barrier(8)
+        failures = []
+        def edit(index):
+            try:
+                changed = json.loads(json.dumps(initial))
+                changed['sourceAudio'][str(index)]['volume'] = (index + 1) / 10
+                barrier.wait(timeout=5)
+                self.store.account_preference('concurrent-owner', 'monitor-view', {'value': changed, 'baseValue': initial}, True)
+            except Exception as error:
+                failures.append(error)
+        threads = [threading.Thread(target=edit, args=(index,)) for index in range(8)]
+        for thread in threads:
+            thread.start()
+        for thread in threads:
+            thread.join(timeout=10)
+        self.assertFalse(any(thread.is_alive() for thread in threads))
+        self.assertEqual(failures, [])
+        saved = self.store.account_preference('concurrent-owner', 'monitor-view')
+        self.assertEqual(saved['revision'], 9)
+        self.assertEqual(saved['value']['sourceAudio'],
+                         {str(index): {'volume': (index + 1) / 10, 'muted': False} for index in range(8)})
+
+    def test_first_source_preference_uses_effective_scene_defaults_without_resetting_another_edit(self) -> None:
+        self.create_user('new-source-owner', ['viewer'])
+        self.store.account_preference('new-source-owner', 'monitor-view', {'value': {'sourceAudio': {}}}, True)
+        base = {'sourceAudio': {'one': {'volume': .9, 'muted': True, 'monitor': True}}}
+        first = self.store.account_preference('new-source-owner', 'monitor-view', {'baseValue': base,
+            'value': {'sourceAudio': {'one': {'volume': .4, 'muted': True, 'monitor': True}}}}, True)
+        self.assertEqual(first['value']['sourceAudio']['one'], {'volume': .4, 'muted': True, 'monitor': True})
+        second = self.store.account_preference('new-source-owner', 'monitor-view', {'baseValue': base,
+            'value': {'sourceAudio': {'one': {'volume': .9, 'muted': False, 'monitor': True}}}}, True)
+        self.assertEqual(second['value']['sourceAudio']['one'], {'volume': .4, 'muted': False, 'monitor': True})
+
     def test_self_profile_acl_and_password_change(self) -> None:
         self.create_user("profile-user", ["viewer"])
         initial = self.store.account_profile("profile-user")

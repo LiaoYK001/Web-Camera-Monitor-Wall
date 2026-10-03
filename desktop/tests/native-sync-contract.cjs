@@ -18,6 +18,38 @@ function cbor(value) {
 }
 
 async function exerciseNativeSync(origin, administratorHeaders) {
+  const preferenceUrl = `${origin}/api/v2/account/preferences/monitor-view`;
+  const before = (await (await fetch(preferenceUrl, { headers: administratorHeaders })).json()).value ?? {};
+  async function savePreference(body) {
+    const response = await fetch(preferenceUrl, { method: 'PUT', headers: {
+      ...administratorHeaders, 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+    assert.equal(response.status, 200, 'actual native monitor preference save');
+    return (await response.json()).value;
+  }
+  const base = { ...before, localMonitorVolume: 1, audioOutput: 'speaker',
+    sourceAudio: { 'preference-one': { volume: 1, muted: false }, 'preference-two': { volume: 1, muted: false } } };
+  await savePreference({ value: base });
+  const edits = [
+    { ...base, localMonitorVolume: .41 },
+    { ...base, audioOutput: 'meter-only' },
+    { ...base, sourceAudio: { ...base.sourceAudio, 'preference-one': { volume: .2, muted: false } } },
+    { ...base, sourceAudio: { ...base.sourceAudio, 'preference-one': { volume: 1, muted: true } } },
+  ];
+  await Promise.all(edits.map(value => savePreference({ value, baseValue: base })));
+  const merged = (await (await fetch(preferenceUrl, { headers: administratorHeaders })).json()).value;
+  assert.equal(merged.localMonitorVolume, .41);
+  assert.equal(merged.audioOutput, 'meter-only');
+  assert.deepEqual(merged.sourceAudio, { 'preference-one': { volume: .2, muted: true }, 'preference-two': { volume: 1, muted: false } });
+  await savePreference({ value: { ...base, sourceAudio: {} } });
+  const inherited = { ...base, sourceAudio: { 'preference-one': { volume: .9, muted: true, monitor: true } } };
+  const firstSource = await savePreference({ baseValue: inherited, value: { ...inherited,
+    sourceAudio: { 'preference-one': { volume: .4, muted: true, monitor: true } } } });
+  assert.deepEqual(firstSource.sourceAudio['preference-one'], { volume: .4, muted: true, monitor: true });
+  const secondSource = await savePreference({ baseValue: inherited, value: { ...inherited,
+    sourceAudio: { 'preference-one': { volume: .9, muted: false, monitor: true } } } });
+  assert.deepEqual(secondSource.sourceAudio['preference-one'], { volume: .4, muted: false, monitor: true });
+  await savePreference({ value: before });
+  console.log('Actual authenticated concurrent account preferences: output, volume and nested/first-source edits preserve other fields and inherited defaults; original fixture settings restored.');
   async function request(route, headers, body, expected = 200) {
     const response = await fetch(`${origin}${route}`, { headers: { ...headers,
       ...(body ? { 'Content-Type': 'application/json' } : {}) },

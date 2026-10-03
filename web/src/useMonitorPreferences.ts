@@ -2,6 +2,7 @@ import { isPageVisible, subscribePageVisibility } from './pageVisibility';
 import { useCallback, useEffect, useRef, useState, type SetStateAction } from 'react';
 import { flushMonitorView, loadMonitorView, saveMonitorView } from './localRuntime';
 import { defaultMonitorView, normalizeMonitorView, type MonitorView } from './monitorView';
+import { mergeMonitorEdits } from './monitorPreferenceMerge';
 
 /** Account preferences outlive the current scene and must not be trimmed to its sources. */
 export function useMonitorPreferences(compact: boolean, skipLoad = false, requireAccount = false) {
@@ -10,6 +11,7 @@ export function useMonitorPreferences(compact: boolean, skipLoad = false, requir
   const [error, setError] = useState('');
   const [retry, setRetry] = useState(0);
   const latest = useRef(view);
+  const baseline = useRef<MonitorView | undefined>(defaultMonitorView());
   const lastQueued = useRef('');
   const lastSaved = useRef('');
   const saveGeneration = useRef(0);
@@ -18,7 +20,11 @@ export function useMonitorPreferences(compact: boolean, skipLoad = false, requir
   const timer = useRef<number | null>(null);
   const mounted = useRef(false);
   const clearing = useRef(false);
-  const setView = useCallback((update: SetStateAction<MonitorView>) => {
+  const setView = useCallback((update: SetStateAction<MonitorView>, seedBaseline?: (base: MonitorView) => MonitorView) => {
+    // A source not yet stored inherits Scene/default controls. Preserve those
+    // effective pre-edit values so creating its first preference edits only
+    // the selected control, rather than resetting another window's controls.
+    if (seedBaseline && baseline.current) baseline.current = normalizeMonitorView(seedBaseline(baseline.current), 16);
     const next = normalizeMonitorView(typeof update === 'function' ? update(latest.current) : update, 16);
     // Capture the edit during the input event, before pagehide or React effects.
     latest.current = next;
@@ -30,8 +36,11 @@ export function useMonitorPreferences(compact: boolean, skipLoad = false, requir
     setLoaded(false);
     void loadMonitorView(false, requireAccount).then((stored) => {
       if (!active) return;
-      const next = normalizeMonitorView(stored, 16);
-      latest.current = next; lastQueued.current = lastSaved.current = JSON.stringify(next);
+      const next = normalizeMonitorView(stored.view, 16);
+      baseline.current = stored.baseValue === undefined ? undefined : normalizeMonitorView(stored.baseValue, 16);
+      latest.current = next;
+      lastQueued.current = stored.pending ? '' : JSON.stringify(next);
+      lastSaved.current = stored.pending ? baseline.current ? JSON.stringify(baseline.current) : '' : JSON.stringify(next);
       applyView(next); setLoaded(true); setError('');
     }).catch(() => { if (active) setError('监控偏好读取失败，请重试。'); });
     return () => { active = false; mounted.current = false; };
@@ -43,9 +52,15 @@ export function useMonitorPreferences(compact: boolean, skipLoad = false, requir
     if (encoded === lastQueued.current) return;
     lastQueued.current = encoded;
     const generation = ++saveGeneration.current;
-    void saveMonitorView(next).then(() => {
+    void saveMonitorView(next, baseline.current).then((saved) => {
       if (generation !== saveGeneration.current) return;
-      lastSaved.current = encoded;
+      baseline.current = saved;
+      lastQueued.current = lastSaved.current = JSON.stringify(saved);
+      const merged = mergeMonitorEdits(saved, next, latest.current);
+      if (JSON.stringify(merged) !== JSON.stringify(latest.current)) {
+        latest.current = merged;
+        if (mounted.current) applyView(merged);
+      }
       if (mounted.current) setError('');
     }).catch(() => {
       if (generation !== saveGeneration.current || clearing.current) return;
@@ -70,7 +85,7 @@ export function useMonitorPreferences(compact: boolean, skipLoad = false, requir
       if (timer.current !== null) window.clearTimeout(timer.current);
       timer.current = null;
       saveGeneration.current++;
-      void flushMonitorView(latest.current).catch(() => undefined);
+      void flushMonitorView(latest.current, baseline.current).catch(() => undefined);
     };
     const clear = () => { clearing.current = true; if (timer.current !== null) window.clearTimeout(timer.current); timer.current = null; };
     const unlistenHidden = subscribePageVisibility(hidden);
@@ -89,12 +104,13 @@ export function useMonitorPreferences(compact: boolean, skipLoad = false, requir
       try {
         const stored = await loadMonitorView(true);
         if (!active || clearing.current || JSON.stringify(latest.current) !== before) return;
-        const next = normalizeMonitorView(stored, 16);
+        const next = normalizeMonitorView(stored.view, 16);
         const encoded = JSON.stringify(next);
         // Retain object identity when another window has not changed the account.
         // Replacing it needlessly rebuilds layouts, rotation timers and media props.
         if (encoded !== before) { latest.current = next; applyView(next); }
         lastQueued.current = lastSaved.current = encoded;
+        baseline.current = stored.baseValue === undefined ? undefined : normalizeMonitorView(stored.baseValue, 16);
         setError('');
       } catch { /* Keep the current preference while the server is unavailable. */ }
       finally { reading = false; }

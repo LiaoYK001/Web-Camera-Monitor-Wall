@@ -684,7 +684,9 @@ function DirectPreview({ scene, compact = false, layoutPreview = false, audioWor
     if (!source) return;
     setMonitorView((value) => ({ ...value, sourceAudio: { ...value.sourceAudio, [sourceId]: {
       ...(value.sourceAudio[sourceId] ?? { volume: source.volume, muted: source.muted, monitor: true }), ...change,
-    } } }));
+    } } }), base => ({ ...base, sourceAudio: { ...base.sourceAudio,
+      [sourceId]: base.sourceAudio[sourceId] ?? { volume: source.volume, muted: source.muted, monitor: true },
+    } }));
   };
   const toggleAudio = () => {
     const enabled = !audioEnabled;
@@ -705,7 +707,7 @@ function DirectPreview({ scene, compact = false, layoutPreview = false, audioWor
         ...value.sourceDecorations,
         [sourceId]: { ...current, ...change, telemetry: { ...current.telemetry, ...(change.telemetry ?? {}) }, audioMeter: { ...current.audioMeter, ...(change.audioMeter ?? {}) }, promotionKinds: { ...current.promotionKinds, ...(change.promotionKinds ?? {}) } },
       } }, scene.items.length);
-    });
+    }, base => ({ ...base, sourceDecorations: { ...base.sourceDecorations, [sourceId]: sourceDecoration(base, sourceId) } }));
   };
 
   useEffect(() => {
