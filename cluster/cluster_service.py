@@ -22,6 +22,7 @@ import hashlib
 import hmac
 import http.server
 import json
+import math
 import os
 import pathlib
 import re
@@ -129,6 +130,44 @@ def require_exact_object(value: Any, allowed: set[str], required: set[str] = set
     if not isinstance(value, dict) or not required.issubset(value) or set(value) - allowed:
         raise ApiError(400, "invalid_request", "request fields are invalid")
     return value
+
+
+def validate_monitor_preference(value: Any) -> None:
+    """Bound recursive merging independently of the HTTP byte limit."""
+    if not isinstance(value, dict):
+        raise ApiError(400, "invalid_preference", "preference must be an object")
+    pending = [(value, 0)]
+    nodes = 0
+    while pending:
+        item, depth = pending.pop()
+        nodes += 1
+        if nodes > 65536 or depth > 32:
+            raise ApiError(400, "invalid_preference", "preference nesting or item count exceeds limits")
+        if isinstance(item, dict):
+            pending.extend((child, depth + 1) for child in item.values())
+        elif isinstance(item, list):
+            pending.extend((child, depth + 1) for child in item)
+        elif isinstance(item, float) and not math.isfinite(item):
+            raise ApiError(400, "invalid_preference", "preference numbers must be finite")
+    if len(canonical_json(value).encode("utf-8")) > 2 * 1024 * 1024:
+        raise ApiError(413, "preference_too_large", "preference exceeds 2 MiB")
+
+
+def merge_monitor_preference(current: Any, base: dict[str, Any], edited: dict[str, Any]) -> dict[str, Any]:
+    """Apply the user's changed leaves under the store lock; arrays are atomic."""
+    result = dict(current) if isinstance(current, dict) else dict(base)
+    for key in base.keys() | edited.keys():
+        if key not in edited:
+            result.pop(key, None)
+        elif key not in base:
+            result[key] = edited[key]
+        elif canonical_json(base[key]) == canonical_json(edited[key]):
+            continue
+        elif isinstance(base[key], dict) and isinstance(edited[key], dict):
+            result[key] = merge_monitor_preference(result.get(key), base[key], edited[key])
+        else:
+            result[key] = edited[key]
+    return result
 
 
 class PasswordHasher:
@@ -652,9 +691,19 @@ class ClusterStore:
             if user is None:
                 raise ApiError(401, "account_rejected", "account is unavailable")
             if write:
-                body = require_exact_object(value, {"value"}, {"value"})["value"]
+                request = require_exact_object(value, {"value", "baseValue"} if kind == "monitor-view" else {"value"}, {"value"})
+                body = request["value"]
                 if not isinstance(body, dict):
                     raise ApiError(400, "invalid_preference", "preference must be an object")
+                if "baseValue" in request:
+                    validate_monitor_preference(body)
+                    validate_monitor_preference(request["baseValue"])
+                    previous = self.db.execute("SELECT body_json FROM account_preferences WHERE user_id=? AND kind=?",
+                                               (user["id"], kind)).fetchone()
+                    current = json.loads(previous["body_json"]) if previous else {}
+                    validate_monitor_preference(current)
+                    body = merge_monitor_preference(current, request["baseValue"], body)
+                    validate_monitor_preference(body)
                 encoded = canonical_json(body)
                 if len(encoded.encode("utf-8")) > 2 * 1024 * 1024:
                     raise ApiError(413, "preference_too_large", "preference exceeds 2 MiB")

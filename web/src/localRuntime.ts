@@ -1,6 +1,6 @@
 import type { StudioDocument } from './types';
 import { isSupportedSceneSchema } from './sceneSchema';
-import type { MonitorView } from './monitorView';
+import { normalizeMonitorView, type MonitorView } from './monitorView';
 
 const DATABASE = 'webobs-local-v1';
 const VERSION = 2;
@@ -26,14 +26,14 @@ async function readAccountPreference<T>(kind: AccountPreferenceKind): Promise<T 
 }
 
 async function writeAccountPreference(kind: AccountPreferenceKind, value: object, signal?: AbortSignal,
-                                     options: { strict?: boolean; keepalive?: boolean } = {}): Promise<void> {
+                                     options: { strict?: boolean; keepalive?: boolean; baseValue?: MonitorView } = {}): Promise<object> {
   const controller = new AbortController();
   const abort = () => controller.abort();
   if (signal?.aborted) controller.abort();
   else signal?.addEventListener('abort', abort, { once: true });
   const timer = window.setTimeout(abort, 8000);
   try {
-    const body = JSON.stringify({ value });
+    const body = JSON.stringify({ value, ...(options.baseValue ? { baseValue: options.baseValue } : {}) });
     const response = await fetch(`/api/v2/account/preferences/${kind}`, {
       method: 'PUT', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' },
       body, signal: controller.signal,
@@ -45,12 +45,15 @@ async function writeAccountPreference(kind: AccountPreferenceKind, value: object
       try { window.localStorage.setItem(`${PREFERENCE_MIGRATION_KEY}:${kind}`, '1'); }
       catch { /* Storage restrictions do not undo a successful account save. */ }
       reportAccountSync('saved');
+      const result = await response.json() as { value?: object };
+      return result.value && typeof result.value === 'object' && !Array.isArray(result.value) ? result.value : value;
     } else {
       reportAccountSync('offline');
       if (options.strict) throw new Error(`账号偏好保存失败（${response.status}）`);
     }
   } catch (error) { reportAccountSync('offline'); if (options.strict) throw error; }
   finally { window.clearTimeout(timer); signal?.removeEventListener('abort', abort); }
+  return value;
 }
 type StoreName = typeof STORES[number];
 
@@ -440,52 +443,56 @@ export async function cacheSyncedScenes(documents: SyncDocument[]): Promise<void
 
 let monitorViewWrites: Promise<void> = Promise.resolve();
 let monitorWriteController = new AbortController();
-async function cacheMonitorView(view: MonitorView, pending: boolean, signal: AbortSignal): Promise<void> {
+async function cacheMonitorView(view: MonitorView, pending: boolean, signal: AbortSignal, baseValue?: MonitorView): Promise<void> {
   try {
     if (signal.aborted) return;
-    const encrypted = await encrypt({ kind: 'monitor-view-v3', view, pending }, Date.now() + LEASE_MS);
+    const encrypted = await encrypt({ kind: 'monitor-view-v4', view, pending, baseValue }, Date.now() + LEASE_MS);
     if (!signal.aborted) await put('runtimeMeta', 'monitor-view', encrypted);
   } catch { /* Local storage restrictions must not prevent account synchronization. */ }
 }
-async function persistMonitorView(snapshot: MonitorView, signal: AbortSignal): Promise<void> {
-  if (signal.aborted) return;
+async function persistMonitorView(snapshot: MonitorView, signal: AbortSignal, baseValue?: MonitorView): Promise<MonitorView> {
+  if (signal.aborted) throw new DOMException('Account save canceled', 'AbortError');
   // Start the server request before encryption/IndexedDB so an immediate reload
   // can still deliver the keepalive request. Retain failed writes for recovery.
-  const local = cacheMonitorView(snapshot, true, signal);
+  const local = cacheMonitorView(snapshot, true, signal, baseValue);
   try {
-    await writeAccountPreference('monitor-view', snapshot, signal, { strict: true, keepalive: true });
+    const saved = normalizeMonitorView(await writeAccountPreference('monitor-view', snapshot, signal,
+      { strict: true, keepalive: true, baseValue }), 16);
     await local;
-    await cacheMonitorView(snapshot, false, signal);
+    await cacheMonitorView(saved, false, signal, saved);
+    return saved;
   } catch (error) { await local; throw error; }
 }
-export function saveMonitorView(view: MonitorView): Promise<void> {
+export function saveMonitorView(view: MonitorView, baseValue?: MonitorView): Promise<MonitorView> {
   const snapshot = structuredClone(view);
+  const base = baseValue ? structuredClone(baseValue) : undefined;
   const signal = monitorWriteController.signal;
   // Keep local encryption and remote writes in the same order, including across page changes.
-  monitorViewWrites = monitorViewWrites.catch(() => undefined).then(async () => {
-    if (signal.aborted) return;
-    await persistMonitorView(snapshot, signal);
-  });
-  return monitorViewWrites;
+  const saving = monitorViewWrites.catch(() => undefined).then(() => persistMonitorView(snapshot, signal, base));
+  monitorViewWrites = saving.then(() => undefined, () => undefined);
+  return saving;
 }
 
 /** pagehide cannot wait for the debounce, encryption, or a previous request. */
-export function flushMonitorView(view: MonitorView): Promise<void> {
+export function flushMonitorView(view: MonitorView, baseValue?: MonitorView): Promise<MonitorView> {
   const previous = monitorViewWrites;
   monitorWriteController.abort();
   monitorWriteController = new AbortController();
   const snapshot = structuredClone(view);
   const signal = monitorWriteController.signal;
-  const remote = writeAccountPreference('monitor-view', snapshot, signal, { strict: true, keepalive: true });
-  monitorViewWrites = (async () => {
+  const base = baseValue ? structuredClone(baseValue) : undefined;
+  const remote = writeAccountPreference('monitor-view', snapshot, signal, { strict: true, keepalive: true, baseValue: base });
+  const saving = (async () => {
     await previous.catch(() => undefined);
-    await cacheMonitorView(snapshot, true, signal);
-    await remote;
-    await cacheMonitorView(snapshot, false, signal);
+    await cacheMonitorView(snapshot, true, signal, base);
+    const saved = normalizeMonitorView(await remote, 16);
+    await cacheMonitorView(saved, false, signal, saved);
+    return saved;
   })();
+  monitorViewWrites = saving.then(() => undefined, () => undefined);
   // Attach immediately: the remote request may reject while the cache is busy.
   void remote.catch(() => undefined);
-  return monitorViewWrites;
+  return saving;
 }
 
 export async function saveWorkspaceLayout(layout: WorkspaceLayout): Promise<void> {
@@ -727,37 +734,48 @@ export async function importLocalConfigBundle(value: unknown): Promise<LocalConf
   return saveLocalConfigProfile(bundle.profile.name, bundle.profile.studio, id, bundle.profile.workspaceLayout);
 }
 
-export async function loadMonitorView(remoteOnly = false, requireAccount = false): Promise<MonitorView | null> {
+export interface MonitorViewLoad { view: MonitorView | null; baseValue?: MonitorView | null; pending?: boolean }
+
+export async function loadMonitorView(remoteOnly = false, requireAccount = false): Promise<MonitorViewLoad> {
   await monitorViewWrites.catch(() => undefined);
-  let cached: { kind: string; view: MonitorView; pending?: boolean } | null = null;
+  let cached: { kind: string; view: MonitorView; pending?: boolean; baseValue?: MonitorView } | null = null;
   try {
     const record = await get<EncryptedRecord>('runtimeMeta', 'monitor-view');
     if (record && record.expiresAt > Date.now()) cached = await decrypt(record);
-    if (cached && !['monitor-view-v1', 'monitor-view-v2', 'monitor-view-v3'].includes(cached.kind)) cached = null;
+    if (cached && !['monitor-view-v1', 'monitor-view-v2', 'monitor-view-v3', 'monitor-view-v4'].includes(cached.kind)) cached = null;
   } catch { /* Server preferences work even if IndexedDB is unavailable. */ }
   if (cached?.pending) {
-    const saving = saveMonitorView(cached.view);
+    const base = cached.baseValue ? normalizeMonitorView(cached.baseValue, 16) : undefined;
+    const saving = saveMonitorView(cached.view, base);
     // A background refresh must never replace an unsaved local edit with an
     // older server value. Retry it when focus/network connectivity returns.
-    if (remoteOnly) await saving;
-    else await saving.catch(() => undefined);
-    return cached.view;
+    try {
+      const saved = await saving;
+      return { view: saved, baseValue: saved };
+    } catch (error) {
+      if (remoteOnly) throw error;
+      return { view: cached.view, baseValue: base, pending: true };
+    }
   }
   const remote = await readAccountPreference<MonitorView>('monitor-view');
-  if (remote) return remote;
+  if (remote) return { view: remote, baseValue: remote };
   // A fresh account-dependent control must not save temporary defaults over
   // settings it failed to read. A valid private cache can still be restored.
   if (requireAccount && remote === undefined && !cached) throw new Error('账号偏好读取失败');
   if (remoteOnly) {
     if (remote === undefined) throw new Error('账号偏好读取失败');
-    return null;
+    return { view: null, baseValue: null };
   }
   if (remote === null) {
-    try { if (window.localStorage.getItem(`${PREFERENCE_MIGRATION_KEY}:monitor-view`)) return null; }
+    try { if (window.localStorage.getItem(`${PREFERENCE_MIGRATION_KEY}:monitor-view`)) return { view: null, baseValue: null }; }
     catch { /* Private browsing can deny localStorage while account APIs work. */ }
   }
-  if (cached && remote === null) await saveMonitorView(cached.view).catch(() => undefined);
-  return cached?.view ?? null;
+  if (cached && remote === null) {
+    const saved = await saveMonitorView(cached.view, normalizeMonitorView(null, 16)).catch(() => null);
+    if (saved) return { view: saved, baseValue: saved };
+    return { view: cached.view, baseValue: normalizeMonitorView(null, 16), pending: true };
+  }
+  return { view: cached?.view ?? null, baseValue: cached?.view ?? null };
 }
 
 export async function loadOfflineStudio(): Promise<{ studio: StudioDocument; state: 'offline-valid'; expiresAt: number } | null> {
