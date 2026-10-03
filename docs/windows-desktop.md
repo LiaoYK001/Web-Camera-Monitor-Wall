@@ -86,6 +86,16 @@ GitHub 检测和下载使用 electron-updater。显式安装等待 Windows 确�
 
 NSIS 自定义初始化仅修改安装器及其子进程的 TEMP/TMP：在现有安装目录所在盘创建私密临时目录，供旧卸载器原子移动旧程序文件，避免跨盘 rename 失败。完成后仅删除该空临时目录，不递归删除未知路径，不修改系统环境变量；账号、录像与快照仍在独立数据目录。
 
+### WebUI 设置细节 / WebUI settings details
+
+客户端开关立即保存，并在执行中锁定输入。局域网 HTTPS 端口先填写，再点击“保存端口”；支持 1024–65535 的整数，错误或未保存的输入不会改变实际端口。未保存端口可以撤销，保存后再点击“应用并重启服务”。状态事件优先于较早发起的读取结果，其他状态变化不会覆盖正在编辑的端口；读取失败提供重试入口。
+
+Client toggles save immediately and lock inputs while running. Edit the LAN HTTPS port and click “保存端口” (Save port); valid integers are 1024–65535. Invalid or unsaved input never changes the actual port. Discard a draft or save before applying a service restart. Push events supersede older IPC reads and unrelated events preserve a port draft. Failed status reads offer retry.
+
+“我的账号”区分读取错误和保存成功，保存时锁定表单，失败保留输入以便重试。昵称或头像未变时不重复提交；密码需要二次确认，并按 UTF-8 字节验证至少 16 字节。密码输入仅在本次页面内保留，成功更新后清空。离开页面会提醒未保存的输入，保存期间阻止切换；Windows 更新草稿检查也包含账号和端口草稿。账号的 WebUI 行为同样适用于普通浏览器及 Android 客户端。
+
+“我的账号” (My account) distinguishes errors from success, locks forms during saves and preserves failed inputs for retry. Unchanged profiles do not submit. Password confirmation must match and the UTF-8 minimum is 16 bytes. Password inputs remain in the current page only and clear after success. Navigation protects drafts and pending saves; Windows update guards also include account and port drafts. Account behavior applies to browser and Android WebUI as well.
+
 ## 正式发布与验收
 
 产品标签 `vX.Y` 对应客户端 `X.Y.0`，`vX.Y.Z` 对应 `X.Y.Z`。容器与 Windows 共用已审计的产品 Release。候选附件包含安装包、blockmap、`latest.yml`（仅正式包）、SHA-256 摘要、运行文件清单、CycloneDX SBOM 与许可证归档。Electron updater 校验 SHA-512 与大小，准备安装时再次校验；可选签名构建额外验证 Authenticode 发布者。客户端不包含 GitHub Token。

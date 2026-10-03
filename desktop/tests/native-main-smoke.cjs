@@ -45,6 +45,62 @@ const pause = ms => new Promise(resolve => setTimeout(resolve, ms));
       const pair = cookie.split(';')[0], split = pair.indexOf('=');
       await main.webContents.session.cookies.set({ url: origin, name: pair.slice(0, split), value: pair.slice(split + 1), httpOnly: true, sameSite: 'lax' });
     }
+    const waitForUi = async (predicate) => {
+      const deadline = Date.now() + 15000;
+      while (Date.now() < deadline) {
+        if (await main.webContents.executeJavaScript(predicate)) return;
+        await pause(100);
+      }
+      const summary = await main.webContents.executeJavaScript(`({
+        account: Boolean(document.querySelector('.account-workspace')),
+        desktop: Boolean(document.querySelector('.desktop-settings')),
+        login: Boolean(document.querySelector('input[autocomplete=current-password]')),
+        forms: document.forms.length,
+        alerts: document.querySelectorAll('[role=alert]').length,
+        scripts: document.scripts.length,
+        bodyChildren: document.body.children.length,
+        inputKinds: [...document.querySelectorAll('input')].map(input=>({type:input.type,autocomplete:input.autocomplete})),
+        title: document.querySelector('h1')?.textContent
+      })`);
+      const auth = await main.webContents.executeJavaScript('fetch("/api/v1/auth/session").then(async response=>({status:response.status,authenticated:(await response.json()).authenticated}))');
+      summary.auth = auth;
+      throw new Error('Desktop settings UI did not reach the expected state: ' + JSON.stringify(summary));
+    };
+    // Cookie injection does not update LoginGate's initial unauthenticated
+    // state. Reload the document after fragment navigation to check the session.
+    await main.loadURL(`${origin}/#account`);
+    await new Promise(resolve => {
+      main.webContents.once('did-finish-load', resolve);
+      main.webContents.reloadIgnoringCache();
+    });
+    await waitForUi('Boolean(document.querySelector("form[aria-label=个人信息] input[maxlength]"))');
+    await main.webContents.executeJavaScript(`{
+      const input=document.querySelector('form[aria-label="个人信息"] input[maxlength]');
+      Object.getOwnPropertyDescriptor(HTMLInputElement.prototype,'value').set.call(input,'Desktop account details');
+      input.dispatchEvent(new Event('input',{bubbles:true}));
+    }`);
+    await waitForUi('!document.querySelector("form[aria-label=个人信息] button[type=submit]").disabled');
+    await main.webContents.executeJavaScript('document.querySelector("form[aria-label=个人信息]").requestSubmit()');
+    await waitForUi('document.querySelector("form[aria-label=个人信息] button[type=submit]").disabled && document.querySelector(".account-workspace").textContent.includes("个人信息已保存")');
+    assert.equal((await (await fetch(`${origin}/api/v2/account/me`, { headers })).json()).displayName, 'Desktop account details');
+    await main.loadURL(`${origin}/#settings`);
+    await waitForUi('Boolean(document.querySelector(".desktop-port-editor input"))');
+    await main.webContents.executeJavaScript(`{
+      const input=document.querySelector('.desktop-port-editor input');
+      Object.getOwnPropertyDescriptor(HTMLInputElement.prototype,'value').set.call(input,'21443');
+      input.dispatchEvent(new Event('input',{bubbles:true}));
+    }`);
+    await waitForUi('!document.querySelector(".desktop-port-editor button[type=submit]").disabled');
+    await main.webContents.executeJavaScript('document.querySelector(".desktop-port-editor").requestSubmit()');
+    await waitForUi('document.querySelector(".desktop-port-editor button[type=submit]").disabled && document.querySelector(".desktop-settings").textContent.includes("端口已保存")');
+    assert.equal((await main.webContents.executeJavaScript('window.webobsDesktop.status()')).settings.lanPort, 21443);
+    const savedDesktop = JSON.parse(await fs.readFile(path.join(temporary, 'WebOBS', 'desktop.json'), 'utf8'));
+    assert.equal(savedDesktop.lanPort, 21443);
+    // The native confirmation is canceled by this fixture. A desktop operation
+    // must not flag itself as an unfinished export and reject its own request.
+    await main.webContents.executeJavaScript("[...document.querySelectorAll('.desktop-settings button')].find(button=>button.textContent==='应用并重启服务').click()");
+    await waitForUi('document.querySelector(".desktop-settings").textContent.includes("服务状态已刷新")');
+    assert.equal(await main.webContents.executeJavaScript('Boolean(document.querySelector(".desktop-settings [role=alert]"))'), false);
     const studio = await (await fetch(`${origin}/api/v1/studio`, { headers })).json();
     const second = { ...structuredClone(studio.scenes[0]), id: 'native-main-second', name: 'Second fixed projector' };
     studio.scenes.push(second);
@@ -82,7 +138,7 @@ const pause = ms => new Promise(resolve => setTimeout(resolve, ms));
     for (const window of BrowserWindow.getAllWindows()) window.destroy();
     await pause(100);
     assert.deepEqual(errors.map(error => String(error)), []);
-    console.log('Actual desktop entry: first login, two fixed Scene projectors, shared session, tray hide and normal exit passed. Camera and clean-install qualification remain separate.');
+    console.log('Actual desktop entry: first login, account UI save, port UI persistence, canceled native restart, two fixed Scene projectors, shared session, tray hide and normal exit passed. Camera and clean-install qualification remain separate.');
   } catch (error) {
     exitCode = 1; console.error(error.stack);
     for (const name of ['native-tools', 'core', 'clients']) {

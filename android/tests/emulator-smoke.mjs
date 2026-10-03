@@ -94,6 +94,13 @@ try {
   await expect.poll(() => page.evaluate(async () => (await (await fetch('/api/v2/account/preferences/monitor-view')).json()).value?.playbackOptimization?.enabled)).toBe(false);
   await page.reload(); await expect(optimization).not.toBeChecked();
   checks.push('account optimization preference persisted after reload');
+  await page.goto(`${base}/#account`);
+  await page.getByRole('textbox', { name: '昵称', exact: true }).fill('安卓设置细节验证');
+  await page.getByRole('button', { name: '保存个人信息', exact: true }).click();
+  await expect(page.getByRole('button', { name: '保存个人信息', exact: true })).toBeDisabled();
+  await expect.poll(() => page.evaluate(async () => (await (await fetch('/api/v2/account/me')).json()).displayName)).toBe('安卓设置细节验证');
+  await expect(page.getByLabel('确认新密码', { exact: true })).toBeVisible();
+  checks.push('actual account editor save and password confirmation UI');
   await page.goto(`${base}/#go2rtc`);
   await page.getByRole('heading', { name: 'go2rtc 管理' }).waitFor();
   await page.getByRole('button', { name: '配置', exact: true }).click();
@@ -144,6 +151,8 @@ try {
   await expect(page.locator('.hero-audio-control').getByRole('combobox', { name: '声音输出模式' })).toHaveValue('meter-only');
   await page.goto(`${base}/#studio`);
   await expect(page.getByRole('button', { name: '选择场景 安卓值守', exact: true })).toBeVisible();
+  await page.goto(`${base}/#account`);
+  await expect(page.getByRole('textbox', { name: '昵称', exact: true })).toHaveValue('安卓设置细节验证');
   checks.push('saved server, HttpOnly login session and account preference after process restart');
   await writeFile(new URL('receipt.json', output), JSON.stringify({ device: device.model(), sdk: adb('shell', 'getprop', 'ro.build.version.sdk').toString().trim(), checks, qualification: 'MuMu emulator and synthetic FFmpeg source; not physical camera/ARM qualification' }, null, 2));
   console.log(`PASS: ${checks.join('; ')}`);
