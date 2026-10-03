@@ -15,6 +15,7 @@ from runtime_support import service_port, service_http, service_rtsp, install_ow
 
 import argparse
 import contextlib
+import copy
 import ctypes
 import ctypes.util
 import datetime as dt
@@ -153,10 +154,10 @@ def validate_monitor_preference(value: Any) -> None:
         raise ApiError(413, "preference_too_large", "preference exceeds 2 MiB")
 
 
-def merge_monitor_preference(current: Any, base: dict[str, Any], edited: dict[str, Any]) -> dict[str, Any]:
+def merge_monitor_preference(current: Any, base: dict[str, Any], edited: dict[str, Any], partial: bool = False) -> dict[str, Any]:
     """Apply the user's changed leaves under the store lock; arrays are atomic."""
     result = dict(current) if isinstance(current, dict) else dict(base)
-    for key in base.keys() | edited.keys():
+    for key in edited.keys() if partial else base.keys() | edited.keys():
         if key not in edited:
             result.pop(key, None)
         elif key not in base:
@@ -164,10 +165,39 @@ def merge_monitor_preference(current: Any, base: dict[str, Any], edited: dict[st
         elif canonical_json(base[key]) == canonical_json(edited[key]):
             continue
         elif isinstance(base[key], dict) and isinstance(edited[key], dict):
-            result[key] = merge_monitor_preference(result.get(key), base[key], edited[key])
+            result[key] = merge_monitor_preference(result.get(key), base[key], edited[key], partial)
         else:
             result[key] = edited[key]
     return result
+
+
+def validate_monitor_removals(base: dict[str, Any], paths: Any) -> list[list[str]]:
+    if not isinstance(paths, list) or len(paths) > 4096:
+        raise ApiError(400, "invalid_preference", "preference removals exceed limits")
+    for path in paths:
+        if not isinstance(path, list) or not 1 <= len(path) <= 32 or any(
+                not isinstance(key, str) or not 1 <= len(key) <= 128 for key in path):
+            raise ApiError(400, "invalid_preference", "preference removal path is invalid")
+        cursor = base
+        for key in path:
+            if not isinstance(cursor, dict) or key not in cursor:
+                raise ApiError(400, "invalid_preference", "preference removal must reference its baseline")
+            cursor = cursor[key]
+    return paths
+
+
+def remove_monitor_fields(value: dict[str, Any], paths: list[list[str]]) -> dict[str, Any]:
+    # A fallback control may still reference an unchanged nested baseline.
+    # Copy once for deletions, rather than mutating that baseline or repeatedly
+    # copying a large source map for every path.
+    value = copy.deepcopy(value) if paths else value
+    for path in paths:
+        cursor = value
+        for key in path[:-1]:
+            cursor = cursor.get(key) if isinstance(cursor, dict) else None
+        if isinstance(cursor, dict):
+            cursor.pop(path[-1], None)
+    return value
 
 
 class PasswordHasher:
@@ -691,10 +721,13 @@ class ClusterStore:
             if user is None:
                 raise ApiError(401, "account_rejected", "account is unavailable")
             if write:
-                request = require_exact_object(value, {"value", "baseValue"} if kind == "monitor-view" else {"value"}, {"value"})
+                request = require_exact_object(value, {"value", "baseValue", "partial", "removedPaths"} if kind == "monitor-view" else {"value"}, {"value"})
                 body = request["value"]
                 if not isinstance(body, dict):
                     raise ApiError(400, "invalid_preference", "preference must be an object")
+                partial = "partial" in request or "removedPaths" in request
+                if partial and (request.get("partial") is not True or "baseValue" not in request):
+                    raise ApiError(400, "invalid_preference", "partial preferences require a baseline and explicit partial mode")
                 if "baseValue" in request:
                     validate_monitor_preference(body)
                     validate_monitor_preference(request["baseValue"])
@@ -702,7 +735,9 @@ class ClusterStore:
                                                (user["id"], kind)).fetchone()
                     current = json.loads(previous["body_json"]) if previous else {}
                     validate_monitor_preference(current)
-                    body = merge_monitor_preference(current, request["baseValue"], body)
+                    removals = validate_monitor_removals(request["baseValue"], request.get("removedPaths", [])) if partial else []
+                    body = merge_monitor_preference(current, request["baseValue"], body, partial)
+                    body = remove_monitor_fields(body, removals)
                     validate_monitor_preference(body)
                 encoded = canonical_json(body)
                 if len(encoded.encode("utf-8")) > 2 * 1024 * 1024:

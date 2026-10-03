@@ -4,6 +4,7 @@ const { execFileSync } = require('node:child_process');
 const crypto = require('node:crypto');
 const assert = require('node:assert/strict');
 const net = require('node:net');
+const { largePreferenceWorkspace } = require('./fixtures/preference-workspace.cjs');
 const root = path.resolve(__dirname, '..');
 const { chromium, expect } = createRequire(path.join(root, 'web/package.json'))('@playwright/test');
 // Build web/dist first and supply a complete product image explicitly.
@@ -87,6 +88,52 @@ let created = false, browser;
     await expect.poll(() => page.locator('.direct-preview video').evaluate(video => video.getVideoPlaybackQuality().totalVideoFrames)).toBeGreaterThan(before.frames);
     assert.equal(writes, 0);
     console.log('PASS production WebUI + complete isolated Linux product: real go2rtc RTSP import and MediaMTX H264 Direct decoding continue through an actual corrupt preference-row HTTP 500; audio stays muted, no default PUT, explicit retry restores account volume/output while decoded frames advance. No API/media mocks; service workers blocked, OBS disabled. Synthetic source, not physical camera or PWA offline qualification.');
+    await page.close();
+    const large = largePreferenceWorkspace();
+    assert.equal((await context.request.put(base + '/api/v2/account/preferences/monitor-view', { headers, data: { value: large } })).status(), 200);
+    const legacyPair = { baseValue: large, value: { ...large, localMonitorVolume: .31 } };
+    const fullPairBytes = Buffer.byteLength(JSON.stringify(legacyPair));
+    assert.ok(fullPairBytes > 1024 * 1024);
+    assert.equal((await context.request.put(base + '/api/v2/account/preferences/monitor-view', { headers, data: legacyPair })).status(), 413);
+    const wide = await context.newPage();
+    // Navigation keepalive requests may outlive the test driver's Page target.
+    // Record only finite byte/keepalive metadata synchronously before invoking
+    // the real fetch; sessionStorage survives this same-window reload.
+    const observeWire = async () => wide.evaluate(() => {
+      const original = window.fetch;
+      window.fetch = (input, init) => {
+        if (String(input).endsWith('/account/preferences/monitor-view') && init?.method === 'PUT') {
+          const receipts = JSON.parse(sessionStorage.getItem('preference-test-wire') || '[]');
+          receipts.push({ bytes: new TextEncoder().encode(String(init.body)).byteLength, keepalive: init.keepalive });
+          sessionStorage.setItem('preference-test-wire', JSON.stringify(receipts.slice(-16)));
+        }
+        return original(input, init);
+      };
+    });
+    await wide.goto(base + '/#monitor');
+    await expect(wide.getByRole('slider', { name: '本地监听主音量' })).toBeEnabled();
+    await observeWire();
+    await wide.getByRole('slider', { name: '本地监听主音量' }).fill('0.31');
+    await wide.reload();
+    await expect(wide.getByRole('slider', { name: '本地监听主音量' })).toHaveValue('0.31', { timeout: 10000 });
+    const saved = (await (await context.request.get(base + '/api/v2/account/preferences/monitor-view')).json()).value;
+    assert.equal(saved.localMonitorVolume, .31);
+    assert.deepEqual(saved.sourceDecorations, large.sourceDecorations);
+    const wire = await wide.evaluate(() => JSON.parse(sessionStorage.getItem('preference-test-wire') || '[]'));
+    assert.ok(wire.length > 0 && wire.every(request => request.bytes < 1024 && request.keepalive));
+    console.log(`PASS actual large-account API + production UI: prior full pair ${fullPairBytes} bytes is rejected by the unchanged 1 MiB gateway limit; a real reload submits ${wire[0].bytes} bytes with keepalive and preserves 1000 source preferences. No request/response mocks.`);
+    await observeWire();
+    await wide.getByRole('checkbox', { name: '统计叠层（全部来源）', exact: true }).check();
+    await expect.poll(async () => {
+      const value = (await (await context.request.get(base + '/api/v2/account/preferences/monitor-view')).json()).value;
+      return Object.values(value.sourceDecorations).every(source => source.telemetry.enabled);
+    }).toBe(true);
+    const bulk = (await (await context.request.get(base + '/api/v2/account/preferences/monitor-view')).json()).value;
+    assert.equal(Object.keys(bulk.sourceDecorations).length, 1000);
+    assert.deepEqual(bulk.sourceDecorations['other-scene-999'].audioMeter, large.sourceDecorations['other-scene-999'].audioMeter);
+    const bulkWire = await wide.evaluate(() => JSON.parse(sessionStorage.getItem('preference-test-wire')).at(-1));
+    assert.ok(bulkWire.bytes < 1024 * 1024);
+    console.log(`PASS actual atomic bulk update: 1000 source telemetry preferences saved with ${bulkWire.bytes} bytes; unrelated audio meter controls retained.`);
   } finally {
     await browser?.close();
     if (created) run('rm', '--force', '--volumes', name);

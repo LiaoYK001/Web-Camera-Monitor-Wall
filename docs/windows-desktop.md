@@ -29,6 +29,10 @@ The Settings “About and updates” card displays the actual Electron installat
 
 The native runtime test also covers two signed device enrollments through the real authentication proxy, schema-v6 multi-track persistence, idempotent retries, conflicts and normal service restart. Its synthetic Camera is never activated; this qualifies the configuration/control path, not camera audio playback or clean-system installation.
 
+The main-entry gate also stores a synthetic 1000-source preference workspace, adjusts volume through the actual monitor UI, verifies a small keepalive request, and applies a global telemetry change through the actual authenticated backend. Both operations must retain unrelated source settings. It restores the original fixture preferences before continuing projectors/tray tests. This check requires the current WebUI and cluster service; it does not activate 1000 camera streams.
+
+主入口门槛还保存合成的 1000 路来源偏好，通过真实监控 UI 调整音量并验证小型保活请求，再经真实认证后端全局调整统计叠层；两者均须保留其他逐路设置。随后恢复原夹具偏好再检查投影和托盘。此项需要当前 WebUI 与 cluster 服务，不会启动 1000 路摄像机流。
+
 开发构建机需要 VS 2022 的 MSVC x64、Windows SDK、CMake >= 3.28、Python、Node 24 和 pnpm 11.16.0。使用 PowerShell 7.2+ 的 VS x64 Developer PowerShell：
 
 ```powershell

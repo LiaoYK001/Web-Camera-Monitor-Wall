@@ -1,6 +1,7 @@
 import type { StudioDocument } from './types';
 import { isSupportedSceneSchema } from './sceneSchema';
 import { normalizeMonitorView, type MonitorView } from './monitorView';
+import { compactMonitorPreference } from './monitorPreferenceMerge';
 
 const DATABASE = 'webobs-local-v1';
 const VERSION = 2;
@@ -33,7 +34,8 @@ async function writeAccountPreference(kind: AccountPreferenceKind, value: object
   else signal?.addEventListener('abort', abort, { once: true });
   const timer = window.setTimeout(abort, 8000);
   try {
-    const body = JSON.stringify({ value, ...(options.baseValue ? { baseValue: options.baseValue } : {}) });
+    const body = JSON.stringify(kind === 'monitor-view' && options.baseValue
+      ? compactMonitorPreference(value as MonitorView, options.baseValue) : { value });
     const response = await fetch(`/api/v2/account/preferences/${kind}`, {
       method: 'PUT', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' },
       body, signal: controller.signal,
