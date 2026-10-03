@@ -8,6 +8,7 @@ import pathlib
 import sys
 import tempfile
 import threading
+import time
 import unittest
 from unittest import mock
 
@@ -55,6 +56,17 @@ class MediaTests(unittest.TestCase):
         connection.close()
         return status, fields, payload
 
+    def assert_readers_released(self):
+        # A HEAD/416 client can receive the final headers before the server
+        # thread exits its reader context. Require bounded eventual cleanup.
+        deadline = time.monotonic() + 1
+        while time.monotonic() < deadline:
+            with self.service.reader_lock:
+                if not self.service.active_readers:
+                    return
+            time.sleep(.005)
+        self.assertFalse(self.service.active_readers, 'Media reader did not release within one second')
+
     def test_ranges_head_and_conditional_resume(self):
         status, headers, payload = self.request()
         self.assertEqual((status, payload), (200, self.payload))
@@ -72,7 +84,7 @@ class MediaTests(unittest.TestCase):
             self.assertEqual(status, 416, value)
             self.assertEqual(fields['Content-Range'], f'bytes */{len(self.payload)}')
             self.assertEqual(payload, b'')
-        self.assertFalse(self.service.active_readers)
+        self.assert_readers_released()
 
     def test_permissions_are_checked_even_for_head_and_304(self):
         def deny(*_args, **_kwargs):
@@ -82,7 +94,7 @@ class MediaTests(unittest.TestCase):
                 status, _, _ = self.request(method=method, headers={'X-WebObs-Nvr-Principal': 'scoped-user'})
                 self.assertEqual(status, 403)
             self.assertEqual(self.request(headers={'If-None-Match': '*', 'X-WebObs-Nvr-Principal': 'scoped-user'})[0], 403)
-        self.assertFalse(self.service.active_readers)
+        self.assert_readers_released()
 
     def test_filtered_lists_do_not_expand_empty_camera_scopes(self):
         with mock.patch.object(self.service, 'authorized_cameras', return_value=[]):
@@ -119,7 +131,7 @@ class MediaTests(unittest.TestCase):
                 self.assertEqual(error.exception.partial, self.payload[:65536])
             finally:
                 connection.close()
-        self.assertFalse(self.service.active_readers)
+        self.assert_readers_released()
 
     def test_alias_batch_authorization_is_fresh_bounded_and_fails_closed(self):
         self.service.config['cameras'][0]['cameraId'] = 'registry-camera'
