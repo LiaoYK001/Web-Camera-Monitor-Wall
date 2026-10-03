@@ -61,7 +61,7 @@ app.on('window-all-closed', () => {});
     await assertSyncPersisted();
     await assertEvidencePersisted();
     await supervisor.stop();
-    console.log('Bundled Windows services, first login, authenticated go2rtc, multi-track sync/conflict, real synthetic H264/AAC evidence export, snapshot and restart persistence passed. Camera/media qualification remains separate.');
+    console.log('Bundled Windows services, first login, authenticated go2rtc, multi-track sync/conflict, streamed large synthetic MP4 with HEAD/Range/ETag/hash, real synthetic H264/AAC evidence export, snapshot and restart persistence passed. Camera/media qualification remains separate.');
   } catch (error) {
     exitCode = 1; console.error(error.stack);
     if (supervisor) {

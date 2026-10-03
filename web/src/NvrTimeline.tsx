@@ -283,7 +283,7 @@ export default function NvrTimeline({ onBack }: { onBack: () => void }) {
           <button className="danger-button" type="button" disabled={!selectedSegment || selectedSegment.locked || busy} onClick={() => mutateSegment('delete')}>删除</button>
         </section>
 
-        <p className="nvr-help">从当前游标导出已选摄像机。快速导出保留完整片段，实际边界可能扩大；精确导出保留声音，要求每路摄像机连续录制。当前单个下载文件上限 64 MiB，较长或高码率录像请缩短导出时间。</p>
+        <p className="nvr-help">从当前游标导出已选摄像机。快速导出保留完整片段，实际边界可能扩大；精确导出保留声音，要求每路摄像机连续录制。大文件按块下载，导出前会检查磁盘余量。支持从游标向后导出最多 1 小时；需要更长范围时请分次导出。</p>
         <label className="nvr-seek">回放时间<input aria-label="回放时间游标" type="range" min={rangeStart} max={rangeEnd - 1} step="1000" value={cursor} onChange={event => seekAll(Number(event.target.value))} /></label>
         <section className="timeline-panel" onClick={(event) => { const bounds = event.currentTarget.getBoundingClientRect(); seekAll(rangeStart + clamp((event.clientX - bounds.left) / bounds.width, 0, 1) * DAY_MS); }}>
           <div className="time-ruler">{[0, 6, 12, 18, 24].map((hour) => <span key={hour} style={{ left: `${hour / 24 * 100}%` }}>{String(hour).padStart(2, '0')}:00</span>)}</div>

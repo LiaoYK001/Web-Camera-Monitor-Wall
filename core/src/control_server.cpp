@@ -3,6 +3,7 @@
 
 #include "webobs/authentication.hpp"
 #include "webobs/go2rtc_proxy.hpp"
+#include "webobs/nvr_media_proxy.hpp"
 #include "webobs/audio_tracks.hpp"
 #include "webobs/audit_event.hpp"
 #include "webobs/scene_controller.hpp"
@@ -453,6 +454,13 @@ std::string permission_for_request(const HttpRequest &request)
     if (target.find("/snapshot") != std::string_view::npos)
         return "snapshot.create";
     if (target.starts_with("/api/v1/nvr")) {
+        const auto path = target.substr(0, target.find('?'));
+        if (path == "/api/v1/nvr/config")
+            return "storage.manage";
+        if (path == "/api/v1/nvr/metrics")
+            return "metrics.view";
+        if (path.starts_with("/api/v1/nvr/events/"))
+            return "event.ack";
         if (target.starts_with("/api/v1/nvr/playback-leases"))
             return "playback.view";
         if (request.method() == http::verb::delete_)
@@ -477,6 +485,11 @@ std::string permission_for_request(const HttpRequest &request)
 
 std::string camera_scope_for_target(std::string_view target, std::string_view body = {})
 {
+    // NVR IDs can alias Registry cameras, and recording/artifact URLs carry
+    // catalog IDs. Its loopback handler checks every authoritative resource
+    // after identity replacement; a query's first camera is not the scope.
+    if (target == "/api/v1/nvr" || target.starts_with("/api/v1/nvr/"))
+        return {};
     // v3 analytics resources carry their Camera/Profile scope in the JSON
     // body.  Do not interpret the route segment "policies", "status", etc.
     // as a camera identifier; doing so would reject scoped operators.
@@ -1861,6 +1874,8 @@ private:
 class NvrProxy {
 public:
     explicit NvrProxy(bool enabled) : enabled_(enabled) {}
+
+    [[nodiscard]] bool enabled() const { return enabled_; }
 
     HttpResponse forward(const HttpRequest &request) const
     {
@@ -3451,9 +3466,7 @@ HttpResponse handle_request(const HttpRequest &request, SceneController &control
     }
 
     if (target == "/api/v1/nvr" || target.starts_with("/api/v1/nvr/")) {
-        if ((request.method() == http::verb::put || request.method() == http::verb::post ||
-             request.method() == http::verb::delete_) &&
-            !request_origin_allowed(request, false, allowed_origins))
+        if (!request_origin_allowed(request, false, allowed_origins) || request["Sec-Fetch-Site"] == "cross-site")
             return response(http::status::forbidden, version,
                             error_body("origin_rejected", "Origin must match the local Host"));
         return nvr_proxy.forward(request);
@@ -4123,6 +4136,28 @@ private:
                 return;
             }
             start_go2rtc_proxy(stream_.release_socket(), std::move(request));
+            return;
+        }
+        const auto nvr_path = target.substr(0, target.find('?'));
+        const bool nvr_media_path = nvr_path.starts_with("/api/v1/nvr/media/") ||
+            nvr_path.starts_with("/api/v1/nvr/thumbnails/") || nvr_path.starts_with("/api/v1/nvr/downloads/");
+        if (nvr_media_path && !nvr_media_target_allowed(target)) {
+            send(response(http::status::bad_request, version,
+                          error_body("invalid_nvr_media_target", "NVR media path or query is invalid")));
+            return;
+        }
+        if (nvr_proxy_.enabled() && nvr_media_path &&
+            (request.method() == http::verb::get || request.method() == http::verb::head)) {
+            if (!request.body().empty() || !request_origin_allowed(request, false, allowed_origins_) ||
+                request["Sec-Fetch-Site"] == "cross-site") {
+                send(response(http::status::forbidden, version,
+                              error_body("nvr_request_rejected", "NVR media requires a valid same-origin request")));
+                return;
+            }
+            std::string renewed_cookie;
+            if (session_token && session_record)
+                renewed_cookie = session_store_.set_cookie_header(*session_token);
+            start_nvr_media_proxy(stream_.release_socket(), std::move(request), std::move(renewed_cookie));
             return;
         }
         if (websocket::is_upgrade(request)) {

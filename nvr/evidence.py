@@ -312,8 +312,6 @@ def export_evidence(service, value, *, job_id=None, cancel=None, owner="local-on
                     left, right = start, end
                 run_export(command + ["-movflags", "+faststart", "-y", str(target)], cancel)
                 concat.unlink()
-                if target.stat().st_size > 64 * 1024 * 1024:
-                    raise EvidenceError("export_file_too_large", "File exceeds the current 64 MiB product download limit; shorten the range", 422)
                 media = service._probe(str(target))
                 tracks = [{"type": item.get("codec_type", ""), "codec": item.get("codec_name", "")} for item in media.get("streams", [])]
                 duration = float(media.get("format", {}).get("duration", 0))
