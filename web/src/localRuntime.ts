@@ -742,7 +742,8 @@ export async function loadMonitorView(remoteOnly = false, requireAccount = false
   try {
     const record = await get<EncryptedRecord>('runtimeMeta', 'monitor-view');
     if (record && record.expiresAt > Date.now()) cached = await decrypt(record);
-    if (cached && !['monitor-view-v1', 'monitor-view-v2', 'monitor-view-v3', 'monitor-view-v4'].includes(cached.kind)) cached = null;
+    if (cached && (!['monitor-view-v1', 'monitor-view-v2', 'monitor-view-v3', 'monitor-view-v4'].includes(cached.kind)
+      || !cached.view || typeof cached.view !== 'object' || Array.isArray(cached.view))) cached = null;
   } catch { /* Server preferences work even if IndexedDB is unavailable. */ }
   if (cached?.pending) {
     const base = cached.baseValue ? normalizeMonitorView(cached.baseValue, 16) : undefined;

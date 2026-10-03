@@ -54,8 +54,97 @@ async function account(context: BrowserContext, server: Map<string, Preferences>
     await route.fulfill({ json: { value: server.get(user) ?? null } });
   });
 }
-const ready = async (page: Page) => expect(page.getByRole('slider', { name: '本地监听主音量' })).toBeVisible();
+const ready = async (page: Page) => expect(page.getByRole('slider', { name: '本地监听主音量' })).toBeEnabled();
 const output = (page: Page) => page.locator('.hero-audio-control').getByRole('combobox', { name: '声音输出模式' });
+
+test('a failed fresh preference read keeps decoded fixture pictures muted until account recovery', async ({ page, context }) => {
+  const server = new Map<string, Preferences>([['alice', { localMonitorVolume: .18, audioMonitorEnabled: true, audioOutput: 'meter-only' }]]);
+  await account(context, server, 'alice');
+  let failing = true, writes = 0;
+  await context.route('**/api/v2/account/preferences/monitor-view', route => {
+    if (route.request().method() === 'PUT') writes++;
+    return failing && route.request().method() === 'GET' ? route.fulfill({ status: 503, json: {} }) : route.fallback();
+  });
+  await page.goto(`${fixture}&layout`);
+  const retry = page.getByRole('button', { name: '重试账号偏好', exact: true });
+  await expect(retry).toBeVisible();
+  await expect(page.getByRole('slider', { name: '本地监听主音量' })).toBeDisabled();
+  await expect(output(page)).toBeDisabled();
+  await expect(page.getByRole('button', { name: '有声音的摄像机 静音', exact: true })).toBeDisabled();
+  await expect(page.getByRole('button', { name: '窗口预览', exact: true })).toBeEnabled();
+  await expect.poll(() => page.locator('.direct-preview video').evaluateAll(videos =>
+    videos.length === 2 && videos.every(video => (video as HTMLVideoElement).readyState >= 2 && (video as HTMLVideoElement).currentTime > 0))).toBe(true);
+  await page.evaluate(() => window.dispatchEvent(new Event('webobs:audio-monitor-enable')));
+  await expect(page.locator('.hero-audio-control')).toHaveAttribute('data-audio-enabled', 'false');
+  expect(await page.locator('.direct-preview video').evaluateAll(videos => videos.every(video => (video as HTMLVideoElement).muted))).toBe(true);
+  expect(writes).toBe(0);
+  failing = false; await retry.click();
+  await expect(page.getByRole('slider', { name: '本地监听主音量' })).toBeEnabled();
+  await expect(page.getByRole('slider', { name: '本地监听主音量' })).toHaveValue('0.18');
+  await expect(output(page)).toHaveValue('meter-only');
+  await expect(page.locator('.hero-audio-control')).toHaveAttribute('data-audio-requested', 'true');
+  await expect(retry).toHaveCount(0);
+  expect(writes).toBe(0);
+});
+
+test('settings and program audio expose retry without enabling unknown account defaults', async ({ page, context }) => {
+  const server = new Map<string, Preferences>([['alice', { audioMonitorEnabled: false, playbackOptimization: { enabled: false } }]]);
+  await account(context, server, 'alice');
+  let failing = true, writes = 0;
+  await context.route('**/api/v2/account/preferences/monitor-view', route => {
+    if (route.request().method() === 'PUT') writes++;
+    return failing && route.request().method() === 'GET' ? route.fulfill({ status: 503, json: {} }) : route.fallback();
+  });
+  await page.goto(fixture.replace('area=monitor', 'area=settings'));
+  const optimization = page.getByRole('checkbox', { name: '自动优化视频播放（默认开启）', exact: true });
+  await expect(optimization).toBeDisabled();
+  await expect(page.getByRole('spinbutton', { name: '探测超时（秒）' })).toBeEnabled();
+  failing = false; await page.getByRole('button', { name: '重试账号偏好', exact: true }).click();
+  await expect(optimization).toBeEnabled(); await expect(optimization).not.toBeChecked();
+  failing = true;
+  await page.goto(fixture.replace('area=monitor', 'area=devices'));
+  await page.evaluate(async () => {
+    const { mountPollingPage } = await import('/tests/harness/pollingMount.tsx');
+    const host = document.createElement('div'); host.id = 'program-recovery'; document.body.appendChild(host);
+    mountPollingPage('program', host);
+  });
+  const program = page.locator('#program-recovery');
+  await expect(program.getByRole('button', { name: '启用节目声音', exact: true })).toBeDisabled();
+  expect(await program.locator('video').evaluate(video => video.muted)).toBe(true);
+  await expect(program.getByRole('button', { name: '独立小窗', exact: true })).toBeEnabled();
+  failing = false; await program.getByRole('button', { name: '重试账号偏好', exact: true }).click();
+  await expect(program.getByRole('button', { name: '启用节目声音', exact: true })).toBeEnabled();
+  expect(writes).toBe(0);
+});
+
+test('manual retry captures the latest input before reloading a failed pending save', async ({ page, context }) => {
+  const server = new Map<string, Preferences>(); await account(context, server, 'alice');
+  let failing = true;
+  await context.route('**/api/v2/account/preferences/monitor-view', route => failing && route.request().method() === 'PUT'
+    ? route.fulfill({ status: 503, json: {} }) : route.fallback());
+  await page.goto(fixture); await ready(page); await page.clock.install();
+  await output(page).selectOption('meter-only'); await page.clock.runFor(400);
+  await expect(page.getByRole('button', { name: '重试账号偏好', exact: true })).toBeVisible();
+  await page.getByRole('slider', { name: '本地监听主音量' }).fill('0.63');
+  failing = false; await page.getByRole('button', { name: '重试账号偏好', exact: true }).click();
+  await expect.poll(() => server.get('alice')).toMatchObject({ localMonitorVolume: .63, audioOutput: 'meter-only' });
+  await expect(page.getByRole('slider', { name: '本地监听主音量' })).toHaveValue('0.63');
+  await expect(output(page)).toBeEnabled();
+});
+
+test('a valid encrypted private cache restores account controls while the server read is unavailable', async ({ page, context }) => {
+  const server = new Map<string, Preferences>(); await account(context, server, 'alice');
+  await page.goto(fixture); await ready(page);
+  await page.getByRole('slider', { name: '本地监听主音量' }).fill('0.27');
+  await output(page).selectOption('meter-only');
+  await expect.poll(() => server.get('alice')).toMatchObject({ localMonitorVolume: .27, audioOutput: 'meter-only' });
+  await context.route('**/api/v2/account/preferences/monitor-view', route => route.request().method() === 'GET'
+    ? route.fulfill({ status: 503, json: {} }) : route.fallback());
+  await page.reload(); await ready(page);
+  await expect(page.getByRole('slider', { name: '本地监听主音量' })).toHaveValue('0.27');
+  await expect(output(page)).toHaveValue('meter-only');
+  await expect(page.getByRole('button', { name: '重试账号偏好', exact: true })).toHaveCount(0);
+});
 
 test('a stale same-account window edits only its field and adopts the merged acknowledgement', async ({ browser }) => {
   const server = new Map<string, Preferences>();

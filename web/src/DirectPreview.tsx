@@ -6,6 +6,7 @@ import type { BrowserTopologyPlan } from './browserMedia';
 import { DirectAudioMixer, getDirectAudioMixer } from './directAudioMixer';
 import { useDirectAudioMeters, useDirectAudioPeak, useDirectAudioSourceLevel, useDirectAudioTopology } from './directAudioState';
 import { useMonitorPreferences } from './useMonitorPreferences';
+import MonitorPreferenceStatus from './MonitorPreferenceStatus';
 import { observeTileVisibility, shouldRunPlayback } from './mediaLifecycle';
 import { countRenderedFrames, formatTelemetry, sampleConnectionTelemetry, sampleElementTelemetry, unavailableTelemetry, type MediaTelemetry } from './mediaTelemetry';
 import { applyAutomaticLayout, canvasModes, canvasPixelPresets, evaluatePromotion, mapDetectionBoxToTile, nextRotationWindow, normalizeMonitorView, playbackTopologyLabel, resolveCanvasSize, resolveFillMode, selectLowPowerProfile, sourceAudioTrackState, sourceDecoration, streamQualityPresets, tileTransform, updateDefaultTelemetry, validDetectionSignal, type AudioMeterConfig, type CanvasMode, type CanvasPixelPresetId, type DetectionSignal, type MonitorView, type SourceAudioTrackState, type StreamQuality, type TelemetryOverlayConfig, type VideoFillMode } from './monitorView';
@@ -491,7 +492,7 @@ function DirectPreview({ scene, compact = false, layoutPreview = false, audioWor
   const [available, setAvailable] = useState(true);
   const [mixer, setMixer] = useState<DirectAudioMixer | null>(null);
   const audio = useDirectAudioTopology(!layoutPreview);
-  const { view: monitorView, setView: setMonitorView, loaded: monitorLoaded, error: monitorError, retry: retryMonitor } = useMonitorPreferences(compact && !audioWorkspace, layoutPreview);
+  const { view: monitorView, setView: setMonitorView, loaded: monitorLoaded, restored: monitorRestored, error: monitorError, retry: retryMonitor } = useMonitorPreferences(compact && !audioWorkspace, layoutPreview);
   const [cameras, setCameras] = useState<CameraRecord[]>([]);
   const [adaptiveProfiles, setAdaptiveProfiles] = useState<Record<string, { profileId: string; changedAt: number }>>({});
   const [analyticsPolicies, setAnalyticsPolicies] = useState<AnalyticsPolicy[]>([]);
@@ -527,6 +528,7 @@ function DirectPreview({ scene, compact = false, layoutPreview = false, audioWor
     if (layoutPreview) return;
     if (compact && !audioWorkspace) return;
     const enable = () => {
+      if (!monitorLoaded) return;
       setMonitorView((view) => ({ ...view, audioMonitorEnabled: true }));
       void mixer?.enable();
     };
@@ -543,11 +545,11 @@ function DirectPreview({ scene, compact = false, layoutPreview = false, audioWor
       window.removeEventListener('webobs:audio-monitor-disable', disable);
       window.removeEventListener('webobs:account-clearing', clear);
     };
-  }, [mixer, layoutPreview, compact, audioWorkspace, setMonitorView]);
+  }, [mixer, layoutPreview, compact, audioWorkspace, setMonitorView, monitorLoaded]);
 
   useEffect(() => {
-    if (!monitorLoaded || !mixer || layoutPreview || (compact && !audioWorkspace)) return;
-    if (monitorView.audioMonitorEnabled && window.webobsAndroidForeground !== false) void mixer.enable();
+    if (!mixer || layoutPreview || (compact && !audioWorkspace)) return;
+    if (monitorLoaded && monitorView.audioMonitorEnabled && window.webobsAndroidForeground !== false) void mixer.enable();
     else void mixer.disable();
   }, [monitorLoaded, monitorView.audioMonitorEnabled, mixer, layoutPreview, compact, audioWorkspace, pageVisible]);
 
@@ -631,7 +633,7 @@ function DirectPreview({ scene, compact = false, layoutPreview = false, audioWor
   }, [audio.state]);
   const analyticsByProfile = useMemo(() => new Map(analyticsPolicies.map((policy) => [`${policy.cameraId}\u0000${policy.profileId}`, policy])), [analyticsPolicies]);
   const effectiveScene = useMemo(() => {
-    if (layoutPreview) return scene;
+    if (layoutPreview || !monitorRestored) return scene;
     let current = !sceneLayout && monitorView.mode === 'auto' && portrait && scene.canvas.width > scene.canvas.height
       ? { ...scene, canvas: { ...scene.canvas, width: scene.canvas.height, height: scene.canvas.width } }
       : scene;
@@ -649,7 +651,7 @@ function DirectPreview({ scene, compact = false, layoutPreview = false, audioWor
         ? { ...source, profileId: adaptiveProfiles[source.id].profileId } : source),
     };
     return sceneLayout ? current : applyAutomaticLayout(current, monitorView);
-  }, [cameras, layoutPreview, sceneLayout, monitorView, portrait, scene, adaptiveProfiles]);
+  }, [cameras, layoutPreview, monitorRestored, sceneLayout, monitorView, portrait, scene, adaptiveProfiles]);
   const networkQuality = useCallback((sourceId: string, profileId: string, weak: boolean) => {
     if (!monitorView.playbackOptimization.enabled || !monitorView.playbackOptimization.adaptiveProfiles || monitorView.lowPower.enabled || layoutPreview) return;
     const source = scene.sources.find((value) => value.id === sourceId);
@@ -689,6 +691,7 @@ function DirectPreview({ scene, compact = false, layoutPreview = false, audioWor
     } }));
   };
   const toggleAudio = () => {
+    if (!monitorLoaded) return;
     const enabled = !audioEnabled;
     setMonitorView((view) => ({ ...view, audioMonitorEnabled: enabled }));
     if (enabled) void mixer?.enable(); else void mixer?.disable();
@@ -885,7 +888,7 @@ function DirectPreview({ scene, compact = false, layoutPreview = false, audioWor
     })),
     effectiveScene.canvas.width, effectiveScene.canvas.height),
   [monitorView, effectiveScene]);
-  const displayScene = useMemo(() => layoutPreview || sceneLayout || monitorView.canvasMode === 'manual-pixels'
+  const displayScene = useMemo(() => layoutPreview || !monitorRestored || sceneLayout || monitorView.canvasMode === 'manual-pixels'
     ? effectiveScene
     : { ...effectiveScene,
       canvas: { ...effectiveScene.canvas, width: resolvedCanvas.width, height: resolvedCanvas.height },
@@ -896,7 +899,7 @@ function DirectPreview({ scene, compact = false, layoutPreview = false, audioWor
         height: item.height * resolvedCanvas.height / effectiveScene.canvas.height,
       })),
     },
-  [layoutPreview, sceneLayout, effectiveScene, resolvedCanvas, monitorView.canvasMode]);
+  [layoutPreview, monitorRestored, sceneLayout, effectiveScene, resolvedCanvas, monitorView.canvasMode]);
 
   const audioMixerChannels = useMemo((): AudioMixerChannel[] => mixedSources.map((source) => {
     const decoration = sourceDecoration(monitorView, source.id);
@@ -922,14 +925,12 @@ function DirectPreview({ scene, compact = false, layoutPreview = false, audioWor
     };
   }), [mixedSources, monitorView, audioBySource, audioTrackState]);
 
-  if (!monitorLoaded) return <div className="monitor-preferences-loading" role="status">{monitorError || '正在读取监控偏好…'}{monitorError && <button type="button" onClick={retryMonitor}>重试</button>}</div>;
-
   return (
     <div
       className={`direct-preview-shell${windowPreview ? ' window-preview-mode' : ''}${layoutPreview ? ' layout-live-preview' : ''}${compact && !layoutPreview ? ` projector-output-${monitorView.projectorOutput}` : ''}`}
       style={windowPreview ? { left: windowRect.x, top: windowRect.y, width: windowRect.width, height: windowRect.height } : undefined}
     >
-      {monitorError && <p role="alert">{monitorError}</p>}
+      <MonitorPreferenceStatus loaded={monitorLoaded} error={monitorError} retry={retryMonitor} />
       {!compact && monitorView.playbackOptimization.enabled && Object.keys(adaptiveProfiles).length > 0 && <p className="playback-adaptation-notice" role="status">弱网优化：{Object.entries(adaptiveProfiles).map(([id, value]) => `${scene.sources.find((source) => source.id === id)?.name ?? id} → ${value.profileId}`).join('；')}。稳定后自动恢复原 Profile；可在系统设置中关闭。</p>}
       {projectorNeedsMeters && !audioEnabled && <button className="projector-meter-enable" type="button" onClick={() => { mixer?.setOutputEnabled(false); void mixer?.enable(); }}>启用电平检测（静音）</button>}
       {windowPreview && <div className="window-preview-bar" onPointerDown={beginWindowDrag}
@@ -937,7 +938,12 @@ function DirectPreview({ scene, compact = false, layoutPreview = false, audioWor
         <span>窗口预览 · 拖动标题栏移动，右下角缩放</span>
         <button type="button" onClick={() => setWindowPreview(false)}>关闭窗口预览</button>
       </div>}
-      {!compact && !windowPreview && <><AudioControlSurface requested={monitorView.audioMonitorEnabled}>
+      {!compact && !windowPreview && <><div className="monitor-window-actions quick-bar">
+        <button type="button" onClick={() => setWindowPreview(true)}>窗口预览</button>
+        <button type="button" onClick={openPopout}>独立小窗</button>
+        {popoutWindow && <button type="button" onClick={closePopout}>关闭小窗</button>}
+      </div><fieldset className="monitor-preference-controls" disabled={!monitorLoaded}>
+      <legend className="sr-only">账号监控偏好</legend><AudioControlSurface requested={monitorView.audioMonitorEnabled}>
         <button
           type="button"
           className={audioEnabled ? 'primary-button audio-master-toggle' : 'audio-master-toggle'}
@@ -951,7 +957,7 @@ function DirectPreview({ scene, compact = false, layoutPreview = false, audioWor
           <option value="speaker">扬声器 + 电平表</option>
           <option value="meter-only">仅电平表 / 阈值</option>
         </select></label>
-        <span>{audio.state === 'blocked'
+        <span>{!monitorLoaded ? '画面可继续查看；账号声音设置读取完成前保持静音。' : audio.state === 'blocked'
           ? '监听设置已保留；浏览器需要点击一次恢复声音。'
           : monitorView.audioOutput === 'meter-only'
             ? `Web Audio 混音 · ${audio.inputCount} 路 · 仅电平表与阈值检测，不输出到扬声器`
@@ -981,9 +987,6 @@ function DirectPreview({ scene, compact = false, layoutPreview = false, audioWor
       <div className="monitor-view-controls" aria-label="监控视图设置">
         <div className="quick-bar">
           <button type="button" className="primary-button" onClick={toggleAudio}>{audioEnabled ? '监听中' : monitorView.audioMonitorEnabled ? '恢复监听' : '启用监听'}</button>
-          <button type="button" onClick={() => setWindowPreview(true)}>窗口预览</button>
-          <button type="button" onClick={openPopout}>独立小窗</button>
-          {popoutWindow && <button type="button" onClick={closePopout}>关闭小窗</button>}
           <label>画质<select aria-label="监控画质" value={monitorView.streamQuality} onChange={(event) => setMonitorView((value) => ({ ...value, streamQuality: event.target.value as StreamQuality }))}>
             {(Object.keys(streamQualityPresets) as StreamQuality[]).map((key) => <option key={key} value={key}>{streamQualityPresets[key].label}</option>)}
           </select></label>
@@ -1015,7 +1018,6 @@ function DirectPreview({ scene, compact = false, layoutPreview = false, audioWor
         <label>文字透明度<input aria-label="统计文字透明度" type="range" min="0" max="1" step="0.05" value={monitorView.telemetry.textOpacity} onChange={(event) => setMonitorView((value) => updateDefaultTelemetry(value, { textOpacity: Number(event.target.value) }))} /></label>
         <label><input type="checkbox" checked={monitorView.telemetry.backgroundEnabled} onChange={(event) => setMonitorView((value) => updateDefaultTelemetry(value, { backgroundEnabled: event.target.checked }))} />文字框</label>
         {monitorView.telemetry.backgroundEnabled && <><input aria-label="统计文字框颜色" type="color" value={monitorView.telemetry.backgroundColor} onChange={(event) => setMonitorView((value) => updateDefaultTelemetry(value, { backgroundColor: event.target.value }))} /><label>背景透明度<input aria-label="统计背景透明度" type="range" min="0" max="1" step="0.05" value={monitorView.telemetry.backgroundOpacity} onChange={(event) => setMonitorView((value) => updateDefaultTelemetry(value, { backgroundOpacity: Number(event.target.value) }))} /></label></>}
-        <button type="button" onClick={() => setWindowPreview(true)}>窗口预览</button>
         <label><input type="checkbox" checked={monitorView.showAudioMixer} onChange={(event) => setMonitorView((value) => ({ ...value, showAudioMixer: event.target.checked }))} />Audio Mixer 栏</label>
         <label>投影内容<select aria-label="投影内容" value={monitorView.projectorOutput} onChange={(event) => setMonitorView((value) => ({ ...value, projectorOutput: event.target.value as MonitorView['projectorOutput'] }))}><option value="full">完整画面（含叠层、电平表和告警）</option><option value="picture">仅画面</option></select></label>
         <label><input type="checkbox" checked={monitorView.showAllAudioSources} onChange={(event) => setMonitorView((value) => ({ ...value, showAllAudioSources: event.target.checked }))} />显示全部来源（包括无音轨）</label>
@@ -1062,7 +1064,7 @@ function DirectPreview({ scene, compact = false, layoutPreview = false, audioWor
             <label><input type="checkbox" checked={decoration.promotionKinds.person} onChange={(event) => updateSourceDecoration(source.id, { promotionKinds: { ...decoration.promotionKinds, person: event.target.checked } })} />Person 提升</label>
           </fieldset>;
         })}</div></details>
-      </div></>}
+      </div></fieldset></>}
       <div
         className="direct-preview"
         ref={previewHostRef}
@@ -1075,7 +1077,7 @@ function DirectPreview({ scene, compact = false, layoutPreview = false, audioWor
           .map((item) => {
             const source = displayScene.sources.find((candidate) => candidate.id === item.sourceId);
             if (!source) return null;
-            const tile = { ...item, scaleMode: layoutPreview || sceneLayout ? item.scaleMode : resolveFillMode(monitorView, item.sourceId, item.scaleMode) };
+            const tile = { ...item, scaleMode: layoutPreview || !monitorRestored || sceneLayout ? item.scaleMode : resolveFillMode(monitorView, item.sourceId, item.scaleMode) };
             const style = {
               left: `${(item.x / displayScene.canvas.width) * 100}%`,
               top: `${(item.y / displayScene.canvas.height) * 100}%`,

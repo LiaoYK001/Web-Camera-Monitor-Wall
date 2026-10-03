@@ -346,10 +346,13 @@ test('cancels pending monitor writes when the account is cleared', async ({ page
   expect((await metrics(page)).monitorSaves).toHaveLength(0);
 });
 
-test('recovers the monitor from a stalled preference read without writing defaults back', async ({ page }) => {
+test('a stalled preference read leaves the scene visible and defaults locked without writing back', async ({ page }) => {
   await page.goto(`${fixture}?area=monitor&monitor-timeout=1`);
-  await expect(page.getByText('正在读取监控偏好…', { exact: true })).toBeVisible();
-  await expect(page.getByRole('combobox', { name: '监控画质' })).toHaveValue('medium', { timeout: 12000 });
+  await expect(page.getByRole('status').filter({ hasText: '正在读取监控偏好…' })).toBeVisible();
+  await expect(page.locator('.direct-preview')).toBeVisible();
+  await expect(page.getByRole('combobox', { name: '监控画质' })).toBeDisabled();
+  await expect(page.getByRole('button', { name: '重试账号偏好', exact: true })).toBeVisible({ timeout: 12000 });
+  await expect(page.getByRole('combobox', { name: '监控画质' })).toBeDisabled();
   await expect(page.getByText('账号配置：待连接服务器', { exact: true })).toBeVisible();
   expect((await metrics(page)).monitorSaves).toHaveLength(0);
 });

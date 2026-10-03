@@ -1331,7 +1331,7 @@ select:focus-visible,
    picture, telemetry, the level meter, detection boxes and audio alerts.  All
    selectors, sliders and per-tile status chips are hidden. */
 :is(.stage-wrap:fullscreen, .monitor-surface:fullscreen, .direct-preview-shell.window-preview-mode, .projector-shell)
-  :is(.monitor-view-controls, .direct-audio-control, .audio-mixer-bar, .monitor-overlay, .fullscreen-overlay,
+  :is(.monitor-view-controls, .monitor-window-actions, .monitor-preference-controls, .direct-audio-control, .audio-mixer-bar, .monitor-overlay, .fullscreen-overlay,
       .tile-status-button, .low-power-status, .direct-tile-name, .direct-tile-state,
       .delivery-diagnostic, .analytics-runtime-status, .monitor-source-rail,
       .direct-tile-placeholder) { display: none !important; }
@@ -2132,7 +2132,10 @@ select:focus-visible,
 .runtime-settings-form label > :is(input:not([type=checkbox]),select) { min-width: 0; width: 100%; min-height: 40px; }
 .settings-save-bar { display: flex; align-items: center; flex-wrap: wrap; gap: 10px; margin: 12px 0; padding: 12px; background: var(--panel); border: 1px solid var(--line); border-radius: 10px; }
 .settings-save-bar > span { flex: 1; min-width: 130px; color: var(--muted); font-size: 13px; }
-.monitor-preferences-loading { padding: 30px; display: flex; align-items: center; gap: 12px; }
+.monitor-preference-status { padding: 10px 12px; display: flex; flex-wrap: wrap; align-items: center; gap: 10px; color: var(--muted); }
+.monitor-preference-status[role='alert'] { color: var(--warning, #f4c76b); }
+.monitor-preference-controls { border: 0; padding: 0; margin: 0; min-inline-size: 0; }
+.monitor-window-actions { padding: 6px 0; }
 @media (max-width: 640px) {
   .config-profile-controls > label { min-width: 0 !important; width: 100%; }
   .config-profile-controls label { font-size: 12px; }
