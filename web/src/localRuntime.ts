@@ -188,9 +188,20 @@ async function wrappingKey(db: IDBDatabase): Promise<CryptoKey> {
   if (existing) return existing;
   const created = await crypto.subtle.generateKey({ name: 'AES-GCM', length: 256 }, false, ['encrypt', 'decrypt']);
   const write = db.transaction('identity', 'readwrite');
-  write.objectStore('identity').put(created, 'wrapping-key');
-  await transactionDone(write);
-  return created;
+  const done = transactionDone(write);
+  // The read/write transaction serializes first use across tabs as well as callers.
+  const selected = await new Promise<CryptoKey>((resolve, reject) => {
+    const store = write.objectStore('identity');
+    const request = store.get('wrapping-key');
+    request.onerror = () => reject(request.error);
+    request.onsuccess = () => {
+      const winner = request.result as CryptoKey | undefined;
+      if (!winner) store.put(created, 'wrapping-key');
+      resolve(winner ?? created);
+    };
+  });
+  await done;
+  return selected;
 }
 
 function assertRedacted(value: unknown): void {
@@ -325,6 +336,35 @@ export async function saveSyncQueue(queue: LocalSyncQueue | null): Promise<void>
   }
   if (queue.mutations.length > 256) throw new Error('Offline sync queue is full');
   await put('syncQueue', 'queue', await encrypt(queue, Date.now() + LEASE_MS));
+}
+
+/** A saved layout and its pending upload must survive or fail together. */
+export async function saveQueuedStudio(queue: LocalSyncQueue, studio: StudioDocument): Promise<void> {
+  if (queue.mutations.length > 256) throw new Error('Offline sync queue is full');
+  const expiresAt = Date.now() + LEASE_MS;
+  const [queued, local, mode] = await Promise.all([
+    encrypt(queue, expiresAt), encrypt({ kind: 'local-only', studio: redactedStudio(studio) }, expiresAt),
+    encrypt({ enabled: true }, expiresAt),
+  ]);
+  const db = await database();
+  try {
+    const transaction = db.transaction(['syncQueue', 'localScenes', 'runtimeMeta'], 'readwrite');
+    transaction.objectStore('syncQueue').put(queued, 'queue');
+    transaction.objectStore('localScenes').put(local, 'studio');
+    transaction.objectStore('runtimeMeta').put(mode, 'device-workspace');
+    await transactionDone(transaction);
+  } finally { db.close(); }
+}
+
+export async function setDeviceWorkspace(enabled: boolean): Promise<void> {
+  await put('runtimeMeta', 'device-workspace', await encrypt({ enabled }, Date.now() + LEASE_MS));
+}
+
+export async function isDeviceWorkspace(): Promise<boolean> {
+  const record = await get<EncryptedRecord>('runtimeMeta', 'device-workspace');
+  if (!record || record.expiresAt <= Date.now()) return false;
+  try { return (await decrypt<{ enabled: boolean }>(record)).enabled === true; }
+  catch { return false; }
 }
 
 export async function loadAuditQueue(): Promise<OfflineAuditEvent[]> {
@@ -747,7 +787,7 @@ export async function loadOfflineStudio(): Promise<{ studio: StudioDocument; sta
   const decoded = await decrypt<StudioDocument | { kind: 'local-only'; studio: StudioDocument }>(snapshot);
   const studio = 'kind' in decoded ? decoded.studio : decoded;
   window.dispatchEvent(new CustomEvent('webobs:local-state', { detail: 'offline-valid' }));
-  return { studio, state: 'offline-valid', expiresAt: snapshot.expiresAt };
+  return { studio, state: 'offline-valid', expiresAt: Math.min(identity.expiresAt, snapshot.expiresAt) };
 }
 
 export async function clearPrivateRuntimeState(): Promise<void> {
@@ -762,6 +802,7 @@ export async function clearPrivateRuntimeState(): Promise<void> {
     transaction.objectStore('runtimeMeta').delete('lease');
     transaction.objectStore('runtimeMeta').delete('monitor-view');
     transaction.objectStore('runtimeMeta').delete('workspace-layout');
+    transaction.objectStore('runtimeMeta').delete('device-workspace');
     transaction.objectStore('runtimeMeta').delete('config-profiles');
     transaction.objectStore('runtimeMeta').delete('active-config-profile');
     await transactionDone(transaction);
@@ -866,6 +907,7 @@ export async function saveBrowserIdentity(identity: StoredBrowserIdentity): Prom
     throw new Error('Browser identity is invalid or expired');
   await put('identity', 'browser-device', await encrypt(identity, identity.expiresAt, true));
   await put('runtimeMeta', 'clock', { highWater: Date.now() });
+  window.dispatchEvent(new Event('webobs:browser-authorization-changed'));
 }
 
 export async function loadBrowserIdentity(): Promise<StoredBrowserIdentity | null> {

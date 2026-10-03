@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { useVisiblePolling } from './useVisiblePolling';
 import { approveClientEnrollment, fetchCameras, fetchClientEnrollments, fetchEnrolledClients, revokeEnrolledClient } from './api';
 import { beginBrowserEnrollment, completeBrowserEnrollment, currentBrowserPairing, type BrowserPairingState } from './browserEnrollment';
@@ -37,6 +37,7 @@ export default function ClientsPanel({ onBack }: { onBack: () => void }) {
   const [notice, setNotice] = useState('');
   const [browserName, setBrowserName] = useState('本机浏览器');
   const [browserPairing, setBrowserPairing] = useState<BrowserPairingState | null>(null);
+  const action = useRef(false);
 
   const read = useCallback(async (signal: AbortSignal) => {
     try {
@@ -72,6 +73,7 @@ export default function ClientsPanel({ onBack }: { onBack: () => void }) {
     } }));
 
   const approve = async (enrollment: ClientEnrollment) => {
+    if (action.current) return;
     const cameraGrants = Object.values(drafts[enrollment.id] ?? {}).filter((grant) => grant.enabled)
       .map(({ enabled: _enabled, ...grant }) => grant);
     if (!/^\d{8}$/.test(codes[enrollment.id] ?? '') || cameraGrants.length === 0 ||
@@ -79,7 +81,7 @@ export default function ClientsPanel({ onBack }: { onBack: () => void }) {
           (grant.credentialMode === 'dedicated' && !grant.credentialsRef))) {
       setError('请输入客户端显示的八位配对码，并至少选择一个摄像机 Profile。'); return;
     }
-    polling.pause(); setBusy(true); setError(''); setNotice('');
+    action.current = true; polling.pause(); setBusy(true); setError(''); setNotice('');
     try {
       const targetClientId = updateTargets[enrollment.id] || undefined;
       const result = await approveClientEnrollment(enrollment.id, codes[enrollment.id], cameraGrants, targetClientId);
@@ -87,37 +89,40 @@ export default function ClientsPanel({ onBack }: { onBack: () => void }) {
         ? `已更新 ${enrollment.name} 的配对设备；旧设备令牌已失效，浏览器请点击“批准后完成配对”。`
         : `已批准 ${enrollment.name}；设备将在下次轮询时取得加密授权包。`);
     } catch (reason) { setError(reason instanceof Error ? reason.message : '批准失败'); }
-    finally { setBusy(false); void polling.resume(); }
+    finally { action.current = false; setBusy(false); void polling.resume(); }
   };
 
   const pairBrowser = async () => {
-    polling.pause(); setBusy(true); setError('');
+    if (action.current) return;
+    action.current = true; polling.pause(); setBusy(true); setError('');
     try {
       const state = await beginBrowserEnrollment(browserName);
       setBrowserPairing(state);
       setNotice('一次性配对身份只以加密形式保存在此 Origin 的 IndexedDB 中。');
     } catch (reason) { setError(reason instanceof Error ? reason.message : '无法创建浏览器配对'); }
-    finally { setBusy(false); void polling.resume(); }
+    finally { action.current = false; setBusy(false); void polling.resume(); }
   };
 
   const finishBrowserPairing = async () => {
-    polling.pause(); setBusy(true); setError('');
+    if (action.current) return;
+    action.current = true; polling.pause(); setBusy(true); setError('');
     try {
       const state = await completeBrowserEnrollment();
       setBrowserPairing(state);
       setNotice(state?.state === 'approved' ? '此浏览器已取得签名、加密且不含摄像机凭据的 7 天授权。' : '管理员尚未批准此配对。');
     } catch (reason) { setError(reason instanceof Error ? reason.message : '无法完成浏览器配对'); }
-    finally { setBusy(false); void polling.resume(); }
+    finally { action.current = false; setBusy(false); void polling.resume(); }
   };
 
   const revoke = async (client: EnrolledClient) => {
+    if (action.current) return;
     if (!window.confirm(`撤销 ${client.name}？在线播放与同步会在十秒内停止。`)) return;
-    polling.pause(); setBusy(true); setError(''); setNotice('');
+    action.current = true; polling.pause(); setBusy(true); setError(''); setNotice('');
     try {
       const result = await revokeEnrolledClient(client.id);
       setNotice(result.weakRevocation ? `客户端已撤销，但摄像机凭据仍需人工轮换；现有 Grant 最迟于 ${new Date(result.offlineEffectiveNoLaterThan * 1000).toLocaleString()} 失效。` : '客户端已撤销，ONVIF 托管专用账号已清理。');
     } catch (reason) { setError(reason instanceof Error ? reason.message : '撤销失败'); }
-    finally { setBusy(false); void polling.resume(); }
+    finally { action.current = false; setBusy(false); void polling.resume(); }
   };
 
   return <main className="clients-page">
@@ -125,6 +130,7 @@ export default function ClientsPanel({ onBack }: { onBack: () => void }) {
     {(error || readError) && <div className="alert" role="alert">{error || readError}</div>}
     {notice && <div className="notice" role="status">{notice}</div>}
     <section className="client-section"><div className="section-title"><div><h2>此浏览器</h2><p>PWA 使用 WebCrypto 包装密钥和本地打包的 libsodium；不会取得长期摄像机密码。</p></div><span>7 天</span></div>
+      <ol><li>创建浏览器配对，记下本机显示的八位码。</li><li>管理员在“待批准配对”中输入该码，选择需要的 Camera 和 Profile，然后批准。</li><li>回到此浏览器点击“批准后完成配对”，再载入设备布局。离线保存会排队；恢复连接后同步，冲突由用户选择。</li></ol>
       <div className="browser-pairing"><label><span>设备名称</span><input value={browserName} maxLength={64} onChange={(event) => setBrowserName(event.target.value)} /></label>
         {!browserPairing && <button className="primary-button" disabled={busy || !window.isSecureContext} onClick={() => void pairBrowser()}>创建浏览器配对</button>}
         {browserPairing?.state === 'pending' && <><strong>配对码：{browserPairing.pairingCode || '已创建'}</strong><span>请在下方待批准项输入该码并选择授权范围。</span><button className="primary-button" disabled={busy} onClick={() => void finishBrowserPairing()}>批准后完成配对</button></>}
