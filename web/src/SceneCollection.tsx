@@ -23,8 +23,9 @@ export function arrangeSceneGrid(scene: SceneDocument): SceneDocument {
   }) };
 }
 
-export default function SceneCollection({ studio, selected, sources, savedSceneIds, onSelect, onOperation, onUpdate, onCreate }: {
+export default function SceneCollection({ studio, selected, sources, savedSceneIds, serverOperations = true, onSelect, onOperation, onUpdate, onCreate }: {
   studio: StudioDocument; selected: string; sources: SceneSource[]; savedSceneIds: string[];
+  serverOperations?: boolean;
   onSelect: (id: string) => void; onOperation: (id: string, operation: SceneOperation) => void;
   onUpdate: (scene: SceneDocument) => void; onCreate: (scene: SceneDocument) => void;
 }) {
@@ -67,7 +68,7 @@ export default function SceneCollection({ studio, selected, sources, savedSceneI
   return <div className="scene-manager">
     <div className="scene-manager-heading"><strong>Scenes · 场景预设</strong>
       <button type="button" disabled={studio.scenes.length >= 64} onClick={add}>新建场景</button>
-      <small>每个场景独立保存来源、位置和画布；保存 Studio 后可投影。</small></div>
+      <small>{serverOperations ? '每个场景独立保存来源、位置和画布；保存 Studio 后可投影。' : '设备布局先同步，再复制到服务器预览后可投影。'}</small></div>
     <div className="scene-collection" role="list" aria-label="命名场景">
       {studio.scenes.map((value) => <div key={value.id} role="listitem" className="scene-entry">
         <button className={`scene-chip ${value.id === selected ? 'selected' : ''}`} type="button" aria-pressed={value.id === selected} title={value.name}
@@ -81,7 +82,7 @@ export default function SceneCollection({ studio, selected, sources, savedSceneI
               width: `${item.width / value.canvas.width * 100}%`, height: `${item.height / value.canvas.height * 100}%` }} />)}
           </span><strong>{value.name}</strong>
           <small>{value.sources.length} 个来源 · {value.canvas.width}×{value.canvas.height}</small>
-          <span className="scene-badges">{value.id === studio.programSceneId && <span className="scene-badge program">PGM</span>}{value.id === studio.previewSceneId && <span className="scene-badge preview">PVW</span>}{!savedSceneIds.includes(value.id) && <span className="scene-badge unsaved">待保存</span>}</span>
+          <span className="scene-badges">{serverOperations && value.id === studio.programSceneId && <span className="scene-badge program">PGM</span>}{value.id === studio.previewSceneId && <span className="scene-badge preview">PVW</span>}{serverOperations && !savedSceneIds.includes(value.id) && <span className="scene-badge unsaved">待保存</span>}</span>
         </button>
         <button type="button" className="scene-menu-button" aria-label={`${value.name} 场景选项`} aria-expanded={menu === value.id} onClick={() => setMenu(value.id)}>⋯</button>
       </div>)}
@@ -114,10 +115,10 @@ export default function SceneCollection({ studio, selected, sources, savedSceneI
           <label><input type="checkbox" checked={fullscreen} onChange={event => setFullscreen(event.target.checked)} />全屏投影（Esc 退出全屏）</label>
           <button role="menuitem" disabled={!savedSceneIds.includes(scene.id)} onClick={() => { void window.webobsDesktop!.projector({ mode: 'direct', sceneId: scene.id, displayId: displayId ? Number(displayId) : undefined, fullscreen }).then(() => setMenu(null)).catch((reason: unknown) => setProjectorError(reason instanceof Error ? reason.message : '无法打开投影')); }}>投影到所选显示器</button>
           {projectorError && <p role="alert">{projectorError}</p>}</>}
-        <p className="scene-operation-hint">{!savedSceneIds.includes(scene.id) ? '此场景有未保存修改，请保存 Studio 后再打开投影。' : '不同场景可同时投影；同一场景重复打开会复用窗口。'}</p>
+        <p className="scene-operation-hint">{!serverOperations ? '设备布局尚未进入服务器，请先复制到服务器预览，再打开投影。' : !savedSceneIds.includes(scene.id) ? '此场景有未保存修改，请保存 Studio 后再打开投影。' : '不同场景可同时投影；同一场景重复打开会复用窗口。'}</p>
         </div><div className="scene-action-group scene-danger-group" role="group" aria-label="删除场景"><h3>删除</h3>
-        <button role="menuitem" className="danger-button" disabled={studio.scenes.length <= 1 || scene.id === studio.programSceneId || referenced(scene.id)} onClick={() => open(scene, 'delete')}>删除场景</button>
-        <p className="scene-operation-hint">{studio.scenes.length <= 1 ? '至少需要保留一个场景。' : scene.id === studio.programSceneId ? '此场景正在 Program 输出，请切换输出场景后再删除。' : referenced(scene.id) ? '此场景被其他场景嵌套引用，请先解除引用。' : '删除前会再次确认，设备目录中的来源会保留。'}</p>
+        <button role="menuitem" className="danger-button" disabled={studio.scenes.length <= 1 || (serverOperations && scene.id === studio.programSceneId) || referenced(scene.id)} onClick={() => open(scene, 'delete')}>删除场景</button>
+        <p className="scene-operation-hint">{studio.scenes.length <= 1 ? '至少需要保留一个场景。' : serverOperations && scene.id === studio.programSceneId ? '此场景正在 Program 输出，请切换输出场景后再删除。' : referenced(scene.id) ? '此场景被其他场景嵌套引用，请先解除引用。' : '删除前会再次确认，设备目录中的来源会保留。'}</p>
         </div>
       </div>
     </Modal>}

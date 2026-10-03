@@ -155,3 +155,14 @@ input[type=checkbox], input[type=radio], progress { accent-color: var(--accent);
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { animation: none !important; transition-duration: .01ms !important; scroll-behavior: auto !important; }
 }
+/* Device layouts are distinct from the server's on-air collection. */
+.device-workspace-banner { display: flex; flex-wrap: wrap; align-items: center; gap: .6rem; padding: .8rem 1rem; }
+.device-workspace-banner > span { flex: 1 1 16rem; }
+.device-sync-panel { margin: 1rem; }
+.device-sync-panel p { overflow-wrap: anywhere; }
+.device-sync-panel .clients-page { padding: 0; }
+.device-sync-actions { display: flex; flex-wrap: wrap; gap: .6rem; }
+.device-sync-panel .browser-pairing label { min-width: 0; flex: 1 1 15rem; max-width: 100%; }
+.device-sync-panel .browser-pairing input { min-width: 0; width: 100%; }
+.device-sync-panel .registry-header { flex-wrap: wrap; }
+.offline-session-banner { padding: .6rem 1rem; font-size: .85rem; }

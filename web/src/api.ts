@@ -63,8 +63,8 @@ export async function changeAccountPassword(currentPassword: string, newPassword
   if (!response.ok) throw await parseError(response);
 }
 
-export async function fetchFirstRunStatus(): Promise<{ registrationOpen: boolean }> {
-  const response = await fetch('/api/v1/auth/setup', { cache: 'no-store', credentials: 'same-origin' });
+export async function fetchFirstRunStatus(signal?: AbortSignal): Promise<{ registrationOpen: boolean }> {
+  const response = await fetch('/api/v1/auth/setup', { cache: 'no-store', credentials: 'same-origin', signal });
   if (!response.ok) throw await parseError(response);
   return await response.json() as { registrationOpen: boolean };
 }

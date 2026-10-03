@@ -23,6 +23,10 @@ The Settings “About and updates” card displays the actual Electron installat
 
 `pnpm --dir desktop test:runtime` 还检查真实认证代理下的两个签名设备配对、多音轨 schema-v6 保存、重复提交幂等、冲突与正常重启后保留。来源为未激活的合成 Camera，仅验证配置与控制链，不代表真实摄像机音频播放或干净系统安装验收。
 
+`pnpm --dir desktop test:main` also exercises the packaged Settings pairing UI, actual signed/encrypted browser grant, device layout upload/reload and explicit copying to server Preview without changing Program. The subsequent fixed projectors, shared session, tray hide and normal shutdown still run. See [offline workspaces](offline-workspace.md); this is UI/control validation, not physical camera, clean-install or multi-device media qualification.
+
+`pnpm --dir desktop test:main` 还操作打包后的设置配对界面，验证真实签名加密授权、设备布局上传/刷新及明确复制到服务器 Preview，同时保留 Program；随后继续检查固定投影、共享会话、托盘隐藏和正常退出。详见[离线工作区](offline-workspace.md)，这是 UI/控制链验证，不代替真实摄像机、干净安装或多设备媒体验收。
+
 The native runtime test also covers two signed device enrollments through the real authentication proxy, schema-v6 multi-track persistence, idempotent retries, conflicts and normal service restart. Its synthetic Camera is never activated; this qualifies the configuration/control path, not camera audio playback or clean-system installation.
 
 开发构建机需要 VS 2022 的 MSVC x64、Windows SDK、CMake >= 3.28、Python、Node 24 和 pnpm 11.16.0。使用 PowerShell 7.2+ 的 VS x64 Developer PowerShell：

@@ -1,8 +1,9 @@
 import { type FormEvent, type ReactNode, useEffect, useState } from 'react';
-import { fetchAuthSession, fetchFirstRunStatus, login, logout, registerFirstAdmin, type AuthSession } from './api';
-import { clearPrivateRuntimeState } from './localRuntime';
+import { ControlApiError, fetchAuthSession, fetchFirstRunStatus, login, logout, registerFirstAdmin, type AuthSession } from './api';
+import { clearPrivateRuntimeState, loadOfflineStudio } from './localRuntime';
+import { withRequestTimeout } from './requestTimeout';
 
-type GateSession = AuthSession & { unavailable?: boolean };
+type GateSession = AuthSession & { unavailable?: boolean; offlineExpiresAt?: number };
 const ACTIVE_ACCOUNT_KEY = 'webobs-active-account';
 
 async function activateAccount(session: AuthSession): Promise<void> {
@@ -23,18 +24,46 @@ export default function LoginGate({ children }: { children: ReactNode }) {
 
   useEffect(() => {
     const controller = new AbortController();
-    Promise.all([fetchAuthSession(controller.signal), fetchFirstRunStatus()])
-      .then(async ([current, setup]) => {
+    const check = async () => {
+      try {
+        const current = await withRequestTimeout(6000, fetchAuthSession, controller.signal);
         if (controller.signal.aborted) return;
+        if (!current.authenticated && current.authenticationEnabled !== false) await clearPrivateRuntimeState();
         await activateAccount(current);
-        if (!controller.signal.aborted) { setSession(current); setRegistrationOpen(setup.registrationOpen); }
-      })
-      .catch(() => {
+        if (!controller.signal.aborted) setSession(current);
+        const setup = await withRequestTimeout(6000, fetchFirstRunStatus, controller.signal).catch(() => ({ registrationOpen: false }));
+        if (!controller.signal.aborted) setRegistrationOpen(setup.registrationOpen);
+      } catch (reason) {
         if (controller.signal.aborted) return;
+        if (reason instanceof ControlApiError && (reason.status === 401 || reason.status === 403)) {
+          await clearPrivateRuntimeState();
+          if (!controller.signal.aborted) setSession({ authenticated: false, authenticationEnabled: true });
+          return;
+        }
+        const offline = await loadOfflineStudio().catch(() => null);
+        if (controller.signal.aborted) return;
+        if (offline) {
+          setSession({ authenticated: false, authenticationEnabled: true, offlineExpiresAt: offline.expiresAt });
+          return;
+        }
         setSession({ authenticated: false, authenticationEnabled: true, unavailable: true });
-      });
+      }
+    };
+    void check();
     return () => controller.abort();
   }, [checkAttempt]);
+
+  useEffect(() => {
+    if (!session?.offlineExpiresAt) return;
+    const recheck = () => { if (document.visibilityState === 'visible') setCheckAttempt(value => value + 1); };
+    const timer = window.setInterval(recheck, 30000);
+    const expires = window.setTimeout(() => {
+      void clearPrivateRuntimeState().finally(() => setSession({ authenticated: false, authenticationEnabled: true, unavailable: true }));
+    }, Math.max(0, session.offlineExpiresAt - Date.now()));
+    window.addEventListener('online', recheck);
+    document.addEventListener('visibilitychange', recheck);
+    return () => { window.clearInterval(timer); window.clearTimeout(expires); window.removeEventListener('online', recheck); document.removeEventListener('visibilitychange', recheck); };
+  }, [session?.offlineExpiresAt]);
 
   const submit = async (event: FormEvent) => {
     event.preventDefault();
@@ -61,13 +90,15 @@ export default function LoginGate({ children }: { children: ReactNode }) {
     <p>未检测到可用的控制服务。请确认开发后端正在运行后重试。</p>
     <button className="primary-button" type="button" onClick={() => { setSession(null); setCheckAttempt((value) => value + 1); }}>重新检查</button>
   </div></main>;
-  if (session.authenticationEnabled === false || session.authenticated) return (
+  if (session.authenticationEnabled === false || session.authenticated || session.offlineExpiresAt) return (
     <>
+      {session.offlineExpiresAt && <div className="notice offline-session-banner" role="status">离线编辑 · 设备授权至 {new Date(session.offlineExpiresAt).toLocaleString()}。管理与服务器操作需要重新连接。</div>}
       {children}
-      {session.authenticated && (
+      {(session.authenticated || session.offlineExpiresAt) && (
         <button className="session-logout" type="button" onClick={() => void logout()
+          .catch(() => undefined)
           .finally(() => clearPrivateRuntimeState())
-          .finally(() => setSession({ authenticated: false, authenticationEnabled: true }))}>
+          .finally(() => { window.localStorage.removeItem(ACTIVE_ACCOUNT_KEY); setSession({ authenticated: false, authenticationEnabled: true }); })}>
           退出登录
         </button>
       )}

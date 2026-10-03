@@ -17,7 +17,13 @@ import LocalRuntimeBadge from './LocalRuntimeBadge';
 import WorkspaceShell, { areaFromHash, type ProductArea } from './WorkspaceShell';
 import { canLeaveWorkspace } from './navigationGuard';
 import { useDesktopWork } from './desktopRuntime';
-import { loadActiveLocalConfigProfile, loadOfflineStudio, loadWorkspaceLayout, makeLocalConfigBundleForStudio, queueOfflineAudit, saveLocalConfigProfile, saveLocalStudio, saveStudioSnapshot, type LocalConfigProfile } from './localRuntime';
+import { useDeviceSync } from './useDeviceSync';
+import DeviceSyncPanel from './DeviceSyncPanel';
+import { copyDeviceLayoutToPreview } from './deviceWorkspace';
+import { queueStudioSync } from './syncRuntime';
+import { withRequestTimeout } from './requestTimeout';
+import { isDeviceWorkspace, loadBrowserIdentity, loadSyncQueue, setDeviceWorkspace } from './localRuntime';
+import { loadActiveLocalConfigProfile, loadOfflineStudio, loadWorkspaceLayout, makeLocalConfigBundleForStudio, queueOfflineAudit, saveLocalConfigProfile, saveStudioSnapshot, type LocalConfigProfile } from './localRuntime';
 import type { AudioMonitoring, CameraRecord, FilterKind, PlaybackMode, ScaleMode, SceneDocument, SceneFilter, SceneItem, SceneSource, StudioCapabilities, StudioDocument, Transport } from './types';
 
 const NvrTimeline = lazy(() => import('./NvrTimeline'));
@@ -127,6 +133,8 @@ export default function App() {
   const [studioBaseline, setStudioBaseline] = useState<StudioDocument | null>(null);
   const [studioDraft, setStudioDraft] = useState<StudioDocument | null>(null);
   const [activeLocalProfile, setActiveLocalProfile] = useState<LocalConfigProfile | null>(null);
+  const [deviceWorkspace, setDeviceWorkspaceMode] = useState(false);
+  const deviceSync = useDeviceSync();
   const [studioCapabilities, setStudioCapabilities] = useState<StudioCapabilities | null>(null);
   const [programScene, setProgramScene] = useState<SceneDocument | null>(null);
   const [selectedSceneId, setSelectedSceneId] = useState<string | null>(null);
@@ -160,12 +168,21 @@ export default function App() {
   const baselineRef = useRef<SceneDocument | null>(null);
   const dirtyRef = useRef(false);
   const savingRef = useRef(false);
+  const studioDraftRef = useRef(studioDraft);
+  studioDraftRef.current = studioDraft;
 
   const dirty = useMemo(
     () => Boolean(studioBaseline && studioDraft && JSON.stringify(studioBaseline) !== JSON.stringify(studioDraft)),
     [studioBaseline, studioDraft],
   );
   useDesktopWork('studio', dirty || adding, saving);
+
+  useEffect(() => {
+    // Pair creation clears the old private cache. Seed the new identity with the
+    // current saved collection, never with an unsaved draft.
+    if (deviceSync.pairing?.state === 'approved' && studioBaseline && !deviceWorkspace)
+      void saveStudioSnapshot(studioBaseline).catch(() => undefined);
+  }, [deviceSync.pairing?.state, studioBaseline, deviceWorkspace]);
 
   useEffect(() => {
     if (!adding && productArea !== 'studio') return;
@@ -181,7 +198,7 @@ export default function App() {
     dirtyRef.current = dirty;
   }, [baseline, dirty]);
 
-  const applyRemoteStudio = useCallback((studio: StudioDocument) => {
+  const applyRemoteStudio = useCallback((studio: StudioDocument, preserveProgram = false) => {
     const scene = studio.scenes.find((candidate) => candidate.id === studio.previewSceneId) ?? studio.scenes[0];
     if (!scene) return;
     baselineRef.current = scene;
@@ -190,7 +207,7 @@ export default function App() {
     setDraft(cloneScene(scene));
     setStudioBaseline(studio);
     setStudioDraft(JSON.parse(JSON.stringify(studio)) as StudioDocument);
-    setProgramScene(null);
+    if (!preserveProgram) setProgramScene(null);
     setSelectedSceneId(scene.id);
     setConflict('');
     setSelectedSourceId((current) =>
@@ -201,7 +218,20 @@ export default function App() {
     setSelectedSourceIds(scene.sources[0] ? [scene.sources[0].id] : []);
   }, []);
 
+  const commitSavedStudio = (committed: StudioDocument, submitted: StudioDocument, preserveProgram = false) => {
+    if (studioDraftRef.current === submitted) applyRemoteStudio(committed, preserveProgram);
+    else {
+      setStudioBaseline(committed);
+      setBaseline(committed.scenes.find(scene => scene.id === selectedSceneId) ?? null);
+      setStudioDraft(current => current ? { ...current, revision: committed.revision } : current);
+      dirtyRef.current = true;
+      setConflict('');
+    }
+  };
+
   const applyLocalProfile = useCallback((profile: LocalConfigProfile) => {
+    setDeviceWorkspaceMode(false);
+    void setDeviceWorkspace(false).catch(() => undefined);
     applyRemoteStudio(profile.studio);
     setActiveLocalProfile(profile);
     setNotice(`已载入配置“${profile.name}”；服务器默认场景不会被修改。`);
@@ -260,10 +290,19 @@ export default function App() {
   const reload = useCallback(async () => {
     setLoadingError('');
     try {
-      const studio = await fetchStudio();
+      if (await isDeviceWorkspace() || (await loadSyncQueue())?.mutations.length) {
+        const cached = await loadOfflineStudio();
+        if (cached) {
+          setActiveLocalProfile(null); setDeviceWorkspaceMode(true);
+          applyRemoteStudio(cached.studio, true);
+          setNotice('已恢复设备布局；待同步修改保留。此布局不会自动替换服务器 Program。');
+          return;
+        }
+      }
+      const studio = await withRequestTimeout(8000, fetchStudio);
       const active = await loadActiveLocalConfigProfile().catch(() => null);
       if (active) applyLocalProfile(active);
-      else { setActiveLocalProfile(null); applyRemoteStudio(studio); }
+      else { setActiveLocalProfile(null); setDeviceWorkspaceMode(false); applyRemoteStudio(studio); }
       void saveStudioSnapshot(studio).catch(() => undefined);
     } catch (error) {
       const active = await loadActiveLocalConfigProfile().catch(() => null);
@@ -275,12 +314,57 @@ export default function App() {
       }
       const offline = await loadOfflineStudio().catch(() => null);
       if (offline) {
+        setDeviceWorkspaceMode(true);
+        await setDeviceWorkspace(true);
         applyRemoteStudio(offline.studio);
         setConnection('offline');
         setNotice(`已载入本机离线场景；授权有效至 ${new Date(offline.expiresAt).toLocaleString()}。`);
       } else setLoadingError(error instanceof Error ? error.message : '无法读取场景');
     }
   }, [applyLocalProfile, applyRemoteStudio]);
+
+  const loadDeviceLayout = async () => {
+    if (savingRef.current || !canLeaveWorkspace() || (dirty && !window.confirm('放弃当前 Studio 未保存修改并载入设备布局？'))) return;
+    try {
+      const cached = await loadOfflineStudio();
+      if (!cached) throw new Error('没有可用的设备布局；请先完成配对并在线载入 Studio。');
+      await setDeviceWorkspace(true);
+      setDeviceWorkspaceMode(true); setActiveLocalProfile(null);
+      applyRemoteStudio(cached.studio, true);
+      setNotice('已载入设备布局；保存会进入设备同步队列。需要输出时请复制到服务器预览。');
+      navigate('studio');
+    } catch (reason) { setNotice(reason instanceof Error ? reason.message : '载入失败'); }
+  };
+
+  const returnToServer = async () => {
+    if (savingRef.current || !canLeaveWorkspace() || (dirty && !window.confirm('放弃当前 Studio 未保存修改并载入服务器布局？'))) return;
+    try {
+      const remote = await withRequestTimeout(8000, fetchStudio);
+      await setDeviceWorkspace(false);
+      setDeviceWorkspaceMode(false); setActiveLocalProfile(null); applyRemoteStudio(remote);
+      setNotice('已载入服务器 Studio；设备布局和待同步队列仍保留。');
+    } catch (reason) { setNotice(reason instanceof Error ? reason.message : '服务器不可达，设备布局仍保留。'); }
+  };
+
+  const copyDeviceToServer = async () => {
+    if (!studioDraft || dirty || savingRef.current || deviceSync.pending || deviceSync.state?.conflicts.length) return;
+    savingRef.current = true; setSaving(true);
+    try {
+      const remote = await withRequestTimeout(8000, fetchStudio);
+      const committed = await replaceStudio(copyDeviceLayoutToPreview(remote, studioDraft));
+      if (studioDraftRef.current !== studioDraft) {
+        setNotice('已复制到服务器 Preview；复制期间的新编辑仍保留在设备布局中，请继续保存。Program 保持原状。');
+        return;
+      }
+      await setDeviceWorkspace(false);
+      setDeviceWorkspaceMode(false); applyRemoteStudio(committed);
+      setNotice('设备布局已复制到服务器 Preview；Program 保持原状。确认预览后可手动 TAKE。');
+    } catch (reason) {
+      setNotice(reason instanceof ControlApiError && reason.status === 412
+        ? '服务器 Studio 已被修改，复制未生效；设备布局仍保留，请重试。'
+        : reason instanceof Error ? reason.message : '复制失败；设备布局仍保留。');
+    } finally { savingRef.current = false; setSaving(false); }
+  };
 
   useEffect(() => {
     if (!studioBaseline) return undefined;
@@ -559,7 +643,7 @@ export default function App() {
   };
 
   const save = async () => {
-    if (!studioDraft || !dirty || saving || conflict) return;
+    if (!studioDraft || !dirty || savingRef.current || conflict) return;
     savingRef.current = true;
     setSaving(true);
     setNotice('');
@@ -567,19 +651,28 @@ export default function App() {
       if (activeLocalProfile) {
         const saved = await saveLocalConfigProfile(activeLocalProfile.name, studioDraft, activeLocalProfile.id);
         setActiveLocalProfile(saved);
-        applyRemoteStudio(saved.studio);
+        commitSavedStudio(saved.studio, studioDraft);
         setNotice(`配置“${saved.name}”已保存；同步状态见顶部提示。服务器默认场景未修改。`);
         return;
       }
-      if (connection === 'offline') {
-        await saveLocalStudio(studioDraft);
-        await queueOfflineAudit('scene.local-save', 'completed');
-        applyRemoteStudio(studioDraft);
-        setNotice('场景仅保存在本机；连接恢复后请重新保存到账号服务器。');
+      if (deviceWorkspace || connection === 'offline') {
+        const identity = await loadBrowserIdentity();
+        if (!identity?.clientId) throw new Error('离线保存需要有效的设备配对授权。请在设置的“设备离线与同步”完成配对；当前草稿会保留。');
+        if (studioDraft.scenes.some(scene => scene.sources.some(source => source.kind === 'camera' &&
+          !identity.grantPayload?.cameras.some(camera => camera.cameraId === source.cameraId && camera.profiles.some(profile => profile.id === source.profileId)))))
+          throw new Error('布局包含此设备尚未获授权的摄像机或 Profile。请先在配对管理调整授权，或从设备布局移除此来源；草稿会保留。');
+        if (studioDraft.scenes.some(scene => scene.sources.some(source => !['camera', 'text', 'color', 'nested'].includes(source.kind))))
+          throw new Error('设备同步仅支持摄像机、文字、色块及嵌套场景。当前草稿含其他来源，请在线保存到服务器，或先导出备份。');
+        await queueStudioSync(studioDraft);
+        setDeviceWorkspaceMode(true);
+        commitSavedStudio(studioDraft, studioDraft, true);
+        void queueOfflineAudit('scene.local-save', 'completed').catch(() => undefined);
+        setNotice('设备布局已保存到本机并加入同步队列；服务器 Program 不会改变。');
+        void deviceSync.sync();
         return;
       }
       const committed = await replaceStudio(studioDraft);
-      applyRemoteStudio(committed);
+      commitSavedStudio(committed, studioDraft);
       void saveStudioSnapshot(committed).catch(() => undefined);
       void queueOfflineAudit('scene.server-save', 'completed').catch(() => undefined);
       setNotice(`Studio s${committed.revision} 已保存到服务器。`);
@@ -614,7 +707,7 @@ export default function App() {
     if (studioDraft.previewSceneId !== sceneId) {
       dirtyRef.current = true;
       setStudioDraft({ ...studioDraft, previewSceneId: sceneId });
-      setNotice('Preview 已切换；保存 Studio 后可执行 Take。');
+      setNotice(deviceWorkspace ? '设备预览已切换；保存后可同步布局。' : 'Preview 已切换；保存 Studio 后可执行 Take。');
     }
   };
 
@@ -648,16 +741,18 @@ export default function App() {
 
   const removeScene = () => {
     if (!studioDraft || !selectedSceneId || studioDraft.scenes.length <= 1 ||
-        studioDraft.programSceneId === selectedSceneId) return;
+        (!deviceWorkspace && studioDraft.programSceneId === selectedSceneId)) return;
     if (studioDraft.scenes.some((scene) => scene.id !== selectedSceneId &&
         scene.sources.some((source) => source.kind === 'nested' && source.sceneId === selectedSceneId))) {
       setNotice('此场景被其他场景嵌套引用，请先解除引用再删除。');
       return;
     }
     const scenes = studioDraft.scenes.filter((scene) => scene.id !== selectedSceneId);
+    if (!window.confirm('删除当前场景及其布局？保存后生效，设备目录中的来源会保留。')) return;
     const nextScene = scenes[0];
     dirtyRef.current = true;
-    setStudioDraft({ ...studioDraft, previewSceneId: nextScene.id, scenes });
+    setStudioDraft({ ...studioDraft, previewSceneId: nextScene.id,
+      programSceneId: studioDraft.programSceneId === selectedSceneId ? nextScene.id : studioDraft.programSceneId, scenes });
     setSelectedSceneId(nextScene.id);
     setDraft(cloneScene(nextScene));
     setBaseline(studioBaseline?.scenes.find((scene) => scene.id === nextScene.id) ?? nextScene);
@@ -685,6 +780,7 @@ export default function App() {
     const scene = studioDraft.scenes.find((value) => value.id === id);
     if (!scene) return;
     if (operation === 'projector') {
+      if (deviceWorkspace) { setNotice('请先将设备布局复制到服务器预览，再打开投影。'); return; }
       if (JSON.stringify(scene) !== JSON.stringify(studioBaseline?.scenes.find((value) => value.id === id))) { setNotice('请先保存此场景，再打开场景投影。'); return; }
       const projector = openProjectorWindow('direct', id);
       if (!projector && !window.webobsDesktop) setNotice('投影窗口被浏览器阻止，请允许本站弹出窗口。');
@@ -694,10 +790,11 @@ export default function App() {
     if (operation === 'grid') { updateCollectionScene(arrangeSceneGrid(scene)); return; }
     if (operation === 'lock' || operation === 'unlock') { updateCollectionScene({ ...scene, items: scene.items.map((item) => ({ ...item, locked: operation === 'lock' })) }); return; }
     if (operation === 'delete') {
-      if (studioDraft.scenes.length <= 1 || studioDraft.programSceneId === id || studioDraft.scenes.some((value) => value.id !== id && value.sources.some((source) => source.kind === 'nested' && source.sceneId === id))) return;
+      if (studioDraft.scenes.length <= 1 || (!deviceWorkspace && studioDraft.programSceneId === id) || studioDraft.scenes.some((value) => value.id !== id && value.sources.some((source) => source.kind === 'nested' && source.sceneId === id))) return;
       const scenes = studioDraft.scenes.filter((value) => value.id !== id);
       dirtyRef.current = true;
-      setStudioDraft({ ...studioDraft, scenes, previewSceneId: studioDraft.previewSceneId === id ? scenes[0].id : studioDraft.previewSceneId });
+      setStudioDraft({ ...studioDraft, scenes, previewSceneId: studioDraft.previewSceneId === id ? scenes[0].id : studioDraft.previewSceneId,
+        programSceneId: studioDraft.programSceneId === id ? scenes[0].id : studioDraft.programSceneId });
       if (selectedSceneId === id) { const next = scenes[0]; setSelectedSceneId(next.id); setDraft(cloneScene(next));
         setBaseline(studioBaseline?.scenes.find((value) => value.id === next.id) ?? next);
         setSelectedSourceId(next.sources[0]?.id ?? null); setSelectedSourceIds(next.sources[0] ? [next.sources[0].id] : []); }
@@ -775,7 +872,7 @@ export default function App() {
   };
 
   const runStudioAction = async (action: 'take' | 'undo' | 'redo') => {
-    if (!studioDraft || dirty || saving) return;
+    if (!studioDraft || deviceWorkspace || connection !== 'online' || dirty || savingRef.current) return;
     setSaving(true);
     savingRef.current = true;
     setNotice('');
@@ -852,7 +949,7 @@ export default function App() {
     return <WorkspaceShell area={productArea} onNavigate={navigate} connection={connection}><AccountWorkspace onAdmin={() => navigate('admin')} /></WorkspaceShell>;
   }
   if (productArea === 'settings') {
-    return <WorkspaceShell area={productArea} onNavigate={navigate} connection={connection}><SettingsWorkspace studio={studioDraft} onProfileSelected={applyLocalProfile} /><SystemStatus onBack={() => navigate('monitor')} /></WorkspaceShell>;
+    return <WorkspaceShell area={productArea} onNavigate={navigate} connection={connection}><SettingsWorkspace studio={studioDraft} onProfileSelected={applyLocalProfile} />{notice && <p className="notice" role="status">{notice}</p>}<DeviceSyncPanel model={deviceSync} onLoad={() => void loadDeviceLayout()} /><SystemStatus onBack={() => navigate('monitor')} /></WorkspaceShell>;
   }
   if (productArea === 'events') {
     return <WorkspaceShell area={productArea} onNavigate={navigate} connection={connection}><EventsPanel onBack={() => navigate('monitor')} /></WorkspaceShell>;
@@ -890,6 +987,7 @@ export default function App() {
   }
 
   if (productArea === 'audio') {
+    if (deviceWorkspace) return <WorkspaceShell area={productArea} onNavigate={navigate} connection={connection}><section className="page-panel"><h1>设备布局声音</h1><p>在 Studio 选择来源调整此设备布局的声音。服务器声音工作台在返回服务器布局后可用。</p><button type="button" onClick={() => navigate('studio')}>返回设备 Studio</button></section></WorkspaceShell>;
     return <WorkspaceShell area={productArea} onNavigate={navigate} connection={connection}><AudioWorkspace studio={studioDraft} onCommitted={applyRemoteStudio} /></WorkspaceShell>;
   }
 
@@ -958,11 +1056,11 @@ export default function App() {
             {connection === 'online' ? '实时同步' : connection === 'connecting' ? '正在连接' : '连接中断'}
           </span>
           <span className="revision">s{studioDraft.revision}</span>
-          <button className="ghost-button" type="button" disabled={dirty || saving} onClick={() => runStudioAction('undo')}>撤销</button>
-          <button className="ghost-button" type="button" disabled={dirty || saving} onClick={() => runStudioAction('redo')}>重做</button>
+          <button className="ghost-button" type="button" disabled={deviceWorkspace || dirty || saving || connection !== 'online'} onClick={() => runStudioAction('undo')}>撤销</button>
+          <button className="ghost-button" type="button" disabled={deviceWorkspace || dirty || saving || connection !== 'online'} onClick={() => runStudioAction('redo')}>重做</button>
           <button className="ghost-button" type="button" disabled={!dirty || saving} onClick={discard}>放弃</button>
           <button className="primary-button save-button" type="button" disabled={!dirty || saving || Boolean(conflict)} onClick={save}>
-            {saving ? '正在保存…' : dirty ? '保存并应用' : '已同步'}
+            {saving ? '正在保存…' : dirty ? (deviceWorkspace ? '保存设备布局' : '保存并应用') : deviceWorkspace ? (deviceSync.pending ? '本机已保存 · 待同步' : '设备布局已保存') : '服务器已保存'}
           </button>
         </div>
       </header>
@@ -975,16 +1073,24 @@ export default function App() {
       )}
       {notice && <div className="alert notice-alert" role="status">{notice}</div>}
 
+      {deviceWorkspace && <div className="notice device-workspace-banner" role="status">
+        <strong>设备布局 · {deviceSync.pending ? `${deviceSync.pending} 项等待同步` : '无待上传修改'}</strong>
+        <span> 布局同步不执行 TAKE。{deviceSync.state?.conflicts.length ? '有同步冲突，请在设置中处理。' : deviceSync.error ? '同步暂不可用，本机内容已保留。' : ''}</span>
+        <button type="button" onClick={() => navigate('settings')}>查看同步与配对</button>
+        <button type="button" disabled={saving || connection !== 'online'} onClick={() => void returnToServer()}>返回服务器布局</button>
+        <button type="button" disabled={dirty || saving || deviceSync.busy || !!deviceSync.pending || !!deviceSync.state?.conflicts.length || connection !== 'online'} onClick={() => void copyDeviceToServer()}>复制到服务器预览</button>
+      </div>}
+
       <section className="studio-deck" aria-label="Studio 场景集合">
         <div className="studio-buses">
           <div className="bus-card program-bus">
             <span>PROGRAM</span>
-            <strong>{studioDraft.scenes.find((scene) => scene.id === studioDraft.programSceneId)?.name ?? studioDraft.programSceneId}</strong>
+            <strong>{deviceWorkspace ? (programScene?.name ?? '服务器输出状态暂不可用') : studioDraft.scenes.find((scene) => scene.id === studioDraft.programSceneId)?.name ?? studioDraft.programSceneId}</strong>
           </div>
           <button
             className="take-button"
             type="button"
-            disabled={dirty || saving}
+            disabled={deviceWorkspace || dirty || saving || connection !== 'online'}
             onClick={() => runStudioAction('take')}
           >TAKE</button>
           <div className="bus-card preview-bus">
@@ -993,7 +1099,8 @@ export default function App() {
           </div>
         </div>
         <SceneCollection studio={studioDraft} selected={selectedSceneId ?? draft.id}
-          savedSceneIds={studioDraft.scenes.filter((scene) => JSON.stringify(scene) === JSON.stringify(studioBaseline?.scenes.find((value) => value.id === scene.id))).map((scene) => scene.id)}
+          serverOperations={!deviceWorkspace}
+          savedSceneIds={deviceWorkspace ? [] : studioDraft.scenes.filter((scene) => JSON.stringify(scene) === JSON.stringify(studioBaseline?.scenes.find((value) => value.id === scene.id))).map((scene) => scene.id)}
           sources={[...new Map([...studioDraft.scenes.flatMap((scene) => scene.sources), ...registryCameras.filter((camera) => camera.enabled !== false && !studioDraft.scenes.some((value) => value.sources.some((source) => source.kind === 'camera' && source.cameraId === camera.id))).flatMap((camera) => {
             const profile = camera.profiles.find((value) => value.enabled !== false);
             return profile ? [{ id: cameraSourceId(camera.id, profile.id), kind: 'camera' as const, name: camera.name,
@@ -1007,7 +1114,7 @@ export default function App() {
           <button className="ghost-button" type="button" disabled={studioDraft.scenes.length >= 64} onClick={() => duplicateScene()}>复制场景</button>
           <button className="ghost-button" type="button" disabled={studioDraft.scenes.length >= 64} onClick={() => addTemplate('grid')}>四宫格模板</button>
           <button className="ghost-button" type="button" disabled={studioDraft.scenes.length >= 64} onClick={() => addTemplate('focus')}>主画面模板</button>
-          <button className="ghost-button" type="button" disabled={studioDraft.scenes.length <= 1 || studioDraft.programSceneId === selectedSceneId} onClick={removeScene}>删除场景</button>
+          <button className="ghost-button" type="button" disabled={studioDraft.scenes.length <= 1 || (!deviceWorkspace && studioDraft.programSceneId === selectedSceneId)} onClick={removeScene}>删除场景</button>
           <button className="ghost-button" type="button" onClick={exportStudio}>导出</button>
           <button className="ghost-button" type="button" onClick={() => importRef.current?.click()}>导入</button>
           <input ref={importRef} className="visually-hidden" type="file" accept="application/json,.json" onChange={(event) => void importStudio(event.target.files?.[0])} />

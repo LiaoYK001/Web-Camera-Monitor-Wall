@@ -291,3 +291,16 @@ export async function refreshBrowserAuthorization(): Promise<number | null> {
   if (bootstrap.contractVersion !== 2) throw new Error('浏览器启动契约版本不匹配');
   return persistVerifiedGrant(identity, bootstrap.client, bootstrap.grantBundle);
 }
+
+/** Reuse the sync bootstrap instead of fetching a second, potentially older grant. */
+export async function acceptBrowserBootstrap(value: unknown, signal?: AbortSignal): Promise<void> {
+  const identity = await loadBrowserIdentity();
+  if (!identity?.clientId) throw new Error('此浏览器尚未完成配对');
+  const body = value as { client?: { id: string; grantExpiresAt: number }; grantBundle?: Record<string, unknown> & { ciphertext: string; serverSigningPublicKey: string } };
+  if (!body.client && !body.grantBundle && !identity.grantBundle) return;
+  if (!body.client || !body.grantBundle || body.client.id !== identity.clientId)
+    throw new Error('同步响应缺少匹配的设备授权包');
+  await sodium.ready;
+  signal?.throwIfAborted();
+  await persistVerifiedGrant(identity, body.client, body.grantBundle);
+}

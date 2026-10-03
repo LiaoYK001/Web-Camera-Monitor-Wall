@@ -1,4 +1,4 @@
-import { browserDeviceHeaders } from './browserEnrollment';
+import { acceptBrowserBootstrap, browserDeviceHeaders } from './browserEnrollment';
 import {
   cacheSyncedScenes,
   clearPrivateRuntimeState,
@@ -7,6 +7,7 @@ import {
   loadSyncQueue,
   loadSyncState,
   saveSyncQueue,
+  saveQueuedStudio,
   saveSyncState,
   type LocalSyncQueue,
   type LocalSyncState,
@@ -15,12 +16,17 @@ import {
   type SyncMutation,
 } from './localRuntime';
 import type { StudioDocument } from './types';
+import { withRequestTimeout } from './requestTimeout';
 
 const MAX_QUEUE = 256;
 const MAX_SYNC_BATCH = 64;
 const SYNC_REQUEST_TIMEOUT_MS = 15000;
 const runtimeLocks = new Map<string, Promise<unknown>>();
 let synchronization: Promise<LocalSyncState | null> | null = null;
+let authorization = new AbortController();
+window.addEventListener('webobs:account-clearing', () => {
+  authorization.abort(); authorization = new AbortController();
+});
 
 async function withRuntimeLock<T>(name: string, operation: () => Promise<T>): Promise<T> {
   const previous = runtimeLocks.get(name) ?? Promise.resolve();
@@ -50,19 +56,28 @@ function mergeMutation(current: SyncMutation | undefined, next: SyncMutation): S
   return { ...next, fields: { ...current.fields, ...next.fields } };
 }
 
-async function queueMutations(mutations: SyncMutation[]): Promise<void> {
+async function queueMutations(mutations: SyncMutation[], studio?: StudioDocument): Promise<void> {
   return withRuntimeLock('sync-queue', async () => {
     const state = await loadSyncState();
     const queued = await loadSyncQueue();
     const merged = new Map<string, SyncMutation>();
     for (const mutation of queued?.mutations ?? []) merged.set(keyOf(mutation), mutation);
+    if (studio) {
+      const sceneIds = new Set(studio.scenes.map(scene => scene.id));
+      for (const mutation of merged.values()) {
+        if (mutation.kind === 'scene' && !sceneIds.has(mutation.id))
+          merged.set(keyOf(mutation), { kind: 'scene', id: mutation.id, operation: 'delete', fields: {} });
+      }
+    }
     for (const mutation of mutations) merged.set(keyOf(mutation), mergeMutation(merged.get(keyOf(mutation)), mutation));
     if (merged.size > MAX_QUEUE) throw new Error('离线同步队列已满，请先恢复与服务器的连接');
-    await saveSyncQueue({
+    const next: LocalSyncQueue = {
       schemaVersion: 1,
       baseRevision: queued?.baseRevision ?? state?.revision ?? 0,
       mutations: [...merged.values()],
-    });
+    };
+    if (studio) await saveQueuedStudio(next, studio);
+    else await saveSyncQueue(next);
     window.dispatchEvent(new CustomEvent('webobs:sync-pending', { detail: merged.size }));
   });
 }
@@ -118,7 +133,7 @@ export async function queueStudioSync(studio: StudioDocument): Promise<void> {
     if (document.kind === 'scene' && !document.deleted && !currentSceneIds.has(document.id))
       mutations.push({ kind: 'scene', id: document.id, operation: 'delete', fields: {} });
   }
-  if (mutations.length) await queueMutations(mutations);
+  if (mutations.length) await queueMutations(mutations, studio);
 }
 
 export async function queueCameraPreference(
@@ -183,23 +198,28 @@ async function checkedJson<T>(response: Response): Promise<T> {
   return body;
 }
 
-async function bootstrap(headers: Record<string, string>, since: number): Promise<BootstrapResponse> {
-  const response = await fetch(`/api/v2/client/bootstrap?sinceRevision=${since}`, {
-    cache: 'no-store', credentials: 'same-origin', headers, signal: AbortSignal.timeout(SYNC_REQUEST_TIMEOUT_MS),
-  });
-  if (response.status === 409 && since !== 0) {
-    const reset = await bootstrap(headers, 0);
-    return { ...reset, sync: { ...reset.sync, resetRequired: true } };
-  }
-  const body = await checkedJson<BootstrapResponse>(response);
-  if (body.contractVersion !== 2 || body.syncPolicy !== 'bidirectional-field-conflict-v1' ||
-      !Number.isSafeInteger(body.revision) || !body.sync || !Array.isArray(body.sync.documents) ||
-      !Array.isArray(body.sync.changes)) throw new Error('浏览器同步契约版本不匹配');
-  return body;
+async function bootstrap(headers: Record<string, string>, since: number, signal: AbortSignal): Promise<BootstrapResponse> {
+  return withRequestTimeout(SYNC_REQUEST_TIMEOUT_MS, async requestSignal => {
+    const response = await fetch(`/api/v2/client/bootstrap?sinceRevision=${since}`, {
+      cache: 'no-store', credentials: 'same-origin', headers, signal: requestSignal,
+    });
+    if (response.status === 409 && since !== 0) {
+      const reset = await bootstrap(headers, 0, requestSignal);
+      return { ...reset, sync: { ...reset.sync, resetRequired: true } };
+    }
+    const body = await checkedJson<BootstrapResponse>(response);
+    if (body.contractVersion !== 2 || body.syncPolicy !== 'bidirectional-field-conflict-v1' ||
+        !Number.isSafeInteger(body.revision) || !body.sync || !Array.isArray(body.sync.documents) ||
+        !Array.isArray(body.sync.changes)) throw new Error('浏览器同步契约版本不匹配');
+    requestSignal.throwIfAborted();
+    await acceptBrowserBootstrap(body, requestSignal);
+    requestSignal.throwIfAborted();
+    return body;
+  }, signal);
 }
 
-async function pull(headers: Record<string, string>, state: LocalSyncState | null): Promise<LocalSyncState> {
-  const response = await bootstrap(headers, state?.revision ?? 0);
+async function pull(headers: Record<string, string>, state: LocalSyncState | null, signal: AbortSignal): Promise<LocalSyncState> {
+  const response = await bootstrap(headers, state?.revision ?? 0, signal);
   const baseDocuments = response.sync.resetRequired ? [] : (state?.documents ?? []);
   const documents = mergeDocuments(
     mergeDocuments(baseDocuments, response.sync.documents), response.sync.changes,
@@ -215,9 +235,24 @@ async function pull(headers: Record<string, string>, state: LocalSyncState | nul
 
 async function performSynchronization(): Promise<LocalSyncState | null> {
   if (!navigator.onLine) return loadSyncState();
+  const signal = authorization.signal;
   const headers = await browserDeviceHeaders();
-  let state = await pull(headers, await loadSyncState());
-  const queue = await loadSyncQueue();
+  let state = await pull(headers, await loadSyncState(), signal);
+  let queue = await loadSyncQueue();
+  if (queue?.mutations.length) {
+    // The cross-window sync-run lock waits for older uploads to finish. After
+    // pulling their acknowledgements, deletes of still-unknown local creations
+    // are no-ops; sending them would get a 404 and block the remaining batch.
+    const missing = queue.mutations.filter(mutation => mutation.kind === 'scene' && mutation.operation === 'delete' &&
+      !state.documents.some(document => document.kind === mutation.kind && document.id === mutation.id) &&
+      !state.conflicts.some(conflict => keyOf(conflict) === keyOf(mutation)));
+    if (missing.length) {
+      signal.throwIfAborted();
+      await acknowledgeQueue({ ...queue, mutations: missing }, { schemaVersion: 1, revision: state.revision,
+        accepted: missing.map(mutation => ({ kind: mutation.kind, id: mutation.id, revision: state.revision, unchanged: true })), conflicts: [] });
+      queue = await loadSyncQueue();
+    }
+  }
   if (queue?.mutations.length && !state.conflicts.length) {
     // Keep nested references/deletions in one transaction rather than splitting
     // a valid scene graph into invalid intermediate graphs.
@@ -229,19 +264,23 @@ async function performSynchronization(): Promise<LocalSyncState | null> {
     const baseRevision = Math.min(queue.baseRevision, state.revision);
     for (let offset = 0; offset < mutations.length; offset += MAX_SYNC_BATCH) {
       const requestQueue = { ...queue, baseRevision, mutations: mutations.slice(offset, offset + MAX_SYNC_BATCH) };
-      const response = await fetch('/api/v2/client/sync', {
-        method: 'POST', cache: 'no-store', credentials: 'same-origin',
-        signal: AbortSignal.timeout(SYNC_REQUEST_TIMEOUT_MS),
-        headers: { ...headers, 'Content-Type': 'application/json' },
-        body: JSON.stringify(requestQueue satisfies LocalSyncQueue),
-      });
-      const result = await checkedJson<SyncResponse>(response);
+      const result = await withRequestTimeout(SYNC_REQUEST_TIMEOUT_MS, async requestSignal => {
+        const response = await fetch('/api/v2/client/sync', {
+          method: 'POST', cache: 'no-store', credentials: 'same-origin',
+          signal: requestSignal,
+          headers: { ...headers, 'Content-Type': 'application/json' },
+          body: JSON.stringify(requestQueue satisfies LocalSyncQueue),
+        });
+        return checkedJson<SyncResponse>(response);
+      }, signal);
+      signal.throwIfAborted();
       if (!validSyncResponse(result, requestQueue, state.revision))
         throw new Error('浏览器同步提交响应无效');
       state = { ...state, conflicts: result.conflicts };
       await saveSyncState(state);
+      signal.throwIfAborted();
       await acknowledgeQueue(requestQueue, result);
-      state = await pull(headers, state);
+      state = await pull(headers, state, signal);
       state.conflicts = result.conflicts;
       if (result.conflicts.length) break;
     }
@@ -249,15 +288,20 @@ async function performSynchronization(): Promise<LocalSyncState | null> {
   const audit = await loadAuditQueue();
   for (let offset = 0; offset < audit.length; offset += 128) {
     const events = audit.slice(offset, offset + 128);
-    const response = await fetch('/api/v2/client/audit/batch', {
-      method: 'POST', cache: 'no-store', credentials: 'same-origin',
-      signal: AbortSignal.timeout(SYNC_REQUEST_TIMEOUT_MS),
-      headers: { ...headers, 'Content-Type': 'application/json' }, body: JSON.stringify({ events }),
-    });
-    await checkedJson<{ accepted: number; received: number }>(response);
+    await withRequestTimeout(SYNC_REQUEST_TIMEOUT_MS, async requestSignal => {
+      const response = await fetch('/api/v2/client/audit/batch', {
+        method: 'POST', cache: 'no-store', credentials: 'same-origin',
+        signal: requestSignal,
+        headers: { ...headers, 'Content-Type': 'application/json' }, body: JSON.stringify({ events }),
+      });
+      await checkedJson<{ accepted: number; received: number }>(response);
+    }, signal);
+    signal.throwIfAborted();
     await consumeAuditQueue(events.length);
   }
+  signal.throwIfAborted();
   await saveSyncState(state);
+  signal.throwIfAborted();
   await cacheUnqueuedScenes(state.documents);
   return state;
 }

@@ -130,6 +130,7 @@ const pause = ms => new Promise(resolve => setTimeout(resolve, ms));
       select.dispatchEvent(new Event('change',{bubbles:true}));
     }`);
     await waitForUi('document.querySelector(".config-profile-panel select").value === "" && !document.querySelector(".config-profile-controls").disabled');
+    await require('./native-offline-ui.cjs').exerciseNativeOfflineUi(main, origin, headers, waitForUi);
     const studio = await (await fetch(`${origin}/api/v1/studio`, { headers })).json();
     const second = { ...structuredClone(studio.scenes[0]), id: 'native-main-second', name: 'Second fixed projector' };
     studio.scenes.push(second);
@@ -167,7 +168,7 @@ const pause = ms => new Promise(resolve => setTimeout(resolve, ms));
     for (const window of BrowserWindow.getAllWindows()) window.destroy();
     await pause(100);
     assert.deepEqual(errors.map(error => String(error)), []);
-    console.log('Actual desktop entry: first login, account UI save, port UI persistence, canceled native restart, authenticated scene synchronization and manual reconnect diagnostics, two fixed Scene projectors, shared session, tray hide and normal exit passed. Camera and clean-install qualification remain separate.');
+    console.log('Actual desktop entry: first login, account UI save, port UI persistence, canceled native restart, authenticated scene synchronization, real browser pairing and encrypted grant, device layout upload/reload/explicit Preview copy, two fixed Scene projectors, shared session, tray hide and normal exit passed. Camera and clean-install qualification remain separate.');
   } catch (error) {
     exitCode = 1; console.error(error.stack);
     for (const name of ['native-tools', 'core', 'clients']) {
