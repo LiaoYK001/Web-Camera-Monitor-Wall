@@ -40,6 +40,10 @@ if (fixtureOptions.has('mixer') || fixtureOptions.has('layout') || fixtureOption
   cameras[1].profiles[0].audioCodec = 'pcm_alaw';
   cameras[1].profiles[0].tracks = [{ index: 1, kind: 'audio', codec: 'pcm_alaw', bitrateKbps: null, width: 0, height: 0, fps: 0, channels: 1, sampleRate: 8000, source: 'probe' }];
 }
+if (fixtureOptions.has('source-identities')) {
+  scene.sources.forEach((source, index) => { source.id = index ? fixtureOptions.get('source-identities')! : 'hasOwnProperty'; });
+  scene.items.forEach((item, index) => { item.sourceId = scene.sources[index].id; });
+}
 const monitorView = { ...defaultMonitorView(), sourceDecorations: { 'other-scene-source': { ...defaultSourceDecoration(), audioMeter: { ...defaultSourceDecoration().audioMeter, enabled: true, opacity: .6 } } } };
 if (fixtureOptions.has('performance')) for (const source of scene.sources) {
   Object.assign(monitorView.sourceDecorations, { [source.id]: { ...defaultSourceDecoration(), audioMeter: { ...defaultSourceDecoration().audioMeter, enabled: true, thresholdDbfs: -3 } } });

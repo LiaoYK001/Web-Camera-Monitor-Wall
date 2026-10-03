@@ -33,6 +33,10 @@ The main-entry gate also stores a synthetic 1000-source preference workspace, ad
 
 主入口门槛还保存合成的 1000 路来源偏好，通过真实监控 UI 调整音量并验证小型保活请求，再经真实认证后端全局调整统计叠层；两者均须保留其他逐路设置。随后恢复原夹具偏好再检查投影和托盘。此项需要当前 WebUI 与 cluster 服务，不会启动 1000 路摄像机流。
 
+The main-entry gate also accepts `constructor` and `__proto__` as real Scene source identifiers, renders each color source and verifies account preference save/reload without losing its own decorations. It restores the original Scene and account preferences before continuing desktop lifecycle checks. Linux production validation separately decodes a synthetic H.264 source using those identifiers; neither check qualifies physical cameras.
+
+主入口门槛还通过实际 Scene 接口接受 `constructor` 和 `__proto__` 来源，显示色块并验证账号偏好保存/刷新后保留自己的外观记录；随后恢复原 Scene 和账号偏好继续桌面生命周期检查。Linux 生产验证另行使用这些标识解码合成 H.264；两者均不代表真实摄像机验收。
+
 开发构建机需要 VS 2022 的 MSVC x64、Windows SDK、CMake >= 3.28、Python、Node 24 和 pnpm 11.16.0。使用 PowerShell 7.2+ 的 VS x64 Developer PowerShell：
 
 ```powershell
