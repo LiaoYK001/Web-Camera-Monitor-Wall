@@ -132,3 +132,7 @@ Windows 10、11 各自记录实际安装、媒体、LAN 与两版更新结果。
 v4 adds the private `services/nvr/evidence.py` runtime contract. Export jobs and their owner remain in the recording catalog, so data snapshots preserve job history. Queued and active exports block update installation even after the archive page closes. `test:runtime` now uses bundled Python/FFmpeg to create synthetic H.264/AAC evidence, submit through the authenticated core and verify hashes and result restoration after restart. A newly compiled core is required for principal injection; host Python tests or an earlier EXE do not establish this Windows gate.
 
 v4 新增私有 `services/nvr/evidence.py` 运行时契约。导出任务与账号归属保存在录像数据库中，数据快照包含任务历史；离开归档页后，排队和活动导出仍阻止更新安装。`test:runtime` 新增使用捆绑 Python/FFmpeg 生成合成 H.264/AAC 证据，通过认证核心提交，并检查摘要与重启后的结果恢复。身份注入需要重新编译核心，主机 Python 测试或旧 EXE 不代替这项 Windows 门禁。
+
+The native evidence gate also streams a valid H.264/AAC MP4 larger than 64 MiB through the core with a bounded client hash reader, HEAD, Range, If-Range and ETag validation. A synthetic MP4 free box provides the file-size stress; it is not camera bitrate or decoder qualification. Large media uses a bounded asynchronous proxy rather than the control request pool, retaining the same account identity, permission checks and reader protection.
+
+原生证据门禁另通过核心传输大于 64 MiB 的有效 H.264/AAC MP4，客户端按块计算摘要，并验证 HEAD、Range、If-Range 和 ETag。使用合成 MP4 free box 扩展文件大小，不冒充摄像机码率或解码器验收。大媒体采用有界异步代理，保留账号身份、权限与读保护，并与控制请求 worker 分离。

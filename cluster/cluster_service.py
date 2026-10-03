@@ -501,6 +501,35 @@ class ClusterStore:
         assert principal is not None
         return {"allowed": True, "userId": principal.user_id, "permission": permission}
 
+    def authorize_cameras(self, username: str, permission: str, camera_ids: list[str]) -> dict[str, Any]:
+        """Internal bounded scope lookup; resolve one fresh principal for a whole list."""
+        if not isinstance(username, str) or not USERNAME.fullmatch(username) or not isinstance(permission, str) or \
+                permission not in PERMISSIONS or not isinstance(camera_ids, list) or len(camera_ids) > 64 or any(
+                not isinstance(value, str) or not IDENTIFIER.fullmatch(value) for value in camera_ids):
+            raise ApiError(400, "invalid_authorization", "camera authorization request is invalid")
+        camera_ids = list(dict.fromkeys(camera_ids))
+        groups: dict[str, str] = {}
+        if camera_ids and self.camera_registry_path.is_absolute():
+            database = None
+            try:
+                database = sqlite3.connect(f"file:{self.camera_registry_path.as_posix()}?mode=ro", uri=True, timeout=1)
+                groups = dict(database.execute("SELECT id,group_id FROM cameras WHERE id IN (" +
+                    ",".join("?" for _ in camera_ids) + ")", camera_ids))
+            except sqlite3.Error:
+                pass  # Missing/locked group metadata cannot grant access.
+            finally:
+                if database is not None:
+                    database.close()
+        with self.lock:
+            row = self.db.execute("SELECT id FROM users WHERE username=?", (username,)).fetchone()
+            if row is None:
+                raise ApiError(404, "user_not_found", "user is not managed by RBAC")
+            principal = self.principal(row["id"])
+            if not principal.permits(permission):
+                raise ApiError(403, "permission_rejected", "permission was rejected")
+            return {"permission": permission, "cameraIds": [value for value in camera_ids
+                if principal.permits(permission, value, groups.get(value, ""))]}
+
     def _camera_group(self, camera_id: str) -> str:
         """Resolve a shared Registry group without copying its catalog into RBAC state."""
         if not camera_id or not IDENTIFIER.fullmatch(camera_id) or not self.camera_registry_path.is_absolute():
@@ -2120,6 +2149,10 @@ class Handler(http.server.BaseHTTPRequestHandler):
                                  {"username", "permission"})
             self.response(200, STORE.authorize(value["username"], value["permission"],
                                                 value.get("cameraId", ""), value.get("groupId", "")))
+        elif path == "/auth/authorize-cameras" and self.command == "POST":
+            value = self.read_json()
+            require_exact_object(value, {"username", "permission", "cameraIds"}, {"username", "permission", "cameraIds"})
+            self.response(200, STORE.authorize_cameras(value["username"], value["permission"], value["cameraIds"]))
         elif path == "/account/me" and self.command in {"GET", "PATCH"}:
             username = self.headers.get("X-WebObs-Principal", "")
             if not USERNAME.fullmatch(username):

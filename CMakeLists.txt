@@ -99,6 +99,7 @@ endif()
 add_executable(webobsd
     core/src/control_server.cpp
     core/src/go2rtc_proxy.cpp
+    core/src/nvr_media_proxy.cpp
     core/src/main.cpp
     core/src/obs_engine.cpp
     core/src/obs_scene_runtime.cpp

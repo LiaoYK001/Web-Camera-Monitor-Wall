@@ -169,13 +169,24 @@ class EvidenceTests(unittest.TestCase):
         self.service.jobs.start();job=self.terminal(self.submit())
         self.assertEqual(job['error']['code'],'export_source_changed');self.assertFalse(self.service.segment_row(first)['locked'])
 
-    def test_oversized_output_is_rejected_before_publishing_an_undownloadable_result(self):
+    def test_large_valid_mp4_is_published_with_complete_hash_and_manifest(self):
         segment=self.segment();self.service.jobs.start()
-        def oversized(command,_cancel):
-            with pathlib.Path(command[-1]).open('wb') as output:output.truncate((64<<20)+1)
-        with mock.patch('evidence.run_export',side_effect=oversized):job=self.terminal(self.submit())
-        self.assertEqual(job['state'],'failed');self.assertEqual(job['error']['code'],'export_file_too_large')
-        self.assertFalse(self.service.segment_row(segment)['locked']);self.assertFalse((self.service.exports_root/job['id']).exists())
+        from evidence import run_export
+        def large_mp4(command,cancel):
+            run_export(command,cancel)
+            # A valid MP4 free box expands the actual output without pretending
+            # an invalid file passed the real FFprobe/track/duration checks.
+            with pathlib.Path(command[-1]).open('ab') as output:
+                offset=output.tell();padding=(64<<20)+8
+                output.write(__import__('struct').pack('>I4s',padding,b'free'))
+                output.truncate(offset+padding)
+        with mock.patch('evidence.run_export',side_effect=large_mp4):job=self.terminal(self.submit())
+        self.assertEqual(job['state'],'completed',job['error'])
+        file=job['result']['files'][0]
+        self.assertGreater(file['sizeBytes'],64<<20)
+        path,_=self.service.download_path(file['downloadUrl'].removeprefix('/api/v1/nvr/downloads/'))
+        self.assertEqual(self.service._sha256(path),file['sha256'])
+        self.assertTrue(self.service.segment_row(segment)['locked'])
 
 
 if __name__ == '__main__':

@@ -10,6 +10,7 @@ import time
 import urllib.error
 import urllib.request
 import uuid
+from nvr_media_product_contract import exercise_media_access
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 spec = importlib.util.spec_from_file_location('product_probe', ROOT / 'tests/test_go2rtc_integration.py')
@@ -99,6 +100,7 @@ db.commit()
         read=probe.Client(base);read.expect('/api/v1/auth/login',body={'username':'evidence-viewer','password':password},method='POST')
         lease=json.loads(read.expect('/api/v1/nvr/playback-leases',201,{'segmentId':json.loads(manifest)['sourceSegmentIds'][0],'ttlSeconds':30},'POST'))
         read.expect('/api/v1/nvr/playback-leases/'+lease['id'],body=None,method='DELETE')
+        snapshot=exercise_media_access(docker,name,admin,one,two,read,stamp)
         docker('restart','--time','45',name)
         # Docker can reassign an automatically published host port on restart.
         base='http://'+docker('port',name,'8080/tcp').splitlines()[0]
@@ -106,6 +108,7 @@ db.commit()
         healthy()
         restored=json.loads(one.expect('/api/v1/nvr/exports/jobs/'+job['id']))
         assert restored['state']=='completed' and restored['result']==result
+        assert hashlib.sha256(one.expect(snapshot['downloadUrl'])).hexdigest()==snapshot['sha256']
         print('Product proxy identity, per-camera export scopes, owner-only status/cancel/download, idempotency, real H264/AAC/SHA-256, viewer lease release and restart persistence passed.')
     finally:
         if created:docker('rm','--force','--volumes',name)

@@ -72,6 +72,20 @@ def heartbeat(node_time: int, *, free: int = 800) -> dict:
 
 
 class ClusterTests(unittest.TestCase):
+    def test_batch_recording_scopes_resolve_camera_groups_and_recheck_disabled_users(self):
+        self.store.create_user({'username': 'batch-operator', 'password': 'fixture-password-123456',
+            'roles': ['operator'], 'scopes': [{'kind': 'camera', 'id': 'camera-1'}, {'kind': 'group', 'id': 'group-1'}]})
+        value = self.store.authorize_cameras('batch-operator', 'playback.view', ['camera-1', 'camera-grouped', 'ungranted'])
+        self.assertEqual(value['cameraIds'], ['camera-1', 'camera-grouped'])
+        with self.assertRaises(cluster.ApiError):
+            self.store.authorize_cameras('batch-operator', 'storage.manage', [])
+        self.store.db.execute("UPDATE users SET enabled=0 WHERE username='batch-operator'")
+        self.store.db.commit()
+        with self.assertRaises(cluster.ApiError):
+            self.store.authorize_cameras('batch-operator', 'playback.view', ['camera-1'])
+        with self.assertRaises(cluster.ApiError):
+            self.store.authorize_cameras('batch-operator', 'playback.view', ['camera-1'] * 65)
+
     def setUp(self) -> None:
         self.directory = tempfile.TemporaryDirectory()
         self.root = pathlib.Path(self.directory.name)
