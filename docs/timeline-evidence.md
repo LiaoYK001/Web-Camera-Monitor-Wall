@@ -22,6 +22,14 @@ Snapshot/lock/delete actions have a 35-second client deadline and block selectio
 
 截图、锁定和删除设置 35 秒客户端时限，完成前禁止更换目标；超时显示“结果尚未确认”，不会自动重试修改。回放租约获取/释放单次最多八秒，续租失败不再无限阻碍删除。删除先卸载媒体播放器，关闭浏览器读取连接，再释放租约；仍受保护时解释处理方式并恢复播放器。其他客户端的读取/租约及证据锁仍会阻止删除。
 
+Archive audio shares the account's `audioMonitorEnabled`, `audioOutput` and `localMonitorVolume` with live monitoring. It stays muted until preferences are available and listening/speaker output are enabled. A fresh failed preference read without a valid private cache disables audio editing and exposes retry, while muted video remains usable. The optional bounded `archiveAudioCameraId` field in monitor schema v5 persists a fixed camera independently of the clock master; legacy preferences default to automatic selection of the first playable audio track. A fixed camera missing from the view, with a gap or without an audio track stays silent. This does not change source recordings or export audio.
+
+归档声音与实时监控共享账号的监听开关、输出模式和主音量。偏好可用且监听/扬声器开启后才解除静音；没有有效私有缓存且偏好读取失败时，禁用声音编辑并提供重试，静音视频仍可播放。monitor schema v5 中新增有界的可选 `archiveAudioCameraId` 字段，保存固定声音摄像机，不受时钟主控选择影响；旧偏好默认自动选择第一路可播放音轨。固定摄像机未显示、断档或没有音轨时保持静音，不切换到其他来源；原录像和导出音轨不变。
+
+Browser visibility and Android Activity signals use the shared page-visibility adapter. Entering the background pauses archive players and invalidates pending play intents without saving a different audio preference. Background lease renewal and export-status polling stop; existing leases expire within their 40-second TTL. Foreground resumes protection/status lookup, with playback remaining paused until the user clicks Play. Server-owned export jobs and recording continue independently.
+
+浏览器可见性与 Android Activity 信号统一使用页面可见性适配。进入后台暂停归档播放器并撤销待完成播放，不修改账号声音意图；后台不再续租和轮询导出状态，已有租约按 40 秒 TTL 过期。返回前台恢复保护/状态查询，继续保持暂停，用户点击播放后恢复；服务器导出任务与录像独立继续。
+
 ## Bounded derived media / 有界派生媒体
 
 `GET /thumbnails/{segment-id}?offsetMs=<n>` uses at most four concurrent FFmpeg jobs, scales to 320 pixels wide, and caches at most 1,000 JPEGs for 24 hours. `POST /snapshots` accepts only a catalog segment ID and bounded offset, copies a generated JPEG into the evidence root, returns its SHA-256 and a fixed download URL, and emits an audit event. Neither operation accepts a path or source URL.

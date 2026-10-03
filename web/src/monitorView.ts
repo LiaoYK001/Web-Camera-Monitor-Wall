@@ -117,6 +117,8 @@ export interface MonitorView {
   playbackOptimization: PlaybackOptimization;
   /** Speaker routing: full monitoring output or meter/threshold detection only. */
   audioOutput: 'speaker' | 'meter-only';
+  /** Fixed archive audio selection; null follows the first playable camera. */
+  archiveAudioCameraId: string | null;
   /** F6-05: keep the homepage monitor switch visible without reopening settings. */
   monitorSwitchProminent: boolean;
   /** F6-03 canvas placement. */
@@ -284,6 +286,7 @@ export const defaultMonitorView = (): MonitorView => ({
   audioMixerCollapsed: false,
   playbackOptimization: defaultPlaybackOptimization(),
   audioOutput: 'speaker',
+  archiveAudioCameraId: null,
   monitorSwitchProminent: true,
   canvasMode: 'auto-fit',
   canvasAspect: 16 / 9,
@@ -523,6 +526,8 @@ export function normalizeMonitorView(value: Partial<MonitorView> | null | undefi
     audioMixerCollapsed: value?.audioMixerCollapsed === true,
     playbackOptimization: normalizePlaybackOptimization(value?.playbackOptimization),
     audioOutput: value?.audioOutput === 'meter-only' ? 'meter-only' : 'speaker',
+    archiveAudioCameraId: typeof value?.archiveAudioCameraId === 'string' && /^[A-Za-z0-9._-]{1,64}$/.test(value.archiveAudioCameraId)
+      ? value.archiveAudioCameraId : null,
     monitorSwitchProminent: value?.monitorSwitchProminent !== false,
     canvasMode: (value?.canvasMode && (canvasModes as string[]).includes(value.canvasMode))
       ? value.canvasMode as CanvasMode : 'auto-fit',

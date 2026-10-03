@@ -8,10 +8,13 @@ const segment: NvrSegment = { id: 'a'.repeat(32), cameraId: 'cam', startUtcMs: s
   durationMs: 30000, kind:'continuous', videoCodec:'h264', audioCodec:'aac', sizeBytes:1024, integrity:'ok', locked:false,
   mediaUrl:'/api/v1/nvr/media/'+ 'a'.repeat(32) };
 
-async function protocol(page: Page, options: { catalogFailure?: boolean } = {}) {
+type PreferenceStore = { value: Record<string,unknown>|null; failed: boolean; writes: number };
+async function protocol(page: Page, options: { catalogFailure?: boolean; preferences?: PreferenceStore } = {}) {
   const state = { jobs: [] as NvrExportJob[], submitted: 0, cancelled: 0, lost: false, delay: 0, denied:false,
     segments: [structuredClone(segment)], leases:0, released:0, deleted:0,
-    timelineDelay: 0, timelineFailure: false, catalogFailure: !!options.catalogFailure, queries: 0 };
+    timelineDelay: 0, timelineFailure: false, catalogFailure: !!options.catalogFailure, queries: 0,
+    recordings: {} as Record<string,NvrSegment[]>,
+    preferences: options.preferences ?? {value:null,failed:false,writes:0} as PreferenceStore };
   await page.addInitScript(() => {
     Object.defineProperty(HTMLMediaElement.prototype,'duration',{get:()=>30});
     Object.defineProperty(HTMLMediaElement.prototype,'readyState',{get:()=>2});
@@ -28,6 +31,11 @@ async function protocol(page: Page, options: { catalogFailure?: boolean } = {}) 
     const request=route.request(); const url=new URL(request.url()); const path=url.pathname;
     const reply=(body:unknown,status=200)=>route.fulfill({status,contentType:'application/json',body:JSON.stringify(body)});
     if(path==='/api/v1/auth/session') return reply({authenticated:true,user:'fixture-admin'});
+    if(path==='/api/v2/account/preferences/monitor-view') {
+      if(state.preferences.failed)return reply({error:{code:'service_unavailable',message:'unavailable'}},503);
+      if(request.method()==='PUT'){state.preferences.value=request.postDataJSON().value;state.preferences.writes++;}
+      return reply({value:state.preferences.value});
+    }
     if(path==='/api/v1/nvr/status') return state.catalogFailure ? reply({error:{code:'service_unavailable',message:'录像服务暂不可用'}},503) : reply({status:'ok',freeBytes:1e9,diskPressure:false,
       cameras:['cam','two','three','four','five'].map(id=>({id,policy:'continuous',state:'idle',segments:1,eventActive:false}))});
     if(path==='/api/v1/nvr/timeline') {
@@ -35,7 +43,7 @@ async function protocol(page: Page, options: { catalogFailure?: boolean } = {}) 
       const fail=state.timelineFailure;
       const document={fromUtcMs:dayStart,toUtcMs:dayStart+86400000,storageTimeZone:'UTC',queryDurationMs:2,
         cameras:url.searchParams.getAll('cameraId').map(cameraId=>({cameraId,recordedStream:'main',retentionBoundaryUtcMs:null,
-          segments:cameraId==='cam'?state.segments:[],gaps:[]}))};
+          segments:cameraId==='cam'?state.segments:state.recordings[cameraId]??[],gaps:[]}))};
       if(state.timelineDelay)await new Promise(resolve=>setTimeout(resolve,state.timelineDelay));
       return fail ? reply({error:{code:'service_unavailable',message:'录像服务暂不可用'}},503) : reply(document);
     }
@@ -62,6 +70,7 @@ async function protocol(page: Page, options: { catalogFailure?: boolean } = {}) 
   if (options.catalogFailure) { await expect(page.getByRole('button',{name:'重试摄像机列表'})).toBeVisible(); return state; }
   await expect(page.getByRole('button',{name:'精确导出',exact:true})).toBeEnabled();
   await expect(page.locator('video')).toHaveCount(1);
+  await expect(page.getByRole('slider',{name:'归档监听主音量'})).toBeEnabled();
   return state;
 }
 
@@ -179,11 +188,93 @@ for(const width of [390,1280])test(`timeline ruler, rail and playhead align at $
     const rail=document.querySelector('.track-rail')!.getBoundingClientRect();
     const ruler=document.querySelector('.time-ruler')!.getBoundingClientRect();
     const marker=document.querySelector('.playhead')!.getBoundingClientRect();
-    const input=document.querySelector('input[type=range]') as HTMLInputElement;
+    const input=document.querySelector('input[aria-label="回放时间游标"]') as HTMLInputElement;
     const fraction=(Number(input.value)-Number(input.min))/(Number(input.max)-Number(input.min)+1);
     return {left:Math.abs(ruler.left-rail.left),width:Math.abs(ruler.width-rail.width),marker:Math.abs(marker.left-(rail.left+rail.width*fraction))};
   });
   expect(alignment.left).toBeLessThan(1);expect(alignment.width).toBeLessThan(1);expect(alignment.marker).toBeLessThan(1);
+});
+
+test('archive respects saved mute/volume and a fixed audio camera remains silent across its gap',async({page})=>{
+  const state=await protocol(page);
+  state.preferences.value={audioMonitorEnabled:true,audioOutput:'meter-only',localMonitorVolume:.31,archiveAudioCameraId:'two'};
+  state.recordings.two=[{...segment,cameraId:'two',id:'f'.repeat(32),mediaUrl:'/api/v1/nvr/media/'+ 'f'.repeat(32),startUtcMs:start+10000,endUtcMs:start+30000,durationMs:20000}];
+  await page.reload();
+  await expect(page.getByRole('combobox',{name:'归档声音输出'})).toHaveValue('meter-only');
+  await expect.poll(()=>page.locator('video').evaluateAll(videos=>videos.every(video=>video.muted&&video.volume===.31))).toBe(true);
+  await page.getByRole('combobox',{name:'归档声音输出'}).selectOption('speaker');
+  await expect(page.getByText('声音摄像机当前无可用音轨，保持静音')).toBeVisible();
+  await expect.poll(()=>page.locator('video').evaluateAll(videos=>videos.every(video=>video.muted))).toBe(true);
+  await page.getByRole('slider',{name:'回放时间游标'}).fill(String(start+11000));
+  await expect(page.locator('video')).toHaveCount(2);
+  await expect.poll(()=>page.locator('video').evaluateAll(videos=>videos.map(video=>({id:video.closest('article')!.querySelector('strong')!.textContent,muted:video.muted})))).toEqual([{id:'cam',muted:true},{id:'two',muted:false}]);
+  await page.getByRole('checkbox',{name:'two',exact:true}).uncheck();
+  await expect(page.getByRole('combobox',{name:'归档声音摄像机'})).toHaveValue('two');
+  await expect.poll(()=>page.locator('video').evaluateAll(videos=>videos.every(video=>video.muted))).toBe(true);
+  await expect(page.getByRole('option',{name:'two（当前未显示）'})).toHaveCount(1);
+});
+
+test('archive audio saves survive reload, a new browser and same-account remote changes',async({browser})=>{
+  const preferences:PreferenceStore={value:null,failed:false,writes:0};
+  const firstContext=await browser.newContext();const first=await firstContext.newPage();await protocol(first,{preferences});
+  await expect(first.getByRole('checkbox',{name:'启用声音监听',exact:true})).not.toBeChecked();
+  await expect.poll(()=>first.locator('video').evaluate(video=>(video as HTMLVideoElement).muted)).toBe(true);
+  await first.getByRole('checkbox',{name:'启用声音监听',exact:true}).check();
+  await first.getByRole('slider',{name:'归档监听主音量'}).fill('0.27');
+  await first.getByRole('combobox',{name:'归档声音摄像机'}).selectOption('cam');
+  await expect.poll(()=>preferences.value).toMatchObject({audioMonitorEnabled:true,localMonitorVolume:.27,archiveAudioCameraId:'cam'});
+  await first.reload();await expect(first.getByRole('slider',{name:'归档监听主音量'})).toHaveValue('0.27');
+  const secondContext=await browser.newContext();const second=await secondContext.newPage();await protocol(second,{preferences});
+  await expect(second.getByRole('checkbox',{name:'启用声音监听',exact:true})).toBeChecked();
+  await expect(second.getByRole('combobox',{name:'归档声音摄像机'})).toHaveValue('cam');
+  await second.getByRole('combobox',{name:'归档声音输出'}).selectOption('meter-only');
+  await expect.poll(()=>preferences.value?.audioOutput).toBe('meter-only');
+  await first.evaluate(()=>dispatchEvent(new Event('focus')));
+  await expect(first.getByRole('combobox',{name:'归档声音输出'})).toHaveValue('meter-only');
+  await expect.poll(()=>first.locator('video').evaluate(video=>(video as HTMLVideoElement).muted)).toBe(true);
+  await firstContext.close();await secondContext.close();
+});
+
+test('automatic archive audio skips a silent clock master without adding another audible player',async({page})=>{
+  const state=await protocol(page);state.segments=[{...segment,audioCodec:'none'}];
+  state.recordings.two=[{...segment,cameraId:'two',id:'f'.repeat(32),mediaUrl:'/api/v1/nvr/media/'+ 'f'.repeat(32)}];
+  state.preferences.value={audioMonitorEnabled:true,audioOutput:'speaker',localMonitorVolume:.5};
+  await page.reload();
+  await expect(page.locator('video')).toHaveCount(2);
+  await expect.poll(()=>page.locator('video').evaluateAll(videos=>videos.filter(video=>!video.muted).map(video=>video.closest('article')!.querySelector('strong')!.textContent))).toEqual(['two']);
+  await expect(page.getByText('监听 two · 50%')).toBeVisible();
+});
+
+test('an unread account preference keeps fresh archive audio silent without replacing settings',async({page})=>{
+  const state=await protocol(page);state.preferences.value={audioMonitorEnabled:true,localMonitorVolume:.14};state.preferences.failed=true;
+  await page.reload();
+  await expect(page.getByRole('button',{name:'重试声音偏好'})).toBeVisible();
+  await expect(page.getByText('声音偏好暂不可用，保持静音')).toBeVisible();
+  await expect(page.getByRole('checkbox',{name:'启用声音监听',exact:true})).toBeDisabled();
+  await expect(page.getByRole('button',{name:'播放',exact:true})).toBeEnabled();
+  await expect.poll(()=>page.locator('video').evaluate(video=>(video as HTMLVideoElement).muted)).toBe(true);
+  expect(state.preferences.writes).toBe(0);
+  state.preferences.failed=false;await page.getByRole('button',{name:'重试声音偏好'}).click();
+  await expect(page.getByRole('slider',{name:'归档监听主音量'})).toHaveValue('0.14');
+  await expect(page.getByRole('checkbox',{name:'启用声音监听',exact:true})).toBeEnabled();
+});
+
+test('Android background pauses archive without changing audio intent and suspends lease renewals',async({page})=>{
+  const state=await protocol(page);await page.clock.install();
+  await page.getByRole('checkbox',{name:'启用声音监听',exact:true}).check();
+  await expect.poll(()=>state.preferences.value?.audioMonitorEnabled).toBe(true);
+  await page.getByRole('button',{name:'播放',exact:true}).click();
+  await expect(page.getByRole('button',{name:'暂停',exact:true})).toBeVisible();
+  await expect.poll(()=>state.leases).toBeGreaterThan(0);const before=state.leases;
+  await page.evaluate(()=>{window.webobsAndroidForeground=false;dispatchEvent(new Event('webobs:visibility'));});
+  await page.clock.runFor(45_000);
+  await expect(page.getByRole('button',{name:'播放',exact:true})).toBeVisible();
+  await expect(page.locator('video')).toHaveAttribute('data-played','false');
+  expect(state.leases).toBe(before);expect(state.preferences.value?.audioMonitorEnabled).toBe(true);
+  await page.evaluate(()=>{window.webobsAndroidForeground=true;dispatchEvent(new Event('webobs:visibility'));});
+  await expect.poll(()=>state.leases).toBeGreaterThan(before);
+  await expect(page.getByRole('button',{name:'播放',exact:true})).toBeVisible();
+  await expect(page.getByRole('checkbox',{name:'启用声音监听',exact:true})).toBeChecked();
 });
 
 test('lost submit response is reconciled from history without a second POST',async({page})=>{

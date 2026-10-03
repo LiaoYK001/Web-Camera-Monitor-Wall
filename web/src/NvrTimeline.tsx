@@ -3,6 +3,8 @@ import { useNvrExportJobs } from './useNvrExportJobs';
 import { NvrExportPanel } from './NvrExportPanel';
 import { archiveError, useNvrArchiveQuery } from './useNvrArchiveQuery';
 import { withRequestTimeout } from './requestTimeout';
+import { useMonitorPreferences } from './useMonitorPreferences';
+import { isPageVisible, subscribePageVisibility } from './pageVisibility';
 import {
   createNvrSnapshot,
   createPlaybackLease,
@@ -40,6 +42,7 @@ export default function NvrTimeline({ onBack }: { onBack: () => void }) {
   const videoIntents = useRef(new WeakMap<HTMLVideoElement, number>());
   const [notice, setNotice] = useState('');
   const exports = useNvrExportJobs();
+  const audio = useMonitorPreferences(false, false, true);
   const [duration, setDuration] = useState(10);
   const [busy, setBusy] = useState(false);
   const [deleting, setDeleting] = useState(false);
@@ -69,7 +72,15 @@ export default function NvrTimeline({ onBack }: { onBack: () => void }) {
 
   const active = useMemo(() => timeline?.cameras.map((camera) => ({ camera, segment: playable(camera, cursor) })) ?? [], [timeline, cursor]);
   const master = active.find((entry) => entry.segment);
+  const audioCameraId = audio.view.archiveAudioCameraId ?? active.find(entry =>
+    entry.segment?.audioCodec && entry.segment.audioCodec !== 'none')?.camera.cameraId;
+  const audioSegment = active.find(entry => entry.camera.cameraId === audioCameraId)?.segment;
+  const audioRequested = audio.loaded && audio.view.audioMonitorEnabled && audio.view.audioOutput === 'speaker';
+  const audioAvailable = !!audioSegment && !!audioSegment.audioCodec && audioSegment.audioCodec !== 'none';
   const activeSegmentKey = active.flatMap((entry) => entry.segment ? [entry.segment.id] : []).join(',');
+  useEffect(() => {
+    Object.values(videos.current).forEach(video => { if (video) video.volume = audio.loaded ? audio.view.localMonitorVolume : 0; });
+  }, [audio.loaded, audio.view.localMonitorVolume, activeSegmentKey]);
 
   useEffect(() => {
     let closed = false;
@@ -79,12 +90,12 @@ export default function NvrTimeline({ onBack }: { onBack: () => void }) {
       await Promise.all(ids.map(id => withRequestTimeout(8000, signal => releasePlaybackLease(id, signal)).catch(() => undefined)));
     };
     const renew = async () => {
-      if (closed || inFlight || deleting || !activeSegmentKey) return;
+      if (closed || inFlight || deleting || !activeSegmentKey || !isPageVisible()) return;
       inFlight = (async () => {
         const acquired = await Promise.all(activeSegmentKey.split(',').map(id =>
           withRequestTimeout(8000, signal => createPlaybackLease(id, 40, signal)).catch(() => null)));
         const next = acquired.flatMap(lease => lease ? [lease.id] : []);
-        if (closed) { await release(next); return; }
+        if (closed || !isPageVisible()) { await release(next); return; }
         const previous = leaseIds; leaseIds = next;
         await release(previous);
         if (!closed && acquired.some(lease => !lease) && mounted.current) setNotice('部分录像保护续期失败，片段可能已被清理。请刷新时间线。');
@@ -99,7 +110,8 @@ export default function NvrTimeline({ onBack }: { onBack: () => void }) {
     releaseLeases.current = stop;
     void renew();
     const timer = window.setInterval(() => { void renew(); }, 20_000);
-    return () => { window.clearInterval(timer); void stop(); };
+    const visible = subscribePageVisibility(() => { if (isPageVisible()) void renew(); });
+    return () => { window.clearInterval(timer); visible(); void stop(); };
   }, [activeSegmentKey, deleting]);
 
   const seekAll = useCallback((utc: number) => {
@@ -142,6 +154,7 @@ export default function NvrTimeline({ onBack }: { onBack: () => void }) {
 
   const pauseAll = useCallback(() => { ++playIntent.current; playLock.current = false; setStarting(false); setPlaying(false); Object.values(videos.current).forEach(video => video?.pause()); }, []);
   useEffect(() => { pauseAll(); }, [archive.selectionKey, pauseAll]);
+  useEffect(() => subscribePageVisibility(() => { if (!isPageVisible()) pauseAll(); }), [pauseAll]);
   const playVideo = async (video: HTMLVideoElement, intent: number) => {
     videoIntents.current.set(video, intent);
     await video.play();
@@ -228,6 +241,23 @@ export default function NvrTimeline({ onBack }: { onBack: () => void }) {
       {notice && <div className="alert notice-alert" role="status">{notice}</div>}
 
       <main className="nvr-content">
+        <fieldset className="nvr-audio-controls" disabled={!audio.loaded}>
+          <legend>归档声音</legend>
+          <label><input type="checkbox" checked={audio.view.audioMonitorEnabled} onChange={event => audio.setView(view => ({ ...view, audioMonitorEnabled: event.target.checked }))} />启用声音监听</label>
+          <label>声音输出<select aria-label="归档声音输出" value={audio.view.audioOutput} onChange={event => audio.setView(view => ({ ...view, audioOutput: event.target.value as 'speaker' | 'meter-only' }))}>
+            <option value="speaker">扬声器</option><option value="meter-only">静音（实时监控保留电平检测）</option>
+          </select></label>
+          <label>主音量<input aria-label="归档监听主音量" type="range" min="0" max="1" step="0.01" value={audio.view.localMonitorVolume} onChange={event => audio.setView(view => ({ ...view, localMonitorVolume: Number(event.target.value) }))} /></label>
+          <label>声音摄像机<select aria-label="归档声音摄像机" value={audio.view.archiveAudioCameraId ?? ''} onChange={event => audio.setView(view => ({ ...view, archiveAudioCameraId: event.target.value || null }))}>
+            <option value="">自动（第一路有音轨的录像）</option>
+            {audio.view.archiveAudioCameraId && !cameraIds.includes(audio.view.archiveAudioCameraId) && <option value={audio.view.archiveAudioCameraId}>{audio.view.archiveAudioCameraId}（当前未显示）</option>}
+            {cameraIds.map(id => <option key={id} value={id}>{id}</option>)}
+          </select></label>
+          <span role="status">{!audio.loaded ? audio.error ? '声音偏好暂不可用，保持静音' : '正在读取账号声音偏好…' : !audio.view.audioMonitorEnabled ? '声音监听已关闭' : audio.view.audioOutput === 'meter-only' ? '归档扬声器输出已静音'
+            : !audioAvailable ? '声音摄像机当前无可用音轨，保持静音' : `监听 ${audioCameraId} · ${Math.round(audio.view.localMonitorVolume * 100)}%`}</span>
+          <p>监听开关、声音输出和主音量与实时监控共享账号设置；选择的声音摄像机也会保存。静音和音量只影响客户端监听，原录像与导出音轨保留。</p>
+        </fieldset>
+        {audio.error && <div className="alert notice-alert" role="alert">{audio.error}<button type="button" onClick={audio.retry}>重试声音偏好</button></div>}
         {snapshotLink && <div className="export-result"><a href={snapshotLink.downloadUrl} download>下载最近截图</a><span>SHA-256 {snapshotLink.sha256}</span></div>}
         <section className="playback-grid" data-count={active.length} aria-busy={loading || archive.catalogLoading}>
           {active.map(({ camera, segment }) => <article className="archive-player" key={camera.cameraId}>
@@ -236,12 +266,13 @@ export default function NvrTimeline({ onBack }: { onBack: () => void }) {
               key={segment.id}
               ref={(node) => { videos.current[camera.cameraId] = node; }}
               src={segment.mediaUrl}
-              muted={camera.cameraId !== master?.camera.cameraId}
+              muted={!audioRequested || !audioAvailable || camera.cameraId !== audioCameraId}
               playsInline
               preload="metadata"
               onLoadedMetadata={(event) => {
                 event.currentTarget.currentTime = clamp((cursor - segment.startUtcMs) / 1000, 0, Math.max(0, event.currentTarget.duration - 0.02));
                 event.currentTarget.playbackRate = speed;
+                event.currentTarget.volume = audio.loaded ? audio.view.localMonitorVolume : 0;
                 const intent = playIntent.current;
                 if (playing) void playVideo(event.currentTarget, intent).catch(() => {
                   if (mounted.current && playIntent.current === intent) { pauseAll(); setNotice('新片段播放失败，请重新点击播放或检查媒体格式。'); }

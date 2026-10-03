@@ -4,7 +4,7 @@ import { flushMonitorView, loadMonitorView, saveMonitorView } from './localRunti
 import { defaultMonitorView, normalizeMonitorView, type MonitorView } from './monitorView';
 
 /** Account preferences outlive the current scene and must not be trimmed to its sources. */
-export function useMonitorPreferences(compact: boolean, skipLoad = false) {
+export function useMonitorPreferences(compact: boolean, skipLoad = false, requireAccount = false) {
   const [view, applyView] = useState<MonitorView>(defaultMonitorView);
   const [loaded, setLoaded] = useState(skipLoad);
   const [error, setError] = useState('');
@@ -28,14 +28,14 @@ export function useMonitorPreferences(compact: boolean, skipLoad = false) {
     let active = true; mounted.current = true;
     if (skipLoad) { setLoaded(true); return () => { active = false; mounted.current = false; }; }
     setLoaded(false);
-    void loadMonitorView().then((stored) => {
+    void loadMonitorView(false, requireAccount).then((stored) => {
       if (!active) return;
       const next = normalizeMonitorView(stored, 16);
       latest.current = next; lastQueued.current = lastSaved.current = JSON.stringify(next);
       applyView(next); setLoaded(true); setError('');
     }).catch(() => { if (active) setError('监控偏好读取失败，请重试。'); });
     return () => { active = false; mounted.current = false; };
-  }, [compact, skipLoad, retry]);
+  }, [compact, skipLoad, retry, requireAccount]);
   const persist = useCallback(() => {
     if (clearing.current || !writable.current) return;
     const next = normalizeMonitorView(latest.current, 16);

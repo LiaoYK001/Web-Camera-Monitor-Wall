@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { cancelNvrExportJob, ControlApiError, fetchAuthSession, fetchNvrExportJobs, submitNvrExportJob } from './api';
 import { useDesktopWork } from './desktopRuntime';
 import { withRequestTimeout } from './requestTimeout';
+import { isPageVisible, subscribePageVisibility } from './pageVisibility';
 import type { NvrExportJob, NvrExportRequest } from './types';
 
 type Submission = NvrExportRequest & { requestId: string };
@@ -87,10 +88,9 @@ export function useNvrExportJobs() {
       } catch { /* Corrupt private tab state cannot submit an export. */ }
       setReady(true); void refresh();
     }).catch(cause => { if (!owner.signal.aborted) setError(exportError(cause)); });
-    const timer = window.setInterval(() => { if (!document.hidden && Date.now() >= nextPoll.current) void refresh(); }, 5000);
-    const visible = () => { if (!document.hidden) void refresh(); };
-    document.addEventListener('visibilitychange', visible);
-    return () => { owner.abort(); window.clearInterval(timer); document.removeEventListener('visibilitychange', visible); };
+    const timer = window.setInterval(() => { if (isPageVisible() && Date.now() >= nextPoll.current) void refresh(); }, 5000);
+    const visible = subscribePageVisibility(() => { if (isPageVisible()) void refresh(); });
+    return () => { owner.abort(); window.clearInterval(timer); visible(); };
   }, [refresh, savePending]);
 
   const action = useCallback(async (operation: (signal: AbortSignal) => Promise<NvrExportJob>, submitting = false) => {
