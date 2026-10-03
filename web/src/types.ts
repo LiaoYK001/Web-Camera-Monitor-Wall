@@ -213,8 +213,19 @@ export interface NvrExport {
   mode: 'fast' | 'exact';
   manifestSha256: string;
   manifestUrl: string;
+  requestedRange: { fromUtcMs: number; toUtcMs: number };
   effectiveRange: { fromUtcMs: number; toUtcMs: number };
-  files: Array<{ cameraId: string; name: string; sha256: string; downloadUrl: string }>;
+  files: Array<{ cameraId: string; name: string; sha256: string; downloadUrl: string; durationMs?: number;
+    coverage?: { intervals: Array<{ fromUtcMs: number; toUtcMs: number }>; gaps: Array<{ fromUtcMs: number; toUtcMs: number }>; gapCount?: number; overlap: boolean; detailsInManifest?: boolean } }>;
+}
+
+export interface NvrExportRequest {
+  cameraIds: string[]; fromUtcMs: number; toUtcMs: number; mode: 'fast' | 'exact'; lock: boolean;
+}
+export interface NvrExportJob {
+  id: string; requestId: string; state: 'queued' | 'running' | 'cancelling' | 'completed' | 'failed' | 'cancelled' | 'interrupted';
+  createdUtcMs: number; updatedUtcMs: number; request: NvrExportRequest;
+  result: NvrExport | null; error: { code: string; message: string } | null;
 }
 
 export type CameraAdapter = 'onvif' | 'rtsp' | 'mjpeg' | 'snapshot' | 'hls' | 'http-flv' | 'whep' | 'srt' | 'rtp' | 'v4l2';

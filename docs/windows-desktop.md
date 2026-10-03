@@ -128,3 +128,7 @@ Windows 10、11 各自记录实际安装、媒体、LAN 与两版更新结果。
 完整构建还运行 `pnpm --dir desktop test:install`，实际执行当前版本的 NSIS 安装与卸载：使用包含中文及空格的独立安装目录、私密测试账号和独立录像目录，检查运行文件摘要、清空 PATH 后启动、认证 go2rtc、Job 清理、默认卸载保留数据，以及注册项和快捷方式清理。已有 WebOBS 注册项或快捷方式时拒绝运行，避免覆盖用户安装。通过后将系统版本、已测运行清单提交和安装包摘要写入 `desktop/out/<版本>/windows-install-smoke.json`；该检查不会更新正式验收记录，也不代替干净系统和两个签名版本的升级测试。本机 Windows 11 已通过该安装与卸载流程。
 
 `pnpm --dir desktop test:updates` 使用真实 electron-updater 和本机小型协议夹具验证检测、下载、损坏摘要拒绝、重新校验和断网状态；不安装夹具。两版实际未签名 NSIS 包可通过 `pwsh desktop/tests/installed-update-smoke.ps1 -PreviousVersion <旧稳定版本> -Version <新稳定版本>` 进行隔离安装、真实完整包下载、确认调用、正常停服/快照、升级启动与账号数据保留检查。该检查使用本机更新源及静默测试安装器，不能冒充 GitHub 下载、交互向导或全平台验收；已有安装或快捷方式时拒绝运行。
+
+v4 adds the private `services/nvr/evidence.py` runtime contract. Export jobs and their owner remain in the recording catalog, so data snapshots preserve job history. Queued and active exports block update installation even after the archive page closes. `test:runtime` now uses bundled Python/FFmpeg to create synthetic H.264/AAC evidence, submit through the authenticated core and verify hashes and result restoration after restart. A newly compiled core is required for principal injection; host Python tests or an earlier EXE do not establish this Windows gate.
+
+v4 新增私有 `services/nvr/evidence.py` 运行时契约。导出任务与账号归属保存在录像数据库中，数据快照包含任务历史；离开归档页后，排队和活动导出仍阻止更新安装。`test:runtime` 新增使用捆绑 Python/FFmpeg 生成合成 H.264/AAC 证据，通过认证核心提交，并检查摘要与重启后的结果恢复。身份注入需要重新编译核心，主机 Python 测试或旧 EXE 不代替这项 Windows 门禁。

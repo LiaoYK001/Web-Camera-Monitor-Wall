@@ -86,6 +86,7 @@ COPY archive/s3_archive.py /opt/webobs/bin/webobs-s3-archive
 COPY backup/encrypted_backup.py /opt/webobs/bin/webobs-encrypted-backup
 COPY backup/preupgrade_guard.py /opt/webobs/bin/webobs-preupgrade-guard
 COPY nvr/nvr_service.py /opt/webobs/bin/webobs-nvr
+COPY nvr/evidence.py /opt/webobs/bin/evidence.py
 COPY tests/test_v2_client_control.py /tmp/test_v2_client_control.py
 COPY tests/test_cluster_service.py /tmp/test_cluster_service.py
 COPY tests/test_node_agent.py /tmp/test_node_agent.py
@@ -520,6 +521,7 @@ COPY --from=caddy-runtime /usr/bin/caddy /opt/webobs/bin/caddy
 COPY docker/entrypoint.sh /opt/webobs/entrypoint.sh
 COPY docker/backup.sh /opt/webobs/bin/webobs-backup
 COPY nvr/nvr_service.py /opt/webobs/bin/webobs-nvrd
+COPY nvr/evidence.py /opt/webobs/bin/evidence.py
 COPY camera/camera_registry.py /opt/webobs/bin/webobs-camera-registry
 COPY events/event_service.py /opt/webobs/bin/webobs-events
 COPY v2/client_control_service.py /opt/webobs/bin/webobs-client-control

@@ -69,6 +69,7 @@ export class Supervisor extends EventEmitter {
     this.env = { ...cleanEnvironment(process.env),
       PATH: [path.join(this.runtime,'bin'),path.join(this.runtime,'obs','bin','64bit'),path.join(this.runtime,'python'),path.join(process.env.SystemRoot || 'C:\\Windows','System32')].join(path.delimiter),
       PYTHONUTF8: '1', PYTHONIOENCODING: 'utf-8', WEBOBS_OWNER_STDIN: 'true',
+      WEBOBS_BUILD_VERSION: this.version,
       WEBOBS_HTTP_PORT: String(this.ports.control), WEBOBS_LISTEN_ADDRESS: '127.0.0.1', WEBOBS_ALLOW_INSECURE_REMOTE: 'false',
       WEBOBS_CONTROL_ALLOWED_ORIGINS: localOrigins.join(','), WEBOBS_PWA_MEDIA_ALLOWED_ORIGINS: localOrigins.filter(origin=>origin.startsWith('https://')).join(','),
       WEBOBS_WEB_ROOT: path.join(this.runtime,'web'), WEBOBS_OBS_PREFIX: path.join(this.runtime,'obs'),
@@ -193,7 +194,7 @@ export class Supervisor extends EventEmitter {
       fetch(`http://127.0.0.1:${this.ports.nvr}/status`,{signal:AbortSignal.timeout(3000)}).then(r=>{if(!r.ok)throw new Error('NVR status unavailable');return r.json();}),
       fetch(`http://127.0.0.1:${this.ports.gatewayApi}/v3/paths/list`,{signal:AbortSignal.timeout(3000)}).then(r=>{if(!r.ok)throw new Error('Media status unavailable');return r.json();}),
     ]);
-    return { exporting:nvr.activeExports > 0, recording:nvr.cameras.some(camera=>!['idle','off','stopped'].includes(camera.state)), streaming:paths.items.some(item=>item.ready),
+    return { exporting:nvr.activeExports > 0 || nvr.queuedExports > 0, recording:nvr.cameras.some(camera=>!['idle','off','stopped'].includes(camera.state)), streaming:paths.items.some(item=>item.ready),
       details:'当前录像或媒体发布仍在运行。继续将正常停止这些任务，创建数据快照后安装更新。' };
   }
 }

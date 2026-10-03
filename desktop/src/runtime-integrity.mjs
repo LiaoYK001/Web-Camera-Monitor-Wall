@@ -11,7 +11,7 @@ export const requiredFiles = ['bin/webobsd.exe', 'bin/webobs-job.exe', 'bin/webo
   'obs/obs-plugins/64bit/image-source.dll', 'obs/obs-plugins/64bit/obs-text.dll',
   'obs/obs-plugins/64bit/obs-browser.dll', 'obs/obs-plugins/64bit/obs-browser-page.exe',
   'bin/msvcp140.dll', 'bin/vcruntime140.dll', 'web/index.html', 'go2rtc-www/index.html',
-  'services/runtime_support.py', 'services/desktop-tools/tool_dispatch.py', 'licenses/THIRD-PARTY-NOTICES.md'];
+  'services/runtime_support.py', 'services/nvr/evidence.py', 'services/desktop-tools/tool_dispatch.py', 'licenses/THIRD-PARTY-NOTICES.md'];
 export function containedPath(root, name) {
   if (typeof name !== 'string' || !name || name.includes('\\') || name.includes(':') || path.posix.isAbsolute(name) || name.split('/').some(p => !p || p === '.' || p === '..'))
     throw new Error('Unsafe runtime path');

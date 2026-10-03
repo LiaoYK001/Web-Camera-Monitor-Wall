@@ -238,6 +238,15 @@ export const createPlaybackLease = (segmentId: string, ttlSeconds = 30) =>
 export const releasePlaybackLease = (leaseId: string) =>
   nvrRequest<{ id: string; released: boolean }>(`/playback-leases/${leaseId}`, { method: 'DELETE' });
 
+export const fetchNvrExportJobs = (signal?: AbortSignal) =>
+  nvrRequest<{ jobs: import('./types').NvrExportJob[] }>('/exports/jobs', { signal });
+export const submitNvrExportJob = (request: import('./types').NvrExportRequest & { requestId: string }, signal?: AbortSignal) =>
+  nvrRequest<import('./types').NvrExportJob>('/exports/jobs', { method: 'POST', signal,
+    headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(request) });
+export const cancelNvrExportJob = (id: string, signal?: AbortSignal) =>
+  nvrRequest<import('./types').NvrExportJob>(`/exports/jobs/${id}/cancel`, { method: 'POST', signal,
+    headers: { 'Content-Type': 'application/json' }, body: '{}' });
+
 async function cameraRequest<T>(path: string, init?: RequestInit): Promise<T> {
   const response = await fetch(`/api/v1${path}`, { cache: 'no-store', ...init });
   if (!response.ok) throw await parseError(response);
