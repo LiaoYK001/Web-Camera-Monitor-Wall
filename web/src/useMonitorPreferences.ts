@@ -5,9 +5,10 @@ import { defaultMonitorView, normalizeMonitorView, type MonitorView } from './mo
 import { mergeMonitorEdits } from './monitorPreferenceMerge';
 
 /** Account preferences outlive the current scene and must not be trimmed to its sources. */
-export function useMonitorPreferences(compact: boolean, skipLoad = false, requireAccount = false) {
+export function useMonitorPreferences(compact: boolean, skipLoad = false, requireAccount = true) {
   const [view, applyView] = useState<MonitorView>(defaultMonitorView);
   const [loaded, setLoaded] = useState(skipLoad);
+  const [restored, setRestored] = useState(skipLoad);
   const [error, setError] = useState('');
   const [retry, setRetry] = useState(0);
   const latest = useRef(view);
@@ -16,11 +17,14 @@ export function useMonitorPreferences(compact: boolean, skipLoad = false, requir
   const lastSaved = useRef('');
   const saveGeneration = useRef(0);
   const writable = useRef(false);
+  const editable = useRef(loaded);
+  editable.current = loaded;
   writable.current = loaded && !compact && !skipLoad;
   const timer = useRef<number | null>(null);
   const mounted = useRef(false);
   const clearing = useRef(false);
   const setView = useCallback((update: SetStateAction<MonitorView>, seedBaseline?: (base: MonitorView) => MonitorView) => {
+    if (!editable.current || clearing.current) return;
     // A source not yet stored inherits Scene/default controls. Preserve those
     // effective pre-edit values so creating its first preference edits only
     // the selected control, rather than resetting another window's controls.
@@ -41,7 +45,8 @@ export function useMonitorPreferences(compact: boolean, skipLoad = false, requir
       latest.current = next;
       lastQueued.current = stored.pending ? '' : JSON.stringify(next);
       lastSaved.current = stored.pending ? baseline.current ? JSON.stringify(baseline.current) : '' : JSON.stringify(next);
-      applyView(next); setLoaded(true); setError('');
+      applyView(next); setLoaded(true); setRestored(true);
+      setError(stored.pending ? '监控偏好保存失败，请再次调整或稍后重试。' : '');
     }).catch(() => { if (active) setError('监控偏好读取失败，请重试。'); });
     return () => { active = false; mounted.current = false; };
   }, [compact, skipLoad, retry, requireAccount]);
@@ -121,5 +126,12 @@ export function useMonitorPreferences(compact: boolean, skipLoad = false, requir
     const unlistenVisible = subscribePageVisibility(visible);
     return () => { active = false; window.clearInterval(interval); window.removeEventListener('focus', visible); window.removeEventListener('online', visible); unlistenVisible(); };
   }, [loaded, skipLoad, persist]);
-  return { view, setView, loaded, error, retry: () => setRetry((value) => value + 1) };
+  const retryPreferences = useCallback(() => {
+    // Capture any input newer than the last failed request before reloading the
+    // pending private cache. loadMonitorView waits for this serialized write.
+    persist();
+    setError('');
+    setRetry((value) => value + 1);
+  }, [persist]);
+  return { view, setView, loaded, restored, error, retry: retryPreferences };
 }

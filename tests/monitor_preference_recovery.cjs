@@ -1,0 +1,94 @@
+const { createRequire } = require('node:module');
+const path = require('node:path');
+const { execFileSync } = require('node:child_process');
+const crypto = require('node:crypto');
+const assert = require('node:assert/strict');
+const net = require('node:net');
+const root = path.resolve(__dirname, '..');
+const { chromium, expect } = createRequire(path.join(root, 'web/package.json'))('@playwright/test');
+// Build web/dist first and supply a complete product image explicitly.
+// node tests/monitor_preference_recovery.cjs --image webobs:test [--docker <executable>]
+const option = name => { const index = process.argv.indexOf(name); return index < 0 ? undefined : process.argv[index + 1]; };
+const image = option('--image');
+if (!image || image.startsWith('--')) throw new Error('Supply --image <complete-product-image>; this test uses an isolated disposable profile.');
+const docker = option('--docker') || 'docker';
+const name = 'webobs-preference-read-' + crypto.randomBytes(5).toString('hex');
+const run = (...args) => execFileSync(docker, args, { encoding: 'utf8', windowsHide: true, timeout: 60000 }).trim();
+let created = false, browser;
+(async () => {
+  try {
+    const socket = net.createServer();
+    const port = await new Promise(resolve => socket.listen(0, '127.0.0.1', () => resolve(socket.address().port)));
+    await new Promise(resolve => socket.close(resolve));
+    run('run', '--detach', '--name', name, '-p', '127.0.0.1::8080', '-p', `127.0.0.1:${port}:${port}/udp`,
+      '--mount', `type=bind,source=${path.join(root, 'web/dist')},target=/opt/webobs/ui,readonly`,
+      '-e', 'WEBOBS_LISTEN_ADDRESS=0.0.0.0', '-e', 'WEBOBS_ALLOW_INSECURE_REMOTE=true',
+      '-e', 'WEBOBS_GO2RTC_ENABLED=true', '-e', 'WEBOBS_WEBRTC_ENABLED=true', '-e', 'WEBOBS_COMPOSITE_ENABLED=false',
+      '-e', `MTX_WEBRTCLOCALUDPADDRESS=:${port}`, '-e', 'WEBOBS_NVR_ENABLED=true', '-e', 'WEBOBS_CLUSTER_ENABLED=true',
+      '-e', 'WEBOBS_COMPAT_BASIC_AUTH=false', '-e', 'WEBOBS_SESSION_COOKIE_SECURE=false', '-e', 'WEBOBS_REGISTRATION_ENABLED=true',
+      image);
+    created = true;
+    const base = 'http://' + run('port', name, '8080/tcp').split('\n')[0];
+    for (let i = 0; i < 120; i++) {
+      try { if ((await fetch(base + '/api/v1/health', { signal: AbortSignal.timeout(1000) })).ok) break; } catch {}
+      await new Promise(resolve => setTimeout(resolve, 250));
+    }
+    browser = await chromium.launch();
+    const context = await browser.newContext({ serviceWorkers: 'block' });
+    const headers = { Origin: base };
+    const account = { username: 'preference-recovery', password: crypto.randomBytes(24).toString('hex') };
+    assert.equal((await context.request.post(base + '/api/v1/auth/setup', { headers, data: account })).status(), 201);
+    assert.equal((await context.request.post(base + '/api/v1/auth/login', { headers, data: account })).status(), 200);
+    assert.equal((await context.request.post(base + '/api/v1/go2rtc/api/config', { headers: { ...headers, 'Content-Type': 'text/plain' },
+      data: 'streams:\n  synthetic: "ffmpeg:virtual?video=testsrc2&size=320x180#video=h264"\n' })).status(), 200);
+    await context.request.post(base + '/api/v1/go2rtc/api/restart', { headers });
+    await expect.poll(async () => (await context.request.get(base + '/api/v1/go2rtc/api/streams')).status()).toBe(200);
+    const runtime = await (await context.request.get(base + '/api/v1/runtime/info')).json();
+    const address = runtime.go2rtcRtspBase + 'synthetic';
+    const detection = await context.request.post(base + '/api/v1/camera-detect', { headers, data: { address } });
+    assert.equal(detection.status(), 200);
+    const detected = await detection.json();
+    const response = await context.request.post(base + '/api/v1/cameras', { headers, data: { name: 'Synthetic recovery camera', address,
+      adapter: 'rtsp', hardwareDecode: 'auto', credentialsRef: '', capabilities: { bridge: 'go2rtc' },
+      profiles: detected.profiles.map(profile => ({ ...profile, transportMode: 'rtsp-tcp' })) } });
+    assert.equal(response.status(), 201);
+    const camera = await response.json();
+    const studio = await (await context.request.get(base + '/api/v1/studio')).json();
+    const scene = studio.scenes[0];
+    scene.sources = [{ id: 'recovery-camera', name: 'Synthetic recovery camera', kind: 'camera', cameraId: camera.id,
+      profileId: camera.profiles[0].id, hardwareDecode: 'auto', muted: true, volume: 1, syncOffsetMs: 0, monitoring: 'off', audioTrack: 1, filters: [] }];
+    scene.items = [{ id: 'recovery-item', sourceId: 'recovery-camera', x: 0, y: 0, width: scene.canvas.width, height: scene.canvas.height,
+      scaleMode: 'contain', crop: { top: 0, right: 0, bottom: 0, left: 0 }, zIndex: 0, visible: true, locked: false,
+      groupId: '', rotation: 0, opacity: 1, blendMode: 'normal' }];
+    studio.previewSceneId = studio.programSceneId = scene.id;
+    assert.equal((await context.request.put(base + '/api/v1/studio', { headers: { ...headers, 'If-Match': `"${studio.revision}"` }, data: studio })).status(), 200);
+    const preferences = { audioMonitorEnabled: true, audioOutput: 'meter-only', localMonitorVolume: .18, mode: 'manual' };
+    assert.equal((await context.request.put(base + '/api/v2/account/preferences/monitor-view', { headers, data: { value: preferences } })).status(), 200);
+    run('exec', name, 'python3', '-c', "import sqlite3; db=sqlite3.connect('/config/webobs/cluster.sqlite3'); db.execute(\"UPDATE account_preferences SET body_json='{' WHERE kind='monitor-view'\"); db.commit()");
+    assert.equal((await context.request.get(base + '/api/v2/account/preferences/monitor-view')).status(), 500);
+    const page = await context.newPage();
+    let writes = 0;
+    page.on('request', request => { if (request.method() === 'PUT' && request.url().endsWith('/account/preferences/monitor-view')) writes++; });
+    await page.goto(base + '/#monitor');
+    const retry = page.getByRole('button', { name: '重试账号偏好', exact: true });
+    await expect(retry).toBeVisible();
+    await expect(page.getByRole('slider', { name: '本地监听主音量' })).toBeDisabled();
+    await page.waitForFunction(() => {
+      const video = document.querySelector('.direct-preview video');
+      return video && video.readyState >= 2 && video.getVideoPlaybackQuality().totalVideoFrames >= 10;
+    }, null, { timeout: 60000 });
+    const before = await page.locator('.direct-preview video').evaluate(video => ({ frames: video.getVideoPlaybackQuality().totalVideoFrames, muted: video.muted }));
+    assert.equal(before.muted, true); assert.equal(writes, 0);
+    run('exec', name, 'python3', '-c', "import sqlite3,sys; db=sqlite3.connect('/config/webobs/cluster.sqlite3'); db.execute(\"UPDATE account_preferences SET body_json=? WHERE kind='monitor-view'\",(sys.argv[1],)); db.commit()", JSON.stringify(preferences));
+    await retry.click();
+    await expect(page.getByRole('slider', { name: '本地监听主音量' })).toHaveValue('0.18');
+    await expect(page.getByRole('slider', { name: '本地监听主音量' })).toBeEnabled();
+    await expect(page.locator('.hero-audio-control').getByRole('combobox', { name: '声音输出模式' })).toHaveValue('meter-only');
+    await expect.poll(() => page.locator('.direct-preview video').evaluate(video => video.getVideoPlaybackQuality().totalVideoFrames)).toBeGreaterThan(before.frames);
+    assert.equal(writes, 0);
+    console.log('PASS production WebUI + complete isolated Linux product: real go2rtc RTSP import and MediaMTX H264 Direct decoding continue through an actual corrupt preference-row HTTP 500; audio stays muted, no default PUT, explicit retry restores account volume/output while decoded frames advance. No API/media mocks; service workers blocked, OBS disabled. Synthetic source, not physical camera or PWA offline qualification.');
+  } finally {
+    await browser?.close();
+    if (created) run('rm', '--force', '--volumes', name);
+  }
+})().catch(error => { console.error(error.stack); process.exitCode = 1; });

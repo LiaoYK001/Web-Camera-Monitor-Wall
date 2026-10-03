@@ -6,6 +6,7 @@ import AboutSettings from './AboutSettings';
 import DeveloperDiagnostics from './DeveloperDiagnostics';
 import { useDesktopWork } from './desktopRuntime';
 import { useMonitorPreferences } from './useMonitorPreferences';
+import MonitorPreferenceStatus from './MonitorPreferenceStatus';
 import type { RuntimeSettings } from './types';
 import type { LocalConfigProfile } from './localRuntime';
 import type { StudioDocument } from './types';
@@ -14,7 +15,7 @@ export default function SettingsWorkspace({ studio, onProfileSelected }: {
   studio?: StudioDocument | null;
   onProfileSelected?: (profile: LocalConfigProfile) => void;
 }) {
-  const { view, setView, loaded: preferencesLoaded, error: preferenceError } = useMonitorPreferences(false);
+  const { view, setView, loaded: preferencesLoaded, error: preferenceError, retry } = useMonitorPreferences(false);
   const [settings, setSettings] = useState<RuntimeSettings | null>(null);
   const [draft, setDraft] = useState<RuntimeSettings['values'] | null>(null);
   const [error, setError] = useState('');
@@ -85,7 +86,7 @@ export default function SettingsWorkspace({ studio, onProfileSelected }: {
     {window.webobsDesktop && <div id="settings-desktop" className="settings-section-target" tabIndex={-1}><DesktopSettings /></div>}
     <section id="settings-playback" tabIndex={-1} className="playback-optimization-settings settings-section-target" aria-label="自动播放优化"><header className="settings-section-heading"><h2>弱网与慢速流自动优化</h2><span className="save-mode-badge">按账号立即保存</span></header>
       <p>默认开启，按当前账号自动保存。适应低帧率来源，减少误判重连；持续丢包或抖动时优先使用设备已有子码流，网络稳定后恢复。不会为此修改设备配置或强制转码。</p>
-      {preferenceError && <p role="alert">{preferenceError}</p>}
+      <MonitorPreferenceStatus loaded={preferencesLoaded} error={preferenceError} retry={retry} />
       <fieldset disabled={!preferencesLoaded}>
         <label><input type="checkbox" checked={view.playbackOptimization.enabled} onChange={(event) => setView((value) => ({ ...value, playbackOptimization: { ...value.playbackOptimization, enabled: event.target.checked } }))} />自动优化视频播放（默认开启）</label>
         {([['slowStreamTolerance', '自动检测慢速流，调整卡顿等待时间'], ['adaptiveProfiles', '弱网时自动选择已有低带宽 Profile'], ['catchUp', '自动调整缓冲并追赶实时画面']] as const).map(([key, label]) => <label key={key}>

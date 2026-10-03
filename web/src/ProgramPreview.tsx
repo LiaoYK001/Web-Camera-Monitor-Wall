@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useVisiblePolling } from './useVisiblePolling';
 import { useMonitorPreferences } from './useMonitorPreferences';
+import MonitorPreferenceStatus from './MonitorPreferenceStatus';
 import { openProjectorWindow } from './projector';
 import { connectProgram, type PlaybackStage, type ProgramConnection, type ProgramConnectionState, type ProgramStatus } from './whep';
 
@@ -31,7 +32,7 @@ export default function ProgramPreview({ aspectRatio, silent = false }: { aspect
   const [status, setStatus] = useState<ProgramStatus | null>(null);
   const [audioEnabled, setAudioEnabled] = useState(false);
   const [audioBlocked, setAudioBlocked] = useState(false);
-  const { view, setView, loaded, error: preferenceError } = useMonitorPreferences(silent);
+  const { view, setView, loaded, error: preferenceError, retry } = useMonitorPreferences(silent);
 
   useEffect(() => {
     if (!videoRef.current) return undefined;
@@ -49,9 +50,9 @@ export default function ProgramPreview({ aspectRatio, silent = false }: { aspect
 
   useEffect(() => {
     const video = videoRef.current;
-    if (!video || !loaded) return;
+    if (!video) return;
     video.volume = view.localMonitorVolume;
-    if (silent || !view.audioMonitorEnabled || view.audioOutput !== 'speaker') {
+    if (!loaded || silent || !view.audioMonitorEnabled || view.audioOutput !== 'speaker') {
       video.muted = true; setAudioEnabled(false); setAudioBlocked(false); return;
     }
     if (state !== 'live') return;
@@ -67,7 +68,7 @@ export default function ProgramPreview({ aspectRatio, silent = false }: { aspect
 
   const toggleAudio = async () => {
     const video = videoRef.current;
-    if (!video) return;
+    if (!video || !loaded) return;
     if (audioEnabled) {
       if (!silent) setView((current) => ({ ...current, audioMonitorEnabled: false }));
       video.muted = true;
@@ -96,12 +97,12 @@ export default function ProgramPreview({ aspectRatio, silent = false }: { aspect
         data-audio-enabled={audioEnabled ? 'true' : 'false'}
         data-audio-state={audioBlocked ? 'blocked' : audioEnabled ? 'running' : 'disabled'}
       >
-        {preferenceError && <span role="alert">{preferenceError}</span>}
-        <button type="button" aria-pressed={audioEnabled} onClick={() => void toggleAudio()}>
+        <MonitorPreferenceStatus loaded={loaded} error={preferenceError} retry={retry} />
+        <button type="button" disabled={!loaded} aria-pressed={audioEnabled} onClick={() => void toggleAudio()}>
           {audioEnabled ? '关闭节目声音' : '启用节目声音'}
         </button>
         <button type="button" onClick={() => { openProjectorWindow('composite'); }}>独立小窗</button>
-        <span>{audioBlocked ? '监听设置已保留；浏览器需要点击一次恢复声音。' : view.audioMonitorEnabled && !silent ? 'Composite 声音按账号设置恢复。' : 'Composite 声音监听已关闭。'}</span>
+        <span>{!loaded ? '账号声音设置读取完成前保持静音。' : audioBlocked ? '监听设置已保留；浏览器需要点击一次恢复声音。' : view.audioMonitorEnabled && !silent ? 'Composite 声音按账号设置恢复。' : 'Composite 声音监听已关闭。'}</span>
       </div>
       <div className={`program-preview ${state}`} style={{ aspectRatio }}>
         <video ref={videoRef} autoPlay muted={!audioEnabled} playsInline aria-label="实时合成节目画面" />
@@ -129,7 +130,10 @@ export default function ProgramPreview({ aspectRatio, silent = false }: { aspect
               <p>修改启动参数后需要重启本次原生服务；日志目录：{status?.logs ?? '%USERPROFILE%\.cache\webobs-dev（项目哈希）\logs'}</p>
             </div>
           )}
-          {stage?.autoplayBlocked && <button type="button" onClick={() => void toggleAudio()}>启用播放与声音</button>}
+          {stage?.autoplayBlocked && <button type="button" onClick={() => {
+            if (loaded) void toggleAudio();
+            else if (videoRef.current) { videoRef.current.muted = true; void connectionRef.current?.resume?.().catch(() => undefined); }
+          }}>{loaded ? '启用播放与声音' : '恢复画面播放（静音）'}</button>}
         </div>
       )}
     </div>
