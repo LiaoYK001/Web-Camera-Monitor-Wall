@@ -310,16 +310,24 @@ export const qualifyBrowserDirect = (cameraId: string, profileId: string) => cam
   method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}',
 });
 export const deleteCamera = (cameraId: string) => cameraRequest<{ id: string; deleted: boolean }>(`/cameras/${encodeURIComponent(cameraId)}`, { method: 'DELETE' });
-const onvifOperation = <T>(cameraId: string, operation: string, body: Record<string, unknown>) =>
+const onvifOperation = <T>(cameraId: string, operation: string, body: Record<string, unknown>, signal?: AbortSignal) =>
   cameraRequest<T>(`/cameras/${encodeURIComponent(cameraId)}/onvif/${operation}`, {
-    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
+    method: 'POST', signal, headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
   });
-export const fetchOnvifPresets = (cameraId: string) => cameraRequest<{ presets: OnvifPreset[] }>(`/cameras/${encodeURIComponent(cameraId)}/onvif/presets`);
-export const sendOnvifPtz = (cameraId: string, body: Record<string, unknown>) => onvifOperation<{ state: string }>(cameraId, 'ptz', body);
-export const mutateOnvifPreset = (cameraId: string, body: Record<string, unknown>) => onvifOperation<{ presetToken: string }>(cameraId, 'presets', body);
-export const fetchOnvifSnapshot = (cameraId: string) => onvifOperation<{ contentType: string; data: string; sha256: string }>(cameraId, 'snapshot', {});
-export const pullOnvifEvents = (cameraId: string) => onvifOperation<{ events: OnvifEvent[] }>(cameraId, 'events/pull', {});
-export const sendOnvifTalk = (cameraId: string, body: Record<string, unknown>) => onvifOperation<{ state: string }>(cameraId, 'talk', body);
+export const fetchOnvifPresets = (cameraId: string, signal?: AbortSignal) => cameraRequest<{ presets: OnvifPreset[] }>(`/cameras/${encodeURIComponent(cameraId)}/onvif/presets`, { signal });
+export const sendOnvifPtz = async (cameraId: string, body: Record<string, unknown>, signal?: AbortSignal) => {
+  const result = await onvifOperation<{ state: string }>(cameraId, 'ptz', body, signal);
+  if (result?.state !== (body.operation === 'stop' ? 'stopped' : 'accepted')) throw new Error('控制服务未确认云台命令，请核对设备状态');
+  return result;
+};
+export const mutateOnvifPreset = (cameraId: string, body: Record<string, unknown>, signal?: AbortSignal) => onvifOperation<{ presetToken: string }>(cameraId, 'presets', body, signal);
+export const fetchOnvifSnapshot = (cameraId: string, signal?: AbortSignal) => onvifOperation<{ contentType: string; data: string; sha256: string }>(cameraId, 'snapshot', {}, signal);
+export const pullOnvifEvents = (cameraId: string, signal?: AbortSignal) => onvifOperation<{ events: OnvifEvent[] }>(cameraId, 'events/pull', {}, signal);
+export const sendOnvifTalk = async (cameraId: string, body: Record<string, unknown>, signal?: AbortSignal) => {
+  const result = await onvifOperation<{ state: string }>(cameraId, 'talk', body, signal);
+  if (result?.state !== (body.operation === 'stop' ? 'stopped' : 'active')) throw new Error('控制服务未确认对讲命令，请核对设备状态');
+  return result;
+};
 export const fetchDeviceOperations = (cameraId: string) => cameraRequest<{ operations: DeviceOperation[] }>(`/cameras/${encodeURIComponent(cameraId)}/operations`);
 async function clientAdminRequest<T>(path: string, init?: RequestInit): Promise<T> {
   const response = await fetch(`/api/v2${path}`, { cache: 'no-store', credentials: 'same-origin', ...init });

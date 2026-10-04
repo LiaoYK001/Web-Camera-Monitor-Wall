@@ -28,11 +28,13 @@ def main():
     parser.add_argument('--core', type=Path, help='Optional freshly compiled Linux webobsd, mounted read-only')
     parser.add_argument('--studio-identities', action='store_true', help='Also verify stable TAKE identities in the installed WebView')
     parser.add_argument('--online-sources', action='store_true', help='Also create/import/play website sources using a backend with bundled extractors')
+    parser.add_argument('--device-controls', action='store_true', help='Also exercise authenticated synthetic ONVIF controls and snapshot decoding')
     args = parser.parse_args()
     assert args.adb and args.docker and (ROOT / 'web/dist/index.html').is_file()
     if args.core and not args.core.is_file():
         parser.error('--core must name an existing Linux webobsd binary')
     core_mount = ['--mount', f'type=bind,src={args.core.resolve()},dst=/opt/obs/bin/webobsd,readonly'] if args.core else []
+    device_env = ['-e', 'WEBOBS_CAMERA_ALLOW_TEST_ENDPOINTS=true'] if args.device_controls else []
     name = 'webobs-android-test-' + uuid.uuid4().hex[:10]
     port = None
     created = False
@@ -48,7 +50,7 @@ def main():
         docker('run', '--detach', '--name', name, '-p', '127.0.0.1::8080',
                '--mount', f'type=bind,src={ROOT / "web/dist"},dst=/opt/webobs/ui,readonly',
                '--mount', f'type=bind,src={ROOT / "cluster/cluster_service.py"},dst=/opt/webobs/bin/webobs-cluster,readonly',
-               *core_mount,
+               *core_mount, *device_env,
                '-e', 'WEBOBS_LISTEN_ADDRESS=0.0.0.0', '-e', 'WEBOBS_ALLOW_INSECURE_REMOTE=true',
                '-e', 'WEBOBS_GO2RTC_ENABLED=true', '-e', 'WEBOBS_WEBRTC_ENABLED=false',
                '-e', 'WEBOBS_COMPOSITE_ENABLED=false', '-e', 'WEBOBS_CLUSTER_ENABLED=true',
@@ -70,6 +72,10 @@ def main():
         if args.online_sources:
             # Pipe only the repository-owned fixture program into this disposable backend.
             subprocess.run([args.docker,'exec','-i',name,'python3','-B','-'],input=(ROOT/'tests/prepare_online_source_fixture.py').read_bytes(),check=True,timeout=60)
+        if args.device_controls:
+            for file in ('test_camera_registry.py', 'prepare_device_control_fixture.py'):
+                docker('cp', str(ROOT/'tests'/file), name+':/tmp/'+file)
+            docker('exec', '--detach', name, 'python3', '-B', '/tmp/prepare_device_control_fixture.py')
         client.expect('/api/v1/auth/setup', 201, {'username': 'android-admin', 'password': password}, 'POST')
         client.expect('/api/v1/auth/login', body={'username': 'android-admin', 'password': password}, method='POST')
         config = 'streams:\n  synthetic: "ffmpeg:virtual?video=testsrc2&size=160x90#video=h264"\n'
@@ -104,7 +110,8 @@ db.commit()
                        env={**os.environ, 'WEBOBS_ANDROID_SERIAL': args.serial, 'WEBOBS_ANDROID_ORIGIN': base,
                             'WEBOBS_ANDROID_PASSWORD': password, 'WEBOBS_ANDROID_ADB': args.adb,
                             'WEBOBS_ANDROID_STUDIO_IDENTITIES': '1' if args.studio_identities else '0',
-                            'WEBOBS_ANDROID_ONLINE_SOURCES': '1' if args.online_sources else '0'})
+                            'WEBOBS_ANDROID_ONLINE_SOURCES': '1' if args.online_sources else '0',
+                            'WEBOBS_ANDROID_DEVICE_CONTROLS': '1' if args.device_controls else '0'})
     finally:
         try:
             if reversed_port:
