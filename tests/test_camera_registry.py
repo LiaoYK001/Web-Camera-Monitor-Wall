@@ -1407,6 +1407,8 @@ class CameraRegistryTests(unittest.TestCase):
                 time.sleep(.01)
             self.assertTrue(any(item['operation'] == 'ptz.auto-stop' and item['result'] == 'failed'
                                 for item in registry.device_audit(camera_id)))
+            for timer in self.ptz_timers:
+                if timer.ident is not None: timer.join(timeout=3)
             self.assertNotIn(camera_id, registry.PTZ_STOP_TIMERS)
             self.assertNotIn(camera_id, registry.PTZ_SESSIONS)
 
