@@ -197,7 +197,7 @@ export default function NvrTimeline({ onBack }: { onBack: () => void }) {
         if (signal.aborted) throw signal.reason;
         await deleteNvrSegment(selectedSegment.id, signal);
       } else await setNvrLock(selectedSegment.id, action === 'lock', signal);
-      if (!mounted.current) return;
+      if (signal.aborted || !mounted.current) return;
       setNotice(action === 'delete' ? '片段已删除并写入审计。' : `证据已${action === 'lock' ? '锁定' : '解锁'}。`);
       reload();
     });
@@ -206,7 +206,7 @@ export default function NvrTimeline({ onBack }: { onBack: () => void }) {
     if (!selectedSegment) return;
     void perform(async signal => {
       const result = await createNvrSnapshot(selectedSegment.id, Math.max(0, Math.round(cursor - selectedSegment.startUtcMs)), signal);
-      if (mounted.current) { setSnapshotLink(result); setNotice('截图已生成，可使用下方链接下载。'); }
+      if (!signal.aborted && mounted.current) { setSnapshotLink(result); setNotice('截图已生成，可使用下方链接下载。'); }
     });
   };
   const exportClip = (mode: 'fast' | 'exact') => {

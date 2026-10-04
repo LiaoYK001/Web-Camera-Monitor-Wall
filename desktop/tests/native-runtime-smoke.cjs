@@ -50,6 +50,7 @@ app.on('window-all-closed', () => {});
     }
     const { exerciseNativeSync } = require('./native-sync-contract.cjs');
     const assertSyncPersisted = await exerciseNativeSync(origin, headers);
+    await require('./native-preference-json.cjs').exercisePreferenceJson(origin, headers);
     const { exerciseNativeEvidence } = require('./native-evidence-contract.cjs');
     const assertEvidencePersisted = await exerciseNativeEvidence(supervisor, runtime, headers);
     await supervisor.stop();

@@ -728,8 +728,9 @@ class ClusterStore:
                 partial = "partial" in request or "removedPaths" in request
                 if partial and (request.get("partial") is not True or "baseValue" not in request):
                     raise ApiError(400, "invalid_preference", "partial preferences require a baseline and explicit partial mode")
-                if "baseValue" in request:
+                if kind == "monitor-view":
                     validate_monitor_preference(body)
+                if "baseValue" in request:
                     validate_monitor_preference(request["baseValue"])
                     previous = self.db.execute("SELECT body_json FROM account_preferences WHERE user_id=? AND kind=?",
                                                (user["id"], kind)).fetchone()
@@ -2178,7 +2179,9 @@ class Handler(http.server.BaseHTTPRequestHandler):
             raise ApiError(400, "invalid_body", "bounded application/json body is required")
         try:
             return json.loads(self.rfile.read(length))
-        except (UnicodeDecodeError, json.JSONDecodeError) as error:
+        # Decoder depth and integer digit limits are invalid client input too;
+        # never expose a generic 500 or echo the submitted body for these cases.
+        except (UnicodeDecodeError, ValueError, RecursionError) as error:
             raise ApiError(400, "invalid_json", "request JSON is invalid") from error
 
     def admin(self) -> None:
