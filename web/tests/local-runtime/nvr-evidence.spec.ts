@@ -140,7 +140,9 @@ test('a hung timeline query times out and remains retryable',async({page})=>{
   await page.route('**/api/v1/nvr/timeline?**',route=>{arrived=true;void route;});
   await page.getByRole('button',{name:'刷新时间线',exact:true}).click();await expect.poll(()=>arrived).toBe(true);
   await page.clock.runFor(12_001);
-  await expect(page.getByRole('alert')).toContainText('查询超时');
+  // Refresh starts independent catalog and timeline requests; both can expire
+  // when this fixture advances time. Assert the timeline's own recovery area.
+  await expect(page.getByRole('alert').filter({has:page.getByRole('button',{name:'重试时间线'})})).toContainText('查询超时');
   await expect(page.getByRole('button',{name:'重试时间线'})).toBeEnabled();
   await expect(page.locator('video')).toHaveCount(0);
   await page.unroute('**/api/v1/nvr/timeline?**');
