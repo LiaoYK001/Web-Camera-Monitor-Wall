@@ -75,3 +75,7 @@ Recording maturity now includes durable evidence jobs, audio-preserving exact ex
 Do not mark v4.0 ready while any matrix row lacks sufficient evidence. Maintain existing Docker/Podman and Direct-only operation. Record the exact tested artifacts and source revisions, attach matching source/licenses/SBOM/digests, and separately report Windows 10/11, Android/ARM, cameras, LAN and long-run results. No v4 tag or installer is published merely because one incremental PR passes.
 
 证据不足的方向不能标记为 v4.0 完成。保留 Docker/Podman 和仅 Direct 模式；记录实测产物、源码版本、许可证、SBOM、摘要，并分别报告系统、真机、摄像机、局域网与长时间验证。本轮 PR 通过不会自动发布 v4 标签或安装包。
+
+2026-10-04 设备控制复核：新增[设备控制与对讲](device-controls.md)的有界操作、停止反馈和麦克风生命周期；非法 PTZ 持续时间/非有限数值在发送前拒绝。原问题由五种后端失败情况和四项浏览器失败回归复现，修复不代表完成真实设备停止、并发命令排序、音频硬件或整体验收。
+
+Device-control follow-up adds bounded UI ownership, stop feedback and microphone cleanup, and rejects invalid continuous moves before SOAP. Reproduced backend/browser failures justify the changes; physical stopping, concurrent command ordering, audio hardware and the remaining maturity matrix still require qualification.

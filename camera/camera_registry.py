@@ -18,6 +18,7 @@ import base64
 import hashlib
 import http.client
 import ipaddress
+import math
 import os
 import re
 import secrets
@@ -2831,7 +2832,7 @@ def bounded_float(payload: dict, name: str, minimum: float, maximum: float,
         value = float(payload.get(name, default))
     except (TypeError, ValueError) as error:
         raise ValueError(f"{name} must be numeric") from error
-    if value < minimum or value > maximum:
+    if not math.isfinite(value) or value < minimum or value > maximum:
         raise ValueError(f"{name} is out of range")
     return value
 
@@ -2871,6 +2872,9 @@ def onvif_ptz_command(camera_id: str, payload: dict) -> dict:
     profile_id = str(payload.get("profileId", ""))
     if operation == "stop":
         return onvif_ptz_stop(camera_id, profile_id)
+    # Validate the stop budget before issuing any movement. An invalid duration
+    # must never leave a device moving without an automatic stop timer.
+    duration_ms = int(bounded_float(payload, "durationMs", 100, 2000, 500)) if operation == "continuous" else None
     now = time.monotonic()
     with PTZ_RATE_LOCK:
         if now - PTZ_LAST_COMMAND.get(camera_id, 0.0) < 0.1:
@@ -2907,7 +2911,6 @@ def onvif_ptz_command(camera_id: str, payload: dict) -> dict:
     audit_device_operation(camera_id, f"ptz.{operation}", "accepted")
     result = {"cameraId": camera_id, "operation": operation, "state": "accepted"}
     if operation == "continuous":
-        duration_ms = int(bounded_float(payload, "durationMs", 100, 2000, 500))
         timer = threading.Timer(duration_ms / 1000.0, scheduled_ptz_stop,
                                 args=(camera_id, profile_id))
         timer.daemon = True

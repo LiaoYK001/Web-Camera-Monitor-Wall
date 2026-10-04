@@ -86,7 +86,7 @@
 .camera-operations, .device-controls, .preset-controls, .device-actions { display: grid; gap: 8px; }
 .device-controls { grid-column: 1 / -1; padding-top: 10px; border-top: 1px solid var(--line); }
 .ptz-pad, .preset-controls, .device-actions { display: flex; flex-wrap: wrap; gap: 6px; }
-.ptz-pad button, .preset-controls button, .device-actions button { min-width: 34px; padding: 6px 9px; color: var(--text); border: 1px solid var(--line); background: #10141c; }
+.ptz-pad button, .preset-controls button, .device-actions button { min-width: 44px; min-height: 44px; padding: 6px 9px; color: var(--text); border: 1px solid var(--line); background: #10141c; }
 .device-snapshot { width: min(100%, 420px); max-height: 260px; object-fit: contain; background: #000; }
 .adapter-footer { color: var(--muted); text-align: center; font-size: 11px; }
 .client-section { display: grid; gap: 16px; max-width: 1180px; margin: 24px auto; padding: 22px; border: 1px solid var(--line); background: var(--panel); }

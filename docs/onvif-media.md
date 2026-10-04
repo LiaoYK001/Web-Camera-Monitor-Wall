@@ -67,3 +67,5 @@ v2 配对还会探测 ONVIF `GetUsers`。管理员选择托管专用凭据时，
 v1-M10 实现包含 PTZ/预置位、临时 PullPoint 事件、快照、受控对讲、指定接口发现与时钟偏移校正；生成式 TLS 夹具证明不受信设备证书会被拒绝、显式信任后才成功，且从不关闭验证。v1.2 采用确定性 ONVIF 覆盖加脱敏真实外部媒体解码门禁；多厂商型号/固件测试独立持续进行，不形成品牌级合规声明。公开报告不得包含真实地址、凭据、序列号或录像。
 
 The design follows the official [ONVIF Profile T](https://www.onvif.org/profiles/profile-t/) target and retains [Profile S](https://www.onvif.org/profiles/profile-s/) only as a compatibility path.
+
+设备控制的请求时限、停止确认、短片段对讲及资源释放见[设备控制与对讲](device-controls.md)。See the device-control guide for deadlines, acknowledgment semantics and recording lifecycle.

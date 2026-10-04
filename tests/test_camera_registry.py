@@ -1242,6 +1242,52 @@ class CameraRegistryTests(unittest.TestCase):
         finally:
             server.shutdown(); server.server_close(); thread.join(timeout=2)
 
+    def test_invalid_continuous_move_never_reaches_the_camera(self) -> None:
+        # An invalid duration used to be checked after ContinuousMove had
+        # already reached the device, so the automatic stop was never armed.
+        for field, value in (("durationMs", 0), ("durationMs", 2001),
+                             ("durationMs", "NaN"), ("x", "NaN"),
+                             ("y", float("inf")), ("zoom", float("nan"))):
+            camera_id = f"invalid-control-{field}-{str(value)}"
+            payload = {"operation": "continuous", "x": 0, "y": 0,
+                       "zoom": 0, "durationMs": 350, field: value}
+            with self.subTest(field=field, value=value), \
+                    patch.object(registry, "onvif_camera_context", return_value=(
+                        {}, {"ptz": "http://camera.example.invalid/ptz"}, "", "")), \
+                    patch.object(registry, "onvif_profile_token", return_value="profile"), \
+                    patch.object(registry, "onvif_soap") as soap:
+                with self.assertRaises(ValueError):
+                    registry.onvif_ptz_command(camera_id, payload)
+                soap.assert_not_called()
+
+    def test_valid_continuous_move_still_stops_the_synthetic_soap_device(self) -> None:
+        self.write_fixture_secret()
+        server, thread = self.onvif_server("T", require_http_digest=True)
+        camera_id = "timed-control-fixture"
+        try:
+            registry.save_camera(registry.validate_camera({
+                "id": camera_id, "name": "Timed fixture", "adapter": "onvif",
+                "address": f"http://127.0.0.1:{server.server_address[1]}",
+                "credentialsRef": "fixture", "profiles": [],
+            }), False)
+            registry.sync_onvif_camera(camera_id)
+            result = registry.onvif_ptz_command(camera_id, {
+                "operation": "continuous", "x": .25, "y": 0, "durationMs": 100,
+            })
+            self.assertEqual(result["autoStopMs"], 100)
+            deadline = time.monotonic() + 3
+            while time.monotonic() < deadline:
+                if any('/Stop"' in action for action in OnvifEmulatorHandler.action_log): break
+                time.sleep(.02)
+            self.assertTrue(any('/ContinuousMove"' in action for action in OnvifEmulatorHandler.action_log))
+            self.assertTrue(any('/Stop"' in action for action in OnvifEmulatorHandler.action_log))
+        finally:
+            with registry.PTZ_RATE_LOCK:
+                timer = registry.PTZ_STOP_TIMERS.pop(camera_id, None)
+                if timer: timer.cancel()
+            if timer: timer.join(timeout=3)
+            server.shutdown(); server.server_close(); thread.join(timeout=2)
+
     def test_profile_s_fallback_and_xml_hardening(self) -> None:
         self.write_fixture_secret()
         server, thread = self.onvif_server("S")

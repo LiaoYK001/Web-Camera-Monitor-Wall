@@ -115,6 +115,21 @@ Invoke-Checked 'pnpm' @('--dir',$desktopRoot,'test')
 Invoke-Checked 'pnpm' @('--dir',$desktopRoot,'test:electron')
 Invoke-Checked 'pnpm' @('--dir',$desktopRoot,'test:updates')
 Invoke-Checked 'python' @((Join-Path $repoRoot 'desktop\tests\test_native_runtime.py'))
+$savedCameraTest = $env:WEBOBS_TEST_CAMERA_REGISTRY
+$savedNvrTest = $env:WEBOBS_TEST_NVR_SERVICE
+try {
+    $env:WEBOBS_TEST_CAMERA_REGISTRY = Join-Path $runtimeRoot 'services\camera\camera_registry.py'
+    $env:WEBOBS_TEST_NVR_SERVICE = Join-Path $runtimeRoot 'services\nvr\nvr_service.py'
+    # Exercise the installed services with embedded Python, without writing
+    # bytecode into the immutable runtime or depending on developer packages.
+    Invoke-Checked (Join-Path $runtimeRoot 'python\python.exe') @('-I','-B',(Join-Path $repoRoot 'tests\test_camera_registry.py'),
+        'CameraRegistryTests.test_invalid_continuous_move_never_reaches_the_camera',
+        'CameraRegistryTests.test_valid_continuous_move_still_stops_the_synthetic_soap_device',
+        'CameraRegistryTests.test_guarded_device_operations_and_private_profile_tokens')
+} finally {
+    if ($null -eq $savedCameraTest) { Remove-Item Env:WEBOBS_TEST_CAMERA_REGISTRY -ErrorAction SilentlyContinue } else { $env:WEBOBS_TEST_CAMERA_REGISTRY = $savedCameraTest }
+    if ($null -eq $savedNvrTest) { Remove-Item Env:WEBOBS_TEST_NVR_SERVICE -ErrorAction SilentlyContinue } else { $env:WEBOBS_TEST_NVR_SERVICE = $savedNvrTest }
+}
 Invoke-Checked 'pnpm' @('--dir',$desktopRoot,'test:runtime')
 Invoke-Checked 'pnpm' @('--dir',$desktopRoot,'test:main')
 if (-not $SkipPackage) {

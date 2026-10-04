@@ -176,6 +176,10 @@ try {
     await require('../tests/online_source_webui.cjs').exerciseOnlineSources(page, base);
     checks.push('actual installed Android WebView: yt-dlp/Streamlink website source creation, authenticated synthetic MSE frame decoding and device import; backend extraction, not external-site qualification');
   }
+  if (process.env.WEBOBS_ANDROID_DEVICE_CONTROLS === '1') {
+    await require('../tests/device_controls_webui.cjs').exerciseDeviceControls(page, base);
+    checks.push('actual installed Android WebView: authenticated synthetic SOAP PTZ/stop/presets/events and real FFmpeg JPEG decoding; not physical camera/audio qualification');
+  }
   await page.goto(`${base}/api/v1/go2rtc/stream.html?src=synthetic&mode=mse`);
   // WebView requires a user gesture. The source is real FFmpeg/go2rtc MSE, never mocked.
   await page.locator('video').click();
