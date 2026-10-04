@@ -35,7 +35,9 @@ exports.exerciseDeviceControls=async(page,base,microphone=false)=>{
   await expect(controls).toContainText('收到 1 个设备事件');
   if(microphone){
     await controls.getByRole('button',{name:'录制对讲',exact:true}).click();
-    await expect(controls).toContainText('正在录音');
+    try{await expect(controls).toContainText('正在录音');}
+    catch(error){throw new Error('Virtual microphone start failed: '+await page.getByRole('alert').allTextContents(),{cause:error});}
+    await expect.poll(()=>page.evaluate(()=>window.deviceStreams.length)).toBeGreaterThan(0);
     await page.getByRole('button',{name:'返回 Studio',exact:true}).click();
     await expect.poll(()=>page.evaluate(()=>window.deviceStreams.flatMap(stream=>stream.getTracks()).every(track=>track.readyState==='ended'))).toBe(true);
   }

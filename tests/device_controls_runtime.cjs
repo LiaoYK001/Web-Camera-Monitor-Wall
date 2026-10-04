@@ -22,7 +22,8 @@ let created=false,browser;
     run('exec','--detach',name,'python3','-B','/tmp/prepare_device_control_fixture.py');
     const base='http://'+run('port',name,'8080/tcp').split('\n')[0];
     await expect.poll(async()=>{try{return(await fetch(base+'/api/v1/health',{signal:AbortSignal.timeout(1000)})).status;}catch{return 0;}},{timeout:30000}).toBe(200);
-    browser=await chromium.launch({args:['--use-fake-device-for-media-stream']});
+    // Full Chromium provides native capture; the headless-shell embedder can reject it.
+    browser=await chromium.launch({channel:'chromium',args:['--use-fake-device-for-media-stream','--use-fake-ui-for-media-stream']});
     const context=await browser.newContext({serviceWorkers:'block',permissions:['microphone']});
     const account={username:'device-control-admin',password:crypto.randomBytes(24).toString('hex')};
     for(const [route,status]of [['setup',201],['login',200]])assert.equal((await context.request.post(base+'/api/v1/auth/'+route,{headers:{Origin:base},data:account})).status(),status);

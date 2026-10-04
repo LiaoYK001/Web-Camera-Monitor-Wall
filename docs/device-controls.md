@@ -23,3 +23,7 @@ Start a deliberate recording, send it manually or after ten seconds, or discard 
 `device-controls.spec.ts` 在实际 Chromium 中使用受控麦克风与网络夹具验证停止失败/错误确认、重复点击、超时晚到响应、释放资源、后台与正常片段提交；它不验证真实音频硬件。`tests/test_camera_registry.py` 复现非法持续时间在发送移动后才报错的问题，并通过摘要认证的本地 SOAP 设备验证有效命令仍自动停止。完整产品和原生候选结果应分别记录具体版本，不据此宣称摄像机或 v4.0 整体已验收。
 
 The browser fixtures validate UI ownership and microphone resource behavior. The authenticated synthetic SOAP fixture verifies command rejection before movement and nominal automatic stopping. These checks are distinct from physical camera/audio, native installation and complete v4.0 qualification.
+
+完整产品检查：先构建包含对应源码的镜像，然后运行 `node tests/device_controls_runtime.cjs --image <image> --docker <docker-path>`。测试使用隔离容器、本地摘要认证 SOAP 设备、FFmpeg 生成的 JPEG 和完整 Chromium 的虚拟麦克风；不使用真实设备凭据。MuMu 可运行 `python android/tests/test_emulator.py --serial <explicit-device> --adb <adb-path> --docker <docker-path> --image <image> --device-controls`，实际已安装 APK 检查设备操作与快照，不清除设备数据；此流程不验证 Android 麦克风。
+
+For full-product verification, supply a matching built image to the runtime script. Use the explicit `--device-controls` emulator option to test the installed APK and snapshot decoding, without clearing existing data. The isolated synthetic device and Chromium virtual capture are not physical camera/Android microphone qualification.
