@@ -11,6 +11,8 @@ const { chromium, expect } = createRequire(path.join(root, 'web/package.json'))(
 // node tests/monitor_preference_recovery.cjs --image webobs:test [--docker <executable>]
 const option = name => { const index = process.argv.indexOf(name); return index < 0 ? undefined : process.argv[index + 1]; };
 const image = option('--image');
+const core = option('--core');
+const uuidScene = process.argv.includes('--uuid-scene');
 if (!image || image.startsWith('--')) throw new Error('Supply --image <complete-product-image>; this test uses an isolated disposable profile.');
 const docker = option('--docker') || 'docker';
 const name = 'webobs-preference-read-' + crypto.randomBytes(5).toString('hex');
@@ -24,6 +26,7 @@ let created = false, browser;
     run('run', '--detach', '--name', name, '-p', '127.0.0.1::8080', '-p', `127.0.0.1:${port}:${port}/udp`,
       '--mount', `type=bind,source=${path.join(root, 'web/dist')},target=/opt/webobs/ui,readonly`,
       '--mount', `type=bind,source=${path.join(root, 'cluster/cluster_service.py')},target=/opt/webobs/bin/webobs-cluster,readonly`,
+      ...(core ? ['--mount', `type=bind,source=${path.resolve(core)},target=/opt/obs/bin/webobsd,readonly`] : []),
       '-e', 'WEBOBS_LISTEN_ADDRESS=0.0.0.0', '-e', 'WEBOBS_ALLOW_INSECURE_REMOTE=true',
       '-e', 'WEBOBS_GO2RTC_ENABLED=true', '-e', 'WEBOBS_WEBRTC_ENABLED=true', '-e', 'WEBOBS_COMPOSITE_ENABLED=false',
       '-e', `MTX_WEBRTCLOCALUDPADDRESS=:${port}`, '-e', 'WEBOBS_NVR_ENABLED=true', '-e', 'WEBOBS_CLUSTER_ENABLED=true',
@@ -60,16 +63,20 @@ let created = false, browser;
     const camera = await response.json();
     const studio = await (await context.request.get(base + '/api/v1/studio')).json();
     const scene = studio.scenes[0];
-    scene.sources = [{ id: 'recovery-camera', name: 'Synthetic recovery camera', kind: 'camera', cameraId: camera.id,
+    if (uuidScene) scene.id = 'scene-00000000-0000-4000-8000-000000000001';
+    const sourceId = uuidScene ? 'camera-00000000-0000-4000-8000-000000000001' : 'recovery-camera';
+    scene.sources = [{ id: sourceId, name: 'Synthetic recovery camera', kind: 'camera', cameraId: camera.id,
       profileId: camera.profiles[0].id, hardwareDecode: 'auto', muted: true, volume: 1, syncOffsetMs: 0, monitoring: 'off', audioTrack: 1, filters: [] }];
-    scene.items = [{ id: 'recovery-item', sourceId: 'recovery-camera', x: 0, y: 0, width: scene.canvas.width, height: scene.canvas.height,
+    scene.items = [{ id: 'recovery-item', sourceId, x: 0, y: 0, width: scene.canvas.width, height: scene.canvas.height,
       scaleMode: 'contain', crop: { top: 0, right: 0, bottom: 0, left: 0 }, zIndex: 0, visible: true, locked: false,
       groupId: '', rotation: 0, opacity: 1, blendMode: 'normal' }];
     studio.previewSceneId = studio.programSceneId = scene.id;
     const committed = await context.request.put(base + '/api/v1/studio', { headers: { ...headers, 'If-Match': `"${studio.revision}"` }, data: studio });
     assert.equal(committed.status(), 200);
     assert.equal((await context.request.post(base + '/api/v1/studio/take', { headers: { ...headers, 'If-Match': `"${(await committed.json()).revision}"` } })).status(), 200);
-    assert.equal((await (await context.request.get(base + '/api/v1/scene')).json()).sources[0].id, `${scene.id}.recovery-camera`);
+    const runtimeSource = (await (await context.request.get(base + '/api/v1/scene')).json()).sources[0];
+    if (uuidScene) assert.match(runtimeSource.id, /^source-[0-9a-f]{56}$/);
+    else assert.equal(runtimeSource.id, `${scene.id}.${sourceId}`);
     const preferences = { audioMonitorEnabled: true, audioOutput: 'meter-only', localMonitorVolume: .18, mode: 'manual' };
     assert.equal((await context.request.put(base + '/api/v2/account/preferences/monitor-view', { headers, data: { value: preferences } })).status(), 200);
     run('exec', name, 'python3', '-c', "import sqlite3; db=sqlite3.connect('/config/webobs/cluster.sqlite3'); db.execute(\"UPDATE account_preferences SET body_json='{' WHERE kind='monitor-view'\"); db.commit()");

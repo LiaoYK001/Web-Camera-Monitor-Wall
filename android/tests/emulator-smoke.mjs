@@ -94,6 +94,32 @@ try {
   }, previous);
   assert.deepEqual(restored, [200, 200]);
   checks.push('actual Android late-source audio controls from a 1000-source account survive master save/reload; isolated synthetic color, not audio hardware qualification');
+  if (process.env.WEBOBS_ANDROID_STUDIO_IDENTITIES === '1') {
+    // Older WebView CDP lacks Storage.getCookies. Use its actual same-origin
+    // fetch and HttpOnly session instead of extracting or replacing cookies.
+    const request = async (url, init) => {
+      const result = await page.evaluate(async ({ url, init }) => {
+        const response = await fetch(url, init);
+        return { status: response.status, body: await response.json() };
+      }, { url, init });
+      return { status: result.status, json: async () => result.body };
+    };
+    const finishIdentity = await require('../desktop/tests/native-studio-identity.cjs').exerciseStudioIdentity(base, {}, async (program, controls) => {
+      await page.goto(`${base}/#monitor`); await page.reload();
+      await expect(page.getByRole('slider', { name: '本地监听主音量', exact: true })).toHaveValue('0.18');
+      await expect(page.locator('.direct-tile-position')).toHaveCount(program.items.length);
+      for (const [name, control] of Object.entries(controls)) {
+        await expect(page.getByRole('slider', { name: `${name} 音量`, exact: true })).toHaveValue(String(control.volume));
+        await expect(page.getByRole('button', { name: `${name} 静音`, exact: true })).toHaveAttribute('aria-pressed', String(control.muted));
+        await expect(page.getByRole('button', { name: `${name} 本地监听`, exact: true })).toHaveAttribute('aria-pressed', String(control.monitor));
+      }
+    }, request);
+    await finishIdentity();
+    // The helper restores Studio through the real API. Refresh its metadata
+    // revision before the following editor save; a fragment keeps the old draft.
+    await page.reload();
+    checks.push('actual installed WebView: UUID TAKE/layer/Scene/nested identities preserve source audio controls on reload; synthetic color, not audio hardware qualification');
+  }
   await page.goto(`${base}/#studio`);
   await page.getByRole('button', { name: '新建场景', exact: true }).click();
   const sceneDialog = page.getByRole('dialog', { name: '新建场景', exact: true });

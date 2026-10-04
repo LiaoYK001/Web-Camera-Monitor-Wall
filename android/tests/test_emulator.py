@@ -25,8 +25,13 @@ def main():
     parser.add_argument('--adb', default=shutil.which('adb'))
     parser.add_argument('--docker', default=shutil.which('docker'))
     parser.add_argument('--image', default='webobs:security-fixes')
+    parser.add_argument('--core', type=Path, help='Optional freshly compiled Linux webobsd, mounted read-only')
+    parser.add_argument('--studio-identities', action='store_true', help='Also verify stable TAKE identities in the installed WebView')
     args = parser.parse_args()
     assert args.adb and args.docker and (ROOT / 'web/dist/index.html').is_file()
+    if args.core and not args.core.is_file():
+        parser.error('--core must name an existing Linux webobsd binary')
+    core_mount = ['--mount', f'type=bind,src={args.core.resolve()},dst=/opt/obs/bin/webobsd,readonly'] if args.core else []
     name = 'webobs-android-test-' + uuid.uuid4().hex[:10]
     port = None
     created = False
@@ -42,6 +47,7 @@ def main():
         docker('run', '--detach', '--name', name, '-p', '127.0.0.1::8080',
                '--mount', f'type=bind,src={ROOT / "web/dist"},dst=/opt/webobs/ui,readonly',
                '--mount', f'type=bind,src={ROOT / "cluster/cluster_service.py"},dst=/opt/webobs/bin/webobs-cluster,readonly',
+               *core_mount,
                '-e', 'WEBOBS_LISTEN_ADDRESS=0.0.0.0', '-e', 'WEBOBS_ALLOW_INSECURE_REMOTE=true',
                '-e', 'WEBOBS_GO2RTC_ENABLED=true', '-e', 'WEBOBS_WEBRTC_ENABLED=false',
                '-e', 'WEBOBS_COMPOSITE_ENABLED=false', '-e', 'WEBOBS_CLUSTER_ENABLED=true',
@@ -92,7 +98,8 @@ db.commit()
         print('Isolated backend and authenticated go2rtc ready; probing actual Android WebView', flush=True)
         subprocess.run(['node', str(ROOT / 'android/tests/emulator-smoke.mjs')], cwd=ROOT, check=True, timeout=240,
                        env={**os.environ, 'WEBOBS_ANDROID_SERIAL': args.serial, 'WEBOBS_ANDROID_ORIGIN': base,
-                            'WEBOBS_ANDROID_PASSWORD': password, 'WEBOBS_ANDROID_ADB': args.adb})
+                            'WEBOBS_ANDROID_PASSWORD': password, 'WEBOBS_ANDROID_ADB': args.adb,
+                            'WEBOBS_ANDROID_STUDIO_IDENTITIES': '1' if args.studio_identities else '0'})
     finally:
         try:
             if reversed_port:

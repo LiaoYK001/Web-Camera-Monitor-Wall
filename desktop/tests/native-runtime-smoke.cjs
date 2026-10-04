@@ -51,6 +51,7 @@ app.on('window-all-closed', () => {});
     const { exerciseNativeSync } = require('./native-sync-contract.cjs');
     const assertSyncPersisted = await exerciseNativeSync(origin, headers);
     await require('./native-preference-json.cjs').exercisePreferenceJson(origin, headers);
+    const assertStudioIdentityPersisted = await require('./native-studio-identity.cjs').exerciseStudioIdentity(origin, headers);
     const { exerciseNativeEvidence } = require('./native-evidence-contract.cjs');
     const assertEvidencePersisted = await exerciseNativeEvidence(supervisor, runtime, headers);
     await supervisor.stop();
@@ -61,6 +62,7 @@ app.on('window-all-closed', () => {});
     assert.equal(restoredSession.status, 200, 'account session must survive service restart');
     await assertSyncPersisted();
     await assertEvidencePersisted();
+    await assertStudioIdentityPersisted(true);
     await supervisor.stop();
     console.log('Bundled Windows services, first login, authenticated go2rtc, multi-track sync/conflict, streamed large synthetic MP4 with HEAD/Range/ETag/hash, real synthetic H264/AAC evidence export, snapshot and restart persistence passed. Camera/media qualification remains separate.');
   } catch (error) {

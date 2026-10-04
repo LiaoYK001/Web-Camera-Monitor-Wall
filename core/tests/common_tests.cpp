@@ -10,6 +10,7 @@
 #include "webobs/studio_document.hpp"
 #include "webobs/studio_store.hpp"
 #include "webobs/video_encoder.hpp"
+#include "studio_identity_tests.hpp"
 
 #include <array>
 #include <cstdint>
@@ -1416,6 +1417,7 @@ int main()
     studio_store_tests();
     scene_mutation_tests();
     studio_document_tests();
+    studio_identity_tests(expect);
     video_encoder_tests();
     audio_track_tests();
     scene_audio_inputs_tests();
