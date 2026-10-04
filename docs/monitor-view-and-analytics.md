@@ -75,6 +75,10 @@ Valid source identifiers, including `constructor`, `__proto__` and `toString`, a
 
 Per-source account audio controls span multiple Scenes and no longer silently discard entries after the first 256. Existing identifier, numeric, account-document byte and node bounds remain enforced. Later sources restore saved gain, mute and monitoring; individual edits, reload and a fresh browser retain other Scenes' controls. The 1000-source check represents account records, with only one synthetic video playing.
 
+完整 `value` 保存和带基线的监控偏好保存使用同一数据边界：最多 32 层、65,536 个节点、2 MiB 编码文档且数值必须有限；入口仍为既有的 1 MiB 上限。无效 UTF-8、JSON 语法、超出解码器深度/整数位数限制，以及非有限或过深的监控偏好返回有界 400，不写入数据或提升偏好修订。有效的 `null`、布尔值、数组和来源数据键保留兼容。此校验阻止新错误写入，不会自动覆盖既有损坏记录；首次读取失败仍使用显式恢复流程。
+
+Full `value` writes and baseline-aware monitor preference writes share the same bounds: depth 32, 65,536 nodes, a 2 MiB encoded document and finite numbers; the existing gateway still limits input to 1 MiB. Invalid UTF-8/JSON, decoder depth/integer digit overflow and non-finite or over-deep monitor values return bounded HTTP 400 without writing data or advancing its revision. Valid nulls, booleans, arrays and source data keys remain compatible. Validation prevents new invalid writes and does not silently replace existing corrupt records; first-read failures retain explicit recovery.
+
 实际 Program 快照只由认证的场景事件更新。读取/保存 Studio、改名、切换本地配置和恢复设备草稿都不会清掉已经收到的直播快照；定义保存仍需要 TAKE 才能改变 Program。启动期间先到达的直播快照也不被较慢的 Studio 读取覆盖。验证直接 Program 接口的来源 ID 时检查实际 UI 来源；TAKE 自动加上的场景前缀不能代替标识边界验证。
 
 Only authenticated scene events update the actual Program snapshot. Studio reads/saves, renaming, local profiles and device drafts retain a received live snapshot; saved definitions still require TAKE to change Program. A slower Studio read cannot clear the snapshot received during startup. Direct Program identifier checks verify the actual UI source; TAKE's Scene prefix cannot substitute for testing the exact identifier boundary.

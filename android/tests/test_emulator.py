@@ -41,6 +41,7 @@ def main():
     try:
         docker('run', '--detach', '--name', name, '-p', '127.0.0.1::8080',
                '--mount', f'type=bind,src={ROOT / "web/dist"},dst=/opt/webobs/ui,readonly',
+               '--mount', f'type=bind,src={ROOT / "cluster/cluster_service.py"},dst=/opt/webobs/bin/webobs-cluster,readonly',
                '-e', 'WEBOBS_LISTEN_ADDRESS=0.0.0.0', '-e', 'WEBOBS_ALLOW_INSECURE_REMOTE=true',
                '-e', 'WEBOBS_GO2RTC_ENABLED=true', '-e', 'WEBOBS_WEBRTC_ENABLED=false',
                '-e', 'WEBOBS_COMPOSITE_ENABLED=false', '-e', 'WEBOBS_CLUSTER_ENABLED=true',

@@ -70,7 +70,9 @@ cd ..
 python android/tests/test_emulator.py --serial 127.0.0.1:16384 --adb $adb --docker 'path\to\docker.exe' --image webobs:security-fixes
 ```
 
-测试在独立完整产品容器中创建一次性账号和 FFmpeg 合成源，通过 ADB reverse 在 **实际 APK 的 WebView** 中操作。结束后移除测试容器/卷及 reverse，不清空模拟器、不使用现有摄像机密码；截图与结果只保存在忽略的 `tests/artifacts/android/`。WebUI 使用当前 `web/dist` 的只读挂载。
+测试在独立完整产品容器中创建一次性账号和 FFmpeg 合成源，通过 ADB reverse 在 **实际 APK 的 WebView** 中操作。结束后移除测试容器/卷及 reverse，不清空模拟器、不使用现有摄像机密码；截图与结果只保存在忽略的 `tests/artifacts/android/`。WebUI 与账号后端分别只读挂载当前 `web/dist` 和 `cluster/cluster_service.py`；其他服务使用指定完整镜像，不代表全镜像重新构建。
+
+The isolated emulator container mounts the current WebUI build and account-service source read-only. Other services come from the explicitly selected complete image; this is not a full image rebuild qualification.
 
 The emulator probe uses the real installed APK, real account APIs, official go2rtc UI, live synthetic H.264 and a stopped recorder's actual H.264/AAC archive. It checks archive play/pause, thumbnails, an authenticated snapshot response/hash and date-switch cleanup. It is not a desktop-browser fixture. This does not qualify physical cameras, ARM devices, microphone hardware, private CA setup, Android DownloadManager/long exports, battery consumption or long-running recovery. Record actual passed checks in the local receipt; do not infer them from source support.
 

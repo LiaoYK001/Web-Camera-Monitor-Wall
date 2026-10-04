@@ -23,6 +23,7 @@ let created = false, browser;
     await new Promise(resolve => socket.close(resolve));
     run('run', '--detach', '--name', name, '-p', '127.0.0.1::8080', '-p', `127.0.0.1:${port}:${port}/udp`,
       '--mount', `type=bind,source=${path.join(root, 'web/dist')},target=/opt/webobs/ui,readonly`,
+      '--mount', `type=bind,source=${path.join(root, 'cluster/cluster_service.py')},target=/opt/webobs/bin/webobs-cluster,readonly`,
       '-e', 'WEBOBS_LISTEN_ADDRESS=0.0.0.0', '-e', 'WEBOBS_ALLOW_INSECURE_REMOTE=true',
       '-e', 'WEBOBS_GO2RTC_ENABLED=true', '-e', 'WEBOBS_WEBRTC_ENABLED=true', '-e', 'WEBOBS_COMPOSITE_ENABLED=false',
       '-e', `MTX_WEBRTCLOCALUDPADDRESS=:${port}`, '-e', 'WEBOBS_NVR_ENABLED=true', '-e', 'WEBOBS_CLUSTER_ENABLED=true',
@@ -40,6 +41,9 @@ let created = false, browser;
     const account = { username: 'preference-recovery', password: crypto.randomBytes(24).toString('hex') };
     assert.equal((await context.request.post(base + '/api/v1/auth/setup', { headers, data: account })).status(), 201);
     assert.equal((await context.request.post(base + '/api/v1/auth/login', { headers, data: account })).status(), 200);
+    await require('../desktop/tests/native-preference-json.cjs').exercisePreferenceJson(base, {
+      ...headers, Cookie: (await context.cookies(base)).map(cookie => `${cookie.name}=${cookie.value}`).join('; '),
+    });
     assert.equal((await context.request.post(base + '/api/v1/go2rtc/api/config', { headers: { ...headers, 'Content-Type': 'text/plain' },
       data: 'streams:\n  synthetic: "ffmpeg:virtual?video=testsrc2&size=320x180#video=h264"\n' })).status(), 200);
     await context.request.post(base + '/api/v1/go2rtc/api/restart', { headers });

@@ -72,6 +72,69 @@ def heartbeat(node_time: int, *, free: int = 800) -> dict:
 
 
 class ClusterTests(unittest.TestCase):
+    def test_legacy_monitor_preferences_reject_unsafe_values_without_mutation(self):
+        self.create_user('json-boundary', ['admin'])
+        initial = self.store.account_preference('json-boundary', 'monitor-view', {'value': {
+            'localMonitorVolume': .27, 'sourceAudio': {'constructor': {'volume': .4}},
+            'optional': None, 'flags': [False, True],
+        }}, True)
+        nested = 0
+        for _ in range(33):
+            nested = [nested]
+        for value in ({'number': float('nan')}, {'number': float('inf')}, {'number': -float('inf')},
+                      {'nested': nested}, {'items': [0] * 65536}):
+            with self.subTest(kind=next(iter(value))):
+                with self.assertRaises(cluster.ApiError) as failure:
+                    self.store.account_preference('json-boundary', 'monitor-view', {'value': value}, True)
+                self.assertEqual(failure.exception.status, 400)
+                self.assertEqual(self.store.account_preference('json-boundary', 'monitor-view'), initial)
+        saved = self.store.account_preference('json-boundary', 'monitor-view', {'value': initial['value']}, True)
+        self.assertEqual(saved['value'], initial['value'])
+        self.assertEqual(saved['revision'], initial['revision'] + 1)
+
+    def test_http_json_failures_are_bounded_client_errors_and_retain_preferences(self):
+        import http.client
+        self.create_user('json-http', ['admin'])
+        initial = self.store.account_preference('json-http', 'monitor-view', {'value': {'localMonitorVolume': .27}}, True)
+        with mock.patch.object(cluster, 'STORE', self.store), mock.patch.object(cluster, 'INTERNAL_TOKEN', 'fixture-internal-json-token'):
+            server = http.server.ThreadingHTTPServer(('127.0.0.1', 0), cluster.Handler)
+            thread = threading.Thread(target=server.serve_forever, daemon=True)
+            thread.start()
+            try:
+                cases = {
+                    'invalid UTF8': b'{"value":{"name":"\xff"}}',
+                    'truncated JSON': b'{"value":',
+                    'deep JSON': b'{"value":{"nested":' + b'[' * 2048 + b'0' + b']' * 2048 + b'}}',
+                    'long integer': b'{"value":{"number":' + b'1' * 5000 + b'}}',
+                    'NaN': b'{"value":{"localMonitorVolume":NaN}}',
+                    'infinite exponent': b'{"value":{"localMonitorVolume":1e309}}',
+                }
+                for label, body in cases.items():
+                    with self.subTest(case=label):
+                        connection = http.client.HTTPConnection(*server.server_address, timeout=3)
+                        try:
+                            connection.request('PUT', '/account/preferences/monitor-view', body, headers={
+                                'Content-Type': 'application/json', 'X-WebObs-Internal-Admin': cluster.INTERNAL_TOKEN,
+                                'X-WebObs-Principal': 'json-http'})
+                            response = connection.getresponse()
+                            raw = response.read()
+                            self.assertEqual(response.status, 400)
+                            self.assertLess(len(raw), 256)
+                            self.assertIn(json.loads(raw)['error']['code'], {'invalid_json', 'invalid_preference'})
+                            self.assertEqual(self.store.account_preference('json-http', 'monitor-view'), initial)
+                        finally:
+                            connection.close()
+                connection = http.client.HTTPConnection(*server.server_address, timeout=3)
+                try:
+                    connection.request('GET', '/health')
+                    response = connection.getresponse()
+                    self.assertEqual(response.status, 200)
+                    self.assertEqual(json.loads(response.read())['status'], 'ok')
+                finally:
+                    connection.close()
+            finally:
+                server.shutdown(); server.server_close(); thread.join()
+
     def test_batch_recording_scopes_resolve_camera_groups_and_recheck_disabled_users(self):
         self.store.create_user({'username': 'batch-operator', 'password': 'fixture-password-123456',
             'roles': ['operator'], 'scopes': [{'kind': 'camera', 'id': 'camera-1'}, {'kind': 'group', 'id': 'group-1'}]})
