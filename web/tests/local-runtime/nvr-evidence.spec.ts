@@ -160,6 +160,47 @@ test('an unconfirmed snapshot timeout restores controls without an automatic ret
   await expect(page.getByLabel('UTC 日期')).toBeEnabled();expect(requests).toBe(1);
 });
 
+for (const action of ['snapshot', 'lock', 'delete']) test(`a late ${action} response after timeout cannot change the new selection`, async ({ page }) => {
+  const state = await protocol(page); await page.clock.install();
+  if (action === 'delete') page.on('dialog', dialog => dialog.accept());
+  await page.evaluate(({ action, segment }) => {
+    const original = window.fetch;
+    const probe = (window as any).lateArchiveAction = { requests: 0, parsed: false, signal: null, release: null };
+    const endpoint = action === 'snapshot' ? '/api/v1/nvr/snapshots'
+      : action === 'lock' ? `/api/v1/nvr/locks/${segment.id}` : `/api/v1/nvr/segments/${segment.id}`;
+    window.fetch = (input, init) => {
+      if (String(input) !== endpoint) return original(input, init);
+      probe.requests++; probe.signal = init?.signal;
+      // Deliberately ignore cancellation so the actual action callback also
+      // needs to check its signal before publishing a late successful result.
+      return new Promise(resolve => { probe.release = () => {
+        const result = action === 'snapshot' ? { id: 'e'.repeat(32), downloadUrl: '/api/v1/nvr/snapshots/late', sha256: 'f'.repeat(64) }
+          : action === 'lock' ? { id: segment.id, locked: true } : { id: segment.id, deleted: true };
+        const response = new Response(JSON.stringify(result), { headers: { 'Content-Type': 'application/json' } });
+        response.json = async () => { probe.parsed = true; return result; };
+        resolve(response);
+      }; });
+    };
+  }, { action, segment });
+  await page.getByRole('button', { name: action === 'snapshot' ? '截图' : action === 'lock' ? '锁定证据' : '删除', exact: true }).click();
+  await expect.poll(() => page.evaluate(() => (window as any).lateArchiveAction.requests)).toBe(1);
+  await page.clock.runFor(35_001);
+  await expect(page.getByText(/操作超时，结果尚未确认/)).toBeVisible();
+  expect(await page.evaluate(() => (window as any).lateArchiveAction.signal.aborted)).toBe(true);
+  const previousDay = new Date(dayStart - 86400000).toISOString().slice(0, 10);
+  await page.getByLabel('UTC 日期').fill(previousDay);
+  await expect(page.locator('.nvr-query-stat')).not.toContainText('查询中');
+  const queries = state.queries;
+  await page.evaluate(() => (window as any).lateArchiveAction.release());
+  await expect.poll(() => page.evaluate(() => (window as any).lateArchiveAction.parsed)).toBe(true);
+  await page.clock.runFor(1000);
+  await expect(page.getByText(/^(截图已生成|片段已删除|证据已锁定)/)).toHaveCount(0);
+  await expect(page.getByRole('link', { name: '下载最近截图' })).toHaveCount(0);
+  await expect(page.getByLabel('UTC 日期')).toHaveValue(previousDay);
+  expect(state.queries).toBe(queries);
+  expect(await page.evaluate(() => (window as any).lateArchiveAction.requests)).toBe(1);
+});
+
 test('delete unloads its media reader and restores the player after a protected-segment rejection',async({page})=>{
   // This fixture tests delete/recovery; its media URLs do not contain real MP4.
   await page.addInitScript(()=>document.addEventListener('error',event=>{

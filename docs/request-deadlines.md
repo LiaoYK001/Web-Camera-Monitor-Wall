@@ -8,6 +8,10 @@ Owner cancellation preserves its original reason, including an explicit `null`. 
 
 所属页面或任务取消时保留原始原因，包括显式 `null`；已经取消时不启动操作。请求完成会移除计时器与所属对象的监听，后续取消不再中止已完成请求。传输晚到的成功或失败保持被处理，不能替换已交付的取消结果。操作应将提供的 signal 传给传输，并避免在所属对象变化后自行应用界面状态；辅助函数限制返回 Promise 的等待，无法撤销操作内部任意副作用。
 
+Archive snapshot and segment mutation callbacks also check that signal after the response arrives. Late success after a timeout cannot publish a screenshot link, replace the unconfirmed-result notice or reload a newly selected camera/day. Three action-level browser regressions deliberately ignore transport cancellation and release their responses after the user changes selection.
+
+归档截图及片段修改的回调在响应返回后也检查该 signal。超时后晚到的成功不会显示旧截图链接、替换“结果待确认”的提示，或刷新用户新选的摄像机/日期。三项操作级浏览器回归刻意忽略传输取消，在用户切换选择后才返回响应。
+
 A client timeout does not prove that the server cancelled a mutation. Archive lock/delete/snapshot actions retain their unconfirmed-result handling; durable export jobs retain their explicit server cancellation and response-loss idempotency. Do not automatically repeat a mutation merely because the client deadline elapsed. See [timeline evidence](timeline-evidence.md) for recovery behavior.
 
 客户端超时不能证明服务端取消了修改。归档锁定、删除和截图继续按“结果尚未确认”处理；持久化导出任务继续使用明确的服务端取消与响应丢失去重。不能仅因客户端等待超时就自动重做修改；恢复逻辑见[时间线与证据](timeline-evidence.md)。
