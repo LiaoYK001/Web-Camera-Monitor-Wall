@@ -39,6 +39,11 @@ class SnapshotTests(unittest.TestCase):
         fixture=module('desktop_online_media',ROOT/'tests/online_source_media.py')
         fixture.exercise(ROOT/'desktop/runtime',drop_media=True)
 
+    @unittest.skipUnless(os.name=='nt' and (ROOT/'desktop/runtime/bin/webobs-online-source.exe').exists(),'requires the complete website runtime')
+    def test_website_cookie_is_not_sent_to_untrusted_tls_peer(self):
+        fixture=module('desktop_online_tls',ROOT/'tests/online_source_tls.py')
+        fixture.exercise(ROOT/'desktop/runtime')
+
     def test_signing_key_file_preserves_binary_ciphertext_on_restart(self):
         from unittest.mock import patch, Mock
         service=module('desktop_signing_persistence',ROOT/'v2/client_control_service.py')

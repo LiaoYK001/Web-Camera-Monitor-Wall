@@ -61,6 +61,12 @@ class OnlineSourceTests(unittest.TestCase):
             with self.assertRaises(source.SourceError) as error:source.input_proxy('https://media.example.test/video')
             self.assertIn('proxy_unsupported',str(error.exception));self.assertNotIn('private',str(error.exception))
 
+    @unittest.skipIf(os.name=='nt','Windows uses the current user/system Schannel trust store')
+    def test_invalid_backend_ca_bundle_fails_without_exposing_its_path(self):
+        with patch.dict(os.environ,{'SSL_CERT_FILE':'/private/missing-fixture-trust.pem'}):
+            with self.assertRaises(source.SourceError) as error:source.tls_options()
+            self.assertIn('tls_trust_unavailable',str(error.exception));self.assertNotIn('private',str(error.exception))
+
     def test_avc_aac_adaptive_tracks_copy_and_unknown_video_converts_only_on_demand(self):
         inputs=[dict(url='https://example.test/v.mp4',headers={},video='avc1.64001f',audio='none'),dict(url='https://example.test/a.m4a',headers={},video='none',audio='mp4a.40.2')]
         with patch.object(source,'binary',return_value='/fixed/ffmpeg'),patch.object(source,'input_proxy',return_value=''),patch.dict(os.environ,{'WEBOBS_GO2RTC_RTSP_PORT':'18554'}):

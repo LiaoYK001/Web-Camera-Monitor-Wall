@@ -10,6 +10,7 @@ import os
 from pathlib import Path
 import re
 import signal
+import ssl
 import subprocess
 import sys
 from urllib.parse import urlsplit
@@ -114,6 +115,26 @@ def input_proxy(url):
     return value
 
 
+def tls_options():
+    # Both packaged TLS backends (GnuTLS / Windows Schannel) verify the URL host.
+    # Do not pin verifyhost: HLS segments and redirects may use another CDN host.
+    options = ['-tls_verify', '1']
+    if os.name != 'nt':
+        configured = os.environ.get('SSL_CERT_FILE')
+        default = ssl.get_default_verify_paths().cafile
+        if configured:
+            bundle = Path(configured)
+            if not bundle.is_absolute() or not bundle.is_file():
+                raise SourceError('tls_trust_unavailable: configure an existing absolute backend CA bundle')
+        elif default:
+            bundle = Path(default)
+        else:
+            import certifi
+            bundle = Path(certifi.where())
+        options += ['-ca_file', str(bundle)]
+    return options
+
+
 class QuietLogger:
     def debug(self, *_): pass
     def info(self, *_): pass
@@ -179,6 +200,8 @@ def ffmpeg_command(inputs, output, mode, height):
     command = [binary('ffmpeg'), '-nostdin', '-hide_banner', '-loglevel', 'error']
     for item in inputs:
         command += ['-rw_timeout', '15000000', '-protocol_whitelist', 'http,https,httpproxy,tcp,tls,crypto,rtmp,rtmps,data']
+        # Also protect HTTPS segments reached from an initial HTTP playlist.
+        command += tls_options()
         if urlsplit(item['url']).scheme in ('http', 'https'):
             # FFmpeg does not use uppercase HTTPS_PROXY like the Python extractors.
             # Apply the selected proxy per input, including explicit NO_PROXY/local bypass.

@@ -57,6 +57,10 @@ Configured backend HTTP/HTTPS proxies are selected per media input, respecting N
 
 HTTP 媒体连接的短暂网络错误及 429/503 使用有界递增重试；正常点播结束不会无限重播。测试另实际断开首次媒体请求，确认真实解析器/转发/解码恢复。Transient HTTP network failures and 429/503 responses use bounded backoff; normal VOD EOF does not loop indefinitely. A real initial media disconnect is covered by the runtime fixture.
 
+网站媒体转发显式开启 TLS 证书与 URL 主机名验证，包括 HTTP 播放列表中的 HTTPS 分段。容器使用系统 CA，管理员可通过后端 `SSL_CERT_FILE` 指定已有绝对路径 CA 文件；Windows FFmpeg 使用 Schannel 的系统/当前用户信任库。不要关闭证书验证。代理使用私有 CA 时，应配置后端信任；无效 CA 路径返回固定 `tls_trust_unavailable`。TLS 测试确认不受信任对端收到 HTTP 请求或 Cookie 前已被拒绝；容器还验证显式可信 CA 可解码及主机名不匹配被拒绝，Windows 测试不向用户信任库安装临时 CA。
+
+Media TLS verification is enabled explicitly, including HTTPS segments inside HTTP playlists. Containers use system CAs (or an existing absolute backend `SSL_CERT_FILE`); Windows FFmpeg uses Schannel system/current-user trust. Configure the backend trust for private proxy CAs; do not disable verification. `tests/online_source_tls.py` exercises actual TLS rejection before website credentials are sent, plus trusted decoding and hostname rejection on Linux. Its Windows fixture does not modify the user's certificate store.
+
 依赖锁位于 `go2rtc/online-source-dependencies.lock.json`，包含 Windows/Linux x64 轮子和 Node 的 SHA-256、大小（轮子）、许可证与对应 Python 源码归档身份。`scripts/install-online-source-runtime.py` 拒绝校验失败、路径穿越、符号链接与过大归档。容器 `online-source-runtime` 阶段和 Windows `stage-runtime.py` 共用该安装器。整包发布继续要求现有对应源码审查和不可变附件流程，不能仅因存在源地址就认为所有第三方源码已审查。
 
 ```sh
