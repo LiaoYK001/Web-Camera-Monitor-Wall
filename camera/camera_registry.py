@@ -14,6 +14,7 @@ _runtime_sys.path.insert(0, str(_RuntimePath(__file__).resolve().parents[1]))
 from runtime_support import service_port, service_http, service_rtsp, install_owner_shutdown, serve_owned, STOP, sync_directory
 
 import json
+from contextlib import contextmanager
 import base64
 import hashlib
 import http.client
@@ -64,6 +65,9 @@ SECRET_REF_RE = re.compile(r"^[a-zA-Z0-9._-]{0,128}$")
 PTZ_RATE_LOCK = threading.Lock()
 PTZ_LAST_COMMAND: dict[str, float] = {}
 PTZ_STOP_TIMERS: dict[str, threading.Timer] = {}
+PTZ_SESSION_GUARD = threading.Lock()
+PTZ_SESSION_WAIT_SECONDS = ONVIF_TIMEOUT_SECONDS + 1
+PTZ_SESSIONS: dict[str, dict] = {}
 TALK_LOCK = threading.Lock()
 TALK_PROCESSES: dict[str, subprocess.Popen] = {}
 MAX_TALK_BYTES = 512 * 1024
@@ -469,7 +473,7 @@ def initialize() -> None:
 
 def audit_device_operation(camera_id: str, operation: str, result: str) -> None:
     safe_operation = re.sub(r"[^a-zA-Z0-9._-]", "-", operation)[:64]
-    safe_result = result if result in {"accepted", "completed", "stopped", "failed", "denied"} else "failed"
+    safe_result = result if result in {"accepted", "completed", "stopped", "failed", "denied", "unconfirmed"} else "failed"
     with connect() as database:
         database.execute(
             "INSERT INTO device_operation_audit(camera_id,operation,result,created_at) VALUES(?,?,?,?)",
@@ -2837,7 +2841,41 @@ def bounded_float(payload: dict, name: str, minimum: float, maximum: float,
     return value
 
 
+@contextmanager
+def ptz_session(camera_id: str, stopping: bool = False):
+    if not ID_RE.fullmatch(camera_id):
+        raise ValueError('camera id is invalid')
+    # Count waiters before acquiring; an entry cannot disappear while another
+    # command is waiting for it. Stop waiters prevent more movement entering.
+    with PTZ_SESSION_GUARD:
+        state = PTZ_SESSIONS.setdefault(camera_id, {'lock': threading.RLock(), 'users': 0, 'stops': 0})
+        if not stopping and state['stops']:
+            raise RuntimeError('PTZ stop is pending; retry movement after stopping')
+        state['users'] += 1
+        if stopping: state['stops'] += 1
+    acquired = False
+    try:
+        acquired = state['lock'].acquire(timeout=PTZ_SESSION_WAIT_SECONDS)
+        if not acquired:
+            raise RuntimeError('PTZ device is busy; operation was not sent')
+        with PTZ_SESSION_GUARD:
+            if not stopping and state['stops']:
+                raise RuntimeError('PTZ stop is pending; operation was not sent')
+        yield
+    finally:
+        if acquired: state['lock'].release()
+        with PTZ_SESSION_GUARD:
+            state['users'] -= 1
+            if stopping: state['stops'] -= 1
+            if not state['users']: PTZ_SESSIONS.pop(camera_id, None)
+
+
 def onvif_ptz_stop(camera_id: str, profile_id: str = "", audit: bool = True) -> dict:
+    with ptz_session(camera_id, stopping=True):
+        return _onvif_ptz_stop(camera_id, profile_id, audit)
+
+
+def _onvif_ptz_stop(camera_id: str, profile_id: str = "", audit: bool = True) -> dict:
     _, services, username, password = onvif_camera_context(camera_id)
     if "ptz" not in services:
         raise ValueError("camera does not advertise PTZ")
@@ -2860,12 +2898,37 @@ def onvif_ptz_stop(camera_id: str, profile_id: str = "", audit: bool = True) -> 
 
 def scheduled_ptz_stop(camera_id: str, profile_id: str) -> None:
     try:
-        onvif_ptz_stop(camera_id, profile_id)
-    except (KeyError, ValueError, PermissionError, OnvifError):
+        with ptz_session(camera_id, stopping=True):
+            with PTZ_RATE_LOCK:
+                if PTZ_STOP_TIMERS.get(camera_id) is not threading.current_thread():
+                    return
+            _onvif_ptz_stop(camera_id, profile_id)
+    except (KeyError, ValueError, PermissionError, OnvifError, RuntimeError):
         audit_device_operation(camera_id, "ptz.auto-stop", "failed")
+    finally:
+        with PTZ_RATE_LOCK:
+            if PTZ_STOP_TIMERS.get(camera_id) is threading.current_thread():
+                PTZ_STOP_TIMERS.pop(camera_id, None)
+
+
+def schedule_ptz_stop(camera_id: str, profile_id: str, delay_ms: int) -> None:
+    timer = threading.Timer(delay_ms / 1000.0, scheduled_ptz_stop, args=(camera_id, profile_id))
+    timer.daemon = True
+    with PTZ_RATE_LOCK:
+        previous = PTZ_STOP_TIMERS.pop(camera_id, None)
+        if previous: previous.cancel()
+        PTZ_STOP_TIMERS[camera_id] = timer
+    timer.start()
 
 
 def onvif_ptz_command(camera_id: str, payload: dict) -> dict:
+    if payload.get('operation') == 'stop':
+        return onvif_ptz_stop(camera_id, str(payload.get('profileId', '')))
+    with ptz_session(camera_id):
+        return _onvif_ptz_command(camera_id, payload)
+
+
+def _onvif_ptz_command(camera_id: str, payload: dict) -> dict:
     operation = payload.get("operation", "")
     if operation not in {"continuous", "relative", "absolute", "stop", "home", "gotoPreset"}:
         raise ValueError("PTZ operation is unsupported")
@@ -2877,10 +2940,11 @@ def onvif_ptz_command(camera_id: str, payload: dict) -> dict:
     duration_ms = int(bounded_float(payload, "durationMs", 100, 2000, 500)) if operation == "continuous" else None
     now = time.monotonic()
     with PTZ_RATE_LOCK:
-        if now - PTZ_LAST_COMMAND.get(camera_id, 0.0) < 0.1:
-            audit_device_operation(camera_id, f"ptz.{operation}", "denied")
-            raise RuntimeError("PTZ command rate limit exceeded")
-        PTZ_LAST_COMMAND[camera_id] = now
+        denied = now - PTZ_LAST_COMMAND.get(camera_id, 0.0) < 0.1
+        if not denied: PTZ_LAST_COMMAND[camera_id] = now
+    if denied:
+        audit_device_operation(camera_id, f"ptz.{operation}", "denied")
+        raise RuntimeError("PTZ command rate limit exceeded")
     _, services, username, password = onvif_camera_context(camera_id)
     if "ptz" not in services:
         raise ValueError("camera does not advertise PTZ")
@@ -2907,20 +2971,30 @@ def onvif_ptz_command(camera_id: str, payload: dict) -> dict:
         action_name = "GotoPreset"
         body = (f'<tptz:GotoPreset xmlns:tptz="{namespace}"><tptz:ProfileToken>{token}</tptz:ProfileToken>'
                 f'<tptz:PresetToken>{escape(preset)}</tptz:PresetToken></tptz:GotoPreset>')
-    onvif_soap(services["ptz"], f"{namespace}/{action_name}", body, username, password)
+    dispatched_at = time.monotonic()
+    if operation == 'continuous':
+        # Arm before dispatch, not after the acknowledgment. The callback is
+        # ordered behind this request and cannot stop an unrelated later move.
+        schedule_ptz_stop(camera_id, profile_id, duration_ms)
+    try:
+        onvif_soap(services["ptz"], f"{namespace}/{action_name}", body, username, password)
+    except (PermissionError, OnvifError, OSError):
+        if operation == 'continuous':
+            schedule_ptz_stop(camera_id, profile_id, 0)
+            audit_device_operation(camera_id, 'ptz.continuous', 'unconfirmed')
+        raise
     audit_device_operation(camera_id, f"ptz.{operation}", "accepted")
     result = {"cameraId": camera_id, "operation": operation, "state": "accepted"}
     if operation == "continuous":
-        timer = threading.Timer(duration_ms / 1000.0, scheduled_ptz_stop,
-                                args=(camera_id, profile_id))
-        timer.daemon = True
+        # A stop waiter can hit its own deadline while transport is stalled.
+        # A late move acknowledgment must still schedule immediate recovery.
+        if time.monotonic() - dispatched_at >= duration_ms / 1000.0:
+            schedule_ptz_stop(camera_id, profile_id, 0)
+        result["autoStopMs"] = duration_ms
+    else:
         with PTZ_RATE_LOCK:
             previous = PTZ_STOP_TIMERS.pop(camera_id, None)
-            if previous:
-                previous.cancel()
-            PTZ_STOP_TIMERS[camera_id] = timer
-        timer.start()
-        result["autoStopMs"] = duration_ms
+            if previous: previous.cancel()
     return result
 
 

@@ -79,3 +79,7 @@ Do not mark v4.0 ready while any matrix row lacks sufficient evidence. Maintain 
 2026-10-04 设备控制复核：新增[设备控制与对讲](device-controls.md)的有界操作、停止反馈和麦克风生命周期；非法 PTZ 持续时间/非有限数值在发送前拒绝。原问题由五种后端失败情况和四项浏览器失败回归复现，修复不代表完成真实设备停止、并发命令排序、音频硬件或整体验收。
 
 Device-control follow-up adds bounded UI ownership, stop feedback and microphone cleanup, and rejects invalid continuous moves before SOAP. Reproduced backend/browser failures justify the changes; physical stopping, concurrent command ordering, audio hardware and the remaining maturity matrix still require qualification.
+
+2026-10-05 PTZ 后续：响应丢失后未停止、同设备停止越过在途移动均由失败回归复现。后台增加发送前计时器、异常/晚到响应恢复、停止优先的逐设备协调及失效计时器归属检查；故障审计与状态清理有单独回归。网络拖延、产品崩溃、设备侧 Timeout 范围协商及真实停止仍是未完成的保障与验收项。
+
+PTZ follow-up reproduces missing stop after response loss and stop overtaking an in-flight movement. Pre-dispatch timers, failure/late-response recovery, bounded per-device stop priority and timer ownership improve backend behavior. Transport stalls, product crashes, device-side timeout negotiation and physical stopping remain open.
