@@ -138,7 +138,7 @@ webobs_warnings(webobs-scene-tool)
 install(TARGETS webobs-scene-tool RUNTIME DESTINATION bin)
 
 if(WIN32)
-    foreach(tool webobs-job webobs-transcoder webobs-s3-archive webobs-encrypted-backup webobs-detector-worker)
+    foreach(tool webobs-job webobs-transcoder webobs-s3-archive webobs-encrypted-backup webobs-detector-worker webobs-online-source)
         add_executable(${tool} desktop/native/job_host.cpp desktop/native/utf8.manifest)
         target_link_libraries(${tool} PRIVATE shell32)
         webobs_warnings(${tool})

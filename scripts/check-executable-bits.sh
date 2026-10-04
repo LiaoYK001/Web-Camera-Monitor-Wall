@@ -4,6 +4,7 @@ set -eu
 required='docker/backup.sh
 docker/entrypoint.sh
 gateway/transcode-on-demand.sh
+go2rtc/webobs-online-source.sh
 scripts/check-executable-bits.sh
 scripts/benchmark-video-pipelines.sh
 scripts/create-source-bundle.sh

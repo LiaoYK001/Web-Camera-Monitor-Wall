@@ -175,6 +175,25 @@ RUN python3 /tmp/install-detector-runtime.py \
         --lock /tmp/detector-requirements.lock --venv /opt/webobs/venv \
     && rm -f /tmp/detector-requirements.lock /tmp/install-detector-runtime.py
 
+FROM ubuntu:24.04 AS online-source-runtime
+RUN apt-get -o Acquire::Retries=5 update \
+    && apt-get -o Acquire::Retries=5 install -y --no-install-recommends ca-certificates python3 python3-venv \
+    && rm -rf /var/lib/apt/lists/* \
+    && python3 -m venv /opt/webobs/online-source/python
+COPY go2rtc/online-source-dependencies.lock.json /tmp/online-source-dependencies.lock.json
+COPY scripts/install-online-source-runtime.py /tmp/install-online-source-runtime.py
+RUN python3 /tmp/install-online-source-runtime.py --platform linux-x64 \
+    --lock /tmp/online-source-dependencies.lock.json --cache /tmp/online-source-cache \
+    --site /opt/webobs/online-source/python/lib/python3.12/site-packages --bin /opt/webobs/bin \
+    --licenses /usr/share/licenses/webobs/online-source \
+    && rm -rf /tmp/online-source-cache
+COPY go2rtc/online_source.py /opt/webobs/online-source/online_source.py
+COPY go2rtc/webobs-online-source.sh /opt/webobs/bin/webobs-online-source
+RUN sed -i 's/\r$//' /opt/webobs/bin/webobs-online-source \
+    && chmod 755 /opt/webobs/bin/webobs-online-source \
+    && /opt/webobs/online-source/python/bin/python3 -B -c 'import yt_dlp, streamlink, yt_dlp_ejs, curl_cffi' \
+    && /opt/webobs/bin/node --version
+
 FROM ubuntu:24.04 AS mediamtx-downloader
 
 ARG DEBIAN_FRONTEND=noninteractive
@@ -504,6 +523,9 @@ COPY --from=core-builder /opt/obs /opt/obs
 COPY --from=sodium-builder /opt/libsodium/lib /opt/webobs/lib
 COPY --from=sodium-builder /opt/libsodium/share/licenses/libsodium /usr/share/licenses/libsodium
 COPY --from=detector-runtime /opt/webobs/venv /opt/webobs/venv
+COPY --from=online-source-runtime /opt/webobs/online-source /opt/webobs/online-source
+COPY --from=online-source-runtime /opt/webobs/bin /opt/webobs/bin
+COPY --from=online-source-runtime /usr/share/licenses/webobs/online-source /usr/share/licenses/webobs/online-source
 COPY --from=web-builder /src/web/dist /opt/webobs/ui
 COPY --from=web-builder /src/web/go2rtc-dist /opt/webobs/go2rtc-www
 COPY --from=go2rtc-builder /out/go2rtc /opt/webobs/bin/go2rtc
@@ -549,13 +571,17 @@ COPY obs/obs-studio/COPYING /usr/share/licenses/webobs/OBS-COPYING
 COPY analytics/detector-requirements.lock /usr/share/licenses/webobs/detector-requirements.lock
 COPY web/public/models/NOTICE.txt /usr/share/licenses/webobs/person-model-NOTICE.txt
 
-ENV PATH=/opt/webobs/venv/bin:$PATH \
+ENV PATH=/opt/webobs/bin:/opt/webobs/venv/bin:$PATH \
+    WEBOBS_ONLINE_SOURCES_ENABLED=true \
+    WEBOBS_NODE_PATH=/opt/webobs/bin/node \
+    WEBOBS_FFMPEG_PATH=/usr/bin/ffmpeg \
     LD_LIBRARY_PATH=/opt/obs/lib:/opt/webobs/lib \
     WEBOBS_LIBSODIUM_LIBRARY=/opt/webobs/lib/libsodium.so.26 \
     DISPLAY=:99 \
     EGL_PLATFORM=x11
 
-RUN WEBOBS_TEST_GO2RTC_ROOT=/tmp/go2rtc PYTHONDONTWRITEBYTECODE=1 python3 /tmp/test_go2rtc_runtime.py \
+RUN /opt/webobs/bin/webobs-online-source --self-test \
+    && WEBOBS_TEST_GO2RTC_ROOT=/tmp/go2rtc PYTHONDONTWRITEBYTECODE=1 python3 /tmp/test_go2rtc_runtime.py \
     && rm -rf /tmp/go2rtc /tmp/test_go2rtc_runtime.py \
     && mkdir -p /assets /config/obs /config/webobs /recordings /usr/share/licenses/caddy \
     && cp /usr/share/common-licenses/Apache-2.0 /usr/share/licenses/caddy/LICENSE \

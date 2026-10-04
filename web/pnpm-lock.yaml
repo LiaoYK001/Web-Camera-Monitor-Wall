@@ -18,6 +18,9 @@ importers:
       hls.js:
         specifier: 1.7.1
         version: 1.7.1
+      js-yaml:
+        specifier: 4.3.2
+        version: 4.3.2
       libsodium-wrappers:
         specifier: 0.8.4
         version: 0.8.4
@@ -52,9 +55,6 @@ importers:
       dompurify:
         specifier: 3.4.16
         version: 3.4.16
-      js-yaml:
-        specifier: 4.3.2
-        version: 4.3.2
       monaco-editor:
         specifier: 0.57.0
         version: 0.57.0

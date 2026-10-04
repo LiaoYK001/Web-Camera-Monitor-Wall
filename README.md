@@ -36,6 +36,29 @@ Vite 代理或后端重启时页面会显示“本地服务暂不可用”，不
 
 项目内置完整 **go2rtc + 官方 WebUI**：各类来源可先整理为内部 RTSP，再接入现有监控墙、MediaMTX、NVR 和 OBS；普通 RTSP 也可直接接入。左侧“go2rtc 管理”支持流管理、设备发现、播放测试、完整配置和日志，服务与 UI 统一打包和启动，配置随已有私有卷保存。详见 [go2rtc 集成与部署](docs/go2rtc-integration.md)。
 
+## 主要平台与版本节奏 / Primary platforms and release cadence
+
+网站与直播源的新接入方式、yt-dlp/Streamlink 打包、私密 Cookie 和三端流程见[网站与直播源](docs/online-sources.md)。Website/live source integration and bundled extractor boundaries are documented there; existing installers require an upgrade containing this change.
+
+本项目目前以 **Docker/Podman 容器、Windows x64 完整客户端、独立 Android 客户端**
+三端为主，按常规 `vA.B` 产品版本持续更新。Android 连接容器或 Windows 后端，共享
+该后端的 go2rtc、设备、账号、Scenes、声音和录像能力；开发 APK 与稳定版验收分开。
+
+The primary delivery targets are the **Docker/Podman container, complete Windows
+x64 desktop and independent Android client**, following regular `vA.B` product
+releases. Android connects to a container or Windows backend and shares its go2rtc,
+devices, accounts, Scenes, audio preferences and recordings. Development APKs and
+stable qualification are recorded separately.
+
+后续拓展 Linux 原生 x86/ARM、Windows ARM、Windows 32 位等平台，一般在 `vA.0`
+大版本（如 v5.0、v6.0、v7.0）集中构建、验证和发布，不跟随三主端每次 `vA.B` 更新。
+规划或源码支持不等于已有安装包或已完成实机验收。
+
+Future native Linux x86/ARM, Windows ARM and Windows 32-bit targets are normally
+built, qualified and released at `vA.0` major milestones such as v5.0/v6.0/v7.0,
+rather than following every primary-platform minor release. Planned or source-level
+support does not imply an available installer or completed device qualification.
+
 ## 运行技术基线
 
 - OBS Studio `32.1.2`，固定 submodule 提交 `fb4d98bf88fae5fc85cb11fc57f7c5e309282194`

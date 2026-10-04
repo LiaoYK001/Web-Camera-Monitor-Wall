@@ -1,5 +1,7 @@
 # 完整 Windows 桌面客户端（阶段一）
 
+网站/直播源运行包新增锁定的 yt-dlp、Streamlink、Node/EJS；固定 `webobs-online-source.exe` 和解析/转发后代使用 Job Object，文件进入 manifest、许可证和 SBOM，日常运行无需开发 PATH。接入、Cookie 与验证见[网站与直播源](online-sources.md)。Windows x64、容器、Android 按 `vA.B` 更新；后续 Windows ARM/32 位和原生 Linux x86/ARM 通常在 `vA.0` 大版本节点构建、验收和发布。Bundled website tools follow complete package updates; future architectures remain major-milestone targets, not qualified platforms.
+
 `desktop/` 是 Electron 安装版，和 `clients/` 中的 Qt 客户端分别构建。Docker/Podman 仍使用现有镜像。Windows 安装版包含原生 C++ 后端、libobs/D3D11 与来源插件、Python 3.12、go2rtc、MediaMTX、FFmpeg、OpenSSL、Caddy 和 WebUI；日常运行无需 Docker、WSL、系统 Python 或系统 PATH。
 
 ## 当前可下载版本

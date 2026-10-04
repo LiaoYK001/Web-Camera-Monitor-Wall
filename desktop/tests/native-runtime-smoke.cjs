@@ -42,6 +42,7 @@ app.on('window-all-closed', () => {});
     assert.equal(info.status, 200);
     const description = await info.json();
     assert.equal(description.platform, 'windows');
+    assert.equal(description.onlineSourcesEnabled, true);
     assert.equal(description.go2rtcRtspBase, `rtsp://127.0.0.1:${supervisor.ports.go2rtcRtsp}/`);
     for (const route of ['/api/v1/scene', '/api/v1/go2rtc/api/streams', '/api/v1/go2rtc/index.html']) {
       const result = await fetch(`${origin}${route}`, { headers });

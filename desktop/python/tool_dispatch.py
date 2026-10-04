@@ -9,6 +9,7 @@ TOOLS = {
     "webobs-s3-archive": "archive/s3_archive.py",
     "webobs-encrypted-backup": "backup/encrypted_backup.py",
     "webobs-detector-worker": "analytics/detector_worker.py",
+    "webobs-online-source": "go2rtc/online_source.py",
 }
 if len(sys.argv) < 2 or sys.argv[1] not in TOOLS:
     raise SystemExit(2)

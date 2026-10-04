@@ -39,6 +39,7 @@ jobs:
           python3 clients/tests/test_release_workflow_policy.py
           ./tests/test-immutable-release-assets.sh
           python3 desktop/tests/test_native_runtime.py
+          python3 tests/test_online_source.py
 
   windows:
     needs: audit
@@ -74,8 +75,9 @@ jobs:
         with:
           path: |
             desktop/.cache/*.zip
+            desktop/.cache/online-source
             desktop/.cache/vcpkg-binaries
-          key: windows-2022-desktop-${{ hashFiles('desktop/dependencies.lock.json', 'desktop/vcpkg.json') }}
+          key: windows-2022-desktop-${{ hashFiles('desktop/dependencies.lock.json', 'desktop/vcpkg.json', 'go2rtc/online-source-dependencies.lock.json') }}
           restore-keys: windows-2022-desktop-
       - name: Compile, test and package complete runtime
         shell: pwsh
@@ -105,8 +107,9 @@ jobs:
         with:
           path: |
             desktop/.cache/*.zip
+            desktop/.cache/online-source
             desktop/.cache/vcpkg-binaries
-          key: windows-2022-desktop-${{ hashFiles('desktop/dependencies.lock.json', 'desktop/vcpkg.json') }}
+          key: windows-2022-desktop-${{ hashFiles('desktop/dependencies.lock.json', 'desktop/vcpkg.json', 'go2rtc/online-source-dependencies.lock.json') }}
       - name: Retain failed runtime for isolated native diagnostics
         if: failure() && hashFiles('desktop/runtime/manifest.json') != ''
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a

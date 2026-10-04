@@ -86,6 +86,7 @@ export class Supervisor extends EventEmitter {
       WEBOBS_NVR_ENABLED: 'true', WEBOBS_CAMERA_REGISTRY_ENABLED: 'true', WEBOBS_WEBRTC_ENABLED: 'true', WEBOBS_COMPOSITE_ENABLED: 'true',
       WEBOBS_WHIP_URL: `http://127.0.0.1:${this.ports.whep}/program/whip`, WEBOBS_RENDERER_SELECTED: 'd3d11',
       WEBOBS_FFMPEG_PATH: this.executable('ffmpeg'), WEBOBS_TRANSCODER_PATH: this.executable('webobs-transcoder'),
+      WEBOBS_NODE_PATH: this.executable('node'), WEBOBS_ONLINE_SOURCES_ENABLED: 'true',
       WEBOBS_DETECTOR_WORKER: this.executable('webobs-detector-worker'), WEBOBS_DETECTOR_MODEL: path.join(this.runtime,'web','models','ssd_mobilenet_v1_12.onnx'),
       WEBOBS_DETECTOR_PYTHON_MODULE: path.join(this.runtime,'services','analytics','detector_worker.py'),
       WEBOBS_ARCHIVE_COMMAND: this.executable('webobs-s3-archive'), WEBOBS_ARCHIVE_CONFIG: config('archive.json'),

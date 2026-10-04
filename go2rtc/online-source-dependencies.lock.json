@@ -1,0 +1,789 @@
+{
+  "schemaVersion": 1,
+  "python": "3.12",
+  "engines": {
+    "yt-dlp": "2026.8.19",
+    "streamlink": "8.6.1",
+    "node": "24.19.0"
+  },
+  "platforms": {
+    "windows-x64": {
+      "node": {
+        "name": "node",
+        "version": "24.19.0",
+        "filename": "node-v24.19.0-win-x64.zip",
+        "url": "https://nodejs.org/dist/v24.19.0/node-v24.19.0-win-x64.zip",
+        "sha256": "57f71ab3652e797d84acddc79c81cc9ff1c6ddb2a1974cdb83f00fee9bff4c73",
+        "license": "MIT"
+      },
+      "wheels": [
+        {
+          "name": "attrs",
+          "version": "26.1.0",
+          "filename": "attrs-26.1.0-py3-none-any.whl",
+          "url": "https://files.pythonhosted.org/packages/64/b4/17d4b0b2a2dc85a6df63d1157e028ed19f90d4cd97c36717afef2bc2f395/attrs-26.1.0-py3-none-any.whl",
+          "sha256": "c647aa4a12dfbad9333ca4e71fe62ddc36f4e63b2d260a37a8b83d2f043ac309",
+          "size": 67548,
+          "license": "MIT",
+          "source": {
+            "url": "https://files.pythonhosted.org/packages/9a/8e/82a0fe20a541c03148528be8cac2408564a6c9a0cc7e9171802bc1d26985/attrs-26.1.0.tar.gz",
+            "sha256": "d03ceb89cb322a8fd706d4fb91940737b6642aa36998fe130a9bc96c985eff32"
+          }
+        },
+        {
+          "name": "brotli",
+          "version": "1.2.0",
+          "filename": "brotli-1.2.0-cp312-cp312-win_amd64.whl",
+          "url": "https://files.pythonhosted.org/packages/1c/4e/bc1dcac9498859d5e353c9b153627a3752868a9d5f05ce8dedd81a2354ab/brotli-1.2.0-cp312-cp312-win_amd64.whl",
+          "sha256": "b35c13ce241abdd44cb8ca70683f20c0c079728a36a996297adb5334adfc1c44",
+          "size": 369115,
+          "license": "LicenseRef-brotli",
+          "source": {
+            "url": "https://files.pythonhosted.org/packages/f7/16/c92ca344d646e71a43b8bb353f0a6490d7f6e06210f8554c8f874e454285/brotli-1.2.0.tar.gz",
+            "sha256": "e310f77e41941c13340a95976fe66a8a95b01e783d430eeaf7a2f87e0a57dd0a"
+          }
+        },
+        {
+          "name": "certifi",
+          "version": "2026.7.22",
+          "filename": "certifi-2026.7.22-py3-none-any.whl",
+          "url": "https://files.pythonhosted.org/packages/0b/a7/71ac2cff56fec219ed242bb11b8efb69fcc4bec75db06fb7bfe35de520e6/certifi-2026.7.22-py3-none-any.whl",
+          "sha256": "62f22742b58a1a33014a2b6b706588a8d7e2a88ae7bd1a6ebe8c992928483775",
+          "size": 136983,
+          "license": "LicenseRef-certifi",
+          "source": {
+            "url": "https://files.pythonhosted.org/packages/a3/c2/24167ea9858356b47a87a50d39908bfdb72ceeefe0041586e704e5376b3a/certifi-2026.7.22.tar.gz",
+            "sha256": "741e2c3b351ddf169a738da9f2c048608ff7f2c5cc02f1ebc6b118bb090d5d55"
+          }
+        },
+        {
+          "name": "cffi",
+          "version": "2.1.1",
+          "filename": "cffi-2.1.1-cp312-cp312-win_amd64.whl",
+          "url": "https://files.pythonhosted.org/packages/d9/79/615cc094e2fb508cade7de88d3b4f6c4ec2bab695c97bce9153dc65aadf5/cffi-2.1.1-cp312-cp312-win_amd64.whl",
+          "sha256": "f53e442b08449d42821fa4a4fba000095af9f62742a500f978a9f557ec44339a",
+          "size": 185919,
+          "license": "MIT-0",
+          "source": {
+            "url": "https://files.pythonhosted.org/packages/9e/ef/008a1939e372c06329a3fce4279c02f328488f3526744906eeec3da7ad5f/cffi-2.1.1.tar.gz",
+            "sha256": "dd31f52ea1086513bb9df30f8fcee9b8918323ae067a3d5b78bc826a000712be"
+          }
+        },
+        {
+          "name": "charset-normalizer",
+          "version": "3.5.2",
+          "filename": "charset_normalizer-3.5.2-cp312-cp312-win_amd64.whl",
+          "url": "https://files.pythonhosted.org/packages/eb/e6/e6e083884cbcfd49c64865af05027fe7011be7b2d9179524f099a1b611f3/charset_normalizer-3.5.2-cp312-cp312-win_amd64.whl",
+          "sha256": "780fbe7cab297b81dad9fb8dc5eb003c0468ffb0d9e5f65068c53a34661a96bc",
+          "size": 207486,
+          "license": "LicenseRef-charset-normalizer",
+          "source": {
+            "url": "https://files.pythonhosted.org/packages/33/1c/f41d4e74c28ab327ff3acd36053f7ea506c55872d7a90b0fa71aa3ab0c89/charset_normalizer-3.5.2.tar.gz",
+            "sha256": "39de2a259fc954455c57274dc94c79d5842774e1247a016aff30bc0efed0f4ef"
+          }
+        },
+        {
+          "name": "curl_cffi",
+          "version": "0.16.3",
+          "filename": "curl_cffi-0.16.3-cp310-abi3-win_amd64.whl",
+          "url": "https://files.pythonhosted.org/packages/9b/72/1732a24ef4a2aeba994b80ec163debe8deda403c07e4abbc0443bca078b8/curl_cffi-0.16.3-cp310-abi3-win_amd64.whl",
+          "sha256": "fe87b66e324ed7318166698e02169f3208dbda32b872a27d2bc61a9c19b335eb",
+          "size": 1978602,
+          "license": "MIT",
+          "source": {
+            "url": "https://files.pythonhosted.org/packages/82/e1/730125c43e3e331d98e17af3cb310ba526b3f1101b7635ca23d976ebfcf5/curl_cffi-0.16.3.tar.gz",
+            "sha256": "d15d0c2a35f2d75bec430c28946c2a833f421c85773bdb0795182cc5c515665b"
+          }
+        },
+        {
+          "name": "h11",
+          "version": "0.16.0",
+          "filename": "h11-0.16.0-py3-none-any.whl",
+          "url": "https://files.pythonhosted.org/packages/04/4b/29cac41a4d98d144bf5f6d33995617b185d14b22401f75ca86f384e87ff1/h11-0.16.0-py3-none-any.whl",
+          "sha256": "63cf8bbe7522de3bf65932fda1d9c2772064ffb3dae62d55932da54b31cb6c86",
+          "size": 37515,
+          "license": "LicenseRef-h11",
+          "source": {
+            "url": "https://files.pythonhosted.org/packages/01/ee/02a2c011bdab74c6fb3c75474d40b3052059d95df7e73351460c8588d963/h11-0.16.0.tar.gz",
+            "sha256": "4e35b956cf45792e4caa5885e69fba00bdbc6ffafbfa020300e549b208ee5ff1"
+          }
+        },
+        {
+          "name": "idna",
+          "version": "3.20",
+          "filename": "idna-3.20-py3-none-any.whl",
+          "url": "https://files.pythonhosted.org/packages/58/a2/bb081bab032533a855d44de1d56f8e8426114ff1ba5d1f07a438a0a654f8/idna-3.20-py3-none-any.whl",
+          "sha256": "ab7ae7122974553370f0bdb919e1a960b2cd1bc1ef0276416d896db81c14582c",
+          "size": 69583,
+          "license": "BSD-3-Clause",
+          "source": {
+            "url": "https://files.pythonhosted.org/packages/f5/08/8eea9d4b8302028f3abb2c0813953f7aec26d33b7a8960ed760e65ff29fa/idna-3.20.tar.gz",
+            "sha256": "a7db850025b95ded1eae8a46181a1a6c56c92c96f0e2b005d9ff8dc0210cab44"
+          }
+        },
+        {
+          "name": "isodate",
+          "version": "0.7.2",
+          "filename": "isodate-0.7.2-py3-none-any.whl",
+          "url": "https://files.pythonhosted.org/packages/15/aa/0aca39a37d3c7eb941ba736ede56d689e7be91cab5d9ca846bde3999eba6/isodate-0.7.2-py3-none-any.whl",
+          "sha256": "28009937d8031054830160fce6d409ed342816b543597cece116d966c6d99e15",
+          "size": 22320,
+          "license": "LicenseRef-isodate",
+          "source": {
+            "url": "https://files.pythonhosted.org/packages/54/4d/e940025e2ce31a8ce1202635910747e5a87cc3a6a6bb2d00973375014749/isodate-0.7.2.tar.gz",
+            "sha256": "4cd1aa0f43ca76f4a6c6c0292a85f40b35ec2e43e315b59f06e6d32171a953e6"
+          }
+        },
+        {
+          "name": "lxml",
+          "version": "6.1.3",
+          "filename": "lxml-6.1.3-cp312-cp312-win_amd64.whl",
+          "url": "https://files.pythonhosted.org/packages/3a/5b/6ed903e4e6278a020c8a6f0dbbe78030d041840a6b4a64ea441a1e414077/lxml-6.1.3-cp312-cp312-win_amd64.whl",
+          "sha256": "3e9a00d1c2c30936f7add097c41afc5da6556c580909104aafd382cac92a855c",
+          "size": 4005999,
+          "license": "LicenseRef-lxml",
+          "source": {
+            "url": "https://files.pythonhosted.org/packages/23/ad/28ecd7cb894d172f3c9c80a075eeeb2017ac62e3632cee05a5f9493547eb/lxml-6.1.3.tar.gz",
+            "sha256": "45222d94ddd511536f3b2f7d9deae3b2339b4ce0f075f1ca25703b07cad9dd21"
+          }
+        },
+        {
+          "name": "mutagen",
+          "version": "1.48.1",
+          "filename": "mutagen-1.48.1-py3-none-any.whl",
+          "url": "https://files.pythonhosted.org/packages/47/d8/a29e4e3991765e7ce4ed1f7e4074fe1ba9da03e0048639734de60f9cadb9/mutagen-1.48.1-py3-none-any.whl",
+          "sha256": "4f077fe87d3fc7fba259aa63d8c026b18382ca6a42ef37c61e16f1b1b5b82fe7",
+          "size": 195706,
+          "license": "GPL-2.0-or-later",
+          "source": {
+            "url": "https://files.pythonhosted.org/packages/df/70/1675da133ea92227da41bf5b24e1c66be597ff736a1533ade41da986852f/mutagen-1.48.1.tar.gz",
+            "sha256": "8f95637ab9f6f305cec6bd1294e197debe207998e3e068596563c74f86b0a173"
+          }
+        },
+        {
+          "name": "outcome",
+          "version": "1.3.0.post0",
+          "filename": "outcome-1.3.0.post0-py2.py3-none-any.whl",
+          "url": "https://files.pythonhosted.org/packages/55/8b/5ab7257531a5d830fc8000c476e63c935488d74609b50f9384a643ec0a62/outcome-1.3.0.post0-py2.py3-none-any.whl",
+          "sha256": "e771c5ce06d1415e356078d3bdd68523f284b4ce5419828922b6871e65eda82b",
+          "size": 10692,
+          "license": "LicenseRef-outcome",
+          "source": {
+            "url": "https://files.pythonhosted.org/packages/98/df/77698abfac98571e65ffeb0c1fba8ffd692ab8458d617a0eed7d9a8d38f2/outcome-1.3.0.post0.tar.gz",
+            "sha256": "9dcf02e65f2971b80047b377468e72a268e15c0af3cf1238e6ff14f7f91143b8"
+          }
+        },
+        {
+          "name": "pycountry",
+          "version": "26.2.16",
+          "filename": "pycountry-26.2.16-py3-none-any.whl",
+          "url": "https://files.pythonhosted.org/packages/9c/42/7703bd45b62fecd44cd7d3495423097e2f7d28bc2e99e7c1af68892ab157/pycountry-26.2.16-py3-none-any.whl",
+          "sha256": "115c4baf7cceaa30f59a4694d79483c9167dbce7a9de4d3d571c5f3ea77c305a",
+          "size": 8044600,
+          "license": "LGPL-2.1-only",
+          "source": {
+            "url": "https://files.pythonhosted.org/packages/de/1d/061b9e7a48b85cfd69f33c33d2ef784a531c359399ad764243399673c8f5/pycountry-26.2.16.tar.gz",
+            "sha256": "5b6027d453fcd6060112b951dd010f01f168b51b4bf8a1f1fc8c95c8d94a0801"
+          }
+        },
+        {
+          "name": "pycparser",
+          "version": "3.0",
+          "filename": "pycparser-3.0-py3-none-any.whl",
+          "url": "https://files.pythonhosted.org/packages/0c/c3/44f3fbbfa403ea2a7c779186dc20772604442dde72947e7d01069cbe98e3/pycparser-3.0-py3-none-any.whl",
+          "sha256": "b727414169a36b7d524c1c3e31839a521725078d7b2ff038656844266160a992",
+          "size": 48172,
+          "license": "BSD-3-Clause",
+          "source": {
+            "url": "https://files.pythonhosted.org/packages/1b/7d/92392ff7815c21062bea51aa7b87d45576f649f16458d78b7cf94b9ab2e6/pycparser-3.0.tar.gz",
+            "sha256": "600f49d217304a5902ac3c37e1281c9fe94e4d0489de643a9504c5cdfdfc6b29"
+          }
+        },
+        {
+          "name": "pycryptodome",
+          "version": "3.23.0",
+          "filename": "pycryptodome-3.23.0-cp37-abi3-win_amd64.whl",
+          "url": "https://files.pythonhosted.org/packages/54/2f/e97a1b8294db0daaa87012c24a7bb714147c7ade7656973fd6c736b484ff/pycryptodome-3.23.0-cp37-abi3-win_amd64.whl",
+          "sha256": "c75b52aacc6c0c260f204cbdd834f76edc9fb0d8e0da9fbf8352ef58202564e2",
+          "size": 1799636,
+          "license": "LicenseRef-pycryptodome",
+          "source": {
+            "url": "https://files.pythonhosted.org/packages/8e/a6/8452177684d5e906854776276ddd34eca30d1b1e15aa1ee9cefc289a33f5/pycryptodome-3.23.0.tar.gz",
+            "sha256": "447700a657182d60338bab09fdb27518f8856aecd80ae4c6bdddb67ff5da44ef"
+          }
+        },
+        {
+          "name": "pycryptodomex",
+          "version": "3.23.0",
+          "filename": "pycryptodomex-3.23.0-cp37-abi3-win_amd64.whl",
+          "url": "https://files.pythonhosted.org/packages/69/96/11f36f71a865dd6df03716d33bd07a67e9d20f6b8d39820470b766af323c/pycryptodomex-3.23.0-cp37-abi3-win_amd64.whl",
+          "sha256": "52e5ca58c3a0b0bd5e100a9fbc8015059b05cffc6c66ce9d98b4b45e023443b9",
+          "size": 1803124,
+          "license": "LicenseRef-pycryptodomex",
+          "source": {
+            "url": "https://files.pythonhosted.org/packages/c9/85/e24bf90972a30b0fcd16c73009add1d7d7cd9140c2498a68252028899e41/pycryptodomex-3.23.0.tar.gz",
+            "sha256": "71909758f010c82bc99b0abf4ea12012c98962fbf0583c2164f8b84533c2e4da"
+          }
+        },
+        {
+          "name": "PySocks",
+          "version": "1.7.1",
+          "filename": "PySocks-1.7.1-py3-none-any.whl",
+          "url": "https://files.pythonhosted.org/packages/8d/59/b4572118e098ac8e46e399a1dd0f2d85403ce8bbaad9ec79373ed6badaf9/PySocks-1.7.1-py3-none-any.whl",
+          "sha256": "2725bd0a9925919b9b51739eea5f9e2bae91e83288108a9ad338b2e3a4435ee5",
+          "size": 16725,
+          "license": "LicenseRef-PySocks",
+          "source": {
+            "url": "https://files.pythonhosted.org/packages/bd/11/293dd436aea955d45fc4e8a35b6ae7270f5b8e00b53cf6c024c83b657a11/PySocks-1.7.1.tar.gz",
+            "sha256": "3f8804571ebe159c380ac6de37643bb4685970655d3bba243530d6558b799aa0"
+          }
+        },
+        {
+          "name": "requests",
+          "version": "2.34.2",
+          "filename": "requests-2.34.2-py3-none-any.whl",
+          "url": "https://files.pythonhosted.org/packages/a0/f4/c67b0b3f1b9245e8d266f0f112c500d50e5b4e83cb6f3b71b6528104182a/requests-2.34.2-py3-none-any.whl",
+          "sha256": "2a0d60c172f83ac6ab31e4554906c0f3b3588d37b5cb939b1c061f4907e278e0",
+          "size": 73075,
+          "license": "LicenseRef-requests",
+          "source": {
+            "url": "https://files.pythonhosted.org/packages/ac/c3/e2a2b89f2d3e2179abd6d00ebd70bff6273f37fb3e0cc209f48b39d00cbf/requests-2.34.2.tar.gz",
+            "sha256": "f288924cae4e29463698d6d60bc6a4da69c89185ad1e0bcc4104f584e960b9ed"
+          }
+        },
+        {
+          "name": "sniffio",
+          "version": "1.3.1",
+          "filename": "sniffio-1.3.1-py3-none-any.whl",
+          "url": "https://files.pythonhosted.org/packages/e9/44/75a9c9421471a6c4805dbf2356f7c181a29c1879239abab1ea2cc8f38b40/sniffio-1.3.1-py3-none-any.whl",
+          "sha256": "2f6da418d1f1e0fddd844478f41680e794e6051915791a034ff65e5f100525a2",
+          "size": 10235,
+          "license": "LicenseRef-sniffio",
+          "source": {
+            "url": "https://files.pythonhosted.org/packages/a2/87/a6771e1546d97e7e041b6ae58d80074f81b7d5121207425c964ddf5cfdbd/sniffio-1.3.1.tar.gz",
+            "sha256": "f4324edc670a0f49750a81b895f35c3adb843cca46f0530f79fc1babb23789dc"
+          }
+        },
+        {
+          "name": "sortedcontainers",
+          "version": "2.4.0",
+          "filename": "sortedcontainers-2.4.0-py2.py3-none-any.whl",
+          "url": "https://files.pythonhosted.org/packages/32/46/9cb0e58b2deb7f82b84065f37f3bffeb12413f947f9388e4cac22c4621ce/sortedcontainers-2.4.0-py2.py3-none-any.whl",
+          "sha256": "a163dcaede0f1c021485e957a39245190e74249897e2ae4b2aa38595db237ee0",
+          "size": 29575,
+          "license": "LicenseRef-sortedcontainers",
+          "source": {
+            "url": "https://files.pythonhosted.org/packages/e8/c4/ba2f8066cceb6f23394729afe52f3bf7adec04bf9ed2c820b39e19299111/sortedcontainers-2.4.0.tar.gz",
+            "sha256": "25caa5a06cc30b6b83d11423433f65d1f9d76c4c6a0c90e3379eaa43b9bfdb88"
+          }
+        },
+        {
+          "name": "streamlink",
+          "version": "8.6.1",
+          "filename": "streamlink-8.6.1-py3-none-win_amd64.whl",
+          "url": "https://files.pythonhosted.org/packages/1a/74/2226763e9e78813a8d774bd17cd4a6ad4c42555334aa1007932bfeee8509/streamlink-8.6.1-py3-none-win_amd64.whl",
+          "sha256": "59eba0d3807b95893e71809d6f64931b9b1ddd319676198d4462a10fee51a91a",
+          "size": 582704,
+          "license": "BSD-2-Clause",
+          "source": {
+            "url": "https://files.pythonhosted.org/packages/a2/64/2ecd92de6d19a724634f29748f81aab8e68d34bbaa1d7cfcaa4f3a101988/streamlink-8.6.1.tar.gz",
+            "sha256": "29ba76ed6d6913c9e69bc730fc584b581b2860022af18661a1d08c8daee03642"
+          }
+        },
+        {
+          "name": "trio",
+          "version": "0.34.0",
+          "filename": "trio-0.34.0-py3-none-any.whl",
+          "url": "https://files.pythonhosted.org/packages/77/1f/555f1364bed52a92a864181962b77f1b15adadeacf23b86105324363e461/trio-0.34.0-py3-none-any.whl",
+          "sha256": "6c7c9f49917694dcdcd5f67abd168df5599eca480d61f29854d17a61a75c2f05",
+          "size": 511840,
+          "license": "MIT OR Apache-2.0",
+          "source": {
+            "url": "https://files.pythonhosted.org/packages/92/dc/a2d25ed73ad49cfd79bf18d262577c3731c98e382284e28d522f49a0df35/trio-0.34.0.tar.gz",
+            "sha256": "63b9485408bdfdde544fced107045a8c0086cdc4bd0ef2f797b9e0dd111b964b"
+          }
+        },
+        {
+          "name": "trio-websocket",
+          "version": "0.12.2",
+          "filename": "trio_websocket-0.12.2-py3-none-any.whl",
+          "url": "https://files.pythonhosted.org/packages/c7/19/eb640a397bba49ba49ef9dbe2e7e5c04202ba045b6ce2ec36e9cadc51e04/trio_websocket-0.12.2-py3-none-any.whl",
+          "sha256": "df605665f1db533f4a386c94525870851096a223adcb97f72a07e8b4beba45b6",
+          "size": 21221,
+          "license": "LicenseRef-trio-websocket",
+          "source": {
+            "url": "https://files.pythonhosted.org/packages/d1/3c/8b4358e81f2f2cfe71b66a267f023a91db20a817b9425dd964873796980a/trio_websocket-0.12.2.tar.gz",
+            "sha256": "22c72c436f3d1e264d0910a3951934798dcc5b00ae56fc4ee079d46c7cf20fae"
+          }
+        },
+        {
+          "name": "urllib3",
+          "version": "2.8.0",
+          "filename": "urllib3-2.8.0-py3-none-any.whl",
+          "url": "https://files.pythonhosted.org/packages/92/9d/c4e665119135114480843e7ab388fa94d8480650450e6f8e26b70d323a4c/urllib3-2.8.0-py3-none-any.whl",
+          "sha256": "0cf3cae568d36aa9576b28dfb35f11328f1cb974ca7647d9475ebb86c75ac6e3",
+          "size": 135717,
+          "license": "MIT",
+          "source": {
+            "url": "https://files.pythonhosted.org/packages/e3/05/b17359e1cefb4f909b5e40b1b90a496d987258916dbbf88e842c729f510e/urllib3-2.8.0.tar.gz",
+            "sha256": "63bf2ead4c879426ebf22ef2a781eeb4aa3b4ae798a0435506f8687fd5bb9b63"
+          }
+        },
+        {
+          "name": "websocket-client",
+          "version": "1.9.2",
+          "filename": "websocket_client-1.9.2-py3-none-any.whl",
+          "url": "https://files.pythonhosted.org/packages/d5/d2/cc4dc1271e464942db7ee278baae2daa99ee77cb2af744025c04da585a3e/websocket_client-1.9.2-py3-none-any.whl",
+          "sha256": "e1a673830a9c7bfa47b1cd3d5e4178f4c9651d80a4eab02c9c23a1c3ec6250ce",
+          "size": 95786,
+          "license": "LicenseRef-websocket-client",
+          "source": {
+            "url": "https://files.pythonhosted.org/packages/d8/cb/a5abcc2891249f393827c650c6296660ce40374ac22d99ab9aea41f9d2a2/websocket_client-1.9.2.tar.gz",
+            "sha256": "0fcb57545848be86992e128218fd96dd87a6769ffdb1a968dff79632b85604d0"
+          }
+        },
+        {
+          "name": "websockets",
+          "version": "17.2",
+          "filename": "websockets-17.2-cp312-cp312-win_amd64.whl",
+          "url": "https://files.pythonhosted.org/packages/c6/2a/90008411c652dcfae34345a2169f4becd066a4ba71eebfa8dd801e0445e1/websockets-17.2-cp312-cp312-win_amd64.whl",
+          "sha256": "faa763b677e96f1beccc6b4d7e8c079dfeed2f249f57a19debc321b519ee64ec",
+          "size": 218528,
+          "license": "BSD-3-Clause",
+          "source": {
+            "url": "https://files.pythonhosted.org/packages/01/89/3f825ab71c242fffb62ea8fe638741c290f62f8d7aadf8125ff897747af3/websockets-17.2.tar.gz",
+            "sha256": "36c2fb94c990cc2545143b12690e2de6c16300f9dbe5b4f33fa300cf57dc8792"
+          }
+        },
+        {
+          "name": "wsproto",
+          "version": "1.3.2",
+          "filename": "wsproto-1.3.2-py3-none-any.whl",
+          "url": "https://files.pythonhosted.org/packages/a4/f5/10b68b7b1544245097b2a1b8238f66f2fc6dcaeb24ba5d917f52bd2eed4f/wsproto-1.3.2-py3-none-any.whl",
+          "sha256": "61eea322cdf56e8cc904bd3ad7573359a242ba65688716b0710a5eb12beab584",
+          "size": 24405,
+          "license": "MIT",
+          "source": {
+            "url": "https://files.pythonhosted.org/packages/c7/79/12135bdf8b9c9367b8701c2c19a14c913c120b882d50b014ca0d38083c2c/wsproto-1.3.2.tar.gz",
+            "sha256": "b86885dcf294e15204919950f666e06ffc6c7c114ca900b060d6e16293528294"
+          }
+        },
+        {
+          "name": "yt-dlp",
+          "version": "2026.8.19",
+          "filename": "yt_dlp-2026.8.19-py3-none-any.whl",
+          "url": "https://files.pythonhosted.org/packages/69/b2/8cd1613f56eed7ceb64fbd4df3f1c01246bfb098e6f398228bafda22b80b/yt_dlp-2026.8.19-py3-none-any.whl",
+          "sha256": "1d57897e94c6665a0a6f9bc54b34e584284e32c034ffab3a7df25d8f7b24eedf",
+          "size": 3185533,
+          "license": "Unlicense",
+          "source": {
+            "url": "https://files.pythonhosted.org/packages/1e/e0/832fa4ca334b766a06933a196066edc3dba37cdb6f14cd98d59bcc69a4b4/yt_dlp-2026.8.19.tar.gz",
+            "sha256": "9e213e48cea35c66b378e4447903f118f6392a5fa380a2b6d7070ec86f4e0af1"
+          }
+        },
+        {
+          "name": "yt-dlp-ejs",
+          "version": "0.8.0",
+          "filename": "yt_dlp_ejs-0.8.0-py3-none-any.whl",
+          "url": "https://files.pythonhosted.org/packages/e3/bd/520769863744b669440a924271a6159ddd82ad5ae26b4ac4d4b69e9f8d44/yt_dlp_ejs-0.8.0-py3-none-any.whl",
+          "sha256": "79300e5fca7f937a1eeede11f0456862c1b41107ce1d726871e0207424f4bdb4",
+          "size": 53443,
+          "license": "Unlicense AND MIT AND ISC",
+          "source": {
+            "url": "https://files.pythonhosted.org/packages/d3/e6/cceb9530e8f4e5940f6f7822d90e9d94f1b85343329a16baaf47bbbb3de1/yt_dlp_ejs-0.8.0.tar.gz",
+            "sha256": "d5fa1639f63b5c4af8d932495f60689d5370f1a095782c944f7f62a303eb104e"
+          }
+        }
+      ]
+    },
+    "linux-x64": {
+      "node": {
+        "name": "node",
+        "version": "24.19.0",
+        "filename": "node-v24.19.0-linux-x64.tar.xz",
+        "url": "https://nodejs.org/dist/v24.19.0/node-v24.19.0-linux-x64.tar.xz",
+        "sha256": "14b342e71204f811bde6153be8e04b62aef63c236fef92b55f9c83154b409647",
+        "license": "MIT"
+      },
+      "wheels": [
+        {
+          "name": "attrs",
+          "version": "26.1.0",
+          "filename": "attrs-26.1.0-py3-none-any.whl",
+          "url": "https://files.pythonhosted.org/packages/64/b4/17d4b0b2a2dc85a6df63d1157e028ed19f90d4cd97c36717afef2bc2f395/attrs-26.1.0-py3-none-any.whl",
+          "sha256": "c647aa4a12dfbad9333ca4e71fe62ddc36f4e63b2d260a37a8b83d2f043ac309",
+          "size": 67548,
+          "license": "MIT",
+          "source": {
+            "url": "https://files.pythonhosted.org/packages/9a/8e/82a0fe20a541c03148528be8cac2408564a6c9a0cc7e9171802bc1d26985/attrs-26.1.0.tar.gz",
+            "sha256": "d03ceb89cb322a8fd706d4fb91940737b6642aa36998fe130a9bc96c985eff32"
+          }
+        },
+        {
+          "name": "brotli",
+          "version": "1.2.0",
+          "filename": "brotli-1.2.0-cp312-cp312-manylinux2014_x86_64.manylinux_2_17_x86_64.whl",
+          "url": "https://files.pythonhosted.org/packages/03/a7/03aa61fbc3c5cbf99b44d158665f9b0dd3d8059be16c460208d9e385c837/brotli-1.2.0-cp312-cp312-manylinux2014_x86_64.manylinux_2_17_x86_64.whl",
+          "sha256": "072e7624b1fc4d601036ab3f4f27942ef772887e876beff0301d261210bca97f",
+          "size": 1419762,
+          "license": "LicenseRef-brotli",
+          "source": {
+            "url": "https://files.pythonhosted.org/packages/f7/16/c92ca344d646e71a43b8bb353f0a6490d7f6e06210f8554c8f874e454285/brotli-1.2.0.tar.gz",
+            "sha256": "e310f77e41941c13340a95976fe66a8a95b01e783d430eeaf7a2f87e0a57dd0a"
+          }
+        },
+        {
+          "name": "certifi",
+          "version": "2026.7.22",
+          "filename": "certifi-2026.7.22-py3-none-any.whl",
+          "url": "https://files.pythonhosted.org/packages/0b/a7/71ac2cff56fec219ed242bb11b8efb69fcc4bec75db06fb7bfe35de520e6/certifi-2026.7.22-py3-none-any.whl",
+          "sha256": "62f22742b58a1a33014a2b6b706588a8d7e2a88ae7bd1a6ebe8c992928483775",
+          "size": 136983,
+          "license": "LicenseRef-certifi",
+          "source": {
+            "url": "https://files.pythonhosted.org/packages/a3/c2/24167ea9858356b47a87a50d39908bfdb72ceeefe0041586e704e5376b3a/certifi-2026.7.22.tar.gz",
+            "sha256": "741e2c3b351ddf169a738da9f2c048608ff7f2c5cc02f1ebc6b118bb090d5d55"
+          }
+        },
+        {
+          "name": "cffi",
+          "version": "2.1.1",
+          "filename": "cffi-2.1.1-cp312-cp312-manylinux2014_x86_64.manylinux_2_17_x86_64.whl",
+          "url": "https://files.pythonhosted.org/packages/b1/db/dceb9dd5b231e1da801793f8acc9f3c52a7e1afe40bb1aae37e02b0faad5/cffi-2.1.1-cp312-cp312-manylinux2014_x86_64.manylinux_2_17_x86_64.whl",
+          "sha256": "c1453022f490d2459a11819d83ad1d586e9ff65a12ac3e705ffebd46d3685dcf",
+          "size": 221822,
+          "license": "MIT-0",
+          "source": {
+            "url": "https://files.pythonhosted.org/packages/9e/ef/008a1939e372c06329a3fce4279c02f328488f3526744906eeec3da7ad5f/cffi-2.1.1.tar.gz",
+            "sha256": "dd31f52ea1086513bb9df30f8fcee9b8918323ae067a3d5b78bc826a000712be"
+          }
+        },
+        {
+          "name": "charset-normalizer",
+          "version": "3.5.2",
+          "filename": "charset_normalizer-3.5.2-cp312-cp312-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl",
+          "url": "https://files.pythonhosted.org/packages/7f/c5/38806a25ab5e65fc178f39affeda20858efafede2fce1ffc2556cfc9fe73/charset_normalizer-3.5.2-cp312-cp312-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl",
+          "sha256": "3d31298449090ab8d47b7b1b2a555ff73cac7ed438a08b7ac160980c7ebed649",
+          "size": 257601,
+          "license": "LicenseRef-charset-normalizer",
+          "source": {
+            "url": "https://files.pythonhosted.org/packages/33/1c/f41d4e74c28ab327ff3acd36053f7ea506c55872d7a90b0fa71aa3ab0c89/charset_normalizer-3.5.2.tar.gz",
+            "sha256": "39de2a259fc954455c57274dc94c79d5842774e1247a016aff30bc0efed0f4ef"
+          }
+        },
+        {
+          "name": "curl_cffi",
+          "version": "0.16.3",
+          "filename": "curl_cffi-0.16.3-cp310-abi3-manylinux2014_x86_64.manylinux_2_17_x86_64.whl",
+          "url": "https://files.pythonhosted.org/packages/72/01/2bbf141baa0fc3921d31a90de5465b7a94188845a8fe84dee86bf7bd90f1/curl_cffi-0.16.3-cp310-abi3-manylinux2014_x86_64.manylinux_2_17_x86_64.whl",
+          "sha256": "a875a661e2f9a949be29454880bbb9553307a487c4c08819738298cf5c1622e2",
+          "size": 13484311,
+          "license": "MIT",
+          "source": {
+            "url": "https://files.pythonhosted.org/packages/82/e1/730125c43e3e331d98e17af3cb310ba526b3f1101b7635ca23d976ebfcf5/curl_cffi-0.16.3.tar.gz",
+            "sha256": "d15d0c2a35f2d75bec430c28946c2a833f421c85773bdb0795182cc5c515665b"
+          }
+        },
+        {
+          "name": "h11",
+          "version": "0.16.0",
+          "filename": "h11-0.16.0-py3-none-any.whl",
+          "url": "https://files.pythonhosted.org/packages/04/4b/29cac41a4d98d144bf5f6d33995617b185d14b22401f75ca86f384e87ff1/h11-0.16.0-py3-none-any.whl",
+          "sha256": "63cf8bbe7522de3bf65932fda1d9c2772064ffb3dae62d55932da54b31cb6c86",
+          "size": 37515,
+          "license": "LicenseRef-h11",
+          "source": {
+            "url": "https://files.pythonhosted.org/packages/01/ee/02a2c011bdab74c6fb3c75474d40b3052059d95df7e73351460c8588d963/h11-0.16.0.tar.gz",
+            "sha256": "4e35b956cf45792e4caa5885e69fba00bdbc6ffafbfa020300e549b208ee5ff1"
+          }
+        },
+        {
+          "name": "idna",
+          "version": "3.20",
+          "filename": "idna-3.20-py3-none-any.whl",
+          "url": "https://files.pythonhosted.org/packages/58/a2/bb081bab032533a855d44de1d56f8e8426114ff1ba5d1f07a438a0a654f8/idna-3.20-py3-none-any.whl",
+          "sha256": "ab7ae7122974553370f0bdb919e1a960b2cd1bc1ef0276416d896db81c14582c",
+          "size": 69583,
+          "license": "BSD-3-Clause",
+          "source": {
+            "url": "https://files.pythonhosted.org/packages/f5/08/8eea9d4b8302028f3abb2c0813953f7aec26d33b7a8960ed760e65ff29fa/idna-3.20.tar.gz",
+            "sha256": "a7db850025b95ded1eae8a46181a1a6c56c92c96f0e2b005d9ff8dc0210cab44"
+          }
+        },
+        {
+          "name": "isodate",
+          "version": "0.7.2",
+          "filename": "isodate-0.7.2-py3-none-any.whl",
+          "url": "https://files.pythonhosted.org/packages/15/aa/0aca39a37d3c7eb941ba736ede56d689e7be91cab5d9ca846bde3999eba6/isodate-0.7.2-py3-none-any.whl",
+          "sha256": "28009937d8031054830160fce6d409ed342816b543597cece116d966c6d99e15",
+          "size": 22320,
+          "license": "LicenseRef-isodate",
+          "source": {
+            "url": "https://files.pythonhosted.org/packages/54/4d/e940025e2ce31a8ce1202635910747e5a87cc3a6a6bb2d00973375014749/isodate-0.7.2.tar.gz",
+            "sha256": "4cd1aa0f43ca76f4a6c6c0292a85f40b35ec2e43e315b59f06e6d32171a953e6"
+          }
+        },
+        {
+          "name": "lxml",
+          "version": "6.1.3",
+          "filename": "lxml-6.1.3-cp312-cp312-manylinux_2_26_x86_64.manylinux_2_28_x86_64.whl",
+          "url": "https://files.pythonhosted.org/packages/0a/20/e022dbc6b4753a9bc9fc5fb28a27163430c1731b9913997f6544c1b2518c/lxml-6.1.3-cp312-cp312-manylinux_2_26_x86_64.manylinux_2_28_x86_64.whl",
+          "sha256": "909f4e927bb051f7740d6367285fc60cdcfdaf0258c2dba4ff5ba7eadadc250c",
+          "size": 5244675,
+          "license": "LicenseRef-lxml",
+          "source": {
+            "url": "https://files.pythonhosted.org/packages/23/ad/28ecd7cb894d172f3c9c80a075eeeb2017ac62e3632cee05a5f9493547eb/lxml-6.1.3.tar.gz",
+            "sha256": "45222d94ddd511536f3b2f7d9deae3b2339b4ce0f075f1ca25703b07cad9dd21"
+          }
+        },
+        {
+          "name": "mutagen",
+          "version": "1.48.1",
+          "filename": "mutagen-1.48.1-py3-none-any.whl",
+          "url": "https://files.pythonhosted.org/packages/47/d8/a29e4e3991765e7ce4ed1f7e4074fe1ba9da03e0048639734de60f9cadb9/mutagen-1.48.1-py3-none-any.whl",
+          "sha256": "4f077fe87d3fc7fba259aa63d8c026b18382ca6a42ef37c61e16f1b1b5b82fe7",
+          "size": 195706,
+          "license": "GPL-2.0-or-later",
+          "source": {
+            "url": "https://files.pythonhosted.org/packages/df/70/1675da133ea92227da41bf5b24e1c66be597ff736a1533ade41da986852f/mutagen-1.48.1.tar.gz",
+            "sha256": "8f95637ab9f6f305cec6bd1294e197debe207998e3e068596563c74f86b0a173"
+          }
+        },
+        {
+          "name": "outcome",
+          "version": "1.3.0.post0",
+          "filename": "outcome-1.3.0.post0-py2.py3-none-any.whl",
+          "url": "https://files.pythonhosted.org/packages/55/8b/5ab7257531a5d830fc8000c476e63c935488d74609b50f9384a643ec0a62/outcome-1.3.0.post0-py2.py3-none-any.whl",
+          "sha256": "e771c5ce06d1415e356078d3bdd68523f284b4ce5419828922b6871e65eda82b",
+          "size": 10692,
+          "license": "LicenseRef-outcome",
+          "source": {
+            "url": "https://files.pythonhosted.org/packages/98/df/77698abfac98571e65ffeb0c1fba8ffd692ab8458d617a0eed7d9a8d38f2/outcome-1.3.0.post0.tar.gz",
+            "sha256": "9dcf02e65f2971b80047b377468e72a268e15c0af3cf1238e6ff14f7f91143b8"
+          }
+        },
+        {
+          "name": "pycountry",
+          "version": "26.2.16",
+          "filename": "pycountry-26.2.16-py3-none-any.whl",
+          "url": "https://files.pythonhosted.org/packages/9c/42/7703bd45b62fecd44cd7d3495423097e2f7d28bc2e99e7c1af68892ab157/pycountry-26.2.16-py3-none-any.whl",
+          "sha256": "115c4baf7cceaa30f59a4694d79483c9167dbce7a9de4d3d571c5f3ea77c305a",
+          "size": 8044600,
+          "license": "LGPL-2.1-only",
+          "source": {
+            "url": "https://files.pythonhosted.org/packages/de/1d/061b9e7a48b85cfd69f33c33d2ef784a531c359399ad764243399673c8f5/pycountry-26.2.16.tar.gz",
+            "sha256": "5b6027d453fcd6060112b951dd010f01f168b51b4bf8a1f1fc8c95c8d94a0801"
+          }
+        },
+        {
+          "name": "pycparser",
+          "version": "3.0",
+          "filename": "pycparser-3.0-py3-none-any.whl",
+          "url": "https://files.pythonhosted.org/packages/0c/c3/44f3fbbfa403ea2a7c779186dc20772604442dde72947e7d01069cbe98e3/pycparser-3.0-py3-none-any.whl",
+          "sha256": "b727414169a36b7d524c1c3e31839a521725078d7b2ff038656844266160a992",
+          "size": 48172,
+          "license": "BSD-3-Clause",
+          "source": {
+            "url": "https://files.pythonhosted.org/packages/1b/7d/92392ff7815c21062bea51aa7b87d45576f649f16458d78b7cf94b9ab2e6/pycparser-3.0.tar.gz",
+            "sha256": "600f49d217304a5902ac3c37e1281c9fe94e4d0489de643a9504c5cdfdfc6b29"
+          }
+        },
+        {
+          "name": "pycryptodome",
+          "version": "3.23.0",
+          "filename": "pycryptodome-3.23.0-cp37-abi3-manylinux_2_17_x86_64.manylinux2014_x86_64.whl",
+          "url": "https://files.pythonhosted.org/packages/5f/e9/a09476d436d0ff1402ac3867d933c61805ec2326c6ea557aeeac3825604e/pycryptodome-3.23.0-cp37-abi3-manylinux_2_17_x86_64.manylinux2014_x86_64.whl",
+          "sha256": "c8987bd3307a39bc03df5c8e0e3d8be0c4c3518b7f044b0f4c15d1aa78f52575",
+          "size": 2268954,
+          "license": "LicenseRef-pycryptodome",
+          "source": {
+            "url": "https://files.pythonhosted.org/packages/8e/a6/8452177684d5e906854776276ddd34eca30d1b1e15aa1ee9cefc289a33f5/pycryptodome-3.23.0.tar.gz",
+            "sha256": "447700a657182d60338bab09fdb27518f8856aecd80ae4c6bdddb67ff5da44ef"
+          }
+        },
+        {
+          "name": "pycryptodomex",
+          "version": "3.23.0",
+          "filename": "pycryptodomex-3.23.0-cp37-abi3-manylinux_2_17_x86_64.manylinux2014_x86_64.whl",
+          "url": "https://files.pythonhosted.org/packages/c8/a9/8862616a85cf450d2822dbd4fff1fcaba90877907a6ff5bc2672cafe42f8/pycryptodomex-3.23.0-cp37-abi3-manylinux_2_17_x86_64.manylinux2014_x86_64.whl",
+          "sha256": "f489c4765093fb60e2edafdf223397bc716491b2b69fe74367b70d6999257a5c",
+          "size": 2272578,
+          "license": "LicenseRef-pycryptodomex",
+          "source": {
+            "url": "https://files.pythonhosted.org/packages/c9/85/e24bf90972a30b0fcd16c73009add1d7d7cd9140c2498a68252028899e41/pycryptodomex-3.23.0.tar.gz",
+            "sha256": "71909758f010c82bc99b0abf4ea12012c98962fbf0583c2164f8b84533c2e4da"
+          }
+        },
+        {
+          "name": "PySocks",
+          "version": "1.7.1",
+          "filename": "PySocks-1.7.1-py3-none-any.whl",
+          "url": "https://files.pythonhosted.org/packages/8d/59/b4572118e098ac8e46e399a1dd0f2d85403ce8bbaad9ec79373ed6badaf9/PySocks-1.7.1-py3-none-any.whl",
+          "sha256": "2725bd0a9925919b9b51739eea5f9e2bae91e83288108a9ad338b2e3a4435ee5",
+          "size": 16725,
+          "license": "LicenseRef-PySocks",
+          "source": {
+            "url": "https://files.pythonhosted.org/packages/bd/11/293dd436aea955d45fc4e8a35b6ae7270f5b8e00b53cf6c024c83b657a11/PySocks-1.7.1.tar.gz",
+            "sha256": "3f8804571ebe159c380ac6de37643bb4685970655d3bba243530d6558b799aa0"
+          }
+        },
+        {
+          "name": "requests",
+          "version": "2.34.2",
+          "filename": "requests-2.34.2-py3-none-any.whl",
+          "url": "https://files.pythonhosted.org/packages/a0/f4/c67b0b3f1b9245e8d266f0f112c500d50e5b4e83cb6f3b71b6528104182a/requests-2.34.2-py3-none-any.whl",
+          "sha256": "2a0d60c172f83ac6ab31e4554906c0f3b3588d37b5cb939b1c061f4907e278e0",
+          "size": 73075,
+          "license": "LicenseRef-requests",
+          "source": {
+            "url": "https://files.pythonhosted.org/packages/ac/c3/e2a2b89f2d3e2179abd6d00ebd70bff6273f37fb3e0cc209f48b39d00cbf/requests-2.34.2.tar.gz",
+            "sha256": "f288924cae4e29463698d6d60bc6a4da69c89185ad1e0bcc4104f584e960b9ed"
+          }
+        },
+        {
+          "name": "sniffio",
+          "version": "1.3.1",
+          "filename": "sniffio-1.3.1-py3-none-any.whl",
+          "url": "https://files.pythonhosted.org/packages/e9/44/75a9c9421471a6c4805dbf2356f7c181a29c1879239abab1ea2cc8f38b40/sniffio-1.3.1-py3-none-any.whl",
+          "sha256": "2f6da418d1f1e0fddd844478f41680e794e6051915791a034ff65e5f100525a2",
+          "size": 10235,
+          "license": "LicenseRef-sniffio",
+          "source": {
+            "url": "https://files.pythonhosted.org/packages/a2/87/a6771e1546d97e7e041b6ae58d80074f81b7d5121207425c964ddf5cfdbd/sniffio-1.3.1.tar.gz",
+            "sha256": "f4324edc670a0f49750a81b895f35c3adb843cca46f0530f79fc1babb23789dc"
+          }
+        },
+        {
+          "name": "sortedcontainers",
+          "version": "2.4.0",
+          "filename": "sortedcontainers-2.4.0-py2.py3-none-any.whl",
+          "url": "https://files.pythonhosted.org/packages/32/46/9cb0e58b2deb7f82b84065f37f3bffeb12413f947f9388e4cac22c4621ce/sortedcontainers-2.4.0-py2.py3-none-any.whl",
+          "sha256": "a163dcaede0f1c021485e957a39245190e74249897e2ae4b2aa38595db237ee0",
+          "size": 29575,
+          "license": "LicenseRef-sortedcontainers",
+          "source": {
+            "url": "https://files.pythonhosted.org/packages/e8/c4/ba2f8066cceb6f23394729afe52f3bf7adec04bf9ed2c820b39e19299111/sortedcontainers-2.4.0.tar.gz",
+            "sha256": "25caa5a06cc30b6b83d11423433f65d1f9d76c4c6a0c90e3379eaa43b9bfdb88"
+          }
+        },
+        {
+          "name": "streamlink",
+          "version": "8.6.1",
+          "filename": "streamlink-8.6.1-py3-none-any.whl",
+          "url": "https://files.pythonhosted.org/packages/7a/6f/1b3a9368c0132fc43491ef3af5ee5d7b78975f079ba795670284ab8d7d29/streamlink-8.6.1-py3-none-any.whl",
+          "sha256": "8e99cfc0241b261d4be202c7357e15ffd932af42963e18b8a5b6508d53f11c3c",
+          "size": 582682,
+          "license": "BSD-2-Clause",
+          "source": {
+            "url": "https://files.pythonhosted.org/packages/a2/64/2ecd92de6d19a724634f29748f81aab8e68d34bbaa1d7cfcaa4f3a101988/streamlink-8.6.1.tar.gz",
+            "sha256": "29ba76ed6d6913c9e69bc730fc584b581b2860022af18661a1d08c8daee03642"
+          }
+        },
+        {
+          "name": "trio",
+          "version": "0.34.0",
+          "filename": "trio-0.34.0-py3-none-any.whl",
+          "url": "https://files.pythonhosted.org/packages/77/1f/555f1364bed52a92a864181962b77f1b15adadeacf23b86105324363e461/trio-0.34.0-py3-none-any.whl",
+          "sha256": "6c7c9f49917694dcdcd5f67abd168df5599eca480d61f29854d17a61a75c2f05",
+          "size": 511840,
+          "license": "MIT OR Apache-2.0",
+          "source": {
+            "url": "https://files.pythonhosted.org/packages/92/dc/a2d25ed73ad49cfd79bf18d262577c3731c98e382284e28d522f49a0df35/trio-0.34.0.tar.gz",
+            "sha256": "63b9485408bdfdde544fced107045a8c0086cdc4bd0ef2f797b9e0dd111b964b"
+          }
+        },
+        {
+          "name": "trio-websocket",
+          "version": "0.12.2",
+          "filename": "trio_websocket-0.12.2-py3-none-any.whl",
+          "url": "https://files.pythonhosted.org/packages/c7/19/eb640a397bba49ba49ef9dbe2e7e5c04202ba045b6ce2ec36e9cadc51e04/trio_websocket-0.12.2-py3-none-any.whl",
+          "sha256": "df605665f1db533f4a386c94525870851096a223adcb97f72a07e8b4beba45b6",
+          "size": 21221,
+          "license": "LicenseRef-trio-websocket",
+          "source": {
+            "url": "https://files.pythonhosted.org/packages/d1/3c/8b4358e81f2f2cfe71b66a267f023a91db20a817b9425dd964873796980a/trio_websocket-0.12.2.tar.gz",
+            "sha256": "22c72c436f3d1e264d0910a3951934798dcc5b00ae56fc4ee079d46c7cf20fae"
+          }
+        },
+        {
+          "name": "urllib3",
+          "version": "2.8.0",
+          "filename": "urllib3-2.8.0-py3-none-any.whl",
+          "url": "https://files.pythonhosted.org/packages/92/9d/c4e665119135114480843e7ab388fa94d8480650450e6f8e26b70d323a4c/urllib3-2.8.0-py3-none-any.whl",
+          "sha256": "0cf3cae568d36aa9576b28dfb35f11328f1cb974ca7647d9475ebb86c75ac6e3",
+          "size": 135717,
+          "license": "MIT",
+          "source": {
+            "url": "https://files.pythonhosted.org/packages/e3/05/b17359e1cefb4f909b5e40b1b90a496d987258916dbbf88e842c729f510e/urllib3-2.8.0.tar.gz",
+            "sha256": "63bf2ead4c879426ebf22ef2a781eeb4aa3b4ae798a0435506f8687fd5bb9b63"
+          }
+        },
+        {
+          "name": "websocket-client",
+          "version": "1.9.2",
+          "filename": "websocket_client-1.9.2-py3-none-any.whl",
+          "url": "https://files.pythonhosted.org/packages/d5/d2/cc4dc1271e464942db7ee278baae2daa99ee77cb2af744025c04da585a3e/websocket_client-1.9.2-py3-none-any.whl",
+          "sha256": "e1a673830a9c7bfa47b1cd3d5e4178f4c9651d80a4eab02c9c23a1c3ec6250ce",
+          "size": 95786,
+          "license": "LicenseRef-websocket-client",
+          "source": {
+            "url": "https://files.pythonhosted.org/packages/d8/cb/a5abcc2891249f393827c650c6296660ce40374ac22d99ab9aea41f9d2a2/websocket_client-1.9.2.tar.gz",
+            "sha256": "0fcb57545848be86992e128218fd96dd87a6769ffdb1a968dff79632b85604d0"
+          }
+        },
+        {
+          "name": "websockets",
+          "version": "17.2",
+          "filename": "websockets-17.2-cp312-cp312-manylinux1_x86_64.manylinux_2_28_x86_64.manylinux_2_5_x86_64.whl",
+          "url": "https://files.pythonhosted.org/packages/03/c0/a6d8be9c43e4456fb9597fdf8b5e0ce1f0a5df41503acce6d869536e4e23/websockets-17.2-cp312-cp312-manylinux1_x86_64.manylinux_2_28_x86_64.manylinux_2_5_x86_64.whl",
+          "sha256": "6627b913b8586b1c06db9516b31dd0dfbc621de3bb9312616d92a7e44f268a5b",
+          "size": 225299,
+          "license": "BSD-3-Clause",
+          "source": {
+            "url": "https://files.pythonhosted.org/packages/01/89/3f825ab71c242fffb62ea8fe638741c290f62f8d7aadf8125ff897747af3/websockets-17.2.tar.gz",
+            "sha256": "36c2fb94c990cc2545143b12690e2de6c16300f9dbe5b4f33fa300cf57dc8792"
+          }
+        },
+        {
+          "name": "wsproto",
+          "version": "1.3.2",
+          "filename": "wsproto-1.3.2-py3-none-any.whl",
+          "url": "https://files.pythonhosted.org/packages/a4/f5/10b68b7b1544245097b2a1b8238f66f2fc6dcaeb24ba5d917f52bd2eed4f/wsproto-1.3.2-py3-none-any.whl",
+          "sha256": "61eea322cdf56e8cc904bd3ad7573359a242ba65688716b0710a5eb12beab584",
+          "size": 24405,
+          "license": "MIT",
+          "source": {
+            "url": "https://files.pythonhosted.org/packages/c7/79/12135bdf8b9c9367b8701c2c19a14c913c120b882d50b014ca0d38083c2c/wsproto-1.3.2.tar.gz",
+            "sha256": "b86885dcf294e15204919950f666e06ffc6c7c114ca900b060d6e16293528294"
+          }
+        },
+        {
+          "name": "yt-dlp",
+          "version": "2026.8.19",
+          "filename": "yt_dlp-2026.8.19-py3-none-any.whl",
+          "url": "https://files.pythonhosted.org/packages/69/b2/8cd1613f56eed7ceb64fbd4df3f1c01246bfb098e6f398228bafda22b80b/yt_dlp-2026.8.19-py3-none-any.whl",
+          "sha256": "1d57897e94c6665a0a6f9bc54b34e584284e32c034ffab3a7df25d8f7b24eedf",
+          "size": 3185533,
+          "license": "Unlicense",
+          "source": {
+            "url": "https://files.pythonhosted.org/packages/1e/e0/832fa4ca334b766a06933a196066edc3dba37cdb6f14cd98d59bcc69a4b4/yt_dlp-2026.8.19.tar.gz",
+            "sha256": "9e213e48cea35c66b378e4447903f118f6392a5fa380a2b6d7070ec86f4e0af1"
+          }
+        },
+        {
+          "name": "yt-dlp-ejs",
+          "version": "0.8.0",
+          "filename": "yt_dlp_ejs-0.8.0-py3-none-any.whl",
+          "url": "https://files.pythonhosted.org/packages/e3/bd/520769863744b669440a924271a6159ddd82ad5ae26b4ac4d4b69e9f8d44/yt_dlp_ejs-0.8.0-py3-none-any.whl",
+          "sha256": "79300e5fca7f937a1eeede11f0456862c1b41107ce1d726871e0207424f4bdb4",
+          "size": 53443,
+          "license": "Unlicense AND MIT AND ISC",
+          "source": {
+            "url": "https://files.pythonhosted.org/packages/d3/e6/cceb9530e8f4e5940f6f7822d90e9d94f1b85343329a16baaf47bbbb3de1/yt_dlp_ejs-0.8.0.tar.gz",
+            "sha256": "d5fa1639f63b5c4af8d932495f60689d5370f1a095782c944f7f62a303eb104e"
+          }
+        }
+      ]
+    }
+  }
+}

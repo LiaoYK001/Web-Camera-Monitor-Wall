@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { fetchRuntimeInfo, useDesktopWork } from './desktopRuntime';
 import Go2rtcStreams from './Go2rtcStreams';
+import Go2rtcOnlineSources from './Go2rtcOnlineSources';
 
 const base = '/api/v1/go2rtc/';
 const pages = [
@@ -18,9 +19,17 @@ export default function Go2rtcWorkspace({ onDevices }: { onDevices: () => void }
   const [generation, setGeneration] = useState(0);
   const [rtspBase, setRtspBase] = useState('rtsp://127.0.0.1:18554/');
   const [configDirty, setConfigDirty] = useState(false);
+  const [onlineRuntime, setOnlineRuntime] = useState({ enabled: false, platform: '' });
+  const [streamsGeneration, setStreamsGeneration] = useState(0);
   const frame = useRef<HTMLIFrameElement>(null);
   useDesktopWork('go2rtc-config', configDirty);
-  useEffect(() => { void fetchRuntimeInfo().then(info => setRtspBase(info.go2rtcRtspBase)).catch(() => undefined); }, []);
+  useEffect(() => {
+    const controller = new AbortController();
+    void fetchRuntimeInfo(controller.signal).then(info => {
+      if (!controller.signal.aborted) { setRtspBase(info.go2rtcRtspBase); setOnlineRuntime({ enabled: info.onlineSourcesEnabled === true, platform: info.platform }); }
+    }).catch(() => undefined);
+    return () => controller.abort();
+  }, [generation]);
   useEffect(() => {
     if (!window.webobsDesktop || selected !== 'config.html') { setConfigDirty(false); return; }
     let cancelled = false;
@@ -67,13 +76,14 @@ export default function Go2rtcWorkspace({ onDevices }: { onDevices: () => void }
       <p>先在 go2rtc 中配置来源，再在“设备与来源”添加 <code>{rtspBase}流名称</code>。这里的地址指后端所在环境；普通 RTSP 也可直接接入。</p>
       <p>配置与日志可能包含设备凭据，仅供管理员使用。修改流名称时，需要同步更新监控墙中的来源。</p>
     </div>
-    <Go2rtcStreams />
+    {state === 'ready' && selected !== 'config.html' && <Go2rtcOnlineSources enabled={onlineRuntime.enabled} platform={onlineRuntime.platform} onCreated={() => setStreamsGeneration(value => value + 1)} />}
+    <Go2rtcStreams refreshKey={streamsGeneration} />
     <nav className="go2rtc-tabs" aria-label="go2rtc 页面">{pages.map((page) => <button type="button" key={page.id} aria-pressed={selected === page.id}
       className={selected === page.id ? 'active' : ''} onClick={() => setSelected(page.id)}>{page.label}</button>)}</nav>
     <p className="go2rtc-description">{pages.find((page) => page.id === selected)?.description}</p>
     {state === 'loading' && <p role="status">正在检查 go2rtc 服务…</p>}
     {state === 'error' && <div role="alert" className="inline-error">{error}</div>}
-    {state === 'ready' && <iframe ref={frame} key={`${selected}:${generation}`} className="go2rtc-frame" title="go2rtc 官方 WebUI"
+    {state === 'ready' && <iframe ref={frame} key={`${selected}:${generation}:${streamsGeneration}`} className="go2rtc-frame" title="go2rtc 官方 WebUI"
       src={`${base}${selected}`} allow="camera; microphone; fullscreen" />}
   </section>;
 }

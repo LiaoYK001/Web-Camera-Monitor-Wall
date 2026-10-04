@@ -3437,10 +3437,13 @@ HttpResponse handle_request(const HttpRequest &request, SceneController &control
 #else
         const char* platform = "linux";
 #endif
+        const char* online_sources = std::getenv("WEBOBS_ONLINE_SOURCES_ENABLED");
+        const bool online_enabled = online_sources && (std::string_view(online_sources) == "true" || std::string_view(online_sources) == "1");
         return response(http::status::ok, version,
             "{\"schemaVersion\":1,\"platform\":\"" + std::string(platform) +
             "\",\"go2rtcRtspBase\":\"" + runtime_rtsp(18554, "/") +
-            "\",\"capabilities\":" + system_capabilities_response(version, runtime_status).body() + "}");
+            "\",\"onlineSourcesEnabled\":" + std::string(online_enabled ? "true" : "false") +
+            ",\"capabilities\":" + system_capabilities_response(version, runtime_status).body() + "}");
     }
     if (request.method() == http::verb::get && target == "/api/v1/system/capabilities")
         return system_capabilities_response(version, runtime_status);

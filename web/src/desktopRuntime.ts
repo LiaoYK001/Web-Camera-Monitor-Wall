@@ -37,10 +37,10 @@ export function desktopTask(key: string): () => void {
   work.set(key, { dirty: false, exporting: true }); announce();
   return () => { work.delete(key); announce(); };
 }
-export async function fetchRuntimeInfo(signal?: AbortSignal): Promise<{ platform: string; go2rtcRtspBase: string }> {
+export async function fetchRuntimeInfo(signal?: AbortSignal): Promise<{ platform: string; go2rtcRtspBase: string; onlineSourcesEnabled?: boolean }> {
   const response = await fetch('/api/v1/runtime/info', { credentials: 'same-origin', cache: 'no-store', signal });
   if (!response.ok) throw new Error('运行时地址不可用，请刷新或检查后端版本。');
-  const info = await response.json() as { platform: string; go2rtcRtspBase: string };
+  const info = await response.json() as { platform: string; go2rtcRtspBase: string; onlineSourcesEnabled?: boolean };
   if (!/^rtsp:\/\/127\.0\.0\.1:\d{1,5}\/$/.test(info.go2rtcRtspBase)) throw new Error('后端 RTSP 地址无效');
   return info;
 }

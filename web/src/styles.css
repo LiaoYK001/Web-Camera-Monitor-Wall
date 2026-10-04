@@ -2374,3 +2374,8 @@ select:focus-visible,
 .playback-optimization-settings fieldset { display: grid; gap: .75rem; }
 .playback-adaptation-notice { padding: .5rem; color: #d7f6a0; }
 @media (max-width: 600px) { .scene-actions { grid-template-columns: 1fr; } .scene-entry .scene-chip { max-width: 240px; } }
+.online-sources fieldset { border: 0; padding: 0; margin: 0; min-width: 0; }
+.online-source-fields { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(260px, 100%), 1fr)); gap: .75rem; margin-bottom: .75rem; }
+.online-source-fields label { display: grid; gap: .35rem; min-width: 0; }
+.online-source-fields input, .online-source-fields select { width: 100%; min-width: 0; }
+.online-source-address { grid-column: 1 / -1; }
