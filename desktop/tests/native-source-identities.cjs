@@ -16,7 +16,7 @@ exports.exerciseNativeSourceIdentities = async (main, origin, headers, waitForUi
   try {
     for (const identity of ['constructor', '__proto__']) {
       const studio = await read(`${origin}/api/v1/studio`);
-      const scene = studio.scenes.find(value => value.id === studio.previewSceneId);
+      const scene = studio.scenes.find(value => value.id === studio.programSceneId);
       scene.sources = [{ id: identity, kind: 'color', name: 'Native source identity', color: '#214f75',
         muted: true, volume: 1, syncOffsetMs: 0, monitoring: 'off', audioTrack: 1, filters: [] }];
       scene.items = [{ id: 'native-identity-item', sourceId: identity, x: 0, y: 0,
@@ -24,6 +24,13 @@ exports.exerciseNativeSourceIdentities = async (main, origin, headers, waitForUi
         crop: { top: 0, right: 0, bottom: 0, left: 0 }, zIndex: 0, visible: true,
         locked: false, groupId: '', rotation: 0, opacity: 1, blendMode: 'normal' }];
       await put(`${origin}/api/v1/studio`, studio, { 'If-Match': `"${studio.revision}"` });
+      const live = await read(`${origin}/api/v1/scene`);
+      assert.equal(live.sources[0].id, identity);
+      if (studio.previewSceneId !== studio.programSceneId) {
+        const saved = await read(`${origin}/api/v1/studio`);
+        assert.deepEqual(saved.scenes.find(value => value.id === studio.previewSceneId),
+          originalStudio.scenes.find(value => value.id === studio.previewSceneId));
+      }
       await put(endpoint, { value: { mode: 'manual', localMonitorVolume: .18,
         sourceDecorations: Object.fromEntries([[identity, { fill: 'contain', telemetry: { enabled: true, fields: ['fps'] } }]]) } });
       await main.loadURL(`${origin}/#monitor`);
