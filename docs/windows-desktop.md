@@ -78,6 +78,10 @@ GitHub `Build full Windows desktop` 是手动候选构建，不发布 Release。
 
 主控制入口固定 `http://127.0.0.1:18080`，内部端口首次分配后保存在 `ports.json`；冲突报错，不结束其他应用。受认证的 `/api/v1/runtime/info` 返回平台与 go2rtc 建档地址，设备导入使用该地址。服务 URL 的环境映射在根目录 `runtime_support.py` 与 C++ `platform_runtime` 中保持一致。
 
+go2rtc WebRTC 首次分配先请求系统可用的 UDP 端口，再保留同端口的 TCP；任一协议冲突/受限时关闭本次候选并尝试新端口，最多 16 次。这样避免 TCP 自动端口落入 Windows UDP 保留区。已保存的端口不自动更改；冲突保留原诊断，且不会关闭其他端口占用者。其他失败仍直接报告。
+
+First-use go2rtc WebRTC allocation asks the OS for an available UDP port, then reserves matching TCP. A conflicting/restricted protocol releases the candidate and tries again, at most 16 times, avoiding TCP automatic choices in Windows UDP exclusions. Saved ports never migrate automatically: conflicts retain actionable diagnostics and other owners stay untouched. Other failures are reported immediately.
+
 同步 CommonJS 启动入口在 Electron ready 之前配置用户与会话目录，然后加载桌面模块，避免打包入口等待 ready 时阻塞启动。模块导入失败会保存 `logs/desktop-startup.log` 并显示日志位置；成功启动也保留简短启动记录。
 
 配置、账号数据库、密钥、桌面设置与浏览器会话位于 `%LOCALAPPDATA%\WebOBS`。私密目录仅当前 Windows 用户访问，备份主密钥由 Electron safeStorage/Windows DPAPI 保护；客户端授权签名密钥也使用 DPAPI。运行期间备份进程使用私密 `run` 目录中的临时密钥，停服删除。录像默认位于用户 Videos 下的 WebOBS，可在设置中选择新目录；已有录像不会自动移动。
