@@ -21,6 +21,11 @@ private_directory=module('desktop_private_directory',ROOT/'desktop/python/privat
 headless=module('desktop_headless',ROOT/'desktop/scripts/prepare-obs-headless.py')
 
 class SnapshotTests(unittest.TestCase):
+    @unittest.skipUnless(os.name=='nt' and (ROOT/'desktop/runtime/bin/webobsd.exe').exists(),'requires a built Windows control runtime')
+    def test_slow_account_operations_keep_login_and_failure_semantics(self):
+        fixture=module('desktop_account_proxy',ROOT/'tests/account_proxy_runtime.py')
+        fixture.exercise(ROOT/'desktop/runtime/bin/webobsd.exe',ROOT/'desktop/runtime/bin/webobs-job.exe')
+
     @unittest.skipUnless(os.name=='nt' and (ROOT/'desktop/runtime/bin/webobs-online-source.exe').exists(),'requires the complete website runtime')
     def test_online_sources_load_without_developer_path(self):
         runtime=ROOT/'desktop/runtime'

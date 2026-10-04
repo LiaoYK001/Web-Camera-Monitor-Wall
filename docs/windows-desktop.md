@@ -86,6 +86,8 @@ First-use go2rtc WebRTC allocation asks the OS for an available UDP port, then r
 
 同步 CommonJS 启动入口在 Electron ready 之前配置用户与会话目录，然后加载桌面模块，避免打包入口等待 ready 时阻塞启动。模块导入失败会保存 `logs/desktop-startup.log` 并显示日志位置；成功启动也保留简短启动记录。
 
+私密启动日志还记录诊断窗口、运行清单校验与服务启动阶段及有界错误。低性能 CPU 启动时，首次建账和密码校验可等待最多 10 秒；账号服务超时/不可用返回 503，不误报密码错误，错误密码和限流仍分别返回 401/429。Private startup diagnostics record initialization stages. Password operations have a bounded 10-second budget; account outages return 503, while invalid credentials/rate limits remain 401/429.
+
 配置、账号数据库、密钥、桌面设置与浏览器会话位于 `%LOCALAPPDATA%\WebOBS`。私密目录仅当前 Windows 用户访问，备份主密钥由 Electron safeStorage/Windows DPAPI 保护；客户端授权签名密钥也使用 DPAPI。运行期间备份进程使用私密 `run` 目录中的临时密钥，停服删除。录像默认位于用户 Videos 下的 WebOBS，可在设置中选择新目录；已有录像不会自动移动。
 
 Windows 写入授权密钥使用二进制文件模式，避免 CRT 把随机密文中的换行字节改写为 CRLF。回归测试同时检查实际文件字节与重新载入后的密钥身份。
