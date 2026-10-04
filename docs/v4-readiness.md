@@ -50,6 +50,10 @@ The control subscription waits up to 15 seconds for the WebSocket upgrade and an
 
 控制订阅等待连接和有效场景各最多 15 秒。短暂连接不会重置渐进重试（起始 500 毫秒、±20% 抖动、上限 30 秒）；有效订阅持续 30 秒才重置。断网或后台失败时暂停重试，网络恢复或返回前台后重试。短暂后台保留正常订阅；超过 30 秒后返回会刷新订阅。自动恢复及手动重连只控制场景同步，不启停媒体或 NVR 服务。
 
+Shared [request deadlines](request-deadlines.md) also bound the UI wait when a transport ignores cancellation and retain the original timeout/owner reason. A client timeout never implies that a server mutation was cancelled; explicit job cancellation and unconfirmed-result recovery remain necessary.
+
+共享的[请求时限](request-deadlines.md)在传输忽略取消时仍限制界面等待，并保留真实超时或所属对象的取消原因。客户端超时不代表服务端修改已取消；仍需明确的任务取消与未确认结果恢复。
+
 In Settings → Developer diagnostics, enable the current-window control counters, reproduce the issue, and copy the counters or manually copy the expanded data. The session-only diagnostic schema contains fixed status/reason codes, timestamps and counts. It excludes URLs, arbitrary transport error/close messages, scene/source payloads, account names and credentials. Counters disappear when a subscription closes and never persist to account storage. A maximum of 32 active records is retained per window; disabled diagnostics do not run an extra polling timer. Browser failures, native lifecycle checks and synthetic video tests remain distinct from physical camera qualification.
 
 设置 → 开发者诊断中按需显示当前窗口计数，复现问题后复制或手动选取数据。会话内诊断只含固定状态码、时间和计数，不保存地址、任意连接报错、场景、账号或密钥。关闭订阅即移除，单窗口最多保留 32 条；未开启时不增加轮询。浏览器故障夹具、原生生命周期和合成视频测试均不等同真实摄像机验收。
