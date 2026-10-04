@@ -1,6 +1,7 @@
 """Actual control binary with a delayed loopback account fixture; no user accounts."""
 import argparse
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+import importlib.util
 import json
 import os
 from pathlib import Path
@@ -34,6 +35,13 @@ def exercise(binary, job=None):
     worker=threading.Thread(target=server.serve_forever,daemon=True);worker.start()
     with tempfile.TemporaryDirectory(prefix='webobs-auth-deadline-') as temp:
         private=Path(temp)
+        if os.name=='nt':
+            # Elevated runners may give new directories to Administrators.
+            # Apply the same user ownership/ACL as the desktop supervisor.
+            spec=importlib.util.spec_from_file_location('account_fixture_private_directory',
+                Path(__file__).resolve().parents[1]/'desktop/python/private_directory.py')
+            storage=importlib.util.module_from_spec(spec);spec.loader.exec_module(storage)
+            storage.protect(private)
         with socket.socket() as lease:lease.bind(('127.0.0.1',0));port=lease.getsockname()[1]
         env={key:value for key,value in os.environ.items() if not key.startswith('WEBOBS_')}
         env.update(WEBOBS_HTTP_PORT=str(port),WEBOBS_LISTEN_ADDRESS='127.0.0.1',
