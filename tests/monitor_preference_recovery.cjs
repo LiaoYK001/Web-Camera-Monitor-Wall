@@ -4,7 +4,7 @@ const { execFileSync } = require('node:child_process');
 const crypto = require('node:crypto');
 const assert = require('node:assert/strict');
 const net = require('node:net');
-const { largePreferenceWorkspace } = require('./fixtures/preference-workspace.cjs');
+const { largePreferenceWorkspace, largeSourceAudioWorkspace } = require('./fixtures/preference-workspace.cjs');
 const root = path.resolve(__dirname, '..');
 const { chromium, expect } = createRequire(path.join(root, 'web/package.json'))('@playwright/test');
 // Build web/dist first and supply a complete product image explicitly.
@@ -62,7 +62,10 @@ let created = false, browser;
       scaleMode: 'contain', crop: { top: 0, right: 0, bottom: 0, left: 0 }, zIndex: 0, visible: true, locked: false,
       groupId: '', rotation: 0, opacity: 1, blendMode: 'normal' }];
     studio.previewSceneId = studio.programSceneId = scene.id;
-    assert.equal((await context.request.put(base + '/api/v1/studio', { headers: { ...headers, 'If-Match': `"${studio.revision}"` }, data: studio })).status(), 200);
+    const committed = await context.request.put(base + '/api/v1/studio', { headers: { ...headers, 'If-Match': `"${studio.revision}"` }, data: studio });
+    assert.equal(committed.status(), 200);
+    assert.equal((await context.request.post(base + '/api/v1/studio/take', { headers: { ...headers, 'If-Match': `"${(await committed.json()).revision}"` } })).status(), 200);
+    assert.equal((await (await context.request.get(base + '/api/v1/scene')).json()).sources[0].id, `${scene.id}.recovery-camera`);
     const preferences = { audioMonitorEnabled: true, audioOutput: 'meter-only', localMonitorVolume: .18, mode: 'manual' };
     assert.equal((await context.request.put(base + '/api/v2/account/preferences/monitor-view', { headers, data: { value: preferences } })).status(), 200);
     run('exec', name, 'python3', '-c', "import sqlite3; db=sqlite3.connect('/config/webobs/cluster.sqlite3'); db.execute(\"UPDATE account_preferences SET body_json='{' WHERE kind='monitor-view'\"); db.commit()");
@@ -134,6 +137,64 @@ let created = false, browser;
     const bulkWire = await wide.evaluate(() => JSON.parse(sessionStorage.getItem('preference-test-wire')).at(-1));
     assert.ok(bulkWire.bytes < 1024 * 1024);
     console.log(`PASS actual atomic bulk update: 1000 source telemetry preferences saved with ${bulkWire.bytes} bytes; unrelated audio meter controls retained.`);
+    await wide.close();
+    for (const identity of ['constructor', '__proto__']) {
+      const currentScene = await (await context.request.get(base + '/api/v1/scene')).json();
+      currentScene.sources[0].id = identity; currentScene.items[0].sourceId = identity;
+      // TAKE namespaces identifiers. The authenticated Program API also accepts
+      // the exact boundary names and must render them without inherited values.
+      const staged = await context.request.put(base + '/api/v1/scene', {
+        headers: { ...headers, 'If-Match': `"${currentScene.revision}"` }, data: currentScene });
+      assert.equal(staged.status(), 200);
+      assert.equal((await (await context.request.get(base + '/api/v1/scene')).json()).sources[0].id, identity);
+      const identityPreferences = { ...preferences, audioMonitorEnabled: false, showAllAudioSources: true,
+        sourceDecorations: Object.fromEntries([[identity, { fill: 'contain', telemetry: { enabled: true, fields: ['fps'] } }]]) };
+      assert.equal((await context.request.put(base + '/api/v2/account/preferences/monitor-view', { headers, data: { value: identityPreferences } })).status(), 200);
+      const identityPage = await context.newPage();
+      await identityPage.goto(base + '/#monitor');
+      await expect(identityPage.getByRole('slider', { name: '本地监听主音量' })).toBeEnabled();
+      await expect(identityPage.locator('.audio-mixer-channel')).toHaveAttribute('data-source-id', identity);
+      await identityPage.waitForFunction(() => document.querySelector('.direct-preview video')?.getVideoPlaybackQuality().totalVideoFrames >= 10,
+        null, { timeout: 60000 });
+      await identityPage.getByRole('slider', { name: '本地监听主音量' }).fill('0.22');
+      await identityPage.reload();
+      await expect(identityPage.getByRole('slider', { name: '本地监听主音量' })).toHaveValue('0.22');
+      await expect(identityPage.locator('.audio-mixer-channel')).toHaveAttribute('data-source-id', identity);
+      await identityPage.waitForFunction(() => document.querySelector('.direct-preview video')?.getVideoPlaybackQuality().totalVideoFrames >= 10,
+        null, { timeout: 60000 });
+      const identitySaved = (await (await context.request.get(base + '/api/v2/account/preferences/monitor-view')).json()).value;
+      assert.ok(Object.hasOwn(identitySaved.sourceDecorations, identity));
+      assert.equal(identitySaved.sourceDecorations[identity].fill, 'contain');
+      assert.deepEqual(identitySaved.sourceDecorations[identity].telemetry.fields, ['fps']);
+      await identityPage.close();
+    }
+    console.log('PASS actual accepted Scene identities constructor/__proto__: real Direct H264 frames before and after preference save/reload, with own source decorations retained. No API/media mocks.');
+    const audioStudio = await (await context.request.get(base + '/api/v1/scene')).json();
+    audioStudio.sources[0].id = 'other-scene-999'; audioStudio.items[0].sourceId = 'other-scene-999';
+    assert.equal((await context.request.put(base + '/api/v1/scene', {
+      headers: { ...headers, 'If-Match': `"${audioStudio.revision}"` }, data: audioStudio })).status(), 200);
+    const audioPreferences = largeSourceAudioWorkspace();
+    assert.equal((await context.request.put(base + '/api/v2/account/preferences/monitor-view', { headers, data: { value: audioPreferences } })).status(), 200);
+    const audioPage = await context.newPage(); await audioPage.goto(base + '/#monitor');
+    await expect(audioPage.getByRole('slider', { name: '本地监听主音量' })).toBeEnabled();
+    const sourceGain = audioPage.getByRole('slider', { name: 'Synthetic recovery camera 音量' });
+    const sourceMute = audioPage.getByRole('button', { name: 'Synthetic recovery camera 静音', exact: true });
+    const sourceMonitor = audioPage.getByRole('button', { name: 'Synthetic recovery camera 本地监听', exact: true });
+    await expect(audioPage.locator('.audio-mixer-channel')).toHaveAttribute('data-source-id', 'other-scene-999');
+    await expect(sourceGain).toHaveValue('0.27');
+    await expect(sourceMute).toHaveAttribute('aria-pressed', 'false');
+    await expect(sourceMonitor).toHaveAttribute('aria-pressed', 'false');
+    await audioPage.waitForFunction(() => document.querySelector('.direct-preview video')?.getVideoPlaybackQuality().totalVideoFrames >= 10,
+      null, { timeout: 60000 });
+    await audioPage.getByRole('slider', { name: '本地监听主音量' }).fill('0.33');
+    await audioPage.reload();
+    await expect(audioPage.getByRole('slider', { name: '本地监听主音量' })).toHaveValue('0.33');
+    await expect(sourceGain).toHaveValue('0.27');
+    await expect(sourceMute).toHaveAttribute('aria-pressed', 'false');
+    await expect(sourceMonitor).toHaveAttribute('aria-pressed', 'false');
+    assert.deepEqual((await (await context.request.get(base + '/api/v2/account/preferences/monitor-view')).json()).value.sourceAudio, audioPreferences.sourceAudio);
+    console.log('PASS production UI + actual Linux account API: late source volume/mute/monitor restored from 1000 audio controls before and after a real master-volume save/reload; H264 decoding continues. Video-only synthetic source, not physical audio qualification.');
+    await audioPage.close();
   } finally {
     await browser?.close();
     if (created) run('rm', '--force', '--volumes', name);

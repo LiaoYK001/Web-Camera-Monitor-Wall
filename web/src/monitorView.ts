@@ -1,5 +1,6 @@
 import type { CameraProfile, SceneDocument, SceneItem } from './types';
 import { defaultPlaybackOptimization, normalizePlaybackOptimization, type PlaybackOptimization } from './playbackOptimization';
+import { ownRecordValue } from './recordValue';
 
 export type TelemetryField = 'fps' | 'bitrate' | 'codec' | 'decoder';
 export type OverlayPosition = 'top-left' | 'top-right' | 'bottom-left' | 'bottom-right' | 'custom';
@@ -333,7 +334,7 @@ export function resolveCanvasSize(
 
 export function sourceDecoration(view: MonitorView, sourceId: string): SourceDecoration {
   const fallback = defaultSourceDecoration();
-  const value = view.sourceDecorations[sourceId];
+  const value = ownRecordValue(view.sourceDecorations, sourceId);
   if (!value) return { ...fallback, telemetry: { ...view.telemetry, fields: [...view.telemetry.fields] } };
   return {
     telemetry: { ...view.telemetry, ...value.telemetry, fields: [...value.telemetry.fields] },
@@ -362,7 +363,7 @@ export function updateDefaultTelemetry(view: MonitorView, change: Partial<Teleme
  * keep the Scene item's own explicit scale mode.
  */
 export function resolveFillMode(view: MonitorView, sourceId: string, manualScaleMode: VideoFillMode): VideoFillMode {
-  const override = view.sourceDecorations[sourceId]?.fill;
+  const override = ownRecordValue(view.sourceDecorations, sourceId)?.fill;
   if (override) return override;
   return view.mode === 'auto' ? view.fill : manualScaleMode;
 }
@@ -445,7 +446,7 @@ export function normalizeMonitorView(value: Partial<MonitorView> | null | undefi
   const panels = { ...defaults.panels, ...(value?.panels ?? {}) };
   const analytics = { ...defaults.analytics, ...(value?.analytics ?? {}) };
   const allowedSourceIds = sourceIds ? new Set(sourceIds.filter(sourceIdentifier)) : null;
-  const sourceDecorations: Record<string, SourceDecoration> = {};
+  const sourceDecorations = new Map<string, SourceDecoration>();
   for (const [sourceId, raw] of Object.entries(value?.sourceDecorations ?? {})) {
     if (!sourceIdentifier(sourceId) || (allowedSourceIds && !allowedSourceIds.has(sourceId)) || !raw || typeof raw !== 'object') continue;
     const candidate = raw as Partial<SourceDecoration>;
@@ -455,7 +456,7 @@ export function normalizeMonitorView(value: Partial<MonitorView> | null | undefi
     // Stored v4 meters defaulted to the top-left corner, which covered the
     // "直达" tile label.  Migrate those to the OBS-style left rail once.
     const legacyTopLeft = !('orientation' in rawAudio) && sourceAudio.position === 'top-left';
-    sourceDecorations[sourceId] = {
+    sourceDecorations.set(sourceId, {
       telemetry: {
         ...sourceTelemetry,
         fields: telemetryFields(sourceTelemetry.fields, defaults.telemetry.fields),
@@ -486,7 +487,7 @@ export function normalizeMonitorView(value: Partial<MonitorView> | null | undefi
         person: Boolean(candidate.promotionKinds?.person),
       },
       ...(candidate.fill ? { fill: fillMode(candidate.fill, defaults.fill) } : {}),
-    };
+    });
   }
   return {
     schemaVersion: 5,
@@ -506,7 +507,7 @@ export function normalizeMonitorView(value: Partial<MonitorView> | null | undefi
       refreshIntervalMs: bounded(Math.trunc(finite(telemetry.refreshIntervalMs, defaults.telemetry.refreshIntervalMs)), defaults.telemetry.refreshIntervalMs, 500, 10000),
       backgroundColor: /^#[0-9a-f]{6}$/i.test(telemetry.backgroundColor) ? telemetry.backgroundColor : '#000000',
     },
-    sourceDecorations,
+    sourceDecorations: Object.fromEntries(sourceDecorations),
     rotation: {
       ...rotation,
       strategy: rotation.strategy === 'random' ? 'random' : 'sequential',
@@ -539,8 +540,10 @@ export function normalizeMonitorView(value: Partial<MonitorView> | null | undefi
     showAudioMixer: value?.showAudioMixer !== false,
     showAllAudioSources: value?.showAllAudioSources === true,
     projectorOutput: value?.projectorOutput === 'picture' ? 'picture' : 'full',
+    // Account controls span multiple Scenes. Keep every valid stored source;
+    // the preference/API byte and node bounds already constrain the document.
     sourceAudio: Object.fromEntries(Object.entries(value?.sourceAudio ?? {}).filter(([id, entry]) =>
-      sourceIdentifier(id) && entry && typeof entry === 'object').slice(0, 256).map(([id, entry]) => [id, {
+      sourceIdentifier(id) && entry && typeof entry === 'object').map(([id, entry]) => [id, {
       volume: bounded(entry.volume, 1, 0, 1.5), muted: entry.muted === true, monitor: entry.monitor !== false,
     }])),
     analytics: {

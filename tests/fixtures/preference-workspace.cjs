@@ -13,3 +13,10 @@ exports.largePreferenceWorkspace = (count = 1000) => ({
     promotionKinds: { audio: false, motion: false, person: false },
   }])),
 });
+
+exports.largeSourceAudioWorkspace = (count = 1000) => ({
+  mode: 'manual', localMonitorVolume: .18, audioMonitorEnabled: false,
+  showAllAudioSources: true,
+  sourceAudio: Object.fromEntries(Array.from({ length: count }, (_, index) =>
+    [`other-scene-${index}`, { volume: .27, muted: false, monitor: false }])),
+});

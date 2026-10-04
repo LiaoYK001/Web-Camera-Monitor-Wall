@@ -67,6 +67,22 @@ Deploy the updated WebUI and cluster service together. Only `monitor-view` accep
 
 Only monitor preferences accept `partial` / `removedPaths`. Partial updates require explicit `partial: true` and a baseline. At most 4096 removals may address object fields present in that baseline; paths contain 1–32 nonempty string keys of at most 128 characters each. Invalid paths leave the database/revision unchanged. Existing `{value, baseValue}` requests without `partial` retain complete-diff merging; `{value}` retains whole-document compatibility.
 
+合法来源标识（包括 `constructor`、`__proto__`、`toString`）按普通数据键处理。逐路外观规范化保留自己的 JSON 字段；默认外观、声音基准、音轨选择、弱网 Profile 和状态查询只读取对象自己的记录，不使用 JavaScript 继承属性。无需改名或丢弃已有来源；首次音量调整仍保留 Scene 的静音/监听基准，保存和刷新后保留逐路外观。
+
+Valid source identifiers, including `constructor`, `__proto__` and `toString`, are ordinary data keys. Decoration normalization retains own JSON entries; default decorations, audio baselines, track selection, adaptive profiles and source states read only own records rather than JavaScript inherited properties. Existing sources need no renaming or removal. First volume edits retain Scene mute/monitoring baselines, and saves/reloads retain source decorations.
+
+账号逐路声音偏好跨多个场景保存，不再静默截掉第 257 路及之后的记录；仍按现有标识、数值、账号文档字节和节点限制校验。来源多于 256 路时，后面的来源也恢复保存的音量、静音和本地监听；单项编辑、刷新和新浏览器登录不会删除其他场景的声音记录。1000 路验证为账号记录，画面只播放单路合成视频。
+
+Per-source account audio controls span multiple Scenes and no longer silently discard entries after the first 256. Existing identifier, numeric, account-document byte and node bounds remain enforced. Later sources restore saved gain, mute and monitoring; individual edits, reload and a fresh browser retain other Scenes' controls. The 1000-source check represents account records, with only one synthetic video playing.
+
+实际 Program 快照只由认证的场景事件更新。读取/保存 Studio、改名、切换本地配置和恢复设备草稿都不会清掉已经收到的直播快照；定义保存仍需要 TAKE 才能改变 Program。启动期间先到达的直播快照也不被较慢的 Studio 读取覆盖。验证直接 Program 接口的来源 ID 时检查实际 UI 来源；TAKE 自动加上的场景前缀不能代替标识边界验证。
+
+Only authenticated scene events update the actual Program snapshot. Studio reads/saves, renaming, local profiles and device drafts retain a received live snapshot; saved definitions still require TAKE to change Program. A slower Studio read cannot clear the snapshot received during startup. Direct Program identifier checks verify the actual UI source; TAKE's Scene prefix cannot substitute for testing the exact identifier boundary.
+
+2026-10-04：三个标识边界用例在修复前失败、修复后通过；包含这些用例的 70 项 Chromium 回归及 typecheck/生产构建通过。生产验证脚本通过真实 Scene 接口接受 `constructor` / `__proto__`，使用当前生产 UI 和隔离 Linux 产品实际解码 H.264，并确认保存/刷新后保留自己的外观字段。已安装 MuMu 开发 APK 的 16 项回归通过（正常来源标识，验证新版 UI 兼容）；新的 Windows 主入口标识用例仍需全新候选。没有清除安卓数据或正式发布。
+
+2026-10-04: Three identifier boundary cases failed before the fix and passed afterward; all 70 Chromium regressions including those cases, typecheck and production build passed. The production script accepts `constructor` / `__proto__` through real Scene APIs, decodes H.264 using the current UI/isolated Linux product, and retains own decorations after save/reload. All 16 installed MuMu development APK regressions passed with ordinary identifiers, checking updated-UI compatibility. New actual Windows identifier cases still require a fresh candidate. No Android data was cleared or formal release published.
+
 首次保存的逐路声音控件以实际 Scene 音量、静音与监听默认值作为编辑基准；逐路外观采用当时继承的全局默认值。创建第一份逐路设置时也只保存本次调整，不把其他继承值当作编辑覆盖另一窗口。
 
 First source audio controls use their effective Scene volume/mute and monitoring defaults as the edit baseline; decorations use inherited global defaults. Creating the first source preference still saves only the selected adjustment instead of treating other inherited values as edits that overwrite another window.

@@ -33,6 +33,14 @@ The main-entry gate also stores a synthetic 1000-source preference workspace, ad
 
 主入口门槛还保存合成的 1000 路来源偏好，通过真实监控 UI 调整音量并验证小型保活请求，再经真实认证后端全局调整统计叠层；两者均须保留其他逐路设置。随后恢复原夹具偏好再检查投影和托盘。此项需要当前 WebUI 与 cluster 服务，不会启动 1000 路摄像机流。
 
+The main-entry gate also accepts `constructor` and `__proto__` as real Scene source identifiers, renders each color source and verifies account preference save/reload without losing its own decorations. It restores the original Scene and account preferences before continuing desktop lifecycle checks. Linux production validation separately decodes a synthetic H.264 source using those identifiers; neither check qualifies physical cameras.
+
+主入口门槛还通过实际 Scene 接口接受 `constructor` 和 `__proto__` 来源，显示色块并验证账号偏好保存/刷新后保留自己的外观记录；随后恢复原 Scene 和账号偏好继续桌面生命周期检查。Linux 生产验证另行使用这些标识解码合成 H.264；两者均不代表真实摄像机验收。
+
+The same gate also loads 1000 account audio records with the visible source last, checks its saved volume/mute/monitoring, and verifies that master-volume save/reload retains every record. It uses the authenticated Program API and checks that Studio definitions stay unchanged. Color source audio controls remain disabled; this validates preference restoration rather than physical audio playback.
+
+同一门槛还将显示中的来源放在 1000 路账号声音记录末尾，检查其音量、静音与监听，并确认主音量保存/刷新保留全部记录。通过认证的 Program 接口准备画面，同时检查 Studio 定义保持原样。色块声音控件仍禁用；此项验证偏好恢复，不代表实际音频播放。
+
 开发构建机需要 VS 2022 的 MSVC x64、Windows SDK、CMake >= 3.28、Python、Node 24 和 pnpm 11.16.0。使用 PowerShell 7.2+ 的 VS x64 Developer PowerShell：
 
 ```powershell
@@ -69,6 +77,10 @@ GitHub `Build full Windows desktop` 是手动候选构建，不发布 Release。
 桌面主进程按 MediaMTX、go2rtc、账号与设备/事件/NVR 服务、备份服务、C++ 控制端的顺序启动，逐项健康检查。配置了归档才启动 S3 服务。分析与集群节点工具随包提供，仍受现有配置和授权控制。
 
 主控制入口固定 `http://127.0.0.1:18080`，内部端口首次分配后保存在 `ports.json`；冲突报错，不结束其他应用。受认证的 `/api/v1/runtime/info` 返回平台与 go2rtc 建档地址，设备导入使用该地址。服务 URL 的环境映射在根目录 `runtime_support.py` 与 C++ `platform_runtime` 中保持一致。
+
+go2rtc WebRTC 首次分配先请求系统可用的 UDP 端口，再保留同端口的 TCP；任一协议冲突/受限时关闭本次候选并尝试新端口，最多 16 次。这样避免 TCP 自动端口落入 Windows UDP 保留区。已保存的端口不自动更改；冲突保留原诊断，且不会关闭其他端口占用者。其他失败仍直接报告。
+
+First-use go2rtc WebRTC allocation asks the OS for an available UDP port, then reserves matching TCP. A conflicting/restricted protocol releases the candidate and tries again, at most 16 times, avoiding TCP automatic choices in Windows UDP exclusions. Saved ports never migrate automatically: conflicts retain actionable diagnostics and other owners stay untouched. Other failures are reported immediately.
 
 同步 CommonJS 启动入口在 Electron ready 之前配置用户与会话目录，然后加载桌面模块，避免打包入口等待 ready 时阻塞启动。模块导入失败会保存 `logs/desktop-startup.log` 并显示日志位置；成功启动也保留简短启动记录。
 

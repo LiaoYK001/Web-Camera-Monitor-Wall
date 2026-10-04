@@ -57,7 +57,11 @@ test('manual camera retry probes its account profile and distinguishes confirmed
   expect(audioUrls).toHaveLength(2);
 });
 
-test('audio workspace groups real tracks per source and wires per-track channels', async ({ page }) => {
+for (const identity of ['source-a', 'constructor', '__proto__']) test(`audio workspace groups probed tracks for ${identity} and wires per-track channels`, async ({ page }) => {
+  const currentStudio = { ...studio, scenes: [{ ...scene,
+    sources: scene.sources.map(source => source.id === 'source-a' ? { ...source, id: identity } : source),
+    items: scene.items.map(item => item.sourceId === 'source-a' ? { ...item, sourceId: identity } : item),
+  }] };
   const posts: string[] = [];
   const deletes: string[] = [];
   const consoleErrors: string[] = [];
@@ -76,7 +80,7 @@ test('audio workspace groups real tracks per source and wires per-track channels
     gets.push(url);
     if (url.includes('cam-a/main')) {
       return route.fulfill({ status: 200, contentType: 'application/json',
-        body: JSON.stringify({ sourceId: 'source-a', probed: true, tracks: [track(0, 1), track(1, 2)] }) });
+        body: JSON.stringify({ sourceId: identity, probed: true, tracks: [track(0, 1), track(1, 2)] }) });
     }
     if (url.includes('cam-b/main')) {
       return route.fulfill({ status: 200, contentType: 'application/json',
@@ -148,7 +152,7 @@ test('audio workspace groups real tracks per source and wires per-track channels
     return { names, loaded, checkedA, controlsBefore, meterBefore, modeLabelBefore, modeLabelAfter,
       controlsAfter, controlsFinal, noAudio, unprobed, reprobe, hiddenAudio,
       loadedGain, loadedMuted, offsetControl: Boolean(offsetControl), saveEnabled, htmlSample: host.innerHTML.slice(0, 300) };
-  }, studio);
+  }, currentStudio);
   expect(result.names, `html=${result.htmlSample} console=${consoleErrors.join(' || ')}`).toEqual(['Camera A', 'Stream C']);
   expect(result.loaded).toBe(true);
   // The first real track is selected by default; multi-select keeps the rest available.
@@ -170,7 +174,7 @@ test('audio workspace groups real tracks per source and wires per-track channels
   const saved = JSON.parse(studioSaves[studioSaves.length - 1] ?? '{}') as {
     scenes?: Array<{ sources?: Array<{ id: string; audioTrack?: number; audioInputs?: Array<{ track: number; gain: number; muted: boolean }> }> }>;
   };
-  const savedSource = saved.scenes?.[0]?.sources?.find((source) => source.id === 'source-a');
+  const savedSource = saved.scenes?.[0]?.sources?.find((source) => source.id === identity);
   expect(savedSource?.audioInputs).toEqual([{ track: 1, gain: 1, muted: false, syncOffsetMs: 0 }]);
   // Selecting input tracks must not rewrite the output bus.
   expect(savedSource?.audioTrack).toBe(1);

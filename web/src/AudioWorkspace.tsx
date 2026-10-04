@@ -6,6 +6,7 @@ import { connectAudioTrack, type AudioChannelState, type AudioTrackConnection } 
 import { getDirectAudioMixer, type DirectAudioSnapshot, type DirectAudioTrackSelection } from './directAudioMixer';
 import { defaultSelectedTracks, fetchSourceAudioTracks, invalidateSourceAudioTracks, type SourceAudioTrack, type SourceAudioTracks } from './sourceAudio';
 import { sourceAudioTrackState } from './monitorView';
+import { ownRecordValue } from './recordValue';
 import type { AudioMonitoring, SceneSource, StudioDocument } from './types';
 
 const dbLabel = (value: number | null | undefined) => value === null || value === undefined ? '—' : `${value.toFixed(1)} dBFS`;
@@ -100,7 +101,7 @@ export default function AudioWorkspace({ studio, onCommitted }: { studio: Studio
     probeGeneration.current += 1;
     for (const source of scene.sources) {
       if (source.kind !== 'camera' && source.kind !== 'rtsp') continue;
-      setTracksBySource((current) => current[source.id] ? current : { ...current, [source.id]: { status: 'loading' } });
+      setTracksBySource((current) => ownRecordValue(current, source.id) ? current : { ...current, [source.id]: { status: 'loading' } });
       void fetchSourceAudioTracks(source.id, controller.signal, source.kind === 'camera' ? source : undefined).then((value) => {
         if (cancelled) return;
         setTracksBySource((current) => ({ ...current, [source.id]: value }));
@@ -108,7 +109,7 @@ export default function AudioWorkspace({ studio, onCommitted }: { studio: Studio
           // A saved schema 6 selection wins; otherwise the first real track is
           // selected by default and multi-select keeps the others available.
           setSelection((current) => {
-            if (current[source.id]) return current;
+            if (ownRecordValue(current, source.id)) return current;
             const saved = source.audioInputs?.filter((input) => value.tracks.some((track) => track.index === input.track)) ?? [];
             const gain: Record<number, number> = {};
             const muted: Record<number, boolean> = {};
@@ -134,9 +135,9 @@ export default function AudioWorkspace({ studio, onCommitted }: { studio: Studio
     const activeSources = new Set(nativeForeground ? scene.sources.map((source) => source.id) : []);
     for (const [key, entry] of [...channels.current]) {
       const [sourceId, index] = key.split('#');
-      const probed = tracksBySource[sourceId];
+      const probed = ownRecordValue(tracksBySource, sourceId);
       if (activeSources.has(sourceId) && probed?.status === 'available' &&
-          probed.tracks.some((track) => track.index === Number(index)) && selection[sourceId]?.selected.includes(Number(index))) continue;
+          probed.tracks.some((track) => track.index === Number(index)) && ownRecordValue(selection, sourceId)?.selected.includes(Number(index))) continue;
       entry.connection.close();
       entry.element.srcObject = null;
       entry.element.remove();
@@ -145,7 +146,8 @@ export default function AudioWorkspace({ studio, onCommitted }: { studio: Studio
     }
     for (const [sourceId, state] of Object.entries(selection)) {
       if (!activeSources.has(sourceId)) continue;
-      const tracks = tracksBySource[sourceId]?.status === 'available' ? tracksBySource[sourceId].tracks : [];
+      const probed = ownRecordValue(tracksBySource, sourceId);
+      const tracks = probed?.status === 'available' ? probed.tracks : [];
       const selections: DirectAudioTrackSelection[] = state.selected.map((index) => ({
         index, gain: state.gain[index] ?? 1, muted: state.muted[index] ?? false,
       }));
@@ -208,7 +210,7 @@ export default function AudioWorkspace({ studio, onCommitted }: { studio: Studio
     setAudioDirty(true);
     setSelection((current) => {
       const fallback: TrackSelection = { selected: [], gain: {}, muted: {}, offset: {}, mode: 'merged' };
-      return { ...current, [sourceId]: change(current[sourceId] ?? fallback) };
+      return { ...current, [sourceId]: change(ownRecordValue(current, sourceId) ?? fallback) };
     });
   };
   const reprobe = async (sourceId: string) => {
@@ -238,7 +240,7 @@ export default function AudioWorkspace({ studio, onCommitted }: { studio: Studio
     scenes: base.scenes.map((candidate) => candidate.id !== scene.id ? candidate : {
       ...candidate,
       sources: candidate.sources.map((source) => {
-        const state = selection[source.id];
+        const state = ownRecordValue(selection, source.id);
         if (!state) return source;
         // Empty selection means "this source adds no audio"; otherwise the
         // legacy audioTrack mirrors the first input for older readers/engines.
@@ -272,12 +274,12 @@ export default function AudioWorkspace({ studio, onCommitted }: { studio: Studio
         <button className="primary-button" type="button" disabled={(!pending && !audioDirty) || saving} onClick={() => void commit()}>{saving ? '保存中…' : '保存音频配置'}</button></div></header>
     {error && <div className="alert conflict-alert">{error}</div>}
     <div className="audio-monitor-preview"><DirectPreview compact audioWorkspace scene={scene} /></div>
-    {scene.sources.some((source) => tracksBySource[source.id]?.status === 'none') && <p role="status">已确认无音轨：{scene.sources.filter((source) => tracksBySource[source.id]?.status === 'none').map((source) => source.name).join('、')}。这些来源不显示音频控制。</p>}
+    {scene.sources.some((source) => ownRecordValue(tracksBySource, source.id)?.status === 'none') && <p role="status">已确认无音轨：{scene.sources.filter((source) => ownRecordValue(tracksBySource, source.id)?.status === 'none').map((source) => source.name).join('、')}。这些来源不显示音频控制。</p>}
     <div className="audio-mixer-head"><span>来源 / Profile</span><span>电平</span><span>静音 / 音量</span><span>监听 / 同步</span><span>音轨</span></div>
     <div className="audio-mixer-list">{scene.sources.map((source) => {
       const meter = meterBySource.get(source.id);
       const cameraProfile = source.kind === 'camera' ? `${source.cameraId} / ${source.profileId}` : source.kind;
-      const probed = tracksBySource[source.id];
+      const probed = ownRecordValue(tracksBySource, source.id);
       const apiTracks = probed?.status === 'available' ? probed.tracks : [];
       const trackState = probed
         ? (probed.status === 'available' ? 'available'
@@ -286,7 +288,7 @@ export default function AudioWorkspace({ studio, onCommitted }: { studio: Studio
         : sourceAudioTrackState({ kind: source.kind, liveAudioTracks: meter?.audioTracks, streamBound: meter?.streamBound });
       // F6-02: video-only sources are omitted from the audio workspace entirely.
       if (trackState === 'none') return null;
-      const state = selection[source.id];
+      const state = ownRecordValue(selection, source.id);
       const mode = state?.mode ?? 'merged';
       return <article className="audio-channel" key={source.id}>
         <div><strong>{source.name}</strong><small>{cameraProfile}</small><span>{topology === 'direct' ? 'Browser Web Audio' : 'libobs Composite'}</span></div>
@@ -304,7 +306,7 @@ export default function AudioWorkspace({ studio, onCommitted }: { studio: Studio
                 <div className="audio-track-list">{apiTracks.map((track) => {
                   const selected = state?.selected.includes(track.index) ?? false;
                   const key = `${source.id}#${track.index}`;
-                  const channel = channelStates[key];
+                  const channel = ownRecordValue(channelStates, key);
                   const trackMeter = meter?.independent.find((value) => value.trackIndex === track.index);
                   return <label className={`audio-track ${selected ? 'selected' : ''}`} key={track.index}>
                     <input type="checkbox" checked={selected} onChange={(event) => updateSelection(source.id, (current) => ({

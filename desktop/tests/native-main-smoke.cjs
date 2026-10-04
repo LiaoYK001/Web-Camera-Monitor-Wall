@@ -134,6 +134,7 @@ const pause = ms => new Promise(resolve => setTimeout(resolve, ms));
     await waitForUi('document.querySelector(".config-profile-panel select").value === "" && !document.querySelector(".config-profile-controls").disabled');
     await require('./native-offline-ui.cjs').exerciseNativeOfflineUi(main, origin, headers, waitForUi);
     await require('./native-preference-ui.cjs').exerciseNativePreferenceUi(main, origin, headers, waitForUi);
+    await require('./native-source-identities.cjs').exerciseNativeSourceIdentities(main, origin, headers, waitForUi);
     const studio = await (await fetch(`${origin}/api/v1/studio`, { headers })).json();
     const second = { ...structuredClone(studio.scenes[0]), id: 'native-main-second', name: 'Second fixed projector' };
     studio.scenes.push(second);

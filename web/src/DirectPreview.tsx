@@ -6,6 +6,7 @@ import type { BrowserTopologyPlan } from './browserMedia';
 import { DirectAudioMixer, getDirectAudioMixer } from './directAudioMixer';
 import { useDirectAudioMeters, useDirectAudioPeak, useDirectAudioSourceLevel, useDirectAudioTopology } from './directAudioState';
 import { useMonitorPreferences } from './useMonitorPreferences';
+import { ownRecordValue } from './recordValue';
 import MonitorPreferenceStatus from './MonitorPreferenceStatus';
 import { observeTileVisibility, shouldRunPlayback } from './mediaLifecycle';
 import { countRenderedFrames, formatTelemetry, sampleConnectionTelemetry, sampleElementTelemetry, unavailableTelemetry, type MediaTelemetry } from './mediaTelemetry';
@@ -582,14 +583,14 @@ function DirectPreview({ scene, compact = false, layoutPreview = false, audioWor
     const receive = (event: Event) => {
       const detail = (event as CustomEvent<{ sourceId?: string; topology?: string }>).detail;
       if (!detail?.sourceId || !detail.topology) return;
-      setTopologies((current) => current[detail.sourceId!] === detail.topology
+      setTopologies((current) => ownRecordValue(current, detail.sourceId!) === detail.topology
         ? current : { ...current, [detail.sourceId!]: detail.topology! });
     };
     window.addEventListener('webobs:media-topology', receive);
     return () => window.removeEventListener('webobs:media-topology', receive);
   }, []);
   const handleSourceState = useCallback((sourceId: string, state: ProgramConnectionState) => {
-    setSourceStates((current) => current[sourceId] === state ? current : { ...current, [sourceId]: state });
+    setSourceStates((current) => ownRecordValue(current, sourceId) === state ? current : { ...current, [sourceId]: state });
   }, []);
   const openIssueCounts = useMemo(() => {
     const counts = new Map<string, number>();
@@ -647,8 +648,10 @@ function DirectPreview({ scene, compact = false, layoutPreview = false, audioWor
       }),
     };
     else if (monitorView.playbackOptimization.enabled && monitorView.playbackOptimization.adaptiveProfiles) current = {
-      ...current, sources: current.sources.map((source) => source.kind === 'camera' && adaptiveProfiles[source.id]
-        ? { ...source, profileId: adaptiveProfiles[source.id].profileId } : source),
+      ...current, sources: current.sources.map((source) => {
+        const profile = ownRecordValue(adaptiveProfiles, source.id);
+        return source.kind === 'camera' && profile ? { ...source, profileId: profile.profileId } : source;
+      }),
     };
     return sceneLayout ? current : applyAutomaticLayout(current, monitorView);
   }, [cameras, layoutPreview, monitorRestored, sceneLayout, monitorView, portrait, scene, adaptiveProfiles]);
@@ -660,7 +663,7 @@ function DirectPreview({ scene, compact = false, layoutPreview = false, audioWor
     const profile = camera?.profiles.find((value) => value.id === profileId);
     if (!camera || !profile) return;
     setAdaptiveProfiles((values) => {
-      const now = Date.now(), current = values[sourceId];
+      const now = Date.now(), current = ownRecordValue(values, sourceId);
       if (current && now - current.changedAt < 60000) return values;
       if (weak) {
         const lower = lowerBandwidthProfile(profile, camera.profiles);
@@ -676,7 +679,7 @@ function DirectPreview({ scene, compact = false, layoutPreview = false, audioWor
   const mixedSources = useMemo(() => effectiveScene.sources.map((source) => {
     if (layoutPreview) return { ...source, muted: true };
     if (layoutPreview) return source;
-    const control = monitorView.sourceAudio[source.id];
+    const control = ownRecordValue(monitorView.sourceAudio, source.id);
     return { ...source, volume: control?.volume ?? source.volume, muted: control?.muted ?? source.muted,
       monitoring: (control?.monitor === false ? 'off' : 'monitor-and-output') as SceneSource['monitoring'] };
   }), [effectiveScene.sources, monitorView.sourceAudio, layoutPreview]);
@@ -685,9 +688,9 @@ function DirectPreview({ scene, compact = false, layoutPreview = false, audioWor
     const source = effectiveScene.sources.find((candidate) => candidate.id === sourceId);
     if (!source) return;
     setMonitorView((value) => ({ ...value, sourceAudio: { ...value.sourceAudio, [sourceId]: {
-      ...(value.sourceAudio[sourceId] ?? { volume: source.volume, muted: source.muted, monitor: true }), ...change,
+      ...(ownRecordValue(value.sourceAudio, sourceId) ?? { volume: source.volume, muted: source.muted, monitor: true }), ...change,
     } } }), base => ({ ...base, sourceAudio: { ...base.sourceAudio,
-      [sourceId]: base.sourceAudio[sourceId] ?? { volume: source.volume, muted: source.muted, monitor: true },
+      [sourceId]: ownRecordValue(base.sourceAudio, sourceId) ?? { volume: source.volume, muted: source.muted, monitor: true },
     } }));
   };
   const toggleAudio = () => {
@@ -1116,10 +1119,10 @@ function DirectPreview({ scene, compact = false, layoutPreview = false, audioWor
         {[...displayScene.items].filter((item) => item.visible).sort((left, right) => left.zIndex - right.zIndex).map((item) => {
           const source = displayScene.sources.find((candidate) => candidate.id === item.sourceId);
           if (!source) return null;
-          const state = sourceStates[source.id] ?? 'checking';
+          const state = ownRecordValue(sourceStates, source.id) ?? 'checking';
           const count = openIssueCounts.get(source.id) ?? 0;
           const label = state === 'live'
-            ? (playbackTopologyLabel(topologies[source.id], bySource.get(source.id)?.deliveryMode) || '播放中')
+            ? (playbackTopologyLabel(ownRecordValue(topologies, source.id), bySource.get(source.id)?.deliveryMode) || '播放中')
             : labels[state];
           return <button type="button" key={item.id} className={`source-status status-${state}`} onClick={() => openIssueCenter(source.id)}
             title={`${source.name} · ${label}${count ? ` · ${count} 个问题` : ''}`}>
