@@ -9,7 +9,7 @@ export function go2rtcStreamNames(value: unknown): string[] {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return [];
   return Object.keys(value).filter((name) => /^[\p{L}\p{N} _.-]{1,128}$/u.test(name)).sort().slice(0, 256);
 }
-export default function Go2rtcStreams({ onImported }: { onImported?: () => void }) {
+export default function Go2rtcStreams({ onImported, refreshKey = 0 }: { onImported?: () => void; refreshKey?: number }) {
   const [names, setNames] = useState<string[]>([]);
   const [rtspBase, setRtspBase] = useState('rtsp://127.0.0.1:18554/');
   const [cameras, setCameras] = useState<CameraRecord[]>([]);
@@ -44,7 +44,7 @@ export default function Go2rtcStreams({ onImported }: { onImported?: () => void 
     const timer = window.setInterval(() => { if (!document.hidden) void refresh(); }, 15000);
     const focus = () => void refresh(); window.addEventListener('focus', focus);
     return () => { controller.abort(); window.clearInterval(timer); window.removeEventListener('focus', focus); };
-  }, [generation]);
+  }, [generation, refreshKey]);
   const existing = (name: string) => imported.current.get(name) ?? cameras.find((camera) =>
     camera.address === go2rtcStreamAddress(name, rtspBase) || camera.addressDisplay === go2rtcStreamAddress(name, rtspBase) ||
     camera.profiles.some((profile) => profile.endpoint === go2rtcStreamAddress(name, rtspBase)))?.id;
@@ -79,7 +79,7 @@ export default function Go2rtcStreams({ onImported }: { onImported?: () => void 
     </ol><p>内部地址是后端环境的 <code>{rtspBase}流名称</code>。命名流无需再次做 ONVIF 发现；设备建档后使用稳定设备 ID。更改或删除 go2rtc 流名后，请同步调整设备地址。仅中转视频的流不具备原摄像机的 PTZ/ONVIF 功能。</p></details>
     {names.length > 0 && <><label>筛选 go2rtc 流<input value={search} onChange={(event) => setSearch(event.target.value)} maxLength={128} /></label>
       <div className="go2rtc-stream-list">{names.filter((name) => name.toLowerCase().includes(search.toLowerCase())).map((name) => <div key={name}>
-        <strong>{name}</strong><code>{go2rtcStreamAddress(name)}</code><button type="button" disabled={Boolean(busy) || Boolean(existing(name))}
+        <strong>{name}</strong><code>{go2rtcStreamAddress(name, rtspBase)}</code><button type="button" disabled={Boolean(busy) || Boolean(existing(name))}
           onClick={() => void add(name)}>{existing(name) ? '已在设备目录' : busy === name ? '检测并添加中…' : '检测并添加设备'}</button>
       </div>)}</div></>}
   </section>;

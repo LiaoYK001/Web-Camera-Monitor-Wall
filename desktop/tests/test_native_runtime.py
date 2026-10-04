@@ -21,6 +21,34 @@ private_directory=module('desktop_private_directory',ROOT/'desktop/python/privat
 headless=module('desktop_headless',ROOT/'desktop/scripts/prepare-obs-headless.py')
 
 class SnapshotTests(unittest.TestCase):
+    @unittest.skipUnless(os.name=='nt' and (ROOT/'desktop/runtime/bin/webobsd.exe').exists(),'requires a built Windows control runtime')
+    def test_slow_account_operations_keep_login_and_failure_semantics(self):
+        fixture=module('desktop_account_proxy',ROOT/'tests/account_proxy_runtime.py')
+        fixture.exercise(ROOT/'desktop/runtime/bin/webobsd.exe',ROOT/'desktop/runtime/bin/webobs-job.exe')
+
+    @unittest.skipUnless(os.name=='nt' and (ROOT/'desktop/runtime/bin/webobs-online-source.exe').exists(),'requires the complete website runtime')
+    def test_online_sources_load_without_developer_path(self):
+        runtime=ROOT/'desktop/runtime'
+        env={key:value for key,value in os.environ.items() if not key.upper().startswith(('PATH','PYTHON','WEBOBS_'))}
+        env.update(PATH=str(pathlib.Path(os.environ['SystemRoot'])/'System32'),PYTHONUTF8='1',
+                   WEBOBS_NODE_PATH=str(runtime/'bin/node.exe'),WEBOBS_FFMPEG_PATH=str(runtime/'bin/ffmpeg.exe'))
+        probe=subprocess.run([str(runtime/'bin/webobs-online-source.exe'),'--self-test'],capture_output=True,text=True,timeout=45,env=env,creationflags=subprocess.CREATE_NO_WINDOW)
+        self.assertEqual(probe.returncode,0,probe.stderr)
+        versions=json.loads(probe.stdout)
+        locked=json.loads((ROOT/'go2rtc/online-source-dependencies.lock.json').read_text())['engines']
+        for name in ('yt-dlp','streamlink'):self.assertEqual(versions[name],locked[name])
+        self.assertEqual(versions['node'],'v'+locked['node'])
+
+    @unittest.skipUnless(os.name=='nt' and (ROOT/'desktop/runtime/bin/webobs-online-source.exe').exists(),'requires the complete website runtime')
+    def test_website_extractors_publish_and_stop_real_synthetic_rtsp(self):
+        fixture=module('desktop_online_media',ROOT/'tests/online_source_media.py')
+        fixture.exercise(ROOT/'desktop/runtime',drop_media=True)
+
+    @unittest.skipUnless(os.name=='nt' and (ROOT/'desktop/runtime/bin/webobs-online-source.exe').exists(),'requires the complete website runtime')
+    def test_website_media_rejects_untrusted_tls_before_http(self):
+        fixture=module('desktop_online_tls',ROOT/'tests/online_source_tls.py')
+        fixture.exercise(ROOT/'desktop/runtime')
+
     def test_signing_key_file_preserves_binary_ciphertext_on_restart(self):
         from unittest.mock import patch, Mock
         service=module('desktop_signing_persistence',ROOT/'v2/client_control_service.py')

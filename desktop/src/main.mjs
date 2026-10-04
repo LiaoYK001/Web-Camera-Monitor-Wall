@@ -1,7 +1,7 @@
 import { app, BrowserWindow, Tray, Menu, ipcMain, dialog, screen, session, nativeImage, powerMonitor, safeStorage, shell } from 'electron';
 import { createTrayIcon } from './tray-icon.mjs';
 import electronUpdater from 'electron-updater';
-import { readFile, writeFile, rename, rm, cp, stat, mkdir } from 'node:fs/promises';
+import { readFile, writeFile, appendFile, rename, rm, cp, stat, mkdir } from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { Supervisor } from './supervisor.mjs';
@@ -14,6 +14,10 @@ import { launchVerifiedInstaller } from './installer.mjs';
 
 const source = path.dirname(fileURLToPath(import.meta.url));
 const root = path.join(process.env.LOCALAPPDATA || app.getPath('appData'),'WebOBS');
+async function startupDiagnostic(message) {
+  // Private startup diagnostics: never send runtime details to a renderer or public logs.
+  await appendFile(path.join(root,'logs','desktop-startup.log'),`${new Date().toISOString()} ${message.slice(0,4000)}\n`,{mode:0o600}).catch(()=>{});
+}
 if(!app.requestSingleInstanceLock())app.quit();
 else {
   let main, tray, supervisor, updates, settings, quitting=false, operating=false, recovery;
@@ -42,7 +46,9 @@ else {
           void child.loadURL(url);return {action:'deny'};
         }
         if(target.protocol==='https:' && !target.username && !target.password && target.pathname==='/' && supervisor?.lanInfo?.addresses.includes(target.origin))void shell.openExternal(target.href);
-        if(target.protocol==='https:' && !target.username && !target.password && ['github.com','www.electron.build','docs.webobs.org'].includes(target.hostname))void shell.openExternal(target.href);
+        if(target.protocol==='https:' && !target.username && !target.password &&
+            (['github.com','www.electron.build','docs.webobs.org'].includes(target.hostname) ||
+             target.hostname==='streamlink.github.io' && target.pathname==='/plugins.html'))void shell.openExternal(target.href);
       }catch{}
       return {action:'deny'};
     });
@@ -73,6 +79,7 @@ else {
   app.on('window-all-closed',()=>{});
   app.on('before-quit',event=>{if(!quitting){event.preventDefault();void quit();}});
   await app.whenReady();
+  await startupDiagnostic('Desktop main ready');
   if(process.platform!=='win32' || process.arch!=='x64'){dialog.showErrorBox('WebOBS','阶段一桌面客户端仅支持 Windows 10/11 x64。');quitting=true;app.quit();}
   else {
     main=new BrowserWindow({title:'WebOBS',width:1440,height:950,minWidth:900,minHeight:600,backgroundColor:'#0b0d12',autoHideMenuBar:true,webPreferences:securePreferences});configureWindow(main);
@@ -168,15 +175,20 @@ else {
       } finally {operating=false;broadcast();}
     });
     // The diagnostics page invokes status immediately; register IPC before loading it.
+    await startupDiagnostic('Loading diagnostics window');
     await main.loadFile(path.join(source,'diagnostics.html'));
+    await startupDiagnostic('Diagnostics window loaded');
     try {
       settings=await loadSettings(root);app.setLoginItemSettings({openAtLogin:settings.startAtLogin});const runtime=app.isPackaged?path.join(process.resourcesPath,'runtime'):path.resolve(source,'..','runtime');
+      await startupDiagnostic('Verifying bundled runtime');
       await verifyRuntime(runtime);
+      await startupDiagnostic('Bundled runtime verified');
       supervisor=new Supervisor({runtime,root,videos:app.getPath('videos'),settings,version:app.getVersion(),safeStorage});supervisor.on('status',broadcast);
       try{recovery=JSON.parse(await readFile(path.join(root,'pending-update.json'),'utf8'));}catch(error){if(error.code!=='ENOENT')throw error;}
       if(recovery && ![recovery.to,recovery.from].includes(app.getVersion()))throw new Error('安装版本与升级快照不匹配，请从对应 Release 恢复。');
       if(recovery && app.getVersion()===recovery.from)throw new Error('检测到待恢复的数据快照，请先选择恢复匹配数据，再启动旧版本。');
       await supervisor.start();
+      await startupDiagnostic('Native services ready');
       // A persistent desktop partition is shared by the wall and every projector.
       await desktopSession.clearStorageData({storages:['serviceworkers','cachestorage']});
       const distribution=JSON.parse(await readFile(path.join(source,'distribution.json'),'utf8'));
@@ -190,6 +202,7 @@ else {
       await main.loadURL(supervisor.origin);broadcast();
       powerMonitor.on('resume',()=>{void fetch(`${supervisor.origin}/api/v1/health`,{signal:AbortSignal.timeout(3000)}).then(response=>{if(!response.ok)throw new Error('Not ready');broadcast();}).catch(()=>{supervisor.announce('failed','休眠恢复后服务不可用，请保存草稿后点击重启服务。');});});
     } catch(error) {
+      await startupDiagnostic(`Desktop startup failed: ${error.message}`);
       if(supervisor)supervisor.announce('failed',error.message);
       else await dialog.showMessageBox(main,{type:'error',message:'WebOBS 原生运行环境无法启动',detail:error.message});
       await main.loadFile(path.join(source,'diagnostics.html'));broadcast();

@@ -172,6 +172,10 @@ try {
   await page.frameLocator('iframe[title="go2rtc 官方 WebUI"]').locator('.monaco-editor').waitFor();
   checks.push('authenticated official go2rtc UI + local Monaco');
   console.log('PASS: preferences and actual go2rtc editor');
+  if (process.env.WEBOBS_ANDROID_ONLINE_SOURCES === '1') {
+    await require('../tests/online_source_webui.cjs').exerciseOnlineSources(page, base);
+    checks.push('actual installed Android WebView: yt-dlp/Streamlink website source creation, authenticated synthetic MSE frame decoding and device import; backend extraction, not external-site qualification');
+  }
   await page.goto(`${base}/api/v1/go2rtc/stream.html?src=synthetic&mode=mse`);
   // WebView requires a user gesture. The source is real FFmpeg/go2rtc MSE, never mocked.
   await page.locator('video').click();

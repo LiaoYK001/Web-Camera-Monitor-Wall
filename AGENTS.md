@@ -13,6 +13,9 @@
 
 ## Working rules
 
+- Primary delivery targets are the Docker/Podman container, native Windows x64 desktop and independent Android client. They follow regular `vA.B` product releases. Native Linux x86/ARM, Windows ARM and Windows 32-bit are future expansion targets, normally built, qualified and published at major `vA.0` milestones such as v5.0/v6.0/v7.0 rather than every minor release. Source support is not platform qualification.
+- 当前主要交付端为容器、Windows x64 与独立 Android 客户端，随常规 `vA.B` 更新。Linux 原生 x86/ARM、Windows ARM 与 Windows 32 位为后续拓展端，一般在 v5.0/v6.0/v7.0 等 `vA.0` 大版本节点集中构建、验证和发布，不跟随每次小版本更新；源码支持不等于完成平台验收。
+
 - Write commit messages, PR titles/descriptions and merge messages in both Chinese and English. Use a concise bilingual subject such as `fix: 修复更新检查 / fix update checking`; include both languages in any substantive body. Override GitHub's English-only default merge message when merging.
 - 提交信息、PR 标题/说明及合并信息必须包含中英文双语。标题简洁，正文有实质说明时也提供双语；合并时显式设置双语信息，不沿用 GitHub 的纯英文默认标题。
 - Inspect related code and documentation before changing behavior. Keep unrelated working-tree edits.
@@ -26,6 +29,8 @@
 - Use `rg` for searches; exclude upstream source/build dependencies when exploring product code. No automatic delegation is required.
 
 ## Validation
+
+- Website sources: `go2rtc/online_source.py` is the fixed on-demand yt-dlp/Streamlink relay; pin all artifacts in `go2rtc/online-source-dependencies.lock.json`. Keep website cookies in the private go2rtc configuration directory, never forward product credentials, and never enable arbitrary renderer commands. Android uses backend extractors. Run `tests/test_online_source.py`, real `tests/online_source_media.py` and authenticated `tests/online_source_runtime.cjs`; external-site support lists are not qualification evidence. See `docs/online-sources.md`.
 
 - Frontend: `cd web; pnpm typecheck; pnpm build`; focused Playwright tests use `pnpm exec playwright test -c playwright.local.config.ts --project=chromium <spec>` (pnpm script `--` can prevent spec filtering).
 - go2rtc assets: `cd web; pnpm go2rtc:ui` assembles the complete upstream UI with locally packaged third-party dependencies.

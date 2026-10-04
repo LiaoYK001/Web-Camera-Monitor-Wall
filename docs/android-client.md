@@ -6,6 +6,8 @@ The first Android app connects to an existing product backend and hosts its WebU
 
 ## 当前范围 / Current scope
 
+Android 在 **go2rtc 管理 → 添加网站与直播源** 选择 yt-dlp/Streamlink，保存、测试、导入设备及监看；工具安装在所连接的完整容器或 Windows x64 后端，APK 无需另外安装解析器。见[网站与直播源](online-sources.md)。三端按 `vA.B` 常规更新；原生 Linux x86/ARM、Windows ARM/32 位等未来目标通常在 `vA.0` 大版本节点发布。Android shares backend website extraction; future architectures are planned major-milestone targets.
+
 - Android 10/API 29 及以上；纯 Java/WebView，不含架构专属原生库。
 - 服务器选择、持久 Cookie/页面存储、原生菜单、可关闭的保持亮屏、横竖屏、视频全屏、最多四个共享会话的投影子页面。Android 投影使用应用内窗口，不承诺同时在多个物理屏幕显示。后台通过有限的固定可见性信号暂停视频/音轨连接及监听，保留草稿和偏好，回前台后恢复监看；没有向网页开放原生命令接口。
 - 关于页面显示 APK 和 WebView 版本、开源仓库、问题反馈和 GitHub 发布记录。手动检查当前正式 Release 是否包含 Android APK；本阶段没有 APK 自动下载/安装。WebUI 随服务器部署更新，继续使用现有 PWA 更新流程。

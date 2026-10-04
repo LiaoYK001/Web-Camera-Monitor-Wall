@@ -5,6 +5,8 @@
 
 ## 总览 / Overview
 
+主要交付端为容器、Windows x64、独立 Android，按 `vA.B` 持续更新。未来原生 Linux x86/ARM、Windows ARM/32 位等端通常只在 `vA.0` 大版本里构建、验收及发布，不承诺每次小版本附件。平台计划不代表已通过验收。网站源依赖锁、许可证/SBOM 与对应源码审查纳入相同不可变发布流程，见[网站与直播源](online-sources.md)。The three primary targets follow regular minor releases; future native architectures normally ship at major milestones after qualification.
+
 ```text
 Windows 环境              Linux 环境                docker / podman 环境              发布
 ┌───────────────┐        ┌───────────────┐        ┌────────────────────────┐

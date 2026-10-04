@@ -14,6 +14,8 @@ The complete upstream module and official WebUI ship in one product image. go2rt
 
 ## 使用流程
 
+网站与直播支持新增内置 yt-dlp、Streamlink、Node/EJS 与按需 FFmpeg 转发；容器/Windows x64 打包工具，Android 使用同一后端。固定参数、私密 Cookie、重启影响与验证边界见[网站与直播源](online-sources.md)。Bundled website extraction is shared by the three primary clients through their selected backend.
+
 1. 打开 **go2rtc 管理**（`/#/go2rtc`）。认证模式需要管理员的 `settings.manage`；本机无认证模式无需额外登录。
 2. 在“设备与发现”使用官方工具，或在“配置”编辑完整 YAML。流管理、播放测试、Links、连接信息/连接图、日志和高级页面全部保留，也可独立打开。
 3. 官方 “Save & Restart” 保存配置并重新加载 go2rtc；返回流列表测试播放。

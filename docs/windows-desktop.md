@@ -1,5 +1,7 @@
 # 完整 Windows 桌面客户端（阶段一）
 
+网站/直播源运行包新增锁定的 yt-dlp、Streamlink、Node/EJS；固定 `webobs-online-source.exe` 和解析/转发后代使用 Job Object，文件进入 manifest、许可证和 SBOM，日常运行无需开发 PATH。接入、Cookie 与验证见[网站与直播源](online-sources.md)。Windows x64、容器、Android 按 `vA.B` 更新；后续 Windows ARM/32 位和原生 Linux x86/ARM 通常在 `vA.0` 大版本节点构建、验收和发布。Bundled website tools follow complete package updates; future architectures remain major-milestone targets, not qualified platforms.
+
 `desktop/` 是 Electron 安装版，和 `clients/` 中的 Qt 客户端分别构建。Docker/Podman 仍使用现有镜像。Windows 安装版包含原生 C++ 后端、libobs/D3D11 与来源插件、Python 3.12、go2rtc、MediaMTX、FFmpeg、OpenSSL、Caddy 和 WebUI；日常运行无需 Docker、WSL、系统 Python 或系统 PATH。
 
 ## 当前可下载版本
@@ -83,6 +85,8 @@ go2rtc WebRTC 首次分配先请求系统可用的 UDP 端口，再保留同端�
 First-use go2rtc WebRTC allocation asks the OS for an available UDP port, then reserves matching TCP. A conflicting/restricted protocol releases the candidate and tries again, at most 16 times, avoiding TCP automatic choices in Windows UDP exclusions. Saved ports never migrate automatically: conflicts retain actionable diagnostics and other owners stay untouched. Other failures are reported immediately.
 
 同步 CommonJS 启动入口在 Electron ready 之前配置用户与会话目录，然后加载桌面模块，避免打包入口等待 ready 时阻塞启动。模块导入失败会保存 `logs/desktop-startup.log` 并显示日志位置；成功启动也保留简短启动记录。
+
+私密启动日志还记录诊断窗口、运行清单校验与服务启动阶段及有界错误。低性能 CPU 启动时，首次建账和密码校验可等待最多 10 秒；账号服务超时/不可用返回 503，不误报密码错误，错误密码和限流仍分别返回 401/429。Private startup diagnostics record initialization stages. Password operations have a bounded 10-second budget; account outages return 503, while invalid credentials/rate limits remain 401/429.
 
 配置、账号数据库、密钥、桌面设置与浏览器会话位于 `%LOCALAPPDATA%\WebOBS`。私密目录仅当前 Windows 用户访问，备份主密钥由 Electron safeStorage/Windows DPAPI 保护；客户端授权签名密钥也使用 DPAPI。运行期间备份进程使用私密 `run` 目录中的临时密钥，停服删除。录像默认位于用户 Videos 下的 WebOBS，可在设置中选择新目录；已有录像不会自动移动。
 

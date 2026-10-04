@@ -311,6 +311,10 @@ struct ClusterLoginResult {
     std::string username;
 };
 
+// Password hashing may exceed three seconds during native OBS startup on a slow CPU.
+// Keep the account operation bounded without misreporting transport failures as bad passwords.
+constexpr long account_password_timeout_ms = 10000L;
+
 ClusterLoginResult cluster_login(std::string_view username, std::string_view password,
                                  std::string_view client_key)
 {
@@ -326,7 +330,7 @@ ClusterLoginResult cluster_login(std::string_view username, std::string_view pas
     curl_easy_setopt(handle, CURLOPT_URL, runtime_http(8095, "/auth/login").c_str());
     curl_easy_setopt(handle, CURLOPT_PROTOCOLS_STR, "http");
     curl_easy_setopt(handle, CURLOPT_CONNECTTIMEOUT_MS, 500L);
-    curl_easy_setopt(handle, CURLOPT_TIMEOUT_MS, 3000L);
+    curl_easy_setopt(handle, CURLOPT_TIMEOUT_MS, account_password_timeout_ms);
     curl_easy_setopt(handle, CURLOPT_NOSIGNAL, 1L);
     curl_easy_setopt(handle, CURLOPT_FOLLOWLOCATION, 0L);
     curl_easy_setopt(handle, CURLOPT_HTTPHEADER, headers);
@@ -387,7 +391,8 @@ HttpResponse cluster_first_run_setup(const HttpRequest &request)
     curl_easy_setopt(handle, CURLOPT_URL, runtime_http(8095, "/auth/setup").c_str());
     curl_easy_setopt(handle, CURLOPT_PROTOCOLS_STR, "http");
     curl_easy_setopt(handle, CURLOPT_CONNECTTIMEOUT_MS, 500L);
-    curl_easy_setopt(handle, CURLOPT_TIMEOUT_MS, 3000L);
+    curl_easy_setopt(handle, CURLOPT_TIMEOUT_MS,
+                     request.method() == http::verb::post ? account_password_timeout_ms : 3000L);
     curl_easy_setopt(handle, CURLOPT_NOSIGNAL, 1L);
     curl_easy_setopt(handle, CURLOPT_FOLLOWLOCATION, 0L);
     curl_easy_setopt(handle, CURLOPT_HTTPHEADER, headers);
@@ -3437,10 +3442,13 @@ HttpResponse handle_request(const HttpRequest &request, SceneController &control
 #else
         const char* platform = "linux";
 #endif
+        const char* online_sources = std::getenv("WEBOBS_ONLINE_SOURCES_ENABLED");
+        const bool online_enabled = online_sources && (std::string_view(online_sources) == "true" || std::string_view(online_sources) == "1");
         return response(http::status::ok, version,
             "{\"schemaVersion\":1,\"platform\":\"" + std::string(platform) +
             "\",\"go2rtcRtspBase\":\"" + runtime_rtsp(18554, "/") +
-            "\",\"capabilities\":" + system_capabilities_response(version, runtime_status).body() + "}");
+            "\",\"onlineSourcesEnabled\":" + std::string(online_enabled ? "true" : "false") +
+            ",\"capabilities\":" + system_capabilities_response(version, runtime_status).body() + "}");
     }
     if (request.method() == http::verb::get && target == "/api/v1/system/capabilities")
         return system_capabilities_response(version, runtime_status);
@@ -3962,6 +3970,12 @@ private:
                     authenticated_username = std::string(authenticator_.configured_username());
             }
             if (authenticated_username.empty()) {
+                if (cluster_auth_enabled && !basic_auth_enabled &&
+                    (cluster_login_status == 0 || cluster_login_status >= 500)) {
+                    send(response(http::status::service_unavailable, version,
+                                  error_body("authentication_unavailable", "account service is temporarily unavailable")));
+                    return;
+                }
                 if (cluster_login_status == 429 && !basic_auth_enabled) {
                     HttpResponse result = response(http::status::too_many_requests, version,
                                                    error_body("rate_limited", "too many authentication attempts"));

@@ -15,6 +15,12 @@ const manifest={schema:1,platform:'windows-x64',version,revision,obsCommit:lock.
 await writeFile(path.join(directory,'manifest.json'),JSON.stringify(manifest,null,2));
 await verifyRuntime(directory);
 const components=lock.artifacts.map(item=>({type:'library',name:item.id,version:item.version,hashes:[{alg:'SHA-256',content:item.sha256}],licenses:[item.license.includes(' OR ')?{expression:item.license}:{license:item.license.startsWith('LicenseRef-')?{name:item.license}:{id:item.license}}],externalReferences:[{type:'distribution',url:item.url}]}));
+const onlineLock=JSON.parse(await readFile(path.join(root,'go2rtc','online-source-dependencies.lock.json'),'utf8'));
+for(const item of [onlineLock.platforms['windows-x64'].node,...onlineLock.platforms['windows-x64'].wheels]) {
+  components.push({type:'library',name:item.name,version:item.version,hashes:[{alg:'SHA-256',content:item.sha256}],
+    licenses:[item.license.startsWith('LicenseRef-')?{license:{name:item.license}}:{expression:item.license}],
+    externalReferences:[{type:'distribution',url:item.url},...(item.source?[{type:'source-distribution',url:item.source.url}]:[])]});
+}
 components.push({type:'library',name:'OBS Studio',version:"32.1.2",properties:[{name:'git:commit',value:lock.obsCommit}],licenses:[{license:{id:'GPL-2.0-or-later'}}]});
 const desktopPackage=JSON.parse(await readFile(path.join(root,'desktop','package.json'),'utf8'));
 for(const [name,version] of Object.entries({...desktopPackage.dependencies,...desktopPackage.devDependencies}))components.push({type:'library',name,version,purl:`pkg:npm/${name}@${version}`});

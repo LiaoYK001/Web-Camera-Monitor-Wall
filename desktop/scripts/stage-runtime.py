@@ -6,6 +6,7 @@ import os
 import pathlib
 import shutil
 import zipfile
+import importlib.util
 
 ROOT = pathlib.Path(__file__).resolve().parents[2]
 DESKTOP = ROOT / "desktop"
@@ -61,16 +62,21 @@ def stage(args):
     for name in ["numpy", "onnxruntime", "flatbuffers", "packaging", "protobuf"]: copy_tree(unpack / name, site)
     pth = output / "python" / "python312._pth"
     pth.write_text("python312.zip\n.\nLib/site-packages\n../services\nimport site\n", encoding="ascii")
+    installer_spec = importlib.util.spec_from_file_location('online_installer', ROOT / 'scripts' / 'install-online-source-runtime.py')
+    installer = importlib.util.module_from_spec(installer_spec); installer_spec.loader.exec_module(installer)
+    installer.install(ROOT / 'go2rtc' / 'online-source-dependencies.lock.json', 'windows-x64',
+                      args.cache / 'online-source', site, output / 'bin', output / 'licenses' / 'online-source')
     for name in ["camera", "events", "nvr", "cluster", "v2", "analytics", "archive", "backup"]:
         (output / "services" / name).mkdir(parents=True)
         for file in (ROOT / name).glob("*.py"): shutil.copy2(file, output / "services" / name / file.name)
     shutil.copy2(ROOT / "runtime_support.py", output / "services" / "runtime_support.py")
     (output / "services" / "scripts").mkdir(); shutil.copy2(ROOT / "scripts" / "hardware-probe.py", output / "services" / "scripts" / "hardware-probe.py")
     (output / "services" / "go2rtc").mkdir(); shutil.copy2(ROOT / "go2rtc" / "runtime.py", output / "services" / "go2rtc" / "runtime.py")
+    shutil.copy2(ROOT / "go2rtc" / "online_source.py", output / "services" / "go2rtc" / "online_source.py")
     copy_tree(DESKTOP / "python", output / "services" / "desktop-tools")
     copy_tree(ROOT / "web" / "dist", output / "web"); copy_tree(ROOT / "web" / "go2rtc-dist", output / "go2rtc-www")
     (output / "etc").mkdir(); shutil.copy2(ROOT / "gateway" / "mediamtx.yml", output / "etc" / "mediamtx.yml"); shutil.copy2(ROOT / "go2rtc" / "go2rtc.yaml", output / "etc" / "go2rtc.yaml")
-    licenses = output / "licenses"; licenses.mkdir()
+    licenses = output / "licenses"; licenses.mkdir(exist_ok=True)
     for name in ["go2rtc","mediamtx","caddy","ffmpeg","python"]:
         target=licenses/name;target.mkdir()
         for file in (unpack/name).rglob("*"):
