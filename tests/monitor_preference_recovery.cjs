@@ -62,7 +62,10 @@ let created = false, browser;
       scaleMode: 'contain', crop: { top: 0, right: 0, bottom: 0, left: 0 }, zIndex: 0, visible: true, locked: false,
       groupId: '', rotation: 0, opacity: 1, blendMode: 'normal' }];
     studio.previewSceneId = studio.programSceneId = scene.id;
-    assert.equal((await context.request.put(base + '/api/v1/studio', { headers: { ...headers, 'If-Match': `"${studio.revision}"` }, data: studio })).status(), 200);
+    const committed = await context.request.put(base + '/api/v1/studio', { headers: { ...headers, 'If-Match': `"${studio.revision}"` }, data: studio });
+    assert.equal(committed.status(), 200);
+    assert.equal((await context.request.post(base + '/api/v1/studio/take', { headers: { ...headers, 'If-Match': `"${(await committed.json()).revision}"` } })).status(), 200);
+    assert.equal((await (await context.request.get(base + '/api/v1/scene')).json()).sources[0].id, `${scene.id}.recovery-camera`);
     const preferences = { audioMonitorEnabled: true, audioOutput: 'meter-only', localMonitorVolume: .18, mode: 'manual' };
     assert.equal((await context.request.put(base + '/api/v2/account/preferences/monitor-view', { headers, data: { value: preferences } })).status(), 200);
     run('exec', name, 'python3', '-c', "import sqlite3; db=sqlite3.connect('/config/webobs/cluster.sqlite3'); db.execute(\"UPDATE account_preferences SET body_json='{' WHERE kind='monitor-view'\"); db.commit()");
@@ -136,11 +139,14 @@ let created = false, browser;
     console.log(`PASS actual atomic bulk update: 1000 source telemetry preferences saved with ${bulkWire.bytes} bytes; unrelated audio meter controls retained.`);
     await wide.close();
     for (const identity of ['constructor', '__proto__']) {
-      const currentStudio = await (await context.request.get(base + '/api/v1/studio')).json();
-      const currentScene = currentStudio.scenes.find(value => value.id === currentStudio.previewSceneId);
+      const currentScene = await (await context.request.get(base + '/api/v1/scene')).json();
       currentScene.sources[0].id = identity; currentScene.items[0].sourceId = identity;
-      assert.equal((await context.request.put(base + '/api/v1/studio', {
-        headers: { ...headers, 'If-Match': `"${currentStudio.revision}"` }, data: currentStudio })).status(), 200);
+      // TAKE namespaces identifiers. The authenticated Program API also accepts
+      // the exact boundary names and must render them without inherited values.
+      const staged = await context.request.put(base + '/api/v1/scene', {
+        headers: { ...headers, 'If-Match': `"${currentScene.revision}"` }, data: currentScene });
+      assert.equal(staged.status(), 200);
+      assert.equal((await (await context.request.get(base + '/api/v1/scene')).json()).sources[0].id, identity);
       const identityPreferences = { ...preferences, audioMonitorEnabled: false,
         sourceDecorations: Object.fromEntries([[identity, { fill: 'contain', telemetry: { enabled: true, fields: ['fps'] } }]]) };
       assert.equal((await context.request.put(base + '/api/v2/account/preferences/monitor-view', { headers, data: { value: identityPreferences } })).status(), 200);

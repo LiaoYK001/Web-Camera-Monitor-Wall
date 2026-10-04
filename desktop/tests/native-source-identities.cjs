@@ -10,27 +10,26 @@ exports.exerciseNativeSourceIdentities = async (main, origin, headers, waitForUi
   const put = async (url, body, extra = {}) => {
     const response = await fetch(url, { method: 'PUT', headers: { ...headers, 'Content-Type': 'application/json', ...extra }, body: JSON.stringify(body) });
     assert.equal(response.status, 200);
+    return response.json();
   };
   const originalStudio = await read(`${origin}/api/v1/studio`);
+  const originalProgram = await read(`${origin}/api/v1/scene`);
   const originalPreferences = (await read(endpoint)).value ?? {};
   try {
     for (const identity of ['constructor', '__proto__']) {
-      const studio = await read(`${origin}/api/v1/studio`);
-      const scene = studio.scenes.find(value => value.id === studio.programSceneId);
+      const scene = await read(`${origin}/api/v1/scene`);
       scene.sources = [{ id: identity, kind: 'color', name: 'Native source identity', color: '#214f75',
         muted: true, volume: 1, syncOffsetMs: 0, monitoring: 'off', audioTrack: 1, filters: [] }];
       scene.items = [{ id: 'native-identity-item', sourceId: identity, x: 0, y: 0,
         width: scene.canvas.width, height: scene.canvas.height, scaleMode: 'contain',
         crop: { top: 0, right: 0, bottom: 0, left: 0 }, zIndex: 0, visible: true,
         locked: false, groupId: '', rotation: 0, opacity: 1, blendMode: 'normal' }];
-      await put(`${origin}/api/v1/studio`, studio, { 'If-Match': `"${studio.revision}"` });
+      // Studio TAKE prefixes source identifiers. Use the authenticated Program
+      // API to exercise the exact accepted identifiers without changing Preview.
+      await put(`${origin}/api/v1/scene`, scene, { 'If-Match': `"${scene.revision}"` });
       const live = await read(`${origin}/api/v1/scene`);
       assert.equal(live.sources[0].id, identity);
-      if (studio.previewSceneId !== studio.programSceneId) {
-        const saved = await read(`${origin}/api/v1/studio`);
-        assert.deepEqual(saved.scenes.find(value => value.id === studio.previewSceneId),
-          originalStudio.scenes.find(value => value.id === studio.previewSceneId));
-      }
+      assert.deepEqual(await read(`${origin}/api/v1/studio`), originalStudio);
       await put(endpoint, { value: { mode: 'manual', localMonitorVolume: .18,
         sourceDecorations: Object.fromEntries([[identity, { fill: 'contain', telemetry: { enabled: true, fields: ['fps'] } }]]) } });
       await main.loadURL(`${origin}/#monitor`);
@@ -50,8 +49,9 @@ exports.exerciseNativeSourceIdentities = async (main, origin, headers, waitForUi
     }
     console.log('Actual native source identifiers constructor/__proto__: accepted Scene, monitor rendering and preference save/reload retain own decorations. Synthetic color source, not camera qualification.');
   } finally {
-    const current = await read(`${origin}/api/v1/studio`);
-    await put(`${origin}/api/v1/studio`, { ...originalStudio, revision: current.revision }, { 'If-Match': `"${current.revision}"` });
+    const current = await read(`${origin}/api/v1/scene`);
+    await put(`${origin}/api/v1/scene`, { ...originalProgram, revision: current.revision }, { 'If-Match': `"${current.revision}"` });
+    assert.deepEqual(await read(`${origin}/api/v1/studio`), originalStudio);
     await put(endpoint, { value: originalPreferences });
     await main.loadURL(`${origin}/#settings`);
   }
