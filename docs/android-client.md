@@ -74,6 +74,10 @@ python android/tests/test_emulator.py --serial 127.0.0.1:16384 --adb $adb --dock
 
 The isolated emulator container mounts the current WebUI build and account-service source read-only. Other services come from the explicitly selected complete image; this is not a full image rebuild qualification.
 
+可通过 `--core <新编译的 Linux webobsd>` 只读挂载当前 Core；`--studio-identities` 另在实际已安装 WebView 中核对 TAKE、层级、场景切换、重复嵌套及来源声音控制恢复。该选项要求所选 Core 已实现[稳定运行标识](studio-runtime-identities.md)，使用旧实现时明确失败。APK 不重新安装，设备数据不清除；Core 挂载仍不代表完整镜像重新构建。
+
+Use `--core <fresh Linux webobsd>` to mount the current Core read-only and `--studio-identities` to check TAKE/layers/Scene switches/repeated nesting/source audio control restoration in the installed WebView. The chosen Core must implement [stable runtime identities](studio-runtime-identities.md); the optional gate deliberately fails against the old implementation. No APK reinstall or device-data clearing is performed; a Core overlay does not qualify a complete image rebuild.
+
 The emulator probe uses the real installed APK, real account APIs, official go2rtc UI, live synthetic H.264 and a stopped recorder's actual H.264/AAC archive. It checks archive play/pause, thumbnails, an authenticated snapshot response/hash and date-switch cleanup. It is not a desktop-browser fixture. This does not qualify physical cameras, ARM devices, microphone hardware, private CA setup, Android DownloadManager/long exports, battery consumption or long-running recovery. Record actual passed checks in the local receipt; do not infer them from source support.
 
 2026-10-03：同一 MuMu Android 15 / API 35 开发 APK 搭配当前生产 WebUI 和隔离完整 Linux 产品镜像，新增真实 H.264/AAC 归档播放/暂停、缩略图、账号截图响应及 SHA-256、切换日期后的旧播放器清理；已有账号、Scenes、投影、官方 go2rtc、声音/优化偏好、HOME/恢复及重启回归全部通过。未安装或正式发布新 APK；CI 开发构建产物与此已安装 APK 的验收分开记录。未验收 Android 原生下载管理器、长导出或真机。

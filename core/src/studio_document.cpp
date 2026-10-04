@@ -1,6 +1,7 @@
 #include "webobs/studio_document.hpp"
 
 #include <jansson.h>
+#include <openssl/evp.h>
 
 #include <algorithm>
 #include <cctype>
@@ -92,34 +93,121 @@ bool visit_nested(const StudioDocument &document, const SceneDocument &scene, in
     return true;
 }
 
-struct FlattenContext {
-    SceneDocument result;
-    std::unordered_map<std::string, std::string> source_ids;
-};
+using IdentityPath = std::vector<std::string>;
 
-std::string mapped_source_id(FlattenContext &context, const SceneSource &source, std::string_view path)
+std::string identity_key(const IdentityPath &path)
 {
-    const SceneSerializeResult encoded_scene = [&] {
-        SceneDocument one;
-        one.sources.push_back(source);
-        return serialize_scene_json(one, SceneJsonView::persistence, false);
-    }();
-    const std::string key = encoded_scene.ok() ? encoded_scene.json : std::string(path) + source.id;
-    if (const auto existing = context.source_ids.find(key); existing != context.source_ids.end())
-        return existing->second;
-    std::string id = std::string(path) + source.id;
-    std::replace(id.begin(), id.end(), '/', '.');
-    if (id.size() > 64)
-        id = "source-" + std::to_string(context.result.sources.size());
-    SceneSource copy = source;
-    copy.id = id;
-    context.result.sources.push_back(std::move(copy));
-    context.source_ids.emplace(key, id);
+    std::string key;
+    for (const std::string &component : path)
+        key += std::to_string(component.size()) + ":" + component;
+    return key;
+}
+
+std::optional<std::string> runtime_id(const IdentityPath &path, std::string_view kind)
+{
+    std::string readable;
+    bool unambiguous = true;
+    for (const std::string &component : path) {
+        if (!readable.empty()) readable += '.';
+        readable += component;
+        unambiguous = unambiguous && component.find('.') == std::string::npos;
+    }
+    if (unambiguous && readable.size() <= 64)
+        return readable;
+
+    // Only immutable, length-framed identifiers enter the digest: display names,
+    // credentials, audio values and layer order must never change an identity.
+    const std::string key = std::string(kind) + ":" + identity_key(path);
+    unsigned char digest[EVP_MAX_MD_SIZE]{};
+    unsigned int size = 0;
+    if (EVP_Digest(key.data(), key.size(), digest, &size, EVP_sha256(), nullptr) != 1 || size != 32)
+        return std::nullopt;
+    constexpr char hex[] = "0123456789abcdef";
+    std::string id = std::string(kind) + '-';
+    // 224 digest bits plus the prefix fit the existing 64-character contract.
+    for (unsigned int index = 0; index < 28; ++index) {
+        id += hex[digest[index] >> 4];
+        id += hex[digest[index] & 15];
+    }
     return id;
 }
 
+struct SourcePlan {
+    std::string path_key;
+    std::string id;
+    bool emitted = false;
+};
+
+struct FlattenContext {
+    SceneDocument result;
+    std::unordered_map<const SceneSource *, std::string> source_keys;
+    std::unordered_map<std::string, SourcePlan> source_plans;
+    std::unordered_set<std::string> planned_paths;
+};
+
+bool plan_sources(const StudioDocument &studio, const SceneDocument &scene, IdentityPath path,
+                  FlattenContext &context, std::string &error)
+{
+    if (!context.planned_paths.insert(identity_key(path)).second)
+        return true;
+    for (const SceneItem &item : scene.items) {
+        const auto source = std::find_if(scene.sources.begin(), scene.sources.end(), [&item](const SceneSource &entry) {
+            return entry.id == item.source_id;
+        });
+        // The caller validated all references and nesting before planning.
+        if (source->kind == "nested") {
+            IdentityPath child_path = path;
+            child_path.push_back(source->nested_scene_id);
+            if (!plan_sources(studio, *find_scene(studio, source->nested_scene_id),
+                              std::move(child_path), context, error))
+                return false;
+            continue;
+        }
+        auto key = context.source_keys.find(&*source);
+        if (key == context.source_keys.end()) {
+            SceneDocument one;
+            one.sources.push_back(*source);
+            const auto encoded = serialize_scene_json(one, SceneJsonView::persistence, false);
+            if (!encoded.ok()) {
+                error = "could not plan flattened source identity";
+                return false;
+            }
+            key = context.source_keys.emplace(&*source, encoded.json).first;
+        }
+        IdentityPath source_path = path;
+        source_path.push_back(source->id);
+        const std::string path_key = identity_key(source_path);
+        auto plan = context.source_plans.find(key->second);
+        if (plan == context.source_plans.end() || path_key < plan->second.path_key) {
+            const auto id = runtime_id(source_path, "source");
+            if (!id) {
+                error = "could not generate flattened source identity";
+                return false;
+            }
+            context.source_plans.insert_or_assign(key->second, SourcePlan{path_key, *id, false});
+            if (context.source_plans.size() > maximum_scene_sources) {
+                error = "flattened scene has too many sources";
+                return false;
+            }
+        }
+    }
+    return true;
+}
+
+std::string mapped_source_id(FlattenContext &context, const SceneSource &source)
+{
+    SourcePlan &plan = context.source_plans.at(context.source_keys.at(&source));
+    if (!plan.emitted) {
+        SceneSource copy = source;
+        copy.id = plan.id;
+        context.result.sources.push_back(std::move(copy));
+        plan.emitted = true;
+    }
+    return plan.id;
+}
+
 bool flatten_into(const StudioDocument &studio, const SceneDocument &scene, const SceneItem *parent,
-                  std::string path, int depth, FlattenContext &context, std::string &error)
+                  IdentityPath path, int depth, FlattenContext &context, std::string &error)
 {
     std::vector<const SceneItem *> ordered;
     for (const SceneItem &item : scene.items)
@@ -153,24 +241,34 @@ bool flatten_into(const StudioDocument &studio, const SceneDocument &scene, cons
             if (transformed.group_id.empty())
                 transformed.group_id = parent->group_id;
         }
-        transformed.id = path + item->id;
-        std::replace(transformed.id.begin(), transformed.id.end(), '/', '.');
-        if (transformed.id.size() > 64)
-            transformed.id = "item-" + std::to_string(context.result.items.size());
-
         if (source->kind == "nested") {
             if (depth >= 2) {
                 error = "nested scenes are limited to two levels";
                 return false;
             }
             const SceneDocument *child = find_scene(studio, source->nested_scene_id);
+            IdentityPath child_path = path;
+            child_path.push_back(item->id);
+            child_path.push_back(source->nested_scene_id);
             if (!child || !flatten_into(studio, *child, &transformed,
-                                        path + source->nested_scene_id + ".", depth + 1, context, error))
+                                        std::move(child_path), depth + 1, context, error))
                 return false;
             continue;
         }
 
-        transformed.source_id = mapped_source_id(context, *source, path);
+        IdentityPath item_path = path;
+        item_path.push_back(item->id);
+        const auto id = runtime_id(item_path, "item");
+        if (!id) {
+            error = "could not generate flattened item identity";
+            return false;
+        }
+        transformed.id = *id;
+        transformed.source_id = mapped_source_id(context, *source);
+        if (context.result.items.size() >= maximum_scene_items) {
+            error = "flattened scene has too many items";
+            return false;
+        }
         transformed.z_index = static_cast<int>(context.result.items.size());
         context.result.items.push_back(std::move(transformed));
     }
@@ -335,7 +433,17 @@ StudioFlattenResult flatten_studio_scene(const StudioDocument &document, std::st
     context.result.id = scene->id;
     context.result.name = scene->name;
     context.result.canvas = scene->canvas;
-    if (!flatten_into(document, *scene, nullptr, scene->id + ".", 0, context, result.error))
+    if (!plan_sources(document, *scene, {scene->id}, context, result.error))
+        return result;
+    std::unordered_set<std::string> source_ids;
+    for (const auto &[key, plan] : context.source_plans) {
+        (void)key;
+        if (!source_ids.insert(plan.id).second) {
+            result.error = "flattened source identity collision";
+            return result;
+        }
+    }
+    if (!flatten_into(document, *scene, nullptr, {scene->id}, 0, context, result.error))
         return result;
     if (const auto error = validate_scene_document(context.result)) {
         result.error = "flattened scene is invalid: " + *error;

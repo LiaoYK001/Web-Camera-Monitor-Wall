@@ -135,6 +135,27 @@ const pause = ms => new Promise(resolve => setTimeout(resolve, ms));
     await require('./native-offline-ui.cjs').exerciseNativeOfflineUi(main, origin, headers, waitForUi);
     await require('./native-preference-ui.cjs').exerciseNativePreferenceUi(main, origin, headers, waitForUi);
     await require('./native-source-identities.cjs').exerciseNativeSourceIdentities(main, origin, headers, waitForUi);
+    const finishStudioIdentity = await require('./native-studio-identity.cjs').exerciseStudioIdentity(origin, headers, async (program, controls) => {
+      await main.loadURL(`${origin}/#monitor`);
+      await new Promise(resolve => {
+        main.webContents.once('did-finish-load', resolve);
+        main.webContents.reloadIgnoringCache();
+      });
+      main.show(); main.restore(); main.focus();
+      await waitForUi(`!document.hidden && document.querySelectorAll('.direct-tile-position').length === ${program.items.length} && document.querySelector('input[aria-label="本地监听主音量"]')?.value === '0.18'`);
+      for (const [name, control] of Object.entries(controls)) {
+        const label = JSON.stringify(name);
+        await waitForUi(`(() => {
+          const name = ${label};
+          return document.querySelector('input[aria-label="' + name + ' 音量"]')?.value === ${JSON.stringify(String(control.volume))}
+            && document.querySelector('button[aria-label="' + name + ' 静音"]')?.getAttribute('aria-pressed') === ${JSON.stringify(String(control.muted))}
+            && document.querySelector('button[aria-label="' + name + ' 本地监听"]')?.getAttribute('aria-pressed') === ${JSON.stringify(String(control.monitor))};
+        })()`);
+      }
+    });
+    // The runtime gate performs a real stop/start; this entry gate adds renderer
+    // control checks and restores its isolated fixture before opening projectors.
+    await finishStudioIdentity();
     const studio = await (await fetch(`${origin}/api/v1/studio`, { headers })).json();
     const second = { ...structuredClone(studio.scenes[0]), id: 'native-main-second', name: 'Second fixed projector' };
     studio.scenes.push(second);

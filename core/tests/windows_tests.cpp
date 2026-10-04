@@ -1,11 +1,17 @@
 #include "webobs/platform_runtime.hpp"
 #include "webobs/scene_store.hpp"
 #include "webobs/studio_store.hpp"
+#include "studio_identity_tests.hpp"
 #include <filesystem>
 #include <iostream>
 #include <cstdlib>
 #include <windows.h>
 int main() {
+    int identity_failures = 0;
+    studio_identity_tests([&](bool condition, std::string_view message) {
+        if (!condition) { std::cerr << "FAIL: " << message << '\n'; ++identity_failures; }
+    });
+    if (identity_failures != 0) return 11;
     const auto root = std::filesystem::temp_directory_path() / (L"webobs-场景-test-" + std::to_wstring(GetCurrentProcessId()));
     const auto path = root / L"场景.json";
     webobs::SceneDocument scene;

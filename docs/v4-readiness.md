@@ -38,6 +38,10 @@ Every row needs current source review, failure-path tests and relevant real prod
 
 ## Control recovery and debugging / 控制恢复与调试
 
+Studio TAKE now uses [stable runtime identities](studio-runtime-identities.md) for long and dotted source/item IDs and distinct nested item instances. Shared sources stay deduplicated independently of layer order. Existing snapshots and account records are retained; ambiguous historical counters require an explicit review of source settings after TAKE.
+
+Studio TAKE 为较长/含点标识和嵌套项实例采用[稳定运行标识](studio-runtime-identities.md)，来源复用不再取决于层级顺序。原快照与账号记录保留；旧序号存在歧义，TAKE 后需明确核对来源设置。
+
 Core currently emits scene schema v6 (explicit `audioInputs`) and accepts legacy v5. WebUI event validation, scene types, local profile import/export and synchronized scene caching accept both without rewriting audio selections. Unknown future versions fail validation. The v2 field-sync service now validates both versions, preserves the actual SQLite version and upgrades explicit inputs without losing the legacy output slot. The independent Qt model retains audio settings during layout/local-save operations. See [the v6 contract](scene-schema-v6.md) for limits and migration behavior.
 
 当前 Core 输出场景 schema v6（显式 `audioInputs`），同时接受 v5。WebUI 类型、事件校验、本地配置导入导出与同步缓存兼容两版；未知新版本拒绝。v2 字段同步服务已补齐两版校验、SQLite 实际版本保存及显式音轨升级，保留旧输出槽位；独立 Qt 模型在布局编辑与本地保存时保留音频设置。音轨边界与迁移行为见 v6 契约。
