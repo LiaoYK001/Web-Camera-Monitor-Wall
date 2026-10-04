@@ -1,5 +1,6 @@
 // Accepted Scene identifiers must work in the actual native monitor renderer.
 const assert = require('node:assert/strict');
+const { largeSourceAudioWorkspace } = require('../../tests/fixtures/preference-workspace.cjs');
 
 exports.exerciseNativeSourceIdentities = async (main, origin, headers, waitForUi) => {
   const endpoint = `${origin}/api/v2/account/preferences/monitor-view`;
@@ -16,7 +17,8 @@ exports.exerciseNativeSourceIdentities = async (main, origin, headers, waitForUi
   const originalProgram = await read(`${origin}/api/v1/scene`);
   const originalPreferences = (await read(endpoint)).value ?? {};
   try {
-    for (const identity of ['constructor', '__proto__']) {
+    for (const identity of ['constructor', '__proto__', 'other-scene-999']) {
+      const largeAudio = identity === 'other-scene-999' ? largeSourceAudioWorkspace() : null;
       const scene = await read(`${origin}/api/v1/scene`);
       scene.sources = [{ id: identity, kind: 'color', name: 'Native source identity', color: '#214f75',
         muted: true, volume: 1, syncOffsetMs: 0, monitoring: 'off', audioTrack: 1, filters: [] }];
@@ -30,10 +32,11 @@ exports.exerciseNativeSourceIdentities = async (main, origin, headers, waitForUi
       const live = await read(`${origin}/api/v1/scene`);
       assert.equal(live.sources[0].id, identity);
       assert.deepEqual(await read(`${origin}/api/v1/studio`), originalStudio);
-      await put(endpoint, { value: { mode: 'manual', localMonitorVolume: .18,
+      await put(endpoint, { value: { ...(largeAudio ?? {}), mode: 'manual', localMonitorVolume: .18,
         sourceDecorations: Object.fromEntries([[identity, { fill: 'contain', telemetry: { enabled: true, fields: ['fps'] } }]]) } });
       await main.loadURL(`${origin}/#monitor`);
       await waitForUi('document.querySelectorAll(".direct-tile-position").length === 1 && document.querySelector(".monitor-source-rail").textContent.includes("Native source identity") && !document.querySelector("input[aria-label=本地监听主音量]").closest("fieldset").disabled');
+      if (largeAudio) await waitForUi(`document.querySelector('input[aria-label="Native source identity 音量"]')?.value === '0.27' && document.querySelector('button[aria-label="Native source identity 静音"]')?.getAttribute('aria-pressed') === 'false' && document.querySelector('button[aria-label="Native source identity 本地监听"]')?.getAttribute('aria-pressed') === 'false'`);
       await main.webContents.executeJavaScript(`{
         const input = document.querySelector('input[aria-label="本地监听主音量"]');
         Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set.call(input, '.22');
@@ -46,8 +49,13 @@ exports.exerciseNativeSourceIdentities = async (main, origin, headers, waitForUi
       assert.ok(Object.hasOwn(saved.sourceDecorations, identity));
       assert.equal(saved.sourceDecorations[identity].fill, 'contain');
       assert.deepEqual(saved.sourceDecorations[identity].telemetry.fields, ['fps']);
+      if (largeAudio) {
+        assert.deepEqual(saved.sourceAudio, largeAudio.sourceAudio);
+        await waitForUi(`document.querySelector('input[aria-label="Native source identity 音量"]')?.value === '0.27'`);
+      }
     }
     console.log('Actual native source identifiers constructor/__proto__: accepted Scene, monitor rendering and preference save/reload retain own decorations. Synthetic color source, not camera qualification.');
+    console.log('Actual native 1000-source audio account: last source volume/mute/monitor restored before and after master-volume save/reload; all source controls retained. Color source controls remain disabled; no physical audio qualification.');
   } finally {
     const current = await read(`${origin}/api/v1/scene`);
     await put(`${origin}/api/v1/scene`, { ...originalProgram, revision: current.revision }, { 'If-Match': `"${current.revision}"` });

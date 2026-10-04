@@ -82,6 +82,10 @@ The emulator probe uses the real installed APK, real account APIs, official go2r
 
 The same-day archive audio/lifecycle regression passed 16 actual emulator checks. Player mute/volume and fixed-camera reload restoration were verified against the real account API; actual HOME/foreground transitions keep the player and UI paused until deliberate playback. The checks inspect video volume/mute properties, not physical speaker output, physical-device behavior or sustained power consumption.
 
+2026-10-04：实际已安装 MuMu 开发 APK 的 17 项检查通过，新增将当前来源放在 1000 路账号声音记录末尾，验证音量/静音/本地监听显示及主音量保存、刷新后保留全部记录。使用独立容器中的色块，未启用实体音频。ADB 丢失或 reverse 移除失败时也会执行测试容器清理；只移除本次成功创建的 reverse，不清除模拟器数据。未安装新 APK 或正式发布。
+
+2026-10-04: All 17 installed MuMu development APK checks passed. The new check places the visible source last in 1000 account audio records and verifies its gain/mute/monitoring plus retention through master-volume save/reload. It uses a color source in an isolated container, with no physical audio output. Container cleanup still runs if ADB is lost or reverse removal fails; only a reverse successfully created by this run is removed. No emulator data was cleared, new APK installed or formal release published.
+
 2026-10-02：MuMu Android 15 / API 35（x86_64）已实测安装与覆盖安装、真实账号登录、Scenes 建档与共享登录投影、横竖屏切换、声音输出模式/主音量和弱网开关持久化、官方 go2rtc/本地 Monaco、160×90 H.264 MSE 持续解码、HOME/前台恢复、原生关于页、进程重启后会话与偏好恢复。实际设备或摄像机验证仍待进行。后台连接释放需后端部署本次新增生命周期适配的 WebUI；旧 WebUI 不保证该行为。
 
 2026-10-02 emulator qualification covers installation, real login, scene persistence, account audio/optimization settings, official go2rtc UI, live synthetic H.264 decoding, background/foreground lifecycle, native About and process restart. This is development qualification, not a formal APK release or physical-device qualification.

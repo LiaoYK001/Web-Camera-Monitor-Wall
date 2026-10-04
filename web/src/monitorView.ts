@@ -540,8 +540,10 @@ export function normalizeMonitorView(value: Partial<MonitorView> | null | undefi
     showAudioMixer: value?.showAudioMixer !== false,
     showAllAudioSources: value?.showAllAudioSources === true,
     projectorOutput: value?.projectorOutput === 'picture' ? 'picture' : 'full',
+    // Account controls span multiple Scenes. Keep every valid stored source;
+    // the preference/API byte and node bounds already constrain the document.
     sourceAudio: Object.fromEntries(Object.entries(value?.sourceAudio ?? {}).filter(([id, entry]) =>
-      sourceIdentifier(id) && entry && typeof entry === 'object').slice(0, 256).map(([id, entry]) => [id, {
+      sourceIdentifier(id) && entry && typeof entry === 'object').map(([id, entry]) => [id, {
       volume: bounded(entry.volume, 1, 0, 1.5), muted: entry.muted === true, monitor: entry.monitor !== false,
     }])),
     analytics: {

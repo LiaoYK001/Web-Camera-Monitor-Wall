@@ -198,7 +198,7 @@ export default function App() {
     dirtyRef.current = dirty;
   }, [baseline, dirty]);
 
-  const applyRemoteStudio = useCallback((studio: StudioDocument, preserveProgram = false) => {
+  const applyRemoteStudio = useCallback((studio: StudioDocument) => {
     const scene = studio.scenes.find((candidate) => candidate.id === studio.previewSceneId) ?? studio.scenes[0];
     if (!scene) return;
     baselineRef.current = scene;
@@ -207,7 +207,8 @@ export default function App() {
     setDraft(cloneScene(scene));
     setStudioBaseline(studio);
     setStudioDraft(JSON.parse(JSON.stringify(studio)) as StudioDocument);
-    if (!preserveProgram) setProgramScene(null);
+    // Studio definitions and device/local drafts are independent of the frozen
+    // Program. Only authenticated scene events replace the live snapshot.
     setSelectedSceneId(scene.id);
     setConflict('');
     setSelectedSourceId((current) =>
@@ -218,8 +219,8 @@ export default function App() {
     setSelectedSourceIds(scene.sources[0] ? [scene.sources[0].id] : []);
   }, []);
 
-  const commitSavedStudio = (committed: StudioDocument, submitted: StudioDocument, preserveProgram = false) => {
-    if (studioDraftRef.current === submitted) applyRemoteStudio(committed, preserveProgram);
+  const commitSavedStudio = (committed: StudioDocument, submitted: StudioDocument) => {
+    if (studioDraftRef.current === submitted) applyRemoteStudio(committed);
     else {
       setStudioBaseline(committed);
       setBaseline(committed.scenes.find(scene => scene.id === selectedSceneId) ?? null);
@@ -294,7 +295,7 @@ export default function App() {
         const cached = await loadOfflineStudio();
         if (cached) {
           setActiveLocalProfile(null); setDeviceWorkspaceMode(true);
-          applyRemoteStudio(cached.studio, true);
+          applyRemoteStudio(cached.studio);
           setNotice('已恢复设备布局；待同步修改保留。此布局不会自动替换服务器 Program。');
           return;
         }
@@ -330,7 +331,7 @@ export default function App() {
       if (!cached) throw new Error('没有可用的设备布局；请先完成配对并在线载入 Studio。');
       await setDeviceWorkspace(true);
       setDeviceWorkspaceMode(true); setActiveLocalProfile(null);
-      applyRemoteStudio(cached.studio, true);
+      applyRemoteStudio(cached.studio);
       setNotice('已载入设备布局；保存会进入设备同步队列。需要输出时请复制到服务器预览。');
       navigate('studio');
     } catch (reason) { setNotice(reason instanceof Error ? reason.message : '载入失败'); }
@@ -665,7 +666,7 @@ export default function App() {
           throw new Error('设备同步仅支持摄像机、文字、色块及嵌套场景。当前草稿含其他来源，请在线保存到服务器，或先导出备份。');
         await queueStudioSync(studioDraft);
         setDeviceWorkspaceMode(true);
-        commitSavedStudio(studioDraft, studioDraft, true);
+        commitSavedStudio(studioDraft, studioDraft);
         void queueOfflineAudit('scene.local-save', 'completed').catch(() => undefined);
         setNotice('设备布局已保存到本机并加入同步队列；服务器 Program 不会改变。');
         void deviceSync.sync();

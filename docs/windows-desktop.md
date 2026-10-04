@@ -37,6 +37,10 @@ The main-entry gate also accepts `constructor` and `__proto__` as real Scene sou
 
 主入口门槛还通过实际 Scene 接口接受 `constructor` 和 `__proto__` 来源，显示色块并验证账号偏好保存/刷新后保留自己的外观记录；随后恢复原 Scene 和账号偏好继续桌面生命周期检查。Linux 生产验证另行使用这些标识解码合成 H.264；两者均不代表真实摄像机验收。
 
+The same gate also loads 1000 account audio records with the visible source last, checks its saved volume/mute/monitoring, and verifies that master-volume save/reload retains every record. It uses the authenticated Program API and checks that Studio definitions stay unchanged. Color source audio controls remain disabled; this validates preference restoration rather than physical audio playback.
+
+同一门槛还将显示中的来源放在 1000 路账号声音记录末尾，检查其音量、静音与监听，并确认主音量保存/刷新保留全部记录。通过认证的 Program 接口准备画面，同时检查 Studio 定义保持原样。色块声音控件仍禁用；此项验证偏好恢复，不代表实际音频播放。
+
 开发构建机需要 VS 2022 的 MSVC x64、Windows SDK、CMake >= 3.28、Python、Node 24 和 pnpm 11.16.0。使用 PowerShell 7.2+ 的 VS x64 Developer PowerShell：
 
 ```powershell

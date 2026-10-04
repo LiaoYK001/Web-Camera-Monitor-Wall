@@ -30,6 +30,7 @@ def main():
     name = 'webobs-android-test-' + uuid.uuid4().hex[:10]
     port = None
     created = False
+    reversed_port = False
 
     def docker(*arguments):
         return subprocess.check_output([args.docker, *arguments], text=True, stderr=subprocess.STDOUT, timeout=60).strip()
@@ -86,15 +87,18 @@ db.commit()
 '''.replace('STAMP', str(stamp)))
         port = base.rsplit(':', 1)[1]
         adb('reverse', 'tcp:' + port, 'tcp:' + port)
+        reversed_port = True
         print('Isolated backend and authenticated go2rtc ready; probing actual Android WebView', flush=True)
         subprocess.run(['node', str(ROOT / 'android/tests/emulator-smoke.mjs')], cwd=ROOT, check=True, timeout=240,
                        env={**os.environ, 'WEBOBS_ANDROID_SERIAL': args.serial, 'WEBOBS_ANDROID_ORIGIN': base,
                             'WEBOBS_ANDROID_PASSWORD': password, 'WEBOBS_ANDROID_ADB': args.adb})
     finally:
-        if port:
-            adb('reverse', '--remove', 'tcp:' + port)
-        if created:
-            docker('rm', '--force', '--volumes', name)
+        try:
+            if reversed_port:
+                adb('reverse', '--remove', 'tcp:' + port)
+        finally:
+            if created:
+                docker('rm', '--force', '--volumes', name)
 
 
 if __name__ == '__main__':

@@ -39,6 +39,43 @@ async function account(context: BrowserContext, server: Map<string, Preferences>
 const ready = async (page: Page) => expect(page.getByRole('slider', { name: '本地监听主音量' })).toBeEnabled();
 const output = (page: Page) => page.locator('.hero-audio-control').getByRole('combobox', { name: '声音输出模式' });
 
+test('late source audio in a 1000-source account survives edits, reload and a fresh browser', async ({ browser }) => {
+  const sourceAudio = Object.fromEntries(Array.from({ length: 1000 }, (_, index) =>
+    [`other-scene-${index}`, { volume: .27, muted: false, monitor: false }]));
+  const server = new Map<string, Preferences>([['large-audio', { sourceAudio }]]);
+  const first = await browser.newContext();
+  await account(first, server, 'large-audio');
+  const page = await first.newPage();
+  const target = `${fixture}&source-identities=other-scene-999`;
+  await page.goto(target); await ready(page); await page.clock.install();
+  const gain = page.getByRole('slider', { name: '有声音的摄像机 音量' });
+  const mute = page.getByRole('button', { name: '有声音的摄像机 静音', exact: true });
+  const monitor = page.getByRole('button', { name: '有声音的摄像机 本地监听', exact: true });
+  await expect(gain).toHaveValue('0.27');
+  await expect(mute).toHaveAttribute('aria-pressed', 'false');
+  await expect(monitor).toHaveAttribute('aria-pressed', 'false');
+  await gain.fill('0.63'); await page.clock.runFor(400);
+  await expect.poll(() => server.get('large-audio')?.sourceAudio?.['other-scene-999']).toEqual({ volume: .63, muted: false, monitor: false });
+  expect(Object.keys(server.get('large-audio')!.sourceAudio)).toHaveLength(1000);
+  expect(server.get('large-audio')!.sourceAudio['other-scene-0']).toEqual(sourceAudio['other-scene-0']);
+  await page.getByRole('slider', { name: '本地监听主音量' }).fill('0.41');
+  await page.evaluate(() => window.dispatchEvent(new Event('pagehide')));
+  await expect.poll(() => server.get('large-audio')?.localMonitorVolume).toBe(.41);
+  await page.reload(); await ready(page);
+  await expect(gain).toHaveValue('0.63');
+  await expect(mute).toHaveAttribute('aria-pressed', 'false');
+  await expect(monitor).toHaveAttribute('aria-pressed', 'false');
+  await first.close();
+  const fresh = await browser.newContext();
+  await account(fresh, server, 'large-audio');
+  const restored = await fresh.newPage(); await restored.goto(target); await ready(restored);
+  await expect(restored.getByRole('slider', { name: '有声音的摄像机 音量' })).toHaveValue('0.63');
+  await expect(restored.getByRole('button', { name: '有声音的摄像机 静音', exact: true })).toHaveAttribute('aria-pressed', 'false');
+  await expect(restored.getByRole('button', { name: '有声音的摄像机 本地监听', exact: true })).toHaveAttribute('aria-pressed', 'false');
+  expect(Object.keys(server.get('large-audio')!.sourceAudio)).toHaveLength(1000);
+  await fresh.close();
+});
+
 for (const identity of ['constructor', '__proto__']) test(`prototype-named ${identity} source displays and preserves inherited audio through save and reload`, async ({ page, context }) => {
   const server = new Map<string, Preferences>(); await account(context, server, 'identity-account');
   await page.goto(`${fixture}&source-identities=${identity}`); await ready(page); await page.clock.install();

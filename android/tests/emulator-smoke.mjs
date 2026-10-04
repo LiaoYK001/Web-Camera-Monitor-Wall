@@ -5,6 +5,7 @@ import { execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 const require = createRequire(new URL('../../web/package.json', import.meta.url));
 const { _android, expect } = require('@playwright/test');
+const { largeSourceAudioWorkspace } = require('../tests/fixtures/preference-workspace.cjs');
 const pkg = 'io.github.liaoyk001.webobs.android';
 const serial = process.env.WEBOBS_ANDROID_SERIAL, base = process.env.WEBOBS_ANDROID_ORIGIN;
 assert(serial && base && process.env.WEBOBS_ANDROID_PASSWORD, 'Run through test_emulator.py');
@@ -55,6 +56,44 @@ try {
   await page.locator('.hero-audio-control').getByRole('combobox', { name: '声音输出模式' }).selectOption('meter-only');
   await expect.poll(() => page.evaluate(async () => (await (await fetch('/api/v2/account/preferences/monitor-view')).json()).value?.localMonitorVolume)).toBe(.37);
   checks.push('actual account audio volume and output preferences');
+  const previous = await page.evaluate(async () => ({ program: await (await fetch('/api/v1/scene')).json(),
+    preferences: (await (await fetch('/api/v2/account/preferences/monitor-view')).json()).value }));
+  const audioWorkspace = { ...previous.preferences, ...largeSourceAudioWorkspace() };
+  const accepted = await page.evaluate(async ({ previous, audioWorkspace }) => {
+    const program = { ...previous.program,
+      sources: [{ id: 'other-scene-999', kind: 'color', name: 'Audio preference check', color: '#214f75',
+        muted: true, volume: 1, syncOffsetMs: 0, monitoring: 'off', audioTrack: 1, filters: [] }],
+      items: [{ id: 'audio-preference-tile', sourceId: 'other-scene-999', x: 0, y: 0,
+        width: previous.program.canvas.width, height: previous.program.canvas.height, scaleMode: 'contain',
+        crop: { top: 0, right: 0, bottom: 0, left: 0 }, zIndex: 0, visible: true,
+        locked: false, groupId: '', rotation: 0, opacity: 1, blendMode: 'normal' }] };
+    const saved = await fetch('/api/v1/scene', { method: 'PUT', headers: { 'Content-Type': 'application/json',
+      'If-Match': `"${program.revision}"` }, body: JSON.stringify(program) });
+    const preferences = await fetch('/api/v2/account/preferences/monitor-view', { method: 'PUT',
+      headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ value: audioWorkspace }) });
+    return [saved.status, preferences.status];
+  }, { previous, audioWorkspace });
+  assert.deepEqual(accepted, [200, 200]);
+  await page.reload();
+  const audioChannel = page.locator('.audio-mixer-channel[data-source-id="other-scene-999"]');
+  await expect(audioChannel.getByRole('slider', { name: 'Audio preference check 音量' })).toHaveValue('0.27');
+  await expect(audioChannel.getByRole('button', { name: 'Audio preference check 静音', exact: true })).toHaveAttribute('aria-pressed', 'false');
+  await expect(audioChannel.getByRole('button', { name: 'Audio preference check 本地监听', exact: true })).toHaveAttribute('aria-pressed', 'false');
+  await page.getByRole('slider', { name: '本地监听主音量' }).fill('0.41');
+  await page.reload();
+  await expect(page.getByRole('slider', { name: '本地监听主音量' })).toHaveValue('0.41');
+  await expect(audioChannel.getByRole('slider', { name: 'Audio preference check 音量' })).toHaveValue('0.27');
+  assert.deepEqual(await page.evaluate(async () => (await (await fetch('/api/v2/account/preferences/monitor-view')).json()).value.sourceAudio), audioWorkspace.sourceAudio);
+  const restored = await page.evaluate(async previous => {
+    const current = await (await fetch('/api/v1/scene')).json();
+    const program = await fetch('/api/v1/scene', { method: 'PUT', headers: { 'Content-Type': 'application/json',
+      'If-Match': `"${current.revision}"` }, body: JSON.stringify({ ...previous.program, revision: current.revision }) });
+    const preferences = await fetch('/api/v2/account/preferences/monitor-view', { method: 'PUT',
+      headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ value: previous.preferences }) });
+    return [program.status, preferences.status];
+  }, previous);
+  assert.deepEqual(restored, [200, 200]);
+  checks.push('actual Android late-source audio controls from a 1000-source account survive master save/reload; isolated synthetic color, not audio hardware qualification');
   await page.goto(`${base}/#studio`);
   await page.getByRole('button', { name: '新建场景', exact: true }).click();
   const sceneDialog = page.getByRole('dialog', { name: '新建场景', exact: true });
