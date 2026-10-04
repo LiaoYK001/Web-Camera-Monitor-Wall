@@ -1,5 +1,6 @@
 import net from 'node:net';
 import dgram from 'node:dgram';
+import { randomInt } from 'node:crypto';
 import { readFile } from 'node:fs/promises';
 import path from 'node:path';
 import { atomicJson } from './settings.mjs';
@@ -12,18 +13,20 @@ export async function bindPort(port, udp = false, address = '127.0.0.1') {
     if (udp) socket.bind(port, address, done); else socket.listen({ port, host: address, exclusive: true }, done);
   });
 }
-export async function bindSharedPort(port = 0, address = '127.0.0.1', bind = bindPort) {
+export async function bindSharedPort(port = 0, address = '127.0.0.1', bind = bindPort, choosePort = () => randomInt(1024, 65536)) {
   for (let attempt = 0; attempt < 16; attempt++) {
-    // UDP automatic allocation avoids the Windows UDP exclusions that a TCP
-    // ephemeral choice does not account for. Both protocols stay reserved.
+    // Start with an OS UDP choice, then spread fallback candidates across the
+    // user-port range. Repeated ephemeral choices can all fall inside one
+    // Windows TCP exclusion block. Both protocols must remain reserved.
     const udpFirst = port === 0;
-    const candidate = await bind(port, udpFirst, address);
+    let candidate;
     try {
+      candidate = await bind(udpFirst && attempt > 0 ? choosePort() : port, udpFirst, address);
       const other = await bind(candidate.port, !udpFirst, address);
       return udpFirst ? [other, candidate] : [candidate, other];
     }
     catch (error) {
-      await candidate.release();
+      if (candidate) await candidate.release();
       // OS TCP/UDP reservations differ. Retry only first-use automatic ports;
       // saved choices must report their conflict without silently migrating.
       if (port !== 0 || !['EADDRINUSE', 'EACCES'].includes(error.code) || attempt === 15) throw error;

@@ -59,3 +59,40 @@ test('non-conflict TCP failures stop allocation and release the UDP candidate', 
   }), { code: 'ENOBUFS' });
   assert.equal(attempts, 1); assert.equal(released, 1);
 });
+
+test('automatic shared allocation escapes a whole TCP-reserved ephemeral range', async () => {
+  const released = [], requested = [];
+  const pair = await bindSharedPort(0, '127.0.0.1', async (port, udp) => {
+    requested.push([port, udp]);
+    const selected = port || 63700;
+    if (!udp && selected >= 63700 && selected < 63800)
+      throw Object.assign(new Error('TCP range reserved'), { code: 'EACCES' });
+    return { port: selected, release: async () => { released.push(selected); } };
+  }, () => 24001);
+  assert.deepEqual(pair.map(lease => lease.port), [24001, 24001]);
+  assert.deepEqual(requested, [[0, true], [63700, false], [24001, true], [24001, false]]);
+  assert.deepEqual(released, [63700]);
+  await Promise.all(pair.map(lease => lease.release()));
+});
+
+test('automatic shared allocation also recovers when a fallback UDP candidate is denied', async () => {
+  const choices = [24001, 25001], released = [];
+  const pair = await bindSharedPort(0, '127.0.0.1', async (port, udp) => {
+    const selected = port || 63700;
+    if ((!udp && selected === 63700) || (udp && selected === 24001))
+      throw Object.assign(new Error('protocol restriction'), { code: 'EACCES' });
+    return { port: selected, release: async () => { released.push(selected); } };
+  }, () => choices.shift());
+  assert.deepEqual(pair.map(lease => lease.port), [25001, 25001]);
+  assert.deepEqual(released, [63700]);
+  await Promise.all(pair.map(lease => lease.release()));
+});
+
+test('a saved shared port denied by TCP is tried once without choosing a replacement', async () => {
+  let attempts = 0;
+  await assert.rejects(bindSharedPort(23456, '127.0.0.1', async (port, udp) => {
+    attempts++; assert.equal(port, 23456); assert.equal(udp, false);
+    throw Object.assign(new Error('TCP restriction'), { code: 'EACCES' });
+  }, () => { throw new Error('A saved port must not be replaced'); }), { code: 'EACCES' });
+  assert.equal(attempts, 1);
+});

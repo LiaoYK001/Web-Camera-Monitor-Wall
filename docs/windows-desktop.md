@@ -116,6 +116,10 @@ NSIS 自定义初始化仅修改安装器及其子进程的 TEMP/TMP：在现有
 
 ### WebUI 设置细节 / WebUI settings details
 
+首次启动的 go2rtc WebRTC 端口必须同时可绑定 TCP 与 UDP。系统自动选择的 UDP 端口若落入 Windows 的 TCP 保留范围，最多 16 次重试会分散选择 1024–65535 内的候选，并释放失败的占位端口；不会停止其他应用。已保存的端口冲突仍明确报错，不自动迁移。
+
+First-use go2rtc WebRTC allocation reserves both TCP and UDP. After an OS-selected UDP port conflicts with TCP, bounded retries spread candidates across user ports and release failed leases. Saved conflicts remain explicit and never silently replace persisted ports or stop other applications.
+
 客户端开关立即保存，并在执行中锁定输入。局域网 HTTPS 端口先填写，再点击“保存端口”；支持 1024–65535 的整数，错误或未保存的输入不会改变实际端口。未保存端口可以撤销，保存后再点击“应用并重启服务”。状态事件优先于较早发起的读取结果，其他状态变化不会覆盖正在编辑的端口；读取失败提供重试入口。
 
 Client toggles save immediately and lock inputs while running. Edit the LAN HTTPS port and click “保存端口” (Save port); valid integers are 1024–65535. Invalid or unsaved input never changes the actual port. Discard a draft or save before applying a service restart. Push events supersede older IPC reads and unrelated events preserve a port draft. Failed status reads offer retry.
