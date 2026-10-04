@@ -44,9 +44,18 @@ class OnlineSourceTests(unittest.TestCase):
             with self.assertRaises(source.SourceError):source.cookie_file('account')
 
     def test_headers_reject_injection_and_bound_sensitive_values(self):
-        self.assertEqual(source.safe_headers({'Cookie':'provider=private','User-Agent':'test','X-Product-Session':'never'}),'Cookie: provider=private\r\nUser-Agent: test\r\n')
-        for headers in ({'Cookie':'x\r\nInjected: y'},{'Cookie':'x'*16385},{'Bad:Name':'x'}):
+        self.assertEqual(source.safe_headers({'User-Agent':'test','X-Product-Session':'never'}),'User-Agent: test\r\n')
+        for headers in ({'Cookie':'private'},{'Authorization':'private'},{'Cookie':'x\r\nInjected: y'},{'User-Agent':'x'*16385},{'Bad:Name':'x'}):
             with self.assertRaises(source.SourceError):source.safe_headers(headers)
+
+    def test_media_cannot_forward_raw_website_cookie_or_authorization(self):
+        with patch.object(source,'binary',return_value='/fixed/ffmpeg'):
+            for scheme in ('http','https'):
+                for key in ('Cookie','Authorization'):
+                    with self.assertRaises(source.SourceError) as error:
+                        source.ffmpeg_command([dict(url=scheme+'://example.test/video',headers={key:'private'},video='h264',audio='none')],
+                                              'rtsp://127.0.0.1:18554/'+'a'*32,'auto',720)
+                    self.assertIn('media_credentials_unsupported',str(error.exception));self.assertNotIn('private',str(error.exception))
 
     def test_https_proxy_and_no_proxy_are_selected_per_input_without_local_escape(self):
         with patch.object(source,'getproxies',return_value={'https':'http://proxy.example.test:3128','http':'http://other.example.test:3128'}),patch.object(source,'proxy_bypass',return_value=False):

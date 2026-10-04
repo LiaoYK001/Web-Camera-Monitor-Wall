@@ -124,6 +124,7 @@ export default function Go2rtcOnlineSources({ enabled, platform, onCreated }: { 
         <li>播放失败时检查网页在后端网络是否可访问、直播是否在线。尝试另一解析器或“H264 转换”；在配置/日志中查看固定错误提示。网站规则变化时升级 WebOBS 获取新的解析器。</li>
       </ol>
       <p>需要登录的网站：管理员在后端私密 go2rtc 配置目录的 <code>cookies/配置名.txt</code> 放置 Netscape 格式 Cookie 文件，再填写配置名。Windows 位于用户 WebOBS 数据目录的 <code>config/go2rtc/cookies</code>；容器位于 <code>/config/webobs/go2rtc/cookies</code>，目录 0700、文件 0600。Cookie 过期后需替换；页面不会上传 Cookie，也不会使用 WebOBS 登录会话访问视频网站。</p>
+      <p>网站 Cookie 用于解析登录页面、获取签名播放地址。当前不支持必须向媒体服务器透传 Cookie 或 Authorization 的来源；这类来源会显示 <code>media_credentials_unsupported</code>，请使用可解析出签名媒体地址的来源。</p>
       <p>默认优先 720p；网站提供的清晰度以实际可用轨道为准。自动模式优先直通已识别的 H264，未知或不兼容的视频使用 FFmpeg 转换，可能增加 CPU 使用；可自行选择直通。点播从开头播放，观看权限需由用户自行具备。</p>
       <p><a href="https://github.com/yt-dlp/yt-dlp/blob/master/supportedsites.md" target="_blank" rel="noopener noreferrer">yt-dlp 支持的网站 ↗</a> · <a href="https://streamlink.github.io/plugins.html" target="_blank" rel="noopener noreferrer">Streamlink 直播插件 ↗</a></p>
     </details>

@@ -40,7 +40,7 @@ class SnapshotTests(unittest.TestCase):
         fixture.exercise(ROOT/'desktop/runtime',drop_media=True)
 
     @unittest.skipUnless(os.name=='nt' and (ROOT/'desktop/runtime/bin/webobs-online-source.exe').exists(),'requires the complete website runtime')
-    def test_website_cookie_is_not_sent_to_untrusted_tls_peer(self):
+    def test_website_media_rejects_untrusted_tls_before_http(self):
         fixture=module('desktop_online_tls',ROOT/'tests/online_source_tls.py')
         fixture.exercise(ROOT/'desktop/runtime')
 

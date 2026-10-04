@@ -39,9 +39,9 @@ The private configuration stores an encoded original page URL, not an expiring r
 | 容器 / Container | `/config/webobs/go2rtc/cookies/<name>.txt`，目录 `0700`、文件 `0600` |
 | Windows x64 | `%LOCALAPPDATA%\WebOBS\config\go2rtc\cookies\<name>.txt`，继承当前用户私密 ACL |
 
-名称只允许 1–64 个字母、数字、下划线或短横线。文件最大 1 MiB，拒绝符号链接和路径穿越；Cookie 随私密 go2rtc 配置卷/Windows 数据目录及现有配置备份保存。Cookie 过期需替换。**产品登录 Cookie/Authorization 不会传给视频网站**；仅显式选择的网站 Cookie 及解析器生成的媒体请求头可用于相应来源。不要提交 Cookie、真实网页凭据、配置或原始日志。
+名称只允许 1–64 个字母、数字、下划线或短横线。文件最大 1 MiB，拒绝符号链接和路径穿越；Cookie 随私密 go2rtc 配置卷/Windows 数据目录及现有配置备份保存。Cookie 过期需替换。**产品登录 Cookie/Authorization 不会传给视频网站**；显式选择的网站 Cookie 用于解析登录页面和获取签名媒体地址。转发接受 User-Agent/Referer/Origin/Accept，不透传原始媒体 Cookie/Authorization：当前容器 FFmpeg 会在重定向时继承自定义请求头，不能保证每次跳转的凭据隔离。必须依赖媒体 Cookie/Authorization 的来源暂不支持，返回 `media_credentials_unsupported`。不要提交 Cookie、真实网页凭据、配置或原始日志。
 
-Administrators supply a private Netscape cookie file and select its short profile name. Files are bounded and cannot be symlinks or arbitrary paths. The product login is never forwarded to websites. Explicit website cookies remain in the existing private configuration/backup boundary and must be refreshed when expired.
+Administrators supply a private Netscape cookie file for authenticated extraction and signed media URLs. Files are bounded and cannot be symlinks or arbitrary paths. The product login is never forwarded to websites. Raw media Cookie/Authorization forwarding is unavailable because the container FFmpeg inherits custom headers across redirects; such sources fail with `media_credentials_unsupported`. Website cookies remain in the private configuration/backup boundary and must be refreshed when expired.
 
 ## 诊断、构建与验证 / Diagnostics, building and validation
 
@@ -49,6 +49,7 @@ Administrators supply a private Netscape cookie file and select its short profil
 - `live_resolution_failed` / `live_unavailable`：确认直播在线，尝试 yt-dlp 或直接媒体地址。需要 Streamlink 特有分段处理/复用的插件可能无法导出单个媒体 URL。
 - `cookies_unavailable` / `cookies_permissions`：核对私密目录、配置名、格式和权限。
 - `runtime_missing`：安装完整容器/NSIS；开发模式不会因系统偶然安装了工具而宣称完整支持。
+- `media_credentials_unsupported`：此来源要求媒体请求直接附带 Cookie/Authorization，当前入口不透传这些凭据；使用可解析出签名媒体地址的来源。Raw media credentials are unsupported; use signed media URLs.
 - 转发失败：检查网络和编码兼容性，尝试 H264。FFmpeg 原始 stderr 可能包含临时 URL/请求头，因此固定入口不公开它；管理员可查看 go2rtc 的连接与启动状态。
 
 后端已配置的 `HTTP_PROXY`/`HTTPS_PROXY`（含小写形式）会按媒体输入协议传给 FFmpeg；`NO_PROXY` 和回环来源绕过代理。转发支持 HTTP CONNECT 代理，SOCKS/PAC 或 TLS 代理 URL 不在此入口支持范围内；不支持时返回不含代理凭据的 `proxy_unsupported`。代理是后端出站网络配置，不会存入流模板或发送给网页。FFmpeg 的 HTTP 代理选项见[官方协议文档](https://ffmpeg.org/ffmpeg-protocols.html#http)。
@@ -57,9 +58,9 @@ Configured backend HTTP/HTTPS proxies are selected per media input, respecting N
 
 HTTP 媒体连接的短暂网络错误及 429/503 使用有界递增重试；正常点播结束不会无限重播。测试另实际断开首次媒体请求，确认真实解析器/转发/解码恢复。Transient HTTP network failures and 429/503 responses use bounded backoff; normal VOD EOF does not loop indefinitely. A real initial media disconnect is covered by the runtime fixture.
 
-网站媒体转发显式开启 TLS 证书与 URL 主机名验证，包括 HTTP 播放列表中的 HTTPS 分段。容器使用系统 CA，管理员可通过后端 `SSL_CERT_FILE` 指定已有绝对路径 CA 文件；Windows FFmpeg 使用 Schannel 的系统/当前用户信任库。不要关闭证书验证。代理使用私有 CA 时，应配置后端信任；无效 CA 路径返回固定 `tls_trust_unavailable`。TLS 测试确认不受信任对端收到 HTTP 请求或 Cookie 前已被拒绝；容器还验证显式可信 CA 可解码及主机名不匹配被拒绝，Windows 测试不向用户信任库安装临时 CA。
+HTTPS/RTMPS 网站媒体转发显式开启 TLS 证书与 URL 主机名验证；普通 HTTP 媒体仍可使用。转发不携带原始网站 Cookie/Authorization，HTTPS 播放列表不接受明文分段；协议白名单不能限制 FFmpeg 内部 HTTP 重定向，所以不能据此宣称全部跳转都使用 TLS。容器使用系统 CA，管理员可通过后端 `SSL_CERT_FILE` 指定已有绝对路径 CA 文件；Windows FFmpeg 使用 Schannel 的系统/当前用户信任库。不要关闭证书验证。代理使用私有 CA 时，应配置后端信任；无效 CA 路径返回固定 `tls_trust_unavailable`。TLS 测试确认不受信任对端收到 HTTP 请求前已被拒绝；容器还验证显式可信 CA 可解码及主机名不匹配被拒绝，Windows 测试不向用户信任库安装临时 CA。
 
-Media TLS verification is enabled explicitly, including HTTPS segments inside HTTP playlists. Containers use system CAs (or an existing absolute backend `SSL_CERT_FILE`); Windows FFmpeg uses Schannel system/current-user trust. Configure the backend trust for private proxy CAs; do not disable verification. `tests/online_source_tls.py` exercises actual TLS rejection before website credentials are sent, plus trusted decoding and hostname rejection on Linux. Its Windows fixture does not modify the user's certificate store.
+HTTPS/RTMPS inputs verify certificates and URL hostnames. Plain HTTP media remains available, and raw media credentials are never forwarded. HTTPS playlists refuse plaintext segments, but a protocol whitelist does not control FFmpeg's internal HTTP redirects; it does not guarantee TLS on every hop. Containers use system CAs (or an existing absolute backend `SSL_CERT_FILE`); Windows FFmpeg uses Schannel system/current-user trust. Configure backend trust for private proxy CAs; do not disable verification. `tests/online_source_tls.py` exercises actual TLS rejection before HTTP, plus trusted decoding and hostname rejection on Linux. Its Windows fixture does not modify the user's certificate store.
 
 依赖锁位于 `go2rtc/online-source-dependencies.lock.json`，包含 Windows/Linux x64 轮子和 Node 的 SHA-256、大小（轮子）、许可证与对应 Python 源码归档身份。`scripts/install-online-source-runtime.py` 拒绝校验失败、路径穿越、符号链接与过大归档。容器 `online-source-runtime` 阶段和 Windows `stage-runtime.py` 共用该安装器。整包发布继续要求现有对应源码审查和不可变附件流程，不能仅因存在源地址就认为所有第三方源码已审查。
 

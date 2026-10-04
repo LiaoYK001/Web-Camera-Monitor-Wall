@@ -1,4 +1,4 @@
-"""Real bundled FFmpeg must reject TLS peers before sending website credentials."""
+"""Real bundled FFmpeg must reject untrusted TLS peers before sending HTTP requests."""
 import argparse
 from functools import partial
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
@@ -52,7 +52,7 @@ def exercise(runtime=None):
             current.pop('SSL_CERT_FILE',None)
             if trust:current['SSL_CERT_FILE']=str(cert)
             inputs=[dict(url=f'https://{host}:{server.server_port}/video.mp4',
-                         headers={'Cookie':'website-fixture=private'},video='h264',audio='none')]
+                         headers={'User-Agent':'WebOBS website fixture'},video='h264',audio='none')]
             with patch.dict(os.environ,current,clear=True):
                 command=source.ffmpeg_command(inputs,'rtsp://127.0.0.1:18554/'+'a'*32,'auto',720)
             # Exercise the exact product input options, using a local decoder instead of RTSP output.
@@ -62,10 +62,10 @@ def exercise(runtime=None):
         try:
             if decode('localhost') == 0 or server.requests or server.cookies:
                 raise AssertionError('Untrusted HTTPS peer received website credentials or decoded media')
-            print('Actual bundled FFmpeg rejected untrusted TLS before sending website Cookie',flush=True)
+            print('Actual bundled FFmpeg rejected untrusted TLS before sending an HTTP request',flush=True)
             if not win:
-                if decode('localhost',True) != 0 or not server.cookies:
-                    raise AssertionError('Trusted localhost TLS did not decode media with website Cookie')
+                if decode('localhost',True) != 0 or not server.requests:
+                    raise AssertionError('Trusted localhost TLS did not decode media')
                 requests=server.requests
                 if decode('127.0.0.1',True) == 0 or server.requests != requests:
                     raise AssertionError('TLS hostname mismatch sent website credentials or decoded media')

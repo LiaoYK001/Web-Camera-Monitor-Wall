@@ -85,7 +85,11 @@ def safe_headers(headers):
     for name, value in headers.items():
         if not isinstance(name, str) or not re.fullmatch(r'[A-Za-z0-9-]{1,64}', name) or not isinstance(value, str) or re.search(r'[\x00-\x1f\x7f]', value):
             raise SourceError('invalid_headers: website returned unsafe media headers')
-        if name.lower() in ('user-agent', 'referer', 'origin', 'cookie', 'authorization', 'accept'):
+        # FFmpeg 6.x inherits custom headers across redirects, including HTTPS -> HTTP.
+        # Cookies authenticate the extractor; media must use signed URLs instead of raw credentials.
+        if name.lower() in ('cookie', 'authorization'):
+            raise SourceError('media_credentials_unsupported: use a source with signed media URLs; raw media Cookie/Authorization forwarding is unavailable')
+        if name.lower() in ('user-agent', 'referer', 'origin', 'accept'):
             lines.append(f'{name}: {value}\r\n')
     text = ''.join(lines)
     if len(text.encode('utf-8')) > 16384:
@@ -199,10 +203,16 @@ def resolve_streamlink(url, height, cookies):
 def ffmpeg_command(inputs, output, mode, height):
     command = [binary('ffmpeg'), '-nostdin', '-hide_banner', '-loglevel', 'error']
     for item in inputs:
-        command += ['-rw_timeout', '15000000', '-protocol_whitelist', 'http,https,httpproxy,tcp,tls,crypto,rtmp,rtmps,data']
-        # Also protect HTTPS segments reached from an initial HTTP playlist.
-        command += tls_options()
-        if urlsplit(item['url']).scheme in ('http', 'https'):
+        parsed = urlsplit(item['url'])
+        protocols = 'http,https,httpproxy,tcp,tls,crypto,rtmp,rtmps,data'
+        if parsed.scheme in ('https', 'rtmps'):
+            # Preserve verification for secure segments; the whitelist cannot police HTTP redirects.
+            protocols = 'https,httpproxy,tcp,tls,crypto,rtmps,data'
+        command += ['-rw_timeout', '15000000', '-protocol_whitelist', protocols]
+        # TLS options are unused (and rejected by FFmpeg) for plain HTTP/RTMP inputs.
+        if parsed.scheme in ('https', 'rtmps'):
+            command += tls_options()
+        if parsed.scheme in ('http', 'https'):
             # FFmpeg does not use uppercase HTTPS_PROXY like the Python extractors.
             # Apply the selected proxy per input, including explicit NO_PROXY/local bypass.
             command += ['-http_proxy', input_proxy(item['url'])]
