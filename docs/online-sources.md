@@ -51,6 +51,12 @@ Administrators supply a private Netscape cookie file and select its short profil
 - `runtime_missing`：安装完整容器/NSIS；开发模式不会因系统偶然安装了工具而宣称完整支持。
 - 转发失败：检查网络和编码兼容性，尝试 H264。FFmpeg 原始 stderr 可能包含临时 URL/请求头，因此固定入口不公开它；管理员可查看 go2rtc 的连接与启动状态。
 
+后端已配置的 `HTTP_PROXY`/`HTTPS_PROXY`（含小写形式）会按媒体输入协议传给 FFmpeg；`NO_PROXY` 和回环来源绕过代理。转发支持 HTTP CONNECT 代理，SOCKS/PAC 或 TLS 代理 URL 不在此入口支持范围内；不支持时返回不含代理凭据的 `proxy_unsupported`。代理是后端出站网络配置，不会存入流模板或发送给网页。FFmpeg 的 HTTP 代理选项见[官方协议文档](https://ffmpeg.org/ffmpeg-protocols.html#http)。
+
+Configured backend HTTP/HTTPS proxies are selected per media input, respecting NO_PROXY and loopback bypass. The relay accepts HTTP CONNECT proxies; unsupported proxy types produce a fixed error without credentials. Proxy settings stay on the backend and are not saved in source templates or exposed to pages.
+
+HTTP 媒体连接的短暂网络错误及 429/503 使用有界递增重试；正常点播结束不会无限重播。测试另实际断开首次媒体请求，确认真实解析器/转发/解码恢复。Transient HTTP network failures and 429/503 responses use bounded backoff; normal VOD EOF does not loop indefinitely. A real initial media disconnect is covered by the runtime fixture.
+
 依赖锁位于 `go2rtc/online-source-dependencies.lock.json`，包含 Windows/Linux x64 轮子和 Node 的 SHA-256、大小（轮子）、许可证与对应 Python 源码归档身份。`scripts/install-online-source-runtime.py` 拒绝校验失败、路径穿越、符号链接与过大归档。容器 `online-source-runtime` 阶段和 Windows `stage-runtime.py` 共用该安装器。整包发布继续要求现有对应源码审查和不可变附件流程，不能仅因存在源地址就认为所有第三方源码已审查。
 
 ```sh

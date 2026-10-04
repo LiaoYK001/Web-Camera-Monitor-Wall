@@ -48,9 +48,22 @@ class OnlineSourceTests(unittest.TestCase):
         for headers in ({'Cookie':'x\r\nInjected: y'},{'Cookie':'x'*16385},{'Bad:Name':'x'}):
             with self.assertRaises(source.SourceError):source.safe_headers(headers)
 
+    def test_https_proxy_and_no_proxy_are_selected_per_input_without_local_escape(self):
+        with patch.object(source,'getproxies',return_value={'https':'http://proxy.example.test:3128','http':'http://other.example.test:3128'}),patch.object(source,'proxy_bypass',return_value=False):
+            self.assertEqual(source.input_proxy('https://media.example.test/v.mp4'),'http://proxy.example.test:3128')
+            self.assertEqual(source.input_proxy('http://media.example.test/v.mp4'),'http://other.example.test:3128')
+            for local in ('http://127.0.0.1:19090/video','http://[::1]/video','http://localhost/video'):
+                self.assertEqual(source.input_proxy(local),'')
+            with patch.object(source,'proxy_bypass',return_value=True):self.assertEqual(source.input_proxy('https://bypass.example.test/video'),'')
+
+    def test_unsupported_proxy_never_leaks_its_credentials_in_the_error(self):
+        with patch.object(source,'getproxies',return_value={'https':'socks5://fixture:private@proxy.example.test:1080'}),patch.object(source,'proxy_bypass',return_value=False):
+            with self.assertRaises(source.SourceError) as error:source.input_proxy('https://media.example.test/video')
+            self.assertIn('proxy_unsupported',str(error.exception));self.assertNotIn('private',str(error.exception))
+
     def test_avc_aac_adaptive_tracks_copy_and_unknown_video_converts_only_on_demand(self):
         inputs=[dict(url='https://example.test/v.mp4',headers={},video='avc1.64001f',audio='none'),dict(url='https://example.test/a.m4a',headers={},video='none',audio='mp4a.40.2')]
-        with patch.object(source,'binary',return_value='/fixed/ffmpeg'),patch.dict(os.environ,{'WEBOBS_GO2RTC_RTSP_PORT':'18554'}):
+        with patch.object(source,'binary',return_value='/fixed/ffmpeg'),patch.object(source,'input_proxy',return_value=''),patch.dict(os.environ,{'WEBOBS_GO2RTC_RTSP_PORT':'18554'}):
             command=source.ffmpeg_command(inputs,'rtsp://127.0.0.1:18554/'+'a'*32,'auto',720)
             self.assertEqual(command[command.index('-c:v')+1],'copy');self.assertEqual(command[command.index('-c:a')+1],'copy')
             self.assertIn('1:a:0?',command);self.assertNotIn('-vf',command)

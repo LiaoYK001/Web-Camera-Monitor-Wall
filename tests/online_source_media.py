@@ -17,6 +17,11 @@ import urllib.request
 
 class QuietHandler(SimpleHTTPRequestHandler):
     def log_message(self, *_): pass
+    def do_GET(self):
+        if self.server.drop_media and not self.server.dropped and self.path == '/video.mp4' and self.headers.get('Range') == 'bytes=0-':
+            self.server.dropped = True
+            self.connection.shutdown(socket.SHUT_RDWR); self.connection.close(); return
+        super().do_GET()
 
 
 def reserve_port():
@@ -24,7 +29,7 @@ def reserve_port():
         lease.bind(('127.0.0.1', 0)); return lease.getsockname()[1]
 
 
-def exercise(runtime=None):
+def exercise(runtime=None, drop_media=False):
     win = os.name == 'nt'
     root = Path(runtime) if runtime else Path('/opt/webobs')
     ffmpeg = root/'bin/ffmpeg.exe' if win else Path('/usr/bin/ffmpeg')
@@ -42,6 +47,7 @@ def exercise(runtime=None):
         subprocess.run([str(ffmpeg),'-nostdin','-hide_banner','-loglevel','error','-i',str(private/'video.mp4'),'-c','copy','-hls_time','1','-hls_list_size','0',str(private/'live.m3u8')],check=True,timeout=30)
         (private/'index.html').write_text('<html><title>Local website source fixture</title><video src="video.mp4" controls></video></html>')
         server = ThreadingHTTPServer(('127.0.0.1',0),partial(QuietHandler,directory=str(private)))
+        server.drop_media, server.dropped = drop_media, False
         worker = threading.Thread(target=server.serve_forever,daemon=True);worker.start()
         media_base = f'http://127.0.0.1:{server.server_port}/'
         streams={}
@@ -77,6 +83,9 @@ def exercise(runtime=None):
                 time.sleep(.2)
             else:raise RuntimeError('website producers remained active after consumers closed')
             print('Website producers stopped after consumers closed',flush=True)
+            if drop_media:
+                if not server.dropped:raise RuntimeError('media disconnect fault was not exercised')
+                print('Actual initial HTTP disconnect recovered and decoded media',flush=True)
         finally:
             if process.poll() is None:
                 if win:process.stdin.write(b'shutdown\n');process.stdin.flush()
@@ -90,4 +99,4 @@ def exercise(runtime=None):
 
 
 if __name__=='__main__':
-    parser=argparse.ArgumentParser();parser.add_argument('--runtime',type=Path);args=parser.parse_args();exercise(args.runtime)
+    parser=argparse.ArgumentParser();parser.add_argument('--runtime',type=Path);parser.add_argument('--drop-first-media-request',action='store_true');args=parser.parse_args();exercise(args.runtime,args.drop_first_media_request)

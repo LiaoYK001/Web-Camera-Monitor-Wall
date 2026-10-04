@@ -3,6 +3,7 @@
 import argparse
 import base64
 import importlib.metadata
+import ipaddress
 import json
 import logging
 import os
@@ -12,6 +13,7 @@ import signal
 import subprocess
 import sys
 from urllib.parse import urlsplit
+from urllib.request import getproxies, proxy_bypass
 
 
 class SourceError(Exception):
@@ -90,6 +92,28 @@ def safe_headers(headers):
     return text
 
 
+def input_proxy(url):
+    parsed = urlsplit(url)
+    # A private local source must never leave the machine through an inherited proxy.
+    try:
+        local = ipaddress.ip_address(parsed.hostname).is_loopback
+    except ValueError:
+        local = parsed.hostname == 'localhost'
+    if local or proxy_bypass(parsed.netloc):
+        return ''
+    proxies = getproxies()
+    value = proxies.get(parsed.scheme) or proxies.get('all') or ''
+    if value:
+        try:
+            proxy = urlsplit(value)
+            if len(value) > 2048 or re.search(r'[\s\x00-\x1f\x7f]', value) or proxy.scheme != 'http' or not proxy.hostname or proxy.path not in ('', '/') or proxy.query or proxy.fragment:
+                raise ValueError()
+            _ = proxy.port
+        except ValueError:
+            raise SourceError('proxy_unsupported: configure an HTTP CONNECT proxy or a direct media network') from None
+    return value
+
+
 class QuietLogger:
     def debug(self, *_): pass
     def info(self, *_): pass
@@ -154,7 +178,13 @@ def resolve_streamlink(url, height, cookies):
 def ffmpeg_command(inputs, output, mode, height):
     command = [binary('ffmpeg'), '-nostdin', '-hide_banner', '-loglevel', 'error']
     for item in inputs:
-        command += ['-rw_timeout', '15000000', '-protocol_whitelist', 'http,https,tcp,tls,crypto,rtmp,rtmps,data']
+        command += ['-rw_timeout', '15000000', '-protocol_whitelist', 'http,https,httpproxy,tcp,tls,crypto,rtmp,rtmps,data']
+        if urlsplit(item['url']).scheme in ('http', 'https'):
+            # FFmpeg does not use uppercase HTTPS_PROXY like the Python extractors.
+            # Apply the selected proxy per input, including explicit NO_PROXY/local bypass.
+            command += ['-http_proxy', input_proxy(item['url'])]
+            command += ['-reconnect', '1', '-reconnect_streamed', '1', '-reconnect_on_network_error', '1',
+                        '-reconnect_on_http_error', '429,503', '-reconnect_delay_max', '3']
         headers = safe_headers(item['headers'])
         if headers:
             command += ['-headers', headers]

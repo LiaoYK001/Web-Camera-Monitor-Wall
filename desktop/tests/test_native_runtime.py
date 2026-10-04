@@ -37,7 +37,7 @@ class SnapshotTests(unittest.TestCase):
     @unittest.skipUnless(os.name=='nt' and (ROOT/'desktop/runtime/bin/webobs-online-source.exe').exists(),'requires the complete website runtime')
     def test_website_extractors_publish_and_stop_real_synthetic_rtsp(self):
         fixture=module('desktop_online_media',ROOT/'tests/online_source_media.py')
-        fixture.exercise(ROOT/'desktop/runtime')
+        fixture.exercise(ROOT/'desktop/runtime',drop_media=True)
 
     def test_signing_key_file_preserves_binary_ciphertext_on_restart(self):
         from unittest.mock import patch, Mock
