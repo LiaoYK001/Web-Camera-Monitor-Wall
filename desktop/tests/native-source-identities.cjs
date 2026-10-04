@@ -16,6 +16,16 @@ exports.exerciseNativeSourceIdentities = async (main, origin, headers, waitForUi
   const originalStudio = await read(`${origin}/api/v1/studio`);
   const originalProgram = await read(`${origin}/api/v1/scene`);
   const originalPreferences = (await read(endpoint)).value ?? {};
+  const reloadMonitor = async () => {
+    await main.loadURL(`${origin}/#monitor`);
+    // A fragment navigation may retain App and its preceding preference read.
+    // This gate promises an actual document reload and a restored account.
+    await new Promise(resolve => {
+      main.webContents.once('did-finish-load', resolve);
+      main.webContents.reloadIgnoringCache();
+    });
+    main.show(); main.restore(); main.focus();
+  };
   try {
     for (const identity of ['constructor', '__proto__', 'other-scene-999']) {
       const largeAudio = identity === 'other-scene-999' ? largeSourceAudioWorkspace() : null;
@@ -34,16 +44,25 @@ exports.exerciseNativeSourceIdentities = async (main, origin, headers, waitForUi
       assert.deepEqual(await read(`${origin}/api/v1/studio`), originalStudio);
       await put(endpoint, { value: { ...(largeAudio ?? {}), mode: 'manual', localMonitorVolume: .18,
         sourceDecorations: Object.fromEntries([[identity, { fill: 'contain', telemetry: { enabled: true, fields: ['fps'] } }]]) } });
-      await main.loadURL(`${origin}/#monitor`);
-      await waitForUi('document.querySelectorAll(".direct-tile-position").length === 1 && document.querySelector(".monitor-source-rail").textContent.includes("Native source identity") && !document.querySelector("input[aria-label=本地监听主音量]").closest("fieldset").disabled');
+      await reloadMonitor();
+      await waitForUi('!document.hidden && document.querySelectorAll(".direct-tile-position").length === 1 && document.querySelector(".monitor-source-rail").textContent.includes("Native source identity") && document.querySelector("input[aria-label=本地监听主音量]")?.value === "0.18" && !document.querySelector("input[aria-label=本地监听主音量]").closest("fieldset").disabled');
       if (largeAudio) await waitForUi(`document.querySelector('input[aria-label="Native source identity 音量"]')?.value === '0.27' && document.querySelector('button[aria-label="Native source identity 静音"]')?.getAttribute('aria-pressed') === 'false' && document.querySelector('button[aria-label="Native source identity 本地监听"]')?.getAttribute('aria-pressed') === 'false'`);
       await main.webContents.executeJavaScript(`{
+        const originalFetch = window.fetch;
+        window.nativeIdentityReads = 0;
+        window.fetch = (input, init) => {
+          if (String(input).endsWith('/account/preferences/monitor-view') && init?.method !== 'PUT') window.nativeIdentityReads++;
+          return originalFetch(input, init);
+        };
         const input = document.querySelector('input[aria-label="本地监听主音量"]');
         Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set.call(input, '.22');
         input.dispatchEvent(new Event('input', { bubbles: true }));
       }`);
-      await waitForUi('fetch("/api/v2/account/preferences/monitor-view").then(response=>response.json()).then(result=>result.value.localMonitorVolume === .22)');
-      await main.loadURL(`${origin}/#monitor`);
+      // A hook focus refresh only starts after its save and encrypted pending
+      // cache have settled. Do not stage another full fixture during that save.
+      await waitForUi('window.dispatchEvent(new Event("focus")); window.nativeIdentityReads > 0');
+      assert.equal((await read(endpoint)).value.localMonitorVolume, .22);
+      await reloadMonitor();
       await waitForUi('document.querySelector("input[aria-label=本地监听主音量]")?.value === "0.22" && document.querySelectorAll(".direct-tile-position").length === 1');
       const saved = (await read(endpoint)).value;
       assert.ok(Object.hasOwn(saved.sourceDecorations, identity));
