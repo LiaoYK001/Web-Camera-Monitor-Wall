@@ -46,7 +46,9 @@ else {
           void child.loadURL(url);return {action:'deny'};
         }
         if(target.protocol==='https:' && !target.username && !target.password && target.pathname==='/' && supervisor?.lanInfo?.addresses.includes(target.origin))void shell.openExternal(target.href);
-        if(target.protocol==='https:' && !target.username && !target.password && ['github.com','www.electron.build','docs.webobs.org'].includes(target.hostname))void shell.openExternal(target.href);
+        if(target.protocol==='https:' && !target.username && !target.password &&
+            (['github.com','www.electron.build','docs.webobs.org'].includes(target.hostname) ||
+             target.hostname==='streamlink.github.io' && target.pathname==='/plugins.html'))void shell.openExternal(target.href);
       }catch{}
       return {action:'deny'};
     });
