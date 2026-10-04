@@ -7,6 +7,7 @@ import os
 from pathlib import Path
 import ssl
 import subprocess
+import sys
 import tempfile
 import threading
 from unittest.mock import patch
@@ -28,7 +29,10 @@ def exercise(runtime=None):
     openssl = root/'bin/openssl.exe' if win else Path('/usr/bin/openssl')
     relay = root/'services/go2rtc/online_source.py' if win else root/'online-source/online_source.py'
     spec = importlib.util.spec_from_file_location('bundled_tls_relay', relay)
-    source = importlib.util.module_from_spec(spec); spec.loader.exec_module(source)
+    source = importlib.util.module_from_spec(spec)
+    # The installed runtime is immutable. The test runner itself may omit Python -B.
+    with patch.object(sys,'dont_write_bytecode',True):
+        spec.loader.exec_module(source)
     with tempfile.TemporaryDirectory(prefix='webobs-source-tls-') as temp:
         private = Path(temp); cert = private/'certificate.pem'; key = private/'key.pem'
         config = private/'openssl.cnf'; config.write_text('[req]\ndistinguished_name=dn\n[dn]\n',encoding='ascii')
