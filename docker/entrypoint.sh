@@ -341,6 +341,9 @@ encrypted_backup_pid=""
 encrypted_backup_filter_pid=""
 encrypted_backup_log_pipe=""
 webobsd_pid=""
+runtime_directory=""
+runtime_forced=false
+core_stop_requested=0
 shutdown_requested=0
 
 terminate_child() {
@@ -351,7 +354,6 @@ terminate_child() {
 }
 
 shutdown_children() {
-    terminate_child "$webobsd_pid"
     terminate_child "$caddy_pid"
     terminate_child "$mediamtx_pid"
     terminate_child "$go2rtc_pid"
@@ -368,11 +370,86 @@ shutdown_children() {
     terminate_child "$weston_pid"
 }
 
+service_pids() {
+    printf '%s\n' "$webobsd_pid" "$caddy_pid" "$mediamtx_pid" "$go2rtc_pid" \
+        "$nvr_pid" "$camera_registry_pid" "$v2_client_control_pid" "$events_pid" \
+        "$cluster_pid" "$node_agent_pid" "$detector_worker_pid" "$archive_pid" \
+        "$encrypted_backup_pid" "$xvfb_pid" "$weston_pid"
+}
+
+filter_pids() {
+    printf '%s\n' "$go2rtc_filter_pid" "$mediamtx_filter_pid" "$caddy_filter_pid" \
+        "$nvr_filter_pid" "$camera_registry_filter_pid" "$v2_client_control_filter_pid" \
+        "$events_filter_pid" "$cluster_filter_pid" "$node_agent_filter_pid" \
+        "$archive_filter_pid" "$encrypted_backup_filter_pid"
+}
+
+wait_bounded() {
+    remaining="$1"
+    shift
+    while [ "$remaining" -gt 0 ]; do
+        alive=false
+        for drain_pid in "$@"; do
+            if kill -0 "$drain_pid" 2>/dev/null; then alive=true; break; fi
+        done
+        [ "$alive" = true ] || return 0
+        remaining=$((remaining - 1))
+        sleep 0.1
+    done
+    for drain_pid in "$@"; do
+        if kill -0 "$drain_pid" 2>/dev/null; then return 1; fi
+    done
+}
+
+request_core_stop() {
+    [ "$core_stop_requested" -eq 0 ] || return 0
+    core_stop_requested=1
+    terminate_child "$webobsd_pid"
+}
+
+stop_core() {
+    [ -n "$webobsd_pid" ] || return 0
+    request_core_stop
+    # Leave the media gateway and renderer running while core flushes outputs.
+    if ! wait_bounded 100 "$webobsd_pid"; then
+        echo "Control server shutdown exceeded 10 seconds; forcing termination" >&2
+        runtime_forced=true
+        kill -KILL "$webobsd_pid" 2>/dev/null || true
+    fi
+}
+
+stop_runtime() {
+    stop_core
+    shutdown_children
+    # Only numeric PIDs created by this entrypoint are passed to the helpers.
+    if ! wait_bounded 50 $(service_pids); then
+        echo "Service shutdown exceeded 5 seconds; forcing termination" >&2
+        runtime_forced=true
+        for drain_pid in $(service_pids); do
+            kill -KILL "$drain_pid" 2>/dev/null || true
+        done
+    fi
+    # Readers normally drain to EOF. Also stop readers blocked on FIFO open
+    # after a startup failure, where a writer may never have been created.
+    if ! wait_bounded 10 $(filter_pids); then
+        for drain_pid in $(filter_pids); do terminate_child "$drain_pid"; done
+        if ! wait_bounded 5 $(filter_pids); then
+            for drain_pid in $(filter_pids); do
+                kill -KILL "$drain_pid" 2>/dev/null || true
+            done
+        fi
+    fi
+    for drain_pid in $(service_pids) $(filter_pids); do
+        wait "$drain_pid" 2>/dev/null || true
+    done
+}
+
 request_shutdown() {
     shutdown_requested=1
-    trap - INT TERM
     # Keep Xvfb and MediaMTX available while webobsd flushes its outputs.
-    terminate_child "$webobsd_pid"
+    request_core_stop
+    # Cancellation during startup must not proceed to launch more services.
+    [ -n "$webobsd_pid" ] || exit 143
 }
 
 trap request_shutdown INT TERM
@@ -383,38 +460,37 @@ trap request_shutdown INT TERM
 # guaranteed rollback before the next start if a child is still flushing.
 upgrade_guard=/opt/webobs/bin/webobs-preupgrade-guard
 upgrade_pending=/config/webobs/.v2-m7-upgrade-pending.json
-python3 "$upgrade_guard" prepare --config-root /config/webobs
 upgrade_exit() {
     upgrade_status=$?
     trap - EXIT
+    trap '' INT TERM
+    stop_runtime
+    [ "$runtime_forced" = false ] || upgrade_status=3
     if [ -f "$upgrade_pending" ]; then
-        shutdown_children
-        upgrade_wait=0
-        while [ "$upgrade_wait" -lt 20 ]; do
-            upgrade_alive=false
-            for upgrade_pid in "$webobsd_pid" "$nvr_pid" "$camera_registry_pid" \
-                    "$v2_client_control_pid" "$events_pid" "$cluster_pid" "$node_agent_pid" \
-                    "$archive_pid" "$encrypted_backup_pid" "$go2rtc_pid"; do
-                if [ -n "$upgrade_pid" ] && kill -0 "$upgrade_pid" 2>/dev/null; then
-                    upgrade_alive=true
-                    break
-                fi
-            done
-            [ "$upgrade_alive" = true ] || break
-            upgrade_wait=$((upgrade_wait + 1))
-            sleep 0.1
-        done
-        if [ "$upgrade_alive" = false ]; then
+        # A forced supervisor stop may leave a descendant flushing. In that
+        # case rollback belongs to the next container start, after PID-namespace
+        # teardown, rather than racing a still-active writer.
+        if [ "$runtime_forced" = false ]; then
             python3 "$upgrade_guard" rollback --config-root /config/webobs || upgrade_status=3
         else
             echo "v2-M7 upgrade rollback deferred until the next safe start" >&2
             upgrade_status=3
         fi
     fi
+    if [ -n "$weston_log" ]; then rm -f -- "$weston_log"; fi
+    if [ -n "$runtime_directory" ]; then rm -rf -- "$runtime_directory"; fi
     cleanup_browser_cache
     exit "$upgrade_status"
 }
 trap upgrade_exit EXIT
+python3 "$upgrade_guard" prepare --config-root /config/webobs
+
+# FIFOs are process-local resources, never persistent configuration. Docker and
+# Podman's private /dev/shm tmpfs is reset on container stop, including SIGKILL.
+# Unique private paths also remain safe if an operator shares an IPC namespace.
+runtime_directory="$(mktemp -d /dev/shm/webobs-runtime.XXXXXXXXXX)" || \
+    fail "Cannot create private runtime directory; check container /dev/shm space and permissions"
+chmod 0700 "$runtime_directory"
 
 renderer_selected=idle
 renderer_fallback=false
@@ -428,8 +504,10 @@ hardware_renderer_ready=false
 if [ "$renderer_required" = true ] && [ "$renderer_requested" != software ] &&
    [ "$vaapi_runtime_probe_passed" = true ]; then
     unset LIBGL_ALWAYS_SOFTWARE GALLIUM_DRIVER || true
-    weston_runtime="/tmp/webobs-weston-runtime.$$"
-    weston_log="/tmp/webobs-weston.$$"
+    weston_runtime="$runtime_directory/weston"
+    # Keep diagnostic bytes outside the small shared-memory mount; only
+    # zero-length FIFOs and compositor sockets belong in the tmpfs directory.
+    weston_log="$(mktemp /tmp/webobs-weston.XXXXXXXXXX)"
     mkdir -m 0700 "$weston_runtime"
     export XDG_RUNTIME_DIR="$weston_runtime"
     export WAYLAND_DISPLAY="webobs-wayland"
@@ -467,6 +545,9 @@ else
     renderer_selected=software
     if [ -n "$weston_pid" ]; then
         terminate_child "$weston_pid"
+        if ! wait_bounded 50 "$weston_pid"; then
+            kill -KILL "$weston_pid" 2>/dev/null || true
+        fi
         wait "$weston_pid" 2>/dev/null || true
         weston_pid=""
     fi
@@ -512,8 +593,8 @@ export WEBOBS_RENDERER_FALLBACK="$renderer_fallback"
 export WEBOBS_RENDERER_FALLBACK_REASON="$renderer_fallback_reason"
 
 if [ "$go2rtc_enabled" = "true" ]; then
-    go2rtc_log_pipe="/tmp/webobs-go2rtc-log.$$"
-    mkfifo "$go2rtc_log_pipe"
+    go2rtc_log_pipe="$runtime_directory/go2rtc.log"
+    mkfifo -m 0600 "$go2rtc_log_pipe"
     /opt/obs/bin/webobs-log-filter < "$go2rtc_log_pipe" &
     go2rtc_filter_pid=$!
     python3 /opt/webobs/bin/webobs-go2rtc > "$go2rtc_log_pipe" 2>&1 &
@@ -533,9 +614,8 @@ if [ "$go2rtc_enabled" = "true" ]; then
 fi
 
 if [ "$mediamtx_enabled" = "true" ]; then
-    mediamtx_log_pipe="/tmp/webobs-mediamtx-log.$$"
-    rm -f -- "$mediamtx_log_pipe"
-    mkfifo "$mediamtx_log_pipe"
+    mediamtx_log_pipe="$runtime_directory/mediamtx.log"
+    mkfifo -m 0600 "$mediamtx_log_pipe"
     /opt/obs/bin/webobs-log-filter < "$mediamtx_log_pipe" &
     mediamtx_filter_pid=$!
     /opt/webobs/bin/mediamtx "$mediamtx_config" > "$mediamtx_log_pipe" 2>&1 &
@@ -544,9 +624,8 @@ fi
 
 if [ "$tls_enabled" = "true" ]; then
     /opt/webobs/bin/caddy validate --config "$caddy_config" --adapter caddyfile >/dev/null
-    caddy_log_pipe="/tmp/webobs-caddy-log.$$"
-    rm -f -- "$caddy_log_pipe"
-    mkfifo "$caddy_log_pipe"
+    caddy_log_pipe="$runtime_directory/caddy.log"
+    mkfifo -m 0600 "$caddy_log_pipe"
     /opt/obs/bin/webobs-log-filter < "$caddy_log_pipe" &
     caddy_filter_pid=$!
     /opt/webobs/bin/caddy run --config "$caddy_config" --adapter caddyfile > "$caddy_log_pipe" 2>&1 &
@@ -554,9 +633,8 @@ if [ "$tls_enabled" = "true" ]; then
 fi
 
 if [ "$nvr_enabled" = "true" ]; then
-    nvr_log_pipe="/tmp/webobs-nvr-log.$$"
-    rm -f -- "$nvr_log_pipe"
-    mkfifo "$nvr_log_pipe"
+    nvr_log_pipe="$runtime_directory/nvr.log"
+    mkfifo -m 0600 "$nvr_log_pipe"
     /opt/obs/bin/webobs-log-filter < "$nvr_log_pipe" &
     nvr_filter_pid=$!
     python3 /opt/webobs/bin/webobs-nvrd > "$nvr_log_pipe" 2>&1 &
@@ -564,9 +642,8 @@ if [ "$nvr_enabled" = "true" ]; then
 fi
 
 if [ "$camera_registry_enabled" = "true" ]; then
-    camera_registry_log_pipe="/tmp/webobs-camera-registry-log.$$"
-    rm -f -- "$camera_registry_log_pipe"
-    mkfifo "$camera_registry_log_pipe"
+    camera_registry_log_pipe="$runtime_directory/camera-registry.log"
+    mkfifo -m 0600 "$camera_registry_log_pipe"
     /opt/obs/bin/webobs-log-filter < "$camera_registry_log_pipe" &
     camera_registry_filter_pid=$!
     python3 /opt/webobs/bin/webobs-camera-registry > "$camera_registry_log_pipe" 2>&1 &
@@ -574,7 +651,7 @@ if [ "$camera_registry_enabled" = "true" ]; then
     registry_ready=0
     registry_attempt=0
     while [ "$registry_attempt" -lt 50 ]; do
-        if curl --fail --silent --show-error http://127.0.0.1:8092/health >/dev/null; then
+        if curl --fail --silent --show-error --max-time 1 http://127.0.0.1:8092/health >/dev/null; then
             registry_ready=1
             break
         fi
@@ -588,9 +665,8 @@ if [ "$camera_registry_enabled" = "true" ]; then
 fi
 
 if [ "$v2_client_control_enabled" = "true" ]; then
-    v2_client_control_log_pipe="/tmp/webobs-client-control-log.$$"
-    rm -f -- "$v2_client_control_log_pipe"
-    mkfifo "$v2_client_control_log_pipe"
+    v2_client_control_log_pipe="$runtime_directory/client-control.log"
+    mkfifo -m 0600 "$v2_client_control_log_pipe"
     /opt/obs/bin/webobs-log-filter < "$v2_client_control_log_pipe" &
     v2_client_control_filter_pid=$!
     python3 /opt/webobs/bin/webobs-client-control > "$v2_client_control_log_pipe" 2>&1 &
@@ -598,7 +674,7 @@ if [ "$v2_client_control_enabled" = "true" ]; then
     v2_ready=0
     v2_attempt=0
     while [ "$v2_attempt" -lt 50 ]; do
-        if curl --fail --silent --show-error http://127.0.0.1:8094/health >/dev/null; then
+        if curl --fail --silent --show-error --max-time 1 http://127.0.0.1:8094/health >/dev/null; then
             v2_ready=1
             break
         fi
@@ -612,9 +688,8 @@ if [ "$v2_client_control_enabled" = "true" ]; then
 fi
 
 if [ "$events_enabled" = "true" ]; then
-    events_log_pipe="/tmp/webobs-events-log.$$"
-    rm -f -- "$events_log_pipe"
-    mkfifo "$events_log_pipe"
+    events_log_pipe="$runtime_directory/events.log"
+    mkfifo -m 0600 "$events_log_pipe"
     /opt/obs/bin/webobs-log-filter < "$events_log_pipe" &
     events_filter_pid=$!
     python3 /opt/webobs/bin/webobs-events > "$events_log_pipe" 2>&1 &
@@ -636,9 +711,8 @@ if [ "$events_enabled" = "true" ]; then
 fi
 
 if [ "$cluster_enabled" = "true" ]; then
-    cluster_log_pipe="/tmp/webobs-cluster-log.$$"
-    rm -f -- "$cluster_log_pipe"
-    mkfifo "$cluster_log_pipe"
+    cluster_log_pipe="$runtime_directory/cluster.log"
+    mkfifo -m 0600 "$cluster_log_pipe"
     /opt/obs/bin/webobs-log-filter < "$cluster_log_pipe" &
     cluster_filter_pid=$!
     python3 /opt/webobs/bin/webobs-cluster > "$cluster_log_pipe" 2>&1 &
@@ -660,9 +734,8 @@ if [ "$cluster_enabled" = "true" ]; then
 fi
 
 if [ "$node_agent_enabled" = "true" ]; then
-    node_agent_log_pipe="/tmp/webobs-node-agent-log.$$"
-    rm -f -- "$node_agent_log_pipe"
-    mkfifo "$node_agent_log_pipe"
+    node_agent_log_pipe="$runtime_directory/node-agent.log"
+    mkfifo -m 0600 "$node_agent_log_pipe"
     /opt/obs/bin/webobs-log-filter < "$node_agent_log_pipe" &
     node_agent_filter_pid=$!
     python3 /opt/webobs/bin/webobs-node-agent > "$node_agent_log_pipe" 2>&1 &
@@ -675,9 +748,8 @@ if [ "$node_agent_enabled" = "true" ]; then
 fi
 
 if [ "$archive_enabled" = "true" ]; then
-    archive_log_pipe="/tmp/webobs-archive-log.$$"
-    rm -f -- "$archive_log_pipe"
-    mkfifo "$archive_log_pipe"
+    archive_log_pipe="$runtime_directory/archive.log"
+    mkfifo -m 0600 "$archive_log_pipe"
     /opt/obs/bin/webobs-log-filter < "$archive_log_pipe" &
     archive_filter_pid=$!
     python3 /opt/webobs/bin/webobs-s3-archive > "$archive_log_pipe" 2>&1 &
@@ -687,9 +759,8 @@ if [ "$archive_enabled" = "true" ]; then
 fi
 
 if [ "$encrypted_backup_enabled" = "true" ]; then
-    encrypted_backup_log_pipe="/tmp/webobs-encrypted-backup-log.$$"
-    rm -f -- "$encrypted_backup_log_pipe"
-    mkfifo "$encrypted_backup_log_pipe"
+    encrypted_backup_log_pipe="$runtime_directory/encrypted-backup.log"
+    mkfifo -m 0600 "$encrypted_backup_log_pipe"
     /opt/obs/bin/webobs-log-filter < "$encrypted_backup_log_pipe" &
     encrypted_backup_filter_pid=$!
     python3 /opt/webobs/bin/webobs-encrypted-backup schedule > "$encrypted_backup_log_pipe" 2>&1 &
@@ -701,152 +772,157 @@ fi
 /opt/obs/bin/webobsd "$@" &
 webobsd_pid=$!
 sleep 0.2
+# A user can stop immediately after HTTP comes up, before migration validation
+# finishes. That is an intentional stop, not a crashed migration process.
+[ "$shutdown_requested" -eq 0 ] || exit 0
 kill -0 "$webobsd_pid" 2>/dev/null || fail "webobsd exited during v2-M7 migration startup"
 python3 "$upgrade_guard" commit --config-root /config/webobs || fail "v2-M7 migration commit failed"
 
 exit_status=0
 while kill -0 "$webobsd_pid" 2>/dev/null; do
+    [ "$shutdown_requested" -eq 0 ] || break
     if [ "$shutdown_requested" -eq 0 ] && [ -n "$go2rtc_pid" ] && ! kill -0 "$go2rtc_pid" 2>/dev/null; then
         echo "go2rtc supervisor exited while webobsd was running" >&2
         exit_status=3
-        terminate_child "$webobsd_pid"
+        request_core_stop
         break
     fi
     if [ "$shutdown_requested" -eq 0 ] && [ -n "$go2rtc_filter_pid" ] && ! kill -0 "$go2rtc_filter_pid" 2>/dev/null; then
         echo "go2rtc log filter exited while webobsd was running" >&2
         exit_status=3
-        terminate_child "$webobsd_pid"
+        request_core_stop
         break
     fi
     if [ "$shutdown_requested" -eq 0 ] && [ -n "$mediamtx_pid" ] && ! kill -0 "$mediamtx_pid" 2>/dev/null; then
         echo "MediaMTX exited while webobsd was running" >&2
         exit_status=3
-        terminate_child "$webobsd_pid"
+        request_core_stop
         break
     fi
     if [ "$shutdown_requested" -eq 0 ] && [ -n "$mediamtx_filter_pid" ] && ! kill -0 "$mediamtx_filter_pid" 2>/dev/null; then
         echo "MediaMTX log filter exited while webobsd was running" >&2
         exit_status=3
-        terminate_child "$webobsd_pid"
+        request_core_stop
         break
     fi
     if [ "$shutdown_requested" -eq 0 ] && [ -n "$caddy_pid" ] && ! kill -0 "$caddy_pid" 2>/dev/null; then
         echo "HTTPS proxy exited while webobsd was running" >&2
         exit_status=3
-        terminate_child "$webobsd_pid"
+        request_core_stop
         break
     fi
     if [ "$shutdown_requested" -eq 0 ] && [ -n "$caddy_filter_pid" ] && ! kill -0 "$caddy_filter_pid" 2>/dev/null; then
         echo "HTTPS proxy log filter exited while webobsd was running" >&2
         exit_status=3
-        terminate_child "$webobsd_pid"
+        request_core_stop
         break
     fi
     if [ "$shutdown_requested" -eq 0 ] && [ -n "$nvr_pid" ] && ! kill -0 "$nvr_pid" 2>/dev/null; then
         echo "NVR service exited while webobsd was running" >&2
         exit_status=3
-        terminate_child "$webobsd_pid"
+        request_core_stop
         break
     fi
     if [ "$shutdown_requested" -eq 0 ] && [ -n "$nvr_filter_pid" ] && ! kill -0 "$nvr_filter_pid" 2>/dev/null; then
         echo "NVR log filter exited while webobsd was running" >&2
         exit_status=3
-        terminate_child "$webobsd_pid"
+        request_core_stop
         break
     fi
     if [ "$shutdown_requested" -eq 0 ] && [ -n "$camera_registry_pid" ] && ! kill -0 "$camera_registry_pid" 2>/dev/null; then
         echo "Camera Registry exited while webobsd was running" >&2
         exit_status=3
-        terminate_child "$webobsd_pid"
+        request_core_stop
         break
     fi
     if [ "$shutdown_requested" -eq 0 ] && [ -n "$camera_registry_filter_pid" ] && ! kill -0 "$camera_registry_filter_pid" 2>/dev/null; then
         echo "Camera Registry log filter exited while webobsd was running" >&2
         exit_status=3
-        terminate_child "$webobsd_pid"
+        request_core_stop
         break
     fi
     if [ "$shutdown_requested" -eq 0 ] && [ -n "$v2_client_control_pid" ] && ! kill -0 "$v2_client_control_pid" 2>/dev/null; then
         echo "v2 client control exited while webobsd was running" >&2
         exit_status=3
-        terminate_child "$webobsd_pid"
+        request_core_stop
         break
     fi
     if [ "$shutdown_requested" -eq 0 ] && [ -n "$v2_client_control_filter_pid" ] && ! kill -0 "$v2_client_control_filter_pid" 2>/dev/null; then
         echo "v2 client control log filter exited while webobsd was running" >&2
         exit_status=3
-        terminate_child "$webobsd_pid"
+        request_core_stop
         break
     fi
     if [ "$shutdown_requested" -eq 0 ] && [ -n "$events_pid" ] && ! kill -0 "$events_pid" 2>/dev/null; then
         echo "Event service exited while webobsd was running" >&2
         exit_status=3
-        terminate_child "$webobsd_pid"
+        request_core_stop
         break
     fi
     if [ "$shutdown_requested" -eq 0 ] && [ -n "$events_filter_pid" ] && ! kill -0 "$events_filter_pid" 2>/dev/null; then
         echo "Event service log filter exited while webobsd was running" >&2
         exit_status=3
-        terminate_child "$webobsd_pid"
+        request_core_stop
         break
     fi
     if [ "$shutdown_requested" -eq 0 ] && [ -n "$cluster_pid" ] && ! kill -0 "$cluster_pid" 2>/dev/null; then
         echo "Cluster service exited while webobsd was running" >&2
         exit_status=3
-        terminate_child "$webobsd_pid"
+        request_core_stop
         break
     fi
     if [ "$shutdown_requested" -eq 0 ] && [ -n "$cluster_filter_pid" ] && ! kill -0 "$cluster_filter_pid" 2>/dev/null; then
         echo "Cluster service log filter exited while webobsd was running" >&2
         exit_status=3
-        terminate_child "$webobsd_pid"
+        request_core_stop
         break
     fi
     if [ "$shutdown_requested" -eq 0 ] && [ -n "$node_agent_pid" ] && ! kill -0 "$node_agent_pid" 2>/dev/null; then
         echo "Node agent exited while webobsd was running" >&2
         exit_status=3
-        terminate_child "$webobsd_pid"
+        request_core_stop
         break
     fi
     if [ "$shutdown_requested" -eq 0 ] && [ -n "$detector_worker_pid" ] && ! kill -0 "$detector_worker_pid" 2>/dev/null; then
         echo "Detector worker exited while webobsd was running" >&2
         exit_status=3
-        terminate_child "$webobsd_pid"
+        request_core_stop
         break
     fi
     if [ "$shutdown_requested" -eq 0 ] && [ -n "$node_agent_filter_pid" ] && ! kill -0 "$node_agent_filter_pid" 2>/dev/null; then
         echo "Node agent log filter exited while webobsd was running" >&2
         exit_status=3
-        terminate_child "$webobsd_pid"
+        request_core_stop
         break
     fi
     if [ "$shutdown_requested" -eq 0 ] && [ -n "$archive_pid" ] && ! kill -0 "$archive_pid" 2>/dev/null; then
         echo "S3 archive service exited while webobsd was running" >&2
         exit_status=3
-        terminate_child "$webobsd_pid"
+        request_core_stop
         break
     fi
     if [ "$shutdown_requested" -eq 0 ] && [ -n "$encrypted_backup_pid" ] && ! kill -0 "$encrypted_backup_pid" 2>/dev/null; then
         echo "Encrypted backup scheduler exited while webobsd was running" >&2
         exit_status=3
-        terminate_child "$webobsd_pid"
+        request_core_stop
         break
     fi
     if [ "$shutdown_requested" -eq 0 ] && [ -n "$xvfb_pid" ] && ! kill -0 "$xvfb_pid" 2>/dev/null; then
         echo "software X display exited while webobsd was running" >&2
         exit_status=3
-        terminate_child "$webobsd_pid"
+        request_core_stop
         break
     fi
     if [ "$shutdown_requested" -eq 0 ] && [ -n "$weston_pid" ] && ! kill -0 "$weston_pid" 2>/dev/null; then
         echo "hardware EGL compositor exited while webobsd was running" >&2
         exit_status=3
-        terminate_child "$webobsd_pid"
+        request_core_stop
         break
     fi
     sleep 0.1
 done
 
+stop_core
 set +e
 wait "$webobsd_pid"
 webobsd_status=$?
@@ -855,122 +931,4 @@ if [ "$exit_status" -eq 0 ]; then
     exit_status=$webobsd_status
 fi
 
-shutdown_children
-if [ -n "$go2rtc_pid" ]; then
-    wait "$go2rtc_pid" 2>/dev/null || true
-fi
-if [ -n "$go2rtc_filter_pid" ]; then
-    wait "$go2rtc_filter_pid" 2>/dev/null || true
-fi
-if [ -n "$go2rtc_log_pipe" ]; then
-    rm -f -- "$go2rtc_log_pipe"
-fi
-if [ -n "$mediamtx_pid" ]; then
-    wait "$mediamtx_pid" 2>/dev/null || true
-fi
-if [ -n "$mediamtx_filter_pid" ]; then
-    wait "$mediamtx_filter_pid" 2>/dev/null || true
-fi
-if [ -n "$caddy_pid" ]; then
-    wait "$caddy_pid" 2>/dev/null || true
-fi
-if [ -n "$caddy_filter_pid" ]; then
-    wait "$caddy_filter_pid" 2>/dev/null || true
-fi
-if [ -n "$nvr_pid" ]; then
-    wait "$nvr_pid" 2>/dev/null || true
-fi
-if [ -n "$nvr_filter_pid" ]; then
-    wait "$nvr_filter_pid" 2>/dev/null || true
-fi
-if [ -n "$camera_registry_pid" ]; then
-    wait "$camera_registry_pid" 2>/dev/null || true
-fi
-if [ -n "$camera_registry_filter_pid" ]; then
-    wait "$camera_registry_filter_pid" 2>/dev/null || true
-fi
-if [ -n "$v2_client_control_pid" ]; then
-    wait "$v2_client_control_pid" 2>/dev/null || true
-fi
-if [ -n "$v2_client_control_filter_pid" ]; then
-    wait "$v2_client_control_filter_pid" 2>/dev/null || true
-fi
-if [ -n "$events_pid" ]; then
-    wait "$events_pid" 2>/dev/null || true
-fi
-if [ -n "$events_filter_pid" ]; then
-    wait "$events_filter_pid" 2>/dev/null || true
-fi
-if [ -n "$cluster_pid" ]; then
-    wait "$cluster_pid" 2>/dev/null || true
-fi
-if [ -n "$cluster_filter_pid" ]; then
-    wait "$cluster_filter_pid" 2>/dev/null || true
-fi
-if [ -n "$node_agent_pid" ]; then
-    wait "$node_agent_pid" 2>/dev/null || true
-fi
-if [ -n "$node_agent_filter_pid" ]; then
-    wait "$node_agent_filter_pid" 2>/dev/null || true
-fi
-if [ -n "$detector_worker_pid" ]; then
-    wait "$detector_worker_pid" 2>/dev/null || true
-fi
-if [ -n "$archive_pid" ]; then
-    wait "$archive_pid" 2>/dev/null || true
-fi
-if [ -n "$archive_filter_pid" ]; then
-    wait "$archive_filter_pid" 2>/dev/null || true
-fi
-if [ -n "$encrypted_backup_pid" ]; then
-    wait "$encrypted_backup_pid" 2>/dev/null || true
-fi
-if [ -n "$encrypted_backup_filter_pid" ]; then
-    wait "$encrypted_backup_filter_pid" 2>/dev/null || true
-fi
-if [ -n "$mediamtx_log_pipe" ]; then
-    rm -f -- "$mediamtx_log_pipe"
-fi
-if [ -n "$caddy_log_pipe" ]; then
-    rm -f -- "$caddy_log_pipe"
-fi
-if [ -n "$nvr_log_pipe" ]; then
-    rm -f -- "$nvr_log_pipe"
-fi
-if [ -n "$detector_worker_log" ]; then
-    rm -f -- "$detector_worker_log"
-fi
-if [ -n "$camera_registry_log_pipe" ]; then
-    rm -f -- "$camera_registry_log_pipe"
-fi
-if [ -n "$v2_client_control_log_pipe" ]; then
-    rm -f -- "$v2_client_control_log_pipe"
-fi
-if [ -n "$events_log_pipe" ]; then
-    rm -f -- "$events_log_pipe"
-fi
-if [ -n "$cluster_log_pipe" ]; then
-    rm -f -- "$cluster_log_pipe"
-fi
-if [ -n "$node_agent_log_pipe" ]; then
-    rm -f -- "$node_agent_log_pipe"
-fi
-if [ -n "$archive_log_pipe" ]; then
-    rm -f -- "$archive_log_pipe"
-fi
-if [ -n "$encrypted_backup_log_pipe" ]; then
-    rm -f -- "$encrypted_backup_log_pipe"
-fi
-if [ -n "$xvfb_pid" ]; then
-    wait "$xvfb_pid" 2>/dev/null || true
-fi
-if [ -n "$weston_pid" ]; then
-    wait "$weston_pid" 2>/dev/null || true
-fi
-if [ -n "$weston_log" ]; then
-    rm -f -- "$weston_log"
-fi
-if [ -n "$weston_runtime" ]; then
-    rm -rf -- "$weston_runtime"
-fi
 exit "$exit_status"

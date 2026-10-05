@@ -2,6 +2,8 @@
 
 本文面向从 Git 仓库克隆代码、在部署主机自行构建产品镜像的操作者。命令均在仓库根目录执行。
 
+v3.5 重启后出现 `mkfifo ... File exists`，以及异常退出后的临时资源与停服恢复，见[容器重启与恢复](container-restart-recovery.md)，包含沿用原 v3.5 的轻量热修步骤。For the v3.5 stale-FIFO fix and crash recovery, follow that guide.
+
 > 当前工作树已实现 v1-M1 至 v1-M11，并通过 v1.2 最终收口门禁。空配置可直接启动，摄像机与事件由 WebUI 管理；基础 HTTP 模式只能用于主机回环，远程部署必须使用 production HTTPS 覆盖。
 
 ## 1. 部署组成与数据边界

@@ -36,6 +36,8 @@ Vite 代理或后端重启时页面会显示“本地服务暂不可用”，不
 
 项目内置完整 **go2rtc + 官方 WebUI**：各类来源可先整理为内部 RTSP，再接入现有监控墙、MediaMTX、NVR 和 OBS；普通 RTSP 也可直接接入。左侧“go2rtc 管理”支持流管理、设备发现、播放测试、完整配置和日志，服务与 UI 统一打包和启动，配置随已有私有卷保存。详见 [go2rtc 集成与部署](docs/go2rtc-integration.md)。
 
+v3.5 容器重启遇到 `mkfifo ... File exists` 的修复与保留数据的轻量热修步骤见[容器重启与恢复](docs/container-restart-recovery.md)。The guide covers the stale-FIFO fix, bounded shutdown and restart validation.
+
 ## 主要平台与版本节奏 / Primary platforms and release cadence
 
 网站与直播源的新接入方式、yt-dlp/Streamlink 打包、私密 Cookie 和三端流程见[网站与直播源](docs/online-sources.md)。Website/live source integration and bundled extractor boundaries are documented there; existing installers require an upgrade containing this change.

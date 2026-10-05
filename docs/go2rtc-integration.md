@@ -51,6 +51,8 @@ docker compose up --build -d
 
 保存重启保持监督器运行；异常退出有有界重试，反复失败会报告服务失败。停止产品时终止 go2rtc 和 FFmpeg/exec 子进程组。Docker 输出经现有日志脱敏器；管理 UI 内原始诊断仅由管理员查看，不要提交配置/日志到 Git。
 
+容器入口使用每次启动独立的私密 tmpfs 目录存放日志 FIFO，并对启动失败和停服统一清理；强制终止后不会复用遗留管道。v3.5 出现 `mkfifo ... File exists` 时的原因、轻量热修和恢复验证见[容器重启与恢复](container-restart-recovery.md)。Container restart recovery and bounded shutdown are documented there.
+
 HTTP 代理持续转发媒体，不积累整个响应；WebSocket 双向传输使用固定缓冲与背压。连接经过产品认证和 `settings.manage`；变更请求/WebSocket 要求匹配 Origin，拒绝路径穿越和跨站请求，产品凭据/内部身份头不转发给上游。官方页面使用独立 CSP，主工作台保留原有脚本限制；API 路径属于 PWA NetworkOnly 区域，不进入离线缓存。
 
 ## 开发与版本

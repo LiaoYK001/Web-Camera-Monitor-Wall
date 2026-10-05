@@ -46,6 +46,7 @@ jobs:
           python3 tests/test_nvr_evidence.py
           python3 tests/test_nvr_media.py
           python3 tests/test_online_source.py
+          python3 tests/test_container_entrypoint.py
       - name: Audit and build the public PWA
         shell: bash
         run: |
