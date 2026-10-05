@@ -23,12 +23,14 @@ export interface DesktopBridge {
   reportWork(value: { dirty: boolean; exporting: boolean }): Promise<unknown>;
   onStatus(callback: (status: DesktopStatus) => void): () => void;
 }
-declare global { interface Window { webobsDesktop?: DesktopBridge } }
+declare global { interface Window { webobsDesktop?: DesktopBridge; webobsUpdateWork?: () => { dirty: boolean; exporting: boolean } } }
 const work = new Map<string, { dirty: boolean; exporting: boolean }>();
-const announce = () => { void window.webobsDesktop?.reportWork({ dirty: [...work.values()].some(value => value.dirty), exporting: [...work.values()].some(value => value.exporting) }).catch(() => undefined); };
+const updateWork = () => ({ dirty: [...work.values()].some(value => value.dirty), exporting: [...work.values()].some(value => value.exporting) });
+// Read-only flags for native Android's fixed install preflight. No payload or native command bridge.
+Object.defineProperty(window, 'webobsUpdateWork', { value: updateWork, configurable: true });
+const announce = () => { void window.webobsDesktop?.reportWork(updateWork()).catch(() => undefined); };
 export function useDesktopWork(key: string, dirty: boolean, exporting = false) {
   useEffect(() => {
-    if (!window.webobsDesktop) return;
     work.set(key, { dirty, exporting }); announce();
     return () => { work.delete(key); announce(); };
   }, [key, dirty, exporting]);

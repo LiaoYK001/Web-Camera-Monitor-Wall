@@ -3,10 +3,13 @@
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
     <uses-permission android:name="android.permission.RECORD_AUDIO" />
-    <application android:label="WebOBS" android:icon="@drawable/ic_webobs"
+    <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
+    <application android:label="${webobsAppLabel}" android:icon="@drawable/ic_webobs"
         android:theme="@android:style/Theme.Material.NoActionBar"
         android:allowBackup="false" android:fullBackupContent="false" android:dataExtractionRules="@xml/data_extraction_rules"
         android:usesCleartextTraffic="false" android:networkSecurityConfig="@xml/network_security_config">
+        <provider android:name=".UpdateProvider" android:authorities="${applicationId}.updates"
+            android:exported="false" android:grantUriPermissions="true" />
         <activity android:name=".MainActivity" android:exported="true"
             android:configChanges="orientation|screenSize|keyboardHidden|keyboard|uiMode"
             android:windowSoftInputMode="adjustResize">

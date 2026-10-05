@@ -37,15 +37,15 @@ Patches keep normal stop/snapshot/recovery and integrity checks. No runtime code
 
 原生“关于 → 检查 GitHub 更新”从最近 20 个公开发布中选出**版本号最高且包含精确匹配正式 APK** 的非草稿、非预发布 Release，区分补丁、功能与主版本，展示本机版本、发布说明和对应页面。仅后端发布不会遮住可用 Android 补丁。开发 APK 不进入正式源，本机版本更高时不提示降级。请求固定、无 Token、有超时和响应大小上限。
 
-The manual checker selects the highest stable Android APK among the latest 20 releases and links matching notes/downloads. Backend-only releases do not hide an APK. Requests are fixed, bounded and token-free; development artifacts and downgrades are excluded.
+The native checker selects the highest stable Android APK among the latest 20 releases and links matching notes/downloads. Configurable foreground automatic checks/downloads are enabled by default. Backend-only releases do not hide an APK. Requests are fixed, bounded and token-free; development artifacts and downgrades are excluded.
 
 APK 完整覆盖安装，保留相同 applicationId、同一持久自签密钥和递增 versionCode。无需购买证书或向微软申请；Android 安装本身要求 APK 签名。v4+ 正式版本码固定为 `A×1,000,000 + B×1,000 + C`，B/C 范围 0–999，总值不超过 2,100,000,000。4.0.0/4.0.1/4.0.2 对应 4,000,000/4,000,001/4,000,002，高于现有开发版 3,050,001。不要更换密钥、卸载重装或用独立 CI debug key 掩盖升级问题。
 
 Android replaces the complete APK with the same ID/key and a deterministic increasing versionCode. Preserve the self-signed key outside Git. See [Android versioning](https://developer.android.com/studio/publish/versioning) and [signing](https://developer.android.com/studio/publish/app-signing).
 
-`build-android.ps1 -Release -Version 4.0.1` 生成本机自签**候选**、摘要与构建回执，不自动上传；见[Android 构建](android-client.md)。当前 Android 从发布页面下载、由系统确认安装，尚未新增应用内自动 APK 下载/安装；该闭环需单独实现并用真实两版 APK 验收，不能由版本比较测试宣告完成。
+`build-android.ps1 -Release -Version 4.0.1` 生成本机自签**候选**、摘要与构建回执，不自动上传；见[Android 构建](android-client.md)。应用内通过系统下载管理器下载，核对 GitHub SHA-256/大小、实际包名/版本/版本码及已安装签名，再由用户和系统确认安装；草稿/任务阻止、取消及重启恢复见 [Android 更新](android-updates.md)。缺少摘要时只提供人工发布入口。实际两次升级由独立验收包验证，不能由版本比较测试替代公开更新源与真机验收。
 
-The stable-candidate helper does not publish. Current Android delivery uses the release page and user-confirmed system installation. In-app automatic APK download/installation remains a separate implementation and actual two-version acceptance item.
+The stable-candidate helper does not publish. In-app downloading checks digest/size, APK identity and installed signers before user/system-confirmed installation, with draft/task blocking and recovery. Missing metadata keeps a manual fallback. Isolated actual-upgrade qualification remains distinct from public-feed and physical-device acceptance.
 
 ## 发布与验收 / Publication and acceptance
 

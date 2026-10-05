@@ -16,9 +16,13 @@ Use [OBS projectors](https://obsproject.com/kb/power-of-projectors) and [scene/s
 
 ## Evidence matrix / 证据与缺口
 
-2026-10-05 交付范围：当前容器重启/异常退出修复留到 v4.0，暂不操作 v3.5 热修。v4 基线之后使用 `vA.B.C` 快速 bug/安全补丁，优先 Windows/Android，见[补丁规则](patch-releases-v4.md)。新增验收项为实际 `4.0.0 → 4.0.1 → 4.0.2`、账号/数据保留、Windows 差量失败回退及 Android 同密钥/错误密钥与版本码；版本/协议测试和候选构建不能替代安装验收。Android 应用内自动 APK 下载/安装仍需实现与实测。
+2026-10-05 交付范围：当前容器重启/异常退出修复留到 v4.0，暂不操作 v3.5 热修。v4 基线之后使用 `vA.B.C` 快速 bug/安全补丁，优先 Windows/Android，见[补丁规则](patch-releases-v4.md)。新增验收项为实际 `4.0.0 → 4.0.1 → 4.0.2`、账号/数据保留、Windows 差量失败回退及 Android 同密钥/错误密钥与版本码；版本/协议测试和候选构建不能替代安装验收。[Android 应用内更新](android-updates.md)已实现可关闭的自动检查/下载、验证、确认安装与恢复，隔离包实测与公开源/生产包/真机验收分别记录。
 
-Hold the restart fixes for v4.0 and qualify regular v4+ patches through actual successive installed upgrades, retention and failure paths. Version/protocol tests and candidate builds are separate evidence; Android in-app automatic APK delivery remains open.
+Hold the restart fixes for v4.0 and qualify regular v4+ patches through actual successive installed upgrades, retention and failure paths. Version/protocol tests and candidate builds are separate evidence. Android verified in-app delivery is implemented; isolated installed-upgrade evidence remains distinct from public-feed, production-package and physical-device qualification.
+
+2026-10-05 Android 更新专项：独立 MuMu API 35 x86_64 包实测系统下载/错误摘要签名包名版本/降级/丢失附件/超量/取消、临时查询失败、暂存丢失、进程重启、权限及草稿阻止、系统确认 `4.0.0 → 4.0.1 → 4.0.2` 和连接/偏好/WebView Cookie 保留通过；4 项相关 Chromium、release JUnit/lint/签名检查通过。使用私密一次性密钥与合成 feed，未改已有产品或发布。公开源、生产包、Wi-Fi/实际断网、磁盘故障及 ARM 真机继续待验收，见 [Android 更新](android-updates.md)。
+
+The isolated Android update gate passed real system download/confirmed successive installation, failure/recovery/retention checks and related unit/lint/browser validation. Public-feed, production-package, actual network/storage failures and physical ARM gates remain open.
 
 Every row needs current source review, failure-path tests and relevant real product checks. The existing evidence below is a starting point, not a completion claim. Record dates, commit, environment and limitations with each qualification result.
 

@@ -1,1 +1,4 @@
-<resources><item name="server_address" type="id" /><item name="connect_server" type="id" /><item name="app_menu" type="id" /></resources>
+<resources><item name="server_address" type="id" /><item name="connect_server" type="id" /><item name="app_menu" type="id" />
+    <item name="update_status" type="id" /><item name="update_check" type="id" /><item name="update_download" type="id" />
+    <item name="update_install" type="id" /><item name="update_cancel" type="id" />
+</resources>
