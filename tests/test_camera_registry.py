@@ -55,6 +55,10 @@ class OnvifEmulatorHandler(BaseHTTPRequestHandler):
     username = "test-operator"
     password = "fixture-password"
     action_log: list[str] = []
+    ptz_moves: list[str] = []
+    ptz_configuration_token = ""
+    ptz_timeout_min = "PT0.1S"
+    ptz_timeout_max = "PT2S"
     device_clock_offset = 0
     scheme = "http"
     users: dict[str, str] = {username: "Administrator"}
@@ -63,6 +67,15 @@ class OnvifEmulatorHandler(BaseHTTPRequestHandler):
         return
 
     def soap(self, body: str, status: int = 200) -> None:
+        if self.ptz_configuration_token and 'GetProfilesResponse' in body:
+            profiles = ET.fromstring(body)
+            for profile in profiles.iter():
+                if local_name(profile.tag) != 'Profiles': continue
+                configurations = next((node for node in profile if local_name(node.tag) == 'Configurations'), None)
+                parent = configurations if configurations is not None else profile
+                tag = '{http://www.onvif.org/ver20/media/wsdl}PTZ' if configurations is not None else '{http://www.onvif.org/ver10/schema}PTZConfiguration'
+                ET.SubElement(parent, tag, {'token': self.ptz_configuration_token})
+            body = ET.tostring(profiles, encoding='unicode')
         data = ('<?xml version="1.0"?><s:Envelope xmlns:s="http://www.w3.org/2003/05/soap-envelope">'
                 '<s:Body>' + body + '</s:Body></s:Envelope>').encode()
         self.send_response(status)
@@ -161,6 +174,11 @@ class OnvifEmulatorHandler(BaseHTTPRequestHandler):
                 self.soap('<trt:GetProfilesResponse xmlns:trt="http://www.onvif.org/ver10/media/wsdl" xmlns:tt="http://www.onvif.org/ver10/schema">'
                           '<trt:Profiles token="legacy-main"><tt:Name>Legacy stream</tt:Name><tt:VideoEncoderConfiguration><tt:Encoding>H264</tt:Encoding><tt:Resolution><tt:Width>1280</tt:Width><tt:Height>720</tt:Height></tt:Resolution><tt:RateControl><tt:FrameRateLimit>20</tt:FrameRateLimit></tt:RateControl></tt:VideoEncoderConfiguration></trt:Profiles>'
                           '</trt:GetProfilesResponse>')
+        elif "GetConfigurationOptions" in action and '/ptz/' in action:
+            self.soap('<tptz:GetConfigurationOptionsResponse xmlns:tptz="http://www.onvif.org/ver20/ptz/wsdl" xmlns:tt="http://www.onvif.org/ver10/schema">'
+                      '<tptz:PTZConfigurationOptions><tt:PTZTimeout><tt:Min>' + self.ptz_timeout_min +
+                      '</tt:Min><tt:Max>' + self.ptz_timeout_max + '</tt:Max></tt:PTZTimeout>'
+                      '</tptz:PTZConfigurationOptions></tptz:GetConfigurationOptionsResponse>')
         elif "GetStreamUri" in action:
             token = next((node.text for node in root.iter() if local_name(node.tag) == "ProfileToken"), "stream")
             self.soap('<trt:GetStreamUriResponse xmlns:trt="http://www.onvif.org/ver10/media/wsdl" xmlns:tt="http://www.onvif.org/ver10/schema"><trt:MediaUri><tt:Uri>'
@@ -197,6 +215,7 @@ class OnvifEmulatorHandler(BaseHTTPRequestHandler):
         elif "SetPreset" in action:
             self.soap('<tptz:SetPresetResponse xmlns:tptz="http://www.onvif.org/ver20/ptz/wsdl"><tptz:PresetToken>preset-created</tptz:PresetToken></tptz:SetPresetResponse>')
         elif any(name in action for name in ("ContinuousMove", "RelativeMove", "AbsoluteMove", "Stop", "GotoHomePosition", "GotoPreset", "RemovePreset")):
+            if 'ContinuousMove' in action: self.ptz_moves.append(next((node.text or '' for node in root.iter() if local_name(node.tag) == 'Timeout'), ''))
             self.soap('<tptz:OperationResponse xmlns:tptz="http://www.onvif.org/ver20/ptz/wsdl"/>')
         elif "CreatePullPointSubscription" in action:
             self.soap('<tev:CreatePullPointSubscriptionResponse xmlns:tev="http://www.onvif.org/ver10/events/wsdl" xmlns:wsa="http://www.w3.org/2005/08/addressing"><tev:SubscriptionReference><wsa:Address>' + base + '/pullpoint</wsa:Address></tev:SubscriptionReference></tev:CreatePullPointSubscriptionResponse>')
@@ -305,6 +324,7 @@ class CameraRegistryTests(unittest.TestCase):
         registry.initialize()
         registry.TLS_CONTEXT = ssl.create_default_context()
         OnvifEmulatorHandler.action_log.clear()
+        OnvifEmulatorHandler.ptz_moves.clear()
         # A cleared timer registry does not mean the actual worker exited.
         # Join real workers before removing their SQLite fixture on Windows.
         self.ptz_timers = []
@@ -1200,6 +1220,151 @@ class CameraRegistryTests(unittest.TestCase):
         finally:
             server.shutdown(); server.server_close(); thread.join(timeout=2)
 
+    def test_device_ptz_timeout_is_negotiated_persisted_and_sent(self) -> None:
+        self.write_fixture_secret()
+        for kind in ('T', 'S'):
+            class TimedDevice(OnvifEmulatorHandler):
+                profile_kind = kind
+                require_http_digest = True
+                ptz_configuration_token = 'private-ptz-configuration'
+                ptz_timeout_min = 'PT0.2501S'
+                ptz_timeout_max = 'PT1.5009S'
+            server = HTTPServer(('127.0.0.1', 0), TimedDevice)
+            thread = threading.Thread(target=server.serve_forever, daemon=True); thread.start()
+            camera_id = 'timed-device-' + kind
+            try:
+                registry.save_camera(registry.validate_camera({
+                    'id': camera_id, 'name': 'Timed fixture', 'adapter': 'onvif',
+                    'address': f'http://127.0.0.1:{server.server_address[1]}', 'credentialsRef': 'fixture', 'profiles': [],
+                }), False)
+                synced = registry.sync_onvif_camera(camera_id)
+                limits = synced['capabilities']['onvif']['ptzTimeout']
+                self.assertEqual(limits, {'state': 'available', 'minimumMs': 251, 'maximumMs': 1500})
+                self.assertNotIn('private-ptz-configuration', json.dumps(synced))
+                self.assertEqual(sum('/GetConfigurationOptions"' in value for value in TimedDevice.action_log), 1)
+                registry.initialize()  # The private numeric contract survives reopening the database.
+                result = registry.onvif_ptz_command(camera_id, {'operation': 'continuous', 'x': .25, 'durationMs': 350})
+                self.assertEqual(result['deviceTimeoutMs'], 350)
+                self.assertEqual(TimedDevice.ptz_moves[-1], 'PT0.350S')
+                time.sleep(.4)
+            finally:
+                server.shutdown(); server.server_close(); thread.join(timeout=2)
+                OnvifEmulatorHandler.action_log.clear()
+
+    def test_ptz_duration_outside_device_range_never_moves(self) -> None:
+        self.write_fixture_secret()
+        class LongerPulse(OnvifEmulatorHandler):
+            ptz_configuration_token = 'longer-pulse'
+            ptz_timeout_min = 'PT0.5S'
+            ptz_timeout_max = 'PT1.5S'
+        server = HTTPServer(('127.0.0.1', 0), LongerPulse)
+        thread = threading.Thread(target=server.serve_forever, daemon=True); thread.start()
+        try:
+            registry.save_camera(registry.validate_camera({'id': 'range-device', 'name': 'Range fixture',
+                'adapter': 'onvif', 'address': f'http://127.0.0.1:{server.server_address[1]}',
+                'credentialsRef': 'fixture', 'profiles': []}), False)
+            registry.sync_onvif_camera('range-device')
+            for duration in (350, 1501):
+                with self.subTest(duration=duration), self.assertRaisesRegex(ValueError, '500.*1500'):
+                    registry.onvif_ptz_command('range-device', {'operation': 'continuous', 'durationMs': duration})
+            self.assertEqual(LongerPulse.ptz_moves, [])
+            self.assertNotIn('range-device', registry.PTZ_STOP_TIMERS)
+            # Public editable capabilities cannot override the private range.
+            with registry.connect() as database:
+                database.execute('UPDATE cameras SET capabilities_json=? WHERE id=?', (json.dumps({'onvif': {'ptzTimeout': {'state': 'available', 'minimumMs': 100, 'maximumMs': 2000}}}), 'range-device'))
+            with self.assertRaisesRegex(ValueError, '500.*1500'):
+                registry.onvif_ptz_command('range-device', {'operation': 'continuous', 'durationMs': 350})
+            with registry.connect() as database:
+                database.execute('UPDATE onvif_profile_tokens SET ptz_timeout_min_ms=1,ptz_timeout_max_ms=0 WHERE camera_id=?', ('range-device',))
+            with self.assertRaisesRegex(ValueError, 'cannot support'):
+                registry.onvif_ptz_command('range-device', {'operation': 'continuous', 'durationMs': 500})
+            with registry.connect() as database:
+                changed = registry.camera_document(database, database.execute('SELECT * FROM cameras WHERE id=?', ('range-device',)).fetchone())
+            changed['address'] = 'http://other-camera.example.invalid'
+            saved = registry.save_camera(registry.validate_camera(changed, 'range-device'), True)
+            self.assertNotIn('onvif', saved['capabilities'])
+            with self.assertRaises(registry.OnvifError): registry.onvif_profile_token('range-device')
+        finally:
+            server.shutdown(); server.server_close(); thread.join(timeout=2)
+
+    def test_device_ptz_timeout_stops_without_backend_watchdog(self) -> None:
+        self.write_fixture_secret(); stopped = threading.Event(); device_timers = []
+        class IndependentStop(OnvifEmulatorHandler):
+            ptz_configuration_token = 'independent-timeout'
+            def soap(self, body, status=200):
+                if '/ContinuousMove"' in self.headers.get('SOAPAction', '') and status == 200:
+                    timeout = self.ptz_moves[-1]
+                    if timeout:
+                        timer = threading.Timer(float(timeout[2:-1]), stopped.set)
+                        timer.daemon = True; device_timers.append(timer); timer.start()
+                return super().soap(body, status)
+        server = HTTPServer(('127.0.0.1', 0), IndependentStop)
+        thread = threading.Thread(target=server.serve_forever, daemon=True); thread.start()
+        try:
+            registry.save_camera(registry.validate_camera({'id': 'independent-stop', 'name': 'Independent fixture',
+                'adapter': 'onvif', 'address': f'http://127.0.0.1:{server.server_address[1]}',
+                'credentialsRef': 'fixture', 'profiles': []}), False)
+            registry.sync_onvif_camera('independent-stop')
+            with patch.object(registry, 'schedule_ptz_stop'):
+                registry.onvif_ptz_command('independent-stop', {'operation': 'continuous', 'x': .25, 'durationMs': 100})
+            self.assertTrue(stopped.wait(1), 'The synthetic device did not receive its own movement timeout')
+            self.assertFalse(any('/Stop"' in value for value in IndependentStop.action_log))
+        finally:
+            for timer in device_timers: timer.cancel(); timer.join(timeout=2)
+            server.shutdown(); server.server_close(); thread.join(timeout=2)
+
+    def test_ptz_timeout_discovery_rejects_invalid_ranges_and_bounds_reads(self) -> None:
+        def options(minimum, maximum):
+            return ET.fromstring('<Options><PTZTimeout><Min>' + minimum + '</Min><Max>' + maximum + '</Max></PTZTimeout></Options>')
+        for minimum, maximum, expected in (
+            ('P0DT0H0M0.1001S', 'PT2.9999S', {'state': 'available', 'minimumMs': 101, 'maximumMs': 2000}),
+            ('PT0.10000000000000000000000000000000000000001S', 'PT2S', {'state': 'available', 'minimumMs': 101, 'maximumMs': 2000}),
+            ('PT2.001S', 'PT10S', {'state': 'unsupported'}),
+            ('PT0.01S', 'PT0.0999S', {'state': 'unsupported'}),
+            ('PT0.1001S', 'PT0.1009S', {'state': 'unsupported'}),
+            ('PT1.5S', 'PT0.5S', {'state': 'unverified'}),
+            ('PTNaNS', 'PT2S', {'state': 'unverified'}),
+            ('P1M', 'PT2S', {'state': 'unverified'}),
+            ('PT', 'PT2S', {'state': 'unverified'}),
+            ('PT-1S', 'PT2S', {'state': 'unverified'}),
+        ):
+            with self.subTest(minimum=minimum), patch.object(registry, 'onvif_soap', return_value=options(minimum, maximum)) as soap:
+                result = registry.onvif_ptz_timeout_options('http://fixture.invalid/ptz', {'main': 'private-token', 'sub': 'private-token'}, '', '')
+                self.assertEqual(result, {'main': expected, 'sub': expected})
+                self.assertEqual(soap.call_count, 1)
+                self.assertNotIn('private-token', json.dumps(result))
+        with patch.object(registry, 'onvif_soap', side_effect=registry.OnvifError('unavailable')) as soap:
+            result = registry.onvif_ptz_timeout_options('http://fixture.invalid/ptz', {f'p{i}': f'c{i}' for i in range(16)}, '', '')
+            self.assertEqual(soap.call_count, 2)
+            self.assertTrue(all(value == {'state': 'unverified'} for value in result.values()))
+
+    def test_legacy_ptz_tokens_migrate_without_inventing_device_timeout(self) -> None:
+        registry.save_camera(registry.validate_camera({'id': 'legacy-tokens', 'name': 'Legacy tokens',
+            'adapter': 'onvif', 'address': 'http://fixture.invalid', 'profiles': []}), False)
+        with registry.connect() as database:
+            database.execute('DROP TABLE onvif_profile_tokens')
+            database.execute('CREATE TABLE onvif_profile_tokens(camera_id TEXT,profile_id TEXT,device_token TEXT,PRIMARY KEY(camera_id,profile_id))')
+            database.execute('INSERT INTO onvif_profile_tokens VALUES(?,?,?)', ('legacy-tokens', 'legacy-profile', 'private-original-token'))
+        registry.initialize()
+        row = registry.onvif_profile_control('legacy-tokens', 'legacy-profile')
+        self.assertEqual(row['device_token'], 'private-original-token')
+        self.assertIsNone(row['ptz_timeout_min_ms']); self.assertIsNone(row['ptz_timeout_max_ms'])
+
+    def test_ptz_timeout_rejection_never_retries_without_timeout(self) -> None:
+        registry.save_camera(registry.validate_camera({'id': 'reject-timeout', 'name': 'Reject timeout',
+            'adapter': 'onvif', 'address': 'http://fixture.invalid', 'profiles': []}), False)
+        with registry.connect() as database:
+            database.execute('INSERT INTO onvif_profile_tokens VALUES(?,?,?,?,?)', ('reject-timeout', 'main', 'private-profile', 100, 2000))
+        context = ({}, {'ptz': 'http://fixture.invalid/ptz'}, '', '')
+        with patch.object(registry, 'onvif_camera_context', return_value=context), \
+                patch.object(registry, 'onvif_soap', side_effect=registry.OnvifError('device rejected timeout')) as soap, \
+                patch.object(registry, 'schedule_ptz_stop') as stop:
+            with self.assertRaises(registry.OnvifError):
+                registry.onvif_ptz_command('reject-timeout', {'profileId': 'main', 'operation': 'continuous', 'durationMs': 350})
+            self.assertEqual(soap.call_count, 1)
+            self.assertIn('<tptz:Timeout>PT0.350S</tptz:Timeout>', soap.call_args.args[2])
+            self.assertEqual(stop.call_args.args[-1], 0)
+
     def test_guarded_device_operations_and_private_profile_tokens(self) -> None:
         self.write_fixture_secret()
         server, thread = self.onvif_server("T", require_http_digest=True)
@@ -1259,6 +1424,7 @@ class CameraRegistryTests(unittest.TestCase):
         # An invalid duration used to be checked after ContinuousMove had
         # already reached the device, so the automatic stop was never armed.
         for field, value in (("durationMs", 0), ("durationMs", 2001),
+                             ('durationMs', 350.5),
                              ("durationMs", "NaN"), ("x", "NaN"),
                              ("y", float("inf")), ("zoom", float("nan"))):
             camera_id = f"invalid-control-{field}-{str(value)}"
@@ -1384,6 +1550,7 @@ class CameraRegistryTests(unittest.TestCase):
         with (patch.object(registry, 'PTZ_SESSION_WAIT_SECONDS', .03),
               patch.object(registry, 'onvif_camera_context', return_value=({}, {'ptz': 'http://camera.example.invalid/ptz'}, '', '')),
               patch.object(registry, 'onvif_profile_token', return_value='profile'),
+              patch.object(registry, 'onvif_profile_control', return_value={'ptz_timeout_min_ms': None, 'ptz_timeout_max_ms': None}),
               patch.object(registry, 'onvif_soap', side_effect=soap),
               patch.object(registry, 'audit_device_operation', side_effect=audit)):
             result = registry.onvif_ptz_command('late-ptz-response', {'operation': 'continuous', 'durationMs': 100})
@@ -1397,6 +1564,7 @@ class CameraRegistryTests(unittest.TestCase):
         camera_id = 'failed-stop-fixture'
         with (patch.object(registry, 'onvif_camera_context', return_value=({}, {'ptz': 'http://camera.example.invalid/ptz'}, '', '')),
               patch.object(registry, 'onvif_profile_token', return_value='profile'),
+              patch.object(registry, 'onvif_profile_control', return_value={'ptz_timeout_min_ms': None, 'ptz_timeout_max_ms': None}),
               patch.object(registry, 'onvif_soap', side_effect=registry.OnvifError('fixture unavailable'))):
             with self.assertRaises(registry.OnvifError):
                 registry.onvif_ptz_command(camera_id, {'operation': 'continuous', 'durationMs': 100})

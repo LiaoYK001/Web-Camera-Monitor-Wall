@@ -3,6 +3,11 @@ import { expect, test, type Page } from '@playwright/test';
 const fixture = '/tests/harness/device-controls.html';
 const controls = (page: Page) => page.locator('.device-controls');
 const stats = (page: Page) => page.evaluate(() => (window as any).deviceFixture.metrics);
+
+const timedCamera = (ptzTimeout: Record<string, unknown>) => ({ cameras: [{
+  id: 'timed-fixture', name: 'Timed fixture', address: 'http://camera.example.invalid', adapter: 'onvif',
+  profiles: [], enabled: true, hardwareDecode: 'auto', capabilities: { onvif: { ptz: true, ptzTimeout } },
+}] });
 test.beforeEach(async ({ page }) => {
   await page.addInitScript(() => {
     const data = { metrics: { microphones: 0, stoppedTracks: 0, recorders: 0 }, deferred: false,
@@ -42,6 +47,45 @@ test.beforeEach(async ({ page }) => {
     if (url.pathname.includes('/analytics')) return route.fulfill({ json: { policies: [], revision: 1 } });
     return route.fulfill({ status: 404, json: {} });
   });
+});
+
+test('PTZ uses a visible supported pulse and reports the actual timeout acknowledgment', async ({ page }) => {
+  await page.route('**/api/v1/cameras', route => route.fulfill({ json: timedCamera({ state: 'available', minimumMs: 500, maximumMs: 1500 }) }));
+  const durations: number[] = [];
+  await page.route('**/onvif/ptz', route => {
+    durations.push(route.request().postDataJSON().durationMs);
+    return route.fulfill({ json: { state: 'accepted', autoStopMs: 1000, deviceTimeoutMs: 1000 } });
+  });
+  await page.goto(fixture);
+  const pulse = controls(page).getByLabel('每次移动时长');
+  await expect(pulse).toHaveValue('500');
+  await pulse.selectOption('1000');
+  await controls(page).getByRole('button', { name: '云台右移' }).click();
+  expect(durations).toEqual([1000]);
+  await expect(controls(page).getByRole('status')).toContainText('1000 毫秒');
+  await expect(controls(page)).toContainText('设备侧超时');
+});
+
+test('PTZ incompatible timeout range disables movement while Stop remains usable', async ({ page }) => {
+  await page.route('**/api/v1/cameras', route => route.fulfill({ json: timedCamera({ state: 'unsupported' }) }));
+  const operations: string[] = [];
+  await page.route('**/onvif/ptz', route => {
+    operations.push(route.request().postDataJSON().operation); return route.fulfill({ json: { state: 'stopped' } });
+  });
+  await page.goto(fixture);
+  await expect(controls(page).getByRole('button', { name: '云台右移' })).toBeDisabled();
+  await expect(controls(page)).toContainText('预置位');
+  await controls(page).getByRole('button', { name: '停止云台' }).click();
+  expect(operations).toEqual(['stop']);
+  await expect(controls(page).getByRole('status')).toContainText('停止云台命令已确认');
+});
+
+test('unknown device timeout remains explicit and missing timing cannot claim a confirmed deadline', async ({ page }) => {
+  await page.goto(fixture);
+  await expect(controls(page)).toContainText('尚未确认设备自身的移动超时');
+  await controls(page).getByRole('button', { name: '云台右移' }).click();
+  await expect(controls(page).getByRole('status')).toContainText('请核对设备位置');
+  await expect(controls(page).getByRole('status')).not.toContainText('350 毫秒');
 });
 
 test('PTZ stop failures are visible and do not become unhandled rejections', async ({ page }) => {

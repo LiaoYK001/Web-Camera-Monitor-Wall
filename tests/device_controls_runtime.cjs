@@ -10,7 +10,14 @@ const option=name=>{const index=process.argv.indexOf(name);return index<0?undefi
 const image=option('--image'),docker=option('--docker')||'docker';assert(image,'Supply the matching complete image');
 const name='webobs-control-test-'+crypto.randomBytes(5).toString('hex');
 const run=(...args)=>execFileSync(docker,args,{encoding:'utf8',windowsHide:true,timeout:60000}).trim();
-let created=false,browser;
+let created=false,browser,frozen=false;
+const signalCamera=signal=>run('exec',name,'python3','-c',
+  'import os,signal;from pathlib import Path\n'+
+  'pids=[]\nfor p in Path("/proc").iterdir():\n'+
+  ' if not p.name.isdigit():continue\n'+
+  ' try:args=(p/"cmdline").read_bytes().split(b"\\0")\n except (FileNotFoundError,PermissionError):continue\n'+
+  ' if b"/opt/webobs/bin/webobs-camera-registry" in args:pids.append(int(p.name))\n'+
+  'assert len(pids)==1,"Isolated camera worker not unique"\nos.kill(pids[0],signal.'+signal+')');
 (async()=>{
   try{
     run('run','--detach','--name',name,'-p','127.0.0.1::8080',
@@ -51,5 +58,16 @@ let created=false,browser;
     assert.equal(audit.status(),200);
     assert((await audit.json()).operations.some(value=>value.operation==='ptz.continuous'&&value.result==='unconfirmed'));
     console.log('Authenticated product: dropped SOAP movement response returns 502, requests stop, records an unconfirmed result and never repeats movement');
-  }finally{await browser?.close();if(created)run('rm','--force','--volumes',name);}
+    const stops=countStops(after);
+    await new Promise(resolve=>setTimeout(resolve,150)); // Deliberately separate commands beyond the product rate limit.
+    const timed=await context.request.post(endpoint,{headers:{Origin:base},data:{operation:'continuous',x:.25,durationMs:2000}});
+    assert.equal(timed.status(),200);assert.equal((await timed.json()).deviceTimeoutMs,2000);
+    signalCamera('SIGSTOP');frozen=true;
+    try{
+      await expect.poll(()=>JSON.parse(run('exec',name,'cat','/tmp/device-control-motion.json')),{timeout:5000})
+        .toEqual({moving:false,reason:'device-timeout'});
+      assert.equal(countStops(JSON.parse(run('exec',name,'cat','/tmp/device-control-actions.json'))),stops,'Frozen backend must not have delivered Stop');
+      console.log('Actual authenticated product: negotiated device Timeout stops the synthetic device while its separate camera worker is frozen; no backend Stop was sent');
+    }finally{signalCamera('SIGCONT');frozen=false;}
+  }finally{if(frozen){try{signalCamera('SIGCONT');}catch{}}await browser?.close();if(created)run('rm','--force','--volumes',name);}
 })().catch(error=>{console.error(error.stack);process.exitCode=1;});

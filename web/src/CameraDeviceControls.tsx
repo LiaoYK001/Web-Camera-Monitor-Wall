@@ -8,6 +8,15 @@ import type { CameraRecord, OnvifPreset } from './types';
 type Operation = { controller: AbortController; name: string; mutation: boolean };
 export default function CameraDeviceControls({ camera, busy, fail }: { camera: CameraRecord; busy: boolean; fail: (message: string) => void }) {
   const capabilities = (camera.capabilities.onvif ?? {}) as Record<string, unknown>;
+  const timeout = capabilities.ptzTimeout as { state?: string; minimumMs?: number; maximumMs?: number } | undefined;
+  const minimum = timeout?.minimumMs, maximum = timeout?.maximumMs;
+  const rangeAvailable = timeout?.state === 'available' && typeof minimum === 'number' && typeof maximum === 'number'
+    && Number.isSafeInteger(minimum) && Number.isSafeInteger(maximum) && minimum >= 100 && maximum <= 2000 && minimum <= maximum;
+  const low = rangeAvailable ? minimum! : 100, high = rangeAvailable ? maximum! : 2000;
+  const incompatible = timeout?.state === 'unsupported';
+  const [pulseMs, setPulseMs] = useState(350);
+  const durationMs = Math.max(low, Math.min(high, pulseMs));
+  useEffect(() => { setPulseMs(Math.max(low, Math.min(high, 350))); }, [camera.id, low, high]);
   const [presets, setPresets] = useState<OnvifPreset[]>([]);
   const [snapshot, setSnapshot] = useState('');
   const [status, setStatus] = useState('');
@@ -50,19 +59,35 @@ export default function CameraDeviceControls({ camera, busy, fail }: { camera: C
     }
   };
   const move = (x: number, y: number, zoom = 0) => invoke('move',
-    signal => sendOnvifPtz(camera.id, { operation: 'continuous', x, y, zoom, durationMs: 350 }, signal), 'PTZ 命令已确认，自动停止时间 350 毫秒。');
+    signal => sendOnvifPtz(camera.id, { operation: 'continuous', x, y, zoom, durationMs }, signal), result => {
+      if (typeof result.autoStopMs !== 'number' || !Number.isSafeInteger(result.autoStopMs) || result.autoStopMs < 100 || result.autoStopMs > 2000)
+        return 'PTZ 命令已确认，停止时长尚未确认；请核对设备位置。';
+      return result.deviceTimeoutMs === result.autoStopMs
+        ? `PTZ 命令已确认，已提交设备侧超时 ${result.autoStopMs} 毫秒；后台也会请求停止。请核对设备位置。`
+        : `PTZ 命令已确认，后台将在 ${result.autoStopMs} 毫秒后请求停止；设备侧超时尚未确认。请核对设备位置。`;
+    });
   const disabled = busy || Boolean(pending);
+  const moveDisabled = disabled || incompatible;
   if (!Object.values(capabilities).some(Boolean)) return null;
   return <div className="device-controls">
-    {capabilities.ptz === true && <><div className="ptz-pad" role="group" aria-label="PTZ 控制">
-      <button type="button" aria-label="云台上移" disabled={disabled} onClick={() => void move(0, 1)}>↑</button>
-      <button type="button" aria-label="云台左移" disabled={disabled} onClick={() => void move(-1, 0)}>←</button>
+    {capabilities.ptz === true && <>
+    <label>每次移动时长 <select aria-label="每次移动时长" value={durationMs} disabled={moveDisabled}
+      onChange={event => setPulseMs(Number(event.target.value))}>
+      {[...new Set([low, 350, 500, 1000, high].filter(value => value >= low && value <= high))].sort((a, b) => a - b)
+        .map(value => <option key={value} value={value}>{value} 毫秒</option>)}
+    </select></label>
+    <small>{incompatible ? '设备超时范围不支持短时移动，可使用预置位或停止；请重新同步 ONVIF Profile 核对。'
+      : rangeAvailable ? `设备侧超时范围 ${low}–${high} 毫秒；后台停止同时保留。`
+      : '尚未确认设备自身的移动超时，当前依赖后台发送停止；请同步 ONVIF Profile。'}</small>
+    <div className="ptz-pad" role="group" aria-label="PTZ 控制">
+      <button type="button" aria-label="云台上移" disabled={moveDisabled} onClick={() => void move(0, 1)}>↑</button>
+      <button type="button" aria-label="云台左移" disabled={moveDisabled} onClick={() => void move(-1, 0)}>←</button>
       <button type="button" aria-label="停止云台" disabled={pending === 'stop'} onClick={() => void invoke('stop',
         signal => sendOnvifPtz(camera.id, { operation: 'stop' }, signal), '停止云台命令已确认。', undefined, true, true)}>■</button>
-      <button type="button" aria-label="云台右移" disabled={disabled} onClick={() => void move(1, 0)}>→</button>
-      <button type="button" aria-label="云台下移" disabled={disabled} onClick={() => void move(0, -1)}>↓</button>
-      <button type="button" aria-label="镜头放大" disabled={disabled} onClick={() => void move(0, 0, .5)}>＋</button>
-      <button type="button" aria-label="镜头缩小" disabled={disabled} onClick={() => void move(0, 0, -.5)}>－</button>
+      <button type="button" aria-label="云台右移" disabled={moveDisabled} onClick={() => void move(1, 0)}>→</button>
+      <button type="button" aria-label="云台下移" disabled={moveDisabled} onClick={() => void move(0, -1)}>↓</button>
+      <button type="button" aria-label="镜头放大" disabled={moveDisabled} onClick={() => void move(0, 0, .5)}>＋</button>
+      <button type="button" aria-label="镜头缩小" disabled={moveDisabled} onClick={() => void move(0, 0, -.5)}>－</button>
     </div><div className="preset-controls">
       <button type="button" className="ghost-button" disabled={disabled} onClick={() => void invoke('presets',
         signal => fetchOnvifPresets(camera.id, signal), '预置位已读取。', value => setPresets(value.presets), false)}>预置位</button>
