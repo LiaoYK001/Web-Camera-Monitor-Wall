@@ -236,3 +236,31 @@ test('an older preference read cannot replace a later confirmed save', async ({ 
   await expect(group).toHaveValue('Saved group');
   expect(await page.evaluate(() => window.webobsUpdateWork?.().dirty)).toBe(false);
 });
+
+test('closing an import during slow detection never starts a later creation', async ({ page }) => {
+  await routes(page); let creates = 0;
+  await page.route('**/api/v1/runtime/info', route => route.fulfill({ json: { platform: 'linux', go2rtcRtspBase: 'rtsp://127.0.0.1:28554/' } }));
+  await page.route('**/api/v1/go2rtc/api/streams', route => route.fulfill({ json: { entrance: {} } }));
+  await page.route('**/api/v1/cameras', route => {
+    if (route.request().method() === 'GET') return route.fulfill({ json: { cameras: [] } });
+    creates++; return route.fulfill({ json: camera(route.request().postDataJSON().id) });
+  });
+  await page.addInitScript(() => {
+    const fetch = window.fetch;
+    window.fetch = async (...args) => {
+      const reply = await fetch(args[0], { ...args[1], signal: undefined });
+      if (String(args[0]).endsWith('/camera-detect'))
+        await new Promise<void>(resolve => { (window as any).releaseImportDetection = resolve; });
+      return reply;
+    };
+  });
+  await page.goto(fixture);
+  await page.getByRole('region', { name: 'go2rtc 流接入' }).getByRole('button', { name: '检测并添加设备' }).click();
+  await expect.poll(() => page.evaluate(() => typeof (window as any).releaseImportDetection)).toBe('function');
+  await page.getByRole('button', { name: '切换设备页面' }).click();
+  await page.evaluate(async () => {
+    (window as any).releaseImportDetection();
+    await new Promise(resolve => window.setTimeout(resolve, 200));
+  });
+  expect(creates).toBe(0);
+});

@@ -40,6 +40,7 @@ try {
     await device.wait({ text: '客户端菜单' });
     await tapNative({ text: /连接.*切换服务器/ });
   }
+  await device.wait({ res: `${pkg}:id/server_address` });
   await device.fill({ res: `${pkg}:id/server_address` }, base);
   await tapNative({ res: `${pkg}:id/connect_server` });
   let page = await (await device.webView({ pkg })).page();

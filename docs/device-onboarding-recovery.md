@@ -86,16 +86,16 @@ fresh Windows 10/11 installation, public updates and prolonged-operation qualifi
 记录源码/镜像及实际结果；合成流、本机分层镜像与已安装 MuMu WebView
 检查分别记录，不作为摄像机/ARM 真机、干净 Windows 10/11、公开更新或长测验收。
 
-2026-10-05: typecheck/production build, 40 focused Chromium checks and 42 cluster tests
-passed. The local layered image `webobs:v4-registry-recovery` was built from
+2026-10-05: typecheck/production build, 41 focused Chromium checks and 42 cluster tests
+passed. The local layered image `webobs:v4-registry-recovery-checked` was built from
 `webobs:v4-ptz-deadline` with current camera/cluster sources and production WebUI.
-Its image ID is `sha256:3a141905b804ebf1a733f039172e06fd06bbdddbcd91ffdfe0751349cd8a33b6`.
+Its image ID is `sha256:6eb6164bf3c2668538fe84a62518fd839d22a66a3dcdfd4836e5f30997045c91`.
 Both registry and device-control runtime scripts passed; the installed MuMu APK on
 explicit ADB device `127.0.0.1:16384` also passed the added registry workflow and existing
 login, preferences, projectors, H.264/AAC, snapshot and lifecycle smoke.
 No new complete Windows/NSIS artifact was built for this follow-up, and no product
 release/feed was published.
 
-2026-10-05：类型与生产构建、40 项 Chromium、42 项 cluster 通过。
+2026-10-05：类型与生产构建、41 项 Chromium、42 项 cluster 通过。
 本机分层镜像包含当前摄像机/账号服务和 WebUI，两个实际后端脚本及 MuMu 已安装 APK
 的新增接入与现有媒体验证通过。此次未构建全新 Windows/NSIS 产物，未发布产品版本或更新源。

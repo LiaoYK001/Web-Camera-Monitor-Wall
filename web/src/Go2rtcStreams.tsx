@@ -73,13 +73,16 @@ export default function Go2rtcStreams({ onImported, refreshKey = 0, blocked = fa
     const confirmed = await run('导入 go2rtc 设备', async signal => {
       if (!submission.current) {
         const runtime = await fetchRuntimeInfo(signal);
+        if (signal.aborted) throw signal.reason ?? new DOMException('导入已取消', 'AbortError');
         const address = go2rtcStreamAddress(name, runtime.go2rtcRtspBase);
         const detected = await detectCamera(address, undefined, signal);
+        if (signal.aborted) throw signal.reason ?? new DOMException('导入已取消', 'AbortError');
         if (detected.adapter !== 'rtsp' || !detected.profiles.length) throw new Error('流尚未就绪，请先在 go2rtc 中测试播放');
         submission.current = { id: `camera-${crypto.randomUUID().replaceAll('-', '')}`, name, address, adapter: 'rtsp', hardwareDecode: 'auto', credentialsRef: '',
           profiles: detected.profiles.map(profile => ({ ...profile, transportMode: 'rtsp-tcp' })), capabilities: { bridge: 'go2rtc' } };
       }
       const submitted = submission.current;
+      if (signal.aborted) throw signal.reason ?? new DOMException('导入已取消', 'AbortError');
       try {
         const record = await createCamera(submitted, signal);
         if (record.id !== submitted.id) throw new Error('服务未确认本次导入的设备标识');
@@ -97,7 +100,10 @@ export default function Go2rtcStreams({ onImported, refreshKey = 0, blocked = fa
     if (confirmed && created) {
       const camera: CameraRecord = created;
       await run('探测轨道', async signal => {
-        for (const profile of camera.profiles) await probeSourceProfile(camera.id, profile.id, signal);
+        for (const profile of camera.profiles) {
+          if (signal.aborted) throw signal.reason ?? new DOMException('探测已取消', 'AbortError');
+          await probeSourceProfile(camera.id, profile.id, signal);
+        }
       }, () => setStatus(`“${name}”已建档并探测轨道。前往 Studio 的“选择场景来源”即可加入场景。`));
     }
   };
