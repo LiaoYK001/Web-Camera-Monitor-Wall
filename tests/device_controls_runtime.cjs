@@ -40,5 +40,16 @@ let created=false,browser;
     assert.equal((await fetch(endpoint,{method:'POST',headers:{Origin:base,'Content-Type':'application/json'},body:'{"operation":"stop"}'})).status,401);
     assert.equal((await context.request.post(endpoint,{headers:{Origin:'https://untrusted.invalid'},data:{operation:'stop'}})).status(),403);
     console.log('Unauthenticated/nonmatching-Origin control gates passed');
+    const countStops=values=>values.filter(action=>action.includes('/Stop"')).length;
+    const before=countStops(actions);
+    run('exec',name,'touch','/tmp/device-control-drop-next-move');
+    assert.equal((await context.request.post(endpoint,{headers:{Origin:base},data:{operation:'continuous',x:.25,durationMs:100}})).status(),502);
+    await expect.poll(()=>countStops(JSON.parse(run('exec',name,'cat','/tmp/device-control-actions.json'))),{timeout:5000}).toBeGreaterThan(before);
+    const after=JSON.parse(run('exec',name,'cat','/tmp/device-control-actions.json'));
+    assert.equal(after.filter(action=>action.includes('/ContinuousMove"')).length,2,'Recovery must never repeat movement');
+    const audit=await context.request.get(base+'/api/v1/cameras/controlled-live-fixture/operations');
+    assert.equal(audit.status(),200);
+    assert((await audit.json()).operations.some(value=>value.operation==='ptz.continuous'&&value.result==='unconfirmed'));
+    console.log('Authenticated product: dropped SOAP movement response returns 502, requests stop, records an unconfirmed result and never repeats movement');
   }finally{await browser?.close();if(created)run('rm','--force','--volumes',name);}
 })().catch(error=>{console.error(error.stack);process.exitCode=1;});

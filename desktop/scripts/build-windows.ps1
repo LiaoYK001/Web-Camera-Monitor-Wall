@@ -125,6 +125,10 @@ try {
     Invoke-Checked (Join-Path $runtimeRoot 'python\python.exe') @('-I','-B',(Join-Path $repoRoot 'tests\test_camera_registry.py'),
         'CameraRegistryTests.test_invalid_continuous_move_never_reaches_the_camera',
         'CameraRegistryTests.test_valid_continuous_move_still_stops_the_synthetic_soap_device',
+        'CameraRegistryTests.test_lost_continuous_response_still_requests_stop',
+        'CameraRegistryTests.test_ptz_stop_orders_after_inflight_move_without_blocking_other_devices',
+        'CameraRegistryTests.test_late_move_response_recovers_after_stop_waiter_timeout',
+        'CameraRegistryTests.test_failed_automatic_stop_is_audited_and_releases_timer_and_session',
         'CameraRegistryTests.test_guarded_device_operations_and_private_profile_tokens')
 } finally {
     if ($null -eq $savedCameraTest) { Remove-Item Env:WEBOBS_TEST_CAMERA_REGISTRY -ErrorAction SilentlyContinue } else { $env:WEBOBS_TEST_CAMERA_REGISTRY = $savedCameraTest }

@@ -305,8 +305,21 @@ class CameraRegistryTests(unittest.TestCase):
         registry.initialize()
         registry.TLS_CONTEXT = ssl.create_default_context()
         OnvifEmulatorHandler.action_log.clear()
+        # A cleared timer registry does not mean the actual worker exited.
+        # Join real workers before removing their SQLite fixture on Windows.
+        self.ptz_timers = []
+        original_timer = threading.Timer
+        def timer(*args, **kwargs):
+            value = original_timer(*args, **kwargs); self.ptz_timers.append(value)
+            return value
+        timer_patch = patch.object(registry.threading, 'Timer', side_effect=timer)
+        timer_patch.start(); self.addCleanup(timer_patch.stop)
 
     def tearDown(self) -> None:
+        for timer in self.ptz_timers:
+            timer.cancel()
+            if timer.ident is not None: timer.join(timeout=3)
+            self.assertFalse(timer.is_alive(), 'Fixture PTZ timer still uses the database')
         self.temporary.cleanup()
 
     def test_camera_http_blocks_special_addresses_before_connecting(self) -> None:
@@ -1287,6 +1300,117 @@ class CameraRegistryTests(unittest.TestCase):
                 if timer: timer.cancel()
             if timer: timer.join(timeout=3)
             server.shutdown(); server.server_close(); thread.join(timeout=2)
+
+    def test_lost_continuous_response_still_requests_stop(self) -> None:
+        class DroppedResponse(OnvifEmulatorHandler):
+            require_http_digest = True
+            def soap(self, body, status=200):
+                if '/ContinuousMove"' in self.headers.get('SOAPAction', '') and status == 200:
+                    self.connection.shutdown(registry.socket.SHUT_RDWR)
+                    self.connection.close(); self.close_connection = True
+                    return
+                super().soap(body, status)
+        self.write_fixture_secret()
+        server = HTTPServer(('127.0.0.1', 0), DroppedResponse)
+        thread = threading.Thread(target=server.serve_forever, daemon=True); thread.start()
+        camera_id = 'lost-ptz-response'
+        try:
+            registry.save_camera(registry.validate_camera({
+                'id': camera_id, 'name': 'Lost response fixture', 'adapter': 'onvif',
+                'address': f'http://127.0.0.1:{server.server_address[1]}',
+                'credentialsRef': 'fixture', 'profiles': [],
+            }), False)
+            registry.sync_onvif_camera(camera_id)
+            with self.assertRaises(registry.OnvifError):
+                registry.onvif_ptz_command(camera_id, {'operation': 'continuous', 'x': .25, 'durationMs': 100})
+            deadline = time.monotonic() + 3
+            while time.monotonic() < deadline and not any('/Stop"' in action for action in DroppedResponse.action_log):
+                time.sleep(.02)
+            self.assertEqual(sum('/ContinuousMove"' in action for action in DroppedResponse.action_log), 1)
+            self.assertTrue(any('/Stop"' in action for action in DroppedResponse.action_log))
+            self.assertTrue(any(item['operation'] == 'ptz.continuous' and item['result'] == 'unconfirmed'
+                                for item in registry.device_audit(camera_id)))
+        finally:
+            with registry.PTZ_RATE_LOCK:
+                timer = registry.PTZ_STOP_TIMERS.pop(camera_id, None)
+                if timer: timer.cancel()
+            if timer: timer.join(timeout=3)
+            server.shutdown(); server.server_close(); thread.join(timeout=2)
+
+    def test_ptz_stop_orders_after_inflight_move_without_blocking_other_devices(self) -> None:
+        entered, finish, stop_started, stop_sent = (threading.Event() for _ in range(4))
+        failures = []
+        def soap(endpoint, action, body, username, password):
+            if username == 'ordered-device' and action.endswith('/RelativeMove'):
+                entered.set()
+                if not finish.wait(3): raise registry.OnvifError('fixture response deadline')
+            if username == 'ordered-device' and action.endswith('/Stop'): stop_sent.set()
+            return ET.Element('Response')
+        def move():
+            try: registry.onvif_ptz_command('ordered-device', {'operation': 'relative', 'x': .25})
+            except Exception as error: failures.append(error)
+        def stop():
+            stop_started.set()
+            try: registry.onvif_ptz_stop('ordered-device')
+            except Exception as error: failures.append(error)
+        threads = [threading.Thread(target=move), threading.Thread(target=stop)]
+        with (patch.object(registry, 'onvif_camera_context', side_effect=lambda camera_id: (
+                {}, {'ptz': 'http://camera.example.invalid/ptz'}, camera_id, '')),
+                patch.object(registry, 'onvif_profile_token', return_value='profile'),
+                patch.object(registry, 'onvif_soap', side_effect=soap)):
+            try:
+                threads[0].start(); self.assertTrue(entered.wait(2))
+                threads[1].start(); self.assertTrue(stop_started.wait(2))
+                self.assertEqual(registry.onvif_ptz_command('parallel-device', {'operation': 'relative'})['state'], 'accepted')
+                self.assertFalse(stop_sent.wait(.2), 'Stop must not overtake a movement whose response is pending')
+            finally:
+                finish.set()
+                for thread in threads:
+                    if thread.ident is not None: thread.join(timeout=4)
+            self.assertFalse(failures)
+            self.assertTrue(stop_sent.is_set())
+
+    def test_late_move_response_recovers_after_stop_waiter_timeout(self) -> None:
+        stopped, failed = threading.Event(), threading.Event()
+        original_audit = registry.audit_device_operation
+        def audit(camera_id, operation, result):
+            original_audit(camera_id, operation, result)
+            if operation == 'ptz.auto-stop' and result == 'failed': failed.set()
+        def soap(endpoint, action, body, username, password):
+            if action.endswith('/ContinuousMove'):
+                if not failed.wait(2): raise registry.OnvifError('fixture stop did not time out')
+            if action.endswith('/Stop'): stopped.set()
+            return ET.Element('Response')
+        with (patch.object(registry, 'PTZ_SESSION_WAIT_SECONDS', .03),
+              patch.object(registry, 'onvif_camera_context', return_value=({}, {'ptz': 'http://camera.example.invalid/ptz'}, '', '')),
+              patch.object(registry, 'onvif_profile_token', return_value='profile'),
+              patch.object(registry, 'onvif_soap', side_effect=soap),
+              patch.object(registry, 'audit_device_operation', side_effect=audit)):
+            result = registry.onvif_ptz_command('late-ptz-response', {'operation': 'continuous', 'durationMs': 100})
+            self.assertEqual(result['state'], 'accepted')
+            self.assertTrue(stopped.wait(2), 'A late response must recover after the first stop waiter timed out')
+            deadline = time.monotonic() + 2
+            while time.monotonic() < deadline and 'late-ptz-response' in registry.PTZ_STOP_TIMERS: time.sleep(.01)
+            self.assertNotIn('late-ptz-response', registry.PTZ_STOP_TIMERS)
+
+    def test_failed_automatic_stop_is_audited_and_releases_timer_and_session(self) -> None:
+        camera_id = 'failed-stop-fixture'
+        with (patch.object(registry, 'onvif_camera_context', return_value=({}, {'ptz': 'http://camera.example.invalid/ptz'}, '', '')),
+              patch.object(registry, 'onvif_profile_token', return_value='profile'),
+              patch.object(registry, 'onvif_soap', side_effect=registry.OnvifError('fixture unavailable'))):
+            with self.assertRaises(registry.OnvifError):
+                registry.onvif_ptz_command(camera_id, {'operation': 'continuous', 'durationMs': 100})
+            deadline = time.monotonic() + 2
+            while time.monotonic() < deadline:
+                if any(item['operation'] == 'ptz.auto-stop' and item['result'] == 'failed'
+                       for item in registry.device_audit(camera_id)): break
+                time.sleep(.01)
+            self.assertTrue(any(item['operation'] == 'ptz.auto-stop' and item['result'] == 'failed'
+                                for item in registry.device_audit(camera_id)))
+            for timer in self.ptz_timers:
+                if timer.ident is not None: timer.join(timeout=3)
+            self.assertNotIn(camera_id, registry.PTZ_STOP_TIMERS)
+            self.assertNotIn(camera_id, registry.PTZ_SESSIONS)
 
     def test_profile_s_fallback_and_xml_hardening(self) -> None:
         self.write_fixture_secret()

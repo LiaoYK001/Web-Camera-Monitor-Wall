@@ -10,6 +10,14 @@ Open the ONVIF device page from the source workspace. The backend enforces permi
 
 Operations have a 20-second client deadline, without automatic mutation retries. The stop control remains available during ordinary requests, and superseded/late responses cannot replace its result. Continuous movement validates its stop budget and finite values before sending SOAP; valid commands retain the backend timer. Real-device stopping, response-loss/concurrent-client ordering and vendor differences require separate qualification.
 
+后台在发送连续移动前安排停止，并在移动响应失败时请求立即停止；不自动重复移动。每台设备的 PTZ 命令串行协调，停止等待期间拒绝新增移动，协调等待最多 7 秒；其他设备可继续操作。停止计时器检查归属，失效计时器不能停止或取消后续命令；如果较早停止等待已超时，晚到的移动确认会再次安排立即停止。审计区分移动结果未确认与停止失败，失败计时器及无活跃使用者的协调状态会释放。
+
+Arm stopping before movement dispatch and request immediate recovery after a failed response, without retrying movement. Per-device coordination bounds waiting to seven seconds and gives stop waiters priority; other cameras remain independent. Timer ownership prevents stale callbacks from affecting later commands. A late acknowledgment recovers after an earlier stop waiter timed out. Audits distinguish unconfirmed movement and failed stopping, and inactive coordination/timer state is removed.
+
+这些是后台尽力停止请求，仍需等待正在执行的网络操作结束；连接不可达、持续拖延、产品崩溃或设备不执行停止时，不保证物理停止。设备侧 ContinuousMove `Timeout` 及其支持范围属于另一层保障，须按 [ONVIF PTZ 规范](https://www.onvif.org/specs/srv/ptz/ONVIF-PTZ-Service-Spec.pdf) 的配置范围与厂商行为另行实现、验证。当前不把此后台修复当作硬件停止时限或 v4 完整验收。
+
+Backend stopping is best effort and waits behind an in-flight transport. Unreachable/stalled devices, product crashes and device behavior still prevent a physical-stop guarantee. Device-side timeout negotiation and real-camera qualification remain separate requirements; this fix does not establish a hardware deadline or full v4 readiness.
+
 ## 对讲 / Talk
 
 点击“录制对讲”请求麦克风，再点击“停止并发送”，或满 10 秒发送。录音格式根据浏览器能力选择 WebM、Ogg 或 MP4；上限 512 KiB，以分片累计大小控制。发送成功只表示片段已提交，设备播放最多 10 秒；“停止设备对讲”发送明确的停止请求。
