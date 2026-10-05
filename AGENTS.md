@@ -13,8 +13,9 @@
 
 ## Working rules
 
-- Primary delivery targets are the Docker/Podman container, native Windows x64 desktop and independent Android client. They follow regular `vA.B` product releases. Native Linux x86/ARM, Windows ARM and Windows 32-bit are future expansion targets, normally built, qualified and published at major `vA.0` milestones such as v5.0/v6.0/v7.0 rather than every minor release. Source support is not platform qualification.
-- 当前主要交付端为容器、Windows x64 与独立 Android 客户端，随常规 `vA.B` 更新。Linux 原生 x86/ARM、Windows ARM 与 Windows 32 位为后续拓展端，一般在 v5.0/v6.0/v7.0 等 `vA.0` 大版本节点集中构建、验证和发布，不跟随每次小版本更新；源码支持不等于完成平台验收。
+- Primary delivery targets are the Docker/Podman container, native Windows x64 desktop and independent Android client. From v4.0, they follow `vA.B` feature releases and `vA.B.C` bug/security patches, especially timely Windows/Android fixes. Native Linux x86/ARM, Windows ARM and Windows 32-bit remain expansion targets normally qualified/published at major `vA.0` milestones such as v5.0/v6.0/v7.0 rather than every minor/patch release. Source support is not platform qualification. See `docs/patch-releases-v4.md`.
+- 当前主要交付端为容器、Windows x64 与独立 Android，从 v4.0 起采用 `vA.B` 功能版本和 `vA.B.C` bug/安全补丁，尤其保障 Windows/Android 无需等待次版本即可修复。Linux 原生 x86/ARM、Windows ARM 与 Windows 32 位仍在 v5.0/v6.0/v7.0 等 `vA.0` 节点集中验收发布，不跟随每次功能/补丁更新；源码支持不等于平台验收。
+- Current restart/crash fixes ship with v4.0; do not publish or apply the proposed v3.5 image hotfix unless the user changes this decision. Patch numbering never authorizes publication by itself. / 当前重启/异常退出修复统一随 v4.0 交付，暂不发布或应用 v3.5 镜像热修；补丁编号规则本身不构成发布授权。
 
 - Write commit messages, PR titles/descriptions and merge messages in both Chinese and English. Use a concise bilingual subject such as `fix: 修复更新检查 / fix update checking`; include both languages in any substantive body. Override GitHub's English-only default merge message when merging.
 - 提交信息、PR 标题/说明及合并信息必须包含中英文双语。标题简洁，正文有实质说明时也提供双语；合并时显式设置双语信息，不沿用 GitHub 的纯英文默认标题。
@@ -26,6 +27,7 @@
 - Persist go2rtc configuration with the existing private configuration volume. Preserve user configuration on restart and upgrade.
 - Update integration/deployment docs when lifecycle, packaging, ports or configuration change. Record upstream commit and licenses in source bundles.
 - Stable Windows NSIS releases are unsigned by default and include verified `latest.yml`; signing is optional via explicit `-Sign`. Keep SHA-512/size validation, user-confirmed installation, backups and normal service shutdown. Development `-dev.*` packages remain outside the stable feed.
+- Android stable candidates require explicit `build-android.ps1 -Release`, a preserved external self-signed key and deterministic v4+ versionCode. No automatic publication or silent installation; version/protocol tests do not qualify installed APK updates. / Android 正式候选需显式 `-Release`、仓库外持久自签密钥与固定递增版本码，不自动发布或静默安装；版本/协议测试不等于实际 APK 升级验收。
 - Use `rg` for searches; exclude upstream source/build dependencies when exploring product code. No automatic delegation is required.
 
 ## Validation
@@ -39,4 +41,4 @@
 - Run `tests/test_go2rtc_runtime.py` for private configuration/lifecycle contracts and the dedicated proxy integration test for HTTP/WebSocket streaming.
 - `cd desktop; pnpm test:install` validates the actual NSIS install/uninstall in an isolated Unicode path and retains data on default uninstall. It refuses an existing WebOBS installation or shortcuts; it does not qualify clean Windows systems, cameras or signed updates.
 - Distinguish browser fixtures and synthetic protocol tests from real camera qualification. Report any full-image or device checks that could not run.
-- Android: `android/scripts/build-android.ps1` runs JUnit, lint, APK build and signature verification. `android/tests/test_emulator.py --serial <explicit-device> ...` exercises the actual installed debug APK through ADB against an isolated complete product image. It does not qualify physical cameras/ARM devices or APK automatic updates; do not clear existing device data.
+- Android: `android/scripts/build-android.ps1` runs JUnit, lint, APK build and signature verification; `python android/tests/test_release_version.py` checks the actual PowerShell stable versionCode helper. `python tests/test_release_identity.py` checks container patch/engineering-gate identity without publishing. `android/tests/test_emulator.py --serial <explicit-device> ...` exercises the installed debug APK through ADB against an isolated complete product image. It does not qualify physical cameras/ARM devices or APK automatic updates; do not clear existing device data.

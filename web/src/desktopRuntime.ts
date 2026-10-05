@@ -4,7 +4,7 @@ export interface DesktopSettings { autoCheck: boolean; autoDownload: boolean; st
 export interface DesktopStatus {
   app?: { version: string; platform: string; architecture: string; packaged: boolean };
   runtime: { phase: string; detail?: string; recordings?: string; lan?: { enabled: boolean; addresses?: string[]; certificate?: string; trustSteps?: string; firewallCommands?: string[] } };
-  update: { phase: string; message?: string; version?: string; releaseNotes?: string; percent?: number; signed?: boolean; lastCheckedAt?: string };
+  update: { phase: string; message?: string; version?: string; kind?: 'major' | 'minor' | 'patch' | null; releaseNotes?: string; percent?: number; signed?: boolean; lastCheckedAt?: string };
   settings: DesktopSettings;
   recovery: { from: string; to: string; hasInstaller: boolean; snapshot: string } | null;
 }

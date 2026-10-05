@@ -104,6 +104,8 @@ class NativeReleaseWorkflowPolicyTests(unittest.TestCase):
 
     def test_local_image_release_uses_v3_analytics_metadata_and_normalizes_semver(self) -> None:
         release_script = (ROOT / "scripts" / "release-image-local.sh").read_text(encoding="utf-8")
+        self.assertIn('source ./scripts/release-identity.sh', release_script)
+        release_script += (ROOT / "scripts" / "release-identity.sh").read_text(encoding="utf-8")
         windows_release_script = (ROOT / "scripts" / "release-image-local.ps1").read_text(encoding="utf-8")
         for marker in ("3.1.0-dev", "v3-M2-dev", "v3-M2", "v3-M1", "v2-M7", "v2-M6", "v2-M5"):
             self.assertIn(marker, release_script)

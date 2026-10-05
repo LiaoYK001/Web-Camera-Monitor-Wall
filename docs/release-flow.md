@@ -5,7 +5,13 @@
 
 ## 总览 / Overview
 
-主要交付端为容器、Windows x64、独立 Android，按 `vA.B` 持续更新。未来原生 Linux x86/ARM、Windows ARM/32 位等端通常只在 `vA.0` 大版本里构建、验收及发布，不承诺每次小版本附件。平台计划不代表已通过验收。网站源依赖锁、许可证/SBOM 与对应源码审查纳入相同不可变发布流程，见[网站与直播源](online-sources.md)。The three primary targets follow regular minor releases; future native architectures normally ship at major milestones after qualification.
+主要交付端为容器、Windows x64、独立 Android，从 v4.0 起按 `vA.B` 功能版本和 `vA.B.C` bug/安全补丁更新。未来原生 Linux x86/ARM、Windows ARM/32 位等端通常只在 `vA.0` 构建、验收及发布，不承诺每次功能/补丁附件。网站源依赖锁、许可证/SBOM 与对应源码审查纳入相同不可变流程，见[网站与直播源](online-sources.md)。The three primary targets use minor feature and patch bug/security releases from v4; future architectures remain qualified major-milestone targets.
+
+本次重启修复统一随 v4.0 交付，不发布或应用 v3.5 热修。后续补丁沿用本流程的审计、人工验证、不可变附件与恢复要求，不能因修复紧急而覆盖旧产物。`vA.B` 映射客户端 `A.B.0`，`vA.B.C` 保持三位；占用的补丁编号递增 C。Windows 保留 NSIS/blockmap/校验/确认/备份；Android 保留同一自签密钥和递增版本码，构建候选不自动上传。默认同步三主端产物及元数据，缺失端在说明中披露。详见[v4+ 补丁规则](patch-releases-v4.md)。
+
+Hold the current restart fix for v4.0. Subsequent patches retain this flow's audit, manual validation, immutable assets and recovery. Patch conflicts advance C; primary artifacts/metadata are synchronized by default with missing-platform disclosure. Stable candidate builds do not publish automatically.
+
+v4+ 稳定镜像发布显式设置 `WEBOBS_TARGET_MILESTONE` 为已审查且与主版本匹配的门禁（如实际采用 `v4-M1`），补丁沿用基线门禁；不得从版本号推断“工程已完成”或沿用历史 v2 默认标识。The v4+ publisher requires an explicit matching reviewed engineering gate, reused by its patches.
 
 ```text
 Windows 环境              Linux 环境                docker / podman 环境              发布

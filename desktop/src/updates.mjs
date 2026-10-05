@@ -3,6 +3,7 @@ import { cp, mkdir, readFile, statfs, stat, rm } from 'node:fs/promises';
 import path from 'node:path';
 import { digestFile } from './runtime-integrity.mjs';
 import { atomicJson } from './settings.mjs';
+import { stableVersion, updateKind } from './release-version.mjs';
 
 export function updateBlockers(windowWork, workload) {
   const reasons = [];
@@ -21,14 +22,22 @@ export class UpdateController extends EventEmitter {
     this.installing=false; this.checking=false;
     updater.autoInstallOnAppQuit=false; updater.autoDownload=false; updater.allowPrerelease=false; updater.allowDowngrade=false; updater.disableWebInstaller=true;
     updater.on('checking-for-update',()=>this.announce('checking'));
-    updater.on('update-not-available',()=>{this.lastCheckedAt=new Date().toISOString();this.announce('current');});
+    updater.on('update-not-available',()=>{this.info=undefined;this.downloaded=undefined;this.lastCheckedAt=new Date().toISOString();this.announce('current');});
     updater.on('update-available',info=>{
-      if (!/^\d+\.\d+\.\d+$/.test(info.version)) { this.announce('error','仅接受正式版本'); return; }
-      this.lastCheckedAt=new Date().toISOString();this.info=info; this.announce('available','有新版本');
+      if (!this.enabled) return;
+      if (!stableVersion(info.version) || !stableVersion(this.version)) { this.info=undefined;this.downloaded=undefined;this.announce('error','仅接受正式版本'); return; }
+      this.lastCheckedAt=new Date().toISOString();
+      const kind=updateKind(this.version,info.version);
+      if (!kind) {this.info=undefined;this.downloaded=undefined;this.announce('current');return;}
+      this.info=info;this.downloaded=undefined; this.announce('available',kind==='patch'?'有新的修复补丁，请查看发布说明。':'有新版本');
       if(this.settings.autoDownload) void this.download();
     });
     updater.on('download-progress',progress=>this.announce('downloading','正在下载',Math.round(progress.percent)));
-    updater.on('update-downloaded',info=>{this.downloaded=info; this.announce('downloaded','下载完成，点击“重启更新”后才安装。');});
+    updater.on('update-downloaded',info=>{
+      if (!this.enabled) return;
+      if (info.version!==this.info?.version || !updateKind(this.version,info.version)) {this.downloaded=undefined;this.announce('error','下载的版本与当前更新不匹配，请重新检查。');return;}
+      this.downloaded=info; this.announce('downloaded','下载完成，点击“重启更新”后才安装。');
+    });
     updater.on('error',error=>{
       if(this.installing)this.installLaunchError=error || new Error('Installer launch failed');
       this.announce('error','更新检测、下载或文件验证失败。当前版本继续运行，可稍后重试。');
@@ -36,7 +45,7 @@ export class UpdateController extends EventEmitter {
   }
   status() {
     const notes = this.info?.releaseNotes;
-    return {...this.state,signed:this.signed,version:this.info?.version,lastCheckedAt:this.lastCheckedAt,releaseNotes:typeof notes==='string'?notes.slice(0,16000):Array.isArray(notes)?notes.map(item=>String(item.note||'')).join('\n').slice(0,16000):''};
+    return {...this.state,signed:this.signed,version:this.info?.version,kind:updateKind(this.version,this.info?.version),lastCheckedAt:this.lastCheckedAt,releaseNotes:typeof notes==='string'?notes.slice(0,16000):Array.isArray(notes)?notes.map(item=>String(item.note||'')).join('\n').slice(0,16000):''};
   }
   announce(phase,message='',percent) { this.state={phase,message,percent}; this.emit('status',this.status()); }
   start() { this.timer=setInterval(()=>{if(this.settings.autoCheck)void this.check();},6*60*60*1000);this.timer.unref?.();if(this.settings.autoCheck)void this.check(); }

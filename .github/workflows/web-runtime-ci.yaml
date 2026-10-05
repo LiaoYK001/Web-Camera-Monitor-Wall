@@ -19,6 +19,27 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  windows-update-contracts:
+    runs-on: windows-2022
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with: { persist-credentials: false }
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with: { node-version: 24.19.0 }
+      - name: Install pinned updater dependencies
+        shell: pwsh
+        run: |
+          npm install --global pnpm@11.16.0
+          if ($LASTEXITCODE -ne 0) { throw 'pnpm installation failed' }
+          pnpm --dir desktop install --frozen-lockfile
+          if ($LASTEXITCODE -ne 0) { throw 'Desktop dependency installation failed' }
+      - name: Patch integrity, confirmation and real updater fallback / 补丁校验确认与更新回退
+        shell: pwsh
+        run: |
+          pnpm --dir desktop test
+          if ($LASTEXITCODE -ne 0) { throw 'Desktop contracts failed' }
+          pnpm --dir desktop test:updates
+          if ($LASTEXITCODE -ne 0) { throw 'Real updater protocol failed' }
   windows-desktop-candidate:
     if: github.event_name == 'workflow_dispatch' && inputs.windows_desktop
     uses: ./.github/workflows/windows-desktop.yaml
@@ -47,6 +68,7 @@ jobs:
           python3 tests/test_nvr_media.py
           python3 tests/test_online_source.py
           python3 tests/test_container_entrypoint.py
+          python3 tests/test_release_identity.py
       - name: Audit and build the public PWA
         shell: bash
         run: |

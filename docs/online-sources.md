@@ -10,7 +10,9 @@ The v4 development integration bundles yt-dlp, Streamlink, Node, yt-dlp-ejs and 
 - **Windows x64 完整客户端**：同样工具进入 NSIS 运行包、文件摘要清单、许可证和 SBOM。`webobs-online-source.exe` 通过固定入口和 Job Object 持有 Python、JavaScript 解析器及 FFmpeg。
 - **Android 独立客户端**：在相同 go2rtc 页面创建、导入和播放网站源；解析发生在所连接的容器或 Windows 后端。APK 不运行本机 OBS/go2rtc/FFmpeg，不需要安装 yt-dlp。
 
-Containers and Windows x64 bundle the media tools; Android manages and watches sources on its selected backend. These three are the primary regular `vA.B` targets. Future native Linux x86/ARM, Windows ARM and Windows 32-bit targets are normally added and qualified at major `vA.0` milestones (v5.0, v6.0, v7.0), rather than every minor release. This is a delivery policy, not an existing support claim.
+Containers and Windows x64 bundle the media tools; Android manages sources on its backend. From v4, the primary targets use `vA.B` feature releases and `vA.B.C` bug/security patches; see [patch delivery](patch-releases-v4.md). Future native Linux x86/ARM, Windows ARM and Windows 32-bit are normally qualified at major `vA.0` milestones, not every feature/patch release. This policy is not an existing platform qualification claim.
+
+三主端从 v4 起采用功能版与修复补丁；解析器安全更新可按 `vA.B.C` 及时交付，仍需更新锁定摘要、对应源码、许可证/SBOM 和实际解析/播放回归。Android 使用更新后的后端解析器，不把第三方可执行命令下发到 APK。
 
 ## 接入步骤 / Adding a source
 

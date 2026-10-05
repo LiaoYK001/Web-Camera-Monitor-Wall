@@ -1,5 +1,28 @@
 plugins { id 'com.android.application' }
 
+def productVersion = providers.gradleProperty('webobsVersion').getOrElse('3.5.0-dev.android.1')
+def releaseCandidate = providers.gradleProperty('webobsRelease').getOrElse('false') == 'true'
+def productCode = providers.gradleProperty('webobsVersionCode').getOrElse('3050001').toInteger()
+if (releaseCandidate) {
+    def match = productVersion =~ /\A(0|[1-9][0-9]{0,8})\.(0|[1-9][0-9]{0,8})\.(0|[1-9][0-9]{0,8})\z/
+    if (!match.matches()) throw new GradleException('Stable Android version must be A.B.C.')
+    def major = match[0][1].toLong(), minor = match[0][2].toLong(), patch = match[0][3].toLong()
+    def expected = major * 1000000L + minor * 1000L + patch
+    if (major < 4 || minor > 999 || patch > 999 || expected > 2100000000L || productCode != expected) throw new GradleException('Stable Android versionCode must match the v4+ product version contract.')
+    for (def name : ['WEBOBS_ANDROID_KEYSTORE', 'WEBOBS_ANDROID_KEY_ALIAS', 'WEBOBS_ANDROID_STORE_PASSWORD', 'WEBOBS_ANDROID_KEY_PASSWORD']) {
+        if (!System.getenv(name)) throw new GradleException('Missing private Android signing environment: ' + name)
+    }
+    def configuredKey = new File(System.getenv('WEBOBS_ANDROID_KEYSTORE'))
+    if (!configuredKey.isAbsolute()) throw new GradleException('Release keystore requires an absolute path.')
+    def key = configuredKey.canonicalFile
+    def repository = rootProject.projectDir.parentFile.canonicalFile.toPath()
+    if (!key.isFile() || key.toPath().startsWith(repository)) throw new GradleException('Release keystore must be a file outside the repository.')
+    if (gradle.startParameter.taskNames.any { it.toLowerCase().contains('debug') }) throw new GradleException('Stable candidates cannot be built as debug APKs.')
+} else if (!(productVersion ==~ /\d+\.\d+\.\d+-dev\.[0-9A-Za-z.-]+/)) {
+    throw new GradleException('Development APKs require X.Y.Z-dev.*; stable candidates require webobsRelease=true.')
+}
+if (productCode < 1 || productCode > 2100000000) throw new GradleException('Invalid Android versionCode.')
+
 android {
     namespace 'io.github.liaoyk001.webobs.android'
     compileSdk 35
@@ -8,12 +31,25 @@ android {
         applicationId 'io.github.liaoyk001.webobs.android'
         minSdk 29
         targetSdk 35
-        versionCode Integer.parseInt(providers.gradleProperty('webobsVersionCode').getOrElse('3050001'))
-        versionName providers.gradleProperty('webobsVersion').getOrElse('3.5.0-dev.android.1')
+        versionCode productCode
+        versionName productVersion
+    }
+    signingConfigs {
+        if (releaseCandidate) {
+            personalRelease {
+                storeFile file(System.getenv('WEBOBS_ANDROID_KEYSTORE'))
+                storePassword System.getenv('WEBOBS_ANDROID_STORE_PASSWORD')
+                keyAlias System.getenv('WEBOBS_ANDROID_KEY_ALIAS')
+                keyPassword System.getenv('WEBOBS_ANDROID_KEY_PASSWORD')
+            }
+        }
     }
     buildTypes {
         debug { }
-        release { minifyEnabled false }
+        release {
+            minifyEnabled false
+            if (releaseCandidate) signingConfig signingConfigs.personalRelease
+        }
     }
     compileOptions {
         sourceCompatibility JavaVersion.VERSION_17

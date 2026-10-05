@@ -48,7 +48,7 @@ export default function AboutSettings() {
         <div className="about-update-heading"><strong role="status">{state ? updateLabels[update?.phase || ''] || '更新状态暂不可用' : readError ? '更新状态暂不可用' : '正在读取更新状态…'}</strong><button type="button" disabled={pending} onClick={() => void run(() => state ? bridge.checkUpdate() : refresh(), Boolean(state))}>{update?.phase === 'checking' ? '正在检查…' : state ? '检查更新' : '重新读取更新状态'}</button></div>
         {update?.message && <p>{update.message}</p>}
         {lastChecked && !Number.isNaN(lastChecked.getTime()) && <small>最近成功检查：{lastChecked.toLocaleString()}</small>}
-        {update?.version && ['available', 'downloading', 'downloaded', 'preparing'].includes(update.phase) && <p>可更新至 <strong>{update.version}</strong></p>}
+        {update?.version && ['available', 'downloading', 'downloaded', 'preparing'].includes(update.phase) && <p>{update.kind === 'patch' ? '修复补丁' : '可更新至'} <strong>{update.version}</strong></p>}
         {update?.phase === 'available' && <button type="button" disabled={busy} onClick={() => void run(() => bridge.downloadUpdate())}>下载更新</button>}
         {update?.phase === 'downloading' && <div className="about-progress"><progress aria-label="更新下载进度" max="100" value={update.percent || 0} /><span>{update.percent || 0}%</span></div>}
         {update?.phase === 'downloaded' && <div className="about-install"><button className="primary-button" type="button" disabled={busy} onClick={() => void run(() => bridge.installUpdate())}>重启更新</button><span>可稍后安装；关闭或退出客户端不会自动安装。</span></div>}

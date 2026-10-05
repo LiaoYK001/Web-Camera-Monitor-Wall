@@ -115,21 +115,8 @@ else
     : "${GITHUB_REPOSITORY:?GITHUB_REPOSITORY is required for a stable release}"
     : "${GH_TOKEN:?GH_TOKEN is required for a stable release}"
     command -v gh >/dev/null
-    build_version="${version#v}"
-    [[ "$build_version" =~ ^[0-9]+\.[0-9]+$ ]] && build_version="${build_version}.0"
-    if [[ "$version" =~ ^v3\.[1-9][0-9]*(\.|$) ]]; then
-        build_milestone="v3-M2"
-    elif [[ "$version" =~ ^v3\.0(\.|$) ]]; then
-        build_milestone="v3-M1"
-    elif [[ "$version" =~ ^v2\.3(\.|$) ]]; then
-        build_milestone="v2-M7"
-    elif [[ "$version" =~ ^v2\.2(\.|$) ]]; then
-        build_milestone="v2-M6"
-    elif [[ "$version" =~ ^v2\.1(\.|$) ]]; then
-        build_milestone="v2-M5"
-    else
-        build_milestone="v2-M3"
-    fi
+    source ./scripts/release-identity.sh
+    webobs_release_identity "$version"
     # GitHub may create the tag named in a Draft immediately. Use a
     # deterministic, non-release tag until the source assets are verified;
     # an existing stable tag is reused only when it already points at HEAD.
