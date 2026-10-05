@@ -46,9 +46,9 @@ Daily work integrates into `dev`; only a versioned release PR promotes it into `
 
 ### v4.0 delivery and subsequent patches / v4.0 交付及后续补丁
 
-重启/异常退出/FIFO 修复随 v4.0 统一发布，暂不发布或应用 v3.5 热修。v4.0 之后三主端采用 `vA.B.C` 快速 bug/安全补丁（如 v4.0.1、v4.0.2），优先 Windows/Android：已补齐数字比较、补丁提示和 APK 正式候选/递增版本码构建入口，真实安装升级与 Android 应用内自动 APK 更新仍待验收/实现。扩展平台仍按 `vA.0` 集中交付。详见[补丁规则](docs/patch-releases-v4.md)与[v4 验收](docs/v4-readiness.md)。v4.0 尚未发布。
+重启/异常退出/FIFO 修复随 v4.0 统一发布，暂不发布或应用 v3.5 热修。v4.0 之后三主端采用 `vA.B.C` 快速 bug/安全补丁（如 v4.0.1、v4.0.2），优先 Windows/Android：已补齐数字比较、补丁提示和 APK 正式候选/递增版本码构建入口，以及 [Android 应用内验证更新](docs/android-updates.md)。自动检查/下载默认开启且可关闭，安装需用户和系统确认。隔离包实际升级与公开源/生产包/真机验收分开记录；扩展平台仍按 `vA.0` 集中交付。详见[补丁规则](docs/patch-releases-v4.md)与[v4 验收](docs/v4-readiness.md)。v4.0 尚未发布。
 
-The current restart fixes are held for v4.0. Subsequent primary-target A.B.C bug/security patches include numeric comparison, patch presentation and stable APK candidate/versionCode tooling. Actual installed upgrades and Android in-app APK delivery remain open; expansion platforms retain major-milestone cadence.
+The current restart fixes are held for v4.0. Subsequent primary-target A.B.C patches include numeric comparison, patch presentation, stable APK candidate/versionCode tooling and configurable verified Android in-app downloading with user/system-confirmed installation. Isolated actual upgrades remain distinct from public-feed/production/physical-device qualification; expansion platforms retain major-milestone cadence.
 
 ### v3.5 published / v3.5 已发布（2026-10-02）
 

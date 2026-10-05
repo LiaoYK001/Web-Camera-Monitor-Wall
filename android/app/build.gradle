@@ -3,6 +3,8 @@ plugins { id 'com.android.application' }
 def productVersion = providers.gradleProperty('webobsVersion').getOrElse('3.5.0-dev.android.1')
 def releaseCandidate = providers.gradleProperty('webobsRelease').getOrElse('false') == 'true'
 def productCode = providers.gradleProperty('webobsVersionCode').getOrElse('3050001').toInteger()
+def updateQualification = providers.gradleProperty('webobsUpdateQualification').getOrElse('false') == 'true'
+if (updateQualification && !releaseCandidate) throw new GradleException('Update qualification requires an explicitly signed release candidate.')
 if (releaseCandidate) {
     def match = productVersion =~ /\A(0|[1-9][0-9]{0,8})\.(0|[1-9][0-9]{0,8})\.(0|[1-9][0-9]{0,8})\z/
     if (!match.matches()) throw new GradleException('Stable Android version must be A.B.C.')
@@ -27,8 +29,12 @@ android {
     namespace 'io.github.liaoyk001.webobs.android'
     compileSdk 35
     buildToolsVersion '35.0.0'
+    testBuildType updateQualification ? 'release' : 'debug'
     defaultConfig {
         applicationId 'io.github.liaoyk001.webobs.android'
+        if (updateQualification) applicationIdSuffix '.updatequalification'
+        manifestPlaceholders = [webobsAppLabel: updateQualification ? 'WebOBS Update Qualification' : 'WebOBS']
+        testInstrumentationRunner 'io.github.liaoyk001.webobs.android.UpdateQualification'
         minSdk 29
         targetSdk 35
         versionCode productCode

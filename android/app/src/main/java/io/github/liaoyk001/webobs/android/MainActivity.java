@@ -36,6 +36,7 @@ import android.widget.ScrollView;
 import android.widget.ProgressBar;
 import android.widget.TextView;
 import android.widget.Toast;
+import android.widget.CheckBox;
 
 import java.util.ArrayList;
 import java.util.Arrays;
@@ -58,11 +59,16 @@ public final class MainActivity extends Activity {
     private PermissionRequest microphone;
     private ValueCallback<Uri[]> fileSelection;
     private View fullscreen;
+    private AndroidUpdates updates;
+    private AndroidUpdates.Listener updateDetails;
+    private boolean installing;
+    private int installEpoch;
     private WebChromeClient.CustomViewCallback fullscreenCallback;
 
     @Override public void onCreate(Bundle saved) {
         super.onCreate(saved);
         preferences = getSharedPreferences("connection", MODE_PRIVATE);
+        updates = AndroidUpdates.get(this);
         setVolumeControlStream(android.media.AudioManager.STREAM_MUSIC);
         WebView.setWebContentsDebuggingEnabled((getApplicationInfo().flags & ApplicationInfo.FLAG_DEBUGGABLE) != 0);
         CookieManager.getInstance().setAcceptCookie(true);
@@ -211,20 +217,99 @@ public final class MainActivity extends Activity {
         LinearLayout details = new LinearLayout(this); details.setOrientation(LinearLayout.VERTICAL); details.setPadding(dp(20), dp(8), dp(20), dp(8));
         String webview = WebView.getCurrentWebViewPackage() == null ? "未报告" : WebView.getCurrentWebViewPackage().versionName;
         details.addView(text("WebOBS Android · " + version + "\nWebView " + webview + "\nGPL-2.0-or-later\n\n连接现有后端，复用账号、场景及声音偏好。APK 使用本机自签密钥，不需商业证书；后续覆盖安装必须使用同一密钥。", 14));
-        Button updates = button("检查 GitHub 更新"), source = button("GitHub 开源仓库"), releases = button("版本发布记录"), issues = button("反馈问题");
-        for (Button button : Arrays.asList(updates, source, releases, issues)) details.addView(button);
-        String installed = version;
-        updates.setOnClickListener(view -> {
-            updates.setEnabled(false); updates.setText("正在检查…");
-            ReleaseCheck.check(installed, result -> runOnUiThread(() -> {
-                if (isFinishing() || isDestroyed()) return;
-                updates.setEnabled(true); updates.setText(R.string.check_updates);
-                new AlertDialog.Builder(this).setTitle("Android 更新").setMessage(result.message).setPositiveButton(result.available ? "查看说明与下载" : "查看发布记录", (dialog, which) -> openExternal(result.releaseUrl)).setNegativeButton("稍后", null).show();
-            }));
-        });
+        for (String[] option : new String[][]{{"autoCheck", "自动检查更新（前台每 6 小时）"}, {"autoDownload", "自动下载可验证更新（安装需确认）"}, {"wifiOnly", "仅 Wi-Fi 下载更新（下次下载生效）"}}) {
+            CheckBox toggle = new CheckBox(this); toggle.setText(option[1]); toggle.setTextColor(Color.rgb(210, 220, 233));
+            toggle.setChecked(updates.setting(option[0])); toggle.setOnCheckedChangeListener((view, checked) -> updates.setting(option[0], checked)); details.addView(toggle);
+        }
+        TextView updateStatus = text(updates.message, 14); updateStatus.setId(R.id.update_status); details.addView(updateStatus);
+        Button check = button("检查 GitHub 更新"), download = button("下载更新"), install = button("安装更新"), cancel = button("取消 / 删除已下载更新"), notes = button("查看更新发布说明");
+        check.setId(R.id.update_check); download.setId(R.id.update_download); install.setId(R.id.update_install); cancel.setId(R.id.update_cancel);
+        Button source = button("GitHub 开源仓库"), releases = button("版本发布记录"), issues = button("反馈问题");
+        for (Button button : Arrays.asList(check, download, install, cancel, notes, source, releases, issues)) details.addView(button);
+        check.setOnClickListener(view -> updates.check(true)); download.setOnClickListener(view -> updates.download());
+        install.setOnClickListener(view -> prepareInstall()); cancel.setOnClickListener(view -> updates.cancel());
+        notes.setOnClickListener(view -> openExternal(updates.releaseUrl));
+        AndroidUpdates.Listener listener = () -> {
+            updateStatus.setText(updates.message);
+            boolean busy = Arrays.asList("checking", "downloading", "verifying").contains(updates.phase);
+            check.setEnabled(!busy && !updates.phase.equals("ready"));
+            download.setVisibility(updates.asset != null && !busy && !updates.phase.equals("ready") ? View.VISIBLE : View.GONE);
+            install.setVisibility(updates.phase.equals("ready") ? View.VISIBLE : View.GONE);
+            cancel.setVisibility(Arrays.asList("downloading", "verifying", "ready").contains(updates.phase) ? View.VISIBLE : View.GONE);
+        };
         source.setOnClickListener(view -> openExternal(REPOSITORY)); releases.setOnClickListener(view -> openExternal(REPOSITORY + "/releases")); issues.setOnClickListener(view -> openExternal(REPOSITORY + "/issues"));
         ScrollView scroll = new ScrollView(this); scroll.addView(details);
-        new AlertDialog.Builder(this).setTitle("关于 WebOBS").setView(scroll).setPositiveButton("关闭", null).show();
+        AlertDialog about = new AlertDialog.Builder(this).setTitle("关于 WebOBS").setView(scroll).setPositiveButton("关闭", null).create();
+        if (updateDetails != null) updates.unlisten(updateDetails);
+        updateDetails = listener; updates.listen(listener);
+        about.setOnDismissListener(dialog -> { updates.unlisten(listener); if (updateDetails == listener) updateDetails = null; }); about.show();
+    }
+
+    private void prepareInstall() {
+        if (installing || !foreground) return;
+        installing = true; int token = ++installEpoch;
+        if (!getPackageManager().canRequestPackageInstalls()) {
+            new AlertDialog.Builder(this).setTitle("允许 WebOBS 安装更新")
+                    .setMessage("系统尚未允许此来源安装 APK。可打开系统设置授权，返回后再点击安装更新。不会自动安装，现有服务器与账号数据保留。")
+                    .setPositiveButton("打开系统设置", (dialog, which) -> {
+                        try { startActivity(new Intent(android.provider.Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES, Uri.parse("package:" + getPackageName()))); }
+                        catch (android.content.ActivityNotFoundException error) { Toast.makeText(this, "系统安装设置不可用，请查看发布说明手动更新。", Toast.LENGTH_LONG).show(); }
+                    }).setNegativeButton("稍后", null).setOnDismissListener(dialog -> endInstall()).show(); return;
+        }
+        checkInstallWork(new ArrayList<>(projectors), 0, false, token, () -> {
+            new AlertDialog.Builder(this).setTitle("安装客户端更新？")
+                    .setMessage("安装会关闭客户端，请确认所有草稿已保存。服务器的监控、录像与导出继续运行；使用相同签名覆盖安装保留连接、账号与偏好。系统还会要求你确认。")
+                    .setPositiveButton("校验并交给系统安装", (dialog, which) -> updates.verifyForInstall(valid -> {
+                        if (!valid || isFinishing() || isDestroyed() || !foreground || token != installEpoch) { endInstall(); return; }
+                        checkInstallWork(new ArrayList<>(projectors), 0, false, token, () -> {
+                            try {
+                                Uri uri = Uri.parse("content://" + getPackageName() + ".updates/apk/" + updates.asset.sha256);
+                                startActivity(new Intent(Intent.ACTION_VIEW).setDataAndType(uri, "application/vnd.android.package-archive").addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION));
+                            } catch (android.content.ActivityNotFoundException | SecurityException error) { Toast.makeText(this, "系统安装器不可用或权限已撤回；客户端可继续使用，请稍后重试。", Toast.LENGTH_LONG).show(); }
+                            finally { endInstall(); }
+                        });
+                    })).setNegativeButton("稍后", (dialog, which) -> endInstall()).setOnCancelListener(dialog -> endInstall()).show();
+        });
+    }
+    private void endInstall() { installing = false; installEpoch++; }
+    private void checkInstallWork(List<WebView> children, int index, boolean unknown, int token, Runnable complete) {
+        if (isFinishing() || isDestroyed() || !foreground || token != installEpoch) return;
+        WebView target = index == 0 ? web : children.get(index - 1);
+        if (!ServerAddress.sameOrigin(target.getUrl(), origin)) {
+            continueInstallWork(children, index, true, token, complete); return;
+        }
+        // Fixed read-only query, with a deadline even if Chromium does not call back.
+        android.os.Handler deadline = new android.os.Handler(android.os.Looper.getMainLooper()); boolean[] done = {false};
+        Runnable timeout = () -> { if (!done[0]) { done[0] = true; continueInstallWork(children, index, true, token, complete); } };
+        deadline.postDelayed(timeout, 3000);
+        try { target.evaluateJavascript("(()=>{try{const s=window.webobsUpdateWork?.();return s&&typeof s.dirty==='boolean'&&typeof s.exporting==='boolean'?JSON.stringify({dirty:s.dirty,exporting:s.exporting}):null}catch{return null}})()", value -> {
+            if (done[0] || isFinishing() || isDestroyed() || !foreground || token != installEpoch) return;
+            done[0] = true; deadline.removeCallbacks(timeout);
+            if (value == null || value.length() > 256) { continueInstallWork(children, index, true, token, complete); return; }
+            try {
+                Object decoded = new org.json.JSONTokener(value).nextValue();
+                if (!(decoded instanceof String)) { continueInstallWork(children, index, true, token, complete); return; }
+                org.json.JSONObject work = new org.json.JSONObject((String) decoded);
+                if (!(work.opt("dirty") instanceof Boolean) || !(work.opt("exporting") instanceof Boolean)) { continueInstallWork(children, index, true, token, complete); return; }
+                if (work.optBoolean("dirty") || work.optBoolean("exporting")) {
+                    endInstall();
+                    new AlertDialog.Builder(this).setTitle("请先处理当前工作")
+                            .setMessage("主页面或投影仍有未保存草稿、保存或导出任务。请保存或处理完成后再次安装；已下载更新保留。")
+                            .setPositiveButton("返回处理", null).show(); return;
+                }
+                continueInstallWork(children, index, unknown, token, complete);
+            } catch (org.json.JSONException error) { continueInstallWork(children, index, true, token, complete); }
+        }); } catch (RuntimeException error) {
+            done[0] = true; deadline.removeCallbacks(timeout); continueInstallWork(children, index, true, token, complete);
+        }
+    }
+    private void continueInstallWork(List<WebView> children, int index, boolean unknown, int token, Runnable complete) {
+        if (isFinishing() || isDestroyed() || !foreground || token != installEpoch) return;
+        if (index < children.size()) { checkInstallWork(children, index + 1, unknown, token, complete); return; }
+        if (unknown) new AlertDialog.Builder(this).setTitle("确认页面工作已保存")
+                .setMessage("当前后端页面未报告草稿或任务状态，可能尚未连接、版本较旧或响应超时。请自行确认已保存；服务端任务不会因客户端安装而停止。")
+                .setPositiveButton("已保存，继续", (dialog, which) -> complete.run()).setNegativeButton("返回处理", (dialog, which) -> endInstall()).setOnCancelListener(dialog -> endInstall()).show();
+        else complete.run();
     }
 
     private void requestMicrophone(PermissionRequest request) {
@@ -274,9 +359,11 @@ public final class MainActivity extends Activity {
         if (!foreground) script += "document.querySelectorAll('video,audio').forEach(v=>v.pause());";
         view.evaluateJavascript(script, null);
     }
-    @Override protected void onResume() { super.onResume(); foreground = true; if (web != null) { web.setVisibility(View.VISIBLE); web.onResume(); web.resumeTimers(); notifyVisibility(web); } for (WebView child : projectors) { child.setVisibility(View.VISIBLE); child.onResume(); notifyVisibility(child); } }
+    @Override protected void onResume() { super.onResume(); foreground = true; if (updates != null) updates.foreground(true); if (web != null) { web.setVisibility(View.VISIBLE); web.onResume(); web.resumeTimers(); notifyVisibility(web); } for (WebView child : projectors) { child.setVisibility(View.VISIBLE); child.onResume(); notifyVisibility(child); } }
     @Override protected void onPause() { foreground = false; CookieManager.getInstance().flush(); if (web != null) { notifyVisibility(web); web.onPause(); } for (WebView child : projectors) { notifyVisibility(child); child.onPause(); } super.onPause(); }
     @Override protected void onStop() {
+        endInstall();
+        if (updates != null) updates.foreground(false);
         // onPause alone does not notify Chromium's Page Visibility API. Preserve
         // the DOM/drafts while allowing existing WebUI media lifecycle to suspend.
         if (web != null) { web.setVisibility(View.INVISIBLE); web.pauseTimers(); }
@@ -289,6 +376,7 @@ public final class MainActivity extends Activity {
         return super.onKeyUp(key, event);
     }
     @Override protected void onDestroy() {
+        if (updates != null && updateDetails != null) updates.unlisten(updateDetails);
         completeMicrophone(false);
         if (fileSelection != null) { fileSelection.onReceiveValue(null); fileSelection = null; }
         for (Dialog dialog : new ArrayList<>(projectorDialogs)) dialog.dismiss();
