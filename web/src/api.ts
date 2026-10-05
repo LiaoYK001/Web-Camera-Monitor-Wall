@@ -316,7 +316,7 @@ const onvifOperation = <T>(cameraId: string, operation: string, body: Record<str
   });
 export const fetchOnvifPresets = (cameraId: string, signal?: AbortSignal) => cameraRequest<{ presets: OnvifPreset[] }>(`/cameras/${encodeURIComponent(cameraId)}/onvif/presets`, { signal });
 export const sendOnvifPtz = async (cameraId: string, body: Record<string, unknown>, signal?: AbortSignal) => {
-  const result = await onvifOperation<{ state: string }>(cameraId, 'ptz', body, signal);
+  const result = await onvifOperation<{ state: string; autoStopMs?: number; deviceTimeoutMs?: number | null }>(cameraId, 'ptz', body, signal);
   if (result?.state !== (body.operation === 'stop' ? 'stopped' : 'accepted')) throw new Error('控制服务未确认云台命令，请核对设备状态');
   return result;
 };

@@ -33,6 +33,7 @@ import tempfile
 import uuid
 import xml.etree.ElementTree as ET
 from datetime import datetime, timezone
+from decimal import Decimal, InvalidOperation, ROUND_CEILING, ROUND_FLOOR, localcontext
 from http.cookiejar import CookieJar
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -340,6 +341,8 @@ def initialize() -> None:
               camera_id TEXT NOT NULL REFERENCES cameras(id) ON DELETE CASCADE,
               profile_id TEXT NOT NULL,
               device_token TEXT NOT NULL,
+              ptz_timeout_min_ms INTEGER,
+              ptz_timeout_max_ms INTEGER,
               PRIMARY KEY(camera_id,profile_id)
             );
             CREATE TABLE IF NOT EXISTS device_operation_audit(
@@ -405,6 +408,10 @@ def initialize() -> None:
             """
         )
         camera_columns = {row["name"] for row in database.execute("PRAGMA table_info(cameras)")}
+        token_columns = {row['name'] for row in database.execute('PRAGMA table_info(onvif_profile_tokens)')}
+        for name in ('ptz_timeout_min_ms', 'ptz_timeout_max_ms'):
+            if name not in token_columns:
+                database.execute(f'ALTER TABLE onvif_profile_tokens ADD COLUMN {name} INTEGER')
         for name, definition in (
             ("kind", "TEXT NOT NULL DEFAULT 'camera'"),
             ("enabled", "INTEGER NOT NULL DEFAULT 1"),
@@ -1386,7 +1393,7 @@ def resolve_profile(database: sqlite3.Connection, camera_id: str, profile_id: st
                             if track["kind"] == "audio"] if profile else []}
 
 
-def save_camera(camera: dict, replace: bool) -> dict:
+def save_camera(camera: dict, replace: bool, *, onvif_verified: bool = False) -> dict:
     now = int(time.time())
     pending = camera.pop("__pendingCredentials", None)
     invalidate_probe_results(camera["id"])
@@ -1397,7 +1404,7 @@ def save_camera(camera: dict, replace: bool) -> dict:
         camera["credentialsRef"] = credentials_ref
     with connect() as database:
         current = database.execute(
-            "SELECT created_at,capabilities_json,revision FROM cameras WHERE id=?", (camera["id"],)).fetchone()
+            "SELECT created_at,capabilities_json,revision,address,adapter,credentials_ref FROM cameras WHERE id=?", (camera["id"],)).fetchone()
         if current and not replace:
             raise FileExistsError("camera id already exists")
         created = current["created_at"] if current else now
@@ -1410,6 +1417,10 @@ def save_camera(camera: dict, replace: bool) -> dict:
             for key in ("browserDirect", "iwaDirectLab"):
                 if key in reserved:
                     camera["capabilities"][key] = reserved[key]
+            if pending or (current['address'], current['adapter'], current['credentials_ref']) != (camera['address'], camera['adapter'], camera['credentialsRef']):
+                database.execute('DELETE FROM onvif_profile_tokens WHERE camera_id=?', (camera['id'],))
+                if not onvif_verified:
+                    camera['capabilities'].pop('onvif', None)
         database.execute(
             "INSERT INTO cameras(id,name,address,adapter,credentials_ref,hardware_decode,capabilities_json,health,created_at,updated_at,kind,enabled,group_id,tags_json,revision) "
             "VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET name=excluded.name,address=excluded.address,"
@@ -2560,7 +2571,7 @@ def onvif_uri(root: ET.Element, adapter: str) -> str:
 
 
 def onvif_media_profiles(endpoint: str, profile_kind: str, username: str,
-                          password: str) -> tuple[list[dict], str, dict[str, str]]:
+                          password: str) -> tuple[list[dict], str, dict[str, str], dict[str, str]]:
     media2 = profile_kind == "T"
     namespace = "http://www.onvif.org/ver20/media/wsdl" if media2 else "http://www.onvif.org/ver10/media/wsdl"
     prefix = "tr2" if media2 else "trt"
@@ -2571,6 +2582,7 @@ def onvif_media_profiles(endpoint: str, profile_kind: str, username: str,
     raw_profiles = [node for node in root.iter()
                     if xml_local_name(node.tag) in ("Profiles", "Profile") and node.get("token")]
     discovered: list[tuple[str, dict]] = []
+    ptz_configurations: dict[str, str] = {}
     used_ids: set[str] = set()
     for index, node in enumerate(raw_profiles[:16]):
         token = str(node.get("token", ""))[:256]
@@ -2580,6 +2592,12 @@ def onvif_media_profiles(endpoint: str, profile_kind: str, username: str,
         while identifier in used_ids:
             identifier = (identifier[:56] + f"-{index + 1}")[:64]
         used_ids.add(identifier)
+        configuration = next((child for child in node.iter()
+                              if xml_local_name(child.tag) in ('PTZ', 'PTZConfiguration') and child.get('token')), None)
+        if configuration is not None:
+            configuration_token = configuration.get('token', '')
+            if len(configuration_token) <= 256 and not any(ord(character) < 32 for character in configuration_token):
+                ptz_configurations[identifier] = configuration_token
         video = onvif_configuration(node, True)
         audio = onvif_configuration(node, False)
         resolution = next((child for child in video.iter()
@@ -2620,7 +2638,61 @@ def onvif_media_profiles(endpoint: str, profile_kind: str, username: str,
         pass
     profiles = [profile for _, profile in ordered]
     tokens = {profile["id"]: token for token, profile in ordered}
-    return profiles, snapshot, tokens
+    return profiles, snapshot, tokens, {profile['id']: ptz_configurations[profile['id']]
+                                      for _, profile in ordered if profile['id'] in ptz_configurations}
+
+
+def onvif_duration_ms(value: str) -> Decimal:
+    # Calendar years/months have no fixed millisecond duration. Accept bounded
+    # nonnegative day/time forms, retaining precision at a millisecond boundary.
+    if not isinstance(value, str) or len(value) > 128:
+        raise ValueError('invalid ONVIF duration')
+    match = re.fullmatch(r'P(?:(\d+)D)?(?:T(?:(\d+)H)?(?:(\d+)M)?(?:(\d+(?:\.\d+)?)S)?)?', value)
+    if not match or not any(match.groups()) or value.endswith('T'):
+        raise ValueError('invalid ONVIF duration')
+    try:
+        with localcontext() as context:
+            context.prec = 160  # Preserve every digit of the bounded input before rounding inward.
+            days, hours, minutes, seconds = (Decimal(part or '0') for part in match.groups())
+            return ((days * 24 + hours) * 60 * 60 + minutes * 60 + seconds) * 1000
+    except InvalidOperation as error:
+        raise ValueError('invalid ONVIF duration') from error
+
+
+def onvif_ptz_timeout_options(endpoint: str, configurations: dict[str, str],
+                              username: str, password: str) -> dict[str, dict]:
+    result: dict[str, dict] = {}
+    cache: dict[str, dict] = {}
+    namespace = 'http://www.onvif.org/ver20/ptz/wsdl'
+    for profile_id, token in configurations.items():
+        if token not in cache:
+            # At most two unique optional configuration reads per sync. Shared
+            # tokens reuse the result; omitted/failed reads remain unverified.
+            if len(cache) >= 2:
+                result[profile_id] = {'state': 'unverified'}
+                continue
+            limits = {'state': 'unverified'}
+            try:
+                root = onvif_soap(endpoint, namespace + '/GetConfigurationOptions',
+                    f'<tptz:GetConfigurationOptions xmlns:tptz="{namespace}">'
+                    f'<tptz:ConfigurationToken>{escape(token)}</tptz:ConfigurationToken></tptz:GetConfigurationOptions>', username, password)
+                timeout = next((node for node in root.iter() if xml_local_name(node.tag) == 'PTZTimeout'), None)
+                if timeout is not None:
+                    minimum = onvif_duration_ms(xml_text(timeout, ('Min',)))
+                    maximum = onvif_duration_ms(xml_text(timeout, ('Max',)))
+                    if maximum < minimum:
+                        raise ValueError('invalid ONVIF duration range')
+                    if minimum > 2000 or maximum < 100:
+                        limits = {'state': 'unsupported'}
+                    else:
+                        low = max(100, int(minimum.to_integral_value(rounding=ROUND_CEILING)))
+                        high = min(2000, int(maximum.to_integral_value(rounding=ROUND_FLOOR)))
+                        limits = {'state': 'available', 'minimumMs': low, 'maximumMs': high} if low <= high else {'state': 'unsupported'}
+            except (OnvifError, PermissionError, ValueError):
+                pass
+            cache[token] = limits
+        result[profile_id] = cache[token]
+    return result
 
 
 def onvif_backchannel_supported(endpoint: str, username: str, password: str) -> bool:
@@ -2725,18 +2797,20 @@ def onvif_probe(address: str, credentials_ref: str, include_private_tokens: bool
     profiles: list[dict] = []
     snapshot = ""
     profile_tokens: dict[str, str] = {}
+    ptz_configurations: dict[str, str] = {}
     if "media2" in services:
         try:
-            profiles, snapshot, profile_tokens = onvif_media_profiles(
+            profiles, snapshot, profile_tokens, ptz_configurations = onvif_media_profiles(
                 services["media2"], "T", username, password)
             profile_kind = "T"
         except OnvifError:
             if "media1" not in services:
                 raise
     if not profiles and "media1" in services:
-        profiles, snapshot, profile_tokens = onvif_media_profiles(
+        profiles, snapshot, profile_tokens, ptz_configurations = onvif_media_profiles(
             services["media1"], "S", username, password)
         profile_kind = "S"
+    ptz_timeouts = onvif_ptz_timeout_options(services['ptz'], ptz_configurations, username, password) if 'ptz' in services else {}
     capabilities = {
         "onvif": {
             "authenticated": bool(username),
@@ -2745,6 +2819,7 @@ def onvif_probe(address: str, credentials_ref: str, include_private_tokens: bool
             "profileCount": len(profiles),
             "snapshot": bool(snapshot),
             "ptz": "ptz" in services,
+            "ptzTimeout": ptz_timeouts.get(profiles[0]['id'], {'state': 'unverified'}) if profiles else {'state': 'unverified'},
             "events": "events" in services,
             "imaging": "imaging" in services,
             "talk": bool(profile_kind == "T" and "media2" in services and
@@ -2764,6 +2839,7 @@ def onvif_probe(address: str, credentials_ref: str, include_private_tokens: bool
     }
     if include_private_tokens:
         result["_profileTokens"] = profile_tokens
+        result['_ptzTimeouts'] = ptz_timeouts
         result["_services"] = services
     return result
 
@@ -2778,16 +2854,20 @@ def sync_onvif_camera(camera_id: str) -> dict:
         raise ValueError("camera adapter is not onvif")
     result = onvif_probe(camera["address"], camera["credentialsRef"], True)
     profile_tokens = result.pop("_profileTokens")
+    ptz_timeouts = result.pop('_ptzTimeouts')
     result.pop("_services", None)
     camera["address"] = result["address"]
     camera["profiles"] = result["profiles"]
     camera["capabilities"] = result["capabilities"]
-    saved = save_camera(validate_camera(camera, camera_id), True)
+    saved = save_camera(validate_camera(camera, camera_id), True, onvif_verified=True)
     with connect() as database:
         database.execute("DELETE FROM onvif_profile_tokens WHERE camera_id=?", (camera_id,))
         database.executemany(
-            "INSERT INTO onvif_profile_tokens(camera_id,profile_id,device_token) VALUES(?,?,?)",
-            [(camera_id, profile_id, token) for profile_id, token in profile_tokens.items()],
+            'INSERT INTO onvif_profile_tokens(camera_id,profile_id,device_token,ptz_timeout_min_ms,ptz_timeout_max_ms) VALUES(?,?,?,?,?)',
+            [(camera_id, profile_id, token,
+              1 if ptz_timeouts.get(profile_id, {}).get('state') == 'unsupported' else ptz_timeouts.get(profile_id, {}).get('minimumMs'),
+              0 if ptz_timeouts.get(profile_id, {}).get('state') == 'unsupported' else ptz_timeouts.get(profile_id, {}).get('maximumMs'))
+             for profile_id, token in profile_tokens.items()],
         )
         database.execute("UPDATE cameras SET health='online' WHERE id=?", (camera_id,))
         row = database.execute("SELECT * FROM cameras WHERE id=?", (camera_id,)).fetchone()
@@ -2809,24 +2889,29 @@ def onvif_camera_context(camera_id: str) -> tuple[dict, dict[str, str], str, str
     return camera, services, username, password
 
 
-def onvif_profile_token(camera_id: str, profile_id: str = "") -> str:
+def onvif_profile_control(camera_id: str, profile_id: str = "") -> sqlite3.Row:
     if profile_id and not ID_RE.fullmatch(profile_id):
         raise ValueError("profile id is invalid")
     with connect() as database:
         if profile_id:
             row = database.execute(
-                "SELECT device_token FROM onvif_profile_tokens WHERE camera_id=? AND profile_id=?",
+                "SELECT * FROM onvif_profile_tokens WHERE camera_id=? AND profile_id=?",
                 (camera_id, profile_id),
             ).fetchone()
         else:
             row = database.execute(
-                "SELECT t.device_token FROM onvif_profile_tokens t "
+                "SELECT t.* FROM onvif_profile_tokens t "
                 "JOIN stream_profiles p ON p.camera_id=t.camera_id AND p.id=t.profile_id "
                 "WHERE t.camera_id=? ORDER BY CASE p.role WHEN 'main' THEN 0 WHEN 'sub' THEN 1 ELSE 2 END,p.id LIMIT 1",
                 (camera_id,),
             ).fetchone()
     if not row:
         raise OnvifError("ONVIF profiles must be synchronized before device control")
+    return row
+
+
+def onvif_profile_token(camera_id: str, profile_id: str = "") -> str:
+    row = onvif_profile_control(camera_id, profile_id)
     return str(row["device_token"])
 
 
@@ -2937,7 +3022,24 @@ def _onvif_ptz_command(camera_id: str, payload: dict) -> dict:
         return onvif_ptz_stop(camera_id, profile_id)
     # Validate the stop budget before issuing any movement. An invalid duration
     # must never leave a device moving without an automatic stop timer.
-    duration_ms = int(bounded_float(payload, "durationMs", 100, 2000, 500)) if operation == "continuous" else None
+    duration = bounded_float(payload, 'durationMs', 100, 2000, 500) if operation == 'continuous' else None
+    if duration is not None and not duration.is_integer():
+        raise ValueError('durationMs must be a whole number of milliseconds')
+    duration_ms = int(duration) if duration is not None else None
+    if operation in {'continuous', 'relative', 'absolute'}:
+        x = bounded_float(payload, 'x', -1.0, 1.0)
+        y = bounded_float(payload, 'y', -1.0, 1.0)
+        zoom = bounded_float(payload, 'zoom', -1.0, 1.0)
+    device_timeout_ms = None
+    if operation == 'continuous':
+        control = onvif_profile_control(camera_id, profile_id)
+        low, high = control['ptz_timeout_min_ms'], control['ptz_timeout_max_ms']
+        if low is not None and high is not None:
+            if low > high:
+                raise ValueError('Camera timeout range cannot support 100-2000 ms pulses; use presets or Stop')
+            if not low <= duration_ms <= high:
+                raise ValueError(f'Camera movement duration must be {low}-{high} ms; select a supported pulse')
+            device_timeout_ms = duration_ms
     now = time.monotonic()
     with PTZ_RATE_LOCK:
         denied = now - PTZ_LAST_COMMAND.get(camera_id, 0.0) < 0.1
@@ -2951,15 +3053,14 @@ def _onvif_ptz_command(camera_id: str, payload: dict) -> dict:
     token = escape(onvif_profile_token(camera_id, profile_id))
     namespace = "http://www.onvif.org/ver20/ptz/wsdl"
     if operation in {"continuous", "relative", "absolute"}:
-        x = bounded_float(payload, "x", -1.0, 1.0)
-        y = bounded_float(payload, "y", -1.0, 1.0)
-        zoom = bounded_float(payload, "zoom", -1.0, 1.0)
         vector = (f'<tt:PanTilt xmlns:tt="http://www.onvif.org/ver10/schema" x="{x:.6f}" y="{y:.6f}"/>'
                   f'<tt:Zoom xmlns:tt="http://www.onvif.org/ver10/schema" x="{zoom:.6f}"/>')
         element = {"continuous": "Velocity", "relative": "Translation", "absolute": "Position"}[operation]
         action_name = operation.capitalize() + "Move"
         body = (f'<tptz:{action_name} xmlns:tptz="{namespace}"><tptz:ProfileToken>{token}</tptz:ProfileToken>'
-                f'<tptz:{element}>{vector}</tptz:{element}></tptz:{action_name}>')
+                f'<tptz:{element}>{vector}</tptz:{element}>'
+                + (f'<tptz:Timeout>PT{device_timeout_ms / 1000:.3f}S</tptz:Timeout>' if device_timeout_ms is not None else '')
+                + f'</tptz:{action_name}>')
     elif operation == "home":
         action_name = "GotoHomePosition"
         body = (f'<tptz:GotoHomePosition xmlns:tptz="{namespace}">'
@@ -2991,6 +3092,7 @@ def _onvif_ptz_command(camera_id: str, payload: dict) -> dict:
         if time.monotonic() - dispatched_at >= duration_ms / 1000.0:
             schedule_ptz_stop(camera_id, profile_id, 0)
         result["autoStopMs"] = duration_ms
+        result['deviceTimeoutMs'] = device_timeout_ms
     else:
         with PTZ_RATE_LOCK:
             previous = PTZ_STOP_TIMERS.pop(camera_id, None)

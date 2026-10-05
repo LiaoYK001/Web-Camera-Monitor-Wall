@@ -124,6 +124,12 @@ try {
     # bytecode into the immutable runtime or depending on developer packages.
     Invoke-Checked (Join-Path $runtimeRoot 'python\python.exe') @('-I','-B',(Join-Path $repoRoot 'tests\test_camera_registry.py'),
         'CameraRegistryTests.test_invalid_continuous_move_never_reaches_the_camera',
+        'CameraRegistryTests.test_device_ptz_timeout_is_negotiated_persisted_and_sent',
+        'CameraRegistryTests.test_ptz_duration_outside_device_range_never_moves',
+        'CameraRegistryTests.test_device_ptz_timeout_stops_without_backend_watchdog',
+        'CameraRegistryTests.test_ptz_timeout_discovery_rejects_invalid_ranges_and_bounds_reads',
+        'CameraRegistryTests.test_legacy_ptz_tokens_migrate_without_inventing_device_timeout',
+        'CameraRegistryTests.test_ptz_timeout_rejection_never_retries_without_timeout',
         'CameraRegistryTests.test_valid_continuous_move_still_stops_the_synthetic_soap_device',
         'CameraRegistryTests.test_lost_continuous_response_still_requests_stop',
         'CameraRegistryTests.test_ptz_stop_orders_after_inflight_move_without_blocking_other_devices',

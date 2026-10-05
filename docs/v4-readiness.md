@@ -83,3 +83,7 @@ Device-control follow-up adds bounded UI ownership, stop feedback and microphone
 2026-10-05 PTZ 后续：响应丢失后未停止、同设备停止越过在途移动均由失败回归复现。后台增加发送前计时器、异常/晚到响应恢复、停止优先的逐设备协调及失效计时器归属检查；故障审计与状态清理有单独回归。网络拖延、产品崩溃、设备侧 Timeout 范围协商及真实停止仍是未完成的保障与验收项。
 
 PTZ follow-up reproduces missing stop after response loss and stop overtaking an in-flight movement. Pre-dispatch timers, failure/late-response recovery, bounded per-device stop priority and timer ownership improve backend behavior. Transport stalls, product crashes, device-side timeout negotiation and physical stopping remain open.
+
+2026-10-05 设备超时后续：同步时读取 Media1/Media2 Profile 的 PTZ 配置范围，保存私密数字限制，连续移动同时提交设备 Timeout 与后台停止。界面显示实际范围、可选时长和未确认状态，不支持短时移动时保留停止/预置位；范围外请求、旧记录迁移和禁止无超时重试有专门回归。设备规范执行、后续配置变化、实际崩溃和真实物理停止仍待专门验收，完整矩阵保持未完成。
+
+Device-timeout follow-up negotiates Media1/Media2 profile ranges, persists private numeric limits and submits Timeout alongside the backend stop. Visible ranges/pulses and unverified states retain Stop/presets when short movement is incompatible. Regression contracts cover rejected durations, legacy migration and no timeout-free retry. Vendor execution, later configuration changes, actual crashes and physical stopping remain separate qualification; the complete matrix is still open.
