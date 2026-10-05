@@ -22,6 +22,8 @@ exports.exerciseDeviceControls=async(page,base,microphone=false)=>{
   const card=page.locator('.camera-card').filter({has:page.getByRole('heading',{name:'Controlled SOAP fixture',exact:true})});
   const controls=card.locator('.device-controls');
   await expect(controls.getByLabel('每次移动时长')).toHaveValue('350');
+  const pulse=await controls.getByLabel('每次移动时长').boundingBox();
+  if(!pulse||pulse.height<44)throw new Error('Movement pulse touch target is too small');
   await expect(controls).toContainText('设备侧超时范围');
   await controls.getByRole('button',{name:'云台上移'}).click();
   await expect(controls).toContainText('PTZ 命令已确认');

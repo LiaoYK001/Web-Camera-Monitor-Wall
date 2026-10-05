@@ -85,6 +85,8 @@
 .profile-list span button { margin-left: auto; }
 .camera-operations, .device-controls, .preset-controls, .device-actions { display: grid; gap: 8px; }
 .device-controls { grid-column: 1 / -1; padding-top: 10px; border-top: 1px solid var(--line); }
+.device-controls > label { display: grid; gap: 6px; max-width: 320px; color: var(--muted); }
+.device-controls select { width: 100%; min-width: 0; min-height: 44px; padding: 8px 10px; border: 1px solid var(--line); border-radius: 6px; color: var(--text); background: var(--panel-raised); }
 .ptz-pad, .preset-controls, .device-actions { display: flex; flex-wrap: wrap; gap: 6px; }
 .ptz-pad button, .preset-controls button, .device-actions button { min-width: 44px; min-height: 44px; padding: 6px 9px; color: var(--text); border: 1px solid var(--line); background: #10141c; }
 .device-snapshot { width: min(100%, 420px); max-height: 260px; object-fit: contain; background: #000; }

@@ -50,6 +50,7 @@ test.beforeEach(async ({ page }) => {
 });
 
 test('PTZ uses a visible supported pulse and reports the actual timeout acknowledgment', async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
   await page.route('**/api/v1/cameras', route => route.fulfill({ json: timedCamera({ state: 'available', minimumMs: 500, maximumMs: 1500 }) }));
   const durations: number[] = [];
   await page.route('**/onvif/ptz', route => {
@@ -59,6 +60,7 @@ test('PTZ uses a visible supported pulse and reports the actual timeout acknowle
   await page.goto(fixture);
   const pulse = controls(page).getByLabel('每次移动时长');
   await expect(pulse).toHaveValue('500');
+  expect((await pulse.boundingBox())!.height).toBeGreaterThanOrEqual(44);
   await pulse.selectOption('1000');
   await controls(page).getByRole('button', { name: '云台右移' }).click();
   expect(durations).toEqual([1000]);
