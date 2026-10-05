@@ -1,6 +1,6 @@
 # Version, milestone and branch policy / 版本、里程碑与分支策略
 
-> Effective / 生效：2026-08-24
+> Effective / 生效：2026-08-24；release-only `main` update / `main` 仅发布时更新：2026-10-05
 
 ## Version and milestone names / 版本与里程碑命名
 
@@ -59,18 +59,22 @@ A milestone name is an engineering gate, not a release date. A release may be cu
 
 | Branch / 分支 | Responsibility / 职责 | Version identity / 版本身份 | Publication / 发布 |
 | --- | --- | --- | --- |
-| `main` | Stable release integration and hotfix baseline / 稳定发布集成与热修基线 | `vX.Y` / `vX.Y.Z` | Immutable release tags and stable GHCR aliases originate here / 不可变发布 Tag 与稳定 GHCR 别名从这里产生 |
-| `dev` | Active milestone integration / 活跃里程碑集成 | milestone `vX-MN` / 里程碑 `vX-MN` | Moving `dev` and `sha-*` development images; completed milestone checkpoints may be tagged immutably / 可移动 `dev` 与 `sha-*` 开发镜像；完成的里程碑检查点可使用不可变 Tag |
+| `main` | Versioned release integration only / 仅集成指定版本的发布 PR | `vX.Y` / `vX.Y.Z` | Immutable release tags and stable GHCR aliases originate here after release integration / 发布集成后，不可变发布 Tag 与稳定 GHCR 别名从这里产生 |
+| `dev` | Daily features, fixes, dependencies, documentation and release preparation / 日常功能、修复、依赖、文档与发布准备 | milestone `vX-MN` and release candidates / 里程碑 `vX-MN` 与发布候选 | Moving `dev` and `sha-*` development images; completed milestone checkpoints may be tagged immutably / 可移动 `dev` 与 `sha-*` 开发镜像；完成的里程碑检查点可使用不可变 Tag |
 
-The policy starts with both branches at the same reviewed baseline. Subsequent feature work targets `dev`; a release PR merges `dev` into `main` only after the release-series gates pass. A hotfix starts from `main`, is reviewed into `main`, and is then merged back into `dev`. Force-pushes and moving published version tags are prohibited.
+Daily feature, bug/security/dependency and documentation PRs target `dev`. Only when preparing an explicitly requested new version, after its release checks pass, open a bilingual versioned release PR from `dev` into `main`, such as `release: 发布 v4.0.5 / release v4.0.5`. Its description records the changes, validation and limitations. This applies equally to major, minor and patch releases; a hotfix is not an exception allowing ordinary work into `main`. Merge the release PR before tagging and publishing from its reviewed `main` commit under [Release flow](release-flow.md). A development commit, PR merge or push must not automatically synchronize `main` or publish a release.
 
-策略启用时，两个分支从同一个已审查基线开始。后续功能开发以 `dev` 为目标；只有发布系列门禁通过后，才通过发布 PR 将 `dev` 合入 `main`。热修从 `main` 分出，审查后合回 `main`，随后同步回 `dev`。禁止强推，也禁止移动已经发布的版本 Tag。
+日常功能、bug/安全/依赖修复和文档 PR 的目标分支为 `dev`。只有实际准备发布已明确要求的新版本且发布检查通过时，才创建中英文双语、标明版本的 `dev` → `main` 发布 PR，例如 `release: 发布 v4.0.5 / release v4.0.5`；说明列出变更、验证和限制。主、次及补丁版本均遵守此规则，热修不构成日常工作合入 `main` 的例外。发布 PR 合并后，按[发布流程](release-flow.md)从已审查的 `main` 提交打 Tag 并发布；普通开发提交、PR 合并或 push 不自动同步 `main`，也不自动发布。
+
+At the 2026-10-05 policy change, both branches shared `5c11fe3`; retain that history without resetting `main` to an older release. Subsequent development may leave `dev` ahead of `main` until a release PR. Published tags remain the identities of shipped versions, and an untagged branch tip is not itself a release. Force-pushes and moving published version tags are prohibited.
+
+2026-10-05 调整规则时，两分支同在 `5c11fe3`，保留此历史，不将 `main` 回退到旧发行版。后续开发期间允许 `dev` 领先 `main`，直到发布 PR 再集成；已发布 Tag 才是发行版本身份，无发布 Tag 的分支最新提交本身不等于已发行版本。禁止强推和移动已发布 Tag。
 
 Recommended protection:
 
 建议保护规则：
 
-- Require pull requests, successful public audit/tests and review for `main`; disallow direct pushes except an explicitly governed emergency / `main` 要求 PR、公开审计/测试成功及审查；除受控紧急流程外禁止直推。
+- Require versioned release pull requests, successful public audit/tests and review for `main`; disallow direct pushes and ordinary development PRs / `main` 要求标明版本的发布 PR、公开审计/测试成功及审查；禁止直推和日常开发 PR。
 - Require public audit/tests for `dev`; platform and container verification is a manual step owned by the releaser and described in [Release flow](release-flow.md) / `dev` 要求公开审计与测试；平台与容器验证是由发布者负责的人工步骤，见[发布流程](release-flow.md)。
 - Restrict release workflow and package write permission to immutable release tags reachable from `main`, or reviewed manual dispatches / 发布工作流与包写权限只允许用于可从 `main` 到达的不可变发布 Tag，或经过审查的手工触发。
 - Delete short-lived feature branches after merge; never place credentials, real camera endpoints, recordings or private acceptance artifacts in any branch / 合并后删除短期功能分支；任何分支都不得包含凭据、真实摄像机端点、录像或私有验收产物。

@@ -40,6 +40,10 @@ Vite 代理或后端重启时页面会显示“本地服务暂不可用”，不
 
 ## 主要平台与版本节奏 / Primary platforms and release cadence
 
+日常功能、修复、依赖和文档只合入 **`dev`**；每次实际准备发布新版本（如 `v4.0.5`）且检查通过时，再通过标明版本的 **`dev` → `main` 发布 PR** 集成。详见[分支规则](docs/versioning-and-branches.md)和[发布流程](docs/release-flow.md)。
+
+Daily features, fixes, dependencies and docs target **`dev`**. Promote them into **`main` through a versioned release PR** only when preparing the requested new release, such as `v4.0.5`, after its checks pass.
+
 网站与直播源的新接入方式、yt-dlp/Streamlink 打包、私密 Cookie 和三端流程见[网站与直播源](docs/online-sources.md)。Website/live source integration and bundled extractor boundaries are documented there; existing installers require an upgrade containing this change.
 
 本项目目前以 **Docker/Podman 容器、Windows x64 完整客户端、独立 Android 客户端**

@@ -352,14 +352,16 @@ v1 完全不变；v2 增加**设备配对**与可独立测量的 `true-direct`�
 
 ## 9. 分支与版本策略 / Branch & version policy
 
-> 权威：`docs/versioning-and-branches.md`（2026-08-24 生效，2026-09-22 增补顺位规则）。
+> 权威：`docs/versioning-and-branches.md`（2026-08-24 生效，2026-09-22 增补顺位规则，2026-10-05 明确 `main` 仅通过版本发布 PR 更新）。
 
 | 分支 | 职责 | 版本身份 | 发布 |
 | --- | --- | --- | --- |
-| `main` | 稳定发布集成与热修基线 | 发布系列 `vX.Y` | 不可变发布 Tag 与稳定 GHCR 别名从此产生 |
-| `dev` | 活跃里程碑集成 | 里程碑 `vX-MN` | 可移动 `dev`/`sha-*`；里程碑检查点可打不可变 Tag |
+| `main` | 仅集成指定版本的发布 PR | 发布系列 `vX.Y` / `vX.Y.Z` | 发布集成后，不可变发布 Tag 与稳定 GHCR 别名从此产生 |
+| `dev` | 日常功能、修复、依赖、文档与发布准备 | 里程碑 `vX-MN` 与发布候选 | 可移动 `dev`/`sha-*`；里程碑检查点可打不可变 Tag |
 
-功能开发以 `dev` 为目标；发布系列门禁通过后经**发布 PR** 合入 `main`。热修从 `main` 分出、合回 `main` 后同步回 `dev`。**禁止强推、禁止移动已发布 Tag。**
+功能、bug/安全/依赖修复和文档只合入 `dev`；实际准备发布指定新版本（如 `v4.0.5`）且检查通过后，才创建中英文双语 **`dev` → `main` 版本发布 PR**。热修同样遵守，日常提交不自动同步 `main`。保留现有历史，允许开发期间 `dev` 领先；**禁止强推、禁止移动已发布 Tag。**
+
+Daily features, fixes, dependencies and docs target `dev`. Update `main` only through a bilingual versioned release PR when preparing the requested release after its checks pass, including patches. Preserve history and allow `dev` to advance between releases; do not auto-sync `main`, force-push or move published tags.
 
 **版本号**：发布系列 `v<major>.<minor>`（可加 patch，如 `v1.2.1`）；里程碑 `v<major>-M<序号>`，序号不补零。里程碑是工程门禁，不是日期。
 
