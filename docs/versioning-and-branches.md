@@ -4,6 +4,16 @@
 
 ## Version and milestone names / 版本与里程碑命名
 
+### Regular patches from v4.0 / v4.0 起常规补丁（2026-10-05）
+
+三主端从 v4.0 起采用 `vA.B` 功能版本与 `vA.B.C` bug/安全修复补丁，`v4.0` 对应客户端 `4.0.0`，后续可独立发布 `v4.0.1`、`v4.0.2`。扩展架构仍通常只在 `vA.0` 验收。当前重启修复留到 v4.0，暂不发布或应用 v3.5 热修；详见[补丁规则](patch-releases-v4.md)。v4.0 尚未发布。
+
+From v4.0, primary targets use regular minor feature and patch bug/security releases. Patches do not wait for a minor; expansion architectures remain major-milestone targets. The restart fix is held for v4.0, with no v3.5 hotfix rollout.
+
+补丁冲突沿用下方幂等/不可变检查，但递增 **C**，如 `v4.0.1 → v4.0.2`，不改成 `v4.1`；`vA.B` 与 `vA.B.0` 不同时作为两个正式基线。补丁沿用已审查基线门禁，不自动增加工程里程碑。
+
+Patch conflicts advance C after the same immutable/idempotency checks. Do not publish vA.B and vA.B.0 as separate baselines. Patches retain their reviewed engineering gate.
+
 ### Unavailable release numbers / 发布编号不可用时顺位递增（2026-09-22）
 
 发布 `vB.A` 时，如果该编号已被其他发布占用、不可变 Release 保留或存在仅针对该编号的限制，不覆盖、删除或强推旧 Tag；改用 `vB.(A+1)`，仍不可用则继续递增次版本号，直到首个可用编号。例如 `v3.1 → v3.2 → v3.3`，`v3.9 → v3.10`，主版本不变。不因跳号而新增功能、改变里程碑、放宽验收或重新构建已指定的镜像。
@@ -20,9 +30,9 @@ Network/TLS failures, invalid credentials, generic permission/repository-rule fa
 
 本次记录 / This release: `v3.1` 因不可变发布标签冲突未能完成，改为 `v3.2`，沿用源码 `5ab5da0fa4d2` 及原镜像，保留已披露的免长测例外和已知限制。 / `v3.1` could not be completed due to the immutable-release tag conflict; use `v3.2` with source `5ab5da0fa4d2`, the original image, and the disclosed long-test exception and limitations.
 
-Release series use `v<major>.<minor>`; implementation milestones use `v<major>-M<number>`. Examples are `v1.1` and `v1-M10`. The milestone number is written as an integer without padding. Historical `M0` remains the pre-version headless proof and is not renamed into a release milestone.
+Release series use `v<major>.<minor>` and, regularly from v4, `v<major>.<minor>.<patch>`; implementation milestones use `v<major>-M<number>`. Examples are `v4.0.1` and `v1-M10`. The milestone number is an integer without padding. Historical `M0` remains the pre-version headless proof.
 
-发布系列使用 `v<主版本>.<次版本>`，实施里程碑使用 `v<主版本>-M<序号>`，例如 `v1.1` 与 `v1-M10`。里程碑序号不补零。历史 `M0` 保留为版本化之前的无头闭环验证，不改名为发布里程碑。
+发布系列使用 `v<主版本>.<次版本>`，v4 起常规补丁使用 `v<主版本>.<次版本>.<补丁>`；实施里程碑使用 `v<主版本>-M<序号>`，例如 `v4.0.1` 与 `v1-M10`。里程碑不补零；历史 `M0` 保留为版本化之前的无头闭环验证。
 
 | Release series / 发布系列 | Included milestones / 所含里程碑 | State / 状态 |
 | --- | --- | --- |
@@ -49,7 +59,7 @@ A milestone name is an engineering gate, not a release date. A release may be cu
 
 | Branch / 分支 | Responsibility / 职责 | Version identity / 版本身份 | Publication / 发布 |
 | --- | --- | --- | --- |
-| `main` | Stable release integration and hotfix baseline / 稳定发布集成与热修基线 | release series `vX.Y` / 发布系列 `vX.Y` | Immutable release tags and stable GHCR aliases originate here / 不可变发布 Tag 与稳定 GHCR 别名从这里产生 |
+| `main` | Stable release integration and hotfix baseline / 稳定发布集成与热修基线 | `vX.Y` / `vX.Y.Z` | Immutable release tags and stable GHCR aliases originate here / 不可变发布 Tag 与稳定 GHCR 别名从这里产生 |
 | `dev` | Active milestone integration / 活跃里程碑集成 | milestone `vX-MN` / 里程碑 `vX-MN` | Moving `dev` and `sha-*` development images; completed milestone checkpoints may be tagged immutably / 可移动 `dev` 与 `sha-*` 开发镜像；完成的里程碑检查点可使用不可变 Tag |
 
 The policy starts with both branches at the same reviewed baseline. Subsequent feature work targets `dev`; a release PR merges `dev` into `main` only after the release-series gates pass. A hotfix starts from `main`, is reviewed into `main`, and is then merged back into `dev`. Force-pushes and moving published version tags are prohibited.
@@ -75,6 +85,6 @@ Recommended protection:
 - `sha-xxxxxxxxxxxx`: immutable source identity for either branch / 任一分支的不可变源码身份。
 - `@sha256:...`: production deployment lock / 生产部署锁定方式。
 
-Stable publication remains tag-driven. The v2 and v3 series publish only the GHCR image containing the PWA, corresponding source, checksums, SBOM, provenance and attestation. The frozen native-client workflow has no tag trigger and requires an explicit confirmation phrase against the protected `dev` tip; it cannot create a Release or stable alias. Platform and container verification is a documented manual step owned by the releaser ([Release flow](release-flow.md)); the release path itself runs only automatic, secret-free checks.
+Stable publication remains tag-driven. GHCR/PWA releases retain source, checksums, SBOM, provenance and attestation; v3.4 introduced Windows candidates and v3.5 stable unsigned NSIS updates. v4+ adds regular patch delivery for the three primary targets. The frozen Qt native-client workflow has no tag trigger and requires an explicit confirmation against protected `dev`; it cannot create a Release or stable alias. Platform/container validation is a documented manual step ([Release flow](release-flow.md)); the release path runs automatic, secret-free checks.
 
-稳定发布继续由 Tag 驱动。v2 与 v3 系列只发布包含 PWA 的 GHCR 镜像、对应源码、校验和、SBOM、provenance 与 attestation。冻结的原生客户端工作流没有 Tag 触发器，且要求对受保护 `dev` 精确 HEAD 输入显式确认短语；它不能创建 Release 或稳定别名。平台与容器验证是由发布者负责、并记录在[发布流程](release-flow.md)中的人工步骤；发布路径本身只运行自动、无 Secret 的检查。
+稳定发布继续由 Tag 驱动。GHCR/PWA 保留对应源码、摘要、SBOM、provenance 与 attestation；v3.4 已引入 Windows 候选，v3.5 引入未签名正式 NSIS 更新，v4 起三主端采用常规补丁交付。冻结的 Qt 原生工作流没有 Tag 触发器，要求对受保护 `dev` 显式确认，不能创建 Release 或稳定别名。平台/容器验证仍是[发布流程](release-flow.md)规定的人工步骤；发布路径运行自动、无 Secret 的检查。

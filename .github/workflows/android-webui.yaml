@@ -25,7 +25,10 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw 'SDK installation failed' }
       - name: Verify dependencies, unit tests, lint and development APK
         shell: pwsh
-        run: ./android/scripts/build-android.ps1 -JavaHome $env:JAVA_HOME_17_X64 -SdkRoot $env:ANDROID_HOME
+        run: |
+          python android/tests/test_release_version.py
+          if ($LASTEXITCODE -ne 0) { throw 'Android patch versionCode contract failed' }
+          ./android/scripts/build-android.ps1 -JavaHome $env:JAVA_HOME_17_X64 -SdkRoot $env:ANDROID_HOME
       - name: Upload disposable development APK and test reports
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a

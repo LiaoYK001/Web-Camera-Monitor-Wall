@@ -36,29 +36,30 @@ Vite 代理或后端重启时页面会显示“本地服务暂不可用”，不
 
 项目内置完整 **go2rtc + 官方 WebUI**：各类来源可先整理为内部 RTSP，再接入现有监控墙、MediaMTX、NVR 和 OBS；普通 RTSP 也可直接接入。左侧“go2rtc 管理”支持流管理、设备发现、播放测试、完整配置和日志，服务与 UI 统一打包和启动，配置随已有私有卷保存。详见 [go2rtc 集成与部署](docs/go2rtc-integration.md)。
 
-v3.5 容器重启遇到 `mkfifo ... File exists` 的修复与保留数据的轻量热修步骤见[容器重启与恢复](docs/container-restart-recovery.md)。The guide covers the stale-FIFO fix, bounded shutdown and restart validation.
+容器 `mkfifo ... File exists`、重启及异常退出修复将随 **v4.0** 统一交付，暂不发布或应用 v3.5 热修；诊断与验证记录见[容器重启与恢复](docs/container-restart-recovery.md)。Restart/crash fixes are retained for v4.0; no v3.5 hotfix rollout is planned now.
 
 ## 主要平台与版本节奏 / Primary platforms and release cadence
 
 网站与直播源的新接入方式、yt-dlp/Streamlink 打包、私密 Cookie 和三端流程见[网站与直播源](docs/online-sources.md)。Website/live source integration and bundled extractor boundaries are documented there; existing installers require an upgrade containing this change.
 
 本项目目前以 **Docker/Podman 容器、Windows x64 完整客户端、独立 Android 客户端**
-三端为主，按常规 `vA.B` 产品版本持续更新。Android 连接容器或 Windows 后端，共享
+三端为主，从 v4.0 起按 `vA.B` 功能版本和 `vA.B.C` bug/安全补丁持续更新，例如
+`v4.0.1`、`v4.0.2`；Windows/Android 无需等待下一次功能版本，见[补丁规则](docs/patch-releases-v4.md)。Android 连接容器或 Windows 后端，共享
 该后端的 go2rtc、设备、账号、Scenes、声音和录像能力；开发 APK 与稳定版验收分开。
 
 The primary delivery targets are the **Docker/Podman container, complete Windows
-x64 desktop and independent Android client**, following regular `vA.B` product
-releases. Android connects to a container or Windows backend and shares its go2rtc,
+x64 desktop and independent Android client**, following `vA.B` feature releases
+and `vA.B.C` bug/security patches from v4.0. Android connects to a container or Windows backend and shares its go2rtc,
 devices, accounts, Scenes, audio preferences and recordings. Development APKs and
 stable qualification are recorded separately.
 
 后续拓展 Linux 原生 x86/ARM、Windows ARM、Windows 32 位等平台，一般在 `vA.0`
-大版本（如 v5.0、v6.0、v7.0）集中构建、验证和发布，不跟随三主端每次 `vA.B` 更新。
+大版本（如 v5.0、v6.0、v7.0）集中构建、验证和发布，不跟随三主端每次功能/补丁更新。
 规划或源码支持不等于已有安装包或已完成实机验收。
 
 Future native Linux x86/ARM, Windows ARM and Windows 32-bit targets are normally
 built, qualified and released at `vA.0` major milestones such as v5.0/v6.0/v7.0,
-rather than following every primary-platform minor release. Planned or source-level
+rather than following every primary-platform minor/patch release. Planned or source-level
 support does not imply an available installer or completed device qualification.
 
 ## 运行技术基线

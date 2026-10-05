@@ -16,6 +16,10 @@ Use [OBS projectors](https://obsproject.com/kb/power-of-projectors) and [scene/s
 
 ## Evidence matrix / 证据与缺口
 
+2026-10-05 交付范围：当前容器重启/异常退出修复留到 v4.0，暂不操作 v3.5 热修。v4 基线之后使用 `vA.B.C` 快速 bug/安全补丁，优先 Windows/Android，见[补丁规则](patch-releases-v4.md)。新增验收项为实际 `4.0.0 → 4.0.1 → 4.0.2`、账号/数据保留、Windows 差量失败回退及 Android 同密钥/错误密钥与版本码；版本/协议测试和候选构建不能替代安装验收。Android 应用内自动 APK 下载/安装仍需实现与实测。
+
+Hold the restart fixes for v4.0 and qualify regular v4+ patches through actual successive installed upgrades, retention and failure paths. Version/protocol tests and candidate builds are separate evidence; Android in-app automatic APK delivery remains open.
+
 Every row needs current source review, failure-path tests and relevant real product checks. The existing evidence below is a starting point, not a completion claim. Record dates, commit, environment and limitations with each qualification result.
 
 每行均需当前源码检查、失败路径测试及对应实际产品验收。下列已有证据只作为起点，尚不能宣告完成；验收结果需记录日期、提交、环境和边界。

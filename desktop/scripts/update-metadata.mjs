@@ -3,12 +3,13 @@ import { createRequire } from 'node:module';
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';
 import { digestFile } from '../src/runtime-integrity.mjs';
+import { stableVersion } from '../src/release-version.mjs';
 
 const require = createRequire(await realpath(new URL('../node_modules/electron-updater/package.json', import.meta.url)));
 const { load } = require('js-yaml');
 
 export async function verifyUpdateMetadata(directory, version) {
-  if (!/^\d+\.\d+\.\d+$/.test(version)) throw new Error('Stable update version required');
+  if (!stableVersion(version)) throw new Error('Stable update version required');
   const text = await readFile(path.join(directory, 'latest.yml'), 'utf8');
   if (Buffer.byteLength(text) > 65536) throw new Error('Update metadata is too large');
   const info = load(text);

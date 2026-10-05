@@ -98,7 +98,7 @@ async function updaterFixture(t, overrides={}) {
   const supervisor={async workload(){return {recording:false,streaming:false,exporting:false};},async stop(){calls.push('stop');},async snapshot(){calls.push('snapshot');return path.join(root,'snapshot');},async start(){calls.push('start');},...overrides.supervisor};
   const controller=new UpdateController({updater,official:true,publisher:'Example publisher',packaged:true,settings:{...defaults},root,supervisor,windowWork:()=>[],confirmStop:async()=>true,beforeInstall:()=>calls.push('install'),verifySignature:async()=>null,version:'3.1.0',...overrides,supervisor});
   controller.info={version:'3.2.0',files:[{url:'new.exe',size:17,sha512:await digestFile(file,'sha512','base64')}]};
-  updater.emit('update-downloaded',{downloadedFile:file});
+  updater.emit('update-downloaded',{version:controller.info.version,downloadedFile:file});
   return {controller,updater,calls,root,file};
 }
 test('updates never install on quit and development packages never query production',async t=>{
@@ -123,6 +123,34 @@ test('unpackaged releases cannot update and manual checking respects disabled au
   const manual=await updaterFixture(t,{publisher:null,settings:{...defaults,autoCheck:false,autoDownload:false}});
   let checks=0;manual.updater.checkForUpdates=async()=>{checks++;};
   manual.controller.start();assert.equal(checks,0);await manual.controller.check();assert.equal(checks,1);manual.controller.dispose();
+});
+
+test('successive v4 patches require confirmation and keep separate recovery mappings',async t=>{
+  for (const [installed,next] of [['4.0.0','4.0.1'],['4.0.1','4.0.2']]) {
+    const f=await updaterFixture(t,{version:installed,publisher:null,settings:{...defaults,autoDownload:false}});
+    f.updater.emit('update-available',{...f.controller.info,version:next});
+    assert.equal(f.controller.status().kind,'patch');
+    assert.equal(f.controller.status().phase,'available');
+    f.updater.emit('update-downloaded',{version:next,downloadedFile:f.file});
+    assert.deepEqual(f.calls,[]);assert.equal(f.updater.autoInstallOnAppQuit,false);
+    await f.controller.install();
+    assert.deepEqual(f.calls,['stop','snapshot','install']);
+    const recovery=JSON.parse(await readFile(path.join(f.root,'pending-update.json'),'utf8'));
+    assert.equal(recovery.from,installed);assert.equal(recovery.to,next);
+  }
+});
+
+test('stale, equal, malformed and mismatched patch events cannot install',async t=>{
+  for (const next of ['4.0.1','4.0.0','3.99.99','4.0.2-dev.1','04.0.2']) {
+    const f=await updaterFixture(t,{version:'4.0.1',publisher:null,settings:{...defaults,autoDownload:false}});
+    f.updater.emit('update-available',{...f.controller.info,version:next});
+    await f.controller.install();
+    assert.deepEqual(f.calls,[]);assert.equal(f.controller.downloaded,undefined);
+  }
+  const f=await updaterFixture(t,{version:'4.0.0',publisher:null,settings:{...defaults,autoDownload:false}});
+  f.updater.emit('update-available',{...f.controller.info,version:'4.0.2'});
+  f.updater.emit('update-downloaded',{version:'4.0.1',downloadedFile:f.file});
+  await f.controller.install();assert.deepEqual(f.calls,[]);assert.equal(f.controller.status().phase,'error');
 });
 test('last successful update check is reported without treating a failed check as success',async t=>{
   const f=await updaterFixture(t,{publisher:null,settings:{...defaults,autoDownload:false}});

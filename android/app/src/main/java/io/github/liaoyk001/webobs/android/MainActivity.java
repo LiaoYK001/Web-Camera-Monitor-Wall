@@ -219,7 +219,7 @@ public final class MainActivity extends Activity {
             ReleaseCheck.check(installed, result -> runOnUiThread(() -> {
                 if (isFinishing() || isDestroyed()) return;
                 updates.setEnabled(true); updates.setText(R.string.check_updates);
-                new AlertDialog.Builder(this).setTitle("Android 更新").setMessage(result.message).setPositiveButton("查看发布记录", (dialog, which) -> openExternal(REPOSITORY + "/releases")).setNegativeButton("稍后", null).show();
+                new AlertDialog.Builder(this).setTitle("Android 更新").setMessage(result.message).setPositiveButton(result.available ? "查看说明与下载" : "查看发布记录", (dialog, which) -> openExternal(result.releaseUrl)).setNegativeButton("稍后", null).show();
             }));
         });
         source.setOnClickListener(view -> openExternal(REPOSITORY)); releases.setOnClickListener(view -> openExternal(REPOSITORY + "/releases")); issues.setOnClickListener(view -> openExternal(REPOSITORY + "/issues"));

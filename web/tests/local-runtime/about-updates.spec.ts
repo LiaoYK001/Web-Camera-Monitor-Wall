@@ -55,12 +55,12 @@ test('browser About shows build/source details and checks the real registered wo
   } finally { await unlink(workerFile); }
 });
 
-test('desktop About uses the installed version and keeps download/install explicit', async ({ page, context }) => {
+test('desktop About shows a v4 patch and keeps download/install explicit', async ({ page, context }) => {
   await account(context);
   await context.addInitScript(() => {
     const w = window as any;
     const settings = { autoCheck: true, autoDownload: false, startAtLogin: false, minimizeToTray: true, lanEnabled: false, lanPort: 18443, recordingDirectory: '' };
-    const state = { app: { version: '3.5.0', platform: 'win32', architecture: 'x64', packaged: true }, runtime: { phase: 'ready' }, update: { phase: 'idle', signed: false } as any, settings, recovery: null };
+    const state = { app: { version: '4.0.0', platform: 'win32', architecture: 'x64', packaged: true }, runtime: { phase: 'ready' }, update: { phase: 'idle', signed: false } as any, settings, recovery: null };
     const listeners = new Set<(value: any) => void>();
     const emit = () => { for (const callback of listeners) callback(structuredClone(state)); };
     w.installCalls = 0;
@@ -70,7 +70,7 @@ test('desktop About uses the installed version and keeps download/install explic
       checkUpdate: async () => {
         state.update = { phase: 'checking' }; emit();
         await new Promise(resolve => setTimeout(resolve, 600));
-        state.update = { phase: 'available', version: '3.6.0', lastCheckedAt: new Date().toISOString(), releaseNotes: '<script>fixture</script> 新版说明' }; emit();
+        state.update = { phase: 'available', version: '4.0.1', kind: 'patch', lastCheckedAt: new Date().toISOString(), releaseNotes: '<script>fixture</script> 新版说明' }; emit();
       },
       downloadUpdate: async () => {
         state.update.phase = 'downloading'; state.update.percent = 45; emit();
@@ -82,12 +82,13 @@ test('desktop About uses the installed version and keeps download/install explic
   });
   await page.goto('/#settings');
   const about = page.getByRole('region', { name: '关于与更新', exact: true });
-  await expect(about.locator('dd').first()).toHaveText('3.5.0');
+  await expect(about.locator('dd').first()).toHaveText('4.0.0');
   await expect(about).toContainText('Windows 客户端 · x64');
   expect(await page.evaluate(() => (window as any).webobsDesktop.version)).toBe(1);
   await about.getByRole('button', { name: '检查更新', exact: true }).click();
   await expect(about.getByRole('button', { name: '正在检查…' })).toBeDisabled();
   await expect(about.getByRole('status')).toHaveText('发现新版本');
+  await expect(about).toContainText('修复补丁 4.0.1');
   await expect(about).toContainText('最近成功检查');
   await about.getByText('新版本发布说明', { exact: true }).click();
   await expect(about.locator('pre')).toContainText('<script>fixture</script>');

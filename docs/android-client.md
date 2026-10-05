@@ -6,11 +6,11 @@ The first Android app connects to an existing product backend and hosts its WebU
 
 ## 当前范围 / Current scope
 
-Android 在 **go2rtc 管理 → 添加网站与直播源** 选择 yt-dlp/Streamlink，保存、测试、导入设备及监看；工具安装在所连接的完整容器或 Windows x64 后端，APK 无需另外安装解析器。见[网站与直播源](online-sources.md)。三端按 `vA.B` 常规更新；原生 Linux x86/ARM、Windows ARM/32 位等未来目标通常在 `vA.0` 大版本节点发布。Android shares backend website extraction; future architectures are planned major-milestone targets.
+Android 在 **go2rtc 管理 → 添加网站与直播源** 选择 yt-dlp/Streamlink，保存、测试、导入设备及监看；工具安装在所连接的容器或 Windows x64 后端，APK 无需另装解析器。见[网站与直播源](online-sources.md)。三端从 v4.0 起按 `vA.B` 功能版与 `vA.B.C` 修复补丁更新；其他架构通常在 `vA.0` 发布。Android shares backend extraction; v4+ introduces regular patch delivery for primary targets.
 
 - Android 10/API 29 及以上；纯 Java/WebView，不含架构专属原生库。
 - 服务器选择、持久 Cookie/页面存储、原生菜单、可关闭的保持亮屏、横竖屏、视频全屏、最多四个共享会话的投影子页面。Android 投影使用应用内窗口，不承诺同时在多个物理屏幕显示。后台通过有限的固定可见性信号暂停视频/音轨连接及监听，保留草稿和偏好，回前台后恢复监看；没有向网页开放原生命令接口。
-- 关于页面显示 APK 和 WebView 版本、开源仓库、问题反馈和 GitHub 发布记录。手动检查当前正式 Release 是否包含 Android APK；本阶段没有 APK 自动下载/安装。WebUI 随服务器部署更新，继续使用现有 PWA 更新流程。
+- 关于页面显示 APK/WebView 版本、仓库、反馈和发布记录。手动检查最近 20 个发布中的最高正式 APK，精确匹配版本/附件，区分补丁/功能/主版本并展示说明；跳过草稿、预发布、开发 APK、相同及旧版。仅后端发布不遮住 Android 补丁。本阶段通过发布页面下载并由系统确认安装，没有新增应用内自动 APK 下载/安装；WebUI 随服务器/PWA 更新。
 - 文件导入使用系统文件选择器。麦克风对讲先询问用户，再请求系统录音权限，只授权当前服务器的音频采集。未请求摄像头、全盘存储、未知来源安装或后台服务权限。
 - 持久账号偏好仍由后端保存；系统自动播放限制可能要求一次触摸才能恢复声音。输出设备选择受 Android/WebView 能力限制。
 
@@ -60,6 +60,25 @@ Install a supported JDK and the official Android SDK command-line tools. Install
 Android 安装要求每个 APK 带签名。这里使用 **本机开发自签密钥**，不购买商业证书、不申请 Microsoft 证书、不上架商店。Gradle debug 密钥通常在 `%USERPROFILE%\.android\debug.keystore`；必须备份并保留同一密钥，覆盖安装才能保留应用数据。密钥在 Git 与 Docker 上下文中排除。
 
 Every installable APK requires a signature. This build uses the local self-signed Android development key, without a certificate authority or store account. Preserve the same private key for updates; a different developer/CI debug key cannot replace this installation. CI APKs are disposable development artifacts and are not published to a stable update feed. Formal personal-use releases will need a preserved release key and explicit APK release integration; an unsigned release APK is not installable. See [Android signing documentation](https://developer.android.com/studio/publish/app-signing).
+
+## v4+ 正式候选与补丁构建 / v4+ stable candidates and patch builds
+
+正式候选需显式 `-Release -Version A.B.C`，从 v4 起版本码自动固定为 `A×1,000,000+B×1,000+C`，B/C 0–999、总值不超过 2,100,000,000；4.0.0/4.0.1/4.0.2 对应 4,000,000/4,000,001/4,000,002。显式传入 `-VersionCode` 必须匹配。开发模式仍要求 `-dev.*`，默认身份不变，不进入正式源。
+
+Stable candidates require explicit release mode with deterministic v4+ versionCode. Development identities/feed exclusion are retained. See [patch policy](patch-releases-v4.md).
+
+在仓库外保存并备份持久自签 keystore，私密构建环境配置 `WEBOBS_ANDROID_KEYSTORE`、`WEBOBS_ANDROID_KEY_ALIAS`、`WEBOBS_ANDROID_STORE_PASSWORD`、`WEBOBS_ANDROID_KEY_PASSWORD`。Gradle 从环境读取密码，不通过命令行/仓库文件传递；缺少密钥时拒绝正式候选，不自动改用 debug key。小范围个人发行不需商业证书或商店账户。覆盖已有开发 APK 时也必须使用与其一致的实际密钥，不允许为隐藏不匹配而卸载。
+
+Preserve the same external key and configure the four private environment values. No passwords go into command arguments or Git. A missing release key fails the build, never silently falls back to a new debug key.
+
+```powershell
+# First configure the private signing environment; this command builds only.
+./android/scripts/build-android.ps1 -Release -Version 4.0.1 -JavaHome 'D:\zulu'
+```
+
+运行 release JUnit、lint、APK 构建与签名核验，输出 `build/android/out/WebOBS-A.B.C-android-SELF-SIGNED.apk`、`.sha256` 和 `.json` 候选回执（版本码、摘要、证书摘要、检查项、`published:false`）。这些只证明构建/签名，不是安装升级回执；构建器不创建 GitHub Release、不上传、不修改 feed。正式发布继续使用审查、对应源码/许可证与不可变附件流程。Android 自动 APK 下载/安装、同密钥实际两版覆盖升级与真机验收仍单独追踪于 [v4 验收](v4-readiness.md)。
+
+The release variant runs unit/lint/build/signature checks and emits a candidate APK, SHA-256 and receipt. No publication occurs. Installed APK upgrades, in-app automatic downloading/installing and physical-device qualification remain separate gates.
 
 ## 实测与边界 / Validation and limits
 

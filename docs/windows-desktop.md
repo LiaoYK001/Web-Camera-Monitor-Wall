@@ -130,6 +130,10 @@ Client toggles save immediately and lock inputs while running. Edit the LAN HTTP
 
 ## 正式发布与验收
 
+从 v4.0 起正式支持 `vA.B.C` 常规补丁（如 `4.0.1`、`4.0.2`），“关于与更新”显示修复补丁并按数字比较版本，拒绝相同/旧版及开发版；安装仍需确认、正常停服和快照。已有 updater 默认尝试 blockmap 差量，失败回退完整 NSIS 下载，完整包校验不变。小范围修改可减少传输，不保证固定包大小。详见[v4+ 补丁规则](patch-releases-v4.md)。当前重启修复留到 v4.0，不发布 v3.5 热修。
+
+From v4.0, regular patches use A.B.C with numeric comparison and a patch label. Differential downloads retain full-installer fallback and integrity; explicit install/normal shutdown/snapshot safeguards apply equally. Real v4 installed patch upgrades remain a qualification item.
+
 产品标签 `vX.Y` 对应客户端 `X.Y.0`，`vX.Y.Z` 对应 `X.Y.Z`。容器与 Windows 共用已审计的产品 Release。候选附件包含安装包、blockmap、`latest.yml`（仅正式包）、SHA-256 摘要、运行文件清单、CycloneDX SBOM 与许可证归档。Electron updater 校验 SHA-512 与大小，准备安装时再次校验；可选签名构建额外验证 Authenticode 发布者。客户端不包含 GitHub Token。
 
 Windows 10、11 各自记录实际安装、媒体、LAN 与两版更新结果。`desktop/qualification.example.json` 只是格式示例，不能作为通过证明；完整检查名见 `desktop/scripts/qualification.mjs`。维护者还需收集匹配第三方二进制的完整对应源码（包括 FFmpeg 及其启用的 GPL 组件），提供已审核 `SOURCE-MANIFEST.json`，其字段为 `revision`、`version`、`reviewed: true`、`files: [{name, sha256}]`。

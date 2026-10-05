@@ -1,5 +1,8 @@
 # 容器重启与异常退出恢复 / Container restart and crash recovery
 
+> 2026-10-05 交付决定：本修复随 **v4.0** 统一发布，暂不发布或应用 v3.5 轻量热修。下方步骤保留为维护参考与本机验证记录，不是当前部署任务；已发布产物与用户数据不变。后续规则见 [v4+ 补丁发布](patch-releases-v4.md)。
+> Delivery decision: retain this fix for v4.0. The v3.5 hotfix instructions below are reference/local validation history, not a current rollout. Published artifacts and user data remain unchanged.
+
 ## v3.5 的遗留 FIFO 故障 / Stale FIFO failure in v3.5
 
 如果日志循环显示 `v2-M7 upgrade guard prepare: already-complete` 和 `mkfifo: ... /tmp/webobs-go2rtc-log.2: File exists`，阻断启动的是遗留日志管道。`already-complete` 只是已完成迁移检查的提示。旧入口按进程号分配路径；强制终止、Docker 的停止超时或宿主机掉电会跳过清理，而同一个容器下次通常复用进程号和可写层中的 `/tmp`。删除账号、数据库或配置卷无法正确修复这个问题。
