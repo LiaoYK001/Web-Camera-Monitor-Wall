@@ -52,8 +52,8 @@ elif sys.argv[1] in ('commit','rollback'):
 import os,signal,time
 from pathlib import Path
 root=Path(os.environ['FIXTURE_ROOT']); role=Path(__file__).name
-(root/(role+'.pid')).write_text(str(os.getpid()))
 signal.signal(signal.SIGTERM, (lambda *_:None) if os.getenv('IGNORE_TERM')==role else (lambda *_:exit(0)))
+(root/(role+'.pid')).write_text(str(os.getpid()))
 while True:time.sleep(.05)
 '''
         self.write('opt/obs/bin/webobsd', service)
@@ -183,6 +183,19 @@ while True:time.sleep(.05)
         process.communicate(timeout=5)
         self.assertEqual(process.returncode, 143)
         self.assertFalse((self.root / 'webobsd.pid').exists())
+        self.assertTrue((self.root / 'rollback').exists())
+        self.assert_stopped()
+
+    def test_stop_after_core_launch_before_migration_commit_is_intentional(self):
+        process = self.launch()
+        deadline = time.monotonic() + 5
+        while not (self.root / 'webobsd.pid').exists() and time.monotonic() < deadline:
+            time.sleep(.01)
+        self.assertTrue((self.root / 'webobsd.pid').exists())
+        self.assertFalse((self.root / 'commit').exists())
+        process.send_signal(signal.SIGTERM)
+        process.communicate(timeout=5)
+        self.assertEqual(process.returncode, 0)
         self.assertTrue((self.root / 'rollback').exists())
         self.assert_stopped()
 

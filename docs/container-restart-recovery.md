@@ -54,7 +54,7 @@ python3 tests/container_restart_runtime.py --image webobs:v3.5-restart-hotfix --
 
 The image test checks the actual packaged product and synthetic FFmpeg media, including persistent accounts and files after repeated restarts. It does not modify existing containers or qualify physical cameras, real host/disk power cuts, or every Podman host.
 
-2026-10-05 已在公开 v3.5 固定 digest 上构建热修，Direct-only 和软件 OBS/Xvfb 两种模式均完成上述重启、崩溃与保留原卷重建验证；入口 10 项回归、go2rtc 私密配置 3 项和升级快照 3 项通过。The published v3.5 base was tested in both Direct-only and software OBS modes, with synthetic media and the stated qualification limits.
+2026-10-05 已在公开 v3.5 固定 digest 上构建热修，Direct-only 和软件 OBS/Xvfb 两种模式均完成上述重启、崩溃与保留原卷重建验证；入口 11 项回归、go2rtc 私密配置 3 项和升级快照 3 项通过。The published v3.5 base was tested in both Direct-only and software OBS modes, with synthetic media and the stated qualification limits.
 
 保留 Compose 的 `stop_grace_period: 20s` 或更长，让正常停止有时间封装录像。部署需要宿主机重启后自动恢复时，在原服务覆盖中显式配置 `restart: unless-stopped`，同时确认 Docker/Podman 本身随系统启动。重启策略不能修复旧镜像的 FIFO 错误，因此先应用热修。不要把 `/dev/shm` 绑定到持久化配置卷；需有可写空间。
 

@@ -651,7 +651,7 @@ if [ "$camera_registry_enabled" = "true" ]; then
     registry_ready=0
     registry_attempt=0
     while [ "$registry_attempt" -lt 50 ]; do
-        if curl --fail --silent --show-error http://127.0.0.1:8092/health >/dev/null; then
+        if curl --fail --silent --show-error --max-time 1 http://127.0.0.1:8092/health >/dev/null; then
             registry_ready=1
             break
         fi
@@ -674,7 +674,7 @@ if [ "$v2_client_control_enabled" = "true" ]; then
     v2_ready=0
     v2_attempt=0
     while [ "$v2_attempt" -lt 50 ]; do
-        if curl --fail --silent --show-error http://127.0.0.1:8094/health >/dev/null; then
+        if curl --fail --silent --show-error --max-time 1 http://127.0.0.1:8094/health >/dev/null; then
             v2_ready=1
             break
         fi
@@ -772,6 +772,9 @@ fi
 /opt/obs/bin/webobsd "$@" &
 webobsd_pid=$!
 sleep 0.2
+# A user can stop immediately after HTTP comes up, before migration validation
+# finishes. That is an intentional stop, not a crashed migration process.
+[ "$shutdown_requested" -eq 0 ] || exit 0
 kill -0 "$webobsd_pid" 2>/dev/null || fail "webobsd exited during v2-M7 migration startup"
 python3 "$upgrade_guard" commit --config-root /config/webobs || fail "v2-M7 migration commit failed"
 

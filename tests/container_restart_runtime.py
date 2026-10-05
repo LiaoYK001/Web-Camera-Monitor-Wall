@@ -2,6 +2,7 @@
 """Real isolated image restart/crash recovery; never touches existing deployments."""
 import argparse
 import json
+from pathlib import Path
 import secrets
 import subprocess
 import time
@@ -174,8 +175,15 @@ def run(options):
         admin.expect('/api/v1/auth/login', body=account, method='POST')
         websocket_media(admin)
         docker('stop', '--time', '20', name)
-        assert state()['ExitCode'] == 0
+        assert state()['ExitCode'] == 0, 'Final shutdown exit: ' + str(state()['ExitCode'])
         print('PASS: service-crash recovery, recreation preserving the original volumes/account/config/media and normal shutdown; synthetic media, no physical power-cut qualification', flush=True)
+    except BaseException:
+        if created and options.artifacts:
+            artifacts = Path(options.artifacts)
+            artifacts.mkdir(parents=True, exist_ok=True)
+            (artifacts / 'failed-container.log').write_text(docker('logs', name), encoding='utf-8')
+            (artifacts / 'failed-state.json').write_text(json.dumps(state()), encoding='utf-8')
+        raise
     finally:
         if created:
             docker('rm', '--force', '--volumes', name)
@@ -189,4 +197,5 @@ if __name__ == '__main__':
     parser.add_argument('--docker', default='docker')
     parser.add_argument('--expect-crash-failure', action='store_true', help='Reproduce the unmodified v3.5 failure')
     parser.add_argument('--composite', action='store_true', help='Also exercise software OBS/Xvfb restart')
+    parser.add_argument('--artifacts', help='Private failure evidence directory; never commit it')
     run(parser.parse_args())
