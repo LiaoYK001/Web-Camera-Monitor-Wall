@@ -566,6 +566,7 @@ COPY tests/test_s3_archive.py /tmp/test_s3_archive.py
 COPY tests/test_encrypted_backup.py /tmp/test_encrypted_backup.py
 COPY tests/test_preupgrade_guard.py /tmp/test_preupgrade_guard.py
 COPY tests/test_nvr_storage.py /tmp/test_nvr_storage.py
+COPY tests/test_container_entrypoint.py /tmp/test_container_entrypoint.py
 COPY LICENSE /usr/share/licenses/webobs/LICENSE
 COPY obs/obs-studio/COPYING /usr/share/licenses/webobs/OBS-COPYING
 COPY analytics/detector-requirements.lock /usr/share/licenses/webobs/detector-requirements.lock
@@ -581,6 +582,8 @@ ENV PATH=/opt/webobs/bin:/opt/webobs/venv/bin:$PATH \
     EGL_PLATFORM=x11
 
 RUN /opt/webobs/bin/webobs-online-source --self-test \
+    && WEBOBS_TEST_CONTAINER_ENTRYPOINT=/opt/webobs/entrypoint.sh PYTHONDONTWRITEBYTECODE=1 python3 /tmp/test_container_entrypoint.py \
+    && rm -f /tmp/test_container_entrypoint.py \
     && WEBOBS_TEST_GO2RTC_ROOT=/tmp/go2rtc PYTHONDONTWRITEBYTECODE=1 python3 /tmp/test_go2rtc_runtime.py \
     && rm -rf /tmp/go2rtc /tmp/test_go2rtc_runtime.py \
     && mkdir -p /assets /config/obs /config/webobs /recordings /usr/share/licenses/caddy \

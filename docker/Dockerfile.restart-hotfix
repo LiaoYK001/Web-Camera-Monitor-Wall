@@ -1,0 +1,7 @@
+# Local v3.5 recovery image: preserve every bundled application dependency.
+# This image is deliberately distinct from the immutable published v3.5 image.
+ARG WEBOBS_RESTART_BASE_IMAGE=ghcr.io/liaoyk001/web-camera-monitor-wall@sha256:7d55187025db3850d9c9aa839bcdc05d9cd4a217683cbca2f66ed4e2052236c4
+FROM ${WEBOBS_RESTART_BASE_IMAGE}
+COPY docker/entrypoint.sh /opt/webobs/entrypoint.sh
+RUN chmod 0755 /opt/webobs/entrypoint.sh && sh -n /opt/webobs/entrypoint.sh
+LABEL io.webobs.local-hotfix="v3.5-container-restart"
