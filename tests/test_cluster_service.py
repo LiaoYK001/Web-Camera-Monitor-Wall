@@ -72,6 +72,53 @@ def heartbeat(node_time: int, *, free: int = 800) -> dict:
 
 
 class ClusterTests(unittest.TestCase):
+    def test_camera_preference_partial_writes_preserve_other_clients_fields_and_devices(self):
+        self.create_user('camera-owner', ['admin'])
+        a = {'displayName': 'Camera A', 'favorite': False, 'group': ''}
+        b = {'displayName': 'Camera B', 'favorite': False, 'group': ''}
+        self.store.account_preference('camera-owner', 'camera-preferences', {'value': {'cameras': {'a': a, 'b': b}}}, True)
+        def patch(identifier, baseline, edited):
+            return self.store.account_preference('camera-owner', 'camera-preferences', {
+                'baseValue': {'cameras': {identifier: baseline}}, 'value': {'cameras': {identifier: edited}}, 'partial': True}, True)
+        patch('a', a, {**a, 'favorite': True})
+        patch('b', b, {**b, 'group': 'Outside'})
+        merged = patch('a', a, {**a, 'displayName': 'Entrance'})['value']['cameras']
+        self.assertEqual(merged, {'a': {**a, 'displayName': 'Entrance', 'favorite': True}, 'b': {**b, 'group': 'Outside'}})
+        self.assertIsNone(self.store.account_preference(self.create_user('other-camera-owner')['username'], 'camera-preferences')['value'])
+
+    def test_concurrent_camera_preferences_are_merged_under_one_store_lock(self):
+        self.create_user('camera-concurrent', ['admin'])
+        initial = {'displayName': 'A', 'favorite': False, 'group': ''}
+        self.store.account_preference('camera-concurrent', 'camera-preferences', {'value': {'cameras': {'a': initial}}}, True)
+        barrier = threading.Barrier(3)
+        failures = []
+        def edit(change):
+            try:
+                barrier.wait()
+                self.store.account_preference('camera-concurrent', 'camera-preferences', {
+                    'baseValue': {'cameras': {'a': initial}}, 'value': {'cameras': {'a': {**initial, **change}}}, 'partial': True}, True)
+            except Exception as error:
+                failures.append(error)
+        threads = [threading.Thread(target=edit, args=(change,)) for change in [{'favorite': True}, {'group': 'Gate'}]]
+        for thread in threads: thread.start()
+        barrier.wait()
+        for thread in threads: thread.join(5)
+        self.assertFalse(failures)
+        self.assertFalse(any(thread.is_alive() for thread in threads))
+        self.assertEqual(self.store.account_preference('camera-concurrent', 'camera-preferences')['value']['cameras']['a'],
+                         {**initial, 'favorite': True, 'group': 'Gate'})
+
+    def test_invalid_camera_preference_merge_never_changes_stored_value(self):
+        self.create_user('camera-invalid', ['admin'])
+        saved = self.store.account_preference('camera-invalid', 'camera-preferences', {'value': {'cameras': {}}}, True)
+        for request in [{'value': {}, 'partial': True}, {'value': {}, 'baseValue': [], 'partial': True},
+                        {'value': {}, 'baseValue': {}, 'partial': False}, {'value': {}, 'removedPaths': []},
+                        {'value': {'x': float('inf')}}, {'value': {}, 'baseValue': {'x': float('nan')}}]:
+            with self.subTest(request=request):
+                with self.assertRaises(cluster.ApiError):
+                    self.store.account_preference('camera-invalid', 'camera-preferences', request, True)
+                self.assertEqual(self.store.account_preference('camera-invalid', 'camera-preferences'), saved)
+
     def test_legacy_monitor_preferences_reject_unsafe_values_without_mutation(self):
         self.create_user('json-boundary', ['admin'])
         initial = self.store.account_preference('json-boundary', 'monitor-view', {'value': {

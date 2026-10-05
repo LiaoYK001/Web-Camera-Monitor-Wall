@@ -3,6 +3,8 @@ import { ControlApiError, fetchOnvifPresets, fetchOnvifSnapshot, mutateOnvifPres
 import { isPageVisible, subscribePageVisibility } from './pageVisibility';
 import { withRequestTimeout } from './requestTimeout';
 import { useShortTalk } from './useShortTalk';
+import { useDesktopWork } from './desktopRuntime';
+import { useDraftGuard } from './useDraftGuard';
 import type { CameraRecord, OnvifPreset } from './types';
 
 type Operation = { controller: AbortController; name: string; mutation: boolean };
@@ -23,6 +25,9 @@ export default function CameraDeviceControls({ camera, busy, fail }: { camera: C
   const [pending, setPending] = useState('');
   const operation = useRef<Operation | null>(null), active = useRef(false);
   const talk = useShortTalk(camera.id, fail, capabilities.talk === true);
+  const working = Boolean(pending) || talk.phase !== 'idle';
+  useDesktopWork(`device-controls-${camera.id}`, false, working);
+  useDraftGuard(false, working, '', () => setStatus('设备操作或录音尚未完成，请完成或丢弃后返回。'));
   useEffect(() => {
     active.current = true; setPresets([]); setSnapshot(''); setStatus(''); setPending('');
     const unsubscribe = subscribePageVisibility(() => {
