@@ -36,6 +36,8 @@ jobs:
       - name: Patch integrity, confirmation and real updater fallback / 补丁校验确认与更新回退
         shell: pwsh
         run: |
+          pnpm --dir desktop audit --audit-level=low
+          if ($LASTEXITCODE -ne 0) { throw 'Desktop dependency audit failed' }
           pnpm --dir desktop test
           if ($LASTEXITCODE -ne 0) { throw 'Desktop contracts failed' }
           pnpm --dir desktop test:updates

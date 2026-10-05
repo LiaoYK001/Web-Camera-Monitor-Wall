@@ -61,3 +61,7 @@ Patches follow the existing reviewed immutable flow with aligned identities and 
 桌面 38 项逻辑测试、真实 Electron 隔离检查及实际 NsisUpdater 的 v4 补丁检测/下载、blockmap 缺失回退、损坏包拒绝与降级拒绝通过。前端类型检查、构建和 2 项关于/补丁操作浏览器回归通过。Android debug/release JUnit（含 5 项版本/发布选择测试）与 lint 通过；用同一隔离测试密钥实际构建 4.0.1/4.0.2 release APK，核对包内版本码、非 debuggable 标记、签名证书一致性及摘要通过。测试包与密钥不属于正式发行；未覆盖安装、未改变模拟器数据、未发布任何 Release/feed/GHCR。
 
 Desktop logic, real Electron/NSIS protocol, frontend and Android build/signature identity checks passed. The two release-variant APKs used one isolated test key and were not installed or published. These checks do not qualify actual NSIS/APK upgrades, clean systems or physical devices.
+
+同次检查移除桌面构建链中被 [GHSA-ch52-4w7c-c8xp](https://github.com/advisories/GHSA-ch52-4w7c-c8xp) 标记的 `http-cache-semantics 4.2.0`，锁定 npm 已发布的 `4.3.0` 和文件完整性；未更新其他依赖。`pnpm audit --audit-level=low` 返回无已知漏洞；新增实际 Electron 构建下载器的回归验证 `max-stale` 请求不会复用前一响应或携带前一响应 Cookie，桌面共 39 项测试通过。CI 同步执行桌面依赖审计。该依赖来自构建工具，不在产品 production 依赖树中；现有发布包不因此被覆盖。
+
+The flagged 4.2.0 build dependency is replaced by published, integrity-locked 4.3.0 without unrelated dependency changes. Dependency audit reports no known vulnerabilities; the real downloader regression and 39 desktop tests pass. CI now audits desktop dependencies. This is a build-tool dependency update, not a modification to published installers.
