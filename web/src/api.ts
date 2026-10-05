@@ -77,19 +77,30 @@ export async function registerFirstAdmin(username: string, password: string): Pr
   if (!response.ok) throw await parseError(response);
 }
 
-export async function fetchCameraPreferences(): Promise<Record<string, { displayName: string; favorite: boolean; group: string }> | null> {
-  const response = await fetch('/api/v2/account/preferences/camera-preferences', { cache: 'no-store', credentials: 'same-origin' });
+export async function fetchCameraPreferences(signal?: AbortSignal): Promise<Record<string, { displayName: string; favorite: boolean; group: string }> | null> {
+  const response = await fetch('/api/v2/account/preferences/camera-preferences', { cache: 'no-store', credentials: 'same-origin', signal });
   if (!response.ok) throw await parseError(response);
   const result = await response.json() as { value: { cameras?: Record<string, { displayName: string; favorite: boolean; group: string }> } | null };
   return result.value?.cameras ?? null;
 }
 
-export async function saveCameraPreferences(cameras: Record<string, { displayName: string; favorite: boolean; group: string }>): Promise<void> {
+export async function saveCameraPreferences(cameras: Record<string, { displayName: string; favorite: boolean; group: string }>, signal?: AbortSignal): Promise<void> {
   const response = await fetch('/api/v2/account/preferences/camera-preferences', {
     method: 'PUT', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ value: { cameras } }),
+    signal, body: JSON.stringify({ value: { cameras } }),
   });
   if (!response.ok) throw await parseError(response);
+}
+
+export async function patchCameraPreference(id: string, value: { displayName: string; favorite: boolean; group: string },
+  baseline: { displayName: string; favorite: boolean; group: string }, signal?: AbortSignal) {
+  const response = await fetch('/api/v2/account/preferences/camera-preferences', {
+    method: 'PUT', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' }, signal,
+    body: JSON.stringify({ value: { cameras: { [id]: value } }, baseValue: { cameras: { [id]: baseline } }, partial: true }),
+  });
+  if (!response.ok) throw await parseError(response);
+  const result = await response.json() as { value: { cameras?: Record<string, typeof value> } };
+  return result.value.cameras ?? {};
 }
 
 export async function logout(): Promise<void> {
@@ -255,9 +266,9 @@ async function cameraRequest<T>(path: string, init?: RequestInit): Promise<T> {
 
 export const fetchCameras = (signal?: AbortSignal) => cameraRequest<{ cameras: CameraRecord[] }>('/cameras', { signal });
 export const fetchAnalyticsPolicies = (signal?: AbortSignal) => cameraRequest<{ policies: AnalyticsPolicy[] }>('/cameras/analytics-policies', { signal });
-export const updateAnalyticsPolicies = (policies: Array<Omit<AnalyticsPolicy, 'updatedAt'>>) =>
+export const updateAnalyticsPolicies = (policies: Array<Omit<AnalyticsPolicy, 'updatedAt'>>, signal?: AbortSignal) =>
   cameraRequest<{ policies: AnalyticsPolicy[] }>('/cameras/analytics-policies', {
-    method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ policies }),
+    method: 'PUT', signal, headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ policies }),
   });
 const analyticsRequest = async <T>(path: string, init?: RequestInit): Promise<T> => {
   const response = await fetch(`/api/v3${path}`, { cache: 'no-store', credentials: 'same-origin', ...init });
@@ -265,8 +276,8 @@ const analyticsRequest = async <T>(path: string, init?: RequestInit): Promise<T>
   return (await response.json()) as T;
 };
 export const fetchV3AnalyticsPolicies = (signal?: AbortSignal) => analyticsRequest<{ schemaVersion: 2; revision: number; policies: AnalyticsPolicy[] }>('/analytics/policies', { signal });
-export const patchV3AnalyticsPolicies = (baseRevision: number, policies: Array<Omit<AnalyticsPolicy, 'updatedAt'>>) => analyticsRequest<{ schemaVersion: 2; revision: number; policies: AnalyticsPolicy[] }>('/analytics/policies', {
-  method: 'PATCH', headers: { 'Content-Type': 'application/json', 'If-Match': `"${baseRevision}"` }, body: JSON.stringify({ baseRevision, policies }),
+export const patchV3AnalyticsPolicies = (baseRevision: number, policies: Array<Omit<AnalyticsPolicy, 'updatedAt'>>, signal?: AbortSignal) => analyticsRequest<{ schemaVersion: 2; revision: number; policies: AnalyticsPolicy[] }>('/analytics/policies', {
+  method: 'PATCH', signal, headers: { 'Content-Type': 'application/json', 'If-Match': `"${baseRevision}"` }, body: JSON.stringify({ baseRevision, policies }),
 });
 export const requestAnalyticsRuntimePlan = (cameraId: string, profileId: string, kinds: Array<'motion' | 'scene-change' | 'person'>, capabilities: Record<string, unknown>) => analyticsRequest<{ sessionId: string; expiresAt: number; plans: AnalyticsRuntimePlan[] }>('/analytics/runtime-plans', {
   method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ cameraId, profileId, kinds, capabilities }),
@@ -286,30 +297,30 @@ export const fetchAnalyticsJobs = () => clientAdminRequest<{ jobs: AnalyticsJob[
 export const createAnalyticsJob = (value: { cameraId: string; profileId: string; modelId: string; modelSha256: string; nodeId?: string }) => clientAdminRequest<AnalyticsJob>('/analytics-jobs', {
   method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ kind: 'person', ...value }),
 });
-export const detectCamera = (address: string, credentials?: { username: string; password: string }) => cameraRequest<CameraDetection & { credentialsExtracted?: boolean; username?: string; password?: string; authRequired?: boolean }>('/camera-detect', {
-  method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ address, ...(credentials ?? {}) }),
+export const detectCamera = (address: string, credentials?: { username: string; password: string }, signal?: AbortSignal) => cameraRequest<CameraDetection & { credentialsExtracted?: boolean }>('/camera-detect', {
+  method: 'POST', signal, headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ address, ...(credentials ?? {}) }),
 });
-export const discoverOnvif = () => cameraRequest<{ devices: Array<{ address: string; host: string; adapter: 'onvif' }> }>('/onvif/discover', {
-  method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}',
+export const discoverOnvif = (signal?: AbortSignal) => cameraRequest<{ devices: Array<{ address: string; host: string; adapter: 'onvif' }> }>('/onvif/discover', {
+  method: 'POST', signal, headers: { 'Content-Type': 'application/json' }, body: '{}',
 });
-export const probeOnvif = (address: string, credentialsRef: string, credentials?: { username: string; password: string }) => cameraRequest<CameraDetection & { credentialsExtracted?: boolean; username?: string; password?: string }>('/onvif/probe', {
-  method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ address, credentialsRef, ...(credentials ?? {}) }),
+export const probeOnvif = (address: string, credentialsRef: string, credentials?: { username: string; password: string }, signal?: AbortSignal) => cameraRequest<CameraDetection & { credentialsExtracted?: boolean }>('/onvif/probe', {
+  method: 'POST', signal, headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ address, credentialsRef, ...(credentials ?? {}) }),
 });
-export const createCamera = (camera: Partial<CameraRecord> & { username?: string; password?: string }) => cameraRequest<CameraRecord>('/cameras', {
-  method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(camera),
+export const createCamera = (camera: Partial<CameraRecord> & { username?: string; password?: string }, signal?: AbortSignal) => cameraRequest<CameraRecord>('/cameras', {
+  method: 'POST', signal, headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(camera),
 });
-export const updateCameraCredentials = (cameraId: string, username: string, password: string) => cameraRequest<CameraRecord>(`/cameras/${encodeURIComponent(cameraId)}/credentials`, {
-  method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ username, password }),
+export const updateCameraCredentials = (cameraId: string, username: string, password: string, signal?: AbortSignal) => cameraRequest<CameraRecord>(`/cameras/${encodeURIComponent(cameraId)}/credentials`, {
+  method: 'PUT', signal, headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ username, password }),
 });
-export const syncOnvifCamera = (cameraId: string) => cameraRequest<CameraRecord>(`/cameras/${encodeURIComponent(cameraId)}/onvif/sync`, {
-  method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}',
+export const syncOnvifCamera = (cameraId: string, signal?: AbortSignal) => cameraRequest<CameraRecord>(`/cameras/${encodeURIComponent(cameraId)}/onvif/sync`, {
+  method: 'POST', signal, headers: { 'Content-Type': 'application/json' }, body: '{}',
 });
-export const qualifyBrowserDirect = (cameraId: string, profileId: string) => cameraRequest<{
+export const qualifyBrowserDirect = (cameraId: string, profileId: string, signal?: AbortSignal) => cameraRequest<{
   cameraId: string; profileId: string; eligible: boolean; reason: string; checkedAt: number;
 }>(`/cameras/${encodeURIComponent(cameraId)}/profiles/${encodeURIComponent(profileId)}/browser-direct/probe`, {
-  method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}',
+    method: 'POST', signal, headers: { 'Content-Type': 'application/json' }, body: '{}',
 });
-export const deleteCamera = (cameraId: string) => cameraRequest<{ id: string; deleted: boolean }>(`/cameras/${encodeURIComponent(cameraId)}`, { method: 'DELETE' });
+export const deleteCamera = (cameraId: string, signal?: AbortSignal) => cameraRequest<{ id: string; deleted: boolean }>(`/cameras/${encodeURIComponent(cameraId)}`, { method: 'DELETE', signal });
 const onvifOperation = <T>(cameraId: string, operation: string, body: Record<string, unknown>, signal?: AbortSignal) =>
   cameraRequest<T>(`/cameras/${encodeURIComponent(cameraId)}/onvif/${operation}`, {
     method: 'POST', signal, headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
@@ -353,10 +364,10 @@ export const batchSourceCatalog = (items: Array<Record<string, unknown>>) =>
   clientAdminRequest<{ items: SourceCatalogItem[] }>('/source-catalog/batch', {
     method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ items }),
   });
-export const probeSourceProfile = (cameraId: string, profileId: string) =>
+export const probeSourceProfile = (cameraId: string, profileId: string, signal?: AbortSignal) =>
   clientAdminRequest<{ cameraId: string; profile: SourceCatalogItem['profiles'][number] }>(
     `/source-catalog/${encodeURIComponent(cameraId)}/profiles/${encodeURIComponent(profileId)}/probe`, {
-      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}',
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}', signal,
     });
 export interface LegacySourceImportItem { sourceId: string; state: 'linked' | 'ready_to_import' | 'needs_configuration'; reason?: string; cameraId?: string; profileId?: string; }
 export interface LegacySourceImportStatus { schemaVersion: 1; baseRevision: number; items: LegacySourceImportItem[]; count: number; }

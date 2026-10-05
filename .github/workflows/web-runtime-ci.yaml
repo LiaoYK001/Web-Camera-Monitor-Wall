@@ -96,7 +96,7 @@ jobs:
         run: |
           set -euo pipefail
           pnpm exec playwright install --with-deps chromium
-          pnpm exec playwright test -c playwright.local.config.ts --project=chromium performance.spec.ts polling-performance.spec.ts peer-stats-performance.spec.ts control-recovery.spec.ts request-deadline.spec.ts sync-runtime.spec.ts sync-resilience.spec.ts offline-workspace.spec.ts program-snapshot.spec.ts nvr-evidence.spec.ts settings-details.spec.ts about-updates.spec.ts native-update-work.spec.ts interaction-flow.spec.ts mixer-runtime.spec.ts audio-preferences.spec.ts playback-optimization-runtime.spec.ts online-sources.spec.ts device-controls.spec.ts
+          pnpm exec playwright test -c playwright.local.config.ts --project=chromium performance.spec.ts polling-performance.spec.ts peer-stats-performance.spec.ts control-recovery.spec.ts request-deadline.spec.ts sync-runtime.spec.ts sync-resilience.spec.ts offline-workspace.spec.ts program-snapshot.spec.ts nvr-evidence.spec.ts settings-details.spec.ts about-updates.spec.ts native-update-work.spec.ts interaction-flow.spec.ts mixer-runtime.spec.ts audio-preferences.spec.ts playback-optimization-runtime.spec.ts online-sources.spec.ts device-controls.spec.ts camera-registry-recovery.spec.ts scenes-go2rtc-optimization.spec.ts
 
       - name: Explain private platform gates
         shell: bash

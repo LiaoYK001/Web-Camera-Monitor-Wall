@@ -177,6 +177,8 @@ try {
     checks.push('actual installed Android WebView: yt-dlp/Streamlink website source creation, authenticated synthetic MSE frame decoding and device import; backend extraction, not external-site qualification');
   }
   if (process.env.WEBOBS_ANDROID_DEVICE_CONTROLS === '1') {
+    await require('../tests/camera_registry_webui.cjs').exerciseCameraRegistry(page, base);
+    checks.push('actual go2rtc onboarding + preference/draft merge + response-loss recovery');
     await require('../tests/device_controls_webui.cjs').exerciseDeviceControls(page, base);
     checks.push('actual installed Android WebView: authenticated synthetic SOAP PTZ/stop/presets/events and real FFmpeg JPEG decoding; not physical camera/audio qualification');
   }

@@ -42,7 +42,11 @@ exports.exerciseDeviceControls=async(page,base,microphone=false)=>{
     try{await expect(controls).toContainText('正在录音');}
     catch(error){throw new Error('Virtual microphone start failed: '+await page.getByRole('alert').allTextContents(),{cause:error});}
     await expect.poll(()=>page.evaluate(()=>window.deviceStreams.length)).toBeGreaterThan(0);
-    await page.getByRole('button',{name:'返回 Studio',exact:true}).click();
+    await page.getByRole('button',{name:'返回设备与来源',exact:true}).click();
+    await expect(controls).toContainText('录音尚未完成');
+    if(!(await page.evaluate(()=>window.webobsUpdateWork?.().exporting)))throw new Error('Native update must wait for an active microphone');
+    await controls.getByRole('button',{name:'丢弃录音',exact:true}).click();
+    await page.getByRole('button',{name:'返回设备与来源',exact:true}).click();
     await expect.poll(()=>page.evaluate(()=>window.deviceStreams.flatMap(stream=>stream.getTracks()).every(track=>track.readyState==='ended'))).toBe(true);
   }
   console.log('Authenticated product: synthetic SOAP PTZ/stop/presets/events, actual FFmpeg JPEG decoding'+(microphone?' and real Chromium virtual-microphone cleanup':'')+' passed; physical camera/audio qualification remains separate');

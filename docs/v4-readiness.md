@@ -72,6 +72,16 @@ In Settings → Developer diagnostics, enable the current-window control counter
 
 ## Release gate / 发布门槛
 
+2026-10-05 设备接入后续：更换地址清除旧凭据、拒绝晚到检测、提交去重和删除权限失败均有失败回归。
+新增[设备接入恢复](device-onboarding-recovery.md)、20 秒等待、未确认创建的固定 ID 核对、
+账号偏好字段合并和草稿刷新保护；建档、go2rtc 导入及控制/录音向原生安装预检报告在途工作。
+部署及实体设备验收仍独立记录，不能由回归检查推断整体完成。
+
+Device-onboarding follow-up reproduces credential destination, late detection, duplicate
+submission and permission failure. Bounded ownership, fixed-ID unconfirmed recovery,
+account-field merging and draft rebase protect the workflow; in-flight import/control/audio
+work is reported to native installation preflight. Deployment and device qualification remain separate.
+
 Recording maturity now includes durable evidence jobs, audio-preserving exact exports, large media streaming, per-camera playback resource authorization, owner-bound snapshots/leases and conditional resume. On 2026-10-03 the complete isolated Linux product verified a 117 MiB synthetic H.264 export and 16 slow readers with bounded core RSS and responsive authenticated control. Fresh Windows candidates for evidence, media proxy, archive controls, archive audio/visibility, field-aware account preferences and first-read recovery passed native, main-window, ASAR and actual NSIS install/uninstall checks (runs 37118305163, 37120673852, 37122169477, 37125358436, 37134460019 and 37137488039). Compact preference writes subsequently passed their own full Windows candidate (37140271869), supplementing 37 cluster tests, 74 Chromium checks, production Linux API/UI checks and 16 installed MuMu APK checks. These are host/synthetic checks; camera, clean Windows 10/11, Android ARM, prolonged storage and every-row qualification remain open.
 
 录像成熟度已增加持久化证据任务、精确导出声音、大媒体流式传输、逐摄像机回放资源授权、绑定账号的截图/租约及条件续传。2026-10-03 的隔离完整 Linux 产品验证了 117 MiB 合成 H.264 导出，以及 16 个慢速读取下有界核心 RSS 和正常认证控制。证据、媒体代理、归档控制、声音/可见性、账号偏好字段合并及首次读取故障恢复的全新 Windows 候选已通过原生、主窗口、ASAR、实际 NSIS 安装卸载（运行 37118305163、37120673852、37122169477、37125358436、37134460019、37137488039）。紧凑偏好请求随后也通过自己的完整 Windows 候选（37140271869），补充此前 37 项 cluster、74 项 Chromium、Linux 生产 API/UI 及已安装 MuMu APK 的 16 项检查。这些为主机/合成检查，真实摄像机、干净 Windows 10/11、Android ARM、长期存储及全部方向验收仍待完成。

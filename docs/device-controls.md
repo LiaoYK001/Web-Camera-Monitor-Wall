@@ -32,6 +32,10 @@ Synchronization reads at most two unique optional PTZ configurations, prioritizi
 
 点击“录制对讲”请求麦克风，再点击“停止并发送”，或满 10 秒发送。录音格式根据浏览器能力选择 WebM、Ogg 或 MP4；上限 512 KiB，以分片累计大小控制。发送成功只表示片段已提交，设备播放最多 10 秒；“停止设备对讲”发送明确的停止请求。
 
+正常切页需先完成或丢弃录音；在途控制和麦克风工作也会暂停 Windows/Android 的安装预检，
+见[设备接入与恢复](device-onboarding-recovery.md)。Complete or discard a recording before normal
+navigation; active control and microphone work also pause native installation preflight.
+
 丢弃、切换页面、进入后台（包括 Android Activity 生命周期）、麦克风断开、录音初始化/处理失败时都释放麦克风；未发送的录音不上传，返回前台不会自动录音。权限等待最多 20 秒；离开或超时后才取得的麦克风立即关闭。发送等待取消/超时仍保留“结果未确认”语义。
 
 Start a deliberate recording, send it manually or after ten seconds, or discard it. Choose a browser-supported media format and bound cumulative chunks to 512 KiB. Navigation, backgrounding (including Android lifecycle), device disconnect or recording errors release tracks. Late permission grants are closed, and returning never resumes recording. Cancelling a submitted request does not prove that its bounded server playback was cancelled.
