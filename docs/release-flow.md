@@ -24,11 +24,11 @@ Windows 环境              Linux 环境                docker / podman 环境  
                          └───────────────┘        └────────────────────────┘
 ```
 
-一句话：**在 `dev` 上开发 → 在能用的平台上人工验证 → 在容器里做基本测试 → 打包并发布 GHCR 镜像。**
+流程：**在 `dev` 上开发 → 在能用的平台上人工验证 → 在容器里做基本测试 → 指定版本的发布 PR 合入 `main` → 打包并发布。** / Develop on `dev`, validate the available platforms and container, merge a versioned release PR into `main`, then package and publish.
 
 ## 1. 开发 / Develop
 
-功能开发在 `dev` 分支完成，Windows 原生或 Linux 原生都可以：
+功能、bug/安全/依赖修复和文档通过 PR 合入 `dev`，Windows 原生或 Linux 原生都可以；日常提交不自动同步 `main`。 / Features, bug/security/dependency fixes and documentation target `dev`; daily commits do not synchronize `main`.
 
 ```powershell
 .\scripts\dev.ps1            # Windows：编译原生后端 + Vite
@@ -59,6 +59,12 @@ docker compose -f compose.yaml up --build          # 或 podman compose
 ```
 
 跨机器联调可用 `scripts/dev.ps1 -Mode container` 或 `docker save` / `docker load`（见 `docs/development.md` §7）。
+
+## 3.1 发布 PR / Release pull request
+
+实际准备发布新版本（如 `v4.0.5`）时，将指定版本、变更说明和验证结果准备在 `dev`，相关检查通过后创建 **`dev` → `main`** 的发布 PR，标题与说明保持中英文双语。主、次和补丁版本均通过此入口；仅修复某个 bug 或更新文档时仍只合入 `dev`。发布 PR 合并后才从对应的 `main` 提交执行下方打包/Tag/Release 流程。详见[分支职责](versioning-and-branches.md)。
+
+When preparing the requested version, record its identity, changes and validation on `dev`, pass the relevant checks and open a bilingual **`dev` → `main`** release PR. Major, minor and patch releases all use this entry. Ordinary fixes/docs remain on `dev`; after release integration, package, tag and publish from the matching `main` commit.
 
 ## 4. 打包发布 / Package and publish
 

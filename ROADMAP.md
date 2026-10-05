@@ -40,6 +40,10 @@ Canonical milestone names use `v<major>-M<number>`. Historical validation prose 
 
 ## Current position / 当前位置
 
+日常改动只集成到 `dev`；指定新版本发布时，再通过 `dev` → `main` 发布 PR 集成。2026-10-05 规则调整前两分支同在 `5c11fe3`，保留历史，后续开发允许 `dev` 领先 `main`；分支最新提交不代表已经发布。见[分支规则](docs/versioning-and-branches.md)。
+
+Daily work integrates into `dev`; only a versioned release PR promotes it into `main`. Preserve the shared `5c11fe3` baseline from before this policy change, allowing `dev` to advance between releases. A branch tip is not a published version.
+
 ### v4.0 delivery and subsequent patches / v4.0 交付及后续补丁
 
 重启/异常退出/FIFO 修复随 v4.0 统一发布，暂不发布或应用 v3.5 热修。v4.0 之后三主端采用 `vA.B.C` 快速 bug/安全补丁（如 v4.0.1、v4.0.2），优先 Windows/Android：已补齐数字比较、补丁提示和 APK 正式候选/递增版本码构建入口，真实安装升级与 Android 应用内自动 APK 更新仍待验收/实现。扩展平台仍按 `vA.0` 集中交付。详见[补丁规则](docs/patch-releases-v4.md)与[v4 验收](docs/v4-readiness.md)。v4.0 尚未发布。

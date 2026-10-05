@@ -49,7 +49,7 @@ The stable-candidate helper does not publish. Current Android delivery uses the 
 
 ## 发布与验收 / Publication and acceptance
 
-1. 从 `main` 已发布基线分出修复分支，中英文说明问题、影响端与验证结果；审查合回 `main` 并同步 `dev`。
+1. 修复先通过 PR 合入 `dev`，中英文说明问题、影响端与验证结果。实际准备发布指定补丁（如 `v4.0.5`）且检查通过后，再创建 `dev` → `main` 的版本发布 PR；普通修复合并不自动同步 `main`。见[分支规则](versioning-and-branches.md)。 / Review fixes into `dev` first, then promote them through a versioned `dev` → `main` release PR when preparing the requested patch and its checks pass. Ordinary fixes do not synchronize `main`.
 2. 同一 Tag/Release 对齐源码与产物版本，默认完成三主端打包及可用更新元数据。缺失端明确披露，不宣称完整三端补丁。构建器不直接发布，沿用[唯一发布流程](release-flow.md)的审计、私密验证、不可变附件与摘要检查。v4+ 镜像发布须显式提供与主版本匹配的已审查 `WEBOBS_TARGET_MILESTONE`，不能回落到历史 v2 默认值；补丁沿用所属基线门禁。
 3. 记录修复、安全影响、后端/客户端兼容性、迁移与恢复方式。快速交付减少变更范围和等待周期，不跳过完整性、用户确认、数据保留或源码/许可证义务。
 4. v4 基线验收实际 `4.0.0 → 4.0.1 → 4.0.2` 的检测、下载/覆盖安装、数据与会话保留；Windows 加测差量失败回退，Android 加测同密钥/错误密钥与版本码。实际设备/安装与协议夹具分别记录。
