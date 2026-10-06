@@ -160,12 +160,13 @@ python tests/test_release_identity.py                             # 2 passed
 
 其中 1 项（`polling-performance.spec.ts` 的 clients）由本轮“有界请求”改动**有意**变更契约并已重写：原断言依赖“请求永久挂起”，而 `clientAdminRequest` 现在有 20 秒读上限、管理刷新层有 15 秒上限，永久慢读会在时限后按间隔重试。重写后断言读时限、轮次不重叠、隐藏即中止，以及**仅仍在途**的请求在卸载时被中止；该文件 6 项在恢复改动后的最终运行中全部通过。
 
-其余 3 项失败均判定为**本机既有的负载敏感用例**，不是本轮回归，既未声称通过也未修改：
+其余 3 项失败经逐一复现后定性为**用例缺陷或负载敏感**，不是产品回归；两项已在后续轮次修复，修复方式都不放宽断言：
 
-- `usability.spec.ts` 每次失败的具体用例不同（三次运行分别命中 `:133` 防抖搜索、`:337` 账号清除时取消待写、`:166` 批量导入中断保留未处理行），其中 `:133` 在 **git stash 后的干净基线**上同样复现。该文件需要依赖 `page.clock` 的确定性重写，而不是放宽断言。
-- `wall-controls.spec.ts:92` “treats an unprobed camera as pending…”：期望未探测摄像机的 `.audio-track-missing` 含“音频未知”，本机渲染为空；**干净基线同样复现**（1/1）。
+- `wall-controls.spec.ts:92`：用例点击的是**折叠 `<details>` 内的隐藏复选框**，浏览器会静默忽略该点击（受控复选框的 `checked` 从未改变），因此逐路统计行根本没有渲染；同时 `fieldsets` 期望值（1）也是按这个失效状态校准的。实测产品行为正确：展开面板后同一操作会显示“音频未知 + 重试”。用例已改为先展开面板、重试切换直到生效，并把期望修正为 2（偏好面板 + 该来源行）；连续两次运行 2/2 通过。
+- `usability.spec.ts:133`：用例用三次 `fill()` 之间**真实经过的时间**来假定它们落在组件 250ms 防抖窗口内；机器较慢时每个值都会被查询——而这是正确行为（三次独立按键本来就该各自触发）。用例改为在页面内同一个任务里连续更新输入值，从而与机器速度无关；连续三次运行 1/1 通过。
+- `usability.spec.ts` 其余间歇失败（曾命中 `:337`、`:166`）在空闲机器上复跑 22/22 通过，判定为并发负载下的时序抖动：完整套件运行时不应同时跑 Gradle/容器构建等重负载任务。
 
-这些需要在目标环境单独判断是夹具时序还是产品状态显示问题，不能计入本轮通过项，也不能因为 CI 在 Linux 上为绿而假定本机为绿。
+这些结论都来自复现与实测，不能仅凭 CI 在 Linux 上为绿就假定本机为绿。
 
 Chromium fixtures used the locally installed Chrome via `WEBOBS_PLAYWRIGHT_CHROMIUM_EXECUTABLE`; the bundled Playwright Chromium is not installed here. `tests/test_v2_client_control.py` could not run in this environment because the pinned libsodium runtime is unavailable (environment limitation, not a source result) and `android/tests/test_release_version.py` skips on this host.
 

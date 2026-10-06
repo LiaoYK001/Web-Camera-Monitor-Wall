@@ -101,9 +101,29 @@ test('treats an unprobed camera as pending instead of no-audio', async ({ page }
     const wall = mountWall(scene as never, host);
     const wait = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
     await wait(400);
-    const showAll = Array.from(host.querySelectorAll('label')).find((label) => label.textContent?.includes('显示全部来源'))?.querySelector('input');
-    showAll?.click();
-    await wait(100);
+    // The per-source rows live inside collapsed <details> panels. A click on a
+    // hidden control is silently ignored by the browser (the controlled checkbox
+    // never changes), so expand them the way an operator does before interacting.
+    const openPanels = () => host.querySelectorAll('details').forEach((node) => { (node as HTMLDetailsElement).open = true; });
+    const showAllInput = () => Array.from(host.querySelectorAll('label'))
+      .find((label) => label.textContent?.includes('显示全部来源'))?.querySelector('input') as HTMLInputElement | null;
+    // Two deterministic preconditions, both real: the panel must be expanded (a click
+    // on a hidden controlled checkbox is silently ignored) and the asynchronous
+    // account/config hydration must have settled, otherwise the late load can restore
+    // the previous value. Retry the toggle until it sticks and fail if it never does.
+    let showAll: HTMLInputElement | null = null;
+    for (let attempt = 0; attempt < 60 && !showAll?.checked; attempt++) {
+      openPanels();
+      const candidate = showAllInput();
+      if (candidate && candidate.offsetParent !== null) {
+        showAll = candidate;
+        candidate.click();
+        await wait(50);
+      } else {
+        await wait(50);
+      }
+    }
+    if (!showAll?.checked) throw new Error('the show-all-sources control never accepted the selection');
     const pending = Array.from(host.querySelectorAll('.audio-track-missing')).map((node) => node.textContent ?? '').join('|');
     const reprobe = Array.from(host.querySelectorAll('.audio-track-missing button')).filter((button) => button.textContent === '重试').length;
     const meterControls = Array.from(host.querySelectorAll('label')).filter((label) => (label.textContent ?? '').includes('画面电平表')).length;
@@ -111,7 +131,10 @@ test('treats an unprobed camera as pending instead of no-audio', async ({ page }
     wall.unmount();
     return { pending, reprobe, meterControls, fieldsets };
   });
-  expect(result.fieldsets).toBe(1);
+  // One fieldset for the monitor preferences plus the single per-source row that the
+  // show-all filter now includes. Before the interaction was corrected the row was
+  // never rendered, so this assertion could not observe the pending state at all.
+  expect(result.fieldsets).toBe(2);
   expect(result.pending).toContain('音频未知');
   expect(result.reprobe).toBe(1);
   expect(result.meterControls).toBe(0);

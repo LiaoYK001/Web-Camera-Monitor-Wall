@@ -134,16 +134,27 @@ test('debounces search and ignores an earlier response arriving after the curren
   await page.goto(fixture);
   await expect(page.locator('.catalog-record')).toHaveCount(24);
   const search = page.getByRole('textbox', { name: '搜索设备' });
-  await search.fill('s'); await search.fill('sl'); await search.fill('slow');
+  // Type the three values inside one page task: a debounce contract is about values
+  // arriving within the window, and three separate Playwright fills take longer than
+  // the component's 250 ms window on a slow machine (each value is then queried, correctly).
+  await page.evaluate(() => {
+    const input = document.querySelector('input[aria-label="搜索设备"]') as HTMLInputElement;
+    const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!;
+    for (const value of ['s', 'sl', 'slow']) {
+      setter.call(input, value);
+      input.dispatchEvent(new Event('input', { bubbles: true }));
+    }
+  });
   await expect.poll(async () => (await metrics(page)).queries).toContain('slow');
+  const queries = (await metrics(page)).queries;
+  expect(queries).not.toContain('s'); expect(queries).not.toContain('sl');
   await search.fill('大门');
   await expect(page.locator('.catalog-record')).toHaveCount(1);
   await expect(page.locator('.catalog-record')).toContainText('大门入口');
-  // Wait for the intentionally late fixture response: it must not replace the current row.
+  // The intentionally late 'slow' response must not replace the current row.
   await page.waitForTimeout(1000);
   await expect(page.locator('.catalog-record')).toContainText('大门入口');
-  const queries = (await metrics(page)).queries;
-  expect(queries).not.toContain('s'); expect(queries).not.toContain('sl');
+  expect((await metrics(page)).queries.filter((value: string) => value === 'slow')).toHaveLength(1);
 });
 
 test('pages through large catalogs, keeps selection on its page, and recovers from an empty search', async ({ page }) => {
