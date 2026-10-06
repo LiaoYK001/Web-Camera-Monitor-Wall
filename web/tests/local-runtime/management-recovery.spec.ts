@@ -293,6 +293,9 @@ test('clients: a lost approval response is confirmed by the read-only reconcile 
   // The server applied the approval; only the response is lost.
   fixture.holds.add('POST /api/v2/enrollments/enroll-1/approve');
   await page.getByRole('button', { name: '批准并签发' }).click();
+  // Establish server application before advancing the browser's deadline: a
+  // fast virtual clock may otherwise cancel fetch before routing sees it.
+  await expect.poll(() => mutations(fixture, 'POST', '/api/v2/enrollments/enroll-1/approve')).toBe(1);
   await page.clock.runFor(20_050);
   await expect(page.getByRole('alert').filter({ hasText: '批准并签发结果尚未确认' })).toBeVisible();
   const reads = count(fixture, 'GET /api/v2/enrollments');
@@ -314,6 +317,7 @@ test('clients: a lost revoke response is confirmed read-only and never re-sent',
   fixture.holds.add('DELETE /api/v2/clients/client-1');
   await page.getByRole('button', { name: '撤销' }).click();
   await expect(page.getByRole('status').filter({ hasText: '撤销客户端处理中…' })).toBeVisible();
+  await expect.poll(() => mutations(fixture, 'DELETE', '/api/v2/clients/client-1')).toBe(1);
   await page.clock.runFor(20_050);
   await expect(page.getByRole('alert').filter({ hasText: '撤销客户端结果尚未确认' })).toBeVisible();
   await page.getByRole('button', { name: '只读核对结果' }).click();
@@ -336,6 +340,7 @@ test('cluster: a node enrollment is created once and a hung approval is reconcil
   const approve = page.getByRole('button', { name: '批准已提交 CSR' });
   await approve.click();
   await expect(approve).toBeDisabled();
+  await expect.poll(() => mutations(fixture, 'POST', '/api/v2/node-enrollments/reg-1/approve')).toBe(1);
   await page.clock.runFor(20_050);
   await expect(page.getByRole('alert').filter({ hasText: '批准节点结果尚未确认' })).toBeVisible();
   await expect(approve).toBeDisabled();
@@ -352,6 +357,7 @@ test('cluster: a hung backup stays unconfirmed, lists candidates and is not subm
   await page.clock.install();
   fixture.holds.add('POST /api/v2/backup-jobs');
   await page.getByRole('button', { name: '立即备份' }).click();
+  await expect.poll(() => mutations(fixture, 'POST', '/api/v2/backup-jobs')).toBe(1);
   await page.clock.runFor(20_050);
   await expect(page.getByRole('alert').filter({ hasText: '创建备份结果尚未确认' })).toBeVisible();
   await page.getByRole('button', { name: '只读核对结果' }).click();
@@ -419,7 +425,9 @@ test('clients: a hanging management read shows its own bounded error without wip
   await expect(page.locator('.client-list')).toContainText('fixture-laptop');
   await page.clock.install();
   fixture.holds.add('GET /api/v2/clients');
+  const initialReads = count(fixture, 'GET /api/v2/clients');
   await page.getByRole('button', { name: '刷新客户端' }).click();
+  await expect.poll(() => count(fixture, 'GET /api/v2/clients')).toBeGreaterThan(initialReads);
   await page.clock.runFor(15_050);
   await expect(page.getByRole('alert').filter({ hasText: '已配对设备读取失败或超时' })).toBeVisible();
   await expect(page.locator('.enrollment-card')).toContainText('fixture-browser');
@@ -427,7 +435,9 @@ test('clients: a hanging management read shows its own bounded error without wip
   await expect(page.locator('.client-list')).toContainText('fixture-laptop');
   await expect(page.getByRole('alert')).toHaveCount(1);
   fixture.holds.delete('GET /api/v2/clients');
+  const timedOutReads = count(fixture, 'GET /api/v2/clients');
   await page.getByRole('button', { name: '刷新客户端' }).click();
+  await expect.poll(() => count(fixture, 'GET /api/v2/clients')).toBeGreaterThan(timedOutReads);
   await expect(page.getByRole('alert').filter({ hasText: '已配对设备读取失败或超时' })).toHaveCount(0);
 });
 
@@ -491,6 +501,7 @@ test('cluster: the user and volume editors keep drafts through conflict and unco
   fixture.holds.add('PATCH /api/v2/storage-volumes/node-1/vol-1');
   await volumeCard.getByRole('button', { name: '保存存储卷' }).click();
   await expect(volumeCard.getByRole('button', { name: '保存存储卷' })).toBeDisabled();
+  await expect.poll(() => mutations(fixture, 'PATCH', '/api/v2/storage-volumes/node-1/vol-1')).toBe(1);
   await page.clock.runFor(20_050);
   await expect(volumeCard).toContainText('修改存储卷结果尚未确认');
   await expect(volumeCard.getByRole('button', { name: '保存存储卷' })).toBeDisabled();
