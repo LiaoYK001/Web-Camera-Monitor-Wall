@@ -1,4 +1,4 @@
-# v4.0 发布说明（草案）/ v4.0 release notes (draft)
+# v4.0 发布说明 / v4.0 release notes
 
 > **v4.0 发布基线与验证边界。** 本文记录发布范围、候选证据及已知限制；实际 Tag/Release、稳定附件和镜像摘要以 [GitHub v4.0 Release](https://github.com/LiaoYK001/Web-Camera-Monitor-Wall/releases/tag/v4.0) 为准。候选通过后仍须按[发布流程](release-flow.md)经指定版本的发布 PR 合入 `main`，从该提交重新打包并核验；候选构建不会自行发布或移动 `latest`。
 
@@ -52,7 +52,7 @@ These are successful stable-candidate builds, real host installation and isolate
 
 - 三端 `4.0.0` 候选已构建并分别记录验证；候选、源码基线和最终正式附件必须区分，实际发布身份与摘要以 Release 为准。
 - 干净 Windows 10/11 安装、真实摄像机与编码矩阵、物理 Android/ARM 真机、跨设备 LAN、长稳（6/24 小时）与参考设备多路性能预算均未验收。
-- 真实 `v3.5 → v4.0` 数据保留升级、`4.0.0 → 4.0.1 → 4.0.2` 连续安装、差量失败回退与损坏包恢复未实测。
+- Windows `v3.5 → v4.0` 数据保留升级仍待最终候选实测；Android 独立验收包的 `4.0.0 → 4.0.1 → 4.0.2` 已实测，生产包与公开源另列。Windows 差量失败回退与损坏包恢复尚未实测。
 - 浏览器归档回放的 32 MiB 上限是保守工程限制，不是参考设备的实测安全上限；更大文件需要单独验证的有界散列/存储策略。
 - 本机 Docker Desktop 存储栈使容器镜像内的 `test_event_service` p95 预算无法满足（同代码在 tmpfs 上为 1.6–2.3 ms），当前 revision 的镜像需在参考 Linux 主机或 CI 构建。
 - 节点注册批准与本地备份没有服务端请求关联标识，核对无法证明“未创建”；管理界面已明确说明。

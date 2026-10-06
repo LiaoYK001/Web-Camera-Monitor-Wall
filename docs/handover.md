@@ -1,16 +1,16 @@
 # 当前开发交接 / Current development handover
 
-更新：2026-10-06。本文面向 `dev` 的 v4.0 开发，不是发布声明。
+更新：2026-10-06。本文面向 v4.0 基线及后续 `dev` 开发；发行状态以 [v4.0 Release](https://github.com/LiaoYK001/Web-Camera-Monitor-Wall/releases/tag/v4.0) 为准。
 
 ## 1. 当前状态 / Status
 
-- 最新已公开产品说明仍为 [v3.5](release-notes-v3.5.md)；v4.0 尚未发布。当前开发修复留到 v4，不执行 v3.5 热修。
+- 本次基线见 [v4.0 发布说明](release-notes-v4.0.md)：三主端 `4.0.0`、显式 `v4-M1`，包含重启修复与恢复性收尾；不另发 v3.5 热修。历史 v3.5 与不可变标签保留。
 - 容器、Windows x64 Electron、独立 Android 是主要交付端；Qt 参考客户端保持独立、冻结。其他原生平台有源码支持不等于发布资格。
 - 日常改进留在 `dev`；仅在指定版本明确请求且门禁满足后，通过双语版本发布 PR 更新 `main`。不自动提交、推送、打 Tag 或发布。
 - 真机、跨设备 LAN、长时间验收当前暂缓，不得标记通过。同源码完整容器/NSIS/正式签名 Android 候选及真实升级也是独立门禁。
 - 当前实现/验证边界以 [v4 验收矩阵](v4-readiness.md)为准。旧手册的 v3.2 / M7 / 工作区干净 / 无认证 / 未提交脚本等陈述已归入[历史快照](history/handover-pre-v4.md)，不能照旧操作。
 
-This is the current development entry point, not a release approval. Historical successful builds, browser fixtures and synthetic protocol tests do not qualify current installed products, physical cameras or soak behavior.
+This is the development entry point for the v4.0 baseline and subsequent patches; the linked Release determines publication status. Candidate/installed checks remain distinct from physical-camera, clean-system and soak qualification.
 
 ## 2. 第一天 / First day
 
@@ -65,7 +65,7 @@ python android/tests/test_release_version.py
 | 主题 | 当前权威入口 |
 | --- | --- |
 | 版本节奏与发布纪律 | [版本与分支](versioning-and-branches.md)、[v4 补丁规则](patch-releases-v4.md) |
-| v4.0 范围与已知限制 | [v4.0 发布说明（草案）](release-notes-v4.0.md) |
+| v4.0 范围与已知限制 | [v4.0 发布说明](release-notes-v4.0.md) |
 | 容器重启/异常退出 | [恢复契约](container-restart-recovery.md) |
 | Windows 安装/更新 | [Windows 产品](windows-desktop.md)、[可选签名](windows-signing.md) |
 | Android 构建/更新 | [Android 产品](android-client.md)、[更新资格](android-updates.md) |

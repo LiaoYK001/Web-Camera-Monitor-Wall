@@ -2,20 +2,20 @@
 
 Windows 10/11 x64 Electron 完整客户端的实现、构建、自动更新与验收要求见 [Windows 桌面客户端](docs/windows-desktop.md)。当前发行版暂不签名；未来可选签名步骤见 [Windows 代码签名](docs/windows-signing.md)。容器部署继续保留；Windows 安装与实际媒体验收状态在该文档中单独记录。
 
-Android 开发版现在位于 `android/`，复用 WebUI 并连接现有 Windows／容器后端。安装、MuMu/ADB 实测与本机开发自签密钥见 [Android 客户端](docs/android-client.md)。The Android development client reuses the backend WebUI; see the linked documentation for build, installation and emulator validation. It remains separate from the existing Qt client.
+独立 Android 客户端位于 `android/`，复用 WebUI 并连接 Windows／容器后端；v4.0 引入正式自签 APK 与确认安装的应用内更新。安装、MuMu/ADB 实测及签名兼容边界见 [Android 客户端](docs/android-client.md)与[Android 更新](docs/android-updates.md)。The independent Android client connects to existing product backends; v4.0 adds a stable self-signed APK and confirmed in-app updating. It remains separate from the Qt client.
 
 > **安全提示 / Security notice:** v3.3 升级后，仍由 v3.2 或更早 Service Worker 控制的旧 PWA 可能凭本机离线授权继续显示缓存工作区。v3.4 已实现自动替换旧 Worker 并重新加载，以及认证不可用时关闭入口；未联网更新的旧 PWA 仍需按[安全公告](docs/security-advisory-v3.3.md)处理。
 > After upgrading to v3.3, an old PWA controlled by an earlier worker may show a cached workspace under a local offline grant. v3.4 implements automatic worker replacement/reload and fails closed when authentication is unavailable. Disconnected old clients still need the [security advisory](docs/security-advisory-v3.3.md).
 
-一个基于 `libobs` 的 Web 监控墙、Gateway Direct WebRTC 网关、Local-first PWA 与 NVR 项目。当前最新产品版本为 **v3.5**；详见 [v3.5 Release](https://github.com/LiaoYK001/Web-Camera-Monitor-Wall/releases/tag/v3.5)、[v3.5 发布说明](docs/release-notes-v3.5.md) 与 [ROADMAP](ROADMAP.md)。
+一个基于 `libobs` 的 Web 监控墙、Gateway Direct WebRTC 网关、Local-first PWA 与 NVR 项目。本次发布基线为 **v4.0**，三主端统一为 `4.0.0`；实际发行状态与附件以 [v4.0 Release](https://github.com/LiaoYK001/Web-Camera-Monitor-Wall/releases/tag/v4.0) 为准，范围与验证边界见 [v4.0 发布说明](docs/release-notes-v4.0.md)和 [ROADMAP](ROADMAP.md)。
 
-The latest product release is **v3.5**; see the [GitHub release](https://github.com/LiaoYK001/Web-Camera-Monitor-Wall/releases/tag/v3.5), [release notes](docs/release-notes-v3.5.md), and [ROADMAP](ROADMAP.md).
+The release baseline is **v4.0**, with `4.0.0` identities across the three primary targets. See the [GitHub release](https://github.com/LiaoYK001/Web-Camera-Monitor-Wall/releases/tag/v4.0) for publication status and artifacts, and the [release notes](docs/release-notes-v4.0.md) for actual verification and limitations.
 
-**当前开发 / Current development:** `dev` 面向尚未发布的 v4.0；[当前交接](docs/handover.md)、[v4 验收矩阵](docs/v4-readiness.md)及[升级与恢复](docs/upgrade-and-recovery.md)区分已实现、自动化验证与未完成的候选/真机/长稳验收。Development work does not authorize a release or updating `main`. 发布范围、三端身份与已知限制见 [v4.0 发布说明（草案）](docs/release-notes-v4.0.md)（尚未发布）。
+**开发与验收 / Development and qualification:** [当前交接](docs/handover.md)、[v4 验收矩阵](docs/v4-readiness.md)及[升级与恢复](docs/upgrade-and-recovery.md)区分已实现、实际候选验证与未完成的真机/长稳验收。日常改动留在 `dev`，指定版本经审查的发布 PR 才更新 `main`。Routine work stays on `dev`; a reviewed versioned release PR integrates the requested release into `main`.
 
-**下载 Windows x64 安装包：** [WebOBS 3.5.0 UNSIGNED](https://github.com/LiaoYK001/Web-Camera-Monitor-Wall/releases/download/v3.5/WebOBS-3.5.0-windows-x64-UNSIGNED.exe)。按维护者选择暂不签名，完整自动更新已启用：默认检测并下载，用户确认后安装；设置中可关闭。v3.4 开发测试版需手动安装 v3.5 一次。容器镜像为 `ghcr.io/liaoyk001/web-camera-monitor-wall:v3.5`；`latest` 指向同一镜像。
+**正式附件 / Stable artifacts:** [Windows x64 4.0.0 UNSIGNED](https://github.com/LiaoYK001/Web-Camera-Monitor-Wall/releases/download/v4.0/WebOBS-4.0.0-windows-x64-UNSIGNED.exe)、[Android 4.0.0 SELF-SIGNED](https://github.com/LiaoYK001/Web-Camera-Monitor-Wall/releases/download/v4.0/WebOBS-4.0.0-android-SELF-SIGNED.apk)。附件在上述 Release 正式发布后可用。Windows 按维护者选择暂不签名；两端默认检查/下载更新，安装需明确确认，设置中可关闭。开发 Windows 包需一次手动安装；不同签名的 Android 开发 APK 不能直接覆盖升级，先按迁移说明保存数据。容器版本标签为 `ghcr.io/liaoyk001/web-camera-monitor-wall:v4.0`；发布后 `latest` 指向同一摘要。
 
-The unsigned Windows x64 **3.5.0** installer supports complete automatic updates: check/download by default, explicit installation and user-controlled settings. Existing v3.4 development installations require one manual upgrade. The container is available as `ghcr.io/liaoyk001/web-camera-monitor-wall:v3.5` and `latest`; validation boundaries are recorded in the [v3.5 notes](docs/release-notes-v3.5.md).
+Stable **4.0.0** Windows and Android attachments become available when the linked Release is published. Both clients require explicit installation; Android keeps a persistent self-signed identity and cannot replace a differently signed development APK. The container version is `ghcr.io/liaoyk001/web-camera-monitor-wall:v4.0`, promoted with `latest` to the same digest after publication.
 
 ```text
 RTSP camera -> libobs ffmpeg_source -> OBS scene -> H.264/AAC MP4
@@ -39,7 +39,7 @@ Local development uses account authentication too: create the first administrato
 
 项目内置完整 **go2rtc + 官方 WebUI**：各类来源可先整理为内部 RTSP，再接入现有监控墙、MediaMTX、NVR 和 OBS；普通 RTSP 也可直接接入。左侧“go2rtc 管理”支持流管理、设备发现、播放测试、完整配置和日志，服务与 UI 统一打包和启动，配置随已有私有卷保存。详见 [go2rtc 集成与部署](docs/go2rtc-integration.md)。
 
-容器 `mkfifo ... File exists`、重启及异常退出修复将随 **v4.0** 统一交付，暂不发布或应用 v3.5 热修；诊断与验证记录见[容器重启与恢复](docs/container-restart-recovery.md)。Restart/crash fixes are retained for v4.0; no v3.5 hotfix rollout is planned now.
+**v4.0** 包含容器 `mkfifo ... File exists`、重启及异常退出修复；诊断与验证记录见[容器重启与恢复](docs/container-restart-recovery.md)。v4.0 includes the restart/crash fixes; no separate v3.5 hotfix is published.
 
 ## 主要平台与版本节奏 / Primary platforms and release cadence
 

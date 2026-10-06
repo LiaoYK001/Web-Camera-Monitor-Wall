@@ -6,7 +6,7 @@
 
 ### Regular patches from v4.0 / v4.0 起常规补丁（2026-10-05）
 
-三主端从 v4.0 起采用 `vA.B` 功能版本与 `vA.B.C` bug/安全修复补丁，`v4.0` 对应客户端 `4.0.0`，后续可独立发布 `v4.0.1`、`v4.0.2`。扩展架构仍通常只在 `vA.0` 验收。当前重启修复留到 v4.0，暂不发布或应用 v3.5 热修；详见[补丁规则](patch-releases-v4.md)。v4.0 尚未发布。
+三主端从 v4.0 起采用 `vA.B` 功能版本与 `vA.B.C` bug/安全修复补丁，`v4.0` 对应客户端 `4.0.0`，后续可独立发布 `v4.0.1`、`v4.0.2`。扩展架构仍通常只在 `vA.0` 验收。当前重启修复留到 v4.0，暂不发布或应用 v3.5 热修；详见[补丁规则](patch-releases-v4.md)。v4.0 基线的实际发行状态见 [Release](https://github.com/LiaoYK001/Web-Camera-Monitor-Wall/releases/tag/v4.0)。
 
 From v4.0, primary targets use regular minor feature and patch bug/security releases. Patches do not wait for a minor; expansion architectures remain major-milestone targets. The restart fix is held for v4.0, with no v3.5 hotfix rollout.
 
@@ -50,6 +50,7 @@ Release series use `v<major>.<minor>` and, regularly from v4, `v<major>.<minor>.
 | `v3.3` | `v3-M2` + Feedback 6 and account, LAN, and monitor fixes / 反馈 6、账户、局域网与监控修复 | Published historical baseline / 已发布的历史基底 |
 | `v3.4` | `v3-M2` + go2rtc, Scenes, account audio, playback recovery and Windows x64 / go2rtc、Scenes、账号声音、播放恢复与 Windows x64 | Published at `4b2ab5f09b48`; Windows 3.4.0-dev.0 is an explicitly unsigned test installer with no updater metadata / 已发布；Windows 为明确标记的未签名测试安装包，不含更新元数据 |
 | `v3.5` | `v3-M2` + full unsigned Windows updates / 完整未签名 Windows 自动更新 | Published at `e7b6a2ad5f87`; Windows 3.5.0 UNSIGNED, latest.yml, two-version local NSIS upgrade and public GitHub download verified; clean-system/camera qualification separate / 已发布，实际本机升级与公开下载通过，干净系统/摄像机验收另列 |
+| `v4.0` | `v4-M1` + recoverable workflows and three-target patches / 可恢复操作与三主端补丁 | Release baseline `4.0.0`; immutable artifacts/status in [Release](https://github.com/LiaoYK001/Web-Camera-Monitor-Wall/releases/tag/v4.0), actual evidence and limits in [notes](release-notes-v4.0.md) / 发布基线与正式发行状态、验证边界分开记录 |
 
 A milestone name is an engineering gate, not a release date. A release may be cut only from completed, reviewed gates. Public SemVer tags may add a patch component such as `v1.1.1`; an existing tag is immutable.
 

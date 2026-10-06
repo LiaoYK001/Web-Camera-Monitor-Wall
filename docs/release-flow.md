@@ -13,7 +13,7 @@ Hold the current restart fix for v4.0. Subsequent patches retain this flow's aud
 
 v4+ 稳定镜像发布显式设置 `WEBOBS_TARGET_MILESTONE` 为已审查且与主版本匹配的门禁（如实际采用 `v4-M1`），补丁沿用基线门禁；不得从版本号推断“工程已完成”或沿用历史 v2 默认标识。开发/预览镜像按里程碑选择身份：`webobs_dev_identity` 只接受显式登记的开发里程碑（当前 `v4-M1-dev` → `4.0.0-dev`，历史 v2/v3 条目保留），未登记或拼错的里程碑直接失败，不会借用其他产品线的版本号；dev 路径的默认里程碑为当前产品线的 `v4-M1-dev`。The v4+ publisher requires an explicit matching reviewed engineering gate, reused by its patches; development images resolve their identity from an explicit milestone table and fail closed otherwise.
 
-v4.0 的范围、身份、已完成验证与已知限制见 [v4.0 发布说明（草案）](release-notes-v4.0.md)；发布时在该文补全“实际发布与验证”。
+v4.0 的范围、身份、已完成验证与已知限制见 [v4.0 发布说明](release-notes-v4.0.md)；发布时在该文补全“实际发布与验证”。
 
 ```text
 Windows 环境              Linux 环境                docker / podman 环境              发布
