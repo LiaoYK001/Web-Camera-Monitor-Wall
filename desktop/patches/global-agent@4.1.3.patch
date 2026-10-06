@@ -1,0 +1,25 @@
+diff --git a/dist/classes/Agent.js b/dist/classes/Agent.js
+index 4a31fe58d6b2226252e8f130486f7a865b7c7aa8..8aac249619e4bba774461e1e2ba352b4f45632d3 100644
+--- a/dist/classes/Agent.js
++++ b/dist/classes/Agent.js
+@@ -153,7 +153,10 @@ class Agent {
+         // > are also accepted:
+         // >   ca, cert, ciphers, clientCertEngine, crl, dhparam, ecdhCurve, honorCipherOrder,
+         // >   key, passphrase, pfx, rejectUnauthorized, secureOptions, secureProtocol, servername, sessionIdContext.
+-        if (configuration.secureEndpoint) {
++        // pnpm patch: upstream 4.x tests configuration.secureEndpoint, which this
++        // agent never sets because it replaces addRequest entirely, so every TLS
++        // option (ca/rejectUnauthorized/servername) was dropped on proxied HTTPS.
++        if (this.protocol === 'https:') {
+             // Determine servername - Node.js doesn't allow IP addresses as servername
+             const host = (_f = configuration.servername) !== null && _f !== void 0 ? _f : connectionConfiguration.host;
+             const servername = net_1.default.isIP(host) ? undefined : host;
+@@ -173,6 +176,8 @@ class Agent {
+                 secureOptions: configuration.secureOptions,
+                 secureProtocol: configuration.secureProtocol,
+                 servername,
++                // Keep the real destination for certificate/hostname verification.
++                host: connectionConfiguration.host,
+                 sessionIdContext: configuration.sessionIdContext,
+             };
+         }
