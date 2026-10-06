@@ -13,6 +13,7 @@
 /web/dist/
 /web/go2rtc-dist/
 /web/test-results/
+/web/test-results-*/
 /web/playwright-report/
 /clients/build/
 /clients/build-*/

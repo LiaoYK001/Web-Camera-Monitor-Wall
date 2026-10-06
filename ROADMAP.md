@@ -1,6 +1,6 @@
 # Roadmap / 项目路线图
 
-> Last updated / 最后更新：2026-10-05
+> Last updated / 最后更新：2026-10-06
 
 This roadmap describes milestone order and acceptance gates, not promised release dates. Priorities may change based on validation results and maintainer capacity.
 
@@ -8,31 +8,21 @@ This roadmap describes milestone order and acceptance gates, not promised releas
 
 ## Local development access and configuration policy / 本地开发访问与配置策略
 
-本项目当前及后续默认的本地开发入口（`http://127.0.0.1:5173` 的 Vite
-前端与回环 Docker API）**不要求用户名或密码**。基础 `compose.yaml` 固定关闭
-集群/RBAC 认证；只有维护者明确选择认证/生产 overlay、启用 HTTPS 远程部署或
-后续需求明确要求时，才启用登录 Session/Basic 兼容。网络故障、Vite 代理暂时
-不可用或后端重启不得被误报为“需要密码”，页面应显示服务不可用并允许重试。
+默认本地 Vite 入口与回环 Docker API 使用产品账号认证：基础 Compose 启用账号/RBAC
+控制面、关闭旧式 Basic Auth，首次部署在 WebUI 创建管理员，没有预置用户名或密码。
+示例环境文件应与此一致；旧环境中显式的 `WEBOBS_CLUSTER_ENABLED=false` 需按
+[升级与恢复](docs/upgrade-and-recovery.md)迁移，不自动覆盖用户配置。
+网络故障、代理不可用与会话失效须区分；不得以关闭认证来绕过后端错误。
 
-用户配置不按登录用户名分叉。Local-first PWA 使用浏览器本机加密的配置档案，
-用户可以在全局“配置”菜单选择、保存多个档案，并在“系统设置”中创建有界备份、
-导出 JSON、导入和恢复。档案只保存脱敏的 Scene v5、布局和本机偏好；导出/备份
-永远不包含密码、Token、Secret、RTSP/HTTP 端点、userinfo、文件路径或客户端地址。
-服务器生产配置仍由管理员 API/SQLite 管理，不会因为选择本机档案而被覆盖。
+账号工作区和声音/监控偏好与浏览器本机加密布局档案是不同层级。脱敏导出仅用于安全布局
+迁移，不包含凭据、Token、Secret、摄像机端点或文件路径，也不代替完整服务端备份。
+本机档案和离线授权不能绕过当前账号会话、资源权限或失效授权。
 
-The default local development entry (`http://127.0.0.1:5173` Vite frontend plus
-the loopback Docker API) **does not require a username or password**. The base
-`compose.yaml` keeps cluster/RBAC authentication disabled. Login Session/Basic
-compatibility is enabled only by an explicit authentication/production overlay,
-remote HTTPS deployment, or a later requirement. A proxy outage or backend
-restart must show an unavailable/retry state rather than a password form.
+The default local frontend/API uses the authenticated account gate and first-administrator setup,
+not anonymous access. Local profiles, account preferences and encrypted device queues are distinct;
+a redacted layout bundle is not a server backup or authentication bypass. Keep loopback defaults
+and explicitly configure HTTPS/Origin/certificates for remote deployments.
 
-Configuration is selected by browser-local profiles, not split by login user.
-Profiles are encrypted locally and can be selected from the global Config menu;
-Settings provides bounded backup, JSON export, import, and restore. Bundles contain
-only redacted Scene v5/layout/local preferences and never credentials, tokens,
-secrets, endpoints, userinfo, paths, or client addresses. Selecting a profile never
-overwrites the server configuration.
 
 Canonical milestone names use `v<major>-M<number>`. Historical validation prose may retain its original short `M<number>` label so prior evidence remains traceable; the mapping is defined in [docs/versioning-and-branches.md](docs/versioning-and-branches.md).
 
@@ -49,6 +39,15 @@ Daily work integrates into `dev`; only a versioned release PR promotes it into `
 重启/异常退出/FIFO 修复随 v4.0 统一发布，暂不发布或应用 v3.5 热修。v4.0 之后三主端采用 `vA.B.C` 快速 bug/安全补丁（如 v4.0.1、v4.0.2），优先 Windows/Android：已补齐数字比较、补丁提示和 APK 正式候选/递增版本码构建入口，以及 [Android 应用内验证更新](docs/android-updates.md)。自动检查/下载默认开启且可关闭，安装需用户和系统确认。隔离包实际升级与公开源/生产包/真机验收分开记录；扩展平台仍按 `vA.0` 集中交付。详见[补丁规则](docs/patch-releases-v4.md)与[v4 验收](docs/v4-readiness.md)。v4.0 尚未发布。
 
 The current restart fixes are held for v4.0. Subsequent primary-target A.B.C patches include numeric comparison, patch presentation, stable APK candidate/versionCode tooling and configurable verified Android in-app downloading with user/system-confirmed installation. Isolated actual upgrades remain distinct from public-feed/production/physical-device qualification; expansion platforms retain major-milestone cadence.
+
+#### v4.0 当前状态与已知限制 / Current v4.0 status and known limits
+
+- **工程门禁**：v4+ 稳定构建必须显式提供已审查且与主版本匹配的 `WEBOBS_TARGET_MILESTONE`（当前约定 `v4-M1`），不能由版本号或历史 v2/v3 默认值推断，见[发布流程](docs/release-flow.md)与[补丁规则](docs/patch-releases-v4.md)。
+- **三主端**：容器（linux/amd64）、Windows x64（Electron/NSIS，按维护者决定暂不签名）与独立 Android（需外部持久自签密钥的正式候选）各有独立构建与验收入口；源码支持不代表平台已验收。
+- **本轮已完成（开发/自动化层）**：依赖审计门禁恢复并通过（含桌面 `global-agent` 升级 + 已记录补丁，见[依赖安全](docs/dependency-security.md)）；管理操作在途锁、未确认结果核对与草稿保护（含 ClientsPanel）；S3 归档回放的读取上限、总时限、取消与选择归属（见[归档回放边界](docs/archive-playback.md)）；脱敏有界支持报告（见[支持诊断](docs/support-diagnostics.md)）；安全更新后的诚实损失提示与显式同步（见 [PWA 更新连续性](docs/pwa-update-continuity.md)）。
+- **尚未验收**：同一 revision 的三端完整候选、真实升级与回退、真机/摄像机/局域网、长时间与性能预算，以及最大归档片段的真机内存边界。未完成项继续按 [v4 验收矩阵](docs/v4-readiness.md)逐行记录，不用自动化结果替代。
+
+- Engineering gate: an explicit reviewed v4 milestone is required for stable v4+ builds. Primary targets keep independent build/qualification entries. Current development added the dependency audit fix, unified management in-flight/reconciliation guards, bounded verified archive playback, bounded redacted support diagnostics and honest PWA update continuity. Revision-matched candidates, real upgrades, physical devices, LAN and long-run budgets remain unqualified.
 
 ### v3.5 published / v3.5 已发布（2026-10-02）
 

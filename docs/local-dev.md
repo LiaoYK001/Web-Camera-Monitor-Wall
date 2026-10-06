@@ -6,14 +6,16 @@ with Docker Compose, and optionally run the Vite frontend with hot reload.
 
 这两个入口脚本只针对当前 `dev` 工作树，不会创建 Tag、登录 GHCR 或执行
 `docker push`。默认使用本地镜像 `webobs:dev`，后端由 Docker Compose 运行，
-前端可选用 Vite 热更新。基础 Compose 只绑定主机回环地址并关闭集群
-RBAC 认证，因此本地开发不会要求用户名和密码；不要把该基础配置暴露到局域网。
+前端可选用 Vite 热更新。基础 Compose 只绑定主机回环地址，默认启用账号/RBAC 控制面
+并关闭旧式 Basic Auth。首次在 WebUI 创建管理员；之后使用已有账号登录，没有预置密码。
+`5173` 的 Vite 代理不会绕过认证，也不要把本地 HTTP/首次设置入口直接暴露到局域网。
 
-如果浏览器曾经停留在旧的登录页面，刷新 `5173` 后会重新探测
-`/api/v1/auth/session`。探测失败只显示“本地服务暂不可用”，不会把网络错误当成
-需要密码；确认 `docker compose ps` 中的服务健康后点击重试即可。若页面仍显示登录
-表单，检查是否误用了 `compose.m6-auth.yaml` 或生产 overlay；它们是显式开启认证的
-测试/远程部署配置，基础本地开发不使用它们。
+Local development uses the same authenticated account gate as the product. Create the first
+administrator in WebUI; a local profile or offline device grant is not a login bypass.
+
+后端不可达或认证服务不可用时，先检查 `docker compose ps` 和健康探针，再重试；
+不要通过关闭控制面来修复登录。旧 `.env` 的 `WEBOBS_CLUSTER_ENABLED=false` 会
+覆盖 Compose 的 `true` 默认值，需显式检查并迁移，见[升级与恢复](upgrade-and-recovery.md)。
 
 ### 本机配置档案与备份
 
@@ -104,9 +106,9 @@ Playwright 测试；`test --full`（PowerShell 为 `test -Full`）运行完整�
 私有 RTSP、证书、账号、录像和浏览器 Profile 只能放在 Git 忽略的 `.env`
 或仓库之外；脚本不会打印 `.env` 内容，也不会把私有门禁原始结果上传。
 
-若要在本机验证登录/Session/RBAC，请按部署文档创建 `secrets/` 下的凭据文件，
-并额外使用 `compose.m6-auth.yaml` 覆盖；该覆盖会重新启用集群认证。基础开发模式
-没有预置用户名或密码。
+登录/Session/RBAC 已是基础开发模式的一部分，不再需要用凭据文件激活账号登录。
+`compose.m6-auth.yaml` 可作为显式 loopback 认证覆盖；远程部署按
+[容器部署](docker-deployment.md)配置生产 HTTPS/Origin/Secret。不要在仓库提交私密配置。
 
 不要用 `docker compose down --volumes` 做日常停止操作，否则会删除本地
 Registry、Scene 和 Session 数据。

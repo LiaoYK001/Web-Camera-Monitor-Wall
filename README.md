@@ -11,6 +11,8 @@ Android 开发版现在位于 `android/`，复用 WebUI 并连接现有 Windows�
 
 The latest product release is **v3.5**; see the [GitHub release](https://github.com/LiaoYK001/Web-Camera-Monitor-Wall/releases/tag/v3.5), [release notes](docs/release-notes-v3.5.md), and [ROADMAP](ROADMAP.md).
 
+**当前开发 / Current development:** `dev` 面向尚未发布的 v4.0；[当前交接](docs/handover.md)、[v4 验收矩阵](docs/v4-readiness.md)及[升级与恢复](docs/upgrade-and-recovery.md)区分已实现、自动化验证与未完成的候选/真机/长稳验收。Development work does not authorize a release or updating `main`.
+
 **下载 Windows x64 安装包：** [WebOBS 3.5.0 UNSIGNED](https://github.com/LiaoYK001/Web-Camera-Monitor-Wall/releases/download/v3.5/WebOBS-3.5.0-windows-x64-UNSIGNED.exe)。按维护者选择暂不签名，完整自动更新已启用：默认检测并下载，用户确认后安装；设置中可关闭。v3.4 开发测试版需手动安装 v3.5 一次。容器镜像为 `ghcr.io/liaoyk001/web-camera-monitor-wall:v3.5`；`latest` 指向同一镜像。
 
 The unsigned Windows x64 **3.5.0** installer supports complete automatic updates: check/download by default, explicit installation and user-controlled settings. Existing v3.4 development installations require one manual upgrade. The container is available as `ghcr.io/liaoyk001/web-camera-monitor-wall:v3.5` and `latest`; validation boundaries are recorded in the [v3.5 notes](docs/release-notes-v3.5.md).
@@ -26,11 +28,12 @@ RTSP camera -> libobs ffmpeg_source -> OBS scene -> H.264/AAC MP4
 
 针对 `dev` 的本地快速启动、Vite 热更新、调试、测试和本地 hotfix，请使用 [Local `dev` loop](docs/local-dev.md) 及 `scripts/dev-local.ps1` / `scripts/dev-local.sh`；它们只使用本地 Docker 镜像，不会发布 GHCR。
 
-本地 `5173` 开发入口默认不需要用户名或密码：基础 Compose 仅绑定回环地址并关闭
-集群/RBAC 认证。只有显式使用认证/生产 overlay 或后续明确要求时才显示登录页；
-Vite 代理或后端重启时页面会显示“本地服务暂不可用”，不会误判为需要密码。配置不按
-用户名区分，工作区全局“配置”菜单可选择本机加密档案；“系统设置”支持保存、备份、
-导出 JSON、导入和恢复。导出包严格脱敏，不含凭据、Token、Secret、端点或文件路径。
+本地 `5173` 开发入口与基础 Compose 使用相同的账号认证：默认启用账号/RBAC 控制面，
+首次使用需在 WebUI 创建管理员，没有预置用户名或密码。基础 Compose 只绑定回环；
+生产/LAN 部署仍需 HTTPS、Origin 和证书配置。旧 `.env` 中的
+`WEBOBS_CLUSTER_ENABLED=false` 会覆盖新默认值，升级前请按[迁移说明](docs/upgrade-and-recovery.md)检查。
+本机加密档案不是账号凭据；导出包严格脱敏，不含密码、Token、Secret、端点或文件路径。
+Local development uses account authentication too: create the first administrator; no default credentials exist.
 
 `WEBOBS_SCENE_FILE` 默认指向 `/config/webobs/scene.json`。空配置首次启动会创建空 Scene/Camera Registry，直接在 WebUI 的“设备管理”中添加设备；`WEBOBS_RTSP_URL` 只保留为一次性兼容 bootstrap，不再是部署必填项。Scene v5 只保存 Camera/Profile ID，凭据通过未提交 Git 的 Secret 引用解析。
 
@@ -119,9 +122,9 @@ ${EDITOR:-vi} .env
 docker compose up --build --abort-on-container-exit
 ```
 
-正常部署无需填写 RTSP bootstrap。启动后打开 WebUI，进入“设备管理”，可以手工添加 Camera Source Adapter 或进行 ONVIF 发现；地址禁止内嵌账号密码。若使用旧式 `WEBOBS_RTSP_URL` bootstrap，则默认输出到 `recordings/webobs-<UTC timestamp>.mp4`，停止时会完成 muxer 和 MP4 封装。
+正常部署无需填写 RTSP bootstrap。启动后打开 WebUI，首次创建管理员（之后正常登录），再进入“设备管理”，可以手工添加 Camera Source Adapter 或进行 ONVIF 发现；地址禁止内嵌账号密码。若使用旧式 `WEBOBS_RTSP_URL` bootstrap，则默认输出到 `recordings/webobs-<UTC timestamp>.mp4`，停止时会完成 muxer 和 MP4 封装。
 
-Compose 只把 `8080` 发布到主机 `127.0.0.1`。启动后在本机浏览器打开 `http://127.0.0.1:8080/` 即可使用场景编辑器，也可直接检查控制接口：
+基础 Compose 的 HTTP 和媒体端口默认只绑定主机 `127.0.0.1`（具体映射见 `compose.yaml`）。在本机浏览器打开 `http://127.0.0.1:8080/` 完成账号设置或登录后使用工作台；健康/就绪探针可匿名检查，其他控制/媒体接口需认证：
 
 ```bash
 curl http://127.0.0.1:8080/api/v1/health
