@@ -15,6 +15,8 @@ v4.0 是整个监控产品的成熟度版本：把已有的发现、接入、编
 
 v4+ 稳定发布不得从版本号推断工程门禁；`v4.0.0` 之后的补丁沿用基线门禁（`4.0.1`、`4.0.2` …）。三端身份由 `tests/test_release_identity.py` 的 `TargetIdentityConsistencyTest` 与 `android/tests/test_release_version.py` 共同约束：同一 `A.B.C` 必须被容器与 Android 助手一致接受，Windows 打包必须拒绝“稳定版本不带 -Release”与“-dev 版本带 -Release”，未知的 v4 开发里程碑必须 fail-closed。
 
+本地容器发布器的 OCI `org.opencontainers.image.version` 使用解析后的 `4.0.0`，与 Dockerfile/WebUI/Core 一致；`v4.0` 保留为外部 Git/Release/镜像标签，不覆盖镜像内三位版本。The local publisher keeps the normalized build version in OCI metadata and the release tag as the external alias.
+
 ## 2. 范围 / Scope
 
 - **容器重启与异常退出**：临时 FIFO/运行目录按启动隔离、停服与启动失败统一清理；异常退出不再阻断下次启动。见[容器重启与恢复](container-restart-recovery.md)。

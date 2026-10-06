@@ -127,7 +127,7 @@ docker buildx build --platform linux/amd64 --file docker/Dockerfile \
   --build-arg "WEBOBS_BUILD_VERSION=${build_version}" \
   --build-arg "WEBOBS_BUILD_MILESTONE=${build_milestone}" \
   --label "org.opencontainers.image.revision=${revision}" \
-  --label "org.opencontainers.image.version=${version}" \
+  --label "org.opencontainers.image.version=${build_version}" \
   "${cache_arguments[@]}" --provenance=mode=max --sbom=true "${tags[@]}" --push .
 
 rm -rf -- "$cache_root"
