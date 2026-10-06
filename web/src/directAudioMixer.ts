@@ -1,3 +1,4 @@
+import { observeAudio } from './diagnosticsRuntime';
 import type { SceneSource } from './types';
 
 export type DirectAudioState = 'disabled' | 'running' | 'suspended' | 'blocked';
@@ -522,6 +523,7 @@ export class DirectAudioMixer {
     }
     const snapshot: DirectAudioSnapshot = { state, inputCount, level: this.level, sources };
     this.latest = snapshot;
+    observeAudio(snapshot);
     this.onSnapshot(snapshot);
   }
 }

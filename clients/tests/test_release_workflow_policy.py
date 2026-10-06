@@ -56,6 +56,25 @@ class NativeReleaseWorkflowPolicyTests(unittest.TestCase):
         self.assertNotIn("gh release create", self.image_text)
         self.assertIn("scripts/release-image-local.sh", self.image_text)
 
+    def test_container_candidate_is_manual_audited_and_never_pushed(self) -> None:
+        candidate = self.image_text.split("  container-candidate:\n", 1)[1]
+        self.assertIn("if: inputs.container_candidate", candidate)
+        self.assertIn("needs: audit", candidate)
+        self.assertIn("webobs_release_identity", candidate)
+        self.assertIn("docker buildx build --load --platform linux/amd64", candidate)
+        self.assertNotIn("--push", candidate)
+        self.assertNotIn("docker login", candidate)
+        self.assertIn('python3 tests/test_go2rtc_integration.py --image "$CANDIDATE_IMAGE"', candidate)
+        self.assertIn('python3 tests/container_restart_runtime.py --image "$CANDIDATE_IMAGE" --composite', candidate)
+        self.assertIn('published:false', candidate)
+        self.assertIn('sha256sum webobs-container-candidate.tar.gz webobs-container-build-cache.tar.gz', candidate)
+        self.assertIn('--cache-to type=local,dest=build/container-build-cache,mode=min', candidate)
+        self.assertIn('physical cameras, power cuts and ARM not qualified', candidate)
+
+    def test_public_ci_runs_each_isolated_maturity_suite(self) -> None:
+        for suite in ('management', 'archive', 'continuity', 'support-diagnostics'):
+            self.assertIn('pnpm test:' + suite + '\n', self.web_text)
+
     def test_pwa_platform_gates_are_local_not_self_hosted(self) -> None:
         self.assertNotIn("runs-on: [self-hosted", self.web_text)
         self.assertNotIn("runs-on: [self-hosted", self.image_text)
@@ -108,6 +127,11 @@ class NativeReleaseWorkflowPolicyTests(unittest.TestCase):
         release_script += (ROOT / "scripts" / "release-identity.sh").read_text(encoding="utf-8")
         windows_release_script = (ROOT / "scripts" / "release-image-local.ps1").read_text(encoding="utf-8")
         for marker in ("3.1.0-dev", "v3-M2-dev", "v3-M2", "v3-M1", "v2-M7", "v2-M6", "v2-M5"):
+            self.assertIn(marker, release_script)
+        # The current line's development images select their identity through the same
+        # helper as stable publication; an unreviewed milestone must fail closed.
+        self.assertIn('webobs_dev_identity', release_script)
+        for marker in ("v4-M1-dev", "4.0.0-dev"):
             self.assertIn(marker, release_script)
         self.assertIn(r'^v3\.[1-9][0-9]*(\.|$)', release_script)
         self.assertIn("build_version", release_script)

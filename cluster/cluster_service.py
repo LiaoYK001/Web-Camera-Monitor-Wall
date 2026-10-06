@@ -721,14 +721,18 @@ class ClusterStore:
             if user is None:
                 raise ApiError(401, "account_rejected", "account is unavailable")
             if write:
-                request = require_exact_object(value, {"value", "baseValue", "partial", "removedPaths"} if kind == "monitor-view" else {"value"}, {"value"})
+                mergeable = kind in {"monitor-view", "camera-preferences"}
+                allowed = {"value", "baseValue", "partial"} if mergeable else {"value"}
+                if kind == "monitor-view":
+                    allowed.add("removedPaths")
+                request = require_exact_object(value, allowed, {"value"})
                 body = request["value"]
                 if not isinstance(body, dict):
                     raise ApiError(400, "invalid_preference", "preference must be an object")
                 partial = "partial" in request or "removedPaths" in request
                 if partial and (request.get("partial") is not True or "baseValue" not in request):
                     raise ApiError(400, "invalid_preference", "partial preferences require a baseline and explicit partial mode")
-                if kind == "monitor-view":
+                if mergeable:
                     validate_monitor_preference(body)
                 if "baseValue" in request:
                     validate_monitor_preference(request["baseValue"])

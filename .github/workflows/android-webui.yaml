@@ -1,7 +1,7 @@
 name: Android WebUI development APK
 on:
   pull_request:
-    paths: ['android/**', 'docs/android-client.md', '.github/workflows/android-webui.yaml']
+    paths: ['android/**', 'docs/android-client.md', 'docs/android-updates.md', '.github/workflows/android-webui.yaml']
   workflow_dispatch:
 permissions:
   contents: read

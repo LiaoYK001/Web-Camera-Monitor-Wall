@@ -10,11 +10,11 @@ Android 在 **go2rtc 管理 → 添加网站与直播源** 选择 yt-dlp/Streaml
 
 - Android 10/API 29 及以上；纯 Java/WebView，不含架构专属原生库。
 - 服务器选择、持久 Cookie/页面存储、原生菜单、可关闭的保持亮屏、横竖屏、视频全屏、最多四个共享会话的投影子页面。Android 投影使用应用内窗口，不承诺同时在多个物理屏幕显示。后台通过有限的固定可见性信号暂停视频/音轨连接及监听，保留草稿和偏好，回前台后恢复监看；没有向网页开放原生命令接口。
-- 关于页面显示 APK/WebView 版本、仓库、反馈和发布记录。手动检查最近 20 个发布中的最高正式 APK，精确匹配版本/附件，区分补丁/功能/主版本并展示说明；跳过草稿、预发布、开发 APK、相同及旧版。仅后端发布不遮住 Android 补丁。本阶段通过发布页面下载并由系统确认安装，没有新增应用内自动 APK 下载/安装；WebUI 随服务器/PWA 更新。
-- 文件导入使用系统文件选择器。麦克风对讲先询问用户，再请求系统录音权限，只授权当前服务器的音频采集。未请求摄像头、全盘存储、未知来源安装或后台服务权限。
+- 关于页面显示 APK/WebView 版本、仓库、反馈和发布记录，区分补丁/功能/主版本并展示说明。默认前台每 6 小时检查最近 20 个发布中的最高正式 APK，通过系统下载管理器下载并校验；自动检查/下载和仅 Wi-Fi 可关闭。安装需用户及系统确认，未保存草稿会阻止安装，支持取消和进程重启后的任务恢复。缺少验证信息时保留人工发布页面入口；WebUI 随服务器/PWA 更新。完整契约见 [Android 更新](android-updates.md)。
+- 文件导入使用系统文件选择器。麦克风对讲先询问用户，再请求系统录音权限，只授权当前服务器的音频采集。用户主动安装更新时才引导授权“安装此来源”；未请求摄像头、全盘存储或后台服务权限。
 - 持久账号偏好仍由后端保存；系统自动播放限制可能要求一次触摸才能恢复声音。输出设备选择受 Android/WebView 能力限制。
 
-Android 10+ uses the system WebView with no native ABI-specific dependencies. Connection/session storage, rotation, full-screen video, limited projector dialogs, file import, explicit microphone consent, About and manual release checks are included. Automatic APK installation, recording downloads/exports and physical multi-display projection are not qualified in this first development build.
+Android 10+ uses the system WebView with no native ABI-specific dependencies. Connection/session storage, rotation, video/projector dialogs, file import and explicit microphone consent are included. About supports configurable automatic checking/downloading, integrity and installed-signer verification, recovery and user-confirmed system installation. Public-feed, physical-device, recording-download/long-export and multi-display qualification remain separate.
 
 ## 安装、服务器与证书 / Install, server and certificates
 
@@ -49,7 +49,11 @@ Install a supported JDK and the official Android SDK command-line tools. Install
 ./android/scripts/build-android.ps1 -JavaHome 'D:\zulu' -SdkRoot "$env:LOCALAPPDATA\WebOBS-Android\sdk"
 # Optional explicit emulator installation; never selects an arbitrary device:
 ./android/scripts/build-android.ps1 -JavaHome 'D:\zulu' -Serial '127.0.0.1:16384' -Adb $adb
+# 正式候选：-Release 需要仓库外的持久自签密钥环境变量，版本码由 A*1000000+B*1000+C 推导
+./android/scripts/build-android.ps1 -Version 4.0.0 -Release -JavaHome 'D:\zulu' -SdkRoot "$env:LOCALAPPDATA\WebOBS-Android\sdk"
 ```
+
+稳定候选的版本码、签名与未验收边界见[更新资格](android-updates.md)与 [v4.0 发布说明（草案）](release-notes-v4.0.md)；三端身份一致性由 `tests/test_release_identity.py` 约束。
 
 其他平台可在 `android/` 使用 `./gradlew :app:testDebugUnitTest :app:lintDebug :app:assembleDebug`。Windows 可使用 `gradlew.bat`。当前 CI 使用 Windows runner，与已校验的 Windows AAPT2 依赖匹配；新增平台依赖应经审核后更新校验清单。
 
@@ -76,9 +80,9 @@ Preserve the same external key and configure the four private environment values
 ./android/scripts/build-android.ps1 -Release -Version 4.0.1 -JavaHome 'D:\zulu'
 ```
 
-运行 release JUnit、lint、APK 构建与签名核验，输出 `build/android/out/WebOBS-A.B.C-android-SELF-SIGNED.apk`、`.sha256` 和 `.json` 候选回执（版本码、摘要、证书摘要、检查项、`published:false`）。这些只证明构建/签名，不是安装升级回执；构建器不创建 GitHub Release、不上传、不修改 feed。正式发布继续使用审查、对应源码/许可证与不可变附件流程。Android 自动 APK 下载/安装、同密钥实际两版覆盖升级与真机验收仍单独追踪于 [v4 验收](v4-readiness.md)。
+运行 release JUnit、lint、APK 构建与签名核验，输出 `build/android/out/WebOBS-A.B.C-android-SELF-SIGNED.apk`、`.sha256` 和 `.json` 候选回执（版本码、摘要、证书摘要、检查项、`published:false`）。这些只证明构建/签名，不是安装升级回执；构建器拒绝错误包名/版本的输出，不创建 GitHub Release、不上传、不修改 feed。正式发布继续使用审查、对应源码/许可证与不可变附件流程。[实际升级脚本](android-updates.md)使用独立验收包验证系统下载、同密钥两次覆盖安装及故障路径，公开源/生产包/真机验收仍由 [v4 验收](v4-readiness.md)跟踪。
 
-The release variant runs unit/lint/build/signature checks and emits a candidate APK, SHA-256 and receipt. No publication occurs. Installed APK upgrades, in-app automatic downloading/installing and physical-device qualification remain separate gates.
+The release variant checks unit/lint/build/signature and the actual output identity, then emits an APK candidate, SHA-256 and receipt without publishing. The isolated update helper exercises real system downloading and successive user-confirmed installation. Public-feed, production-package and physical-device qualification remain separate gates.
 
 ## 实测与边界 / Validation and limits
 

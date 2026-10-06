@@ -59,7 +59,7 @@ The image test checks the actual packaged product and synthetic FFmpeg media, in
 
 2026-10-05 已在公开 v3.5 固定 digest 上构建热修，Direct-only 和软件 OBS/Xvfb 两种模式均完成上述重启、崩溃与保留原卷重建验证；入口 11 项回归、go2rtc 私密配置 3 项和升级快照 3 项通过。The published v3.5 base was tested in both Direct-only and software OBS modes, with synthetic media and the stated qualification limits.
 
-保留 Compose 的 `stop_grace_period: 20s` 或更长，让正常停止有时间封装录像。部署需要宿主机重启后自动恢复时，在原服务覆盖中显式配置 `restart: unless-stopped`，同时确认 Docker/Podman 本身随系统启动。重启策略不能修复旧镜像的 FIFO 错误，因此先应用热修。不要把 `/dev/shm` 绑定到持久化配置卷；需有可写空间。
+保留 Compose 的 `stop_grace_period: 20s` 或更长，让正常停止有时间封装录像。部署需要宿主机重启后自动恢复时，在原服务覆盖中显式配置 `restart: unless-stopped`，同时确认 Docker/Podman 本身随系统启动。重启策略不能修复旧镜像的 FIFO 错误；当前修复保留到 v4.0，应等待经明确授权且验收合格的版本，不执行历史 v3.5 热修步骤。不要把 `/dev/shm` 绑定到持久化配置卷；需有可写空间。
 
 突然断电不能执行任何退出处理；本修复保证临时资源不会阻断下次启动，并验证进程级强制终止后的数据恢复。断电瞬间尚未落盘的配置或录像仍依赖文件系统、磁盘与应用的写入边界；定期备份、UPS 与实际掉电验收仍有各自用途，不承诺任意掉电无数据损失。
 

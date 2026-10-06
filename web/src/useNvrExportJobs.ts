@@ -3,6 +3,7 @@ import { cancelNvrExportJob, ControlApiError, fetchAuthSession, fetchNvrExportJo
 import { useDesktopWork } from './desktopRuntime';
 import { withRequestTimeout } from './requestTimeout';
 import { isPageVisible, subscribePageVisibility } from './pageVisibility';
+import { observeExportJobs } from './diagnosticsRuntime';
 import type { NvrExportJob, NvrExportRequest } from './types';
 
 type Submission = NvrExportRequest & { requestId: string };
@@ -58,6 +59,7 @@ export function useNvrExportJobs() {
     try {
       const result = await withRequestTimeout(12_000, signal => fetchNvrExportJobs(signal), owner.signal);
       if (owner.signal.aborted || current !== generation.current) return;
+      observeExportJobs(result.jobs);
       setJobs(result.jobs);
       setAllowed(true);
       nextPoll.current = Date.now() + (result.jobs.some(exportActive) ? 5000 : 30_000);

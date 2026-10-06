@@ -2,6 +2,7 @@
 [CmdletBinding()]
 param(
     [string]$Version = '3.4.0-dev.0',
+    [string]$Milestone = $env:WEBOBS_TARGET_MILESTONE,
     [switch]$Release,
     [switch]$Sign,
     [switch]$SkipPackage
@@ -18,6 +19,8 @@ if ($Version -notmatch '^\d+\.\d+\.\d+(-dev\.[0-9A-Za-z.-]+)?$') { throw 'Use a 
 if ($Release -and $Version -match '-') { throw 'Release builds require a stable X.Y.Z version.' }
 if ($Sign -and (-not $Release -or -not $env:CSC_LINK -or -not $env:WEBOBS_SIGNING_PUBLISHER)) { throw 'Signing requires -Release, CSC_LINK and WEBOBS_SIGNING_PUBLISHER.' }
 if (-not $Release -and $Version -notmatch '-dev\.') { throw 'Development builds require a -dev.* version.' }
+. (Join-Path $PSScriptRoot 'release-milestone.ps1')
+$buildMilestone = Resolve-WebOBSDesktopMilestone -Version $Version -Release $Release.IsPresent -Milestone $Milestone
 if (-not $Sign) {$env:CSC_IDENTITY_AUTO_DISCOVERY='false';Remove-Item Env:CSC_LINK,Env:CSC_KEY_PASSWORD -ErrorAction SilentlyContinue}
 foreach ($tool in @('cmake','git','python','node','pnpm')) { if (-not (Get-Command $tool -ErrorAction SilentlyContinue)) { throw "Build dependency missing: $tool. Run in a VS 2022 x64 Developer PowerShell with CMake >= 3.28 and Node 24." } }
 if (-not (Get-Command cl -ErrorAction SilentlyContinue)) { throw 'No MSVC x64 compiler. Open VS 2022 x64 Developer PowerShell; desktop builds do not install compilers automatically.' }
@@ -81,7 +84,7 @@ Invoke-Checked 'cmake' @('--install',$obsBuild,'--config','Release','--component
 $coreBuild = Join-Path $buildRoot 'core-build'
 $coreInstall = Join-Path $buildRoot 'core-install'
 $corePrefix = "$obsInstall;$vcpkgInstalled\x64-windows;$obsSource\.deps\obs-deps-2025-08-23-x64"
-Invoke-Checked 'cmake' @('-S',$repoRoot,'-B',$coreBuild,'-G','Visual Studio 17 2022','-A','x64',"-DCMAKE_TOOLCHAIN_FILE=$vcpkgRoot/scripts/buildsystems/vcpkg.cmake",'-DVCPKG_MANIFEST_MODE=OFF',"-DVCPKG_INSTALLED_DIR=$vcpkgInstalled",'-DVCPKG_TARGET_TRIPLET=x64-windows',"-DCMAKE_PREFIX_PATH=$corePrefix", "-DWEBOBS_OBS_PREFIX=$obsInstall", "-DWEBOBS_VERSION_OVERRIDE=$Version", "-DCMAKE_INSTALL_PREFIX=$coreInstall")
+Invoke-Checked 'cmake' @('-S',$repoRoot,'-B',$coreBuild,'-G','Visual Studio 17 2022','-A','x64',"-DCMAKE_TOOLCHAIN_FILE=$vcpkgRoot/scripts/buildsystems/vcpkg.cmake",'-DVCPKG_MANIFEST_MODE=OFF',"-DVCPKG_INSTALLED_DIR=$vcpkgInstalled",'-DVCPKG_TARGET_TRIPLET=x64-windows',"-DCMAKE_PREFIX_PATH=$corePrefix", "-DWEBOBS_OBS_PREFIX=$obsInstall", "-DWEBOBS_VERSION_OVERRIDE=$Version", "-DWEBOBS_MILESTONE_OVERRIDE=$buildMilestone", "-DCMAKE_INSTALL_PREFIX=$coreInstall")
 Invoke-Checked 'cmake' @('--build',$coreBuild,'--config','Release','--parallel','4')
 $savedPath = $env:PATH
 try {
@@ -92,6 +95,7 @@ Invoke-Checked 'cmake' @('--install',$coreBuild,'--config','Release')
 Invoke-Checked 'pnpm' @('--dir',(Join-Path $repoRoot 'web'),'install','--frozen-lockfile')
 Invoke-Checked 'pnpm' @('--dir',(Join-Path $repoRoot 'web'),'typecheck')
 $env:WEBOBS_BUILD_VERSION=$Version
+$env:WEBOBS_BUILD_MILESTONE=$buildMilestone
 Invoke-Checked 'pnpm' @('--dir',(Join-Path $repoRoot 'web'),'build')
 Invoke-Checked 'pnpm' @('--dir',(Join-Path $repoRoot 'web'),'go2rtc:ui')
 if (Test-Path -LiteralPath $runtimeRoot) {

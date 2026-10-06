@@ -17,7 +17,7 @@ async function backend(context: BrowserContext, rtspPort = 18554) {
     const reply = (json: unknown, status = 200) => route.fulfill({ status, json });
     if (path === '/api/v1/auth/session') return reply({ authenticated: true, user: 'test-user', via: 'session' });
     if (path === '/api/v1/auth/setup') return reply({ registrationOpen: false });
-    if (path === '/api/v1/runtime/info' && rtspPort !== 18554) return reply({ schema: 1, platform: 'windows', go2rtcRtspBase: `rtsp://127.0.0.1:${rtspPort}/` });
+    if (path === '/api/v1/runtime/info') return reply({ schema: 1, platform: 'windows', go2rtcRtspBase: `rtsp://127.0.0.1:${rtspPort}/` });
     if (path === '/api/v2/account/me') return reply({ username: 'test-user', displayName: 'Test', avatar: 'camera', roles: ['admin'], permissions: ['settings.manage', 'scene.manage'], scopes: [], acl: [] });
     if (path.startsWith('/api/v2/account/preferences/')) {
       if (method === 'PUT') preferences.set(path, route.request().postDataJSON().value);
@@ -27,7 +27,7 @@ async function backend(context: BrowserContext, rtspPort = 18554) {
     if (path === '/api/v1/scene') return reply(studio.scenes.find((value) => value.id === studio.programSceneId));
     if (path.endsWith('/capabilities')) return reply({ modes: { direct: { enabled: true }, composite: { enabled: false } }, sources: [], scenes: [] });
     if (path === '/api/v1/cameras') {
-      if (method === 'POST') { const value = route.request().postDataJSON(); creates.push(value); const camera = { ...value, id: `imported-${cameras.length}`, revision: 1, health: 'unknown', createdAt: 0, updatedAt: 0 }; cameras.push(camera); return reply(camera); }
+      if (method === 'POST') { const value = route.request().postDataJSON(); creates.push(value); const camera = { ...value, id: value.id ?? `imported-${cameras.length}`, revision: 1, health: 'unknown', createdAt: 0, updatedAt: 0 }; cameras.push(camera); return reply(camera); }
       return reply({ cameras });
     }
     if (path === '/api/v1/go2rtc/api/streams') return reply({ entrance: { producers: [{ url: 'rtsp://private:do-not-display@camera.invalid/live' }] }, yard: {} });

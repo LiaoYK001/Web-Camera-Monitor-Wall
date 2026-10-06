@@ -54,9 +54,11 @@ try {
         if ($LASTEXITCODE -ne 0 -or $gradleVersion -notcontains "Gradle $($lock.gradle.version)") { throw 'Gradle must match toolchain.lock.json.' }
     }
     $variant = if ($Release) { 'Release' } else { 'Debug' }
-    & $gradle --project-dir $projectRoot --console=plain "-PwebobsVersion=$Version" "-PwebobsVersionCode=$VersionCode" "-PwebobsRelease=$($Release.IsPresent.ToString().ToLowerInvariant())" ":app:test${variant}UnitTest" ":app:lint${variant}" ":app:assemble${variant}"
+    & $gradle --project-dir $projectRoot --console=plain "-PwebobsVersion=$Version" "-PwebobsVersionCode=$VersionCode" "-PwebobsRelease=$($Release.IsPresent.ToString().ToLowerInvariant())" '-PwebobsUpdateQualification=false' ":app:test${variant}UnitTest" ":app:lint${variant}" ":app:assemble${variant}"
     if ($LASTEXITCODE -ne 0) { throw 'Android checks/build failed.' }
     $apk = Join-Path $projectRoot "app/build/outputs/apk/$($variant.ToLowerInvariant())/app-$($variant.ToLowerInvariant()).apk"
+    $metadata = Get-Content (Join-Path $projectRoot "app/build/outputs/apk/$($variant.ToLowerInvariant())/output-metadata.json") -Raw | ConvertFrom-Json
+    if ($metadata.applicationId -ne $lock.applicationId -or $metadata.elements.Count -ne 1 -or $metadata.elements[0].versionName -ne $Version -or $metadata.elements[0].versionCode -ne $VersionCode) { throw 'Built APK identity differs from the requested product; refusing packaging or installation.' }
     $signature = & (Join-Path $SdkRoot "build-tools/$($lock.buildTools)/apksigner.bat") verify --verbose --print-certs $apk
     if ($LASTEXITCODE -ne 0) { throw 'APK signature verification failed.' }
     $certificate = ($signature | Select-String '^Signer #1 certificate SHA-256 digest: ([a-fA-F0-9]{64})$').Matches.Groups[1].Value

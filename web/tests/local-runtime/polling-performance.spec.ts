@@ -26,18 +26,29 @@ for (const kind of ['system', 'clients', 'analytics', 'projector', 'program'] as
       const host = document.createElement('div'); host.id = 'polling-test'; document.body.appendChild(host);
       (window as any).pollingTest = { requests, original, ...mount.mountPollingPage(kind, host) };
     }, { kind, paths });
-    await expect.poll(() => page.evaluate(() => (window as any).pollingTest.requests.length)).toBe(paths.length);
-    await page.clock.runFor(25_000);
+    const round = paths.length;
+    await expect.poll(() => page.evaluate(() => (window as any).pollingTest.requests.length)).toBe(round);
+    // ClientsPanel refreshes through the management layer, which bounds every read
+    // (15 s). A server that never answers is therefore rejected at that deadline and
+    // retried on the next interval instead of holding the panel hostage; rounds still
+    // never overlap. The other panels keep their unbounded in-flight read.
+    const boundedRead = kind === 'clients';
+    await page.clock.runFor(boundedRead ? 14_000 : 25_000);
     const active = await page.evaluate(() => (window as any).pollingTest.requests.length);
-    expect(active).toBe(paths.length);
+    expect(active).toBe(round);
+    if (boundedRead) {
+      await page.clock.runFor(6_000);
+      expect(await page.evaluate(() => (window as any).pollingTest.requests.length)).toBe(round * 2);
+    }
+    const beforeHide = await page.evaluate(() => (window as any).pollingTest.requests.length);
     await page.evaluate(() => { window.webobsAndroidForeground = false; window.dispatchEvent(new Event('webobs:visibility')); });
     await page.clock.runFor(25_000);
     expect(await page.evaluate(() => (window as any).pollingTest.requests.every((request: any) => request.signal.aborted))).toBe(true);
-    expect(await page.evaluate(() => (window as any).pollingTest.requests.length)).toBe(active);
+    expect(await page.evaluate(() => (window as any).pollingTest.requests.length)).toBe(beforeHide);
     await page.evaluate(() => { window.webobsAndroidForeground = true; window.dispatchEvent(new Event('webobs:visibility')); });
-    await expect.poll(() => page.evaluate(() => (window as any).pollingTest.requests.length)).toBe(paths.length * 2);
+    await expect.poll(() => page.evaluate(() => (window as any).pollingTest.requests.length)).toBe(beforeHide + round);
     // Deliberately ignore AbortSignal in the fixture to exercise stale response guards.
-    await page.evaluate(({ kind, paths }) => {
+    await page.evaluate(({ kind, paths, beforeHide }) => {
       const response = (path: string, fresh: boolean) => {
         const marker = fresh ? 'fresh-poll-result' : 'stale-poll-result';
         if (kind === 'program') return { enabled: false, reason: marker };
@@ -58,21 +69,25 @@ for (const kind of ['system', 'clients', 'analytics', 'projector', 'program'] as
       };
       const requests = (window as any).pollingTest.requests;
       // Newest first, old response after it to reproduce the prior overwrite.
-      requests.slice(paths.length).forEach((request: any) => request.resolve(Response.json(response(request.path, true))));
-      requests.slice(0, paths.length).forEach((request: any) => request.resolve(Response.json(response(request.path, false))));
-    }, { kind, paths });
+      // Mark what this fixture answered: only requests that are still pending can be
+      // aborted later, so the cancellation assertions must ignore settled ones.
+      requests.slice(beforeHide).forEach((request: any) => { request.settled = true; request.resolve(Response.json(response(request.path, true))); });
+      requests.slice(beforeHide - paths.length, beforeHide).forEach((request: any) => { request.settled = true; request.resolve(Response.json(response(request.path, false))); });
+    }, { kind, paths, beforeHide });
     const host = page.locator('#polling-test');
     expect(errors).toEqual([]);
     if (kind === 'projector') await expect(page).toHaveTitle('fresh-poll-result · 场景投影');
     else await expect(host).toContainText(kind === 'analytics' ? 'revision 20' : kind === 'system' ? 'FRESH-POLL-RESULT' : 'fresh-poll-result');
     await expect(host).not.toContainText(kind === 'system' ? 'STALE-POLL-RESULT' : 'stale-poll-result');
     await page.clock.runFor(kind === 'analytics' ? 10_001 : 5001);
-    await expect.poll(() => page.evaluate(() => (window as any).pollingTest.requests.length)).toBe(paths.length * 3);
+    const afterResolve = beforeHide + round;
+    await expect.poll(() => page.evaluate(() => (window as any).pollingTest.requests.length)).toBe(afterResolve + round);
     await page.evaluate(() => (window as any).pollingTest.unmount());
-    expect(await page.evaluate(() => (window as any).pollingTest.requests.every((request: any) => request.signal.aborted))).toBe(true);
+    expect(await page.evaluate(() => (window as any).pollingTest.requests.filter((request: any) => !request.settled)
+      .every((request: any) => request.signal.aborted))).toBe(true);
     await page.clock.runFor(25_000);
-    expect(await page.evaluate(() => (window as any).pollingTest.requests.length)).toBe(paths.length * 3);
-    console.log('POLLING_RECEIPT', JSON.stringify({ page: kind, activeSlowReads: active, hiddenNewReads: 0, endpoints: paths.length }));
+    expect(await page.evaluate(() => (window as any).pollingTest.requests.length)).toBe(afterResolve + round);
+    console.log('POLLING_RECEIPT', JSON.stringify({ page: kind, activeSlowReads: active, hiddenNewReads: 0, endpoints: round, boundedRead }));
   });
 }
 

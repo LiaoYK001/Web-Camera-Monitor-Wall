@@ -6,7 +6,10 @@ export default defineConfig({
   testDir: './tests',
   // The v2-M7 administration suite runs only under playwright.m7.config.ts
   // (it requires the ephemeral cluster credentials of the private gate).
-  testIgnore: ['local-runtime/**', 'tests/m7/**'],
+  // The security-update continuity suite runs only under
+  // playwright.pwa-continuity.config.ts, which needs the dedicated
+  // vite.pwa-test.config.ts build (see pnpm test:continuity).
+  testIgnore: ['local-runtime/**', 'tests/m7/**', 'pwa-security-update.spec.ts'],
   timeout: 30_000,
   expect: { timeout: 8_000 },
   forbidOnly: Boolean(process.env.CI),

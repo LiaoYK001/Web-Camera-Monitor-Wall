@@ -37,19 +37,19 @@ Patches keep normal stop/snapshot/recovery and integrity checks. No runtime code
 
 原生“关于 → 检查 GitHub 更新”从最近 20 个公开发布中选出**版本号最高且包含精确匹配正式 APK** 的非草稿、非预发布 Release，区分补丁、功能与主版本，展示本机版本、发布说明和对应页面。仅后端发布不会遮住可用 Android 补丁。开发 APK 不进入正式源，本机版本更高时不提示降级。请求固定、无 Token、有超时和响应大小上限。
 
-The manual checker selects the highest stable Android APK among the latest 20 releases and links matching notes/downloads. Backend-only releases do not hide an APK. Requests are fixed, bounded and token-free; development artifacts and downgrades are excluded.
+The native checker selects the highest stable Android APK among the latest 20 releases and links matching notes/downloads. Configurable foreground automatic checks/downloads are enabled by default. Backend-only releases do not hide an APK. Requests are fixed, bounded and token-free; development artifacts and downgrades are excluded.
 
 APK 完整覆盖安装，保留相同 applicationId、同一持久自签密钥和递增 versionCode。无需购买证书或向微软申请；Android 安装本身要求 APK 签名。v4+ 正式版本码固定为 `A×1,000,000 + B×1,000 + C`，B/C 范围 0–999，总值不超过 2,100,000,000。4.0.0/4.0.1/4.0.2 对应 4,000,000/4,000,001/4,000,002，高于现有开发版 3,050,001。不要更换密钥、卸载重装或用独立 CI debug key 掩盖升级问题。
 
 Android replaces the complete APK with the same ID/key and a deterministic increasing versionCode. Preserve the self-signed key outside Git. See [Android versioning](https://developer.android.com/studio/publish/versioning) and [signing](https://developer.android.com/studio/publish/app-signing).
 
-`build-android.ps1 -Release -Version 4.0.1` 生成本机自签**候选**、摘要与构建回执，不自动上传；见[Android 构建](android-client.md)。当前 Android 从发布页面下载、由系统确认安装，尚未新增应用内自动 APK 下载/安装；该闭环需单独实现并用真实两版 APK 验收，不能由版本比较测试宣告完成。
+`build-android.ps1 -Release -Version 4.0.1` 生成本机自签**候选**、摘要与构建回执，不自动上传；见[Android 构建](android-client.md)。应用内通过系统下载管理器下载，核对 GitHub SHA-256/大小、实际包名/版本/版本码及已安装签名，再由用户和系统确认安装；草稿/任务阻止、取消及重启恢复见 [Android 更新](android-updates.md)。缺少摘要时只提供人工发布入口。实际两次升级由独立验收包验证，不能由版本比较测试替代公开更新源与真机验收。
 
-The stable-candidate helper does not publish. Current Android delivery uses the release page and user-confirmed system installation. In-app automatic APK download/installation remains a separate implementation and actual two-version acceptance item.
+The stable-candidate helper does not publish. In-app downloading checks digest/size, APK identity and installed signers before user/system-confirmed installation, with draft/task blocking and recovery. Missing metadata keeps a manual fallback. Isolated actual-upgrade qualification remains distinct from public-feed and physical-device acceptance.
 
 ## 发布与验收 / Publication and acceptance
 
-1. 从 `main` 已发布基线分出修复分支，中英文说明问题、影响端与验证结果；审查合回 `main` 并同步 `dev`。
+1. 修复先通过 PR 合入 `dev`，中英文说明问题、影响端与验证结果。实际准备发布指定补丁（如 `v4.0.5`）且检查通过后，再创建 `dev` → `main` 的版本发布 PR；普通修复合并不自动同步 `main`。见[分支规则](versioning-and-branches.md)。 / Review fixes into `dev` first, then promote them through a versioned `dev` → `main` release PR when preparing the requested patch and its checks pass. Ordinary fixes do not synchronize `main`.
 2. 同一 Tag/Release 对齐源码与产物版本，默认完成三主端打包及可用更新元数据。缺失端明确披露，不宣称完整三端补丁。构建器不直接发布，沿用[唯一发布流程](release-flow.md)的审计、私密验证、不可变附件与摘要检查。v4+ 镜像发布须显式提供与主版本匹配的已审查 `WEBOBS_TARGET_MILESTONE`，不能回落到历史 v2 默认值；补丁沿用所属基线门禁。
 3. 记录修复、安全影响、后端/客户端兼容性、迁移与恢复方式。快速交付减少变更范围和等待周期，不跳过完整性、用户确认、数据保留或源码/许可证义务。
 4. v4 基线验收实际 `4.0.0 → 4.0.1 → 4.0.2` 的检测、下载/覆盖安装、数据与会话保留；Windows 加测差量失败回退，Android 加测同密钥/错误密钥与版本码。实际设备/安装与协议夹具分别记录。

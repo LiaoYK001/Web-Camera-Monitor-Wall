@@ -1,6 +1,6 @@
 # Roadmap / 项目路线图
 
-> Last updated / 最后更新：2026-10-05
+> Last updated / 最后更新：2026-10-06
 
 This roadmap describes milestone order and acceptance gates, not promised release dates. Priorities may change based on validation results and maintainer capacity.
 
@@ -8,31 +8,21 @@ This roadmap describes milestone order and acceptance gates, not promised releas
 
 ## Local development access and configuration policy / 本地开发访问与配置策略
 
-本项目当前及后续默认的本地开发入口（`http://127.0.0.1:5173` 的 Vite
-前端与回环 Docker API）**不要求用户名或密码**。基础 `compose.yaml` 固定关闭
-集群/RBAC 认证；只有维护者明确选择认证/生产 overlay、启用 HTTPS 远程部署或
-后续需求明确要求时，才启用登录 Session/Basic 兼容。网络故障、Vite 代理暂时
-不可用或后端重启不得被误报为“需要密码”，页面应显示服务不可用并允许重试。
+默认本地 Vite 入口与回环 Docker API 使用产品账号认证：基础 Compose 启用账号/RBAC
+控制面、关闭旧式 Basic Auth，首次部署在 WebUI 创建管理员，没有预置用户名或密码。
+示例环境文件应与此一致；旧环境中显式的 `WEBOBS_CLUSTER_ENABLED=false` 需按
+[升级与恢复](docs/upgrade-and-recovery.md)迁移，不自动覆盖用户配置。
+网络故障、代理不可用与会话失效须区分；不得以关闭认证来绕过后端错误。
 
-用户配置不按登录用户名分叉。Local-first PWA 使用浏览器本机加密的配置档案，
-用户可以在全局“配置”菜单选择、保存多个档案，并在“系统设置”中创建有界备份、
-导出 JSON、导入和恢复。档案只保存脱敏的 Scene v5、布局和本机偏好；导出/备份
-永远不包含密码、Token、Secret、RTSP/HTTP 端点、userinfo、文件路径或客户端地址。
-服务器生产配置仍由管理员 API/SQLite 管理，不会因为选择本机档案而被覆盖。
+账号工作区和声音/监控偏好与浏览器本机加密布局档案是不同层级。脱敏导出仅用于安全布局
+迁移，不包含凭据、Token、Secret、摄像机端点或文件路径，也不代替完整服务端备份。
+本机档案和离线授权不能绕过当前账号会话、资源权限或失效授权。
 
-The default local development entry (`http://127.0.0.1:5173` Vite frontend plus
-the loopback Docker API) **does not require a username or password**. The base
-`compose.yaml` keeps cluster/RBAC authentication disabled. Login Session/Basic
-compatibility is enabled only by an explicit authentication/production overlay,
-remote HTTPS deployment, or a later requirement. A proxy outage or backend
-restart must show an unavailable/retry state rather than a password form.
+The default local frontend/API uses the authenticated account gate and first-administrator setup,
+not anonymous access. Local profiles, account preferences and encrypted device queues are distinct;
+a redacted layout bundle is not a server backup or authentication bypass. Keep loopback defaults
+and explicitly configure HTTPS/Origin/certificates for remote deployments.
 
-Configuration is selected by browser-local profiles, not split by login user.
-Profiles are encrypted locally and can be selected from the global Config menu;
-Settings provides bounded backup, JSON export, import, and restore. Bundles contain
-only redacted Scene v5/layout/local preferences and never credentials, tokens,
-secrets, endpoints, userinfo, paths, or client addresses. Selecting a profile never
-overwrites the server configuration.
 
 Canonical milestone names use `v<major>-M<number>`. Historical validation prose may retain its original short `M<number>` label so prior evidence remains traceable; the mapping is defined in [docs/versioning-and-branches.md](docs/versioning-and-branches.md).
 
@@ -40,17 +30,31 @@ Canonical milestone names use `v<major>-M<number>`. Historical validation prose 
 
 ## Current position / 当前位置
 
+日常改动只集成到 `dev`；指定新版本发布时，再通过 `dev` → `main` 发布 PR 集成。2026-10-05 规则调整前两分支同在 `5c11fe3`，保留历史，后续开发允许 `dev` 领先 `main`；分支最新提交不代表已经发布。见[分支规则](docs/versioning-and-branches.md)。
+
+Daily work integrates into `dev`; only a versioned release PR promotes it into `main`. Preserve the shared `5c11fe3` baseline from before this policy change, allowing `dev` to advance between releases. A branch tip is not a published version.
+
 ### v4.0 delivery and subsequent patches / v4.0 交付及后续补丁
 
-重启/异常退出/FIFO 修复随 v4.0 统一发布，暂不发布或应用 v3.5 热修。v4.0 之后三主端采用 `vA.B.C` 快速 bug/安全补丁（如 v4.0.1、v4.0.2），优先 Windows/Android：已补齐数字比较、补丁提示和 APK 正式候选/递增版本码构建入口，真实安装升级与 Android 应用内自动 APK 更新仍待验收/实现。扩展平台仍按 `vA.0` 集中交付。详见[补丁规则](docs/patch-releases-v4.md)与[v4 验收](docs/v4-readiness.md)。v4.0 尚未发布。
+v4.0 发布基线统一交付重启/异常退出/FIFO 修复、管理恢复、归档读取边界、支持报告及安全更新连续性。三主端使用 `4.0.0`，发行状态与附件见 [v4.0 Release](https://github.com/LiaoYK001/Web-Camera-Monitor-Wall/releases/tag/v4.0)；本次不另发 v3.5 热修。后续采用 `vA.B.C` 快速 bug/安全补丁，优先 Windows/Android；[Android 应用内验证更新](docs/android-updates.md)默认检查/下载且可关闭，安装需用户和系统确认。隔离包实际升级与公开源/生产包/真机验收分开记录；扩展平台仍按 `vA.0` 集中交付。详见[补丁规则](docs/patch-releases-v4.md)、[发布说明](docs/release-notes-v4.0.md)与[v4 验收](docs/v4-readiness.md)。
 
-The current restart fixes are held for v4.0. Subsequent primary-target A.B.C bug/security patches include numeric comparison, patch presentation and stable APK candidate/versionCode tooling. Actual installed upgrades and Android in-app APK delivery remain open; expansion platforms retain major-milestone cadence.
+The v4.0 release baseline delivers restart fixes, recoverable management, bounded archive reads, diagnostics and security-update continuity across the three primary targets. The linked Release records publication status and immutable artifacts. Subsequent A.B.C patches retain confirmed Windows/Android installation; physical-device and public-feed qualification remain separate.
+
+#### v4.0 当前状态与已知限制 / Current v4.0 status and known limits
+
+- **工程门禁**：v4+ 稳定构建必须显式提供已审查且与主版本匹配的 `WEBOBS_TARGET_MILESTONE`（当前约定 `v4-M1`），不能由版本号或历史 v2/v3 默认值推断，见[发布流程](docs/release-flow.md)与[补丁规则](docs/patch-releases-v4.md)。开发镜像同样按里程碑表解析身份（`v4-M1-dev` → `4.0.0-dev`），未登记的里程碑 fail-closed；三端身份一致性由新增门禁测试约束。
+- **三主端**：容器（linux/amd64）、Windows x64（Electron/NSIS，按维护者决定暂不签名）与独立 Android（需外部持久自签密钥的正式候选）各有独立构建与验收入口；源码支持不代表平台已验收。
+- **本轮已完成（开发/自动化层）**：依赖审计门禁恢复并通过（含桌面 `global-agent` 升级 + 已记录补丁，见[依赖安全](docs/dependency-security.md)）；管理操作在途锁、未确认结果核对与草稿保护（含 ClientsPanel）；S3 归档回放的读取上限、总时限、取消与选择归属（见[归档回放边界](docs/archive-playback.md)）；脱敏有界支持报告（见[支持诊断](docs/support-diagnostics.md)）；安全更新后的诚实损失提示与显式同步（见 [PWA 更新连续性](docs/pwa-update-continuity.md)）。
+- **候选证据**：参考 Linux 完整容器构建/认证合成媒体/重启、Windows 完整构建及实际 NSIS 安装、Android 正式签名构建与独立包确认连续升级已有成功证据；最终发布从审查后的同一 `main` 源码重建核验，见[发布说明](docs/release-notes-v4.0.md)。
+- **尚未验收**：干净系统、真机/摄像机/局域网、长时间与参考设备性能预算、最大归档片段的真机内存边界、生产 Android 公开源与实体 ARM 更新。未完成项继续按 [v4 验收矩阵](docs/v4-readiness.md)逐行记录，不用自动化结果替代。
+
+- Engineering gate: stable builds explicitly select the reviewed v4 milestone. Complete container/Windows candidates and signed Android builds have actual evidence; final artifacts are rebuilt from reviewed `main`. Clean systems, physical devices, LAN, long-run budgets and production Android/public-feed updates remain unqualified.
 
 ### v3.5 published / v3.5 已发布（2026-10-02）
 
-最新产品版本为 [v3.5](https://github.com/LiaoYK001/Web-Camera-Monitor-Wall/releases/tag/v3.5)，不可变标签固定在 `e7b6a2ad5f87b37ea933b8fd9e5d7a885e12cb03`。Windows `3.5.0 UNSIGNED` 正式安装包启用完整 GitHub 自动更新：默认检测与下载、用户确认安装、正常停服、快照与恢复。Release 附带 14 个核验附件，包含 `latest.yml`、blockmap、摘要、源码、SBOM 与许可证。公开 GHCR `v3.5` / `latest` digest 均为 `sha256:7d55187025db3850d9c9aa839bcdc05d9cd4a217683cbca2f66ed4e2052236c4`。本机 Windows 11 首次安装、两版真实 NSIS 升级、账号偏好保留与正常停服验证通过；真实 GitHub provider 无 Token 下载完整 EXE 并校验 SHA-512/SHA-256 通过。干净 Windows 10/11、真实摄像机和跨设备 LAN 仍待验收。签名按维护者决定暂不采用。详情见 [v3.5 发布说明](docs/release-notes-v3.5.md)。
+历史产品版本 [v3.5](https://github.com/LiaoYK001/Web-Camera-Monitor-Wall/releases/tag/v3.5)，不可变标签固定在 `e7b6a2ad5f87b37ea933b8fd9e5d7a885e12cb03`。Windows `3.5.0 UNSIGNED` 正式安装包启用完整 GitHub 自动更新：默认检测与下载、用户确认安装、正常停服、快照与恢复。Release 附带 14 个核验附件，包含 `latest.yml`、blockmap、摘要、源码、SBOM 与许可证。公开 GHCR `v3.5` / `latest` digest 均为 `sha256:7d55187025db3850d9c9aa839bcdc05d9cd4a217683cbca2f66ed4e2052236c4`。本机 Windows 11 首次安装、两版真实 NSIS 升级、账号偏好保留与正常停服验证通过；真实 GitHub provider 无 Token 下载完整 EXE 并校验 SHA-512/SHA-256 通过。干净 Windows 10/11、真实摄像机和跨设备 LAN 仍待验收。签名按维护者决定暂不采用。详情见 [v3.5 发布说明](docs/release-notes-v3.5.md)。
 
-The latest release is v3.5, with an unsigned stable Windows 3.5.0 installer and complete automatic updates. All 14 attachments, public updater metadata and both GHCR aliases are verified. Actual local NSIS upgrade/data retention and public GitHub installer download passed; clean-system, real-camera and cross-device qualification remain separate.
+The historical v3.5 release provided an unsigned stable Windows 3.5.0 installer and complete automatic updates. All 14 attachments, public updater metadata and both GHCR aliases are verified. Actual local NSIS upgrade/data retention and public GitHub installer download passed; clean-system, real-camera and cross-device qualification remain separate.
 
 ### Historical v3.4 / 历史 v3.4（2026-10-02）
 

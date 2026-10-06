@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { EventEmitter } from 'node:events';
-import { mkdtemp, writeFile, mkdir, rm, readFile } from 'node:fs/promises';
+import { mkdtemp, writeFile, mkdir, rm, readFile, symlink } from 'node:fs/promises';
 import path from 'node:path';
 import os from 'node:os';
 import { requiredFiles, inventory, verifyRuntime, containedPath, digestFile } from '../src/runtime-integrity.mjs';
@@ -29,6 +29,12 @@ test('runtime inventory detects alteration, missing components and extra untrack
   await verifyRuntime(root);
   await writeFile(path.join(root,'bin','go2rtc.exe'),'corrupt');await assert.rejects(verifyRuntime(root),/checksum/);
   await writeFile(path.join(root,'bin','go2rtc.exe'),'fixture');await writeFile(path.join(root,'bin','unexpected.dll'),'fixture');await assert.rejects(verifyRuntime(root),/Untracked/);
+  await rm(path.join(root,'bin','unexpected.dll'));await rm(path.join(root,'bin','go2rtc.exe'));await assert.rejects(verifyRuntime(root),/ENOENT/);
+  await writeFile(path.join(root,'bin','go2rtc.exe'),'fixture');
+  const manifest=JSON.parse(await readFile(path.join(root,'manifest.json'),'utf8'));
+  manifest.files.push(manifest.files[0]);await atomicJson(path.join(root,'manifest.json'),manifest);await assert.rejects(verifyRuntime(root),/duplicate/);
+  manifest.files.pop();await atomicJson(path.join(root,'manifest.json'),manifest);
+  await symlink(path.join(root,'bin'),path.join(root,'linked-runtime'),'junction');await assert.rejects(verifyRuntime(root),/links/);
   for(const name of ['../escape','a/../escape','C:/secret','a\\b','/outside'])assert.throws(()=>containedPath(root,name));
 });
 test('occupied port is reported and its owner remains listening',async()=>{

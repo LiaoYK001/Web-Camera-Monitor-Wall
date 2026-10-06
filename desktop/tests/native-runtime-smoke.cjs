@@ -28,6 +28,12 @@ app.on('window-all-closed', () => {});
     await supervisor.start();
     assert.equal(supervisor.state.phase, 'ready');
     const origin = supervisor.origin;
+    if (Number(manifest.version.split('.')[0]) >= 4) {
+      assert.match(manifest.milestone, /^v[1-9][0-9]*-M[1-9][0-9]*(?:-dev)?$/);
+      assert.equal(manifest.milestone.endsWith('-dev'), manifest.version.includes('-dev.'));
+      const health = await (await fetch(`${origin}/api/v1/health`)).json();
+      assert.equal(health.milestone, manifest.milestone, 'Compiled core must report the selected release milestone');
+    }
     assert.equal((await fetch(`${origin}/api/v1/runtime/info`)).status, 401);
     const credentials = { username: 'desktop-smoke-admin', password: crypto.randomBytes(24).toString('hex') };
     const request = { method: 'POST', headers: { Origin: origin, 'Content-Type': 'application/json' }, body: JSON.stringify(credentials) };

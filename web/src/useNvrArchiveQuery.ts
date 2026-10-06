@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { ControlApiError, fetchNvrStatus, fetchNvrTimeline } from './api';
 import { withRequestTimeout } from './requestTimeout';
+import { observeRecorder } from './diagnosticsRuntime';
 import type { NvrTimeline } from './types';
 
 type TimelineQuery = { key: string; loading: boolean; document: NvrTimeline | null; error: string };
@@ -36,6 +37,7 @@ export function useNvrArchiveQuery(from: number, to: number) {
     setCatalogLoading(true); setCatalogError('');
     void withRequestTimeout(12_000, signal => fetchNvrStatus(signal), owner.signal).then(status => {
       if (owner.signal.aborted) return;
+      observeRecorder(status);
       const ids = status.cameras.map(camera => camera.id);
       setAvailableIds(ids); setDiskPressure(status.diskPressure);
       const first = !initialized.current; initialized.current = true;

@@ -16,7 +16,7 @@ The complete upstream module and official WebUI ship in one product image. go2rt
 
 网站与直播支持新增内置 yt-dlp、Streamlink、Node/EJS 与按需 FFmpeg 转发；容器/Windows x64 打包工具，Android 使用同一后端。固定参数、私密 Cookie、重启影响与验证边界见[网站与直播源](online-sources.md)。Bundled website extraction is shared by the three primary clients through their selected backend.
 
-1. 打开 **go2rtc 管理**（`/#/go2rtc`）。认证模式需要管理员的 `settings.manage`；本机无认证模式无需额外登录。
+1. 使用产品账号登录后打开 **go2rtc 管理**（`/#/go2rtc`），需要 `settings.manage` 权限。本地开发同样默认启用账号控制面；没有独立的上游登录绕过入口。
 2. 在“设备与发现”使用官方工具，或在“配置”编辑完整 YAML。流管理、播放测试、Links、连接信息/连接图、日志和高级页面全部保留，也可独立打开。
 3. 官方 “Save & Restart” 保存配置并重新加载 go2rtc；返回流列表测试播放。
 4. 在项目“设备与来源”添加 `rtsp://127.0.0.1:18554/流名称`，通过正常探测、注册和场景流程使用。此地址指 **后端所在环境**（容器或 WSL），不是浏览器所在电脑。特殊流名称需要 URL 编码。
@@ -51,7 +51,7 @@ docker compose up --build -d
 
 保存重启保持监督器运行；异常退出有有界重试，反复失败会报告服务失败。停止产品时终止 go2rtc 和 FFmpeg/exec 子进程组。Docker 输出经现有日志脱敏器；管理 UI 内原始诊断仅由管理员查看，不要提交配置/日志到 Git。
 
-容器入口使用每次启动独立的私密 tmpfs 目录存放日志 FIFO，并对启动失败和停服统一清理；强制终止后不会复用遗留管道。v3.5 出现 `mkfifo ... File exists` 时的原因、轻量热修和恢复验证见[容器重启与恢复](container-restart-recovery.md)。Container restart recovery and bounded shutdown are documented there.
+容器入口使用每次启动独立的私密 tmpfs 目录存放日志 FIFO，并对启动失败和停服统一清理；强制终止后不会复用遗留管道。旧版本 `mkfifo ... File exists` 的原因与恢复验证见[容器重启与恢复](container-restart-recovery.md)；修复留到 v4.0，历史 v3.5 热修不作为当前操作步骤。Container restart recovery and bounded shutdown are documented there.
 
 HTTP 代理持续转发媒体，不积累整个响应；WebSocket 双向传输使用固定缓冲与背压。连接经过产品认证和 `settings.manage`；变更请求/WebSocket 要求匹配 Origin，拒绝路径穿越和跨站请求，产品凭据/内部身份头不转发给上游。官方页面使用独立 CSP，主工作台保留原有脚本限制；API 路径属于 PWA NetworkOnly 区域，不进入离线缓存。
 

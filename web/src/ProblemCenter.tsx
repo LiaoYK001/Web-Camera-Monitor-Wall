@@ -3,6 +3,7 @@ import { acknowledgeOperationalIssue, fetchOperationalIssues } from './api';
 import { subscribeLocalIssues } from './issueRuntime';
 import type { OperationalIssue } from './types';
 import Modal from './Modal';
+import { observeIssues } from './diagnosticsRuntime';
 
 const severityLabel = { info: '信息', warning: '警告', error: '错误' } as const;
 
@@ -33,7 +34,7 @@ export default function ProblemCenter() {
     const controller = new AbortController(); request.current = controller; setLoading(true);
     try {
       const value = await fetchOperationalIssues('', controller.signal);
-      if (!controller.signal.aborted) { setServer(value.issues); setError(''); }
+      if (!controller.signal.aborted) { observeIssues(value.issues, 'server'); setServer(value.issues); setError(''); }
     } catch { if (!controller.signal.aborted) setError('服务端问题列表暂时不可用，可点击刷新重试。'); }
     finally { if (request.current === controller) { request.current = null; setLoading(false); } }
   }, []);

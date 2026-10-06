@@ -150,6 +150,8 @@ export function reconnectDelayMs(attempt: number, random: () => number = Math.ra
   return Math.round(base * (0.85 + random() * 0.3));
 }
 
+import { createMediaDiagnostic } from './diagnosticsRuntime';
+
 function connectWhep(
   video: HTMLVideoElement,
   resolveEndpoint: EndpointResolver,
@@ -161,7 +163,9 @@ function connectWhep(
   onAuthorizationRejected?: AuthorizationRejected,
   onStage?: (stage: PlaybackStage) => void,
   options: PlaybackOptions = {},
+  topology: 'direct' | 'composite' | 'approved' = 'direct',
 ): ProgramConnection {
+  const diagnostic = createMediaDiagnostic(topology);
   const optimization = normalizePlaybackOptimization(options.optimization);
   const cadence = new FrameCadence();
   let previousNetwork: NetworkSample | undefined;
@@ -190,6 +194,7 @@ function connectWhep(
 
   const report = (patch: Partial<PlaybackStage>) => {
     stage = { ...stage, ...patch };
+    diagnostic.stage(stage);
     onStage?.({ ...stage });
   };
 
@@ -247,6 +252,7 @@ function connectWhep(
     onState(attempt === 0 ? 'offline' : 'reconnecting');
     // F6-10: progressive 3→5→10→20→40→60s ladder, never stops on recoverable errors.
     const delay = reconnectDelayMs(attempt);
+    diagnostic.retry(delay);
     attempt += 1;
     retryTimer = window.setTimeout(() => {
       retryTimer = undefined;
@@ -258,6 +264,7 @@ function connectWhep(
     if (closed || currentGeneration !== generation) return;
     cadence.observe(performance.now());
     stage.frames += 1;
+    diagnostic.frame();
     lastFrameAt = performance.now();
     if (!stage.firstFrame) {
       if (firstFrameTimer !== undefined) { window.clearTimeout(firstFrameTimer); firstFrameTimer = undefined; }
@@ -331,6 +338,7 @@ function connectWhep(
   };
 
   const connect = async () => {
+    if (!closed) diagnostic.attempt();
     if (closed) return;
     const currentGeneration = ++generation;
     authorizationRejected = false;
@@ -430,6 +438,7 @@ function connectWhep(
   const close = () => {
     if (closed) return;
     closed = true;
+    diagnostic.close();
     generation += 1;
     window.removeEventListener('pagehide', close);
     clearTimers();
@@ -463,7 +472,7 @@ export function connectProgram(
     if (!statusResponse.ok) throw new Error('Program status is unavailable');
     const status = (await statusResponse.json()) as ProgramStatus;
     return status.enabled ? status.endpoint : null;
-  }, onState, true, undefined, undefined, {}, undefined, onStage, options);
+  }, onState, true, undefined, undefined, {}, undefined, onStage, options, 'composite');
 }
 
 export function connectSource(
@@ -500,5 +509,5 @@ export function connectApprovedWhep(
     return candidate;
   };
   return connectWhep(video, async () => endpoint, onState, true, options.onRemoteStream, validate,
-    options.deviceToken ? { 'Authorization': `Bearer ${options.deviceToken}` } : {}, options.onAuthorizationRejected, options.onStage, options);
+    options.deviceToken ? { 'Authorization': `Bearer ${options.deviceToken}` } : {}, options.onAuthorizationRejected, options.onStage, options, 'approved');
 }

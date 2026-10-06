@@ -1,3 +1,4 @@
+import { downloadVerifiedArchivedRecording, type ArchivePlaybackTicket } from './archiveDownload';
 import type { AnalyticsJob, AnalyticsPolicy, AnalyticsRuntimePlan, AnalyticsStatus, ApiErrorEnvelope, ArchiveTarget, AudioMeterSnapshot, BackupJob, CameraDetection, CameraRecord, ClientCameraGrant, ClientEnrollment, ClusterNode, ClusterRecordingTimeline, ClusterRole, ClusterUser, DeviceOperation, EnrolledClient, EventRule, ExternalProvider, MonitorEvent, MotionZone, NvrExport, NvrStatus, NvrTimeline, OnvifEvent, OnvifPreset, OperationalIssue, PlaybackCapabilities, ProcessDiagnostics, RecordingPlacement, ResourceCapacity, RuntimeSettings, SceneDocument, SceneEvent, SourceCatalogItem, SourceCatalogPage, StorageVolume, StudioCapabilities, StudioDocument, SystemCapabilities } from './types';
 
 export class ControlApiError extends Error {
@@ -77,19 +78,30 @@ export async function registerFirstAdmin(username: string, password: string): Pr
   if (!response.ok) throw await parseError(response);
 }
 
-export async function fetchCameraPreferences(): Promise<Record<string, { displayName: string; favorite: boolean; group: string }> | null> {
-  const response = await fetch('/api/v2/account/preferences/camera-preferences', { cache: 'no-store', credentials: 'same-origin' });
+export async function fetchCameraPreferences(signal?: AbortSignal): Promise<Record<string, { displayName: string; favorite: boolean; group: string }> | null> {
+  const response = await fetch('/api/v2/account/preferences/camera-preferences', { cache: 'no-store', credentials: 'same-origin', signal });
   if (!response.ok) throw await parseError(response);
   const result = await response.json() as { value: { cameras?: Record<string, { displayName: string; favorite: boolean; group: string }> } | null };
   return result.value?.cameras ?? null;
 }
 
-export async function saveCameraPreferences(cameras: Record<string, { displayName: string; favorite: boolean; group: string }>): Promise<void> {
+export async function saveCameraPreferences(cameras: Record<string, { displayName: string; favorite: boolean; group: string }>, signal?: AbortSignal): Promise<void> {
   const response = await fetch('/api/v2/account/preferences/camera-preferences', {
     method: 'PUT', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ value: { cameras } }),
+    signal, body: JSON.stringify({ value: { cameras } }),
   });
   if (!response.ok) throw await parseError(response);
+}
+
+export async function patchCameraPreference(id: string, value: { displayName: string; favorite: boolean; group: string },
+  baseline: { displayName: string; favorite: boolean; group: string }, signal?: AbortSignal) {
+  const response = await fetch('/api/v2/account/preferences/camera-preferences', {
+    method: 'PUT', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' }, signal,
+    body: JSON.stringify({ value: { cameras: { [id]: value } }, baseValue: { cameras: { [id]: baseline } }, partial: true }),
+  });
+  if (!response.ok) throw await parseError(response);
+  const result = await response.json() as { value: { cameras?: Record<string, typeof value> } };
+  return result.value.cameras ?? {};
 }
 
 export async function logout(): Promise<void> {
@@ -255,9 +267,9 @@ async function cameraRequest<T>(path: string, init?: RequestInit): Promise<T> {
 
 export const fetchCameras = (signal?: AbortSignal) => cameraRequest<{ cameras: CameraRecord[] }>('/cameras', { signal });
 export const fetchAnalyticsPolicies = (signal?: AbortSignal) => cameraRequest<{ policies: AnalyticsPolicy[] }>('/cameras/analytics-policies', { signal });
-export const updateAnalyticsPolicies = (policies: Array<Omit<AnalyticsPolicy, 'updatedAt'>>) =>
+export const updateAnalyticsPolicies = (policies: Array<Omit<AnalyticsPolicy, 'updatedAt'>>, signal?: AbortSignal) =>
   cameraRequest<{ policies: AnalyticsPolicy[] }>('/cameras/analytics-policies', {
-    method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ policies }),
+    method: 'PUT', signal, headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ policies }),
   });
 const analyticsRequest = async <T>(path: string, init?: RequestInit): Promise<T> => {
   const response = await fetch(`/api/v3${path}`, { cache: 'no-store', credentials: 'same-origin', ...init });
@@ -265,8 +277,8 @@ const analyticsRequest = async <T>(path: string, init?: RequestInit): Promise<T>
   return (await response.json()) as T;
 };
 export const fetchV3AnalyticsPolicies = (signal?: AbortSignal) => analyticsRequest<{ schemaVersion: 2; revision: number; policies: AnalyticsPolicy[] }>('/analytics/policies', { signal });
-export const patchV3AnalyticsPolicies = (baseRevision: number, policies: Array<Omit<AnalyticsPolicy, 'updatedAt'>>) => analyticsRequest<{ schemaVersion: 2; revision: number; policies: AnalyticsPolicy[] }>('/analytics/policies', {
-  method: 'PATCH', headers: { 'Content-Type': 'application/json', 'If-Match': `"${baseRevision}"` }, body: JSON.stringify({ baseRevision, policies }),
+export const patchV3AnalyticsPolicies = (baseRevision: number, policies: Array<Omit<AnalyticsPolicy, 'updatedAt'>>, signal?: AbortSignal) => analyticsRequest<{ schemaVersion: 2; revision: number; policies: AnalyticsPolicy[] }>('/analytics/policies', {
+  method: 'PATCH', signal, headers: { 'Content-Type': 'application/json', 'If-Match': `"${baseRevision}"` }, body: JSON.stringify({ baseRevision, policies }),
 });
 export const requestAnalyticsRuntimePlan = (cameraId: string, profileId: string, kinds: Array<'motion' | 'scene-change' | 'person'>, capabilities: Record<string, unknown>) => analyticsRequest<{ sessionId: string; expiresAt: number; plans: AnalyticsRuntimePlan[] }>('/analytics/runtime-plans', {
   method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ cameraId, profileId, kinds, capabilities }),
@@ -286,30 +298,30 @@ export const fetchAnalyticsJobs = () => clientAdminRequest<{ jobs: AnalyticsJob[
 export const createAnalyticsJob = (value: { cameraId: string; profileId: string; modelId: string; modelSha256: string; nodeId?: string }) => clientAdminRequest<AnalyticsJob>('/analytics-jobs', {
   method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ kind: 'person', ...value }),
 });
-export const detectCamera = (address: string, credentials?: { username: string; password: string }) => cameraRequest<CameraDetection & { credentialsExtracted?: boolean; username?: string; password?: string; authRequired?: boolean }>('/camera-detect', {
-  method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ address, ...(credentials ?? {}) }),
+export const detectCamera = (address: string, credentials?: { username: string; password: string }, signal?: AbortSignal) => cameraRequest<CameraDetection & { credentialsExtracted?: boolean }>('/camera-detect', {
+  method: 'POST', signal, headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ address, ...(credentials ?? {}) }),
 });
-export const discoverOnvif = () => cameraRequest<{ devices: Array<{ address: string; host: string; adapter: 'onvif' }> }>('/onvif/discover', {
-  method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}',
+export const discoverOnvif = (signal?: AbortSignal) => cameraRequest<{ devices: Array<{ address: string; host: string; adapter: 'onvif' }> }>('/onvif/discover', {
+  method: 'POST', signal, headers: { 'Content-Type': 'application/json' }, body: '{}',
 });
-export const probeOnvif = (address: string, credentialsRef: string, credentials?: { username: string; password: string }) => cameraRequest<CameraDetection & { credentialsExtracted?: boolean; username?: string; password?: string }>('/onvif/probe', {
-  method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ address, credentialsRef, ...(credentials ?? {}) }),
+export const probeOnvif = (address: string, credentialsRef: string, credentials?: { username: string; password: string }, signal?: AbortSignal) => cameraRequest<CameraDetection & { credentialsExtracted?: boolean }>('/onvif/probe', {
+  method: 'POST', signal, headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ address, credentialsRef, ...(credentials ?? {}) }),
 });
-export const createCamera = (camera: Partial<CameraRecord> & { username?: string; password?: string }) => cameraRequest<CameraRecord>('/cameras', {
-  method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(camera),
+export const createCamera = (camera: Partial<CameraRecord> & { username?: string; password?: string }, signal?: AbortSignal) => cameraRequest<CameraRecord>('/cameras', {
+  method: 'POST', signal, headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(camera),
 });
-export const updateCameraCredentials = (cameraId: string, username: string, password: string) => cameraRequest<CameraRecord>(`/cameras/${encodeURIComponent(cameraId)}/credentials`, {
-  method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ username, password }),
+export const updateCameraCredentials = (cameraId: string, username: string, password: string, signal?: AbortSignal) => cameraRequest<CameraRecord>(`/cameras/${encodeURIComponent(cameraId)}/credentials`, {
+  method: 'PUT', signal, headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ username, password }),
 });
-export const syncOnvifCamera = (cameraId: string) => cameraRequest<CameraRecord>(`/cameras/${encodeURIComponent(cameraId)}/onvif/sync`, {
-  method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}',
+export const syncOnvifCamera = (cameraId: string, signal?: AbortSignal) => cameraRequest<CameraRecord>(`/cameras/${encodeURIComponent(cameraId)}/onvif/sync`, {
+  method: 'POST', signal, headers: { 'Content-Type': 'application/json' }, body: '{}',
 });
-export const qualifyBrowserDirect = (cameraId: string, profileId: string) => cameraRequest<{
+export const qualifyBrowserDirect = (cameraId: string, profileId: string, signal?: AbortSignal) => cameraRequest<{
   cameraId: string; profileId: string; eligible: boolean; reason: string; checkedAt: number;
 }>(`/cameras/${encodeURIComponent(cameraId)}/profiles/${encodeURIComponent(profileId)}/browser-direct/probe`, {
-  method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}',
+    method: 'POST', signal, headers: { 'Content-Type': 'application/json' }, body: '{}',
 });
-export const deleteCamera = (cameraId: string) => cameraRequest<{ id: string; deleted: boolean }>(`/cameras/${encodeURIComponent(cameraId)}`, { method: 'DELETE' });
+export const deleteCamera = (cameraId: string, signal?: AbortSignal) => cameraRequest<{ id: string; deleted: boolean }>(`/cameras/${encodeURIComponent(cameraId)}`, { method: 'DELETE', signal });
 const onvifOperation = <T>(cameraId: string, operation: string, body: Record<string, unknown>, signal?: AbortSignal) =>
   cameraRequest<T>(`/cameras/${encodeURIComponent(cameraId)}/onvif/${operation}`, {
     method: 'POST', signal, headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
@@ -330,9 +342,13 @@ export const sendOnvifTalk = async (cameraId: string, body: Record<string, unkno
 };
 export const fetchDeviceOperations = (cameraId: string) => cameraRequest<{ operations: DeviceOperation[] }>(`/cameras/${encodeURIComponent(cameraId)}/operations`);
 async function clientAdminRequest<T>(path: string, init?: RequestInit): Promise<T> {
-  const response = await fetch(`/api/v2${path}`, { cache: 'no-store', credentials: 'same-origin', ...init });
-  if (!response.ok) throw await parseError(response);
-  return (await response.json()) as T;
+  // Bound headers and body parsing, even for callers without an owner hook.
+  const { withRequestTimeout } = await import('./requestTimeout');
+  return withRequestTimeout(20000, async signal => {
+    const response = await fetch(`/api/v2${path}`, { cache: 'no-store', credentials: 'same-origin', ...init, signal });
+    if (!response.ok) throw await parseError(response);
+    return await response.json() as T;
+  }, init?.signal ?? undefined);
 }
 export interface SourceCatalogQuery {
   page?: number; limit?: number; q?: string; group?: string; adapter?: string; health?: string;
@@ -353,10 +369,10 @@ export const batchSourceCatalog = (items: Array<Record<string, unknown>>) =>
   clientAdminRequest<{ items: SourceCatalogItem[] }>('/source-catalog/batch', {
     method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ items }),
   });
-export const probeSourceProfile = (cameraId: string, profileId: string) =>
+export const probeSourceProfile = (cameraId: string, profileId: string, signal?: AbortSignal) =>
   clientAdminRequest<{ cameraId: string; profile: SourceCatalogItem['profiles'][number] }>(
     `/source-catalog/${encodeURIComponent(cameraId)}/profiles/${encodeURIComponent(profileId)}/probe`, {
-      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}',
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}', signal,
     });
 export interface LegacySourceImportItem { sourceId: string; state: 'linked' | 'ready_to_import' | 'needs_configuration'; reason?: string; cameraId?: string; profileId?: string; }
 export interface LegacySourceImportStatus { schemaVersion: 1; baseRevision: number; items: LegacySourceImportItem[]; count: number; }
@@ -386,26 +402,26 @@ export const fetchClientEnrollments = (signal?: AbortSignal) =>
   clientAdminRequest<{ enrollments: ClientEnrollment[] }>('/enrollments', { signal });
 export const fetchEnrolledClients = (signal?: AbortSignal) =>
   clientAdminRequest<{ clients: EnrolledClient[] }>('/clients', { signal });
-export const approveClientEnrollment = (enrollmentId: string, pairingCode: string, cameraGrants: ClientCameraGrant[], targetClientId?: string) =>
+export const approveClientEnrollment = (enrollmentId: string, pairingCode: string, cameraGrants: ClientCameraGrant[], targetClientId?: string, signal?: AbortSignal) =>
   clientAdminRequest<{ clientId: string; state: 'approved'; grantExpiresAt: number; revision: number; updated: boolean }>(
     `/enrollments/${encodeURIComponent(enrollmentId)}/approve`, {
-      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      method: 'POST', signal, headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ pairingCode, cameraGrants, ...(targetClientId ? { targetClientId } : {}) }),
     });
-export const revokeEnrolledClient = (clientId: string) =>
+export const revokeEnrolledClient = (clientId: string, signal?: AbortSignal) =>
   clientAdminRequest<{ clientId: string; status: 'revoked'; revokedAt: number;
     offlineEffectiveNoLaterThan: number; weakRevocation: boolean;
     cameraCredentialCleanup: 'complete' | 'partial' | 'not-applicable' }>(
-    `/clients/${encodeURIComponent(clientId)}`, { method: 'DELETE' });
+    `/clients/${encodeURIComponent(clientId)}`, { method: 'DELETE', signal });
 
 export const fetchClusterUsers = (signal?: AbortSignal) =>
   clientAdminRequest<{ users: ClusterUser[]; revision: number }>('/users', { signal });
 export const createClusterUser = (value: { username: string; password: string; roles: ClusterRole[];
-  scopes: Array<{ kind: 'camera' | 'group'; id: string }> }) =>
-  clientAdminRequest<ClusterUser>('/users', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(value) });
-export const patchClusterUser = (userId: string, revision: number, patch: Record<string, unknown>) =>
+  scopes: Array<{ kind: 'camera' | 'group'; id: string }> }, signal?: AbortSignal) =>
+  clientAdminRequest<ClusterUser>('/users', { method: 'POST', signal, headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(value) });
+export const patchClusterUser = (userId: string, revision: number, patch: Record<string, unknown>, signal?: AbortSignal) =>
   clientAdminRequest<ClusterUser>(`/users/${encodeURIComponent(userId)}`, {
-    method: 'PATCH', headers: { 'Content-Type': 'application/json', 'If-Match': `"${revision}"` }, body: JSON.stringify(patch),
+    method: 'PATCH', signal, headers: { 'Content-Type': 'application/json', 'If-Match': `"${revision}"` }, body: JSON.stringify(patch),
   });
 export const fetchClusterRoles = (signal?: AbortSignal) =>
   clientAdminRequest<{ roles: Array<{ id: ClusterRole; permissions: string[] }> }>('/roles', { signal });
@@ -417,23 +433,23 @@ export const fetchClusterAudit = (limit = 100, before?: number, signal?: AbortSi
 };
 export const fetchClusterNodes = (signal?: AbortSignal) =>
   clientAdminRequest<{ nodes: ClusterNode[]; revision: number }>('/nodes', { signal });
-export const createNodeEnrollment = (value: { name: string; role: 'recorder' | 'worker' }) =>
+export const createNodeEnrollment = (value: { name: string; role: 'recorder' | 'worker' }, signal?: AbortSignal) =>
   clientAdminRequest<{ id: string; token: string; expiresAt: number; state: string }>('/node-enrollments', {
-    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(value),
+    method: 'POST', signal, headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(value),
   });
-export const approveNodeEnrollment = (enrollmentId: string) =>
+export const approveNodeEnrollment = (enrollmentId: string, signal?: AbortSignal) =>
   clientAdminRequest<{ id: string; nodeId: string; state: string }>(`/node-enrollments/${encodeURIComponent(enrollmentId)}/approve`, {
-    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}',
+    method: 'POST', signal, headers: { 'Content-Type': 'application/json' }, body: '{}',
   });
-export const revokeClusterNode = (nodeId: string, revision: number) =>
+export const revokeClusterNode = (nodeId: string, revision: number, signal?: AbortSignal) =>
   clientAdminRequest<{ id: string; state: string }>(`/nodes/${encodeURIComponent(nodeId)}`, {
-    method: 'DELETE', headers: { 'If-Match': `"${revision}"` },
+    method: 'DELETE', signal, headers: { 'If-Match': `"${revision}"` },
   });
 export const fetchStorageVolumes = (signal?: AbortSignal) =>
   clientAdminRequest<{ volumes: StorageVolume[]; revision: number }>('/storage-volumes', { signal });
-export const patchStorageVolume = (volume: StorageVolume, patch: Record<string, unknown>) =>
+export const patchStorageVolume = (volume: StorageVolume, patch: Record<string, unknown>, signal?: AbortSignal) =>
   clientAdminRequest<StorageVolume>(`/storage-volumes/${encodeURIComponent(volume.nodeId)}/${encodeURIComponent(volume.id)}`, {
-    method: 'PATCH', headers: { 'Content-Type': 'application/json', 'If-Match': `"${volume.revision}"` }, body: JSON.stringify(patch),
+    method: 'PATCH', signal, headers: { 'Content-Type': 'application/json', 'If-Match': `"${volume.revision}"` }, body: JSON.stringify(patch),
   });
 export const fetchResourceCapacity = (signal?: AbortSignal) =>
   clientAdminRequest<ResourceCapacity>('/resource-capacity', { signal });
@@ -443,35 +459,19 @@ export const fetchClusterRecordingTimeline = (fromUtcMs: number, toUtcMs: number
   const query = new URLSearchParams({ from: String(fromUtcMs), to: String(toUtcMs) });
   return clientAdminRequest<ClusterRecordingTimeline>(`/recordings/timeline?${query}`, { signal });
 };
-export const fetchVerifiedArchivedRecording = async (segmentId: string, cameraId: string): Promise<Blob> => {
-  const query = new URLSearchParams({ cameraId });
-  const ticket = await clientAdminRequest<{ segmentId: string; cameraId: string; url: string; sha256: string;
-    sizeBytes: number; contentType: string; expiresAt: number; credentialExposure: 'ephemeral' }>(
-    `/recordings/${encodeURIComponent(segmentId)}/playback-ticket?${query}`, { method: 'POST', body: '' },
-  );
-  const endpoint = new URL(ticket.url);
-  if (endpoint.protocol !== 'https:' || ticket.segmentId !== segmentId || ticket.cameraId !== cameraId
-      || ticket.credentialExposure !== 'ephemeral' || ticket.expiresAt * 1000 <= Date.now()
-      || !/^[0-9a-f]{64}$/.test(ticket.sha256) || ticket.sizeBytes < 1 || ticket.sizeBytes > 512 * 1024 * 1024) {
-    throw new Error('归档回放票据无效或已过期');
-  }
-  const response = await fetch(endpoint, {
-    method: 'GET', cache: 'no-store', credentials: 'omit', redirect: 'error', referrerPolicy: 'no-referrer',
-  });
-  if (!response.ok) throw new Error('无法读取归档录像');
-  const bytes = await response.arrayBuffer();
-  if (bytes.byteLength !== ticket.sizeBytes) throw new Error('归档录像大小校验失败');
-  const computed = [...new Uint8Array(await crypto.subtle.digest('SHA-256', bytes))]
-    .map((value) => value.toString(16).padStart(2, '0')).join('');
-  if (computed !== ticket.sha256) throw new Error('归档录像 SHA-256 校验失败');
-  return new Blob([bytes], { type: ticket.contentType === 'video/mp4' ? 'video/mp4' : 'application/octet-stream' });
-};
+export const fetchVerifiedArchivedRecording = (segmentId: string, cameraId: string, signal?: AbortSignal): Promise<Blob> =>
+  downloadVerifiedArchivedRecording(segmentId, cameraId, requestSignal => {
+    const query = new URLSearchParams({ cameraId });
+    return clientAdminRequest<ArchivePlaybackTicket>(
+      `/recordings/${encodeURIComponent(segmentId)}/playback-ticket?${query}`, { method: 'POST', body: '', signal: requestSignal },
+    );
+  }, signal);
 export const fetchArchiveTargets = (signal?: AbortSignal) =>
   clientAdminRequest<{ targets: ArchiveTarget[]; revision: number }>('/archive-targets', { signal });
 export const fetchBackupJobs = (signal?: AbortSignal) =>
   clientAdminRequest<{ jobs: BackupJob[]; revision: number }>('/backup-jobs', { signal });
-export const createBackupJob = (targetId = 'local') =>
-  clientAdminRequest<BackupJob>('/backup-jobs', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ targetId }) });
+export const createBackupJob = (targetId = 'local', signal?: AbortSignal) =>
+  clientAdminRequest<BackupJob>('/backup-jobs', { method: 'POST', signal, headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ targetId }) });
 export const fetchExternalProviders = (signal?: AbortSignal) =>
   clientAdminRequest<{ providers: ExternalProvider[]; revision: number }>('/providers', { signal });
 export const fetchEvents = (query = '') => cameraRequest<{ events: MonitorEvent[] }>(`/events${query ? `?${query}` : ''}`);

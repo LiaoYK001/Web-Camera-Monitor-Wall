@@ -13,6 +13,33 @@ ROOT = Path(__file__).resolve().parents[1]
 ENTRYPOINT = Path(os.environ.get('WEBOBS_TEST_CONTAINER_ENTRYPOINT', ROOT / 'docker/entrypoint.sh'))
 
 
+@unittest.skipUnless((ROOT / 'compose.yaml').is_file() and (ROOT / '.env.example').is_file(),
+                     'Repository-level defaults check; the image build copies only this test file')
+class DeploymentDefaultsTests(unittest.TestCase):
+    """Source defaults only; not a container or installed-product qualification.
+
+    The image build runs this module inside the container to exercise the supervisor
+    contracts. Deployment defaults live in the repository (compose.yaml/.env.example),
+    which the image does not carry, so that part is skipped there instead of failing.
+    """
+
+    def test_copied_environment_keeps_account_control_plane_enabled(self):
+        example = dict(re.findall(r'^([A-Z_]+)=([^\r\n]*)$',
+                                  (ROOT / '.env.example').read_text(encoding='utf-8'), re.MULTILINE))
+        self.assertEqual(example.get('WEBOBS_CLUSTER_ENABLED'), 'true',
+                         'Copying .env.example must not override authenticated Compose with false')
+        self.assertEqual(example.get('WEBOBS_BIND_ADDRESS'), '127.0.0.1')
+
+    def test_base_compose_keeps_authenticated_loopback_defaults(self):
+        compose = (ROOT / 'compose.yaml').read_text(encoding='utf-8')
+        self.assertIn('WEBOBS_CLUSTER_ENABLED: ${WEBOBS_CLUSTER_ENABLED:-true}', compose)
+        self.assertIn('WEBOBS_COMPAT_BASIC_AUTH: "false"', compose)
+        self.assertIn('WEBOBS_COMPOSITE_ENABLED: "false"', compose)
+        for line in compose.split('    ports:', 1)[1].split('    stop_grace_period:', 1)[0].splitlines():
+            if line.strip().startswith('-'):
+                self.assertIn('${WEBOBS_BIND_ADDRESS:-127.0.0.1}', line)
+
+
 @unittest.skipUnless(os.name == 'posix', 'Linux shell/process lifecycle contracts')
 class EntrypointTests(unittest.TestCase):
     def setUp(self):
