@@ -1,3 +1,4 @@
+import { observeIssues } from './diagnosticsRuntime';
 import type { OperationalIssue } from './types';
 
 type Listener = (issues: OperationalIssue[]) => void;
@@ -14,6 +15,7 @@ const safeDetails = (details: Record<string, unknown> = {}) => Object.fromEntrie
 
 const emit = () => {
   const snapshot = [...issues.values()].sort((left, right) => right.lastSeenAt - left.lastSeenAt);
+  observeIssues(snapshot, 'local');
   listeners.forEach((listener) => listener(snapshot));
   window.dispatchEvent(new CustomEvent('webobs:issues-changed', { detail: snapshot }));
 };

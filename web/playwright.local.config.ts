@@ -4,6 +4,10 @@ const chromiumExecutable = process.env.WEBOBS_PLAYWRIGHT_CHROMIUM_EXECUTABLE;
 
 export default defineConfig({
   testDir: './tests/local-runtime',
+  // The support-report suite asserts a specific injected build version, so it runs
+  // under playwright.support.config.ts with its own webServer env (pnpm
+  // test:support-diagnostics). Everything else in this directory runs here.
+  testIgnore: 'support-diagnostics.spec.ts',
   timeout: 30_000,
   workers: 1,
   reporter: 'line',

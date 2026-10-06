@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
+import { observeNative } from './diagnosticsRuntime';
 import type { DesktopStatus } from './desktopRuntime';
 
 /** Push notifications supersede earlier IPC snapshots, including the initial read. */
@@ -15,7 +16,7 @@ export function useDesktopStatus() {
     try {
       const value = await bridge.status();
       if (lifecycle.current === epoch && reads.current === request && events.current === event) {
-        setState(value); setError('');
+        observeNative(value); setState(value); setError('');
       }
     } catch (reason) {
       if (lifecycle.current !== epoch || reads.current !== request || events.current !== event) return;
@@ -30,7 +31,7 @@ export function useDesktopStatus() {
     const epoch = ++lifecycle.current;
     const unsubscribe = bridge.onStatus((value) => {
       if (lifecycle.current !== epoch) return;
-      events.current++; setState(value); setError(''); setLoading(false);
+      observeNative(value); events.current++; setState(value); setError(''); setLoading(false);
     });
     void refresh().catch(() => undefined);
     return () => { lifecycle.current++; unsubscribe(); };

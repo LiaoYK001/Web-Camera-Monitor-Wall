@@ -1,5 +1,6 @@
 import type { StudioDocument } from './types';
 import { isSupportedSceneSchema } from './sceneSchema';
+import { normalizeStudioDocument } from './studioCompat';
 import { normalizeMonitorView, type MonitorView } from './monitorView';
 import { compactMonitorPreference } from './monitorPreferenceMerge';
 
@@ -609,8 +610,12 @@ export async function hasLocalConfigProfiles(): Promise<boolean> {
 
 export async function saveLocalConfigProfile(name: string, studio: StudioDocument, id?: string, workspaceLayout?: WorkspaceLayout): Promise<LocalConfigProfile> {
   const trimmed = name.trim();
-  if (!validLocalConfigName(trimmed) || !validateProfileStudio(studio)) throw new Error('本地配置名称或场景格式无效');
-  const safeStudio = redactedStudio(studio);
+  // Compatibility boundary: a document written by an older core is migrated with safe
+  // defaults before it is validated and stored, so a local profile always holds a
+  // document the editor can render (docs/scene-schema-v4.md).
+  const normalized = normalizeStudioDocument(studio);
+  if (!validLocalConfigName(trimmed) || !validateProfileStudio(normalized)) throw new Error('本地配置名称或场景格式无效');
+  const safeStudio = redactedStudio(normalized);
   assertRedacted(safeStudio);
   const safeLayout = workspaceLayout ?? await loadWorkspaceLayout();
   if (safeLayout && !validateWorkspaceLayout(safeLayout)) throw new Error('本机工作区布局格式无效');

@@ -21,6 +21,8 @@ import { useDeviceSync } from './useDeviceSync';
 import DeviceSyncPanel from './DeviceSyncPanel';
 import { copyDeviceLayoutToPreview } from './deviceWorkspace';
 import { queueStudioSync } from './syncRuntime';
+import { normalizeStudioDocument } from './studioCompat';
+import { useSecurityUpdateRecovery } from './pwaContinuity';
 import { withRequestTimeout } from './requestTimeout';
 import { isDeviceWorkspace, loadBrowserIdentity, loadSyncQueue, setDeviceWorkspace } from './localRuntime';
 import { loadActiveLocalConfigProfile, loadOfflineStudio, loadWorkspaceLayout, makeLocalConfigBundleForStudio, queueOfflineAudit, saveLocalConfigProfile, saveStudioSnapshot, type LocalConfigProfile } from './localRuntime';
@@ -135,6 +137,7 @@ export default function App() {
   const [activeLocalProfile, setActiveLocalProfile] = useState<LocalConfigProfile | null>(null);
   const [deviceWorkspace, setDeviceWorkspaceMode] = useState(false);
   const deviceSync = useDeviceSync();
+  const securityUpdate = useSecurityUpdateRecovery();
   const [studioCapabilities, setStudioCapabilities] = useState<StudioCapabilities | null>(null);
   const [programScene, setProgramScene] = useState<SceneDocument | null>(null);
   const [selectedSceneId, setSelectedSceneId] = useState<string | null>(null);
@@ -199,14 +202,17 @@ export default function App() {
   }, [baseline, dirty]);
 
   const applyRemoteStudio = useCallback((studio: StudioDocument) => {
-    const scene = studio.scenes.find((candidate) => candidate.id === studio.previewSceneId) ?? studio.scenes[0];
+    // One normalization boundary for server responses, cached snapshots and local
+    // profiles: the editor only ever renders a document it understands.
+    const normalized = normalizeStudioDocument(studio);
+    const scene = normalized.scenes.find((candidate) => candidate.id === normalized.previewSceneId) ?? normalized.scenes[0];
     if (!scene) return;
     baselineRef.current = scene;
     dirtyRef.current = false;
     setBaseline(scene);
     setDraft(cloneScene(scene));
-    setStudioBaseline(studio);
-    setStudioDraft(JSON.parse(JSON.stringify(studio)) as StudioDocument);
+    setStudioBaseline(normalized);
+    setStudioDraft(JSON.parse(JSON.stringify(normalized)) as StudioDocument);
     // Studio definitions and device/local drafts are independent of the frozen
     // Program. Only authenticated scene events replace the live snapshot.
     setSelectedSceneId(scene.id);
@@ -1008,6 +1014,9 @@ export default function App() {
     return (rightItem?.zIndex ?? -1) - (leftItem?.zIndex ?? -1);
   });
   const selectedCapability = studioCapabilities?.scenes.find((scene) => scene.sceneId === draft.id);
+  // Capability payloads are advisory wire data: a plan this build cannot read is
+  // skipped instead of taking the whole workspace down with it.
+  const selectedDirect = selectedCapability?.direct;
   const newSourceValueValid = newKind === 'camera' ? newUrls.length > 0
     : newKind === 'rtsp' ? /^rtsps?:\/\/\S+$/i.test(newUrl)
     : newKind === 'browser' ? /^https?:\/\/\S+$/i.test(newUrl)
@@ -1077,7 +1086,9 @@ export default function App() {
       {deviceWorkspace && <div className="notice device-workspace-banner" role="status">
         <strong>设备布局 · {deviceSync.pending ? `${deviceSync.pending} 项等待同步` : '无待上传修改'}</strong>
         <span> 布局同步不执行 TAKE。{deviceSync.state?.conflicts.length ? '有同步冲突，请在设置中处理。' : deviceSync.error ? '同步暂不可用，本机内容已保留。' : ''}</span>
-        <button type="button" onClick={() => navigate('settings')}>查看同步与配对</button>
+        {/* The post-update recovery notice owns this exact action while it is shown,
+            so the workspace never offers two identically named controls. */}
+        {securityUpdate.state === 'none' && <button type="button" onClick={() => navigate('settings')}>查看同步与配对</button>}
         <button type="button" disabled={saving || connection !== 'online'} onClick={() => void returnToServer()}>返回服务器布局</button>
         <button type="button" disabled={dirty || saving || deviceSync.busy || !!deviceSync.pending || !!deviceSync.state?.conflicts.length || connection !== 'online'} onClick={() => void copyDeviceToServer()}>复制到服务器预览</button>
       </div>}
@@ -1134,10 +1145,10 @@ export default function App() {
         </div>
       </section>
 
-      {selectedCapability && !selectedCapability.direct.exact && (
+      {selectedDirect && !selectedDirect.exact && (
         <div className="capability-alert" role="status">
-          Direct 会自动降级为 {selectedCapability.direct.selected.toUpperCase()}：
-          {selectedCapability.direct.reasons.join('；')}
+          Direct 会自动降级为 {selectedDirect.selected.toUpperCase()}：
+          {selectedDirect.reasons.join('；')}
         </div>
       )}
 

@@ -1,7 +1,9 @@
-import { type FormEvent, type ReactNode, useEffect, useState } from 'react';
+import { type FormEvent, type ReactNode, useEffect, useRef, useState } from 'react';
 import { ControlApiError, fetchAuthSession, fetchFirstRunStatus, login, logout, registerFirstAdmin, type AuthSession } from './api';
 import { clearPrivateRuntimeState, loadOfflineStudio } from './localRuntime';
 import { withRequestTimeout } from './requestTimeout';
+import { observeSession, resetDiagnostics } from './diagnosticsRuntime';
+import { SecurityUpdateRecoveryNotice } from './pwaContinuity';
 
 type GateSession = AuthSession & { unavailable?: boolean; offlineExpiresAt?: number };
 const ACTIVE_ACCOUNT_KEY = 'webobs-active-account';
@@ -21,6 +23,15 @@ export default function LoginGate({ children }: { children: ReactNode }) {
   const [error, setError] = useState('');
   const [submitting, setSubmitting] = useState(false);
   const [registrationOpen, setRegistrationOpen] = useState(false);
+  const diagnosticSession = useRef<GateSession | null>(null);
+  useEffect(() => {
+    if (!session) return;
+    const previous = diagnosticSession.current;
+    // Compare identity in the auth owner only; never send it to diagnostics.
+    if (previous && (previous.user !== session.user || previous.authenticated !== session.authenticated)) resetDiagnostics();
+    diagnosticSession.current = session;
+    observeSession(session);
+  }, [session]);
 
   useEffect(() => {
     const controller = new AbortController();
@@ -83,14 +94,19 @@ export default function LoginGate({ children }: { children: ReactNode }) {
     }
   };
 
-  if (!session) return <main className="login-screen"><div className="login-card"><p>正在检查安全会话…</p></div></main>;
-  if (session.unavailable) return <main className="login-screen"><div className="login-card">
+  // This component owns the outermost shell, so the post-security-update notice
+  // also covers the authentication gate that a forced replacement must refresh
+  // immediately. It never stores draft text or credentials.
+  const shell = (content: ReactNode) => <><SecurityUpdateRecoveryNotice />{content}</>;
+
+  if (!session) return shell(<main className="login-screen"><div className="login-card"><p>正在检查安全会话…</p></div></main>);
+  if (session.unavailable) return shell(<main className="login-screen"><div className="login-card">
     <span className="eyebrow">Web Camera Monitor Wall</span>
     <h1>本地服务暂不可用</h1>
     <p>未检测到可用的控制服务。请确认开发后端正在运行后重试。</p>
     <button className="primary-button" type="button" onClick={() => { setSession(null); setCheckAttempt((value) => value + 1); }}>重新检查</button>
-  </div></main>;
-  if (session.authenticationEnabled === false || session.authenticated || session.offlineExpiresAt) return (
+  </div></main>);
+  if (session.authenticationEnabled === false || session.authenticated || session.offlineExpiresAt) return shell(
     <>
       {session.offlineExpiresAt && <div className="notice offline-session-banner" role="status">离线编辑 · 设备授权至 {new Date(session.offlineExpiresAt).toLocaleString()}。管理与服务器操作需要重新连接。</div>}
       {children}
@@ -104,7 +120,7 @@ export default function LoginGate({ children }: { children: ReactNode }) {
       )}
     </>
   );
-  return (
+  return shell(
     <main className="login-screen">
       <form className="login-card" onSubmit={(event) => void submit(event)}>
         <span className="eyebrow">Web Camera Monitor Wall</span>

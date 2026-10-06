@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { currentBrowserPairing, type BrowserPairingState } from './browserEnrollment';
 import { loadSyncQueue, loadSyncState, type LocalSyncState } from './localRuntime';
+import { useSecurityUpdateRecovery } from './pwaContinuity';
 import { resolveSyncConflicts, synchronizeBrowserState } from './syncRuntime';
 import { startVisiblePolling } from './visiblePolling';
 
@@ -14,13 +15,19 @@ export function useDeviceSync() {
   const mounted = useRef(false);
   const operation = useRef(false);
   const epoch = useRef(0);
+  // 'checking' is not "no update": uploads wait for a definitive answer so a
+  // forced security replacement can never be followed by a silent recovery POST.
+  const recovery = useSecurityUpdateRecovery();
+  const recoveryState = recovery.state;
+  const clearRecovery = recovery.clear;
   const read = useCallback(async () => {
     const revision = epoch.current;
     const [identity, cached, queue] = await Promise.all([currentBrowserPairing(), loadSyncState(), loadSyncQueue()]);
     if (!mounted.current || revision !== epoch.current) return;
     setPairing(identity); setState(cached); setPending(queue?.mutations.length ?? 0);
   }, []);
-  const sync = useCallback(async (choice?: 'local' | 'server') => {
+  /** `explicit` is the user pressing a sync control; only that clears the update record. */
+  const sync = useCallback(async (choice?: 'local' | 'server', explicit = true) => {
     if (operation.current || !navigator.onLine) return;
     operation.current = true;
     const revision = epoch.current;
@@ -28,6 +35,9 @@ export function useDeviceSync() {
     try {
       if (choice) await resolveSyncConflicts(choice);
       else await synchronizeBrowserState();
+      // A completed explicit sync is the user's own confirmation that the
+      // preserved queue is safe to upload, so automatic syncing may resume.
+      if (explicit) await clearRecovery();
     } catch (reason) {
       if (mounted.current && revision === epoch.current)
         setError(reason instanceof Error ? reason.message : '同步失败；本机保存会保留，请稍后重试。');
@@ -35,7 +45,7 @@ export function useDeviceSync() {
       operation.current = false;
       if (mounted.current) { setBusy(false); await read().catch(() => undefined); }
     }
-  }, [read]);
+  }, [read, clearRecovery]);
   useEffect(() => {
     mounted.current = true;
     const refresh = () => { void read().catch(() => undefined); };
@@ -52,10 +62,12 @@ export function useDeviceSync() {
   }, [read]);
   const approved = pairing?.state === 'approved';
   useEffect(() => {
-    if (!approved) return;
-    const polling = startVisiblePolling(async () => { await sync(); }, 30000);
+    // After a forced security replacement the durable queue stays on the device
+    // until the user explicitly syncs it: no mount-time upload, no timer upload.
+    if (!approved || recoveryState !== 'none') return;
+    const polling = startVisiblePolling(async () => { await sync(undefined, false); }, 30000);
     return () => polling.stop();
-  }, [approved, sync]);
+  }, [approved, recoveryState, sync]);
   return { pairing, state, pending, busy, error, sync, read };
 }
 export type DeviceSyncModel = ReturnType<typeof useDeviceSync>;

@@ -1,3 +1,4 @@
+import { downloadVerifiedArchivedRecording, type ArchivePlaybackTicket } from './archiveDownload';
 import type { AnalyticsJob, AnalyticsPolicy, AnalyticsRuntimePlan, AnalyticsStatus, ApiErrorEnvelope, ArchiveTarget, AudioMeterSnapshot, BackupJob, CameraDetection, CameraRecord, ClientCameraGrant, ClientEnrollment, ClusterNode, ClusterRecordingTimeline, ClusterRole, ClusterUser, DeviceOperation, EnrolledClient, EventRule, ExternalProvider, MonitorEvent, MotionZone, NvrExport, NvrStatus, NvrTimeline, OnvifEvent, OnvifPreset, OperationalIssue, PlaybackCapabilities, ProcessDiagnostics, RecordingPlacement, ResourceCapacity, RuntimeSettings, SceneDocument, SceneEvent, SourceCatalogItem, SourceCatalogPage, StorageVolume, StudioCapabilities, StudioDocument, SystemCapabilities } from './types';
 
 export class ControlApiError extends Error {
@@ -341,9 +342,13 @@ export const sendOnvifTalk = async (cameraId: string, body: Record<string, unkno
 };
 export const fetchDeviceOperations = (cameraId: string) => cameraRequest<{ operations: DeviceOperation[] }>(`/cameras/${encodeURIComponent(cameraId)}/operations`);
 async function clientAdminRequest<T>(path: string, init?: RequestInit): Promise<T> {
-  const response = await fetch(`/api/v2${path}`, { cache: 'no-store', credentials: 'same-origin', ...init });
-  if (!response.ok) throw await parseError(response);
-  return (await response.json()) as T;
+  // Bound headers and body parsing, even for callers without an owner hook.
+  const { withRequestTimeout } = await import('./requestTimeout');
+  return withRequestTimeout(20000, async signal => {
+    const response = await fetch(`/api/v2${path}`, { cache: 'no-store', credentials: 'same-origin', ...init, signal });
+    if (!response.ok) throw await parseError(response);
+    return await response.json() as T;
+  }, init?.signal ?? undefined);
 }
 export interface SourceCatalogQuery {
   page?: number; limit?: number; q?: string; group?: string; adapter?: string; health?: string;
@@ -397,26 +402,26 @@ export const fetchClientEnrollments = (signal?: AbortSignal) =>
   clientAdminRequest<{ enrollments: ClientEnrollment[] }>('/enrollments', { signal });
 export const fetchEnrolledClients = (signal?: AbortSignal) =>
   clientAdminRequest<{ clients: EnrolledClient[] }>('/clients', { signal });
-export const approveClientEnrollment = (enrollmentId: string, pairingCode: string, cameraGrants: ClientCameraGrant[], targetClientId?: string) =>
+export const approveClientEnrollment = (enrollmentId: string, pairingCode: string, cameraGrants: ClientCameraGrant[], targetClientId?: string, signal?: AbortSignal) =>
   clientAdminRequest<{ clientId: string; state: 'approved'; grantExpiresAt: number; revision: number; updated: boolean }>(
     `/enrollments/${encodeURIComponent(enrollmentId)}/approve`, {
-      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      method: 'POST', signal, headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ pairingCode, cameraGrants, ...(targetClientId ? { targetClientId } : {}) }),
     });
-export const revokeEnrolledClient = (clientId: string) =>
+export const revokeEnrolledClient = (clientId: string, signal?: AbortSignal) =>
   clientAdminRequest<{ clientId: string; status: 'revoked'; revokedAt: number;
     offlineEffectiveNoLaterThan: number; weakRevocation: boolean;
     cameraCredentialCleanup: 'complete' | 'partial' | 'not-applicable' }>(
-    `/clients/${encodeURIComponent(clientId)}`, { method: 'DELETE' });
+    `/clients/${encodeURIComponent(clientId)}`, { method: 'DELETE', signal });
 
 export const fetchClusterUsers = (signal?: AbortSignal) =>
   clientAdminRequest<{ users: ClusterUser[]; revision: number }>('/users', { signal });
 export const createClusterUser = (value: { username: string; password: string; roles: ClusterRole[];
-  scopes: Array<{ kind: 'camera' | 'group'; id: string }> }) =>
-  clientAdminRequest<ClusterUser>('/users', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(value) });
-export const patchClusterUser = (userId: string, revision: number, patch: Record<string, unknown>) =>
+  scopes: Array<{ kind: 'camera' | 'group'; id: string }> }, signal?: AbortSignal) =>
+  clientAdminRequest<ClusterUser>('/users', { method: 'POST', signal, headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(value) });
+export const patchClusterUser = (userId: string, revision: number, patch: Record<string, unknown>, signal?: AbortSignal) =>
   clientAdminRequest<ClusterUser>(`/users/${encodeURIComponent(userId)}`, {
-    method: 'PATCH', headers: { 'Content-Type': 'application/json', 'If-Match': `"${revision}"` }, body: JSON.stringify(patch),
+    method: 'PATCH', signal, headers: { 'Content-Type': 'application/json', 'If-Match': `"${revision}"` }, body: JSON.stringify(patch),
   });
 export const fetchClusterRoles = (signal?: AbortSignal) =>
   clientAdminRequest<{ roles: Array<{ id: ClusterRole; permissions: string[] }> }>('/roles', { signal });
@@ -428,23 +433,23 @@ export const fetchClusterAudit = (limit = 100, before?: number, signal?: AbortSi
 };
 export const fetchClusterNodes = (signal?: AbortSignal) =>
   clientAdminRequest<{ nodes: ClusterNode[]; revision: number }>('/nodes', { signal });
-export const createNodeEnrollment = (value: { name: string; role: 'recorder' | 'worker' }) =>
+export const createNodeEnrollment = (value: { name: string; role: 'recorder' | 'worker' }, signal?: AbortSignal) =>
   clientAdminRequest<{ id: string; token: string; expiresAt: number; state: string }>('/node-enrollments', {
-    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(value),
+    method: 'POST', signal, headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(value),
   });
-export const approveNodeEnrollment = (enrollmentId: string) =>
+export const approveNodeEnrollment = (enrollmentId: string, signal?: AbortSignal) =>
   clientAdminRequest<{ id: string; nodeId: string; state: string }>(`/node-enrollments/${encodeURIComponent(enrollmentId)}/approve`, {
-    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}',
+    method: 'POST', signal, headers: { 'Content-Type': 'application/json' }, body: '{}',
   });
-export const revokeClusterNode = (nodeId: string, revision: number) =>
+export const revokeClusterNode = (nodeId: string, revision: number, signal?: AbortSignal) =>
   clientAdminRequest<{ id: string; state: string }>(`/nodes/${encodeURIComponent(nodeId)}`, {
-    method: 'DELETE', headers: { 'If-Match': `"${revision}"` },
+    method: 'DELETE', signal, headers: { 'If-Match': `"${revision}"` },
   });
 export const fetchStorageVolumes = (signal?: AbortSignal) =>
   clientAdminRequest<{ volumes: StorageVolume[]; revision: number }>('/storage-volumes', { signal });
-export const patchStorageVolume = (volume: StorageVolume, patch: Record<string, unknown>) =>
+export const patchStorageVolume = (volume: StorageVolume, patch: Record<string, unknown>, signal?: AbortSignal) =>
   clientAdminRequest<StorageVolume>(`/storage-volumes/${encodeURIComponent(volume.nodeId)}/${encodeURIComponent(volume.id)}`, {
-    method: 'PATCH', headers: { 'Content-Type': 'application/json', 'If-Match': `"${volume.revision}"` }, body: JSON.stringify(patch),
+    method: 'PATCH', signal, headers: { 'Content-Type': 'application/json', 'If-Match': `"${volume.revision}"` }, body: JSON.stringify(patch),
   });
 export const fetchResourceCapacity = (signal?: AbortSignal) =>
   clientAdminRequest<ResourceCapacity>('/resource-capacity', { signal });
@@ -454,35 +459,19 @@ export const fetchClusterRecordingTimeline = (fromUtcMs: number, toUtcMs: number
   const query = new URLSearchParams({ from: String(fromUtcMs), to: String(toUtcMs) });
   return clientAdminRequest<ClusterRecordingTimeline>(`/recordings/timeline?${query}`, { signal });
 };
-export const fetchVerifiedArchivedRecording = async (segmentId: string, cameraId: string): Promise<Blob> => {
-  const query = new URLSearchParams({ cameraId });
-  const ticket = await clientAdminRequest<{ segmentId: string; cameraId: string; url: string; sha256: string;
-    sizeBytes: number; contentType: string; expiresAt: number; credentialExposure: 'ephemeral' }>(
-    `/recordings/${encodeURIComponent(segmentId)}/playback-ticket?${query}`, { method: 'POST', body: '' },
-  );
-  const endpoint = new URL(ticket.url);
-  if (endpoint.protocol !== 'https:' || ticket.segmentId !== segmentId || ticket.cameraId !== cameraId
-      || ticket.credentialExposure !== 'ephemeral' || ticket.expiresAt * 1000 <= Date.now()
-      || !/^[0-9a-f]{64}$/.test(ticket.sha256) || ticket.sizeBytes < 1 || ticket.sizeBytes > 512 * 1024 * 1024) {
-    throw new Error('归档回放票据无效或已过期');
-  }
-  const response = await fetch(endpoint, {
-    method: 'GET', cache: 'no-store', credentials: 'omit', redirect: 'error', referrerPolicy: 'no-referrer',
-  });
-  if (!response.ok) throw new Error('无法读取归档录像');
-  const bytes = await response.arrayBuffer();
-  if (bytes.byteLength !== ticket.sizeBytes) throw new Error('归档录像大小校验失败');
-  const computed = [...new Uint8Array(await crypto.subtle.digest('SHA-256', bytes))]
-    .map((value) => value.toString(16).padStart(2, '0')).join('');
-  if (computed !== ticket.sha256) throw new Error('归档录像 SHA-256 校验失败');
-  return new Blob([bytes], { type: ticket.contentType === 'video/mp4' ? 'video/mp4' : 'application/octet-stream' });
-};
+export const fetchVerifiedArchivedRecording = (segmentId: string, cameraId: string, signal?: AbortSignal): Promise<Blob> =>
+  downloadVerifiedArchivedRecording(segmentId, cameraId, requestSignal => {
+    const query = new URLSearchParams({ cameraId });
+    return clientAdminRequest<ArchivePlaybackTicket>(
+      `/recordings/${encodeURIComponent(segmentId)}/playback-ticket?${query}`, { method: 'POST', body: '', signal: requestSignal },
+    );
+  }, signal);
 export const fetchArchiveTargets = (signal?: AbortSignal) =>
   clientAdminRequest<{ targets: ArchiveTarget[]; revision: number }>('/archive-targets', { signal });
 export const fetchBackupJobs = (signal?: AbortSignal) =>
   clientAdminRequest<{ jobs: BackupJob[]; revision: number }>('/backup-jobs', { signal });
-export const createBackupJob = (targetId = 'local') =>
-  clientAdminRequest<BackupJob>('/backup-jobs', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ targetId }) });
+export const createBackupJob = (targetId = 'local', signal?: AbortSignal) =>
+  clientAdminRequest<BackupJob>('/backup-jobs', { method: 'POST', signal, headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ targetId }) });
 export const fetchExternalProviders = (signal?: AbortSignal) =>
   clientAdminRequest<{ providers: ExternalProvider[]; revision: number }>('/providers', { signal });
 export const fetchEvents = (query = '') => cameraRequest<{ events: MonitorEvent[] }>(`/events${query ? `?${query}` : ''}`);
