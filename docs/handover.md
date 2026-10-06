@@ -65,6 +65,7 @@ python android/tests/test_release_version.py
 | 主题 | 当前权威入口 |
 | --- | --- |
 | 版本节奏与发布纪律 | [版本与分支](versioning-and-branches.md)、[v4 补丁规则](patch-releases-v4.md) |
+| v4.0 范围与已知限制 | [v4.0 发布说明（草案）](release-notes-v4.0.md) |
 | 容器重启/异常退出 | [恢复契约](container-restart-recovery.md) |
 | Windows 安装/更新 | [Windows 产品](windows-desktop.md)、[可选签名](windows-signing.md) |
 | Android 构建/更新 | [Android 产品](android-client.md)、[更新资格](android-updates.md) |

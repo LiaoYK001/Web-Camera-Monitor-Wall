@@ -65,15 +65,9 @@ rm -rf -- "$next_cache"
 tags=(--tag "${image}:sha-${short_revision}")
 if [ "$version" = dev ]; then
     tags+=(--tag "${image}:dev")
-    build_milestone="${WEBOBS_TARGET_MILESTONE:-v3-M2-dev}"
-    case "$build_milestone" in
-        v3-M1-dev) default_dev_version="3.0.0-dev" ;;
-        v3-M2-dev) default_dev_version="3.1.0-dev" ;;
-        v2-M7-dev) default_dev_version="2.3.0-dev" ;;
-        v2-M6-dev) default_dev_version="2.2.0-dev" ;;
-        v2-M5-dev) default_dev_version="2.1.0-dev" ;;
-        *) echo "unsupported development milestone: ${build_milestone}" >&2; exit 64 ;;
-    esac
+    build_milestone="${WEBOBS_TARGET_MILESTONE:-v4-M1-dev}"
+    source ./scripts/release-identity.sh
+    webobs_dev_identity "$build_milestone" || exit 64
     build_version="${WEBOBS_DEV_VERSION:-${default_dev_version}}.${short_revision}"
 elif [ "$prerelease" = true ]; then
     [ "$(git branch --show-current)" = dev ] || {

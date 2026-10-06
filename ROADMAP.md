@@ -42,7 +42,7 @@ The current restart fixes are held for v4.0. Subsequent primary-target A.B.C pat
 
 #### v4.0 当前状态与已知限制 / Current v4.0 status and known limits
 
-- **工程门禁**：v4+ 稳定构建必须显式提供已审查且与主版本匹配的 `WEBOBS_TARGET_MILESTONE`（当前约定 `v4-M1`），不能由版本号或历史 v2/v3 默认值推断，见[发布流程](docs/release-flow.md)与[补丁规则](docs/patch-releases-v4.md)。
+- **工程门禁**：v4+ 稳定构建必须显式提供已审查且与主版本匹配的 `WEBOBS_TARGET_MILESTONE`（当前约定 `v4-M1`），不能由版本号或历史 v2/v3 默认值推断，见[发布流程](docs/release-flow.md)与[补丁规则](docs/patch-releases-v4.md)。开发镜像同样按里程碑表解析身份（`v4-M1-dev` → `4.0.0-dev`），未登记的里程碑 fail-closed；三端身份一致性由新增门禁测试约束。
 - **三主端**：容器（linux/amd64）、Windows x64（Electron/NSIS，按维护者决定暂不签名）与独立 Android（需外部持久自签密钥的正式候选）各有独立构建与验收入口；源码支持不代表平台已验收。
 - **本轮已完成（开发/自动化层）**：依赖审计门禁恢复并通过（含桌面 `global-agent` 升级 + 已记录补丁，见[依赖安全](docs/dependency-security.md)）；管理操作在途锁、未确认结果核对与草稿保护（含 ClientsPanel）；S3 归档回放的读取上限、总时限、取消与选择归属（见[归档回放边界](docs/archive-playback.md)）；脱敏有界支持报告（见[支持诊断](docs/support-diagnostics.md)）；安全更新后的诚实损失提示与显式同步（见 [PWA 更新连续性](docs/pwa-update-continuity.md)）。
 - **尚未验收**：同一 revision 的三端完整候选、真实升级与回退、真机/摄像机/局域网、长时间与性能预算，以及最大归档片段的真机内存边界。未完成项继续按 [v4 验收矩阵](docs/v4-readiness.md)逐行记录，不用自动化结果替代。

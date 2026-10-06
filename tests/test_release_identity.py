@@ -37,5 +37,61 @@ class ReleaseIdentityTest(unittest.TestCase):
             with self.subTest(tag=tag):
                 self.assertNotEqual(self.identity(tag, 'v4-M1').returncode, 0)
 
+def dev_identity(milestone):
+    return subprocess.run([BASH, '-c', 'source "$1"; webobs_dev_identity "$WEBOBS_TEST_DEV_MILESTONE" || exit $?; printf "%s" "$default_dev_version"',
+                           '_', (ROOT / 'scripts/release-identity.sh').as_posix()],
+                          capture_output=True, text=True, encoding='utf-8',
+                          env={**os.environ, 'WEBOBS_TEST_DEV_MILESTONE': milestone}, timeout=10)
+
+@unittest.skipUnless(BASH, 'Requires Bash')
+class DevIdentityTest(unittest.TestCase):
+    def test_current_line_defaults_to_the_v4_gate_and_keeps_history(self):
+        for milestone, expected in [('v4-M1-dev', '4.0.0-dev'), ('v3-M2-dev', '3.1.0-dev'), ('v2-M7-dev', '2.3.0-dev')]:
+            with self.subTest(milestone=milestone):
+                result = dev_identity(milestone)
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertEqual(result.stdout, expected)
+
+    def test_unreviewed_development_milestones_fail_closed(self):
+        for milestone in ['', 'v4-M1', 'v4-M2-dev', 'v5-M1-dev', 'v4-m1-dev', 'v4-M01-dev', 'v4-M1-dev ']:
+            with self.subTest(milestone=milestone):
+                self.assertNotEqual(dev_identity(milestone).returncode, 0)
+
+@unittest.skipUnless(shutil.which('pwsh'), 'Requires PowerShell 7')
+class TargetIdentityConsistencyTest(unittest.TestCase):
+    """The three primary targets must accept one release version and reject the wrong class."""
+
+    def pwsh(self, command, timeout=30):
+        return subprocess.run(['pwsh', '-NoProfile', '-Command', command], capture_output=True,
+                              text=True, encoding='utf-8', timeout=timeout)
+
+    def test_android_accepts_the_same_stable_version_as_the_container(self):
+        script = str(ROOT / 'android' / 'scripts' / 'release-version.ps1').replace("'", "''")
+        result = self.pwsh(f"$ErrorActionPreference='Stop'; . '{script}'; "
+                           "(Get-WebOBSAndroidReleaseIdentity -Version '4.0.0').VersionCode")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(result.stdout.strip(), '4000000')
+        # The same A.B.C string the container tag v4.0 resolves to.
+        container = subprocess.run([BASH, '-c', 'source "$1"; WEBOBS_TARGET_MILESTONE=v4-M1 webobs_release_identity v4.0; printf "%s" "$build_version"',
+                                    '_', (ROOT / 'scripts/release-identity.sh').as_posix()],
+                                   capture_output=True, text=True, encoding='utf-8', timeout=10)
+        self.assertEqual(container.stdout, '4.0.0')
+
+    @unittest.skipUnless(os.name == 'nt', 'Windows packaging validation runs on Windows')
+    def test_windows_packaging_separates_release_and_development_classes(self):
+        script = str(ROOT / 'desktop' / 'scripts' / 'build-windows.ps1')
+        cases = [
+            (['-Version', '4.0.0'], 'Development builds require a -dev.* version.'),
+            (['-Version', '4.0.0-dev.1', '-Release'], 'Release builds require a stable X.Y.Z version.'),
+            (['-Version', 'v4.0.0', '-Release'], 'Use a stable X.Y.Z or X.Y.Z-dev.* version.'),
+        ]
+        for arguments, expected in cases:
+            with self.subTest(arguments=arguments):
+                # Parameter names must stay unquoted; only values are quoted.
+                quoted = ' '.join(value if value.startswith('-') else "'" + value + "'" for value in arguments)
+                result = self.pwsh(f"& '{script}' {quoted}")
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIn(expected, (result.stdout or '') + (result.stderr or ''))
+
 if __name__ == '__main__':
     unittest.main()

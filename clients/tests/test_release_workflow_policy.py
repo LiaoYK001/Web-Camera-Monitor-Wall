@@ -109,6 +109,11 @@ class NativeReleaseWorkflowPolicyTests(unittest.TestCase):
         windows_release_script = (ROOT / "scripts" / "release-image-local.ps1").read_text(encoding="utf-8")
         for marker in ("3.1.0-dev", "v3-M2-dev", "v3-M2", "v3-M1", "v2-M7", "v2-M6", "v2-M5"):
             self.assertIn(marker, release_script)
+        # The current line's development images select their identity through the same
+        # helper as stable publication; an unreviewed milestone must fail closed.
+        self.assertIn('webobs_dev_identity', release_script)
+        for marker in ("v4-M1-dev", "4.0.0-dev"):
+            self.assertIn(marker, release_script)
         self.assertIn(r'^v3\.[1-9][0-9]*(\.|$)', release_script)
         self.assertIn("build_version", release_script)
         self.assertIn('build_version="${build_version}.0"', release_script)
