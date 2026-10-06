@@ -5,17 +5,22 @@ on:
     inputs:
       version: { type: string, default: '3.4.0-dev.0' }
       official: { type: boolean, default: false }
+      milestone: { type: string, default: '' }
   workflow_dispatch:
     inputs:
       version:
         description: 'Development version X.Y.Z-dev.* or stable version X.Y.Z'
         required: true
-        default: '3.4.0-dev.0'
+        default: '4.0.0-dev.0'
         type: string
       official:
         description: 'Build a stable auto-updatable candidate (unsigned by default; does not publish)'
         default: false
         type: boolean
+      milestone:
+        description: 'Explicit reviewed engineering milestone (stable v4-M1; development v4-M1-dev)'
+        default: 'v4-M1-dev'
+        type: string
 
 permissions:
   contents: read
@@ -84,8 +89,9 @@ jobs:
         env:
           DESKTOP_VERSION: ${{ inputs.version }}
           DESKTOP_OFFICIAL: ${{ inputs.official }}
+          DESKTOP_MILESTONE: ${{ inputs.milestone }}
         run: |
-          $parameters = @{Version=$env:DESKTOP_VERSION}
+          $parameters = @{Version=$env:DESKTOP_VERSION;Milestone=$env:DESKTOP_MILESTONE}
           if ($env:DESKTOP_OFFICIAL -eq 'true') {$parameters.Release=$true}
           ./desktop/scripts/build-windows.ps1 @parameters
       - name: Record actual build identity (does not count as camera qualification)

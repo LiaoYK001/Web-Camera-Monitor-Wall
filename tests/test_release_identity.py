@@ -77,6 +77,27 @@ class TargetIdentityConsistencyTest(unittest.TestCase):
                                    capture_output=True, text=True, encoding='utf-8', timeout=10)
         self.assertEqual(container.stdout, '4.0.0')
 
+    def test_windows_core_milestone_is_explicit_and_matches_the_release_class(self):
+        script = str(ROOT / 'desktop/scripts/release-milestone.ps1').replace("'", "''")
+        for version, release, milestone in [('4.0.0', '$true', 'v4-M1'), ('4.0.1', '$true', 'v4-M1'),
+                                             ('4.0.0-dev.1', '$false', 'v4-M1-dev')]:
+            with self.subTest(version=version):
+                result = self.pwsh(f"$ErrorActionPreference='Stop'; . '{script}'; "
+                                   f"Resolve-WebOBSDesktopMilestone -Version '{version}' -Release {release} -Milestone '{milestone}'")
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertEqual(result.stdout.strip(), milestone)
+
+    def test_windows_core_rejects_missing_mismatched_and_wrong_class_gates(self):
+        script = str(ROOT / 'desktop/scripts/release-milestone.ps1').replace("'", "''")
+        for version, release, milestone in [('4.0.0', '$true', ''), ('4.0.0', '$true', 'v3-M2'),
+                                             ('4.0.0', '$true', 'v4-M1-dev'), ('4.0.0', '$true', 'v5-M1'),
+                                             ('4.0.0', '$true', 'v4-M01'), ('4.0.0', '$true', 'v4-M1\n'),
+                                             ('4.0.0-dev.1', '$false', 'v4-M1'), ('4.0.0', '$false', 'v4-M1-dev')]:
+            with self.subTest(version=version, milestone=milestone):
+                result = self.pwsh(f"$ErrorActionPreference='Stop'; . '{script}'; "
+                                   f"Resolve-WebOBSDesktopMilestone -Version '{version}' -Release {release} -Milestone '{milestone}'")
+                self.assertNotEqual(result.returncode, 0)
+
     @unittest.skipUnless(os.name == 'nt', 'Windows packaging validation runs on Windows')
     def test_windows_packaging_separates_release_and_development_classes(self):
         script = str(ROOT / 'desktop' / 'scripts' / 'build-windows.ps1')

@@ -78,7 +78,7 @@ export function pwaServer() {
       const ext = path.extname(file);
       res.writeHead(200, { 'Content-Type': ({ '.js': 'text/javascript', '.html': 'text/html', '.css': 'text/css', '.json': 'application/json', '.svg': 'image/svg+xml', '.png': 'image/png', '.webmanifest': 'application/manifest+json' } as Record<string,string>)[ext] ?? 'application/octet-stream', 'Cache-Control': 'no-store' });
       res.end(body);
-    } catch (error) { json({ error: String(error) }, 500); }
+    } catch { json({ error: { code: 'fixture_internal', message: 'Fixture request failed' } }, 500); }
   });
   return { state, upgrade: () => { current = true; }, reset: () => { current = false; state.authenticated = true; state.offline = false; state.mutations = []; state.syncPosts = 0; state.jobs = []; state.exportPosts = 0; state.exportRequestIds = []; state.loseExportResponse = false; state.account.clear(); },
     start: async () => { await readFile(path.join(directory, 'sw.js')); await readFile(path.join(directory, 'tests/harness/pwa-seed.html')); await new Promise<void>((resolve, reject) => { server.once('error', reject); server.listen(4191, '127.0.0.1', resolve); }); },

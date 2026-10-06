@@ -46,7 +46,8 @@ jobs:
     if: github.event_name == 'workflow_dispatch' && inputs.windows_desktop
     uses: ./.github/workflows/windows-desktop.yaml
     with:
-      version: '3.4.0-dev.0'
+      version: '4.0.0-dev.0'
+      milestone: 'v4-M1-dev'
       official: false
   public-audit:
     runs-on: ubuntu-24.04

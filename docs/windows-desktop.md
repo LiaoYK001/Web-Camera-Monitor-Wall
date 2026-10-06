@@ -48,7 +48,7 @@ The same gate also loads 1000 account audio records with the visible source last
 ```powershell
 ./desktop/scripts/build-windows.ps1 -Version 3.4.0-dev.0
 # 正式候选（稳定 X.Y.Z 必须显式 -Release；v4+ 沿用已审查的 v4-M1 门禁）
-./desktop/scripts/build-windows.ps1 -Version 4.0.0 -Release
+./desktop/scripts/build-windows.ps1 -Version 4.0.0 -Milestone v4-M1 -Release
 ```
 
 稳定候选的版本、门禁与已知限制见 [v4.0 发布说明（草案）](release-notes-v4.0.md)；`Release` 与 `-dev.*` 两类互斥，脚本会在任何下载或编译之前拒绝不匹配的组合。

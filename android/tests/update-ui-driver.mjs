@@ -18,6 +18,10 @@ for await (const line of createInterface({ input: process.stdin })) {
       for (const res of ['android:id/alertTitle', 'android:id/button1', 'android:id/button2']) nodes[res] = await device.info({ res }).catch(() => null);
       process.stdout.write(JSON.stringify({ ok: true, nodes }) + '\n'); continue;
     }
+    // Initialize native automation without swallowing missing-driver or device
+    // errors as a selector miss. The explicit owned package must be foreground.
+    if (request.tap && request.resource && request.pattern === 'app_menu$')
+      await device.wait({ pkg: 'io.github.liaoyk001.webobs.android.updatequalification' });
     if (!request.tap && ['允许 WebOBS 安装更新', '请先处理当前工作'].includes(request.pattern)) {
       await device.wait({ res: 'android:id/alertTitle' });
       const title = (await device.info({ res: 'android:id/alertTitle' })).text;

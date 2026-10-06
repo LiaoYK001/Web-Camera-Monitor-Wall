@@ -24,8 +24,10 @@ const [url, target, expected, caPath] = process.argv.slice(2);
     await run();
     assert.equal(await fs.readFile(target, 'utf8'), 'fixture-download');
   } else {
+    const expectedCodes = expected.split('|');
+    assert.ok(expectedCodes.length <= 4 && expectedCodes.every(code => /^[A-Z0-9_]{1,80}$/.test(code)));
     await assert.rejects(run, error => {
-      assert.match(error.code, new RegExp(expected));
+      assert.ok(expectedCodes.includes(error.code), 'Unexpected downloader error code: ' + error.code);
       return true;
     });
   }

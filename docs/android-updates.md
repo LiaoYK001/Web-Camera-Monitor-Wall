@@ -38,6 +38,8 @@ cd ..
 python android/tests/test_update_install.py --serial 127.0.0.1:16384 --adb 'Q:\Program Files\Netease\MuMu\nx_main\adb.exe'
 ```
 
+若 JDK 不在脚本默认路径，显式传 `--java-home '<JDK 17–23 目录>'`。先安装当前锁定 Playwright 的 Android 驱动；驱动缺失属于测试环境初始化失败，不能当作产品原生元素缺失。 / Pass `--java-home` when the JDK differs from the helper's default. Install the locked Playwright Android driver first; a missing driver is an environment initialization failure, not a product-selector failure.
+
 此脚本要求显式设备，拒绝已有同名验收包；使用独立 `.updatequalification` applicationId、仓库外一次性自签密钥和私密回执目录。实际系统下载管理器与安装器运行 `4.0.0 → 4.0.1 → 4.0.2`，覆盖摘要/大小、不同签名/包名/版本、降级、丢失附件、取消、临时查询失败、丢失暂存包、进程重启恢复、安装权限及未保存草稿阻止、数据保留和只读 URI。仅测试 APK 的原生 transport 使用 ADB reverse 夹具；生产 APK 无端点覆盖入口。测试负责移除自己的包/reverse/一次性密钥，不清除或更新已有 WebOBS 包。
 
 The helper refuses existing qualification installations and uses a separate application ID with ephemeral external keys. It exercises real system downloading and confirmed successive installation plus failure/recovery/retention checks. Only test transport uses an ADB-reversed fixture; product APKs have no endpoint override. Cleanup removes only owned test packages/reverse/keys, preserving the existing product installation.

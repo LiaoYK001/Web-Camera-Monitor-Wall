@@ -12,6 +12,7 @@ const version=process.env.WEBOBS_DESKTOP_VERSION || JSON.parse(await readFile(pa
 const files=await inventory(directory);
 const revision=execFileSync('git',['rev-parse','HEAD'],{cwd:root,encoding:'utf8'}).trim();
 const manifest={schema:1,platform:'windows-x64',version,revision,obsCommit:lock.obsCommit,go2rtcCommit:lock.go2rtcCommit,files};
+if(process.env.WEBOBS_BUILD_MILESTONE)manifest.milestone=process.env.WEBOBS_BUILD_MILESTONE;
 await writeFile(path.join(directory,'manifest.json'),JSON.stringify(manifest,null,2));
 await verifyRuntime(directory);
 const components=lock.artifacts.map(item=>({type:'library',name:item.id,version:item.version,hashes:[{alg:'SHA-256',content:item.sha256}],licenses:[item.license.includes(' OR ')?{expression:item.license}:{license:item.license.startsWith('LicenseRef-')?{name:item.license}:{id:item.license}}],externalReferences:[{type:'distribution',url:item.url}]}));
