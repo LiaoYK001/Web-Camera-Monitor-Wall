@@ -70,6 +70,10 @@ class NativeReleaseWorkflowPolicyTests(unittest.TestCase):
         self.assertIn('sha256sum webobs-container-candidate.tar.gz', candidate)
         self.assertIn('physical cameras, power cuts and ARM not qualified', candidate)
 
+    def test_public_ci_runs_each_isolated_maturity_suite(self) -> None:
+        for suite in ('management', 'archive', 'continuity', 'support-diagnostics'):
+            self.assertIn('pnpm test:' + suite + '\n', self.web_text)
+
     def test_pwa_platform_gates_are_local_not_self_hosted(self) -> None:
         self.assertNotIn("runs-on: [self-hosted", self.web_text)
         self.assertNotIn("runs-on: [self-hosted", self.image_text)
