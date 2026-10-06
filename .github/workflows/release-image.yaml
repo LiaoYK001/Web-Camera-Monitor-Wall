@@ -2,6 +2,19 @@ name: Release preflight audit
 
 on:
   workflow_dispatch:
+    inputs:
+      container_candidate:
+        description: 'Build and test an unpublished Linux amd64 container candidate'
+        type: boolean
+        default: false
+      release_tag:
+        description: 'Candidate identity, vA.B or vA.B.C'
+        type: string
+        default: 'v4.0'
+      milestone:
+        description: 'Explicit engineering milestone for the candidate'
+        type: string
+        default: 'v4-M1'
 
 permissions:
   contents: read
@@ -50,8 +63,82 @@ jobs:
           pnpm test:iwa
           pnpm build
 
-      - name: Record the local-only publication boundary
+      - name: Record the publication boundary
         shell: bash
         run: |
-          echo "This workflow does not build, sign, tag, or push an OCI image."
-          echo "Run both revision-bound local gates, then use scripts/release-image-local.ps1 or scripts/release-image-local.sh."
+          echo "Optional candidates are built and tested without publication or registry credentials."
+          echo "Publication remains explicit through scripts/release-image-local.ps1 or scripts/release-image-local.sh."
+
+  container-candidate:
+    if: inputs.container_candidate
+    needs: audit
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    steps:
+      - name: Check out the audited revision
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          submodules: recursive
+          persist-credentials: false
+      - name: Use locked Node
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: 24.19.0
+      - name: Resolve the candidate identity
+        shell: bash
+        env:
+          RELEASE_TAG: ${{ inputs.release_tag }}
+          WEBOBS_TARGET_MILESTONE: ${{ inputs.milestone }}
+        run: |
+          set -euo pipefail
+          source scripts/release-identity.sh
+          webobs_release_identity "$RELEASE_TAG"
+          echo "CANDIDATE_VERSION=$build_version" >> "$GITHUB_ENV"
+          echo "CANDIDATE_MILESTONE=$build_milestone" >> "$GITHUB_ENV"
+          echo "CANDIDATE_IMAGE=webobs:candidate-${GITHUB_SHA:0:12}" >> "$GITHUB_ENV"
+      - name: Install the locked browser probe
+        shell: bash
+        run: |
+          set -euo pipefail
+          corepack enable
+          corepack prepare pnpm@11.16.0 --activate
+          cd web
+          pnpm install --frozen-lockfile
+          pnpm exec playwright install --with-deps chromium
+      - name: Build the complete image with all existing budgets
+        shell: bash
+        run: |
+          set -euo pipefail
+          docker buildx create --driver docker-container --name webobs-candidate --use
+          docker buildx build --load --platform linux/amd64 \
+            --build-arg "WEBOBS_BUILD_VERSION=$CANDIDATE_VERSION" \
+            --build-arg "WEBOBS_BUILD_MILESTONE=$CANDIDATE_MILESTONE" \
+            --label "org.opencontainers.image.revision=$GITHUB_SHA" \
+            --file docker/Dockerfile --tag "$CANDIDATE_IMAGE" .
+      - name: Qualify authentication, media and restart persistence
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 tests/test_go2rtc_integration.py --image "$CANDIDATE_IMAGE"
+          python3 tests/container_restart_runtime.py --image "$CANDIDATE_IMAGE"
+          python3 tests/container_restart_runtime.py --image "$CANDIDATE_IMAGE" --composite
+      - name: Record identity and retain the tested image
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p build/container-candidate
+          image_id="$(docker image inspect --format '{{.Id}}' "$CANDIDATE_IMAGE")"
+          jq -n --arg revision "$GITHUB_SHA" --arg version "$CANDIDATE_VERSION" \
+            --arg milestone "$CANDIDATE_MILESTONE" --arg imageId "$image_id" \
+            '{schema:1,revision:$revision,version:$version,milestone:$milestone,imageId:$imageId,platform:"linux/amd64",published:false,checks:["complete-image-build","authenticated-go2rtc-http-websocket-media","direct-restart-persistence","composite-restart-persistence"],qualification:"synthetic-media; physical cameras, power cuts and ARM not qualified"}' \
+            > build/container-candidate/container-build-evidence.json
+          docker save "$CANDIDATE_IMAGE" | gzip -1 > build/container-candidate/webobs-container-candidate.tar.gz
+          (cd build/container-candidate && sha256sum webobs-container-candidate.tar.gz > webobs-container-candidate.tar.gz.sha256)
+      - name: Retain unpublished candidate artifacts
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: webobs-container-${{ inputs.release_tag }}-${{ github.sha }}
+          path: build/container-candidate/*
+          compression-level: 0
+          retention-days: 7
+          if-no-files-found: error

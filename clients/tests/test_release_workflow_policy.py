@@ -56,6 +56,20 @@ class NativeReleaseWorkflowPolicyTests(unittest.TestCase):
         self.assertNotIn("gh release create", self.image_text)
         self.assertIn("scripts/release-image-local.sh", self.image_text)
 
+    def test_container_candidate_is_manual_audited_and_never_pushed(self) -> None:
+        candidate = self.image_text.split("  container-candidate:\n", 1)[1]
+        self.assertIn("if: inputs.container_candidate", candidate)
+        self.assertIn("needs: audit", candidate)
+        self.assertIn("webobs_release_identity", candidate)
+        self.assertIn("docker buildx build --load --platform linux/amd64", candidate)
+        self.assertNotIn("--push", candidate)
+        self.assertNotIn("docker login", candidate)
+        self.assertIn('python3 tests/test_go2rtc_integration.py --image "$CANDIDATE_IMAGE"', candidate)
+        self.assertIn('python3 tests/container_restart_runtime.py --image "$CANDIDATE_IMAGE" --composite', candidate)
+        self.assertIn('published:false', candidate)
+        self.assertIn('sha256sum webobs-container-candidate.tar.gz', candidate)
+        self.assertIn('physical cameras, power cuts and ARM not qualified', candidate)
+
     def test_pwa_platform_gates_are_local_not_self_hosted(self) -> None:
         self.assertNotIn("runs-on: [self-hosted", self.web_text)
         self.assertNotIn("runs-on: [self-hosted", self.image_text)
