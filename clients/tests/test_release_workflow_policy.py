@@ -67,7 +67,8 @@ class NativeReleaseWorkflowPolicyTests(unittest.TestCase):
         self.assertIn('python3 tests/test_go2rtc_integration.py --image "$CANDIDATE_IMAGE"', candidate)
         self.assertIn('python3 tests/container_restart_runtime.py --image "$CANDIDATE_IMAGE" --composite', candidate)
         self.assertIn('published:false', candidate)
-        self.assertIn('sha256sum webobs-container-candidate.tar.gz', candidate)
+        self.assertIn('sha256sum webobs-container-candidate.tar.gz webobs-container-build-cache.tar.gz', candidate)
+        self.assertIn('--cache-to type=local,dest=build/container-build-cache,mode=min', candidate)
         self.assertIn('physical cameras, power cuts and ARM not qualified', candidate)
 
     def test_public_ci_runs_each_isolated_maturity_suite(self) -> None:

@@ -111,6 +111,7 @@ jobs:
           set -euo pipefail
           docker buildx create --driver docker-container --name webobs-candidate --use
           docker buildx build --load --platform linux/amd64 \
+            --cache-to type=local,dest=build/container-build-cache,mode=min \
             --build-arg "WEBOBS_BUILD_VERSION=$CANDIDATE_VERSION" \
             --build-arg "WEBOBS_BUILD_MILESTONE=$CANDIDATE_MILESTONE" \
             --label "org.opencontainers.image.revision=$GITHUB_SHA" \
@@ -133,7 +134,8 @@ jobs:
             '{schema:1,revision:$revision,version:$version,milestone:$milestone,imageId:$imageId,platform:"linux/amd64",published:false,checks:["complete-image-build","authenticated-go2rtc-http-websocket-media","direct-restart-persistence","composite-restart-persistence"],qualification:"synthetic-media; physical cameras, power cuts and ARM not qualified"}' \
             > build/container-candidate/container-build-evidence.json
           docker save "$CANDIDATE_IMAGE" | gzip -1 > build/container-candidate/webobs-container-candidate.tar.gz
-          (cd build/container-candidate && sha256sum webobs-container-candidate.tar.gz > webobs-container-candidate.tar.gz.sha256)
+          tar -C build/container-build-cache -cf - . | gzip -1 > build/container-candidate/webobs-container-build-cache.tar.gz
+          (cd build/container-candidate && sha256sum webobs-container-candidate.tar.gz webobs-container-build-cache.tar.gz > SHA256SUMS.txt)
       - name: Retain unpublished candidate artifacts
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:

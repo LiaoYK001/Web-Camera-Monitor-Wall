@@ -57,6 +57,7 @@ v4+ 稳定发布不得从版本号推断工程门禁；`v4.0.0` 之后的补丁�
 
 1. 冻结范围，按[发布流程](release-flow.md)在参考环境构建三主端候选，记录 revision、摘要与 SBOM/许可证。
    容器可先从 `dev` 的 `Release preflight audit` 手动入口选择 `container_candidate=true`、`release_tag=v4.0`、`milestone=v4-M1`，在 Ubuntu 24.04 runner 完整构建并运行认证媒体、Direct/Composite 重启持久化检查。该入口仅保留带摘要与 revision 的未发布 Linux amd64 镜像归档，不持有注册表写权限、不替代真实设备验收；正式发布仍按本地发布流程执行。
+   候选附件还保留最小 BuildKit 缓存和 SHA-256 清单；从对应 `main` revision 的成功运行取回并核验后，可将缓存解压至 `build/release-cache`，由现有本地发布脚本复用，继续执行原始 Dockerfile、SBOM/provenance 和发布检查。缓存与未发布镜像不进入稳定更新源。
 2. 完成第 4 节列出的实际安装、升级、设备与长稳验收。
 3. 准备双语发布 PR（`dev` → `main`），随后从对应 `main` 提交执行打包/Tag/Release，并在本文补全“实际发布与验证”一节。
 
