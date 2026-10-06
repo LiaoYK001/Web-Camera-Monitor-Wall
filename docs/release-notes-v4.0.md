@@ -45,6 +45,8 @@ v4+ 稳定发布不得从版本号推断工程门禁；`v4.0.0` 之后的补丁�
 - [公开 CI](https://github.com/LiaoYK001/Web-Camera-Monitor-Wall/actions/runs/37460685931) 对 `ec03a7e9d194cb76e73d8bae84c676f89e894d81` 通过服务/类型/构建/依赖审计、浏览器性能与音频、四套独立专项和 Windows 更新契约。管理套件新增“请求确已抵达后才推进虚拟超时时钟”的前置条件，保留超时及禁止重发断言；14 项均通过。
 - 发布审查发现上述首个 Windows 候选虽报告版本 `4.0.0`，核心仍沿用 CMake 的历史 `v3-M2-dev` 里程碑。该候选不能作为最终 v4 身份验收；Windows 构建现要求显式 `-Milestone v4-M1`，写入运行时 manifest，并由实际 `/api/v1/health` 检查与所选里程碑一致。正式附件必须来自包含此修复的新候选。CodeQL 的两处新增告警均位于测试夹具：下载器错误码改用有界字面量集合、PWA 夹具错误不再回传异常文本；不通过忽略告警发布。
 - MuMu API 35 x86_64 的独立 `.updatequalification` 包重跑实际系统下载、错误摘要/大小/签名/包名/版本与恢复检查、权限拒绝、草稿阻止、确认的 `4.0.0 → 4.0.1 → 4.0.2`、连接/偏好/WebView Cookie 保留和 APK 请求不含产品凭据。该检查使用合成 feed 和一次性测试密钥；未更新、卸载或清除已有产品。Playwright Android 驱动是前置依赖，不应将驱动初始化失败误报为产品元素缺失。
+- 本机完整容器联调进一步通过 117 MiB H.264 媒体的 HEAD/Range/ETag/断点读取、16 个慢读者与有界内存/控制响应、断连清理、摄像机与导出归属，以及实际 H.264/AAC 证据导出/摘要/重启恢复；网站表单的两种真实解析器、认证 MSE 解码、设备导入与重启后的命名流恢复通过。Windows 固定解析器另通过真实首次 HTTP 断连恢复。
+- Windows 收尾构建曾在融合 ASAR 首次启动的原有 120 秒检查预算内失败；本机旧候选复现了运行时校验超时。校验器原先逐文件散列两遍，第二遍只使用文件名；现保留一次完整 SHA-256/规范路径/文件类型校验，最多 8 个并发文件，随后只读目录核对额外文件与链接。相同 7,938 个实际安装文件的热缓存对比为 `43.18 → 11.63 秒`；篡改、缺失、重复、多余文件与目录链接仍被拒绝。原有启动预算保持不变，正式附件必须通过重新打包的实际 ASAR/NSIS 验证。
 
 These are successful stable-candidate builds, real host installation and isolated installed-update checks. Final attachments are rebuilt and verified from the reviewed release `main` commit. Synthetic media, the Windows build host and the separate Android qualification package do not qualify physical cameras, clean systems, ARM or the production APK/public update feed.
 

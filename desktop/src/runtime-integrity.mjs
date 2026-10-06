@@ -24,13 +24,13 @@ export async function digestFile(file, algorithm = 'sha256', encoding = 'hex') {
   for await (const chunk of createReadStream(file)) digest.update(chunk);
   return digest.digest(encoding);
 }
-export async function inventory(root, prefix = '') {
+export async function inventory(root, prefix = '', includeDigests = true) {
   const entries = [];
   for (const item of await readdir(path.join(root, prefix), { withFileTypes: true })) {
     const name = prefix ? `${prefix}/${item.name}` : item.name;
     if (item.isSymbolicLink()) throw new Error('Runtime links are prohibited');
-    if (item.isDirectory()) entries.push(...await inventory(root, name));
-    else if (item.isFile() && name !== 'manifest.json') entries.push({ path: name, sha256: await digestFile(containedPath(root, name)) });
+    if (item.isDirectory()) entries.push(...await inventory(root, name, includeDigests));
+    else if (item.isFile() && name !== 'manifest.json') entries.push(includeDigests ? { path: name, sha256: await digestFile(containedPath(root, name)) } : { path: name });
   }
   return entries.sort((a,b) => a.path.localeCompare(b.path));
 }
@@ -42,13 +42,26 @@ export async function verifyRuntime(root) {
   const names = new Set();
   for (const item of manifest.files) {
     if (!/^[a-f0-9]{64}$/.test(item.sha256) || names.has(item.path)) throw new Error('Invalid or duplicate runtime digest');
-    const file = containedPath(root, item.path), info = await lstat(file);
-    if (!info.isFile() || info.isSymbolicLink() || !(await realpath(file)).startsWith(canonicalRoot + path.sep)) throw new Error('Runtime file is not a regular installed file');
-    if (await digestFile(file) !== item.sha256) throw new Error(`Runtime checksum failed: ${item.path}`);
+    containedPath(root, item.path);
     names.add(item.path);
   }
   for (const name of requiredFiles) if (!names.has(name)) throw new Error(`Required native component missing: ${name}`);
-  const actual = await inventory(root);
+  // Bound open files while overlapping Windows filesystem/antivirus latency.
+  // Every listed file still receives the same path, type and SHA-256 checks.
+  let cursor = 0, failure;
+  await Promise.all(Array.from({ length: Math.min(8, manifest.files.length) }, async () => {
+    while (!failure && cursor < manifest.files.length) {
+      const item = manifest.files[cursor++];
+      try {
+        const file = containedPath(root, item.path), info = await lstat(file);
+        if (!info.isFile() || info.isSymbolicLink() || !(await realpath(file)).startsWith(canonicalRoot + path.sep)) throw new Error('Runtime file is not a regular installed file');
+        if (await digestFile(file) !== item.sha256) throw new Error(`Runtime checksum failed: ${item.path}`);
+      } catch (error) { failure ??= error; }
+    }
+  }));
+  if (failure) throw failure;
+  // The second walk detects extra files and links; rehashing them adds no check.
+  const actual = await inventory(root, '', false);
   const untracked=actual.filter(item=>!names.has(item.path));
   if (actual.length !== names.size || untracked.length) throw new Error(`Untracked runtime file; rebuild the complete package (${untracked.slice(0,8).map(item=>item.path).join(', ')})`);
   return manifest;
