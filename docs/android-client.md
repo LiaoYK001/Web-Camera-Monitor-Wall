@@ -49,7 +49,11 @@ Install a supported JDK and the official Android SDK command-line tools. Install
 ./android/scripts/build-android.ps1 -JavaHome 'D:\zulu' -SdkRoot "$env:LOCALAPPDATA\WebOBS-Android\sdk"
 # Optional explicit emulator installation; never selects an arbitrary device:
 ./android/scripts/build-android.ps1 -JavaHome 'D:\zulu' -Serial '127.0.0.1:16384' -Adb $adb
+# 正式候选：-Release 需要仓库外的持久自签密钥环境变量，版本码由 A*1000000+B*1000+C 推导
+./android/scripts/build-android.ps1 -Version 4.0.0 -Release -JavaHome 'D:\zulu' -SdkRoot "$env:LOCALAPPDATA\WebOBS-Android\sdk"
 ```
+
+稳定候选的版本码、签名与未验收边界见[更新资格](android-updates.md)与 [v4.0 发布说明（草案）](release-notes-v4.0.md)；三端身份一致性由 `tests/test_release_identity.py` 约束。
 
 其他平台可在 `android/` 使用 `./gradlew :app:testDebugUnitTest :app:lintDebug :app:assembleDebug`。Windows 可使用 `gradlew.bat`。当前 CI 使用 Windows runner，与已校验的 Windows AAPT2 依赖匹配；新增平台依赖应经审核后更新校验清单。
 

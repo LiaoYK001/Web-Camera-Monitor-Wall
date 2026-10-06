@@ -11,7 +11,7 @@ Android 开发版现在位于 `android/`，复用 WebUI 并连接现有 Windows�
 
 The latest product release is **v3.5**; see the [GitHub release](https://github.com/LiaoYK001/Web-Camera-Monitor-Wall/releases/tag/v3.5), [release notes](docs/release-notes-v3.5.md), and [ROADMAP](ROADMAP.md).
 
-**当前开发 / Current development:** `dev` 面向尚未发布的 v4.0；[当前交接](docs/handover.md)、[v4 验收矩阵](docs/v4-readiness.md)及[升级与恢复](docs/upgrade-and-recovery.md)区分已实现、自动化验证与未完成的候选/真机/长稳验收。Development work does not authorize a release or updating `main`.
+**当前开发 / Current development:** `dev` 面向尚未发布的 v4.0；[当前交接](docs/handover.md)、[v4 验收矩阵](docs/v4-readiness.md)及[升级与恢复](docs/upgrade-and-recovery.md)区分已实现、自动化验证与未完成的候选/真机/长稳验收。Development work does not authorize a release or updating `main`. 发布范围、三端身份与已知限制见 [v4.0 发布说明（草案）](docs/release-notes-v4.0.md)（尚未发布）。
 
 **下载 Windows x64 安装包：** [WebOBS 3.5.0 UNSIGNED](https://github.com/LiaoYK001/Web-Camera-Monitor-Wall/releases/download/v3.5/WebOBS-3.5.0-windows-x64-UNSIGNED.exe)。按维护者选择暂不签名，完整自动更新已启用：默认检测并下载，用户确认后安装；设置中可关闭。v3.4 开发测试版需手动安装 v3.5 一次。容器镜像为 `ghcr.io/liaoyk001/web-camera-monitor-wall:v3.5`；`latest` 指向同一镜像。
 
