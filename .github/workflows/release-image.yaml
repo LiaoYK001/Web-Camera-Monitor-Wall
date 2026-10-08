@@ -81,9 +81,10 @@ jobs:
           submodules: recursive
           persist-credentials: false
       - name: Use locked Node
-        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0; node24 action runtime
         with:
           node-version: 24.19.0
+          package-manager-cache: false
       - name: Resolve the candidate identity
         shell: bash
         env:

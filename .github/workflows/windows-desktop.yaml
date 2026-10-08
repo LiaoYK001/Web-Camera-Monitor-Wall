@@ -72,9 +72,10 @@ jobs:
           Enter-VsDevShell -VsInstallPath $vs -SkipAutomaticLocation -DevCmdArguments '-arch=x64 -host_arch=x64'
           Get-ChildItem Env: | Where-Object Name -In @('PATH','INCLUDE','LIB','LIBPATH','VCToolsInstallDir','VSINSTALLDIR','WindowsSdkDir','WindowsSDKVersion') | ForEach-Object { "$($_.Name)=$($_.Value)" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8 }
       - name: Use locked Node and pnpm
-        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0; node24 action runtime
         with:
           node-version: 24.19.0
+          package-manager-cache: false
       - name: Install locked pnpm
         shell: pwsh
         run: |
@@ -82,7 +83,7 @@ jobs:
           npm install --global pnpm@11.16.0
       - name: Cache verified archives and vcpkg binary builds
         id: windows-cache
-        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0; node24 action runtime
         with:
           path: |
             desktop/.cache/*.zip
@@ -115,7 +116,7 @@ jobs:
           if-no-files-found: error
       - name: Preserve verified build dependencies after a failed candidate
         if: always() && !cancelled() && steps.windows-cache.outputs.cache-hit != 'true'
-        uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0; node24 action runtime
         with:
           path: |
             desktop/.cache/*.zip
@@ -145,9 +146,10 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
           persist-credentials: false
-      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0; node24 action runtime
         with:
           node-version: 24.19.0
+          package-manager-cache: false
       - name: Install only the locked test tools
         shell: pwsh
         run: |

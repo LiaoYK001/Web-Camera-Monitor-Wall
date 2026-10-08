@@ -31,7 +31,7 @@ v4+ 稳定发布不得从版本号推断工程门禁；`v4.0.0` 之后的补丁�
 
 ## 3. 已完成的验证（开发/自动化层）/ Verification performed
 
-以下为 `dev` 上实际运行过的检查；详细命令、逐项结果与未验收边界见 [v4 矩阵](v4-readiness.md)：
+以下保留发布前 `dev` 上实际运行过的检查与候选审查历史；最终正式附件、安装升级和公开核验以第 7 节为准。详细命令、逐项结果与未验收边界见 [v4 矩阵](v4-readiness.md)。These are pre-release development/candidate records; section 7 states the final published artifacts and qualification.
 
 - 前端 `typecheck`、`build` 通过；依赖审计（web/desktop，含 `--prod`）无已知漏洞；公开仓库审计通过。
 - 浏览器回归：完整 `playwright.local.config.ts` 套件 252 通过（其余 3 项为本机既有负载敏感用例，非本轮回归）；归档 22 项、管理 14 项、支持报告 6 项、安全更新连续性 4 项专项通过，其中管理套件带“移除加固即失败”的反证。
@@ -54,11 +54,11 @@ These are successful stable-candidate builds, real host installation and isolate
 
 ## 4. 已知限制与未验收项 / Known limitations
 
-- 三端 `4.0.0` 候选已构建并分别记录验证；候选、源码基线和最终正式附件必须区分，实际发布身份与摘要以 Release 为准。
+- 三端 `4.0.0` 已正式发布；第 3 节的历史候选与第 7 节的最终正式附件分别记录，实际发布身份与摘要以 Release 为准。
 - 干净 Windows 10/11 安装、真实摄像机与编码矩阵、物理 Android/ARM 真机、跨设备 LAN、长稳（6/24 小时）与参考设备多路性能预算均未验收。
-- Windows `v3.5 → v4.0` 数据保留升级仍待最终候选实测；Android 独立验收包的 `4.0.0 → 4.0.1 → 4.0.2` 已实测，生产包与公开源另列。Windows 差量失败回退与损坏包恢复尚未实测。
+- Windows `v3.5 → v4.0` 已使用冻结正式安装包在 Windows Server 2022 参考 runner 完成实际升级与数据保留验收，范围见第 7 节；公开 feed、交互向导与干净 Windows 10/11 另列。Android 独立验收包的 `4.0.0 → 4.0.1 → 4.0.2` 已实测，生产包与公开源另列。Windows 差量失败回退与损坏包恢复尚未完成实际安装验收。
 - 浏览器归档回放的 32 MiB 上限是保守工程限制，不是参考设备的实测安全上限；更大文件需要单独验证的有界散列/存储策略。
-- 本机 Docker Desktop 存储栈使容器镜像内的 `test_event_service` p95 预算无法满足（同代码在 tmpfs 上为 1.6–2.3 ms），当前 revision 的镜像需在参考 Linux 主机或 CI 构建。
+- 本机 Docker Desktop 存储栈此前使镜像内的 `test_event_service` p95 超出预算（同代码在 tmpfs 上为 1.6–2.3 ms）；最终正式镜像已在 Ubuntu 24.04 参考 runner 按原预算构建并通过。该结果不代表本机存储栈或其他设备达到同一预算。
 - 节点注册批准与本地备份没有服务端请求关联标识，核对无法证明“未创建”；管理界面已明确说明。
 - Android 生产包/公开 GitHub feed、实体 ARM、真实 Wi-Fi/断网与磁盘故障尚未验收；独立更新包实测不等于这些结果。正式签名不能覆盖既有不同签名的开发 APK，不能通过自动卸载掩盖签名不匹配。
 
@@ -94,3 +94,10 @@ The stable Release delivers all three primary targets as `4.0.0` from the review
 [三端验证汇总](https://github.com/LiaoYK001/Web-Camera-Monitor-Wall/releases/download/v4.0/webobs-v4.0-verification.json) 与 [第三方源码清单](https://github.com/LiaoYK001/Web-Camera-Monitor-Wall/releases/download/v4.0/webobs-third-party-4.0.0-source-manifest.json) 记录对应 revision、摘要、工具适配与审查范围。第 4 节的干净 Windows 10/11、物理摄像机/ARM、生产 Android 公开更新源、LAN、故障/长稳和参考设备性能仍未验收；附件发布不把这些限制改写为通过。The evidence and source manifest state exact provenance and scope; outstanding clean-system, physical-device, production-feed, LAN, fault, soak and performance qualification remains open.
 
 发行期间发现共享 Draft 按标签查询返回 404，以及首轮公开时关联临时标签并被不可变保护锁定。使用数字 Release ID 上传并在公开请求中显式绑定正式标签后，最终 `v4.0` 的公开地址和全部附件通过匿名核验。先前的[标签关联异常记录](https://github.com/LiaoYK001/Web-Camera-Monitor-Wall/releases/tag/untagged-4bf93dc14cfde7a839ed) 保留并明确标为历史，不移旧标签、不覆盖附件或关闭不可变保护。发行工具及测试器修复留在 `dev`，产品冻结基线仍为上述 `main`。The earlier immutable temporary-tag record is retained and labeled historical; the official `v4.0` publication passed anonymous checks. Tooling fixes stay on `dev` without rewriting the frozen product tag or assets.
+
+## 8. 2026-10-08 GitHub 发布后复查 / Post-publication GitHub audit
+
+- **Actions 与代码检查 / Actions and code checks:** 发布基线的完整容器、Windows 构建与五类 CodeQL 分析均成功；复查时 `dev` 的 `ed8db65` [公开 CI](https://github.com/LiaoYK001/Web-Camera-Monitor-Wall/actions/runs/37760674916) 成功。普通 push 的完整 Windows 候选 job 按设计跳过，实际正式构建与升级另有第 7 节的成功运行。旧提交上的权限启动错误和 Electron 冷初始化失败已修复，其历史失败记录保留。The release baseline and audited development tip pass their respective checks; optional full Windows builds are manual and have separate successful evidence.
+- **安全告警 / Security alerts:** GitHub API 返回未关闭 CodeQL、Dependabot、Secret scanning 告警各 0 条。最终产品基线的 Python 分析仍有 7 条已处置历史结果：2 条 SSRF 与 1 条 UDP 绑定误报、3 条固定测试夹具结果、1 条 OASIS SHA-1 协议兼容例外；各条理由保留在 GitHub，说明见[安全与 CI 修复](security-ci-remediation.md)。这是“未关闭告警为零”，不是“分析从未报告任何问题”。Open alerts are zero; seven existing Python results remain explicitly dismissed for documented false positives, test usage or protocol compatibility, rather than being described as an empty analysis.
+- **动作运行时 / Action runtime:** 复查发现旧 `setup-node` 与 Windows `cache` 的 Node 20 退役警告；`dev` 更新为经官方标签与 `action.yml` 核验的 SHA 固定 `setup-node v7.1.0` / `cache v6.1.0`（Node 24），显式关闭隐式包管理器缓存。项目 Node/pnpm 版本、既有缓存路径/键、权限和产品附件不因此改变；后续运行见 [Actions](https://github.com/LiaoYK001/Web-Camera-Monitor-Wall/actions)。Verified immutable action pins use Node 24, with automatic package-manager caching disabled and the existing build/deployment contract retained.
+- **公开交付 / Public delivery:** 再次匿名核对最新稳定 Release、正式 annotated 标签和 25 项远端摘要/大小，并实际下载验证 12 项小附件、Android 包身份/签名及 `latest.yml`；GHCR 三个正式别名、产品标签、SBOM/provenance 和旧 v3.5 摘要核对通过。GitHub 正式 Release 已有中英文变更、验证、限制、迁移与直接下载说明。The repeated anonymous verification passes; the official GitHub Release contains both languages and the qualification limits. Large assets use remote digest/size versus local actual hashing rather than a second complete download.
