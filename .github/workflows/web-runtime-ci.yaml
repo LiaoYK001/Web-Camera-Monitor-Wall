@@ -44,6 +44,9 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw 'Real updater protocol failed' }
   windows-desktop-candidate:
     if: github.event_name == 'workflow_dispatch' && inputs.windows_desktop
+    permissions:
+      contents: read
+      actions: read # The reusable workflow reads immutable candidate artifacts.
     uses: ./.github/workflows/windows-desktop.yaml
     with:
       version: '4.0.0-dev.0'
