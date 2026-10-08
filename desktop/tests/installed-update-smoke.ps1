@@ -18,6 +18,10 @@ $installation=Join-Path $root '客户端 安装'
 New-Item -ItemType Directory -Path $root -Force|Out-Null
 $old=Join-Path $repo "desktop/out/$PreviousVersion/WebOBS-$PreviousVersion-windows-x64-UNSIGNED.exe"
 $savedProfile=$env:LOCALAPPDATA
+# Electron 44 initializes its pinned binary lazily and logs the download on
+# stdout. Complete that initialization before capturing the executable path.
+& node -e "require(require('node:path').join(process.argv[1],'desktop/node_modules/electron'));" $repo
+if($LASTEXITCODE -ne 0){throw 'Pinned Electron binary initialization failed'}
 $electronOutput=@(& node -e "process.stdout.write(require(require('node:path').join(process.argv[1],'desktop/node_modules/electron')))" $repo)
 if($LASTEXITCODE -ne 0 -or $electronOutput.Count -ne 1 -or $electronOutput[0] -isnot [string]){throw 'Pinned Electron path could not be identified unambiguously'}
 $electronPath=$electronOutput[0].Trim()

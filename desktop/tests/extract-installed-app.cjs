@@ -27,4 +27,3 @@ asar.extractAll(archive,destination);
 const result={schema:1,packageVersion:packageInfo.version,archiveSha256:crypto.createHash('sha256').update(fs.readFileSync(archive)).digest('hex'),entries:entries.length,extractor:'locked @electron/asar 3.4.1 in a separate Node process; exits before the Electron harness; no archive handle kept during NSIS upgrade'};
 fs.writeFileSync(path.join(root,'previous-app-extraction.json'),JSON.stringify(result,null,2));
 console.log('Previous release code/dependencies extracted and identified; independent reader will exit before upgrade.');
-
