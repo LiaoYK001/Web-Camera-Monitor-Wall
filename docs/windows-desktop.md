@@ -161,6 +161,10 @@ Windows 10、11 各自记录实际安装、媒体、LAN 与两版更新结果。
 
 `pnpm --dir desktop test:updates` 使用真实 electron-updater 和本机小型协议夹具验证检测、下载、损坏摘要拒绝、重新校验和断网状态；不安装夹具。两版实际未签名 NSIS 包可通过 `pwsh desktop/tests/installed-update-smoke.ps1 -PreviousVersion <旧稳定版本> -Version <新稳定版本>` 进行隔离安装、真实完整包下载、确认调用、正常停服/快照、升级启动与账号数据保留检查。该检查使用本机更新源及静默测试安装器，不能冒充 GitHub 下载、交互向导或全平台验收；已有安装或快捷方式时拒绝运行。
 
+跨版本检查使用旧安装包自身的完整性、服务和更新模块，在独立 Node 进程中提取后再启动测试，避免持有待替换的 ASAR。升级后执行当前完整校验并验证实际健康里程碑。下载三分钟、安装五分钟预算保持原值；`windows-upgrade-trace.json` 只记录阶段、时间和退出码，不包含账号、Cookie、配置或原始服务日志。手动 Windows 工作流的 `installed_upgrade` 路径只验证冻结的 v4.0 候选与已发布 v3.5，不重建或发布包；测试提交与安装包的源码提交分别记录。
+
+Cross-version checks use the previous installed package's own integrity, supervisor and update modules, extracted in a separate Node process before testing so the harness does not keep the replaced ASAR open. The upgraded runtime receives the current full verification and actual health-milestone check. The three-minute download and five-minute install budgets stay unchanged. The bounded trace records only phases, timestamps and exit codes. The manual Windows workflow's `installed_upgrade` path qualifies the frozen v4.0 artifact against published v3.5 without rebuilding or publishing; tester and artifact revisions are recorded separately.
+
 v4 adds the private `services/nvr/evidence.py` runtime contract. Export jobs and their owner remain in the recording catalog, so data snapshots preserve job history. Queued and active exports block update installation even after the archive page closes. `test:runtime` now uses bundled Python/FFmpeg to create synthetic H.264/AAC evidence, submit through the authenticated core and verify hashes and result restoration after restart. A newly compiled core is required for principal injection; host Python tests or an earlier EXE do not establish this Windows gate.
 
 v4 新增私有 `services/nvr/evidence.py` 运行时契约。导出任务与账号归属保存在录像数据库中，数据快照包含任务历史；离开归档页后，排队和活动导出仍阻止更新安装。`test:runtime` 新增使用捆绑 Python/FFmpeg 生成合成 H.264/AAC 证据，通过认证核心提交，并检查摘要与重启后的结果恢复。身份注入需要重新编译核心，主机 Python 测试或旧 EXE 不代替这项 Windows 门禁。

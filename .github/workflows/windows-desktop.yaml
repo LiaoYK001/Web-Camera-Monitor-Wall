@@ -6,6 +6,7 @@ on:
       version: { type: string, default: '3.4.0-dev.0' }
       official: { type: boolean, default: false }
       milestone: { type: string, default: '' }
+      installed_upgrade: { type: boolean, default: false }
   workflow_dispatch:
     inputs:
       version:
@@ -21,6 +22,10 @@ on:
         description: 'Explicit reviewed engineering milestone (stable v4-M1; development v4-M1-dev)'
         default: 'v4-M1-dev'
         type: string
+      installed_upgrade:
+        description: 'Qualify the frozen main v4.0 NSIS artifact against published v3.5 without rebuilding or publishing'
+        default: false
+        type: boolean
 
 permissions:
   contents: read
@@ -47,6 +52,7 @@ jobs:
           python3 tests/test_online_source.py
 
   windows:
+    if: ${{ !inputs.installed_upgrade }}
     needs: audit
     runs-on: windows-2022
     environment: windows-desktop-build
@@ -126,3 +132,63 @@ jobs:
           retention-days: 3
           compression-level: 0
           if-no-files-found: ignore
+
+  installed-upgrade:
+    if: inputs.installed_upgrade
+    needs: audit
+    runs-on: windows-2022
+    timeout-minutes: 45
+    permissions:
+      contents: read
+      actions: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: 24.19.0
+      - name: Install only the locked test tools
+        shell: pwsh
+        run: |
+          npm install --global pnpm@11.16.0
+          pnpm --dir desktop install --frozen-lockfile
+      - name: Require the immutable final main artifact
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $artifact = gh api repos/LiaoYK001/Web-Camera-Monitor-Wall/actions/artifacts/11530798545 | ConvertFrom-Json
+          if ($LASTEXITCODE -ne 0 -or $artifact.name -ne 'webobs-windows-4.0.0' -or $artifact.digest -ne 'sha256:17ef09e486fe7b6cd06f7912bd397144e8f20a66f885154c44722d4d12b570e0' -or $artifact.workflow_run.head_sha -ne '54392d8e9ea42b18cf118f113cf455e048ba9899' -or $artifact.expired) { throw 'Frozen artifact identity failed' }
+      - uses: actions/download-artifact@70fc10c6e5e1ce46ad2ea6f2b72d43f7d47b13c3
+        with:
+          artifact-ids: 11530798545
+          merge-multiple: true
+          path: desktop/out
+          run-id: 37732484146
+          github-token: ${{ github.token }}
+      - name: Fetch the published previous installer and verify both versions
+        shell: pwsh
+        run: |
+          $previous = 'desktop/out/3.5.0/WebOBS-3.5.0-windows-x64-UNSIGNED.exe'
+          New-Item -ItemType Directory -Path 'desktop/out/3.5.0' -Force | Out-Null
+          Invoke-WebRequest 'https://github.com/LiaoYK001/Web-Camera-Monitor-Wall/releases/download/v3.5/WebOBS-3.5.0-windows-x64-UNSIGNED.exe' -OutFile $previous
+          if ((Get-FileHash -LiteralPath $previous -Algorithm SHA256).Hash.ToLowerInvariant() -ne '1b275c8ff40d3dd2b49c558eedf9bd88ac5cecd6f9f4fe2542bc5ccdb28d2101') { throw 'Previous stable installer hash failed' }
+          $installer = 'desktop/out/4.0.0/WebOBS-4.0.0-windows-x64-UNSIGNED.exe'
+          if ((Get-FileHash -LiteralPath $installer -Algorithm SHA256).Hash.ToLowerInvariant() -ne '8495886a4efbf532a1a89d89b34c3b2621ef04d030fafb41a27e350dfd5499ab') { throw 'Final stable installer hash failed' }
+          $manifest = Get-Content 'desktop/out/4.0.0/webobs-windows-4.0.0-runtime-manifest.json' -Raw | ConvertFrom-Json
+          if ($manifest.revision -ne '54392d8e9ea42b18cf118f113cf455e048ba9899' -or $manifest.version -ne '4.0.0' -or $manifest.milestone -ne 'v4-M1') { throw 'Final runtime identity failed' }
+      - name: Perform isolated actual NSIS update and data retention
+        shell: pwsh
+        run: |
+          ./desktop/tests/installed-update-smoke.ps1 -PreviousVersion 3.5.0 -Version 4.0.0
+      - name: Retain bounded qualification receipts without publication
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: webobs-windows-v4.0-installed-upgrade
+          path: |
+            desktop/out/4.0.0/windows-update-smoke.json
+            desktop/out/4.0.0/windows-upgrade-trace.json
+          if-no-files-found: ignore
+          retention-days: 7
