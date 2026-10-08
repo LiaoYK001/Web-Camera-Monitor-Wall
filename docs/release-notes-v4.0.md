@@ -1,6 +1,6 @@
 # v4.0 发布说明 / v4.0 release notes
 
-> **v4.0 发布基线与验证边界。** 本文记录发布范围、候选证据及已知限制；实际 Tag/Release、稳定附件和镜像摘要以 [GitHub v4.0 Release](https://github.com/LiaoYK001/Web-Camera-Monitor-Wall/releases/tag/v4.0) 为准。候选通过后仍须按[发布流程](release-flow.md)经指定版本的发布 PR 合入 `main`，从该提交重新打包并核验；候选构建不会自行发布或移动 `latest`。
+> **v4.0 已于 2026-10-08 正式发布。** 本文保留发布范围、候选证据与已知限制，第 7 节记录实际发布与公开核验。正式 Tag/Release、25 项稳定附件和镜像摘要以 [GitHub v4.0 Release](https://github.com/LiaoYK001/Web-Camera-Monitor-Wall/releases/tag/v4.0) 为准；候选经[发布流程](release-flow.md)和指定版本 PR 合入 `main` 后，从同一提交重新构建、核验并发行。Published on 2026-10-08; section 7 records the actual publication and public verification.
 
 v4.0 是整个监控产品的成熟度版本：把已有的发现、接入、编排、监看、回放与证据能力收口为**操作一致、失败可恢复、诊断可交付**的产品，并把重启/异常退出修复随本版本一起交付。
 
@@ -69,7 +69,7 @@ These are successful stable-candidate builds, real host installation and isolate
 - Windows 按维护者决定继续发布未签名稳定包；已安装的开发 `-dev.*` 包仍需一次手动安装。Android 必须沿用同一自签密钥与递增版本码，不同密钥不能直接覆盖安装。
 - v3.5 的轻量热修不再适用；重启/异常退出修复已包含在 v4.0 中。
 
-## 6. 发布前剩余步骤 / Remaining release steps
+## 6. 发布准备步骤（历史记录，已完成）/ Release preparation (completed historical checklist)
 
 1. 冻结范围，按[发布流程](release-flow.md)在参考环境构建三主端候选，记录 revision、摘要与 SBOM/许可证。
    容器可先从 `dev` 的 `Release preflight audit` 手动入口选择 `container_candidate=true`、`release_tag=v4.0`、`milestone=v4-M1`，在 Ubuntu 24.04 runner 完整构建并运行认证媒体、Direct/Composite 重启持久化检查。该入口仅保留带摘要与 revision 的未发布 Linux amd64 镜像归档，不持有注册表写权限、不替代真实设备验收；正式发布仍按本地发布流程执行。
@@ -78,3 +78,19 @@ These are successful stable-candidate builds, real host installation and isolate
 3. 准备双语发布 PR（`dev` → `main`），随后从对应 `main` 提交执行打包/Tag/Release，并在本文补全“实际发布与验证”一节。
 
 The v4.0 baseline unifies management workflows, bounded archive playback, redacted diagnostics, honest PWA update continuity, dependency-audit health, deployment defaults, verified Android updates and container restart fixes. Identity is explicitly selected as `v4-M1` and cross-checked across the primary targets. Three stable candidates have been built; current host/synthetic evidence and outstanding qualification are reported separately. Publication follows the reviewed versioned release PR and final artifact verification. Clean-system, physical-device, camera, LAN, long-run and production Android/public-feed qualification remain open.
+
+## 7. 2026-10-08 实际发布与验证 / Actual publication and verification
+
+[v4.0 正式 Release](https://github.com/LiaoYK001/Web-Camera-Monitor-Wall/releases/tag/v4.0) 已发布，三主端均为 `4.0.0`。经双语 [发布 PR #50](https://github.com/LiaoYK001/Web-Camera-Monitor-Wall/pull/50) 合入的产品基线为 `54392d8e9ea42b18cf118f113cf455e048ba9899`；不可变 annotated `v4.0` 标签指向该提交，旧版本标签保留。Release 的 25 个附件包括 Windows 安装包及更新元数据、Android APK 与验证证据、两组产品对应源码、六份固定第三方源码及摘要/清单/验证汇总。
+
+The stable Release delivers all three primary targets as `4.0.0` from the reviewed product revision above. The immutable annotated tag resolves to that revision; previous tags are preserved. Its 25 attachments include both client deliveries, updater metadata, corresponding product/third-party sources and verification evidence.
+
+- **容器 / Container:** `ghcr.io/liaoyk001/web-camera-monitor-wall:v4.0` 与 `latest` 指向同一 OCI 摘要 `sha256:5f8fb22de948048ba0bbbfc4e6b79fc39021089312b96d55025379d7b476a6f9`，包含 SBOM/provenance，平台为 Linux amd64。[最终完整镜像检查](https://github.com/LiaoYK001/Web-Camera-Monitor-Wall/actions/runs/37732612280) 通过原始镜像内测试、认证 HTTP/WebSocket 合成媒体及 Direct/Composite 重启、异常退出和配置保留；原事件 p95 < 50 ms 预算未放宽。The aliases share the verified digest; the original image, authenticated media and restart/persistence gates passed without relaxing timing budgets.
+- **Windows x64:** `WebOBS-4.0.0-windows-x64-UNSIGNED.exe` 为 454,116,555 bytes，SHA-256 `8495886a4efbf532a1a89d89b34c3b2621ef04d030fafb41a27e350dfd5499ab`。[最终完整构建](https://github.com/LiaoYK001/Web-Camera-Monitor-Wall/actions/runs/37732484146) 通过原生服务、实际入口、融合 ASAR/Job 生命周期及 Unicode NSIS 安装/卸载数据保留检查；实际 7,938 个运行文件、`latest.yml` 的大小/SHA-512 与未签名状态均已核验。The complete native runtime, entry, packaged lifecycle and actual NSIS checks passed; all runtime files and updater integrity metadata were verified.
+- **Windows 实际升级 / Installed upgrade:** [参考主机验收](https://github.com/LiaoYK001/Web-Camera-Monitor-Wall/actions/runs/37755314969) 使用同一冻结安装包，从已发布 v3.5 实际升级至 v4.0，六项下载/确认/停服快照/安装/账号数据保留/健康检查通过。NSIS 用时 60.282 秒、退出 0，保留原 300 秒预算。测试器来自 `dev` 的 `703f926`；先初始化固定 Electron，再用独立 Node 进程提取旧版模块，避免将 v4 新增组件要求用于 v3.5。此前本机尝试未通过，不计为升级成功。The tester revision differs from the unchanged product revision. The successful Windows Server 2022 probe uses a synthetic loopback feed and silent test launcher; it does not qualify public-feed delivery or an interactive wizard.
+- **Android:** `WebOBS-4.0.0-android-SELF-SIGNED.apk` 为 90,208 bytes，SHA-256 `f8f9865baec03176784f15a1b8840d1dbb1f0abd7c6d4b783333d42fad3c914d`，实际 `versionCode 4000000`；仓库外持久签名证书 SHA-256 `d6d4f3bbc30f26a971b548344b3065983c495dec6ca388b57e897ba7a2509d2c`。最终干净 `main` 显式 `-Release` 构建、13 项 JUnit、lint（0 错误/4 个已有警告）、实际包身份与签名校验通过；独立验收包完成确认的 `4.0.0 → 4.0.1 → 4.0.2` 系统安装与两次数据保留。The stable APK uses the preserved external identity; real successive system-install probes used separate packages and ephemeral keys, leaving the existing product untouched.
+- **公开发布核验 / Public verification:** 匿名访问的最新 Release 为 v4.0，正式标签、25 项远端摘要/大小与本机核验产物一致；实际下载核对公开 `latest.yml`、Android APK/证据、源码摘要与验证清单。大型安装包及源码以远端 GitHub SHA-256/大小和本机实际散列比对，不宣称全部重新下载。Anonymous latest/tag/inventory checks and bounded public downloads passed; large assets were compared through remote digests/sizes and actual local hashing.
+
+[三端验证汇总](https://github.com/LiaoYK001/Web-Camera-Monitor-Wall/releases/download/v4.0/webobs-v4.0-verification.json) 与 [第三方源码清单](https://github.com/LiaoYK001/Web-Camera-Monitor-Wall/releases/download/v4.0/webobs-third-party-4.0.0-source-manifest.json) 记录对应 revision、摘要、工具适配与审查范围。第 4 节的干净 Windows 10/11、物理摄像机/ARM、生产 Android 公开更新源、LAN、故障/长稳和参考设备性能仍未验收；附件发布不把这些限制改写为通过。The evidence and source manifest state exact provenance and scope; outstanding clean-system, physical-device, production-feed, LAN, fault, soak and performance qualification remains open.
+
+发行期间发现共享 Draft 按标签查询返回 404，以及首轮公开时关联临时标签并被不可变保护锁定。使用数字 Release ID 上传并在公开请求中显式绑定正式标签后，最终 `v4.0` 的公开地址和全部附件通过匿名核验。先前的[标签关联异常记录](https://github.com/LiaoYK001/Web-Camera-Monitor-Wall/releases/tag/untagged-4bf93dc14cfde7a839ed) 保留并明确标为历史，不移旧标签、不覆盖附件或关闭不可变保护。发行工具及测试器修复留在 `dev`，产品冻结基线仍为上述 `main`。The earlier immutable temporary-tag record is retained and labeled historical; the official `v4.0` publication passed anonymous checks. Tooling fixes stay on `dev` without rewriting the frozen product tag or assets.
