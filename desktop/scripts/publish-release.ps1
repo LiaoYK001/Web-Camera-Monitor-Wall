@@ -66,9 +66,12 @@ try {
     $approvedAssets += "webobs-source-$version.tar.gz","webobs-source-$version.tar.gz.sha256"
     $env:GITHUB_REPOSITORY = 'LiaoYK001/Web-Camera-Monitor-Wall'
     # The existing Release is shared with the container and must have this exact tag.
-    & gh release view $Tag --repo $env:GITHUB_REPOSITORY --json tagName,targetCommitish; if ($LASTEXITCODE -ne 0) { throw 'Create the product/container Release through the existing reviewed release flow first.' }
+    $release = & gh release view $Tag --repo $env:GITHUB_REPOSITORY --json databaseId,tagName,targetCommitish | ConvertFrom-Json
+    if ($LASTEXITCODE -ne 0 -or $release.tagName -ne $Tag -or [string]$release.databaseId -notmatch '^[1-9][0-9]*$') { throw 'Create the matching product/container Release through the existing reviewed release flow first.' }
     $assets = $approvedAssets | ForEach-Object { (Join-Path $artifacts $_) -replace '\\','/' }
     if (-not $env:GH_TOKEN) { throw 'Use a maintainer GH_TOKEN only on the publishing host; it is never included in the client.' }
-    & bash './scripts/upload-release-assets-immutable.sh' $Tag @assets
+    # GitHub's REST tag lookup may return 404 for a Draft even though gh can
+    # resolve it. Use the existing immutable numeric-ID upload protocol.
+    & bash './scripts/upload-release-assets-immutable.sh' ([string]$release.databaseId) @assets
     if ($LASTEXITCODE -ne 0) { throw 'Immutable asset upload failed; already existing different assets were not overwritten.' }
 } finally { Set-Location -LiteralPath $savedLocation }

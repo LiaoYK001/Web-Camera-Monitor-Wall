@@ -143,13 +143,15 @@ From v4.0, regular patches use A.B.C with numeric comparison and a patch label. 
 Windows 10、11 各自记录实际安装、媒体、LAN 与两版更新结果。`desktop/qualification.example.json` 只是格式示例，不能作为通过证明；完整检查名见 `desktop/scripts/qualification.mjs`。维护者还需收集匹配第三方二进制的完整对应源码（包括 FFmpeg 及其启用的 GPL 组件），提供已审核 `SOURCE-MANIFEST.json`，其字段为 `revision`、`version`、`reviewed: true`、`files: [{name, sha256}]`。
 
 ```powershell
-./desktop/scripts/publish-release.ps1 -Tag v3.5 `
+./desktop/scripts/publish-release.ps1 -Tag v4.0 `
   -ArtifactDirectory 'D:/release/webobs-windows' `
   -QualificationReceipts 'D:/private/windows-qualification.json' `
   -CorrespondingThirdPartySourceDirectory 'D:/release/matching-third-party-sources'
 ```
 
 发布器验证实际安装包摘要、版本、`latest.yml` 与源码身份，复用 `scripts/create-source-bundle.sh` 和 `scripts/upload-release-assets-immutable.sh`。默认允许明确标记 `UNSIGNED` 的正式包；显式签名包仍需匹配发布者。没有完整平台验收回执时，必须提供绑定安装包摘要的实际 `windows-install-smoke.json`，并在 Release 如实披露干净系统/摄像机等待验收项；主机冒烟检查不等于全平台验收。对应源码仍需审核。维护者发布机需要 Git Bash/gh；Token 仅用于附件上传。不要把开发包的元数据上传到正式更新源。
+
+多端共用 Draft 时，发布器通过 `gh release view` 核对标签并取得数字 Release ID，再调用既有不可变上传接口；GitHub REST 按标签查询草稿可能返回 404，不能因此新建第二个 Release 或提前发布。已有不同内容的同名附件仍拒绝覆盖。For a shared Draft, the publisher resolves its numeric ID through `gh`, verifies the tag and uses the existing immutable ID-based uploader. A REST tag lookup returning 404 does not authorize a duplicate Release or early publication; conflicting attachment bytes remain rejected.
 
 ## 当前验证边界
 
