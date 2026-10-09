@@ -12,9 +12,9 @@ For v4.0, save the configuration, dismiss the dialog, then exit WebOBS normally 
 
 ## 开发分支修复 / Development fix
 
-修复始于 `72e0bf055ce49af226d41238e9f39b47b5585c5b`（`dev`），后续补齐 Windows 退出时连接重置的处理。完整 Windows 测试候选为 `4.0.1-dev.2`，不是正式 `v4.0.1`；现有公开 v4.0 安装包不包含本修复。
+修复始于 `72e0bf055ce49af226d41238e9f39b47b5585c5b`（`dev`），后续补齐 Windows 退出时连接重置的处理。完整 Windows 测试候选为 `4.0.1-dev.3`，不是正式 `v4.0.1`；现有公开 v4.0 安装包不包含本修复。
 
-The fix starts at `72e0bf055ce49af226d41238e9f39b47b5585c5b` on `dev`, followed by Windows exit/reset handling. The Windows test candidate is `4.0.1-dev.2`, not a stable `v4.0.1` release. Published v4.0 installers remain unchanged.
+The fix starts at `72e0bf055ce49af226d41238e9f39b47b5585c5b` on `dev`, followed by Windows exit/reset handling. The Windows test candidate is `4.0.1-dev.3`, not a stable `v4.0.1` release. Published v4.0 installers remain unchanged.
 
 - 产品认证代理将重启请求转为固定退出码 `75`；监督器仅替换 go2rtc，重新读取私密配置，保留其他服务与登录会话。/ The authenticated proxy requests reserved exit code `75`; the supervisor replaces only go2rtc, preserving other services and sessions.
 - 连续保存，包括早于监督器就绪轮询的快速保存，不消耗或重置异常重试预算。/ Repeated saves, including saves before the readiness poll observes startup, neither consume nor reset the crash budget.
@@ -35,3 +35,7 @@ The fix starts at `72e0bf055ce49af226d41238e9f39b47b5585c5b` on `dev`, followed 
 完整 Windows 编译、真实服务及 NSIS 构建验证见[候选工作流](https://github.com/LiaoYK001/Web-Camera-Monitor-Wall/actions/workflows/windows-desktop.yaml)。工作流内新增七次完整认证代理重载及产品重启后配置保留检查。首轮 [`4.0.1-dev.1` / #48](https://github.com/LiaoYK001/Web-Camera-Monitor-Wall/actions/runs/37915051098) 已通过原生编译和两项 CTest，但真实 go2rtc 退出时连接重置被代理误报为 `503`，新回归阻止了打包；该失败不计为完整候选通过。最终结论以新候选工作流完成结果为准；本机分项验证不代表新安装包已通过完整构建或已经发布。
 
 The [candidate workflow](https://github.com/LiaoYK001/Web-Camera-Monitor-Wall/actions/workflows/windows-desktop.yaml) compiles Windows, exercises seven real authenticated reloads and persistence, then packages and checks NSIS. The first dev.1 attempt passed compilation/CTest but failed the real restart assertion: socket reset on exit was reported as `503`, preventing packaging. It is not a successful full candidate. The completed new run determines readiness; component checks alone do not qualify or publish an installer.
+
+第二轮 [`4.0.1-dev.2` / #49](https://github.com/LiaoYK001/Web-Camera-Monitor-Wall/actions/runs/37916427221) 已通过原生编译、两项 CTest 和七次完整认证代理配置重载，但新增非法 YAML 用例误将上游 POST 的拒绝状态预期为 400，实际固定版本返回 500，导致后续打包停止。现已按上游源码纠正断言和浏览器夹具，继续保留文件与运行流不变的检查；未放宽重载、服务所有权或会话断言。
+
+The second dev.2 attempt passed native compilation, both CTests and all seven real authenticated reloads. Packaging then stopped because the new invalid-YAML test incorrectly expected 400; the pinned upstream POST handler returns 500. The assertion and browser fixture now match that contract, retaining file/stream preservation checks and all reload, ownership and session assertions.

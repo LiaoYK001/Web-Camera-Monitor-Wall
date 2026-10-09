@@ -19,7 +19,7 @@ async function editorFixture(page: import('@playwright/test').Page) {
     if (target === 'api/config') {
       if (route.request().method() === 'POST') {
         state.writes++;
-        if (state.rejectSave) return route.fulfill({status: 400, body: 'invalid YAML'});
+        if (state.rejectSave) return route.fulfill({status: 500, body: 'invalid YAML'});
         state.config = route.request().postData()!;
       }
       return route.fulfill({contentType: 'application/yaml', body: state.config});

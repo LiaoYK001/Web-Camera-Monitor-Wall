@@ -23,7 +23,8 @@ exports.exerciseGo2rtcReload = async (supervisor, headers) => {
     assert.equal((await fetch(supervisor.origin + '/api/v1/auth/session', {headers})).status, 200);
   }
   const invalid = await fetch(base + 'api/config', {method: 'POST', headers, body: 'streams: [unclosed'});
-  assert.equal(invalid.status, 400);
+  // Pinned go2rtc v1.9.14 rejects invalid POST YAML with 500 (PATCH uses 400).
+  assert.equal(invalid.status, 500);
   assert.equal(await (await fetch(base + 'api/config', {headers})).text(), config);
   assert.deepEqual(Object.keys(await (await fetch(base + 'api/streams', {headers})).json()), ['reload-6']);
   console.log('Actual go2rtc: seven successive config reloads, removal of old names, unchanged service owners/session and invalid-YAML preservation passed.');
