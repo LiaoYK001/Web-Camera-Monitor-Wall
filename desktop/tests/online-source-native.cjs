@@ -10,7 +10,7 @@ app.on('window-all-closed',()=>{});
  const temporary=process.env.WEBOBS_SOURCE_UI_ROOT;
  if(!temporary||!path.resolve(temporary).startsWith(path.join(os.tmpdir(),'webobs-source-ui-')))throw new Error('Use run-online-source-native.mjs with an isolated owned profile');
  app.setPath('userData',path.join(temporary,'WebOBS'));app.setPath('sessionData',path.join(temporary,'browser'));
- let supervisor,browser,window,upstream,manifestRevision,frontendEntrySha256,frontendOverride,exit=0;const receipts=[];
+ let supervisor,browser,window,upstream,manifestRevision,frontendEntrySha256,frontendOverride,restartVideo,failure,stage='initialization',exit=0;const receipts=[];
  try{
   await app.whenReady();window=new BrowserWindow({show:false,webPreferences:{sandbox:true,contextIsolation:true,nodeIntegration:false}});await window.loadURL('data:text/html,<title>Public online qualification</title>');
   const runtime=path.resolve(option('--runtime')||path.join(root,'desktop/runtime'));
@@ -38,10 +38,13 @@ app.on('window-all-closed',()=>{});
   expect((await context.request.post(base+'/api/v1/auth/setup',{headers:{Origin:base},data})).status()).toBe(201);
   expect((await context.request.post(base+'/api/v1/auth/login',{headers:{Origin:base},data})).status()).toBe(200);
   const page=await context.newPage();page.setDefaultTimeout(15000);
-  let socketBytes=0,socketFrames=0,socketErrors=0;
+  let socketBytes=0,socketFrames=0,socketErrors=0;const socketErrorCategories=new Set();
   page.on('websocket',socket=>socket.on('framereceived',event=>{
    if(Buffer.isBuffer(event.payload)){socketFrames++;socketBytes+=event.payload.length;}
-   else {try{if(JSON.parse(event.payload).type==='error')socketErrors++;}catch{}}
+   else {try{const value=JSON.parse(event.payload);if(value.type==='error'){
+    socketErrors++;const text=JSON.stringify(value).toLowerCase();
+    for(const category of ['timeout','no compatible codecs','exec','eof','401','403','404','refused','reset'])if(text.includes(category))socketErrorCategories.add(category);
+   }}catch{}}
   }));
   // Exercise the current production frontend with the actual authenticated native services.
   if(frontend)await page.route(base+'/**',async route=>{
@@ -52,6 +55,7 @@ app.on('window-all-closed',()=>{});
    const ext=path.extname(target);await route.fulfill({body,contentType:ext==='.js'?'application/javascript':ext==='.css'?'text/css':ext==='.html'?'text/html':'application/octet-stream'});
   });
   for(const {name,address,engine,video:videoMode} of external||[{name:'private-rtsp',address:rtspAddress,engine:'auto'}]){
+   socketBytes=socketFrames=socketErrors=0;socketErrorCategories.clear();
    const start=Date.now();let phase='form';
    try{
     await page.goto(base+'/#go2rtc');const form=page.getByRole('region',{name:'网站与直播源'});
@@ -96,10 +100,11 @@ app.on('window-all-closed',()=>{});
     await management.close();receipts.push({name,address:external?address:'[private authenticated RTSP fixture]',engine,videoMode:videoMode||'auto',result:'passed',dimensions,seconds:Math.round((Date.now()-start)/1000),deviceImported:true,coldImport:true,studioPersisted:true,monitorWallDecoded:true,...(soak?{soak}:{})});
    }catch(error){
     const mediaDiagnostic=await page.locator('video').first().evaluate(v=>({readyState:v.readyState,networkState:v.networkState,errorCode:v.error?.code||null,decodedFrames:v.getVideoPlaybackQuality().totalVideoFrames,currentTime:v.currentTime,buffered:Array.from({length:Math.min(v.buffered.length,4)},(_,i)=>[v.buffered.start(i),v.buffered.end(i)])})).catch(()=>null);
-    receipts.push({name,address:external?address:'[private authenticated RTSP fixture]',engine,videoMode:videoMode||'auto',result:'failed',phase,errorType:error.name,seconds:Math.round((Date.now()-start)/1000),mediaDiagnostic,socketBytes,socketFrames,socketErrors});exit=1;await page.screenshot({path:path.join(temporary,name+'-failed.png')}).catch(()=>{});}
+    receipts.push({name,address:external?address:'[private authenticated RTSP fixture]',engine,videoMode:videoMode||'auto',result:'failed',phase,errorType:error.name,seconds:Math.round((Date.now()-start)/1000),mediaDiagnostic,socketBytes,socketFrames,socketErrors,socketErrorCategories:[...socketErrorCategories]});exit=1;await page.screenshot({path:path.join(temporary,name+'-failed.png')}).catch(()=>{});}
    console.log(JSON.stringify(receipts.at(-1)));
   }
   if(!exit&&receipts.length){
+   stage='restart-persistence';
    await context.close();await supervisor.stop();await supervisor.start();
    const restored=await browser.newContext({serviceWorkers:'block'});
    expect((await restored.request.post(base+'/api/v1/auth/login',{headers:{Origin:base},data})).status()).toBe(200);
@@ -113,16 +118,19 @@ app.on('window-all-closed',()=>{});
     receipt.restartPersistence=true;
    }
    console.log('Named streams, device identity and Studio retained after complete product restart');
-   const last=receipts.at(-1),monitor=await restored.newPage();await monitor.goto(base+'/#monitor');
+   stage='restart-playback';const last=receipts.at(-1),monitor=await restored.newPage();await monitor.goto(base+'/#monitor');
    const wall=monitor.getByLabel(last.name+' 浏览器媒体画面',{exact:true});
+   restartVideo=wall;
    await expect.poll(()=>wall.evaluate(v=>v.readyState>=2&&v.videoWidth>0),{timeout:110000}).toBe(true);
    const stamp=await wall.evaluate(v=>v.currentTime);await expect.poll(()=>wall.evaluate(v=>v.currentTime),{timeout:15000}).toBeGreaterThan(stamp+1);
    last.monitorWallAfterRestart=true;console.log('Actual Program monitor wall resumed after complete product restart');
   }
- }catch(error){exit=1;console.error('Native source UI qualification failed: '+error.name);}
+ }catch(error){exit=1;failure={phase:stage,errorType:error.name};
+  if(restartVideo)failure.mediaDiagnostic=await restartVideo.evaluate(v=>({readyState:v.readyState,networkState:v.networkState,errorCode:v.error?.code||null,decodedFrames:v.getVideoPlaybackQuality().totalVideoFrames,currentTime:v.currentTime})).catch(()=>null);
+  console.error('Native source UI qualification failed: '+stage+' / '+error.name);}
  finally{
   await browser?.close();await supervisor?.stop().catch(()=>{});if(upstream&&upstream.exitCode===null){upstream.stdin.end();await Promise.race([new Promise(resolve=>upstream.once('exit',resolve)),new Promise(resolve=>setTimeout(resolve,5000))]);if(upstream.exitCode===null)upstream.kill();}window?.destroy();
-  if(option('--receipt'))await fs.writeFile(path.resolve(option('--receipt')),JSON.stringify({testedAt:new Date().toISOString(),result:exit?'failed':'passed',runtimeRevision:manifestRevision,frontendOverride,frontendEntrySha256,receipts},null,2));
+  if(option('--receipt'))await fs.writeFile(path.resolve(option('--receipt')),JSON.stringify({testedAt:new Date().toISOString(),result:exit?'failed':'passed',runtimeRevision:manifestRevision,frontendOverride,frontendEntrySha256,...(failure?{failure}:{}),receipts},null,2));
   app.exit(exit);
  }
 })().catch(() => { console.error('Native source UI harness failed'); app.exit(1); });

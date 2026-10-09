@@ -207,6 +207,18 @@ class SnapshotTests(unittest.TestCase):
             self.assertNotIn('-hwaccel',call.call_args.args[0])
             self.assertEqual(call.call_args.args[0][call.call_args.args[0].index('-c:v')+1],'copy')
 
+    def test_go2rtc_startup_budget_is_fixed_and_keeps_hardware_fallback(self):
+        values=['direct-'+'a'*32,'hybrid-'+'b'*32,'transcode','copy','90']
+        env={'WEBOBS_FFMPEG_PATH':'ffmpeg','WEBOBS_NVIDIA_ENCODE_SUPPORTED':'true','WEBOBS_NVIDIA_DECODE_SUPPORTED':'true','WEBOBS_HYBRID_VIDEO_ENCODER':'auto','WEBOBS_SOFTWARE_FALLBACK':'false'}
+        with patch.dict(os.environ,env):
+            call=Mock(side_effect=[1,0]);self.assertEqual(transcoder.run_transcoder(values,call),0)
+            for invocation in call.call_args_list:
+                args=invocation.args[0];self.assertEqual(args[args.index('-timeout')+1],'90000000')
+            ordinary=transcoder.arguments(values[:4]);self.assertEqual(ordinary[ordinary.index('-timeout')+1],'8000000')
+            for extra in ('0','91','90000000','90;calc'):
+                with self.assertRaises(ValueError):transcoder.arguments(values[:4]+[extra])
+            with self.assertRaises(ValueError):transcoder.arguments([values[0],'audio-'+'b'*32+'-t0','audio-track','0','90'])
+
     @unittest.skipUnless(os.name=='nt' and (ROOT/'desktop/runtime/bin/webobs-job.exe').exists(),'requires a built Windows runtime')
     def test_console_stop_reaches_owned_child_and_preserves_normal_exit(self):
         with tempfile.TemporaryDirectory() as temp:

@@ -94,4 +94,8 @@ Website format selection preserves the best compatible quality up to the selecte
 
 Windows 原生来源门禁可追加 `--soak-seconds 600`（每源 0–3600 秒），逐段确认主页真实解码帧持续增长。失败回执仅保留允许的媒体状态、缓冲时间范围和 WebSocket 字节/错误数量，不保存签名媒体 URL。
 
-The native source UI gate accepts `--soak-seconds 600` (0–3600 seconds per source) and checks decoded-frame progress on the actual monitor wall. Failed receipts retain only allowed media state, buffered time ranges and socket counters, never signed media URLs.
+The native source UI gate accepts `--soak-seconds 600` (0–3600 seconds per source) and checks decoded-frame progress on the actual monitor wall. Failed receipts retain only allowed media state, buffered time ranges and socket counters, never signed media URLs. Restart failures record their phase separately from a completed soak; socket errors use a fixed category allowlist.
+
+产品内部 go2rtc 回环 RTSP 路径的冷启动预算与网站助手对齐：Direct 来源等待最多 90 秒，Hybrid 输入使用固定 90 秒，发布启动最多 95 秒；普通摄像机维持原预算。单次 WHEP 信令仍为 15 秒，浏览器沿原有退避重试，提取过程不会被较短的 Hybrid 输入等待提前终止。只识别本产品运行时的 go2rtc 回环监听地址，不接受前端提供任意等待时长；退出观看后仍按需停止。
+
+Internal product-loopback go2rtc routes align with the fixed extractor startup budget: 90 seconds for the Direct source/Hybrid input and 95 seconds for Hybrid publishing. Ordinary camera budgets remain unchanged. Each WHEP signaling request retains its 15-second deadline and existing browser backoff; a shorter downstream input wait no longer prematurely aborts extraction. Only the product's loopback go2rtc listener is recognized; renderers cannot choose arbitrary durations. Media remains on demand.

@@ -201,3 +201,5 @@ System status includes the current desktop process tree, excluding unrelated sam
 轨道探测现额外保存 `has_b_frames`（复用原有 FFprobe，不另开媒体连接）。WebRTC 不兼容已确认需要重排序的 H.264 时，设备路径按需进入 Hybrid；没有 B 帧的兼容视频仍直通。私有设备数据库增加可空 `video_b_frames` 列，未知不冒充 0；同来源重命名保留结果，修改 endpoint/transport/凭据会失效。升级后对已有设备重新“探测轨道”以登记此信息。旧式直接 RTSP 场景没有这份设备探测信息，不能据此宣称已覆盖。
 
 Track probing stores B-frame metadata using the existing FFprobe read. Known reordered H.264 uses on-demand Hybrid; compatible reorder-free video remains passthrough. The private registry adds a nullable column, preserving results across renames and invalidating them when media endpoints, transport or credentials change. Re-probe existing device tracks after upgrading. Legacy raw RTSP scenes are outside this registry-based compatibility check.
+
+内部 go2rtc 来源支持最多 90 秒冷启动、Hybrid 发布最多 95 秒，解决网站解析仍在进行时下游 8/10 秒提前断开的冲突；单次信令仍保留 15 秒预算与退避重试，普通摄像机保持原等待上限。见 [网站来源说明](online-sources.md)。Internal go2rtc cold startup uses the fixed extractor budget without changing ordinary camera or per-request signaling deadlines.

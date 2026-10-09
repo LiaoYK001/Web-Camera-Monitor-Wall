@@ -1127,6 +1127,7 @@ private:
         bool video_transcode = false;
         bool video_reordering = false;
         bool audio_transcode = false;
+        bool go2rtc_startup = false;
         std::string hybrid_path;
         /** Per-track audio-only MediaMTX paths, keyed by 0:a:<index> (F5-05). */
         std::unordered_map<int, std::string> audio_paths;
@@ -1479,11 +1480,16 @@ private:
             }
         }
         route.rtsp_url = effective_url;
+        // Website extraction is owned by the fixed go2rtc relay (90s startup).
+        // Keep ordinary camera budgets; recognize only this product's loopback
+        // go2rtc listener, never a renderer-supplied duration or external host.
+        route.go2rtc_startup = effective_url.starts_with(runtime_rtsp(18554, "/"));
         route.video_reordering = video_reordering;
         route.source_key = source_key;
         route.transport = source_transport;
         const std::string body = "{\"source\":\"" + json_escape(route.rtsp_url) +
-                                 "\",\"sourceOnDemand\":true,\"sourceOnDemandStartTimeout\":\"10s\"," +
+                                 "\",\"sourceOnDemand\":true,\"sourceOnDemandStartTimeout\":\"" +
+                                 (route.go2rtc_startup ? "90s" : "10s") + "\"," +
                                  "\"sourceOnDemandCloseAfter\":\"5s\",\"maxReaders\":8," +
                                  "\"overridePublisher\":false,\"rtspTransport\":\"" +
                                  json_escape(route.transport) + "\"}";
@@ -1584,11 +1590,13 @@ private:
             const std::string command = command_quote(transcoder_executable()) + " " + route.path + " " +
                                         route.hybrid_path + " " +
                                         (route.video_transcode ? "transcode" : "copy") + " " +
-                                        (route.audio_transcode ? "transcode" : "copy");
+                                        (route.audio_transcode ? "transcode" : "copy") +
+                                        (route.go2rtc_startup ? " 90" : "");
             const std::string body =
                 std::string("{\"source\":\"publisher\",\"overridePublisher\":false,\"maxReaders\":8,") +
                 "\"runOnDemand\":\"" + json_escape(command) +
-                "\",\"runOnDemandRestart\":false,\"runOnDemandStartTimeout\":\"10s\"," +
+                "\",\"runOnDemandRestart\":false,\"runOnDemandStartTimeout\":\"" +
+                (route.go2rtc_startup ? "95s" : "10s") + "\"," +
                 "\"runOnDemandCloseAfter\":\"2s\"}";
             const std::string url = std::string(control_origin) + "/v3/config/paths/add/" + route.hybrid_path;
             const UpstreamResponse configured = request_http(url, body, "POST", "application/json");
