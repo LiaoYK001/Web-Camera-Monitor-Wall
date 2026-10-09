@@ -13,14 +13,13 @@ def arguments(values, encoder="libx264", hardware_decode=False):
     source, target, video, audio = values[:4]
     if len(values) == 5 and (values[4] != "90" or video not in {"copy", "transcode"}):
         raise ValueError("invalid startup budget")
-    input_timeout = "90000000" if len(values) == 5 else "8000000"
     direct = bool(re.fullmatch(r"direct-[a-f0-9]{32}", source))
     url = bool(re.fullmatch(r"rtsps?://[!-~]{1,2048}", source))
     if not direct and not url:
         raise ValueError("invalid source")
     ffmpeg = os.environ["WEBOBS_FFMPEG_PATH"]
     decode = ["-hwaccel", "cuda"] if hardware_decode and video == "transcode" and encoder == "h264_nvenc" else []
-    args = [ffmpeg, "-hide_banner", "-loglevel", "error", "-nostdin", "-rtsp_transport", "tcp", "-timeout", input_timeout, *decode,
+    args = [ffmpeg, "-hide_banner", "-loglevel", "error", "-nostdin", "-rtsp_transport", "tcp", "-timeout", "8000000", *decode,
             "-i", service_rtsp(8554, "/" + source) if direct else source]
     if video == "audio-track":
         if not re.fullmatch(r"([0-9]|[12][0-9]|3[01])", audio) or target != f"audio-{target[6:38]}-t{audio}" or not re.fullmatch(r"audio-[a-f0-9]{32}-t\d{1,2}", target):
@@ -55,7 +54,25 @@ def arguments(values, encoder="libx264", hardware_decode=False):
     else: args += ["-c:a", "libopus", "-b:a", "96k", "-ar", "48000", "-ac", "2"]
     return args + ["-rtsp_transport", "tcp", "-f", "rtsp", service_rtsp(8554, "/"+target)]
 
+def prepare_cold_input(values):
+    # Warm only the loopback direct route. A 90s FFmpeg I/O timeout would also
+    # hide established-stream stalls for 90s; keep steady-state reads at 8s.
+    args = arguments(values)  # Validate the full fixed vector before spawning.
+    probe = pathlib.Path(os.environ['WEBOBS_FFMPEG_PATH']).with_name('ffprobe.exe' if os.name == 'nt' else 'ffprobe')
+    command = [str(probe), '-v', 'error', '-rtsp_transport', 'tcp', '-timeout', '90000000',
+               '-analyzeduration', '1000000', '-probesize', '1048576', '-select_streams', 'v:0',
+               '-show_entries', 'stream=codec_name', '-of', 'json', args[args.index('-i')+1]]
+    try:
+        return subprocess.run(command, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                              timeout=90, **({'creationflags':subprocess.CREATE_NO_WINDOW} if os.name=='nt' else {})).returncode
+    except (OSError, subprocess.TimeoutExpired):
+        return 1
+
+
 def run_transcoder(values, call=subprocess.call):
+    if len(values) == 5 and prepare_cold_input(values) != 0:
+        print('go2rtc cold input did not become ready', file=sys.stderr)
+        return 1
     if len(values) in {4, 5} and values[2] == "transcode" and os.environ.get("WEBOBS_NVIDIA_ENCODE_SUPPORTED") == "true" and os.environ.get("WEBOBS_HYBRID_VIDEO_ENCODER") != "x264":
         if os.environ.get("WEBOBS_NVIDIA_DECODE_SUPPORTED") == "true":
             result = call(arguments(values, "h264_nvenc", hardware_decode=True))

@@ -87,14 +87,16 @@ app.on('window-all-closed',()=>{});
     const wallStamp=await wall.evaluate(v=>v.currentTime);await expect.poll(()=>wall.evaluate(v=>v.currentTime),{timeout:15000}).toBeGreaterThan(wallStamp+1);
     let soak;
     if(soakSeconds){
-     phase='monitor-soak';const started=Date.now();let samples=0;
+     phase='monitor-soak';const started=Date.now(),initialFrames=await wall.evaluate(v=>v.getVideoPlaybackQuality().totalVideoFrames);let samples=0;
      while(Date.now()-started<soakSeconds*1000){
       const frames=await wall.evaluate(v=>v.getVideoPlaybackQuality().totalVideoFrames);
       await page.waitForTimeout(Math.min(5000,Math.max(0,soakSeconds*1000-(Date.now()-started))));
       await expect.poll(()=>wall.evaluate(v=>v.getVideoPlaybackQuality().totalVideoFrames),{timeout:15000}).toBeGreaterThan(frames);
       samples++;if(samples%12===0)console.log('Monitor media soak: '+Math.round((Date.now()-started)/1000)+' seconds with decoded-frame progress');
      }
-     soak={seconds:Math.round((Date.now()-started)/1000),progressSamples:samples};
+     const quality=await wall.evaluate(v=>{const q=v.getVideoPlaybackQuality();return {frames:q.totalVideoFrames,droppedFrames:q.droppedVideoFrames};});
+     const seconds=(Date.now()-started)/1000;
+     soak={seconds:Math.round(seconds),progressSamples:samples,decodedFrames:quality.frames-initialFrames,averageDecodedFps:Number(((quality.frames-initialFrames)/seconds).toFixed(2)),droppedFrames:quality.droppedFrames};
     }
     console.log('Actual monitor wall decoded and advanced after TAKE');
     await management.close();receipts.push({name,address:external?address:'[private authenticated RTSP fixture]',engine,videoMode:videoMode||'auto',result:'passed',dimensions,seconds:Math.round((Date.now()-start)/1000),deviceImported:true,coldImport:true,studioPersisted:true,monitorWallDecoded:true,...(soak?{soak}:{})});

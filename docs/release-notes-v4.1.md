@@ -11,17 +11,18 @@ v4.1 has not been released. Existing v4.0 assets do not contain these changes. T
 - 系统状态统计本次应用进程树，区分 go2rtc、浏览器、FFmpeg 与后台服务，并提供整体 CPU 折算。Diagnostics show the owned desktop process tree and normalized CPU.
 - go2rtc 命名流支持批量选择、逐项导入、部分失败重试、停止及不确定写入核对。Named streams support safe batch import, progress, partial retries, stopping and reconciliation.
 - 网站回放自动检查 H.264 帧重排序兼容性，按需处理 B 帧；增加主页持续解码验收。Website VOD checks H.264 frame reordering and adds monitor-wall soak validation.
-- 内部 go2rtc 冷启动统一固定 90 秒来源/输入预算与 95 秒 Hybrid 发布预算，修复下游 8/10 秒提前终止网站解析；单次信令与普通摄像机预算不变。Internal go2rtc startup aligns with the fixed extractor budget, preserving individual signaling and ordinary camera deadlines.
+- 内部 go2rtc 冷启动使用固定 90 秒来源/启动探测预算与 95 秒 Hybrid 发布预算，修复下游 8/10 秒提前终止网站解析；实际媒体读取仍为 8 秒，单次信令与普通摄像机预算不变。Internal go2rtc startup aligns with the fixed extractor budget, preserving steady-state media reads, individual signaling and ordinary camera deadlines.
 - 设备轨道探测复用同一次 FFprobe 记录 B 帧，已确认需要重排序的 H.264 自动进入 Hybrid；无 B 帧来源继续直通。旧设备需重新探测轨道；直接写入旧式 RTSP 场景的来源仍不具备此登记信息。Registry track probes persist B-frame metadata without an additional media read; known reordered H.264 uses Hybrid. Existing devices need a fresh track probe; legacy raw RTSP scene sources do not have this registry metadata.
 - 同时包含此前 dev 中的配置 Save/reload、RTSP 自动识别和实际主页播放/重启验收修复。Includes prior dev configuration reload, RTSP detection and actual playback/restart fixes.
 
 ## 已有证据 / Available evidence
 
 - 前端 typecheck/build；相关浏览器回归 24 项通过。Frontend typecheck/build and 24 focused browser checks passed.
-- Desktop 单元 48 项通过；原生 Python 16 项中 8 项通过、8 项因本机对应运行时位置未构建而跳过；POSIX 转码回归 10 项通过。Desktop unit checks passed; local Python checks distinguish eight passes from eight runtime-dependent skips; ten POSIX transcoder checks passed.
+- Desktop 单元 48 项通过；原生 Python 17 项中 9 项通过、8 项因本机对应运行时位置未构建而跳过；POSIX 转码回归 10 项通过。Desktop unit checks passed; local Python checks distinguish nine passes from eight runtime-dependent skips; ten POSIX transcoder checks passed.
 - Windows `4.1.0-dev.4`（`5be2962`）[完整 CI](https://github.com/LiaoYK001/Web-Camera-Monitor-Wall/actions/runs/37940944357) 通过，包括原生运行时、Composite 实际浏览器按需与发布故障恢复、打包启动、NSIS；它尚不包含本轮随后发现的冷启动预算修复。设备服务 Windows 全量 52 项通过。The dev.4 complete Windows candidate passed its runtime, browser demand/fault, package and NSIS gates; the later cold-start fix still requires a new candidate. All 52 Windows registry checks passed.
 - Linux/WSL 编译、CTest 2 项通过；实际 OBS→WHIP→MediaMTX→RTSP 解码验证待机、观看超过保温期、关闭后停止、强制踢出发布连接后恢复与健康状态。网站助手另通过 MP4/HLS 实际解码、重复连接及首次 HTTP 请求中断恢复。Linux/WSL compilation and two CTest cases passed; real transport exercised demand lifecycle and publisher fault recovery. The website helper passed MP4/HLS decoding, reconnect and initial HTTP disconnect recovery. These are separate from complete Windows candidate qualification.
 - 2560×1440/25fps 合成 HEVC → NVENC 的单路 20 秒试验：软件解码 3.375 CPU 秒、CUDA 解码 3.312 CPU 秒（本机 9950X3D/RTX3090）。样本差异很小，不能据此宣称显著优化，更不是暗夜精灵或 OBS 对照。A short synthetic decode sample showed little CPU difference and establishes neither significant savings nor stock OBS parity.
+- 同五路合成源、实际 Electron 隐藏窗口短测：优化前开发候选整体 CPU 中位 10.30%、p95 12.86%；`4.1.0-dev.4` 为 7.14% / 8.39%，中位约下降 30.7%，webobsd 分项中位由 3.39% 降至 0.19%。五路持续解码，视频尺寸一致；仅一次短测，不代表可见窗口、准确 FPS 或 OBS 达标。[方法与边界](windows-performance-v4.1.md)。A same-source short synthetic Electron comparison reduced normalized median CPU by about 30.7%; its limits remain explicit.
 - 用户指定的 YouTube 已转为回放：旧候选自动直通复现无画面，显式 H.264 转换通过主页十分钟及整应用重启恢复；`4.1.0-dev.2` 自动策略首次 MSE 启动失败，复跑通过主页 600 秒、117 次帧增长采样，但整应用重启后播放失败。日志确认下游 8/10 秒早于提取冷启动完成；不能将十分钟播放成功计为完整通过。The reported replay passed a ten-minute automatic monitor soak on dev.2 after an initial MSE failure, but failed playback after full restart. Logs exposed the shorter downstream startup deadlines; full qualification remains failed.
 - 冷启动修复经 Linux 实际 go2rtc→Hybrid→浏览器验证：人为延迟 18 秒的 H.264/AAC 源在 25 秒出画面并持续解码，正常关闭后生产者与转码停止。此合成故障验证不替代 Windows YouTube 的完整复验。With the startup fix, an actual synthetic go2rtc source delayed by 18 seconds decoded through Hybrid in a browser within 25 seconds and stopped after viewer shutdown; Windows external-site requalification remains required.
 

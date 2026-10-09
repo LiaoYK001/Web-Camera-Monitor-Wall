@@ -67,13 +67,13 @@ fi
 
 # Only the core's product-loopback go2rtc route uses the fixed website startup
 # budget. No arbitrary duration or additional renderer command is accepted.
-input_timeout=8000000
+cold_input=false
 if [ "$#" -eq 5 ]; then
     if [ "$5" != 90 ] || { [ "$3" != copy ] && [ "$3" != transcode ]; }; then
         echo "invalid internal transcoder path" >&2
         exit 2
     fi
-    input_timeout=90000000
+    cold_input=true
 fi
 
 case "$3" in
@@ -193,7 +193,7 @@ fi
 
 run_ffmpeg() {
     encoder="$1"
-    set -- ffmpeg -hide_banner -loglevel error -nostdin -rtsp_transport tcp -timeout "$input_timeout"
+    set -- ffmpeg -hide_banner -loglevel error -nostdin -rtsp_transport tcp -timeout 8000000
     if [ "$video_mode" = transcode ]; then
         if [ "$encoder" = vaapi ]; then
             set -- "$@" -hwaccel vaapi -hwaccel_device "$vaapi_device" -hwaccel_output_format vaapi
@@ -234,6 +234,17 @@ run_ffmpeg() {
     set -- "$@" -rtsp_transport tcp -f rtsp "rtsp://127.0.0.1:8554/$target_path"
     "$@"
 }
+
+if [ "$cold_input" = true ]; then
+    # Startup-only loopback readiness probe. Keep FFmpeg's active-stream read
+    # timeout at eight seconds so cold-start support never masks media stalls.
+    if ! timeout -k 2s 90s ffprobe -v error -rtsp_transport tcp -timeout 90000000 \
+        -analyzeduration 1000000 -probesize 1048576 -select_streams v:0 \
+        -show_entries stream=codec_name -of json "rtsp://127.0.0.1:8554/$source_path" >/dev/null 2>&1; then
+        echo "go2rtc cold input did not become ready" >&2
+        exit 1
+    fi
+fi
 
 if [ "$video_mode" = transcode ] && [ "${WEBOBS_HYBRID_VIDEO_ENCODER:-auto}" != x264 ]; then
     if [ "${WEBOBS_NVIDIA_ENCODE_SUPPORTED:-false}" = true ]; then
