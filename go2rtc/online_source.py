@@ -154,7 +154,7 @@ def resolve_ytdlp(url, height, cookies):
                    skip_download=True, cachedir=False, socket_timeout=15, retries=2,
                    extractor_retries=2, ffmpeg_location=binary('ffmpeg'),
                    js_runtimes={'node': {'path': binary('node')}}, remote_components=set(),
-                   cookiefile=cookies, format=f'b[height<={height}][vcodec^=avc1][acodec^=mp4a]/bv*[height<={height}][vcodec^=avc1]+ba[acodec^=mp4a]/b[height<={height}][vcodec^=avc1]/bv*[height<={height}]+ba/b[height<={height}]/b')
+                   cookiefile=cookies, format=f'bv*[height<={height}][vcodec^=avc1]+ba[acodec^=mp4a]/b[height<={height}][vcodec^=avc1]/bv*[height<={height}]+ba/b[height<={height}]/b')
     try:
         with YoutubeDL(options) as extractor:
             info = extractor.extract_info(url, download=False)

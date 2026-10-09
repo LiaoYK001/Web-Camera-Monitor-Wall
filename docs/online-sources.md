@@ -88,9 +88,9 @@ Validation uses real locked extractors, FFmpeg and go2rtc against local syntheti
 
 Named streams support filtered selection and sequential batch import/probing. Successful entries are retained, failed selections can be retried, and stopping completes the current device. An uncertain write pauses the queue until its original device ID is reconciled.
 
-网站自动策略优先兼容的合并 H.264/AAC 输入；没有合并格式时仍接受分离音视频。非直播 H.264 在按需启动时用固定 FFprobe 做最多 6 秒、1 MiB/1 秒探测预算的重排序兼容性检查：无 B 帧才能自动直通，存在 B 帧或未确认则转为无 B 帧 H.264。在线直播 H.264 保持原直通规则；显式“直通”不自动转换。原有 RTSP 直通入口不走此网站探测。429/500/502/503/504 使用已有有界 HTTP 退避；403 不持续重试过期 URL。
+网站保留按所选清晰度寻找最佳兼容格式的顺序，不为优先合并音视频而降清晰度。非直播 H.264 在按需启动时用固定 FFprobe 做最多 6 秒、1 MiB/1 秒探测预算的重排序兼容性检查：无 B 帧才能自动直通，存在 B 帧或未确认则转为无 B 帧 H.264。在线直播 H.264 保持原直通规则；显式“直通”不自动转换。原有 RTSP 直通入口不走此网站探测。429/500/502/503/504 使用已有有界 HTTP 退避；403 不持续重试过期 URL。
 
-Automatic website playback prefers compatible combined H.264/AAC where available. On-demand non-live H.264 uses a fixed FFprobe with a six-second deadline and 1 MiB/one-second analysis budget: verified reorder-free video passes through; reordered or unverified VOD uses zero-B-frame H.264 conversion. Live H.264 retains passthrough, explicit copy never forces conversion, and direct RTSP bypasses this website probe. Transient 429/500/502/503/504 use bounded HTTP backoff; expired 403 URLs are not retried indefinitely.
+Website format selection preserves the best compatible quality up to the selected height rather than preferring a lower-resolution combined stream. On-demand non-live H.264 uses a fixed FFprobe with a six-second deadline and 1 MiB/one-second analysis budget: verified reorder-free video passes through; reordered or unverified VOD uses zero-B-frame H.264 conversion. Live H.264 retains passthrough, explicit copy never forces conversion, and direct RTSP bypasses this website probe. Transient 429/500/502/503/504 use bounded HTTP backoff; expired 403 URLs are not retried indefinitely.
 
 Windows 原生来源门禁可追加 `--soak-seconds 600`（每源 0–3600 秒），逐段确认主页真实解码帧持续增长。失败回执仅保留允许的媒体状态、缓冲时间范围和 WebSocket 字节/错误数量，不保存签名媒体 URL。
 
