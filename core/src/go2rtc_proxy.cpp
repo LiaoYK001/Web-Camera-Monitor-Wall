@@ -8,6 +8,7 @@
 #include <algorithm>
 #include <cctype>
 #include <cstdlib>
+#include <iostream>
 #include <memory>
 #include <optional>
 #include <string>
@@ -80,12 +81,18 @@ private:
     {
         http::async_read_header(upstream_, header_buffer_, parser_,
             [self = shared_from_this()](beast::error_code error, std::size_t) {
-                // /api/exit terminates without writing an HTTP response. Only
-                // a complete request followed by an empty EOF is acceptance;
-                // connect/write failures, timeouts and partial headers fail.
-                if (self->restarting_ && error == http::error::end_of_stream)
+                // /api/exit terminates without writing an HTTP response;
+                // Windows process exit can reset its socket instead of EOF.
+                // Accept only after a complete write and no response bytes.
+                // Connect/write failures, timeouts and partial headers fail.
+                if (self->restarting_ && !self->parser_.got_some() && self->header_buffer_.size() == 0 &&
+                    (error == http::error::end_of_stream || error == net::error::connection_reset))
                     return self->restart_accepted();
-                if (error) return self->unavailable();
+                if (error) {
+                    if (self->restarting_) std::cerr << "go2rtc restart connection failed: "
+                        << error.category().name() << '/' << error.value() << '\n';
+                    return self->unavailable();
+                }
                 self->reply_ = self->parser_.release();
                 if (self->reply_.result_int() == 101 && !self->upgrade_) return self->unavailable();
                 self->reply_.erase(http::field::set_cookie);

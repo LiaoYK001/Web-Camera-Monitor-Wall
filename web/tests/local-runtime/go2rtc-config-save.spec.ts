@@ -6,7 +6,7 @@ import path from 'node:path';
 async function editorFixture(page: import('@playwright/test').Page) {
   const assets = path.resolve('go2rtc-dist');
   const state = { config: 'streams: {}\n', active: {} as Record<string, object>,
-    writes: 0, restarts: 0, recovering: 0, rejectSave: false, rejectRestart: false, alerts: [] as string[] };
+    writes: 0, restarts: 0, recovering: 0, holdReload: false, rejectSave: false, rejectRestart: false, alerts: [] as string[] };
   page.on('dialog', async dialog => { state.alerts.push(dialog.message()); await dialog.dismiss(); });
   await page.route('**/api/v1/auth/session', route => route.fulfill({json: {authenticated: true, user: 'admin', via: 'session'}}));
   await page.route('**/api/v1/auth/setup', route => route.fulfill({json: {registrationOpen: false}}));
@@ -31,7 +31,7 @@ async function editorFixture(page: import('@playwright/test').Page) {
       state.active = {'saved-stream': {}};
       return route.fulfill({status: 202, json: {status: 'restarting'}});
     }
-    if (target === 'api/streams') return state.recovering-- > 0
+    if (target === 'api/streams') return (state.restarts > 0 && state.holdReload) || state.recovering-- > 0
       ? route.fulfill({status: 503, json: {}}) : route.fulfill({json: state.active});
     const file = path.resolve(assets, target || 'index.html');
     if (!file.startsWith(assets + path.sep)) return route.abort();
@@ -57,6 +57,7 @@ async function edit(frame: import('@playwright/test').Frame, text: string) {
 
 test('packaged editor reloads before reporting success and refreshes parent without losing the editor', async ({page}) => {
   const state = await editorFixture(page);
+  state.holdReload = true;
   await page.goto('/#/go2rtc');
   await page.getByRole('button', {name: '配置', exact: true}).click();
   await expect(page.locator('iframe')).toBeVisible();
@@ -68,6 +69,7 @@ test('packaged editor reloads before reporting success and refreshes parent with
   await frame.getByRole('button', {name: 'Save & Restart'}).click();
   await expect.poll(() => state.restarts).toBe(1);
   expect(state.alerts).toEqual([]);
+  state.holdReload = false;
   await expect.poll(() => state.alerts[0]).toContain('配置已保存并生效');
   await expect(page.locator('.go2rtc-stream-list')).toContainText('saved-stream');
   expect(actual.isDetached()).toBe(false);

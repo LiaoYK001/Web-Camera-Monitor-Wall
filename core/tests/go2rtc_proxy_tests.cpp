@@ -15,7 +15,7 @@ static void check(bool condition, const char* message) {
 }
 
 static void exercise(http::verb method, const std::string& target, const std::string& upstream_reply,
-                     unsigned expected_status, const std::string& expected_target, bool available = true) {
+                     unsigned expected_status, const std::string& expected_target, bool available = true, bool reset = false) {
     net::io_context context;
     tcp::acceptor upstream(context, {net::ip::make_address("127.0.0.1"), 0});
     const auto port = std::to_string(upstream.local_endpoint().port());
@@ -33,6 +33,7 @@ static void exercise(http::verb method, const std::string& target, const std::st
             boost::beast::flat_buffer buffer;
             http::read(socket, buffer, received);
             if (!upstream_reply.empty()) net::write(socket, net::buffer(upstream_reply));
+            if (reset) socket.set_option(net::socket_base::linger(true, 0));
             // go2rtc api/exit closes without sending any HTTP response.
         });
     } else upstream.close();
@@ -83,10 +84,12 @@ int main() {
         const std::string restart = "/api/v1/go2rtc/api/restart";
         const std::string exit = "/api/v1/go2rtc/api/exit?code=75";
         exercise(http::verb::post, restart + "?code=0", "", 202, exit);
+        exercise(http::verb::post, restart, "", 202, exit, true, true);
         exercise(http::verb::get, restart, "HTTP/1.1 400 Bad Request\r\nContent-Length: 0\r\n\r\n", 400, restart);
         exercise(http::verb::post, restart, "HTTP/1.1 403 Forbidden\r\nContent-Length: 0\r\n\r\n", 403, exit);
         exercise(http::verb::post, restart, "HTTP/1.1 200", 503, exit);
         exercise(http::verb::get, "/api/v1/go2rtc/api/streams?src=test", "", 503, "/api/v1/go2rtc/api/streams?src=test");
+        exercise(http::verb::get, "/api/v1/go2rtc/api/streams", "", 503, "/api/v1/go2rtc/api/streams", true, true);
         exercise(http::verb::post, restart, "", 503, "", false);
         std::cout << "go2rtc restart acceptance, failure handling, method/query isolation and credential stripping passed\n";
     } catch (const std::exception& error) {
