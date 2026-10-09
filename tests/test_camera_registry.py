@@ -499,6 +499,33 @@ class CameraRegistryTests(unittest.TestCase):
         self.assertTrue(resolved["tracksProbed"])
         self.assertEqual(resolved["audioTracks"], [])
 
+    def test_video_reordering_is_probed_and_persisted_without_an_extra_read(self) -> None:
+        camera = registry.validate_camera({"id": "bframe-probe", "name": "Frame probe", "adapter": "rtsp",
+            "address": "rtsp://camera.example.invalid/live", "profiles": [{"id": "main", "endpoint": "rtsp://camera.example.invalid/live"}]})
+        registry.save_camera(camera, False)
+        for count in (2, 0, None):
+            registry.invalidate_probe_results()
+            stream = {"index": 0, "codec_type": "video", "codec_name": "h264", "has_b_frames": count}
+            payload = json.dumps({"streams": [stream]}).encode()
+            with patch.object(registry.subprocess, "run", return_value=subprocess.CompletedProcess([], 0, payload, b"")) as runner:
+                registry.probe_source_profile("bframe-probe", "main")
+            self.assertEqual(runner.call_count, 1, "reuse the existing track probe")
+            with registry.connect() as database:
+                self.assertEqual(database.execute("SELECT video_b_frames FROM stream_profiles WHERE camera_id='bframe-probe'").fetchone()[0], count)
+                self.assertEqual(registry.resolve_profile(database, "bframe-probe", "main")["videoReordering"], count == 2)
+        registry.invalidate_probe_results()
+        stream["has_b_frames"] = 2
+        with patch.object(registry.subprocess, "run", return_value=subprocess.CompletedProcess([], 0, json.dumps({"streams": [stream]}).encode(), b"")):
+            registry.probe_source_profile("bframe-probe", "main")
+        camera["name"] = "Renamed frame probe"
+        registry.save_camera(camera, True)
+        with registry.connect() as database:
+            self.assertTrue(registry.resolve_profile(database, "bframe-probe", "main")["videoReordering"])
+        camera["profiles"][0]["endpoint"] = "rtsp://camera.example.invalid/new-live"
+        registry.save_camera(camera, True)
+        with registry.connect() as database:
+            self.assertFalse(registry.resolve_profile(database, "bframe-probe", "main")["videoReordering"])
+
     def test_automatic_probe_retry_limit_health_and_manual_recovery(self) -> None:
         registry.invalidate_probe_results()
         registry.save_camera(registry.validate_camera({

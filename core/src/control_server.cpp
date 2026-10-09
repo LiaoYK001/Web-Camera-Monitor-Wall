@@ -696,6 +696,7 @@ struct ResolvedCameraEndpoint {
     std::string audio_codec;
     std::string transport_mode;
     std::optional<std::vector<AudioTrackDescriptor>> probed_audio_tracks;
+    bool video_reordering = false;
 };
 
 std::optional<ResolvedCameraEndpoint> resolve_camera_endpoint(std::string_view camera_id,
@@ -738,6 +739,7 @@ std::optional<ResolvedCameraEndpoint> resolve_camera_endpoint(std::string_view c
             json_is_string(audio_codec) ? json_string_value(audio_codec) : "", "auto", std::nullopt};
         if (json_t *transport = json_object_get(root, "transportMode"); json_is_string(transport))
             result->transport_mode = json_string_value(transport);
+        result->video_reordering = json_is_true(json_object_get(root, "videoReordering"));
         if (json_is_true(json_object_get(root, "tracksProbed")) && json_is_array(json_object_get(root, "audioTracks"))) {
             json_t *probe = json_object();
             json_object_set(probe, "streams", json_object_get(root, "audioTracks"));
@@ -824,7 +826,7 @@ public:
             const std::string video_delivery = video_transcode ? "transcode" : "copy";
             const std::string audio_delivery = audio_transcode ? "transcode" : "copy";
             const std::string cost = video_transcode ? "high" : audio_transcode ? "medium" : "low";
-            const std::string reason = video_transcode ? "video_codec_incompatible" :
+            const std::string reason = video_transcode ? (route->second.video_reordering ? "video_frame_reordering" : "video_codec_incompatible") :
                                        audio_transcode ? "audio_codec_incompatible" : "";
             const std::string encoder = video_transcode
                 ? (video_encoder_backend_ready(VideoEncoderKind::vaapi, runtime_status_.video_encoder.vaapi) ? "h264_vaapi" : "libx264")
@@ -1123,6 +1125,7 @@ private:
         std::string audio_codec;
         bool transcode = false;
         bool video_transcode = false;
+        bool video_reordering = false;
         bool audio_transcode = false;
         std::string hybrid_path;
         /** Per-track audio-only MediaMTX paths, keyed by 0:a:<index> (F5-05). */
@@ -1423,12 +1426,14 @@ private:
     std::optional<std::string> ensure_direct_route(const SceneSource &source)
     {
         std::string effective_url = source.rtsp_url;
+        bool video_reordering = false;
         std::string source_transport = source.kind == "rtsp" ? source.transport : "tcp";
         if (source.kind == "camera") {
             const auto resolved = resolve_camera_endpoint(source.camera_id, source.profile_id);
             if (!resolved)
                 return std::nullopt;
             effective_url = resolved->endpoint;
+            video_reordering = resolved->video_reordering;
             if (resolved->transport_mode == "rtsp-udp") source_transport = "udp";
             else if (resolved->transport_mode == "rtsp-udp-multicast") source_transport = "multicast";
         }
@@ -1445,6 +1450,7 @@ private:
             adding = existing == direct_routes_.end();
             if (!adding && existing->second.source_key == source_key &&
                 existing->second.rtsp_url == effective_url &&
+                existing->second.video_reordering == video_reordering &&
                 existing->second.transport == source_transport)
                 return existing->second.path;
             if (adding) {
@@ -1473,6 +1479,7 @@ private:
             }
         }
         route.rtsp_url = effective_url;
+        route.video_reordering = video_reordering;
         route.source_key = source_key;
         route.transport = source_transport;
         const std::string body = "{\"source\":\"" + json_escape(route.rtsp_url) +
@@ -1518,7 +1525,7 @@ private:
             if (resolved && !resolved->video_codec.empty() && resolved->video_codec != "unknown") {
                 route.codec = resolved->video_codec;
                 route.audio_codec = resolved->audio_codec == "unknown" ? "" : resolved->audio_codec;
-                route.video_transcode = !browser_compatible_codec(route.codec);
+                route.video_transcode = !browser_compatible_codec(route.codec) || (route.codec == "h264" && route.video_reordering);
                 route.audio_transcode = !browser_compatible_audio_codec(route.audio_codec);
                 route.transcode = route.video_transcode || route.audio_transcode;
                 const std::lock_guard lock(route_state_mutex_);

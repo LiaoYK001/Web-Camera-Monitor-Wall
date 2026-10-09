@@ -433,6 +433,7 @@ def initialize() -> None:
             ("auto_probe", "INTEGER NOT NULL DEFAULT 1"),
             ("probe_attempts", "INTEGER NOT NULL DEFAULT 0"),
             ("probe_error", "TEXT NOT NULL DEFAULT ''"),
+            ("video_b_frames", "INTEGER"),
         ):
             if name not in profile_columns:
                 database.execute(f"ALTER TABLE stream_profiles ADD COLUMN {name} {definition}")
@@ -1386,6 +1387,7 @@ def resolve_profile(database: sqlite3.Connection, camera_id: str, profile_id: st
             "transportMode": profile["transport_mode"] if profile else "auto",
             "videoCodec": (profile["video_codec"] if profile else "") or "",
             "audioCodec": (profile["audio_codec"] if profile else "") or "",
+            "videoReordering": bool(profile and profile["video_b_frames"] is not None and profile["video_b_frames"] > 0),
             "tracksProbed": bool(profile and profile["probe_state"] in {"ready", "cached"}),
             "audioTracks": [{"index": track["index"], "codec_name": track["codec"],
                              "channels": track["channels"], "sample_rate": track["sampleRate"]}
@@ -1433,13 +1435,16 @@ def save_camera(camera: dict, replace: bool, *, onvif_verified: bool = False) ->
              "unknown", created, now, camera["kind"], int(camera["enabled"]), camera["groupId"],
              json.dumps(camera["tags"], separators=(",", ":"), ensure_ascii=False), revision),
         )
+        previous_reordering = {(p["id"], p["endpoint"], p["transport_mode"]): p["video_b_frames"]
+                               for p in database.execute("SELECT id,endpoint,transport_mode,video_b_frames FROM stream_profiles WHERE camera_id=?", (camera["id"],))} \
+            if current and not pending and current["credentials_ref"] == camera["credentialsRef"] and current["adapter"] == camera["adapter"] else {}
         database.execute("DELETE FROM stream_profiles WHERE camera_id=?", (camera["id"],))
         database.executemany(
-            "INSERT INTO stream_profiles(id,camera_id,name,role,endpoint,video_codec,audio_codec,width,height,fps,enabled,transport_mode,live_bitrate_cap_kbps,audio_expectation,probe_state,last_probe_at,allow_insecure_http) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+            "INSERT INTO stream_profiles(id,camera_id,name,role,endpoint,video_codec,audio_codec,width,height,fps,enabled,transport_mode,live_bitrate_cap_kbps,audio_expectation,probe_state,last_probe_at,allow_insecure_http,video_b_frames) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
             [(p["id"], camera["id"], p["name"], p["role"], p["endpoint"], p["videoCodec"],
               p["audioCodec"], p["width"], p["height"], p["fps"], int(p["enabled"]),
               p["transportMode"], p["liveBitrateCapKbps"], p["audioExpectation"],
-              p["probeState"], p["lastProbeAt"], int(p["allowInsecureHttp"])) for p in camera["profiles"]],
+              p["probeState"], p["lastProbeAt"], int(p["allowInsecureHttp"]), previous_reordering.get((p["id"], p["endpoint"], p["transportMode"]))) for p in camera["profiles"]],
         )
         if camera["profiles"]:
             placeholders = ",".join("?" for _ in camera["profiles"])
@@ -1677,7 +1682,7 @@ def patch_source_catalog(camera_id: str, payload: dict, revision: int) -> dict:
             values = {key: value for key, value in profile.items() if key != "id"}
             if values:
                 if "transport_mode" in values or values.get("auto_probe") == 1 or values.get("enabled") == 1:
-                    values.update(probe_state="unknown", probe_attempts=0, probe_error="", last_probe_at=0)
+                    values.update(probe_state="unknown", probe_attempts=0, probe_error="", last_probe_at=0, video_b_frames=None)
                 assignments = ",".join(f"{field}=?" for field in values)
                 database.execute(f"UPDATE stream_profiles SET {assignments} WHERE camera_id=? AND id=?",
                                  (*values.values(), camera_id, profile["id"]))
@@ -1886,7 +1891,7 @@ def probe_source_profile(camera_id: str, profile_id: str) -> dict:
             settings = database.execute("SELECT settings_json FROM runtime_settings WHERE id=1").fetchone()
             probe_timeout = int(json.loads(settings["settings_json"])["probeTimeoutSeconds"])
         command = ["ffprobe", "-v", "error", "-show_entries",
-                   "stream=index,codec_type,codec_name,bit_rate,width,height,avg_frame_rate,sample_rate,channels",
+                   "stream=index,codec_type,codec_name,has_b_frames,bit_rate,width,height,avg_frame_rate,sample_rate,channels",
                    "-of", "json"]
         if endpoint.startswith(("rtsp://", "rtsps://")):
             # Interleaved TCP also works across NAT, VPN and WSL; UDP stays an explicit option.
@@ -1917,6 +1922,7 @@ def probe_source_profile(camera_id: str, profile_id: str) -> dict:
                     "fps": parse_rate(item.get("avg_frame_rate", "")),
                     "sampleRate": int(item.get("sample_rate", 0) or 0),
                     "channels": int(item.get("channels", 0) or 0), "source": "probe",
+                    "bFrames": item.get("has_b_frames") if type(item.get("has_b_frames")) is int and 0 <= item["has_b_frames"] <= 16 else None,
                 })
             if not tracks:
                 raise ValueError("probe_tracks_invalid")
@@ -1943,11 +1949,11 @@ def probe_source_profile(camera_id: str, profile_id: str) -> dict:
             video = next((item for item in tracks if item["kind"] == "video"), None)
             audio = next((item for item in tracks if item["kind"] == "audio"), None)
             database.execute(
-                "UPDATE stream_profiles SET video_codec=?,audio_codec=?,width=?,height=?,fps=?,probe_state='ready',probe_attempts=0,probe_error='',last_probe_at=? "
+                "UPDATE stream_profiles SET video_codec=?,audio_codec=?,width=?,height=?,fps=?,video_b_frames=?,probe_state='ready',probe_attempts=0,probe_error='',last_probe_at=? "
                 "WHERE camera_id=? AND id=?",
                 (video["codec"] if video else "", audio["codec"] if audio else "",
                  video["width"] if video else 0, video["height"] if video else 0,
-                 video["fps"] if video else 0, int(time.time()), camera_id, profile_id),
+                 video["fps"] if video else 0, video["bFrames"] if video else None, int(time.time()), camera_id, profile_id),
             )
             resolve_issue(database, "MEDIA_PROBE_FAILED", "profile", f"{camera_id}.{profile_id}"[:64], "media-probe")
             update_camera_probe_health(database, camera_id)

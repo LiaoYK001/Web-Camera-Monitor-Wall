@@ -11,6 +11,7 @@ v4.1 has not been released. Existing v4.0 assets do not contain these changes. T
 - 系统状态统计本次应用进程树，区分 go2rtc、浏览器、FFmpeg 与后台服务，并提供整体 CPU 折算。Diagnostics show the owned desktop process tree and normalized CPU.
 - go2rtc 命名流支持批量选择、逐项导入、部分失败重试、停止及不确定写入核对。Named streams support safe batch import, progress, partial retries, stopping and reconciliation.
 - 网站回放自动检查 H.264 帧重排序兼容性，按需处理 B 帧；增加主页持续解码验收。Website VOD checks H.264 frame reordering and adds monitor-wall soak validation.
+- 设备轨道探测复用同一次 FFprobe 记录 B 帧，已确认需要重排序的 H.264 自动进入 Hybrid；无 B 帧来源继续直通。旧设备需重新探测轨道；直接写入旧式 RTSP 场景的来源仍不具备此登记信息。Registry track probes persist B-frame metadata without an additional media read; known reordered H.264 uses Hybrid. Existing devices need a fresh track probe; legacy raw RTSP scene sources do not have this registry metadata.
 - 同时包含此前 dev 中的配置 Save/reload、RTSP 自动识别和实际主页播放/重启验收修复。Includes prior dev configuration reload, RTSP detection and actual playback/restart fixes.
 
 ## 已有证据 / Available evidence

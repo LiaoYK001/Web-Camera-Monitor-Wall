@@ -127,6 +127,7 @@ try {
     # Exercise the installed services with embedded Python, without writing
     # bytecode into the immutable runtime or depending on developer packages.
     Invoke-Checked (Join-Path $runtimeRoot 'python\python.exe') @('-I','-B',(Join-Path $repoRoot 'tests\test_camera_registry.py'),
+        'CameraRegistryTests.test_video_reordering_is_probed_and_persisted_without_an_extra_read',
         'CameraRegistryTests.test_invalid_continuous_move_never_reaches_the_camera',
         'CameraRegistryTests.test_device_ptz_timeout_is_negotiated_persisted_and_sent',
         'CameraRegistryTests.test_ptz_duration_outside_device_range_never_moves',
