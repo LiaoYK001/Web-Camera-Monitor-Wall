@@ -4,18 +4,23 @@
 
 These checks exercised complete native Windows services on 2026-10-09. A listed website or saved stream name alone is not playback qualification. Fixes remain on `dev`; no stable patch or replacement v4.0 asset is announced here.
 
-## 实测结果 / Actual results
+## 最终开发候选实测 / Final development-candidate results
+
+[`4.0.1-dev.5` 完整 Windows 构建](https://github.com/LiaoYK001/Web-Camera-Monitor-Wall/actions/runs/37925142592) 与[同提交常规 CI](https://github.com/LiaoYK001/Web-Camera-Monitor-Wall/actions/runs/37925141245) 全部通过。候选提交为 `7001bae07760b37b446f33728a0df3196d7f2f20`。本机公开直播复验于 `2026-10-09T12:03:57.030Z` 完成，直接使用候选运行时和内置前端，未替换静态资源（`frontendOverride=false`）；全部运行文件通过 manifest 校验，前端入口 SHA-256 为 `be2c988e9a325d2acd007cc0202d3f80c8744056355bf7f0b8e6507dc0b757eb`。
+
+Both the full Windows candidate build and same-commit public CI passed. Public live-source qualification used the candidate's own manifest-verified runtime and frontend with no static override. The timestamp, revision and entry hash identify this check. This is a development candidate, not a published stable patch.
+
 
 | 来源 / Source | 解析 / Engine | 冷导入、轨道、MSE、场景 / Cold import, tracks, MSE, Studio | 实际画面 / Decoded size | 整应用重启后保留 / Restart persistence |
 | --- | --- | --- | --- | --- |
-| [DW News 公开直播](https://www.youtube.com/@DWNews/live) | 自动 → yt-dlp | 通过 / Passed，完整单路步骤 29 s | 1280×720 | 流、设备、场景 / Stream, device, scene |
-| [Al Jazeera English 公开直播](https://www.youtube.com/@AlJazeeraEnglish/live) | 自动 → yt-dlp | 通过 / Passed，26 s | 1280×720 | 流、设备、场景 / Stream, device, scene |
-| DW News 同一直播 / Same live page | Streamlink | 通过 / Passed，22 s | 1280×720 | 流、设备、场景 / Stream, device, scene |
-| 独立回环 RTSP，随机密码含 URL 保留字符 / Isolated RTSP with encoded reserved characters in a random password | 自动 → 直接 / Automatic → direct | 通过 / Passed，11 s | 160×90 合成画面 / Synthetic | 流、设备、场景 / Stream, device, scene |
+| [DW News 公开直播](https://www.youtube.com/@DWNews/live) | 自动 → yt-dlp | 通过 / Passed，含 Take 后主页播放 34 s | 1280×720 | 流、设备、场景 / Stream, device, scene |
+| [Al Jazeera English 公开直播](https://www.youtube.com/@AlJazeeraEnglish/live) | 自动 → yt-dlp | 通过 / Passed，含主页播放 35 s | 1280×720 | 流、设备、场景 / Stream, device, scene |
+| DW News 同一直播 / Same live page | Streamlink | 通过 / Passed，含主页播放 27 s | 1280×720 | 流、设备、场景 / Stream, device, scene |
+| 独立回环 RTSP，随机密码含 URL 保留字符 / Isolated RTSP with encoded reserved characters in a random password | 自动 → 直接 / Automatic → direct | 通过 / Passed，候选 CI 含主页播放 19 s | 160×90 合成画面 / Synthetic | 流、设备、场景 / Stream, device, scene |
 
-公开直播的严格回执时间为 `2026-10-09T11:10:43.531Z`。原生后端来自已通过完整 Windows 构建的 `4.0.1-dev.3`，提交 `02d0f5a288724ea5e5d6d8d24b3f5582e98ecd6d`，全部运行文件通过 manifest 校验；前端使用本次修复的本机生产构建，入口 SHA-256 为 `d804671e114e3809590e6cc2bae25a510a43582bed29f4385d73a2a0f76f6d34`。测试替换静态前端响应，认证、配置、媒体、设备和 Studio API 全部使用真实原生服务。这是开发组合实测，不等于包含新 UI 的 NSIS 已通过；新安装候选须重新完成构建门禁。
+此前开发组合的回执时间为 `2026-10-09T11:10:43.531Z`：后端来自 `4.0.1-dev.3`，提交 `02d0f5a288724ea5e5d6d8d24b3f5582e98ecd6d`，前端为本机生产构建，入口 SHA-256 为 `d804671e114e3809590e6cc2bae25a510a43582bed29f4385d73a2a0f76f6d34`。该轮只替换静态前端，API 全部使用真实服务，是开发组合证据；现在上表由 dev.5 候选自身的复验补齐，不能混淆两轮的提交和摘要。
 
-The public-source receipt was completed at the timestamp above. Its manifest-verified backend is dev.3 at the specified commit; its frontend is the current local production build, identified by the entry hash. Only static frontend files were supplied locally: authentication, configuration, media, camera and Studio APIs used actual services. This development combination does not qualify an installer containing the new UI; that candidate needs a fresh full build.
+The earlier dev.3 backend plus local-frontend check is historical development evidence. Its revision and entry hash differ from the final dev.5 recheck above. All three final public routes passed actual monitor-wall playback after Take; the active Program (DW/Streamlink) also decoded again after full-product restart. Candidate CI independently passed the same restart playback check with authenticated synthetic RTSP.
 
 三个公开来源另外各通过两次真实 RTSP 连接与 FFmpeg 解码，覆盖断开后的重新解析/重连；消费者关闭后按需生产者停止。早期试跑有一次未分类解码失败，未保留足够诊断，不能断言其根因已修复；随后增加脱敏诊断的媒体测试、独立 UI 冷启动测试均通过。站点、CDN、地域和网络状态会变化，正式候选仍需复验，失败应保留私密诊断，不以无解释复跑覆盖失败记录。
 
