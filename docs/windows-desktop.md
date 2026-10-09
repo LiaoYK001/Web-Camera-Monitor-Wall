@@ -6,6 +6,10 @@
 
 ## 当前可下载版本
 
+[v4.0 Release](https://github.com/LiaoYK001/Web-Camera-Monitor-Wall/releases/tag/v4.0) 是当前正式基线，包含 [Windows x64 4.0.0 安装包](https://github.com/LiaoYK001/Web-Camera-Monitor-Wall/releases/download/v4.0/WebOBS-4.0.0-windows-x64-UNSIGNED.exe)。v4.0 的 go2rtc 保存重载问题、临时处理与开发修复见[配置重载说明](go2rtc-config-reload.md)；原安装包不会因开发分支修复而改变。Current stable baseline is v4.0; its immutable Windows installer does not include subsequent development fixes.
+
+以下 v3.5 为历史升级说明。The following v3.5 information describes the historical upgrade path.
+
 [v3.5 Release](https://github.com/LiaoYK001/Web-Camera-Monitor-Wall/releases/tag/v3.5) 已于 2026-10-02 附带 [Windows x64 安装包](https://github.com/LiaoYK001/Web-Camera-Monitor-Wall/releases/download/v3.5/WebOBS-3.5.0-windows-x64-UNSIGNED.exe)。版本为 `3.5.0 UNSIGNED`，按维护者选择暂不签名；完整正式自动更新已启用，附带 `latest.yml` 与 blockmap。v3.4 开发版需手动安装 v3.5 一次，此后可使用内置更新。摘要与验证边界见 [v3.5 发布说明](release-notes-v3.5.md)。
 
 ## 默认行为

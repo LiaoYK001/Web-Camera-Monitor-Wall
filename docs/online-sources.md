@@ -17,12 +17,12 @@ Containers and Windows x64 bundle the media tools; Android manages sources on it
 ## 接入步骤 / Adding a source
 
 1. 管理员打开 **go2rtc 管理 → 添加网站与直播源**。需要 `settings.manage`；所有配置、播放和 API 仍经 `/api/v1/go2rtc/` 的产品认证代理。
-2. 单个视频网页选择 **yt-dlp**，直播网页选择 **Streamlink**；已有 HLS/HTTP/RTSP/RTMP 媒体地址可选择直接媒体地址。填写新的命名流。支持范围取决于上游 [yt-dlp 网站列表](https://github.com/yt-dlp/yt-dlp/blob/master/supportedsites.md) 和 [Streamlink 插件](https://streamlink.github.io/plugins.html)，不承诺所有网页、登录/地域限制或 DRM 视频都可用。
+2. 默认 **自动识别**：RTSP/RTSPS/RTMP 和常见 HLS/MP4 媒体链接直接接入，其他 HTTP(S) 网页交给 **yt-dlp**。也可明确选择 yt-dlp、Streamlink 或直接媒体地址。YouTube 直播网页优先使用自动识别或 yt-dlp，不能当作直接媒体链接；RTSP 摄像机可使用含认证信息的地址，凭据仅进入管理员私密配置。填写新的命名流。支持范围取决于上游 [yt-dlp 网站列表](https://github.com/yt-dlp/yt-dlp/blob/master/supportedsites.md) 和 [Streamlink 插件](https://streamlink.github.io/plugins.html)，不承诺所有网页、登录/地域限制或 DRM 视频都可用。
 3. 默认优先 **720p / 自动**；已识别 H264/AAC 优先直通，不兼容或未知编码在播放时用 FFmpeg 转换。可以选择直通或始终 H264。清晰度选择是偏好，站点可用轨道决定实际结果；Streamlink 无合适标注轨道时回退最佳轨道，并在需要转换时限制输出高度。
 4. 点击 **保存命名流并重启 go2rtc**。上游 `/api/streams` 有意禁止新增 `exec`，因此产品通过管理员配置合并 API 保存固定模板，再重启并等待命名流可见。已有桥接播放/录像输入会短暂中断。先检查运行流和已保存配置中的重名；上游没有原子新增/配置修订接口，多位管理员同时编辑应协调操作。合并保留其他配置值，但上游可能重排 YAML 或移除注释。
 5. 在官方流管理中测试播放；然后在下方 **检测并添加设备** 建档。在 Studio 选择该设备加入场景。Android、Windows 和浏览器共享同一后端设备目录。
 
-Choose yt-dlp for individual video pages, Streamlink for live pages, or direct media for existing HLS/HTTP/RTSP/RTMP URLs. Save a new name, test playback in the official UI, import the flow into the device registry, then select it in Studio. Saving merges the fixed source into administrator configuration and restarts go2rtc, briefly interrupting existing bridge consumers. The form checks active and stored names, but upstream provides no atomic create/revision API; coordinate concurrent administrator changes. YAML formatting/comments may be rewritten by upstream.
+Automatic selection sends RTSP/RTSPS/RTMP and common HLS/MP4 media URLs directly to go2rtc, and HTTP(S) webpages to yt-dlp. Explicit yt-dlp, Streamlink and direct modes remain available. YouTube live pages require a website extractor; authenticated RTSP addresses stay in private administrator configuration. Save a new name, test playback in the official UI, import the flow into the device registry, then select it in Studio. Saving merges the fixed source into administrator configuration and restarts go2rtc, briefly interrupting existing bridge consumers. The form checks active and stored names, but upstream provides no atomic create/revision API; coordinate concurrent administrator changes. YAML formatting/comments may be rewritten by upstream.
 
 ## 按需解析与编码 / On-demand resolution and codecs
 
@@ -46,6 +46,8 @@ The private configuration stores an encoded original page URL, not an expiring r
 Administrators supply a private Netscape cookie file for authenticated extraction and signed media URLs. Files are bounded and cannot be symlinks or arbitrary paths. The product login is never forwarded to websites. Raw media Cookie/Authorization forwarding is unavailable because the container FFmpeg inherits custom headers across redirects; such sources fail with `media_credentials_unsupported`. Website cookies remain in the private configuration/backup boundary and must be refreshed when expired.
 
 ## 诊断、构建与验证 / Diagnostics, building and validation
+
+实际公开 YouTube 直播、冷导入、轨道解码、Studio 与重启保留的结果和复验命令见 [v4 接入验收](online-source-validation-v4.md)。Public live-source results and the full native UI recheck are recorded separately from synthetic fixtures.
 
 - `website_resolution_failed`：检查网页、后端网络、Cookie 和解析器版本；确认视频未结束且具备访问权限。
 - `live_resolution_failed` / `live_unavailable`：确认直播在线，尝试 yt-dlp 或直接媒体地址。需要 Streamlink 特有分段处理/复用的插件可能无法导出单个媒体 URL。

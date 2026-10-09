@@ -6,7 +6,7 @@ import Go2rtcOnlineSources from './Go2rtcOnlineSources';
 const base = '/api/v1/go2rtc/';
 const pages = [
   { id: '', label: '流管理', description: '查看、添加和测试协议转换后的流。' },
-  { id: 'add.html', label: '设备与发现', description: '使用 go2rtc 官方设备发现与协议接入工具。' },
+  { id: 'add.html', label: '设备与发现', description: '设备发现和临时连接测试。英文 Temporary stream 不会保存配置；永久 RTSP、网站和直播来源请使用上方添加表单。' },
   { id: 'config.html', label: '配置', description: '编辑完整 YAML 配置，保存后重新加载 go2rtc，现有桥接播放会短暂中断。' },
   { id: 'log.html', label: '日志', description: '查看 go2rtc 的运行日志与连接问题。' },
 ];

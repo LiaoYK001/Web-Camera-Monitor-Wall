@@ -81,6 +81,46 @@ test('old backends expose direct media and actionable upgrade instructions', asy
   await expect(page.getByRole('button', { name: '保存命名流并重启 go2rtc' })).toBeEnabled();
 });
 
+test('default form accepts authenticated RTSP without sending it to a website extractor', async ({page}) => {
+  let saved = '';
+  await page.route('**/api/v1/go2rtc/api/config', route => {
+    if (route.request().method() === 'PATCH') { saved = route.request().postDataJSON().streams.camera[0]; return route.fulfill({json: {}}); }
+    return route.fulfill({contentType: 'application/yaml', body: 'streams: {}'});
+  });
+  await page.route('**/api/v1/go2rtc/api/streams*', route => route.fulfill({json: saved ? {camera: {}} : {}}));
+  await page.goto('/#/go2rtc');
+  await expect(page.getByLabel('接入方式')).toHaveValue('auto');
+  const address = 'rtsp://fixture-user:fixture-password@camera.example.test:8554/live';
+  await page.getByLabel('流名称', {exact: true}).fill('camera');
+  await page.getByLabel('视频网页或直播地址').fill(address);
+  await page.getByRole('button', {name: '保存命名流并重启 go2rtc'}).click();
+  await expect(page.getByRole('region', {name: '网站与直播源'}).getByRole('status')).toContainText('已保存并加载');
+  expect(saved).toBe(address);
+  await expect(page.locator('.go2rtc-stream-list')).toContainText('camera');
+  await expect(page.locator('body')).not.toContainText('fixture-password');
+});
+
+test('default form saves HLS directly and prevents YouTube webpages in direct mode', async ({page}) => {
+  let saved = '', writes = 0;
+  await page.route('**/api/v1/go2rtc/api/config', route => {
+    if (route.request().method() === 'PATCH') { writes++; saved = route.request().postDataJSON().streams.hls[0]; return route.fulfill({json: {}}); }
+    return route.fulfill({contentType: 'application/yaml', body: 'streams: {}'});
+  });
+  await page.route('**/api/v1/go2rtc/api/streams*', route => route.fulfill({json: saved ? {hls: {}} : {}}));
+  await page.goto('/#/go2rtc');
+  await page.getByLabel('流名称', {exact: true}).fill('hls');
+  await page.getByLabel('视频网页或直播地址').fill('https://media.example.test/live.m3u8?channel=1');
+  await page.getByRole('button', {name: '保存命名流并重启 go2rtc'}).click();
+  await expect(page.getByRole('region', {name: '网站与直播源'}).getByRole('status')).toContainText('已保存并加载');
+  expect(saved).toBe('https://media.example.test/live.m3u8?channel=1');
+  await page.getByLabel('接入方式').selectOption('direct');
+  await page.getByLabel('流名称', {exact: true}).fill('youtube');
+  await page.getByLabel('视频网页或直播地址').fill('https://www.youtube.com/@DWNews/live');
+  await page.getByRole('button', {name: '保存命名流并重启 go2rtc'}).click();
+  await expect(page.getByRole('region', {name: '网站与直播源'}).getByRole('alert')).toContainText('YouTube 链接是视频网页');
+  expect(writes).toBe(1);
+});
+
 test('permission failures hide the source form', async ({ page }) => {
   await page.route('**/api/v1/go2rtc/api', route => route.fulfill({ status: 403, json: {} }));
   await page.goto('/#/go2rtc');

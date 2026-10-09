@@ -128,6 +128,7 @@ tests/test_camera_registry.py|user:password
 tests/test_camera_registry.py|user:pass
 tests/test_camera_registry.py|*****:*****
 web/tests/local-runtime/scenes-go2rtc-optimization.spec.ts|private:do-not-display
+web/tests/local-runtime/online-sources.spec.ts|fixture-user:fixture-password
 docs/bulk-source-import.md|user:password
 web/src/CameraRegistry.tsx|user:password
 web/src/SourceCatalog.tsx|user:password

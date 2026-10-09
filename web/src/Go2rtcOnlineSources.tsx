@@ -26,25 +26,36 @@ async function storedStreamNames(signal: AbortSignal): Promise<object> {
   } finally { await reader.cancel().catch(() => undefined); reader.releaseLock(); }
 }
 
-type Engine = 'yt-dlp' | 'streamlink' | 'direct';
+type Engine = 'auto' | 'yt-dlp' | 'streamlink' | 'direct';
+function sourceEngine(engine: Engine, url: URL): Exclude<Engine, 'auto'> {
+  if (engine !== 'auto') return engine;
+  return ['rtsp:', 'rtsps:', 'rtmp:', 'rtmps:'].includes(url.protocol) ||
+    /\.(m3u8|mp4|mjpeg|mjpg|ts)$/i.test(url.pathname) ? 'direct' : 'yt-dlp';
+}
 export function onlineSourceUri(engine: Engine, address: string, height: string, video: string, cookies: string, windows: boolean): string {
   const bytes = new TextEncoder().encode(address);
-  const url = new URL(address);
-  if (bytes.length > 2048 || /[\s\x00-\x1f\x7f]/.test(address) || !url.hostname || url.username || url.password ||
-      !(engine === 'direct' ? ['http:', 'https:', 'rtsp:', 'rtmp:', 'rtmps:'] : ['http:', 'https:']).includes(url.protocol))
+  let url: URL;
+  try { url = new URL(address); } catch { throw new Error('请输入完整地址，例如 rtsp://设备地址/流 或 https://视频网站/视频。'); }
+  const resolved = sourceEngine(engine, url);
+  const cameraCredentials = resolved === 'direct' && ['rtsp:', 'rtsps:'].includes(url.protocol);
+  if (bytes.length > 2048 || /[\s\x00-\x1f\x7f]/.test(address) || !url.hostname ||
+      (!cameraCredentials && (url.username || url.password)) ||
+      !(resolved === 'direct' ? ['http:', 'https:', 'rtsp:', 'rtsps:', 'rtmp:', 'rtmps:'] : ['http:', 'https:']).includes(url.protocol))
     throw new Error('请输入单个有效视频网页或直播地址（最多 2048 字节），账号登录请使用私密 Cookie 配置。');
-  if (engine === 'direct') {
+  if (resolved === 'direct') {
+    if (['youtube.com', 'www.youtube.com', 'm.youtube.com', 'music.youtube.com', 'youtu.be'].includes(url.hostname.toLowerCase()))
+      throw new Error('YouTube 链接是视频网页，请选择“自动识别”或“视频网页 · yt-dlp”，不能作为直接媒体地址。');
     if (url.hash) throw new Error('直接媒体地址不能带 # 参数，请在官方流管理中配置高级选项。');
     return ['rtmp:', 'rtmps:'].includes(url.protocol) ? `ffmpeg:${address}#video=copy#audio=copy` : address;
   }
   if (!['360', '480', '720', '1080', '1440', '2160'].includes(height) || !['auto', 'copy', 'h264'].includes(video) ||
       (cookies && !/^[A-Za-z0-9_-]{1,64}$/.test(cookies))) throw new Error('源设置无效；Cookie 配置仅接受名称。');
   const encoded = btoa(Array.from(bytes, byte => String.fromCharCode(byte)).join('')).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
-  return `exec:webobs-online-source --engine ${engine} --url64 ${encoded} --height ${height} --video ${video}${cookies ? ` --cookies-name ${cookies}` : ''} --output {output}#starttimeout=90${windows ? '' : '#killsignal=15#killtimeout=5'}`;
+  return `exec:webobs-online-source --engine ${resolved} --url64 ${encoded} --height ${height} --video ${video}${cookies ? ` --cookies-name ${cookies}` : ''} --output {output}#starttimeout=90${windows ? '' : '#killsignal=15#killtimeout=5'}`;
 }
 
 export default function Go2rtcOnlineSources({ enabled, platform, onCreated }: { enabled: boolean; platform: string; onCreated: () => void }) {
-  const [engine, setEngine] = useState<Engine>('yt-dlp');
+  const [engine, setEngine] = useState<Engine>('auto');
   const [name, setName] = useState('');
   const [address, setAddress] = useState('');
   const [height, setHeight] = useState('720');
@@ -54,7 +65,7 @@ export default function Go2rtcOnlineSources({ enabled, platform, onCreated }: { 
   const [notice, setNotice] = useState('');
   const [error, setError] = useState('');
   const pending = useRef<AbortController | null>(null);
-  useEffect(() => setEngine(enabled ? 'yt-dlp' : 'direct'), [enabled]);
+  useEffect(() => setEngine(enabled ? 'auto' : 'direct'), [enabled]);
   useEffect(() => () => pending.current?.abort(), []);
   useDesktopWork('online-source', Boolean(address || name));
   const create = async (event: React.FormEvent) => {
@@ -102,12 +113,13 @@ export default function Go2rtcOnlineSources({ enabled, platform, onCreated }: { 
     <form onSubmit={event => void create(event)}>
       <fieldset disabled={busy}><div className="online-source-fields">
         <label>接入方式<select value={engine} onChange={event => setEngine(event.target.value as Engine)}>
+          <option value="auto" disabled={!enabled}>自动识别 · 网页 / RTSP / 媒体地址</option>
           <option value="yt-dlp" disabled={!enabled}>视频网页 · yt-dlp</option>
           <option value="streamlink" disabled={!enabled}>直播网站 · Streamlink</option>
           <option value="direct">直接媒体地址 · HLS / HTTP / RTSP / RTMP</option>
         </select></label>
         <label>流名称<input value={name} onChange={event => setName(event.target.value)} maxLength={128} placeholder="例如：网站直播" required autoComplete="off" /></label>
-        <label className="online-source-address">视频网页或直播地址<input type="url" value={address} onChange={event => setAddress(event.target.value)} maxLength={2048} placeholder="https://…" required autoComplete="off" spellCheck={false} /></label>
+        <label className="online-source-address">视频网页或直播地址<input type="url" value={address} onChange={event => setAddress(event.target.value)} maxLength={2048} placeholder="rtsp://设备地址/流 或 https://视频网站/视频" required autoComplete="off" spellCheck={false} /></label>
         {engine !== 'direct' && <>
           <label>优先清晰度<select value={height} onChange={event => setHeight(event.target.value)}>{['360', '480', '720', '1080', '1440', '2160'].map(value => <option key={value} value={value}>{value}p</option>)}</select></label>
           <label>视频兼容策略<select value={video} onChange={event => setVideo(event.target.value)}>

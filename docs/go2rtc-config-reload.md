@@ -12,9 +12,9 @@ For v4.0, save the configuration, dismiss the dialog, then exit WebOBS normally 
 
 ## 开发分支修复 / Development fix
 
-修复始于 `72e0bf055ce49af226d41238e9f39b47b5585c5b`（`dev`），后续补齐 Windows 退出时连接重置的处理。完整 Windows 测试候选为 `4.0.1-dev.3`，不是正式 `v4.0.1`；现有公开 v4.0 安装包不包含本修复。
+修复始于 `72e0bf055ce49af226d41238e9f39b47b5585c5b`（`dev`），后续补齐 Windows 退出时连接重置的处理。完整 Windows 测试候选为 `4.0.1-dev.4`，不是正式 `v4.0.1`；现有公开 v4.0 安装包不包含本修复。
 
-The fix starts at `72e0bf055ce49af226d41238e9f39b47b5585c5b` on `dev`, followed by Windows exit/reset handling. The Windows test candidate is `4.0.1-dev.3`, not a stable `v4.0.1` release. Published v4.0 installers remain unchanged.
+The fix starts at `72e0bf055ce49af226d41238e9f39b47b5585c5b` on `dev`, followed by Windows exit/reset handling. The Windows test candidate is `4.0.1-dev.4`, not a stable `v4.0.1` release. Published v4.0 installers remain unchanged.
 
 - 产品认证代理将重启请求转为固定退出码 `75`；监督器仅替换 go2rtc，重新读取私密配置，保留其他服务与登录会话。/ The authenticated proxy requests reserved exit code `75`; the supervisor replaces only go2rtc, preserving other services and sessions.
 - 连续保存，包括早于监督器就绪轮询的快速保存，不消耗或重置异常重试预算。/ Repeated saves, including saves before the readiness poll observes startup, neither consume nor reset the crash budget.
@@ -39,3 +39,7 @@ The [candidate workflow](https://github.com/LiaoYK001/Web-Camera-Monitor-Wall/ac
 第二轮 [`4.0.1-dev.2` / #49](https://github.com/LiaoYK001/Web-Camera-Monitor-Wall/actions/runs/37916427221) 已通过原生编译、两项 CTest 和七次完整认证代理配置重载，但新增非法 YAML 用例误将上游 POST 的拒绝状态预期为 400，实际固定版本返回 500，导致后续打包停止。现已按上游源码纠正断言和浏览器夹具，继续保留文件与运行流不变的检查；未放宽重载、服务所有权或会话断言。
 
 The second dev.2 attempt passed native compilation, both CTests and all seven real authenticated reloads. Packaging then stopped because the new invalid-YAML test incorrectly expected 400; the pinned upstream POST handler returns 500. The assertion and browser fixture now match that contract, retaining file/stream preservation checks and all reload, ownership and session assertions.
+
+第三轮 [`4.0.1-dev.3` / #50](https://github.com/LiaoYK001/Web-Camera-Monitor-Wall/actions/runs/37917871396) 完整通过原生编译、CTest、七次认证代理重载、产品重启后保留、真实 Electron 入口、完整打包和 NSIS 安装/卸载。它包含配置重载修复，但没有随后发现的 RTSP 自动识别/UI 改动；后者与新增冷导入、MSE、Studio 门禁进入 dev.4，仍需新构建。公开 YouTube 实测与边界见[网站接入验收](online-source-validation-v4.md)。
+
+The dev.3 full Windows run passed compilation, CTest, seven authenticated reloads, restart persistence, actual Electron entry, packaging and NSIS install/uninstall. It predates the additional RTSP automatic-selection/UI changes; those and the new cold import/MSE/Studio gate require dev.4 qualification. Public YouTube checks are recorded separately.

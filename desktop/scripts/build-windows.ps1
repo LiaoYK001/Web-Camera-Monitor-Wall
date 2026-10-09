@@ -145,6 +145,8 @@ try {
     if ($null -eq $savedNvrTest) { Remove-Item Env:WEBOBS_TEST_NVR_SERVICE -ErrorAction SilentlyContinue } else { $env:WEBOBS_TEST_NVR_SERVICE = $savedNvrTest }
 }
 Invoke-Checked 'pnpm' @('--dir',$desktopRoot,'test:runtime')
+Invoke-Checked 'pnpm' @('--dir',(Join-Path $repoRoot 'web'),'exec','playwright','install','chromium')
+Invoke-Checked 'pnpm' @('--dir',$desktopRoot,'test:source-ui','--runtime',$runtimeRoot,'--receipt',(Join-Path $buildRoot 'windows-source-ui.json'))
 Invoke-Checked 'pnpm' @('--dir',$desktopRoot,'test:main')
 if (-not $SkipPackage) {
     $distributionPath = Join-Path $desktopRoot 'src\distribution.json'
@@ -154,6 +156,7 @@ if (-not $SkipPackage) {
     } finally { [IO.File]::WriteAllBytes($distributionPath,$savedDistribution) }
     Invoke-Checked 'pnpm' @('--dir',$desktopRoot,'test:package')
     Invoke-Checked 'pnpm' @('--dir',$desktopRoot,'test:install')
+    Copy-Item -LiteralPath (Join-Path $buildRoot 'windows-source-ui.json') -Destination (Join-Path $desktopRoot "out/$Version/windows-source-ui.json")
     Invoke-Checked 'node' @((Join-Path $PSScriptRoot 'release-assets.mjs'),$Version)
 }
 Write-Output "Built WebOBS $Version. Runtime: $runtimeRoot. Windows 10/11 installation and actual camera checks remain separate qualification steps."
