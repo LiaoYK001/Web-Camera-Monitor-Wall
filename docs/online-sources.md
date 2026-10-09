@@ -80,3 +80,18 @@ node tests/online_source_runtime.cjs --image <complete-product-image>
 前端：`pnpm typecheck`、`pnpm build` 及 `online-sources.spec.ts`。Windows 原生门禁增加无开发 PATH 的工具自检、真实本地网页/HLS → RTSP 解码、重连和消费者退出验证。Android 使用 `android/tests/test_emulator.py --serial <明确设备> --image <含解析器的完整产品镜像> --online-sources`，通过实际已安装 APK 验证同一表单、认证 MSE 解码与设备导入，保留设备数据。
 
 Validation uses real locked extractors, FFmpeg and go2rtc against local synthetic MP4/HLS, plus authenticated browser/installed-APK workflows. It is not qualification of external websites, physical cameras, ARM devices, hardware audio or clean Windows installations. Record the exact source and candidate gates before announcing release readiness.
+
+
+## v4.1 开发调整 / v4.1 development changes
+
+命名流列表支持筛选、选择未添加的流及批量建档，依次检测并探测轨道。部分失败保留成功项，失败项仍被选中可重试；“完成当前设备后停止”不会中断正在写入的设备。写入结果不确定时暂停队列，先核对原设备 ID，避免重复建档。
+
+Named streams support filtered selection and sequential batch import/probing. Successful entries are retained, failed selections can be retried, and stopping completes the current device. An uncertain write pauses the queue until its original device ID is reconciled.
+
+网站自动策略优先兼容的合并 H.264/AAC 输入；没有合并格式时仍接受分离音视频。非直播 H.264 在按需启动时用固定 FFprobe 做最多 6 秒、1 MiB/1 秒探测预算的重排序兼容性检查：无 B 帧才能自动直通，存在 B 帧或未确认则转为无 B 帧 H.264。在线直播 H.264 保持原直通规则；显式“直通”不自动转换。原有 RTSP 直通入口不走此网站探测。429/500/502/503/504 使用已有有界 HTTP 退避；403 不持续重试过期 URL。
+
+Automatic website playback prefers compatible combined H.264/AAC where available. On-demand non-live H.264 uses a fixed FFprobe with a six-second deadline and 1 MiB/one-second analysis budget: verified reorder-free video passes through; reordered or unverified VOD uses zero-B-frame H.264 conversion. Live H.264 retains passthrough, explicit copy never forces conversion, and direct RTSP bypasses this website probe. Transient 429/500/502/503/504 use bounded HTTP backoff; expired 403 URLs are not retried indefinitely.
+
+Windows 原生来源门禁可追加 `--soak-seconds 600`（每源 0–3600 秒），逐段确认主页真实解码帧持续增长。失败回执仅保留允许的媒体状态、缓冲时间范围和 WebSocket 字节/错误数量，不保存签名媒体 URL。
+
+The native source UI gate accepts `--soak-seconds 600` (0–3600 seconds per source) and checks decoded-frame progress on the actual monitor wall. Failed receipts retain only allowed media state, buffered time ranges and socket counters, never signed media URLs.

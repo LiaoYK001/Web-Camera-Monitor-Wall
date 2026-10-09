@@ -346,6 +346,7 @@ export interface SystemCapabilities {
   hardwareDecode: { requested: string; selected: string; fallback: boolean; fallbackReason: string };
 }
 export interface ProcessDiagnostics {
+  cpuLogicalCores?: number; cpuMeasurement?: string; scope?: string;
   processes: Array<{ name: string; instances: number; rssKiB: number; cpuPercent: number }>;
     rtspSessions: number; rtspSessionProbeAvailable?: boolean; gpuBusyPercent: number; controlPlaneActive: boolean; engineActive: boolean; compositePublisherActive: boolean;
 }

@@ -848,6 +848,30 @@ public:
         return response(http::status::ok, version, std::move(body));
     }
 
+    bool composite_requested()
+    {
+        // Called only by the engine thread, never by the HTTP worker. The
+        // publisher stays warm while negotiation retries, then actual gateway
+        // readers decide demand (including clients that crash without DELETE).
+        const auto now = std::chrono::steady_clock::now().time_since_epoch();
+        const auto milliseconds = std::chrono::duration_cast<std::chrono::milliseconds>(now).count();
+        if (milliseconds - last_program_request_.load() < 45000)
+            return true;
+        if (!runtime_status_.webrtc_ready.load())
+            return false;
+        const auto upstream = request_http(std::string(control_origin) + "/v3/paths/get/program", {}, "GET", {}, 1000L);
+        if (upstream.ok && upstream.status == 404)
+            return false;
+        if (!upstream.ok || upstream.status != 200)
+            return true; // A monitoring outage must not stop active viewers.
+        json_error_t error{};
+        json_t *root = json_loads(upstream.body.c_str(), JSON_REJECT_DUPLICATES, &error);
+        const json_t *readers = root ? json_object_get(root, "readers") : nullptr;
+        const bool requested = !json_is_array(readers) || json_array_size(readers) > 0;
+        if (root) json_decref(root);
+        return requested;
+    }
+
     HttpResponse create_program(const HttpRequest &request)
     {
         if (!composite_enabled_)
@@ -1150,7 +1174,7 @@ private:
     }
 
     static UpstreamResponse request_http(std::string_view url, std::string_view body,
-                                         std::string_view method, std::string_view content_type)
+                                         std::string_view method, std::string_view content_type, long timeout_ms = 15000L)
     {
         UpstreamResponse result;
         CURL *handle = curl_easy_init();
@@ -1167,7 +1191,7 @@ private:
         curl_easy_setopt(handle, CURLOPT_URL, url_value.c_str());
         curl_easy_setopt(handle, CURLOPT_PROTOCOLS_STR, "http");
         curl_easy_setopt(handle, CURLOPT_CONNECTTIMEOUT_MS, 1500L);
-        curl_easy_setopt(handle, CURLOPT_TIMEOUT_MS, 15000L);
+        curl_easy_setopt(handle, CURLOPT_TIMEOUT_MS, timeout_ms);
         curl_easy_setopt(handle, CURLOPT_NOSIGNAL, 1L);
         curl_easy_setopt(handle, CURLOPT_WRITEFUNCTION, &write_body);
         curl_easy_setopt(handle, CURLOPT_WRITEDATA, &result.body);
@@ -1241,6 +1265,14 @@ private:
             if (sessions_.size() >= maximum_sessions)
                 return response(http::status::too_many_requests, version,
                                 error_body("session_limit", "Too many active WebRTC playback sessions"));
+        }
+
+        if (path == "program") {
+            last_program_request_.store(std::chrono::duration_cast<std::chrono::milliseconds>(
+                std::chrono::steady_clock::now().time_since_epoch()).count());
+            if (runtime_status_.composite_idle.load())
+                return response(http::status::service_unavailable, version,
+                                error_body("composite_starting", "Composite publisher is starting; retry playback"));
         }
 
         const std::string create_url = std::string(upstream_origin) + "/" + std::string(path) + "/whep";
@@ -1856,6 +1888,7 @@ private:
         std::erase_if(sessions_, [cutoff](const auto &entry) { return entry.second.created_at < cutoff; });
     }
 
+    std::atomic<std::int64_t> last_program_request_{-45000};
     bool enabled_ = false;
     bool composite_enabled_ = false;
     SceneController &controller_;
@@ -2966,17 +2999,41 @@ HttpResponse process_diagnostics_response(unsigned int version, const RuntimeSta
     const auto captured_at = std::chrono::steady_clock::now();
 #ifdef _WIN32
     std::unordered_map<std::string, ProcessTotal> totals;
+    std::vector<PROCESSENTRY32W> entries;
     HANDLE snapshot = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
     if (snapshot != INVALID_HANDLE_VALUE) {
         PROCESSENTRY32W entry{}; entry.dwSize = sizeof(entry);
-        if (Process32FirstW(snapshot, &entry)) do {
+        if (Process32FirstW(snapshot, &entry)) do { entries.push_back(entry); } while (Process32NextW(snapshot, &entry));
+        CloseHandle(snapshot);
+    }
+    unsigned long owner_pid = GetCurrentProcessId();
+    if (const char *value = std::getenv("WEBOBS_DESKTOP_OWNER_PID")) {
+        const std::string_view text(value);
+        unsigned long parsed = 0;
+        const auto result = std::from_chars(text.data(), text.data()+text.size(), parsed);
+        if (result.ec == std::errc{} && result.ptr == text.data()+text.size() && parsed > 0) owner_pid = parsed;
+    }
+    std::unordered_set<unsigned long> owned{owner_pid};
+    for (std::size_t depth = 0; depth < 64; ++depth) {
+        const auto before = owned.size();
+        for (const auto &entry : entries)
+            if (owned.contains(entry.th32ParentProcessID)) owned.insert(entry.th32ProcessID);
+        if (owned.size() == before) break;
+    }
+    for (const auto &entry : entries) {
+            if (!owned.contains(entry.th32ProcessID)) continue;
             std::wstring executable(entry.szExeFile);
-            std::string role;
+            // Compare ASCII executable names without locale-dependent casing.
+            for (auto &character : executable) if (character >= L'A' && character <= L'Z') character += L'a'-L'A';
+            std::string role = "runtime";
             if (executable == L"webobsd.exe") role = "webobsd";
             else if (executable == L"mediamtx.exe") role = "mediamtx";
+            else if (executable == L"go2rtc.exe") role = "go2rtc";
             else if (executable == L"ffmpeg.exe") role = "ffmpeg";
             else if (executable == L"caddy.exe") role = "caddy";
-            if (role.empty()) continue;
+            else if (executable == L"webobs.exe" || executable == L"electron.exe") role = "desktop";
+            else if (executable == L"python.exe") role = "python";
+            else if (executable.starts_with(L"obs-browser")) role = "obs-browser";
             HANDLE process = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION|PROCESS_VM_READ, FALSE, entry.th32ProcessID);
             PROCESS_MEMORY_COUNTERS memory{};
             auto& total = totals[role]; ++total.instances;
@@ -2995,16 +3052,19 @@ HttpResponse process_diagnostics_response(unsigned int version, const RuntimeSta
                 }
                 CloseHandle(process);
             }
-        } while (Process32NextW(snapshot, &entry));
-        CloseHandle(snapshot);
     }
+    std::erase_if(previous_samples, [&owned](const auto &sample) {
+        unsigned long pid = 0;
+        std::from_chars(sample.first.data(), sample.first.data()+sample.first.size(), pid);
+        return !owned.contains(pid);
+    });
     std::uint64_t rtsp_sessions = 0;
     int gpu_busy_percent = -1;
 #else
     const long clock_ticks = std::max<long>(1, sysconf(_SC_CLK_TCK));
     std::unordered_map<std::string, ProcessTotal> totals;
     const auto recognized = [](std::string_view name) -> std::string_view {
-        if (name == "webobsd" || name == "mediamtx" || name == "ffmpeg" || name == "caddy")
+        if (name == "webobsd" || name == "mediamtx" || name == "go2rtc" || name == "ffmpeg" || name == "caddy")
             return name;
         if (name.starts_with("obs-browser"))
             return "obs-browser";
@@ -3095,9 +3155,17 @@ HttpResponse process_diagnostics_response(unsigned int version, const RuntimeSta
     }
 
 #endif
-    std::string body = "{\"processes\":[";
+    const auto logical_cores = std::max(1u, std::thread::hardware_concurrency());
+    std::string body = "{\"cpuLogicalCores\":" + std::to_string(logical_cores) +
+        ",\"cpuMeasurement\":\"one-core\",\"scope\":\"" +
+#ifdef _WIN32
+        "desktop-process-tree"
+#else
+        "matching-processes"
+#endif
+        + std::string("\",\"processes\":[");
     bool first = true;
-    for (const std::string_view role : {"webobsd", "mediamtx", "ffmpeg", "caddy", "obs-browser"}) {
+    for (const std::string_view role : {"desktop", "webobsd", "go2rtc", "mediamtx", "ffmpeg", "python", "caddy", "obs-browser", "runtime"}) {
         const ProcessTotal total = totals[std::string(role)];
         if (!first)
             body.push_back(',');
@@ -4395,6 +4463,11 @@ std::optional<std::string> ControlServer::start()
     impl_->listener->run();
     impl_->thread = std::thread([this] { impl_->context.run(); });
     return std::nullopt;
+}
+
+bool ControlServer::composite_requested()
+{
+    return impl_->whep_proxy.composite_requested();
 }
 
 void ControlServer::stop()

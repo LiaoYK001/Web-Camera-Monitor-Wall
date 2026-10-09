@@ -25,10 +25,16 @@ export default function Go2rtcStreams({ onImported, refreshKey = 0, blocked = fa
   const [ready, setReady] = useState(false);
   const [search, setSearch] = useState('');
   const [generation, setGeneration] = useState(0);
+  const [selected, setSelected] = useState<string[]>([]);
+  const [batchActive, setBatchActive] = useState(false);
+  const [results, setResults] = useState<Record<string, string>>({});
+  const batch = useRef({ active: false, stop: false });
+  useEffect(() => () => { batch.current.stop = true; }, []);
   const imported = useRef(new Map<string, string>());
   const readingOwner = useRef<AbortController | null>(null);
   const submission = useRef<Partial<CameraRecord> | null>(null);
-  const { run, busy, isMutating } = useOwnedRequest(setError, () => readingOwner.current?.abort());
+  const { run, busy: requestBusy, isMutating } = useOwnedRequest(setError, () => readingOwner.current?.abort());
+  const busy = requestBusy || batchActive;
   const workKey = useId();
   useDesktopWork(`go2rtc-import-${workKey}`, Boolean(pending), busy);
   useDraftGuard(Boolean(pending), busy, 'go2rtc 导入结果尚未确认，离开后需先核对设备目录。继续？', setStatus);
@@ -36,7 +42,7 @@ export default function Go2rtcStreams({ onImported, refreshKey = 0, blocked = fa
   useEffect(() => {
     const owner = new AbortController(); let reading = false;
     const refresh = async () => {
-      if (reading || owner.signal.aborted || isMutating() || blocked) return;
+      if (reading || owner.signal.aborted || isMutating() || batch.current.active || blocked) return;
       reading = true;
       const controller = new AbortController(); readingOwner.current = controller;
       const abort = () => controller.abort(); owner.signal.addEventListener('abort', abort, { once: true });
@@ -66,8 +72,8 @@ export default function Go2rtcStreams({ onImported, refreshKey = 0, blocked = fa
   const existing = (name: string) => imported.current.get(name) ?? cameras.find((camera) =>
     camera.address === go2rtcStreamAddress(name, rtspBase) || camera.addressDisplay === go2rtcStreamAddress(name, rtspBase) ||
     camera.profiles.some((profile) => profile.endpoint === go2rtcStreamAddress(name, rtspBase)))?.id;
-  const add = async (name: string) => {
-    if (blocked || isMutating() || existing(name) || (pending && pending !== name)) return;
+  const add = async (name: string, inBatch = false) => {
+    if (blocked || isMutating() || (!inBatch && batch.current.active) || existing(name) || (pending && pending !== name)) return false;
     setWorking(name);
     let created: CameraRecord | undefined;
     const confirmed = await run('导入 go2rtc 设备', async signal => {
@@ -99,17 +105,21 @@ export default function Go2rtcStreams({ onImported, refreshKey = 0, blocked = fa
     });
     if (confirmed && created) {
       const camera: CameraRecord = created;
-      await run('探测轨道', async signal => {
+      const probed = await run('探测轨道', async signal => {
         for (const profile of camera.profiles) {
           if (signal.aborted) throw signal.reason ?? new DOMException('探测已取消', 'AbortError');
           await probeSourceProfile(camera.id, profile.id, signal);
         }
       }, () => setStatus(`“${name}”已建档并探测轨道。前往 Studio 的“选择场景来源”即可加入场景。`));
+      setResults(values => ({ ...values, [name]: probed ? '已添加并探测轨道' : '已添加，轨道探测需重试' }));
+    } else {
+      setResults(values => ({ ...values, [name]: submission.current ? '结果待核对，批量已暂停' : '添加失败，可重试' }));
     }
+    return confirmed;
   };
   const accept = (camera: CameraRecord, name: string) => {
     imported.current.set(name, camera.id); setCameras(values => [...values.filter(value => value.id !== camera.id), camera]);
-    submission.current = null; setPending(''); onImported?.();
+    submission.current = null; setPending(''); setSelected(values => values.filter(value => value !== name)); onImported?.();
     setStatus(`“${name}”已加入设备目录；可在设备详情探测轨道，或前往 Studio 选择场景来源。`);
   };
   const reconcile = () => run('核对 go2rtc 导入', signal => fetchCameras(signal), result => {
@@ -117,6 +127,27 @@ export default function Go2rtcStreams({ onImported, refreshKey = 0, blocked = fa
     if (record) accept(record, pending);
     else setStatus('目录中暂未找到这次导入。可继续提交同一设备；不自动生成第二个 ID。');
   }, false);
+  const visible = names.filter(name => name.toLowerCase().includes(search.toLowerCase()));
+  const eligible = visible.filter(name => !existing(name));
+  const addSelected = async () => {
+    if (blocked || busy || pending || batch.current.active) return;
+    const queue = names.filter(name => selected.includes(name) && !existing(name));
+    if (!queue.length) return;
+    batch.current = { active: true, stop: false }; setBatchActive(true);
+    let succeeded = 0, attempted = 0;
+    try {
+      for (const name of queue) {
+        if (batch.current.stop) break;
+        setStatus(`批量接入 ${attempted + 1}/${queue.length}：“${name}”`);
+        if (await add(name, true)) succeeded++;
+        attempted++;
+        // An uncertain write keeps its original ID. Never advance past it or
+        // retry with a new ID; the user must reconcile this submission first.
+        if (submission.current) break;
+      }
+      setStatus(`${batch.current.stop ? '批量已停止' : '批量接入'}：已添加 ${succeeded}，未添加 ${attempted - succeeded}，剩余 ${queue.length - attempted}。已添加设备可前往 Studio 选择场景来源。`);
+    } finally { batch.current.active = false; setBatchActive(false); }
+  };
   return <section className="go2rtc-streams" aria-label="go2rtc 流接入">
     <header><h2>从 go2rtc 接入设备</h2><button type="button" disabled={busy || blocked} onClick={() => setGeneration((value) => value + 1)}>刷新 go2rtc 流</button>
       <a href="#go2rtc">管理 go2rtc</a></header>
@@ -126,14 +157,25 @@ export default function Go2rtcStreams({ onImported, refreshKey = 0, blocked = fa
       <button type="button" disabled={busy || blocked} onClick={() => void add(pending)}>继续提交同一设备</button></div>}
     <details><summary>从 go2rtc 到正式设备与场景：操作步骤</summary><ol>
       <li>打开“go2rtc 管理”，在流管理或设备与发现中添加来源，并在配置中保存命名流；先测试该流能播放。</li>
-      <li>返回这里，刷新列表，点击对应流的“检测并添加设备”。系统使用后端内部 RTSP 地址检测并建档，摄像机密码继续保存在 go2rtc 配置中。</li>
+      <li>返回这里，刷新列表，点击对应流的“检测并添加设备”，或勾选多路后批量接入。系统使用后端内部 RTSP 地址检测并建档，摄像机密码继续保存在 go2rtc 配置中。</li>
       <li>在“设备与来源”查看刚添加的设备；轨道探测失败时，可在详情中重试，检查 go2rtc 源的编码与连接状态。</li>
       <li>前往 Studio，新建或右键场景 → 选择场景来源，勾选设备，调整画布位置并保存 Studio。可分别打开多个场景投影。</li>
     </ol><p>内部地址是后端环境的 <code>{rtspBase}流名称</code>。命名流无需再次做 ONVIF 发现；设备建档后使用稳定设备 ID。更改或删除 go2rtc 流名后，请同步调整设备地址。仅中转视频的流不具备原摄像机的 PTZ/ONVIF 功能。</p></details>
     {names.length > 0 && <><label>筛选 go2rtc 流<input value={search} onChange={(event) => setSearch(event.target.value)} maxLength={128} /></label>
-      <div className="go2rtc-stream-list">{names.filter((name) => name.toLowerCase().includes(search.toLowerCase())).map((name) => <div key={name}>
+      <div className="go2rtc-batch-controls">
+        <button type="button" disabled={busy || blocked || !ready || Boolean(pending) || !eligible.length}
+          onClick={() => setSelected(values => [...new Set([...values, ...eligible])])}>选择筛选结果中未添加的流</button>
+        <button type="button" disabled={busy || !selected.length} onClick={() => setSelected([])}>清除选择</button>
+        <button type="button" disabled={busy || blocked || !ready || Boolean(pending) || !selected.some(name => names.includes(name) && !existing(name))}
+          onClick={() => void addSelected()}>批量检测并添加（{selected.filter(name => names.includes(name) && !existing(name)).length}）</button>
+        {batchActive && <button type="button" onClick={() => { batch.current.stop = true; setStatus('正在完成当前设备，随后停止；已添加设备保留。'); }}>完成当前设备后停止</button>}
+      </div>
+      <div className="go2rtc-stream-list">{visible.map((name) => <div key={name}>
+        <label><input type="checkbox" aria-label={`选择流 ${name}`} checked={selected.includes(name)} disabled={busy || blocked || Boolean(pending) || Boolean(existing(name))}
+          onChange={event => setSelected(values => event.target.checked ? [...values, name] : values.filter(value => value !== name))} />选择</label>
         <strong>{name}</strong><code>{go2rtcStreamAddress(name, rtspBase)}</code><button type="button" disabled={busy || blocked || !ready || Boolean(pending) || Boolean(existing(name))}
           onClick={() => void add(name)}>{existing(name) ? '已在设备目录' : busy && working === name ? '检测并添加中…' : '检测并添加设备'}</button>
+        {results[name] && <span role="status">{results[name]}</span>}
       </div>)}</div></>}
   </section>;
 }

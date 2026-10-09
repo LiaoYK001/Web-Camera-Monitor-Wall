@@ -54,7 +54,7 @@ struct RendererCapabilities {
 struct HardwareDecodeCapabilities {
     std::string requested = "auto";
     std::string selected = "off";
-    /** "cuda", "vaapi" or "software"; the backend actually selected at runtime. */
+    /** "cuda", "vaapi", "obs-auto" or "software"; obs-auto probes per source. */
     std::string backend = "software";
     bool fallback = false;
     std::string fallback_reason;

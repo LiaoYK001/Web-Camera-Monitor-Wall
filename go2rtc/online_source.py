@@ -70,7 +70,7 @@ def cookie_file(name):
 
 def binary(name):
     key = 'WEBOBS_' + name.upper() + '_PATH'
-    default = '/opt/webobs/bin/node' if name == 'node' else '/usr/bin/ffmpeg'
+    default = '/opt/webobs/bin/node' if name == 'node' else str(Path(binary('ffmpeg')).with_name('ffprobe.exe' if os.name == 'nt' else 'ffprobe')) if name == 'ffprobe' else '/usr/bin/ffmpeg'
     value = Path(os.environ.get(key, default))
     if not value.is_absolute() or not value.is_file():
         raise SourceError('runtime_missing: install the complete WebOBS media runtime')
@@ -154,7 +154,7 @@ def resolve_ytdlp(url, height, cookies):
                    skip_download=True, cachedir=False, socket_timeout=15, retries=2,
                    extractor_retries=2, ffmpeg_location=binary('ffmpeg'),
                    js_runtimes={'node': {'path': binary('node')}}, remote_components=set(),
-                   cookiefile=cookies, format=f'bv*[height<={height}][vcodec^=avc1]+ba[acodec^=mp4a]/b[height<={height}][vcodec^=avc1]/bv*[height<={height}]+ba/b[height<={height}]/b')
+                   cookiefile=cookies, format=f'b[height<={height}][vcodec^=avc1][acodec^=mp4a]/bv*[height<={height}][vcodec^=avc1]+ba[acodec^=mp4a]/b[height<={height}][vcodec^=avc1]/bv*[height<={height}]+ba/b[height<={height}]/b')
     try:
         with YoutubeDL(options) as extractor:
             info = extractor.extract_info(url, download=False)
@@ -164,7 +164,7 @@ def resolve_ytdlp(url, height, cookies):
             if not 1 <= len(formats) <= 2:
                 raise SourceError('unsupported_media: choose a single video or live broadcast')
             return [dict(url=web_url(item.get('url'), ('http', 'https', 'rtmp', 'rtmps')),
-                         headers=item.get('http_headers') or {}, video=item.get('vcodec'), audio=item.get('acodec')) for item in formats]
+                         headers=item.get('http_headers') or {}, video=item.get('vcodec'), audio=item.get('acodec'), live=info.get('is_live') is True) for item in formats]
     except SourceError:
         raise
     except Exception:
@@ -200,27 +200,52 @@ def resolve_streamlink(url, height, cookies):
         session.http.close()
 
 
+def media_input_options(item):
+    options = []
+    parsed = urlsplit(item['url'])
+    protocols = 'http,https,httpproxy,tcp,tls,crypto,rtmp,rtmps,data'
+    if parsed.scheme in ('https', 'rtmps'):
+        # Preserve verification for secure segments; the whitelist cannot police HTTP redirects.
+        protocols = 'https,httpproxy,tcp,tls,crypto,rtmps,data'
+    options += ['-rw_timeout', '15000000', '-protocol_whitelist', protocols]
+    # TLS options are unused (and rejected by FFmpeg) for plain HTTP/RTMP inputs.
+    if parsed.scheme in ('https', 'rtmps'):
+        options += tls_options()
+    if parsed.scheme in ('http', 'https'):
+        # FFmpeg does not use uppercase HTTPS_PROXY like the Python extractors.
+        # Apply the selected proxy per input, including explicit NO_PROXY/local bypass.
+        options += ['-http_proxy', input_proxy(item['url'])]
+        options += ['-reconnect', '1', '-reconnect_streamed', '1', '-reconnect_on_network_error', '1',
+                    '-reconnect_on_http_error', '429,500,502,503,504', '-reconnect_delay_max', '3']
+    headers = safe_headers(item['headers'])
+    if headers:
+        options += ['-headers', headers]
+
+    return options
+
+
+def reorder_free_video(item):
+    # VOD H.264 may contain B-frames: copying its RTP timestamps through the
+    # pinned go2rtc MSE/WebRTC path can leave the browser waiting indefinitely.
+    # Probe only VOD auto mode, on demand. Unknown results choose compatibility;
+    # live H.264 and explicit copy keep their existing passthrough behavior.
+    command = [binary('ffprobe'), '-v', 'error', '-analyzeduration', '1000000', '-probesize', '1048576',
+               *media_input_options(item), '-select_streams', 'v:0', '-show_entries',
+               'stream=codec_name,has_b_frames', '-of', 'json', web_url(item['url'], ('http', 'https', 'rtmp', 'rtmps'))]
+    try:
+        result = subprocess.run(command, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
+                                timeout=6, **({'creationflags': subprocess.CREATE_NO_WINDOW} if os.name == 'nt' else {}))
+        metadata = json.loads(result.stdout) if result.returncode == 0 else {}
+        tracks = metadata.get('streams', []) if isinstance(metadata, dict) else []
+        return isinstance(tracks, list) and len(tracks) == 1 and isinstance(tracks[0], dict) and tracks[0].get('codec_name') == 'h264' and tracks[0].get('has_b_frames') == 0
+    except (OSError, subprocess.TimeoutExpired, ValueError, TypeError):
+        return False
+
+
 def ffmpeg_command(inputs, output, mode, height):
     command = [binary('ffmpeg'), '-nostdin', '-hide_banner', '-loglevel', 'error']
     for item in inputs:
-        parsed = urlsplit(item['url'])
-        protocols = 'http,https,httpproxy,tcp,tls,crypto,rtmp,rtmps,data'
-        if parsed.scheme in ('https', 'rtmps'):
-            # Preserve verification for secure segments; the whitelist cannot police HTTP redirects.
-            protocols = 'https,httpproxy,tcp,tls,crypto,rtmps,data'
-        command += ['-rw_timeout', '15000000', '-protocol_whitelist', protocols]
-        # TLS options are unused (and rejected by FFmpeg) for plain HTTP/RTMP inputs.
-        if parsed.scheme in ('https', 'rtmps'):
-            command += tls_options()
-        if parsed.scheme in ('http', 'https'):
-            # FFmpeg does not use uppercase HTTPS_PROXY like the Python extractors.
-            # Apply the selected proxy per input, including explicit NO_PROXY/local bypass.
-            command += ['-http_proxy', input_proxy(item['url'])]
-            command += ['-reconnect', '1', '-reconnect_streamed', '1', '-reconnect_on_network_error', '1',
-                        '-reconnect_on_http_error', '429,503', '-reconnect_delay_max', '3']
-        headers = safe_headers(item['headers'])
-        if headers:
-            command += ['-headers', headers]
+        command += media_input_options(item)
         command += ['-re', '-i', web_url(item['url'], ('http', 'https', 'rtmp', 'rtmps'))]
     video_index = next((i for i, item in enumerate(inputs) if item['video'] != 'none'), 0)
     audio_index = next((i for i, item in enumerate(inputs) if item['audio'] != 'none'), video_index)
@@ -228,7 +253,9 @@ def ffmpeg_command(inputs, output, mode, height):
     video = inputs[video_index]['video'] or ''
     audio = inputs[audio_index]['audio'] or ''
     copy_video = mode == 'copy' or mode == 'auto' and video.startswith(('avc1', 'h264'))
-    command += ['-c:v', 'copy'] if copy_video else ['-c:v', 'libx264', '-preset', 'veryfast', '-tune', 'zerolatency', '-pix_fmt', 'yuv420p', '-vf', f'scale=-2:min({height}\\,ih)', '-g', '50']
+    if copy_video and mode == 'auto' and inputs[video_index].get('live') is False:
+        copy_video = reorder_free_video(inputs[video_index])
+    command += ['-c:v', 'copy'] if copy_video else ['-c:v', 'libx264', '-preset', 'veryfast', '-tune', 'zerolatency', '-pix_fmt', 'yuv420p', '-bf', '0', '-vf', f'scale=-2:min({height}\\,ih)', '-g', '50']
     command += ['-c:a', 'copy'] if mode == 'copy' or audio.startswith(('mp4a', 'aac')) else ['-c:a', 'aac', '-b:a', '128k']
     return command + ['-f', 'rtsp', '-rtsp_transport', 'tcp', output_url(output)]
 

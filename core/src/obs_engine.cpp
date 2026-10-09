@@ -444,6 +444,18 @@ HardwareDecodeCapabilities select_hardware_decode(const Config &config,
         result.backend = "software";
         return result;
     }
+#ifdef _WIN32
+    const bool qsv_ready = capabilities.qsv.device_present && capabilities.qsv.decode_supported &&
+                           capabilities.qsv.runtime_probe_passed;
+    if (obs_initialized() && (cuda_ready || qsv_ready)) {
+        // The pinned OBS FFmpeg source probes CUDA/D3D11VA/DXVA2 per codec and
+        // falls back to software when no usable context exists. "auto" is a
+        // policy, not a claim that every source is hardware decoded.
+        result.selected = "auto";
+        result.backend = "obs-auto";
+        return result;
+    }
+#endif
     if (vaapi_ready) {
         // OBS RTSP sources decode through VA-API inside the engine.
         result.selected = "vaapi";
@@ -523,6 +535,7 @@ ExitCode run_obs_engine(const Config &config, const SceneDocument &document)
     std::error_code path_error;
     const bool recording_enabled = !config.output_path.empty();
     const bool composite_runtime_active = recording_enabled || config.composite_enabled;
+    const bool demand_driven = config.composite_on_demand && !recording_enabled;
     std::filesystem::path output_path;
     std::filesystem::path temporary_path;
     if (recording_enabled) {
@@ -550,7 +563,7 @@ ExitCode run_obs_engine(const Config &config, const SceneDocument &document)
                                       config.source_stale_seconds,
                                       config.source_recovery_base_seconds,
                                       config.source_recovery_max_seconds,
-                                      hardware_decode.selected == "vaapi", false);
+                                      hardware_decode.selected != "off", false);
         if (const auto prepare_error = scene_runtime.prepare(document)) {
             blog(LOG_ERROR, "Could not prepare the direct-only scene state: %s", prepare_error->c_str());
             return ExitCode::scene_store_failed;
@@ -749,16 +762,16 @@ ExitCode run_obs_engine(const Config &config, const SceneDocument &document)
                                   config.source_stale_seconds,
                                   config.source_recovery_base_seconds,
                                   config.source_recovery_max_seconds,
-                                  hardware_decode.selected == "vaapi");
+                                  hardware_decode.selected != "off");
     if (const auto prepare_error = scene_runtime.prepare(document)) {
         blog(LOG_ERROR, "Could not prepare OBS scene: %s", prepare_error->c_str());
         return ExitCode::obs_initialization_failed;
     }
     scene_runtime.commit_prepared();
-    if (composite_runtime_active)
+    if (!demand_driven)
         scene_runtime.activate();
     const std::size_t expected_sources = scene_runtime.visible_source_count();
-    if (!composite_runtime_active) {
+    if (demand_driven) {
         blog(LOG_INFO, "Composite pipeline is idle; OBS sources are not decoding");
     } else if (expected_sources == 0) {
         blog(LOG_INFO, "Scene has no visible sources; recording starts with a black canvas");
@@ -933,6 +946,7 @@ ExitCode run_obs_engine(const Config &config, const SceneDocument &document)
     runtime_status.control_plane_active.store(true);
     runtime_status.engine_active.store(true);
     runtime_status.webrtc_configured.store(config.webrtc_enabled && config.composite_enabled);
+    runtime_status.composite_idle.store(demand_driven);
     scene_runtime.maintain_source_health();
     update_source_runtime_status(runtime_status, scene_runtime.source_health_snapshot());
     ControlServer control_server(config, scene_controller, studio_controller, runtime_status);
@@ -948,14 +962,14 @@ ExitCode run_obs_engine(const Config &config, const SceneDocument &document)
             blog(LOG_WARNING, "HTTP control listener is unauthenticated; keep the published host port local");
     }
 
-    if (whip_output && !obs_output_start(whip_output.get())) {
+    if (whip_output && !demand_driven && !obs_output_start(whip_output.get())) {
         const char *message = obs_output_get_last_error(whip_output.get());
         blog(LOG_ERROR, "Could not start WebRTC publishing%s%s", message && *message ? ": " : "",
              message && *message ? message : "");
         control_server.stop();
         return ExitCode::output_failed;
     }
-    if (whip_output)
+    if (whip_output && !demand_driven)
         blog(LOG_INFO, "WebRTC program publishing initiated");
 
     if (output && !obs_output_start(output.get())) {
@@ -972,7 +986,7 @@ ExitCode run_obs_engine(const Config &config, const SceneDocument &document)
         blog(LOG_INFO, "Recording started: %dx%d at %d fps, %d Kbps", document.canvas.width,
              document.canvas.height, config.fps, config.bitrate_kbps);
 
-    if (whip_output &&
+    if (whip_output && !demand_driven &&
         !wait_for_webrtc_connection(whip_output.get(), whip_output_state, config.connect_timeout_seconds)) {
         blog(LOG_ERROR, "WebRTC publishing did not become ready within %d seconds",
              config.connect_timeout_seconds);
@@ -990,15 +1004,45 @@ ExitCode run_obs_engine(const Config &config, const SceneDocument &document)
             blog(LOG_ERROR, "One or more outputs could not be stopped after the WebRTC startup timeout");
         return ExitCode::output_failed;
     }
-    if (whip_output)
+    if (whip_output && !demand_driven)
         blog(LOG_INFO, "WebRTC program publishing is ready");
-    runtime_status.webrtc_ready.store(whip_output != nullptr);
+    runtime_status.webrtc_ready.store(whip_output != nullptr && !demand_driven);
 
     const auto recording_started = std::chrono::steady_clock::now();
     auto next_health_maintenance = recording_started;
     bool unexpected_stop = false;
+    auto next_demand_check = recording_started;
+    auto next_publish_retry = recording_started;
     while (!stop_requested) {
         const auto now = std::chrono::steady_clock::now();
+        if (demand_driven && whip_output && now >= next_demand_check) {
+            next_demand_check = now + std::chrono::seconds(2);
+            const bool requested = control_server.composite_requested();
+            if (requested && !obs_output_active(whip_output.get()) && now >= next_publish_retry) {
+                scene_runtime.activate();
+                whip_output_state.stopped.store(false);
+                whip_output_state.stop_code.store(0);
+                if (obs_output_start(whip_output.get()) &&
+                    wait_for_webrtc_connection(whip_output.get(), whip_output_state, config.connect_timeout_seconds)) {
+                    runtime_status.composite_idle.store(false);
+                    runtime_status.webrtc_ready.store(true);
+                    blog(LOG_INFO, "On-demand Composite publisher is ready");
+                } else {
+                    if (obs_output_active(whip_output.get()))
+                        wait_for_output_stop(whip_output.get(), whip_output_state, "WebRTC output");
+                    scene_runtime.deactivate();
+                    runtime_status.webrtc_ready.store(false);
+                    runtime_status.composite_idle.store(true);
+                    next_publish_retry = std::chrono::steady_clock::now() + std::chrono::seconds(5);
+                }
+            } else if (!requested && obs_output_active(whip_output.get())) {
+                runtime_status.composite_idle.store(true);
+                runtime_status.webrtc_ready.store(false);
+                wait_for_output_stop(whip_output.get(), whip_output_state, "WebRTC output");
+                scene_runtime.deactivate();
+                blog(LOG_INFO, "On-demand Composite publisher stopped; no readers remain");
+            }
+        }
         if (now >= next_health_maintenance) {
             scene_runtime.maintain_source_health();
             update_source_runtime_status(runtime_status, scene_runtime.source_health_snapshot());
@@ -1011,7 +1055,7 @@ ExitCode run_obs_engine(const Config &config, const SceneDocument &document)
             unexpected_stop = true;
             break;
         }
-        if (whip_output && whip_output_state.stopped.load()) {
+        if (whip_output && !demand_driven && whip_output_state.stopped.load()) {
             unexpected_stop = true;
             break;
         }
@@ -1041,7 +1085,7 @@ ExitCode run_obs_engine(const Config &config, const SceneDocument &document)
     runtime_status.control_plane_active.store(false);
     control_server.stop();
     bool outputs_stopped = true;
-    if (whip_output)
+    if (whip_output && obs_output_active(whip_output.get()))
         outputs_stopped = wait_for_output_stop(whip_output.get(), whip_output_state, "WebRTC output");
     whip_output.reset();
     whip_service.reset();

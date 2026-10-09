@@ -7,7 +7,7 @@ import sys
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1]))
 from runtime_support import service_rtsp
 
-def arguments(values, encoder="libx264"):
+def arguments(values, encoder="libx264", hardware_decode=False):
     if len(values) != 4:
         raise ValueError("invalid argument count")
     source, target, video, audio = values
@@ -16,7 +16,8 @@ def arguments(values, encoder="libx264"):
     if not direct and not url:
         raise ValueError("invalid source")
     ffmpeg = os.environ["WEBOBS_FFMPEG_PATH"]
-    args = [ffmpeg, "-hide_banner", "-loglevel", "error", "-nostdin", "-rtsp_transport", "tcp", "-timeout", "8000000",
+    decode = ["-hwaccel", "cuda"] if hardware_decode and video == "transcode" and encoder == "h264_nvenc" else []
+    args = [ffmpeg, "-hide_banner", "-loglevel", "error", "-nostdin", "-rtsp_transport", "tcp", "-timeout", "8000000", *decode,
             "-i", service_rtsp(8554, "/" + source) if direct else source]
     if video == "audio-track":
         if not re.fullmatch(r"([0-9]|[12][0-9]|3[01])", audio) or target != f"audio-{target[6:38]}-t{audio}" or not re.fullmatch(r"audio-[a-f0-9]{32}-t\d{1,2}", target):
@@ -51,14 +52,21 @@ def arguments(values, encoder="libx264"):
     else: args += ["-c:a", "libopus", "-b:a", "96k", "-ar", "48000", "-ac", "2"]
     return args + ["-rtsp_transport", "tcp", "-f", "rtsp", service_rtsp(8554, "/"+target)]
 
+def run_transcoder(values, call=subprocess.call):
+    if len(values) == 4 and values[2] == "transcode" and os.environ.get("WEBOBS_NVIDIA_ENCODE_SUPPORTED") == "true" and os.environ.get("WEBOBS_HYBRID_VIDEO_ENCODER") != "x264":
+        if os.environ.get("WEBOBS_NVIDIA_DECODE_SUPPORTED") == "true":
+            result = call(arguments(values, "h264_nvenc", hardware_decode=True))
+            if result == 0: return 0
+        # A source may use a profile the hardware decoder cannot consume. Keep
+        # NVENC with software decoding before falling back to all-software.
+        result = call(arguments(values, "h264_nvenc"))
+        if result == 0 or os.environ.get("WEBOBS_SOFTWARE_FALLBACK", "true") != "true": return result
+    return call(arguments(values))
+
+
 if __name__ == "__main__":
     try:
-        values = sys.argv[1:]
-        if len(values) == 4 and values[2] == "transcode" and os.environ.get("WEBOBS_NVIDIA_ENCODE_SUPPORTED") == "true" and os.environ.get("WEBOBS_HYBRID_VIDEO_ENCODER") != "x264":
-            result = subprocess.call(arguments(values, "h264_nvenc"))
-            if result == 0: raise SystemExit(0)
-            if os.environ.get("WEBOBS_SOFTWARE_FALLBACK", "true") != "true": raise SystemExit(result)
-        raise SystemExit(subprocess.call(arguments(values)))
+        raise SystemExit(run_transcoder(sys.argv[1:]))
     except (ValueError, KeyError):
         print("invalid internal transcoder configuration", file=sys.stderr)
         raise SystemExit(2)

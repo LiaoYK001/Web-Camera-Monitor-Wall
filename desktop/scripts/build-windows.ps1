@@ -144,8 +144,8 @@ try {
     if ($null -eq $savedCameraTest) { Remove-Item Env:WEBOBS_TEST_CAMERA_REGISTRY -ErrorAction SilentlyContinue } else { $env:WEBOBS_TEST_CAMERA_REGISTRY = $savedCameraTest }
     if ($null -eq $savedNvrTest) { Remove-Item Env:WEBOBS_TEST_NVR_SERVICE -ErrorAction SilentlyContinue } else { $env:WEBOBS_TEST_NVR_SERVICE = $savedNvrTest }
 }
-Invoke-Checked 'pnpm' @('--dir',$desktopRoot,'test:runtime')
 Invoke-Checked 'pnpm' @('--dir',(Join-Path $repoRoot 'web'),'exec','playwright','install','chromium')
+Invoke-Checked 'pnpm' @('--dir',$desktopRoot,'test:runtime')
 Invoke-Checked 'pnpm' @('--dir',$desktopRoot,'test:source-ui','--runtime',$runtimeRoot,'--receipt',(Join-Path $buildRoot 'windows-source-ui.json'))
 Invoke-Checked 'pnpm' @('--dir',$desktopRoot,'test:main')
 if (-not $SkipPackage) {

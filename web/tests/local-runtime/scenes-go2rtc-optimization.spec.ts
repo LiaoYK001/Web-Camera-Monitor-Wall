@@ -6,7 +6,7 @@ const scene = (id: string, count: number): SceneDocument => ({ schemaVersion: 5,
   sources: Array.from({ length: count }, (_, index) => ({ id: `color-${index}`, kind: 'color', name: `来源 ${index + 1}`, color: '#214f75', muted: true, volume: 0, syncOffsetMs: 0, monitoring: 'off', audioTrack: 1, filters: [] })),
   items: Array.from({ length: count }, (_, index) => ({ id: `item-${index}`, sourceId: `color-${index}`, x: index * 200, y: 100, width: 200, height: 200, scaleMode: 'contain', crop: { top: 0, right: 0, bottom: 0, left: 0 }, zIndex: index, visible: true, locked: false, groupId: '', rotation: 0, opacity: 1, blendMode: 'normal' })),
 });
-async function backend(context: BrowserContext, rtspPort = 18554) {
+async function backend(context: BrowserContext, rtspPort = 18554, dropFirstCreation = false) {
   let studio: StudioDocument = { schemaVersion: 1, revision: 1, programSceneId: 'main', previewSceneId: 'main', transition: { kind: 'cut', durationMs: 0 }, scenes: [scene('main', 6)] };
   const preferences = new Map<string, any>(); const cameras: CameraRecord[] = []; const creates: any[] = [];
   await context.routeWebSocket('**/api/v1/ws', (socket) => {
@@ -27,7 +27,7 @@ async function backend(context: BrowserContext, rtspPort = 18554) {
     if (path === '/api/v1/scene') return reply(studio.scenes.find((value) => value.id === studio.programSceneId));
     if (path.endsWith('/capabilities')) return reply({ modes: { direct: { enabled: true }, composite: { enabled: false } }, sources: [], scenes: [] });
     if (path === '/api/v1/cameras') {
-      if (method === 'POST') { const value = route.request().postDataJSON(); creates.push(value); const camera = { ...value, id: value.id ?? `imported-${cameras.length}`, revision: 1, health: 'unknown', createdAt: 0, updatedAt: 0 }; cameras.push(camera); return reply(camera); }
+      if (method === 'POST') { const value = route.request().postDataJSON(); creates.push(value); const camera = { ...value, id: value.id ?? `imported-${cameras.length}`, revision: 1, health: 'unknown', createdAt: 0, updatedAt: 0 }; cameras.push(camera); if (dropFirstCreation) { dropFirstCreation = false; return route.abort('failed'); } return reply(camera); }
       return reply({ cameras });
     }
     if (path === '/api/v1/go2rtc/api/streams') return reply({ entrance: { producers: [{ url: 'rtsp://private:do-not-display@camera.invalid/live' }] }, yard: {} });
@@ -149,4 +149,60 @@ test('defaults optimization on, saves user opt-out and tolerates slow cadence wi
     return { slow, disabled, slowCongested: congested(before, after), lossCongested: congested(before, { ...after, received: 200, lost: 20 }), lower: lower?.id };
   });
   expect(result).toEqual({ slow: 53000, disabled: 6000, slowCongested: false, lossCongested: true, lower: 'sub' });
+});
+
+
+test('batch imports filtered streams, keeps successes and retries only failed entries', async ({ page, context }) => {
+  const server = await backend(context);
+  let failYard = true;
+  await context.route('**/api/v1/camera-detect', route => {
+    const address = route.request().postDataJSON().address;
+    return failYard && address.endsWith('/yard') ? route.fulfill({ status: 422, json: { error: 'fixture_not_ready' } })
+      : route.fulfill({ json: { adapter: 'rtsp', address, profiles: [{ id: 'main', name: 'Main', role: 'main', endpoint: address, videoCodec: 'h264', audioCodec: '', width: 640, height: 360, fps: 5 }] } });
+  });
+  await page.goto('/#go2rtc');
+  const bridge = page.getByRole('region', { name: 'go2rtc 流接入' });
+  await bridge.getByRole('button', { name: '选择筛选结果中未添加的流' }).click();
+  await bridge.getByRole('button', { name: '批量检测并添加（2）', exact: true }).click();
+  await expect(bridge).toContainText('已添加 1，未添加 1，剩余 0');
+  expect(server.creates.map(value => value.name)).toEqual(['entrance']);
+  await expect(bridge.getByLabel('选择流 entrance')).toBeDisabled();
+  await expect(bridge.getByLabel('选择流 yard')).toBeChecked();
+  failYard = false;
+  await bridge.getByRole('button', { name: '批量检测并添加（1）', exact: true }).click();
+  await expect.poll(() => server.creates.map(value => value.name)).toEqual(['entrance', 'yard']);
+  await expect(bridge.getByRole('button', { name: '已在设备目录' })).toHaveCount(2);
+  await expect(bridge).not.toContainText('do-not-display');
+});
+
+test('batch pauses after an uncertain creation and reconciles the original device ID', async ({ page, context }) => {
+  const server = await backend(context, 18554, true);
+  await page.goto('/#devices');
+  const bridge = page.getByRole('region', { name: 'go2rtc 流接入' });
+  await bridge.getByRole('button', { name: '选择筛选结果中未添加的流' }).click();
+  await bridge.getByRole('button', { name: '批量检测并添加（2）', exact: true }).click();
+  await expect(bridge).toContainText('结果待核对，批量已暂停');
+  expect(server.creates).toHaveLength(1);
+  const original = server.creates[0].id;
+  await bridge.getByRole('button', { name: '核对导入结果', exact: true }).click();
+  await expect(bridge.getByLabel('选择流 entrance')).toBeDisabled();
+  await bridge.getByRole('button', { name: '批量检测并添加（1）', exact: true }).click();
+  await expect.poll(() => server.creates.length).toBe(2);
+  expect(server.creates[0].id).toBe(original);
+  expect(new Set(server.creates.map(value => value.id)).size).toBe(2);
+});
+
+test('stopping a batch completes the current write and preserves remaining selection', async ({ page, context }) => {
+  const server = await backend(context);
+  let release!: () => void;
+  const gate = new Promise<void>(resolve => { release = resolve; });
+  await context.route('**/api/v1/camera-detect', async route => { await gate; await route.fallback(); });
+  await page.goto('/#devices');
+  const bridge = page.getByRole('region', { name: 'go2rtc 流接入' });
+  await bridge.getByRole('button', { name: '选择筛选结果中未添加的流' }).click();
+  await bridge.getByRole('button', { name: '批量检测并添加（2）', exact: true }).click();
+  await bridge.getByRole('button', { name: '完成当前设备后停止', exact: true }).click(); release();
+  await expect(bridge.getByRole('button', { name: '批量检测并添加（1）', exact: true })).toBeEnabled();
+  expect(server.creates.map(value => value.name)).toEqual(['entrance']);
+  await expect(bridge.getByLabel('选择流 yard')).toBeChecked();
 });

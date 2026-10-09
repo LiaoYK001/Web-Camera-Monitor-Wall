@@ -6,12 +6,15 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const require = createRequire(import.meta.url);
+const soakIndex = process.argv.indexOf('--soak-seconds');
+const soak = soakIndex < 0 ? 0 : Number(process.argv[soakIndex + 1]);
+if (!Number.isInteger(soak) || soak < 0 || soak > 3600) throw new Error('Soak seconds must be an integer from 0 to 3600');
 const root = await mkdtemp(path.join(os.tmpdir(), 'webobs-source-ui-'));
 try {
   process.exitCode = await new Promise((resolve, reject) => {
     const child = spawn(require('electron'), [fileURLToPath(new URL('./online-source-native.cjs', import.meta.url)), ...process.argv.slice(2)],
       { env: { ...process.env, WEBOBS_SOURCE_UI_ROOT: root }, windowsHide: true, stdio: 'inherit' });
-    const timer = setTimeout(() => child.kill(), process.argv.includes('--sources') ? 15 * 60_000 : 4 * 60_000);
+    const timer = setTimeout(() => child.kill(), (process.argv.includes('--sources') ? 15 * 60_000 : 4 * 60_000) + soak * 8 * 1000);
     child.once('error', error => { clearTimeout(timer); reject(error); });
     child.once('exit', code => { clearTimeout(timer); resolve(code ?? 1); });
   });

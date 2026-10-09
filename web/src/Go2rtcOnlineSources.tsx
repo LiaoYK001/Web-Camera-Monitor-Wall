@@ -123,7 +123,7 @@ export default function Go2rtcOnlineSources({ enabled, platform, onCreated }: { 
         {engine !== 'direct' && <>
           <label>优先清晰度<select value={height} onChange={event => setHeight(event.target.value)}>{['360', '480', '720', '1080', '1440', '2160'].map(value => <option key={value} value={value}>{value}p</option>)}</select></label>
           <label>视频兼容策略<select value={video} onChange={event => setVideo(event.target.value)}>
-            <option value="auto">自动 · H264 可直通，否则转换</option><option value="copy">直通 · 不转换编码</option><option value="h264">始终转换 H264</option>
+            <option value="auto">自动 · 兼容 H264 直通，否则转换</option><option value="copy">直通 · 不转换编码</option><option value="h264">始终转换 H264</option>
           </select></label>
           <label>私密 Cookie 配置名（可选）<input value={cookies} onChange={event => setCookies(event.target.value)} maxLength={64} pattern="[A-Za-z0-9_-]+" placeholder="例如：my-account" autoComplete="off" /></label>
         </>}

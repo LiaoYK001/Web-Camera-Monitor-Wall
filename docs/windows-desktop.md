@@ -180,3 +180,20 @@ v4 新增私有 `services/nvr/evidence.py` 运行时契约。导出任务与账�
 The native evidence gate also streams a valid H.264/AAC MP4 larger than 64 MiB through the core with a bounded client hash reader, HEAD, Range, If-Range and ETag validation. A synthetic MP4 free box provides the file-size stress; it is not camera bitrate or decoder qualification. Large media uses a bounded asynchronous proxy rather than the control request pool, retaining the same account identity, permission checks and reader protection.
 
 原生证据门禁另通过核心传输大于 64 MiB 的有效 H.264/AAC MP4，客户端按块计算摘要，并验证 HEAD、Range、If-Range 和 ETag。使用合成 MP4 free box 扩展文件大小，不冒充摄像机码率或解码器验收。大媒体采用有界异步代理，保留账号身份、权限与读保护，并与控制请求 worker 分离。
+
+
+## v4.1 开发中的监看性能调整 / Monitoring performance in v4.1 development
+
+Windows supervisor 设置 `WEBOBS_COMPOSITE_ON_DEMAND=true`。保留 OBS 初始化与 Composite 能力，Direct 监看不会持续发布合成画面或让闲置的 OBS 媒体来源解码。首次经过认证与 Origin 校验的 Composite 播放请求唤醒发布；启动期间返回可重试的 `composite_starting`。协商保温 45 秒，随后按 MediaMTX 实际 reader 数决定是否继续，关闭/崩溃的观看端不会因遗留的 HTTP session 一直占用合成链路。网关状态暂不可读取时保留正在发布的节目。显式文件录制继续保持连续运行。容器和原生开发环境可显式设置此开关，默认值仍为 false。
+
+Windows enables on-demand Composite publishing. Authenticated, Origin-checked playback wakes the publisher; a 45-second negotiation grace period is followed by actual gateway reader checks. An unavailable reader probe conservatively retains the running publisher. Explicit recording remains continuous. Containers/native development can opt in; the configuration default remains false.
+
+Windows Hybrid 的 NVIDIA 路径在已通过现有能力探测时尝试 CUDA 解码；失败先保留 NVENC 编码并退回软件解码，再依原有软件回退开关决定是否使用 x264。H.264 可直通视频不启动视频解码/编码。OBS 来源使用上游每个 codec/device 的硬解探测与软件回退；状态 `auto` 表示策略，不表示每路已证实硬解。
+
+The NVIDIA Hybrid path tries qualified CUDA decoding, then NVENC with software decoding, then the existing optional x264 fallback. Compatible H.264 video stays passthrough. OBS sources use upstream per-codec/device probing and software fallback; `auto` describes policy, not verified hardware decode for every source.
+
+“系统状态 / 视频加速”增加本次桌面进程树（包括 desktop、go2rtc、webobsd、FFmpeg、Python 等）的占用，并排除其他软件的同名 FFmpeg。逐项 CPU 以单逻辑处理器 100% 计量，整体占用按逻辑处理器数折算；首次采样必须等下一次刷新。它不暴露进程参数或摄像机地址。
+
+System status includes the current desktop process tree, excluding unrelated same-name media tools. Per-role CPU uses one logical processor as 100%; the overall value is normalized by the logical processor count. The first useful CPU sample requires the next refresh. No process arguments or camera addresses are exposed.
+
+验收范围与尚未完成的同机 OBS 对照见 [v4.1 草案](release-notes-v4.1.md)。These changes do not yet establish stock OBS performance parity.

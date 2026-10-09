@@ -15,8 +15,10 @@ app.on('window-all-closed',()=>{});
   await app.whenReady();window=new BrowserWindow({show:false,webPreferences:{sandbox:true,contextIsolation:true,nodeIntegration:false}});await window.loadURL('data:text/html,<title>Public online qualification</title>');
   const runtime=path.resolve(option('--runtime')||path.join(root,'desktop/runtime'));
   const frontend=option('--frontend')&&path.resolve(option('--frontend'));
+  const soakSeconds=Number(option('--soak-seconds')||0);
+  if(!Number.isInteger(soakSeconds)||soakSeconds<0||soakSeconds>3600)throw new Error('Soak seconds must be an integer from 0 to 3600');
   const external=option('--sources')&&JSON.parse(await fs.readFile(option('--sources'),'utf8'));
-  if(external&&(!Array.isArray(external)||external.length<1||external.length>8||external.some(s=>!/^[-a-z0-9]{1,64}$/.test(s.name)||!['auto','yt-dlp','streamlink','direct'].includes(s.engine)||!/^https?:\/\//.test(s.address))))throw new Error('Supply 1-8 explicitly selected public sources');
+  if(external&&(!Array.isArray(external)||external.length<1||external.length>8||external.some(s=>!/^[-a-z0-9]{1,64}$/.test(s.name)||!['auto','yt-dlp','streamlink','direct'].includes(s.engine)||(s.video&&!['auto','copy','h264'].includes(s.video))||!/^https?:\/\//.test(s.address))))throw new Error('Supply 1-8 explicitly selected public sources');
   const manifest=await (await import('../src/runtime-integrity.mjs')).verifyRuntime(runtime);manifestRevision=manifest.revision;
   frontendOverride=Boolean(frontend);
   frontendEntrySha256=crypto.createHash('sha256').update(await fs.readFile(path.join(frontend||path.join(runtime,'web'),'index.html'))).digest('hex');
@@ -36,6 +38,11 @@ app.on('window-all-closed',()=>{});
   expect((await context.request.post(base+'/api/v1/auth/setup',{headers:{Origin:base},data})).status()).toBe(201);
   expect((await context.request.post(base+'/api/v1/auth/login',{headers:{Origin:base},data})).status()).toBe(200);
   const page=await context.newPage();page.setDefaultTimeout(15000);
+  let socketBytes=0,socketFrames=0,socketErrors=0;
+  page.on('websocket',socket=>socket.on('framereceived',event=>{
+   if(Buffer.isBuffer(event.payload)){socketFrames++;socketBytes+=event.payload.length;}
+   else {try{if(JSON.parse(event.payload).type==='error')socketErrors++;}catch{}}
+  }));
   // Exercise the current production frontend with the actual authenticated native services.
   if(frontend)await page.route(base+'/**',async route=>{
    const u=new URL(route.request().url());if(u.pathname.startsWith('/api/'))return route.continue();
@@ -44,11 +51,12 @@ app.on('window-all-closed',()=>{});
    const body=await fs.readFile(target).catch(()=>null);if(!body)return route.continue();
    const ext=path.extname(target);await route.fulfill({body,contentType:ext==='.js'?'application/javascript':ext==='.css'?'text/css':ext==='.html'?'text/html':'application/octet-stream'});
   });
-  for(const {name,address,engine} of external||[{name:'private-rtsp',address:rtspAddress,engine:'auto'}]){
+  for(const {name,address,engine,video:videoMode} of external||[{name:'private-rtsp',address:rtspAddress,engine:'auto'}]){
    const start=Date.now();let phase='form';
    try{
     await page.goto(base+'/#go2rtc');const form=page.getByRole('region',{name:'网站与直播源'});
     await form.getByLabel('接入方式').selectOption(engine);await form.getByLabel('流名称',{exact:true}).fill(name);await form.getByLabel('视频网页或直播地址').fill(address);
+    if(videoMode)await form.getByLabel('视频兼容策略').selectOption(videoMode);
     await form.getByRole('button',{name:'保存命名流并重启 go2rtc'}).click();await expect(form.getByRole('status')).toContainText('已保存并加载',{timeout:35000});
     phase='cold-import';
     const cold=page.locator('.go2rtc-stream-list > div').filter({has:page.getByText(name,{exact:true})});await cold.getByRole('button',{name:'检测并添加设备',exact:true}).click();
@@ -73,9 +81,22 @@ app.on('window-all-closed',()=>{});
     const wall=management.getByLabel(name+' 浏览器媒体画面',{exact:true});
     await expect.poll(()=>wall.evaluate(v=>v.readyState>=2&&v.videoWidth>0),{timeout:90000}).toBe(true);
     const wallStamp=await wall.evaluate(v=>v.currentTime);await expect.poll(()=>wall.evaluate(v=>v.currentTime),{timeout:15000}).toBeGreaterThan(wallStamp+1);
+    let soak;
+    if(soakSeconds){
+     phase='monitor-soak';const started=Date.now();let samples=0;
+     while(Date.now()-started<soakSeconds*1000){
+      const frames=await wall.evaluate(v=>v.getVideoPlaybackQuality().totalVideoFrames);
+      await page.waitForTimeout(Math.min(5000,Math.max(0,soakSeconds*1000-(Date.now()-started))));
+      await expect.poll(()=>wall.evaluate(v=>v.getVideoPlaybackQuality().totalVideoFrames),{timeout:15000}).toBeGreaterThan(frames);
+      samples++;if(samples%12===0)console.log('Monitor media soak: '+Math.round((Date.now()-started)/1000)+' seconds with decoded-frame progress');
+     }
+     soak={seconds:Math.round((Date.now()-started)/1000),progressSamples:samples};
+    }
     console.log('Actual monitor wall decoded and advanced after TAKE');
-    await management.close();receipts.push({name,address:external?address:'[private authenticated RTSP fixture]',engine,result:'passed',dimensions,seconds:Math.round((Date.now()-start)/1000),deviceImported:true,coldImport:true,studioPersisted:true,monitorWallDecoded:true});
-   }catch(error){receipts.push({name,address:external?address:'[private authenticated RTSP fixture]',engine,result:'failed',phase,errorType:error.name,seconds:Math.round((Date.now()-start)/1000)});exit=1;await page.screenshot({path:path.join(temporary,name+'-failed.png')}).catch(()=>{});}
+    await management.close();receipts.push({name,address:external?address:'[private authenticated RTSP fixture]',engine,videoMode:videoMode||'auto',result:'passed',dimensions,seconds:Math.round((Date.now()-start)/1000),deviceImported:true,coldImport:true,studioPersisted:true,monitorWallDecoded:true,...(soak?{soak}:{})});
+   }catch(error){
+    const mediaDiagnostic=await page.locator('video').first().evaluate(v=>({readyState:v.readyState,networkState:v.networkState,errorCode:v.error?.code||null,decodedFrames:v.getVideoPlaybackQuality().totalVideoFrames,currentTime:v.currentTime,buffered:Array.from({length:Math.min(v.buffered.length,4)},(_,i)=>[v.buffered.start(i),v.buffered.end(i)])})).catch(()=>null);
+    receipts.push({name,address:external?address:'[private authenticated RTSP fixture]',engine,videoMode:videoMode||'auto',result:'failed',phase,errorType:error.name,seconds:Math.round((Date.now()-start)/1000),mediaDiagnostic,socketBytes,socketFrames,socketErrors});exit=1;await page.screenshot({path:path.join(temporary,name+'-failed.png')}).catch(()=>{});}
    console.log(JSON.stringify(receipts.at(-1)));
   }
   if(!exit&&receipts.length){
