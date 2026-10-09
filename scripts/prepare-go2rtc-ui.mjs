@@ -39,8 +39,26 @@ for (const filename of readdirSync(upstream)) {
   // relative URL from a data: worker's location.
   content = content.replace("const monacoRoot = 'vendor/monaco-editor/min';",
     "const monacoRoot = new URL('vendor/monaco-editor/min', location.href).href;");
+  if (filename === 'config.html') {
+    // Adapt the generated copy only. Fail closed when upstream changes the
+    // editor integration, instead of silently shipping the old early OK alert.
+    const handler = /document\.getElementById\('save'\)\.addEventListener\('click', async \(\) => \{[\s\S]*?\n        \}\);/g;
+    if ([...content.matchAll(handler)].length !== 1) throw new Error('Unexpected upstream config save handler');
+    content = content.replace(handler, `document.getElementById('save').addEventListener('click', async () => {
+            const button = document.getElementById('save');
+            if (button.disabled) return;
+            button.disabled = true;
+            try {
+                const {saveGo2rtcConfig} = await import('./webobs-config-save.js');
+                await saveGo2rtcConfig(editor, dump, value => { dump = value; });
+            } catch {
+                alert('Unable to load the configuration editor integration. Refresh and retry.');
+            } finally { button.disabled = false; }
+        });`);
+  }
   writeFileSync(path.join(output, filename), content);
 }
+cpSync(path.join(root, 'go2rtc/config-save.js'), path.join(output, 'webobs-config-save.js'));
 cpSync(path.join(root, 'go2rtc/go2rtc/LICENSE'), path.join(output, 'GO2RTC-LICENSE'));
 cpSync(path.join(root, 'go2rtc/dependencies.lock.json'), path.join(output, 'dependencies.lock.json'));
 console.log('Prepared complete go2rtc WebUI with local third-party assets.');

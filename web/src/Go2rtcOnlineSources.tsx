@@ -76,7 +76,8 @@ export default function Go2rtcOnlineSources({ enabled, platform, onCreated }: { 
         const response = await fetch('/api/v1/go2rtc/api/config', { method: 'PATCH', credentials: 'same-origin', cache: 'no-store', signal,
           headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ streams: { [name]: [source] } }) });
         if (!response.ok) throw new Error(response.status === 403 ? '添加源需要系统设置管理权限。' : '流未保存，请检查 go2rtc 配置是否可写后重试。');
-        await fetch('/api/v1/go2rtc/api/restart', { method: 'POST', credentials: 'same-origin', cache: 'no-store', signal }).catch(reason => { if (signal.aborted) throw reason; });
+        const restart = await fetch('/api/v1/go2rtc/api/restart', { method: 'POST', credentials: 'same-origin', cache: 'no-store', signal });
+        if (!restart.ok) throw new Error('流已保存，但重载请求失败。请检查 go2rtc 状态后在官方配置中保存并重启。');
         while (!signal.aborted) {
           const active = await fetch('/api/v1/go2rtc/api/streams', { credentials: 'same-origin', cache: 'no-store', signal }).catch(() => null);
           if (active?.ok && Object.hasOwn(await active.json(), name)) return;

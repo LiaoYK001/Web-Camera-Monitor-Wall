@@ -9,7 +9,7 @@ test.beforeEach(async ({ page }) => {
     if (url.pathname === '/api/v1/go2rtc/api') return route.fulfill({ json: { version: '1.9.14' } });
     if (url.pathname === '/api/v1/go2rtc/api/streams') return route.fulfill({ json: {} });
     if (url.pathname === '/api/v1/go2rtc/api/config') return route.fulfill({ contentType: 'application/yaml', body: 'streams: {}' });
-    if (url.pathname === '/api/v1/go2rtc/api/restart') return route.fulfill({ json: {} });
+    if (url.pathname === '/api/v1/go2rtc/api/restart') return route.fulfill({ status: 202, json: {status: 'restarting'} });
     if (url.pathname === '/api/v1/cameras') return route.fulfill({ json: { cameras: [] } });
     return route.fulfill({ status: 404, json: {} });
   });
@@ -96,4 +96,16 @@ test('failed writes retain the draft and never announce success', async ({ page 
   await page.getByRole('button', { name: '保存命名流并重启 go2rtc' }).click();
   await expect(page.getByRole('region', { name: '网站与直播源' }).getByRole('alert')).toContainText('流未保存');
   await expect(page.getByLabel('流名称', { exact: true })).toHaveValue('retry');
+});
+
+test('a saved source with a rejected reload retains its draft and reports the failed restart', async ({page}) => {
+  await page.route('**/api/v1/go2rtc/api/restart', route => route.fulfill({status: 503, json: {}}));
+  await page.goto('/#/go2rtc');
+  await page.getByLabel('流名称', {exact: true}).fill('retry-reload');
+  await page.getByLabel('视频网页或直播地址').fill('https://example.test/video');
+  await page.getByRole('button', {name: '保存命名流并重启 go2rtc'}).click();
+  const form = page.getByRole('region', {name: '网站与直播源'});
+  await expect(form.getByRole('alert')).toContainText('流已保存，但重载请求失败');
+  await expect(form.getByLabel('流名称', {exact: true})).toHaveValue('retry-reload');
+  await expect(form.getByRole('status')).toHaveCount(0);
 });

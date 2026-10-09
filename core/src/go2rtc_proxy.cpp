@@ -45,6 +45,16 @@ public:
         upgrade_ = beast::websocket::is_upgrade(request_);
         clean.set(http::field::connection, upgrade_ ? "Upgrade" : "close");
         clean.body() = std::move(request_.body());
+        // Upstream's restart uses syscall.Exec, which cannot restart Windows.
+        // Request a supervised replacement on every platform instead. Exit 75
+        // is reserved by go2rtc/runtime.py for this intentional restart.
+        const auto target = clean.target();
+        if (clean.method() == http::verb::post &&
+            target.substr(0, target.find('?')) == "/api/v1/go2rtc/api/restart") {
+            restarting_ = true;
+            clean.target("/api/v1/go2rtc/api/exit?code=75");
+            clean.body().clear();
+        }
         clean.prepare_payload();
         request_ = std::move(clean);
         parser_.header_limit(16 * 1024);
@@ -70,6 +80,11 @@ private:
     {
         http::async_read_header(upstream_, header_buffer_, parser_,
             [self = shared_from_this()](beast::error_code error, std::size_t) {
+                // /api/exit terminates without writing an HTTP response. Only
+                // a complete request followed by an empty EOF is acceptance;
+                // connect/write failures, timeouts and partial headers fail.
+                if (self->restarting_ && error == http::error::end_of_stream)
+                    return self->restart_accepted();
                 if (error) return self->unavailable();
                 self->reply_ = self->parser_.release();
                 if (self->reply_.result_int() == 101 && !self->upgrade_) return self->unavailable();
@@ -138,13 +153,24 @@ private:
             });
     }
 
+    void restart_accepted()
+    {
+        respond(http::status::accepted, R"({"status":"restarting"})");
+    }
+
     void unavailable()
     {
-        failure_ = {http::status::service_unavailable, 11};
+        respond(http::status::service_unavailable,
+            R"({"error":{"code":"go2rtc_unavailable","message":"go2rtc service is unavailable"}})");
+    }
+
+    void respond(http::status status, std::string body)
+    {
+        failure_ = {status, 11};
         failure_.set(http::field::content_type, "application/json");
         failure_.set(http::field::cache_control, "no-store");
         failure_.keep_alive(false);
-        failure_.body() = R"({"error":{"code":"go2rtc_unavailable","message":"go2rtc service is unavailable"}})";
+        failure_.body() = std::move(body);
         failure_.prepare_payload();
         downstream_.expires_after(std::chrono::seconds(5));
         http::async_write(downstream_, failure_,
@@ -169,6 +195,7 @@ private:
     beast::flat_buffer header_buffer_;
     std::array<char, 16384> server_bytes_{}, client_bytes_{};
     bool upgrade_ = false;
+    bool restarting_ = false;
 };
 } // namespace
 

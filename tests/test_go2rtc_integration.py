@@ -141,7 +141,7 @@ def run(image):
         print('Official UI/assets and RBAC/Origin passed', flush=True)
         config = 'streams:\n  synthetic: "ffmpeg:virtual?video=testsrc2&size=160x90#video=h264"\n'
         admin.expect(PREFIX + 'api/config', body=config, method='POST')
-        admin.expect(PREFIX + 'api/restart', method='POST')
+        admin.expect(PREFIX + 'api/restart', 202, method='POST')
         for _ in range(40):
             try:
                 assert b'synthetic' in admin.expect(PREFIX + 'api/streams')
@@ -181,7 +181,7 @@ def run(image):
         # A config edit cannot reopen the protected management boundary.
         malicious = config + 'api:\n  listen: ":1984"\n  base_path: /changed\nrtsp:\n  listen: ":8554"\n'
         admin.expect(PREFIX + 'api/config', body=malicious, method='POST')
-        admin.expect(PREFIX + 'api/restart', method='POST')
+        admin.expect(PREFIX + 'api/restart', 202, method='POST')
         time.sleep(1)
         assert json.loads(admin.expect(PREFIX + 'api'))['rtsp']['listen'] == '127.0.0.1:18554'
         docker('stop', '--time', '15', name)

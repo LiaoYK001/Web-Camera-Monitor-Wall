@@ -7,7 +7,7 @@ const base = '/api/v1/go2rtc/';
 const pages = [
   { id: '', label: '流管理', description: '查看、添加和测试协议转换后的流。' },
   { id: 'add.html', label: '设备与发现', description: '使用 go2rtc 官方设备发现与协议接入工具。' },
-  { id: 'config.html', label: '配置', description: '编辑完整 YAML 配置，保存后由 go2rtc 重启应用。' },
+  { id: 'config.html', label: '配置', description: '编辑完整 YAML 配置，保存后重新加载 go2rtc，现有桥接播放会短暂中断。' },
   { id: 'log.html', label: '日志', description: '查看 go2rtc 的运行日志与连接问题。' },
 ];
 
@@ -21,8 +21,17 @@ export default function Go2rtcWorkspace({ onDevices }: { onDevices: () => void }
   const [configDirty, setConfigDirty] = useState(false);
   const [onlineRuntime, setOnlineRuntime] = useState({ enabled: false, platform: '' });
   const [streamsGeneration, setStreamsGeneration] = useState(0);
+  const [configRevision, setConfigRevision] = useState(0);
   const frame = useRef<HTMLIFrameElement>(null);
   useDesktopWork('go2rtc-config', configDirty);
+  useEffect(() => {
+    const reloaded = (event: MessageEvent) => {
+      if (event.origin === window.location.origin && event.source === frame.current?.contentWindow &&
+          event.data?.type === 'webobs:go2rtc-reloaded') setConfigRevision(value => value + 1);
+    };
+    window.addEventListener('message', reloaded);
+    return () => window.removeEventListener('message', reloaded);
+  }, []);
   useEffect(() => {
     const controller = new AbortController();
     void fetchRuntimeInfo(controller.signal).then(info => {
@@ -77,7 +86,7 @@ export default function Go2rtcWorkspace({ onDevices }: { onDevices: () => void }
       <p>配置与日志可能包含设备凭据，仅供管理员使用。修改流名称时，需要同步更新监控墙中的来源。</p>
     </div>
     {state === 'ready' && selected !== 'config.html' && <Go2rtcOnlineSources enabled={onlineRuntime.enabled} platform={onlineRuntime.platform} onCreated={() => setStreamsGeneration(value => value + 1)} />}
-    <Go2rtcStreams refreshKey={streamsGeneration} />
+    <Go2rtcStreams refreshKey={streamsGeneration + configRevision} />
     <nav className="go2rtc-tabs" aria-label="go2rtc 页面">{pages.map((page) => <button type="button" key={page.id} aria-pressed={selected === page.id}
       className={selected === page.id ? 'active' : ''} onClick={() => setSelected(page.id)}>{page.label}</button>)}</nav>
     <p className="go2rtc-description">{pages.find((page) => page.id === selected)?.description}</p>

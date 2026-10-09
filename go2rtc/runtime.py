@@ -16,6 +16,8 @@ import urllib.request
 
 stopping = threading.Event()
 child = None
+# The authenticated product proxy maps POST api/restart to api/exit?code=75.
+RESTART_EXIT_CODE = 75
 
 
 def prepare_config(path: Path, template: Path) -> None:
@@ -51,7 +53,12 @@ def stop_child() -> None:
     if child is None:
         return
     try:
-        if os.name == 'nt': child.send_signal(signal.CTRL_BREAK_EVENT)
+        if os.name == 'nt':
+            # Each generation owns a nested Job, including any FFmpeg children.
+            # Closing/killing its host also cleans descendants after api/exit.
+            if child.poll() is None and child.stdin is not None:
+                child.stdin.write(b'shutdown\n')
+                child.stdin.flush()
         else: os.killpg(child.pid, signal.SIGTERM)
     except OSError:
         if child.poll() is None:
@@ -72,8 +79,13 @@ def supervise(binary: Path, config: Path, template: Path, static_dir: Path) -> i
     os.umask(0o077)
     attempts = 0
     while not stopping.is_set():
-        child = subprocess.Popen([str(binary), '-config', str(config), '-config', runtime_overlay(static_dir)],
-                                 cwd=config.parent, stdin=subprocess.DEVNULL, start_new_session=os.name != 'nt', creationflags=subprocess.CREATE_NEW_PROCESS_GROUP if os.name == 'nt' else 0)
+        command = [str(binary), '-config', str(config), '-config', runtime_overlay(static_dir)]
+        if os.name == 'nt':
+            command = [str(binary.with_name('webobs-job.exe')), '--console', *command]
+        child = subprocess.Popen(command, cwd=config.parent,
+                                 stdin=subprocess.PIPE if os.name == 'nt' else subprocess.DEVNULL,
+                                 start_new_session=os.name != 'nt',
+                                 creationflags=subprocess.CREATE_NO_WINDOW if os.name == 'nt' else 0)
         ready = False
         for _ in range(100):
             if stopping.is_set() or child.poll() is not None:
@@ -102,10 +114,16 @@ def supervise(binary: Path, config: Path, template: Path, static_dir: Path) -> i
             except ProcessLookupError:
                 pass
             child.wait()
+        if child.stdin is not None:
+            child.stdin.close()
         if stopping.is_set():
             return 0
-        # Save & Restart uses upstream exec and keeps the same PID. This handles
-        # actual exits/crashes with a bounded retry budget instead of spinning.
+        if child.returncode == RESTART_EXIT_CODE:
+            print('go2rtc configuration restart requested', flush=True)
+            continue
+        # Deliberate reloads do not consume or reset the bounded crash budget.
+        # The pinned binary only exits with 75 when api/exit explicitly asks it
+        # to. A fast Save can arrive before our readiness poll observes it.
         attempts += 1
         if attempts >= 5:
             print('go2rtc repeatedly exited; supervisor stopped', file=sys.stderr, flush=True)
