@@ -31,6 +31,10 @@ Each public route also passed two actual RTSP connections and FFmpeg decoding, f
 4. UI 创建 Studio 场景并保存；检查后端设备身份引用和刷新后保留。
 5. 正常停止并重启完整产品；重新登录，核对命名流、设备身份和场景。
 
+补充主页检查：保存 Studio 后执行 `TAKE`，在“监看 Monitor”要求真实视频尺寸有效且时间推进；整产品重启后再次检查当前 Program 的主页解码。公开 DW / Al Jazeera 的三个解析路径及带认证 RTSP 已通过 Take 后主页检查，随后把重启后主页恢复加入固定门禁。Studio 保存本身只保存 Preview，仍需 Take 才进入 Program。
+
+The extended gate performs Take, verifies actual advancing video on Monitor, then verifies the active Program again after full-product restart. All three public routes and authenticated RTSP passed the initial monitor-wall checks before adding restart playback to the deterministic gate. Saving Studio preserves Preview; Take selects Program.
+
 The default gate uses an isolated authenticated synthetic RTSP server, actual UI actions and native services. It requires ready tracks, advancing decoded video, persisted Studio references and full-product restart persistence. It never modifies an existing installation. Failures retain the private temporary profile for diagnosis; successful runs clean it after Electron exits. Do not attach private profiles/configuration/logs to a public release.
 
 ```powershell

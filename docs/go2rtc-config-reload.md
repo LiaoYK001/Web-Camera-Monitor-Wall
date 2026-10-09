@@ -12,9 +12,9 @@ For v4.0, save the configuration, dismiss the dialog, then exit WebOBS normally 
 
 ## 开发分支修复 / Development fix
 
-修复始于 `72e0bf055ce49af226d41238e9f39b47b5585c5b`（`dev`），后续补齐 Windows 退出时连接重置的处理。完整 Windows 测试候选为 `4.0.1-dev.4`，不是正式 `v4.0.1`；现有公开 v4.0 安装包不包含本修复。
+修复始于 `72e0bf055ce49af226d41238e9f39b47b5585c5b`（`dev`），后续补齐 Windows 退出时连接重置的处理。下一轮完整 Windows 测试候选为 `4.0.1-dev.5`，不是正式 `v4.0.1`；现有公开 v4.0 安装包不包含本修复。
 
-The fix starts at `72e0bf055ce49af226d41238e9f39b47b5585c5b` on `dev`, followed by Windows exit/reset handling. The Windows test candidate is `4.0.1-dev.4`, not a stable `v4.0.1` release. Published v4.0 installers remain unchanged.
+The fix starts at `72e0bf055ce49af226d41238e9f39b47b5585c5b` on `dev`, followed by Windows exit/reset handling. The next Windows test candidate is `4.0.1-dev.5`, not a stable `v4.0.1` release. Published v4.0 installers remain unchanged.
 
 - 产品认证代理将重启请求转为固定退出码 `75`；监督器仅替换 go2rtc，重新读取私密配置，保留其他服务与登录会话。/ The authenticated proxy requests reserved exit code `75`; the supervisor replaces only go2rtc, preserving other services and sessions.
 - 连续保存，包括早于监督器就绪轮询的快速保存，不消耗或重置异常重试预算。/ Repeated saves, including saves before the readiness poll observes startup, neither consume nor reset the crash budget.
@@ -43,3 +43,7 @@ The second dev.2 attempt passed native compilation, both CTests and all seven re
 第三轮 [`4.0.1-dev.3` / #50](https://github.com/LiaoYK001/Web-Camera-Monitor-Wall/actions/runs/37917871396) 完整通过原生编译、CTest、七次认证代理重载、产品重启后保留、真实 Electron 入口、完整打包和 NSIS 安装/卸载。它包含配置重载修复，但没有随后发现的 RTSP 自动识别/UI 改动；后者与新增冷导入、MSE、Studio 门禁进入 dev.4，仍需新构建。公开 YouTube 实测与边界见[网站接入验收](online-source-validation-v4.md)。
 
 The dev.3 full Windows run passed compilation, CTest, seven authenticated reloads, restart persistence, actual Electron entry, packaging and NSIS install/uninstall. It predates the additional RTSP automatic-selection/UI changes; those and the new cold import/MSE/Studio gate require dev.4 qualification. Public YouTube checks are recorded separately.
+
+第四轮 [`4.0.1-dev.4` / #51](https://github.com/LiaoYK001/Web-Camera-Monitor-Wall/actions/runs/37922913145) 的真实 RTSP 表单、冷导入、MSE 解码、Studio 保存与整产品重启保留均通过，真实 Electron 入口与 NSIS 文件生成也通过。但最终融合 ASAR 的启动检查在 120 秒内未获得后端健康响应；日志停在运行时校验完成，不能据此确定卡住的准备阶段，也不能将此轮计为完整成功。dev.5 补充固定阶段及工具名称的私密启动诊断，继续保留原 120 秒预算；新增 Take 后监控墙实际解码、整产品重启后主页恢复检查。
+
+The dev.4 run passed actual RTSP form entry, cold import, MSE decoding, Studio persistence, full-product restart and the Electron entry; NSIS generation also completed. Its fused-ASAR startup check did not receive backend health within the existing 120-second budget. The last recorded stage was runtime verification, which does not identify the stalled preparation step. This is a failed full candidate. Dev.5 adds private fixed-stage/tool-name diagnostics without changing that budget, plus decoded monitor-wall playback after Take and after a full restart.

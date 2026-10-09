@@ -67,7 +67,14 @@ app.on('window-all-closed',()=>{});
     const dialog=management.getByRole('dialog',{name:'新建场景',exact:true});await dialog.getByLabel('场景名称').fill(name);await dialog.getByRole('checkbox',{name,exact:true}).check();await dialog.getByRole('button',{name:'应用到草稿'}).click();await management.getByRole('button',{name:'保存并应用',exact:true}).click();
     await expect.poll(async()=>{const studio=await (await context.request.get(base+'/api/v1/studio')).json();return studio.scenes.some(s=>s.name===name&&s.sources.some(source=>source.cameraId===camera.id))},{timeout:20000}).toBe(true);
     await management.reload();await expect(management.getByRole('button',{name:'选择场景 '+name,exact:true})).toBeVisible();
-    await management.close();receipts.push({name,address:external?address:'[private authenticated RTSP fixture]',engine,result:'passed',dimensions,seconds:Math.round((Date.now()-start)/1000),deviceImported:true,coldImport:true,studioPersisted:true});
+    phase='take';await management.getByRole('button',{name:'TAKE',exact:true}).click();
+    await expect.poll(async()=>{const studio=await (await context.request.get(base+'/api/v1/studio')).json();return studio.scenes.find(s=>s.id===studio.programSceneId)?.name},{timeout:20000}).toBe(name);
+    phase='monitor-wall';await management.goto(base+'/#monitor');
+    const wall=management.getByLabel(name+' 浏览器媒体画面',{exact:true});
+    await expect.poll(()=>wall.evaluate(v=>v.readyState>=2&&v.videoWidth>0),{timeout:90000}).toBe(true);
+    const wallStamp=await wall.evaluate(v=>v.currentTime);await expect.poll(()=>wall.evaluate(v=>v.currentTime),{timeout:15000}).toBeGreaterThan(wallStamp+1);
+    console.log('Actual monitor wall decoded and advanced after TAKE');
+    await management.close();receipts.push({name,address:external?address:'[private authenticated RTSP fixture]',engine,result:'passed',dimensions,seconds:Math.round((Date.now()-start)/1000),deviceImported:true,coldImport:true,studioPersisted:true,monitorWallDecoded:true});
    }catch(error){receipts.push({name,address:external?address:'[private authenticated RTSP fixture]',engine,result:'failed',phase,errorType:error.name,seconds:Math.round((Date.now()-start)/1000)});exit=1;await page.screenshot({path:path.join(temporary,name+'-failed.png')}).catch(()=>{});}
    console.log(JSON.stringify(receipts.at(-1)));
   }
@@ -85,6 +92,11 @@ app.on('window-all-closed',()=>{});
     receipt.restartPersistence=true;
    }
    console.log('Named streams, device identity and Studio retained after complete product restart');
+   const last=receipts.at(-1),monitor=await restored.newPage();await monitor.goto(base+'/#monitor');
+   const wall=monitor.getByLabel(last.name+' 浏览器媒体画面',{exact:true});
+   await expect.poll(()=>wall.evaluate(v=>v.readyState>=2&&v.videoWidth>0),{timeout:110000}).toBe(true);
+   const stamp=await wall.evaluate(v=>v.currentTime);await expect.poll(()=>wall.evaluate(v=>v.currentTime),{timeout:15000}).toBeGreaterThan(stamp+1);
+   last.monitorWallAfterRestart=true;console.log('Actual Program monitor wall resumed after complete product restart');
   }
  }catch(error){exit=1;console.error('Native source UI qualification failed: '+error.name);}
  finally{

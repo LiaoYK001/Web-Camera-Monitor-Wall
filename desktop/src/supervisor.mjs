@@ -24,6 +24,8 @@ export class Supervisor extends EventEmitter {
   python(script, ...args) { return [path.join(this.runtime, 'python', 'python.exe'), '-B', path.join(this.runtime, 'services', script), ...args]; }
   async tool(script, args = [], timeout = 120000) {
     const command = this.python(script, ...args);
+    // Fixed tool names only: arguments can include private paths or backup data.
+    this.emit('diagnostic', `Native tool starting: ${script}`);
     return new Promise((resolve,reject) => {
       const child = spawn(this.executable('webobs-job'), ['--stdio', ...command], { env: { ...(this.env || cleanEnvironment(process.env)), PYTHONUTF8:'1', PYTHONIOENCODING:'utf-8', WEBOBS_OWNER_STDIN: 'false' }, windowsHide: true, stdio: ['pipe','pipe','pipe'] });
       let output = '', errors = ''; const timer = setTimeout(() => { child.kill(); reject(new Error('Native tool timed out')); }, timeout);
@@ -32,6 +34,7 @@ export class Supervisor extends EventEmitter {
       child.on('error', error => { clearTimeout(timer); reject(error); });
       child.on('exit', async code => {
         clearTimeout(timer);
+        this.emit('diagnostic', `Native tool exited: ${script} (${code})`);
         if(code === 0)resolve(output);
         else {
           const log=path.join(this.root,'logs','native-tools.log');
@@ -55,6 +58,7 @@ export class Supervisor extends EventEmitter {
     const run = (...names) => path.join(this.root, 'run', ...names);
     this.lanIPs = this.settings.lanEnabled ? lanAddresses() : [];
     if (this.settings.lanEnabled && !this.lanIPs.length) throw new Error('局域网共享已开启，但没有私有 IPv4 地址。连接局域网后重试，或关闭共享。');
+    this.emit('diagnostic', 'Preparing protected backup key');
     if (!this.safeStorage.isEncryptionAvailable()) throw new Error('Windows DPAPI 不可用，无法保护本机备份密钥。');
     const protectedKey = path.join(this.root,'backup-key.dpapi');
     let key;
@@ -65,6 +69,7 @@ export class Supervisor extends EventEmitter {
     }
     if (!/^[a-f0-9]{64}$/.test(key)) throw new Error('Invalid protected backup key');
     await writeFile(run('backup.key'), Buffer.from(key,'hex'), { mode: 0o600 });
+    this.emit('diagnostic', 'Protected backup key prepared');
     const localOrigins = [this.origin, ...this.lanIPs.map(ip => `https://${ip}:${this.settings.lanPort}`)];
     this.env = { ...cleanEnvironment(process.env),
       PATH: [path.join(this.runtime,'bin'),path.join(this.runtime,'obs','bin','64bit'),path.join(this.runtime,'python'),path.join(process.env.SystemRoot || 'C:\\Windows','System32')].join(path.delimiter),
