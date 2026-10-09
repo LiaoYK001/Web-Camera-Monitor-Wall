@@ -1017,6 +1017,11 @@ ExitCode run_obs_engine(const Config &config, const SceneDocument &document)
         const auto now = std::chrono::steady_clock::now();
         if (demand_driven && whip_output && now >= next_demand_check) {
             next_demand_check = now + std::chrono::seconds(2);
+            if (whip_output_state.stopped.load() && !obs_output_active(whip_output.get())) {
+                runtime_status.webrtc_ready.store(false);
+                runtime_status.composite_idle.store(true);
+                scene_runtime.deactivate();
+            }
             const bool requested = control_server.composite_requested();
             if (requested && !obs_output_active(whip_output.get()) && now >= next_publish_retry) {
                 scene_runtime.activate();

@@ -17,7 +17,7 @@ v4.1 has not been released. Existing v4.0 assets do not contain these changes. T
 
 - 前端 typecheck/build；相关浏览器回归 24 项通过。Frontend typecheck/build and 24 focused browser checks passed.
 - Desktop 单元 48 项通过；原生 Python 15 项中 7 项通过、8 项因本机未构建正式运行时跳过。Desktop unit checks passed; local Python runtime checks distinguish seven passes from eight runtime-dependent skips.
-- Linux/WSL 编译、CTest 2 项通过；实际 OBS→WHIP→MediaMTX→RTSP 解码验证待机、观看超过保温期、关闭后停止、再次启动与健康状态。Linux/WSL compilation and two CTest cases passed; real encode/transport/decode exercised demand lifecycle. This is separate from Windows qualification.
+- Linux/WSL 编译、CTest 2 项通过；实际 OBS→WHIP→MediaMTX→RTSP 解码验证待机、观看超过保温期、关闭后停止、强制踢出发布连接后恢复与健康状态。网站助手另通过 MP4/HLS 实际解码、重复连接及首次 HTTP 请求中断恢复。Linux/WSL compilation and two CTest cases passed; real transport exercised demand lifecycle and publisher fault recovery. The website helper passed MP4/HLS decoding, reconnect and initial HTTP disconnect recovery. These are separate from complete Windows candidate qualification.
 - 2560×1440/25fps 合成 HEVC → NVENC 的单路 20 秒试验：软件解码 3.375 CPU 秒、CUDA 解码 3.312 CPU 秒（本机 9950X3D/RTX3090）。样本差异很小，不能据此宣称显著优化，更不是暗夜精灵或 OBS 对照。A short synthetic decode sample showed little CPU difference and establishes neither significant savings nor stock OBS parity.
 - 用户指定的 YouTube 回放：独立 RTSP 解码五分钟通过；旧候选自动直通的完整浏览器流程复现无画面；同候选显式 H.264 转换通过实际主页连续解码十分钟及完整重启恢复。实际输入含 B 帧；新版自动策略的独立 RTSP 解码已通过，完整新版候选仍待验收。The reported replay failed browser playback with old automatic passthrough; explicit H.264 conversion passed ten minutes of real monitor decoding and full restart recovery. The new automatic policy passed independent RTSP decoding; complete candidate qualification remains pending.
 

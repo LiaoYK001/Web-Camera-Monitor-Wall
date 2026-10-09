@@ -55,7 +55,7 @@ app.on('window-all-closed', () => {});
       assert.ok(result.ok, `authenticated native route failed (${route}, ${result.status})`);
       await result.arrayBuffer();
     }
-    await require('./native-composite-demand.cjs').exerciseCompositeDemand(origin, headers);
+    await require('./native-composite-demand.cjs').exerciseCompositeDemand(origin, headers, supervisor.ports.gatewayApi);
     const { exerciseNativeSync } = require('./native-sync-contract.cjs');
     const assertSyncPersisted = await exerciseNativeSync(origin, headers);
     await require('./native-preference-json.cjs').exercisePreferenceJson(origin, headers);
