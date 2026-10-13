@@ -88,13 +88,17 @@ Validation uses real locked extractors, FFmpeg and go2rtc against local syntheti
 
 Named streams support filtered selection and sequential batch import/probing. Successful entries are retained, failed selections can be retried, and stopping completes the current device. An uncertain write pauses the queue until its original device ID is reconciled.
 
+已建档流提供“重新探测轨道”，复用原设备 ID，失败不重复创建设备。轨道探测提交短请求并轮询有界任务，完成后再通过短 POST 核对当前状态及广播；最多保留 16 个任务、5 分钟过期，实际探测仍受现有 4 路并发限制。产品内部 go2rtc 探测最多 90 秒，前端整体等待最多 120 秒，各 HTTP 请求沿用原上限。队列满或探测失败会显示可重试状态；修改来源时拒绝旧结果写回。任务只保存在内存，服务重启后需重新探测，取消页面等待不强制终止共享探测。
+
+Imported streams can re-probe without changing device identity. Short submission/poll/completion requests avoid holding the proxy open. At most 16 in-memory jobs expire after five minutes; the existing four-probe concurrency limit remains. Product-loopback go2rtc probes use 90 seconds within a 120-second frontend wait, preserving individual HTTP limits. Failed/full jobs can retry, edited sources reject stale results, and restarting the service discards jobs. Cancelling one waiter does not kill a shared probe.
+
 网站保留按所选清晰度寻找最佳兼容格式的顺序，不为优先合并音视频而降清晰度。非直播 H.264 在按需启动时用固定 FFprobe 做最多 6 秒、1 MiB/1 秒探测预算的重排序兼容性检查：无 B 帧才能自动直通，存在 B 帧或未确认则转为无 B 帧 H.264。在线直播 H.264 保持原直通规则；显式“直通”不自动转换。原有 RTSP 直通入口不走此网站探测。429/500/502/503/504 使用已有有界 HTTP 退避；403 不持续重试过期 URL。
 
 Website format selection preserves the best compatible quality up to the selected height rather than preferring a lower-resolution combined stream. On-demand non-live H.264 uses a fixed FFprobe with a six-second deadline and 1 MiB/one-second analysis budget: verified reorder-free video passes through; reordered or unverified VOD uses zero-B-frame H.264 conversion. Live H.264 retains passthrough, explicit copy never forces conversion, and direct RTSP bypasses this website probe. Transient 429/500/502/503/504 use bounded HTTP backoff; expired 403 URLs are not retried indefinitely.
 
-Windows 原生来源门禁可追加 `--soak-seconds 600`（每源 0–3600 秒），逐段确认主页真实解码帧持续增长。失败回执仅保留允许的媒体状态、缓冲时间范围和 WebSocket 字节/错误数量，不保存签名媒体 URL。
+Windows 原生来源门禁可追加 `--soak-seconds 600`（每源 0–3600 秒），确保视频处于可见视口，要求 `requestVideoFrameCallback` 并逐段检查总帧减丢弃帧的增长，整应用重启后同样要求实际呈现。失败回执仅保留允许的媒体状态、缓冲时间范围和 WebSocket 字节/错误数量，不保存签名媒体 URL。
 
-The native source UI gate accepts `--soak-seconds 600` (0–3600 seconds per source) and checks decoded-frame progress on the actual monitor wall. Failed receipts retain only allowed media state, buffered time ranges and socket counters, never signed media URLs. Restart failures record their phase separately from a completed soak; socket errors use a fixed category allowlist.
+The native source UI gate accepts `--soak-seconds 600` (0–3600 seconds per source), brings video into the viewport, requires frame callbacks and checks non-dropped frame progress, including after full restart. Failed receipts retain only allowed media state, buffered time ranges and socket counters, never signed media URLs. Restart failures record their phase separately from a completed soak; socket errors use a fixed category allowlist.
 
 产品内部 go2rtc 回环 RTSP 路径的冷启动预算与网站助手对齐：Direct 来源等待最多 90 秒，Hybrid 在启动前用固定 FFprobe 等待最多 90 秒，发布启动最多 95 秒；实际 FFmpeg 媒体读取仍为 8 秒，普通摄像机维持原预算。启动探测临时读取同一条回环 Direct 路径，退出后立即由转码器接续，网关复用已有来源；不会额外持续连接摄像机。单次 WHEP 信令仍为 15 秒，浏览器沿原有退避重试，提取过程不会被较短的 Hybrid 输入等待提前终止。只识别本产品运行时的 go2rtc 回环监听地址，不接受前端提供任意等待时长；退出观看后仍按需停止。
 

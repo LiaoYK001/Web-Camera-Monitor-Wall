@@ -370,10 +370,36 @@ export const batchSourceCatalog = (items: Array<Record<string, unknown>>) =>
     method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ items }),
   });
 export const probeSourceProfile = (cameraId: string, profileId: string, signal?: AbortSignal) =>
-  clientAdminRequest<{ cameraId: string; profile: SourceCatalogItem['profiles'][number] }>(
-    `/source-catalog/${encodeURIComponent(cameraId)}/profiles/${encodeURIComponent(profileId)}/probe`, {
-      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}', signal,
+  probeSourceProfileQueued(cameraId, profileId, signal);
+export async function probeSourceProfileQueued(cameraId: string, profileId: string, parentSignal?: AbortSignal) {
+  type Result = { cameraId: string; profile: SourceCatalogItem['profiles'][number] };
+  type Job = { jobId?: string; state: 'pending' | 'completed' | 'failed'; profile?: Result['profile']; cameraId?: string };
+  const path = `/source-catalog/${encodeURIComponent(cameraId)}/profiles/${encodeURIComponent(profileId)}`;
+  const { withRequestTimeout } = await import('./requestTimeout');
+  return withRequestTimeout(120000, async signal => {
+    const first = await clientAdminRequest<Result | Job>(path + '/probe', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ async: true }), signal,
     });
+    if ('profile' in first && first.profile) return first as Result; // Compatibility with an older backend.
+    const jobId = 'jobId' in first ? first.jobId : undefined;
+    if (!jobId || !/^[a-f0-9]{32}$/.test(jobId)) throw new Error('服务未确认轨道探测任务，请刷新后重试。');
+    for (;;) {
+      await new Promise<void>((resolve, reject) => {
+        const abort = () => { clearTimeout(timer); reject(signal.reason ?? new DOMException('探测等待已取消', 'AbortError')); };
+        const timer = window.setTimeout(() => { signal.removeEventListener('abort', abort); resolve(); }, 500);
+        signal.addEventListener('abort', abort, { once: true });
+        if (signal.aborted) abort();
+      });
+      const result = await clientAdminRequest<Job>(path + '/probe-jobs/' + jobId, { signal });
+      // A short completion POST reuses the normal status notification and
+      // verifies the profile has not changed since this job finished.
+      if (result.state === 'completed' && result.profile) return clientAdminRequest<Result>(path + '/probe', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ jobId }), signal,
+      });
+      if (result.state !== 'pending') throw new Error('轨道探测未完成，请检查来源或重新探测；已添加的设备仍保留。');
+    }
+  }, parentSignal);
+}
 export interface LegacySourceImportItem { sourceId: string; state: 'linked' | 'ready_to_import' | 'needs_configuration'; reason?: string; cameraId?: string; profileId?: string; }
 export interface LegacySourceImportStatus { schemaVersion: 1; baseRevision: number; items: LegacySourceImportItem[]; count: number; }
 export const fetchLegacySourceImport = (signal?: AbortSignal) =>

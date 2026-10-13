@@ -5,6 +5,7 @@
 #include "webobs/go2rtc_proxy.hpp"
 #include "webobs/nvr_media_proxy.hpp"
 #include "webobs/audio_tracks.hpp"
+#include "webobs/receiver_codecs.hpp"
 #include "webobs/audit_event.hpp"
 #include "webobs/scene_controller.hpp"
 #include "webobs/studio_controller.hpp"
@@ -697,6 +698,7 @@ struct ResolvedCameraEndpoint {
     std::string transport_mode;
     std::optional<std::vector<AudioTrackDescriptor>> probed_audio_tracks;
     bool video_reordering = false;
+    bool video_reordering_known = false;
 };
 
 std::optional<ResolvedCameraEndpoint> resolve_camera_endpoint(std::string_view camera_id,
@@ -740,6 +742,7 @@ std::optional<ResolvedCameraEndpoint> resolve_camera_endpoint(std::string_view c
         if (json_t *transport = json_object_get(root, "transportMode"); json_is_string(transport))
             result->transport_mode = json_string_value(transport);
         result->video_reordering = json_is_true(json_object_get(root, "videoReordering"));
+        result->video_reordering_known = json_is_true(json_object_get(root, "videoReorderingKnown"));
         if (json_is_true(json_object_get(root, "tracksProbed")) && json_is_array(json_object_get(root, "audioTracks"))) {
             json_t *probe = json_object();
             json_object_set(probe, "streams", json_object_get(root, "audioTracks"));
@@ -823,6 +826,9 @@ public:
                 route == direct_routes_.end() ? std::string{} : route->second.audio_codec;
             const bool video_transcode = route != direct_routes_.end() && route->second.video_transcode;
             const bool audio_transcode = route != direct_routes_.end() && route->second.audio_transcode;
+            const bool native_hevc_eligible = route != direct_routes_.end() &&
+                hevc_passthrough_allowed(codec, route->second.video_reordering_known,
+                                         route->second.video_reordering, true, false);
             const std::string video_delivery = video_transcode ? "transcode" : "copy";
             const std::string audio_delivery = audio_transcode ? "transcode" : "copy";
             const std::string cost = video_transcode ? "high" : audio_transcode ? "medium" : "low";
@@ -844,7 +850,8 @@ public:
                     ",\"serverAudioTranscode\":" + (audio_transcode ? "true" : "false") +
                     ",\"decoder\":\"" + (video_transcode ? "vaapi-or-software" : "browser") +
                     "\",\"encoder\":\"" + encoder + "\",\"serverCost\":\"" + cost +
-                    "\",\"compositePublisherActive\":" +
+                    "\",\"strategyScope\":\"compatibility-default\",\"nativeHevcEligible\":" +
+                    (native_hevc_eligible ? "true" : "false") + ",\"compositePublisherActive\":" +
                     (runtime_status_.webrtc_ready.load() ? "true" : "false") + "}";
         }
         body += "]}";
@@ -904,7 +911,7 @@ public:
         {
             const auto route_lock = route_lock_for(source->id);
             const std::lock_guard operation_lock(*route_lock);
-            route = ensure_playback_route(*source);
+            route = ensure_playback_route(*source, false, receiver_offers_hevc(request.body()));
         }
         if (!route)
             return response(http::status::bad_gateway, request.version(),
@@ -929,7 +936,7 @@ public:
         {
             const auto route_lock = route_lock_for(source.id);
             const std::lock_guard operation_lock(*route_lock);
-            route = ensure_playback_route(source);
+            route = ensure_playback_route(source, false, receiver_offers_hevc(request.body()));
         }
         if (!route)
             return response(http::status::bad_gateway, request.version(),
@@ -1126,9 +1133,11 @@ private:
         bool transcode = false;
         bool video_transcode = false;
         bool video_reordering = false;
+        bool video_reordering_known = false;
         bool audio_transcode = false;
         bool go2rtc_startup = false;
         std::string hybrid_path;
+        std::string native_hevc_path;
         /** Per-track audio-only MediaMTX paths, keyed by 0:a:<index> (F5-05). */
         std::unordered_map<int, std::string> audio_paths;
         /** Probe cache of the real audio tracks of this source. */
@@ -1380,6 +1389,7 @@ private:
             direct_routes_.erase(found);
         }
         delete_config_path(route.hybrid_path);
+        delete_config_path(route.native_hevc_path);
         for (const auto &entry : route.audio_paths)
             delete_config_path(entry.second);
         delete_config_path(route.path);
@@ -1428,6 +1438,7 @@ private:
     {
         std::string effective_url = source.rtsp_url;
         bool video_reordering = false;
+        bool video_reordering_known = false;
         std::string source_transport = source.kind == "rtsp" ? source.transport : "tcp";
         if (source.kind == "camera") {
             const auto resolved = resolve_camera_endpoint(source.camera_id, source.profile_id);
@@ -1435,6 +1446,7 @@ private:
                 return std::nullopt;
             effective_url = resolved->endpoint;
             video_reordering = resolved->video_reordering;
+            video_reordering_known = resolved->video_reordering_known;
             if (resolved->transport_mode == "rtsp-udp") source_transport = "udp";
             else if (resolved->transport_mode == "rtsp-udp-multicast") source_transport = "multicast";
         }
@@ -1444,6 +1456,7 @@ private:
         DirectRoute route;
         bool adding = false;
         std::string previous_hybrid_path;
+        std::string previous_native_hevc_path;
         std::vector<std::string> previous_audio_paths;
         {
             const std::lock_guard lock(route_state_mutex_);
@@ -1452,6 +1465,7 @@ private:
             if (!adding && existing->second.source_key == source_key &&
                 existing->second.rtsp_url == effective_url &&
                 existing->second.video_reordering == video_reordering &&
+                existing->second.video_reordering_known == video_reordering_known &&
                 existing->second.transport == source_transport)
                 return existing->second.path;
             if (adding) {
@@ -1465,12 +1479,14 @@ private:
             } else {
                 route = existing->second;
                 previous_hybrid_path = route.hybrid_path;
+                previous_native_hevc_path = route.native_hevc_path;
                 route.codec.clear();
                 route.audio_codec.clear();
                 route.transcode = false;
                 route.video_transcode = false;
                 route.audio_transcode = false;
                 route.hybrid_path.clear();
+                route.native_hevc_path.clear();
                 for (const auto &entry : route.audio_paths)
                     previous_audio_paths.push_back(entry.second);
                 route.audio_paths.clear();
@@ -1485,6 +1501,7 @@ private:
         // go2rtc listener, never a renderer-supplied duration or external host.
         route.go2rtc_startup = effective_url.starts_with(runtime_rtsp(18554, "/"));
         route.video_reordering = video_reordering;
+        route.video_reordering_known = video_reordering_known;
         route.source_key = source_key;
         route.transport = source_transport;
         const std::string body = "{\"source\":\"" + json_escape(route.rtsp_url) +
@@ -1500,6 +1517,7 @@ private:
         if (!configured.ok || configured.status != 200)
             return std::nullopt;
         delete_config_path(previous_hybrid_path);
+        delete_config_path(previous_native_hevc_path);
         for (const std::string &audio_path : previous_audio_paths)
             delete_config_path(audio_path);
         {
@@ -1510,7 +1528,8 @@ private:
     }
 
     std::optional<std::string> ensure_playback_route(const SceneSource &source,
-                                                     bool force_video_transcode = false)
+                                                     bool force_video_transcode = false,
+                                                     bool receiver_hevc = false)
     {
         const auto direct_path = ensure_direct_route(source);
         if (!direct_path)
@@ -1575,21 +1594,26 @@ private:
             direct_routes_.at(source.id).video_transcode = true;
             direct_routes_.at(source.id).transcode = true;
         }
-        if (!route.transcode)
+        const bool native_hevc = hevc_passthrough_allowed(route.codec, route.video_reordering_known,
+                                                         route.video_reordering, receiver_hevc, force_video_transcode);
+        if (!route.transcode || (native_hevc && !route.audio_transcode))
             return route.path;
 
-        if (route.hybrid_path.empty()) {
+        // Native HEVC receivers may still need an audio-only conversion. Keep
+        // that path separate from H.264 fallback for simultaneous older clients.
+        std::string& hybrid_path = native_hevc ? route.native_hevc_path : route.hybrid_path;
+        if (hybrid_path.empty()) {
             {
                 const std::lock_guard lock(route_state_mutex_);
                 do {
-                    route.hybrid_path = "hybrid-" + random_token();
-                } while (std::any_of(direct_routes_.begin(), direct_routes_.end(), [&route](const auto &entry) {
-                    return entry.second.hybrid_path == route.hybrid_path;
+                    hybrid_path = "hybrid-" + random_token();
+                } while (std::any_of(direct_routes_.begin(), direct_routes_.end(), [&hybrid_path](const auto &entry) {
+                    return entry.second.hybrid_path == hybrid_path || entry.second.native_hevc_path == hybrid_path;
                 }));
             }
             const std::string command = command_quote(transcoder_executable()) + " " + route.path + " " +
-                                        route.hybrid_path + " " +
-                                        (route.video_transcode ? "transcode" : "copy") + " " +
+                                        hybrid_path + " " +
+                                        (route.video_transcode && !native_hevc ? "transcode" : "copy") + " " +
                                         (route.audio_transcode ? "transcode" : "copy") +
                                         (route.go2rtc_startup ? " 90" : "");
             const std::string body =
@@ -1598,16 +1622,17 @@ private:
                 "\",\"runOnDemandRestart\":false,\"runOnDemandStartTimeout\":\"" +
                 (route.go2rtc_startup ? "95s" : "10s") + "\"," +
                 "\"runOnDemandCloseAfter\":\"2s\"}";
-            const std::string url = std::string(control_origin) + "/v3/config/paths/add/" + route.hybrid_path;
+            const std::string url = std::string(control_origin) + "/v3/config/paths/add/" + hybrid_path;
             const UpstreamResponse configured = request_http(url, body, "POST", "application/json");
             if (!configured.ok || configured.status != 200) {
-                route.hybrid_path.clear();
+                hybrid_path.clear();
                 return std::nullopt;
             }
             const std::lock_guard lock(route_state_mutex_);
-            direct_routes_.at(source.id).hybrid_path = route.hybrid_path;
+            if (native_hevc) direct_routes_.at(source.id).native_hevc_path = hybrid_path;
+            else direct_routes_.at(source.id).hybrid_path = hybrid_path;
         }
-        return route.hybrid_path;
+        return hybrid_path;
     }
 
     /**
@@ -1876,6 +1901,7 @@ private:
         }
         for (const DirectRoute &route : removed) {
             delete_config_path(route.hybrid_path);
+            delete_config_path(route.native_hevc_path);
             for (const auto &entry : route.audio_paths)
                 delete_config_path(entry.second);
             delete_config_path(route.path);

@@ -56,7 +56,7 @@ app.on('window-all-closed',()=>{});
   });
   for(const {name,address,engine,video:videoMode} of external||[{name:'private-rtsp',address:rtspAddress,engine:'auto'}]){
    socketBytes=socketFrames=socketErrors=0;socketErrorCategories.clear();
-   const start=Date.now();let phase='form';
+   const start=Date.now();let phase='form',management,activeVideo;
    try{
     await page.goto(base+'/#go2rtc');const form=page.getByRole('region',{name:'网站与直播源'});
     await form.getByLabel('接入方式').selectOption(engine);await form.getByLabel('流名称',{exact:true}).fill(name);await form.getByLabel('视频网页或直播地址').fill(address);
@@ -64,14 +64,14 @@ app.on('window-all-closed',()=>{});
     await form.getByRole('button',{name:'保存命名流并重启 go2rtc'}).click();await expect(form.getByRole('status')).toContainText('已保存并加载',{timeout:35000});
     phase='cold-import';
     const cold=page.locator('.go2rtc-stream-list > div').filter({has:page.getByText(name,{exact:true})});await cold.getByRole('button',{name:'检测并添加设备',exact:true}).click();
-    await expect(cold.getByRole('button',{name:'已在设备目录',exact:true})).toBeVisible({timeout:60000});await expect.poll(async()=>{const cameras=(await (await context.request.get(base+'/api/v1/cameras')).json()).cameras;return cameras.find(c=>c.name===name)?.profiles.every(p=>p.probeState==='ready'&&p.width>0)},{timeout:30000}).toBe(true);console.log('Cold import and actual track probe completed');
+    await expect(cold.getByRole('button',{name:'已在设备目录',exact:true})).toBeVisible({timeout:125000});await expect.poll(async()=>{const cameras=(await (await context.request.get(base+'/api/v1/cameras')).json()).cameras;return cameras.find(c=>c.name===name)?.profiles.every(p=>p.probeState==='ready'&&p.width>0)},{timeout:30000}).toBe(true);console.log('Cold import and actual track probe completed');
     phase='decode';await page.goto(base+'/api/v1/go2rtc/stream.html?src='+name+'&mode=mse');
-    const video=page.locator('video');await video.evaluate(v=>{v.muted=true;v.play().catch(()=>{});});
+    const video=page.locator('video');activeVideo=video;await video.evaluate(v=>{v.muted=true;v.play().catch(()=>{});});
     await page.waitForFunction(()=>{const v=document.querySelector('video');return v?.readyState>=2&&v.videoWidth>0},null,{timeout:110000});
     const stamp=await video.evaluate(v=>v.currentTime);await expect.poll(()=>video.evaluate(v=>v.currentTime),{timeout:15000}).toBeGreaterThan(stamp+1);
     const dimensions=await video.evaluate(v=>[v.videoWidth,v.videoHeight]);phase='registry';
     // Keep the decoder open while a second page checks the registry and Studio.
-    const management=await context.newPage();await management.route(base+'/**',async route=>route.continue());await management.goto(base+'/#go2rtc');
+    management=await context.newPage();await management.route(base+'/**',async route=>route.continue());await management.goto(base+'/#go2rtc');
     const row=management.locator('.go2rtc-stream-list > div').filter({has:management.getByText(name,{exact:true})});
     await expect(row.getByRole('button',{name:'已在设备目录',exact:true})).toBeVisible({timeout:60000});
     const cameras=(await (await context.request.get(base+'/api/v1/cameras')).json()).cameras;const camera=cameras.find(c=>c.name===name);expect(camera?.profiles?.length).toBeGreaterThan(0);
@@ -82,27 +82,34 @@ app.on('window-all-closed',()=>{});
     phase='take';await management.getByRole('button',{name:'TAKE',exact:true}).click();
     await expect.poll(async()=>{const studio=await (await context.request.get(base+'/api/v1/studio')).json();return studio.scenes.find(s=>s.id===studio.programSceneId)?.name},{timeout:20000}).toBe(name);
     phase='monitor-wall';await management.goto(base+'/#monitor');
+    await management.bringToFront();
     const wall=management.getByLabel(name+' 浏览器媒体画面',{exact:true});
+    activeVideo=wall;
+    await wall.scrollIntoViewIfNeeded();
     await expect.poll(()=>wall.evaluate(v=>v.readyState>=2&&v.videoWidth>0),{timeout:90000}).toBe(true);
     const wallStamp=await wall.evaluate(v=>v.currentTime);await expect.poll(()=>wall.evaluate(v=>v.currentTime),{timeout:15000}).toBeGreaterThan(wallStamp+1);
+    await wall.scrollIntoViewIfNeeded();
+    await wall.evaluate(v=>new Promise((resolve,reject)=>{const timer=setTimeout(()=>reject(new Error('Monitor compositor did not present a frame')),15000);v.requestVideoFrameCallback(()=>{clearTimeout(timer);resolve();});}));
     let soak;
     if(soakSeconds){
-     phase='monitor-soak';const started=Date.now(),initialFrames=await wall.evaluate(v=>v.getVideoPlaybackQuality().totalVideoFrames);let samples=0;
+     phase='monitor-soak';const started=Date.now(),initial=await wall.evaluate(v=>{const q=v.getVideoPlaybackQuality();return {total:q.totalVideoFrames,dropped:q.droppedVideoFrames};});let samples=0;
      while(Date.now()-started<soakSeconds*1000){
-      const frames=await wall.evaluate(v=>v.getVideoPlaybackQuality().totalVideoFrames);
+      await wall.scrollIntoViewIfNeeded();
+      const frames=await wall.evaluate(v=>{const q=v.getVideoPlaybackQuality();return q.totalVideoFrames-q.droppedVideoFrames;});
       await page.waitForTimeout(Math.min(5000,Math.max(0,soakSeconds*1000-(Date.now()-started))));
-      await expect.poll(()=>wall.evaluate(v=>v.getVideoPlaybackQuality().totalVideoFrames),{timeout:15000}).toBeGreaterThan(frames);
-      samples++;if(samples%12===0)console.log('Monitor media soak: '+Math.round((Date.now()-started)/1000)+' seconds with decoded-frame progress');
+      await expect.poll(()=>wall.evaluate(v=>{const q=v.getVideoPlaybackQuality();return q.totalVideoFrames-q.droppedVideoFrames;}),{timeout:15000}).toBeGreaterThan(frames);
+      samples++;if(samples%12===0)console.log('Monitor media soak: '+Math.round((Date.now()-started)/1000)+' seconds with presented-frame progress');
      }
      const quality=await wall.evaluate(v=>{const q=v.getVideoPlaybackQuality();return {frames:q.totalVideoFrames,droppedFrames:q.droppedVideoFrames};});
      const seconds=(Date.now()-started)/1000;
-     soak={seconds:Math.round(seconds),progressSamples:samples,decodedFrames:quality.frames-initialFrames,averageDecodedFps:Number(((quality.frames-initialFrames)/seconds).toFixed(2)),droppedFrames:quality.droppedFrames};
+     const totalFrames=quality.frames-initial.total,droppedFrames=quality.droppedFrames-initial.dropped,presentedFrames=Math.max(0,totalFrames-droppedFrames);
+     soak={seconds:Math.round(seconds),progressSamples:samples,totalFrames,droppedFrames,presentedFrames,averagePresentedFps:Number((presentedFrames/seconds).toFixed(2))};
     }
     console.log('Actual monitor wall decoded and advanced after TAKE');
-    await management.close();receipts.push({name,address:external?address:'[private authenticated RTSP fixture]',engine,videoMode:videoMode||'auto',result:'passed',dimensions,seconds:Math.round((Date.now()-start)/1000),deviceImported:true,coldImport:true,studioPersisted:true,monitorWallDecoded:true,...(soak?{soak}:{})});
+    await management.close();receipts.push({name,address:external?address:'[private authenticated RTSP fixture]',engine,videoMode:videoMode||'auto',result:'passed',dimensions,seconds:Math.round((Date.now()-start)/1000),deviceImported:true,coldImport:true,studioPersisted:true,monitorWallDecoded:true,monitorFramePresented:true,...(soak?{soak}:{})});
    }catch(error){
-    const mediaDiagnostic=await page.locator('video').first().evaluate(v=>({readyState:v.readyState,networkState:v.networkState,errorCode:v.error?.code||null,decodedFrames:v.getVideoPlaybackQuality().totalVideoFrames,currentTime:v.currentTime,buffered:Array.from({length:Math.min(v.buffered.length,4)},(_,i)=>[v.buffered.start(i),v.buffered.end(i)])})).catch(()=>null);
-    receipts.push({name,address:external?address:'[private authenticated RTSP fixture]',engine,videoMode:videoMode||'auto',result:'failed',phase,errorType:error.name,seconds:Math.round((Date.now()-start)/1000),mediaDiagnostic,socketBytes,socketFrames,socketErrors,socketErrorCategories:[...socketErrorCategories]});exit=1;await page.screenshot({path:path.join(temporary,name+'-failed.png')}).catch(()=>{});}
+    const mediaDiagnostic=await activeVideo?.evaluate(v=>{const q=v.getVideoPlaybackQuality(),r=v.getBoundingClientRect();return {readyState:v.readyState,networkState:v.networkState,errorCode:v.error?.code||null,totalFrames:q.totalVideoFrames,droppedFrames:q.droppedVideoFrames,currentTime:v.currentTime,visibility:document.visibilityState,rectangle:{x:r.x,y:r.y,width:r.width,height:r.height},viewport:{width:innerWidth,height:innerHeight},buffered:Array.from({length:Math.min(v.buffered.length,4)},(_,i)=>[v.buffered.start(i),v.buffered.end(i)])};}).catch(()=>null);
+    receipts.push({name,address:external?address:'[private authenticated RTSP fixture]',engine,videoMode:videoMode||'auto',result:'failed',phase,errorType:error.name,seconds:Math.round((Date.now()-start)/1000),mediaDiagnostic,socketBytes,socketFrames,socketErrors,socketErrorCategories:[...socketErrorCategories]});exit=1;await (management||page).screenshot({path:path.join(temporary,name+'-failed.png')}).catch(()=>{});}
    console.log(JSON.stringify(receipts.at(-1)));
   }
   if(!exit&&receipts.length){
@@ -122,10 +129,14 @@ app.on('window-all-closed',()=>{});
    console.log('Named streams, device identity and Studio retained after complete product restart');
    stage='restart-playback';const last=receipts.at(-1),monitor=await restored.newPage();await monitor.goto(base+'/#monitor');
    const wall=monitor.getByLabel(last.name+' 浏览器媒体画面',{exact:true});
+   await monitor.bringToFront();
+   await wall.scrollIntoViewIfNeeded();
    restartVideo=wall;
    await expect.poll(()=>wall.evaluate(v=>v.readyState>=2&&v.videoWidth>0),{timeout:110000}).toBe(true);
    const stamp=await wall.evaluate(v=>v.currentTime);await expect.poll(()=>wall.evaluate(v=>v.currentTime),{timeout:15000}).toBeGreaterThan(stamp+1);
-   last.monitorWallAfterRestart=true;console.log('Actual Program monitor wall resumed after complete product restart');
+   await wall.scrollIntoViewIfNeeded();
+   await wall.evaluate(v=>new Promise((resolve,reject)=>{const timer=setTimeout(()=>reject(new Error('Restarted Monitor did not present a frame')),15000);v.requestVideoFrameCallback(()=>{clearTimeout(timer);resolve();});}));
+   last.monitorWallAfterRestart=true;last.restartFramePresented=true;console.log('Actual Program monitor wall resumed after complete product restart');
   }
  }catch(error){exit=1;failure={phase:stage,errorType:error.name};
   if(restartVideo)failure.mediaDiagnostic=await restartVideo.evaluate(v=>({readyState:v.readyState,networkState:v.networkState,errorCode:v.error?.code||null,decodedFrames:v.getVideoPlaybackQuality().totalVideoFrames,currentTime:v.currentTime})).catch(()=>null);

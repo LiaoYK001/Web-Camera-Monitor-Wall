@@ -1,10 +1,12 @@
 # v4+ 补丁发布 / Patch releases from v4
 
-## 当前决定 / Current delivery decision
+## 历史决定（2026-10-05） / Historical delivery decision
 
 2026-10-05：容器重启、异常退出及遗留 FIFO 的修复留在源码中，随 **v4.0** 统一交付。暂不发布或应用基于 v3.5 镜像的轻量热修，不修改 v3.5 Tag、Release、GHCR 标签或客户端更新源。当前稳定产品仍是 v3.5；v4.0 尚未发布。
 
 The restart/crash/FIFO fixes are retained for the unified v4.0 release. No v3.5 hotfix is published or applied. Existing artifacts and update feeds remain unchanged; v4.0 is not released yet.
+
+2026-10-13 状态核对：[v4.0](https://github.com/LiaoYK001/Web-Camera-Monitor-Wall/releases/tag/v4.0) 已于 2026-10-08 发布。上文保留发布前决策的历史记录；当前下一轮功能开发按用户指定进入 **v4.1**，不发布历史 `4.0.1-dev.*` 试验包，不覆盖现有正式附件。Verified current status: v4.0 was published on October 8; the next requested feature release is v4.1. The preceding text records the earlier decision, not current release availability.
 
 ## 版本规则 / Version rules
 

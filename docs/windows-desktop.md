@@ -204,4 +204,10 @@ System status includes the current desktop process tree, excluding unrelated sam
 
 Track probing stores B-frame metadata using the existing FFprobe read. Known reordered H.264 uses on-demand Hybrid; compatible reorder-free video remains passthrough. The private registry adds a nullable column, preserving results across renames and invalidating them when media endpoints, transport or credentials change. Re-probe existing device tracks after upgrading. Legacy raw RTSP scenes are outside this registry-based compatibility check.
 
+Direct 根据实际 WHEP 接收端的活动视频 SDP 协商原生 H.265，仅当设备探测明确为无 B 帧时允许视频直通；不兼容音频可单独转换。未知、有 B 帧及旧接收端走 H.264；显式 Hybrid 策略保留转换。原生视频/仅音频转换与旧接收端视频转换使用不同按需路径，共用同一条上游 Direct 来源，关闭一个观看端不应中断另一端。前端在原生协商拒绝或可见、允许自动播放的画面迟迟不呈现时重试兼容编码，不因页面隐藏或自动播放限制判定 H.265 不可用。能力 API 的 `strategyScope: compatibility-default` 表示旧接收端默认代价，`nativeHevcEligible` 仅表示来源资格，不证明当前观看端实际硬解或当前 CPU。
+
+Native HEVC requires an actual active video offer plus registry-confirmed zero B frames. Incompatible audio may convert independently; older, unknown, reordered and explicit-Hybrid cases retain conversion. Concurrent receiver paths share the upstream source. Frontend fallback respects viewport visibility and autoplay state. Capability defaults describe compatibility cost; source eligibility does not prove negotiated hardware decode or measured CPU.
+
+首次 502 保留原生编码重试，连续两次原生 offer 的 502 才过滤 H.265；网关刚加载路径时的短暂失败不应立即变为持续转码。A single 502 retains native codecs for retry; two rejected native offers trigger compatibility filtering, avoiding immediate conversion after a transient path-application race.
+
 内部 go2rtc 来源支持最多 90 秒冷启动探测、Hybrid 发布最多 95 秒，解决网站解析仍在进行时下游 8/10 秒提前断开的冲突；实际媒体读取仍为 8 秒，单次信令保留 15 秒预算与退避重试，普通摄像机保持原等待上限。见 [网站来源说明](online-sources.md)。Internal go2rtc cold startup uses a separate readiness probe without extending active-media reads, ordinary camera or per-request signaling deadlines.

@@ -157,6 +157,8 @@ export interface SourcePlaybackCapability {
   decoder?: string;
   encoder?: string;
   serverCost?: 'low' | 'medium' | 'high';
+  strategyScope?: 'compatibility-default';
+  nativeHevcEligible?: boolean;
   compositePublisherActive?: boolean;
 }
 

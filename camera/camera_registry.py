@@ -80,6 +80,10 @@ PROBE_OUTPUT_LIMIT = 1024 * 1024
 PROBE_SEMAPHORE = threading.BoundedSemaphore(4)
 PROBE_LOCKS_GUARD = threading.Lock()
 PROBE_LOCKS: dict[str, threading.Lock] = {}
+PROBE_JOBS_GUARD = threading.Lock()
+PROBE_JOBS: dict[str, dict] = {}
+PROBE_JOB_LIMIT = 16
+PROBE_JOB_TTL_SECONDS = 300
 # Short-lived probe result cache.  Keys hash the endpoint so a raw RTSP URL is
 # never retained; a mutation or TTL expiry invalidates the entry.
 PROBE_RESULTS_GUARD = threading.Lock()
@@ -1388,6 +1392,7 @@ def resolve_profile(database: sqlite3.Connection, camera_id: str, profile_id: st
             "videoCodec": (profile["video_codec"] if profile else "") or "",
             "audioCodec": (profile["audio_codec"] if profile else "") or "",
             "videoReordering": bool(profile and profile["video_b_frames"] is not None and profile["video_b_frames"] > 0),
+            "videoReorderingKnown": bool(profile and profile['video_b_frames'] is not None),
             "tracksProbed": bool(profile and profile["probe_state"] in {"ready", "cached"}),
             "audioTracks": [{"index": track["index"], "codec_name": track["codec"],
                              "channels": track["channels"], "sample_rate": track["sampleRate"]}
@@ -1844,6 +1849,64 @@ def automatic_probe_worker() -> None:
         time.sleep(5)
 
 
+def probe_binding_matches(database, camera, profile, endpoint):
+    current_camera = database.execute("SELECT * FROM cameras WHERE id=?", (camera['id'],)).fetchone()
+    current_profile = database.execute("SELECT * FROM stream_profiles WHERE camera_id=? AND id=?", (camera['id'],profile['id'])).fetchone()
+    if not current_camera or not current_profile or not current_camera['enabled'] or not current_profile['enabled']:
+        return False
+    if current_profile['transport_mode'] != profile['transport_mode'] or current_camera['adapter'] != camera['adapter']:
+        return False
+    current_endpoint = current_profile['endpoint']
+    if current_camera['credentials_ref']:
+        try:
+            current_endpoint = endpoint_with_credentials(current_endpoint, *load_credentials(current_camera['credentials_ref']))
+        except (OSError, ValueError, PermissionError):
+            return False
+    return current_endpoint == endpoint
+
+
+def queue_profile_probe(camera_id: str, profile_id: str) -> dict:
+    with connect() as database:
+        if not database.execute("SELECT 1 FROM stream_profiles WHERE camera_id=? AND id=?", (camera_id,profile_id)).fetchone():
+            raise KeyError('profile not found')
+    now = time.monotonic()
+    with PROBE_JOBS_GUARD:
+        for job_id in list(PROBE_JOBS):
+            if now-PROBE_JOBS[job_id]['createdAt'] > PROBE_JOB_TTL_SECONDS:
+                del PROBE_JOBS[job_id]
+        for job_id, job in PROBE_JOBS.items():
+            if job['cameraId']==camera_id and job['profileId']==profile_id and job['state']=='pending':
+                return {'jobId':job_id,'state':'pending'}
+        if len(PROBE_JOBS) >= PROBE_JOB_LIMIT:
+            completed = [key for key,value in PROBE_JOBS.items() if value['state']!='pending']
+            if not completed:
+                raise RuntimeError('camera probe job limit reached')
+            del PROBE_JOBS[min(completed,key=lambda key:PROBE_JOBS[key]['createdAt'])]
+        job_id = secrets.token_hex(16)
+        job = {'cameraId':camera_id,'profileId':profile_id,'state':'pending','createdAt':now}
+        PROBE_JOBS[job_id] = job
+    def work():
+        try:
+            result = probe_source_profile(camera_id,profile_id)
+            update = {'state':'completed','profile':result}
+        except Exception:
+            # Neither endpoint data nor ffprobe/credential exception text leaves the job.
+            update = {'state':'failed','error':'probe_failed'}
+        with PROBE_JOBS_GUARD:
+            if PROBE_JOBS.get(job_id) is job:
+                job.update(update)
+    threading.Thread(target=work,daemon=True,name='camera-profile-probe').start()
+    return {'jobId':job_id,'state':'pending'}
+
+
+def profile_probe_job(camera_id: str, profile_id: str, job_id: str) -> dict:
+    with PROBE_JOBS_GUARD:
+        job = PROBE_JOBS.get(job_id)
+        if not job or job['cameraId']!=camera_id or job['profileId']!=profile_id or time.monotonic()-job['createdAt']>PROBE_JOB_TTL_SECONDS:
+            raise KeyError('probe job not found')
+        return {key:value for key,value in job.items() if key!='createdAt'}
+
+
 def probe_source_profile(camera_id: str, profile_id: str) -> dict:
     with PROBE_LOCKS_GUARD:
         lock = PROBE_LOCKS.setdefault(camera_id, threading.Lock())
@@ -1887,9 +1950,13 @@ def probe_source_profile(camera_id: str, profile_id: str) -> dict:
                     "UPDATE stream_profiles SET probe_state='ready',probe_attempts=0,probe_error='',last_probe_at=? WHERE camera_id=? AND id=?",
                     (int(time.time()), camera_id, profile_id))
                 update_camera_probe_health(database, camera_id)
-                return cached
+                refreshed = database.execute(
+                    "SELECT * FROM stream_profiles WHERE camera_id=? AND id=?", (camera_id, profile_id)).fetchone()
+                return profile_document(database, camera_id, refreshed, include_endpoint=False)
             settings = database.execute("SELECT settings_json FROM runtime_settings WHERE id=1").fetchone()
             probe_timeout = int(json.loads(settings["settings_json"])["probeTimeoutSeconds"])
+            if endpoint.startswith(service_rtsp(18554, '/')):
+                probe_timeout = 90
         command = ["ffprobe", "-v", "error", "-show_entries",
                    "stream=index,codec_type,codec_name,has_b_frames,bit_rate,width,height,avg_frame_rate,sample_rate,channels",
                    "-of", "json"]
@@ -1930,6 +1997,9 @@ def probe_source_profile(camera_id: str, profile_id: str) -> dict:
             if isinstance(error, subprocess.TimeoutExpired): failure_reason = "timeout"
             elif isinstance(error, OSError): failure_reason = "probe_unavailable"
             with connect() as database:
+                database.execute('BEGIN IMMEDIATE')
+                if not probe_binding_matches(database,camera,profile,endpoint):
+                    raise ValueError('probe source changed; retry the current source')
                 database.execute(
                     "UPDATE stream_profiles SET probe_state='failed',probe_attempts=probe_attempts+1,probe_error=?,last_probe_at=? WHERE camera_id=? AND id=?",
                     (failure_reason, int(time.time()), camera_id, profile_id))
@@ -1938,6 +2008,9 @@ def probe_source_profile(camera_id: str, profile_id: str) -> dict:
                              f"{camera_id}.{profile_id}"[:64], "media-probe", {"transportMode": transport_mode, "reason": failure_reason})
             raise ValueError(f"media probe failed: {failure_reason}")
         with connect() as database:
+            database.execute('BEGIN IMMEDIATE')
+            if not probe_binding_matches(database,camera,profile,endpoint):
+                raise ValueError('probe source changed; retry the current source')
             database.execute("DELETE FROM profile_tracks WHERE camera_id=? AND profile_id=?", (camera_id, profile_id))
             database.executemany(
                 "INSERT INTO profile_tracks(camera_id,profile_id,track_index,kind,codec,bitrate_kbps,width,height,fps,sample_rate,channels,source) "
@@ -3511,6 +3584,13 @@ class Handler(BaseHTTPRequestHandler):
             return
         if path == "/source-catalog/legacy-import":
             self.respond(200, legacy_import_status()); return
+        probe_job_match = re.fullmatch(r"/source-catalog/([a-zA-Z0-9._-]{1,64})/profiles/([a-zA-Z0-9._-]{1,64})/probe-jobs/([a-f0-9]{32})",path)
+        if probe_job_match:
+            try:
+                self.respond(200,profile_probe_job(*probe_job_match.groups()))
+            except KeyError:
+                self.respond(404,{'error':'probe job not found'})
+            return
         catalog_match = re.fullmatch(r"/source-catalog/([a-zA-Z0-9._-]{1,64})", path)
         if catalog_match:
             with connect() as database:
@@ -3691,8 +3771,21 @@ class Handler(BaseHTTPRequestHandler):
                 self.path,
             )
             if catalog_probe_match:
-                if int(self.headers.get("Content-Length", "0")):
-                    self.payload()
+                payload = self.payload() if int(self.headers.get("Content-Length", "0")) else {}
+                if payload.get('async') is True:
+                    self.respond(202,queue_profile_probe(*catalog_probe_match.groups())); return
+                if 'jobId' in payload:
+                    if not isinstance(payload['jobId'],str) or not re.fullmatch(r'[a-f0-9]{32}',payload['jobId']):
+                        raise ValueError('invalid probe job')
+                    job = profile_probe_job(*catalog_probe_match.groups(),payload['jobId'])
+                    if job['state'] != 'completed':
+                        raise ValueError('probe job is not completed')
+                    with connect() as database:
+                        row=database.execute('SELECT * FROM stream_profiles WHERE camera_id=? AND id=?',catalog_probe_match.groups()).fetchone()
+                        if not row or row['probe_state'] not in {'ready','cached'} or row['last_probe_at'] != job['profile']['lastProbeAt']:
+                            raise ValueError('probe source changed; retry the current source')
+                        self.respond(200,{'cameraId':catalog_probe_match.group(1),'profile':profile_document(database,catalog_probe_match.group(1),row,include_endpoint=False)})
+                    return
                 self.respond(200, {"cameraId": catalog_probe_match.group(1),
                                    "profile": probe_source_profile(*catalog_probe_match.groups())}); return
             issue_ack_match = re.fullmatch(

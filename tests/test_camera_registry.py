@@ -7,6 +7,7 @@ import importlib.util
 from importlib.machinery import SourceFileLoader
 import base64
 import hashlib
+import http.client
 import json
 import os
 import re
@@ -525,6 +526,89 @@ class CameraRegistryTests(unittest.TestCase):
         registry.save_camera(camera, True)
         with registry.connect() as database:
             self.assertFalse(registry.resolve_profile(database, "bframe-probe", "main")["videoReordering"])
+
+    def test_probe_jobs_coalesce_bound_results_and_never_return_exception_secrets(self):
+        camera=registry.validate_camera({'id':'queued-probe','name':'Queued','adapter':'rtsp','address':'rtsp://camera.example.invalid/live','profiles':[{'id':'main','endpoint':'rtsp://camera.example.invalid/live'},{'id':'other','endpoint':'rtsp://camera.example.invalid/other'}]})
+        registry.save_camera(camera,False)
+        started,release,done=threading.Event(),threading.Event(),threading.Event()
+        def slow(*_):
+            started.set();release.wait(3);done.set();return {'id':'main','probeState':'ready'}
+        with patch.object(registry,'PROBE_JOBS',{}),patch.object(registry,'probe_source_profile',side_effect=slow) as probe:
+            first=registry.queue_profile_probe('queued-probe','main');self.assertTrue(started.wait(1))
+            second=registry.queue_profile_probe('queued-probe','main');self.assertEqual(first['jobId'],second['jobId'])
+            self.assertEqual(registry.profile_probe_job('queued-probe','main',first['jobId'])['state'],'pending')
+            with self.assertRaises(KeyError):registry.profile_probe_job('other','main',first['jobId'])
+            with patch.object(registry,'PROBE_JOB_LIMIT',1):
+                with self.assertRaises(RuntimeError):registry.queue_profile_probe('queued-probe','other')
+            release.set();self.assertTrue(done.wait(1))
+            deadline=time.monotonic()+1
+            while registry.profile_probe_job('queued-probe','main',first['jobId'])['state']=='pending' and time.monotonic()<deadline:time.sleep(.01)
+            self.assertEqual(registry.profile_probe_job('queued-probe','main',first['jobId'])['profile']['probeState'],'ready');self.assertEqual(probe.call_count,1)
+        with patch.object(registry,'PROBE_JOBS',{}),patch.object(registry,'probe_source_profile',side_effect=ValueError('private camera password')):
+            job=registry.queue_profile_probe('queued-probe','main')
+            deadline=time.monotonic()+1
+            while registry.profile_probe_job('queued-probe','main',job['jobId'])['state']=='pending' and time.monotonic()<deadline:time.sleep(.01)
+            result=registry.profile_probe_job('queued-probe','main',job['jobId'])
+            self.assertEqual(result['state'],'failed');self.assertNotIn('password',json.dumps(result))
+
+    def test_probe_cannot_overwrite_a_changed_source(self):
+        camera=registry.validate_camera({'id':'changed-probe','name':'Changed','adapter':'rtsp','address':'rtsp://camera.example.invalid/live','profiles':[{'id':'main','endpoint':'rtsp://camera.example.invalid/live'}]})
+        registry.save_camera(camera,False)
+        def changed(*_,**__):
+            camera['profiles'][0]['endpoint']='rtsp://camera.example.invalid/new'
+            registry.save_camera(camera,True)
+            return subprocess.CompletedProcess([],0,json.dumps({'streams':[{'codec_type':'video','codec_name':'h264','has_b_frames':2}]}).encode(),b'')
+        with patch.object(registry.subprocess,'run',side_effect=changed):
+            with self.assertRaisesRegex(ValueError,'source changed'):registry.probe_source_profile('changed-probe','main')
+        with registry.connect() as database:
+            row=database.execute("SELECT video_b_frames,probe_state FROM stream_profiles WHERE camera_id='changed-probe'").fetchone()
+            self.assertIsNone(row['video_b_frames']);self.assertNotEqual(row['probe_state'],'ready')
+
+    def test_queued_probe_http_completion_accepts_a_cached_result(self):
+        camera = registry.validate_camera({'id':'http-probe','name':'HTTP probe','adapter':'rtsp',
+            'address':'rtsp://camera.example.invalid/live',
+            'profiles':[{'id':'main','endpoint':'rtsp://camera.example.invalid/live'}]})
+        registry.save_camera(camera,False)
+        result = subprocess.CompletedProcess([],0,b'{"streams":[{"codec_type":"video","codec_name":"hevc","has_b_frames":0}]}',b'')
+        with patch.object(registry.subprocess,'run',return_value=result) as run:
+            registry.probe_source_profile('http-probe','main')
+            # The second probe uses cached media data but has a new database timestamp.
+            with registry.connect() as database:
+                database.execute("UPDATE stream_profiles SET last_probe_at=1 WHERE camera_id='http-probe'")
+            server = HTTPServer(('127.0.0.1',0),registry.Handler)
+            worker = threading.Thread(target=server.serve_forever,daemon=True);worker.start()
+            def request(method,path,payload=None):
+                connection=http.client.HTTPConnection('127.0.0.1',server.server_port,timeout=3)
+                try:
+                    body=json.dumps(payload) if payload is not None else None
+                    connection.request(method,path,body,{'Content-Type':'application/json'})
+                    response=connection.getresponse();return response.status,json.loads(response.read())
+                finally:connection.close()
+            base='/source-catalog/http-probe/profiles/main'
+            try:
+                with patch.object(registry.time,'time',return_value=time.time()+5),patch.object(registry,'PROBE_JOBS',{}):
+                    status,job=request('POST',base+'/probe',{'async':True});self.assertEqual(status,202)
+                    deadline=time.monotonic()+3
+                    while time.monotonic()<deadline:
+                        status,value=request('GET',base+'/probe-jobs/'+job['jobId'])
+                        if value['state']!='pending':break
+                        time.sleep(.01)
+                    self.assertEqual(value['state'],'completed')
+                    status,value=request('POST',base+'/probe',{'jobId':job['jobId']})
+                    self.assertEqual(status,200);self.assertEqual(value['profile']['probeState'],'ready')
+                    self.assertEqual(request('GET',base.replace('http-probe','other')+'/probe-jobs/'+job['jobId'])[0],404)
+                    self.assertEqual(run.call_count,1)
+            finally:server.shutdown();server.server_close();worker.join(timeout=3)
+
+    def test_only_product_go2rtc_probe_uses_the_cold_start_budget(self):
+        result=subprocess.CompletedProcess([],0,b'{"streams":[{"codec_type":"video","codec_name":"h264","has_b_frames":0}]}',b'')
+        with patch.dict(os.environ,{'WEBOBS_GO2RTC_RTSP_PORT':'28554'}):
+            for camera_id,endpoint,seconds in [('product-probe','rtsp://127.0.0.1:28554/named',90),('ordinary-probe','rtsp://127.0.0.1:18554/named',10)]:
+                camera=registry.validate_camera({'id':camera_id,'name':camera_id,'adapter':'rtsp','address':endpoint,'profiles':[{'id':'main','endpoint':endpoint}]})
+                registry.save_camera(camera,False)
+                with patch.object(registry.subprocess,'run',return_value=result) as run:
+                    registry.probe_source_profile(camera_id,'main')
+                    self.assertEqual(run.call_args.kwargs['timeout'],seconds)
 
     def test_automatic_probe_retry_limit_health_and_manual_recovery(self) -> None:
         registry.invalidate_probe_results()

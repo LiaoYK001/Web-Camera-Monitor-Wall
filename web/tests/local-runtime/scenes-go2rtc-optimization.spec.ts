@@ -33,7 +33,7 @@ async function backend(context: BrowserContext, rtspPort = 18554, dropFirstCreat
     if (path === '/api/v1/go2rtc/api/streams') return reply({ entrance: { producers: [{ url: 'rtsp://private:do-not-display@camera.invalid/live' }] }, yard: {} });
     if (path === '/api/v1/camera-detect') return reply({ adapter: 'rtsp', address: route.request().postDataJSON().address, probe: 'ready', profiles: [{ id: 'main', name: 'Main', role: 'main', endpoint: route.request().postDataJSON().address, videoCodec: 'h264', audioCodec: '', width: 640, height: 360, fps: 5 }] });
     if (path === '/api/v2/source-catalog') return reply({ schemaVersion: 2, page: 1, limit: 24, total: cameras.length, items: cameras.map((camera) => ({ ...camera, schemaVersion: 2, addressDisplay: camera.address, kind: 'network-stream', enabled: true, groupId: '', tags: [], profileCount: camera.profiles.length, trackCount: 0, deviceCapabilities: { ptz: false, snapshot: false, talk: false }, profiles: camera.profiles.map((profile) => ({ ...profile, endpointDisplay: profile.endpoint, enabled: true, transportMode: 'rtsp-tcp', probeState: 'ready', tracks: [], lastProbeAt: 0, audioExpectation: 'auto' })) })) });
-    if (path.endsWith('/probe')) return reply({});
+    if (path.endsWith('/probe')) return reply({ cameraId: path.split('/')[4], profile: { id: 'main', probeState: 'ready' } });
     if (path.includes('analytics')) return reply({ policies: [] });
     if (path.includes('motion-zones')) return reply({ zones: [] });
     if (path === '/api/v2/settings') return reply({ schemaVersion: 1, revision: 1, values: { defaultTransportMode: 'auto', probeTimeoutSeconds: 8, sourceRecoveryEnabled: true, issueRetentionLimit: 512 }, deployment: {} });
@@ -205,4 +205,26 @@ test('stopping a batch completes the current write and preserves remaining selec
   await expect(bridge.getByRole('button', { name: '批量检测并添加（1）', exact: true })).toBeEnabled();
   expect(server.creates.map(value => value.name)).toEqual(['entrance']);
   await expect(bridge.getByLabel('选择流 yard')).toBeChecked();
+});
+
+test('queued track probes wait for results and retry an imported device without recreating it', async ({ page, context }) => {
+  const server = await backend(context); let attempts = 0, polls = 0;
+  await context.route('**/api/v2/source-catalog/*/profiles/*/probe', route => {
+    if (route.request().postDataJSON().jobId) return route.fulfill({ json: { cameraId: 'imported', profile: { id: 'main', probeState: 'ready' } } });
+    expect(route.request().postDataJSON()).toEqual({ async: true }); attempts++; polls = 0;
+    return route.fulfill({ status: 202, json: { state: 'pending', jobId: attempts.toString(16).padStart(32, '0') } });
+  });
+  await context.route('**/api/v2/source-catalog/*/profiles/*/probe-jobs/*', route => {
+    polls++;
+    return route.fulfill({ json: polls === 1 ? { state: 'pending' } : attempts === 2 ? { state: 'failed', error: 'probe_failed' }
+      : { state: 'completed', profile: { id: 'main', probeState: 'ready' } } });
+  });
+  await page.goto('/#go2rtc'); const bridge = page.getByRole('region', { name: 'go2rtc 流接入' });
+  const row = bridge.locator('.go2rtc-stream-list > div').filter({ hasText: 'entrance' });
+  await row.getByRole('button', { name: '检测并添加设备', exact: true }).click();
+  await expect(row).toContainText('已添加并探测轨道'); expect(server.creates).toHaveLength(1);
+  await row.getByRole('button', { name: '重新探测轨道', exact: true }).click();
+  await expect(row).toContainText('已添加，轨道探测需重试'); expect(server.creates).toHaveLength(1);
+  await row.getByRole('button', { name: '重新探测轨道', exact: true }).click();
+  await expect(row).toContainText('已重新探测轨道'); expect(server.creates).toHaveLength(1); expect(attempts).toBe(3);
 });

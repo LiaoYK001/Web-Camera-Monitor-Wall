@@ -122,6 +122,18 @@ export default function Go2rtcStreams({ onImported, refreshKey = 0, blocked = fa
     submission.current = null; setPending(''); setSelected(values => values.filter(value => value !== name)); onImported?.();
     setStatus(`“${name}”已加入设备目录；可在设备详情探测轨道，或前往 Studio 选择场景来源。`);
   };
+  const reprobe = async (name: string) => {
+    const id = existing(name);
+    if (!id || busy || blocked || pending || batch.current.active) return;
+    setWorking(name);
+    const confirmed = await run('重新探测 go2rtc 轨道', async signal => {
+      const record = (await fetchCameras(signal)).cameras.find(camera => camera.id === id);
+      if (!record) throw new Error('设备已变化，请刷新 go2rtc 流后重试。');
+      for (const profile of record.profiles) await probeSourceProfile(record.id, profile.id, signal);
+      return fetchCameras(signal);
+    }, registry => { setCameras(registry.cameras); setStatus(`“${name}”轨道已更新。`); });
+    setResults(values => ({ ...values, [name]: confirmed ? '已重新探测轨道' : '已添加，轨道探测需重试' }));
+  };
   const reconcile = () => run('核对 go2rtc 导入', signal => fetchCameras(signal), result => {
     const record = result.cameras.find(camera => camera.id === submission.current?.id);
     if (record) accept(record, pending);
@@ -175,6 +187,8 @@ export default function Go2rtcStreams({ onImported, refreshKey = 0, blocked = fa
           onChange={event => setSelected(values => event.target.checked ? [...values, name] : values.filter(value => value !== name))} />选择</label>
         <strong>{name}</strong><code>{go2rtcStreamAddress(name, rtspBase)}</code><button type="button" disabled={busy || blocked || !ready || Boolean(pending) || Boolean(existing(name))}
           onClick={() => void add(name)}>{existing(name) ? '已在设备目录' : busy && working === name ? '检测并添加中…' : '检测并添加设备'}</button>
+        {existing(name) && <button type="button" disabled={busy || blocked || Boolean(pending)} onClick={() => void reprobe(name)}>
+          {busy && working === name ? '正在探测轨道…' : '重新探测轨道'}</button>}
         {results[name] && <span role="status">{results[name]}</span>}
       </div>)}</div></>}
   </section>;
