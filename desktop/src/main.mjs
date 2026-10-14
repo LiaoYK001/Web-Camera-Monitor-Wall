@@ -184,6 +184,8 @@ else {
       await verifyRuntime(runtime);
       await startupDiagnostic('Bundled runtime verified');
       supervisor=new Supervisor({runtime,root,videos:app.getPath('videos'),settings,version:app.getVersion(),safeStorage});supervisor.on('status',broadcast);
+      supervisor.on('diagnostic',message=>void startupDiagnostic(message));
+      supervisor.on('status',state=>void startupDiagnostic(`Native services phase: ${state.phase}; owners: ${state.services.length}`));
       try{recovery=JSON.parse(await readFile(path.join(root,'pending-update.json'),'utf8'));}catch(error){if(error.code!=='ENOENT')throw error;}
       if(recovery && ![recovery.to,recovery.from].includes(app.getVersion()))throw new Error('安装版本与升级快照不匹配，请从对应 Release 恢复。');
       if(recovery && app.getVersion()===recovery.from)throw new Error('检测到待恢复的数据快照，请先选择恢复匹配数据，再启动旧版本。');

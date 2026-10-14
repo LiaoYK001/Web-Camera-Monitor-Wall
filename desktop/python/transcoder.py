@@ -7,16 +7,19 @@ import sys
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1]))
 from runtime_support import service_rtsp
 
-def arguments(values, encoder="libx264"):
-    if len(values) != 4:
+def arguments(values, encoder="libx264", hardware_decode=False):
+    if len(values) not in {4, 5}:
         raise ValueError("invalid argument count")
-    source, target, video, audio = values
+    source, target, video, audio = values[:4]
+    if len(values) == 5 and (values[4] != "90" or video not in {"copy", "transcode"}):
+        raise ValueError("invalid startup budget")
     direct = bool(re.fullmatch(r"direct-[a-f0-9]{32}", source))
     url = bool(re.fullmatch(r"rtsps?://[!-~]{1,2048}", source))
     if not direct and not url:
         raise ValueError("invalid source")
     ffmpeg = os.environ["WEBOBS_FFMPEG_PATH"]
-    args = [ffmpeg, "-hide_banner", "-loglevel", "error", "-nostdin", "-rtsp_transport", "tcp", "-timeout", "8000000",
+    decode = ["-hwaccel", "cuda"] if hardware_decode and video == "transcode" and encoder == "h264_nvenc" else []
+    args = [ffmpeg, "-hide_banner", "-loglevel", "error", "-nostdin", "-rtsp_transport", "tcp", "-timeout", "8000000", *decode,
             "-i", service_rtsp(8554, "/" + source) if direct else source]
     if video == "audio-track":
         if not re.fullmatch(r"([0-9]|[12][0-9]|3[01])", audio) or target != f"audio-{target[6:38]}-t{audio}" or not re.fullmatch(r"audio-[a-f0-9]{32}-t\d{1,2}", target):
@@ -51,14 +54,39 @@ def arguments(values, encoder="libx264"):
     else: args += ["-c:a", "libopus", "-b:a", "96k", "-ar", "48000", "-ac", "2"]
     return args + ["-rtsp_transport", "tcp", "-f", "rtsp", service_rtsp(8554, "/"+target)]
 
+def prepare_cold_input(values):
+    # Warm only the loopback direct route. A 90s FFmpeg I/O timeout would also
+    # hide established-stream stalls for 90s; keep steady-state reads at 8s.
+    args = arguments(values)  # Validate the full fixed vector before spawning.
+    probe = pathlib.Path(os.environ['WEBOBS_FFMPEG_PATH']).with_name('ffprobe.exe' if os.name == 'nt' else 'ffprobe')
+    command = [str(probe), '-v', 'error', '-rtsp_transport', 'tcp', '-timeout', '90000000',
+               '-analyzeduration', '1000000', '-probesize', '1048576', '-select_streams', 'v:0',
+               '-show_entries', 'stream=codec_name', '-of', 'json', args[args.index('-i')+1]]
+    try:
+        return subprocess.run(command, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                              timeout=90, **({'creationflags':subprocess.CREATE_NO_WINDOW} if os.name=='nt' else {})).returncode
+    except (OSError, subprocess.TimeoutExpired):
+        return 1
+
+
+def run_transcoder(values, call=subprocess.call):
+    if len(values) == 5 and prepare_cold_input(values) != 0:
+        print('go2rtc cold input did not become ready', file=sys.stderr)
+        return 1
+    if len(values) in {4, 5} and values[2] == "transcode" and os.environ.get("WEBOBS_NVIDIA_ENCODE_SUPPORTED") == "true" and os.environ.get("WEBOBS_HYBRID_VIDEO_ENCODER") != "x264":
+        if os.environ.get("WEBOBS_NVIDIA_DECODE_SUPPORTED") == "true":
+            result = call(arguments(values, "h264_nvenc", hardware_decode=True))
+            if result == 0: return 0
+        # A source may use a profile the hardware decoder cannot consume. Keep
+        # NVENC with software decoding before falling back to all-software.
+        result = call(arguments(values, "h264_nvenc"))
+        if result == 0 or os.environ.get("WEBOBS_SOFTWARE_FALLBACK", "true") != "true": return result
+    return call(arguments(values))
+
+
 if __name__ == "__main__":
     try:
-        values = sys.argv[1:]
-        if len(values) == 4 and values[2] == "transcode" and os.environ.get("WEBOBS_NVIDIA_ENCODE_SUPPORTED") == "true" and os.environ.get("WEBOBS_HYBRID_VIDEO_ENCODER") != "x264":
-            result = subprocess.call(arguments(values, "h264_nvenc"))
-            if result == 0: raise SystemExit(0)
-            if os.environ.get("WEBOBS_SOFTWARE_FALLBACK", "true") != "true": raise SystemExit(result)
-        raise SystemExit(subprocess.call(arguments(values)))
+        raise SystemExit(run_transcoder(sys.argv[1:]))
     except (ValueError, KeyError):
         print("invalid internal transcoder configuration", file=sys.stderr)
         raise SystemExit(2)

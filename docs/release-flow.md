@@ -74,6 +74,8 @@ When preparing the requested version, record its identity, changes and validatio
 
 For a combined immutable release, `-PrepareOnly` / `WEBOBS_RELEASE_PREPARE_ONLY=true` prepares the candidate and source Draft without publishing the Release or moving stable/version/latest tags. Verify all approved attachments, then resume the normal publisher from the same revision. Stable Windows packages may be explicitly labeled UNSIGNED with complete updater metadata; signing is optional. Source, digest, actual-install evidence and disclosed qualification boundaries still apply.
 
+GitHub 不可变发布在公开后锁定关联标签。公开 Draft 的请求必须同时显式提交正式 `tag_name` 和对应 `target_commitish`，随后读取实际 Release 标签再次核对；`untagged-*`、错误标签或不可读取的正式下载入口不能当作成功，也不能继续提升镜像别名。已公开的错误记录保留，不通过关闭不可变保护、移动旧标签或覆盖附件修复。GitHub immutable releases lock the associated tag after publication. Publish with the exact tag/revision in the same request and verify the returned Release identity before image promotion. An untagged association is a failure; preserve published history and immutable assets rather than disabling protection or moving old tags.
+
 在 **`main`** 上执行（发布从稳定基线出）：
 
 ```bash

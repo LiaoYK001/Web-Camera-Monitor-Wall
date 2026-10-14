@@ -17,12 +17,12 @@ Containers and Windows x64 bundle the media tools; Android manages sources on it
 ## 接入步骤 / Adding a source
 
 1. 管理员打开 **go2rtc 管理 → 添加网站与直播源**。需要 `settings.manage`；所有配置、播放和 API 仍经 `/api/v1/go2rtc/` 的产品认证代理。
-2. 单个视频网页选择 **yt-dlp**，直播网页选择 **Streamlink**；已有 HLS/HTTP/RTSP/RTMP 媒体地址可选择直接媒体地址。填写新的命名流。支持范围取决于上游 [yt-dlp 网站列表](https://github.com/yt-dlp/yt-dlp/blob/master/supportedsites.md) 和 [Streamlink 插件](https://streamlink.github.io/plugins.html)，不承诺所有网页、登录/地域限制或 DRM 视频都可用。
+2. 默认 **自动识别**：RTSP/RTSPS/RTMP 和常见 HLS/MP4 媒体链接直接接入，其他 HTTP(S) 网页交给 **yt-dlp**。也可明确选择 yt-dlp、Streamlink 或直接媒体地址。YouTube 直播网页优先使用自动识别或 yt-dlp，不能当作直接媒体链接；RTSP 摄像机可使用含认证信息的地址，凭据仅进入管理员私密配置。填写新的命名流。支持范围取决于上游 [yt-dlp 网站列表](https://github.com/yt-dlp/yt-dlp/blob/master/supportedsites.md) 和 [Streamlink 插件](https://streamlink.github.io/plugins.html)，不承诺所有网页、登录/地域限制或 DRM 视频都可用。
 3. 默认优先 **720p / 自动**；已识别 H264/AAC 优先直通，不兼容或未知编码在播放时用 FFmpeg 转换。可以选择直通或始终 H264。清晰度选择是偏好，站点可用轨道决定实际结果；Streamlink 无合适标注轨道时回退最佳轨道，并在需要转换时限制输出高度。
 4. 点击 **保存命名流并重启 go2rtc**。上游 `/api/streams` 有意禁止新增 `exec`，因此产品通过管理员配置合并 API 保存固定模板，再重启并等待命名流可见。已有桥接播放/录像输入会短暂中断。先检查运行流和已保存配置中的重名；上游没有原子新增/配置修订接口，多位管理员同时编辑应协调操作。合并保留其他配置值，但上游可能重排 YAML 或移除注释。
 5. 在官方流管理中测试播放；然后在下方 **检测并添加设备** 建档。在 Studio 选择该设备加入场景。Android、Windows 和浏览器共享同一后端设备目录。
 
-Choose yt-dlp for individual video pages, Streamlink for live pages, or direct media for existing HLS/HTTP/RTSP/RTMP URLs. Save a new name, test playback in the official UI, import the flow into the device registry, then select it in Studio. Saving merges the fixed source into administrator configuration and restarts go2rtc, briefly interrupting existing bridge consumers. The form checks active and stored names, but upstream provides no atomic create/revision API; coordinate concurrent administrator changes. YAML formatting/comments may be rewritten by upstream.
+Automatic selection sends RTSP/RTSPS/RTMP and common HLS/MP4 media URLs directly to go2rtc, and HTTP(S) webpages to yt-dlp. Explicit yt-dlp, Streamlink and direct modes remain available. YouTube live pages require a website extractor; authenticated RTSP addresses stay in private administrator configuration. Save a new name, test playback in the official UI, import the flow into the device registry, then select it in Studio. Saving merges the fixed source into administrator configuration and restarts go2rtc, briefly interrupting existing bridge consumers. The form checks active and stored names, but upstream provides no atomic create/revision API; coordinate concurrent administrator changes. YAML formatting/comments may be rewritten by upstream.
 
 ## 按需解析与编码 / On-demand resolution and codecs
 
@@ -46,6 +46,8 @@ The private configuration stores an encoded original page URL, not an expiring r
 Administrators supply a private Netscape cookie file for authenticated extraction and signed media URLs. Files are bounded and cannot be symlinks or arbitrary paths. The product login is never forwarded to websites. Raw media Cookie/Authorization forwarding is unavailable because the container FFmpeg inherits custom headers across redirects; such sources fail with `media_credentials_unsupported`. Website cookies remain in the private configuration/backup boundary and must be refreshed when expired.
 
 ## 诊断、构建与验证 / Diagnostics, building and validation
+
+实际公开 YouTube 直播、冷导入、轨道解码、Studio 与重启保留的结果和复验命令见 [v4 接入验收](online-source-validation-v4.md)。Public live-source results and the full native UI recheck are recorded separately from synthetic fixtures.
 
 - `website_resolution_failed`：检查网页、后端网络、Cookie 和解析器版本；确认视频未结束且具备访问权限。
 - `live_resolution_failed` / `live_unavailable`：确认直播在线，尝试 yt-dlp 或直接媒体地址。需要 Streamlink 特有分段处理/复用的插件可能无法导出单个媒体 URL。
@@ -78,3 +80,32 @@ node tests/online_source_runtime.cjs --image <complete-product-image>
 前端：`pnpm typecheck`、`pnpm build` 及 `online-sources.spec.ts`。Windows 原生门禁增加无开发 PATH 的工具自检、真实本地网页/HLS → RTSP 解码、重连和消费者退出验证。Android 使用 `android/tests/test_emulator.py --serial <明确设备> --image <含解析器的完整产品镜像> --online-sources`，通过实际已安装 APK 验证同一表单、认证 MSE 解码与设备导入，保留设备数据。
 
 Validation uses real locked extractors, FFmpeg and go2rtc against local synthetic MP4/HLS, plus authenticated browser/installed-APK workflows. It is not qualification of external websites, physical cameras, ARM devices, hardware audio or clean Windows installations. Record the exact source and candidate gates before announcing release readiness.
+
+
+## v4.1 开发调整 / v4.1 development changes
+
+命名流列表支持筛选、选择未添加的流及批量建档，依次检测并探测轨道。部分失败保留成功项，失败项仍被选中可重试；“完成当前设备后停止”不会中断正在写入的设备。写入结果不确定时暂停队列，先核对原设备 ID，避免重复建档。
+
+Named streams support filtered selection and sequential batch import/probing. Successful entries are retained, failed selections can be retried, and stopping completes the current device. An uncertain write pauses the queue until its original device ID is reconciled.
+
+已建档流提供“重新探测轨道”，复用原设备 ID，失败不重复创建设备。轨道探测提交短请求并轮询有界任务，完成后再通过短 POST 核对当前状态及广播；最多保留 16 个任务、5 分钟过期，实际探测仍受现有 4 路并发限制。产品内部 go2rtc 探测最多 90 秒，前端整体等待最多 120 秒，各 HTTP 请求沿用原上限。队列满或探测失败会显示可重试状态；修改来源时拒绝旧结果写回。任务只保存在内存，服务重启后需重新探测，取消页面等待不强制终止共享探测。
+
+Imported streams can re-probe without changing device identity. Short submission/poll/completion requests avoid holding the proxy open. At most 16 in-memory jobs expire after five minutes; the existing four-probe concurrency limit remains. Product-loopback go2rtc probes use 90 seconds within a 120-second frontend wait, preserving individual HTTP limits. Failed/full jobs can retry, edited sources reject stale results, and restarting the service discards jobs. Cancelling one waiter does not kill a shared probe.
+
+go2rtc 表单的轨道探测操作单独使用 150 秒外层预算，覆盖单 Profile 的 120 秒任务等待及状态核对；普通编辑与创建操作仍使用 20 秒。浏览器虚拟时钟回归确认超过 20 秒仍在等待并正常完成、不重复建档；仅调整内层 API 超时不足以覆盖外层取消。Track-probe operations alone use a 150-second editor-owner budget; ordinary writes retain 20 seconds. A clock-driven browser regression crosses the ordinary deadline and verifies completion without duplicate creation.
+
+手动探测请求会显式刷新短期媒体缓存，避免刚切换来源编码后仍返回旧轨道。播放路由同时核对设备登记的视频/音频 codec；同一个地址的 codec 更新也会使旧转换路由及音轨缓存失效。网关明确拒绝编码时，受管设备观看路径可提交一次异步新探测，后续 WHEP 重试读取新结果；每路最多每 30 秒一次，首次不依赖系统启动时长，不处理普通网络超时，不唤醒闲置来源。该服务器内部请求只走固定回环 Camera Registry，不转发产品凭据。
+
+Manual probes explicitly refresh the media cache. Routing checks registered video/audio codecs as well as endpoint/B-frame metadata, invalidating stale conversion/audio paths when codecs change at the same URL. A codec rejection can queue a fresh device probe for subsequent WHEP retries, at most once per route every thirty seconds. Idle sources and ordinary network timeouts do not trigger it; the fixed loopback request carries no product credentials.
+
+网站保留按所选清晰度寻找最佳兼容格式的顺序，不为优先合并音视频而降清晰度。非直播 H.264 在按需启动时用固定 FFprobe 做最多 6 秒、1 MiB/1 秒探测预算的重排序兼容性检查：无 B 帧才能自动直通，存在 B 帧或未确认则转为无 B 帧 H.264。在线直播 H.264 保持原直通规则；显式“直通”不自动转换。原有 RTSP 直通入口不走此网站探测。429/500/502/503/504 使用已有有界 HTTP 退避；403 不持续重试过期 URL。
+
+Website format selection preserves the best compatible quality up to the selected height rather than preferring a lower-resolution combined stream. On-demand non-live H.264 uses a fixed FFprobe with a six-second deadline and 1 MiB/one-second analysis budget: verified reorder-free video passes through; reordered or unverified VOD uses zero-B-frame H.264 conversion. Live H.264 retains passthrough, explicit copy never forces conversion, and direct RTSP bypasses this website probe. Transient 429/500/502/503/504 use bounded HTTP backoff; expired 403 URLs are not retried indefinitely.
+
+Windows 原生来源门禁可追加 `--soak-seconds 600`（每源 0–3600 秒），确保视频处于可见视口，要求 `requestVideoFrameCallback` 并逐段检查总帧减丢弃帧的增长，整应用重启后同样要求实际呈现。失败回执仅保留允许的媒体状态、缓冲时间范围和 WebSocket 字节/错误数量，不保存签名媒体 URL。
+
+The native source UI gate accepts `--soak-seconds 600` (0–3600 seconds per source), brings video into the viewport, requires frame callbacks and checks non-dropped frame progress, including after full restart. Failed receipts retain only allowed media state, buffered time ranges and socket counters, never signed media URLs. Restart failures record their phase separately from a completed soak; socket errors use a fixed category allowlist.
+
+产品内部 go2rtc 回环 RTSP 路径的冷启动预算与网站助手对齐：Direct 来源等待最多 90 秒，Hybrid 在启动前用固定 FFprobe 等待最多 90 秒，发布启动最多 95 秒；实际 FFmpeg 媒体读取仍为 8 秒，普通摄像机维持原预算。启动探测临时读取同一条回环 Direct 路径，退出后立即由转码器接续，网关复用已有来源；不会额外持续连接摄像机。单次 WHEP 信令仍为 15 秒，浏览器沿原有退避重试，提取过程不会被较短的 Hybrid 输入等待提前终止。只识别本产品运行时的 go2rtc 回环监听地址，不接受前端提供任意等待时长；退出观看后仍按需停止。
+
+Internal product-loopback go2rtc routes align with the fixed extractor startup budget: 90 seconds for the Direct source/startup-only FFprobe and 95 seconds for Hybrid publishing. Actual FFmpeg media reads retain their eight-second deadline, so established-stream stalls are not hidden for 90 seconds. The temporary probe reads the shared loopback Direct path and hands over to FFmpeg; it adds no continuous camera connection. Ordinary camera budgets remain unchanged. Each WHEP signaling request retains its 15-second deadline and existing browser backoff. Only the product's loopback go2rtc listener is recognized; renderers cannot choose arbitrary durations. Media remains on demand.
