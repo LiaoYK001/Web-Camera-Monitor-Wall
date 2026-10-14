@@ -1865,7 +1865,7 @@ def probe_binding_matches(database, camera, profile, endpoint):
     return current_endpoint == endpoint
 
 
-def queue_profile_probe(camera_id: str, profile_id: str) -> dict:
+def queue_profile_probe(camera_id: str, profile_id: str, refresh: bool = False) -> dict:
     with connect() as database:
         if not database.execute("SELECT 1 FROM stream_profiles WHERE camera_id=? AND id=?", (camera_id,profile_id)).fetchone():
             raise KeyError('profile not found')
@@ -1887,6 +1887,8 @@ def queue_profile_probe(camera_id: str, profile_id: str) -> dict:
         PROBE_JOBS[job_id] = job
     def work():
         try:
+            if refresh:
+                invalidate_probe_results(camera_id)
             result = probe_source_profile(camera_id,profile_id)
             update = {'state':'completed','profile':result}
         except Exception:
@@ -3773,7 +3775,9 @@ class Handler(BaseHTTPRequestHandler):
             if catalog_probe_match:
                 payload = self.payload() if int(self.headers.get("Content-Length", "0")) else {}
                 if payload.get('async') is True:
-                    self.respond(202,queue_profile_probe(*catalog_probe_match.groups())); return
+                    if 'refresh' in payload and type(payload['refresh']) is not bool:
+                        raise ValueError('refresh must be a boolean')
+                    self.respond(202,queue_profile_probe(*catalog_probe_match.groups(),refresh=payload.get('refresh') is True)); return
                 if 'jobId' in payload:
                     if not isinstance(payload['jobId'],str) or not re.fullmatch(r'[a-f0-9]{32}',payload['jobId']):
                         raise ValueError('invalid probe job')

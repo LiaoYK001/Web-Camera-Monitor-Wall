@@ -1130,6 +1130,11 @@ private:
         std::string transport;
         std::string codec;
         std::string audio_codec;
+        std::string registry_video_codec;
+        std::string registry_audio_codec;
+        std::string camera_id;
+        std::string profile_id;
+        std::chrono::steady_clock::time_point last_track_refresh{};
         bool transcode = false;
         bool video_transcode = false;
         bool video_reordering = false;
@@ -1291,9 +1296,13 @@ private:
 
         const std::string create_url = std::string(upstream_origin) + "/" + std::string(path) + "/whep";
         UpstreamResponse upstream = request_http(create_url, request.body(), "POST", "application/sdp");
-        if (!upstream.ok || upstream.status != 201 || upstream.body.empty())
+        if (!upstream.ok || upstream.status != 201 || upstream.body.empty()) {
+            if (upstream.ok && (upstream.status == 400 || upstream.status == 500) &&
+                lowercase(upstream.body).find("codec") != std::string::npos)
+                refresh_rejected_tracks(path);
             return response(http::status::bad_gateway, version,
                             error_body("whep_upstream", "WebRTC signaling did not accept the offer"));
+        }
         const std::string upstream_prefix = "/" + std::string(path) + "/whep/";
         const auto upstream_location = normalize_location(upstream.location, upstream_prefix);
         if (!upstream_location)
@@ -1369,6 +1378,30 @@ private:
         return codec.empty() || codec == "opus" || codec == "pcm_alaw" || codec == "pcm_mulaw";
     }
 
+    void refresh_rejected_tracks(std::string_view path)
+    {
+        std::string camera_id, profile_id;
+        {
+            const std::lock_guard lock(route_state_mutex_);
+            for (auto &[id, route] : direct_routes_) {
+                if (route.path != path && route.hybrid_path != path && route.native_hevc_path != path) continue;
+                const auto now = std::chrono::steady_clock::now();
+                if (route.camera_id.empty() || route.profile_id.empty() ||
+                    (route.last_track_refresh != std::chrono::steady_clock::time_point{} &&
+                     now - route.last_track_refresh < std::chrono::seconds(30))) return;
+                route.last_track_refresh = now;
+                camera_id = route.camera_id; profile_id = route.profile_id;
+                break;
+            }
+        }
+        if (camera_id.empty()) return;
+        // A named source may change codecs without changing its registry URL.
+        // Queue a bounded fresh probe only after a codec rejection, never for
+        // idle sources or ordinary network timeouts. Do not forward credentials.
+        request_http(runtime_http(8092, "/source-catalog/") + camera_id + "/profiles/" + profile_id + "/probe",
+                     R"({"async":true,"refresh":true})", "POST", "application/json", 1000L);
+    }
+
     void delete_config_path(std::string_view path)
     {
         if (path.empty())
@@ -1439,6 +1472,7 @@ private:
         std::string effective_url = source.rtsp_url;
         bool video_reordering = false;
         bool video_reordering_known = false;
+        std::string registry_video_codec, registry_audio_codec;
         std::string source_transport = source.kind == "rtsp" ? source.transport : "tcp";
         if (source.kind == "camera") {
             const auto resolved = resolve_camera_endpoint(source.camera_id, source.profile_id);
@@ -1447,6 +1481,8 @@ private:
             effective_url = resolved->endpoint;
             video_reordering = resolved->video_reordering;
             video_reordering_known = resolved->video_reordering_known;
+            registry_video_codec = resolved->video_codec;
+            registry_audio_codec = resolved->audio_codec;
             if (resolved->transport_mode == "rtsp-udp") source_transport = "udp";
             else if (resolved->transport_mode == "rtsp-udp-multicast") source_transport = "multicast";
         }
@@ -1466,6 +1502,8 @@ private:
                 existing->second.rtsp_url == effective_url &&
                 existing->second.video_reordering == video_reordering &&
                 existing->second.video_reordering_known == video_reordering_known &&
+                existing->second.registry_video_codec == registry_video_codec &&
+                existing->second.registry_audio_codec == registry_audio_codec &&
                 existing->second.transport == source_transport)
                 return existing->second.path;
             if (adding) {
@@ -1496,6 +1534,10 @@ private:
             }
         }
         route.rtsp_url = effective_url;
+        route.registry_video_codec = registry_video_codec;
+        route.registry_audio_codec = registry_audio_codec;
+        route.camera_id = source.kind == "camera" ? source.camera_id : std::string{};
+        route.profile_id = source.kind == "camera" ? source.profile_id : std::string{};
         // Website extraction is owned by the fixed go2rtc relay (90s startup).
         // Keep ordinary camera budgets; recognize only this product's loopback
         // go2rtc listener, never a renderer-supplied duration or external host.

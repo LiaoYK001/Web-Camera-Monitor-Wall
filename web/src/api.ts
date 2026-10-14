@@ -378,7 +378,7 @@ export async function probeSourceProfileQueued(cameraId: string, profileId: stri
   const { withRequestTimeout } = await import('./requestTimeout');
   return withRequestTimeout(120000, async signal => {
     const first = await clientAdminRequest<Result | Job>(path + '/probe', {
-      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ async: true }), signal,
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ async: true, refresh: true }), signal,
     });
     if ('profile' in first && first.profile) return first as Result; // Compatibility with an older backend.
     const jobId = 'jobId' in first ? first.jobId : undefined;

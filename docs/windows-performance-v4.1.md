@@ -4,6 +4,26 @@
 
 Development measurements only. These results establish neither stock OBS parity nor qualification of the user's laptop.
 
+## 可见窗口长测（2026-10-14） / Visible-window sustained comparison
+
+在同一 9950X3D/RTX3090 上，保持同一组持续运行的合成源：三路无 B 帧 H.264 1080p、两路有 B 帧 HEVC 1440p，25fps。实际 Electron 窗口可见，五路均完整处于视口；视频尺寸及每个画面的显示尺寸一致，画面整体纵向位置相差约 23px。两轮各预热 3 分钟，外部统计器每 5 秒采样、各保留 180 个样本（15 分钟）；观看端另在约 17 分钟内逐段验证非丢弃帧增长。
+
+The same uninterrupted fixture supplied both runs. Actual Electron displayed all five videos inside the viewport at matching decoded and displayed sizes; vertical placement differed by about 23 pixels. Each run used three minutes of warm-up and 180 external CPU samples over fifteen minutes, with ongoing non-dropped-frame checks for approximately seventeen minutes.
+
+| 项目 / Measurement | 旧开发候选 / Earlier candidate | 新开发候选 / New candidate |
+| --- | --- | --- |
+| 身份 / Identity | `4.0.1-dev.5` / `7001bae` | `4.1.0-dev.8` / `0468c02` |
+| 整体 CPU 中位 / Median CPU | 13.02% | 8.62% |
+| 整体 CPU p95 / p95 CPU | 15.58% | 10.31% |
+| 每路平均呈现 / Presented FPS per stream | 24.95–24.96 | 24.82–24.87 |
+| 每路丢弃帧 / Dropped frames per stream | 12–16 | 67–88 |
+| Composite 发布 / Publisher | 持续发布 / publishing | 待机 / idle |
+| 五路实际传输视频编码 / Negotiated video codecs | 5 × H.264 | 5 × H.264 |
+
+CPU 中位下降约 33.8%，p95 同样下降约 33.8%；不是通过降低分辨率或关闭画面取得。新版呈现 FPS 略低、丢弃帧略多，不宣称无掉帧或满 25fps。两路 HEVC 在此组有 B 帧，仍走兼容 H.264 转换；这组数据不证明原生 HEVC 直通的性能。统计范围、PID 创建时间检查和排除上游生成器的规则沿用下文。单次顺序对照、合成无音频来源、当前主机/负载的限制仍然存在；旧基线是开发候选，不能改写成已发布 v4.0 或 stock OBS。
+
+Median and p95 CPU decreased by approximately 33.8% at matching resolution and displayed size. The new run had slightly lower presented FPS and more dropped frames. Reordered HEVC still used H.264 conversion, so these measurements do not qualify native HEVC savings. This is one sequential synthetic, audio-free comparison on this host, against an earlier development candidate rather than published v4.0 or stock OBS.
+
 ## 同源短测 / Same-source short comparison
 
 测试机为 Ryzen 9950X3D / RTX3090，32 个逻辑处理器。来源由应用进程树外的独立测试服务器提供：三路无 B 帧 H.264 1920×1080、两路 HEVC 2560×1440，全部 25fps、相同生成文件循环播放。通过实际表单、批量导入、Studio 保存、TAKE 和主页五个视频完成操作；两轮都要求每段采样的五路总帧计数增长，视频尺寸保持不变。总帧包含丢弃帧，不能据此证明可见画面持续呈现。

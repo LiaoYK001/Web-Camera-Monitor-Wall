@@ -211,7 +211,7 @@ test('queued track probes wait for results and retry an imported device without 
   const server = await backend(context); let attempts = 0, polls = 0;
   await context.route('**/api/v2/source-catalog/*/profiles/*/probe', route => {
     if (route.request().postDataJSON().jobId) return route.fulfill({ json: { cameraId: 'imported', profile: { id: 'main', probeState: 'ready' } } });
-    expect(route.request().postDataJSON()).toEqual({ async: true }); attempts++; polls = 0;
+    expect(route.request().postDataJSON()).toEqual({ async: true, refresh: true }); attempts++; polls = 0;
     return route.fulfill({ status: 202, json: { state: 'pending', jobId: attempts.toString(16).padStart(32, '0') } });
   });
   await context.route('**/api/v2/source-catalog/*/profiles/*/probe-jobs/*', route => {

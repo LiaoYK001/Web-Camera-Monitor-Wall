@@ -28,7 +28,8 @@ app.on('window-all-closed',()=>{});
   fixtureUrl.username='fixture';fixtureUrl.password=encodeURIComponent(password);
   const rtspAddress=fixtureUrl.href;
   const fixtureConfig=path.join(temporary,'fixture.json');await fs.writeFile(fixtureConfig,JSON.stringify({api:{listen:`127.0.0.1:${apiPort}`},rtsp:{listen:`127.0.0.1:${rtspPort}`,username:'fixture',password},webrtc:{listen:''},streams:{fixture:'ffmpeg:virtual?video=testsrc2&size=160x90#video=h264'}}));
-  if(!external)upstream=require('node:child_process').spawn(path.join(runtime,'bin/webobs-job.exe'),['--console',path.join(runtime,'bin/go2rtc.exe'),'-config',fixtureConfig],{windowsHide:true,stdio:['pipe','ignore','ignore'],env:{...process.env,PATH:path.join(runtime,'bin')+path.delimiter+path.join(process.env.SystemRoot,'System32')}});
+  const launchFixture=()=>require('node:child_process').spawn(path.join(runtime,'bin/webobs-job.exe'),['--console',path.join(runtime,'bin/go2rtc.exe'),'-config',fixtureConfig],{windowsHide:true,stdio:['pipe','ignore','ignore'],env:{...process.env,PATH:path.join(runtime,'bin')+path.delimiter+path.join(process.env.SystemRoot,'System32')}});
+  if(!external)upstream=launchFixture();
   if(upstream)await expect.poll(async()=>{try{return (await fetch(`http://127.0.0.1:${apiPort}/api/streams`)).status}catch{return 0}},{timeout:15000}).toBe(200);
   const {Supervisor}=await import('../src/supervisor.mjs');const {defaults}=await import('../src/settings.mjs');
   supervisor=new Supervisor({runtime,root:path.join(temporary,'WebOBS'),videos:path.join(temporary,'Videos'),settings:{...defaults},version:manifest.version,safeStorage});
@@ -106,7 +107,42 @@ app.on('window-all-closed',()=>{});
      soak={seconds:Math.round(seconds),progressSamples:samples,totalFrames,droppedFrames,presentedFrames,averagePresentedFps:Number((presentedFrames/seconds).toFixed(2))};
     }
     console.log('Actual monitor wall decoded and advanced after TAKE');
-    await management.close();receipts.push({name,address:external?address:'[private authenticated RTSP fixture]',engine,videoMode:videoMode||'auto',result:'passed',dimensions,seconds:Math.round((Date.now()-start)/1000),deviceImported:true,coldImport:true,studioPersisted:true,monitorWallDecoded:true,monitorFramePresented:true,...(soak?{soak}:{})});
+    let codecSwitchRecovered=false;
+    if(!external){
+     phase='codec-switch-playback';
+     const changed=JSON.parse(await fs.readFile(fixtureConfig,'utf8'));
+     changed.streams.fixture='ffmpeg:virtual?video=testsrc2&size=320x180#video=h265';
+     await fs.writeFile(fixtureConfig,JSON.stringify(changed));
+     const oldFixture=upstream;oldFixture.stdin.end();
+     await Promise.race([new Promise(resolve=>oldFixture.once('exit',resolve)),new Promise(resolve=>setTimeout(resolve,5000))]);
+     if(oldFixture.exitCode===null)oldFixture.kill();
+     await expect.poll(async()=>{try{return (await fetch(`http://127.0.0.1:${apiPort}/api/streams`,{signal:AbortSignal.timeout(500)})).status;}catch{return 0;}},{timeout:10000}).not.toBe(200);
+     upstream=launchFixture();
+     await expect.poll(async()=>{try{return (await fetch(`http://127.0.0.1:${apiPort}/api/streams`)).status;}catch{return 0;}},{timeout:15000}).toBe(200);
+     // Same named stream, credentials, camera/profile and B-frame count. The
+     // real source switches H264 -> HEVC; no manual probe or page reload.
+     await expect.poll(async()=>{const records=(await (await context.request.get(base+'/api/v1/cameras')).json()).cameras;const current=records.find(c=>c.id===camera.id);return current?.profiles.some(p=>p.videoCodec==='hevc'&&p.width===320&&p.probeState==='ready');},{timeout:90000}).toBe(true);
+     await expect.poll(()=>wall.evaluate(v=>v.videoWidth===320&&v.videoHeight===180&&v.readyState>=2),{timeout:90000}).toBe(true);
+     await wall.scrollIntoViewIfNeeded();
+     await wall.evaluate(v=>new Promise((resolve,reject)=>{const timer=setTimeout(()=>reject(new Error('Changed codec did not present a frame')),15000);v.requestVideoFrameCallback(()=>{clearTimeout(timer);resolve();});}));
+     codecSwitchRecovered=true;console.log('Same-address H264 to HEVC source refreshed tracks and resumed Monitor automatically');
+    }
+    phase='go2rtc-restart-playback';
+    const restarted=await context.request.post(base+'/api/v1/go2rtc/api/restart',{headers:{Origin:base}});
+    expect(restarted.status()).toBe(202);
+    await expect.poll(async()=>{
+     try{const response=await context.request.get(base+'/api/v1/go2rtc/api/streams');return response.ok()&&Object.hasOwn(await response.json(),name);}catch{return false;}
+    },{timeout:30000}).toBe(true);
+    // Do not reload Monitor or restart the product to conceal failed recovery.
+    // Wait past the short RTC buffer before requiring a new presented frame.
+    await management.waitForTimeout(15000);await wall.scrollIntoViewIfNeeded();
+    await wall.evaluate(v=>new Promise((resolve,reject)=>{const timer=setTimeout(()=>reject(new Error('Monitor did not recover after go2rtc restart')),110000);v.requestVideoFrameCallback(()=>{clearTimeout(timer);resolve();});}));
+    const recoveredStamp=await wall.evaluate(v=>v.currentTime);
+    await expect.poll(()=>wall.evaluate(v=>v.currentTime),{timeout:15000}).toBeGreaterThan(recoveredStamp+1);
+    const retained=(await (await context.request.get(base+'/api/v1/cameras')).json()).cameras.find(c=>c.name===name);
+    expect(retained?.id).toBe(camera.id);
+    console.log('Monitor presented new frames after authenticated go2rtc restart without page reload');
+    await management.close();receipts.push({name,address:external?address:'[private authenticated RTSP fixture]',engine,videoMode:videoMode||'auto',result:'passed',dimensions,seconds:Math.round((Date.now()-start)/1000),deviceImported:true,coldImport:true,studioPersisted:true,monitorWallDecoded:true,monitorFramePresented:true,go2rtcRestartFramePresented:true,...(codecSwitchRecovered?{codecSwitchRecovered:true,codecSwitchDimensions:[320,180]}:{}),...(soak?{soak}:{})});
    }catch(error){
     const mediaDiagnostic=await activeVideo?.evaluate(v=>{const q=v.getVideoPlaybackQuality(),r=v.getBoundingClientRect();return {readyState:v.readyState,networkState:v.networkState,errorCode:v.error?.code||null,totalFrames:q.totalVideoFrames,droppedFrames:q.droppedVideoFrames,currentTime:v.currentTime,visibility:document.visibilityState,rectangle:{x:r.x,y:r.y,width:r.width,height:r.height},viewport:{width:innerWidth,height:innerHeight},buffered:Array.from({length:Math.min(v.buffered.length,4)},(_,i)=>[v.buffered.start(i),v.buffered.end(i)])};}).catch(()=>null);
     receipts.push({name,address:external?address:'[private authenticated RTSP fixture]',engine,videoMode:videoMode||'auto',result:'failed',phase,errorType:error.name,seconds:Math.round((Date.now()-start)/1000),mediaDiagnostic,socketBytes,socketFrames,socketErrors,socketErrorCategories:[...socketErrorCategories]});exit=1;await (management||page).screenshot({path:path.join(temporary,name+'-failed.png')}).catch(()=>{});}

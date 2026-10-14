@@ -63,3 +63,15 @@ Supply an explicit JSON array of currently available public sources. The same co
 本轮未验收真摄像机、ARM 设备、音频硬件、干净 Windows 安装或生产安装包升级；本机公网成功不代表 GitHub runner、其他地区或需登录网站可用。不得把本表改写为所有 YouTube 直播保证可用。
 
 Physical cameras, ARM, audio hardware, clean-machine installation and production-package upgrades are separate qualifications. Results do not guarantee every YouTube live stream, region, network or authenticated site.
+
+## v4.1 后续验收（2026-10-14） / Subsequent v4.1 qualification
+
+Windows `4.1.0-dev.8` / `0468c0217b533e617ccbd29f2d4f2371592ff946` 的完整 CI 已通过。新增本机验收使用全部 manifest 校验后的候选自身前端（入口 SHA-256 `be74993a577dbee54dac99809ae76ae932059b5c63dc2c35659c1b76a4beeac0`，无前端替换）：私密随机认证 RTSP → 冷建档/轨道探测 → MSE → Studio/TAKE → 主页可见帧；在播放中通过认证产品 API 重启 go2rtc，不刷新页面、不重启应用，等待超过短 RTC 缓冲后要求新的呈现帧与时间推进。设备 ID 保持不变，随后整产品重启及主页恢复也通过。
+
+Dev.8 passed its complete Windows CI. The additional local gate used its manifest-verified bundled frontend and an authenticated synthetic RTSP source. Monitor recovered new presented frames after a go2rtc-only restart, without page reload or full-app restart, then also passed full-product restart recovery. This does not qualify changing codecs under an existing stream name, public-site network faults or physical cameras.
+
+固定来源门禁现加入 go2rtc-only 重启恢复，回执字段为 `go2rtcRestartFramePresented`。Windows CI 的 dev.8 构建快照早于此新增断言，不能声称该 CI 已运行这一新增检查；上述结果来自随后本机使用该候选的独立实测。[完整 v4.1 范围与待完成项](release-notes-v4.1.md)。The new assertion is an additional local check against the candidate, not a retroactive claim about its earlier CI snapshot.
+
+后续同址编码切换检查在 dev.8 **失败**：私密 RTSP 测试源保持 URI/认证/设备 ID/B 帧数量不变，从 H.264 160×90 改为 HEVC 320×180，主页没有自行恢复，目录 codec 仍为旧值。新固定门禁加入该切换，要求无需手动探测/页面刷新即可更新轨道并呈现 320×180 新帧，然后再验证 go2rtc-only 和完整产品重启。修复源码已通过 Linux 核心与实际 Electron 的旧 codec 提示/新编码流验证；包含修复的 Windows 候选仍需运行这条完整新门禁，不能将 dev.8 原通过结果扩展到本场景。
+
+Dev.8 failed the subsequent same-URL H264-to-HEVC switch without manual intervention. The strengthened synthetic gate now requires automatic track refresh and new-resolution presentation before its restart checks. Linux-core/Electron recovery passed after the source fix; complete new Windows qualification is still pending.

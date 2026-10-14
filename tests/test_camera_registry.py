@@ -610,6 +610,27 @@ class CameraRegistryTests(unittest.TestCase):
                     registry.probe_source_profile(camera_id,'main')
                     self.assertEqual(run.call_args.kwargs['timeout'],seconds)
 
+    def test_manual_probe_refresh_replaces_cached_codec_at_the_same_endpoint(self):
+        camera=registry.validate_camera({'id':'refresh-probe','name':'Refresh','adapter':'rtsp',
+            'address':'rtsp://camera.example.invalid/live',
+            'profiles':[{'id':'main','endpoint':'rtsp://camera.example.invalid/live'}]})
+        registry.save_camera(camera,False)
+        initial=subprocess.CompletedProcess([],0,b'{"streams":[{"codec_type":"video","codec_name":"h264","has_b_frames":0}]}',b'')
+        changed=subprocess.CompletedProcess([],0,b'{"streams":[{"codec_type":"video","codec_name":"hevc","has_b_frames":0}]}',b'')
+        with patch.object(registry.subprocess,'run',return_value=initial) as run,patch.object(registry,'PROBE_JOBS',{}):
+            self.assertEqual(registry.probe_source_profile('refresh-probe','main')['videoCodec'],'h264')
+            run.return_value=changed
+            self.assertEqual(registry.probe_source_profile('refresh-probe','main')['videoCodec'],'h264')
+            self.assertEqual(run.call_count,1)
+            job=registry.queue_profile_probe('refresh-probe','main',refresh=True)
+            deadline=time.monotonic()+3
+            while time.monotonic()<deadline:
+                result=registry.profile_probe_job('refresh-probe','main',job['jobId'])
+                if result['state']!='pending':break
+                time.sleep(.01)
+            self.assertEqual(result['state'],'completed');self.assertEqual(result['profile']['videoCodec'],'hevc')
+            self.assertEqual(run.call_count,2)
+
     def test_automatic_probe_retry_limit_health_and_manual_recovery(self) -> None:
         registry.invalidate_probe_results()
         registry.save_camera(registry.validate_camera({

@@ -94,6 +94,10 @@ Imported streams can re-probe without changing device identity. Short submission
 
 go2rtc 表单的轨道探测操作单独使用 150 秒外层预算，覆盖单 Profile 的 120 秒任务等待及状态核对；普通编辑与创建操作仍使用 20 秒。浏览器虚拟时钟回归确认超过 20 秒仍在等待并正常完成、不重复建档；仅调整内层 API 超时不足以覆盖外层取消。Track-probe operations alone use a 150-second editor-owner budget; ordinary writes retain 20 seconds. A clock-driven browser regression crosses the ordinary deadline and verifies completion without duplicate creation.
 
+手动探测请求会显式刷新短期媒体缓存，避免刚切换来源编码后仍返回旧轨道。播放路由同时核对设备登记的视频/音频 codec；同一个地址的 codec 更新也会使旧转换路由及音轨缓存失效。网关明确拒绝编码时，受管设备观看路径可提交一次异步新探测，后续 WHEP 重试读取新结果；每路最多每 30 秒一次，首次不依赖系统启动时长，不处理普通网络超时，不唤醒闲置来源。该服务器内部请求只走固定回环 Camera Registry，不转发产品凭据。
+
+Manual probes explicitly refresh the media cache. Routing checks registered video/audio codecs as well as endpoint/B-frame metadata, invalidating stale conversion/audio paths when codecs change at the same URL. A codec rejection can queue a fresh device probe for subsequent WHEP retries, at most once per route every thirty seconds. Idle sources and ordinary network timeouts do not trigger it; the fixed loopback request carries no product credentials.
+
 网站保留按所选清晰度寻找最佳兼容格式的顺序，不为优先合并音视频而降清晰度。非直播 H.264 在按需启动时用固定 FFprobe 做最多 6 秒、1 MiB/1 秒探测预算的重排序兼容性检查：无 B 帧才能自动直通，存在 B 帧或未确认则转为无 B 帧 H.264。在线直播 H.264 保持原直通规则；显式“直通”不自动转换。原有 RTSP 直通入口不走此网站探测。429/500/502/503/504 使用已有有界 HTTP 退避；403 不持续重试过期 URL。
 
 Website format selection preserves the best compatible quality up to the selected height rather than preferring a lower-resolution combined stream. On-demand non-live H.264 uses a fixed FFprobe with a six-second deadline and 1 MiB/one-second analysis budget: verified reorder-free video passes through; reordered or unverified VOD uses zero-B-frame H.264 conversion. Live H.264 retains passthrough, explicit copy never forces conversion, and direct RTSP bypasses this website probe. Transient 429/500/502/503/504 use bounded HTTP backoff; expired 403 URLs are not retried indefinitely.
