@@ -110,7 +110,7 @@ export default function Go2rtcStreams({ onImported, refreshKey = 0, blocked = fa
           if (signal.aborted) throw signal.reason ?? new DOMException('探测已取消', 'AbortError');
           await probeSourceProfile(camera.id, profile.id, signal);
         }
-      }, () => setStatus(`“${name}”已建档并探测轨道。前往 Studio 的“选择场景来源”即可加入场景。`));
+      }, () => setStatus(`“${name}”已建档并探测轨道。前往 Studio 的“选择场景来源”即可加入场景。`), true, undefined, 150000);
       setResults(values => ({ ...values, [name]: probed ? '已添加并探测轨道' : '已添加，轨道探测需重试' }));
     } else {
       setResults(values => ({ ...values, [name]: submission.current ? '结果待核对，批量已暂停' : '添加失败，可重试' }));
@@ -131,7 +131,7 @@ export default function Go2rtcStreams({ onImported, refreshKey = 0, blocked = fa
       if (!record) throw new Error('设备已变化，请刷新 go2rtc 流后重试。');
       for (const profile of record.profiles) await probeSourceProfile(record.id, profile.id, signal);
       return fetchCameras(signal);
-    }, registry => { setCameras(registry.cameras); setStatus(`“${name}”轨道已更新。`); });
+    }, registry => { setCameras(registry.cameras); setStatus(`“${name}”轨道已更新。`); }, true, undefined, 150000);
     setResults(values => ({ ...values, [name]: confirmed ? '已重新探测轨道' : '已添加，轨道探测需重试' }));
   };
   const reconcile = () => run('核对 go2rtc 导入', signal => fetchCameras(signal), result => {

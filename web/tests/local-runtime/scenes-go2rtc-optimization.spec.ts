@@ -228,3 +228,25 @@ test('queued track probes wait for results and retry an imported device without 
   await row.getByRole('button', { name: '重新探测轨道', exact: true }).click();
   await expect(row).toContainText('已重新探测轨道'); expect(server.creates).toHaveLength(1); expect(attempts).toBe(3);
 });
+
+test('a cold track probe survives the ordinary editor deadline without recreating its device', async ({ page, context }) => {
+  const server = await backend(context); let submitted = false, completed = false, polls = 0;
+  await context.route('**/api/v2/source-catalog/*/profiles/*/probe', route => {
+    if (route.request().postDataJSON().jobId) return route.fulfill({ json: { cameraId: 'imported', profile: { id: 'main', probeState: 'ready' } } });
+    submitted = true;
+    return route.fulfill({ status: 202, json: { state: 'pending', jobId: 'a'.repeat(32) } });
+  });
+  await context.route('**/api/v2/source-catalog/*/profiles/*/probe-jobs/*', route => {
+    polls++;
+    return route.fulfill({ json: completed ? { state: 'completed', profile: { id: 'main', probeState: 'ready' } } : { state: 'pending' } });
+  });
+  await page.clock.install(); await page.goto('/#go2rtc');
+  const row = page.getByRole('region', { name: 'go2rtc 流接入' }).locator('.go2rtc-stream-list > div').filter({ hasText: 'entrance' });
+  await row.getByRole('button', { name: '检测并添加设备', exact: true }).click();
+  await expect.poll(() => submitted).toBe(true);
+  await page.clock.fastForward(21000); await expect.poll(() => polls).toBeGreaterThan(0);
+  await expect(row.getByRole('button', { name: '正在探测轨道…', exact: true })).toBeDisabled();
+  await expect(row).not.toContainText('轨道探测需重试');
+  completed = true; await page.clock.runFor(1000);
+  await expect(row).toContainText('已添加并探测轨道'); expect(server.creates).toHaveLength(1);
+});

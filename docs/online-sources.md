@@ -92,6 +92,8 @@ Named streams support filtered selection and sequential batch import/probing. Su
 
 Imported streams can re-probe without changing device identity. Short submission/poll/completion requests avoid holding the proxy open. At most 16 in-memory jobs expire after five minutes; the existing four-probe concurrency limit remains. Product-loopback go2rtc probes use 90 seconds within a 120-second frontend wait, preserving individual HTTP limits. Failed/full jobs can retry, edited sources reject stale results, and restarting the service discards jobs. Cancelling one waiter does not kill a shared probe.
 
+go2rtc 表单的轨道探测操作单独使用 150 秒外层预算，覆盖单 Profile 的 120 秒任务等待及状态核对；普通编辑与创建操作仍使用 20 秒。浏览器虚拟时钟回归确认超过 20 秒仍在等待并正常完成、不重复建档；仅调整内层 API 超时不足以覆盖外层取消。Track-probe operations alone use a 150-second editor-owner budget; ordinary writes retain 20 seconds. A clock-driven browser regression crosses the ordinary deadline and verifies completion without duplicate creation.
+
 网站保留按所选清晰度寻找最佳兼容格式的顺序，不为优先合并音视频而降清晰度。非直播 H.264 在按需启动时用固定 FFprobe 做最多 6 秒、1 MiB/1 秒探测预算的重排序兼容性检查：无 B 帧才能自动直通，存在 B 帧或未确认则转为无 B 帧 H.264。在线直播 H.264 保持原直通规则；显式“直通”不自动转换。原有 RTSP 直通入口不走此网站探测。429/500/502/503/504 使用已有有界 HTTP 退避；403 不持续重试过期 URL。
 
 Website format selection preserves the best compatible quality up to the selected height rather than preferring a lower-resolution combined stream. On-demand non-live H.264 uses a fixed FFprobe with a six-second deadline and 1 MiB/one-second analysis budget: verified reorder-free video passes through; reordered or unverified VOD uses zero-B-frame H.264 conversion. Live H.264 retains passthrough, explicit copy never forces conversion, and direct RTSP bypasses this website probe. Transient 429/500/502/503/504 use bounded HTTP backoff; expired 403 URLs are not retried indefinitely.
