@@ -83,3 +83,22 @@ Dev.9's complete Windows CI passed with the codec-change fix and strengthened so
 新增监看页实时占用栏后，固定 Windows 门禁还会展开该栏、等待真实进程采样、核对播放器 DOM 节点未替换，收起后要求新的呈现帧；回执使用 `liveProcessReadout`。此断言晚于 dev.10，须由后续完整候选执行；不能追溯扩展旧 CI 的覆盖范围。来源门禁使用锁定 Playwright Chromium 的页面视口与实际媒体合成回调；它与前述实际可见 Electron 五路性能测试分别记录，不宣称是同一个渲染器测试。
 
 The subsequent Windows gate opens the live process readout, waits for real CPU samples, verifies the player element is retained and requires another presented frame after collapse. Its `liveProcessReadout` receipt must come from a candidate after dev.10. This source gate uses locked Playwright Chromium's viewport/compositor; it is recorded separately from the actual visible Electron five-stream performance run.
+
+## 双路公开源一小时与故障恢复（2026-10-19） / Paired public-source hour and recovery
+
+使用 `4.1.0-dev.10` / `32f6ccb8ce9eff964849f90d81d28028e6c78668` 的完整 manifest 校验运行时与捆绑前端，无静态替换，入口 SHA-256 为 `55b24910a42a0a692018ecc6c2b61f9904cce8d113542e55a0a938c9dc96b16e`。两路同时进入同一 Program，通过锁定 Playwright Chromium（headless、页面 visible、画面完整位于视口）的真实呈现回调与非丢弃帧增长检查；不是实际 Electron 窗口的性能测试。完成回执为 `2026-10-19T06:47:32.797Z`。
+
+The manifest-verified dev.10 candidate used its bundled frontend without override. Both sources played simultaneously in one Program, with viewport bounds, visible document state, real video frame callbacks and non-dropped progress checked in locked headless Playwright Chromium. This is distinct from actual Electron-window performance qualification.
+
+| 来源 / Source | 测试开始时状态 / Initial status | 同时监看 / Paired duration | 总帧 / Total | 丢弃 / Dropped | 非丢弃平均 FPS / Non-dropped FPS |
+| --- | --- | --- | --- | --- | --- |
+| [用户指定来源 / Reported source](https://www.youtube.com/watch?v=eYDDvvGbhp8) | 已结束直播的回放 / Replay (`was_live`) | 3601 s | 107965 | 147 (0.14%) | 29.94 |
+| [DW News](https://www.youtube.com/@DWNews/live) | 直播 / Live (`LuKwFajn37U`, `is_live`) | 3601 s | 196417 | 20916 (10.65%) | 48.74 |
+
+每路均通过 UI 冷保存/导入、真实轨道探测、MSE、Studio/TAKE、主页播放及独立 go2rtc 重启。小时检查取得 645 次双路增长采样。随后专用回环 CONNECT 夹具只中断本次后端访问公网的连接 40 秒，确认缓冲耗尽后两路停止增长；恢复后不刷新页面，两路均再次呈现并推进。之后双路 go2rtc 重启、完整产品正常重启、流/设备身份/场景保留及重启后双路主页呈现均通过。
+
+Each source passed cold UI import, track probing, MSE, Studio/TAKE and individual go2rtc restart. The hour produced 645 paired progress samples. An owned loopback CONNECT fixture then interrupted only this backend's external connections for 40 seconds, verified both buffers stopped advancing, and required new presented frames after restoration without page reload. A subsequent paired go2rtc restart and full normal product restart also passed, preserving streams, device identities and Studio with both Monitor videos presenting again.
+
+**这是持续播放与恢复通过，不是零掉帧或流畅度达标。** DW 的浏览器丢弃比例约 10.65%，需进一步区分来源/网络、接收与渲染因素；本轮未采集足以确定掉帧根因的 RTC 解码统计。未据此承诺所有地区、站点、摄像机、音频硬件或用户笔记本均稳定。早前 dev.8 中断的一小时尝试仍不计通过；新断网夹具初次认证/传输超时及视口错误的失败回执也保留，修正夹具后才执行本轮长测，未放宽产品预算。
+
+**Continuous playback and recovery passed, not zero-drop or smoothness qualification.** DW's 10.65% browser drops remain an investigation item; this run did not capture enough RTC decoder statistics to establish their cause. Earlier interrupted dev.8 and initial fixture failures remain retained. Fixture authentication/transfer/viewport corrections did not relax product deadlines. No physical-camera, audio-hardware, region-wide or user-laptop guarantee follows from this result.
