@@ -165,3 +165,26 @@ The same-source/Program comparison used two visible top-level Electron Monitor w
 **不采用固定 800ms 策略。** 本轮冻结与呈现结果均未改善；设置目标不等于实际平均缓冲时长，本地零丢包也不能排除上游或时间戳因素。此结果不将 MSE 历史修复扩展为 WHEP 修复。此前防嵌入拦截、首页查询参数 404、诊断误读已关闭连接的夹具失败均保留且未计入有效对照；没有关闭 CSP 或修改产品鉴权。
 
 **The fixed target was rejected.** It increased measured buffering and did not improve freezing/presentation in this run. A target is not the measured mean, and zero reported local loss does not rule out upstream/timestamp causes. Earlier framing, root-query and closed-peer fixture failures are retained and excluded; product CSP/authentication stayed intact.
+
+
+## dev.13 候选与本机公网复验（2026-10-20） / Candidate and external recheck
+
+已核验 `4.1.0-dev.13` / `1728381b2876fe06783b9529ccd89006a6f40ba9` 的 7886 个运行文件，实际 MSE 文件与生成副本逐字节摘要一致。候选 CI 回执为长 GOP 41 秒、8 次呈现采样、2 次实际 HTML 身份检查、无前端替换或额外浏览器权限；完整 Windows 与同提交容器工作流均通过。候选前端入口 SHA-256 为 `30a6ae542e22bfca4cbfccce4487b4e7feba89ce3a50aa96812acce30427135e`。
+
+All 7,886 runtime files and the generated MSE asset were verified. The candidate's own CI receipt records eight long-GOP samples over 41 seconds and two actual document hashes, without override/additional permission. This complements its successful complete Windows/container workflows.
+
+用户指定回放 `eYDDvvGbhp8` 使用候选自身前端与独立账号，冷保存/建档、轨道探测、MSE 启动、Studio/TAKE、实时占用栏节点保留、主页 120 秒、go2rtc 及完整产品重启恢复均通过。23 次增长检查，3311 总帧、69 丢弃、3242 非丢弃帧，平均 26.99fps；仍不是零丢帧或稳定满 30fps。元数据确认当时是 `was_live` 回放，不能称为正在直播。
+
+The exact reported replay passed the bundled candidate through 120 seconds of Monitor playback and both restarts, with 3,242 non-dropped frames (26.99fps average), not zero-drop/full-30fps qualification. Metadata identified a replay rather than a current live broadcast.
+
+**本轮 DW 直播冷导入失败，不计通过。** 元数据确认 `LuKwFajn37U` 当时为公开 `is_live`，但未取得格式；产品冷导入 38 秒后失败。进一步诊断捕获直播 m3u8 下载的 TLS `UNEXPECTED_EOF_WHILE_READING`；普通 YouTube 首页可验证 TLS 并返回 200，`manifest.googlevideo.com` 在当前无代理网络下独立 Python TLS、Chrome/Safari 指纹和 TLS 1.2 探测均失败。Al Jazeera 元数据也出现无格式，尚未完成其产品全流程。该问题出现在独立传输探测中，不能直接归因为新 MSE 代码，也不能据此确认究竟是本机路由、网络设备还是远端拒绝；没有关闭证书验证或替换失败回执。
+
+**DW cold import failed and remains unqualified.** It was public/live, but manifest TLS failed before formats were available. Independent verified-TLS probes reproduced the manifest-host failure while the normal YouTube page worked. Al Jazeera metadata also had no formats; its product flow was not locally qualified. These observations do not prove a particular network cause or extend the successful replay result to live sites.
+
+新增只读参考环境复验入口：现有 `release-image.yaml` 的手动 `public_sources` 模式调用固定网站验收，不构建或发布镜像。只能选取本仓库受保护 dev 历史中的成功 Windows 构建，核验不可变 artifact 身份与完整运行文件，再使用候选提交自身的锁定测试器逐条创建临时账号、播放 120 秒并完整重启。仅上传脱敏 JSON，私密配置、截图、日志和媒体均不上传；参考环境结果也不能替代用户笔记本、摄像机或 Android/ARM。
+
+```powershell
+gh workflow run release-image.yaml --ref dev -f public_sources=true -f container_candidate=false -f candidate_run=39249967602 -f candidate_version=4.1.0-dev.13
+```
+
+The manual reference check consumes an existing successful immutable Windows candidate, uses its own locked harness and fresh per-source accounts, and uploads only redacted receipts. It neither builds nor publishes packages and does not qualify physical hardware or actual Electron performance. Its independent network result must be recorded rather than assuming another runner will succeed.

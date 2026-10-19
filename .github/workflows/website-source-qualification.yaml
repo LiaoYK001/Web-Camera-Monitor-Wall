@@ -1,0 +1,100 @@
+name: Qualify fixed public website sources
+
+on:
+  workflow_call:
+    inputs:
+      candidate_run:
+        description: 'Successful protected dev Windows build run ID'
+        required: true
+        type: string
+      candidate_version:
+        description: 'Exact existing Windows candidate version; never builds or publishes'
+        required: true
+        type: string
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: webobs-public-source-qualification
+  cancel-in-progress: false
+
+jobs:
+  qualify:
+    runs-on: windows-2022
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with: {persist-credentials: false, fetch-depth: 0, path: qualification}
+      - name: Require trusted successful immutable candidate
+        id: candidate
+        shell: pwsh
+        working-directory: qualification
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          CANDIDATE_RUN: ${{ inputs.candidate_run }}
+          CANDIDATE_VERSION: ${{ inputs.candidate_version }}
+          REF_TYPE: ${{ github.ref_type }}
+          REF_NAME: ${{ github.ref_name }}
+        run: |
+          if ($env:REF_TYPE -ne 'branch' -or $env:REF_NAME -ne 'dev') { throw 'Manual protected dev only' }
+          git fetch --no-tags origin dev
+          if ($LASTEXITCODE -ne 0 -or (git rev-parse origin/dev) -ne $env:GITHUB_SHA) { throw 'Require exact remote dev tip' }
+          if ($env:CANDIDATE_RUN -notmatch '^[0-9]+$' -or $env:CANDIDATE_VERSION -notmatch '^[0-9]+.[0-9]+.[0-9]+(?:-dev.[0-9]+)?$') { throw 'Invalid candidate identity' }
+          $run = gh api "repos/$env:GH_REPO/actions/runs/$env:CANDIDATE_RUN" | ConvertFrom-Json
+          if ($LASTEXITCODE -ne 0 -or $run.status -ne 'completed' -or $run.conclusion -ne 'success' -or
+              $run.event -ne 'workflow_dispatch' -or $run.head_branch -ne 'dev' -or
+              $run.path -ne '.github/workflows/windows-desktop.yaml' -or
+              $run.head_repository.full_name -ne $env:GH_REPO -or $run.head_sha -notmatch '^[a-f0-9]{40}$') { throw 'Untrusted candidate build' }
+          git merge-base --is-ancestor $run.head_sha $env:GITHUB_SHA
+          if ($LASTEXITCODE -ne 0) { throw 'Candidate is not protected development history' }
+          $all = gh api "repos/$env:GH_REPO/actions/runs/$env:CANDIDATE_RUN/artifacts" | ConvertFrom-Json
+          if ($LASTEXITCODE -ne 0) { throw 'Cannot read candidate artifacts' }
+          $artifact = @($all.artifacts | Where-Object { $_.name -eq "webobs-windows-$env:CANDIDATE_VERSION" -and -not $_.expired })
+          if ($artifact.Count -ne 1 -or $artifact[0].digest -notmatch '^sha256:[a-f0-9]{64}$') { throw 'Missing immutable artifact identity' }
+          "revision=$($run.head_sha)" >> $env:GITHUB_OUTPUT
+          "artifact=$($artifact[0].id)" >> $env:GITHUB_OUTPUT
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: ${{ steps.candidate.outputs.revision }}
+          persist-credentials: false
+          path: candidate
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1
+        with: {node-version: 24.19.0, package-manager-cache: false}
+      - name: Install candidate's locked test tools
+        shell: pwsh
+        working-directory: candidate
+        run: |
+          npm install --global pnpm@11.16.0
+          if ($LASTEXITCODE -ne 0) { throw 'pnpm install failed' }
+          pnpm --dir desktop install --frozen-lockfile
+          if ($LASTEXITCODE -ne 0) { throw 'Desktop dependency install failed' }
+          pnpm --dir web install --frozen-lockfile
+          if ($LASTEXITCODE -ne 0) { throw 'Browser dependency install failed' }
+          pnpm --dir web exec playwright install chromium
+          if ($LASTEXITCODE -ne 0) { throw 'Locked Chromium install failed' }
+      - uses: actions/download-artifact@70fc10c6e5e1ce46ad2ea6f2b72d43f7d47b13c3
+        with:
+          artifact-ids: ${{ steps.candidate.outputs.artifact }}
+          run-id: ${{ inputs.candidate_run }}
+          github-token: ${{ github.token }}
+          digest-mismatch: error
+          merge-multiple: true
+          path: candidate-artifacts
+      - name: Qualify each public source with its own account and full restart
+        shell: pwsh
+        env:
+          CANDIDATE_VERSION: ${{ inputs.candidate_version }}
+          CANDIDATE_REVISION: ${{ steps.candidate.outputs.revision }}
+        run: |
+          ./qualification/desktop/tests/qualify-public-sources.ps1 -CandidateSource candidate -ArtifactDirectory candidate-artifacts -ExpectedVersion $env:CANDIDATE_VERSION -ExpectedRevision $env:CANDIDATE_REVISION -ReceiptDirectory "$env:RUNNER_TEMP/public-source-receipts"
+      - name: Retain only redacted receipts; never private profiles or recordings
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: public-source-receipts-${{ inputs.candidate_version }}
+          path: ${{ runner.temp }}/public-source-receipts/*.json
+          if-no-files-found: ignore
+          retention-days: 7

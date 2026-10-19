@@ -62,6 +62,8 @@ WHEP 另做 183.643 秒同源双可见窗口对照：固定 800ms 接收目标�
 
 2026-10-20 核对：`1728381` 的[完整 Windows dev.13](https://github.com/LiaoYK001/Web-Camera-Monitor-Wall/actions/runs/39249967602)和[同提交完整容器预检](https://github.com/LiaoYK001/Web-Camera-Monitor-Wall/actions/runs/39249973536)均已成功，包含新 MSE 长 GOP 呈现门禁；两轮公开 CI 与五类 CodeQL 也通过。候选附件的本机完整性核验与本轮公开来源复验另行记录，不能把工作流成功直接扩展为全部公网/设备验收。Dev.13 passed complete Windows/container qualification and public CI/CodeQL. Artifact verification and this candidate's external-site recheck remain separate evidence.
 
+dev.13 附件的 7886 文件及实际 MSE 摘要已核验；指定回放的候选自身前端、主页 120 秒及两种重启通过（非丢弃平均 26.99fps，保留丢帧）。本轮 DW 直播冷导入失败，独立探测定位到直播清单主机 TLS EOF，具体网络原因未确定；Al Jazeera 元数据同样未取得格式，不扩大为已通过。新增手动只读 Windows 参考环境复验，待独立补证。[本轮结果与限制](online-source-validation-v4.md)。Dev.13 integrity and the reported replay recheck passed; current live-site TLS failures remain retained and unqualified, with a manual reference-runner check prepared.
+
 ## 发布前仍需完成 / Remaining qualification
 
 1. dev.12 实时占用栏完整候选已通过；后续改动仍需最终提交 CI/CodeQL 与代码评审，再从评审后冻结版本构建最终稳定三端候选。The complete dev.12 readout candidate passed; subsequent changes still require final-revision CI/CodeQL and review before stable candidates are built from frozen source.
