@@ -133,6 +133,7 @@ try {
         'CameraRegistryTests.test_only_product_go2rtc_probe_uses_the_cold_start_budget',
         'CameraRegistryTests.test_queued_probe_http_completion_accepts_a_cached_result',
         'CameraRegistryTests.test_manual_probe_refresh_replaces_cached_codec_at_the_same_endpoint',
+        'CameraRegistryTests.test_automatic_and_manual_probes_share_the_same_pending_job',
         'CameraRegistryTests.test_invalid_continuous_move_never_reaches_the_camera',
         'CameraRegistryTests.test_device_ptz_timeout_is_negotiated_persisted_and_sent',
         'CameraRegistryTests.test_ptz_duration_outside_device_range_never_moves',

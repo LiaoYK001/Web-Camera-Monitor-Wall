@@ -92,6 +92,10 @@ Named streams support filtered selection and sequential batch import/probing. Su
 
 Imported streams can re-probe without changing device identity. Short submission/poll/completion requests avoid holding the proxy open. At most 16 in-memory jobs expire after five minutes; the existing four-probe concurrency limit remains. Product-loopback go2rtc probes use 90 seconds within a 120-second frontend wait, preserving individual HTTP limits. Failed/full jobs can retry, edited sources reject stale results, and restarting the service discards jobs. Cancelling one waiter does not kill a shared probe.
 
+自动恢复与手动探测共用同一条进行中的任务，避免网站冷启动仍在正常运行时，另一个探测因等待设备锁 20 秒而提前失败。任务数量及实际 FFprobe 并发上限不变；停止服务会结束自动任务的等待。
+
+Automatic recovery and manual probes join the same pending job. A healthy cold probe no longer causes a second caller to fail at the shorter camera-lock deadline. Job and FFprobe concurrency limits are unchanged; automatic waiters observe service shutdown.
+
 go2rtc 表单的轨道探测操作单独使用 150 秒外层预算，覆盖单 Profile 的 120 秒任务等待及状态核对；普通编辑与创建操作仍使用 20 秒。浏览器虚拟时钟回归确认超过 20 秒仍在等待并正常完成、不重复建档；仅调整内层 API 超时不足以覆盖外层取消。Track-probe operations alone use a 150-second editor-owner budget; ordinary writes retain 20 seconds. A clock-driven browser regression crosses the ordinary deadline and verifies completion without duplicate creation.
 
 手动探测请求会显式刷新短期媒体缓存，避免刚切换来源编码后仍返回旧轨道。播放路由同时核对设备登记的视频/音频 codec；同一个地址的 codec 更新也会使旧转换路由及音轨缓存失效。网关明确拒绝编码时，受管设备观看路径可提交一次异步新探测，后续 WHEP 重试读取新结果；每路最多每 30 秒一次，首次不依赖系统启动时长，不处理普通网络超时，不唤醒闲置来源。该服务器内部请求只走固定回环 Camera Registry，不转发产品凭据。

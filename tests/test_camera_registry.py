@@ -631,6 +631,37 @@ class CameraRegistryTests(unittest.TestCase):
             self.assertEqual(result['state'],'completed');self.assertEqual(result['profile']['videoCodec'],'hevc')
             self.assertEqual(run.call_count,2)
 
+    def test_automatic_and_manual_probes_share_the_same_pending_job(self):
+        camera=registry.validate_camera({'id':'shared-auto-probe','name':'Shared','adapter':'rtsp',
+            'address':'rtsp://camera.example.invalid/live',
+            'profiles':[{'id':'main','endpoint':'rtsp://camera.example.invalid/live'}]})
+        registry.save_camera(camera,False)
+        started,release,stop=threading.Event(),threading.Event(),threading.Event()
+        original_thread=threading.Thread;children=[]
+        def owned_thread(*args,**kwargs):
+            child=original_thread(*args,**kwargs);children.append(child);return child
+        def slow_probe(*_,**__):
+            started.set();release.wait(3)
+            return subprocess.CompletedProcess([],0,b'{"streams":[{"codec_type":"video","codec_name":"h264","has_b_frames":0}]}',b'')
+        with patch.object(registry,'STOP',stop),patch.object(registry,'PROBE_JOBS',{}), \
+                patch.object(registry.threading,'Thread',side_effect=owned_thread), \
+                patch.object(registry,'automatic_probe_candidates',return_value=[('shared-auto-probe','main')]), \
+                patch.object(registry.subprocess,'run',side_effect=slow_probe) as run:
+            worker=original_thread(target=registry.automatic_probe_worker,daemon=True);worker.start()
+            try:
+                self.assertTrue(started.wait(1))
+                with registry.PROBE_JOBS_GUARD:automatic_job_id,=registry.PROBE_JOBS
+                manual=registry.queue_profile_probe('shared-auto-probe','main',refresh=True)
+                self.assertEqual(manual['jobId'],automatic_job_id)
+                release.set();deadline=time.monotonic()+3
+                while registry.profile_probe_job('shared-auto-probe','main',manual['jobId'])['state']=='pending' and time.monotonic()<deadline:time.sleep(.01)
+                self.assertEqual(registry.profile_probe_job('shared-auto-probe','main',manual['jobId'])['state'],'completed')
+                self.assertEqual(run.call_count,1)
+            finally:
+                release.set();stop.set();worker.join(timeout=3)
+                for child in children:child.join(timeout=3)
+                self.assertFalse(worker.is_alive());self.assertFalse(any(child.is_alive() for child in children))
+
     def test_automatic_probe_retry_limit_health_and_manual_recovery(self) -> None:
         registry.invalidate_probe_results()
         registry.save_camera(registry.validate_camera({

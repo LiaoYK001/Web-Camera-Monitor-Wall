@@ -1823,7 +1823,14 @@ def automatic_probe_worker() -> None:
 
     def run(camera_id: str, profile_id: str) -> None:
         try:
-            probe_source_profile(camera_id, profile_id)
+            job = queue_profile_probe(camera_id, profile_id)
+            # Share the same task with a manual waiter. A cold automatic probe
+            # can legitimately take 90s; a second independent lock waiter used
+            # to fail after 20s even though that probe was still healthy.
+            while not STOP.is_set():
+                if profile_probe_job(camera_id, profile_id, job['jobId'])['state'] != 'pending':
+                    break
+                STOP.wait(.1)
         except (ValueError, PermissionError, KeyError, RuntimeError, OSError, sqlite3.Error):
             pass  # Persisted probe results and sanitized issues are the public status.
         finally:
@@ -1834,7 +1841,7 @@ def automatic_probe_worker() -> None:
     with connect() as database:
         for row in database.execute("SELECT DISTINCT camera_id FROM stream_profiles WHERE probe_state IN ('ready','cached','failed')").fetchall():
             update_camera_probe_health(database, row[0])
-    while True:
+    while not STOP.is_set():
         try:
             for camera_id, profile_id in automatic_probe_candidates():
                 with guard:
@@ -1846,7 +1853,7 @@ def automatic_probe_worker() -> None:
                 threading.Thread(target=run, args=(camera_id, profile_id), daemon=True).start()
         except (OSError, sqlite3.Error):
             pass
-        time.sleep(5)
+        STOP.wait(5)
 
 
 def probe_binding_matches(database, camera, profile, endpoint):

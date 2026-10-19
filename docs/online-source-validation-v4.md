@@ -75,3 +75,7 @@ Dev.8 passed its complete Windows CI. The additional local gate used its manifes
 后续同址编码切换检查在 dev.8 **失败**：私密 RTSP 测试源保持 URI/认证/设备 ID/B 帧数量不变，从 H.264 160×90 改为 HEVC 320×180，主页没有自行恢复，目录 codec 仍为旧值。新固定门禁加入该切换，要求无需手动探测/页面刷新即可更新轨道并呈现 320×180 新帧，然后再验证 go2rtc-only 和完整产品重启。修复源码已通过 Linux 核心与实际 Electron 的旧 codec 提示/新编码流验证；包含修复的 Windows 候选仍需运行这条完整新门禁，不能将 dev.8 原通过结果扩展到本场景。
 
 Dev.8 failed the subsequent same-URL H264-to-HEVC switch without manual intervention. The strengthened synthetic gate now requires automatic track refresh and new-resolution presentation before its restart checks. Linux-core/Electron recovery passed after the source fix; complete new Windows qualification is still pending.
+
+2026-10-19 更新：包含该修复及新增断言的 `4.1.0-dev.9` / `358dafc` [完整 Windows CI](https://github.com/LiaoYK001/Web-Camera-Monitor-Wall/actions/runs/38499041402)已成功，构建脚本在打包前执行固定来源门禁；[同提交完整容器预检](https://github.com/LiaoYK001/Web-Camera-Monitor-Wall/actions/runs/38499044749)也成功。此结果补上 Windows 合成来源编码切换验收，不扩大为公网一小时、网络故障或物理摄像机验收。先前 dev.8 一小时公网尝试缺少完成回执，仍待补测。
+
+Dev.9's complete Windows CI passed with the codec-change fix and strengthened source gate executed before packaging; the same-source full container preflight also passed. This qualifies the synthetic Windows codec-switch case, separately from one-hour public-site, network-fault and physical-camera checks. An earlier interrupted dev.8 one-hour public attempt has no completion receipt and remains unqualified.

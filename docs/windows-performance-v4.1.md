@@ -1,6 +1,6 @@
 # v4.1 Windows 性能开发证据 / Windows performance development evidence
 
-2026-10-09。本页记录开发试验，尚未完成用户暗夜精灵 13900HX/RTX4090 Laptop 的同机 OBS 对照，也不构成 v4.1 正式发布验收。
+更新于 2026-10-19。本页记录开发试验，尚未完成用户暗夜精灵 13900HX/RTX4090 Laptop 的同机 OBS 对照，也不构成 v4.1 正式发布验收。
 
 Development measurements only. These results establish neither stock OBS parity nor qualification of the user's laptop.
 
@@ -23,6 +23,16 @@ The same uninterrupted fixture supplied both runs. Actual Electron displayed all
 CPU 中位下降约 33.8%，p95 同样下降约 33.8%；不是通过降低分辨率或关闭画面取得。新版呈现 FPS 略低、丢弃帧略多，不宣称无掉帧或满 25fps。两路 HEVC 在此组有 B 帧，仍走兼容 H.264 转换；这组数据不证明原生 HEVC 直通的性能。统计范围、PID 创建时间检查和排除上游生成器的规则沿用下文。单次顺序对照、合成无音频来源、当前主机/负载的限制仍然存在；旧基线是开发候选，不能改写成已发布 v4.0 或 stock OBS。
 
 Median and p95 CPU decreased by approximately 33.8% at matching resolution and displayed size. The new run had slightly lower presented FPS and more dropped frames. Reordered HEVC still used H.264 conversion, so these measurements do not qualify native HEVC savings. This is one sequential synthetic, audio-free comparison on this host, against an earlier development candidate rather than published v4.0 or stock OBS.
+
+## Windows 原生 HEVC 功能验证（2026-10-14） / Packaged Windows native HEVC check
+
+另一次 dev.8 / `0468c02` 的可见 Electron 测试使用三路 H.264 1080p、两路 HEVC 1440p，全部无 B 帧、25fps、无音频。实际产品表单、批量建档、Studio/TAKE 和捆绑主页协商出 `3 × video/H264 + 2 × video/H265`，24 次进程采样中应用媒体 FFmpeg 均为零，Composite 保持待机。约 137 秒内各路平均呈现 24.66–24.76fps，存在丢帧。
+
+A separate visible Electron run with the packaged dev.8 runtime negotiated three H.264 and two native H.265 streams. All sources were reorder-free, 25fps and audio-free. The actual import/Studio/TAKE workflow and bundled Monitor ran without application media FFmpeg in all 24 process samples, with Composite idle. Presented progress averaged 24.66–24.76fps per stream over approximately 137 seconds, with recorded drops.
+
+这次仅验证直通功能，不是 CPU 对照；与上方长测相比 HEVC 的 B 帧条件不同，不能合并计算性能收益，也不替代用户摄像机或更长稳定性验收。
+
+This establishes the passthrough path, not a CPU comparison. The HEVC reordering condition differs from the sustained comparison above; do not combine their results into a performance claim or physical-camera qualification.
 
 ## 同源短测 / Same-source short comparison
 
@@ -50,7 +60,7 @@ The new run had two media FFmpeg processes, observed with CUDA decoding and NVEN
 ## 边界 / Limits
 
 - 使用实际 Electron 的隐藏测试窗口，关闭后台节流；不是可见桌面窗口、物理摄像机或 stock OBS 对照。Actual Electron used a hidden window with background throttling disabled; this is not visible-window, physical-camera or OBS qualification.
-- 2026-10-13 复核：该历史计数使用 `totalVideoFrames`，包含丢弃帧，原文“解码帧增长”不能作为实际呈现证明。后续来源门禁要求视频处于视口、`requestVideoFrameCallback` 与总帧减丢弃帧的增长；尚未用这套更严格方法重做五路 CPU 对照。Historical total counters include dropped frames. New gates require viewport visibility, video frame callbacks and non-dropped frame progress; the five-stream CPU comparison has not yet been repeated with those stronger checks.
+- 2026-10-13 复核：该历史短测计数使用 `totalVideoFrames`，包含丢弃帧，原文“解码帧增长”不能作为实际呈现证明。后续来源门禁要求视频处于视口、`requestVideoFrameCallback` 与总帧减丢弃帧的增长；上方 2026-10-14 长测已采用这些更严格检查，历史短测的边界仍保留。Historical short-run total counters include dropped frames. The sustained comparison above uses viewport visibility, video frame callbacks and non-dropped frame progress; the earlier short run retains its original limitations.
 - 旧候选只在批量建档阶段借用当前前端；主页播放使用旧候选自己的前端，新候选全程使用自身前端。The older candidate used the current frontend for batch setup only; playback used its own bundled frontend. The new candidate used its own frontend throughout.
 - 优化前基线为历史开发候选，不是已发布 v4.0 安装包。仅一次短测；持续帧增长不等于逐路精确 FPS、掉帧和画质验收。The baseline is an earlier development candidate, not the published v4.0 installer. One short run and advancing frames do not qualify exact FPS, dropped frames or visual quality.
 - 私密回执及测试运行目录保留在 Git 外。本页仅保留汇总，不包含摄像机地址、日志、口令或媒体文件。Private receipts remain outside Git; no camera URLs, logs, credentials or media are published here.

@@ -39,7 +39,11 @@ v4.1 has not been released. Existing v4.0 assets do not contain these changes. T
 
 ## 发布前仍需完成 / Remaining qualification
 
-1. 完成 dev.8 五路混合编码可见呈现与占用复验、Windows 原生 HEVC 路径和来源编码变更检查；最终稳定候选仍需从评审后冻结的版本构建。Complete visible mixed-codec/CPU, packaged HEVC and source-codec-change checks; build final stable candidates from the reviewed frozen revision.
+2026-10-19 复核：`358dafc` 的 [Windows dev.9 完整构建](https://github.com/LiaoYK001/Web-Camera-Monitor-Wall/actions/runs/38499041402)、[同提交容器预检](https://github.com/LiaoYK001/Web-Camera-Monitor-Wall/actions/runs/38499044749)、公开 CI 及 PR 五类 CodeQL 分析均通过，包含同址编码变更恢复门禁。dev.8 的额外可见五路原生 HEVC 功能检查也通过：协商三路 H.264、两路 H.265，24 次应用媒体 FFmpeg 采样均为零；约 137 秒逐路平均呈现 24.66–24.76fps，不能计作 CPU 对照。自动与手动探测共用进行中任务的补充修复通过 Windows 设备服务全量 58 项，仍需进入后续完整候选。此前 dev.8 一小时 YouTube 测试未留下完成回执，不计为通过。
+
+The dev.9 Windows build, same-revision container preflight, public CI and five PR CodeQL analyses passed, including the same-address codec-change recovery gate. A separate dev.8 visible native-HEVC check negotiated three H.264/two H.265 streams without application media FFmpeg in 24 samples; its approximately 137-second frame results are not a CPU comparison. The additional automatic/manual shared-job fix passed all 58 Windows registry tests and still needs a complete candidate. An interrupted dev.8 one-hour YouTube attempt has no completion receipt and is not counted as passed.
+
+1. 五路合成源可见长测、Windows 原生 HEVC 与 dev.9 编码变更门禁已有上述结果；补充探测任务修复及最终稳定候选仍需从评审后冻结的版本构建验收。The synthetic visible comparison, packaged HEVC and dev.9 codec-change gates have the evidence above; qualify the additional probe fix and final stable candidates from the reviewed frozen revision.
 2. 同一暗夜精灵 13900HX/4090 Laptop、同五路来源、画质/FPS/音频设置，对照 stock OBS。分别测 H.264、H.265 与混合，比较直连与 go2rtc；每轮预热 3 分钟、采样至少 15 分钟，记录整体 CPU 中位/p95、内存、GPU 解码/编码、真实帧进度、断流恢复及摄像机连接数。全程不以降低画质代替性能达标。Same-machine/source/quality OBS comparison remains required; source fixtures cannot qualify this target.
 3. 用户指定回放与至少一条正在直播的来源，进行至少一小时持续监看、网络中断及 go2rtc/应用正常重启恢复。One-hour replay/live soak, network fault and normal restart checks remain required.
 4. 补齐适用的 Android 已安装客户端/后端回归和三端最终候选证据、源码及不可变附件检查，再完成版本化 dev→main 发布 PR 与正式发布。Complete applicable installed Android/backend, final-candidate, source and immutable-asset checks before merging/publishing the versioned release.
