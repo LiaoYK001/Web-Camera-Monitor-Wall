@@ -44,6 +44,6 @@ try {
             $result.receipts[0].soak.seconds -lt 120) { $failed = $true }
     }
     $network = Get-Content -LiteralPath (Join-Path $receipts 'network.json') -Raw | ConvertFrom-Json
-    if (@($network.sources | Where-Object { $_.name -ne 'reported' -and $_.isLive -eq $true -and $_.formatCount -gt 0 }).Count -eq 0) { $failed = $true }
+    if (@($network.sources | Where-Object { $_.name -ne 'reported' -and $_.isLive -eq $true -and $_.videoFormatCount -gt 0 }).Count -eq 0) { $failed = $true }
     if ($failed) { throw 'Public source qualification incomplete; retain redacted receipts, never publish' }
 } finally { Pop-Location }

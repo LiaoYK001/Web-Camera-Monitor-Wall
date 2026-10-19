@@ -36,6 +36,11 @@ class PublicSourceQualificationTests(unittest.TestCase):
         self.assertEqual(set(network.SOURCES), {'reported', 'dw', 'aljazeera'})
         self.assertTrue(all(url.startswith('https://www.youtube.com/') for url in network.SOURCES.values()))
 
+    def test_authentication_diagnostics_are_fixed_labels_not_raw_signed_urls(self):
+        labels = network.warning_categories('Sign in to confirm you are not a bot; use cookies at https://user:secret@private.example/?signed=secret')
+        self.assertEqual(labels, {'authentication', 'bot-check', 'cookies'})
+        self.assertNotIn('secret', json.dumps(sorted(labels)))
+
     def test_reusable_workflow_cannot_execute_fork_or_failed_candidate(self):
         text = (ROOT / '.github/workflows/website-source-qualification.yaml').read_text()
         self.assertIn('  workflow_call:', text)

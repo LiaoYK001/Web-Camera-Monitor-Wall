@@ -188,3 +188,8 @@ gh workflow run release-image.yaml --ref dev -f public_sources=true -f container
 ```
 
 The manual reference check consumes an existing successful immutable Windows candidate, uses its own locked harness and fresh per-source accounts, and uploads only redacted receipts. It neither builds nor publishes packages and does not qualify physical hardware or actual Electron performance. Its independent network result must be recorded rather than assuming another runner will succeed.
+
+
+首轮[独立 Windows 参考复验](https://github.com/LiaoYK001/Web-Camera-Monitor-Wall/actions/runs/39287575164)失败，已保留脱敏回执：候选身份、下载摘要、完整运行文件与工具安装通过，普通 YouTube 为 200、清单主机为已验证 TLS 的 404，故未复现本机 TLS 握手失败。但三条来源均未取得格式（直播状态也未取得），分别在冷导入阶段失败，不能认为该参考环境通过或把问题确定为与本机相同。首轮固定标签不足以识别认证/反自动化/挑战失败的细分原因，下一轮只增加脱敏分类和可用性字段，产品候选不变、断言不放宽；首轮失败不得由随后成功覆盖。
+
+The first independent Windows run failed after successful artifact/runtime checks. TLS worked there, but all three sources lacked formats and failed cold import, unlike the passing local replay. The original bounded tags did not establish a more specific extraction cause. A diagnostic-only code change adds fixed warning categories/availability without changing the candidate or relaxing media assertions; its instrumented recheck must retain this first failure.

@@ -16,6 +16,17 @@ SOURCES = {
 }
 
 
+def warning_categories(message):
+    text = str(message).lower()
+    return {label for label, needle in [
+        ('tls-eof', 'EOF'), ('manifest', 'm3u8'), ('http403', '403'), ('http429', '429'),
+        ('format', 'format'), ('authentication', 'sign in'), ('cookies', 'cookies'),
+        ('bot-check', 'not a bot'), ('captcha', 'captcha'), ('geo-restriction', 'country'),
+        ('challenge', 'challenge'), ('javascript', 'javascript'), ('po-token', 'po token'),
+        ('po-token', 'po_token'), ('rate-limit', 'too many requests'),
+    ] if needle.lower() in text}
+
+
 def tls_probe(host, context):
     result = {'host': host, 'certificateVerification': True}
     try:
@@ -48,10 +59,7 @@ def main():
             def debug(self, *_): pass
             def info(self, *_): pass
             def warning(self, message, *_):
-                for label, needle in [('tls-eof', 'EOF'), ('manifest', 'm3u8'), ('http403', '403'),
-                                      ('http429', '429'), ('format', 'format')]:
-                    if needle.lower() in str(message).lower():
-                        categories.add(label)
+                categories.update(warning_categories(message))
             error = warning
 
         item = {'name': name}
@@ -64,7 +72,10 @@ def main():
                                 format='bv*[height<=720][vcodec^=avc1]+ba[acodec^=mp4a]/b[height<=720][vcodec^=avc1]/bv*[height<=720]+ba/b[height<=720]/b')) as extractor:
                 info = extractor.extract_info(address, download=False)
             item.update(isLive=info.get('is_live'), liveStatus=info.get('live_status'),
-                        formatCount=len(info.get('formats') or []))
+                        availability=info.get('availability') if info.get('availability') in {
+                            'public', 'private', 'unlisted', 'premium_only', 'subscriber_only', 'needs_auth'} else 'unknown',
+                        formatCount=len(info.get('formats') or []),
+                        videoFormatCount=sum(format.get('vcodec') not in (None, 'none', 'images') for format in info.get('formats') or []))
         except Exception as error:
             item.update(result='failed', errorType=type(error).__name__)
         item['warningCategories'] = sorted(categories)
