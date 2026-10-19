@@ -42,7 +42,7 @@ jobs:
           if ($env:REF_TYPE -ne 'branch' -or $env:REF_NAME -ne 'dev') { throw 'Manual protected dev only' }
           git fetch --no-tags origin dev
           if ($LASTEXITCODE -ne 0 -or (git rev-parse origin/dev) -ne $env:GITHUB_SHA) { throw 'Require exact remote dev tip' }
-          if ($env:CANDIDATE_RUN -notmatch '^[0-9]+$' -or $env:CANDIDATE_VERSION -notmatch '^[0-9]+.[0-9]+.[0-9]+(?:-dev.[0-9]+)?$') { throw 'Invalid candidate identity' }
+          if ($env:CANDIDATE_RUN -notmatch '^[0-9]+$' -or $env:CANDIDATE_VERSION -notmatch '^[0-9]+\.[0-9]+\.[0-9]+(?:-dev\.[0-9]+)?$') { throw 'Invalid candidate identity' }
           $run = gh api "repos/$env:GH_REPO/actions/runs/$env:CANDIDATE_RUN" | ConvertFrom-Json
           if ($LASTEXITCODE -ne 0 -or $run.status -ne 'completed' -or $run.conclusion -ne 'success' -or
               $run.event -ne 'workflow_dispatch' -or $run.head_branch -ne 'dev' -or

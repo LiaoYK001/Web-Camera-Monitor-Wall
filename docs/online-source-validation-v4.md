@@ -177,9 +177,9 @@ All 7,886 runtime files and the generated MSE asset were verified. The candidate
 
 The exact reported replay passed the bundled candidate through 120 seconds of Monitor playback and both restarts, with 3,242 non-dropped frames (26.99fps average), not zero-drop/full-30fps qualification. Metadata identified a replay rather than a current live broadcast.
 
-**本轮 DW 直播冷导入失败，不计通过。** 元数据确认 `LuKwFajn37U` 当时为公开 `is_live`，但未取得格式；产品冷导入 38 秒后失败。进一步诊断捕获直播 m3u8 下载的 TLS `UNEXPECTED_EOF_WHILE_READING`；普通 YouTube 首页可验证 TLS 并返回 200，`manifest.googlevideo.com` 在当前无代理网络下独立 Python TLS、Chrome/Safari 指纹和 TLS 1.2 探测均失败。Al Jazeera 元数据也出现无格式，尚未完成其产品全流程。该问题出现在独立传输探测中，不能直接归因为新 MSE 代码，也不能据此确认究竟是本机路由、网络设备还是远端拒绝；没有关闭证书验证或替换失败回执。
+**本轮 DW 直播冷导入失败，不计通过。** 元数据确认 `LuKwFajn37U` 当时为公开 `is_live`，但未取得格式；产品冷导入 38 秒后失败。进一步诊断捕获直播 m3u8 下载的 TLS `UNEXPECTED_EOF_WHILE_READING`；普通 YouTube 首页可验证 TLS 并返回 200，`manifest.googlevideo.com` 在本次未配置显式 HTTP 代理的进程环境下，独立 Python TLS、Chrome/Safari 指纹和 TLS 1.2 探测均失败。Al Jazeera 元数据也出现无格式，该默认路径下尚未完成其产品全流程。该问题出现在独立传输探测中，不能直接归因为新 MSE 代码，也不能据此确认究竟是本机路由、网络设备还是远端拒绝；没有关闭证书验证或替换失败回执。
 
-**DW cold import failed and remains unqualified.** It was public/live, but manifest TLS failed before formats were available. Independent verified-TLS probes reproduced the manifest-host failure while the normal YouTube page worked. Al Jazeera metadata also had no formats; its product flow was not locally qualified. These observations do not prove a particular network cause or extend the successful replay result to live sites.
+**DW default-route cold import failed and remains unqualified.** It was public/live, but manifest TLS failed before formats were available. Independent verified-TLS probes reproduced the manifest-host failure while the normal YouTube page worked. Al Jazeera metadata also had no formats; its product flow was not locally qualified. These observations do not prove a particular network cause or extend the successful replay result to live sites.
 
 新增只读参考环境复验入口：现有 `release-image.yaml` 的手动 `public_sources` 模式调用固定网站验收，不构建或发布镜像。只能选取本仓库受保护 dev 历史中的成功 Windows 构建，核验不可变 artifact 身份与完整运行文件，再使用候选提交自身的锁定测试器逐条创建临时账号、播放 120 秒并完整重启。仅上传脱敏 JSON，私密配置、截图、日志和媒体均不上传；参考环境结果也不能替代用户笔记本、摄像机或 Android/ARM。
 
@@ -190,6 +190,46 @@ gh workflow run release-image.yaml --ref dev -f public_sources=true -f container
 The manual reference check consumes an existing successful immutable Windows candidate, uses its own locked harness and fresh per-source accounts, and uploads only redacted receipts. It neither builds nor publishes packages and does not qualify physical hardware or actual Electron performance. Its independent network result must be recorded rather than assuming another runner will succeed.
 
 
-首轮[独立 Windows 参考复验](https://github.com/LiaoYK001/Web-Camera-Monitor-Wall/actions/runs/39287575164)失败，已保留脱敏回执：候选身份、下载摘要、完整运行文件与工具安装通过，普通 YouTube 为 200、清单主机为已验证 TLS 的 404，故未复现本机 TLS 握手失败。但三条来源均未取得格式（直播状态也未取得），分别在冷导入阶段失败，不能认为该参考环境通过或把问题确定为与本机相同。首轮固定标签不足以识别认证/反自动化/挑战失败的细分原因，下一轮只增加脱敏分类和可用性字段，产品候选不变、断言不放宽；首轮失败不得由随后成功覆盖。
+首轮[独立 Windows 参考复验](https://github.com/LiaoYK001/Web-Camera-Monitor-Wall/actions/runs/39287575164)失败，已保留脱敏回执：候选身份、下载摘要、完整运行文件与工具安装通过，普通 YouTube 为 200、清单主机为已验证 TLS 的 404，故未复现本机 TLS 握手失败。但三条来源均未取得格式（直播状态也未取得），分别在冷导入阶段失败，不能认为该参考环境通过或把问题确定为与本机相同。首轮固定标签不足以识别认证/反自动化/挑战失败的细分原因，随后 `689bfe6` 只增加脱敏分类和可用性字段，产品候选不变、断言不放宽；第二轮结果见下，首轮失败不得由随后成功覆盖。
 
-The first independent Windows run failed after successful artifact/runtime checks. TLS worked there, but all three sources lacked formats and failed cold import, unlike the passing local replay. The original bounded tags did not establish a more specific extraction cause. A diagnostic-only code change adds fixed warning categories/availability without changing the candidate or relaxing media assertions; its instrumented recheck must retain this first failure.
+The first independent Windows run failed after successful artifact/runtime checks. TLS worked there, but all three sources lacked formats and failed cold import, unlike the passing local replay. The original bounded tags did not establish a more specific extraction cause. A diagnostic-only code change adds fixed warning categories/availability without changing the candidate or relaxing media assertions; its subsequently completed instrumented recheck is recorded below with the first failure retained.
+
+
+### 独立参考环境与本机域名路径诊断（2026-10-20） / Independent runner and local host-route diagnosis
+
+[带分类诊断的第二轮 Windows 参考复验](https://github.com/LiaoYK001/Web-Camera-Monitor-Wall/actions/runs/39288854910)同样失败。TLS 仍可验证，三条来源的固定警告标签均包含 `authentication`、`bot-check`、`cookies`、`format`，均无视频格式。该结果支持本轮参考网络受到网站登录/反自动化检查限制；没有使用 Cookie、关闭 TLS 验证或放宽成功条件。它不是本机直播清单 TLS EOF 的复现，也不证明所有提取失败具有同一原因。两轮失败均保留。`689bfe6` 的 push/PR 公开 CI 与五类 CodeQL 已通过；公网来源复验失败与这些代码检查分开记录。
+
+The instrumented reference rerun failed with fixed authentication/bot-check/cookie/format labels for all three sources despite working verified TLS. This supports a website access challenge on that runner, separately from the local manifest TLS failure. Both failed runs remain retained; no cookies, TLS bypass or relaxed gates were used. Public CI and all five CodeQL analyses passed for `689bfe6`.
+
+本机另检查域名路径：系统将直播清单主机解析到 `198.18.0.0/15` 虚拟映射地址，而通过 HTTPS DNS 查询取得的公网地址，使用原主机 SNI 和正常 CA 验证可以建立 TLS 1.3。由此确认本轮系统解析/透明网络路径与可验证公网路径的行为不同；不据此判定具体代理软件、网络设备或所有历史故障原因。没有修改系统 DNS、VPN、代理设置、证书信任或产品代码。
+
+The system-resolved manifest route used a virtual mapping address, while an HTTPS-DNS public address completed verified TLS 1.3 using the original hostname/SNI. This isolates a route-dependent difference without identifying a particular proxy/device or explaining every historical failure. Global DNS, VPN/proxy settings, trust stores and product code stayed unchanged.
+
+
+### 隔离网络下的 dev.13 直播复验 / Dev.13 live recheck on an isolated route
+
+使用临时的已认证回环 HTTP CONNECT 测试服务，仅为本轮子进程将直播清单主机连接到上述已验证公网地址；端到端 TLS、原 SNI/主机名验证保持不变，没有拦截 TLS，也没有修改系统网络。该路径下三条来源均可提取视频格式，DW 和 Al Jazeera 均为公开 `is_live`；元数据可用仅是实际媒体验收的前提。
+
+DW 使用原 dev.13 运行文件、候选自身前端和独立账号，通过冷保存/建档/轨道探测、MSE 启动、Studio/TAKE、实时占用栏保持播放节点、120 秒 Monitor 帧增长、go2rtc 重启不刷新恢复，以及完整产品重启后的配置/设备身份/Program 新帧。两次文档摘要一致，无前端/媒体替换或额外浏览器权限。该媒体门禁使用锁定的 headless Chromium，不是可见 Electron 性能测试。1280×720，23 次增长检查，6324 总帧、842 丢弃（13.31%）、5482 非丢弃帧，平均 45.62fps。通过恢复不等于掉帧/流畅度达标，也不将测试路径通过改写为默认网络恢复。私密材料未提交或上传；成功账号的独立配置按测试器流程清理，诊断回执与日志仅保留本机，DW 本轮测试服务已关闭。
+
+The owned per-process CONNECT fixture changes only the manifest host's connection destination, preserving end-to-end TLS and original SNI/hostname verification. No global network or product changes were made. All three sources yielded video formats, with DW/Al Jazeera live. DW then passed the original bundled dev.13 cold-import, 120-second Monitor, node-preserving CPU readout and both restart gates, with two matching document hashes and no override/additional permissions. The locked headless-Chromium flow recorded 5,482 non-dropped frames at 45.62fps and 13.31% drops; it is neither smoothness nor visible-Electron performance qualification. Default-route failures remain retained separately.
+
+
+参考复验版本选择还修正了未转义的正则点号：原式会接受 `4x1x0`；新增反例在修复前失败，修复后 6 项来源验收测试、18 项发布策略测试通过，实际 PowerShell/.NET 的合法/非法版本断言与脚本语法解析也通过。这是验收入口校验修复，不改变 dev.13 产品附件。
+
+The reference-workflow version guard now treats dots literally. A regression reproduced acceptance of `4x1x0` before the fix; six qualification tests, eighteen release-policy tests and actual PowerShell/.NET syntax/version checks passed afterward. The original candidate binaries remain unchanged.
+
+
+随后 Al Jazeera 以另一独立账号、同一原始候选和同样的临时域名路径完成相同全流程：两次文档摘要、冷导入/轨道、Studio/Monitor、实时占用栏、go2rtc 与整产品重启后的新帧均通过。120 秒、23 次增长检查，3609 总帧、36 丢弃、3573 非丢弃帧，平均 29.68fps。测试器和回环 CONNECT 服务正常退出；没有修改已有产品配置或系统网络。其默认路径仅保留此前元数据失败，不声称已有默认网络的完整媒体对照。
+
+Al Jazeera subsequently passed the same full bundled-candidate flow using a separate account and isolated route: 120 seconds, 23 growth checks, 3,573 non-dropped frames at 29.68fps, 36/3,609 drops. Both owned test/proxy processes exited normally without changing existing product data or global networking. Its prior default-route metadata failure remains separate; a default-route full-media comparison was not run.
+
+| 来源 / Source | 本轮路径 / Route | 120 秒非丢弃帧 / Presented | 丢弃 / Drops | 平均呈现 FPS / Mean | 两种重启 / Both restarts |
+| --- | --- | ---: | ---: | ---: | --- |
+| 指定回放 / Reported replay | 默认 / Default | 3242 | 69/3311（2.08%） | 26.99 | 通过 / Passed |
+| DW 直播 / DW live | 进程隔离 / Isolated process | 5482 | 842/6324（13.31%） | 45.62 | 通过 / Passed |
+| Al Jazeera 直播 / Al Jazeera live | 进程隔离 / Isolated process | 3573 | 36/3609（1.00%） | 29.68 | 通过 / Passed |
+
+三次是不同时间/来源的短时功能验收，不是同条件性能排名，也不能替代一小时、用户五路摄像机/OBS 或可见 Electron 流畅度测试。固定域名连接地址仅用于本轮诊断，未写入产品配置；没有把隔离路径通过当作产品网络修复。
+
+These are separate short functional runs at different times/sources, not controlled performance rankings or substitutes for hour-long, five-camera/OBS or visible-Electron qualification. The diagnostic destination was never added to product configuration, and isolated-route success is not a product network fix.

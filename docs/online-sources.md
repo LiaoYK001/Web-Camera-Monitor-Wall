@@ -58,6 +58,10 @@ Administrators supply a private Netscape cookie file for authenticated extractio
 
 后端已配置的 `HTTP_PROXY`/`HTTPS_PROXY`（含小写形式）会按媒体输入协议传给 FFmpeg；`NO_PROXY` 和回环来源绕过代理。转发支持 HTTP CONNECT 代理，SOCKS/PAC 或 TLS 代理 URL 不在此入口支持范围内；不支持时返回不含代理凭据的 `proxy_unsupported`。代理是后端出站网络配置，不会存入流模板或发送给网页。FFmpeg 的 HTTP 代理选项见[官方协议文档](https://ffmpeg.org/ffmpeg-protocols.html#http)。
 
+网页能打开不代表直播媒体可达：解析与播放发生在后端，直播清单/CDN 可能使用不同域名。排查时分别检查后端页面、清单主机的 DNS/已验证 TLS，以及是否出现网站登录/机器人验证；未设置 HTTP 代理仍可能存在系统级透明网络映射。参考验收的固定 `bot-check`/`authentication` 标签只表示当次访问触发网站检查，不应通过改用 H264、反复重建同一设备或关闭证书验证处理。需要登录时使用上文管理员私密 Cookie 配置；确认网络/权限后，对已建档流重试轨道探测，保留原设备身份。[实际失败与隔离路径复验](online-source-validation-v4.md)。
+
+Page access does not establish backend manifest/CDN reachability. Check backend DNS and verified TLS separately from website authentication challenges; a transparent system route may exist without explicit HTTP proxy variables. The qualification receipt's fixed bot/authentication labels describe that request, not a codec failure. Use the private cookie configuration when appropriate, retain TLS verification and retry track probing on the existing device after restoring access.
+
 Configured backend HTTP/HTTPS proxies are selected per media input, respecting NO_PROXY and loopback bypass. The relay accepts HTTP CONNECT proxies; unsupported proxy types produce a fixed error without credentials. Proxy settings stay on the backend and are not saved in source templates or exposed to pages.
 
 HTTP 媒体连接的短暂网络错误及 429/503 使用有界递增重试；正常点播结束不会无限重播。测试另实际断开首次媒体请求，确认真实解析器/转发/解码恢复。Transient HTTP network failures and 429/503 responses use bounded backoff; normal VOD EOF does not loop indefinitely. A real initial media disconnect is covered by the runtime fixture.

@@ -2,6 +2,7 @@
 """Protect qualification trust boundaries and diagnostic redaction."""
 import importlib.util
 import json
+import re
 from pathlib import Path
 import unittest
 from unittest.mock import patch
@@ -40,6 +41,15 @@ class PublicSourceQualificationTests(unittest.TestCase):
         labels = network.warning_categories('Sign in to confirm you are not a bot; use cookies at https://user:secret@private.example/?signed=secret')
         self.assertEqual(labels, {'authentication', 'bot-check', 'cookies'})
         self.assertNotIn('secret', json.dumps(sorted(labels)))
+
+    def test_workflow_version_separators_are_literal_dots(self):
+        text = (ROOT / '.github/workflows/website-source-qualification.yaml').read_text()
+        pattern = re.search(r"\$env:CANDIDATE_VERSION -notmatch '([^']+)'", text).group(1)
+        for version in ('4.1.0', '4.1.0-dev.13'):
+            self.assertIsNotNone(re.fullmatch(pattern, version), version)
+        for version in ('4x1x0', '4/1/0', '4.1.0-devx13', '4.1.0-dev/13',
+                        '4.1.0-dev.1.2', 'v4.1', '4.1.0-dev.13/../payload'):
+            self.assertIsNone(re.fullmatch(pattern, version), version)
 
     def test_reusable_workflow_cannot_execute_fork_or_failed_candidate(self):
         text = (ROOT / '.github/workflows/website-source-qualification.yaml').read_text()
