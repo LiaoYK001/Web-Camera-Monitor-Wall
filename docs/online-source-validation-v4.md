@@ -146,3 +146,22 @@ An offline synthetic long-GOP source reproduced the same problem and the generat
 新固定门禁在 dev.12 运行时加生成 MSE 文件替换的开发组合上通过：42 秒、8 次长 GOP 帧增长/真实呈现检查，随后冷建档、Studio/TAKE、占用栏节点保留、同址编码切换、go2rtc 与整产品重启全部通过，实际 HTML 身份校验 2 次，无额外浏览器权限。回执显式标记 `mediaAssetOverride=true`，不能当作 dev.12 原包或新完整候选通过。此前不完整首帧尝试及私密诊断包装器异常均保留并排除；成功结果同时核验进程退出码、采样次数与完整后续检查。
 
 The complete strengthened local gate passed with the generated MSE file explicitly overlaid on dev.12: eight presented-frame samples over 42 seconds, then all existing import/Monitor/CPU/codec/restart checks and two document hashes. This media override remains development evidence; the new complete candidate is pending. Incomplete first-frame attempts and a private diagnostic-wrapper failure are retained and excluded.
+
+
+## WHEP 接收缓冲对照（2026-10-19） / WHEP receive-buffer comparison
+
+为进一步区分 WHEP 冻结原因，使用 dev.12 自身前端、同一 DW 流/设备/Program、两个实际可见 Electron 顶层 Monitor 窗口。仅实验侧拦截 `jitterBufferTarget` 设置为 800ms；原侧保留当前自适应策略（本轮活动目标 120ms）。核验活动连接，预热 30 秒后进行 36 次同步采样，共 183.643 秒；两侧始终为 1280×720。该实验有额外延迟，不是 CPU、OBS 或真实摄像机基准。
+
+The same-source/Program comparison used two visible top-level Electron Monitor windows and bundled frontend. Only the experimental receiver target was forced to 800ms; the control kept the existing policy. Active-peer identity, dimensions and viewport were checked. This is a latency experiment, not CPU/OBS or physical-camera qualification.
+
+| 指标 / Measured delta | 原策略 / Existing policy | 固定 800ms / Fixed target |
+| --- | --- | --- |
+| RTC freezeCount | 31 | 36 |
+| RTC totalFreezesDuration | 34.664 s | 43.788 s |
+| 本地 RTP packetsLost / Local RTP loss | 0 | 0 |
+| 呈现回调 / Presented callbacks | 8617 | 8104 |
+| 实际平均 jitter-buffer delay / Measured average | 823.90 ms | 922.40 ms |
+
+**不采用固定 800ms 策略。** 本轮冻结与呈现结果均未改善；设置目标不等于实际平均缓冲时长，本地零丢包也不能排除上游或时间戳因素。此结果不将 MSE 历史修复扩展为 WHEP 修复。此前防嵌入拦截、首页查询参数 404、诊断误读已关闭连接的夹具失败均保留且未计入有效对照；没有关闭 CSP 或修改产品鉴权。
+
+**The fixed target was rejected.** It increased measured buffering and did not improve freezing/presentation in this run. A target is not the measured mean, and zero reported local loss does not rule out upstream/timestamp causes. Earlier framing, root-query and closed-peer fixture failures are retained and excluded; product CSP/authentication stayed intact.
