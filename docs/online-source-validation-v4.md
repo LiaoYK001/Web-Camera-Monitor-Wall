@@ -79,3 +79,7 @@ Dev.8 failed the subsequent same-URL H264-to-HEVC switch without manual interven
 2026-10-19 更新：包含该修复及新增断言的 `4.1.0-dev.9` / `358dafc` [完整 Windows CI](https://github.com/LiaoYK001/Web-Camera-Monitor-Wall/actions/runs/38499041402)已成功，构建脚本在打包前执行固定来源门禁；[同提交完整容器预检](https://github.com/LiaoYK001/Web-Camera-Monitor-Wall/actions/runs/38499044749)也成功。此结果补上 Windows 合成来源编码切换验收，不扩大为公网一小时、网络故障或物理摄像机验收。先前 dev.8 一小时公网尝试缺少完成回执，仍待补测。
 
 Dev.9's complete Windows CI passed with the codec-change fix and strengthened source gate executed before packaging; the same-source full container preflight also passed. This qualifies the synthetic Windows codec-switch case, separately from one-hour public-site, network-fault and physical-camera checks. An earlier interrupted dev.8 one-hour public attempt has no completion receipt and remains unqualified.
+
+新增监看页实时占用栏后，固定 Windows 门禁还会展开该栏、等待真实进程采样、核对播放器 DOM 节点未替换，收起后要求新的呈现帧；回执使用 `liveProcessReadout`。此断言晚于 dev.10，须由后续完整候选执行；不能追溯扩展旧 CI 的覆盖范围。来源门禁使用锁定 Playwright Chromium 的页面视口与实际媒体合成回调；它与前述实际可见 Electron 五路性能测试分别记录，不宣称是同一个渲染器测试。
+
+The subsequent Windows gate opens the live process readout, waits for real CPU samples, verifies the player element is retained and requires another presented frame after collapse. Its `liveProcessReadout` receipt must come from a candidate after dev.10. This source gate uses locked Playwright Chromium's viewport/compositor; it is recorded separately from the actual visible Electron five-stream performance run.

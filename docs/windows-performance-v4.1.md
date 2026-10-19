@@ -4,6 +4,16 @@
 
 Development measurements only. These results establish neither stock OBS parity nor qualification of the user's laptop.
 
+## 播放中定位占用 / Inspect CPU during playback
+
+监看页新增“实时占用”：保持播放器挂载，展开后每 5 秒读取本次桌面进程树，显示整体 CPU 及桌面/浏览器、FFmpeg、go2rtc、MediaMTX、核心等分项。整体及各项统一按逻辑处理器数量折算；首次读取或长时间中断后等待下一次采样，不把初始化零值计作真实负载。收起后停止读取，后台暂停、恢复后重新读取；单次读取最多 8 秒，旧响应不覆盖新状态。
+
+The monitor's optional live CPU readout keeps the player mounted and samples the owned desktop process tree every five seconds. Total and per-role CPU use the same machine-normalized scale. The first reading or a long gap waits for the next sample. Collapsing stops reads, hidden pages pause, reads are bounded to eight seconds and stale results are discarded.
+
+普通“系统状态”会离开当前监看页；只有独立投影等其他观看端仍在播放时，其读数才可能代表媒体负载。定位主窗口多路占用时使用监看页内的读数。容器/旧后端没有桌面进程树信息时，仅显示服务端单核百分比，不能代表 Windows/Android 观看端整体占用。即时读数用于定位大头，不能替代下文 15 分钟中位数/p95 对照。
+
+The full settings/status page leaves the current Monitor view, so its numbers alone do not measure that wall's active load. Use the inline readout for the main monitor. Server-only diagnostics use an explicitly labeled per-core scale and cannot describe the watching Windows/Android device. Instantaneous readings help identify consumers; they do not replace the sustained median/p95 comparison below.
+
 ## 可见窗口长测（2026-10-14） / Visible-window sustained comparison
 
 在同一 9950X3D/RTX3090 上，保持同一组持续运行的合成源：三路无 B 帧 H.264 1080p、两路有 B 帧 HEVC 1440p，25fps。实际 Electron 窗口可见，五路均完整处于视口；视频尺寸及每个画面的显示尺寸一致，画面整体纵向位置相差约 23px。两轮各预热 3 分钟，外部统计器每 5 秒采样、各保留 180 个样本（15 分钟）；观看端另在约 17 分钟内逐段验证非丢弃帧增长。

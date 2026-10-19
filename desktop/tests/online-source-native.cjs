@@ -91,6 +91,19 @@ app.on('window-all-closed',()=>{});
     const wallStamp=await wall.evaluate(v=>v.currentTime);await expect.poll(()=>wall.evaluate(v=>v.currentTime),{timeout:15000}).toBeGreaterThan(wallStamp+1);
     await wall.scrollIntoViewIfNeeded();
     await wall.evaluate(v=>new Promise((resolve,reject)=>{const timer=setTimeout(()=>reject(new Error('Monitor compositor did not present a frame')),15000);v.requestVideoFrameCallback(()=>{clearTimeout(timer);resolve();});}));
+    phase='monitor-process-readout';
+    const retainedVideo=await wall.elementHandle();
+    const processToggle=management.getByRole('button',{name:'实时占用',exact:true});
+    await processToggle.click();
+    const processReadout=management.getByRole('region',{name:'监看实时占用'});
+    await expect(processReadout).toContainText('本应用 CPU',{timeout:15000});
+    await expect(processReadout).not.toContainText('采样中',{timeout:15000});
+    await expect(processReadout).toContainText('桌面 / 浏览器');
+    expect(await wall.evaluate((video,original)=>video===original,retainedVideo)).toBe(true);
+    await processToggle.click();await expect(processReadout).toHaveCount(0);
+    await retainedVideo.dispose();await wall.scrollIntoViewIfNeeded();
+    await wall.evaluate(v=>new Promise((resolve,reject)=>{const timer=setTimeout(()=>reject(new Error('Monitor lost presentation after process readout')),15000);v.requestVideoFrameCallback(()=>{clearTimeout(timer);resolve();});}));
+    console.log('Live process readout retained the playing Monitor element');
     let soak;
     if(soakSeconds){
      phase='monitor-soak';const started=Date.now(),initial=await wall.evaluate(v=>{const q=v.getVideoPlaybackQuality();return {total:q.totalVideoFrames,dropped:q.droppedVideoFrames};});let samples=0;
@@ -142,7 +155,7 @@ app.on('window-all-closed',()=>{});
     const retained=(await (await context.request.get(base+'/api/v1/cameras')).json()).cameras.find(c=>c.name===name);
     expect(retained?.id).toBe(camera.id);
     console.log('Monitor presented new frames after authenticated go2rtc restart without page reload');
-    await management.close();receipts.push({name,address:external?address:'[private authenticated RTSP fixture]',engine,videoMode:videoMode||'auto',result:'passed',dimensions,seconds:Math.round((Date.now()-start)/1000),deviceImported:true,coldImport:true,studioPersisted:true,monitorWallDecoded:true,monitorFramePresented:true,go2rtcRestartFramePresented:true,...(codecSwitchRecovered?{codecSwitchRecovered:true,codecSwitchDimensions:[320,180]}:{}),...(soak?{soak}:{})});
+    await management.close();receipts.push({name,address:external?address:'[private authenticated RTSP fixture]',engine,videoMode:videoMode||'auto',result:'passed',dimensions,seconds:Math.round((Date.now()-start)/1000),deviceImported:true,coldImport:true,studioPersisted:true,monitorWallDecoded:true,monitorFramePresented:true,liveProcessReadout:true,go2rtcRestartFramePresented:true,...(codecSwitchRecovered?{codecSwitchRecovered:true,codecSwitchDimensions:[320,180]}:{}),...(soak?{soak}:{})});
    }catch(error){
     const mediaDiagnostic=await activeVideo?.evaluate(v=>{const q=v.getVideoPlaybackQuality(),r=v.getBoundingClientRect();return {readyState:v.readyState,networkState:v.networkState,errorCode:v.error?.code||null,totalFrames:q.totalVideoFrames,droppedFrames:q.droppedVideoFrames,currentTime:v.currentTime,visibility:document.visibilityState,rectangle:{x:r.x,y:r.y,width:r.width,height:r.height},viewport:{width:innerWidth,height:innerHeight},buffered:Array.from({length:Math.min(v.buffered.length,4)},(_,i)=>[v.buffered.start(i),v.buffered.end(i)])};}).catch(()=>null);
     receipts.push({name,address:external?address:'[private authenticated RTSP fixture]',engine,videoMode:videoMode||'auto',result:'failed',phase,errorType:error.name,seconds:Math.round((Date.now()-start)/1000),mediaDiagnostic,socketBytes,socketFrames,socketErrors,socketErrorCategories:[...socketErrorCategories]});exit=1;await (management||page).screenshot({path:path.join(temporary,name+'-failed.png')}).catch(()=>{});}

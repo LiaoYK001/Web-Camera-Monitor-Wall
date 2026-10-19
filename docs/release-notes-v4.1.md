@@ -9,6 +9,7 @@ v4.1 has not been released. Existing v4.0 assets do not contain these changes. T
 - Windows Direct 监看按需启停后台 Composite 发布，闲置 OBS 网络/媒体来源停止解码；录制保持连续。Windows uses on-demand Composite publishing and releases inactive OBS media decoding while recording remains continuous.
 - NVIDIA Hybrid 增加 CUDA 解码及保留 NVENC 的分级回退，OBS 来源启用上游硬解探测策略。Hybrid adds CUDA decoding with staged NVENC/software fallback; OBS sources use upstream hardware probing.
 - 系统状态统计本次应用进程树，区分 go2rtc、浏览器、FFmpeg 与后台服务，并提供整体 CPU 折算。Diagnostics show the owned desktop process tree and normalized CPU.
+- 监看页新增可折叠实时占用栏，查看 CPU 时保留播放器；默认不轮询，展开后每 5 秒读取，容器后端与本机桌面口径分开。The optional inline CPU readout preserves Monitor playback, polls only while expanded/visible and distinguishes the desktop process tree from server-only diagnostics.
 - go2rtc 命名流支持批量选择、逐项导入、部分失败重试、停止及不确定写入核对。Named streams support safe batch import, progress, partial retries, stopping and reconciliation.
 - 网站回放自动检查 H.264 帧重排序兼容性，按需处理 B 帧；增加主页持续解码验收。Website VOD checks H.264 frame reordering and adds monitor-wall soak validation.
 - 内部 go2rtc 冷启动使用固定 90 秒来源/启动探测预算与 95 秒 Hybrid 发布预算，修复下游 8/10 秒提前终止网站解析；实际媒体读取仍为 8 秒，单次信令与普通摄像机预算不变。Internal go2rtc startup aligns with the fixed extractor budget, preserving steady-state media reads, individual signaling and ordinary camera deadlines.
@@ -38,6 +39,8 @@ v4.1 has not been released. Existing v4.0 assets do not contain these changes. T
 - 随后在 dev.8 实际复现同址来源 H.264→HEVC 后主页停止出帧，设备目录仍是旧 codec。最新源码将视频/音频 codec 纳入路由失效条件，手动探测刷新短期缓存，编码拒绝时按 30 秒每路限频自动排队新探测。Linux 最新核心、真实媒体与 Windows Electron 的旧元数据/兼容接收端场景已验证自动更新后恢复；Windows 全量设备 57 项、聚焦浏览器 43 项和 CTest 2 项通过。该修复晚于 dev.8，须进入新 Windows/容器候选；保留 dev.8 失败回执，不把此前纯重启成功当作编码切换成功。Dev.8 reproduced same-address codec-change failure. New source invalidates routes on codec metadata changes and bounds automatic fresh probes after codec rejection. Linux/actual-media/Electron recovery and source tests passed; a new Windows/container candidate remains required.
 
 ## 发布前仍需完成 / Remaining qualification
+
+监看实时占用栏已通过 typecheck/build、投影/监看及轮询 14 项回归和界面布局检查；新增真实媒体门禁要求展开/收起后播放器节点保留、实际进程采样及新呈现帧。该功能晚于 dev.10，仍需新完整候选。The inline readout passed frontend build, fourteen related browser checks and layout inspection; a subsequent complete candidate must execute its new actual-media retention/readout gate.
 
 2026-10-19 复核：`358dafc` 的 [Windows dev.9 完整构建](https://github.com/LiaoYK001/Web-Camera-Monitor-Wall/actions/runs/38499041402)、[同提交容器预检](https://github.com/LiaoYK001/Web-Camera-Monitor-Wall/actions/runs/38499044749)、公开 CI 及 PR 五类 CodeQL 分析均通过，包含同址编码变更恢复门禁。dev.8 的额外可见五路原生 HEVC 功能检查也通过：协商三路 H.264、两路 H.265，24 次应用媒体 FFmpeg 采样均为零；约 137 秒逐路平均呈现 24.66–24.76fps，不能计作 CPU 对照。自动与手动探测共用进行中任务的补充修复通过 Windows 设备服务全量 58 项，仍需进入后续完整候选。此前 dev.8 一小时 YouTube 测试未留下完成回执，不计为通过。
 

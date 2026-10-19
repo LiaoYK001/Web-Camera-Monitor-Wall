@@ -30,6 +30,7 @@ import type { AudioMonitoring, CameraRecord, FilterKind, PlaybackMode, ScaleMode
 
 const NvrTimeline = lazy(() => import('./NvrTimeline'));
 const SystemStatus = lazy(() => import('./SystemStatus'));
+const MonitorProcessStatus = lazy(() => import('./MonitorProcessStatus'));
 const EventsPanel = lazy(() => import('./EventsPanel'));
 const SourceCatalog = lazy(() => import('./SourceCatalog'));
 const Go2rtcWorkspace = lazy(() => import('./Go2rtcWorkspace'));
@@ -987,7 +988,7 @@ export default function App() {
         <button type="button" onClick={() => setPlaybackMode('direct')} className={playbackMode === 'direct' ? 'active' : ''}>浏览器媒体</button>
         <button type="button" onClick={() => setPlaybackMode('composite')} className={playbackMode === 'composite' ? 'active' : ''}>服务端 Program</button>
         <button type="button" onClick={() => void toggleFullscreen()}>真全屏</button>
-      </div></header><div ref={monitorRef} className="monitor-surface">
+      </div></header><MonitorProcessStatus /><div ref={monitorRef} className="monitor-surface">
         {playbackMode === 'direct' ? <DirectPreview scene={monitorScene} /> : <ProgramPreview aspectRatio={`${monitorScene.canvas.width} / ${monitorScene.canvas.height}`} />}
         {fullscreen && <div className="fullscreen-overlay"><button type="button" onClick={() => void toggleFullscreen()}>退出全屏</button><span>{wakeLockState === 'active' ? '● 屏幕常亮' : wakeLockState === 'unsupported' ? '⚠ 不支持防休眠' : ''}</span></div>}
       </div></section></WorkspaceShell>;
