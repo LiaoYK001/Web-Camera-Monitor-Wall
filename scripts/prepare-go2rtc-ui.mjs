@@ -2,6 +2,7 @@ import { cpSync, mkdirSync, readFileSync, readdirSync, realpathSync, rmSync, wri
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { patchMonacoSanitizer } from './patch-monaco-sanitizer.mjs';
+import { retainGo2rtcMseHistory } from './patch-go2rtc-mse.mjs';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const output = path.join(root, 'web/go2rtc-dist');
@@ -39,6 +40,7 @@ for (const filename of readdirSync(upstream)) {
   // relative URL from a data: worker's location.
   content = content.replace("const monacoRoot = 'vendor/monaco-editor/min';",
     "const monacoRoot = new URL('vendor/monaco-editor/min', location.href).href;");
+  if (filename === 'video-rtc.js') content = retainGo2rtcMseHistory(content);
   if (filename === 'config.html') {
     // Adapt the generated copy only. Fail closed when upstream changes the
     // editor integration, instead of silently shipping the old early OK alert.

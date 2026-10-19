@@ -10,7 +10,7 @@ app.on('window-all-closed',()=>{});
  const temporary=process.env.WEBOBS_SOURCE_UI_ROOT;
  if(!temporary||!path.resolve(temporary).startsWith(path.join(os.tmpdir(),'webobs-source-ui-')))throw new Error('Use run-online-source-native.mjs with an isolated owned profile');
  app.setPath('userData',path.join(temporary,'WebOBS'));app.setPath('sessionData',path.join(temporary,'browser'));
- let supervisor,browser,window,upstream,manifestRevision,frontendEntrySha256,frontendOverride,restartVideo,failure,stage='initialization',exit=0,frontendDocumentsVerified=0;const receipts=[];
+ let supervisor,browser,window,upstream,manifestRevision,frontendEntrySha256,frontendOverride,restartVideo,failure,mseLongGop,stage='initialization',exit=0,frontendDocumentsVerified=0;const receipts=[];
  try{
   await app.whenReady();window=new BrowserWindow({show:false,webPreferences:{sandbox:true,contextIsolation:true,nodeIntegration:false}});await window.loadURL('data:text/html,<title>Public online qualification</title>');
   const runtime=path.resolve(option('--runtime')||path.join(root,'desktop/runtime'));
@@ -27,7 +27,7 @@ app.on('window-all-closed',()=>{});
   const fixtureUrl=new URL(`rtsp://127.0.0.1:${rtspPort}/fixture`);
   fixtureUrl.username='fixture';fixtureUrl.password=encodeURIComponent(password);
   const rtspAddress=fixtureUrl.href;
-  const fixtureConfig=path.join(temporary,'fixture.json');await fs.writeFile(fixtureConfig,JSON.stringify({api:{listen:`127.0.0.1:${apiPort}`},rtsp:{listen:`127.0.0.1:${rtspPort}`,username:'fixture',password},webrtc:{listen:''},streams:{fixture:'ffmpeg:virtual?video=testsrc2&size=160x90#video=h264'}}));
+  const fixtureConfig=path.join(temporary,'fixture.json');await fs.writeFile(fixtureConfig,JSON.stringify({api:{listen:`127.0.0.1:${apiPort}`},rtsp:{listen:`127.0.0.1:${rtspPort}`,username:'fixture',password},webrtc:{listen:''},ffmpeg:{'h264/longgop':'-c:v libx264 -g 300 -keyint_min 300 -sc_threshold 0 -bf 0 -preset ultrafast -tune zerolatency -pix_fmt yuv420p'},streams:{fixture:'ffmpeg:virtual?video=testsrc2&size=160x90#video=h264',longgop:'ffmpeg:virtual?video=testsrc2&size=160x90&rate=30#video=h264/longgop'}}));
   const launchFixture=()=>require('node:child_process').spawn(path.join(runtime,'bin/webobs-job.exe'),['--console',path.join(runtime,'bin/go2rtc.exe'),'-config',fixtureConfig],{windowsHide:true,stdio:['pipe','ignore','ignore'],env:{...process.env,PATH:path.join(runtime,'bin')+path.delimiter+path.join(process.env.SystemRoot,'System32')}});
   if(!external)upstream=launchFixture();
   if(upstream)await expect.poll(async()=>{try{return (await fetch(`http://127.0.0.1:${apiPort}/api/streams`)).status}catch{return 0}},{timeout:15000}).toBe(200);
@@ -70,6 +70,27 @@ app.on('window-all-closed',()=>{});
    expect(crypto.createHash('sha256').update(await response.body()).digest('hex')).toBe(frontendEntrySha256);
    frontendDocumentsVerified++;
   };
+  if(!external){
+   stage='mse-long-gop';
+   const address=new URL(rtspAddress);address.pathname='/longgop';
+   await page.goto(base+'/#go2rtc');const form=page.getByRole('region',{name:'网站与直播源'});
+   await form.getByLabel('流名称',{exact:true}).fill('qualification-long-gop');await form.getByLabel('视频网页或直播地址').fill(address.href);
+   await form.getByRole('button',{name:'保存命名流并重启 go2rtc'}).click();await expect(form.getByRole('status')).toContainText('已保存并加载',{timeout:35000});
+   await page.goto(base+'/api/v1/go2rtc/stream.html?src=qualification-long-gop&mode=mse');await page.bringToFront();
+   const video=page.locator('video');restartVideo=video;
+   await video.evaluate(v=>{v.muted=true;v.play().catch(()=>{});});
+   await expect.poll(()=>video.evaluate(v=>v.readyState>=2&&v.videoWidth===160),{timeout:30000}).toBe(true);
+   stage='mse-long-gop-progress';
+   const started=Date.now();
+   for(let sample=0;sample<8;sample++){
+    const before=await video.evaluate(v=>{const q=v.getVideoPlaybackQuality();return q.totalVideoFrames-q.droppedVideoFrames;});
+    await page.waitForTimeout(5000);
+    expect(await video.evaluate(v=>{const q=v.getVideoPlaybackQuality();return q.totalVideoFrames-q.droppedVideoFrames;})).toBeGreaterThan(before);
+    await video.evaluate(v=>new Promise((resolve,reject)=>{const timer=setTimeout(()=>reject(new Error('Long-GOP MSE stopped presenting')),2000);v.requestVideoFrameCallback(()=>{clearTimeout(timer);resolve();});}));
+   }
+   mseLongGop={gopFrames:300,fps:30,seconds:Math.round((Date.now()-started)/1000),progressSamples:8};
+   restartVideo=undefined;console.log('Long-GOP authenticated MSE retained presented-frame progress');
+  }
   for(const {name,address,engine,video:videoMode} of external||[{name:'private-rtsp',address:rtspAddress,engine:'auto'}]){
    socketBytes=socketFrames=socketErrors=0;socketErrorCategories.clear();
    const start=Date.now();let phase='form',management,activeVideo;
@@ -209,7 +230,7 @@ app.on('window-all-closed',()=>{});
   console.error('Native source UI qualification failed: '+stage+' / '+error.name);}
  finally{
   await browser?.close();await supervisor?.stop().catch(()=>{});if(upstream&&upstream.exitCode===null){upstream.stdin.end();await Promise.race([new Promise(resolve=>upstream.once('exit',resolve)),new Promise(resolve=>setTimeout(resolve,5000))]);if(upstream.exitCode===null)upstream.kill();}window?.destroy();
-  if(option('--receipt'))await fs.writeFile(path.resolve(option('--receipt')),JSON.stringify({testedAt:new Date().toISOString(),result:exit?'failed':'passed',runtimeRevision:manifestRevision,frontendOverride,frontendEntrySha256,frontendDocumentsVerified,browserPermissionScope:frontendOverride?'local-network-access:owned-loopback-origin':'none',...(failure?{failure}:{}),receipts},null,2));
+  if(option('--receipt'))await fs.writeFile(path.resolve(option('--receipt')),JSON.stringify({testedAt:new Date().toISOString(),result:exit?'failed':'passed',runtimeRevision:manifestRevision,frontendOverride,frontendEntrySha256,frontendDocumentsVerified,browserPermissionScope:frontendOverride?'local-network-access:owned-loopback-origin':'none',mseLongGop,...(failure?{failure}:{}),receipts},null,2));
   app.exit(exit);
  }
 })().catch(() => { console.error('Native source UI harness failed'); app.exit(1); });

@@ -56,11 +56,13 @@ Dev.9 passed its normal-network DW and synthetic checks. Initial private fault-f
 
 同日 dev.10 的实际可见 Electron 双路短诊断（非前端替换）约 320.3 秒：回放平均呈现 29.49fps、17/9462 丢弃（0.18%）；DW 56.00fps、395/18334 丢弃（2.15%）。RTC 接收统计仍出现冻结，两个接收端测量段分别新增 54/10 次、27.558/6.079 秒；本地 RTP 丢包增量均为零，平均每帧解码约 1.68/2.12ms。未取得解码器实现/硬解标识，不能据此认定硬解；本地 RTP 无丢包也不能排除上游网络或时间戳因素，根因仍待隔离。该短诊断没有专用断网代理，与小时长测的渲染器/网络条件不同，不能合并作性能提升结论。A separate visible Electron diagnostic still recorded freezes despite no reported local RTP loss. Decoder implementation/hardware indicators were unavailable. It is not a controlled comparison with the earlier headless/proxied hour and establishes no drop/freeze root cause or performance gain.
 
+新增 MSE 长 GOP 停顿修复：原始播放器 5 秒历史清理可能删除当前解码依赖，生成副本改为保留 30 秒历史并保留原 5 秒追赶条件。可见 Electron 同一 DW 生产者 199 秒对照，原始侧新增 65 次 waiting、修复侧 0；离线 10 秒 GOP 合成源同样复现并恢复。速率限幅单独无效，未采用；4 项生成资源回归通过，新增 Windows 长 GOP 门禁的本机开发组合通过 42 秒、8 次呈现检查及其余完整流程；仍须进入新完整候选。增加历史有浏览器内存代价，不改源画质/FPS、不断言 WHEP 冻结已修复。[完整方法与限制](online-source-validation-v4.md)。A generated-player MSE history fix passed controlled live/synthetic diagnostics and asset regressions; a new complete candidate remains required. This preserves live-edge recovery with more buffer memory and does not claim to fix all Monitor-WHEP freezes.
+
 ## 发布前仍需完成 / Remaining qualification
 
 1. dev.12 实时占用栏完整候选已通过；后续改动仍需最终提交 CI/CodeQL 与代码评审，再从评审后冻结版本构建最终稳定三端候选。The complete dev.12 readout candidate passed; subsequent changes still require final-revision CI/CodeQL and review before stable candidates are built from frozen source.
 2. 同一暗夜精灵 13900HX/4090 Laptop、同五路来源、画质/FPS/音频设置，对照 stock OBS；分别测 H.264、H.265 与混合，直连与 go2rtc。每轮预热 3 分钟、采样至少 15 分钟，记录整体 CPU 中位/p95、内存、GPU 解码/编码、真实帧进度、断流恢复及摄像机连接数。用户暂时无法实机，保持未验证，不以降低画质代替性能达标。The user laptop is currently unavailable. Same-machine/source/quality OBS qualification remains open; synthetic fixtures cannot qualify this target.
-3. 双路一小时持续播放和故障恢复已通过，继续排查 DW 较高丢帧与独立 MSE 长停顿并补最终候选复验；不把恢复通过等同于零掉帧/流畅度达标。The paired hour and recovery passed; investigate DW drops and separately observed long MSE stalls, then recheck the final candidate without claiming zero-drop smoothness.
+3. 双路一小时持续播放和故障恢复已通过，完成 MSE 历史修复的新完整候选，继续排查 DW WHEP 较高丢帧/冻结并补最终候选复验；不把恢复通过等同于零掉帧/流畅度达标。The paired hour and recovery passed; qualify the new MSE fix, investigate remaining DW WHEP drops/freezes, then recheck the final candidate without claiming zero-drop smoothness.
 4. 补齐适用的 Android 已安装客户端/后端回归、三端最终候选、源码及不可变附件检查，再完成版本化 dev→main 发布 PR 与正式发布。本机当前 ADB 无设备；已有签名 APK 不替代生产包升级/ARM 真机证据。Complete applicable installed Android/backend, final-candidate, source and immutable-asset checks; no ADB device is currently available, and a signed APK does not qualify production/ARM updates.
 
 不宣称达到 OBS 性能水平，不把短时、合成或 Linux 证据替代用户 Windows 实机验收。No OBS performance parity claim is made.

@@ -113,3 +113,10 @@ The native source UI gate accepts `--soak-seconds 600` (0–3600 seconds per sou
 产品内部 go2rtc 回环 RTSP 路径的冷启动预算与网站助手对齐：Direct 来源等待最多 90 秒，Hybrid 在启动前用固定 FFprobe 等待最多 90 秒，发布启动最多 95 秒；实际 FFmpeg 媒体读取仍为 8 秒，普通摄像机维持原预算。启动探测临时读取同一条回环 Direct 路径，退出后立即由转码器接续，网关复用已有来源；不会额外持续连接摄像机。单次 WHEP 信令仍为 15 秒，浏览器沿原有退避重试，提取过程不会被较短的 Hybrid 输入等待提前终止。只识别本产品运行时的 go2rtc 回环监听地址，不接受前端提供任意等待时长；退出观看后仍按需停止。
 
 Internal product-loopback go2rtc routes align with the fixed extractor startup budget: 90 seconds for the Direct source/startup-only FFprobe and 95 seconds for Hybrid publishing. Actual FFmpeg media reads retain their eight-second deadline, so established-stream stalls are not hidden for 90 seconds. The temporary probe reads the shared loopback Direct path and hands over to FFmpeg; it adds no continuous camera connection. Ordinary camera budgets remain unchanged. Each WHEP signaling request retains its 15-second deadline and existing browser backoff. Only the product's loopback go2rtc listener is recognized; renderers cannot choose arbitrary durations. Media remains on demand.
+
+
+### MSE 播放历史 / MSE playback history
+
+生成的 go2rtc 播放器以约 30 秒的媒体时间历史为保留目标，将其与 5 秒直播追赶条件分开；不修改上游子模块，不改变源画质/FPS，也不新增转码。原因是 MSE 在 GOP 中部删除历史时可能连带删除当前播放所需的帧。保留更多历史会增加浏览器缓冲内存，实际字节量取决于码率和浏览器配额；30 秒不是新增的固定播放延迟。适配在 `pnpm go2rtc:ui` 时生成，遇到未知上游结构即拒绝构建。[验证与边界](online-source-validation-v4.md)。
+
+The generated MSE player separates thirty seconds of retained media history from the existing five-second live-edge recovery condition. This preserves long-GOP decoding dependencies without changing source quality/FPS or adding transcoding. More history uses more browser memory, depending on bitrate/quota; it does not impose thirty seconds of latency. The pinned upstream checkout stays intact, and unexpected player structure fails the asset build.

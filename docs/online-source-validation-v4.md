@@ -115,3 +115,34 @@ Chromium 对测试中由路由直接返回的 HTML 曾报 `ERR_BLOCKED_BY_LOCAL_
 对完整 manifest 校验的 dev.12 / `d6387db`，捆绑模式和本机构建替换模式分别通过：每轮实际 HTML 校验 2 次，CPU 栏节点保留、编码切换、go2rtc 与完整重启均通过。捆绑入口摘要为 `a40ccf21d36e8e3e67c36781e4086342aa6319f7ba17a9851e2686680d74e4a7`；替换入口为 `0a0950fc676d56e01cd60c5dda0743626b0ae50180aa1ee44bfa1917bf6bb30e`。先前矩阵包装器的替换轮在 initialization 阶段失败，缺少足够诊断，仍保留并标为根因未明；后续独立通过不证明该次失败已修复。新增身份断言晚于 dev.12 CI，不能追溯声称该 CI 已运行。
 
 Both bundled and local-override runs against manifest-verified dev.12 passed two actual-document hashes and the CPU/media/restart checks. A prior matrix-wrapper initialization failure remains retained without an established cause. Independent passing receipts do not resolve that failure or retroactively extend dev.12 CI coverage. The overridden run remains a development combination, not a release candidate.
+
+
+## MSE 长停顿定位与修复验证（2026-10-19） / MSE stall investigation
+
+在 manifest 校验后的 dev.12 上，使用实际可见 Electron、同一 DW 直播生产者及两个同时可见的最小 VideoRTC 播放器；只对一侧播放器模块做私密诊断替换，并校验实际加载的实现。不是完整新候选、CPU 基准或 WHEP 主监看页验收。两个播放器使用相同源分辨率与编码，不降低源 FPS。
+
+The controlled diagnostic used manifest-verified dev.12 and the actual visible Electron renderer, with two minimal same-source VideoRTC players. One module was explicitly overridden and its loaded implementation checked. This is development evidence, not complete-candidate, CPU or Monitor-WHEP qualification.
+
+先比较原始速率与 1.00–1.05 限幅：187.804 秒内两侧仍有约 10.5 秒停顿，限幅侧呈现回调反而更少，**未采用此策略**。独立 90 秒观察取得两侧完全相同的 9074 条二进制消息、14577146 字节，最长到达间隔约 0.578 秒。首轮因模块缓存导致实验实现未加载的结果、后续夹具重复播放器失败均保留，不计为有效对照。
+
+Rate limiting alone failed to remove the stalls and was rejected. A separate 90-second observation received identical binary messages/bytes on both sides, with maximum arrival gaps around 0.578 seconds. An earlier unloaded-override attempt and a duplicate-player fixture failure remain excluded from the comparison.
+
+随后只改变历史保留范围，原始播放速率及落后超过 5 秒的追赶条件保持不变。预热后 36 次同步采样、199.145 秒结果：
+
+| 策略 / Policy | 新呈现回调 / New frame callbacks | 新 waiting 事件 / New waiting events | 新增 >250ms 回调间隔 / New callback gaps |
+| --- | --- | --- | --- |
+| 原始 5 秒历史 / Original five-second history | 1356 | 65 | 25 |
+| 30 秒历史、原追赶条件 / Thirty-second history, same live-edge condition | 12047 | 0 | 0 |
+
+250ms 是本次自定义回调间隔阈值，不是 RTC 标准 freezeCount。原始侧全程最长间隔约 10.529 秒；修复侧最长约 0.462 秒发生在预热阶段，测量段没有新增超过 250ms 的间隔。另一个 90 秒删除观察中，原始侧 19/19 次清理把实际保留起点推进到播放位置之后，修复侧 0/23 次；实际删除边界会推进到后续关键帧，与 [MSE 编码帧删除算法](https://www.w3.org/TR/media-source-1/#sourcebuffer-coded-frame-removal)一致。这是此 MSE 场景的因果证据，不能解释或宣称修复全部 WHEP/网站冻结。
+
+The 250ms threshold is a custom callback-gap metric, not RTC freezeCount. A separate removal observation found the playing position outside the retained range after 19/19 original removals, versus 0/23 adapted removals, consistent with MSE's random-access/dependency removal rules. This establishes the MSE case separately from unresolved WHEP freezes.
+
+本地无公网合成源（160×90、30fps、H.264、零 B 帧、300 帧/10 秒 GOP）再对照 61.604 秒：原始侧新增 118 次呈现回调、12 次 waiting、6 次 >250ms 间隔，最长约 9.836 秒；修复侧 1852 次呈现回调、0 waiting、0 新增 >250ms 间隔。该轮使用实际生成的播放器副本。资源回归另外执行真实播放器方法，覆盖 5/10 秒 GOP 删除依赖、30 秒历史边界、原 5 秒追赶与异常上游拒绝。
+
+An offline synthetic long-GOP source reproduced the same problem and the generated player adaptation restored sustained presentation. Asset regressions exercise the actual player method and fail closed for unexpected/already-adapted upstream input. The Windows fixed gate now includes forty seconds of authenticated long-GOP MSE frame progress; a newly built complete candidate must run it before this source change is qualified for distribution.
+
+
+新固定门禁在 dev.12 运行时加生成 MSE 文件替换的开发组合上通过：42 秒、8 次长 GOP 帧增长/真实呈现检查，随后冷建档、Studio/TAKE、占用栏节点保留、同址编码切换、go2rtc 与整产品重启全部通过，实际 HTML 身份校验 2 次，无额外浏览器权限。回执显式标记 `mediaAssetOverride=true`，不能当作 dev.12 原包或新完整候选通过。此前不完整首帧尝试及私密诊断包装器异常均保留并排除；成功结果同时核验进程退出码、采样次数与完整后续检查。
+
+The complete strengthened local gate passed with the generated MSE file explicitly overlaid on dev.12: eight presented-frame samples over 42 seconds, then all existing import/Monitor/CPU/codec/restart checks and two document hashes. This media override remains development evidence; the new complete candidate is pending. Incomplete first-frame attempts and a private diagnostic-wrapper failure are retained and excluded.
