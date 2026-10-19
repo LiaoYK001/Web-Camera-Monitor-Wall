@@ -76,3 +76,7 @@ The new run had two media FFmpeg processes, observed with CUDA decoding and NVEN
 - 私密回执及测试运行目录保留在 Git 外。本页仅保留汇总，不包含摄像机地址、日志、口令或媒体文件。Private receipts remain outside Git; no camera URLs, logs, credentials or media are published here.
 
 正式性能目标仍按 [v4.1 发布草案](release-notes-v4.1.md) 的同机、同源、同质量长期对照完成。Further qualification must use the same user hardware, sources and quality settings for a sustained comparison.
+
+## 可选占用栏加载隔离 / Optional readout loading isolation
+
+新增受控模块延迟回归在修复前失败：占用栏尚未加载时，页面级 Suspense 会隐藏整个 Monitor。现在仅占用栏自身使用加载边界，保留同高禁用按钮；监看立即可用，模块完成后播放器 DOM 不变。typecheck/build 和完整相关 15 项回归通过；新完整候选仍需运行实际媒体门禁。A controlled module-delay regression failed before the fix. A local loading boundary now keeps Monitor and its player mounted while the optional module loads; fifteen related browser checks passed. Complete candidate qualification remains required.

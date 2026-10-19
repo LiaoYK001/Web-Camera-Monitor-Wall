@@ -96,6 +96,30 @@ test('ordinary routes keep the full workspace shell', async ({ page }) => {
   await expect(page.locator('.projector-shell')).toHaveCount(0);
 });
 
+test('a delayed optional readout module does not block or replace Monitor playback', async ({ page }) => {
+  await mockBackend(page);
+  let release!: () => void;
+  let requested!: () => void;
+  const delayed = new Promise<void>(resolve => { release = resolve; });
+  const loading = new Promise<void>(resolve => { requested = resolve; });
+  await page.route('**/src/MonitorProcessStatus.tsx*', async route => {
+    requested(); await delayed; await route.continue();
+  });
+  try {
+    await page.goto('/#monitor');
+    await loading;
+    await expect(page.locator('.monitor-workspace')).toBeVisible({ timeout: 2000 });
+    await page.getByRole('button', { name: '服务端 Program', exact: true }).click();
+    const video = page.locator('.program-preview video');
+    await expect(video).toHaveCount(1);
+    const original = await video.elementHandle();
+    release();
+    await expect(page.getByRole('button', { name: '实时占用', exact: true })).toBeEnabled();
+    expect(await video.evaluate((value, retained) => value === retained, original)).toBe(true);
+    await original?.dispose();
+  } finally { release(); }
+});
+
 test('monitor CPU readout preserves the media element and only polls while expanded', async ({ page }, testInfo) => {
   await mockBackend(page);
   let reads = 0;

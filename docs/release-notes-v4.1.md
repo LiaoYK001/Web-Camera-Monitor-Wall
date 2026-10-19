@@ -50,6 +50,12 @@ v4.1 has not been released. Existing v4.0 assets do not contain these changes. T
 
 Dev.9 passed its normal-network DW and synthetic checks. Initial private fault-fixture authentication, transfer and viewport failures remain retained; corrected-fixture rehearsal and dev.10's long run passed without changing product budgets. Not every historical failure has an established product root cause.
 
+2026-10-19 追加：dev.10 的同一完整 NSIS 附件（SHA-256 `ae31f451e9b230a2f64bf69037aaff67506c81c530b75ce605c192f5bdf979cf`）在本机 Windows 11 上通过中文路径安装、全部 7885 个运行文件校验、干净 PATH 启动、首次登录/认证 go2rtc、异常退出清理与默认卸载保留数据；CI 原回执另存保留。仅为本机安装冒烟，不是干净系统/真实摄像机/正式升级验收。The same complete installer passed local Windows 11 installation/lifecycle/uninstall smoke, retaining the original CI receipt and its qualification limits.
+
+[dev.11 Windows CI](https://github.com/LiaoYK001/Web-Camera-Monitor-Wall/actions/runs/39224034606)在首次 Monitor 滚动检查失败，本机同一 manifest 运行时已复现 `Element is not attached to the DOM`：hash 路由切换期间，原定位器先抓到 Studio 中的同名旧视频。门禁改为等待并限定真正的 `.monitor-workspace`。另新增受控延迟模块回归，确认可选占用栏经页面级 Suspense 会阻挡整个 Monitor；局部加载边界修复后，前端 typecheck/build 与完整相关 15 项回归通过。失败运行保留，新完整 Windows 候选仍需验收。Dev.11 failed on a detached Studio video during Monitor navigation. The gate now waits for the actual Monitor workspace; a separate before/after regression verifies that loading the optional readout no longer blocks the whole Monitor. A fresh complete candidate is still required.
+
+同日 dev.10 的实际可见 Electron 双路短诊断（非前端替换）约 320.3 秒：回放平均呈现 29.49fps、17/9462 丢弃（0.18%）；DW 56.00fps、395/18334 丢弃（2.15%）。RTC 接收统计仍出现冻结，两个接收端测量段分别新增 54/10 次、27.558/6.079 秒；本地 RTP 丢包增量均为零，平均每帧解码约 1.68/2.12ms。未取得解码器实现/硬解标识，不能据此认定硬解；本地 RTP 无丢包也不能排除上游网络或时间戳因素，根因仍待隔离。该短诊断没有专用断网代理，与小时长测的渲染器/网络条件不同，不能合并作性能提升结论。A separate visible Electron diagnostic still recorded freezes despite no reported local RTP loss. Decoder implementation/hardware indicators were unavailable. It is not a controlled comparison with the earlier headless/proxied hour and establishes no drop/freeze root cause or performance gain.
+
 ## 发布前仍需完成 / Remaining qualification
 
 1. 完成实时占用栏的新完整候选、最终提交 CI/CodeQL 与代码评审，随后从评审后冻结的版本构建最终稳定三端候选。Complete the readout candidate, final-revision CI/CodeQL and review, then qualify stable candidates from the reviewed frozen source.
