@@ -10,7 +10,7 @@ app.on('window-all-closed',()=>{});
  const temporary=process.env.WEBOBS_SOURCE_UI_ROOT;
  if(!temporary||!path.resolve(temporary).startsWith(path.join(os.tmpdir(),'webobs-source-ui-')))throw new Error('Use run-online-source-native.mjs with an isolated owned profile');
  app.setPath('userData',path.join(temporary,'WebOBS'));app.setPath('sessionData',path.join(temporary,'browser'));
- let supervisor,browser,window,upstream,manifestRevision,frontendEntrySha256,frontendOverride,restartVideo,failure,stage='initialization',exit=0;const receipts=[];
+ let supervisor,browser,window,upstream,manifestRevision,frontendEntrySha256,frontendOverride,restartVideo,failure,stage='initialization',exit=0,frontendDocumentsVerified=0;const receipts=[];
  try{
   await app.whenReady();window=new BrowserWindow({show:false,webPreferences:{sandbox:true,contextIsolation:true,nodeIntegration:false}});await window.loadURL('data:text/html,<title>Public online qualification</title>');
   const runtime=path.resolve(option('--runtime')||path.join(root,'desktop/runtime'));
@@ -48,13 +48,28 @@ app.on('window-all-closed',()=>{});
    }}catch{}}
   }));
   // Exercise the current production frontend with the actual authenticated native services.
-  if(frontend)await page.route(base+'/**',async route=>{
-   const u=new URL(route.request().url());if(u.pathname.startsWith('/api/'))return route.continue();
-   const relative=u.pathname==='/'?'index.html':u.pathname.slice(1);const target=path.resolve(frontend,relative);
-   if(!target.startsWith(frontend+path.sep))return route.continue();
-   const body=await fs.readFile(target).catch(()=>null);if(!body)return route.continue();
-   const ext=path.extname(target);await route.fulfill({body,contentType:ext==='.js'?'application/javascript':ext==='.css'?'text/css':ext==='.html'?'text/html':'application/octet-stream'});
-  });
+  const attachFrontend=async target=>{
+   if(!frontend)return;
+   expect(new URL(base).hostname).toBe('127.0.0.1');
+   // Fulfilled documents have no loopback network response. Model the explicit
+   // browser permission only for this owned origin; bundled candidates get none.
+   await target.grantPermissions(['local-network-access'],{origin:base});
+   // Literal static globs keep Chromium's network interception off API/WS upgrades.
+   const serve=async route=>{
+    const u=new URL(route.request().url());
+    const relative=u.pathname==='/'?'index.html':u.pathname.slice(1);const file=path.resolve(frontend,relative);
+    if(!file.startsWith(frontend+path.sep))return route.continue();
+    const body=await fs.readFile(file).catch(()=>null);if(!body)return route.continue();
+    const ext=path.extname(file);await route.fulfill({body,contentType:ext==='.js'?'application/javascript':ext==='.css'?'text/css':ext==='.html'?'text/html':'application/octet-stream'});
+   };
+   for(const suffix of ['/','/index.html','/assets/**','/manifest.webmanifest','/webobs-icon.svg','/sw.js'])await target.route(base+suffix,serve);
+  };
+  await attachFrontend(context);
+  const verifyFrontendDocument=async response=>{
+   expect(response).not.toBeNull();
+   expect(crypto.createHash('sha256').update(await response.body()).digest('hex')).toBe(frontendEntrySha256);
+   frontendDocumentsVerified++;
+  };
   for(const {name,address,engine,video:videoMode} of external||[{name:'private-rtsp',address:rtspAddress,engine:'auto'}]){
    socketBytes=socketFrames=socketErrors=0;socketErrorCategories.clear();
    const start=Date.now();let phase='form',management,activeVideo;
@@ -72,14 +87,14 @@ app.on('window-all-closed',()=>{});
     const stamp=await video.evaluate(v=>v.currentTime);await expect.poll(()=>video.evaluate(v=>v.currentTime),{timeout:15000}).toBeGreaterThan(stamp+1);
     const dimensions=await video.evaluate(v=>[v.videoWidth,v.videoHeight]);phase='registry';
     // Keep the decoder open while a second page checks the registry and Studio.
-    management=await context.newPage();await management.route(base+'/**',async route=>route.continue());await management.goto(base+'/#go2rtc');
+    management=await context.newPage();await management.bringToFront();await verifyFrontendDocument(await management.goto(base+'/#go2rtc'));
     const row=management.locator('.go2rtc-stream-list > div').filter({has:management.getByText(name,{exact:true})});
     await expect(row.getByRole('button',{name:'已在设备目录',exact:true})).toBeVisible({timeout:60000});
     const cameras=(await (await context.request.get(base+'/api/v1/cameras')).json()).cameras;const camera=cameras.find(c=>c.name===name);expect(camera?.profiles?.length).toBeGreaterThan(0);
-    phase='studio';await management.goto(base+'/#studio');await management.getByRole('button',{name:'新建场景',exact:true}).click();
+    phase='studio';await management.goto(base+'/#studio');await expect(management.locator('.connection.online').filter({hasText:'实时同步'})).toBeVisible();await management.getByRole('button',{name:'新建场景',exact:true}).click();
     const dialog=management.getByRole('dialog',{name:'新建场景',exact:true});await dialog.getByLabel('场景名称').fill(name);await dialog.getByRole('checkbox',{name,exact:true}).check();await dialog.getByRole('button',{name:'应用到草稿'}).click();await management.getByRole('button',{name:'保存并应用',exact:true}).click();
     await expect.poll(async()=>{const studio=await (await context.request.get(base+'/api/v1/studio')).json();return studio.scenes.some(s=>s.name===name&&s.sources.some(source=>source.cameraId===camera.id))},{timeout:20000}).toBe(true);
-    await management.reload();await expect(management.getByRole('button',{name:'选择场景 '+name,exact:true})).toBeVisible();
+    await management.reload();await expect(management.locator('.connection.online').filter({hasText:'实时同步'})).toBeVisible();await expect(management.getByRole('button',{name:'选择场景 '+name,exact:true})).toBeVisible();
     phase='take';await management.getByRole('button',{name:'TAKE',exact:true}).click();
     await expect.poll(async()=>{const studio=await (await context.request.get(base+'/api/v1/studio')).json();return studio.scenes.find(s=>s.id===studio.programSceneId)?.name},{timeout:20000}).toBe(name);
     phase='monitor-wall';await management.goto(base+'/#monitor');
@@ -166,6 +181,7 @@ app.on('window-all-closed',()=>{});
    stage='restart-persistence';
    await context.close();await supervisor.stop();await supervisor.start();
    const restored=await browser.newContext({serviceWorkers:'block'});
+   await attachFrontend(restored);
    expect((await restored.request.post(base+'/api/v1/auth/login',{headers:{Origin:base},data})).status()).toBe(200);
    const streams=await (await restored.request.get(base+'/api/v1/go2rtc/api/streams')).json();
    const cameras=(await (await restored.request.get(base+'/api/v1/cameras')).json()).cameras;
@@ -177,7 +193,7 @@ app.on('window-all-closed',()=>{});
     receipt.restartPersistence=true;
    }
    console.log('Named streams, device identity and Studio retained after complete product restart');
-   stage='restart-playback';const last=receipts.at(-1),monitor=await restored.newPage();await monitor.goto(base+'/#monitor');
+   stage='restart-playback';const last=receipts.at(-1),monitor=await restored.newPage();await verifyFrontendDocument(await monitor.goto(base+'/#monitor'));
    const wall=monitor.getByLabel(last.name+' 浏览器媒体画面',{exact:true});
    await monitor.bringToFront();
    await wall.scrollIntoViewIfNeeded();
@@ -193,7 +209,7 @@ app.on('window-all-closed',()=>{});
   console.error('Native source UI qualification failed: '+stage+' / '+error.name);}
  finally{
   await browser?.close();await supervisor?.stop().catch(()=>{});if(upstream&&upstream.exitCode===null){upstream.stdin.end();await Promise.race([new Promise(resolve=>upstream.once('exit',resolve)),new Promise(resolve=>setTimeout(resolve,5000))]);if(upstream.exitCode===null)upstream.kill();}window?.destroy();
-  if(option('--receipt'))await fs.writeFile(path.resolve(option('--receipt')),JSON.stringify({testedAt:new Date().toISOString(),result:exit?'failed':'passed',runtimeRevision:manifestRevision,frontendOverride,frontendEntrySha256,...(failure?{failure}:{}),receipts},null,2));
+  if(option('--receipt'))await fs.writeFile(path.resolve(option('--receipt')),JSON.stringify({testedAt:new Date().toISOString(),result:exit?'failed':'passed',runtimeRevision:manifestRevision,frontendOverride,frontendEntrySha256,frontendDocumentsVerified,browserPermissionScope:frontendOverride?'local-network-access:owned-loopback-origin':'none',...(failure?{failure}:{}),receipts},null,2));
   app.exit(exit);
  }
 })().catch(() => { console.error('Native source UI harness failed'); app.exit(1); });

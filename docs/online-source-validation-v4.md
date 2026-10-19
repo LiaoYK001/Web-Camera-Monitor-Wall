@@ -18,9 +18,9 @@ Both the full Windows candidate build and same-commit public CI passed. Public l
 | DW News 同一直播 / Same live page | Streamlink | 通过 / Passed，含主页播放 27 s | 1280×720 | 流、设备、场景 / Stream, device, scene |
 | 独立回环 RTSP，随机密码含 URL 保留字符 / Isolated RTSP with encoded reserved characters in a random password | 自动 → 直接 / Automatic → direct | 通过 / Passed，候选 CI 含主页播放 19 s | 160×90 合成画面 / Synthetic | 流、设备、场景 / Stream, device, scene |
 
-此前开发组合的回执时间为 `2026-10-09T11:10:43.531Z`：后端来自 `4.0.1-dev.3`，提交 `02d0f5a288724ea5e5d6d8d24b3f5582e98ecd6d`，前端为本机生产构建，入口 SHA-256 为 `d804671e114e3809590e6cc2bae25a510a43582bed29f4385d73a2a0f76f6d34`。该轮只替换静态前端，API 全部使用真实服务，是开发组合证据；现在上表由 dev.5 候选自身的复验补齐，不能混淆两轮的提交和摘要。
+此前开发组合的回执时间为 `2026-10-09T11:10:43.531Z`：后端来自 `4.0.1-dev.3`，提交 `02d0f5a288724ea5e5d6d8d24b3f5582e98ecd6d`，前端为本机生产构建，入口 SHA-256 为 `d804671e114e3809590e6cc2bae25a510a43582bed29f4385d73a2a0f76f6d34`。该轮只替换初始页面的静态前端，API 全部使用真实服务；后续管理页与重启页实际使用捆绑前端，因此不能把入口摘要扩展为全流程前端身份，是有限的开发组合证据；现在上表由 dev.5 候选自身的复验补齐，不能混淆两轮的提交和摘要。
 
-The earlier dev.3 backend plus local-frontend check is historical development evidence. Its revision and entry hash differ from the final dev.5 recheck above. All three final public routes passed actual monitor-wall playback after Take; the active Program (DW/Streamlink) also decoded again after full-product restart. Candidate CI independently passed the same restart playback check with authenticated synthetic RTSP.
+The earlier dev.3 backend plus local-frontend check is historical development evidence: only its initial page used the override; management and restart pages used bundled assets, so the entry hash does not identify their frontend. Its revision and entry hash differ from the final dev.5 recheck above. All three final public routes passed actual monitor-wall playback after Take; the active Program (DW/Streamlink) also decoded again after full-product restart. Candidate CI independently passed the same restart playback check with authenticated synthetic RTSP.
 
 三个公开来源另外各通过两次真实 RTSP 连接与 FFmpeg 解码，覆盖断开后的重新解析/重连；消费者关闭后按需生产者停止。早期试跑有一次未分类解码失败，未保留足够诊断，不能断言其根因已修复；随后增加脱敏诊断的媒体测试、独立 UI 冷启动测试均通过。站点、CDN、地域和网络状态会变化，正式候选仍需复验，失败应保留私密诊断，不以无解释复跑覆盖失败记录。
 
@@ -102,3 +102,16 @@ Each source passed cold UI import, track probing, MSE, Studio/TAKE and individua
 **这是持续播放与恢复通过，不是零掉帧或流畅度达标。** DW 的浏览器丢弃比例约 10.65%，需进一步区分来源/网络、接收与渲染因素；本轮未采集足以确定掉帧根因的 RTC 解码统计。未据此承诺所有地区、站点、摄像机、音频硬件或用户笔记本均稳定。早前 dev.8 中断的一小时尝试仍不计通过；新断网夹具初次认证/传输超时及视口错误的失败回执也保留，修正夹具后才执行本轮长测，未放宽产品预算。
 
 **Continuous playback and recovery passed, not zero-drop or smoothness qualification.** DW's 10.65% browser drops remain an investigation item; this run did not capture enough RTC decoder statistics to establish their cause. Earlier interrupted dev.8 and initial fixture failures remain retained. Fixture authentication/transfer/viewport corrections did not relax product deadlines. No physical-camera, audio-hardware, region-wide or user-laptop guarantee follows from this result.
+
+
+## 前端身份检查补强（2026-10-19） / Frontend identity checks
+
+默认候选仍使用完整捆绑前端，不授予额外浏览器权限。开发用 `--frontend` 现应用于整个浏览器 context（含管理页和重启后的新 context），只拦截列明的静态路径；管理页与重启页的实际 HTML 响应分别校验入口 SHA-256，回执新增 `frontendDocumentsVerified`。旧的仅初始页面替换结果不追溯扩大；`frontendOverride=false` 的候选结果不受此缺口影响。
+
+Bundled candidates keep their own frontend and receive no additional browser permission. Development overrides now cover all pages and the restored context, intercept only explicit static paths and hash actual management/restart HTML responses. Historical initial-page-only overrides do not establish full-flow frontend identity; bundled candidate results are unaffected.
+
+Chromium 对测试中由路由直接返回的 HTML 曾报 `ERR_BLOCKED_BY_LOCAL_NETWORK_ACCESS_CHECKS`，WebSocket 尚未握手便失败。仅开发替换模式对本次自建 `127.0.0.1` origin 授予 `local-network-access`，回执明确记录权限范围；不更改产品权限或关闭浏览器安全检查。[Playwright 权限接口](https://playwright.dev/docs/api/class-browsercontext#browser-context-grant-permissions)与 [Chrome 本地网络访问说明](https://developer.chrome.com/blog/local-network-access)。The override-only permission is restricted to the owned loopback origin and explicitly recorded; normal candidate qualification grants none.
+
+对完整 manifest 校验的 dev.12 / `d6387db`，捆绑模式和本机构建替换模式分别通过：每轮实际 HTML 校验 2 次，CPU 栏节点保留、编码切换、go2rtc 与完整重启均通过。捆绑入口摘要为 `a40ccf21d36e8e3e67c36781e4086342aa6319f7ba17a9851e2686680d74e4a7`；替换入口为 `0a0950fc676d56e01cd60c5dda0743626b0ae50180aa1ee44bfa1917bf6bb30e`。先前矩阵包装器的替换轮在 initialization 阶段失败，缺少足够诊断，仍保留并标为根因未明；后续独立通过不证明该次失败已修复。新增身份断言晚于 dev.12 CI，不能追溯声称该 CI 已运行。
+
+Both bundled and local-override runs against manifest-verified dev.12 passed two actual-document hashes and the CPU/media/restart checks. A prior matrix-wrapper initialization failure remains retained without an established cause. Independent passing receipts do not resolve that failure or retroactively extend dev.12 CI coverage. The overridden run remains a development combination, not a release candidate.
