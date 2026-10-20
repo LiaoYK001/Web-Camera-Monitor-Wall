@@ -27,7 +27,7 @@ let created = false, browser;
       assert.equal((await context.request.post(base + '/api/v1/auth/' + route, { headers: { Origin: base }, data: account })).status(), status);
     assert.equal((await context.request.post(base + '/api/v1/go2rtc/api/config', { headers: { Origin: base, 'Content-Type': 'application/yaml' },
       data: 'streams:\n  synthetic: "ffmpeg:virtual?video=testsrc2&size=160x90#video=h264"\n' })).status(), 200);
-    assert.equal((await context.request.post(base + '/api/v1/go2rtc/api/restart', { headers: { Origin: base } })).status(), 200);
+    assert.equal((await context.request.post(base + '/api/v1/go2rtc/api/restart', { headers: { Origin: base } })).status(), 202);
     await expect.poll(async () => {
       const response = await context.request.get(base + '/api/v1/go2rtc/api/streams');
       return response.ok() && Object.hasOwn(await response.json(), 'synthetic');

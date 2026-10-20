@@ -55,12 +55,14 @@ app.on('window-all-closed', () => {});
       assert.ok(result.ok, `authenticated native route failed (${route}, ${result.status})`);
       await result.arrayBuffer();
     }
+    await require('./native-composite-demand.cjs').exerciseCompositeDemand(origin, headers, supervisor.ports.gatewayApi);
     const { exerciseNativeSync } = require('./native-sync-contract.cjs');
     const assertSyncPersisted = await exerciseNativeSync(origin, headers);
     await require('./native-preference-json.cjs').exercisePreferenceJson(origin, headers);
     const assertStudioIdentityPersisted = await require('./native-studio-identity.cjs').exerciseStudioIdentity(origin, headers);
     const { exerciseNativeEvidence } = require('./native-evidence-contract.cjs');
     const assertEvidencePersisted = await exerciseNativeEvidence(supervisor, runtime, headers);
+    const assertGo2rtcPersisted = await require('./native-go2rtc-reload.cjs').exerciseGo2rtcReload(supervisor, headers);
     await supervisor.stop();
     const snapshot = await supervisor.snapshot();
     assert.ok((await fs.stat(path.join(snapshot, 'snapshot.json'))).isFile());
@@ -70,6 +72,7 @@ app.on('window-all-closed', () => {});
     await assertSyncPersisted();
     await assertEvidencePersisted();
     await assertStudioIdentityPersisted(true);
+    await assertGo2rtcPersisted();
     await supervisor.stop();
     console.log('Bundled Windows services, first login, authenticated go2rtc, multi-track sync/conflict, streamed large synthetic MP4 with HEAD/Range/ETag/hash, real synthetic H264/AAC evidence export, snapshot and restart persistence passed. Camera/media qualification remains separate.');
   } catch (error) {

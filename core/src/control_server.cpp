@@ -5,6 +5,7 @@
 #include "webobs/go2rtc_proxy.hpp"
 #include "webobs/nvr_media_proxy.hpp"
 #include "webobs/audio_tracks.hpp"
+#include "webobs/receiver_codecs.hpp"
 #include "webobs/audit_event.hpp"
 #include "webobs/scene_controller.hpp"
 #include "webobs/studio_controller.hpp"
@@ -50,6 +51,7 @@
 #include <string_view>
 #include <thread>
 #include <unordered_map>
+#include <unordered_set>
 #include <utility>
 #include <vector>
 
@@ -695,6 +697,8 @@ struct ResolvedCameraEndpoint {
     std::string audio_codec;
     std::string transport_mode;
     std::optional<std::vector<AudioTrackDescriptor>> probed_audio_tracks;
+    bool video_reordering = false;
+    bool video_reordering_known = false;
 };
 
 std::optional<ResolvedCameraEndpoint> resolve_camera_endpoint(std::string_view camera_id,
@@ -737,6 +741,8 @@ std::optional<ResolvedCameraEndpoint> resolve_camera_endpoint(std::string_view c
             json_is_string(audio_codec) ? json_string_value(audio_codec) : "", "auto", std::nullopt};
         if (json_t *transport = json_object_get(root, "transportMode"); json_is_string(transport))
             result->transport_mode = json_string_value(transport);
+        result->video_reordering = json_is_true(json_object_get(root, "videoReordering"));
+        result->video_reordering_known = json_is_true(json_object_get(root, "videoReorderingKnown"));
         if (json_is_true(json_object_get(root, "tracksProbed")) && json_is_array(json_object_get(root, "audioTracks"))) {
             json_t *probe = json_object();
             json_object_set(probe, "streams", json_object_get(root, "audioTracks"));
@@ -820,10 +826,13 @@ public:
                 route == direct_routes_.end() ? std::string{} : route->second.audio_codec;
             const bool video_transcode = route != direct_routes_.end() && route->second.video_transcode;
             const bool audio_transcode = route != direct_routes_.end() && route->second.audio_transcode;
+            const bool native_hevc_eligible = route != direct_routes_.end() &&
+                hevc_passthrough_allowed(codec, route->second.video_reordering_known,
+                                         route->second.video_reordering, true, false);
             const std::string video_delivery = video_transcode ? "transcode" : "copy";
             const std::string audio_delivery = audio_transcode ? "transcode" : "copy";
             const std::string cost = video_transcode ? "high" : audio_transcode ? "medium" : "low";
-            const std::string reason = video_transcode ? "video_codec_incompatible" :
+            const std::string reason = video_transcode ? (route->second.video_reordering ? "video_frame_reordering" : "video_codec_incompatible") :
                                        audio_transcode ? "audio_codec_incompatible" : "";
             const std::string encoder = video_transcode
                 ? (video_encoder_backend_ready(VideoEncoderKind::vaapi, runtime_status_.video_encoder.vaapi) ? "h264_vaapi" : "libx264")
@@ -841,11 +850,36 @@ public:
                     ",\"serverAudioTranscode\":" + (audio_transcode ? "true" : "false") +
                     ",\"decoder\":\"" + (video_transcode ? "vaapi-or-software" : "browser") +
                     "\",\"encoder\":\"" + encoder + "\",\"serverCost\":\"" + cost +
-                    "\",\"compositePublisherActive\":" +
+                    "\",\"strategyScope\":\"compatibility-default\",\"nativeHevcEligible\":" +
+                    (native_hevc_eligible ? "true" : "false") + ",\"compositePublisherActive\":" +
                     (runtime_status_.webrtc_ready.load() ? "true" : "false") + "}";
         }
         body += "]}";
         return response(http::status::ok, version, std::move(body));
+    }
+
+    bool composite_requested()
+    {
+        // Called only by the engine thread, never by the HTTP worker. The
+        // publisher stays warm while negotiation retries, then actual gateway
+        // readers decide demand (including clients that crash without DELETE).
+        const auto now = std::chrono::steady_clock::now().time_since_epoch();
+        const auto milliseconds = std::chrono::duration_cast<std::chrono::milliseconds>(now).count();
+        if (milliseconds - last_program_request_.load() < 45000)
+            return true;
+        if (!runtime_status_.webrtc_ready.load())
+            return false;
+        const auto upstream = request_http(std::string(control_origin) + "/v3/paths/get/program", {}, "GET", {}, 1000L);
+        if (upstream.ok && upstream.status == 404)
+            return false;
+        if (!upstream.ok || upstream.status != 200)
+            return true; // A monitoring outage must not stop active viewers.
+        json_error_t error{};
+        json_t *root = json_loads(upstream.body.c_str(), JSON_REJECT_DUPLICATES, &error);
+        const json_t *readers = root ? json_object_get(root, "readers") : nullptr;
+        const bool requested = !json_is_array(readers) || json_array_size(readers) > 0;
+        if (root) json_decref(root);
+        return requested;
     }
 
     HttpResponse create_program(const HttpRequest &request)
@@ -877,7 +911,7 @@ public:
         {
             const auto route_lock = route_lock_for(source->id);
             const std::lock_guard operation_lock(*route_lock);
-            route = ensure_playback_route(*source);
+            route = ensure_playback_route(*source, false, receiver_offers_hevc(request.body()));
         }
         if (!route)
             return response(http::status::bad_gateway, request.version(),
@@ -902,7 +936,7 @@ public:
         {
             const auto route_lock = route_lock_for(source.id);
             const std::lock_guard operation_lock(*route_lock);
-            route = ensure_playback_route(source);
+            route = ensure_playback_route(source, false, receiver_offers_hevc(request.body()));
         }
         if (!route)
             return response(http::status::bad_gateway, request.version(),
@@ -1096,10 +1130,19 @@ private:
         std::string transport;
         std::string codec;
         std::string audio_codec;
+        std::string registry_video_codec;
+        std::string registry_audio_codec;
+        std::string camera_id;
+        std::string profile_id;
+        std::chrono::steady_clock::time_point last_track_refresh{};
         bool transcode = false;
         bool video_transcode = false;
+        bool video_reordering = false;
+        bool video_reordering_known = false;
         bool audio_transcode = false;
+        bool go2rtc_startup = false;
         std::string hybrid_path;
+        std::string native_hevc_path;
         /** Per-track audio-only MediaMTX paths, keyed by 0:a:<index> (F5-05). */
         std::unordered_map<int, std::string> audio_paths;
         /** Probe cache of the real audio tracks of this source. */
@@ -1150,7 +1193,7 @@ private:
     }
 
     static UpstreamResponse request_http(std::string_view url, std::string_view body,
-                                         std::string_view method, std::string_view content_type)
+                                         std::string_view method, std::string_view content_type, long timeout_ms = 15000L)
     {
         UpstreamResponse result;
         CURL *handle = curl_easy_init();
@@ -1167,7 +1210,7 @@ private:
         curl_easy_setopt(handle, CURLOPT_URL, url_value.c_str());
         curl_easy_setopt(handle, CURLOPT_PROTOCOLS_STR, "http");
         curl_easy_setopt(handle, CURLOPT_CONNECTTIMEOUT_MS, 1500L);
-        curl_easy_setopt(handle, CURLOPT_TIMEOUT_MS, 15000L);
+        curl_easy_setopt(handle, CURLOPT_TIMEOUT_MS, timeout_ms);
         curl_easy_setopt(handle, CURLOPT_NOSIGNAL, 1L);
         curl_easy_setopt(handle, CURLOPT_WRITEFUNCTION, &write_body);
         curl_easy_setopt(handle, CURLOPT_WRITEDATA, &result.body);
@@ -1243,11 +1286,23 @@ private:
                                 error_body("session_limit", "Too many active WebRTC playback sessions"));
         }
 
+        if (path == "program") {
+            last_program_request_.store(std::chrono::duration_cast<std::chrono::milliseconds>(
+                std::chrono::steady_clock::now().time_since_epoch()).count());
+            if (runtime_status_.composite_idle.load())
+                return response(http::status::service_unavailable, version,
+                                error_body("composite_starting", "Composite publisher is starting; retry playback"));
+        }
+
         const std::string create_url = std::string(upstream_origin) + "/" + std::string(path) + "/whep";
         UpstreamResponse upstream = request_http(create_url, request.body(), "POST", "application/sdp");
-        if (!upstream.ok || upstream.status != 201 || upstream.body.empty())
+        if (!upstream.ok || upstream.status != 201 || upstream.body.empty()) {
+            if (upstream.ok && (upstream.status == 400 || upstream.status == 500) &&
+                lowercase(upstream.body).find("codec") != std::string::npos)
+                refresh_rejected_tracks(path);
             return response(http::status::bad_gateway, version,
                             error_body("whep_upstream", "WebRTC signaling did not accept the offer"));
+        }
         const std::string upstream_prefix = "/" + std::string(path) + "/whep/";
         const auto upstream_location = normalize_location(upstream.location, upstream_prefix);
         if (!upstream_location)
@@ -1323,6 +1378,30 @@ private:
         return codec.empty() || codec == "opus" || codec == "pcm_alaw" || codec == "pcm_mulaw";
     }
 
+    void refresh_rejected_tracks(std::string_view path)
+    {
+        std::string camera_id, profile_id;
+        {
+            const std::lock_guard lock(route_state_mutex_);
+            for (auto &[id, route] : direct_routes_) {
+                if (route.path != path && route.hybrid_path != path && route.native_hevc_path != path) continue;
+                const auto now = std::chrono::steady_clock::now();
+                if (route.camera_id.empty() || route.profile_id.empty() ||
+                    (route.last_track_refresh != std::chrono::steady_clock::time_point{} &&
+                     now - route.last_track_refresh < std::chrono::seconds(30))) return;
+                route.last_track_refresh = now;
+                camera_id = route.camera_id; profile_id = route.profile_id;
+                break;
+            }
+        }
+        if (camera_id.empty()) return;
+        // A named source may change codecs without changing its registry URL.
+        // Queue a bounded fresh probe only after a codec rejection, never for
+        // idle sources or ordinary network timeouts. Do not forward credentials.
+        request_http(runtime_http(8092, "/source-catalog/") + camera_id + "/profiles/" + profile_id + "/probe",
+                     R"({"async":true,"refresh":true})", "POST", "application/json", 1000L);
+    }
+
     void delete_config_path(std::string_view path)
     {
         if (path.empty())
@@ -1343,6 +1422,7 @@ private:
             direct_routes_.erase(found);
         }
         delete_config_path(route.hybrid_path);
+        delete_config_path(route.native_hevc_path);
         for (const auto &entry : route.audio_paths)
             delete_config_path(entry.second);
         delete_config_path(route.path);
@@ -1390,12 +1470,19 @@ private:
     std::optional<std::string> ensure_direct_route(const SceneSource &source)
     {
         std::string effective_url = source.rtsp_url;
+        bool video_reordering = false;
+        bool video_reordering_known = false;
+        std::string registry_video_codec, registry_audio_codec;
         std::string source_transport = source.kind == "rtsp" ? source.transport : "tcp";
         if (source.kind == "camera") {
             const auto resolved = resolve_camera_endpoint(source.camera_id, source.profile_id);
             if (!resolved)
                 return std::nullopt;
             effective_url = resolved->endpoint;
+            video_reordering = resolved->video_reordering;
+            video_reordering_known = resolved->video_reordering_known;
+            registry_video_codec = resolved->video_codec;
+            registry_audio_codec = resolved->audio_codec;
             if (resolved->transport_mode == "rtsp-udp") source_transport = "udp";
             else if (resolved->transport_mode == "rtsp-udp-multicast") source_transport = "multicast";
         }
@@ -1405,6 +1492,7 @@ private:
         DirectRoute route;
         bool adding = false;
         std::string previous_hybrid_path;
+        std::string previous_native_hevc_path;
         std::vector<std::string> previous_audio_paths;
         {
             const std::lock_guard lock(route_state_mutex_);
@@ -1412,6 +1500,10 @@ private:
             adding = existing == direct_routes_.end();
             if (!adding && existing->second.source_key == source_key &&
                 existing->second.rtsp_url == effective_url &&
+                existing->second.video_reordering == video_reordering &&
+                existing->second.video_reordering_known == video_reordering_known &&
+                existing->second.registry_video_codec == registry_video_codec &&
+                existing->second.registry_audio_codec == registry_audio_codec &&
                 existing->second.transport == source_transport)
                 return existing->second.path;
             if (adding) {
@@ -1425,12 +1517,14 @@ private:
             } else {
                 route = existing->second;
                 previous_hybrid_path = route.hybrid_path;
+                previous_native_hevc_path = route.native_hevc_path;
                 route.codec.clear();
                 route.audio_codec.clear();
                 route.transcode = false;
                 route.video_transcode = false;
                 route.audio_transcode = false;
                 route.hybrid_path.clear();
+                route.native_hevc_path.clear();
                 for (const auto &entry : route.audio_paths)
                     previous_audio_paths.push_back(entry.second);
                 route.audio_paths.clear();
@@ -1440,10 +1534,21 @@ private:
             }
         }
         route.rtsp_url = effective_url;
+        route.registry_video_codec = registry_video_codec;
+        route.registry_audio_codec = registry_audio_codec;
+        route.camera_id = source.kind == "camera" ? source.camera_id : std::string{};
+        route.profile_id = source.kind == "camera" ? source.profile_id : std::string{};
+        // Website extraction is owned by the fixed go2rtc relay (90s startup).
+        // Keep ordinary camera budgets; recognize only this product's loopback
+        // go2rtc listener, never a renderer-supplied duration or external host.
+        route.go2rtc_startup = effective_url.starts_with(runtime_rtsp(18554, "/"));
+        route.video_reordering = video_reordering;
+        route.video_reordering_known = video_reordering_known;
         route.source_key = source_key;
         route.transport = source_transport;
         const std::string body = "{\"source\":\"" + json_escape(route.rtsp_url) +
-                                 "\",\"sourceOnDemand\":true,\"sourceOnDemandStartTimeout\":\"10s\"," +
+                                 "\",\"sourceOnDemand\":true,\"sourceOnDemandStartTimeout\":\"" +
+                                 (route.go2rtc_startup ? "90s" : "10s") + "\"," +
                                  "\"sourceOnDemandCloseAfter\":\"5s\",\"maxReaders\":8," +
                                  "\"overridePublisher\":false,\"rtspTransport\":\"" +
                                  json_escape(route.transport) + "\"}";
@@ -1454,6 +1559,7 @@ private:
         if (!configured.ok || configured.status != 200)
             return std::nullopt;
         delete_config_path(previous_hybrid_path);
+        delete_config_path(previous_native_hevc_path);
         for (const std::string &audio_path : previous_audio_paths)
             delete_config_path(audio_path);
         {
@@ -1464,7 +1570,8 @@ private:
     }
 
     std::optional<std::string> ensure_playback_route(const SceneSource &source,
-                                                     bool force_video_transcode = false)
+                                                     bool force_video_transcode = false,
+                                                     bool receiver_hevc = false)
     {
         const auto direct_path = ensure_direct_route(source);
         if (!direct_path)
@@ -1485,7 +1592,7 @@ private:
             if (resolved && !resolved->video_codec.empty() && resolved->video_codec != "unknown") {
                 route.codec = resolved->video_codec;
                 route.audio_codec = resolved->audio_codec == "unknown" ? "" : resolved->audio_codec;
-                route.video_transcode = !browser_compatible_codec(route.codec);
+                route.video_transcode = !browser_compatible_codec(route.codec) || (route.codec == "h264" && route.video_reordering);
                 route.audio_transcode = !browser_compatible_audio_codec(route.audio_codec);
                 route.transcode = route.video_transcode || route.audio_transcode;
                 const std::lock_guard lock(route_state_mutex_);
@@ -1529,37 +1636,45 @@ private:
             direct_routes_.at(source.id).video_transcode = true;
             direct_routes_.at(source.id).transcode = true;
         }
-        if (!route.transcode)
+        const bool native_hevc = hevc_passthrough_allowed(route.codec, route.video_reordering_known,
+                                                         route.video_reordering, receiver_hevc, force_video_transcode);
+        if (!route.transcode || (native_hevc && !route.audio_transcode))
             return route.path;
 
-        if (route.hybrid_path.empty()) {
+        // Native HEVC receivers may still need an audio-only conversion. Keep
+        // that path separate from H.264 fallback for simultaneous older clients.
+        std::string& hybrid_path = native_hevc ? route.native_hevc_path : route.hybrid_path;
+        if (hybrid_path.empty()) {
             {
                 const std::lock_guard lock(route_state_mutex_);
                 do {
-                    route.hybrid_path = "hybrid-" + random_token();
-                } while (std::any_of(direct_routes_.begin(), direct_routes_.end(), [&route](const auto &entry) {
-                    return entry.second.hybrid_path == route.hybrid_path;
+                    hybrid_path = "hybrid-" + random_token();
+                } while (std::any_of(direct_routes_.begin(), direct_routes_.end(), [&hybrid_path](const auto &entry) {
+                    return entry.second.hybrid_path == hybrid_path || entry.second.native_hevc_path == hybrid_path;
                 }));
             }
             const std::string command = command_quote(transcoder_executable()) + " " + route.path + " " +
-                                        route.hybrid_path + " " +
-                                        (route.video_transcode ? "transcode" : "copy") + " " +
-                                        (route.audio_transcode ? "transcode" : "copy");
+                                        hybrid_path + " " +
+                                        (route.video_transcode && !native_hevc ? "transcode" : "copy") + " " +
+                                        (route.audio_transcode ? "transcode" : "copy") +
+                                        (route.go2rtc_startup ? " 90" : "");
             const std::string body =
                 std::string("{\"source\":\"publisher\",\"overridePublisher\":false,\"maxReaders\":8,") +
                 "\"runOnDemand\":\"" + json_escape(command) +
-                "\",\"runOnDemandRestart\":false,\"runOnDemandStartTimeout\":\"10s\"," +
+                "\",\"runOnDemandRestart\":false,\"runOnDemandStartTimeout\":\"" +
+                (route.go2rtc_startup ? "95s" : "10s") + "\"," +
                 "\"runOnDemandCloseAfter\":\"2s\"}";
-            const std::string url = std::string(control_origin) + "/v3/config/paths/add/" + route.hybrid_path;
+            const std::string url = std::string(control_origin) + "/v3/config/paths/add/" + hybrid_path;
             const UpstreamResponse configured = request_http(url, body, "POST", "application/json");
             if (!configured.ok || configured.status != 200) {
-                route.hybrid_path.clear();
+                hybrid_path.clear();
                 return std::nullopt;
             }
             const std::lock_guard lock(route_state_mutex_);
-            direct_routes_.at(source.id).hybrid_path = route.hybrid_path;
+            if (native_hevc) direct_routes_.at(source.id).native_hevc_path = hybrid_path;
+            else direct_routes_.at(source.id).hybrid_path = hybrid_path;
         }
-        return route.hybrid_path;
+        return hybrid_path;
     }
 
     /**
@@ -1828,6 +1943,7 @@ private:
         }
         for (const DirectRoute &route : removed) {
             delete_config_path(route.hybrid_path);
+            delete_config_path(route.native_hevc_path);
             for (const auto &entry : route.audio_paths)
                 delete_config_path(entry.second);
             delete_config_path(route.path);
@@ -1856,6 +1972,7 @@ private:
         std::erase_if(sessions_, [cutoff](const auto &entry) { return entry.second.created_at < cutoff; });
     }
 
+    std::atomic<std::int64_t> last_program_request_{-45000};
     bool enabled_ = false;
     bool composite_enabled_ = false;
     SceneController &controller_;
@@ -2966,17 +3083,41 @@ HttpResponse process_diagnostics_response(unsigned int version, const RuntimeSta
     const auto captured_at = std::chrono::steady_clock::now();
 #ifdef _WIN32
     std::unordered_map<std::string, ProcessTotal> totals;
+    std::vector<PROCESSENTRY32W> entries;
     HANDLE snapshot = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
     if (snapshot != INVALID_HANDLE_VALUE) {
         PROCESSENTRY32W entry{}; entry.dwSize = sizeof(entry);
-        if (Process32FirstW(snapshot, &entry)) do {
+        if (Process32FirstW(snapshot, &entry)) do { entries.push_back(entry); } while (Process32NextW(snapshot, &entry));
+        CloseHandle(snapshot);
+    }
+    unsigned long owner_pid = GetCurrentProcessId();
+    if (const char *value = std::getenv("WEBOBS_DESKTOP_OWNER_PID")) {
+        const std::string_view text(value);
+        unsigned long parsed = 0;
+        const auto result = std::from_chars(text.data(), text.data()+text.size(), parsed);
+        if (result.ec == std::errc{} && result.ptr == text.data()+text.size() && parsed > 0) owner_pid = parsed;
+    }
+    std::unordered_set<unsigned long> owned{owner_pid};
+    for (std::size_t depth = 0; depth < 64; ++depth) {
+        const auto before = owned.size();
+        for (const auto &entry : entries)
+            if (owned.contains(entry.th32ParentProcessID)) owned.insert(entry.th32ProcessID);
+        if (owned.size() == before) break;
+    }
+    for (const auto &entry : entries) {
+            if (!owned.contains(entry.th32ProcessID)) continue;
             std::wstring executable(entry.szExeFile);
-            std::string role;
+            // Compare ASCII executable names without locale-dependent casing.
+            for (auto &character : executable) if (character >= L'A' && character <= L'Z') character += L'a'-L'A';
+            std::string role = "runtime";
             if (executable == L"webobsd.exe") role = "webobsd";
             else if (executable == L"mediamtx.exe") role = "mediamtx";
+            else if (executable == L"go2rtc.exe") role = "go2rtc";
             else if (executable == L"ffmpeg.exe") role = "ffmpeg";
             else if (executable == L"caddy.exe") role = "caddy";
-            if (role.empty()) continue;
+            else if (executable == L"webobs.exe" || executable == L"electron.exe") role = "desktop";
+            else if (executable == L"python.exe") role = "python";
+            else if (executable.starts_with(L"obs-browser")) role = "obs-browser";
             HANDLE process = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION|PROCESS_VM_READ, FALSE, entry.th32ProcessID);
             PROCESS_MEMORY_COUNTERS memory{};
             auto& total = totals[role]; ++total.instances;
@@ -2995,16 +3136,19 @@ HttpResponse process_diagnostics_response(unsigned int version, const RuntimeSta
                 }
                 CloseHandle(process);
             }
-        } while (Process32NextW(snapshot, &entry));
-        CloseHandle(snapshot);
     }
+    std::erase_if(previous_samples, [&owned](const auto &sample) {
+        unsigned long pid = 0;
+        std::from_chars(sample.first.data(), sample.first.data()+sample.first.size(), pid);
+        return !owned.contains(pid);
+    });
     std::uint64_t rtsp_sessions = 0;
     int gpu_busy_percent = -1;
 #else
     const long clock_ticks = std::max<long>(1, sysconf(_SC_CLK_TCK));
     std::unordered_map<std::string, ProcessTotal> totals;
     const auto recognized = [](std::string_view name) -> std::string_view {
-        if (name == "webobsd" || name == "mediamtx" || name == "ffmpeg" || name == "caddy")
+        if (name == "webobsd" || name == "mediamtx" || name == "go2rtc" || name == "ffmpeg" || name == "caddy")
             return name;
         if (name.starts_with("obs-browser"))
             return "obs-browser";
@@ -3095,9 +3239,17 @@ HttpResponse process_diagnostics_response(unsigned int version, const RuntimeSta
     }
 
 #endif
-    std::string body = "{\"processes\":[";
+    const auto logical_cores = std::max(1u, std::thread::hardware_concurrency());
+    std::string body = "{\"cpuLogicalCores\":" + std::to_string(logical_cores) +
+        ",\"cpuMeasurement\":\"one-core\",\"scope\":\"" +
+#ifdef _WIN32
+        "desktop-process-tree"
+#else
+        "matching-processes"
+#endif
+        + std::string("\",\"processes\":[");
     bool first = true;
-    for (const std::string_view role : {"webobsd", "mediamtx", "ffmpeg", "caddy", "obs-browser"}) {
+    for (const std::string_view role : {"desktop", "webobsd", "go2rtc", "mediamtx", "ffmpeg", "python", "caddy", "obs-browser", "runtime"}) {
         const ProcessTotal total = totals[std::string(role)];
         if (!first)
             body.push_back(',');
@@ -4395,6 +4547,11 @@ std::optional<std::string> ControlServer::start()
     impl_->listener->run();
     impl_->thread = std::thread([this] { impl_->context.run(); });
     return std::nullopt;
+}
+
+bool ControlServer::composite_requested()
+{
+    return impl_->whep_proxy.composite_requested();
 }
 
 void ControlServer::stop()

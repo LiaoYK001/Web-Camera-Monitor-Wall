@@ -620,10 +620,9 @@ SourceEntry create_source_entry(const SceneSource &configuration, int connect_ti
             decode_override = configuration.hardware_decode == "auto"
                                   ? resolved->hardware_decode : configuration.hardware_decode;
         }
-        // A per-camera "on" preference must not bypass the runtime capability
-        // probe. The resolved global flag is false when VA-API initialization
-        // failed, so every requested hardware path safely falls back to FFmpeg's
-        // software decoder instead of failing the source outright.
+        // A per-camera "on" preference must not bypass runtime readiness.
+        // Windows OBS also probes each codec/device and falls back to software;
+        // other platforms retain their existing capability gate.
         const bool source_hardware_decode = decode_override != "off" && hardware_decode_enabled;
         obs_data_set_bool(settings.get(), "is_local_file", false);
         // Several selected input tracks arrive as one gateway-mixed stream, which
@@ -634,7 +633,7 @@ SourceEntry create_source_entry(const SceneSource &configuration, int connect_ti
         if (adapter == "rtsp")
             obs_data_set_string(settings.get(), "input_format", "rtsp");
         obs_data_set_bool(settings.get(), "restart_on_activate", true);
-        obs_data_set_bool(settings.get(), "close_when_inactive", false);
+        obs_data_set_bool(settings.get(), "close_when_inactive", true);
         obs_data_set_bool(settings.get(), "hw_decode", source_hardware_decode);
         obs_data_set_int(settings.get(), "buffering_mb", 2);
         const long long timeout_microseconds =
@@ -662,7 +661,7 @@ SourceEntry create_source_entry(const SceneSource &configuration, int connect_ti
         obs_data_set_string(settings.get(), "local_file", configuration.file_path.c_str());
         obs_data_set_bool(settings.get(), "looping", configuration.loop);
         obs_data_set_bool(settings.get(), "restart_on_activate", true);
-        obs_data_set_bool(settings.get(), "close_when_inactive", false);
+        obs_data_set_bool(settings.get(), "close_when_inactive", true);
         obs_data_set_bool(settings.get(), "hw_decode", hardware_decode_enabled);
     } else if (configuration.kind == "color") {
         obs_data_set_int(settings.get(), "color", obs_color(configuration.color));
@@ -1131,6 +1130,7 @@ std::optional<std::string> ObsSceneRuntime::prepare(const SceneDocument &documen
 
     const auto visible = visible_source_ids(candidate.get());
     for (const std::string &id : visible) {
+        if (!impl_->active) break;
         auto source = candidate->sources.find(id);
         if (source != candidate->sources.end()) {
             const bool already_active = obs_source_active(source->second.source.get());
@@ -1165,6 +1165,7 @@ std::optional<std::string> ObsSceneRuntime::wait_prepared_visible_sources()
     if (!impl_->prepared)
         return "no OBS scene replacement is prepared";
 
+    if (!impl_->active) return std::nullopt;
     const auto deadline = std::chrono::steady_clock::now() +
                           std::chrono::seconds(impl_->connect_timeout_seconds);
     std::vector<std::string> pending;
@@ -1293,6 +1294,7 @@ void ObsSceneRuntime::commit_prepared(std::string_view transition_kind, int dura
         impl_->transition.reset();
     }
     impl_->current = std::move(impl_->prepared);
+    release_prewarmed_sources(impl_->current.get());
 }
 
 void ObsSceneRuntime::activate()
@@ -1303,8 +1305,22 @@ void ObsSceneRuntime::activate()
     if (impl_->active)
         return;
     impl_->active = true;
-    if (impl_->current)
+    if (impl_->current) {
+        const auto now = std::chrono::steady_clock::now();
+        for (const auto &id : visible_source_ids(impl_->current.get())) {
+            auto &entry = impl_->current->sources.at(id);
+            entry.frame_primed = false;
+            entry.status->started.store(false);
+            entry.status->activated_at = now;
+            entry.status->last_frame_at = {};
+            entry.status->last_observed_frame_count = entry.status->frame_count.load();
+            entry.status->next_recovery_at = {};
+            entry.status->recovering = false;
+            entry.status->stale_reported = false;
+            entry.status->consecutive_restarts = 0;
+        }
         obs_set_output_source(0, obs_scene_get_source(impl_->current->scene.get()));
+    }
 }
 
 void ObsSceneRuntime::deactivate()
@@ -1432,7 +1448,7 @@ SourceHealthSnapshot ObsSceneRuntime::source_health_snapshot() const
         SourceHealthEntry health;
         health.id = id;
         health.kind = entry.configuration.kind;
-        health.visible = visible.contains(id);
+        health.visible = impl_->active && visible.contains(id);
         health.state = source_health_state(entry, health.visible, now, stale_threshold);
         health.restart_count = entry.status->restart_count;
         if (entry.status->last_frame_at != std::chrono::steady_clock::time_point{})

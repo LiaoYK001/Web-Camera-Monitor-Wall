@@ -6,6 +6,10 @@
 
 ## 当前可下载版本
 
+[v4.0 Release](https://github.com/LiaoYK001/Web-Camera-Monitor-Wall/releases/tag/v4.0) 是当前正式基线，包含 [Windows x64 4.0.0 安装包](https://github.com/LiaoYK001/Web-Camera-Monitor-Wall/releases/download/v4.0/WebOBS-4.0.0-windows-x64-UNSIGNED.exe)。v4.0 的 go2rtc 保存重载问题、临时处理与开发修复见[配置重载说明](go2rtc-config-reload.md)；原安装包不会因开发分支修复而改变。Current stable baseline is v4.0; its immutable Windows installer does not include subsequent development fixes.
+
+以下 v3.5 为历史升级说明。The following v3.5 information describes the historical upgrade path.
+
 [v3.5 Release](https://github.com/LiaoYK001/Web-Camera-Monitor-Wall/releases/tag/v3.5) 已于 2026-10-02 附带 [Windows x64 安装包](https://github.com/LiaoYK001/Web-Camera-Monitor-Wall/releases/download/v3.5/WebOBS-3.5.0-windows-x64-UNSIGNED.exe)。版本为 `3.5.0 UNSIGNED`，按维护者选择暂不签名；完整正式自动更新已启用，附带 `latest.yml` 与 blockmap。v3.4 开发版需手动安装 v3.5 一次，此后可使用内置更新。摘要与验证边界见 [v3.5 发布说明](release-notes-v3.5.md)。
 
 ## 默认行为
@@ -84,6 +88,8 @@ GitHub `Build full Windows desktop` 是手动候选构建，不发布 Release。
 
 主控制入口固定 `http://127.0.0.1:18080`，内部端口首次分配后保存在 `ports.json`；冲突报错，不结束其他应用。受认证的 `/api/v1/runtime/info` 返回平台与 go2rtc 建档地址，设备导入使用该地址。服务 URL 的环境映射在根目录 `runtime_support.py` 与 C++ `platform_runtime` 中保持一致。
 
+Windows v4.0 存在 go2rtc 保存配置后未重载的问题，临时处理、`dev` 修复及测试候选状态见[配置重载说明](go2rtc-config-reload.md)。Published Windows v4.0 has a known configuration reload issue; see the linked workaround and development fix status.
+
 go2rtc WebRTC 首次分配先请求系统可用的 UDP 端口，再保留同端口的 TCP；任一协议冲突/受限时关闭本次候选并尝试新端口，最多 16 次。这样避免 TCP 自动端口落入 Windows UDP 保留区。已保存的端口不自动更改；冲突保留原诊断，且不会关闭其他端口占用者。其他失败仍直接报告。
 
 First-use go2rtc WebRTC allocation asks the OS for an available UDP port, then reserves matching TCP. A conflicting/restricted protocol releases the candidate and tries again, at most 16 times, avoiding TCP automatic choices in Windows UDP exclusions. Saved ports never migrate automatically: conflicts retain actionable diagnostics and other owners stay untouched. Other failures are reported immediately.
@@ -138,18 +144,20 @@ Client toggles save immediately and lock inputs while running. Edit the LAN HTTP
 
 From v4.0, regular patches use A.B.C with numeric comparison and a patch label. Differential downloads retain full-installer fallback and integrity; explicit install/normal shutdown/snapshot safeguards apply equally. Real v4 installed patch upgrades remain a qualification item.
 
-产品标签 `vX.Y` 对应客户端 `X.Y.0`，`vX.Y.Z` 对应 `X.Y.Z`。容器与 Windows 共用已审计的产品 Release。候选附件包含安装包、blockmap、`latest.yml`（仅正式包）、SHA-256 摘要、运行文件清单、CycloneDX SBOM 与许可证归档。Electron updater 校验 SHA-512 与大小，准备安装时再次校验；可选签名构建额外验证 Authenticode 发布者。客户端不包含 GitHub Token。
+产品标签 `vX.Y` 对应客户端 `X.Y.0`，`vX.Y.Z` 对应 `X.Y.Z`。Windows 可以独立使用已审计的产品 Release，不要求先发布容器；多端同时发行时共用该 Release。用户 2026-10-20 指定 v4.1 仅 Windows x64，Android/Docker 同步交付暂停，见[Windows 单端流程](release-flow.md#windows-单端发布--windows-only-publication)。候选附件包含安装包、blockmap、`latest.yml`（仅正式包）、SHA-256 摘要、运行文件清单、CycloneDX SBOM 与许可证归档。Electron updater 校验 SHA-512 与大小，准备安装时再次校验；可选签名构建额外验证 Authenticode 发布者。客户端不包含 GitHub Token。
 
 Windows 10、11 各自记录实际安装、媒体、LAN 与两版更新结果。`desktop/qualification.example.json` 只是格式示例，不能作为通过证明；完整检查名见 `desktop/scripts/qualification.mjs`。维护者还需收集匹配第三方二进制的完整对应源码（包括 FFmpeg 及其启用的 GPL 组件），提供已审核 `SOURCE-MANIFEST.json`，其字段为 `revision`、`version`、`reviewed: true`、`files: [{name, sha256}]`。
 
 ```powershell
-./desktop/scripts/publish-release.ps1 -Tag v3.5 `
+./desktop/scripts/publish-release.ps1 -Tag v4.0 `
   -ArtifactDirectory 'D:/release/webobs-windows' `
   -QualificationReceipts 'D:/private/windows-qualification.json' `
   -CorrespondingThirdPartySourceDirectory 'D:/release/matching-third-party-sources'
 ```
 
 发布器验证实际安装包摘要、版本、`latest.yml` 与源码身份，复用 `scripts/create-source-bundle.sh` 和 `scripts/upload-release-assets-immutable.sh`。默认允许明确标记 `UNSIGNED` 的正式包；显式签名包仍需匹配发布者。没有完整平台验收回执时，必须提供绑定安装包摘要的实际 `windows-install-smoke.json`，并在 Release 如实披露干净系统/摄像机等待验收项；主机冒烟检查不等于全平台验收。对应源码仍需审核。维护者发布机需要 Git Bash/gh；Token 仅用于附件上传。不要把开发包的元数据上传到正式更新源。
+
+多端共用 Draft 时，发布器通过 `gh release view` 核对标签并取得数字 Release ID，再调用既有不可变上传接口；GitHub REST 按标签查询草稿可能返回 404，不能因此新建第二个 Release 或提前发布。已有不同内容的同名附件仍拒绝覆盖。For a shared Draft, the publisher resolves its numeric ID through `gh`, verifies the tag and uses the existing immutable ID-based uploader. A REST tag lookup returning 404 does not authorize a duplicate Release or early publication; conflicting attachment bytes remain rejected.
 
 ## 当前验证边界
 
@@ -161,6 +169,10 @@ Windows 10、11 各自记录实际安装、媒体、LAN 与两版更新结果。
 
 `pnpm --dir desktop test:updates` 使用真实 electron-updater 和本机小型协议夹具验证检测、下载、损坏摘要拒绝、重新校验和断网状态；不安装夹具。两版实际未签名 NSIS 包可通过 `pwsh desktop/tests/installed-update-smoke.ps1 -PreviousVersion <旧稳定版本> -Version <新稳定版本>` 进行隔离安装、真实完整包下载、确认调用、正常停服/快照、升级启动与账号数据保留检查。该检查使用本机更新源及静默测试安装器，不能冒充 GitHub 下载、交互向导或全平台验收；已有安装或快捷方式时拒绝运行。
 
+跨版本检查使用旧安装包自身的完整性、服务和更新模块，在独立 Node 进程中提取后再启动测试，避免持有待替换的 ASAR。升级后执行当前完整校验并验证实际健康里程碑。下载三分钟、安装五分钟预算保持原值；`windows-upgrade-trace.json` 只记录阶段、时间和退出码，不包含账号、Cookie、配置或原始服务日志。手动 Windows 工作流的 `installed_upgrade` 路径只验证冻结的 v4.0 候选与已发布 v3.5，不重建或发布包；测试提交与安装包的源码提交分别记录。
+
+Cross-version checks use the previous installed package's own integrity, supervisor and update modules, extracted in a separate Node process before testing so the harness does not keep the replaced ASAR open. The upgraded runtime receives the current full verification and actual health-milestone check. The three-minute download and five-minute install budgets stay unchanged. The bounded trace records only phases, timestamps and exit codes. The manual Windows workflow's `installed_upgrade` path qualifies the frozen v4.0 artifact against published v3.5 without rebuilding or publishing; tester and artifact revisions are recorded separately.
+
 v4 adds the private `services/nvr/evidence.py` runtime contract. Export jobs and their owner remain in the recording catalog, so data snapshots preserve job history. Queued and active exports block update installation even after the archive page closes. `test:runtime` now uses bundled Python/FFmpeg to create synthetic H.264/AAC evidence, submit through the authenticated core and verify hashes and result restoration after restart. A newly compiled core is required for principal injection; host Python tests or an earlier EXE do not establish this Windows gate.
 
 v4 新增私有 `services/nvr/evidence.py` 运行时契约。导出任务与账号归属保存在录像数据库中，数据快照包含任务历史；离开归档页后，排队和活动导出仍阻止更新安装。`test:runtime` 新增使用捆绑 Python/FFmpeg 生成合成 H.264/AAC 证据，通过认证核心提交，并检查摘要与重启后的结果恢复。身份注入需要重新编译核心，主机 Python 测试或旧 EXE 不代替这项 Windows 门禁。
@@ -168,3 +180,34 @@ v4 新增私有 `services/nvr/evidence.py` 运行时契约。导出任务与账�
 The native evidence gate also streams a valid H.264/AAC MP4 larger than 64 MiB through the core with a bounded client hash reader, HEAD, Range, If-Range and ETag validation. A synthetic MP4 free box provides the file-size stress; it is not camera bitrate or decoder qualification. Large media uses a bounded asynchronous proxy rather than the control request pool, retaining the same account identity, permission checks and reader protection.
 
 原生证据门禁另通过核心传输大于 64 MiB 的有效 H.264/AAC MP4，客户端按块计算摘要，并验证 HEAD、Range、If-Range 和 ETag。使用合成 MP4 free box 扩展文件大小，不冒充摄像机码率或解码器验收。大媒体采用有界异步代理，保留账号身份、权限与读保护，并与控制请求 worker 分离。
+
+
+## v4.1 开发中的监看性能调整 / Monitoring performance in v4.1 development
+
+Windows supervisor 设置 `WEBOBS_COMPOSITE_ON_DEMAND=true`。保留 OBS 初始化与 Composite 能力，Direct 监看不会持续发布合成画面或让闲置的 OBS 媒体来源解码。首次经过认证与 Origin 校验的 Composite 播放请求唤醒发布；启动期间返回可重试的 `composite_starting`。协商保温 45 秒，随后按 MediaMTX 实际 reader 数决定是否继续，关闭/崩溃的观看端不会因遗留的 HTTP session 一直占用合成链路。网关状态暂不可读取时保留正在发布的节目。显式文件录制继续保持连续运行。容器和原生开发环境可显式设置此开关，默认值仍为 false。
+
+Windows enables on-demand Composite publishing. Authenticated, Origin-checked playback wakes the publisher; a 45-second negotiation grace period is followed by actual gateway reader checks. An unavailable reader probe conservatively retains the running publisher. Explicit recording remains continuous. Containers/native development can opt in; the configuration default remains false.
+
+Windows Hybrid 的 NVIDIA 路径在已通过现有能力探测时尝试 CUDA 解码；失败先保留 NVENC 编码并退回软件解码，再依原有软件回退开关决定是否使用 x264。H.264 可直通视频不启动视频解码/编码。OBS 来源使用上游每个 codec/device 的硬解探测与软件回退；状态 `auto` 表示策略，不表示每路已证实硬解。
+
+The NVIDIA Hybrid path tries qualified CUDA decoding, then NVENC with software decoding, then the existing optional x264 fallback. Compatible H.264 video stays passthrough. OBS sources use upstream per-codec/device probing and software fallback; `auto` describes policy, not verified hardware decode for every source.
+
+“系统状态 / 视频加速”增加本次桌面进程树（包括 desktop、go2rtc、webobsd、FFmpeg、Python 等）的占用，并排除其他软件的同名 FFmpeg。逐项 CPU 以单逻辑处理器 100% 计量，整体占用按逻辑处理器数折算；首次采样必须等下一次刷新。它不暴露进程参数或摄像机地址。
+
+System status includes the current desktop process tree, excluding unrelated same-name media tools. Per-role CPU uses one logical processor as 100%; the overall value is normalized by the logical processor count. The first useful CPU sample requires the next refresh. No process arguments or camera addresses are exposed.
+
+验收范围与尚未完成的同机 OBS 对照见 [v4.1 草案](release-notes-v4.1.md)。These changes do not yet establish stock OBS performance parity.
+
+同五路合成源的短测方法与汇总见 [Windows 性能开发证据](windows-performance-v4.1.md)。The synthetic five-stream measurements retain their methodology and qualification limits.
+
+轨道探测现额外保存 `has_b_frames`（复用原有 FFprobe，不另开媒体连接）。WebRTC 不兼容已确认需要重排序的 H.264 时，设备路径按需进入 Hybrid；没有 B 帧的兼容视频仍直通。私有设备数据库增加可空 `video_b_frames` 列，未知不冒充 0；同来源重命名保留结果，修改 endpoint/transport/凭据会失效。升级后对已有设备重新“探测轨道”以登记此信息。旧式直接 RTSP 场景没有这份设备探测信息，不能据此宣称已覆盖。
+
+Track probing stores B-frame metadata using the existing FFprobe read. Known reordered H.264 uses on-demand Hybrid; compatible reorder-free video remains passthrough. The private registry adds a nullable column, preserving results across renames and invalidating them when media endpoints, transport or credentials change. Re-probe existing device tracks after upgrading. Legacy raw RTSP scenes are outside this registry-based compatibility check.
+
+Direct 根据实际 WHEP 接收端的活动视频 SDP 协商原生 H.265，仅当设备探测明确为无 B 帧时允许视频直通；不兼容音频可单独转换。未知、有 B 帧及旧接收端走 H.264；显式 Hybrid 策略保留转换。原生视频/仅音频转换与旧接收端视频转换使用不同按需路径，共用同一条上游 Direct 来源，关闭一个观看端不应中断另一端。前端在原生协商拒绝或可见、允许自动播放的画面迟迟不呈现时重试兼容编码，不因页面隐藏或自动播放限制判定 H.265 不可用。能力 API 的 `strategyScope: compatibility-default` 表示旧接收端默认代价，`nativeHevcEligible` 仅表示来源资格，不证明当前观看端实际硬解或当前 CPU。
+
+Native HEVC requires an actual active video offer plus registry-confirmed zero B frames. Incompatible audio may convert independently; older, unknown, reordered and explicit-Hybrid cases retain conversion. Concurrent receiver paths share the upstream source. Frontend fallback respects viewport visibility and autoplay state. Capability defaults describe compatibility cost; source eligibility does not prove negotiated hardware decode or measured CPU.
+
+首次 502 保留原生编码重试，连续两次原生 offer 的 502 才过滤 H.265；网关刚加载路径时的短暂失败不应立即变为持续转码。A single 502 retains native codecs for retry; two rejected native offers trigger compatibility filtering, avoiding immediate conversion after a transient path-application race.
+
+内部 go2rtc 来源支持最多 90 秒冷启动探测、Hybrid 发布最多 95 秒，解决网站解析仍在进行时下游 8/10 秒提前断开的冲突；实际媒体读取仍为 8 秒，单次信令保留 15 秒预算与退避重试，普通摄像机保持原等待上限。见 [网站来源说明](online-sources.md)。Internal go2rtc cold startup uses a separate readiness probe without extending active-media reads, ordinary camera or per-request signaling deadlines.

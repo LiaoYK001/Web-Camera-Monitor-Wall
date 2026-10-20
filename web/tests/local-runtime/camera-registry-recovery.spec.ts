@@ -144,9 +144,11 @@ test('refresh rebases edits onto remote fields and syncing one camera leaves the
   await routes(page, [camera('a'), camera('b')]);
   const initial = { displayName: 'Fixture camera', favorite: false, group: '' };
   let values = { a: { ...initial }, b: { ...initial } }; const writes: any[] = [];
-  await page.route('**/api/v2/account/preferences/camera-preferences', route => {
+  let completeWrite!: () => void;
+  await page.route('**/api/v2/account/preferences/camera-preferences', async route => {
     if (route.request().method() === 'PUT') {
       const request = route.request().postDataJSON(); writes.push(request);
+      await new Promise<void>(resolve => { completeWrite = resolve; });
       values = { ...values, ...request.value.cameras };
     }
     return route.fulfill({ json: { value: { cameras: values } } });
@@ -164,7 +166,12 @@ test('refresh rebases edits onto remote fields and syncing one camera leaves the
   expect(writes[0]).toMatchObject({ partial: true, value: { cameras: { a: { favorite: true, group: 'Local A' } } } });
   expect(writes[0].value.cameras).not.toHaveProperty('b');
   await expect(b.getByLabel('分组', { exact: true })).toHaveValue('Local B');
-  expect(await page.evaluate(() => window.webobsUpdateWork?.())).toEqual({ dirty: true, exporting: false });
+  // Seeing the PUT is not its acknowledgement: retain the updater guard until
+  // the response is consumed, then retain only the other camera's dirty draft.
+  await expect.poll(() => page.evaluate(() => window.webobsUpdateWork?.())).toEqual({ dirty: true, exporting: true });
+  completeWrite();
+  await expect(a.getByRole('button', { name: '同步显示偏好' })).toBeEnabled();
+  await expect.poll(() => page.evaluate(() => window.webobsUpdateWork?.())).toEqual({ dirty: true, exporting: false });
   await b.getByLabel('分组', { exact: true }).fill('');
   await expect.poll(() => page.evaluate(() => window.webobsUpdateWork?.())).toEqual({ dirty: false, exporting: false });
 });

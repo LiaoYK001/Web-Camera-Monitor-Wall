@@ -15,6 +15,18 @@ on:
         description: 'Explicit engineering milestone for the candidate'
         type: string
         default: 'v4-M1'
+      public_sources:
+        description: 'Only qualify fixed public sources against an existing Windows candidate'
+        type: boolean
+        default: false
+      candidate_run:
+        description: 'Successful protected dev Windows build run ID for public-source checks'
+        type: string
+        default: ''
+      candidate_version:
+        description: 'Exact existing Windows candidate version for public-source checks'
+        type: string
+        default: ''
 
 permissions:
   contents: read
@@ -54,6 +66,7 @@ jobs:
           ./tests/run-public-audit.sh
           python3 ./clients/scripts/verify_dependency_lock.py
           python3 ./clients/tests/test_release_workflow_policy.py
+          python3 ./tests/test_public_source_qualification.py
           python3 ./clients/tests/test_local_gate_receipts.py
           corepack enable
           corepack prepare pnpm@11.16.0 --activate
@@ -70,7 +83,7 @@ jobs:
           echo "Publication remains explicit through scripts/release-image-local.ps1 or scripts/release-image-local.sh."
 
   container-candidate:
-    if: inputs.container_candidate
+    if: inputs.container_candidate && !inputs.public_sources
     needs: audit
     runs-on: ubuntu-24.04
     timeout-minutes: 120
@@ -81,9 +94,10 @@ jobs:
           submodules: recursive
           persist-credentials: false
       - name: Use locked Node
-        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0; node24 action runtime
         with:
           node-version: 24.19.0
+          package-manager-cache: false
       - name: Resolve the candidate identity
         shell: bash
         env:
@@ -144,3 +158,14 @@ jobs:
           compression-level: 0
           retention-days: 7
           if-no-files-found: error
+
+  public-source-qualification:
+    if: inputs.public_sources
+    needs: audit
+    permissions:
+      contents: read
+      actions: read
+    uses: ./.github/workflows/website-source-qualification.yaml
+    with:
+      candidate_run: ${{ inputs.candidate_run }}
+      candidate_version: ${{ inputs.candidate_version }}

@@ -41,6 +41,7 @@ struct Config {
     int source_recovery_max_seconds = 60;
     bool webrtc_enabled = false;
     bool composite_enabled = false;
+    bool composite_on_demand = false;
     bool nvr_enabled = false;
     bool camera_registry_enabled = true;
     std::string whip_url = "http://127.0.0.1:8889/program/whip";

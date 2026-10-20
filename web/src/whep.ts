@@ -185,6 +185,8 @@ function connectWhep(
   let frameCallbackId: number | undefined;
   let request: AbortController | undefined;
   let authorizationRejected = false;
+  let avoidHevc = false, hevcAnswer = false;
+  let nativeOfferFailures = 0;
   let lastFrameAt = 0;
   let lastFrameCount = 0;
   let stage: PlaybackStage = {
@@ -356,10 +358,15 @@ function connectWhep(
       onState(attempt === 0 ? 'connecting' : 'reconnecting');
 
       const nextPeer = new RTCPeerConnection();
+      hevcAnswer = false;
       peer = nextPeer;
       const remoteStream = new MediaStream();
       video.srcObject = remoteStream;
-      nextPeer.addTransceiver('video', { direction: 'recvonly' });
+      const videoReceiver = nextPeer.addTransceiver('video', { direction: 'recvonly' });
+      if (avoidHevc && typeof videoReceiver?.setCodecPreferences === 'function') {
+        const codecs = RTCRtpReceiver.getCapabilities('video')?.codecs.filter(codec => codec.mimeType.toLowerCase() !== 'video/h265');
+        if (codecs?.length) videoReceiver.setCodecPreferences(codecs);
+      }
       if (receiveAudio) nextPeer.addTransceiver('audio', { direction: 'recvonly' });
       startFrameTracking(currentGeneration);
       nextPeer.ontrack = (event) => {
@@ -379,7 +386,12 @@ function connectWhep(
           report({ iceConnected: true });
           if (!stage.firstFrame && firstFrameTimer === undefined)
             firstFrameTimer = window.setTimeout(() => {
-              if (!stage.firstFrame) scheduleReconnect('first_frame_timeout');
+              if (!stage.firstFrame) {
+                const bounds = video.getBoundingClientRect();
+                const visible = isPageVisible() && bounds.width > 0 && bounds.height > 0 && bounds.bottom > 0 && bounds.right > 0 && bounds.top < innerHeight && bounds.left < innerWidth;
+                if (topology === 'direct' && hevcAnswer && visible && !stage.autoplayBlocked) avoidHevc = true;
+                scheduleReconnect('first_frame_timeout');
+              }
             }, optimization.enabled && optimization.slowStreamTolerance ? 45000 : FIRST_FRAME_TIMEOUT_MS);
         } else if (nextPeer.connectionState === 'failed') {
           scheduleReconnect('ice_failed');
@@ -406,13 +418,24 @@ function connectWhep(
         authorizationRejected = true;
         await onAuthorizationRejected?.();
       }
-      if (offerResponse.status !== 201) throw new Error('WHEP offer was rejected');
+      if (offerResponse.status !== 201) {
+        // A newly configured gateway path may briefly return 502 before it is
+        // applied. Preserve native video on the first retry rather than turning
+        // one startup race into continuous video transcoding.
+        if (topology === 'direct' && offerResponse.status === 502 && /a=rtpmap:\d+ H265\/90000/i.test(nextPeer.localDescription.sdp)) {
+          nativeOfferFailures += 1;
+          if (nativeOfferFailures >= 2) avoidHevc = true;
+        }
+        throw new Error('WHEP offer was rejected');
+      }
+      nativeOfferFailures = 0;
       if (offerResponse.headers.get('Content-Type')?.split(';', 1)[0].trim().toLowerCase() !== 'application/sdp')
         throw new Error('WHEP answer content type is invalid');
       const location = validSessionLocation(offerResponse.headers.get('Location'), endpoint);
       if (!location) throw new Error('WHEP session location is invalid');
       sessionLocation = location;
       const answer = await boundedText(offerResponse, 64 * 1024);
+      hevcAnswer = /a=rtpmap:\d+ H265\/90000/i.test(answer);
       if (validSdpAnswer(answer) === false) throw new Error('WHEP answer is invalid');
       await nextPeer.setRemoteDescription({ type: 'answer', sdp: answer });
       report({ signaling: true });
