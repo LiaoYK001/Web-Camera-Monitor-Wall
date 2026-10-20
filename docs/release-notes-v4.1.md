@@ -64,6 +64,10 @@ WHEP 另做 183.643 秒同源双可见窗口对照：固定 800ms 接收目标�
 
 dev.13 附件的 7886 文件及实际 MSE 摘要已核验；指定回放用候选自身前端通过 120 秒和两种重启（平均非丢弃 26.99fps，保留丢帧）。默认网络 DW 冷导入失败，直播清单 TLS EOF 独立复现；系统虚拟解析路径与原 SNI/正常 CA 验证的公网路径行为不同。只改变测试子进程的该域名连接地址后，DW 与 Al Jazeera 各自的冷导入、120 秒、go2rtc 和整产品重启通过，丢帧分别为 13.31% / 1.00%，不认定流畅度达标或默认网络已恢复。[独立 Windows 第二轮参考复验](https://github.com/LiaoYK001/Web-Camera-Monitor-Wall/actions/runs/39288854910)仍失败，TLS 可达但三条来源触发登录/机器人验证标签且无格式；与本机网络失败分开保留。`689bfe6` 的公开 CI 与五类 CodeQL 均通过；后续版本号正则校验修复的 6 项及发布策略 18 项通过。[结果、方法与限制](online-source-validation-v4.md)。Dev.13 integrity/replay and isolated per-process-route DW/Al Jazeera recovery checks passed, with explicit drops/headless-renderer limits. Default-route TLS failures and the independent runner's authentication challenges remain retained; neither network nor OBS parity is claimed.
 
+Windows-only 后续短测：原 dev.13 可见窗口原生三 H264/两 H265、BF0、25fps/无音频，138.145 秒逐路约 25fps、无本轮掉帧，24 次媒体 FFmpeg 为零、Composite idle；整体 CPU 中位/p95 为 6.06% / 7.28%。与先前有 B 帧转换长测条件不同，不直接计算版本降幅，更不是 OBS 或用户五路验收。[方法与限制](windows-performance-v4.1.md)。The bundled candidate passed a short native-HEVC diagnostic with explicit source/duration/decoder limits; it is not sustained OBS parity.
+
+范围提交的一轮[公开 CI](https://github.com/LiaoYK001/Web-Camera-Monitor-Wall/actions/runs/39374112100)保留失败：设备偏好测试在 PUT 被观察到但响应未完成时，过早断言保存保护已结束。修正测试为受控响应，分别验证待决时保护开启、确认后结束且另一设备草稿仍保留；聚焦连续 5 次、完整设备恢复 11 项通过。未放宽超时或丢弃保护断言，后续新提交 CI 单独核对。A retained CI failure raced request acknowledgement. The corrected test controls the response and asserts both pending/completed guard states; five repeats and eleven recovery cases passed without changing product behavior.
+
 ## 发布前仍需完成 / Remaining qualification
 
 1. dev.13 实时占用栏与 MSE 长 GOP 完整候选已通过；后续改动仍需最终提交 CI/CodeQL 与代码评审，再从评审后冻结版本构建最终稳定 Windows 候选。The complete dev.13 readout/MSE candidate passed; subsequent changes still require final-revision CI/CodeQL and review before stable candidates are built from frozen source.

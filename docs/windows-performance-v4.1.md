@@ -80,3 +80,20 @@ The new run had two media FFmpeg processes, observed with CUDA decoding and NVEN
 ## 可选占用栏加载隔离 / Optional readout loading isolation
 
 新增受控模块延迟回归在修复前失败：占用栏尚未加载时，页面级 Suspense 会隐藏整个 Monitor。现在仅占用栏自身使用加载边界，保留同高禁用按钮；监看立即可用，模块完成后播放器 DOM 不变。typecheck/build 和完整相关 15 项回归通过；新完整候选仍需运行实际媒体门禁。A controlled module-delay regression failed before the fix. A local loading boundary now keeps Monitor and its player mounted while the optional module loads; fifteen related browser checks passed. Complete candidate qualification remains required.
+
+
+## Windows 单端后续诊断（2026-10-20） / Windows-only follow-up diagnostics
+
+按用户决定暂停 Android/Docker 同步交付，本轮继续使用已核验的原始 Windows `4.1.0-dev.13` / `1728381`，无前端替换。可见 Electron 1280×900 窗口同时播放三路 1920×1080 H264、两路 2560×1440 HEVC，均为 25fps、无 B 帧、无音频的合成源；编码目标每路 4Mbps，预先生成的 20 秒媒体由应用进程树外的 loopback RTSP 服务循环发送。实际文件 FFprobe 确认 codec/尺寸/25fps/BF0；H264 SHA-256 `f7b1648672abf3b9c582e0713d9b91ff3a7163b204941d3cb721e0293ba573a1`，HEVC `2090c44169654fed7f66bb095460eb18b6b70f2e49e2760666525a1eed5adb6f`。保留实际视口断言，完整五路尺寸不变。
+
+这是短时诊断：画面就绪后预热 30 秒，外部进程树 CPU 收集 24 次、约 5 秒间隔；按本机 32 个逻辑处理器折算，中位 **6.06%**、p95 **7.28%**。同轮媒体窗口 138.145 秒，五路各 3453 个非丢弃帧，均约 **25.00fps**、本轮丢弃计数增量为零。实际接收 codec 为三路 H264、两路 H265；24 次应用状态中媒体 FFmpeg 实例均为零，Composite 均为 idle。解码实现/省电标记未在本轮 WebRTC 统计中出现，不能只凭全局 `video_decode: enabled` 宣称每路硬解。
+
+The original bundled dev.13 passed this short visible five-source BF0/no-audio diagnostic: normalized median/p95 CPU 6.06%/7.28%, with 3,453 non-dropped frames per stream over 138.145 seconds (about 25fps), no observed dropped-frame increment, native 3×H264/2×H265, zero application media FFmpeg in 24 samples and idle Composite. Per-stream decoder implementation/power-efficiency fields were unavailable; global decode capability is not per-stream hardware proof.
+
+**不把 6.06% 与此前 8.62% 直接计算版本降幅**：此前长测包含有 B 帧的 HEVC 兼容转换，本轮来源条件不同；本轮仅为 2 分钟级短测，不替代 15 分钟或暗夜精灵/实际摄像机/OBS 对照。独立的带采样器诊断进一步区分 Electron browser/renderer/GPU/utility 与 go2rtc/MediaMTX；该轮存在 profiler 开销，不作为第二份无干扰性能基准，也不把各角色中位数相加作为总占用。
+
+Do not compare 6.06% directly with the earlier 8.62% as a version improvement: the earlier run converted reordered HEVC, and the source conditions differ. This short run does not replace sustained, Omen, real-camera or OBS qualification. A separate instrumented role/renderer profile has profiling overhead and is diagnostic only; role medians do not sum to the overall median.
+
+本机已准备签名有效的 OBS Studio 32.1.0 便携副本及独立配置，WebSocket 与自动更新关闭、源仅连接自建 loopback RTSP，没有读取或修改用户现有 OBS 配置。首次启动使用隐藏窗口，测试可见性断言按预期拒绝，该失败保留并排除，未计作 OBS 性能通过；进程已结束。显示独立对照窗口的明确授权尚待用户回复；不以隐藏窗口代替可见预览对照。
+
+A validly signed installed OBS 32.1.0 binary was copied into an isolated portable reference, with WebSocket/updates disabled and owned loopback sources. Its initial hidden launch was rejected by the visibility guard and retained/excluded, without changing existing OBS data. The owned process exited; visible-window permission remains pending, and no OBS parity is claimed.
