@@ -3,6 +3,8 @@
 > 生效 / Effective：2026-09-22（v3.3 起）。本文件是发布流程的**唯一权威说明**。
 > 取代 / Supersedes：早期「两份本机平台收据 + v3‑M2 四份收据、48 小时有效、缺一不可」的硬门禁。
 
+> **当前 v4.1 范围（2026-10-20） / Current scope:** 用户指定仅 Windows x64。Android 与 Docker/容器同步交付暂停；本轮不构建、推送或提升镜像，不发布 APK，不用这两端验收阻塞 Windows。共享源码审计/安全检查仍保留。历史三端验收保留为历史；Windows 发布需自己的稳定包、更新元数据、源码、不可变附件与实际安装证据，并明确披露平台范围。Windows-only by explicit user decision; Android/container delivery is paused, without waiving Windows qualification or shared source/security checks.
+
 ## 总览 / Overview
 
 主要交付端为容器、Windows x64、独立 Android，从 v4.0 起按 `vA.B` 功能版本和 `vA.B.C` bug/安全补丁更新。未来原生 Linux x86/ARM、Windows ARM/32 位等端通常只在 `vA.0` 构建、验收及发布，不承诺每次功能/补丁附件。网站源依赖锁、许可证/SBOM 与对应源码审查纳入相同不可变流程，见[网站与直播源](online-sources.md)。The three primary targets use minor feature and patch bug/security releases from v4; future architectures remain qualified major-milestone targets.
@@ -67,6 +69,27 @@ docker compose -f compose.yaml up --build          # 或 podman compose
 实际准备发布新版本（如 `v4.0.5`）时，将指定版本、变更说明和验证结果准备在 `dev`，相关检查通过后创建 **`dev` → `main`** 的发布 PR，标题与说明保持中英文双语。主、次和补丁版本均通过此入口；仅修复某个 bug 或更新文档时仍只合入 `dev`。发布 PR 合并后才从对应的 `main` 提交执行下方打包/Tag/Release 流程。详见[分支职责](versioning-and-branches.md)。
 
 When preparing the requested version, record its identity, changes and validation on `dev`, pass the relevant checks and open a bilingual **`dev` → `main`** release PR. Major, minor and patch releases all use this entry. Ordinary fixes/docs remain on `dev`; after release integration, package, tag and publish from the matching `main` commit.
+
+### Windows 单端发布 / Windows-only publication
+
+v4.1 按 2026-10-20 用户决定采用此路径，不调用镜像发布脚本，不创建 APK。先完成 Windows 性能/媒体/安装及更新验证和发布 PR 评审，合入 `main` 后从同一干净提交构建正式 `4.1.0` NSIS（显式 `-Release`，未签名时保留 UNSIGNED 标记）。开发包不可重命名为稳定包。准备安装回执、已审查第三方对应源码、许可证/SBOM、完整摘要及经校验的 `latest.yml`/blockmap。历史容器/Android 结果不是本轮缺项，不阻塞此单端发行。
+
+Windows v4.1 uses this path by explicit user instruction. Finish Windows qualification/review, then build the stable installer from the reviewed clean `main` revision. Preserve the unsigned label when applicable; do not rename a development build. Android/container work is paused, not a missing Windows gate. No image publisher or APK build runs here.
+
+只有最终 Windows 产物与源码检查通过后，才从该发布提交创建并推送不可变双语 annotated `v4.1` Tag，然后准备同标签 Draft：
+
+```powershell
+gh release create v4.1 --verify-tag --draft --title 'v4.1 Windows x64 / Windows 单端发布' --notes-file docs/release-notes-v4.1.md
+./desktop/scripts/publish-release.ps1 -Tag v4.1 -ArtifactDirectory <stable-windows-artifacts> -CorrespondingThirdPartySourceDirectory <reviewed-matching-sources>
+```
+
+Windows 上传脚本已有实际 NSIS 回执/安装包身份、SHA-512/大小、签名状态、运行清单、第三方与产品源码及不可变附件检查；它只向匹配的 Draft/Release 上传，不会构建镜像、发布 Release 或安装更新。可选完整设备回执继续使用 `-QualificationReceipts`；仅本机安装冒烟时必须披露边界。上述占位路径由发布者替换为本机已核验目录，不含密钥或实际摄像机地址。
+
+The existing uploader verifies installation evidence, artifact identity, updater hashes/size, signature status, manifests, corresponding sources and immutable attachments. It only uploads to the matching Draft/Release; it does not build an image, publish the Release or install an update. Full platform receipts remain optional via `-QualificationReceipts`, with host-smoke limitations disclosed when applicable.
+
+最后核验 Draft 全部 Windows 附件与对应源码后，沿用下文不可变发布规则：在同一次公开请求中明确设置正式 `tag_name` 和该 Tag 的 `target_commitish`，再核对公开标签、全部附件摘要和 Windows 更新入口。本轮 Release 明确“Windows x64 only”；Android 无新 APK，容器无新镜像或 GHCR `latest`/版本别名提升。原 v4.0 附件、持久 Android 密钥和现有镜像保留。
+
+After Draft asset verification, publish with the explicit final tag and matching revision in one request, then verify public assets and the Windows feed. Label the release Windows x64 only. Do not create Android assets, push images or promote GHCR aliases; existing v4.0 assets, keys and images are retained.
 
 ## 4. 打包发布 / Package and publish
 

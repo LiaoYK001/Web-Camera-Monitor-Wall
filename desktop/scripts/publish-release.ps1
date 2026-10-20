@@ -12,7 +12,7 @@ if ($Tag -notmatch '^v(\d+)\.(\d+)(?:\.(\d+))?$') { throw 'Tag must be vX.Y or v
 $version = if ($Matches[3]) {"$($Matches[1]).$($Matches[2]).$($Matches[3])"} else {"$($Matches[1]).$($Matches[2]).0"}
 $artifacts = (Resolve-Path -LiteralPath $ArtifactDirectory).Path
 $revision = (& git -C $repoRoot rev-parse "$Tag^{commit}").Trim()
-if ($LASTEXITCODE -ne 0) { throw 'Use an existing reviewed product/container release tag.' }
+if ($LASTEXITCODE -ne 0) { throw 'Use an existing reviewed product release tag; Windows-only releases are supported.' }
 if ((& git -C $repoRoot rev-parse HEAD).Trim() -ne $revision) { throw 'Checkout must match the release tag exactly.' }
 if ($QualificationReceipts) {
     & node (Join-Path $PSScriptRoot 'qualification.mjs') $QualificationReceipts $revision $version
@@ -65,9 +65,10 @@ try {
     & bash './scripts/create-source-bundle.sh' $version $posixArtifacts; if ($LASTEXITCODE -ne 0) { throw 'Corresponding product source bundle failed.' }
     $approvedAssets += "webobs-source-$version.tar.gz","webobs-source-$version.tar.gz.sha256"
     $env:GITHUB_REPOSITORY = 'LiaoYK001/Web-Camera-Monitor-Wall'
-    # The existing Release is shared with the container and must have this exact tag.
+    # A matching product Draft/Release is required. It may be Windows-only;
+    # creating or publishing a container image is not a prerequisite.
     $release = & gh release view $Tag --repo $env:GITHUB_REPOSITORY --json databaseId,tagName,targetCommitish | ConvertFrom-Json
-    if ($LASTEXITCODE -ne 0 -or $release.tagName -ne $Tag -or [string]$release.databaseId -notmatch '^[1-9][0-9]*$') { throw 'Create the matching product/container Release through the existing reviewed release flow first.' }
+    if ($LASTEXITCODE -ne 0 -or $release.tagName -ne $Tag -or [string]$release.databaseId -notmatch '^[1-9][0-9]*$') { throw 'Create the matching product Draft/Release through the reviewed release flow first; no container is required.' }
     $assets = $approvedAssets | ForEach-Object { (Join-Path $artifacts $_) -replace '\\','/' }
     if (-not $env:GH_TOKEN) { throw 'Use a maintainer GH_TOKEN only on the publishing host; it is never included in the client.' }
     # GitHub's REST tag lookup may return 404 for a Draft even though gh can

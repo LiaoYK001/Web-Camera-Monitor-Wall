@@ -144,7 +144,7 @@ Client toggles save immediately and lock inputs while running. Edit the LAN HTTP
 
 From v4.0, regular patches use A.B.C with numeric comparison and a patch label. Differential downloads retain full-installer fallback and integrity; explicit install/normal shutdown/snapshot safeguards apply equally. Real v4 installed patch upgrades remain a qualification item.
 
-产品标签 `vX.Y` 对应客户端 `X.Y.0`，`vX.Y.Z` 对应 `X.Y.Z`。容器与 Windows 共用已审计的产品 Release。候选附件包含安装包、blockmap、`latest.yml`（仅正式包）、SHA-256 摘要、运行文件清单、CycloneDX SBOM 与许可证归档。Electron updater 校验 SHA-512 与大小，准备安装时再次校验；可选签名构建额外验证 Authenticode 发布者。客户端不包含 GitHub Token。
+产品标签 `vX.Y` 对应客户端 `X.Y.0`，`vX.Y.Z` 对应 `X.Y.Z`。Windows 可以独立使用已审计的产品 Release，不要求先发布容器；多端同时发行时共用该 Release。用户 2026-10-20 指定 v4.1 仅 Windows x64，Android/Docker 同步交付暂停，见[Windows 单端流程](release-flow.md#windows-单端发布--windows-only-publication)。候选附件包含安装包、blockmap、`latest.yml`（仅正式包）、SHA-256 摘要、运行文件清单、CycloneDX SBOM 与许可证归档。Electron updater 校验 SHA-512 与大小，准备安装时再次校验；可选签名构建额外验证 Authenticode 发布者。客户端不包含 GitHub Token。
 
 Windows 10、11 各自记录实际安装、媒体、LAN 与两版更新结果。`desktop/qualification.example.json` 只是格式示例，不能作为通过证明；完整检查名见 `desktop/scripts/qualification.mjs`。维护者还需收集匹配第三方二进制的完整对应源码（包括 FFmpeg 及其启用的 GPL 组件），提供已审核 `SOURCE-MANIFEST.json`，其字段为 `revision`、`version`、`reviewed: true`、`files: [{name, sha256}]`。
 

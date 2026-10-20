@@ -1,8 +1,8 @@
 # v4.1 发布说明（开发草案） / v4.1 release notes (development draft)
 
-尚未发布 v4.1；v4.0 已发布安装包不包含本页的新调整。后续正式身份为 `v4.1` / `4.1.0`；当前仅准备开发候选。主交付端仍为 Windows x64、容器及独立 Android。
+尚未发布 v4.1；v4.0 已发布安装包不包含本页的新调整。后续正式身份为 `v4.1` / `4.1.0`；当前仅准备开发候选。按用户 2026-10-20 决定，本轮只发布 Windows x64；Android 与 Docker/容器暂停同步候选、验收和发布。
 
-v4.1 has not been released. Existing v4.0 assets do not contain these changes. The intended stable identity is `v4.1` / `4.1.0`; only development candidates are being prepared.
+v4.1 has not been released. Existing v4.0 assets do not contain these changes. The intended stable identity is `v4.1` / `4.1.0`; only Windows x64 development candidates are being prepared. Android/container synchronized candidate and release work is paused by the user decision of 2026-10-20; their historical results below are retained, not current Windows release gates.
 
 ## 本轮变更 / Changes
 
@@ -66,9 +66,9 @@ dev.13 附件的 7886 文件及实际 MSE 摘要已核验；指定回放用候�
 
 ## 发布前仍需完成 / Remaining qualification
 
-1. dev.13 实时占用栏与 MSE 长 GOP 完整候选已通过；后续改动仍需最终提交 CI/CodeQL 与代码评审，再从评审后冻结版本构建最终稳定三端候选。The complete dev.13 readout/MSE candidate passed; subsequent changes still require final-revision CI/CodeQL and review before stable candidates are built from frozen source.
+1. dev.13 实时占用栏与 MSE 长 GOP 完整候选已通过；后续改动仍需最终提交 CI/CodeQL 与代码评审，再从评审后冻结版本构建最终稳定 Windows 候选。The complete dev.13 readout/MSE candidate passed; subsequent changes still require final-revision CI/CodeQL and review before stable candidates are built from frozen source.
 2. 同一暗夜精灵 13900HX/4090 Laptop、同五路来源、画质/FPS/音频设置，对照 stock OBS；分别测 H.264、H.265 与混合，直连与 go2rtc。每轮预热 3 分钟、采样至少 15 分钟，记录整体 CPU 中位/p95、内存、GPU 解码/编码、真实帧进度、断流恢复及摄像机连接数。用户暂时无法实机，保持未验证，不以降低画质代替性能达标。The user laptop is currently unavailable. Same-machine/source/quality OBS qualification remains open; synthetic fixtures cannot qualify this target.
 3. 双路一小时持续播放和故障恢复已通过，完成 MSE 历史修复的新完整候选，继续排查 DW WHEP 较高丢帧/冻结并补最终候选复验；不把恢复通过等同于零掉帧/流畅度达标。The paired hour and recovery passed; qualify the new MSE fix, investigate remaining DW WHEP drops/freezes, then recheck the final candidate without claiming zero-drop smoothness.
-4. 补齐适用的 Android 已安装客户端/后端回归、三端最终候选、源码及不可变附件检查，再完成版本化 dev→main 发布 PR 与正式发布。本机当前 ADB 无设备；已有签名 APK 不替代生产包升级/ARM 真机证据。Complete applicable installed Android/backend, final-candidate, source and immutable-asset checks; no ADB device is currently available, and a signed APK does not qualify production/ARM updates.
+4. 补齐 Windows 最终稳定 NSIS、更新元数据、源码及不可变附件检查，完成版本化 dev→main 发布 PR 与 Windows v4.1 正式发布。Android 安装/升级、容器镜像验收及发布按本轮范围暂停，不阻塞 Windows；不为它们创建 v4.1 APK、镜像或更新元数据。Complete the final Windows stable NSIS/update metadata, corresponding-source and immutable-asset checks, followed by the versioned release PR and Windows v4.1 publication. Paused Android/container qualification is not a Windows gate; no new APK/image/feed is delivered for them.
 
 不宣称达到 OBS 性能水平，不把短时、合成或 Linux 证据替代用户 Windows 实机验收。No OBS performance parity claim is made.
