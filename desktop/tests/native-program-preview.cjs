@@ -86,11 +86,15 @@ exports.exerciseNativeProgramPreview = async (supervisor, runtime, headers, temp
   } finally {
     await native('DELETE').catch(() => {});
     await until(async () => (await native()).state === 0).catch(() => {});
-    await saveScene(original);
-    if (publisher && publisher.exitCode === null) {
-      const exited = new Promise(resolve => publisher.once('exit', resolve)); publisher.kill(); await exited;
+    try { await saveScene(original); }
+    finally {
+      if (publisher && publisher.exitCode === null) {
+        const exited = new Promise(resolve => publisher.once('exit', resolve)); publisher.kill(); await exited;
+      }
+      await Promise.allSettled([
+        fetch(gateway + '/v3/config/paths/delete/' + route, { method: 'DELETE' }),
+        fs.rm(media, { force: true }),
+      ]);
     }
-    await fetch(gateway + '/v3/config/paths/delete/' + route, { method: 'DELETE' });
-    await fs.rm(media, { force: true });
   }
 };

@@ -82,6 +82,12 @@ struct NativePreview::Impl {
                 obs_display_set_enabled(self->display, visible);
                 if (visible) obs_display_resize(self->display, LOWORD(lparam), HIWORD(lparam));
             }
+            if (message == WM_DPICHANGED) {
+                const auto &bounds = *reinterpret_cast<const RECT *>(lparam);
+                SetWindowPos(handle, nullptr, bounds.left, bounds.top, bounds.right - bounds.left,
+                             bounds.bottom - bounds.top, SWP_NOZORDER | SWP_NOACTIVATE);
+                return 0;
+            }
             if (message == WM_LBUTTONDBLCLK || (message == WM_KEYDOWN && wparam == VK_F11)) {
                 self->toggle_fullscreen(); return 0;
             }
@@ -137,9 +143,11 @@ NativePreview::NativePreview(NativePreviewControl &control) : impl_(std::make_un
 {
 #ifdef _WIN32
     if (control.supported) impl_->thread = std::thread([this] {
+        // Size the swapchain in physical pixels on scaled/mixed-DPI monitors.
+        SetThreadDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2);
         while (!impl_->stopping.load()) {
             update();
-            std::this_thread::sleep_for(std::chrono::milliseconds(20));
+            MsgWaitForMultipleObjectsEx(0, nullptr, 100, QS_ALLINPUT, MWMO_INPUTAVAILABLE);
         }
         impl_->close();
         impl_->active.store(false);
