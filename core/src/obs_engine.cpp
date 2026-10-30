@@ -432,8 +432,12 @@ RendererCapabilities detect_renderer_capabilities(const Config &config)
 }
 
 HardwareDecodeCapabilities select_hardware_decode(const Config &config,
-                                                   const VideoEncoderCapabilities &capabilities)
+                                                   const VideoEncoderCapabilities &capabilities,
+                                                   const RendererCapabilities &renderer)
 {
+#ifndef _WIN32
+    (void)renderer;
+#endif
     HardwareDecodeCapabilities result;
     result.requested = std::string(hardware_decode_preference_name(config.hardware_decode));
     const bool cuda_ready = capabilities.nvenc.device_present && capabilities.nvenc.library_loaded &&
@@ -447,10 +451,11 @@ HardwareDecodeCapabilities select_hardware_decode(const Config &config,
 #ifdef _WIN32
     const bool qsv_ready = capabilities.qsv.device_present && capabilities.qsv.decode_supported &&
                            capabilities.qsv.runtime_probe_passed;
-    if (obs_initialized() && (cuda_ready || qsv_ready)) {
+    if (obs_initialized() && (renderer.hardware_probe_passed || cuda_ready || qsv_ready)) {
         // The pinned OBS FFmpeg source probes CUDA/D3D11VA/DXVA2 per codec and
-        // falls back to software when no usable context exists. "auto" is a
-        // policy, not a claim that every source is hardware decoded.
+        // falls back to software when no usable context exists. Its D3D11VA
+        // decoder must not depend on an unrelated external NVENC/QSV encoding
+        // sample succeeding. "auto" is a policy, not per-source HW evidence.
         result.selected = "auto";
         result.backend = "obs-auto";
         return result;
@@ -558,7 +563,7 @@ ExitCode run_obs_engine(const Config &config, const SceneDocument &document)
             detect_video_encoder_capabilities(config, false);
         const RendererCapabilities renderer_capabilities = detect_renderer_capabilities(config);
         const HardwareDecodeCapabilities hardware_decode =
-            select_hardware_decode(config, encoder_capabilities);
+            select_hardware_decode(config, encoder_capabilities, renderer_capabilities);
         ObsSceneRuntime scene_runtime(config.connect_timeout_seconds, config.browser_security,
                                       config.source_stale_seconds,
                                       config.source_recovery_base_seconds,
@@ -732,7 +737,7 @@ ExitCode run_obs_engine(const Config &config, const SceneDocument &document)
     VideoEncoderCapabilities encoder_capabilities = detect_video_encoder_capabilities(config);
     const RendererCapabilities renderer_capabilities = detect_renderer_capabilities(config);
     const HardwareDecodeCapabilities hardware_decode =
-        select_hardware_decode(config, encoder_capabilities);
+        select_hardware_decode(config, encoder_capabilities, renderer_capabilities);
     if (!encoder_capabilities.x264.encoder_available) {
         blog(LOG_ERROR, "The mandatory obs_x264 software fallback is unavailable");
         return ExitCode::obs_initialization_failed;

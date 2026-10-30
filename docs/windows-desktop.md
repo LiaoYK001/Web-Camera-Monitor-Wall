@@ -208,6 +208,10 @@ Windows Hybrid 的 NVIDIA 路径在已通过现有能力探测时尝试 CUDA 解
 
 The NVIDIA Hybrid path tries qualified CUDA decoding, then NVENC with software decoding, then the existing optional x264 fallback. Compatible H.264 video stays passthrough. OBS sources use upstream per-codec/device probing and software fallback; `auto` describes policy, not verified hardware decode for every source.
 
+Windows OBS 来源的硬解策略额外接受实际已初始化的硬件 D3D11 渲染设备作为就绪条件，不再要求无关的外置 FFmpeg NVENC/QSV 编码样例先成功。没有 OBS 图形运行时或只有软件渲染器时，仍使用已有能力门控；显式关闭硬解继续有效。
+
+Windows OBS hardware decoding can now be enabled by its actual initialized hardware D3D11 device independently of external FFmpeg NVENC/QSV encoding samples. Direct-only/no-OBS and software-renderer cases retain their capability gates, and explicit decode-off remains authoritative.
+
 “系统状态 / 视频加速”增加本次桌面进程树（包括 desktop、go2rtc、webobsd、FFmpeg、Python 等）的占用，并排除其他软件的同名 FFmpeg。逐项 CPU 以单逻辑处理器 100% 计量，整体占用按逻辑处理器数折算；首次采样必须等下一次刷新。它不暴露进程参数或摄像机地址。
 
 System status includes the current desktop process tree, excluding unrelated same-name media tools. Per-role CPU uses one logical processor as 100%; the overall value is normalized by the logical processor count. The first useful CPU sample requires the next refresh. No process arguments or camera addresses are exposed.

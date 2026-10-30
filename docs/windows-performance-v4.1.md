@@ -10,6 +10,10 @@ Development measurements only. These results establish neither stock OBS parity 
 
 The reported dev.14 HEVC workload exceeds stock OBS substantially. Code confirms that ineligible browser HEVC paths use H.264 compatibility conversion, adding server decode/encode, WebRTC relay and browser decode/render. User-specific per-stream routing remains unverified.
 
+另发现 Windows OBS 来源硬解的全局就绪条件依赖外置 FFmpeg 的 NVENC/QSV 探测结果，而不是单独接受已经初始化的硬件 D3D11 设备。新的策略让实际硬件渲染设备也可启用 OBS 内部逐编码解码探测，避免外置编码探测失败时不必要地关闭来源硬解；显式关闭、软件回退与逐路实测边界保留。该问题是否发生在用户 dev.14 设备上仍需私有运行数据确认。
+
+The Windows source-decode gate also unnecessarily depended on external encoder probes. A real initialized hardware D3D11 device now independently permits OBS's internal per-codec decoder probing, retaining explicit off/software fallback. This identifies a code-level cause of avoidable software decoding, not proof it occurred on the user's machine.
+
 新增的 Windows 原生 Program 监看直接使用 libobs 解码/渲染，绕过本机观看的兼容视频转换、WebRTC 和浏览器解码。主窗口切换时释放其原播放器；已有独立观看端不随之关闭。当前作为显式试验入口，保留可回退的浏览器模式，使用与 OBS 相同的 NVIDIA/AMD 高性能提示。验收仍要求同机、同源、同分辨率/帧率/音频的可见窗口对照；不能用窗口绘制次数替代每路真实视频帧进度或硬解证据。详见 [Windows 运行边界](windows-desktop.md#v41-开发中的监看性能调整--monitoring-performance-in-v41-development)。
 
 The explicit experimental native Program path bypasses those local video stages and releases the main browser players. Other viewers retain their work. Matching laptop/source/resolution/FPS/audio qualification remains required; draw callbacks alone do not prove per-stream media progress or hardware decode.
