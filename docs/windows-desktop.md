@@ -231,3 +231,9 @@ Native HEVC requires an actual active video offer plus registry-confirmed zero B
 首次 502 保留原生编码重试，连续两次原生 offer 的 502 才过滤 H.265；网关刚加载路径时的短暂失败不应立即变为持续转码。A single 502 retains native codecs for retry; two rejected native offers trigger compatibility filtering, avoiding immediate conversion after a transient path-application race.
 
 内部 go2rtc 来源支持最多 90 秒冷启动探测、Hybrid 发布最多 95 秒，解决网站解析仍在进行时下游 8/10 秒提前断开的冲突；实际媒体读取仍为 8 秒，单次信令保留 15 秒预算与退避重试，普通摄像机保持原等待上限。见 [网站来源说明](online-sources.md)。Internal go2rtc cold startup uses a separate readiness probe without extending active-media reads, ordinary camera or per-request signaling deadlines.
+
+### dev.17 开发附件转存 / dev.17 development attachment transfer
+
+用户 2026-10-30 授权将已通过测试的 dev.17 放到 GitHub 预发布下载。`windows-desktop.yaml` 的手动 `publish_dev17=true` 入口只允许版本 `4.1.0-dev.17`、固定成功构建 41062148722 / 附件 12981884498 / 源码 `4ca94a4`。它在托管运行器内核对构建身份、原始 SHA-256 与运行清单，上传到既有空白开发预发布草稿后公开；不重新构建、不覆盖附件、不发布 `latest.yml`、不提升 Latest。普通构建与可复用工作流不会触发发布。
+
+On 2026-10-30 the user authorized GitHub prerelease downloads for tested dev.17. The manual `publish_dev17=true` entry accepts only `4.1.0-dev.17` and frozen successful run 41062148722 / artifact 12981884498 / source `4ca94a4`. A hosted runner verifies build identity, original SHA-256 checksums and runtime manifest before attaching files to the existing empty development draft and publishing it. It does not rebuild, overwrite attachments, publish `latest.yml` or promote Latest. Normal builds and reusable workflow calls do not publish.
