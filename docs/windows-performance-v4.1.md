@@ -26,6 +26,18 @@ The original CI archive records large, independently required Electron, CEF, FFm
 
 Local generated UI assets shrink by 117,284,527 bytes relative to dev.14; omitting unused ffplay removes another 18,800,128 bytes from the locked Windows payload. The new candidate footprint must confirm final installed size. These are payload savings, not a CPU/GPU improvement percentage.
 
+首轮 [Windows dev.15 完整门禁](https://github.com/LiaoYK001/Web-Camera-Monitor-Wall/actions/runs/41059000815)（`614a89b`）通过。真实 Win32/libobs 窗口读取五路 320×180/10fps、带 B 帧的合成 HEVC，来源健康与窗口绘制增长通过；未启动 Composite 发布或额外视频兼容路径，关闭/重开与 15 秒失去心跳回收通过。其 `*-footprint.json` 记录安装文件 1,458,546,999 字节、NSIS 427,196,203 字节；dev.14 ZIP 中央目录记录对应 1,594,695,173 / 454,131,546 字节，安装载荷减少 136,148,174 字节（约 8.54%）。它仍是完整的大型运行包，不能描述为接近 159 MB。
+
+The first complete Windows dev.15 gate passed actual native-window/reordered-HEVC functional tests, normal packaging and isolated NSIS installation. Installed payload fell by approximately 8.54%; this does not measure CPU/GPU performance. The tiny synthetic streams do not qualify the user's 13900HX/RTX4090 Laptop sources.
+
+dev.15 仅证明早期原生路径，未包含后续 OBS 硬解门控和安全依赖更新。早期 PR 审计因新通告[失败](https://github.com/LiaoYK001/Web-Camera-Monitor-Wall/actions/runs/41060132083)，修复后的[公开 CI](https://github.com/LiaoYK001/Web-Camera-Monitor-Wall/actions/runs/41062155214)已通过；最终运行候选使用新提交与独立身份，不能把早期附件追认为修复后的版本。
+
+Dev.15 predates the later decode-gate and dependency fixes. The corrected public CI passes; its complete Windows candidate must retain its own identity and evidence rather than retroactively qualifying the earlier artifact.
+
+最终 [Windows dev.17 完整构建](https://github.com/LiaoYK001/Web-Camera-Monitor-Wall/actions/runs/41062148722)（`4ca94a4`）已通过并保留开发附件，包含硬解门控修复和 Electron 44.9.1 / DOMPurify 3.4.17 等依赖更新。五路合成 HEVC 原生路径门禁再次通过；真实 desktop entry 额外调用 preload/IPC 原生入口，核对主进程 Cookie 认证和窗口状态/绘制后正常关闭。捆绑来源 UI 门禁、ASAR 的 clean-PATH/首登/Job 崩溃收束、隔离 Unicode 路径 NSIS 安装/卸载与数据保留也通过。没有发布稳定版本或更新生产 feed；13900HX/RTX4090 Laptop 的同机、同来源、同质量 OBS 对照仍未完成。
+
+Final dev.17 (`4ca94a4`) passes the complete Windows build with the decode-gate/security fixes, repeated reordered-HEVC native-window checks and the actual desktop preload/IPC/cookie path. Source UI, packaged ASAR and isolated NSIS gates pass. The artifact is a development candidate, outside the stable feed. Actual same-source/quality OBS comparison on the user's laptop remains open.
+
 ## 播放中定位占用 / Inspect CPU during playback
 
 监看页新增“实时占用”：保持播放器挂载，展开后每 5 秒读取本次桌面进程树，显示整体 CPU 及桌面/浏览器、FFmpeg、go2rtc、MediaMTX、核心等分项。整体及各项统一按逻辑处理器数量折算；首次读取或长时间中断后等待下一次采样，不把初始化零值计作真实负载。收起后停止读取，后台暂停、恢复后重新读取；单次读取最多 8 秒，旧响应不覆盖新状态。
