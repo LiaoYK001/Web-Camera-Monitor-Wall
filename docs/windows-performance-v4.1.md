@@ -1,6 +1,6 @@
 # v4.1 Windows 性能开发证据 / Windows performance development evidence
 
-更新于 2026-10-19。本页记录开发试验，尚未完成用户暗夜精灵 13900HX/RTX4090 Laptop 的同机 OBS 对照，也不构成 v4.1 正式发布验收。
+更新于 2026-10-30。本页记录开发试验，尚未完成用户暗夜精灵 13900HX/RTX4090 Laptop 的同机 OBS 对照，也不构成 v4.1 正式发布验收。
 
 Development measurements only. These results establish neither stock OBS parity nor qualification of the user's laptop.
 
@@ -22,9 +22,9 @@ The explicit experimental native Program path bypasses those local video stages 
 
 The original CI archive records large, independently required Electron, CEF, FFmpeg and Python runtimes. OBS and external FFmpeg use different codec DLL ABIs and cannot safely share arbitrary binaries. Installer download size and installed bytes are distinct measurements.
 
-本机新生成的 go2rtc UI 为 27,226,832 字节，相对 dev.14 减少 117,286,623 字节；Windows 旧包中的未使用 `ffplay.exe` 为 18,800,128 字节，后续不再打包。两项预期合计约 136 MB，实际新安装体积以新候选 `*-footprint.json` 为准。这是文件载荷缩减，不是 CPU/GPU 性能提升率。
+本机新生成的 go2rtc UI 为 27,228,928 字节，相对 dev.14 减少 117,284,527 字节；Windows 旧包中的未使用 `ffplay.exe` 为 18,800,128 字节，后续不再打包。两项预期合计约 136 MB，实际新安装体积以新候选 `*-footprint.json` 为准。这是文件载荷缩减，不是 CPU/GPU 性能提升率。
 
-Local generated UI assets shrink by 117,286,623 bytes relative to dev.14; omitting unused ffplay removes another 18,800,128 bytes from the locked Windows payload. The new candidate footprint must confirm final installed size. These are payload savings, not a CPU/GPU improvement percentage.
+Local generated UI assets shrink by 117,284,527 bytes relative to dev.14; omitting unused ffplay removes another 18,800,128 bytes from the locked Windows payload. The new candidate footprint must confirm final installed size. These are payload savings, not a CPU/GPU improvement percentage.
 
 ## 播放中定位占用 / Inspect CPU during playback
 

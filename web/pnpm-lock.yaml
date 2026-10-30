@@ -6,11 +6,16 @@ settings:
 
 overrides:
   source-map-js@^1.2.1: 1.2.2
-  fast-uri: 3.1.8
+  fast-uri: 3.1.9
   js-yaml@^4: 4.3.2
-  dompurify: 3.4.16
+  dompurify: 3.4.17
   brace-expansion@>=2 <3: 2.1.7
   brace-expansion@>=4 <6: 5.0.12
+  serialize-javascript: 7.1.3
+  '@rollup/plugin-node-resolve@16.0.3>deepmerge': '-'
+
+patchedDependencies:
+  '@rollup/plugin-node-resolve@16.0.3': be62dc9211d95e5034b7dc50fcd1c89993757756796f2f0b4e9386f191d50e53
 
 importers:
 
@@ -49,13 +54,13 @@ importers:
         version: 19.2.4(@types/react@19.2.18)
       '@vitejs/plugin-react':
         specifier: 6.0.5
-        version: 6.0.5(vite@8.1.5(@types/node@22.19.7)(terser@5.50.0))
+        version: 6.0.5(vite@8.1.6(@types/node@22.19.7)(terser@5.50.0))
       acorn:
         specifier: 8.18.0
         version: 8.18.0
       dompurify:
-        specifier: 3.4.16
-        version: 3.4.16
+        specifier: 3.4.17
+        version: 3.4.17
       monaco-editor:
         specifier: 0.57.0
         version: 0.57.0
@@ -69,11 +74,11 @@ importers:
         specifier: 10.0.2
         version: 10.0.2(@egjs/hammerjs@2.0.17)(component-emitter@2.0.0)(keycharm@0.4.0)(uuid@13.0.2)(vis-data@8.0.5(uuid@13.0.2)(vis-util@6.0.2(@egjs/hammerjs@2.0.17)(component-emitter@2.0.0)))(vis-util@6.0.2(@egjs/hammerjs@2.0.17)(component-emitter@2.0.0))
       vite:
-        specifier: 8.1.5
-        version: 8.1.5(@types/node@22.19.7)(terser@5.50.0)
+        specifier: 8.1.6
+        version: 8.1.6(@types/node@22.19.7)(terser@5.50.0)
       vite-plugin-pwa:
         specifier: 1.3.0
-        version: 1.3.0(vite@8.1.5(@types/node@22.19.7)(terser@5.50.0))(workbox-build@7.4.1)(workbox-window@7.4.1)
+        version: 1.3.0(vite@8.1.6(@types/node@22.19.7)(terser@5.50.0))(workbox-build@7.4.1)(workbox-window@7.4.1)
       workbox-core:
         specifier: 7.4.1
         version: 7.4.1
@@ -1273,10 +1278,6 @@ packages:
       supports-color:
         optional: true
 
-  deepmerge@4.3.1:
-    resolution: {integrity: sha512-3sUqbMEc77XqpdNO7FRyRog+eW3ph+GYCbj+rK+uYyRMuwsVy0rMiVtPn+QJlKFvWP/1PYpapqYn0Me2knFn+A==}
-    engines: {node: '>=0.10.0'}
-
   define-data-property@1.1.4:
     resolution: {integrity: sha512-rBMvIzlpA8v6E+SJZoo++HAYqsLrkg7MSfIinMPFhmkorw7X+dOXVJQs+QT69zGkzMyfDnIMN2Wid1+NbL3T+A==}
     engines: {node: '>= 0.4'}
@@ -1289,8 +1290,8 @@ packages:
     resolution: {integrity: sha512-Btj2BOOO83o3WyH59e8MgXsxEQVcarkUOpEYrubB0urwnN10yQ364rsiByU11nZlqWYZm05i/of7io4mzihBtQ==}
     engines: {node: '>=8'}
 
-  dompurify@3.4.16:
-    resolution: {integrity: sha512-sqo+pNp3qRhCIpbgRi1y8Tgk27Bo2Ry7w0dC1NBeNTdZChWjz9Xb/KOoZbRP/R6pQZ80Qw8YhXw13hWWBbMRnQ==}
+  dompurify@3.4.17:
+    resolution: {integrity: sha512-B/pSlYVHQ58kqISD/yDjuJ1yfzI34m1gF4lAod2bwSRhiN4K5Cl3H8Af7hqB2PmTL911tdEudnnXn5FnhRoz0w==}
 
   dunder-proto@1.0.1:
     resolution: {integrity: sha512-KIN/nDJBQRcXw0MLVhZE9iQHmG68qAVIBg9CqmUYjmQIhgij9U5MFvrqkUL5FbtyyzZuOeOt0zdeRe4UY7ct+A==}
@@ -1353,8 +1354,8 @@ packages:
   fast-json-stable-stringify@2.1.0:
     resolution: {integrity: sha512-lhd/wF+Lk98HZoTCtlVraHtfh5XYijIjalXck7saUtuanSDyLMxnHhSXEDJqHxD7msR8D0uCmqlkwjCV8xvwHw==}
 
-  fast-uri@3.1.8:
-    resolution: {integrity: sha512-GZMtZUTNRpOVIECoXwLNZS5xUGE+mVNbTB8h/7Rwh2TFWcBQiPzTgyZi05BF9UMZKkLJv8XBRJTlU7zg8+ZfMg==}
+  fast-uri@3.1.9:
+    resolution: {integrity: sha512-hS/0Wt3Ya043oKXs0sIxrMpKQITXhMLIrVAKKXi4gozGC9v7YRWVnXIZzjNPTO02M9BdxLCWqK1yRXgNziVyJQ==}
 
   fdir@6.5.0:
     resolution: {integrity: sha512-tIbYtZbucOs0BRGqPJkshJUYdL+SDH7dVM8gjy+ERp3WAUjLEFJE+02kanyHtwjWOnwrKYBiwAmM0p4kLJAnXg==}
@@ -1919,8 +1920,8 @@ packages:
     resolution: {integrity: sha512-BR7VvDCVHO+q2xBEWskxS6DJE1qRnb7DxzUrogb71CWoSficBxYsiAGd+Kl0mmq/MprG9yArRkyrQxTO6XjMzA==}
     hasBin: true
 
-  serialize-javascript@7.1.0:
-    resolution: {integrity: sha512-RNEqWOyhhUQYN9V1GfHwu9AR/g+NTciH6Z5u3/no6X3/w+04J2lVDL+svFQVXgXrEGBMG2puMVN3gq2SNGuTGw==}
+  serialize-javascript@7.1.3:
+    resolution: {integrity: sha512-kYEnegpAxWFjUw3dSYdSM9zVlTrsxDbsSkq/qd3B7VanqyJ+JdDy6qVyuqVGBhSfuD/rLZQEKuXsO5KZFCrVYQ==}
     engines: {node: '>=20.0.0'}
 
   set-function-length@1.2.2:
@@ -2139,8 +2140,8 @@ packages:
       '@vite-pwa/assets-generator':
         optional: true
 
-  vite@8.1.5:
-    resolution: {integrity: sha512-7ULLwsCdYx/nRyrpiEwvqb5TFHrMVZyBt+rg/OAXT7rgj/z+DtTDyKFeLAdDkubDVDKD8jOsndmy7m55XcfUsw==}
+  vite@8.1.6:
+    resolution: {integrity: sha512-aRAHIxx5SW5zc1sMqFwJU/t5qaFfXb5Hj0J7W0VXihu/X99+346tz6080tO1T1xVIJORX/b3zVTXGFqUXh35uw==}
     engines: {node: ^20.19.0 || >=22.12.0}
     hasBin: true
     peerDependencies:
@@ -3069,11 +3070,10 @@ snapshots:
     transitivePeerDependencies:
       - supports-color
 
-  '@rollup/plugin-node-resolve@16.0.3(rollup@4.62.5)':
+  '@rollup/plugin-node-resolve@16.0.3(patch_hash=be62dc9211d95e5034b7dc50fcd1c89993757756796f2f0b4e9386f191d50e53)(rollup@4.62.5)':
     dependencies:
       '@rollup/pluginutils': 5.4.0(rollup@4.62.5)
       '@types/resolve': 1.20.2
-      deepmerge: 4.3.1
       is-module: 1.0.0
       resolve: 1.22.12
     optionalDependencies:
@@ -3088,7 +3088,7 @@ snapshots:
 
   '@rollup/plugin-terser@1.0.0(rollup@4.62.5)':
     dependencies:
-      serialize-javascript: 7.1.0
+      serialize-javascript: 7.1.3
       smob: 1.6.2
       terser: 5.50.0
     optionalDependencies:
@@ -3269,17 +3269,17 @@ snapshots:
   '@typescript/typescript-win32-x64@7.0.2':
     optional: true
 
-  '@vitejs/plugin-react@6.0.5(vite@8.1.5(@types/node@22.19.7)(terser@5.50.0))':
+  '@vitejs/plugin-react@6.0.5(vite@8.1.6(@types/node@22.19.7)(terser@5.50.0))':
     dependencies:
       '@rolldown/pluginutils': 1.0.1
-      vite: 8.1.5(@types/node@22.19.7)(terser@5.50.0)
+      vite: 8.1.6(@types/node@22.19.7)(terser@5.50.0)
 
   acorn@8.18.0: {}
 
   ajv@8.20.0:
     dependencies:
       fast-deep-equal: 3.1.3
-      fast-uri: 3.1.8
+      fast-uri: 3.1.9
       json-schema-traverse: 1.0.0
       require-from-string: 2.0.2
 
@@ -3421,8 +3421,6 @@ snapshots:
     dependencies:
       ms: 2.1.3
 
-  deepmerge@4.3.1: {}
-
   define-data-property@1.1.4:
     dependencies:
       es-define-property: 1.0.1
@@ -3437,7 +3435,7 @@ snapshots:
 
   detect-libc@2.1.2: {}
 
-  dompurify@3.4.16:
+  dompurify@3.4.17:
     optionalDependencies:
       '@types/trusted-types': 2.0.7
 
@@ -3553,7 +3551,7 @@ snapshots:
 
   fast-json-stable-stringify@2.1.0: {}
 
-  fast-uri@3.1.8: {}
+  fast-uri@3.1.9: {}
 
   fdir@6.5.0(picomatch@4.0.5):
     optionalDependencies:
@@ -3918,7 +3916,7 @@ snapshots:
 
   monaco-editor@0.57.0:
     dependencies:
-      dompurify: 3.4.16
+      dompurify: 3.4.17
       marked: 14.0.0
 
   ms@2.1.3: {}
@@ -4144,7 +4142,7 @@ snapshots:
 
   semver@6.3.1: {}
 
-  serialize-javascript@7.1.0: {}
+  serialize-javascript@7.1.3: {}
 
   set-function-length@1.2.2:
     dependencies:
@@ -4409,18 +4407,18 @@ snapshots:
       '@egjs/hammerjs': 2.0.17
       component-emitter: 2.0.0
 
-  vite-plugin-pwa@1.3.0(vite@8.1.5(@types/node@22.19.7)(terser@5.50.0))(workbox-build@7.4.1)(workbox-window@7.4.1):
+  vite-plugin-pwa@1.3.0(vite@8.1.6(@types/node@22.19.7)(terser@5.50.0))(workbox-build@7.4.1)(workbox-window@7.4.1):
     dependencies:
       debug: 4.4.3
       pretty-bytes: 6.1.1
       tinyglobby: 0.2.17
-      vite: 8.1.5(@types/node@22.19.7)(terser@5.50.0)
+      vite: 8.1.6(@types/node@22.19.7)(terser@5.50.0)
       workbox-build: 7.4.1
       workbox-window: 7.4.1
     transitivePeerDependencies:
       - supports-color
 
-  vite@8.1.5(@types/node@22.19.7)(terser@5.50.0):
+  vite@8.1.6(@types/node@22.19.7)(terser@5.50.0):
     dependencies:
       lightningcss: 1.33.0
       picomatch: 4.0.5
@@ -4493,7 +4491,7 @@ snapshots:
       '@babel/preset-env': 7.29.7(@babel/core@7.29.7)
       '@babel/runtime': 7.29.7
       '@rollup/plugin-babel': 6.1.0(@babel/core@7.29.7)(rollup@4.62.5)
-      '@rollup/plugin-node-resolve': 16.0.3(rollup@4.62.5)
+      '@rollup/plugin-node-resolve': 16.0.3(patch_hash=be62dc9211d95e5034b7dc50fcd1c89993757756796f2f0b4e9386f191d50e53)(rollup@4.62.5)
       '@rollup/plugin-replace': 6.0.3(rollup@4.62.5)
       '@rollup/plugin-terser': 1.0.0(rollup@4.62.5)
       '@trickfilm400/rollup-plugin-off-main-thread': 3.0.0-pre1
