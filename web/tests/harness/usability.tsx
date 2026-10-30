@@ -40,6 +40,13 @@ if (fixtureOptions.has('mixer') || fixtureOptions.has('layout') || fixtureOption
   cameras[1].profiles[0].audioCodec = 'pcm_alaw';
   cameras[1].profiles[0].tracks = [{ index: 1, kind: 'audio', codec: 'pcm_alaw', bitrateKbps: null, width: 0, height: 0, fps: 0, channels: 1, sampleRate: 8000, source: 'probe' }];
 }
+if (fixtureOptions.has('raw-performance')) {
+  scene.sources = Array.from({ length: 5 }, (_, index) => ({ id: `raw-${index}`, kind: 'rtsp', name: `RTSP ${index}`,
+    rtspUrl: 'rtsp://camera.invalid/live', transport: 'tcp', muted: true, volume: 1, syncOffsetMs: 0,
+    monitoring: 'off', audioTrack: 1, filters: [] }));
+  scene.items = scene.sources.map((source, index) => ({ ...scene.items[0], id: `raw-item-${index}`, sourceId: source.id,
+    x: index * 384, width: 384 }));
+}
 if (fixtureOptions.has('source-identities')) {
   scene.sources.forEach((source, index) => { source.id = index ? fixtureOptions.get('source-identities')! : 'hasOwnProperty'; });
   scene.items.forEach((item, index) => { item.sourceId = scene.sources[index].id; });
@@ -48,7 +55,7 @@ const monitorView = { ...defaultMonitorView(), sourceDecorations: { 'other-scene
 if (fixtureOptions.has('performance')) for (const source of scene.sources) {
   Object.assign(monitorView.sourceDecorations, { [source.id]: { ...defaultSourceDecoration(), audioMeter: { ...defaultSourceDecoration().audioMeter, enabled: true, thresholdDbfs: -3 } } });
 }
-if (fixtureOptions.has('layout') || fixtureOptions.has('performance')) {
+if (fixtureOptions.has('layout') || fixtureOptions.has('performance') || fixtureOptions.has('raw-performance')) {
   const canvas = document.createElement('canvas'); canvas.width = 640; canvas.height = 360;
   const context = canvas.getContext('2d')!;
   let frame = 0;
@@ -92,8 +99,8 @@ window.fetch = async (input, init) => {
   if (fixtureOptions.has('account-server') && url.pathname === '/api/v2/account/preferences/monitor-view') return originalFetch(input, init);
   const reply = (data: unknown, status = 200) => new Response(JSON.stringify(data), { status, headers: { 'Content-Type': 'application/json' } });
   if (url.pathname === '/api/v1/studio') return reply(studio);
-  if ((fixtureOptions.has('layout') || fixtureOptions.has('performance')) && url.pathname.includes('/account-cameras/')) {
-    if (init?.method === 'DELETE') return new Response(null, { status: 204 });
+  if ((fixtureOptions.has('layout') || fixtureOptions.has('performance') || fixtureOptions.has('raw-performance')) && (url.pathname.includes('/account-cameras/') || url.pathname.startsWith('/api/v1/sources/'))) {
+    if (init?.method === 'DELETE') { document.documentElement.dataset.fixtureDeletes = String(Number(document.documentElement.dataset.fixtureDeletes || 0) + 1); return new Response(null, { status: 204 }); }
     fixtureOffers++; document.documentElement.dataset.fixtureOffers = String(fixtureOffers);
     return new Response('v=0\r\no=- 0 0 IN IP4 127.0.0.1\r\ns=-\r\nt=0 0\r\nm=video 9 UDP/TLS/RTP/SAVPF 96\r\na=mid:0\r\na=fingerprint:sha-256 AA:BB\r\n',
       { status: 201, headers: { 'Content-Type': 'application/sdp', Location: url.pathname + '/session/fixture-session' } });
@@ -178,7 +185,7 @@ window.fetch = async (input, init) => {
     issue.state = 'acknowledged'; return reply(issue);
   }
   if (url.pathname === '/api/v1/cameras') return reply({ cameras: fixtureOptions.has('performance') ? cameras.slice(0, 12) : fixtureOptions.has('mixer') || fixtureOptions.has('layout') ? cameras.slice(0, 2) : [] });
-  if (url.pathname === '/api/v1/playback/capabilities') return reply({ modes: { direct: { enabled: true } }, sources: [] });
+  if (url.pathname === '/api/v1/playback/capabilities') return reply({ modes: { direct: { enabled: true } }, sources: fixtureOptions.has('raw-performance') ? scene.sources.map(source => ({ sourceId: source.id, endpoint: `/api/v1/sources/${source.id}/whep`, preferred: 'direct', fallback: 'composite', strategy: 'passthrough', codec: 'h264', audioCodec: '' })) : [] });
   if (url.pathname.includes('analytics')) return reply({ policies: [] });
   if (url.pathname.includes('motion-zones')) return reply({ zones: [] });
   return reply({}, 404);

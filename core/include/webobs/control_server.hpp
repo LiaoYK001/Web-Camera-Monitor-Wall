@@ -23,6 +23,7 @@ struct RuntimeStatus {
     std::atomic<bool> recording_active{false};
     std::atomic<bool> webrtc_configured{false};
     std::atomic<bool> webrtc_ready{false};
+    std::atomic<bool> composite_idle{false};
     std::atomic<std::uint64_t> source_visible{0};
     std::atomic<std::uint64_t> source_healthy{0};
     std::atomic<std::uint64_t> source_unhealthy{0};
@@ -30,7 +31,7 @@ struct RuntimeStatus {
 
     [[nodiscard]] bool ready() const
     {
-        return control_plane_active.load() && (!webrtc_configured.load() || webrtc_ready.load()) &&
+        return control_plane_active.load() && (!webrtc_configured.load() || composite_idle.load() || webrtc_ready.load()) &&
                source_unhealthy.load() == 0;
     }
 };
@@ -46,6 +47,7 @@ public:
 
     std::optional<std::string> start();
     void stop();
+    bool composite_requested();
 
 private:
     struct Impl;

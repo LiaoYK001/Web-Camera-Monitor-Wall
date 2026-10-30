@@ -228,7 +228,12 @@ if [ -n "$draft_tag" ]; then
 fi
 if [ "$prerelease" = true ]; then
     gh api --method PATCH "repos/$GITHUB_REPOSITORY/releases/$release_id" \
-        -F draft=false -F prerelease=true >/dev/null
+        -F draft=false -F prerelease=true \
+        -f "tag_name=$version" -f "target_commitish=$revision" >/dev/null
+    published_release_tag="$(gh api "repos/$GITHUB_REPOSITORY/releases/$release_id" --jq .tag_name)"
+    [ "$published_release_tag" = "$version" ] || {
+        echo "published Release tag differs; refusing image promotion" >&2; exit 65;
+    }
     docker buildx imagetools create \
         --tag "${image}:${version}" "${image}@${digest}"
     promoted_digest="$(docker buildx imagetools inspect "${image}:${version}" | \
@@ -238,7 +243,14 @@ if [ "$prerelease" = true ]; then
     }
     echo "published preview ${version} and sha-${short_revision} from ${digest}; latest was not changed"
 else
-    gh api --method PATCH "repos/$GITHUB_REPOSITORY/releases/$release_id" -F draft=false >/dev/null
+    # Bind the existing annotated tag in the same request that publishes the
+    # Draft. Immutable releases cannot repair an untagged association later.
+    gh api --method PATCH "repos/$GITHUB_REPOSITORY/releases/$release_id" -F draft=false \
+        -f "tag_name=$version" -f "target_commitish=$revision" >/dev/null
+    published_release_tag="$(gh api "repos/$GITHUB_REPOSITORY/releases/$release_id" --jq .tag_name)"
+    [ "$published_release_tag" = "$version" ] || {
+        echo "published Release tag differs; refusing image promotion" >&2; exit 65;
+    }
 
     docker buildx imagetools create \
         --tag "${image}:${version}" --tag "${image}:latest" "${image}@${digest}"

@@ -56,6 +56,8 @@ A milestone name is an engineering gate, not a release date. A release may be cu
 
 里程碑名称是工程门禁，不是发布日期。只有已完成并经审查的门禁才能形成发布。公开 SemVer Tag 可增加补丁位，例如 `v1.1.1`；已经发布的 Tag 不得移动。
 
+v4.1 当前范围例外（2026-10-20 用户决定）：仅 Windows x64，Android 与 Docker/容器暂停同步交付。仍通过 Windows 版本化发布 PR → 已审查 main 提交 → 不可变 v4.1 Tag/Release，不因暂停两端而发布其 APK/镜像或变更 GHCR 别名。历史验收保留；[Windows 单端流程](release-flow.md#windows-单端发布--windows-only-publication)。Current v4.1 scope is Windows x64 only; the reviewed release branch/tag flow remains mandatory, with no Android/container publication or alias changes.
+
 ## Branch responsibilities / 分支职责
 
 | Branch / 分支 | Responsibility / 职责 | Version identity / 版本身份 | Publication / 发布 |

@@ -85,6 +85,29 @@ class OnlineSourceTests(unittest.TestCase):
             inputs[0]['video']='vp9';command=source.ffmpeg_command(inputs,'rtsp://127.0.0.1:18554/'+'a'*32,'auto',720)
             self.assertEqual(command[command.index('-c:v')+1],'libx264');self.assertNotIn('file',command[command.index('-protocol_whitelist')+1])
 
+    def test_vod_auto_checks_frame_reordering_but_live_and_explicit_copy_skip_probe(self):
+        item=dict(url='http://example.test/video.mp4',headers={},video='h264',audio='aac',live=False)
+        output='rtsp://127.0.0.1:18554/'+'a'*32
+        with patch.object(source,'binary',return_value='/fixed/ffmpeg'),patch.object(source,'input_proxy',return_value=''),patch.object(source,'reorder_free_video',return_value=False) as probe:
+            command=source.ffmpeg_command([item],output,'auto',720)
+            self.assertEqual(command[command.index('-c:v')+1],'libx264')
+            self.assertEqual(command[command.index('-bf')+1],'0')
+            self.assertEqual(command[command.index('-c:a')+1],'copy')
+            probe.assert_called_once();probe.reset_mock()
+            for mode,live in [('copy',False),('auto',True)]:
+                item['live']=live;command=source.ffmpeg_command([item],output,mode,720)
+                self.assertEqual(command[command.index('-c:v')+1],'copy');probe.assert_not_called()
+
+    def test_vod_probe_rejects_missing_failed_or_reordered_streams(self):
+        item=dict(url='http://example.test/video.mp4',headers={},video='h264',audio='aac')
+        with patch.object(source,'binary',return_value='/fixed/ffprobe'),patch.object(source,'input_proxy',return_value=''):
+            for tracks,expected in [([],False),([{'codec_name':'h264','has_b_frames':1}],False),([{'codec_name':'h264','has_b_frames':0}],True)]:
+                result=type('Result',(),{'returncode':0,'stdout':json.dumps({'streams':tracks}).encode()})()
+                with patch.object(source.subprocess,'run',return_value=result) as run:
+                    self.assertEqual(source.reorder_free_video(item),expected)
+                    self.assertEqual(run.call_args.kwargs['timeout'],6)
+                    self.assertEqual(run.call_args.kwargs['stderr'],source.subprocess.DEVNULL)
+
     def test_checksum_failure_never_replaces_cached_artifact(self):
         with tempfile.TemporaryDirectory() as temp:
             root=Path(temp);cache=root/'cache';cache.mkdir();(cache/'tool.zip').write_bytes(b'old')

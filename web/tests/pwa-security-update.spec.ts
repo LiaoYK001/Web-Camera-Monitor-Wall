@@ -94,6 +94,22 @@ test('encrypted saved profile and offline queue survive without automatic recove
 
 test('accepted evidence export with lost response reconciles after update without duplicate submission', async ({ page }, testInfo) => {
   fixture.state.loseExportResponse = true;
+  // Count application submissions across document replacement. Chromium can
+  // retransmit the old fetch after the update has started; raw HTTP totals
+  // cannot distinguish that from the new application issuing another write.
+  await page.addInitScript(() => {
+    const original = window.fetch.bind(window);
+    window.fetch = (input, init) => {
+      const method = init?.method ?? (input instanceof Request ? input.method : 'GET');
+      const url = input instanceof Request ? input.url : String(input);
+      if (method.toUpperCase() === 'POST' && new URL(url, location.href).pathname === '/api/v1/nvr/exports/jobs') {
+        const key = 'pwa-test:export-submissions';
+        sessionStorage.setItem(key, String(Number(sessionStorage.getItem(key) ?? 0) + 1));
+      }
+      return original(input, init);
+    };
+  });
+  const submissions = () => page.evaluate(() => Number(sessionStorage.getItem('pwa-test:export-submissions') ?? 0));
   await page.goto('/#/archive');
   await controlled(page);
   await page.getByRole('button', { name: '快速导出', exact: true }).click();
@@ -105,16 +121,17 @@ test('accepted evidence export with lost response reconciles after update withou
   await expect.poll(() => new Set(fixture.state.exportRequestIds).size).toBe(1);
   await expect.poll(() => fixture.state.jobs.length).toBe(1);
   const postsBeforeUpdate = fixture.state.exportPosts;
+  expect(await submissions()).toBe(1);
   await upgrade([page]);
   await expect(page.getByRole('region', { name: '导出任务' })).toContainText('正在导出');
   // The update path itself submits nothing and never invents a second identity.
   await page.waitForTimeout(2500);
-  expect(fixture.state.exportPosts).toBe(postsBeforeUpdate);
+  expect(await submissions()).toBe(1);
   expect(new Set(fixture.state.exportRequestIds).size).toBe(1);
   expect(fixture.state.jobs.length).toBe(1);
   await expect(page.getByRole('button', { name: '恢复同一次提交' })).toHaveCount(0);
   await expect(notice(page)).toContainText('任务列表');
-  testInfo.annotations.push({ type: 'raw-http-posts', description: String(postsBeforeUpdate) });
+  testInfo.annotations.push({ type: 'raw-http-posts', description: `${postsBeforeUpdate} before update, ${fixture.state.exportPosts} after update` });
 });
 
 test('legacy client without acknowledgement reloads gate and never caches private routes', async ({ page, context }) => {
