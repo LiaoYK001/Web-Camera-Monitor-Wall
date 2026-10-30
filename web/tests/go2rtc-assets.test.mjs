@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
-import { readFileSync } from 'node:fs';
+import { readFileSync, readdirSync, statSync, existsSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import vm from 'node:vm';
@@ -12,6 +12,22 @@ const web = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const monaco = path.join(web, 'go2rtc-dist/vendor/monaco-editor');
 const evidence = JSON.parse(readFileSync(path.join(monaco, 'webobs-sanitizer.json'), 'utf8'));
 const source = readFileSync(path.join(monaco, evidence.file), 'utf8');
+
+test('offline UI retains every Monaco runtime asset and only the used standalone vendor builds', () => {
+  const original = path.join(web, 'node_modules/monaco-editor/min');
+  for (const file of readdirSync(original, { recursive: true })) {
+    if (statSync(path.join(original, file)).isFile()) assert.ok(existsSync(path.join(monaco, 'min', file)), file);
+  }
+  const vendor = path.join(web, 'go2rtc-dist/vendor');
+  const files = readdirSync(vendor, { recursive: true });
+  assert.ok(!files.some(file => /(^|[\\/])(node_modules|src|esm|dev|esnext|peer|examples)([\\/]|$)/.test(file)));
+  for (const file of ['hls.js/dist/hls.min.js', 'dompurify/dist/purify.min.js', 'js-yaml/dist/js-yaml.min.js',
+    'vis-network/standalone/umd/vis-network.min.js', 'qrcodejs/qrcode.min.js']) assert.ok(existsSync(path.join(vendor, file)));
+  for (const name of readdirSync(vendor)) {
+    assert.ok(existsSync(path.join(vendor, name, 'package.json')));
+    assert.ok(readdirSync(path.join(vendor, name)).some(file => /^license/i.test(file)));
+  }
+});
 
 test('actual packaged Monaco constructor uses the pinned, patched DOMPurify', () => {
   assert.equal(evidence.dompurifyVersion, '3.4.16');

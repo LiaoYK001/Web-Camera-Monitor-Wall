@@ -8,6 +8,7 @@ contextBridge.exposeInMainWorld('webobsDesktop', Object.freeze({
   chooseRecordingDirectory: () => invoke('recordings.choose'),
   displays: () => invoke('displays'),
   projector: options => invoke('projector', options),
+  nativePreview: operation => invoke('native-preview', operation),
   checkUpdate: () => invoke('update.check'),
   downloadUpdate: () => invoke('update.download'),
   installUpdate: () => invoke('update.install'),

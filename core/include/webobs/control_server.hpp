@@ -1,6 +1,7 @@
 #pragma once
 
 #include "webobs/config.hpp"
+#include "webobs/native_preview.hpp"
 #include "webobs/video_encoder.hpp"
 
 #include <atomic>
@@ -15,6 +16,7 @@ class SceneController;
 class StudioController;
 
 struct RuntimeStatus {
+    mutable NativePreviewControl native_preview;
     VideoEncoderCapabilities video_encoder;
     RendererCapabilities renderer;
     HardwareDecodeCapabilities hardware_decode;

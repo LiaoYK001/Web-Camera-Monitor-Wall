@@ -4,6 +4,24 @@
 
 Development measurements only. These results establish neither stock OBS parity nor qualification of the user's laptop.
 
+## 2026-10-30 原生监看与体积排查 / Native monitor and size investigation
+
+用户反馈 `4.1.0-dev.14` 播放相同 H.265 时，FFmpeg/MediaMTX CPU 较高、WebOBS GPU 较高，整体超过 stock OBS 三倍。源码证实：浏览器不满足 HEVC 直通条件（例如已确认 B 帧、重排序未知或接收端不支持）时保留 H.264 兼容转换；此时服务端先解码/编码，网关转发 WebRTC，浏览器再解码/渲染。没有本机进程参数/逐路数据，不能断言用户每一路都命中了该分支。
+
+The reported dev.14 HEVC workload exceeds stock OBS substantially. Code confirms that ineligible browser HEVC paths use H.264 compatibility conversion, adding server decode/encode, WebRTC relay and browser decode/render. User-specific per-stream routing remains unverified.
+
+新增的 Windows 原生 Program 监看直接使用 libobs 解码/渲染，绕过本机观看的兼容视频转换、WebRTC 和浏览器解码。主窗口切换时释放其原播放器；已有独立观看端不随之关闭。当前作为显式试验入口，保留可回退的浏览器模式，使用与 OBS 相同的 NVIDIA/AMD 高性能提示。验收仍要求同机、同源、同分辨率/帧率/音频的可见窗口对照；不能用窗口绘制次数替代每路真实视频帧进度或硬解证据。详见 [Windows 运行边界](windows-desktop.md#v41-开发中的监看性能调整--monitoring-performance-in-v41-development)。
+
+The explicit experimental native Program path bypasses those local video stages and releases the main browser players. Other viewers retain their work. Matching laptop/source/resolution/FPS/audio qualification remains required; draw callbacks alone do not prove per-stream media progress or hardware decode.
+
+对现有 [dev.14 CI 附件](https://github.com/LiaoYK001/Web-Camera-Monitor-Wall/actions/runs/41034181094) ZIP 中央目录的只读检查（按未压缩文件字节）得到：runtime/bin 451,074,384、OBS/CEF 352,434,045、Python 172,898,288、go2rtc UI 144,513,455、WebUI/模型 56,640,014；Electron 主程序另有 245,726,208 字节，尚有其他 Shell 运行库。压缩 NSIS 安装器为 454,131,546 字节，不与安装体积混用。外置 FFmpeg `avcodec-62.dll` 为 118,923,264 字节，OBS 自身使用另一套 `avcodec-61.dll`；二者 ABI 不同，不能简单删除/替换。
+
+The original CI archive records large, independently required Electron, CEF, FFmpeg and Python runtimes. OBS and external FFmpeg use different codec DLL ABIs and cannot safely share arbitrary binaries. Installer download size and installed bytes are distinct measurements.
+
+本机新生成的 go2rtc UI 为 27,226,832 字节，相对 dev.14 减少 117,286,623 字节；Windows 旧包中的未使用 `ffplay.exe` 为 18,800,128 字节，后续不再打包。两项预期合计约 136 MB，实际新安装体积以新候选 `*-footprint.json` 为准。这是文件载荷缩减，不是 CPU/GPU 性能提升率。
+
+Local generated UI assets shrink by 117,286,623 bytes relative to dev.14; omitting unused ffplay removes another 18,800,128 bytes from the locked Windows payload. The new candidate footprint must confirm final installed size. These are payload savings, not a CPU/GPU improvement percentage.
+
 ## 播放中定位占用 / Inspect CPU during playback
 
 监看页新增“实时占用”：保持播放器挂载，展开后每 5 秒读取本次桌面进程树，显示整体 CPU 及桌面/浏览器、FFmpeg、go2rtc、MediaMTX、核心等分项。整体及各项统一按逻辑处理器数量折算；首次读取或长时间中断后等待下一次采样，不把初始化零值计作真实负载。收起后停止读取，后台暂停、恢复后重新读取；单次读取最多 8 秒，旧响应不覆盖新状态。

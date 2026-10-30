@@ -101,6 +101,7 @@ add_executable(webobsd
     core/src/go2rtc_proxy.cpp
     core/src/nvr_media_proxy.cpp
     core/src/main.cpp
+    core/src/native_preview.cpp
     core/src/obs_engine.cpp
     core/src/obs_scene_runtime.cpp
     core/src/scene_controller.cpp
@@ -110,6 +111,7 @@ target_link_libraries(webobsd PRIVATE webobs-common webobs-libobs Boost::headers
 webobs_warnings(webobsd)
 if(WIN32)
     target_sources(webobsd PRIVATE desktop/native/utf8.manifest)
+    target_link_libraries(webobsd PRIVATE user32)
 endif()
 target_compile_definitions(webobsd PRIVATE
     WEBOBS_OBS_PREFIX="${WEBOBS_OBS_PREFIX}"

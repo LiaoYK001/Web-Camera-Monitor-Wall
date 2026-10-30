@@ -9,8 +9,10 @@ export interface DesktopStatus {
   recovery: { from: string; to: string; hasInstaller: boolean; snapshot: string } | null;
 }
 export interface DesktopDisplay { id: number; label: string; primary: boolean; bounds: { x: number; y: number; width: number; height: number } }
+export interface NativePreviewStatus { supported: boolean; requested: boolean; state: number; frames: number }
 export interface DesktopBridge {
   version: number;
+  nativePreview?(operation: 'open' | 'close' | 'status'): Promise<NativePreviewStatus>;
   status(): Promise<DesktopStatus>;
   settings(): Promise<DesktopSettings>;
   saveSettings(changes: Partial<DesktopSettings>): Promise<DesktopSettings>;
