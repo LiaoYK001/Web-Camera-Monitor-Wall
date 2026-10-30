@@ -38,6 +38,10 @@ Dev.15 predates the later decode-gate and dependency fixes. The corrected public
 
 Final dev.17 (`4ca94a4`) passes the complete Windows build with the decode-gate/security fixes, repeated reordered-HEVC native-window checks and the actual desktop preload/IPC/cookie path. Source UI, packaged ASAR and isolated NSIS gates pass. The artifact is a development candidate, outside the stable feed. Actual same-source/quality OBS comparison on the user's laptop remains open.
 
+dev.17 的实际 `*-footprint.json`：安装文件总量 **1,459,393,176 字节**，压缩安装器 **427,435,987 字节**；相对 dev.14 的安装载荷净减少 **135,301,997 字节（8.48%）**。此数字已包含 Electron 安全更新后的 Shell 体积，不能把单项资源预计缩减直接当作最终净减。运行仍为完整多进程产品；性能对照需统计整棵应用进程树，不能只看转移了渲染职责后的 `WebOBS.exe` 单项。
+
+The final installed payload is 1,459,393,176 bytes and the installer is 427,435,987 bytes, a net installed reduction of 135,301,997 bytes (8.48%) from dev.14, including the updated Electron shell. CPU/GPU comparisons must include the complete owned process tree rather than only the shell process after rendering moves into the core.
+
 ## 播放中定位占用 / Inspect CPU during playback
 
 监看页新增“实时占用”：保持播放器挂载，展开后每 5 秒读取本次桌面进程树，显示整体 CPU 及桌面/浏览器、FFmpeg、go2rtc、MediaMTX、核心等分项。整体及各项统一按逻辑处理器数量折算；首次读取或长时间中断后等待下一次采样，不把初始化零值计作真实负载。收起后停止读取，后台暂停、恢复后重新读取；单次读取最多 8 秒，旧响应不覆盖新状态。
