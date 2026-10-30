@@ -74,6 +74,7 @@ The new run had two media FFmpeg processes, observed with CUDA decoding and NVEN
 - 旧候选只在批量建档阶段借用当前前端；主页播放使用旧候选自己的前端，新候选全程使用自身前端。The older candidate used the current frontend for batch setup only; playback used its own bundled frontend. The new candidate used its own frontend throughout.
 - 优化前基线为历史开发候选，不是已发布 v4.0 安装包。仅一次短测；持续帧增长不等于逐路精确 FPS、掉帧和画质验收。The baseline is an earlier development candidate, not the published v4.0 installer. One short run and advancing frames do not qualify exact FPS, dropped frames or visual quality.
 - 私密回执及测试运行目录保留在 Git 外。本页仅保留汇总，不包含摄像机地址、日志、口令或媒体文件。Private receipts remain outside Git; no camera URLs, logs, credentials or media are published here.
+- 2026-10-30 低功耗暂停：启用低功耗后，隐藏窗口或完全移出视口的直接 RTSP 画面会关闭连接并在可见时重连，因此隐藏窗口读数不再等价于可见五路。与 OBS 对照时请保持主窗口可见、五路完整在视口内，并在两侧统一低功耗开关。Low-power suspension closes hidden/offscreen direct RTSP playback and reconnects on return, so hidden-window readings no longer represent five visible streams; keep the window visible with all five tiles in view and match the low-power switch on both sides for OBS comparisons.
 
 正式性能目标仍按 [v4.1 发布草案](release-notes-v4.1.md) 的同机、同源、同质量长期对照完成。Further qualification must use the same user hardware, sources and quality settings for a sustained comparison.
 
