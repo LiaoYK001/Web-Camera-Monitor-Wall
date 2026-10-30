@@ -158,3 +158,23 @@ test('slow composite meters stay single flight, pause in the background and reje
   await page.waitForTimeout(400);
   expect(await calls()).toBe(after);
 });
+
+test('low power releases hidden raw RTSP playback and reconnects on return', async ({ page }) => {
+  await page.setViewportSize({ width: 1800, height: 1800 });
+  await page.goto('/tests/harness/usability.html?area=monitor&raw-performance');
+  await expect(page.locator('.direct-tile.live')).toHaveCount(5);
+  const offers = () => page.evaluate(() => Number(document.documentElement.dataset.fixtureOffers));
+  const initial = await offers();
+  await page.evaluate(() => { Object.defineProperty(document, 'hidden', { configurable: true, value: true }); document.dispatchEvent(new Event('visibilitychange')); });
+  await page.waitForTimeout(300);
+  await expect(page.locator('.direct-tile.live')).toHaveCount(5);
+  expect(await offers()).toBe(initial);
+  await page.evaluate(() => { Object.defineProperty(document, 'hidden', { configurable: true, value: false }); document.dispatchEvent(new Event('visibilitychange')); });
+  await page.getByLabel('低功耗', { exact: true }).check();
+  await page.evaluate(() => { Object.defineProperty(document, 'hidden', { configurable: true, value: true }); document.dispatchEvent(new Event('visibilitychange')); });
+  await expect(page.locator('.direct-tile.disabled')).toHaveCount(5);
+  await expect.poll(() => page.evaluate(() => Number(document.documentElement.dataset.fixtureDeletes || 0))).toBe(5);
+  await page.evaluate(() => { Object.defineProperty(document, 'hidden', { configurable: true, value: false }); document.dispatchEvent(new Event('visibilitychange')); });
+  await expect(page.locator('.direct-tile.live')).toHaveCount(5);
+  expect(await offers()).toBe(initial + 5);
+});

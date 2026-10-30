@@ -48,16 +48,21 @@ function videoGeometry(item: SceneItem, width: number, height: number): CSSPrope
   };
 }
 
-function DirectTile({ item, source, capability, mixer, telemetry, audioMeter, onState, optimization }: {
+function DirectTile({ item, source, capability, mixer, telemetry, audioMeter, onState, optimization, lowPowerEnabled, documentVisible }: {
   item: SceneItem;
   source: SceneSource;
   optimization: PlaybackOptimization;
+  lowPowerEnabled: boolean;
+  documentVisible: boolean;
   capability?: SourcePlaybackCapability;
   mixer: DirectAudioMixer | null;
   telemetry?: TelemetryOverlayConfig;
   audioMeter?: AudioMeterConfig;
   onState?: (sourceId: string, state: ProgramConnectionState) => void;
 }) {
+  const tileRef = useRef<HTMLDivElement>(null);
+  const [tileIntersecting, setTileIntersecting] = useState(true);
+  const playbackEnabled = shouldRunPlayback({ lowPowerEnabled, documentVisible, tileIntersecting, nativeForeground: window.webobsAndroidForeground });
   const videoRef = useRef<HTMLVideoElement>(null);
   const [videoElement, setVideoElement] = useState<HTMLVideoElement | null>(null);
   const bindVideo = useCallback((element: HTMLVideoElement | null) => { videoRef.current = element; setVideoElement(element); }, []);
@@ -71,13 +76,16 @@ function DirectTile({ item, source, capability, mixer, telemetry, audioMeter, on
   const audioAboveSince = useRef(0);
   const audioBelowSince = useRef(0);
 
+  useEffect(() => tileRef.current ? observeTileVisibility(tileRef.current, setTileIntersecting) : undefined, []);
+
   useEffect(() => {
+    if (!playbackEnabled) { setState('disabled'); return undefined; }
     if (source.kind === 'camera' || !videoRef.current || !mixer || !capability?.endpoint || capability.preferred !== 'direct') return undefined;
     const connection = connectSource(videoRef.current, capability.endpoint, setState,
       (stream) => mixer.bindStream(source.id, stream), undefined, { optimization });
     setActiveConnection(connection);
     return () => { connection.close(); setActiveConnection(null); };
-  }, [capability, mixer, source.id, optimization.enabled, optimization.slowStreamTolerance, optimization.adaptiveProfiles, optimization.catchUp]);
+  }, [capability, mixer, source.id, playbackEnabled, optimization.enabled, optimization.slowStreamTolerance, optimization.adaptiveProfiles, optimization.catchUp]);
 
   useEffect(() => {
     if (source.kind === 'camera' || !mixer || !videoRef.current || !capability?.endpoint || capability.preferred !== 'direct') return undefined;
@@ -121,6 +129,7 @@ function DirectTile({ item, source, capability, mixer, telemetry, audioMeter, on
   return (
     <div
       className={`direct-tile ${state}`}
+      ref={tileRef}
       data-source-id={source.id}
       data-audio-gain={source.muted ? '0' : source.volume.toFixed(3)}
       data-audio-sync-ms={source.syncOffsetMs}
@@ -1106,6 +1115,7 @@ function DirectPreview({ scene, compact = false, layoutPreview = false, audioWor
                       analyticsZones={analyticsZones}
                       showAnalytics={layoutPreview ? { ...monitorView.analytics, showDetectionBoxes: false, showDetectionLabels: false, showInferenceStatus: false } : monitorView.analytics} onState={handleSourceState} />
                   : <DirectTile item={tile} source={source} capability={bySource.get(source.id)} mixer={mixer}
+                      lowPowerEnabled={!layoutPreview && monitorView.lowPower.enabled} documentVisible={pageVisible}
                       optimization={monitorView.playbackOptimization}
                       telemetry={layoutPreview ? { ...sourceDecoration(monitorView, source.id).telemetry, enabled: false } : monitorView.lowPower.enabled
                         ? { ...sourceDecoration(monitorView, source.id).telemetry, refreshIntervalMs: Math.max(5000, sourceDecoration(monitorView, source.id).telemetry.refreshIntervalMs) }
