@@ -368,3 +368,17 @@ On 2026-11-01, beyond the normal-exit process gate from round 20, a deliberate h
 Evidence: `native-crash-smoke.json` reports `status=passed`, `crashAfterSeconds=8`, `exitCode=4294967295` (the Windows hard-kill value); the gate receipt reports `crashed=true`, five samples, `listeners=[]` and `orphans=[]`. This run observed no obs64 child processes, so the receipt proves "no install-root process survived the hard kill", not "every OBS child exits with its root".
 
 Boundaries: still five placeholder RTSP inputs, not real cameras; only a process-level kill, not plugin/driver crashes, real decode pressure or long-run crashes; it does not cover second instance, detached services outside the install root, retained-feature start/stop, and is neither target-machine evidence nor a P3 conclusion for the Electron default stack.
+
+### 原生宿主单实例守卫 / Native host single-instance guard
+
+2026-11-01 为入口 `launch-native.ps1` 增加会话级互斥量 `Local\WebObsNativeHostSingleInstance`：第一次启动持有它并在整个 OBS 生命周期内保持；第二个启动在任何 profile 创建、任何 obs64 进程出现之前直接退出（退出码 0，打印“already running”）。`-AllowMultiple` 保留给明确的多实例开发场景；直接绕过启动器运行 obs64 时仍由上游 OBS 自己的“已在运行”对话框拦截，本测试不自动点击该对话框。([run 41246119235](https://github.com/LiaoYK001/Web-Camera-Monitor-Wall/actions/runs/41246119235)，版本 `4.1.0-dev.50`，提交 `9f07eea`，artifact `13059736192`。)
+
+证据：`native-second-instance-smoke.json` 为 `status=passed`、`holdSeconds=30`、`secondExitCode=0`、`secondElapsedMs=547`、`hostsBefore=1`、`hostsAfter=1`、`refused=true`；被持有的第一个宿主随后按计划强杀，进程门 `crashed=true`、`samples=16`、`durationMs=30361`、`listeners=[]`、`orphans=[]`。因此该烟测证明“第二个启动器不会产生第二个 profile 或第二个 obs64”，并同时复验强杀收束。
+
+边界：仅覆盖启动器层；不覆盖直接运行 obs64 时上游对话框的自动化、窗口前置/聚焦转发、不同安装根目录并行运行、真实相机、保留功能启停或目标机；依旧不是 P3 全量结论。
+
+On 2026-11-01 the `launch-native.ps1` entry point gained a session mutex `Local\WebObsNativeHostSingleInstance`: the first launch holds it for the whole OBS lifetime; a second launch exits with code 0 and an "already running" message before creating any profile or obs64 process. `-AllowMultiple` remains the explicit multi-instance escape hatch. Running obs64 directly still reaches upstream OBS's own "already running" dialog, which this test deliberately does not automate. ([run 41246119235](https://github.com/LiaoYK001/Web-Camera-Monitor-Wall/actions/runs/41246119235), version `4.1.0-dev.50`, commit `9f07eea`, artifact `13059736192`.)
+
+Evidence: `native-second-instance-smoke.json` reports `status=passed`, `holdSeconds=30`, `secondExitCode=0`, `secondElapsedMs=547`, `hostsBefore=1`, `hostsAfter=1`, `refused=true`; the held first host was then deliberately killed and the process gate reports `crashed=true`, `samples=16`, `durationMs=30361`, `listeners=[]`, `orphans=[]`. The smoke therefore proves "a second launcher creates neither a second profile nor a second obs64" and re-checks kill containment in the same run.
+
+Boundaries: launcher level only; it does not automate upstream OBS's dialog when obs64 is run directly, window activation/focus forwarding, parallel runs from different install roots, real cameras, retained-feature start/stop, or the target machine; it is still not a full P3 conclusion.
