@@ -515,6 +515,12 @@ def run(runtime: Path, result: Path, ffmpeg_override: Path | None, offline: bool
         # Fixed harness exceptions contain no camera names/URLs/desktop pixels.
         error = failure
         summary["errorType"] = type(failure).__name__
+        try:
+            failed = private / "failed.json"
+            if failed.exists():
+                summary["harnessFailure"] = str(read_json(failed).get("error", ""))[:300]
+        except Exception:
+            pass
     finally:
         if process is not None and process.poll() is None:
             process.kill()  # Only this Popen-owned, new disposable obs64 instance.
