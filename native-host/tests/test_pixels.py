@@ -123,6 +123,13 @@ class PixelContractTests(unittest.TestCase):
             self.assertNotIn(directory, json.dumps(report))
             self.assertNotIn('ENOENT:', json.dumps(report))
             self.assertFalse(report["temporalProgress"])
+            # The fullscreen Program role is a real capture target, not an alias
+            # rejected by the analyzer's role allowlist.
+            result = subprocess.run([shutil.which("node"), str(HERE / "pixel-pattern.cjs"), "analyze", directory,
+                                     "program-fullscreen", "forward", "true"], check=True, capture_output=True, text=True)
+            fullscreen = json.loads(result.stdout)
+            self.assertFalse(fullscreen["passed"])
+            self.assertEqual(len(fullscreen["samples"]), 8)
             # Preserve our fixed assertion diagnostics, but never filesystem paths.
             (Path(directory) / "client-0.bmp").write_bytes(b"BM")
             result = subprocess.run([shutil.which("node"), str(HERE / "pixel-pattern.cjs"), "analyze", directory,

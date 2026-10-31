@@ -93,7 +93,7 @@ if (require.main === module) {
     fs.writeFileSync(args[1], Buffer.concat(Array.from({ length: pattern.FRAMES }, (_, counter) => pattern.frame(channel,counter))), { flag: 'wx' });
   } else if (mode === 'analyze') {
     const [directory, role, order, dynamic] = args;
-    assert.ok(['main-preview', 'program-projector'].includes(role));
+    assert.ok(['main-preview', 'program-projector', 'program-fullscreen'].includes(role));
     console.log(JSON.stringify(analyze(directory, { inset: role === 'main-preview' ? 10 : 0, order: order === 'reverse' ? REVERSED : ORDER, dynamic: dynamic === 'true' })));
   } else throw new Error('Expected selftest, fixture or analyze');
 }
