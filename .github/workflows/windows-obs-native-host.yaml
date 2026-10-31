@@ -207,6 +207,76 @@ jobs:
             qualification = 'unsigned per-user development installer on a GitHub-hosted runner; not the product installer, target-machine evidence or a P5 claim'
           }
           $receipt | ConvertTo-Json -Depth 4 | Set-Content -LiteralPath (Join-Path $out 'native-nsis-installer.json') -Encoding utf8
+      - name: Upgrade the shipped per-user installer in place
+        if: ${{ !inputs.pixel_test }}
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+          NATIVE_VERSION: ${{ inputs.version }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $oldDir = Join-Path $env:RUNNER_TEMP 'native-nsis-old'
+          if (Test-Path $oldDir) { Remove-Item -Recurse -Force $oldDir }
+          New-Item -ItemType Directory -Path $oldDir | Out-Null
+          gh release download v4.1.0-dev.40 --repo $env:GITHUB_REPOSITORY --pattern '*SETUP.exe' --dir $oldDir
+          if ($LASTEXITCODE -ne 0) { throw 'Pinned dev.40 installer download failed.' }
+          $oldSetup = Get-ChildItem -LiteralPath $oldDir -Filter '*SETUP.exe' | Select-Object -First 1
+          if (-not $oldSetup) { throw 'The pinned release did not contain a SETUP.exe.' }
+          $oldHash = (Get-FileHash -LiteralPath $oldSetup.FullName -Algorithm SHA256).Hash.ToLowerInvariant()
+          if ($oldHash -ne '7cc5724c0aee941802bdc9f8ed71b7547d1b3d73631170e003c5a03d7bb2a54d') { throw "Pinned dev.40 installer hash mismatch: $oldHash" }
+          $root = Join-Path $env:RUNNER_TEMP 'native-nsis-upgrade'
+          if (Test-Path $root) { Remove-Item -Recurse -Force $root }
+          $install = Start-Process -FilePath $oldSetup.FullName -ArgumentList '/S', "/D=$root" -Wait -PassThru
+          if ($install.ExitCode -ne 0) { throw "Installing the pinned dev.40 installer failed with exit code $($install.ExitCode)." }
+          $oldManifest = Get-Content -LiteralPath (Join-Path $root 'webobs-native-prototype.json') -Raw | ConvertFrom-Json
+          if ($oldManifest.version -ne '4.1.0-dev.40') { throw "Pinned installer produced $($oldManifest.version)." }
+          $configRoot = Join-Path $root 'config'
+          New-Item -ItemType Directory -Path (Join-Path $configRoot 'obs-studio/plugin_config/webobs-native-host') -Force | Out-Null
+          [IO.File]::WriteAllText((Join-Path $configRoot 'obs-studio/private-marker.txt'), "dev.40 profile marker`n")
+          $beforeHashes = @{}
+          Get-ChildItem -LiteralPath $configRoot -Recurse -File -Force | ForEach-Object {
+            $rel = $_.FullName.Substring($configRoot.Length).Replace('','/').TrimStart('/')
+            $beforeHashes[$rel] = (Get-FileHash -LiteralPath $_.FullName -Algorithm SHA256).Hash.ToLowerInvariant()
+          }
+          $setup = Get-ChildItem (Join-Path $env:GITHUB_WORKSPACE 'build/obs-native-ci/WebOBS-OBS-native-*-SETUP.exe') | Select-Object -First 1
+          if (-not $setup) { throw 'No current per-user installer for the upgrade step.' }
+          $upgrade = Start-Process -FilePath $setup.FullName -ArgumentList '/S', "/D=$root" -Wait -PassThru
+          if ($upgrade.ExitCode -ne 0) { throw "Upgrading the pinned install failed with exit code $($upgrade.ExitCode)." }
+          $manifest = Get-Content -LiteralPath (Join-Path $root 'webobs-native-prototype.json') -Raw | ConvertFrom-Json
+          if ($manifest.version -ne $env:NATIVE_VERSION) { throw "Upgraded manifest is $($manifest.version), expected $env:NATIVE_VERSION." }
+          $afterHashes = @{}
+          Get-ChildItem -LiteralPath $configRoot -Recurse -File -Force | ForEach-Object {
+            $rel = $_.FullName.Substring($configRoot.Length).Replace('','/').TrimStart('/')
+            $afterHashes[$rel] = (Get-FileHash -LiteralPath $_.FullName -Algorithm SHA256).Hash.ToLowerInvariant()
+          }
+          if ((($beforeHashes.Keys | Sort-Object) -join "`n") -ne (($afterHashes.Keys | Sort-Object) -join "`n")) { throw 'Private profile file set changed across the installer upgrade.' }
+          foreach ($rel in $beforeHashes.Keys) { if ($afterHashes[$rel] -ne $beforeHashes[$rel]) { throw "Private profile file $rel changed across the installer upgrade." } }
+          $uninstall = Start-Process -FilePath (Join-Path $root 'Uninstall.exe') -ArgumentList '/S' -Wait -PassThru
+          if ($uninstall.ExitCode -ne 0) { throw "Silent uninstall after upgrade failed with exit code $($uninstall.ExitCode)." }
+          if (Test-Path -LiteralPath (Join-Path $root 'bin/64bit/obs64.exe')) { throw 'Uninstall after upgrade left runtime binaries behind.' }
+          if (Test-Path -LiteralPath (Join-Path $root 'webobs-native-prototype.json')) { throw 'Uninstall after upgrade left the bundle manifest behind.' }
+          foreach ($rel in $beforeHashes.Keys) {
+            $kept = Join-Path $configRoot $rel
+            if (-not (Test-Path -LiteralPath $kept -PathType Leaf)) { throw "Uninstall after upgrade removed private file $rel." }
+            if ((Get-FileHash -LiteralPath $kept -Algorithm SHA256).Hash.ToLowerInvariant() -ne $beforeHashes[$rel]) { throw "Uninstall after upgrade changed private file $rel." }
+          }
+          if (Test-Path -LiteralPath 'HKCU:\Software\WebOBS\NativePrototype') { throw 'Uninstall after upgrade left the app registry key behind.' }
+          if (Test-Path -LiteralPath 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\WebOBSNativePrototype') { throw 'Uninstall after upgrade left the uninstall registry entry behind.' }
+          $receipt = [ordered]@{
+            schema = 1
+            kind = 'per-user-nsis-upgrade'
+            previousVersion = $oldManifest.version
+            version = $env:NATIVE_VERSION
+            previousInstallerSha256 = $oldHash
+            installerSha256 = (Get-FileHash -LiteralPath $setup.FullName -Algorithm SHA256).Hash.ToLowerInvariant()
+            configuredFileCount = $beforeHashes.Count
+            configPreservedAcrossUpgrade = $true
+            configPreservedAcrossUninstall = $true
+            registryCleanedOnUninstall = $true
+            signed = $false
+            qualification = 'unsigned per-user development upgrade on a GitHub-hosted runner; not the product installer, target-machine evidence or a P5 claim'
+          }
+          $receipt | ConvertTo-Json -Depth 4 | Set-Content -LiteralPath 'build/obs-native-ci/native-nsis-upgrade.json' -Encoding utf8
       - name: Upgrade a pinned previous prototype and verify the private profile survives
         if: ${{ inputs.upgrade_previous && !inputs.pixel_test }}
         shell: pwsh
@@ -381,6 +451,7 @@ jobs:
             build/obs-native-ci/native-restore.json
             build/obs-native-ci/native-crash-smoke.json
             build/obs-native-ci/native-second-instance-smoke.json
+            build/obs-native-ci/native-nsis-upgrade.json
             build/obs-native-ci/native-*-process-gate.json
             build/obs-native-ci/WebOBS-OBS-native-*-windows-x64-SETUP.exe
           if-no-files-found: ignore
