@@ -126,7 +126,7 @@ void backup_config_for_upgrade_if_needed()
 
 	const QString stamp =
 		QDateTime::currentDateTimeUtc().toString(QStringLiteral("yyyyMMdd'T'HHmmss'Z'"));
-	const QDir destination(backups_path + QStringLiteral("/config-") + version + QLatin1Char('-') + stamp);
+	QDir destination(backups_path + QStringLiteral("/config-") + version + QLatin1Char('-') + stamp);
 	if (!QDir().mkpath(destination.absolutePath()))
 		return;
 
