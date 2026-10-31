@@ -155,6 +155,23 @@ jobs:
           path: desktop/out/*/*
           include-hidden-files: true
           if-no-files-found: error
+      - name: Preserve the small install-smoke receipt even on failure
+        if: always() && !cancelled()
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path 'build/desktop-windows' | Out-Null
+          $files = @(Get-ChildItem -LiteralPath 'desktop/out' -Recurse -Filter 'windows-install-smoke.json' -File -ErrorAction SilentlyContinue)
+          foreach ($file in $files) {
+            Copy-Item -LiteralPath $file.FullName -Destination (Join-Path 'build/desktop-windows' $file.Name) -Force
+          }
+      - name: Retain the bounded install-smoke receipt
+        if: always() && !cancelled() && hashFiles('build/desktop-windows/windows-install-smoke.json') != ''
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: webobs-windows-install-smoke-${{ inputs.version }}
+          path: build/desktop-windows/windows-install-smoke.json
+          if-no-files-found: ignore
+          retention-days: 7
       - name: Preserve verified build dependencies after a failed candidate
         if: always() && !cancelled() && steps.windows-cache.outputs.cache-hit != 'true'
         uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0; node24 action runtime

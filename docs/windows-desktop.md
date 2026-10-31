@@ -6,7 +6,7 @@
 
 The 2026-10-31 user decision supersedes a permanently mandatory Electron host. Converge on the pinned OBS frontend, media and display lifecycle through product-owned plugins/build integration. The Electron/NSIS sections below describe the migration fallback, not the target architecture. Do not replace the default product before capability, security/data and lifecycle/installation parity is verified. Keep independent Qt/GStreamer clients separate.
 
-完整目标、真实五路/OBS 同机对照口径和未完成项见[执行计划](windows-obs-parity-dsh-plan.md)与[执行记录及迁移账目](windows-obs-parity-execution.md)。开发预发布不代表黑屏修复、实际硬解或性能/体积达标。
+完整目标、真实五路/OBS 同机对照口径和未完成项见[执行计划](windows-obs-parity-dsh-plan.md)与[执行记录及迁移账目](windows-obs-parity-execution.md)；目标机五路/OBS 同机采集步骤见[目标机验收运行手册](windows-target-qualification-runbook.md)。开发预发布不代表黑屏修复、实际硬解或性能/体积达标。
 
 网站/直播源运行包新增锁定的 yt-dlp、Streamlink、Node/EJS；固定 `webobs-online-source.exe` 和解析/转发后代使用 Job Object，文件进入 manifest、许可证和 SBOM，日常运行无需开发 PATH。接入、Cookie 与验证见[网站与直播源](online-sources.md)。Windows x64、容器、Android 按 `vA.B` 更新；后续 Windows ARM/32 位和原生 Linux x86/ARM 通常在 `vA.0` 大版本节点构建、验收和发布。Bundled website tools follow complete package updates; future architectures remain major-milestone targets, not qualified platforms.
 
