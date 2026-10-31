@@ -526,7 +526,7 @@ def run(runtime: Path, result: Path, ffmpeg_override: Path | None, offline: bool
             original_sources = None
             with tempfile.TemporaryDirectory(prefix="webobs-synthetic-client-") as temporary:
                 captures = Path(temporary)
-                for seq in range(1, 9):
+                for seq in range(1, len(PHASES) + 1):
                     state = wait_state(private, seq, process, deadline)
                     validate_state(state, seq, token, process.pid)
                     if 2 <= seq <= 5:

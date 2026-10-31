@@ -153,7 +153,8 @@ class PixelContractTests(unittest.TestCase):
         gate_source = (ROOT / "native-host/tests/pixel_windows.py").read_text()
         for text in ("LoopbackRtsp", "rtsp-loopback", "mediamtx", "rtsp_transport", "loopbackRtspPhaseQualified",
                      "interrupt_publisher", "restart_publisher", "rtsp-recovered", "rtspRecoveryPhaseQualified",
-                     "fullscreen-recovery", "fullscreenRecoveryPhaseQualified"):
+                     "fullscreen-recovery", "fullscreenRecoveryPhaseQualified",
+                     "for seq in range(1, len(PHASES) + 1)"):
             self.assertIn(text, gate_source)
         self.assertEqual(gate.PHASES[-2:], ("program-fullscreen", "fullscreen-recovery"))
         for text in ("QTcpServer", "QWebSocket", "obs_frontend_recording_start", "obs_output_start", "obs_frontend_take_screenshot", "gs_stage_texture"):
