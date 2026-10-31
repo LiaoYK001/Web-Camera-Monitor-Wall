@@ -36,18 +36,18 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw 'Synthetic process accounting contract failed.' }
           python -B native-host/qualification/test_windows_api.py
           if ($LASTEXITCODE -ne 0) { throw 'Actual Windows process query or private directory API failed; no performance qualification.' }
+      - name: Preflight actual PowerShell capture compilation before other pixel contracts
+        if: inputs.pixel_test
+        shell: pwsh
+        run: |
+          pwsh -NoProfile -File native-host/tests/capture-pixels.ps1 -CompileOnly
+          if ($LASTEXITCODE -ne 0) { throw 'Synthetic capture preflight failed; no final pixels were captured.' }
       - name: Verify finite synthetic pixel-test contracts
         if: inputs.pixel_test
         shell: pwsh
         run: |
           python -B native-host/tests/test_pixels.py
           if ($LASTEXITCODE -ne 0) { throw 'Finite pixel-test contract failed.' }
-      - name: Preflight actual PowerShell capture compilation before the OBS build
-        if: inputs.pixel_test
-        shell: pwsh
-        run: |
-          pwsh -NoProfile -File native-host/tests/capture-pixels.ps1 -CompileOnly
-          if ($LASTEXITCODE -ne 0) { throw 'Synthetic capture preflight failed; no final pixels were captured.' }
       - name: Select existing VS compiler
         shell: pwsh
         run: |
