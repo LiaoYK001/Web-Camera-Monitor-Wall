@@ -30,7 +30,7 @@ from prepare import OBS_COMMIT, obtain
 from smoke_windows import fingerprint
 
 PHASES = ("known-colors", "five-codecs", "studio-preview-no-take", "explicit-take", "program-reopened", "rtsp-loopback",
-          "rtsp-recovered", "program-fullscreen")
+          "rtsp-recovered", "program-fullscreen", "fullscreen-recovery")
 ENV_OVERRIDES = ("OBS_PLUGINS_PATH", "OBS_PLUGINS_DATA_PATH", "OBS_CONFIG_PATH", "QT_PLUGIN_PATH",
                  "QT_QPA_PLATFORM_PLUGIN_PATH", "QML2_IMPORT_PATH", "WEBOBS_NATIVE_SMOKE_TOKEN", "WEBOBS_NATIVE_PIXEL_TOKEN")
 
@@ -343,7 +343,7 @@ def validate_state(state: dict, seq: int, token: str, pid: int) -> None:
     if state.get("studio") is not (3 <= seq <= 5) or (4 <= seq <= 5 and state.get("transitionStopped") is not True):
         raise AssertionError("Studio/TAKE state mismatch")
     windows = state.get("windows", [])
-    if seq == 8:
+    if seq in (8, 9):
         expected_roles = {"main-preview", "program-fullscreen"}
     elif seq >= 6:
         expected_roles = {"main-preview"}
@@ -557,19 +557,21 @@ def run(runtime: Path, result: Path, ffmpeg_override: Path | None, offline: bool
                     phase["passed"] = not timing["captureFailed"] and all(role["passed"] for role in phase["roles"])
                     summary["phases"].append(phase)
                     write_new(private / f"ack-{seq:02}.json", {"schema": 1, "seq": seq, "token": token})
-                    if seq == 6:
+                    if seq in (6, 8):
                         # Only our own synthetic publisher: interrupt one stream,
-                        # keep the source, then let OBS reconnect.
+                        # keep the source, then let OBS reconnect. Phase 8 does this
+                        # while the fullscreen Program projector stays open.
                         rtsp.interrupt_publisher(0)
                         time.sleep(20)
                         rtsp.restart_publisher(0)
                 process.wait(timeout=max(1, min(30, int(deadline-time.monotonic()))))
-                if process.returncode != 0 or read_json(private / "complete.json").get("phases") != 8:
+                if process.returncode != 0 or read_json(private / "complete.json").get("phases") != 9:
                     raise RuntimeError("Native frontend normal close/finite completion failed")
                 summary["normalExit"] = True
                 summary["loopbackRtspPhaseQualified"] = bool(len(summary["phases"]) >= 6 and summary["phases"][5]["passed"])
                 summary["rtspRecoveryPhaseQualified"] = bool(len(summary["phases"]) >= 7 and summary["phases"][6]["passed"])
                 summary["programFullscreenPhaseQualified"] = bool(len(summary["phases"]) >= 8 and summary["phases"][7]["passed"])
+                summary["fullscreenRecoveryPhaseQualified"] = bool(len(summary["phases"]) >= 9 and summary["phases"][8]["passed"])
             summary["status"] = "passed" if all(phase["passed"] for phase in summary["phases"]) else "failed"
             summary["syntheticFinalWindowPixelsQualified"] = summary["status"] == "passed"
     except Exception as failure:

@@ -361,6 +361,13 @@ class Harness final : public QObject {
 			if (!rtsp_playing()) return false;
 			return !obs_frontend_preview_program_mode_active() && scene_is(obs_frontend_get_current_scene, rtsp_scene_);
 		}
+		if (phase_ == 9) {
+			// The fullscreen projector must stay real and full-screen across a
+			// media interruption, then show the recovered five-tile wall.
+			if (!fullscreen_ || !fullscreen_->isFullScreen()) return false;
+			if (!rtsp_drop_seen_ || !rtsp_playing()) return false;
+			return !obs_frontend_preview_program_mode_active() && scene_is(obs_frontend_get_current_scene, rtsp_scene_);
+		}
 		if (phase_ >= 6) {
 			for (auto *source : rtsp_) {
 				if (!source || obs_source_media_get_state(source) != OBS_MEDIA_STATE_PLAYING ||
@@ -395,7 +402,7 @@ class Harness final : public QObject {
 		if (phase_ > 1) for (std::size_t i = 0; i < uuid_set.size(); ++i)
 			ids.append(QJsonObject{{"uuid", QString::fromStdString(uuid_set[i])}, {"settingsSha256", QString::fromLatin1(hash_set[i])}});
 		const char *names[] = {"", "known-colors", "five-codecs", "studio-preview-no-take", "explicit-take", "program-reopened",
-		                       "rtsp-loopback", "rtsp-recovered", "program-fullscreen"};
+		                       "rtsp-loopback", "rtsp-recovered", "program-fullscreen", "fullscreen-recovery"};
 		QJsonArray windows; windows.append(window(preview_, "main-preview", 10));
 		if (program_) windows.append(window(program_, "program-projector", 0));
 		if (fullscreen_) windows.append(window(fullscreen_, "program-fullscreen", 0));
@@ -424,8 +431,9 @@ class Harness final : public QObject {
 		else if (phase_ == 6) { if (program_) { program_->close(); program_ = nullptr; } obs_frontend_set_preview_program_mode(false); create_rtsp(); }
 		else if (phase_ == 7) { rtsp_drop_seen_ = false; rtsp_drop_at_ = -1; }
 		else if (phase_ == 8) { open_fullscreen(); }
+		else if (phase_ == 9) { rtsp_drop_seen_ = false; rtsp_drop_at_ = -1; }
 		else {
-			write_new(directory_ + "/complete.json", {{"schema", 1}, {"phases", 8}, {"syntheticOnly", true}, {"pixelQualified", false}});
+			write_new(directory_ + "/complete.json", {{"schema", 1}, {"phases", 9}, {"syntheticOnly", true}, {"pixelQualified", false}});
 			close_normal();
 		}
 	}
@@ -441,7 +449,7 @@ class Harness final : public QObject {
 				reopening_ = false; open_program();
 			}
 			require(identities(snapshot), "input pointer/UUID/settings/global private-input identity changed");
-			if (phase_ == 7) {
+			if (phase_ == 7 || phase_ == 9) {
 				if (!rtsp_drop_seen_) {
 					for (auto *source : rtsp_)
 						if (!source || obs_source_media_get_state(source) != OBS_MEDIA_STATE_PLAYING) {
@@ -455,7 +463,7 @@ class Harness final : public QObject {
 				}
 			}
 			if (!published_) {
-				require(clock_.elapsed() - changed_at_ < (phase_ == 7 ? 180000 : 30000),
+				require(clock_.elapsed() - changed_at_ < (phase_ == 7 || phase_ == 9 ? 180000 : 30000),
 				        "bounded scene/media state readiness timed out");
 				if (!ready()) { ready_at_ = -1; return; }
 				if (ready_at_ < 0) ready_at_ = clock_.elapsed();
