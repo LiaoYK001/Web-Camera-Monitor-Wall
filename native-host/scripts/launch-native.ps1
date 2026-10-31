@@ -59,10 +59,42 @@ $start.Environment.Remove('WEBOBS_NATIVE_SMOKE_TOKEN') | Out-Null
 if ($SmokeToken) { $start.Environment['WEBOBS_NATIVE_SMOKE_TOKEN'] = $SmokeToken }
 $process = [Diagnostics.Process]::Start($start)
 if ($SmokeToken -and -not $process.WaitForExit($TimeoutSeconds * 1000)) {
+    $titles = @()
+    try {
+        Add-Type -TypeDefinition @"
+using System;
+using System.Collections.Generic;
+using System.Runtime.InteropServices;
+using System.Text;
+public static class WebObsTimeoutWindows {
+    public delegate bool EnumProc(IntPtr hWnd, IntPtr lParam);
+    [DllImport("user32.dll")] public static extern bool EnumWindows(EnumProc callback, IntPtr lParam);
+    [DllImport("user32.dll")] public static extern uint GetWindowThreadProcessId(IntPtr hWnd, out uint processId);
+    [DllImport("user32.dll", CharSet = CharSet.Unicode)] public static extern int GetWindowText(IntPtr hWnd, StringBuilder text, int max);
+    [DllImport("user32.dll")] public static extern bool IsWindowVisible(IntPtr hWnd);
+    public static List<string> Titles(uint target) {
+        var titles = new List<string>();
+        EnumWindows((handle, parameter) => {
+            uint owner;
+            GetWindowThreadProcessId(handle, out owner);
+            if (owner == target && IsWindowVisible(handle)) {
+                var buffer = new StringBuilder(256);
+                GetWindowText(handle, buffer, 256);
+                if (buffer.Length > 0) { titles.Add(buffer.ToString()); }
+            }
+            return true;
+        }, IntPtr.Zero);
+        return titles;
+    }
+}
+"@
+        $titles = [WebObsTimeoutWindows]::Titles([uint32]$process.Id) | Select-Object -First 5
+    } catch { }
     # Only the process we just created in the disposable test bundle.
     $process.Kill($true)
     $process.WaitForExit()
-    throw "Native Qt smoke timed out after $TimeoutSeconds seconds; inspect only this runtime's private OBS log locally."
+    $bounded = @($titles | ForEach-Object { if ($_.Length -gt 120) { $_.Substring(0, 120) } else { $_ } }) -join ' | '
+    throw "Native Qt smoke timed out after $TimeoutSeconds seconds; visible windows: $bounded"
 }
 $process.WaitForExit()
 exit $process.ExitCode
