@@ -34,7 +34,7 @@ pwsh -NoProfile -File desktop/scripts/build-obs-native.ps1 -Version 0.1.0-dev.3 
 
 独立开发安装包（原型）：`native-host/installer/WebOBSNative.nsi` 用 NSIS 把同一份冻结 runtime 打包成未签名的每用户安装器 `WebOBS-OBS-native-<dev>-windows-x64-SETUP.exe`。静默安装到 `%LOCALAPPDATA%\WebOBS Native Prototype`，只写 HKCU 的卸载信息，不注册服务；重装会覆盖程序文件而不触碰 `config\`，静默卸载删除程序文件但逐字节保留 `config\`（内含 RTSP 凭据与五格墙）。CI 会在同一运行中验证安装→双启动烟测→重装保留配置→卸载保留配置与清理注册表，并记录安装包字节数/SHA-256。它仍是开发包：未签名、无自动更新、无自动数据迁移或自动回滚，不是产品安装器。
 
-版本升级快照：每次以一个安装目录中**首次出现的新版本**启动时，插件在 `FINISHED_LOADING` 处理前把 `config/obs-studio`（跳过 `obs-studio/logs`）复制到 `backups/config-<version>-<UTC 时间>/`，并写 `backup.json`（逐文件 SHA-256、字节数、版本）；最多保留 3 份，失败时删除半成品，绝不阻塞启动。`backups/` 与 `config/` 一样不随卸载删除。恢复前先查看并校验：
+版本升级快照：每次以一个安装目录中**首次出现的新版本**启动时，插件在 `FINISHED_LOADING` 处理前把 `config/obs-studio`（跳过 `obs-studio/logs`、运行时 `.sentinel` 与 `crashes`）复制到 `backups/config-<version>-<UTC 时间>/`，并写 `backup.json`（逐文件 SHA-256、字节数、版本）；最多保留 3 份，失败时删除半成品，绝不阻塞启动。`backups/` 与 `config/` 一样不随卸载删除。恢复前先查看并校验：
 
 ```powershell
 python -B native-host/scripts/restore_native_backup.py --install-root '<安装根>' --list
@@ -45,7 +45,7 @@ python -B native-host/scripts/restore_native_backup.py --install-root '<安装�
 
 Standalone development installer (prototype): `native-host/installer/WebOBSNative.nsi` packages the same frozen runtime with NSIS into an unsigned per-user `WebOBS-OBS-native-<dev>-windows-x64-SETUP.exe`. It installs silently under `%LOCALAPPDATA%\WebOBS Native Prototype`, writes only HKCU uninstall metadata and registers no service; reinstalling replaces program files without touching `config\`, and silent uninstall removes program files while preserving `config\` byte for byte (including RTSP credentials and the five-tile wall). CI verifies install → two-launch smoke → reinstall preserving the profile → uninstall preserving the profile and cleaning the registry, and records the installer byte count/SHA-256. It remains a development package: unsigned, no auto-update, no automatic data migration or rollback, not the product installer.
 
-Version upgrade snapshots: on the first launch of a **new version** in an install root, the plugin copies `config/obs-studio` (excluding `obs-studio/logs`) to `backups/config-<version>-<UTC>/` before `FINISHED_LOADING` handling and writes `backup.json` (per-file SHA-256, byte counts, version); at most three snapshots are kept, a partial directory is removed on failure, and startup is never blocked. Like `config/`, `backups/` survives uninstall. Inspect and restore with:
+Version upgrade snapshots: on the first launch of a **new version** in an install root, the plugin copies `config/obs-studio` (excluding `obs-studio/logs`, runtime `.sentinel` files and `crashes`) to `backups/config-<version>-<UTC>/` before `FINISHED_LOADING` handling and writes `backup.json` (per-file SHA-256, byte counts, version); at most three snapshots are kept, a partial directory is removed on failure, and startup is never blocked. Like `config/`, `backups/` survives uninstall. Inspect and restore with:
 
 ```powershell
 python -B native-host/scripts/restore_native_backup.py --install-root '<install root>' --list

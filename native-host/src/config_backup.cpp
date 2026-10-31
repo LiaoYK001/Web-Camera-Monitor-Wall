@@ -64,10 +64,12 @@ bool copy_profile(const QDir &config, const QDir &destination, QJsonArray &entri
 		if (relative.isEmpty() || relative.startsWith(QStringLiteral("..")) ||
 		    QDir::isAbsolutePath(relative))
 			return false;
-		// OBS appends to its own logs during startup; they are diagnostics, not
-		// user configuration, and must not race or bloat the snapshot.
-		if (relative == QStringLiteral("obs-studio/logs") ||
-		    relative.startsWith(QStringLiteral("obs-studio/logs/")))
+		// OBS appends to its own logs during startup and drops per-run sentinel
+		// files; neither is user configuration, and restoring a stale sentinel
+		// could look like a crash. Crash dumps are private and not needed either.
+		if (relative.startsWith(QStringLiteral("obs-studio/logs/")) ||
+		    relative.startsWith(QStringLiteral("obs-studio/.sentinel/")) ||
+		    relative.startsWith(QStringLiteral("obs-studio/crashes/")))
 			continue;
 		QFile source(info.absoluteFilePath());
 		if (!source.open(QIODevice::ReadOnly))
