@@ -60,17 +60,19 @@ exports.exerciseNativeProgramPreview = async (supervisor, runtime, headers, temp
       lastState = await native();
       const powershell = path.join(process.env.SystemRoot, 'System32/WindowsPowerShell/v1.0/powershell.exe');
       const env = { ...process.env }; for (const key of Object.keys(env)) if (key.toLowerCase() === 'psmodulepath') delete env[key];
-      await execute(powershell, ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File',
+      const { stdout } = await execute(powershell, ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File',
         path.join(__dirname, 'capture-native-preview.ps1'), '-OwnerProcessId', String(process.pid),
         '-NativeExecutable', path.join(runtime, 'bin/webobsd.exe'), '-OutputDirectory', directory,
         '-SampleCount', dynamic ? '8' : '1'], { windowsHide: true, timeout: 30000, maxBuffer: 1024 * 1024, env });
+      const captureState = JSON.parse(stdout.trim());
+      assert.equal(captureState.capture, 'visible-native-client');
       const values = [];
       for (let sample = 0; sample < (dynamic ? 8 : 1); sample++) {
         const image = pattern.bitmap(await fs.readFile(path.join(directory, `client-${sample}.bmp`)));
         values.push(pattern.inspect(image, original.canvas, { dynamic, order }));
       }
       if (dynamic) pattern.progress(values);
-      receipt.stages.push({ name, passed: true, temporalCodes: values });
+      receipt.stages.push({ name, passed: true, captureState, temporalCodes: values });
       await saveReceipt(); return values;
     } catch (error) {
       // Bounded, non-private state only; screenshots/URLs/tokens stay in the

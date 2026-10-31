@@ -54,20 +54,26 @@ public static class NativePreviewCapture {
             uint pid; GetWindowThreadProcessId(handle, out pid);
             if (pid != expectedPid) return true;
             var name=new StringBuilder(256); GetClassName(handle,name,name.Capacity);
-            if (name.ToString()=="WebOBS.NativeProgram" && IsWindowVisible(handle)) { found=handle; matches++; }
+            // The Job launcher uses STARTF_USESHOWWINDOW/SW_HIDE. Win32 may
+            // apply that startup preference to the first ShowWindow call even
+            // though the core requested SW_SHOW. Find only our owned HWND,
+            // then explicitly expose it below before reading final pixels.
+            if (name.ToString()=="WebOBS.NativeProgram") { found=handle; matches++; }
             return true;
         },IntPtr.Zero);
-        if (matches!=1) throw new InvalidOperationException("Expected one visible native Program window.");
+        if (matches!=1) throw new InvalidOperationException("Expected exactly one test-owned native Program window (including startup-hidden windows).");
         return found;
     }
-    public static void Capture(uint pid, string directory, int samples) {
+    public static bool Capture(uint pid, string directory, int samples) {
         var previous=SetThreadDpiAwarenessContext(new IntPtr(-4));
         try {
             var handle=Find(pid); var screen=Screen.PrimaryScreen.Bounds;
+            bool initiallyVisible=IsWindowVisible(handle);
             ShowWindow(handle,9);
             if (!SetWindowPos(handle,new IntPtr(-1),screen.Left+20,screen.Top+20,Math.Min(1100,screen.Width-40),Math.Min(760,screen.Height-40),0x0040))
                 throw new InvalidOperationException("Cannot expose native test window.");
             SetForegroundWindow(handle); System.Threading.Thread.Sleep(300);
+            if (!IsWindowVisible(handle)) throw new InvalidOperationException("Test-owned native window could not be made visible.");
             for (int i=0;i<samples;i++) {
                 Rect client; var origin=new Point(0,0);
                 if (!GetClientRect(handle,out client) || !ClientToScreen(handle,ref origin)) throw new InvalidOperationException("Native client rectangle unavailable.");
@@ -88,9 +94,10 @@ public static class NativePreviewCapture {
                 if (i+1<samples) System.Threading.Thread.Sleep(310);
             }
             SetWindowPos(handle,new IntPtr(-2),0,0,0,0,0x0001|0x0002|0x0010);
+            return initiallyVisible;
         } finally { if(previous!=IntPtr.Zero) SetThreadDpiAwarenessContext(previous); }
     }
 }
 '@
-[NativePreviewCapture]::Capture([uint32]$candidates[0].ProcessId, [IO.Path]::GetFullPath($OutputDirectory), $SampleCount)
-@{ schema=1; samples=$SampleCount; capture='visible-native-client'; scope='synthetic-fixture-only' } | ConvertTo-Json -Compress
+$initiallyVisible = [NativePreviewCapture]::Capture([uint32]$candidates[0].ProcessId, [IO.Path]::GetFullPath($OutputDirectory), $SampleCount)
+@{ schema=1; samples=$SampleCount; capture='visible-native-client'; scope='synthetic-fixture-only'; initiallyVisible=$initiallyVisible; testExposedAndResized=$true } | ConvertTo-Json -Compress
