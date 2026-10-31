@@ -54,12 +54,14 @@ class PixelContractTests(unittest.TestCase):
                 "productBootstrapVerified": seq >= 6,
                 "globalFfmpegInputsIncludingPrivate": 0 if seq == 1 else 10 if seq >= 6 else 5,
                 "studio": 3 <= seq <= 5, "transitionStopped": 4 <= seq <= 5, "programGeneration": 2 if seq >= 5 else 1,
-                "windows": ([{"role": "main-preview", "qtClass": "OBSBasicPreview"}] if seq >= 6 else
+                "windows": ([{"role": "main-preview", "qtClass": "OBSBasicPreview"}] if seq == 7 else
+                            [{"role": "main-preview", "qtClass": "OBSBasicPreview"}, {"role": "program-fullscreen", "qtClass": "OBSProjector"}] if seq == 8 else
+                            [{"role": "main-preview", "qtClass": "OBSBasicPreview"}] if seq >= 6 else
                             [{"role": "main-preview", "qtClass": "OBSBasicPreview"}, {"role": "program-projector", "qtClass": "OBSProjector"}]),
                 "sources": [{"uuid": f"synthetic-{i}", "settingsSha256": str(i)*64} for i in range(5)] if seq > 1 else []}
 
     def test_phase_identity_uuid_counts_encoder_and_no_implicit_take(self):
-        for seq in range(1,8):
+        for seq in range(1,9):
             state = self.state(seq)
             gate.validate_state(state, seq, "a"*32, 123)
             for key, bad in (("seq", 1 if seq != 1 else 2), ("token", "b"*32), ("pid", "124"), ("canvasWidth", 1920),
@@ -88,6 +90,11 @@ class PixelContractTests(unittest.TestCase):
         bad["sources"][1]["uuid"] = bad["sources"][0]["uuid"]
         with self.assertRaises(AssertionError):
             gate.validate_state(bad, 4, "a"*32, 123)
+        # The fullscreen Program phase is exactly one real projector next to the
+        # main Preview; a windowed Program projector cannot masquerade as it.
+        for change in ({"windows": self.state(5)["windows"]}, {"windows": self.state(7)["windows"]}):
+            with self.subTest(change=change), self.assertRaises(AssertionError):
+                gate.validate_state(dict(self.state(8), **change), 8, "a"*32, 123)
 
     def test_metadata_is_bounded_and_refuses_overwrite(self):
         with tempfile.TemporaryDirectory() as temporary:
@@ -140,7 +147,7 @@ class PixelContractTests(unittest.TestCase):
         for text in ("LoopbackRtsp", "rtsp-loopback", "mediamtx", "rtsp_transport", "loopbackRtspPhaseQualified",
                      "interrupt_publisher", "restart_publisher", "rtsp-recovered", "rtspRecoveryPhaseQualified"):
             self.assertIn(text, gate_source)
-        self.assertEqual(gate.PHASES[-2:], ("rtsp-loopback", "rtsp-recovered"))
+        self.assertEqual(gate.PHASES[-3:], ("rtsp-loopback", "rtsp-recovered", "program-fullscreen"))
         for text in ("QTcpServer", "QWebSocket", "obs_frontend_recording_start", "obs_output_start", "obs_frontend_take_screenshot", "gs_stage_texture"):
             self.assertNotIn(text, source)
         self.assertIn('[switch]$PixelTest', builder)
@@ -149,8 +156,10 @@ class PixelContractTests(unittest.TestCase):
         self.assertIn("$SmokeTest -and $PixelTest", builder)
 
     def capture_result(self, failed=False):
+        # A single capture invocation always covers at most the main Preview and
+        # one Program window; the fullscreen role replaces the windowed one.
         roles = [{"role": role, "captureFailed": False, "sampleCount": 8,
-                  "sampleElapsedMs": [400+i*310 for i in range(8)]} for role in gate.CAPTURE_ROLES]
+                  "sampleElapsedMs": [400+i*310 for i in range(8)]} for role in gate.CAPTURE_ROLES[:2]]
         if failed:
             roles[0].update(captureFailed=True, sampleCount=0, sampleElapsedMs=[],
                             diagnostic={"stage": "identity", "code": "process-identity", "sampleIndex": -1,

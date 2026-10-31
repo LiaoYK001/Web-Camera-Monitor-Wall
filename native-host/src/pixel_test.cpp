@@ -120,7 +120,7 @@ struct Snapshot {
 };
 
 class Harness final : public QObject {
-	QPointer<QWidget> main_, preview_, program_;
+	QPointer<QWidget> main_, preview_, program_, fullscreen_;
 	QString directory_, token_;
 	QTimer timer_;
 	QElapsedTimer clock_;
@@ -147,6 +147,7 @@ class Harness final : public QObject {
 	{
 		closing_ = true;
 		timer_.stop();
+		if (fullscreen_) fullscreen_->close();
 		if (program_) program_->close();
 		if (main_) QTimer::singleShot(0, main_, [window = main_] { if (window) window->close(); });
 	}
@@ -172,6 +173,21 @@ class Harness final : public QObject {
 		require(found, "native Program projector identity unavailable");
 		program_ = found;
 		++generation_;
+	}
+	void open_fullscreen()
+	{
+		const auto before = QApplication::topLevelWidgets();
+		obs_frontend_open_projector("StudioProgram", 0, nullptr, nullptr);
+		QWidget *found = nullptr;
+		for (auto *widget : QApplication::topLevelWidgets()) {
+			if (!before.contains(widget) && std::strcmp(widget->metaObject()->className(), "OBSProjector") == 0 &&
+			    widget->windowHandle() && widget->windowHandle()->property("isOBSProjectorWindow").toBool()) {
+				require(!found, "ambiguous new fullscreen Program projector");
+				found = widget;
+			}
+		}
+		require(found, "fullscreen Program projector identity unavailable");
+		fullscreen_ = found;
 	}
 	void initialize()
 	{
@@ -340,6 +356,11 @@ class Harness final : public QObject {
 			if (!rtsp_drop_seen_ || !rtsp_playing()) return false;
 			return !obs_frontend_preview_program_mode_active() && scene_is(obs_frontend_get_current_scene, rtsp_scene_);
 		}
+		if (phase_ == 8) {
+			if (!fullscreen_ || !fullscreen_->isFullScreen()) return false;
+			if (!rtsp_playing()) return false;
+			return !obs_frontend_preview_program_mode_active() && scene_is(obs_frontend_get_current_scene, rtsp_scene_);
+		}
 		if (phase_ >= 6) {
 			for (auto *source : rtsp_) {
 				if (!source || obs_source_media_get_state(source) != OBS_MEDIA_STATE_PLAYING ||
@@ -374,9 +395,10 @@ class Harness final : public QObject {
 		if (phase_ > 1) for (std::size_t i = 0; i < uuid_set.size(); ++i)
 			ids.append(QJsonObject{{"uuid", QString::fromStdString(uuid_set[i])}, {"settingsSha256", QString::fromLatin1(hash_set[i])}});
 		const char *names[] = {"", "known-colors", "five-codecs", "studio-preview-no-take", "explicit-take", "program-reopened",
-		                       "rtsp-loopback", "rtsp-recovered"};
+		                       "rtsp-loopback", "rtsp-recovered", "program-fullscreen"};
 		QJsonArray windows; windows.append(window(preview_, "main-preview", 10));
 		if (program_) windows.append(window(program_, "program-projector", 0));
+		if (fullscreen_) windows.append(window(fullscreen_, "program-fullscreen", 0));
 		const QJsonObject state{{"schema", 1}, {"seq", phase_}, {"phase", QString::fromLatin1(names[phase_])}, {"token", token_},
 		                       {"pid", QString::number(QCoreApplication::applicationPid())}, {"canvasWidth", 960}, {"canvasHeight", 540},
 		                       {"studio", obs_frontend_preview_program_mode_active()}, {"transitionStopped", take_stopped_},
@@ -401,8 +423,9 @@ class Harness final : public QObject {
 		else if (phase_ == 5) { require(program_, "Program projector lost before reopen"); program_->close(); reopening_ = true; }
 		else if (phase_ == 6) { if (program_) { program_->close(); program_ = nullptr; } obs_frontend_set_preview_program_mode(false); create_rtsp(); }
 		else if (phase_ == 7) { rtsp_drop_seen_ = false; rtsp_drop_at_ = -1; }
+		else if (phase_ == 8) { open_fullscreen(); }
 		else {
-			write_new(directory_ + "/complete.json", {{"schema", 1}, {"phases", 7}, {"syntheticOnly", true}, {"pixelQualified", false}});
+			write_new(directory_ + "/complete.json", {{"schema", 1}, {"phases", 8}, {"syntheticOnly", true}, {"pixelQualified", false}});
 			close_normal();
 		}
 	}

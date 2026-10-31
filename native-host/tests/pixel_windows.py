@@ -30,7 +30,7 @@ from prepare import OBS_COMMIT, obtain
 from smoke_windows import fingerprint
 
 PHASES = ("known-colors", "five-codecs", "studio-preview-no-take", "explicit-take", "program-reopened", "rtsp-loopback",
-          "rtsp-recovered")
+          "rtsp-recovered", "program-fullscreen")
 ENV_OVERRIDES = ("OBS_PLUGINS_PATH", "OBS_PLUGINS_DATA_PATH", "OBS_CONFIG_PATH", "QT_PLUGIN_PATH",
                  "QT_QPA_PLATFORM_PLUGIN_PATH", "QML2_IMPORT_PATH", "WEBOBS_NATIVE_SMOKE_TOKEN", "WEBOBS_NATIVE_PIXEL_TOKEN")
 
@@ -343,7 +343,12 @@ def validate_state(state: dict, seq: int, token: str, pid: int) -> None:
     if state.get("studio") is not (3 <= seq <= 5) or (4 <= seq <= 5 and state.get("transitionStopped") is not True):
         raise AssertionError("Studio/TAKE state mismatch")
     windows = state.get("windows", [])
-    expected_roles = {"main-preview"} if seq >= 6 else {"main-preview", "program-projector"}
+    if seq == 8:
+        expected_roles = {"main-preview", "program-fullscreen"}
+    elif seq >= 6:
+        expected_roles = {"main-preview"}
+    else:
+        expected_roles = {"main-preview", "program-projector"}
     if len(windows) != len(expected_roles) or {w.get("role") for w in windows} != expected_roles:
         raise AssertionError("Only exact real main Preview and native Program clients are accepted")
     for window in windows:
@@ -361,12 +366,13 @@ def validate_state(state: dict, seq: int, token: str, pid: int) -> None:
 # The public receipt deliberately carries no PowerShell exception text, paths,
 # process identity, token or HWND. Even valid JSON from the private subprocess is
 # projected onto this finite schema, never copied into the artifact verbatim.
-CAPTURE_ROLES = ("main-preview", "program-projector")
+CAPTURE_ROLES = ("main-preview", "program-projector", "program-fullscreen")
 CAPTURE_CODES = {
     "input": {"input-validation", "windows-required", "output-directory", "state-size", "state-identity", "state-roles", "window-state", "native-arguments"},
     "assembly-load": {"reference-assemblies"}, "compile": {"csharp-compilation"},
     "role-directory": {"role-directory"}, "identity": {"process-inspection", "process-identity", "window-identity"},
-    "dpi": {"dpi-awareness"}, "expose": {"interactive-screen", "main-preview-expose", "program-projector-expose"},
+    "dpi": {"dpi-awareness"}, "expose": {"interactive-screen", "main-preview-expose", "program-projector-expose",
+                                        "fullscreen-projector-expose"},
     "visibility": {"client-hidden"}, "geometry": {"client-geometry", "client-bounds"},
     "occlusion": {"client-obscured"}, "dwm": {"composition-sync"}, "copy": {"screen-copy"},
     "write": {"bitmap-write"}, "subprocess": {"timeout", "launch-failed", "invalid-report", "no-report"},
@@ -520,7 +526,7 @@ def run(runtime: Path, result: Path, ffmpeg_override: Path | None, offline: bool
             original_sources = None
             with tempfile.TemporaryDirectory(prefix="webobs-synthetic-client-") as temporary:
                 captures = Path(temporary)
-                for seq in range(1, 8):
+                for seq in range(1, 9):
                     state = wait_state(private, seq, process, deadline)
                     validate_state(state, seq, token, process.pid)
                     if 2 <= seq <= 5:
@@ -558,11 +564,12 @@ def run(runtime: Path, result: Path, ffmpeg_override: Path | None, offline: bool
                         time.sleep(20)
                         rtsp.restart_publisher(0)
                 process.wait(timeout=max(1, min(30, int(deadline-time.monotonic()))))
-                if process.returncode != 0 or read_json(private / "complete.json").get("phases") != 7:
+                if process.returncode != 0 or read_json(private / "complete.json").get("phases") != 8:
                     raise RuntimeError("Native frontend normal close/finite completion failed")
                 summary["normalExit"] = True
                 summary["loopbackRtspPhaseQualified"] = bool(len(summary["phases"]) >= 6 and summary["phases"][5]["passed"])
                 summary["rtspRecoveryPhaseQualified"] = bool(len(summary["phases"]) >= 7 and summary["phases"][6]["passed"])
+                summary["programFullscreenPhaseQualified"] = bool(len(summary["phases"]) >= 8 and summary["phases"][7]["passed"])
             summary["status"] = "passed" if all(phase["passed"] for phase in summary["phases"]) else "failed"
             summary["syntheticFinalWindowPixelsQualified"] = summary["status"] == "passed"
     except Exception as failure:

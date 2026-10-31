@@ -51,7 +51,8 @@ try {
         $state = Get-Content -LiteralPath $StateFile -Raw | ConvertFrom-Json
         if ($state.schema -ne 1 -or $state.scope -ne 'synthetic-test-only' -or $state.pid -ne "$ExpectedProcessId" -or @($state.windows).Count -lt 1 -or @($state.windows).Count -gt 2) { $code='state-identity'; throw 'Unexpected state.' }
         $roles = @($state.windows | ForEach-Object { $_.role })
-        if (@($roles | Sort-Object -Unique).Count -ne $roles.Count -or @($roles | Where-Object { $_ -notin @('main-preview','program-projector') }).Count -ne 0 -or ($roles.Count -eq 2 -and (@($roles) -notcontains 'main-preview' -or @($roles) -notcontains 'program-projector'))) { $code='state-roles'; throw 'Unexpected roles.' }
+        if (@($roles | Sort-Object -Unique).Count -ne $roles.Count -or @($roles | Where-Object { $_ -notin @('main-preview','program-projector','program-fullscreen') }).Count -ne 0) { $code='state-roles'; throw 'Unexpected roles.' }
+        if ($roles.Count -eq 2 -and (@($roles) -notcontains 'main-preview' -or @($roles | Where-Object { $_ -in @('program-projector','program-fullscreen') }).Count -ne 1)) { $code='state-roles'; throw 'Unexpected roles.' }
     }
     $stage='compile'
     # Core-only P/Invoke code: no Windows Drawing/Forms references needed.
@@ -125,6 +126,9 @@ public static class ObsPixelCapture {
             if (role=="main-preview") {
                 ShowWindow(root,3); // Maximize the main UI, not its child widget.
                 if (!SetWindowPos(root,new IntPtr(-1),0,0,0,0,0x0001|0x0002|0x0040)) throw Failure("expose","main-preview-expose",Marshal.GetLastWin32Error());
+            } else if (role=="program-fullscreen") {
+                // Keep the OBS fullscreen geometry; only ensure it is on top and visible.
+                if (hwnd!=root || !SetWindowPos(root,new IntPtr(-1),0,0,0,0,0x0001|0x0002|0x0040)) throw Failure("expose","fullscreen-projector-expose",Marshal.GetLastWin32Error());
             } else {
                 if (hwnd!=root || !SetWindowPos(root,new IntPtr(-1),20,20,Math.Min(1100,screenWidth-40),Math.Min(740,screenHeight-40),0x0040)) throw Failure("expose","program-projector-expose",Marshal.GetLastWin32Error());
             }
@@ -205,7 +209,7 @@ public static class ObsPixelCapture {
     foreach ($window in $state.windows) {
         $stage='input'; $code='window-state'
         if ($window.hwnd -notmatch '^[0-9a-f]{1,16}$' -or $window.rootHwnd -notmatch '^[0-9a-f]{1,16}$') { throw 'Invalid handle.' }
-        if (($window.role -eq 'main-preview' -and $window.qtClass -ne 'OBSBasicPreview') -or ($window.role -eq 'program-projector' -and $window.qtClass -ne 'OBSProjector')) { throw 'Incorrect widget.' }
+        if (($window.role -eq 'main-preview' -and $window.qtClass -ne 'OBSBasicPreview') -or ($window.role -in @('program-projector','program-fullscreen') -and $window.qtClass -ne 'OBSProjector')) { throw 'Incorrect widget.' }
         $target = Join-Path $OutputDirectory $window.role
         $roleResult = @{role=$window.role; sampleElapsedMs=@(); startedAtUnixMs=[DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds(); sampleCount=0; capture='visible-synthetic-owned-client'; captureFailed=$true}
         $nativeStarted=$false
