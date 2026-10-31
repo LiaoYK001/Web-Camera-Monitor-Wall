@@ -65,6 +65,8 @@ C++ 测试包含实际固定 OBS 32.1.2 headers，只用记录操作的 API doub
 
 本地合同测试本身不能证明 Qt DLL/MSVC 链接或 UI 加载；Fedora 实现环境没有 PowerShell/Windows/Qt SDK。后续独立 Windows CI 已实际完成固定 OBS/frontend/plugin 编译和隔离启动烟测： [41180501363](https://github.com/LiaoYK001/Web-Camera-Monitor-Wall/actions/runs/41180501363)、[41182986553](https://github.com/LiaoYK001/Web-Camera-Monitor-Wall/actions/runs/41182986553)。这些运行验证 Qt 6.8.3、产品 dock/Media Source 注册、portable 配置、原 OBS profile 未变与正常退出，**不是最终媒体像素、实机硬解或 P5 性能验收**。
 
+独立 Windows 工作流现在还会把冻结的 `WebOBS-OBS-native-<dev>-windows-x64-PROTOTYPE.zip` 解压到干净临时目录，再对解压树执行同一套“全新创建 + 复用”双启动烟测，并拒绝任何 `config/` 目录泄漏。这验证的是可下载压缩包自包含且能解压运行，仍不是安装器、升级、最终像素、实机硬解或 P5 性能验收。
+
 ### Windows 实际启动烟测（需图形桌面）
 
 构建完成后、尚未运行过的新 `runtime` 可执行：

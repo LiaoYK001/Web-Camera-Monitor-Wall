@@ -93,6 +93,20 @@ jobs:
           Compress-Archive -Path "$runtime/*" -DestinationPath $package
           $hash = (Get-FileHash -LiteralPath $package -Algorithm SHA256).Hash.ToLowerInvariant()
           "$hash  $([IO.Path]::GetFileName($package))" | Set-Content "$package.sha256" -Encoding utf8
+      - name: Require the frozen prototype ZIP to run from a clean extraction
+        if: ${{ !inputs.pixel_test }}
+        shell: pwsh
+        env:
+          NATIVE_VERSION: ${{ inputs.version }}
+        run: |
+          $zip = Get-ChildItem (Join-Path $env:GITHUB_WORKSPACE 'build/obs-native-ci/WebOBS-OBS-native-*-PROTOTYPE.zip') | Select-Object -First 1
+          if (-not $zip) { throw 'No frozen prototype archive to verify.' }
+          $extract = Join-Path $env:RUNNER_TEMP 'native-portable-extract'
+          if (Test-Path $extract) { Remove-Item -Recurse -Force $extract }
+          Expand-Archive -LiteralPath $zip.FullName -DestinationPath $extract
+          if (Test-Path (Join-Path $extract 'config')) { throw 'Portable archive leaked a configured profile.' }
+          python -B native-host/tests/smoke_windows.py --runtime $extract --result (Join-Path $env:GITHUB_WORKSPACE 'build/obs-native-ci/native-portable-smoke.json')
+          if ($LASTEXITCODE -ne 0) { throw 'Frozen portable ZIP startup/isolation smoke failed.' }
       - name: Require actual Qt plugin startup, private portable config and normal exit
         if: ${{ !inputs.pixel_test }}
         shell: pwsh
@@ -117,6 +131,7 @@ jobs:
             build/obs-native-ci/*.sha256
             build/obs-native-ci/runtime/webobs-native-prototype.json
             build/obs-native-ci/native-startup-smoke.json
+            build/obs-native-ci/native-portable-smoke.json
           if-no-files-found: ignore
           retention-days: 7
           compression-level: 0
