@@ -3670,14 +3670,31 @@ HttpResponse handle_request(const HttpRequest &request, SceneController &control
                             error_body("invalid_native_preview", "Request body must be empty"));
         auto &preview = runtime_status.native_preview;
         if (request.method() == http::verb::post) preview.open();
-        else if (request.method() == http::verb::get) preview.renew();
+        else if (request.method() == http::verb::get) {
+            preview.renew();
+            preview.request_draw_sample();
+        }
         else if (request.method() == http::verb::delete_) preview.requested.store(false);
         else return response(http::status::method_not_allowed, version,
                              error_body("method_not_allowed", "Use GET, POST or DELETE"));
+        const auto sample = preview.draw_sample();
+        const auto boolean = [](bool value) { return value ? "true" : "false"; };
         return response(http::status::ok, version,
-                        "{\"supported\":true,\"requested\":" + std::string(preview.requested.load() ? "true" : "false") +
+                        "{\"supported\":true,\"requested\":" + std::string(boolean(preview.requested.load())) +
                         ",\"state\":" + std::to_string(preview.state.load()) +
-                        ",\"frames\":" + std::to_string(preview.frames.load()) + "}");
+                        ",\"frames\":" + std::to_string(preview.frames.load()) +
+                        ",\"draw_sample\":{\"available\":" + boolean(sample.available) +
+                        ",\"video_ready\":" + boolean(sample.video_ready) +
+                        ",\"main_texture_ready\":" + boolean(sample.main_texture_ready) +
+                        ",\"output_bound\":" + boolean(sample.output_bound) +
+                        ",\"output_active\":" + boolean(sample.output_active) +
+                        ",\"output_showing\":" + boolean(sample.output_showing) +
+                        ",\"base_width\":" + std::to_string(sample.base_width) +
+                        ",\"base_height\":" + std::to_string(sample.base_height) +
+                        ",\"display_width\":" + std::to_string(sample.display_width) +
+                        ",\"display_height\":" + std::to_string(sample.display_height) +
+                        ",\"frame\":" + std::to_string(sample.frame) +
+                        ",\"sampled_at_ms\":" + std::to_string(sample.sampled_at_ms) + "}}");
     }
     if (request.method() == http::verb::get && target == "/api/v1/playback/capabilities")
         return whep_proxy.capabilities(version);

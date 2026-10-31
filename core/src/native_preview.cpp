@@ -3,6 +3,7 @@
 
 #ifdef _WIN32
 #include <windows.h>
+#include "native_preview_window.hpp"
 #include <obs.h>
 #include <graphics/graphics.h>
 #include <algorithm>
@@ -32,18 +33,45 @@ struct NativePreview::Impl {
     {
         auto &self = *static_cast<Impl *>(data);
         obs_video_info info{};
-        if (!obs_get_video_info(&info) || !width || !height || !info.base_width || !info.base_height) return;
-        const double scale = std::min(double(width) / info.base_width, double(height) / info.base_height);
-        const int cx = std::max(1, int(info.base_width * scale));
-        const int cy = std::max(1, int(info.base_height * scale));
-        gs_viewport_push();
-        gs_projection_push();
-        gs_set_viewport((int(width) - cx) / 2, (int(height) - cy) / 2, cx, cy);
-        gs_ortho(0.f, float(info.base_width), 0.f, float(info.base_height), -100.f, 100.f);
-        obs_render_main_texture();
-        gs_projection_pop();
-        gs_viewport_pop();
-        self.control.frames.fetch_add(1, std::memory_order_relaxed);
+        const bool video_ready = obs_get_video_info(&info);
+        if (video_ready && width && height && info.base_width && info.base_height) {
+            const double scale = std::min(double(width) / info.base_width, double(height) / info.base_height);
+            const int cx = std::max(1, int(info.base_width * scale));
+            const int cy = std::max(1, int(info.base_height * scale));
+            gs_viewport_push();
+            gs_projection_push();
+            gs_set_viewport((int(width) - cx) / 2, (int(height) - cy) / 2, cx, cy);
+            gs_ortho(0.f, float(info.base_width), 0.f, float(info.base_height), -100.f, 100.f);
+            // This is also the pinned OBS Program projector's render path.
+            obs_render_main_texture();
+            gs_projection_pop();
+            gs_viewport_pop();
+            self.control.frames.fetch_add(1, std::memory_order_relaxed);
+        }
+        if (self.control.consume_draw_sample_request()) {
+            NativePreviewDrawSample sample;
+            sample.available = true;
+            sample.video_ready = video_ready;
+            // obs_get_main_texture requires a configured main video mix and is
+            // observed only on this graphics callback, never the HTTP thread.
+            sample.main_texture_ready = video_ready && obs_get_main_texture() != nullptr;
+            obs_source_t *output = obs_get_output_source(0);
+            sample.output_bound = output != nullptr;
+            if (output) {
+                sample.output_active = obs_source_active(output);
+                sample.output_showing = obs_source_showing(output);
+                obs_source_release(output);
+            }
+            sample.base_width = info.base_width;
+            sample.base_height = info.base_height;
+            sample.display_width = width;
+            sample.display_height = height;
+            sample.frame = self.control.frames.load(std::memory_order_relaxed);
+            sample.sampled_at_ms = NativePreviewControl::now_ms();
+            self.control.publish_draw_sample(sample);
+            // libobs calls Present only AFTER this callback. These fields are
+            // pipeline diagnostics, not a window-pixel or presentation verdict.
+        }
     }
 
     void toggle_fullscreen()
@@ -122,8 +150,9 @@ struct NativePreview::Impl {
         display = obs_display_create(&graphics, 0xff000000);
         if (!display) { close(); return false; }
         control.frames.store(0);
+        control.clear_draw_sample();
         obs_display_add_draw_callback(display, draw, this);
-        ShowWindow(window, SW_SHOW);
+        if (!detail::show_native_preview_window(window)) { close(); return false; }
         return true;
     }
     void close()
@@ -133,6 +162,7 @@ struct NativePreview::Impl {
             obs_display_destroy(display);
             display = nullptr;
         }
+        control.clear_draw_sample();
         if (window) { DestroyWindow(window); window = nullptr; }
         fullscreen = false;
     }
