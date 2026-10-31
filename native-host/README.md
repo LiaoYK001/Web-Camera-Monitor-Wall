@@ -26,6 +26,10 @@ pwsh -NoProfile -File desktop/scripts/build-obs-native.ps1 -Version 0.1.0-dev.3 
 
 结果中的 `webobs-native-prototype.json` 记录固定版本、禁用可选特性、无服务启动和按 Qt/plugins/other 粗分的实际字节数。
 
+OBS 的 Windows 安装规则会顺带安装 `*.pdb` 调试符号；它们不被 `obs64.exe` 加载，却会被 NSIS 安装器完整打包。构建脚本在 `stage.py` 记录清单之前调用 `native-host/scripts/prune_runtime.py` 删除运行时内的 PDB，写出 `native-runtime-prune.json`（删除文件数与字节数），并断言没有残留；NSIS 步骤也会拒绝打包了 PDB 的安装树。因此清单里的 `sizeBytesBeforeManifest`/`sizeGroups` 和安装体积都不含构建符号。
+
+OBS's Windows install rules also stage `*.pdb` debug symbols; `obs64.exe` never loads them, but the NSIS installer would package every byte. Before `stage.py` writes the manifest the build calls `native-host/scripts/prune_runtime.py`, which removes PDBs from the runtime, writes `native-runtime-prune.json` (removed count and bytes), and asserts none survive; the NSIS step also rejects an installed tree that contains PDBs. The manifest's `sizeBytesBeforeManifest`/`sizeGroups` and the installed size therefore exclude build symbols.
+
 ### 原型安装与升级 / Prototype install and upgrade
 
 `native-host/scripts/install_native.py` 把冻结 ZIP 安装到用户指定的私密目录：校验条目路径与 manifest（开发版、`defaultProduct=false`、不启动服务）、拒绝包内 `config/`、当前安装目录没有 manifest 时拒绝覆盖无关目录、替换前备份并在失败时回滚；已存在的 `config/obs-studio` portable profile 会复制进新树，因此重装/升级保留五格墙、source settings 与账号登录。安装器写入小型 JSON 回执（版本、SHA-256、是否保留配置、文件数），不含路径、URL 或日志。这是原型安装器，不注册系统服务、不写注册表、未签名，也不是产品安装包。

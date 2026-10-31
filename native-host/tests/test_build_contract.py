@@ -164,6 +164,18 @@ class BuildContractTests(unittest.TestCase):
         self.assertNotIn("Start-Process", launcher)  # Explicit child environment, fixed CWD.
         self.assertNotIn("--multi", launcher)  # Do not bypass upstream portable instance guard.
 
+    def test_build_symbols_are_stripped_before_the_manifest(self):
+        builder = (ROOT / "desktop/scripts/build-obs-native.ps1").read_text()
+        workflow = (ROOT / ".github/workflows/windows-obs-native-host.yaml").read_text()
+        self.assertIn("native-host/scripts/prune_runtime.py", builder)
+        self.assertLess(
+            builder.index("prune_runtime.py"),
+            builder.index("native-host/scripts/stage.py"),
+        )
+        self.assertIn("native-runtime-prune.json", workflow)
+        self.assertIn("-Filter *.pdb", workflow)
+        self.assertIn("build-symbol PDB files", workflow)
+
     def test_installer_is_per_user_and_never_deletes_private_config(self):
         script = (ROOT / "native-host/installer/WebOBSNative.nsi").read_text()
         workflow = (ROOT / ".github/workflows/windows-obs-native-host.yaml").read_text()

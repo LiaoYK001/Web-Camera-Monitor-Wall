@@ -45,6 +45,8 @@ jobs:
         run: |
           python -B native-host/qualification/test_qualification.py
           if ($LASTEXITCODE -ne 0) { throw 'Synthetic process accounting contract failed.' }
+          python -B native-host/tests/test_prune_runtime.py
+          if ($LASTEXITCODE -ne 0) { throw 'Runtime PDB pruning contract failed.' }
           python -B native-host/qualification/test_windows_api.py
           if ($LASTEXITCODE -ne 0) { throw 'Actual Windows process query or private directory API failed; no performance qualification.' }
       - name: Preflight actual PowerShell capture compilation before other pixel contracts
@@ -165,6 +167,8 @@ jobs:
           $manifest = Get-Content -LiteralPath (Join-Path $root 'webobs-native-prototype.json') -Raw | ConvertFrom-Json
           if ($manifest.version -ne $env:NATIVE_VERSION) { throw "Installed manifest version $($manifest.version) does not match $env:NATIVE_VERSION." }
           $installedFiles = (Get-ChildItem -LiteralPath $root -Recurse -File | Measure-Object).Count
+          $installedPdb = Get-ChildItem -LiteralPath $root -Recurse -File -Filter *.pdb
+          if ($installedPdb) { throw "The installer packaged $($installedPdb.Count) build-symbol PDB files." }
           python -B native-host/tests/smoke_windows.py --runtime $root --result (Join-Path $out 'native-nsis-install-smoke.json')
           if ($LASTEXITCODE -ne 0) { throw 'First-run smoke from the installed tree failed.' }
           $configDir = Join-Path $root 'config/obs-studio'
@@ -446,6 +450,7 @@ jobs:
             build/obs-native-ci/native-upgrade-second.json
             build/obs-native-ci/native-upgrade-second-smoke.json
             build/obs-native-ci/obs-size-reference.json
+            build/obs-native-ci/native-runtime-prune.json
             build/obs-native-ci/native-nsis-installer.json
             build/obs-native-ci/native-nsis-install-smoke.json
             build/obs-native-ci/native-restore.json

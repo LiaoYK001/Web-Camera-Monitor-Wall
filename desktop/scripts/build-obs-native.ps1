@@ -57,6 +57,10 @@ Invoke-Checked 'python' @((Join-Path $repoRoot 'native-host/tests/test_build_con
 # Upstream's own install rules collect Qt platform plugins and ABI dependencies.
 Invoke-Checked 'cmake' @('--install',$obsBuild,'--config','Release','--prefix',$runtime)
 Invoke-Checked 'cmake' @('--install',$pluginBuild,'--config','Release','--prefix',$runtime)
+# P4: the Windows install rules also stage debug symbols. PDBs are build
+# products, are never loaded by obs64, and the NSIS installer would package
+# them. Remove them before stage.py records the file manifest and size groups.
+Invoke-Checked 'python' @((Join-Path $repoRoot 'native-host/scripts/prune_runtime.py'),'--runtime',$runtime,'--report',(Join-Path $buildRoot 'native-runtime-prune.json'))
 Invoke-Checked 'python' @((Join-Path $repoRoot 'native-host/scripts/stage.py'),'--repo',$repoRoot,'--source',$source,'--runtime',$runtime,'--version',$Version)
 if ($PixelTest) {
     # A test-enabled runtime must never masquerade as a redistributable prototype.
