@@ -55,9 +55,14 @@ on:
         description: 'With native_host: install the pinned stock OBS 32.1.2 and record a same-OS installed-size reference'
         default: false
         type: boolean
+      upgrade_previous:
+        description: 'With native_host: install the pinned previous prototype, then upgrade it and verify the private profile survives'
+        default: false
+        type: boolean
 
 permissions:
   contents: read
+  actions: read
 
 concurrency:
   # Independent read-only prototype/diagnostic runners do not share product
@@ -272,6 +277,7 @@ jobs:
     with:
       version: ${{ inputs.version }}
       measure_obs_baseline: ${{ inputs.obs_size_baseline }}
+      upgrade_previous: ${{ inputs.upgrade_previous }}
 
   obs-native-host-pixels:
     if: github.event_name == 'workflow_dispatch' && inputs.native_host_pixels && !inputs.native_host && !inputs.diagnose_dev17 && !inputs.publish_dev17 && !inputs.publish_dev18 && !inputs.official && !inputs.installed_upgrade

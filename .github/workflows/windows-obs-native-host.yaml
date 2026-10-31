@@ -7,6 +7,7 @@ on:
       version: { type: string, required: true }
       pixel_test: { type: boolean, default: false }
       measure_obs_baseline: { type: boolean, default: false }
+      upgrade_previous: { type: boolean, default: false }
   workflow_dispatch:
     inputs:
       pixel_test:
@@ -17,6 +18,10 @@ on:
         description: 'Install the pinned stock OBS 32.1.2 installer and record a same-OS installed-size reference'
         type: boolean
         default: false
+      upgrade_previous:
+        description: 'Install the pinned previous prototype, upgrade it in place and verify the private profile survives'
+        type: boolean
+        default: false
       version:
         type: string
         required: true
@@ -24,6 +29,7 @@ on:
 
 permissions:
   contents: read
+  actions: read
 
 jobs:
   native-host:
@@ -130,6 +136,41 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw 'Reinstall over the private profile failed.' }
           python -B native-host/tests/smoke_windows.py --runtime $root --result (Join-Path $env:GITHUB_WORKSPACE 'build/obs-native-ci/native-install-smoke-second.json') --existing-wall
           if ($LASTEXITCODE -ne 0) { throw 'Existing-wall smoke after reinstall failed.' }
+      - name: Upgrade a pinned previous prototype and verify the private profile survives
+        if: ${{ inputs.upgrade_previous }} && ${{ !inputs.pixel_test }}
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+          NATIVE_VERSION: ${{ inputs.version }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $oldRoot = Join-Path $env:RUNNER_TEMP 'native-upgrade-previous'
+          if (Test-Path $oldRoot) { Remove-Item -Recurse -Force $oldRoot }
+          gh run download 41220134972 --repo $env:GITHUB_REPOSITORY --name webobs-obs-native-prototype-4.1.0-dev.32 --dir $oldRoot
+          if ($LASTEXITCODE -ne 0) { throw 'Pinned previous prototype artifact download failed.' }
+          $oldZip = Get-ChildItem $oldRoot -Filter '*.zip' | Select-Object -First 1
+          if (-not $oldZip) { throw 'Pinned previous prototype artifact did not contain a ZIP.' }
+          $root = Join-Path $env:RUNNER_TEMP 'native-upgrade'
+          if (Test-Path $root) { Remove-Item -Recurse -Force $root }
+          python -B native-host/scripts/install_native.py --package $oldZip.FullName --install-root $root --receipt build/obs-native-ci/native-upgrade-first.json
+          if ($LASTEXITCODE -ne 0) { throw 'Installing the pinned previous prototype failed.' }
+          python -B native-host/tests/smoke_windows.py --runtime $root --result build/obs-native-ci/native-upgrade-first-smoke.json
+          if ($LASTEXITCODE -ne 0) { throw 'Pinned previous prototype smoke failed.' }
+          $configDir = Join-Path $root 'config/obs-studio'
+          if (-not (Test-Path -LiteralPath $configDir -PathType Container)) { throw 'Pinned previous prototype did not create a private config directory.' }
+          $before = Get-ChildItem -LiteralPath $configDir -Recurse -File | Sort-Object FullName | ForEach-Object { $_.FullName.Substring($configDir.Length) + ':' + (Get-FileHash -LiteralPath $_.FullName -Algorithm SHA256).Hash } | Out-String
+          $zip = Get-ChildItem (Join-Path $env:GITHUB_WORKSPACE 'build/obs-native-ci/WebOBS-OBS-native-*-PROTOTYPE.zip') | Select-Object -First 1
+          if (-not $zip) { throw 'No frozen prototype archive for the upgrade step.' }
+          python -B native-host/scripts/install_native.py --package $zip.FullName --install-root $root --receipt build/obs-native-ci/native-upgrade-second.json
+          if ($LASTEXITCODE -ne 0) { throw 'Upgrade over the pinned previous prototype failed.' }
+          $receipt = Get-Content -LiteralPath 'build/obs-native-ci/native-upgrade-second.json' -Raw | ConvertFrom-Json
+          if ($receipt.version -ne $env:NATIVE_VERSION) { throw "Upgraded version $($receipt.version) does not match $env:NATIVE_VERSION." }
+          if ($receipt.previousVersion -ne '4.1.0-dev.32') { throw "Unexpected previousVersion $($receipt.previousVersion)." }
+          if ($receipt.configPreserved -ne $true) { throw 'Upgrade did not preserve the private profile.' }
+          $after = Get-ChildItem -LiteralPath $configDir -Recurse -File | Sort-Object FullName | ForEach-Object { $_.FullName.Substring($configDir.Length) + ':' + (Get-FileHash -LiteralPath $_.FullName -Algorithm SHA256).Hash } | Out-String
+          if ($before -ne $after) { throw 'Private config bytes changed across the upgrade.' }
+          python -B native-host/tests/smoke_windows.py --runtime $root --result build/obs-native-ci/native-upgrade-second-smoke.json --existing-wall
+          if ($LASTEXITCODE -ne 0) { throw 'Existing-wall smoke after cross-version upgrade failed.' }
       - name: Measure the stock OBS 32.1.2 installation for a same-OS size reference
         if: ${{ inputs.measure_obs_baseline }} && ${{ !inputs.pixel_test }}
         shell: pwsh
@@ -188,6 +229,10 @@ jobs:
             build/obs-native-ci/native-install-second.json
             build/obs-native-ci/native-install-smoke-first.json
             build/obs-native-ci/native-install-smoke-second.json
+            build/obs-native-ci/native-upgrade-first.json
+            build/obs-native-ci/native-upgrade-first-smoke.json
+            build/obs-native-ci/native-upgrade-second.json
+            build/obs-native-ci/native-upgrade-second-smoke.json
             build/obs-native-ci/obs-size-reference.json
           if-no-files-found: ignore
           retention-days: 7
