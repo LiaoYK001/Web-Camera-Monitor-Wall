@@ -126,13 +126,27 @@ This is still synthetic fixtures on a GitHub-hosted software-D3D11 runner, not t
 
 [Windows 运行 41224874089](https://github.com/LiaoYK001/Web-Camera-Monitor-Wall/actions/runs/41224874089)（`20d173e`，dev.37）八个相位全部 passed：第一至第五相位主 Preview 与 Program projector 各 8 样本，第六、七相位主 Preview 各 8 样本，第八相位主 Preview 与全屏 Program 各 8 样本；`programFullscreenPhaseQualified=true`、`syntheticFinalWindowPixelsQualified=true`。回执 artifact `webobs-obs-native-final-pixels-4.1.0-dev.37`（id `13051488872`，2968 字节 zip，JSON 2968 字节）。`rtspQualified` / `realCameraQualified` / `mediaHardwareQualified` / `performanceP2Qualified` / `productMigrationQualified` 仍为 false。
 
-该证据覆盖**单显示器、100% 缩放、软件 D3D11 运行器**上的全屏 Program 投影最终像素；DPI 缩放、多显示器、断流恢复期间的全屏保持、保存场景重启与真实相机/硬解仍不在其中，不能视为 P1 显示项全部完成或 P5 目标机结论。
+该证据覆盖**单显示器、100% 缩放、软件 D3D11 运行器**上的全屏 Program 投影最终像素；DPI 缩放、多显示器、保存场景重启与真实相机/硬解仍不在其中，不能视为 P1 显示项全部完成或 P5 目标机结论。
 
 An eighth finite phase, `program-fullscreen` (`5b4b643`), opens a real fullscreen StudioProgram projector on monitor 0 after the recovery phase, requires `isFullScreen()`, all five loopback RTSP streams still PLAYING and the current scene to remain the five-tile RTSP wall, then captures eight frames from both the main Preview and the fullscreen Program client, keeping the fullscreen geometry instead of the windowed 1100×740 size. `9f49d8f` added `program-fullscreen` to the analyzer's role allowlist (inset=0), and `20d173e` fixed the mixed `${{ }}` conditions on the upgrade and size-baseline steps, whose joined string was always truthy and made a pixel run execute the upgrade step and fail without a prototype ZIP. Both failures were test-engineering defects, not pixel regressions.
 
 Windows run [41224874089](https://github.com/LiaoYK001/Web-Camera-Monitor-Wall/actions/runs/41224874089) (`20d173e`, dev.37) passed all eight phases: eight samples each for the main Preview and Program projector in phases 1–5, eight main-Preview samples in phases 6–7, and eight samples each for the main Preview and the fullscreen Program in phase 8, with `programFullscreenPhaseQualified=true` and `syntheticFinalWindowPixelsQualified=true`. The receipt artifact is `webobs-obs-native-final-pixels-4.1.0-dev.37` (id 13051488872, 2968-byte zip; JSON 2968 bytes). `rtspQualified`, `realCameraQualified`, `mediaHardwareQualified`, `performanceP2Qualified` and `productMigrationQualified` remain false.
 
-This covers fullscreen Program pixels on a **single-monitor, 100%-scale, software-D3D11 runner**; DPI scaling, multiple monitors, fullscreen persistence during stream recovery, saved-scene restart and real cameras/hardware decode are not covered, so it is not a completed P1 display gate or a P5 target conclusion.
+This covers fullscreen Program pixels on a **single-monitor, 100%-scale, software-D3D11 runner**; DPI scaling, multiple monitors, saved-scene restart and real cameras/hardware decode are not covered, so it is not a completed P1 display gate or a P5 target conclusion.
+
+### 全屏投影跨断流恢复 / Fullscreen projector across a stream interruption
+
+新增第九相位 `fullscreen-recovery`（`4b5e0e5`）：第八相位完成后保持全屏 StudioProgram 投影打开，驱动在确认第八相位后中断第一路合成 RTSP 发布者 20 秒再重启；宿主必须在全屏投影仍播放时观察到至少一路离开 PLAYING，再等五路恢复 PLAYING、仍在同一五格墙且全屏状态未变，才发布第九相位并分别捕获主 Preview 与全屏 Program 八帧。这样“断流恢复期间全屏投影仍展示恢复后的同一画面”不再是推测。
+
+[Windows 运行 41226901078](https://github.com/LiaoYK001/Web-Camera-Monitor-Wall/actions/runs/41226901078)（`602723a`，dev.39）九个相位全部 passed：第八相位主 Preview 与全屏 Program 各 8 样本，第九相位在全屏投影保持打开、断流 20 秒并恢复后同样各 8 样本；`fullscreenRecoveryPhaseQualified=true`、`syntheticFinalWindowPixelsQualified=true`，回执 artifact `webobs-obs-native-final-pixels-4.1.0-dev.39`（id `13051764319`，3185 字节 zip）。首轮 dev.38 在八相位后超时，原因是驱动把相位循环写死为 8 而没有等待第九相位，`602723a` 改为按 `PHASES` 长度迭代并加契约断言。
+
+该证据仍受**单显示器、100% 缩放、软件 D3D11、合成 RTSP 夹具**限制：断流期间的中断画面本身不被采集，只验证恢复后全屏投影仍显示同一五格墙；DPI 缩放、多显示器、保存场景重启、真实相机/硬解不在其中，`rtspQualified` / `realCameraQualified` / `mediaHardwareQualified` / `performanceP2Qualified` / `productMigrationQualified` 仍为 false。
+
+An ninth finite phase, `fullscreen-recovery` (`4b5e0e5`), keeps the real fullscreen StudioProgram projector open after phase 8 while the driver interrupts the first synthetic RTSP publisher for 20 s and restarts it; the host must observe at least one stream leaving PLAYING while the fullscreen projector is still playing, then wait for all five to return PLAYING on the same five-tile wall with the fullscreen state unchanged before publishing the phase and capturing eight frames each from the main Preview and the fullscreen Program. "The fullscreen projector still shows the recovered scene after an interruption" is therefore no longer a guess.
+
+Windows run [41226901078](https://github.com/LiaoYK001/Web-Camera-Monitor-Wall/actions/runs/41226901078) (`602723a`, dev.39) passed all nine phases: eight samples each for the main Preview and the fullscreen Program in phase 8, and eight each again in phase 9 after the fullscreen projector stayed open across the 20-second interruption and recovery, with `fullscreenRecoveryPhaseQualified=true` and `syntheticFinalWindowPixelsQualified=true`. The receipt artifact is `webobs-obs-native-final-pixels-4.1.0-dev.39` (id 13051764319, 3185-byte zip). The first dev.38 attempt timed out after eight phases because the driver hard-coded the phase loop to eight and never waited for the ninth; `602723a` iterates over `len(PHASES)` and adds a contract assertion.
+
+This is still limited to **one monitor, 100% scale, software D3D11 and synthetic RTSP fixtures**: the interrupted frames themselves are not captured; only the recovered fullscreen projection of the same five-tile wall is verified. DPI scaling, multiple monitors, saved-scene restart, real cameras and hardware decode remain uncovered, and `rtspQualified`, `realCameraQualified`, `mediaHardwareQualified`, `performanceP2Qualified` and `productMigrationQualified` stay false.
 
 ### 回环 RTSP 阶段：测试已扩展，尚未运行 / Loopback RTSP phase
 
