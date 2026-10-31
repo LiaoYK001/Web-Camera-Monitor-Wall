@@ -19,7 +19,7 @@ function Get-SafeDiagnostic($record, [bool]$native = $false) {
     # Never emit Exception.Message, ErrorRecord text, paths, token, PID or HWND.
     # Only our fixed stage/code fields and numeric progress/compiler codes leave
     # this private subprocess. Unknown CLR failures retain their operation code.
-    $diagnostic = @{stage=$stage; code=$code; sampleIndex=-1; completedSamples=0; nativeError=0; compilerCodes=@()}
+    $diagnostic = @{stage=$stage; code=$code; sampleIndex=-1; completedSamples=0; nativeError=0; compilerCodes=@(); missingTypes=@(); missingAssemblies=@()}
     if ($native) {
         $diagnostic.stage = [ObsPixelCapture]::Stage
         $diagnostic.code = [ObsPixelCapture]::Code
@@ -30,6 +30,13 @@ function Get-SafeDiagnostic($record, [bool]$native = $false) {
     if ($stage -eq 'compile') {
         $text = (@($compilerErrors) + @($record) | Out-String)
         $diagnostic.compilerCodes = @([regex]::Matches($text,'\bCS[0-9]{4}\b') | ForEach-Object { $_.Value } | Sort-Object -Unique | Select-Object -First 8)
+        # Fixed .NET type/assembly names only; never paths, tokens or user data.
+        $diagnostic.missingTypes = @([regex]::Matches($text,"type(?: name)? '([^']{1,200})'") |
+            ForEach-Object { $_.Groups[1].Value } | Where-Object { $_ -match '^[A-Za-z0-9_.+<>\[\] ]{1,200}$' } |
+            Sort-Object -Unique | Select-Object -First 8)
+        $diagnostic.missingAssemblies = @([regex]::Matches($text,"assembly '([^',]{1,200})") |
+            ForEach-Object { $_.Groups[1].Value } | Where-Object { $_ -match '^[A-Za-z0-9_.+-]{1,200}$' } |
+            Sort-Object -Unique | Select-Object -First 8)
     }
     return $diagnostic
 }
@@ -66,14 +73,18 @@ try {
     )
     $referenceDirectory = Join-Path $PSHOME 'ref'
     if (-not (Test-Path -LiteralPath $referenceDirectory -PathType Container)) { throw 'Trusted reference pack missing.' }
-    $references = @([AppDomain]::CurrentDomain.GetAssemblies() |
+    # Candidate 1: only loaded runtime assemblies (one consistent identity set).
+    $loaded = @([AppDomain]::CurrentDomain.GetAssemblies() |
         Where-Object { -not $_.IsDynamic -and $_.Location } |
         ForEach-Object { $_.Location })
-    $references += @((Get-ChildItem -LiteralPath $referenceDirectory -Filter '*.dll' -File).FullName)
-    # One reference per simple name; loaded runtime assemblies win over the pack.
-    $references = @($references | Group-Object { [IO.Path]::GetFileNameWithoutExtension($_) } | ForEach-Object { $_.Group[0] })
+    $loaded = @($loaded | Group-Object { [IO.Path]::GetFileNameWithoutExtension($_) } | ForEach-Object { $_.Group[0] })
+    # Candidate 2: loaded runtime assemblies first, then the trusted pack fills
+    # facades PowerShell never loads. Loaded assemblies win on simple name.
+    $withPack = @($loaded)
+    $withPack += @((Get-ChildItem -LiteralPath $referenceDirectory -Filter '*.dll' -File).FullName)
+    $withPack = @($withPack | Group-Object { [IO.Path]::GetFileNameWithoutExtension($_) } | ForEach-Object { $_.Group[0] })
     $stage='compile'; $code='csharp-compilation'
-    Add-Type -ReferencedAssemblies $references -ErrorVariable compilerErrors -TypeDefinition @'
+    $typeDefinition = @'
 using System;
 using System.Diagnostics;
 using System.Drawing;
@@ -172,6 +183,22 @@ public static class ObsPixelCapture {
     }
 }
 '@
+    # Bounded: at most these two whole reference sets are tried, in order.
+    $candidates = @()
+    $candidates += ,$loaded
+    $candidates += ,$withPack
+    $compileError = $null
+    foreach ($references in $candidates) {
+        $compilerErrors = @()
+        try {
+            Add-Type -ReferencedAssemblies $references -ErrorVariable compilerErrors -TypeDefinition $typeDefinition
+            $compileError = $null
+            break
+        } catch {
+            $compileError = $_
+        }
+    }
+    if ($compileError) { throw $compileError }
     if ($CompileOnly) {
         Write-Report @{schema=1; compileOnly=$true; captureFailed=$false; captures=@()}
         exit 0

@@ -203,6 +203,13 @@ class PixelContractTests(unittest.TestCase):
         # referenced; a reference-pack-only list fails CS0012 on Windows.
         self.assertIn("[AppDomain]::CurrentDomain.GetAssemblies()", script)
         self.assertIn("GetFileNameWithoutExtension", script)
+        # Bounded cascade: loaded-only first, then loaded plus trusted pack.
+        self.assertIn("$candidates += ,$loaded", script)
+        self.assertIn("$candidates += ,$withPack", script)
+        self.assertIn("if ($compileError) { throw $compileError }", script)
+        # Fixed .NET type/assembly names only for CS0012/CS1069 diagnosis.
+        self.assertIn("missingTypes", script)
+        self.assertIn("missingAssemblies", script)
         for type_family in ("[System.Drawing.Bitmap]", "[System.Drawing.Rectangle]",
                             "[System.Windows.Forms.Screen]", "[System.Diagnostics.Process]",
                             "[System.Diagnostics.Stopwatch]"):
