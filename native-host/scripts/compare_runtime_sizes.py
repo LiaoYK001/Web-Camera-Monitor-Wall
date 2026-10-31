@@ -61,6 +61,49 @@ def group_totals(paths: dict[str, int]) -> list[dict]:
     ]
 
 
+CEF_NAMES = {
+    "libcef.dll",
+    "icudtl.dat",
+    "resources.pak",
+    "libglesv2.dll",
+    "libegl.dll",
+    "chrome_elf.dll",
+    "snapshot_blob.bin",
+    "v8_context_snapshot.bin",
+}
+
+
+def category(relative: str) -> str:
+    name = relative.rsplit("/", 1)[-1].lower()
+    if name.endswith(".pdb"):
+        return "debug-symbols"
+    if name in CEF_NAMES or "/cef/" in relative.lower() or name.endswith(".pak"):
+        return "cef-browser"
+    if relative.startswith("data/obs-scripting/") or "obs-scripting" in name or "python" in relative.lower():
+        return "scripting"
+    if "obs-websocket" in name:
+        return "websocket"
+    if relative.startswith("data/obs-plugins/"):
+        return "plugin-data-locales"
+    if relative.startswith("obs-plugins/"):
+        return "extra-plugins"
+    if name == "uninstall.exe":
+        return "uninstaller"
+    return "other"
+
+
+def category_totals(paths: dict[str, int]) -> list[dict]:
+    totals: dict[str, list[int]] = {}
+    for relative, size in paths.items():
+        entry = totals.setdefault(category(relative), [0, 0])
+        entry[0] += 1
+        entry[1] += size
+    return [
+        {"category": key, "files": files, "bytes": size}
+        for key, (files, size) in sorted(totals.items(), key=lambda item: -item[1][1])
+    ]
+
+
 def compare(prototype: Path, obs: Path, largest: int = 15) -> dict:
     prototype_files = walk(prototype)
     obs_files = walk(obs)
@@ -72,6 +115,9 @@ def compare(prototype: Path, obs: Path, largest: int = 15) -> dict:
     }
     obs_only = {
         path: size for path, size in obs_files.items() if path not in prototype_files
+    }
+    obs_without_symbols = {
+        path: size for path, size in obs_files.items() if not path.lower().endswith(".pdb")
     }
     largest_obs_only = sorted(obs_only.items(), key=lambda item: -item[1])[:largest]
     prototype_total = sum(prototype_files.values())
@@ -91,6 +137,13 @@ def compare(prototype: Path, obs: Path, largest: int = 15) -> dict:
         "obsOnly": summarize(obs_only),
         "sharedPercentOfObsBytes": round(overlap, 2),
         "obsOnlyGroups": group_totals(obs_only),
+        "obsOnlyCategories": category_totals(obs_only),
+        "obsWithoutBuildSymbols": summarize(obs_without_symbols),
+        "prototypePercentOfObsWithoutSymbols": round(
+            100.0 * prototype_total / sum(obs_without_symbols.values()), 2
+        )
+        if obs_without_symbols
+        else 0.0,
         "prototypeOnlyGroups": group_totals(prototype_only)[:largest],
         "largestObsOnly": [
             {"path": path, "bytes": size} for path, size in largest_obs_only
