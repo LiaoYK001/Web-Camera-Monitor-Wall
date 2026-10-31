@@ -137,7 +137,7 @@ jobs:
           python -B native-host/tests/smoke_windows.py --runtime $root --result (Join-Path $env:GITHUB_WORKSPACE 'build/obs-native-ci/native-install-smoke-second.json') --existing-wall
           if ($LASTEXITCODE -ne 0) { throw 'Existing-wall smoke after reinstall failed.' }
       - name: Upgrade a pinned previous prototype and verify the private profile survives
-        if: ${{ inputs.upgrade_previous }} && ${{ !inputs.pixel_test }}
+        if: ${{ inputs.upgrade_previous && !inputs.pixel_test }}
         shell: pwsh
         env:
           GH_TOKEN: ${{ github.token }}
@@ -172,7 +172,7 @@ jobs:
           python -B native-host/tests/smoke_windows.py --runtime $root --result build/obs-native-ci/native-upgrade-second-smoke.json --existing-wall
           if ($LASTEXITCODE -ne 0) { throw 'Existing-wall smoke after cross-version upgrade failed.' }
       - name: Measure the stock OBS 32.1.2 installation for a same-OS size reference
-        if: ${{ inputs.measure_obs_baseline }} && ${{ !inputs.pixel_test }}
+        if: ${{ inputs.measure_obs_baseline && !inputs.pixel_test }}
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
