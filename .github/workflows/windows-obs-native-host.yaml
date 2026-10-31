@@ -404,6 +404,8 @@ jobs:
           $path = 'build/obs-native-ci/obs-size-reference.json'
           New-Item -ItemType Directory -Force -Path (Split-Path $path) | Out-Null
           $receipt | ConvertTo-Json -Depth 6 | Set-Content -LiteralPath $path
+          python -B native-host/scripts/compare_runtime_sizes.py --prototype build/obs-native-ci/runtime --obs $root --report build/obs-native-ci/native-size-compare.json
+          if ($LASTEXITCODE -ne 0) { throw 'Explaining the OBS same-OS size gap failed.' }
           Get-Content -LiteralPath $path
       - name: Require actual Qt plugin startup, private portable config and normal exit
         if: ${{ !inputs.pixel_test }}
@@ -458,6 +460,7 @@ jobs:
             build/obs-native-ci/native-upgrade-second.json
             build/obs-native-ci/native-upgrade-second-smoke.json
             build/obs-native-ci/obs-size-reference.json
+            build/obs-native-ci/native-size-compare.json
             build/obs-native-ci/native-runtime-prune.json
             build/obs-native-ci/native-runtime-inventory.json
             build/obs-native-ci/native-nsis-installer.json

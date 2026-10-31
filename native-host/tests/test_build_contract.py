@@ -176,6 +176,19 @@ class BuildContractTests(unittest.TestCase):
         self.assertIn("-Filter *.pdb", workflow)
         self.assertIn("build-symbol PDB files", workflow)
 
+    def test_size_gap_comparison_runs_against_stock_obs(self):
+        workflow = (ROOT / ".github/workflows/windows-obs-native-host.yaml").read_text()
+        script = (SCRIPTS / "compare_runtime_sizes.py").read_text()
+        self.assertIn("native-host/scripts/compare_runtime_sizes.py", workflow)
+        self.assertIn("--prototype build/obs-native-ci/runtime --obs $root", workflow)
+        self.assertIn("build/obs-native-ci/native-size-compare.json", workflow)
+        self.assertLess(
+            workflow.index("Measure the stock OBS 32.1.2 installation"),
+            workflow.index("--obs $root"),
+        )
+        for expected in ("obsOnlyGroups", "sharedPercentOfObsBytes", "largestObsOnly"):
+            self.assertIn(expected, script)
+
     def test_runtime_inventory_enforces_budget_and_accounting(self):
         workflow = (ROOT / ".github/workflows/windows-obs-native-host.yaml").read_text()
         script = (SCRIPTS / "runtime_inventory.py").read_text()
