@@ -56,34 +56,8 @@ try {
     $stage='assembly-load'; $code='reference-assemblies'
     Add-Type -AssemblyName System.Drawing
     Add-Type -AssemblyName System.Windows.Forms
-    # PS 6+ -ReferencedAssemblies REPLACES default .NET references, so every
-    # type family the inline C# uses must resolve. Touch the concrete types
-    # first to force their runtime assemblies to load, then reference the
-    # loaded runtime assemblies and PowerShell's trusted reference pack. The
-    # reference-pack-only list had no Windows Drawing/Forms dependencies and
-    # failed CS0012 before any BMP. Do not resolve from the disposable profile
-    # or current directory.
-    $null = @(
-        [System.Drawing.Bitmap], [System.Drawing.Rectangle], [System.Drawing.Size],
-        [System.Drawing.Imaging.PixelFormat], [System.Drawing.CopyPixelOperation],
-        [System.Windows.Forms.Screen], [System.Diagnostics.Process],
-        [System.Diagnostics.Stopwatch], [System.Threading.Thread],
-        [System.Runtime.InteropServices.Marshal], [System.Globalization.CultureInfo],
-        [System.IO.Path]
-    )
-    $referenceDirectory = Join-Path $PSHOME 'ref'
-    if (-not (Test-Path -LiteralPath $referenceDirectory -PathType Container)) { throw 'Trusted reference pack missing.' }
-    # Candidate 1: only loaded runtime assemblies (one consistent identity set).
-    $loaded = @([AppDomain]::CurrentDomain.GetAssemblies() |
-        Where-Object { -not $_.IsDynamic -and $_.Location } |
-        ForEach-Object { $_.Location })
-    $loaded = @($loaded | Group-Object { [IO.Path]::GetFileNameWithoutExtension($_) } | ForEach-Object { $_.Group[0] })
-    # Candidate 2: loaded runtime assemblies first, then the trusted pack fills
-    # facades PowerShell never loads. Loaded assemblies win on simple name.
-    $withPack = @($loaded)
-    $withPack += @((Get-ChildItem -LiteralPath $referenceDirectory -Filter '*.dll' -File).FullName)
-    $withPack = @($withPack | Group-Object { [IO.Path]::GetFileNameWithoutExtension($_) } | ForEach-Object { $_.Group[0] })
-    $stage='compile'; $code='csharp-compilation'
+    # Use the proven PowerShell assembly-name reference set. The default
+    # reference pack alone lacked Windows Drawing/Forms dependencies.
     $typeDefinition = @'
 using System;
 using System.Diagnostics;
@@ -183,22 +157,7 @@ public static class ObsPixelCapture {
     }
 }
 '@
-    # Bounded: at most these two whole reference sets are tried, in order.
-    $candidates = @()
-    $candidates += ,$loaded
-    $candidates += ,$withPack
-    $compileError = $null
-    foreach ($references in $candidates) {
-        $compilerErrors = @()
-        try {
-            Add-Type -ReferencedAssemblies $references -ErrorVariable compilerErrors -TypeDefinition $typeDefinition
-            $compileError = $null
-            break
-        } catch {
-            $compileError = $_
-        }
-    }
-    if ($compileError) { throw $compileError }
+    Add-Type -ReferencedAssemblies System.Drawing,System.Windows.Forms -ErrorVariable compilerErrors -TypeDefinition $typeDefinition
     if ($CompileOnly) {
         Write-Report @{schema=1; compileOnly=$true; captureFailed=$false; captures=@()}
         exit 0

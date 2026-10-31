@@ -198,23 +198,13 @@ class PixelContractTests(unittest.TestCase):
     def test_capture_compile_only_references_and_unchanged_identity_guards(self):
         script = (HERE / "capture-pixels.ps1").read_text()
         self.assertIn("[switch]$CompileOnly", script)
-        self.assertIn("Join-Path $PSHOME 'ref'", script)
-        # Loaded runtime assemblies (including Windows Drawing/Forms) must be
-        # referenced; a reference-pack-only list fails CS0012 on Windows.
-        self.assertIn("[AppDomain]::CurrentDomain.GetAssemblies()", script)
-        self.assertIn("GetFileNameWithoutExtension", script)
-        # Bounded cascade: loaded-only first, then loaded plus trusted pack.
-        self.assertIn("$candidates += ,$loaded", script)
-        self.assertIn("$candidates += ,$withPack", script)
-        self.assertIn("if ($compileError) { throw $compileError }", script)
+        # Proven assembly-name reference set, loaded via -AssemblyName above.
+        self.assertIn("Add-Type -AssemblyName System.Drawing", script)
+        self.assertIn("Add-Type -AssemblyName System.Windows.Forms", script)
+        self.assertIn("Add-Type -ReferencedAssemblies System.Drawing,System.Windows.Forms", script)
         # Fixed .NET type/assembly names only for CS0012/CS1069 diagnosis.
         self.assertIn("missingTypes", script)
         self.assertIn("missingAssemblies", script)
-        for type_family in ("[System.Drawing.Bitmap]", "[System.Drawing.Rectangle]",
-                            "[System.Windows.Forms.Screen]", "[System.Diagnostics.Process]",
-                            "[System.Diagnostics.Stopwatch]"):
-            self.assertIn(type_family, script)
-        self.assertIn("Add-Type -ReferencedAssemblies $references", script)
         for guard in ("process.StartTime.ToUniversalTime().ToFileTimeUtc()!=creation", "actual!=pid || actualRoot!=pid",
                       "GetAncestor(hwnd,2)!=root", "!IsChild(hwnd,hit)", "screen.Contains(new Rectangle", "DwmFlush()", "i<8"):
             self.assertIn(guard, script)
