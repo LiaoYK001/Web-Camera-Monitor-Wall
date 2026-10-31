@@ -119,6 +119,34 @@ void obs_sceneitem_set_bounds_alignment(obs_sceneitem_t *item, uint32_t value) {
 void obs_sceneitem_set_bounds_type(obs_sceneitem_t *item, obs_bounds_type value) { item->bounds_type = value; }
 void obs_sceneitem_set_bounds(obs_sceneitem_t *item, const vec2 *value) { item->bounds = *value; }
 void obs_sceneitem_set_pos(obs_sceneitem_t *item, const vec2 *value) { item->pos = *value; }
+obs_source_t *obs_source_get_ref(obs_source_t *source)
+{
+	if (source)
+		++source->refs;
+	return source;
+}
+const char *obs_source_get_uuid(const obs_source_t *source) { return source->uuid.c_str(); }
+const char *obs_source_get_name(const obs_source_t *source) { return source->name.c_str(); }
+obs_scene_t *obs_scene_from_source(const obs_source_t *source)
+{
+	for (auto &scene : scenes)
+		if (&scene->source == source)
+			return scene.get();
+	return nullptr;
+}
+void obs_enum_scenes(bool (*callback)(void *, obs_source_t *), void *param)
+{
+	for (auto &scene : scenes)
+		if (scene && !callback(param, &scene->source))
+			return;
+}
+void obs_scene_enum_items(obs_scene_t *scene, bool (*callback)(obs_scene_t *, obs_sceneitem_t *, void *), void *param)
+{
+	for (auto &item : scene->items)
+		if (!callback(scene, &item, param))
+			return;
+}
+obs_source_t *obs_sceneitem_get_source(const obs_sceneitem_t *item) { return item->source; }
 bool obs_frontend_preview_program_mode_active(void) { return studio; }
 void obs_frontend_set_current_preview_scene(obs_source_t *scene) { preview = scene; }
 void obs_frontend_set_current_scene(obs_source_t *scene) { program = scene; }
@@ -182,5 +210,24 @@ int main()
 	assert(!wall.scene && created == 1 && scenes[0]->source.removed);
 	assert(program == nullptr && preview == nullptr);
 	balanced();
-	std::cout << "Pinned OBS API: source identity/reuse, validation, rollback, layout and Preview/Program contracts passed\n";
+	reset();
+	auto first = create_five_tile_wall(selection());
+	assert(first.scene);
+	const int before_reuse = created;
+	auto reuse = ensure_five_tile_wall(selection(), first.scene->source.name);
+	assert(reuse.reused && reuse.scene == first.scene && created == before_reuse);
+	balanced();
+	auto mismatch = selection();
+	mismatch[2] = "uuid-0";
+	auto rejected = ensure_five_tile_wall(mismatch, first.scene->source.name);
+	assert(!rejected.scene && !rejected.error.empty() && created == before_reuse);
+	balanced();
+	auto fresh = ensure_five_tile_wall(selection(), "WebOBS Native Wall");
+	assert(fresh.scene && fresh.reused && fresh.scene == first.scene && created == before_reuse);
+	balanced();
+	reset();
+	auto created_wall = ensure_five_tile_wall(selection(), "WebOBS Native Wall");
+	assert(created_wall.scene && !created_wall.reused && created == 1);
+	balanced();
+	std::cout << "Pinned OBS API: source identity/reuse, validation, rollback, layout, wall reuse/mismatch and Preview/Program contracts passed\n";
 }
