@@ -120,6 +120,20 @@ The real entry failure was `Add-Type -AssemblyName System.Drawing` in PowerShell
 
 This is still synthetic fixtures on a GitHub-hosted software-D3D11 runner, not the target RTX 4090, real cameras or an OBS comparison; P2–P5 gates, migration, size and performance remain open, the default package is still legacy Electron, and nothing was published or tagged.
 
+### 全屏 Program 投影最终像素（合成夹具）/ Fullscreen Program projector final pixels
+
+最终像素门槛新增第八相位 `program-fullscreen`（`5b4b643`）：在第七相位恢复后打开 monitor 0 的真实全屏 StudioProgram 投影，要求 `isFullScreen()`、五路回环 RTSP 仍为 PLAYING、当前场景仍是五格 RTSP 墙，然后分别捕获主 Preview 与全屏 Program 客户端八帧；全屏角色保留全屏几何，不再套用窗口化 1100×740 的尺寸。`9f49d8f` 把 `program-fullscreen` 加入分析器角色白名单（inset=0）；`20d173e` 修正升级与体积基线步骤的混合 `${{ }}` 条件——拼接后的字符串恒为真，导致像素运行误触升级步骤并因没有原型 ZIP 失败。这两次失败均是测试工程缺陷，不是像素回归。
+
+[Windows 运行 41224874089](https://github.com/LiaoYK001/Web-Camera-Monitor-Wall/actions/runs/41224874089)（`20d173e`，dev.37）八个相位全部 passed：第一至第五相位主 Preview 与 Program projector 各 8 样本，第六、七相位主 Preview 各 8 样本，第八相位主 Preview 与全屏 Program 各 8 样本；`programFullscreenPhaseQualified=true`、`syntheticFinalWindowPixelsQualified=true`。回执 artifact `webobs-obs-native-final-pixels-4.1.0-dev.37`（id `13051488872`，2968 字节 zip，JSON 2968 字节）。`rtspQualified` / `realCameraQualified` / `mediaHardwareQualified` / `performanceP2Qualified` / `productMigrationQualified` 仍为 false。
+
+该证据覆盖**单显示器、100% 缩放、软件 D3D11 运行器**上的全屏 Program 投影最终像素；DPI 缩放、多显示器、断流恢复期间的全屏保持、保存场景重启与真实相机/硬解仍不在其中，不能视为 P1 显示项全部完成或 P5 目标机结论。
+
+An eighth finite phase, `program-fullscreen` (`5b4b643`), opens a real fullscreen StudioProgram projector on monitor 0 after the recovery phase, requires `isFullScreen()`, all five loopback RTSP streams still PLAYING and the current scene to remain the five-tile RTSP wall, then captures eight frames from both the main Preview and the fullscreen Program client, keeping the fullscreen geometry instead of the windowed 1100×740 size. `9f49d8f` added `program-fullscreen` to the analyzer's role allowlist (inset=0), and `20d173e` fixed the mixed `${{ }}` conditions on the upgrade and size-baseline steps, whose joined string was always truthy and made a pixel run execute the upgrade step and fail without a prototype ZIP. Both failures were test-engineering defects, not pixel regressions.
+
+Windows run [41224874089](https://github.com/LiaoYK001/Web-Camera-Monitor-Wall/actions/runs/41224874089) (`20d173e`, dev.37) passed all eight phases: eight samples each for the main Preview and Program projector in phases 1–5, eight main-Preview samples in phases 6–7, and eight samples each for the main Preview and the fullscreen Program in phase 8, with `programFullscreenPhaseQualified=true` and `syntheticFinalWindowPixelsQualified=true`. The receipt artifact is `webobs-obs-native-final-pixels-4.1.0-dev.37` (id 13051488872, 2968-byte zip; JSON 2968 bytes). `rtspQualified`, `realCameraQualified`, `mediaHardwareQualified`, `performanceP2Qualified` and `productMigrationQualified` remain false.
+
+This covers fullscreen Program pixels on a **single-monitor, 100%-scale, software-D3D11 runner**; DPI scaling, multiple monitors, fullscreen persistence during stream recovery, saved-scene restart and real cameras/hardware decode are not covered, so it is not a completed P1 display gate or a P5 target conclusion.
+
 ### 回环 RTSP 阶段：测试已扩展，尚未运行 / Loopback RTSP phase
 
 `pixel_test` 有限阶段新增第六阶段 `rtsp-loopback`：测试在启动前先退出 Studio、关闭 Program 投影，再由锁定的 MediaMTX 1.18.2（`desktop/dependencies.lock.json`）在 `127.0.0.1:8554` 上服务五路 `hybrid-<32hex>-1..5` 回环路径，五路 ffmpeg 发布器以 TCP 循环推送同一组本地夹具；harness 只接受五条 `^rtsp://127\.0\.0\.1:[1-9][0-9]{0,4}/hybrid-[0-9a-f]{32}-[1-5]$` URL，以 `is_local_file=false`、`restart_on_activate=true`、`close_when_inactive=false` 创建五个 ffmpeg Media Source 并组成五分屏，等待五路均为 PLAYING/320×180 后由外部仅捕获主 Preview 客户端像素。该阶段全局 ffmpeg 输入为 10，active output/encoder/raw consumer 仍须为零。回环 RTSP 只验证 HTTP 之外的真实解码/播放链路，**不等于**真实摄像机、硬解或 OBS 对照，`rtspQualified` 保持 false。
