@@ -1,0 +1,77 @@
+name: Diagnose frozen dev.17 final native pixels
+
+# Executes the NEW test against the OLD immutable runtime, without rebuilding,
+# publishing, mutating a release or claiming target-camera qualification.
+on:
+  workflow_call:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  frozen-pixels:
+    runs-on: windows-2022
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1
+        with:
+          node-version: 24.19.0
+          package-manager-cache: false
+      - name: Require the immutable previously successful runtime
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $artifact = gh api repos/LiaoYK001/Web-Camera-Monitor-Wall/actions/artifacts/12981884498 | ConvertFrom-Json
+          if ($LASTEXITCODE -ne 0 -or $artifact.name -ne 'webobs-windows-4.1.0-dev.17' -or $artifact.expired -or
+              $artifact.digest -ne 'sha256:91306c23c876a87fa3648367fa123fe35383b34710bcbd9b72a7bfc5e2f25f81' -or
+              $artifact.workflow_run.id -ne 41062148722 -or
+              $artifact.workflow_run.head_sha -ne '4ca94a43290ee93bf20d9083554edc2c892dfda6') { throw 'Frozen dev.17 artifact identity failed.' }
+      - uses: actions/download-artifact@70fc10c6e5e1ce46ad2ea6f2b72d43f7d47b13c3
+        with:
+          artifact-ids: 12981884498
+          merge-multiple: true
+          path: incoming
+          run-id: 41062148722
+          github-token: ${{ github.token }}
+      - name: Stage only the exact frozen runtime without altering its manifest
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $installers = @(Get-ChildItem incoming -Recurse -File -Filter 'WebOBS-4.1.0-dev.17-windows-x64-DEVELOPMENT-UNSIGNED.exe')
+          if ($installers.Count -ne 1 -or $installers[0].Length -ne 427435987 -or
+              (Get-FileHash $installers[0].FullName -Algorithm SHA256).Hash.ToLowerInvariant() -ne 'd52cd3394ee4a8dad0a3029aab3a7cba912d2cb5bb7f1666ef107d65a4466535') { throw 'Frozen installer identity failed.' }
+          $manifests = @(Get-ChildItem incoming -Recurse -File -Filter manifest.json | Where-Object { $_.Directory.Name -eq 'runtime' })
+          if ($manifests.Count -ne 1) { throw 'Expected one unpacked frozen runtime.' }
+          $manifest = Get-Content $manifests[0].FullName -Raw | ConvertFrom-Json
+          if ($manifest.version -ne '4.1.0-dev.17' -or $manifest.revision -ne '4ca94a43290ee93bf20d9083554edc2c892dfda6') { throw 'Frozen runtime manifest identity failed.' }
+          if (Test-Path desktop/runtime) { throw 'Refuse to overwrite an existing runtime.' }
+          Copy-Item -LiteralPath $manifests[0].Directory.FullName -Destination desktop/runtime -Recurse
+      - name: Install only the locked external test tools
+        shell: pwsh
+        run: |
+          npm install --global pnpm@11.16.0
+          if ($LASTEXITCODE -ne 0) { throw 'pnpm installation failed.' }
+          pnpm --dir desktop install --frozen-lockfile
+          if ($LASTEXITCODE -ne 0) { throw 'Locked test tool installation failed.' }
+          pnpm --dir desktop test
+          if ($LASTEXITCODE -ne 0) { throw 'Fixture predicate unit tests failed.' }
+      - name: Require actual final visible pixels, channel identity and progression
+        shell: pwsh
+        run: |
+          pnpm --dir desktop test:runtime
+          if ($LASTEXITCODE -ne 0) { throw 'Frozen native final-pixel gate failed; not camera or performance qualification.' }
+      - name: Preserve only bounded synthetic test receipts
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: frozen-dev17-native-final-pixels
+          path: build/desktop-windows/native-preview-pixels.json
+          if-no-files-found: ignore
+          retention-days: 7
