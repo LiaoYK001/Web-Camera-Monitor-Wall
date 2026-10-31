@@ -77,6 +77,6 @@ python -B native-host/qualification/test_qualification.py
 python -B native-host/qualification/test_windows_api.py
 ```
 
-[test_qualification.py](test_qualification.py) 使用合成累计数值/假句柄/临时文件验证 PID 重用、退出尾数、首次 baseline、新进程增量、缺失指标、私密目录拒绝、SHA-256 重算、元数据/配对/顺序拒绝等，不证明真实 API 正确。Linux 上 [test_windows_api.py](test_windows_api.py) 明确 skip；Windows 该测试只创建并结束自己的短时 Python fixture，不启动/停止任何产品，可检查系统 times/memory/snapshot、保留句柄退出 CPU 和私密目录创建。操作者仍须核实实际 DACL 权限、Unicode 路径、PID/路径拒绝、子孙启动/退出、权限不足、采样中根退出、缺失尾数与进程树外服务边界。正式跑之前应在独立 fixture 上复核采样器自身开销；两侧采用同版本/间隔/工具。
+[test_qualification.py](test_qualification.py) 使用合成累计数值/假句柄/临时文件验证 PID 重用、退出尾数、首次 baseline、新进程增量、缺失指标、私密目录拒绝、SHA-256 重算、元数据/配对/顺序拒绝等，不证明真实 API 正确。Linux 上 [test_windows_api.py](test_windows_api.py) 明确 skip；Windows 该测试只创建并结束自己的短时 Python fixture，不启动/停止任何产品；四项合约覆盖系统 times/memory/snapshot、保留句柄退出 CPU、读取实际 protected DACL 并只允许当前用户与 SYSTEM，以及短采样结束后 fixture 仍存活/可应答。测试源码存在或 Linux skip 不等于 Windows API 已通过。操作者仍须核实实际目录的后续权限变动、Unicode 路径、PID/路径拒绝、子孙启动/退出、权限不足、采样中根退出、缺失尾数与进程树外服务边界。正式跑之前应在独立 fixture 上复核采样器自身开销；两侧采用同版本/间隔/工具。
 
-本目录不改变现有 Windows 构建、默认宿主、服务、现有测试或 CI，不包含摄像机、配置、录制或任何实机测量数据。Windows 全流程和实际用户机器五路同条件 P5 验收仍待执行。
+本工具不改变默认宿主、服务或产品运行状态；独立原生宿主 CI 另行执行这些纯合成/系统 API 合约，不自动开展 P5 实机测量。本目录不包含摄像机、配置、录制或任何实机测量数据。Windows 全流程和实际用户机器五路同条件 P5 验收仍待执行。
