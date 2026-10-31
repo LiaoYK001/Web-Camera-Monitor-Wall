@@ -176,6 +176,19 @@ class BuildContractTests(unittest.TestCase):
         self.assertIn("-Filter *.pdb", workflow)
         self.assertIn("build-symbol PDB files", workflow)
 
+    def test_runtime_inventory_enforces_budget_and_accounting(self):
+        workflow = (ROOT / ".github/workflows/windows-obs-native-host.yaml").read_text()
+        script = (SCRIPTS / "runtime_inventory.py").read_text()
+        self.assertIn("native-host/scripts/runtime_inventory.py", workflow)
+        self.assertIn("--max-runtime-bytes 104857600", workflow)
+        self.assertIn("build/obs-native-ci/native-runtime-inventory.json", workflow)
+        self.assertLess(
+            workflow.index("Inventory the runtime"),
+            workflow.index("Freeze clean non-default prototype"),
+        )
+        for expected in ('".pdb"', '".lib"', "licenseHint", "withinBudget"):
+            self.assertIn(expected, script)
+
     def test_installer_is_per_user_and_never_deletes_private_config(self):
         script = (ROOT / "native-host/installer/WebOBSNative.nsi").read_text()
         workflow = (ROOT / ".github/workflows/windows-obs-native-host.yaml").read_text()

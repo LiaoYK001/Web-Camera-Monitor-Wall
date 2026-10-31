@@ -86,6 +86,7 @@ jobs:
           node-version: 24.19.0
           package-manager-cache: false
       - name: Compile pinned OBS frontend and product plugin without legacy services
+        id: compile
         shell: pwsh
         env:
           NATIVE_VERSION: ${{ inputs.version }}
@@ -94,6 +95,13 @@ jobs:
           $parameters = @{Version=$env:NATIVE_VERSION;BuildDirectory="$env:GITHUB_WORKSPACE/build/obs-native-ci"}
           if ($env:NATIVE_PIXEL_TEST -eq 'true') { $parameters.PixelTest=$true }
           ./desktop/scripts/build-obs-native.ps1 @parameters
+      - name: Inventory the runtime and enforce the P4 size budget
+        if: always() && steps.compile.outcome == 'success'
+        shell: pwsh
+        run: |
+          $runtime = Join-Path $env:GITHUB_WORKSPACE 'build/obs-native-ci/runtime'
+          if (-not (Test-Path (Join-Path $runtime 'webobs-native-prototype.json'))) { throw 'No staged runtime to inventory.' }
+          python native-host/scripts/runtime_inventory.py --runtime $runtime --report build/obs-native-ci/native-runtime-inventory.json --max-runtime-bytes 104857600
       - name: Freeze clean non-default prototype before generating any config
         if: ${{ !inputs.pixel_test }}
         shell: pwsh
@@ -451,6 +459,7 @@ jobs:
             build/obs-native-ci/native-upgrade-second-smoke.json
             build/obs-native-ci/obs-size-reference.json
             build/obs-native-ci/native-runtime-prune.json
+            build/obs-native-ci/native-runtime-inventory.json
             build/obs-native-ci/native-nsis-installer.json
             build/obs-native-ci/native-nsis-install-smoke.json
             build/obs-native-ci/native-restore.json
