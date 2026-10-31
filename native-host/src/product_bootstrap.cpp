@@ -101,6 +101,7 @@ ProductWallResult create_product_five_camera_wall(const std::array<ProductCamera
 			if (!media_settings_match(existing, cameras[i])) {
 				obs_source_release(existing);
 				remove_created(result.sources, result.created);
+				result.release();
 				result.error = "camera-name-conflict";
 				return result;
 			}
@@ -111,6 +112,7 @@ ProductWallResult create_product_five_camera_wall(const std::array<ProductCamera
 		auto *created = create_camera_source(cameras[i]);
 		if (!created) {
 			remove_created(result.sources, result.created);
+			result.release();
 			result.error = "camera-source-create-failed";
 			return result;
 		}
@@ -123,6 +125,7 @@ ProductWallResult create_product_five_camera_wall(const std::array<ProductCamera
 	auto wall = ensure_five_tile_wall(uuids, wall_name);
 	if (!wall.scene) {
 		remove_created(result.sources, result.created);
+		result.release();
 		result.error = wall.error.empty() ? "wall-unavailable" : wall.error;
 		return result;
 	}
