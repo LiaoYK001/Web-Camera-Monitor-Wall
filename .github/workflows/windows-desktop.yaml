@@ -9,6 +9,10 @@ on:
       installed_upgrade: { type: boolean, default: false }
   workflow_dispatch:
     inputs:
+      native_host:
+        description: 'Build the independent non-default OBS/Qt prototype; no legacy installer or publication'
+        default: false
+        type: boolean
       diagnose_dev17:
         description: 'Test frozen dev.17 final visible native pixels without rebuilding or publishing'
         default: false
@@ -44,7 +48,7 @@ concurrency:
 
 jobs:
   audit:
-    if: ${{ !inputs.publish_dev17 && !inputs.diagnose_dev17 }}
+    if: ${{ !inputs.publish_dev17 && !inputs.diagnose_dev17 && !inputs.native_host }}
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
@@ -204,15 +208,21 @@ jobs:
           if-no-files-found: ignore
           retention-days: 7
 
+  obs-native-host:
+    if: github.event_name == 'workflow_dispatch' && inputs.native_host && !inputs.diagnose_dev17 && !inputs.publish_dev17 && !inputs.official && !inputs.installed_upgrade
+    uses: ./.github/workflows/windows-obs-native-host.yaml
+    with:
+      version: ${{ inputs.version }}
+
   diagnose-dev17:
-    if: github.event_name == 'workflow_dispatch' && inputs.diagnose_dev17 && !inputs.publish_dev17 && !inputs.official && !inputs.installed_upgrade
+    if: github.event_name == 'workflow_dispatch' && inputs.diagnose_dev17 && !inputs.native_host && !inputs.publish_dev17 && !inputs.official && !inputs.installed_upgrade
     permissions:
       contents: read
       actions: read
     uses: ./.github/workflows/windows-native-preview.yaml
 
   publish-dev17:
-    if: github.event_name == 'workflow_dispatch' && inputs.publish_dev17 && !inputs.diagnose_dev17 && !inputs.official && !inputs.installed_upgrade && inputs.version == '4.1.0-dev.17'
+    if: github.event_name == 'workflow_dispatch' && inputs.publish_dev17 && !inputs.diagnose_dev17 && !inputs.native_host && !inputs.official && !inputs.installed_upgrade && inputs.version == '4.1.0-dev.17'
     runs-on: ubuntu-24.04
     timeout-minutes: 20
     permissions:

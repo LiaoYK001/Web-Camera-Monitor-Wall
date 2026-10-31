@@ -1,0 +1,85 @@
+name: Build isolated OBS native frontend prototype
+
+# Explicit, non-default prototype; no installer, release write or stable feed.
+on:
+  workflow_call:
+    inputs:
+      version: { type: string, required: true }
+  workflow_dispatch:
+    inputs:
+      version:
+        type: string
+        required: true
+        default: '4.1.0-dev.18'
+
+permissions:
+  contents: read
+
+jobs:
+  native-host:
+    runs-on: windows-2022
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          submodules: recursive
+          persist-credentials: false
+      - name: Select existing VS compiler
+        shell: pwsh
+        run: |
+          $vswhere = Join-Path ${env:ProgramFiles(x86)} 'Microsoft Visual Studio/Installer/vswhere.exe'
+          $vs = & $vswhere -latest -products '*' -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath
+          if (-not $vs) { throw 'MSVC x64 not available on runner' }
+          Import-Module (Join-Path $vs 'Common7/Tools/Microsoft.VisualStudio.DevShell.dll')
+          Enter-VsDevShell -VsInstallPath $vs -SkipAutomaticLocation -DevCmdArguments '-arch=x64 -host_arch=x64'
+          Get-ChildItem Env: | Where-Object Name -In @('PATH','INCLUDE','LIB','LIBPATH','VCToolsInstallDir','VSINSTALLDIR','WindowsSdkDir','WindowsSDKVersion') | ForEach-Object { "$($_.Name)=$($_.Value)" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8 }
+      - name: Cache only hash-verified dependency archives
+        id: dependencies
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
+        with:
+          path: desktop/.cache/*.zip
+          key: windows-2022-obs-native-${{ hashFiles('desktop/dependencies.lock.json', 'native-host/dependencies.lock.json') }}
+          restore-keys: |
+            windows-2022-obs-native-
+            windows-2022-desktop-
+      - name: Compile pinned OBS frontend and product plugin without legacy services
+        shell: pwsh
+        env:
+          NATIVE_VERSION: ${{ inputs.version }}
+        run: |
+          ./desktop/scripts/build-obs-native.ps1 -Version $env:NATIVE_VERSION -BuildDirectory "$env:GITHUB_WORKSPACE/build/obs-native-ci"
+      - name: Freeze clean non-default prototype before generating any config
+        shell: pwsh
+        env:
+          NATIVE_VERSION: ${{ inputs.version }}
+        run: |
+          $runtime = Join-Path $env:GITHUB_WORKSPACE 'build/obs-native-ci/runtime'
+          if (Test-Path "$runtime/config") { throw 'Refuse to archive a configured runtime.' }
+          $package = "build/obs-native-ci/WebOBS-OBS-native-$env:NATIVE_VERSION-windows-x64-PROTOTYPE.zip"
+          Compress-Archive -Path "$runtime/*" -DestinationPath $package
+          $hash = (Get-FileHash -LiteralPath $package -Algorithm SHA256).Hash.ToLowerInvariant()
+          "$hash  $([IO.Path]::GetFileName($package))" | Set-Content "$package.sha256" -Encoding utf8
+      - name: Require actual Qt plugin startup, private portable config and normal exit
+        shell: pwsh
+        run: |
+          python -B native-host/tests/smoke_windows.py --runtime build/obs-native-ci/runtime --result build/obs-native-ci/native-startup-smoke.json
+          if ($LASTEXITCODE -ne 0) { throw 'Native frontend startup/isolation smoke failed; not camera or performance qualification.' }
+      - name: Preserve clean prototype and bounded receipts only
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: webobs-obs-native-prototype-${{ inputs.version }}
+          path: |
+            build/obs-native-ci/WebOBS-OBS-native-*-windows-x64-PROTOTYPE.zip
+            build/obs-native-ci/*.sha256
+            build/obs-native-ci/runtime/webobs-native-prototype.json
+            build/obs-native-ci/native-startup-smoke.json
+          if-no-files-found: ignore
+          retention-days: 7
+          compression-level: 0
+      - name: Preserve verified archives after compile failures
+        if: always() && !cancelled() && steps.dependencies.outputs.cache-hit != 'true'
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
+        with:
+          path: desktop/.cache/*.zip
+          key: windows-2022-obs-native-${{ hashFiles('desktop/dependencies.lock.json', 'native-host/dependencies.lock.json') }}
