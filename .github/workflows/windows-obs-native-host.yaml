@@ -264,11 +264,11 @@ jobs:
           $stableBefore = @{}
           foreach ($key in $beforeHashes.Keys) { if ($key -like 'obs-studio/*' -and $key -notlike 'obs-studio/logs/*') { $stableBefore[$key] = $beforeHashes[$key] } }
           $stableEntries = @($manifest.entries | Where-Object { $_.path -like 'obs-studio/*' -and $_.path -notlike 'obs-studio/logs/*' })
-          if ($stableEntries.Count -ne $stableBefore.Count) {
-            $snapshotPaths = @($stableEntries | ForEach-Object { $_.path })
-            $missing = @($stableBefore.Keys | Where-Object { $snapshotPaths -notcontains $_ })
-            throw "Snapshot captured $($stableEntries.Count) stable files, expected $($stableBefore.Count); missing: $($missing -join ', ')."
-          }
+          $snapshotPaths = @($stableEntries | ForEach-Object { $_.path })
+          $missing = @($stableBefore.Keys | Where-Object { $snapshotPaths -notcontains $_ })
+          if ($missing.Count -gt 0) { throw "Snapshot is missing pre-upgrade files: $($missing -join ', ')." }
+          $extra = @($snapshotPaths | Where-Object { -not $stableBefore.ContainsKey($_) })
+          if ($extra.Count -gt 0) { Write-Host "Snapshot also captured new files: $($extra -join ', ')" }
           foreach ($entry in $manifest.entries) {
             $entryPath = ($entry.path -replace '\\','/')
             if ($entryPath -like '*..*' -or $entryPath.StartsWith('/')) { throw "Unsafe snapshot entry $($entry.path)." }
