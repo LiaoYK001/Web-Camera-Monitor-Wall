@@ -235,7 +235,7 @@ jobs:
           [IO.File]::WriteAllText((Join-Path $configRoot 'obs-studio/private-marker.txt'), "dev.40 profile marker`n")
           $beforeHashes = @{}
           Get-ChildItem -LiteralPath $configRoot -Recurse -File -Force | ForEach-Object {
-            $rel = $_.FullName.Substring($configRoot.Length).Replace('','/').TrimStart('/')
+            $rel = $_.FullName.Substring($configRoot.Length).Replace('\','/').TrimStart('/')
             $beforeHashes[$rel] = (Get-FileHash -LiteralPath $_.FullName -Algorithm SHA256).Hash.ToLowerInvariant()
           }
           $setup = Get-ChildItem (Join-Path $env:GITHUB_WORKSPACE 'build/obs-native-ci/WebOBS-OBS-native-*-SETUP.exe') | Select-Object -First 1
@@ -246,7 +246,7 @@ jobs:
           if ($manifest.version -ne $env:NATIVE_VERSION) { throw "Upgraded manifest is $($manifest.version), expected $env:NATIVE_VERSION." }
           $afterHashes = @{}
           Get-ChildItem -LiteralPath $configRoot -Recurse -File -Force | ForEach-Object {
-            $rel = $_.FullName.Substring($configRoot.Length).Replace('','/').TrimStart('/')
+            $rel = $_.FullName.Substring($configRoot.Length).Replace('\','/').TrimStart('/')
             $afterHashes[$rel] = (Get-FileHash -LiteralPath $_.FullName -Algorithm SHA256).Hash.ToLowerInvariant()
           }
           if ((($beforeHashes.Keys | Sort-Object) -join "`n") -ne (($afterHashes.Keys | Sort-Object) -join "`n")) { throw 'Private profile file set changed across the installer upgrade.' }
