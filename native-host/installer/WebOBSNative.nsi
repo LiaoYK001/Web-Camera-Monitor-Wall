@@ -58,13 +58,15 @@ SectionEnd
 
 Section "Uninstall"
   ; Everything except the private portable profile is owned by this installer.
-  ; config\ may contain RTSP credentials and the five-tile wall, so it stays.
+  ; config\ may contain RTSP credentials and the five-tile wall; backups\ holds the
+  ; version upgrade snapshots. Both stay on uninstall.
   FindFirst $0 $1 "$INSTDIR\*.*"
   un_loop:
     StrCmp $1 "" un_done
     StrCmp $1 "." un_next
     StrCmp $1 ".." un_next
     StrCmp $1 "config" un_next
+    StrCmp $1 "backups" un_next
     StrCmp $1 "Uninstall.exe" un_next
     IfFileExists "$INSTDIR\$1\*.*" 0 un_file
       RMDir /r "$INSTDIR\$1"

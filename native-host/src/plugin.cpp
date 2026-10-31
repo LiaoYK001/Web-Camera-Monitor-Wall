@@ -1,3 +1,4 @@
+#include "config_backup.hpp"
 #include "product_bootstrap.hpp"
 #include "wall.hpp"
 #ifdef WEBOBS_NATIVE_PIXEL_TEST
@@ -223,6 +224,7 @@ void frontend_event(enum obs_frontend_event event, void *)
 	}
 	if (pixel_test_handled || event != OBS_FRONTEND_EVENT_FINISHED_LOADING)
 		return;
+	webobs::native_host::backup_config_for_upgrade_if_needed();
 	bootstrap_product_configuration();
 	const QString token = qEnvironmentVariable("WEBOBS_NATIVE_SMOKE_TOKEN");
 	if (!QRegularExpression("^[0-9a-f]{32}$").match(token).hasMatch())

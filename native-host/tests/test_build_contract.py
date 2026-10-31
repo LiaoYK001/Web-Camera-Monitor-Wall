@@ -169,6 +169,7 @@ class BuildContractTests(unittest.TestCase):
         workflow = (ROOT / ".github/workflows/windows-obs-native-host.yaml").read_text()
         self.assertIn("RequestExecutionLevel user", script)
         self.assertIn('StrCmp $1 "config" un_next', script)
+        self.assertIn('StrCmp $1 "backups" un_next', script)
         self.assertNotIn('RMDir /r "$INSTDIR"', script)
         self.assertIn("File /r \"${PACKAGE_DIR}\\*.*\"", script)
         self.assertIn('WriteUninstaller "$INSTDIR\\Uninstall.exe"', script)

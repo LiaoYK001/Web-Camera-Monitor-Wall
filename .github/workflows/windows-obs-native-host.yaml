@@ -169,6 +169,12 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw 'First-run smoke from the installed tree failed.' }
           $configDir = Join-Path $root 'config/obs-studio'
           if (-not (Test-Path -LiteralPath $configDir -PathType Container)) { throw 'The installed runtime did not create a private profile.' }
+          $backups = Join-Path $root 'backups'
+          if (-not (Test-Path -LiteralPath $backups -PathType Container)) { throw 'The first run did not snapshot the private profile for version upgrades.' }
+          $versionBackups = @(Get-ChildItem -LiteralPath $backups -Directory | Where-Object { $_.Name -like "config-$env:NATIVE_VERSION-*" })
+          if ($versionBackups.Count -ne 1) { throw "Expected one upgrade snapshot for $env:NATIVE_VERSION, found $($versionBackups.Count)." }
+          $backupManifest = Get-Content -LiteralPath (Join-Path $versionBackups[0].FullName 'backup.json') -Raw | ConvertFrom-Json
+          if ($backupManifest.kind -ne 'native-config-upgrade-backup' -or $backupManifest.version -ne $env:NATIVE_VERSION) { throw 'The upgrade snapshot receipt is invalid.' }
           $before = (Get-ChildItem -LiteralPath $configDir -Recurse -File | Sort-Object FullName | ForEach-Object { $_.FullName.Substring($configDir.Length) + ':' + (Get-FileHash -LiteralPath $_.FullName -Algorithm SHA256).Hash }) -join "`n"
           $upgrade = Start-Process -FilePath $setup -ArgumentList '/S', "/D=$root" -Wait -PassThru
           if ($upgrade.ExitCode -ne 0) { throw "Silent reinstall failed with exit code $($upgrade.ExitCode)." }
@@ -180,6 +186,8 @@ jobs:
           if (Test-Path -LiteralPath (Join-Path $root 'webobs-native-prototype.json')) { throw 'Uninstall left the bundle manifest behind.' }
           $kept = (Get-ChildItem -LiteralPath $configDir -Recurse -File | Sort-Object FullName | ForEach-Object { $_.FullName.Substring($configDir.Length) + ':' + (Get-FileHash -LiteralPath $_.FullName -Algorithm SHA256).Hash }) -join "`n"
           if ($kept -ne $before) { throw 'Uninstall did not preserve the private profile byte for byte.' }
+          if (-not (Test-Path -LiteralPath $backups -PathType Container)) { throw 'Uninstall removed the version upgrade snapshots.' }
+          if (-not (Test-Path -LiteralPath (Join-Path $versionBackups[0].FullName 'backup.json') -PathType Leaf)) { throw 'Uninstall removed an upgrade snapshot receipt.' }
           if (Test-Path -LiteralPath 'HKCU:\Software\WebOBS\NativePrototype') { throw 'Uninstall left the app registry key behind.' }
           if (Test-Path -LiteralPath 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\WebOBSNativePrototype') { throw 'Uninstall left the uninstall registry entry behind.' }
           $asset = Get-Item -LiteralPath $setup
@@ -192,6 +200,8 @@ jobs:
             installedFileCount = $installedFiles
             configPreservedAcrossReinstall = $true
             configPreservedAcrossUninstall = $true
+            upgradeBackupCreatedOnFirstRun = $true
+            upgradeBackupsPreservedOnUninstall = $true
             registryCleanedOnUninstall = $true
             signed = $false
             qualification = 'unsigned per-user development installer on a GitHub-hosted runner; not the product installer, target-machine evidence or a P5 claim'
@@ -219,7 +229,12 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw 'Pinned previous prototype smoke failed.' }
           $configDir = Join-Path $root 'config/obs-studio'
           if (-not (Test-Path -LiteralPath $configDir -PathType Container)) { throw 'Pinned previous prototype did not create a private config directory.' }
-          $before = Get-ChildItem -LiteralPath $configDir -Recurse -File | Sort-Object FullName | ForEach-Object { $_.FullName.Substring($configDir.Length) + ':' + (Get-FileHash -LiteralPath $_.FullName -Algorithm SHA256).Hash } | Out-String
+          $beforeHashes = @{}
+          Get-ChildItem -LiteralPath $configDir -Recurse -File | ForEach-Object {
+            $relative = $_.FullName.Substring($configDir.Length).Replace('\','/').TrimStart('/')
+            $beforeHashes[$relative] = (Get-FileHash -LiteralPath $_.FullName -Algorithm SHA256).Hash.ToLowerInvariant()
+          }
+          $before = ($beforeHashes.Keys | Sort-Object | ForEach-Object { $_ + ':' + $beforeHashes[$_] }) -join "`n"
           $zip = Get-ChildItem (Join-Path $env:GITHUB_WORKSPACE 'build/obs-native-ci/WebOBS-OBS-native-*-PROTOTYPE.zip') | Select-Object -First 1
           if (-not $zip) { throw 'No frozen prototype archive for the upgrade step.' }
           python -B native-host/scripts/install_native.py --package $zip.FullName --install-root $root --receipt build/obs-native-ci/native-upgrade-second.json
@@ -228,10 +243,51 @@ jobs:
           if ($receipt.version -ne $env:NATIVE_VERSION) { throw "Upgraded version $($receipt.version) does not match $env:NATIVE_VERSION." }
           if ($receipt.previousVersion -ne '4.1.0-dev.32') { throw "Unexpected previousVersion $($receipt.previousVersion)." }
           if ($receipt.configPreserved -ne $true) { throw 'Upgrade did not preserve the private profile.' }
-          $after = Get-ChildItem -LiteralPath $configDir -Recurse -File | Sort-Object FullName | ForEach-Object { $_.FullName.Substring($configDir.Length) + ':' + (Get-FileHash -LiteralPath $_.FullName -Algorithm SHA256).Hash } | Out-String
+          $afterHashes = @{}
+          Get-ChildItem -LiteralPath $configDir -Recurse -File | ForEach-Object {
+            $relative = $_.FullName.Substring($configDir.Length).Replace('\','/').TrimStart('/')
+            $afterHashes[$relative] = (Get-FileHash -LiteralPath $_.FullName -Algorithm SHA256).Hash.ToLowerInvariant()
+          }
+          $after = ($afterHashes.Keys | Sort-Object | ForEach-Object { $_ + ':' + $afterHashes[$_] }) -join "`n"
           if ($before -ne $after) { throw 'Private config bytes changed across the upgrade.' }
           python -B native-host/tests/smoke_windows.py --runtime $root --result build/obs-native-ci/native-upgrade-second-smoke.json --existing-wall
           if ($LASTEXITCODE -ne 0) { throw 'Existing-wall smoke after cross-version upgrade failed.' }
+
+          $backupsRoot = Join-Path $root 'backups'
+          if (-not (Test-Path -LiteralPath $backupsRoot -PathType Container)) { throw 'The upgraded build did not snapshot the previous private profile.' }
+          $backupDir = Get-ChildItem -LiteralPath $backupsRoot -Directory | Where-Object { $_.Name -like "config-$env:NATIVE_VERSION-*" } | Sort-Object Name -Descending | Select-Object -First 1
+          if (-not $backupDir) { throw 'No version upgrade snapshot exists for the upgraded build.' }
+          $manifest = Get-Content -LiteralPath (Join-Path $backupDir.FullName 'backup.json') -Raw | ConvertFrom-Json
+          if ($manifest.schema -ne 1 -or $manifest.kind -ne 'native-config-upgrade-backup') { throw 'Unexpected upgrade snapshot schema.' }
+          if ($manifest.version -ne $env:NATIVE_VERSION) { throw "Snapshot version $($manifest.version) does not match $env:NATIVE_VERSION." }
+          $stableBefore = @{}
+          foreach ($key in $beforeHashes.Keys) { if ($key -notlike 'obs-studio/logs/*') { $stableBefore[$key] = $beforeHashes[$key] } }
+          $stableEntries = @($manifest.entries | Where-Object { $_.path -notlike 'obs-studio/logs/*' })
+          if ($stableEntries.Count -ne $stableBefore.Count) { throw "Snapshot captured $($stableEntries.Count) stable files, expected $($stableBefore.Count)." }
+          foreach ($entry in $manifest.entries) {
+            $entryPath = ($entry.path -replace '\\','/')
+            if ($entryPath -like '*..*' -or $entryPath.StartsWith('/')) { throw "Unsafe snapshot entry $($entry.path)." }
+            $file = Join-Path $backupDir.FullName $entryPath
+            if (-not (Test-Path -LiteralPath $file -PathType Leaf)) { throw "Snapshot payload missing $entryPath." }
+            if ((Get-FileHash -LiteralPath $file -Algorithm SHA256).Hash.ToLowerInvariant() -ne $entry.sha256) { throw "Snapshot file $entryPath is corrupted." }
+            if ($entryPath -notlike 'obs-studio/logs/*') {
+              if (-not $stableBefore.ContainsKey($entryPath)) { throw "Snapshot entry $entryPath was not in the pre-upgrade profile." }
+              if ($stableBefore[$entryPath] -ne $entry.sha256) { throw "Snapshot entry $entryPath does not match the pre-upgrade bytes." }
+            }
+          }
+          $restoreRoot = Join-Path $env:RUNNER_TEMP 'native-restore-check'
+          if (Test-Path $restoreRoot) { Remove-Item -Recurse -Force $restoreRoot }
+          New-Item -ItemType Directory -Path $restoreRoot | Out-Null
+          Copy-Item -LiteralPath (Join-Path $root 'webobs-native-prototype.json') -Destination (Join-Path $restoreRoot 'webobs-native-prototype.json')
+          Copy-Item -LiteralPath (Join-Path $root 'config') -Destination (Join-Path $restoreRoot 'config') -Recurse
+          Copy-Item -LiteralPath $backupsRoot -Destination (Join-Path $restoreRoot 'backups') -Recurse
+          python -B native-host/scripts/restore_native_backup.py --install-root $restoreRoot --backup $backupDir.Name --apply --receipt (Join-Path $env:GITHUB_WORKSPACE 'build/obs-native-ci/native-restore.json')
+          if ($LASTEXITCODE -ne 0) { throw 'Restoring the cross-version snapshot failed.' }
+          foreach ($key in $stableBefore.Keys) {
+            $restored = Join-Path $restoreRoot ('config/' + $key)
+            if (-not (Test-Path -LiteralPath $restored -PathType Leaf)) { throw "Restored profile is missing $key." }
+            if ((Get-FileHash -LiteralPath $restored -Algorithm SHA256).Hash.ToLowerInvariant() -ne $stableBefore[$key]) { throw "Restored profile differs at $key." }
+          }
       - name: Measure the stock OBS 32.1.2 installation for a same-OS size reference
         if: ${{ inputs.measure_obs_baseline && !inputs.pixel_test }}
         shell: pwsh

@@ -32,9 +32,27 @@ pwsh -NoProfile -File desktop/scripts/build-obs-native.ps1 -Version 0.1.0-dev.3 
 
 `native-host/scripts/install_native.py` installs a frozen ZIP into a private caller-chosen directory: it validates entry paths and the manifest (development version, `defaultProduct=false`, no services), rejects a bundled `config/`, refuses to overwrite an unrelated directory without a manifest, backs up the old tree and rolls back on failure; an existing `config/obs-studio` portable profile is copied into the new tree so reinstall or upgrade keeps the five-tile wall, source settings and account login. It writes a small JSON receipt (version, SHA-256, whether config was preserved, file count) without paths, URLs or logs. This is a prototype installer: no service registration, no registry writes, unsigned, and not a product installer.
 
-独立开发安装包（原型）：`native-host/installer/WebOBSNative.nsi` 用 NSIS 把同一份冻结 runtime 打包成未签名的每用户安装器 `WebOBS-OBS-native-<dev>-windows-x64-SETUP.exe`。静默安装到 `%LOCALAPPDATA%\WebOBS Native Prototype`，只写 HKCU 的卸载信息，不注册服务；重装会覆盖程序文件而不触碰 `config\`，静默卸载删除程序文件但逐字节保留 `config\`（内含 RTSP 凭据与五格墙）。CI 会在同一运行中验证安装→双启动烟测→重装保留配置→卸载保留配置与清理注册表，并记录安装包字节数/SHA-256。它仍是开发包：未签名、无自动更新、无跨版本迁移，不是产品安装器。
+独立开发安装包（原型）：`native-host/installer/WebOBSNative.nsi` 用 NSIS 把同一份冻结 runtime 打包成未签名的每用户安装器 `WebOBS-OBS-native-<dev>-windows-x64-SETUP.exe`。静默安装到 `%LOCALAPPDATA%\WebOBS Native Prototype`，只写 HKCU 的卸载信息，不注册服务；重装会覆盖程序文件而不触碰 `config\`，静默卸载删除程序文件但逐字节保留 `config\`（内含 RTSP 凭据与五格墙）。CI 会在同一运行中验证安装→双启动烟测→重装保留配置→卸载保留配置与清理注册表，并记录安装包字节数/SHA-256。它仍是开发包：未签名、无自动更新、无自动数据迁移或自动回滚，不是产品安装器。
 
-Standalone development installer (prototype): `native-host/installer/WebOBSNative.nsi` packages the same frozen runtime with NSIS into an unsigned per-user `WebOBS-OBS-native-<dev>-windows-x64-SETUP.exe`. It installs silently under `%LOCALAPPDATA%\WebOBS Native Prototype`, writes only HKCU uninstall metadata and registers no service; reinstalling replaces program files without touching `config\`, and silent uninstall removes program files while preserving `config\` byte for byte (including RTSP credentials and the five-tile wall). CI verifies install → two-launch smoke → reinstall preserving the profile → uninstall preserving the profile and cleaning the registry, and records the installer byte count/SHA-256. It remains a development package: unsigned, no auto-update, no cross-version migration, not the product installer.
+版本升级快照：每次以一个安装目录中**首次出现的新版本**启动时，插件在 `FINISHED_LOADING` 处理前把 `config/obs-studio`（跳过 `obs-studio/logs`）复制到 `backups/config-<version>-<UTC 时间>/`，并写 `backup.json`（逐文件 SHA-256、字节数、版本）；最多保留 3 份，失败时删除半成品，绝不阻塞启动。`backups/` 与 `config/` 一样不随卸载删除。恢复前先查看并校验：
+
+```powershell
+python -B native-host/scripts/restore_native_backup.py --install-root '<安装根>' --list
+python -B native-host/scripts/restore_native_backup.py --install-root '<安装根>' --backup config-<version>-<时间> --apply
+```
+
+`--apply` 会先把当前 `config/` 快照到 `backups/pre-restore-<UTC>/`，再以临时目录原子替换并写恢复回执；拒绝路径穿越、绝对路径、未列入清单的文件、重复条目和哈希/字节数不匹配。边界：这是同一安装目录内的文件级开发快照，不是加密凭据备份、跨机器迁移、自动回滚或产品数据保留策略。
+
+Standalone development installer (prototype): `native-host/installer/WebOBSNative.nsi` packages the same frozen runtime with NSIS into an unsigned per-user `WebOBS-OBS-native-<dev>-windows-x64-SETUP.exe`. It installs silently under `%LOCALAPPDATA%\WebOBS Native Prototype`, writes only HKCU uninstall metadata and registers no service; reinstalling replaces program files without touching `config\`, and silent uninstall removes program files while preserving `config\` byte for byte (including RTSP credentials and the five-tile wall). CI verifies install → two-launch smoke → reinstall preserving the profile → uninstall preserving the profile and cleaning the registry, and records the installer byte count/SHA-256. It remains a development package: unsigned, no auto-update, no automatic data migration or rollback, not the product installer.
+
+Version upgrade snapshots: on the first launch of a **new version** in an install root, the plugin copies `config/obs-studio` (excluding `obs-studio/logs`) to `backups/config-<version>-<UTC>/` before `FINISHED_LOADING` handling and writes `backup.json` (per-file SHA-256, byte counts, version); at most three snapshots are kept, a partial directory is removed on failure, and startup is never blocked. Like `config/`, `backups/` survives uninstall. Inspect and restore with:
+
+```powershell
+python -B native-host/scripts/restore_native_backup.py --install-root '<install root>' --list
+python -B native-host/scripts/restore_native_backup.py --install-root '<install root>' --backup config-<version>-<time> --apply
+```
+
+`--apply` first snapshots the current `config/` to `backups/pre-restore-<UTC>/`, then atomically replaces it from a staging directory and writes a restore receipt; it rejects path traversal, absolute paths, unlisted files, duplicate entries and size/hash mismatches. Boundary: this is a file-level development snapshot inside one install root, not encrypted credential backup, cross-machine migration, automatic rollback or a product data-retention policy.
 这是原型体积基线，不是发布包/压缩率或性能结论。保留 OBS 自身的 license/data 安装内容，并复制 GPL、产品插件许可、依赖锁；公开分发前仍须完整许可证/源码包审计。
 
 ## 运行与配置隔离
