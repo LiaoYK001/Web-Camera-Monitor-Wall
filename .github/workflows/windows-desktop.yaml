@@ -43,7 +43,9 @@ permissions:
   contents: read
 
 concurrency:
-  group: webobs-windows-desktop-build
+  # Independent read-only prototype/diagnostic runners do not share product
+  # output trees. Keep product/install/publication operations serialized.
+  group: webobs-windows-desktop-build-${{ inputs.native_host && 'native-host' || inputs.diagnose_dev17 && 'frozen-preview' || 'product' }}
   cancel-in-progress: false
 
 jobs:
@@ -136,6 +138,14 @@ jobs:
             desktop/.cache/online-source
             desktop/.cache/vcpkg-binaries
           key: windows-2022-desktop-${{ hashFiles('desktop/dependencies.lock.json', 'desktop/vcpkg.json', 'go2rtc/online-source-dependencies.lock.json') }}
+      - name: Retain bounded synthetic native pixel receipt even on failure
+        if: always() && hashFiles('build/desktop-windows/native-preview-pixels.json') != ''
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: webobs-native-final-pixels-${{ inputs.version }}
+          path: build/desktop-windows/native-preview-pixels.json
+          retention-days: 7
+          if-no-files-found: error
       - name: Retain failed runtime for isolated native diagnostics
         if: failure() && hashFiles('desktop/runtime/manifest.json') != ''
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a

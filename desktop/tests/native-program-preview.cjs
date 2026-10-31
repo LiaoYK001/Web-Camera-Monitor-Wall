@@ -50,37 +50,64 @@ exports.exerciseNativeProgramPreview = async (supervisor, runtime, headers, temp
   const item = (id, slot, sourceId) => ({ id, sourceId, x: slot * original.canvas.width / 5, y: 0,
     width: original.canvas.width / 5, height: original.canvas.height, zIndex: slot, visible: true, locked: false,
     scaleMode: 'stretch', crop: { top: 0, right: 0, bottom: 0, left: 0 }, groupId: '', rotation: 0, opacity: 1, blendMode: 'normal' });
-  const capture = async (name, dynamic, order = [0, 1, 2, 3, 4]) => {
+  const capture = async (name, dynamic, order = [0, 1, 2, 3, 4], observation = false) => {
     const directory = path.join(temporary, `native-visible-${name}`);
     await fs.mkdir(directory);
     // Renew the authenticated lease while an asynchronous external screenshot
     // utility is running; it receives no session, native token or camera URL.
     const heartbeat = setInterval(() => void native().catch(() => {}), 2000);
-    let lastState;
+    let lastState, captureState;
+    const sampleResults = [];
     try {
       lastState = await native();
       const powershell = path.join(process.env.SystemRoot, 'System32/WindowsPowerShell/v1.0/powershell.exe');
       const env = { ...process.env }; for (const key of Object.keys(env)) if (key.toLowerCase() === 'psmodulepath') delete env[key];
+      const captureRequestStartedAtUnixMs = Date.now();
       const { stdout } = await execute(powershell, ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File',
         path.join(__dirname, 'capture-native-preview.ps1'), '-OwnerProcessId', String(process.pid),
         '-NativeExecutable', path.join(runtime, 'bin/webobsd.exe'), '-OutputDirectory', directory,
         '-SampleCount', dynamic ? '8' : '1'], { windowsHide: true, timeout: 30000, maxBuffer: 1024 * 1024, env });
-      const captureState = JSON.parse(stdout.trim());
+      const captureRequestFinishedAtUnixMs = Date.now();
+      captureState = { ...JSON.parse(stdout.trim()), captureRequestStartedAtUnixMs, captureRequestFinishedAtUnixMs };
+      assert.ok(Number.isSafeInteger(captureState.captureStartedAtUnixMs));
+      assert.equal(captureState.sampleElapsedMs.length, dynamic ? 8 : 1);
+      assert.ok(captureState.sampleElapsedMs.every((ms, i, all) => Number.isSafeInteger(ms) && ms >= 0 && (i === 0 || ms >= all[i - 1])));
+      lastState = await native();
       assert.equal(captureState.capture, 'visible-native-client');
       if (process.env.WEBOBS_TEST_ALLOW_STARTUP_HIDDEN !== '1')
         assert.equal(captureState.initiallyVisible, true, 'native Program must show itself without capture-tool intervention');
       const values = [];
+      // Inspect every bounded synthetic sample even after the first bad one.
+      // Do not retry away transient black frames or relax the all-samples gate.
       for (let sample = 0; sample < (dynamic ? 8 : 1); sample++) {
-        const image = pattern.bitmap(await fs.readFile(path.join(directory, `client-${sample}.bmp`)));
-        values.push(pattern.inspect(image, original.canvas, { dynamic, order }));
+        try {
+          const image = pattern.bitmap(await fs.readFile(path.join(directory, `client-${sample}.bmp`)));
+          const codes = pattern.inspect(image, original.canvas, { dynamic, order });
+          values.push(codes); sampleResults.push({ sample, passed: true, temporalCodes: codes });
+        } catch (error) {
+          sampleResults.push({ sample, passed: false, failure: String(error.message).slice(0, 400) });
+        }
       }
-      if (dynamic) pattern.progress(values);
-      receipt.stages.push({ name, passed: true, captureState, temporalCodes: values });
+      const failed = sampleResults.filter(sample => !sample.passed);
+      if (observation) {
+        let temporalFailure;
+        if (dynamic && failed.length === 0) {
+          try { pattern.progress(values); } catch (error) { temporalFailure = String(error.message).slice(0, 400); }
+        }
+        receipt.observations ??= [];
+        receipt.observations.push({ name, qualification: 'startup-transition-only-not-an-acceptance-pass', captureState,
+          nativeState: lastState, samples: sampleResults, invalidSamples: failed.length, temporalFailure });
+      } else {
+        assert.equal(failed.length, 0, failed.length ? `${failed.length}/${sampleResults.length} final pixel samples failed; first: ${failed[0].failure}` : undefined);
+        if (dynamic) pattern.progress(values);
+        receipt.stages.push({ name, passed: true, captureState, nativeState: lastState, samples: sampleResults, temporalCodes: values });
+      }
       await saveReceipt(); return values;
     } catch (error) {
       // Bounded, non-private state only; screenshots/URLs/tokens stay in the
       // disposable fixture directory, not the public receipt or error text.
-      receipt.stages.push({ name, passed: false, nativeState: lastState, failure: String(error.message).slice(0, 4000) });
+      receipt.stages.push({ name, passed: false, captureState, nativeState: lastState, samples: sampleResults,
+        failure: String(error.message).slice(0, 4000) });
       await saveReceipt();
       throw new Error(`Native final pixel gate failed at ${name}: ${error.message}`, { cause: error });
     } finally { clearInterval(heartbeat); }
@@ -137,7 +164,19 @@ exports.exerciseNativeProgramPreview = async (supervisor, runtime, headers, temp
     scene.items = scene.sources.map((source, i) => item(`native-item-${i}`, 4 - i, source.id));
     await saveScene(scene); await pause(700); await capture('program-reordered', true, [4, 3, 2, 1, 0]);
     await native('DELETE'); await until(async () => (await native()).state === 0);
+    const reopenedAt = Date.now();
+    receipt.reopenStartedAtUnixMs = reopenedAt;
     await native('POST'); await until(async () => (await native()).frames > 10 && (await native()).state === 2);
+    receipt.reopenInitialHealth = await get('/api/v1/sources/status');
+    await capture('reopen-startup-observation', true, [4, 3, 2, 1, 0], true);
+    receipt.reopenHealthAfterObservation = await get('/api/v1/sources/status');
+    // Closing the native lease deactivates channel 0. RTSP media intentionally
+    // closes while inactive and restarts on activation, so draw callbacks alone
+    // are not decoder readiness. Apply the SAME bounded recovery/warmup used at
+    // first media activation; never retry or discard a failing captured pixel.
+    await until(async () => { await native(); return (await get('/api/v1/sources/status')).healthy === 5; });
+    await pause(1500);
+    receipt.reopenRecovery = { elapsedMs: Date.now() - reopenedAt, healthySources: 5, decoderWarmupMs: 1500 };
     await capture('reopened', true, [4, 3, 2, 1, 0]);
     // Losing the desktop heartbeat must close the host picture as well.
     await pause(16000);

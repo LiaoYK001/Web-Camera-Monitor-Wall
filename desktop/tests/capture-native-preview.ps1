@@ -64,7 +64,10 @@ public static class NativePreviewCapture {
         if (matches!=1) throw new InvalidOperationException("Expected exactly one test-owned native Program window (including startup-hidden windows).");
         return found;
     }
+    public static long[] SampleElapsedMs;
     public static bool Capture(uint pid, string directory, int samples) {
+        SampleElapsedMs = new long[samples];
+        var clock=System.Diagnostics.Stopwatch.StartNew();
         var previous=SetThreadDpiAwarenessContext(new IntPtr(-4));
         try {
             var handle=Find(pid); var screen=Screen.PrimaryScreen.Bounds;
@@ -89,6 +92,7 @@ public static class NativePreviewCapture {
                 using (var image=new Bitmap(width,height,PixelFormat.Format24bppRgb))
                 using (var graphics=Graphics.FromImage(image)) {
                     graphics.CopyFromScreen(origin.x,origin.y,0,0,new Size(width,height),CopyPixelOperation.SourceCopy);
+                    SampleElapsedMs[i]=clock.ElapsedMilliseconds;
                     image.Save(System.IO.Path.Combine(directory,"client-"+i+".bmp"),ImageFormat.Bmp);
                 }
                 if (i+1<samples) System.Threading.Thread.Sleep(310);
@@ -99,5 +103,6 @@ public static class NativePreviewCapture {
     }
 }
 '@
+$captureStartedAtUnixMs = [DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds()
 $initiallyVisible = [NativePreviewCapture]::Capture([uint32]$candidates[0].ProcessId, [IO.Path]::GetFullPath($OutputDirectory), $SampleCount)
-@{ schema=1; samples=$SampleCount; capture='visible-native-client'; scope='synthetic-fixture-only'; initiallyVisible=$initiallyVisible; testExposedAndResized=$true } | ConvertTo-Json -Compress
+@{ schema=1; samples=$SampleCount; captureStartedAtUnixMs=$captureStartedAtUnixMs; sampleElapsedMs=@([NativePreviewCapture]::SampleElapsedMs); capture='visible-native-client'; scope='synthetic-fixture-only'; initiallyVisible=$initiallyVisible; testExposedAndResized=$true } | ConvertTo-Json -Compress
