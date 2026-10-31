@@ -106,6 +106,16 @@ dev.18 原始最终像素工作提交的桌面 Node 单测 58/58、公开工作�
 
 静态复查发现 PowerShell 7 的 `Add-Type -ReferencedAssemblies System.Drawing,System.Windows.Forms` 覆盖默认引用集，而捕获代码使用 Process/Stopwatch 等额外 .NET 类型；原始 subprocess stderr 未保留使首轮具体错误不可还原，不能断言这就是唯一根因。下一检查先做编译预检并只输出固定枚举错误类别，保持 PID/exe/创建时间/HWND/root/可见性/遮挡等守卫以及所有逐样本图像门槛，不公开 token、窗口身份、私密路径、BMP 或测试运行时。普通原型和已发布 dev.18 不随此测试修改。
 
+### 最终像素门槛在 Windows 通过（合成夹具）/ Native final-pixel gate passed on Windows
+
+失败的真正入口是 PowerShell 7 的 `Add-Type -AssemblyName System.Drawing`：它先于任何截图在 assembly-load 阶段抛错，旧回执只留下 ENOENT。随后两次引用集调整分别得到 CS0012 与 CS1069，证明混用运行时/引用包不是修复方向。`ec4485c` 把捕获改为**纯 GDI**：`GetDC` → 兼容 DC/位图 → `BitBlt` 复制客户端区域 → 取消选择 → `GetDIBits` 取 24 位 BGR → 手写 BMP 头；屏幕边界改用 `GetSystemMetrics`，不再加载 Drawing/WinForms。编译预检与有限合约步骤随后通过，捕获回执首次包含完整 stage/code 诊断，8 个样本不再重试。
+
+[Windows 运行 41198311598](https://github.com/LiaoYK001/Web-Camera-Monitor-Wall/actions/runs/41198311598)（`ec4485c`）五个阶段全部 `passed`，主 Preview 与 Program projector 各 8 样本全部 `passed/captureFailed=false`，覆盖：五个已知色、五路独立 HEVC、Studio Preview 不隐式 TAKE、显式 TAKE、重开 Program（generation 2）。回执显示主 Preview 客户端 998×578、Program 单独窗口客户端捕获、每阶段时间码/色块参数推进、正常退出、外部 OBS profile 未变、active output/encoder/raw consumer 均为零。回执 artifact `webobs-obs-native-final-pixels-4.1.0-dev.18`（id `13041537611`，2295 字节 zip），JSON 30678 字节 / SHA-256 `1a8e877789e2d010486cc6fc9fe3963dbdeb7d83629f7ee61c247266ae01edab`。
+
+这仍是**合成夹具 + GitHub 托管 Windows Server 2022（Microsoft Basic Render Driver 软件 D3D11）**，不是目标 i9-13900HX/RTX 4090、真实五路 HEVC 摄像机或 OBS 同机对照；BitBlt 读到的是可见窗口像素，不是 GPU/硬解指标。P2–P5 的实机、能力迁移、体积与性能门槛保持未通过，默认包仍为旧 Electron，未发布、未改标签。
+
+The real entry failure was `Add-Type -AssemblyName System.Drawing` in PowerShell 7, which threw at assembly-load before any capture; the old receipt only showed ENOENT. Two later reference-set rewrites produced CS0012 and CS1069, ruling out mixed runtime/reference packs. `ec4485c` replaces capture with core-only GDI: GetDC, compatible DC/bitmap, BitBlt of the client area, deselect, GetDIBits to 24-bit BGR, then a hand-written BMP header, with GetSystemMetrics for bounds and no Drawing/WinForms load. Windows run 41198311598 (`ec4485c`) passed all five phases for both the main Preview and the Program projector, eight samples each, covering known colors, five independent HEVC fixtures, Studio Preview without implicit TAKE, explicit TAKE, and Program reopen (generation 2), with normal exit and unchanged external OBS profile. The receipt artifact is `webobs-obs-native-final-pixels-4.1.0-dev.18` (id 13041537611, 2295-byte zip); the JSON is 30678 bytes, SHA-256 `1a8e877789e2d010486cc6fc9fe3963dbdeb7d83629f7ee61c247266ae01edab`. This is still synthetic fixtures on a GitHub-hosted software-D3D11 runner, not the target RTX 4090, real cameras or an OBS comparison; P2–P5 gates, migration, size and performance remain open, the default package is still legacy Electron, and nothing was published or tagged.
+
 ### P2–P5：原型与后续门槛
 
 完整 [能力迁移账本](windows-obs-capability-migration.md) 区分普通 RTSP 直读与控制面/持久任务：现有 cluster/RBAC fail-closed、MTX/NVR 更新工作门、Windows CEF 启动要求、备份/事件/录像任务均不能通过直接删除服务绕过。后续先拆 renderer-free 控制适配、只读数据导入 dry-run 与持久能力状态，再逐项迁移并保留回退。
