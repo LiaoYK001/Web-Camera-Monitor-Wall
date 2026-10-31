@@ -427,6 +427,16 @@ The pruned runtime still passed all ten synthetic pixel phases (run 41250018069,
 
 Boundaries: this slice removes build symbols only; no plug-in/resource trimming, no Electron default removal, no functional-scope change. The prototype and full OBS (479,371,662 B, including CEF/scripting/WebSocket/VST/VLC) are not same-feature measurements, so this is not a P4 size-completion claim. Group accounting for default/extension/actual installs, SBOM/licence inventory, explanations for remaining files and target-machine evidence are still missing.
 
+### P4 运行时清单与体积预算 / P4 runtime inventory and size budget
+
+- 2026-11-01 [run 41253166037](https://github.com/LiaoYK001/Web-Camera-Monitor-Wall/actions/runs/41253166037)（`8eabc18`，`4.1.0-dev.56`，artifact `13061902704`，68,930,838 B）在裁剪、冻结之后新增 CI 步骤 “Inventory the runtime and enforce the P4 size budget”。`native-host/scripts/runtime_inventory.py` 拒绝残留的 PDB/lib/exp/obj/CMake 产物，按组汇总字节，统计 locale，并把每个 DLL/EXE 的路径、大小、SHA-256 与厂商/许可提示写入 `native-runtime-inventory.json`；运行时超过 100 MiB（104,857,600 B）即失败。
+- 实测：1,544 文件 / 99,168,288 B（与 dev.53 同口径一致）；分组 `bin` 57,188,864 B、`qt` 25,835,008 B、`plugins` 7,354,604 B、`data` 423,075 B、`licenses` 23,001 B、`other` 32,245 B；locale 1,169 文件 / 8,311,491 B / 75 种语言；66 个二进制全部归类（OBS 34、Qt 19、FFmpeg 7、第三方 5、x264 1），无未分类条目。安装器 27,410,022 B（SHA-256 `13b4ffeb664cda5dd58835a56617333a3512576d07ed45de691b168f6bd2e510`，1,545 文件），dev.40 → dev.56 就地升级仍保留私密配置。
+- 边界：这是**开发口径**的 100 MiB 预算与厂商/许可提示，不是完整 SBOM 或法律结论，`licenses/` 仍为权威；未裁剪插件/资源，未移除 Electron 默认运行时，未做默认/扩展/实际安装三套口径的分别计量，也没有目标机证据。
+
+On 2026-11-01 [run 41253166037](https://github.com/LiaoYK001/Web-Camera-Monitor-Wall/actions/runs/41253166037) (`8eabc18`, `4.1.0-dev.56`, artifact `13061902704`, 68,930,838 B) added the CI step "Inventory the runtime and enforce the P4 size budget" after pruning and freezing. `native-host/scripts/runtime_inventory.py` rejects leftover PDB/lib/exp/obj/CMake products, sums bytes per group, counts locales, and records each DLL/EXE path, size, SHA-256 and vendor/licence hint in `native-runtime-inventory.json`; the runtime fails above the 100 MiB (104,857,600 B) budget.
+- Measured: 1,544 files / 99,168,288 B (same scope as dev.53); groups `bin` 57,188,864 B, `qt` 25,835,008 B, `plugins` 7,354,604 B, `data` 423,075 B, `licenses` 23,001 B, `other` 32,245 B; 1,169 locale files / 8,311,491 B across 75 languages; all 66 binaries classified (OBS 34, Qt 19, FFmpeg 7, third-party 5, x264 1) with none unclassified. The installer is 27,410,022 B (SHA-256 `13b4ffeb664cda5dd58835a56617333a3512576d07ed45de691b168f6bd2e510`, 1,545 files), and the dev.40 → dev.56 in-place upgrade still preserves the private profile.
+- Boundaries: this is a **development-scope** 100 MiB budget with vendor/licence hints, not a complete SBOM or legal conclusion; `licenses/` stays authoritative. No plug-in/resource trimming, no Electron-default removal, no separate default/extension/actual-install accounting and no target-machine evidence.
+
 ### 开发候选发布 v4.1.0-dev.53 / Development candidate publication v4.1.0-dev.53
 
 - 2026-11-01 发布 Pre-release [v4.1.0-dev.53](https://github.com/LiaoYK001/Web-Camera-Monitor-Wall/releases/tag/v4.1.0-dev.53)，`--prerelease`、`--latest=false`；stable Latest 仍为 v4.0，tag 指向已测试提交 `b77f9160385ad6370a0587ea448942c0250f1dcc`。

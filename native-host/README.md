@@ -30,6 +30,10 @@ OBS 的 Windows 安装规则会顺带安装 `*.pdb` 调试符号；它们不被 
 
 OBS's Windows install rules also stage `*.pdb` debug symbols; `obs64.exe` never loads them, but the NSIS installer would package every byte. Before `stage.py` writes the manifest the build calls `native-host/scripts/prune_runtime.py`, which removes PDBs from the runtime, writes `native-runtime-prune.json` (removed count and bytes), and asserts none survive; the NSIS step also rejects an installed tree that contains PDBs. The manifest's `sizeBytesBeforeManifest`/`sizeGroups` and the installed size therefore exclude build symbols.
 
+正常构建随后运行 `native-host/scripts/runtime_inventory.py`（CI 步骤 "Inventory the runtime and enforce the P4 size budget"）：拒绝残留的 PDB/lib/exp/obj/CMake 产物，按 `bin`/`qt`/`plugins`/`data`/`licenses`/`other` 汇总字节，统计 locale 文件数与语言数，并把每个 DLL/EXE 的路径、大小、SHA-256 和供应商/许可证提示写进 `native-runtime-inventory.json`；运行时超过 100 MiB 开发预算即失败。该清单是 P4 体积与 SBOM 的输入，不是法律结论，`licenses/` 仍为权威。
+
+Normal builds then run `native-host/scripts/runtime_inventory.py` (CI step "Inventory the runtime and enforce the P4 size budget"): it rejects leftover PDB/lib/exp/obj/CMake products, sums bytes per `bin`/`qt`/`plugins`/`data`/`licenses`/`other`, counts locale files and languages, and writes each DLL/EXE path, size, SHA-256 and vendor/licence hint into `native-runtime-inventory.json`; the runtime fails the step above the 100 MiB development budget. The report feeds P4 size and SBOM work; it is not a legal conclusion, and `licenses/` stays authoritative.
+
 ### 原型安装与升级 / Prototype install and upgrade
 
 `native-host/scripts/install_native.py` 把冻结 ZIP 安装到用户指定的私密目录：校验条目路径与 manifest（开发版、`defaultProduct=false`、不启动服务）、拒绝包内 `config/`、当前安装目录没有 manifest 时拒绝覆盖无关目录、替换前备份并在失败时回滚；已存在的 `config/obs-studio` portable profile 会复制进新树，因此重装/升级保留五格墙、source settings 与账号登录。安装器写入小型 JSON 回执（版本、SHA-256、是否保留配置、文件数），不含路径、URL 或日志。这是原型安装器，不注册系统服务、不写注册表、未签名，也不是产品安装包。
