@@ -50,7 +50,7 @@ class PixelContractTests(unittest.TestCase):
                 "scope": "synthetic-test-only", "canvasWidth": 960, "canvasHeight": 540, "pixelQualified": False,
                 "activeOutputs": 0, "activeEncoders": 0, "rawVideoActive": False, "sameInputPointersAndSettings": True,
                 "globalFfmpegInputsIncludingPrivate": 0 if seq == 1 else 10 if seq >= 6 else 5,
-                "studio": 3 <= seq <= 5, "transitionStopped": 4 <= seq <= 5, "programGeneration": 2 if seq == 5 else 1,
+                "studio": 3 <= seq <= 5, "transitionStopped": 4 <= seq <= 5, "programGeneration": 2 if seq >= 5 else 1,
                 "windows": ([{"role": "main-preview", "qtClass": "OBSBasicPreview"}] if seq >= 6 else
                             [{"role": "main-preview", "qtClass": "OBSBasicPreview"}, {"role": "program-projector", "qtClass": "OBSProjector"}]),
                 "sources": [{"uuid": f"synthetic-{i}", "settingsSha256": str(i)*64} for i in range(5)] if seq > 1 else []}

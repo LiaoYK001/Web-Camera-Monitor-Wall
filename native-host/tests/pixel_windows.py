@@ -300,7 +300,7 @@ def validate_state(state: dict, seq: int, token: str, pid: int) -> None:
         expected_class = "OBSBasicPreview" if window["role"] == "main-preview" else "OBSProjector"
         if window.get("qtClass") != expected_class:
             raise AssertionError("Qt native widget identity mismatch")
-    if state.get("programGeneration") != (2 if seq == 5 else 1):
+    if state.get("programGeneration") != (2 if seq >= 5 else 1):
         raise AssertionError("Program projector close/reopen generation mismatch")
     if seq > 1:
         sources = state.get("sources", [])
