@@ -37,6 +37,17 @@ namespace WebOBS.InstalledTreeFootprint
         public string StartedAt { get; internal set; }
         public string CompletedAt { get; internal set; }
         public string Purpose { get; internal set; }
+        public List<Group> Groups { get; internal set; }
+        public bool GroupsComplete { get; internal set; }
+    }
+
+    public sealed class Group
+    {
+        public string Name { get; internal set; }
+        public long LogicalBytes { get; internal set; }
+        public long AllocationBytes { get; internal set; }
+        public long FileCount { get; internal set; }
+        public long DirectoryCount { get; internal set; }
     }
 
     public static class Reader
@@ -185,12 +196,34 @@ namespace WebOBS.InstalledTreeFootprint
             internal readonly Result Result;
             internal readonly Stopwatch Clock = Stopwatch.StartNew();
             internal readonly HashSet<string> Identities = new HashSet<string>(StringComparer.Ordinal);
+            internal readonly Dictionary<string, Group> Groups = new Dictionary<string, Group>(StringComparer.Ordinal);
             internal readonly int MaximumFiles, MaximumDirectories, MaximumDepth, MaximumSeconds;
             internal Scan(Result result, int files, int directories, int depth, int seconds)
             { Result = result; MaximumFiles = files; MaximumDirectories = directories; MaximumDepth = depth; MaximumSeconds = seconds; }
             private void Bound()
             { Require(Clock.Elapsed.TotalSeconds <= MaximumSeconds, "measurement_time_limit"); }
-            internal void Visit(string directory, int depth)
+            // Relative directories are truncated to two components so the receipt
+            // attributes bytes by product area without recording file names.
+            private static string GroupKey(string relativeDirectory)
+            {
+                if (relativeDirectory.Length == 0) return ".";
+                int first = relativeDirectory.IndexOf('/');
+                if (first < 0) return relativeDirectory;
+                int second = relativeDirectory.IndexOf('/', first + 1);
+                return second < 0 ? relativeDirectory : relativeDirectory.Substring(0, second);
+            }
+            private Group GroupFor(string relativeDirectory)
+            {
+                string key = GroupKey(relativeDirectory);
+                Group group;
+                if (!Groups.TryGetValue(key, out group))
+                {
+                    group = new Group { Name = key };
+                    Groups.Add(key, group);
+                }
+                return group;
+            }
+            internal void Visit(string directory, int depth, string relativeDirectory)
             {
                 Bound();
                 Require(depth <= MaximumDepth, "directory_depth_limit");
@@ -200,6 +233,8 @@ namespace WebOBS.InstalledTreeFootprint
                     Require(Identities.Add(Identity(handle)), "duplicate_file_identity_rejected");
                     Result.DirectoryCount = checked(Result.DirectoryCount + 1);
                     Require(Result.DirectoryCount <= MaximumDirectories, "directory_count_limit");
+                    Group directoryGroup = GroupFor(relativeDirectory);
+                    directoryGroup.DirectoryCount = checked(directoryGroup.DirectoryCount + 1);
                     // Directory is pinned without write/delete sharing. No recursion/follow-link
                     // option is delegated to the filesystem enumerator; every child is inspected.
                     var names = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
@@ -211,7 +246,13 @@ namespace WebOBS.InstalledTreeFootprint
                         uint attributes = GetFileAttributesW(entry);
                         Require(attributes != UInt32.MaxValue, "entry_attributes_unavailable");
                         Require((attributes & ReparseAttribute) == 0, "reparse_entry_rejected");
-                        if ((attributes & DirectoryAttribute) != 0) Visit(entry, depth + 1);
+                        if ((attributes & DirectoryAttribute) != 0)
+                        {
+                            string childDirectory = relativeDirectory.Length == 0
+                                ? Path.GetFileName(entry)
+                                : relativeDirectory + "/" + Path.GetFileName(entry);
+                            Visit(entry, depth + 1, childDirectory);
+                        }
                         else
                         {
                             using (SafeFileHandle file = Open(entry))
@@ -222,6 +263,10 @@ namespace WebOBS.InstalledTreeFootprint
                                 Require(Result.FileCount <= MaximumFiles, "file_count_limit");
                                 Result.LogicalBytes = checked(Result.LogicalBytes + before.EndOfFile);
                                 Result.MainStreamAllocationBytes = checked(Result.MainStreamAllocationBytes + before.AllocationSize);
+                                Group fileGroup = GroupFor(relativeDirectory);
+                                fileGroup.LogicalBytes = checked(fileGroup.LogicalBytes + before.EndOfFile);
+                                fileGroup.AllocationBytes = checked(fileGroup.AllocationBytes + before.AllocationSize);
+                                fileGroup.FileCount = checked(fileGroup.FileCount + 1);
                                 StandardInfo after = Inspect(file, false);
                                 Require(before.EndOfFile == after.EndOfFile && before.AllocationSize == after.AllocationSize,
                                     "file_changed_during_measurement");
@@ -261,7 +306,33 @@ namespace WebOBS.InstalledTreeFootprint
                     Require(GetDiskFreeSpaceW(Path.GetPathRoot(scope.Root), out sectors, out bytes, out free, out total) &&
                         sectors > 0 && bytes > 0, "allocation_unit_unavailable");
                     result.AllocationUnitBytes = checked((long)sectors * bytes);
-                    scan.Visit(scope.Root, 0);
+                    scan.Visit(scope.Root, 0, String.Empty);
+                    var groups = new List<Group>(scan.Groups.Values);
+                    groups.Sort(delegate (Group left, Group right)
+                    {
+                        int byBytes = right.LogicalBytes.CompareTo(left.LogicalBytes);
+                        return byBytes != 0 ? byBytes : StringComparer.Ordinal.Compare(left.Name, right.Name);
+                    });
+                    if (groups.Count > 200)
+                    {
+                        var kept = groups.GetRange(0, 199);
+                        var other = new Group { Name = "__other__" };
+                        for (int index = 199; index < groups.Count; index++)
+                        {
+                            other.LogicalBytes = checked(other.LogicalBytes + groups[index].LogicalBytes);
+                            other.AllocationBytes = checked(other.AllocationBytes + groups[index].AllocationBytes);
+                            other.FileCount = checked(other.FileCount + groups[index].FileCount);
+                            other.DirectoryCount = checked(other.DirectoryCount + groups[index].DirectoryCount);
+                        }
+                        kept.Add(other);
+                        result.Groups = kept;
+                        result.GroupsComplete = false;
+                    }
+                    else
+                    {
+                        result.Groups = groups;
+                        result.GroupsComplete = true;
+                    }
                     result.CompletedAt = DateTime.UtcNow.ToString("o");
                     result.ElapsedMilliseconds = scan.Clock.ElapsedMilliseconds;
                     return result;
@@ -307,6 +378,16 @@ function Measure-InstalledTreeFootprint {
         directoryCountIncludingRoot = $measurement.DirectoryCount
         mainStreamAllocationBytes = $measurement.MainStreamAllocationBytes
         allocationUnitBytes = $measurement.AllocationUnitBytes
+        sizeGroups = @($measurement.Groups | ForEach-Object {
+            [ordered]@{
+                name = $_.Name
+                logicalBytes = $_.LogicalBytes
+                allocationBytes = $_.AllocationBytes
+                fileCount = $_.FileCount
+                directoryCount = $_.DirectoryCount
+            }
+        })
+        sizeGroupsComplete = $measurement.GroupsComplete
         startedAt = $measurement.StartedAt
         completedAt = $measurement.CompletedAt
         elapsedMilliseconds = $measurement.ElapsedMilliseconds
@@ -315,11 +396,13 @@ function Measure-InstalledTreeFootprint {
             allocation = 'GetFileInformationByHandleEx(FILE_STANDARD_INFO).AllocationSize; sum regular unnamed data streams'
             identity = 'GetFileInformationByHandleEx(FILE_ID_INFO); hard links and duplicate identities rejected'
             reparsePoints = 'rejected for root, ancestors and every entry; no link traversal'
+            sizeGroups = 'relative containing-directory paths truncated to two components; files directly in the root use "."; at most 199 groups plus "__other__"; no file names or absolute paths'
             unknownOrFailure = 'fail closed; no partial result and no replacement zero'
         }
         limits = [ordered]@{
             maximumFiles = $MaximumFiles; maximumDirectories = $MaximumDirectories
             maximumDepth = $MaximumDepth; maximumSeconds = $MaximumSeconds
+            maximumSizeGroups = 200
             atomicSnapshot = $false
             consistency = 'before first product start; read handles and entry-set checks, not a filesystem snapshot'
             totalVolumeUsage = $false

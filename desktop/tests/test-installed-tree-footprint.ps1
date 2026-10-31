@@ -119,6 +119,18 @@ try {
     }
     $encoded = $result | ConvertTo-Json -Depth 6 -Compress
     Assert-Contract (-not $encoded.Contains($testRoot) -and -not $encoded.Contains('empty.bin') -and -not $encoded.Contains('unaligned.bin')) 'aggregate_receipt_has_no_paths'
+    Assert-Contract ($result.sizeGroupsComplete -eq $true) 'size_groups_complete'
+    Assert-Contract (@($result.sizeGroups).Count -eq 2) 'size_group_count'
+    $groupLogical = [long]0; $groupFiles = 0L; $groupDirectories = 0L
+    foreach ($group in $result.sizeGroups) {
+        $groupLogical += $group.logicalBytes; $groupFiles += $group.fileCount; $groupDirectories += $group.directoryCount
+    }
+    Assert-Contract ($groupLogical -eq $result.logicalBytes -and $groupFiles -eq $result.fileCount -and $groupDirectories -eq $result.directoryCountIncludingRoot) 'size_groups_sum_to_totals'
+    Assert-Contract ($result.sizeGroups[0].name -eq '.' -and $result.sizeGroups[0].logicalBytes -eq ($expectedLogical - $sizes[2])) 'root_group_largest_and_relative'
+    Assert-Contract ($result.sizeGroups[1].name -eq 'nested' -and $result.sizeGroups[1].logicalBytes -eq $sizes[2]) 'nested_group_bytes'
+    foreach ($group in $result.sizeGroups) {
+        Assert-Contract (-not $group.name.Contains(':') -and -not $group.name.Contains('\') -and -not $group.name.StartsWith('/')) 'size_group_names_are_relative_directories'
+    }
     Assert-Contract (-not $result.limits.atomicSnapshot -and -not $result.limits.totalVolumeUsage) 'scope_limits_explicit'
     Assert-Contract ($result.method.allocation.Contains('FILE_STANDARD_INFO).AllocationSize')) 'allocation_method_explicit'
     Assert-Rejected { Measure-InstalledTreeFootprint -Scope $scope } 'new_unconsumed_scope_required'
@@ -132,6 +144,7 @@ try {
     [IO.Directory]::CreateDirectory($emptyRoot) | Out-Null
     $empty = Measure-InstalledTreeFootprint -Scope $emptyScope
     Assert-Contract ($empty.fileCount -eq 0 -and $empty.logicalBytes -eq 0 -and $empty.mainStreamAllocationBytes -eq 0 -and $empty.directoryCountIncludingRoot -eq 1) 'genuinely_empty_directory'
+    Assert-Contract ($empty.sizeGroupsComplete -eq $true -and @($empty.sizeGroups).Count -eq 1 -and $empty.sizeGroups[0].name -eq '.' -and $empty.sizeGroups[0].fileCount -eq 0 -and $empty.sizeGroups[0].directoryCount -eq 1) 'empty_directory_single_root_group'
     $checks.emptyNewDirectory = 'passed'
 
     $missingRoot = Join-Path $testRoot 'never-created'

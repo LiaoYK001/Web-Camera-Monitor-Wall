@@ -68,7 +68,7 @@ python -B native-host/qualification/summarize.py --run '<私密目录>\pair01-pr
 
 ## 5. 安装体积同口径
 
-产品安装包已在 CI 的 NSIS 安装烟测中写入 `installedTreeFootprint`（逻辑字节、主数据流分配、文件 / 目录数、分配单元）；目标机可用同一脚本复测：
+产品安装包已在 CI 的 NSIS 安装烟测中写入 `installedTreeFootprint`（逻辑字节、主数据流分配、文件 / 目录数、分配单元）；回执还带 `sizeGroups` 与 `sizeGroupsComplete`：按“相对目录前两级”归因（根目录直接文件记为 `.`，最多 199 组再加 `__other__`，不含文件名或绝对路径），用于定位 Electron、运行时、插件等各占多少。目标机可用同一脚本复测：
 
 ```powershell
 . .\desktop\tests\installed-tree-footprint.ps1
