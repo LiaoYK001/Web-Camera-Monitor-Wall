@@ -475,6 +475,20 @@ def wait_state(private: Path, seq: int, process: subprocess.Popen, deadline: flo
     raise TimeoutError("Owned native pixel test deadline exceeded")
 
 
+def wait_restart_state(directory: Path, process: subprocess.Popen, deadline: float) -> dict:
+    target = directory / "phase-01.json"
+    while time.monotonic() < deadline:
+        if (directory / "failed.json").exists():
+            failure = read_json(directory / "failed.json")
+            raise RuntimeError("Saved-scene restart witness failed: " + str(failure.get("error", "unknown"))[:200])
+        if target.exists():
+            return read_json(target)
+        if process.poll() is not None:
+            raise RuntimeError("Restart witness exited before publishing the reopened scene")
+        time.sleep(0.1)
+    raise TimeoutError("Saved-scene restart witness deadline exceeded")
+
+
 def run(runtime: Path, result: Path, ffmpeg_override: Path | None, offline: bool) -> dict:
     if sys.platform != "win32":
         raise RuntimeError("Actual HWND/DWM final pixels require Windows x64")
@@ -503,6 +517,7 @@ def run(runtime: Path, result: Path, ffmpeg_override: Path | None, offline: bool
                "productMigrationQualified": False, "mediaHardwareQualified": False,
                "publicationForbidden": True, "phases": []}
     process = None
+    process2 = None
     rtsp = None
     error = None
     try:
@@ -568,10 +583,53 @@ def run(runtime: Path, result: Path, ffmpeg_override: Path | None, offline: bool
                 if process.returncode != 0 or read_json(private / "complete.json").get("phases") != 9:
                     raise RuntimeError("Native frontend normal close/finite completion failed")
                 summary["normalExit"] = True
+                # Second launch: a brand-new OBS process must reopen the saved
+                # private profile and the five-source wall, then show final
+                # Preview pixels. Nothing is created or selected by this run.
+                restart = private.parent / "native-restart-test"
+                restart.mkdir(exist_ok=False)
+                write_new(restart / "request.json", {"schema": 1, "token": token})
+                env2 = os.environ.copy()
+                for key in ENV_OVERRIDES:
+                    env2.pop(key, None)
+                env2["WEBOBS_NATIVE_RESTART_TOKEN"] = token
+                with (private / "restart-process.log").open("xb") as log2:
+                    process2 = subprocess.Popen([str(executable), "--portable", "--disable-updater"], cwd=executable.parent,
+                                                env=env2, stdin=subprocess.DEVNULL, stdout=log2, stderr=log2)
+                    created2 = creation_time(process2)
+                    restart_deadline = time.monotonic() + 180
+                    state = wait_restart_state(restart, process2, restart_deadline)
+                    if (state.get("schema") != 1 or state.get("seq") != 1 or state.get("phase") != "saved-scene-restart" or
+                            state.get("token") != token or state.get("pid") != str(process2.pid) or
+                            state.get("savedSceneReopened") is not True or state.get("savedSceneSourceCount") != 5):
+                        raise AssertionError("Saved-scene restart state is not a real reopened private profile")
+                    if len(state.get("windows", [])) != 1 or state["windows"][0].get("role") != "main-preview":
+                        raise AssertionError("Saved-scene restart must witness only the real main Preview")
+                    restart_capture = captures / "phase-10"
+                    restart_capture.mkdir()
+                    command = [pwsh, "-NoProfile", "-File", str(HERE / "capture-pixels.ps1"),
+                               "-ExpectedProcessId", str(process2.pid), "-ExpectedExecutable", str(executable),
+                               "-ExpectedCreationTime", created2, "-StateFile", str(restart / "phase-01.json"),
+                               "-OutputDirectory", str(restart_capture)]
+                    timing = run_capture(command, timeout=min(45, max(1, int(restart_deadline-time.monotonic()))))
+                    analysis = subprocess.run([node, str(HERE / "pixel-pattern.cjs"), "analyze", str(restart_capture / "main-preview"),
+                                               "main-preview", "forward", "true"],
+                                              capture_output=True, text=True, check=True, timeout=20)
+                    role = {"role": "main-preview", **json.loads(analysis.stdout)}
+                    phase = {"seq": 10, "phase": "saved-scene-restart", "capture": timing, "roles": [role],
+                             "inputUUIDsAndSettingsUnchanged": True, "savedSceneReopened": True}
+                    phase["passed"] = not timing["captureFailed"] and bool(role["passed"])
+                    summary["phases"].append(phase)
+                    write_new(restart / "ack-01.json", {"schema": 1, "seq": 1, "token": token})
+                    process2.wait(timeout=max(1, min(30, int(restart_deadline-time.monotonic()))))
+                    if process2.returncode != 0 or read_json(restart / "complete.json").get("phases") != 1:
+                        raise RuntimeError("Saved-scene restart witness normal close/completion failed")
+                    summary["savedSceneRestartPhaseQualified"] = bool(phase["passed"])
                 summary["loopbackRtspPhaseQualified"] = bool(len(summary["phases"]) >= 6 and summary["phases"][5]["passed"])
                 summary["rtspRecoveryPhaseQualified"] = bool(len(summary["phases"]) >= 7 and summary["phases"][6]["passed"])
                 summary["programFullscreenPhaseQualified"] = bool(len(summary["phases"]) >= 8 and summary["phases"][7]["passed"])
                 summary["fullscreenRecoveryPhaseQualified"] = bool(len(summary["phases"]) >= 9 and summary["phases"][8]["passed"])
+                summary["savedSceneRestartPhaseQualified"] = bool(len(summary["phases"]) >= 10 and summary["phases"][9]["passed"])
             summary["status"] = "passed" if all(phase["passed"] for phase in summary["phases"]) else "failed"
             summary["syntheticFinalWindowPixelsQualified"] = summary["status"] == "passed"
     except Exception as failure:
@@ -589,6 +647,10 @@ def run(runtime: Path, result: Path, ffmpeg_override: Path | None, offline: bool
         if process is not None and process.poll() is None:
             process.kill()  # Only this Popen-owned, new disposable obs64 instance.
             process.wait(timeout=15)
+            summary["deadlineOrFailureOwnedProcessKilled"] = True
+        if process2 is not None and process2.poll() is None:
+            process2.kill()  # Only the second, Popen-owned restart witness.
+            process2.wait(timeout=15)
             summary["deadlineOrFailureOwnedProcessKilled"] = True
         if rtsp is not None:
             rtsp.stop()

@@ -502,19 +502,171 @@ public:
 	}
 	void transition_stopped() { if (phase_ == 4) take_stopped_ = true; }
 };
+
+// Second-launch witness: the scene collection saved by the nine-phase harness
+// is reopened by a brand-new OBS process. Nothing is created or selected here;
+// the wall, sources and media state must come back from the saved private
+// profile, and only the real final Preview pixels are captured.
+class RestartHarness final : public QObject {
+	QPointer<QWidget> main_, preview_;
+	QString directory_, token_;
+	QTimer timer_;
+	QElapsedTimer clock_;
+	qint64 ready_at_ = -1;
+	obs_scene_t *wall_ = nullptr;
+	std::array<obs_source_t *, 5> sources_{};
+	int phase_ = 1;
+	bool published_ = false, closing_ = false;
+
+	void require(bool value, const char *message) const
+	{
+		if (!value) throw std::runtime_error(message);
+	}
+	void close_normal()
+	{
+		closing_ = true;
+		timer_.stop();
+		if (main_) QTimer::singleShot(0, main_, [window = main_] { if (window) window->close(); });
+	}
+	void fail(const char *message)
+	{
+		try { write_new(directory_ + "/failed.json", {{"schema", 1}, {"phase", phase_}, {"error", QString::fromUtf8(message)}}); }
+		catch (...) { /* The external owned-process deadline still fails closed. */ }
+		close_normal();
+	}
+	void inspect()
+	{
+		if (!wall_) wall_ = obs_get_scene_by_name("WebOBS Native RTSP Wall");
+		for (std::size_t i = 0; i < sources_.size(); ++i) {
+			if (sources_[i]) continue;
+			const auto name = "Synthetic loopback RTSP " + std::to_string(i + 1);
+			sources_[i] = obs_get_source_by_name(name.c_str());
+		}
+	}
+	bool ready() const
+	{
+		if (!wall_ || !preview_ || !preview_->isVisible()) return false;
+		for (auto *source : sources_) {
+			if (!source || obs_source_media_get_state(source) != OBS_MEDIA_STATE_PLAYING ||
+			    obs_source_get_width(source) != 320 || obs_source_get_height(source) != 180) return false;
+		}
+		auto *current = obs_frontend_get_current_scene();
+		const bool same = current && obs_scene_get_source(wall_) == current;
+		obs_source_release(current);
+		return same;
+	}
+	void publish()
+	{
+		require(QMetaObject::invokeMethod(main_, "setPreviewScalingWindow", Qt::DirectConnection), "Preview fit-to-window slot unavailable");
+		const auto handle = QString::number(qulonglong(preview_->winId()), 16);
+		const auto root = QString::number(qulonglong(preview_->window()->winId()), 16);
+		QJsonArray windows;
+		windows.append(QJsonObject{{"role", "main-preview"}, {"hwnd", handle}, {"rootHwnd", root},
+		                           {"canvasInsetPixels", 10}, {"qtClass", QString::fromLatin1(preview_->metaObject()->className())}});
+		obs_video_info info{};
+		require(obs_get_video_info(&info), "restart video info unavailable");
+		const QJsonObject state{{"schema", 1}, {"seq", 1}, {"phase", "saved-scene-restart"}, {"token", token_},
+		                       {"pid", QString::number(QCoreApplication::applicationPid())},
+		                       {"canvasWidth", int(info.base_width)}, {"canvasHeight", int(info.base_height)},
+		                       {"studio", obs_frontend_preview_program_mode_active()},
+		                       {"savedSceneReopened", true}, {"savedSceneSourceCount", 5},
+		                       {"elapsedMs", double(clock_.elapsed())},
+		                       {"windows", windows}, {"pixelQualified", false}, {"scope", "synthetic-test-only"}};
+		write_new(directory_ + "/phase-01.json", state);
+		published_ = true;
+	}
+	void tick()
+	{
+		if (closing_) return;
+		try {
+			require(clock_.elapsed() < 120000, "saved-scene restart readiness timed out");
+			inspect();
+			if (!published_) {
+				if (!ready()) { ready_at_ = -1; return; }
+				if (ready_at_ < 0) ready_at_ = clock_.elapsed();
+				if (clock_.elapsed() - ready_at_ < 1500) return;
+				publish();
+				return;
+			}
+			const QString path = directory_ + "/ack-01.json";
+			if (!QFileInfo::exists(path)) return;
+			const auto ack = read_object(path);
+			require(ack.size() == 3 && ack.value("schema").toInt() == 1 && ack.value("seq").toInt() == 1 &&
+			        ack.value("token").toString() == token_, "invalid saved-scene restart acknowledgement");
+			write_new(directory_ + "/complete.json", {{"schema", 1}, {"phases", 1}, {"syntheticOnly", true}, {"pixelQualified", false}});
+			close_normal();
+		} catch (const std::exception &error) { fail(error.what()); }
+	}
+public:
+	RestartHarness(QWidget *main, QString directory, QString token)
+		: QObject(main), main_(main), directory_(std::move(directory)), token_(std::move(token))
+	{
+		require(main_, "OBS main window unavailable");
+		for (auto *widget : main_->findChildren<QWidget *>("preview")) {
+			if (std::strcmp(widget->metaObject()->className(), "OBSBasicPreview") == 0 && !preview_) preview_ = widget;
+		}
+		require(preview_, "real OBSBasicPreview widget unavailable after restart");
+		main_->showMaximized();
+		obs_frontend_set_preview_program_mode(false);
+		obs_frontend_set_preview_enabled(true);
+		clock_.start();
+		QObject::connect(&timer_, &QTimer::timeout, this, [this] { tick(); });
+		timer_.start(100);
+	}
+	~RestartHarness() override
+	{
+		timer_.stop();
+		if (wall_) obs_scene_release(wall_);
+		for (auto *source : sources_) if (source) obs_source_release(source);
+	}
+};
+
+QPointer<RestartHarness> restart_harness;
+
 QPointer<Harness> harness;
 } // namespace
 
 bool pixel_test_event(enum obs_frontend_event event)
 {
-	if (event == OBS_FRONTEND_EVENT_EXIT) { delete harness.data(); harness = nullptr; return false; }
+	if (event == OBS_FRONTEND_EVENT_EXIT) {
+		delete harness.data(); harness = nullptr;
+		delete restart_harness.data(); restart_harness = nullptr;
+		return false;
+	}
 	if (harness) {
 		if (event == OBS_FRONTEND_EVENT_TRANSITION_STOPPED) harness->transition_stopped();
 		return true;
 	}
+	if (restart_harness) return true;
 	if (event != OBS_FRONTEND_EVENT_FINISHED_LOADING) return false;
 	const QString token = qEnvironmentVariable("WEBOBS_NATIVE_PIXEL_TOKEN");
-	if (!QRegularExpression("^[0-9a-f]{32}$").match(token).hasMatch()) return false;
+	const QString restart = qEnvironmentVariable("WEBOBS_NATIVE_RESTART_TOKEN");
+	if (!QRegularExpression("^[0-9a-f]{32}$").match(token).hasMatch()) {
+		if (!QRegularExpression("^[0-9a-f]{32}$").match(restart).hasMatch()) return false;
+		try {
+			const QDir bin(QCoreApplication::applicationDirPath());
+			const QString root = QFileInfo(bin.absoluteFilePath("../..")).canonicalFilePath();
+			const QString profile = QFileInfo(root + "/config/obs-studio").canonicalFilePath();
+			const QString directory = QFileInfo(profile + "/native-restart-test").canonicalFilePath();
+			char *module_path = obs_module_config_path("");
+			const QString actual = module_path ? QDir::cleanPath(QFileInfo(QString::fromUtf8(module_path)).absoluteFilePath()) : QString{};
+			bfree(module_path);
+			if (root.isEmpty() || profile.isEmpty() || directory.isEmpty() ||
+			    directory.compare(profile + "/native-restart-test", Qt::CaseInsensitive) != 0 ||
+			    actual.compare(profile + "/plugin_config/webobs-native-host", Qt::CaseInsensitive) != 0) return false;
+			const auto manifest = read_object(root + "/webobs-native-prototype.json");
+			const auto build = read_object(root + "/webobs-native-pixel-test-build.json");
+			const auto request = read_object(directory + "/request.json");
+			if (manifest.value("obsCommit").toString() != pin || manifest.value("defaultProduct").toBool(true) ||
+			    !manifest.value("pixelTestBuild").toBool() || !manifest.value("redistributable").isBool() || manifest.value("redistributable").toBool(true) ||
+			    !build.value("pixelTestBuild").toBool() || build.value("redistributable").toBool(true) ||
+			    request.size() != 2 || request.value("schema").toInt() != 1 || request.value("token").toString() != restart ||
+			    QFileInfo::exists(directory + "/claimed.json") || QFileInfo::exists(directory + "/phase-01.json")) return false;
+			if (!QFile::rename(directory + "/request.json", directory + "/claimed.json")) return false;
+			restart_harness = new RestartHarness(static_cast<QWidget *>(obs_frontend_get_main_window()), directory, restart);
+			return true;
+		} catch (...) { return false; }
+	}
 	try {
 		const QDir bin(QCoreApplication::applicationDirPath());
 		const QString root = QFileInfo(bin.absoluteFilePath("../..")).canonicalFilePath();

@@ -154,8 +154,11 @@ class PixelContractTests(unittest.TestCase):
         for text in ("LoopbackRtsp", "rtsp-loopback", "mediamtx", "rtsp_transport", "loopbackRtspPhaseQualified",
                      "interrupt_publisher", "restart_publisher", "rtsp-recovered", "rtspRecoveryPhaseQualified",
                      "fullscreen-recovery", "fullscreenRecoveryPhaseQualified",
-                     "for seq in range(1, len(PHASES) + 1)"):
+                     "WEBOBS_NATIVE_RESTART_TOKEN", "wait_restart_state", "saved-scene-restart",
+                     "savedSceneRestartPhaseQualified", "for seq in range(1, len(PHASES) + 1)"):
             self.assertIn(text, gate_source)
+        for text in ("RestartHarness", "native-restart-test", "savedSceneReopened"):
+            self.assertIn(text, source)
         self.assertEqual(gate.PHASES[-2:], ("program-fullscreen", "fullscreen-recovery"))
         for text in ("QTcpServer", "QWebSocket", "obs_frontend_recording_start", "obs_output_start", "obs_frontend_take_screenshot", "gs_stage_texture"):
             self.assertNotIn(text, source)
