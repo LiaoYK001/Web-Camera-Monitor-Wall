@@ -24,6 +24,13 @@ jobs:
         with:
           submodules: recursive
           persist-credentials: false
+      - name: Verify process accounting logic and actual Windows query APIs
+        shell: pwsh
+        run: |
+          python -B native-host/qualification/test_qualification.py
+          if ($LASTEXITCODE -ne 0) { throw 'Synthetic process accounting contract failed.' }
+          python -B native-host/qualification/test_windows_api.py
+          if ($LASTEXITCODE -ne 0) { throw 'Actual Windows process query or private directory API failed; no performance qualification.' }
       - name: Select existing VS compiler
         shell: pwsh
         run: |
