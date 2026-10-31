@@ -175,16 +175,16 @@ jobs:
           if ($versionBackups.Count -ne 1) { throw "Expected one upgrade snapshot for $env:NATIVE_VERSION, found $($versionBackups.Count)." }
           $backupManifest = Get-Content -LiteralPath (Join-Path $versionBackups[0].FullName 'backup.json') -Raw | ConvertFrom-Json
           if ($backupManifest.kind -ne 'native-config-upgrade-backup' -or $backupManifest.version -ne $env:NATIVE_VERSION) { throw 'The upgrade snapshot receipt is invalid.' }
-          $before = (Get-ChildItem -LiteralPath $configDir -Recurse -File | Sort-Object FullName | ForEach-Object { $_.FullName.Substring($configDir.Length) + ':' + (Get-FileHash -LiteralPath $_.FullName -Algorithm SHA256).Hash }) -join "`n"
+          $before = (Get-ChildItem -LiteralPath $configDir -Recurse -File -Force | Sort-Object FullName | ForEach-Object { $_.FullName.Substring($configDir.Length) + ':' + (Get-FileHash -LiteralPath $_.FullName -Algorithm SHA256).Hash }) -join "`n"
           $upgrade = Start-Process -FilePath $setup -ArgumentList '/S', "/D=$root" -Wait -PassThru
           if ($upgrade.ExitCode -ne 0) { throw "Silent reinstall failed with exit code $($upgrade.ExitCode)." }
-          $after = (Get-ChildItem -LiteralPath $configDir -Recurse -File | Sort-Object FullName | ForEach-Object { $_.FullName.Substring($configDir.Length) + ':' + (Get-FileHash -LiteralPath $_.FullName -Algorithm SHA256).Hash }) -join "`n"
+          $after = (Get-ChildItem -LiteralPath $configDir -Recurse -File -Force | Sort-Object FullName | ForEach-Object { $_.FullName.Substring($configDir.Length) + ':' + (Get-FileHash -LiteralPath $_.FullName -Algorithm SHA256).Hash }) -join "`n"
           if ($before -ne $after) { throw 'Private profile bytes changed across the installer reinstall.' }
           $uninstall = Start-Process -FilePath (Join-Path $root 'Uninstall.exe') -ArgumentList '/S' -Wait -PassThru
           if ($uninstall.ExitCode -ne 0) { throw "Silent uninstall failed with exit code $($uninstall.ExitCode)." }
           if (Test-Path -LiteralPath (Join-Path $root 'bin/64bit/obs64.exe')) { throw 'Uninstall left runtime binaries behind.' }
           if (Test-Path -LiteralPath (Join-Path $root 'webobs-native-prototype.json')) { throw 'Uninstall left the bundle manifest behind.' }
-          $kept = (Get-ChildItem -LiteralPath $configDir -Recurse -File | Sort-Object FullName | ForEach-Object { $_.FullName.Substring($configDir.Length) + ':' + (Get-FileHash -LiteralPath $_.FullName -Algorithm SHA256).Hash }) -join "`n"
+          $kept = (Get-ChildItem -LiteralPath $configDir -Recurse -File -Force | Sort-Object FullName | ForEach-Object { $_.FullName.Substring($configDir.Length) + ':' + (Get-FileHash -LiteralPath $_.FullName -Algorithm SHA256).Hash }) -join "`n"
           if ($kept -ne $before) { throw 'Uninstall did not preserve the private profile byte for byte.' }
           if (-not (Test-Path -LiteralPath $backups -PathType Container)) { throw 'Uninstall removed the version upgrade snapshots.' }
           if (-not (Test-Path -LiteralPath (Join-Path $versionBackups[0].FullName 'backup.json') -PathType Leaf)) { throw 'Uninstall removed an upgrade snapshot receipt.' }
@@ -229,9 +229,10 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw 'Pinned previous prototype smoke failed.' }
           $configDir = Join-Path $root 'config/obs-studio'
           if (-not (Test-Path -LiteralPath $configDir -PathType Container)) { throw 'Pinned previous prototype did not create a private config directory.' }
+          $configRoot = Join-Path $root 'config'
           $beforeHashes = @{}
-          Get-ChildItem -LiteralPath $configDir -Recurse -File | ForEach-Object {
-            $relative = $_.FullName.Substring($configDir.Length).Replace('\','/').TrimStart('/')
+          Get-ChildItem -LiteralPath $configRoot -Recurse -File -Force | ForEach-Object {
+            $relative = $_.FullName.Substring($configRoot.Length).Replace('\','/').TrimStart('/')
             $beforeHashes[$relative] = (Get-FileHash -LiteralPath $_.FullName -Algorithm SHA256).Hash.ToLowerInvariant()
           }
           $before = ($beforeHashes.Keys | Sort-Object | ForEach-Object { $_ + ':' + $beforeHashes[$_] }) -join "`n"
@@ -244,8 +245,8 @@ jobs:
           if ($receipt.previousVersion -ne '4.1.0-dev.32') { throw "Unexpected previousVersion $($receipt.previousVersion)." }
           if ($receipt.configPreserved -ne $true) { throw 'Upgrade did not preserve the private profile.' }
           $afterHashes = @{}
-          Get-ChildItem -LiteralPath $configDir -Recurse -File | ForEach-Object {
-            $relative = $_.FullName.Substring($configDir.Length).Replace('\','/').TrimStart('/')
+          Get-ChildItem -LiteralPath $configRoot -Recurse -File -Force | ForEach-Object {
+            $relative = $_.FullName.Substring($configRoot.Length).Replace('\','/').TrimStart('/')
             $afterHashes[$relative] = (Get-FileHash -LiteralPath $_.FullName -Algorithm SHA256).Hash.ToLowerInvariant()
           }
           $after = ($afterHashes.Keys | Sort-Object | ForEach-Object { $_ + ':' + $afterHashes[$_] }) -join "`n"
@@ -261,16 +262,20 @@ jobs:
           if ($manifest.schema -ne 1 -or $manifest.kind -ne 'native-config-upgrade-backup') { throw 'Unexpected upgrade snapshot schema.' }
           if ($manifest.version -ne $env:NATIVE_VERSION) { throw "Snapshot version $($manifest.version) does not match $env:NATIVE_VERSION." }
           $stableBefore = @{}
-          foreach ($key in $beforeHashes.Keys) { if ($key -notlike 'obs-studio/logs/*') { $stableBefore[$key] = $beforeHashes[$key] } }
-          $stableEntries = @($manifest.entries | Where-Object { $_.path -notlike 'obs-studio/logs/*' })
-          if ($stableEntries.Count -ne $stableBefore.Count) { throw "Snapshot captured $($stableEntries.Count) stable files, expected $($stableBefore.Count)." }
+          foreach ($key in $beforeHashes.Keys) { if ($key -like 'obs-studio/*' -and $key -notlike 'obs-studio/logs/*') { $stableBefore[$key] = $beforeHashes[$key] } }
+          $stableEntries = @($manifest.entries | Where-Object { $_.path -like 'obs-studio/*' -and $_.path -notlike 'obs-studio/logs/*' })
+          if ($stableEntries.Count -ne $stableBefore.Count) {
+            $snapshotPaths = @($stableEntries | ForEach-Object { $_.path })
+            $missing = @($stableBefore.Keys | Where-Object { $snapshotPaths -notcontains $_ })
+            throw "Snapshot captured $($stableEntries.Count) stable files, expected $($stableBefore.Count); missing: $($missing -join ', ')."
+          }
           foreach ($entry in $manifest.entries) {
             $entryPath = ($entry.path -replace '\\','/')
             if ($entryPath -like '*..*' -or $entryPath.StartsWith('/')) { throw "Unsafe snapshot entry $($entry.path)." }
             $file = Join-Path $backupDir.FullName $entryPath
             if (-not (Test-Path -LiteralPath $file -PathType Leaf)) { throw "Snapshot payload missing $entryPath." }
             if ((Get-FileHash -LiteralPath $file -Algorithm SHA256).Hash.ToLowerInvariant() -ne $entry.sha256) { throw "Snapshot file $entryPath is corrupted." }
-            if ($entryPath -notlike 'obs-studio/logs/*') {
+            if ($entryPath -like 'obs-studio/*' -and $entryPath -notlike 'obs-studio/logs/*') {
               if (-not $stableBefore.ContainsKey($entryPath)) { throw "Snapshot entry $entryPath was not in the pre-upgrade profile." }
               if ($stableBefore[$entryPath] -ne $entry.sha256) { throw "Snapshot entry $entryPath does not match the pre-upgrade bytes." }
             }
