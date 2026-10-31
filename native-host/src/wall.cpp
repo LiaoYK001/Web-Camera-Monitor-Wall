@@ -14,6 +14,56 @@ struct Sources {
 			obs_source_release(source);
 	}
 };
+struct ItemCheck {
+	const std::array<std::string, 5> *uuids;
+	std::size_t index = 0;
+	bool ok = true;
+};
+
+bool scene_item_uuids_match(obs_scene_t *scene, const std::array<std::string, 5> &uuids)
+{
+	ItemCheck check{&uuids};
+	obs_scene_enum_items(
+		scene,
+		[](obs_scene_t *, obs_sceneitem_t *item, void *opaque) {
+			auto *state = static_cast<ItemCheck *>(opaque);
+			if (state->index >= state->uuids->size()) {
+				state->ok = false;
+				return false;
+			}
+			auto *source = obs_sceneitem_get_source(item);
+			const char *uuid = source ? obs_source_get_uuid(source) : nullptr;
+			if (!uuid || (*state->uuids)[state->index] != uuid) {
+				state->ok = false;
+				return false;
+			}
+			++state->index;
+			return true;
+		},
+		&check);
+	return check.ok && check.index == uuids.size();
+}
+
+struct SceneScan {
+	const std::array<std::string, 5> *uuids;
+	const std::string *name;
+	bool name_taken = false;
+	obs_scene_t *matched = nullptr;
+};
+
+bool scan_scenes(void *opaque, obs_source_t *source)
+{
+	auto *scan = static_cast<SceneScan *>(opaque);
+	if (std::strcmp(obs_source_get_name(source), scan->name->c_str()) != 0)
+		return true;
+	scan->name_taken = true;
+	auto *scene = obs_scene_from_source(source);
+	if (!scene || !scene_item_uuids_match(scene, *scan->uuids))
+		return true;
+	obs_source_get_ref(source);
+	scan->matched = scene;
+	return false;
+}
 } // namespace
 
 WallResult create_five_tile_wall(const std::array<std::string, 5> &source_uuids)
@@ -64,6 +114,28 @@ WallResult create_five_tile_wall(const std::array<std::string, 5> &source_uuids)
 		obs_sceneitem_set_pos(item, &position);
 	}
 	return {scene, {}};
+}
+
+WallResolution ensure_five_tile_wall(const std::array<std::string, 5> &source_uuids,
+				     const std::string &preferred_name)
+{
+	for (const auto &uuid : source_uuids) {
+		if (uuid.empty())
+			return {nullptr, false, "Select an existing Media Source for every tile."};
+	}
+	SceneScan scan{&source_uuids, &preferred_name};
+	obs_enum_scenes(scan_scenes, &scan);
+	if (scan.matched) {
+		select_wall(scan.matched);
+		return {scan.matched, true, {}};
+	}
+	if (scan.name_taken)
+		return {nullptr, false, "An existing scene has the preferred name but different sources."};
+	auto created = create_five_tile_wall(source_uuids);
+	if (!created.scene)
+		return {nullptr, false, created.error};
+	select_wall(created.scene);
+	return {created.scene, false, {}};
 }
 
 void select_wall(obs_scene_t *scene)

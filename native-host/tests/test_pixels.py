@@ -48,7 +48,7 @@ class PixelContractTests(unittest.TestCase):
     def state(self, seq):
         return {"schema": 1, "seq": seq, "phase": gate.PHASES[seq-1], "token": "a"*32, "pid": "123",
                 "scope": "synthetic-test-only", "canvasWidth": 960, "canvasHeight": 540, "pixelQualified": False,
-                "activeOutputs": 0, "activeEncoders": 0, "rawVideoActive": False, "sameInputPointersAndSettings": True,
+                "activeOutputs": 0, "activeEncoders": 0, "rawVideoActive": False, "sameInputPointersAndSettings": True, "wallReuseVerified": True,
                 "globalFfmpegInputsIncludingPrivate": 0 if seq == 1 else 10 if seq >= 6 else 5,
                 "studio": 3 <= seq <= 5, "transitionStopped": 4 <= seq <= 5, "programGeneration": 2 if seq >= 5 else 1,
                 "windows": ([{"role": "main-preview", "qtClass": "OBSBasicPreview"}] if seq >= 6 else
@@ -62,7 +62,7 @@ class PixelContractTests(unittest.TestCase):
             for key, bad in (("seq", 1 if seq == 6 else 6), ("token", "b"*32), ("pid", "124"), ("canvasWidth", 1920),
                              ("activeEncoders", 1), ("activeOutputs", 1), ("rawVideoActive", True),
                              ("globalFfmpegInputsIncludingPrivate", 6), ("sameInputPointersAndSettings", False),
-                             ("programGeneration", 99), ("pixelQualified", True)):
+                             ("programGeneration", 99), ("pixelQualified", True), ("wallReuseVerified", False)):
                 with self.subTest(seq=seq,key=key), self.assertRaises(AssertionError):
                     gate.validate_state(dict(state, **{key:bad}), seq, "a"*32, 123)
         # The loopback RTSP phase keeps ten global inputs (five local media plus

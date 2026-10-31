@@ -12,6 +12,7 @@
 #include <QFileInfo>
 #include <QFormLayout>
 #include <QGuiApplication>
+#include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QRegularExpression>
@@ -41,6 +42,71 @@ bool frontend_alive = false;
 // Development-only load receipt. No arbitrary output path, camera/source settings,
 // URL or user configuration is serialized. The external smoke runner owns the
 // entirely new portable tree and checks normal process exit and private isolation.
+void write_wall_receipt(const QJsonObject &object)
+{
+	char *path = obs_module_config_path("wall-bootstrap.json");
+	if (!path)
+		return;
+	QFile receipt(QString::fromUtf8(path));
+	bfree(path);
+	if (receipt.open(QIODevice::WriteOnly | QIODevice::Truncate))
+		receipt.write(QJsonDocument(object).toJson());
+}
+
+void bootstrap_configured_wall()
+{
+	char *config_path = obs_module_config_path("wall.json");
+	if (!config_path)
+		return;
+	const QString path = QString::fromUtf8(config_path);
+	bfree(config_path);
+	QFile file(path);
+	if (!file.exists())
+		return;
+	QJsonObject receipt{{"schema", 1}, {"scope", "existing-sources-only"}, {"ok", false}};
+	const auto fail = [&receipt](const char *code) {
+		receipt.insert("error", QString::fromLatin1(code));
+		write_wall_receipt(receipt);
+	};
+	if (!file.open(QIODevice::ReadOnly) || file.size() > 4096) {
+		fail("config-unreadable");
+		return;
+	}
+	const auto document = QJsonDocument::fromJson(file.readAll());
+	if (!document.isObject()) {
+		fail("config-invalid-json");
+		return;
+	}
+	const auto object = document.object();
+	const auto sources = object.value("sources").toArray();
+	if (object.value("schema").toInt() != 1 || sources.size() != 5) {
+		fail("config-schema");
+		return;
+	}
+	const QRegularExpression uuid("^[0-9a-fA-F]{8}-([0-9a-fA-F]{4}-){3}[0-9a-fA-F]{12}$");
+	std::array<std::string, 5> uuids;
+	for (int i = 0; i < 5; ++i) {
+		const QString value = sources.at(i).toString();
+		if (!uuid.match(value).hasMatch()) {
+			fail("config-uuid");
+			return;
+		}
+		uuids[std::size_t(i)] = value.toStdString();
+	}
+	auto resolved = webobs::native_host::ensure_five_tile_wall(uuids, "WebOBS Native Wall");
+	receipt.insert("reused", resolved.reused);
+	receipt.insert("items", 5);
+	if (!resolved.scene) {
+		receipt.insert("error", resolved.error.empty() ? QStringLiteral("wall-unavailable")
+							       : QString::fromStdString(resolved.error));
+		write_wall_receipt(receipt);
+		return;
+	}
+	obs_scene_release(resolved.scene);
+	receipt.insert("ok", true);
+	write_wall_receipt(receipt);
+}
+
 void frontend_event(enum obs_frontend_event event, void *)
 {
 #ifdef WEBOBS_NATIVE_PIXEL_TEST
@@ -54,6 +120,7 @@ void frontend_event(enum obs_frontend_event event, void *)
 	}
 	if (pixel_test_handled || event != OBS_FRONTEND_EVENT_FINISHED_LOADING)
 		return;
+	bootstrap_configured_wall();
 	const QString token = qEnvironmentVariable("WEBOBS_NATIVE_SMOKE_TOKEN");
 	if (!QRegularExpression("^[0-9a-f]{32}$").match(token).hasMatch())
 		return;

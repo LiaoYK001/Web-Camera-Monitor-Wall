@@ -133,6 +133,7 @@ class Harness final : public QObject {
 	obs_scene_t *known_ = nullptr, *a_ = nullptr, *b_ = nullptr, *rtsp_scene_ = nullptr;
 	int phase_ = 0, generation_ = 0;
 	bool published_ = false, closing_ = false, take_stopped_ = false, reopening_ = false;
+	bool wall_reuse_verified_ = false;
 
 	void require(bool value, const char *message) const
 	{
@@ -241,6 +242,10 @@ class Harness final : public QObject {
 		result = create_five_tile_wall(reversed); b_ = result.scene;
 		require(b_, "real five-tile wall B creation failed");
 		select_wall(a_);
+		auto reused = ensure_five_tile_wall(uuids_, "WebOBS Native Wall");
+		require(reused.reused && reused.scene == a_, "existing wall scene was not reused");
+		obs_scene_release(reused.scene);
+		wall_reuse_verified_ = true;
 	}
 	void create_rtsp()
 	{
@@ -357,6 +362,7 @@ class Harness final : public QObject {
 		                       {"studio", obs_frontend_preview_program_mode_active()}, {"transitionStopped", take_stopped_},
 		                       {"programGeneration", generation_}, {"elapsedMs", double(clock_.elapsed())},
 		                       {"globalFfmpegInputsIncludingPrivate", int(snapshot.ffmpeg)}, {"globalInputCountIncludingPrivate", int(snapshot.inputs)},
+		                       {"wallReuseVerified", wall_reuse_verified_},
 		                       {"activeOutputs", int(snapshot.active_outputs)}, {"activeEncoders", int(snapshot.active_encoders)},
 		                       {"rawVideoActive", obs_video_active()}, {"sameInputPointersAndSettings", true}, {"sources", ids},
 		                       {"windows", windows},
