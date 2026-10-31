@@ -7,6 +7,7 @@ on:
       official: { type: boolean, default: false }
       milestone: { type: string, default: '' }
       installed_upgrade: { type: boolean, default: false }
+      obs_size_baseline: { type: boolean, default: false }
   workflow_dispatch:
     inputs:
       native_host:
@@ -266,6 +267,7 @@ jobs:
     uses: ./.github/workflows/windows-obs-native-host.yaml
     with:
       version: ${{ inputs.version }}
+      measure_obs_baseline: ${{ inputs.obs_size_baseline }}
 
   obs-native-host-pixels:
     if: github.event_name == 'workflow_dispatch' && inputs.native_host_pixels && !inputs.native_host && !inputs.diagnose_dev17 && !inputs.publish_dev17 && !inputs.publish_dev18 && !inputs.official && !inputs.installed_upgrade

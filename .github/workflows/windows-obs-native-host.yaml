@@ -6,10 +6,15 @@ on:
     inputs:
       version: { type: string, required: true }
       pixel_test: { type: boolean, default: false }
+      measure_obs_baseline: { type: boolean, default: false }
   workflow_dispatch:
     inputs:
       pixel_test:
         description: 'Compile a non-redistributable finite final-pixel harness; upload sanitized synthetic receipt only'
+        type: boolean
+        default: false
+      measure_obs_baseline:
+        description: 'Install the pinned stock OBS 32.1.2 installer and record a same-OS installed-size reference'
         type: boolean
         default: false
       version:
@@ -125,6 +130,35 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw 'Reinstall over the private profile failed.' }
           python -B native-host/tests/smoke_windows.py --runtime $root --result (Join-Path $env:GITHUB_WORKSPACE 'build/obs-native-ci/native-install-smoke-second.json') --existing-wall
           if ($LASTEXITCODE -ne 0) { throw 'Existing-wall smoke after reinstall failed.' }
+      - name: Measure the stock OBS 32.1.2 installation for a same-OS size reference
+        if: ${{ inputs.measure_obs_baseline }} && ${{ !inputs.pixel_test }}
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $root = Join-Path $env:RUNNER_TEMP 'obs-size-reference'
+          if (Test-Path $root) { Remove-Item -Recurse -Force $root }
+          $setup = Join-Path $env:RUNNER_TEMP 'OBS-Studio-32.1.2-Windows-x64-Installer.exe'
+          Invoke-WebRequest -Uri 'https://github.com/obsproject/obs-studio/releases/download/32.1.2/OBS-Studio-32.1.2-Windows-x64-Installer.exe' -OutFile $setup
+          $asset = Get-Item -LiteralPath $setup
+          . ./desktop/tests/installed-tree-footprint.ps1
+          $scope = New-InstalledTreeFootprintScope -Root $root -Purpose isolated-nsis-install-before-first-start
+          $process = Start-Process -FilePath $setup -ArgumentList '/S', "/D=$root" -PassThru -Wait
+          if ($process.ExitCode -ne 0) { throw "Stock OBS silent install failed with exit code $($process.ExitCode)" }
+          if (-not (Test-Path -LiteralPath (Join-Path $root 'bin/64bit/obs64.exe') -PathType Leaf)) { throw 'Stock OBS installer did not produce obs64.exe' }
+          $footprint = Measure-InstalledTreeFootprint -Scope $scope
+          $receipt = [ordered]@{
+            schema = 1
+            scope = 'reference-stock-obs-installation'
+            obsVersion = '32.1.2'
+            installerSha256 = (Get-FileHash -LiteralPath $setup -Algorithm SHA256).Hash.ToLowerInvariant()
+            installerBytes = $asset.Length
+            installed = $footprint
+            qualification = 'GitHub-hosted Windows Server 2022 reference only; not a target-machine measurement and not an equal-feature scope'
+          }
+          $path = 'build/obs-native-ci/obs-size-reference.json'
+          New-Item -ItemType Directory -Force -Path (Split-Path $path) | Out-Null
+          $receipt | ConvertTo-Json -Depth 6 | Set-Content -LiteralPath $path
+          Get-Content -LiteralPath $path
       - name: Require actual Qt plugin startup, private portable config and normal exit
         if: ${{ !inputs.pixel_test }}
         shell: pwsh
@@ -154,6 +188,7 @@ jobs:
             build/obs-native-ci/native-install-second.json
             build/obs-native-ci/native-install-smoke-first.json
             build/obs-native-ci/native-install-smoke-second.json
+            build/obs-native-ci/obs-size-reference.json
           if-no-files-found: ignore
           retention-days: 7
           compression-level: 0
