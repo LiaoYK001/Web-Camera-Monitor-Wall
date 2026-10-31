@@ -211,13 +211,20 @@ def run_crash(runtime: Path, result: Path, *, crash_after: int = 8) -> dict:
     for name in ("OBS_PLUGINS_PATH", "OBS_PLUGINS_DATA_PATH", "OBS_CONFIG_PATH", "QT_PLUGIN_PATH", "QT_QPA_PLATFORM_PLUGIN_PATH", "QML2_IMPORT_PATH"):
         environment[name] = str(runtime / "deliberately-nonexistent-external-override")
     gate_path = result.parent / (result.stem + "-process-gate.json")
+    product_file = (result.parent / (result.stem + "-product.json")).resolve()
+    write_product_config(product_file)
     args = [pwsh, "-NoProfile", "-File", str(runtime / "launch-native.ps1"), "-AllowPrototype",
             "-SmokeToken", token, "-TimeoutSeconds", "120", "-CrashAfterSeconds", str(crash_after),
-            "-ProcessGatePath", str(gate_path)]
-    process = subprocess.run(args, cwd=runtime.parent, env=environment, check=False)
+            "-ProcessGatePath", str(gate_path), "-ProductConfig", str(product_file)]
+    try:
+        process = subprocess.run(args, cwd=runtime.parent, env=environment, check=False)
+    finally:
+        product_file.unlink(missing_ok=True)
     gate = json.loads(gate_path.read_text(encoding="utf-8"))
     if gate.get("crashed") is not True:
-        raise AssertionError("Crash smoke launcher did not record the deliberate kill")
+        raise AssertionError(f"Crash smoke launcher did not record the deliberate kill "
+                             f"(exit={process.returncode}, samples={gate.get('samples')}, "
+                             f"observed={[item.get('name') for item in gate.get('observed', [])]})")
     if int(gate.get("samples", 0)) < 2:
         raise AssertionError("Crash smoke did not sample the running process tree before the kill")
     checked = check_process_gate(gate_path)
