@@ -207,7 +207,7 @@ void bootstrap_product_configuration()
 	if (present)
 		bootstrap_product_cameras();
 	else
-		bootstrap_product_configuration();
+		bootstrap_configured_wall();
 }
 
 void frontend_event(enum obs_frontend_event event, void *)
@@ -223,7 +223,7 @@ void frontend_event(enum obs_frontend_event event, void *)
 	}
 	if (pixel_test_handled || event != OBS_FRONTEND_EVENT_FINISHED_LOADING)
 		return;
-	bootstrap_configured_wall();
+	bootstrap_product_configuration();
 	const QString token = qEnvironmentVariable("WEBOBS_NATIVE_SMOKE_TOKEN");
 	if (!QRegularExpression("^[0-9a-f]{32}$").match(token).hasMatch())
 		return;
