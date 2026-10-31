@@ -199,8 +199,14 @@ class PixelContractTests(unittest.TestCase):
         script = (HERE / "capture-pixels.ps1").read_text()
         self.assertIn("[switch]$CompileOnly", script)
         self.assertIn("Join-Path $PSHOME 'ref'", script)
-        self.assertIn("[System.Drawing.Bitmap].Assembly.Location", script)
-        self.assertIn("[System.Windows.Forms.Screen].Assembly.Location", script)
+        # Loaded runtime assemblies (including Windows Drawing/Forms) must be
+        # referenced; a reference-pack-only list fails CS0012 on Windows.
+        self.assertIn("[AppDomain]::CurrentDomain.GetAssemblies()", script)
+        self.assertIn("GetFileNameWithoutExtension", script)
+        for type_family in ("[System.Drawing.Bitmap]", "[System.Drawing.Rectangle]",
+                            "[System.Windows.Forms.Screen]", "[System.Diagnostics.Process]",
+                            "[System.Diagnostics.Stopwatch]"):
+            self.assertIn(type_family, script)
         self.assertIn("Add-Type -ReferencedAssemblies $references", script)
         for guard in ("process.StartTime.ToUniversalTime().ToFileTimeUtc()!=creation", "actual!=pid || actualRoot!=pid",
                       "GetAncestor(hwnd,2)!=root", "!IsChild(hwnd,hit)", "screen.Contains(new Rectangle", "DwmFlush()", "i<8"):

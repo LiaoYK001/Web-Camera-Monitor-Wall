@@ -49,16 +49,29 @@ try {
     $stage='assembly-load'; $code='reference-assemblies'
     Add-Type -AssemblyName System.Drawing
     Add-Type -AssemblyName System.Windows.Forms
-    # PS 6+ -ReferencedAssemblies REPLACES default .NET references. The previous
-    # Drawing/Forms-only list omitted System.Diagnostics.Process used below and
-    # can fail before the first BMP. Use PowerShell's trusted reference pack,
-    # plus the actual Windows Drawing/Forms assemblies (not only forwarders).
-    # Do not resolve references from the disposable profile or current directory.
+    # PS 6+ -ReferencedAssemblies REPLACES default .NET references, so every
+    # type family the inline C# uses must resolve. Touch the concrete types
+    # first to force their runtime assemblies to load, then reference the
+    # loaded runtime assemblies and PowerShell's trusted reference pack. The
+    # reference-pack-only list had no Windows Drawing/Forms dependencies and
+    # failed CS0012 before any BMP. Do not resolve from the disposable profile
+    # or current directory.
+    $null = @(
+        [System.Drawing.Bitmap], [System.Drawing.Rectangle], [System.Drawing.Size],
+        [System.Drawing.Imaging.PixelFormat], [System.Drawing.CopyPixelOperation],
+        [System.Windows.Forms.Screen], [System.Diagnostics.Process],
+        [System.Diagnostics.Stopwatch], [System.Threading.Thread],
+        [System.Runtime.InteropServices.Marshal], [System.Globalization.CultureInfo],
+        [System.IO.Path]
+    )
     $referenceDirectory = Join-Path $PSHOME 'ref'
     if (-not (Test-Path -LiteralPath $referenceDirectory -PathType Container)) { throw 'Trusted reference pack missing.' }
-    $references = @((Get-ChildItem -LiteralPath $referenceDirectory -Filter '*.dll' -File).FullName)
-    $references += @([System.Drawing.Bitmap].Assembly.Location, [System.Windows.Forms.Screen].Assembly.Location)
-    $references = @($references | Group-Object { [IO.Path]::GetFileName($_) } | ForEach-Object { $_.Group[0] })
+    $references = @([AppDomain]::CurrentDomain.GetAssemblies() |
+        Where-Object { -not $_.IsDynamic -and $_.Location } |
+        ForEach-Object { $_.Location })
+    $references += @((Get-ChildItem -LiteralPath $referenceDirectory -Filter '*.dll' -File).FullName)
+    # One reference per simple name; loaded runtime assemblies win over the pack.
+    $references = @($references | Group-Object { [IO.Path]::GetFileNameWithoutExtension($_) } | ForEach-Object { $_.Group[0] })
     $stage='compile'; $code='csharp-compilation'
     Add-Type -ReferencedAssemblies $references -ErrorVariable compilerErrors -TypeDefinition @'
 using System;
