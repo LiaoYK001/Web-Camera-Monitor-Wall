@@ -155,7 +155,7 @@ exports.exerciseNativeProgramPreview = async (supervisor, runtime, headers, temp
     await saveScene(scene);
     await until(async () => { await native(); return (await get('/api/v1/sources/status')).healthy === 5; });
     // HEVC decoder warmup is independent of source health/callback progress.
-    await pause(1500); await capture('five-hevc', true);
+    await pause(1500); await capture('five-codecs', true);
     assert.equal((await get('/api/v1/program/status')).publish, 'idle', 'native display must not activate the encoder/publisher');
     const paths = await (await fetch(gateway + '/v3/paths/list')).json();
     assert.deepEqual(paths.items.filter(value => value.name.startsWith('hybrid-')).map(value => value.name).sort(), routes.sort(), 'native viewing creates no video compatibility routes');

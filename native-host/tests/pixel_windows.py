@@ -28,7 +28,7 @@ sys.path.insert(0, str(ROOT / "native-host/scripts"))
 from prepare import OBS_COMMIT, obtain
 from smoke_windows import fingerprint
 
-PHASES = ("known-colors", "five-hevc", "studio-preview-no-take", "explicit-take", "program-reopened")
+PHASES = ("known-colors", "five-codecs", "studio-preview-no-take", "explicit-take", "program-reopened")
 ENV_OVERRIDES = ("OBS_PLUGINS_PATH", "OBS_PLUGINS_DATA_PATH", "OBS_CONFIG_PATH", "QT_PLUGIN_PATH",
                  "QT_QPA_PLATFORM_PLUGIN_PATH", "QML2_IMPORT_PATH", "WEBOBS_NATIVE_SMOKE_TOKEN", "WEBOBS_NATIVE_PIXEL_TOKEN")
 
@@ -115,18 +115,25 @@ def make_fixtures(private: Path, ffmpeg: Path, ffprobe: Path, node: str) -> list
     for channel in range(5):
         raw, video = private / f"fixture-{channel + 1}.rgb", private / f"fixture-{channel + 1}.mkv"
         subprocess.run([node, str(HERE / "pixel-pattern.cjs"), "fixture", str(channel), str(raw)], check=True, capture_output=True, timeout=30)
+        # Two of the five independent fixtures are H.264 so the local decode
+        # path is not only HEVC; both codecs stay 320x180/10fps/B0 lossy yuv420p.
+        codec = "h264" if channel >= 3 else "hevc"
+        if codec == "h264":
+            video_args = ["-c:v", "libx264", "-preset", "ultrafast", "-pix_fmt", "yuv420p",
+                          "-x264-params", "keyint=10:min-keyint=10:scenecut=0:bframes=0:log-level=error"]
+        else:
+            video_args = ["-c:v", "libx265", "-preset", "ultrafast", "-pix_fmt", "yuv420p",
+                          "-x265-params", "pools=1:frame-threads=1:keyint=10:min-keyint=10:scenecut=0:bframes=0:log-level=error"]
         command = [str(ffmpeg), "-hide_banner", "-loglevel", "error", "-nostdin", "-n", "-f", "rawvideo",
                    "-pixel_format", "rgb24", "-video_size", "320x180", "-framerate", "10", "-i", str(raw),
-                   "-an", "-c:v", "libx265", "-preset", "ultrafast", "-pix_fmt", "yuv420p",
-                   "-x265-params", "pools=1:frame-threads=1:keyint=10:min-keyint=10:scenecut=0:bframes=0:log-level=error",
-                   "-f", "matroska", str(video)]
+                   "-an", *video_args, "-f", "matroska", str(video)]
         subprocess.run(command, check=True, capture_output=True, timeout=90)
         probe = subprocess.run([str(ffprobe), "-v", "error", "-select_streams", "v:0", "-show_entries", "stream=codec_name,width,height",
                                 "-of", "json", str(video)], check=True, capture_output=True, text=True, timeout=20)
         streams = json.loads(probe.stdout)["streams"]
-        if streams != [{"codec_name": "hevc", "width": 320, "height": 180}]:
-            raise AssertionError("Local fixture is not independently encoded 320x180 HEVC")
-        fixtures.append({"channel": channel + 1, "codec": "hevc", "width": 320, "height": 180,
+        if streams != [{"codec_name": codec, "width": 320, "height": 180}]:
+            raise AssertionError(f"Local fixture is not independently encoded 320x180 {codec}")
+        fixtures.append({"channel": channel + 1, "codec": codec, "width": 320, "height": 180,
                          "sha256": hashlib.sha256(video.read_bytes()).hexdigest()})
         # Raw targets are exact files just created by this function under the
         # caller's new fixed private directory, never a computed user path.

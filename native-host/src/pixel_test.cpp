@@ -276,7 +276,7 @@ class Harness final : public QObject {
 		QJsonArray ids;
 		if (phase_ > 1) for (std::size_t i = 0; i < media_.size(); ++i)
 			ids.append(QJsonObject{{"uuid", QString::fromStdString(uuids_[i])}, {"settingsSha256", QString::fromLatin1(hashes_[i])}});
-		const char *names[] = {"", "known-colors", "five-hevc", "studio-preview-no-take", "explicit-take", "program-reopened"};
+		const char *names[] = {"", "known-colors", "five-codecs", "studio-preview-no-take", "explicit-take", "program-reopened"};
 		const QJsonObject state{{"schema", 1}, {"seq", phase_}, {"phase", QString::fromLatin1(names[phase_])}, {"token", token_},
 		                       {"pid", QString::number(QCoreApplication::applicationPid())}, {"canvasWidth", 960}, {"canvasHeight", 540},
 		                       {"studio", obs_frontend_preview_program_mode_active()}, {"transitionStopped", take_stopped_},

@@ -222,13 +222,14 @@ class PixelContractTests(unittest.TestCase):
         self.assertEqual(value, {"schema": 1, "compileOnly": True, "captureFailed": False, "captures": []})
 
     @unittest.skipUnless(os.environ.get("WEBOBS_TEST_FFMPEG") and shutil.which("node"), "Opt-in local FFmpeg fixture smoke")
-    def test_real_five_independent_hevc_preencoding(self):
+    def test_real_five_independent_mixed_codec_preencoding(self):
         ffmpeg = Path(os.environ["WEBOBS_TEST_FFMPEG"])
         ffprobe = ffmpeg.with_name("ffprobe.exe" if sys.platform == "win32" else "ffprobe")
         with tempfile.TemporaryDirectory() as temporary:
             fixtures = gate.make_fixtures(Path(temporary), ffmpeg, ffprobe, shutil.which("node"))
             self.assertEqual(len(fixtures), 5)
             self.assertEqual(len({f["sha256"] for f in fixtures}),5)
+            self.assertEqual({f["codec"] for f in fixtures}, {"hevc", "h264"})
             self.assertEqual(len(list(Path(temporary).glob("*.mkv"))),5)
             self.assertEqual(list(Path(temporary).glob("*.rgb")),[])
 
