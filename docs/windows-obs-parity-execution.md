@@ -426,3 +426,15 @@ Step 5 of P4 requires cleaning unused plug-ins, resources, development files and
 The pruned runtime still passed all ten synthetic pixel phases (run 41250018069, `4.1.0-dev.54`, artifact `13060579898`), and the full prototype run at the same commit (run 41250011450, `4.1.0-dev.53`, artifact `13060374195`) passed startup, NSIS install/uninstall, crash containment, single-instance and shipped-installer upgrade smokes.
 
 Boundaries: this slice removes build symbols only; no plug-in/resource trimming, no Electron default removal, no functional-scope change. The prototype and full OBS (479,371,662 B, including CEF/scripting/WebSocket/VST/VLC) are not same-feature measurements, so this is not a P4 size-completion claim. Group accounting for default/extension/actual installs, SBOM/licence inventory, explanations for remaining files and target-machine evidence are still missing.
+
+### 开发候选发布 v4.1.0-dev.53 / Development candidate publication v4.1.0-dev.53
+
+- 2026-11-01 发布 Pre-release [v4.1.0-dev.53](https://github.com/LiaoYK001/Web-Camera-Monitor-Wall/releases/tag/v4.1.0-dev.53)，`--prerelease`、`--latest=false`；stable Latest 仍为 v4.0，tag 指向已测试提交 `b77f9160385ad6370a0587ea448942c0250f1dcc`。
+- 构建 artifact `13060374195`（68,909,368 B，`sha256:08ee3b052b0a8abfb851d2d4db5cee7b162b40d719f128f93cd4608788c4f806`，run 41250011450）。发布前用 `verify_native_dev_assets.py` 校验 NSIS 回执、ZIP 清单、版本/上游 pin、无私有 `config/` 与路径穿越，暂存 `SETUP.exe` + `PROTOTYPE.zip` + `SHA256SUMS.txt`。
+- 附件为冻结字节、未重新打包：SETUP 27,408,522 B `3c7f58466600982ae13bbab98d67ef2dd8edc9f2623bbf1b0f8eedbf7694caab`，PROTOTYPE.zip 41,484,488 B `2d065e4671357d54e7d29983918baf8040260a5c5f65b276181bf79b5df9c3e8`，SHA256SUMS 242 B。上传后 GitHub 摘要与本地哈希一致；发布后重新下载 SETUP 并 `sha256sum -c` 通过。
+- 同提交的 dev.53 原型运行（启动、NSIS 安装/卸载、崩溃收束、单实例、已发布 dev.40 安装包就地升级）与 dev.54 十阶段像素运行全部通过；发布不改变这些边界。
+
+- 2026-11-01 published Pre-release [v4.1.0-dev.53](https://github.com/LiaoYK001/Web-Camera-Monitor-Wall/releases/tag/v4.1.0-dev.53) with `--prerelease --latest=false`; the stable Latest remains v4.0 and the tag points at the tested commit `b77f9160385ad6370a0587ea448942c0250f1dcc`.
+- Build artifact `13060374195` (68,909,368 B, `sha256:08ee3b052b0a8abfb851d2d4db5cee7b162b40d719f128f93cd4608788c4f806`, run 41250011450). Before publication `verify_native_dev_assets.py` checked the NSIS receipt, ZIP manifest, version/upstream pins, absence of a private `config/` and traversal entries, then staged `SETUP.exe`, `PROTOTYPE.zip` and `SHA256SUMS.txt`.
+- The attached bytes are frozen and unrepacked: SETUP 27,408,522 B `3c7f5846…`, PROTOTYPE.zip 41,484,488 B `2d065e46…`, SHA256SUMS 242 B. GitHub asset digests matched the local hashes after upload; the published SETUP was downloaded again and passed `sha256sum -c`.
+- At the same commit the dev.53 prototype run (startup, NSIS install/uninstall, crash containment, single instance, in-place upgrade of the published dev.40 installer) and the dev.54 ten-phase pixel run passed; publication does not change those boundaries.
