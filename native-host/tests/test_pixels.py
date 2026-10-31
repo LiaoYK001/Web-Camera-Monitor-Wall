@@ -11,6 +11,7 @@ import tempfile
 import unittest
 from unittest.mock import patch
 import pixel_windows as gate
+import smoke_windows as smoke
 
 HERE = Path(__file__).resolve().parent
 ROOT = HERE.parents[1]
@@ -252,6 +253,38 @@ class PixelContractTests(unittest.TestCase):
             self.assertEqual({f["codec"] for f in fixtures}, {"hevc", "h264"})
             self.assertEqual(len(list(Path(temporary).glob("*.mkv"))),5)
             self.assertEqual(list(Path(temporary).glob("*.rgb")),[])
+
+
+class ProductSmokeContractTests(unittest.TestCase):
+    def test_payload_has_five_bounded_cameras(self):
+        payload = smoke.product_config_payload()
+        self.assertEqual(payload["schema"], 1)
+        self.assertEqual(len(payload["cameras"]), 5)
+        for index, camera in enumerate(payload["cameras"], start=1):
+            self.assertEqual(camera["id"], f"cam-{index}")
+            self.assertTrue(camera["url"].startswith("rtsp://127.0.0.1:9/"))
+            self.assertIs(camera["hardwareDecode"], False)
+
+    def test_receipt_accepts_a_clean_bootstrap(self):
+        receipt = {"schema": 1, "scope": "product-cameras", "ok": True, "created": 5, "reused": 0,
+                   "sceneReused": False, "canvasApplied": False, "items": 5}
+        with tempfile.TemporaryDirectory() as temporary:
+            path = Path(temporary) / "product-bootstrap.json"
+            path.write_text(json.dumps(receipt), encoding="utf-8")
+            parsed = smoke.check_product_receipt(path)
+        self.assertEqual(parsed["created"], 5)
+
+    def test_receipt_rejects_errors_and_leaks(self):
+        base = {"schema": 1, "scope": "product-cameras", "ok": True, "created": 5, "reused": 0,
+                "sceneReused": False, "canvasApplied": False, "items": 5}
+        cases = [dict(base, error="camera-name-conflict"), dict(base, created=4), dict(base, ok=False),
+                 dict(base, items=4), dict(base, leaked="rtsp://127.0.0.1:9/smoke-1")]
+        for case in cases:
+            with self.subTest(case=case), tempfile.TemporaryDirectory() as temporary:
+                path = Path(temporary) / "product-bootstrap.json"
+                path.write_text(json.dumps(case), encoding="utf-8")
+                with self.assertRaises(AssertionError):
+                    smoke.check_product_receipt(path)
 
 
 if __name__ == "__main__":

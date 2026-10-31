@@ -3,6 +3,7 @@
 param(
     [switch]$AllowPrototype,
     [ValidatePattern('^$|^[0-9a-f]{32}$')][string]$SmokeToken = '',
+    [string]$ProductConfig = '',
     [ValidateRange(10,300)][int]$TimeoutSeconds = 90
 )
 $ErrorActionPreference = 'Stop'
@@ -24,6 +25,15 @@ if ($SmokeToken) {
     New-Item -ItemType Directory -Path $profile | Out-Null
     # Only this new disposable profile: skip auto-config/default audio input creation.
     [IO.File]::WriteAllText((Join-Path $profile 'user.ini'), "[General]`nFirstRun=true`n[BasicWindow]`nSysTrayEnabled=false`n")
+    if ($ProductConfig) {
+        if (-not (Test-Path -LiteralPath $ProductConfig -PathType Leaf)) { throw 'Product config file is missing.' }
+        if ((Get-Item -LiteralPath $ProductConfig).Length -gt 16384) { throw 'Product config exceeds the 16 KiB limit.' }
+        $product = Get-Content -LiteralPath $ProductConfig -Raw | ConvertFrom-Json
+        if ($product.schema -ne 1 -or @($product.cameras).Count -ne 5) { throw 'Product config must be schema 1 with five cameras.' }
+        $pluginConfig = Join-Path $profile 'plugin_config/webobs-native-host'
+        New-Item -ItemType Directory -Path $pluginConfig -Force | Out-Null
+        Copy-Item -LiteralPath $ProductConfig -Destination (Join-Path $pluginConfig 'product.json')
+    }
 }
 New-Item -ItemType Directory -Path $config -Force | Out-Null
 $probe = Join-Path $config ('.write-probe-' + [Guid]::NewGuid().ToString('N'))
