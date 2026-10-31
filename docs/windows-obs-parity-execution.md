@@ -86,15 +86,29 @@ The strict gate detects black/missing/swapped/duplicated/flipped/frozen channels
 
 [新候选完整检查 41181595863](https://github.com/LiaoYK001/Web-Camera-Monitor-Wall/actions/runs/41181595863) 已成功，实际产品源码 `24e8eb371582c646c5e4c7059e070d37b4fdfcaa`、版本 `4.1.0-dev.18`，audit 与完整 Windows build/runtime/Composite/source-UI/main/package/NSIS 安装检查保留且通过；历史 installed-upgrade 专项未请求。最终像素回执四个严格阶段通过，新窗口在工具介入前均已可见。重开早期观察 8 张中 6 张不完整，首个完整样本约 4003ms，恢复准备 6930ms（含 1500ms 预热与请求开销）；不将这些过渡帧接受为成功，也不声称用户持续黑屏根因已修复。像素 artifact `13035643128` / SHA-256 `113eec5a2889515671cac8a560aff2b56261803de4d394638021e80d23c7cda0`。Build runner uses Microsoft Basic Render Driver, not the target RTX 4090 Laptop.
 
-完整候选 artifact `13035199490` / `1031259327` 字节 / ZIP SHA-256 `fb2581a20dd9388c2ed63af2f6b824854bfc765dfbe036bbbe5c7b037907a594`，安装器 `427436667` 字节。足迹清单的 `installedBytes=1459397091` / 7500 files 实际来自 `release-assets.mjs` 对 `win-unpacked` 的遍历，不是用户机器重新安装后的磁盘占用；配置、卸载器、分配空间与用户数据边界仍须实测。开发 Pre-release 仅复制该固定构建字节，不重新打包、换 DLL 或替换 stable/Latest。独立 OBS/Qt 原型不混入这个安装器。
+完整候选 artifact `13035199490` / `1031259327` 字节 / ZIP SHA-256 `fb2581a20dd9388c2ed63af2f6b824854bfc765dfbe036bbbe5c7b037907a594`，安装器 `427436667` 字节。足迹清单的 `installedBytes=1459397091` / 7500 files 实际来自 `release-assets.mjs` 对 `win-unpacked` 的遍历，不是用户机器重新安装后的磁盘占用；配置、卸载器、分配空间与用户数据边界仍须实测。后续 footprint schema 2 明确记为 `measurementScope=packaged-unpacked-tree / byteMetric=logical-file-length / unpackedPayloadBytes`，实际安装逻辑/分配字节未测时均为 null；旧 installedBytes 仅作为带说明的弃用别名兼容，不回写已发布附件。开发 Pre-release 仅复制该固定构建字节，不重新打包、换 DLL 或替换 stable/Latest。独立 OBS/Qt 原型不混入这个安装器。
+
+### dev.18 开发交付 / Development prerelease delivery
+
+[固定字节发布检查 41185010472](https://github.com/LiaoYK001/Web-Camera-Monitor-Wall/actions/runs/41185010472) 已通过：Windows 上先执行离线资产校验正/负例，再核对构建 run/source/artifact 全 ZIP 的字节数与摘要，复制原有八个附件，逐项检查 GitHub 上传摘要后公开 [v4.1.0-dev.18 Pre-release](https://github.com/LiaoYK001/Web-Camera-Monitor-Wall/releases/tag/v4.1.0-dev.18)。发布时间 `2026-10-31T08:33:41Z`，Git tag 与 release target 均为已测试的 `24e8eb371582c646c5e4c7059e070d37b4fdfcaa`，不是后续测试 harness 的源码。没有重建产品、覆盖已有资产或发布像素测试专用运行时。
+
+安装器 [直接下载](https://github.com/LiaoYK001/Web-Camera-Monitor-Wall/releases/download/v4.1.0-dev.18/WebOBS-4.1.0-dev.18-windows-x64-DEVELOPMENT-UNSIGNED.exe)：`427436667` 字节，SHA-256 `1663e24827de1a9ce41b9e44957bf37bc1b0545c91f7b5cb62b369347d3b8e4f`。`draft=false / prerelease=true`，仅八个白名单附件，无私密校验回执；stable Latest 仍是 release `406670417 / v4.0`。This is unsigned development delivery, not target-camera/performance qualification or an OBS-native default-host migration.
 
 ### Linux 实际 libobs 与浏览器边界
 
 Opt-in `WEBOBS_BUILD_OBS_RENDER_TESTS` 对固定 OBS 实际渲染到测试 FBO，并读取已知色块位置，覆盖 activate、prepare 不改 Program、cut、失败 prepare、deactivate/reactivate，确认无 encoder/raw video consumer 也有主纹理。Fedora 44 / RTX 3090 / NVIDIA 615.78.08 / X11 EGL / OpenGL 3.3：CTest 3/3 通过，GPU 测试 0.57 秒，额外重复 10/10 通过。只证明该 Linux/libobs 路径，不证明 Windows D3D11/HWND/Present/摄像机或性能。
 
-本轮桌面 Node 单测 58/58、公开工作流策略 18/18、受控诊断 UI 的 typecheck + 两项 focused Playwright 通过。它们分别证明 predicate、边界与界面交互，不替代最终像素实测；测试夹具无真实后端时的 WebSocket proxy refusal 不当成产品网络诊断。
+dev.18 原始最终像素工作提交的桌面 Node 单测 58/58、公开工作流策略 18/18、受控诊断 UI 的 typecheck + 两项 focused Playwright 通过。后续 unpacked footprint 语义修复及空树未知指标不填零的负例使桌面检查为 59/59；离线发布资产正负例 32/32、策略 18/18 再验通过。它们分别证明 predicate、边界与界面交互，不替代最终像素实测；测试夹具无真实后端时的 WebSocket proxy refusal 不当成产品网络诊断。
+
+### 原生宿主最终像素首轮：编译通过，捕获失败 / First native-host pixel run
+
+默认关闭的 `-PixelTest` 独立测试构建 [41185006193](https://github.com/LiaoYK001/Web-Camera-Monitor-Wall/actions/runs/41185006193) 实际 Windows/Qt/MSVC 编译及五个有限阶段均执行，但小型回执 `status=failed / syntheticFinalWindowPixelsQualified=false`。每阶段实际主 Preview 与 Program projector 捕获均失败，读取八个 BMP 为 ENOENT；**未得到最终像素，不能称为截到黑屏、媒体失败或迁移通过**。已能记录阶段零/五个全局 ffmpeg source（包括 private sources）、既有五个 UUID/pointer/settings 不变、active output/encoder/raw consumer 为零、正常退出及外部 OBS profile 未变，但这些不是图像替代证明。
+
+静态复查发现 PowerShell 7 的 `Add-Type -ReferencedAssemblies System.Drawing,System.Windows.Forms` 覆盖默认引用集，而捕获代码使用 Process/Stopwatch 等额外 .NET 类型；原始 subprocess stderr 未保留使首轮具体错误不可还原，不能断言这就是唯一根因。下一检查先做编译预检并只输出固定枚举错误类别，保持 PID/exe/创建时间/HWND/root/可见性/遮挡等守卫以及所有逐样本图像门槛，不公开 token、窗口身份、私密路径、BMP 或测试运行时。普通原型和已发布 dev.18 不随此测试修改。
 
 ### P2–P5：原型与后续门槛
+
+完整 [能力迁移账本](windows-obs-capability-migration.md) 区分普通 RTSP 直读与控制面/持久任务：现有 cluster/RBAC fail-closed、MTX/NVR 更新工作门、Windows CEF 启动要求、备份/事件/录像任务均不能通过直接删除服务绕过。后续先拆 renderer-free 控制适配、只读数据导入 dry-run 与持久能力状态，再逐项迁移并保留回退。
 
 `37e4f98` 增加独立 `native-host/` 与 `desktop/scripts/build-obs-native.ps1`：固定 OBS 完整 Qt frontend + 产品 dock，按已有 source UUID 复用媒体源，非破坏新建五分屏，Studio Preview 不自动 TAKE，投影使用 OBS 原生接口。全新 portable 配置与原 OBS/产品数据隔离，不启动旧服务。Linux 的七项 Python build contract 与固定真实 OBS headers API contract 1/1 已通过。[Windows 原型检查 41180501363](https://github.com/LiaoYK001/Web-Camera-Monitor-Wall/actions/runs/41180501363) 已成功：在 Windows 2022 / VS2022 实际编译 OBS 32.1.2 + Qt 6.8.3 + 产品插件，Qt dock 与媒体源注册、独立 portable 配置、原 OBS profile 未改变、清除继承插件覆盖及正常退出烟测均通过。`mediaQualified=false`，**不证明五路最终像素、摄像机、硬解或性能**。干净归档在烟测产生私密配置前完成，不上传配置和日志。Artifact `13034867787` / `78036418` 字节 / SHA-256 `86cdc83ad3677425fe86dd71a3b46a8b1e6bd6e96c932b0ae92f78810ad59e6a`；prototype manifest 之前文件总字节 `243419789`（Qt `23833088`、plugins `73164953`、other `146421748`），不是安装器大小、完整产品安装空间或同口径原版 OBS 比较，仍未达到体积验收。
 
