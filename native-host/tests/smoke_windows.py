@@ -49,11 +49,13 @@ def check_product_receipt(receipt_path: Path, urls: Sequence[str] = PRODUCT_URLS
 
 
 def launch_once(runtime: Path, pwsh: str, environment: dict, token: str, product_file: Path,
-                reuse: bool = False) -> None:
+                receipt: str, reuse: bool = False) -> None:
     args = [pwsh, "-NoProfile", "-File", str(runtime / "launch-native.ps1"), "-AllowPrototype",
             "-SmokeToken", token, "-TimeoutSeconds", "90", "-ProductConfig", str(product_file)]
     if reuse:
         args.append("-ReuseProfile")
+    environment = dict(environment)
+    environment["WEBOBS_NATIVE_SMOKE_RECEIPT"] = receipt
     process = subprocess.run(args, cwd=runtime.parent, env=environment, check=False)
     if process.returncode:
         raise RuntimeError(f"Native startup/normal close failed with exit code {process.returncode}")
@@ -122,9 +124,11 @@ def run(runtime: Path, result: Path, *, existing_wall: bool = False) -> dict:
         environment[name] = str(runtime / "deliberately-nonexistent-external-override")
     product_file = (result.parent / (result.stem + "-product.json")).resolve()
     write_product_config(product_file)
+    first_name = f"native-smoke-{token[:12]}-first.json"
+    second_name = f"native-smoke-{token[:12]}-second.json"
     try:
-        launch_once(runtime, pwsh, environment, token, product_file, reuse=existing_wall)
-        first_receipt = verify_smoke(profile / "native-smoke.json", token, profile)
+        launch_once(runtime, pwsh, environment, token, product_file, first_name, reuse=existing_wall)
+        first_receipt = verify_smoke(profile / first_name, token, profile)
         product = check_product_receipt(
             profile / "plugin_config/webobs-native-host/product-bootstrap.json",
             expect_created=0 if existing_wall else 5,
@@ -133,11 +137,8 @@ def run(runtime: Path, result: Path, *, existing_wall: bool = False) -> dict:
         if existing_wall:
             second = product
         else:
-            (profile / "native-smoke.json").replace(profile / "native-smoke-first.json")
-            (profile / "plugin_config/webobs-native-host/product-bootstrap.json").replace(
-                profile / "plugin_config/webobs-native-host/product-bootstrap-first.json")
-            launch_once(runtime, pwsh, environment, token, product_file, reuse=True)
-            verify_smoke(profile / "native-smoke.json", token, profile)
+            launch_once(runtime, pwsh, environment, token, product_file, second_name, reuse=True)
+            verify_smoke(profile / second_name, token, profile)
             second = check_product_receipt(profile / "plugin_config/webobs-native-host/product-bootstrap.json",
                                            expect_created=0, expect_reused=5, expect_scene_reused=True)
     finally:

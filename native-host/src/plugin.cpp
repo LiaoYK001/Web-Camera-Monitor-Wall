@@ -242,7 +242,10 @@ void frontend_event(enum obs_frontend_event event, void *)
 	if (manifest.value("obsCommit").toString() != "fb4d98bf88fae5fc85cb11fc57f7c5e309282194" ||
 	    !manifest.contains("defaultProduct") || manifest.value("defaultProduct").toBool(true))
 		return;
-	QFile receipt(profile + "/native-smoke.json");
+	const QString receipt_name = qEnvironmentVariable("WEBOBS_NATIVE_SMOKE_RECEIPT", "native-smoke.json");
+	if (!QRegularExpression("^[A-Za-z0-9._-]{1,80}\\.json$").match(receipt_name).hasMatch())
+		return;
+	QFile receipt(profile + "/" + receipt_name);
 	if (!receipt.open(QIODevice::WriteOnly | QIODevice::NewOnly))
 		return;
 	const QJsonObject result{{"schema", 1}, {"token", token},
