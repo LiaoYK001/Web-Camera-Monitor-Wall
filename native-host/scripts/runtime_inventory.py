@@ -38,12 +38,12 @@ FORBIDDEN_SUFFIXES = {
 # (path regex, vendor, licence hint). First match wins; unmatched binaries stay "unclassified".
 VENDORS = (
     (re.compile(r"^bin/64bit/Qt6.*\.dll$|^bin/64bit/(platforms|imageformats|styles|iconengines)/"), "Qt", "LGPL-3.0-only"),
-    (re.compile(r"^bin/64bit/(avcodec|avformat|avfilter|avutil|swscale|swresample)-.*\.dll$"), "FFmpeg", "LGPL-2.1-or-later (build may carry GPL parts)"),
+    (re.compile(r"^bin/64bit/(avcodec|avdevice|avfilter|avformat|avutil|swscale|swresample)-.*\.dll$"), "FFmpeg", "LGPL-2.1-or-later (build may carry GPL parts)"),
     (re.compile(r"^bin/64bit/libx264.*\.dll$"), "x264", "GPL-2.0-or-later"),
     (re.compile(r"^bin/64bit/(libcurl|srt|librist|zlib|w32-pthreads)\.dll$"), "third-party", "see licenses/"),
     (re.compile(r"^bin/64bit/(obs64\.exe|obs\.dll|obs-frontend-api\.dll|libobs.*\.dll)$"), "OBS Studio", "GPL-2.0-or-later"),
     (re.compile(r"^(obs-plugins/64bit|data/obs-plugins)/"), "OBS Studio", "GPL-2.0-or-later (plug-in-specific terms apply)"),
-    (re.compile(r"^bin/64bit/obs-.*-test\.exe$"), "OBS Studio", "GPL-2.0-or-later"),
+    (re.compile(r"^bin/64bit/(obs-.*-test|obs-ffmpeg-mux)\.exe$"), "OBS Studio", "GPL-2.0-or-later"),
 )
 
 

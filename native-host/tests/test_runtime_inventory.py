@@ -19,6 +19,8 @@ def make_runtime(root: Path) -> Path:
         "bin/64bit/obs64.exe": b"e" * 10,
         "bin/64bit/Qt6Core.dll": b"q" * 20,
         "bin/64bit/avcodec-61.dll": b"a" * 30,
+        "bin/64bit/avdevice-61.dll": b"d" * 4,
+        "bin/64bit/obs-ffmpeg-mux.exe": b"m" * 3,
         "bin/64bit/libx264-164.dll": b"x" * 5,
         "obs-plugins/64bit/obs-ffmpeg.dll": b"f" * 7,
         "data/obs-plugins/obs-filters/locale/en-US.ini": b"hello",
@@ -52,6 +54,8 @@ class RuntimeInventoryTests(unittest.TestCase):
             self.assertEqual(vendors["bin/64bit/Qt6Core.dll"], "Qt")
             self.assertEqual(vendors["bin/64bit/avcodec-61.dll"], "FFmpeg")
             self.assertEqual(vendors["bin/64bit/libx264-164.dll"], "x264")
+            self.assertEqual(vendors["bin/64bit/avdevice-61.dll"], "FFmpeg")
+            self.assertEqual(vendors["bin/64bit/obs-ffmpeg-mux.exe"], "OBS Studio")
             self.assertEqual(vendors["obs-plugins/64bit/obs-ffmpeg.dll"], "OBS Studio")
             self.assertEqual(vendors["bin/64bit/obs64.exe"], "OBS Studio")
             hashes = {c["path"]: c["sha256"] for c in receipt["components"]}
