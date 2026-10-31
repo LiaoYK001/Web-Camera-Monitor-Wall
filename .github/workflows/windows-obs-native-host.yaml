@@ -360,6 +360,7 @@ jobs:
             build/obs-native-ci/native-nsis-installer.json
             build/obs-native-ci/native-nsis-install-smoke.json
             build/obs-native-ci/native-restore.json
+            build/obs-native-ci/native-*-process-gate.json
             build/obs-native-ci/WebOBS-OBS-native-*-windows-x64-SETUP.exe
           if-no-files-found: ignore
           retention-days: 7

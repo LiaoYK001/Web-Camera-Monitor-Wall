@@ -15,6 +15,9 @@ from typing import Sequence
 
 
 PRODUCT_URLS = tuple(f"rtsp://127.0.0.1:9/smoke-{index}" for index in range(1, 6))
+FORBIDDEN_PROCESS_NAMES = frozenset({"ffmpeg.exe", "go2rtc.exe", "mediamtx.exe", "python.exe", "python3.exe",
+                                     "node.exe", "caddy.exe", "webobs.exe", "electron.exe"})
+SERVICE_LISTENER_PORTS = frozenset({80, 443, 1984, 8554, 8555, 8888, 9000, 8080})
 
 
 def product_config_payload() -> dict:
@@ -49,9 +52,11 @@ def check_product_receipt(receipt_path: Path, urls: Sequence[str] = PRODUCT_URLS
 
 
 def launch_once(runtime: Path, pwsh: str, environment: dict, token: str, product_file: Path,
-                receipt: str, reuse: bool = False) -> None:
+                receipt: str, reuse: bool = False, gate: Path | None = None) -> None:
     args = [pwsh, "-NoProfile", "-File", str(runtime / "launch-native.ps1"), "-AllowPrototype",
             "-SmokeToken", token, "-TimeoutSeconds", "90", "-ProductConfig", str(product_file)]
+    if gate is not None:
+        args.extend(["-ProcessGatePath", str(gate)])
     if reuse:
         args.append("-ReuseProfile")
     environment = dict(environment)
@@ -59,6 +64,28 @@ def launch_once(runtime: Path, pwsh: str, environment: dict, token: str, product
     process = subprocess.run(args, cwd=runtime.parent, env=environment, check=False)
     if process.returncode:
         raise RuntimeError(f"Native startup/normal close failed with exit code {process.returncode}")
+
+
+def check_process_gate(path: Path) -> dict:
+    """Reject helper services and post-exit orphans observed around one real OBS launch."""
+    gate = json.loads(path.read_text(encoding="utf-8"))
+    if gate.get("schema") != 1 or gate.get("samples", 0) < 1:
+        raise AssertionError("Native process gate did not sample the running process tree")
+    names = [str(item.get("name", "")).lower() for item in gate.get("observed", [])]
+    forbidden = sorted(set(names) & FORBIDDEN_PROCESS_NAMES)
+    if forbidden:
+        raise AssertionError(f"Native host started unrelated helper processes: {forbidden}")
+    orphans = gate.get("orphans", [])
+    if orphans:
+        raise AssertionError(f"Native host left {len(orphans)} process(es) after normal exit: "
+                             + ", ".join(sorted({str(item.get('name', '?')) for item in orphans})))
+    service_ports = sorted({int(item.get("port", 0)) for item in gate.get("listeners", [])
+                            if int(item.get("port", 0)) in SERVICE_LISTENER_PORTS})
+    if service_ports:
+        raise AssertionError(f"Native host opened gateway/website listener ports: {service_ports}")
+    return {"schema": 1, "samples": int(gate.get("samples", 0)),
+            "observedNames": sorted(set(names)), "serviceListenerPorts": [],
+            "orphanCount": 0}
 
 
 def verify_smoke(receipt_path: Path, token: str, profile: Path) -> dict:
@@ -126,8 +153,11 @@ def run(runtime: Path, result: Path, *, existing_wall: bool = False) -> dict:
     write_product_config(product_file)
     first_name = f"native-smoke-{token[:12]}-first.json"
     second_name = f"native-smoke-{token[:12]}-second.json"
+    gate_path = result.parent / (result.stem + "-process-gate.json")
     try:
-        launch_once(runtime, pwsh, environment, token, product_file, first_name, reuse=existing_wall)
+        launch_once(runtime, pwsh, environment, token, product_file, first_name, reuse=existing_wall,
+                    gate=gate_path)
+        process_gate = check_process_gate(gate_path)
         first_receipt = verify_smoke(profile / first_name, token, profile)
         product = check_product_receipt(
             profile / "plugin_config/webobs-native-host/product-bootstrap.json",
@@ -157,7 +187,7 @@ def run(runtime: Path, result: Path, *, existing_wall: bool = False) -> dict:
                "productCameraCreatedSecond": second["created"], "productCameraReusedSecond": second["reused"],
                "productSceneReusedSecond": second["sceneReused"],
                "inheritedPluginOverridesCleared": True, "mediaQualified": False,
-               "qualification": qualification}
+               "processGate": process_gate, "qualification": qualification}
     with result.open("x", encoding="utf-8") as output:
         json.dump(summary, output, indent=2)
         output.write("\n")

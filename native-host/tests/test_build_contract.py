@@ -159,7 +159,7 @@ class BuildContractTests(unittest.TestCase):
             # Comment explicitly states no GStreamer; commands must never import it.
             if forbidden != "GStreamer":
                 self.assertNotIn(forbidden, builder)
-        for expected in ("$AllowPrototype", "--portable", "--disable-updater", "WorkingDirectory = Join-Path $root 'bin/64bit'", "OBS_PLUGINS_PATH", "QT_PLUGIN_PATH", "defaultProduct"):
+        for expected in ("$AllowPrototype", "--portable", "--disable-updater", "WorkingDirectory = Join-Path $root 'bin/64bit'", "OBS_PLUGINS_PATH", "QT_PLUGIN_PATH", "defaultProduct", "$ProcessGatePath", "Get-CimInstance Win32_Process"):
             self.assertIn(expected, launcher)
         self.assertNotIn("Start-Process", launcher)  # Explicit child environment, fixed CWD.
         self.assertNotIn("--multi", launcher)  # Do not bypass upstream portable instance guard.
@@ -179,6 +179,31 @@ class BuildContractTests(unittest.TestCase):
         self.assertIn("configPreservedAcrossReinstall = $true", workflow)
         self.assertIn("configPreservedAcrossUninstall = $true", workflow)
         self.assertIn("signed = $false", workflow)
+
+    def test_process_gate_rejects_helper_services_and_orphans(self):
+        workflow = (ROOT / ".github/workflows/windows-obs-native-host.yaml").read_text()
+        smoke = (ROOT / "native-host/tests/smoke_windows.py").read_text()
+        self.assertIn("native-*-process-gate.json", workflow)
+        for expected in ("FORBIDDEN_PROCESS_NAMES", "SERVICE_LISTENER_PORTS", "check_process_gate"):
+            self.assertIn(expected, smoke)
+        base = {"schema": 1, "samples": 3, "observed": [{"name": "obs64.exe"}], "listeners": [], "orphans": []}
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "gate.json"
+
+            def write(payload):
+                path.write_text(json.dumps(payload), encoding="utf-8")
+
+            write(base)
+            self.assertEqual(smoke_windows.check_process_gate(path)["orphanCount"], 0)
+            for payload in (
+                {**base, "observed": [{"name": "ffmpeg.exe"}]},
+                {**base, "orphans": [{"name": "obs64.exe"}]},
+                {**base, "listeners": [{"port": 8554, "name": "obs64"}]},
+                {**base, "samples": 0},
+            ):
+                write(payload)
+                with self.assertRaises(AssertionError):
+                    smoke_windows.check_process_gate(path)
 
 
 if __name__ == "__main__":
