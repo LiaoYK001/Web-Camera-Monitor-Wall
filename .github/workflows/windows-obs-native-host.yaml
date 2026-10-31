@@ -329,6 +329,17 @@ jobs:
         run: |
           python -B native-host/tests/smoke_windows.py --runtime build/obs-native-ci/runtime --result build/obs-native-ci/native-startup-smoke.json
           if ($LASTEXITCODE -ne 0) { throw 'Native frontend startup/isolation smoke failed; not camera or performance qualification.' }
+      - name: Kill the real OBS host and require no surviving processes
+        if: ${{ !inputs.pixel_test }}
+        shell: pwsh
+        run: |
+          $source = Join-Path $env:GITHUB_WORKSPACE 'build/obs-native-ci/runtime'
+          $runtime = Join-Path $env:RUNNER_TEMP 'native-crash'
+          if (Test-Path $runtime) { Remove-Item -Recurse -Force $runtime }
+          Copy-Item -LiteralPath $source -Destination $runtime -Recurse
+          if (Test-Path (Join-Path $runtime 'config')) { Remove-Item -Recurse -Force (Join-Path $runtime 'config') }
+          python -B native-host/tests/smoke_windows.py --crash-smoke --runtime $runtime --result (Join-Path $env:GITHUB_WORKSPACE 'build/obs-native-ci/native-crash-smoke.json') --crash-after-seconds 8
+          if ($LASTEXITCODE -ne 0) { throw 'Crash containment smoke failed.' }
       - name: Preserve sanitized synthetic final-pixel receipt only, never the test runtime
         if: always() && inputs.pixel_test
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
@@ -360,6 +371,7 @@ jobs:
             build/obs-native-ci/native-nsis-installer.json
             build/obs-native-ci/native-nsis-install-smoke.json
             build/obs-native-ci/native-restore.json
+            build/obs-native-ci/native-crash-smoke.json
             build/obs-native-ci/native-*-process-gate.json
             build/obs-native-ci/WebOBS-OBS-native-*-windows-x64-SETUP.exe
           if-no-files-found: ignore

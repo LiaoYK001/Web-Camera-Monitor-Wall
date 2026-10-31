@@ -205,6 +205,18 @@ class BuildContractTests(unittest.TestCase):
                 with self.assertRaises(AssertionError):
                     smoke_windows.check_process_gate(path)
 
+    def test_crash_smoke_kills_the_host_and_requires_no_survivors(self):
+        workflow = (ROOT / ".github/workflows/windows-obs-native-host.yaml").read_text()
+        launcher = (ROOT / "native-host/scripts/launch-native.ps1").read_text()
+        smoke = (ROOT / "native-host/tests/smoke_windows.py").read_text()
+        self.assertIn("--crash-smoke", workflow)
+        self.assertIn("native-crash-smoke.json", workflow)
+        self.assertIn("--crash-after-seconds 8", workflow)
+        self.assertIn("$CrashAfterSeconds", launcher)
+        self.assertIn("crashed = [bool]$gateCrashed", launcher)
+        self.assertIn('--crash-smoke', smoke)
+        self.assertIn('gate.get("crashed") is not True', smoke)
+
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)

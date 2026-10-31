@@ -195,11 +195,54 @@ def run(runtime: Path, result: Path, *, existing_wall: bool = False) -> dict:
     return summary
 
 
+def run_crash(runtime: Path, result: Path, *, crash_after: int = 8) -> dict:
+    """Kill the real OBS host and require no surviving process from the install root."""
+    if sys.platform != "win32":
+        raise RuntimeError("The crash containment smoke requires actual Windows x64")
+    if (runtime / "config").exists():
+        raise ValueError("Crash smoke requires a NEW disposable runtime; never overwrite private configuration")
+    if result.exists():
+        raise ValueError("Use a NEW result path")
+    pwsh = shutil.which("pwsh")
+    if not pwsh:
+        raise RuntimeError("PowerShell 7.2+ is required")
+    token = secrets.token_hex(16)
+    environment = os.environ.copy()
+    for name in ("OBS_PLUGINS_PATH", "OBS_PLUGINS_DATA_PATH", "OBS_CONFIG_PATH", "QT_PLUGIN_PATH", "QT_QPA_PLATFORM_PLUGIN_PATH", "QML2_IMPORT_PATH"):
+        environment[name] = str(runtime / "deliberately-nonexistent-external-override")
+    gate_path = result.parent / (result.stem + "-process-gate.json")
+    args = [pwsh, "-NoProfile", "-File", str(runtime / "launch-native.ps1"), "-AllowPrototype",
+            "-SmokeToken", token, "-TimeoutSeconds", "120", "-CrashAfterSeconds", str(crash_after),
+            "-ProcessGatePath", str(gate_path)]
+    process = subprocess.run(args, cwd=runtime.parent, env=environment, check=False)
+    gate = json.loads(gate_path.read_text(encoding="utf-8"))
+    if gate.get("crashed") is not True:
+        raise AssertionError("Crash smoke launcher did not record the deliberate kill")
+    if int(gate.get("samples", 0)) < 2:
+        raise AssertionError("Crash smoke did not sample the running process tree before the kill")
+    checked = check_process_gate(gate_path)
+    summary = {"schema": 1, "kind": "native-crash-smoke", "status": "passed",
+               "crashAfterSeconds": crash_after, "exitCode": int(process.returncode),
+               "processGate": checked,
+               "qualification": "Deliberate host kill only: no camera, pixel, performance, auth or upgrade claim"}
+    with result.open("x", encoding="utf-8") as output:
+        json.dump(summary, output, indent=2)
+        output.write("\n")
+    print(json.dumps(summary, indent=2))
+    return summary
+
+
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--runtime", type=Path, required=True)
     parser.add_argument("--result", type=Path, required=True)
     parser.add_argument("--existing-wall", action="store_true",
                         help="existing installed profile already owns the five-camera wall")
+    parser.add_argument("--crash-smoke", action="store_true",
+                        help="deliberately kill the host and require no surviving process")
+    parser.add_argument("--crash-after-seconds", type=int, default=8)
     args = parser.parse_args()
-    run(args.runtime.resolve(), args.result.resolve(), existing_wall=args.existing_wall)
+    if args.crash_smoke:
+        run_crash(args.runtime.resolve(), args.result.resolve(), crash_after=args.crash_after_seconds)
+    else:
+        run(args.runtime.resolve(), args.result.resolve(), existing_wall=args.existing_wall)

@@ -6,6 +6,7 @@ param(
     [string]$ProductConfig = '',
     [switch]$ReuseProfile,
     [ValidateRange(10,300)][int]$TimeoutSeconds = 90,
+    [ValidateRange(0,300)][int]$CrashAfterSeconds = 0,
     [string]$ProcessGatePath = ''
 )
 $ErrorActionPreference = 'Stop'
@@ -62,6 +63,7 @@ $process = [Diagnostics.Process]::Start($start)
 $gateObserved = [ordered]@{}
 $gateListeners = @()
 $gateSamples = 0
+$gateCrashed = $false
 $gateClock = [Diagnostics.Stopwatch]::StartNew()
 if ($ProcessGatePath -and -not $SmokeToken) { throw 'ProcessGatePath is only supported for the smoke launcher.' }
 if ($SmokeToken) {
@@ -69,6 +71,11 @@ if ($SmokeToken) {
     while (-not $exited) {
         $exited = $process.WaitForExit(500)
         if ($exited) { break }
+        if ($CrashAfterSeconds -gt 0 -and -not $gateCrashed -and $gateClock.Elapsed.TotalSeconds -ge $CrashAfterSeconds) {
+            # Deliberate crash containment probe: kill only the OBS root; descendants must not survive.
+            $process.Kill()
+            $gateCrashed = $true
+        }
         if ($ProcessGatePath -and $gateClock.Elapsed.TotalSeconds -ge ($gateSamples * 2) -and $gateSamples -lt 45) {
             try {
                 $all = @(Get-CimInstance Win32_Process -Property ProcessId,ParentProcessId,Name,ExecutablePath -ErrorAction Stop)
@@ -156,6 +163,7 @@ if ($ProcessGatePath) {
         schema = 1
         rootPid = [int]$process.Id
         exitCode = [int]$process.ExitCode
+        crashed = [bool]$gateCrashed
         samples = $gateSamples
         durationMs = [int]$gateClock.Elapsed.TotalMilliseconds
         observed = @($gateObserved.Keys | ForEach-Object { @{ name = [string]$_; path = [string]$gateObserved[$_] } })
