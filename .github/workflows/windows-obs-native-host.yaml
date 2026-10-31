@@ -5,8 +5,13 @@ on:
   workflow_call:
     inputs:
       version: { type: string, required: true }
+      pixel_test: { type: boolean, default: false }
   workflow_dispatch:
     inputs:
+      pixel_test:
+        description: 'Compile a non-redistributable finite final-pixel harness; upload sanitized synthetic receipt only'
+        type: boolean
+        default: false
       version:
         type: string
         required: true
@@ -31,6 +36,12 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw 'Synthetic process accounting contract failed.' }
           python -B native-host/qualification/test_windows_api.py
           if ($LASTEXITCODE -ne 0) { throw 'Actual Windows process query or private directory API failed; no performance qualification.' }
+      - name: Verify finite synthetic pixel-test contracts
+        if: inputs.pixel_test
+        shell: pwsh
+        run: |
+          python -B native-host/tests/test_pixels.py
+          if ($LASTEXITCODE -ne 0) { throw 'Finite pixel-test contract failed.' }
       - name: Select existing VS compiler
         shell: pwsh
         run: |
@@ -49,13 +60,23 @@ jobs:
           restore-keys: |
             windows-2022-obs-native-
             windows-2022-desktop-
+      - name: Use Node only for synthetic test fixtures and pixel inspection
+        if: inputs.pixel_test
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1
+        with:
+          node-version: 24.19.0
+          package-manager-cache: false
       - name: Compile pinned OBS frontend and product plugin without legacy services
         shell: pwsh
         env:
           NATIVE_VERSION: ${{ inputs.version }}
+          NATIVE_PIXEL_TEST: ${{ inputs.pixel_test }}
         run: |
-          ./desktop/scripts/build-obs-native.ps1 -Version $env:NATIVE_VERSION -BuildDirectory "$env:GITHUB_WORKSPACE/build/obs-native-ci"
+          $parameters = @{Version=$env:NATIVE_VERSION;BuildDirectory="$env:GITHUB_WORKSPACE/build/obs-native-ci"}
+          if ($env:NATIVE_PIXEL_TEST -eq 'true') { $parameters.PixelTest=$true }
+          ./desktop/scripts/build-obs-native.ps1 @parameters
       - name: Freeze clean non-default prototype before generating any config
+        if: ${{ !inputs.pixel_test }}
         shell: pwsh
         env:
           NATIVE_VERSION: ${{ inputs.version }}
@@ -67,12 +88,21 @@ jobs:
           $hash = (Get-FileHash -LiteralPath $package -Algorithm SHA256).Hash.ToLowerInvariant()
           "$hash  $([IO.Path]::GetFileName($package))" | Set-Content "$package.sha256" -Encoding utf8
       - name: Require actual Qt plugin startup, private portable config and normal exit
+        if: ${{ !inputs.pixel_test }}
         shell: pwsh
         run: |
           python -B native-host/tests/smoke_windows.py --runtime build/obs-native-ci/runtime --result build/obs-native-ci/native-startup-smoke.json
           if ($LASTEXITCODE -ne 0) { throw 'Native frontend startup/isolation smoke failed; not camera or performance qualification.' }
+      - name: Preserve sanitized synthetic final-pixel receipt only, never the test runtime
+        if: always() && inputs.pixel_test
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: webobs-obs-native-final-pixels-${{ inputs.version }}
+          path: build/obs-native-ci/native-final-pixels.json
+          if-no-files-found: ignore
+          retention-days: 7
       - name: Preserve clean prototype and bounded receipts only
-        if: always()
+        if: always() && !inputs.pixel_test
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
           name: webobs-obs-native-prototype-${{ inputs.version }}

@@ -1,4 +1,7 @@
 #include "wall.hpp"
+#ifdef WEBOBS_NATIVE_PIXEL_TEST
+#include "pixel_test.hpp"
+#endif
 
 #include <obs-module.h>
 #include <obs-frontend-api.h>
@@ -40,11 +43,16 @@ bool frontend_alive = false;
 // entirely new portable tree and checks normal process exit and private isolation.
 void frontend_event(enum obs_frontend_event event, void *)
 {
+#ifdef WEBOBS_NATIVE_PIXEL_TEST
+	const bool pixel_test_handled = webobs::native_host::pixel_test_event(event);
+#else
+	const bool pixel_test_handled = false;
+#endif
 	if (event == OBS_FRONTEND_EVENT_EXIT) {
 		frontend_alive = false;
 		return;
 	}
-	if (event != OBS_FRONTEND_EVENT_FINISHED_LOADING)
+	if (pixel_test_handled || event != OBS_FRONTEND_EVENT_FINISHED_LOADING)
 		return;
 	const QString token = qEnvironmentVariable("WEBOBS_NATIVE_SMOKE_TOKEN");
 	if (!QRegularExpression("^[0-9a-f]{32}$").match(token).hasMatch())

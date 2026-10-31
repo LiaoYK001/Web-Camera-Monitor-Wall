@@ -63,7 +63,7 @@ ctest --test-dir build/native-host-contract --output-on-failure
 
 C++ 测试包含实际固定 OBS 32.1.2 headers，只用记录操作的 API doubles 执行验证，不链接其他版本的 system libobs，也不模拟媒体验收。覆盖源身份/引用释放、重复槽位复用、缺失/删除/错误类型输入、canvas 校验、唯一场景名、奇数 canvas 网格、部分失败回滚和 Studio Preview/Program 语义。Python 覆盖共享缓存 SHA-256/离线拒绝、真实 dependency lock 对齐、Git tracked 快照与篡改拒绝、缺失 Qt/插件运行时拒绝、portable 数据保护和脚本架构边界。
 
-本地测试不能证明完整 Qt DLL/MSVC 链接或 UI 加载。本次实现环境没有 PowerShell、Windows、Qt development headers，故不能声称 PowerShell 实际执行或完整插件/上游前端 Windows 构建成功。
+本地合同测试本身不能证明 Qt DLL/MSVC 链接或 UI 加载；Fedora 实现环境没有 PowerShell/Windows/Qt SDK。后续独立 Windows CI 已实际完成固定 OBS/frontend/plugin 编译和隔离启动烟测： [41180501363](https://github.com/LiaoYK001/Web-Camera-Monitor-Wall/actions/runs/41180501363)、[41182986553](https://github.com/LiaoYK001/Web-Camera-Monitor-Wall/actions/runs/41182986553)。这些运行验证 Qt 6.8.3、产品 dock/Media Source 注册、portable 配置、原 OBS profile 未变与正常退出，**不是最终媒体像素、实机硬解或 P5 性能验收**。
 
 ### Windows 实际启动烟测（需图形桌面）
 
@@ -80,6 +80,20 @@ pwsh -NoProfile -File desktop/scripts/build-obs-native.ps1 -Version 0.1.0-dev.4 
 脚本对 `%APPDATA%/obs-studio` 做有界私密哈希前后比较（不导出内容）；若有并发 OBS 写入会安全失败，请在独立测试账号运行。公开的 summary 仅包含版本与布尔结果，不含 token、完整路径或日志。这个回执证明的上限是 Qt/plugin 实际加载、Media Source 类型注册、一次 portable 配置与正常退出，**不是五分屏/摄像头/解码/像素/性能或迁移验收**。
 
 烟测后 `runtime/config` 是可丢弃私密测试数据。若需上传 CI 原型，必须在烟测前归档干净 runtime，之后只上传先前归档、构建身份清单和脱敏 summary；不要上传生成的配置目录或 OBS 日志，也不自动删除已有配置来重跑烟测。
+
+## 有限最终像素测试构建（不可发布）
+
+`-PixelTest` 与 `-SmokeTest` 互斥，默认关闭。仅在新的独立构建目录使用：
+
+```powershell
+pwsh -NoProfile -File desktop/scripts/build-obs-native.ps1 -Version 0.1.0-dev.5 -BuildDirectory 'D:\\WebOBS Pixel Test\\run-5' -PixelTest
+```
+
+该开关编译仅测试专用的有限 harness，标记运行时 `pixelTestBuild=true` / `redistributable=false`，随后**自动运行一次**真实 Windows 图形测试，不能再次复用生成的私密配置。不得公开归档或发布此运行时、配置、日志、句柄或截图；CI 仅保留 `<BuildDirectory>/native-final-pixels.json` 脱敏合成回执。正常原型仍不编译这个入口，未增加生产截图/HTTP/任意媒体路径接口。
+
+在全新 portable profile 中，以一次性 token 和固定阶段协议检查：五色场景、五个独立本地 HEVC 图案、真实产品五分屏 A/B、Studio Preview 不隐式 TAKE、显式 TAKE、Program 投影确实销毁后重开与正常退出。每阶段分别识别**真实主 UI Preview**与原生 **StudioProgram projector** 的所属 HWND，校验 PID/可执行路径/创建时间/遮挡后，仅采集测试自有客户区。每角色保留并检查全部八张样本的五路身份、位置、方向与时间码，不以回调、PLAYING 或一次亮图接受黑帧；全局包含 private sources 的媒体计数仍为五，原 UUID/对象/settings 不变，活动 encoder/output 与 raw-video consumer 为零。
+
+本地 `python -B native-host/tests/test_pixels.py` 仅验证协议/图案 predicate/负例；不代表 Windows Qt/Win32 执行成功。新增 harness 的首轮 Windows 编译/像素结果须另行记录。此固定夹具为 320×180、无 B 帧、软件解码的本地 HEVC，主 Preview inset 只覆盖固定源码的 100% DPI；**不资格化真实摄像机、RTSP、逐路硬解、DPI/多显示器、P2 性能、P3 迁移或完整产品**。不能把测试代码存在或合成 PASS 扩大为这些结论。
 
 ## 必须完成的 Windows 验证
 

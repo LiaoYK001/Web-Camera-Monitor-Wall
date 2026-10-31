@@ -13,12 +13,20 @@ on:
         description: 'Build the independent non-default OBS/Qt prototype; no legacy installer or publication'
         default: false
         type: boolean
+      native_host_pixels:
+        description: 'Run the finite test-only OBS/Qt final-pixel harness; sanitized receipt only, no runnable artifact'
+        default: false
+        type: boolean
       diagnose_dev17:
         description: 'Test frozen dev.17 final visible native pixels without rebuilding or publishing'
         default: false
         type: boolean
       publish_dev17:
         description: 'Explicitly publish the frozen tested dev.17 artifact to its existing development prerelease'
+        default: false
+        type: boolean
+      publish_dev18:
+        description: 'Publish only the frozen successful dev.18 bytes to an existing empty prerelease draft; never Latest'
         default: false
         type: boolean
       version:
@@ -45,12 +53,12 @@ permissions:
 concurrency:
   # Independent read-only prototype/diagnostic runners do not share product
   # output trees. Keep product/install/publication operations serialized.
-  group: webobs-windows-desktop-build-${{ inputs.native_host && 'native-host' || inputs.diagnose_dev17 && 'frozen-preview' || 'product' }}
+  group: webobs-windows-desktop-build-${{ (inputs.native_host || inputs.native_host_pixels) && 'native-host' || inputs.diagnose_dev17 && 'frozen-preview' || 'product' }}
   cancel-in-progress: false
 
 jobs:
   audit:
-    if: ${{ !inputs.publish_dev17 && !inputs.diagnose_dev17 && !inputs.native_host }}
+    if: ${{ !inputs.publish_dev17 && !inputs.publish_dev18 && !inputs.diagnose_dev17 && !inputs.native_host && !inputs.native_host_pixels }}
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
@@ -219,20 +227,34 @@ jobs:
           retention-days: 7
 
   obs-native-host:
-    if: github.event_name == 'workflow_dispatch' && inputs.native_host && !inputs.diagnose_dev17 && !inputs.publish_dev17 && !inputs.official && !inputs.installed_upgrade
+    if: github.event_name == 'workflow_dispatch' && inputs.native_host && !inputs.native_host_pixels && !inputs.diagnose_dev17 && !inputs.publish_dev17 && !inputs.publish_dev18 && !inputs.official && !inputs.installed_upgrade
     uses: ./.github/workflows/windows-obs-native-host.yaml
     with:
       version: ${{ inputs.version }}
 
+  obs-native-host-pixels:
+    if: github.event_name == 'workflow_dispatch' && inputs.native_host_pixels && !inputs.native_host && !inputs.diagnose_dev17 && !inputs.publish_dev17 && !inputs.publish_dev18 && !inputs.official && !inputs.installed_upgrade
+    uses: ./.github/workflows/windows-obs-native-host.yaml
+    with:
+      version: ${{ inputs.version }}
+      pixel_test: true
+
   diagnose-dev17:
-    if: github.event_name == 'workflow_dispatch' && inputs.diagnose_dev17 && !inputs.native_host && !inputs.publish_dev17 && !inputs.official && !inputs.installed_upgrade
+    if: github.event_name == 'workflow_dispatch' && inputs.diagnose_dev17 && !inputs.native_host && !inputs.native_host_pixels && !inputs.publish_dev17 && !inputs.publish_dev18 && !inputs.official && !inputs.installed_upgrade
     permissions:
       contents: read
       actions: read
     uses: ./.github/workflows/windows-native-preview.yaml
 
+  publish-dev18:
+    if: github.event_name == 'workflow_dispatch' && inputs.publish_dev18 && !inputs.publish_dev17 && !inputs.diagnose_dev17 && !inputs.native_host && !inputs.native_host_pixels && !inputs.official && !inputs.installed_upgrade && inputs.version == '4.1.0-dev.18'
+    permissions:
+      contents: write
+      actions: read
+    uses: ./.github/workflows/publish-windows-dev18.yaml
+
   publish-dev17:
-    if: github.event_name == 'workflow_dispatch' && inputs.publish_dev17 && !inputs.diagnose_dev17 && !inputs.native_host && !inputs.official && !inputs.installed_upgrade && inputs.version == '4.1.0-dev.17'
+    if: github.event_name == 'workflow_dispatch' && inputs.publish_dev17 && !inputs.publish_dev18 && !inputs.diagnose_dev17 && !inputs.native_host && !inputs.native_host_pixels && !inputs.official && !inputs.installed_upgrade && inputs.version == '4.1.0-dev.17'
     runs-on: ubuntu-24.04
     timeout-minutes: 20
     permissions:

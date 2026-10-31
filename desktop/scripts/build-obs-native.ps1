@@ -6,9 +6,13 @@ param(
     [string]$BuildDirectory,
     [ValidateRange(1,64)][int]$Parallel = 4,
     [switch]$Offline,
-    [switch]$SmokeTest
+    [switch]$SmokeTest,
+    [switch]$PixelTest
 )
 $ErrorActionPreference = 'Stop'
+if ($SmokeTest -and $PixelTest) { throw 'Choose startup SmokeTest OR finite PixelTest; each requires a NEW private profile.' }
+if ($PixelTest -and -not (Get-Command 'node' -ErrorAction SilentlyContinue)) { throw 'PixelTest requires Node for synthetic patterns/pixel analysis, never for the native host.' }
+$pixelBuild = if ($PixelTest) { 'ON' } else { 'OFF' }
 if (-not $IsWindows -or -not [Environment]::Is64BitOperatingSystem -or [Runtime.InteropServices.RuntimeInformation]::OSArchitecture -ne 'X64') { throw 'The OBS prototype requires Windows x64.' }
 if ($Version -notmatch '^\d+\.\d+\.\d+-dev\.[0-9A-Za-z.-]+$') { throw 'This independent prototype accepts X.Y.Z-dev.* versions only; no release/package/publication mode exists.' }
 $repoRoot = (Resolve-Path (Join-Path $PSScriptRoot '../..')).Path
@@ -45,7 +49,7 @@ Invoke-Checked 'cmake' @('--install',$obsBuild,'--config','Release')
 Invoke-Checked 'cmake' @('--install',$obsBuild,'--config','Release','--component','Development')
 $pluginBuild = Join-Path $buildRoot 'plugin-build'
 # Explicit Qt6_DIR pins plugin ABI to the frontend's locked Qt, not PATH/system Qt.
-Invoke-Checked 'cmake' @('-S',(Join-Path $repoRoot 'native-host'),'-B',$pluginBuild,'-G','Visual Studio 17 2022','-A','x64',"-DCMAKE_PREFIX_PATH=$obsInstall;$deps;$qt", "-DQt6_DIR=$qt/lib/cmake/Qt6",'-DWEBOBS_NATIVE_BUILD_TESTS=ON',"-DSIMDE_INCLUDE_DIR=$deps/include",'-DCMAKE_FIND_USE_PACKAGE_REGISTRY=OFF','-DCMAKE_EXPORT_PACKAGE_REGISTRY=OFF')
+Invoke-Checked 'cmake' @('-S',(Join-Path $repoRoot 'native-host'),'-B',$pluginBuild,'-G','Visual Studio 17 2022','-A','x64',"-DCMAKE_PREFIX_PATH=$obsInstall;$deps;$qt", "-DQt6_DIR=$qt/lib/cmake/Qt6",'-DWEBOBS_NATIVE_BUILD_TESTS=ON',"-DWEBOBS_NATIVE_PIXEL_TEST=$pixelBuild","-DSIMDE_INCLUDE_DIR=$deps/include",'-DCMAKE_FIND_USE_PACKAGE_REGISTRY=OFF','-DCMAKE_EXPORT_PACKAGE_REGISTRY=OFF')
 Invoke-Checked 'cmake' @('--build',$pluginBuild,'--config','Release','--parallel',"$Parallel")
 Invoke-Checked 'ctest' @('--test-dir',$pluginBuild,'-C','Release','--output-on-failure')
 Invoke-Checked 'python' @((Join-Path $repoRoot 'native-host/tests/test_build_contract.py'))
@@ -54,6 +58,15 @@ Invoke-Checked 'python' @((Join-Path $repoRoot 'native-host/tests/test_build_con
 Invoke-Checked 'cmake' @('--install',$obsBuild,'--config','Release','--prefix',$runtime)
 Invoke-Checked 'cmake' @('--install',$pluginBuild,'--config','Release','--prefix',$runtime)
 Invoke-Checked 'python' @((Join-Path $repoRoot 'native-host/scripts/stage.py'),'--repo',$repoRoot,'--source',$source,'--runtime',$runtime,'--version',$Version)
+if ($PixelTest) {
+    # A test-enabled runtime must never masquerade as a redistributable prototype.
+    # The compiler-installed marker is checked before annotating the stage manifest.
+    Invoke-Checked 'python' @((Join-Path $repoRoot 'native-host/tests/pixel_windows.py'),'--runtime',$runtime,'--mark-build')
+    $pixelArguments = @((Join-Path $repoRoot 'native-host/tests/pixel_windows.py'),'--runtime',$runtime,'--result',(Join-Path $buildRoot 'native-final-pixels.json'))
+    if ($Offline) { $pixelArguments += '--offline' }
+    Invoke-Checked 'python' $pixelArguments
+    Write-Output 'NON-REDISTRIBUTABLE PixelTest runtime: upload only the small synthetic native-final-pixels.json receipt, never runtime/config, logs, binaries or BMPs.'
+}
 if ($SmokeTest) {
     Invoke-Checked 'python' @((Join-Path $repoRoot 'native-host/tests/smoke_windows.py'),'--runtime',$runtime,'--result',(Join-Path $buildRoot 'native-startup-smoke.json'))
     Write-Output 'Smoke generated a disposable private config; do not upload runtime/config or treat it as a clean redistributable bundle.'
