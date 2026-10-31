@@ -322,3 +322,21 @@ CI evidence (installer + pinned dev.32 upgrade + restore):
 - Restore: from snapshot `config-4.1.0-dev.42-20261031T200201Z` into a temporary install root, restoring 18 files / 126,204 B after creating `pre-restore-20261031T200201Z`; every stable file hash matches the pre-upgrade value and the receipt is archived with the artifact.
 
 Boundaries: the snapshot is file level and unencrypted (it relies on the user directory ACL); there is no DPAPI wrapping, cross-machine migration, automatic rollback, scheduling, Electron data/account migration or cross-major-version compatibility promise. The installer still does not migrate automatically — only the explicit CI `upgrade_previous` path is verified — and nothing here was checked on the target machine or counts as P5 or product retention evidence.
+
+### 保存场景重启后最终像素 / Final pixels after a saved-scene restart
+
+2026-11-01 原生像素门新增第 10 阶段：第一个 OBS 进程创建合成五路 RTSP 墙并通过 `obs_frontend_save()` 保存场景集合后正常退出；另一个全新的 obs64 进程使用同一私密 profile 重新启动，不创建、不选择任何场景或源，只等待保存的 `WebOBS Native RTSP Wall` 自动恢复、五路源进入 PLAYING，然后捕获八帧真实主 Preview 窗口像素。([run 41240282257](https://github.com/LiaoYK001/Web-Camera-Monitor-Wall/actions/runs/41240282257)，版本 `4.1.0-dev.45`，提交 `1fdd1f8`，artifact `13057621643`，3,427 B；回执十阶段全部通过，`savedSceneRestartPhaseQualified=true`。)
+
+机制：第二进程只接受 `WEBOBS_NATIVE_RESTART_TOKEN` 对应的私密 `native-restart-test/request.json`（schema 1、token），校验安装根、私密 profile 与插件配置目录后认领；窗口打开时把测试画布固定回文档化的 960×540，要求墙场景是当前场景、五路 `Synthetic loopback RTSP 1..5` 均为 320×180 PLAYING，且场景项正好五个、全部可见、位置为 (0,0)、(320,0)、(640,0)、(0,270)、(320,270)。状态文件发布这些几何与画布字段后，外部脚本捕获主 Preview 的八帧，按五格颜色/时间码与时间推进判定，再确认正常退出。
+
+迭代记录：dev.43 首次执行到第 10 阶段，但保存的 profile 没有带回测试画布（重启后为 1024×768），分析的 960×540 几何不再匹配，样本报 `Wrong channel 1 in tile 0: 19,20,26`；dev.44 仅在安全回执中加入位图尺寸（998×578）与画布/墙项字段完成定位；`1fdd1f8` 在见证进程固定 960×540 画布并显式发布、校验五个可见墙项后，dev.45 通过。这是测试见证器的画布契约，不是产品默认行为。
+
+边界：仍是软件 D3D11 上的合成回环 RTSP；只捕获主 Preview，不覆盖断流期间的丢帧、真实相机/硬件解码、物理 GPU、DPI 缩放、多显示器、产品默认安装或目标机；保存场景的自动恢复只在像素测试构建中验证，不等于产品生命周期或 P5 证据。
+
+On 2026-11-01 the native pixel gate gained a tenth phase: one OBS process creates the synthetic five-source RTSP wall and saves the scene collection through `obs_frontend_save()`, then exits normally; a brand-new obs64 process reopens the same private profile without creating or selecting any scene or source, waits for the saved `WebOBS Native RTSP Wall` to return by itself with all five sources PLAYING, and captures eight real main-Preview samples. ([run 41240282257](https://github.com/LiaoYK001/Web-Camera-Monitor-Wall/actions/runs/41240282257), version `4.1.0-dev.45`, commit `1fdd1f8`, artifact `13057621643`, 3,427 B; all ten phases passed, `savedSceneRestartPhaseQualified=true`.)
+
+Mechanism: the second process only accepts the private `native-restart-test/request.json` (schema 1, token) matching `WEBOBS_NATIVE_RESTART_TOKEN`, after checking the install root, private profile and plugin config directory; on window open it pins the documented 960×540 test canvas, requires the wall scene to be current, the five `Synthetic loopback RTSP 1..5` sources to be 320×180 and PLAYING, and exactly five visible scene items at (0,0), (320,0), (640,0), (0,270) and (320,270). After publishing those geometry/canvas fields, the external script captures eight main-Preview samples, verifies five-tile colours/timecode and temporal progress, and confirms a normal exit.
+
+Iteration record: dev.43 reached phase 10, but the saved profile did not carry the test canvas (1024×768 after restart), so the 960×540 analysis geometry no longer matched and samples reported `Wrong channel 1 in tile 0: 19,20,26`; dev.44 added only bitmap dimensions (998×578) and canvas/wall-item fields to the safe receipt to locate it; `1fdd1f8` pinned 960×540 in the witness and published/validated the five visible wall items, after which dev.45 passed. This is a witness canvas contract, not product default behaviour.
+
+Boundaries: still synthetic loopback RTSP on software D3D11; only the main Preview is captured; interrupted-frame loss, real cameras/hardware decoding, physical GPU, DPI scaling, multiple monitors, the product default install and the target machine are not covered; automatic saved-scene recovery is verified only in the pixel-test build and is not product-lifecycle or P5 evidence.
