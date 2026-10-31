@@ -63,6 +63,7 @@
 2. 做 renderer-free 控制/认证适配契约：既有 session/Origin/RBAC、loopback 内部凭据、私密数据根与 Job 所有权；原生端仅调用白名单命令。先在全新 profile 验证首次登录、撤销、跨 Origin、fail-closed、正常退出及无孤儿进程。
 3. 对旧 scene/schema 做只读 import dry-run，输出稳定 ID 映射、兼容性和不支持清单，不覆盖旧数据；用户明确确认后复制并保留回退。仅 URL 相同不表示来源连接、音轨、过滤器与解码设置兼容。
 4. 建立持久任务/订阅引用图与上述更新工作门，再逐项按需启停网关、设备、NVR、网站、分析/归档。每项保留启动者、消费者、退出条件、异常清理者与 raw evidence。
+   - 2026-11-01 dev.53 起在打包前剥离运行时 `*.pdb`（34 个、144,351,232 B，零残留断言，NSIS 拒绝含 PDB 的安装树），运行时解包 243,502,095 B → 99,168,288 B；这只是构建产物清理，未裁剪插件/资源，也未移除 Electron 默认运行时，不构成 P4 体积结论。
 5. P4 默认/扩展包分别固定版本、SHA-256、许可、SBOM/对应源码和显式下载确认；离线安装/卸载与数据保留实测。逻辑 unpacked bytes 不替代实际 post-install/allocated bytes，不以缺功能的原型与完整 OBS 做体积比较。
 6. P2 首轮同机同源 OBS A/B、逐路实际硬解和 P5 三对交替/两小时稳定性仍须目标硬件。轮询 CPU/内存工具的 coverageIncomplete/strictTotal 边界不消失，未知 GPU/功耗/延迟/画面指标不得填零。
 

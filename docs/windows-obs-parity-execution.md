@@ -396,3 +396,33 @@ On 2026-11-01 the cross-version check moved from "extract a ZIP and overwrite" t
 Receipt `native-nsis-upgrade.json`: `previousVersion=4.1.0-dev.40`, `version=4.1.0-dev.52`, `previousInstallerSha256=7cc5724c…`, `installerSha256=3ccd92aa…`, `configPreservedAcrossUpgrade=true`, `configPreservedAcrossUninstall=true`, `registryCleanedOnUninstall=true`, `signed=false`. The first attempt of this step failed before the upgrade because the YAML edit swallowed a path-separator backslash (`Replace('','/')`); the fixed script passed.
 
 Boundaries: still an unsigned development installer; the private profile is only the marker file seeded by this test plus file-set/hash assertions, not real user data, encrypted backup or cross-machine migration; no auto-update/download channel, version rollback, downgrade refusal, admin install, real cameras or target-machine evidence.
+
+### P4 运行时构建符号剥离 / P4 runtime build-symbol pruning
+
+P4 的第 5 步要求清理“不用的插件、资源、开发文件和构建产物”。先做了其中可归因、可复核的一项：OBS 的 Windows 安装规则把 `*.pdb` 调试符号一起装进运行时，`obs64.exe` 从不加载它们，但 NSIS 会逐字节打包。构建脚本现在在 `stage.py` 生成清单之前调用 `native-host/scripts/prune_runtime.py`：只删除运行时内的 PDB、写出 `native-runtime-prune.json`（删除 34 个文件、144,351,232 B）、断言零残留；NSIS 步骤也拒绝含 PDB 的安装树。清单 `sizeBytesBeforeManifest`/`sizeGroups` 与安装体积因此都不含构建符号。
+
+| 计量（同一构建树，dev.52 → dev.53） | 剥离前 | 剥离后 | 变化 |
+| --- | ---: | ---: | ---: |
+| 运行时解包字节（zip 内文件总和） | 243,502,095 B | 99,168,288 B | −59.3% |
+| 运行时文件数（不含 Uninstall.exe） | 1,578 | 1,544 | −34 |
+| 原型 ZIP 下载字节 | 77,986,903 B | 41,484,488 B | −46.8% |
+| SETUP.exe 安装包字节 | 45,172,904 B | 27,408,522 B | −39.3% |
+| Actions artifact 总字节 | 123,172,732 B | 68,909,368 B | −44.1% |
+
+剥离后的运行时仍通过 10 个合成像素阶段（run 41250018069，`4.1.0-dev.54`，artifact `13060579898`），同一提交的完整原型运行（run 41250011450，`4.1.0-dev.53`，artifact `13060374195`）也通过启动、NSIS 安装/卸载、崩溃收束、单实例与已发布安装包升级烟测。
+
+边界：本项只移除构建符号，未裁剪插件/资源，未移除 Electron 默认运行时，也未改变功能范围；原型与完整 OBS（479,371,662 B，含 CEF/脚本/WebSocket/VST/VLC 等）不是同功能口径，不能据此宣称 P4 体积目标完成。仍缺默认/扩展/实际安装的分组计量、SBOM/许可清单、具体剩余文件解释与目标机证据。
+
+Step 5 of P4 requires cleaning unused plug-ins, resources, development files and build products. The first slice is attributable and reviewable: OBS's Windows install rules stage `*.pdb` debug symbols into the runtime, `obs64.exe` never loads them, yet NSIS packages every byte. Before `stage.py` writes the manifest the build now calls `native-host/scripts/prune_runtime.py`, which removes only runtime PDBs, writes `native-runtime-prune.json` (34 files, 144,351,232 B), and asserts zero survivors; the NSIS step also rejects a PDB-bearing install tree. The manifest's `sizeBytesBeforeManifest`/`sizeGroups` and the installed size therefore exclude build symbols.
+
+| Measurement (same build tree, dev.52 → dev.53) | Before | After | Change |
+| --- | ---: | ---: | ---: |
+| Runtime unpacked bytes (sum of zip entries) | 243,502,095 B | 99,168,288 B | −59.3% |
+| Runtime file count (excluding Uninstall.exe) | 1,578 | 1,544 | −34 |
+| Prototype ZIP download bytes | 77,986,903 B | 41,484,488 B | −46.8% |
+| SETUP.exe installer bytes | 45,172,904 B | 27,408,522 B | −39.3% |
+| Actions artifact total bytes | 123,172,732 B | 68,909,368 B | −44.1% |
+
+The pruned runtime still passed all ten synthetic pixel phases (run 41250018069, `4.1.0-dev.54`, artifact `13060579898`), and the full prototype run at the same commit (run 41250011450, `4.1.0-dev.53`, artifact `13060374195`) passed startup, NSIS install/uninstall, crash containment, single-instance and shipped-installer upgrade smokes.
+
+Boundaries: this slice removes build symbols only; no plug-in/resource trimming, no Electron default removal, no functional-scope change. The prototype and full OBS (479,371,662 B, including CEF/scripting/WebSocket/VST/VLC) are not same-feature measurements, so this is not a P4 size-completion claim. Group accounting for default/extension/actual installs, SBOM/licence inventory, explanations for remaining files and target-machine evidence are still missing.
