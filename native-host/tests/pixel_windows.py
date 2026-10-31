@@ -586,6 +586,7 @@ def run(runtime: Path, result: Path, ffmpeg_override: Path | None, offline: bool
                 # Second launch: a brand-new OBS process must reopen the saved
                 # private profile and the five-source wall, then show final
                 # Preview pixels. Nothing is created or selected by this run.
+                time.sleep(1)  # Let the first owned OBS release its single-instance resources.
                 restart = private.parent / "native-restart-test"
                 restart.mkdir(exist_ok=False)
                 write_new(restart / "request.json", {"schema": 1, "token": token})
@@ -617,7 +618,9 @@ def run(runtime: Path, result: Path, ffmpeg_override: Path | None, offline: bool
                                               capture_output=True, text=True, check=True, timeout=20)
                     role = {"role": "main-preview", **json.loads(analysis.stdout)}
                     phase = {"seq": 10, "phase": "saved-scene-restart", "capture": timing, "roles": [role],
-                             "inputUUIDsAndSettingsUnchanged": True, "savedSceneReopened": True}
+                             "inputUUIDsAndSettingsUnchanged": True, "savedSceneReopened": True,
+                             "canvasWidth": state.get("canvasWidth"), "canvasHeight": state.get("canvasHeight"),
+                             "windowCount": len(state.get("windows", []))}
                     phase["passed"] = not timing["captureFailed"] and bool(role["passed"])
                     summary["phases"].append(phase)
                     write_new(restart / "ack-01.json", {"schema": 1, "seq": 1, "token": token})

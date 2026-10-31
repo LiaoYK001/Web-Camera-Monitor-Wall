@@ -38,14 +38,16 @@ function inspect(image, { order = ORDER, dynamic = true, inset = 0 } = {}) {
 function analyze(directory, options) {
   const samples = [];
   for (let i = 0; i < 8; i++) {
+    let size = '';
     try {
       const bytes = fs.readFileSync(path.join(directory, `client-${i}.bmp`));
       assert.ok(bytes.length <= 64 * 1024 * 1024, 'Oversized screenshot');
       const image = pattern.bitmap(bytes);
+      size = ` (bitmap ${image.width}x${image.height})`;
       samples.push({ sample: i, passed: true, width: image.width, height: image.height, counters: inspect(image, options) });
     } catch (error) {
       // fs errors contain local paths; public synthetic summaries must not.
-      const message = error.code && error.code !== 'ERR_ASSERTION' ? `Synthetic client sample unavailable (${error.code})` : String(error.message).slice(0, 220);
+      const message = error.code && error.code !== 'ERR_ASSERTION' ? `Synthetic client sample unavailable (${error.code})` : String(error.message).slice(0, 200) + size;
       samples.push({ sample: i, passed: false, error: message });
     }
   }
