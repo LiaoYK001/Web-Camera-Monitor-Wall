@@ -9,7 +9,13 @@ export interface DesktopStatus {
   recovery: { from: string; to: string; hasInstaller: boolean; snapshot: string } | null;
 }
 export interface DesktopDisplay { id: number; label: string; primary: boolean; bounds: { x: number; y: number; width: number; height: number } }
-export interface NativePreviewStatus { supported: boolean; requested: boolean; state: number; frames: number }
+export interface NativePreviewDrawSample {
+  available: boolean; video_ready: boolean; main_texture_ready: boolean;
+  output_bound: boolean; output_active: boolean; output_showing: boolean;
+  base_width: number; base_height: number; display_width: number; display_height: number;
+  frame: number; sampled_at_ms: number;
+}
+export interface NativePreviewStatus { supported: boolean; requested: boolean; state: number; frames: number; draw_sample?: NativePreviewDrawSample }
 export interface DesktopBridge {
   version: number;
   nativePreview?(operation: 'open' | 'close' | 'status'): Promise<NativePreviewStatus>;
