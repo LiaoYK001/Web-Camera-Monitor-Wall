@@ -4,6 +4,14 @@
 
 Development measurements only. These results establish neither stock OBS parity nor qualification of the user's laptop.
 
+## 2026-10-31 当前验收口径 / Current acceptance protocol
+
+后续执行以[OBS 同等开销计划](windows-obs-parity-dsh-plan.md)和[执行记录](windows-obs-parity-execution.md)为准。dev.17 用户报告窗口可见/计数增长但全黑；旧 CI 没有验证最终像素，不能据此认定五路正常。先补已知图案、错路/缺路/冻结和最终窗口像素回归；实际硬件与摄像机另验。
+
+每次预热至少 3 分钟、采样至少 20 分钟，至少三组成对且交替顺序，初步达标后稳定性至少 2 小时。画面、帧率、音轨、可见窗口与解码/GPU 设置必须同口径；不以隐藏暂停、降质量或额外延迟换低开销。统计全部所属进程，GPU 按同设备/引擎计量，连同内存/显存/功耗/延迟审查。下面 15 分钟/短测是**历史开发证据**，不是新验收标准；历史“统一低功耗开关”不替代完整可见五路的可比要求。
+
+Use at least 3 minutes of warm-up and 20 minutes of sampling, three alternating paired runs, then at least 2 hours of stability testing. Include every owned process and comparable per-adapter GPU engines, memory/VRAM, power and latency. No black/hidden/paused/lower-quality picture qualifies. Historical short or 15-minute fixtures below remain historical only. Native window draw progress does not prove final pixels, camera decode or hardware acceleration.
+
 ## 2026-10-30 原生监看与体积排查 / Native monitor and size investigation
 
 用户反馈 `4.1.0-dev.14` 播放相同 H.265 时，FFmpeg/MediaMTX CPU 较高、WebOBS GPU 较高，整体超过 stock OBS 三倍。源码证实：浏览器不满足 HEVC 直通条件（例如已确认 B 帧、重排序未知或接收端不支持）时保留 H.264 兼容转换；此时服务端先解码/编码，网关转发 WebRTC，浏览器再解码/渲染。没有本机进程参数/逐路数据，不能断言用户每一路都命中了该分支。

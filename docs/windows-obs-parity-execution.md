@@ -1,0 +1,99 @@
+# Windows OBS 同等开销执行记录 / OBS parity execution record
+
+## 2026-10-31 / P0 冻结现场（首轮，尚未通过实机基线）
+
+本记录执行 [用户 P0–P5 计划](windows-obs-parity-dsh-plan.md)，不是完成声明。The plan remains open; build/fixture success is not hardware or performance qualification.
+
+### 回退起点与源码身份 / Frozen source identity
+
+- 接手分支 `codex/windows-native-monitor`，HEAD `b6f07f529c131cf407fd484e636b796dded45027`；`origin/dev=5473f9abe389be1f6a166cbd98b2ce3a7b5366c7`。
+- [PR #53](https://github.com/LiaoYK001/Web-Camera-Monitor-Wall/pull/53) 于本轮核对时仍为 OPEN，目标 `dev`，尚未合入。No ordinary development targets main.
+- 已发布 [dev.17](https://github.com/LiaoYK001/Web-Camera-Monitor-Wall/releases/tag/v4.1.0-dev.17) 为未签名开发预发布；[成功构建 41062148722](https://github.com/LiaoYK001/Web-Camera-Monitor-Wall/actions/runs/41062148722) 的源码为 `4ca94a43290ee93bf20d9083554edc2c892dfda6`。
+- Release API 核对安装器 `427435987` 字节，SHA-256 `d52cd3394ee4a8dad0a3029aab3a7cba912d2cb5bb7f1666ef107d65a4466535`。先前 footprint 记录安装载荷 `1459393176` 字节；不把下载大小当安装大小。本轮未重新安装或测量默认/扩展安装空间。
+- OBS 固定 `fb4d98bf88fae5fc85cb11fc57f7c5e309282194`（32.1.2）；go2rtc 固定 `b5948cfb25404cc5cb37b166ecaa2dca20b11d4b`。上游子模块不承载产品修改。
+- 接手时未跟踪 `.directory`（KDE，保留）与 `docs/windows-obs-parity-dsh-plan.md`（用户计划，纳入开发依据）；无其他已跟踪修改。Preserve unrelated metadata and all private configuration.
+
+### 黑屏与输入基线 / Black-screen reproduction and input baseline
+
+已知反馈：dev.17 原生窗口可见、绘制计数 1445、最终画面全黑。这是用户反馈，不是本机已重现。原临时附件可能过期，不能以日志计数补造截图证据。
+
+复现路径（待目标机复核）：保留原版 OBS 正常的五路配置 → 记录当前已 TAKE Program 场景/来源/音轨 → 打开 Windows 原生监看 → 观察最终画面 → 短时采集脱敏诊断与窗口截图 → 无录像/推流地重开、TAKE、全屏、DPI/显示器切换。不要先覆盖已有 OBS 配置或以虚假录像激活渲染。
+
+接手时的 `desktop/tests/native-program-preview.cjs` 只让五个来源读取同一小型 HEVC 测试片，检查状态、来源健康与绘制计数，不能区分黑屏、旧帧、错路、漏路。首轮已补最终窗口像素、五个独立输入的路号/色彩/空间标记/动态时间码和位置变更回归，下面保留旧实现对照与失败记录。`obs_render_main_texture()` 为合法显示 API，根因仍须由固定源码和实际测试确认，不能把新增测试当用户黑屏已经修复。
+
+| 条件 / Condition | 已知 / Known | 待实机补齐 / Missing |
+| --- | --- | --- |
+| 目标设备 | i9-13900HX / RTX 4090 Laptop（用户报告） | Windows、驱动、散热/电源、集显/独显 LUID、显示器连接/DPI |
+| 输入 1–5 | 五路真实 RTSP / H.265（用户报告） | 每路分辨率、FPS、码率、B 帧、音轨、传输、缓冲/重连；只记录匿名 source-1…source-5 |
+| 原版 OBS | 用户报告约 159 MB | 精确版本/来源/组件/插件/文件总字节数、画布/帧率、解码设置、预览/投影尺寸 |
+| dev.17 Program | 黑屏反馈、窗口计数增长 | 实际 TAKE 状态、有效帧进度、源 active/showing、渲染/解码适配器 |
+| 成本 | 未有合格同机 OBS A/B 数据 | 全进程 CPU、分设备/引擎 GPU、内存/显存、功耗/延迟、画面质量与不确定度 |
+
+Windows 目标机当前不在 Fedora 会话可用环境中。P0 的仓库/候选身份已核对，但五路/声音/显示条件尚未核齐，不能标记 P0 通过。Private camera addresses, secrets, full logs and footage stay outside Git, CI and Releases.
+
+### 数据收集口径 / Measurement protocol
+
+先将原始数据保存在目标机的 Git 外私密目录，每次运行记录 UTC+08 时间、源码/包摘要、来源匿名 ID 和 OBS 设置。OBS 与产品交替单独运行；每次预热 ≥3 分钟、采样 ≥20 分钟，至少三组成对且交替先后；初步满足后稳定性 ≥2 小时。保留原始进程累计 CPU 时间/创建时间、按适配器 LUID/Video Decode/3D/Copy 分类的 GPU 时间及采集工具版本。不要相加异口径百分比或重复计算共享 GPU 时间/内存。
+
+每轮用同一计量办法统计产品全部所属进程，辅助进程不排除；双方合成输入发布器成本一致，或都在外部。画面全程可见，不以黑屏、低帧、静音、隐藏暂停、额外延迟换低读数。截图/CPU 像素分析仅测试或短时诊断，不进入常驻逐帧路径。缺失功耗/延迟/硬解证据明确写“未测”，不填 0。
+
+### 架构与能力迁移账目 / Architecture and capability migration ledger
+
+2026-10-31 决定优先固定 OBS 原生前端 + 产品插件/Qt 扩展；更新旧的 Electron 永久宿主说明。当前完整产品仍为 Electron + supervised services，未静默替换默认包；原生原型要在独立配置和可回退入口中验证。
+
+| 能力/组件 / Capability | 现状 / Current | 目标/退出条件 / Target |
+| --- | --- | --- |
+| 来源、场景、Program、投影、五路本地媒体 | 现有 libobs + 自制 Win32 试验窗口；黑屏待定位 | 固定 OBS 前端的媒体源/场景/原生显示，兼容配置复用 source，不按 URL 粗暴共享 |
+| 配置、来源标识、布局、音轨/过滤器 | 现有产品私有数据格式 | 待迁移；不覆盖 OBS 或既有产品数据、不静默导入 |
+| 账号、权限、Origin、loopback、备份恢复 | 现有 C++/Python/主进程边界 | 待迁移/保留远程后端；未等价验证前不替换完整产品 |
+| 单实例、托盘/后台、正常退出、崩溃收束 | Electron + Windows Job | 新宿主需等价行为测试，不能仅删除 Electron 测试 |
+| 安装、升级、卸载保留数据/失败恢复、更新校验 | 完整 NSIS 路径 | 原生宿主独立验证后再切默认；开发包不进 stable feed |
+| Electron | 当前完整兼容路径 | 迁移门槛完成后移出 Windows 默认安装/常驻 |
+| MediaMTX / go2rtc | 现有分发/适配服务 | 普通本地 RTSP 不必经；按实际消费者启停 |
+| 外置 FFmpeg | 当前转换/导出等任务 | 普通本地媒体用 OBS 内部 obs-ffmpeg，外部任务按需；不同 ABI DLL 不直接替换 |
+| Python / 检测 ONNX、NumPy、模型 | 当前默认大包 | 必需本地能力迁入原生/共享库；检测作版本/摘要验证扩展 |
+| Node/网站提取 / CEF / Caddy | 当前完整包 | 网站来源/浏览器源/LAN HTTPS 按需组件；许可证、对应源码与离线安装可用 |
+
+所有保留进程还须记录启动者、消费者、退出条件及异常清理者。原型只覆盖明确声明的本地能力，其他能力仍写待迁移，不宣称已完整替代。
+
+### 本轮状态 / Current round
+
+- 修改前路径、进程与依赖：dev.17 完整包身份冻结如上；默认安装仍未切换。
+- 五路真实画面/实际 GPU 与逐路硬解：未测；源码策略 `auto` 不作硬解证明。
+- 性能/体积目标：未通过；不将 CI、小型合成媒体或候选发布当目标完成。
+- 执行中：P1 固定源码定位 + 最终窗口像素回归；P2 最小 OBS 原生宿主和隔离配置构建；测试结果、候选与下一步将在本记录追加。
+- 下一轮：先用已知图案显示测试区分窗口绘图、场景/Program 与媒体出帧层；保留原缺陷可失败的回归，再上目标机验证真实五路与可比 OBS 设置。
+
+## 2026-10-31 / 首轮实现与实测记录
+
+### P1：已经证实的独立窗口缺陷，不冒充用户黑屏根因
+
+Job 启动器使用 `STARTF_USESHOWWINDOW/SW_HIDE` 隐藏控制台，原生窗口第一次 `ShowWindow(SW_SHOW)` 会受该启动标记影响。冻结 dev.17 的首次窗口在最终像素工具介入前确为隐藏；这与用户“窗口可见但画面黑”不相同。`bb124c8` 将显式展示改为 `SetWindowPos(...SWP_SHOWWINDOW)` 并检查 `IsWindowVisible`，未猜测更改矩阵、sRGB 或渲染 API。[首轮新核心 Windows 检查](https://github.com/LiaoYK001/Web-Camera-Monitor-Wall/actions/runs/41180349503) 中 unit/proxy/新 Win32 子进程回归 3/3 通过，窗口回归 0.12 秒；旧首次 ShowWindow 仍隐藏、新 helper 首次与重开可见。该修复只证明窗口自显，不证明摄像机图像成功。
+
+Draw callback is before swapchain Present. Authenticated diagnostic snapshots now report video/texture/output binding and active/showing state on request, without per-frame CPU readback; neither callback count nor these flags qualify final media pixels or hardware decoding. UI wording in `24e8eb3` reflects that boundary, with compatibility for older backends.
+
+### 冻结旧包、失败与回归范围
+
+- 旧包始终是同一 dev.17 artifact `12981884498`，摘要 `91306c23c876a87fa3648367fa123fe35383b34710bcbd9b72a7bfc5e2f25f81`；新测试代码不重新构建旧运行时。
+- [对照 41179250595](https://github.com/LiaoYK001/Web-Camera-Monitor-Wall/actions/runs/41179250595)：选择器原先要求已可见窗口，故在读像素前失败，**不是重现黑屏**。改为精确 PID/路径/类名定位测试自有 HWND，明确记录 `initiallyVisible`，仅旧包允许工具强制展示；新包必须自己显示。
+- [对照 41179685711](https://github.com/LiaoYK001/Web-Camera-Monitor-Wall/actions/runs/41179685711)：已展示的五色 Program 最终像素通过；随后测试发布路径不符合既有网关 ACL，未进入媒体检查。修正为五个独立 `hybrid-<32hex>` 测试路径，未放宽生产权限。
+- [对照 41180301808](https://github.com/LiaoYK001/Web-Camera-Monitor-Wall/actions/runs/41180301808)：五色 Program、五路独立 HEVC B 帧图案、倒序布局最终像素与各路时间进度通过；重开后第一张截图为黑，原门槛失败。首轮新核心构建也在该阶段失败，未生成安装器，不发布。
+- 固定源码显示媒体在 inactive 时关闭、reactivate 时异步重启且清空旧帧，绘制计数增长不表示 decoder 恢复。此前首开等待 healthy=5 + 1500ms，重开只等 callback，测试条件不对称。`a208029` 现在完整保留重开早期 8 张样本的逐帧成功/失败、采样相对时间与绝对时间边界，明确标为 **启动过渡观察，不是验收通过**；再使用与首开相同的有界健康/预热条件做恢复后的严格全样本像素与时间进度检查。不丢弃失败样本、不以等到一次亮图判成功；等待前后的健康及恢复耗时另记。
+
+- [同口径旧包对照 41181886193](https://github.com/LiaoYK001/Web-Camera-Monitor-Wall/actions/runs/41181886193)：最终像素回执 `passed=true`，五色、五路 HEVC、倒序、恢复后重开全部通过，**因此不能把新测试的恢复后成功归因于新核心修复**。启动观察 8 张中 7 张仍不满足完整五路；首个完整样本位于重开后约 3859ms，恢复准备记录 5561ms（含 1500ms 预热）。这些是合成输入/软件 D3D11 的短时数据，不是用户真实黑屏已定位或延迟目标已过。整个 job 随后在原有 Composite 合约因诊断工作流未安装 `@playwright/test` 失败；像素回执 `13035217646` / SHA-256 `a691ee0d5165e27f2fadd2463f5024d58b028807d007da1327d4602b0ff63e15` 独立保留，不能写成整个 CI 通过。后续为冻结诊断补装锁定 web/Chromium 工具，保留全部既有合约，不删测试。
+
+The strict gate detects black/missing/swapped/duplicated/flipped/frozen channels and wrong final positions in known synthetic fixtures. Black camera content remains legal. Screenshots stay in the disposable synthetic fixture directory; only bounded counters and non-private synthetic diagnostics are retained. Window occlusion/no interactive desktop fails explicitly.
+
+[新候选检查 41181595863](https://github.com/LiaoYK001/Web-Camera-Monitor-Wall/actions/runs/41181595863)，源码 `24e8eb3`、版本 `4.1.0-dev.18`，正在运行；没有发布安装器或稳定版本。Build runner uses Microsoft Basic Render Driver, not the target RTX 4090 Laptop.
+
+### Linux 实际 libobs 与浏览器边界
+
+Opt-in `WEBOBS_BUILD_OBS_RENDER_TESTS` 对固定 OBS 实际渲染到测试 FBO，并读取已知色块位置，覆盖 activate、prepare 不改 Program、cut、失败 prepare、deactivate/reactivate，确认无 encoder/raw video consumer 也有主纹理。Fedora 44 / RTX 3090 / NVIDIA 615.78.08 / X11 EGL / OpenGL 3.3：CTest 3/3 通过，GPU 测试 0.57 秒，额外重复 10/10 通过。只证明该 Linux/libobs 路径，不证明 Windows D3D11/HWND/Present/摄像机或性能。
+
+本轮桌面 Node 单测 58/58、公开工作流策略 18/18、受控诊断 UI 的 typecheck + 两项 focused Playwright 通过。它们分别证明 predicate、边界与界面交互，不替代最终像素实测；测试夹具无真实后端时的 WebSocket proxy refusal 不当成产品网络诊断。
+
+### P2–P5：原型与后续门槛
+
+`37e4f98` 增加独立 `native-host/` 与 `desktop/scripts/build-obs-native.ps1`：固定 OBS 完整 Qt frontend + 产品 dock，按已有 source UUID 复用媒体源，非破坏新建五分屏，Studio Preview 不自动 TAKE，投影使用 OBS 原生接口。全新 portable 配置与原 OBS/产品数据隔离，不启动旧服务。Linux 的七项 Python build contract 与固定真实 OBS headers API contract 1/1 已通过。[Windows 原型检查 41180501363](https://github.com/LiaoYK001/Web-Camera-Monitor-Wall/actions/runs/41180501363) 已成功：在 Windows 2022 / VS2022 实际编译 OBS 32.1.2 + Qt 6.8.3 + 产品插件，Qt dock 与媒体源注册、独立 portable 配置、原 OBS profile 未改变、清除继承插件覆盖及正常退出烟测均通过。`mediaQualified=false`，**不证明五路最终像素、摄像机、硬解或性能**。干净归档在烟测产生私密配置前完成，不上传配置和日志。Artifact `13034867787` / `78036418` 字节 / SHA-256 `86cdc83ad3677425fe86dd71a3b46a8b1e6bd6e96c932b0ae92f78810ad59e6a`；prototype manifest 之前文件总字节 `243419789`（Qt `23833088`、plugins `73164953`、other `146421748`），不是安装器大小、完整产品安装空间或同口径原版 OBS 比较，仍未达到体积验收。
+
+本轮不切换默认包、不删除旧能力、不移动已发布标签。原型仍缺产品认证/迁移/安装升级与许可证、源码交付审计；实际五路硬解、同源 decoder 数、真实 Windows GPU/显示拓扑、首轮 OBS A/B 及安装体积同口径目标均未通过。全屏/DPI/多显示器/故障恢复、直接绘图 A 层与本地 H.264 独立测试尚待补齐。P5 准备只读进程树原始 CPU/内存采集工具；轮询遗漏短命后代的覆盖风险必须明确，不能由不完整下界数据宣布总体性能等价。
