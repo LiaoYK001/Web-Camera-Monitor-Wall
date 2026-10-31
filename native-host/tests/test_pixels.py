@@ -59,10 +59,10 @@ class PixelContractTests(unittest.TestCase):
                 "sources": [{"uuid": f"synthetic-{i}", "settingsSha256": str(i)*64} for i in range(5)] if seq > 1 else []}
 
     def test_phase_identity_uuid_counts_encoder_and_no_implicit_take(self):
-        for seq in range(1,7):
+        for seq in range(1,8):
             state = self.state(seq)
             gate.validate_state(state, seq, "a"*32, 123)
-            for key, bad in (("seq", 1 if seq == 6 else 6), ("token", "b"*32), ("pid", "124"), ("canvasWidth", 1920),
+            for key, bad in (("seq", 1 if seq != 1 else 2), ("token", "b"*32), ("pid", "124"), ("canvasWidth", 1920),
                              ("activeEncoders", 1), ("activeOutputs", 1), ("rawVideoActive", True),
                              ("globalFfmpegInputsIncludingPrivate", 6), ("sameInputPointersAndSettings", False),
                              ("programGeneration", 99), ("pixelQualified", True), ("wallReuseVerified", False),
@@ -137,9 +137,10 @@ class PixelContractTests(unittest.TestCase):
                      "loopback_rtsp_urls", "create_rtsp"):
             self.assertIn(text, source)
         gate_source = (ROOT / "native-host/tests/pixel_windows.py").read_text()
-        for text in ("LoopbackRtsp", "rtsp-loopback", "mediamtx", "rtsp_transport", "loopbackRtspPhaseQualified"):
+        for text in ("LoopbackRtsp", "rtsp-loopback", "mediamtx", "rtsp_transport", "loopbackRtspPhaseQualified",
+                     "interrupt_publisher", "restart_publisher", "rtsp-recovered", "rtspRecoveryPhaseQualified"):
             self.assertIn(text, gate_source)
-        self.assertEqual(gate.PHASES[-1], "rtsp-loopback")
+        self.assertEqual(gate.PHASES[-2:], ("rtsp-loopback", "rtsp-recovered"))
         for text in ("QTcpServer", "QWebSocket", "obs_frontend_recording_start", "obs_output_start", "obs_frontend_take_screenshot", "gs_stage_texture"):
             self.assertNotIn(text, source)
         self.assertIn('[switch]$PixelTest', builder)

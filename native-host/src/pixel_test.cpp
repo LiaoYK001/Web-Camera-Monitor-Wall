@@ -135,6 +135,8 @@ class Harness final : public QObject {
 	int phase_ = 0, generation_ = 0;
 	bool published_ = false, closing_ = false, take_stopped_ = false, reopening_ = false;
 	bool wall_reuse_verified_ = false;
+	bool rtsp_drop_seen_ = false;
+	qint64 rtsp_drop_at_ = -1;
 	bool product_bootstrap_verified_ = false;
 
 	void require(bool value, const char *message) const
@@ -323,9 +325,21 @@ class Harness final : public QObject {
 		}
 		return true;
 	}
+	bool rtsp_playing() const
+	{
+		for (auto *source : rtsp_) {
+			if (!source || obs_source_media_get_state(source) != OBS_MEDIA_STATE_PLAYING ||
+			    obs_source_get_width(source) != 320 || obs_source_get_height(source) != 180) return false;
+		}
+		return true;
+	}
 	bool ready()
 	{
 		if (phase_ == 1) return scene_is(obs_frontend_get_current_scene, known_);
+		if (phase_ == 7) {
+			if (!rtsp_drop_seen_ || !rtsp_playing()) return false;
+			return !obs_frontend_preview_program_mode_active() && scene_is(obs_frontend_get_current_scene, rtsp_scene_);
+		}
 		if (phase_ >= 6) {
 			for (auto *source : rtsp_) {
 				if (!source || obs_source_media_get_state(source) != OBS_MEDIA_STATE_PLAYING ||
@@ -360,7 +374,7 @@ class Harness final : public QObject {
 		if (phase_ > 1) for (std::size_t i = 0; i < uuid_set.size(); ++i)
 			ids.append(QJsonObject{{"uuid", QString::fromStdString(uuid_set[i])}, {"settingsSha256", QString::fromLatin1(hash_set[i])}});
 		const char *names[] = {"", "known-colors", "five-codecs", "studio-preview-no-take", "explicit-take", "program-reopened",
-		                       "rtsp-loopback"};
+		                       "rtsp-loopback", "rtsp-recovered"};
 		QJsonArray windows; windows.append(window(preview_, "main-preview", 10));
 		if (program_) windows.append(window(program_, "program-projector", 0));
 		const QJsonObject state{{"schema", 1}, {"seq", phase_}, {"phase", QString::fromLatin1(names[phase_])}, {"token", token_},
@@ -386,8 +400,9 @@ class Harness final : public QObject {
 		else if (phase_ == 4) { take_stopped_ = false; obs_frontend_preview_program_trigger_transition(); }
 		else if (phase_ == 5) { require(program_, "Program projector lost before reopen"); program_->close(); reopening_ = true; }
 		else if (phase_ == 6) { if (program_) { program_->close(); program_ = nullptr; } obs_frontend_set_preview_program_mode(false); create_rtsp(); }
+		else if (phase_ == 7) { rtsp_drop_seen_ = false; rtsp_drop_at_ = -1; }
 		else {
-			write_new(directory_ + "/complete.json", {{"schema", 1}, {"phases", 6}, {"syntheticOnly", true}, {"pixelQualified", false}});
+			write_new(directory_ + "/complete.json", {{"schema", 1}, {"phases", 7}, {"syntheticOnly", true}, {"pixelQualified", false}});
 			close_normal();
 		}
 	}
@@ -403,8 +418,22 @@ class Harness final : public QObject {
 				reopening_ = false; open_program();
 			}
 			require(identities(snapshot), "input pointer/UUID/settings/global private-input identity changed");
+			if (phase_ == 7) {
+				if (!rtsp_drop_seen_) {
+					for (auto *source : rtsp_)
+						if (!source || obs_source_media_get_state(source) != OBS_MEDIA_STATE_PLAYING) {
+							rtsp_drop_seen_ = true;
+							rtsp_drop_at_ = clock_.elapsed();
+							break;
+						}
+					require(rtsp_drop_seen_ || clock_.elapsed() - changed_at_ < 45000, "RTSP recovery: no media interruption observed");
+				} else {
+					require(clock_.elapsed() - rtsp_drop_at_ < 150000, "RTSP recovery: media source did not recover");
+				}
+			}
 			if (!published_) {
-				require(clock_.elapsed() - changed_at_ < 30000, "bounded scene/media state readiness timed out");
+				require(clock_.elapsed() - changed_at_ < (phase_ == 7 ? 180000 : 30000),
+				        "bounded scene/media state readiness timed out");
 				if (!ready()) { ready_at_ = -1; return; }
 				if (ready_at_ < 0) ready_at_ = clock_.elapsed();
 				// Declared warmup, never a retry after a failed screenshot. PLAYING is

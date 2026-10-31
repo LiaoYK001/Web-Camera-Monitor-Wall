@@ -29,7 +29,8 @@ sys.path.insert(0, str(ROOT / "native-host/scripts"))
 from prepare import OBS_COMMIT, obtain
 from smoke_windows import fingerprint
 
-PHASES = ("known-colors", "five-codecs", "studio-preview-no-take", "explicit-take", "program-reopened", "rtsp-loopback")
+PHASES = ("known-colors", "five-codecs", "studio-preview-no-take", "explicit-take", "program-reopened", "rtsp-loopback",
+          "rtsp-recovered")
 ENV_OVERRIDES = ("OBS_PLUGINS_PATH", "OBS_PLUGINS_DATA_PATH", "OBS_CONFIG_PATH", "QT_PLUGIN_PATH",
                  "QT_QPA_PLATFORM_PLUGIN_PATH", "QML2_IMPORT_PATH", "WEBOBS_NATIVE_SMOKE_TOKEN", "WEBOBS_NATIVE_PIXEL_TOKEN")
 
@@ -141,8 +142,12 @@ class LoopbackRtsp:
 
     def __init__(self, private: Path, ffmpeg: Path, ffprobe: Path, fixtures: list[dict], token: str, offline: bool):
         self.private = private
+        self.ffmpeg = ffmpeg
+        self.ffprobe = ffprobe
+        self.fixtures = fixtures
+        self.fixture_paths = [private / f"fixture-{index + 1}.mkv" for index in range(5)]
         self.urls: list[str] = []
-        self.publishers: list[subprocess.Popen] = []
+        self.publishers: list[subprocess.Popen | None] = []
         self.server: subprocess.Popen | None = None
         self.log = (private / "rtsp-test.log").open("xb")
         try:
@@ -155,13 +160,8 @@ class LoopbackRtsp:
                                            stdout=self.log, stderr=subprocess.STDOUT)
             self._wait_port(time.monotonic() + 20)
             for index in range(5):
-                url = f"rtsp://127.0.0.1:8554/hybrid-{token}-{index + 1}"
-                self.urls.append(url)
-                self.publishers.append(subprocess.Popen(
-                    [str(ffmpeg), "-hide_banner", "-loglevel", "error", "-nostdin", "-re", "-stream_loop", "-1",
-                     "-i", str(private / f"fixture-{index + 1}.mkv"), "-c", "copy", "-f", "rtsp",
-                     "-rtsp_transport", "tcp", url],
-                    cwd=private, stdin=subprocess.DEVNULL, stdout=self.log, stderr=subprocess.STDOUT))
+                self.urls.append(f"rtsp://127.0.0.1:8554/hybrid-{token}-{index + 1}")
+                self._start_publisher(index)
             self._wait_streams(fixtures, ffprobe, time.monotonic() + 40)
         except Exception:
             self.stop()
@@ -206,9 +206,55 @@ class LoopbackRtsp:
         if pending:
             raise RuntimeError("Loopback RTSP streams did not become readable")
 
+    def _publisher_command(self, index: int) -> list[str]:
+        return [str(self.ffmpeg), "-hide_banner", "-loglevel", "error", "-nostdin", "-re", "-stream_loop", "-1",
+                "-i", str(self.fixture_paths[index]), "-c", "copy", "-f", "rtsp", "-rtsp_transport", "tcp",
+                self.urls[index]]
+
+    def _start_publisher(self, index: int) -> None:
+        while len(self.publishers) <= index:
+            self.publishers.append(None)
+        self.publishers[index] = subprocess.Popen(self._publisher_command(index), cwd=self.private,
+                                                  stdin=subprocess.DEVNULL, stdout=self.log, stderr=subprocess.STDOUT)
+
+    def interrupt_publisher(self, index: int) -> None:
+        publisher = self.publishers[index]
+        if publisher is not None and publisher.poll() is None:
+            publisher.terminate()
+            try:
+                publisher.wait(timeout=10)
+            except subprocess.TimeoutExpired:
+                publisher.kill()
+                publisher.wait(timeout=5)
+        self.publishers[index] = None
+
+    def restart_publisher(self, index: int) -> None:
+        self._start_publisher(index)
+        deadline = time.monotonic() + 40
+        while time.monotonic() < deadline:
+            publisher = self.publishers[index]
+            if publisher is None or publisher.poll() is not None:
+                raise RuntimeError("Loopback RTSP publisher exited after restart")
+            try:
+                probe = subprocess.run(
+                    [str(self.ffprobe), "-v", "error", "-rtsp_transport", "tcp", "-select_streams", "v:0",
+                     "-show_entries", "stream=codec_name,width,height", "-of", "json", self.urls[index]],
+                    capture_output=True, text=True, timeout=8)
+            except subprocess.TimeoutExpired:
+                continue
+            if probe.returncode == 0:
+                try:
+                    streams = json.loads(probe.stdout)["streams"]
+                except (ValueError, KeyError):
+                    streams = []
+                if streams == [{"codec_name": self.fixtures[index]["codec"], "width": 320, "height": 180}]:
+                    return
+            time.sleep(0.5)
+        raise RuntimeError("Loopback RTSP stream did not return after restart")
+
     def stop(self) -> None:
         for publisher in self.publishers:
-            if publisher.poll() is None:
+            if publisher is not None and publisher.poll() is None:
                 publisher.terminate()
                 try:
                     publisher.wait(timeout=10)
@@ -474,7 +520,7 @@ def run(runtime: Path, result: Path, ffmpeg_override: Path | None, offline: bool
             original_sources = None
             with tempfile.TemporaryDirectory(prefix="webobs-synthetic-client-") as temporary:
                 captures = Path(temporary)
-                for seq in range(1, 7):
+                for seq in range(1, 8):
                     state = wait_state(private, seq, process, deadline)
                     validate_state(state, seq, token, process.pid)
                     if 2 <= seq <= 5:
@@ -505,11 +551,18 @@ def run(runtime: Path, result: Path, ffmpeg_override: Path | None, offline: bool
                     phase["passed"] = not timing["captureFailed"] and all(role["passed"] for role in phase["roles"])
                     summary["phases"].append(phase)
                     write_new(private / f"ack-{seq:02}.json", {"schema": 1, "seq": seq, "token": token})
+                    if seq == 6:
+                        # Only our own synthetic publisher: interrupt one stream,
+                        # keep the source, then let OBS reconnect.
+                        rtsp.interrupt_publisher(0)
+                        time.sleep(20)
+                        rtsp.restart_publisher(0)
                 process.wait(timeout=max(1, min(30, int(deadline-time.monotonic()))))
-                if process.returncode != 0 or read_json(private / "complete.json").get("phases") != 6:
+                if process.returncode != 0 or read_json(private / "complete.json").get("phases") != 7:
                     raise RuntimeError("Native frontend normal close/finite completion failed")
                 summary["normalExit"] = True
-                summary["loopbackRtspPhaseQualified"] = bool(summary["phases"] and summary["phases"][-1]["passed"])
+                summary["loopbackRtspPhaseQualified"] = bool(len(summary["phases"]) >= 6 and summary["phases"][5]["passed"])
+                summary["rtspRecoveryPhaseQualified"] = bool(len(summary["phases"]) >= 7 and summary["phases"][6]["passed"])
             summary["status"] = "passed" if all(phase["passed"] for phase in summary["phases"]) else "failed"
             summary["syntheticFinalWindowPixelsQualified"] = summary["status"] == "passed"
     except Exception as failure:
