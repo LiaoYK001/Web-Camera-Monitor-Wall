@@ -270,3 +270,29 @@ This still covers only **replacing a portable prototype tree across one dev vers
 Windows run [41221199820](https://github.com/LiaoYK001/Web-Camera-Monitor-Wall/actions/runs/41221199820) (`d6e9c44`, dev.33, input `obs_size_baseline=true`) silently installed the pinned OBS 32.1.2 installer (157,809,480 bytes, SHA-256 `94d180c1fc481ccc307b95513f795d088d63ac4f61ad3253c2ac0d94d0844110`, recorded for this download rather than an independently published checksum) on a GitHub-hosted Windows Server 2022 runner and measured it before first start with the same installed-tree tool: 479,371,662 logical bytes, 482,421,648 main-stream allocation bytes, 2158 files over 88 directories and a 4096-byte allocation unit. `obs-plugins/64bit` accounts for 317,367,244 B (120 files, including CEF/obs-browser) and `bin/64bit` for 137,144,384 B; the rest is `data/obs-plugins` 11,402,872 B, `data/obs-scripting` 6,835,991 B, `data/obs-studio` 6,366,768 B and `data/libobs` 106,377 B.
 
 This is a **same-OS reference baseline**, not the target machine and not an equal-feature scope: stock OBS includes the CEF browser, scripting, WebSocket, VLC, AJA/DeckLink and other components this prototype disables. The native prototype's 243,466,645 bytes before its manifest are smaller than the stock installation but lack those capabilities, so this cannot be presented as meeting the size target. Convergence of the current 1.46 GB Electron default still depends on P3 capability migration and an equal-feature comparison.
+
+### 开发候选发布 v4.1.0-dev.40 / Development candidate publication v4.1.0-dev.40
+
+2026-11-01 将 dev.40 原生监看原型作为**未签名开发 Pre-release** 发布：[v4.1.0-dev.40](https://github.com/LiaoYK001/Web-Camera-Monitor-Wall/releases/tag/v4.1.0-dev.40)，源码 `3c916db18de59e86dfbd14f39ea53cef1f564005`（[Windows 运行 41228010208](https://github.com/LiaoYK001/Web-Camera-Monitor-Wall/actions/runs/41228010208)），标签与 release target 均为该已测试提交，stable Latest 仍为 `v4.0`。
+
+发布前重新下载不可变 artifact `13052358847`（123,286,064 字节，摘要 `sha256:0f338160fc3ef8fcd64a2d02977884513440029467dfbcd4277c168fc60fdd3d`），本机运行 `native-host/scripts/verify_native_dev_assets.py` 核对安装器回执、原型 ZIP 清单、sidecar 与私有配置排除；上传后 GitHub 记录的三个附件摘要与本地哈希一致，再下载发布后的 SETUP.exe 复核 `sha256sum` 通过。附件字节未重新打包：
+
+| 附件 / Asset | 字节 / Bytes | SHA-256 |
+| --- | ---: | --- |
+| `WebOBS-OBS-native-4.1.0-dev.40-windows-x64-PROTOTYPE.zip` | 78,029,241 | `634af4be2fd9b7a0709a29a87ad67e8b3a0662fcaf54043205c1cdf21402ab18` |
+| `WebOBS-OBS-native-4.1.0-dev.40-windows-x64-SETUP.exe` | 45,250,255 | `7cc5724c0aee941802bdc9f8ed71b7547d1b3d73631170e003c5a03d7bb2a54d` |
+| `SHA256SUMS.txt` | 242 | `04abb74831aa3d13e93cacbb7b7e92f928bc618b6052ade21d6738f088b3fab1` |
+
+边界：未签名、无自动更新、无跨版本安装器升级/数据迁移；原型 ZIP 不是产品默认包，不替换 Electron 产品；像素门槛仍为软件 D3D11 + 合成 RTSP（九阶段），不证明目标机、真实五路 H.265、硬解、延迟、功耗或 OBS 同机对照；P1 显示缺口、P3 能力迁移与 P5 性能/体积门槛保持未通过。发布说明见 `docs/release-notes-dev40.md`。
+
+On 2026-11-01 the dev.40 native monitor prototype was published as an **unsigned development Pre-release**: [v4.1.0-dev.40](https://github.com/LiaoYK001/Web-Camera-Monitor-Wall/releases/tag/v4.1.0-dev.40), source `3c916db18de59e86dfbd14f39ea53cef1f564005` ([Windows run 41228010208](https://github.com/LiaoYK001/Web-Camera-Monitor-Wall/actions/runs/41228010208)); both the tag and the release target are that tested commit, and stable Latest remains `v4.0`.
+
+Before publication the immutable artifact `13052358847` (123,286,064 bytes, digest `sha256:0f338160fc3ef8fcd64a2d02977884513440029467dfbcd4277c168fc60fdd3d`) was downloaded again and `native-host/scripts/verify_native_dev_assets.py` checked the installer receipt, prototype ZIP manifest, sidecar digests and private-config exclusion locally; after upload GitHub's recorded digests for all three assets matched the local hashes, and the published SETUP.exe was downloaded again and passed `sha256sum`. No asset was repacked:
+
+| Asset | Bytes | SHA-256 |
+| --- | ---: | --- |
+| `WebOBS-OBS-native-4.1.0-dev.40-windows-x64-PROTOTYPE.zip` | 78,029,241 | `634af4be2fd9b7a0709a29a87ad67e8b3a0662fcaf54043205c1cdf21402ab18` |
+| `WebOBS-OBS-native-4.1.0-dev.40-windows-x64-SETUP.exe` | 45,250,255 | `7cc5724c0aee941802bdc9f8ed71b7547d1b3d73631170e003c5a03d7bb2a54d` |
+| `SHA256SUMS.txt` | 242 | `04abb74831aa3d13e93cacbb7b7e92f928bc618b6052ade21d6738f088b3fab1` |
+
+Boundaries: unsigned, no auto-update, no cross-version installer upgrade or data migration; the prototype ZIP is not the product default and does not replace the Electron product; the pixel gate is still software D3D11 plus synthetic RTSP (nine phases) and does not qualify the target machine, five real H.265 cameras, hardware decoding, latency, power or same-machine OBS comparison; P1 display gaps, P3 capability migration and P5 performance/size gates remain open. Release notes: `docs/release-notes-dev40.md`.
