@@ -287,6 +287,37 @@ class ProductSmokeContractTests(unittest.TestCase):
                     smoke.check_product_receipt(path)
 
 
+class ProductReceiptTests(unittest.TestCase):
+    def write(self, root, payload):
+        path = Path(root) / "product-bootstrap.json"
+        path.write_text(json.dumps(payload), encoding="utf-8")
+        return path
+
+    def base(self, **overrides):
+        payload = {"schema": 1, "scope": "product-cameras", "ok": True, "created": 5, "reused": 0,
+                   "canvasApplied": False, "sceneReused": False, "items": 5}
+        payload.update(overrides)
+        return payload
+
+    def test_fresh_and_reused_receipts(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            smoke.check_product_receipt(self.write(temporary, self.base()))
+            reused = self.write(temporary, self.base(created=0, reused=5, sceneReused=True))
+            smoke.check_product_receipt(reused, expect_created=0, expect_reused=5, expect_scene_reused=True)
+
+    def test_reused_receipt_cannot_pass_the_fresh_gate(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            reused = self.write(temporary, self.base(created=0, reused=5, sceneReused=True))
+            with self.assertRaises(AssertionError):
+                smoke.check_product_receipt(reused)
+
+    def test_receipt_must_not_leak_camera_urls(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            leaked = self.write(temporary, self.base(note=smoke.PRODUCT_URLS[0]))
+            with self.assertRaises(AssertionError):
+                smoke.check_product_receipt(leaked)
+
+
 if __name__ == "__main__":
     import sys
     unittest.main(verbosity=2)

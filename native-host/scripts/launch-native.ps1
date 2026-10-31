@@ -4,6 +4,7 @@ param(
     [switch]$AllowPrototype,
     [ValidatePattern('^$|^[0-9a-f]{32}$')][string]$SmokeToken = '',
     [string]$ProductConfig = '',
+    [switch]$ReuseProfile,
     [ValidateRange(10,300)][int]$TimeoutSeconds = 90
 )
 $ErrorActionPreference = 'Stop'
@@ -20,11 +21,14 @@ foreach ($relative in @('portable_mode.txt','disable_updater.txt','bin/64bit/obs
 # This writable portable profile never imports %APPDATA%\obs-studio or desktop data.
 $config = Join-Path $root 'config'
 if ($SmokeToken) {
-    if (Test-Path -LiteralPath $config) { throw 'Smoke mode requires a NEW disposable runtime with no existing profile.' }
+    if (-not $ReuseProfile -and (Test-Path -LiteralPath $config)) { throw 'Smoke mode requires a NEW disposable runtime with no existing profile.' }
+    if ($ReuseProfile -and -not (Test-Path -LiteralPath (Join-Path $config 'obs-studio'))) { throw 'ReuseProfile requires an existing disposable portable profile.' }
     $profile = Join-Path $config 'obs-studio'
-    New-Item -ItemType Directory -Path $profile | Out-Null
-    # Only this new disposable profile: skip auto-config/default audio input creation.
-    [IO.File]::WriteAllText((Join-Path $profile 'user.ini'), "[General]`nFirstRun=true`n[BasicWindow]`nSysTrayEnabled=false`n")
+    if (-not $ReuseProfile) {
+        New-Item -ItemType Directory -Path $profile | Out-Null
+        # Only this new disposable profile: skip auto-config/default audio input creation.
+        [IO.File]::WriteAllText((Join-Path $profile 'user.ini'), "[General]`nFirstRun=true`n[BasicWindow]`nSysTrayEnabled=false`n")
+    }
     if ($ProductConfig) {
         if (-not (Test-Path -LiteralPath $ProductConfig -PathType Leaf)) { throw 'Product config file is missing.' }
         if ((Get-Item -LiteralPath $ProductConfig).Length -gt 16384) { throw 'Product config exceeds the 16 KiB limit.' }
