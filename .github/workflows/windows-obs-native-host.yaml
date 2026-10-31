@@ -340,6 +340,14 @@ jobs:
           if (Test-Path (Join-Path $runtime 'config')) { Remove-Item -Recurse -Force (Join-Path $runtime 'config') }
           python -B native-host/tests/smoke_windows.py --crash-smoke --runtime $runtime --result (Join-Path $env:GITHUB_WORKSPACE 'build/obs-native-ci/native-crash-smoke.json') --crash-after-seconds 8
           if ($LASTEXITCODE -ne 0) { throw 'Crash containment smoke failed.' }
+      - name: Refuse a second host before it can duplicate the runtime
+        if: ${{ !inputs.pixel_test }}
+        shell: pwsh
+        run: |
+          $runtime = Join-Path $env:RUNNER_TEMP 'native-crash'
+          if (Test-Path (Join-Path $runtime 'config')) { Remove-Item -Recurse -Force (Join-Path $runtime 'config') }
+          python -B native-host/tests/smoke_windows.py --second-instance-smoke --runtime $runtime --result (Join-Path $env:GITHUB_WORKSPACE 'build/obs-native-ci/native-second-instance-smoke.json') --hold-seconds 30
+          if ($LASTEXITCODE -ne 0) { throw 'Second-instance smoke failed.' }
       - name: Preserve sanitized synthetic final-pixel receipt only, never the test runtime
         if: always() && inputs.pixel_test
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
@@ -372,6 +380,7 @@ jobs:
             build/obs-native-ci/native-nsis-install-smoke.json
             build/obs-native-ci/native-restore.json
             build/obs-native-ci/native-crash-smoke.json
+            build/obs-native-ci/native-second-instance-smoke.json
             build/obs-native-ci/native-*-process-gate.json
             build/obs-native-ci/WebOBS-OBS-native-*-windows-x64-SETUP.exe
           if-no-files-found: ignore

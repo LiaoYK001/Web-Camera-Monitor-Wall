@@ -8,6 +8,7 @@ param(
     [ValidateRange(10,300)][int]$TimeoutSeconds = 90,
     [ValidateRange(0,300)][int]$CrashAfterSeconds = 0,
     [switch]$CrashProbe,
+    [switch]$AllowMultiple,
     [string]$ProcessGatePath = ''
 )
 $ErrorActionPreference = 'Stop'
@@ -19,6 +20,19 @@ $manifest = Get-Content -LiteralPath $manifestPath -Raw | ConvertFrom-Json
 if ($manifest.obsCommit -ne 'fb4d98bf88fae5fc85cb11fc57f7c5e309282194' -or $manifest.obsVersion -ne '32.1.2' -or $manifest.defaultProduct -ne $false) { throw 'Prototype bundle identity mismatch.' }
 foreach ($relative in @('portable_mode.txt','disable_updater.txt','bin/64bit/obs64.exe','bin/64bit/platforms/qwindows.dll','obs-plugins/64bit/obs-ffmpeg.dll','obs-plugins/64bit/webobs-native-host.dll')) {
     if (-not (Test-Path -LiteralPath (Join-Path $root $relative) -PathType Leaf)) { throw "Incomplete native bundle: $relative" }
+}
+# Product-level single instance: refuse a second launcher before it can create a
+# profile or a second OBS host. Bypassing the launcher keeps upstream OBS's
+# own "already running" dialog, which is intentionally not automated here.
+if (-not $AllowMultiple) {
+    $instanceMutex = [Threading.Mutex]::new($false, 'Local\WebObsNativeHostSingleInstance')
+    $acquired = $false
+    try { $acquired = $instanceMutex.WaitOne(0) } catch [Threading.AbandonedMutexException] { $acquired = $true }
+    if (-not $acquired) {
+        $instanceMutex.Dispose()
+        Write-Host 'WebOBS Native host is already running in this session; refusing a second instance.'
+        exit 0
+    }
 }
 # The sentinel and fixed working directory are both required by OBS 32.1.2.
 # This writable portable profile never imports %APPDATA%\obs-studio or desktop data.

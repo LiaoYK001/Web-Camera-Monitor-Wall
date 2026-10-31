@@ -11,6 +11,7 @@ import secrets
 import shutil
 import subprocess
 import sys
+import time
 from typing import Sequence
 
 
@@ -195,6 +196,79 @@ def run(runtime: Path, result: Path, *, existing_wall: bool = False) -> dict:
     return summary
 
 
+def _obs64_count() -> int:
+    output = subprocess.run(["tasklist", "/FI", "IMAGENAME eq obs64.exe", "/FO", "CSV", "/NH"],
+                            check=False, capture_output=True, text=True).stdout
+    return sum(1 for line in output.splitlines() if "obs64.exe" in line)
+
+
+def run_second_instance(runtime: Path, result: Path, *, hold_seconds: int = 30) -> dict:
+    """Hold one real host, prove the launcher refuses a second one, then contain the first."""
+    if sys.platform != "win32":
+        raise RuntimeError("The second-instance smoke requires actual Windows x64")
+    if (runtime / "config").exists():
+        raise ValueError("Second-instance smoke requires a NEW disposable runtime; never overwrite private configuration")
+    if result.exists():
+        raise ValueError("Use a NEW result path")
+    pwsh = shutil.which("pwsh")
+    if not pwsh:
+        raise RuntimeError("PowerShell 7.2+ is required")
+    environment = os.environ.copy()
+    for name in ("WEBOBS_NATIVE_SMOKE_TOKEN", "WEBOBS_NATIVE_SMOKE_RECEIPT", "WEBOBS_NATIVE_PIXEL_TOKEN",
+                 "WEBOBS_NATIVE_RESTART_TOKEN", "OBS_PLUGINS_PATH", "OBS_PLUGINS_DATA_PATH", "OBS_CONFIG_PATH",
+                 "QT_PLUGIN_PATH", "QT_QPA_PLATFORM_PLUGIN_PATH", "QML2_IMPORT_PATH"):
+        environment.pop(name, None)
+    gate_path = result.parent / (result.stem + "-process-gate.json")
+    product_file = (result.parent / (result.stem + "-product.json")).resolve()
+    write_product_config(product_file)
+    first_args = [pwsh, "-NoProfile", "-File", str(runtime / "launch-native.ps1"), "-AllowPrototype",
+                  "-CrashProbe", "-TimeoutSeconds", "120", "-CrashAfterSeconds", str(hold_seconds),
+                  "-ProcessGatePath", str(gate_path), "-ProductConfig", str(product_file)]
+    second_args = [pwsh, "-NoProfile", "-File", str(runtime / "launch-native.ps1"), "-AllowPrototype"]
+    try:
+        first = subprocess.Popen(first_args, cwd=runtime.parent, env=environment)
+        try:
+            deadline = time.monotonic() + 45
+            while time.monotonic() < deadline and _obs64_count() < 1:
+                time.sleep(0.5)
+            if _obs64_count() < 1:
+                raise AssertionError("The first host never started")
+            time.sleep(4)
+            hosts_before = _obs64_count()
+            started = time.monotonic()
+            second = subprocess.run(second_args, cwd=runtime.parent, env=environment, check=False,
+                                    capture_output=True, text=True, timeout=60)
+            elapsed_ms = int((time.monotonic() - started) * 1000)
+            time.sleep(1)
+            hosts_after = _obs64_count()
+        finally:
+            first.wait(timeout=120)
+        gate = json.loads(gate_path.read_text(encoding="utf-8"))
+        if second.returncode != 0:
+            raise AssertionError(f"The refused second launcher exited {second.returncode}: {second.stderr[-400:]}")
+        if "already running" not in (second.stdout + second.stderr).lower():
+            raise AssertionError(f"The second launcher did not report the single-instance refusal: {second.stdout[-400:]}")
+        if elapsed_ms > 20000:
+            raise AssertionError(f"The second launcher was not refused promptly: {elapsed_ms} ms")
+        if hosts_before != 1 or hosts_after != 1:
+            raise AssertionError(f"Expected exactly one real host before/after the refusal, saw {hosts_before}/{hosts_after}")
+        if gate.get("crashed") is not True or int(gate.get("samples", 0)) < 2:
+            raise AssertionError(f"The held first host was not deliberately killed: {gate.get('crashed')}/{gate.get('samples')}")
+        checked = check_process_gate(gate_path)
+        summary = {"schema": 1, "kind": "native-second-instance-smoke", "status": "passed",
+                   "holdSeconds": hold_seconds, "secondExitCode": int(second.returncode),
+                   "secondElapsedMs": elapsed_ms, "hostsBefore": hosts_before, "hostsAfter": hosts_after,
+                   "refused": True, "processGate": checked,
+                   "qualification": "Launcher-level single instance only: no camera, pixel, performance, auth or upgrade claim"}
+        with result.open("x", encoding="utf-8") as output:
+            json.dump(summary, output, indent=2)
+            output.write("\n")
+        print(json.dumps(summary, indent=2))
+        return summary
+    finally:
+        product_file.unlink(missing_ok=True)
+
+
 def run_crash(runtime: Path, result: Path, *, crash_after: int = 8) -> dict:
     """Kill the real OBS host and require no surviving process from the install root."""
     if sys.platform != "win32":
@@ -247,8 +321,13 @@ if __name__ == "__main__":
     parser.add_argument("--crash-smoke", action="store_true",
                         help="deliberately kill the host and require no surviving process")
     parser.add_argument("--crash-after-seconds", type=int, default=8)
+    parser.add_argument("--second-instance-smoke", action="store_true",
+                        help="hold one host and require the launcher to refuse a second one")
+    parser.add_argument("--hold-seconds", type=int, default=30)
     args = parser.parse_args()
-    if args.crash_smoke:
+    if args.second_instance_smoke:
+        run_second_instance(args.runtime.resolve(), args.result.resolve(), hold_seconds=args.hold_seconds)
+    elif args.crash_smoke:
         run_crash(args.runtime.resolve(), args.result.resolve(), crash_after=args.crash_after_seconds)
     else:
         run(args.runtime.resolve(), args.result.resolve(), existing_wall=args.existing_wall)
