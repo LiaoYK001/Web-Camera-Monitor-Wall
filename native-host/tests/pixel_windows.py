@@ -15,6 +15,7 @@ import os
 from pathlib import Path, PurePosixPath
 import re
 import secrets
+import socket
 import shutil
 import subprocess
 import sys
@@ -28,7 +29,7 @@ sys.path.insert(0, str(ROOT / "native-host/scripts"))
 from prepare import OBS_COMMIT, obtain
 from smoke_windows import fingerprint
 
-PHASES = ("known-colors", "five-codecs", "studio-preview-no-take", "explicit-take", "program-reopened")
+PHASES = ("known-colors", "five-codecs", "studio-preview-no-take", "explicit-take", "program-reopened", "rtsp-loopback")
 ENV_OVERRIDES = ("OBS_PLUGINS_PATH", "OBS_PLUGINS_DATA_PATH", "OBS_CONFIG_PATH", "QT_PLUGIN_PATH",
                  "QT_QPA_PLATFORM_PLUGIN_PATH", "QML2_IMPORT_PATH", "WEBOBS_NATIVE_SMOKE_TOKEN", "WEBOBS_NATIVE_PIXEL_TOKEN")
 
@@ -109,6 +110,124 @@ def locked_ffmpeg(private: Path, offline: bool) -> tuple[Path, Path]:
     return tools / "ffmpeg.exe", tools / "ffprobe.exe"
 
 
+def locked_mediamtx(private: Path, offline: bool) -> Path:
+    lock = read_json(ROOT / "desktop/dependencies.lock.json")
+    artifacts = [a for a in lock["artifacts"] if a.get("id") == "mediamtx"]
+    if len(artifacts) != 1 or lock.get("obsCommit") != OBS_COMMIT:
+        raise ValueError("Exactly one existing desktop-locked MediaMTX artifact is required")
+    artifact = artifacts[0]
+    if (not artifact["url"].startswith("https://github.com/bluenviron/mediamtx/releases/download/") or
+            len(artifact["sha256"]) != 64):
+        raise ValueError("Unapproved locked MediaMTX archive")
+    archive = obtain(artifact, ROOT / "desktop/.cache", offline)
+    tools = private / "fixture-tools"
+    tools.mkdir(exist_ok=True)
+    with zipfile.ZipFile(archive) as source:
+        entries = [e for e in source.infolist() if not e.is_dir() and e.filename.lower().endswith("mediamtx.exe")]
+        if len(entries) != 1 or "/" in entries[0].filename:
+            raise ValueError("Locked MediaMTX archive has ambiguous binary")
+        target = tools / "mediamtx.exe"
+        with source.open(entries[0]) as input_file, target.open("xb") as output_file:
+            shutil.copyfileobj(input_file, output_file)
+    return target
+
+
+class LoopbackRtsp:
+    """Five loopback RTSP publishers behind a fixed local MediaMTX instance.
+
+    Only synthetic fixtures are published on 127.0.0.1; no real-camera,
+    hardware-decode, camera-URL or OBS-parity qualification is claimed.
+    """
+
+    def __init__(self, private: Path, ffmpeg: Path, ffprobe: Path, fixtures: list[dict], token: str, offline: bool):
+        self.private = private
+        self.urls: list[str] = []
+        self.publishers: list[subprocess.Popen] = []
+        self.server: subprocess.Popen | None = None
+        self.log = (private / "rtsp-test.log").open("xb")
+        try:
+            mediamtx = locked_mediamtx(private, offline)
+            eol = chr(10)
+            config = private / "mediamtx.yml"
+            config.write_text(eol.join(["logLevel: warn", "rtspAddress: 127.0.0.1:8554", "paths:", "  all_others:"]) + eol,
+                              encoding="utf-8")
+            self.server = subprocess.Popen([str(mediamtx), str(config)], cwd=private, stdin=subprocess.DEVNULL,
+                                           stdout=self.log, stderr=subprocess.STDOUT)
+            self._wait_port(time.monotonic() + 20)
+            for index in range(5):
+                url = f"rtsp://127.0.0.1:8554/hybrid-{token}-{index + 1}"
+                self.urls.append(url)
+                self.publishers.append(subprocess.Popen(
+                    [str(ffmpeg), "-hide_banner", "-loglevel", "error", "-nostdin", "-re", "-stream_loop", "-1",
+                     "-i", str(private / f"fixture-{index + 1}.mkv"), "-c", "copy", "-f", "rtsp",
+                     "-rtsp_transport", "tcp", url],
+                    cwd=private, stdin=subprocess.DEVNULL, stdout=self.log, stderr=subprocess.STDOUT))
+            self._wait_streams(fixtures, ffprobe, time.monotonic() + 40)
+        except Exception:
+            self.stop()
+            raise
+
+    def _wait_port(self, deadline: float) -> None:
+        while time.monotonic() < deadline:
+            if self.server is not None and self.server.poll() is not None:
+                raise RuntimeError("Loopback RTSP server exited before listening")
+            try:
+                with socket.create_connection(("127.0.0.1", 8554), timeout=0.5):
+                    return
+            except OSError:
+                time.sleep(0.2)
+        raise RuntimeError("Loopback RTSP server did not listen")
+
+    def _wait_streams(self, fixtures: list[dict], ffprobe: Path, deadline: float) -> None:
+        pending = set(range(5))
+        while pending and time.monotonic() < deadline:
+            for index in sorted(pending):
+                publisher = self.publishers[index]
+                if publisher.poll() is not None:
+                    raise RuntimeError("Loopback RTSP publisher exited")
+                try:
+                    probe = subprocess.run(
+                        [str(ffprobe), "-v", "error", "-rtsp_transport", "tcp", "-select_streams", "v:0",
+                         "-show_entries", "stream=codec_name,width,height", "-of", "json", self.urls[index]],
+                        capture_output=True, text=True, timeout=8)
+                except subprocess.TimeoutExpired:
+                    continue
+                if probe.returncode != 0:
+                    continue
+                try:
+                    streams = json.loads(probe.stdout)["streams"]
+                except (ValueError, KeyError):
+                    continue
+                fixture = fixtures[index]
+                if streams == [{"codec_name": fixture["codec"], "width": 320, "height": 180}]:
+                    pending.discard(index)
+            if pending:
+                time.sleep(0.5)
+        if pending:
+            raise RuntimeError("Loopback RTSP streams did not become readable")
+
+    def stop(self) -> None:
+        for publisher in self.publishers:
+            if publisher.poll() is None:
+                publisher.terminate()
+                try:
+                    publisher.wait(timeout=10)
+                except subprocess.TimeoutExpired:
+                    publisher.kill()
+                    publisher.wait(timeout=5)
+        self.publishers = []
+        if self.server is not None and self.server.poll() is None:
+            self.server.terminate()
+            try:
+                self.server.wait(timeout=10)
+            except subprocess.TimeoutExpired:
+                self.server.kill()
+                self.server.wait(timeout=5)
+        self.server = None
+        if not self.log.closed:
+            self.log.close()
+
+
 def make_fixtures(private: Path, ffmpeg: Path, ffprobe: Path, node: str) -> list[dict]:
     """All encoders exit here, BEFORE OBS launches; no dummy recording/output."""
     fixtures = []
@@ -168,12 +287,14 @@ def validate_state(state: dict, seq: int, token: str, pid: int) -> None:
             raise AssertionError("An OBS output/encoder was active during the pixel test")
     if state.get("rawVideoActive") is not False or state.get("sameInputPointersAndSettings") is not True:
         raise AssertionError("Unexpected raw consumer or input mutation")
-    if state.get("globalFfmpegInputsIncludingPrivate") != (0 if seq == 1 else 5):
+    expected_ffmpeg = 0 if seq == 1 else 10 if seq >= 6 else 5
+    if state.get("globalFfmpegInputsIncludingPrivate") != expected_ffmpeg:
         raise AssertionError("Duplicate/missing global Media Source (including private Studio inputs)")
-    if state.get("studio") is not (seq >= 3) or (seq >= 4 and state.get("transitionStopped") is not True):
+    if state.get("studio") is not (3 <= seq <= 5) or (4 <= seq <= 5 and state.get("transitionStopped") is not True):
         raise AssertionError("Studio/TAKE state mismatch")
     windows = state.get("windows", [])
-    if len(windows) != 2 or {w.get("role") for w in windows} != {"main-preview", "program-projector"}:
+    expected_roles = {"main-preview"} if seq >= 6 else {"main-preview", "program-projector"}
+    if len(windows) != len(expected_roles) or {w.get("role") for w in windows} != expected_roles:
         raise AssertionError("Only exact real main Preview and native Program clients are accepted")
     for window in windows:
         expected_class = "OBSBasicPreview" if window["role"] == "main-preview" else "OBSProjector"
@@ -264,7 +385,7 @@ def capture_report(completed: subprocess.CompletedProcess) -> dict:
         if value["captureFailed"]:
             if completed.returncode == 0 or not ("diagnostic" in result or any(role["captureFailed"] for role in result["captures"])):
                 raise ValueError("Inconsistent failed capture report")
-        elif completed.returncode != 0 or seen != set(CAPTURE_ROLES) or any(role["captureFailed"] for role in result["captures"]):
+        elif completed.returncode != 0 or not seen or not seen <= set(CAPTURE_ROLES) or any(role["captureFailed"] for role in result["captures"]):
             raise ValueError("Inconsistent passing capture report")
         result["processExitCode"] = completed.returncode
         return result
@@ -326,12 +447,17 @@ def run(runtime: Path, result: Path, ffmpeg_override: Path | None, offline: bool
                "productMigrationQualified": False, "mediaHardwareQualified": False,
                "publicationForbidden": True, "phases": []}
     process = None
+    rtsp = None
     error = None
     try:
         ffmpeg, ffprobe = ((ffmpeg_override, ffmpeg_override.with_name("ffprobe.exe")) if ffmpeg_override else locked_ffmpeg(private, offline))
-        summary["fixtures"] = make_fixtures(private, ffmpeg, ffprobe, node)
+        (private / "fixture-tools").mkdir(exist_ok=True)
+        fixtures = make_fixtures(private, ffmpeg, ffprobe, node)
+        summary["fixtures"] = fixtures
         summary["fixtureEncodingStoppedBeforeObs"] = True
-        write_new(private / "request.json", {"schema": 1, "token": token})
+        rtsp = LoopbackRtsp(private, ffmpeg, ffprobe, fixtures, token, offline)
+        summary["rtspSources"] = 5
+        write_new(private / "request.json", {"schema": 1, "token": token, "rtsp": rtsp.urls})
         env = os.environ.copy()
         for key in ENV_OVERRIDES:
             env.pop(key, None)
@@ -344,10 +470,10 @@ def run(runtime: Path, result: Path, ffmpeg_override: Path | None, offline: bool
             original_sources = None
             with tempfile.TemporaryDirectory(prefix="webobs-synthetic-client-") as temporary:
                 captures = Path(temporary)
-                for seq in range(1, 6):
+                for seq in range(1, 7):
                     state = wait_state(private, seq, process, deadline)
                     validate_state(state, seq, token, process.pid)
-                    if seq > 1:
+                    if 2 <= seq <= 5:
                         if original_sources is None:
                             original_sources = state["sources"]
                         elif state["sources"] != original_sources:
@@ -365,8 +491,9 @@ def run(runtime: Path, result: Path, ffmpeg_override: Path | None, offline: bool
                              "inputUUIDsAndSettingsUnchanged": True, "programGeneration": state["programGeneration"]}
                     # Analyze every one of the eight files, including earlier bad
                     # samples and missing captures; never retry away a black frame.
-                    for role in ("main-preview", "program-projector"):
-                        reverse = (seq == 3 and role == "main-preview") or (seq >= 4 and role == "program-projector")
+                    for window in state["windows"]:
+                        role = window["role"]
+                        reverse = (seq == 3 and role == "main-preview") or (seq in (4, 5) and role == "program-projector")
                         analysis = subprocess.run([node, str(HERE / "pixel-pattern.cjs"), "analyze", str(phase_capture / role), role,
                                                    "reverse" if reverse else "forward", "false" if seq == 1 else "true"],
                                                   capture_output=True, text=True, check=True, timeout=20)
@@ -375,9 +502,10 @@ def run(runtime: Path, result: Path, ffmpeg_override: Path | None, offline: bool
                     summary["phases"].append(phase)
                     write_new(private / f"ack-{seq:02}.json", {"schema": 1, "seq": seq, "token": token})
                 process.wait(timeout=max(1, min(30, int(deadline-time.monotonic()))))
-                if process.returncode != 0 or read_json(private / "complete.json").get("phases") != 5:
+                if process.returncode != 0 or read_json(private / "complete.json").get("phases") != 6:
                     raise RuntimeError("Native frontend normal close/finite completion failed")
                 summary["normalExit"] = True
+                summary["loopbackRtspPhaseQualified"] = bool(summary["phases"] and summary["phases"][-1]["passed"])
             summary["status"] = "passed" if all(phase["passed"] for phase in summary["phases"]) else "failed"
             summary["syntheticFinalWindowPixelsQualified"] = summary["status"] == "passed"
     except Exception as failure:
@@ -390,6 +518,9 @@ def run(runtime: Path, result: Path, ffmpeg_override: Path | None, offline: bool
             process.kill()  # Only this Popen-owned, new disposable obs64 instance.
             process.wait(timeout=15)
             summary["deadlineOrFailureOwnedProcessKilled"] = True
+        if rtsp is not None:
+            rtsp.stop()
+            summary["loopbackRtspStopped"] = True
         unchanged = fingerprint(external) == before
         summary["externalObsProfileUnchanged"] = unchanged
         if not unchanged:

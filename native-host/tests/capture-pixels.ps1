@@ -49,9 +49,9 @@ try {
         if (-not (Test-Path -LiteralPath $OutputDirectory -PathType Container)) { $code='output-directory'; throw 'Private directory required.' }
         if ((Get-Item -LiteralPath $StateFile).Length -gt 65536) { $code='state-size'; throw 'Oversized state.' }
         $state = Get-Content -LiteralPath $StateFile -Raw | ConvertFrom-Json
-        if ($state.schema -ne 1 -or $state.scope -ne 'synthetic-test-only' -or $state.pid -ne "$ExpectedProcessId" -or @($state.windows).Count -ne 2) { $code='state-identity'; throw 'Unexpected state.' }
+        if ($state.schema -ne 1 -or $state.scope -ne 'synthetic-test-only' -or $state.pid -ne "$ExpectedProcessId" -or @($state.windows).Count -lt 1 -or @($state.windows).Count -gt 2) { $code='state-identity'; throw 'Unexpected state.' }
         $roles = @($state.windows | ForEach-Object { $_.role })
-        if (@($roles | Sort-Object -Unique).Count -ne 2 -or $roles -notcontains 'main-preview' -or $roles -notcontains 'program-projector') { $code='state-roles'; throw 'Unexpected roles.' }
+        if (@($roles | Sort-Object -Unique).Count -ne $roles.Count -or @($roles | Where-Object { $_ -notin @('main-preview','program-projector') }).Count -ne 0 -or ($roles.Count -eq 2 -and (@($roles) -notcontains 'main-preview' -or @($roles) -notcontains 'program-projector'))) { $code='state-roles'; throw 'Unexpected roles.' }
     }
     $stage='compile'
     # Core-only P/Invoke code: no Windows Drawing/Forms references needed.

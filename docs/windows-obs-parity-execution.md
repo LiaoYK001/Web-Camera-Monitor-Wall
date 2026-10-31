@@ -120,6 +120,12 @@ The real entry failure was `Add-Type -AssemblyName System.Drawing` in PowerShell
 
 This is still synthetic fixtures on a GitHub-hosted software-D3D11 runner, not the target RTX 4090, real cameras or an OBS comparison; P2–P5 gates, migration, size and performance remain open, the default package is still legacy Electron, and nothing was published or tagged.
 
+### 回环 RTSP 阶段：测试已扩展，尚未运行 / Loopback RTSP phase
+
+`pixel_test` 有限阶段新增第六阶段 `rtsp-loopback`：测试在启动前先退出 Studio、关闭 Program 投影，再由锁定的 MediaMTX 1.18.2（`desktop/dependencies.lock.json`）在 `127.0.0.1:8554` 上服务五路 `hybrid-<32hex>-1..5` 回环路径，五路 ffmpeg 发布器以 TCP 循环推送同一组本地夹具；harness 只接受五条 `^rtsp://127\.0\.0\.1:[1-9][0-9]{0,4}/hybrid-[0-9a-f]{32}-[1-5]$` URL，以 `is_local_file=false`、`restart_on_activate=true`、`close_when_inactive=false` 创建五个 ffmpeg Media Source 并组成五分屏，等待五路均为 PLAYING/320×180 后由外部仅捕获主 Preview 客户端像素。该阶段全局 ffmpeg 输入为 10，active output/encoder/raw consumer 仍须为零。回环 RTSP 只验证 HTTP 之外的真实解码/播放链路，**不等于**真实摄像机、硬解或 OBS 对照，`rtspQualified` 保持 false；本轮提交时尚未运行 Windows 像素 CI。
+
+A sixth finite phase, `rtsp-loopback`, has been added: the test leaves Studio mode, closes the Program projector, then a locked MediaMTX 1.18.2 serves five `hybrid-<32hex>-1..5` loopback paths on `127.0.0.1:8554` while five ffmpeg publishers loop the same local fixtures over TCP; the harness accepts only five `^rtsp://127\.0\.0\.1:[1-9][0-9]{0,4}/hybrid-[0-9a-f]{32}-[1-5]$` URLs, creates five ffmpeg Media Sources with `is_local_file=false`, `restart_on_activate=true`, `close_when_inactive=false`, builds a five-tile wall and captures only the main Preview client once all five are PLAYING at 320×180. Global ffmpeg inputs must be ten and active outputs/encoders/raw consumers zero. Loopback RTSP exercises the real decode/playback path beyond HTTP but is not a real camera, hardware decode or OBS comparison; `rtspQualified` stays false and the Windows pixel CI had not yet run at commit time.
+
 ### 安装目录实际占用：契约通过，NSIS 记录待完整构建 / Installed-tree footprint
 
 新增只读工具 [installed-tree-footprint.ps1](../desktop/tests/installed-tree-footprint.ps1)：在 NSIS 创建隔离安装根**之前**登记 scope，安装后、首次启动前用 `FILE_STANDARD_INFO` 统计逻辑字节、主数据流分配、文件/目录数与分配单元；拒绝 UNC/设备/ADS、非固定盘、reparse、硬链接、重复身份与扫描期间变化，失败不返回部分或填零结果。安装烟测把 `installedTreeFootprint` 写入 `windows-install-smoke.json`，并新增独立 Windows 契约测试（合成临时夹具，junction / 硬链接 / 可选符号链接 / 越界路径负例）。`37fe688` 起回执再带 `sizeGroups` / `sizeGroupsComplete`：按相对目录前两级归集逻辑/分配字节与文件/目录数，根目录直接文件记为 `.`，最多 199 组再加 `__other__`，不写文件名或绝对路径，用于定位安装体积构成。

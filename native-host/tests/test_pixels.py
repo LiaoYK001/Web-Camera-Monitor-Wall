@@ -49,21 +49,29 @@ class PixelContractTests(unittest.TestCase):
         return {"schema": 1, "seq": seq, "phase": gate.PHASES[seq-1], "token": "a"*32, "pid": "123",
                 "scope": "synthetic-test-only", "canvasWidth": 960, "canvasHeight": 540, "pixelQualified": False,
                 "activeOutputs": 0, "activeEncoders": 0, "rawVideoActive": False, "sameInputPointersAndSettings": True,
-                "globalFfmpegInputsIncludingPrivate": 0 if seq == 1 else 5, "studio": seq >= 3,
-                "transitionStopped": seq >= 4, "programGeneration": 2 if seq == 5 else 1,
-                "windows": [{"role": "main-preview", "qtClass": "OBSBasicPreview"}, {"role": "program-projector", "qtClass": "OBSProjector"}],
+                "globalFfmpegInputsIncludingPrivate": 0 if seq == 1 else 10 if seq >= 6 else 5,
+                "studio": 3 <= seq <= 5, "transitionStopped": 4 <= seq <= 5, "programGeneration": 2 if seq == 5 else 1,
+                "windows": ([{"role": "main-preview", "qtClass": "OBSBasicPreview"}] if seq >= 6 else
+                            [{"role": "main-preview", "qtClass": "OBSBasicPreview"}, {"role": "program-projector", "qtClass": "OBSProjector"}]),
                 "sources": [{"uuid": f"synthetic-{i}", "settingsSha256": str(i)*64} for i in range(5)] if seq > 1 else []}
 
     def test_phase_identity_uuid_counts_encoder_and_no_implicit_take(self):
-        for seq in range(1,6):
+        for seq in range(1,7):
             state = self.state(seq)
             gate.validate_state(state, seq, "a"*32, 123)
-            for key, bad in (("seq", 6), ("token", "b"*32), ("pid", "124"), ("canvasWidth", 1920),
+            for key, bad in (("seq", 1 if seq == 6 else 6), ("token", "b"*32), ("pid", "124"), ("canvasWidth", 1920),
                              ("activeEncoders", 1), ("activeOutputs", 1), ("rawVideoActive", True),
                              ("globalFfmpegInputsIncludingPrivate", 6), ("sameInputPointersAndSettings", False),
                              ("programGeneration", 99), ("pixelQualified", True)):
                 with self.subTest(seq=seq,key=key), self.assertRaises(AssertionError):
                     gate.validate_state(dict(state, **{key:bad}), seq, "a"*32, 123)
+        # The loopback RTSP phase keeps ten global inputs (five local media plus
+        # five RTSP inputs) and leaves Studio again once Program closed.
+        for change in ({"globalFfmpegInputsIncludingPrivate": 5}, {"studio": True},
+                       {"sources": self.state(6)["sources"][:4]},
+                       {"windows": self.state(5)["windows"]}):
+            with self.subTest(change=change), self.assertRaises(AssertionError):
+                gate.validate_state(dict(self.state(6), **change), 6, "a"*32, 123)
         bad = self.state(3)
         bad["windows"][0]["qtClass"] = "OBSProjector"
         with self.assertRaises(AssertionError):
@@ -116,9 +124,14 @@ class PixelContractTests(unittest.TestCase):
         self.assertIn('option(WEBOBS_NATIVE_PIXEL_TEST "NON-REDISTRIBUTABLE synthetic final-window pixel test entry point" OFF)', cmake)
         self.assertIn("#ifdef WEBOBS_NATIVE_PIXEL_TEST", plugin)
         self.assertIn("if(WEBOBS_NATIVE_PIXEL_TEST)", cmake)
-        for text in ("obs_enum_all_sources", "OBSBasicPreview", "OBSProjector", 'ack.size() == 3', 'request.size() != 2',
-                     '"/claimed.json"', "240000", 'obs_frontend_open_projector("StudioProgram"', "obs_frontend_preview_program_trigger_transition"):
+        for text in ("obs_enum_all_sources", "OBSBasicPreview", "OBSProjector", 'ack.size() == 3', 'request.size() != 3',
+                     '"/claimed.json"', "240000", 'obs_frontend_open_projector("StudioProgram"', "obs_frontend_preview_program_trigger_transition",
+                     "loopback_rtsp_urls", "create_rtsp"):
             self.assertIn(text, source)
+        gate_source = (ROOT / "native-host/tests/pixel_windows.py").read_text()
+        for text in ("LoopbackRtsp", "rtsp-loopback", "mediamtx", "rtsp_transport", "loopbackRtspPhaseQualified"):
+            self.assertIn(text, gate_source)
+        self.assertEqual(gate.PHASES[-1], "rtsp-loopback")
         for text in ("QTcpServer", "QWebSocket", "obs_frontend_recording_start", "obs_output_start", "obs_frontend_take_screenshot", "gs_stage_texture"):
             self.assertNotIn(text, source)
         self.assertIn('[switch]$PixelTest', builder)

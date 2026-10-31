@@ -65,6 +65,25 @@ QByteArray settings_hash(obs_source_t *source)
 	return QCryptographicHash::hash(json, QCryptographicHash::Sha256).toHex();
 }
 
+// Exactly five loopback RTSP inputs on the fixed local host/port/path shape.
+// No credentials, LAN address, arbitrary scheme or camera URL can be injected.
+std::array<QString, 5> loopback_rtsp_urls(const QJsonObject &request)
+{
+	const auto value = request.value("rtsp");
+	const auto array = value.toArray();
+	if (!value.isArray() || array.size() != 5)
+		throw std::runtime_error("fixed loopback RTSP URL set unavailable");
+	const QRegularExpression pattern("^rtsp://127\\.0\\.0\\.1:[1-9][0-9]{0,4}/hybrid-[0-9a-f]{32}-[1-5]$");
+	std::array<QString, 5> urls{};
+	for (int i = 0; i < 5; ++i) {
+		const auto url = array.at(i).toString();
+		if (url.size() > 160 || !pattern.match(url).hasMatch())
+			throw std::runtime_error("non-loopback RTSP URL rejected");
+		urls[i] = url;
+	}
+	return urls;
+}
+
 struct Snapshot {
 	unsigned ffmpeg = 0, inputs = 0, active_outputs = 0, active_encoders = 0;
 	std::vector<obs_source_t *> media;
@@ -105,10 +124,13 @@ class Harness final : public QObject {
 	QTimer timer_;
 	QElapsedTimer clock_;
 	qint64 changed_at_ = 0, ready_at_ = -1;
-	Sources color_{}, media_{};
+	Sources color_{}, media_{}, rtsp_{};
 	std::array<QByteArray, 5> hashes_{};
 	std::array<std::string, 5> uuids_{};
-	obs_scene_t *known_ = nullptr, *a_ = nullptr, *b_ = nullptr;
+	std::array<QByteArray, 5> rtsp_hashes_{};
+	std::array<std::string, 5> rtsp_uuids_{};
+	std::array<QString, 5> rtsp_urls_{};
+	obs_scene_t *known_ = nullptr, *a_ = nullptr, *b_ = nullptr, *rtsp_scene_ = nullptr;
 	int phase_ = 0, generation_ = 0;
 	bool published_ = false, closing_ = false, take_stopped_ = false, reopening_ = false;
 
@@ -220,6 +242,26 @@ class Harness final : public QObject {
 		require(b_, "real five-tile wall B creation failed");
 		select_wall(a_);
 	}
+	void create_rtsp()
+	{
+		for (std::size_t i = 0; i < rtsp_.size(); ++i) {
+			auto *settings = obs_data_create();
+			const auto utf8 = rtsp_urls_[i].toUtf8();
+			obs_data_set_bool(settings, "is_local_file", false); obs_data_set_string(settings, "input", utf8.constData());
+			obs_data_set_bool(settings, "looping", false); obs_data_set_bool(settings, "hw_decode", false);
+			obs_data_set_bool(settings, "restart_on_activate", true); obs_data_set_bool(settings, "close_when_inactive", false);
+			const auto name = "Synthetic loopback RTSP " + std::to_string(i + 1);
+			rtsp_[i] = obs_source_create("ffmpeg_source", name.c_str(), settings, nullptr);
+			obs_data_release(settings);
+			require(rtsp_[i], "loopback RTSP Media Source creation failed");
+			rtsp_uuids_[i] = obs_source_get_uuid(rtsp_[i]);
+			rtsp_hashes_[i] = settings_hash(rtsp_[i]);
+		}
+		auto result = create_five_tile_wall(rtsp_uuids_);
+		rtsp_scene_ = result.scene;
+		require(rtsp_scene_, "loopback RTSP five-tile wall creation failed");
+		select_wall(rtsp_scene_);
+	}
 	bool scene_is(obs_source_t *(*getter)(), obs_scene_t *expected) const
 	{
 		auto *source = getter();
@@ -230,10 +272,30 @@ class Harness final : public QObject {
 	bool identities(Snapshot &snapshot)
 	{
 		if (phase_ == 1) return snapshot.ffmpeg == 0;
-		if (snapshot.ffmpeg != 5 || snapshot.media.size() != 5) return false;
-		for (std::size_t i = 0; i < media_.size(); ++i) {
-			if (std::find(snapshot.media.begin(), snapshot.media.end(), media_[i]) == snapshot.media.end() ||
-			    uuids_[i] != obs_source_get_uuid(media_[i]) || hashes_[i] != settings_hash(media_[i])) return false;
+		const bool rtsp_phase = phase_ >= 6;
+		const std::size_t expected = rtsp_phase ? 10 : 5;
+		if (snapshot.ffmpeg != expected || snapshot.media.size() != expected) return false;
+		const auto intact = [&](const Sources &sources, const std::array<std::string, 5> &uuids,
+		                        const std::array<QByteArray, 5> &hashes) {
+			for (std::size_t i = 0; i < sources.size(); ++i) {
+				if (!sources[i] || std::find(snapshot.media.begin(), snapshot.media.end(), sources[i]) == snapshot.media.end() ||
+				    uuids[i] != obs_source_get_uuid(sources[i]) || hashes[i] != settings_hash(sources[i])) return false;
+			}
+			return true;
+		};
+		if (!intact(media_, uuids_, hashes_)) return false;
+		if (rtsp_phase) {
+			if (!intact(rtsp_, rtsp_uuids_, rtsp_hashes_) || !rtsp_scene_) return false;
+			struct RtspItems { const Sources *sources; std::size_t count = 0; bool valid = true; };
+			RtspItems items{&rtsp_};
+			obs_scene_enum_items(rtsp_scene_, [](obs_scene_t *, obs_sceneitem_t *item, void *data) {
+				auto &list = *static_cast<RtspItems *>(data);
+				if (list.count >= 5) { list.valid = false; return false; }
+				if (obs_sceneitem_get_source(item) != (*list.sources)[list.count]) list.valid = false;
+				obs_sceneitem_select(item, false); ++list.count;
+				return true;
+			}, &items);
+			return items.valid && items.count == 5;
 		}
 		struct Items { const Sources *sources; bool reversed; std::size_t count = 0; bool valid = true; };
 		for (int reverse = 0; reverse < 2; ++reverse) {
@@ -253,6 +315,13 @@ class Harness final : public QObject {
 	bool ready()
 	{
 		if (phase_ == 1) return scene_is(obs_frontend_get_current_scene, known_);
+		if (phase_ >= 6) {
+			for (auto *source : rtsp_) {
+				if (!source || obs_source_media_get_state(source) != OBS_MEDIA_STATE_PLAYING ||
+				    obs_source_get_width(source) != 320 || obs_source_get_height(source) != 180) return false;
+			}
+			return !obs_frontend_preview_program_mode_active() && scene_is(obs_frontend_get_current_scene, rtsp_scene_);
+		}
 		for (auto *source : media_) {
 			if (!source || obs_source_media_get_state(source) != OBS_MEDIA_STATE_PLAYING ||
 			    obs_source_get_width(source) != 320 || obs_source_get_height(source) != 180) return false;
@@ -273,10 +342,16 @@ class Harness final : public QObject {
 	void publish(Snapshot &snapshot)
 	{
 		require(QMetaObject::invokeMethod(main_, "setPreviewScalingWindow", Qt::DirectConnection), "Preview fit-to-window slot unavailable");
+		const bool rtsp_phase = phase_ >= 6;
+		const auto &uuid_set = rtsp_phase ? rtsp_uuids_ : uuids_;
+		const auto &hash_set = rtsp_phase ? rtsp_hashes_ : hashes_;
 		QJsonArray ids;
-		if (phase_ > 1) for (std::size_t i = 0; i < media_.size(); ++i)
-			ids.append(QJsonObject{{"uuid", QString::fromStdString(uuids_[i])}, {"settingsSha256", QString::fromLatin1(hashes_[i])}});
-		const char *names[] = {"", "known-colors", "five-codecs", "studio-preview-no-take", "explicit-take", "program-reopened"};
+		if (phase_ > 1) for (std::size_t i = 0; i < uuid_set.size(); ++i)
+			ids.append(QJsonObject{{"uuid", QString::fromStdString(uuid_set[i])}, {"settingsSha256", QString::fromLatin1(hash_set[i])}});
+		const char *names[] = {"", "known-colors", "five-codecs", "studio-preview-no-take", "explicit-take", "program-reopened",
+		                       "rtsp-loopback"};
+		QJsonArray windows; windows.append(window(preview_, "main-preview", 10));
+		if (program_) windows.append(window(program_, "program-projector", 0));
 		const QJsonObject state{{"schema", 1}, {"seq", phase_}, {"phase", QString::fromLatin1(names[phase_])}, {"token", token_},
 		                       {"pid", QString::number(QCoreApplication::applicationPid())}, {"canvasWidth", 960}, {"canvasHeight", 540},
 		                       {"studio", obs_frontend_preview_program_mode_active()}, {"transitionStopped", take_stopped_},
@@ -284,7 +359,7 @@ class Harness final : public QObject {
 		                       {"globalFfmpegInputsIncludingPrivate", int(snapshot.ffmpeg)}, {"globalInputCountIncludingPrivate", int(snapshot.inputs)},
 		                       {"activeOutputs", int(snapshot.active_outputs)}, {"activeEncoders", int(snapshot.active_encoders)},
 		                       {"rawVideoActive", obs_video_active()}, {"sameInputPointersAndSettings", true}, {"sources", ids},
-		                       {"windows", QJsonArray{window(preview_, "main-preview", 10), window(program_, "program-projector", 0)}},
+		                       {"windows", windows},
 		                       {"pixelQualified", false}, {"scope", "synthetic-test-only"}};
 		write_new(directory_ + QString("/phase-%1.json").arg(phase_, 2, 10, QLatin1Char('0')), state);
 		published_ = true;
@@ -297,8 +372,9 @@ class Harness final : public QObject {
 		else if (phase_ == 3) { obs_frontend_set_preview_program_mode(true); select_wall(b_); }
 		else if (phase_ == 4) { take_stopped_ = false; obs_frontend_preview_program_trigger_transition(); }
 		else if (phase_ == 5) { require(program_, "Program projector lost before reopen"); program_->close(); reopening_ = true; }
+		else if (phase_ == 6) { if (program_) { program_->close(); program_ = nullptr; } obs_frontend_set_preview_program_mode(false); create_rtsp(); }
 		else {
-			write_new(directory_ + "/complete.json", {{"schema", 1}, {"phases", 5}, {"syntheticOnly", true}, {"pixelQualified", false}});
+			write_new(directory_ + "/complete.json", {{"schema", 1}, {"phases", 6}, {"syntheticOnly", true}, {"pixelQualified", false}});
 			close_normal();
 		}
 	}
@@ -333,9 +409,10 @@ class Harness final : public QObject {
 		} catch (const std::exception &error) { fail(error.what()); }
 	}
 public:
-	Harness(QWidget *main, QString directory, QString token)
+	Harness(QWidget *main, QString directory, QString token, std::array<QString, 5> rtsp_urls)
 		: QObject(main), main_(main), directory_(std::move(directory)), token_(std::move(token))
 	{
+		rtsp_urls_ = std::move(rtsp_urls);
 		clock_.start();
 		QObject::connect(&timer_, &QTimer::timeout, this, [this] { tick(); });
 		try { advance(); timer_.start(100); }
@@ -345,7 +422,9 @@ public:
 	{
 		timer_.stop();
 		obs_scene_release(known_); obs_scene_release(a_); obs_scene_release(b_);
+		if (rtsp_scene_) obs_scene_release(rtsp_scene_);
 		for (auto *source : media_) obs_source_release(source);
+		for (auto *source : rtsp_) if (source) obs_source_release(source);
 		for (auto *source : color_) obs_source_release(source);
 	}
 	void transition_stopped() { if (phase_ == 4) take_stopped_ = true; }
@@ -380,10 +459,11 @@ bool pixel_test_event(enum obs_frontend_event event)
 		if (manifest.value("obsCommit").toString() != pin || manifest.value("defaultProduct").toBool(true) ||
 		    !manifest.value("pixelTestBuild").toBool() || !manifest.value("redistributable").isBool() || manifest.value("redistributable").toBool(true) ||
 		    !build.value("pixelTestBuild").toBool() || build.value("redistributable").toBool(true) ||
-		    request.size() != 2 || request.value("schema").toInt() != 1 || request.value("token").toString() != token ||
+		    request.size() != 3 || request.value("schema").toInt() != 1 || request.value("token").toString() != token ||
 		    QFileInfo::exists(directory + "/claimed.json") || QFileInfo::exists(directory + "/phase-01.json")) return false;
+		const auto rtsp_urls = loopback_rtsp_urls(request);
 		if (!QFile::rename(directory + "/request.json", directory + "/claimed.json")) return false;
-		harness = new Harness(static_cast<QWidget *>(obs_frontend_get_main_window()), directory, token);
+		harness = new Harness(static_cast<QWidget *>(obs_frontend_get_main_window()), directory, token, rtsp_urls);
 		return true;
 	} catch (...) { return false; } // Malformed test opt-in cannot mutate an ordinary profile.
 }
