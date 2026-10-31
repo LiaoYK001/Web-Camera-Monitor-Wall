@@ -206,7 +206,6 @@ def run_crash(runtime: Path, result: Path, *, crash_after: int = 8) -> dict:
     pwsh = shutil.which("pwsh")
     if not pwsh:
         raise RuntimeError("PowerShell 7.2+ is required")
-    token = secrets.token_hex(16)
     environment = os.environ.copy()
     for name in ("OBS_PLUGINS_PATH", "OBS_PLUGINS_DATA_PATH", "OBS_CONFIG_PATH", "QT_PLUGIN_PATH", "QT_QPA_PLATFORM_PLUGIN_PATH", "QML2_IMPORT_PATH"):
         environment[name] = str(runtime / "deliberately-nonexistent-external-override")
@@ -214,7 +213,7 @@ def run_crash(runtime: Path, result: Path, *, crash_after: int = 8) -> dict:
     product_file = (result.parent / (result.stem + "-product.json")).resolve()
     write_product_config(product_file)
     args = [pwsh, "-NoProfile", "-File", str(runtime / "launch-native.ps1"), "-AllowPrototype",
-            "-SmokeToken", token, "-TimeoutSeconds", "120", "-CrashAfterSeconds", str(crash_after),
+            "-CrashProbe", "-TimeoutSeconds", "120", "-CrashAfterSeconds", str(crash_after),
             "-ProcessGatePath", str(gate_path), "-ProductConfig", str(product_file)]
     try:
         process = subprocess.run(args, cwd=runtime.parent, env=environment, check=False)

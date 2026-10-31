@@ -7,6 +7,7 @@ param(
     [switch]$ReuseProfile,
     [ValidateRange(10,300)][int]$TimeoutSeconds = 90,
     [ValidateRange(0,300)][int]$CrashAfterSeconds = 0,
+    [switch]$CrashProbe,
     [string]$ProcessGatePath = ''
 )
 $ErrorActionPreference = 'Stop'
@@ -22,7 +23,7 @@ foreach ($relative in @('portable_mode.txt','disable_updater.txt','bin/64bit/obs
 # The sentinel and fixed working directory are both required by OBS 32.1.2.
 # This writable portable profile never imports %APPDATA%\obs-studio or desktop data.
 $config = Join-Path $root 'config'
-if ($SmokeToken) {
+if ($SmokeToken -or $CrashProbe) {
     if (-not $ReuseProfile -and (Test-Path -LiteralPath $config)) { throw 'Smoke mode requires a NEW disposable runtime with no existing profile.' }
     if ($ReuseProfile -and -not (Test-Path -LiteralPath (Join-Path $config 'obs-studio'))) { throw 'ReuseProfile requires an existing disposable portable profile.' }
     $profile = Join-Path $config 'obs-studio'
@@ -65,8 +66,8 @@ $gateListeners = @()
 $gateSamples = 0
 $gateCrashed = $false
 $gateClock = [Diagnostics.Stopwatch]::StartNew()
-if ($ProcessGatePath -and -not $SmokeToken) { throw 'ProcessGatePath is only supported for the smoke launcher.' }
-if ($SmokeToken) {
+if ($ProcessGatePath -and -not ($SmokeToken -or $CrashProbe)) { throw 'ProcessGatePath is only supported for the smoke launcher.' }
+if ($SmokeToken -or $CrashProbe) {
     $exited = $false
     while (-not $exited) {
         $exited = $process.WaitForExit(500)

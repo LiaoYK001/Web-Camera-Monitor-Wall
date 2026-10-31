@@ -213,6 +213,8 @@ class BuildContractTests(unittest.TestCase):
         self.assertIn("native-crash-smoke.json", workflow)
         self.assertIn("--crash-after-seconds 8", workflow)
         self.assertIn("$CrashAfterSeconds", launcher)
+        self.assertIn("-CrashProbe", smoke)
+        self.assertIn("$CrashProbe", launcher)
         self.assertIn("crashed = [bool]$gateCrashed", launcher)
         self.assertIn('--crash-smoke', smoke)
         self.assertIn('gate.get("crashed") is not True', smoke)
