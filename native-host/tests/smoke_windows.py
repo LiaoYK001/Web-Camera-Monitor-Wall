@@ -96,11 +96,17 @@ def fingerprint(root: Path) -> dict:
     return state
 
 
-def run(runtime: Path, result: Path) -> dict:
+def run(runtime: Path, result: Path, *, existing_wall: bool = False) -> dict:
     if sys.platform != "win32":
         raise RuntimeError("The Qt startup smoke requires actual Windows x64")
-    if (runtime / "config").exists() or result.exists():
-        raise ValueError("Use a NEW disposable runtime and result path; never overwrite private configuration")
+    profile = (runtime / "config/obs-studio").resolve()
+    if existing_wall:
+        if not profile.is_dir() or not (profile / "global.ini").is_file() or not (profile / "user.ini").is_file():
+            raise ValueError("Existing-wall smoke requires an installed private portable profile")
+    elif (runtime / "config").exists():
+        raise ValueError("Use a NEW disposable runtime; never overwrite private configuration")
+    if result.exists():
+        raise ValueError("Use a NEW result path")
     pwsh = shutil.which("pwsh")
     if not pwsh:
         raise RuntimeError("PowerShell 7.2+ is required")
@@ -114,32 +120,43 @@ def run(runtime: Path, result: Path) -> dict:
     # The real launcher must remove these, including Qt's plugin override.
     for name in ("OBS_PLUGINS_PATH", "OBS_PLUGINS_DATA_PATH", "OBS_CONFIG_PATH", "QT_PLUGIN_PATH", "QT_QPA_PLATFORM_PLUGIN_PATH", "QML2_IMPORT_PATH"):
         environment[name] = str(runtime / "deliberately-nonexistent-external-override")
-    profile = (runtime / "config/obs-studio").resolve()
     product_file = (result.parent / (result.stem + "-product.json")).resolve()
     write_product_config(product_file)
     try:
-        launch_once(runtime, pwsh, environment, token, product_file)
+        launch_once(runtime, pwsh, environment, token, product_file, reuse=existing_wall)
         first_receipt = verify_smoke(profile / "native-smoke.json", token, profile)
-        first_product = check_product_receipt(profile / "plugin_config/webobs-native-host/product-bootstrap.json")
-        (profile / "native-smoke.json").replace(profile / "native-smoke-first.json")
-        (profile / "plugin_config/webobs-native-host/product-bootstrap.json").replace(
-            profile / "plugin_config/webobs-native-host/product-bootstrap-first.json")
-        launch_once(runtime, pwsh, environment, token, product_file, reuse=True)
-        verify_smoke(profile / "native-smoke.json", token, profile)
-        second_product = check_product_receipt(profile / "plugin_config/webobs-native-host/product-bootstrap.json",
-                                               expect_created=0, expect_reused=5, expect_scene_reused=True)
+        product = check_product_receipt(
+            profile / "plugin_config/webobs-native-host/product-bootstrap.json",
+            expect_created=0 if existing_wall else 5,
+            expect_reused=5 if existing_wall else 0,
+            expect_scene_reused=True if existing_wall else None)
+        if existing_wall:
+            second = product
+        else:
+            (profile / "native-smoke.json").replace(profile / "native-smoke-first.json")
+            (profile / "plugin_config/webobs-native-host/product-bootstrap.json").replace(
+                profile / "plugin_config/webobs-native-host/product-bootstrap-first.json")
+            launch_once(runtime, pwsh, environment, token, product_file, reuse=True)
+            verify_smoke(profile / "native-smoke.json", token, profile)
+            second = check_product_receipt(profile / "plugin_config/webobs-native-host/product-bootstrap.json",
+                                           expect_created=0, expect_reused=5, expect_scene_reused=True)
     finally:
         product_file.unlink(missing_ok=True)
     if fingerprint(external) != before:
         raise AssertionError("External OBS profile changed during native portable smoke; do not publish private files")
-    summary = {"schema": 1, "status": "passed", "obsVersion": "32.1.2", "qtVersion": first_receipt["qtVersion"],
+    qualification = ("Single launch over an installed private profile: reuse only; "
+                     "no camera/pixel/performance/auth/upgrade claim") if existing_wall else (
+        "Two launches in one disposable profile: fresh product creation then reuse; "
+        "no camera/pixel/performance/auth/upgrade claim")
+    summary = {"schema": 1, "status": "passed", "existingWallMode": existing_wall,
+               "obsVersion": "32.1.2", "qtVersion": first_receipt["qtVersion"],
                "dockLoaded": True, "mediaSourceRegistered": True, "normalExit": True,
                "portableProfile": True, "externalObsProfileUnchanged": True,
-               "productCameraCreated": first_product["created"], "productCameraReused": first_product["reused"],
-               "productCameraCreatedSecond": second_product["created"], "productCameraReusedSecond": second_product["reused"],
-               "productSceneReusedSecond": second_product["sceneReused"],
+               "productCameraCreated": product["created"], "productCameraReused": product["reused"],
+               "productCameraCreatedSecond": second["created"], "productCameraReusedSecond": second["reused"],
+               "productSceneReusedSecond": second["sceneReused"],
                "inheritedPluginOverridesCleared": True, "mediaQualified": False,
-               "qualification": "Two launches in one disposable profile: fresh product creation then reuse; no camera/pixel/performance/auth/upgrade claim"}
+               "qualification": qualification}
     with result.open("x", encoding="utf-8") as output:
         json.dump(summary, output, indent=2)
         output.write("\n")
@@ -151,5 +168,7 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--runtime", type=Path, required=True)
     parser.add_argument("--result", type=Path, required=True)
+    parser.add_argument("--existing-wall", action="store_true",
+                        help="existing installed profile already owns the five-camera wall")
     args = parser.parse_args()
-    run(args.runtime.resolve(), args.result.resolve())
+    run(args.runtime.resolve(), args.result.resolve(), existing_wall=args.existing_wall)

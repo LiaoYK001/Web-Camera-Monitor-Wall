@@ -107,6 +107,24 @@ jobs:
           if (Test-Path (Join-Path $extract 'config')) { throw 'Portable archive leaked a configured profile.' }
           python -B native-host/tests/smoke_windows.py --runtime $extract --result (Join-Path $env:GITHUB_WORKSPACE 'build/obs-native-ci/native-portable-smoke.json')
           if ($LASTEXITCODE -ne 0) { throw 'Frozen portable ZIP startup/isolation smoke failed.' }
+      - name: Install the frozen prototype twice and verify private config survives
+        if: ${{ !inputs.pixel_test }}
+        shell: pwsh
+        env:
+          NATIVE_VERSION: ${{ inputs.version }}
+        run: |
+          $zip = Get-ChildItem (Join-Path $env:GITHUB_WORKSPACE 'build/obs-native-ci/WebOBS-OBS-native-*-PROTOTYPE.zip') | Select-Object -First 1
+          if (-not $zip) { throw 'No frozen prototype archive to install.' }
+          $root = Join-Path $env:RUNNER_TEMP 'native-install'
+          if (Test-Path $root) { Remove-Item -Recurse -Force $root }
+          python -B native-host/scripts/install_native.py --package $zip.FullName --install-root $root --receipt (Join-Path $env:GITHUB_WORKSPACE 'build/obs-native-ci/native-install-first.json')
+          if ($LASTEXITCODE -ne 0) { throw 'Fresh private install failed.' }
+          python -B native-host/tests/smoke_windows.py --runtime $root --result (Join-Path $env:GITHUB_WORKSPACE 'build/obs-native-ci/native-install-smoke-first.json')
+          if ($LASTEXITCODE -ne 0) { throw 'Fresh install smoke failed.' }
+          python -B native-host/scripts/install_native.py --package $zip.FullName --install-root $root --receipt (Join-Path $env:GITHUB_WORKSPACE 'build/obs-native-ci/native-install-second.json')
+          if ($LASTEXITCODE -ne 0) { throw 'Reinstall over the private profile failed.' }
+          python -B native-host/tests/smoke_windows.py --runtime $root --result (Join-Path $env:GITHUB_WORKSPACE 'build/obs-native-ci/native-install-smoke-second.json') --existing-wall
+          if ($LASTEXITCODE -ne 0) { throw 'Existing-wall smoke after reinstall failed.' }
       - name: Require actual Qt plugin startup, private portable config and normal exit
         if: ${{ !inputs.pixel_test }}
         shell: pwsh
@@ -132,6 +150,10 @@ jobs:
             build/obs-native-ci/runtime/webobs-native-prototype.json
             build/obs-native-ci/native-startup-smoke.json
             build/obs-native-ci/native-portable-smoke.json
+            build/obs-native-ci/native-install-first.json
+            build/obs-native-ci/native-install-second.json
+            build/obs-native-ci/native-install-smoke-first.json
+            build/obs-native-ci/native-install-smoke-second.json
           if-no-files-found: ignore
           retention-days: 7
           compression-level: 0

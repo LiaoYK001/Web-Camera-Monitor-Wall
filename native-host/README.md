@@ -24,7 +24,14 @@ pwsh -NoProfile -File desktop/scripts/build-obs-native.ps1 -Version 0.1.0-dev.3 
 
 默认输出为 `build/obs-native-windows/<dev-version>-<unique-id>/`，内有只读语义的源码快照、OBS build/install、plugin build 和独立 `runtime/`。每次使用 **全新构建树**，只复用已验证归档缓存，避免上游 `.deps` 提取收据掩盖陈旧内容。脚本拒绝已存在的 `BuildDirectory`，不会删除、迁移或覆盖私密 portable 数据。失败后请保留现场，另选新目录重试。`--offline` 对缺失归档直接失败；已复制归档均完整验证后才会启动上游 CMake。
 
-结果中的 `webobs-native-prototype.json` 记录固定版本、禁用可选特性、无服务启动和按 Qt/plugins/other 粗分的实际字节数。这是原型体积基线，不是发布包/压缩率或性能结论。保留 OBS 自身的 license/data 安装内容，并复制 GPL、产品插件许可、依赖锁；公开分发前仍须完整许可证/源码包审计。
+结果中的 `webobs-native-prototype.json` 记录固定版本、禁用可选特性、无服务启动和按 Qt/plugins/other 粗分的实际字节数。
+
+### 原型安装与升级 / Prototype install and upgrade
+
+`native-host/scripts/install_native.py` 把冻结 ZIP 安装到用户指定的私密目录：校验条目路径与 manifest（开发版、`defaultProduct=false`、不启动服务）、拒绝包内 `config/`、当前安装目录没有 manifest 时拒绝覆盖无关目录、替换前备份并在失败时回滚；已存在的 `config/obs-studio` portable profile 会复制进新树，因此重装/升级保留五格墙、source settings 与账号登录。安装器写入小型 JSON 回执（版本、SHA-256、是否保留配置、文件数），不含路径、URL 或日志。这是原型安装器，不注册系统服务、不写注册表、未签名，也不是产品安装包。
+
+`native-host/scripts/install_native.py` installs a frozen ZIP into a private caller-chosen directory: it validates entry paths and the manifest (development version, `defaultProduct=false`, no services), rejects a bundled `config/`, refuses to overwrite an unrelated directory without a manifest, backs up the old tree and rolls back on failure; an existing `config/obs-studio` portable profile is copied into the new tree so reinstall or upgrade keeps the five-tile wall, source settings and account login. It writes a small JSON receipt (version, SHA-256, whether config was preserved, file count) without paths, URLs or logs. This is a prototype installer: no service registration, no registry writes, unsigned, and not a product installer.
+这是原型体积基线，不是发布包/压缩率或性能结论。保留 OBS 自身的 license/data 安装内容，并复制 GPL、产品插件许可、依赖锁；公开分发前仍须完整许可证/源码包审计。
 
 ## 运行与配置隔离
 
