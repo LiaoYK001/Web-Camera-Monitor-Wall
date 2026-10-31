@@ -126,6 +126,96 @@ class PixelContractTests(unittest.TestCase):
         self.assertIn('-DWEBOBS_NATIVE_PIXEL_TEST=$pixelBuild', builder)
         self.assertIn("$SmokeTest -and $PixelTest", builder)
 
+    def capture_result(self, failed=False):
+        roles = [{"role": role, "captureFailed": False, "sampleCount": 8,
+                  "sampleElapsedMs": [400+i*310 for i in range(8)]} for role in gate.CAPTURE_ROLES]
+        if failed:
+            roles[0].update(captureFailed=True, sampleCount=0, sampleElapsedMs=[],
+                            diagnostic={"stage": "identity", "code": "process-identity", "sampleIndex": -1,
+                                        "completedSamples": 0, "nativeError": 0, "compilerCodes": []})
+        return {"schema": 1, "captureFailed": failed, "captures": roles}
+
+    def test_capture_report_retains_safe_partial_failures_and_all_eight_counts(self):
+        for failed in (False, True):
+            payload = self.capture_result(failed)
+            # A private subprocess must not smuggle extra data into the artifact.
+            payload.update(token="secret-token", pid="777777", hwnd="deadbeef", path="C:/private/profile")
+            payload["captures"][0]["privateError"] = "C:/private/profile secret-token"
+            report = gate.capture_report(subprocess.CompletedProcess([], int(failed), json.dumps(payload), "private-stderr"))
+            self.assertEqual(report["captureFailed"], failed)
+            self.assertEqual(len(report["captures"]), 2)
+            self.assertEqual(report["captures"][1]["sampleCount"], 8)
+            if failed:
+                self.assertEqual(report["captures"][0]["diagnostic"]["code"], "process-identity")
+            for secret in ("secret-token", "777777", "deadbeef", "C:/private", "private-stderr"):
+                self.assertNotIn(secret, json.dumps(report))
+
+    def test_capture_compile_failure_keeps_codes_not_stderr_or_paths(self):
+        payload = {"schema": 1, "captureFailed": True, "captures": [],
+                   "diagnostic": {"stage": "compile", "code": "csharp-compilation", "compilerCodes": ["CS1069", "CS0012"]}}
+        report = gate.capture_report(subprocess.CompletedProcess([], 1, json.dumps(payload), "C:/private/token user HWND123"))
+        self.assertEqual(report["diagnostic"]["stage"], "compile")
+        self.assertEqual(report["diagnostic"]["compilerCodes"], ["CS0012", "CS1069"])
+        self.assertNotIn("private", json.dumps(report))
+        # Parser/host failures before the script's catch still have a bounded
+        # category; only the exact compiler-code grammar may leave stderr.
+        report = gate.capture_report(subprocess.CompletedProcess([], 1, "", "C:/private/token: CS1069 PID777 HWND123"))
+        self.assertEqual(report["diagnostic"]["code"], "no-report")
+        self.assertEqual(report["diagnostic"]["compilerCodes"], ["CS1069"])
+        for secret in ("private", "token", "777", "HWND123"):
+            self.assertNotIn(secret, json.dumps(report))
+
+    def test_capture_report_rejects_unsafe_or_inconsistent_categories(self):
+        for bad in ({}, {"schema": 1, "captureFailed": False, "captures": []},
+                    {"schema": 1, "captureFailed": True, "captures": [], "diagnostic": {"stage": "private-path", "code": "secret"}}):
+            report = gate.capture_report(subprocess.CompletedProcess([], 0, json.dumps(bad), ""))
+            self.assertTrue(report["captureFailed"])
+            self.assertEqual(report["diagnostic"]["code"], "invalid-report")
+            self.assertNotIn("private-path", json.dumps(report))
+        for change in ({"sampleCount": 7}, {"sampleElapsedMs": [999999]*8},
+                       {"role": "C:/private/path"}, {"captureFailed": "false"}):
+            payload = self.capture_result()
+            payload["captures"][0].update(change)
+            report = gate.capture_report(subprocess.CompletedProcess([], 0, json.dumps(payload), ""))
+            self.assertTrue(report["captureFailed"])
+        for value in (-2, 8, "secret"):
+            payload = self.capture_result(True)
+            payload["captures"][0]["diagnostic"]["sampleIndex"] = value
+            self.assertTrue(gate.capture_report(subprocess.CompletedProcess([], 1, json.dumps(payload), ""))["captureFailed"])
+            self.assertEqual(gate.capture_report(subprocess.CompletedProcess([], 1, json.dumps(payload), ""))["diagnostic"]["code"], "invalid-report")
+
+    def test_capture_timeout_and_launch_failure_are_bounded_without_private_command(self):
+        command = ["C:/private/tool", "secret-token", "PID777", "HWND123"]
+        for failure, code in ((subprocess.TimeoutExpired(command, 45, output="secret", stderr="C:/private"), "timeout"),
+                              (OSError("C:/private/secret-token"), "launch-failed")):
+            with patch.object(gate.subprocess, "run", side_effect=failure):
+                report = gate.run_capture(command, 45)
+                self.assertTrue(report["captureFailed"])
+                self.assertEqual(report["diagnostic"]["code"], code)
+                for secret in command + ["secret-token", "PID777", "HWND123"]:
+                    self.assertNotIn(secret, json.dumps(report))
+
+    def test_capture_compile_only_references_and_unchanged_identity_guards(self):
+        script = (HERE / "capture-pixels.ps1").read_text()
+        self.assertIn("[switch]$CompileOnly", script)
+        self.assertIn("Join-Path $PSHOME 'ref'", script)
+        self.assertIn("[System.Drawing.Bitmap].Assembly.Location", script)
+        self.assertIn("[System.Windows.Forms.Screen].Assembly.Location", script)
+        self.assertIn("Add-Type -ReferencedAssemblies $references", script)
+        for guard in ("process.StartTime.ToUniversalTime().ToFileTimeUtc()!=creation", "actual!=pid || actualRoot!=pid",
+                      "GetAncestor(hwnd,2)!=root", "!IsChild(hwnd,hit)", "screen.Contains(new Rectangle", "DwmFlush()", "i<8"):
+            self.assertIn(guard, script)
+        self.assertNotIn("Exception.Message", script.replace("# Never emit Exception.Message", ""))
+
+    @unittest.skipUnless(sys.platform == "win32" and shutil.which("pwsh"), "Real PowerShell inline C# compile preflight requires Windows")
+    def test_real_windows_capture_compile_only(self):
+        completed = subprocess.run([shutil.which("pwsh"), "-NoProfile", "-File", str(HERE / "capture-pixels.ps1"), "-CompileOnly"],
+                                   capture_output=True, text=True, timeout=30)
+        # Never echo the compiler's unbounded stderr on test failure.
+        self.assertEqual(completed.returncode, 0, "Inline capture C# compile preflight failed")
+        value = json.loads(completed.stdout)
+        self.assertEqual(value, {"schema": 1, "compileOnly": True, "captureFailed": False, "captures": []})
+
     @unittest.skipUnless(os.environ.get("WEBOBS_TEST_FFMPEG") and shutil.which("node"), "Opt-in local FFmpeg fixture smoke")
     def test_real_five_independent_hevc_preencoding(self):
         ffmpeg = Path(os.environ["WEBOBS_TEST_FFMPEG"])

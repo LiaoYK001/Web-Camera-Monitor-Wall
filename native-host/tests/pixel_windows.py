@@ -13,6 +13,7 @@ import hashlib
 import json
 import os
 from pathlib import Path, PurePosixPath
+import re
 import secrets
 import shutil
 import subprocess
@@ -179,6 +180,103 @@ def validate_state(state: dict, seq: int, token: str, pid: int) -> None:
             raise AssertionError("Five distinct retained source UUIDs are required")
 
 
+# The public receipt deliberately carries no PowerShell exception text, paths,
+# process identity, token or HWND. Even valid JSON from the private subprocess is
+# projected onto this finite schema, never copied into the artifact verbatim.
+CAPTURE_ROLES = ("main-preview", "program-projector")
+CAPTURE_CODES = {
+    "input": {"input-validation", "windows-required", "output-directory", "state-size", "state-identity", "state-roles", "window-state", "native-arguments"},
+    "assembly-load": {"reference-assemblies"}, "compile": {"csharp-compilation"},
+    "role-directory": {"role-directory"}, "identity": {"process-inspection", "process-identity", "window-identity"},
+    "dpi": {"dpi-awareness"}, "expose": {"interactive-screen", "main-preview-expose", "program-projector-expose"},
+    "visibility": {"client-hidden"}, "geometry": {"client-geometry", "client-bounds"},
+    "occlusion": {"client-obscured"}, "dwm": {"composition-sync"}, "copy": {"screen-copy"},
+    "write": {"bitmap-write"}, "subprocess": {"timeout", "launch-failed", "invalid-report", "no-report"},
+}
+
+
+def _integer(value, minimum: int, maximum: int) -> bool:
+    return type(value) is int and minimum <= value <= maximum
+
+
+def _safe_diagnostic(value: dict) -> dict:
+    if not isinstance(value, dict) or value.get("code") not in CAPTURE_CODES.get(value.get("stage"), set()):
+        raise ValueError("Unexpected capture diagnostic classification")
+    result = {"stage": value["stage"], "code": value["code"]}
+    for name, low, high in (("sampleIndex", -1, 7), ("completedSamples", 0, 8), ("nativeError", -(2**31), 2**31-1)):
+        number = value.get(name, low if name == "sampleIndex" else 0)
+        if not _integer(number, low, high):
+            raise ValueError("Unexpected capture diagnostic progress")
+        result[name] = number
+    codes = value.get("compilerCodes", [])
+    if not isinstance(codes, list) or len(codes) > 8 or any(not isinstance(code, str) or not re.fullmatch(r"CS[0-9]{4}", code) for code in codes):
+        raise ValueError("Unexpected capture compiler diagnostic")
+    result["compilerCodes"] = sorted(set(codes))
+    return result
+
+
+def capture_failure(code: str, *, exit_code: int | None = None, stderr: str = "") -> dict:
+    diagnostic = _safe_diagnostic({"stage": "subprocess", "code": code,
+                                   "compilerCodes": sorted(set(re.findall(r"\bCS[0-9]{4}\b", stderr[:65536])))[:8]})
+    result = {"schema": 1, "captureFailed": True, "diagnostic": diagnostic, "captures": []}
+    if _integer(exit_code, -(2**31), 2**32-1):
+        result["processExitCode"] = exit_code
+    return result
+
+
+def capture_report(completed: subprocess.CompletedProcess) -> dict:
+    """Fail closed and retain bounded categories, including failure before BMP 0."""
+    try:
+        if len(completed.stdout) > 32768:
+            raise ValueError("Oversized capture report")
+        value = json.loads(completed.stdout)
+        if not isinstance(value, dict) or value.get("schema") != 1 or type(value.get("captureFailed")) is not bool:
+            raise ValueError("Invalid capture report")
+        captures = value.get("captures")
+        if not isinstance(captures, list) or len(captures) > 2:
+            raise ValueError("Unexpected capture roles")
+        result = {"schema": 1, "captureFailed": value["captureFailed"], "captures": []}
+        seen = set()
+        for role in captures:
+            if not isinstance(role, dict) or role.get("role") not in CAPTURE_ROLES or role["role"] in seen:
+                raise ValueError("Unexpected capture role")
+            seen.add(role["role"])
+            if type(role.get("captureFailed")) is not bool or not _integer(role.get("sampleCount"), 0, 8):
+                raise ValueError("Invalid capture sample progress")
+            count, elapsed = role["sampleCount"], role.get("sampleElapsedMs")
+            if not isinstance(elapsed, list) or len(elapsed) != count or any(not _integer(ms, 0, 45000) for ms in elapsed) or elapsed != sorted(elapsed):
+                raise ValueError("Invalid capture sample timing")
+            if not role["captureFailed"] and count != 8:
+                raise ValueError("Incomplete role cannot pass capture")
+            safe = {"role": role["role"], "captureFailed": role["captureFailed"], "sampleCount": count, "sampleElapsedMs": elapsed}
+            if role["captureFailed"]:
+                safe["diagnostic"] = _safe_diagnostic(role.get("diagnostic"))
+            result["captures"].append(safe)
+        if "diagnostic" in value:
+            result["diagnostic"] = _safe_diagnostic(value["diagnostic"])
+        if value["captureFailed"]:
+            if completed.returncode == 0 or not ("diagnostic" in result or any(role["captureFailed"] for role in result["captures"])):
+                raise ValueError("Inconsistent failed capture report")
+        elif completed.returncode != 0 or seen != set(CAPTURE_ROLES) or any(role["captureFailed"] for role in result["captures"]):
+            raise ValueError("Inconsistent passing capture report")
+        result["processExitCode"] = completed.returncode
+        return result
+    except (ValueError, TypeError, AttributeError):
+        # Parser/parameter/host failures can happen before our PS try/catch. Keep
+        # only a numeric compiler code, never raw stdout/stderr or ErrorRecord.
+        return capture_failure("invalid-report" if completed.stdout.strip() else "no-report",
+                               exit_code=completed.returncode, stderr=completed.stderr)
+
+
+def run_capture(command: list[str], timeout: float) -> dict:
+    try:
+        return capture_report(subprocess.run(command, capture_output=True, text=True, timeout=timeout))
+    except subprocess.TimeoutExpired:
+        return capture_failure("timeout")
+    except OSError:
+        return capture_failure("launch-failed")
+
+
 def wait_state(private: Path, seq: int, process: subprocess.Popen, deadline: float) -> dict:
     target = private / f"phase-{seq:02}.json"
     while time.monotonic() < deadline:
@@ -253,8 +351,7 @@ def run(runtime: Path, result: Path, ffmpeg_override: Path | None, offline: bool
                                "-ExpectedProcessId", str(process.pid), "-ExpectedExecutable", str(executable),
                                "-ExpectedCreationTime", created, "-StateFile", str(private / f"phase-{seq:02}.json"),
                                "-OutputDirectory", str(phase_capture)]
-                    capture = subprocess.run(command, capture_output=True, text=True, timeout=min(45, max(1, int(deadline-time.monotonic()))))
-                    timing = json.loads(capture.stdout) if capture.returncode == 0 else {"captureFailed": True}
+                    timing = run_capture(command, timeout=min(45, max(1, int(deadline-time.monotonic()))))
                     phase = {"seq": seq, "phase": PHASES[seq - 1], "capture": timing, "roles": [],
                              "globalFfmpegInputsIncludingPrivate": state["globalFfmpegInputsIncludingPrivate"],
                              "activeOutputs": state["activeOutputs"], "activeEncoders": state["activeEncoders"],
@@ -267,7 +364,7 @@ def run(runtime: Path, result: Path, ffmpeg_override: Path | None, offline: bool
                                                    "reverse" if reverse else "forward", "false" if seq == 1 else "true"],
                                                   capture_output=True, text=True, check=True, timeout=20)
                         phase["roles"].append({"role": role, **json.loads(analysis.stdout)})
-                    phase["passed"] = capture.returncode == 0 and all(role["passed"] for role in phase["roles"])
+                    phase["passed"] = not timing["captureFailed"] and all(role["passed"] for role in phase["roles"])
                     summary["phases"].append(phase)
                     write_new(private / f"ack-{seq:02}.json", {"schema": 1, "seq": seq, "token": token})
                 process.wait(timeout=max(1, min(30, int(deadline-time.monotonic()))))
