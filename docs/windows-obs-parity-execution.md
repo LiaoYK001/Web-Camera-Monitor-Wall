@@ -354,3 +354,17 @@ On 2026-11-01 the startup smoke gained a process gate as partial P3 evidence for
 Evidence: all five smoke receipts report `status=passed` with a passing `processGate`. The two-launch portable smoke sampled four times and observed only OBS's own `get-graphics-offsets32.exe` and `conhost.exe` (internal GPU/console helpers, not in the forbidden set), with no service ports and zero survivors; the four shorter startup/install/uninstall smokes sampled once each, observed no children, and likewise reported no service ports or survivors. Gate receipts upload as `native-*-process-gate.json`.
 
 Boundaries: the smoke uses five placeholder RTSP URLs, not real cameras or media; the gate inspects only obs64 descendants and survivors inside the install root, so a detached service outside that root would be missed; it proves this native host starts no known helper processes and leaves nothing behind on normal exit, not retained-feature start/stop, crash containment, second-instance behaviour, real cameras/hardware decode, or Electron-default P3 migration.
+
+### 原生宿主崩溃收束烟测 / Crash containment smoke
+
+2026-11-01 在第 20 轮正常退出进程门之外，增加“故意杀死宿主”的收束烟测：`launch-native.ps1` 新增 `-CrashProbe` 模式，使用同一个一次性 portable profile 与进程门，但**不设置**烟测令牌，因此插件不会在写完烟测回执后自行关闭 OBS；运行 8 秒后只终止真实的 obs64 根进程，再检查进程树监听端口与安装根目录残留。回执显式写入 `crashed=true` 与 `crashAfterSeconds`，避免与正常启动烟测混淆。([run 41244917594](https://github.com/LiaoYK001/Web-Camera-Monitor-Wall/actions/runs/41244917594)，版本 `4.1.0-dev.49`，提交 `f0042e8`，artifact `13059452295`。)
+
+证据：`native-crash-smoke.json` 为 `status=passed`、`crashAfterSeconds=8`、`exitCode=4294967295`（Windows 强杀返回值）；门回执 `crashed=true`、采样 5 次、`listeners=[]`、`orphans=[]`。此次运行未观察到 obs64 的子进程，因此该回执证明的是“强杀后没有安装根进程存活”，不能扩展为“任何 OBS 子进程都会随根进程退出”。
+
+边界：仍使用五路占位 RTSP 输入而非真实相机；只测试进程级强杀，不模拟插件/驱动崩溃、真实解码压力或长时间运行后的崩溃；不覆盖二实例、安装根之外的分离服务、保留功能启停，也不构成目标机证据或 Electron 默认栈的 P3 结论。
+
+On 2026-11-01, beyond the normal-exit process gate from round 20, a deliberate host-kill containment smoke was added: `launch-native.ps1` gained a `-CrashProbe` mode that reuses the same disposable portable profile and process gate but deliberately **does not** set the smoke token, so the plugin cannot close OBS after writing its receipt; after eight seconds only the real obs64 root process is terminated, then the tree's listeners and install-root survivors are checked. The receipt records `crashed=true` and `crashAfterSeconds` so it can never be confused with a normal startup smoke. ([run 41244917594](https://github.com/LiaoYK001/Web-Camera-Monitor-Wall/actions/runs/41244917594), version `4.1.0-dev.49`, commit `f0042e8`, artifact `13059452295`.)
+
+Evidence: `native-crash-smoke.json` reports `status=passed`, `crashAfterSeconds=8`, `exitCode=4294967295` (the Windows hard-kill value); the gate receipt reports `crashed=true`, five samples, `listeners=[]` and `orphans=[]`. This run observed no obs64 child processes, so the receipt proves "no install-root process survived the hard kill", not "every OBS child exits with its root".
+
+Boundaries: still five placeholder RTSP inputs, not real cameras; only a process-level kill, not plugin/driver crashes, real decode pressure or long-run crashes; it does not cover second instance, detached services outside the install root, retained-feature start/stop, and is neither target-machine evidence nor a P3 conclusion for the Electron default stack.
