@@ -233,6 +233,16 @@ Windows run 41201055747 (`37fe688`, dev.20) install smoke, read from the new sma
 
 [Windows 运行 41220134972](https://github.com/LiaoYK001/Web-Camera-Monitor-Wall/actions/runs/41220134972)（`841b6fe`，dev.32）的安装步骤全部通过：新装回执 `configPreserved=false`、1578 文件、包 78,000,435 字节（SHA-256 `1f85d9fb939efe0164b5d0baafd4667c920933e5f506c90a9bf0a33bb048e7cd`）；对同一包重装回执 `configPreserved=true`、`previousVersion=4.1.0-dev.32`、1598 文件。新装双启动烟测通过（首启 created=5/reused=0，次启 created=0/reused=5、sceneReused=true），重装后对保留配置的单启动烟测也通过（created=0/reused=5、sceneReused=true，正常退出，外部 OBS profile 未变）。首个 dev.30 尝试曾因保留配置里已有旧 `native-smoke.json`、插件 `NewOnly` 写入失败而超时；`841b6fe` 改为插件读取受限的 `WEBOBS_NATIVE_SMOKE_RECEIPT`，每次启动使用带随机前缀的唯一回执名。
 
+### 每用户安装包原型：安装、重装与卸载保留私密配置 / Per-user installer prototype: install, reinstall and uninstall keep the private profile
+
+`native-host/installer/WebOBSNative.nsi` 把同一份冻结 runtime 打成未签名的每用户安装器，安装到 `%LOCALAPPDATA%\WebOBS Native Prototype`，只写 HKCU 卸载信息、不注册服务；安装包本身不含 `config/`，重装覆盖程序文件但不触碰现有 `config/`，静默卸载删除程序文件而逐字节保留 `config/`（含 RTSP 凭据与五格墙），并清理注册表。
+
+[Windows 运行 41228010208](https://github.com/LiaoYK001/Web-Camera-Monitor-Wall/actions/runs/41228010208)（`3c916db`，dev.40）通过：安装器 45,250,255 字节、SHA-256 `7cc5724c0aee941802bdc9f8ed71b7547d1b3d73631170e003c5a03d7bb2a54d`，静默安装 1579 个文件后首次双启动烟测通过；重装前后 `config/obs-studio` 逐文件哈希一致；静默卸载后程序文件与 manifest 消失、`config/obs-studio` 逐字节保留、两个 HKCU 键均被清理。回执 `native-nsis-installer.json`。安装包未签名，不覆盖跨版本安装器升级、自动更新、数据迁移、认证、真实相机或 P5 性能。
+
+A per-user installer prototype packages the same frozen runtime under `%LOCALAPPDATA%\WebOBS Native Prototype`, writes only HKCU uninstall metadata and registers no service; the package itself carries no `config/`, reinstall replaces program files without touching the existing `config/`, and silent uninstall removes program files while preserving `config/` byte for byte (RTSP credentials and the five-tile wall) and cleaning the registry.
+
+Windows run [41228010208](https://github.com/LiaoYK001/Web-Camera-Monitor-Wall/actions/runs/41228010208) (`3c916db`, dev.40) passed: the installer is 45,250,255 bytes with SHA-256 `7cc5724c0aee941802bdc9f8ed71b7547d1b3d73631170e003c5a03d7bb2a54d`; the silent install of 1,579 files passed the two-launch smoke; the per-file hashes of `config/obs-studio` were identical across a reinstall; and after silent uninstall the program files and manifest were gone while `config/obs-studio` was preserved byte for byte and both HKCU keys were removed. The receipt is `native-nsis-installer.json`. The installer is unsigned and does not cover cross-version installer upgrades, auto-update, data migration, authentication, real cameras or P5 performance.
+
 该证据仅覆盖**同一包的安装/重装与保留配置复用**：安装器是未签名的 portable 原型，不写注册表/服务；跨一个 dev 版本的原型树替换另见下节，它不覆盖真实安装器、数据迁移、认证、像素或 P5 性能验收，仍不能作为产品安装包或体积目标结论。
 
 Commit `a6015d5` added `native-host/scripts/install_native.py`: it accepts only a frozen ZIP carrying `webobs-native-prototype.json`, `launch-native.ps1` and the fixed OBS files, rejects absolute/`..`/drive-letter segments and a top-level `config/`, copies any existing `config` into the staging tree (`configPreserved`) before replacing the tree, moves the old root to a backup and restores it on failure; uninstall likewise requires the manifest. Its receipt carries only version, package bytes/SHA-256, file count and booleans, never paths or URLs.
