@@ -51,6 +51,10 @@ on:
         description: 'Validate only the Windows installed-tree footprint contracts; no build, installer or product start'
         default: false
         type: boolean
+      obs_size_baseline:
+        description: 'With native_host: install the pinned stock OBS 32.1.2 and record a same-OS installed-size reference'
+        default: false
+        type: boolean
 
 permissions:
   contents: read
