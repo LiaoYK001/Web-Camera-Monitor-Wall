@@ -53,20 +53,14 @@ try {
         $roles = @($state.windows | ForEach-Object { $_.role })
         if (@($roles | Sort-Object -Unique).Count -ne 2 -or $roles -notcontains 'main-preview' -or $roles -notcontains 'program-projector') { $code='state-roles'; throw 'Unexpected roles.' }
     }
-    $stage='assembly-load'; $code='reference-assemblies'
-    Add-Type -AssemblyName System.Drawing
-    Add-Type -AssemblyName System.Windows.Forms
-    # Use the proven PowerShell assembly-name reference set. The default
-    # reference pack alone lacked Windows Drawing/Forms dependencies.
+    $stage='compile'
+    # Core-only P/Invoke code: no Windows Drawing/Forms references needed.
     $typeDefinition = @'
 using System;
 using System.Diagnostics;
-using System.Drawing;
-using System.Drawing.Imaging;
 using System.Globalization;
 using System.IO;
 using System.Runtime.InteropServices;
-using System.Windows.Forms;
 public static class ObsPixelCapture {
     [StructLayout(LayoutKind.Sequential)] public struct Rect { public int left, top, right, bottom; }
     [StructLayout(LayoutKind.Sequential)] public struct Point { public int x, y; public Point(int a,int b) { x=a; y=b; } }
@@ -83,6 +77,17 @@ public static class ObsPixelCapture {
     [DllImport("user32.dll")] static extern IntPtr WindowFromPoint(Point point);
     [DllImport("user32.dll")] static extern IntPtr GetAncestor(IntPtr hwnd,uint flags);
     [DllImport("dwmapi.dll")] static extern int DwmFlush();
+    [StructLayout(LayoutKind.Sequential)] struct BitmapInfoHeader { public uint biSize; public int biWidth; public int biHeight; public ushort biPlanes; public ushort biBitCount; public uint biCompression; public uint biSizeImage; public int biXPelsPerMeter; public int biYPelsPerMeter; public uint biClrUsed; public uint biClrImportant; }
+    [DllImport("user32.dll")] static extern int GetSystemMetrics(int index);
+    [DllImport("user32.dll")] static extern IntPtr GetDC(IntPtr hwnd);
+    [DllImport("user32.dll")] static extern int ReleaseDC(IntPtr hwnd,IntPtr dc);
+    [DllImport("gdi32.dll")] static extern IntPtr CreateCompatibleDC(IntPtr dc);
+    [DllImport("gdi32.dll")] static extern IntPtr CreateCompatibleBitmap(IntPtr dc,int width,int height);
+    [DllImport("gdi32.dll")] static extern IntPtr SelectObject(IntPtr dc,IntPtr obj);
+    [DllImport("gdi32.dll")] static extern bool DeleteObject(IntPtr obj);
+    [DllImport("gdi32.dll")] static extern bool DeleteDC(IntPtr dc);
+    [DllImport("gdi32.dll")] static extern bool BitBlt(IntPtr dst,int x,int y,int width,int height,IntPtr src,int sx,int sy,uint rop);
+    [DllImport("gdi32.dll")] static extern int GetDIBits(IntPtr dc,IntPtr bitmap,uint start,uint lines,byte[] bits,ref BitmapInfoHeader info,uint usage);
     public static long[] SampleElapsedMs;
     public static string Stage, Code;
     public static int SampleIndex, CompletedSamples, NativeError;
@@ -114,13 +119,14 @@ public static class ObsPixelCapture {
         try {
             Identity(pid,executable,creation,hwnd,root);
             Mark("expose","interactive-screen");
-            var screen=Screen.PrimaryScreen.Bounds;
+            int screenWidth=GetSystemMetrics(0),screenHeight=GetSystemMetrics(1);
+            if (screenWidth<=0 || screenHeight<=0) throw Failure("expose","interactive-screen");
             ShowWindow(root,9);
             if (role=="main-preview") {
                 ShowWindow(root,3); // Maximize the main UI, not its child widget.
                 if (!SetWindowPos(root,new IntPtr(-1),0,0,0,0,0x0001|0x0002|0x0040)) throw Failure("expose","main-preview-expose",Marshal.GetLastWin32Error());
             } else {
-                if (hwnd!=root || !SetWindowPos(root,new IntPtr(-1),screen.Left+20,screen.Top+20,Math.Min(1100,screen.Width-40),Math.Min(740,screen.Height-40),0x0040)) throw Failure("expose","program-projector-expose",Marshal.GetLastWin32Error());
+                if (hwnd!=root || !SetWindowPos(root,new IntPtr(-1),20,20,Math.Min(1100,screenWidth-40),Math.Min(740,screenHeight-40),0x0040)) throw Failure("expose","program-projector-expose",Marshal.GetLastWin32Error());
             }
             topmost=true; SetForegroundWindow(root); System.Threading.Thread.Sleep(400);
             for (int i=0;i<8;i++) {
@@ -131,7 +137,7 @@ public static class ObsPixelCapture {
                 Rect rect; var origin=new Point(0,0);
                 if (!GetClientRect(hwnd,out rect) || !ClientToScreen(hwnd,ref origin)) throw Failure("geometry","client-geometry",Marshal.GetLastWin32Error());
                 int width=rect.right-rect.left,height=rect.bottom-rect.top;
-                if (width<320 || height<180 || width>8192 || height>8192 || !screen.Contains(new Rectangle(origin.x,origin.y,width,height))) throw Failure("geometry","client-bounds");
+                if (width<320 || height<180 || width>8192 || height>8192 || origin.x<0 || origin.y<0 || origin.x+width>screenWidth || origin.y+height>screenHeight) throw Failure("geometry","client-bounds");
                 for (int y=1;y<=5;y++) for (int x=1;x<=5;x++) {
                     var hit=WindowFromPoint(new Point(origin.x+width*x/6,origin.y+height*y/6));
                     if (GetAncestor(hit,2)!=root || (hit!=hwnd && !IsChild(hwnd,hit))) throw Failure("occlusion","client-obscured");
@@ -139,14 +145,11 @@ public static class ObsPixelCapture {
                 Mark("dwm","composition-sync");
                 int dwm=DwmFlush(); if (dwm!=0) throw Failure("dwm","composition-sync",dwm);
                 Mark("copy","screen-copy");
-                using (var bitmap=new Bitmap(width,height,PixelFormat.Format24bppRgb))
-                using (var graphics=Graphics.FromImage(bitmap)) {
-                    graphics.CopyFromScreen(origin.x,origin.y,0,0,new Size(width,height),CopyPixelOperation.SourceCopy);
-                    SampleElapsedMs[i]=clock.ElapsedMilliseconds;
-                    Mark("write","bitmap-write");
-                    bitmap.Save(Path.Combine(directory,"client-"+i+".bmp"),ImageFormat.Bmp);
-                    CompletedSamples=i+1;
-                }
+                var pixels=CaptureClient(origin.x,origin.y,width,height);
+                SampleElapsedMs[i]=clock.ElapsedMilliseconds;
+                Mark("write","bitmap-write");
+                WriteBmp(Path.Combine(directory,"client-"+i+".bmp"),width,height,pixels);
+                CompletedSamples=i+1;
                 if (i<7) System.Threading.Thread.Sleep(310);
             }
             Mark("complete","capture-complete");
@@ -155,9 +158,46 @@ public static class ObsPixelCapture {
             if (previous!=IntPtr.Zero) SetThreadDpiAwarenessContext(previous);
         }
     }
+    static byte[] CaptureClient(int x,int y,int width,int height) {
+        int stride=(width*3+3)/4*4;
+        var pixels=new byte[checked(stride*height)];
+        var header=new BitmapInfoHeader { biSize=(uint)Marshal.SizeOf(typeof(BitmapInfoHeader)), biWidth=width, biHeight=height, biPlanes=1, biBitCount=24, biCompression=0, biSizeImage=(uint)pixels.Length };
+        IntPtr screen=GetDC(IntPtr.Zero);
+        if (screen==IntPtr.Zero) throw Failure("copy","screen-copy",Marshal.GetLastWin32Error());
+        IntPtr memory=IntPtr.Zero,bitmap=IntPtr.Zero,previous=IntPtr.Zero;
+        try {
+            memory=CreateCompatibleDC(screen); bitmap=CreateCompatibleBitmap(screen,width,height);
+            if (memory==IntPtr.Zero || bitmap==IntPtr.Zero) throw Failure("copy","screen-copy",Marshal.GetLastWin32Error());
+            previous=SelectObject(memory,bitmap);
+            if (previous==IntPtr.Zero) throw Failure("copy","screen-copy",Marshal.GetLastWin32Error());
+            if (!BitBlt(memory,0,0,width,height,screen,x,y,0x00CC0020)) throw Failure("copy","screen-copy",Marshal.GetLastWin32Error());
+            // GetDIBits requires the bitmap to be deselected first.
+            SelectObject(memory,previous); previous=IntPtr.Zero;
+            if (GetDIBits(memory,bitmap,0,(uint)height,pixels,ref header,0)!=height) throw Failure("copy","screen-copy",Marshal.GetLastWin32Error());
+        } finally {
+            if (memory!=IntPtr.Zero) { if (previous!=IntPtr.Zero) SelectObject(memory,previous); if (bitmap!=IntPtr.Zero) DeleteObject(bitmap); DeleteDC(memory); }
+            else if (bitmap!=IntPtr.Zero) DeleteObject(bitmap);
+            ReleaseDC(IntPtr.Zero,screen);
+        }
+        return pixels;
+    }
+    static void WriteBmp(string path,int width,int height,byte[] pixels) {
+        int offset=54,size=checked(offset+pixels.Length);
+        var file=new byte[size];
+        file[0]=(byte)0x42; file[1]=(byte)0x4D;
+        Buffer.BlockCopy(BitConverter.GetBytes(size),0,file,2,4);
+        Buffer.BlockCopy(BitConverter.GetBytes(offset),0,file,10,4);
+        Buffer.BlockCopy(BitConverter.GetBytes(40),0,file,14,4);
+        Buffer.BlockCopy(BitConverter.GetBytes(width),0,file,18,4);
+        Buffer.BlockCopy(BitConverter.GetBytes(height),0,file,22,4);
+        file[26]=1; file[28]=24;
+        Buffer.BlockCopy(BitConverter.GetBytes(pixels.Length),0,file,34,4);
+        Buffer.BlockCopy(pixels,0,file,offset,pixels.Length);
+        File.WriteAllBytes(path,file);
+    }
 }
 '@
-    Add-Type -ReferencedAssemblies System.Drawing,System.Windows.Forms -ErrorVariable compilerErrors -TypeDefinition $typeDefinition
+    Add-Type -ErrorVariable compilerErrors -TypeDefinition $typeDefinition
     if ($CompileOnly) {
         Write-Report @{schema=1; compileOnly=$true; captureFailed=$false; captures=@()}
         exit 0
