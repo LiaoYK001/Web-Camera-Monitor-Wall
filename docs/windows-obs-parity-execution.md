@@ -382,3 +382,17 @@ On 2026-11-01 the `launch-native.ps1` entry point gained a session mutex `Local\
 Evidence: `native-second-instance-smoke.json` reports `status=passed`, `holdSeconds=30`, `secondExitCode=0`, `secondElapsedMs=547`, `hostsBefore=1`, `hostsAfter=1`, `refused=true`; the held first host was then deliberately killed and the process gate reports `crashed=true`, `samples=16`, `durationMs=30361`, `listeners=[]`, `orphans=[]`. The smoke therefore proves "a second launcher creates neither a second profile nor a second obs64" and re-checks kill containment in the same run.
 
 Boundaries: launcher level only; it does not automate upstream OBS's dialog when obs64 is run directly, window activation/focus forwarding, parallel runs from different install roots, real cameras, retained-feature start/stop, or the target machine; it is still not a full P3 conclusion.
+
+### 已发布安装包的跨版本升级 / Cross-version upgrade of a shipped installer
+
+2026-11-01 把跨版本验证从“解压 ZIP 后覆盖”推进到“已在 GitHub 发布的 NSIS 安装包原地升级”：CI 下载固定版本的 `v4.1.0-dev.40` SETUP（固定 SHA-256 `7cc5724c…`），静默安装到一次性 per-user 目录并写入一个私有 profile 文件；随后用当前构建的 SETUP 静默覆盖安装，要求 manifest 版本从 `4.1.0-dev.40` 变为当前版本，而 `config/` 的文件集合与逐文件 SHA-256 完全不变；最后静默卸载，要求私有 profile 逐字节保留、运行时二进制与 manifest 删除、两个 HKCU 键清除。([run 41248500574](https://github.com/LiaoYK001/Web-Camera-Monitor-Wall/actions/runs/41248500574)，版本 `4.1.0-dev.52`，提交 `2fbd1b0`，artifact `13060618337`。)
+
+回执 `native-nsis-upgrade.json`：`previousVersion=4.1.0-dev.40`、`version=4.1.0-dev.52`、`previousInstallerSha256=7cc5724c…`、`installerSha256=3ccd92aa…`、`configPreservedAcrossUpgrade=true`、`configPreservedAcrossUninstall=true`、`registryCleanedOnUninstall=true`、`signed=false`。首次运行该步骤时因 YAML 中路径分隔符被吃掉（`Replace('','/')`）失败，等待升级开始前即抛错；修正后通过。
+
+边界：仍是未签名开发安装包；私有 profile 只覆盖本测试写入的标记文件与文件集合/哈希断言，不代表真实用户配置、加密备份或跨机器迁移；不包含自动更新/下载通道、版本回滚、降级拒绝、管理员安装、真实相机或目标机证据。
+
+On 2026-11-01 the cross-version check moved from "extract a ZIP and overwrite" to an in-place upgrade of an NSIS installer already published on GitHub: CI downloads the fixed `v4.1.0-dev.40` SETUP (SHA-256 `7cc5724c…`), silently installs it into a disposable per-user directory and seeds a private profile file; the current SETUP then installs over it, and the manifest must move from `4.1.0-dev.40` to the current version while the `config/` file set and every per-file SHA-256 stay identical; finally a silent uninstall must preserve the private profile byte for byte, remove runtime binaries and the manifest, and clear both HKCU keys. ([run 41248500574](https://github.com/LiaoYK001/Web-Camera-Monitor-Wall/actions/runs/41248500574), version `4.1.0-dev.52`, commit `2fbd1b0`, artifact `13060618337`.)
+
+Receipt `native-nsis-upgrade.json`: `previousVersion=4.1.0-dev.40`, `version=4.1.0-dev.52`, `previousInstallerSha256=7cc5724c…`, `installerSha256=3ccd92aa…`, `configPreservedAcrossUpgrade=true`, `configPreservedAcrossUninstall=true`, `registryCleanedOnUninstall=true`, `signed=false`. The first attempt of this step failed before the upgrade because the YAML edit swallowed a path-separator backslash (`Replace('','/')`); the fixed script passed.
+
+Boundaries: still an unsigned development installer; the private profile is only the marker file seeded by this test plus file-set/hash assertions, not real user data, encrypted backup or cross-machine migration; no auto-update/download channel, version rollback, downgrade refusal, admin install, real cameras or target-machine evidence.
