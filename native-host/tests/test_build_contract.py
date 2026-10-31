@@ -164,6 +164,21 @@ class BuildContractTests(unittest.TestCase):
         self.assertNotIn("Start-Process", launcher)  # Explicit child environment, fixed CWD.
         self.assertNotIn("--multi", launcher)  # Do not bypass upstream portable instance guard.
 
+    def test_installer_is_per_user_and_never_deletes_private_config(self):
+        script = (ROOT / "native-host/installer/WebOBSNative.nsi").read_text()
+        workflow = (ROOT / ".github/workflows/windows-obs-native-host.yaml").read_text()
+        self.assertIn("RequestExecutionLevel user", script)
+        self.assertIn('StrCmp $1 "config" un_next', script)
+        self.assertNotIn('RMDir /r "$INSTDIR"', script)
+        self.assertIn("File /r \"${PACKAGE_DIR}\\*.*\"", script)
+        self.assertIn('WriteUninstaller "$INSTDIR\\Uninstall.exe"', script)
+        self.assertIn("Software\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\WebOBSNativePrototype", script)
+        self.assertIn("native-host/installer/WebOBSNative.nsi", workflow)
+        self.assertIn("choco install nsis", workflow)
+        self.assertIn("configPreservedAcrossReinstall = $true", workflow)
+        self.assertIn("configPreservedAcrossUninstall = $true", workflow)
+        self.assertIn("signed = $false", workflow)
+
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)

@@ -136,6 +136,67 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw 'Reinstall over the private profile failed.' }
           python -B native-host/tests/smoke_windows.py --runtime $root --result (Join-Path $env:GITHUB_WORKSPACE 'build/obs-native-ci/native-install-smoke-second.json') --existing-wall
           if ($LASTEXITCODE -ne 0) { throw 'Existing-wall smoke after reinstall failed.' }
+      - name: Build and exercise the per-user installer (install, reinstall, uninstall)
+        if: ${{ !inputs.pixel_test }}
+        shell: pwsh
+        env:
+          NATIVE_VERSION: ${{ inputs.version }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $runtime = Join-Path $env:GITHUB_WORKSPACE 'build/obs-native-ci/runtime'
+          if (-not (Test-Path -LiteralPath (Join-Path $runtime 'webobs-native-prototype.json') -PathType Leaf)) { throw 'No verified runtime tree to package.' }
+          if (Test-Path -LiteralPath (Join-Path $runtime 'config')) { throw 'Refuse to package a runtime with private configuration.' }
+          choco install nsis --no-progress -y | Out-Null
+          $makensis = 'C:\Program Files (x86)\NSIS\makensis.exe'
+          if (-not (Test-Path -LiteralPath $makensis -PathType Leaf)) { throw 'makensis is unavailable after installing NSIS.' }
+          $out = Join-Path $env:GITHUB_WORKSPACE 'build/obs-native-ci'
+          $setup = Join-Path $out "WebOBS-OBS-native-$env:NATIVE_VERSION-windows-x64-SETUP.exe"
+          & $makensis /V2 "/DVERSION=$env:NATIVE_VERSION" "/DPACKAGE_DIR=$runtime" "/DOUTPUT_DIR=$out" (Join-Path $env:GITHUB_WORKSPACE 'native-host/installer/WebOBSNative.nsi')
+          if ($LASTEXITCODE -ne 0) { throw "makensis failed with exit code $LASTEXITCODE." }
+          if (-not (Test-Path -LiteralPath $setup -PathType Leaf)) { throw 'The installer was not produced.' }
+          $root = Join-Path $env:RUNNER_TEMP 'native-nsis-install'
+          if (Test-Path -LiteralPath $root) { Remove-Item -LiteralPath $root -Recurse -Force }
+          $install = Start-Process -FilePath $setup -ArgumentList '/S', "/D=$root" -Wait -PassThru
+          if ($install.ExitCode -ne 0) { throw "Silent install failed with exit code $($install.ExitCode)." }
+          foreach ($relative in @('webobs-native-prototype.json','bin/64bit/obs64.exe','obs-plugins/64bit/webobs-native-host.dll','Uninstall.exe')) {
+            if (-not (Test-Path -LiteralPath (Join-Path $root $relative) -PathType Leaf)) { throw "Installed tree is missing $relative." }
+          }
+          if (Test-Path -LiteralPath (Join-Path $root 'config')) { throw 'Silent install created a private profile before the first run.' }
+          $manifest = Get-Content -LiteralPath (Join-Path $root 'webobs-native-prototype.json') -Raw | ConvertFrom-Json
+          if ($manifest.version -ne $env:NATIVE_VERSION) { throw "Installed manifest version $($manifest.version) does not match $env:NATIVE_VERSION." }
+          $installedFiles = (Get-ChildItem -LiteralPath $root -Recurse -File | Measure-Object).Count
+          python -B native-host/tests/smoke_windows.py --runtime $root --result (Join-Path $out 'native-nsis-install-smoke.json')
+          if ($LASTEXITCODE -ne 0) { throw 'First-run smoke from the installed tree failed.' }
+          $configDir = Join-Path $root 'config/obs-studio'
+          if (-not (Test-Path -LiteralPath $configDir -PathType Container)) { throw 'The installed runtime did not create a private profile.' }
+          $before = (Get-ChildItem -LiteralPath $configDir -Recurse -File | Sort-Object FullName | ForEach-Object { $_.FullName.Substring($configDir.Length) + ':' + (Get-FileHash -LiteralPath $_.FullName -Algorithm SHA256).Hash }) -join "`n"
+          $upgrade = Start-Process -FilePath $setup -ArgumentList '/S', "/D=$root" -Wait -PassThru
+          if ($upgrade.ExitCode -ne 0) { throw "Silent reinstall failed with exit code $($upgrade.ExitCode)." }
+          $after = (Get-ChildItem -LiteralPath $configDir -Recurse -File | Sort-Object FullName | ForEach-Object { $_.FullName.Substring($configDir.Length) + ':' + (Get-FileHash -LiteralPath $_.FullName -Algorithm SHA256).Hash }) -join "`n"
+          if ($before -ne $after) { throw 'Private profile bytes changed across the installer reinstall.' }
+          $uninstall = Start-Process -FilePath (Join-Path $root 'Uninstall.exe') -ArgumentList '/S' -Wait -PassThru
+          if ($uninstall.ExitCode -ne 0) { throw "Silent uninstall failed with exit code $($uninstall.ExitCode)." }
+          if (Test-Path -LiteralPath (Join-Path $root 'bin/64bit/obs64.exe')) { throw 'Uninstall left runtime binaries behind.' }
+          if (Test-Path -LiteralPath (Join-Path $root 'webobs-native-prototype.json')) { throw 'Uninstall left the bundle manifest behind.' }
+          $kept = (Get-ChildItem -LiteralPath $configDir -Recurse -File | Sort-Object FullName | ForEach-Object { $_.FullName.Substring($configDir.Length) + ':' + (Get-FileHash -LiteralPath $_.FullName -Algorithm SHA256).Hash }) -join "`n"
+          if ($kept -ne $before) { throw 'Uninstall did not preserve the private profile byte for byte.' }
+          if (Test-Path -LiteralPath 'HKCU:\Software\WebOBS\NativePrototype') { throw 'Uninstall left the app registry key behind.' }
+          if (Test-Path -LiteralPath 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\WebOBSNativePrototype') { throw 'Uninstall left the uninstall registry entry behind.' }
+          $asset = Get-Item -LiteralPath $setup
+          $receipt = [ordered]@{
+            schema = 1
+            kind = 'per-user-nsis-installer'
+            version = $env:NATIVE_VERSION
+            installerBytes = $asset.Length
+            installerSha256 = (Get-FileHash -LiteralPath $setup -Algorithm SHA256).Hash.ToLowerInvariant()
+            installedFileCount = $installedFiles
+            configPreservedAcrossReinstall = $true
+            configPreservedAcrossUninstall = $true
+            registryCleanedOnUninstall = $true
+            signed = $false
+            qualification = 'unsigned per-user development installer on a GitHub-hosted runner; not the product installer, target-machine evidence or a P5 claim'
+          }
+          $receipt | ConvertTo-Json -Depth 4 | Set-Content -LiteralPath (Join-Path $out 'native-nsis-installer.json') -Encoding utf8
       - name: Upgrade a pinned previous prototype and verify the private profile survives
         if: ${{ inputs.upgrade_previous && !inputs.pixel_test }}
         shell: pwsh
@@ -234,6 +295,8 @@ jobs:
             build/obs-native-ci/native-upgrade-second.json
             build/obs-native-ci/native-upgrade-second-smoke.json
             build/obs-native-ci/obs-size-reference.json
+            build/obs-native-ci/native-nsis-installer.json
+            build/obs-native-ci/WebOBS-OBS-native-*-windows-x64-SETUP.exe
           if-no-files-found: ignore
           retention-days: 7
           compression-level: 0
