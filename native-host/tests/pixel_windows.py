@@ -606,6 +606,9 @@ def run(runtime: Path, result: Path, ffmpeg_override: Path | None, offline: bool
                         raise AssertionError("Saved-scene restart state is not a real reopened private profile")
                     if len(state.get("windows", [])) != 1 or state["windows"][0].get("role") != "main-preview":
                         raise AssertionError("Saved-scene restart must witness only the real main Preview")
+                    items = state.get("items", [])
+                    if len(items) != 5 or not all(item.get("visible") is True for item in items):
+                        raise AssertionError("Saved-scene restart wall must retain exactly five visible items")
                     restart_capture = captures / "phase-10"
                     restart_capture.mkdir()
                     command = [pwsh, "-NoProfile", "-File", str(HERE / "capture-pixels.ps1"),
@@ -620,7 +623,7 @@ def run(runtime: Path, result: Path, ffmpeg_override: Path | None, offline: bool
                     phase = {"seq": 10, "phase": "saved-scene-restart", "capture": timing, "roles": [role],
                              "inputUUIDsAndSettingsUnchanged": True, "savedSceneReopened": True,
                              "canvasWidth": state.get("canvasWidth"), "canvasHeight": state.get("canvasHeight"),
-                             "windowCount": len(state.get("windows", []))}
+                             "windowCount": len(state.get("windows", [])), "wallItems": items}
                     phase["passed"] = not timing["captureFailed"] and bool(role["passed"])
                     summary["phases"].append(phase)
                     write_new(restart / "ack-01.json", {"schema": 1, "seq": 1, "token": token})

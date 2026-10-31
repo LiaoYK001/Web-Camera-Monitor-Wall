@@ -565,13 +565,28 @@ class RestartHarness final : public QObject {
 		                           {"canvasInsetPixels", 10}, {"qtClass", QString::fromLatin1(preview_->metaObject()->className())}});
 		obs_video_info info{};
 		require(obs_get_video_info(&info), "restart video info unavailable");
+		QJsonArray items;
+		if (wall_) obs_scene_enum_items(wall_, [](obs_scene_t *, obs_sceneitem_t *item, void *param) {
+			auto *out = static_cast<QJsonArray *>(param);
+			obs_source_t *source = obs_sceneitem_get_source(item);
+			if (!source) return true;
+			vec2 position{}, item_scale{};
+			obs_sceneitem_get_pos(item, &position);
+			obs_sceneitem_get_scale(item, &item_scale);
+			out->append(QJsonObject{{"name", QString::fromUtf8(obs_source_get_name(source))},
+			                       {"x", position.x}, {"y", position.y},
+			                       {"sx", item_scale.x}, {"sy", item_scale.y},
+			                       {"visible", obs_sceneitem_visible(item)}});
+			return true;
+		}, &items);
 		const QJsonObject state{{"schema", 1}, {"seq", 1}, {"phase", "saved-scene-restart"}, {"token", token_},
 		                       {"pid", QString::number(QCoreApplication::applicationPid())},
 		                       {"canvasWidth", int(info.base_width)}, {"canvasHeight", int(info.base_height)},
 		                       {"studio", obs_frontend_preview_program_mode_active()},
 		                       {"savedSceneReopened", true}, {"savedSceneSourceCount", 5},
 		                       {"elapsedMs", double(clock_.elapsed())},
-		                       {"windows", windows}, {"pixelQualified", false}, {"scope", "synthetic-test-only"}};
+		                       {"windows", windows}, {"items", items},
+		                       {"pixelQualified", false}, {"scope", "synthetic-test-only"}};
 		write_new(directory_ + "/phase-01.json", state);
 		published_ = true;
 	}
@@ -607,6 +622,15 @@ public:
 		}
 		require(preview_, "real OBSBasicPreview widget unavailable after restart");
 		main_->showMaximized();
+		auto *config = obs_frontend_get_profile_config();
+		require(config, "portable profile config unavailable after restart");
+		config_set_uint(config, "Video", "BaseCX", 960); config_set_uint(config, "Video", "BaseCY", 540);
+		config_set_uint(config, "Video", "OutputCX", 960); config_set_uint(config, "Video", "OutputCY", 540);
+		config_set_uint(config, "Video", "FPSType", 0); config_set_string(config, "Video", "FPSCommon", "30");
+		obs_frontend_reset_video();
+		obs_video_info fixed{};
+		require(obs_get_video_info(&fixed) && fixed.base_width == 960 && fixed.base_height == 540,
+		        "fixed 960x540 canvas could not be restored for the restart witness");
 		obs_frontend_set_preview_program_mode(false);
 		obs_frontend_set_preview_enabled(true);
 		clock_.start();
