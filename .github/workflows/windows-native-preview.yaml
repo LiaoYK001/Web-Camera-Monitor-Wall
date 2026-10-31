@@ -64,6 +64,10 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw 'Fixture predicate unit tests failed.' }
       - name: Require actual final visible pixels, channel identity and progression
         shell: pwsh
+        env:
+          # Frozen old runtime has a separately reproduced hidden-startup defect.
+          # Record initiallyVisible=false; only the baseline may expose it first.
+          WEBOBS_TEST_ALLOW_STARTUP_HIDDEN: '1'
         run: |
           pnpm --dir desktop test:runtime
           if ($LASTEXITCODE -ne 0) { throw 'Frozen native final-pixel gate failed; not camera or performance qualification.' }

@@ -31,8 +31,9 @@ exports.exerciseNativeProgramPreview = async (supervisor, runtime, headers, temp
   assert.equal((await native()).requested, false);
   const original = await get('/api/v1/scene');
   const gateway = `http://127.0.0.1:${supervisor.ports.gatewayApi}`;
-  const prefix = 'hybrid-' + crypto.randomBytes(16).toString('hex');
-  const routes = Array.from({ length: 5 }, (_, i) => `${prefix}-${i}`);
+  // Match the existing gateway's strict hybrid-[a-f0-9]{32} local ACL. Five
+  // distinct routes do not require broadening the production publish boundary.
+  const routes = Array.from({ length: 5 }, () => 'hybrid-' + crypto.randomBytes(16).toString('hex'));
   const ffmpeg = path.join(runtime, 'bin/ffmpeg.exe'), publishers = [];
   const receiptPath = path.resolve(__dirname, '../../build/desktop-windows/native-preview-pixels.json');
   const receipt = { schema: 1, scope: 'synthetic-visible-native-client-only', passed: false, stages: [] };
@@ -66,6 +67,8 @@ exports.exerciseNativeProgramPreview = async (supervisor, runtime, headers, temp
         '-SampleCount', dynamic ? '8' : '1'], { windowsHide: true, timeout: 30000, maxBuffer: 1024 * 1024, env });
       const captureState = JSON.parse(stdout.trim());
       assert.equal(captureState.capture, 'visible-native-client');
+      if (process.env.WEBOBS_TEST_ALLOW_STARTUP_HIDDEN !== '1')
+        assert.equal(captureState.initiallyVisible, true, 'native Program must show itself without capture-tool intervention');
       const values = [];
       for (let sample = 0; sample < (dynamic ? 8 : 1); sample++) {
         const image = pattern.bitmap(await fs.readFile(path.join(directory, `client-${sample}.bmp`)));
@@ -106,10 +109,14 @@ exports.exerciseNativeProgramPreview = async (supervisor, runtime, headers, temp
         headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ source: 'publisher', overridePublisher: false }) })).status, 200);
       const publisher = spawn(ffmpeg, ['-hide_banner', '-loglevel', 'error', '-re', '-stream_loop', '-1', '-i', media,
         '-c', 'copy', '-rtsp_transport', 'tcp', '-f', 'rtsp', `rtsp://127.0.0.1:${supervisor.ports.rtsp}/${routes[i]}`],
-        { windowsHide: true, stdio: ['pipe', 'ignore', 'ignore'] });
-      publishers.push(publisher); let failure; publisher.on('error', error => { failure = error; });
+        { windowsHide: true, stdio: ['pipe', 'ignore', 'pipe'] });
+      publishers.push(publisher); let failure, diagnostic = '';
+      publisher.stderr.on('data', bytes => { diagnostic = (diagnostic + bytes.toString()).slice(-1200); });
+      publisher.on('error', error => { failure = error; });
       await until(async () => {
         await native(); if (failure) throw failure;
+        if (publisher.exitCode !== null || publisher.signalCode !== null)
+          throw new Error(`Synthetic publisher ${i + 1} exited (${publisher.exitCode ?? publisher.signalCode}): ${diagnostic.replaceAll(temporary, '[fixture]').replace(/rtsp:\/\/[^\s]+/g, '[loopback-fixture]')}`);
         const response = await fetch(gateway + '/v3/paths/get/' + routes[i]);
         return response.ok && (await response.json()).ready;
       });
@@ -137,6 +144,10 @@ exports.exerciseNativeProgramPreview = async (supervisor, runtime, headers, temp
     const expired = await native(); assert.equal(expired.requested, false); assert.equal(expired.state, 0);
     receipt.passed = true; await saveReceipt();
     console.log('Actual native Program: final visible scene colors and five distinct reordered HEVC channel pixels/time progression, committed layout reorder, no publisher/compatibility route, reopen and lease expiry passed. Hardware/CPU/camera qualification remains open.');
+  } catch (error) {
+    receipt.failure = String(error.message).slice(0, 4000);
+    await saveReceipt();
+    throw error;
   } finally {
     await native('DELETE').catch(() => {});
     await until(async () => (await native()).state === 0).catch(() => {});
