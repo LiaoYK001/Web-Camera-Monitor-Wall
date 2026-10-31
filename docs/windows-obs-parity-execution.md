@@ -296,3 +296,29 @@ Before publication the immutable artifact `13052358847` (123,286,064 bytes, dige
 | `SHA256SUMS.txt` | 242 | `04abb74831aa3d13e93cacbb7b7e92f928bc618b6052ade21d6738f088b3fab1` |
 
 Boundaries: unsigned, no auto-update, no cross-version installer upgrade or data migration; the prototype ZIP is not the product default and does not replace the Electron product; the pixel gate is still software D3D11 plus synthetic RTSP (nine phases) and does not qualify the target machine, five real H.265 cameras, hardware decoding, latency, power or same-machine OBS comparison; P1 display gaps, P3 capability migration and P5 performance/size gates remain open. Release notes: `docs/release-notes-dev40.md`.
+
+### 版本升级私密配置快照与校验恢复 / Version-upgrade private-profile snapshots and verified restore
+
+2026-11-01 原生原型增加每版本私密配置快照与可校验恢复（[run 41236346267](https://github.com/LiaoYK001/Web-Camera-Monitor-Wall/actions/runs/41236346267)，提交 `011e879`，artifact `13055697896`，123,339,661 B）。这是 P3/P4 数据保留与升级生命周期的一个有界步骤，不等于完整能力迁移或产品数据保留政策。
+
+机制：插件在 `OBS_FRONTEND_EVENT_FINISHED_LOADING`、产品五分屏 bootstrap 之前读取 `<install>/webobs-native-prototype.json` 的版本；若 `backups/config-<version>-*` 尚无同版本 `backup.json`，就把 `<install>/config/` 逐文件快照到 `backups/config-<version>-<UTC>/`，记录相对路径、字节数和 SHA-256，跳过 `obs-studio/logs/`、运行时 `.sentinel/` 与 `crashes/`；`backup.json` 用 `QSaveFile` 原子写入，最多保留 3 份，任何失败都删除半成品且不阻塞启动；pixel-test 构建运行时不快照。NSIS 卸载保留 `config/` 与 `backups/`。恢复由 `native-host/scripts/restore_native_backup.py --backup <name> --apply` 执行：先校验清单（schema/kind/version、路径安全、重复、大小/哈希、多余或缺失文件），把当前 `config/` 另存为 `backups/pre-restore-<UTC>`，再在安装根下的临时目录内替换 `config/` 并写回执。
+
+CI 证据（安装器 + 固定 dev.32 升级 + 恢复）：
+
+- 安装器：`SETUP.exe` 45,235,341 B，SHA-256 `601eff0989aed2e9cfe564fcab9ca07b78056d36e01f2fd45400936779c94675`，1,579 文件；重装与卸载都保留配置；首次启动生成 1 份版本快照，卸载后快照与回执保留；未签名。
+- 升级：固定 dev.32（78,000,435 B）安装并双启动后覆盖安装 dev.42（`packageBytes` 78,093,814，`sha256` `e3cd8eb2fd212c30295d98b00705f0e4758732d2e033d42b505e7501ef873b44`），`previousVersion=4.1.0-dev.32`、`configPreserved=true`、`fileCount=1598`；新版本启动后快照的稳定文件集合与升级前一致、逐文件哈希相同（没有缺失，也没有额外配置外文件），`--existing-wall` 启动复用 5 路（created=0/reused=5，`sceneReusedSecond=true`）。
+- 恢复：从快照 `config-4.1.0-dev.42-20261031T200201Z` 恢复到临时安装根，恢复 18 个文件 / 126,204 B，先生成 `pre-restore-20261031T200201Z`；恢复后每个稳定文件哈希与升级前一致；回执随 artifact 归档。
+
+边界：快照是文件级且未加密（依赖用户目录 ACL），不含 DPAPI 封装、跨机器迁移、自动回滚、自动调度、Electron 数据/账号迁移或跨大版本兼容承诺；安装器仍不会自动迁移，只有 CI 的显式 `upgrade_previous` 路径被验证；未在目标机验证，不构成 P5 或产品数据保留政策证据。
+
+On 2026-11-01 the native prototype gained per-version private-profile snapshots and verified restore ([run 41236346267](https://github.com/LiaoYK001/Web-Camera-Monitor-Wall/actions/runs/41236346267), commit `011e879`, artifact `13055697896`, 123,339,661 B). This is one bounded P3/P4 data-retention and upgrade-lifecycle step, not a complete capability migration or a product retention policy.
+
+Mechanism: before the product five-tile bootstrap at `OBS_FRONTEND_EVENT_FINISHED_LOADING`, the plugin reads the version in `<install>/webobs-native-prototype.json`; if no `backups/config-<version>-*` directory already holds a `backup.json` for that version, it snapshots `<install>/config/` file by file into `backups/config-<version>-<UTC>/`, recording relative path, bytes and SHA-256 while skipping `obs-studio/logs/`, runtime `.sentinel/` files and `crashes/`. `backup.json` is written atomically with `QSaveFile`, at most three snapshots are kept, failures remove partial data and never block startup, and pixel-test runs do not snapshot. NSIS uninstall keeps `config/` and `backups/`. Restore runs through `native-host/scripts/restore_native_backup.py --backup <name> --apply`: it validates the manifest (schema/kind/version, path safety, duplicates, sizes/hashes, extra or missing files), saves the current `config/` as `backups/pre-restore-<UTC>`, then replaces `config/` from a staging directory under the install root and writes a receipt.
+
+CI evidence (installer + pinned dev.32 upgrade + restore):
+
+- Installer: `SETUP.exe` 45,235,341 B, SHA-256 `601eff0989aed2e9cfe564fcab9ca07b78056d36e01f2fd45400936779c94675`, 1,579 files; reinstall and uninstall preserve configuration; the first run creates one version snapshot and uninstall keeps the snapshot and receipt; unsigned.
+- Upgrade: after installing and double-launching pinned dev.32 (78,000,435 B), dev.42 is installed over it (`packageBytes` 78,093,814, `sha256` `e3cd8eb2fd212c30295d98b00705f0e4758732d2e033d42b505e7501ef873b44`) with `previousVersion=4.1.0-dev.32`, `configPreserved=true`, `fileCount=1598`; the new version's snapshot has the same stable file set and per-file hashes as before the upgrade (nothing missing, no extra non-configuration file), and the `--existing-wall` launch reuses five cameras (created=0/reused=5, `sceneReusedSecond=true`).
+- Restore: from snapshot `config-4.1.0-dev.42-20261031T200201Z` into a temporary install root, restoring 18 files / 126,204 B after creating `pre-restore-20261031T200201Z`; every stable file hash matches the pre-upgrade value and the receipt is archived with the artifact.
+
+Boundaries: the snapshot is file level and unencrypted (it relies on the user directory ACL); there is no DPAPI wrapping, cross-machine migration, automatic rollback, scheduling, Electron data/account migration or cross-major-version compatibility promise. The installer still does not migrate automatically — only the explicit CI `upgrade_previous` path is verified — and nothing here was checked on the target machine or counts as P5 or product retention evidence.
