@@ -3,6 +3,7 @@
 #include "pixel_test.hpp"
 #include "wall.hpp"
 #include "layout.hpp"
+#include "product_bootstrap.hpp"
 #include <obs-module.h>
 #include <util/config-file.h>
 #include <QApplication>
@@ -134,6 +135,7 @@ class Harness final : public QObject {
 	int phase_ = 0, generation_ = 0;
 	bool published_ = false, closing_ = false, take_stopped_ = false, reopening_ = false;
 	bool wall_reuse_verified_ = false;
+	bool product_bootstrap_verified_ = false;
 
 	void require(bool value, const char *message) const
 	{
@@ -249,23 +251,27 @@ class Harness final : public QObject {
 	}
 	void create_rtsp()
 	{
+		std::array<ProductCamera, 5> cameras{};
 		for (std::size_t i = 0; i < rtsp_.size(); ++i) {
-			auto *settings = obs_data_create();
-			const auto utf8 = rtsp_urls_[i].toUtf8();
-			obs_data_set_bool(settings, "is_local_file", false); obs_data_set_string(settings, "input", utf8.constData());
-			obs_data_set_bool(settings, "looping", false); obs_data_set_bool(settings, "hw_decode", false);
-			obs_data_set_bool(settings, "restart_on_activate", true); obs_data_set_bool(settings, "close_when_inactive", false);
-			const auto name = "Synthetic loopback RTSP " + std::to_string(i + 1);
-			rtsp_[i] = obs_source_create("ffmpeg_source", name.c_str(), settings, nullptr);
-			obs_data_release(settings);
-			require(rtsp_[i], "loopback RTSP Media Source creation failed");
-			rtsp_uuids_[i] = obs_source_get_uuid(rtsp_[i]);
+			cameras[i].id = "loopback-" + std::to_string(i + 1);
+			cameras[i].name = "Synthetic loopback RTSP " + std::to_string(i + 1);
+			cameras[i].url = rtsp_urls_[i].toStdString();
+			cameras[i].hardware_decode = false;
+		}
+		auto product = create_product_five_camera_wall(cameras, "WebOBS Native RTSP Wall");
+		require(product.error.empty(), "product camera bootstrap failed");
+		require(product.created == 5 && product.reused == 0,
+			"product camera bootstrap did not create five fresh sources");
+		for (std::size_t i = 0; i < rtsp_.size(); ++i) {
+			rtsp_[i] = product.sources[i];
+			product.sources[i] = nullptr;
+			rtsp_uuids_[i] = product.uuids[i];
 			rtsp_hashes_[i] = settings_hash(rtsp_[i]);
 		}
-		auto result = create_five_tile_wall(rtsp_uuids_);
-		rtsp_scene_ = result.scene;
+		rtsp_scene_ = product.scene;
+		product.scene = nullptr;
 		require(rtsp_scene_, "loopback RTSP five-tile wall creation failed");
-		select_wall(rtsp_scene_);
+		product_bootstrap_verified_ = true;
 	}
 	bool scene_is(obs_source_t *(*getter)(), obs_scene_t *expected) const
 	{
@@ -363,6 +369,7 @@ class Harness final : public QObject {
 		                       {"programGeneration", generation_}, {"elapsedMs", double(clock_.elapsed())},
 		                       {"globalFfmpegInputsIncludingPrivate", int(snapshot.ffmpeg)}, {"globalInputCountIncludingPrivate", int(snapshot.inputs)},
 		                       {"wallReuseVerified", wall_reuse_verified_},
+		                       {"productBootstrapVerified", product_bootstrap_verified_},
 		                       {"activeOutputs", int(snapshot.active_outputs)}, {"activeEncoders", int(snapshot.active_encoders)},
 		                       {"rawVideoActive", obs_video_active()}, {"sameInputPointersAndSettings", true}, {"sources", ids},
 		                       {"windows", windows},

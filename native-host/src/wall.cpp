@@ -66,7 +66,8 @@ bool scan_scenes(void *opaque, obs_source_t *source)
 }
 } // namespace
 
-WallResult create_five_tile_wall(const std::array<std::string, 5> &source_uuids)
+WallResult create_five_tile_wall(const std::array<std::string, 5> &source_uuids,
+				 const std::string &preferred_name)
 {
 	Sources sources;
 	for (std::size_t i = 0; i < sources.values.size(); ++i) {
@@ -84,13 +85,13 @@ WallResult create_five_tile_wall(const std::array<std::string, 5> &source_uuids)
 	if (!obs_get_video_info(&video) || video.base_width < 3 || video.base_height < 2)
 		return {nullptr, "The OBS canvas is not ready."};
 
-	std::string name = "WebOBS Native Wall";
+	std::string name = preferred_name;
 	for (unsigned suffix = 1;; ++suffix) {
 		auto *existing = obs_get_source_by_name(name.c_str());
 		if (!existing)
 			break;
 		obs_source_release(existing);
-		name = "WebOBS Native Wall " + std::to_string(suffix);
+		name = preferred_name + " " + std::to_string(suffix);
 	}
 	auto *scene = obs_scene_create(name.c_str());
 	if (!scene)
@@ -119,6 +120,8 @@ WallResult create_five_tile_wall(const std::array<std::string, 5> &source_uuids)
 WallResolution ensure_five_tile_wall(const std::array<std::string, 5> &source_uuids,
 				     const std::string &preferred_name)
 {
+	if (preferred_name.empty())
+		return {nullptr, false, "The wall name must not be empty."};
 	for (const auto &uuid : source_uuids) {
 		if (uuid.empty())
 			return {nullptr, false, "Select an existing Media Source for every tile."};
@@ -131,7 +134,7 @@ WallResolution ensure_five_tile_wall(const std::array<std::string, 5> &source_uu
 	}
 	if (scan.name_taken)
 		return {nullptr, false, "An existing scene has the preferred name but different sources."};
-	auto created = create_five_tile_wall(source_uuids);
+	auto created = create_five_tile_wall(source_uuids, preferred_name);
 	if (!created.scene)
 		return {nullptr, false, created.error};
 	select_wall(created.scene);

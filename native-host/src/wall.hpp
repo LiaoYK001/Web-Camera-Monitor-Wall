@@ -13,7 +13,8 @@ struct WallResult {
 
 // Only existing ffmpeg_source UUIDs are accepted. No source/decoder is created,
 // settings are not changed and existing scenes are never overwritten.
-WallResult create_five_tile_wall(const std::array<std::string, 5> &source_uuids);
+WallResult create_five_tile_wall(const std::array<std::string, 5> &source_uuids,
+				 const std::string &preferred_name = "WebOBS Native Wall");
 // Reuse an existing wall scene with exactly these five sources in tile order;
 // create it only when no scene with the preferred name exists. A same-named
 // scene with different items is an error (never overwritten).

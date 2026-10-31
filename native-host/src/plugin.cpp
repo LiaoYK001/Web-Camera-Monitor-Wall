@@ -1,3 +1,4 @@
+#include "product_bootstrap.hpp"
 #include "wall.hpp"
 #ifdef WEBOBS_NATIVE_PIXEL_TEST
 #include "pixel_test.hpp"
@@ -105,6 +106,108 @@ void bootstrap_configured_wall()
 	obs_scene_release(resolved.scene);
 	receipt.insert("ok", true);
 	write_wall_receipt(receipt);
+}
+
+void write_product_receipt(const QJsonObject &object)
+{
+	char *path = obs_module_config_path("product-bootstrap.json");
+	if (!path)
+		return;
+	QFile receipt(QString::fromUtf8(path));
+	bfree(path);
+	if (receipt.open(QIODevice::WriteOnly | QIODevice::Truncate))
+		receipt.write(QJsonDocument(object).toJson());
+}
+
+void bootstrap_product_cameras()
+{
+	char *config_path = obs_module_config_path("product.json");
+	if (!config_path)
+		return;
+	const QString path = QString::fromUtf8(config_path);
+	bfree(config_path);
+	QFile file(path);
+	if (!file.exists())
+		return;
+	QJsonObject receipt{{"schema", 1}, {"scope", "product-cameras"}, {"ok", false}};
+	const auto fail = [&receipt](const char *code) {
+		receipt.insert("error", QString::fromLatin1(code));
+		write_product_receipt(receipt);
+	};
+	if (!file.open(QIODevice::ReadOnly) || file.size() > 16384) {
+		fail("config-unreadable");
+		return;
+	}
+	const auto document = QJsonDocument::fromJson(file.readAll());
+	if (!document.isObject()) {
+		fail("config-invalid-json");
+		return;
+	}
+	const auto object = document.object();
+	const auto cameras_json = object.value("cameras").toArray();
+	if (object.value("schema").toInt() != 1 || cameras_json.size() != 5) {
+		fail("config-schema");
+		return;
+	}
+	const QRegularExpression id_pattern("^[A-Za-z0-9_.-]{1,64}$");
+	const QRegularExpression url_pattern("^(rtsp|rtsps|http|https)://");
+	std::array<webobs::native_host::ProductCamera, 5> cameras{};
+	for (int i = 0; i < 5; ++i) {
+		const auto camera = cameras_json.at(i).toObject();
+		const QString id = camera.value("id").toString();
+		const QString name = camera.value("name").toString();
+		const QString url = camera.value("url").toString();
+		if (!id_pattern.match(id).hasMatch() || name.isEmpty() || name.size() > 128 ||
+		    name.contains('\n') || name.contains('\r') || url.size() > 2048 ||
+		    !camera.value("url").isString() || !url_pattern.match(url).hasMatch()) {
+			fail("config-camera");
+			return;
+		}
+		cameras[std::size_t(i)] = {id.toStdString(), name.toStdString(), url.toStdString(),
+					   camera.value("hardwareDecode").toBool(false)};
+	}
+	bool canvas_applied = false;
+	const auto canvas_value = object.value("canvas");
+	if (canvas_value.isObject()) {
+		const auto canvas = canvas_value.toObject();
+		std::string error;
+		if (!webobs::native_host::apply_product_video_config(canvas.value("width").toInt(0),
+								     canvas.value("height").toInt(0),
+								     canvas.value("fps").toInt(0), error)) {
+			receipt.insert("error", QString::fromStdString(error.empty() ? "video-config" : error));
+			write_product_receipt(receipt);
+			return;
+		}
+		canvas_applied = true;
+	}
+	auto product = webobs::native_host::create_product_five_camera_wall(cameras, "WebOBS Native Wall");
+	receipt.insert("created", product.created);
+	receipt.insert("reused", product.reused);
+	receipt.insert("sceneReused", product.scene_reused);
+	receipt.insert("canvasApplied", canvas_applied);
+	receipt.insert("items", 5);
+	if (!product.error.empty() || !product.scene) {
+		receipt.insert("error",
+			       QString::fromStdString(product.error.empty() ? "wall-unavailable" : product.error));
+		product.release();
+		write_product_receipt(receipt);
+		return;
+	}
+	product.release();
+	receipt.insert("ok", true);
+	write_product_receipt(receipt);
+}
+
+void bootstrap_product_configuration()
+{
+	char *path = obs_module_config_path("product.json");
+	const bool present = path && QFileInfo(QString::fromUtf8(path)).exists();
+	if (path)
+		bfree(path);
+	if (present)
+		bootstrap_product_cameras();
+	else
+		bootstrap_product_configuration();
 }
 
 void frontend_event(enum obs_frontend_event event, void *)

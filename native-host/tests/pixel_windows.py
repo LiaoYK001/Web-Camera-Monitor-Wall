@@ -287,6 +287,8 @@ def validate_state(state: dict, seq: int, token: str, pid: int) -> None:
             raise AssertionError("An OBS output/encoder was active during the pixel test")
     if seq >= 2 and state.get("wallReuseVerified") is not True:
         raise AssertionError("native payload wall reuse was not verified")
+    if seq >= 6 and state.get("productBootstrapVerified") is not True:
+        raise AssertionError("product camera bootstrap path was not verified")
     if state.get("rawVideoActive") is not False or state.get("sameInputPointersAndSettings") is not True:
         raise AssertionError("Unexpected raw consumer or input mutation")
     expected_ffmpeg = 0 if seq == 1 else 10 if seq >= 6 else 5
