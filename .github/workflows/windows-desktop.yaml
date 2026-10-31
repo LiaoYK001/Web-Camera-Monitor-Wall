@@ -46,6 +46,10 @@ on:
         description: 'Qualify the frozen main v4.0 NSIS artifact against published v3.5 without rebuilding or publishing'
         default: false
         type: boolean
+      footprint_check:
+        description: 'Validate only the Windows installed-tree footprint contracts; no build, installer or product start'
+        default: false
+        type: boolean
 
 permissions:
   contents: read
@@ -53,12 +57,26 @@ permissions:
 concurrency:
   # Independent read-only prototype/diagnostic runners do not share product
   # output trees. Keep product/install/publication operations serialized.
-  group: webobs-windows-desktop-build-${{ (inputs.native_host || inputs.native_host_pixels) && 'native-host' || inputs.diagnose_dev17 && 'frozen-preview' || 'product' }}
+  group: webobs-windows-desktop-build-${{ (inputs.native_host || inputs.native_host_pixels) && 'native-host' || inputs.diagnose_dev17 && 'frozen-preview' || inputs.footprint_check && 'footprint' || 'product' }}
   cancel-in-progress: false
 
 jobs:
+  footprint-contracts:
+    if: ${{ inputs.footprint_check }}
+    runs-on: windows-2022
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - name: Validate installed-tree footprint contracts
+        shell: pwsh
+        run: |
+          $ErrorActionPreference='Stop'
+          pwsh -NoProfile -File desktop/tests/test-installed-tree-footprint.ps1
+
   audit:
-    if: ${{ !inputs.publish_dev17 && !inputs.publish_dev18 && !inputs.diagnose_dev17 && !inputs.native_host && !inputs.native_host_pixels }}
+    if: ${{ !inputs.publish_dev17 && !inputs.publish_dev18 && !inputs.diagnose_dev17 && !inputs.native_host && !inputs.native_host_pixels && !inputs.footprint_check }}
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
@@ -75,7 +93,7 @@ jobs:
           python3 tests/test_online_source.py
 
   windows:
-    if: ${{ !inputs.installed_upgrade }}
+    if: ${{ !inputs.installed_upgrade && !inputs.footprint_check }}
     needs: audit
     runs-on: windows-2022
     environment: windows-desktop-build
