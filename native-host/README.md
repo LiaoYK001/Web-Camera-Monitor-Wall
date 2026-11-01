@@ -2,7 +2,15 @@
 
 此目录是 Windows 架构收敛的 **P2 初始脚手架**，不是新发布产品，也不会替换默认 Electron/NSIS 兼容路径。它直接构建固定上游 OBS Studio **32.1.2** 的完整 Qt 前端、`libobs` 与原生 Media Source/Preview/Projector，再以产品自有插件提供五分屏入口。不引入另一套播放器、渲染器、WebView、Electron、GStreamer 或 `clients/` 产品。
 
-**当前没有产品登录/RBAC、旧数据迁移、服务 supervisor、安装器或产品更新器。请仅在新的、可写、隔离开发目录运行。** 不要导入已有 OBS 用户配置或正式产品私密数据。已有功能仍由兼容产品承担；本原型不能声称 P3/P4 完成或五路 H.265/CPU/GPU 等价验收通过。
+**当前尚无接入原生 UI 的产品登录/RBAC、可应用的旧数据迁移、服务 supervisor 或产品更新器；已有下述独立未签名 NSIS 开发安装器与配置快照/恢复工具。请仅在新的、可写、隔离开发目录运行。** 不要把已有 OBS 用户配置或正式产品私密数据放入原型。已有功能仍由兼容产品承担；本原型不能声称 P3/P4 完成或五路 H.265/CPU/GPU 等价验收通过。
+
+The prototype has an unsigned per-user NSIS development installer and versioned profile snapshots/restoration. Product login/RBAC is not wired into the native UI; applicable legacy-data migration, a service supervisor and the product updater remain absent. The compatibility product stays the default.
+
+## 控制认证与迁移预检 / Control authorization and migration preflight
+
+新增 [无媒体认证边界](../docs/native-control-auth.md) 复用现有 SQLite 会话，对固定命令逐次检查账号权限和 camera scope；它尚未接入原生 UI、真实账号后端或 HTTP listener。新增 [旧配置只读预检](../docs/native-legacy-import.md) 仅处理显式导出的 scene/studio JSON，生成稳定身份映射与不支持项，不扫描旧私密 profile、不应用或覆盖数据。两者是 P3 的开发基础，不改变默认产品，也不表示登录或迁移已验收。
+
+The renderer-free authorization library and read-only legacy-import preflight are development foundations. They do not enable native product login or apply old data. Follow the linked boundaries before integration.
 
 ## 固定输入与独立构建
 
@@ -36,9 +44,9 @@ Normal builds then run `native-host/scripts/runtime_inventory.py` (CI step "Inve
 
 ### 原型安装与升级 / Prototype install and upgrade
 
-`native-host/scripts/install_native.py` 把冻结 ZIP 安装到用户指定的私密目录：校验条目路径与 manifest（开发版、`defaultProduct=false`、不启动服务）、拒绝包内 `config/`、当前安装目录没有 manifest 时拒绝覆盖无关目录、替换前备份并在失败时回滚；已存在的 `config/obs-studio` portable profile 会复制进新树，因此重装/升级保留五格墙、source settings 与账号登录。安装器写入小型 JSON 回执（版本、SHA-256、是否保留配置、文件数），不含路径、URL 或日志。这是原型安装器，不注册系统服务、不写注册表、未签名，也不是产品安装包。
+`native-host/scripts/install_native.py` 把冻结 ZIP 安装到用户指定的私密目录：校验条目路径与 manifest（开发版、`defaultProduct=false`、不启动服务）、拒绝包内 `config/`、当前安装目录没有 manifest 时拒绝覆盖无关目录、替换前备份并在失败时回滚；已存在的 `config/obs-studio` portable profile 会复制进新树，因此重装/升级保留五格墙和 source settings；这不提供或迁移产品账号登录。安装器写入小型 JSON 回执（版本、SHA-256、是否保留配置、文件数），不含路径、URL 或日志。这是原型安装器，不注册系统服务、不写注册表、未签名，也不是产品安装包。
 
-`native-host/scripts/install_native.py` installs a frozen ZIP into a private caller-chosen directory: it validates entry paths and the manifest (development version, `defaultProduct=false`, no services), rejects a bundled `config/`, refuses to overwrite an unrelated directory without a manifest, backs up the old tree and rolls back on failure; an existing `config/obs-studio` portable profile is copied into the new tree so reinstall or upgrade keeps the five-tile wall, source settings and account login. It writes a small JSON receipt (version, SHA-256, whether config was preserved, file count) without paths, URLs or logs. This is a prototype installer: no service registration, no registry writes, unsigned, and not a product installer.
+`native-host/scripts/install_native.py` installs a frozen ZIP into a private caller-chosen directory: it validates entry paths and the manifest (development version, `defaultProduct=false`, no services), rejects a bundled `config/`, refuses to overwrite an unrelated directory without a manifest, backs up the old tree and rolls back on failure; an existing `config/obs-studio` portable profile is copied into the new tree so reinstall or upgrade keeps the five-tile wall and source settings; this does not provide or migrate product account login. It writes a small JSON receipt (version, SHA-256, whether config was preserved, file count) without paths, URLs or logs. This is a prototype installer: no service registration, no registry writes, unsigned, and not a product installer.
 
 独立开发安装包（原型）：`native-host/installer/WebOBSNative.nsi` 用 NSIS 把同一份冻结 runtime 打包成未签名的每用户安装器 `WebOBS-OBS-native-<dev>-windows-x64-SETUP.exe`。静默安装到 `%LOCALAPPDATA%\WebOBS Native Prototype`，只写 HKCU 的卸载信息，不注册服务；重装会覆盖程序文件而不触碰 `config\`，静默卸载删除程序文件但逐字节保留 `config\`（内含 RTSP 凭据与五格墙）。CI 会在同一运行中验证安装→双启动烟测→重装保留配置→卸载保留配置与清理注册表，并记录安装包字节数/SHA-256。它仍是开发包：未签名、无自动更新、无自动数据迁移或自动回滚，不是产品安装器。
 

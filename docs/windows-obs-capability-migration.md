@@ -55,7 +55,17 @@
 
 ### 4.4 不把现有 core 作为第二个 OBS renderer 搬入新宿主
 
-[core entry](../core/src/main.cpp#L135) 直接调用 `run_obs_engine`。直接把完整旧 Supervisor 放进 Qt 宿主会启动第二套 OBS 媒体/渲染实例，违背消除冗余目标。先拆出 renderer-free 控制/认证适配契约，再接入同一 OBS source/scene/frontend 对象。
+[core entry](../core/src/main.cpp#L135) 调用 `run_obs_engine`，但**不等于总会启动第二套 OBS renderer**：[Direct-only 分支](../core/src/obs_engine.cpp#L541-L630) 在无 `output_path` 且 `composite_enabled=false` 时使用 disabled `ObsSceneRuntime`，在 `obs_startup` 之前返回；它仍链接 libobs，但不初始化媒体/合成/编码。该分支仍创建/保存旧 scene/studio 状态、暴露通用可写 API，并不是原生 frontend 的命令适配器。复用控制面必须固定 renderer-free 配置、收窄白名单、强制会话与逐命令授权，再接入**同一** OBS source/scene/frontend 对象，不能直接搬入完整旧 Supervisor 或让它随录制/Composite 配置启用第二引擎。
+
+The existing core already has a renderer-free Direct-only branch (no output and Composite disabled); libobs linkage is not evidence of a second initialized renderer. Its writable legacy graph, broad APIs and configuration-dependent media activation still make it unsuitable as an unmodified native frontend adapter. Preserve the disabled-renderer invariant and add an explicit fail-closed command boundary before integration.
+
+另外，旧 core 在内部账号 token 缺失时允许退出 cluster auth 路径；`/api/v1/auth/session` 也只检查本地会话，返回发生在 fresh RBAC 之前。新原生边界不得继承可选认证默认值，不得把“session 有效”当作操作授权；每次操作都必须重新检查账号状态、权限与 camera scope，账号后端不可用时拒绝执行。The native boundary must never use optional-auth defaults or a cached login flag as authority for OBS commands.
+
+### 4.5 当前 P3 基础 / Current P3 foundations
+
+[无媒体授权库](native-control-auth.md) 已复用实际 SessionStore 并提供逐命令 fresh RBAC 回调契约；[旧配置显式导出预检](native-legacy-import.md) 已提供只读稳定 ID 规划与不支持项阻断。它们不启动服务，不应用旧配置，也未接入真实账号后端、完整 OBS UI 策略和 copy-on-write 回滚。以下步骤仍是集成验收门，不能因基础库/预检测试通过就标记 P3 完成。
+
+Renderer-free authorization and explicit-export migration planning are now independently testable foundations, not a wired native account product or an applied data migration. The gates below remain open until their actual integration evidence exists.
 
 ## 5. 下一最小安全实现 / Next minimal safe implementation
 

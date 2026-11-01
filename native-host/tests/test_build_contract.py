@@ -293,6 +293,26 @@ class BuildContractTests(unittest.TestCase):
         self.assertIn('--crash-smoke', smoke)
         self.assertIn('gate.get("crashed") is not True', smoke)
 
+    def test_native_control_boundary_has_standalone_linux_and_msvc_contracts(self):
+        workflow = (ROOT / ".github/workflows/web-runtime-ci.yaml").read_text()
+        standalone = (ROOT / "native-host/tests/control-auth/CMakeLists.txt").read_text()
+        root_cmake = (ROOT / "CMakeLists.txt").read_text()
+        manifest = json.loads((ROOT / "native-host/tests/control-auth-vcpkg/vcpkg.json").read_text())
+        self.assertIn("native-control-contracts:", workflow)
+        self.assertIn("windows-native-control-contracts:", workflow)
+        self.assertIn("native-host/tests/test_legacy_import.py", workflow)
+        self.assertIn("native-host/tests/control-auth", workflow)
+        self.assertIn("x64-windows-static", workflow)
+        self.assertIn("core/src/native_control_auth.cpp", standalone)
+        self.assertIn("core/src/authentication.cpp", standalone)
+        self.assertNotIn("add_subdirectory", standalone)
+        self.assertNotIn("find_package(libobs", standalone)
+        self.assertNotIn("find_package(Qt", standalone)
+        self.assertIn("native-control-no-media-symbols", standalone)
+        self.assertIn("webobs-native-control-auth-tests", root_cmake)
+        self.assertEqual(manifest["dependencies"], ["openssl", "sqlite3"])
+        self.assertEqual(manifest["builtin-baseline"], "eb2d3a3279fd019cb7733072d86900d0ad2a1aef")
+
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)

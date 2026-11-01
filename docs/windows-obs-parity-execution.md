@@ -483,3 +483,21 @@ On [run 41255533864](https://github.com/LiaoYK001/Web-Camera-Monitor-Wall/action
 - 2026-11-01 新增 `native-host/qualification/plan.py`：从一份已确认的 pair-1/position-1 元数据展开三对交替（产品→OBS→产品→OBS→产品→OBS）的六个 `run-NN-*.json` 与 `plan.json`，可绑定一份 `status=pass`、`diagnostic=false` 的预检回执；`status=planned`、`qualified=false`，不启动 OBS、不采集、不判定。
 - 契约：模板必须五路全 `h265`、`five-real-h265`、七项声明全部确认；派生 `runId` 必须唯一且 ≤64 字符；输出必须是仓库外的新私密目录；诊断预检回执会被拒绝。
 - 边界：这是排期与元数据一致性工具，不是测量；每轮仍须独立私密目录、`collect.py` 采样与操作者手工核对窗口/相机，P5 未因此推进。
+
+### P3 无媒体控制授权基础 / P3 renderer-free control authorization foundation
+
+- 2026-11-01 按用户优先推进控制/认证与旧配置迁移的决定，新增 [NativeControlAuth](../core/include/webobs/native_control_auth.hpp) 与 [接入边界说明](native-control-auth.md)。直接复用既有 SQLite SessionStore，固定 `scene.read` / `scene.write` / `live.view`，每次操作重新查询可信账号回调；检查精确 loopback peer、Origin、authority 与单个 camera scope，不使用 Basic 或 session-only 管理员回退。
+- 账号不存在/禁用时成功撤销该用户会话才返回 401；拒绝 403、后端异常/无回调/无配置 503。独立审查发现原实现忽略 `revoke_user` 返回值，已加入实际 SQLite `BEFORE DELETE ... RAISE(ABORT)` 故障回归：删除未确认时保守 503，不报告撤销成功。structural rejection 不滑动会话或调用后端；后台授权结束后再次验证会话，拒绝途中 logout。
+- 本地 Fedora：独立 Release CTest（真实 SessionStore 回归、静态库无媒体符号）通过；根 CTest 的 common / native auth / go2rtc proxy 同时通过。CI 增加独立 Linux/MSVC 构建，Windows 只从既有固定 vcpkg baseline 使用 OpenSSL/SQLite 测试依赖，不改原生包的依赖或媒体链路。
+- 边界：这是库和回归，不是完整原生登录。真实账号 HTTP adapter、私密凭据/ACL、listener 有界解析、全部 graph-derived scope 与 OBS 菜单/快捷键等绕过入口控制尚未接入；未开启任何新服务、未切换 Electron 默认产品，未发布新安装器。回执/单测不能替代目标机像素、硬解和性能验收。
+
+The new renderer-free boundary reuses persistent sessions and performs fresh allowlisted permission/scope checks per operation. A real SQLite deletion-failure regression now prevents an unconfirmed revoke-all operation from being reported as a normal 401. Fedora standalone and existing shared regressions pass; Linux/MSVC CI coverage is added independently of the OBS runtime. This does **not** implement native product login, account-service transport, OBS execution or complete UI isolation, and does not change the default product or qualify target-machine media/performance.
+
+### P3 旧配置只读规划 / P3 read-only legacy configuration planning
+
+- 新增 [显式导出预检](../native-host/scripts/legacy_import.py) 与 [契约说明](native-legacy-import.md)，接受 scene schema 5/6 或 studio schema 1。只读一个显式 JSON，不发现/打开账号及 camera 数据库、不解密、不访问网络或实际相机、不提供 apply。报告仅含白名单属性和稳定 ID 映射，去除名称、原始 ID、URL、路径及秘密；Program/Preview 分开映射，不隐式 TAKE。
+- 普通 RTSP 是保守候选；硬解与超时必须显式确认。非 RTSP、filter（含 disabled）、非黑背景、高级 item、显式非空 audioInputs 都阻断，不能静默舍弃；空 audioInputs 与缺省语义分开，audioTrack 仍为输出总线。候选不是原生 product 配置，当前 bootstrap 未因此获得超时设置或导入能力。
+- POSIX 逐级目录 fd + O_NOFOLLOW；Windows 持有 ancestor handle 并以 OPEN_REPARSE_POINT 打开最终输入，读取前验证 handle 类型/属性/链接/大小，防止先跟随后拒绝。审查发现并修正原 lstat→CRT-open 竞态；加入最终分量替换和 Windows kernel API 契约测试。报告位于导出目录树外，exclusive-create 不覆盖原文件。Windows ACL 继承、不声称自动建立私密 ACL。
+- 本地 Python 回归使用临时合成文档，不读取真实私密配置；CI 在 Linux 和 Windows 同跑。所有结果 dryRun=true、applied=false、qualified=false；尚无经授权的 copy-on-write 应用、逐字段 OBS graph 比对与回滚，P3 仍未完成。
+
+The new preflight plans only explicitly exported scene/studio JSON, reconstructs a safe public report and stable scoped IDs, and blocks unsupported semantics instead of dropping them. It does not open databases, decrypt secrets, connect to cameras, or apply a migration. A reviewed Windows final-component race is fixed with a native no-follow handle; race and API-contract regressions accompany the privacy/read-only tests. Reversible application and native product authentication remain future work; no default-product or target-machine qualification claim is made.

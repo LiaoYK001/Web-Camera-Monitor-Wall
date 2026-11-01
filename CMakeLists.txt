@@ -50,6 +50,7 @@ add_library(webobs-common
     core/src/authentication.cpp
     core/src/audit_event.cpp
     core/src/browser_security.cpp
+    core/src/native_control_auth.cpp
     core/src/config.cpp
     core/src/redaction.cpp
     core/src/scene_document.cpp
@@ -159,6 +160,11 @@ if(WEBOBS_BUILD_TESTS)
     target_link_libraries(webobs-unit-tests PRIVATE webobs-common)
     webobs_warnings(webobs-unit-tests)
     add_test(NAME webobs-unit-tests COMMAND webobs-unit-tests)
+    add_executable(webobs-native-control-auth-tests core/tests/native_control_auth_tests.cpp)
+    target_link_libraries(webobs-native-control-auth-tests PRIVATE webobs-common)
+    webobs_warnings(webobs-native-control-auth-tests)
+    add_test(NAME webobs-native-control-auth-tests COMMAND webobs-native-control-auth-tests)
+    set_tests_properties(webobs-native-control-auth-tests PROPERTIES TIMEOUT 30 LABELS "security;native-control")
     add_executable(webobs-go2rtc-proxy-tests core/tests/go2rtc_proxy_tests.cpp core/src/go2rtc_proxy.cpp)
     target_link_libraries(webobs-go2rtc-proxy-tests PRIVATE webobs-common Boost::headers)
     target_compile_definitions(webobs-go2rtc-proxy-tests PRIVATE BOOST_ERROR_CODE_HEADER_ONLY BOOST_SYSTEM_NO_DEPRECATED)

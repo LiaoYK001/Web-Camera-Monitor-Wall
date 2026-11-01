@@ -19,6 +19,48 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  native-control-contracts:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with: { persist-credentials: false }
+      - name: Renderer-free authorization and read-only legacy import / 无渲染认证与旧配置只读预检
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y cmake ninja-build libssl-dev libsqlite3-dev
+          cmake -S native-host/tests/control-auth -B build/native-control-auth -G Ninja -DCMAKE_BUILD_TYPE=Release
+          cmake --build build/native-control-auth --parallel 2
+          ctest --test-dir build/native-control-auth --output-on-failure
+          python3 -B native-host/tests/test_legacy_import.py
+  windows-native-control-contracts:
+    runs-on: windows-2022
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with: { persist-credentials: false }
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          repository: microsoft/vcpkg
+          ref: eb2d3a3279fd019cb7733072d86900d0ad2a1aef
+          path: build/native-auth-vcpkg
+          persist-credentials: false
+      - name: Compile authorization without OBS and exercise Windows import safety / 独立编译认证并验证 Windows 迁移安全
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $vcpkg = Join-Path $PWD 'build/native-auth-vcpkg'
+          & "$vcpkg/bootstrap-vcpkg.bat" -disableMetrics
+          if ($LASTEXITCODE -ne 0) { throw 'Pinned vcpkg bootstrap failed.' }
+          cmake -S native-host/tests/control-auth -B build/native-control-auth -G 'Visual Studio 17 2022' -A x64 "-DCMAKE_TOOLCHAIN_FILE=$vcpkg/scripts/buildsystems/vcpkg.cmake" "-DVCPKG_MANIFEST_DIR=$PWD/native-host/tests/control-auth-vcpkg" -DVCPKG_TARGET_TRIPLET=x64-windows-static -DCMAKE_MSVC_RUNTIME_LIBRARY=MultiThreaded
+          if ($LASTEXITCODE -ne 0) { throw 'Standalone authorization configure failed.' }
+          cmake --build build/native-control-auth --config Release --parallel 2
+          if ($LASTEXITCODE -ne 0) { throw 'Standalone authorization build failed.' }
+          ctest --test-dir build/native-control-auth -C Release --output-on-failure
+          if ($LASTEXITCODE -ne 0) { throw 'Native authorization regressions failed.' }
+          python -B native-host/tests/test_legacy_import.py
+          if ($LASTEXITCODE -ne 0) { throw 'Read-only legacy import regressions failed.' }
   windows-update-contracts:
     runs-on: windows-2022
     steps:
