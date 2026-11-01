@@ -472,3 +472,8 @@ On [run 41255533864](https://github.com/LiaoYK001/Web-Camera-Monitor-Wall/action
 - Build artifact `13060374195` (68,909,368 B, `sha256:08ee3b052b0a8abfb851d2d4db5cee7b162b40d719f128f93cd4608788c4f806`, run 41250011450). Before publication `verify_native_dev_assets.py` checked the NSIS receipt, ZIP manifest, version/upstream pins, absence of a private `config/` and traversal entries, then staged `SETUP.exe`, `PROTOTYPE.zip` and `SHA256SUMS.txt`.
 - The attached bytes are frozen and unrepacked: SETUP 27,408,522 B `3c7f5846…`, PROTOTYPE.zip 41,484,488 B `2d065e46…`, SHA256SUMS 242 B. GitHub asset digests matched the local hashes after upload; the published SETUP was downloaded again and passed `sha256sum -c`.
 - At the same commit the dev.53 prototype run (startup, NSIS install/uninstall, crash containment, single instance, in-place upgrade of the published dev.40 installer) and the dev.54 ten-phase pixel run passed; publication does not change those boundaries.
+### P5 目标机预检工具与 Windows 诊断回执 / P5 target preflight and hosted diagnostic
+
+- 2026-11-01 新增 `native-host/qualification/preflight.py`：在正式采样前核对 Windows 版本、CPU、物理内存、显示适配器/驱动、显示器数量、两个 `obs64.exe` 的 SHA-256/字节数（必须不同）与元数据契约（五路输入全部 `h265`、`workload=five-real-h265`、七项声明全部确认）。回执 schema 1、kind `native-p5-preflight`，永远 `qualified=false` / `coverageIncomplete=true`；不启动 OBS、不读取摄像机、不测 GPU。`--diagnostic` 只供 CI 用公开占位元数据自检。
+- 诊断回执：run 41257481405（提交 75a2992，dev.61），Windows Server 2022 build 20348 / EPYC 9V74 / 17,174,360,064 B 内存 / Microsoft Hyper-V Video / 1 显示器；10/10 检查通过，`diagnostic=true`、`qualified=false`，两个 EXE 的 SHA-256 不同。dev.60 首次诊断在占位声明与 16 GiB 阈值上按预期失败，随后把“诊断模式允许占位声明”和 CI 阈值写清，并非目标机结果。
+- 边界：这是工具自检与机器身份回执，不是五路真实相机、硬件解码、GPU、延迟或同机 OBS 对照证据；托管运行器的 Hyper-V 适配器不是 RTX 4090，目标机仍须由操作者按运行手册执行并保管私密回执。
