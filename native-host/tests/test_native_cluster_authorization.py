@@ -138,7 +138,7 @@ class NativeAccountTests(unittest.TestCase):
     @contextlib.contextmanager
     def real_cluster(self):
         registry = self.root / "registry.sqlite3"
-        with sqlite3.connect(registry) as db:
+        with contextlib.closing(sqlite3.connect(registry)) as db, db:
             db.execute("CREATE TABLE cameras(id TEXT PRIMARY KEY,group_id TEXT NOT NULL)")
             db.executemany("INSERT INTO cameras VALUES(?,?)", [("camera-a", "group-a"), ("camera-b", "group-b")])
         store = cluster.ClusterStore(self.root / "accounts.sqlite3", FixtureHasher(),
@@ -157,6 +157,34 @@ class NativeAccountTests(unittest.TestCase):
                     yield store, registry, server.server_port
         finally:
             store.close()
+
+    def test_owned_fixture_database_handles_close_without_garbage_collection(self):
+        connections = []
+        original_connect = sqlite3.connect
+
+        class TrackedConnection(sqlite3.Connection):
+            def __init__(self, *args, **kwargs):
+                super().__init__(*args, **kwargs)
+                self.explicitly_closed = False
+                connections.append(self)
+
+            def close(self):
+                super().close()
+                self.explicitly_closed = True
+
+        def connect(*args, **kwargs):
+            return original_connect(*args, **kwargs, factory=TrackedConnection)
+
+        # Keeping strong references deliberately prevents GC from hiding a
+        # leaked handle on POSIX, where unlink would otherwise still succeed.
+        with mock.patch.object(sqlite3, "connect", side_effect=connect):
+            with self.real_cluster() as (_store, _registry, port), Probe(self.root, port, self.token) as probe:
+                probe.create()
+                self.assertEqual(probe.auth(), 200)
+            good = json.dumps({"allowed": True, "userId": "a" * 32, "permission": "live.view"}).encode()
+            self.assertEqual(self.hostile(body=good)[0], 200)
+        self.assertGreaterEqual(len(connections), 4)
+        self.assertTrue(all(connection.explicitly_closed for connection in connections))
 
     def test_real_cluster_fresh_roles_camera_scopes_and_group_registry(self):
         with self.real_cluster() as (store, registry, port), Probe(self.root, port, self.token) as probe:
@@ -178,7 +206,7 @@ class NativeAccountTests(unittest.TestCase):
             self.assertEqual(probe.auth(camera="camera-b"), 200)
             probe.create("group-one", "group")
             self.assertEqual(probe.auth("group"), 200)
-            with sqlite3.connect(registry) as db:
+            with contextlib.closing(sqlite3.connect(registry)) as db, db:
                 db.execute("UPDATE cameras SET group_id='group-b' WHERE id='camera-a'")
             self.assertEqual(probe.auth("group"), 403)
             probe.create("empty-one", "empty")
@@ -196,7 +224,7 @@ class NativeAccountTests(unittest.TestCase):
             self.assertEqual(probe.auth(), 401)
             self.assertEqual(probe.auth("second"), 401)
             self.assertEqual(probe.auth("admin", command=1), 200)
-            with sqlite3.connect(probe.path) as db:
+            with contextlib.closing(sqlite3.connect(probe.path)) as db, db:
                 rows = db.execute("SELECT user_name FROM auth_sessions").fetchall()
             self.assertEqual(rows, [("admin-one",)])
 
@@ -235,7 +263,7 @@ class NativeAccountTests(unittest.TestCase):
             started = time.monotonic()
             reply = probe.auth() if direct is None else probe.call(op="direct", **direct)
             elapsed = time.monotonic() - started
-            with sqlite3.connect(probe.path) as db:
+            with contextlib.closing(sqlite3.connect(probe.path)) as db, db:
                 remaining = db.execute("SELECT COUNT(*) FROM auth_sessions").fetchone()[0]
             self.assertEqual(remaining, 0 if reply == 401 and direct is None else 1)
             return reply, observed, elapsed, probe.init_status
