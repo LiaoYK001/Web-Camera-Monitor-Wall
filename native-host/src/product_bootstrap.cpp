@@ -62,15 +62,14 @@ obs_source_t *create_camera_source(const ProductCamera &camera)
 	return source;
 }
 
-void remove_created(std::array<obs_source_t *, 5> &sources, int created)
+void remove_created(const std::array<obs_source_t *, 5> &sources, const std::array<bool, 5> &created_here)
 {
-	for (int i = 0; i < created; ++i) {
-		if (sources[std::size_t(i)]) {
-			obs_source_remove(sources[std::size_t(i)]);
-			obs_source_release(sources[std::size_t(i)]);
-			sources[std::size_t(i)] = nullptr;
-		}
-	}
+	// Reused and new sources can occupy any slots. Counts are reporting only,
+	// never ownership: only remove objects created by this bootstrap attempt.
+	// ProductWallResult::release then releases every acquired reference once.
+	for (std::size_t i = 0; i < sources.size(); ++i)
+		if (created_here[i] && sources[i])
+			obs_source_remove(sources[i]);
 }
 } // namespace
 
@@ -92,6 +91,7 @@ ProductWallResult create_product_five_camera_wall(const std::array<ProductCamera
 						 const std::string &wall_name)
 {
 	ProductWallResult result;
+	std::array<bool, 5> created_here{};
 	for (const auto &camera : cameras)
 		if (!valid_camera(camera, result.error))
 			return result;
@@ -100,7 +100,7 @@ ProductWallResult create_product_five_camera_wall(const std::array<ProductCamera
 		if (existing) {
 			if (!media_settings_match(existing, cameras[i])) {
 				obs_source_release(existing);
-				remove_created(result.sources, result.created);
+				remove_created(result.sources, created_here);
 				result.release();
 				result.error = "camera-name-conflict";
 				return result;
@@ -111,12 +111,13 @@ ProductWallResult create_product_five_camera_wall(const std::array<ProductCamera
 		}
 		auto *created = create_camera_source(cameras[i]);
 		if (!created) {
-			remove_created(result.sources, result.created);
+			remove_created(result.sources, created_here);
 			result.release();
 			result.error = "camera-source-create-failed";
 			return result;
 		}
 		result.sources[i] = created;
+		created_here[i] = true;
 		++result.created;
 	}
 	std::array<std::string, 5> uuids;
@@ -124,7 +125,7 @@ ProductWallResult create_product_five_camera_wall(const std::array<ProductCamera
 		uuids[i] = obs_source_get_uuid(result.sources[i]);
 	auto wall = ensure_five_tile_wall(uuids, wall_name);
 	if (!wall.scene) {
-		remove_created(result.sources, result.created);
+		remove_created(result.sources, created_here);
 		result.release();
 		result.error = wall.error.empty() ? "wall-unavailable" : wall.error;
 		return result;

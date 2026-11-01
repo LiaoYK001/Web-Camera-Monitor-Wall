@@ -108,6 +108,10 @@ ctest --test-dir build/native-host-contract --output-on-failure
 
 C++ 测试包含实际固定 OBS 32.1.2 headers，只用记录操作的 API doubles 执行验证，不链接其他版本的 system libobs，也不模拟媒体验收。覆盖源身份/引用释放、重复槽位复用、缺失/删除/错误类型输入、canvas 校验、唯一场景名、奇数 canvas 网格、部分失败回滚和 Studio Preview/Program 语义。Python 覆盖共享缓存 SHA-256/离线拒绝、真实 dependency lock 对齐、Git tracked 快照与篡改拒绝、缺失 Qt/插件运行时拒绝、portable 数据保护和脚本架构边界。
 
+独立 `native-product-bootstrap-api-contract` 还直接编译产品 bootstrap 源码，以独立 wall 返回值替身验证混合复用/新建的所有权：181 个用例覆盖各失败位置与全部五槽 ownership masks、引用平衡、失败仅删除本次新建项、成功不删除以及重复 release。旧前缀计数回滚在本地为 113 通过/68 失败，逐槽创建标记修复后 181/181 通过。替身不证明真实 wall 的选择/保存、scene item 内部引用、媒体或像素；既有 wall 契约单独保留。公共 CI 的 `native-graph-api-contracts` 矩阵只获取固定 OBS headers，在 Linux 与 MSVC x64 独立编译这些测试，插件构建关闭，不启动 OBS。MSVC x64 使用 SDK SSE2，不额外要求 SIMDe。
+
+The separate bootstrap contract compiles the actual product source against pinned OBS headers and API doubles. It checks per-slot ownership, all mixed reuse/create failure masks and reference cleanup; the wall seam does not model real frontend actions, internal scene-item retention, media or pixels. The lightweight Linux/MSVC matrix builds no renderer, plugin or installer.
+
 本地合同测试本身不能证明 Qt DLL/MSVC 链接或 UI 加载；Fedora 实现环境没有 PowerShell/Windows/Qt SDK。后续独立 Windows CI 已实际完成固定 OBS/frontend/plugin 编译和隔离启动烟测： [41180501363](https://github.com/LiaoYK001/Web-Camera-Monitor-Wall/actions/runs/41180501363)、[41182986553](https://github.com/LiaoYK001/Web-Camera-Monitor-Wall/actions/runs/41182986553)。这些运行验证 Qt 6.8.3、产品 dock/Media Source 注册、portable 配置、原 OBS profile 未变与正常退出，**不是最终媒体像素、实机硬解或 P5 性能验收**。
 
 独立 Windows 工作流现在还会把冻结的 `WebOBS-OBS-native-<dev>-windows-x64-PROTOTYPE.zip` 解压到干净临时目录，再对解压树执行同一套“全新创建 + 复用”双启动烟测，并拒绝任何 `config/` 目录泄漏。这验证的是可下载压缩包自包含且能解压运行，仍不是安装器、升级、最终像素、实机硬解或 P5 性能验收。

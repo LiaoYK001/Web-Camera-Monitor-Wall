@@ -528,3 +528,12 @@ The renderer-free adapter now speaks the actual cluster authorization protocol w
 - 接入前的独立审查见 [认证契约后续](native-control-auth.md#后续--next)：先可信 graph/camera 身份与全 scope 预检；旧 product bootstrap 混合 reuse/create 回滚的静态风险须另做可执行回归，不能直接对现有 dock 加登录后宣称完成。
 
 Run 41289560072 at tested commit `b23420d` passed both native Linux and real MSVC jobs after fixing macro/CRT portability and deterministic fixture SQLite ownership; the earlier failed attempts remain documented. Fedora standalone/root CTest passed 4/4 each, build contracts 18/18, read-only import 13 passed plus one Windows-only skip. The whole workflow is still red on unchanged PWA/updater dependency audits, with downstream tests unexecuted. No audit bypass, new package/release, default-host switch, secured native login, reversible import or target-machine media/performance qualification is claimed.
+
+### P3 bootstrap 混合所有权回滚 / P3 bootstrap mixed-ownership rollback
+
+- 将先前静态发现转为可执行红→绿回归：直接编译实际 `product_bootstrap.cpp` 与固定 OBS 32.1.2 headers、API doubles，旧代码 181 用例中 113 通过/68 失败；最小复现为 reuse 槽 0 → create 槽 1 → 槽 2 名称冲突，按 created=1 删除前缀会误删复用源、遗留新建源。源创建失败和 wall 失败的混合排列也覆盖。
+- 修复仅用函数内部逐槽 `created_here` 标记本次成功创建的源；所有失败出口只 remove 标记项，随后由既有 `ProductWallResult::release` 统一释放所有取得的引用。公共 result/counters、媒体 settings、源复用规则、Studio/Program 语义均未改变。
+- 本地 Release CTest 2/2（既有 wall + 新 bootstrap）、bootstrap 181/181、Python 构建契约 19/19；检查全部五槽 mask、每个早退位置、失败引用平衡/精确删除、成功不删除、release 幂等、无效最后槽在 OBS 调用前拒绝。新增轻量 Linux/MSVC 矩阵 `native-graph-api-contracts`，只取固定 headers、不构建或启动 OBS；Windows 结果待实际运行后另记。
+- 替身 wall 只模拟返回 scene 引用，不证明真实 scene lookup/item 引用/选择/保存、Qt、媒体或像素。修复不建立 camera registry 身份、授权 UI、copy-on-write 迁移或目标机验收；未发布安装器或切换默认产品，既有 PWA/updater 审计门保持。
+
+The static concern is now executable: 68 of 181 bootstrap cases fail under the old prefix cleanup, including reuse0/create1/conflict2. A private per-slot creation mask limits removal to objects created by this attempt, followed by the unchanged reference-release path; local bootstrap 181/181, CTest 2/2 and build contracts 19/19 pass. Lightweight Linux/MSVC API-double jobs were added, with Windows results to be recorded only after execution. Their wall seam is not frontend/media qualification; trusted graph identity, live authorization and reversible migration remain separate open gates.

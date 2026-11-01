@@ -321,6 +321,21 @@ class BuildContractTests(unittest.TestCase):
         self.assertIn("native-cluster-no-media-symbols", standalone)
         self.assertEqual(manifest["builtin-baseline"], "eb2d3a3279fd019cb7733072d86900d0ad2a1aef")
 
+    def test_native_graph_ownership_contracts_use_pinned_headers_without_media(self):
+        workflow = (ROOT / ".github/workflows/web-runtime-ci.yaml").read_text()
+        cmake = (ROOT / "native-host/CMakeLists.txt").read_text()
+        job = workflow.split("  native-graph-api-contracts:", 1)[1].split("  windows-update-contracts:", 1)[0]
+        self.assertIn("os: [ubuntu-24.04, windows-2022]", job)
+        self.assertIn("git submodule update --init --depth 1 obs/obs-studio", job)
+        self.assertIn("actual == pin", job)
+        self.assertIn("-DWEBOBS_NATIVE_BUILD_PLUGIN=OFF", job)
+        self.assertIn("-DWEBOBS_NATIVE_BUILD_TESTS=ON", job)
+        self.assertNotIn("vcpkg", job)
+        self.assertNotIn("build-obs-native.ps1", job)
+        self.assertIn("tests/product_bootstrap_test.cpp src/product_bootstrap.cpp", cmake)
+        self.assertIn("native-product-bootstrap-api-contract", cmake)
+        self.assertIn('TIMEOUT 30 LABELS "native;api-contract;no-media"', cmake)
+
     def test_native_account_overflow_guard_survives_windows_max_macro(self):
         source = (ROOT / "core/src/native_cluster_authorization.cpp").read_text()
         # curl may expose the SDK's function-like max macro. Keep the callable

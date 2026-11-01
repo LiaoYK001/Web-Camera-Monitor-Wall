@@ -61,6 +61,44 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw 'Native authorization regressions failed.' }
           python -B native-host/tests/test_legacy_import.py
           if ($LASTEXITCODE -ne 0) { throw 'Read-only legacy import regressions failed.' }
+  native-graph-api-contracts:
+    name: Native graph API contracts (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, windows-2022]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with: { persist-credentials: false }
+      - name: Fetch only fixed OBS headers / 仅获取固定 OBS headers
+        shell: bash
+        run: |
+          set -euo pipefail
+          git submodule update --init --depth 1 obs/obs-studio
+          python -c 'import json, subprocess; from pathlib import Path; pin=json.loads(Path("desktop/dependencies.lock.json").read_text())["obsCommit"]; actual=subprocess.check_output(["git", "-C", "obs/obs-studio", "rev-parse", "HEAD"], text=True).strip(); assert actual == pin, "OBS header pin mismatch"'
+      - name: Configure Linux API doubles / 配置 Linux API 替身
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y cmake ninja-build libsimde-dev
+          cmake -S native-host -B build/native-graph-api -G Ninja -DCMAKE_BUILD_TYPE=Release -DWEBOBS_NATIVE_BUILD_PLUGIN=OFF -DWEBOBS_NATIVE_BUILD_TESTS=ON
+      - name: Configure MSVC x64 API doubles / 配置 MSVC x64 API 替身
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          cmake -S native-host -B build/native-graph-api -G 'Visual Studio 17 2022' -A x64 -DWEBOBS_NATIVE_BUILD_PLUGIN=OFF -DWEBOBS_NATIVE_BUILD_TESTS=ON
+          if ($LASTEXITCODE -ne 0) { throw 'Native graph API configure failed.' }
+      - name: Verify source ownership without media / 验证源所有权且不启动媒体
+        shell: bash
+        run: |
+          set -euo pipefail
+          cmake --build build/native-graph-api --config Release --parallel 2
+          ctest --test-dir build/native-graph-api -C Release --output-on-failure
   windows-update-contracts:
     runs-on: windows-2022
     steps:
