@@ -375,6 +375,9 @@ class BuildContractTests(unittest.TestCase):
         self.assertIn('--target libobs', job)
         self.assertIn('-DENABLE_FRONTEND=OFF', job)
         self.assertIn('-DENABLE_PLUGINS=OFF', job)
+        self.assertIn('extra-cmake-modules', job)
+        self.assertIn('xvfb xauth', job)
+        self.assertIn('xvfb-run -a ctest --test-dir build/native-real-loader', job)
         self.assertNotIn('upload-artifact', job)
         self.assertNotIn('contents: write', job)
 
