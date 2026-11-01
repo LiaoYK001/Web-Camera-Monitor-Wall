@@ -334,6 +334,8 @@ class BuildContractTests(unittest.TestCase):
         self.assertNotIn("build-obs-native.ps1", job)
         self.assertIn("tests/product_bootstrap_test.cpp src/product_bootstrap.cpp", cmake)
         self.assertIn("native-product-bootstrap-api-contract", cmake)
+        self.assertIn("tests/wall_snapshot_test.cpp src/wall_snapshot.cpp", cmake)
+        self.assertIn("native-wall-snapshot-api-contract", cmake)
         self.assertIn('TIMEOUT 30 LABELS "native;api-contract;no-media"', cmake)
 
     def test_native_account_overflow_guard_survives_windows_max_macro(self):

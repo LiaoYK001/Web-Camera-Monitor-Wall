@@ -50,6 +50,14 @@ ctest --test-dir build/native-control-auth --output-on-failure
 
 The standalone and root CTest projects exercise the actual account-service implementation against disposable data, not a production profile. Non-MSVC builds scan both static libraries for forbidden media/frontend symbols. CI builds on Linux and MSVC using the existing pinned vcpkg baseline and a [minimal test manifest](../native-host/tests/control-auth-vcpkg/vcpkg.json) with OpenSSL/SQLite/curl/Jansson. These are test dependencies, not added shipped services or native installer components. Passing them is not Windows ACL, native UI, camera, pixel or performance qualification.
 
+## 只读 graph 观察基础 / Read-only graph observation
+
+独立的 [wall snapshot](../native-host/src/wall_snapshot.hpp) 现在可观察现有、无 filter 的平面五项 Media Source scene；它只复制 scene/source UUID、item ID 与用户可见标记，包含隐藏项和重复 source。不读 settings/名称/URL，不创建、删除、选择、保存或启动媒体。源码只进入独立 API 契约测试，不接入产品插件或认证库，不暴露管理路由。固定 OBS headers + 15 个只读/引用/加锁替身在本地覆盖 84 情形，包括失败清空、引用平衡、异常不穿越 C callback、第六项及禁用 filter 拒绝。
+
+这只是后续身份解析所需的观测，不是全依赖图、可信绑定或授权预检：不包含 transforms/audio/show-hide transitions，不证明 source settings 或 collection incarnation 未改变。必须由正确 frontend/control context 的调用者序列化 collection/source/filter 编辑；scene lock 不是全图锁，filter 遍历和锁等待无硬时限。未来私密 owner map 不能由请求字段、URL/名称相等或相同 UUID 元组替代；先对每项解析真实对象及可信 camera/profile 身份，再做去重和全 scope 检查。
+
+The internal inspector is now implemented and locally tested, but remains entirely unexposed. Its owned UUID/item/visibility DTO is only an observation: it neither proves authoritative camera/profile identity nor covers transitions, source settings, audio or future graph use. No hard whole-operation deadline is implied. Sequential current RBAC calls can span different policy epochs, and existing sessions are username-based; trusted identity invalidation, immutable user/session epochs, atomic policy consistency, private service ownership, UI bypass prevention and authorized reversible apply still require separate implementation before any live action.
+
 ## 后续 / Next
 
 先验证只读的“现有 OBS graph → 可信 registry camera/profile 身份 → 全 scope”预检，不把请求给出的映射、名称/URL 相等或空 scene scope 当作授权依据；当前 product bootstrap 没有建立这份所有权映射。现有 `select_wall` 在非 Studio 会改 Program，`ensure_five_tile_wall` 也有选择/保存副作用，不能复用为只读或 Preview-only 命令。之后才能接入明确 frontend 命令与可拦截 UI、账号服务所有权和私密凭据，再处理经授权的 copy-on-write 导入、逐字段 graph 比对和回滚。此前 product bootstrap 混合 reuse/create 的数组前缀回滚问题现已用实际产品源码 + 固定 OBS headers 的 API 替身复现（113 通过/68 失败），并改为逐槽记录本次创建所有权，所有失败出口只 remove 新建项，再统一 release 引用；本地 181/181 用例通过。它修复错误清理，不建立可信 camera/profile 绑定，也不提供认证或可应用迁移；真实 wall/媒体验收仍独立。迁移只读预检与应用保持分离；未接入路径保持关闭，不切换默认产品。

@@ -55,7 +55,8 @@ if(WEBOBS_NATIVE_BUILD_TESTS)
     "#pragma once\n#define OBS_DATA_PATH \"\"\n#define OBS_INSTALL_PREFIX \"\"\n#define OBS_RELEASE_CANDIDATE 0\n#define OBS_BETA 0\n")
   add_executable(native-wall-test tests/wall_test.cpp src/wall.cpp)
   add_executable(native-product-bootstrap-test tests/product_bootstrap_test.cpp src/product_bootstrap.cpp)
-  foreach(test_target IN ITEMS native-wall-test native-product-bootstrap-test)
+  add_executable(native-wall-snapshot-test tests/wall_snapshot_test.cpp src/wall_snapshot.cpp)
+  foreach(test_target IN ITEMS native-wall-test native-product-bootstrap-test native-wall-snapshot-test)
     target_include_directories(${test_target} PRIVATE src "${WEBOBS_NATIVE_OBS_SOURCE}/libobs"
       "${WEBOBS_NATIVE_OBS_SOURCE}/frontend/api" "${CMAKE_CURRENT_BINARY_DIR}/test-config" ${native_test_simde_include})
     if(MSVC)
@@ -66,6 +67,7 @@ if(WEBOBS_NATIVE_BUILD_TESTS)
   endforeach()
   add_test(NAME native-wall-api-contract COMMAND native-wall-test)
   add_test(NAME native-product-bootstrap-api-contract COMMAND native-product-bootstrap-test)
-  set_tests_properties(native-wall-api-contract native-product-bootstrap-api-contract
+  add_test(NAME native-wall-snapshot-api-contract COMMAND native-wall-snapshot-test)
+  set_tests_properties(native-wall-api-contract native-product-bootstrap-api-contract native-wall-snapshot-api-contract
     PROPERTIES TIMEOUT 30 LABELS "native;api-contract;no-media")
 endif()

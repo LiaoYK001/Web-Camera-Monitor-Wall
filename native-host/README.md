@@ -112,6 +112,10 @@ C++ 测试包含实际固定 OBS 32.1.2 headers，只用记录操作的 API doub
 
 The separate bootstrap contract compiles the actual product source against pinned OBS headers and API doubles. It checks per-slot ownership, all mixed reuse/create failure masks and reference cleanup; the wall seam does not model real frontend actions, internal scene-item retention, media or pixels. The lightweight Linux/MSVC matrix builds no renderer, plugin or installer.
 
+新增独立只读 [wall snapshot](src/wall_snapshot.hpp)：根据 scene UUID 观察已有的平面五项 `ffmpeg_source` scene，保留隐藏项、枚举顺序、item ID 和重复 source UUID；无效/缺失/不支持结构不返回半份结果。拒绝组、嵌套场景、任意 source/scene filter（含禁用项）、错误类型或重复 item ID；第六项在读取其 source 前停止。实际实现只调用 OBS 的查询/引用/加锁接口，不读名称、settings 或 URL，不创建/选择/保存 scene，不接入插件或认证执行器。固定 headers 的独立 API doubles 覆盖 84 个情形；没有 mutation/frontend 替身，误引入这些调用会链接失败。它不是可信 camera 身份、全 scope 授权或可用作执行许可的 graph revision；`visible` 仅是用户可见标记，不是像素，transition/其他媒体依赖未审计，锁与 filter 遍历也没有硬时限。
+
+The separate [wall-snapshot contract](tests/wall_snapshot_test.cpp) compiles the actual unexposed inspector against the pinned headers, with 15 read/ref/lock API doubles and 84 local scenarios. It observes existing flat five-item scenes, including hidden/duplicate-source entries, and returns no partial DTO on failure. No mutation/frontend double is defined; no plugin, auth-library or live-command wiring is added. UUID tuples are not authoritative camera bindings or permission grants; observation is TOCTOU-prone, transitions/media dependencies are outside scope, and OBS locks/filter traversal are untimed.
+
 本地合同测试本身不能证明 Qt DLL/MSVC 链接或 UI 加载；Fedora 实现环境没有 PowerShell/Windows/Qt SDK。后续独立 Windows CI 已实际完成固定 OBS/frontend/plugin 编译和隔离启动烟测： [41180501363](https://github.com/LiaoYK001/Web-Camera-Monitor-Wall/actions/runs/41180501363)、[41182986553](https://github.com/LiaoYK001/Web-Camera-Monitor-Wall/actions/runs/41182986553)。这些运行验证 Qt 6.8.3、产品 dock/Media Source 注册、portable 配置、原 OBS profile 未变与正常退出，**不是最终媒体像素、实机硬解或 P5 性能验收**。
 
 独立 Windows 工作流现在还会把冻结的 `WebOBS-OBS-native-<dev>-windows-x64-PROTOTYPE.zip` 解压到干净临时目录，再对解压树执行同一套“全新创建 + 复用”双启动烟测，并拒绝任何 `config/` 目录泄漏。这验证的是可下载压缩包自包含且能解压运行，仍不是安装器、升级、最终像素、实机硬解或 P5 性能验收。
