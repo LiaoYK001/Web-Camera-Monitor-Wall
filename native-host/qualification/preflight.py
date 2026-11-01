@@ -123,7 +123,8 @@ def run(native: Path, obs: Path, metadata_path: Path, output: Path, min_memory_g
     check("five-inputs", len(meta["inputs"]) == 5, f"{len(meta['inputs'])} declared inputs")
     check("five-h265", meta["workload"] == "five-real-h265" if not diagnostic else True,
           f"workload={meta['workload']}")
-    check("declarations", all_declared, f"{sum(declarations.values())}/{len(declarations)} confirmed")
+    check("declarations", all_declared or diagnostic,
+          f"{sum(declarations.values())}/{len(declarations)} confirmed" + (" (placeholders allowed)" if diagnostic else ""))
     cpu = probe.get("cpu") or ""
     check("cpu", bool(cpu), cpu or "CPU name unavailable")
     check("gpu", bool(probe.get("adapters")), ", ".join(a["name"] for a in probe.get("adapters", [])) or "no adapter")

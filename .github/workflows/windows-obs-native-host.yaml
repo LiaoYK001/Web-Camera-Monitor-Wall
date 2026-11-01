@@ -417,9 +417,10 @@ jobs:
         shell: pwsh
         run: |
           $output = Join-Path $env:RUNNER_TEMP ('p5-preflight-' + $env:GITHUB_RUN_ID)
-          python -B native-host/qualification/preflight.py --native-exe build/obs-native-ci/runtime/bin/64bit/obs64.exe --obs-exe (Join-Path $env:RUNNER_TEMP 'obs-size-reference/bin/64bit/obs64.exe') --metadata native-host/qualification/metadata.example.json --output $output --diagnostic
+          python -B native-host/qualification/preflight.py --native-exe build/obs-native-ci/runtime/bin/64bit/obs64.exe --obs-exe (Join-Path $env:RUNNER_TEMP 'obs-size-reference/bin/64bit/obs64.exe') --metadata native-host/qualification/metadata.example.json --output $output --diagnostic --min-memory-gb 1 --min-monitors 0
           if ($LASTEXITCODE -ne 0) { throw 'P5 preflight with placeholder metadata failed.' }
           Copy-Item -LiteralPath (Join-Path $output 'preflight.json') -Destination build/obs-native-ci/native-p5-preflight-diagnostic.json
+          python -c "import json;d=json.load(open('build/obs-native-ci/native-p5-preflight-diagnostic.json',encoding='utf-8'));assert d['qualified'] is False and d['diagnostic'] is True and len(d['checks']) >= 8, d"
           Get-Content -LiteralPath build/obs-native-ci/native-p5-preflight-diagnostic.json -TotalCount 12
       - name: Require actual Qt plugin startup, private portable config and normal exit
         if: ${{ !inputs.pixel_test }}
