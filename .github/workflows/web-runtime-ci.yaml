@@ -87,7 +87,10 @@ jobs:
   windows-desktop-candidate:
     if: github.event_name == 'workflow_dispatch' && inputs.windows_desktop
     permissions:
-      contents: read
+      # GitHub validates every nested callee, even skipped publication jobs.
+      # This is only the optional reusable-call ceiling: its build jobs remain
+      # read-only; official=false and no publication inputs are passed below.
+      contents: write
       actions: read # The reusable workflow reads immutable candidate artifacts.
     uses: ./.github/workflows/windows-desktop.yaml
     with:

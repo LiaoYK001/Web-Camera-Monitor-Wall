@@ -303,6 +303,11 @@ class BuildContractTests(unittest.TestCase):
         self.assertIn("native-host/tests/test_legacy_import.py", workflow)
         self.assertIn("native-host/tests/control-auth", workflow)
         self.assertIn("x64-windows-static", workflow)
+        self.assertEqual(workflow.count("contents: write"), 1)
+        optional_caller = workflow.split("  windows-desktop-candidate:", 1)[1].split("  public-audit:", 1)[0]
+        self.assertIn("contents: write", optional_caller)
+        self.assertIn("official: false", optional_caller)
+        self.assertNotIn("publish_dev", optional_caller)
         self.assertIn("core/src/native_control_auth.cpp", standalone)
         self.assertIn("core/src/authentication.cpp", standalone)
         self.assertNotIn("add_subdirectory", standalone)
