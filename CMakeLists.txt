@@ -57,6 +57,7 @@ add_library(webobs-common
     core/src/scene_mutation.cpp
     core/src/scene_store.cpp
     core/src/studio_document.cpp
+    core/src/native_operation_auth.cpp
     core/src/studio_store.cpp
     core/src/video_encoder.cpp
     core/src/platform_runtime.cpp
@@ -176,6 +177,11 @@ if(WEBOBS_BUILD_TESTS)
     webobs_warnings(webobs-session-identity-tests)
     add_test(NAME webobs-session-identity-tests COMMAND webobs-session-identity-tests)
     set_tests_properties(webobs-session-identity-tests PROPERTIES TIMEOUT 30 LABELS "security;native-control")
+    add_executable(webobs-native-operation-auth-tests core/tests/native_operation_auth_tests.cpp)
+    target_link_libraries(webobs-native-operation-auth-tests PRIVATE webobs-common)
+    webobs_warnings(webobs-native-operation-auth-tests)
+    add_test(NAME webobs-native-operation-auth-tests COMMAND webobs-native-operation-auth-tests)
+    set_tests_properties(webobs-native-operation-auth-tests PROPERTIES TIMEOUT 30 LABELS "security;native-control")
     find_package(Python3 QUIET COMPONENTS Interpreter)
     if(Python3_Interpreter_FOUND)
         add_test(NAME webobs-native-account-identity COMMAND "${Python3_EXECUTABLE}" -B

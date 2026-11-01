@@ -401,6 +401,23 @@ class BuildContractTests(unittest.TestCase):
         self.assertIn("(std::numeric_limits<std::size_t>::max)() / size", source)
         self.assertNotIn("std::numeric_limits<std::size_t>::max()", source)
 
+    def test_operation_auth_orchestrator_is_bounded_and_cached_nothing(self):
+        header = (ROOT / "core/include/webobs/native_operation_auth.hpp").read_text(encoding="utf-8")
+        source = (ROOT / "core/src/native_operation_auth.cpp").read_text(encoding="utf-8")
+        standalone = (ROOT / "native-host/tests/control-auth/CMakeLists.txt").read_text(encoding="utf-8")
+        root_cmake = (ROOT / "CMakeLists.txt").read_text(encoding="utf-8")
+        # Wired into both the standalone Linux/MSVC contract and the root build.
+        self.assertIn("core/src/native_operation_auth.cpp", standalone)
+        self.assertIn("webobs-native-operation-auth-tests", standalone)
+        self.assertIn("native-operation-auth", standalone)
+        self.assertIn("core/src/native_operation_auth.cpp", root_cmake)
+        self.assertIn("webobs-native-operation-auth-tests", root_cmake)
+        # Fail-closed whole-operation gate: one budget, no reusable grant cache.
+        self.assertIn("total_budget", header)
+        self.assertNotIn("std::map", source)
+        self.assertNotIn("std::unordered_map", source)
+        self.assertIn("current - start >= total_budget", source)
+
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)

@@ -4,7 +4,7 @@ project(webobs_native_control_auth_boundary LANGUAGES CXX)
 # Standalone renderer-free security boundary; no root project/libobs/Qt discovery.
 # Loopback fixtures own a disposable authority; no production service or media
 # process is required to build/run these tests.
-set(CMAKE_CXX_STANDARD 17)
+set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 
@@ -37,6 +37,7 @@ endif()
 
 add_library(webobs-native-control-auth STATIC
     "${WEBOBS_ROOT}/core/src/native_control_auth.cpp"
+    "${WEBOBS_ROOT}/core/src/native_operation_auth.cpp"
     "${WEBOBS_ROOT}/core/src/authentication.cpp")
 target_include_directories(webobs-native-control-auth PUBLIC "${WEBOBS_ROOT}/core/include")
 target_link_libraries(webobs-native-control-auth PUBLIC OpenSSL::Crypto ${WEBOBS_SQLITE_TARGET} Threads::Threads)
@@ -78,6 +79,14 @@ else()
     target_compile_options(webobs-session-identity-tests PRIVATE -Wall -Wextra -Wpedantic)
 endif()
 
+add_executable(webobs-native-operation-auth-tests "${WEBOBS_ROOT}/core/tests/native_operation_auth_tests.cpp")
+target_link_libraries(webobs-native-operation-auth-tests PRIVATE webobs-native-control-auth)
+if(MSVC)
+    target_compile_options(webobs-native-operation-auth-tests PRIVATE /W4 /permissive- /utf-8)
+else()
+    target_compile_options(webobs-native-operation-auth-tests PRIVATE -Wall -Wextra -Wpedantic)
+endif()
+
 enable_testing()
 add_test(NAME session-identity COMMAND webobs-session-identity-tests)
 set_tests_properties(session-identity PROPERTIES TIMEOUT 30)
@@ -90,6 +99,8 @@ add_test(NAME native-cluster-authorization COMMAND "${Python3_EXECUTABLE}" -B
 set_tests_properties(native-cluster-authorization PROPERTIES TIMEOUT 90)
 add_test(NAME native-control-auth COMMAND webobs-native-control-auth-tests)
 set_tests_properties(native-control-auth PROPERTIES TIMEOUT 30)
+add_test(NAME native-operation-auth COMMAND webobs-native-operation-auth-tests)
+set_tests_properties(native-operation-auth PROPERTIES TIMEOUT 30)
 
 # GNU/LLVM nm evidence: reject renderer/media entry points in the entire archive,
 # including defined and undefined symbols. MSVC builds retain the compile/link

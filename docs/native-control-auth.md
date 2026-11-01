@@ -26,6 +26,12 @@ Each native command requires an explicitly bound username/userId/authEpoch sessi
 
 The adapter uses the existing [cluster authorization route](../cluster/cluster_service.py), not a replacement service. It validates the full reply rather than trusting status 200. Strict error-message matching deliberately fails closed if the backend contract changes. Proxy/redirect traps and malformed replies are tested separately from the real Handler/ClusterStore/registry integration.
 
+## 全操作授权编排 / Whole-operation authorization orchestration
+
+新增 [NativeOperationAuth](../core/include/webobs/native_operation_auth.hpp) `authorize_operation`：一次操作声明的全部 `(permission, resource)` 需求（至多 16 项，permission≤32、resource≤128，拒绝重复对与控制字符）在同一总预算内逐项调用最新账号授权；任何一次拒绝即停止并返回 `forbidden`，账号消失返回 `binding_invalid`，后端故障或时钟异常返回 `unavailable`，非法输入或非正预算返回 `invalid_request` 且零后端调用；预算耗尽返回 `unavailable` 且不发起剩余调用。每次后端调用仍携带并比较完整绑定 username/userId/authEpoch，因此中途 logout 或 epoch 轮换不能被缝合为许可。这仍是决策时总时限门，不是可复用授权缓存，也不是执行围栏；尚未接入任何 listener、HTTP 路由或产品路径，宿主接入时仍须自行执行整个操作的硬序列化截止。
+
+`authorize_operation` evaluates every declared permission/resource requirement of one operation against the fresh authoritative backend within a single total budget, stopping at the first denial. Invalid input, a non-positive budget or budget exhaustion fails closed with no reusable grant; backend or clock exceptions never relay their message. Each call still re-checks the full bound identity, so a mid-operation logout or epoch rotation cannot be stitched into an allowance. This is a whole-operation decision-time gate, not an execution fence, and is not yet wired into any listener, route or product path; hosts must still enforce their own hard serialization deadline when adopting it.
+
 ## 接入前仍须保留的契约 / Remaining integration contracts
 
 可信 adapter 必须从 socket 获得 peer，不信任 `X-Forwarded-For` 或请求 principal；在构造请求前拒绝重复/折叠的 Host、Origin、cookie，限制 body/header、连接数与请求时限。当前库不是 HTTP parser，也不验证 OBS 参数。会话及内部凭据文件仍须 owner 私密目录/Windows ACL；账号服务仍须受单实例、Job 与退出回收管理。仅通过授权后在同一原生 frontend 线程操作同一 OBS graph；不开放旧 core 通用可写 API，不启动完整 Supervisor。
@@ -38,7 +44,7 @@ The libraries do not implement native login, graph-derived multi-camera authoriz
 
 ## 独立验证 / Standalone validation
 
-需要 C++17、OpenSSL Crypto、SQLite、libcurl、Jansson、Python 3 和 Threads；不配置 libobs/Qt/GStreamer，不启动媒体进程：
+需要 C++20、OpenSSL Crypto、SQLite、libcurl、Jansson、Python 3 和 Threads；不配置 libobs/Qt/GStreamer，不启动媒体进程：
 
 ```sh
 cmake -S native-host/tests/control-auth -B build/native-control-auth -DCMAKE_BUILD_TYPE=Release
