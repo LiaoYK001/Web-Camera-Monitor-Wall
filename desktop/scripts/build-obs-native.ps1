@@ -47,6 +47,19 @@ Invoke-Checked 'cmake' @('-S',$source,'-B',$obsBuild,'-G','Visual Studio 17 2022
 Invoke-Checked 'cmake' @('--build',$obsBuild,'--config','Release','--parallel',"$Parallel")
 Invoke-Checked 'cmake' @('--install',$obsBuild,'--config','Release')
 Invoke-Checked 'cmake' @('--install',$obsBuild,'--config','Release','--component','Development')
+# Separate executable: real pinned libobs loader with its own inert source. No
+# modules, frontend, media, video/audio reset or existing portable profile. Never
+# install/package the probe; PATH below exists only while running its CTest.
+$loaderBuild = Join-Path $buildRoot 'real-loader-test'
+Invoke-Checked 'cmake' @('-S',(Join-Path $repoRoot 'native-host/tests/real-loader'),'-B',$loaderBuild,'-G','Visual Studio 17 2022','-A','x64',"-DCMAKE_PREFIX_PATH=$obsInstall;$deps",'-DCMAKE_FIND_USE_PACKAGE_REGISTRY=OFF','-DCMAKE_EXPORT_PACKAGE_REGISTRY=OFF')
+Invoke-Checked 'cmake' @('--build',$loaderBuild,'--config','Release','--parallel',"$Parallel")
+$beforeLoaderPath = $env:PATH
+try {
+    $env:PATH = (Join-Path $obsInstall 'bin/64bit') + ';' + (Join-Path $deps 'bin') + ';' + $beforeLoaderPath
+    Invoke-Checked 'ctest' @('--test-dir',$loaderBuild,'-C','Release','--output-on-failure')
+} finally {
+    $env:PATH = $beforeLoaderPath
+}
 $pluginBuild = Join-Path $buildRoot 'plugin-build'
 # Explicit Qt6_DIR pins plugin ABI to the frontend's locked Qt, not PATH/system Qt.
 Invoke-Checked 'cmake' @('-S',(Join-Path $repoRoot 'native-host'),'-B',$pluginBuild,'-G','Visual Studio 17 2022','-A','x64',"-DCMAKE_PREFIX_PATH=$obsInstall;$deps;$qt", "-DQt6_DIR=$qt/lib/cmake/Qt6",'-DWEBOBS_NATIVE_BUILD_TESTS=ON',"-DWEBOBS_NATIVE_PIXEL_TEST=$pixelBuild","-DSIMDE_INCLUDE_DIR=$deps/include",'-DCMAKE_FIND_USE_PACKAGE_REGISTRY=OFF','-DCMAKE_EXPORT_PACKAGE_REGISTRY=OFF')

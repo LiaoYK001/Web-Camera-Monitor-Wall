@@ -356,6 +356,28 @@ class BuildContractTests(unittest.TestCase):
         self.assertIn("document_stage.verify", cli)
         self.assertNotIn("subprocess", cli)
 
+    def test_real_loader_gate_is_standalone_and_never_installed(self):
+        cmake = (ROOT / 'native-host/tests/real-loader/CMakeLists.txt').read_text()
+        probe = (ROOT / 'native-host/tests/real-loader/loader_probe.cpp').read_text()
+        builder = (ROOT / 'desktop/scripts/build-obs-native.ps1').read_text()
+        workflow = (ROOT / '.github/workflows/web-runtime-ci.yaml').read_text()
+        self.assertIn('find_package(libobs 32.1.2 EXACT CONFIG REQUIRED)', cmake)
+        self.assertIn('PRIVATE OBS::libobs', cmake)
+        self.assertNotIn('install(', cmake)
+        self.assertIn('TIMEOUT 60', cmake)
+        self.assertIn('test_real_legacy_loader.py', cmake)
+        for forbidden in ('obs_reset_video(', 'obs_reset_audio(', 'obs_load_all_modules(',
+                          'obs_open_module(', 'obs_frontend_', 'obs_set_output_source('):
+            self.assertNotIn(forbidden, probe)
+        self.assertIn("Join-Path $repoRoot 'native-host/tests/real-loader'", builder)
+        self.assertIn('$env:PATH = $beforeLoaderPath', builder)
+        job = workflow.split('  native-real-loader-contracts:', 1)[1].split('  native-private-staging-contracts:', 1)[0]
+        self.assertIn('--target libobs', job)
+        self.assertIn('-DENABLE_FRONTEND=OFF', job)
+        self.assertIn('-DENABLE_PLUGINS=OFF', job)
+        self.assertNotIn('upload-artifact', job)
+        self.assertNotIn('contents: write', job)
+
     def test_native_account_overflow_guard_survives_windows_max_macro(self):
         source = (ROOT / "core/src/native_cluster_authorization.cpp").read_text()
         # curl may expose the SDK's function-like max macro. Keep the callable

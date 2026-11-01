@@ -34,6 +34,33 @@ jobs:
           cmake --build build/native-control-auth --parallel 2
           ctest --test-dir build/native-control-auth --output-on-failure
           python3 -B native-host/tests/test_legacy_import.py
+  native-real-loader-contracts:
+    name: Pinned real-libobs loader (no media or GPU)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with: { persist-credentials: false }
+      - name: Build only the fixed libobs SDK / 仅构建固定 libobs SDK
+        shell: bash
+        run: |
+          set -euo pipefail
+          git submodule update --init --recursive --depth 1 obs/obs-studio
+          python3 -c 'import json, subprocess; from pathlib import Path; pin=json.loads(Path("desktop/dependencies.lock.json").read_text())["obsCommit"]; assert subprocess.check_output(["git", "-C", "obs/obs-studio", "rev-parse", "HEAD"], text=True).strip() == pin == "fb4d98bf88fae5fc85cb11fc57f7c5e309282194"'
+          sudo apt-get update
+          sudo apt-get install -y cmake ninja-build pkg-config libsimde-dev libavformat-dev libavcodec-dev libavutil-dev libswscale-dev libswresample-dev libjansson-dev libx11-dev libx11-xcb-dev libxcb1-dev libxcb-xinput-dev libdrm-dev uuid-dev zlib1g-dev uthash-dev
+          cmake -S obs/obs-studio -B build/native-loader-obs -G Ninja -DCMAKE_BUILD_TYPE=Release -DOBS_VERSION_OVERRIDE=32.1.2 -DENABLE_FRONTEND=OFF -DENABLE_PLUGINS=OFF -DENABLE_SCRIPTING=OFF -DENABLE_WAYLAND=OFF -DENABLE_PULSEAUDIO=OFF
+          cmake --build build/native-loader-obs --target libobs --parallel 2
+          # Limit installation to libobs: frontend-api is deliberately unbuilt.
+          cmake -DCMAKE_INSTALL_PREFIX="$PWD/build/native-loader-sdk" -DCMAKE_INSTALL_COMPONENT=Development -P build/native-loader-obs/libobs/cmake_install.cmake
+          cmake -DCMAKE_INSTALL_PREFIX="$PWD/build/native-loader-sdk" -DCMAKE_INSTALL_COMPONENT=Unspecified -P build/native-loader-obs/libobs/cmake_install.cmake
+      - name: Real load-query-save-reload of synthetic objects / 合成对象真实加载查询保存重载
+        shell: bash
+        run: |
+          set -euo pipefail
+          cmake -S native-host/tests/real-loader -B build/native-real-loader -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMAKE_PREFIX_PATH="$PWD/build/native-loader-sdk" -DCMAKE_FIND_USE_PACKAGE_REGISTRY=OFF
+          cmake --build build/native-real-loader --parallel 2
+          ctest --test-dir build/native-real-loader --output-on-failure --verbose
   native-private-staging-contracts:
     name: Offline private staging (${{ matrix.os }})
     strategy:
