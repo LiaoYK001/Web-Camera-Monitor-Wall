@@ -12,6 +12,14 @@
 python -B native-host/qualification/preflight.py --native-exe <native obs64.exe> --obs-exe <OBS obs64.exe> --metadata <pair01-obs.json> --output <new private dir>
 ```
 
+## 六轮交替计划
+
+[plan.py](plan.py) 把一份已确认的 pair-1/position-1 元数据展开为三对交替（产品→OBS→产品→OBS→产品→OBS）的六个 `run-NN-*.json` 与 `plan.json`，并可绑定一份非诊断的预检回执。计划只做排期：`status=planned`、`qualified=false`，不启动 OBS、不产生任何测量。
+
+```powershell
+python -B native-host/qualification/plan.py --template <pair01-product.json> --preflight <preflight-01/preflight.json> --output <new private dir>
+```
+
 ## 范围与依赖
 
 Windows x64 使用用户已有的 64 位 Python 3.10+ 与系统 API（`ctypes`，无第三方包、无管理员权限要求）。不提供任意 Python 二进制下载。离线统计与合成算法回归可在 Linux / Windows 使用标准 Python 运行。

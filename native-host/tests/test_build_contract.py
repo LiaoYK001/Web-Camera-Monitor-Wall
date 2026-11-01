@@ -186,6 +186,13 @@ class BuildContractTests(unittest.TestCase):
             workflow.index("Measure-InstalledTreeFootprint"),
         )
 
+    def test_p5_campaign_plan_is_scheduled_not_measured(self):
+        plan = (ROOT / "native-host/qualification/plan.py").read_text()
+        self.assertIn('"qualified": False', plan)
+        self.assertIn('"status": "planned"', plan)
+        self.assertIn("plan.py", (ROOT / "native-host/qualification/README.md").read_text())
+        self.assertIn("plan.py", (ROOT / "docs/windows-target-qualification-runbook.md").read_text())
+
     def test_p5_preflight_is_diagnostic_only(self):
         workflow = (ROOT / ".github/workflows/windows-obs-native-host.yaml").read_text()
         preflight = (ROOT / "native-host/qualification/preflight.py").read_text()

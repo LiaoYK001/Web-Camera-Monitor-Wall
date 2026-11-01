@@ -47,6 +47,17 @@ python -B native-host/qualification/preflight.py `
 ```
 
 预检要求元数据为 `five-real-h265`、五路 `h265`、七项声明全部确认；至少 16 GiB 内存与 1 个显示器（阈值可调）。回执只证明身份/环境/工具一致，不证明五路画面、硬解、GPU 或性能；`--diagnostic` 只供 CI 用公开占位元数据自检，不能用于目标机验收。
+
+预检通过后生成三对交替的六轮排期，避免手工复制元数据时写错 `pairIndex`/`position`/`variant`：
+
+```powershell
+python -B native-host/qualification/plan.py `
+  --template 'D:\private-p5\pair01-product.json' `
+  --preflight 'D:\private-p5\preflight-01\preflight.json' `
+  --output 'D:\private-p5\plan-01'
+```
+
+`plan.json` 只排期（`status=planned`、`qualified=false`），每个 `run-NN-*.json` 仍是待采集的元数据；每轮仍须独立创建私密输出目录并运行 `collect.py`。
 - 长效稳定性：另做一次 ≥2 小时连续运行（可单独记录），期间不隐藏窗口、不改变布局。
 
 ## 3. 采集命令
