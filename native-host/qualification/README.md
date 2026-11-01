@@ -4,6 +4,14 @@
 
 **永远输出 `qualified=false`、`strictTotal=false`、`coverageIncomplete=true`。** 轮询无法证明所有短命进程都被观察，也不能发现经未知中间父进程启动或根进程树外的服务。结果是 *observed-tree lower-bound diagnostic*：已观察进程的 CPU 增量下界诊断，不是全部所属进程的严格总量。即使 CPU 比值小于等于 1，也不能宣布 OBS 同等开销目标达成。Windows 实机/API fixture 通过也不证明摄像机、GPU 或性能资格。
 
+## 目标机预检
+
+[preflight.py](preflight.py) 在正式采样前核对：Windows 版本、CPU、内存、显示适配器与驱动、显示器数量、两个 `obs64.exe` 的 SHA-256 与字节数（必须不同）、元数据的五路 `h265`、`five-real-h265` 与七项声明。回执 schema 1、kind `native-p5-preflight`，**永远 `qualified=false` / `coverageIncomplete=true`**；不会启动 OBS、读取摄像机或测量 GPU。失败时返回非零。`--diagnostic` 只允许公开占位元数据（声明未确认、fixture）用于 CI 自检，回执带该标记并禁止当作验收证据。
+
+```powershell
+python -B native-host/qualification/preflight.py --native-exe <native obs64.exe> --obs-exe <OBS obs64.exe> --metadata <pair01-obs.json> --output <new private dir>
+```
+
 ## 范围与依赖
 
 Windows x64 使用用户已有的 64 位 Python 3.10+ 与系统 API（`ctypes`，无第三方包、无管理员权限要求）。不提供任意 Python 二进制下载。离线统计与合成算法回归可在 Linux / Windows 使用标准 Python 运行。

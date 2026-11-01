@@ -186,6 +186,15 @@ class BuildContractTests(unittest.TestCase):
             workflow.index("Measure-InstalledTreeFootprint"),
         )
 
+    def test_p5_preflight_is_diagnostic_only(self):
+        workflow = (ROOT / ".github/workflows/windows-obs-native-host.yaml").read_text()
+        preflight = (ROOT / "native-host/qualification/preflight.py").read_text()
+        self.assertIn("native-host/qualification/preflight.py", workflow)
+        self.assertIn("--diagnostic", workflow)
+        self.assertIn("native-p5-preflight-diagnostic.json", workflow)
+        self.assertIn("never marks a P5 campaign qualified", preflight)
+        self.assertIn('"qualified": False', preflight)
+
     def test_size_gap_comparison_runs_against_stock_obs(self):
         workflow = (ROOT / ".github/workflows/windows-obs-native-host.yaml").read_text()
         script = (SCRIPTS / "compare_runtime_sizes.py").read_text()

@@ -412,6 +412,15 @@ jobs:
           python -B native-host/scripts/compare_runtime_sizes.py --prototype build/obs-native-ci/runtime --obs $root --report build/obs-native-ci/native-size-compare.json
           if ($LASTEXITCODE -ne 0) { throw 'Explaining the OBS same-OS size gap failed.' }
           Get-Content -LiteralPath $path
+      - name: Preflight the P5 machine/tooling contract with public placeholder metadata
+        if: ${{ inputs.measure_obs_baseline && !inputs.pixel_test }}
+        shell: pwsh
+        run: |
+          $output = Join-Path $env:RUNNER_TEMP ('p5-preflight-' + $env:GITHUB_RUN_ID)
+          python -B native-host/qualification/preflight.py --native-exe build/obs-native-ci/runtime/bin/64bit/obs64.exe --obs-exe (Join-Path $env:RUNNER_TEMP 'obs-size-reference/bin/64bit/obs64.exe') --metadata native-host/qualification/metadata.example.json --output $output --diagnostic
+          if ($LASTEXITCODE -ne 0) { throw 'P5 preflight with placeholder metadata failed.' }
+          Copy-Item -LiteralPath (Join-Path $output 'preflight.json') -Destination build/obs-native-ci/native-p5-preflight-diagnostic.json
+          Get-Content -LiteralPath build/obs-native-ci/native-p5-preflight-diagnostic.json -TotalCount 12
       - name: Require actual Qt plugin startup, private portable config and normal exit
         if: ${{ !inputs.pixel_test }}
         shell: pwsh
@@ -466,6 +475,7 @@ jobs:
             build/obs-native-ci/native-upgrade-second-smoke.json
             build/obs-native-ci/obs-size-reference.json
             build/obs-native-ci/native-size-compare.json
+            build/obs-native-ci/native-p5-preflight-diagnostic.json
             build/obs-native-ci/native-runtime-prune.json
             build/obs-native-ci/native-runtime-inventory.json
             build/obs-native-ci/native-nsis-installer.json

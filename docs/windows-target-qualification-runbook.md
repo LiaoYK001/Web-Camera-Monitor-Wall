@@ -35,6 +35,18 @@
 - 电源计划、GPU 偏好（两程序均设“高性能”）、显示器与 DPI、窗口位置保持一致；一次只运行一侧，另一侧**正常退出**后再开始。
 - 先在 OBS 中确认五路画面完整、无黑屏 / 冻结 / 错路；产品侧同样确认。任何异常先按第 7 节记录，不要靠重试掩盖。
 - 预热 ≥180 秒，正式采样 ≥1200 秒，采样间隔 5 秒；连续 3 对交替（产品 → OBS → 产品 → OBS → 产品 → OBS），共 6 次采样。
+
+先跑一次目标机预检，确认机器/驱动/显示器/内存与两个候选 EXE 的身份一致（回执永远 `qualified=false`）：
+
+```powershell
+python -B native-host/qualification/preflight.py `
+  --native-exe 'C:\private-native\bin\64bit\obs64.exe' `
+  --obs-exe 'C:\Program Files\obs-studio\bin\64bit\obs64.exe' `
+  --metadata 'D:\private-p5\pair01-obs.json' `
+  --output 'D:\private-p5\preflight-01'
+```
+
+预检要求元数据为 `five-real-h265`、五路 `h265`、七项声明全部确认；至少 16 GiB 内存与 1 个显示器（阈值可调）。回执只证明身份/环境/工具一致，不证明五路画面、硬解、GPU 或性能；`--diagnostic` 只供 CI 用公开占位元数据自检，不能用于目标机验收。
 - 长效稳定性：另做一次 ≥2 小时连续运行（可单独记录），期间不隐藏窗口、不改变布局。
 
 ## 3. 采集命令
