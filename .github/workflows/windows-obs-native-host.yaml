@@ -166,6 +166,8 @@ jobs:
           if (-not (Test-Path -LiteralPath $setup -PathType Leaf)) { throw 'The installer was not produced.' }
           $root = Join-Path $env:RUNNER_TEMP 'native-nsis-install'
           if (Test-Path -LiteralPath $root) { Remove-Item -LiteralPath $root -Recurse -Force }
+          . ./desktop/tests/installed-tree-footprint.ps1
+          $scope = New-InstalledTreeFootprintScope -Root $root -Purpose isolated-nsis-install-before-first-start
           $install = Start-Process -FilePath $setup -ArgumentList '/S', "/D=$root" -Wait -PassThru
           if ($install.ExitCode -ne 0) { throw "Silent install failed with exit code $($install.ExitCode)." }
           foreach ($relative in @('webobs-native-prototype.json','bin/64bit/obs64.exe','obs-plugins/64bit/webobs-native-host.dll','Uninstall.exe')) {
@@ -174,7 +176,9 @@ jobs:
           if (Test-Path -LiteralPath (Join-Path $root 'config')) { throw 'Silent install created a private profile before the first run.' }
           $manifest = Get-Content -LiteralPath (Join-Path $root 'webobs-native-prototype.json') -Raw | ConvertFrom-Json
           if ($manifest.version -ne $env:NATIVE_VERSION) { throw "Installed manifest version $($manifest.version) does not match $env:NATIVE_VERSION." }
+          $footprint = Measure-InstalledTreeFootprint -Scope $scope
           $installedFiles = (Get-ChildItem -LiteralPath $root -Recurse -File | Measure-Object).Count
+          if ($footprint.fileCount -ne $installedFiles) { throw "Footprint file count $($footprint.fileCount) does not match installed tree $installedFiles." }
           $installedPdb = Get-ChildItem -LiteralPath $root -Recurse -File -Filter *.pdb
           if ($installedPdb) { throw "The installer packaged $($installedPdb.Count) build-symbol PDB files." }
           python -B native-host/tests/smoke_windows.py --runtime $root --result (Join-Path $out 'native-nsis-install-smoke.json')
@@ -210,6 +214,7 @@ jobs:
             installerBytes = $asset.Length
             installerSha256 = (Get-FileHash -LiteralPath $setup -Algorithm SHA256).Hash.ToLowerInvariant()
             installedFileCount = $installedFiles
+            installed = $footprint
             configPreservedAcrossReinstall = $true
             configPreservedAcrossUninstall = $true
             upgradeBackupCreatedOnFirstRun = $true

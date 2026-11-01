@@ -176,6 +176,16 @@ class BuildContractTests(unittest.TestCase):
         self.assertIn("-Filter *.pdb", workflow)
         self.assertIn("build-symbol PDB files", workflow)
 
+    def test_nsis_install_receipt_records_actual_footprint(self):
+        workflow = (ROOT / ".github/workflows/windows-obs-native-host.yaml").read_text()
+        self.assertIn("New-InstalledTreeFootprintScope -Root $root -Purpose isolated-nsis-install-before-first-start", workflow)
+        self.assertIn("$footprint = Measure-InstalledTreeFootprint -Scope $scope", workflow)
+        self.assertIn("installed = $footprint", workflow)
+        self.assertLess(
+            workflow.index("New-InstalledTreeFootprintScope"),
+            workflow.index("Measure-InstalledTreeFootprint"),
+        )
+
     def test_size_gap_comparison_runs_against_stock_obs(self):
         workflow = (ROOT / ".github/workflows/windows-obs-native-host.yaml").read_text()
         script = (SCRIPTS / "compare_runtime_sizes.py").read_text()
