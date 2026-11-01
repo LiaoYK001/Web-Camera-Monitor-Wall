@@ -34,6 +34,24 @@ jobs:
           cmake --build build/native-control-auth --parallel 2
           ctest --test-dir build/native-control-auth --output-on-failure
           python3 -B native-host/tests/test_legacy_import.py
+  native-private-staging-contracts:
+    name: Offline private staging (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, windows-2022]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with: { persist-credentials: false }
+      - name: Verify private offline copies without OBS or network / 无宿主无网络验证私密离线副本
+        shell: bash
+        run: |
+          set -euo pipefail
+          python -B native-host/tests/test_legacy_stage_document.py
+          python -B native-host/tests/test_private_stage.py
+          python -B native-host/tests/test_legacy_stage.py
   windows-native-control-contracts:
     runs-on: windows-2022
     timeout-minutes: 30

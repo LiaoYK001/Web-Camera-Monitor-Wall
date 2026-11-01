@@ -342,6 +342,20 @@ class BuildContractTests(unittest.TestCase):
         self.assertNotIn("/EHc-", plugin)
         self.assertIn('TIMEOUT 30 LABELS "native;api-contract;no-media"', cmake)
 
+    def test_offline_private_staging_is_a_separate_no_media_matrix(self):
+        workflow = (ROOT / ".github/workflows/web-runtime-ci.yaml").read_text()
+        job = workflow.split("  native-private-staging-contracts:", 1)[1].split("  windows-native-control-contracts:", 1)[0]
+        self.assertIn("os: [ubuntu-24.04, windows-2022]", job)
+        for name in ("test_legacy_stage_document.py", "test_private_stage.py", "test_legacy_stage.py"):
+            self.assertIn(name, job)
+        for command in ("vcpkg", "submodule", "build-obs", "obs64", "upload-artifact"):
+            self.assertNotIn(command, job)
+        self.assertNotIn("contents: write", job)
+        cli = (SCRIPTS / "legacy_stage.py").read_text()
+        self.assertIn("--existing-config-root", cli)
+        self.assertIn("document_stage.verify", cli)
+        self.assertNotIn("subprocess", cli)
+
     def test_native_account_overflow_guard_survives_windows_max_macro(self):
         source = (ROOT / "core/src/native_cluster_authorization.cpp").read_text()
         # curl may expose the SDK's function-like max macro. Keep the callable

@@ -10,7 +10,9 @@ The prototype has an unsigned per-user NSIS development installer and versioned 
 
 [无媒体认证边界与有界真实账号 adapter](../docs/native-control-auth.md) 复用现有 SQLite 会话，逐命令请求既有 cluster 的账号权限和 camera scope；已加入真实 Handler/ClusterStore/registry 集成回归，但尚未接入原生 UI、登录入口或 HTTP listener。[旧配置只读预检](../docs/native-legacy-import.md) 仅处理显式导出的 scene/studio JSON，生成稳定身份映射与不支持项，不扫描旧私密 profile、不应用或覆盖数据。这些是 P3 的开发基础，不改变默认产品，也不表示原生登录或迁移已验收。
 
-The renderer-free authorization library and read-only legacy-import preflight are development foundations. They do not enable native product login or apply old data. Follow the linked boundaries before integration.
+The renderer-free authorization library and read-only legacy-import preflight are development foundations. A separate offline private-copy CLI now converts a restricted, explicitly silent single scene into a new private candidate with independent semantic verification and guarded file readback; see the [offline-copy contract](../docs/native-legacy-import.md#离线私密副本已实现子集--offline-private-copy-implemented-subset). It neither loads OBS nor enables native product login, restores old accounts, or applies old data. Global profile/output/FPS and timeout remain unapplied, real loader compatibility remains unproven, and Windows directory durability is explicitly unconfirmed.
+
+新增离线私密副本只处理明确静音的单场景受限子集，在显式全新目录中写候选并独立比对/安全读回；所有生成文件均可能含秘密，不得公开。它不扫描或覆盖旧配置、不加载宿主、不提供账号权限，也不是 live apply 或产品迁移完成声明。
 
 ## 固定输入与独立构建
 
