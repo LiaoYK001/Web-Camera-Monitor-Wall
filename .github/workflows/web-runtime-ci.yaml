@@ -29,7 +29,7 @@ jobs:
         run: |
           set -euo pipefail
           sudo apt-get update
-          sudo apt-get install -y cmake ninja-build libssl-dev libsqlite3-dev
+          sudo apt-get install -y cmake ninja-build libssl-dev libsqlite3-dev libcurl4-openssl-dev libjansson-dev pkg-config
           cmake -S native-host/tests/control-auth -B build/native-control-auth -G Ninja -DCMAKE_BUILD_TYPE=Release
           cmake --build build/native-control-auth --parallel 2
           ctest --test-dir build/native-control-auth --output-on-failure

@@ -8,7 +8,7 @@ The prototype has an unsigned per-user NSIS development installer and versioned 
 
 ## 控制认证与迁移预检 / Control authorization and migration preflight
 
-新增 [无媒体认证边界](../docs/native-control-auth.md) 复用现有 SQLite 会话，对固定命令逐次检查账号权限和 camera scope；它尚未接入原生 UI、真实账号后端或 HTTP listener。新增 [旧配置只读预检](../docs/native-legacy-import.md) 仅处理显式导出的 scene/studio JSON，生成稳定身份映射与不支持项，不扫描旧私密 profile、不应用或覆盖数据。两者是 P3 的开发基础，不改变默认产品，也不表示登录或迁移已验收。
+[无媒体认证边界与有界真实账号 adapter](../docs/native-control-auth.md) 复用现有 SQLite 会话，逐命令请求既有 cluster 的账号权限和 camera scope；已加入真实 Handler/ClusterStore/registry 集成回归，但尚未接入原生 UI、登录入口或 HTTP listener。[旧配置只读预检](../docs/native-legacy-import.md) 仅处理显式导出的 scene/studio JSON，生成稳定身份映射与不支持项，不扫描旧私密 profile、不应用或覆盖数据。这些是 P3 的开发基础，不改变默认产品，也不表示原生登录或迁移已验收。
 
 The renderer-free authorization library and read-only legacy-import preflight are development foundations. They do not enable native product login or apply old data. Follow the linked boundaries before integration.
 

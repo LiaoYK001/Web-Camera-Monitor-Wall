@@ -11,6 +11,16 @@ get_filename_component(WEBOBS_ROOT "${CMAKE_CURRENT_LIST_DIR}/../../.." ABSOLUTE
 find_package(OpenSSL REQUIRED COMPONENTS Crypto)
 find_package(SQLite3 REQUIRED)
 find_package(Threads REQUIRED)
+find_package(CURL REQUIRED)
+find_package(Python3 REQUIRED COMPONENTS Interpreter)
+if(WIN32)
+    find_package(jansson CONFIG REQUIRED)
+    set(WEBOBS_AUTH_JSON_TARGET jansson::jansson)
+else()
+    find_package(PkgConfig REQUIRED)
+    pkg_check_modules(JANSSON REQUIRED IMPORTED_TARGET jansson)
+    set(WEBOBS_AUTH_JSON_TARGET PkgConfig::JANSSON)
+endif()
 
 add_library(webobs-native-control-auth STATIC
     "${WEBOBS_ROOT}/core/src/native_control_auth.cpp"
@@ -38,7 +48,26 @@ else()
     target_compile_options(webobs-native-control-auth-tests PRIVATE -Wall -Wextra -Wpedantic)
 endif()
 
+add_library(webobs-native-cluster-authorization STATIC
+    "${WEBOBS_ROOT}/core/src/native_cluster_authorization.cpp")
+target_link_libraries(webobs-native-cluster-authorization PUBLIC
+    webobs-native-control-auth CURL::libcurl ${WEBOBS_AUTH_JSON_TARGET})
+add_executable(webobs-native-cluster-authorization-probe
+    "${WEBOBS_ROOT}/core/tests/native_cluster_authorization_probe.cpp")
+target_link_libraries(webobs-native-cluster-authorization-probe PRIVATE webobs-native-cluster-authorization)
+if(MSVC)
+    target_compile_options(webobs-native-cluster-authorization PRIVATE /W4 /permissive- /utf-8)
+    target_compile_options(webobs-native-cluster-authorization-probe PRIVATE /W4 /permissive- /utf-8)
+else()
+    target_compile_options(webobs-native-cluster-authorization PRIVATE -Wall -Wextra -Wpedantic)
+    target_compile_options(webobs-native-cluster-authorization-probe PRIVATE -Wall -Wextra -Wpedantic)
+endif()
+
 enable_testing()
+add_test(NAME native-cluster-authorization COMMAND "${Python3_EXECUTABLE}" -B
+    "${WEBOBS_ROOT}/native-host/tests/test_native_cluster_authorization.py"
+    --probe "$<TARGET_FILE:webobs-native-cluster-authorization-probe>")
+set_tests_properties(native-cluster-authorization PROPERTIES TIMEOUT 90)
 add_test(NAME native-control-auth COMMAND webobs-native-control-auth-tests)
 set_tests_properties(native-control-auth PROPERTIES TIMEOUT 30)
 
@@ -48,6 +77,11 @@ set_tests_properties(native-control-auth PROPERTIES TIMEOUT 30)
 if(CMAKE_NM AND NOT MSVC)
     add_test(NAME native-control-no-media-symbols
         COMMAND "${CMAKE_NM}" -C "$<TARGET_FILE:webobs-native-control-auth>")
+    add_test(NAME native-cluster-no-media-symbols
+        COMMAND "${CMAKE_NM}" -C "$<TARGET_FILE:webobs-native-cluster-authorization>")
+    set_tests_properties(native-cluster-no-media-symbols PROPERTIES
+        TIMEOUT 30
+        FAIL_REGULAR_EXPRESSION "obs_startup|obs_shutdown|obs_scene_|obs_source_|obs_frontend_|gst_init|QApplication|QGuiApplication")
     set_tests_properties(native-control-no-media-symbols PROPERTIES
         TIMEOUT 30
         FAIL_REGULAR_EXPRESSION "obs_startup|obs_shutdown|obs_scene_|obs_source_|obs_frontend_|gst_init|QApplication|QGuiApplication")

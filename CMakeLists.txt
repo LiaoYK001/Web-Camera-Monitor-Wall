@@ -78,6 +78,12 @@ target_compile_definitions(webobs-common PUBLIC
     WEBOBS_MILESTONE="${WEBOBS_MILESTONE_OVERRIDE}"
 )
 
+# Optional native authority transport, deliberately separate from the media host.
+# Reuses existing runtime dependencies without creating listeners or starting services.
+add_library(webobs-native-cluster-authorization STATIC core/src/native_cluster_authorization.cpp)
+target_link_libraries(webobs-native-cluster-authorization PUBLIC webobs-common CURL::libcurl)
+webobs_warnings(webobs-native-cluster-authorization)
+
 if(WIN32)
     find_package(libobs CONFIG REQUIRED HINTS "${WEBOBS_OBS_PREFIX}/cmake" "${WEBOBS_OBS_PREFIX}/lib/cmake")
     add_library(webobs-libobs ALIAS OBS::libobs)
@@ -165,6 +171,16 @@ if(WEBOBS_BUILD_TESTS)
     webobs_warnings(webobs-native-control-auth-tests)
     add_test(NAME webobs-native-control-auth-tests COMMAND webobs-native-control-auth-tests)
     set_tests_properties(webobs-native-control-auth-tests PROPERTIES TIMEOUT 30 LABELS "security;native-control")
+    find_package(Python3 QUIET COMPONENTS Interpreter)
+    if(Python3_Interpreter_FOUND)
+        add_executable(webobs-native-cluster-authorization-probe core/tests/native_cluster_authorization_probe.cpp)
+        target_link_libraries(webobs-native-cluster-authorization-probe PRIVATE webobs-native-cluster-authorization)
+        webobs_warnings(webobs-native-cluster-authorization-probe)
+        add_test(NAME webobs-native-cluster-authorization COMMAND "${Python3_EXECUTABLE}" -B
+            "${CMAKE_SOURCE_DIR}/native-host/tests/test_native_cluster_authorization.py"
+            --probe "$<TARGET_FILE:webobs-native-cluster-authorization-probe>")
+        set_tests_properties(webobs-native-cluster-authorization PROPERTIES TIMEOUT 90 LABELS "security;native-control")
+    endif()
     add_executable(webobs-go2rtc-proxy-tests core/tests/go2rtc_proxy_tests.cpp core/src/go2rtc_proxy.cpp)
     target_link_libraries(webobs-go2rtc-proxy-tests PRIVATE webobs-common Boost::headers)
     target_compile_definitions(webobs-go2rtc-proxy-tests PRIVATE BOOST_ERROR_CODE_HEADER_ONLY BOOST_SYSTEM_NO_DEPRECATED)

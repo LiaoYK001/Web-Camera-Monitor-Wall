@@ -315,7 +315,10 @@ class BuildContractTests(unittest.TestCase):
         self.assertNotIn("find_package(Qt", standalone)
         self.assertIn("native-control-no-media-symbols", standalone)
         self.assertIn("webobs-native-control-auth-tests", root_cmake)
-        self.assertEqual(manifest["dependencies"], ["openssl", "sqlite3"])
+        self.assertEqual(manifest["dependencies"], ["openssl", "sqlite3", "curl", "jansson"])
+        self.assertIn("core/src/native_cluster_authorization.cpp", standalone)
+        self.assertIn("test_native_cluster_authorization.py", standalone)
+        self.assertIn("native-cluster-no-media-symbols", standalone)
         self.assertEqual(manifest["builtin-baseline"], "eb2d3a3279fd019cb7733072d86900d0ad2a1aef")
 
 

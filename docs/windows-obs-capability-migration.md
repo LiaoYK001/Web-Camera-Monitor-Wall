@@ -63,7 +63,7 @@ The existing core already has a renderer-free Direct-only branch (no output and 
 
 ### 4.5 当前 P3 基础 / Current P3 foundations
 
-[无媒体授权库](native-control-auth.md) 已复用实际 SessionStore 并提供逐命令 fresh RBAC 回调契约；[旧配置显式导出预检](native-legacy-import.md) 已提供只读稳定 ID 规划与不支持项阻断。它们不启动服务，不应用旧配置，也未接入真实账号后端、完整 OBS UI 策略和 copy-on-write 回滚。以下步骤仍是集成验收门，不能因基础库/预检测试通过就标记 P3 完成。
+[无媒体授权库及真实账号 adapter](native-control-auth.md) 已复用实际 SessionStore，并以有界、无代理/重定向的 loopback 请求接入既有 cluster 授权协议；真实 Handler/ClusterStore/registry 的隔离回归与恶意 HTTP 回归分别验证。[旧配置显式导出预检](native-legacy-import.md) 提供只读稳定 ID 规划与不支持项阻断。它们不启动产品服务、不应用旧配置，原生登录、完整 OBS UI 策略、全 graph-derived scope、账号身份/会话 epoch、copy-on-write 回滚仍未集成。以下步骤仍是验收门，不能因库/预检测试通过就标记 P3 完成。
 
 Renderer-free authorization and explicit-export migration planning are now independently testable foundations, not a wired native account product or an applied data migration. The gates below remain open until their actual integration evidence exists.
 

@@ -2,36 +2,43 @@
 
 ## 当前交付与限制 / Delivered scope and limits
 
-这是 renderer-free C++ 库与安全回归，不是已接入原生 OBS UI 的账号产品。它没有监听端口、创建账号、登录、HTTP 解析、服务启动或 OBS 命令执行功能，不初始化第二媒体/显示引擎。Electron 兼容产品仍为默认入口。不能把库测试通过写成原生产品已经完成认证、旧数据迁移或 P3 验收。
+这是 renderer-free C++ 库、真实账号授权后端 adapter 与安全回归，不是已接入原生 OBS UI 的账号产品。没有新增 listener、登录入口、服务启动或 OBS 动作执行；不初始化第二媒体/显示引擎。Electron 兼容产品仍为默认入口。不能把库测试通过写成原生产品认证、旧数据迁移或 P3 已验收。
 
-This is a renderer-free C++ authorization boundary and regression suite, not a wired native login product. It owns no listener, login endpoint, account service, media runtime or OBS action executor. The compatibility Electron product remains the default.
+These renderer-free libraries provide persistent-session authorization and a bounded adapter to the existing account service, not a native login product. They start no service or listener, execute no OBS action and leave the compatibility Electron product as the default.
 
-实现为 [NativeControlAuth](../core/include/webobs/native_control_auth.hpp)，直接复用 [SessionStore](../core/include/webobs/authentication.hpp) 的 SQLite 持久会话和令牌哈希；没有另造 session 数据库协议或 Basic 管理员回退。
+[NativeControlAuth](../core/include/webobs/native_control_auth.hpp) 直接复用 [SessionStore](../core/include/webobs/authentication.hpp) 的 SQLite 持久会话和令牌哈希。[NativeClusterAuthorizationBackend](../core/include/webobs/native_cluster_authorization.hpp) 实现其 fresh RBAC 回调；没有另造 session 协议、Basic 管理员回退或新账号服务。
 
 ## 固定命令与检查 / Allowlisted checks
 
-- `read_scene` → `scene.read`；`write_scene` → `scene.write`；`view_camera` → `live.view`。最后一种必须带一个 camera ID；其余允许带一个明确 scope。任意字符串权限、URL、路径、列表或通配符不能作为 camera scope。
-- 在访问会话/账号后端前验证 socket/IPC 提供的 loopback peer、精确配置的 Origin 和 authority 及其长度、命令和 scope。配置只接受明确的 loopback HTTP(S) origin，不接受 userinfo、路径、query、fragment、DNS 后缀匹配或宽泛 localhost 子串。
-- token 必须为现有 SessionStore 产生的 64 位小写十六进制字符串。逐命令检查本地会话后调用可信的最新账号授权回调，不缓存角色/许可；后端许可后再检查一次会话，避免后端请求期间退出登录仍获得授权。
-- 缺失/失效会话返回 `401`；不存在/禁用账号在成功撤销其全部本地会话后返回 `401`；若撤销未确认删除任何记录，则保守返回 `503`（包含数据库删除失败或并发已删除的情况），不能声称撤销成功。权限不足 `403`；未配置、后端故障/异常或未知决定 `503`。异常消息和 token 不进入返回对象；拒绝时不返回 principal。
+- `read_scene` → `scene.read`；`write_scene` → `scene.write`；`view_camera` → `live.view`。最后一种必须带一个 camera ID；其余允许一个明确 scope。URL、路径、列表和通配符不能作为 camera scope。
+- 在访问会话/账号后端前验证真实 socket/IPC 提供的 loopback peer、精确 Origin/authority、字段长度、命令和 scope。配置只接受明确的 loopback HTTP(S) origin，不接受 userinfo、路径、query、fragment、DNS 后缀或宽泛 localhost 子串匹配。
+- SessionStore token 必须为 64 位小写十六进制。逐命令检查本地会话并调用最新账号授权，不缓存角色/许可；许可后再验证会话，拒绝后端请求期间发生的 logout。
+- 缺失/失效会话 `401`；账号不存在/禁用且成功撤销全部同用户本地会话后 `401`；撤销未确认删除记录则保守 `503`，包括数据库删除失败或并发已删除。权限不足 `403`；未配置、后端故障/异常或未知决定 `503`。拒绝不返回 principal、异常详情或 token。
 
-Each command requires the existing persistent session AND a fresh authoritative permission/scope decision. Unknown accounts revoke all local sessions for that account. Backend exceptions and invalid decisions fail closed. The result is a one-command decision, not a reusable authorization token.
+Each command requires the existing session AND a fresh authoritative permission/scope decision. The result is a one-command decision, not a reusable authorization token. Unknown users revoke all same-user local sessions; unconfirmed revocation fails closed as unavailable.
 
-## 接入前必须保留的契约 / Required integration contracts
+## 真实账号后端 / Authoritative account backend
 
-可信 adapter 必须从真实 socket 获得 peer，不能信任 `X-Forwarded-For` 或请求里的 principal；在构造请求前拒绝重复/折叠的 Host、Origin、cookie 字段，限制 body/header、连接数和请求时限。当前库不是 HTTP parser，也不会验证 HTTP body 中的 OBS 参数。
+- 固定目标 `http://127.0.0.1:<port>/auth/authorize`，默认端口 8095；配置只接受非零 uint16 端口、64 位小写 hex 内部凭据、connect 1–500 ms、total 1–2000 ms 且 connect≤total。未来配置 parser 必须在转换 uint16 前拒绝越界数，不能先截断。
+- POST 仅发送 `username`、固定 permission、`cameraId`。**不传 groupId**：现有 cluster 会信任显式 groupId，省略后才按真实 camera registry 查询组。浏览器 cookie、session token 和 Basic 凭据不转发；内部 token 只用于 `X-WebObs-Internal-Admin`。
+- 强制 loopback IPv4 HTTP、禁用环境代理、重定向、netrc 和 HTTP Basic；每次创建独立 easy handle，连接/总时限、4 KiB body、16 KiB 聚合 headers/128 次 header callback 均有界。C callback 捕获异常，错误不输出原始响应或秘密。
+- 只有严格 JSON（拒绝重复键、NUL、尾随数据）且 `200` 精确包含 `allowed:true`、32 位小写 hex `userId`、请求 permission 回显，才许可。仅精确识别 `403 permission_rejected` 与 `404 user_not_found` 及当前固定 message；错误内部 token、其他状态/结构或措辞变化一律 unavailable，而非默认许可或撤销账号。
 
-The eventual adapter must authenticate its loopback account-service request using a private internal credential, impose time/response-size limits, and map missing, malformed or unavailable backend replies to `unavailable`. It must never forward the browser session cookie as an internal-service credential.
+The adapter uses the existing [cluster authorization route](../cluster/cluster_service.py), not a replacement service. It validates the full reply rather than trusting status 200. Strict error-message matching deliberately fails closed if the backend contract changes. Proxy/redirect traps and malformed replies are tested separately from the real Handler/ClusterStore/registry integration.
 
-账号服务回调仍需实现并接入真实 cluster API；会话文件仍需由 owner 建立独立用户私密目录/ACL；服务需纳入单实例与 Job/退出回收；通过授权后只允许在原生 frontend 线程操作同一 OBS graph。不能直接开放旧 core 的宽泛可写 scene/studio API，也不能把旧完整 Supervisor 全部启动。
+## 接入前仍须保留的契约 / Remaining integration contracts
 
-库只检查请求里声明的单个 scope，不解析场景内容或 OBS 参数。可信 adapter 必须从目标对象推导全部受影响的 camera ID，逐一授权，并对场景读取做可见性过滤；不能由调用者填一个获许可的 ID，就读取/修改包含其他受限相机的整个 graph。无 scope 的 `scene.read/write` 不自动豁免账号的相机范围限制。
+可信 adapter 必须从 socket 获得 peer，不信任 `X-Forwarded-For` 或请求 principal；在构造请求前拒绝重复/折叠的 Host、Origin、cookie，限制 body/header、连接数与请求时限。当前库不是 HTTP parser，也不验证 OBS 参数。会话及内部凭据文件仍须 owner 私密目录/Windows ACL；账号服务仍须受单实例、Job 与退出回收管理。仅通过授权后在同一原生 frontend 线程操作同一 OBS graph；不开放旧 core 通用可写 API，不启动完整 Supervisor。
 
-原生 OBS 自带菜单/快捷键/dock/脚本等可能修改场景的入口必须逐一界定。仅保护新的 API，而任由原生 UI 绕过策略，不构成完整账号隔离。`authorize` 返回之后立即执行对应白名单动作；不能保存结果留待以后使用。与所有分离的授权/执行一样，最后检查之后发生的撤销仍需后续 adapter 的执行序列化策略定义。
+库只检查声明的单个 scope，不能解析整场景。可信执行 adapter 必须从实际目标推导所有受影响 camera ID 并逐个授权，对读取结果做可见性过滤。无 scope 的 `scene.read/write` 是粗粒度权限，**不是所有相机范围的豁免**；现有 cluster 的管理员/显式 scope 许可也不是 camera 对象存在性证明，执行前须解析目标。
+
+原生菜单/快捷键/dock/脚本等修改入口必须界定和防绕过。`authorize` 后应立即执行对应白名单动作；最后检查之后发生撤销的处理仍须执行序列化策略定义。现有 SessionStore 以 username 绑定，不检测“删除再用同名重建”的身份替换，也没有密码变更 epoch；这些仍是接入前的独立身份/会话契约，不能因本 adapter 存在就声称解决。
+
+The libraries do not implement native login, graph-derived multi-camera authorization, UI bypass controls, private ACL provisioning, account-service ownership or reversible migration. Username reuse and password-change session epochs remain unresolved integration issues. libcurl ownership is balanced; concurrent invocation assumes normal C++ object lifetime and a supported modern libcurl build with thread-safe global initialization. Destruction/mutation concurrent with a call is not supported.
 
 ## 独立验证 / Standalone validation
 
-只需 C++17、OpenSSL Crypto、SQLite 和 Threads；不配置 libobs/Qt/GStreamer，不启动媒体进程：
+需要 C++17、OpenSSL Crypto、SQLite、libcurl、Jansson、Python 3 和 Threads；不配置 libobs/Qt/GStreamer，不启动媒体进程：
 
 ```sh
 cmake -S native-host/tests/control-auth -B build/native-control-auth -DCMAKE_BUILD_TYPE=Release
@@ -39,12 +46,12 @@ cmake --build build/native-control-auth --parallel 2
 ctest --test-dir build/native-control-auth --output-on-failure
 ```
 
-测试使用临时 SQLite 数据库，覆盖权限变化、backend outage、scope、expiry、logout/revoke_user、后端请求期间撤销、伪造 Origin/authority/peer、超长字段、控制字符、未知枚举和安全返回码。非 MSVC 下额外扫描完整静态库符号，拒绝 OBS/media/frontend 初始化或操作入口。它不证明端口/HTTP 认证、真实账号后端、Windows ACL、完整原生 UI 或摄像头验收已经通过。
+测试使用临时 SessionStore、真实 cluster Handler/ClusterStore 和合成 camera registry，密码 hasher 为 fixture（不测试 Argon2/登录）。覆盖同会话角色/直接相机 scope 改变、registry 组改变、禁用账号撤销全部本地会话、错误内部凭据 503 后恢复；独立 hostile HTTP 覆盖状态与 JSON 不符、重复键、控制字符、超限、超时、无代理/重定向泄漏。无效 direct 请求用活跃 observer 断言零网络请求；probe 每次响应有独立时限，CTest 另有整体时限。原会话库的 expiry/logout/SQLite 删除失败等回归继续运行。
 
-The standalone CMake project and existing root CTest suite run the same real-session tests. The public CI adds Linux and MSVC builds; the Windows job uses only OpenSSL and SQLite from the existing pinned vcpkg baseline in [the minimal test manifest](../native-host/tests/control-auth-vcpkg/vcpkg.json). These are tests, not shipped services or added product dependencies.
+The standalone and root CTest projects exercise the actual account-service implementation against disposable data, not a production profile. Non-MSVC builds scan both static libraries for forbidden media/frontend symbols. CI builds on Linux and MSVC using the existing pinned vcpkg baseline and a [minimal test manifest](../native-host/tests/control-auth-vcpkg/vcpkg.json) with OpenSSL/SQLite/curl/Jansson. These are test dependencies, not added shipped services or native installer components. Passing them is not Windows ACL, native UI, camera, pixel or performance qualification.
 
 ## 后续 / Next
 
-先实现有界且 fail-closed 的真实账号后端 adapter，再接入少量明确 frontend 命令和可拦截 UI；迁移预检与获授权的应用阶段分开。尚未接入的路径保持关闭，不因库存在而切换默认产品。
+接入少量明确 frontend 命令与可拦截 UI、账号服务所有权和私密凭据，再处理经授权的 copy-on-write 导入、逐字段 graph 比对和回滚。迁移只读预检与应用保持分离；未接入路径保持关闭，不切换默认产品。
 
-Implement the bounded authoritative backend adapter, then wire narrowly scoped native frontend actions and their bypass controls. Keep migration preflight separate from an authorized, reversible apply operation and do not switch the product default on the strength of this library alone.
+Next wire narrowly scoped frontend actions and their bypass controls, private service ownership and login/session identity contracts. Keep read-only migration planning separate from an authorized, reversible apply operation; the current libraries alone do not justify a product-default switch.
