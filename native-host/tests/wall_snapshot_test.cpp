@@ -419,7 +419,7 @@ int main()
 		std::cout << "wall_snapshot_contract_pass " << cases << '\n';
 		return 0;
 	} catch (const std::exception &error) {
-		std::cerr << "wall_snapshot_contract_fail " << error.what() << '\n';
+		std::cerr << "wall_snapshot_contract_fail case_" << (cases + 1) << ' ' << error.what() << '\n';
 		return 1;
 	} catch (...) {
 		std::cerr << "wall_snapshot_contract_fail unknown_exception\n";

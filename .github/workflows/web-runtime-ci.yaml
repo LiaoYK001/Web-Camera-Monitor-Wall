@@ -97,7 +97,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          cmake --build build/native-graph-api --config Release --parallel 2
+          cmake --build build/native-graph-api --config Release --parallel 2 --verbose
           ctest --test-dir build/native-graph-api -C Release --output-on-failure
   windows-update-contracts:
     runs-on: windows-2022

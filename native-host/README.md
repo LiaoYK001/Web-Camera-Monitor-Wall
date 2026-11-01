@@ -87,7 +87,7 @@ OBS 32.1.2 Windows portable 配置实际位于 **`runtime/config/obs-studio/`**�
 
 ## 最小原生功能
 
-1. 在独立 OBS 内用其原生 **Media Source** 属性创建摄像头输入；取消 Local File 并输入自己的 RTSP 地址。缓存、硬件解码、重连、音频、色彩等仍由固定 OBS 原生属性控制，本插件不解析/另存 URL、不新建 media source、不更改这些参数。
+1. 在独立 OBS 内用其原生 **Media Source** 属性创建摄像头输入；取消 Local File 并输入自己的 RTSP 地址。缓存、硬件解码、重连、音频、色彩等仍由固定 OBS 原生属性控制；此手工选择既有 source 的 dock 路径不解析/另存 URL、不新建 media source、不更改这些参数。另有显式私密 `product.json` bootstrap 路径可创建 source，不应与此手工路径混同。
 2. 在 **Docks → WebOBS Native Prototype** 中刷新既有 Media Sources，并选择五个槽位。插件使用 source **UUID** 获取相同源对象，添加 scene item 时复用对象及其现有解码器。跨场景/投影不主动另开解码器；同一源可以选入多个槽位，这不代表五路独立输入验收。
 3. 点击创建五分屏会新建唯一名称的场景，不覆盖既有场景。按当前 OBS canvas base size 布局为 3×2 网格、末格留空，画面保持比例并居中在每格内。先验证全部输入再变更；scene item 创建失败会移除新建的半成品场景。Studio Mode 只选到 **Preview**，TAKE 仍由用户决定；非 Studio Mode 选择当前 Scene。
 4. Program 按钮调用 OBS 原生 `StudioProgram` projector；可在 OBS 原生窗口菜单中选择屏幕/管理投影。它既不 capture/canvas 回读画面，也不借用浏览器播放。多投影的源/解码器稳定性仍需实际 Windows 观测，不能由此代码结构替代验收。

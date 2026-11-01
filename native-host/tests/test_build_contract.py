@@ -328,6 +328,7 @@ class BuildContractTests(unittest.TestCase):
         self.assertIn("os: [ubuntu-24.04, windows-2022]", job)
         self.assertIn("git submodule update --init --depth 1 obs/obs-studio", job)
         self.assertIn("actual == pin", job)
+        self.assertIn("cmake --build build/native-graph-api --config Release --parallel 2 --verbose", job)
         self.assertIn("-DWEBOBS_NATIVE_BUILD_PLUGIN=OFF", job)
         self.assertIn("-DWEBOBS_NATIVE_BUILD_TESTS=ON", job)
         self.assertNotIn("vcpkg", job)
@@ -336,6 +337,9 @@ class BuildContractTests(unittest.TestCase):
         self.assertIn("native-product-bootstrap-api-contract", cmake)
         self.assertIn("tests/wall_snapshot_test.cpp src/wall_snapshot.cpp", cmake)
         self.assertIn("native-wall-snapshot-api-contract", cmake)
+        self.assertIn("target_compile_options(native-wall-snapshot-test PRIVATE /EHs /EHc-)", cmake)
+        plugin = cmake.split("if(WEBOBS_NATIVE_BUILD_PLUGIN)", 1)[1].split("if(WEBOBS_NATIVE_BUILD_TESTS)", 1)[0]
+        self.assertNotIn("/EHc-", plugin)
         self.assertIn('TIMEOUT 30 LABELS "native;api-contract;no-media"', cmake)
 
     def test_native_account_overflow_guard_survives_windows_max_macro(self):

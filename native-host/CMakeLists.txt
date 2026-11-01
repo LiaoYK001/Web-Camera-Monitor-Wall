@@ -65,6 +65,13 @@ if(WEBOBS_NATIVE_BUILD_TESTS)
       target_compile_options(${test_target} PRIVATE -Wall -Wextra -Werror -UNDEBUG)
     endif()
   endforeach()
+  # Only this API-double test intentionally throws from extern-C OBS stand-ins.
+  # MSVC's default /EHsc assumes such calls cannot throw and omits unwinding;
+  # keep the adversarial cleanup assertions, but model their C++ exceptions.
+  # This does NOT change flags or exception assumptions in the real plugin.
+  if(MSVC)
+    target_compile_options(native-wall-snapshot-test PRIVATE /EHs /EHc-)
+  endif()
   add_test(NAME native-wall-api-contract COMMAND native-wall-test)
   add_test(NAME native-product-bootstrap-api-contract COMMAND native-product-bootstrap-test)
   add_test(NAME native-wall-snapshot-api-contract COMMAND native-wall-snapshot-test)
