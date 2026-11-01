@@ -48,7 +48,7 @@ jobs:
           git submodule update --init --recursive --depth 1 obs/obs-studio
           python3 -c 'import json, subprocess; from pathlib import Path; pin=json.loads(Path("desktop/dependencies.lock.json").read_text())["obsCommit"]; assert subprocess.check_output(["git", "-C", "obs/obs-studio", "rev-parse", "HEAD"], text=True).strip() == pin == "fb4d98bf88fae5fc85cb11fc57f7c5e309282194"'
           sudo apt-get update
-          sudo apt-get install -y cmake ninja-build pkg-config extra-cmake-modules xvfb xauth libsimde-dev libavformat-dev libavcodec-dev libavutil-dev libswscale-dev libswresample-dev libjansson-dev libx11-dev libx11-xcb-dev libxcb1-dev libxcb-xinput-dev libdrm-dev uuid-dev zlib1g-dev uthash-dev
+          sudo apt-get install -y cmake ninja-build pkg-config extra-cmake-modules xvfb xauth libglvnd-dev libsimde-dev libavformat-dev libavcodec-dev libavutil-dev libswscale-dev libswresample-dev libjansson-dev libx11-dev libx11-xcb-dev libxcb1-dev libxcb-xinput-dev libdrm-dev uuid-dev zlib1g-dev uthash-dev
           cmake -S obs/obs-studio -B build/native-loader-obs -G Ninja -DCMAKE_BUILD_TYPE=Release -DOBS_VERSION_OVERRIDE=32.1.2 -DENABLE_FRONTEND=OFF -DENABLE_PLUGINS=OFF -DENABLE_SCRIPTING=OFF -DENABLE_WAYLAND=OFF -DENABLE_PULSEAUDIO=OFF
           cmake --build build/native-loader-obs --target libobs --parallel 2
           # Limit installation to libobs: frontend-api is deliberately unbuilt.

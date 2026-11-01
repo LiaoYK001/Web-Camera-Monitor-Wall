@@ -56,7 +56,7 @@ Invoke-Checked 'cmake' @('--build',$loaderBuild,'--config','Release','--parallel
 $beforeLoaderPath = $env:PATH
 try {
     $env:PATH = (Join-Path $obsInstall 'bin/64bit') + ';' + (Join-Path $deps 'bin') + ';' + $beforeLoaderPath
-    Invoke-Checked 'ctest' @('--test-dir',$loaderBuild,'-C','Release','--output-on-failure')
+    Invoke-Checked 'ctest' @('--test-dir',$loaderBuild,'-C','Release','--output-on-failure','--verbose')
 } finally {
     $env:PATH = $beforeLoaderPath
 }

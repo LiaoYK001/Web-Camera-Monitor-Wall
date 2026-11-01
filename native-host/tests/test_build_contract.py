@@ -2,6 +2,7 @@
 """Cross-platform build/isolation tests, not Windows/Qt/media qualification."""
 from __future__ import annotations
 
+import ast
 import copy
 import importlib.util
 import json
@@ -21,9 +22,21 @@ import smoke_windows
 
 
 class BuildContractTests(unittest.TestCase):
+    def test_repository_text_reads_have_explicit_utf8(self):
+        # Source files and bilingual docs are UTF-8, independent of Windows ACP.
+        tree = ast.parse(Path(__file__).read_text(encoding="utf-8"))
+        calls = [node for node in ast.walk(tree) if isinstance(node, ast.Call)
+                 and isinstance(node.func, ast.Attribute) and node.func.attr == "read_text"]
+        self.assertTrue(calls)
+        for call in calls:
+            self.assertTrue(any(keyword.arg == "encoding" and
+                                isinstance(keyword.value, ast.Constant) and
+                                keyword.value.value == "utf-8" for keyword in call.keywords),
+                            "repository source read must explicitly use UTF-8")
+
     def test_lock_matches_pinned_obs_and_only_needed_dependencies(self):
-        lock = json.loads((ROOT / "desktop/dependencies.lock.json").read_text())
-        presets = json.loads((ROOT / "obs/obs-studio/CMakePresets.json").read_text())
+        lock = json.loads((ROOT / "desktop/dependencies.lock.json").read_text(encoding="utf-8"))
+        presets = json.loads((ROOT / "obs/obs-studio/CMakePresets.json").read_text(encoding="utf-8"))
         artifacts = prepare.locked_artifacts(lock, presets)
         self.assertEqual([a["id"] for a in artifacts], ["obs-deps", "obs-qt"])
         for field, value in [("obsCommit", "0" * 40)]:
@@ -67,8 +80,8 @@ class BuildContractTests(unittest.TestCase):
             with patch.object(prepare, "OBS_COMMIT", pin):
                 prepare.snapshot(source, output)
                 self.assertFalse((output / "untracked-secret.txt").exists())
-                self.assertEqual((output / "nested with spaces/second.txt").read_text(), "another tracked entry\n")
-                receipt = json.loads((output / ".webobs-source.json").read_text())
+                self.assertEqual((output / "nested with spaces/second.txt").read_text(encoding="utf-8"), "another tracked entry\n")
+                receipt = json.loads((output / ".webobs-source.json").read_text(encoding="utf-8"))
                 self.assertEqual(len(receipt["files"]), 2)
                 prepare.snapshot(source, output)
                 (output / "tracked.txt").write_text("patched")
@@ -93,7 +106,7 @@ class BuildContractTests(unittest.TestCase):
             with patch.object(prepare, "OBS_COMMIT", pin):
                 prepare.snapshot(source, output)
                 self.assertFalse((output / "tool-link").is_symlink())
-                self.assertEqual((output / "tool-link").read_text(), "../private.txt")
+                self.assertEqual((output / "tool-link").read_text(encoding="utf-8"), "../private.txt")
                 prepare.snapshot(source, output)
 
     def fixture_runtime(self, root: Path) -> tuple[Path, Path, Path]:
@@ -114,7 +127,7 @@ class BuildContractTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             repo, source, runtime = self.fixture_runtime(Path(directory))
             manifest = stage.finalize(repo, source, runtime, "0.1.0-dev.test")
-            self.assertEqual(json.loads((runtime / "webobs-native-prototype.json").read_text()), manifest)
+            self.assertEqual(json.loads((runtime / "webobs-native-prototype.json").read_text(encoding="utf-8")), manifest)
             self.assertFalse(manifest["defaultProduct"])
             self.assertEqual(manifest["servicesStarted"], [])
             self.assertEqual(manifest["obsCommit"], prepare.OBS_COMMIT)
@@ -151,8 +164,8 @@ class BuildContractTests(unittest.TestCase):
             self.assertNotEqual(smoke_windows.fingerprint(profile), before)
 
     def test_launcher_and_builder_keep_architecture_boundaries(self):
-        builder = (ROOT / "desktop/scripts/build-obs-native.ps1").read_text()
-        launcher = (SCRIPTS / "launch-native.ps1").read_text()
+        builder = (ROOT / "desktop/scripts/build-obs-native.ps1").read_text(encoding="utf-8")
+        launcher = (SCRIPTS / "launch-native.ps1").read_text(encoding="utf-8")
         for expected in ("-DENABLE_FRONTEND=ON", "-DENABLE_BROWSER=OFF", "-DQt6_DIR=", "-A','x64", "-DCMAKE_SYSTEM_VERSION=10.0.22621.0", "BuildDirectory already exists"):
             self.assertIn(expected, builder)
         for forbidden in ("prepare-obs-headless.py", "Invoke-Checked 'pnpm'", "ENABLE_FRONTEND=OFF", "Invoke-Checked 'node'", "clients/", "GStreamer"):
@@ -165,8 +178,8 @@ class BuildContractTests(unittest.TestCase):
         self.assertNotIn("--multi", launcher)  # Do not bypass upstream portable instance guard.
 
     def test_build_symbols_are_stripped_before_the_manifest(self):
-        builder = (ROOT / "desktop/scripts/build-obs-native.ps1").read_text()
-        workflow = (ROOT / ".github/workflows/windows-obs-native-host.yaml").read_text()
+        builder = (ROOT / "desktop/scripts/build-obs-native.ps1").read_text(encoding="utf-8")
+        workflow = (ROOT / ".github/workflows/windows-obs-native-host.yaml").read_text(encoding="utf-8")
         self.assertIn("native-host/scripts/prune_runtime.py", builder)
         self.assertLess(
             builder.index("prune_runtime.py"),
@@ -177,7 +190,7 @@ class BuildContractTests(unittest.TestCase):
         self.assertIn("build-symbol PDB files", workflow)
 
     def test_nsis_install_receipt_records_actual_footprint(self):
-        workflow = (ROOT / ".github/workflows/windows-obs-native-host.yaml").read_text()
+        workflow = (ROOT / ".github/workflows/windows-obs-native-host.yaml").read_text(encoding="utf-8")
         self.assertIn("New-InstalledTreeFootprintScope -Root $root -Purpose isolated-nsis-install-before-first-start", workflow)
         self.assertIn("$footprint = Measure-InstalledTreeFootprint -Scope $scope", workflow)
         self.assertIn("installed = $footprint", workflow)
@@ -187,15 +200,15 @@ class BuildContractTests(unittest.TestCase):
         )
 
     def test_p5_campaign_plan_is_scheduled_not_measured(self):
-        plan = (ROOT / "native-host/qualification/plan.py").read_text()
+        plan = (ROOT / "native-host/qualification/plan.py").read_text(encoding="utf-8")
         self.assertIn('"qualified": False', plan)
         self.assertIn('"status": "planned"', plan)
-        self.assertIn("plan.py", (ROOT / "native-host/qualification/README.md").read_text())
-        self.assertIn("plan.py", (ROOT / "docs/windows-target-qualification-runbook.md").read_text())
+        self.assertIn("plan.py", (ROOT / "native-host/qualification/README.md").read_text(encoding="utf-8"))
+        self.assertIn("plan.py", (ROOT / "docs/windows-target-qualification-runbook.md").read_text(encoding="utf-8"))
 
     def test_p5_preflight_is_diagnostic_only(self):
-        workflow = (ROOT / ".github/workflows/windows-obs-native-host.yaml").read_text()
-        preflight = (ROOT / "native-host/qualification/preflight.py").read_text()
+        workflow = (ROOT / ".github/workflows/windows-obs-native-host.yaml").read_text(encoding="utf-8")
+        preflight = (ROOT / "native-host/qualification/preflight.py").read_text(encoding="utf-8")
         self.assertIn("native-host/qualification/preflight.py", workflow)
         self.assertIn("--diagnostic", workflow)
         self.assertIn("native-p5-preflight-diagnostic.json", workflow)
@@ -203,8 +216,8 @@ class BuildContractTests(unittest.TestCase):
         self.assertIn('"qualified": False', preflight)
 
     def test_size_gap_comparison_runs_against_stock_obs(self):
-        workflow = (ROOT / ".github/workflows/windows-obs-native-host.yaml").read_text()
-        script = (SCRIPTS / "compare_runtime_sizes.py").read_text()
+        workflow = (ROOT / ".github/workflows/windows-obs-native-host.yaml").read_text(encoding="utf-8")
+        script = (SCRIPTS / "compare_runtime_sizes.py").read_text(encoding="utf-8")
         self.assertIn("native-host/scripts/compare_runtime_sizes.py", workflow)
         self.assertIn("--prototype build/obs-native-ci/runtime --obs $root", workflow)
         self.assertIn("build/obs-native-ci/native-size-compare.json", workflow)
@@ -216,8 +229,8 @@ class BuildContractTests(unittest.TestCase):
             self.assertIn(expected, script)
 
     def test_runtime_inventory_enforces_budget_and_accounting(self):
-        workflow = (ROOT / ".github/workflows/windows-obs-native-host.yaml").read_text()
-        script = (SCRIPTS / "runtime_inventory.py").read_text()
+        workflow = (ROOT / ".github/workflows/windows-obs-native-host.yaml").read_text(encoding="utf-8")
+        script = (SCRIPTS / "runtime_inventory.py").read_text(encoding="utf-8")
         self.assertIn("native-host/scripts/runtime_inventory.py", workflow)
         self.assertIn("--max-runtime-bytes 104857600", workflow)
         self.assertIn("build/obs-native-ci/native-runtime-inventory.json", workflow)
@@ -229,8 +242,8 @@ class BuildContractTests(unittest.TestCase):
             self.assertIn(expected, script)
 
     def test_installer_is_per_user_and_never_deletes_private_config(self):
-        script = (ROOT / "native-host/installer/WebOBSNative.nsi").read_text()
-        workflow = (ROOT / ".github/workflows/windows-obs-native-host.yaml").read_text()
+        script = (ROOT / "native-host/installer/WebOBSNative.nsi").read_text(encoding="utf-8")
+        workflow = (ROOT / ".github/workflows/windows-obs-native-host.yaml").read_text(encoding="utf-8")
         self.assertIn("RequestExecutionLevel user", script)
         self.assertIn('StrCmp $1 "config" un_next', script)
         self.assertIn('StrCmp $1 "backups" un_next', script)
@@ -245,8 +258,8 @@ class BuildContractTests(unittest.TestCase):
         self.assertIn("signed = $false", workflow)
 
     def test_process_gate_rejects_helper_services_and_orphans(self):
-        workflow = (ROOT / ".github/workflows/windows-obs-native-host.yaml").read_text()
-        smoke = (ROOT / "native-host/tests/smoke_windows.py").read_text()
+        workflow = (ROOT / ".github/workflows/windows-obs-native-host.yaml").read_text(encoding="utf-8")
+        smoke = (ROOT / "native-host/tests/smoke_windows.py").read_text(encoding="utf-8")
         self.assertIn("native-*-process-gate.json", workflow)
         for expected in ("FORBIDDEN_PROCESS_NAMES", "SERVICE_LISTENER_PORTS", "check_process_gate"):
             self.assertIn(expected, smoke)
@@ -270,9 +283,9 @@ class BuildContractTests(unittest.TestCase):
                     smoke_windows.check_process_gate(path)
 
     def test_crash_smoke_kills_the_host_and_requires_no_survivors(self):
-        workflow = (ROOT / ".github/workflows/windows-obs-native-host.yaml").read_text()
-        launcher = (ROOT / "native-host/scripts/launch-native.ps1").read_text()
-        smoke = (ROOT / "native-host/tests/smoke_windows.py").read_text()
+        workflow = (ROOT / ".github/workflows/windows-obs-native-host.yaml").read_text(encoding="utf-8")
+        launcher = (ROOT / "native-host/scripts/launch-native.ps1").read_text(encoding="utf-8")
+        smoke = (ROOT / "native-host/tests/smoke_windows.py").read_text(encoding="utf-8")
         self.assertIn("--crash-smoke", workflow)
         self.assertIn("native-crash-smoke.json", workflow)
         self.assertIn("--crash-after-seconds 8", workflow)
@@ -294,10 +307,10 @@ class BuildContractTests(unittest.TestCase):
         self.assertIn('gate.get("crashed") is not True', smoke)
 
     def test_native_control_boundary_has_standalone_linux_and_msvc_contracts(self):
-        workflow = (ROOT / ".github/workflows/web-runtime-ci.yaml").read_text()
-        standalone = (ROOT / "native-host/tests/control-auth/CMakeLists.txt").read_text()
-        root_cmake = (ROOT / "CMakeLists.txt").read_text()
-        manifest = json.loads((ROOT / "native-host/tests/control-auth-vcpkg/vcpkg.json").read_text())
+        workflow = (ROOT / ".github/workflows/web-runtime-ci.yaml").read_text(encoding="utf-8")
+        standalone = (ROOT / "native-host/tests/control-auth/CMakeLists.txt").read_text(encoding="utf-8")
+        root_cmake = (ROOT / "CMakeLists.txt").read_text(encoding="utf-8")
+        manifest = json.loads((ROOT / "native-host/tests/control-auth-vcpkg/vcpkg.json").read_text(encoding="utf-8"))
         self.assertIn("native-control-contracts:", workflow)
         self.assertIn("windows-native-control-contracts:", workflow)
         self.assertIn("native-host/tests/test_legacy_import.py", workflow)
@@ -322,8 +335,8 @@ class BuildContractTests(unittest.TestCase):
         self.assertEqual(manifest["builtin-baseline"], "eb2d3a3279fd019cb7733072d86900d0ad2a1aef")
 
     def test_native_graph_ownership_contracts_use_pinned_headers_without_media(self):
-        workflow = (ROOT / ".github/workflows/web-runtime-ci.yaml").read_text()
-        cmake = (ROOT / "native-host/CMakeLists.txt").read_text()
+        workflow = (ROOT / ".github/workflows/web-runtime-ci.yaml").read_text(encoding="utf-8")
+        cmake = (ROOT / "native-host/CMakeLists.txt").read_text(encoding="utf-8")
         job = workflow.split("  native-graph-api-contracts:", 1)[1].split("  windows-update-contracts:", 1)[0]
         self.assertIn("os: [ubuntu-24.04, windows-2022]", job)
         self.assertIn("git submodule update --init --depth 1 obs/obs-studio", job)
@@ -343,7 +356,7 @@ class BuildContractTests(unittest.TestCase):
         self.assertIn('TIMEOUT 30 LABELS "native;api-contract;no-media"', cmake)
 
     def test_offline_private_staging_is_a_separate_no_media_matrix(self):
-        workflow = (ROOT / ".github/workflows/web-runtime-ci.yaml").read_text()
+        workflow = (ROOT / ".github/workflows/web-runtime-ci.yaml").read_text(encoding="utf-8")
         job = workflow.split("  native-private-staging-contracts:", 1)[1].split("  windows-native-control-contracts:", 1)[0]
         self.assertIn("os: [ubuntu-24.04, windows-2022]", job)
         for name in ("test_legacy_stage_document.py", "test_private_stage.py", "test_legacy_stage.py"):
@@ -351,16 +364,16 @@ class BuildContractTests(unittest.TestCase):
         for command in ("vcpkg", "submodule", "build-obs", "obs64", "upload-artifact"):
             self.assertNotIn(command, job)
         self.assertNotIn("contents: write", job)
-        cli = (SCRIPTS / "legacy_stage.py").read_text()
+        cli = (SCRIPTS / "legacy_stage.py").read_text(encoding="utf-8")
         self.assertIn("--existing-config-root", cli)
         self.assertIn("document_stage.verify", cli)
         self.assertNotIn("subprocess", cli)
 
     def test_real_loader_gate_is_standalone_and_never_installed(self):
-        cmake = (ROOT / 'native-host/tests/real-loader/CMakeLists.txt').read_text()
-        probe = (ROOT / 'native-host/tests/real-loader/loader_probe.cpp').read_text()
-        builder = (ROOT / 'desktop/scripts/build-obs-native.ps1').read_text()
-        workflow = (ROOT / '.github/workflows/web-runtime-ci.yaml').read_text()
+        cmake = (ROOT / 'native-host/tests/real-loader/CMakeLists.txt').read_text(encoding="utf-8")
+        probe = (ROOT / 'native-host/tests/real-loader/loader_probe.cpp').read_text(encoding="utf-8")
+        builder = (ROOT / 'desktop/scripts/build-obs-native.ps1').read_text(encoding="utf-8")
+        workflow = (ROOT / '.github/workflows/web-runtime-ci.yaml').read_text(encoding="utf-8")
         self.assertIn('find_package(libobs 32.1.2 EXACT CONFIG REQUIRED)', cmake)
         self.assertIn('PRIVATE OBS::libobs', cmake)
         self.assertNotIn('install(', cmake)
@@ -376,13 +389,13 @@ class BuildContractTests(unittest.TestCase):
         self.assertIn('-DENABLE_FRONTEND=OFF', job)
         self.assertIn('-DENABLE_PLUGINS=OFF', job)
         self.assertIn('extra-cmake-modules', job)
-        self.assertIn('xvfb xauth', job)
+        self.assertIn('xvfb xauth libglvnd-dev', job)
         self.assertIn('xvfb-run -a ctest --test-dir build/native-real-loader', job)
         self.assertNotIn('upload-artifact', job)
         self.assertNotIn('contents: write', job)
 
     def test_native_account_overflow_guard_survives_windows_max_macro(self):
-        source = (ROOT / "core/src/native_cluster_authorization.cpp").read_text()
+        source = (ROOT / "core/src/native_cluster_authorization.cpp").read_text(encoding="utf-8")
         # curl may expose the SDK's function-like max macro. Keep the callable
         # parenthesized rather than changing the arithmetic or weakening bounds.
         self.assertIn("(std::numeric_limits<std::size_t>::max)() / size", source)
