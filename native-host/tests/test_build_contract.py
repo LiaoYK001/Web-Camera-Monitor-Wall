@@ -321,6 +321,13 @@ class BuildContractTests(unittest.TestCase):
         self.assertIn("native-cluster-no-media-symbols", standalone)
         self.assertEqual(manifest["builtin-baseline"], "eb2d3a3279fd019cb7733072d86900d0ad2a1aef")
 
+    def test_native_account_overflow_guard_survives_windows_max_macro(self):
+        source = (ROOT / "core/src/native_cluster_authorization.cpp").read_text()
+        # curl may expose the SDK's function-like max macro. Keep the callable
+        # parenthesized rather than changing the arithmetic or weakening bounds.
+        self.assertIn("(std::numeric_limits<std::size_t>::max)() / size", source)
+        self.assertNotIn("std::numeric_limits<std::size_t>::max()", source)
+
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)

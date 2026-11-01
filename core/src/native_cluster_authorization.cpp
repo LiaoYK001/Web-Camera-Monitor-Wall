@@ -62,7 +62,7 @@ struct Response {
 
 bool byte_count(std::size_t size, std::size_t count, std::size_t &bytes) noexcept
 {
-    if (size != 0 && count > std::numeric_limits<std::size_t>::max() / size)
+    if (size != 0 && count > (std::numeric_limits<std::size_t>::max)() / size)
         return false;
     bytes = size * count;
     return true;
