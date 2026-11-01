@@ -24,7 +24,7 @@ def scene(schema=6):
     return {'schemaVersion': schema, 'revision': 1, 'id': 'private-scene', 'name': 'PRIVATE_DISPLAY_NAME',
             'canvas': {'width': 1920, 'height': 1080, 'backgroundColor': '#000000'},
             'sources': [{'id': 'private-source', 'kind': 'rtsp', 'name': 'PRIVATE_CAMERA_NAME',
-                         'rtspUrl': 'rtsp://secret-user:secret-password@camera.invalid/private-channel?secret=query',
+                         'rtspUrl': 'rtsp://fixture-user:fixture-password@camera.invalid/private-channel?secret=query',
                          'transport': 'tcp', 'muted': True, 'volume': 0.5, 'syncOffsetMs': 13,
                          'monitoring': 'off', 'audioTrack': 2, 'filters': []}],
             'items': [{'id': 'private-item', 'sourceId': 'private-source', 'x': 0, 'y': 0,
@@ -41,7 +41,7 @@ class LegacyImportTests(unittest.TestCase):
             self.assertFalse(report['qualified'])
             encoded = json.dumps(report)
             for secret in ('PRIVATE_DISPLAY_NAME', 'PRIVATE_CAMERA_NAME', 'private-scene',
-                           'private-source', 'private-item', 'secret-user', 'secret-password',
+                           'private-source', 'private-item', 'fixture-user', 'fixture-password',
                            'camera.invalid', 'private-channel', 'secret=query'):
                 self.assertNotIn(secret, encoded)
             mapped = report['scenes'][0]['sources'][0]
