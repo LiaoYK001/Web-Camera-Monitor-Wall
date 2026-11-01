@@ -54,19 +54,33 @@ public:
     std::filesystem::path path;
 };
 
+SessionIdentity synthetic_identity()
+{
+    return {"0123456789abcdef0123456789abcdef", "fedcba9876543210fedcba9876543210"};
+}
+
+std::optional<std::string> create_bound(SessionStore &sessions, std::string_view user,
+                                      std::string_view metadata,
+                                      const SessionIdentity &identity = synthetic_identity())
+{
+    return sessions.create_bound(user, metadata, identity);
+}
+
 struct Backend {
     int calls = 0;
     NativeAuthorizationDecision next = NativeAuthorizationDecision::allowed;
     bool throw_exception = false;
     std::string principal;
+    SessionIdentity identity;
     std::string permission;
     std::string camera;
 
-    NativeAuthorizationDecision operator()(std::string_view user, std::string_view grant,
-                                           std::string_view scope)
+    NativeAuthorizationDecision operator()(std::string_view user, const SessionIdentity &binding,
+                                           std::string_view grant, std::string_view scope)
     {
         ++calls;
         principal = user;
+        identity = binding;
         permission = grant;
         camera = scope;
         if (throw_exception)
@@ -108,12 +122,136 @@ void execute_sql(const std::filesystem::path &path, const char *sql)
     require(status == SQLITE_OK, "could not update temporary fixture database");
 }
 
+void legacy_and_corrupt_binding_never_reach_backend()
+{
+    PrivateTemporaryDirectory temporary;
+    const auto database_path = temporary.path / "sessions.db";
+    SessionStore sessions(database_path.string(), std::chrono::seconds(3600), false);
+    require(!sessions.initialize(), "SessionStore initialization failed");
+    Backend backend;
+    NativeControlAuth gate(sessions, config(), std::ref(backend));
+    const auto legacy = sessions.create("legacy-user", "legacy-username-only");
+    require(legacy.has_value(), "legacy fixture creation failed");
+    expect_status(gate.authorize(request_for(*legacy)), 401);
+    expect_status(gate.authorize(request_for(*legacy)), 401);
+    const auto unchanged = sessions.validate_and_slide(*legacy);
+    require(unchanged && !unchanged->identity,
+            "first native authorization must not opportunistically bind a legacy session");
+    require(backend.calls == 0, "legacy sessions must never reach the authority backend");
+
+    // Exercise persisted damage, including one-sided/NULL bindings, noncanonical
+    // hex, lengths, and embedded NUL. Creation deliberately uses only valid IDs.
+    for (const auto mutation : {
+             "user_id=NULL", "auth_epoch=NULL", "user_id='',auth_epoch=''",
+             "user_id='0123456789abcdef0123456789abcde'",
+             "auth_epoch='0123456789abcdef0123456789abcdef0'",
+             "user_id='ABCDEF0123456789abcdef0123456789'",
+             "auth_epoch='gggggggggggggggggggggggggggggggg'",
+             "user_id='0123456789abcdef'||char(0)||'123456789abcdef'",
+             "auth_epoch='0123456789abcdef'||char(0)||'123456789abcdef'",
+             "user_id='0123456789abcdef0123456789abcdef'||char(0)||'tail'",
+             "auth_epoch='fedcba9876543210fedcba9876543210'||char(0)||'tail'"}) {
+        const auto token = create_bound(sessions, "binding-user", "corrupt-binding");
+        require(token.has_value(), "bound fixture creation failed");
+        const std::string sql = std::string("UPDATE auth_sessions SET ") + mutation +
+                                " WHERE user_name='binding-user'";
+        execute_sql(database_path, sql.c_str());
+        expect_status(gate.authorize(request_for(*token)), 401);
+        require(backend.calls == 0, "damaged binding must not reach the authority backend");
+    }
+}
+
+void binding_revalidation_and_safe_diagnostics()
+{
+    // Mutate the real persisted binding from inside the authoritative callback;
+    // even a positive decision applies only to the exact pre-callback identity.
+    for (const auto mutation : {
+             "user_id='11111111111111111111111111111111'",
+             "auth_epoch='22222222222222222222222222222222'",
+             "user_id='11111111111111111111111111111111',"
+             "auth_epoch='22222222222222222222222222222222'",
+             "user_name='renamed-user'", "user_id=NULL,auth_epoch=NULL",
+             "user_id=NULL", "auth_epoch='BROKEN'"}) {
+        PrivateTemporaryDirectory temporary;
+        const auto database_path = temporary.path / "sessions.db";
+        SessionStore sessions(database_path.string(), std::chrono::seconds(3600), false);
+        require(!sessions.initialize(), "SessionStore initialization failed");
+        const auto token = create_bound(sessions, "race-user", "binding-race");
+        require(token.has_value(), "binding race fixture creation failed");
+        int calls = 0;
+        NativeControlAuth gate(sessions, config(),
+            [&](std::string_view principal, const SessionIdentity &identity,
+                std::string_view permission, std::string_view camera) {
+                ++calls;
+                require(principal == "race-user" && permission == "scene.read" && camera.empty(),
+                        "binding race callback received incorrect principal or permission");
+                require(identity.user_id == synthetic_identity().user_id &&
+                            identity.auth_epoch == synthetic_identity().auth_epoch,
+                        "binding race callback lost the original identity");
+                const std::string sql = std::string("UPDATE auth_sessions SET ") + mutation;
+                execute_sql(database_path, sql.c_str());
+                return NativeAuthorizationDecision::allowed;
+            });
+        const auto reply = gate.authorize(request_for(*token));
+        expect_status(reply, 401);
+        require(calls == 1, "binding revalidation must follow exactly one fresh backend call");
+    }
+
+    PrivateTemporaryDirectory temporary;
+    SessionStore sessions((temporary.path / "sessions.db").string(), std::chrono::seconds(3600), false);
+    require(!sessions.initialize(), "SessionStore initialization failed");
+    const auto token = create_bound(sessions, "diagnostic-user", "safe-diagnostics");
+    require(token.has_value(), "diagnostic fixture creation failed");
+    NativeControlAuth throwing_gate(sessions, config(),
+        [&](std::string_view, const SessionIdentity &identity, std::string_view, std::string_view)
+            -> NativeAuthorizationDecision {
+            throw std::runtime_error(identity.user_id + ":" + identity.auth_epoch + ":" + *token);
+        });
+    const auto reply = throwing_gate.authorize(request_for(*token));
+    expect_status(reply, 503);
+    require(reply.code() == "authorization_unavailable" && reply.principal.empty(),
+            "exceptions must expose only a fixed safe code, never identity or session token");
+
+    std::size_t removed = 0;
+    NativeControlAuth already_revoked_gate(sessions, config(),
+        [&](std::string_view user, const SessionIdentity &identity, std::string_view, std::string_view) {
+            removed = sessions.revoke_identity(user, identity);
+            return NativeAuthorizationDecision::unknown_user;
+        });
+    expect_status(already_revoked_gate.authorize(request_for(*token)), 503);
+    require(removed == 1, "concurrent exact-binding revocation fixture failed");
+}
+
+void stale_binding_cannot_revoke_replacement()
+{
+    PrivateTemporaryDirectory temporary;
+    const auto database_path = temporary.path / "sessions.db";
+    SessionStore sessions(database_path.string(), std::chrono::seconds(3600), false);
+    require(!sessions.initialize(), "SessionStore initialization failed");
+    const auto token = create_bound(sessions, "replacement-user", "replacement-race");
+    require(token.has_value(), "replacement fixture creation failed");
+    NativeControlAuth gate(sessions, config(),
+        [&](std::string_view, const SessionIdentity &, std::string_view, std::string_view) {
+            execute_sql(database_path,
+                "UPDATE auth_sessions SET auth_epoch='33333333333333333333333333333333'");
+            return NativeAuthorizationDecision::unknown_user;
+        });
+    // The only row is now a different binding: revoking the original deletes
+    // zero rows and must return 503 without destroying that replacement.
+    expect_status(gate.authorize(request_for(*token)), 503);
+    const auto replacement = sessions.validate_and_slide(*token);
+    require(replacement && replacement->identity &&
+                replacement->identity->user_id == synthetic_identity().user_id &&
+                replacement->identity->auth_epoch == "33333333333333333333333333333333",
+            "stale backend decision must not revoke a replacement binding");
+}
+
 void freshness_scope_and_fail_closed()
 {
     PrivateTemporaryDirectory temporary;
     SessionStore sessions((temporary.path / "sessions.db").string(), std::chrono::seconds(3600), false);
     require(!sessions.initialize(), "SessionStore initialization failed");
-    const auto token = sessions.create("operator-user", "native-control-unit-test");
+    const auto token = create_bound(sessions, "operator-user", "native-control-unit-test");
     require(token.has_value(), "SessionStore creation failed");
     Backend backend;
     NativeControlAuth gate(sessions, config(), std::ref(backend));
@@ -124,6 +262,9 @@ void freshness_scope_and_fail_closed()
     expect_status(first, 200);
     require(first.principal == "operator-user" && backend.principal == "operator-user",
             "backend must receive only the validated session principal");
+    require(backend.identity.user_id == synthetic_identity().user_id &&
+                backend.identity.auth_epoch == synthetic_identity().auth_epoch,
+            "backend must receive both exact bound identity fields without transformation");
     require(backend.permission == "scene.read" && backend.camera.empty(), "read permission mapping changed");
     expect_status(gate.authorize(request), 200);
     require(backend.calls == 2, "repeated commands must freshly call the backend");
@@ -154,14 +295,25 @@ void freshness_scope_and_fail_closed()
     backend.next = static_cast<NativeAuthorizationDecision>(999);
     expect_status(gate.authorize(request), 503);
 
-    const auto second = sessions.create("operator-user", "second-session");
-    const auto unrelated = sessions.create("different-user", "unrelated-session");
-    require(second && unrelated, "additional session fixture creation failed");
+    const auto second = create_bound(sessions, "operator-user", "second-session");
+    const auto unrelated = create_bound(sessions, "different-user", "unrelated-session");
+    auto new_epoch = synthetic_identity();
+    new_epoch.auth_epoch = "11111111111111111111111111111111";
+    auto new_account = synthetic_identity();
+    new_account.user_id = "22222222222222222222222222222222";
+    const auto reauthenticated = create_bound(sessions, "operator-user", "new-epoch", new_epoch);
+    const auto recreated = create_bound(sessions, "operator-user", "new-account", new_account);
+    const auto legacy = sessions.create("operator-user", "legacy-session");
+    require(second && unrelated && reauthenticated && recreated && legacy,
+            "additional session fixture creation failed");
     backend.next = NativeAuthorizationDecision::unknown_user;
     expect_status(gate.authorize(request), 401);
     require(!sessions.validate_and_slide(*token) && !sessions.validate_and_slide(*second),
-            "deleted/disabled user must revoke every local session for that user");
+            "unknown identity must revoke every local session for the exact binding");
     require(sessions.validate_and_slide(*unrelated).has_value(), "revocation must not affect another user");
+    require(sessions.validate_and_slide(*reauthenticated) && sessions.validate_and_slide(*recreated) &&
+                sessions.validate_and_slide(*legacy),
+            "old identity revocation must preserve same-name new bindings and legacy sessions");
     const int calls_after_revoke = backend.calls;
     backend.next = NativeAuthorizationDecision::allowed;
     expect_status(gate.authorize(request), 401);
@@ -174,9 +326,9 @@ void failed_revocation_is_unavailable()
     const auto database_path = temporary.path / "sessions.db";
     SessionStore sessions(database_path.string(), std::chrono::seconds(3600), false);
     require(!sessions.initialize(), "SessionStore initialization failed");
-    const auto first = sessions.create("disabled-user", "first-session");
-    const auto second = sessions.create("disabled-user", "second-session");
-    const auto unrelated = sessions.create("different-user", "unrelated-session");
+    const auto first = create_bound(sessions, "disabled-user", "first-session");
+    const auto second = create_bound(sessions, "disabled-user", "second-session");
+    const auto unrelated = create_bound(sessions, "different-user", "unrelated-session");
     require(first && second && unrelated, "revocation failure fixture creation failed");
     Backend backend;
     backend.next = NativeAuthorizationDecision::unknown_user;
@@ -213,7 +365,7 @@ void structural_rejection_precedes_session_and_backend()
     const auto database_path = temporary.path / "sessions.db";
     SessionStore sessions(database_path.string(), std::chrono::seconds(3600), false);
     require(!sessions.initialize(), "SessionStore initialization failed");
-    const auto token = sessions.create("scope-user", "structural-tests");
+    const auto token = create_bound(sessions, "scope-user", "structural-tests");
     require(token.has_value(), "SessionStore creation failed");
     Backend backend;
     NativeControlAuth gate(sessions, config(), std::ref(backend));
@@ -346,7 +498,7 @@ void configuration_expiry_revocation_and_races()
     const auto database_path = temporary.path / "sessions.db";
     SessionStore sessions(database_path.string(), std::chrono::seconds(3600), false);
     require(!sessions.initialize(), "SessionStore initialization failed");
-    auto token = sessions.create("expiry-user", "expiry-tests");
+    auto token = create_bound(sessions, "expiry-user", "expiry-tests");
     require(token.has_value(), "SessionStore creation failed");
     Backend backend;
     NativeControlAuth gate(sessions, config(), std::ref(backend));
@@ -354,17 +506,18 @@ void configuration_expiry_revocation_and_races()
     execute_sql(database_path, "UPDATE auth_sessions SET expires_at=0");
     expect_status(gate.authorize(request), 401);
     require(backend.calls == 0, "expired token must not reach backend");
-    token = sessions.create("expiry-user", "revocation-tests");
+    token = create_bound(sessions, "expiry-user", "revocation-tests");
     require(token.has_value(), "SessionStore recreation failed");
     request = request_for(*token);
     require(sessions.revoke(*token), "fixture token revocation failed");
     expect_status(gate.authorize(request), 401);
     require(backend.calls == 0, "revoked token must not reach backend");
 
-    token = sessions.create("expiry-user", "in-flight-revocation-test");
+    token = create_bound(sessions, "expiry-user", "in-flight-revocation-test");
     require(token.has_value(), "in-flight session fixture failed");
     request = request_for(*token);
-    NativeControlAuth racing_gate(sessions, config(), [&](std::string_view, std::string_view, std::string_view) {
+    NativeControlAuth racing_gate(sessions, config(), [&](std::string_view, const SessionIdentity &,
+                                                        std::string_view, std::string_view) {
         require(sessions.revoke(*token), "backend fixture revocation failed");
         return NativeAuthorizationDecision::allowed;
     });
@@ -396,7 +549,7 @@ void configuration_expiry_revocation_and_races()
     for (const auto &valid : std::vector<NativeControlAuthConfig>{
              {"http://localhost", "localhost"}, {"http://127.0.0.1:65535", "127.0.0.1:65535"},
              {"https://[::1]:8443", "[::1]:8443"}, {"http://[::1]", "[::1]"}}) {
-        const auto fresh = sessions.create("config-user", "origin-tests");
+        const auto fresh = create_bound(sessions, "config-user", "origin-tests");
         require(fresh.has_value(), "configuration fixture token creation failed");
         NativeControlAuth configured_gate(sessions, valid, std::ref(backend));
         require(configured_gate.configured(), "valid canonical loopback origin must configure");
@@ -414,6 +567,9 @@ void configuration_expiry_revocation_and_races()
 int main()
 {
     try {
+        legacy_and_corrupt_binding_never_reach_backend();
+        binding_revalidation_and_safe_diagnostics();
+        stale_binding_cannot_revoke_replacement();
         freshness_scope_and_fail_closed();
         failed_revocation_is_unavailable();
         structural_rejection_precedes_session_and_backend();

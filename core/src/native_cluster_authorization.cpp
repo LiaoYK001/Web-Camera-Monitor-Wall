@@ -99,7 +99,8 @@ std::string_view string_value(const json_t *value) noexcept
                                  : std::string_view{};
 }
 
-Decision parse_response(long status, const std::string &body, std::string_view permission)
+Decision parse_response(long status, const std::string &body, std::string_view permission,
+                        const SessionIdentity *identity)
 {
     if (body.empty() || body.size() > 4096 || body.find('\0') != std::string::npos)
         return Decision::unavailable;
@@ -110,9 +111,13 @@ Decision parse_response(long status, const std::string &body, std::string_view p
     if (status == 200) {
         // The real service returns no username echo. Bind this reply to the
         // trusted principal's dedicated POST and correlate the requested permission.
-        return json_object_size(root.get()) == 3 &&
+        const auto user_id = string_value(json_object_get(root.get(), "userId"));
+        const auto epoch = string_value(json_object_get(root.get(), "authEpoch"));
+        const bool binding_matches = !identity ||
+            (user_id == identity->user_id && epoch == identity->auth_epoch);
+        return json_object_size(root.get()) == (identity ? 4u : 3u) &&
             json_is_true(json_object_get(root.get(), "allowed")) &&
-            lower_hex(string_value(json_object_get(root.get(), "userId")), 32) &&
+            lower_hex(user_id, 32) && binding_matches &&
             string_value(json_object_get(root.get(), "permission")) == permission
             ? Decision::allowed : Decision::unavailable;
     }
@@ -148,15 +153,32 @@ NativeClusterAuthorizationBackend::NativeClusterAuthorizationBackend(NativeClust
 NativeAuthorizationDecision NativeClusterAuthorizationBackend::operator()(std::string_view principal,
     std::string_view permission, std::string_view camera_id) const noexcept
 {
+    return request(principal, nullptr, permission, camera_id);
+}
+
+NativeAuthorizationDecision NativeClusterAuthorizationBackend::operator()(std::string_view principal,
+    const SessionIdentity &identity, std::string_view permission, std::string_view camera_id) const noexcept
+{
+    return request(principal, &identity, permission, camera_id);
+}
+
+NativeAuthorizationDecision NativeClusterAuthorizationBackend::request(std::string_view principal,
+    const SessionIdentity *identity, std::string_view permission, std::string_view camera_id) const noexcept
+{
     if (!configured() || !identifier(principal, 3) ||
+        (identity && (!lower_hex(identity->user_id, 32) || !lower_hex(identity->auth_epoch, 32))) ||
         (permission != "scene.read" && permission != "scene.write" && permission != "live.view") ||
         (!camera_id.empty() && !identifier(camera_id)) || (permission == "live.view" && camera_id.empty()))
         return Decision::unavailable;
     try {
-        const std::string url = "http://127.0.0.1:" + std::to_string(config_.port) + "/auth/authorize";
-        // Inputs have an ASCII-only alphabet without JSON escapes; size is <= 190.
-        const std::string body = "{\"cameraId\":\"" + std::string(camera_id) + "\",\"permission\":\"" +
-            std::string(permission) + "\",\"username\":\"" + std::string(principal) + "\"}";
+        const std::string url = "http://127.0.0.1:" + std::to_string(config_.port) +
+            (identity ? "/auth/native-authorize" : "/auth/authorize");
+        // ASCII-only validated inputs, no JSON escapes or caller-supplied group.
+        std::string body = "{\"cameraId\":\"" + std::string(camera_id) + "\",\"permission\":\"" +
+            std::string(permission) + "\",\"username\":\"" + std::string(principal) + "\"";
+        if (identity)
+            body += ",\"userId\":\"" + identity->user_id + "\",\"authEpoch\":\"" + identity->auth_epoch + "\"";
+        body += "}";
         const std::string token_header = "X-WebObs-Internal-Admin: " + config_.internal_token;
         Response response;
         std::unique_ptr<curl_slist, decltype(&curl_slist_free_all)> headers(nullptr, &curl_slist_free_all);
@@ -190,7 +212,7 @@ NativeAuthorizationDecision NativeClusterAuthorizationBackend::operator()(std::s
         if (curl_easy_perform(handle.get()) != CURLE_OK ||
             curl_easy_getinfo(handle.get(), CURLINFO_RESPONSE_CODE, &status) != CURLE_OK)
             return Decision::unavailable;
-        return parse_response(status, response.body, permission);
+        return parse_response(status, response.body, permission, identity);
     } catch (...) { return Decision::unavailable; }
 }
 } // namespace webobs

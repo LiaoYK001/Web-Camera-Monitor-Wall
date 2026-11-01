@@ -129,6 +129,23 @@ bool safe_session_token(std::string_view token)
     return true;
 }
 
+bool valid_identity_component(std::string_view value)
+{
+    if (value.size() != 32)
+        return false;
+    for (char character : value) {
+        if ((character < '0' || character > '9') && (character < 'a' || character > 'f'))
+            return false;
+    }
+    return true;
+}
+
+bool valid_bound_identity(const std::optional<SessionIdentity> &identity)
+{
+    return identity && valid_identity_component(identity->user_id) &&
+           valid_identity_component(identity->auth_epoch);
+}
+
 std::string_view permission_for_command(NativeControlCommand command)
 {
     switch (command) {
@@ -197,23 +214,28 @@ NativeControlAuthorization NativeControlAuth::authorize(const NativeControlReque
 
     try {
         const auto session = sessions_.validate_and_slide(request.session_token);
-        if (!session || !safe_identifier(session->user, 3))
+        // Username-only legacy sessions are not proof of an account binding.
+        // Never ask the backend to opportunistically bind them on first use.
+        if (!session || !safe_identifier(session->user, 3) || !valid_bound_identity(session->identity))
             return result(NativeControlStatus::unauthenticated);
-        const auto decision = backend_(session->user, permission, request.camera_id);
+        const auto decision = backend_(session->user, *session->identity, permission, request.camera_id);
         switch (decision) {
         case NativeAuthorizationDecision::allowed: {
-            // A logout/revocation while the backend was in flight must not grant
-            // a command using the formerly valid session.
+            // Logout, rename or binding replacement while the backend was in
+            // flight must not grant a command using the formerly valid session.
             const auto current = sessions_.validate_and_slide(request.session_token);
-            if (!current || current->user != session->user)
+            if (!current || current->user != session->user || !valid_bound_identity(current->identity) ||
+                current->identity->user_id != session->identity->user_id ||
+                current->identity->auth_epoch != session->identity->auth_epoch)
                 return result(NativeControlStatus::unauthenticated);
             return {NativeControlStatus::allowed, session->user};
         }
         case NativeAuthorizationDecision::unknown_user:
-            // SessionStore reports both DELETE failure and zero matching rows
-            // as zero. Do not claim revocation succeeded while tokens remain.
-            // Concurrent prior revocation can conservatively return 503 too.
-            if (sessions_.revoke_user(session->user) == 0)
+            // Revoke every session for this exact username/id/epoch, never a
+            // same-named account recreated or reauthenticated with a new binding.
+            // DELETE failure and zero matching rows both report zero; concurrent
+            // prior revocation can conservatively return 503 too.
+            if (sessions_.revoke_identity(session->user, *session->identity) == 0)
                 return result(NativeControlStatus::unavailable);
             return result(NativeControlStatus::unauthenticated);
         case NativeAuthorizationDecision::denied:

@@ -253,6 +253,89 @@ bool execute_sql(sqlite3 *database, const char *sql)
     return result == SQLITE_OK;
 }
 
+bool valid_identity(const SessionIdentity &identity)
+{
+    const auto valid_field = [](std::string_view value) {
+        return value.size() == 32 &&
+               std::all_of(value.begin(), value.end(), [](unsigned char character) {
+                   return (character >= '0' && character <= '9') ||
+                          (character >= 'a' && character <= 'f');
+               });
+    };
+    return valid_field(identity.user_id) && valid_field(identity.auth_epoch);
+}
+
+class SqlTransaction {
+public:
+    explicit SqlTransaction(sqlite3 *database)
+        : database_(database), active_(execute_sql(database, "BEGIN IMMEDIATE"))
+    {
+    }
+    ~SqlTransaction()
+    {
+        if (active_)
+            execute_sql(database_, "ROLLBACK");
+    }
+    explicit operator bool() const { return active_; }
+    bool commit()
+    {
+        if (!active_ || !execute_sql(database_, "COMMIT"))
+            return false;
+        active_ = false;
+        return true;
+    }
+    SqlTransaction(const SqlTransaction &) = delete;
+    SqlTransaction &operator=(const SqlTransaction &) = delete;
+
+private:
+    sqlite3 *database_;
+    bool active_;
+};
+
+bool migrate_session_schema(sqlite3 *database)
+{
+    SqlTransaction transaction(database);
+    if (!transaction || !execute_sql(database,
+            "CREATE TABLE IF NOT EXISTS auth_sessions("
+            "session_id_hash TEXT PRIMARY KEY,user_name TEXT NOT NULL,created_at INTEGER NOT NULL,"
+            "last_seen INTEGER NOT NULL,expires_at INTEGER NOT NULL,client_metadata TEXT NOT NULL,"
+            "user_id TEXT,auth_epoch TEXT)"))
+        return false;
+
+    sqlite3_stmt *columns = nullptr;
+    if (sqlite3_prepare_v2(database, "PRAGMA table_info(auth_sessions)", -1,
+                           &columns, nullptr) != SQLITE_OK)
+        return false;
+    bool has_user_id = false;
+    bool has_auth_epoch = false;
+    int result = SQLITE_OK;
+    while ((result = sqlite3_step(columns)) == SQLITE_ROW) {
+        const auto *name = reinterpret_cast<const char *>(sqlite3_column_text(columns, 1));
+        if (!name) {
+            sqlite3_finalize(columns);
+            return false;
+        }
+        has_user_id = has_user_id || sqlite3_stricmp(name, "user_id") == 0;
+        has_auth_epoch = has_auth_epoch || sqlite3_stricmp(name, "auth_epoch") == 0;
+    }
+    const int finalized = sqlite3_finalize(columns);
+    if (result != SQLITE_DONE || finalized != SQLITE_OK ||
+        (!has_user_id && !execute_sql(database, "ALTER TABLE auth_sessions ADD COLUMN user_id TEXT")) ||
+        (!has_auth_epoch && !execute_sql(database, "ALTER TABLE auth_sessions ADD COLUMN auth_epoch TEXT")) ||
+        !execute_sql(database,
+            "CREATE INDEX IF NOT EXISTS auth_sessions_expiry ON auth_sessions(expires_at)"))
+        return false;
+
+    // A malformed pre-existing table must not leave a partly migrated, usable store.
+    sqlite3_stmt *probe = nullptr;
+    const int prepared = sqlite3_prepare_v2(database,
+        "SELECT session_id_hash,user_name,created_at,last_seen,expires_at,client_metadata,"
+        "user_id,auth_epoch FROM auth_sessions LIMIT 0", -1, &probe, nullptr);
+    const bool usable = prepared == SQLITE_OK && sqlite3_step(probe) == SQLITE_DONE;
+    const int probe_finalized = sqlite3_finalize(probe);
+    return usable && probe_finalized == SQLITE_OK && transaction.commit();
+}
+
 void prune_expired_sessions(sqlite3 *database, std::int64_t now)
 {
     sqlite3_stmt *statement = nullptr;
@@ -299,12 +382,7 @@ std::optional<std::string> SessionStore::initialize()
     sqlite3_busy_timeout(impl_->database, 3000);
     if (!execute_sql(impl_->database, "PRAGMA journal_mode=WAL") ||
         !execute_sql(impl_->database, "PRAGMA synchronous=NORMAL") ||
-        !execute_sql(impl_->database,
-            "CREATE TABLE IF NOT EXISTS auth_sessions("
-            "session_id_hash TEXT PRIMARY KEY,user_name TEXT NOT NULL,created_at INTEGER NOT NULL,"
-            "last_seen INTEGER NOT NULL,expires_at INTEGER NOT NULL,client_metadata TEXT NOT NULL)") ||
-        !execute_sql(impl_->database,
-            "CREATE INDEX IF NOT EXISTS auth_sessions_expiry ON auth_sessions(expires_at)")) {
+        !migrate_session_schema(impl_->database)) {
         sqlite3_close(impl_->database);
         impl_->database = nullptr;
         return "could not initialize the session database schema";
@@ -315,6 +393,23 @@ std::optional<std::string> SessionStore::initialize()
 
 std::optional<std::string> SessionStore::create(std::string_view user,
                                                std::string_view client_metadata)
+{
+    // Legacy sessions remain unbound, regardless of the client metadata contents.
+    return create_impl(user, client_metadata, nullptr);
+}
+
+std::optional<std::string> SessionStore::create_bound(std::string_view user,
+                                                     std::string_view client_metadata,
+                                                     const SessionIdentity &identity)
+{
+    if (!valid_identity(identity))
+        return std::nullopt;
+    return create_impl(user, client_metadata, &identity);
+}
+
+std::optional<std::string> SessionStore::create_impl(std::string_view user,
+                                                    std::string_view client_metadata,
+                                                    const SessionIdentity *identity)
 {
     std::lock_guard lock(mutex_);
     if (!impl_->database || user.empty() || user.size() > 64)
@@ -331,18 +426,24 @@ std::optional<std::string> SessionStore::create(std::string_view user,
     prune_expired_sessions(impl_->database, now);
     std::string metadata(client_metadata.substr(0, 256));
     sqlite3_stmt *statement = nullptr;
-    const char *sql = "INSERT INTO auth_sessions(session_id_hash,user_name,created_at,last_seen,expires_at,client_metadata) VALUES(?,?,?,?,?,?)";
+    const char *sql = "INSERT INTO auth_sessions(session_id_hash,user_name,created_at,last_seen,expires_at,client_metadata,user_id,auth_epoch) VALUES(?,?,?,?,?,?,?,?)";
     if (sqlite3_prepare_v2(impl_->database, sql, -1, &statement, nullptr) != SQLITE_OK)
         return std::nullopt;
-    sqlite3_bind_text(statement, 1, hash->c_str(), -1, SQLITE_TRANSIENT);
-    sqlite3_bind_text(statement, 2, std::string(user).c_str(), -1, SQLITE_TRANSIENT);
-    sqlite3_bind_int64(statement, 3, now);
-    sqlite3_bind_int64(statement, 4, now);
-    sqlite3_bind_int64(statement, 5, expires);
-    sqlite3_bind_text(statement, 6, metadata.c_str(), -1, SQLITE_TRANSIENT);
-    const bool inserted = sqlite3_step(statement) == SQLITE_DONE;
-    sqlite3_finalize(statement);
-    return inserted ? std::optional<std::string>(token) : std::nullopt;
+    const bool bound =
+        sqlite3_bind_text(statement, 1, hash->c_str(), -1, SQLITE_TRANSIENT) == SQLITE_OK &&
+        sqlite3_bind_text(statement, 2, user.data(), static_cast<int>(user.size()), SQLITE_TRANSIENT) == SQLITE_OK &&
+        sqlite3_bind_int64(statement, 3, now) == SQLITE_OK &&
+        sqlite3_bind_int64(statement, 4, now) == SQLITE_OK &&
+        sqlite3_bind_int64(statement, 5, expires) == SQLITE_OK &&
+        sqlite3_bind_text(statement, 6, metadata.data(), static_cast<int>(metadata.size()), SQLITE_TRANSIENT) == SQLITE_OK &&
+        (identity ?
+            (sqlite3_bind_text(statement, 7, identity->user_id.data(), 32, SQLITE_TRANSIENT) == SQLITE_OK &&
+             sqlite3_bind_text(statement, 8, identity->auth_epoch.data(), 32, SQLITE_TRANSIENT) == SQLITE_OK) :
+            (sqlite3_bind_null(statement, 7) == SQLITE_OK &&
+             sqlite3_bind_null(statement, 8) == SQLITE_OK));
+    const bool inserted = bound && sqlite3_step(statement) == SQLITE_DONE;
+    const int finalized = sqlite3_finalize(statement);
+    return inserted && finalized == SQLITE_OK ? std::optional<std::string>(token) : std::nullopt;
 }
 
 std::optional<SessionRecord> SessionStore::validate_and_slide(std::string_view token)
@@ -355,35 +456,67 @@ std::optional<SessionRecord> SessionStore::validate_and_slide(std::string_view t
         return std::nullopt;
     const std::int64_t now = static_cast<std::int64_t>(std::time(nullptr));
     const std::int64_t expires = now + inactivity_expiry_.count();
+    SqlTransaction transaction(impl_->database);
+    if (!transaction)
+        return std::nullopt;
+    sqlite3_stmt *select = nullptr;
+    if (sqlite3_prepare_v2(impl_->database,
+            "SELECT user_name,created_at,last_seen,expires_at,user_id,auth_epoch "
+            "FROM auth_sessions WHERE session_id_hash=? AND expires_at>?",
+            -1, &select, nullptr) != SQLITE_OK)
+        return std::nullopt;
+    const bool selected = sqlite3_bind_text(select, 1, hash->c_str(), -1, SQLITE_TRANSIENT) == SQLITE_OK &&
+                          sqlite3_bind_int64(select, 2, now) == SQLITE_OK &&
+                          sqlite3_step(select) == SQLITE_ROW;
+    SessionRecord record;
+    bool valid = selected && sqlite3_column_type(select, 0) == SQLITE_TEXT;
+    if (valid) {
+        const auto *user = reinterpret_cast<const char *>(sqlite3_column_text(select, 0));
+        valid = user != nullptr;
+        if (valid)
+            record.user.assign(user, static_cast<std::size_t>(sqlite3_column_bytes(select, 0)));
+        record.created_at = sqlite3_column_int64(select, 1);
+        record.last_seen = now;
+        record.expires_at = expires;
+        const int user_type = sqlite3_column_type(select, 4);
+        const int epoch_type = sqlite3_column_type(select, 5);
+        if (user_type == SQLITE_NULL && epoch_type == SQLITE_NULL) {
+            // Only two actual SQL NULLs identify a legacy session.
+        } else if (user_type == SQLITE_TEXT && epoch_type == SQLITE_TEXT &&
+                   sqlite3_column_bytes(select, 4) == 32 && sqlite3_column_bytes(select, 5) == 32) {
+            const auto *id = reinterpret_cast<const char *>(sqlite3_column_text(select, 4));
+            const auto *epoch = reinterpret_cast<const char *>(sqlite3_column_text(select, 5));
+            if (id && epoch) {
+                SessionIdentity identity{std::string(id, 32), std::string(epoch, 32)};
+                valid = valid && valid_identity(identity);
+                if (valid)
+                    record.identity = std::move(identity);
+            } else {
+                valid = false;
+            }
+        } else {
+            valid = false;
+        }
+    }
+    const int finalized = sqlite3_finalize(select);
+    if (!valid || finalized != SQLITE_OK)
+        return std::nullopt;
+
+    // Do not slide corrupt bindings, and keep validation and sliding atomic.
     sqlite3_stmt *update = nullptr;
     if (sqlite3_prepare_v2(impl_->database,
             "UPDATE auth_sessions SET last_seen=?,expires_at=? WHERE session_id_hash=? AND expires_at>?",
             -1, &update, nullptr) != SQLITE_OK)
         return std::nullopt;
-    sqlite3_bind_int64(update, 1, now);
-    sqlite3_bind_int64(update, 2, expires);
-    sqlite3_bind_text(update, 3, hash->c_str(), -1, SQLITE_TRANSIENT);
-    sqlite3_bind_int64(update, 4, now);
-    const bool updated = sqlite3_step(update) == SQLITE_DONE && sqlite3_changes(impl_->database) == 1;
-    sqlite3_finalize(update);
-    if (!updated)
+    const bool bound = sqlite3_bind_int64(update, 1, now) == SQLITE_OK &&
+                       sqlite3_bind_int64(update, 2, expires) == SQLITE_OK &&
+                       sqlite3_bind_text(update, 3, hash->c_str(), -1, SQLITE_TRANSIENT) == SQLITE_OK &&
+                       sqlite3_bind_int64(update, 4, now) == SQLITE_OK;
+    const bool updated = bound && sqlite3_step(update) == SQLITE_DONE && sqlite3_changes(impl_->database) == 1;
+    const int update_finalized = sqlite3_finalize(update);
+    if (!updated || update_finalized != SQLITE_OK || !transaction.commit())
         return std::nullopt;
-    sqlite3_stmt *select = nullptr;
-    if (sqlite3_prepare_v2(impl_->database,
-            "SELECT user_name,created_at,last_seen,expires_at FROM auth_sessions WHERE session_id_hash=?",
-            -1, &select, nullptr) != SQLITE_OK)
-        return std::nullopt;
-    sqlite3_bind_text(select, 1, hash->c_str(), -1, SQLITE_TRANSIENT);
-    SessionRecord record;
-    const bool found = sqlite3_step(select) == SQLITE_ROW;
-    if (found) {
-        record.user = reinterpret_cast<const char *>(sqlite3_column_text(select, 0));
-        record.created_at = sqlite3_column_int64(select, 1);
-        record.last_seen = sqlite3_column_int64(select, 2);
-        record.expires_at = sqlite3_column_int64(select, 3);
-    }
-    sqlite3_finalize(select);
-    return found ? std::optional<SessionRecord>(std::move(record)) : std::nullopt;
+    return record;
 }
 
 bool SessionStore::revoke(std::string_view token)
@@ -420,6 +553,28 @@ std::size_t SessionStore::revoke_user(std::string_view user)
     const int changes = deleted ? sqlite3_changes(impl_->database) : 0;
     sqlite3_finalize(statement);
     return changes > 0 ? static_cast<std::size_t>(changes) : 0;
+}
+
+std::size_t SessionStore::revoke_identity(std::string_view user, const SessionIdentity &identity)
+{
+    if (user.empty() || user.size() > 64 || !valid_identity(identity))
+        return 0;
+    std::lock_guard lock(mutex_);
+    if (!impl_->database)
+        return 0;
+    sqlite3_stmt *statement = nullptr;
+    if (sqlite3_prepare_v2(impl_->database,
+            "DELETE FROM auth_sessions WHERE user_name=? AND user_id=? AND auth_epoch=?",
+            -1, &statement, nullptr) != SQLITE_OK)
+        return 0;
+    const bool bound =
+        sqlite3_bind_text(statement, 1, user.data(), static_cast<int>(user.size()), SQLITE_TRANSIENT) == SQLITE_OK &&
+        sqlite3_bind_text(statement, 2, identity.user_id.data(), 32, SQLITE_TRANSIENT) == SQLITE_OK &&
+        sqlite3_bind_text(statement, 3, identity.auth_epoch.data(), 32, SQLITE_TRANSIENT) == SQLITE_OK;
+    const bool deleted = bound && sqlite3_step(statement) == SQLITE_DONE;
+    const int changes = deleted ? sqlite3_changes(impl_->database) : 0;
+    const int finalized = sqlite3_finalize(statement);
+    return finalized == SQLITE_OK && changes > 0 ? static_cast<std::size_t>(changes) : 0;
 }
 
 std::string SessionStore::set_cookie_header(std::string_view token) const

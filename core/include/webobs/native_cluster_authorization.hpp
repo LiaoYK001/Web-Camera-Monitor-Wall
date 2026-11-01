@@ -25,10 +25,19 @@ public:
     [[nodiscard]] bool configured() const noexcept { return static_cast<bool>(runtime_); }
     // principal must come from NativeControlAuth's freshly validated SessionStore.
     // No grants are cached; every valid invocation performs its own bounded POST.
+    // Legacy diagnostic adapter only; NativeControlAuth cannot call this overload.
     [[nodiscard]] NativeAuthorizationDecision operator()(std::string_view principal,
         std::string_view permission, std::string_view camera_id) const noexcept;
+    // Bound native sessions use a separate internal endpoint. Both immutable
+    // account ID and authentication epoch must match the authoritative snapshot.
+    [[nodiscard]] NativeAuthorizationDecision operator()(std::string_view principal,
+        const SessionIdentity &identity, std::string_view permission,
+        std::string_view camera_id) const noexcept;
 
 private:
+    [[nodiscard]] NativeAuthorizationDecision request(std::string_view principal,
+        const SessionIdentity *identity, std::string_view permission,
+        std::string_view camera_id) const noexcept;
     NativeClusterAuthorizationConfig config_;
     // Copies share only our curl_global_init reference, never an easy handle.
     std::shared_ptr<void> runtime_;

@@ -427,7 +427,22 @@ class ClusterStore:
             target_columns = {row[1] for row in self.db.execute("PRAGMA table_info(archive_targets)")}
             if "region" not in target_columns:
                 self.db.execute("ALTER TABLE archive_targets ADD COLUMN region TEXT NOT NULL DEFAULT 'us-east-1'")
-            self.db.execute("PRAGMA user_version=6")
+            # Commit the new column and all legacy-row guards atomically: a
+            # crash must not leave an installed column with uninitialized rows.
+            if not self.db.in_transaction:
+                self.db.execute("BEGIN IMMEDIATE")
+            user_columns = {row[1] for row in self.db.execute("PRAGMA table_info(users)")}
+            if "auth_epoch" not in user_columns:
+                # Nullable ALTER supports the old seven-column schema. Only this
+                # migration may initialize old rows; an already-present invalid
+                # guard (including NULL) is corruption, not a new identity.
+                self.db.execute("ALTER TABLE users ADD COLUMN auth_epoch TEXT")
+                for row in self.db.execute("SELECT id FROM users").fetchall():
+                    self.db.execute("UPDATE users SET auth_epoch=? WHERE id=?",
+                                    (secrets.token_hex(16), row["id"]))
+            # Existing guards are preserved byte-for-byte. Native authentication
+            # fails closed on malformed values instead of repairing or granting.
+            self.db.execute("PRAGMA user_version=7")
         with contextlib.suppress(OSError):
             os.chmod(database_path, 0o600)
 
@@ -489,8 +504,10 @@ class ClusterStore:
         timestamp = now_seconds()
         try:
             with self.lock, self.db:
-                self.db.execute("INSERT INTO users VALUES(?,?,?,?,?,?,?)",
-                                (user_id, username, password_hash, 1, timestamp, timestamp, 1))
+                self.db.execute("INSERT INTO users "
+                                "(id,username,password_hash,enabled,created_at,updated_at,revision,auth_epoch) "
+                                "VALUES(?,?,?,?,?,?,?,?)",
+                                (user_id, username, password_hash, 1, timestamp, timestamp, 1, secrets.token_hex(16)))
                 self.db.executemany("INSERT INTO user_roles VALUES(?,?)", [(user_id, role) for role in roles])
                 self.db.executemany("INSERT INTO user_scopes VALUES(?,?,?)",
                                     [(user_id, kind, identifier) for kind, identifier in scopes])
@@ -517,6 +534,23 @@ class ClusterStore:
 
     def authenticate(self, username: Any, password: Any, client_key: str = "loopback",
                      timestamp: int | None = None) -> Principal | None:
+        rejection = None
+        principal = None
+        with self.lock, self.db:
+            try:
+                principal = self._authenticate_locked(username, password, client_key, timestamp)
+            except ApiError as error:
+                # Preserve the legacy rate-limit audit, which was committed
+                # before its 429 was raised by the original implementation.
+                rejection = error
+        if rejection is not None:
+            raise rejection
+        return principal
+
+    def _authenticate_locked(self, username: Any, password: Any, client_key: str,
+                             timestamp: int | None = None) -> Principal | None:
+        # Shared verifier/audit/rate limiting. The caller owns the lock and the
+        # transaction; do not commit here before a native caller reads identity.
         timestamp = timestamp or now_seconds()
         if not isinstance(client_key, str) or not client_key or len(client_key) > 128:
             client_key = "invalid"
@@ -524,24 +558,94 @@ class ClusterStore:
         if timestamp - started >= 60:
             started, failures = timestamp, 0
         if failures >= 5:
-            with self.lock, self.db:
-                self._audit("auth.login", "anonymous", "session", "rate-limited")
+            self._audit("auth.login", "anonymous", "session", "rate-limited")
             raise ApiError(429, "authentication_rate_limited", "too many authentication failures")
         if not isinstance(username, str) or not isinstance(password, str) or len(password.encode("utf-8")) > 128:
             self.auth_failures[client_key] = (started, failures + 1)
-            with self.lock, self.db:
-                self._audit("auth.login", "anonymous", "session", "rejected")
+            self._audit("auth.login", "anonymous", "session", "rejected")
             return None
-        with self.lock, self.db:
-            row = self.db.execute("SELECT * FROM users WHERE username=? AND enabled=1", (username,)).fetchone()
-            if row is None or not self.hasher.verify(row["password_hash"], password):
-                self.auth_failures[client_key] = (started, failures + 1)
-                self._audit("auth.login", "anonymous", "session", "rejected")
-                return None
-            self.auth_failures.pop(client_key, None)
-            principal = self.principal(row["id"])
-            self._audit("auth.login", principal.user_id, "session", "succeeded")
-            return principal
+        row = self.db.execute("SELECT * FROM users WHERE username=? AND enabled=1", (username,)).fetchone()
+        if row is None or not self.hasher.verify(row["password_hash"], password):
+            self.auth_failures[client_key] = (started, failures + 1)
+            self._audit("auth.login", "anonymous", "session", "rejected")
+            return None
+        self.auth_failures.pop(client_key, None)
+        principal = self.principal(row["id"])
+        self._audit("auth.login", principal.user_id, "session", "succeeded")
+        return principal
+
+    @contextlib.contextmanager
+    def _native_auth_transaction(self):
+        try:
+            with self.lock, self.db:
+                # sqlite3's connection context does NOT begin a transaction for
+                # SELECT. Reserve the write transaction before the first read,
+                # so identity, verifier, roles/scopes and audit share a real
+                # SQLite snapshot even against another database connection.
+                self.db.execute("BEGIN IMMEDIATE")
+                yield
+        except ApiError:
+            raise
+        except Exception:
+            raise ApiError(503, "native_auth_unavailable", "native account authentication is unavailable") from None
+
+    @staticmethod
+    def _valid_native_guard(value: Any) -> bool:
+        return isinstance(value, str) and re.fullmatch(r"[0-9a-f]{32}", value) is not None
+
+    def native_login(self, value: Any) -> dict[str, Any]:
+        fields = {"username", "password", "clientKey"}
+        value = require_exact_object(value, fields, fields)
+        if not isinstance(value["username"], str) or not USERNAME.fullmatch(value["username"]) or \
+                not isinstance(value["password"], str) or \
+                not isinstance(value["clientKey"], str) or not 1 <= len(value["clientKey"]) <= 128:
+            raise ApiError(400, "invalid_request", "native login fields are invalid")
+        try:
+            password_bytes = len(value["password"].encode("utf-8"))
+        except UnicodeEncodeError:
+            raise ApiError(400, "invalid_request", "native login fields are invalid") from None
+        if password_bytes > 128:
+            raise ApiError(400, "invalid_request", "native login fields are invalid")
+        identity = None
+        with self._native_auth_transaction():
+            principal = self._authenticate_locked(value["username"], value["password"], value["clientKey"])
+            if principal is not None:
+                row = self.db.execute("SELECT id,username,auth_epoch FROM users WHERE id=? AND enabled=1",
+                                      (principal.user_id,)).fetchone()
+                if row is None or not self._valid_native_guard(row["id"]) or \
+                        not self._valid_native_guard(row["auth_epoch"]):
+                    raise ApiError(503, "native_auth_unavailable", "native account authentication is unavailable")
+                identity = {"userId": row["id"], "username": row["username"], "authEpoch": row["auth_epoch"]}
+        if identity is None:
+            raise ApiError(401, "invalid_credentials", "credentials were rejected")
+        return identity
+
+    def native_authorize(self, value: Any) -> dict[str, Any]:
+        fields = {"username", "userId", "authEpoch", "permission", "cameraId"}
+        value = require_exact_object(value, fields, fields)
+        if not isinstance(value["username"], str) or not USERNAME.fullmatch(value["username"]) or \
+                not self._valid_native_guard(value["userId"]) or not self._valid_native_guard(value["authEpoch"]) or \
+                not isinstance(value["permission"], str) or value["permission"] not in PERMISSIONS or \
+                not isinstance(value["cameraId"], str) or (value["cameraId"] and not IDENTIFIER.fullmatch(value["cameraId"])):
+            raise ApiError(400, "invalid_request", "native authorization fields are invalid")
+        rejection = None
+        with self._native_auth_transaction():
+            row = self.db.execute("SELECT id,username,enabled,auth_epoch FROM users WHERE id=?",
+                                  (value["userId"],)).fetchone()
+            if row is None or not row["enabled"] or row["username"] != value["username"] or \
+                    not self._valid_native_guard(row["auth_epoch"]) or row["auth_epoch"] != value["authEpoch"]:
+                self._audit("auth.authorization", "anonymous", value["permission"], "user-unknown")
+                rejection = ApiError(404, "user_not_found", "user is not managed by RBAC")
+            else:
+                principal = self.principal(row["id"])
+                if not principal.permits(value["permission"], value["cameraId"], self._camera_group(value["cameraId"])):
+                    self._audit("auth.authorization", principal.user_id, value["permission"], "rejected")
+                    rejection = ApiError(403, "permission_rejected", "permission or resource scope was rejected")
+        if rejection is not None:
+            raise rejection
+        # This is a decision-time snapshot, not an execution-time fence.
+        return {"allowed": True, "userId": value["userId"], "authEpoch": value["authEpoch"],
+                "permission": value["permission"]}
 
     def authorize(self, username: str, permission: str, camera_id: str = "", group_id: str = "") -> dict[str, Any]:
         if permission not in PERMISSIONS:
@@ -800,8 +904,8 @@ class ClusterStore:
             if row is None or not self.hasher.verify(row["password_hash"], value["currentPassword"]):
                 raise ApiError(401, "invalid_credentials", "current password was rejected")
             encoded = self.hasher.hash(value["newPassword"])
-            self.db.execute("UPDATE users SET password_hash=?,revision=revision+1,updated_at=? WHERE id=?",
-                            (encoded, now_seconds(), row["id"]))
+            self.db.execute("UPDATE users SET password_hash=?,auth_epoch=?,revision=revision+1,updated_at=? WHERE id=?",
+                            (encoded, secrets.token_hex(16), now_seconds(), row["id"]))
             self._audit("account.password.changed", username, row["id"], "completed")
         return {"changed": True}
 
@@ -843,8 +947,11 @@ class ClusterStore:
                 if remaining == 0:
                     raise ApiError(409, "last_admin", "the last enabled administrator cannot be removed")
             revision = row["revision"] + 1
-            self.db.execute("UPDATE users SET enabled=?,password_hash=COALESCE(?,password_hash),updated_at=?,revision=? WHERE id=?",
-                            (int(resulting_enabled), password_hash, now_seconds(), revision, user_id))
+            auth_epoch = secrets.token_hex(16) if "password" in value or \
+                bool(resulting_enabled) != bool(row["enabled"]) else row["auth_epoch"]
+            self.db.execute("UPDATE users SET enabled=?,password_hash=COALESCE(?,password_hash),auth_epoch=?,"
+                            "updated_at=?,revision=? WHERE id=?",
+                            (int(resulting_enabled), password_hash, auth_epoch, now_seconds(), revision, user_id))
             if roles is not None:
                 self.db.execute("DELETE FROM user_roles WHERE user_id=?", (user_id,))
                 self.db.executemany("INSERT INTO user_roles VALUES(?,?)", [(user_id, role) for role in roles])
@@ -2234,7 +2341,11 @@ class Handler(http.server.BaseHTTPRequestHandler):
             self.response(200, STORE.consume_provider_grant(path.split("/")[2], token))
             return
         self.admin()
-        if path == "/auth/authorize" and self.command == "POST":
+        if path == "/auth/native-login" and self.command == "POST":
+            self.response(200, STORE.native_login(self.read_json()))
+        elif path == "/auth/native-authorize" and self.command == "POST":
+            self.response(200, STORE.native_authorize(self.read_json()))
+        elif path == "/auth/authorize" and self.command == "POST":
             value = self.read_json()
             require_exact_object(value, {"username", "permission", "cameraId", "groupId"},
                                  {"username", "permission"})

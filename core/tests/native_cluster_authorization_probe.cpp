@@ -56,7 +56,8 @@ int main(int argc, char **argv)
                 backend = std::make_unique<webobs::NativeClusterAuthorizationBackend>(std::move(config));
                 reply = backend->configured() ? 200 : 503;
             } else if (op == "create") {
-                const auto token = sessions.create(text(root.get(), "user"), "native-account-contract");
+                const webobs::SessionIdentity identity{text(root.get(), "userId"), text(root.get(), "authEpoch")};
+                const auto token = sessions.create_bound(text(root.get(), "user"), "native-account-contract", identity);
                 if (token) {
                     tokens[text(root.get(), "slot")] = *token;
                     reply = 200;
@@ -65,8 +66,9 @@ int main(int argc, char **argv)
                 reply = status((*backend)(text(root.get(), "user"), text(root.get(), "permission"), text(root.get(), "camera")));
             } else if (op == "authorize" && backend) {
                 webobs::NativeControlAuth auth(sessions, {"http://127.0.0.1:18086", "127.0.0.1:18086"},
-                    [&](std::string_view user, std::string_view permission, std::string_view camera) {
-                        return (*backend)(user, permission, camera);
+                    [&](std::string_view user, const webobs::SessionIdentity &identity,
+                        std::string_view permission, std::string_view camera) {
+                        return (*backend)(user, identity, permission, camera);
                     });
                 const auto slot = text(root.get(), "slot");
                 const auto camera = text(root.get(), "camera");

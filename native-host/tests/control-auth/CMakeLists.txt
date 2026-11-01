@@ -70,7 +70,20 @@ else()
     target_compile_options(webobs-native-cluster-authorization-probe PRIVATE -Wall -Wextra -Wpedantic)
 endif()
 
+add_executable(webobs-session-identity-tests "${WEBOBS_ROOT}/core/tests/session_identity_tests.cpp")
+target_link_libraries(webobs-session-identity-tests PRIVATE webobs-native-control-auth)
+if(MSVC)
+    target_compile_options(webobs-session-identity-tests PRIVATE /W4 /permissive- /utf-8)
+else()
+    target_compile_options(webobs-session-identity-tests PRIVATE -Wall -Wextra -Wpedantic)
+endif()
+
 enable_testing()
+add_test(NAME session-identity COMMAND webobs-session-identity-tests)
+set_tests_properties(session-identity PROPERTIES TIMEOUT 30)
+add_test(NAME native-account-identity COMMAND "${Python3_EXECUTABLE}" -B
+    "${WEBOBS_ROOT}/native-host/tests/test_native_account_identity.py")
+set_tests_properties(native-account-identity PROPERTIES TIMEOUT 30)
 add_test(NAME native-cluster-authorization COMMAND "${Python3_EXECUTABLE}" -B
     "${WEBOBS_ROOT}/native-host/tests/test_native_cluster_authorization.py"
     --probe "$<TARGET_FILE:webobs-native-cluster-authorization-probe>")

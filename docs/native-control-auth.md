@@ -13,9 +13,9 @@ These renderer-free libraries provide persistent-session authorization and a bou
 - `read_scene` → `scene.read`；`write_scene` → `scene.write`；`view_camera` → `live.view`。最后一种必须带一个 camera ID；其余允许一个明确 scope。URL、路径、列表和通配符不能作为 camera scope。
 - 在访问会话/账号后端前验证真实 socket/IPC 提供的 loopback peer、精确 Origin/authority、字段长度、命令和 scope。配置只接受明确的 loopback HTTP(S) origin，不接受 userinfo、路径、query、fragment、DNS 后缀或宽泛 localhost 子串匹配。
 - SessionStore token 必须为 64 位小写十六进制。逐命令检查本地会话并调用最新账号授权，不缓存角色/许可；许可后再验证会话，拒绝后端请求期间发生的 logout。
-- 缺失/失效会话 `401`；账号不存在/禁用且成功撤销全部同用户本地会话后 `401`；撤销未确认删除记录则保守 `503`，包括数据库删除失败或并发已删除。权限不足 `403`；未配置、后端故障/异常或未知决定 `503`。拒绝不返回 principal、异常详情或 token。
+- 缺失/失效/未绑定的旧会话 `401`（零后端请求）；账号不存在、禁用或身份/认证 epoch 不符时，成功撤销该 username/userId/authEpoch 的全部本地会话后 `401`，不误撤销同名重建或重新登录的新身份。撤销未确认删除记录则保守 `503`，包括数据库删除失败或并发已删除。权限不足 `403`；未配置、后端故障/异常或未知决定 `503`。许可后再检查 username 与完整绑定，拒绝进行中的 logout/身份替换。拒绝不返回 principal、异常详情或 token。
 
-Each command requires the existing session AND a fresh authoritative permission/scope decision. The result is a one-command decision, not a reusable authorization token. Unknown users revoke all same-user local sessions; unconfirmed revocation fails closed as unavailable.
+Each native command requires an explicitly bound username/userId/authEpoch session AND a fresh authoritative permission/scope decision. Legacy unbound sessions are rejected before backend I/O, never adopted by username. Revocation targets that exact binding; fresh same-name logins and recreated accounts are preserved. Allowed replies are followed by a complete local identity recheck. This is a decision-time check, not an execution-time fence or reusable grant.
 
 ## 真实账号后端 / Authoritative account backend
 

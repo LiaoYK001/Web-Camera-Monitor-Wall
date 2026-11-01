@@ -18,17 +18,20 @@ enum class NativeControlCommand {
 
 enum class NativeAuthorizationDecision {
     allowed,
-    unknown_user, // Includes a disabled/deleted account; revoke every local session.
+    unknown_user, // Disabled/deleted/stale identity; revoke sessions for this exact binding.
     denied,
     unavailable,
 };
 
 // The trusted adapter must perform a FRESH authoritative RBAC/scope lookup for
 // every call, with a bounded deadline, and map malformed replies to unavailable.
+// It must compare BOTH bound identity fields with the authoritative account,
+// not resolve a username-only session into a fresh binding on first use.
 // The callback must not accept the session cookie as its internal-service token.
 // Arguments are borrowed only for the duration of the callback.
 using NativeAuthorizationBackend = std::function<NativeAuthorizationDecision(
-    std::string_view principal, std::string_view permission, std::string_view camera_id)>;
+    std::string_view principal, const SessionIdentity &identity,
+    std::string_view permission, std::string_view camera_id)>;
 
 struct NativeControlAuthConfig {
     // Exact, canonical loopback HTTP(S) origin and authority (including any port).
@@ -80,6 +83,8 @@ public:
                       NativeAuthorizationBackend backend);
 
     // No cached grants. A local session check alone can NEVER return allowed.
+    // Requires an already-bound valid SessionIdentity; legacy username-only
+    // sessions return 401 without a backend call and are never auto-bound here.
     // Run the corresponding allowlisted action immediately in the trusted
     // adapter; this result is not a transferable/reusable authorization token.
     [[nodiscard]] NativeControlAuthorization authorize(const NativeControlRequest &request) const;
@@ -94,7 +99,8 @@ private:
 
 } // namespace webobs
 
-/* Boundary only: production integration still needs a trusted, authenticated
+/* Unexposed library boundary only, not a native UI login implementation.
+ * Production integration still needs a trusted, authenticated
  * cluster-service callback, bounded transport, private per-user session storage,
  * lifecycle ownership, and interception of every relevant OBS frontend action.
  * Merely adding this library does not authenticate the native OBS application.
