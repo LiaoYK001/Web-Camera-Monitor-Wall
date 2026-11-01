@@ -54,7 +54,10 @@ def stage(args):
         file = next((unpack / name).rglob(name + ".exe")); shutil.copy2(file, output / "bin" / file.name)
     ffmpeg_bin = next((unpack / "ffmpeg").rglob("ffmpeg.exe")).parent
     for file in ffmpeg_bin.iterdir():
-        if file.is_file(): shutil.copy2(file, output / "bin" / file.name)
+        # ffplay is a separate SDL player (~19 MB in the locked build), never
+        # invoked by the product. Keep both used tools and all shared codecs.
+        if file.is_file() and (file.name.lower() in {"ffmpeg.exe", "ffprobe.exe"} or file.suffix.lower() == ".dll"):
+            shutil.copy2(file, output / "bin" / file.name)
     copy_tree(unpack / "python", output / "python")
     for file in (output / "bin").glob("*.dll"):
         if file.name.lower().startswith(("msvcp", "vcruntime", "concrt")): shutil.copy2(file, output / "python" / file.name)

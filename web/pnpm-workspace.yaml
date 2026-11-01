@@ -3,8 +3,13 @@ allowBuilds:
 overrides:
   # GHSA-68fv-2mgg-jv7q; preserve the compatible 1.x API.
   source-map-js@^1.2.1: 1.2.2
-  fast-uri: 3.1.8
+  fast-uri: 3.1.9
   js-yaml@^4: 4.3.2
-  dompurify: 3.4.16
+  dompurify: 3.4.17
   'brace-expansion@>=2 <3': 2.1.7
   'brace-expansion@>=4 <6': 5.0.12
+  serialize-javascript: 7.1.3
+  # Patched node-resolve only deep-clones its constant defaults; no deepmerge call remains.
+  '@rollup/plugin-node-resolve@16.0.3>deepmerge': '-'
+patchedDependencies:
+  '@rollup/plugin-node-resolve@16.0.3': patches/@rollup__plugin-node-resolve@16.0.3.patch

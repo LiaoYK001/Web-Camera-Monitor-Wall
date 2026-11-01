@@ -89,6 +89,7 @@ export class Supervisor extends EventEmitter {
       WEBOBS_NODE_STATE_DIR: config('node'), WEBOBS_NODE_ASSIGNMENTS_FILE: config('node','assignments.json'), WEBOBS_NODE_ROLE: 'standalone',
       WEBOBS_REGISTRATION_ENABLED: 'true', WEBOBS_COMPAT_BASIC_AUTH: 'false', WEBOBS_SESSION_COOKIE_SECURE: 'false',
       WEBOBS_CLUSTER_INTERNAL_TOKEN: randomBytes(32).toString('hex'), WEBOBS_V2_INTERNAL_TOKEN: randomBytes(32).toString('hex'),
+      WEBOBS_NATIVE_PREVIEW_TOKEN: randomBytes(32).toString('hex'),
       WEBOBS_NVR_ENABLED: 'true', WEBOBS_CAMERA_REGISTRY_ENABLED: 'true', WEBOBS_WEBRTC_ENABLED: 'true', WEBOBS_COMPOSITE_ENABLED: 'true', WEBOBS_COMPOSITE_ON_DEMAND: 'true',
       WEBOBS_WHIP_URL: `http://127.0.0.1:${this.ports.whep}/program/whip`, WEBOBS_RENDERER_SELECTED: 'd3d11',
       WEBOBS_FFMPEG_PATH: this.executable('ffmpeg'), WEBOBS_TRANSCODER_PATH: this.executable('webobs-transcoder'),

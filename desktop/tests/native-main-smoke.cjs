@@ -78,6 +78,13 @@ const pause = ms => new Promise(resolve => setTimeout(resolve, ms));
       main.webContents.reloadIgnoringCache();
     });
     await waitForUi('Boolean(document.querySelector("form[aria-label=个人信息] input[maxlength]"))');
+    // Exercise the actual finite preload/IPC bridge, main-process cookie lookup
+    // and authenticated core endpoint, rather than only an HTTP test secret.
+    const native = await main.webContents.executeJavaScript('window.webobsDesktop.nativePreview("open")');
+    assert.equal(native.requested, true);
+    await waitForUi('(async()=>{const state=await window.webobsDesktop.nativePreview("status");return state.requested && state.state===2 && state.frames>0;})()');
+    const nativeClosed = await main.webContents.executeJavaScript('window.webobsDesktop.nativePreview("close")');
+    assert.equal(nativeClosed.requested, false);
     await main.webContents.executeJavaScript(`{
       const input=document.querySelector('form[aria-label="个人信息"] input[maxlength]');
       Object.getOwnPropertyDescriptor(HTMLInputElement.prototype,'value').set.call(input,'Desktop account details');

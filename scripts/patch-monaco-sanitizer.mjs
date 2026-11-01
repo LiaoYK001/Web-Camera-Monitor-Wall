@@ -6,7 +6,7 @@ import path from 'node:path';
 const requireWeb = createRequire(new URL('../web/package.json', import.meta.url));
 const { parse } = requireWeb('acorn');
 const bundledVersion = '3.4.15';
-const patchedVersion = '3.4.16';
+const patchedVersion = '3.4.17';
 const digest = source => createHash('sha256').update(source).digest('hex');
 
 function visit(node, callback, ancestors = []) {

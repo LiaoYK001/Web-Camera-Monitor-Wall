@@ -1,8 +1,54 @@
 # v4.1 Windows 性能开发证据 / Windows performance development evidence
 
-更新于 2026-10-19。本页记录开发试验，尚未完成用户暗夜精灵 13900HX/RTX4090 Laptop 的同机 OBS 对照，也不构成 v4.1 正式发布验收。
+更新于 2026-10-30。本页记录开发试验，尚未完成用户暗夜精灵 13900HX/RTX4090 Laptop 的同机 OBS 对照，也不构成 v4.1 正式发布验收。
 
 Development measurements only. These results establish neither stock OBS parity nor qualification of the user's laptop.
+
+## 2026-10-31 当前验收口径 / Current acceptance protocol
+
+后续执行以[OBS 同等开销计划](windows-obs-parity-dsh-plan.md)和[执行记录](windows-obs-parity-execution.md)为准。dev.17 用户报告窗口可见/计数增长但全黑；旧 CI 没有验证最终像素，不能据此认定五路正常。先补已知图案、错路/缺路/冻结和最终窗口像素回归；实际硬件与摄像机另验。
+
+每次预热至少 3 分钟、采样至少 20 分钟，至少三组成对且交替顺序，初步达标后稳定性至少 2 小时。画面、帧率、音轨、可见窗口与解码/GPU 设置必须同口径；不以隐藏暂停、降质量或额外延迟换低开销。统计全部所属进程，GPU 按同设备/引擎计量，连同内存/显存/功耗/延迟审查。下面 15 分钟/短测是**历史开发证据**，不是新验收标准；历史“统一低功耗开关”不替代完整可见五路的可比要求。
+
+Use at least 3 minutes of warm-up and 20 minutes of sampling, three alternating paired runs, then at least 2 hours of stability testing. Include every owned process and comparable per-adapter GPU engines, memory/VRAM, power and latency. No black/hidden/paused/lower-quality picture qualifies. Historical short or 15-minute fixtures below remain historical only. Native window draw progress does not prove final pixels, camera decode or hardware acceleration.
+
+## 2026-10-30 原生监看与体积排查 / Native monitor and size investigation
+
+用户反馈 `4.1.0-dev.14` 播放相同 H.265 时，FFmpeg/MediaMTX CPU 较高、WebOBS GPU 较高，整体超过 stock OBS 三倍。源码证实：浏览器不满足 HEVC 直通条件（例如已确认 B 帧、重排序未知或接收端不支持）时保留 H.264 兼容转换；此时服务端先解码/编码，网关转发 WebRTC，浏览器再解码/渲染。没有本机进程参数/逐路数据，不能断言用户每一路都命中了该分支。
+
+The reported dev.14 HEVC workload exceeds stock OBS substantially. Code confirms that ineligible browser HEVC paths use H.264 compatibility conversion, adding server decode/encode, WebRTC relay and browser decode/render. User-specific per-stream routing remains unverified.
+
+另发现 Windows OBS 来源硬解的全局就绪条件依赖外置 FFmpeg 的 NVENC/QSV 探测结果，而不是单独接受已经初始化的硬件 D3D11 设备。新的策略让实际硬件渲染设备也可启用 OBS 内部逐编码解码探测，避免外置编码探测失败时不必要地关闭来源硬解；显式关闭、软件回退与逐路实测边界保留。该问题是否发生在用户 dev.14 设备上仍需私有运行数据确认。
+
+The Windows source-decode gate also unnecessarily depended on external encoder probes. A real initialized hardware D3D11 device now independently permits OBS's internal per-codec decoder probing, retaining explicit off/software fallback. This identifies a code-level cause of avoidable software decoding, not proof it occurred on the user's machine.
+
+新增的 Windows 原生 Program 监看直接使用 libobs 解码/渲染，绕过本机观看的兼容视频转换、WebRTC 和浏览器解码。主窗口切换时释放其原播放器；已有独立观看端不随之关闭。当前作为显式试验入口，保留可回退的浏览器模式，使用与 OBS 相同的 NVIDIA/AMD 高性能提示。验收仍要求同机、同源、同分辨率/帧率/音频的可见窗口对照；不能用窗口绘制次数替代每路真实视频帧进度或硬解证据。详见 [Windows 运行边界](windows-desktop.md#v41-开发中的监看性能调整--monitoring-performance-in-v41-development)。
+
+The explicit experimental native Program path bypasses those local video stages and releases the main browser players. Other viewers retain their work. Matching laptop/source/resolution/FPS/audio qualification remains required; draw callbacks alone do not prove per-stream media progress or hardware decode.
+
+对现有 [dev.14 CI 附件](https://github.com/LiaoYK001/Web-Camera-Monitor-Wall/actions/runs/41034181094) ZIP 中央目录的只读检查（按未压缩文件字节）得到：runtime/bin 451,074,384、OBS/CEF 352,434,045、Python 172,898,288、go2rtc UI 144,513,455、WebUI/模型 56,640,014；Electron 主程序另有 245,726,208 字节，尚有其他 Shell 运行库。压缩 NSIS 安装器为 454,131,546 字节，不与安装体积混用。外置 FFmpeg `avcodec-62.dll` 为 118,923,264 字节，OBS 自身使用另一套 `avcodec-61.dll`；二者 ABI 不同，不能简单删除/替换。
+
+The original CI archive records large, independently required Electron, CEF, FFmpeg and Python runtimes. OBS and external FFmpeg use different codec DLL ABIs and cannot safely share arbitrary binaries. Installer download size and installed bytes are distinct measurements.
+
+本机新生成的 go2rtc UI 为 27,228,928 字节，相对 dev.14 减少 117,284,527 字节；Windows 旧包中的未使用 `ffplay.exe` 为 18,800,128 字节，后续不再打包。两项预期合计约 136 MB，实际新安装体积以新候选 `*-footprint.json` 为准。这是文件载荷缩减，不是 CPU/GPU 性能提升率。
+
+Local generated UI assets shrink by 117,284,527 bytes relative to dev.14; omitting unused ffplay removes another 18,800,128 bytes from the locked Windows payload. The new candidate footprint must confirm final installed size. These are payload savings, not a CPU/GPU improvement percentage.
+
+首轮 [Windows dev.15 完整门禁](https://github.com/LiaoYK001/Web-Camera-Monitor-Wall/actions/runs/41059000815)（`614a89b`）通过。真实 Win32/libobs 窗口读取五路 320×180/10fps、带 B 帧的合成 HEVC，来源健康与窗口绘制增长通过；未启动 Composite 发布或额外视频兼容路径，关闭/重开与 15 秒失去心跳回收通过。其 `*-footprint.json` 记录安装文件 1,458,546,999 字节、NSIS 427,196,203 字节；dev.14 ZIP 中央目录记录对应 1,594,695,173 / 454,131,546 字节，安装载荷减少 136,148,174 字节（约 8.54%）。它仍是完整的大型运行包，不能描述为接近 159 MB。
+
+The first complete Windows dev.15 gate passed actual native-window/reordered-HEVC functional tests, normal packaging and isolated NSIS installation. Installed payload fell by approximately 8.54%; this does not measure CPU/GPU performance. The tiny synthetic streams do not qualify the user's 13900HX/RTX4090 Laptop sources.
+
+dev.15 仅证明早期原生路径，未包含后续 OBS 硬解门控和安全依赖更新。早期 PR 审计因新通告[失败](https://github.com/LiaoYK001/Web-Camera-Monitor-Wall/actions/runs/41060132083)，修复后的[公开 CI](https://github.com/LiaoYK001/Web-Camera-Monitor-Wall/actions/runs/41062155214)已通过；最终运行候选使用新提交与独立身份，不能把早期附件追认为修复后的版本。
+
+Dev.15 predates the later decode-gate and dependency fixes. The corrected public CI passes; its complete Windows candidate must retain its own identity and evidence rather than retroactively qualifying the earlier artifact.
+
+最终 [Windows dev.17 完整构建](https://github.com/LiaoYK001/Web-Camera-Monitor-Wall/actions/runs/41062148722)（`4ca94a4`）已通过并保留开发附件，包含硬解门控修复和 Electron 44.9.1 / DOMPurify 3.4.17 等依赖更新。五路合成 HEVC 原生路径门禁再次通过；真实 desktop entry 额外调用 preload/IPC 原生入口，核对主进程 Cookie 认证和窗口状态/绘制后正常关闭。捆绑来源 UI 门禁、ASAR 的 clean-PATH/首登/Job 崩溃收束、隔离 Unicode 路径 NSIS 安装/卸载与数据保留也通过。没有发布稳定版本或更新生产 feed；13900HX/RTX4090 Laptop 的同机、同来源、同质量 OBS 对照仍未完成。
+
+Final dev.17 (`4ca94a4`) passes the complete Windows build with the decode-gate/security fixes, repeated reordered-HEVC native-window checks and the actual desktop preload/IPC/cookie path. Source UI, packaged ASAR and isolated NSIS gates pass. The artifact is a development candidate, outside the stable feed. Actual same-source/quality OBS comparison on the user's laptop remains open.
+
+dev.17 的实际 `*-footprint.json`：安装文件总量 **1,459,393,176 字节**，压缩安装器 **427,435,987 字节**；相对 dev.14 的安装载荷净减少 **135,301,997 字节（8.48%）**。此数字已包含 Electron 安全更新后的 Shell 体积，不能把单项资源预计缩减直接当作最终净减。运行仍为完整多进程产品；性能对照需统计整棵应用进程树，不能只看转移了渲染职责后的 `WebOBS.exe` 单项。
+
+The final installed payload is 1,459,393,176 bytes and the installer is 427,435,987 bytes, a net installed reduction of 135,301,997 bytes (8.48%) from dev.14, including the updated Electron shell. CPU/GPU comparisons must include the complete owned process tree rather than only the shell process after rendering moves into the core.
 
 ## 播放中定位占用 / Inspect CPU during playback
 

@@ -432,8 +432,12 @@ RendererCapabilities detect_renderer_capabilities(const Config &config)
 }
 
 HardwareDecodeCapabilities select_hardware_decode(const Config &config,
-                                                   const VideoEncoderCapabilities &capabilities)
+                                                   const VideoEncoderCapabilities &capabilities,
+                                                   const RendererCapabilities &renderer)
 {
+#ifndef _WIN32
+    (void)renderer;
+#endif
     HardwareDecodeCapabilities result;
     result.requested = std::string(hardware_decode_preference_name(config.hardware_decode));
     const bool cuda_ready = capabilities.nvenc.device_present && capabilities.nvenc.library_loaded &&
@@ -447,10 +451,11 @@ HardwareDecodeCapabilities select_hardware_decode(const Config &config,
 #ifdef _WIN32
     const bool qsv_ready = capabilities.qsv.device_present && capabilities.qsv.decode_supported &&
                            capabilities.qsv.runtime_probe_passed;
-    if (obs_initialized() && (cuda_ready || qsv_ready)) {
+    if (obs_initialized() && (renderer.hardware_probe_passed || cuda_ready || qsv_ready)) {
         // The pinned OBS FFmpeg source probes CUDA/D3D11VA/DXVA2 per codec and
-        // falls back to software when no usable context exists. "auto" is a
-        // policy, not a claim that every source is hardware decoded.
+        // falls back to software when no usable context exists. Its D3D11VA
+        // decoder must not depend on an unrelated external NVENC/QSV encoding
+        // sample succeeding. "auto" is a policy, not per-source HW evidence.
         result.selected = "auto";
         result.backend = "obs-auto";
         return result;
@@ -558,7 +563,7 @@ ExitCode run_obs_engine(const Config &config, const SceneDocument &document)
             detect_video_encoder_capabilities(config, false);
         const RendererCapabilities renderer_capabilities = detect_renderer_capabilities(config);
         const HardwareDecodeCapabilities hardware_decode =
-            select_hardware_decode(config, encoder_capabilities);
+            select_hardware_decode(config, encoder_capabilities, renderer_capabilities);
         ObsSceneRuntime scene_runtime(config.connect_timeout_seconds, config.browser_security,
                                       config.source_stale_seconds,
                                       config.source_recovery_base_seconds,
@@ -732,7 +737,7 @@ ExitCode run_obs_engine(const Config &config, const SceneDocument &document)
     VideoEncoderCapabilities encoder_capabilities = detect_video_encoder_capabilities(config);
     const RendererCapabilities renderer_capabilities = detect_renderer_capabilities(config);
     const HardwareDecodeCapabilities hardware_decode =
-        select_hardware_decode(config, encoder_capabilities);
+        select_hardware_decode(config, encoder_capabilities, renderer_capabilities);
     if (!encoder_capabilities.x264.encoder_available) {
         blog(LOG_ERROR, "The mandatory obs_x264 software fallback is unavailable");
         return ExitCode::obs_initialization_failed;
@@ -943,6 +948,12 @@ ExitCode run_obs_engine(const Config &config, const SceneDocument &document)
     runtime_status.video_encoder = encoder_capabilities;
     runtime_status.renderer = renderer_capabilities;
     runtime_status.hardware_decode = hardware_decode;
+    // Only the supervised Windows desktop can authorize a native host window.
+#ifdef _WIN32
+    if (const char *token = std::getenv("WEBOBS_NATIVE_PREVIEW_TOKEN"))
+        runtime_status.native_preview.supported = std::string_view(token).size() == 64;
+#endif
+    NativePreview native_preview(runtime_status.native_preview);
     runtime_status.control_plane_active.store(true);
     runtime_status.engine_active.store(true);
     runtime_status.webrtc_configured.store(config.webrtc_enabled && config.composite_enabled);
@@ -1013,6 +1024,7 @@ ExitCode run_obs_engine(const Config &config, const SceneDocument &document)
     bool unexpected_stop = false;
     auto next_demand_check = recording_started;
     auto next_publish_retry = recording_started;
+    bool scene_active = !demand_driven;
     while (!stop_requested) {
         const auto now = std::chrono::steady_clock::now();
         if (demand_driven && whip_output && now >= next_demand_check) {
@@ -1020,11 +1032,11 @@ ExitCode run_obs_engine(const Config &config, const SceneDocument &document)
             if (whip_output_state.stopped.load() && !obs_output_active(whip_output.get())) {
                 runtime_status.webrtc_ready.store(false);
                 runtime_status.composite_idle.store(true);
-                scene_runtime.deactivate();
             }
             const bool requested = control_server.composite_requested();
             if (requested && !obs_output_active(whip_output.get()) && now >= next_publish_retry) {
                 scene_runtime.activate();
+                scene_active = true;
                 whip_output_state.stopped.store(false);
                 whip_output_state.stop_code.store(0);
                 if (obs_output_start(whip_output.get()) &&
@@ -1035,7 +1047,6 @@ ExitCode run_obs_engine(const Config &config, const SceneDocument &document)
                 } else {
                     if (obs_output_active(whip_output.get()))
                         wait_for_output_stop(whip_output.get(), whip_output_state, "WebRTC output");
-                    scene_runtime.deactivate();
                     runtime_status.webrtc_ready.store(false);
                     runtime_status.composite_idle.store(true);
                     next_publish_retry = std::chrono::steady_clock::now() + std::chrono::seconds(5);
@@ -1044,10 +1055,16 @@ ExitCode run_obs_engine(const Config &config, const SceneDocument &document)
                 runtime_status.composite_idle.store(true);
                 runtime_status.webrtc_ready.store(false);
                 wait_for_output_stop(whip_output.get(), whip_output_state, "WebRTC output");
-                scene_runtime.deactivate();
                 blog(LOG_INFO, "On-demand Composite publisher stopped; no readers remain");
             }
         }
+        // Native viewing activates the same scene without starting any encoder.
+        // A remote Composite reader or recording can independently retain it.
+        const bool needs_scene = !demand_driven || native_preview.active() ||
+                                 (whip_output && obs_output_active(whip_output.get()));
+        if (needs_scene && !scene_active) scene_runtime.activate();
+        else if (!needs_scene && scene_active) scene_runtime.deactivate();
+        scene_active = needs_scene;
         if (now >= next_health_maintenance) {
             scene_runtime.maintain_source_health();
             update_source_runtime_status(runtime_status, scene_runtime.source_health_snapshot());

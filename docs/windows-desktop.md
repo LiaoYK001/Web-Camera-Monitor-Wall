@@ -1,4 +1,12 @@
-# 完整 Windows 桌面客户端（阶段一）
+# Windows 桌面客户端 / Windows desktop
+
+## 2026-10-31 架构决定与迁移边界 / Native OBS architecture decision
+
+用户决定将 Windows 默认本地监看向固定 OBS 原生前端/Qt 宿主、obs-ffmpeg 媒体源、libobs 场景和原生预览/投影收敛，能复用则不重复实现，包括依赖和安装体积控制。下文 Electron/完整服务/NSIS 描述的是**当前兼容实现**，不再是永久架构要求。原生最小宿主在独立配置中验证；功能、账号/权限、来源标识、音频、退出/崩溃、升级备份和安装生命周期迁移门槛未通过前，不静默移除现有能力或切换默认包。`clients/` Qt/GStreamer 产品保持独立，不并入主媒体链。
+
+The 2026-10-31 user decision supersedes a permanently mandatory Electron host. Converge on the pinned OBS frontend, media and display lifecycle through product-owned plugins/build integration. The Electron/NSIS sections below describe the migration fallback, not the target architecture. Do not replace the default product before capability, security/data and lifecycle/installation parity is verified. Keep independent Qt/GStreamer clients separate.
+
+完整目标、真实五路/OBS 同机对照口径和未完成项见[执行计划](windows-obs-parity-dsh-plan.md)与[执行记录及迁移账目](windows-obs-parity-execution.md)；目标机五路/OBS 同机采集步骤见[目标机验收运行手册](windows-target-qualification-runbook.md)。开发预发布不代表黑屏修复、实际硬解或性能/体积达标。
 
 网站/直播源运行包新增锁定的 yt-dlp、Streamlink、Node/EJS；固定 `webobs-online-source.exe` 和解析/转发后代使用 Job Object，文件进入 manifest、许可证和 SBOM，日常运行无需开发 PATH。接入、Cookie 与验证见[网站与直播源](online-sources.md)。Windows x64、容器、Android 按 `vA.B` 更新；后续 Windows ARM/32 位和原生 Linux x86/ARM 通常在 `vA.0` 大版本节点构建、验收和发布。Bundled website tools follow complete package updates; future architectures remain major-milestone targets, not qualified platforms.
 
@@ -184,6 +192,22 @@ The native evidence gate also streams a valid H.264/AAC MP4 larger than 64 MiB t
 
 ## v4.1 开发中的监看性能调整 / Monitoring performance in v4.1 development
 
+Windows 桌面监看页新增“Windows 原生监看（试验）”，在独立 Win32/D3D11 窗口显示服务器已 TAKE 的 Program 场景。入口切换会卸载主窗口的浏览器播放器。libobs 直接读取原始 H.264/H.265（包括带 B 帧的来源），不为该窗口建立 WHEP 会话或视频兼容转码，也不唤醒 Composite 发布编码器；远程 Composite 观看和文件录制仍可独立保持场景运行。来自 go2rtc 的来源保留 go2rtc 中转；显式多轨混音可能仍使用音频 FFmpeg。已有浏览器投影或其他客户端仍可保留其自己的播放链路。
+
+The experimental Windows native monitor renders the committed Program through libobs in a Win32/D3D11 window, releasing the main browser players. Local display bypasses WHEP, video compatibility transcoding and Composite publishing. Remote viewers, explicit multi-track audio mixing and recordings retain their own work. A go2rtc-backed source still uses its relay. Other browser projectors/clients can independently retain their playback pipelines.
+
+双击原生画面或 F11 切换全屏，Esc 退出全屏，关闭窗口或切回浏览器模式释放原生显示。它显示 Program 布局，不应用浏览器监看页的临时自动排版、事件提升和检测叠层；声音遵循 Studio 来源的 OBS 监听设置。来源硬解仍由 OBS 的逐编码/设备探测决定并保留软件回退。`webobsd.exe` 使用与固定 OBS 前端相同的 NVIDIA/AMD 高性能显卡导出提示，Windows 图形偏好可能覆盖它；提示和 `auto` 均不能证明实际硬解。
+
+Double-click/F11 toggles fullscreen; Escape exits fullscreen. Closing or switching back releases the display. It uses Program layout and Studio source monitoring, without browser-only layout/promotion/detection overlays. OBS probes hardware decode per codec/device and retains software fallback. The same NVIDIA/AMD driver hints as the pinned OBS frontend request a high-performance GPU; Windows settings can override them, and the hints do not prove actual hardware decode.
+
+原生窗口控制只接受桌面主进程持有的一次启动随机密钥，并同时要求现有账号认证、`live.view` 与 Origin 校验；渲染进程不能获得密钥或传入 HWND/程序命令。主进程每 3 秒续租，退出账号/崩溃/失去认证后不再续租，最长 15 秒关闭原生画面。它不因为主窗口隐藏而依赖浏览器后台定时器。Windows 全量门禁包含五路合成带 B 帧 HEVC 的来源健康、窗口绘制增长、无额外视频兼容路由、关闭/重开和租期回收；这不是用户设备性能或实际摄像机验收。
+
+Native control requires normal account authentication, `live.view`, matching Origin and a one-boot secret held only by desktop main. No renderer-provided HWND or executable is accepted. A main-process heartbeat renews a 15-second lease every three seconds, independent of browser throttling. Loss of authentication stops renewal. The Windows runtime gate exercises five reordered synthetic HEVC sources, draw progress, absence of video compatibility routes, close/reopen and expiry; it is not a physical-device performance benchmark.
+
+安装包的 `*-footprint.json` 分别记录安装目录实际文件字节数、各运行时分项、最大文件与压缩安装器大小。go2rtc UI 仅打包实际使用的第三方浏览器构建、完整 Monaco `min/`（含 Worker/语言）和许可证，不再复制 npm 源码/备用构建/嵌套依赖。外置 FFmpeg 保留 `ffmpeg`/`ffprobe` 和共享编解码 DLL，去掉产品不使用的 `ffplay`。保留 OBS/CEF、Electron、网站解析器和 Python 功能运行时，因此不能承诺缩至 OBS 安装体积。
+
+The footprint attachment distinguishes installed bytes from compressed installer bytes. Offline go2rtc assets retain actual standalone browser builds, all Monaco runtime modules/workers/languages and licenses, excluding unused npm sources/alternate builds/nested dependencies. FFmpeg keeps both used tools and all codec DLLs while omitting unused ffplay. Existing browser sources, Electron, website extractors and Python features retain their runtimes.
+
 Windows supervisor 设置 `WEBOBS_COMPOSITE_ON_DEMAND=true`。保留 OBS 初始化与 Composite 能力，Direct 监看不会持续发布合成画面或让闲置的 OBS 媒体来源解码。首次经过认证与 Origin 校验的 Composite 播放请求唤醒发布；启动期间返回可重试的 `composite_starting`。协商保温 45 秒，随后按 MediaMTX 实际 reader 数决定是否继续，关闭/崩溃的观看端不会因遗留的 HTTP session 一直占用合成链路。网关状态暂不可读取时保留正在发布的节目。显式文件录制继续保持连续运行。容器和原生开发环境可显式设置此开关，默认值仍为 false。
 
 Windows enables on-demand Composite publishing. Authenticated, Origin-checked playback wakes the publisher; a 45-second negotiation grace period is followed by actual gateway reader checks. An unavailable reader probe conservatively retains the running publisher. Explicit recording remains continuous. Containers/native development can opt in; the configuration default remains false.
@@ -191,6 +215,10 @@ Windows enables on-demand Composite publishing. Authenticated, Origin-checked pl
 Windows Hybrid 的 NVIDIA 路径在已通过现有能力探测时尝试 CUDA 解码；失败先保留 NVENC 编码并退回软件解码，再依原有软件回退开关决定是否使用 x264。H.264 可直通视频不启动视频解码/编码。OBS 来源使用上游每个 codec/device 的硬解探测与软件回退；状态 `auto` 表示策略，不表示每路已证实硬解。
 
 The NVIDIA Hybrid path tries qualified CUDA decoding, then NVENC with software decoding, then the existing optional x264 fallback. Compatible H.264 video stays passthrough. OBS sources use upstream per-codec/device probing and software fallback; `auto` describes policy, not verified hardware decode for every source.
+
+Windows OBS 来源的硬解策略额外接受实际已初始化的硬件 D3D11 渲染设备作为就绪条件，不再要求无关的外置 FFmpeg NVENC/QSV 编码样例先成功。没有 OBS 图形运行时或只有软件渲染器时，仍使用已有能力门控；显式关闭硬解继续有效。
+
+Windows OBS hardware decoding can now be enabled by its actual initialized hardware D3D11 device independently of external FFmpeg NVENC/QSV encoding samples. Direct-only/no-OBS and software-renderer cases retain their capability gates, and explicit decode-off remains authoritative.
 
 “系统状态 / 视频加速”增加本次桌面进程树（包括 desktop、go2rtc、webobsd、FFmpeg、Python 等）的占用，并排除其他软件的同名 FFmpeg。逐项 CPU 以单逻辑处理器 100% 计量，整体占用按逻辑处理器数折算；首次采样必须等下一次刷新。它不暴露进程参数或摄像机地址。
 
@@ -211,3 +239,9 @@ Native HEVC requires an actual active video offer plus registry-confirmed zero B
 首次 502 保留原生编码重试，连续两次原生 offer 的 502 才过滤 H.265；网关刚加载路径时的短暂失败不应立即变为持续转码。A single 502 retains native codecs for retry; two rejected native offers trigger compatibility filtering, avoiding immediate conversion after a transient path-application race.
 
 内部 go2rtc 来源支持最多 90 秒冷启动探测、Hybrid 发布最多 95 秒，解决网站解析仍在进行时下游 8/10 秒提前断开的冲突；实际媒体读取仍为 8 秒，单次信令保留 15 秒预算与退避重试，普通摄像机保持原等待上限。见 [网站来源说明](online-sources.md)。Internal go2rtc cold startup uses a separate readiness probe without extending active-media reads, ordinary camera or per-request signaling deadlines.
+
+### dev.17 开发附件转存 / dev.17 development attachment transfer
+
+用户 2026-10-30 授权将已通过测试的 dev.17 放到 GitHub 预发布下载。`windows-desktop.yaml` 的手动 `publish_dev17=true` 入口只允许版本 `4.1.0-dev.17`、固定成功构建 41062148722 / 附件 12981884498 / 源码 `4ca94a4`。它在托管运行器内核对构建身份、原始 SHA-256 与运行清单，上传到既有空白开发预发布草稿后公开；不重新构建、不覆盖附件、不发布 `latest.yml`、不提升 Latest。普通构建与可复用工作流不会触发发布。
+
+On 2026-10-30 the user authorized GitHub prerelease downloads for tested dev.17. The manual `publish_dev17=true` entry accepts only `4.1.0-dev.17` and frozen successful run 41062148722 / artifact 12981884498 / source `4ca94a4`. A hosted runner verifies build identity, original SHA-256 checksums and runtime manifest before attaching files to the existing empty development draft and publishing it. It does not rebuild, overwrite attachments, publish `latest.yml` or promote Latest. Normal builds and reusable workflow calls do not publish.

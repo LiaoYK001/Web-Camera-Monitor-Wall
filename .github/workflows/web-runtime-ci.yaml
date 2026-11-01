@@ -19,6 +19,133 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  native-control-contracts:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with: { persist-credentials: false }
+      - name: Renderer-free authorization and read-only legacy import / 无渲染认证与旧配置只读预检
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y cmake ninja-build libssl-dev libsqlite3-dev libcurl4-openssl-dev libjansson-dev pkg-config
+          cmake -S native-host/tests/control-auth -B build/native-control-auth -G Ninja -DCMAKE_BUILD_TYPE=Release
+          cmake --build build/native-control-auth --parallel 2
+          ctest --test-dir build/native-control-auth --output-on-failure
+          python3 -B native-host/tests/test_legacy_import.py
+  native-real-loader-contracts:
+    name: Pinned real-libobs loader (no media or GPU)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with: { persist-credentials: false }
+      - name: Build only the fixed libobs SDK / 仅构建固定 libobs SDK
+        shell: bash
+        run: |
+          set -euo pipefail
+          git submodule update --init --recursive --depth 1 obs/obs-studio
+          python3 -c 'import json, subprocess; from pathlib import Path; pin=json.loads(Path("desktop/dependencies.lock.json").read_text())["obsCommit"]; assert subprocess.check_output(["git", "-C", "obs/obs-studio", "rev-parse", "HEAD"], text=True).strip() == pin == "fb4d98bf88fae5fc85cb11fc57f7c5e309282194"'
+          sudo apt-get update
+          sudo apt-get install -y cmake ninja-build pkg-config extra-cmake-modules xvfb xauth libglvnd-dev libsimde-dev libavformat-dev libavcodec-dev libavutil-dev libswscale-dev libswresample-dev libjansson-dev libx11-dev libx11-xcb-dev libxcb1-dev libxcb-xinput-dev libdrm-dev uuid-dev zlib1g-dev uthash-dev
+          cmake -S obs/obs-studio -B build/native-loader-obs -G Ninja -DCMAKE_BUILD_TYPE=Release -DOBS_VERSION_OVERRIDE=32.1.2 -DENABLE_FRONTEND=OFF -DENABLE_PLUGINS=OFF -DENABLE_SCRIPTING=OFF -DENABLE_WAYLAND=OFF -DENABLE_PULSEAUDIO=OFF
+          cmake --build build/native-loader-obs --target libobs --parallel 2
+          # Limit installation to libobs: frontend-api is deliberately unbuilt.
+          cmake -DCMAKE_INSTALL_PREFIX="$PWD/build/native-loader-sdk" -DCMAKE_INSTALL_COMPONENT=Development -P build/native-loader-obs/libobs/cmake_install.cmake
+          cmake -DCMAKE_INSTALL_PREFIX="$PWD/build/native-loader-sdk" -DCMAKE_INSTALL_COMPONENT=Unspecified -P build/native-loader-obs/libobs/cmake_install.cmake
+      - name: Real load-query-save-reload of synthetic objects / 合成对象真实加载查询保存重载
+        shell: bash
+        run: |
+          set -euo pipefail
+          cmake -S native-host/tests/real-loader -B build/native-real-loader -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMAKE_PREFIX_PATH="$PWD/build/native-loader-sdk" -DCMAKE_FIND_USE_PACKAGE_REGISTRY=OFF
+          cmake --build build/native-real-loader --parallel 2
+          # obs_startup initializes X11 hotkeys even without audio/video reset.
+          # Xvfb supplies that OS service only; the probe never creates a video context.
+          xvfb-run -a ctest --test-dir build/native-real-loader --output-on-failure --verbose
+  native-private-staging-contracts:
+    name: Offline private staging (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, windows-2022]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with: { persist-credentials: false }
+      - name: Verify private offline copies without OBS or network / 无宿主无网络验证私密离线副本
+        shell: bash
+        run: |
+          set -euo pipefail
+          python -B native-host/tests/test_legacy_stage_document.py
+          python -B native-host/tests/test_private_stage.py
+          python -B native-host/tests/test_legacy_stage.py
+  windows-native-control-contracts:
+    runs-on: windows-2022
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with: { persist-credentials: false }
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          repository: microsoft/vcpkg
+          ref: eb2d3a3279fd019cb7733072d86900d0ad2a1aef
+          path: build/native-auth-vcpkg
+          persist-credentials: false
+      - name: Compile authorization without OBS and exercise Windows import safety / 独立编译认证并验证 Windows 迁移安全
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $vcpkg = Join-Path $PWD 'build/native-auth-vcpkg'
+          & "$vcpkg/bootstrap-vcpkg.bat" -disableMetrics
+          if ($LASTEXITCODE -ne 0) { throw 'Pinned vcpkg bootstrap failed.' }
+          cmake -S native-host/tests/control-auth -B build/native-control-auth -G 'Visual Studio 17 2022' -A x64 "-DCMAKE_TOOLCHAIN_FILE=$vcpkg/scripts/buildsystems/vcpkg.cmake" "-DVCPKG_MANIFEST_DIR=$PWD/native-host/tests/control-auth-vcpkg" -DVCPKG_TARGET_TRIPLET=x64-windows-static -DCMAKE_MSVC_RUNTIME_LIBRARY=MultiThreaded
+          if ($LASTEXITCODE -ne 0) { throw 'Standalone authorization configure failed.' }
+          cmake --build build/native-control-auth --config Release --parallel 2
+          if ($LASTEXITCODE -ne 0) { throw 'Standalone authorization build failed.' }
+          ctest --test-dir build/native-control-auth -C Release --output-on-failure
+          if ($LASTEXITCODE -ne 0) { throw 'Native authorization regressions failed.' }
+          python -B native-host/tests/test_legacy_import.py
+          if ($LASTEXITCODE -ne 0) { throw 'Read-only legacy import regressions failed.' }
+  native-graph-api-contracts:
+    name: Native graph API contracts (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, windows-2022]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with: { persist-credentials: false }
+      - name: Fetch only fixed OBS headers / 仅获取固定 OBS headers
+        shell: bash
+        run: |
+          set -euo pipefail
+          git submodule update --init --depth 1 obs/obs-studio
+          python -c 'import json, subprocess; from pathlib import Path; pin=json.loads(Path("desktop/dependencies.lock.json").read_text())["obsCommit"]; actual=subprocess.check_output(["git", "-C", "obs/obs-studio", "rev-parse", "HEAD"], text=True).strip(); assert actual == pin, "OBS header pin mismatch"'
+      - name: Configure Linux API doubles / 配置 Linux API 替身
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y cmake ninja-build libsimde-dev
+          cmake -S native-host -B build/native-graph-api -G Ninja -DCMAKE_BUILD_TYPE=Release -DWEBOBS_NATIVE_BUILD_PLUGIN=OFF -DWEBOBS_NATIVE_BUILD_TESTS=ON
+      - name: Configure MSVC x64 API doubles / 配置 MSVC x64 API 替身
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          cmake -S native-host -B build/native-graph-api -G 'Visual Studio 17 2022' -A x64 -DWEBOBS_NATIVE_BUILD_PLUGIN=OFF -DWEBOBS_NATIVE_BUILD_TESTS=ON
+          if ($LASTEXITCODE -ne 0) { throw 'Native graph API configure failed.' }
+      - name: Verify source ownership without media / 验证源所有权且不启动媒体
+        shell: bash
+        run: |
+          set -euo pipefail
+          cmake --build build/native-graph-api --config Release --parallel 2 --verbose
+          ctest --test-dir build/native-graph-api -C Release --output-on-failure
   windows-update-contracts:
     runs-on: windows-2022
     steps:
@@ -45,7 +172,10 @@ jobs:
   windows-desktop-candidate:
     if: github.event_name == 'workflow_dispatch' && inputs.windows_desktop
     permissions:
-      contents: read
+      # GitHub validates every nested callee, even skipped publication jobs.
+      # This is only the optional reusable-call ceiling: its build jobs remain
+      # read-only; official=false and no publication inputs are passed below.
+      contents: write
       actions: read # The reusable workflow reads immutable candidate artifacts.
     uses: ./.github/workflows/windows-desktop.yaml
     with:

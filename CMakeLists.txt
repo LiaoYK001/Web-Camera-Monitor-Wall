@@ -7,6 +7,7 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 
 option(WEBOBS_BUILD_TESTS "Build the webobs unit tests" ON)
+option(WEBOBS_BUILD_OBS_RENDER_TESTS "Build opt-in libobs GPU rendering tests (requires a real graphics display)" OFF)
 set(WEBOBS_OBS_SOURCE_DIR "${CMAKE_SOURCE_DIR}/obs/obs-studio" CACHE PATH "OBS Studio source directory")
 set(WEBOBS_OBS_BUILD_DIR "${WEBOBS_OBS_SOURCE_DIR}/build_ubuntu" CACHE PATH "OBS Studio build directory")
 set(WEBOBS_OBS_PREFIX "/opt/obs" CACHE PATH "Runtime OBS installation prefix")
@@ -49,12 +50,14 @@ add_library(webobs-common
     core/src/authentication.cpp
     core/src/audit_event.cpp
     core/src/browser_security.cpp
+    core/src/native_control_auth.cpp
     core/src/config.cpp
     core/src/redaction.cpp
     core/src/scene_document.cpp
     core/src/scene_mutation.cpp
     core/src/scene_store.cpp
     core/src/studio_document.cpp
+    core/src/native_operation_auth.cpp
     core/src/studio_store.cpp
     core/src/video_encoder.cpp
     core/src/platform_runtime.cpp
@@ -75,6 +78,12 @@ target_compile_definitions(webobs-common PUBLIC
     WEBOBS_VERSION="${WEBOBS_VERSION_OVERRIDE}"
     WEBOBS_MILESTONE="${WEBOBS_MILESTONE_OVERRIDE}"
 )
+
+# Optional native authority transport, deliberately separate from the media host.
+# Reuses existing runtime dependencies without creating listeners or starting services.
+add_library(webobs-native-cluster-authorization STATIC core/src/native_cluster_authorization.cpp)
+target_link_libraries(webobs-native-cluster-authorization PUBLIC webobs-common CURL::libcurl)
+webobs_warnings(webobs-native-cluster-authorization)
 
 if(WIN32)
     find_package(libobs CONFIG REQUIRED HINTS "${WEBOBS_OBS_PREFIX}/cmake" "${WEBOBS_OBS_PREFIX}/lib/cmake")
@@ -101,6 +110,7 @@ add_executable(webobsd
     core/src/go2rtc_proxy.cpp
     core/src/nvr_media_proxy.cpp
     core/src/main.cpp
+    core/src/native_preview.cpp
     core/src/obs_engine.cpp
     core/src/obs_scene_runtime.cpp
     core/src/scene_controller.cpp
@@ -110,6 +120,7 @@ target_link_libraries(webobsd PRIVATE webobs-common webobs-libobs Boost::headers
 webobs_warnings(webobsd)
 if(WIN32)
     target_sources(webobsd PRIVATE desktop/native/utf8.manifest)
+    target_link_libraries(webobsd PRIVATE user32)
 endif()
 target_compile_definitions(webobsd PRIVATE
     WEBOBS_OBS_PREFIX="${WEBOBS_OBS_PREFIX}"
@@ -156,10 +167,59 @@ if(WEBOBS_BUILD_TESTS)
     target_link_libraries(webobs-unit-tests PRIVATE webobs-common)
     webobs_warnings(webobs-unit-tests)
     add_test(NAME webobs-unit-tests COMMAND webobs-unit-tests)
+    add_executable(webobs-native-control-auth-tests core/tests/native_control_auth_tests.cpp)
+    target_link_libraries(webobs-native-control-auth-tests PRIVATE webobs-common)
+    webobs_warnings(webobs-native-control-auth-tests)
+    add_test(NAME webobs-native-control-auth-tests COMMAND webobs-native-control-auth-tests)
+    set_tests_properties(webobs-native-control-auth-tests PROPERTIES TIMEOUT 30 LABELS "security;native-control")
+    add_executable(webobs-session-identity-tests core/tests/session_identity_tests.cpp)
+    target_link_libraries(webobs-session-identity-tests PRIVATE webobs-common)
+    webobs_warnings(webobs-session-identity-tests)
+    add_test(NAME webobs-session-identity-tests COMMAND webobs-session-identity-tests)
+    set_tests_properties(webobs-session-identity-tests PROPERTIES TIMEOUT 30 LABELS "security;native-control")
+    add_executable(webobs-native-operation-auth-tests core/tests/native_operation_auth_tests.cpp)
+    target_link_libraries(webobs-native-operation-auth-tests PRIVATE webobs-common)
+    webobs_warnings(webobs-native-operation-auth-tests)
+    add_test(NAME webobs-native-operation-auth-tests COMMAND webobs-native-operation-auth-tests)
+    set_tests_properties(webobs-native-operation-auth-tests PROPERTIES TIMEOUT 30 LABELS "security;native-control")
+    find_package(Python3 QUIET COMPONENTS Interpreter)
+    if(Python3_Interpreter_FOUND)
+        add_test(NAME webobs-native-account-identity COMMAND "${Python3_EXECUTABLE}" -B
+            "${CMAKE_SOURCE_DIR}/native-host/tests/test_native_account_identity.py")
+        set_tests_properties(webobs-native-account-identity PROPERTIES TIMEOUT 30 LABELS "security;native-control")
+        add_executable(webobs-native-cluster-authorization-probe core/tests/native_cluster_authorization_probe.cpp)
+        target_link_libraries(webobs-native-cluster-authorization-probe PRIVATE webobs-native-cluster-authorization)
+        webobs_warnings(webobs-native-cluster-authorization-probe)
+        add_test(NAME webobs-native-cluster-authorization COMMAND "${Python3_EXECUTABLE}" -B
+            "${CMAKE_SOURCE_DIR}/native-host/tests/test_native_cluster_authorization.py"
+            --probe "$<TARGET_FILE:webobs-native-cluster-authorization-probe>")
+        set_tests_properties(webobs-native-cluster-authorization PROPERTIES TIMEOUT 90 LABELS "security;native-control")
+    endif()
     add_executable(webobs-go2rtc-proxy-tests core/tests/go2rtc_proxy_tests.cpp core/src/go2rtc_proxy.cpp)
     target_link_libraries(webobs-go2rtc-proxy-tests PRIVATE webobs-common Boost::headers)
     target_compile_definitions(webobs-go2rtc-proxy-tests PRIVATE BOOST_ERROR_CODE_HEADER_ONLY BOOST_SYSTEM_NO_DEPRECATED)
     webobs_warnings(webobs-go2rtc-proxy-tests)
     add_test(NAME webobs-go2rtc-proxy-tests COMMAND webobs-go2rtc-proxy-tests)
     set_tests_properties(webobs-go2rtc-proxy-tests PROPERTIES TIMEOUT 30)
+    if(WIN32)
+        add_executable(webobs-native-preview-window-tests core/tests/native_preview_window_tests.cpp)
+        target_link_libraries(webobs-native-preview-window-tests PRIVATE user32)
+        webobs_warnings(webobs-native-preview-window-tests)
+        add_test(NAME webobs-native-preview-window-tests COMMAND webobs-native-preview-window-tests)
+        set_tests_properties(webobs-native-preview-window-tests PROPERTIES TIMEOUT 25 LABELS "win32;native-preview")
+    endif()
+    if(WEBOBS_BUILD_OBS_RENDER_TESTS)
+        add_executable(webobs-obs-native-preview-tests
+            core/tests/obs_native_preview_tests.cpp core/src/obs_scene_runtime.cpp)
+        target_link_libraries(webobs-obs-native-preview-tests PRIVATE webobs-common webobs-libobs CURL::libcurl)
+        webobs_warnings(webobs-obs-native-preview-tests)
+        if(WIN32)
+            set(_obs_test_graphics "${WEBOBS_OBS_PREFIX}/bin/64bit/libobs-d3d11.dll")
+        else()
+            set(_obs_test_graphics "${WEBOBS_OBS_BUILD_DIR}/libobs-opengl/libobs-opengl.so")
+        endif()
+        add_test(NAME webobs-obs-native-preview-tests COMMAND webobs-obs-native-preview-tests
+            "${_obs_test_graphics}" "${WEBOBS_OBS_SOURCE_DIR}/libobs/data")
+        set_tests_properties(webobs-obs-native-preview-tests PROPERTIES TIMEOUT 30 LABELS "gpu;libobs")
+    endif()
 endif()

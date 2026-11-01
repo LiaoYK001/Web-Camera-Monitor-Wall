@@ -1,0 +1,498 @@
+name: Build isolated OBS native frontend prototype
+
+# Explicit, non-default prototype; no installer, release write or stable feed.
+on:
+  workflow_call:
+    inputs:
+      version: { type: string, required: true }
+      pixel_test: { type: boolean, default: false }
+      measure_obs_baseline: { type: boolean, default: false }
+      upgrade_previous: { type: boolean, default: false }
+  workflow_dispatch:
+    inputs:
+      pixel_test:
+        description: 'Compile a non-redistributable finite final-pixel harness; upload sanitized synthetic receipt only'
+        type: boolean
+        default: false
+      measure_obs_baseline:
+        description: 'Install the pinned stock OBS 32.1.2 installer and record a same-OS installed-size reference'
+        type: boolean
+        default: false
+      upgrade_previous:
+        description: 'Install the pinned previous prototype, upgrade it in place and verify the private profile survives'
+        type: boolean
+        default: false
+      version:
+        type: string
+        required: true
+        default: '4.1.0-dev.18'
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  native-host:
+    runs-on: windows-2022
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          submodules: recursive
+          persist-credentials: false
+      - name: Verify process accounting logic and actual Windows query APIs
+        shell: pwsh
+        run: |
+          python -B native-host/qualification/test_qualification.py
+          if ($LASTEXITCODE -ne 0) { throw 'Synthetic process accounting contract failed.' }
+          python -B native-host/tests/test_prune_runtime.py
+          if ($LASTEXITCODE -ne 0) { throw 'Runtime PDB pruning contract failed.' }
+          python -B native-host/qualification/test_windows_api.py
+          if ($LASTEXITCODE -ne 0) { throw 'Actual Windows process query or private directory API failed; no performance qualification.' }
+      - name: Preflight actual PowerShell capture compilation before other pixel contracts
+        if: inputs.pixel_test
+        shell: pwsh
+        run: |
+          pwsh -NoProfile -File native-host/tests/capture-pixels.ps1 -CompileOnly
+          if ($LASTEXITCODE -ne 0) { throw 'Synthetic capture preflight failed; no final pixels were captured.' }
+      - name: Verify finite synthetic pixel-test contracts
+        if: inputs.pixel_test
+        shell: pwsh
+        run: |
+          python -B native-host/tests/test_pixels.py
+          if ($LASTEXITCODE -ne 0) { throw 'Finite pixel-test contract failed.' }
+      - name: Select existing VS compiler
+        shell: pwsh
+        run: |
+          $vswhere = Join-Path ${env:ProgramFiles(x86)} 'Microsoft Visual Studio/Installer/vswhere.exe'
+          $vs = & $vswhere -latest -products '*' -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath
+          if (-not $vs) { throw 'MSVC x64 not available on runner' }
+          Import-Module (Join-Path $vs 'Common7/Tools/Microsoft.VisualStudio.DevShell.dll')
+          Enter-VsDevShell -VsInstallPath $vs -SkipAutomaticLocation -DevCmdArguments '-arch=x64 -host_arch=x64'
+          Get-ChildItem Env: | Where-Object Name -In @('PATH','INCLUDE','LIB','LIBPATH','VCToolsInstallDir','VSINSTALLDIR','WindowsSdkDir','WindowsSDKVersion') | ForEach-Object { "$($_.Name)=$($_.Value)" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8 }
+      - name: Cache only hash-verified dependency archives
+        id: dependencies
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
+        with:
+          path: desktop/.cache/*.zip
+          key: windows-2022-obs-native-${{ hashFiles('desktop/dependencies.lock.json', 'native-host/dependencies.lock.json') }}
+          restore-keys: |
+            windows-2022-obs-native-
+            windows-2022-desktop-
+      - name: Use Node only for synthetic test fixtures and pixel inspection
+        if: inputs.pixel_test
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1
+        with:
+          node-version: 24.19.0
+          package-manager-cache: false
+      - name: Compile pinned OBS frontend and product plugin without legacy services
+        id: compile
+        shell: pwsh
+        env:
+          NATIVE_VERSION: ${{ inputs.version }}
+          NATIVE_PIXEL_TEST: ${{ inputs.pixel_test }}
+        run: |
+          $parameters = @{Version=$env:NATIVE_VERSION;BuildDirectory="$env:GITHUB_WORKSPACE/build/obs-native-ci"}
+          if ($env:NATIVE_PIXEL_TEST -eq 'true') { $parameters.PixelTest=$true }
+          ./desktop/scripts/build-obs-native.ps1 @parameters
+      - name: Inventory the runtime and enforce the P4 size budget
+        if: always() && steps.compile.outcome == 'success'
+        shell: pwsh
+        run: |
+          $runtime = Join-Path $env:GITHUB_WORKSPACE 'build/obs-native-ci/runtime'
+          if (-not (Test-Path (Join-Path $runtime 'webobs-native-prototype.json'))) { throw 'No staged runtime to inventory.' }
+          python native-host/scripts/runtime_inventory.py --runtime $runtime --report build/obs-native-ci/native-runtime-inventory.json --max-runtime-bytes 104857600
+      - name: Freeze clean non-default prototype before generating any config
+        if: ${{ !inputs.pixel_test }}
+        shell: pwsh
+        env:
+          NATIVE_VERSION: ${{ inputs.version }}
+        run: |
+          $runtime = Join-Path $env:GITHUB_WORKSPACE 'build/obs-native-ci/runtime'
+          if (Test-Path "$runtime/config") { throw 'Refuse to archive a configured runtime.' }
+          $package = "build/obs-native-ci/WebOBS-OBS-native-$env:NATIVE_VERSION-windows-x64-PROTOTYPE.zip"
+          Compress-Archive -Path "$runtime/*" -DestinationPath $package
+          $hash = (Get-FileHash -LiteralPath $package -Algorithm SHA256).Hash.ToLowerInvariant()
+          "$hash  $([IO.Path]::GetFileName($package))" | Set-Content "$package.sha256" -Encoding utf8
+      - name: Require the frozen prototype ZIP to run from a clean extraction
+        if: ${{ !inputs.pixel_test }}
+        shell: pwsh
+        env:
+          NATIVE_VERSION: ${{ inputs.version }}
+        run: |
+          $zip = Get-ChildItem (Join-Path $env:GITHUB_WORKSPACE 'build/obs-native-ci/WebOBS-OBS-native-*-PROTOTYPE.zip') | Select-Object -First 1
+          if (-not $zip) { throw 'No frozen prototype archive to verify.' }
+          $extract = Join-Path $env:RUNNER_TEMP 'native-portable-extract'
+          if (Test-Path $extract) { Remove-Item -Recurse -Force $extract }
+          Expand-Archive -LiteralPath $zip.FullName -DestinationPath $extract
+          if (Test-Path (Join-Path $extract 'config')) { throw 'Portable archive leaked a configured profile.' }
+          python -B native-host/tests/smoke_windows.py --runtime $extract --result (Join-Path $env:GITHUB_WORKSPACE 'build/obs-native-ci/native-portable-smoke.json')
+          if ($LASTEXITCODE -ne 0) { throw 'Frozen portable ZIP startup/isolation smoke failed.' }
+      - name: Install the frozen prototype twice and verify private config survives
+        if: ${{ !inputs.pixel_test }}
+        shell: pwsh
+        env:
+          NATIVE_VERSION: ${{ inputs.version }}
+        run: |
+          $zip = Get-ChildItem (Join-Path $env:GITHUB_WORKSPACE 'build/obs-native-ci/WebOBS-OBS-native-*-PROTOTYPE.zip') | Select-Object -First 1
+          if (-not $zip) { throw 'No frozen prototype archive to install.' }
+          $root = Join-Path $env:RUNNER_TEMP 'native-install'
+          if (Test-Path $root) { Remove-Item -Recurse -Force $root }
+          python -B native-host/scripts/install_native.py --package $zip.FullName --install-root $root --receipt (Join-Path $env:GITHUB_WORKSPACE 'build/obs-native-ci/native-install-first.json')
+          if ($LASTEXITCODE -ne 0) { throw 'Fresh private install failed.' }
+          python -B native-host/tests/smoke_windows.py --runtime $root --result (Join-Path $env:GITHUB_WORKSPACE 'build/obs-native-ci/native-install-smoke-first.json')
+          if ($LASTEXITCODE -ne 0) { throw 'Fresh install smoke failed.' }
+          python -B native-host/scripts/install_native.py --package $zip.FullName --install-root $root --receipt (Join-Path $env:GITHUB_WORKSPACE 'build/obs-native-ci/native-install-second.json')
+          if ($LASTEXITCODE -ne 0) { throw 'Reinstall over the private profile failed.' }
+          python -B native-host/tests/smoke_windows.py --runtime $root --result (Join-Path $env:GITHUB_WORKSPACE 'build/obs-native-ci/native-install-smoke-second.json') --existing-wall
+          if ($LASTEXITCODE -ne 0) { throw 'Existing-wall smoke after reinstall failed.' }
+      - name: Build and exercise the per-user installer (install, reinstall, uninstall)
+        if: ${{ !inputs.pixel_test }}
+        shell: pwsh
+        env:
+          NATIVE_VERSION: ${{ inputs.version }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $runtime = Join-Path $env:GITHUB_WORKSPACE 'build/obs-native-ci/runtime'
+          if (-not (Test-Path -LiteralPath (Join-Path $runtime 'webobs-native-prototype.json') -PathType Leaf)) { throw 'No verified runtime tree to package.' }
+          if (Test-Path -LiteralPath (Join-Path $runtime 'config')) { throw 'Refuse to package a runtime with private configuration.' }
+          choco install nsis --no-progress -y | Out-Null
+          $makensis = 'C:\Program Files (x86)\NSIS\makensis.exe'
+          if (-not (Test-Path -LiteralPath $makensis -PathType Leaf)) { throw 'makensis is unavailable after installing NSIS.' }
+          $out = Join-Path $env:GITHUB_WORKSPACE 'build/obs-native-ci'
+          $setup = Join-Path $out "WebOBS-OBS-native-$env:NATIVE_VERSION-windows-x64-SETUP.exe"
+          & $makensis /V2 "/DVERSION=$env:NATIVE_VERSION" "/DPACKAGE_DIR=$runtime" "/DOUTPUT_DIR=$out" (Join-Path $env:GITHUB_WORKSPACE 'native-host/installer/WebOBSNative.nsi')
+          if ($LASTEXITCODE -ne 0) { throw "makensis failed with exit code $LASTEXITCODE." }
+          if (-not (Test-Path -LiteralPath $setup -PathType Leaf)) { throw 'The installer was not produced.' }
+          $root = Join-Path $env:RUNNER_TEMP 'native-nsis-install'
+          if (Test-Path -LiteralPath $root) { Remove-Item -LiteralPath $root -Recurse -Force }
+          . ./desktop/tests/installed-tree-footprint.ps1
+          $scope = New-InstalledTreeFootprintScope -Root $root -Purpose isolated-nsis-install-before-first-start
+          $install = Start-Process -FilePath $setup -ArgumentList '/S', "/D=$root" -Wait -PassThru
+          if ($install.ExitCode -ne 0) { throw "Silent install failed with exit code $($install.ExitCode)." }
+          foreach ($relative in @('webobs-native-prototype.json','bin/64bit/obs64.exe','obs-plugins/64bit/webobs-native-host.dll','Uninstall.exe')) {
+            if (-not (Test-Path -LiteralPath (Join-Path $root $relative) -PathType Leaf)) { throw "Installed tree is missing $relative." }
+          }
+          if (Test-Path -LiteralPath (Join-Path $root 'config')) { throw 'Silent install created a private profile before the first run.' }
+          $manifest = Get-Content -LiteralPath (Join-Path $root 'webobs-native-prototype.json') -Raw | ConvertFrom-Json
+          if ($manifest.version -ne $env:NATIVE_VERSION) { throw "Installed manifest version $($manifest.version) does not match $env:NATIVE_VERSION." }
+          $footprint = Measure-InstalledTreeFootprint -Scope $scope
+          $installedFiles = (Get-ChildItem -LiteralPath $root -Recurse -File | Measure-Object).Count
+          if ($footprint.fileCount -ne $installedFiles) { throw "Footprint file count $($footprint.fileCount) does not match installed tree $installedFiles." }
+          $installedPdb = Get-ChildItem -LiteralPath $root -Recurse -File -Filter *.pdb
+          if ($installedPdb) { throw "The installer packaged $($installedPdb.Count) build-symbol PDB files." }
+          python -B native-host/tests/smoke_windows.py --runtime $root --result (Join-Path $out 'native-nsis-install-smoke.json')
+          if ($LASTEXITCODE -ne 0) { throw 'First-run smoke from the installed tree failed.' }
+          $configDir = Join-Path $root 'config/obs-studio'
+          if (-not (Test-Path -LiteralPath $configDir -PathType Container)) { throw 'The installed runtime did not create a private profile.' }
+          $backups = Join-Path $root 'backups'
+          if (-not (Test-Path -LiteralPath $backups -PathType Container)) { throw 'The first run did not snapshot the private profile for version upgrades.' }
+          $versionBackups = @(Get-ChildItem -LiteralPath $backups -Directory | Where-Object { $_.Name -like "config-$env:NATIVE_VERSION-*" })
+          if ($versionBackups.Count -ne 1) { throw "Expected one upgrade snapshot for $env:NATIVE_VERSION, found $($versionBackups.Count)." }
+          $backupManifest = Get-Content -LiteralPath (Join-Path $versionBackups[0].FullName 'backup.json') -Raw | ConvertFrom-Json
+          if ($backupManifest.kind -ne 'native-config-upgrade-backup' -or $backupManifest.version -ne $env:NATIVE_VERSION) { throw 'The upgrade snapshot receipt is invalid.' }
+          $before = (Get-ChildItem -LiteralPath $configDir -Recurse -File -Force | Sort-Object FullName | ForEach-Object { $_.FullName.Substring($configDir.Length) + ':' + (Get-FileHash -LiteralPath $_.FullName -Algorithm SHA256).Hash }) -join "`n"
+          $upgrade = Start-Process -FilePath $setup -ArgumentList '/S', "/D=$root" -Wait -PassThru
+          if ($upgrade.ExitCode -ne 0) { throw "Silent reinstall failed with exit code $($upgrade.ExitCode)." }
+          $after = (Get-ChildItem -LiteralPath $configDir -Recurse -File -Force | Sort-Object FullName | ForEach-Object { $_.FullName.Substring($configDir.Length) + ':' + (Get-FileHash -LiteralPath $_.FullName -Algorithm SHA256).Hash }) -join "`n"
+          if ($before -ne $after) { throw 'Private profile bytes changed across the installer reinstall.' }
+          $uninstall = Start-Process -FilePath (Join-Path $root 'Uninstall.exe') -ArgumentList '/S' -Wait -PassThru
+          if ($uninstall.ExitCode -ne 0) { throw "Silent uninstall failed with exit code $($uninstall.ExitCode)." }
+          if (Test-Path -LiteralPath (Join-Path $root 'bin/64bit/obs64.exe')) { throw 'Uninstall left runtime binaries behind.' }
+          if (Test-Path -LiteralPath (Join-Path $root 'webobs-native-prototype.json')) { throw 'Uninstall left the bundle manifest behind.' }
+          $kept = (Get-ChildItem -LiteralPath $configDir -Recurse -File -Force | Sort-Object FullName | ForEach-Object { $_.FullName.Substring($configDir.Length) + ':' + (Get-FileHash -LiteralPath $_.FullName -Algorithm SHA256).Hash }) -join "`n"
+          if ($kept -ne $before) { throw 'Uninstall did not preserve the private profile byte for byte.' }
+          if (-not (Test-Path -LiteralPath $backups -PathType Container)) { throw 'Uninstall removed the version upgrade snapshots.' }
+          if (-not (Test-Path -LiteralPath (Join-Path $versionBackups[0].FullName 'backup.json') -PathType Leaf)) { throw 'Uninstall removed an upgrade snapshot receipt.' }
+          if (Test-Path -LiteralPath 'HKCU:\Software\WebOBS\NativePrototype') { throw 'Uninstall left the app registry key behind.' }
+          if (Test-Path -LiteralPath 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\WebOBSNativePrototype') { throw 'Uninstall left the uninstall registry entry behind.' }
+          $asset = Get-Item -LiteralPath $setup
+          $receipt = [ordered]@{
+            schema = 1
+            kind = 'per-user-nsis-installer'
+            version = $env:NATIVE_VERSION
+            installerBytes = $asset.Length
+            installerSha256 = (Get-FileHash -LiteralPath $setup -Algorithm SHA256).Hash.ToLowerInvariant()
+            installedFileCount = $installedFiles
+            installed = $footprint
+            configPreservedAcrossReinstall = $true
+            configPreservedAcrossUninstall = $true
+            upgradeBackupCreatedOnFirstRun = $true
+            upgradeBackupsPreservedOnUninstall = $true
+            registryCleanedOnUninstall = $true
+            signed = $false
+            qualification = 'unsigned per-user development installer on a GitHub-hosted runner; not the product installer, target-machine evidence or a P5 claim'
+          }
+          $receipt | ConvertTo-Json -Depth 4 | Set-Content -LiteralPath (Join-Path $out 'native-nsis-installer.json') -Encoding utf8
+      - name: Upgrade the shipped per-user installer in place
+        if: ${{ !inputs.pixel_test }}
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+          NATIVE_VERSION: ${{ inputs.version }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $oldDir = Join-Path $env:RUNNER_TEMP 'native-nsis-old'
+          if (Test-Path $oldDir) { Remove-Item -Recurse -Force $oldDir }
+          New-Item -ItemType Directory -Path $oldDir | Out-Null
+          gh release download v4.1.0-dev.40 --repo $env:GITHUB_REPOSITORY --pattern '*SETUP.exe' --dir $oldDir
+          if ($LASTEXITCODE -ne 0) { throw 'Pinned dev.40 installer download failed.' }
+          $oldSetup = Get-ChildItem -LiteralPath $oldDir -Filter '*SETUP.exe' | Select-Object -First 1
+          if (-not $oldSetup) { throw 'The pinned release did not contain a SETUP.exe.' }
+          $oldHash = (Get-FileHash -LiteralPath $oldSetup.FullName -Algorithm SHA256).Hash.ToLowerInvariant()
+          if ($oldHash -ne '7cc5724c0aee941802bdc9f8ed71b7547d1b3d73631170e003c5a03d7bb2a54d') { throw "Pinned dev.40 installer hash mismatch: $oldHash" }
+          $root = Join-Path $env:RUNNER_TEMP 'native-nsis-upgrade'
+          if (Test-Path $root) { Remove-Item -Recurse -Force $root }
+          $install = Start-Process -FilePath $oldSetup.FullName -ArgumentList '/S', "/D=$root" -Wait -PassThru
+          if ($install.ExitCode -ne 0) { throw "Installing the pinned dev.40 installer failed with exit code $($install.ExitCode)." }
+          $oldManifest = Get-Content -LiteralPath (Join-Path $root 'webobs-native-prototype.json') -Raw | ConvertFrom-Json
+          if ($oldManifest.version -ne '4.1.0-dev.40') { throw "Pinned installer produced $($oldManifest.version)." }
+          $configRoot = Join-Path $root 'config'
+          New-Item -ItemType Directory -Path (Join-Path $configRoot 'obs-studio/plugin_config/webobs-native-host') -Force | Out-Null
+          [IO.File]::WriteAllText((Join-Path $configRoot 'obs-studio/private-marker.txt'), "dev.40 profile marker`n")
+          $beforeHashes = @{}
+          Get-ChildItem -LiteralPath $configRoot -Recurse -File -Force | ForEach-Object {
+            $rel = $_.FullName.Substring($configRoot.Length).Replace('\','/').TrimStart('/')
+            $beforeHashes[$rel] = (Get-FileHash -LiteralPath $_.FullName -Algorithm SHA256).Hash.ToLowerInvariant()
+          }
+          $setup = Get-ChildItem (Join-Path $env:GITHUB_WORKSPACE 'build/obs-native-ci/WebOBS-OBS-native-*-SETUP.exe') | Select-Object -First 1
+          if (-not $setup) { throw 'No current per-user installer for the upgrade step.' }
+          $upgrade = Start-Process -FilePath $setup.FullName -ArgumentList '/S', "/D=$root" -Wait -PassThru
+          if ($upgrade.ExitCode -ne 0) { throw "Upgrading the pinned install failed with exit code $($upgrade.ExitCode)." }
+          $manifest = Get-Content -LiteralPath (Join-Path $root 'webobs-native-prototype.json') -Raw | ConvertFrom-Json
+          if ($manifest.version -ne $env:NATIVE_VERSION) { throw "Upgraded manifest is $($manifest.version), expected $env:NATIVE_VERSION." }
+          $afterHashes = @{}
+          Get-ChildItem -LiteralPath $configRoot -Recurse -File -Force | ForEach-Object {
+            $rel = $_.FullName.Substring($configRoot.Length).Replace('\','/').TrimStart('/')
+            $afterHashes[$rel] = (Get-FileHash -LiteralPath $_.FullName -Algorithm SHA256).Hash.ToLowerInvariant()
+          }
+          if ((($beforeHashes.Keys | Sort-Object) -join "`n") -ne (($afterHashes.Keys | Sort-Object) -join "`n")) { throw 'Private profile file set changed across the installer upgrade.' }
+          foreach ($rel in $beforeHashes.Keys) { if ($afterHashes[$rel] -ne $beforeHashes[$rel]) { throw "Private profile file $rel changed across the installer upgrade." } }
+          $uninstall = Start-Process -FilePath (Join-Path $root 'Uninstall.exe') -ArgumentList '/S' -Wait -PassThru
+          if ($uninstall.ExitCode -ne 0) { throw "Silent uninstall after upgrade failed with exit code $($uninstall.ExitCode)." }
+          if (Test-Path -LiteralPath (Join-Path $root 'bin/64bit/obs64.exe')) { throw 'Uninstall after upgrade left runtime binaries behind.' }
+          if (Test-Path -LiteralPath (Join-Path $root 'webobs-native-prototype.json')) { throw 'Uninstall after upgrade left the bundle manifest behind.' }
+          foreach ($rel in $beforeHashes.Keys) {
+            $kept = Join-Path $configRoot $rel
+            if (-not (Test-Path -LiteralPath $kept -PathType Leaf)) { throw "Uninstall after upgrade removed private file $rel." }
+            if ((Get-FileHash -LiteralPath $kept -Algorithm SHA256).Hash.ToLowerInvariant() -ne $beforeHashes[$rel]) { throw "Uninstall after upgrade changed private file $rel." }
+          }
+          if (Test-Path -LiteralPath 'HKCU:\Software\WebOBS\NativePrototype') { throw 'Uninstall after upgrade left the app registry key behind.' }
+          if (Test-Path -LiteralPath 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\WebOBSNativePrototype') { throw 'Uninstall after upgrade left the uninstall registry entry behind.' }
+          $receipt = [ordered]@{
+            schema = 1
+            kind = 'per-user-nsis-upgrade'
+            previousVersion = $oldManifest.version
+            version = $env:NATIVE_VERSION
+            previousInstallerSha256 = $oldHash
+            installerSha256 = (Get-FileHash -LiteralPath $setup.FullName -Algorithm SHA256).Hash.ToLowerInvariant()
+            configuredFileCount = $beforeHashes.Count
+            configPreservedAcrossUpgrade = $true
+            configPreservedAcrossUninstall = $true
+            registryCleanedOnUninstall = $true
+            signed = $false
+            qualification = 'unsigned per-user development upgrade on a GitHub-hosted runner; not the product installer, target-machine evidence or a P5 claim'
+          }
+          $receipt | ConvertTo-Json -Depth 4 | Set-Content -LiteralPath 'build/obs-native-ci/native-nsis-upgrade.json' -Encoding utf8
+      - name: Upgrade a pinned previous prototype and verify the private profile survives
+        if: ${{ inputs.upgrade_previous && !inputs.pixel_test }}
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+          NATIVE_VERSION: ${{ inputs.version }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $oldRoot = Join-Path $env:RUNNER_TEMP 'native-upgrade-previous'
+          if (Test-Path $oldRoot) { Remove-Item -Recurse -Force $oldRoot }
+          gh run download 41220134972 --repo $env:GITHUB_REPOSITORY --name webobs-obs-native-prototype-4.1.0-dev.32 --dir $oldRoot
+          if ($LASTEXITCODE -ne 0) { throw 'Pinned previous prototype artifact download failed.' }
+          $oldZip = Get-ChildItem $oldRoot -Filter '*.zip' | Select-Object -First 1
+          if (-not $oldZip) { throw 'Pinned previous prototype artifact did not contain a ZIP.' }
+          $root = Join-Path $env:RUNNER_TEMP 'native-upgrade'
+          if (Test-Path $root) { Remove-Item -Recurse -Force $root }
+          python -B native-host/scripts/install_native.py --package $oldZip.FullName --install-root $root --receipt build/obs-native-ci/native-upgrade-first.json
+          if ($LASTEXITCODE -ne 0) { throw 'Installing the pinned previous prototype failed.' }
+          python -B native-host/tests/smoke_windows.py --runtime $root --result build/obs-native-ci/native-upgrade-first-smoke.json
+          if ($LASTEXITCODE -ne 0) { throw 'Pinned previous prototype smoke failed.' }
+          $configDir = Join-Path $root 'config/obs-studio'
+          if (-not (Test-Path -LiteralPath $configDir -PathType Container)) { throw 'Pinned previous prototype did not create a private config directory.' }
+          $configRoot = Join-Path $root 'config'
+          $beforeHashes = @{}
+          Get-ChildItem -LiteralPath $configRoot -Recurse -File -Force | ForEach-Object {
+            $relative = $_.FullName.Substring($configRoot.Length).Replace('\','/').TrimStart('/')
+            $beforeHashes[$relative] = (Get-FileHash -LiteralPath $_.FullName -Algorithm SHA256).Hash.ToLowerInvariant()
+          }
+          $before = ($beforeHashes.Keys | Sort-Object | ForEach-Object { $_ + ':' + $beforeHashes[$_] }) -join "`n"
+          $zip = Get-ChildItem (Join-Path $env:GITHUB_WORKSPACE 'build/obs-native-ci/WebOBS-OBS-native-*-PROTOTYPE.zip') | Select-Object -First 1
+          if (-not $zip) { throw 'No frozen prototype archive for the upgrade step.' }
+          python -B native-host/scripts/install_native.py --package $zip.FullName --install-root $root --receipt build/obs-native-ci/native-upgrade-second.json
+          if ($LASTEXITCODE -ne 0) { throw 'Upgrade over the pinned previous prototype failed.' }
+          $receipt = Get-Content -LiteralPath 'build/obs-native-ci/native-upgrade-second.json' -Raw | ConvertFrom-Json
+          if ($receipt.version -ne $env:NATIVE_VERSION) { throw "Upgraded version $($receipt.version) does not match $env:NATIVE_VERSION." }
+          if ($receipt.previousVersion -ne '4.1.0-dev.32') { throw "Unexpected previousVersion $($receipt.previousVersion)." }
+          if ($receipt.configPreserved -ne $true) { throw 'Upgrade did not preserve the private profile.' }
+          $afterHashes = @{}
+          Get-ChildItem -LiteralPath $configRoot -Recurse -File -Force | ForEach-Object {
+            $relative = $_.FullName.Substring($configRoot.Length).Replace('\','/').TrimStart('/')
+            $afterHashes[$relative] = (Get-FileHash -LiteralPath $_.FullName -Algorithm SHA256).Hash.ToLowerInvariant()
+          }
+          $after = ($afterHashes.Keys | Sort-Object | ForEach-Object { $_ + ':' + $afterHashes[$_] }) -join "`n"
+          if ($before -ne $after) { throw 'Private config bytes changed across the upgrade.' }
+          python -B native-host/tests/smoke_windows.py --runtime $root --result build/obs-native-ci/native-upgrade-second-smoke.json --existing-wall
+          if ($LASTEXITCODE -ne 0) { throw 'Existing-wall smoke after cross-version upgrade failed.' }
+
+          $backupsRoot = Join-Path $root 'backups'
+          if (-not (Test-Path -LiteralPath $backupsRoot -PathType Container)) { throw 'The upgraded build did not snapshot the previous private profile.' }
+          $backupDir = Get-ChildItem -LiteralPath $backupsRoot -Directory | Where-Object { $_.Name -like "config-$env:NATIVE_VERSION-*" } | Sort-Object Name -Descending | Select-Object -First 1
+          if (-not $backupDir) { throw 'No version upgrade snapshot exists for the upgraded build.' }
+          $manifest = Get-Content -LiteralPath (Join-Path $backupDir.FullName 'backup.json') -Raw | ConvertFrom-Json
+          if ($manifest.schema -ne 1 -or $manifest.kind -ne 'native-config-upgrade-backup') { throw 'Unexpected upgrade snapshot schema.' }
+          if ($manifest.version -ne $env:NATIVE_VERSION) { throw "Snapshot version $($manifest.version) does not match $env:NATIVE_VERSION." }
+          $stableBefore = @{}
+          foreach ($key in $beforeHashes.Keys) {
+            if ($key -like 'obs-studio/*' -and $key -notlike 'obs-studio/logs/*' -and $key -notlike 'obs-studio/.sentinel/*' -and $key -notlike 'obs-studio/crashes/*') { $stableBefore[$key] = $beforeHashes[$key] }
+          }
+          $stableEntries = @($manifest.entries | Where-Object { $_.path -like 'obs-studio/*' -and $_.path -notlike 'obs-studio/logs/*' -and $_.path -notlike 'obs-studio/.sentinel/*' -and $_.path -notlike 'obs-studio/crashes/*' })
+          $snapshotPaths = @($stableEntries | ForEach-Object { $_.path })
+          $missing = @($stableBefore.Keys | Where-Object { $snapshotPaths -notcontains $_ })
+          if ($missing.Count -gt 0) { throw "Snapshot is missing pre-upgrade files: $($missing -join ', ')." }
+          $extra = @($snapshotPaths | Where-Object { -not $stableBefore.ContainsKey($_) })
+          if ($extra.Count -gt 0) { Write-Host "Snapshot also captured new files: $($extra -join ', ')" }
+          foreach ($entry in $manifest.entries) {
+            $entryPath = ($entry.path -replace '\\','/')
+            if ($entryPath -like '*..*' -or $entryPath.StartsWith('/')) { throw "Unsafe snapshot entry $($entry.path)." }
+            $file = Join-Path $backupDir.FullName $entryPath
+            if (-not (Test-Path -LiteralPath $file -PathType Leaf)) { throw "Snapshot payload missing $entryPath." }
+            if ((Get-FileHash -LiteralPath $file -Algorithm SHA256).Hash.ToLowerInvariant() -ne $entry.sha256) { throw "Snapshot file $entryPath is corrupted." }
+            if ($stableBefore.ContainsKey($entryPath) -and $stableBefore[$entryPath] -ne $entry.sha256) {
+              throw "Snapshot entry $entryPath does not match the pre-upgrade bytes."
+            }
+          }
+          $restoreRoot = Join-Path $env:RUNNER_TEMP 'native-restore-check'
+          if (Test-Path $restoreRoot) { Remove-Item -Recurse -Force $restoreRoot }
+          New-Item -ItemType Directory -Path $restoreRoot | Out-Null
+          Copy-Item -LiteralPath (Join-Path $root 'webobs-native-prototype.json') -Destination (Join-Path $restoreRoot 'webobs-native-prototype.json')
+          Copy-Item -LiteralPath (Join-Path $root 'config') -Destination (Join-Path $restoreRoot 'config') -Recurse
+          Copy-Item -LiteralPath $backupsRoot -Destination (Join-Path $restoreRoot 'backups') -Recurse
+          python -B native-host/scripts/restore_native_backup.py --install-root $restoreRoot --backup $backupDir.Name --apply --receipt (Join-Path $env:GITHUB_WORKSPACE 'build/obs-native-ci/native-restore.json')
+          if ($LASTEXITCODE -ne 0) { throw 'Restoring the cross-version snapshot failed.' }
+          foreach ($key in $stableBefore.Keys) {
+            $restored = Join-Path $restoreRoot ('config/' + $key)
+            if (-not (Test-Path -LiteralPath $restored -PathType Leaf)) { throw "Restored profile is missing $key." }
+            if ((Get-FileHash -LiteralPath $restored -Algorithm SHA256).Hash.ToLowerInvariant() -ne $stableBefore[$key]) { throw "Restored profile differs at $key." }
+          }
+      - name: Measure the stock OBS 32.1.2 installation for a same-OS size reference
+        if: ${{ inputs.measure_obs_baseline && !inputs.pixel_test }}
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $root = Join-Path $env:RUNNER_TEMP 'obs-size-reference'
+          if (Test-Path $root) { Remove-Item -Recurse -Force $root }
+          $setup = Join-Path $env:RUNNER_TEMP 'OBS-Studio-32.1.2-Windows-x64-Installer.exe'
+          Invoke-WebRequest -Uri 'https://github.com/obsproject/obs-studio/releases/download/32.1.2/OBS-Studio-32.1.2-Windows-x64-Installer.exe' -OutFile $setup
+          $asset = Get-Item -LiteralPath $setup
+          . ./desktop/tests/installed-tree-footprint.ps1
+          $scope = New-InstalledTreeFootprintScope -Root $root -Purpose isolated-nsis-install-before-first-start
+          $process = Start-Process -FilePath $setup -ArgumentList '/S', "/D=$root" -PassThru -Wait
+          if ($process.ExitCode -ne 0) { throw "Stock OBS silent install failed with exit code $($process.ExitCode)" }
+          if (-not (Test-Path -LiteralPath (Join-Path $root 'bin/64bit/obs64.exe') -PathType Leaf)) { throw 'Stock OBS installer did not produce obs64.exe' }
+          $footprint = Measure-InstalledTreeFootprint -Scope $scope
+          $receipt = [ordered]@{
+            schema = 1
+            scope = 'reference-stock-obs-installation'
+            obsVersion = '32.1.2'
+            installerSha256 = (Get-FileHash -LiteralPath $setup -Algorithm SHA256).Hash.ToLowerInvariant()
+            installerBytes = $asset.Length
+            installed = $footprint
+            qualification = 'GitHub-hosted Windows Server 2022 reference only; not a target-machine measurement and not an equal-feature scope'
+          }
+          $path = 'build/obs-native-ci/obs-size-reference.json'
+          New-Item -ItemType Directory -Force -Path (Split-Path $path) | Out-Null
+          $receipt | ConvertTo-Json -Depth 6 | Set-Content -LiteralPath $path
+          python -B native-host/scripts/compare_runtime_sizes.py --prototype build/obs-native-ci/runtime --obs $root --report build/obs-native-ci/native-size-compare.json
+          if ($LASTEXITCODE -ne 0) { throw 'Explaining the OBS same-OS size gap failed.' }
+          Get-Content -LiteralPath $path
+      - name: Preflight the P5 machine/tooling contract with public placeholder metadata
+        if: ${{ inputs.measure_obs_baseline && !inputs.pixel_test }}
+        shell: pwsh
+        run: |
+          $output = Join-Path $env:RUNNER_TEMP ('p5-preflight-' + $env:GITHUB_RUN_ID)
+          python -B native-host/qualification/preflight.py --native-exe build/obs-native-ci/runtime/bin/64bit/obs64.exe --obs-exe (Join-Path $env:RUNNER_TEMP 'obs-size-reference/bin/64bit/obs64.exe') --metadata native-host/qualification/metadata.example.json --output $output --diagnostic --min-memory-gb 1 --min-monitors 0
+          if ($LASTEXITCODE -ne 0) { throw 'P5 preflight with placeholder metadata failed.' }
+          Copy-Item -LiteralPath (Join-Path $output 'preflight.json') -Destination build/obs-native-ci/native-p5-preflight-diagnostic.json
+          python -c "import json;d=json.load(open('build/obs-native-ci/native-p5-preflight-diagnostic.json',encoding='utf-8'));assert d['qualified'] is False and d['diagnostic'] is True and len(d['checks']) >= 8, d"
+          Get-Content -LiteralPath build/obs-native-ci/native-p5-preflight-diagnostic.json -TotalCount 12
+      - name: Require actual Qt plugin startup, private portable config and normal exit
+        if: ${{ !inputs.pixel_test }}
+        shell: pwsh
+        run: |
+          python -B native-host/tests/smoke_windows.py --runtime build/obs-native-ci/runtime --result build/obs-native-ci/native-startup-smoke.json
+          if ($LASTEXITCODE -ne 0) { throw 'Native frontend startup/isolation smoke failed; not camera or performance qualification.' }
+      - name: Kill the real OBS host and require no surviving processes
+        if: ${{ !inputs.pixel_test }}
+        shell: pwsh
+        run: |
+          $source = Join-Path $env:GITHUB_WORKSPACE 'build/obs-native-ci/runtime'
+          $runtime = Join-Path $env:RUNNER_TEMP 'native-crash'
+          if (Test-Path $runtime) { Remove-Item -Recurse -Force $runtime }
+          Copy-Item -LiteralPath $source -Destination $runtime -Recurse
+          if (Test-Path (Join-Path $runtime 'config')) { Remove-Item -Recurse -Force (Join-Path $runtime 'config') }
+          python -B native-host/tests/smoke_windows.py --crash-smoke --runtime $runtime --result (Join-Path $env:GITHUB_WORKSPACE 'build/obs-native-ci/native-crash-smoke.json') --crash-after-seconds 8
+          if ($LASTEXITCODE -ne 0) { throw 'Crash containment smoke failed.' }
+      - name: Refuse a second host before it can duplicate the runtime
+        if: ${{ !inputs.pixel_test }}
+        shell: pwsh
+        run: |
+          $runtime = Join-Path $env:RUNNER_TEMP 'native-crash'
+          if (Test-Path (Join-Path $runtime 'config')) { Remove-Item -Recurse -Force (Join-Path $runtime 'config') }
+          python -B native-host/tests/smoke_windows.py --second-instance-smoke --runtime $runtime --result (Join-Path $env:GITHUB_WORKSPACE 'build/obs-native-ci/native-second-instance-smoke.json') --hold-seconds 30
+          if ($LASTEXITCODE -ne 0) { throw 'Second-instance smoke failed.' }
+      - name: Preserve sanitized synthetic final-pixel receipt only, never the test runtime
+        if: always() && inputs.pixel_test
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: webobs-obs-native-final-pixels-${{ inputs.version }}
+          path: build/obs-native-ci/native-final-pixels.json
+          if-no-files-found: ignore
+          retention-days: 7
+      - name: Preserve clean prototype and bounded receipts only
+        if: always() && !inputs.pixel_test
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: webobs-obs-native-prototype-${{ inputs.version }}
+          path: |
+            build/obs-native-ci/WebOBS-OBS-native-*-windows-x64-PROTOTYPE.zip
+            build/obs-native-ci/*.sha256
+            build/obs-native-ci/runtime/webobs-native-prototype.json
+            build/obs-native-ci/native-startup-smoke.json
+            build/obs-native-ci/native-portable-smoke.json
+            build/obs-native-ci/native-install-first.json
+            build/obs-native-ci/native-install-second.json
+            build/obs-native-ci/native-install-smoke-first.json
+            build/obs-native-ci/native-install-smoke-second.json
+            build/obs-native-ci/native-upgrade-first.json
+            build/obs-native-ci/native-upgrade-first-smoke.json
+            build/obs-native-ci/native-upgrade-second.json
+            build/obs-native-ci/native-upgrade-second-smoke.json
+            build/obs-native-ci/obs-size-reference.json
+            build/obs-native-ci/native-size-compare.json
+            build/obs-native-ci/native-p5-preflight-diagnostic.json
+            build/obs-native-ci/native-runtime-prune.json
+            build/obs-native-ci/native-runtime-inventory.json
+            build/obs-native-ci/native-nsis-installer.json
+            build/obs-native-ci/native-nsis-install-smoke.json
+            build/obs-native-ci/native-restore.json
+            build/obs-native-ci/native-crash-smoke.json
+            build/obs-native-ci/native-second-instance-smoke.json
+            build/obs-native-ci/native-nsis-upgrade.json
+            build/obs-native-ci/native-*-process-gate.json
+            build/obs-native-ci/WebOBS-OBS-native-*-windows-x64-SETUP.exe
+          if-no-files-found: ignore
+          retention-days: 7
+          compression-level: 0
+      - name: Preserve verified archives after compile failures
+        if: always() && !cancelled() && steps.dependencies.outputs.cache-hit != 'true'
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
+        with:
+          path: desktop/.cache/*.zip
+          key: windows-2022-obs-native-${{ hashFiles('desktop/dependencies.lock.json', 'native-host/dependencies.lock.json') }}
