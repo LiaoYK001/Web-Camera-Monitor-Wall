@@ -677,6 +677,34 @@ class BuildContractTests(unittest.TestCase):
                         source.index("authorize_wall_apply(sessions"))
 
 
+    def test_backup_executor_captures_before_mutating(self):
+        source = (ROOT / "native-host/src/wall_apply_backup_executor.cpp").read_text(encoding="utf-8")
+        header = (ROOT / "native-host/src/wall_apply_backup_executor.hpp").read_text(encoding="utf-8")
+        cmake = ROOT / "native-host/tests/control-auth/CMakeLists.txt"
+        cmake_text = cmake.read_text(encoding="utf-8")
+        plugin_cmake = (ROOT / "native-host/CMakeLists.txt").read_text(encoding="utf-8")
+        plugin = (ROOT / "native-host/src/plugin.cpp").read_text(encoding="utf-8")
+
+        # Standalone library + CTest wiring; the product plugin never links it.
+        self.assertIn("wall_apply_backup_executor.cpp", cmake_text)
+        self.assertIn("webobs-wall-apply-backup-executor-tests", cmake_text)
+        self.assertIn("native-wall-apply-backup-executor", cmake_text)
+        self.assertNotIn("wall_apply_backup_executor.cpp",
+                         next(line for line in plugin_cmake.splitlines() if "add_library(webobs-native-host" in line))
+        self.assertNotIn("execute_wall_apply_with_backup", plugin)
+
+        # Pure module: no OBS, files, sockets.
+        for forbidden in ("fstream", "filesystem", "ofstream", "ifstream", "obs_", "socket"):
+            self.assertNotIn(forbidden, source)
+        self.assertIn("NOT wired to OBS", header)
+        self.assertIn("no atomicity", header)
+
+        # Capture precedes every target call; a partial rollback never restores.
+        self.assertLess(source.index("capture_wall_apply_backup(plan"), source.index("execute_wall_apply(plan"))
+        self.assertIn("backup_unavailable", source)
+        self.assertIn("rollback_incomplete", source)
+        self.assertLess(source.index("operation_failed_rollback_incomplete"), source.index("restore_wall_apply_backup"))
+
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)

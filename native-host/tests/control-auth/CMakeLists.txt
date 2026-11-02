@@ -114,6 +114,7 @@ add_library(webobs-native-wall-apply-authorization STATIC
     "${WEBOBS_ROOT}/native-host/src/wall_apply_authorization.cpp"
     "${WEBOBS_ROOT}/native-host/src/wall_apply_executor.cpp"
     "${WEBOBS_ROOT}/native-host/src/wall_apply_backup.cpp"
+    "${WEBOBS_ROOT}/native-host/src/wall_apply_backup_executor.cpp"
     "${WEBOBS_ROOT}/native-host/src/camera_catalog_binding.cpp"
     "${WEBOBS_ROOT}/native-host/src/wall_apply_plan.cpp"
     "${WEBOBS_ROOT}/native-host/src/source_ownership.cpp")
@@ -133,6 +134,15 @@ if(MSVC)
     target_compile_options(webobs-wall-apply-authorization-tests PRIVATE /W4 /permissive- /utf-8)
 else()
     target_compile_options(webobs-wall-apply-authorization-tests PRIVATE -Wall -Wextra -Wpedantic)
+endif()
+
+add_executable(webobs-wall-apply-backup-executor-tests
+    "${WEBOBS_ROOT}/native-host/tests/wall_apply_backup_executor_test.cpp")
+target_link_libraries(webobs-wall-apply-backup-executor-tests PRIVATE webobs-native-wall-apply-authorization)
+if(MSVC)
+    target_compile_options(webobs-wall-apply-backup-executor-tests PRIVATE /W4 /permissive- /utf-8)
+else()
+    target_compile_options(webobs-wall-apply-backup-executor-tests PRIVATE -Wall -Wextra -Wpedantic)
 endif()
 
 add_executable(webobs-camera-catalog-binding-tests
@@ -182,6 +192,8 @@ add_test(NAME native-wall-apply-authorization COMMAND webobs-wall-apply-authoriz
 set_tests_properties(native-wall-apply-authorization PROPERTIES TIMEOUT 30)
 add_test(NAME native-wall-apply-executor COMMAND webobs-wall-apply-executor-tests)
 set_tests_properties(native-wall-apply-executor PROPERTIES TIMEOUT 30)
+add_test(NAME native-wall-apply-backup-executor COMMAND webobs-wall-apply-backup-executor-tests)
+set_tests_properties(native-wall-apply-backup-executor PROPERTIES TIMEOUT 30)
 add_test(NAME native-camera-catalog-binding COMMAND webobs-camera-catalog-binding-tests)
 set_tests_properties(native-camera-catalog-binding PROPERTIES TIMEOUT 30)
 add_test(NAME native-wall-apply-backup COMMAND webobs-wall-apply-backup-tests)
