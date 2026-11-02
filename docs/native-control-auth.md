@@ -111,3 +111,13 @@ Next establish a read-only existing-graph/authoritative camera-identity/all-scop
 The uncovered execution boundary lives in `native-host/src/wall_apply_executor.cpp`. It consumes only a plan produced by `authorize_wall_apply`; it never re-decides permissions and never touches OBS. Execution has two phases: first the plan is recomputed with `plan_wall_apply` from a **fresh snapshot** and the **current ledger**, using the desired state implied by the plan's own operations; the passed plan must match that recomputation field for field, otherwise the result is `stale_plan` and no target callback runs. Then replace/remove/add operations run in plan order while keep operations never touch the target. On the first forward failure the journal of the applied prefix is replayed newest-first; every undo entry is attempted even after a failure, and the status honestly reports `operation_failed_rolled_back` or `operation_failed_rollback_incomplete`.
 
 The boundaries stay unchanged: re-derivation only narrows the observation-to-execution window; it is not global atomicity, an execution fence or a reusable capability. Rollback restores ledger/graph claims only and cannot recreate deleted source objects or their settings. No persistence, crash-recovery or cross-step atomicity is claimed. The module stays decoupled from the plugin, and the build contract locks that the product plugin never links or calls it.
+
+## 授权应用备份捕获 / Authorized-apply backup capture
+
+`native-host/src/wall_apply_backup.cpp` 补齐执行器的可逆性缺口：在执行任何 replace/remove 之前，通过注入的读取器捕获被销毁源的**有界不透明设置**（单源 ≤64 KiB，总量 ≤512 KiB）；缺失、抛异常或超限一律整体 `unavailable`，绝不保留半份材料，执行器因此不应启动。捕获按计划顺序进行，同一旧 UUID 只允许出现一次。失败后由注入的写入器按“最新优先”回放恢复，逐条尝试并如实返回 `restored/failed/complete` 计数。
+
+边界：捕获与恢复都不做授权、不读 OBS/文件/网络、不是执行栅栏；设置材料只是 best-effort 恢复证据，不承诺持久化、原子性或崩溃恢复；产品插件不得链接或调用（构建契约锁定）。
+
+The executor's reversibility gap is closed by `native-host/src/wall_apply_backup.cpp`: before any replace/remove, an injected reader captures the **bounded opaque settings** of the source being destroyed (≤64 KiB per source, ≤512 KiB total). A missing blob, a thrown exception or an oversize blob makes the whole capture `unavailable` with no partial material, so the executor must not start. Capture follows plan order and each old UUID may appear only once. After a failure an injected writer replays the material newest-first, attempts every entry and reports honest `restored/failed/complete` counts.
+
+Boundaries: capture and restore never authorize, never read OBS/files/network and are not an execution fence; the material is best-effort recovery evidence with no durability, atomicity or crash-recovery promise, and the product plugin must not link or call the module (locked by the build contract).

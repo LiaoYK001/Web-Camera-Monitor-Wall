@@ -613,5 +613,36 @@ class BuildContractTests(unittest.TestCase):
         self.assertIn("journal.rbegin()", source)
 
 
+    def test_wall_apply_backup_is_bounded_and_unwired(self):
+        control_cmake = (ROOT / "native-host/tests/control-auth/CMakeLists.txt").read_text(encoding="utf-8")
+        cmake = (ROOT / "native-host/CMakeLists.txt").read_text(encoding="utf-8")
+        header = (ROOT / "native-host/src/wall_apply_backup.hpp").read_text(encoding="utf-8")
+        source = (ROOT / "native-host/src/wall_apply_backup.cpp").read_text(encoding="utf-8")
+        plugin = (ROOT / "native-host/src/plugin.cpp").read_text(encoding="utf-8")
+        # Unexposed: the product plugin never links or captures backups.
+        plugin_line = cmake.split("add_library(webobs-native-host MODULE", 1)[1].splitlines()[0]
+        self.assertNotIn("wall_apply_backup.cpp", plugin_line)
+        self.assertNotIn("capture_wall_apply_backup", plugin)
+        # Verified only inside the renderer-free standalone boundary.
+        self.assertIn("webobs-wall-apply-backup-tests", control_cmake)
+        self.assertIn("add_test(NAME native-wall-apply-backup", control_cmake)
+        self.assertIn("wall_apply_backup.cpp", control_cmake)
+        # No I/O or OBS/network entry points inside the module.
+        for forbidden in ("fstream", "filesystem", "ofstream", "ifstream", "obs_", "socket"):
+            self.assertNotIn(forbidden, source)
+        self.assertNotIn("std::map", source)
+        self.assertNotIn("std::unordered_map", source)
+        # Bounds and fail-closed rules are part of the contract text.
+        self.assertIn("kMaxWallApplySettingsBytes", header)
+        self.assertIn("kMaxWallApplyBackupBytes", header)
+        self.assertIn("Fail-closed", header)
+        self.assertIn("best-effort restore", header)
+        self.assertIn("kMaxWallApplySettingsBytes", source)
+        self.assertIn("available", source)
+        # Restore replays newest-first and reports accounting.
+        self.assertIn("entries.rbegin()", source)
+        self.assertIn("complete", source)
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)
