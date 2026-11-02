@@ -548,6 +548,39 @@ class BuildContractTests(unittest.TestCase):
         # Fail-closed order: ledger consistency precedes snapshot classification.
         self.assertLess(source.index("ownership_ledger_consistent"), source.index("classify_wall_entries"))
 
+    def test_wall_apply_authorization_is_unwired_and_binds_session_before_backend(self):
+        control_cmake = (ROOT / "native-host/tests/control-auth/CMakeLists.txt").read_text(encoding="utf-8")
+        cmake = (ROOT / "native-host/CMakeLists.txt").read_text(encoding="utf-8")
+        header = (ROOT / "native-host/src/wall_apply_authorization.hpp").read_text(encoding="utf-8")
+        source = (ROOT / "native-host/src/wall_apply_authorization.cpp").read_text(encoding="utf-8")
+        plugin = (ROOT / "native-host/src/plugin.cpp").read_text(encoding="utf-8")
+        # Unexposed: neither native build links the composition into the product plugin.
+        plugin_line = cmake.split("add_library(webobs-native-host MODULE", 1)[1].splitlines()[0]
+        self.assertNotIn("wall_apply_authorization.cpp", plugin_line)
+        self.assertNotIn("authorize_wall_apply", plugin)
+        # Verified only inside the renderer-free standalone boundary.
+        self.assertIn("webobs-native-wall-apply-authorization", control_cmake)
+        self.assertIn("webobs-wall-apply-authorization-tests", control_cmake)
+        self.assertIn("add_test(NAME native-wall-apply-authorization", control_cmake)
+        self.assertIn("native-wall-apply-no-media-symbols", control_cmake)
+        # No I/O or OBS/network entry points inside the module. set is a
+        # call-local duplicate index, not a cached grant. Static shape is not
+        # a complete proof; runtime semantics belong to the CTest itself.
+        for forbidden in ("fstream", "filesystem", "ofstream", "ifstream", "obs_", "socket"):
+            self.assertNotIn(forbidden, source)
+        self.assertNotIn("std::map", source)
+        self.assertNotIn("std::unordered_map", source)
+        self.assertIn("decision-time snapshot", header)
+        self.assertIn("NOT an authorization grant", header)
+        self.assertIn("NOT an execution fence", header)
+        self.assertIn("never forbidden", source)
+        # Order locks: exact session binding precedes the batch backend call,
+        # the batch precedes observation, and observation precedes planning.
+        # (rindex anchors on the actual call sites, not earlier comments.)
+        self.assertLess(source.index("validate_and_slide"), source.rindex("authorize_operation("))
+        self.assertLess(source.rindex("authorize_operation("), source.index("provider()"))
+        self.assertLess(source.index("provider()"), source.rindex("plan_wall_apply("))
+
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)

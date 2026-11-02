@@ -110,6 +110,28 @@ else()
     target_compile_options(webobs-live-view-pipeline-tests PRIVATE -Wall -Wextra -Wpedantic)
 endif()
 
+add_library(webobs-native-wall-apply-authorization STATIC
+    "${WEBOBS_ROOT}/native-host/src/wall_apply_authorization.cpp"
+    "${WEBOBS_ROOT}/native-host/src/wall_apply_plan.cpp"
+    "${WEBOBS_ROOT}/native-host/src/source_ownership.cpp")
+target_include_directories(webobs-native-wall-apply-authorization PUBLIC
+    "${WEBOBS_ROOT}/core/include" "${WEBOBS_ROOT}/native-host/src")
+target_link_libraries(webobs-native-wall-apply-authorization PUBLIC webobs-native-control-auth)
+if(MSVC)
+    target_compile_options(webobs-native-wall-apply-authorization PRIVATE /W4 /permissive- /utf-8)
+else()
+    target_compile_options(webobs-native-wall-apply-authorization PRIVATE -Wall -Wextra -Wpedantic)
+endif()
+
+add_executable(webobs-wall-apply-authorization-tests
+    "${WEBOBS_ROOT}/native-host/tests/wall_apply_authorization_test.cpp")
+target_link_libraries(webobs-wall-apply-authorization-tests PRIVATE webobs-native-wall-apply-authorization)
+if(MSVC)
+    target_compile_options(webobs-wall-apply-authorization-tests PRIVATE /W4 /permissive- /utf-8)
+else()
+    target_compile_options(webobs-wall-apply-authorization-tests PRIVATE -Wall -Wextra -Wpedantic)
+endif()
+
 enable_testing()
 add_test(NAME session-identity COMMAND webobs-session-identity-tests)
 set_tests_properties(session-identity PROPERTIES TIMEOUT 30)
@@ -126,6 +148,8 @@ add_test(NAME native-operation-auth COMMAND webobs-native-operation-auth-tests)
 set_tests_properties(native-operation-auth PROPERTIES TIMEOUT 30)
 add_test(NAME native-live-view-pipeline COMMAND webobs-live-view-pipeline-tests)
 set_tests_properties(native-live-view-pipeline PROPERTIES TIMEOUT 30)
+add_test(NAME native-wall-apply-authorization COMMAND webobs-wall-apply-authorization-tests)
+set_tests_properties(native-wall-apply-authorization PROPERTIES TIMEOUT 30)
 
 # GNU/LLVM nm evidence: reject renderer/media entry points in the entire archive,
 # including defined and undefined symbols. MSVC builds retain the compile/link
@@ -137,6 +161,8 @@ if(CMAKE_NM AND NOT MSVC)
         COMMAND "${CMAKE_NM}" -C "$<TARGET_FILE:webobs-native-cluster-authorization>")
     add_test(NAME native-live-view-no-media-symbols
         COMMAND "${CMAKE_NM}" -C "$<TARGET_FILE:webobs-native-live-view-pipeline>")
+    add_test(NAME native-wall-apply-no-media-symbols
+        COMMAND "${CMAKE_NM}" -C "$<TARGET_FILE:webobs-native-wall-apply-authorization>")
     set_tests_properties(native-cluster-no-media-symbols PROPERTIES
         TIMEOUT 30
         FAIL_REGULAR_EXPRESSION "obs_startup|obs_shutdown|obs_scene_|obs_source_|obs_frontend_|gst_init|QApplication|QGuiApplication")
@@ -144,6 +170,9 @@ if(CMAKE_NM AND NOT MSVC)
         TIMEOUT 30
         FAIL_REGULAR_EXPRESSION "obs_startup|obs_shutdown|obs_scene_|obs_source_|obs_frontend_|gst_init|QApplication|QGuiApplication")
     set_tests_properties(native-live-view-no-media-symbols PROPERTIES
+        TIMEOUT 30
+        FAIL_REGULAR_EXPRESSION "obs_startup|obs_shutdown|obs_scene_|obs_source_|obs_frontend_|gst_init|QApplication|QGuiApplication")
+    set_tests_properties(native-wall-apply-no-media-symbols PROPERTIES
         TIMEOUT 30
         FAIL_REGULAR_EXPRESSION "obs_startup|obs_shutdown|obs_scene_|obs_source_|obs_frontend_|gst_init|QApplication|QGuiApplication")
 endif()
