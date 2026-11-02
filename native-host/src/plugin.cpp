@@ -1,4 +1,5 @@
 #include "config_backup.hpp"
+#include "native_ui_gate.hpp"
 #include "product_bootstrap.hpp"
 #include "ownership_store.hpp"
 #include "wall.hpp"
@@ -343,6 +344,19 @@ class WallDock final : public QWidget {
 
 	void create_wall()
 	{
+		// Fail closed: the dock mutation requires an operator authorization
+		// decision, and no control layer produces one for the plugin yet. The
+		// other entry points (refresh, projector, bootstrap) stay documented
+		// bypasses; see docs/native-control-auth.md.
+		const auto gate = webobs::native_host::evaluate_ui_action(
+			webobs::native_host::UiActionKind::dock_create_wall, webobs::native_host::UiAuthorizationState{});
+		if (gate != webobs::native_host::UiGateStatus::allowed) {
+			QMessageBox::warning(this, tr("WebOBS Native Prototype"),
+			                     tr("Creating a wall from the dock requires an operator authorization "
+			                        "decision, which is not connected to this prototype yet. The action "
+			                        "was refused."));
+			return;
+		}
 		std::array<std::string, 5> uuids;
 		for (std::size_t i = 0; i < slots_.size(); ++i)
 			uuids[i] = slots_[i]->currentData().toString().toStdString();

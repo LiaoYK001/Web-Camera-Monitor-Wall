@@ -737,6 +737,7 @@ class BuildContractTests(unittest.TestCase):
         header = (ROOT / "native-host/src/native_ui_gate.hpp").read_text(encoding="utf-8")
         plugin = (ROOT / "native-host/src/plugin.cpp").read_text(encoding="utf-8")
         cmake_text = (ROOT / "native-host/tests/control-auth/CMakeLists.txt").read_text(encoding="utf-8")
+        plugin_cmake = (ROOT / "native-host/CMakeLists.txt").read_text(encoding="utf-8")
 
         # The inventory labels are exactly the plugin's own strings/call sites.
         for marker in ("Refresh existing Media Sources", "Create a new five-tile scene",
@@ -745,9 +746,16 @@ class BuildContractTests(unittest.TestCase):
             self.assertIn(marker, gate)
         self.assertIn("OBS native source editing", gate)
 
-        # Wiring debt is explicit: the plugin does not consult the gate yet.
-        self.assertNotIn("evaluate_ui_action", plugin)
-        self.assertIn("NOT wired into the plugin yet", header)
+        # The dock mutation consults the gate fail-closed; the remaining entry
+        # points stay documented bypasses (no other action kind in the plugin).
+        self.assertIn("evaluate_ui_action", plugin)
+        self.assertIn("UiActionKind::dock_create_wall", plugin)
+        for other in ("dock_refresh_sources", "dock_open_program_projector",
+                      "auto_bootstrap_on_load", "obs_native_source_editing"):
+            self.assertNotIn(other, plugin)
+        self.assertIn("Only the dock create-wall mutation calls it today", header)
+        self.assertIn("native_ui_gate.cpp",
+                      next(line for line in plugin_cmake.splitlines() if "add_library(webobs-native-host" in line))
 
         # Pure policy module and standalone CTest wiring.
         self.assertNotIn("obs_frontend_", gate)

@@ -7,10 +7,10 @@ namespace webobs::native_host {
 // Inventory of the mutating/viewing entry points the native plugin exposes
 // today, plus the one UI surface it CANNOT gate. The gate itself is an
 // unexposed policy module: it answers "may this UI action proceed under the
-// current operator state?" and is NOT wired into the plugin yet, so the
-// current product still performs the actions below without asking it. Wiring
-// debt and the exact bypass surfaces are documented in
-// docs/native-control-auth.md.
+// current operator state?". Only the dock create-wall mutation calls it today
+// (fail closed: no control layer supplies an operator decision yet); the other
+// entry points below remain bypasses until their wiring lands. Wiring debt and
+// the exact bypass surfaces are documented in docs/native-control-auth.md.
 //
 // Anything a user can do through OBS itself (Add Source, Properties, scene
 // collection editing, hotkeys, scripts) bypasses the plugin entirely and is
