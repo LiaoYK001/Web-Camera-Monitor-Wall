@@ -76,6 +76,8 @@ PERMISSIONS = frozenset({
     "analytics.view", "analytics.run", "analytics.manage",
 })
 
+NATIVE_BATCH_ITEMS = 16
+
 ROLE_PERMISSIONS: dict[str, frozenset[str]] = {
     "admin": PERMISSIONS,
     "operator": frozenset({
@@ -646,6 +648,93 @@ class ClusterStore:
         # This is a decision-time snapshot, not an execution-time fence.
         return {"allowed": True, "userId": value["userId"], "authEpoch": value["authEpoch"],
                 "permission": value["permission"]}
+
+    def native_authorize_batch(self, value: Any) -> dict[str, Any]:
+        """Decide a whole native requirement batch against one identity snapshot.
+
+        Internal foundation only: no HTTP route is registered for this method
+        yet, so no caller can reach it from the network. Every request field,
+        bound and duplicate check completes before any database read. Identity,
+        roles and scopes are read inside the same BEGIN IMMEDIATE cluster
+        snapshot, and camera-bound items resolve their groups from one
+        dedicated read-only Registry snapshot. Those are two stable snapshots
+        without a common linearization point, and the result remains a
+        decision-time snapshot, not an execution-time fence.
+        """
+        fields = {"username", "userId", "authEpoch", "requirements"}
+        value = require_exact_object(value, fields, fields)
+        if not isinstance(value["username"], str) or not USERNAME.fullmatch(value["username"]) or \
+                not self._valid_native_guard(value["userId"]) or not self._valid_native_guard(value["authEpoch"]):
+            raise ApiError(400, "invalid_request", "native batch identity fields are invalid")
+        requirements = value["requirements"]
+        if not isinstance(requirements, list) or not 1 <= len(requirements) <= NATIVE_BATCH_ITEMS:
+            raise ApiError(400, "invalid_request", "native batch requirements are invalid")
+        pairs: list[tuple[str, str]] = []
+        for item in requirements:
+            if not isinstance(item, dict) or set(item) != {"permission", "cameraId"} or \
+                    not isinstance(item["permission"], str) or item["permission"] not in PERMISSIONS or \
+                    not isinstance(item["cameraId"], str) or \
+                    (item["cameraId"] and not IDENTIFIER.fullmatch(item["cameraId"])):
+                raise ApiError(400, "invalid_request", "native batch requirements are invalid")
+            pairs.append((item["permission"], item["cameraId"]))
+        if len(set(pairs)) != len(pairs):
+            raise ApiError(400, "invalid_request", "native batch requirements contain duplicates")
+        camera_ids = list(dict.fromkeys(camera_id for _, camera_id in pairs if camera_id))
+        rejection: ApiError | None = None
+        groups: dict[str, str] | None = None
+        with self._native_auth_transaction():
+            row = self.db.execute("SELECT id,username,enabled,auth_epoch FROM users WHERE id=?",
+                                  (value["userId"],)).fetchone()
+            if row is None or not row["enabled"] or row["username"] != value["username"] or \
+                    not self._valid_native_guard(row["auth_epoch"]) or row["auth_epoch"] != value["authEpoch"]:
+                self._audit("auth.batch-authorization", "anonymous", "requirements", "user-unknown")
+                rejection = ApiError(404, "user_not_found", "user is not managed by RBAC")
+            else:
+                # A batch containing camera-bound items must see authoritative
+                # Registry group metadata. Unlike _camera_group(), a missing,
+                # locked or malformed Registry fails the whole batch closed
+                # instead of degrading groups to "" and granting camera scopes.
+                if camera_ids:
+                    groups = {}
+                    if not self.camera_registry_path.is_absolute():
+                        rejection = ApiError(503, "native_registry_unavailable", "camera registry is unavailable")
+                    else:
+                        database: sqlite3.Connection | None = None
+                        try:
+                            database = sqlite3.connect(
+                                f"file:{self.camera_registry_path.as_posix()}?mode=ro", uri=True, timeout=1)
+                            rows = database.execute(
+                                "SELECT id,group_id FROM cameras WHERE id IN (" +
+                                ",".join("?" for _ in camera_ids) + ")", camera_ids).fetchall()
+                            resolved = {item[0]: item[1] for item in rows}
+                            if any(not isinstance(group, str) or not IDENTIFIER.fullmatch(group)
+                                   for group in resolved.values()) or \
+                                    any(camera_id not in resolved for camera_id in camera_ids):
+                                rejection = ApiError(503, "native_registry_unavailable",
+                                                     "camera registry is unavailable")
+                            else:
+                                groups = resolved
+                        except sqlite3.Error:
+                            rejection = ApiError(503, "native_registry_unavailable",
+                                                 "camera registry is unavailable")
+                        finally:
+                            if database is not None:
+                                database.close()
+                if rejection is None:
+                    principal = self.principal(row["id"])
+                    for permission, camera_id in pairs:
+                        if not principal.permits(permission, camera_id, groups.get(camera_id, "") if groups else ""):
+                            self._audit("auth.batch-authorization", principal.user_id, permission, "rejected")
+                            rejection = ApiError(403, "permission_rejected",
+                                                 "permission or resource scope was rejected")
+                            break
+        if rejection is not None:
+            raise rejection
+        # The whole batch shares one decision snapshot; any denial denies the
+        # entire batch. No partial executable subset is returned.
+        return {"allowed": True, "userId": value["userId"], "authEpoch": value["authEpoch"],
+                "requirements": [{"permission": permission, "cameraId": camera_id}
+                                 for permission, camera_id in pairs]}
 
     def authorize(self, username: str, permission: str, camera_id: str = "", group_id: str = "") -> dict[str, Any]:
         if permission not in PERMISSIONS:

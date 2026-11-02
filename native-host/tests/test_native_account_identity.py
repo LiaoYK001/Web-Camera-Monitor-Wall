@@ -83,6 +83,15 @@ class NativeAccountIdentityTests(unittest.TestCase):
         return {"username": identity["username"], "userId": identity["userId"],
                 "authEpoch": identity["authEpoch"], "permission": permission, "cameraId": camera}
 
+    @staticmethod
+    def batch(identity, requirements):
+        return {"username": identity["username"], "userId": identity["userId"],
+                "authEpoch": identity["authEpoch"], "requirements": requirements}
+
+    @staticmethod
+    def requirement(permission, camera=""):
+        return {"permission": permission, "cameraId": camera}
+
     def update(self, identity, patch):
         row = self.store.db.execute("SELECT revision FROM users WHERE id=?", (identity["userId"],)).fetchone()
         return self.store.update_user(identity["userId"], patch, row["revision"])
@@ -353,6 +362,144 @@ class NativeAccountIdentityTests(unittest.TestCase):
         status, result = self.request("/auth/native-authorize", self.authorization(identity))
         self.assertEqual(status, 503)
         self.assertEqual(result["error"]["code"], "native_auth_unavailable")
+
+    def test_batch_validation_completes_before_any_database_snapshot(self):
+        self.create()
+        identity = self.login()
+        valid = self.batch(identity, [self.requirement("live.view")])
+        invalid = [{key: item for key, item in valid.items() if key != missing} for missing in valid]
+        invalid += [{**valid, "unexpected": True}, {**valid, "username": None},
+                    {**valid, "userId": "f" * 31}, {**valid, "authEpoch": "F" * 32},
+                    {**valid, "requirements": None}]
+        for requirements in ([], [self.requirement("live.view")] * 17,
+                             [{"permission": "live.view"}],
+                             [{"permission": "live.view", "cameraId": "../bad"}],
+                             [{"permission": "unknown", "cameraId": ""}],
+                             [{"permission": "live.view", "cameraId": "", "extra": 1}],
+                             ["live.view"], [{"permission": 1, "cameraId": ""}],
+                             [{"permission": None, "cameraId": None}],
+                             [self.requirement("live.view"), self.requirement("live.view")]):
+            invalid.append({**valid, "requirements": requirements})
+        def unreachable_transaction():
+            raise AssertionError("batch touched a database snapshot before validation completed")
+        with mock.patch.object(self.store, "_native_auth_transaction", side_effect=unreachable_transaction):
+            for request in invalid:
+                self.assert_api_error(400, lambda request=request: self.store.native_authorize_batch(request),
+                                      "invalid_request")
+
+    def test_batch_denies_the_whole_request_when_a_late_item_denies(self):
+        self.create(scopes=[{"kind": "group", "id": "group-a"}])
+        identity = self.login()
+        result = self.store.native_authorize_batch(self.batch(identity, [
+            self.requirement("live.view"), self.requirement("live.view", "camera-a")]))
+        self.assertTrue(result["allowed"])
+        self.assertEqual(result["requirements"], [{"permission": "live.view", "cameraId": ""},
+                                                  {"permission": "live.view", "cameraId": "camera-a"}])
+        self.assertTrue(result["userId"] == identity["userId"] and result["authEpoch"] == identity["authEpoch"])
+        original_principal = self.store.principal
+        observed = []
+        def principal(user_id):
+            observed.append(user_id)
+            return original_principal(user_id)
+        with mock.patch.object(self.store, "principal", side_effect=principal):
+            self.assert_api_error(403, lambda: self.store.native_authorize_batch(self.batch(identity, [
+                self.requirement("live.view"), self.requirement("live.view", "camera-a"),
+                self.requirement("ptz.control", "camera-b")])),
+                                  "permission_rejected", "permission or resource scope was rejected")
+        self.assertEqual(len(observed), 1, "batch resolved more than one RBAC snapshot")
+        row = self.store.db.execute("SELECT event,result FROM rbac_audit ORDER BY id DESC LIMIT 1").fetchone()
+        self.assertEqual(tuple(row), ("auth.batch-authorization", "rejected"))
+
+    def test_batch_identity_stale_disabled_and_recreated_share_uniform_404(self):
+        self.create()
+        identity = self.login()
+        self.update(identity, {"password": PASSWORD})
+        self.assert_api_error(404, lambda: self.store.native_authorize_batch(
+            self.batch(identity, [self.requirement("live.view")])),
+            "user_not_found", "user is not managed by RBAC")
+        row = self.store.db.execute("SELECT event,result FROM rbac_audit ORDER BY id DESC LIMIT 1").fetchone()
+        self.assertEqual(tuple(row), ("auth.batch-authorization", "user-unknown"))
+        current = self.login()
+        self.assertTrue(self.store.native_authorize_batch(
+            self.batch(current, [self.requirement("live.view")]))["allowed"])
+        self.update(current, {"enabled": False})
+        self.assert_api_error(404, lambda: self.store.native_authorize_batch(
+            self.batch(current, [self.requirement("live.view")])),
+            "user_not_found", "user is not managed by RBAC")
+
+    def test_batch_camera_snapshot_is_whole_batch_fail_closed(self):
+        self.create(scopes=[{"kind": "camera", "id": "camera-a"}])
+        identity = self.login()
+        # The Registry row must exist; a missing camera never degrades to the
+        # coarse empty-group allow path used by _camera_group().
+        self.assert_api_error(503, lambda: self.store.native_authorize_batch(self.batch(identity, [
+            self.requirement("live.view"), self.requirement("live.view", "camera-missing")])),
+            "native_registry_unavailable", "camera registry is unavailable")
+        # Coarse-only batches never open the Registry, so a relative path cannot
+        # block scene decisions while camera decisions fail closed.
+        with mock.patch.object(self.store, "camera_registry_path", self.root / "relative-cameras.sqlite3"):
+            self.assertTrue(self.store.native_authorize_batch(
+                self.batch(identity, [self.requirement("live.view")]))["allowed"])
+            self.assert_api_error(503, lambda: self.store.native_authorize_batch(
+                self.batch(identity, [self.requirement("live.view", "camera-a")])),
+                "native_registry_unavailable", "camera registry is unavailable")
+        with mock.patch.object(self.store, "camera_registry_path", self.root / "deleted-cameras.sqlite3"):
+            self.assert_api_error(503, lambda: self.store.native_authorize_batch(
+                self.batch(identity, [self.requirement("live.view", "camera-a")])),
+                "native_registry_unavailable", "camera registry is unavailable")
+        connections = []
+        original_connect = cluster.sqlite3.connect
+        def connect(*args, **kwargs):
+            connections.append(args)
+            return original_connect(*args, **kwargs)
+        with mock.patch.object(cluster.sqlite3, "connect", side_effect=connect):
+            self.assertTrue(self.store.native_authorize_batch(self.batch(identity, [
+                self.requirement("live.view"), self.requirement("live.view", "camera-a")]))["allowed"])
+        self.assertEqual(len(connections), 1, "camera batch opened more than one Registry snapshot")
+
+    def test_batch_cluster_snapshot_precedes_reads_and_faults_are_503(self):
+        self.create()
+        identity = self.login()
+        original_principal = self.store.principal
+        observed = []
+        with contextlib.closing(sqlite3.connect(self.store.path, timeout=0)) as writer:
+            def assert_reserved():
+                self.assertTrue(self.store.db.in_transaction, "batch read was outside a SQLite transaction")
+                try:
+                    writer.execute("BEGIN IMMEDIATE")
+                except sqlite3.OperationalError as error:
+                    self.assertIn("locked", str(error))
+                    observed.append(True)
+                else:
+                    writer.rollback()
+                    self.fail("external writer entered a batch identity snapshot")
+
+            def principal(user_id):
+                assert_reserved()
+                return original_principal(user_id)
+
+            with mock.patch.object(self.store, "principal", side_effect=principal):
+                self.assertTrue(self.store.native_authorize_batch(
+                    self.batch(identity, [self.requirement("live.view")]))["allowed"])
+        self.assertEqual(len(observed), 1)
+        self.assertFalse(self.store.db.in_transaction)
+        self.store.close()
+        self.assert_api_error(503, lambda: self.store.native_authorize_batch(
+            self.batch(identity, [self.requirement("live.view")])),
+            "native_auth_unavailable", "native account authentication is unavailable")
+
+    def test_batch_route_is_not_exposed_and_legacy_routes_are_unchanged(self):
+        self.create()
+        identity = self.login()
+        request = self.batch(identity, [self.requirement("live.view")])
+        status, result = self.request("/auth/native-batch-authorize", request)
+        self.assertEqual(status, 404)
+        self.assertEqual(result["error"]["code"], "not_found")
+        status, result = self.request("/auth/native-batch-authorize", request, token=None)
+        self.assertEqual(status, 403)
+        self.assertEqual(result["error"]["code"], "internal_auth_rejected")
+        source = (ROOT / "cluster/cluster_service.py").read_text(encoding="utf-8")
+        self.assertNotIn("native_authorize_batch(self.read_json())", source)
 
 
 if __name__ == "__main__":
