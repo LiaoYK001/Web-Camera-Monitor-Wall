@@ -705,6 +705,33 @@ class BuildContractTests(unittest.TestCase):
         self.assertIn("rollback_incomplete", source)
         self.assertLess(source.index("operation_failed_rollback_incomplete"), source.index("restore_wall_apply_backup"))
 
+    def test_wall_apply_flow_orders_gates_and_executes_only_after_decision(self):
+        source = (ROOT / "native-host/src/wall_apply_flow.cpp").read_text(encoding="utf-8")
+        header = (ROOT / "native-host/src/wall_apply_flow.hpp").read_text(encoding="utf-8")
+        cmake_text = (ROOT / "native-host/tests/control-auth/CMakeLists.txt").read_text(encoding="utf-8")
+        plugin_cmake = (ROOT / "native-host/CMakeLists.txt").read_text(encoding="utf-8")
+        plugin = (ROOT / "native-host/src/plugin.cpp").read_text(encoding="utf-8")
+
+        # Standalone wiring only; the product plugin stays unwired.
+        self.assertIn("wall_apply_flow.cpp", cmake_text)
+        self.assertIn("webobs-wall-apply-flow-tests", cmake_text)
+        self.assertIn("native-wall-apply-flow", cmake_text)
+        self.assertNotIn("wall_apply_flow.cpp",
+                         next(line for line in plugin_cmake.splitlines() if "add_library(webobs-native-host" in line))
+        self.assertNotIn("execute_wall_apply_flow", plugin)
+
+        # Pure module: no OBS, files, sockets.
+        for forbidden in ("fstream", "filesystem", "ofstream", "ifstream", "obs_", "socket"):
+            self.assertNotIn(forbidden, source)
+        self.assertIn("NOT an execution fence", header)
+        self.assertIn("Two observations", header)
+
+        # Gate order and the second observation before any mutation.
+        self.assertLess(source.index("authorize_wall_apply_with_catalog("), source.index("provider()"))
+        self.assertLess(source.index("provider()"), source.index("execute_wall_apply_with_backup("))
+        self.assertIn("called by the authorization step and again", header)
+        self.assertGreaterEqual(source.count("provider()"), 1)
+
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)

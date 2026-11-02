@@ -141,3 +141,15 @@ Boundaries: capture and restore never authorize, never read OBS/files/network an
 ### Backup-aware execution composition (English)
 
 `native-host/src/wall_apply_backup_executor.{hpp,cpp}` (unwired, pure composition) captures each destroyed/replaced source's opaque settings through an injected reader before touching the target, then delegates to the existing executor for fresh-snapshot revalidation and execution. A failed capture → `backup_unavailable` with zero target calls; invalid plan → `invalid_plan`; stale plan → `stale_plan` (the capture already happened but nothing mutated); success → `applied`. A forward failure whose prefix was fully undone restores the captured material newest-first — `rolled_back` when all restores succeed, `rollback_settings_incomplete` otherwise — while an incomplete undo reports `rollback_incomplete` and deliberately performs no settings restore (target state unknown). Still an unexposed decision/execution boundary: not an authorization check, not an execution fence, no persistence/signing/encryption and no atomicity, durability or crash-recovery guarantee.
+
+## 端到端授权应用流 / End-to-end authorized-apply flow
+
+新增 `native-host/src/wall_apply_flow.{hpp,cpp}`（未接线，纯组合）：单一入口依次执行 `authorize_wall_apply_with_catalog`（绑定会话 → 目录锚点 → 批量授权 → 首个新鲜快照 → 计划），再对执行器做第二次独立新鲜快照观测并用 `execute_wall_apply_with_backup` 捕获与执行。任一前置拒绝（未认证/禁止/目录、账本或 graph 不符/预算或观测不可用/非法请求）都零 target 调用；`noop` 只观测一次、不执行、不捕获；计划在两次观测之间失效 → `stale_plan`；前向失败且前序完整撤销 → `rolled_back`（设置写回成功），否则 `rollback_settings_incomplete`；撤销不完整 → `rollback_incomplete` 且不写回。报告携带授权（后端调用数）与执行/恢复计数。
+
+边界：两次观测缩小但不消除 snapshot→execution 窗口；仍不是授权授予或执行栅栏，不能抢占同步回调，未接入 OBS；无原子性、持久性或崩溃恢复承诺；目录仍只是身份锚点，`replace`/`remove` 的重建由 target undo 负责。
+
+### End-to-end authorized-apply flow (English)
+
+`native-host/src/wall_apply_flow.{hpp,cpp}` (unwired composition) runs one chain: `authorize_wall_apply_with_catalog` (bound session → catalog anchor → whole-batch authorization → first fresh snapshot → plan), then a second independent observation for the executor's re-derivation and `execute_wall_apply_with_backup` capture/execution. Every refusal (unauthenticated, forbidden, catalog/ledger/graph mismatch, unavailable budget/observation, invalid request) ends with zero target calls; `noop` observes exactly once and neither executes nor captures; a plan that no longer reproduces → `stale_plan`; a forward failure with a fully undone prefix → `rolled_back` when material restores, else `rollback_settings_incomplete`; an incomplete undo → `rollback_incomplete` with no settings write-back. The report carries authorization (backend calls) and execution/restore counts.
+
+Boundaries: two observations narrow but do not close the snapshot-to-execution window; still not a grant or execution fence, synchronous callbacks cannot be preempted, and OBS is not wired; no atomicity, durability or crash-recovery guarantee; the catalog remains an identity anchor, and the target's undo recreates destroyed objects.
