@@ -435,5 +435,23 @@ class BuildContractTests(unittest.TestCase):
         self.assertNotIn("cameraIds", batch)
 
 
+    def test_source_ownership_ledger_is_unexposed_and_io_free(self):
+        cmake = (ROOT / "native-host/CMakeLists.txt").read_text(encoding="utf-8")
+        plugin_sources = cmake.split("add_library(webobs-native-host MODULE ")[1].split(")")[0]
+        ownership_header = (ROOT / "native-host/src/source_ownership.hpp").read_text(encoding="utf-8")
+        ownership_source = (ROOT / "native-host/src/source_ownership.cpp").read_text(encoding="utf-8")
+        # The plugin module never links the ledger; only the dedicated test
+        # target compiles it, so no product path can consult provenance yet.
+        self.assertNotIn("source_ownership.cpp", plugin_sources)
+        self.assertIn("add_executable(native-source-ownership-test tests/source_ownership_test.cpp src/source_ownership.cpp)", cmake)
+        self.assertIn("native-source-ownership-api-contract", cmake)
+        # Persistence stays with the caller: the module itself performs no file,
+        # network or OBS API work, so no claim of durable write semantics here.
+        for forbidden in ("#include <fstream>", "#include <filesystem>", "std::ofstream", "std::ifstream",
+                          "obs_", "socket"):
+            self.assertNotIn(forbidden, ownership_source)
+        self.assertIn("not an\n// authorization grant", ownership_header)
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)
