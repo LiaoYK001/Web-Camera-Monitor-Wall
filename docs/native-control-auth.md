@@ -121,3 +121,15 @@ The boundaries stay unchanged: re-derivation only narrows the observation-to-exe
 The executor's reversibility gap is closed by `native-host/src/wall_apply_backup.cpp`: before any replace/remove, an injected reader captures the **bounded opaque settings** of the source being destroyed (≤64 KiB per source, ≤512 KiB total). A missing blob, a thrown exception or an oversize blob makes the whole capture `unavailable` with no partial material, so the executor must not start. Capture follows plan order and each old UUID may appear only once. After a failure an injected writer replays the material newest-first, attempts every entry and reports honest `restored/failed/complete` counts.
 
 Boundaries: capture and restore never authorize, never read OBS/files/network and are not an execution fence; the material is best-effort recovery evidence with no durability, atomicity or crash-recovery promise, and the product plugin must not link or call the module (locked by the build contract).
+
+## 目录绑定 / Catalog-bound identity anchor
+
+新增 `native-host/src/camera_catalog_binding.{hpp,cpp}`（未接线、纯函数）：把账本声明与调用方注入的权威相机目录观测（`CameraCatalogEntry{camera_id, enabled}`）逐项比对。规则：目录最多 256 项、ID 必须符合集群标识语法且不得重复；账本必须通过 `ownership_ledger_consistent`；按账本顺序，首个未知相机返回 `unknown_camera`，首个禁用相机返回 `disabled_camera`，形状错误返回 `invalid_catalog`。空账本视为 `bound`（wall 形状由其他关卡负责）。该函数只证明“这些声明身份在注入观测中存在且启用”，是身份锚点，不是授权、不是 revision/epoch 绑定，也不读取数据库、HTTP、OBS 或文件。
+
+`authorize_wall_apply_with_catalog` 在会话校验和后端调用之前执行上述分类：`unknown_camera` → `graph_unbound`、`disabled_camera` → `forbidden`、`invalid_catalog` → `invalid_request`，均不触发任何后端调用或 graph 观测；`bound` 时委托未改变的 `authorize_wall_apply` 管线（同一批量授权、账本、规划、预算与新鲜快照复验）。仍属决策时检查，不是执行栅栏；catalog 适配器必须提供新鲜观测，插件未接线（契约锁定）。
+
+### Catalog-bound identity anchor (English)
+
+`camera_catalog_binding` compares every ledger claim with an injected authoritative catalog observation (id + enabled): ≤256 unique valid IDs, consistent ledger; the first unknown camera yields `unknown_camera`, the first disabled camera `disabled_camera`, malformed input `invalid_catalog`, and an empty ledger is vacuously `bound`. It proves only existence/enabled state in that observation — an identity anchor, not a grant or revision binding; it performs no I/O.
+
+`authorize_wall_apply_with_catalog` runs this classification before any session/backend work: unknown → `graph_unbound`, disabled → `forbidden`, invalid → `invalid_request`, all with zero backend calls and zero graph observation; `bound` delegates to the unchanged `authorize_wall_apply` pipeline. It remains a decision-time check, not an execution fence; the adapter must supply a fresh observation, and the plugin stays unwired (locked by the thirty-third build contract).

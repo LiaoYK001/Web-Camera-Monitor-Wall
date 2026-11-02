@@ -643,6 +643,40 @@ class BuildContractTests(unittest.TestCase):
         self.assertIn("entries.rbegin()", source)
         self.assertIn("complete", source)
 
+    def test_camera_catalog_binding_is_unwired_and_fails_closed(self):
+        module = ROOT / "native-host/src/camera_catalog_binding.cpp"
+        header = ROOT / "native-host/src/camera_catalog_binding.hpp"
+        plugin = ROOT / "native-host/src/plugin.cpp"
+        cmake = ROOT / "native-host/tests/control-auth/CMakeLists.txt"
+        source = module.read_text(encoding="utf-8")
+        header_text = header.read_text(encoding="utf-8")
+
+        # The catalog check belongs to the unexposed decision layer only.
+        plugin_cmake = (ROOT / "native-host/CMakeLists.txt").read_text(encoding="utf-8")
+        add_library = next(line for line in plugin_cmake.splitlines()
+                           if "add_library(webobs-native-host" in line)
+        self.assertNotIn("camera_catalog_binding.cpp", add_library)
+        self.assertNotIn("classify_camera_catalog", plugin.read_text(encoding="utf-8"))
+        self.assertNotIn("authorize_wall_apply_with_catalog", plugin.read_text(encoding="utf-8"))
+
+        # Wired into the standalone decision-authorization library and its CTest.
+        cmake_text = cmake.read_text(encoding="utf-8")
+        self.assertIn("camera_catalog_binding.cpp", cmake_text)
+        self.assertIn("webobs-camera-catalog-binding-tests", cmake_text)
+        self.assertIn("native-camera-catalog-binding", cmake_text)
+
+        # Pure module: no OBS, files, sockets or cached grant containers.
+        for forbidden in ("fstream", "filesystem", "ofstream", "ifstream", "obs_", "socket"):
+            self.assertNotIn(forbidden, source)
+
+        # Contract anchors: identity-only claim, not a grant; classifier runs
+        # before the delegated decision.
+        self.assertIn("not an authorization grant", header_text)
+        self.assertIn("injected observation", header_text)
+        self.assertLess(source.index("classify_camera_catalog(ledger, catalog)"),
+                        source.index("authorize_wall_apply(sessions"))
+
+
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)

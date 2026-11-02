@@ -1,5 +1,6 @@
 #pragma once
 
+#include "camera_catalog_binding.hpp"
 #include "source_ownership.hpp"
 #include "wall_apply_plan.hpp"
 #include "wall_snapshot.hpp"
@@ -66,6 +67,19 @@ struct WallApplyAuthorization {
 	const std::function<std::optional<WallSnapshot>()> &provider,
 	const NativeAuthorizationBackend &backend,
 	std::chrono::milliseconds total_budget,
+	NativeOperationClock now = [] { return std::chrono::steady_clock::now(); }) noexcept;
+
+// Catalog-bound variant: before any session/backend work, every ledger claim
+// must map to an enabled camera in the injected authoritative catalog
+// observation (`invalid_catalog`/`unknown_camera`/`disabled_camera` fail closed
+// with zero backend calls and zero graph observation). A `bound` catalog then
+// delegates to exactly the same pipeline above; the catalog is an identity
+// anchor, not a permission and not a revision binding.
+[[nodiscard]] WallApplyAuthorization authorize_wall_apply_with_catalog(
+	const std::vector<CameraCatalogEntry> &catalog, SessionStore &sessions, std::string_view session_token,
+	std::string_view wall_resource_id, const std::vector<OwnershipEntry> &ledger,
+	const std::vector<WallApplyEntry> &desired, const std::function<std::optional<WallSnapshot>()> &provider,
+	const NativeAuthorizationBackend &backend, std::chrono::milliseconds total_budget,
 	NativeOperationClock now = [] { return std::chrono::steady_clock::now(); }) noexcept;
 
 } // namespace webobs::native_host

@@ -393,6 +393,67 @@ void test_budget_and_graph_unbound()
 	require(unbound.plan.operations.empty() && unbound.plan.rollback.empty(), "unbound carries no partial plan");
 }
 
+std::vector<webobs::native_host::CameraCatalogEntry> five_catalog()
+{
+	std::vector<webobs::native_host::CameraCatalogEntry> catalog;
+	for (int index = 0; index < 5; ++index)
+		catalog.push_back({"cam-" + std::to_string(index), true});
+	return catalog;
+}
+
+webobs::native_host::WallApplyAuthorization run_with_catalog(
+	TempStore &store, const std::vector<webobs::native_host::CameraCatalogEntry> &catalog, const std::string &token,
+	const std::vector<webobs::native_host::OwnershipEntry> &ledger,
+	const std::vector<webobs::native_host::WallApplyEntry> &desired,
+	const std::function<std::optional<webobs::native_host::WallSnapshot>()> &provider,
+	const webobs::NativeAuthorizationBackend &backend, std::chrono::milliseconds budget,
+	webobs::NativeOperationClock clock = webobs::NativeOperationClock{})
+{
+	if (clock) {
+		return webobs::native_host::authorize_wall_apply_with_catalog(
+			catalog, store.store(), token, "wall-a", ledger, desired, provider, backend, budget, std::move(clock));
+	}
+	return webobs::native_host::authorize_wall_apply_with_catalog(catalog, store.store(), token, "wall-a", ledger,
+								      desired, provider, backend, budget);
+}
+
+void test_catalog_binding_gates_before_backend()
+{
+	TempStore store;
+	BackendTrace trace;
+	ProviderTrace provider_trace;
+	const std::string token = bound_token(store);
+	const auto backend = recording_backend(trace);
+	const auto provider = recording_provider(provider_trace);
+
+	// Ledger claims cam-3, catalog does not know it: fail closed before any backend call.
+	auto missing = five_catalog();
+	missing.erase(missing.begin() + 3);
+	const auto unknown = run_with_catalog(store, missing, token, five_ledger(), same_as_ledger(), provider, backend,
+		std::chrono::milliseconds(5000));
+	require(unknown.status == webobs::native_host::WallApplyAuthorizationStatus::graph_unbound,
+		"catalog-unknown ledger claim must be graph_unbound");
+	require(trace.calls == 0 && provider_trace.calls == 0,
+		"catalog mismatch must not reach backend or observation");
+
+	// Disabled catalog camera: authorization refuses without backend work.
+	auto disabled = five_catalog();
+	disabled[3].enabled = false;
+	const auto refused = run_with_catalog(store, disabled, token, five_ledger(), same_as_ledger(), provider, backend,
+		std::chrono::milliseconds(5000));
+	require(refused.status == webobs::native_host::WallApplyAuthorizationStatus::forbidden,
+		"disabled catalog camera must be forbidden");
+	require(trace.calls == 0 && provider_trace.calls == 0, "disabled camera must not reach backend or observation");
+
+	// Fully bound catalog delegates to the unchanged pipeline.
+	const auto bound = run_with_catalog(store, five_catalog(), token, five_ledger(), same_as_ledger(), provider,
+		backend, std::chrono::milliseconds(5000));
+	require(bound.status == webobs::native_host::WallApplyAuthorizationStatus::noop,
+		"bound catalog with identical desired must be noop");
+	require(bound.backend_calls == 6 && provider_trace.calls == 1,
+		"bound catalog uses the single whole-batch backend pass and one observation");
+}
+
 } // namespace
 
 int main()
@@ -404,6 +465,7 @@ int main()
 	test_provider_states();
 	test_fail_closed_inputs_before_backend();
 	test_budget_and_graph_unbound();
+	test_catalog_binding_gates_before_backend();
 	std::fprintf(stderr, "wall apply authorization tests passed\n");
 	return 0;
 }
