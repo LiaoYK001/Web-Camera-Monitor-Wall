@@ -87,6 +87,29 @@ else()
     target_compile_options(webobs-native-operation-auth-tests PRIVATE -Wall -Wextra -Wpedantic)
 endif()
 
+# Live-view pipeline links the core auth boundary with the pure native-host
+# pairing modules; the native-host sources stay OBS-, Qt- and I/O-free.
+add_library(webobs-native-live-view-pipeline STATIC
+    "${WEBOBS_ROOT}/native-host/src/live_view_pipeline.cpp"
+    "${WEBOBS_ROOT}/native-host/src/wall_live_decision.cpp"
+    "${WEBOBS_ROOT}/native-host/src/source_ownership.cpp")
+target_include_directories(webobs-native-live-view-pipeline PUBLIC
+    "${WEBOBS_ROOT}/core/include" "${WEBOBS_ROOT}/native-host/src")
+target_link_libraries(webobs-native-live-view-pipeline PUBLIC webobs-native-control-auth)
+if(MSVC)
+    target_compile_options(webobs-native-live-view-pipeline PRIVATE /W4 /permissive- /utf-8)
+else()
+    target_compile_options(webobs-native-live-view-pipeline PRIVATE -Wall -Wextra -Wpedantic)
+endif()
+
+add_executable(webobs-live-view-pipeline-tests "${WEBOBS_ROOT}/native-host/tests/live_view_pipeline_test.cpp")
+target_link_libraries(webobs-live-view-pipeline-tests PRIVATE webobs-native-live-view-pipeline)
+if(MSVC)
+    target_compile_options(webobs-live-view-pipeline-tests PRIVATE /W4 /permissive- /utf-8)
+else()
+    target_compile_options(webobs-live-view-pipeline-tests PRIVATE -Wall -Wextra -Wpedantic)
+endif()
+
 enable_testing()
 add_test(NAME session-identity COMMAND webobs-session-identity-tests)
 set_tests_properties(session-identity PROPERTIES TIMEOUT 30)
@@ -101,6 +124,8 @@ add_test(NAME native-control-auth COMMAND webobs-native-control-auth-tests)
 set_tests_properties(native-control-auth PROPERTIES TIMEOUT 30)
 add_test(NAME native-operation-auth COMMAND webobs-native-operation-auth-tests)
 set_tests_properties(native-operation-auth PROPERTIES TIMEOUT 30)
+add_test(NAME native-live-view-pipeline COMMAND webobs-live-view-pipeline-tests)
+set_tests_properties(native-live-view-pipeline PROPERTIES TIMEOUT 30)
 
 # GNU/LLVM nm evidence: reject renderer/media entry points in the entire archive,
 # including defined and undefined symbols. MSVC builds retain the compile/link
@@ -110,10 +135,15 @@ if(CMAKE_NM AND NOT MSVC)
         COMMAND "${CMAKE_NM}" -C "$<TARGET_FILE:webobs-native-control-auth>")
     add_test(NAME native-cluster-no-media-symbols
         COMMAND "${CMAKE_NM}" -C "$<TARGET_FILE:webobs-native-cluster-authorization>")
+    add_test(NAME native-live-view-no-media-symbols
+        COMMAND "${CMAKE_NM}" -C "$<TARGET_FILE:webobs-native-live-view-pipeline>")
     set_tests_properties(native-cluster-no-media-symbols PROPERTIES
         TIMEOUT 30
         FAIL_REGULAR_EXPRESSION "obs_startup|obs_shutdown|obs_scene_|obs_source_|obs_frontend_|gst_init|QApplication|QGuiApplication")
     set_tests_properties(native-control-no-media-symbols PROPERTIES
+        TIMEOUT 30
+        FAIL_REGULAR_EXPRESSION "obs_startup|obs_shutdown|obs_scene_|obs_source_|obs_frontend_|gst_init|QApplication|QGuiApplication")
+    set_tests_properties(native-live-view-no-media-symbols PROPERTIES
         TIMEOUT 30
         FAIL_REGULAR_EXPRESSION "obs_startup|obs_shutdown|obs_scene_|obs_source_|obs_frontend_|gst_init|QApplication|QGuiApplication")
 endif()

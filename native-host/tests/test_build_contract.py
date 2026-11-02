@@ -499,6 +499,33 @@ class BuildContractTests(unittest.TestCase):
         self.assertIn("decision-time snapshot", header)
         self.assertIn("NOT an authorization grant", header)
 
+    def test_live_view_pipeline_is_unwired_and_fresh_decisions(self):
+        control_cmake = (ROOT / "native-host/tests/control-auth/CMakeLists.txt").read_text(encoding="utf-8")
+        cmake = (ROOT / "native-host/CMakeLists.txt").read_text(encoding="utf-8")
+        header = (ROOT / "native-host/src/live_view_pipeline.hpp").read_text(encoding="utf-8")
+        source = (ROOT / "native-host/src/live_view_pipeline.cpp").read_text(encoding="utf-8")
+        plugin = (ROOT / "native-host/src/plugin.cpp").read_text(encoding="utf-8")
+        # Unexposed: neither native build links the pipeline into the product plugin.
+        plugin_line = cmake.split("add_library(webobs-native-host MODULE", 1)[1].splitlines()[0]
+        self.assertNotIn("live_view_pipeline.cpp", plugin_line)
+        self.assertNotIn("authorize_live_view", plugin)
+        # Verified only inside the renderer-free standalone boundary.
+        self.assertIn("webobs-native-live-view-pipeline", control_cmake)
+        self.assertIn("webobs-live-view-pipeline-tests", control_cmake)
+        self.assertIn("add_test(NAME native-live-view-pipeline", control_cmake)
+        self.assertIn("native-live-view-no-media-symbols", control_cmake)
+        self.assertIn("webobs-native-control-auth", control_cmake)
+        # No cached grants and no I/O inside the module. Static shape is not a
+        # complete proof; runtime semantics belong to the pipeline CTest itself.
+        for forbidden in ("fstream", "filesystem", "ofstream", "ifstream", "obs_", "socket",
+                          "std::map", "std::unordered_map"):
+            self.assertNotIn(forbidden, source)
+        self.assertIn("decision-time pipeline", header)
+        self.assertIn("NOT an execution fence", header)
+        # Session binding must precede observation and authorization (order lock).
+        self.assertLess(source.index("validate_and_slide"), source.index("provider()"))
+        self.assertLess(source.index("provider()"), source.index("decide_wall_live_view"))
+
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)
