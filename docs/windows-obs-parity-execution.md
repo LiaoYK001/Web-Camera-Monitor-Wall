@@ -807,3 +807,15 @@ Local receipt: standalone CTest 16/16 (new native-wall-apply-flow, 9 families co
 实际运行 41484627808（source 2602a46，web-runtime-ci `windows_desktop=false`）：Ubuntu native-control-contracts job 125411571428 CTest 16/16（native-wall-apply-flow Passed 0.05s、native-wall-apply-backup-executor 0.00s、native-camera-catalog-binding 0.00s，importer Ran 14 OK）；Windows windows-native-control-contracts job 125411571966 CTest 12/12（flow 0.43s、authorization 0.31s、live-view-pipeline 1.84s，importer Ran 14）。graph 双平台 job 125411571903 / 125411572052 成功；loader 125411571845、offline staging 125411571783 / 125411571883 成功；windows-desktop-candidate 125411574244 跳过。整体 workflow 仍仅失败于既有依赖审计：windows-update-contracts job 125411571908（minimatch GHSA-g3hv-75wg-m249）与 public-audit job 125411571642（privacy 889 indexed paths 先通过，随后 minimatch 同告警 + glob GHSA-3g3m-2fjr-6pw4），无忽略或阈值放宽；无发布、默认未切换、无目标硬件结论。
 
 Actual run 41484627808 (source 2602a46, web-runtime-ci `windows_desktop=false`): Ubuntu native-control-contracts job 125411571428 CTest 16/16 (native-wall-apply-flow Passed 0.05s, native-wall-apply-backup-executor 0.00s, native-camera-catalog-binding 0.00s, importer Ran 14 OK); Windows windows-native-control-contracts job 125411571966 CTest 12/12 (flow 0.43s, authorization 0.31s, live-view-pipeline 1.84s, importer Ran 14). Graph jobs 125411571903 / 125411572052 passed; loader 125411571845 and offline staging 125411571783 / 125411571883 passed; windows-desktop-candidate 125411574244 skipped. The workflow still fails only on the unchanged dependency audits: windows-update-contracts job 125411571908 (minimatch GHSA-g3hv-75wg-m249) and public-audit job 125411571642 (privacy audit passed 889 indexed paths first, then the same minimatch advisory plus glob GHSA-3g3m-2fjr-6pw4), with no ignores or threshold weakening; nothing was published, the default is unchanged, and no target-hardware claims are made.
+
+### UI 旁路清单与门控 / UI bypass inventory and gate
+
+登记插件入口的封闭清单并实现 fail-closed 矩阵：OBS 原生编辑恒拒绝、其余动作需绑定会话、建墙另需决策+计划+备份捕获；插件尚未调用该门（契约锁定），引导与 OBS 原生编辑作为已记录旁路留待后续接线/策略处理。
+
+本机回执：standalone CTest 17/17（新增 native-ui-gate，6 组矩阵用例）、build contracts 36/36、graph 7/7、root 5/5、identity 19/19、cluster 42/42、迁移套件通过、diffcheck 干净。平台回执待实际 CI 日志后补记。
+
+### UI bypass inventory and gate (English)
+
+A closed inventory of plugin entry points with a fail-closed matrix: OBS-native editing is always refused, every action needs a bound session, and create-wall additionally needs decision+plan+captured backup; the plugin does not call the gate yet (contract-locked), leaving the bootstrap path and OBS-native editing as recorded bypass surfaces for later wiring/policy work.
+
+Local receipt: standalone CTest 17/17 (new native-ui-gate, 6 matrix families), build contracts 36/36, graph 7/7, root 5/5, identity 19/19, cluster 42/42, migration suites green, diffcheck clean. The platform receipt will be appended after the actual CI logs.

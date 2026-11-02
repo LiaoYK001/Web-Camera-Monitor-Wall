@@ -732,6 +732,31 @@ class BuildContractTests(unittest.TestCase):
         self.assertIn("called by the authorization step and again", header)
         self.assertGreaterEqual(source.count("provider()"), 1)
 
+    def test_native_ui_gate_inventory_matches_plugin_entry_points(self):
+        gate = (ROOT / "native-host/src/native_ui_gate.cpp").read_text(encoding="utf-8")
+        header = (ROOT / "native-host/src/native_ui_gate.hpp").read_text(encoding="utf-8")
+        plugin = (ROOT / "native-host/src/plugin.cpp").read_text(encoding="utf-8")
+        cmake_text = (ROOT / "native-host/tests/control-auth/CMakeLists.txt").read_text(encoding="utf-8")
+
+        # The inventory labels are exactly the plugin's own strings/call sites.
+        for marker in ("Refresh existing Media Sources", "Create a new five-tile scene",
+                       "Open native Program projector", "bootstrap_product_configuration"):
+            self.assertIn(marker, plugin)
+            self.assertIn(marker, gate)
+        self.assertIn("OBS native source editing", gate)
+
+        # Wiring debt is explicit: the plugin does not consult the gate yet.
+        self.assertNotIn("evaluate_ui_action", plugin)
+        self.assertIn("NOT wired into the plugin yet", header)
+
+        # Pure policy module and standalone CTest wiring.
+        self.assertNotIn("obs_frontend_", gate)
+        self.assertNotIn("obs_source_", gate)
+        self.assertNotIn("#include <Q", gate)
+        self.assertIn("native_ui_gate.cpp", cmake_text)
+        self.assertIn("webobs-native-ui-gate-tests", cmake_text)
+        self.assertIn("native-ui-gate", cmake_text)
+
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)

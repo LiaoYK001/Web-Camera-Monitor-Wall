@@ -153,3 +153,15 @@ Boundaries: capture and restore never authorize, never read OBS/files/network an
 `native-host/src/wall_apply_flow.{hpp,cpp}` (unwired composition) runs one chain: `authorize_wall_apply_with_catalog` (bound session → catalog anchor → whole-batch authorization → first fresh snapshot → plan), then a second independent observation for the executor's re-derivation and `execute_wall_apply_with_backup` capture/execution. Every refusal (unauthenticated, forbidden, catalog/ledger/graph mismatch, unavailable budget/observation, invalid request) ends with zero target calls; `noop` observes exactly once and neither executes nor captures; a plan that no longer reproduces → `stale_plan`; a forward failure with a fully undone prefix → `rolled_back` when material restores, else `rollback_settings_incomplete`; an incomplete undo → `rollback_incomplete` with no settings write-back. The report carries authorization (backend calls) and execution/restore counts.
 
 Boundaries: two observations narrow but do not close the snapshot-to-execution window; still not a grant or execution fence, synchronous callbacks cannot be preempted, and OBS is not wired; no atomicity, durability or crash-recovery guarantee; the catalog remains an identity anchor, and the target's undo recreates destroyed objects.
+
+## UI 旁路清单与门控矩阵 / UI bypass inventory and gate matrix
+
+新增 `native-host/src/native_ui_gate.{hpp,cpp}`（未接线、纯策略）：把插件当前暴露的入口登记为封闭清单——dock 刷新源（只读）、dock 建墙（变更）、dock 打开 Program 投影（只读视图）、FINISHED_LOADING 的产品引导（变更，且发生在任何会话之前），以及**无法由插件门控**的 `obs_native_source_editing`（OBS 自身 Add Source/属性/场景集合编辑/热键/脚本）。
+
+矩阵：`obs_native_source_editing` 恒为 `refused_outside_plugin`；其余动作没有绑定操作员会话即 `refused_no_session`；建墙还需新鲜决策与计划（否则 `refused_no_decision`）以及已捕获的备份材料（否则 `refused_no_backup`）；刷新与投影在会话存在时允许。未知动作一律 fail closed。插件**尚未**调用该门（契约锁定 `evaluate_ui_action` 未出现在 plugin.cpp），因此当前产品仍会不经门控执行上述动作；引导路径与 OBS 原生编辑是两条已记录的旁路，前者需迁移到受控引导，后者只能靠场景集合/权限策略约束。
+
+### UI bypass inventory and gate matrix (English)
+
+`native-host/src/native_ui_gate.{hpp,cpp}` (unwired policy) registers the plugin's current entry points as a closed inventory: dock refresh (read-only), dock create-wall (mutation), dock open Program projector (read-only view), the FINISHED_LOADING product bootstrap (mutation, before any session), and the explicitly ungateable `obs_native_source_editing` (OBS's own Add Source/properties/scene-collection edits/hotkeys/scripts).
+
+Matrix: the OBS-native surface is always `refused_outside_plugin`; every other action needs a bound operator session; create-wall additionally needs a fresh decision and plan (`refused_no_decision`) and captured backup material (`refused_no_backup`); refresh and projector are allowed with a session. Unknown kinds fail closed. The plugin does **not** call the gate yet (a contract locks `evaluate_ui_action` out of plugin.cpp), so the current product still performs these actions ungated: the bootstrap path and OBS-native editing are two recorded bypass surfaces — the former must migrate to a supervised bootstrap, the latter can only be constrained by scene-collection/permission policy.
