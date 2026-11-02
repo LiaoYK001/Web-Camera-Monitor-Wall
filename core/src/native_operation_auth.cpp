@@ -71,7 +71,11 @@ NativeOperationAuthorization authorize_operation(
 {
     NativeOperationAuthorization result;
 
+    // Keep duration comparisons representable in the steady clock's tick unit.
+    const auto max_budget = std::chrono::duration_cast<std::chrono::milliseconds>(
+        std::chrono::steady_clock::duration::max());
     if (!valid_identity(identity) || total_budget <= std::chrono::milliseconds::zero() ||
+        total_budget > max_budget ||
         !valid_requirements(requirements) || !backend || principal.empty()) {
         result.status = NativeOperationStatus::invalid_request;
         return result;
@@ -88,6 +92,12 @@ NativeOperationAuthorization authorize_operation(
         return result;
     }
 
+    auto last_observation = start;
+    const auto elapsed_unrepresentable = [&](std::chrono::steady_clock::time_point current) {
+        const auto origin = start.time_since_epoch();
+        return origin < std::chrono::steady_clock::duration::zero() &&
+            current.time_since_epoch() > std::chrono::steady_clock::duration::max() + origin;
+    };
     for (const auto &item : requirements) {
         std::chrono::steady_clock::time_point current;
         try {
@@ -98,10 +108,11 @@ NativeOperationAuthorization authorize_operation(
         }
         // Remaining budget <= 0 is fail-closed, so a clock exactly at the
         // budget stops before spending another backend call.
-        if (current - start >= total_budget) {
+        if (current < last_observation || elapsed_unrepresentable(current) || current - start >= total_budget) {
             result.status = NativeOperationStatus::unavailable;
             return result;
         }
+        last_observation = current;
 
         NativeAuthorizationDecision decision = NativeAuthorizationDecision::unavailable;
         try {
@@ -111,6 +122,21 @@ NativeOperationAuthorization authorize_operation(
             result.status = NativeOperationStatus::unavailable;
             return result;
         }
+
+        // A callback cannot be cancelled by this synchronous interface. Reject
+        // any late reply, including the final one, before accepting its grant.
+        // Deadline/clock failure takes precedence over every backend outcome.
+        try {
+            current = now();
+        } catch (...) {
+            result.status = NativeOperationStatus::unavailable;
+            return result;
+        }
+        if (current < last_observation || elapsed_unrepresentable(current) || current - start >= total_budget) {
+            result.status = NativeOperationStatus::unavailable;
+            return result;
+        }
+        last_observation = current;
 
         switch (decision) {
         case NativeAuthorizationDecision::allowed:

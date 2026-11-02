@@ -171,12 +171,16 @@ void test_invalid_inputs_call_no_backend()
                 .status == NativeOperationStatus::invalid_request,
         "duplicate pair must be invalid_request");
 
-    const std::vector<NativeOperationRequirement> many = [] {
-        std::vector<NativeOperationRequirement> items;
+    // Views must not refer to temporary strings, even in a rejected fixture.
+    const std::vector<std::string> resources = [] {
+        std::vector<std::string> items;
         for (int i = 0; i < 17; ++i)
-            items.push_back({"live.view", "camera-" + std::to_string(i)});
+            items.push_back("camera-" + std::to_string(i));
         return items;
     }();
+    std::vector<NativeOperationRequirement> many;
+    for (const auto &resource : resources)
+        many.push_back({"live.view", resource});
     require(authorize_operation("operator-one", valid_identity(), many, backend_fn,
         std::chrono::milliseconds(1000), clock)
                 .status == NativeOperationStatus::invalid_request,
@@ -197,6 +201,9 @@ void test_invalid_inputs_call_no_backend()
                 .status == NativeOperationStatus::invalid_request,
         "control character permission must be invalid_request");
 
+    require(authorize_operation("operator-one", valid_identity(), ok, backend_fn,
+        std::chrono::milliseconds::max(), clock).status == NativeOperationStatus::invalid_request,
+        "unrepresentable steady-clock budget must be invalid_request");
     require(backend.calls.empty(), "invalid inputs must produce zero backend calls");
 }
 
@@ -226,6 +233,107 @@ void test_budget_boundary_and_exhaustion()
         std::chrono::milliseconds(5000), std::ref(clock2));
     require(result.status == NativeOperationStatus::unavailable, "budget exhaustion must be unavailable");
     require(backend2.calls.size() == 2, "third requirement must be skipped once budget is spent");
+}
+
+void test_final_reply_must_arrive_before_budget()
+{
+    const std::vector<NativeOperationRequirement> one = {{"live.view", "camera-1"}};
+    for (const auto elapsed : {4999, 5000, 5001}) {
+        FakeClock clock;
+        std::size_t calls = 0;
+        NativeAuthorizationBackend backend = [&](std::string_view, const SessionIdentity &,
+                                                 std::string_view, std::string_view) {
+            ++calls;
+            clock.advance(std::chrono::milliseconds(elapsed));
+            return NativeAuthorizationDecision::allowed;
+        };
+        const auto result = authorize_operation("operator-one", valid_identity(), one, backend,
+            std::chrono::milliseconds(5000), std::ref(clock));
+        require(calls == 1, "final reply test must call backend exactly once");
+        require(result.allowed() == (elapsed < 5000), "late final allow must never authorize");
+        require(result.evaluated == (elapsed < 5000 ? 1u : 0u), "late reply is not a timely allowed prefix");
+        if (elapsed >= 5000)
+            require(result.status == NativeOperationStatus::unavailable, "deadline equality fails closed");
+    }
+}
+
+void test_reply_clock_failure_and_regression_fail_closed()
+{
+    const std::vector<NativeOperationRequirement> one = {{"live.view", "camera-1"}};
+    for (const bool throws : {false, true}) {
+        FakeClock clock;
+        NativeAuthorizationBackend backend = [&](std::string_view, const SessionIdentity &,
+                                                 std::string_view, std::string_view) {
+            if (throws)
+                clock.throw_on_call = true;
+            else
+                clock.advance(std::chrono::milliseconds(-1));
+            return NativeAuthorizationDecision::allowed;
+        };
+        const auto result = authorize_operation("operator-one", valid_identity(), one, backend,
+            std::chrono::milliseconds(5000), std::ref(clock));
+        require(result.status == NativeOperationStatus::unavailable && result.evaluated == 0,
+            "unreliable completion clock must not authorize");
+    }
+    // Regression can remain above start: 0 -> 8 -> 7 must still fail.
+    for (const std::vector<int> &samples : {std::vector<int>{0, 8, 7},
+                                          std::vector<int>{0, 4, 8, 7}}) {
+        std::size_t reads = 0;
+        std::size_t calls = 0;
+        NativeOperationClock clock = [&] {
+            return clock_point{} + std::chrono::milliseconds(samples.at(reads++));
+        };
+        NativeAuthorizationBackend backend = [&](std::string_view, const SessionIdentity &,
+                                                 std::string_view, std::string_view) {
+            ++calls;
+            return NativeAuthorizationDecision::allowed;
+        };
+        const auto requirements = wall_requirements();
+        const auto result = authorize_operation("operator-one", valid_identity(), requirements, backend,
+            std::chrono::milliseconds(10), clock);
+        require(result.status == NativeOperationStatus::unavailable && calls == 1,
+            "relative clock regression must stop before another backend call");
+        require(result.evaluated == (samples.size() == 3 ? 0u : 1u),
+            "clock regression must preserve only timely allowed prefix");
+        require(reads == samples.size(), "clock failure must be observed at intended boundary");
+    }
+    for (const auto decision : {NativeAuthorizationDecision::denied,
+             NativeAuthorizationDecision::unknown_user, NativeAuthorizationDecision::unavailable,
+             static_cast<NativeAuthorizationDecision>(999)}) {
+        FakeClock clock;
+        NativeAuthorizationBackend backend = [&](std::string_view, const SessionIdentity &,
+                                                 std::string_view, std::string_view) {
+            clock.advance(std::chrono::milliseconds(5000));
+            return decision;
+        };
+        const auto result = authorize_operation("operator-one", valid_identity(), one, backend,
+            std::chrono::milliseconds(5000), std::ref(clock));
+        require(result.status == NativeOperationStatus::unavailable && result.evaluated == 0,
+            "deadline failure takes precedence over late backend decision");
+    }
+}
+
+void test_extreme_clock_interval_fails_closed()
+{
+    const std::vector<NativeOperationRequirement> one = {{"live.view", "camera-1"}};
+    for (const bool overflow_after_call : {false, true}) {
+        std::size_t reads = 0;
+        std::size_t calls = 0;
+        NativeOperationClock clock = [&] {
+            const auto n = reads++;
+            return n <= (overflow_after_call ? 1u : 0u) ? clock_point::min() : clock_point::max();
+        };
+        NativeAuthorizationBackend backend = [&](std::string_view, const SessionIdentity &,
+                                                 std::string_view, std::string_view) {
+            ++calls;
+            return NativeAuthorizationDecision::allowed;
+        };
+        const auto result = authorize_operation("operator-one", valid_identity(), one, backend,
+            std::chrono::milliseconds(5000), clock);
+        require(result.status == NativeOperationStatus::unavailable && result.evaluated == 0,
+            "unrepresentable elapsed interval must fail closed without arithmetic overflow");
+        require(calls == (overflow_after_call ? 1u : 0u), "overflow must stop at intended boundary");
+    }
 }
 
 void test_backend_exception_maps_unavailable_without_relay()
@@ -264,6 +372,9 @@ int main()
         test_backend_unavailable_stops();
         test_invalid_inputs_call_no_backend();
         test_budget_boundary_and_exhaustion();
+        test_final_reply_must_arrive_before_budget();
+        test_reply_clock_failure_and_regression_fail_closed();
+        test_extreme_clock_interval_fails_closed();
         test_backend_exception_maps_unavailable_without_relay();
         test_clock_exception_maps_unavailable();
     } catch (const std::exception &error) {

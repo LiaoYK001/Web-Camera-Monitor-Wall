@@ -401,7 +401,7 @@ class BuildContractTests(unittest.TestCase):
         self.assertIn("(std::numeric_limits<std::size_t>::max)() / size", source)
         self.assertNotIn("std::numeric_limits<std::size_t>::max()", source)
 
-    def test_operation_auth_orchestrator_is_bounded_and_cached_nothing(self):
+    def test_operation_auth_orchestrator_wiring_and_budget_checks(self):
         header = (ROOT / "core/include/webobs/native_operation_auth.hpp").read_text(encoding="utf-8")
         source = (ROOT / "core/src/native_operation_auth.cpp").read_text(encoding="utf-8")
         standalone = (ROOT / "native-host/tests/control-auth/CMakeLists.txt").read_text(encoding="utf-8")
@@ -412,7 +412,9 @@ class BuildContractTests(unittest.TestCase):
         self.assertIn("native-operation-auth", standalone)
         self.assertIn("core/src/native_operation_auth.cpp", root_cmake)
         self.assertIn("webobs-native-operation-auth-tests", root_cmake)
-        # Fail-closed whole-operation gate: one budget, no reusable grant cache.
+        # Source-shape guard only; this cannot prove runtime deadlines, policy
+        # consistency or absence of all forms of caching. Executable tests own
+        # the pre/post-call budget and clock-failure behavior.
         self.assertIn("total_budget", header)
         self.assertNotIn("std::map", source)
         self.assertNotIn("std::unordered_map", source)

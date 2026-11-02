@@ -41,7 +41,8 @@ enum class NativeOperationStatus {
 
 struct NativeOperationAuthorization {
     NativeOperationStatus status = NativeOperationStatus::unavailable;
-    // Requirements actually evaluated. Equals the total count only on allow.
+    // Timely allowed prefix, not number of backend calls. A late or rejected
+    // reply is not counted. Equals the total count only on allow.
     std::size_t evaluated = 0;
 
     [[nodiscard]] bool allowed() const noexcept { return status == NativeOperationStatus::allowed; }
@@ -50,25 +51,25 @@ struct NativeOperationAuthorization {
 // Deterministic clock injection for budget tests; defaults to the real clock.
 using NativeOperationClock = std::function<std::chrono::steady_clock::time_point()>;
 
-// Bounded whole-operation authorization for one trusted multi-resource
-// command (for example: one coarse scene.write plus live.view on five cameras
-// for a wall operation). Each requirement performs its own fresh authoritative
-// backend lookup; there is no cached grant and the returned value is NOT a
-// reusable authorization token. Fail-closed rules:
-//  * the exact bound identity is required up front and is compared by every
-//    backend call; a mid-operation rotation/delete surfaces as
-//    binding_invalid and stops evaluation instead of stitching stale epochs;
-//  * a single total budget covers the whole evaluation; remaining budget <= 0
-//    before a call stops with unavailable and skips later requirements;
-//  * an explicit deny stops with forbidden immediately;
-//  * backend exceptions never leak messages and map to unavailable.
-// This is a decision-time gate, not an execution-time fence: callers must
-// execute the allowlisted action immediately after allow and revalidate the
-// session binding, exactly as NativeControlAuth requires. The per-backend-call
-// cap stays whatever the injected adapter enforces (the cluster backend uses
-// <=2000ms), so the absolute worst-case wall time of THIS function is the
-// total budget plus one backend call; hosts must additionally enforce their
-// own transport/command deadline.
+// Sequential decision-time checks for one trusted multi-resource command.
+// Each requirement performs a fresh backend lookup; no grant is cached here.
+// The result is NOT a reusable authorization token. Fail-closed rules:
+//  * require a valid bound identity up front; the authoritative adapter must
+//    compare it on every call. Observed identity loss stops evaluation;
+//  * check one elapsed-time budget before AND after each synchronous call;
+//    elapsed >= budget, a regressing clock or a clock exception yields
+//    unavailable, taking precedence even over a late deny/unknown_user;
+//  * only timely allowed replies contribute to evaluated; a timely deny stops
+//    with forbidden, and backend exceptions map to unavailable without text;
+//  * budgets exceeding the steady clock's representable milliseconds are
+//    invalid_request; an unrepresentable elapsed interval is unavailable.
+// This function neither reads/revokes local sessions nor detects logout.
+// authEpoch guards authentication identity, NOT RBAC policy/registry revision:
+// fresh sequential decisions need not share a single policy snapshot.
+// Synchronous backend/clock callbacks cannot be preempted. Rejection of a late
+// reply does not bound actual return time; the host must enforce transport and
+// execution deadlines, session revalidation, policy/graph consistency and
+// action serialization. No immediate action after allow closes those gaps.
 [[nodiscard]] NativeOperationAuthorization authorize_operation(
     std::string_view principal, const SessionIdentity &identity,
     std::span<const NativeOperationRequirement> requirements,

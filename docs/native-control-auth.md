@@ -19,18 +19,20 @@ Each native command requires an explicitly bound username/userId/authEpoch sessi
 
 ## 真实账号后端 / Authoritative account backend
 
-- 固定目标 `http://127.0.0.1:<port>/auth/authorize`，默认端口 8095；配置只接受非零 uint16 端口、64 位小写 hex 内部凭据、connect 1–500 ms、total 1–2000 ms 且 connect≤total。未来配置 parser 必须在转换 uint16 前拒绝越界数，不能先截断。
-- POST 仅发送 `username`、固定 permission、`cameraId`。**不传 groupId**：现有 cluster 会信任显式 groupId，省略后才按真实 camera registry 查询组。浏览器 cookie、session token 和 Basic 凭据不转发；内部 token 只用于 `X-WebObs-Internal-Admin`。
+- 绑定身份调用的固定目标是 `http://127.0.0.1:<port>/auth/native-authorize`；三参数 legacy 诊断重载仍使用 `/auth/authorize`，原生会话 gate 不回退到该重载。默认端口 8095；配置只接受非零 uint16 端口、64 位小写 hex 内部凭据、connect 1–500 ms、total 1–2000 ms 且 connect≤total。未来配置 parser 必须在转换 uint16 前拒绝越界数，不能先截断。
+- 绑定 POST 发送 `username`、`userId`、`authEpoch`、固定 permission、`cameraId`；legacy 诊断请求不含两个身份字段。**不传 groupId**：现有 cluster 会信任显式 groupId，省略后才按真实 camera registry 查询组。浏览器 cookie、session token 和 Basic 凭据不转发；内部 token 只用于 `X-WebObs-Internal-Admin`。
 - 强制 loopback IPv4 HTTP、禁用环境代理、重定向、netrc 和 HTTP Basic；每次创建独立 easy handle，连接/总时限、4 KiB body、16 KiB 聚合 headers/128 次 header callback 均有界。C callback 捕获异常，错误不输出原始响应或秘密。
-- 只有严格 JSON（拒绝重复键、NUL、尾随数据）且 `200` 精确包含 `allowed:true`、32 位小写 hex `userId`、请求 permission 回显，才许可。仅精确识别 `403 permission_rejected` 与 `404 user_not_found` 及当前固定 message；错误内部 token、其他状态/结构或措辞变化一律 unavailable，而非默认许可或撤销账号。
+- 绑定响应只有严格 JSON（拒绝重复键、NUL、尾随数据）且 `200` 精确包含 `allowed:true`、与请求相等的 32 位小写 hex `userId` 和 `authEpoch`、请求 permission 回显共四字段，才许可；缺少 epoch 的 legacy 三字段响应不能用于绑定调用。仅精确识别 `403 permission_rejected` 与 `404 user_not_found` 及当前固定 message；错误内部 token、其他状态/结构或措辞变化一律 unavailable，而非默认许可或撤销账号。
 
 The adapter uses the existing [cluster authorization route](../cluster/cluster_service.py), not a replacement service. It validates the full reply rather than trusting status 200. Strict error-message matching deliberately fails closed if the backend contract changes. Proxy/redirect traps and malformed replies are tested separately from the real Handler/ClusterStore/registry integration.
 
 ## 全操作授权编排 / Whole-operation authorization orchestration
 
-新增 [NativeOperationAuth](../core/include/webobs/native_operation_auth.hpp) `authorize_operation`：一次操作声明的全部 `(permission, resource)` 需求（至多 16 项，permission≤32、resource≤128，拒绝重复对与控制字符）在同一总预算内逐项调用最新账号授权；任何一次拒绝即停止并返回 `forbidden`，账号消失返回 `binding_invalid`，后端故障或时钟异常返回 `unavailable`，非法输入或非正预算返回 `invalid_request` 且零后端调用；预算耗尽返回 `unavailable` 且不发起剩余调用。每次后端调用仍携带并比较完整绑定 username/userId/authEpoch，因此中途 logout 或 epoch 轮换不能被缝合为许可。这仍是决策时总时限门，不是可复用授权缓存，也不是执行围栏；尚未接入任何 listener、HTTP 路由或产品路径，宿主接入时仍须自行执行整个操作的硬序列化截止。
+[NativeOperationAuth](../core/include/webobs/native_operation_auth.hpp) `authorize_operation` 按声明顺序逐项查询权威后端（至多 16 项，permission≤32、resource≤128，拒绝重复对与控制字符）。每次同步调用前后检查统一经过时间预算；只有预算内返回的全部许可才产生 `allowed`。预算相等/耗尽、时钟异常/回退或无法表示的时间差返回 `unavailable`，优先于迟到的后端决定，并停止后续调用。`evaluated` 是及时许可前缀数，不是后端调用总数。非法输入、非正或无法用 steady clock 表示的预算返回 `invalid_request` 且零后端调用；及时的拒绝返回 `forbidden`，身份不符返回 `binding_invalid`，故障返回 `unavailable`。
 
-`authorize_operation` evaluates every declared permission/resource requirement of one operation against the fresh authoritative backend within a single total budget, stopping at the first denial. Invalid input, a non-positive budget or budget exhaustion fails closed with no reusable grant; backend or clock exceptions never relay their message. Each call still re-checks the full bound identity, so a mid-operation logout or epoch rotation cannot be stitched into an allowance. This is a whole-operation decision-time gate, not an execution fence, and is not yet wired into any listener, route or product path; hosts must still enforce their own hard serialization deadline when adopting it.
+它不读取或撤销本地会话，不检测 logout；`authEpoch` 是认证身份轮换守卫，不是 RBAC policy/registry revision。因此逐项 fresh RBAC 不构成整操作单一策略快照；最后权威检查之后的身份轮换也没有执行栅栏。同步 backend/clock 回调不能抢占，拒绝迟到结果不等于限制函数实际返回时间。宿主仍负责会话前后复查、可信 graph 身份/策略一致性以及执行序列化与硬截止；这些没有因本编排器而完成。未接入 listener、产品路径或 OBS 动作。
+
+`authorize_operation` performs fresh lookups in declaration order and checks one elapsed-time budget before and after each synchronous call. Only timely allows covering every requirement yield `allowed`; `evaluated` counts that timely allowed prefix. Budget equality/exhaustion, clock failure/regression or an unrepresentable interval yields `unavailable`, taking precedence over late backend outcomes. Calls cannot be preempted: rejecting late results does not bound actual return time. This function does not read/revoke sessions or detect logout. Authentication epochs are not RBAC-policy/registry revisions, so sequential decisions do not establish one policy snapshot or an execution fence. Session revalidation, trusted graph identity, policy consistency and host deadlines remain integration work.
 
 ## 接入前仍须保留的契约 / Remaining integration contracts
 
@@ -38,9 +40,9 @@ The adapter uses the existing [cluster authorization route](../cluster/cluster_s
 
 库只检查声明的单个 scope，不能解析整场景。可信执行 adapter 必须从实际目标推导所有受影响 camera ID 并逐个授权，对读取结果做可见性过滤。无 scope 的 `scene.read/write` 是粗粒度权限，**不是所有相机范围的豁免**；现有 cluster 的管理员/显式 scope 许可也不是 camera 对象存在性证明，执行前须解析目标。
 
-原生菜单/快捷键/dock/脚本等修改入口必须界定和防绕过。`authorize` 后应立即执行对应白名单动作；最后检查之后发生撤销的处理仍须执行序列化策略定义。现有 SessionStore 以 username 绑定，不检测“删除再用同名重建”的身份替换，也没有密码变更 epoch；这些仍是接入前的独立身份/会话契约，不能因本 adapter 存在就声称解决。
+原生菜单/快捷键/dock/脚本等修改入口必须界定和防绕过。`authorize` 后应立即执行对应白名单动作；最后检查之后发生撤销的处理仍须执行序列化策略定义。SessionStore 与 NativeControlAuth 已实现完整 username/userId/authEpoch 绑定及许可后复查；旧 HTTP/Electron 协议没有因此改成原生绑定协议。整操作编排器没有本地会话输入，尚须宿主把会话生命周期与多资源检查、策略一致性和执行序列化正确连接。
 
-The libraries do not implement native login, graph-derived multi-camera authorization, UI bypass controls, private ACL provisioning, account-service ownership or reversible migration. Username reuse and password-change session epochs remain unresolved integration issues. libcurl ownership is balanced; concurrent invocation assumes normal C++ object lifetime and a supported modern libcurl build with thread-safe global initialization. Destruction/mutation concurrent with a call is not supported.
+The libraries do not implement native login, graph-derived multi-camera authorization, UI bypass controls, private ACL provisioning, account-service ownership or reversible migration. Immutable user/session authentication bindings are implemented in the native gate; whole-operation session wiring, atomic policy consistency and execution fencing remain unresolved integration issues. libcurl ownership is balanced; concurrent invocation assumes normal C++ object lifetime and a supported modern libcurl build with thread-safe global initialization. Destruction/mutation concurrent with a call is not supported.
 
 ## 独立验证 / Standalone validation
 
@@ -62,7 +64,7 @@ The standalone and root CTest projects exercise the actual account-service imple
 
 这只是后续身份解析所需的观测，不是全依赖图、可信绑定或授权预检：不包含 transforms/audio/show-hide transitions，不证明 source settings 或 collection incarnation 未改变。必须由正确 frontend/control context 的调用者序列化 collection/source/filter 编辑；scene lock 不是全图锁，filter 遍历和锁等待无硬时限。未来私密 owner map 不能由请求字段、URL/名称相等或相同 UUID 元组替代；先对每项解析真实对象及可信 camera/profile 身份，再做去重和全 scope 检查。
 
-The internal inspector is now implemented and locally tested, but remains entirely unexposed. Its owned UUID/item/visibility DTO is only an observation: it neither proves authoritative camera/profile identity nor covers transitions, source settings, audio or future graph use. No hard whole-operation deadline is implied. Sequential current RBAC calls can span different policy epochs, and existing sessions are username-based; trusted identity invalidation, immutable user/session epochs, atomic policy consistency, private service ownership, UI bypass prevention and authorized reversible apply still require separate implementation before any live action.
+The internal inspector is now implemented and locally tested, but remains entirely unexposed. Its owned UUID/item/visibility DTO is only an observation: it neither proves authoritative camera/profile identity nor covers transitions, source settings, audio or future graph use. No hard whole-operation deadline is implied. Sequential current RBAC calls can span different policy epochs despite the implemented immutable native user/authentication-epoch binding. Trusted graph identity invalidation, whole-operation session wiring, atomic policy consistency, private service ownership, UI bypass prevention and authorized reversible apply still require separate implementation before any live action.
 
 ## 后续 / Next
 
