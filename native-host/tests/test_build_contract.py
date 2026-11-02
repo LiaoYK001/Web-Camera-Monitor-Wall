@@ -582,5 +582,36 @@ class BuildContractTests(unittest.TestCase):
         self.assertLess(source.index("provider()"), source.rindex("plan_wall_apply("))
 
 
+    def test_wall_apply_executor_revalidates_before_mutating(self):
+        control_cmake = (ROOT / "native-host/tests/control-auth/CMakeLists.txt").read_text(encoding="utf-8")
+        cmake = (ROOT / "native-host/CMakeLists.txt").read_text(encoding="utf-8")
+        header = (ROOT / "native-host/src/wall_apply_executor.hpp").read_text(encoding="utf-8")
+        source = (ROOT / "native-host/src/wall_apply_executor.cpp").read_text(encoding="utf-8")
+        plugin = (ROOT / "native-host/src/plugin.cpp").read_text(encoding="utf-8")
+        # Unexposed: the product plugin never links or calls the executor.
+        plugin_line = cmake.split("add_library(webobs-native-host MODULE", 1)[1].splitlines()[0]
+        self.assertNotIn("wall_apply_executor.cpp", plugin_line)
+        self.assertNotIn("execute_wall_apply", plugin)
+        # Verified only inside the renderer-free standalone boundary.
+        self.assertIn("webobs-wall-apply-executor-tests", control_cmake)
+        self.assertIn("add_test(NAME native-wall-apply-executor", control_cmake)
+        self.assertIn("wall_apply_executor.cpp", control_cmake)
+        # No I/O or OBS/network entry points inside the module.
+        for forbidden in ("fstream", "filesystem", "ofstream", "ifstream", "obs_", "socket"):
+            self.assertNotIn(forbidden, source)
+        self.assertNotIn("std::map", source)
+        self.assertNotIn("std::unordered_map", source)
+        self.assertIn("NOT an authorization check and NOT an execution", header)
+        self.assertIn("stale_plan", header)
+        # Order locks: the plan is re-derived from the fresh observation before
+        # any target callback, keeps never reach the target, and the prefix
+        # journal is replayed newest-first.
+        rederive = source.index("const WallApplyPlan rederived = plan_wall_apply")
+        self.assertLess(rederive, source.index("invoke_apply(target, op)"))
+        self.assertLess(source.index("op.kind == WallApplyOpKind::keep"),
+                        source.index("invoke_apply(target, op)"))
+        self.assertIn("journal.rbegin()", source)
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

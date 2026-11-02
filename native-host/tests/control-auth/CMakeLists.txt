@@ -112,6 +112,7 @@ endif()
 
 add_library(webobs-native-wall-apply-authorization STATIC
     "${WEBOBS_ROOT}/native-host/src/wall_apply_authorization.cpp"
+    "${WEBOBS_ROOT}/native-host/src/wall_apply_executor.cpp"
     "${WEBOBS_ROOT}/native-host/src/wall_apply_plan.cpp"
     "${WEBOBS_ROOT}/native-host/src/source_ownership.cpp")
 target_include_directories(webobs-native-wall-apply-authorization PUBLIC
@@ -132,6 +133,15 @@ else()
     target_compile_options(webobs-wall-apply-authorization-tests PRIVATE -Wall -Wextra -Wpedantic)
 endif()
 
+add_executable(webobs-wall-apply-executor-tests
+    "${WEBOBS_ROOT}/native-host/tests/wall_apply_executor_test.cpp")
+target_link_libraries(webobs-wall-apply-executor-tests PRIVATE webobs-native-wall-apply-authorization)
+if(MSVC)
+    target_compile_options(webobs-wall-apply-executor-tests PRIVATE /W4 /permissive- /utf-8)
+else()
+    target_compile_options(webobs-wall-apply-executor-tests PRIVATE -Wall -Wextra -Wpedantic)
+endif()
+
 enable_testing()
 add_test(NAME session-identity COMMAND webobs-session-identity-tests)
 set_tests_properties(session-identity PROPERTIES TIMEOUT 30)
@@ -150,6 +160,8 @@ add_test(NAME native-live-view-pipeline COMMAND webobs-live-view-pipeline-tests)
 set_tests_properties(native-live-view-pipeline PROPERTIES TIMEOUT 30)
 add_test(NAME native-wall-apply-authorization COMMAND webobs-wall-apply-authorization-tests)
 set_tests_properties(native-wall-apply-authorization PROPERTIES TIMEOUT 30)
+add_test(NAME native-wall-apply-executor COMMAND webobs-wall-apply-executor-tests)
+set_tests_properties(native-wall-apply-executor PROPERTIES TIMEOUT 30)
 
 # GNU/LLVM nm evidence: reject renderer/media entry points in the entire archive,
 # including defined and undefined symbols. MSVC builds retain the compile/link
