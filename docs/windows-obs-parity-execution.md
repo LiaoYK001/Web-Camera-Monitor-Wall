@@ -818,4 +818,10 @@ Actual run 41484627808 (source 2602a46, web-runtime-ci `windows_desktop=false`):
 
 A closed inventory of plugin entry points with a fail-closed matrix: OBS-native editing is always refused, every action needs a bound session, and create-wall additionally needs decision+plan+captured backup; the plugin does not call the gate yet (contract-locked), leaving the bootstrap path and OBS-native editing as recorded bypass surfaces for later wiring/policy work.
 
-Local receipt: standalone CTest 17/17 (new native-ui-gate, 6 matrix families), build contracts 36/36, graph 7/7, root 5/5, identity 19/19, cluster 42/42, migration suites green, diffcheck clean. The platform receipt will be appended after the actual CI logs.
+Local receipt: standalone CTest 17/17 (new native-ui-gate, 6 matrix families), build contracts 36/36, graph 7/7, root 5/5, identity 19/19, cluster 42/42, migration suites green, diffcheck clean. 平台回执见下节 / the platform receipt is recorded below.
+
+#### UI 旁路门控平台回执 / UI gate platform receipt
+
+实际运行 41486749888（source 34bf612，web-runtime-ci `windows_desktop=false`）：Ubuntu native-control-contracts job 125419033544 CTest 17/17（native-wall-apply-flow 0.02s、native-ui-gate 通过，importer Ran 14 OK）；Windows windows-native-control-contracts job 125419033360 CTest 13/13（native-ui-gate 0.01s、native-wall-apply-flow 0.76s，importer Ran 14）。graph 双平台 125419033382 / 125419033824、loader 125419033561、staging 125419033498 / 125419033515 均成功；candidate 125419035673 跳过。整体仍仅失败于既有审计：windows-update-contracts 125419033042（minimatch GHSA-g3hv-75wg-m249）与 public-audit 125419033672（privacy 892 paths 先通过，随后 minimatch + glob GHSA-3g3m-2fjr-6pw4）；无忽略、无发布、默认未切换、插件仍未调用该门。
+
+Actual run 41486749888 (source 34bf612): Ubuntu job 125419033544 CTest 17/17 (flow 0.02s, native-ui-gate passed, importer Ran 14), Windows job 125419033360 CTest 13/13 (native-ui-gate 0.01s, flow 0.76s, importer Ran 14); graph/loader/staging green both platforms; candidate skipped. Failures are only the unchanged audits (minimatch GHSA-g3hv-75wg-m249 job 125419033042; public-audit job 125419033672 after privacy 892 paths, adding glob GHSA-3g3m-2fjr-6pw4). No ignores, nothing published, default unchanged, and the plugin still does not call the gate.
