@@ -65,4 +65,10 @@ struct OwnershipBinding {
 // was never deleted/recreated; pair it with a fresh snapshot at decision time.
 std::vector<OwnershipBinding> classify_wall_entries(const std::vector<OwnershipEntry> &ledger,
 						    const std::vector<std::string> &snapshot_uuids) noexcept;
+
+// Fail-closed consistency/syntax checks shared with the internal rules above
+// (single source of truth for decision-time callers). An empty ledger is a
+// valid initial state; these perform no I/O and prove no liveness.
+bool ownership_ledger_consistent(const std::vector<OwnershipEntry> &ledger) noexcept;
+bool ownership_source_uuid_valid(std::string_view uuid) noexcept;
 } // namespace webobs::native_host

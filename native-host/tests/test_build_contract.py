@@ -480,6 +480,25 @@ class BuildContractTests(unittest.TestCase):
         self.assertIn("ownershipLedger", smoke)
         self.assertIn("expect_ownership_entries", smoke)
 
+    def test_wall_live_decision_is_unwired_and_fail_closed(self):
+        cmake = (ROOT / "native-host/CMakeLists.txt").read_text(encoding="utf-8")
+        header = (ROOT / "native-host/src/wall_live_decision.hpp").read_text(encoding="utf-8")
+        source = (ROOT / "native-host/src/wall_live_decision.cpp").read_text(encoding="utf-8")
+        plugin = (ROOT / "native-host/src/plugin.cpp").read_text(encoding="utf-8")
+        self.assertIn(
+            "add_executable(native-wall-live-decision-test tests/wall_live_decision_test.cpp "
+            "src/wall_live_decision.cpp src/source_ownership.cpp)", cmake)
+        self.assertIn("native-wall-live-decision-api-contract", cmake)
+        # Unexposed: the product plugin must not link or call the pairing module.
+        plugin_line = cmake.split("add_library(webobs-native-host MODULE", 1)[1].splitlines()[0]
+        self.assertNotIn("wall_live_decision.cpp", plugin_line)
+        self.assertNotIn("decide_wall_live_view", plugin)
+        # Pure pairing logic: no I/O, no OBS API, no network inside the module.
+        for forbidden in ("fstream", "filesystem", "ofstream", "ifstream", "obs_", "socket"):
+            self.assertNotIn(forbidden, source)
+        self.assertIn("decision-time snapshot", header)
+        self.assertIn("NOT an authorization grant", header)
+
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)

@@ -275,4 +275,14 @@ std::vector<OwnershipBinding> classify_wall_entries(const std::vector<OwnershipE
 	}
 	return bindings;
 }
+
+bool ownership_ledger_consistent(const std::vector<OwnershipEntry> &ledger) noexcept
+{
+	return ledger_consistent(ledger);
+}
+
+bool ownership_source_uuid_valid(std::string_view uuid) noexcept
+{
+	return valid_source_uuid(uuid);
+}
 } // namespace webobs::native_host
