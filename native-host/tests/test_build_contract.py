@@ -526,6 +526,28 @@ class BuildContractTests(unittest.TestCase):
         self.assertLess(source.index("validate_and_slide"), source.index("provider()"))
         self.assertLess(source.index("provider()"), source.index("decide_wall_live_view"))
 
+    def test_wall_apply_plan_is_unwired_and_never_plans_over_unowned_graph(self):
+        cmake = (ROOT / "native-host/CMakeLists.txt").read_text(encoding="utf-8")
+        header = (ROOT / "native-host/src/wall_apply_plan.hpp").read_text(encoding="utf-8")
+        source = (ROOT / "native-host/src/wall_apply_plan.cpp").read_text(encoding="utf-8")
+        plugin = (ROOT / "native-host/src/plugin.cpp").read_text(encoding="utf-8")
+        self.assertIn(
+            "add_executable(native-wall-apply-plan-test tests/wall_apply_plan_test.cpp "
+            "src/wall_apply_plan.cpp src/source_ownership.cpp)", cmake)
+        self.assertIn("native-wall-apply-plan-api-contract", cmake)
+        # Unexposed: the product plugin must not link or call the planner.
+        plugin_line = cmake.split("add_library(webobs-native-host MODULE", 1)[1].splitlines()[0]
+        self.assertNotIn("wall_apply_plan.cpp", plugin_line)
+        self.assertNotIn("plan_wall_apply", plugin)
+        # Pure plan logic: no I/O, no OBS API, no network inside the module.
+        # map/set are call-local deterministic indexes, not cached grants.
+        for forbidden in ("fstream", "filesystem", "ofstream", "ifstream", "obs_", "socket"):
+            self.assertNotIn(forbidden, source)
+        self.assertIn("PLAN, not an executor", header)
+        self.assertIn("never planned over", header)
+        # Fail-closed order: ledger consistency precedes snapshot classification.
+        self.assertLess(source.index("ownership_ledger_consistent"), source.index("classify_wall_entries"))
+
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)

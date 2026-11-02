@@ -285,4 +285,9 @@ bool ownership_source_uuid_valid(std::string_view uuid) noexcept
 {
 	return valid_source_uuid(uuid);
 }
+
+bool ownership_camera_id_valid(std::string_view camera_id) noexcept
+{
+	return valid_camera_id(camera_id);
+}
 } // namespace webobs::native_host

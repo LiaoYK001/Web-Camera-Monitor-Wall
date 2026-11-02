@@ -59,7 +59,8 @@ if(WEBOBS_NATIVE_BUILD_TESTS)
   add_executable(native-source-ownership-test tests/source_ownership_test.cpp src/source_ownership.cpp)
   add_executable(native-ownership-store-test tests/ownership_store_test.cpp src/ownership_store.cpp src/source_ownership.cpp)
   add_executable(native-wall-live-decision-test tests/wall_live_decision_test.cpp src/wall_live_decision.cpp src/source_ownership.cpp)
-  foreach(test_target IN ITEMS native-wall-test native-product-bootstrap-test native-wall-snapshot-test native-source-ownership-test native-ownership-store-test native-wall-live-decision-test)
+  add_executable(native-wall-apply-plan-test tests/wall_apply_plan_test.cpp src/wall_apply_plan.cpp src/source_ownership.cpp)
+  foreach(test_target IN ITEMS native-wall-test native-product-bootstrap-test native-wall-snapshot-test native-source-ownership-test native-ownership-store-test native-wall-live-decision-test native-wall-apply-plan-test)
     target_include_directories(${test_target} PRIVATE src "${WEBOBS_NATIVE_OBS_SOURCE}/libobs"
       "${WEBOBS_NATIVE_OBS_SOURCE}/frontend/api" "${CMAKE_CURRENT_BINARY_DIR}/test-config" ${native_test_simde_include})
     if(MSVC)
@@ -81,7 +82,9 @@ if(WEBOBS_NATIVE_BUILD_TESTS)
   add_test(NAME native-source-ownership-api-contract COMMAND native-source-ownership-test)
   add_test(NAME native-ownership-store-api-contract COMMAND native-ownership-store-test)
   add_test(NAME native-wall-live-decision-api-contract COMMAND native-wall-live-decision-test)
+  add_test(NAME native-wall-apply-plan-api-contract COMMAND native-wall-apply-plan-test)
   set_tests_properties(native-wall-api-contract native-product-bootstrap-api-contract native-wall-snapshot-api-contract
     native-source-ownership-api-contract native-ownership-store-api-contract native-wall-live-decision-api-contract
+    native-wall-apply-plan-api-contract
     PROPERTIES TIMEOUT 30 LABELS "native;api-contract;no-media")
 endif()

@@ -71,4 +71,5 @@ std::vector<OwnershipBinding> classify_wall_entries(const std::vector<OwnershipE
 // valid initial state; these perform no I/O and prove no liveness.
 bool ownership_ledger_consistent(const std::vector<OwnershipEntry> &ledger) noexcept;
 bool ownership_source_uuid_valid(std::string_view uuid) noexcept;
+bool ownership_camera_id_valid(std::string_view camera_id) noexcept;
 } // namespace webobs::native_host
