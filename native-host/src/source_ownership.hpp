@@ -24,6 +24,11 @@ struct OwnershipEntry {
 	std::uint64_t generation; // creation counter within this ledger; strictly increasing
 };
 
+inline bool operator==(const OwnershipEntry &a, const OwnershipEntry &b)
+{
+	return a.camera_id == b.camera_id && a.source_uuid == b.source_uuid && a.generation == b.generation;
+}
+
 enum class OwnershipStatus { success, ledger_invalid, record_conflict };
 
 struct OwnershipLedgerResult {

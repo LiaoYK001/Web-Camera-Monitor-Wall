@@ -23,6 +23,9 @@ struct ProductWallResult {
 	int reused = 0;
 	bool scene_reused = false;
 	std::string error;
+	// Per-slot ownership: true only for sources created by THIS attempt.
+	// Reused slots stay false, so provenance/rollback never treat them as new.
+	std::array<bool, 5> created_here{};
 
 	// Releases every still-owned source and the scene reference.
 	void release();

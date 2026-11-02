@@ -34,7 +34,8 @@ def write_product_config(path: Path) -> None:
 
 
 def check_product_receipt(receipt_path: Path, urls: Sequence[str] = PRODUCT_URLS, *, expect_created: int = 5,
-                          expect_reused: int = 0, expect_scene_reused: bool | None = None) -> dict:
+                          expect_reused: int = 0, expect_scene_reused: bool | None = None,
+                          expect_ownership_entries: int | None = None) -> dict:
     """Validate the URL-free bootstrap receipt; never leak or print camera URLs."""
     text = receipt_path.read_text(encoding="utf-8")
     receipt = json.loads(text)
@@ -49,6 +50,14 @@ def check_product_receipt(receipt_path: Path, urls: Sequence[str] = PRODUCT_URLS
     for url in urls:
         if url in text:
             raise AssertionError("Product bootstrap receipt leaked a camera URL")
+    if "ownershipLedger" in receipt:
+        raise AssertionError("Product bootstrap ownership ledger persistence failed")
+    # Receipts from plugin versions predating the ledger report no such field
+    # (cross-version upgrade smokes run pinned older binaries); only a
+    # reported count may be asserted, and an explicit failure marker is fatal.
+    if (expect_ownership_entries is not None and "ownershipEntries" in receipt
+            and receipt["ownershipEntries"] != expect_ownership_entries):
+        raise AssertionError("Product bootstrap ownership ledger entry count mismatch")
     return receipt
 
 
@@ -164,14 +173,16 @@ def run(runtime: Path, result: Path, *, existing_wall: bool = False) -> dict:
             profile / "plugin_config/webobs-native-host/product-bootstrap.json",
             expect_created=0 if existing_wall else 5,
             expect_reused=5 if existing_wall else 0,
-            expect_scene_reused=True if existing_wall else None)
+            expect_scene_reused=True if existing_wall else None,
+            expect_ownership_entries=5)
         if existing_wall:
             second = product
         else:
             launch_once(runtime, pwsh, environment, token, product_file, second_name, reuse=True)
             verify_smoke(profile / second_name, token, profile)
             second = check_product_receipt(profile / "plugin_config/webobs-native-host/product-bootstrap.json",
-                                           expect_created=0, expect_reused=5, expect_scene_reused=True)
+                                           expect_created=0, expect_reused=5, expect_scene_reused=True,
+                                           expect_ownership_entries=5)
     finally:
         product_file.unlink(missing_ok=True)
     if fingerprint(external) != before:
@@ -187,6 +198,8 @@ def run(runtime: Path, result: Path, *, existing_wall: bool = False) -> dict:
                "productCameraCreated": product["created"], "productCameraReused": product["reused"],
                "productCameraCreatedSecond": second["created"], "productCameraReusedSecond": second["reused"],
                "productSceneReusedSecond": second["sceneReused"],
+               "productOwnershipEntries": product.get("ownershipEntries"),
+               "productOwnershipEntriesSecond": second.get("ownershipEntries"),
                "inheritedPluginOverridesCleared": True, "mediaQualified": False,
                "processGate": process_gate, "qualification": qualification}
     with result.open("x", encoding="utf-8") as output:

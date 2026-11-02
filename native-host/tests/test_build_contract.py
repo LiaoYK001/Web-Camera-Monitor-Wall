@@ -435,22 +435,50 @@ class BuildContractTests(unittest.TestCase):
         self.assertNotIn("cameraIds", batch)
 
 
-    def test_source_ownership_ledger_is_unexposed_and_io_free(self):
+    def test_source_ownership_ledger_is_wired_for_creation_only(self):
         cmake = (ROOT / "native-host/CMakeLists.txt").read_text(encoding="utf-8")
         plugin_sources = cmake.split("add_library(webobs-native-host MODULE ")[1].split(")")[0]
+        plugin = (ROOT / "native-host/src/plugin.cpp").read_text(encoding="utf-8")
         ownership_header = (ROOT / "native-host/src/source_ownership.hpp").read_text(encoding="utf-8")
         ownership_source = (ROOT / "native-host/src/source_ownership.cpp").read_text(encoding="utf-8")
-        # The plugin module never links the ledger; only the dedicated test
-        # target compiles it, so no product path can consult provenance yet.
-        self.assertNotIn("source_ownership.cpp", plugin_sources)
+        # The plugin links the ledger and store ONLY for creation-time
+        # persistence. No decision path classifies provenance yet: no wall
+        # selection, preview or projector behavior may consult the ledger.
+        self.assertIn("src/source_ownership.cpp", plugin_sources)
+        self.assertIn("src/ownership_store.cpp", plugin_sources)
+        self.assertIn("record_product_ownership", plugin)
+        self.assertIn("not an\n// authorization grant", ownership_header)
+        for forbidden in ("classify_wall_entries", "classify_snapshot", "authorize", "native_operation"):
+            self.assertNotIn(forbidden, plugin)
         self.assertIn("add_executable(native-source-ownership-test tests/source_ownership_test.cpp src/source_ownership.cpp)", cmake)
         self.assertIn("native-source-ownership-api-contract", cmake)
-        # Persistence stays with the caller: the module itself performs no file,
-        # network or OBS API work, so no claim of durable write semantics here.
+        # Persistence stays OUTSIDE the pure module: the ledger codec itself
+        # performs no file, network or OBS API work.
         for forbidden in ("#include <fstream>", "#include <filesystem>", "std::ofstream", "std::ifstream",
                           "obs_", "socket"):
             self.assertNotIn(forbidden, ownership_source)
-        self.assertIn("not an\n// authorization grant", ownership_header)
+
+    def test_ownership_store_persistence_is_bounded_without_durability_claims(self):
+        cmake = (ROOT / "native-host/CMakeLists.txt").read_text(encoding="utf-8")
+        store_header = (ROOT / "native-host/src/ownership_store.hpp").read_text(encoding="utf-8")
+        store_source = (ROOT / "native-host/src/ownership_store.cpp").read_text(encoding="utf-8")
+        plugin = (ROOT / "native-host/src/plugin.cpp").read_text(encoding="utf-8")
+        smoke = (ROOT / "native-host/tests/smoke_windows.py").read_text(encoding="utf-8")
+        self.assertIn(
+            "add_executable(native-ownership-store-test tests/ownership_store_test.cpp "
+            "src/ownership_store.cpp src/source_ownership.cpp)", cmake)
+        self.assertIn("native-ownership-store-api-contract", cmake)
+        # Honest boundary: the store performs plain write+rename only. It must
+        # not claim or implement fsync/FlushFileBuffers durability semantics.
+        for forbidden in ("fsync", "_commit", "FlushFileBuffers"):
+            self.assertNotIn(forbidden, store_source)
+        self.assertIn("does NOT claim", store_header)
+        # Plugin records only slots created by this attempt and reports ledger
+        # failures without failing the wall itself.
+        self.assertIn("product.created_here[i]", plugin)
+        self.assertIn('"ownershipLedger"', plugin)
+        self.assertIn("ownershipLedger", smoke)
+        self.assertIn("expect_ownership_entries", smoke)
 
 
 if __name__ == "__main__":

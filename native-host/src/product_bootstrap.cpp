@@ -133,6 +133,7 @@ ProductWallResult create_product_five_camera_wall(const std::array<ProductCamera
 	result.scene = wall.scene;
 	result.scene_reused = wall.reused;
 	result.uuids = uuids;
+	result.created_here = created_here;
 	return result;
 }
 

@@ -1,5 +1,6 @@
 #include "config_backup.hpp"
 #include "product_bootstrap.hpp"
+#include "ownership_store.hpp"
 #include "wall.hpp"
 #ifdef WEBOBS_NATIVE_PIXEL_TEST
 #include "pixel_test.hpp"
@@ -120,6 +121,49 @@ void write_product_receipt(const QJsonObject &object)
 		receipt.write(QJsonDocument(object).toJson());
 }
 
+// Provenance persistence: records ONLY sources created by this bootstrap
+// (reused sources never yield an entry). The stored ledger is a local claim
+// record inside the module's private config directory — not an authorization
+// grant, not a secret, and no durability/rename-atomicity strength is claimed
+// (see ownership_store.hpp). Failures are surfaced as receipt fields without
+// failing the wall itself.
+void record_product_ownership(const std::array<webobs::native_host::ProductCamera, 5> &cameras,
+                              const webobs::native_host::ProductWallResult &product,
+                              QJsonObject &receipt)
+{
+	char *path = obs_module_config_path("source-ownership.json");
+	if (!path)
+		return;
+	const QString file = QString::fromUtf8(path);
+	bfree(path);
+	const auto loaded = webobs::native_host::load_ownership_store(file.toStdString());
+	if (loaded.status == webobs::native_host::OwnershipStoreStatus::invalid_ledger) {
+		receipt.insert("ownershipLedger", QStringLiteral("ledger-invalid"));
+		return;
+	}
+	if (loaded.status == webobs::native_host::OwnershipStoreStatus::io_error) {
+		receipt.insert("ownershipLedger", QStringLiteral("store-io-error"));
+		return;
+	}
+	auto entries = loaded.entries;
+	for (std::size_t i = 0; i < cameras.size(); ++i) {
+		if (!product.created_here[i])
+			continue;
+		if (webobs::native_host::record_created_source(entries, cameras[i].id, product.uuids[i]) !=
+		    webobs::native_host::OwnershipStatus::success) {
+			receipt.insert("ownershipLedger", QStringLiteral("record-conflict"));
+			return;
+		}
+	}
+	if (entries.empty()) // nothing created and no prior ledger: persist nothing
+		return;
+	if (webobs::native_host::save_ownership_store(file.toStdString(), entries) !=
+	    webobs::native_host::OwnershipStoreStatus::success)
+		receipt.insert("ownershipLedger", QStringLiteral("store-io-error"));
+	else
+		receipt.insert("ownershipEntries", static_cast<int>(entries.size()));
+}
+
 void bootstrap_product_cameras()
 {
 	char *config_path = obs_module_config_path("product.json");
@@ -194,6 +238,7 @@ void bootstrap_product_cameras()
 		write_product_receipt(receipt);
 		return;
 	}
+	record_product_ownership(cameras, product, receipt);
 	product.release();
 	receipt.insert("ok", true);
 	write_product_receipt(receipt);

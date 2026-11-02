@@ -249,6 +249,7 @@ void success_case(unsigned reuse_mask, bool reused_scene)
 		require(result.sources[i]->refs == 1, "result does not own exactly one camera reference");
 		require(result.uuids[i] == resolved[i]->uuid && wall_uuids[i] == result.uuids[i],
 			"wall/result UUID order differs from source identity");
+		require(result.created_here[i] == !borrowed, "created_here flag mislabels slot ownership");
 	}
 	require(result.reused == reused && result.created == 5 - reused, "incorrect source ownership counts");
 	require(create_attempts == 5 - reused && wall_calls == 1 && lookups == 5, "unexpected bootstrap API calls");
