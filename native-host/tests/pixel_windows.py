@@ -380,6 +380,10 @@ def validate_state(state: dict, seq: int, token: str, pid: int) -> None:
         raise AssertionError("native payload wall reuse was not verified")
     if seq >= 6 and state.get("productBootstrapVerified") is not True:
         raise AssertionError("product camera bootstrap path was not verified")
+    requests = state.get("hardwareDecodeRequestedSources")
+    if (type(requests) is not int or requests != (1 if seq >= 6 else 0)
+            or state.get("hardwareDecodeVerified") is not False):
+        raise AssertionError("Stored decode requests differ or claim unmeasured hardware verification")
     if state.get("rawVideoActive") is not False or state.get("sameInputPointersAndSettings") is not True:
         raise AssertionError("Unexpected raw consumer or input mutation")
     expected_ffmpeg = 0 if seq == 1 else 10 if seq >= 6 else 5
@@ -615,6 +619,8 @@ def run(runtime: Path, result: Path, ffmpeg_override: Path | None, offline: bool
                                                   capture_output=True, text=True, check=True, timeout=20)
                         phase["roles"].append({"role": role, **json.loads(analysis.stdout)})
                     phase["videoInfo"] = state["videoInfo"]
+                    phase["hardwareDecodeRequestedSources"] = state["hardwareDecodeRequestedSources"]
+                    phase["hardwareDecodeVerified"] = False
                     phase["passed"] = not timing["captureFailed"] and all(role["passed"] for role in phase["roles"])
                     summary["phases"].append(phase)
                     write_new(private / f"ack-{seq:02}.json", {"schema": 1, "seq": seq, "token": token})

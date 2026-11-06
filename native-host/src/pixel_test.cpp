@@ -278,7 +278,11 @@ class Harness final : public QObject {
 			cameras[i].id = "loopback-" + std::to_string(i + 1);
 			cameras[i].name = "Synthetic loopback RTSP " + std::to_string(i + 1);
 			cameras[i].url = rtsp_urls_[i].toStdString();
-			cameras[i].hardware_decode = false;
+			// Exercise the production omitted preference on reordered HEVC input
+			// zero; four explicit software inputs remain controls. CI hardware
+			// availability is unknown, so final pixels must pass either way.
+			if (i != 0)
+				cameras[i].hardware_decode = false;
 		}
 		auto product = create_product_five_camera_wall(cameras, "WebOBS Native RTSP Wall");
 		require(product.error.empty(), "product camera bootstrap failed");
@@ -286,6 +290,11 @@ class Harness final : public QObject {
 			"product camera bootstrap did not create five fresh sources");
 		for (std::size_t i = 0; i < rtsp_.size(); ++i) {
 			rtsp_[i] = product.sources[i];
+			auto *settings = obs_source_get_settings(rtsp_[i]);
+			require(settings, "RTSP decode request settings unavailable");
+			const bool hardware_requested = obs_data_get_bool(settings, "hw_decode");
+			obs_data_release(settings);
+			require(hardware_requested == (i == 0), "RTSP stored decode request differs from production policy");
 			product.sources[i] = nullptr;
 			rtsp_uuids_[i] = product.uuids[i];
 			rtsp_hashes_[i] = settings_hash(rtsp_[i]);
@@ -418,6 +427,8 @@ class Harness final : public QObject {
 		                       {"globalFfmpegInputsIncludingPrivate", int(snapshot.ffmpeg)}, {"globalInputCountIncludingPrivate", int(snapshot.inputs)},
 		                       {"wallReuseVerified", wall_reuse_verified_},
 		                       {"productBootstrapVerified", product_bootstrap_verified_},
+		                       {"hardwareDecodeRequestedSources", rtsp_phase ? 1 : 0},
+		                       {"hardwareDecodeVerified", false},
 		                       {"activeOutputs", int(snapshot.active_outputs)}, {"activeEncoders", int(snapshot.active_encoders)},
 		                       {"rawVideoActive", obs_video_active()}, {"sameInputPointersAndSettings", true}, {"sources", ids},
 		                       {"windows", windows},

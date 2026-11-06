@@ -104,6 +104,10 @@ OBS 32.1.2 Windows portable 配置实际位于 **`runtime/config/obs-studio/`**�
 
 原生 OBS UI 有英文开发提示。当前 dock 没有 PTZ、收藏/锁定、告警、摄像头目录、分享、录像迁移、审核/权限或后端管理能力；请参照主计划和执行台账逐项迁移，不静默删功能。
 
+私密 `product.json` 的逐路 `hardwareDecode` 现在是三态：省略时，新建来源请求 OBS 媒体源硬解，复用来源保留原有 `hw_decode`；显式 `true` / `false` 则要求同名既有来源完全匹配，不覆盖其设置。`null`、数字与字符串会被拒绝。旧导入工具保留显式解码选择；手工选择来源路径不受此策略影响。`product-bootstrap.json.hardwareDecodeRequestedSources` 只统计实际 source settings 的请求数，不证明解码成功或选择了 4090。固定上游 OBS 自行选择解码后端及回退，当前不保证解码与渲染使用同一适配器、零拷贝或更低性能开销。
+
+An omitted per-camera `hardwareDecode` now prefers upstream hardware decoding for new product sources while preserving reused sources. Explicit booleans remain strict compatibility settings; malformed types are refused. The receipt counts stored requests only. It does not verify the decoder, its adapter, zero-copy operation or performance parity. The pixel harness requests hardware for one reordered HEVC loopback input and retains four software controls; this addition requires its own Windows final-pixel receipt.
+
 ## 跨平台可验证范围
 
 在有 C++17 编译器、CMake/Ninja 和 SIMDe headers 的 Linux 环境可运行：

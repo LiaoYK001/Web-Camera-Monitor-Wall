@@ -78,7 +78,7 @@ obs_data_t *store_settings(const SettingsValues &values)
 SettingsValues matching_settings(const ProductCamera &camera)
 {
 	SettingsValues values;
-	values.booleans = {{"is_local_file", false}, {"hw_decode", camera.hardware_decode}};
+	values.booleans = {{"is_local_file", false}, {"hw_decode", camera.hardware_decode.value_or(true)}};
 	values.strings = {{"input", camera.url}};
 	return values;
 }
@@ -213,7 +213,7 @@ void conflict_case(unsigned reuse_mask, int conflict_slot, int conflict_kind = 0
 	if (conflict_kind == 4)
 		conflict->settings->values.booleans["is_local_file"] = true;
 	if (conflict_kind == 5)
-		conflict->settings->values.booleans["hw_decode"] = !cameras[std::size_t(conflict_slot)].hardware_decode;
+		conflict->settings->values.booleans["hw_decode"] = !*cameras[std::size_t(conflict_slot)].hardware_decode;
 	auto result = webobs::native_host::create_product_five_camera_wall(cameras, "Fixture wall");
 	check_failure(result, "camera-name-conflict");
 	require(wall_calls == 0 && lookups == conflict_slot + 1, "conflict did not stop before wall/later sources");
@@ -303,6 +303,31 @@ void invalid_case(int kind)
 	require(lookups == 0 && create_attempts == 0 && settings_creates == 0 && settings_writes == 0 && wall_calls == 0,
 		"invalid input mutated or queried OBS state");
 	require(result.created == 0 && result.reused == 0, "invalid input acquired cameras");
+}
+
+void unspecified_decode_case(unsigned reuse_mask)
+{
+	reset(reuse_mask);
+	// Existing fixtures deliberately alternate software/hardware. An omitted
+	// preference must reuse them without writes, while new inputs request HW.
+	for (auto &camera : cameras)
+		camera.hardware_decode.reset();
+	auto result = webobs::native_host::create_product_five_camera_wall(cameras, "Fixture wall");
+	require(result.scene && result.error.empty(), "omitted decode preference refused existing settings");
+	for (std::size_t i = 0; i < cameras.size(); ++i) {
+		const bool reused = (reuse_mask & (1u << i)) != 0;
+		const bool requested = result.sources[i]->settings->values.booleans.at("hw_decode");
+		require(requested == (reused ? i % 2 != 0 : true), "decode preference rewrote existing state or disabled new HW");
+		require(result.created_here[i] == !reused, "decode policy changed source ownership");
+		if (reused)
+			require(result.sources[i] == existing[i], "decode policy replaced existing source");
+	}
+	if (reuse_mask == 31u)
+		require(settings_writes == 0, "reusing all sources wrote media settings");
+	release_twice(result);
+	require_balanced();
+	require_removals(false);
+	require_no_frontend_mutation();
 }
 
 void video_config_case(int fps, int failure = 0)
@@ -534,6 +559,7 @@ int main()
 		run("wall-failure-mask-" + std::to_string(mask), [=] { wall_failure_case(mask); });
 		run("success-new-wall-mask-" + std::to_string(mask), [=] { success_case(mask, false); });
 		run("success-reused-wall-mask-" + std::to_string(mask), [=] { success_case(mask, true); });
+		run("unspecified-decode-mask-" + std::to_string(mask), [=] { unspecified_decode_case(mask); });
 	}
 	for (int kind = 1; kind <= 5; ++kind)
 		run("conflict-setting-kind-" + std::to_string(kind), [=] { conflict_case(0b00101u, 4, kind); });

@@ -222,14 +222,17 @@ void bootstrap_product_cameras()
 		const QString id = camera.value("id").toString();
 		const QString name = camera.value("name").toString();
 		const QString url = camera.value("url").toString();
+		const auto hardware_decode = camera.value("hardwareDecode");
 		if (!id_pattern.match(id).hasMatch() || name.isEmpty() || name.size() > 128 ||
 		    name.contains('\n') || name.contains('\r') || url.size() > 2048 ||
-		    !camera.value("url").isString() || !url_pattern.match(url).hasMatch()) {
+		    !camera.value("url").isString() || !url_pattern.match(url).hasMatch() ||
+		    (!hardware_decode.isUndefined() && !hardware_decode.isBool())) {
 			fail("config-camera");
 			return;
 		}
 		cameras[std::size_t(i)] = {id.toStdString(), name.toStdString(), url.toStdString(),
-					   camera.value("hardwareDecode").toBool(false)};
+					   hardware_decode.isUndefined() ? std::nullopt :
+					   std::optional<bool>(hardware_decode.toBool())};
 	}
 	bool canvas_applied = false;
 	const auto canvas_value = object.value("canvas");
@@ -268,6 +271,21 @@ void bootstrap_product_cameras()
 		return;
 	}
 	record_product_ownership(cameras, product, receipt);
+	int hardware_requests = 0;
+	bool requests_available = true;
+	for (auto *source : product.sources) {
+		auto *settings = obs_source_get_settings(source);
+		if (!settings) {
+			requests_available = false;
+			break;
+		}
+		hardware_requests += obs_data_get_bool(settings, "hw_decode") ? 1 : 0;
+		obs_data_release(settings);
+	}
+	// Stored requests only: OBS chooses the decoder and may fall back. Neither
+	// this count nor the renderer device verifies per-camera hardware decoding.
+	if (requests_available)
+		receipt.insert("hardwareDecodeRequestedSources", hardware_requests);
 	product.release();
 	receipt.insert("ok", true);
 	write_product_receipt(receipt);

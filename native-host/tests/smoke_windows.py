@@ -37,7 +37,8 @@ def write_product_config(path: Path) -> None:
 def check_product_receipt(receipt_path: Path, urls: Sequence[str] = PRODUCT_URLS, *, expect_created: int = 5,
                           expect_reused: int = 0, expect_scene_reused: bool | None = None,
                           expect_ownership_entries: int | None = None,
-                          expect_video: dict | None = None) -> dict:
+                          expect_video: dict | None = None,
+                          expect_hardware_requests: int | None = None) -> dict:
     """Validate the URL-free bootstrap receipt; never leak or print camera URLs."""
     text = receipt_path.read_text(encoding="utf-8")
     receipt = json.loads(text)
@@ -53,6 +54,10 @@ def check_product_receipt(receipt_path: Path, urls: Sequence[str] = PRODUCT_URLS
         if receipt.get("canvasApplied") is not True or receipt.get("videoInfo") != expect_video:
             raise AssertionError("Actual OBS canvas/output/fps did not match the requested mode")
         check_renderer_receipt(receipt.get("renderer"))
+    if expect_hardware_requests is not None:
+        value = receipt.get("hardwareDecodeRequestedSources")
+        if type(value) is not int or value != expect_hardware_requests:
+            raise AssertionError("Stored OBS source hardware-decode requests did not match policy")
     for url in urls:
         if url in text:
             raise AssertionError("Product bootstrap receipt leaked a camera URL")
@@ -182,6 +187,8 @@ def run(runtime: Path, result: Path, *, existing_wall: bool = False, verify_vide
     expected_video = None
     if verify_video:
         payload = product_config_payload()
+        for camera in payload["cameras"]:
+            del camera["hardwareDecode"]
         payload["canvas"] = {"width": 1280, "height": 720, "fps": 15}
         product_file.write_text(json.dumps(payload), encoding="utf-8")
         expected_video = {"baseWidth": 1280, "baseHeight": 720, "outputWidth": 1280,
@@ -199,7 +206,8 @@ def run(runtime: Path, result: Path, *, existing_wall: bool = False, verify_vide
             expect_created=0 if existing_wall else 5,
             expect_reused=5 if existing_wall else 0,
             expect_scene_reused=True if existing_wall else None,
-            expect_ownership_entries=5, expect_video=expected_video)
+            expect_ownership_entries=5, expect_video=expected_video,
+            expect_hardware_requests=5 if verify_video else None)
         if existing_wall:
             second = product
         else:
@@ -207,7 +215,8 @@ def run(runtime: Path, result: Path, *, existing_wall: bool = False, verify_vide
             verify_smoke(profile / second_name, token, profile)
             second = check_product_receipt(profile / "plugin_config/webobs-native-host/product-bootstrap.json",
                                            expect_created=0, expect_reused=5, expect_scene_reused=True,
-                                           expect_ownership_entries=5, expect_video=expected_video)
+                                           expect_ownership_entries=5, expect_video=expected_video,
+                                           expect_hardware_requests=5 if verify_video else None)
     finally:
         product_file.unlink(missing_ok=True)
     if fingerprint(external) != before:
@@ -227,6 +236,7 @@ def run(runtime: Path, result: Path, *, existing_wall: bool = False, verify_vide
                "productOwnershipEntriesSecond": second.get("ownershipEntries"),
                "verifiedVideoInfo": product.get("videoInfo") if verify_video else None,
                "actualRenderer": product.get("renderer") if verify_video else None,
+               "hardwareDecodeRequestedSources": product.get("hardwareDecodeRequestedSources"),
                "inheritedPluginOverridesCleared": True, "mediaQualified": False,
                "processGate": process_gate, "qualification": qualification}
     with result.open("x", encoding="utf-8") as output:

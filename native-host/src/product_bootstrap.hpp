@@ -3,6 +3,7 @@
 #include <obs.h>
 
 #include <array>
+#include <optional>
 #include <string>
 
 namespace webobs::native_host {
@@ -12,7 +13,9 @@ struct ProductCamera {
 	std::string id;
 	std::string name;
 	std::string url;
-	bool hardware_decode = false;
+	// Unspecified: preserve a reused source, prefer OBS hardware decoding for a
+	// new source. Explicit false/true remain strict source compatibility settings.
+	std::optional<bool> hardware_decode;
 };
 
 struct ProductWallResult {

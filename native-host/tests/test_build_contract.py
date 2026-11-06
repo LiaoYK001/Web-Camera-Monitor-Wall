@@ -800,6 +800,19 @@ class BuildContractTests(unittest.TestCase):
             with self.assertRaises(AssertionError):
                 smoke_windows.check_renderer_receipt(changed)
 
+    def test_decode_request_receipt_does_not_accept_missing_boolean_or_out_of_range(self):
+        receipt = {"ok": True, "created": 5, "reused": 0, "items": 5, "canvasApplied": False,
+                   "hardwareDecodeRequestedSources": 5}
+        with tempfile.TemporaryDirectory() as temporary:
+            path = Path(temporary) / "receipt.json"
+            path.write_text(json.dumps(receipt), encoding="utf-8")
+            smoke_windows.check_product_receipt(path, expect_hardware_requests=5)
+            for wrong in (None, True, False, "5", -1, 6, 0):
+                changed = dict(receipt, hardwareDecodeRequestedSources=wrong)
+                path.write_text(json.dumps(changed), encoding="utf-8")
+                with self.subTest(wrong=wrong), self.assertRaises(AssertionError):
+                    smoke_windows.check_product_receipt(path, expect_hardware_requests=5)
+
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)

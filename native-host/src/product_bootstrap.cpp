@@ -43,7 +43,8 @@ bool media_settings_match(obs_source_t *source, const ProductCamera &camera)
 	const bool local = obs_data_get_bool(settings, "is_local_file");
 	const char *input = obs_data_get_string(settings, "input");
 	const bool hardware = obs_data_get_bool(settings, "hw_decode");
-	const bool match = !local && input && camera.url == input && hardware == camera.hardware_decode;
+	const bool match = !local && input && camera.url == input &&
+		(!camera.hardware_decode.has_value() || hardware == *camera.hardware_decode);
 	obs_data_release(settings);
 	return match;
 }
@@ -54,7 +55,7 @@ obs_source_t *create_camera_source(const ProductCamera &camera)
 	obs_data_set_bool(settings, "is_local_file", false);
 	obs_data_set_string(settings, "input", camera.url.c_str());
 	obs_data_set_bool(settings, "looping", false);
-	obs_data_set_bool(settings, "hw_decode", camera.hardware_decode);
+	obs_data_set_bool(settings, "hw_decode", camera.hardware_decode.value_or(true));
 	obs_data_set_bool(settings, "restart_on_activate", true);
 	obs_data_set_bool(settings, "close_when_inactive", false);
 	obs_data_set_int(settings, "reconnect_delay_sec", 10);
