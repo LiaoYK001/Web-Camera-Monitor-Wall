@@ -190,7 +190,7 @@ class LoopbackRtsp:
                 try:
                     probe = subprocess.run(
                         [str(ffprobe), "-v", "error", "-rtsp_transport", "tcp", "-select_streams", "v:0",
-                         "-show_entries", "stream=codec_name,width,height", "-of", "json", self.urls[index]],
+                         "-show_entries", "stream=codec_name,width,height,has_b_frames", "-of", "json", self.urls[index]],
                         capture_output=True, text=True, timeout=8)
                 except subprocess.TimeoutExpired:
                     continue
@@ -201,7 +201,7 @@ class LoopbackRtsp:
                 except (ValueError, KeyError):
                     continue
                 fixture = fixtures[index]
-                if streams == [{"codec_name": fixture["codec"], "width": 320, "height": 180}]:
+                if probe_matches_fixture(streams, fixture):
                     pending.discard(index)
             if pending:
                 time.sleep(0.5)
@@ -240,7 +240,7 @@ class LoopbackRtsp:
             try:
                 probe = subprocess.run(
                     [str(self.ffprobe), "-v", "error", "-rtsp_transport", "tcp", "-select_streams", "v:0",
-                     "-show_entries", "stream=codec_name,width,height", "-of", "json", self.urls[index]],
+                     "-show_entries", "stream=codec_name,width,height,has_b_frames", "-of", "json", self.urls[index]],
                     capture_output=True, text=True, timeout=8)
             except subprocess.TimeoutExpired:
                 continue
@@ -249,7 +249,7 @@ class LoopbackRtsp:
                     streams = json.loads(probe.stdout)["streams"]
                 except (ValueError, KeyError):
                     streams = []
-                if streams == [{"codec_name": self.fixtures[index]["codec"], "width": 320, "height": 180}]:
+                if probe_matches_fixture(streams, self.fixtures[index]):
                     return
             time.sleep(0.5)
         raise RuntimeError("Loopback RTSP stream did not return after restart")
@@ -276,6 +276,33 @@ class LoopbackRtsp:
             self.log.close()
 
 
+def probe_matches_fixture(streams, fixture: dict) -> bool:
+    """Verify both file and actual RTSP codec/reordering; unknown is not B-frame-free."""
+    if not isinstance(streams, list) or len(streams) != 1 or not isinstance(streams[0], dict):
+        return False
+    stream = streams[0]
+    if stream.get("codec_name") != fixture["codec"]:
+        return False
+    for key in ("width", "height"):
+        if type(stream.get(key)) is not int or stream[key] != fixture[key]:
+            return False
+    reordered = stream.get("has_b_frames")
+    return (type(reordered) is int and 0 <= reordered <= 32
+            and (reordered > 0) == (fixture["requestedBFrames"] > 0))
+
+
+def picture_counts(frames, require_b_frames: bool) -> tuple[int, int]:
+    # has_b_frames describes decoder reorder buffering; independently inspect
+    # decoded picture types so metadata alone cannot certify actual B pictures.
+    if (not isinstance(frames, list) or not 1 <= len(frames) <= 64
+            or any(not isinstance(frame, dict) or frame.get("pict_type") not in {"I", "P", "B"} for frame in frames)):
+        raise AssertionError("Missing or invalid bounded encoded-picture probe")
+    count = sum(frame["pict_type"] == "B" for frame in frames)
+    if (count > 0) != require_b_frames:
+        raise AssertionError("Actual encoded B-picture presence differs from the fixture specification")
+    return len(frames), count
+
+
 def make_fixtures(private: Path, ffmpeg: Path, ffprobe: Path, node: str) -> list[dict]:
     """All encoders exit here, BEFORE OBS launches; no dummy recording/output."""
     fixtures = []
@@ -283,24 +310,32 @@ def make_fixtures(private: Path, ffmpeg: Path, ffprobe: Path, node: str) -> list
         raw, video = private / f"fixture-{channel + 1}.rgb", private / f"fixture-{channel + 1}.mkv"
         subprocess.run([node, str(HERE / "pixel-pattern.cjs"), "fixture", str(channel), str(raw)], check=True, capture_output=True, timeout=30)
         # Two of the five independent fixtures are H.264 so the local decode
-        # path is not only HEVC; both codecs stay 320x180/10fps/B0 lossy yuv420p.
+        # path is not only HEVC. Two HEVC streams force B-frame reordering;
+        # one HEVC and both H.264 streams retain the no-B-frame baseline.
         codec = "h264" if channel >= 3 else "hevc"
+        requested_b_frames = 2 if codec == "hevc" and channel != 1 else 0
         if codec == "h264":
             video_args = ["-c:v", "libx264", "-preset", "ultrafast", "-pix_fmt", "yuv420p",
                           "-x264-params", "keyint=10:min-keyint=10:scenecut=0:bframes=0:log-level=error"]
         else:
             video_args = ["-c:v", "libx265", "-preset", "ultrafast", "-pix_fmt", "yuv420p",
-                          "-x265-params", "pools=1:frame-threads=1:keyint=10:min-keyint=10:scenecut=0:bframes=0:log-level=error"]
+                          "-x265-params", f"pools=1:frame-threads=1:keyint=10:min-keyint=10:scenecut=0:b-adapt=0:bframes={requested_b_frames}:log-level=error"]
         command = [str(ffmpeg), "-hide_banner", "-loglevel", "error", "-nostdin", "-n", "-f", "rawvideo",
                    "-pixel_format", "rgb24", "-video_size", "320x180", "-framerate", "10", "-i", str(raw),
                    "-an", *video_args, "-f", "matroska", str(video)]
         subprocess.run(command, check=True, capture_output=True, timeout=90)
-        probe = subprocess.run([str(ffprobe), "-v", "error", "-select_streams", "v:0", "-show_entries", "stream=codec_name,width,height",
+        probe = subprocess.run([str(ffprobe), "-v", "error", "-select_streams", "v:0", "-read_intervals", "%+#32",
+                                "-show_entries", "stream=codec_name,width,height,has_b_frames:frame=pict_type",
                                 "-of", "json", str(video)], check=True, capture_output=True, text=True, timeout=20)
-        streams = json.loads(probe.stdout)["streams"]
-        if streams != [{"codec_name": codec, "width": 320, "height": 180}]:
-            raise AssertionError(f"Local fixture is not independently encoded 320x180 {codec}")
+        document = json.loads(probe.stdout)
+        streams = document["streams"]
+        specification = {"codec": codec, "width": 320, "height": 180, "requestedBFrames": requested_b_frames}
+        if not probe_matches_fixture(streams, specification):
+            raise AssertionError("Encoded fixture codec/dimensions/reordering did not match its specification")
+        pictures, b_pictures = picture_counts(document.get("frames"), requested_b_frames > 0)
         fixtures.append({"channel": channel + 1, "codec": codec, "width": 320, "height": 180,
+                         "requestedBFrames": requested_b_frames, "hasBFrames": streams[0]["has_b_frames"],
+                         "probedPictureCount": pictures, "probedBPictureCount": b_pictures,
                          "sha256": hashlib.sha256(video.read_bytes()).hexdigest()})
         # Raw targets are exact files just created by this function under the
         # caller's new fixed private directory, never a computed user path.

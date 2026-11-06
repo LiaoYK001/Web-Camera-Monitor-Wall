@@ -100,7 +100,10 @@ jobs:
           if ($env:NATIVE_PIXEL_TEST -eq 'true') { $parameters.PixelTest=$true }
           ./desktop/scripts/build-obs-native.ps1 @parameters
       - name: Inventory the runtime and enforce the P4 size budget
-        if: always() && steps.compile.outcome == 'success'
+        # The builder already inventories BOTH variants before first start.
+        # Pixel builds now contain private fixtures; only clean normal builds
+        # may be inventoried again here. The budget itself is unchanged.
+        if: always() && steps.compile.outcome == 'success' && !inputs.pixel_test
         shell: pwsh
         run: |
           $runtime = Join-Path $env:GITHUB_WORKSPACE 'build/obs-native-ci/runtime'

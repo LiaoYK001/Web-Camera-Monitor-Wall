@@ -884,3 +884,17 @@ Run 42227297220 passed the full Windows native prototype build, installation/lif
 Windows renderer-free 认证 CI 增加仅用于依赖的 vcpkg binary cache，键含固定 baseline、manifest 和托管编译器镜像版本；vcpkg 仍按包 ABI 校验。配置依赖完成即保存，之后照常编译全部认证代码并运行所有测试。缓存不含产品包或私密配置，不跳过任何验证，实际命中/平台结果待后续 CI。此变化优化迭代速度，不是产品性能改善证据。
 
 The test-only pixel harness now exercises the production integer-FPS setter at 15fps and checks actual mode at every original phase and restart. Existing picture/identity/TAKE/recovery checks remain. Local protocol tests pass, but the Windows final-pixel gate is still pending. A vcpkg dependency-only ABI-checked cache speeds future Windows authorization iterations without skipping builds/tests or changing product performance.
+
+### dev.69 实际 15fps 最终像素通过，后置体积门槛失败 / 15fps pixels passed; post-test inventory failed
+
+[run 42229486054](https://github.com/LiaoYK001/Web-Camera-Monitor-Wall/actions/runs/42229486054)（source `c0f1fab`，dev.69）实际编译并执行 15fps 生产配置路径，`native-final-pixels.json`（artifact `13508876380`）为 `status=passed / syntheticFinalWindowPixelsQualified=true`：已知颜色、五路独立 H.264/H.265、Studio Preview 未 TAKE、显式 TAKE、Program 重开、回环 RTSP、断流恢复、Program 全屏、全屏恢复及保存场景重启十阶段全部最终像素通过，每阶段 base/output=960×540、实际 FPS=15/1，活动 encoder/output 均为零；来源身份/设置保持。它仍是合成小流与托管设备证据，不是用户相机或性能证据。
+
+整个工作流结论为 **failure**，原因是 helper 已运行像素测试、在 `runtime/config/` 生成私密测试 profile/FFmpeg/夹具后，workflow 又扫描整棵树，得到 373,686,550 B > 104,857,600 B。它不是最终像素失败，也不是实际普通安装树膨胀。修复将所有构建的清单/预算检查强制前置到首次运行之前；配置/备份目录存在时工具直接拒绝，像素构建不再后置重扫。没有提高预算、隐藏已安装组件或放宽画面门槛，后续新运行验证整条流程。
+
+### 带重排序 HEVC 输入（待 Windows 最终画面回执）/ Reordered HEVC inputs (pending Windows pixels)
+
+像素夹具中两路 HEVC 改为 `bframes=2 / b-adapt=0`，另一路 HEVC 与两路 H.264 保留 B0 基线。独立文件与实际 RTSP 的 ffprobe 都要求尺寸/codec/`has_b_frames` 与预期一致，未知重排序不作为 B0；编码文件还解码检查有界的 `pict_type`，要求实际 B 图像存在，不只相信重排缓冲元数据。编码在 OBS 启动前全部结束，之后 fixture 发布者仅 stream-copy；原窗口/五路身份/动态时间码/零编码器检查保留。
+
+Fedora 自带 free FFmpeg 没有 libx264/libx265，未更换系统包。仅在 Git 忽略的 `build/obs-parity-test-tools` 中下载官方同版本 Linux 测试 CLI `ffmpeg-n8.1.3-9-g29e619e767-linux64-gpl-8.1.tar.xz`，用同一官方 Release 的 checksums.sha256 校验为 `97ce978979194b5cf7e06a5e68020dbdaa7a4f3294c5452b6a1bc347100dbb79`，只提取两个普通工具文件，无 root、无新增产品依赖或随包二进制。本机启用真实编码回归共 23 项，22 通过、1 项 Windows capture 专属跳过；两路 HEVC 的实际 B 图像及重排缓冲均为正，B0 三路保持零。Windows 最终画面与实际 RTSP 重排序回执尚待新运行，不能借用 dev.69 的 B0 夹具结论。
+
+Run 42229486054 produced a passing ten-phase 15fps final-pixel receipt but the workflow then failed by inventorying test-created private tools/profile data as if they were installed payload. Inventory is now enforced before first start for both variants, with the same 100 MiB gate and explicit refusal of configured profiles. Separately, two HEVC fixtures now force reordering and verify actual B-picture types as well as file/RTSP stream shape. Same-version, checksum-verified Linux test tools exercised real encoding locally (22 passes / one Windows-only skip). Windows reordered-input pixels remain pending. No product performance, real-camera or full-default migration completion is claimed.

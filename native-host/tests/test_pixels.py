@@ -118,6 +118,30 @@ class PixelContractTests(unittest.TestCase):
             with self.assertRaises(AssertionError):
                 gate.validate_video_mode({"videoInfo": video})
 
+    def test_probe_rejects_unknown_or_changed_reordering_and_stream_shape(self):
+        specification = {"codec": "hevc", "width": 320, "height": 180, "requestedBFrames": 2}
+        stream = {"codec_name": "hevc", "width": 320, "height": 180, "has_b_frames": 2}
+        self.assertTrue(gate.probe_matches_fixture([stream], specification))
+        self.assertTrue(gate.probe_matches_fixture([dict(stream, has_b_frames=1)], specification))
+        for bad in (dict(stream, has_b_frames=0), dict(stream, has_b_frames=True), dict(stream, has_b_frames=-1),
+                    dict(stream, codec_name="h264"), dict(stream, width=640), dict(stream, height=360)):
+            self.assertFalse(gate.probe_matches_fixture([bad], specification))
+        missing = {k: v for k, v in stream.items() if k != 'has_b_frames'}
+        for bad in ([], [stream, stream], [missing], None):
+            self.assertFalse(gate.probe_matches_fixture(bad, specification))
+        no_b_frames = dict(specification, requestedBFrames=0)
+        self.assertFalse(gate.probe_matches_fixture([stream], no_b_frames))
+        self.assertTrue(gate.probe_matches_fixture([dict(stream, has_b_frames=0)], no_b_frames))
+
+    def test_b_frames_require_actual_probed_picture_types_not_only_buffer_metadata(self):
+        self.assertEqual(gate.picture_counts([{'pict_type': 'I'}, {'pict_type': 'P'}, {'pict_type': 'B'}], True), (3, 1))
+        self.assertEqual(gate.picture_counts([{'pict_type': 'I'}, {'pict_type': 'P'}], False), (2, 0))
+        for frames, require_b in [([], False), (None, True), ([{}], True), ([{'pict_type': 'unknown'}], True),
+                                  ([{'pict_type': 'I'}], True), ([{'pict_type': 'B'}], False),
+                                  ([{'pict_type': 'B'}] * 65, True)]:
+            with self.assertRaises(AssertionError):
+                gate.picture_counts(frames, require_b)
+
     @unittest.skipUnless(shutil.which("node"), "Node test tool unavailable")
     def test_geometry_timecode_and_negative_cases(self):
         subprocess.run([shutil.which("node"), str(HERE / "pixel-pattern.cjs"), "selftest"], check=True)
@@ -284,6 +308,9 @@ class PixelContractTests(unittest.TestCase):
             self.assertEqual(len(fixtures), 5)
             self.assertEqual(len({f["sha256"] for f in fixtures}),5)
             self.assertEqual({f["codec"] for f in fixtures}, {"hevc", "h264"})
+            self.assertEqual([f['requestedBFrames'] for f in fixtures], [2, 0, 2, 0, 0])
+            self.assertEqual([f['hasBFrames'] > 0 for f in fixtures], [True, False, True, False, False])
+            self.assertEqual([f['probedBPictureCount'] > 0 for f in fixtures], [True, False, True, False, False])
             self.assertEqual(len(list(Path(temporary).glob("*.mkv"))),5)
             self.assertEqual(list(Path(temporary).glob("*.rgb")),[])
 

@@ -46,6 +46,10 @@ OBS's Windows install rules also stage `*.pdb` debug symbols; `obs64.exe` never 
 
 正常构建随后运行 `native-host/scripts/runtime_inventory.py`（CI 步骤 "Inventory the runtime and enforce the P4 size budget"）：拒绝残留的 PDB/lib/exp/obj/CMake 产物，按 `bin`/`qt`/`plugins`/`data`/`licenses`/`other` 汇总字节，统计 locale 文件数与语言数，并把每个 DLL/EXE 的路径、大小、SHA-256 和供应商/许可证提示写进 `native-runtime-inventory.json`；运行时超过 100 MiB 开发预算即失败。该清单是 P4 体积与 SBOM 的输入，不是法律结论，`licenses/` 仍为权威。
 
+普通/像素两种构建现在都由 builder 在首次启动之前强制计量，并记录 `measurementPhase=staged-before-first-start`。像素测试生成的私密 profile、临时 FFmpeg 与媒体夹具不属于此阶段的安装载荷；不能事后扫描它们再声称是安装体积。清单工具遇到 `config/` 或 `backups/` 会在读取文件前拒绝，普通构建的 workflow 可在仍干净时复验，像素构建沿用测试前的计量结果；100 MiB 门槛不变，原型测试运行时仍禁止打包发布。
+
+Both normal and pixel builds inventory the staged runtime before first start. Configured profiles/backups are refused before hashing; test-only tools are never reclassified as installed payload. The 100 MiB budget is unchanged and pixel-enabled runtimes remain non-redistributable.
+
 Normal builds then run `native-host/scripts/runtime_inventory.py` (CI step "Inventory the runtime and enforce the P4 size budget"): it rejects leftover PDB/lib/exp/obj/CMake products, sums bytes per `bin`/`qt`/`plugins`/`data`/`licenses`/`other`, counts locale files and languages, and writes each DLL/EXE path, size, SHA-256 and vendor/licence hint into `native-runtime-inventory.json`; the runtime fails the step above the 100 MiB development budget. The report feeds P4 size and SBOM work; it is not a legal conclusion, and `licenses/` stays authoritative.
 
 ### 原型安装与升级 / Prototype install and upgrade

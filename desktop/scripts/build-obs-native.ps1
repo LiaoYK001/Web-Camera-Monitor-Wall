@@ -79,6 +79,12 @@ if ($PixelTest) {
     # A test-enabled runtime must never masquerade as a redistributable prototype.
     # The compiler-installed marker is checked before annotating the stage manifest.
     Invoke-Checked 'python' @((Join-Path $repoRoot 'native-host/tests/pixel_windows.py'),'--runtime',$runtime,'--mark-build')
+}
+# Measure the clean staged payload before any startup/pixel fixture creates a
+# private profile and test-only FFmpeg tools inside runtime/config. Keep the
+# same product budget for both builds; never exclude configured files silently.
+Invoke-Checked 'python' @((Join-Path $repoRoot 'native-host/scripts/runtime_inventory.py'),'--runtime',$runtime,'--report',(Join-Path $buildRoot 'native-runtime-inventory.json'),'--max-runtime-bytes','104857600')
+if ($PixelTest) {
     $pixelArguments = @((Join-Path $repoRoot 'native-host/tests/pixel_windows.py'),'--runtime',$runtime,'--result',(Join-Path $buildRoot 'native-final-pixels.json'))
     if ($Offline) { $pixelArguments += '--offline' }
     Invoke-Checked 'python' $pixelArguments

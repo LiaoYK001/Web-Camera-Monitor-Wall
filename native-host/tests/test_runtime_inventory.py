@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import tempfile
 import unittest
+from unittest.mock import patch
 from pathlib import Path
 import sys
 
@@ -44,6 +45,7 @@ class RuntimeInventoryTests(unittest.TestCase):
             receipt = runtime_inventory.inventory(runtime)
             self.assertEqual(receipt["kind"], "native-runtime-inventory")
             self.assertEqual(receipt["version"], "4.1.0-dev.99")
+            self.assertEqual(receipt["measurementPhase"], "staged-before-first-start")
             self.assertEqual(receipt["groups"]["qt"], 20)
             self.assertEqual(receipt["groups"]["plugins"], 7)
             self.assertEqual(receipt["groups"]["licenses"], 3)
@@ -73,6 +75,17 @@ class RuntimeInventoryTests(unittest.TestCase):
             runtime = make_runtime(Path(tmp))
             with self.assertRaises(SystemExit):
                 runtime_inventory.inventory(runtime, max_runtime_bytes=10)
+
+    def test_initialized_profiles_and_backups_are_refused_before_hashing_any_files(self) -> None:
+        for private_name in ("config", "backups"):
+            with self.subTest(private_name=private_name), tempfile.TemporaryDirectory() as tmp:
+                runtime = make_runtime(Path(tmp))
+                private = runtime / private_name
+                private.mkdir()
+                (private / "synthetic-private-fixture.json").write_text('{}')
+                with patch.object(runtime_inventory, 'sha256', side_effect=AssertionError('Must not inspect used profiles')):
+                    with self.assertRaisesRegex(SystemExit, 'before first start'):
+                        runtime_inventory.inventory(runtime)
 
     def test_main_writes_receipt(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

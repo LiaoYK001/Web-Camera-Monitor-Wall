@@ -81,6 +81,8 @@ def inventory(runtime: Path, max_runtime_bytes: int = DEFAULT_MAX_RUNTIME_BYTES)
     runtime = runtime.resolve()
     if not runtime.is_dir():
         raise SystemExit(f"runtime is not a directory: {runtime}")
+    if any((runtime / name).exists() or (runtime / name).is_symlink() for name in ("config", "backups")):
+        raise SystemExit("Inventory requires a clean staged runtime before first start, not private profiles or test fixtures")
     forbidden: list[str] = []
     groups = {"bin": 0, "qt": 0, "plugins": 0, "data": 0, "licenses": 0, "other": 0}
     locales = {"files": 0, "bytes": 0}
@@ -143,6 +145,7 @@ def inventory(runtime: Path, max_runtime_bytes: int = DEFAULT_MAX_RUNTIME_BYTES)
         "kind": RECEIPT_KIND,
         "version": version,
         "scope": "default portable prototype runtime (development-only)",
+        "measurementPhase": "staged-before-first-start",
         "files": files,
         "totalBytes": total,
         "maxRuntimeBytes": max_runtime_bytes,
