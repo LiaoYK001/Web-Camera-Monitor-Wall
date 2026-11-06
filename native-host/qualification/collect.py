@@ -96,6 +96,7 @@ def run(args) -> Path:
         raise ValueError("Sample count safety limit exceeded")
     root = win32.Process(args.pid, 0, args.exe.name, None)
     tree = Tree(root, win32.Process, win32.snapshot)
+    gpu = None
     try:
         actual = os.path.normcase(os.path.normpath(root.image()))
         expected = os.path.normcase(os.path.normpath(str(args.exe)))
@@ -104,6 +105,9 @@ def run(args) -> Path:
         if root.observe()["exited"]:
             raise ValueError("Root process has already exited")
         cpus = win32.logical_processors()
+        if args.gpu:
+            from gpu import Sampler
+            gpu = Sampler()
         output = new_private_directory(args.output)
         write_json(output / "metadata.json", meta)
         manifest = {"schemaVersion": SCHEMA, "collector": "windows-readonly-process-tree-v1",
@@ -114,7 +118,8 @@ def run(args) -> Path:
                                "intervalSeconds": args.interval, "actualWarmupSeconds": None},
                     "coverageIncomplete": True, "strictTotal": False, "qualified": False,
                     "samplingMethod": "Read-only Toolhelp parent snapshots; retained process handles / GetProcessTimes / GetProcessMemoryInfo",
-                    "unmeasured": UNMEASURED.copy()}
+                    "unmeasured": UNMEASURED.copy(),
+                    "gpuDiagnosticRequested": args.gpu}
         start = time.perf_counter(); measurements = []; last_exited = set(); root_exit = False
         try:
             with (output / "samples.jsonl").open("x", encoding="utf-8", newline="\n") as raw:
@@ -127,10 +132,18 @@ def run(args) -> Path:
                             last_exited.add(process["identity"])
                             events.append({"kind": "exit", "identity": process["identity"]})
                     root_exit = root.exited
+                    gpu_sample = None
+                    if gpu is not None:
+                        def verify_alive(identity):
+                            value = tree.owned[identity].observe()
+                            return not value["exited"] and not value.get("errors")
+                        gpu_sample = gpu.sample(processes, verify_alive)
                     record = {"phase": phase, "elapsedSeconds": time.perf_counter() - start,
                               "fileTime": win32.system_file_time(), "utc": utc(),
                               "captureSpanSeconds": time.perf_counter() - before,
                               "processes": processes, "events": events}
+                    if gpu_sample is not None:
+                        record["gpuDiagnostic"] = gpu_sample
                     raw.write(json.dumps(record, ensure_ascii=False, allow_nan=False) + "\n"); raw.flush()
                     if phase != "warmup": measurements.append(record)
                 deadline = start + args.warmup
@@ -173,6 +186,8 @@ def run(args) -> Path:
             raise ValueError(f'Private partial receipt retained; status={manifest["status"]}')
         return output
     finally:
+        if gpu is not None:
+            gpu.close()
         tree.close()
 
 
@@ -186,6 +201,7 @@ def parser():
     result.add_argument("--duration", type=float, default=1200)
     result.add_argument("--interval", type=float, default=5)
     result.add_argument("--fixture", action="store_true", help="Explicit short algorithm diagnostic, never qualification")
+    result.add_argument("--gpu", action="store_true", help="Optional per-engine PDH diagnostics; no GPU total or parity verdict")
     return result
 
 

@@ -38,7 +38,8 @@ class PlanTest(unittest.TestCase):
         output = self.root / "plan"
         value = plan.build(self.template_path, output)
         self.assertEqual(6, len(value["runs"]))
-        self.assertEqual(["product", "obs"] * 3, [run["variant"] for run in value["runs"]])
+        self.assertEqual(["product", "obs", "obs", "product", "product", "obs"],
+                         [run["variant"] for run in value["runs"]])
         self.assertEqual([1, 1, 2, 2, 3, 3], [run["pairIndex"] for run in value["runs"]])
         names = {run["metadataFile"] for run in value["runs"]}
         self.assertEqual(6, len(names))
@@ -47,6 +48,29 @@ class PlanTest(unittest.TestCase):
             self.assertEqual(run["runId"], common.metadata(generated)["runId"])
         self.assertFalse(value["qualified"])
         self.assertTrue((output / "README.txt").is_file())
+
+    def test_generated_order_is_accepted_by_actual_offline_paired_report(self):
+        from datetime import datetime, timedelta, timezone
+        from test_qualification import raw_run
+        from summarize import load_run, paired_report
+        schedule = plan.build(self.template_path, self.root / 'plan')
+        start = datetime(2026, 11, 6, tzinfo=timezone.utc)
+        runs = []
+        for index, entry in enumerate(schedule['runs']):
+            output = self.root / f'run-{index}'
+            raw_run(output, entry['pairIndex'], entry['position'], entry['variant'], start + timedelta(seconds=index * 1500))
+            generated = json.loads((self.root / 'plan' / entry['metadataFile']).read_text(encoding='utf-8'))
+            (output / 'metadata.json').write_text(json.dumps(generated), encoding='utf-8')
+            manifest = common.read_json(output / 'manifest.json')
+            manifest['metadataSha256'] = common.digest(output / 'metadata.json')
+            (output / 'manifest.json').write_text(json.dumps(manifest), encoding='utf-8')
+            runs.append(load_run(output))
+        report = paired_report(runs)
+        self.assertEqual(report['pairCount'], 3)
+        self.assertEqual([pair['order'] for pair in report['pairs']],
+                         [['product', 'obs'], ['obs', 'product'], ['product', 'obs']])
+        self.assertFalse(report['qualified'])
+        self.assertIsNone(report['obsParity'])
 
     def test_rejects_anon_template_that_is_not_pair_one_product(self) -> None:
         template = dict(self.template, variant="obs", position=2)

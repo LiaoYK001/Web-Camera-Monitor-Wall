@@ -45,6 +45,10 @@ jobs:
         run: |
           python -B native-host/qualification/test_qualification.py
           if ($LASTEXITCODE -ne 0) { throw 'Synthetic process accounting contract failed.' }
+          python -B native-host/qualification/test_gpu.py
+          if ($LASTEXITCODE -ne 0) { throw 'GPU attribution contract failed.' }
+          python -B native-host/qualification/test_plan.py
+          if ($LASTEXITCODE -ne 0) { throw 'Counterbalanced campaign contract failed.' }
           python -B native-host/tests/test_prune_runtime.py
           if ($LASTEXITCODE -ne 0) { throw 'Runtime PDB pruning contract failed.' }
           python -B native-host/qualification/test_windows_api.py

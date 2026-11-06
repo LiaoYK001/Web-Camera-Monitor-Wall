@@ -16,6 +16,25 @@ import unittest
 
 @unittest.skipUnless(os.name == "nt", "Actual Windows x64 APIs are not available")
 class WindowsApiTests(unittest.TestCase):
+    def test_actual_pdh_query_lifecycle_and_safe_missing_gpu_counters(self):
+        import ctypes as C
+        from gpu import Sampler
+        import win32
+        process = win32.Process(os.getpid(), 0, "python-fixture", None)
+        sampler = Sampler()
+        try:
+            for _ in range(2):
+                value = sampler.sample([process.observe()], lambda _: not process.observe()["exited"])
+                self.assertIn(value["status"], {"priming", "sampled", "unavailable"})
+                self.assertFalse(value["qualified"])
+                self.assertTrue(all(r["identity"] == process.identity for r in value["rows"]))
+            self.assertEqual(C.sizeof(sampler.backend.Item), 24)
+            self.assertEqual(sampler.backend.Item.value.offset, 8)
+        finally:
+            sampler.close()
+            sampler.close()  # idempotent close; no PDH handles may leak
+            process.close()
+
     def test_current_process_times_memory_and_snapshot(self):
         import win32
         current = win32.Process(os.getpid(), 0, "python-fixture", None)
@@ -198,7 +217,7 @@ for command in sys.stdin:
                 self.assertFalse(output.exists())
                 args = parser().parse_args(["--pid", str(fixture.pid), "--exe", str(executable),
                                             "--metadata", str(metadata_path), "--output", str(output),
-                                            "--fixture", "--warmup", "0", "--duration", "1",
+                                            "--gpu", "--fixture", "--warmup", "0", "--duration", "1",
                                             "--interval", ".25"])
                 self.assertEqual(run(args), output)
                 self.assertIsNone(fixture.poll(), "Collector must not terminate its observed root")
@@ -208,6 +227,7 @@ for command in sys.stdin:
                                  {"metadata.json", "manifest.json", "samples.jsonl"})
                 manifest = json.loads((output / "manifest.json").read_text(encoding="utf-8"))
                 self.assertEqual(manifest["status"], "complete")
+                self.assertTrue(manifest["gpuDiagnosticRequested"])
                 self.assertTrue(manifest["fixture"])
                 self.assertEqual(manifest["rootIdentity"], identity)
                 self.assertEqual(manifest["rootExeSha256"], hashlib.sha256(executable.read_bytes()).hexdigest())
@@ -219,6 +239,8 @@ for command in sys.stdin:
                 self.assertEqual(samples[0]["phase"], "baseline")
                 self.assertTrue(all(s["phase"] == "measure" for s in samples[1:]))
                 for sample in samples:
+                    self.assertFalse(sample["gpuDiagnostic"]["qualified"])
+                    self.assertTrue(sample["gpuDiagnostic"]["coverageIncomplete"])
                     root = next(p for p in sample["processes"] if p["identity"] == identity)
                     self.assertFalse(root["exited"])
                     self.assertIsInstance(root["cpuTime100ns"], int)

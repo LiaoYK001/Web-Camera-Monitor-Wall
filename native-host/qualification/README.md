@@ -14,13 +14,29 @@ python -B native-host/qualification/preflight.py --native-exe <native obs64.exe>
 
 ## 六轮交替计划
 
-[plan.py](plan.py) 把一份已确认的 pair-1/position-1 元数据展开为三对交替（产品→OBS→产品→OBS→产品→OBS）的六个 `run-NN-*.json` 与 `plan.json`，并可绑定一份非诊断的预检回执。计划只做排期：`status=planned`、`qualified=false`，不启动 OBS、不产生任何测量。
+[plan.py](plan.py) 把一份已确认的 pair-1/position-1 元数据展开为三对交换先后顺序的六个 `run-NN-*.json` 与 `plan.json`：第一对产品→OBS、第二对 OBS→产品、第三对产品→OBS，并可绑定一份非诊断的预检回执。旧生成器总把产品放在每对第一位，与离线汇总要求相冲突；已修复并增加生成计划→合成原始回执→真实离线汇总的回归。计划只做排期：`status=planned`、`qualified=false`，不启动 OBS、不产生任何测量。
 
 ```powershell
 python -B native-host/qualification/plan.py --template <pair01-product.json> --preflight <preflight-01/preflight.json> --output <new private dir>
 ```
 
 ## 范围与依赖
+
+### 可选 GPU 引擎诊断
+
+采集命令可添加 `--gpu`，通过 Windows 自带 PDH 的语言无关计数器记录已观察进程的 GPU 引擎利用率及 Dedicated/Shared Usage；不启动其他媒体程序、不需 npm/Python 第三方包。实现见 [gpu.py](gpu.py)，使用 `PdhAddEnglishCounterW`、`PdhGetFormattedCounterArrayW`，支持中文 Windows 的计数器名称。
+
+```powershell
+python -B native-host/qualification/collect.py --pid <already-running-PID> --exe <exact-absolute-exe> --metadata <run-metadata.json> --output <new-private-directory> --gpu
+```
+
+每条原始 sample 增加 `gpuDiagnostic`：分别保留进程创建期身份、适配器 LUID、physical adapter、engine 编号/类型和利用率；显存计数器单独记录字节。不跨引擎或显卡求和，也不把 GPU Engine 的 VideoDecode 活动解释成每一路已证实硬解。PDH 第一轮采样、无计数器、无实例、无效值和权限/驱动问题保持明确状态，不补零。新观察或 PID 重用的进程必须在连续两次采样中身份一致，并且 PDH 查询结束后原进程句柄仍存活，才能归属采样值。忽略其他进程的行，不保存其名称或完整原始计数器实例。
+
+GPU 诊断与 CPU 共用私密 `samples.jsonl` 和原始文件摘要，采集耗时包含 PDH 查询；两侧应使用相同开关与间隔。它增加少量采样开销，不进入产品常驻媒体路径。缺失/重复/未知实例会计入拒绝数。GPU 引擎实例的出现/消失、短命进程、系统合成器及树外服务仍有覆盖缺口；没有 GPU 总量、严格显存总量、功耗或性能验收结论。既有离线配对报告仍只比较 CPU/内存，不会将这些原始诊断自动混入资格判定；`unmeasured` 中的严格 GPU/VRAM 项保持空值。
+
+Windows CI 验证 ctypes 布局、真实 PDH query 生命周期、缺少 GPU 时的明确状态，以及 `--gpu` 与 CPU 采集的合成进程集成；CI 未提供 4090 或真实摄像机，不能当作目标机测量。
+
+API 参考：[Microsoft PDH language-neutral counter](https://learn.microsoft.com/en-us/windows/win32/api/pdh/nf-pdh-pdhaddenglishcounterw)、[formatted wildcard array](https://learn.microsoft.com/en-us/windows/win32/api/pdh/nf-pdh-pdhgetformattedcounterarrayw)。
 
 Windows x64 使用用户已有的 64 位 Python 3.10+ 与系统 API（`ctypes`，无第三方包、无管理员权限要求）。不提供任意 Python 二进制下载。离线统计与合成算法回归可在 Linux / Windows 使用标准 Python 运行。
 

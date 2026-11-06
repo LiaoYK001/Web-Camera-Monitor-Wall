@@ -19,6 +19,20 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  windows-performance-diagnostics:
+    name: Windows read-only performance diagnostics (not hardware qualification)
+    runs-on: windows-2022
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with: { persist-credentials: false }
+      - name: Verify accounting, counterbalanced campaign and actual PDH API lifecycle
+        shell: pwsh
+        run: |
+          foreach ($test in @('test_qualification.py', 'test_gpu.py', 'test_plan.py', 'test_windows_api.py')) {
+            python -B "native-host/qualification/$test"
+            if ($LASTEXITCODE -ne 0) { throw "Performance diagnostic check failed: $test" }
+          }
   native-control-contracts:
     runs-on: ubuntu-24.04
     steps:

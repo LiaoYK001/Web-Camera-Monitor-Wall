@@ -19,7 +19,7 @@ BOUNDARIES = (
 
 
 def _run_id(campaign: str, pair: int, position: int, variant: str) -> str:
-    value = f"{campaign}-p{pair:02d}-{'product' if position == 1 else 'obs'}"
+    value = f"{campaign}-p{pair:02d}-{variant}"
     if len(value) > 64:
         raise ValueError("campaignId is too long to derive per-run ids (max 64 characters)")
     return value
@@ -44,7 +44,10 @@ def build(template_path: Path, output: Path, preflight_path: Path | None = None)
     campaign = base["campaignId"]
     runs = []
     for pair in range(1, PAIRS + 1):
-        for position, variant in ((1, "product"), (2, "obs")):
+        # Counterbalance first/second position; the offline paired-report gate
+        # rejects repeated first variants because they confound order/thermal effects.
+        variants = ("product", "obs") if pair % 2 else ("obs", "product")
+        for position, variant in enumerate(variants, 1):
             value = json.loads(json.dumps(template))
             value.update({"runId": _run_id(campaign, pair, position, variant), "pairId": f"{campaign}-pair{pair:02d}",
                           "pairIndex": pair, "position": position, "variant": variant})
