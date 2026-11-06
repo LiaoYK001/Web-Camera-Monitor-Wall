@@ -225,6 +225,15 @@ void bootstrap_product_cameras()
 			return;
 		}
 		canvas_applied = true;
+		obs_video_info actual{};
+		if (!obs_get_video_info(&actual)) {
+			fail("video-config-unavailable");
+			return;
+		}
+		receipt.insert("videoInfo", QJsonObject{{"baseWidth", int(actual.base_width)},
+			{"baseHeight", int(actual.base_height)}, {"outputWidth", int(actual.output_width)},
+			{"outputHeight", int(actual.output_height)}, {"fpsNumerator", int(actual.fps_num)},
+			{"fpsDenominator", int(actual.fps_den)}});
 	}
 	auto product = webobs::native_host::create_product_five_camera_wall(cameras, "WebOBS Native Wall");
 	receipt.insert("created", product.created);

@@ -430,7 +430,7 @@ jobs:
         if: ${{ !inputs.pixel_test }}
         shell: pwsh
         run: |
-          python -B native-host/tests/smoke_windows.py --runtime build/obs-native-ci/runtime --result build/obs-native-ci/native-startup-smoke.json
+          python -B native-host/tests/smoke_windows.py --runtime build/obs-native-ci/runtime --result build/obs-native-ci/native-startup-smoke.json --verify-video
           if ($LASTEXITCODE -ne 0) { throw 'Native frontend startup/isolation smoke failed; not camera or performance qualification.' }
       - name: Kill the real OBS host and require no surviving processes
         if: ${{ !inputs.pixel_test }}

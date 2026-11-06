@@ -62,6 +62,9 @@ std::string wall_error;
 int lookups = 0, create_attempts = 0, settings_creates = 0, settings_writes = 0, wall_calls = 0;
 int selections = 0, saves = 0, profile_queries = 0, config_writes = 0, video_resets = 0, video_queries = 0;
 config_t profile;
+bool video_info_available = false, fixture_output_active = false, profile_available = true;
+obs_video_info reported_video{};
+std::map<std::string, uint64_t> profile_values;
 
 obs_data_t *store_settings(const SettingsValues &values)
 {
@@ -106,6 +109,10 @@ void reset(unsigned reuse_mask = 0)
 	wall_error = "fixture-wall-failure";
 	lookups = create_attempts = settings_creates = settings_writes = wall_calls = 0;
 	selections = saves = profile_queries = config_writes = video_resets = video_queries = 0;
+	video_info_available = fixture_output_active = false;
+	profile_available = true;
+	reported_video = {};
+	profile_values.clear();
 	for (std::size_t i = 0; i < cameras.size(); ++i) {
 		cameras[i] = {"camera-" + std::to_string(i), "Fixture camera " + std::to_string(i),
 			      "rtsp://fixture.invalid/camera-" + std::to_string(i), i % 2 != 0};
@@ -278,18 +285,57 @@ void invalid_case(int kind)
 		if (kind == 5) camera.name = std::string(129, 'x');
 		if (kind == 6) camera.name = "invalid\rname";
 		if (kind == 7) camera.name = "invalid\nname";
-	} else {
+	} else if (kind <= 11) {
 		error = "camera-url-invalid";
 		if (kind == 8) camera.url.clear();
 		if (kind == 9) camera.url = "https://fixture.invalid/" + std::string(2048, 'x');
 		if (kind == 10) camera.url = "file://fixture.invalid/video";
 		if (kind == 11) camera.url = "fixture.invalid/video";
+	} else if (kind == 12) {
+		camera.id = cameras[0].id;
+		error = "camera-id-duplicate";
+	} else {
+		camera.name = cameras[0].name;
+		error = "camera-name-duplicate";
 	}
 	auto result = webobs::native_host::create_product_five_camera_wall(cameras, "Fixture wall");
 	check_failure(result, error);
 	require(lookups == 0 && create_attempts == 0 && settings_creates == 0 && settings_writes == 0 && wall_calls == 0,
 		"invalid input mutated or queried OBS state");
 	require(result.created == 0 && result.reused == 0, "invalid input acquired cameras");
+}
+
+void video_config_case(int fps, int failure = 0)
+{
+	reset();
+	video_info_available = true;
+	reported_video.base_width = reported_video.output_width = 1280;
+	reported_video.base_height = reported_video.output_height = 720;
+	reported_video.fps_num = unsigned(fps);
+	reported_video.fps_den = 1;
+	if (failure == 1) reported_video.fps_num = unsigned(fps + 1);
+	if (failure == 2) reported_video.fps_den = 0;
+	if (failure == 3) reported_video.output_width = 640;
+	if (failure == 4) video_info_available = false;
+	if (failure == 5) fixture_output_active = true;
+	if (failure == 6) profile_available = false;
+	if (failure == 7) reported_video.base_height = 360;
+	if (failure == 8) { reported_video.fps_num *= 1000; reported_video.fps_den = 1000; }
+	std::string error;
+	const bool ok = webobs::native_host::apply_product_video_config(1280, 720, fps, error);
+	const bool should_succeed = failure == 0 || failure == 8;
+	require(ok == should_succeed, "video setup accepted an unapplied mode or rejected an exact mode");
+	if (failure == 5 || failure == 6) {
+		require(config_writes == 0 && video_resets == 0 && video_queries == 0,
+			"active outputs or missing profile must fail before mutation");
+		require(error == (failure == 5 ? "video-output-active" : "video-profile-unavailable"),
+			"video refusal code mismatch");
+	} else {
+		require(config_writes == 6 && video_resets == 1 && video_queries == 1, "video setup did not verify runtime");
+		require(profile_values["FPSType"] == 1 && profile_values["FPSInt"] == unsigned(fps),
+			"accepted integer fps must not use the enumerated FPSCommon string");
+		require(should_succeed ? error.empty() : error == "video-config-not-applied", "video result code mismatch");
+	}
 }
 } // namespace
 
@@ -414,17 +460,22 @@ void obs_frontend_save(void) { ++saves; }
 config_t *obs_frontend_get_profile_config(void)
 {
 	++profile_queries;
-	return &profile;
+	return profile_available ? &profile : nullptr;
 }
-void config_set_uint(config_t *, const char *, const char *, uint64_t) { ++config_writes; }
+void config_set_uint(config_t *, const char *, const char *key, uint64_t value)
+{
+	++config_writes;
+	profile_values[key] = value;
+}
 void config_set_string(config_t *, const char *, const char *, const char *) { ++config_writes; }
 void obs_frontend_reset_video(void) { ++video_resets; }
 bool obs_get_video_info(obs_video_info *info)
 {
 	++video_queries;
-	*info = {};
-	return false;
+	*info = reported_video;
+	return video_info_available;
 }
+bool obs_video_active(void) { return fixture_output_active; }
 } // extern "C"
 
 namespace webobs::native_host {
@@ -486,8 +537,12 @@ int main()
 	}
 	for (int kind = 1; kind <= 5; ++kind)
 		run("conflict-setting-kind-" + std::to_string(kind), [=] { conflict_case(0b00101u, 4, kind); });
-	for (int kind = 0; kind < 12; ++kind)
+	for (int kind = 0; kind < 14; ++kind)
 		run("invalid-input-" + std::to_string(kind), [=] { invalid_case(kind); });
+	for (const int fps : {1, 15, 24, 25, 30, 50, 60, 120})
+		run("integer-fps-" + std::to_string(fps), [=] { video_config_case(fps); });
+	for (int failure = 1; failure <= 8; ++failure)
+		run("video-runtime-check-" + std::to_string(failure), [=] { video_config_case(15, failure); });
 
 	std::cout << "Pinned OBS product bootstrap API contract: " << passed << " passed, " << failed << " failed\n";
 	return failed == 0 ? 0 : 1;

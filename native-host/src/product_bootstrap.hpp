@@ -38,6 +38,8 @@ struct ProductWallResult {
 ProductWallResult create_product_five_camera_wall(const std::array<ProductCamera, 5> &cameras,
 						 const std::string &wall_name);
 
-// Applies the private product canvas/fps to the current portable profile.
+// Applies the private product canvas/integer fps to the current portable profile.
+// Refuses active video outputs before mutation and verifies actual base/output
+// sizes and rational fps after the frontend reset. Not an atomic profile change.
 bool apply_product_video_config(int width, int height, int fps, std::string &error);
 } // namespace webobs::native_host

@@ -35,7 +35,8 @@ def write_product_config(path: Path) -> None:
 
 def check_product_receipt(receipt_path: Path, urls: Sequence[str] = PRODUCT_URLS, *, expect_created: int = 5,
                           expect_reused: int = 0, expect_scene_reused: bool | None = None,
-                          expect_ownership_entries: int | None = None) -> dict:
+                          expect_ownership_entries: int | None = None,
+                          expect_video: dict | None = None) -> dict:
     """Validate the URL-free bootstrap receipt; never leak or print camera URLs."""
     text = receipt_path.read_text(encoding="utf-8")
     receipt = json.loads(text)
@@ -47,6 +48,9 @@ def check_product_receipt(receipt_path: Path, urls: Sequence[str] = PRODUCT_URLS
         raise AssertionError("Product camera bootstrap wall reuse mismatch")
     if "error" in receipt:
         raise AssertionError("Product camera bootstrap reported an error")
+    if expect_video is not None:
+        if receipt.get("canvasApplied") is not True or receipt.get("videoInfo") != expect_video:
+            raise AssertionError("Actual OBS canvas/output/fps did not match the requested mode")
     for url in urls:
         if url in text:
             raise AssertionError("Product bootstrap receipt leaked a camera URL")
@@ -135,7 +139,7 @@ def fingerprint(root: Path) -> dict:
     return state
 
 
-def run(runtime: Path, result: Path, *, existing_wall: bool = False) -> dict:
+def run(runtime: Path, result: Path, *, existing_wall: bool = False, verify_video: bool = False) -> dict:
     if sys.platform != "win32":
         raise RuntimeError("The Qt startup smoke requires actual Windows x64")
     profile = (runtime / "config/obs-studio").resolve()
@@ -161,6 +165,13 @@ def run(runtime: Path, result: Path, *, existing_wall: bool = False) -> dict:
         environment[name] = str(runtime / "deliberately-nonexistent-external-override")
     product_file = (result.parent / (result.stem + "-product.json")).resolve()
     write_product_config(product_file)
+    expected_video = None
+    if verify_video:
+        payload = product_config_payload()
+        payload["canvas"] = {"width": 1280, "height": 720, "fps": 15}
+        product_file.write_text(json.dumps(payload), encoding="utf-8")
+        expected_video = {"baseWidth": 1280, "baseHeight": 720, "outputWidth": 1280,
+                          "outputHeight": 720, "fpsNumerator": 15, "fpsDenominator": 1}
     first_name = f"native-smoke-{token[:12]}-first.json"
     second_name = f"native-smoke-{token[:12]}-second.json"
     gate_path = result.parent / (result.stem + "-process-gate.json")
@@ -174,7 +185,7 @@ def run(runtime: Path, result: Path, *, existing_wall: bool = False) -> dict:
             expect_created=0 if existing_wall else 5,
             expect_reused=5 if existing_wall else 0,
             expect_scene_reused=True if existing_wall else None,
-            expect_ownership_entries=5)
+            expect_ownership_entries=5, expect_video=expected_video)
         if existing_wall:
             second = product
         else:
@@ -182,7 +193,7 @@ def run(runtime: Path, result: Path, *, existing_wall: bool = False) -> dict:
             verify_smoke(profile / second_name, token, profile)
             second = check_product_receipt(profile / "plugin_config/webobs-native-host/product-bootstrap.json",
                                            expect_created=0, expect_reused=5, expect_scene_reused=True,
-                                           expect_ownership_entries=5)
+                                           expect_ownership_entries=5, expect_video=expected_video)
     finally:
         product_file.unlink(missing_ok=True)
     if fingerprint(external) != before:
@@ -200,6 +211,7 @@ def run(runtime: Path, result: Path, *, existing_wall: bool = False) -> dict:
                "productSceneReusedSecond": second["sceneReused"],
                "productOwnershipEntries": product.get("ownershipEntries"),
                "productOwnershipEntriesSecond": second.get("ownershipEntries"),
+               "verifiedVideoInfo": product.get("videoInfo") if verify_video else None,
                "inheritedPluginOverridesCleared": True, "mediaQualified": False,
                "processGate": process_gate, "qualification": qualification}
     with result.open("x", encoding="utf-8") as output:
@@ -331,6 +343,8 @@ if __name__ == "__main__":
     parser.add_argument("--result", type=Path, required=True)
     parser.add_argument("--existing-wall", action="store_true",
                         help="existing installed profile already owns the five-camera wall")
+    parser.add_argument("--verify-video", action="store_true",
+                        help="require actual 1280x720 / 15fps OBS mode after both launches")
     parser.add_argument("--crash-smoke", action="store_true",
                         help="deliberately kill the host and require no surviving process")
     parser.add_argument("--crash-after-seconds", type=int, default=8)
@@ -343,4 +357,5 @@ if __name__ == "__main__":
     elif args.crash_smoke:
         run_crash(args.runtime.resolve(), args.result.resolve(), crash_after=args.crash_after_seconds)
     else:
-        run(args.runtime.resolve(), args.result.resolve(), existing_wall=args.existing_wall)
+        run(args.runtime.resolve(), args.result.resolve(), existing_wall=args.existing_wall,
+            verify_video=args.verify_video)

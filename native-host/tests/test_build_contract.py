@@ -765,6 +765,26 @@ class BuildContractTests(unittest.TestCase):
         self.assertIn("webobs-native-ui-gate-tests", cmake_text)
         self.assertIn("native-ui-gate", cmake_text)
 
+    def test_video_receipt_checks_actual_mode_instead_of_accepting_a_flag(self):
+        expected = {"baseWidth": 1280, "baseHeight": 720, "outputWidth": 1280,
+                    "outputHeight": 720, "fpsNumerator": 15, "fpsDenominator": 1}
+        receipt = {"ok": True, "created": 5, "reused": 0, "items": 5, "canvasApplied": True,
+                   "videoInfo": expected.copy()}
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "receipt.json"
+            path.write_text(json.dumps(receipt), encoding="utf-8")
+            smoke_windows.check_product_receipt(path, expect_video=expected)
+            for field in expected:
+                changed = copy.deepcopy(receipt)
+                changed["videoInfo"][field] += 1
+                path.write_text(json.dumps(changed), encoding="utf-8")
+                with self.assertRaises(AssertionError):
+                    smoke_windows.check_product_receipt(path, expect_video=expected)
+            del receipt["videoInfo"]
+            path.write_text(json.dumps(receipt), encoding="utf-8")
+            with self.assertRaises(AssertionError):
+                smoke_windows.check_product_receipt(path, expect_video=expected)
+
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)

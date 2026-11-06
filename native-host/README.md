@@ -1,5 +1,9 @@
 # OBS 原生前端独立开发原型 / Independent native OBS frontend prototype
 
+产品配置中的整数 `canvas.fps` 使用 OBS 的 `FPSType=1 / FPSInt`，支持已声明的 1–120fps；不再把任意整数写入枚举字符串 `FPSCommon`（例如 `15`、`25`、`50` 曾被固定上游回落到 30fps）。应用前拒绝活动视频输出，应用后核对实际 base/output 尺寸和有理数帧率；失败会报告固定错误码，不把配置写入成功当作实际模式成功。该配置变更不保证原子回滚。显式请求视频模式时，脱敏启动回执包含实际 `videoInfo`，Windows `--verify-video` 冒烟要求 1280×720 / 15fps 的真实运行时回读。五路 camera ID 和 source name 必须各自唯一，重复会在接触 OBS 前拒绝。
+
+Integer `canvas.fps` now uses OBS's integer mode, avoiding silent 30fps fallback from unsupported common-FPS strings. Active video outputs are refused before mutation; actual base/output dimensions and rational FPS are checked after reset. Configuration writes are not atomic. A sanitized startup receipt records the actual mode, and opt-in Windows smoke validates 1280×720 at 15fps. Duplicate camera IDs/source names fail before touching OBS.
+
 此目录是 Windows 架构收敛的 **P2 初始脚手架**，不是新发布产品，也不会替换默认 Electron/NSIS 兼容路径。它直接构建固定上游 OBS Studio **32.1.2** 的完整 Qt 前端、`libobs` 与原生 Media Source/Preview/Projector，再以产品自有插件提供五分屏入口。不引入另一套播放器、渲染器、WebView、Electron、GStreamer 或 `clients/` 产品。
 
 **当前尚无接入原生 UI 的产品登录/RBAC、可应用的旧数据迁移、服务 supervisor 或产品更新器；已有下述独立未签名 NSIS 开发安装器与配置快照/恢复工具。请仅在新的、可写、隔离开发目录运行。** 不要把已有 OBS 用户配置或正式产品私密数据放入原型。已有功能仍由兼容产品承担；本原型不能声称 P3/P4 完成或五路 H.265/CPU/GPU 等价验收通过。

@@ -5,6 +5,8 @@
 #include <util/config-file.h>
 
 #include <cstring>
+#include <cstdint>
+#include <set>
 
 namespace webobs::native_host {
 namespace {
@@ -95,6 +97,17 @@ ProductWallResult create_product_five_camera_wall(const std::array<ProductCamera
 	for (const auto &camera : cameras)
 		if (!valid_camera(camera, result.error))
 			return result;
+	std::set<std::string> ids, names;
+	for (const auto &camera : cameras) {
+		if (!ids.insert(camera.id).second) {
+			result.error = "camera-id-duplicate";
+			return result;
+		}
+		if (!names.insert(camera.name).second) {
+			result.error = "camera-name-duplicate";
+			return result;
+		}
+	}
 	for (std::size_t i = 0; i < cameras.size(); ++i) {
 		auto *existing = obs_get_source_by_name(cameras[i].name.c_str());
 		if (existing) {
@@ -143,6 +156,10 @@ bool apply_product_video_config(int width, int height, int fps, std::string &err
 		error = "video-config-out-of-range";
 		return false;
 	}
+	if (obs_video_active()) {
+		error = "video-output-active";
+		return false;
+	}
 	auto *config = obs_frontend_get_profile_config();
 	if (!config) {
 		error = "video-profile-unavailable";
@@ -152,11 +169,16 @@ bool apply_product_video_config(int width, int height, int fps, std::string &err
 	config_set_uint(config, "Video", "BaseCY", unsigned(height));
 	config_set_uint(config, "Video", "OutputCX", unsigned(width));
 	config_set_uint(config, "Video", "OutputCY", unsigned(height));
-	config_set_uint(config, "Video", "FPSType", 0);
-	config_set_string(config, "Video", "FPSCommon", std::to_string(fps).c_str());
+	// FPSCommon is an enumerated string (e.g. "25 PAL", "50 PAL").
+	// Unsupported strings silently become 30 fps in the pinned frontend;
+	// the integer mode represents every fps we accept without that fallback.
+	config_set_uint(config, "Video", "FPSType", 1);
+	config_set_uint(config, "Video", "FPSInt", unsigned(fps));
 	obs_frontend_reset_video();
 	obs_video_info info{};
-	if (!obs_get_video_info(&info) || int(info.base_width) != width || int(info.base_height) != height) {
+	if (!obs_get_video_info(&info) || info.base_width != unsigned(width) || info.base_height != unsigned(height) ||
+	    info.output_width != unsigned(width) || info.output_height != unsigned(height) || info.fps_den == 0 ||
+	    std::uint64_t(info.fps_num) != std::uint64_t(fps) * info.fps_den) {
 		error = "video-config-not-applied";
 		return false;
 	}
