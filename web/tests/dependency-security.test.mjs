@@ -10,6 +10,22 @@ const { SourceMapConsumer, SourceMapGenerator, SourceNode } = postcssRequire('so
 const basic = { version: 3, sources: ['input.css'], names: [], mappings: 'AAAA', sourcesContent: ['a{}'] };
 const indexed = (line, column = 0, map = basic) => ({ version: 3, sections: [{ offset: { line, column }, map }] });
 
+test('actual Workbox scans assets with patched glob and preserves exclusions', async t => {
+  const { mkdtemp, mkdir, writeFile, rm } = await import('node:fs/promises');
+  const path = await import('node:path');
+  const os = await import('node:os');
+  const pwa = createRequire(require.resolve('vite-plugin-pwa'));
+  const workbox = pwa('workbox-build');
+  const root = await mkdtemp(path.join(os.tmpdir(), 'webobs-workbox-glob-'));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  await mkdir(path.join(root, 'private'));
+  for (const name of ['index.html', 'main.js', 'private/secret.js']) await writeFile(path.join(root, name), name);
+  const result = await workbox.getManifest({ globDirectory: root, globPatterns: ['**/*.{html,js}'], globIgnores: ['private/**'] });
+  assert.deepEqual(result.manifestEntries.map(item => item.url).sort(), ['index.html', 'main.js']);
+  assert.equal(result.warnings.length, 0);
+  assert.ok(result.manifestEntries.every(item => /^[a-f0-9]+$/.test(item.revision)));
+});
+
 test('Vite/PostCSS resolves the reviewed source-map-js patch', () => {
   assert.equal(postcssRequire('source-map-js/package.json').version, '1.2.2');
 });

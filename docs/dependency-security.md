@@ -62,3 +62,11 @@ There is no published fixed deepmerge release. A version-scoped node-resolve pat
 `dependency-security.test.mjs` 通过 Workbox 的真实解析路径同时加载 CJS/ESM 构建，检查默认数组和冻结，并实际使用 Rollup 构建临时包的导入；普通 PWA 生产构建也验证了真实 Workbox 消费链。两个工作区 `pnpm audit --audit-level=low` 当前均通过。Electron 的真实沙盒/下载器/代理/TLS/更新回退及 Windows 全量候选仍分别验证，不用审计结果替代。
 
 The dependency regression loads both actual Workbox resolver builds, checks defaults/freezing and bundles a temporary package through real Rollup. Both low-threshold workspace audits pass. Native Electron, downloader/proxy/TLS/update contracts and complete Windows packaging retain their separate gates.
+
+## 2026-11-06：恢复 minimatch / glob 审计门禁
+
+接手时公共 CI 被 [minimatch GHSA-g3hv-75wg-m249](https://github.com/advisories/GHSA-g3hv-75wg-m249) 和 [glob GHSA-3g3m-2fjr-6pw4](https://github.com/advisories/GHSA-3g3m-2fjr-6pw4) 阻断。修复版分别为 minimatch 11.0.1 与 glob 14.0.2；通过 pnpm 范围覆盖只更新受影响的 minimatch >=7 和 glob >=9，保留较旧消费者的原有 API。没有忽略公告。两个工作区使用锁定 pnpm 11.16.0 更新并执行低阈值审计。
+
+这是跨主版本的构建依赖更新，验证真实消费者：Workbox `getManifest` 在临时文件树扫描/过滤并生成 revision；Electron builder 的实际 `FileMatcher` 检查 include/exclude，实际 ASAR 创建/读取回归确认排除文件未入包。网页生产构建、桌面测试和相关依赖回归本地通过；平台回执另记执行台账，不将 Linux 成功冒充 Windows 安装验证。
+
+Public CI was blocked by the two advisories above. Scoped pnpm overrides upgrade the affected minimatch >=7 and glob >=9 consumers to 11.0.1 / 14.0.2 while leaving older APIs intact. Both low-threshold workspace audits pass with locked pnpm 11.16.0. Because these are major-version dependency changes, regressions exercise actual Workbox scanning/revisions and Electron builder file filtering plus an ASAR round trip. Local production web build and desktop tests pass; Windows platform evidence is recorded separately.
