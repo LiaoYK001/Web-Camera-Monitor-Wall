@@ -33,6 +33,9 @@ def load_run(directory: Path) -> dict:
         raise ValueError("Raw process polling must retain incomplete-coverage boundaries")
     if manifest.get("unmeasured") != UNMEASURED:
         raise ValueError("Do not merge unmeasured or incompatible GPU/picture metrics into process reports")
+    gpu_requested = manifest.get("gpuDiagnosticRequested", False)
+    if type(gpu_requested) is not bool:
+        raise ValueError("Invalid GPU diagnostic sampling declaration")
     if manifest.get("metadataSha256") != digest(directory / "metadata.json"):
         raise ValueError("Metadata receipt digest mismatch")
     raw = directory / "samples.jsonl"
@@ -47,6 +50,14 @@ def load_run(directory: Path) -> dict:
             if lines > 36002 or len(line) > 8 * 1024 * 1024:
                 raise ValueError("Raw receipt safety limit exceeded")
             value = json.loads(line, parse_constant=lambda _: (_ for _ in ()).throw(ValueError("Nonfinite sample")))
+            if ("gpuDiagnostic" in value) != gpu_requested:
+                raise ValueError("Raw GPU diagnostic presence differs from the collection declaration")
+            if gpu_requested:
+                diagnostic = value["gpuDiagnostic"]
+                if (not isinstance(diagnostic, dict) or diagnostic.get("qualified") is not False
+                        or diagnostic.get("coverageIncomplete") is not True
+                        or diagnostic.get("status") not in {"priming", "sampled", "unavailable"}):
+                    raise ValueError("Invalid raw GPU diagnostic boundaries")
             if value.get("phase") in ("baseline", "measure"):
                 records.append(value)
             elif value.get("phase") != "warmup":
@@ -105,6 +116,8 @@ def paired_report(runs: list[dict]) -> dict:
     for timing_key in ("intervalSeconds", "requestedWarmupSeconds", "requestedDurationSeconds"):
         if len({r["manifest"]["timing"][timing_key] for r in runs}) != 1:
             raise ValueError("Sampling cadence or requested timing differs across runs")
+    if len({r["manifest"].get("gpuDiagnosticRequested", False) for r in runs}) != 1:
+        raise ValueError("GPU diagnostic sampling overhead must be enabled equally across all runs")
     for side in ("obs", "product"):
         if len({r["manifest"]["rootExeSha256"] for r in runs if r["metadata"]["variant"] == side}) != 1:
             raise ValueError("Executable identity changed within a comparison variant")
@@ -149,7 +162,8 @@ def paired_report(runs: list[dict]) -> dict:
                         "pairIndex": run["metadata"]["pairIndex"], "startedUtc": run["manifest"]["startedUtc"],
                         "endedUtc": run["manifest"]["endedUtc"], "rootExeSha256": run["manifest"]["rootExeSha256"],
                         "rawSamplesSha256": run["manifest"]["samplesSha256"], "summary": run["summary"],
-                        "diagnosticRestrictions": run["diagnosticRestrictions"]})
+                        "diagnosticRestrictions": run["diagnosticRestrictions"],
+                        "gpuDiagnosticRequested": run["manifest"].get("gpuDiagnosticRequested", False)})
     medians = [p["cpuObservedLowerBoundProductOverObs"]["median"] for p in pairs]
     return {"schemaVersion": SCHEMA, "reportKind": "observed-process-paired-diagnostic", "qualified": False,
             "obsParity": None, "strictTotal": False, "coverageIncomplete": True,
@@ -163,7 +177,7 @@ def paired_report(runs: list[dict]) -> dict:
                             "Capture reads are sequential; raw capture span and monotonic intervals expose timing skew.",
                             "Working-set sums double-count shared pages; private commit is not resident physical memory.",
                             "Per-run percentiles and paired ratios are not confidence bounds; noisy differences need further runs.",
-                            "No GPU/VRAM/power/latency/final pixels/hardware decode/thermal/frequency or external-owned-process measurement; no parity decision."]}
+                            "No strict GPU/VRAM totals, power, latency, final pixels, hardware decode, thermal/frequency or external-owned-process measurement; optional raw PDH diagnostics are not merged into CPU ratios or a parity decision."]}
 
 
 def render_text(report: dict) -> str:

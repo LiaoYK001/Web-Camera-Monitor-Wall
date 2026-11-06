@@ -188,6 +188,37 @@ class QualificationTests(unittest.TestCase):
             with (root / "run0" / "samples.jsonl").open("a") as stream: stream.write("{}\n")
             with self.assertRaises(ValueError): load_run(root / "run0")
 
+    def test_pairing_rejects_different_gpu_collection_overhead(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            runs = self.six_runs(Path(tmp))
+            runs[0]["manifest"]["gpuDiagnosticRequested"] = True
+            with self.assertRaisesRegex(ValueError, "enabled equally"):
+                paired_report(runs)
+
+    def test_raw_gpu_presence_and_qualification_flags_must_match_manifest(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            directory = Path(tmp) / "run"
+            raw_run(directory, 1, 1, "product", datetime(2026, 11, 6, tzinfo=timezone.utc))
+            manifest = read_json(directory / "manifest.json")
+            manifest["gpuDiagnosticRequested"] = True
+            (directory / "manifest.json").write_text(json.dumps(manifest), encoding="utf-8")
+            with self.assertRaisesRegex(ValueError, "presence differs"):
+                load_run(directory)
+            samples = [json.loads(line) for line in (directory / "samples.jsonl").read_text(encoding="utf-8").splitlines()]
+            for sample_value in samples:
+                sample_value["gpuDiagnostic"] = {"qualified": False, "coverageIncomplete": True, "status": "unavailable"}
+            raw = directory / "samples.jsonl"
+            raw.write_text(''.join(json.dumps(value) + '\n' for value in samples), encoding="utf-8")
+            manifest["samplesSha256"] = digest(raw)
+            (directory / "manifest.json").write_text(json.dumps(manifest), encoding="utf-8")
+            self.assertEqual(load_run(directory)["summary"], manifest["summary"])
+            samples[-1]["gpuDiagnostic"]["qualified"] = True
+            raw.write_text(''.join(json.dumps(value) + '\n' for value in samples), encoding="utf-8")
+            manifest["samplesSha256"] = digest(raw)
+            (directory / "manifest.json").write_text(json.dumps(manifest), encoding="utf-8")
+            with self.assertRaisesRegex(ValueError, "boundaries"):
+                load_run(directory)
+
     def test_pairs_reject_mismatch_bad_order_overlap_or_insufficient_pairs(self):
         with tempfile.TemporaryDirectory() as tmp:
             runs = self.six_runs(Path(tmp))
