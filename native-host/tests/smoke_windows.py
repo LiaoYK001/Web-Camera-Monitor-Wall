@@ -6,6 +6,7 @@ import argparse
 import hashlib
 import json
 import os
+import re
 from pathlib import Path
 import secrets
 import shutil
@@ -51,6 +52,7 @@ def check_product_receipt(receipt_path: Path, urls: Sequence[str] = PRODUCT_URLS
     if expect_video is not None:
         if receipt.get("canvasApplied") is not True or receipt.get("videoInfo") != expect_video:
             raise AssertionError("Actual OBS canvas/output/fps did not match the requested mode")
+        check_renderer_receipt(receipt.get("renderer"))
     for url in urls:
         if url in text:
             raise AssertionError("Product bootstrap receipt leaked a camera URL")
@@ -63,6 +65,18 @@ def check_product_receipt(receipt_path: Path, urls: Sequence[str] = PRODUCT_URLS
             and receipt["ownershipEntries"] != expect_ownership_entries):
         raise AssertionError("Product bootstrap ownership ledger entry count mismatch")
     return receipt
+
+
+def check_renderer_receipt(value) -> None:
+    if (not isinstance(value, dict) or value.get("available") is not True
+            or value.get("api") != "d3d11" or value.get("hardwareDecodeVerified") is not False
+            or type(value.get("software")) is not bool
+            or not isinstance(value.get("adapterLuid"), str)
+            or re.fullmatch(r"[a-f0-9]{8}:[a-f0-9]{8}", value["adapterLuid"]) is None):
+        raise AssertionError("Actual OBS renderer adapter was not identified")
+    for key in ("vendorId", "deviceId", "dedicatedVideoMemoryCapacityBytes"):
+        if type(value.get(key)) is not int or not 0 <= value[key] <= 2 ** 53:
+            raise AssertionError("Actual OBS renderer adapter metadata is invalid")
 
 
 def launch_once(runtime: Path, pwsh: str, environment: dict, token: str, product_file: Path,
@@ -212,6 +226,7 @@ def run(runtime: Path, result: Path, *, existing_wall: bool = False, verify_vide
                "productOwnershipEntries": product.get("ownershipEntries"),
                "productOwnershipEntriesSecond": second.get("ownershipEntries"),
                "verifiedVideoInfo": product.get("videoInfo") if verify_video else None,
+               "actualRenderer": product.get("renderer") if verify_video else None,
                "inheritedPluginOverridesCleared": True, "mediaQualified": False,
                "processGate": process_gate, "qualification": qualification}
     with result.open("x", encoding="utf-8") as output:

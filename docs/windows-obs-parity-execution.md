@@ -856,3 +856,15 @@ Actual run 41488868639 (source 56e48c0, version 4.1.0-dev.66): obs-native-host j
 - 同时拒绝重复 camera ID/source name，防止配置在创建后出现身份别名或账本冲突。原生 bootstrap API 回归本地 199 项通过、独立 CTest 7/7、构建契约 37 项、合成像素协议 18 项通过（Windows 专属 2 项本地跳过）。新增 Windows 真实 15fps 启动回执门槛，编译/运行结果须待实际 CI 另记。
 
 Continuation on 2026-11-06: the target laptop is unavailable, so no real-camera or OBS-parity completion is claimed. Dependency audits were repaired without suppressions, and optional PDH diagnostics plus a counterbalanced campaign generator now cover previously missing measurement preparation. Windows PDH lifecycle/integration checks passed; an unrelated public-audit event-index timing failure remains disclosed. A native FPS configuration defect was found against the pinned frontend: unsupported common-FPS strings silently became 30fps. The fix uses integer FPS, checks actual canvas/output/FPS, refuses active outputs and validates distinct camera identities before creation. Local regression results do not replace pending Windows runtime and physical-machine evidence. The compatibility product remains default and the overall goal remains open.
+
+### 渲染适配器身份接线（待 Windows 编译回执）/ Renderer identity wiring (pending Windows build)
+
+为把实际宿主设备与逐引擎 PDH 数据对应，新增 `native-host/src/renderer_device.{hpp,cpp}` 并接入启动配置回执：在 OBS 图形上下文内从实际 D3D11 device 查询 DXGI adapter，记录高:低 LUID、vendor/device ID、软件标志和显存容量。它不选择设备、不修改来源、无常驻轮询或服务；COM 引用按 RAII 释放，无法读取时不声称硬件可用。`hardwareDecodeVerified=false`，容量不是显存消耗。新的 `--verify-video` 冒烟也核验实际 adapter 回执；软件 adapter 可通过 CI，不能资格化 4090。构建契约 38/38 本地通过，Windows 编译和实际回读尚待后续运行，不借用前一个无此模块的候选证据。
+
+A one-shot adapter observer now joins the actual D3D11 device to the PDH high:low LUID format without changing graphics/source settings or adding services. Resources use scoped cleanup; software is explicit and decoder verification remains false. The local receipt contracts pass 38/38. Actual Windows compilation/readback for this addition remains pending; the earlier candidate does not qualify it.
+
+### 2026-11-06 Windows 构建基础设施失败 / Windows build infrastructure failure
+
+原生 dev.67 [run 42226273110](https://github.com/LiaoYK001/Web-Camera-Monitor-Wall/actions/runs/42226273110)（source `16f9b61`）在编译固定上游 OBS frontend 时失败：FTK1011、MSB6003、D8040 及最终 runner file-command 清理同时报告 `A device which does not exist was specified`，涉及运行器 D: 工作盘。它没有编译到产品插件/执行 15fps 启动验收，不能当作代码成功或实际模式证据；保留失败记录，后续新运行复验。新增实际 adapter 模块也尚未取得 Windows 编译回执。
+
+Native dev.67 failed while compiling pinned upstream OBS because the runner's D: workspace became unavailable (also breaking runner cleanup). It did not qualify the product plugin or 15fps startup. A fresh build is required; the failure is retained rather than reported as a pass.

@@ -2,6 +2,7 @@
 #include "native_ui_gate.hpp"
 #include "product_bootstrap.hpp"
 #include "ownership_store.hpp"
+#include "renderer_device.hpp"
 #include "wall.hpp"
 #ifdef WEBOBS_NATIVE_PIXEL_TEST
 #include "pixel_test.hpp"
@@ -42,6 +43,23 @@ namespace {
 constexpr const char *dock_id = "webobs-native-host";
 QPointer<QWidget> dock;
 bool frontend_alive = false;
+
+QJsonObject renderer_receipt()
+{
+	const auto device = webobs::native_host::observe_renderer_device();
+	QJsonObject value{{"available", device.available}, {"hardwareDecodeVerified", false}};
+	if (!device.available)
+		return value;
+	value.insert("api", QStringLiteral("d3d11"));
+	// Same high:low LUID representation as the private PDH GPU diagnostic.
+	value.insert("adapterLuid", QStringLiteral("%1:%2").arg(device.luid_high, 8, 16, QLatin1Char('0'))
+		.arg(device.luid_low, 8, 16, QLatin1Char('0')));
+	value.insert("vendorId", int(device.vendor_id));
+	value.insert("deviceId", int(device.device_id));
+	value.insert("software", device.software);
+	value.insert("dedicatedVideoMemoryCapacityBytes", double(device.dedicated_video_memory));
+	return value;
+}
 
 // Development-only load receipt. No arbitrary output path, camera/source settings,
 // URL or user configuration is serialized. The external smoke runner owns the
@@ -176,6 +194,7 @@ void bootstrap_product_cameras()
 	if (!file.exists())
 		return;
 	QJsonObject receipt{{"schema", 1}, {"scope", "product-cameras"}, {"ok", false}};
+	receipt.insert("renderer", renderer_receipt());
 	const auto fail = [&receipt](const char *code) {
 		receipt.insert("error", QString::fromLatin1(code));
 		write_product_receipt(receipt);

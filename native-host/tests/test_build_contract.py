@@ -769,7 +769,9 @@ class BuildContractTests(unittest.TestCase):
         expected = {"baseWidth": 1280, "baseHeight": 720, "outputWidth": 1280,
                     "outputHeight": 720, "fpsNumerator": 15, "fpsDenominator": 1}
         receipt = {"ok": True, "created": 5, "reused": 0, "items": 5, "canvasApplied": True,
-                   "videoInfo": expected.copy()}
+                   "videoInfo": expected.copy(), "renderer": {"available": True, "api": "d3d11",
+                    "hardwareDecodeVerified": False, "software": True, "adapterLuid": "00000000:00001234",
+                    "vendorId": 5140, "deviceId": 140, "dedicatedVideoMemoryCapacityBytes": 0}}
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "receipt.json"
             path.write_text(json.dumps(receipt), encoding="utf-8")
@@ -784,6 +786,19 @@ class BuildContractTests(unittest.TestCase):
             path.write_text(json.dumps(receipt), encoding="utf-8")
             with self.assertRaises(AssertionError):
                 smoke_windows.check_product_receipt(path, expect_video=expected)
+
+    def test_actual_adapter_receipt_distinguishes_software_and_hardware_without_decode_claim(self):
+        receipt = {"available": True, "api": "d3d11", "hardwareDecodeVerified": False,
+                   "software": False, "adapterLuid": "00000000:00001234", "vendorId": 0x10de,
+                   "deviceId": 0x1234, "dedicatedVideoMemoryCapacityBytes": 16 * 1024 ** 3}
+        smoke_windows.check_renderer_receipt(receipt)
+        software = dict(receipt, software=True, dedicatedVideoMemoryCapacityBytes=0)
+        smoke_windows.check_renderer_receipt(software)
+        for changed in [dict(receipt, available=False), dict(receipt, adapterLuid="GPU0"),
+                        dict(receipt, software="false"), dict(receipt, hardwareDecodeVerified=True),
+                        dict(receipt, vendorId=-1), dict(receipt, dedicatedVideoMemoryCapacityBytes=None), None]:
+            with self.assertRaises(AssertionError):
+                smoke_windows.check_renderer_receipt(changed)
 
 
 if __name__ == "__main__":

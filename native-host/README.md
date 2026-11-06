@@ -167,3 +167,9 @@ pwsh -NoProfile -File desktop/scripts/build-obs-native.ps1 -Version 0.1.0-dev.5 
 ## 文件与许可
 
 产品源码/构建帮助器全在本目录与独立 `desktop/scripts/build-obs-native.ps1`，遵循仓库 GPL-2.0-or-later。OBS 上游及嵌套依赖保留各自原始许可；未对 upstream checkout 打补丁。参见 `LICENSE`、`obs/obs-studio/COPYING` 与 `desktop/dependencies.lock.json`。
+
+## 实际渲染设备回执 / Actual renderer adapter receipt
+
+`product-bootstrap.json` 的 `renderer` 从 OBS 实际 D3D11 device 的 DXGI adapter 读取，而非从显卡请求或枚举顺序推断。它记录 `available`、高:低 32 位 `adapterLuid`（与私密 PDH 诊断一致）、vendor/device ID、`software` 和独立显存容量；容量不是当前显存占用。不修改 GPU 选择、来源设置或媒体路径，只在启动配置回执时查询一次，所有 COM 引用和图形上下文在返回前释放。不可读取时只报告 unavailable；`hardwareDecodeVerified` 保持 false，实际渲染设备不证明每路解码设备。`--verify-video` 的新宿主 Windows 冒烟同时要求实际 adapter 回读有效，软件 D3D11 也可以作为 CI 的有效渲染设备，但不能当作独显验收。
+
+The startup renderer receipt queries the DXGI adapter owning OBS's actual D3D11 device. Its high:low LUID matches the private PDH diagnostics. Software adapters are explicit; dedicated video memory is adapter capacity, not current consumption. No adapter/source settings are changed, and resources are released before return. This does not verify per-source hardware decoding. The new-host Windows smoke requires a valid adapter observation while still allowing software D3D11 on CI.
