@@ -36,6 +36,17 @@ constexpr const char *pin = "fb4d98bf88fae5fc85cb11fc57f7c5e309282194";
 using Sources = std::array<obs_source_t *, 5>;
 const std::array<std::array<int, 3>, 5> colors{{{216, 50, 50}, {50, 200, 80}, {50, 100, 220}, {220, 190, 50}, {180, 60, 200}}};
 
+QJsonObject observed_video_mode()
+{
+	obs_video_info info{};
+	if (!obs_get_video_info(&info) || info.base_width != 960 || info.base_height != 540 ||
+	    info.output_width != 960 || info.output_height != 540 || info.fps_num != 15 || info.fps_den != 1)
+		throw std::runtime_error("synthetic production video mode changed");
+	return {{"baseWidth", int(info.base_width)}, {"baseHeight", int(info.base_height)},
+	        {"outputWidth", int(info.output_width)}, {"outputHeight", int(info.output_height)},
+	        {"fpsNumerator", int(info.fps_num)}, {"fpsDenominator", int(info.fps_den)}};
+}
+
 QJsonObject read_object(const QString &path)
 {
 	QFile file(path);
@@ -204,15 +215,8 @@ class Harness final : public QObject {
 		main_->showMaximized();
 		obs_frontend_set_preview_program_mode(false);
 		obs_frontend_set_preview_enabled(true);
-		auto *config = obs_frontend_get_profile_config();
-		require(config, "portable profile config unavailable");
-		config_set_uint(config, "Video", "BaseCX", 960); config_set_uint(config, "Video", "BaseCY", 540);
-		config_set_uint(config, "Video", "OutputCX", 960); config_set_uint(config, "Video", "OutputCY", 540);
-		config_set_uint(config, "Video", "FPSType", 0); config_set_string(config, "Video", "FPSCommon", "30");
-		obs_frontend_reset_video();
-		obs_video_info info{};
-		require(obs_get_video_info(&info) && info.base_width == 960 && info.base_height == 540,
-		        "fixed 960x540 canvas could not be configured");
+		std::string video_error;
+		require(apply_product_video_config(960, 540, 15, video_error), "production 960x540/15fps mode failed");
 		const char *color_id = obs_get_latest_input_type_id("color_source");
 		require(color_id, "official OBS color source unavailable");
 		known_ = obs_scene_create("Synthetic known colors");
@@ -407,6 +411,7 @@ class Harness final : public QObject {
 		if (program_) windows.append(window(program_, "program-projector", 0));
 		if (fullscreen_) windows.append(window(fullscreen_, "program-fullscreen", 0));
 		const QJsonObject state{{"schema", 1}, {"seq", phase_}, {"phase", QString::fromLatin1(names[phase_])}, {"token", token_},
+		                       {"videoInfo", observed_video_mode()},
 		                       {"pid", QString::number(QCoreApplication::applicationPid())}, {"canvasWidth", 960}, {"canvasHeight", 540},
 		                       {"studio", obs_frontend_preview_program_mode_active()}, {"transitionStopped", take_stopped_},
 		                       {"programGeneration", generation_}, {"elapsedMs", double(clock_.elapsed())},
@@ -580,6 +585,7 @@ class RestartHarness final : public QObject {
 			return true;
 		}, &items);
 		const QJsonObject state{{"schema", 1}, {"seq", 1}, {"phase", "saved-scene-restart"}, {"token", token_},
+		                       {"videoInfo", observed_video_mode()},
 		                       {"pid", QString::number(QCoreApplication::applicationPid())},
 		                       {"canvasWidth", int(info.base_width)}, {"canvasHeight", int(info.base_height)},
 		                       {"studio", obs_frontend_preview_program_mode_active()},
@@ -622,15 +628,8 @@ public:
 		}
 		require(preview_, "real OBSBasicPreview widget unavailable after restart");
 		main_->showMaximized();
-		auto *config = obs_frontend_get_profile_config();
-		require(config, "portable profile config unavailable after restart");
-		config_set_uint(config, "Video", "BaseCX", 960); config_set_uint(config, "Video", "BaseCY", 540);
-		config_set_uint(config, "Video", "OutputCX", 960); config_set_uint(config, "Video", "OutputCY", 540);
-		config_set_uint(config, "Video", "FPSType", 0); config_set_string(config, "Video", "FPSCommon", "30");
-		obs_frontend_reset_video();
-		obs_video_info fixed{};
-		require(obs_get_video_info(&fixed) && fixed.base_width == 960 && fixed.base_height == 540,
-		        "fixed 960x540 canvas could not be restored for the restart witness");
+		std::string video_error;
+		require(apply_product_video_config(960, 540, 15, video_error), "production 960x540/15fps restart mode failed");
 		obs_frontend_set_preview_program_mode(false);
 		obs_frontend_set_preview_enabled(true);
 		clock_.start();

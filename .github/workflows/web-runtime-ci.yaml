@@ -98,6 +98,8 @@ jobs:
   windows-native-control-contracts:
     runs-on: windows-2022
     timeout-minutes: 30
+    env:
+      VCPKG_BINARY_SOURCES: 'clear;files,${{ github.workspace }}/build/native-auth-binary-cache,readwrite'
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with: { persist-credentials: false }
@@ -107,15 +109,38 @@ jobs:
           ref: eb2d3a3279fd019cb7733072d86900d0ad2a1aef
           path: build/native-auth-vcpkg
           persist-credentials: false
-      - name: Compile authorization without OBS and exercise Windows import safety / 独立编译认证并验证 Windows 迁移安全
+      - name: Identify the hosted compiler image for dependency caching
+        id: native-auth-image
+        shell: pwsh
+        run: |
+          "version=$env:ImageVersion" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
+      - name: Restore ABI-checked native control dependencies
+        id: native-auth-cache
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
+        with:
+          path: build/native-auth-binary-cache
+          key: native-auth-win2022-static-eb2d3a3279fd019c-${{ hashFiles('native-host/tests/control-auth-vcpkg/vcpkg.json') }}-${{ steps.native-auth-image.outputs.version }}
+          restore-keys: native-auth-win2022-static-eb2d3a3279fd019c-${{ hashFiles('native-host/tests/control-auth-vcpkg/vcpkg.json') }}-
+      - name: Configure authorization dependencies without OBS / 配置无 OBS 认证依赖
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
+          New-Item -ItemType Directory -Path 'build/native-auth-binary-cache' -Force | Out-Null
           $vcpkg = Join-Path $PWD 'build/native-auth-vcpkg'
           & "$vcpkg/bootstrap-vcpkg.bat" -disableMetrics
           if ($LASTEXITCODE -ne 0) { throw 'Pinned vcpkg bootstrap failed.' }
           cmake -S native-host/tests/control-auth -B build/native-control-auth -G 'Visual Studio 17 2022' -A x64 "-DCMAKE_TOOLCHAIN_FILE=$vcpkg/scripts/buildsystems/vcpkg.cmake" "-DVCPKG_MANIFEST_DIR=$PWD/native-host/tests/control-auth-vcpkg" -DVCPKG_TARGET_TRIPLET=x64-windows-static -DCMAKE_MSVC_RUNTIME_LIBRARY=MultiThreaded
           if ($LASTEXITCODE -ne 0) { throw 'Standalone authorization configure failed.' }
+      - name: Retain only vcpkg dependency archives before product tests
+        if: steps.native-auth-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
+        with:
+          path: build/native-auth-binary-cache
+          key: ${{ steps.native-auth-cache.outputs.cache-primary-key }}
+      - name: Compile authorization and exercise Windows import safety / 编译认证并验证 Windows 迁移安全
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
           cmake --build build/native-control-auth --config Release --parallel 2
           if ($LASTEXITCODE -ne 0) { throw 'Standalone authorization build failed.' }
           ctest --test-dir build/native-control-auth -C Release --output-on-failure

@@ -31,6 +31,8 @@ from smoke_windows import fingerprint
 
 PHASES = ("known-colors", "five-codecs", "studio-preview-no-take", "explicit-take", "program-reopened", "rtsp-loopback",
           "rtsp-recovered", "program-fullscreen", "fullscreen-recovery")
+VIDEO_MODE = {"baseWidth": 960, "baseHeight": 540, "outputWidth": 960, "outputHeight": 540,
+              "fpsNumerator": 15, "fpsDenominator": 1}
 ENV_OVERRIDES = ("OBS_PLUGINS_PATH", "OBS_PLUGINS_DATA_PATH", "OBS_CONFIG_PATH", "QT_PLUGIN_PATH",
                  "QT_QPA_PLATFORM_PLUGIN_PATH", "QML2_IMPORT_PATH", "WEBOBS_NATIVE_SMOKE_TOKEN", "WEBOBS_NATIVE_PIXEL_TOKEN")
 
@@ -323,11 +325,19 @@ def creation_time(process: subprocess.Popen) -> str:
     return str((created.high << 32) | created.low)
 
 
+def validate_video_mode(state: dict) -> None:
+    value = state.get("videoInfo")
+    if (not isinstance(value, dict) or set(value) != set(VIDEO_MODE)
+            or any(type(v) is not int or v != VIDEO_MODE[k] for k, v in value.items())):
+        raise AssertionError("Actual production video mode must be 960x540 / 15fps throughout the pixel gate")
+
+
 def validate_state(state: dict, seq: int, token: str, pid: int) -> None:
     if (state.get("schema") != 1 or state.get("seq") != seq or state.get("phase") != PHASES[seq - 1] or
             state.get("token") != token or state.get("pid") != str(pid) or state.get("scope") != "synthetic-test-only" or
             state.get("canvasWidth") != 960 or state.get("canvasHeight") != 540 or state.get("pixelQualified") is not False):
         raise AssertionError("Finite native phase/process/synthetic identity mismatch")
+    validate_video_mode(state)
     for key in ("activeOutputs", "activeEncoders"):
         if state.get(key) != 0:
             raise AssertionError("An OBS output/encoder was active during the pixel test")
@@ -569,6 +579,7 @@ def run(runtime: Path, result: Path, ffmpeg_override: Path | None, offline: bool
                                                    "reverse" if reverse else "forward", "false" if seq == 1 else "true"],
                                                   capture_output=True, text=True, check=True, timeout=20)
                         phase["roles"].append({"role": role, **json.loads(analysis.stdout)})
+                    phase["videoInfo"] = state["videoInfo"]
                     phase["passed"] = not timing["captureFailed"] and all(role["passed"] for role in phase["roles"])
                     summary["phases"].append(phase)
                     write_new(private / f"ack-{seq:02}.json", {"schema": 1, "seq": seq, "token": token})
@@ -600,6 +611,7 @@ def run(runtime: Path, result: Path, ffmpeg_override: Path | None, offline: bool
                     created2 = creation_time(process2)
                     restart_deadline = time.monotonic() + 180
                     state = wait_restart_state(restart, process2, restart_deadline)
+                    validate_video_mode(state)
                     if (state.get("schema") != 1 or state.get("seq") != 1 or state.get("phase") != "saved-scene-restart" or
                             state.get("token") != token or state.get("pid") != str(process2.pid) or
                             state.get("savedSceneReopened") is not True or state.get("savedSceneSourceCount") != 5):
@@ -623,6 +635,7 @@ def run(runtime: Path, result: Path, ffmpeg_override: Path | None, offline: bool
                     phase = {"seq": 10, "phase": "saved-scene-restart", "capture": timing, "roles": [role],
                              "inputUUIDsAndSettingsUnchanged": True, "savedSceneReopened": True,
                              "canvasWidth": state.get("canvasWidth"), "canvasHeight": state.get("canvasHeight"),
+                             "videoInfo": state["videoInfo"],
                              "windowCount": len(state.get("windows", [])), "wallItems": items}
                     phase["passed"] = not timing["captureFailed"] and bool(role["passed"])
                     summary["phases"].append(phase)

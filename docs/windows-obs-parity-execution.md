@@ -868,3 +868,19 @@ A one-shot adapter observer now joins the actual D3D11 device to the PDH high:lo
 原生 dev.67 [run 42226273110](https://github.com/LiaoYK001/Web-Camera-Monitor-Wall/actions/runs/42226273110)（source `16f9b61`）在编译固定上游 OBS frontend 时失败：FTK1011、MSB6003、D8040 及最终 runner file-command 清理同时报告 `A device which does not exist was specified`，涉及运行器 D: 工作盘。它没有编译到产品插件/执行 15fps 启动验收，不能当作代码成功或实际模式证据；保留失败记录，后续新运行复验。新增实际 adapter 模块也尚未取得 Windows 编译回执。
 
 Native dev.67 failed while compiling pinned upstream OBS because the runner's D: workspace became unavailable (also breaking runner cleanup). It did not qualify the product plugin or 15fps startup. A fresh build is required; the failure is retained rather than reported as a pass.
+
+### dev.68 完整 Windows 原型通过 / Complete Windows prototype passed
+
+[run 42227297220](https://github.com/LiaoYK001/Web-Camera-Monitor-Wall/actions/runs/42227297220)（source `c4e82c1`，`4.1.0-dev.68`）成功，产物 `13506877331` / `webobs-obs-native-prototype-4.1.0-dev.68` / 68,969,522 B（Actions ZIP，非安装器体积）。实际 OBS/Qt 插件编译、独立 portable/安装/重装/卸载、配置保留、启动/退出、崩溃清理和单实例门槛通过。`native-startup-smoke.json` 的真实回读为 base/output 1280×720、fpsNumerator=15 / fpsDenominator=1，已捕获原来会默默回落到 30fps 的配置缺陷。实际 D3D11 adapter 回读也通过：CI vendorId=5140 / deviceId=140 / 显存容量 0，DXGI software flag=false。这是托管虚拟环境的设备标识，**software flag=false 不能当作物理独显或硬解证明**；`hardwareDecodeVerified=false` 保持。没有在该运行执行最终像素或真实五路/性能对照。
+
+同源码 [公共 CI 42227279671](https://github.com/LiaoYK001/Web-Camera-Monitor-Wall/actions/runs/42227279671) 全部成功，含 Windows PDH、Windows/Linux 认证/图/loader/私密迁移、桌面更新与公开审计。先前事件索引 p95 测试没有修改实现或阈值，此轮原预算通过；保留前次失败记录，不从一次通过推导目标机性能结论。未发布 dev.68、未切默认包。
+
+Run 42227297220 passed the full Windows native prototype build, installation/lifecycle gates, actual 1280×720 at 15fps readback and D3D11 adapter observation. The hosted adapter is not the target 4090; a clear DXGI software flag alone does not verify a physical GPU or hardware decoder. Public CI 42227279671 also passed without loosening the previous event-index timing budget. Final pixels and real-camera/performance qualification remain open. Nothing was published or promoted to the default product.
+
+### 15fps 最终像素回归与依赖缓存（待平台运行）/ 15fps final-pixel regression and dependency cache (pending platform run)
+
+测试专用 harness 不再自行设置常用 30fps，而在初始化与保存场景重启时调用同一个生产 `apply_product_video_config(960,540,15)`。九阶段及重启回执分别读取实际 base/output/FPS；像素 runner 逐阶段核对固定模式，旧的 30fps 回落或输出缩放不匹配会直接失败。所有原有已知色块、五路 H.264/H.265、Preview/Program TAKE、重开、回环 RTSP/断流恢复、全屏与重启最终像素检查保留；本地合成协议/负例 19 项通过、Windows 专属 2 项跳过。实际 Windows 像素结果另记，不能因测试代码存在而宣布通过。
+
+Windows renderer-free 认证 CI 增加仅用于依赖的 vcpkg binary cache，键含固定 baseline、manifest 和托管编译器镜像版本；vcpkg 仍按包 ABI 校验。配置依赖完成即保存，之后照常编译全部认证代码并运行所有测试。缓存不含产品包或私密配置，不跳过任何验证，实际命中/平台结果待后续 CI。此变化优化迭代速度，不是产品性能改善证据。
+
+The test-only pixel harness now exercises the production integer-FPS setter at 15fps and checks actual mode at every original phase and restart. Existing picture/identity/TAKE/recovery checks remain. Local protocol tests pass, but the Windows final-pixel gate is still pending. A vcpkg dependency-only ABI-checked cache speeds future Windows authorization iterations without skipping builds/tests or changing product performance.

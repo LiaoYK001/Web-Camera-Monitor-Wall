@@ -49,6 +49,7 @@ class PixelContractTests(unittest.TestCase):
     def state(self, seq):
         return {"schema": 1, "seq": seq, "phase": gate.PHASES[seq-1], "token": "a"*32, "pid": "123",
                 "scope": "synthetic-test-only", "canvasWidth": 960, "canvasHeight": 540, "pixelQualified": False,
+                "videoInfo": gate.VIDEO_MODE.copy(),
                 "activeOutputs": 0, "activeEncoders": 0, "rawVideoActive": False, "sameInputPointersAndSettings": True,
                 "wallReuseVerified": seq >= 2,
                 "productBootstrapVerified": seq >= 6,
@@ -106,6 +107,16 @@ class PixelContractTests(unittest.TestCase):
             path.write_text(" "*65537)
             with self.assertRaises(ValueError):
                 gate.read_json(path)
+
+    def test_pixel_gate_rejects_silent_fps_fallback_scaled_output_or_absent_video_readback(self):
+        for field in gate.VIDEO_MODE:
+            state = self.state(1)
+            state["videoInfo"][field] += 1
+            with self.assertRaises(AssertionError):
+                gate.validate_state(state, 1, "a" * 32, 123)
+        for video in (None, {}, dict(gate.VIDEO_MODE, fpsNumerator=30), dict(gate.VIDEO_MODE, fpsDenominator=True)):
+            with self.assertRaises(AssertionError):
+                gate.validate_video_mode({"videoInfo": video})
 
     @unittest.skipUnless(shutil.which("node"), "Node test tool unavailable")
     def test_geometry_timecode_and_negative_cases(self):
