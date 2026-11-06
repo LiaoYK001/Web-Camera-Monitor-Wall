@@ -7,8 +7,29 @@ on:
       official: { type: boolean, default: false }
       milestone: { type: string, default: '' }
       installed_upgrade: { type: boolean, default: false }
+      obs_size_baseline: { type: boolean, default: false }
   workflow_dispatch:
     inputs:
+      native_host:
+        description: 'Build the independent non-default OBS/Qt prototype; no legacy installer or publication'
+        default: false
+        type: boolean
+      native_host_pixels:
+        description: 'Run the finite test-only OBS/Qt final-pixel harness; sanitized receipt only, no runnable artifact'
+        default: false
+        type: boolean
+      diagnose_dev17:
+        description: 'Test frozen dev.17 final visible native pixels without rebuilding or publishing'
+        default: false
+        type: boolean
+      publish_dev17:
+        description: 'Explicitly publish the frozen tested dev.17 artifact to its existing development prerelease'
+        default: false
+        type: boolean
+      publish_dev18:
+        description: 'Publish only the frozen successful dev.18 bytes to an existing empty prerelease draft; never Latest'
+        default: false
+        type: boolean
       version:
         description: 'Development version X.Y.Z-dev.* or stable version X.Y.Z'
         required: true
@@ -26,16 +47,46 @@ on:
         description: 'Qualify the frozen main v4.0 NSIS artifact against published v3.5 without rebuilding or publishing'
         default: false
         type: boolean
+      footprint_check:
+        description: 'Validate only the Windows installed-tree footprint contracts; no build, installer or product start'
+        default: false
+        type: boolean
+      obs_size_baseline:
+        description: 'With native_host: install the pinned stock OBS 32.1.2 and record a same-OS installed-size reference'
+        default: false
+        type: boolean
+      upgrade_previous:
+        description: 'With native_host: install the pinned previous prototype, then upgrade it and verify the private profile survives'
+        default: false
+        type: boolean
 
 permissions:
   contents: read
+  actions: read
 
 concurrency:
-  group: webobs-windows-desktop-build
+  # Independent read-only prototype/diagnostic runners do not share product
+  # output trees. Keep product/install/publication operations serialized.
+  group: webobs-windows-desktop-build-${{ (inputs.native_host || inputs.native_host_pixels) && 'native-host' || inputs.diagnose_dev17 && 'frozen-preview' || inputs.footprint_check && 'footprint' || 'product' }}
   cancel-in-progress: false
 
 jobs:
+  footprint-contracts:
+    if: ${{ inputs.footprint_check }}
+    runs-on: windows-2022
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - name: Validate installed-tree footprint contracts
+        shell: pwsh
+        run: |
+          $ErrorActionPreference='Stop'
+          pwsh -NoProfile -File desktop/tests/test-installed-tree-footprint.ps1
+
   audit:
+    if: ${{ !inputs.publish_dev17 && !inputs.publish_dev18 && !inputs.diagnose_dev17 && !inputs.native_host && !inputs.native_host_pixels && !inputs.footprint_check }}
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
@@ -52,7 +103,7 @@ jobs:
           python3 tests/test_online_source.py
 
   windows:
-    if: ${{ !inputs.installed_upgrade }}
+    if: ${{ !inputs.installed_upgrade && !inputs.footprint_check }}
     needs: audit
     runs-on: windows-2022
     environment: windows-desktop-build
@@ -114,6 +165,23 @@ jobs:
           path: desktop/out/*/*
           include-hidden-files: true
           if-no-files-found: error
+      - name: Preserve the small install-smoke receipt even on failure
+        if: always() && !cancelled()
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path 'build/desktop-windows' | Out-Null
+          $files = @(Get-ChildItem -LiteralPath 'desktop/out' -Recurse -Filter 'windows-install-smoke.json' -File -ErrorAction SilentlyContinue)
+          foreach ($file in $files) {
+            Copy-Item -LiteralPath $file.FullName -Destination (Join-Path 'build/desktop-windows' $file.Name) -Force
+          }
+      - name: Retain the bounded install-smoke receipt
+        if: always() && !cancelled() && hashFiles('build/desktop-windows/windows-install-smoke.json') != ''
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: webobs-windows-install-smoke-${{ inputs.version }}
+          path: build/desktop-windows/windows-install-smoke.json
+          if-no-files-found: ignore
+          retention-days: 7
       - name: Preserve verified build dependencies after a failed candidate
         if: always() && !cancelled() && steps.windows-cache.outputs.cache-hit != 'true'
         uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0; node24 action runtime
@@ -123,6 +191,14 @@ jobs:
             desktop/.cache/online-source
             desktop/.cache/vcpkg-binaries
           key: windows-2022-desktop-${{ hashFiles('desktop/dependencies.lock.json', 'desktop/vcpkg.json', 'go2rtc/online-source-dependencies.lock.json') }}
+      - name: Retain bounded synthetic native pixel receipt even on failure
+        if: always() && hashFiles('build/desktop-windows/native-preview-pixels.json') != ''
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: webobs-native-final-pixels-${{ inputs.version }}
+          path: build/desktop-windows/native-preview-pixels.json
+          retention-days: 7
+          if-no-files-found: error
       - name: Retain failed runtime for isolated native diagnostics
         if: failure() && hashFiles('desktop/runtime/manifest.json') != ''
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
@@ -194,3 +270,94 @@ jobs:
             desktop/out/4.0.0/windows-upgrade-trace.json
           if-no-files-found: ignore
           retention-days: 7
+
+  obs-native-host:
+    if: github.event_name == 'workflow_dispatch' && inputs.native_host && !inputs.native_host_pixels && !inputs.diagnose_dev17 && !inputs.publish_dev17 && !inputs.publish_dev18 && !inputs.official && !inputs.installed_upgrade
+    uses: ./.github/workflows/windows-obs-native-host.yaml
+    with:
+      version: ${{ inputs.version }}
+      measure_obs_baseline: ${{ inputs.obs_size_baseline }}
+      upgrade_previous: ${{ inputs.upgrade_previous }}
+
+  obs-native-host-pixels:
+    if: github.event_name == 'workflow_dispatch' && inputs.native_host_pixels && !inputs.native_host && !inputs.diagnose_dev17 && !inputs.publish_dev17 && !inputs.publish_dev18 && !inputs.official && !inputs.installed_upgrade
+    uses: ./.github/workflows/windows-obs-native-host.yaml
+    with:
+      version: ${{ inputs.version }}
+      pixel_test: true
+
+  diagnose-dev17:
+    if: github.event_name == 'workflow_dispatch' && inputs.diagnose_dev17 && !inputs.native_host && !inputs.native_host_pixels && !inputs.publish_dev17 && !inputs.publish_dev18 && !inputs.official && !inputs.installed_upgrade
+    permissions:
+      contents: read
+      actions: read
+    uses: ./.github/workflows/windows-native-preview.yaml
+
+  publish-dev18:
+    if: github.event_name == 'workflow_dispatch' && inputs.publish_dev18 && !inputs.publish_dev17 && !inputs.diagnose_dev17 && !inputs.native_host && !inputs.native_host_pixels && !inputs.official && !inputs.installed_upgrade && inputs.version == '4.1.0-dev.18'
+    permissions:
+      contents: write
+      actions: read
+    uses: ./.github/workflows/publish-windows-dev18.yaml
+
+  publish-dev17:
+    if: github.event_name == 'workflow_dispatch' && inputs.publish_dev17 && !inputs.publish_dev18 && !inputs.diagnose_dev17 && !inputs.native_host && !inputs.native_host_pixels && !inputs.official && !inputs.installed_upgrade && inputs.version == '4.1.0-dev.17'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    permissions:
+      contents: write
+      actions: read
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+    steps:
+      - name: Require the frozen successful development build
+        run: |
+          gh api repos/$GH_REPO/actions/artifacts/12981884498 > artifact.json
+          gh api repos/$GH_REPO/actions/runs/41062148722 > run.json
+          gh release view v4.1.0-dev.17 --json tagName,targetCommitish,isDraft,isPrerelease,assets > release.json
+          python3 - <<'PYVERIFY'
+          import json
+          a=json.load(open('artifact.json')); r=json.load(open('run.json')); p=json.load(open('release.json'))
+          revision='4ca94a43290ee93bf20d9083554edc2c892dfda6'
+          assert a['name']=='webobs-windows-4.1.0-dev.17' and not a['expired']
+          assert a['digest']=='sha256:91306c23c876a87fa3648367fa123fe35383b34710bcbd9b72a7bfc5e2f25f81'
+          assert a['workflow_run']['id']==41062148722 and a['workflow_run']['head_sha']==revision
+          assert r['status']=='completed' and r['conclusion']=='success' and r['head_sha']==revision
+          assert p['tagName']=='v4.1.0-dev.17' and p['targetCommitish']==revision
+          assert p['isDraft'] and p['isPrerelease'] and not p['assets']
+          PYVERIFY
+      - uses: actions/download-artifact@70fc10c6e5e1ce46ad2ea6f2b72d43f7d47b13c3
+        with:
+          artifact-ids: 12981884498
+          merge-multiple: true
+          path: incoming
+          run-id: 41062148722
+          github-token: ${{ github.token }}
+      - name: Verify original checksums and source identity without executing payloads
+        run: |
+          python3 - <<'PYVERIFY'
+          from pathlib import Path
+          import hashlib,json,re,shutil
+          root=Path('incoming'); version='4.1.0-dev.17'; prefix='webobs-windows-'+version
+          checks=list(root.rglob(prefix+'-SHA256SUMS.txt')); assert len(checks)==1
+          base=checks[0].parent; out=Path('release-assets'); out.mkdir()
+          names=[]
+          for line in checks[0].read_text().splitlines():
+              match=re.fullmatch(r'([a-f0-9]{64})  ([A-Za-z0-9][A-Za-z0-9._-]{0,199})',line); assert match
+              digest,name=match.groups(); assert name not in names and name!='latest.yml'
+              file=base/name; assert file.is_file() and not file.is_symlink()
+              with file.open('rb') as stream: assert hashlib.file_digest(stream,'sha256').hexdigest()==digest
+              names.append(name); shutil.copyfile(file,out/name)
+          installer='WebOBS-'+version+'-windows-x64-DEVELOPMENT-UNSIGNED.exe'
+          assert [n for n in names if n.endswith('.exe')]==[installer]
+          assert (out/installer).stat().st_size==427435987
+          manifest=json.loads((out/(prefix+'-runtime-manifest.json')).read_text())
+          assert manifest['revision']=='4ca94a43290ee93bf20d9083554edc2c892dfda6' and manifest['version']==version
+          shutil.copyfile(checks[0],out/checks[0].name)
+          print('Verified original installer and',len(names),'checksummed attachments')
+          PYVERIFY
+      - name: Upload immutable development attachments and publish prerelease
+        run: |
+          gh release upload v4.1.0-dev.17 release-assets/*
+          gh release edit v4.1.0-dev.17 --draft=false --prerelease --latest=false

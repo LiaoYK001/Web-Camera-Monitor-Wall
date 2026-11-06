@@ -1,0 +1,12 @@
+WebOBS native frontend integration
+Copyright (C) 2026 LYKK231
+
+SPDX-License-Identifier: GPL-2.0-or-later
+
+This product-owned OBS frontend integration is part of Web Camera Monitor Wall.
+You may redistribute it and/or modify it under the GNU General Public License,
+version 2 or (at your option) any later version. It is provided without warranty.
+
+The complete GPL version 2 text is in the pinned OBS source at
+obs/obs-studio/COPYING and is copied to development bundles as OBS-COPYING.txt.
+https://www.gnu.org/licenses/old-licenses/gpl-2.0.txt

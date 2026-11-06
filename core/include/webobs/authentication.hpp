@@ -61,11 +61,19 @@ private:
     std::uint64_t failed_attempts_ = 0;
 };
 
+// Opaque account incarnation identifiers, not permissions or password hashes.
+// Both fields must be exactly 32 lowercase hexadecimal characters.
+struct SessionIdentity {
+    std::string user_id;
+    std::string auth_epoch;
+};
+
 struct SessionRecord {
     std::string user;
     std::int64_t created_at = 0;
     std::int64_t last_seen = 0;
     std::int64_t expires_at = 0;
+    std::optional<SessionIdentity> identity;
 };
 
 class SessionStore {
@@ -80,9 +88,13 @@ public:
     [[nodiscard]] std::optional<std::string> initialize();
     [[nodiscard]] std::optional<std::string> create(std::string_view user,
                                                     std::string_view client_metadata);
+    [[nodiscard]] std::optional<std::string> create_bound(std::string_view user,
+                                                          std::string_view client_metadata,
+                                                          const SessionIdentity &identity);
     [[nodiscard]] std::optional<SessionRecord> validate_and_slide(std::string_view token);
     bool revoke(std::string_view token);
     std::size_t revoke_user(std::string_view user);
+    std::size_t revoke_identity(std::string_view user, const SessionIdentity &identity);
     [[nodiscard]] std::string set_cookie_header(std::string_view token) const;
     [[nodiscard]] std::string clear_cookie_header() const;
     [[nodiscard]] bool enabled() const { return !database_path_.empty(); }
@@ -92,6 +104,9 @@ public:
     }
 
 private:
+    [[nodiscard]] std::optional<std::string> create_impl(std::string_view user,
+                                                         std::string_view client_metadata,
+                                                         const SessionIdentity *identity);
     struct Impl;
     std::string database_path_;
     std::chrono::seconds inactivity_expiry_;
