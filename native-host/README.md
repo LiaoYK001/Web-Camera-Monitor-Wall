@@ -60,7 +60,7 @@ Normal builds then run `native-host/scripts/runtime_inventory.py` (CI step "Inve
 
 独立开发安装包（原型）：`native-host/installer/WebOBSNative.nsi` 用 NSIS 把同一份冻结 runtime 打包成未签名的每用户安装器 `WebOBS-OBS-native-<dev>-windows-x64-SETUP.exe`。静默安装到 `%LOCALAPPDATA%\WebOBS Native Prototype`，只写 HKCU 的卸载信息，不注册服务；重装会覆盖程序文件而不触碰 `config\`，静默卸载删除程序文件但逐字节保留 `config\`（内含 RTSP 凭据与五格墙）。CI 会在同一运行中验证安装→双启动烟测→重装保留配置→卸载保留配置与清理注册表，并记录安装包字节数/SHA-256。它仍是开发包：未签名、无自动更新、无自动数据迁移或自动回滚，不是产品安装器。
 
-版本升级快照：每次以一个安装目录中**首次出现的新版本**启动时，插件在 `FINISHED_LOADING` 处理前把 `config/obs-studio`（跳过 `obs-studio/logs`、运行时 `.sentinel` 与 `crashes`）复制到 `backups/config-<version>-<UTC 时间>/`，并写 `backup.json`（逐文件 SHA-256、字节数、版本）；最多保留 3 份，失败时删除半成品，绝不阻塞启动。`backups/` 与 `config/` 一样不随卸载删除。恢复前先查看并校验：
+版本升级快照（时机已收紧）：只有以 `-DiagnosticBootstrap` 显式请求并通过隔离检查的诊断启动，插件才在 `FINISHED_LOADING` 内、本插件 bootstrap 前，按版本首次把 `config/obs-studio`（跳过 `obs-studio/logs`、运行时 `.sentinel` 与 `crashes`）复制到 `backups/config-<version>-<UTC 时间>/`，并写 `backup.json`（逐文件 SHA-256、字节数、版本）；最多保留 3 份，失败时删除半成品，绝不阻塞启动。`backups/` 与 `config/` 一样不随卸载删除。恢复前先查看并校验：
 
 ```powershell
 python -B native-host/scripts/restore_native_backup.py --install-root '<安装根>' --list
@@ -71,7 +71,7 @@ python -B native-host/scripts/restore_native_backup.py --install-root '<安装�
 
 Standalone development installer (prototype): `native-host/installer/WebOBSNative.nsi` packages the same frozen runtime with NSIS into an unsigned per-user `WebOBS-OBS-native-<dev>-windows-x64-SETUP.exe`. It installs silently under `%LOCALAPPDATA%\WebOBS Native Prototype`, writes only HKCU uninstall metadata and registers no service; reinstalling replaces program files without touching `config\`, and silent uninstall removes program files while preserving `config\` byte for byte (including RTSP credentials and the five-tile wall). CI verifies install → two-launch smoke → reinstall preserving the profile → uninstall preserving the profile and cleaning the registry, and records the installer byte count/SHA-256. It remains a development package: unsigned, no auto-update, no automatic data migration or rollback, not the product installer.
 
-Version upgrade snapshots: on the first launch of a **new version** in an install root, the plugin copies `config/obs-studio` (excluding `obs-studio/logs`, runtime `.sentinel` files and `crashes`) to `backups/config-<version>-<UTC>/` before `FINISHED_LOADING` handling and writes `backup.json` (per-file SHA-256, byte counts, version); at most three snapshots are kept, a partial directory is removed on failure, and startup is never blocked. Like `config/`, `backups/` survives uninstall. Inspect and restore with:
+Version upgrade snapshots (timing restricted): only an explicitly requested, isolation-checked `-DiagnosticBootstrap` launch invokes the best-effort snapshot, once per version, inside FINISHED_LOADING before this plugin's bootstrap. Ordinary startup no longer makes this snapshot; OBS itself may already have loaded/written its profile. This is not authorized-apply backup success or a rollback guarantee. The plugin copies `config/obs-studio` (excluding `obs-studio/logs`, runtime `.sentinel` files and `crashes`) to `backups/config-<version>-<UTC>/` and writes `backup.json` (per-file SHA-256, byte counts, version); at most three snapshots are kept, a partial directory is removed on failure, and startup is never blocked. Like `config/`, `backups/` survives uninstall. Inspect and restore with:
 
 ```powershell
 python -B native-host/scripts/restore_native_backup.py --install-root '<install root>' --list
@@ -95,11 +95,26 @@ OBS 32.1.2 Windows portable 配置实际位于 **`runtime/config/obs-studio/`**�
 
 不运行任何 core/Python/go2rtc/MediaMTX/转码服务，不监听产品管理端口，不访问旧 Electron 数据，不自动迁移，不执行自动更新，也不绕过 OBS 自身实例互斥。
 
+### 普通启动拒绝与显式短诊断 / Ordinary refusal and explicit short diagnostics
+
+普通启动现在拒绝自动 `product.json` / `wall.json` 引导：不进行本插件的升级快照、配置解析、视频重置、媒体/场景创建、选墙或所有权写入。`-AllowPrototype`、配置存在或 SmokeToken 都不是授权。仅在全新隔离开发树中需要运行旧的 bootstrap 测试时，显式增加 `-DiagnosticBootstrap`，并配合有界的 `-SmokeToken`（正常自动关闭）或 `-CrashProbe`（短时故意终止）启动。启动器清除继承的诊断/像素/重启选择器；插件再次校验固定 manifest、portable profile/module binding 和本次根目录。普通升级不再自动产生该 best-effort 快照；已有快照与恢复工具仍保留，它们不是执行器的授权备份。
+
+```powershell
+# 短诊断：私密配置仅放在隔离目录；这不是账号登录/授权或 P5 长测启动器。
+$correlation = [guid]::NewGuid().ToString('N')
+pwsh -NoProfile -File '<runtime>\\launch-native.ps1' -AllowPrototype `
+  -DiagnosticBootstrap -SmokeToken $correlation -ProductConfig '<private-product.json>'
+```
+
+**已知残余：OBS 本体会在 FINISHED_LOADING 之前恢复保存的 scene collection 并创建/播放媒体。** 此改动仅关闭插件自己额外的自动引导，不能宣称“未登录不播放”。OBS 手工编辑、集合切换、热键/脚本、dock 源名刷新与 Program 投影仍不受产品账号门控。环境选择器仅防误触/关联诊断，不是对同用户代码的权限边界。后续还需在 OBS 载入前选择账号隔离/锁定 collection，再以真实权限受控载入。
+
+Ordinary startup refuses plugin automatic bootstrap before all its backup/config/video/media/ledger effects. Explicit `-DiagnosticBootstrap` is limited to bounded smoke/crash diagnostics and requires the fixed non-default portable identity; it is NOT RBAC or migration qualification. Smoke tokens select auto-close only. Receipts explicitly say `diagnosticOnly=true`, `accountAuthorization=false`, `migrationQualified=false`. OBS's earlier scene restoration, native editing, refresh and projectors remain bypasses; this does not prove pre-login media isolation. The short launcher mode cannot cover a full P5 warmup/measurement campaign.
+
 ## 最小原生功能
 
 1. 在独立 OBS 内用其原生 **Media Source** 属性创建摄像头输入；取消 Local File 并输入自己的 RTSP 地址。缓存、硬件解码、重连、音频、色彩等仍由固定 OBS 原生属性控制；此手工选择既有 source 的 dock 路径不解析/另存 URL、不新建 media source、不更改这些参数。另有显式私密 `product.json` bootstrap 路径可创建 source，不应与此手工路径混同。
 2. 在 **Docks → WebOBS Native Prototype** 中刷新既有 Media Sources，并选择五个槽位。插件使用 source **UUID** 获取相同源对象，添加 scene item 时复用对象及其现有解码器。跨场景/投影不主动另开解码器；同一源可以选入多个槽位，这不代表五路独立输入验收。
-3. 点击创建五分屏会新建唯一名称的场景，不覆盖既有场景。按当前 OBS canvas base size 布局为 3×2 网格、末格留空，画面保持比例并居中在每格内。先验证全部输入再变更；scene item 创建失败会移除新建的半成品场景。Studio Mode 只选到 **Preview**，TAKE 仍由用户决定；非 Studio Mode 选择当前 Scene。
+3. **当前 dock 建墙按钮因无真实操作员决策而默认拒绝，以下仅描述未对 UI 放行的底层能力与隔离诊断路径：**创建五分屏会新建唯一名称的场景，不覆盖既有场景。按当前 OBS canvas base size 布局为 3×2 网格、末格留空，画面保持比例并居中在每格内。先验证全部输入再变更；scene item 创建失败会移除新建的半成品场景。Studio Mode 只选到 **Preview**，TAKE 仍由用户决定；非 Studio Mode 选择当前 Scene。
 4. Program 按钮调用 OBS 原生 `StudioProgram` projector；可在 OBS 原生窗口菜单中选择屏幕/管理投影。它既不 capture/canvas 回读画面，也不借用浏览器播放。多投影的源/解码器稳定性仍需实际 Windows 观测，不能由此代码结构替代验收。
 
 原生 OBS UI 有英文开发提示。当前 dock 没有 PTZ、收藏/锁定、告警、摄像头目录、分享、录像迁移、审核/权限或后端管理能力；请参照主计划和执行台账逐项迁移，不静默删功能。
@@ -144,7 +159,7 @@ python -B native-host/tests/smoke_windows.py --runtime '<buildroot>/runtime' --r
 pwsh -NoProfile -File desktop/scripts/build-obs-native.ps1 -Version 0.1.0-dev.4 -SmokeTest
 ```
 
-烟测调用真正的启动器，故意注入错误 OBS/Qt plugin 路径以验证子进程清除环境；仅在全新 profile 中设置跳过 OBS 首启向导，不创建任何摄像头或默认音频输入。实际产品插件收到 `FINISHED_LOADING` 后，确认从 `obs_module_config_path` 取得的配置根严格位于 bundle portable 目录，再写固定回执并排队关闭原生主窗口，走 OBS 正常保存/退出。启动器仅在显式烟测参数下设定 90 秒截止时间，超时只结束它刚创建的子进程。正常开发启动会删除继承的烟测环境开关，不会自动关闭窗口。
+烟测调用真正的启动器，先在全新 profile 用仅 SmokeToken 的普通启动分别覆盖 product+canvas 与 wall fallback 拒绝，核对实际视频/媒体前后不变、没有新增引导/账本回执及未进行插件备份；之后才显式 opt-in 诊断创建五路并再次复用。故意注入错误 OBS/Qt plugin 和诊断选择器以验证子进程清除环境；仅在全新 profile 中设置跳过 OBS 首启向导，不创建任何摄像头或默认音频输入。实际产品插件收到 `FINISHED_LOADING` 后，确认从 `obs_module_config_path` 取得的配置根严格位于 bundle portable 目录，再写固定回执并排队关闭原生主窗口，走 OBS 正常保存/退出。启动器仅在显式烟测参数下设定 90 秒截止时间，超时只结束它刚创建的子进程。正常开发启动会删除继承的烟测环境开关，不会自动关闭窗口。
 
 脚本对 `%APPDATA%/obs-studio` 做有界私密哈希前后比较（不导出内容）；若有并发 OBS 写入会安全失败，请在独立测试账号运行。公开的 summary 仅包含版本与布尔结果，不含 token、完整路径或日志。这个回执证明的上限是 Qt/plugin 实际加载、Media Source 类型注册、一次 portable 配置与正常退出，**不是五分屏/摄像头/解码/像素/性能或迁移验收**。
 

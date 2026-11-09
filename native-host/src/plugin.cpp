@@ -3,6 +3,7 @@
 #include "product_bootstrap.hpp"
 #include "ownership_store.hpp"
 #include "renderer_device.hpp"
+#include "startup_bootstrap.hpp"
 #include "wall.hpp"
 #ifdef WEBOBS_NATIVE_PIXEL_TEST
 #include "pixel_test.hpp"
@@ -303,6 +304,54 @@ void bootstrap_product_configuration()
 		bootstrap_configured_wall();
 }
 
+// Diagnostic identity only, NOT an account authorization or a private-file
+// security boundary. OBS may already have restored sources before this event.
+struct PrototypeIsolation {
+	bool valid = false;
+	QString root;
+	QString profile;
+	QString module_config;
+};
+
+PrototypeIsolation inspect_prototype_isolation()
+{
+	PrototypeIsolation result;
+	const QDir bin(QCoreApplication::applicationDirPath());
+	result.root = QFileInfo(bin.absoluteFilePath("../..")).canonicalFilePath();
+	result.profile = QFileInfo(result.root + "/config/obs-studio").canonicalFilePath();
+	char *module_config = obs_module_config_path("");
+	result.module_config = module_config ? QDir::cleanPath(QFileInfo(QString::fromUtf8(module_config)).absoluteFilePath()) : QString{};
+	bfree(module_config);
+	QFile manifest_file(result.root + "/webobs-native-prototype.json");
+	if (result.root.isEmpty() || result.profile.isEmpty() ||
+	    !QFileInfo(result.root + "/portable_mode.txt").isFile() ||
+	    result.module_config.compare(result.profile + "/plugin_config/webobs-native-host", Qt::CaseInsensitive) != 0 ||
+	    !manifest_file.open(QIODevice::ReadOnly) || manifest_file.size() > 16384)
+		return result;
+	const auto manifest = QJsonDocument::fromJson(manifest_file.readAll()).object();
+	result.valid = manifest.value("obsCommit").toString() == "fb4d98bf88fae5fc85cb11fc57f7c5e309282194" &&
+		manifest.value("obsVersion").toString() == "32.1.2" &&
+		manifest.value("defaultProduct").isBool() && !manifest.value("defaultProduct").toBool(true);
+	return result;
+}
+
+QJsonObject startup_observation()
+{
+	int media_sources = 0;
+	obs_enum_sources([](void *opaque, obs_source_t *source) {
+		const char *id = obs_source_get_unversioned_id(source);
+		if (id && std::strcmp(id, "ffmpeg_source") == 0)
+			++*static_cast<int *>(opaque);
+		return true;
+	}, &media_sources);
+	obs_video_info video{};
+	const bool video_available = obs_get_video_info(&video);
+	return {{"mediaSources", media_sources}, {"videoAvailable", video_available},
+		{"baseWidth", int(video.base_width)}, {"baseHeight", int(video.base_height)},
+		{"outputWidth", int(video.output_width)}, {"outputHeight", int(video.output_height)},
+		{"fpsNumerator", int(video.fps_num)}, {"fpsDenominator", int(video.fps_den)}};
+}
+
 void frontend_event(enum obs_frontend_event event, void *)
 {
 #ifdef WEBOBS_NATIVE_PIXEL_TEST
@@ -316,26 +365,28 @@ void frontend_event(enum obs_frontend_event event, void *)
 	}
 	if (pixel_test_handled || event != OBS_FRONTEND_EVENT_FINISHED_LOADING)
 		return;
-	webobs::native_host::backup_config_for_upgrade_if_needed();
-	bootstrap_product_configuration();
 	const QString token = qEnvironmentVariable("WEBOBS_NATIVE_SMOKE_TOKEN");
-	if (!QRegularExpression("^[0-9a-f]{32}$").match(token).hasMatch())
+	const bool smoke_requested = QRegularExpression("^[0-9a-f]{32}$").match(token).hasMatch();
+	const bool diagnostic_requested = qEnvironmentVariable("WEBOBS_NATIVE_DIAGNOSTIC_BOOTSTRAP") == "isolated-prototype-v1";
+	const auto isolation = (smoke_requested || diagnostic_requested) ? inspect_prototype_isolation() : PrototypeIsolation{};
+	const QString requested_root = QFileInfo(qEnvironmentVariable("WEBOBS_NATIVE_DIAGNOSTIC_ROOT")).canonicalFilePath();
+	const bool diagnostic_isolated = isolation.valid && !requested_root.isEmpty() &&
+		requested_root.compare(isolation.root, Qt::CaseInsensitive) == 0;
+	const auto before = smoke_requested ? startup_observation() : QJsonObject{};
+	// auto_bootstrap_on_load has NO account permission path. This dispatcher
+	// refuses ordinary startup BEFORE backup, product.json/wall.json reads,
+	// video reset, source creation, wall selection or ownership writes.
+	const auto startup = webobs::native_host::run_startup_bootstrap(
+		{diagnostic_requested, diagnostic_isolated}, [] {
+			webobs::native_host::backup_config_for_upgrade_if_needed();
+			bootstrap_product_configuration();
+		});
+	if (startup != webobs::native_host::StartupBootstrapStatus::diagnostic_completed)
+		blog(LOG_INFO, "[webobs-native-host] automatic bootstrap refused; no operator authorization is connected");
+	if (!smoke_requested || !isolation.valid)
 		return;
-
-	const QDir bin(QCoreApplication::applicationDirPath());
-	const QString root = QDir::cleanPath(bin.absoluteFilePath("../.."));
-	const QString profile = QFileInfo(root + "/config/obs-studio").canonicalFilePath();
-	char *module_config = obs_module_config_path("");
-	const QString actual_module_config = module_config ? QDir::cleanPath(QFileInfo(QString::fromUtf8(module_config)).absoluteFilePath()) : QString{};
-	bfree(module_config);
-	QFile manifest_file(root + "/webobs-native-prototype.json");
-	if (profile.isEmpty() || actual_module_config.compare(profile + "/plugin_config/webobs-native-host", Qt::CaseInsensitive) != 0 ||
-	    !manifest_file.open(QIODevice::ReadOnly))
-		return;
-	const auto manifest = QJsonDocument::fromJson(manifest_file.readAll()).object();
-	if (manifest.value("obsCommit").toString() != "fb4d98bf88fae5fc85cb11fc57f7c5e309282194" ||
-	    !manifest.contains("defaultProduct") || manifest.value("defaultProduct").toBool(true))
-		return;
+	const QString &profile = isolation.profile;
+	const QString &actual_module_config = isolation.module_config;
 	const QString receipt_name = qEnvironmentVariable("WEBOBS_NATIVE_SMOKE_RECEIPT", "native-smoke.json");
 	if (!QRegularExpression("^[A-Za-z0-9._-]{1,80}\\.json$").match(receipt_name).hasMatch())
 		return;
@@ -349,7 +400,12 @@ void frontend_event(enum obs_frontend_event event, void *)
 	                         {"profile", profile}, {"moduleConfig", actual_module_config},
 	                         {"dockLoaded", !dock.isNull()},
 	                         {"mediaSourceRegistered", (obs_get_source_output_flags("ffmpeg_source") & OBS_SOURCE_VIDEO) != 0},
-	                         {"finishedLoading", true}, {"mediaQualified", false}};
+	                         {"finishedLoading", true}, {"mediaQualified", false},
+	                         {"diagnosticOnly", true}, {"accountAuthorization", false}, {"migrationQualified", false},
+	                         {"startupBootstrap", startup == webobs::native_host::StartupBootstrapStatus::diagnostic_completed ?
+	                             "diagnostic-completed" : startup == webobs::native_host::StartupBootstrapStatus::diagnostic_failed ?
+	                             "diagnostic-failed" : "refused"},
+	                         {"beforeBootstrap", before}, {"afterBootstrap", startup_observation()}};
 	const QByteArray bytes = QJsonDocument(result).toJson();
 	if (receipt.write(bytes) != bytes.size())
 		return;
@@ -392,8 +448,8 @@ class WallDock final : public QWidget {
 	{
 		// Fail closed: the dock mutation requires an operator authorization
 		// decision, and no control layer produces one for the plugin yet. The
-		// other entry points (refresh, projector, bootstrap) stay documented
-		// bypasses; see docs/native-control-auth.md.
+		// refresh/projector and OBS-native editing remain outside this
+		// mutation gate; ordinary automatic bootstrap is separately refused.
 		const auto gate = webobs::native_host::evaluate_ui_action(
 			webobs::native_host::UiActionKind::dock_create_wall, webobs::native_host::UiAuthorizationState{});
 		if (gate != webobs::native_host::UiGateStatus::allowed) {

@@ -319,7 +319,13 @@ jobs:
           if (Test-Path $root) { Remove-Item -Recurse -Force $root }
           python -B native-host/scripts/install_native.py --package $oldZip.FullName --install-root $root --receipt build/obs-native-ci/native-upgrade-first.json
           if ($LASTEXITCODE -ne 0) { throw 'Installing the pinned previous prototype failed.' }
-          python -B native-host/tests/smoke_windows.py --runtime $root --result build/obs-native-ci/native-upgrade-first-smoke.json
+          # The old launcher predates DiagnosticBootstrap and the strict new receipt.
+          # Freeze ONLY its pre-upgrade smoke helper; after upgrade use the current gate.
+          $legacySmoke = Join-Path $env:RUNNER_TEMP 'native-smoke-before-startup-gate.py'
+          $legacySmokeBase64 = gh api "repos/$env:GITHUB_REPOSITORY/contents/native-host/tests/smoke_windows.py?ref=70ecbe9c40fd2bf1d57c5dda416d832adebc0209" --jq '.content'
+          if ($LASTEXITCODE -ne 0) { throw 'Frozen previous-launcher smoke helper download failed.' }
+          [IO.File]::WriteAllBytes($legacySmoke, [Convert]::FromBase64String(($legacySmokeBase64 -join '')))
+          python -B $legacySmoke --runtime $root --result build/obs-native-ci/native-upgrade-first-smoke.json
           if ($LASTEXITCODE -ne 0) { throw 'Pinned previous prototype smoke failed.' }
           $configDir = Join-Path $root 'config/obs-studio'
           if (-not (Test-Path -LiteralPath $configDir -PathType Container)) { throw 'Pinned previous prototype did not create a private config directory.' }

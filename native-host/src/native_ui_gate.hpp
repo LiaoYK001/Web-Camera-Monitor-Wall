@@ -7,9 +7,9 @@ namespace webobs::native_host {
 // Inventory of the mutating/viewing entry points the native plugin exposes
 // today, plus the one UI surface it CANNOT gate. The gate itself is an
 // unexposed policy module: it answers "may this UI action proceed under the
-// current operator state?". Only the dock create-wall mutation calls it today
-// (fail closed: no control layer supplies an operator decision yet); the other
-// entry points below remain bypasses until their wiring lands. Wiring debt and
+// current operator state?". Dock create-wall fails closed, and the startup
+// dispatcher always refuses ordinary automatic bootstrap. Explicit isolated
+// prototype diagnostics are NOT an account authorization path. Wiring debt and
 // the exact bypass surfaces are documented in docs/native-control-auth.md.
 //
 // Anything a user can do through OBS itself (Add Source, Properties, scene
@@ -59,8 +59,8 @@ enum class UiGateStatus {
 //  - wall mutations additionally require a decision, a plan and captured
 //    backup material;
 //  - `auto_bootstrap_on_load` runs before any session exists and is therefore
-//    refused (the legacy bootstrap stays a documented bypass until the product
-//    path is migrated);
+//    refused; a separate explicitly isolated diagnostic dispatcher may exercise
+//    legacy bootstrap without pretending to provide RBAC;
 //  - unknown kinds are refused as `refused_outside_plugin`.
 [[nodiscard]] UiGateStatus evaluate_ui_action(UiActionKind kind, const UiAuthorizationState &state) noexcept;
 

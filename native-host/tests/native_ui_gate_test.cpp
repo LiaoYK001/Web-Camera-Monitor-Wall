@@ -1,5 +1,5 @@
-// Policy matrix for the unexposed native UI gate. Pure logic: no Qt, OBS,
-// filesystem or network. The plugin is NOT wired to this module yet.
+// Policy matrix for the native UI gate. Pure logic: no Qt, OBS, filesystem
+// or network; not a dock-click or frontend execution regression.
 #include "native_ui_gate.hpp"
 
 #include <cstdio>

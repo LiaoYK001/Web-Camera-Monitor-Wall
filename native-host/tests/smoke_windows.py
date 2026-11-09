@@ -84,10 +84,15 @@ def check_renderer_receipt(value) -> None:
             raise AssertionError("Actual OBS renderer adapter metadata is invalid")
 
 
-def launch_once(runtime: Path, pwsh: str, environment: dict, token: str, product_file: Path,
-                receipt: str, reuse: bool = False, gate: Path | None = None) -> None:
+def launch_once(runtime: Path, pwsh: str, environment: dict, token: str, product_file: Path | None,
+                receipt: str, reuse: bool = False, gate: Path | None = None,
+                diagnostic: bool = True) -> None:
     args = [pwsh, "-NoProfile", "-File", str(runtime / "launch-native.ps1"), "-AllowPrototype",
-            "-SmokeToken", token, "-TimeoutSeconds", "90", "-ProductConfig", str(product_file)]
+            "-SmokeToken", token, "-TimeoutSeconds", "90"]
+    if product_file is not None:
+        args.extend(["-ProductConfig", str(product_file)])
+    if diagnostic:
+        args.append("-DiagnosticBootstrap")
     if gate is not None:
         args.extend(["-ProcessGatePath", str(gate)])
     if reuse:
@@ -132,9 +137,60 @@ def verify_smoke(receipt_path: Path, token: str, profile: Path) -> dict:
             raise AssertionError(f"Native startup receipt missing {flag}")
     if receipt.get("mediaQualified") is not False:
         raise AssertionError("A startup smoke cannot qualify media")
+    if (receipt.get("diagnosticOnly") is not True or receipt.get("accountAuthorization") is not False
+            or receipt.get("migrationQualified") is not False):
+        raise AssertionError("A diagnostic receipt must explicitly disclaim account authorization/migration")
     if not (profile / "global.ini").is_file() or not (profile / "user.ini").is_file():
         raise AssertionError("Portable OBS did not persist its own configuration")
     return receipt
+
+
+def check_startup_refusal(receipt: dict, module: Path) -> None:
+    if receipt.get("startupBootstrap") != "refused":
+        raise AssertionError("Ordinary startup must refuse automatic bootstrap even with a smoke token")
+    before, after = receipt.get("beforeBootstrap"), receipt.get("afterBootstrap")
+    if (not isinstance(before, dict) or not before or before != after
+            or before.get("mediaSources") != 0 or before.get("videoAvailable") is not True):
+        raise AssertionError("Plugin startup changed video/media in the fresh refusal fixture")
+    for name in ("product-bootstrap.json", "wall-bootstrap.json", "source-ownership.json"):
+        if (module / name).exists():
+            raise AssertionError("Refused startup wrote a bootstrap/ownership receipt")
+
+
+def run_startup_refusal(runtime: Path, pwsh: str, environment: dict, token: str,
+                        product_file: Path, profile: Path) -> None:
+    """Actual plugin event, fresh synthetic profile only; NOT OBS pre-load isolation."""
+    module = profile / "plugin_config/webobs-native-host"
+    environment = dict(environment)
+    # Inherited selectors MUST NOT opt an ordinary launcher into diagnostics.
+    environment["WEBOBS_NATIVE_DIAGNOSTIC_BOOTSTRAP"] = "isolated-prototype-v1"
+    environment["WEBOBS_NATIVE_DIAGNOSTIC_ROOT"] = str(runtime)
+    original = product_file.read_bytes()
+    payload = json.loads(original)
+    payload["canvas"] = {"width": 1280, "height": 720, "fps": 15}
+    product_file.write_text(json.dumps(payload), encoding="utf-8")
+    try:
+        name = f"native-smoke-{token[:12]}-refused-product.json"
+        launch_once(runtime, pwsh, environment, token, product_file, name, diagnostic=False)
+        check_startup_refusal(verify_smoke(profile / name, token, profile), module)
+        if (runtime / "backups").exists():
+            raise AssertionError("Ordinary startup unexpectedly performed the plugin backup")
+        if (module / "product.json").read_bytes() != product_file.read_bytes():
+            raise AssertionError("Refusal modified the synthetic private product config")
+        # Exercise the wall.json fallback in the SAME fresh disposable fixture.
+        private_product = module / "product.json"
+        if private_product.resolve() != (runtime / "config/obs-studio/plugin_config/webobs-native-host/product.json").resolve():
+            raise AssertionError("Unexpected private refusal fixture path")
+        private_product.unlink()
+        wall = module / "wall.json"
+        wall.write_text(json.dumps({"schema": 1, "sources": [
+            f"11111111-2222-3333-4444-{index:012d}" for index in range(5)]}), encoding="utf-8")
+        name = f"native-smoke-{token[:12]}-refused-wall.json"
+        launch_once(runtime, pwsh, environment, token, None, name, reuse=True, diagnostic=False)
+        check_startup_refusal(verify_smoke(profile / name, token, profile), module)
+        wall.unlink()
+    finally:
+        product_file.write_bytes(original)
 
 
 def fingerprint(root: Path) -> dict:
@@ -197,10 +253,14 @@ def run(runtime: Path, result: Path, *, existing_wall: bool = False, verify_vide
     second_name = f"native-smoke-{token[:12]}-second.json"
     gate_path = result.parent / (result.stem + "-process-gate.json")
     try:
-        launch_once(runtime, pwsh, environment, token, product_file, first_name, reuse=existing_wall,
+        if not existing_wall:
+            run_startup_refusal(runtime, pwsh, environment, token, product_file, profile)
+        launch_once(runtime, pwsh, environment, token, product_file, first_name, reuse=True,
                     gate=gate_path)
         process_gate = check_process_gate(gate_path)
         first_receipt = verify_smoke(profile / first_name, token, profile)
+        if first_receipt.get("startupBootstrap") != "diagnostic-completed":
+            raise AssertionError("Explicit isolated bootstrap diagnostic did not run")
         product = check_product_receipt(
             profile / "plugin_config/webobs-native-host/product-bootstrap.json",
             expect_created=0 if existing_wall else 5,
@@ -226,6 +286,8 @@ def run(runtime: Path, result: Path, *, existing_wall: bool = False, verify_vide
         "Two launches in one disposable profile: fresh product creation then reuse; "
         "no camera/pixel/performance/auth/upgrade claim")
     summary = {"schema": 1, "status": "passed", "existingWallMode": existing_wall,
+               "diagnosticOnly": True, "accountAuthorization": False, "migrationQualified": False,
+               "ordinaryStartupRefusalVerified": not existing_wall,
                "obsVersion": "32.1.2", "qtVersion": first_receipt["qtVersion"],
                "dockLoaded": True, "mediaSourceRegistered": True, "normalExit": True,
                "portableProfile": True, "externalObsProfileUnchanged": True,
@@ -272,7 +334,7 @@ def run_second_instance(runtime: Path, result: Path, *, hold_seconds: int = 30) 
     product_file = (result.parent / (result.stem + "-product.json")).resolve()
     write_product_config(product_file)
     first_args = [pwsh, "-NoProfile", "-File", str(runtime / "launch-native.ps1"), "-AllowPrototype",
-                  "-CrashProbe", "-TimeoutSeconds", "120", "-CrashAfterSeconds", str(hold_seconds),
+                  "-CrashProbe", "-DiagnosticBootstrap", "-TimeoutSeconds", "120", "-CrashAfterSeconds", str(hold_seconds),
                   "-ProcessGatePath", str(gate_path), "-ProductConfig", str(product_file)]
     second_args = [pwsh, "-NoProfile", "-File", str(runtime / "launch-native.ps1"), "-AllowPrototype"]
     try:
@@ -337,7 +399,7 @@ def run_crash(runtime: Path, result: Path, *, crash_after: int = 8) -> dict:
     product_file = (result.parent / (result.stem + "-product.json")).resolve()
     write_product_config(product_file)
     args = [pwsh, "-NoProfile", "-File", str(runtime / "launch-native.ps1"), "-AllowPrototype",
-            "-CrashProbe", "-TimeoutSeconds", "120", "-CrashAfterSeconds", str(crash_after),
+            "-CrashProbe", "-DiagnosticBootstrap", "-TimeoutSeconds", "120", "-CrashAfterSeconds", str(crash_after),
             "-ProcessGatePath", str(gate_path), "-ProductConfig", str(product_file)]
     try:
         process = subprocess.run(args, cwd=runtime.parent, env=environment, check=False)

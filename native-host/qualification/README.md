@@ -63,6 +63,10 @@ Windows x64 使用用户已有的 64 位 Python 3.10+ 与系统 API（`ctypes`�
 
 ## 手工采样
 
+当前普通原型启动不再自动应用 `product.json`/`wall.json`；显式 `-DiagnosticBootstrap` 仅用于有截止时间的隔离 smoke/crash 短诊断，不是 P5 长时启动器、账号授权或迁移放行。已有 profile 仍可能被 OBS 本体自动恢复媒体（已知未关闭旁路），不可误称未登录隔离。下列采样工具只附着操作者已合法准备并运行的 PID，不启动产品、不改登录/来源/解码/布局；未准备好等条件与完整授权边界前，不能给出产品资格结论。
+
+Ordinary startup no longer applies product/wall configuration. Explicit bootstrap diagnostics are bounded short tests, not the P5 launcher or authorization. OBS's own saved-profile restore remains a known bypass. Collection still only attaches to an already prepared process; it does not start/configure the product or establish qualification.
+
 手工正常启动一侧，保持五路真实 H.265、同画布/FPS/音轨/可见窗口/布局与 OBS 原生预览/投影设置；另一侧正常退出，不要同时占摄像机/解码器。自行从可信任务管理器核对根 PID 和完整 EXE 路径；采样器不会搜索或启动产品。默认再预热 180 秒、正式采样 1200 秒、间隔 5 秒。
 
 ```powershell

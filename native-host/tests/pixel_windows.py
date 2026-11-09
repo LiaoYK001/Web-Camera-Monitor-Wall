@@ -34,7 +34,8 @@ PHASES = ("known-colors", "five-codecs", "studio-preview-no-take", "explicit-tak
 VIDEO_MODE = {"baseWidth": 960, "baseHeight": 540, "outputWidth": 960, "outputHeight": 540,
               "fpsNumerator": 15, "fpsDenominator": 1}
 ENV_OVERRIDES = ("OBS_PLUGINS_PATH", "OBS_PLUGINS_DATA_PATH", "OBS_CONFIG_PATH", "QT_PLUGIN_PATH",
-                 "QT_QPA_PLATFORM_PLUGIN_PATH", "QML2_IMPORT_PATH", "WEBOBS_NATIVE_SMOKE_TOKEN", "WEBOBS_NATIVE_PIXEL_TOKEN")
+                 "QT_QPA_PLATFORM_PLUGIN_PATH", "QML2_IMPORT_PATH", "WEBOBS_NATIVE_SMOKE_TOKEN", "WEBOBS_NATIVE_PIXEL_TOKEN",
+                 "WEBOBS_NATIVE_RESTART_TOKEN", "WEBOBS_NATIVE_DIAGNOSTIC_BOOTSTRAP", "WEBOBS_NATIVE_DIAGNOSTIC_ROOT")
 
 
 def read_json(path: Path) -> dict:

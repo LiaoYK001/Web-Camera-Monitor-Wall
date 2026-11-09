@@ -2,9 +2,10 @@
 
 namespace webobs::native_host {
 
-// Best-effort snapshot of the private portable profile before this build writes
-// to it. Runs once per application version when an existing profile is present;
-// failures never block startup and never modify the profile.
+// Best-effort snapshot before this plugin's explicitly isolated diagnostic
+// bootstrap, once per version. Ordinary startup no longer invokes this helper.
+// OBS may already have loaded/written its profile before FINISHED_LOADING.
+// Failures do not block diagnostics; this is NOT an authorized-apply backup.
 void backup_config_for_upgrade_if_needed();
 
 } // namespace webobs::native_host

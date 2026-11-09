@@ -156,6 +156,17 @@ else()
     target_compile_options(webobs-wall-apply-flow-tests PRIVATE -Wall -Wextra -Wpedantic)
 endif()
 
+add_executable(webobs-startup-bootstrap-tests
+    "${WEBOBS_ROOT}/native-host/tests/startup_bootstrap_test.cpp"
+    "${WEBOBS_ROOT}/native-host/src/startup_bootstrap.cpp"
+    "${WEBOBS_ROOT}/native-host/src/native_ui_gate.cpp")
+target_include_directories(webobs-startup-bootstrap-tests PRIVATE "${WEBOBS_ROOT}/native-host/src")
+if(MSVC)
+    target_compile_options(webobs-startup-bootstrap-tests PRIVATE /W4 /permissive- /utf-8)
+else()
+    target_compile_options(webobs-startup-bootstrap-tests PRIVATE -Wall -Wextra -Wpedantic -Werror)
+endif()
+
 add_executable(webobs-native-ui-gate-tests
     "${WEBOBS_ROOT}/native-host/tests/native_ui_gate_test.cpp")
 target_link_libraries(webobs-native-ui-gate-tests PRIVATE webobs-native-wall-apply-authorization)
@@ -212,6 +223,8 @@ add_test(NAME native-wall-apply-authorization COMMAND webobs-wall-apply-authoriz
 set_tests_properties(native-wall-apply-authorization PROPERTIES TIMEOUT 30)
 add_test(NAME native-wall-apply-executor COMMAND webobs-wall-apply-executor-tests)
 set_tests_properties(native-wall-apply-executor PROPERTIES TIMEOUT 30)
+add_test(NAME native-startup-bootstrap COMMAND webobs-startup-bootstrap-tests)
+set_tests_properties(native-startup-bootstrap PROPERTIES TIMEOUT 30)
 add_test(NAME native-ui-gate COMMAND webobs-native-ui-gate-tests)
 set_tests_properties(native-ui-gate PROPERTIES TIMEOUT 30)
 add_test(NAME native-wall-apply-flow COMMAND webobs-wall-apply-flow-tests)

@@ -746,14 +746,17 @@ class BuildContractTests(unittest.TestCase):
             self.assertIn(marker, gate)
         self.assertIn("OBS native source editing", gate)
 
-        # The dock mutation consults the gate fail-closed; the remaining entry
-        # points stay documented bypasses (no other action kind in the plugin).
+        # Dock mutation fails closed; ordinary startup is separately refused
+        # by the callback dispatcher. Remaining viewing/editing paths are not gated.
         self.assertIn("evaluate_ui_action", plugin)
         self.assertIn("UiActionKind::dock_create_wall", plugin)
-        for other in ("dock_refresh_sources", "dock_open_program_projector",
-                      "auto_bootstrap_on_load", "obs_native_source_editing"):
+        for other in ("dock_refresh_sources", "dock_open_program_projector", "obs_native_source_editing"):
             self.assertNotIn(other, plugin)
-        self.assertIn("Only the dock create-wall mutation calls it today", header)
+        self.assertIn("always refuses ordinary automatic bootstrap", header)
+        startup = (ROOT / "native-host/src/startup_bootstrap.cpp").read_text(encoding="utf-8")
+        self.assertIn("UiActionKind::auto_bootstrap_on_load", startup)
+        self.assertIn("run_startup_bootstrap", plugin)
+        self.assertIn("startup_bootstrap.cpp", plugin_cmake)
         self.assertIn("native_ui_gate.cpp",
                       next(line for line in plugin_cmake.splitlines() if "add_library(webobs-native-host" in line))
 
@@ -764,6 +767,53 @@ class BuildContractTests(unittest.TestCase):
         self.assertIn("native_ui_gate.cpp", cmake_text)
         self.assertIn("webobs-native-ui-gate-tests", cmake_text)
         self.assertIn("native-ui-gate", cmake_text)
+
+    def test_startup_dispatcher_precedes_all_bootstrap_effects_and_diagnostics_are_explicit(self):
+        plugin = (ROOT / "native-host/src/plugin.cpp").read_text(encoding="utf-8")
+        event = plugin.split("void frontend_event(", 1)[1].split("class WallDock", 1)[0]
+        dispatch = event.index("run_startup_bootstrap(")
+        self.assertLess(dispatch, event.index("backup_config_for_upgrade_if_needed();"))
+        self.assertLess(dispatch, event.index("bootstrap_product_configuration();"))
+        self.assertEqual(event.count("bootstrap_product_configuration();"), 1)
+        self.assertLess(event.index("pixel_test_event(event)"), dispatch)
+        self.assertIn('"WEBOBS_NATIVE_DIAGNOSTIC_BOOTSTRAP"', event)
+        self.assertIn('"isolated-prototype-v1"', event)
+        launcher = (ROOT / "native-host/scripts/launch-native.ps1").read_text(encoding="utf-8")
+        self.assertIn("[switch]$DiagnosticBootstrap", launcher)
+        self.assertLess(launcher.index("if ($DiagnosticBootstrap -and"), launcher.index("[Diagnostics.Process]::Start"))
+        self.assertIn("'WEBOBS_NATIVE_DIAGNOSTIC_BOOTSTRAP'", launcher)
+        self.assertIn("if ($DiagnosticBootstrap) {", launcher)
+        self.assertIn("'WEBOBS_NATIVE_RESTART_TOKEN'", launcher)
+        cmake = (ROOT / "native-host/tests/control-auth/CMakeLists.txt").read_text(encoding="utf-8")
+        self.assertIn("native-startup-bootstrap", cmake)
+        smoke = (ROOT / "native-host/tests/smoke_windows.py").read_text(encoding="utf-8")
+        self.assertIn("run_startup_refusal(runtime", smoke)
+        self.assertIn("diagnostic=False", smoke)
+        self.assertIn('"ordinaryStartupRefusalVerified": not existing_wall', smoke)
+        workflow = (ROOT / ".github/workflows/windows-obs-native-host.yaml").read_text(encoding="utf-8")
+        self.assertIn("ref=70ecbe9c40fd2bf1d57c5dda416d832adebc0209", workflow)
+        self.assertIn("python -B $legacySmoke --runtime $root --result build/obs-native-ci/native-upgrade-first-smoke.json", workflow)
+        self.assertIn("python -B native-host/tests/smoke_windows.py --runtime $root --result build/obs-native-ci/native-upgrade-second-smoke.json --existing-wall", workflow)
+
+    def test_startup_refusal_checker_rejects_false_or_stale_evidence(self):
+        observed = {"mediaSources": 0, "videoAvailable": True, "fpsNumerator": 30}
+        valid = {"startupBootstrap": "refused", "beforeBootstrap": observed, "afterBootstrap": observed.copy()}
+        with tempfile.TemporaryDirectory() as directory:
+            module = Path(directory)
+            smoke_windows.check_startup_refusal(valid, module)
+            for wrong in (dict(valid, startupBootstrap="diagnostic-completed"),
+                          dict(valid, beforeBootstrap={}), dict(valid, afterBootstrap={}),
+                          dict(valid, afterBootstrap=dict(observed, fpsNumerator=15)),
+                          dict(valid, beforeBootstrap=dict(observed, mediaSources=5),
+                               afterBootstrap=dict(observed, mediaSources=5))):
+                with self.assertRaises(AssertionError):
+                    smoke_windows.check_startup_refusal(wrong, module)
+            for name in ("product-bootstrap.json", "wall-bootstrap.json", "source-ownership.json"):
+                file = module / name
+                file.write_text("{}", encoding="utf-8")
+                with self.assertRaises(AssertionError):
+                    smoke_windows.check_startup_refusal(valid, module)
+                file.unlink()
 
     def test_video_receipt_checks_actual_mode_instead_of_accepting_a_flag(self):
         expected = {"baseWidth": 1280, "baseHeight": 720, "outputWidth": 1280,

@@ -2,6 +2,7 @@
 [CmdletBinding()]
 param(
     [switch]$AllowPrototype,
+    [switch]$DiagnosticBootstrap,
     [ValidatePattern('^$|^[0-9a-f]{32}$')][string]$SmokeToken = '',
     [string]$ProductConfig = '',
     [switch]$ReuseProfile,
@@ -14,6 +15,10 @@ param(
 $ErrorActionPreference = 'Stop'
 if (-not $IsWindows) { throw 'This native development bundle is Windows x64 only.' }
 if (-not $AllowPrototype) { throw 'Not a replacement product: authentication/migration/upgrade qualification is incomplete. Use -AllowPrototype only for isolated developer testing.' }
+# Validate before creating a profile or child process. A smoke token only
+# selects bounded auto-close, NEVER automatic camera creation or RBAC.
+if ($DiagnosticBootstrap -and -not ($SmokeToken -or $CrashProbe)) { throw 'DiagnosticBootstrap requires a bounded isolated SmokeToken or CrashProbe run; it is not account authorization.' }
+if ($ProcessGatePath -and -not ($SmokeToken -or $CrashProbe)) { throw 'ProcessGatePath is only supported for the smoke launcher.' }
 $root = $PSScriptRoot
 $manifestPath = Join-Path $root 'webobs-native-prototype.json'
 $manifest = Get-Content -LiteralPath $manifestPath -Raw | ConvertFrom-Json
@@ -72,7 +77,12 @@ $start.UseShellExecute = $false
 $start.ArgumentList.Add('--portable')
 $start.ArgumentList.Add('--disable-updater')
 foreach ($name in @('OBS_PLUGINS_PATH','OBS_PLUGINS_DATA_PATH','OBS_CONFIG_PATH','QT_PLUGIN_PATH','QT_QPA_PLATFORM_PLUGIN_PATH','QML2_IMPORT_PATH')) { $start.Environment.Remove($name) | Out-Null }
-$start.Environment.Remove('WEBOBS_NATIVE_SMOKE_TOKEN') | Out-Null
+foreach ($name in @('WEBOBS_NATIVE_SMOKE_TOKEN','WEBOBS_NATIVE_DIAGNOSTIC_BOOTSTRAP','WEBOBS_NATIVE_DIAGNOSTIC_ROOT','WEBOBS_NATIVE_PIXEL_TOKEN','WEBOBS_NATIVE_RESTART_TOKEN')) { $start.Environment.Remove($name) | Out-Null }
+if ($DiagnosticBootstrap) {
+    Write-Host 'ISOLATED DIAGNOSTIC ONLY: automatic bootstrap is NOT account authorization or migration qualification.'
+    $start.Environment['WEBOBS_NATIVE_DIAGNOSTIC_BOOTSTRAP'] = 'isolated-prototype-v1'
+    $start.Environment['WEBOBS_NATIVE_DIAGNOSTIC_ROOT'] = [IO.Path]::GetFullPath($root)
+}
 if ($SmokeToken) { $start.Environment['WEBOBS_NATIVE_SMOKE_TOKEN'] = $SmokeToken }
 $process = [Diagnostics.Process]::Start($start)
 $gateObserved = [ordered]@{}
@@ -80,7 +90,6 @@ $gateListeners = @()
 $gateSamples = 0
 $gateCrashed = $false
 $gateClock = [Diagnostics.Stopwatch]::StartNew()
-if ($ProcessGatePath -and -not ($SmokeToken -or $CrashProbe)) { throw 'ProcessGatePath is only supported for the smoke launcher.' }
 if ($SmokeToken -or $CrashProbe) {
     $exited = $false
     while (-not $exited) {
