@@ -448,7 +448,7 @@ class BuildContractTests(unittest.TestCase):
         self.assertIn("src/ownership_store.cpp", plugin_sources)
         self.assertIn("record_product_ownership", plugin)
         self.assertIn("not an\n// authorization grant", ownership_header)
-        for forbidden in ("classify_wall_entries", "classify_snapshot", "authorize", "native_operation"):
+        for forbidden in ("classify_snapshot", "authorize", "native_operation"):
             self.assertNotIn(forbidden, plugin)
         self.assertIn("add_executable(native-source-ownership-test tests/source_ownership_test.cpp src/source_ownership.cpp)", cmake)
         self.assertIn("native-source-ownership-api-contract", cmake)
@@ -479,6 +479,24 @@ class BuildContractTests(unittest.TestCase):
         self.assertIn('"ownershipLedger"', plugin)
         self.assertIn("ownershipLedger", smoke)
         self.assertIn("expect_ownership_entries", smoke)
+
+    def test_binding_inspection_is_read_only_and_receipt_only(self):
+        cmake = (ROOT / "native-host/CMakeLists.txt").read_text(encoding="utf-8")
+        plugin_sources = cmake.split("add_library(webobs-native-host MODULE ")[1].split(")")[0]
+        plugin = (ROOT / "native-host/src/plugin.cpp").read_text(encoding="utf-8")
+        smoke = (ROOT / "native-host/tests/smoke_windows.py").read_text(encoding="utf-8")
+        self.assertIn("src/wall_snapshot.cpp", plugin_sources)
+        # Exactly one provenance classification exists: the read-only receipt
+        # path. It must not mutate the graph or persist anything.
+        self.assertEqual(plugin.count("classify_wall_entries("), 1)
+        body = plugin.split("void record_binding_inspection")[1].split("void bootstrap_product_cameras")[0]
+        for forbidden in ("obs_source_create", "obs_scene_create", "obs_sceneitem_",
+                          "obs_source_remove", "obs_scene_release", "save_ownership_store"):
+            self.assertNotIn(forbidden, body)
+        for key in ('"bindingInspection"', '"bindingItems"', '"bindingBound"', '"bindingUnbound"'):
+            self.assertIn(key, body)
+        self.assertIn("expect_binding_bound", smoke)
+        self.assertIn("productBindingBound", smoke)
 
     def test_wall_live_decision_is_unwired_and_fail_closed(self):
         cmake = (ROOT / "native-host/CMakeLists.txt").read_text(encoding="utf-8")

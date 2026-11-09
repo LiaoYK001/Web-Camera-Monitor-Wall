@@ -5,6 +5,7 @@
 #include "renderer_device.hpp"
 #include "startup_bootstrap.hpp"
 #include "wall.hpp"
+#include "wall_snapshot.hpp"
 #ifdef WEBOBS_NATIVE_PIXEL_TEST
 #include "pixel_test.hpp"
 #endif
@@ -32,6 +33,8 @@
 
 #include <array>
 #include <cstring>
+#include <string>
+#include <vector>
 
 OBS_DECLARE_MODULE()
 OBS_MODULE_USE_DEFAULT_LOCALE("webobs-native-host", "en-US")
@@ -184,6 +187,58 @@ void record_product_ownership(const std::array<webobs::native_host::ProductCamer
 		receipt.insert("ownershipEntries", static_cast<int>(entries.size()));
 }
 
+// Read-only observation for the diagnostic receipt: snapshot the wall scene and
+// pair its item UUIDs with the private creation ledger. This reports counts
+// only, changes no graph and is NOT an authorization check, grant or UI gate:
+// a bound entry is a local provenance claim, never proof of live media or
+// registry identity. Reused-by-name sources stay unbound.
+void record_binding_inspection(const webobs::native_host::ProductWallResult &product,
+			       QJsonObject &receipt)
+{
+	auto *scene_source = obs_scene_get_source(product.scene);
+	const char *scene_uuid = scene_source ? obs_source_get_uuid(scene_source) : nullptr;
+	if (!scene_uuid) {
+		receipt.insert("bindingInspection", QStringLiteral("scene-unavailable"));
+		return;
+	}
+	const auto snapshot = webobs::native_host::inspect_existing_wall(scene_uuid);
+	if (snapshot.status != webobs::native_host::WallSnapshotStatus::success ||
+	    !snapshot.snapshot) {
+		receipt.insert("bindingInspection", QStringLiteral("snapshot-unavailable"));
+		return;
+	}
+	std::vector<std::string> uuids;
+	uuids.reserve(snapshot.snapshot->entries.size());
+	for (const auto &entry : snapshot.snapshot->entries)
+		uuids.push_back(entry.source_uuid);
+	char *path = obs_module_config_path("source-ownership.json");
+	if (!path) {
+		receipt.insert("bindingInspection", QStringLiteral("ledger-unavailable"));
+		return;
+	}
+	const QString file = QString::fromUtf8(path);
+	bfree(path);
+	const auto loaded = webobs::native_host::load_ownership_store(file.toStdString());
+	if (loaded.status == webobs::native_host::OwnershipStoreStatus::invalid_ledger) {
+		receipt.insert("bindingInspection", QStringLiteral("ledger-invalid"));
+		return;
+	}
+	if (loaded.status == webobs::native_host::OwnershipStoreStatus::io_error) {
+		receipt.insert("bindingInspection", QStringLiteral("ledger-io-error"));
+		return;
+	}
+	const auto bindings = webobs::native_host::classify_wall_entries(loaded.entries, uuids);
+	int bound = 0;
+	for (const auto &binding : bindings) {
+		if (binding.camera_id)
+			++bound;
+	}
+	receipt.insert("bindingInspection", QStringLiteral("observed"));
+	receipt.insert("bindingItems", static_cast<int>(bindings.size()));
+	receipt.insert("bindingBound", bound);
+	receipt.insert("bindingUnbound", static_cast<int>(bindings.size()) - bound);
+}
+
 void bootstrap_product_cameras()
 {
 	char *config_path = obs_module_config_path("product.json");
@@ -272,6 +327,7 @@ void bootstrap_product_cameras()
 		return;
 	}
 	record_product_ownership(cameras, product, receipt);
+	record_binding_inspection(product, receipt);
 	int hardware_requests = 0;
 	bool requests_available = true;
 	for (auto *source : product.sources) {

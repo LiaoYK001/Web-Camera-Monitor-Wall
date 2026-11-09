@@ -37,6 +37,7 @@ def write_product_config(path: Path) -> None:
 def check_product_receipt(receipt_path: Path, urls: Sequence[str] = PRODUCT_URLS, *, expect_created: int = 5,
                           expect_reused: int = 0, expect_scene_reused: bool | None = None,
                           expect_ownership_entries: int | None = None,
+                          expect_binding_bound: int | None = None,
                           expect_video: dict | None = None,
                           expect_hardware_requests: int | None = None) -> dict:
     """Validate the URL-free bootstrap receipt; never leak or print camera URLs."""
@@ -69,6 +70,15 @@ def check_product_receipt(receipt_path: Path, urls: Sequence[str] = PRODUCT_URLS
     if (expect_ownership_entries is not None and "ownershipEntries" in receipt
             and receipt["ownershipEntries"] != expect_ownership_entries):
         raise AssertionError("Product bootstrap ownership ledger entry count mismatch")
+    if expect_binding_bound is not None:
+        if receipt.get("bindingInspection") != "observed" or receipt.get("bindingItems") != 5:
+            raise AssertionError("Product bootstrap binding inspection was not observed")
+        bound = receipt.get("bindingBound")
+        unbound = receipt.get("bindingUnbound")
+        if type(bound) is not int or type(unbound) is not int or bound + unbound != 5:
+            raise AssertionError("Product bootstrap binding receipt is malformed")
+        if bound != expect_binding_bound:
+            raise AssertionError("Product bootstrap bound provenance count mismatch")
     return receipt
 
 
@@ -266,7 +276,7 @@ def run(runtime: Path, result: Path, *, existing_wall: bool = False, verify_vide
             expect_created=0 if existing_wall else 5,
             expect_reused=5 if existing_wall else 0,
             expect_scene_reused=True if existing_wall else None,
-            expect_ownership_entries=5, expect_video=expected_video,
+            expect_ownership_entries=5, expect_binding_bound=5, expect_video=expected_video,
             expect_hardware_requests=5 if verify_video else None)
         if existing_wall:
             second = product
@@ -275,7 +285,8 @@ def run(runtime: Path, result: Path, *, existing_wall: bool = False, verify_vide
             verify_smoke(profile / second_name, token, profile)
             second = check_product_receipt(profile / "plugin_config/webobs-native-host/product-bootstrap.json",
                                            expect_created=0, expect_reused=5, expect_scene_reused=True,
-                                           expect_ownership_entries=5, expect_video=expected_video,
+                                           expect_ownership_entries=5, expect_binding_bound=5,
+                                           expect_video=expected_video,
                                            expect_hardware_requests=5 if verify_video else None)
     finally:
         product_file.unlink(missing_ok=True)
@@ -296,6 +307,8 @@ def run(runtime: Path, result: Path, *, existing_wall: bool = False, verify_vide
                "productSceneReusedSecond": second["sceneReused"],
                "productOwnershipEntries": product.get("ownershipEntries"),
                "productOwnershipEntriesSecond": second.get("ownershipEntries"),
+               "productBindingBound": product.get("bindingBound"),
+               "productBindingBoundSecond": second.get("bindingBound"),
                "verifiedVideoInfo": product.get("videoInfo") if verify_video else None,
                "actualRenderer": product.get("renderer") if verify_video else None,
                "hardwareDecodeRequestedSources": product.get("hardwareDecodeRequestedSources"),
