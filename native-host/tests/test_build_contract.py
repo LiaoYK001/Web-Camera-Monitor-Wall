@@ -764,13 +764,29 @@ class BuildContractTests(unittest.TestCase):
             self.assertIn(marker, gate)
         self.assertIn("OBS native source editing", gate)
 
-        # Dock mutation fails closed; ordinary startup is separately refused
-        # by the callback dispatcher. Remaining viewing/editing paths are not gated.
-        self.assertIn("evaluate_ui_action", plugin)
-        self.assertIn("UiActionKind::dock_create_wall", plugin)
-        for other in ("dock_refresh_sources", "dock_open_program_projector", "obs_native_source_editing"):
-            self.assertNotIn(other, plugin)
-        self.assertIn("always refuses ordinary automatic bootstrap", header)
+        # Dock mutation, refresh and projector all fail closed on an empty
+        # operator state before their OBS call; ordinary startup is separately
+        # refused by the callback dispatcher. OBS-native editing stays outside
+        # the plugin and is never claimed to be gated here.
+        self.assertEqual(plugin.count("evaluate_ui_action("), 1)
+        for kind in ("dock_refresh_sources", "dock_create_wall", "dock_open_program_projector"):
+            self.assertEqual(plugin.count("UiActionKind::" + kind), 1, kind)
+        self.assertIn("UiAuthorizationState{}", plugin)
+        self.assertNotIn("obs_native_source_editing", plugin)
+        self.assertEqual(plugin.count("refresh();"), 1)
+        self.assertEqual(plugin.count("obs_frontend_open_projector"), 1)
+
+        dock = plugin.split("class WallDock", 1)[1]
+        refresh_call = dock.index("refresh();")
+        self.assertLess(dock.index("UiActionKind::dock_refresh_sources"), refresh_call)
+        self.assertIn("refuse_ui_action();", dock[:refresh_call])
+        projector_call = dock.index("obs_frontend_open_projector")
+        self.assertLess(dock.index("UiActionKind::dock_open_program_projector"), projector_call)
+        self.assertIn("refuse_ui_action();", dock[:projector_call])
+        # The constructor must not populate the combos through an ungated call.
+        self.assertNotIn("\n\t\trefresh();\n", dock)
+        self.assertIn("Every dock entry (refresh, create wall, open the", header)
+        self.assertIn("fails closed on an empty state before any OBS", header)
         startup = (ROOT / "native-host/src/startup_bootstrap.cpp").read_text(encoding="utf-8")
         self.assertIn("UiActionKind::auto_bootstrap_on_load", startup)
         self.assertIn("run_startup_bootstrap", plugin)

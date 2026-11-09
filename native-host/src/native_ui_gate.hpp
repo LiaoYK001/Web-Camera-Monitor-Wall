@@ -7,10 +7,12 @@ namespace webobs::native_host {
 // Inventory of the mutating/viewing entry points the native plugin exposes
 // today, plus the one UI surface it CANNOT gate. The gate itself is an
 // unexposed policy module: it answers "may this UI action proceed under the
-// current operator state?". Dock create-wall fails closed, and the startup
-// dispatcher always refuses ordinary automatic bootstrap. Explicit isolated
-// prototype diagnostics are NOT an account authorization path. Wiring debt and
-// the exact bypass surfaces are documented in docs/native-control-auth.md.
+// current operator state?". Every dock entry (refresh, create wall, open the
+// native Program projector) fails closed on an empty state before any OBS
+// call, and the startup dispatcher always refuses ordinary automatic bootstrap.
+// Explicit isolated prototype diagnostics are NOT an account authorization
+// path. Wiring debt and the exact bypass surfaces are documented in
+// docs/native-control-auth.md.
 //
 // Anything a user can do through OBS itself (Add Source, Properties, scene
 // collection editing, hotkeys, scripts) bypasses the plugin entirely and is

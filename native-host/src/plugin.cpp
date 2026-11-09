@@ -500,19 +500,27 @@ class WallDock final : public QWidget {
 		}
 	}
 
+	bool ui_allowed(webobs::native_host::UiActionKind kind)
+	{
+		return webobs::native_host::evaluate_ui_action(kind, webobs::native_host::UiAuthorizationState{}) ==
+		       webobs::native_host::UiGateStatus::allowed;
+	}
+
+	void refuse_ui_action()
+	{
+		QMessageBox::warning(this, tr("WebOBS Native Prototype"),
+		                     tr("This UI action requires an operator authorization decision, which is "
+		                        "not connected to this prototype yet. The action was refused."));
+	}
+
 	void create_wall()
 	{
-		// Fail closed: the dock mutation requires an operator authorization
-		// decision, and no control layer produces one for the plugin yet. The
-		// refresh/projector and OBS-native editing remain outside this
-		// mutation gate; ordinary automatic bootstrap is separately refused.
-		const auto gate = webobs::native_host::evaluate_ui_action(
-			webobs::native_host::UiActionKind::dock_create_wall, webobs::native_host::UiAuthorizationState{});
-		if (gate != webobs::native_host::UiGateStatus::allowed) {
-			QMessageBox::warning(this, tr("WebOBS Native Prototype"),
-			                     tr("Creating a wall from the dock requires an operator authorization "
-			                        "decision, which is not connected to this prototype yet. The action "
-			                        "was refused."));
+		// Every dock entry below is gated with an empty operator state, so all of
+		// them fail closed before any OBS call. OBS-native editing remains outside
+		// the plugin, and the startup dispatcher separately refuses ordinary
+		// automatic bootstrap.
+		if (!ui_allowed(webobs::native_host::UiActionKind::dock_create_wall)) {
+			refuse_ui_action();
 			return;
 		}
 		std::array<std::string, 5> uuids;
@@ -551,12 +559,21 @@ public:
 		layout->addWidget(create_button);
 		layout->addWidget(projector_button);
 		layout->addStretch();
-		connect(refresh_button, &QPushButton::clicked, this, [this] { refresh(); });
+		connect(refresh_button, &QPushButton::clicked, this, [this] {
+			if (!ui_allowed(webobs::native_host::UiActionKind::dock_refresh_sources)) {
+				refuse_ui_action();
+				return;
+			}
+			refresh();
+		});
 		connect(create_button, &QPushButton::clicked, this, [this] { create_wall(); });
-		connect(projector_button, &QPushButton::clicked, this, [] {
+		connect(projector_button, &QPushButton::clicked, this, [this] {
+			if (!ui_allowed(webobs::native_host::UiActionKind::dock_open_program_projector)) {
+				refuse_ui_action();
+				return;
+			}
 			obs_frontend_open_projector("StudioProgram", -1, nullptr, nullptr);
 		});
-		refresh();
 	}
 };
 } // namespace
