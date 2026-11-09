@@ -833,6 +833,41 @@ class BuildContractTests(unittest.TestCase):
                     smoke_windows.check_startup_refusal(valid, module)
                 file.unlink()
 
+    def test_restored_graph_refusal_checker_requires_measured_restore(self):
+        observed = {"mediaSources": 5, "videoAvailable": True, "fpsNumerator": 30}
+        valid = {"startupBootstrap": "refused", "beforeBootstrap": observed, "afterBootstrap": observed.copy()}
+        with tempfile.TemporaryDirectory() as directory:
+            module = Path(directory)
+            for name in ("product-bootstrap.json", "source-ownership.json"):
+                (module / name).write_text("{}", encoding="utf-8")
+            smoke_windows.check_restored_graph_refusal(valid, module, expected_sources=5)
+            for wrong in (dict(valid, startupBootstrap="diagnostic-completed"),
+                          dict(valid, beforeBootstrap={}),
+                          dict(valid, afterBootstrap=dict(observed, mediaSources=4)),
+                          dict(valid, beforeBootstrap=dict(observed, mediaSources=0),
+                               afterBootstrap=dict(observed, mediaSources=0)),
+                          dict(valid, afterBootstrap=dict(observed, videoAvailable=False))):
+                with self.assertRaises(AssertionError):
+                    smoke_windows.check_restored_graph_refusal(wrong, module, expected_sources=5)
+            (module / "source-ownership.json").unlink()
+            with self.assertRaises(AssertionError):
+                smoke_windows.check_restored_graph_refusal(valid, module, expected_sources=5)
+
+    def test_fresh_smoke_measures_obs_restored_graph_before_second_launch(self):
+        smoke = (ROOT / "native-host/tests/smoke_windows.py").read_text(encoding="utf-8")
+        first = smoke.index("expect_created=0 if existing_wall else 5")
+        restored = smoke.index('restored_name = f"native-smoke-')
+        second = smoke.index("second_name, reuse=True")
+        self.assertLess(first, restored)
+        self.assertLess(restored, second)
+        segment = smoke[restored:second]
+        self.assertIn("restored_name", segment)
+        self.assertIn("diagnostic=False", segment)
+        self.assertIn("expected_sources=5", segment)
+        self.assertIn("mutated the bootstrap receipt", segment)
+        self.assertIn("rewrote the ownership ledger", segment)
+        self.assertIn('"restoredGraphRefusalVerified": not existing_wall', smoke)
+
     def test_video_receipt_checks_actual_mode_instead_of_accepting_a_flag(self):
         expected = {"baseWidth": 1280, "baseHeight": 720, "outputWidth": 1280,
                     "outputHeight": 720, "fpsNumerator": 15, "fpsDenominator": 1}

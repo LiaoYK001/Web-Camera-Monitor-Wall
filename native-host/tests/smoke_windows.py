@@ -155,6 +155,28 @@ def verify_smoke(receipt_path: Path, token: str, profile: Path) -> dict:
     return receipt
 
 
+def check_restored_graph_refusal(receipt: dict, module: Path, *, expected_sources: int) -> None:
+    """Ordinary launch over an OBS-restored wall: measure the graph, refuse bootstrap.
+
+    OBS loads the saved scene collection before FINISHED_LOADING. This check does
+    not claim pre-load isolation; it proves the plugin observes the already
+    restored ffmpeg sources and still performs no bootstrap or ownership write.
+    """
+    if receipt.get("startupBootstrap") != "refused":
+        raise AssertionError("Ordinary startup must refuse automatic bootstrap over a restored wall")
+    before, after = receipt.get("beforeBootstrap"), receipt.get("afterBootstrap")
+    if not isinstance(before, dict) or not before:
+        raise AssertionError("Ordinary startup receipt lacks a graph observation")
+    if before != after:
+        raise AssertionError("Ordinary startup changed the graph observation")
+    if before.get("mediaSources") != expected_sources or before.get("videoAvailable") is not True:
+        raise AssertionError(
+            f"OBS-restored graph not observed before the plugin gate: mediaSources={before.get('mediaSources')}")
+    for name in ("product-bootstrap.json", "source-ownership.json"):
+        if not (module / name).is_file():
+            raise AssertionError(f"Restored-graph fixture lacks the private {name}")
+
+
 def check_startup_refusal(receipt: dict, module: Path) -> None:
     if receipt.get("startupBootstrap") != "refused":
         raise AssertionError("Ordinary startup must refuse automatic bootstrap even with a smoke token")
@@ -281,6 +303,18 @@ def run(runtime: Path, result: Path, *, existing_wall: bool = False, verify_vide
         if existing_wall:
             second = product
         else:
+            module = profile / "plugin_config/webobs-native-host"
+            bootstrap_bytes = (module / "product-bootstrap.json").read_bytes()
+            ownership_bytes = (module / "source-ownership.json").read_bytes()
+            restored_name = f"native-smoke-{token[:12]}-restored.json"
+            launch_once(runtime, pwsh, environment, token, product_file, restored_name,
+                        reuse=True, diagnostic=False)
+            check_restored_graph_refusal(verify_smoke(profile / restored_name, token, profile),
+                                         module, expected_sources=5)
+            if (module / "product-bootstrap.json").read_bytes() != bootstrap_bytes:
+                raise AssertionError("Ordinary startup mutated the bootstrap receipt")
+            if (module / "source-ownership.json").read_bytes() != ownership_bytes:
+                raise AssertionError("Ordinary startup rewrote the ownership ledger")
             launch_once(runtime, pwsh, environment, token, product_file, second_name, reuse=True)
             verify_smoke(profile / second_name, token, profile)
             second = check_product_receipt(profile / "plugin_config/webobs-native-host/product-bootstrap.json",
@@ -307,6 +341,8 @@ def run(runtime: Path, result: Path, *, existing_wall: bool = False, verify_vide
                "productSceneReusedSecond": second["sceneReused"],
                "productOwnershipEntries": product.get("ownershipEntries"),
                "productOwnershipEntriesSecond": second.get("ownershipEntries"),
+               "restoredGraphRefusalVerified": not existing_wall,
+               "restoredMediaSources": 5 if not existing_wall else None,
                "productBindingBound": product.get("bindingBound"),
                "productBindingBoundSecond": second.get("bindingBound"),
                "verifiedVideoInfo": product.get("videoInfo") if verify_video else None,
