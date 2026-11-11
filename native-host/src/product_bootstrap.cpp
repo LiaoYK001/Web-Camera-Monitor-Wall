@@ -30,7 +30,8 @@ bool valid_camera(const ProductCamera &camera, std::string &error)
 	if (!starts_with(camera.url, "rtsp://") && !starts_with(camera.url, "rtsps://") &&
 	    !starts_with(camera.url, "http://") && !starts_with(camera.url, "https://"))
 		return error = "camera-url-invalid", false;
-	if (camera.transport != "auto" && camera.transport != "tcp" && camera.transport != "udp")
+	if (camera.transport != "auto" && camera.transport != "tcp" && camera.transport != "udp" &&
+	    camera.transport != "udp_multicast")
 		return error = "camera-transport-invalid", false;
 	return true;
 }
@@ -159,7 +160,8 @@ ProductWallResult create_product_five_camera_wall(const std::array<ProductCamera
 
 bool apply_product_video_config(int width, int height, int fps, std::string &error)
 {
-	if (width < 320 || width > 3840 || height < 180 || height > 2160 || fps < 1 || fps > 120) {
+	if (width < 16 || width > 8192 || width % 2 != 0 || height < 16 || height > 8192 || height % 2 != 0 ||
+	    fps < 1 || fps > 120) {
 		error = "video-config-out-of-range";
 		return false;
 	}

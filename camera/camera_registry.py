@@ -3945,6 +3945,11 @@ class Handler(BaseHTTPRequestHandler):
 
 if __name__ == "__main__":
     initialize()
-    threading.Thread(target=automatic_probe_worker, daemon=True).start()
-    threading.Thread(target=onvif_event_worker, daemon=True).start()
+    for setting, target in (("WEBOBS_CAMERA_BACKGROUND_PROBES", automatic_probe_worker),
+                            ("WEBOBS_CAMERA_BACKGROUND_EVENTS", onvif_event_worker)):
+        enabled = os.environ.get(setting, "true")
+        if enabled not in {"true", "false"}:
+            raise SystemExit(f"{setting} must be true or false")
+        if enabled == "true":
+            threading.Thread(target=target, daemon=True).start()
     serve_owned(ThreadingHTTPServer(LISTEN, Handler))

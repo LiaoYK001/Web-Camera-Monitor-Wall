@@ -7,6 +7,7 @@
 #include <QAction>
 #include <QCloseEvent>
 #include <QComboBox>
+#include <QCoreApplication>
 #include <QDesktopServices>
 #include <QDir>
 #include <QFile>
@@ -58,6 +59,44 @@ class ProductWindow final : public QWidget {
 	bool applying_ = false;
 
 	using Reply = std::function<void(int, const QJsonObject &)>;
+	void observe_state(const char *phase)
+	{
+		int media_sources = 0;
+		obs_enum_all_sources([](void *count, obs_source_t *source) {
+			if (QString::fromUtf8(obs_source_get_unversioned_id(source)) == "ffmpeg_source")
+				++*static_cast<int *>(count);
+			return true;
+		}, &media_sources);
+		obs_video_info video{};
+		const bool video_available = obs_get_video_info(&video);
+		QJsonArray bindings;
+		for (int i = 0; i < watching_.size(); ++i) {
+			auto binding = watching_[i].toObject();
+			binding.insert("sourceUuid", QString::fromStdString(wall_.uuids[std::size_t(i)]));
+			bindings.append(binding);
+		}
+		QJsonObject state{{"schema", 1}, {"phase", QString::fromLatin1(phase)},
+			{"pid", QString::number(QCoreApplication::applicationPid())},
+			{"sessionBound", !user_id_.isEmpty()}, {"mediaSources", media_sources}, {"bindings", bindings},
+			{"videoAvailable", video_available}, {"hardwareDecodeVerified", false}};
+		if (preview_)
+			state.insert("windows", QJsonArray{QJsonObject{{"role", "main-preview"},
+				{"qtClass", QString::fromLatin1(preview_->metaObject()->className())},
+				{"hwnd", QString::number(quintptr(preview_->winId()), 16)},
+				{"rootHwnd", QString::number(quintptr(window()->winId()), 16)}}});
+		if (video_available)
+			state.insert("videoInfo", QJsonObject{{"baseWidth", int(video.base_width)},
+				{"baseHeight", int(video.base_height)}, {"outputWidth", int(video.output_width)},
+				{"outputHeight", int(video.output_height)}, {"fpsNumerator", int(video.fps_num)},
+				{"fpsDenominator", int(video.fps_den)}});
+		char *path = obs_module_config_path("product-state.json");
+		QSaveFile file(QString::fromUtf8(path ? path : ""));
+		bfree(path);
+		const auto encoded = QJsonDocument(state).toJson();
+		if (!QDir().mkpath(QFileInfo(file.fileName()).absolutePath()) || !file.open(QIODevice::WriteOnly) ||
+		    file.write(encoded) != encoded.size() || !file.commit())
+			blog(LOG_WARNING, "WebOBS product state observation is unavailable");
+	}
 	void request(const QString &path, const QByteArray &method, const QJsonObject &body, Reply callback,
 		     int timeout_ms = 2000)
 	{
@@ -136,6 +175,7 @@ class ProductWindow final : public QWidget {
 			slot->setEnabled(false);
 		}
 		status_->setText(message);
+		observe_state("locked");
 	}
 
 	QString workspace_path() const
@@ -179,6 +219,7 @@ class ProductWindow final : public QWidget {
 				return;
 			}
 			user_id_ = id;
+			observe_state("authenticated");
 			for (auto *button : {watch_, save_, logout_, refresh_})
 				button->setEnabled(true);
 			status_->setText(tr("已登录，正在读取授权设备目录…"));
@@ -249,12 +290,19 @@ class ProductWindow final : public QWidget {
 			const auto resolved = body.value("cameras").toArray();
 			// Reauthorize after resolution and immediately before OBS graph writes.
 			request("/api/v1/native/cameras/authorize", "POST", {{"cameras", selected}},
-				[this, selected, resolved](int status, const QJsonObject &) {
+				[this, selected, resolved](int status, const QJsonObject &authorization) {
 				if (status != 200) {
 					locked(tr("观看权限已失效，请重新登录。"));
 					return;
 				}
 				clear_media();
+				const auto video = authorization.value("video").toObject();
+				std::string video_error;
+				if (!apply_product_video_config(video.value("width").toInt(), video.value("height").toInt(),
+					video.value("fps").toInt(), video_error)) {
+					locked(tr("无法应用项目画布或帧率，请检查视频设置。"));
+					return;
+				}
 				std::array<ProductCamera, 5> cameras;
 				for (int i = 0; i < 5; ++i) {
 					const auto item = resolved[i].toObject();
@@ -289,6 +337,7 @@ class ProductWindow final : public QWidget {
 				}
 				select_wall(wall_.scene);
 				watching_ = selected;
+				observe_state("graph-applied");
 				status_->setText(tr("原生监看已连接。"));
 			}, 12000);
 		}, 12000);
@@ -328,14 +377,21 @@ public:
 		create_account_->setEnabled(false);
 		create_account_->setObjectName("webobsCreateAccount");
 		layout->addWidget(create_account_);
-		for (auto &slot : slots_) {
-			slot = new QComboBox(this);
-			layout->addWidget(slot);
+		auto *cameras = new QFormLayout;
+		for (std::size_t i = 0; i < slots_.size(); ++i) {
+			slots_[i] = new QComboBox(this);
+			slots_[i]->setObjectName(QString("webobsCameraSlot%1").arg(i + 1));
+			cameras->addRow(tr("画面 %1").arg(i + 1), slots_[i]);
 		}
+		layout->addLayout(cameras);
 		watch_ = new QPushButton(tr("开始原生监看"), this);
 		save_ = new QPushButton(tr("保存布局"), this);
 		logout_ = new QPushButton(tr("退出账号"), this);
 		refresh_ = new QPushButton(tr("刷新设备目录"), this);
+		watch_->setObjectName("webobsWatch");
+		save_->setObjectName("webobsSaveLayout");
+		logout_->setObjectName("webobsLogout");
+		refresh_->setObjectName("webobsRefreshCatalog");
 		for (auto *button : {watch_, save_, refresh_, logout_})
 			layout->addWidget(button);
 		auto *manage = new QPushButton(tr("打开设备与系统管理"), this);

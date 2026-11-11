@@ -82,3 +82,44 @@
  	if (!QSystemTrayIcon::isSystemTrayAvailable())
  		return;
  	if (!trayIcon && !firstStarted)
+--- a/frontend/OBSApp.cpp
++++ b/frontend/OBSApp.cpp
+@@ -37,6 +37,7 @@
+ 
+ #include <QCheckBox>
+ #include <QDesktopServices>
++#include <QDir>
+ #if defined(_WIN32) || defined(ENABLE_SPARKLE_UPDATER)
+ #include <QFile>
+ #endif
+@@ -1676,6 +1676,14 @@
+ 
+ int GetAppConfigPath(char *path, size_t size, const char *name)
+ {
++#ifdef WEBOBS_PRODUCT_FRONTEND
++	const QString root = qEnvironmentVariable("WEBOBS_NATIVE_PROFILE_ROOT");
++	if (root.isEmpty() || !QDir::isAbsolutePath(root))
++		return -1;
++	const auto utf8 = root.toUtf8();
++	return name && *name ? snprintf(path, size, "%s/%s", utf8.constData(), name)
++			    : snprintf(path, size, "%s", utf8.constData());
++#endif
+ #if ALLOW_PORTABLE_MODE
+ 	if (portable_mode) {
+ 		if (name && *name) {
+@@ -1693,6 +1701,15 @@
+ 
+ char *GetAppConfigPathPtr(const char *name)
+ {
++#ifdef WEBOBS_PRODUCT_FRONTEND
++	const QString root = qEnvironmentVariable("WEBOBS_NATIVE_PROFILE_ROOT");
++	if (root.isEmpty() || !QDir::isAbsolutePath(root))
++		return nullptr;
++	QString result = root;
++	if (name && *name)
++		result += "/" + QString::fromUtf8(name);
++	return bstrdup(result.toUtf8().constData());
++#endif
+ #if ALLOW_PORTABLE_MODE
+ 	if (portable_mode) {
+ 		char path[512];

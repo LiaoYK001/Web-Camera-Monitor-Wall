@@ -571,7 +571,7 @@ int main()
 		run("integer-fps-" + std::to_string(fps), [=] { video_config_case(fps); });
 	for (int failure = 1; failure <= 8; ++failure)
 		run("video-runtime-check-" + std::to_string(failure), [=] { video_config_case(15, failure); });
-	for (const std::string transport : {"tcp", "udp"})
+	for (const std::string transport : {"tcp", "udp", "udp_multicast"})
 		run("profile-transport-" + transport, [&] {
 			reset();
 			cameras[0].transport = transport;

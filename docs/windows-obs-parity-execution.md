@@ -980,3 +980,13 @@ source `09389a0` 的 public CI `42959086576` 成功。内部 ProductMode `4.1.0-
 随后产品窗口补上首个管理员注册入口，复用现有 `/api/v1/auth/setup` 后再登录绑定会话。原生 Preview 禁用鼠标/拖放/焦点编辑，原前端 QAction 禁用，避免经预览右键或应用快捷键进入编辑。Linux 真实服务测试同时覆盖实际首个管理员注册、注册关闭与重复拒绝，既有账号、授权目录和 Profile 硬解/传输偏好校验继续通过。新增 UI 行为需要后续 Windows 运行单独验证。
 
 Public CI 42959086576 and internal ProductMode run 42959101870 at source 09389a0 passed. The actual frontend/plugin/UI compiled with Qt Network and the pinned build-copy hook. The pre-start media/UI inventory measured 99,147,756 bytes. Product mode deliberately skipped prototype packaging and startup/pixel smokes, so this records compilation and contract scope only. First-account registration and the product preview/action input restrictions were then added for subsequent Windows validation. The real-service Linux test passes first-run registration as well as bound login, scope, Profile settings, revocation and logout. Installed R1 integration continues.
+
+#### R1 统一入口与服务实际接线 / Unified entry and service wiring
+
+首个账号与 Preview 编辑限制在 source `f6dedc3` 的 ProductMode dev.77 / run `42960606412` 编译成功，仍不是窗口操作或安装验收。随后新增 `webobs-wall.exe` GUI 入口，复用现有 kill-on-close Job launcher，在子进程执行前分配 Job；固定启动包内 Python supervisor。账号和 Registry 的真实 Handler 在一个 Python 进程内运行，单独的 core 为 Direct-only，OBS frontend 是唯一监看媒体宿主。固定 profile 根通过外置 frontend patch 指向私密用户目录，不在安装目录写配置。内部构建暂用独立 NativeIntegration 数据根，旧数据迁移与正式位置待 R4，不会把空的新目录当作旧数据升级完成。
+
+Windows ProductMode 现在额外构建并部署真实 core、launcher、锁定嵌入 Python、现有账号/设备服务和管理 WebUI，产生全量哈希/字节清单；原 100 MiB 媒体清单单独保留，不把完整服务成本藏进旧媒体预算。CI 增加实际 launcher + Qt UI Automation 的建账/登录/注销/撤销、正常关闭与杀 launcher 的 Job 收束检查，该 Windows gate 当前待执行。未生成完整 NSIS，未宣称 R1 安装态、原生最终像素或全部功能通过。
+
+Linux 实际 core 全量 CTest 8/8、graph API 7/7、构建契约 44/44、真实 HTTP 接线、Web typecheck/build 通过。新增 supervisor 实际进程测试复用生产服务与 core：建账登录、同 profile 二次实例退出 73 且不改活动状态、重启保留账号、正常关闭监听、核心故障退出并收束前端通过；前端明确为进程夹具，不算 Qt/媒体/Windows Job 验收。该测试读取 `/system/processes` 确认 `engineActive=false`、`compositePublisherActive=false`。另修复 Registry `rtsp-*` 枚举到 OBS transport 的真实映射，视频参数由授权响应传到 OBS 并回读诊断。
+
+The unified entry now owns the real account/Registry handlers, Direct-only core and one OBS frontend. Product-mode staging includes the locked embedded Python and management UI with full component accounting. A Linux real-process supervisor regression passes account persistence, duplicate-owner refusal, ordinary shutdown and required-service failure cleanup; its frontend is explicitly a lifecycle fixture. The actual Windows launcher/UI/Job gate is added but not yet measured. NSIS, old-data migration, final pixels and complete product functionality remain open.

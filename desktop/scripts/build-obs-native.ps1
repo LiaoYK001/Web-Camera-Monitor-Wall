@@ -89,7 +89,14 @@ if ($PixelTest) {
 # Measure the clean staged payload before any startup/pixel fixture creates a
 # private profile and test-only FFmpeg tools inside runtime/config. Keep the
 # same product budget for both builds; never exclude configured files silently.
-Invoke-Checked 'python' @((Join-Path $repoRoot 'native-host/scripts/runtime_inventory.py'),'--runtime',$runtime,'--report',(Join-Path $buildRoot 'native-runtime-inventory.json'),'--max-runtime-bytes','104857600')
+$mediaInventory = if ($ProductMode) { 'native-media-runtime-inventory.json' } else { 'native-runtime-inventory.json' }
+Invoke-Checked 'python' @((Join-Path $repoRoot 'native-host/scripts/runtime_inventory.py'),'--runtime',$runtime,'--report',(Join-Path $buildRoot $mediaInventory),'--max-runtime-bytes','104857600')
+if ($ProductMode) {
+    $controlParameters = @{BuildDirectory=$buildRoot;Version=$Version;Parallel=$Parallel}
+    if ($Offline) { $controlParameters.Offline=$true }
+    & (Join-Path $PSScriptRoot 'build-native-product-control.ps1') @controlParameters
+    if ($LASTEXITCODE -ne 0) { throw 'Integrated product control build failed.' }
+}
 if ($PixelTest) {
     $pixelArguments = @((Join-Path $repoRoot 'native-host/tests/pixel_windows.py'),'--runtime',$runtime,'--result',(Join-Path $buildRoot 'native-final-pixels.json'))
     if ($Offline) { $pixelArguments += '--offline' }

@@ -53,7 +53,7 @@ def exercise(binary):
                     "VALUES(?,?,?,?,?,?,?,?,?,?)",
                     ("main", name, "Main", "main", "rtsp://127.0.0.1:9/synthetic", "h265", "", 320, 180, 10))
             database.execute("UPDATE cameras SET hardware_decode='off' WHERE id='camera-a'")
-            database.execute("UPDATE stream_profiles SET transport_mode='tcp' WHERE camera_id='camera-a'")
+            database.execute("UPDATE stream_profiles SET transport_mode='rtsp-tcp' WHERE camera_id='camera-a'")
         cluster.INTERNAL_TOKEN = secrets.token_hex(32)
         cluster.STORE = cluster.ClusterStore(private / "accounts.db", cluster.PasswordHasher(),
                                             camera_registry_path=camera.DB_PATH)
@@ -87,6 +87,7 @@ def exercise(binary):
             WEBOBS_COMPAT_BASIC_AUTH="false", WEBOBS_SESSION_COOKIE_SECURE="false",
             WEBOBS_SESSION_DATABASE=str(private / "sessions.db"), WEBOBS_SCENE_FILE=str(private / "scene.json"),
             WEBOBS_WEBRTC_ENABLED="true", WEBOBS_COMPOSITE_ENABLED="false", WEBOBS_NVR_ENABLED="false",
+            WEBOBS_FPS="15",
             WEBOBS_WHIP_URL="http://127.0.0.1:9/synthetic/whip", NO_PROXY="127.0.0.1,localhost")
         origin = f"http://127.0.0.1:{port}"
         opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
@@ -145,7 +146,8 @@ def exercise(binary):
                 denied = {"cameras": selection["cameras"] + [{"cameraId": "camera-b", "profileId": "main"}]}
                 assert request("/api/v1/native/cameras/resolve", denied)[0] == 403
                 assert resolved == [], "denied selection resolved a private endpoint"
-                assert request("/api/v1/native/cameras/authorize", selection)[0] == 200
+                status, _, authorized = request("/api/v1/native/cameras/authorize", selection)
+                assert status == 200 and authorized["video"] == {"width": 1920, "height": 1080, "fps": 15}
                 assert resolved == [], "authorization unexpectedly resolved an endpoint"
                 status, _, value = request("/api/v1/native/cameras/resolve", selection)
                 assert status == 200 and len(value["cameras"]) == 1
@@ -153,6 +155,13 @@ def exercise(binary):
                 assert value["cameras"][0]["hardwareDecode"] == "off"
                 assert value["cameras"][0]["transport"] == "tcp"
                 assert resolved == ["/resolve/camera-a/main?requireProfile=1"]
+                for configured, expected in (("auto", "tcp"), ("rtsp-udp", "udp"),
+                                             ("rtsp-udp-multicast", "udp_multicast")):
+                    with camera.connect() as database:
+                        database.execute("UPDATE stream_profiles SET transport_mode=? WHERE camera_id='camera-a'",
+                                         (configured,))
+                    status, _, value = request("/api/v1/native/cameras/resolve", selection)
+                    assert status == 200 and value["cameras"][0]["transport"] == expected
                 missing = {"cameras": [{"cameraId": "camera-a", "profileId": "missing"}]}
                 assert request("/api/v1/native/cameras/resolve", missing)[0] == 503, "unknown profile silently fell back"
                 assert request("/api/v1/native/cameras/resolve", {"cameras": [{"cameraId": "../bad", "profileId": "main"}]})[0] == 400

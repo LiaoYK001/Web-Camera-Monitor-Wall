@@ -87,12 +87,21 @@ jobs:
           restore-keys: |
             windows-2022-obs-native-
             windows-2022-desktop-
-      - name: Use Node only for synthetic test fixtures and pixel inspection
-        if: inputs.pixel_test
+      - name: Use Node for test fixtures or building the management UI
+        if: inputs.pixel_test || inputs.product_mode
         uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1
         with:
           node-version: 24.19.0
           package-manager-cache: false
+      - name: Restore only ABI-checked product vcpkg dependency packages
+        if: inputs.product_mode
+        id: product-dependencies
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
+        with:
+          path: desktop/.cache/vcpkg-binaries
+          key: windows-2022-native-product-vcpkg-${{ hashFiles('desktop/vcpkg.json', 'desktop/dependencies.lock.json') }}-${{ env.ImageVersion }}
+          restore-keys: |
+            windows-2022-native-product-vcpkg-${{ hashFiles('desktop/vcpkg.json', 'desktop/dependencies.lock.json') }}-
       - name: Compile pinned OBS frontend and product plugin without legacy services
         id: compile
         shell: pwsh
@@ -105,6 +114,25 @@ jobs:
           if ($env:NATIVE_PIXEL_TEST -eq 'true') { $parameters.PixelTest=$true }
           if ($env:NATIVE_PRODUCT_MODE -eq 'true') { $parameters.ProductMode=$true }
           ./desktop/scripts/build-obs-native.ps1 @parameters
+      - name: Exercise the actual integrated launcher and authenticated product window
+        if: inputs.product_mode
+        shell: pwsh
+        run: |
+          $ErrorActionPreference='Stop'
+          $runtime = Join-Path $env:GITHUB_WORKSPACE 'build/obs-native-ci/runtime'
+          & "$runtime/python/python.exe" -B native-host/tests/product_windows.py --runtime $runtime --report build/obs-native-ci/native-product-entry-ui.json
+          if ($LASTEXITCODE -ne 0) { throw 'Actual native product entry and UI gate failed.' }
+      - name: Retain only sanitized internal product receipts
+        if: always() && inputs.product_mode
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: native-product-integration-receipts-${{ inputs.version }}
+          retention-days: 14
+          if-no-files-found: warn
+          path: |
+            build/obs-native-ci/native-media-runtime-inventory.json
+            build/obs-native-ci/native-product-entry-ui.json
+            build/obs-native-ci/runtime/product-components.json
       - name: Inventory the runtime and enforce the P4 size budget
         # The builder already inventories BOTH variants before first start.
         # Pixel builds now contain private fixtures; only clean normal builds
@@ -515,3 +543,9 @@ jobs:
         with:
           path: desktop/.cache/*.zip
           key: windows-2022-obs-native-${{ hashFiles('desktop/dependencies.lock.json', 'native-host/dependencies.lock.json') }}
+      - name: Preserve product dependency packages after successful port builds
+        if: always() && !cancelled() && inputs.product_mode && steps.product-dependencies.outputs.cache-hit != 'true'
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
+        with:
+          path: desktop/.cache/vcpkg-binaries
+          key: windows-2022-native-product-vcpkg-${{ hashFiles('desktop/vcpkg.json', 'desktop/dependencies.lock.json') }}-${{ env.ImageVersion }}

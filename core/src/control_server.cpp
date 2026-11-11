@@ -3163,7 +3163,8 @@ HttpResponse process_diagnostics_response(unsigned int version, const RuntimeSta
             else if (executable == L"go2rtc.exe") role = "go2rtc";
             else if (executable == L"ffmpeg.exe") role = "ffmpeg";
             else if (executable == L"caddy.exe") role = "caddy";
-            else if (executable == L"webobs.exe" || executable == L"electron.exe") role = "desktop";
+            else if (executable == L"webobs.exe" || executable == L"electron.exe" || executable == L"webobs-wall.exe") role = "desktop";
+            else if (executable == L"obs64.exe") role = "obs-native";
             else if (executable == L"python.exe") role = "python";
             else if (executable.starts_with(L"obs-browser")) role = "obs-browser";
             HANDLE process = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION|PROCESS_VM_READ, FALSE, entry.th32ProcessID);
@@ -3297,7 +3298,7 @@ HttpResponse process_diagnostics_response(unsigned int version, const RuntimeSta
 #endif
         + std::string("\",\"processes\":[");
     bool first = true;
-    for (const std::string_view role : {"desktop", "webobsd", "go2rtc", "mediamtx", "ffmpeg", "python", "caddy", "obs-browser", "runtime"}) {
+    for (const std::string_view role : {"desktop", "webobsd", "obs-native", "go2rtc", "mediamtx", "ffmpeg", "python", "caddy", "obs-browser", "runtime"}) {
         const ProcessTotal total = totals[std::string(role)];
         if (!first)
             body.push_back(',');
@@ -4311,8 +4312,21 @@ private:
                     reject(http::status::service_unavailable, "native_profile_unavailable");
                     return;
                 }
+                std::string transport = "auto";
+                if (endpoint->endpoint.starts_with("rtsp://") || endpoint->endpoint.starts_with("rtsps://")) {
+                    if (endpoint->transport_mode == "auto" || endpoint->transport_mode == "rtsp-tcp")
+                        transport = "tcp";
+                    else if (endpoint->transport_mode == "rtsp-udp")
+                        transport = "udp";
+                    else if (endpoint->transport_mode == "rtsp-udp-multicast")
+                        transport = "udp_multicast";
+                    else {
+                        reject(http::status::unprocessable_entity, "native_transport_unsupported");
+                        return;
+                    }
+                }
                 result += ",\"url\":\"" + json_escape(endpoint->endpoint) +
-                    "\",\"transport\":\"" + json_escape(endpoint->transport_mode) +
+                    "\",\"transport\":\"" + transport +
                     "\",\"hardwareDecode\":\"" + json_escape(endpoint->hardware_decode) + "\"";
             }
             result += '}';
@@ -4322,7 +4336,11 @@ private:
             reject(http::status::service_unavailable, "native_request_expired");
             return;
         }
-        send_response(response(http::status::ok, version, result + "]}"));
+        const auto canvas = controller_.private_document_snapshot().canvas;
+        result += "],\"video\":{\"width\":" + std::to_string(canvas.width) +
+            ",\"height\":" + std::to_string(canvas.height) + ",\"fps\":" +
+            std::to_string(runtime_status_.configured_fps) + "}}";
+        send_response(response(http::status::ok, version, std::move(result)));
     }
 
     void do_read()
@@ -4815,6 +4833,7 @@ struct ControlServer::Impl {
           camera_proxy(configuration.camera_registry_enabled)
     {
         pwa_media_allowed_origins = configuration.pwa_media_allowed_origins;
+        status.configured_fps = configuration.fps;
     }
 
     const Config &config;

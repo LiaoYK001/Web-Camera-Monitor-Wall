@@ -16,6 +16,7 @@ class SceneController;
 class StudioController;
 
 struct RuntimeStatus {
+    int configured_fps = 30; // Immutable after ControlServer construction, not a renderer readback.
     mutable NativePreviewControl native_preview;
     VideoEncoderCapabilities video_encoder;
     RendererCapabilities renderer;

@@ -7,6 +7,7 @@
 #include <thread>
 #include <atomic>
 #include <vector>
+#include <cstdlib>
 
 static BOOL WINAPI ignore_owned_console_signal(DWORD) { return TRUE; }
 
@@ -24,6 +25,15 @@ int wmain(int argc, wchar_t** argv) {
     const std::filesystem::path self(executable);
     std::vector<std::wstring> command;
     bool console_stop = false;
+#ifdef WEBOBS_PRODUCT_LAUNCHER
+    if (argc != 1) return 125;
+    const auto product_root = self.parent_path().parent_path();
+    command = {(product_root / L"python/python.exe").wstring(), L"-B",
+               (product_root / L"services/product/supervisor.py").wstring()};
+    for (const auto *name : {L"PYTHONHOME", L"PYTHONPATH", L"PYTHONSTARTUP", L"PYTHONINSPECT",
+                             L"QT_PLUGIN_PATH", L"QT_QPA_PLATFORM_PLUGIN_PATH", L"QML2_IMPORT_PATH"})
+        SetEnvironmentVariableW(name, nullptr);
+#else
     if (self.stem() == L"webobs-job") {
         if (argc < 3 || (std::wstring(argv[1]) != L"--stdio" && std::wstring(argv[1]) != L"--console")) return 125;
         console_stop = std::wstring(argv[1]) == L"--console";
@@ -33,6 +43,7 @@ int wmain(int argc, wchar_t** argv) {
         command = {(root / L"python/python.exe").wstring(), L"-B", (root / L"services/desktop-tools/tool_dispatch.py").wstring(), self.stem().wstring()};
         for (int i = 1; i < argc; ++i) command.emplace_back(argv[i]);
     }
+#endif
     std::wstring line;
     for (const auto& arg : command) { if (!line.empty()) line += L' '; line += quote(arg); }
     HANDLE job = CreateJobObjectW(nullptr, nullptr);
@@ -82,5 +93,17 @@ int wmain(int argc, wchar_t** argv) {
     DWORD code = 125; GetExitCodeProcess(child.hProcess, &code);
     // Process termination closes the job even on a forced Electron exit.
     CloseHandle(input_write); CloseHandle(child.hProcess); CloseHandle(job);
+#ifdef WEBOBS_PRODUCT_LAUNCHER
+    if (code && code != 73) {
+        const auto error = GetStdHandle(STD_ERROR_HANDLE);
+        if (!error || error == INVALID_HANDLE_VALUE)
+            MessageBoxW(nullptr, L"WebOBS Wall 启动或运行失败。请查看本机 WebOBS 日志后重试。",
+                        L"WebOBS Wall", MB_OK | MB_ICONERROR);
+    }
+#endif
     ExitProcess(code); // A detached reader must never outlive its stack references.
 }
+
+#ifdef WEBOBS_PRODUCT_LAUNCHER
+int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int) { return wmain(__argc, __wargv); }
+#endif
