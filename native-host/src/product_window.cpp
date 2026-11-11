@@ -77,6 +77,7 @@ class ProductWindow final : public QWidget {
 		}
 		QJsonObject state{{"schema", 1}, {"phase", QString::fromLatin1(phase)},
 			{"pid", QString::number(QCoreApplication::applicationPid())},
+			{"catalogItems", slots_[0] && slots_[0]->count() > 0 ? slots_[0]->count() - 1 : 0},
 			{"sessionBound", !user_id_.isEmpty()}, {"mediaSources", media_sources}, {"bindings", bindings},
 			{"videoAvailable", video_available}, {"hardwareDecodeVerified", false}};
 		if (preview_)
@@ -252,6 +253,7 @@ class ProductWindow final : public QWidget {
 				}
 				slot->setEnabled(true);
 			}
+			observe_state(watching_.isEmpty() ? "authenticated" : "graph-applied");
 			if (restore) {
 				QFile file(workspace_path());
 				if (file.size() <= 16384 && file.open(QIODevice::ReadOnly)) {

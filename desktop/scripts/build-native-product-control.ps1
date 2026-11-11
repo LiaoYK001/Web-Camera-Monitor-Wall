@@ -39,7 +39,7 @@ $prefix = "$obsInstall;$vcpkgInstalled/x64-windows;$deps"
 Invoke-Checked 'cmake' @('-S',$repoRoot,'-B',$coreBuild,'-G','Visual Studio 17 2022','-A','x64',
     "-DCMAKE_TOOLCHAIN_FILE=$vcpkgRoot/scripts/buildsystems/vcpkg.cmake",'-DVCPKG_MANIFEST_MODE=OFF',
     "-DVCPKG_INSTALLED_DIR=$vcpkgInstalled",'-DVCPKG_TARGET_TRIPLET=x64-windows',"-DCMAKE_PREFIX_PATH=$prefix",
-    "-DWEBOBS_OBS_PREFIX=$obsInstall", "-DWEBOBS_VERSION_OVERRIDE=$Version",'-DWEBOBS_MILESTONE_OVERRIDE=v4-M1-dev',
+    "-DWEBOBS_OBS_PREFIX=$obsInstall",'-DWEBOBS_BUILD_PRODUCT_LAUNCHER=ON', "-DWEBOBS_VERSION_OVERRIDE=$Version",'-DWEBOBS_MILESTONE_OVERRIDE=v4-M1-dev',
     "-DCMAKE_INSTALL_PREFIX=$coreInstall")
 Invoke-Checked 'cmake' @('--build',$coreBuild,'--config','Release','--parallel',"$Parallel")
 $previousPath = $env:PATH

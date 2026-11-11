@@ -14,17 +14,29 @@
    obs-studio
 --- a/frontend/widgets/OBSBasic.cpp
 +++ b/frontend/widgets/OBSBasic.cpp
-@@ -221,6 +221,10 @@
+@@ -221,6 +221,11 @@
  
  OBSBasic::OBSBasic(QWidget *parent) : OBSMainWindow(parent), undo_s(ui), ui(new Ui::OBSBasic)
  {
 +#ifdef WEBOBS_PRODUCT_FRONTEND
 +	setProperty("webobsProductFrontend", true);
 +	setAttribute(Qt::WA_DontShowOnScreen);
++	disable_3p_plugins = true;
 +#endif
  	collections = {};
  
  	setAttribute(Qt::WA_NativeWindow);
+@@ -1020,6 +1025,10 @@
+ 	struct obs_module_failure_info mfi;
+ 
+ 	// Safe Mode disables third-party plugins so we don't need to add each path outside the OBS bundle/installation.
++#ifdef WEBOBS_PRODUCT_FRONTEND
++	obs_add_safe_module("webobs-native-host");
++	obs_add_core_module("webobs-native-host");
++#endif
+ 	if (safe_mode || disable_3p_plugins) {
+ 		SetSafeModuleNames();
+ 	} else {
 --- a/frontend/widgets/OBSBasic_SceneCollections.cpp
 +++ b/frontend/widgets/OBSBasic_SceneCollections.cpp
 @@ -804,6 +804,9 @@

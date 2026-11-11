@@ -4,17 +4,30 @@
 param([Parameter(Mandatory=$true)][int]$FrontendPid)
 $ErrorActionPreference = 'Stop'
 $stage = 'initialize'
+$code = 'assemblies'
 try {
     Add-Type -AssemblyName UIAutomationClient,UIAutomationTypes,System.Windows.Forms
+    Add-Type -TypeDefinition @'
+using System;
+using System.Runtime.InteropServices;
+public static class ProductTestWindow {
+    [DllImport("user32.dll")] public static extern bool SetForegroundWindow(IntPtr window);
+    [DllImport("user32.dll")] public static extern bool ShowWindow(IntPtr window,int command);
+}
+'@
     $operation = [Console]::In.ReadToEnd() | ConvertFrom-Json
     $condition = [System.Windows.Automation.PropertyCondition]::new(
         [System.Windows.Automation.AutomationElement]::ProcessIdProperty, $FrontendPid)
     $windows = [System.Windows.Automation.AutomationElement]::RootElement.FindAll(
         [System.Windows.Automation.TreeScope]::Children, $condition)
     $window = @($windows | Where-Object { $_.Current.AutomationId -eq 'webobsProductWindow' })
+    $code = 'product-window'
     if ($window.Count -ne 1) { throw 'Expected exactly one owned product window.' }
     $window = $window[0]
+    $null = [ProductTestWindow]::ShowWindow([IntPtr]$window.Current.NativeWindowHandle, 9)
+    $null = [ProductTestWindow]::SetForegroundWindow([IntPtr]$window.Current.NativeWindowHandle)
     function Find-Control([string]$Identity) {
+        $script:code = 'find-' + $Identity
         $found = $window.FindFirst([System.Windows.Automation.TreeScope]::Descendants,
             [System.Windows.Automation.PropertyCondition]::new(
                 [System.Windows.Automation.AutomationElement]::AutomationIdProperty, $Identity))
@@ -23,11 +36,13 @@ try {
     }
     function Invoke-Control([string]$Identity) {
         $control = Find-Control $Identity
+        $script:code = 'invoke-' + $Identity
         if (-not $control.Current.IsEnabled) { throw 'Product control disabled.' }
         $control.GetCurrentPattern([System.Windows.Automation.InvokePattern]::Pattern).Invoke()
     }
     function Set-Control([string]$Identity, [string]$Value) {
         $control = Find-Control $Identity
+        $script:code = 'set-' + $Identity
         $pattern = $null
         if ($control.TryGetCurrentPattern([System.Windows.Automation.ValuePattern]::Pattern, [ref]$pattern)) {
             $pattern.SetValue($Value)
@@ -80,6 +95,6 @@ try {
     [Console]::Out.WriteLine((@{passed=$true;stage=$stage} | ConvertTo-Json -Compress))
 } catch {
     # Fixed stage only: UIA exceptions can contain private paths or input values.
-    [Console]::Out.WriteLine((@{passed=$false;stage=$stage} | ConvertTo-Json -Compress))
+    [Console]::Out.WriteLine((@{passed=$false;stage=$stage;code=$code} | ConvertTo-Json -Compress))
     exit 1
 }

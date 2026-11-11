@@ -304,7 +304,7 @@ def picture_counts(frames, require_b_frames: bool) -> tuple[int, int]:
     return len(frames), count
 
 
-def make_fixtures(private: Path, ffmpeg: Path, ffprobe: Path, node: str) -> list[dict]:
+def make_fixtures(private: Path, ffmpeg: Path, ffprobe: Path, node: str, *, all_hevc: bool = False) -> list[dict]:
     """All encoders exit here, BEFORE OBS launches; no dummy recording/output."""
     fixtures = []
     for channel in range(5):
@@ -313,7 +313,7 @@ def make_fixtures(private: Path, ffmpeg: Path, ffprobe: Path, node: str) -> list
         # Two of the five independent fixtures are H.264 so the local decode
         # path is not only HEVC. Two HEVC streams force B-frame reordering;
         # one HEVC and both H.264 streams retain the no-B-frame baseline.
-        codec = "h264" if channel >= 3 else "hevc"
+        codec = "h264" if channel >= 3 and not all_hevc else "hevc"
         requested_b_frames = 2 if codec == "hevc" and channel != 1 else 0
         if codec == "h264":
             video_args = ["-c:v", "libx264", "-preset", "ultrafast", "-pix_fmt", "yuv420p",

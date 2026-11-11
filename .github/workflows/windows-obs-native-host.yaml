@@ -120,7 +120,7 @@ jobs:
         run: |
           $ErrorActionPreference='Stop'
           $runtime = Join-Path $env:GITHUB_WORKSPACE 'build/obs-native-ci/runtime'
-          & "$runtime/python/python.exe" -B native-host/tests/product_windows.py --runtime $runtime --report build/obs-native-ci/native-product-entry-ui.json
+          & "$runtime/python/python.exe" -B native-host/tests/product_windows.py --runtime $runtime --with-media --report build/obs-native-ci/native-product-entry-ui.json
           if ($LASTEXITCODE -ne 0) { throw 'Actual native product entry and UI gate failed.' }
       - name: Retain only sanitized internal product receipts
         if: always() && inputs.product_mode
