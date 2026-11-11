@@ -122,6 +122,11 @@ def exercise(binary):
                 else:
                     raise AssertionError("isolated control process did not become ready")
                 login = {"username": "native-viewer", "password": password}
+                assert request("/api/v1/auth/setup")[2]["registrationOpen"] is True
+                first_admin = {"username": "native-admin", "password": secrets.token_urlsafe(24)}
+                assert request("/api/v1/auth/setup", first_admin)[0] == 201
+                assert request("/api/v1/auth/setup")[2]["registrationOpen"] is False
+                assert request("/api/v1/auth/setup", first_admin)[0] == 409
                 assert request("/api/v1/native/auth/login", login, secret="0" * 64)[0] == 403
                 assert request("/api/v1/native/auth/login", login, request_origin="https://untrusted.invalid")[0] == 403
                 assert request("/api/v1/native/auth/session")[0] == 401

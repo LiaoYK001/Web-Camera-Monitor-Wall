@@ -4,6 +4,7 @@
 
 #include <obs-frontend-api.h>
 #include <obs-module.h>
+#include <QAction>
 #include <QCloseEvent>
 #include <QComboBox>
 #include <QDesktopServices>
@@ -47,7 +48,7 @@ class ProductWindow final : public QWidget {
 	QByteArray host_secret_;
 	QLineEdit *username_, *password_;
 	QLabel *status_;
-	QPushButton *login_, *watch_, *save_, *logout_, *refresh_;
+	QPushButton *login_, *create_account_, *watch_, *save_, *logout_, *refresh_;
 	std::array<QComboBox *, 5> slots_{};
 	ProductWallResult wall_;
 	QJsonArray watching_;
@@ -158,6 +159,34 @@ class ProductWindow final : public QWidget {
 		return selected;
 	}
 
+	void refresh_registration()
+	{
+		request("/api/v1/auth/setup", "GET", {}, [this](int code, const QJsonObject &body) {
+			create_account_->setEnabled(code == 200 && body.value("registrationOpen").toBool() &&
+				user_id_.isEmpty() && login_->isEnabled());
+		});
+	}
+
+	void login(const QJsonObject &credentials)
+	{
+		login_->setEnabled(false);
+		create_account_->setEnabled(false);
+		request("/api/v1/native/auth/login", "POST", credentials, [this](int code, const QJsonObject &body) {
+			const auto id = body.value("userId").toString();
+			if (code != 200 || !QRegularExpression("^[a-f0-9]{32}$").match(id).hasMatch()) {
+				locked(tr("登录失败，请核对账号和本机服务状态。"));
+				refresh_registration();
+				return;
+			}
+			user_id_ = id;
+			for (auto *button : {watch_, save_, logout_, refresh_})
+				button->setEnabled(true);
+			status_->setText(tr("已登录，正在读取授权设备目录…"));
+			heartbeat_.start(2000);
+			refresh_catalog(true);
+		}, 12000);
+	}
+
 	void refresh_catalog(bool restore)
 	{
 		request("/api/v1/native/cameras", "GET", {}, [this, restore](int code, const QJsonObject &body) {
@@ -207,6 +236,9 @@ class ProductWindow final : public QWidget {
 		}
 		applying_ = true;
 		watch_->setEnabled(false);
+		refresh_->setEnabled(false);
+		for (auto *slot : slots_)
+			slot->setEnabled(false);
 		status_->setText(tr("正在核验权限并连接摄像机…"));
 		request("/api/v1/native/cameras/resolve", "POST", {{"cameras", selected}},
 			[this, selected](int code, const QJsonObject &body) {
@@ -247,6 +279,9 @@ class ProductWindow final : public QWidget {
 				wall_ = create_product_five_camera_wall(cameras, "WebOBS Wall");
 				applying_ = false;
 				watch_->setEnabled(true);
+				refresh_->setEnabled(true);
+				for (auto *slot : slots_)
+					slot->setEnabled(true);
 				if (!wall_.scene || !wall_.error.empty()) {
 					clear_media();
 					status_->setText(tr("原生画面创建失败，请检查设备配置后重试。"));
@@ -289,6 +324,10 @@ public:
 		login_ = new QPushButton(tr("登录"), this);
 		login_->setObjectName("webobsLogin");
 		layout->addWidget(login_);
+		create_account_ = new QPushButton(tr("创建首个管理员账号"), this);
+		create_account_->setEnabled(false);
+		create_account_->setObjectName("webobsCreateAccount");
+		layout->addWidget(create_account_);
 		for (auto &slot : slots_) {
 			slot = new QComboBox(this);
 			layout->addWidget(slot);
@@ -304,6 +343,9 @@ public:
 		for (auto *widget : frontend->findChildren<QWidget *>("preview")) {
 			if (QString::fromLatin1(widget->metaObject()->className()) == "OBSBasicPreview") {
 				preview_ = widget;
+				widget->setFocusPolicy(Qt::NoFocus);
+				widget->setAcceptDrops(false);
+				widget->setAttribute(Qt::WA_TransparentForMouseEvents);
 				widget->setParent(this);
 				layout->addWidget(widget, 1);
 				widget->show();
@@ -323,21 +365,23 @@ public:
 			return;
 		}
 		connect(login_, &QPushButton::clicked, this, [this] {
-			login_->setEnabled(false);
 			const QJsonObject credentials{{"username", username_->text()}, {"password", password_->text()}};
 			password_->clear();
-			request("/api/v1/native/auth/login", "POST", credentials, [this](int code, const QJsonObject &body) {
-				const auto id = body.value("userId").toString();
-				if (code != 200 || !QRegularExpression("^[a-f0-9]{32}$").match(id).hasMatch()) {
-					locked(tr("登录失败，请核对账号和本机服务状态。"));
-					return;
+			login(credentials);
+		});
+		refresh_registration();
+		connect(create_account_, &QPushButton::clicked, this, [this] {
+			const QJsonObject credentials{{"username", username_->text()}, {"password", password_->text()}};
+			password_->clear();
+			create_account_->setEnabled(false);
+			login_->setEnabled(false);
+			request("/api/v1/auth/setup", "POST", credentials, [this, credentials](int code, const QJsonObject &) {
+				if (code == 201)
+					login(credentials);
+				else {
+					locked(tr("创建账号失败，请检查账号格式和密码要求后重试。"));
+					refresh_registration();
 				}
-				user_id_ = id;
-				for (auto *button : {watch_, save_, logout_, refresh_})
-					button->setEnabled(true);
-				status_->setText(tr("已登录，正在读取授权设备目录…"));
-				heartbeat_.start(2000);
-				refresh_catalog(true);
 			}, 12000);
 		});
 		connect(password_, &QLineEdit::returnPressed, login_, &QPushButton::click);
@@ -397,6 +441,12 @@ void start_product_window()
 		return;
 	if (!product_window)
 		product_window = new ProductWindow(frontend);
+	// The raw frontend remains alive for OBS's lifecycle, while its editing and
+	// application-shortcut entry points stay outside the product input surface.
+	for (auto *action : frontend->findChildren<QAction *>()) {
+		action->setEnabled(false);
+		action->setShortcuts({});
+	}
 	frontend->hide();
 	product_window->show();
 	obs_frontend_set_preview_program_mode(false);

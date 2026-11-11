@@ -972,3 +972,11 @@ core 实际 listener 已接入 `/api/v1/native/` 登录、会话、退出、授�
 本机已编译真实 `webobsd`。`product_http_runtime.py` 使用真实账号 Handler/Argon2id/SQLite、真实 Camera Registry Handler 和实际 core 二进制，登录、绑定会话、授权目录仅含 camera-a、越权整批拒绝且零 URL 解析、未知 Profile、authEpoch 变更和注销均通过。现有慢账号代理回归通过，root 相关 CTest 5/5、camera registry 58/58、原型构建契约 44/44。第一次新增集成测试误写会话表名 browser_sessions，改为实际 auth_sessions 后通过。以上尚未验证 Qt 点击、最终像素或安装态产品闭环。
 
 The real core listener now serves native account/session/catalog/resolve operations with a boot secret, strict loopback Origin/Host checks, bound identities and fresh camera authorization. A real-service Linux integration run passes with production Argon2id and Registry handlers. The Qt product surface calls those routes and the OBS source/scene API. Product-only frontend hooks apply to a pinned build copy. Windows UI/runtime evidence, the supervisor, first-run setup and installed end-to-end R1 remain in progress. Intermediate testing stays with the agent and CI.
+
+#### R1 首个 Windows 产品变体编译回执 / First product-variant build receipt
+
+source `09389a0` 的 public CI `42959086576` 成功。内部 ProductMode `4.1.0-dev.76` / run `42959101870` / job `130321120170` 成功，实际日志包含外置 frontend hook、`product_window.cpp`、`webobs-native-host.dll` 与 Qt6Network.dll 部署。真实 libobs loader CTest 1/1（2.82s）、graph API 7/7（0.07s）、构建契约 44 项通过。首次启动前 inventory 为 1546 文件、99,147,756 B、66 binaries，通过原 104,857,600 B 门槛。此范围只有原生媒体/UI 构建，尚未计入完整服务安装。ProductMode 跳过普通原型的 ZIP/NSIS/启动/像素步骤，未生成公开下载附件，不能把这次编译当作 Windows 登录点击、媒体恢复拦截或完整 R1 验收。
+
+随后产品窗口补上首个管理员注册入口，复用现有 `/api/v1/auth/setup` 后再登录绑定会话。原生 Preview 禁用鼠标/拖放/焦点编辑，原前端 QAction 禁用，避免经预览右键或应用快捷键进入编辑。Linux 真实服务测试同时覆盖实际首个管理员注册、注册关闭与重复拒绝，既有账号、授权目录和 Profile 硬解/传输偏好校验继续通过。新增 UI 行为需要后续 Windows 运行单独验证。
+
+Public CI 42959086576 and internal ProductMode run 42959101870 at source 09389a0 passed. The actual frontend/plugin/UI compiled with Qt Network and the pinned build-copy hook. The pre-start media/UI inventory measured 99,147,756 bytes. Product mode deliberately skipped prototype packaging and startup/pixel smokes, so this records compilation and contract scope only. First-account registration and the product preview/action input restrictions were then added for subsequent Windows validation. The real-service Linux test passes first-run registration as well as bound login, scope, Profile settings, revocation and logout. Installed R1 integration continues.
