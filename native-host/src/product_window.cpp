@@ -1,0 +1,411 @@
+#include "product_window.hpp"
+#include "product_bootstrap.hpp"
+#include "wall.hpp"
+
+#include <obs-frontend-api.h>
+#include <obs-module.h>
+#include <QCloseEvent>
+#include <QComboBox>
+#include <QDesktopServices>
+#include <QDir>
+#include <QFile>
+#include <QFileInfo>
+#include <QFormLayout>
+#include <QJsonArray>
+#include <QJsonDocument>
+#include <QJsonObject>
+#include <QLabel>
+#include <QLineEdit>
+#include <QNetworkAccessManager>
+#include <QNetworkCookieJar>
+#include <QNetworkProxy>
+#include <QNetworkReply>
+#include <QPointer>
+#include <QPushButton>
+#include <QRegularExpression>
+#include <QSaveFile>
+#include <QTimer>
+#include <QUrl>
+#include <QVBoxLayout>
+#include <QWidget>
+
+#include <array>
+#include <functional>
+#include <memory>
+
+namespace webobs::native_host {
+namespace {
+class ProductWindow;
+QPointer<ProductWindow> product_window;
+
+class ProductWindow final : public QWidget {
+	QWidget *frontend_;
+	QWidget *preview_ = nullptr;
+	QNetworkAccessManager network_;
+	QTimer heartbeat_;
+	QUrl origin_;
+	QByteArray host_secret_;
+	QLineEdit *username_, *password_;
+	QLabel *status_;
+	QPushButton *login_, *watch_, *save_, *logout_, *refresh_;
+	std::array<QComboBox *, 5> slots_{};
+	ProductWallResult wall_;
+	QJsonArray watching_;
+	QString user_id_;
+	quint64 generation_ = 0;
+	bool heartbeat_pending_ = false;
+	bool applying_ = false;
+
+	using Reply = std::function<void(int, const QJsonObject &)>;
+	void request(const QString &path, const QByteArray &method, const QJsonObject &body, Reply callback,
+		     int timeout_ms = 2000)
+	{
+		const auto generation = generation_;
+		QUrl url = origin_;
+		url.setPath(path);
+		QNetworkRequest message(url);
+		message.setRawHeader("Origin", origin_.toString(QUrl::RemovePath).toUtf8());
+		message.setRawHeader("X-WebOBS-Native-Host", host_secret_);
+		message.setHeader(QNetworkRequest::ContentTypeHeader, "application/json");
+		message.setAttribute(QNetworkRequest::RedirectPolicyAttribute, QNetworkRequest::ManualRedirectPolicy);
+		message.setTransferTimeout(timeout_ms);
+		QNetworkReply *reply = method == "GET" ? network_.get(message) :
+			network_.post(message, QJsonDocument(body).toJson(QJsonDocument::Compact));
+		reply->setReadBufferSize(256 * 1024);
+		auto *deadline = new QTimer(reply);
+		deadline->setSingleShot(true);
+		connect(deadline, &QTimer::timeout, reply, &QNetworkReply::abort);
+		deadline->start(timeout_ms);
+		auto bytes = std::make_shared<QByteArray>();
+		connect(reply, &QNetworkReply::readyRead, this, [reply, bytes] {
+			if (reply->bytesAvailable() > 256 * 1024 - bytes->size()) {
+				reply->abort();
+				return;
+			}
+			bytes->append(reply->readAll());
+		});
+		connect(reply, &QNetworkReply::finished, this, [this, reply, bytes, deadline, generation, callback] {
+			deadline->stop();
+			const int code = reply->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt();
+			const auto document = QJsonDocument::fromJson(*bytes);
+			const bool valid = reply->error() == QNetworkReply::NoError && document.isObject();
+			reply->deleteLater();
+			if (generation == generation_)
+				callback(valid ? code : (code >= 400 ? code : 0), document.object());
+		});
+	}
+
+	void clear_media()
+	{
+		watching_ = {};
+		if (!obs_initialized())
+			return;
+		// Clear the inputs before releasing graph references, including references
+		// retained temporarily by the frontend. Credentials stay out of disk state.
+		for (auto *source : wall_.sources) {
+			if (!source)
+				continue;
+			auto *empty = obs_data_create();
+			obs_data_set_bool(empty, "is_local_file", false);
+			obs_data_set_string(empty, "input", "");
+			obs_data_set_string(empty, "local_file", "");
+			obs_source_update(source, empty);
+			obs_data_release(empty);
+			obs_source_remove(source);
+		}
+		if (wall_.scene)
+			obs_source_remove(obs_scene_get_source(wall_.scene));
+		wall_.release();
+	}
+
+	void locked(const QString &message)
+	{
+		++generation_;
+		heartbeat_.stop();
+		heartbeat_pending_ = false;
+		applying_ = false;
+		clear_media();
+		user_id_.clear();
+		network_.setCookieJar(new QNetworkCookieJar(&network_));
+		login_->setEnabled(true);
+		for (auto *button : {watch_, save_, logout_, refresh_})
+			button->setEnabled(false);
+		for (auto *slot : slots_) {
+			slot->clear();
+			slot->setEnabled(false);
+		}
+		status_->setText(message);
+	}
+
+	QString workspace_path() const
+	{
+		const auto name = ("workspace-" + user_id_ + ".json").toUtf8();
+		char *path = obs_module_config_path(name.constData());
+		const QString result = QString::fromUtf8(path ? path : "");
+		bfree(path);
+		return result;
+	}
+
+	QJsonArray selection() const
+	{
+		QJsonArray selected;
+		for (auto *slot : slots_) {
+			const auto item = slot->currentData().toJsonObject();
+			if (item.isEmpty())
+				return {};
+			selected.append(item);
+		}
+		return selected;
+	}
+
+	void refresh_catalog(bool restore)
+	{
+		request("/api/v1/native/cameras", "GET", {}, [this, restore](int code, const QJsonObject &body) {
+			if (code != 200 || !body.value("cameras").isArray()) {
+				locked(tr("无法核验摄像机权限，请重新登录。"));
+				return;
+			}
+			for (auto *slot : slots_) {
+				slot->clear();
+				slot->addItem(tr("选择摄像机与 Profile"), QJsonObject{});
+				for (const auto camera_value : body.value("cameras").toArray()) {
+					const auto camera = camera_value.toObject();
+					if (!camera.value("enabled").toBool())
+						continue;
+					for (const auto profile_value : camera.value("profiles").toArray()) {
+						const auto profile = profile_value.toObject();
+						if (!profile.value("enabled").toBool())
+							continue;
+						slot->addItem(camera.value("name").toString() + " / " + profile.value("name").toString(),
+							QJsonObject{{"cameraId", camera.value("id")}, {"profileId", profile.value("id")}});
+					}
+				}
+				slot->setEnabled(true);
+			}
+			if (restore) {
+				QFile file(workspace_path());
+				if (file.size() <= 16384 && file.open(QIODevice::ReadOnly)) {
+					const auto saved = QJsonDocument::fromJson(file.readAll()).object().value("cameras").toArray();
+					if (saved.size() == 5)
+						for (int i = 0; i < 5; ++i) {
+							const int index = slots_[i]->findData(saved[i].toObject());
+							slots_[i]->setCurrentIndex(index > 0 ? index : 0);
+						}
+				}
+				if (selection().size() == 5)
+					watch();
+			}
+		}, 12000);
+	}
+
+	void watch()
+	{
+		const QJsonArray selected = selection();
+		if (selected.size() != 5 || user_id_.isEmpty() || applying_) {
+			status_->setText(tr("请选择五个摄像机 Profile。"));
+			return;
+		}
+		applying_ = true;
+		watch_->setEnabled(false);
+		status_->setText(tr("正在核验权限并连接摄像机…"));
+		request("/api/v1/native/cameras/resolve", "POST", {{"cameras", selected}},
+			[this, selected](int code, const QJsonObject &body) {
+			if (code != 200 || body.value("cameras").toArray().size() != 5) {
+				locked(tr("摄像机授权或连接资料不可用，请重新登录。"));
+				return;
+			}
+			const auto resolved = body.value("cameras").toArray();
+			// Reauthorize after resolution and immediately before OBS graph writes.
+			request("/api/v1/native/cameras/authorize", "POST", {{"cameras", selected}},
+				[this, selected, resolved](int status, const QJsonObject &) {
+				if (status != 200) {
+					locked(tr("观看权限已失效，请重新登录。"));
+					return;
+				}
+				clear_media();
+				std::array<ProductCamera, 5> cameras;
+				for (int i = 0; i < 5; ++i) {
+					const auto item = resolved[i].toObject();
+					const auto wanted = selected[i].toObject();
+					if (item.value("cameraId") != wanted.value("cameraId") ||
+					    item.value("profileId") != wanted.value("profileId")) {
+						locked(tr("摄像机身份不匹配，请重新登录。"));
+						return;
+					}
+					cameras[i].id = wanted.value("cameraId").toString().toStdString();
+					cameras[i].name = "WebOBS " + std::to_string(i + 1);
+					cameras[i].url = item.value("url").toString().toStdString();
+					cameras[i].transport = item.value("transport").toString().toStdString();
+					const auto hardware = item.value("hardwareDecode").toString();
+					if (hardware != "auto" && hardware != "on" && hardware != "off") {
+						locked(tr("设备解码配置无效，请在设备库中修复。"));
+						return;
+					}
+					if (hardware != "auto")
+						cameras[i].hardware_decode = hardware == "on";
+				}
+				wall_ = create_product_five_camera_wall(cameras, "WebOBS Wall");
+				applying_ = false;
+				watch_->setEnabled(true);
+				if (!wall_.scene || !wall_.error.empty()) {
+					clear_media();
+					status_->setText(tr("原生画面创建失败，请检查设备配置后重试。"));
+					return;
+				}
+				select_wall(wall_.scene);
+				watching_ = selected;
+				status_->setText(tr("原生监看已连接。"));
+			}, 12000);
+		}, 12000);
+	}
+
+	void closeEvent(QCloseEvent *event) override
+	{
+		locked(tr("正在退出…"));
+		frontend_->close();
+		event->accept();
+	}
+
+public:
+	explicit ProductWindow(QWidget *frontend) : QWidget(frontend, Qt::Window), frontend_(frontend), network_(this)
+	{
+		setWindowTitle("WebOBS Wall");
+		setObjectName("webobsProductWindow");
+		resize(1280, 800);
+		auto *layout = new QVBoxLayout(this);
+		status_ = new QLabel(tr("登录 WebOBS 后选择已有摄像机。"), this);
+		layout->addWidget(status_);
+		auto *form = new QFormLayout;
+		username_ = new QLineEdit(this);
+		username_->setObjectName("webobsUsername");
+		username_->setMaxLength(64);
+		password_ = new QLineEdit(this);
+		password_->setObjectName("webobsPassword");
+		password_->setMaxLength(128);
+		password_->setEchoMode(QLineEdit::Password);
+		form->addRow(tr("账号"), username_);
+		form->addRow(tr("密码"), password_);
+		layout->addLayout(form);
+		login_ = new QPushButton(tr("登录"), this);
+		login_->setObjectName("webobsLogin");
+		layout->addWidget(login_);
+		for (auto &slot : slots_) {
+			slot = new QComboBox(this);
+			layout->addWidget(slot);
+		}
+		watch_ = new QPushButton(tr("开始原生监看"), this);
+		save_ = new QPushButton(tr("保存布局"), this);
+		logout_ = new QPushButton(tr("退出账号"), this);
+		refresh_ = new QPushButton(tr("刷新设备目录"), this);
+		for (auto *button : {watch_, save_, refresh_, logout_})
+			layout->addWidget(button);
+		auto *manage = new QPushButton(tr("打开设备与系统管理"), this);
+		layout->addWidget(manage);
+		for (auto *widget : frontend->findChildren<QWidget *>("preview")) {
+			if (QString::fromLatin1(widget->metaObject()->className()) == "OBSBasicPreview") {
+				preview_ = widget;
+				widget->setParent(this);
+				layout->addWidget(widget, 1);
+				widget->show();
+				break;
+			}
+		}
+		network_.setProxy(QNetworkProxy::NoProxy);
+		origin_ = QUrl(qEnvironmentVariable("WEBOBS_NATIVE_CONTROL_ORIGIN"));
+		host_secret_ = qgetenv("WEBOBS_NATIVE_HOST_TOKEN");
+		locked(tr("请登录已有 WebOBS 账号。"));
+		if (origin_.scheme() != "http" || origin_.host() != "127.0.0.1" || origin_.port() < 1 ||
+		    !origin_.userInfo().isEmpty() || !origin_.path().isEmpty() || origin_.hasQuery() || origin_.hasFragment() ||
+		    !QRegularExpression("^[a-f0-9]{64}$").match(QString::fromLatin1(host_secret_)).hasMatch()) {
+			status_->setText(tr("本机产品服务连接失败，请从 WebOBS Wall 启动入口重试。"));
+			login_->setEnabled(false);
+			manage->setEnabled(false);
+			return;
+		}
+		connect(login_, &QPushButton::clicked, this, [this] {
+			login_->setEnabled(false);
+			const QJsonObject credentials{{"username", username_->text()}, {"password", password_->text()}};
+			password_->clear();
+			request("/api/v1/native/auth/login", "POST", credentials, [this](int code, const QJsonObject &body) {
+				const auto id = body.value("userId").toString();
+				if (code != 200 || !QRegularExpression("^[a-f0-9]{32}$").match(id).hasMatch()) {
+					locked(tr("登录失败，请核对账号和本机服务状态。"));
+					return;
+				}
+				user_id_ = id;
+				for (auto *button : {watch_, save_, logout_, refresh_})
+					button->setEnabled(true);
+				status_->setText(tr("已登录，正在读取授权设备目录…"));
+				heartbeat_.start(2000);
+				refresh_catalog(true);
+			}, 12000);
+		});
+		connect(password_, &QLineEdit::returnPressed, login_, &QPushButton::click);
+		connect(watch_, &QPushButton::clicked, this, [this] { watch(); });
+		connect(refresh_, &QPushButton::clicked, this, [this] { refresh_catalog(false); });
+		connect(save_, &QPushButton::clicked, this, [this] {
+			if (watching_.size() != 5 || applying_) {
+				status_->setText(tr("请先连接要保存的摄像机。"));
+				return;
+			}
+			QSaveFile file(workspace_path());
+			const auto bytes = QJsonDocument(QJsonObject{{"schema", 1}, {"cameras", watching_}}).toJson();
+			if (!QDir().mkpath(QFileInfo(file.fileName()).absolutePath()) ||
+			    !file.open(QIODevice::WriteOnly) || file.write(bytes) != bytes.size() || !file.commit())
+				status_->setText(tr("布局保存失败，已有布局已保留。"));
+			else
+				status_->setText(tr("布局已保存，重新登录后恢复。"));
+		});
+		connect(logout_, &QPushButton::clicked, this, [this] {
+			request("/api/v1/native/auth/logout", "POST", {}, [](int, const QJsonObject &) {});
+			locked(tr("已退出账号。"));
+		});
+		connect(manage, &QPushButton::clicked, this, [this] {
+			auto url = origin_;
+			url.setFragment("/devices");
+			QDesktopServices::openUrl(url);
+		});
+		connect(&heartbeat_, &QTimer::timeout, this, [this] {
+			if (heartbeat_pending_ || user_id_.isEmpty())
+				return;
+			heartbeat_pending_ = true;
+			const bool active = !watching_.isEmpty();
+			request(active ? "/api/v1/native/cameras/authorize" : "/api/v1/native/auth/session",
+				active ? "POST" : "GET", {{"cameras", watching_}}, [this](int code, const QJsonObject &) {
+				heartbeat_pending_ = false;
+				if (code != 200)
+					locked(tr("会话或摄像机权限已失效，请重新登录。"));
+			});
+		});
+	}
+	~ProductWindow() override
+	{
+		clear_media();
+		// OBS retains its UI pointer through frontend teardown.
+		if (preview_) {
+			preview_->setParent(frontend_);
+			preview_->hide();
+		}
+	}
+};
+} // namespace
+
+void start_product_window()
+{
+	auto *frontend = static_cast<QWidget *>(obs_frontend_get_main_window());
+	if (!frontend || !frontend->property("webobsProductFrontend").toBool())
+		return;
+	if (!product_window)
+		product_window = new ProductWindow(frontend);
+	frontend->hide();
+	product_window->show();
+	obs_frontend_set_preview_program_mode(false);
+	obs_frontend_set_preview_enabled(true);
+}
+
+void stop_product_window()
+{
+	delete product_window.data();
+	product_window = nullptr;
+}
+} // namespace webobs::native_host

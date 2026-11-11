@@ -81,6 +81,8 @@ def verify(artifact_dir: Path, version: str, revision: str, output: Path) -> dic
         _reject("prototype manifest identity does not match the frozen pin")
     if manifest.get("defaultProduct") is not False or manifest.get("servicesStarted") != []:
         _reject("prototype must not be the default product or start services")
+    if manifest.get("publicationForbidden") or manifest.get("productIntegration") or manifest.get("pixelTestBuild"):
+        _reject("internal integration and pixel-test builds cannot be published as prototypes")
     if output.exists() and any(output.iterdir()):
         _reject("output directory must be new or empty")
     output.mkdir(parents=True, exist_ok=True)

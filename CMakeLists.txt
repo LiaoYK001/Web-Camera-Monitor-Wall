@@ -116,7 +116,7 @@ add_executable(webobsd
     core/src/scene_controller.cpp
     core/src/studio_controller.cpp
 )
-target_link_libraries(webobsd PRIVATE webobs-common webobs-libobs Boost::headers CURL::libcurl Threads::Threads)
+target_link_libraries(webobsd PRIVATE webobs-common webobs-native-cluster-authorization webobs-libobs Boost::headers CURL::libcurl Threads::Threads)
 webobs_warnings(webobsd)
 if(WIN32)
     target_sources(webobsd PRIVATE desktop/native/utf8.manifest)

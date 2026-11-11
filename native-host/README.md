@@ -1,5 +1,9 @@
 # OBS 原生前端独立开发原型 / Independent native OBS frontend prototype
 
+2026-11-11 开始按 [完整融合版任务书](../docs/windows-webobs-wall-release-plan-2026-11-11.md) 推进产品化，状态见 [功能矩阵](../docs/windows-native-feature-parity.md)。新增内部 `-ProductMode` 构建将授权 Qt 界面连到 core 的 native HTTP 路由，并在固定 OBS 构建副本中前置 collection/热键/托盘约束。普通原型构建仍沿用下文行为。R1 尚在开发，完整 supervisor、安装入口、业务迁移及实际 Windows UI 联调待完成。
+
+The internal ProductMode build connects a native Qt login/catalog/watch/save/logout surface to the real core account boundary. A pinned patch applies only to a verified OBS build copy. Product-mode compilation/runtime and the installed R1 loop remain under development. The feature matrix tracks the full release scope.
+
 产品配置中的整数 `canvas.fps` 使用 OBS 的 `FPSType=1 / FPSInt`，支持已声明的 1–120fps；不再把任意整数写入枚举字符串 `FPSCommon`（例如 `15`、`25`、`50` 曾被固定上游回落到 30fps）。应用前拒绝活动视频输出，应用后核对实际 base/output 尺寸和有理数帧率；失败会报告固定错误码，不把配置写入成功当作实际模式成功。该配置变更不保证原子回滚。显式请求视频模式时，脱敏启动回执包含实际 `videoInfo`，Windows `--verify-video` 冒烟要求 1280×720 / 15fps 的真实运行时回读。五路 camera ID 和 source name 必须各自唯一，重复会在接触 OBS 前拒绝。
 
 Integer `canvas.fps` now uses OBS's integer mode, avoiding silent 30fps fallback from unsupported common-FPS strings. Active video outputs are refused before mutation; actual base/output dimensions and rational FPS are checked after reset. Configuration writes are not atomic. A sanitized startup receipt records the actual mode, and opt-in Windows smoke validates 1280×720 at 15fps. Duplicate camera IDs/source names fail before touching OBS.

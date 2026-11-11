@@ -96,6 +96,22 @@ class DevAssetTests(unittest.TestCase):
             with self.assertRaises(ValueError):
                 verify_module.verify(root, VERSION, REVISION, root.parent / "output")
 
+    def test_internal_product_build_is_rejected_even_with_matching_archive_digest(self):
+        holding, root = self.make_artifact()
+        with holding:
+            prototype = next(root.glob("*PROTOTYPE.zip"))
+            with zipfile.ZipFile(prototype) as archive:
+                entries = {item.filename: archive.read(item) for item in archive.infolist()}
+            manifest = json.loads(entries["webobs-native-prototype.json"])
+            manifest.update(productIntegration=True, publicationForbidden=True)
+            entries["webobs-native-prototype.json"] = json.dumps(manifest).encode()
+            with zipfile.ZipFile(prototype, "w") as archive:
+                for name, content in entries.items():
+                    archive.writestr(name, content)
+            Path(str(prototype) + ".sha256").write_text(sha256(prototype.read_bytes()), encoding="utf-8")
+            with self.assertRaisesRegex(ValueError, "cannot be published"):
+                verify_module.verify(root, VERSION, REVISION, root.parent / "output")
+
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)

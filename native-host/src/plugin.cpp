@@ -6,6 +6,9 @@
 #include "startup_bootstrap.hpp"
 #include "wall.hpp"
 #include "wall_snapshot.hpp"
+#ifdef WEBOBS_NATIVE_PRODUCT_MODE
+#include "product_window.hpp"
+#endif
 #ifdef WEBOBS_NATIVE_PIXEL_TEST
 #include "pixel_test.hpp"
 #endif
@@ -410,6 +413,15 @@ QJsonObject startup_observation()
 
 void frontend_event(enum obs_frontend_event event, void *)
 {
+#ifdef WEBOBS_NATIVE_PRODUCT_MODE
+	if (event == OBS_FRONTEND_EVENT_EXIT) {
+		webobs::native_host::stop_product_window();
+		frontend_alive = false;
+	} else if (event == OBS_FRONTEND_EVENT_FINISHED_LOADING) {
+		webobs::native_host::start_product_window();
+	}
+	return;
+#endif
 #ifdef WEBOBS_NATIVE_PIXEL_TEST
 	const bool pixel_test_handled = webobs::native_host::pixel_test_event(event);
 #else
@@ -585,6 +597,11 @@ bool obs_module_load(void)
 
 void obs_module_post_load(void)
 {
+#ifdef WEBOBS_NATIVE_PRODUCT_MODE
+	frontend_alive = true;
+	obs_frontend_add_event_callback(frontend_event, nullptr);
+	return;
+#endif
 	auto *widget = new WallDock;
 	if (!obs_frontend_add_dock_by_id(dock_id, "WebOBS Native Prototype", widget)) {
 		delete widget;

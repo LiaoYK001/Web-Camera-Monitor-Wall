@@ -1,0 +1,84 @@
+--- a/frontend/CMakeLists.txt
++++ b/frontend/CMakeLists.txt
+@@ -28,6 +28,11 @@
+ 
+ add_executable(obs-studio)
+ add_executable(OBS::studio ALIAS obs-studio)
++
++option(WEBOBS_PRODUCT_FRONTEND "Use the WebOBS authenticated product surface" ON)
++if(WEBOBS_PRODUCT_FRONTEND)
++  target_compile_definitions(obs-studio PRIVATE WEBOBS_PRODUCT_FRONTEND=1)
++endif()
+ 
+ target_link_libraries(
+   obs-studio
+--- a/frontend/widgets/OBSBasic.cpp
++++ b/frontend/widgets/OBSBasic.cpp
+@@ -221,6 +221,10 @@
+ 
+ OBSBasic::OBSBasic(QWidget *parent) : OBSMainWindow(parent), undo_s(ui), ui(new Ui::OBSBasic)
+ {
++#ifdef WEBOBS_PRODUCT_FRONTEND
++	setProperty("webobsProductFrontend", true);
++	setAttribute(Qt::WA_DontShowOnScreen);
++#endif
+ 	collections = {};
+ 
+ 	setAttribute(Qt::WA_NativeWindow);
+--- a/frontend/widgets/OBSBasic_SceneCollections.cpp
++++ b/frontend/widgets/OBSBasic_SceneCollections.cpp
+@@ -804,6 +804,9 @@
+ 
+ void OBSBasic::Save(SceneCollection &collection)
+ {
++#ifdef WEBOBS_PRODUCT_FRONTEND
++	return;
++#endif
+ 	OBSDataAutoRelease saveData = obs_data_create();
+ 
+ 	// Scene collection name
+@@ -1118,6 +1121,10 @@
+ 
+ void OBSBasic::Load(SceneCollection &collection)
+ {
++#ifdef WEBOBS_PRODUCT_FRONTEND
++	CreateDefaultScene(false);
++	return;
++#endif
+ 	disableSaving++;
+ 
+ 	lastOutputResolution.reset();
+@@ -1168,6 +1175,9 @@
+ 
+ void OBSBasic::LoadData(obs_data_t *data, SceneCollection &collection)
+ {
++#ifdef WEBOBS_PRODUCT_FRONTEND
++	return;
++#endif
+ 	ClearSceneData();
+ 	ClearContextBar();
+ 
+--- a/frontend/widgets/OBSBasic_Hotkeys.cpp
++++ b/frontend/widgets/OBSBasic_Hotkeys.cpp
+@@ -23,6 +23,9 @@
+ 
+ void OBSBasic::InitHotkeys()
+ {
++#ifdef WEBOBS_PRODUCT_FRONTEND
++	return;
++#endif
+ 	ProfileScope("OBSBasic::InitHotkeys");
+ 
+ 	struct obs_hotkeys_translations t = {};
+--- a/frontend/widgets/OBSBasic_SysTray.cpp
++++ b/frontend/widgets/OBSBasic_SysTray.cpp
+@@ -106,6 +106,9 @@
+ 
+ void OBSBasic::SystemTray(bool firstStarted)
+ {
++#ifdef WEBOBS_PRODUCT_FRONTEND
++	return;
++#endif
+ 	if (!QSystemTrayIcon::isSystemTrayAvailable())
+ 		return;
+ 	if (!trayIcon && !firstStarted)

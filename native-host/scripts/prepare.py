@@ -120,13 +120,23 @@ def snapshot(source: Path, destination: Path) -> None:
     marker.write_text(json.dumps(receipt, indent=2) + "\n", encoding="utf-8")
 
 
-def prepare(repo: Path, output: Path, cache: Path, offline: bool) -> None:
+def prepare(repo: Path, output: Path, cache: Path, offline: bool, product: bool = False) -> None:
     source = repo / "obs/obs-studio"
     lock = json.loads((repo / "desktop/dependencies.lock.json").read_text(encoding="utf-8"))
     presets = json.loads((source / "CMakePresets.json").read_text(encoding="utf-8"))
     artifacts = locked_artifacts(lock, presets)
     # Verify upstream before downloading/copying, and reject existing patched snapshots.
     snapshot(source, output)
+    if product:
+        patch = repo / "native-host/patches/obs-32.1.2-product-frontend.patch"
+        # snapshot verifies every original tracked byte before this opt-in hook.
+        # git apply is confined to the new build copy, never the upstream checkout.
+        subprocess.run(["git", "apply", "--check", str(patch)], cwd=output, check=True)
+        subprocess.run(["git", "apply", str(patch)], cwd=output, check=True)
+        (output / ".webobs-product-patch.json").write_text(json.dumps({
+            "obsCommit": OBS_COMMIT, "patchSha256": digest(patch),
+            "patch": patch.name, "productFrontendRequired": True,
+        }, indent=2) + "\n", encoding="utf-8")
     deps = output / ".deps"
     deps.mkdir(exist_ok=True)
     for artifact in artifacts:
@@ -139,7 +149,8 @@ def prepare(repo: Path, output: Path, cache: Path, offline: bool) -> None:
             shutil.copy2(archive, target)
         if digest(target) != artifact["sha256"]:
             raise ValueError("Dependency changed while staging")
-    print("Verified OBS 32.1.2 snapshot and locked obs-deps/Qt inputs; no upstream patches")
+    print("Verified OBS 32.1.2 snapshot and locked obs-deps/Qt inputs" +
+          ("; product frontend hook applied only to the build copy" if product else "; no upstream patches"))
 
 
 if __name__ == "__main__":
@@ -148,5 +159,6 @@ if __name__ == "__main__":
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--cache", type=Path, required=True)
     parser.add_argument("--offline", action="store_true")
+    parser.add_argument("--product", action="store_true")
     args = parser.parse_args()
-    prepare(args.repo.resolve(), args.output.resolve(), args.cache.resolve(), args.offline)
+    prepare(args.repo.resolve(), args.output.resolve(), args.cache.resolve(), args.offline, args.product)

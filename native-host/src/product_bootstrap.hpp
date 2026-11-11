@@ -16,6 +16,7 @@ struct ProductCamera {
 	// Unspecified: preserve a reused source, prefer OBS hardware decoding for a
 	// new source. Explicit false/true remain strict source compatibility settings.
 	std::optional<bool> hardware_decode;
+	std::string transport = "auto";
 };
 
 struct ProductWallResult {

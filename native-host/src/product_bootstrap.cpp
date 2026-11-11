@@ -30,6 +30,8 @@ bool valid_camera(const ProductCamera &camera, std::string &error)
 	if (!starts_with(camera.url, "rtsp://") && !starts_with(camera.url, "rtsps://") &&
 	    !starts_with(camera.url, "http://") && !starts_with(camera.url, "https://"))
 		return error = "camera-url-invalid", false;
+	if (camera.transport != "auto" && camera.transport != "tcp" && camera.transport != "udp")
+		return error = "camera-transport-invalid", false;
 	return true;
 }
 
@@ -43,8 +45,10 @@ bool media_settings_match(obs_source_t *source, const ProductCamera &camera)
 	const bool local = obs_data_get_bool(settings, "is_local_file");
 	const char *input = obs_data_get_string(settings, "input");
 	const bool hardware = obs_data_get_bool(settings, "hw_decode");
+	const char *options = obs_data_get_string(settings, "ffmpeg_options");
 	const bool match = !local && input && camera.url == input &&
-		(!camera.hardware_decode.has_value() || hardware == *camera.hardware_decode);
+		(!camera.hardware_decode.has_value() || hardware == *camera.hardware_decode) &&
+		(camera.transport == "auto" || (options && "rtsp_transport=" + camera.transport == options));
 	obs_data_release(settings);
 	return match;
 }
@@ -54,6 +58,8 @@ obs_source_t *create_camera_source(const ProductCamera &camera)
 	auto *settings = obs_data_create();
 	obs_data_set_bool(settings, "is_local_file", false);
 	obs_data_set_string(settings, "input", camera.url.c_str());
+	if (camera.transport != "auto")
+		obs_data_set_string(settings, "ffmpeg_options", ("rtsp_transport=" + camera.transport).c_str());
 	obs_data_set_bool(settings, "looping", false);
 	obs_data_set_bool(settings, "hw_decode", camera.hardware_decode.value_or(true));
 	obs_data_set_bool(settings, "restart_on_activate", true);

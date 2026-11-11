@@ -6,10 +6,14 @@ on:
     inputs:
       version: { type: string, required: true }
       pixel_test: { type: boolean, default: false }
+      product_mode: { type: boolean, default: false }
       measure_obs_baseline: { type: boolean, default: false }
       upgrade_previous: { type: boolean, default: false }
   workflow_dispatch:
     inputs:
+      product_mode:
+        type: boolean
+        default: false
       pixel_test:
         description: 'Compile a non-redistributable finite final-pixel harness; upload sanitized synthetic receipt only'
         type: boolean
@@ -95,22 +99,24 @@ jobs:
         env:
           NATIVE_VERSION: ${{ inputs.version }}
           NATIVE_PIXEL_TEST: ${{ inputs.pixel_test }}
+          NATIVE_PRODUCT_MODE: ${{ inputs.product_mode }}
         run: |
           $parameters = @{Version=$env:NATIVE_VERSION;BuildDirectory="$env:GITHUB_WORKSPACE/build/obs-native-ci"}
           if ($env:NATIVE_PIXEL_TEST -eq 'true') { $parameters.PixelTest=$true }
+          if ($env:NATIVE_PRODUCT_MODE -eq 'true') { $parameters.ProductMode=$true }
           ./desktop/scripts/build-obs-native.ps1 @parameters
       - name: Inventory the runtime and enforce the P4 size budget
         # The builder already inventories BOTH variants before first start.
         # Pixel builds now contain private fixtures; only clean normal builds
         # may be inventoried again here. The budget itself is unchanged.
-        if: always() && steps.compile.outcome == 'success' && !inputs.pixel_test
+        if: always() && steps.compile.outcome == 'success' && !inputs.pixel_test && !inputs.product_mode
         shell: pwsh
         run: |
           $runtime = Join-Path $env:GITHUB_WORKSPACE 'build/obs-native-ci/runtime'
           if (-not (Test-Path (Join-Path $runtime 'webobs-native-prototype.json'))) { throw 'No staged runtime to inventory.' }
           python native-host/scripts/runtime_inventory.py --runtime $runtime --report build/obs-native-ci/native-runtime-inventory.json --max-runtime-bytes 104857600
       - name: Freeze clean non-default prototype before generating any config
-        if: ${{ !inputs.pixel_test }}
+        if: ${{ !inputs.pixel_test && !inputs.product_mode }}
         shell: pwsh
         env:
           NATIVE_VERSION: ${{ inputs.version }}
@@ -122,7 +128,7 @@ jobs:
           $hash = (Get-FileHash -LiteralPath $package -Algorithm SHA256).Hash.ToLowerInvariant()
           "$hash  $([IO.Path]::GetFileName($package))" | Set-Content "$package.sha256" -Encoding utf8
       - name: Require the frozen prototype ZIP to run from a clean extraction
-        if: ${{ !inputs.pixel_test }}
+        if: ${{ !inputs.pixel_test && !inputs.product_mode }}
         shell: pwsh
         env:
           NATIVE_VERSION: ${{ inputs.version }}
@@ -136,7 +142,7 @@ jobs:
           python -B native-host/tests/smoke_windows.py --runtime $extract --result (Join-Path $env:GITHUB_WORKSPACE 'build/obs-native-ci/native-portable-smoke.json')
           if ($LASTEXITCODE -ne 0) { throw 'Frozen portable ZIP startup/isolation smoke failed.' }
       - name: Install the frozen prototype twice and verify private config survives
-        if: ${{ !inputs.pixel_test }}
+        if: ${{ !inputs.pixel_test && !inputs.product_mode }}
         shell: pwsh
         env:
           NATIVE_VERSION: ${{ inputs.version }}
@@ -154,7 +160,7 @@ jobs:
           python -B native-host/tests/smoke_windows.py --runtime $root --result (Join-Path $env:GITHUB_WORKSPACE 'build/obs-native-ci/native-install-smoke-second.json') --existing-wall
           if ($LASTEXITCODE -ne 0) { throw 'Existing-wall smoke after reinstall failed.' }
       - name: Build and exercise the per-user installer (install, reinstall, uninstall)
-        if: ${{ !inputs.pixel_test }}
+        if: ${{ !inputs.pixel_test && !inputs.product_mode }}
         shell: pwsh
         env:
           NATIVE_VERSION: ${{ inputs.version }}
@@ -232,7 +238,7 @@ jobs:
           }
           $receipt | ConvertTo-Json -Depth 4 | Set-Content -LiteralPath (Join-Path $out 'native-nsis-installer.json') -Encoding utf8
       - name: Upgrade the shipped per-user installer in place
-        if: ${{ !inputs.pixel_test }}
+        if: ${{ !inputs.pixel_test && !inputs.product_mode }}
         shell: pwsh
         env:
           GH_TOKEN: ${{ github.token }}
@@ -302,7 +308,7 @@ jobs:
           }
           $receipt | ConvertTo-Json -Depth 4 | Set-Content -LiteralPath 'build/obs-native-ci/native-nsis-upgrade.json' -Encoding utf8
       - name: Upgrade a pinned previous prototype and verify the private profile survives
-        if: ${{ inputs.upgrade_previous && !inputs.pixel_test }}
+        if: ${{ inputs.upgrade_previous && !inputs.pixel_test && !inputs.product_mode }}
         shell: pwsh
         env:
           GH_TOKEN: ${{ github.token }}
@@ -395,7 +401,7 @@ jobs:
             if ((Get-FileHash -LiteralPath $restored -Algorithm SHA256).Hash.ToLowerInvariant() -ne $stableBefore[$key]) { throw "Restored profile differs at $key." }
           }
       - name: Measure the stock OBS 32.1.2 installation for a same-OS size reference
-        if: ${{ inputs.measure_obs_baseline && !inputs.pixel_test }}
+        if: ${{ inputs.measure_obs_baseline && !inputs.pixel_test && !inputs.product_mode }}
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
@@ -426,7 +432,7 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw 'Explaining the OBS same-OS size gap failed.' }
           Get-Content -LiteralPath $path
       - name: Preflight the P5 machine/tooling contract with public placeholder metadata
-        if: ${{ inputs.measure_obs_baseline && !inputs.pixel_test }}
+        if: ${{ inputs.measure_obs_baseline && !inputs.pixel_test && !inputs.product_mode }}
         shell: pwsh
         run: |
           $output = Join-Path $env:RUNNER_TEMP ('p5-preflight-' + $env:GITHUB_RUN_ID)
@@ -436,13 +442,13 @@ jobs:
           python -c "import json;d=json.load(open('build/obs-native-ci/native-p5-preflight-diagnostic.json',encoding='utf-8'));assert d['qualified'] is False and d['diagnostic'] is True and len(d['checks']) >= 8, d"
           Get-Content -LiteralPath build/obs-native-ci/native-p5-preflight-diagnostic.json -TotalCount 12
       - name: Require actual Qt plugin startup, private portable config and normal exit
-        if: ${{ !inputs.pixel_test }}
+        if: ${{ !inputs.pixel_test && !inputs.product_mode }}
         shell: pwsh
         run: |
           python -B native-host/tests/smoke_windows.py --runtime build/obs-native-ci/runtime --result build/obs-native-ci/native-startup-smoke.json --verify-video
           if ($LASTEXITCODE -ne 0) { throw 'Native frontend startup/isolation smoke failed; not camera or performance qualification.' }
       - name: Kill the real OBS host and require no surviving processes
-        if: ${{ !inputs.pixel_test }}
+        if: ${{ !inputs.pixel_test && !inputs.product_mode }}
         shell: pwsh
         run: |
           $source = Join-Path $env:GITHUB_WORKSPACE 'build/obs-native-ci/runtime'
@@ -453,7 +459,7 @@ jobs:
           python -B native-host/tests/smoke_windows.py --crash-smoke --runtime $runtime --result (Join-Path $env:GITHUB_WORKSPACE 'build/obs-native-ci/native-crash-smoke.json') --crash-after-seconds 8
           if ($LASTEXITCODE -ne 0) { throw 'Crash containment smoke failed.' }
       - name: Refuse a second host before it can duplicate the runtime
-        if: ${{ !inputs.pixel_test }}
+        if: ${{ !inputs.pixel_test && !inputs.product_mode }}
         shell: pwsh
         run: |
           $runtime = Join-Path $env:RUNNER_TEMP 'native-crash'
@@ -469,7 +475,7 @@ jobs:
           if-no-files-found: ignore
           retention-days: 7
       - name: Preserve clean prototype and bounded receipts only
-        if: always() && !inputs.pixel_test
+        if: always() && !inputs.pixel_test && !inputs.product_mode
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
           name: webobs-obs-native-prototype-${{ inputs.version }}

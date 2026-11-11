@@ -80,6 +80,8 @@ SettingsValues matching_settings(const ProductCamera &camera)
 	SettingsValues values;
 	values.booleans = {{"is_local_file", false}, {"hw_decode", camera.hardware_decode.value_or(true)}};
 	values.strings = {{"input", camera.url}};
+	if (camera.transport != "auto")
+		values.strings["ffmpeg_options"] = "rtsp_transport=" + camera.transport;
 	return values;
 }
 
@@ -569,6 +571,22 @@ int main()
 		run("integer-fps-" + std::to_string(fps), [=] { video_config_case(fps); });
 	for (int failure = 1; failure <= 8; ++failure)
 		run("video-runtime-check-" + std::to_string(failure), [=] { video_config_case(15, failure); });
+	for (const std::string transport : {"tcp", "udp"})
+		run("profile-transport-" + transport, [&] {
+			reset();
+			cameras[0].transport = transport;
+			auto result = webobs::native_host::create_product_five_camera_wall(cameras, "Fixture wall");
+			require(result.scene && result.error.empty(), "registered transport could not create source");
+			release_twice(result);
+			require_balanced();
+		});
+	run("reject-invalid-transport-before-OBS", [] {
+		reset();
+		cameras[4].transport = "tcp;invalid";
+		auto result = webobs::native_host::create_product_five_camera_wall(cameras, "Fixture wall");
+		check_failure(result, "camera-transport-invalid");
+		require(lookups == 0, "invalid transport reached OBS");
+	});
 
 	std::cout << "Pinned OBS product bootstrap API contract: " << passed << " passed, " << failed << " failed\n";
 	return failed == 0 ? 0 : 1;

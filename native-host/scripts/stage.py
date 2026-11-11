@@ -22,7 +22,7 @@ REQUIRED = (
 )
 
 
-def finalize(repo: Path, source: Path, runtime: Path, version: str) -> dict:
+def finalize(repo: Path, source: Path, runtime: Path, version: str, product: bool = False) -> dict:
     if not version or "-dev." not in version:
         raise ValueError("Only an explicitly development-tagged prototype may be staged")
     if not runtime.is_dir() or runtime.is_symlink() or (runtime / "webobs-native-prototype.json").exists():
@@ -42,6 +42,12 @@ def finalize(repo: Path, source: Path, runtime: Path, version: str) -> dict:
     shutil.copy2(source / "COPYING", licenses / "OBS-COPYING.txt")
     shutil.copy2(repo / "native-host/LICENSE", licenses / "PLUGIN-COPYING.txt")
     shutil.copy2(repo / "desktop/dependencies.lock.json", licenses / "desktop-dependencies.lock.json")
+    if product:
+        patch_receipt = source / ".webobs-product-patch.json"
+        if not patch_receipt.is_file() or not (runtime / "bin/64bit/Qt6Network.dll").is_file():
+            raise ValueError("Product integration requires the pinned frontend hook and Qt Network runtime")
+        shutil.copy2(patch_receipt, licenses / "product-frontend-patch.json")
+        shutil.copy2(repo / "native-host/patches/obs-32.1.2-product-frontend.patch", licenses)
     # OBS's own runtime install retains its data/licenses and dependency licenses.
     # This development tree is NOT approved as a redistributable license bundle.
     files = [p for p in runtime.rglob("*") if p.is_file()]
@@ -64,6 +70,9 @@ def finalize(repo: Path, source: Path, runtime: Path, version: str) -> dict:
         "sizeBytesBeforeManifest": sum(groups.values()),
         "sizeGroups": groups,
     }
+    if product:
+        manifest.update(productIntegration=True, publicationForbidden=True,
+                        qualification="R1 integration in progress; internal automation build")
     (runtime / "webobs-native-prototype.json").write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf-8")
     return manifest
 
@@ -74,6 +83,7 @@ if __name__ == "__main__":
     parser.add_argument("--source", type=Path, required=True)
     parser.add_argument("--runtime", type=Path, required=True)
     parser.add_argument("--version", required=True)
+    parser.add_argument("--product", action="store_true")
     args = parser.parse_args()
-    manifest = finalize(args.repo.resolve(), args.source.resolve(), args.runtime.resolve(), args.version)
+    manifest = finalize(args.repo.resolve(), args.source.resolve(), args.runtime.resolve(), args.version, args.product)
     print(json.dumps(manifest, indent=2))

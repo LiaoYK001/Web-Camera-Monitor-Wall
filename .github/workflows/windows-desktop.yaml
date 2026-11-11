@@ -10,6 +10,10 @@ on:
       obs_size_baseline: { type: boolean, default: false }
   workflow_dispatch:
     inputs:
+      product_mode:
+        description: 'Internal R1 product integration build with authenticated Qt UI and pre-restore frontend hook'
+        default: false
+        type: boolean
       native_host:
         description: 'Build the independent non-default OBS/Qt prototype; no legacy installer or publication'
         default: false
@@ -276,6 +280,7 @@ jobs:
     uses: ./.github/workflows/windows-obs-native-host.yaml
     with:
       version: ${{ inputs.version }}
+      product_mode: ${{ inputs.product_mode || false }}
       measure_obs_baseline: ${{ inputs.obs_size_baseline }}
       upgrade_previous: ${{ inputs.upgrade_previous }}
 

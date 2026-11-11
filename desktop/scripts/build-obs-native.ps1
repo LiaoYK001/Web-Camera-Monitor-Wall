@@ -7,9 +7,12 @@ param(
     [ValidateRange(1,64)][int]$Parallel = 4,
     [switch]$Offline,
     [switch]$SmokeTest,
-    [switch]$PixelTest
+    [switch]$PixelTest,
+    [switch]$ProductMode
 )
 $ErrorActionPreference = 'Stop'
+if ($ProductMode -and ($PixelTest -or $SmokeTest)) { throw 'Product mode requires the authenticated product integration test, separate from prototype smoke/pixels.' }
+$productBuild = if ($ProductMode) { 'ON' } else { 'OFF' }
 if ($SmokeTest -and $PixelTest) { throw 'Choose startup SmokeTest OR finite PixelTest; each requires a NEW private profile.' }
 if ($PixelTest -and -not (Get-Command 'node' -ErrorAction SilentlyContinue)) { throw 'PixelTest requires Node for synthetic patterns/pixel analysis, never for the native host.' }
 $pixelBuild = if ($PixelTest) { 'ON' } else { 'OFF' }
@@ -36,6 +39,7 @@ New-Item -ItemType Directory -Path $buildRoot | Out-Null
 $source = Join-Path $buildRoot 'obs-source'
 $prepare = @((Join-Path $repoRoot 'native-host/scripts/prepare.py'),'--repo',$repoRoot,'--output',$source,'--cache',$cacheRoot)
 if ($Offline) { $prepare += '--offline' }
+if ($ProductMode) { $prepare += '--product' }
 Invoke-Checked 'python' $prepare
 $obsBuild = Join-Path $buildRoot 'obs-build'
 $obsInstall = Join-Path $buildRoot 'obs-install'
@@ -62,7 +66,7 @@ try {
 }
 $pluginBuild = Join-Path $buildRoot 'plugin-build'
 # Explicit Qt6_DIR pins plugin ABI to the frontend's locked Qt, not PATH/system Qt.
-Invoke-Checked 'cmake' @('-S',(Join-Path $repoRoot 'native-host'),'-B',$pluginBuild,'-G','Visual Studio 17 2022','-A','x64',"-DCMAKE_PREFIX_PATH=$obsInstall;$deps;$qt", "-DQt6_DIR=$qt/lib/cmake/Qt6",'-DWEBOBS_NATIVE_BUILD_TESTS=ON',"-DWEBOBS_NATIVE_PIXEL_TEST=$pixelBuild","-DSIMDE_INCLUDE_DIR=$deps/include",'-DCMAKE_FIND_USE_PACKAGE_REGISTRY=OFF','-DCMAKE_EXPORT_PACKAGE_REGISTRY=OFF')
+Invoke-Checked 'cmake' @('-S',(Join-Path $repoRoot 'native-host'),'-B',$pluginBuild,'-G','Visual Studio 17 2022','-A','x64',"-DCMAKE_PREFIX_PATH=$obsInstall;$deps;$qt", "-DQt6_DIR=$qt/lib/cmake/Qt6",'-DWEBOBS_NATIVE_BUILD_TESTS=ON',"-DWEBOBS_NATIVE_PIXEL_TEST=$pixelBuild", "-DWEBOBS_NATIVE_PRODUCT_MODE=$productBuild", "-DSIMDE_INCLUDE_DIR=$deps/include",'-DCMAKE_FIND_USE_PACKAGE_REGISTRY=OFF','-DCMAKE_EXPORT_PACKAGE_REGISTRY=OFF')
 Invoke-Checked 'cmake' @('--build',$pluginBuild,'--config','Release','--parallel',"$Parallel")
 Invoke-Checked 'ctest' @('--test-dir',$pluginBuild,'-C','Release','--output-on-failure')
 Invoke-Checked 'python' @((Join-Path $repoRoot 'native-host/tests/test_build_contract.py'))
@@ -74,7 +78,9 @@ Invoke-Checked 'cmake' @('--install',$pluginBuild,'--config','Release','--prefix
 # products, are never loaded by obs64, and the NSIS installer would package
 # them. Remove them before stage.py records the file manifest and size groups.
 Invoke-Checked 'python' @((Join-Path $repoRoot 'native-host/scripts/prune_runtime.py'),'--runtime',$runtime,'--report',(Join-Path $buildRoot 'native-runtime-prune.json'))
-Invoke-Checked 'python' @((Join-Path $repoRoot 'native-host/scripts/stage.py'),'--repo',$repoRoot,'--source',$source,'--runtime',$runtime,'--version',$Version)
+$stageArguments = @((Join-Path $repoRoot 'native-host/scripts/stage.py'),'--repo',$repoRoot,'--source',$source,'--runtime',$runtime,'--version',$Version)
+if ($ProductMode) { $stageArguments += '--product' }
+Invoke-Checked 'python' $stageArguments
 if ($PixelTest) {
     # A test-enabled runtime must never masquerade as a redistributable prototype.
     # The compiler-installed marker is checked before annotating the stage manifest.

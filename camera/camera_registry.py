@@ -1362,13 +1362,16 @@ def ingest_analytics_signals(payload: dict, session_id: str, principal: str = ""
     return {"accepted": len(accepted), "events": accepted}
 
 
-def resolve_profile(database: sqlite3.Connection, camera_id: str, profile_id: str) -> dict:
+def resolve_profile(database: sqlite3.Connection, camera_id: str, profile_id: str, *,
+                    require_profile: bool = False) -> dict:
     camera = database.execute("SELECT * FROM cameras WHERE id=?", (camera_id,)).fetchone()
     if not camera:
         raise KeyError("camera not found")
     profile = database.execute(
         "SELECT * FROM stream_profiles WHERE camera_id=? AND id=?", (camera_id, profile_id)
     ).fetchone()
+    if require_profile and profile is None:
+        raise KeyError("profile not found")
     if not bool(camera["enabled"]) or (profile is not None and not bool(profile["enabled"])):
         raise PermissionError("camera profile is disabled")
     if profile is not None and profile["live_bitrate_cap_kbps"] is not None:
@@ -3670,7 +3673,8 @@ class Handler(BaseHTTPRequestHandler):
                 parts = path.removeprefix("/resolve/").split("/")
                 if len(parts) != 2 or not all(ID_RE.fullmatch(part) for part in parts):
                     self.respond(404, {"error": "not_found"}); return
-                try: self.respond(200, resolve_profile(database, parts[0], parts[1]))
+                try: self.respond(200, resolve_profile(database, parts[0], parts[1],
+                                                       require_profile=query == "requireProfile=1"))
                 except KeyError: self.respond(404, {"error": "not_found"})
                 except InsecureHttpDenied: self.respond(403, {"error": "insecure_http_not_approved"})
                 except (PermissionError, OSError, ValueError, json.JSONDecodeError): self.respond(503, {"error": "credentials_unavailable"})
