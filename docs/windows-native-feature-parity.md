@@ -57,10 +57,13 @@ The dev.79 internal R1 component receipt measures 197,867,225 bytes before the r
 
 ## 2026-11-12 R1 当前门槛 / Current R1 gate
 
-dev.86（43219901436、source 52b877c）的实际统一入口 UI/media/lifecycle passed=true：九组最终捕获各八帧通过，包含五路动态 HEVC、注销/禁用/配置变更/失效清屏、保存 IDs、重登重启、固定 origin 冲突拒绝及 Job 崩溃收束。恢复对照失败，安装态未执行。dev.87（43226176793、source 198ed4b）正在执行普通用户 scope/账号隔离、普通改密、细化恢复探针与独立内部 NSIS，不预记通过。均不代表完整功能、旧数据升级、硬解或目标机性能达标。
+dev.86（43219901436、source 52b877c）的实际统一入口 UI/media/lifecycle passed=true：九组最终捕获各八帧通过，包含五路动态 HEVC、注销/禁用/配置变更/失效清屏、保存 IDs、重登重启、固定 origin 冲突拒绝及 Job 崩溃收束。恢复对照失败，安装态未执行。dev.87（43226176793、source 198ed4b）22 项实际 UI 检查和 13 组八帧捕获通过，含普通 scope/账号隔离/改密撤销；恢复对照真实 RTSP I/O 通过但正常关窗超时，NSIS 实际落盘/哈希/体积通过后在快捷方式检查附近失败，installed UI/卸载未执行。均不代表完整功能、旧数据升级、硬解或目标机性能达标。
 
-Dev.86 passes the existing portable product UI/media/lifecycle gate with nine eight-frame capture groups. The restore positive control fails and installation did not run. Dev.87 adds scoped-viewer/account-isolation/password-change tests and independent installation evidence, still pending. R2–R7 remain open and no intermediate user testing is requested.
+Dev.86 passes the existing portable product UI/media/lifecycle gate with nine eight-frame capture groups. The restore positive control fails and installation did not run. Dev.87 passes scoped-viewer/account-isolation/password-change regressions. Restore normal close fails after real RTSP I/O; fresh NSIS reaches measured installation but fails before installed UI. R2–R7 remain open and no intermediate user testing is requested.
 
 2026-11-12 后续：dev.84（43176197394）五路 UI 选择/建图与八帧最终窗口捕获通过，五路像素因纯红编辑叠线仍失败；后续复用 OBS Locked Preview 的修改待新 Windows job。未执行后面的保存恢复/安装态门槛。 / Dev.84 passed choice, graph and guarded capture, but final five-stream pixels failed. The locked-preview repair is pending Windows validation.
 
 2026-11-12 后续：dev.85（43178800584、source 6edb407）实际产品五路 HEVC 最终 Preview 八帧颜色/标记/时间推进通过，保存 camera/profile ID 通过；注销时源计数未退休归零，后续空白/重登/重启/安装态未通过。core 独占端口的实际 Windows 强制绑定负向检查通过。不是目标机硬解/性能或完整产品证明。 / Dev.85 passes the first actual five-stream final-pixel sequence and exclusive bind tests, then fails at logout retirement; later lifecycle and installation remain open.
+
+
+dev.87 实际 NSIS 安装前首启测量：198,314,717 logical B、201,252,904 unnamed-stream allocation B、1865 files；setup 70,074,866 B。安装 gate 总体失败于 installed UI 前，因此仅作为本次不完整集成范围的实测体积，完整业务/升级/首次运行成本仍待补齐。 / Actual fresh installed footprint was measured in dev.87, but installed-entry and uninstall gates did not execute. It is not a full-product size qualification.

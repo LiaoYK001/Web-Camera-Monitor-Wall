@@ -45,17 +45,26 @@ try {
     $scope = New-InstalledTreeFootprintScope -Root $installed -Purpose isolated-nsis-install-before-first-start
     $install = Start-Process -FilePath $setup -ArgumentList '/S', "/D=$installed" -Wait -PassThru
     if ($install.ExitCode -ne 0) { throw 'Actual NSIS fresh installation failed.' }
+    $phase = 'installed-registration'
     if ((Get-ItemProperty $appKey).InstallDir -ne $installed -or
         (Get-ItemProperty $uninstallKey).InstallLocation -ne $installed) { throw 'Installed registry identity mismatch.' }
+    $phase = 'installed-payload'
     $installedPayload = & $python -B $verifier --runtime $installed --installed
     if ($LASTEXITCODE -ne 0) { throw 'Installed payload hash verification failed.' }
     $installedPayload = $installedPayload | ConvertFrom-Json
+    $phase = 'installed-footprint'
     $footprint = Measure-InstalledTreeFootprint -Scope $scope
     if ($footprint.logicalBytes -ne $installedPayload.totalBytes) { throw 'Installed byte accounting mismatch.' }
     $report.footprint = $footprint
+    $phase = 'installed-shortcut'
+    if (-not (Test-Path -LiteralPath $shortcut -PathType Leaf)) { throw 'Installed integration shortcut missing.' }
     $shell = New-Object -ComObject WScript.Shell
     $link = $shell.CreateShortcut($shortcut)
-    if ($link.TargetPath -ne (Join-Path $installed 'bin/webobs-wall.exe') -or $link.Arguments) {
+    $expectedTarget = [IO.Path]::GetFullPath((Join-Path $installed 'bin/webobs-wall.exe'))
+    $report.shortcutTargetMatches = -not [string]::IsNullOrEmpty($link.TargetPath) -and
+        [string]::Equals([IO.Path]::GetFullPath($link.TargetPath), $expectedTarget, [StringComparison]::OrdinalIgnoreCase)
+    $report.shortcutArgumentsEmpty = [string]::IsNullOrEmpty($link.Arguments)
+    if (-not $report.shortcutTargetMatches -or -not $report.shortcutArgumentsEmpty) {
         throw 'Installed shortcut does not target the unified native entry.'
     }
     [Runtime.InteropServices.Marshal]::FinalReleaseComObject($link) | Out-Null
@@ -98,6 +107,8 @@ try {
     Remove-Item -LiteralPath $privateRoot -Recurse -Force
 } catch {
     $report.failurePhase = $phase
+    $report.exceptionType = $_.Exception.GetType().FullName
+    $report.errorId = if ($_.FullyQualifiedErrorId -match '^[A-Za-z0-9_.-]{1,96}$') { $_.FullyQualifiedErrorId } else { 'private-detail-redacted' }
     throw 'Internal native product installer gate failed; see sanitized phase receipt.'
 } finally {
     $report | ConvertTo-Json -Depth 16 | Set-Content -LiteralPath (Join-Path $buildRoot 'native-product-nsis.json') -Encoding utf8

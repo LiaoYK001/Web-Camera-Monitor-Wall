@@ -17,6 +17,7 @@ import hashlib
 import json
 import os
 from pathlib import Path
+import re
 import secrets
 import shutil
 import socketserver
@@ -76,21 +77,42 @@ def seed(config, encoded):
     return path
 
 
-def close_windows(pid):
+def close_windows(pid, expected_window=None):
     user = ctypes.WinDLL("user32", use_last_error=True)
     callback = ctypes.WINFUNCTYPE(wintypes.BOOL, wintypes.HWND, wintypes.LPARAM)
     user.GetWindowThreadProcessId.argtypes = [wintypes.HWND, ctypes.POINTER(wintypes.DWORD)]
+    user.GetWindowThreadProcessId.restype = wintypes.DWORD
     user.PostMessageW.argtypes = [wintypes.HWND, wintypes.UINT, wintypes.WPARAM, wintypes.LPARAM]
+    user.PostMessageW.restype = wintypes.BOOL
     user.EnumWindows.argtypes = [callback, wintypes.LPARAM]
+    user.EnumWindows.restype = wintypes.BOOL
+    user.GetClassNameW.argtypes = [wintypes.HWND, wintypes.LPWSTR, ctypes.c_int]
+    user.GetClassNameW.restype = ctypes.c_int
+    user.GetWindowLongPtrW.argtypes = [wintypes.HWND, ctypes.c_int]
+    user.GetWindowLongPtrW.restype = ctypes.c_ssize_t
+    user.GetWindow.argtypes = [wintypes.HWND, wintypes.UINT]
+    user.GetWindow.restype = wintypes.HWND
+    posted = 0
 
     def close(window, _):
+        nonlocal posted
         owner = wintypes.DWORD()
         user.GetWindowThreadProcessId(window, ctypes.byref(owner))
         if owner.value == pid:
-            user.PostMessageW(window, 0x0010, 0, 0)
+            name = ctypes.create_unicode_buffer(256)
+            user.GetClassNameW(window, name, len(name))
+            # Media restore can start before the main native HWND exists. Qt's
+            # earlier clipboard/theme/tool windows are not a closable frontend.
+            if ((expected_window is not None and window == expected_window) or
+                    (expected_window is None and re.fullmatch(r"Qt[0-9]+QWindowIcon", name.value) and
+                     user.GetWindowLongPtrW(window, -16) & 0x00C00000 and not user.GetWindow(window, 4))):
+                if user.PostMessageW(window, 0x0010, 0, 0):
+                    posted += 1
         return True
 
-    user.EnumWindows(callback(close), 0)
+    if not user.EnumWindows(callback(close), 0):
+        raise ctypes.WinError(ctypes.get_last_error())
+    return posted
 
 
 def exercise(runtime, control_frontend, report):
@@ -194,7 +216,8 @@ def exercise(runtime, control_frontend, report):
                 wait_for(restored_io, "saved collection positive control did not perform RTSP media I/O", timeout=30)
                 result["checks"].append("unguarded-saved-collection-rtsp-request-observed")
                 phase = "unguarded-normal-close"
-                close_windows(frontend.pid)
+                result["controlCloseWindows"] = wait_for(lambda: close_windows(frontend.pid),
+                    "unguarded main Qt window never became available for normal close", timeout=10)
                 assert current.wait(timeout=30) == 0, "unguarded frontend did not close normally"
                 wait_for(lambda: exited(frontend), "owned control frontend survived normal close")
             result["checks"].append("same-saved-collection-performs-rtsp-io-without-product-guard")
@@ -255,7 +278,9 @@ def exercise(runtime, control_frontend, report):
             result["checks"].extend(["actual-selected-collection-refused-before-load", "zero-preauthentication-rtsp-requests",
                 "locked-ui-zero-media-and-no-session", "refused-collection-preserved"])
             phase = "normal-shutdown"
-            close_windows(frontend_pid)
+            main_window = int(observation["windows"][0]["rootHwnd"], 16)
+            result["productCloseWindows"] = wait_for(lambda: close_windows(frontend_pid, main_window),
+                "protected main Qt window never became available for normal close", timeout=10)
             assert current.wait(timeout=40) == 0
             wait_for(lambda: all(exited(identity) for identity in identities), "owned restore processes survived shutdown")
             assert fingerprint(external) == external_before, "external OBS profile changed during isolated restore test"

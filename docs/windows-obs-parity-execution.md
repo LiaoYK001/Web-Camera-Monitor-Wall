@@ -1115,3 +1115,14 @@ Linux 实际 libobs/图形运行回归已验证：末项绑定错误/冲突和�
 Windows 产品脚本另外增加五格重复第一摄像机：要求实际 ffmpeg_source 只有一个、五个 UUID 相同，八帧最终像素均为第一路且持续推进，随后恢复五个不同通道再检查；原先五路独立 HEVC 检查保持不变。此改动不在正在执行的 dev.87，实际 Windows 编译/像素和新源退休回归仍待下一轮。当前 watch 仍在重新授权前清空旧图，跨切换不断流、完整 Scene/Studio、Preview/Program、固定多投影和音轨仍待继续接线。
 
 The real watch action now builds a validated SceneDocument through a product-owned shared-source pool. Actual libobs tests pass ownership, whole-document preflight, compatible cross-graph reuse, item mapping, account separation, tamper refusal and last-owner endpoint retirement using an explicitly inert input fixture. Existing Program pixel tests also pass. New Windows tests require five items to share one actual HEVC source and preserve the five-distinct-channel baseline; they are not included in dev.87 and remain pending. The fixed UI, full Studio, continuous graph swaps, audio routing and multiple projectors are still open R2 work.
+
+
+#### dev.87 权限 UI 通过、恢复关闭与安装快捷方式定位 / Permission UI passes; restore-close and shortcut failures
+
+`43226176793`（source 198ed4b、dev.87）最终 failure。portable 实际产品入口 UI/media/lifecycle passed=true，22 项检查通过；13 组最终窗口捕获各八帧通过，包含 scoped viewer 看不到第六个越权项、允许五路动态像素、immutable account ID 布局隔离、普通 If-Match 用户 API 撤回 camera scope 后清屏/恢复，以及普通 account/password API 改密撤销当前原生会话。logoutRetirementMs=4。仍为 CI 合成五路 HEVC 软件解码，非目标机/硬解/性能/完整产品验收。
+
+恢复对照这次明确通过 exact owned frontend 与真实 saved-collection RTSP I/O：31 个匹配 OPTIONS、31 个完整头；失败在 unguarded-normal-close，TimeoutExpired，入口仍活跃。故先前 parser 修复不能写成已解释根因，产品拒绝分支仍未执行。RTSP 在 Load 期间就能开始，而旧关窗只枚举一次、不确认存在可关闭窗口；这是可能的启动时序竞争。后续等待确切所属 Qt 主窗口出现，再发送普通 WM_CLOSE，保留关闭窗口数和非强杀退出要求；protected 端使用已观察到的实际 root HWND。效果待下一轮 Windows 验证，不放宽零 I/O 和正常退出断言。
+
+首次内部 NSIS 已实际构建（70,074,866 B）并安装到新 Unicode/空格私密目录，注册校验、载荷哈希及完整体积测量已执行：198,314,717 logical B / 201,252,904 unnamed-stream allocation B / 1865 files。失败仍旧粗分 install，但 receipt 已含 footprint，随后仅剩快捷方式读取/比较及 COM 释放，installed UI 未开始、卸载保留未验证。后续将注册/载荷/体积/快捷方式阶段独立记录，路径经 GetFullPath 后按 Windows 大小写语义比较，仍要求统一入口绝对目标一致且 arguments 为空；保留固定异常类型/脱敏 errorId。不得将已生成安装器或成功落盘计作安装验收完成，也不据此记完整功能或 159 MB 达标。
+
+Dev.87 passes 22 actual portable product checks and thirteen eight-frame capture groups, including scoped-viewer isolation, ordinary scope revocation and password-change invalidation. The restore control proves actual saved-collection RTSP I/O but times out during normal close; the protected phase remains unexecuted. Fresh NSIS installation reaches hash verification and measured footprint, then fails before installed UI. Follow-up waits for an owned main window and normalizes exact shortcut targets while preserving hard shutdown, zero-I/O, payload and full-product gates. No internal executable is published.
