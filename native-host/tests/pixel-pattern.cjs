@@ -35,6 +35,16 @@ function inspect(image, { order = ORDER, dynamic = true, inset = 0 } = {}) {
   for (const [x, y] of [[810, 350], [900, 480], [700, 500]]) near(sampleCanvas(x, y), [0, 0, 0], 'Sixth tile must be empty', 30);
   return counters;
 }
+function inspectEmpty(image, { inset = 0 } = {}) {
+  const scale = Math.min((image.width - inset * 2) / 960, (image.height - inset * 2) / 540);
+  assert.ok(scale > 0 && image.width >= 320 && image.height >= 180, 'Client is too small');
+  const left = (image.width - scale * 960) / 2, top = (image.height - scale * 540) / 2;
+  for (let y = 12; y < 540; y += 24) for (let x = 12; x < 960; x += 24) {
+    const rgb = image.pixel(Math.floor(left + x * scale), Math.floor(top + y * scale));
+    assert.ok(rgb.every(v => v <= 30), 'Protected preview retained visible media');
+  }
+  return [];
+}
 function analyze(directory, options) {
   const samples = [];
   for (let i = 0; i < 8; i++) {
@@ -44,15 +54,16 @@ function analyze(directory, options) {
       assert.ok(bytes.length <= 64 * 1024 * 1024, 'Oversized screenshot');
       const image = pattern.bitmap(bytes);
       size = ` (bitmap ${image.width}x${image.height})`;
-      samples.push({ sample: i, passed: true, width: image.width, height: image.height, counters: inspect(image, options) });
+      samples.push({ sample: i, passed: true, width: image.width, height: image.height,
+        counters: options.empty ? inspectEmpty(image, options) : inspect(image, options) });
     } catch (error) {
       // fs errors contain local paths; public synthetic summaries must not.
       const message = error.code && error.code !== 'ERR_ASSERTION' ? `Synthetic client sample unavailable (${error.code})` : String(error.message).slice(0, 200) + size;
       samples.push({ sample: i, passed: false, error: message });
     }
   }
-  let temporalProgress = !options.dynamic, progressError;
-  if (options.dynamic) {
+  let temporalProgress = options.empty || !options.dynamic, progressError;
+  if (options.dynamic && !options.empty) {
     try { pattern.progress(samples.filter(s => s.passed).map(s => s.counters)); temporalProgress = true; }
     catch (error) { progressError = String(error.message); }
   }
@@ -84,6 +95,8 @@ function selftest() {
   assert.throws(() => pattern.progress(Array.from({ length: 8 }, () => [3,3,3,3,3])), /Frozen/);
   assert.throws(() => inspect(synthetic(960,540), { inset: 30 }), /Wrong|Missing|Invalid/);
   pattern.progress([0,1,2].map(counter => inspect(synthetic(960,540,{ counter }))));
+  assert.deepEqual(inspectEmpty({ width: 960, height: 540, pixel: () => [0,0,0] }), []);
+  assert.throws(() => inspectEmpty(synthetic(960,540)), /retained visible media/);
   console.log('PASS: 3x2 SCALE_INNER, Preview inset, colors, markers, all five temporal channels and negative cases');
 }
 if (require.main === module) {
@@ -93,10 +106,11 @@ if (require.main === module) {
     const channel = Number(args[0]);
     assert.ok(Number.isInteger(channel) && channel >= 0 && channel < 5);
     fs.writeFileSync(args[1], Buffer.concat(Array.from({ length: pattern.FRAMES }, (_, counter) => pattern.frame(channel,counter))), { flag: 'wx' });
-  } else if (mode === 'analyze') {
+  } else if (mode === 'analyze' || mode === 'analyze-empty') {
     const [directory, role, order, dynamic] = args;
     assert.ok(['main-preview', 'program-projector', 'program-fullscreen'].includes(role));
-    console.log(JSON.stringify(analyze(directory, { inset: role === 'main-preview' ? 10 : 0, order: order === 'reverse' ? REVERSED : ORDER, dynamic: dynamic === 'true' })));
+    console.log(JSON.stringify(analyze(directory, { inset: role === 'main-preview' ? 10 : 0,
+      empty: mode === 'analyze-empty', order: order === 'reverse' ? REVERSED : ORDER, dynamic: dynamic === 'true' })));
   } else throw new Error('Expected selftest, fixture or analyze');
 }
-module.exports = { inspect, analyze, synthetic };
+module.exports = { inspect, inspectEmpty, analyze, synthetic };

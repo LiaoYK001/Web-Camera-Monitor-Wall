@@ -44,6 +44,10 @@ core 原生 `cameras/authorize` 与 `cameras/resolve` 在同一次请求内使�
 
 The actual native selection routes use this adapter before resolving any endpoint. All chunks must pass, with local identity and deadline checks plus the final authoritative scene check; no grant is cached across requests. A five-camera renewal now uses one batch and two scene checks. Exact reply identity/order/count, transport bounds and failure cleanup remain enforced. This is request-count evidence, not measured CPU parity; catalog filtering still uses individual decisions.
 
+产品观看批次使用明确的 camera/Profile 对：`live.view` requirement 增加非空、严格标识符 `profileId`，该字段不允许用于其他 permission。Registry 的组与 camera/Profile 存在、启用状态在同一个显式只读事务中检查；缺 Profile 为不可用，camera 或 Profile 禁用为拒绝，均在读取任何私密端点之前失败。返回 requirement 必须完整回显 Profile，C++ `authorize_profiles` 拒绝 camera-only 响应降级。普通不带 Profile 的库调用保留原语义。此处仍未检测已启用 Profile 的连接配置变化，不能写成配置变化续验已完成。
+
+Product viewing uses exact camera/Profile requirements. The optional nonempty `profileId` is allowed only for camera-bound live.view; one explicit read-only Registry transaction checks groups and both enabled flags. Missing or disabled Profiles reject the operation before endpoint resolution. The typed C++ adapter rejects replies that drop Profile identity. Connection-configuration change detection remains separate work.
+
 ## 接入前仍须保留的契约 / Remaining integration contracts
 
 可信 adapter 必须从 socket 获得 peer，不信任 `X-Forwarded-For` 或请求 principal；在构造请求前拒绝重复/折叠的 Host、Origin、cookie，限制 body/header、连接数与请求时限。当前库不是 HTTP parser，也不验证 OBS 参数。会话及内部凭据文件仍须 owner 私密目录/Windows ACL；账号服务仍须受单实例、Job 与退出回收管理。仅通过授权后在同一原生 frontend 线程操作同一 OBS graph；不开放旧 core 通用可写 API，不启动完整 Supervisor。

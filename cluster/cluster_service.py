@@ -668,17 +668,23 @@ class ClusterStore:
         requirements = value["requirements"]
         if not isinstance(requirements, list) or not 1 <= len(requirements) <= NATIVE_BATCH_ITEMS:
             raise ApiError(400, "invalid_request", "native batch requirements are invalid")
-        pairs: list[tuple[str, str]] = []
+        pairs: list[tuple[str, str, str]] = []
         for item in requirements:
-            if not isinstance(item, dict) or set(item) != {"permission", "cameraId"} or \
+            if not isinstance(item, dict) or set(item) not in ({"permission", "cameraId"},
+                                                             {"permission", "cameraId", "profileId"}) or \
                     not isinstance(item["permission"], str) or item["permission"] not in PERMISSIONS or \
                     not isinstance(item["cameraId"], str) or \
                     (item["cameraId"] and not IDENTIFIER.fullmatch(item["cameraId"])):
                 raise ApiError(400, "invalid_request", "native batch requirements are invalid")
-            pairs.append((item["permission"], item["cameraId"]))
+            profile_id = item.get("profileId", "")
+            if "profileId" in item and (item["permission"] != "live.view" or not item["cameraId"] or
+                    not isinstance(profile_id, str) or not IDENTIFIER.fullmatch(profile_id)):
+                raise ApiError(400, "invalid_request", "native batch requirements are invalid")
+            pairs.append((item["permission"], item["cameraId"], profile_id))
         if len(set(pairs)) != len(pairs):
             raise ApiError(400, "invalid_request", "native batch requirements contain duplicates")
-        camera_ids = list(dict.fromkeys(camera_id for _, camera_id in pairs if camera_id))
+        camera_ids = list(dict.fromkeys(camera_id for _, camera_id, _ in pairs if camera_id))
+        profile_ids = [(camera_id, profile_id) for _, camera_id, profile_id in pairs if profile_id]
         rejection: ApiError | None = None
         groups: dict[str, str] | None = None
         with self._native_auth_transaction():
@@ -702,6 +708,7 @@ class ClusterStore:
                         try:
                             database = sqlite3.connect(
                                 f"file:{self.camera_registry_path.as_posix()}?mode=ro", uri=True, timeout=1)
+                            database.execute("BEGIN")
                             rows = database.execute(
                                 "SELECT id,group_id FROM cameras WHERE id IN (" +
                                 ",".join("?" for _ in camera_ids) + ")", camera_ids).fetchall()
@@ -713,6 +720,18 @@ class ClusterStore:
                                                      "camera registry is unavailable")
                             else:
                                 groups = resolved
+                            if rejection is None and profile_ids:
+                                profile_rows = database.execute(
+                                    "SELECT p.camera_id,p.id,c.enabled,p.enabled FROM stream_profiles p "
+                                    "JOIN cameras c ON c.id=p.camera_id WHERE (p.camera_id,p.id) IN (" +
+                                    ",".join("(?,?)" for _ in profile_ids) + ")",
+                                    [part for pair in profile_ids for part in pair]).fetchall()
+                                active = {(item[0], item[1]): (item[2], item[3]) for item in profile_rows}
+                                if any(pair not in active for pair in profile_ids) or any(
+                                        flag not in (0, 1) for flags in active.values() for flag in flags):
+                                    rejection = ApiError(503, "native_registry_unavailable", "camera registry is unavailable")
+                                elif any(flags != (1, 1) for flags in active.values()):
+                                    rejection = ApiError(403, "permission_rejected", "permission or resource scope was rejected")
                         except sqlite3.Error:
                             rejection = ApiError(503, "native_registry_unavailable",
                                                  "camera registry is unavailable")
@@ -721,7 +740,7 @@ class ClusterStore:
                                 database.close()
                 if rejection is None:
                     principal = self.principal(row["id"])
-                    for permission, camera_id in pairs:
+                    for permission, camera_id, _profile_id in pairs:
                         if not principal.permits(permission, camera_id, groups.get(camera_id, "") if groups else ""):
                             self._audit("auth.batch-authorization", principal.user_id, permission, "rejected")
                             rejection = ApiError(403, "permission_rejected",
@@ -732,8 +751,9 @@ class ClusterStore:
         # The whole batch shares one decision snapshot; any denial denies the
         # entire batch. No partial executable subset is returned.
         return {"allowed": True, "userId": value["userId"], "authEpoch": value["authEpoch"],
-                "requirements": [{"permission": permission, "cameraId": camera_id}
-                                 for permission, camera_id in pairs]}
+                "requirements": [{"permission": permission, "cameraId": camera_id,
+                                  **({"profileId": profile_id} if profile_id else {})}
+                                 for permission, camera_id, profile_id in pairs]}
 
     def authorize(self, username: str, permission: str, camera_id: str = "", group_id: str = "") -> dict[str, Any]:
         if permission not in PERMISSIONS:

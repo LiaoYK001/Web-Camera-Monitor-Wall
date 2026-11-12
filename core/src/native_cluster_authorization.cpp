@@ -194,8 +194,7 @@ NativeAuthorizationDecision NativeClusterAuthorizationBackend::authorize_batch(s
         return Decision::unavailable;
     try {
         std::set<std::pair<std::string_view, std::string_view>> unique;
-        std::string body = "{\"username\":\"" + std::string(principal) + "\",\"userId\":\"" + identity.user_id +
-            "\",\"authEpoch\":\"" + identity.auth_epoch + "\",\"requirements\":[";
+        std::string body = "[";
         for (const auto &item : requirements) {
             if ((item.permission != "scene.read" && item.permission != "scene.write" && item.permission != "live.view") ||
                 (!item.resource_id.empty() && !identifier(item.resource_id)) ||
@@ -207,7 +206,40 @@ NativeAuthorizationDecision NativeClusterAuthorizationBackend::authorize_batch(s
             body += "{\"permission\":\"" + std::string(item.permission) + "\",\"cameraId\":\"" +
                 std::string(item.resource_id) + "\"}";
         }
-        body += "]}";
+        body += "]";
+        return batch_request(principal, identity, body);
+    } catch (...) { return Decision::unavailable; }
+}
+
+NativeAuthorizationDecision NativeClusterAuthorizationBackend::authorize_profiles(std::string_view principal,
+    const SessionIdentity &identity, std::span<const NativeClusterProfileRequirement> profiles) const noexcept
+{
+    if (!configured() || !identifier(principal, 3) || !lower_hex(identity.user_id, 32) ||
+        !lower_hex(identity.auth_epoch, 32) || profiles.empty() || profiles.size() > 16)
+        return Decision::unavailable;
+    try {
+        std::set<std::pair<std::string_view, std::string_view>> unique;
+        std::string body = "[";
+        for (const auto &item : profiles) {
+            if (!identifier(item.camera_id) || !identifier(item.profile_id) ||
+                !unique.emplace(item.camera_id, item.profile_id).second)
+                return Decision::unavailable;
+            if (body.back() != '[')
+                body += ',';
+            body += "{\"permission\":\"live.view\",\"cameraId\":\"" + std::string(item.camera_id) +
+                "\",\"profileId\":\"" + std::string(item.profile_id) + "\"}";
+        }
+        body += "]";
+        return batch_request(principal, identity, body);
+    } catch (...) { return Decision::unavailable; }
+}
+
+NativeAuthorizationDecision NativeClusterAuthorizationBackend::batch_request(std::string_view principal,
+    const SessionIdentity &identity, const std::string &requirements) const noexcept
+{
+    try {
+        const std::string body = "{\"username\":\"" + std::string(principal) + "\",\"userId\":\"" + identity.user_id +
+            "\",\"authEpoch\":\"" + identity.auth_epoch + "\",\"requirements\":" + requirements + "}";
         long status = 0;
         std::string reply;
         if (!exchange("/auth/native-authorize-batch", body, status, reply))
@@ -217,19 +249,14 @@ NativeAuthorizationDecision NativeClusterAuthorizationBackend::authorize_batch(s
         std::unique_ptr<json_t, decltype(&json_decref)> root(
             json_loadb(reply.data(), reply.size(), JSON_REJECT_DUPLICATES, nullptr), &json_decref);
         const json_t *items = root ? json_object_get(root.get(), "requirements") : nullptr;
+        std::unique_ptr<json_t, decltype(&json_decref)> expected(
+            json_loadb(requirements.data(), requirements.size(), JSON_REJECT_DUPLICATES, nullptr), &json_decref);
         if (!json_is_object(root.get()) || json_object_size(root.get()) != 4 ||
             !json_is_true(json_object_get(root.get(), "allowed")) ||
             string_value(json_object_get(root.get(), "userId")) != identity.user_id ||
             string_value(json_object_get(root.get(), "authEpoch")) != identity.auth_epoch ||
-            !json_is_array(items) || json_array_size(items) != requirements.size())
+            !expected || !json_is_array(items) || !json_equal(items, expected.get()))
             return Decision::unavailable;
-        for (std::size_t index = 0; index < requirements.size(); ++index) {
-            const auto *item = json_array_get(items, index);
-            if (!json_is_object(item) || json_object_size(item) != 2 ||
-                string_value(json_object_get(item, "permission")) != requirements[index].permission ||
-                string_value(json_object_get(item, "cameraId")) != requirements[index].resource_id)
-                return Decision::unavailable;
-        }
         return Decision::allowed;
     } catch (...) { return Decision::unavailable; }
 }

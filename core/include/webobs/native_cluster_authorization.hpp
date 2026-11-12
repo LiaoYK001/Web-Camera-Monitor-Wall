@@ -19,6 +19,11 @@ struct NativeClusterAuthorizationConfig {
     std::chrono::milliseconds request_timeout{2000};
 };
 
+struct NativeClusterProfileRequirement {
+    std::string_view camera_id;
+    std::string_view profile_id;
+};
+
 // Renderer-free adapter for the existing loopback cluster authority. Configuration
 // comes from the trusted host, NEVER a renderer request or browser credential.
 class NativeClusterAuthorizationBackend {
@@ -40,6 +45,10 @@ public:
     // their execution deadline. A denial never returns a partial executable set.
     [[nodiscard]] NativeAuthorizationDecision authorize_batch(std::string_view principal,
         const SessionIdentity &identity, std::span<const NativeOperationRequirement> requirements) const noexcept;
+    // Product viewing also requires each exact Profile to exist and both the
+    // camera and Profile to remain enabled in the authoritative Registry.
+    [[nodiscard]] NativeAuthorizationDecision authorize_profiles(std::string_view principal,
+        const SessionIdentity &identity, std::span<const NativeClusterProfileRequirement> profiles) const noexcept;
 
 private:
     [[nodiscard]] NativeAuthorizationDecision request(std::string_view principal,
@@ -47,6 +56,8 @@ private:
         std::string_view camera_id) const noexcept;
     [[nodiscard]] bool exchange(std::string_view route, const std::string &body,
         long &status, std::string &reply) const noexcept;
+    [[nodiscard]] NativeAuthorizationDecision batch_request(std::string_view principal,
+        const SessionIdentity &identity, const std::string &requirements) const noexcept;
     NativeClusterAuthorizationConfig config_;
     // Copies share only our curl_global_init reference, never an easy handle.
     std::shared_ptr<void> runtime_;

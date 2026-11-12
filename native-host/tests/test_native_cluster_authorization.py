@@ -309,7 +309,7 @@ class NativeAccountTests(unittest.TestCase):
             self.assertEqual(probe.call(op="init", token=self.token, connectMs=100, totalMs=500), 200)
             self.assertEqual(probe.auth(), 200)
 
-    def hostile(self, *, body=b"", status=200, headers=(), delay=0, env=None, token=None, connect=100, total=500, direct=None, batch=None):
+    def hostile(self, *, body=b"", status=200, headers=(), delay=0, env=None, token=None, connect=100, total=500, direct=None, batch=None, profiles=False):
         observed = []
 
         class Handler(http.server.BaseHTTPRequestHandler):
@@ -335,7 +335,7 @@ class NativeAccountTests(unittest.TestCase):
                 self.token if token is None else token, connect=connect, total=total, env=env) as probe:
             probe.create()
             started = time.monotonic()
-            reply = (probe.call(op="batch", **batch) if batch is not None else
+            reply = (probe.call(op="profiles" if profiles else "batch", **batch) if batch is not None else
                      probe.auth() if direct is None else probe.call(op="direct", **direct))
             elapsed = time.monotonic() - started
             with contextlib.closing(sqlite3.connect(probe.path)) as db, db:
@@ -389,6 +389,18 @@ class NativeAccountTests(unittest.TestCase):
                       [{"permission": "live.view", "cameraId": "../bad"}]):
             reply, observed, _, _ = self.hostile(batch={**request, "requirements": items})
             self.assertEqual((reply, observed), (503, []))
+
+    def test_profile_batch_reply_cannot_downgrade_to_camera_only_authorization(self):
+        requirements = [{"permission": "live.view", "cameraId": "camera-a", "profileId": "main"}]
+        request = {"user": "viewer-one", "userId": "a" * 32, "authEpoch": "b" * 32,
+                   "requirements": requirements}
+        good = {"allowed": True, "userId": "a" * 32, "authEpoch": "b" * 32, "requirements": requirements}
+        self.assertEqual(self.hostile(body=json.dumps(good).encode(), batch=request, profiles=True)[0], 200)
+        camera_only = {**good, "requirements": [{"permission": "live.view", "cameraId": "camera-a"}]}
+        self.assertEqual(self.hostile(body=json.dumps(camera_only).encode(), batch=request, profiles=True)[0], 503)
+        invalid = {**request, "requirements": [{"cameraId": "camera-a", "profileId": ""}]}
+        reply, observed, _, _ = self.hostile(batch=invalid, profiles=True)
+        self.assertEqual((reply, observed), (503, []))
 
     def test_hostile_200_is_not_a_status_only_grant(self):
         valid = {"allowed": True, "userId": "a" * 32, "authEpoch": "b" * 32, "permission": "live.view"}

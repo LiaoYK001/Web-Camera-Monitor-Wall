@@ -166,7 +166,7 @@ def exercise(runtime, report, *, with_media=False):
                 "outputWidth": 1920, "outputHeight": 1080, "fpsNumerator": 30, "fpsDenominator": 1}
             return observed
 
-        def check_pixels(label):
+        def check_pixels(label, *, blank=False):
             from ctypes import wintypes
             import pixel_windows
             kernel = ctypes.WinDLL("kernel32", use_last_error=True)
@@ -182,7 +182,9 @@ def exercise(runtime, report, *, with_media=False):
                 created = pixel_windows.creation_time(Frontend())
             finally:
                 kernel.CloseHandle(handle)
-            observed = check_graph()
+            observed = state() if blank else check_graph()
+            if blank:
+                assert observed.get("phase") == "locked" and observed.get("mediaSources") == 0
             assert observed.get("windows", [{}])[0].get("qtClass") == "OBSBasicPreview"
             target = private / ("pixels-" + label)
             target.mkdir()
@@ -197,12 +199,12 @@ def exercise(runtime, report, *, with_media=False):
             evidence.setdefault("captures", []).append({"phase": label,
                 "captureFailed": capture.get("captureFailed", True)})
             assert result.returncode == 0 and capture.get("captureFailed") is False, "actual product preview capture failed"
-            analysis = subprocess.run([shutil.which("node"), str(HERE / "pixel-pattern.cjs"), "analyze",
+            analysis = subprocess.run([shutil.which("node"), str(HERE / "pixel-pattern.cjs"), "analyze-empty" if blank else "analyze",
                 str(target / "main-preview"), "main-preview", "forward", "true"],
                 check=True, capture_output=True, text=True, encoding="utf-8", timeout=20)
             result = json.loads(analysis.stdout)
             evidence["captures"][-1]["analysis"] = result
-            assert result.get("passed") is True, "five product preview channels did not show correct progressing final pixels"
+            assert result.get("passed") is True, "product preview failed the expected final-pixel state"
 
         frontend_pid = 0
         try:
@@ -256,12 +258,25 @@ def exercise(runtime, report, *, with_media=False):
             assert state()["mediaSources"] == 0 and state()["sessionBound"] is False
             evidence["checks"].append("logout-clears-bound-session")
             if with_media:
+                check_pixels("logout", blank=True)
                 phase = "relogin-restores-media"
                 assert ui("login", **account)
                 check_graph()
                 time.sleep(3)
                 check_pixels("relogin")
                 evidence["checks"].append("relogin-restores-saved-five-hevc-final-pixels")
+                for table in ("stream_profiles", "cameras"):
+                    phase = "disable-" + table
+                    with contextlib.closing(sqlite3.connect(profile / "config/cameras.db")) as database, database:
+                        database.execute(f"UPDATE {table} SET enabled=0")
+                    wait_for(lambda: state().get("phase") == "locked", "disabled camera/Profile remained viewable", timeout=8)
+                    check_pixels("disabled-" + table, blank=True)
+                    with contextlib.closing(sqlite3.connect(profile / "config/cameras.db")) as database, database:
+                        database.execute(f"UPDATE {table} SET enabled=1")
+                    evidence["checks"].append("disabled-" + table + "-clears-final-preview")
+                    if table == "stream_profiles":
+                        assert ui("login", **account)
+                        check_graph()
             phase = "normal-close"
             assert ui("close")
             assert process.wait(timeout=40) == 0, "normal UI close failed orderly shutdown"
@@ -283,6 +298,8 @@ def exercise(runtime, report, *, with_media=False):
                 database.execute("UPDATE users SET auth_epoch=? WHERE username=?", (secrets.token_hex(16), account["username"]))
             wait_for(lambda: state().get("phase") == "locked", "real account epoch change did not lock product UI", timeout=8)
             assert state()["sessionBound"] is False and state()["mediaSources"] == 0
+            if with_media:
+                check_pixels("revoked", blank=True)
             evidence["checks"].append("real-authority-revocation-locks-ui")
             phase = "owner-crash"
             process.kill()

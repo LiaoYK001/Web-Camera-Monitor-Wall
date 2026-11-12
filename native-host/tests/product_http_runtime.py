@@ -174,6 +174,16 @@ def exercise(binary):
                 missing = {"cameras": [{"cameraId": "camera-a", "profileId": "missing"}]}
                 assert request("/api/v1/native/cameras/resolve", missing)[0] == 503, "unknown profile silently fell back"
                 assert request("/api/v1/native/cameras/resolve", {"cameras": [{"cameraId": "../bad", "profileId": "main"}]})[0] == 400
+                for table in ("cameras", "stream_profiles"):
+                    before = len(resolved)
+                    with camera.connect() as database:
+                        database.execute(f"UPDATE {table} SET enabled=0")
+                    assert request("/api/v1/native/cameras/authorize", selection)[0] == 403
+                    assert request("/api/v1/native/cameras/resolve", selection)[0] == 403
+                    assert len(resolved) == before, "disabled Profile reached private endpoint resolution"
+                    with camera.connect() as database:
+                        database.execute(f"UPDATE {table} SET enabled=1")
+                    assert request("/api/v1/native/cameras/authorize", selection)[0] == 200
                 # Real account epoch change invalidates the existing session.
                 with cluster.STORE.lock, cluster.STORE.db:
                     cluster.STORE.db.execute("UPDATE users SET auth_epoch=? WHERE username=?",

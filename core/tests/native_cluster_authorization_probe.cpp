@@ -78,6 +78,19 @@ int main(int argc, char **argv)
                 for (const auto &[permission, camera] : values)
                     requirements.push_back({permission, camera});
                 reply = status(backend->authorize_batch(text(root.get(), "user"), identity, requirements));
+            } else if (op == "profiles" && backend) {
+                const webobs::SessionIdentity identity{text(root.get(), "userId"), text(root.get(), "authEpoch")};
+                std::vector<std::pair<std::string, std::string>> values;
+                const auto *items = json_object_get(root.get(), "requirements");
+                if (json_is_array(items))
+                    for (std::size_t i = 0; i < json_array_size(items); ++i) {
+                        auto *item = json_array_get(items, i);
+                        values.emplace_back(text(item, "cameraId"), text(item, "profileId"));
+                    }
+                std::vector<webobs::NativeClusterProfileRequirement> requirements;
+                for (const auto &[camera, profile] : values)
+                    requirements.push_back({camera, profile});
+                reply = status(backend->authorize_profiles(text(root.get(), "user"), identity, requirements));
             } else if (op == "authorize" && backend) {
                 webobs::NativeControlAuth auth(sessions, {"http://127.0.0.1:18086", "127.0.0.1:18086"},
                     [&](std::string_view user, const webobs::SessionIdentity &identity,

@@ -4295,19 +4295,18 @@ private:
             reject(http::status::unauthorized, "native_session_rejected");
             return;
         }
-        std::vector<NativeOperationRequirement> requirements;
-        std::set<std::string_view> camera_ids;
+        std::vector<NativeClusterProfileRequirement> requirements;
+        std::set<std::pair<std::string_view, std::string_view>> profile_ids;
         for (const auto &[id, profile] : selected) {
-            (void)profile;
-            if (camera_ids.insert(id).second)
-                requirements.push_back({"live.view", id});
+            if (profile_ids.emplace(id, profile).second)
+                requirements.push_back({id, profile});
         }
         // Preserve the authority's sixteen-item bound. All chunks must pass;
         // no URL or partially executable subset leaves this request on failure.
         for (std::size_t offset = 0; offset < requirements.size(); offset += 16) {
             const auto count = (std::min)(std::size_t(16), requirements.size() - offset);
-            const auto decision = backend.authorize_batch(bound->user, *bound->identity,
-                std::span<const NativeOperationRequirement>(requirements.data() + offset, count));
+            const auto decision = backend.authorize_profiles(bound->user, *bound->identity,
+                std::span<const NativeClusterProfileRequirement>(requirements.data() + offset, count));
             if (std::chrono::steady_clock::now() >= deadline || decision != NativeAuthorizationDecision::allowed) {
                 auto status = http::status::service_unavailable;
                 if (std::chrono::steady_clock::now() < deadline) {

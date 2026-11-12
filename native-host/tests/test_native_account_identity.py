@@ -380,6 +380,12 @@ class NativeAccountIdentityTests(unittest.TestCase):
                              [{"permission": None, "cameraId": None}],
                              [self.requirement("live.view"), self.requirement("live.view")]):
             invalid.append({**valid, "requirements": requirements})
+        for requirement in ({"permission": "live.view", "cameraId": "camera-a", "profileId": ""},
+                            {"permission": "live.view", "cameraId": "camera-a", "profileId": None},
+                            {"permission": "scene.read", "cameraId": "camera-a", "profileId": "main"},
+                            {"permission": "live.view", "cameraId": "", "profileId": "main"},
+                            {"permission": "live.view", "cameraId": "camera-a", "profileId": "../bad"}):
+            invalid.append({**valid, "requirements": [requirement]})
         def unreachable_transaction():
             raise AssertionError("batch touched a database snapshot before validation completed")
         with mock.patch.object(self.store, "_native_auth_transaction", side_effect=unreachable_transaction):
@@ -515,6 +521,25 @@ class NativeAccountIdentityTests(unittest.TestCase):
         self.assertTrue(self.store.native_authorize_batch(request)["allowed"])
         with contextlib.closing(sqlite3.connect(self.registry)) as database, database:
             database.execute("UPDATE cameras SET group_id='../malformed' WHERE id='camera-a'")
+        self.assert_api_error(503, lambda: self.store.native_authorize_batch(request), "native_registry_unavailable")
+
+    def test_profile_batch_checks_exact_enabled_profile_without_endpoint_reads(self):
+        self.create(scopes=[{"kind": "camera", "id": "camera-a"}])
+        identity = self.login()
+        with contextlib.closing(sqlite3.connect(self.registry)) as database, database:
+            database.execute("ALTER TABLE cameras ADD COLUMN enabled INTEGER NOT NULL DEFAULT 1")
+            database.execute("CREATE TABLE stream_profiles(camera_id TEXT,id TEXT,enabled INTEGER)")
+            database.execute("INSERT INTO stream_profiles VALUES('camera-a','main',1)")
+        wanted = {"permission": "live.view", "cameraId": "camera-a", "profileId": "main"}
+        request = self.batch(identity, [wanted])
+        self.assertEqual(self.store.native_authorize_batch(request)["requirements"], [wanted])
+        for table in ("cameras", "stream_profiles"):
+            with contextlib.closing(sqlite3.connect(self.registry)) as database, database:
+                database.execute(f"UPDATE {table} SET enabled=0")
+            self.assert_api_error(403, lambda: self.store.native_authorize_batch(request), "permission_rejected")
+            with contextlib.closing(sqlite3.connect(self.registry)) as database, database:
+                database.execute(f"UPDATE {table} SET enabled=1")
+        request["requirements"][0]["profileId"] = "missing"
         self.assert_api_error(503, lambda: self.store.native_authorize_batch(request), "native_registry_unavailable")
 
 
