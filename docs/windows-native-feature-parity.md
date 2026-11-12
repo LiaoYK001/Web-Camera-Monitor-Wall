@@ -67,3 +67,6 @@ Dev.86 passes the existing portable product UI/media/lifecycle gate with nine ei
 
 
 dev.87 实际 NSIS 安装前首启测量：198,314,717 logical B、201,252,904 unnamed-stream allocation B、1865 files；setup 70,074,866 B。安装 gate 总体失败于 installed UI 前，因此仅作为本次不完整集成范围的实测体积，完整业务/升级/首次运行成本仍待补齐。 / Actual fresh installed footprint was measured in dev.87, but installed-entry and uninstall gates did not execute. It is not a full-product size qualification.
+
+
+dev.88（43230943802、source 1dda0c5）：23 项实际 portable UI 检查和十五组八帧像素通过，含五格仅一个实际 HEVC 来源与切回独立五路；登录前恢复正/负 I/O 对照九项通过。NSIS 198,392,037 logical B / 201,326,632 allocation B，仍失败于快捷方式目标比较，installed UI/卸载待执行。已保存 Studio 场景的新入口未包含在该构建，完整 Studio/功能/迁移/更新/性能仍未完成。 / Dev.88 passes actual source sharing and pre-authentication restore isolation, but not installed-entry or full-product qualification.

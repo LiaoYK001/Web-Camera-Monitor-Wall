@@ -61,8 +61,32 @@ try {
     $shell = New-Object -ComObject WScript.Shell
     $link = $shell.CreateShortcut($shortcut)
     $expectedTarget = [IO.Path]::GetFullPath((Join-Path $installed 'bin/webobs-wall.exe'))
-    $report.shortcutTargetMatches = -not [string]::IsNullOrEmpty($link.TargetPath) -and
-        [string]::Equals([IO.Path]::GetFullPath($link.TargetPath), $expectedTarget, [StringComparison]::OrdinalIgnoreCase)
+    # Shell links may return existing 8.3 aliases. GetFullPath only performs
+    # lexical normalization; expand both existing paths before exact comparison.
+    Add-Type -TypeDefinition @'
+using System;
+using System.ComponentModel;
+using System.Runtime.InteropServices;
+using System.Text;
+public static class WebOBSInstalledShortcutPath {
+    [DllImport("kernel32.dll", CharSet=CharSet.Unicode, ExactSpelling=true, SetLastError=true)]
+    private static extern uint GetLongPathNameW(string path, StringBuilder result, uint size);
+    public static string ExistingLongPath(string path) {
+        var result = new StringBuilder(32768);
+        uint count = GetLongPathNameW(path, result, (uint)result.Capacity);
+        if (count == 0 || count >= result.Capacity) throw new Win32Exception(Marshal.GetLastWin32Error());
+        return result.ToString();
+    }
+}
+'@
+    $target = [string]$link.TargetPath
+    $report.shortcutTargetPresent = -not [string]::IsNullOrEmpty($target)
+    $report.shortcutTargetExists = $report.shortcutTargetPresent -and (Test-Path -LiteralPath $target -PathType Leaf)
+    $report.shortcutTargetUsesShortAlias = $target -match '(?i)~[0-9]+(?:\\|$)'
+    $report.shortcutTargetFileNameMatches = [string]::Equals([IO.Path]::GetFileName($target), 'webobs-wall.exe', [StringComparison]::OrdinalIgnoreCase)
+    $report.shortcutTargetMatches = $report.shortcutTargetExists -and [string]::Equals(
+        [WebOBSInstalledShortcutPath]::ExistingLongPath([IO.Path]::GetFullPath($target)),
+        [WebOBSInstalledShortcutPath]::ExistingLongPath($expectedTarget), [StringComparison]::OrdinalIgnoreCase)
     $report.shortcutArgumentsEmpty = [string]::IsNullOrEmpty($link.Arguments)
     if (-not $report.shortcutTargetMatches -or -not $report.shortcutArgumentsEmpty) {
         throw 'Installed shortcut does not target the unified native entry.'

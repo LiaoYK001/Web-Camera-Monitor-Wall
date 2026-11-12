@@ -1139,3 +1139,16 @@ Linux 实际 core/account/Registry HTTP 联调通过：场景摘要不含端点�
 Windows 真实产品脚本新增普通 Studio API 保存五路文档，再从原生列表选择并检查最终像素；保存 sceneId/退出清屏/重新登录恢复；普通 API 修改文档 revision 后必须最终空白，再按新 revision 恢复五路。最后恢复原五路 workspace，再运行独立账号/权限/重启回归。以上新的 Qt/Windows 行为不在 dev.88，实际执行仍待下一 source，不能由 Linux 接口或脚本存在记为通过。
 
 Saved canonical Studio camera scenes are now wired to the actual native selection action and owned graph renderer, with ID-only per-account restore and revision-aware renewal. Real Linux service tests pass canonical binding, nested-scene authorization, refusal-before-resolution and ordinary-API revision invalidation. Windows saved-scene pixels/persistence/blanking tests are prepared but not included in dev.88. Full Studio control/editing, source kinds, audio routing and remaining R0–R7 gates stay open.
+
+
+#### dev.88 实际共享解码与登录前恢复隔离通过 / Actual sharing and pre-login restore isolation pass
+
+`43230943802`（source 1dda0c5、dev.88）总体 failure，便携产品入口门禁 passed=true：23 项检查、15 组各八帧最终捕获全部通过。新增 shared-camera 真实要求五个画面项只有一个 ffmpeg_source、五绑定 UUID 相同，五格第一路动态像素全部通过；恢复五个不同摄像机后 distinct-after-sharing 也通过。scope/账号隔离/普通改密、正常退出/重启/Job 门禁保持通过；注销实际引用退休 4ms（锁定处理器起算，不是网络端到端撤销耗时）。不是目标机硬解、性能或完整 Studio 证明。
+
+`native-product-restore.json` passed=true，九项检查通过：未保护 frontend 确切 Job 身份、相同 saved collection 真实 RTSP I/O（2 个请求）、正常关闭后静止；受保护统一入口 Load 前确切拒绝注入 collection、八秒零新 RTSP 请求、locked/零来源/无会话、拒绝文件字节不变，正常停机与外部 OBS profile 指纹不变。controlCloseWindows=1、productCloseWindows=1。前轮正常关闭超时已随等待实际主 HWND 的修改通过；未扩展为原生菜单全部旁路或旧数据迁移验收。
+
+内部 NSIS 实际安装继续通过载荷/注册/体积阶段：198,392,037 logical B、201,326,632 unnamed-stream allocation B、1865 files；setup 70,093,273 B。精确失败为 installed-shortcut，shortcutTargetMatches=false、shortcutArgumentsEmpty=true；installed UI 与卸载尚未执行，不能记作安装态通过。GetFullPath 的词法规范化未解决该比较；后续增加 Windows GetLongPathNameW，对两端存在路径展开 8.3 别名后仍要求完整目标精确相等，并记录存在/短路径/固定文件名等布尔分类，继续不上传任何本机路径。短路径是否确为原因仍待实际回归，不提前断言已修复。
+
+后续 e22667a 的已保存场景接线不包含在该次 Windows 运行。该 Qt 窗口已用解包到临时目录的 Fedora Qt 6.11.2 头进行 C++20 语法检查通过；未修改/安装系统 Qt，也不代替锁定 Windows Qt 6.8.3/MSVC 编译或实际 UI。完整产品交付与 R2–R7 仍打开。
+
+Dev.88 passes actual one-HEVC-source/five-item final pixels and the unchanged five-distinct-channel baseline, with 23 portable checks and fifteen eight-frame capture groups. The real unguarded/protected pre-login restore I/O gate passes all nine checks. NSIS again reaches measured installation but fails exact shortcut-target comparison before installed UI; the next check expands existing Windows short aliases and retains bounded classifications. This remains an internal incomplete product with publication forbidden. New saved-scene wiring still awaits Windows execution.
