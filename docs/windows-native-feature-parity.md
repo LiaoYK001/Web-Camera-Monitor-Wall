@@ -18,11 +18,11 @@ One pinned OBS frontend owns local media. Reuse the existing Direct-only core fo
 
 | ID | 旧入口与实际代码 | 新入口与迁移位置 | 数据与权限 | 组件 | 真实接线验证 | 状态与证据 | 当前阻塞 |
 | --- | --- | --- | --- | --- | --- | --- | --- |
-| AUTH | `LoginGate.tsx`、`AccountWorkspace.tsx`、core auth、cluster accounts | 原生登录/建账/退出，管理浏览器账号页 | 同一账号、绑定 userId/authEpoch，会话撤销 | core Direct-only、cluster | 安装后真实账号登录、改密/禁用/过期关闭画面 | 接线开发中，现有原生身份基础可复用 | Qt 登录已接 core native API，Windows 安装态与执行一致性待验证 |
-| RBAC | `UserAccessEditor.tsx`、cluster role/camera scope | 原生目录和每次执行/持续观看校验 | 角色、camera/group scope，未知来源拒绝 | cluster、Registry | 同名重建账号、换组、隐藏/嵌套来源、权限撤销 | 旧实现可用，原生未接线 | OBS 原生编辑和自动恢复入口 |
-| DEV | `CameraRegistry.tsx`、`camera_registry.py` | 原生摄像机/Profile 选择，本机设备管理页 | 稳定 camera/profile ID、Secret 引用 | camera、core | 选已有设备进入媒体源，禁用/缺失 Profile 可见报错 | 已接线，真实 HTTP 通过，UI 实播待通过 | 已接目录、Profile/启用检查及配置版本续验，Windows UI/安装态待验证 |
+| AUTH | `LoginGate.tsx`、`AccountWorkspace.tsx`、core auth、cluster accounts | 原生登录/建账/退出，管理浏览器账号页 | 同一账号、绑定 userId/authEpoch，会话撤销 | core Direct-only、cluster | 安装后真实账号登录、改密/禁用/过期关闭画面 | 已接真实账号服务；Windows dev.81/.83 首次建账登录通过 | 旧账号数据迁移、安装态、全部恢复/编辑旁路与撤销像素未通过 |
+| RBAC | `UserAccessEditor.tsx`、cluster role/camera scope | 原生目录和每次执行/持续观看校验 | 角色、camera/group scope，未知来源拒绝 | cluster、Registry | 同名重建账号、换组、隐藏/嵌套来源、权限撤销 | 已接目录/整批选择/持续授权与配置版本；Linux 实际 API 隔离通过 | OBS 恢复/编辑旁路、Windows 最终画面撤销仍需真实负向验收 |
+| DEV | `CameraRegistry.tsx`、`camera_registry.py` | 原生摄像机/Profile 选择，本机设备管理页 | 稳定 camera/profile ID、Secret 引用 | camera、core | 选已有设备进入媒体源，禁用/缺失 Profile 可见报错 | 已接线，真实 HTTP 通过；dev.81 实际 UI 五路建图通过 | dev.83 选择提交未建图；后续修复与 dev.84 回归中，最终像素/安装态未过 |
 | IMPORT | `bulkSourceImport.ts`、ONVIF API | 设备库批量导入/ONVIF 页面 | 去重、配置保留、device.manage | camera、WebUI | 实际导入、失败不覆盖、重启保留 | 旧实现可用，原生未接线 | 管理入口与安装组件 |
-| LIVE | `DirectPreview.tsx`、`ProgramPreview.tsx`、core OBS | 原生 OBS Media Source 与 Preview/Program | 认证后建图，同源兼容设置共享 | OBS、obs-ffmpeg | 真实插件、真实服务、动态 H.264/H.265 最终像素 | 原型自动化通过，用户报告 dev.53 显示正常 | 完整账号/目录闭环 |
+| LIVE | `DirectPreview.tsx`、`ProgramPreview.tsx`、core OBS | 原生 OBS Media Source 与 Preview/Program | 认证后建图，同源兼容设置共享 | OBS、obs-ffmpeg | 真实插件、真实服务、动态 H.264/H.265 最终像素 | 原型自动化通过，用户报告 dev.53 显示正常；产品 dev.81 五来源已建图 | 产品最终 Preview capture 未过；不能沿用原型或 source 数量作实播证明 |
 | STUDIO | `SceneCollection.tsx`、`sceneSchema.ts`、`StudioController` | 原生场景切换/编辑与现有管理 Studio | Scene/Source UUID、草稿、revision、嵌套 | OBS、core、WebUI | 保存/恢复、裁剪/层级/锁定、冲突、TAKE | 原生未接线 | 文档与 frontend 图映射 |
 | LAYOUT | `monitorView.ts`、监控偏好、设备布局 | 原生网格/轮换/事件提升/主子码流 | 账号与设备偏好分离 | OBS、account、clients | 既有布局范围、人工选择、帧率/分辨率回读 | 原生未接线 | 不限五路的布局接线 |
 | PROJECT | `ProjectorView.tsx`、desktop fixed projector IPC | 原生 Program 与固定 Scene 多投影 | 固定场景身份、同源引用 | OBS/Qt | 双固定场景、切 Program、重开/全屏/DPI | 原型 Program 像素覆盖，产品入口待接线 | 多投影授权和消费者寿命 |
@@ -40,7 +40,7 @@ One pinned OBS frontend owns local media. Reuse the existing Direct-only core fo
 | OFFLINE | `DeviceSyncPanel.tsx`、`useDeviceSync.ts`、v2 | 受认证管理页与原生布局状态同步 | 签名/加密缓存、冲突、有限离线权限 | clients、core、WebUI | 离线编辑、重连冲突选择、Program 不被覆盖 | 旧实现可用，原生未接线 | 设备状态与原生 scene 映射 |
 | OPS | `ProblemCenter.tsx`、`DeveloperDiagnostics.tsx` | 原生问题/诊断入口与受认证管理页 | 有界脱敏导出、settings.manage | core、业务服务 | 解码/组件/连接故障定位、脱敏支持包 | 旧实现可用，原生未接线 | 产品内采样及统一诊断 |
 | BACKUP | backup 服务、原型 restore helper | 管理页及安装升级一致性备份 | 活跃 SQLite 快照、Secret、录像路径 | backup、原生 updater | 损坏/中断/磁盘满、幂等迁移和真实恢复 | 原型文件备份覆盖，完整迁移待实现 | 旧数据全量映射与数据库一致性 |
-| LIFE | `main.mjs`、`supervisor.mjs`、`job_host.cpp` | 原生单实例/托盘/supervisor | Job、任务消费者、正常退出和崩溃收束 | Qt、Win32、按需服务 | 安装态关闭/托盘/后台任务/故意崩溃零遗留 | 原生统一入口已实际启动，完整门禁未过 | 托盘/后台任务、稳定 WebUI origin、迁移及安装生命周期 |
+| LIFE | `main.mjs`、`supervisor.mjs`、`job_host.cpp` | 原生单实例/托盘/supervisor | Job、任务消费者、正常退出和崩溃收束 | Qt、Win32、按需服务 | 安装态关闭/托盘/后台任务/故意崩溃零遗留 | 原生统一入口已实际启动，完整门禁未过 | 稳定 WebUI origin 的 Linux 实际重启/冲突回归通过，Windows 待验；托盘/后台任务、迁移及安装生命周期未完成 |
 | UPDATE | desktop updater/NSIS、稳定 feed | 原生更新设置/下载/确认/安装 | SHA-512/size、版本、备份、用户确认 | 原生 updater、NSIS | 旧稳定升级、新原生后续升级、截断/断网/失败恢复 | 原型 NSIS 部分通过，原生 updater 待实现 | electron-updater 替代与完整数据升级 |
 
 ## 进程和体积口径 / Process and size accounting
@@ -54,3 +54,9 @@ The old full-runtime baseline is 1,459,397,091 logical bytes in published dev.18
 dev.79 R1 内部组件回执（source aa90f52、run 43164336627）记录 1863 文件、197,867,225 B（清单自身除外）。其中 bin 96,876,552 B、Python 23,785,687 B、Web 56,642,796 B、OBS data 12,372,562 B、插件 3,725,824 B、许可证 3,972,953 B、services 442,527 B，其余为固定说明/标记。Web 内 `ssd_mobilenet_v1_12.onnx` 29,461,455 B 与 ORT WASM 25,749,873 B 合计 55,211,328 B。它们尚未做按需安装接线，当前真实体积全部计入；不能先从分母扣掉再宣称核心/完整版本达标。这个 R1 范围尚缺完整业务组件、安装态 allocation 与首次运行数据成本。
 
 The dev.79 internal R1 component receipt measures 197,867,225 bytes before the receipt itself, including 56,642,796 bytes of WebUI assets. Its ONNX model and ORT WASM alone total 55,211,328 bytes. They remain shipped and fully counted until real optional installation is wired. This incomplete R1 scope is neither a complete-feature installed footprint nor an OBS-size pass.
+
+## 2026-11-12 R1 当前门槛 / Current R1 gate
+
+Windows 实际运行证据止于建账登录及 dev.81 五路 graph-applied，最终窗口像素、注销/禁用后的最终空白画面、保存重开与安装态尚未整条通过。dev.83 停于盲按键选择后未建图；dev.84（run 43176197394、source 4d8353e）正在验证真实选择提交/捕获分类和同 origin 重启。后续 ccbf96f 增加 Windows native listener 独占与实际强制重绑定负向检查，尚未跑 Windows；Linux 实际 core CTest 8/8、真实 HTTP 及 supervisor 回归通过。所有后续里程碑仍打开，不要求用户测试中间包。
+
+The actual Windows product evidence currently reaches first-account authentication and, in dev.81, five applied sources. Final visible pixels, blanking after logout/disable, persistence and installed-entry execution have not passed the complete chain. Dev.84 runs the corrected selection checks; later exclusive-listener changes still await Windows compilation/execution. R2–R7 remain open, including complete functionality, legacy migration, updater, full accounting and final target-device acceptance.
