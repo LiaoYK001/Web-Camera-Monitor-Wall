@@ -14,6 +14,8 @@ using System.Runtime.InteropServices;
 public static class ProductTestWindow {
     [DllImport("user32.dll")] public static extern bool SetForegroundWindow(IntPtr window);
     [DllImport("user32.dll")] public static extern bool ShowWindow(IntPtr window,int command);
+    [DllImport("user32.dll")] public static extern IntPtr GetForegroundWindow();
+    [DllImport("user32.dll")] public static extern uint GetWindowThreadProcessId(IntPtr window,out uint pid);
 }
 '@
     $operation = [Console]::In.ReadToEnd() | ConvertFrom-Json
@@ -113,12 +115,26 @@ public static class ProductTestWindow {
                 $choice = [int]$operation.indices[$index]
                 if ($choice -lt 1 -or $choice -gt 5) { throw 'Invalid fixture index.' }
                 $control = Find-Control "webobsCameraSlot$($index+1)"
-                $control.SetFocus()
-                [System.Windows.Forms.SendKeys]::SendWait('{HOME}')
-                for ($step=0; $step -lt $choice; ++$step) {
-                    [System.Windows.Forms.SendKeys]::SendWait('{DOWN}')
+                $code = "expand-camera-$($index+1)"
+                # Qt's noneditable combo accessibility action opens its popup;
+                # SetFocus alone need not focus that combo. Commit the highlighted
+                # popup entry with Enter, then read the actual combo value back.
+                $expand = $control.GetCurrentPattern([System.Windows.Automation.ExpandCollapsePattern]::Pattern)
+                $expand.Expand()
+                $code = "focus-camera-$($index+1)"
+                [uint32]$foregroundPid = 0
+                $null = [ProductTestWindow]::GetWindowThreadProcessId(
+                    [ProductTestWindow]::GetForegroundWindow(), [ref]$foregroundPid)
+                if ($foregroundPid -ne $FrontendPid) { throw 'Fixture product does not own keyboard input.' }
+                $code = "choose-camera-$($index+1)"
+                [System.Windows.Forms.SendKeys]::SendWait('{HOME}' + ('{DOWN}' * $choice) + '{ENTER}')
+                $value = $control.GetCurrentPattern([System.Windows.Automation.ValuePattern]::Pattern)
+                $deadline = [DateTime]::UtcNow.AddSeconds(2)
+                while ($value.Current.Value -ne "Fixture $choice / Main" -and [DateTime]::UtcNow -lt $deadline) {
+                    Start-Sleep -Milliseconds 25
                 }
-                [System.Windows.Forms.SendKeys]::SendWait('{ESC}')
+                $code = "verify-camera-$($index+1)"
+                if ($value.Current.Value -ne "Fixture $choice / Main") { throw 'Fixture camera choice was not committed.' }
             }
             Invoke-Control 'webobsWatch'
         }

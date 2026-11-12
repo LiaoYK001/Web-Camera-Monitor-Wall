@@ -251,6 +251,7 @@ def exercise(runtime, report, *, with_media=False, retained_profile=None):
                 assert ui("refresh")
                 wait_for(lambda: state().get("catalogItems") == 5, "product camera choices did not refresh")
                 assert ui("choose", indices=[1, 2, 3, 4, 5])
+                phase = "authorized-graph-application"
                 check_graph()
                 phase = "product-final-pixels"
                 time.sleep(3)
@@ -360,7 +361,8 @@ def exercise(runtime, report, *, with_media=False, retained_profile=None):
             evidence["failurePhase"] = phase
             evidence["entryExitCode"] = process.poll() if process is not None else None
             observed = state()
-            evidence["observedState"] = {key: observed[key] for key in ("phase", "mediaSources", "sessionBound", "catalogItems") if key in observed}
+            evidence["observedState"] = {key: observed[key] for key in (
+                "phase", "mediaSources", "sessionBound", "catalogItems", "selectionIndices") if key in observed}
             markers = ("ModuleNotFoundError", "ImportError", "PermissionError", "FileNotFoundError",
                        "RuntimeError", "AttributeError", "ValueError", "control exited during startup",
                        "control health deadline exceeded", "a required product service exited", "saved control port is unavailable")

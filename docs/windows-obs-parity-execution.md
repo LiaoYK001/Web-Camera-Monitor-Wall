@@ -1056,3 +1056,9 @@ Dev.81 passed actual product-window first-account creation/login and applied fiv
 Linux 实际 supervisor + account/Registry/core 进程测试通过同 origin 重启、被占端口拒绝且配置字节不变、释放后恢复旧 origin，以及损坏/重复配置拒绝；前端仍明确为生命周期夹具，不作 Windows UI 或存储设备证明。Windows 实际产品 gate 已增加同样的被占 origin 拒绝和正常重启保持 origin，待新 source 的实际 job。完整 WebUI local-first 数据迁移、冲突恢复与固定远程 HTTPS 入口仍待 R3/R4。
 
 The supervisor now commits a private persistent control port before exposing the first origin, reuses it on restart and refuses conflicts or corrupt state without choosing another origin. Real Linux service-process tests pass stable restart and conflict/corruption handling; the corresponding actual Windows entry check is added but pending. This preserves new native workspace addressing, not legacy browser-data migration.
+
+#### dev.83 选择器提交回归 / Camera-choice commit regression
+
+内部 `43172062032`（source feb73a1、dev.83）完成为 failure：真实首次建账/登录通过，授权目录含五项，但操作选择器后仍为 authenticated / 零媒体源，未进入最终捕获。原脚本的 SetFocus + Home/Down/Esc 只发送按键、不验证提交；Qt 非编辑 ComboBox 的无障碍 action 路径并不保证该 SetFocus，而 popup 的 Escape 也不是提交动作。因此后续改用实际 UIA ExpandCollapse 打开 popup、核对键盘所属进程、Home/Down/Enter 提交，并通过 ValuePattern 读取确切的合成夹具选中项，全部匹配后才点击观看。产品私密观察补充五个数字 selectionIndices，以及选择不全/建图失败阶段，仍不输出 URL、凭据或完整控件文本。参考固定 Qt v6.8.3 的 complexwidgets.cpp / qcombobox.cpp 实现与 Microsoft UI Automation API；具体 Windows 选择/像素结果待下一轮，不把源码推断写成已验证根因。
+
+Dev.83 passed real first-account UI authentication but remained at five catalog choices with no applied media graph after the old blind keyboard sequence. The next test opens the actual combo popup, checks input ownership, commits with Enter and reads each synthetic fixture value back before watching. Private product observations now distinguish incomplete selection and failed graph application. Local build contracts 44/44, package checks 6/6 and pixel protocol checks 21 passed (two platform/opt-in skips); actual Windows selection, final pixels and installed-entry verification remain pending.

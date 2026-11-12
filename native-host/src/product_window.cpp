@@ -73,6 +73,9 @@ class ProductWindow final : public QWidget {
 		obs_video_info video{};
 		const bool video_available = obs_get_video_info(&video);
 		QJsonArray bindings;
+		QJsonArray selection_indices;
+		for (auto *slot : slots_)
+			selection_indices.append(slot ? slot->currentIndex() : -1);
 		for (int i = 0; i < watching_.size(); ++i) {
 			auto binding = watching_[i].toObject();
 			binding.insert("sourceUuid", QString::fromStdString(wall_.uuids[std::size_t(i)]));
@@ -81,6 +84,7 @@ class ProductWindow final : public QWidget {
 		QJsonObject state{{"schema", 1}, {"phase", QString::fromLatin1(phase)},
 			{"pid", QString::number(QCoreApplication::applicationPid())},
 			{"catalogItems", slots_[0] && slots_[0]->count() > 0 ? slots_[0]->count() - 1 : 0},
+			{"selectionIndices", selection_indices},
 			{"sessionBound", !user_id_.isEmpty()}, {"mediaSources", media_sources}, {"bindings", bindings},
 			{"videoAvailable", video_available}, {"hardwareDecodeVerified", false}};
 		if (preview_)
@@ -279,6 +283,7 @@ class ProductWindow final : public QWidget {
 		const QJsonArray selected = selection();
 		if (selected.size() != 5 || user_id_.isEmpty() || applying_) {
 			status_->setText(tr("请选择五个摄像机 Profile。"));
+			observe_state("selection-incomplete");
 			return;
 		}
 		++generation_;
@@ -352,6 +357,7 @@ class ProductWindow final : public QWidget {
 				if (!wall_.scene || !wall_.error.empty()) {
 					clear_media();
 					status_->setText(tr("原生画面创建失败，请检查设备配置后重试。"));
+					observe_state("graph-failed");
 					return;
 				}
 				select_wall(wall_.scene);
