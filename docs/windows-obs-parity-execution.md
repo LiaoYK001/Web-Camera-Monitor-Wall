@@ -1030,3 +1030,13 @@ dev.80 / run `43166679698`（source 200345f）最终仍在相同旧 UIA `product
 随后补齐配置版本续验：批量 Profile 回包从同一 Registry 只读事务携带 cameraVersions，C++ 严格验证 ID 集、整数类型与范围，最大标识符场景允许 8 KiB 有界回包（通用权限回包仍 4 KiB）。core 把该映射传给原生窗口；resolve 与紧邻授权版本不同则拒绝建图，后续版本变化清空旧画面。Windows gate 新增通过真实带 If-Match 的 source-catalog API 修改传输设置，再检测空白和重新连接五路最终像素。Linux 实际 core/Registry 回归核对生产保存函数推进版本且续验零端点读取，root CTest 8/8、身份 21 项、adapter 15 项通过，非法/缺失/多余版本和最大长度 16 Profile 回包均已测试。切换观看还会推进请求代次并先释放旧媒体，避免旧 heartbeat 回复干扰新图；该 Qt 行为仍待后续实际 Windows job，不由 Linux CTest 代替。
 
 Dev.80 failed at the same old UIA window targeting, without the later fix; dev.81 at 3d3c0b0 is now running the corrected targeting. Subsequent source adds strict camera-revision propagation and checks across resolution/renewal, with real-service Linux evidence and a real-catalog-update Windows regression prepared. UI generations reject late replies when switching media. Any revision currently requires reconnect, including metadata-only saves; smoother R2 behavior remains open, along with installed R1 and the full R0–R7 product gates.
+
+#### R1 安装态接线准备 / Installed-entry gate preparation
+
+新增独立内部 `WebOBSProductIntegration.nsi`，目标是统一 `webobs-wall.exe` 与实际 core/Python/服务/WebUI 的当前集成树；不是旧原型快捷入口，也不会替换现有 Electron 产品。清洁载荷验证器逐文件核对 stage SHA-256、大小和全量清单，拒绝配置/未知文件/链接/重复或危险路径及正式发布标记；卸载指令仅由已验证的已知文件生成，不递归清除用户目录。R1 内部安装器只允许全新 per-user x64 安装，已有 integration 注册或非空目标拒绝覆盖，R4 的旧版迁移/升级仍未实现。
+
+CI 将在普通真实 UI/媒体 gate 成功之后，实际构建内部 NSIS、安装到新的含空格与中文路径、重新核对安装文件并测量实际 logical/allocation、验证 Start Menu 指向统一入口，再从安装目录执行完整产品 UI/五路回归。测试使用新建私密 profile 并保留真实账号/Registry/workspace 到卸载后，比较完整文件哈希验证数据不改、未知用户文件也保留。仅上传小型脱敏回执，内部安装器不发布。当前只有载荷防篡改/污染契约 6 项在 Linux 通过，Windows NSIS 编译与安装态执行尚待 UI 前置门槛通过，不能记作已生成或已验收安装包。
+
+另记录 R4 待办：当前 supervisor 每次选择新的 control port，复杂管理 WebUI 的 local-first origin 必须在正式产品中稳定并处理端口冲突，不能将原生账号数据库保留误称为浏览器离线数据完整保留。
+
+The internal NSIS gate is now wired after the actual portable-entry UI/media gate. It packages the unified product entry, verifies every staged file, measures the fresh installed tree, reruns real UI/media from that installation and compares retained profile hashes after ownership-based uninstall. Existing installations and unrelated targets are refused; this does not implement legacy upgrade. Six synthetic payload checks pass locally, but Windows installer compilation/execution remain pending. The ephemeral control origin is also an explicit R4 persistence issue for browser-local data.

@@ -55,6 +55,8 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw 'Counterbalanced campaign contract failed.' }
           python -B native-host/tests/test_prune_runtime.py
           if ($LASTEXITCODE -ne 0) { throw 'Runtime PDB pruning contract failed.' }
+          python -B native-host/tests/test_product_package.py
+          if ($LASTEXITCODE -ne 0) { throw 'Internal product payload contamination/tamper contract failed.' }
           python -B native-host/qualification/test_windows_api.py
           if ($LASTEXITCODE -ne 0) { throw 'Actual Windows process query or private directory API failed; no performance qualification.' }
       - name: Preflight actual PowerShell capture compilation before other pixel contracts
@@ -129,6 +131,11 @@ jobs:
           $runtime = Join-Path $env:GITHUB_WORKSPACE 'build/obs-native-ci/runtime'
           & "$runtime/python/python.exe" -B native-host/tests/product_windows.py --runtime $runtime --with-media --report build/obs-native-ci/native-product-entry-ui.json
           if ($LASTEXITCODE -ne 0) { throw 'Actual native product entry and UI gate failed.' }
+      - name: Build and qualify a fresh integrated product NSIS installation
+        if: inputs.product_mode
+        shell: pwsh
+        run: |
+          ./desktop/scripts/test-native-product-install.ps1 -BuildDirectory "$env:GITHUB_WORKSPACE/build/obs-native-ci"
       - name: Retain only sanitized internal product receipts
         if: always() && inputs.product_mode
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
@@ -139,6 +146,8 @@ jobs:
           path: |
             build/obs-native-ci/native-media-runtime-inventory.json
             build/obs-native-ci/native-product-entry-ui.json
+            build/obs-native-ci/native-product-installed-ui.json
+            build/obs-native-ci/native-product-nsis.json
             build/obs-native-ci/runtime/product-components.json
       - name: Inventory the runtime and enforce the P4 size budget
         # The builder already inventories BOTH variants before first start.

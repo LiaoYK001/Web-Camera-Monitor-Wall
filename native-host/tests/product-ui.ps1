@@ -78,9 +78,11 @@ public static class ProductTestWindow {
         $control = Find-Control $Identity
         $script:code = 'set-' + $Identity
         $pattern = $null
+        $valueSet = $false
         if ($control.TryGetCurrentPattern([System.Windows.Automation.ValuePattern]::Pattern, [ref]$pattern)) {
-            $pattern.SetValue($Value)
-        } else {
+            try { $pattern.SetValue($Value); $valueSet = $true } catch { }
+        }
+        if (-not $valueSet) {
             # Fixture credentials deliberately contain only SendKeys-safe ASCII.
             if ($Value -notmatch '^[A-Za-z0-9_-]{1,128}$') { throw 'Unsafe fixture text.' }
             $control.SetFocus()

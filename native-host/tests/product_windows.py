@@ -62,7 +62,7 @@ def alive(pid):
         kernel.CloseHandle(handle)
 
 
-def exercise(runtime, report, *, with_media=False):
+def exercise(runtime, report, *, with_media=False, retained_profile=None):
     if os.name != "nt":
         raise ValueError("actual Windows product gate requires Windows")
     manifest = read_json(runtime / "webobs-native-prototype.json")
@@ -84,7 +84,9 @@ def exercise(runtime, report, *, with_media=False):
     phase = "prepare"
     with tempfile.TemporaryDirectory(prefix="WebOBS 产品接线-") as temporary:
         private = Path(temporary)
-        profile = private / "profile"
+        profile = Path(retained_profile).absolute() if retained_profile is not None else private / "profile"
+        if profile.exists() or profile.is_symlink():
+            raise ValueError("product gate requires a NEW disposable profile")
         environment = dict(os.environ)
         environment["WEBOBS_PRODUCT_TEST_ROOT"] = str(profile)
         if with_media:
@@ -373,5 +375,7 @@ if __name__ == "__main__":
     parser.add_argument("--runtime", type=Path, required=True)
     parser.add_argument("--report", type=Path, required=True)
     parser.add_argument("--with-media", action="store_true")
+    parser.add_argument("--retained-profile", type=Path)
     arguments = parser.parse_args()
-    exercise(arguments.runtime.resolve(strict=True), arguments.report.resolve(), with_media=arguments.with_media)
+    exercise(arguments.runtime.resolve(strict=True), arguments.report.resolve(), with_media=arguments.with_media,
+             retained_profile=arguments.retained_profile)
