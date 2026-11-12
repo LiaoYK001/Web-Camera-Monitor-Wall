@@ -32,6 +32,7 @@ ROOT = HERE.parents[1]
 sys.path.insert(0, str(HERE))
 from product_windows import read_json, wait_for
 from smoke_windows import fingerprint
+from product_restore_protocol import inspect_request
 
 COLLECTION = "WebOBS restore isolation fixture"
 FILENAME = "webobs-restore-isolation"
@@ -114,6 +115,8 @@ def exercise(runtime, control_frontend, report):
         processes, identities = [], []
         token = ("restore-" + secrets.token_hex(16)).encode("ascii")
         request_count = 0
+        probe_counts = {"tcpConnections": 0, "completeHeaders": 0, "options": 0,
+                        "describe": 0, "matchingRequests": 0}
         requests_lock = threading.Lock()
 
         class Probe(socketserver.ThreadingTCPServer):
@@ -123,17 +126,11 @@ def exercise(runtime, control_frontend, report):
         class Handler(socketserver.BaseRequestHandler):
             def handle(self):
                 nonlocal request_count
-                self.request.settimeout(1)
-                try:
-                    message = self.request.recv(4096)
-                    first = message.split(b"\r\n", 1)[0]
-                    if (first.startswith((b"OPTIONS rtsp://", b"DESCRIBE rtsp://")) and
-                            b"/" + token + b" RTSP/1.0" in first):
-                        with requests_lock:
-                            request_count += 1
-                    self.request.sendall(b"RTSP/1.0 404 Not Found\r\nCSeq: 1\r\nContent-Length: 0\r\n\r\n")
-                except OSError:
-                    pass
+                observed = inspect_request(self.request, token)
+                with requests_lock:
+                    request_count += observed["matchingRequests"]
+                    for key in probe_counts:
+                        probe_counts[key] += observed[key]
 
         server = Probe(("127.0.0.1", 0), Handler)
         cleanup.callback(server.server_close)
@@ -165,7 +162,7 @@ def exercise(runtime, control_frontend, report):
             return process_api.WaitForSingleObject(identity.handle, 0) == 0
 
         try:
-            phase = "unguarded-positive-control"
+            phase = "unguarded-launch"
             with (private / "private-control.log").open("wb") as log:
                 current = subprocess.Popen([str(job_host), "--stdio", str(control / "bin/64bit/obs64.exe"),
                     "--portable", "--disable-updater", "--only-bundled-plugins"],
@@ -184,14 +181,19 @@ def exercise(runtime, control_frontend, report):
                     assert child.created >= owner.created and Path(child.image()).resolve() == (control / "bin/64bit/obs64.exe").resolve()
                     return child
 
+                phase = "unguarded-child-identity"
                 frontend = wait_for(control_child, "unguarded frontend was not launched inside the owned Job")
+                result["checks"].append("exact-unguarded-frontend-owned-by-job")
 
                 def restored_io():
                     assert current.poll() is None, "unguarded frontend exited without media restore I/O"
                     with requests_lock:
                         return request_count > 0
 
+                phase = "unguarded-restore-rtsp"
                 wait_for(restored_io, "saved collection positive control did not perform RTSP media I/O", timeout=30)
+                result["checks"].append("unguarded-saved-collection-rtsp-request-observed")
+                phase = "unguarded-normal-close"
                 close_windows(frontend.pid)
                 assert current.wait(timeout=30) == 0, "unguarded frontend did not close normally"
                 wait_for(lambda: exited(frontend), "owned control frontend survived normal close")
@@ -259,8 +261,24 @@ def exercise(runtime, control_frontend, report):
             assert fingerprint(external) == external_before, "external OBS profile changed during isolated restore test"
             result["checks"].extend(["normal-product-shutdown", "external-obs-profile-unchanged"])
             result["passed"] = True
-        except Exception:
+        except Exception as error:
             result["failurePhase"] = phase
+            result["exceptionType"] = type(error).__name__
+            result["ownedEntryExitCode"] = current.poll() if current is not None else None
+            with requests_lock:
+                result["probeCounts"] = dict(probe_counts)
+            markers = ("Portable mode: true", "Third-party plugins disabled.", "Loaded scenes:",
+                       "No scene file found, creating default scene", "Synthetic protected source",
+                       "Failed to load module", "Failed to initialize video", "Failed to create source")
+            result["privateControlLogMarkers"] = []
+            logs = [private / "private-control.log", *sorted((control / "config/obs-studio/logs").glob("*.txt"))[-3:]]
+            for log in logs:
+                if log.is_file() and not log.is_symlink():
+                    with log.open("rb") as source:
+                        source.seek(max(0, log.stat().st_size - 262144))
+                        tail = source.read(262144).decode("utf-8", errors="replace")
+                    result["privateControlLogMarkers"].extend(marker for marker in markers if marker in tail)
+            result["privateControlLogMarkers"] = sorted(set(result["privateControlLogMarkers"]))
             raise AssertionError("actual product restore isolation failed at " + phase) from None
         finally:
             cleanup_failed = False

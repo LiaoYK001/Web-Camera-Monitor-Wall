@@ -295,6 +295,54 @@ def exercise(runtime, report, *, with_media=False, retained_profile=None):
             evidence["checks"].append("logout-clears-bound-session")
             if with_media:
                 check_pixels("logout", blank=True)
+                phase = "scoped-viewer-account-api"
+                viewer_credentials = {"username": "native-viewer", "password": secrets.token_urlsafe(24)}
+                viewer_scopes = [{"kind": "camera", "id": f"fixture-{index}"} for index in range(1, 6)]
+                code, _, viewer = request("/api/v2/users", {**viewer_credentials,
+                    "roles": ["viewer"], "scopes": viewer_scopes}, cookie)
+                assert code == 201, "ordinary account API could not create a scoped viewer"
+                code, _, _ = request("/api/v1/cameras", {"id": "fixture-denied", "name": "Forbidden fixture",
+                    "address": rtsp.urls[0], "adapter": "rtsp", "hardwareDecode": "off", "profiles": [{
+                        "id": "main", "name": "Main", "role": "main", "endpoint": rtsp.urls[0],
+                        "transportMode": "rtsp-tcp", "videoCodec": "h265", "width": 320, "height": 180,
+                        "fps": 10, "audioCodec": ""}]}, cookie)
+                assert code == 201, "could not create the separate forbidden catalog entry"
+                owner_workspace = paths[0]
+                owner_bytes = owner_workspace.read_bytes()
+                phase = "scoped-viewer-product-ui"
+                assert ui("login", **viewer_credentials)
+                wait_for(lambda: state().get("phase") == "authenticated" and state().get("catalogItems") == 5,
+                    "viewer catalog did not expose exactly the five permitted cameras")
+                assert ui("choose", indices=[1, 2, 3, 4, 5])
+                check_graph()
+                time.sleep(3)
+                check_pixels("scoped-viewer")
+                assert ui("save")
+                viewer_paths = wait_for(lambda: list((profile / "native-profile").rglob(
+                    "workspace-" + viewer["id"] + ".json")), "viewer workspace was not bound to its account identity")
+                assert len(viewer_paths) == 1 and viewer_paths[0] != owner_workspace
+                assert read_json(viewer_paths[0]) == saved and owner_workspace.read_bytes() == owner_bytes
+                evidence["checks"].extend(["scoped-viewer-catalog-excludes-forbidden-camera",
+                    "scoped-viewer-five-hevc-final-pixels", "separate-account-workspace-does-not-overwrite-owner"])
+                phase = "camera-scope-revocation-api"
+                code, _, changed_viewer = request("/api/v2/users/" + viewer["id"],
+                    {"scopes": viewer_scopes[:-1]}, cookie, method="PATCH", revision=viewer["revision"])
+                assert code == 200, "ordinary user API did not revoke one camera scope"
+                wait_for(lambda: state().get("phase") == "locked", "revoked camera scope remained viewable", timeout=8)
+                assert state()["sessionBound"] is False and state()["mediaSources"] == 0
+                check_pixels("camera-scope-revoked", blank=True)
+                evidence["checks"].append("ordinary-camera-scope-change-clears-actual-viewer-preview")
+                code, _, _ = request("/api/v2/users/" + viewer["id"], {"scopes": viewer_scopes}, cookie,
+                    method="PATCH", revision=changed_viewer["revision"])
+                assert code == 200
+                assert ui("login", **viewer_credentials)
+                check_graph()
+                time.sleep(3)
+                check_pixels("viewer-scope-restored")
+                assert ui("logout")
+                wait_for(lambda: state().get("phase") == "locked", "viewer logout did not release its graph")
+                check_pixels("viewer-logout", blank=True)
+                assert owner_workspace.read_bytes() == owner_bytes
                 phase = "relogin-restores-media"
                 assert ui("login", **account)
                 check_graph()
@@ -362,14 +410,19 @@ def exercise(runtime, report, *, with_media=False, retained_profile=None):
                 time.sleep(3)
                 check_pixels("configuration-reconnected")
                 evidence["checks"].append("real-catalog-change-clears-stale-preview-and-reconnects")
+            phase = "password-change-api"
+            code, issued, _ = request("/api/v1/auth/login", account)
+            assert code == 200 and issued
+            code, _, changed_password = request("/api/v2/account/password", {
+                "currentPassword": account["password"], "newPassword": secrets.token_urlsafe(24)}, issued.split(";", 1)[0])
+            assert code == 200 and changed_password.get("changed") is True, "ordinary password change failed"
             phase = "revocation"
-            with contextlib.closing(sqlite3.connect(profile / "config/cluster.sqlite3")) as database, database:
-                database.execute("UPDATE users SET auth_epoch=? WHERE username=?", (secrets.token_hex(16), account["username"]))
             wait_for(lambda: state().get("phase") == "locked", "real account epoch change did not lock product UI", timeout=8)
             assert state()["sessionBound"] is False and state()["mediaSources"] == 0
             if with_media:
                 check_pixels("revoked", blank=True)
             evidence["checks"].append("real-authority-revocation-locks-ui")
+            evidence["checks"].append("ordinary-password-change-revokes-active-native-session")
             phase = "owner-crash"
             process.kill()
             process.wait(timeout=10)

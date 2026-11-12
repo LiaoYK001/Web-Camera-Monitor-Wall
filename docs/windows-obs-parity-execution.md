@@ -1090,3 +1090,15 @@ Dev.85 passes the actual product's first five-HEVC final-window sequence with al
 Linux 真实 core 编译、CTest 8/8（含实际 libobs Program 像素放置、prepare/cut/停启）通过；产品分支 wall.cpp 对固定 OBS 头的 C++20 语法编译通过，构建契约 44/44。该改动尚未包含在 dev.86，也未证明原生完整 Studio、裁剪/透明度全部 UI 操作或 Windows 最终像素通过。R2 的规范文档/身份/同源池/Preview-Program/固定场景多投影仍须接入并实际验证，不能据共享代码记为完成。
 
 The existing core item mapping is now shared with the actual native product wall path, including the reusable per-item opacity implementation. Linux real-core compilation and 8/8 CTests pass, as does product-branch syntax against the pinned OBS headers. This does not introduce another media runtime. Dev.86 predates this change; Windows product regression and the complete Studio/identity/sharing/projector integration remain open.
+
+#### dev.86 统一入口媒体/生命周期门禁通过 / Unified-entry media and lifecycle pass
+
+`43219901436`（source 52b877c、dev.86）总体 failure，但 `native-product-entry-ui.json` 的 passed=true，17 项检查全部通过。watch、logout、relogin、disabled-stream_profiles、disabled-cameras、restart、configuration-changed、configuration-reconnected、revoked 共九组最终 Preview 捕获各八帧全部通过；显示组五通道都有动态推进，拒绝组为最终空白。Qt 收到锁定动作开始到实际零来源的 logoutRetirementMs=5。真实账户服务/Registry/core/Qt 入口、保存 IDs、正常退出、固定 origin 的冲突拒绝与重启、真实 source-catalog 更新后重连、authEpoch 失效清屏及杀 launcher 后 Job 收束均在该范围通过。仍是 CI 合成 320×180/10fps HEVC 的软件解码，不是目标机/硬解/性能/长稳或安装态证明。
+
+新的恢复门禁在 unguarded-positive-control 阶段失败，尚未验证产品拒绝分支；原分类太粗，未区分子进程定位、真实 RTSP I/O 与正常关闭。后续细分阶段，保留入口退出码、固定日志标记和有界协议计数，继续不输出日志/URL/路径。旧探针一次 recv 就解析/回应，不能正确处理 TCP 分段；现改为最多 4096 bytes、总计一秒内收齐头部并回显合法 CSeq。实际 socketpair 的分段 OPTIONS、DESCRIBE、错路径/序号、残缺/超长头与静默超时四项回归通过（ResourceWarning 作为错误），但是否解释 dev.86 对照失败仍待新 Windows 回归，不能据 parser 修复提前说恢复门禁通过。
+
+实际 UI gate 已可通过，后续内部 NSIS 门禁改为在 UI 成功且无恢复对照清理失败时独立执行，以便恢复对照失败仍能收集安装态证据。任何门禁失败仍使整个 workflow 失败，所有 internal 安装器继续 publicationForbidden，交付仍要求全部成功；这不跳过恢复、安全或完整功能条件。dev.86 的 NSIS 因旧串行条件未执行，不补记通过。
+
+后续 Windows UI gate 还增加普通用户 API 创建 scoped viewer/第六个越权目录项，再通过真实 Qt 登录验证只出现允许的五路、五路最终像素、按 immutable account ID 分开的布局保存；普通 If-Match 用户 API 撤回一个 camera scope 后必须实际清屏，再恢复权限和观看。最终撤销由普通 account/password API 改密触发 authEpoch 更新，替代仅直接修改测试数据库。以上新测试待实际 Windows 执行，不扩大当前 dev.86 证据。
+
+Dev.86 passes the full existing portable-entry UI/media/lifecycle gate, including nine eight-frame capture groups and actual five-source retirement measured at 5 ms from the native lock handler. Its unguarded restore control fails, so restore isolation and installation remain unqualified. The next source adds bounded fragmented-RTSP handling and precise diagnostics, plus scoped-viewer/account-isolation and real password-change UI regressions. Fresh internal NSIS can now run independently after a successful UI gate; any restore failure still fails the workflow and forbids delivery.

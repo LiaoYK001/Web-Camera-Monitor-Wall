@@ -57,6 +57,8 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw 'Runtime PDB pruning contract failed.' }
           python -B native-host/tests/test_product_package.py
           if ($LASTEXITCODE -ne 0) { throw 'Internal product payload contamination/tamper contract failed.' }
+          python -B native-host/tests/test_product_restore_protocol.py
+          if ($LASTEXITCODE -ne 0) { throw 'Fragmented restore-I/O request witness failed.' }
           python -B native-host/qualification/test_windows_api.py
           if ($LASTEXITCODE -ne 0) { throw 'Actual Windows process query or private directory API failed; no performance qualification.' }
       - name: Preflight actual PowerShell capture compilation before other pixel contracts
@@ -139,9 +141,17 @@ jobs:
         run: |
           ./desktop/scripts/test-native-product-restore.ps1 -BuildDirectory "$env:GITHUB_WORKSPACE/build/obs-native-ci"
       - name: Build and qualify a fresh integrated product NSIS installation
-        if: inputs.product_mode
+        # Keep both independent gates observable. A failed restore control still
+        # fails this workflow and forbids delivery; it need not hide fresh
+        # installed-entry evidence after the actual portable UI gate passes.
+        if: always() && inputs.product_mode && steps.product-ui.outcome == 'success' && steps.product-control.outcome == 'success'
         shell: pwsh
         run: |
+          $restoreReceipt = Join-Path $env:GITHUB_WORKSPACE 'build/obs-native-ci/native-product-restore.json'
+          if (Test-Path -LiteralPath $restoreReceipt) {
+            $restore = Get-Content -LiteralPath $restoreReceipt -Raw | ConvertFrom-Json
+            if ($restore.cleanupFailed) { throw 'Owned restore-control cleanup failed; do not start another product.' }
+          }
           ./desktop/scripts/test-native-product-install.ps1 -BuildDirectory "$env:GITHUB_WORKSPACE/build/obs-native-ci"
       - name: Retain only sanitized internal product receipts
         if: always() && inputs.product_mode
