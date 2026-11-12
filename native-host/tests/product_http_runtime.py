@@ -155,6 +155,7 @@ def exercise(binary):
                 authority_paths.clear()
                 status, _, authorized = request("/api/v1/native/cameras/authorize", selection)
                 assert status == 200 and authorized["video"] == {"width": 1920, "height": 1080, "fps": 15}
+                assert authorized["cameraVersions"] == {"camera-a": 1}
                 assert authority_paths.count("/auth/native-authorize-batch") == 1
                 assert authority_paths.count("/auth/native-authorize") == 2, "selection used per-camera authorization requests"
                 assert resolved == [], "authorization unexpectedly resolved an endpoint"
@@ -184,6 +185,13 @@ def exercise(binary):
                     with camera.connect() as database:
                         database.execute(f"UPDATE {table} SET enabled=1")
                     assert request("/api/v1/native/cameras/authorize", selection)[0] == 200
+                before = len(resolved)
+                changed = camera.patch_source_catalog("camera-a", {"profiles": [
+                    {"id": "main", "transportMode": "auto"}]}, 1)
+                assert changed["revision"] == 2
+                code, _, renewed = request("/api/v1/native/cameras/authorize", selection)
+                assert code == 200 and renewed["cameraVersions"] == {"camera-a": 2}
+                assert len(resolved) == before, "configuration renewal unexpectedly read endpoint credentials"
                 # Real account epoch change invalidates the existing session.
                 with cluster.STORE.lock, cluster.STORE.db:
                     cluster.STORE.db.execute("UPDATE users SET auth_epoch=? WHERE username=?",

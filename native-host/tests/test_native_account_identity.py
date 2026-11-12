@@ -528,11 +528,13 @@ class NativeAccountIdentityTests(unittest.TestCase):
         identity = self.login()
         with contextlib.closing(sqlite3.connect(self.registry)) as database, database:
             database.execute("ALTER TABLE cameras ADD COLUMN enabled INTEGER NOT NULL DEFAULT 1")
+            database.execute("ALTER TABLE cameras ADD COLUMN revision INTEGER NOT NULL DEFAULT 1")
             database.execute("CREATE TABLE stream_profiles(camera_id TEXT,id TEXT,enabled INTEGER)")
             database.execute("INSERT INTO stream_profiles VALUES('camera-a','main',1)")
         wanted = {"permission": "live.view", "cameraId": "camera-a", "profileId": "main"}
         request = self.batch(identity, [wanted])
         self.assertEqual(self.store.native_authorize_batch(request)["requirements"], [wanted])
+        self.assertEqual(self.store.native_authorize_batch(request)["cameraVersions"], {"camera-a": 1})
         for table in ("cameras", "stream_profiles"):
             with contextlib.closing(sqlite3.connect(self.registry)) as database, database:
                 database.execute(f"UPDATE {table} SET enabled=0")

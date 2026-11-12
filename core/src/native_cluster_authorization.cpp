@@ -59,6 +59,7 @@ struct CurlRuntime {
 struct Response {
     std::string body;
     std::size_t header_bytes = 0, header_count = 0;
+    std::size_t body_limit = 4096;
 };
 
 bool byte_count(std::size_t size, std::size_t count, std::size_t &bytes) noexcept
@@ -72,9 +73,10 @@ bool byte_count(std::size_t size, std::size_t count, std::size_t &bytes) noexcep
 std::size_t body_callback(char *data, std::size_t size, std::size_t count, void *context) noexcept
 {
     try {
-        auto &body = static_cast<Response *>(context)->body;
+        auto &response = *static_cast<Response *>(context);
+        auto &body = response.body;
         std::size_t bytes = 0;
-        if (!byte_count(size, count, bytes) || bytes > 4096 || body.size() > 4096 - bytes)
+        if (!byte_count(size, count, bytes) || bytes > response.body_limit || body.size() > response.body_limit - bytes)
             return 0;
         body.append(data, bytes);
         return bytes;
@@ -212,8 +214,11 @@ NativeAuthorizationDecision NativeClusterAuthorizationBackend::authorize_batch(s
 }
 
 NativeAuthorizationDecision NativeClusterAuthorizationBackend::authorize_profiles(std::string_view principal,
-    const SessionIdentity &identity, std::span<const NativeClusterProfileRequirement> profiles) const noexcept
+    const SessionIdentity &identity, std::span<const NativeClusterProfileRequirement> profiles,
+    NativeCameraVersions *versions) const noexcept
 {
+    if (versions)
+        versions->clear();
     if (!configured() || !identifier(principal, 3) || !lower_hex(identity.user_id, 32) ||
         !lower_hex(identity.auth_epoch, 32) || profiles.empty() || profiles.size() > 16)
         return Decision::unavailable;
@@ -230,19 +235,20 @@ NativeAuthorizationDecision NativeClusterAuthorizationBackend::authorize_profile
                 "\",\"profileId\":\"" + std::string(item.profile_id) + "\"}";
         }
         body += "]";
-        return batch_request(principal, identity, body);
+        return batch_request(principal, identity, body, true, versions);
     } catch (...) { return Decision::unavailable; }
 }
 
 NativeAuthorizationDecision NativeClusterAuthorizationBackend::batch_request(std::string_view principal,
-    const SessionIdentity &identity, const std::string &requirements) const noexcept
+    const SessionIdentity &identity, const std::string &requirements, bool profiles,
+    NativeCameraVersions *versions) const noexcept
 {
     try {
         const std::string body = "{\"username\":\"" + std::string(principal) + "\",\"userId\":\"" + identity.user_id +
             "\",\"authEpoch\":\"" + identity.auth_epoch + "\",\"requirements\":" + requirements + "}";
         long status = 0;
         std::string reply;
-        if (!exchange("/auth/native-authorize-batch", body, status, reply))
+        if (!exchange("/auth/native-authorize-batch", body, status, reply, profiles ? 8192 : 4096))
             return Decision::unavailable;
         if (status != 200)
             return parse_response(status, reply, {}, &identity);
@@ -251,23 +257,42 @@ NativeAuthorizationDecision NativeClusterAuthorizationBackend::batch_request(std
         const json_t *items = root ? json_object_get(root.get(), "requirements") : nullptr;
         std::unique_ptr<json_t, decltype(&json_decref)> expected(
             json_loadb(requirements.data(), requirements.size(), JSON_REJECT_DUPLICATES, nullptr), &json_decref);
-        if (!json_is_object(root.get()) || json_object_size(root.get()) != 4 ||
+        if (!json_is_object(root.get()) || json_object_size(root.get()) != (profiles ? 5u : 4u) ||
             !json_is_true(json_object_get(root.get(), "allowed")) ||
             string_value(json_object_get(root.get(), "userId")) != identity.user_id ||
             string_value(json_object_get(root.get(), "authEpoch")) != identity.auth_epoch ||
             !expected || !json_is_array(items) || !json_equal(items, expected.get()))
             return Decision::unavailable;
+        if (profiles) {
+            NativeCameraVersions observed;
+            const auto *values = json_object_get(root.get(), "cameraVersions");
+            if (!json_is_object(values))
+                return Decision::unavailable;
+            for (std::size_t index = 0; index < json_array_size(expected.get()); ++index) {
+                const auto camera = string_value(json_object_get(json_array_get(expected.get(), index), "cameraId"));
+                const auto *revision = json_object_get(values, std::string(camera).c_str());
+                if (!json_is_integer(revision) || json_integer_value(revision) < 1 ||
+                    json_integer_value(revision) > 9007199254740991LL)
+                    return Decision::unavailable;
+                observed.emplace(camera, json_integer_value(revision));
+            }
+            if (json_object_size(values) != observed.size())
+                return Decision::unavailable;
+            if (versions)
+                *versions = std::move(observed);
+        }
         return Decision::allowed;
     } catch (...) { return Decision::unavailable; }
 }
 
 bool NativeClusterAuthorizationBackend::exchange(std::string_view route, const std::string &body,
-    long &status, std::string &reply) const noexcept
+    long &status, std::string &reply, std::size_t body_limit) const noexcept
 {
     try {
         const std::string url = "http://127.0.0.1:" + std::to_string(config_.port) + std::string(route);
         const std::string token_header = "X-WebObs-Internal-Admin: " + config_.internal_token;
         Response response;
+        response.body_limit = body_limit;
         std::unique_ptr<curl_slist, decltype(&curl_slist_free_all)> headers(nullptr, &curl_slist_free_all);
         std::unique_ptr<CURL, decltype(&curl_easy_cleanup)> handle(curl_easy_init(), &curl_easy_cleanup);
         if (!handle)

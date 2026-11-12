@@ -685,6 +685,7 @@ class ClusterStore:
             raise ApiError(400, "invalid_request", "native batch requirements contain duplicates")
         camera_ids = list(dict.fromkeys(camera_id for _, camera_id, _ in pairs if camera_id))
         profile_ids = [(camera_id, profile_id) for _, camera_id, profile_id in pairs if profile_id]
+        camera_versions: dict[str, int] = {}
         rejection: ApiError | None = None
         groups: dict[str, str] | None = None
         with self._native_auth_transaction():
@@ -710,7 +711,7 @@ class ClusterStore:
                                 f"file:{self.camera_registry_path.as_posix()}?mode=ro", uri=True, timeout=1)
                             database.execute("BEGIN")
                             rows = database.execute(
-                                "SELECT id,group_id FROM cameras WHERE id IN (" +
+                                "SELECT id,group_id" + (",revision" if profile_ids else "") + " FROM cameras WHERE id IN (" +
                                 ",".join("?" for _ in camera_ids) + ")", camera_ids).fetchall()
                             resolved = {item[0]: item[1] for item in rows}
                             if any(not isinstance(group, str) or (group and not IDENTIFIER.fullmatch(group))
@@ -720,6 +721,12 @@ class ClusterStore:
                                                      "camera registry is unavailable")
                             else:
                                 groups = resolved
+                            if rejection is None and profile_ids:
+                                wanted = {camera_id for camera_id, _ in profile_ids}
+                                camera_versions = {item[0]: item[2] for item in rows if item[0] in wanted}
+                                if any(type(revision) is not int or not 1 <= revision <= 9007199254740991
+                                       for revision in camera_versions.values()):
+                                    rejection = ApiError(503, "native_registry_unavailable", "camera registry is unavailable")
                             if rejection is None and profile_ids:
                                 profile_rows = database.execute(
                                     "SELECT p.camera_id,p.id,c.enabled,p.enabled FROM stream_profiles p "
@@ -731,6 +738,7 @@ class ClusterStore:
                                         flag not in (0, 1) for flags in active.values() for flag in flags):
                                     rejection = ApiError(503, "native_registry_unavailable", "camera registry is unavailable")
                                 elif any(flags != (1, 1) for flags in active.values()):
+                                    self._audit("auth.batch-authorization", row["id"], "live.view", "rejected")
                                     rejection = ApiError(403, "permission_rejected", "permission or resource scope was rejected")
                         except sqlite3.Error:
                             rejection = ApiError(503, "native_registry_unavailable",
@@ -751,6 +759,7 @@ class ClusterStore:
         # The whole batch shares one decision snapshot; any denial denies the
         # entire batch. No partial executable subset is returned.
         return {"allowed": True, "userId": value["userId"], "authEpoch": value["authEpoch"],
+                **({"cameraVersions": camera_versions} if profile_ids else {}),
                 "requirements": [{"permission": permission, "cameraId": camera_id,
                                   **({"profileId": profile_id} if profile_id else {})}
                                  for permission, camera_id, profile_id in pairs]}

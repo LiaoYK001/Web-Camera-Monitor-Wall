@@ -44,9 +44,13 @@ core 原生 `cameras/authorize` 与 `cameras/resolve` 在同一次请求内使�
 
 The actual native selection routes use this adapter before resolving any endpoint. All chunks must pass, with local identity and deadline checks plus the final authoritative scene check; no grant is cached across requests. A five-camera renewal now uses one batch and two scene checks. Exact reply identity/order/count, transport bounds and failure cleanup remain enforced. This is request-count evidence, not measured CPU parity; catalog filtering still uses individual decisions.
 
-产品观看批次使用明确的 camera/Profile 对：`live.view` requirement 增加非空、严格标识符 `profileId`，该字段不允许用于其他 permission。Registry 的组与 camera/Profile 存在、启用状态在同一个显式只读事务中检查；缺 Profile 为不可用，camera 或 Profile 禁用为拒绝，均在读取任何私密端点之前失败。返回 requirement 必须完整回显 Profile，C++ `authorize_profiles` 拒绝 camera-only 响应降级。普通不带 Profile 的库调用保留原语义。此处仍未检测已启用 Profile 的连接配置变化，不能写成配置变化续验已完成。
+产品观看批次使用明确的 camera/Profile 对：`live.view` requirement 增加非空、严格标识符 `profileId`，该字段不允许用于其他 permission。Registry 的组、camera/Profile 存在、启用状态和 camera revision 在同一个显式只读事务中检查；缺 Profile 为不可用，camera 或 Profile 禁用为拒绝，均在读取任何私密端点之前失败。返回 requirement 必须完整回显 Profile，另返回只含本批次相机的 `cameraVersions`；版本为 1..2^53−1 的精确整数。C++ `authorize_profiles` 拒绝 camera-only 降级、缺项/额外版本或非法版本。Profile 回包放宽为有界 8 KiB，以容纳 16 组最大长度 camera/Profile ID 和版本；普通不带 Profile 的库调用保留原语义与 4 KiB 回包上限。
 
-Product viewing uses exact camera/Profile requirements. The optional nonempty `profileId` is allowed only for camera-bound live.view; one explicit read-only Registry transaction checks groups and both enabled flags. Missing or disabled Profiles reject the operation before endpoint resolution. The typed C++ adapter rejects replies that drop Profile identity. Connection-configuration change detection remains separate work.
+Product viewing uses exact camera/Profile requirements. A single read-only Registry transaction checks groups, both enabled flags and camera revisions. Missing/disabled Profiles reject before endpoint resolution. The typed adapter validates exact Profile echoes and the complete camera-version map with positive exactly representable integer revisions. Profile replies are bounded at 8 KiB for maximal identifiers; ordinary replies retain 4 KiB.
+
+原生窗口在 resolve 后的紧邻授权要求两个版本映射一致，持续续验也必须匹配当前建图的映射；真实管理 API 更新（包括端点、Profile、凭据等会推进 Registry revision 的保存）使旧画面清空，重新登录连接后读取新资料。当前任意 camera revision 变化均要求重连，改名/标签也可能触发；R2 仍需改善为兼容设置分类和更细的消费者重建，不把该保守中间行为当作最终交互。观看切换先释放旧媒体并推进 UI 请求代次，忽略此前迟到回复；建图期间没有受保护旧来源继续播放。Workspace 仍只保存 camera/Profile ID，版本不是缓存授权或永久端点。
+
+The UI requires matching revisions immediately after resolution and on each renewal. Registry updates clear the old view; reconnecting resolves fresh data. Any camera revision currently triggers reconnect, including non-media metadata edits, so R2 still owns smoother compatibility-aware rebuilding. Switching viewing advances the UI request generation and releases old media before resolving, preventing late replies from restoring stale state. Persisted workspaces remain ID-only.
 
 ## 接入前仍须保留的契约 / Remaining integration contracts
 

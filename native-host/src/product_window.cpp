@@ -53,6 +53,7 @@ class ProductWindow final : public QWidget {
 	std::array<QComboBox *, 5> slots_{};
 	ProductWallResult wall_;
 	QJsonArray watching_;
+	QJsonObject watching_versions_;
 	QString user_id_;
 	quint64 generation_ = 0;
 	bool heartbeat_pending_ = false;
@@ -139,6 +140,7 @@ class ProductWindow final : public QWidget {
 	void clear_media()
 	{
 		watching_ = {};
+		watching_versions_ = {};
 		if (!obs_initialized())
 			return;
 		// Clear the inputs before releasing graph references, including references
@@ -277,7 +279,11 @@ class ProductWindow final : public QWidget {
 			status_->setText(tr("请选择五个摄像机 Profile。"));
 			return;
 		}
+		++generation_;
+		heartbeat_pending_ = false;
+		clear_media();
 		applying_ = true;
+		observe_state("connecting");
 		watch_->setEnabled(false);
 		refresh_->setEnabled(false);
 		for (auto *slot : slots_)
@@ -290,11 +296,20 @@ class ProductWindow final : public QWidget {
 				return;
 			}
 			const auto resolved = body.value("cameras").toArray();
+			const auto versions = body.value("cameraVersions").toObject();
+			if (versions.size() != 5) {
+				locked(tr("设备配置版本不可用，请重新登录。"));
+				return;
+			}
 			// Reauthorize after resolution and immediately before OBS graph writes.
 			request("/api/v1/native/cameras/authorize", "POST", {{"cameras", selected}},
-				[this, selected, resolved](int status, const QJsonObject &authorization) {
+				[this, selected, resolved, versions](int status, const QJsonObject &authorization) {
 				if (status != 200) {
 					locked(tr("观看权限已失效，请重新登录。"));
+					return;
+				}
+				if (authorization.value("cameraVersions").toObject() != versions) {
+					locked(tr("设备配置已变更，请重新连接。"));
 					return;
 				}
 				clear_media();
@@ -339,6 +354,7 @@ class ProductWindow final : public QWidget {
 				}
 				select_wall(wall_.scene);
 				watching_ = selected;
+				watching_versions_ = versions;
 				observe_state("graph-applied");
 				status_->setText(tr("原生监看已连接。"));
 			}, 12000);
@@ -471,15 +487,17 @@ public:
 			QDesktopServices::openUrl(url);
 		});
 		connect(&heartbeat_, &QTimer::timeout, this, [this] {
-			if (heartbeat_pending_ || user_id_.isEmpty())
+			if (heartbeat_pending_ || applying_ || user_id_.isEmpty())
 				return;
 			heartbeat_pending_ = true;
 			const bool active = !watching_.isEmpty();
 			request(active ? "/api/v1/native/cameras/authorize" : "/api/v1/native/auth/session",
-				active ? "POST" : "GET", {{"cameras", watching_}}, [this](int code, const QJsonObject &) {
+				active ? "POST" : "GET", {{"cameras", watching_}}, [this, active](int code, const QJsonObject &body) {
 				heartbeat_pending_ = false;
 				if (code != 200)
 					locked(tr("会话或摄像机权限已失效，请重新登录。"));
+				else if (active && body.value("cameraVersions").toObject() != watching_versions_)
+					locked(tr("设备配置已变更，请重新登录后连接。"));
 			});
 		});
 	}

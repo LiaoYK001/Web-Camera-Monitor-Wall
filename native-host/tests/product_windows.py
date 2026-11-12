@@ -97,13 +97,15 @@ def exercise(runtime, report, *, with_media=False):
         opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
         rtsp = None
 
-        def request(path, body=None, cookie=""):
+        def request(path, body=None, cookie="", *, method=None, revision=None):
             origin = status()["origin"]
             headers = {"Origin": origin, "Content-Type": "application/json"}
             if cookie:
                 headers["Cookie"] = cookie
+            if revision is not None:
+                headers["If-Match"] = '"' + str(revision) + '"'
             message = urllib.request.Request(origin + path, headers=headers,
-                data=None if body is None else json.dumps(body).encode())
+                data=None if body is None else json.dumps(body).encode(), method=method)
             try:
                 reply = opener.open(message, timeout=15)
             except urllib.error.HTTPError as error:
@@ -300,6 +302,23 @@ def exercise(runtime, report, *, with_media=False):
             else:
                 wait_for(lambda: state().get("phase") == "authenticated", "persisted account did not log in after restart")
             evidence["checks"].append("restart-keeps-account-requires-login")
+            if with_media:
+                phase = "configuration-change"
+                code, issued, _ = request("/api/v1/auth/login", account)
+                assert code == 200 and issued
+                cookie = issued.split(";", 1)[0]
+                code, _, item = request("/api/v2/source-catalog/fixture-1", cookie=cookie)
+                assert code == 200
+                code, _, _ = request("/api/v2/source-catalog/fixture-1", {"profiles": [
+                    {"id": "main", "transportMode": "auto"}]}, cookie, method="PATCH", revision=item["revision"])
+                assert code == 200, "ordinary catalog update API did not save the fixture change"
+                wait_for(lambda: state().get("phase") == "locked", "changed connection configuration remained active", timeout=8)
+                check_pixels("configuration-changed", blank=True)
+                assert ui("login", **account)
+                check_graph()
+                time.sleep(3)
+                check_pixels("configuration-reconnected")
+                evidence["checks"].append("real-catalog-change-clears-stale-preview-and-reconnects")
             phase = "revocation"
             with contextlib.closing(sqlite3.connect(profile / "config/cluster.sqlite3")) as database, database:
                 database.execute("UPDATE users SET auth_epoch=? WHERE username=?", (secrets.token_hex(16), account["username"]))

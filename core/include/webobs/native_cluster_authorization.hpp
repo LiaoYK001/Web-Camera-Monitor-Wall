@@ -6,6 +6,7 @@
 #include <chrono>
 #include <cstdint>
 #include <memory>
+#include <map>
 #include <span>
 #include <string>
 #include <string_view>
@@ -23,6 +24,7 @@ struct NativeClusterProfileRequirement {
     std::string_view camera_id;
     std::string_view profile_id;
 };
+using NativeCameraVersions = std::map<std::string, std::int64_t>;
 
 // Renderer-free adapter for the existing loopback cluster authority. Configuration
 // comes from the trusted host, NEVER a renderer request or browser credential.
@@ -48,16 +50,18 @@ public:
     // Product viewing also requires each exact Profile to exist and both the
     // camera and Profile to remain enabled in the authoritative Registry.
     [[nodiscard]] NativeAuthorizationDecision authorize_profiles(std::string_view principal,
-        const SessionIdentity &identity, std::span<const NativeClusterProfileRequirement> profiles) const noexcept;
+        const SessionIdentity &identity, std::span<const NativeClusterProfileRequirement> profiles,
+        NativeCameraVersions *versions = nullptr) const noexcept;
 
 private:
     [[nodiscard]] NativeAuthorizationDecision request(std::string_view principal,
         const SessionIdentity *identity, std::string_view permission,
         std::string_view camera_id) const noexcept;
     [[nodiscard]] bool exchange(std::string_view route, const std::string &body,
-        long &status, std::string &reply) const noexcept;
+        long &status, std::string &reply, std::size_t body_limit = 4096) const noexcept;
     [[nodiscard]] NativeAuthorizationDecision batch_request(std::string_view principal,
-        const SessionIdentity &identity, const std::string &requirements) const noexcept;
+        const SessionIdentity &identity, const std::string &requirements, bool profiles = false,
+        NativeCameraVersions *versions = nullptr) const noexcept;
     NativeClusterAuthorizationConfig config_;
     // Copies share only our curl_global_init reference, never an easy handle.
     std::shared_ptr<void> runtime_;

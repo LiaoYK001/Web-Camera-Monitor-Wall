@@ -4303,10 +4303,12 @@ private:
         }
         // Preserve the authority's sixteen-item bound. All chunks must pass;
         // no URL or partially executable subset leaves this request on failure.
+        NativeCameraVersions camera_versions;
         for (std::size_t offset = 0; offset < requirements.size(); offset += 16) {
             const auto count = (std::min)(std::size_t(16), requirements.size() - offset);
+            NativeCameraVersions chunk_versions;
             const auto decision = backend.authorize_profiles(bound->user, *bound->identity,
-                std::span<const NativeClusterProfileRequirement>(requirements.data() + offset, count));
+                std::span<const NativeClusterProfileRequirement>(requirements.data() + offset, count), &chunk_versions);
             if (std::chrono::steady_clock::now() >= deadline || decision != NativeAuthorizationDecision::allowed) {
                 auto status = http::status::service_unavailable;
                 if (std::chrono::steady_clock::now() < deadline) {
@@ -4318,6 +4320,13 @@ private:
                 }
                 reject(status, "native_camera_rejected");
                 return;
+            }
+            for (const auto &[camera, revision] : chunk_versions) {
+                const auto [existing, inserted] = camera_versions.emplace(camera, revision);
+                if (!inserted && existing->second != revision) {
+                    reject(http::status::service_unavailable, "native_catalog_changed");
+                    return;
+                }
             }
         }
         const auto current = session_store_.validate_and_slide(*token);
@@ -4367,7 +4376,13 @@ private:
             return;
         }
         const auto canvas = controller_.private_document_snapshot().canvas;
-        result += "],\"video\":{\"width\":" + std::to_string(canvas.width) +
+        result += "],\"cameraVersions\":{";
+        for (const auto &[camera, revision] : camera_versions) {
+            if (result.back() != '{')
+                result += ',';
+            result += "\"" + json_escape(camera) + "\":" + std::to_string(revision);
+        }
+        result += "},\"video\":{\"width\":" + std::to_string(canvas.width) +
             ",\"height\":" + std::to_string(canvas.height) + ",\"fps\":" +
             std::to_string(runtime_status_.configured_fps) + "}}";
         send_response(response(http::status::ok, version, std::move(result)));

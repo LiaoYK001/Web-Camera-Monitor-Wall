@@ -394,13 +394,25 @@ class NativeAccountTests(unittest.TestCase):
         requirements = [{"permission": "live.view", "cameraId": "camera-a", "profileId": "main"}]
         request = {"user": "viewer-one", "userId": "a" * 32, "authEpoch": "b" * 32,
                    "requirements": requirements}
-        good = {"allowed": True, "userId": "a" * 32, "authEpoch": "b" * 32, "requirements": requirements}
+        good = {"allowed": True, "userId": "a" * 32, "authEpoch": "b" * 32,
+                "requirements": requirements, "cameraVersions": {"camera-a": 1}}
         self.assertEqual(self.hostile(body=json.dumps(good).encode(), batch=request, profiles=True)[0], 200)
         camera_only = {**good, "requirements": [{"permission": "live.view", "cameraId": "camera-a"}]}
         self.assertEqual(self.hostile(body=json.dumps(camera_only).encode(), batch=request, profiles=True)[0], 503)
         invalid = {**request, "requirements": [{"cameraId": "camera-a", "profileId": ""}]}
         reply, observed, _, _ = self.hostile(batch=invalid, profiles=True)
         self.assertEqual((reply, observed), (503, []))
+        for versions in ({}, {"camera-b": 1}, {"camera-a": 0}, {"camera-a": True},
+                         {"camera-a": 9007199254740992}, {"camera-a": 1, "extra-camera": 1}):
+            self.assertEqual(self.hostile(body=json.dumps({**good, "cameraVersions": versions}).encode(),
+                                         batch=request, profiles=True)[0], 503)
+        maximum = [{"permission": "live.view", "cameraId": "c" + str(index).zfill(63),
+                    "profileId": "p" * 64} for index in range(16)]
+        large = {**good, "requirements": maximum,
+                 "cameraVersions": {item["cameraId"]: 9007199254740991 for item in maximum}}
+        full_request = {**request, "requirements": maximum}
+        self.assertEqual(self.hostile(body=json.dumps(large).encode(), batch=full_request, profiles=True)[0], 200)
+        self.assertEqual(self.hostile(body=b"x" * 8193, batch=request, profiles=True)[0], 503)
 
     def test_hostile_200_is_not_a_status_only_grant(self):
         valid = {"allowed": True, "userId": "a" * 32, "authEpoch": "b" * 32, "permission": "live.view"}
