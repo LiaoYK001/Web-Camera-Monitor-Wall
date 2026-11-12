@@ -11,6 +11,7 @@ import {
 } from 'react';
 import { connectSceneEvents, ControlApiError, fetchCameras, fetchStudio, fetchStudioCapabilities, replaceStudio, studioAction } from './api';
 import DirectPreview from './DirectPreview';
+import NativeProgramPreview from './NativeProgramPreview';
 import ProgramPreview from './ProgramPreview';
 import SceneCollection, { arrangeSceneGrid, cameraSourceId, type SceneOperation } from './SceneCollection';
 import { openProjectorWindow } from './projector';
@@ -155,6 +156,7 @@ export default function App() {
   const [adding, setAdding] = useState(false);
   const [workspaceMode, setWorkspaceMode] = useState<WorkspaceMode>('program');
   const [playbackMode, setPlaybackMode] = useState<PlaybackMode>(initialPlaybackMode);
+  const [nativeMonitor, setNativeMonitor] = useState(false);
   const [canvasZoom, setCanvasZoom] = useState(1);
   const [liveLayoutPreview, setLiveLayoutPreview] = useState(true);
   const [newKind, setNewKind] = useState<AddSourceKind>('camera');
@@ -986,11 +988,12 @@ export default function App() {
     const monitorScene = programScene ?? studioDraft.scenes.find((scene) => scene.id === studioDraft.programSceneId) ?? draft;
     return <WorkspaceShell area={productArea} onNavigate={navigate} connection={connection}><section className="monitor-workspace page-panel">
       <header className="monitor-heading"><div><span className="eyebrow">Live monitor</span><h1>{monitorScene.name}</h1></div><div>
-        <button type="button" onClick={() => setPlaybackMode('direct')} className={playbackMode === 'direct' ? 'active' : ''}>浏览器媒体</button>
-        <button type="button" onClick={() => setPlaybackMode('composite')} className={playbackMode === 'composite' ? 'active' : ''}>服务端 Program</button>
-        <button type="button" onClick={() => void toggleFullscreen()}>真全屏</button>
+        {window.webobsDesktop?.nativePreview && !deviceWorkspace && <button type="button" onClick={() => setNativeMonitor(true)} className={nativeMonitor ? 'active' : ''}>Windows 原生监看（试验）</button>}
+        <button type="button" onClick={() => { setNativeMonitor(false); setPlaybackMode('direct'); }} className={!nativeMonitor && playbackMode === 'direct' ? 'active' : ''}>浏览器媒体</button>
+        <button type="button" onClick={() => { setNativeMonitor(false); setPlaybackMode('composite'); }} className={!nativeMonitor && playbackMode === 'composite' ? 'active' : ''}>服务端 Program</button>
+        {!nativeMonitor && <button type="button" onClick={() => void toggleFullscreen()}>真全屏</button>}
       </div></header><Suspense fallback={<div className="monitor-process-status"><button type="button" className="ghost-button" disabled aria-busy="true">实时占用</button></div>}><MonitorProcessStatus /></Suspense><div ref={monitorRef} className="monitor-surface">
-        {playbackMode === 'direct' ? <DirectPreview scene={monitorScene} /> : <ProgramPreview aspectRatio={`${monitorScene.canvas.width} / ${monitorScene.canvas.height}`} />}
+        {nativeMonitor && !deviceWorkspace ? <NativeProgramPreview /> : playbackMode === 'direct' ? <DirectPreview scene={monitorScene} /> : <ProgramPreview aspectRatio={`${monitorScene.canvas.width} / ${monitorScene.canvas.height}`} />}
         {fullscreen && <div className="fullscreen-overlay"><button type="button" onClick={() => void toggleFullscreen()}>退出全屏</button><span>{wakeLockState === 'active' ? '● 屏幕常亮' : wakeLockState === 'unsupported' ? '⚠ 不支持防休眠' : ''}</span></div>}
       </div></section></WorkspaceShell>;
   }

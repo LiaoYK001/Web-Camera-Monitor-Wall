@@ -1,0 +1,162 @@
+--- a/frontend/CMakeLists.txt
++++ b/frontend/CMakeLists.txt
+@@ -28,6 +28,11 @@
+ 
+ add_executable(obs-studio)
+ add_executable(OBS::studio ALIAS obs-studio)
++
++option(WEBOBS_PRODUCT_FRONTEND "Use the WebOBS authenticated product surface" ON)
++if(WEBOBS_PRODUCT_FRONTEND)
++  target_compile_definitions(obs-studio PRIVATE WEBOBS_PRODUCT_FRONTEND=1)
++endif()
+ 
+ target_link_libraries(
+   obs-studio
+--- a/frontend/widgets/OBSBasic.cpp
++++ b/frontend/widgets/OBSBasic.cpp
+@@ -221,6 +221,11 @@
+ 
+ OBSBasic::OBSBasic(QWidget *parent) : OBSMainWindow(parent), undo_s(ui), ui(new Ui::OBSBasic)
+ {
++#ifdef WEBOBS_PRODUCT_FRONTEND
++	setProperty("webobsProductFrontend", true);
++	setAttribute(Qt::WA_DontShowOnScreen);
++	disable_3p_plugins = true;
++#endif
+ 	collections = {};
+ 
+ 	setAttribute(Qt::WA_NativeWindow);
+@@ -244,6 +249,10 @@
+ 	api = InitializeAPIInterface(this);
+ 
+ 	ui->setupUi(this);
++#ifdef WEBOBS_PRODUCT_FRONTEND
++	// Monitoring reuses OBS's locked preview, without editing/spacing guides.
++	ui->preview->SetLocked(true);
++#endif
+ 	ui->previewDisabledWidget->setVisible(false);
+ 
+ 	/* Set up streaming connections */
+@@ -1020,6 +1029,10 @@
+ 	struct obs_module_failure_info mfi;
+ 
+ 	// Safe Mode disables third-party plugins so we don't need to add each path outside the OBS bundle/installation.
++#ifdef WEBOBS_PRODUCT_FRONTEND
++	obs_add_safe_module("webobs-native-host");
++	obs_add_core_module("webobs-native-host");
++#endif
+ 	if (safe_mode || disable_3p_plugins) {
+ 		SetSafeModuleNames();
+ 	} else {
+--- a/frontend/widgets/OBSBasic_SceneCollections.cpp
++++ b/frontend/widgets/OBSBasic_SceneCollections.cpp
+@@ -804,6 +804,9 @@
+ 
+ void OBSBasic::Save(SceneCollection &collection)
+ {
++#ifdef WEBOBS_PRODUCT_FRONTEND
++	return;
++#endif
+ 	OBSDataAutoRelease saveData = obs_data_create();
+ 
+ 	// Scene collection name
+@@ -1118,6 +1121,12 @@
+ 
+ void OBSBasic::Load(SceneCollection &collection)
+ {
++#ifdef WEBOBS_PRODUCT_FRONTEND
++	setProperty("webobsRefusedCollection", QString::fromStdString(collection.getName()));
++	setProperty("webobsRestoreGuardHits", property("webobsRestoreGuardHits").toInt() + 1);
++	CreateDefaultScene(false);
++	return;
++#endif
+ 	disableSaving++;
+ 
+ 	lastOutputResolution.reset();
+@@ -1168,6 +1177,9 @@
+ 
+ void OBSBasic::LoadData(obs_data_t *data, SceneCollection &collection)
+ {
++#ifdef WEBOBS_PRODUCT_FRONTEND
++	return;
++#endif
+ 	ClearSceneData();
+ 	ClearContextBar();
+ 
+--- a/frontend/widgets/OBSBasic_Hotkeys.cpp
++++ b/frontend/widgets/OBSBasic_Hotkeys.cpp
+@@ -23,6 +23,9 @@
+ 
+ void OBSBasic::InitHotkeys()
+ {
++#ifdef WEBOBS_PRODUCT_FRONTEND
++	return;
++#endif
+ 	ProfileScope("OBSBasic::InitHotkeys");
+ 
+ 	struct obs_hotkeys_translations t = {};
+--- a/frontend/widgets/OBSBasic_SysTray.cpp
++++ b/frontend/widgets/OBSBasic_SysTray.cpp
+@@ -106,6 +106,9 @@
+ 
+ void OBSBasic::SystemTray(bool firstStarted)
+ {
++#ifdef WEBOBS_PRODUCT_FRONTEND
++	return;
++#endif
+ 	if (!QSystemTrayIcon::isSystemTrayAvailable())
+ 		return;
+ 	if (!trayIcon && !firstStarted)
+--- a/frontend/OBSApp.cpp
++++ b/frontend/OBSApp.cpp
+@@ -37,6 +37,7 @@
+ 
+ #include <QCheckBox>
+ #include <QDesktopServices>
++#include <QDir>
+ #if defined(_WIN32) || defined(ENABLE_SPARKLE_UPDATER)
+ #include <QFile>
+ #endif
+@@ -1676,6 +1676,14 @@
+ 
+ int GetAppConfigPath(char *path, size_t size, const char *name)
+ {
++#ifdef WEBOBS_PRODUCT_FRONTEND
++	const QString root = qEnvironmentVariable("WEBOBS_NATIVE_PROFILE_ROOT");
++	if (root.isEmpty() || !QDir::isAbsolutePath(root))
++		return -1;
++	const auto utf8 = root.toUtf8();
++	return name && *name ? snprintf(path, size, "%s/%s", utf8.constData(), name)
++			    : snprintf(path, size, "%s", utf8.constData());
++#endif
+ #if ALLOW_PORTABLE_MODE
+ 	if (portable_mode) {
+ 		if (name && *name) {
+@@ -1693,6 +1701,15 @@
+ 
+ char *GetAppConfigPathPtr(const char *name)
+ {
++#ifdef WEBOBS_PRODUCT_FRONTEND
++	const QString root = qEnvironmentVariable("WEBOBS_NATIVE_PROFILE_ROOT");
++	if (root.isEmpty() || !QDir::isAbsolutePath(root))
++		return nullptr;
++	QString result = root;
++	if (name && *name)
++		result += "/" + QString::fromUtf8(name);
++	return bstrdup(result.toUtf8().constData());
++#endif
+ #if ALLOW_PORTABLE_MODE
+ 	if (portable_mode) {
+ 		char path[512];
+--- a/frontend/widgets/OBSBasicPreview.hpp
++++ b/frontend/widgets/OBSBasicPreview.hpp
+@@ -33,6 +33,9 @@
+ 
+ class OBSBasicPreview : public OBSQTDisplay {
+ 	Q_OBJECT
++#ifdef WEBOBS_PRODUCT_FRONTEND
++	Q_PROPERTY(bool webobsPreviewLocked READ Locked)
++#endif
+ 
+ 	friend class SourceTree;
+ 	friend class SourceTreeItem;

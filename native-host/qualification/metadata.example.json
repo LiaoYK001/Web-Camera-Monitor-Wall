@@ -1,0 +1,41 @@
+{
+  "schemaVersion": 1,
+  "campaignId": "private-laptop-campaign-01",
+  "runId": "pair01-obs",
+  "pairId": "pair01",
+  "pairIndex": 1,
+  "position": 1,
+  "variant": "obs",
+  "workload": "five-real-h265",
+  "identities": {
+    "machine": "machine-01",
+    "os": "os-settings-01",
+    "driver": "driver-settings-01",
+    "power": "power-settings-01",
+    "thermal": "thermal-condition-01",
+    "display": "display-dpi-settings-01",
+    "adapter": "adapter-settings-01",
+    "canvas": "canvas-fps-settings-01",
+    "view": "layout-window-size-01",
+    "decode": "decode-buffer-reconnect-color-01",
+    "audio": "audio-settings-01",
+    "extras": "extras-disabled-01",
+    "fixturePlacement": "external-source-scope-01"
+  },
+  "inputs": [
+    {"sourceId": "camera-01", "settingsId": "stream-settings-01", "codec": "h265"},
+    {"sourceId": "camera-02", "settingsId": "stream-settings-02", "codec": "h265"},
+    {"sourceId": "camera-03", "settingsId": "stream-settings-03", "codec": "h265"},
+    {"sourceId": "camera-04", "settingsId": "stream-settings-04", "codec": "h265"},
+    {"sourceId": "camera-05", "settingsId": "stream-settings-05", "codec": "h265"}
+  ],
+  "declarations": {
+    "fiveSourcesVisible": false,
+    "sameQuality": false,
+    "recordingOff": false,
+    "streamingOff": false,
+    "detectionOff": false,
+    "otherVariantStopped": false,
+    "ownedScopeReviewed": false
+  }
+}

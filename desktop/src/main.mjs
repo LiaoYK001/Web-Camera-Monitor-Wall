@@ -11,6 +11,7 @@ import { verifyRuntime, digestFile } from './runtime-integrity.mjs';
 import { trustedFrame, projectorOptions } from './ipc-policy.mjs';
 import { verifyPublisher } from './signature.mjs';
 import { launchVerifiedInstaller } from './installer.mjs';
+import { NativePreviewClient, requestNativePreview } from './native-preview.mjs';
 
 const source = path.dirname(fileURLToPath(import.meta.url));
 const root = path.join(process.env.LOCALAPPDATA || app.getPath('appData'),'WebOBS');
@@ -88,6 +89,13 @@ else {
     tray=new Tray(trayIcon);tray.setToolTip('WebOBS · 本机监控墙');tray.on('double-click',showMain);
     tray.setContextMenu(Menu.buildFromTemplate([{label:'显示主窗口',click:showMain},{label:'检查更新',click:()=>{showMain();void updates?.check();}},{type:'separator'},{label:'退出并停止服务',click:()=>void quit()}]));
     const desktopSession=session.fromPartition('persist:webobs-desktop');
+    const nativePreview=new NativePreviewClient(operation=>requestNativePreview(operation,{
+      origin:supervisor?.origin,token:supervisor?.env?.WEBOBS_NATIVE_PREVIEW_TOKEN,cookies:desktopSession.cookies,
+    }));
+    main.webContents.on('did-start-navigation',(_event,_url,isInPlace,isMainFrame)=>{
+      if(isMainFrame && !isInPlace)void nativePreview.close().catch(()=>{});
+    });
+    main.webContents.on('destroyed',()=>void nativePreview.close().catch(()=>{}));
     desktopSession.setPermissionRequestHandler((contents,permission,callback)=>{
       let trusted=false;try{trusted=knownContents.has(contents.id) && new URL(contents.getURL()).origin===supervisor?.origin;}catch{}
       callback(trusted && ['media','speaker-selection','fullscreen'].includes(permission));
@@ -96,6 +104,11 @@ else {
     ipcMain.handle('webobs:desktop',async(event,operation,value)=>{
       if(!trustedFrame(event,supervisor?.origin,knownContents,diagnosticUrl))throw new Error('Untrusted desktop IPC sender');
       if(operation==='status')return status();
+      if(operation==='native-preview'){
+        if(event.sender!==main.webContents || !['open','close','status'].includes(value))throw new Error('Invalid native monitor request');
+        if(value==='status')return nativePreview.status();
+        return value==='open'?nativePreview.open():nativePreview.close();
+      }
       if(operation==='settings')return settings;
       if(operation==='workspace.work'){
         if(!value || Object.keys(value).some(key=>!['dirty','exporting'].includes(key)) || typeof value.dirty!=='boolean' || typeof value.exporting!=='boolean')throw new Error('Invalid workspace state');

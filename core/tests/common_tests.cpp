@@ -1,3 +1,4 @@
+#include "native_preview_tests.hpp"
 #include "webobs/audio_tracks.hpp"
 #include "webobs/config.hpp"
 #include "webobs/authentication.hpp"
@@ -1420,6 +1421,7 @@ int main()
     studio_document_tests();
     studio_identity_tests(expect);
     receiver_codec_tests(expect);
+    native_preview_tests(expect);
     video_encoder_tests();
     audio_track_tests();
     scene_audio_inputs_tests();

@@ -1,6 +1,7 @@
 #pragma once
 
 #include "webobs/config.hpp"
+#include "webobs/native_preview.hpp"
 #include "webobs/video_encoder.hpp"
 
 #include <atomic>
@@ -15,6 +16,8 @@ class SceneController;
 class StudioController;
 
 struct RuntimeStatus {
+    int configured_fps = 30; // Immutable after ControlServer construction, not a renderer readback.
+    mutable NativePreviewControl native_preview;
     VideoEncoderCapabilities video_encoder;
     RendererCapabilities renderer;
     HardwareDecodeCapabilities hardware_decode;

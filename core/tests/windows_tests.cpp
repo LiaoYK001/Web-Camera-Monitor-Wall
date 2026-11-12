@@ -3,6 +3,7 @@
 #include "webobs/studio_store.hpp"
 #include "studio_identity_tests.hpp"
 #include "receiver_codec_tests.hpp"
+#include "native_preview_tests.hpp"
 #include <filesystem>
 #include <iostream>
 #include <cstdlib>
@@ -13,6 +14,9 @@ int main() {
         if (!condition) { std::cerr << "FAIL: " << message << '\n'; ++identity_failures; }
     });
     receiver_codec_tests([&](bool condition, std::string_view message) {
+        if (!condition) { std::cerr << "FAIL: " << message << '\n'; ++identity_failures; }
+    });
+    native_preview_tests([&](bool condition, std::string_view message) {
         if (!condition) { std::cerr << "FAIL: " << message << '\n'; ++identity_failures; }
     });
     if (identity_failures != 0) return 11;

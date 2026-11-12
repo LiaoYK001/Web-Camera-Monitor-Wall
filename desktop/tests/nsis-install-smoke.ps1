@@ -5,6 +5,7 @@ param([string]$Version = '')
 # This is a host smoke test, not clean-machine or camera qualification.
 $ErrorActionPreference='Stop'
 if (-not $IsWindows -or -not [Environment]::Is64BitOperatingSystem) {throw 'Requires Windows x64'}
+. (Join-Path $PSScriptRoot 'installed-tree-footprint.ps1')
 $repoRoot=(Resolve-Path -LiteralPath (Join-Path $PSScriptRoot '../..')).Path
 if(-not $Version){$Version=$env:WEBOBS_DESKTOP_VERSION}
 if(-not $Version){$Version=(Get-Content -LiteralPath (Join-Path $repoRoot 'desktop/package.json') -Raw|ConvertFrom-Json).version}
@@ -34,6 +35,9 @@ $originalPath=$env:PATH
 $testApp=$null;$installed=$false;$validated=$false
 try {
     $env:LOCALAPPDATA=$profileRoot
+    # Capture an absent, isolated root BEFORE NSIS creates it. This scope cannot
+    # attach to a pre-existing installation or a personal/configuration directory.
+    $installFootprintScope=New-InstalledTreeFootprintScope -Root $installRoot -Purpose isolated-nsis-install-before-first-start
     $installation=Start-Process -FilePath $installer -ArgumentList @('/S',"/D=$installRoot") -WindowStyle Hidden -Wait -PassThru
     if($installation.ExitCode -ne 0) {throw "NSIS install failed ($($installation.ExitCode))"}
     $installed=$true
@@ -42,6 +46,9 @@ try {
     node (Join-Path $repoRoot 'desktop/scripts/verify-runtime.mjs') (Join-Path $installRoot 'resources/runtime')
     if($LASTEXITCODE -ne 0) {throw 'Installed runtime failed integrity validation'}
     $testedManifest=Get-Content -LiteralPath (Join-Path $installRoot 'resources/runtime/manifest.json') -Raw | ConvertFrom-Json
+    # Real installed files, before FIRST product startup. This is neither the
+    # unpacked build footprint nor whole-volume/profile/ADS/FS-metadata usage.
+    $installedTreeFootprint=Measure-InstalledTreeFootprint -Scope $installFootprintScope
     $env:PATH=Join-Path $env:SystemRoot 'System32'
     $testApp=Start-Process -FilePath (Join-Path $installRoot 'WebOBS.exe') -WorkingDirectory $installRoot -WindowStyle Hidden -PassThru
     $origin='http://127.0.0.1:18080'
@@ -78,7 +85,7 @@ try {
     if((ProductEntries).Count){throw 'Uninstall left product registration'}
     if(@($shortcuts|Where-Object {Test-Path -LiteralPath $_}).Count){throw 'Uninstall left product shortcuts'}
     $hostOS=Get-CimInstance Win32_OperatingSystem
-    @{schema=1;revision=$testedManifest.revision;version=$Version;installerSha256=(Get-FileHash -LiteralPath $installer -Algorithm SHA256).Hash.ToLowerInvariant();hostOS=$hostOS.Caption;hostVersion=$hostOS.Version;testedAt=[DateTime]::UtcNow.ToString('o');checks=@{nsisInstall='passed';unicodePath='passed';runtimeIntegrity='passed';cleanPathStartup='passed';firstLogin='passed';authenticatedGo2rtc='passed';ownerCrashCleanup='passed';defaultUninstallDataRetention='passed';registrationAndShortcutCleanup='passed'};qualification='host-smoke-only; not clean-machine, camera or signed-update qualification'} | ConvertTo-Json -Depth 4 | Set-Content -LiteralPath (Join-Path $candidates[0].DirectoryName 'windows-install-smoke.json') -Encoding utf8NoBOM
+    @{schema=1;revision=$testedManifest.revision;version=$Version;installerSha256=(Get-FileHash -LiteralPath $installer -Algorithm SHA256).Hash.ToLowerInvariant();hostOS=$hostOS.Caption;hostVersion=$hostOS.Version;testedAt=[DateTime]::UtcNow.ToString('o');installedTreeFootprint=$installedTreeFootprint;checks=@{nsisInstall='passed';installedTreeFootprint='passed';unicodePath='passed';runtimeIntegrity='passed';cleanPathStartup='passed';firstLogin='passed';authenticatedGo2rtc='passed';ownerCrashCleanup='passed';defaultUninstallDataRetention='passed';registrationAndShortcutCleanup='passed'};qualification='host-smoke-only; not clean-machine, camera or signed-update qualification'} | ConvertTo-Json -Depth 6 | Set-Content -LiteralPath (Join-Path $candidates[0].DirectoryName 'windows-install-smoke.json') -Encoding utf8NoBOM
     $validated=$true
     Write-Output 'Actual Windows x64 NSIS install, Unicode path, clean-PATH startup, first login, authenticated go2rtc, owner cleanup and uninstall data retention passed. This is a host smoke test; clean-machine, Windows 10/11 media and signed-update qualification remain separate.'
 } finally {

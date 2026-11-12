@@ -5,7 +5,7 @@ import { useVisiblePolling } from './useVisiblePolling';
 import type { ProcessDiagnostics } from './types';
 
 const names: Record<string, string> = { desktop: '桌面 / 浏览器', ffmpeg: 'FFmpeg', webobsd: '核心',
-  go2rtc: 'go2rtc', mediamtx: 'MediaMTX', 'obs-browser': 'OBS 浏览器', python: 'Python 服务', runtime: '运行时', caddy: '网关' };
+  go2rtc: 'go2rtc', mediamtx: 'MediaMTX', 'obs-browser': 'OBS 浏览器', 'obs-native': 'OBS 原生监看', python: 'Python 服务', runtime: '运行时', caddy: '网关' };
 
 function ProcessReadout({ id }: { id: string }) {
   const [sample, setSample] = useState<{ data: ProcessDiagnostics; ready: boolean } | null>(null);
