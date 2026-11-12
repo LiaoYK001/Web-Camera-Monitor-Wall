@@ -117,6 +117,7 @@ jobs:
           if ($env:NATIVE_PRODUCT_MODE -eq 'true') { $parameters.ProductMode=$true; $parameters.DeferProductServices=$true }
           ./desktop/scripts/build-obs-native.ps1 @parameters
       - name: Build and stage the integrated control and account services
+        id: product-control
         if: inputs.product_mode
         shell: pwsh
         env:
@@ -124,6 +125,7 @@ jobs:
         run: |
           ./desktop/scripts/build-native-product-control.ps1 -Version $env:NATIVE_VERSION -BuildDirectory "$env:GITHUB_WORKSPACE/build/obs-native-ci"
       - name: Exercise the actual integrated launcher and authenticated product window
+        id: product-ui
         if: inputs.product_mode
         shell: pwsh
         run: |
@@ -131,6 +133,11 @@ jobs:
           $runtime = Join-Path $env:GITHUB_WORKSPACE 'build/obs-native-ci/runtime'
           & "$runtime/python/python.exe" -B native-host/tests/product_windows.py --runtime $runtime --with-media --report build/obs-native-ci/native-product-entry-ui.json
           if ($LASTEXITCODE -ne 0) { throw 'Actual native product entry and UI gate failed.' }
+      - name: Verify pre-authentication restore I/O with an unguarded frontend control
+        if: always() && inputs.product_mode && steps.compile.outcome == 'success' && steps.product-control.outcome == 'success'
+        shell: pwsh
+        run: |
+          ./desktop/scripts/test-native-product-restore.ps1 -BuildDirectory "$env:GITHUB_WORKSPACE/build/obs-native-ci"
       - name: Build and qualify a fresh integrated product NSIS installation
         if: inputs.product_mode
         shell: pwsh
@@ -146,6 +153,7 @@ jobs:
           path: |
             build/obs-native-ci/native-media-runtime-inventory.json
             build/obs-native-ci/native-product-entry-ui.json
+            build/obs-native-ci/native-product-restore.json
             build/obs-native-ci/native-product-installed-ui.json
             build/obs-native-ci/native-product-nsis.json
             build/obs-native-ci/runtime/product-components.json

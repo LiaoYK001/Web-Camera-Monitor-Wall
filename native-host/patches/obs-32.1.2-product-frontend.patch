@@ -60,18 +60,20 @@
  	OBSDataAutoRelease saveData = obs_data_create();
  
  	// Scene collection name
-@@ -1118,6 +1121,10 @@
+@@ -1118,6 +1121,12 @@
  
  void OBSBasic::Load(SceneCollection &collection)
  {
 +#ifdef WEBOBS_PRODUCT_FRONTEND
++	setProperty("webobsRefusedCollection", QString::fromStdString(collection.getName()));
++	setProperty("webobsRestoreGuardHits", property("webobsRestoreGuardHits").toInt() + 1);
 +	CreateDefaultScene(false);
 +	return;
 +#endif
  	disableSaving++;
  
  	lastOutputResolution.reset();
-@@ -1168,6 +1175,9 @@
+@@ -1168,6 +1177,9 @@
  
  void OBSBasic::LoadData(obs_data_t *data, SceneCollection &collection)
  {

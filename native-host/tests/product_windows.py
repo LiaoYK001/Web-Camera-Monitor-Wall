@@ -289,6 +289,9 @@ def exercise(runtime, report, *, with_media=False, retained_profile=None):
             assert ui("logout")
             wait_for(lambda: state().get("phase") == "locked", "logout did not lock product UI")
             assert state()["mediaSources"] == 0 and state()["sessionBound"] is False
+            evidence["logoutRetirementMs"] = state().get("lastRetirementMs")
+            assert type(evidence["logoutRetirementMs"]) is int and 0 <= evidence["logoutRetirementMs"] <= 2000, \
+                "native logout did not retire the actual media references within two seconds"
             evidence["checks"].append("logout-clears-bound-session")
             if with_media:
                 check_pixels("logout", blank=True)
@@ -383,7 +386,8 @@ def exercise(runtime, report, *, with_media=False, retained_profile=None):
             evidence["entryExitCode"] = process.poll() if process is not None else None
             observed = state()
             evidence["observedState"] = {key: observed[key] for key in (
-                "phase", "mediaSources", "sessionBound", "catalogItems", "selectionIndices", "previewLocked") if key in observed}
+                "phase", "mediaSources", "sessionBound", "catalogItems", "selectionIndices", "previewLocked",
+                "lastRetirementMs") if key in observed}
             markers = ("ModuleNotFoundError", "ImportError", "PermissionError", "FileNotFoundError",
                        "RuntimeError", "AttributeError", "ValueError", "control exited during startup",
                        "control health deadline exceeded", "a required product service exited", "saved control port is unavailable")

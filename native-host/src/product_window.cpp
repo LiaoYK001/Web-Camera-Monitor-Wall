@@ -9,6 +9,7 @@
 #include <QComboBox>
 #include <QCoreApplication>
 #include <QDesktopServices>
+#include <QElapsedTimer>
 #include <QEvent>
 #include <QDir>
 #include <QFile>
@@ -47,6 +48,8 @@ class ProductWindow final : public QWidget {
 	QWidget *preview_ = nullptr;
 	QNetworkAccessManager network_;
 	QTimer heartbeat_;
+	QTimer retirement_;
+	QElapsedTimer retirement_elapsed_;
 	QUrl origin_;
 	QByteArray host_secret_;
 	QLineEdit *username_, *password_;
@@ -60,9 +63,10 @@ class ProductWindow final : public QWidget {
 	quint64 generation_ = 0;
 	bool heartbeat_pending_ = false;
 	bool applying_ = false;
+	qint64 last_retirement_ms_ = 0;
 
 	using Reply = std::function<void(int, const QJsonObject &)>;
-	void observe_state(const char *phase)
+	int media_source_count() const
 	{
 		int media_sources = 0;
 		obs_enum_all_sources([](void *count, obs_source_t *source) {
@@ -70,6 +74,11 @@ class ProductWindow final : public QWidget {
 				++*static_cast<int *>(count);
 			return true;
 		}, &media_sources);
+		return media_sources;
+	}
+	void observe_state(const char *phase)
+	{
+		const int media_sources = media_source_count();
 		obs_video_info video{};
 		const bool video_available = obs_get_video_info(&video);
 		QJsonArray bindings;
@@ -88,6 +97,9 @@ class ProductWindow final : public QWidget {
 			{"sessionBound", !user_id_.isEmpty()}, {"mediaSources", media_sources}, {"bindings", bindings},
 			{"videoAvailable", video_available}, {"hardwareDecodeVerified", false}};
 		state.insert("previewLocked", preview_ && preview_->property("webobsPreviewLocked").toBool());
+		state.insert("restoreGuardHits", frontend_->property("webobsRestoreGuardHits").toInt());
+		state.insert("refusedCollection", frontend_->property("webobsRefusedCollection").toString());
+		state.insert("lastRetirementMs", last_retirement_ms_);
 		if (preview_)
 			state.insert("windows", QJsonArray{QJsonObject{{"role", "main-preview"},
 				{"qtClass", QString::fromLatin1(preview_->metaObject()->className())},
@@ -150,6 +162,14 @@ class ProductWindow final : public QWidget {
 		watching_versions_ = {};
 		if (!obs_initialized())
 			return;
+		// Detach protected pictures from the active scene immediately. Frontend
+		// source-tree references and OBS's destruction queue may retire later.
+		if (wall_.scene)
+			obs_scene_enum_items(wall_.scene, [](obs_scene_t *, obs_sceneitem_t *item, void *) {
+				obs_sceneitem_set_visible(item, false);
+				obs_sceneitem_remove(item);
+				return true;
+			}, nullptr);
 		// Clear the inputs before releasing graph references, including references
 		// retained temporarily by the frontend. Credentials stay out of disk state.
 		for (auto *source : wall_.sources) {
@@ -171,7 +191,9 @@ class ProductWindow final : public QWidget {
 	void locked(const QString &message)
 	{
 		++generation_;
+		retirement_elapsed_.start();
 		heartbeat_.stop();
+		retirement_.stop();
 		heartbeat_pending_ = false;
 		applying_ = false;
 		clear_media();
@@ -185,7 +207,17 @@ class ProductWindow final : public QWidget {
 			slot->setEnabled(false);
 		}
 		status_->setText(message);
-		observe_state("locked");
+		if (media_source_count() == 0) {
+			last_retirement_ms_ = retirement_elapsed_.elapsed();
+			observe_state("locked");
+		} else {
+			// Do not publish a settled zero-source state or permit a new login
+			// before the actual deferred references have left this process.
+			login_->setEnabled(false);
+			create_account_->setEnabled(false);
+			observe_state("locking");
+			retirement_.start(50);
+		}
 	}
 
 	QString workspace_path() const
@@ -477,6 +509,20 @@ public:
 		network_.setProxy(QNetworkProxy::NoProxy);
 		origin_ = QUrl(qEnvironmentVariable("WEBOBS_NATIVE_CONTROL_ORIGIN"));
 		host_secret_ = qgetenv("WEBOBS_NATIVE_HOST_TOKEN");
+		connect(&retirement_, &QTimer::timeout, this, [this] {
+			if (media_source_count() == 0) {
+				retirement_.stop();
+				last_retirement_ms_ = retirement_elapsed_.elapsed();
+				login_->setEnabled(true);
+				observe_state("locked");
+				refresh_registration();
+			} else if (retirement_elapsed_.elapsed() >= 2000) {
+				retirement_.stop();
+				last_retirement_ms_ = retirement_elapsed_.elapsed();
+				status_->setText(tr("摄像机已停止显示，但资源尚未完全释放，请退出后重开。"));
+				observe_state("cleanup-failed");
+			}
+		});
 		locked(tr("请登录已有 WebOBS 账号。"));
 		if (origin_.scheme() != "http" || origin_.host() != "127.0.0.1" || origin_.port() < 1 ||
 		    !origin_.userInfo().isEmpty() || !origin_.path().isEmpty() || origin_.hasQuery() || origin_.hasFragment() ||
