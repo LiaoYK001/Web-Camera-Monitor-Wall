@@ -206,9 +206,8 @@ def exercise(runtime, report, *, with_media=False, retained_profile=None):
                 "-ExpectedProcessId", str(frontend_pid), "-ExpectedExecutable", str(runtime / "bin/64bit/obs64.exe"),
                 "-ExpectedCreationTime", created, "-StateFile", str(metadata), "-OutputDirectory", str(target)],
                 capture_output=True, text=True, encoding="utf-8", timeout=35)
-            capture = json.loads(result.stdout)
-            evidence.setdefault("captures", []).append({"phase": label,
-                "captureFailed": capture.get("captureFailed", True)})
+            capture = pixel_windows.capture_report(result)
+            evidence.setdefault("captures", []).append({"phase": label, **capture})
             assert result.returncode == 0 and capture.get("captureFailed") is False, "actual product preview capture failed"
             analysis = subprocess.run([shutil.which("node"), str(HERE / "pixel-pattern.cjs"), "analyze-empty" if blank else "analyze",
                 str(target / "main-preview"), "main-preview", "forward", "true"],

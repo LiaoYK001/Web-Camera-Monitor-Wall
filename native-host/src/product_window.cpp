@@ -9,10 +9,12 @@
 #include <QComboBox>
 #include <QCoreApplication>
 #include <QDesktopServices>
+#include <QEvent>
 #include <QDir>
 #include <QFile>
 #include <QFileInfo>
 #include <QFormLayout>
+#include <QHBoxLayout>
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
@@ -367,6 +369,34 @@ class ProductWindow final : public QWidget {
 		frontend_->close();
 		event->accept();
 	}
+	bool eventFilter(QObject *object, QEvent *event) override
+	{
+		if (object == preview_) {
+			switch (event->type()) {
+			case QEvent::MouseButtonPress:
+			case QEvent::MouseButtonRelease:
+			case QEvent::MouseButtonDblClick:
+			case QEvent::MouseMove:
+			case QEvent::Wheel:
+			case QEvent::ContextMenu:
+			case QEvent::KeyPress:
+			case QEvent::KeyRelease:
+			case QEvent::ShortcutOverride:
+			case QEvent::DragEnter:
+			case QEvent::DragMove:
+			case QEvent::DragLeave:
+			case QEvent::Drop:
+			case QEvent::TouchBegin:
+			case QEvent::TouchUpdate:
+			case QEvent::TouchEnd:
+				event->accept();
+				return true;
+			default:
+				break;
+			}
+		}
+		return QWidget::eventFilter(object, event);
+	}
 
 public:
 	explicit ProductWindow(QWidget *frontend) : QWidget(frontend, Qt::Window), frontend_(frontend), network_(this)
@@ -374,7 +404,13 @@ public:
 		setWindowTitle("WebOBS Wall");
 		setObjectName("webobsProductWindow");
 		resize(1280, 800);
-		auto *layout = new QVBoxLayout(this);
+		auto *body = new QHBoxLayout(this);
+		auto *controls = new QWidget(this);
+		controls->setMinimumWidth(280);
+		controls->setMaximumWidth(360);
+		auto *layout = new QVBoxLayout(controls);
+		layout->setContentsMargins(0, 0, 0, 0);
+		body->addWidget(controls);
 		status_ = new QLabel(tr("登录 WebOBS 后选择已有摄像机。"), this);
 		layout->addWidget(status_);
 		auto *form = new QFormLayout;
@@ -417,14 +453,16 @@ public:
 			layout->addWidget(button);
 		auto *manage = new QPushButton(tr("打开设备与系统管理"), this);
 		layout->addWidget(manage);
+		layout->addStretch(1);
 		for (auto *widget : frontend->findChildren<QWidget *>("preview")) {
 			if (QString::fromLatin1(widget->metaObject()->className()) == "OBSBasicPreview") {
 				preview_ = widget;
 				widget->setFocusPolicy(Qt::NoFocus);
 				widget->setAcceptDrops(false);
-				widget->setAttribute(Qt::WA_TransparentForMouseEvents);
+				widget->installEventFilter(this);
+				widget->setMinimumSize(320, 180);
 				widget->setParent(this);
-				layout->addWidget(widget, 1);
+				body->addWidget(widget, 1);
 				widget->show();
 				break;
 			}

@@ -1040,3 +1040,11 @@ CI 将在普通真实 UI/媒体 gate 成功之后，实际构建内部 NSIS、�
 另记录 R4 待办：当前 supervisor 每次选择新的 control port，复杂管理 WebUI 的 local-first origin 必须在正式产品中稳定并处理端口冲突，不能将原生账号数据库保留误称为浏览器离线数据完整保留。
 
 The internal NSIS gate is now wired after the actual portable-entry UI/media gate. It packages the unified product entry, verifies every staged file, measures the fresh installed tree, reruns real UI/media from that installation and compares retained profile hashes after ownership-based uninstall. Existing installations and unrelated targets are refused; this does not implement legacy upgrade. Six synthetic payload checks pass locally, but Windows installer compilation/execution remain pending. The ephemeral control origin is also an explicit R4 persistence issue for browser-local data.
+
+#### dev.81 真实首次建账与五路建图 / Actual first-account UI and five-source graph
+
+`43167760559`（source 3d3c0b0、dev.81）最终 failure，已越过旧 UIA 定位错误。实际回执通过 `single-entry-real-core-authority-and-qt`、`first-account-through-product-ui`：真实 Qt 按钮创建首个账号并登录，普通已有摄像机 API 创建五路夹具，五个 UI 选择器触发原生建图，失败时状态为 `graph-applied`、`mediaSources=5`、`sessionBound=true`、`catalogItems=5`。五个独立 HEVC 文件的 codec/dimensions/B-picture 探测也通过。该证据不等于显示正确：首个最终 Preview capture 为 captureFailed，因此没有五路动态像素、保存恢复、撤销/正常退出/安装态通过结论。
+
+产品回执此前只保留 captureFailed 布尔值，丢掉了已有捕获器的安全分类；现改为复用经过测试的 `capture_report`，保留有界 stage/code/样本进度，继续不输出路径、PID/HWND、日志或截图。后续 UI 同时将控制区放到侧栏，使原生 Preview 有足够窗口空间；预览使用产品事件过滤器消费鼠标/键盘/上下文/拖放/触摸输入，保留原生绘制/resize 与实际窗口命中，不重新开放原 OBS 编辑菜单。具体捕获失败原因与这些 Qt 变更仍需后续 Windows job 验证，不由源码分析代替。
+
+Dev.81 passed actual product-window first-account creation/login and applied five authorized sources through the real camera API and UI selectors. The first final-preview capture failed, so no pixels, persistence, revocation or installed-product pass is claimed. Follow-up preserves the existing sanitized capture diagnostics and gives the native Preview a full-height area with input interception rather than reopening raw editing. Actual Windows verification remains pending.
