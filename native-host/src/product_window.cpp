@@ -87,6 +87,7 @@ class ProductWindow final : public QWidget {
 			{"selectionIndices", selection_indices},
 			{"sessionBound", !user_id_.isEmpty()}, {"mediaSources", media_sources}, {"bindings", bindings},
 			{"videoAvailable", video_available}, {"hardwareDecodeVerified", false}};
+		state.insert("previewLocked", preview_ && preview_->property("webobsPreviewLocked").toBool());
 		if (preview_)
 			state.insert("windows", QJsonArray{QJsonObject{{"role", "main-preview"},
 				{"qtClass", QString::fromLatin1(preview_->metaObject()->className())},

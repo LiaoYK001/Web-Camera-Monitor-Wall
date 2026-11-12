@@ -137,13 +137,20 @@ def exercise(runtime, report, *, with_media=False, retained_profile=None):
             windows = owned.get("windows", [])
             if len(windows) != 1 or owned.get("pid") != str(frontend_pid):
                 return False
-            result = subprocess.run([powershell, "-NoLogo", "-NoProfile", "-NonInteractive", "-File",
-                str(HERE / "product-ui.ps1"), "-FrontendPid", str(frontend_pid), "-RootHwnd", windows[0]["rootHwnd"]],
-                input=json.dumps({"action": action, **fields}), capture_output=True, text=True,
-                encoding="utf-8", timeout=25)
             try:
+                result = subprocess.run([powershell, "-NoLogo", "-NoProfile", "-NonInteractive", "-File",
+                    str(HERE / "product-ui.ps1"), "-FrontendPid", str(frontend_pid), "-RootHwnd", windows[0]["rootHwnd"]],
+                    input=json.dumps({"action": action, **fields}), capture_output=True, text=True,
+                    encoding="utf-8", timeout=25)
+            except subprocess.TimeoutExpired:
+                evidence["lastUiFailure"] = {"stage": action, "code": "ui-timeout"}
+                raise AssertionError("product UI Automation exceeded its deadline") from None
+            try:
+                assert len(result.stdout) <= 4096
                 reply = json.loads(result.stdout)
-            except ValueError:
+                assert isinstance(reply, dict)
+            except (ValueError, AssertionError):
+                evidence["lastUiFailure"] = {"stage": action, "code": "invalid-report"}
                 raise AssertionError("product UI Automation did not return a bounded result") from None
             if reply.get("passed") is not True:
                 evidence["lastUiFailure"] = {key: reply[key] for key in ("stage", "code", "exceptionType") if key in reply}
@@ -163,6 +170,7 @@ def exercise(runtime, report, *, with_media=False, retained_profile=None):
             frontend_pid = next(service["pid"] for service in value["services"] if service["name"] == "frontend")
             wait_for(lambda: state().get("phase") == "locked", "actual product window did not lock before authentication")
             assert state()["mediaSources"] == 0, "media source restored before login"
+            assert state().get("previewLocked") is True, "product monitor preview retained OBS editing guides"
             wait_for(lambda: ui("inspect"), "actual product controls not accessible")
             return value
 
@@ -170,6 +178,7 @@ def exercise(runtime, report, *, with_media=False, retained_profile=None):
             wait_for(lambda: state().get("phase") == "graph-applied", "UI did not apply authorized camera graph", timeout=35)
             observed = state()
             assert observed["sessionBound"] is True and observed["mediaSources"] == 5
+            assert observed.get("previewLocked") is True
             bindings = observed["bindings"]
             assert [(item["cameraId"], item["profileId"]) for item in bindings] == [
                 (f"fixture-{index}", "main") for index in range(1, 6)]
@@ -212,10 +221,12 @@ def exercise(runtime, report, *, with_media=False, retained_profile=None):
             assert result.returncode == 0 and capture.get("captureFailed") is False, "actual product preview capture failed"
             analysis = subprocess.run([shutil.which("node"), str(HERE / "pixel-pattern.cjs"), "analyze-empty" if blank else "analyze",
                 str(target / "main-preview"), "main-preview", "forward", "true"],
-                check=True, capture_output=True, text=True, encoding="utf-8", timeout=20)
+                capture_output=True, text=True, encoding="utf-8", timeout=20)
+            assert len(analysis.stdout) <= 16384, "oversized synthetic pixel analysis"
             result = json.loads(analysis.stdout)
+            assert isinstance(result, dict), "invalid synthetic pixel analysis"
             evidence["captures"][-1]["analysis"] = result
-            assert result.get("passed") is True, "product preview failed the expected final-pixel state"
+            assert analysis.returncode == 0 and result.get("passed") is True, "product preview failed the expected final-pixel state"
 
         frontend_pid = 0
         try:
@@ -372,7 +383,7 @@ def exercise(runtime, report, *, with_media=False, retained_profile=None):
             evidence["entryExitCode"] = process.poll() if process is not None else None
             observed = state()
             evidence["observedState"] = {key: observed[key] for key in (
-                "phase", "mediaSources", "sessionBound", "catalogItems", "selectionIndices") if key in observed}
+                "phase", "mediaSources", "sessionBound", "catalogItems", "selectionIndices", "previewLocked") if key in observed}
             markers = ("ModuleNotFoundError", "ImportError", "PermissionError", "FileNotFoundError",
                        "RuntimeError", "AttributeError", "ValueError", "control exited during startup",
                        "control health deadline exceeded", "a required product service exited", "saved control port is unavailable")

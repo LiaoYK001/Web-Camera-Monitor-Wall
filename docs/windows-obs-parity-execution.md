@@ -1062,3 +1062,13 @@ The supervisor now commits a private persistent control port before exposing the
 内部 `43172062032`（source feb73a1、dev.83）完成为 failure：真实首次建账/登录通过，授权目录含五项，但操作选择器后仍为 authenticated / 零媒体源，未进入最终捕获。原脚本的 SetFocus + Home/Down/Esc 只发送按键、不验证提交；Qt 非编辑 ComboBox 的无障碍 action 路径并不保证该 SetFocus，而 popup 的 Escape 也不是提交动作。因此后续改用实际 UIA ExpandCollapse 打开 popup、核对键盘所属进程、Home/Down/Enter 提交，并通过 ValuePattern 读取确切的合成夹具选中项，全部匹配后才点击观看。产品私密观察补充五个数字 selectionIndices，以及选择不全/建图失败阶段，仍不输出 URL、凭据或完整控件文本。参考固定 Qt v6.8.3 的 complexwidgets.cpp / qcombobox.cpp 实现与 Microsoft UI Automation API；具体 Windows 选择/像素结果待下一轮，不把源码推断写成已验证根因。
 
 Dev.83 passed real first-account UI authentication but remained at five catalog choices with no applied media graph after the old blind keyboard sequence. The next test opens the actual combo popup, checks input ownership, commits with Enter and reads each synthetic fixture value back before watching. Private product observations now distinguish incomplete selection and failed graph application. Local build contracts 44/44, package checks 6/6 and pixel protocol checks 21 passed (two platform/opt-in skips); actual Windows selection, final pixels and installed-entry verification remain pending.
+
+#### dev.84 最终窗口捕获成功、编辑叠线污染 / Final capture succeeds, editor guides contaminate monitoring
+
+`43176197394`（source 4d8353e、dev.84）最终 failure，但越过前轮选择错误：selectionIndices=[1,2,3,4,5]，graph-applied、mediaSources=5、sessionBound=true；实际 Preview HWND 经过原身份/遮挡门禁成功捕获八帧（716×683），captureFailed=false。五路分析仍失败，八帧均报告 channel 2 的采样点为纯红 255,0,0。因此不是本轮捕获器失败，不能记作完整五路显示通过，后面的注销、保存重开及 NSIS 门槛未执行。
+
+固定 OBS frontend 的 AddSceneItem 会选择刚添加项，而 RenderMain 持续绘制 DrawSceneEditing / DrawSpacingHelpers；选择色正是 255,0,0。产品窗口此前只拦截编辑输入，没有锁定 OBS Preview。后续外置构建副本补丁在 setupUi 后调用既有 SetLocked(true)，同时关闭这两个原生编辑叠层；使用产品专用只读 Qt property 回读实际 Locked()，在登录前与建图后核对，保持原有最终颜色、标记、五路时间推进断言不变。叠线来源是根据实际像素与固定源码的推断，修复效果仍需下一次 Windows 回归验证；未修改上游 checkout。
+
+Windows 回执也补充有界 UI Automation timeout / invalid-report 分类，并在像素分析器非零退出时先记录其脱敏 JSON，再判失败。Linux 构建契约 44/44、像素协议 21 通过/2 平台跳过，git apply --check 对固定上游通过。此前 ccbf96f 的 native 监听独占将在包含它的新 Windows 构建验证；Linux 实际 core 8/8、真实 HTTP 与 supervisor 回归通过。
+
+Dev.84 committed all five actual UI choices, applied five media sources and passed eight guarded final-window captures. Pixel analysis still fails at a pure-red point in channel 2, so final five-stream display and downstream lifecycle/installation remain unqualified. The pinned frontend selects added items and renders editing/spacing guides; this is the working explanation, not yet a verified repair. The product-only hook now reuses OBS SetLocked(true), with actual lock-state observation and unchanged pixel assertions. Upstream checkout bytes remain untouched.

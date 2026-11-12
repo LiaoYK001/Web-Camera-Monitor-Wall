@@ -26,7 +26,18 @@
  	collections = {};
  
  	setAttribute(Qt::WA_NativeWindow);
-@@ -1020,6 +1025,10 @@
+@@ -244,6 +249,10 @@
+ 	api = InitializeAPIInterface(this);
+ 
+ 	ui->setupUi(this);
++#ifdef WEBOBS_PRODUCT_FRONTEND
++	// Monitoring reuses OBS's locked preview, without editing/spacing guides.
++	ui->preview->SetLocked(true);
++#endif
+ 	ui->previewDisabledWidget->setVisible(false);
+ 
+ 	/* Set up streaming connections */
+@@ -1020,6 +1029,10 @@
  	struct obs_module_failure_info mfi;
  
  	// Safe Mode disables third-party plugins so we don't need to add each path outside the OBS bundle/installation.
@@ -135,3 +146,15 @@
  #if ALLOW_PORTABLE_MODE
  	if (portable_mode) {
  		char path[512];
+--- a/frontend/widgets/OBSBasicPreview.hpp
++++ b/frontend/widgets/OBSBasicPreview.hpp
+@@ -33,6 +33,9 @@
+ 
+ class OBSBasicPreview : public OBSQTDisplay {
+ 	Q_OBJECT
++#ifdef WEBOBS_PRODUCT_FRONTEND
++	Q_PROPERTY(bool webobsPreviewLocked READ Locked)
++#endif
+ 
+ 	friend class SourceTree;
+ 	friend class SourceTreeItem;
