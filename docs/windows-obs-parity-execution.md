@@ -1014,3 +1014,13 @@ The real native selection routes now use the existing bounded batch authority, w
 后续继续接通 exact Profile 续验：产品批次由 `authorize_profiles` 携带 cameraId/ProfileId，cluster 在同一显式 Registry 只读事务中检查组、Profile 存在和两级 enabled。任一级禁用在真实 core 路由为 403，缺 Profile 为 503，实际 HTTP 回归确认零私密端点解析；C++ hostile reply 回归拒绝丢弃 Profile 的 camera-only 降级。Linux root 8/8、身份 21 项、adapter 15 项、像素协议 21 通过/2 平台跳过与实际 HTTP 回归通过。Windows UI gate 新增注销/权限撤销/摄像机和 Profile 禁用后的八张最终 Preview 空白检测，以及重新登录和重启五路恢复；该 Windows gate 尚待实际运行。已启用连接配置变化续验仍待实现，不把禁用检查扩大为配置完整一致性。
 
 Exact Profile renewal is now wired through the real core and authority, with missing/disabled metadata rejected before any private endpoint read. Linux regressions pass, including refusal of camera-only downgrade replies. The actual Windows gate additionally checks eight final blank-preview samples after logout, revocation and disable, alongside five-stream restoration; Windows execution remains pending. Enabled-Profile connection changes are still an open consistency check.
+
+#### dev.79 统一入口实际运行与 UI 定位修复 / Actual entry execution and UI targeting
+
+`43164336627` / job `131002571059`（source aa90f52、dev.79）已结束，结果 failure。短 buildtrees 修复成功：锁定 vcpkg port 构建、真实 core/launcher、管理 UI 和嵌入 Python 服务部署完成，包内解释器执行的真实账号/Registry/core HTTP 联调通过。全量 R1 集成组件清单 1863 文件 / 197,867,225 bytes（receipt 本身除外），仅当前已部署范围，不是完整功能安装或已分配大小，更不作 159 MB 达标结论。
+
+实际 `webobs-wall.exe` 入口启动了 supervisor、账号/Registry、core 和 OBS，并由产品插件写出本次 PID 的 locked/零媒体源状态；随后 UI Automation 未匹配预期顶层 AutomationId，gate 在 first-entry 失败，登录点击及五路像素均未运行。失败清理还暴露出杀 launcher 后立即清除临时 profile 的时序竞争，不能写成 Windows 崩溃验收通过。后续测试改用产品读取的实际 HWND + 所属进程作为 UIA 根，控件兼容 Qt 分层 AutomationId 与类型/无障碍名称定位，产品输入框/选择器补充本地化无障碍名称；finally 在删除 profile 前等待全部已知所属进程退出。UIA 的异常类型与私密日志固定标记仅用于脱敏失败定位，不上传日志/截图/秘密。
+
+内部 dev.80 / run `43166679698` 在 source 200345f 执行批量/Profile 门禁，未包含后续 UIA 定位修复；不重启或冒称其已使用新修复。下一轮构建将媒体编译和控制/服务部署拆成可观察步骤，保持实际 UI gate 必须通过。
+
+Run 43164336627 failed at initial UI Automation targeting, after successful real product build/staging, packaged-interpreter HTTP tests and actual supervised startup with a current-PID locked/no-media observation. It did not click login or qualify media. Follow-up targeting uses the observed owned HWND, localized accessibility metadata and process-cleanup waits. The measured 197,867,225-byte component scope is the current R1 stage, not the complete installation or an OBS-size pass. Dev.80 remains a distinct earlier-source run; no in-flight job is restarted to pretend it includes later fixes.

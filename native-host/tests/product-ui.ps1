@@ -1,7 +1,8 @@
 #requires -Version 7.2
 # Test-only UI Automation for an explicitly supplied disposable product process.
 # Credentials enter over stdin and are never echoed or placed on a command line.
-param([Parameter(Mandatory=$true)][int]$FrontendPid)
+param([Parameter(Mandatory=$true)][int]$FrontendPid,
+      [Parameter(Mandatory=$true)][string]$RootHwnd)
 $ErrorActionPreference = 'Stop'
 $stage = 'initialize'
 $code = 'assemblies'
@@ -16,14 +17,13 @@ public static class ProductTestWindow {
 }
 '@
     $operation = [Console]::In.ReadToEnd() | ConvertFrom-Json
-    $condition = [System.Windows.Automation.PropertyCondition]::new(
-        [System.Windows.Automation.AutomationElement]::ProcessIdProperty, $FrontendPid)
-    $windows = [System.Windows.Automation.AutomationElement]::RootElement.FindAll(
-        [System.Windows.Automation.TreeScope]::Children, $condition)
-    $window = @($windows | Where-Object { $_.Current.AutomationId -eq 'webobsProductWindow' })
     $code = 'product-window'
-    if ($window.Count -ne 1) { throw 'Expected exactly one owned product window.' }
-    $window = $window[0]
+    if ($RootHwnd -notmatch '^[0-9a-f]{1,16}$') { throw 'Invalid owned root handle.' }
+    $window = [System.Windows.Automation.AutomationElement]::FromHandle(
+        [IntPtr]::new([Convert]::ToInt64($RootHwnd,16)))
+    if ($null -eq $window -or $window.Current.ProcessId -ne $FrontendPid) {
+        throw 'Product window process identity mismatch.'
+    }
     $null = [ProductTestWindow]::ShowWindow([IntPtr]$window.Current.NativeWindowHandle, 9)
     $null = [ProductTestWindow]::SetForegroundWindow([IntPtr]$window.Current.NativeWindowHandle)
     function Find-Control([string]$Identity) {
@@ -31,6 +31,40 @@ public static class ProductTestWindow {
         $found = $window.FindFirst([System.Windows.Automation.TreeScope]::Descendants,
             [System.Windows.Automation.PropertyCondition]::new(
                 [System.Windows.Automation.AutomationElement]::AutomationIdProperty, $Identity))
+        if ($null -eq $found) {
+            # Some Qt Windows providers qualify AutomationId with the QObject
+            # ancestry. Search only this exact process-owned product root.
+            $descendants = $window.FindAll([System.Windows.Automation.TreeScope]::Descendants,
+                [System.Windows.Automation.Condition]::TrueCondition)
+            $controlCandidates = @($descendants | Where-Object {
+                ([string]$_.Current.AutomationId).EndsWith('.' + $Identity, [StringComparison]::Ordinal)
+            })
+            if ($controlCandidates.Count -eq 1) { $found = $controlCandidates[0] }
+        }
+        if ($null -eq $found) {
+            $kind = [System.Windows.Automation.ControlType]::Button
+            $name = switch ($Identity) {
+                'webobsUsername' { $kind = [System.Windows.Automation.ControlType]::Edit; '账号' }
+                'webobsPassword' { $kind = [System.Windows.Automation.ControlType]::Edit; '密码' }
+                'webobsLogin' { '登录' }
+                'webobsCreateAccount' { '创建首个管理员账号' }
+                'webobsWatch' { '开始原生监看' }
+                'webobsSaveLayout' { '保存布局' }
+                'webobsLogout' { '退出账号' }
+                'webobsRefreshCatalog' { '刷新设备目录' }
+                default {
+                    if ($Identity -match '^webobsCameraSlot([1-5])$') {
+                        $kind = [System.Windows.Automation.ControlType]::ComboBox
+                        "画面 $($Matches[1])"
+                    } else { throw 'Unknown fixture control.' }
+                }
+            }
+            $controlCandidates = @($window.FindAll([System.Windows.Automation.TreeScope]::Descendants,
+                [System.Windows.Automation.Condition]::TrueCondition) | Where-Object {
+                    $_.Current.Name -eq $name -and $_.Current.ControlType -eq $kind
+                })
+            if ($controlCandidates.Count -eq 1) { $found = $controlCandidates[0] }
+        }
         if ($null -eq $found) { throw 'Product control missing.' }
         return $found
     }
@@ -95,6 +129,6 @@ public static class ProductTestWindow {
     [Console]::Out.WriteLine((@{passed=$true;stage=$stage} | ConvertTo-Json -Compress))
 } catch {
     # Fixed stage only: UIA exceptions can contain private paths or input values.
-    [Console]::Out.WriteLine((@{passed=$false;stage=$stage;code=$code} | ConvertTo-Json -Compress))
+    [Console]::Out.WriteLine((@{passed=$false;stage=$stage;code=$code;exceptionType=$_.Exception.GetType().FullName} | ConvertTo-Json -Compress))
     exit 1
 }

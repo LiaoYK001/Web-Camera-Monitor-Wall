@@ -364,9 +364,11 @@ public:
 		auto *form = new QFormLayout;
 		username_ = new QLineEdit(this);
 		username_->setObjectName("webobsUsername");
+		username_->setAccessibleName(tr("账号"));
 		username_->setMaxLength(64);
 		password_ = new QLineEdit(this);
 		password_->setObjectName("webobsPassword");
+		password_->setAccessibleName(tr("密码"));
 		password_->setMaxLength(128);
 		password_->setEchoMode(QLineEdit::Password);
 		form->addRow(tr("账号"), username_);
@@ -383,6 +385,7 @@ public:
 		for (std::size_t i = 0; i < slots_.size(); ++i) {
 			slots_[i] = new QComboBox(this);
 			slots_[i]->setObjectName(QString("webobsCameraSlot%1").arg(i + 1));
+			slots_[i]->setAccessibleName(tr("画面 %1").arg(i + 1));
 			cameras->addRow(tr("画面 %1").arg(i + 1), slots_[i]);
 		}
 		layout->addLayout(cameras);

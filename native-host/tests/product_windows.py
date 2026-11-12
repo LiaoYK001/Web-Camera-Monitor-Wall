@@ -125,8 +125,12 @@ def exercise(runtime, report, *, with_media=False):
                 return {}
 
         def ui(action, **fields):
+            owned = state()
+            windows = owned.get("windows", [])
+            if len(windows) != 1 or owned.get("pid") != str(frontend_pid):
+                return False
             result = subprocess.run([powershell, "-NoLogo", "-NoProfile", "-NonInteractive", "-File",
-                str(HERE / "product-ui.ps1"), "-FrontendPid", str(frontend_pid)],
+                str(HERE / "product-ui.ps1"), "-FrontendPid", str(frontend_pid), "-RootHwnd", windows[0]["rootHwnd"]],
                 input=json.dumps({"action": action, **fields}), capture_output=True, text=True,
                 encoding="utf-8", timeout=25)
             try:
@@ -134,7 +138,7 @@ def exercise(runtime, report, *, with_media=False):
             except ValueError:
                 raise AssertionError("product UI Automation did not return a bounded result") from None
             if reply.get("passed") is not True:
-                evidence["lastUiFailure"] = {key: reply[key] for key in ("stage", "code") if key in reply}
+                evidence["lastUiFailure"] = {key: reply[key] for key in ("stage", "code", "exceptionType") if key in reply}
             return result.returncode == 0 and reply.get("passed") is True
 
         def start():
@@ -311,13 +315,30 @@ def exercise(runtime, report, *, with_media=False):
             evidence["mediaScope"] = "synthetic-five-hevc-final-preview-pixels" if with_media else "not-run"
             evidence["passed"] = True
         except Exception:
-            # Synthetic logs stay private; public result contains fixed phase only.
+            # Synthetic logs stay private. Only fixed marker categories, bounded
+            # counts and numeric exit status leave this disposable test profile.
             evidence["failurePhase"] = phase
+            evidence["entryExitCode"] = process.poll() if process is not None else None
+            observed = state()
+            evidence["observedState"] = {key: observed[key] for key in ("phase", "mediaSources", "sessionBound", "catalogItems") if key in observed}
+            markers = ("ModuleNotFoundError", "ImportError", "PermissionError", "FileNotFoundError",
+                       "RuntimeError", "AttributeError", "ValueError", "control exited during startup",
+                       "control health deadline exceeded", "a required product service exited")
+            evidence["privateLogMarkers"] = []
+            for log in (profile / "logs").glob("native-*.log"):
+                if log.is_file() and not log.is_symlink():
+                    with log.open("rb") as source:
+                        source.seek(max(0, log.stat().st_size - 131072))
+                        tail = source.read(131072).decode("utf-8", errors="replace")
+                    evidence["privateLogMarkers"].extend(marker for marker in markers if marker in tail)
+            evidence["privateLogMarkers"] = sorted(set(evidence["privateLogMarkers"]))
             raise AssertionError("native product entry/UI gate failed at " + phase) from None
         finally:
             if process is not None and process.poll() is None:
                 process.kill()
                 process.wait(timeout=10)
+            wait_for(lambda: not any(alive(pid) for pid in known_pids),
+                     "owned Windows process survived gate cleanup", timeout=15)
             if rtsp is not None:
                 rtsp.stop()
             report.parent.mkdir(parents=True, exist_ok=True)

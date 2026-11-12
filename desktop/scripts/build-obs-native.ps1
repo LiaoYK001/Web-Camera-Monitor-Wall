@@ -8,9 +8,11 @@ param(
     [switch]$Offline,
     [switch]$SmokeTest,
     [switch]$PixelTest,
-    [switch]$ProductMode
+    [switch]$ProductMode,
+    [switch]$DeferProductServices
 )
 $ErrorActionPreference = 'Stop'
+if ($DeferProductServices -and -not $ProductMode) { throw 'Deferring services is valid only for an internal product integration build.' }
 if ($ProductMode -and ($PixelTest -or $SmokeTest)) { throw 'Product mode requires the authenticated product integration test, separate from prototype smoke/pixels.' }
 $productBuild = if ($ProductMode) { 'ON' } else { 'OFF' }
 if ($SmokeTest -and $PixelTest) { throw 'Choose startup SmokeTest OR finite PixelTest; each requires a NEW private profile.' }
@@ -91,7 +93,7 @@ if ($PixelTest) {
 # same product budget for both builds; never exclude configured files silently.
 $mediaInventory = if ($ProductMode) { 'native-media-runtime-inventory.json' } else { 'native-runtime-inventory.json' }
 Invoke-Checked 'python' @((Join-Path $repoRoot 'native-host/scripts/runtime_inventory.py'),'--runtime',$runtime,'--report',(Join-Path $buildRoot $mediaInventory),'--max-runtime-bytes','104857600')
-if ($ProductMode) {
+if ($ProductMode -and -not $DeferProductServices) {
     $controlParameters = @{BuildDirectory=$buildRoot;Version=$Version;Parallel=$Parallel}
     if ($Offline) { $controlParameters.Offline=$true }
     & (Join-Path $PSScriptRoot 'build-native-product-control.ps1') @controlParameters
@@ -107,6 +109,11 @@ if ($SmokeTest) {
     Invoke-Checked 'python' @((Join-Path $repoRoot 'native-host/tests/smoke_windows.py'),'--runtime',$runtime,'--result',(Join-Path $buildRoot 'native-startup-smoke.json'))
     Write-Output 'Smoke generated a disposable private config; do not upload runtime/config or treat it as a clean redistributable bundle.'
 }
-Write-Output "Non-default development prototype: $runtime"
-Write-Output "Launch explicitly: pwsh -NoProfile -File `"$runtime/launch-native.ps1`" -AllowPrototype"
+if ($ProductMode) {
+    Write-Output "Internal product integration media staged: $runtime"
+    Write-Output 'The integrated control/service build and actual launcher/UI gates are required before running this product variant.'
+} else {
+    Write-Output "Non-default development prototype: $runtime"
+    Write-Output "Launch explicitly: pwsh -NoProfile -File `"$runtime/launch-native.ps1`" -AllowPrototype"
+}
 Write-Output 'Windows plugin load, source/decoder counts, portable isolation, real cameras, two projectors, auth/migration/lifecycle and install/upgrade qualification are still required. No existing product was replaced.'

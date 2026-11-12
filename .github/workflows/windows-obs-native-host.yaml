@@ -112,8 +112,15 @@ jobs:
         run: |
           $parameters = @{Version=$env:NATIVE_VERSION;BuildDirectory="$env:GITHUB_WORKSPACE/build/obs-native-ci"}
           if ($env:NATIVE_PIXEL_TEST -eq 'true') { $parameters.PixelTest=$true }
-          if ($env:NATIVE_PRODUCT_MODE -eq 'true') { $parameters.ProductMode=$true }
+          if ($env:NATIVE_PRODUCT_MODE -eq 'true') { $parameters.ProductMode=$true; $parameters.DeferProductServices=$true }
           ./desktop/scripts/build-obs-native.ps1 @parameters
+      - name: Build and stage the integrated control and account services
+        if: inputs.product_mode
+        shell: pwsh
+        env:
+          NATIVE_VERSION: ${{ inputs.version }}
+        run: |
+          ./desktop/scripts/build-native-product-control.ps1 -Version $env:NATIVE_VERSION -BuildDirectory "$env:GITHUB_WORKSPACE/build/obs-native-ci"
       - name: Exercise the actual integrated launcher and authenticated product window
         if: inputs.product_mode
         shell: pwsh
