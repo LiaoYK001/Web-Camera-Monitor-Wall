@@ -54,6 +54,8 @@ public static class ProductTestWindow {
                 'webobsSaveLayout' { '保存布局' }
                 'webobsLogout' { '退出账号' }
                 'webobsRefreshCatalog' { '刷新设备目录' }
+                'webobsWatchScene' { '监看所选 Studio 场景' }
+                'webobsStudioScene' { $kind = [System.Windows.Automation.ControlType]::ComboBox; '已保存的 Studio 场景' }
                 default {
                     if ($Identity -match '^webobsCameraSlot([1-5])$') {
                         $kind = [System.Windows.Automation.ControlType]::ComboBox
@@ -139,6 +141,29 @@ public static class ProductTestWindow {
             Invoke-Control 'webobsWatch'
         }
         'save' { Invoke-Control 'webobsSaveLayout' }
+        'scene' {
+            $choice = [int]$operation.index
+            if ($choice -lt 1 -or $choice -gt 64 -or
+                $operation.fixtureName -notin @('Fixture Studio five', 'Fixture Studio five updated')) {
+                throw 'Invalid synthetic Studio selection.'
+            }
+            $control = Find-Control 'webobsStudioScene'
+            $code = 'expand-studio-scene'
+            $control.GetCurrentPattern([System.Windows.Automation.ExpandCollapsePattern]::Pattern).Expand()
+            [uint32]$foregroundPid = 0
+            $null = [ProductTestWindow]::GetWindowThreadProcessId(
+                [ProductTestWindow]::GetForegroundWindow(), [ref]$foregroundPid)
+            if ($foregroundPid -ne $FrontendPid) { throw 'Fixture product does not own keyboard input.' }
+            [System.Windows.Forms.SendKeys]::SendWait('{HOME}' + ('{DOWN}' * $choice) + '{ENTER}')
+            $value = $control.GetCurrentPattern([System.Windows.Automation.ValuePattern]::Pattern)
+            $deadline = [DateTime]::UtcNow.AddSeconds(2)
+            while ($value.Current.Value -ne $operation.fixtureName -and [DateTime]::UtcNow -lt $deadline) {
+                Start-Sleep -Milliseconds 25
+            }
+            $code = 'verify-studio-scene'
+            if ($value.Current.Value -ne $operation.fixtureName) { throw 'Studio fixture selection was not committed.' }
+            Invoke-Control 'webobsWatchScene'
+        }
         'logout' { Invoke-Control 'webobsLogout' }
         'refresh' { Invoke-Control 'webobsRefreshCatalog' }
         'close' { $window.GetCurrentPattern([System.Windows.Automation.WindowPattern]::Pattern).Close() }

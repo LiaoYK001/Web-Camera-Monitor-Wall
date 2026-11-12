@@ -23,7 +23,7 @@ One pinned OBS frontend owns local media. Reuse the existing Direct-only core fo
 | DEV | `CameraRegistry.tsx`、`camera_registry.py` | 原生摄像机/Profile 选择，本机设备管理页 | 稳定 camera/profile ID、Secret 引用 | camera、core | 选已有设备进入媒体源，禁用/缺失 Profile 可见报错 | 已接线，真实 HTTP 通过；dev.81 实际 UI 五路建图通过 | dev.86 已通过统一入口九组显示/清屏、保存、重登重启及生命周期；恢复对照与安装态未过 |
 | IMPORT | `bulkSourceImport.ts`、ONVIF API | 设备库批量导入/ONVIF 页面 | 去重、配置保留、device.manage | camera、WebUI | 实际导入、失败不覆盖、重启保留 | 旧实现可用，原生未接线 | 管理入口与安装组件 |
 | LIVE | `DirectPreview.tsx`、`ProgramPreview.tsx`、core OBS | 原生 OBS Media Source 与 Preview/Program | 认证后建图，同源兼容设置共享 | OBS、obs-ffmpeg | 真实插件、真实服务、动态 H.264/H.265 最终像素 | 原型实测反馈 dev.53；产品 dev.86 九组八帧显示/清屏及重登重启通过 | 真实相机/目标机硬解/性能/长稳及安装态仍待验证 |
-| STUDIO | `SceneCollection.tsx`、`sceneSchema.ts`、`StudioController` | 原生场景切换/编辑与现有管理 Studio | Scene/Source UUID、草稿、revision、嵌套 | OBS、core、WebUI | 保存/恢复、裁剪/层级/锁定、冲突、TAKE | SceneDocument 相机建图接入当前观看按钮；Linux 实际 libobs 共享/引用/变换测试通过 | Studio 文档/API、编辑、TAKE、嵌套及 Windows 共享像素待接线/执行 |
+| STUDIO | `SceneCollection.tsx`、`sceneSchema.ts`、`StudioController` | 原生场景切换/编辑与现有管理 Studio | Scene/Source UUID、草稿、revision、嵌套 | OBS、core、WebUI | 保存/恢复、裁剪/层级/锁定、冲突、TAKE | SceneDocument 相机建图及后台 Studio 场景列表/监看按钮已接线；Linux 实际 HTTP 与 libobs 共享/引用/变换测试通过 | Windows 场景/嵌套显示与共享像素待执行；编辑、TAKE/过渡、Preview/Program 与业务来源仍待接线 |
 | LAYOUT | `monitorView.ts`、监控偏好、设备布局 | 原生网格/轮换/事件提升/主子码流 | 账号与设备偏好分离 | OBS、account、clients | 既有布局范围、人工选择、帧率/分辨率回读 | 原生未接线 | 不限五路的布局接线 |
 | PROJECT | `ProjectorView.tsx`、desktop fixed projector IPC | 原生 Program 与固定 Scene 多投影 | 固定场景身份、同源引用 | OBS/Qt | 双固定场景、切 Program、重开/全屏/DPI | 原型 Program 像素覆盖，产品入口待接线 | 多投影授权和消费者寿命 |
 | AUDIO | `AudioWorkspace.tsx`、`sourceAudio.ts`、schema-v6 | 原生混音/监听/电平，管理音轨页 | 账号监听偏好与项目轨道语义 | OBS、必要音轨适配组件 | 无重复扬声器输出、多轨保存、失效轨报错 | 原生未接线 | 音轨与运行时映射 |

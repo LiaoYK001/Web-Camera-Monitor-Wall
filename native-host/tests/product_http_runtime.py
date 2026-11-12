@@ -54,6 +54,29 @@ def exercise(binary):
                     ("main", name, "Main", "main", "rtsp://127.0.0.1:9/synthetic", "h265", "", 320, 180, 10))
             database.execute("UPDATE cameras SET hardware_decode='off' WHERE id='camera-a'")
             database.execute("UPDATE stream_profiles SET transport_mode='rtsp-tcp' WHERE camera_id='camera-a'")
+        def scene(identifier, camera_ids):
+            sources = [{"id": f"source-{index}", "name": f"Source {index}", "kind": "camera",
+                "cameraId": camera_id, "profileId": "main", "hardwareDecode": "auto"}
+                for index, camera_id in enumerate(camera_ids)]
+            return {"schemaVersion": 6, "revision": 0, "id": identifier, "name": identifier,
+                "canvas": {"width": 1920, "height": 1080, "backgroundColor": "#000000"},
+                "sources": sources, "items": [{"id": f"item-{index}", "sourceId": source["id"],
+                    "x": index * 640, "y": 0, "width": 640, "height": 360, "scaleMode": "contain",
+                    "zIndex": index, "visible": True,
+                    "crop": {"top": 0, "right": 0, "bottom": 0, "left": 0}} for index, source in enumerate(sources)]}
+        allowed_scene = scene("allowed", ["camera-a"])
+        denied_scene = scene("denied", ["camera-a", "camera-b"])
+        raw_scene = scene("unbound", ["camera-a"])
+        raw_scene["sources"] = [{"id": "source-0", "name": "Unbound private source", "kind": "rtsp",
+            "rtspUrl": "rtsp://private:private@127.0.0.1:9/not-a-catalog-binding", "transport": "tcp"}]
+        nested_scene = scene("nested", ["camera-a"])
+        nested_scene["sources"] = [{"id": "source-0", "name": "Nested allowed", "kind": "nested", "sceneId": "allowed"}]
+        for document in (allowed_scene, denied_scene, raw_scene, nested_scene):
+            for source in document["sources"]:
+                source.update(muted=True, volume=1, syncOffsetMs=0, monitoring="off", audioTrack=1)
+        (private / "studio.json").write_text(json.dumps({"schemaVersion": 1, "revision": 7,
+            "programSceneId": "allowed", "previewSceneId": "allowed", "transition": {"kind": "cut", "durationMs": 300},
+            "scenes": [allowed_scene, denied_scene, raw_scene, nested_scene]}), encoding="utf-8")
         cluster.INTERNAL_TOKEN = secrets.token_hex(32)
         cluster.STORE = cluster.ClusterStore(private / "accounts.db", cluster.PasswordHasher(),
                                             camera_registry_path=camera.DB_PATH)
@@ -99,10 +122,14 @@ def exercise(binary):
         opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
         cookie = ""
 
-        def request(path, value=None, *, method=None, secret=host_secret, request_origin=origin, use_cookie=True):
+        def request(path, value=None, *, method=None, secret=host_secret, request_origin=origin,
+                    use_cookie=True, cookie_override=None, revision=None):
             headers = {"Origin": request_origin, "Content-Type": "application/json", "X-WebOBS-Native-Host": secret}
-            if cookie and use_cookie:
-                headers["Cookie"] = cookie
+            effective_cookie = cookie if cookie_override is None else cookie_override
+            if effective_cookie and use_cookie:
+                headers["Cookie"] = effective_cookie
+            if revision is not None:
+                headers["If-Match"] = '"' + str(revision) + '"'
             data = None if value is None else json.dumps(value).encode()
             message = urllib.request.Request(origin + path, data=data, headers=headers, method=method)
             try:
@@ -155,6 +182,44 @@ def exercise(binary):
                 status, _, catalog = request("/api/v1/native/cameras")
                 assert status == 200 and [item["id"] for item in catalog["cameras"]] == ["camera-a"], \
                     "native catalog exposed an unauthorized camera"
+                status, _, scenes = request("/api/v1/native/scenes")
+                assert status == 200 and scenes["revision"] == 7
+                assert [item["id"] for item in scenes["scenes"]] == ["allowed", "denied", "unbound", "nested"]
+                assert "rtsp://" not in json.dumps(scenes) and "127.0.0.1" not in json.dumps(scenes)
+                for scene_id, expected in (("denied", 403), ("unbound", 409), ("missing", 409)):
+                    assert request("/api/v1/native/scenes/resolve", {"sceneId": scene_id, "revision": 7})[0] == expected
+                    assert resolved == [], "rejected scene resolved a private endpoint"
+                for invalid in ({"sceneId": "allowed", "revision": True},
+                                {"sceneId": "allowed", "revision": 7, "cameras": []},
+                                {"sceneId": "../allowed", "revision": 7}):
+                    assert request("/api/v1/native/scenes/resolve", invalid)[0] == 400
+                assert request("/api/v1/native/scenes/resolve", {"sceneId": "allowed", "revision": 6})[0] == 412
+                for scene_id in ("allowed", "nested"):
+                    status, _, value = request("/api/v1/native/scenes/resolve", {"sceneId": scene_id, "revision": 7})
+                    assert status == 200 and value["studioRevision"] == 7 and value["cameraVersions"] == {"camera-a": 1}
+                    assert len(value["cameras"]) == 1 and value["cameras"][0]["cameraId"] == "camera-a"
+                    assert value["scene"]["sources"][0]["kind"] == "camera" and "rtsp://" not in json.dumps(value["scene"])
+                    before = list(resolved)
+                    status, _, renewed_scene = request("/api/v1/native/scenes/authorize", {"sceneId": scene_id, "revision": 7})
+                    assert status == 200 and renewed_scene["studioRevision"] == 7 and "scene" not in renewed_scene
+                    assert resolved == before and "url" not in json.dumps(renewed_scene)
+                resolved.clear()
+                # Change the canonical document through the ordinary admin API,
+                # rather than editing a file that the live controller cannot see.
+                code, admin_issued, _ = request("/api/v1/auth/login", first_admin, use_cookie=False)
+                assert code == 200 and admin_issued
+                admin_cookie = admin_issued.split(";", 1)[0]
+                code, _, studio = request("/api/v1/studio", cookie_override=admin_cookie)
+                assert code == 200 and studio["revision"] == 7
+                studio["scenes"][0]["name"] = "Allowed revised through existing API"
+                assert request("/api/v1/studio", studio, method="PUT", revision=7)[0] == 403
+                code, _, updated = request("/api/v1/studio", studio, method="PUT", revision=7,
+                    cookie_override=admin_cookie)
+                assert code == 200 and updated["revision"] == 8
+                assert request("/api/v1/native/scenes/authorize", {"sceneId": "allowed", "revision": 7})[0] == 412
+                assert request("/api/v1/native/scenes/resolve", {"sceneId": "allowed", "revision": 7})[0] == 412
+                assert resolved == [], "stale canonical scene read private endpoints after an ordinary API update"
+                assert request("/api/v1/native/scenes/authorize", {"sceneId": "allowed", "revision": 8})[0] == 200
                 with contextlib.closing(sqlite3.connect(private / "sessions.db")) as database:
                     row = database.execute("SELECT user_id,auth_epoch FROM auth_sessions").fetchone()
                     assert row and len(row[0]) == len(row[1]) == 32, "session was not identity-bound"

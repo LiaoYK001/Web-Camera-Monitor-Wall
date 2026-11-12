@@ -229,3 +229,14 @@ The build contract now asserts exactly one `evaluate_ui_action` call in the plug
 原生模式的 Windows core listener（存在一次启动 host token）在 bind 前使用 `SO_EXCLUSIVEADDRUSE`，不使用 Windows 的强制重绑定 `SO_REUSEADDR`；supervisor 预留的控制/账号/Registry sockets 同样独占。POSIX 与非原生控制路径保留既有行为。失败拒绝启动，不切换已保存的管理 origin。依据 [Microsoft socket 选项说明](https://learn.microsoft.com/en-us/windows/win32/winsock/using-so-reuseaddr-and-so-exclusiveaddruse)，默认或 reuse listener 都不能作为原生账号入口的独占保证。
 
 The Windows native core and supervisor socket reservations now request exclusive ownership before binding. The actual Windows core HTTP test and unified-entry test attempt a competing forced rebind on their own disposable loopback listener; installed-entry restart also verifies the same saved origin. Windows execution is pending until a build containing this change runs. Linux real core/service checks do not qualify Windows Winsock or restart behavior.
+
+
+### 已保存场景监看接线 / Saved-scene monitoring integration
+
+新增内部 `GET /api/v1/native/scenes` 返回当前 Studio revision、Program/Preview ID 与最多 64 个场景的 id/name 摘要，不返回来源 URL。`POST /api/v1/native/scenes/resolve` 与 `/authorize` 只接受 `{sceneId, revision}`；请求仍经过同一个 host token、loopback、Origin/Host、bound userId/authEpoch 和 scene.read 门禁。core 从当前 StudioController 文档展开该场景及嵌套，派生全部 camera/Profile 需求，复用整批授权、严格 Profile/版本与会话/deadline 复查，任一来源不受支持或任一相机拒绝都拒绝整个动作。不是由客户端提交的 camera 清单替代真实场景。全局 Studio revision 在读取前及返回前都必须相同。
+
+resolve 返回无原始 URL 的 SceneDocument 及分开的私密解析绑定；authorize 返回 revision、cameraVersions 和视频参数，既不读取端点也不重复传送整个文档。Qt 选择按钮先 resolve，再以同一 scene/revision 续验后建图，后续 heartbeat 对相同场景/revision 续验；文档或设备版本改变、scope/身份失效则清屏。Qt 响应上限固定为 2 MiB，选择请求上限仍为 16 KiB。原生本地布局仅保存 `{schema:2, sceneId}`；重登后读取当时的文档与权限，保留原 schema-1 五路 ID 布局兼容。
+
+这接的是“已保存场景监看”，尚不是 Preview/Program/TAKE 控制与编辑语义迁移。目前显式音轨混合、LUT/遮罩资产与未接 resolver 的其他来源仍拒绝；旧数据迁移和完整原生菜单旁路验收仍打开。Linux 真实 core/account/Registry HTTP 测试通过摘要不含端点、拒绝场景零端点读取、允许/嵌套场景、普通管理员 API 改文档后旧 revision 拒绝、viewer 写 Studio 拒绝与无端点续验。新的真实 Windows UI/像素、保存/恢复与文档变更清屏脚本已接入，尚待对应 source 构建执行。
+
+The saved-scene routes derive all bindings from the live canonical Studio document, including nested scenes, and reuse whole-selection Profile authorization before private resolution. Revision and identity checks surround the operation. The Qt action resolves, renews, then builds through the same owned graph path; its bounded heartbeat rejects stale documents. Per-account workspace persistence stores only a scene ID and reauthorizes on login. Actual Linux service tests pass; new Windows UI/pixel execution is pending. Preview/Program/TAKE, full editing, unresolved source/assets/audio routing and legacy migration remain separate open work.

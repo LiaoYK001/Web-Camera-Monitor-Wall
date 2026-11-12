@@ -47,6 +47,8 @@ class ProductWindow;
 QPointer<ProductWindow> product_window;
 
 class ProductWindow final : public QWidget {
+	// One bounded Studio document plus its separately authorized private bindings.
+	static constexpr qint64 response_limit = 2 * maximum_scene_json_bytes;
 	QWidget *frontend_;
 	QWidget *preview_ = nullptr;
 	QNetworkAccessManager network_;
@@ -57,12 +59,15 @@ class ProductWindow final : public QWidget {
 	QByteArray host_secret_;
 	QLineEdit *username_, *password_;
 	QLabel *status_;
-	QPushButton *login_, *create_account_, *watch_, *save_, *logout_, *refresh_;
+	QPushButton *login_, *create_account_, *watch_, *save_, *logout_, *refresh_, *scene_watch_;
+	QComboBox *scenes_ = nullptr;
 	std::array<QComboBox *, 5> slots_{};
 	ProductSourcePool source_pool_;
 	std::unique_ptr<ProductSceneGraph> wall_;
 	QJsonArray watching_;
 	QJsonObject watching_versions_;
+	QString watching_scene_id_;
+	qint64 watching_studio_revision_ = -1;
 	QString user_id_;
 	quint64 generation_ = 0;
 	bool heartbeat_pending_ = false;
@@ -87,6 +92,10 @@ class ProductWindow final : public QWidget {
 		const bool video_available = obs_get_video_info(&video);
 		QJsonArray bindings;
 		QJsonArray selection_indices;
+		QJsonArray studio_choices;
+		if (scenes_)
+			for (int i = 1; i < scenes_->count(); ++i)
+				studio_choices.append(scenes_->itemData(i).toJsonObject().value("sceneId"));
 		for (auto *slot : slots_)
 			selection_indices.append(slot ? slot->currentIndex() : -1);
 		for (int i = 0; i < watching_.size(); ++i) {
@@ -98,6 +107,8 @@ class ProductWindow final : public QWidget {
 			{"pid", QString::number(QCoreApplication::applicationPid())},
 			{"catalogItems", slots_[0] && slots_[0]->count() > 0 ? slots_[0]->count() - 1 : 0},
 			{"selectionIndices", selection_indices},
+			{"sceneId", watching_scene_id_}, {"studioRevision", watching_studio_revision_},
+			{"studioChoices", studio_choices},
 			{"sessionBound", !user_id_.isEmpty()}, {"mediaSources", media_sources}, {"bindings", bindings},
 			{"videoAvailable", video_available}, {"hardwareDecodeVerified", false}};
 		state.insert("previewLocked", preview_ && preview_->property("webobsPreviewLocked").toBool());
@@ -136,14 +147,14 @@ class ProductWindow final : public QWidget {
 		message.setTransferTimeout(timeout_ms);
 		QNetworkReply *reply = method == "GET" ? network_.get(message) :
 			network_.post(message, QJsonDocument(body).toJson(QJsonDocument::Compact));
-		reply->setReadBufferSize(256 * 1024);
+		reply->setReadBufferSize(response_limit);
 		auto *deadline = new QTimer(reply);
 		deadline->setSingleShot(true);
 		connect(deadline, &QTimer::timeout, reply, &QNetworkReply::abort);
 		deadline->start(timeout_ms);
 		auto bytes = std::make_shared<QByteArray>();
 		connect(reply, &QNetworkReply::readyRead, this, [reply, bytes] {
-			if (reply->bytesAvailable() > 256 * 1024 - bytes->size()) {
+			if (reply->bytesAvailable() > response_limit - bytes->size()) {
 				reply->abort();
 				return;
 			}
@@ -164,6 +175,8 @@ class ProductWindow final : public QWidget {
 	{
 		watching_ = {};
 		watching_versions_ = {};
+		watching_scene_id_.clear();
+		watching_studio_revision_ = -1;
 		if (!obs_initialized())
 			return;
 		// Graph teardown detaches pictures first and retires only its last-owned
@@ -183,12 +196,14 @@ class ProductWindow final : public QWidget {
 		user_id_.clear();
 		network_.setCookieJar(new QNetworkCookieJar(&network_));
 		login_->setEnabled(true);
-		for (auto *button : {watch_, save_, logout_, refresh_})
+		for (auto *button : {watch_, save_, logout_, refresh_, scene_watch_})
 			button->setEnabled(false);
 		for (auto *slot : slots_) {
 			slot->clear();
 			slot->setEnabled(false);
 		}
+		scenes_->clear();
+		scenes_->setEnabled(false);
 		status_->setText(message);
 		if (media_source_count() == 0) {
 			last_retirement_ms_ = retirement_elapsed_.elapsed();
@@ -245,7 +260,7 @@ class ProductWindow final : public QWidget {
 			}
 			user_id_ = id;
 			observe_state("authenticated");
-			for (auto *button : {watch_, save_, logout_, refresh_})
+			for (auto *button : {watch_, save_, logout_, refresh_, scene_watch_})
 				button->setEnabled(true);
 			status_->setText(tr("已登录，正在读取授权设备目录…"));
 			heartbeat_.start(2000);
@@ -278,19 +293,155 @@ class ProductWindow final : public QWidget {
 				slot->setEnabled(true);
 			}
 			observe_state(watching_.isEmpty() ? "authenticated" : "graph-applied");
+			QString restore_scene;
 			if (restore) {
 				QFile file(workspace_path());
 				if (file.size() <= 16384 && file.open(QIODevice::ReadOnly)) {
-					const auto saved = QJsonDocument::fromJson(file.readAll()).object().value("cameras").toArray();
-					if (saved.size() == 5)
-						for (int i = 0; i < 5; ++i) {
-							const int index = slots_[i]->findData(saved[i].toObject());
-							slots_[i]->setCurrentIndex(index > 0 ? index : 0);
-						}
+					const auto workspace = QJsonDocument::fromJson(file.readAll()).object();
+					if (workspace.value("schema").toInt() == 2)
+						restore_scene = workspace.value("sceneId").toString();
+					else {
+						const auto saved = workspace.value("cameras").toArray();
+						if (saved.size() == 5)
+							for (int i = 0; i < 5; ++i) {
+								const int index = slots_[i]->findData(saved[i].toObject());
+								slots_[i]->setCurrentIndex(index > 0 ? index : 0);
+							}
+					}
 				}
-				if (selection().size() == 5)
+				if (restore_scene.isEmpty() && selection().size() == 5)
 					watch();
 			}
+			refresh_scenes(restore_scene);
+		}, 12000);
+	}
+
+	void refresh_scenes(const QString &restore_id = {})
+	{
+		request("/api/v1/native/scenes", "GET", {}, [this, restore_id](int code, const QJsonObject &body) {
+			if (code != 200 || !body.value("scenes").isArray() || body.value("revision").toInteger(-1) < 0)
+				return;
+			scenes_->clear();
+			scenes_->addItem(tr("选择已保存的 Studio 场景"), QJsonObject{});
+			int restored = 0;
+			for (const auto value : body.value("scenes").toArray()) {
+				const auto scene = value.toObject();
+				scenes_->addItem(scene.value("name").toString(),
+					QJsonObject{{"sceneId", scene.value("id")}, {"revision", body.value("revision")}});
+				if (scene.value("id").toString() == restore_id)
+					restored = scenes_->count() - 1;
+			}
+			scenes_->setEnabled(!applying_);
+			observe_state(applying_ ? "connecting" : (watching_.isEmpty() ? "authenticated" : "graph-applied"));
+			if (restored > 0) {
+				scenes_->setCurrentIndex(restored);
+				watch_scene();
+			}
+		});
+	}
+
+	void begin_connecting()
+	{
+		++generation_;
+		heartbeat_pending_ = false;
+		clear_media();
+		applying_ = true;
+		observe_state("connecting");
+		for (auto *button : {watch_, refresh_, scene_watch_}) button->setEnabled(false);
+		scenes_->setEnabled(false);
+		for (auto *slot : slots_) slot->setEnabled(false);
+		status_->setText(tr("正在核验权限并连接摄像机…"));
+	}
+
+	void apply_graph(const SceneDocument &document, const std::vector<ProductCamera> &cameras,
+		const QJsonArray &selected, const QJsonObject &versions, const QJsonObject &video,
+		const QString &scene_id = {}, qint64 studio_revision = -1)
+	{
+		clear_media();
+		std::string error;
+		if (!apply_product_video_config(video.value("width").toInt(), video.value("height").toInt(),
+			video.value("fps").toInt(), error)) {
+			locked(tr("无法应用项目画布或帧率，请检查视频设置。"));
+			return;
+		}
+		wall_ = create_product_scene(source_pool_, user_id_.toStdString(), document, cameras, error);
+		applying_ = false;
+		for (auto *button : {watch_, refresh_, scene_watch_}) button->setEnabled(true);
+		scenes_->setEnabled(true);
+		for (auto *slot : slots_) slot->setEnabled(true);
+		if (!wall_ || !wall_->scene) {
+			clear_media();
+			status_->setText(tr("原生画面创建失败；部分来源、音轨或资产仍需接入。"));
+			observe_state("graph-failed");
+			return;
+		}
+		select_wall(wall_->scene);
+		watching_ = selected;
+		watching_versions_ = versions;
+		watching_scene_id_ = scene_id;
+		watching_studio_revision_ = studio_revision;
+		observe_state("graph-applied");
+		status_->setText(tr("原生监看已连接。"));
+	}
+
+	void watch_scene()
+	{
+		const auto wanted = scenes_->currentData().toJsonObject();
+		const auto id = wanted.value("sceneId").toString();
+		const auto revision = wanted.value("revision").toInteger(-1);
+		if (id.isEmpty() || revision < 0 || user_id_.isEmpty() || applying_) return;
+		begin_connecting();
+		request("/api/v1/native/scenes/resolve", "POST", wanted,
+			[this, wanted, id, revision](int code, const QJsonObject &body) {
+			if (code != 200 || body.value("studioRevision").toInteger(-1) != revision || !body.value("scene").isObject()) {
+				locked(tr("场景不可用或已变更，请登录后刷新；部分业务来源仍需接入。"));
+				return;
+			}
+			request("/api/v1/native/scenes/authorize", "POST", wanted,
+				[this, id, revision, body](int status, const QJsonObject &authorization) {
+				if (status != 200 || authorization.value("studioRevision").toInteger(-1) != revision ||
+				    authorization.value("cameraVersions") != body.value("cameraVersions")) {
+					locked(tr("场景或摄像机权限已变更，请重新登录。"));
+					return;
+				}
+				const auto bytes = QJsonDocument(body.value("scene").toObject()).toJson(QJsonDocument::Compact);
+				auto parsed = parse_scene_json(std::string_view(bytes.constData(), std::size_t(bytes.size())));
+				const auto resolved = body.value("cameras").toArray();
+				if (!parsed.ok() || parsed.document->sources.size() != std::size_t(resolved.size())) {
+					locked(tr("场景资料无效，请检查已保存的布局。"));
+					return;
+				}
+				std::vector<ProductCamera> cameras;
+				QJsonArray selected;
+				for (int i = 0; i < resolved.size(); ++i) {
+					auto &source = parsed.document->sources[std::size_t(i)];
+					const auto binding = resolved[i].toObject();
+					if (source.kind != "camera" || source.camera_id != binding.value("cameraId").toString().toStdString() ||
+					    source.profile_id != binding.value("profileId").toString().toStdString()) {
+						locked(tr("场景来源身份不匹配，请重新登录。"));
+						return;
+					}
+					ProductCamera camera;
+					camera.id = source.camera_id;
+					camera.profile_id = source.profile_id;
+					camera.name = "WebOBS " + source.id;
+					camera.url = binding.value("url").toString().toStdString();
+					camera.transport = binding.value("transport").toString().toStdString();
+					const auto requested_hardware = source.hardware_decode == "auto" ?
+						binding.value("hardwareDecode").toString().toStdString() : source.hardware_decode;
+					if (requested_hardware != "auto" && requested_hardware != "on" && requested_hardware != "off") {
+						locked(tr("场景解码配置无效。"));
+						return;
+					}
+					if (requested_hardware != "auto") camera.hardware_decode = requested_hardware == "on";
+					source.hardware_decode = requested_hardware;
+					source.transport = camera.transport;
+					cameras.push_back(std::move(camera));
+					selected.append(QJsonObject{{"cameraId", binding.value("cameraId")}, {"profileId", binding.value("profileId")}});
+				}
+				apply_graph(*parsed.document, cameras, selected, body.value("cameraVersions").toObject(),
+					authorization.value("video").toObject(), id, revision);
+			}, 12000);
 		}, 12000);
 	}
 
@@ -302,16 +453,7 @@ class ProductWindow final : public QWidget {
 			observe_state("selection-incomplete");
 			return;
 		}
-		++generation_;
-		heartbeat_pending_ = false;
-		clear_media();
-		applying_ = true;
-		observe_state("connecting");
-		watch_->setEnabled(false);
-		refresh_->setEnabled(false);
-		for (auto *slot : slots_)
-			slot->setEnabled(false);
-		status_->setText(tr("正在核验权限并连接摄像机…"));
+		begin_connecting();
 		request("/api/v1/native/cameras/resolve", "POST", {{"cameras", selected}},
 			[this, selected](int code, const QJsonObject &body) {
 			if (code != 200 || body.value("cameras").toArray().size() != 5) {
@@ -338,14 +480,7 @@ class ProductWindow final : public QWidget {
 					locked(tr("设备配置已变更，请重新连接。"));
 					return;
 				}
-				clear_media();
 				const auto video = authorization.value("video").toObject();
-				std::string video_error;
-				if (!apply_product_video_config(video.value("width").toInt(), video.value("height").toInt(),
-					video.value("fps").toInt(), video_error)) {
-					locked(tr("无法应用项目画布或帧率，请检查视频设置。"));
-					return;
-				}
 				std::vector<ProductCamera> cameras(5);
 				SceneDocument document;
 				document.canvas.width = video.value("width").toInt();
@@ -392,24 +527,7 @@ class ProductWindow final : public QWidget {
 					scene_item.z_index = i;
 					document.items.push_back(scene_item);
 				}
-				std::string graph_error;
-				wall_ = create_product_scene(source_pool_, user_id_.toStdString(), document, cameras, graph_error);
-				applying_ = false;
-				watch_->setEnabled(true);
-				refresh_->setEnabled(true);
-				for (auto *slot : slots_)
-					slot->setEnabled(true);
-				if (!wall_ || !wall_->scene) {
-					clear_media();
-					status_->setText(tr("原生画面创建失败，请检查设备配置后重试。"));
-					observe_state("graph-failed");
-					return;
-				}
-				select_wall(wall_->scene);
-				watching_ = selected;
-				watching_versions_ = versions;
-				observe_state("graph-applied");
-				status_->setText(tr("原生监看已连接。"));
+				apply_graph(document, cameras, selected, versions, video);
 			}, 12000);
 		}, 12000);
 	}
@@ -502,6 +620,13 @@ public:
 		refresh_->setObjectName("webobsRefreshCatalog");
 		for (auto *button : {watch_, save_, refresh_, logout_})
 			layout->addWidget(button);
+		scenes_ = new QComboBox(this);
+		scenes_->setObjectName("webobsStudioScene");
+		scenes_->setAccessibleName(tr("已保存的 Studio 场景"));
+		scene_watch_ = new QPushButton(tr("监看所选 Studio 场景"), this);
+		scene_watch_->setObjectName("webobsWatchScene");
+		layout->addWidget(scenes_);
+		layout->addWidget(scene_watch_);
 		auto *manage = new QPushButton(tr("打开设备与系统管理"), this);
 		layout->addWidget(manage);
 		layout->addStretch(1);
@@ -566,14 +691,18 @@ public:
 		});
 		connect(password_, &QLineEdit::returnPressed, login_, &QPushButton::click);
 		connect(watch_, &QPushButton::clicked, this, [this] { watch(); });
+		connect(scene_watch_, &QPushButton::clicked, this, [this] { watch_scene(); });
 		connect(refresh_, &QPushButton::clicked, this, [this] { refresh_catalog(false); });
 		connect(save_, &QPushButton::clicked, this, [this] {
-			if (watching_.size() != 5 || applying_) {
+			if (watching_.isEmpty() || applying_ || user_id_.isEmpty()) {
 				status_->setText(tr("请先连接要保存的摄像机。"));
 				return;
 			}
 			QSaveFile file(workspace_path());
-			const auto bytes = QJsonDocument(QJsonObject{{"schema", 1}, {"cameras", watching_}}).toJson();
+			const QJsonObject workspace = watching_scene_id_.isEmpty() ?
+				QJsonObject{{"schema", 1}, {"cameras", watching_}} :
+				QJsonObject{{"schema", 2}, {"sceneId", watching_scene_id_}};
+			const auto bytes = QJsonDocument(workspace).toJson();
 			if (!QDir().mkpath(QFileInfo(file.fileName()).absolutePath()) ||
 			    !file.open(QIODevice::WriteOnly) || file.write(bytes) != bytes.size() || !file.commit())
 				status_->setText(tr("布局保存失败，已有布局已保留。"));
@@ -594,13 +723,20 @@ public:
 				return;
 			heartbeat_pending_ = true;
 			const bool active = !watching_.isEmpty();
-			request(active ? "/api/v1/native/cameras/authorize" : "/api/v1/native/auth/session",
-				active ? "POST" : "GET", {{"cameras", watching_}}, [this, active](int code, const QJsonObject &body) {
+			const bool scene_active = active && !watching_scene_id_.isEmpty();
+			const QString path = scene_active ? "/api/v1/native/scenes/authorize" :
+				(active ? "/api/v1/native/cameras/authorize" : "/api/v1/native/auth/session");
+			const QJsonObject renewal = scene_active ?
+				QJsonObject{{"sceneId", watching_scene_id_}, {"revision", watching_studio_revision_}} :
+				QJsonObject{{"cameras", watching_}};
+			request(path, active ? "POST" : "GET", renewal, [this, active, scene_active](int code, const QJsonObject &body) {
 				heartbeat_pending_ = false;
 				if (code != 200)
 					locked(tr("会话或摄像机权限已失效，请重新登录。"));
 				else if (active && body.value("cameraVersions").toObject() != watching_versions_)
 					locked(tr("设备配置已变更，请重新登录后连接。"));
+				else if (scene_active && body.value("studioRevision").toInteger(-1) != watching_studio_revision_)
+					locked(tr("场景已变更，请重新登录后连接。"));
 			});
 		});
 	}

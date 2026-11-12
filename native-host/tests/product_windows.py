@@ -296,6 +296,58 @@ def exercise(runtime, report, *, with_media=False, retained_profile=None):
                 check_graph()
                 time.sleep(3)
                 check_pixels("distinct-after-sharing")
+                phase = "existing-studio-api-to-native-scene"
+                code, _, studio = request("/api/v1/studio", cookie=cookie)
+                assert code == 200
+                fixture_scene = {"schemaVersion": 6, "revision": 0, "id": "fixture-five", "name": "Fixture Studio five",
+                    "canvas": {"width": 1920, "height": 1080, "backgroundColor": "#000000"}, "sources": [], "items": []}
+                for index in range(5):
+                    source_id = f"fixture-source-{index}"
+                    fixture_scene["sources"].append({"id": source_id, "kind": "camera", "name": f"Camera {index}",
+                        "cameraId": f"fixture-{index + 1}", "profileId": "main", "hardwareDecode": "auto",
+                        "muted": True, "volume": 1, "syncOffsetMs": 0, "monitoring": "off", "audioTrack": 1})
+                    fixture_scene["items"].append({"id": f"fixture-item-{index}", "sourceId": source_id,
+                        "x": (index % 3) * 640, "y": (index // 3) * 540, "width": 640, "height": 540,
+                        "scaleMode": "contain", "crop": {"top": 0, "right": 0, "bottom": 0, "left": 0},
+                        "visible": True, "locked": True, "zIndex": index})
+                studio.update(programSceneId="fixture-five", previewSceneId="fixture-five", scenes=[fixture_scene])
+                code, _, studio = request("/api/v1/studio", studio, cookie, method="PUT", revision=studio["revision"])
+                assert code == 200, "ordinary Studio API could not save the camera scene"
+                assert ui("refresh")
+                wait_for(lambda: state().get("studioChoices") == ["fixture-five"], "saved Studio scene did not enter native choices")
+                assert ui("scene", index=1, fixtureName="Fixture Studio five")
+                wait_for(lambda: state().get("sceneId") == "fixture-five", "native action did not select saved Studio scene")
+                check_graph()
+                time.sleep(3)
+                check_pixels("studio-scene")
+                assert ui("save") and read_json(paths[0]) == {"schema": 2, "sceneId": "fixture-five"}
+                assert ui("logout")
+                wait_for(lambda: state().get("phase") == "locked", "Studio scene did not retire on logout")
+                check_pixels("studio-logout", blank=True)
+                assert ui("login", **account)
+                wait_for(lambda: state().get("sceneId") == "fixture-five", "saved scene ID did not restore after authentication")
+                check_graph()
+                time.sleep(3)
+                check_pixels("studio-restored")
+                phase = "studio-revision-renewal"
+                studio["scenes"][0]["name"] = "Fixture Studio five updated"
+                code, _, changed_studio = request("/api/v1/studio", studio, cookie, method="PUT", revision=studio["revision"])
+                assert code == 200
+                wait_for(lambda: state().get("phase") == "locked", "changed canonical scene kept stale native media", timeout=8)
+                check_pixels("studio-changed", blank=True)
+                assert ui("login", **account)
+                wait_for(lambda: state().get("sceneId") == "fixture-five" and
+                    state().get("studioRevision") == changed_studio["revision"], "current Studio revision did not restore")
+                check_graph()
+                time.sleep(3)
+                check_pixels("studio-current-revision")
+                evidence["checks"].extend(["ordinary-studio-document-to-native-final-pixels",
+                    "saved-scene-id-restores-only-after-login", "studio-revision-change-clears-stale-native-pixels"])
+                # Restore the original five-camera workspace for subsequent
+                # independent account, restart and permission regressions.
+                assert ui("choose", indices=[1, 2, 3, 4, 5])
+                check_graph()
+                assert ui("save") and read_json(paths[0]) == saved
             phase = "logout"
             assert ui("logout")
             wait_for(lambda: state().get("phase") == "locked", "logout did not lock product UI")

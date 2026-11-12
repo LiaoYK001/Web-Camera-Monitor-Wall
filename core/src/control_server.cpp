@@ -4252,8 +4252,28 @@ private:
             send_response(response(http::status::ok, version, "{\"cameras\":" + std::string(encoded.get()) + "}"));
             return;
         }
-        const bool resolve = target == "/api/v1/native/cameras/resolve";
-        if ((!resolve && target != "/api/v1/native/cameras/authorize") || request.method() != http::verb::post) {
+        if (target == "/api/v1/native/scenes" && request.method() == http::verb::get && request.body().empty()) {
+            const auto snapshot = studio_.snapshot();
+            const auto parsed = snapshot.ok() ? parse_studio_json(snapshot.public_json) : StudioParseResult{};
+            if (!parsed.ok()) {
+                reject(http::status::service_unavailable, "native_studio_unavailable");
+                return;
+            }
+            std::string summaries = "{\"revision\":" + std::to_string(snapshot.revision) +
+                ",\"programSceneId\":\"" + json_escape(parsed.document->program_scene_id) +
+                "\",\"previewSceneId\":\"" + json_escape(parsed.document->preview_scene_id) + "\",\"scenes\":[";
+            for (const auto &scene : parsed.document->scenes) {
+                if (summaries.back() != '[') summaries += ',';
+                summaries += "{\"id\":\"" + json_escape(scene.id) + "\",\"name\":\"" + json_escape(scene.name) + "\"}";
+            }
+            summaries += "]}";
+            send_response(response(http::status::ok, version, std::move(summaries)));
+            return;
+        }
+        const bool scene_request = target == "/api/v1/native/scenes/resolve" ||
+                                   target == "/api/v1/native/scenes/authorize";
+        const bool resolve = target == "/api/v1/native/cameras/resolve" || target == "/api/v1/native/scenes/resolve";
+        if ((!resolve && !scene_request && target != "/api/v1/native/cameras/authorize") || request.method() != http::verb::post) {
             reject(http::status::not_found, "native_route_unknown");
             return;
         }
@@ -4265,6 +4285,46 @@ private:
         };
         std::unique_ptr<json_t, decltype(&json_decref)> body(
             json_loadb(request.body().data(), request.body().size(), JSON_REJECT_DUPLICATES, nullptr), &json_decref);
+        std::optional<SceneDocument> scene_document;
+        std::optional<std::uint64_t> studio_revision;
+        if (scene_request) {
+            auto *id = body ? json_object_get(body.get(), "sceneId") : nullptr;
+            auto *revision = body ? json_object_get(body.get(), "revision") : nullptr;
+            if (!json_is_object(body.get()) || json_object_size(body.get()) != 2 || !json_is_string(id) ||
+                !json_is_integer(revision) || json_integer_value(revision) < 0 ||
+                !identifier(std::string(json_string_value(id), json_string_length(id)))) {
+                reject(http::status::bad_request, "native_scene_invalid");
+                return;
+            }
+            studio_revision = static_cast<std::uint64_t>(json_integer_value(revision));
+            const auto snapshot = studio_.snapshot();
+            if (!snapshot.ok() || snapshot.revision != *studio_revision) {
+                reject(http::status::precondition_failed, "native_studio_changed");
+                return;
+            }
+            const auto parsed = parse_studio_json(snapshot.public_json);
+            const auto flattened = parsed.ok() ? flatten_studio_scene(*parsed.document,
+                std::string_view(json_string_value(id), json_string_length(id))) : StudioFlattenResult{};
+            if (!flattened.ok() || flattened.document->sources.empty() ||
+                std::any_of(flattened.document->sources.begin(), flattened.document->sources.end(),
+                    [](const auto &source) { return source.kind != "camera"; })) {
+                reject(http::status::conflict, "native_scene_source_unavailable");
+                return;
+            }
+            scene_document = *flattened.document;
+            // Derive bindings from the server's canonical document, never a
+            // caller-supplied source list or raw URL. The existing whole-batch
+            // authority/strict-Profile path below owns all private resolution.
+            body.reset(json_object());
+            auto *selected = json_array();
+            json_object_set_new(body.get(), "cameras", selected);
+            for (const auto &source : scene_document->sources) {
+                auto *binding = json_object();
+                json_object_set_new(binding, "cameraId", json_string(source.camera_id.c_str()));
+                json_object_set_new(binding, "profileId", json_string(source.profile_id.c_str()));
+                json_array_append_new(selected, binding);
+            }
+        }
         auto *cameras = body ? json_object_get(body.get(), "cameras") : nullptr;
         if (!json_is_object(body.get()) || json_object_size(body.get()) != 1 || !json_is_array(cameras) ||
             json_array_size(cameras) < 1 || json_array_size(cameras) > 64) {
@@ -4375,7 +4435,14 @@ private:
             reject(http::status::service_unavailable, "native_request_expired");
             return;
         }
-        const auto canvas = controller_.private_document_snapshot().canvas;
+        if (studio_revision) {
+            const auto current_studio = studio_.snapshot();
+            if (!current_studio.ok() || current_studio.revision != *studio_revision) {
+                reject(http::status::precondition_failed, "native_studio_changed");
+                return;
+            }
+        }
+        const auto canvas = scene_document ? scene_document->canvas : controller_.private_document_snapshot().canvas;
         result += "],\"cameraVersions\":{";
         for (const auto &[camera, revision] : camera_versions) {
             if (result.back() != '{')
@@ -4384,7 +4451,19 @@ private:
         }
         result += "},\"video\":{\"width\":" + std::to_string(canvas.width) +
             ",\"height\":" + std::to_string(canvas.height) + ",\"fps\":" +
-            std::to_string(runtime_status_.configured_fps) + "}}";
+            std::to_string(runtime_status_.configured_fps) + "}";
+        if (scene_document) {
+            result += ",\"studioRevision\":" + std::to_string(*studio_revision);
+            if (resolve) {
+                const auto encoded_scene = serialize_scene_json(*scene_document, SceneJsonView::public_api);
+                if (!encoded_scene.ok()) {
+                    reject(http::status::service_unavailable, "native_studio_unavailable");
+                    return;
+                }
+                result += ",\"scene\":" + encoded_scene.json;
+            }
+        }
+        result += '}';
         send_response(response(http::status::ok, version, std::move(result)));
     }
 

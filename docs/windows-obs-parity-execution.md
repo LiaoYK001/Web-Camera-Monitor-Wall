@@ -1126,3 +1126,16 @@ The real watch action now builds a validated SceneDocument through a product-own
 首次内部 NSIS 已实际构建（70,074,866 B）并安装到新 Unicode/空格私密目录，注册校验、载荷哈希及完整体积测量已执行：198,314,717 logical B / 201,252,904 unnamed-stream allocation B / 1865 files。失败仍旧粗分 install，但 receipt 已含 footprint，随后仅剩快捷方式读取/比较及 COM 释放，installed UI 未开始、卸载保留未验证。后续将注册/载荷/体积/快捷方式阶段独立记录，路径经 GetFullPath 后按 Windows 大小写语义比较，仍要求统一入口绝对目标一致且 arguments 为空；保留固定异常类型/脱敏 errorId。不得将已生成安装器或成功落盘计作安装验收完成，也不据此记完整功能或 159 MB 达标。
 
 Dev.87 passes 22 actual portable product checks and thirteen eight-frame capture groups, including scoped-viewer isolation, ordinary scope revocation and password-change invalidation. The restore control proves actual saved-collection RTSP I/O but times out during normal close; the protected phase remains unexecuted. Fresh NSIS installation reaches hash verification and measured footprint, then fails before installed UI. Follow-up waits for an owned main window and normalizes exact shortcut targets while preserving hard shutdown, zero-I/O, payload and full-product gates. No internal executable is published.
+
+
+#### R2 已保存 Studio 场景进入真实产品入口 / Saved Studio scenes enter the product surface
+
+在 dev.88（run 43230943802、source 1dda0c5）执行前述来源池/恢复关闭/快捷方式回归期间，继续连接已有 StudioController：原生窗口新增真实场景列表与“监看所选 Studio 场景”按钮，通过内部 sceneId/revision 协议读取现有文档，服务端展开嵌套并从规范文档推导整批 camera/Profile 权限和私密绑定，再由同一个 OBS graph/source pool 显示。原五路选择路径复用共同 apply_graph，不新增媒体宿主。场景文档支持模型内的 1–64 相机来源/最多 256 画面项，固定五格选择仍兼容。硬解 auto 使用设备配置，显式场景 on/off 保留；实际传输以已授权 Profile 解析为准。
+
+会话内场景监看持续核对同一 Studio revision、cameraVersions 与当前权限；任一变化清屏。本地 schema-2 只保存场景 ID，登录后按当前版本重新解析并恢复；旧 schema-1 五路 ID 布局继续可读。新入口当前是读取/监看既有场景，没有宣称完整 Studio 编辑、TAKE/过渡、Preview/Program 同步、多投影、业务来源和声音迁移完成。
+
+Linux 实际 core/account/Registry HTTP 联调通过：场景摘要不含端点，无权限的多相机场景在读取任何 URL 前拒绝，未绑定 raw 来源/缺失场景/非法输入拒绝，允许的单相机及嵌套场景可解析，authorize 不读取端点/不传完整文档；普通 viewer 写 Studio 403，普通管理员 API 写入新 revision 后旧原生 resolve/authorize 均 412 且零端点读取，新 revision 续验通过。真实 core 编译、CTest 8/8（含既有图形/来源引用回归）及 supervisor 生命周期回归通过。
+
+Windows 真实产品脚本新增普通 Studio API 保存五路文档，再从原生列表选择并检查最终像素；保存 sceneId/退出清屏/重新登录恢复；普通 API 修改文档 revision 后必须最终空白，再按新 revision 恢复五路。最后恢复原五路 workspace，再运行独立账号/权限/重启回归。以上新的 Qt/Windows 行为不在 dev.88，实际执行仍待下一 source，不能由 Linux 接口或脚本存在记为通过。
+
+Saved canonical Studio camera scenes are now wired to the actual native selection action and owned graph renderer, with ID-only per-account restore and revision-aware renewal. Real Linux service tests pass canonical binding, nested-scene authorization, refusal-before-resolution and ordinary-API revision invalidation. Windows saved-scene pixels/persistence/blanking tests are prepared but not included in dev.88. Full Studio control/editing, source kinds, audio routing and remaining R0–R7 gates stay open.
