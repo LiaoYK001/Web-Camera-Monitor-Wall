@@ -50,3 +50,7 @@ One pinned OBS frontend owns local media. Reuse the existing Direct-only core fo
 旧 dev.18 footprint 总逻辑字节 1,459,397,091，其中 Electron shell 388,050,826、独立 runtime/bin 432,284,496、OBS 树 352,434,045、Python 172,898,288。数据来自其已发布 footprint，最终完整安装重新计量。原型约 99 MB 的历史证据仅作为核心媒体基线。R5 分别记录下载、安装逻辑/分配、首次运行新增、离线完整组件与功能增量，包含所属树外进程。
 
 The old full-runtime baseline is 1,459,397,091 logical bytes in published dev.18. Its Electron shell, separate tools, OBS tree and Python runtime dominate the payload. The native prototype's roughly 99 MB receipt applies to its measured component scope. R5 measures the integrated core and complete installation afresh, including optional/offline components and owned external processes.
+
+dev.79 R1 内部组件回执（source aa90f52、run 43164336627）记录 1863 文件、197,867,225 B（清单自身除外）。其中 bin 96,876,552 B、Python 23,785,687 B、Web 56,642,796 B、OBS data 12,372,562 B、插件 3,725,824 B、许可证 3,972,953 B、services 442,527 B，其余为固定说明/标记。Web 内 `ssd_mobilenet_v1_12.onnx` 29,461,455 B 与 ORT WASM 25,749,873 B 合计 55,211,328 B。它们尚未做按需安装接线，当前真实体积全部计入；不能先从分母扣掉再宣称核心/完整版本达标。这个 R1 范围尚缺完整业务组件、安装态 allocation 与首次运行数据成本。
+
+The dev.79 internal R1 component receipt measures 197,867,225 bytes before the receipt itself, including 56,642,796 bytes of WebUI assets. Its ONNX model and ORT WASM alone total 55,211,328 bytes. They remain shipped and fully counted until real optional installation is wired. This incomplete R1 scope is neither a complete-feature installed footprint nor an OBS-size pass.

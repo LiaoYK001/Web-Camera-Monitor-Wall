@@ -24,6 +24,9 @@ import urllib.request
 
 ROOT = Path(__file__).resolve().parents[2]
 HERE = Path(__file__).resolve().parent
+# The shipped embedded interpreter intentionally excludes the working directory
+# and script directory. Only this test process imports the adjacent test tools.
+sys.path.insert(0, str(HERE))
 
 
 def read_json(path):
