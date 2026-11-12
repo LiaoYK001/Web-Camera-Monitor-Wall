@@ -223,6 +223,16 @@ def exercise(runtime, report, *, with_media=False, retained_profile=None):
             started = start()
             assert sorted(service["name"] for service in started["services"]) == ["accounts-and-registry", "control", "frontend"]
             evidence["checks"].append("single-entry-real-core-authority-and-qt")
+            phase = "exclusive-control-listener"
+            with socket.socket() as competing_listener:
+                competing_listener.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+                try:
+                    competing_listener.bind(("127.0.0.1", int(started["origin"].rsplit(":", 1)[1])))
+                except OSError as error:
+                    assert error.winerror in (10013, 10048), "unexpected listener isolation failure"
+                else:
+                    raise AssertionError("another listener could force-bind the native account origin")
+            evidence["checks"].append("active-control-origin-refuses-forced-rebind")
             phase = "first-account-ui"
             wait_for(lambda: ui("create", **account), "actual first-account button not usable")
             wait_for(lambda: state().get("phase") == "authenticated", "first account did not authenticate through real UI")

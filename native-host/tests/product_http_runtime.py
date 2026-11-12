@@ -128,6 +128,16 @@ def exercise(binary):
                         time.sleep(0.1)
                 else:
                     raise AssertionError("isolated control process did not become ready")
+                if os.name == "nt":
+                    # Exercise the actual Windows core before UI/media gates.
+                    with socket.socket() as competitor:
+                        competitor.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+                        try:
+                            competitor.bind(("127.0.0.1", port))
+                        except OSError as error:
+                            assert error.winerror in (10013, 10048)
+                        else:
+                            raise AssertionError("native listener permitted a forced rebind")
                 login = {"username": "native-viewer", "password": password}
                 assert request("/api/v1/auth/setup")[2]["registrationOpen"] is True
                 first_admin = {"username": "native-admin", "password": secrets.token_urlsafe(24)}

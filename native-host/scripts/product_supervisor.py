@@ -158,7 +158,9 @@ class ProductSupervisor:
         lease = self.resources.enter_context(socket.socket())
         # POSIX permits ordinary restart over old TIME_WAIT connections. Never
         # use Windows SO_REUSEADDR to force a bind over an existing listener.
-        if os.name != "nt":
+        if os.name == "nt":
+            lease.setsockopt(socket.SOL_SOCKET, socket.SO_EXCLUSIVEADDRUSE, 1)
+        else:
             lease.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
         lease.bind(("127.0.0.1", preferred))
         return lease, lease.getsockname()[1]

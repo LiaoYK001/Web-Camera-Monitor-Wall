@@ -4804,8 +4804,20 @@ public:
     {
         beast::error_code error;
         acceptor_.open(endpoint.protocol(), error);
-        if (!error)
-            acceptor_.set_option(net::socket_base::reuse_address(true), error);
+        if (!error) {
+#ifdef _WIN32
+            const char *native_host = std::getenv("WEBOBS_NATIVE_HOST_TOKEN");
+            if (native_host && *native_host) {
+                // Windows SO_REUSEADDR permits force-binding an active listener.
+                // The authenticated native origin must remain owned by this core.
+                const BOOL exclusive = TRUE;
+                if (::setsockopt(acceptor_.native_handle(), SOL_SOCKET, SO_EXCLUSIVEADDRUSE,
+                                 reinterpret_cast<const char *>(&exclusive), sizeof(exclusive)) == SOCKET_ERROR)
+                    error.assign(::WSAGetLastError(), net::error::get_system_category());
+            } else
+#endif
+                acceptor_.set_option(net::socket_base::reuse_address(true), error);
+        }
         if (!error)
             acceptor_.bind(endpoint, error);
         if (!error)
