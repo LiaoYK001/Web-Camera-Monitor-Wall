@@ -174,20 +174,20 @@ def exercise(runtime, report, *, with_media=False, retained_profile=None):
             wait_for(lambda: ui("inspect"), "actual product controls not accessible")
             return value
 
-        def check_graph():
+        def check_graph(*, repeat_first=False):
             wait_for(lambda: state().get("phase") == "graph-applied", "UI did not apply authorized camera graph", timeout=35)
             observed = state()
-            assert observed["sessionBound"] is True and observed["mediaSources"] == 5
+            assert observed["sessionBound"] is True and observed["mediaSources"] == (1 if repeat_first else 5)
             assert observed.get("previewLocked") is True
             bindings = observed["bindings"]
             assert [(item["cameraId"], item["profileId"]) for item in bindings] == [
-                (f"fixture-{index}", "main") for index in range(1, 6)]
-            assert len({item["sourceUuid"] for item in bindings}) == 5
+                (f"fixture-{1 if repeat_first else index}", "main") for index in range(1, 6)]
+            assert len({item["sourceUuid"] for item in bindings}) == (1 if repeat_first else 5)
             assert observed["videoInfo"] == {"baseWidth": 1920, "baseHeight": 1080,
                 "outputWidth": 1920, "outputHeight": 1080, "fpsNumerator": 30, "fpsDenominator": 1}
             return observed
 
-        def check_pixels(label, *, blank=False):
+        def check_pixels(label, *, blank=False, repeat_first=False):
             from ctypes import wintypes
             import pixel_windows
             kernel = ctypes.WinDLL("kernel32", use_last_error=True)
@@ -203,7 +203,7 @@ def exercise(runtime, report, *, with_media=False, retained_profile=None):
                 created = pixel_windows.creation_time(Frontend())
             finally:
                 kernel.CloseHandle(handle)
-            observed = state() if blank else check_graph()
+            observed = state() if blank else check_graph(repeat_first=repeat_first)
             if blank:
                 assert observed.get("phase") == "locked" and observed.get("mediaSources") == 0
             assert observed.get("windows", [{}])[0].get("qtClass") == "OBSBasicPreview"
@@ -220,7 +220,7 @@ def exercise(runtime, report, *, with_media=False, retained_profile=None):
             evidence.setdefault("captures", []).append({"phase": label, **capture})
             assert result.returncode == 0 and capture.get("captureFailed") is False, "actual product preview capture failed"
             analysis = subprocess.run([shutil.which("node"), str(HERE / "pixel-pattern.cjs"), "analyze-empty" if blank else "analyze",
-                str(target / "main-preview"), "main-preview", "forward", "true"],
+                str(target / "main-preview"), "main-preview", "repeat-first" if repeat_first else "forward", "true"],
                 capture_output=True, text=True, encoding="utf-8", timeout=20)
             assert len(analysis.stdout) <= 16384, "oversized synthetic pixel analysis"
             result = json.loads(analysis.stdout)
@@ -285,6 +285,17 @@ def exercise(runtime, report, *, with_media=False, retained_profile=None):
                 assert saved == {"schema": 1, "cameras": [
                     {"cameraId": f"fixture-{index}", "profileId": "main"} for index in range(1, 6)]}
                 evidence["checks"].extend(["existing-camera-api-to-native-selection", "five-hevc-final-pixels", "save-only-bound-camera-profile-ids"])
+                phase = "repeated-camera-source-sharing"
+                assert ui("choose", indices=[1, 1, 1, 1, 1])
+                check_graph(repeat_first=True)
+                time.sleep(3)
+                check_pixels("shared-camera", repeat_first=True)
+                evidence["checks"].append("five-items-one-owned-hevc-source-final-pixels")
+                # Preserve the five DISTINCT-channel baseline and saved workspace.
+                assert ui("choose", indices=[1, 2, 3, 4, 5])
+                check_graph()
+                time.sleep(3)
+                check_pixels("distinct-after-sharing")
             phase = "logout"
             assert ui("logout")
             wait_for(lambda: state().get("phase") == "locked", "logout did not lock product UI")

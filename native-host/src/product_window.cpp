@@ -1,5 +1,7 @@
 #include "product_window.hpp"
 #include "product_bootstrap.hpp"
+#include "product_scene.hpp"
+#include "layout.hpp"
 #include "wall.hpp"
 
 #include <obs-frontend-api.h>
@@ -37,6 +39,7 @@
 #include <array>
 #include <functional>
 #include <memory>
+#include <set>
 
 namespace webobs::native_host {
 namespace {
@@ -56,7 +59,8 @@ class ProductWindow final : public QWidget {
 	QLabel *status_;
 	QPushButton *login_, *create_account_, *watch_, *save_, *logout_, *refresh_;
 	std::array<QComboBox *, 5> slots_{};
-	ProductWallResult wall_;
+	ProductSourcePool source_pool_;
+	std::unique_ptr<ProductSceneGraph> wall_;
 	QJsonArray watching_;
 	QJsonObject watching_versions_;
 	QString user_id_;
@@ -87,7 +91,7 @@ class ProductWindow final : public QWidget {
 			selection_indices.append(slot ? slot->currentIndex() : -1);
 		for (int i = 0; i < watching_.size(); ++i) {
 			auto binding = watching_[i].toObject();
-			binding.insert("sourceUuid", QString::fromStdString(wall_.uuids[std::size_t(i)]));
+			binding.insert("sourceUuid", QString::fromStdString(wall_->uuids[std::size_t(i)]));
 			bindings.append(binding);
 		}
 		QJsonObject state{{"schema", 1}, {"phase", QString::fromLatin1(phase)},
@@ -162,30 +166,9 @@ class ProductWindow final : public QWidget {
 		watching_versions_ = {};
 		if (!obs_initialized())
 			return;
-		// Detach protected pictures from the active scene immediately. Frontend
-		// source-tree references and OBS's destruction queue may retire later.
-		if (wall_.scene)
-			obs_scene_enum_items(wall_.scene, [](obs_scene_t *, obs_sceneitem_t *item, void *) {
-				obs_sceneitem_set_visible(item, false);
-				obs_sceneitem_remove(item);
-				return true;
-			}, nullptr);
-		// Clear the inputs before releasing graph references, including references
-		// retained temporarily by the frontend. Credentials stay out of disk state.
-		for (auto *source : wall_.sources) {
-			if (!source)
-				continue;
-			auto *empty = obs_data_create();
-			obs_data_set_bool(empty, "is_local_file", false);
-			obs_data_set_string(empty, "input", "");
-			obs_data_set_string(empty, "local_file", "");
-			obs_source_update(source, empty);
-			obs_data_release(empty);
-			obs_source_remove(source);
-		}
-		if (wall_.scene)
-			obs_source_remove(obs_scene_get_source(wall_.scene));
-		wall_.release();
+		// Graph teardown detaches pictures first and retires only its last-owned
+		// media entries. Other authorized graphs can retain shared sources.
+		wall_.reset();
 	}
 
 	void locked(const QString &message)
@@ -337,7 +320,10 @@ class ProductWindow final : public QWidget {
 			}
 			const auto resolved = body.value("cameras").toArray();
 			const auto versions = body.value("cameraVersions").toObject();
-			if (versions.size() != 5) {
+			std::set<QString> camera_ids;
+			for (const auto value : selected)
+				camera_ids.insert(value.toObject().value("cameraId").toString());
+			if (std::size_t(versions.size()) != camera_ids.size()) {
 				locked(tr("设备配置版本不可用，请重新登录。"));
 				return;
 			}
@@ -360,7 +346,11 @@ class ProductWindow final : public QWidget {
 					locked(tr("无法应用项目画布或帧率，请检查视频设置。"));
 					return;
 				}
-				std::array<ProductCamera, 5> cameras;
+				std::vector<ProductCamera> cameras(5);
+				SceneDocument document;
+				document.canvas.width = video.value("width").toInt();
+				document.canvas.height = video.value("height").toInt();
+				const auto tiles = five_tile_layout(unsigned(document.canvas.width), unsigned(document.canvas.height));
 				for (int i = 0; i < 5; ++i) {
 					const auto item = resolved[i].toObject();
 					const auto wanted = selected[i].toObject();
@@ -370,6 +360,7 @@ class ProductWindow final : public QWidget {
 						return;
 					}
 					cameras[i].id = wanted.value("cameraId").toString().toStdString();
+					cameras[i].profile_id = wanted.value("profileId").toString().toStdString();
 					cameras[i].name = "WebOBS " + std::to_string(i + 1);
 					cameras[i].url = item.value("url").toString().toStdString();
 					cameras[i].transport = item.value("transport").toString().toStdString();
@@ -380,20 +371,41 @@ class ProductWindow final : public QWidget {
 					}
 					if (hardware != "auto")
 						cameras[i].hardware_decode = hardware == "on";
+					SceneSource source;
+					source.id = "slot-" + std::to_string(i + 1);
+					source.kind = "camera";
+					source.name = cameras[i].name;
+					source.camera_id = cameras[i].id;
+					source.profile_id = cameras[i].profile_id;
+					source.transport = cameras[i].transport;
+					source.hardware_decode = hardware.toStdString();
+					// Preserve the existing monitor's continuous inactive-source policy.
+					source.shutdown_when_hidden = false;
+					document.sources.push_back(source);
+					SceneItem scene_item;
+					scene_item.id = source.id;
+					scene_item.source_id = source.id;
+					scene_item.x = int(tiles[i].x);
+					scene_item.y = int(tiles[i].y);
+					scene_item.width = int(tiles[i].width);
+					scene_item.height = int(tiles[i].height);
+					scene_item.z_index = i;
+					document.items.push_back(scene_item);
 				}
-				wall_ = create_product_five_camera_wall(cameras, "WebOBS Wall");
+				std::string graph_error;
+				wall_ = create_product_scene(source_pool_, user_id_.toStdString(), document, cameras, graph_error);
 				applying_ = false;
 				watch_->setEnabled(true);
 				refresh_->setEnabled(true);
 				for (auto *slot : slots_)
 					slot->setEnabled(true);
-				if (!wall_.scene || !wall_.error.empty()) {
+				if (!wall_ || !wall_->scene) {
 					clear_media();
 					status_->setText(tr("原生画面创建失败，请检查设备配置后重试。"));
 					observe_state("graph-failed");
 					return;
 				}
-				select_wall(wall_.scene);
+				select_wall(wall_->scene);
 				watching_ = selected;
 				watching_versions_ = versions;
 				observe_state("graph-applied");

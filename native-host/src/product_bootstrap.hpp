@@ -1,23 +1,13 @@
 #pragma once
 
 #include <obs.h>
+#include "product_media.hpp"
 
 #include <array>
 #include <optional>
 #include <string>
 
 namespace webobs::native_host {
-// Product-owned local monitoring configuration. Cameras are never logged and
-// their URLs are only passed to the existing OBS Media Source.
-struct ProductCamera {
-	std::string id;
-	std::string name;
-	std::string url;
-	// Unspecified: preserve a reused source, prefer OBS hardware decoding for a
-	// new source. Explicit false/true remain strict source compatibility settings.
-	std::optional<bool> hardware_decode;
-	std::string transport = "auto";
-};
 
 struct ProductWallResult {
 	obs_scene_t *scene = nullptr; // Owned reference; caller must release.

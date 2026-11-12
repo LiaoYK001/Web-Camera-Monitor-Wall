@@ -1102,3 +1102,16 @@ The existing core item mapping is now shared with the actual native product wall
 后续 Windows UI gate 还增加普通用户 API 创建 scoped viewer/第六个越权目录项，再通过真实 Qt 登录验证只出现允许的五路、五路最终像素、按 immutable account ID 分开的布局保存；普通 If-Match 用户 API 撤回一个 camera scope 后必须实际清屏，再恢复权限和观看。最终撤销由普通 account/password API 改密触发 authEpoch 更新，替代仅直接修改测试数据库。以上新测试待实际 Windows 执行，不扩大当前 dev.86 证据。
 
 Dev.86 passes the full existing portable-entry UI/media/lifecycle gate, including nine eight-frame capture groups and actual five-source retirement measured at 5 ms from the native lock handler. Its unguarded restore control fails, so restore isolation and installation remain unqualified. The next source adds bounded fragmented-RTSP handling and precise diagnostics, plus scoped-viewer/account-isolation and real password-change UI regressions. Fresh internal NSIS can now run independently after a successful UI gate; any restore failure still fails the workflow and forbids delivery.
+
+
+#### R2 文档建图与产品所有来源池 / Document graph and product-owned source pool
+
+当前观看按钮从旧固定五路 bootstrap 改为构造既有 SceneDocument，再经共用校验器与 OBS 场景项映射建图。通用建图支持模型的最多 64 来源/256 项边界，当前 UI 仍为五格，不称完整布局/Studio 已迁移。整个文档、全部 camera/Profile 精确绑定、分辨率、解码/传输配置和重复绑定一致性在任何来源创建前检查；尚未接好业务 resolver 的种类、音轨混合和 LUT/遮罩资产明确拒绝。原始 URL 不进入场景文档或布局保存。
+
+来源池只持有自己创建对象的弱引用，图持有共享所有权，拒绝借用全局同名 OBS 来源。兼容键覆盖 camera/Profile、解析 URL、传输/硬解、音频、过滤器及来源策略，排除纯文档 id/name；同一 immutable userId 的多个项目/场景图可复用。复用前核对实际 settings/filter/audio 状态，已修改对象拒绝复用；有活跃图时不能换 owner。释放图先移除图片项，最后一个图释放来源时清空私密输入再 remove/release；其他图仍引用的来源保留。现有 OBS Media Source 的工厂与既有 core 过滤器实现被提取复用，没有第二个播放器、libobs startup 或逐帧读回。
+
+Linux 实际 libobs/图形运行回归已验证：末项绑定错误/冲突和非法文档在零来源创建时拒绝，五个文档来源共享一个实际输入对象，全局同名外来来源不被借用，两个图的变换/裁剪/锁定、同源引用、跨账号拒绝、最后图清输入和外部引用退休，以及实际音频策略变更后拒绝复用。这里的输入是明确注册的惰性 fixture，不冒称 FFmpeg 解码或摄像机显示。既有真实 Program 读回/prepare/cut 回归也通过。
+
+Windows 产品脚本另外增加五格重复第一摄像机：要求实际 ffmpeg_source 只有一个、五个 UUID 相同，八帧最终像素均为第一路且持续推进，随后恢复五个不同通道再检查；原先五路独立 HEVC 检查保持不变。此改动不在正在执行的 dev.87，实际 Windows 编译/像素和新源退休回归仍待下一轮。当前 watch 仍在重新授权前清空旧图，跨切换不断流、完整 Scene/Studio、Preview/Program、固定多投影和音轨仍待继续接线。
+
+The real watch action now builds a validated SceneDocument through a product-owned shared-source pool. Actual libobs tests pass ownership, whole-document preflight, compatible cross-graph reuse, item mapping, account separation, tamper refusal and last-owner endpoint retirement using an explicitly inert input fixture. Existing Program pixel tests also pass. New Windows tests require five items to share one actual HEVC source and preserve the five-distinct-channel baseline; they are not included in dev.87 and remain pending. The fixed UI, full Studio, continuous graph swaps, audio routing and multiple projectors are still open R2 work.

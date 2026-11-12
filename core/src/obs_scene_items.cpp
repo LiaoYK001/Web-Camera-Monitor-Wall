@@ -46,6 +46,7 @@ void configure_obs_scene_item(obs_sceneitem_t *scene_item, const SceneItem &conf
         blending = OBS_BLEND_SCREEN;
     obs_sceneitem_set_blending_mode(scene_item, blending);
     obs_sceneitem_set_visible(scene_item, configuration.visible);
+    obs_sceneitem_set_locked(scene_item, configuration.locked);
     obs_sceneitem_set_order_position(scene_item, configuration.z_index);
 }
 
@@ -92,6 +93,60 @@ obs_sceneitem_t *add_obs_scene_item(obs_scene_t *scene, obs_source_t *source,
     }
     configure_obs_scene_item(group, configuration);
     return group;
+}
+
+bool attach_obs_source_filters(obs_source_t *source, const SceneSource &configuration,
+                               std::string_view internal_name)
+{
+    for (const SceneFilter &filter : configuration.filters) {
+        std::unique_ptr<obs_data_t, decltype(&obs_data_release)> settings(obs_data_create(), &obs_data_release);
+        if (!settings)
+            return false;
+        const char *filter_type = nullptr;
+        if (filter.kind == "opacity") {
+            filter_type = "color_filter";
+            obs_data_set_int(settings.get(), "opacity", static_cast<long long>(filter.amount * 100.0));
+        } else if (filter.kind == "color-correction") {
+            filter_type = "color_filter";
+            obs_data_set_double(settings.get(), "brightness", filter.amount);
+        } else if (filter.kind == "delay") {
+            filter_type = "async_delay_filter";
+            obs_data_set_int(settings.get(), "delay_ms", static_cast<long long>(filter.amount));
+        } else if (filter.kind == "scaling") {
+            filter_type = "scale_filter";
+            obs_data_set_string(settings.get(), "resolution", filter.value.c_str());
+            obs_data_set_string(settings.get(), "sampling", "bicubic");
+        } else if (filter.kind == "lut") {
+            filter_type = "clut_filter";
+            obs_data_set_string(settings.get(), "image_path", filter.value.c_str());
+            obs_data_set_double(settings.get(), "clut_amount", filter.amount);
+        } else if (filter.kind == "mask-blend") {
+            filter_type = "mask_filter";
+            obs_data_set_string(settings.get(), "image_path", filter.value.c_str());
+            obs_data_set_int(settings.get(), "opacity", static_cast<long long>(filter.amount * 100.0));
+        } else if (filter.kind == "crop-pad") {
+            filter_type = "crop_filter";
+            obs_data_set_bool(settings.get(), "relative", true);
+            long long crop = static_cast<long long>(filter.amount);
+            obs_data_set_int(settings.get(), "left", crop);
+            obs_data_set_int(settings.get(), "top", crop);
+            obs_data_set_int(settings.get(), "right", crop);
+            obs_data_set_int(settings.get(), "bottom", crop);
+        }
+        if (!filter_type)
+            return false;
+        const std::string name = std::string(internal_name) + " filter " + filter.id;
+        std::unique_ptr<obs_source_t, decltype(&obs_source_release)> instance(
+            obs_source_create_private(filter_type, name.c_str(), settings.get()), &obs_source_release);
+        if (!instance)
+            return false;
+        const auto previous_count = obs_source_filter_count(source);
+        obs_source_filter_add(source, instance.get());
+        if (obs_source_filter_count(source) != previous_count + 1)
+            return false;
+        obs_source_set_enabled(instance.get(), filter.enabled);
+    }
+    return true;
 }
 
 } // namespace webobs

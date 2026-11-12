@@ -23,7 +23,7 @@ One pinned OBS frontend owns local media. Reuse the existing Direct-only core fo
 | DEV | `CameraRegistry.tsx`、`camera_registry.py` | 原生摄像机/Profile 选择，本机设备管理页 | 稳定 camera/profile ID、Secret 引用 | camera、core | 选已有设备进入媒体源，禁用/缺失 Profile 可见报错 | 已接线，真实 HTTP 通过；dev.81 实际 UI 五路建图通过 | dev.86 已通过统一入口九组显示/清屏、保存、重登重启及生命周期；恢复对照与安装态未过 |
 | IMPORT | `bulkSourceImport.ts`、ONVIF API | 设备库批量导入/ONVIF 页面 | 去重、配置保留、device.manage | camera、WebUI | 实际导入、失败不覆盖、重启保留 | 旧实现可用，原生未接线 | 管理入口与安装组件 |
 | LIVE | `DirectPreview.tsx`、`ProgramPreview.tsx`、core OBS | 原生 OBS Media Source 与 Preview/Program | 认证后建图，同源兼容设置共享 | OBS、obs-ffmpeg | 真实插件、真实服务、动态 H.264/H.265 最终像素 | 原型实测反馈 dev.53；产品 dev.86 九组八帧显示/清屏及重登重启通过 | 真实相机/目标机硬解/性能/长稳及安装态仍待验证 |
-| STUDIO | `SceneCollection.tsx`、`sceneSchema.ts`、`StudioController` | 原生场景切换/编辑与现有管理 Studio | Scene/Source UUID、草稿、revision、嵌套 | OBS、core、WebUI | 保存/恢复、裁剪/层级/锁定、冲突、TAKE | 原生未接线 | 文档与 frontend 图映射 |
+| STUDIO | `SceneCollection.tsx`、`sceneSchema.ts`、`StudioController` | 原生场景切换/编辑与现有管理 Studio | Scene/Source UUID、草稿、revision、嵌套 | OBS、core、WebUI | 保存/恢复、裁剪/层级/锁定、冲突、TAKE | SceneDocument 相机建图接入当前观看按钮；Linux 实际 libobs 共享/引用/变换测试通过 | Studio 文档/API、编辑、TAKE、嵌套及 Windows 共享像素待接线/执行 |
 | LAYOUT | `monitorView.ts`、监控偏好、设备布局 | 原生网格/轮换/事件提升/主子码流 | 账号与设备偏好分离 | OBS、account、clients | 既有布局范围、人工选择、帧率/分辨率回读 | 原生未接线 | 不限五路的布局接线 |
 | PROJECT | `ProjectorView.tsx`、desktop fixed projector IPC | 原生 Program 与固定 Scene 多投影 | 固定场景身份、同源引用 | OBS/Qt | 双固定场景、切 Program、重开/全屏/DPI | 原型 Program 像素覆盖，产品入口待接线 | 多投影授权和消费者寿命 |
 | AUDIO | `AudioWorkspace.tsx`、`sourceAudio.ts`、schema-v6 | 原生混音/监听/电平，管理音轨页 | 账号监听偏好与项目轨道语义 | OBS、必要音轨适配组件 | 无重复扬声器输出、多轨保存、失效轨报错 | 原生未接线 | 音轨与运行时映射 |
@@ -57,9 +57,9 @@ The dev.79 internal R1 component receipt measures 197,867,225 bytes before the r
 
 ## 2026-11-12 R1 当前门槛 / Current R1 gate
 
-Windows 实际运行证据止于建账登录及 dev.81 五路 graph-applied，最终窗口像素、注销/禁用后的最终空白画面、保存重开与安装态尚未整条通过。dev.83 停于盲按键选择后未建图；dev.84（run 43176197394、source 4d8353e）正在验证真实选择提交/捕获分类和同 origin 重启。后续 ccbf96f 增加 Windows native listener 独占与实际强制重绑定负向检查，尚未跑 Windows；Linux 实际 core CTest 8/8、真实 HTTP 及 supervisor 回归通过。所有后续里程碑仍打开，不要求用户测试中间包。
+dev.86（43219901436、source 52b877c）的实际统一入口 UI/media/lifecycle passed=true：九组最终捕获各八帧通过，包含五路动态 HEVC、注销/禁用/配置变更/失效清屏、保存 IDs、重登重启、固定 origin 冲突拒绝及 Job 崩溃收束。恢复对照失败，安装态未执行。dev.87（43226176793、source 198ed4b）正在执行普通用户 scope/账号隔离、普通改密、细化恢复探针与独立内部 NSIS，不预记通过。均不代表完整功能、旧数据升级、硬解或目标机性能达标。
 
-The actual Windows product evidence currently reaches first-account authentication and, in dev.81, five applied sources. Final visible pixels, blanking after logout/disable, persistence and installed-entry execution have not passed the complete chain. Dev.84 runs the corrected selection checks; later exclusive-listener changes still await Windows compilation/execution. R2–R7 remain open, including complete functionality, legacy migration, updater, full accounting and final target-device acceptance.
+Dev.86 passes the existing portable product UI/media/lifecycle gate with nine eight-frame capture groups. The restore positive control fails and installation did not run. Dev.87 adds scoped-viewer/account-isolation/password-change tests and independent installation evidence, still pending. R2–R7 remain open and no intermediate user testing is requested.
 
 2026-11-12 后续：dev.84（43176197394）五路 UI 选择/建图与八帧最终窗口捕获通过，五路像素因纯红编辑叠线仍失败；后续复用 OBS Locked Preview 的修改待新 Windows job。未执行后面的保存恢复/安装态门槛。 / Dev.84 passed choice, graph and guarded capture, but final five-stream pixels failed. The locked-preview repair is pending Windows validation.
 

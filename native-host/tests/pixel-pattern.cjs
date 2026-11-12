@@ -4,7 +4,7 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 const pattern = require('../../desktop/tests/native-preview-pattern.cjs');
-const ORDER = [0, 1, 2, 3, 4], REVERSED = [4, 3, 2, 1, 0];
+const ORDER = [0, 1, 2, 3, 4], REVERSED = [4, 3, 2, 1, 0], REPEAT_FIRST = [0, 0, 0, 0, 0];
 function inspect(image, { order = ORDER, dynamic = true, inset = 0 } = {}) {
   assert.equal(order.length, 5);
   const scale = Math.min((image.width - inset * 2) / 960, (image.height - inset * 2) / 540);
@@ -95,6 +95,9 @@ function selftest() {
   assert.throws(() => pattern.progress(Array.from({ length: 8 }, () => [3,3,3,3,3])), /Frozen/);
   assert.throws(() => inspect(synthetic(960,540), { inset: 30 }), /Wrong|Missing|Invalid/);
   pattern.progress([0,1,2].map(counter => inspect(synthetic(960,540,{ counter }))));
+  pattern.progress([0,1,2].map(counter => inspect(synthetic(960,540,{ counter, order: REPEAT_FIRST }), { order: REPEAT_FIRST })));
+  assert.throws(() => inspect(synthetic(960,540,{ order: REPEAT_FIRST })), /Wrong channel/);
+  assert.throws(() => inspect(synthetic(960,540), { order: REPEAT_FIRST }), /Wrong channel/);
   assert.deepEqual(inspectEmpty({ width: 960, height: 540, pixel: () => [0,0,0] }), []);
   assert.throws(() => inspectEmpty(synthetic(960,540)), /retained visible media/);
   console.log('PASS: 3x2 SCALE_INNER, Preview inset, colors, markers, all five temporal channels and negative cases');
@@ -110,7 +113,7 @@ if (require.main === module) {
     const [directory, role, order, dynamic] = args;
     assert.ok(['main-preview', 'program-projector', 'program-fullscreen'].includes(role));
     console.log(JSON.stringify(analyze(directory, { inset: role === 'main-preview' ? 10 : 0,
-      empty: mode === 'analyze-empty', order: order === 'reverse' ? REVERSED : ORDER, dynamic: dynamic === 'true' })));
+      empty: mode === 'analyze-empty', order: order === 'reverse' ? REVERSED : order === 'repeat-first' ? REPEAT_FIRST : ORDER, dynamic: dynamic === 'true' })));
   } else throw new Error('Expected selftest, fixture or analyze');
 }
 module.exports = { inspect, inspectEmpty, analyze, synthetic };

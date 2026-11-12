@@ -440,56 +440,6 @@ std::uint32_t obs_color(std::string_view color)
     return 0xff000000U | (blue << 16U) | (green << 8U) | red;
 }
 
-bool attach_configured_filters(obs_source_t *source, const SceneSource &configuration,
-                               std::string_view internal_name)
-{
-    for (const SceneFilter &filter : configuration.filters) {
-        DataPtr settings(obs_data_create());
-        if (!settings)
-            return false;
-        const char *filter_type = nullptr;
-        if (filter.kind == "opacity") {
-            filter_type = "color_filter";
-            obs_data_set_int(settings.get(), "opacity", static_cast<long long>(filter.amount * 100.0));
-        } else if (filter.kind == "color-correction") {
-            filter_type = "color_filter";
-            obs_data_set_double(settings.get(), "brightness", filter.amount);
-        } else if (filter.kind == "delay") {
-            filter_type = "async_delay_filter";
-            obs_data_set_int(settings.get(), "delay_ms", static_cast<long long>(filter.amount));
-        } else if (filter.kind == "scaling") {
-            filter_type = "scale_filter";
-            obs_data_set_string(settings.get(), "resolution", filter.value.c_str());
-            obs_data_set_string(settings.get(), "sampling", "bicubic");
-        } else if (filter.kind == "lut") {
-            filter_type = "clut_filter";
-            obs_data_set_string(settings.get(), "image_path", filter.value.c_str());
-            obs_data_set_double(settings.get(), "clut_amount", filter.amount);
-        } else if (filter.kind == "mask-blend") {
-            filter_type = "mask_filter";
-            obs_data_set_string(settings.get(), "image_path", filter.value.c_str());
-            obs_data_set_int(settings.get(), "opacity", static_cast<long long>(filter.amount * 100.0));
-        } else if (filter.kind == "crop-pad") {
-            filter_type = "crop_filter";
-            obs_data_set_bool(settings.get(), "relative", true);
-            long long crop = static_cast<long long>(filter.amount);
-            obs_data_set_int(settings.get(), "left", crop);
-            obs_data_set_int(settings.get(), "top", crop);
-            obs_data_set_int(settings.get(), "right", crop);
-            obs_data_set_int(settings.get(), "bottom", crop);
-        }
-        if (!filter_type)
-            return false;
-        const std::string name = std::string(internal_name) + " filter " + filter.id;
-        SourcePtr instance(obs_source_create_private(filter_type, name.c_str(), settings.get()));
-        if (!instance)
-            return false;
-        obs_source_filter_add(source, instance.get());
-        obs_source_set_enabled(instance.get(), filter.enabled);
-    }
-    return true;
-}
-
 bool private_network_address(const sockaddr *address)
 {
     if (address->sa_family == AF_INET) {
@@ -719,7 +669,7 @@ SourceEntry create_source_entry(const SceneSource &configuration, int connect_ti
         entry.source.get(),
         1U << static_cast<unsigned int>(std::clamp(entry.configuration.audio_track, 1, 6) - 1));
     entry.audio_mix = audio_mix;
-    if (!attach_configured_filters(entry.source.get(), configuration, internal_name)) {
+    if (!attach_obs_source_filters(entry.source.get(), configuration, internal_name)) {
         entry.source.reset();
         entry.status.reset();
         return entry;

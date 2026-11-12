@@ -17,6 +17,8 @@
 #include <string>
 #include <thread>
 
+bool exercise_product_scene_graph();
+
 namespace {
 constexpr std::uint32_t width = 320, height = 180;
 
@@ -221,7 +223,7 @@ int main(int argc, char **argv)
     info.get_height = color_height;
     info.video_render = color_render;
     obs_register_source(&info);
-    const bool passed = exercise_runtime();
+    const bool passed = exercise_runtime() && exercise_product_scene_graph();
     obs_wait_for_destroy_queue();
     obs_shutdown();
     if (!passed) return 1;

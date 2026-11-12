@@ -219,7 +219,9 @@ if(WEBOBS_BUILD_TESTS)
     endif()
     if(WEBOBS_BUILD_OBS_RENDER_TESTS)
         add_executable(webobs-obs-native-preview-tests
-            core/tests/obs_native_preview_tests.cpp core/src/obs_scene_runtime.cpp core/src/obs_scene_items.cpp)
+            core/tests/obs_native_preview_tests.cpp core/src/obs_scene_runtime.cpp core/src/obs_scene_items.cpp
+            native-host/src/product_media.cpp native-host/src/product_scene.cpp native-host/tests/product_scene_libobs_test.cpp)
+        target_include_directories(webobs-obs-native-preview-tests PRIVATE native-host/src)
         target_link_libraries(webobs-obs-native-preview-tests PRIVATE webobs-common webobs-libobs CURL::libcurl)
         webobs_warnings(webobs-obs-native-preview-tests)
         if(WIN32)
