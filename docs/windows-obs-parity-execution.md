@@ -996,3 +996,7 @@ The unified entry now owns the real account/Registry handlers, Direct-only core 
 产品模式同时强制只搜索随包插件并将产品插件加入 OBS safe/core module 清单，避免系统额外插件路径和插件管理器禁用产品入口；普通 OBS/原型构建不受影响。统一 launcher 改为 root CMake 显式开关，只由产品构建启用，旧 Electron 包不额外安装不具备 supervisor 的入口。
 
 Public CI 42965484328 passed at d4ebe81; internal Windows dev.78 is running. The next increment adds production-UI five-HEVC final-preview capture across watch/relogin/restart, with exact process/window identity and the existing capture guards. Linux fixture encoding/probes pass; the Windows media run is pending. Product-mode hooks restrict discovery to bundled modules and make the product module non-disableable. The integrated launcher is now an explicit product-build option rather than an unused entry in the legacy package.
+
+dev.78 最终失败在 vcpkg port 版本检出，日志明确为 `Filename too long`，并非媒体/UI 测试失败；真实 OBS/Qt 产品插件此前已编译，graph 7/7、loader 1/1 通过。原生完整入口尚未运行。2026-11-12 接续修复将依赖 buildtrees 放入新建短临时目录，并仅对该 vcpkg 仓库设置 `core.longpaths=true`；只在 port 安装成功后保存二进制缓存，避免 dev.78 的空缓存挡住后续缓存。未改系统长路径策略或上游 checkout。
+
+The completed dev.78 run failed during vcpkg port version checkout with Windows filename-length errors, before the actual entry/UI gate. The OBS/frontend/plugin compilation and graph/loader checks had passed. The follow-up uses a new short temporary buildtrees directory and repository-local Git long-path support. Only successful port installation enables cache saving. No media, UI or installed-product success is inferred from this failed run.

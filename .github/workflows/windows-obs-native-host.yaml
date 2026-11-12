@@ -99,9 +99,9 @@ jobs:
         uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
         with:
           path: desktop/.cache/vcpkg-binaries
-          key: windows-2022-native-product-vcpkg-${{ hashFiles('desktop/vcpkg.json', 'desktop/dependencies.lock.json') }}-${{ env.ImageVersion }}
+          key: windows-2022-native-product-vcpkg-v2-${{ hashFiles('desktop/vcpkg.json', 'desktop/dependencies.lock.json') }}-${{ env.ImageVersion }}
           restore-keys: |
-            windows-2022-native-product-vcpkg-${{ hashFiles('desktop/vcpkg.json', 'desktop/dependencies.lock.json') }}-
+            windows-2022-native-product-vcpkg-v2-${{ hashFiles('desktop/vcpkg.json', 'desktop/dependencies.lock.json') }}-
       - name: Compile pinned OBS frontend and product plugin without legacy services
         id: compile
         shell: pwsh
@@ -544,8 +544,8 @@ jobs:
           path: desktop/.cache/*.zip
           key: windows-2022-obs-native-${{ hashFiles('desktop/dependencies.lock.json', 'native-host/dependencies.lock.json') }}
       - name: Preserve product dependency packages after successful port builds
-        if: always() && !cancelled() && inputs.product_mode && steps.product-dependencies.outputs.cache-hit != 'true'
+        if: always() && !cancelled() && inputs.product_mode && env.WEBOBS_PRODUCT_PORTS_READY == 'true' && steps.product-dependencies.outputs.cache-hit != 'true'
         uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
         with:
           path: desktop/.cache/vcpkg-binaries
-          key: windows-2022-native-product-vcpkg-${{ hashFiles('desktop/vcpkg.json', 'desktop/dependencies.lock.json') }}-${{ env.ImageVersion }}
+          key: windows-2022-native-product-vcpkg-v2-${{ hashFiles('desktop/vcpkg.json', 'desktop/dependencies.lock.json') }}-${{ env.ImageVersion }}

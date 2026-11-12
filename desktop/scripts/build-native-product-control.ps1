@@ -22,6 +22,7 @@ Invoke-Checked 'python' $prepareArguments
 $vcpkgRoot = Join-Path $buildRoot ('vcpkg-source/vcpkg-' + $lock.vcpkgCommit)
 if ($Offline) { throw 'Product offline builds require a prequalified vcpkg toolchain; runtime installation itself is offline.' }
 Invoke-Checked 'git' @('-C',$vcpkgRoot,'init')
+Invoke-Checked 'git' @('-C',$vcpkgRoot,'config','core.longpaths','true')
 Invoke-Checked 'git' @('-C',$vcpkgRoot,'remote','add','origin','https://github.com/microsoft/vcpkg.git')
 Invoke-Checked 'git' @('-C',$vcpkgRoot,'fetch','--depth','1','origin',$lock.vcpkgCommit)
 Invoke-Checked 'git' @('-C',$vcpkgRoot,'reset','--mixed','FETCH_HEAD')
@@ -30,7 +31,12 @@ $vcpkgInstalled = Join-Path $buildRoot 'product-vcpkg-installed'
 $binaryCache = Join-Path $cacheRoot 'vcpkg-binaries'
 New-Item -ItemType Directory -Force $binaryCache | Out-Null
 $env:VCPKG_BINARY_SOURCES = "clear;files,$binaryCache,readwrite"
-Invoke-Checked (Join-Path $vcpkgRoot 'vcpkg.exe') @('install','--triplet=x64-windows',"--x-manifest-root=$repoRoot/desktop","--x-install-root=$vcpkgInstalled",'--disable-metrics')
+# Port version checkouts append long content hashes and patch names. Keep that
+# disposable build tree short independently of the user's repository location.
+$portBuildRoot = Join-Path ([IO.Path]::GetTempPath()) ('wv-' + [Guid]::NewGuid().ToString('N').Substring(0,8))
+New-Item -ItemType Directory $portBuildRoot | Out-Null
+Invoke-Checked (Join-Path $vcpkgRoot 'vcpkg.exe') @('install','--triplet=x64-windows',"--x-manifest-root=$repoRoot/desktop", "--x-buildtrees-root=$portBuildRoot", "--x-install-root=$vcpkgInstalled",'--disable-metrics')
+if ($env:GITHUB_ENV) { 'WEBOBS_PRODUCT_PORTS_READY=true' | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8 }
 $obsInstall = Join-Path $buildRoot 'obs-install'
 $deps = Join-Path $buildRoot 'obs-source/.deps/obs-deps-2025-08-23-x64'
 $coreBuild = Join-Path $buildRoot 'product-core-build'
