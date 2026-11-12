@@ -652,8 +652,7 @@ class ClusterStore:
     def native_authorize_batch(self, value: Any) -> dict[str, Any]:
         """Decide a whole native requirement batch against one identity snapshot.
 
-        Internal foundation only: no HTTP route is registered for this method
-        yet, so no caller can reach it from the network. Every request field,
+        Available only behind the internal administrator header. Every request field,
         bound and duplicate check completes before any database read. Identity,
         roles and scopes are read inside the same BEGIN IMMEDIATE cluster
         snapshot, and camera-bound items resolve their groups from one
@@ -707,7 +706,7 @@ class ClusterStore:
                                 "SELECT id,group_id FROM cameras WHERE id IN (" +
                                 ",".join("?" for _ in camera_ids) + ")", camera_ids).fetchall()
                             resolved = {item[0]: item[1] for item in rows}
-                            if any(not isinstance(group, str) or not IDENTIFIER.fullmatch(group)
+                            if any(not isinstance(group, str) or (group and not IDENTIFIER.fullmatch(group))
                                    for group in resolved.values()) or \
                                     any(camera_id not in resolved for camera_id in camera_ids):
                                 rejection = ApiError(503, "native_registry_unavailable",
@@ -2434,6 +2433,8 @@ class Handler(http.server.BaseHTTPRequestHandler):
             self.response(200, STORE.native_login(self.read_json()))
         elif path == "/auth/native-authorize" and self.command == "POST":
             self.response(200, STORE.native_authorize(self.read_json()))
+        elif path == "/auth/native-authorize-batch" and self.command == "POST":
+            self.response(200, STORE.native_authorize_batch(self.read_json()))
         elif path == "/auth/authorize" and self.command == "POST":
             value = self.read_json()
             require_exact_object(value, {"username", "permission", "cameraId", "groupId"},

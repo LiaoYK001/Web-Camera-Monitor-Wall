@@ -6,6 +6,7 @@
 #include <cstring>
 #include <limits>
 #include <mutex>
+#include <set>
 #include <utility>
 
 namespace webobs {
@@ -171,25 +172,84 @@ NativeAuthorizationDecision NativeClusterAuthorizationBackend::request(std::stri
         (!camera_id.empty() && !identifier(camera_id)) || (permission == "live.view" && camera_id.empty()))
         return Decision::unavailable;
     try {
-        const std::string url = "http://127.0.0.1:" + std::to_string(config_.port) +
-            (identity ? "/auth/native-authorize" : "/auth/authorize");
         // ASCII-only validated inputs, no JSON escapes or caller-supplied group.
         std::string body = "{\"cameraId\":\"" + std::string(camera_id) + "\",\"permission\":\"" +
             std::string(permission) + "\",\"username\":\"" + std::string(principal) + "\"";
         if (identity)
             body += ",\"userId\":\"" + identity->user_id + "\",\"authEpoch\":\"" + identity->auth_epoch + "\"";
         body += "}";
+        long status = 0;
+        std::string reply;
+        if (!exchange(identity ? "/auth/native-authorize" : "/auth/authorize", body, status, reply))
+            return Decision::unavailable;
+        return parse_response(status, reply, permission, identity);
+    } catch (...) { return Decision::unavailable; }
+}
+
+NativeAuthorizationDecision NativeClusterAuthorizationBackend::authorize_batch(std::string_view principal,
+    const SessionIdentity &identity, std::span<const NativeOperationRequirement> requirements) const noexcept
+{
+    if (!configured() || !identifier(principal, 3) || !lower_hex(identity.user_id, 32) ||
+        !lower_hex(identity.auth_epoch, 32) || requirements.empty() || requirements.size() > 16)
+        return Decision::unavailable;
+    try {
+        std::set<std::pair<std::string_view, std::string_view>> unique;
+        std::string body = "{\"username\":\"" + std::string(principal) + "\",\"userId\":\"" + identity.user_id +
+            "\",\"authEpoch\":\"" + identity.auth_epoch + "\",\"requirements\":[";
+        for (const auto &item : requirements) {
+            if ((item.permission != "scene.read" && item.permission != "scene.write" && item.permission != "live.view") ||
+                (!item.resource_id.empty() && !identifier(item.resource_id)) ||
+                (item.permission == "live.view" && item.resource_id.empty()) ||
+                !unique.emplace(item.permission, item.resource_id).second)
+                return Decision::unavailable;
+            if (body.back() != '[')
+                body += ',';
+            body += "{\"permission\":\"" + std::string(item.permission) + "\",\"cameraId\":\"" +
+                std::string(item.resource_id) + "\"}";
+        }
+        body += "]}";
+        long status = 0;
+        std::string reply;
+        if (!exchange("/auth/native-authorize-batch", body, status, reply))
+            return Decision::unavailable;
+        if (status != 200)
+            return parse_response(status, reply, {}, &identity);
+        std::unique_ptr<json_t, decltype(&json_decref)> root(
+            json_loadb(reply.data(), reply.size(), JSON_REJECT_DUPLICATES, nullptr), &json_decref);
+        const json_t *items = root ? json_object_get(root.get(), "requirements") : nullptr;
+        if (!json_is_object(root.get()) || json_object_size(root.get()) != 4 ||
+            !json_is_true(json_object_get(root.get(), "allowed")) ||
+            string_value(json_object_get(root.get(), "userId")) != identity.user_id ||
+            string_value(json_object_get(root.get(), "authEpoch")) != identity.auth_epoch ||
+            !json_is_array(items) || json_array_size(items) != requirements.size())
+            return Decision::unavailable;
+        for (std::size_t index = 0; index < requirements.size(); ++index) {
+            const auto *item = json_array_get(items, index);
+            if (!json_is_object(item) || json_object_size(item) != 2 ||
+                string_value(json_object_get(item, "permission")) != requirements[index].permission ||
+                string_value(json_object_get(item, "cameraId")) != requirements[index].resource_id)
+                return Decision::unavailable;
+        }
+        return Decision::allowed;
+    } catch (...) { return Decision::unavailable; }
+}
+
+bool NativeClusterAuthorizationBackend::exchange(std::string_view route, const std::string &body,
+    long &status, std::string &reply) const noexcept
+{
+    try {
+        const std::string url = "http://127.0.0.1:" + std::to_string(config_.port) + std::string(route);
         const std::string token_header = "X-WebObs-Internal-Admin: " + config_.internal_token;
         Response response;
         std::unique_ptr<curl_slist, decltype(&curl_slist_free_all)> headers(nullptr, &curl_slist_free_all);
         std::unique_ptr<CURL, decltype(&curl_easy_cleanup)> handle(curl_easy_init(), &curl_easy_cleanup);
         if (!handle)
-            return Decision::unavailable;
+            return false;
         for (const char *header : {"Content-Type: application/json", "Accept: application/json", "Expect:",
                                    "Connection: close", token_header.c_str()}) {
             curl_slist *next = curl_slist_append(headers.get(), header);
             if (!next)
-                return Decision::unavailable;
+                return false;
             (void)headers.release();
             headers.reset(next);
         }
@@ -207,12 +267,12 @@ NativeAuthorizationDecision NativeClusterAuthorizationBackend::request(std::stri
               set(CURLOPT_POSTFIELDSIZE_LARGE, static_cast<curl_off_t>(body.size())) &&
               set(CURLOPT_WRITEFUNCTION, &body_callback) && set(CURLOPT_WRITEDATA, &response) &&
               set(CURLOPT_HEADERFUNCTION, &header_callback) && set(CURLOPT_HEADERDATA, &response)))
-            return Decision::unavailable;
-        long status = 0;
+            return false;
         if (curl_easy_perform(handle.get()) != CURLE_OK ||
             curl_easy_getinfo(handle.get(), CURLINFO_RESPONSE_CODE, &status) != CURLE_OK)
-            return Decision::unavailable;
-        return parse_response(status, response.body, permission, identity);
-    } catch (...) { return Decision::unavailable; }
+            return false;
+        reply = std::move(response.body);
+        return true;
+    } catch (...) { return false; }
 }
 } // namespace webobs

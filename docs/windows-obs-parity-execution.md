@@ -1000,3 +1000,13 @@ Public CI 42965484328 passed at d4ebe81; internal Windows dev.78 is running. The
 dev.78 最终失败在 vcpkg port 版本检出，日志明确为 `Filename too long`，并非媒体/UI 测试失败；真实 OBS/Qt 产品插件此前已编译，graph 7/7、loader 1/1 通过。原生完整入口尚未运行。2026-11-12 接续修复将依赖 buildtrees 放入新建短临时目录，并仅对该 vcpkg 仓库设置 `core.longpaths=true`；只在 port 安装成功后保存二进制缓存，避免 dev.78 的空缓存挡住后续缓存。未改系统长路径策略或上游 checkout。
 
 The completed dev.78 run failed during vcpkg port version checkout with Windows filename-length errors, before the actual entry/UI gate. The OBS/frontend/plugin compilation and graph/loader checks had passed. The follow-up uses a new short temporary buildtrees directory and repository-local Git long-path support. Only successful port installation enables cache saving. No media, UI or installed-product success is inferred from this failed run.
+
+#### 监看整批续验接线 / Batched viewing renewal integration
+
+内部 dev.79 / run `43164336627` 在 source `aa90f52` 验证短 buildtrees 修复及真实 UI/五路 gate，运行中。独立后续增量把既有 `native_authorize_batch` 接到内部管理员保护的固定路由与真实 C++ 后端，并用于原生 `cameras/authorize`、`cameras/resolve`：相同 camera ID 去重，至多 16 个一批，所有批次通过前零端点解析；前后本地完整绑定复查、最终 scene.read 和总 deadline 保留。单次五路续验从逐 camera 请求变成两次 scene.read 加一次整批请求，无跨请求许可缓存。目录筛选仍逐项，不声称全部优化或 CPU 达标。
+
+复用基础时修复 Registry 合法空组 `group_id=''` 被错误视为损坏的问题；缺行、损坏组和库错误仍失败关闭。真实账号/Registry/core HTTP 测试核对批量实际调用数、越权整批拒绝且零 URL 解析、会话轮换。真实 C++ adapter 的批量回归验证精确身份、权限/资源顺序、缺项/重排/超量/无效 ID、4 KiB 响应、时限和无凭据转发。Linux root CTest 8/8（adapter 共 14 tests）、身份测试 20 项、构建契约 44 项通过。另显式关闭新增验收夹具 SQLite 句柄，避免 Windows 临时目录清理依赖 GC。
+
+仍须补齐的 R1 行为：持续观看应检测 camera/Profile 禁用、删除及连接配置变化，而不止账号权限；当前 resolve 已严格拒绝禁用/缺失 Profile，但 authorize 续验尚未验证 Profile 状态，不能据本批量优化宣称该门槛通过。Windows UI、最终像素与安装态结果待对应实际 job。
+
+The real native selection routes now use the existing bounded batch authority, with complete-selection rejection before endpoint resolution and unchanged identity/deadline checks. Linux real-service and adapter regressions pass; a five-camera renewal's reduced request count is measured by the actual HTTP handler, not extrapolated into a CPU claim. Ongoing Profile disable/configuration-change detection remains an explicit R1 gap; Windows UI/media and installed-product evidence are still pending.

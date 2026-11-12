@@ -420,13 +420,14 @@ class BuildContractTests(unittest.TestCase):
         self.assertNotIn("std::unordered_map", source)
         self.assertIn("current - start >= total_budget", source)
 
-    def test_native_batch_foundation_is_whole_batch_and_unexposed(self):
+    def test_native_batch_is_whole_batch_and_internal_only(self):
         source = (ROOT / "cluster/cluster_service.py").read_text(encoding="utf-8")
         batch = source.split("def native_authorize_batch")[1].split("def authorize(")[0]
-        # The internal helper exists, but no HTTP route invokes it yet, so no
-        # network caller can reach batch decisions.
+        # The product now invokes the bounded helper through the existing
+        # internal administrator gate; it is never a public proxy allowlist.
         self.assertIn("def native_authorize_batch(", source)
-        self.assertNotIn("native_authorize_batch(self.read_json())", source)
+        self.assertIn("native_authorize_batch(self.read_json())", source)
+        self.assertIn('path == "/auth/native-authorize-batch"', source)
         self.assertIn("NATIVE_BATCH_ITEMS = 16", source.split("ROLE_PERMISSIONS")[0])
         # Any denial raises: the batch never returns a partially executable
         # subset, and Registry failures fail the whole batch closed.

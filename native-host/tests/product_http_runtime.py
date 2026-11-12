@@ -62,6 +62,12 @@ def exercise(binary):
         cluster.STORE.create_user({"username": "native-viewer", "password": password,
             "roles": ["viewer"], "scopes": [{"kind": "camera", "id": "camera-a"}]})
         resolved = []
+        authority_paths = []
+
+        class AccountHandler(cluster.Handler):
+            def do_POST(self):
+                authority_paths.append(self.path)
+                super().do_POST()
 
         class RegistryHandler(camera.Handler):
             def do_GET(self):
@@ -69,7 +75,7 @@ def exercise(binary):
                     resolved.append(self.path)
                 super().do_GET()
 
-        account_server = ThreadingHTTPServer(("127.0.0.1", 0), cluster.Handler)
+        account_server = ThreadingHTTPServer(("127.0.0.1", 0), AccountHandler)
         camera_server = ThreadingHTTPServer(("127.0.0.1", 0), RegistryHandler)
         for server in (account_server, camera_server):
             cleanup.callback(server.server_close)
@@ -139,15 +145,18 @@ def exercise(binary):
                 status, _, catalog = request("/api/v1/native/cameras")
                 assert status == 200 and [item["id"] for item in catalog["cameras"]] == ["camera-a"], \
                     "native catalog exposed an unauthorized camera"
-                with sqlite3.connect(private / "sessions.db") as database:
+                with contextlib.closing(sqlite3.connect(private / "sessions.db")) as database:
                     row = database.execute("SELECT user_id,auth_epoch FROM auth_sessions").fetchone()
                     assert row and len(row[0]) == len(row[1]) == 32, "session was not identity-bound"
                 selection = {"cameras": [{"cameraId": "camera-a", "profileId": "main"}]}
                 denied = {"cameras": selection["cameras"] + [{"cameraId": "camera-b", "profileId": "main"}]}
                 assert request("/api/v1/native/cameras/resolve", denied)[0] == 403
                 assert resolved == [], "denied selection resolved a private endpoint"
+                authority_paths.clear()
                 status, _, authorized = request("/api/v1/native/cameras/authorize", selection)
                 assert status == 200 and authorized["video"] == {"width": 1920, "height": 1080, "fps": 15}
+                assert authority_paths.count("/auth/native-authorize-batch") == 1
+                assert authority_paths.count("/auth/native-authorize") == 2, "selection used per-camera authorization requests"
                 assert resolved == [], "authorization unexpectedly resolved an endpoint"
                 status, _, value = request("/api/v1/native/cameras/resolve", selection)
                 assert status == 200 and len(value["cameras"]) == 1

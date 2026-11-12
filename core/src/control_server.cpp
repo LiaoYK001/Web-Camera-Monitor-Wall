@@ -50,6 +50,8 @@
 #include <mutex>
 #include <optional>
 #include <random>
+#include <set>
+#include <span>
 #include <sstream>
 #include <string>
 #include <string_view>
@@ -4288,14 +4290,43 @@ private:
         }
         const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(10);
         // Authorize the complete selection before resolving ANY private URL.
+        const auto bound = token ? session_store_.validate_and_slide(*token) : std::nullopt;
+        if (!bound || !bound->identity || bound->user != session.principal) {
+            reject(http::status::unauthorized, "native_session_rejected");
+            return;
+        }
+        std::vector<NativeOperationRequirement> requirements;
+        std::set<std::string_view> camera_ids;
         for (const auto &[id, profile] : selected) {
             (void)profile;
-            const auto decision = authorize(NativeControlCommand::view_camera, id);
-            if (!decision.allowed() || std::chrono::steady_clock::now() >= deadline) {
-                reject(decision.allowed() ? http::status::service_unavailable :
-                    static_cast<http::status>(decision.status_code()), "native_camera_rejected");
+            if (camera_ids.insert(id).second)
+                requirements.push_back({"live.view", id});
+        }
+        // Preserve the authority's sixteen-item bound. All chunks must pass;
+        // no URL or partially executable subset leaves this request on failure.
+        for (std::size_t offset = 0; offset < requirements.size(); offset += 16) {
+            const auto count = (std::min)(std::size_t(16), requirements.size() - offset);
+            const auto decision = backend.authorize_batch(bound->user, *bound->identity,
+                std::span<const NativeOperationRequirement>(requirements.data() + offset, count));
+            if (std::chrono::steady_clock::now() >= deadline || decision != NativeAuthorizationDecision::allowed) {
+                auto status = http::status::service_unavailable;
+                if (std::chrono::steady_clock::now() < deadline) {
+                    if (decision == NativeAuthorizationDecision::denied)
+                        status = http::status::forbidden;
+                    else if (decision == NativeAuthorizationDecision::unknown_user &&
+                             session_store_.revoke_identity(bound->user, *bound->identity) > 0)
+                        status = http::status::unauthorized;
+                }
+                reject(status, "native_camera_rejected");
                 return;
             }
+        }
+        const auto current = session_store_.validate_and_slide(*token);
+        if (!current || current->user != bound->user || !current->identity ||
+            current->identity->user_id != bound->identity->user_id ||
+            current->identity->auth_epoch != bound->identity->auth_epoch) {
+            reject(http::status::unauthorized, "native_session_rejected");
+            return;
         }
         std::string result = "{\"authorized\":true,\"cameras\":[";
         for (const auto &[id, profile] : selected) {

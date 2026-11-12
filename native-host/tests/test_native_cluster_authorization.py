@@ -309,7 +309,7 @@ class NativeAccountTests(unittest.TestCase):
             self.assertEqual(probe.call(op="init", token=self.token, connectMs=100, totalMs=500), 200)
             self.assertEqual(probe.auth(), 200)
 
-    def hostile(self, *, body=b"", status=200, headers=(), delay=0, env=None, token=None, connect=100, total=500, direct=None):
+    def hostile(self, *, body=b"", status=200, headers=(), delay=0, env=None, token=None, connect=100, total=500, direct=None, batch=None):
         observed = []
 
         class Handler(http.server.BaseHTTPRequestHandler):
@@ -335,12 +335,60 @@ class NativeAccountTests(unittest.TestCase):
                 self.token if token is None else token, connect=connect, total=total, env=env) as probe:
             probe.create()
             started = time.monotonic()
-            reply = probe.auth() if direct is None else probe.call(op="direct", **direct)
+            reply = (probe.call(op="batch", **batch) if batch is not None else
+                     probe.auth() if direct is None else probe.call(op="direct", **direct))
             elapsed = time.monotonic() - started
             with contextlib.closing(sqlite3.connect(probe.path)) as db, db:
                 remaining = db.execute("SELECT COUNT(*) FROM auth_sessions").fetchone()[0]
-            self.assertEqual(remaining, 0 if reply == 401 and direct is None else 1)
+            self.assertEqual(remaining, 0 if reply == 401 and direct is None and batch is None else 1)
             return reply, observed, elapsed, probe.init_status
+
+    def test_real_batch_checks_whole_camera_selection_and_fresh_identity(self):
+        with self.real_cluster() as (store, registry, port), Probe(self.root, port, self.token) as probe:
+            identity = self.native_login(port)
+            request = {"user": "viewer-one", **identity, "requirements": [
+                {"permission": "live.view", "cameraId": "camera-a"}]}
+            self.assertEqual(probe.call(op="batch", **request), 200)
+            with contextlib.closing(sqlite3.connect(registry)) as database, database:
+                database.execute("UPDATE cameras SET group_id='' WHERE id='camera-a'")
+            self.assertEqual(probe.call(op="batch", **request), 200)
+            denied = {**request, "requirements": request["requirements"] + [
+                {"permission": "live.view", "cameraId": "camera-b"}]}
+            self.assertEqual(probe.call(op="batch", **denied), 403)
+            user = next(item for item in store.list_users()["users"] if item["username"] == "viewer-one")
+            store.update_user(user["id"], {"password": "fixture-password-not-used"}, user["revision"])
+            self.assertEqual(probe.call(op="batch", **request), 401)
+            request.update(self.native_login(port))
+            self.assertEqual(probe.call(op="batch", **request), 200)
+
+    def test_batch_reply_correlates_exact_identity_order_and_requirements(self):
+        requirements = [{"permission": "scene.read", "cameraId": ""},
+                        {"permission": "live.view", "cameraId": "camera-a"}]
+        request = {"user": "viewer-one", "userId": "a" * 32, "authEpoch": "b" * 32,
+                   "requirements": requirements}
+        good = {"allowed": True, "userId": "a" * 32, "authEpoch": "b" * 32,
+                "requirements": requirements}
+        reply, observed, _, _ = self.hostile(body=json.dumps(good).encode(), batch=request)
+        self.assertEqual(reply, 200)
+        path, headers, actual = observed[0]
+        self.assertEqual(path, "/auth/native-authorize-batch")
+        self.assertEqual(actual, {"username": "viewer-one", **{key: value for key, value in request.items() if key != "user"}})
+        self.assertEqual(headers["X-WebObs-Internal-Admin"], self.token)
+        self.assertNotIn("Cookie", headers)
+        self.assertNotIn("Authorization", headers)
+        bad = [{**good, "allowed": 1}, {**good, "userId": "c" * 32}, {**good, "authEpoch": "c" * 32},
+               {**good, "requirements": requirements[:1]}, {**good, "requirements": requirements[::-1]},
+               {**good, "requirements": requirements * 2}, {**good, "extra": 1},
+               {**good, "requirements": [requirements[0], {"permission": "live.view", "cameraId": "camera-b"}]}]
+        for index, value in enumerate(bad):
+            with self.subTest(case=index):
+                self.assertEqual(self.hostile(body=json.dumps(value).encode(), batch=request)[0], 503)
+        self.assertEqual(self.hostile(body=b"x" * 4097, batch=request)[0], 503)
+        self.assertEqual(self.hostile(body=json.dumps(good).encode(), batch=request, delay=.6, total=100, connect=50)[0], 503)
+        for items in ([], requirements * 2, requirements * 9,
+                      [{"permission": "live.view", "cameraId": "../bad"}]):
+            reply, observed, _, _ = self.hostile(batch={**request, "requirements": items})
+            self.assertEqual((reply, observed), (503, []))
 
     def test_hostile_200_is_not_a_status_only_grant(self):
         valid = {"allowed": True, "userId": "a" * 32, "authEpoch": "b" * 32, "permission": "live.view"}

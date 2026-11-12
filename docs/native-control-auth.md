@@ -2,9 +2,9 @@
 
 ## 当前交付与限制 / Delivered scope and limits
 
-这是 renderer-free C++ 库、真实账号授权后端 adapter 与安全回归，不是已接入原生 OBS UI 的账号产品。没有新增 listener、登录入口、服务启动或 OBS 动作执行；不初始化第二媒体/显示引擎。Electron 兼容产品仍为默认入口。不能把库测试通过写成原生产品认证、旧数据迁移或 P3 已验收。
+本文记录 renderer-free C++ 边界、真实账号后端 adapter 和后续产品接线。R1 产品变体已通过现有 core listener 连接 Qt 登录/注册、授权目录、来源解析与 OBS 观看动作，独立 supervisor 启动真实服务；core 保持 Direct-only。Linux 真实服务接线已验证，Windows 实际入口/UI/媒体门禁仍在持续执行，不能把库测试或编译通过写成安装态账号产品、旧数据迁移或 P3 验收。Electron 兼容产品仍为默认交付。最新回执见 [执行记录](windows-obs-parity-execution.md)。
 
-These renderer-free libraries provide persistent-session authorization and a bounded adapter to the existing account service, not a native login product. They start no service or listener, execute no OBS action and leave the compatibility Electron product as the default.
+The R1 product variant now wires these libraries through the existing core listener to the actual Qt login/catalog/watch flow and supervised services. The core stays Direct-only. Linux real-service integration is tested; actual Windows UI/media and installed-product gates remain open. The standalone libraries alone prove neither a complete account product nor migration, and the compatibility Electron product remains the default delivery.
 
 [NativeControlAuth](../core/include/webobs/native_control_auth.hpp) 直接复用 [SessionStore](../core/include/webobs/authentication.hpp) 的 SQLite 持久会话和令牌哈希。[NativeClusterAuthorizationBackend](../core/include/webobs/native_cluster_authorization.hpp) 实现其 fresh RBAC 回调；没有另造 session 协议、Basic 管理员回退或新账号服务。
 
@@ -36,9 +36,13 @@ The adapter uses the existing [cluster authorization route](../cluster/cluster_s
 
 ## 整批授权决策基础 / Whole-batch authorization foundation
 
-`ClusterStore.native_authorize_batch` 是 cluster 内部整批决策基础：当前**没有注册任何 HTTP 路由**，网络调用不可达。请求必须精确携带 `username/userId/authEpoch/requirements`，requirements 为 1–16 个 `{permission,cameraId}`；permission 只接受既有 allowlist，cameraId 只接受现有标识符语法或空 scope，重复对拒绝；全部字段、界限与去重校验在读取任何数据库之前完成。身份（username/userId/authEpoch）在同一 `BEGIN IMMEDIATE` cluster 快照内只校验一次，角色/scopes 的 principal 也只解析一次并用于整批；任一项拒绝即整批 `403 permission_rejected`，不返回可执行子集；身份不符沿用统一 `404 user_not_found` 并审计 `user-unknown`，本地会话撤销仍由原生 gate 负责。相机项的组元数据来自一个独立只读 Registry 连接、一次 `SELECT` 的单一快照：行缺失、组损坏、库缺失或查询失败使整批 `503 native_registry_unavailable`，不会像单条 `_camera_group` 那样退化为空组路径。cluster RBAC 与 Registry 是两个各自稳定的快照，没有共同线性化点；组改变与角色改变仍可能跨快照撕裂。这仍是决定时快照，不是执行栅栏，也未接入 listener、产品路径、UI 或媒体动作。
+`ClusterStore.native_authorize_batch` 现通过内部 `/auth/native-authorize-batch` 接入产品，由现有内部管理员 header 保护。请求必须精确携带 `username/userId/authEpoch/requirements`，requirements 为 1–16 个 `{permission,cameraId}`；permission 只接受既有 allowlist，cameraId 为既有标识符或空 scope，重复对拒绝，全部结构检查先于数据库读取。身份和 principal 在同一 `BEGIN IMMEDIATE` cluster 快照内只读取一次；任一项拒绝即整批 `403`，不返回可执行子集。相机组由独立只读 Registry 单次查询获得：有效未分组 `group_id=''` 正常授权，缺行/损坏/库或查询失败为整批 `503`，不会降级许可。身份失效为统一 `404`，宿主撤销对应绑定。本地与 Registry 是两个稳定但无共同线性化点的快照，仍是决定时检查，不是执行栅栏。
 
-The batch helper validates the entire request before any database read, binds one identity check and one principal read inside a single `BEGIN IMMEDIATE` cluster snapshot, and denies the whole batch when any item denies — no partially executable subset is returned. Camera-bound items resolve groups from one dedicated read-only Registry snapshot; a missing row, corrupt group, absent database or failed query fails the whole batch closed as `native_registry_unavailable` instead of degrading to the empty-group path. Cluster RBAC and Registry are two independently stable snapshots with no common linearization point, and this remains a decision-time snapshot, not an execution fence or a routed endpoint.
+The bounded helper is now routed behind internal administrator authentication. It validates the complete set before database reads, checks one bound identity/principal per cluster snapshot and denies the entire batch on any failure. Camera metadata comes from one independent read-only Registry snapshot; legitimate ungrouped cameras work, while missing/corrupt metadata fails closed. The two databases have no common linearization point; this remains a decision-time check, not an execution fence.
+
+core 原生 `cameras/authorize` 与 `cameras/resolve` 在同一次请求内使用该后端，对已验证的完整 camera 选择按至多 16 个不同 camera ID 分批检查；所有批次通过后才解析任何端点。前后复查完整本地身份与统一 deadline，保留最终权威 scene.read 复查；任一批失败拒绝整个选择，不缓存跨请求许可。C++ 后端保留 4 KiB/16 KiB 响应与 header 上限、禁用代理/重定向，并精确比对响应身份、权限/资源顺序和数量。普通五路续验由逐 camera 查询减少为两次 scene.read 与一次五路批量请求；这只是调用数证据，实际 CPU 性能仍需 R5 测量。目录筛选尚走逐项查询，未被该优化覆盖。
+
+The actual native selection routes use this adapter before resolving any endpoint. All chunks must pass, with local identity and deadline checks plus the final authoritative scene check; no grant is cached across requests. A five-camera renewal now uses one batch and two scene checks. Exact reply identity/order/count, transport bounds and failure cleanup remain enforced. This is request-count evidence, not measured CPU parity; catalog filtering still uses individual decisions.
 
 ## 接入前仍须保留的契约 / Remaining integration contracts
 

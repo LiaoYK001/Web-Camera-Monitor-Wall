@@ -7,6 +7,7 @@ claim installed-product, real-camera, performance or hardware-decode acceptance.
 from __future__ import annotations
 
 import argparse
+import contextlib
 import ctypes
 import json
 import os
@@ -278,7 +279,7 @@ def exercise(runtime, report, *, with_media=False):
                 wait_for(lambda: state().get("phase") == "authenticated", "persisted account did not log in after restart")
             evidence["checks"].append("restart-keeps-account-requires-login")
             phase = "revocation"
-            with sqlite3.connect(profile / "config/cluster.sqlite3") as database:
+            with contextlib.closing(sqlite3.connect(profile / "config/cluster.sqlite3")) as database, database:
                 database.execute("UPDATE users SET auth_epoch=? WHERE username=?", (secrets.token_hex(16), account["username"]))
             wait_for(lambda: state().get("phase") == "locked", "real account epoch change did not lock product UI", timeout=8)
             assert state()["sessionBound"] is False and state()["mediaSources"] == 0

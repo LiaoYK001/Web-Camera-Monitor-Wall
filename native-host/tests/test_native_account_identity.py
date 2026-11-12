@@ -488,18 +488,34 @@ class NativeAccountIdentityTests(unittest.TestCase):
             self.batch(identity, [self.requirement("live.view")])),
             "native_auth_unavailable", "native account authentication is unavailable")
 
-    def test_batch_route_is_not_exposed_and_legacy_routes_are_unchanged(self):
+    def test_batch_route_requires_internal_auth_and_does_not_enable_unknown_alias(self):
         self.create()
         identity = self.login()
         request = self.batch(identity, [self.requirement("live.view")])
+        status, result = self.request("/auth/native-authorize-batch", request)
+        self.assertEqual(status, 200)
+        self.assertTrue(result["allowed"])
+        for token in (None, "incorrect-internal-secret"):
+            status, result = self.request("/auth/native-authorize-batch", request, token=token)
+            self.assertEqual(status, 403)
+            self.assertEqual(result["error"]["code"], "internal_auth_rejected")
         status, result = self.request("/auth/native-batch-authorize", request)
         self.assertEqual(status, 404)
         self.assertEqual(result["error"]["code"], "not_found")
         status, result = self.request("/auth/native-batch-authorize", request, token=None)
         self.assertEqual(status, 403)
         self.assertEqual(result["error"]["code"], "internal_auth_rejected")
-        source = (ROOT / "cluster/cluster_service.py").read_text(encoding="utf-8")
-        self.assertNotIn("native_authorize_batch(self.read_json())", source)
+
+    def test_batch_accepts_authoritative_ungrouped_camera_and_rejects_malformed_group(self):
+        self.create(scopes=[{"kind": "camera", "id": "camera-a"}])
+        identity = self.login()
+        with contextlib.closing(sqlite3.connect(self.registry)) as database, database:
+            database.execute("UPDATE cameras SET group_id='' WHERE id='camera-a'")
+        request = self.batch(identity, [self.requirement("live.view", "camera-a")])
+        self.assertTrue(self.store.native_authorize_batch(request)["allowed"])
+        with contextlib.closing(sqlite3.connect(self.registry)) as database, database:
+            database.execute("UPDATE cameras SET group_id='../malformed' WHERE id='camera-a'")
+        self.assert_api_error(503, lambda: self.store.native_authorize_batch(request), "native_registry_unavailable")
 
 
 if __name__ == "__main__":
