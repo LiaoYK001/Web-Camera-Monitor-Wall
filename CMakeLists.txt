@@ -114,6 +114,7 @@ add_executable(webobsd
     core/src/native_preview.cpp
     core/src/obs_engine.cpp
     core/src/obs_scene_runtime.cpp
+    core/src/obs_scene_items.cpp
     core/src/scene_controller.cpp
     core/src/studio_controller.cpp
 )
@@ -218,7 +219,7 @@ if(WEBOBS_BUILD_TESTS)
     endif()
     if(WEBOBS_BUILD_OBS_RENDER_TESTS)
         add_executable(webobs-obs-native-preview-tests
-            core/tests/obs_native_preview_tests.cpp core/src/obs_scene_runtime.cpp)
+            core/tests/obs_native_preview_tests.cpp core/src/obs_scene_runtime.cpp core/src/obs_scene_items.cpp)
         target_link_libraries(webobs-obs-native-preview-tests PRIVATE webobs-common webobs-libobs CURL::libcurl)
         webobs_warnings(webobs-obs-native-preview-tests)
         if(WIN32)

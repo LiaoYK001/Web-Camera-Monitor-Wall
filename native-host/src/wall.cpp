@@ -1,5 +1,8 @@
 #include "wall.hpp"
 #include "layout.hpp"
+#ifdef WEBOBS_NATIVE_PRODUCT_MODE
+#include "webobs/obs_scene_items.hpp"
+#endif
 
 #include <obs-frontend-api.h>
 #include <cstring>
@@ -106,6 +109,15 @@ WallResult create_five_tile_wall(const std::array<std::string, 5> &source_uuids,
 			return {nullptr, "OBS could not add all five scene items."};
 		}
 		const auto &tile = tiles[i];
+#ifdef WEBOBS_NATIVE_PRODUCT_MODE
+		webobs::SceneItem configuration;
+		configuration.x = int(tile.x);
+		configuration.y = int(tile.y);
+		configuration.width = int(tile.width);
+		configuration.height = int(tile.height);
+		configuration.z_index = int(i);
+		webobs::configure_obs_scene_item(item, configuration);
+#else
 		vec2 position{static_cast<float>(tile.x), static_cast<float>(tile.y)};
 		vec2 bounds{static_cast<float>(tile.width), static_cast<float>(tile.height)};
 		obs_sceneitem_set_alignment(item, OBS_ALIGN_LEFT | OBS_ALIGN_TOP);
@@ -113,6 +125,7 @@ WallResult create_five_tile_wall(const std::array<std::string, 5> &source_uuids,
 		obs_sceneitem_set_bounds_type(item, OBS_BOUNDS_SCALE_INNER);
 		obs_sceneitem_set_bounds(item, &bounds);
 		obs_sceneitem_set_pos(item, &position);
+#endif
 	}
 	return {scene, {}};
 }

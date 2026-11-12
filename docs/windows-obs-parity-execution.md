@@ -1082,3 +1082,11 @@ Dev.84 committed all five actual UI choices, applied five media sources and pass
 同时新增实际启动前恢复 I/O gate：在已核验的产品 runtime 之外，从同一固定构建副本编译 WEBOBS_PRODUCT_FRONTEND=OFF 的对照 frontend，保持已部署产品文件哈希不变。对照 frontend 通过现有 webobs-job 先入 Job 再执行；同一份新建合成 collection 必须真的发起 loopback RTSP 请求，退出并静止后，产品统一入口读取相同 collection，私密只读状态确认实际 Load 前拒绝分支命中该 collection，登录前八秒零新媒体请求/零来源/无会话，且拒绝的配置与外部 OBS profile 不变。只上传脱敏回执，不发布未保护的对照程序，也不以此替代原生菜单/其他旁路全量验收。该新 gate 在普通 UI gate 失败时仍可独立执行；NSIS 仍须全部前置门槛成功。
 
 Dev.85 passes the actual product's first five-HEVC final-window sequence with all eight samples and temporal progress, plus native listener exclusive-rebind checks. It then fails at logout's premature settled observation with two source objects still counted. The repair detaches visible items and awaits actual deferred reference retirement with a bounded timer; zero-source/blank-pixel requirements remain intact. A separate unguarded-frontend positive control now verifies real saved-collection RTSP I/O against the protected pre-load refusal. Local syntax, pinned patch application, build contracts 44/44, package 6/6 and pixel protocols 21 passed (two platform/opt-in skips); new Windows execution, full bypass coverage and installed R1 remain pending.
+
+#### R2 共用场景项映射开始接入 / Shared scene-item mapping starts integration
+
+在 dev.86（43219901436、source 52b877c）等待实际 Windows 回归期间，将既有 ObsSceneRuntime 中的缩放边界、位置、裁剪、旋转、混合、可见性、层级及 per-item opacity group/color_filter 实现提取到 `core/src/obs_scene_items.cpp`，core 仍实际调用该实现；原生产品五路建墙也改为调用同一个 configure_obs_scene_item。原型构建保留原 API 路径，产品目标使用 C++20 以复用现有 SceneItem 模型。该提取不启动媒体运行时或新增逐帧处理，也不增加第二套 libobs。
+
+Linux 真实 core 编译、CTest 8/8（含实际 libobs Program 像素放置、prepare/cut/停启）通过；产品分支 wall.cpp 对固定 OBS 头的 C++20 语法编译通过，构建契约 44/44。该改动尚未包含在 dev.86，也未证明原生完整 Studio、裁剪/透明度全部 UI 操作或 Windows 最终像素通过。R2 的规范文档/身份/同源池/Preview-Program/固定场景多投影仍须接入并实际验证，不能据共享代码记为完成。
+
+The existing core item mapping is now shared with the actual native product wall path, including the reusable per-item opacity implementation. Linux real-core compilation and 8/8 CTests pass, as does product-branch syntax against the pinned OBS headers. This does not introduce another media runtime. Dev.86 predates this change; Windows product regression and the complete Studio/identity/sharing/projector integration remain open.
