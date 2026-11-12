@@ -13,6 +13,7 @@ from pathlib import Path
 import secrets
 import shutil
 import signal
+import socket
 import subprocess
 import sys
 import tempfile
@@ -126,8 +127,20 @@ def exercise(binary, sodium):
             assert process.wait(timeout=30) == 0, "normal frontend close did not complete orderly shutdown"
             assert current()["phase"] == "stopped"
             wait_for(lambda: assert_closed(origin), "control listener survived normal close", timeout=5)
+            network_path = profile / "config/native-network.json"
+            saved_network = network_path.read_bytes()
+            with socket.socket() as blocker:
+                blocker.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+                blocker.bind(("127.0.0.1", int(origin.rsplit(":", 1)[1])))
+                blocker.listen(1)
+                refused = subprocess.run([sys.executable, "-B", str(supervisor)], env=environment,
+                    stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=15)
+                assert refused.returncode == 1, "occupied saved origin was silently replaced"
+                assert network_path.read_bytes() == saved_network
+                assert current()["phase"] == "stopped" and current()["services"] == []
             # Restart uses the same real account store; no reset or re-registration.
             process, state = start()
+            assert state["origin"] == origin and network_path.read_bytes() == saved_network
             assert request(state["origin"], "/api/v1/auth/setup")[2]["registrationOpen"] is False
             assert request(state["origin"], "/api/v1/auth/login", account)[0] == 200
             core_pid = next(service["pid"] for service in state["services"] if service["name"] == "control")
@@ -141,6 +154,16 @@ def exercise(binary, sodium):
             else:
                 raise AssertionError("frontend fixture survived required-service failure")
             assert current()["phase"] == "stopped"
+            for invalid in ('{"schema":1,"controlPort":true}',
+                            '{"schema":true,"controlPort":12345}',
+                            '{"schema":1,"controlPort":12345,"controlPort":12346}',
+                            '{"schema":1,"controlPort":80}'):
+                network_path.write_text(invalid, encoding="utf-8")
+                rejected = subprocess.run([sys.executable, "-B", str(supervisor)], env=environment,
+                    stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=15)
+                assert rejected.returncode == 1, "corrupt network state silently changed the origin"
+                assert network_path.read_text(encoding="utf-8") == invalid
+            network_path.write_bytes(saved_network)
             print("PASS actual supervisor, embedded authority, registration/login, duplicate entry, persistence and service-failure cleanup (frontend fixture; no media qualification)")
         finally:
             for process in processes:

@@ -1048,3 +1048,11 @@ The internal NSIS gate is now wired after the actual portable-entry UI/media gat
 产品回执此前只保留 captureFailed 布尔值，丢掉了已有捕获器的安全分类；现改为复用经过测试的 `capture_report`，保留有界 stage/code/样本进度，继续不输出路径、PID/HWND、日志或截图。后续 UI 同时将控制区放到侧栏，使原生 Preview 有足够窗口空间；预览使用产品事件过滤器消费鼠标/键盘/上下文/拖放/触摸输入，保留原生绘制/resize 与实际窗口命中，不重新开放原 OBS 编辑菜单。具体捕获失败原因与这些 Qt 变更仍需后续 Windows job 验证，不由源码分析代替。
 
 Dev.81 passed actual product-window first-account creation/login and applied five authorized sources through the real camera API and UI selectors. The first final-preview capture failed, so no pixels, persistence, revocation or installed-product pass is claimed. Follow-up preserves the existing sanitized capture diagnostics and gives the native Preview a full-height area with input interception rather than reopening raw editing. Actual Windows verification remains pending.
+
+#### 工作区 origin 连续性 / Workspace-origin continuity
+
+后续 supervisor 在首次暴露管理页之前，把所选 loopback control port 原子写入私密 `config/native-network.json`，以后同一工作区复用该端口；camera/cluster 内部端口仍可每次分配。已保存端口被占用、配置损坏/重复字段/非法类型时启动失败，不改文件、不静默切换 origin，也不先打开账号/Registry listener。Windows 预留端口不使用会强制重绑定的 SO_REUSEADDR；POSIX 保留普通 TIME_WAIT 重启的 reuse 语义，依据 [Microsoft socket 选项说明](https://learn.microsoft.com/en-us/windows/win32/winsock/using-so-reuseaddr-and-so-exclusiveaddruse)。这是当前 native 工作区的地址连续性，不是旧 Electron/Web/PWA 数据迁移证明。
+
+Linux 实际 supervisor + account/Registry/core 进程测试通过同 origin 重启、被占端口拒绝且配置字节不变、释放后恢复旧 origin，以及损坏/重复配置拒绝；前端仍明确为生命周期夹具，不作 Windows UI 或存储设备证明。Windows 实际产品 gate 已增加同样的被占 origin 拒绝和正常重启保持 origin，待新 source 的实际 job。完整 WebUI local-first 数据迁移、冲突恢复与固定远程 HTTPS 入口仍待 R3/R4。
+
+The supervisor now commits a private persistent control port before exposing the first origin, reuses it on restart and refuses conflicts or corrupt state without choosing another origin. Real Linux service-process tests pass stable restart and conflict/corruption handling; the corresponding actual Windows entry check is added but pending. This preserves new native workspace addressing, not legacy browser-data migration.

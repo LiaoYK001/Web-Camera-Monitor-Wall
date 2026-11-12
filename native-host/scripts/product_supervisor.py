@@ -17,6 +17,7 @@ import socket
 import subprocess
 import sys
 import threading
+import tempfile
 import time
 import traceback
 import urllib.request
@@ -29,6 +30,15 @@ def clean_environment(environment):
     return {key: value for key, value in environment.items()
             if not key.upper().startswith(blocked) and key.upper() not in secrets_and_proxies
             and key.upper() != "PATH"}
+
+
+def unique_configuration(pairs):
+    value = {}
+    for key, item in pairs:
+        if key in value:
+            raise ValueError("native network configuration contains duplicate fields")
+        value[key] = item
+    return value
 
 
 def protect(root, runtime):
@@ -144,10 +154,53 @@ class ProductSupervisor:
             self.environment["WEBOBS_CAMERA_ALLOW_TEST_ENDPOINTS"] = "true"
         return True
 
-    def port(self):
+    def port(self, preferred=0):
         lease = self.resources.enter_context(socket.socket())
-        lease.bind(("127.0.0.1", 0))
+        # POSIX permits ordinary restart over old TIME_WAIT connections. Never
+        # use Windows SO_REUSEADDR to force a bind over an existing listener.
+        if os.name != "nt":
+            lease.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        lease.bind(("127.0.0.1", preferred))
         return lease, lease.getsockname()[1]
+
+    def control_port(self):
+        path = self.root / "config/native-network.json"
+        if path.is_symlink() or (path.exists() and getattr(path.lstat(), "st_file_attributes", 0) & 0x400):
+            raise ValueError("native network configuration must not be a link")
+        if path.exists():
+            if not path.is_file() or path.stat().st_size > 4096:
+                raise ValueError("native network configuration is invalid")
+            value = json.loads(path.read_text(encoding="utf-8"), object_pairs_hook=unique_configuration)
+            if (not isinstance(value, dict) or set(value) != {"schema", "controlPort"} or
+                    type(value["schema"]) is not int or value["schema"] != 1 or
+                    type(value["controlPort"]) is not int or not 1024 <= value["controlPort"] <= 65535):
+                raise ValueError("native network configuration is invalid")
+            try:
+                return self.port(value["controlPort"])
+            except OSError:
+                raise RuntimeError("saved control port is unavailable") from None
+        lease, port = self.port()
+        # Commit once before exposing the first browser origin. Later launches
+        # preserve these bytes; startup failure must never select a new origin.
+        temporary = None
+        try:
+            with tempfile.NamedTemporaryFile(mode="w", encoding="utf-8", prefix="native-network-",
+                                             suffix=".new", dir=path.parent, delete=False) as output:
+                temporary = Path(output.name)
+                json.dump({"schema": 1, "controlPort": port}, output)
+                output.flush()
+                os.fsync(output.fileno())
+            temporary.replace(path)
+            if os.name != "nt":
+                descriptor = os.open(path.parent, os.O_RDONLY)
+                try:
+                    os.fsync(descriptor)
+                finally:
+                    os.close(descriptor)
+        finally:
+            if temporary is not None:
+                temporary.unlink(missing_ok=True)
+        return lease, port
 
     def start(self, name, command, *, environment=None, health="", lease=None):
         if lease is not None:
@@ -260,7 +313,10 @@ class ProductSupervisor:
         try:
             if not self.prepare():
                 return 73
-            leases = {name: self.port() for name in ("camera", "cluster", "control")}
+            # Reserve the persistent origin first, before opening any authority
+            # listener. Registry/account ports remain private per-boot details.
+            leases = {"control": self.control_port()}
+            leases.update({name: self.port() for name in ("camera", "cluster")})
             camera_port = leases["camera"][1]
             cluster_port = leases["cluster"][1]
             control_port = leases["control"][1]

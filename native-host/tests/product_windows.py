@@ -15,6 +15,7 @@ from pathlib import Path
 import secrets
 import shutil
 import sqlite3
+import socket
 import subprocess
 import sys
 import tempfile
@@ -292,8 +293,24 @@ def exercise(runtime, report, *, with_media=False, retained_profile=None):
             assert process.wait(timeout=40) == 0, "normal UI close failed orderly shutdown"
             wait_for(lambda: not any(alive(pid) for pid in known_pids), "owned process survived normal close")
             evidence["checks"].append("normal-ui-close-cleans-owned-processes")
+            phase = "persistent-origin-conflict"
+            original_origin = started["origin"]
+            network_path = profile / "config/native-network.json"
+            saved_network = network_path.read_bytes()
+            with socket.socket() as blocker:
+                # No Windows SO_REUSEADDR: the gate must not force-bind or
+                # steal another listener in order to report a conflict pass.
+                blocker.bind(("127.0.0.1", int(original_origin.rsplit(":", 1)[1])))
+                blocker.listen(1)
+                rejected = subprocess.run([str(entry)], env=environment, stdin=subprocess.DEVNULL,
+                    stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=40)
+                assert rejected.returncode == 1, "occupied saved origin was silently replaced"
+                assert network_path.read_bytes() == saved_network
+                assert status()["phase"] == "stopped" and status()["services"] == []
             phase = "restart-login"
-            start()
+            restarted = start()
+            assert restarted["origin"] == original_origin and network_path.read_bytes() == saved_network
+            evidence["checks"].append("persistent-control-origin-and-conflict-refusal")
             assert ui("login", **account)
             if with_media:
                 check_graph()
@@ -346,7 +363,7 @@ def exercise(runtime, report, *, with_media=False, retained_profile=None):
             evidence["observedState"] = {key: observed[key] for key in ("phase", "mediaSources", "sessionBound", "catalogItems") if key in observed}
             markers = ("ModuleNotFoundError", "ImportError", "PermissionError", "FileNotFoundError",
                        "RuntimeError", "AttributeError", "ValueError", "control exited during startup",
-                       "control health deadline exceeded", "a required product service exited")
+                       "control health deadline exceeded", "a required product service exited", "saved control port is unavailable")
             evidence["privateLogMarkers"] = []
             for log in (profile / "logs").glob("native-*.log"):
                 if log.is_file() and not log.is_symlink():
