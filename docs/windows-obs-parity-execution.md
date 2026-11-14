@@ -1202,3 +1202,23 @@ The product-owned build-copy patch adds an atomic opaque serial after non-null O
 本机 Qt 编译检查与产品控件映射检查通过；新的 Windows UI gate 将检查未登录禁用，登录后打开确切 OBSBasicStats，再用其实际所属 root HWND 正常关闭，并确认状态同步。该检查尚未执行，不据源码接线宣称统计界面或安装态已验收。完整产品 all-owned-process CPU/内存、分适配器/引擎 GPU、显存、长稳和 OBS 对照仍为 R5 门槛。
 
 The authenticated product button opens the pinned frontend's existing OBSBasicStats surface and retires it on logout or shutdown. Its title explicitly scopes CPU/memory to the OBS host. Local Qt compilation and control mapping checks pass; the real Windows open/close UI regression is pending. This reuse does not qualify complete-process or target-device performance.
+
+
+#### R2 同画布主图切换复用 / Same-canvas main-view reuse
+
+主画面开始新选择时保留旧的已授权图，并继续对该确切图执行原有两秒权限续查；准备新选择不再跳过续查。新解析/授权或旧图续查失败仍锁定全部主画面/投影。续查只持有旧图弱引用，提交新图后返回的旧图结果不作用于新图，注销仍通过 client generation 取消旧会话回调。保持画布/帧率时先创建候选图、复用兼容的自有来源，再交给 OBS 切换，最后释放旧图；改变画布仍先清主图，投影活跃时拒绝改变并保留原图。
+
+新增最长两秒、50ms 间隔的退出观察仅用于图切换后的异步来源退休，不把 removed 来源从实际全来源计数剔除，也不阻塞实际切换；失败仍清屏/拒绝继续。Windows gate 将在没有投影保活的情况下反转五格顺序并切回，要求每 camera/Profile 对应 UUID 不变和反序最终像素正确；待执行。Linux Qt 编译检查通过，既有 libobs 跨图来源复用回归此前通过；不据此宣称 Windows 不断流或长稳已验收。
+
+A same-canvas replacement now prepares the successor while continuously renewing the exact old authorized graph. Compatible owned sources survive the scene switch; old replies cannot act on a new graph or session. Bounded deferred-retirement observation preserves actual source accounting. Qt compilation passes; a new real Windows no-projector source-identity/pixel regression is pending, so continuous Windows media and long stability remain unqualified.
+
+
+#### dev.91 实际多投影通过，恢复编译竞争与快捷方式失败 / Projectors pass; restore-build race and shortcut failure
+
+run 43616770312、source 49cd463 最终 failure。portable 产品入口 passed=true，31 项 UI/media/lifecycle 检查通过，25 组最终捕获各八帧通过，包含两个不同固定场景与主画面共用五个实际媒体来源、F11 全屏/恢复、关闭一个投影保留其余画面，以及仅投影使用的摄像机撤权后全部受保护窗口退休。logoutRetirementMs=3。保存场景、回切手动五路和正常保存本轮通过。仍为 CI 合成五路 HEVC 软件解码，不是硬解/目标机/完整产品证明。
+
+恢复 gate 在执行探针前重编译 unguarded OBS 失败，因此本轮没有 native-product-restore.json，不补记旧 dev.88/90 证据。日志 MSB3491 明确指出 pinned win-capture 两个嵌套 MSBuild 同时写同一 build_x86 的 ZERO_CHECK.lastbuildstate。control-only rebuild 改为 --parallel 1，保留全部依赖与 I/O 正负门禁；效果待下一轮。
+
+NSIS 已安装/核验全部载荷：198,496,992 logical B / 201,433,128 unnamed-stream allocation B / 1865 files；setup 70,131,234 B。失败仍 installed-shortcut，这次诊断明确 targetPresent=true、targetExists=false、fileNameMatches=true、usesShortAlias=false、argumentsEmpty=true。故不能再将问题解释为纯 8.3 比较；真实目标路径或读取方式仍需定位，installed UI/卸载未执行。帧进度、OBS 统计和同画布复用修改均未包含在 dev.91。
+
+Dev.91 passes 31 actual portable checks and 25 eight-frame capture groups, including fixed-scene sharing/fullscreen/retirement and manual-save recovery. The restore control fails before probing due to a logged concurrent nested-MSBuild ZERO_CHECK writer; its rebuild is serialized without removing dependencies. NSIS measured installation again fails because the reported shortcut target does not exist, not merely an alias mismatch. Installed-entry, upgrade, complete features and target-device performance remain open.

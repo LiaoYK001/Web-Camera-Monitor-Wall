@@ -56,6 +56,8 @@ class ProductWindow final : public QWidget {
 	std::unique_ptr<ProductHttpClient> client_;
 	QTimer heartbeat_;
 	QTimer retirement_;
+	QTimer settlement_;
+	QElapsedTimer settlement_elapsed_;
 	QElapsedTimer retirement_elapsed_;
 	QUrl origin_;
 	QByteArray host_secret_;
@@ -139,6 +141,14 @@ class ProductWindow final : public QWidget {
 			return true;
 		}, &media_sources);
 		return media_sources;
+	}
+	std::size_t owned_media_source_count() const
+	{
+		std::set<std::string> inputs;
+		if (wall_) inputs.insert(wall_->uuids.begin(), wall_->uuids.end());
+		for (const auto &view : projectors_)
+			if (view && view->window) inputs.insert(view->graph->uuids.begin(), view->graph->uuids.end());
+		return inputs.size();
 	}
 	void observe_state(const char *phase)
 	{
@@ -423,6 +433,7 @@ class ProductWindow final : public QWidget {
 		++main_generation_;
 		retirement_elapsed_.start();
 		heartbeat_.stop();
+		settlement_.stop();
 		retirement_.stop();
 		heartbeat_pending_ = false;
 		applying_ = false;
@@ -576,8 +587,10 @@ class ProductWindow final : public QWidget {
 	void begin_connecting()
 	{
 		++main_generation_;
-		heartbeat_pending_ = false;
-		clear_main_media();
+		settlement_.stop();
+		save_->setEnabled(false);
+		// Keep the current authorized graph alive while resolving its successor.
+		// The heartbeat continues renewing this exact graph during preparation.
 		applying_ = true;
 		update_projector_controls();
 		observe_state("connecting");
@@ -591,7 +604,6 @@ class ProductWindow final : public QWidget {
 		const QJsonArray &selected, const QJsonObject &versions, const QJsonObject &video,
 		const QString &scene_id = {}, qint64 studio_revision = -1)
 	{
-		clear_main_media();
 		std::string error;
 		obs_video_info actual{};
 		const bool same_video = obs_get_video_info(&actual) &&
@@ -602,6 +614,7 @@ class ProductWindow final : public QWidget {
 			std::uint64_t(video.value("fps").toInt()) * actual.fps_den;
 		if (!same_video && (projectors_[0] || projectors_[1])) {
 			applying_ = false;
+			save_->setEnabled(wall_ && !watching_.isEmpty());
 			for (auto *button : {watch_, refresh_, scene_watch_}) button->setEnabled(true);
 			scenes_->setEnabled(true);
 			for (auto *slot : slots_) slot->setEnabled(true);
@@ -610,24 +623,30 @@ class ProductWindow final : public QWidget {
 			observe_current_media();
 			return;
 		}
-		if (!same_video && !apply_product_video_config(video.value("width").toInt(), video.value("height").toInt(),
-			video.value("fps").toInt(), error)) {
-			locked(tr("无法应用项目画布或帧率，请检查视频设置。"));
-			return;
+		if (!same_video) {
+			clear_main_media();
+			if (!apply_product_video_config(video.value("width").toInt(), video.value("height").toInt(),
+				video.value("fps").toInt(), error)) {
+				locked(tr("无法应用项目画布或帧率，请检查视频设置。"));
+				return;
+			}
 		}
-		wall_ = create_product_scene(source_pool_, user_id_.toStdString(), document, cameras, error);
+		// Build before releasing the previous graph, so compatible owned sources
+		// retain their decoder and socket across a same-canvas layout change.
+		auto candidate = create_product_scene(source_pool_, user_id_.toStdString(), document, cameras, error);
 		applying_ = false;
 		for (auto *button : {watch_, refresh_, scene_watch_}) button->setEnabled(true);
 		scenes_->setEnabled(true);
 		for (auto *slot : slots_) slot->setEnabled(true);
-		if (!wall_ || !wall_->scene) {
+		if (!candidate || !candidate->scene) {
 			clear_main_media();
 			update_projector_controls();
 			status_->setText(tr("原生画面创建失败；部分来源、音轨或资产仍需接入。"));
 			observe_state("graph-failed");
 			return;
 		}
-		select_wall(wall_->scene);
+		select_wall(candidate->scene);
+		wall_ = std::move(candidate);
 		watching_ = selected;
 		watching_versions_ = versions;
 		watching_scene_id_ = scene_id;
@@ -637,6 +656,12 @@ class ProductWindow final : public QWidget {
 		observe_state("graph-applied");
 		status_->setText(tr("原生场景已创建，视频状态见下方。"));
 		refresh_video_health();
+		// Observe bounded deferred retirement without hiding removed inputs from
+		// accounting or delaying the actual scene switch.
+		if (media_source_count() != int(owned_media_source_count())) {
+			settlement_elapsed_.start();
+			settlement_.start(50);
+		}
 	}
 
 	void watch_scene()
@@ -963,6 +988,16 @@ public:
 				observe_state("cleanup-failed");
 			}
 		});
+		connect(&settlement_, &QTimer::timeout, this, [this] {
+			if (media_source_count() == int(owned_media_source_count())) {
+				settlement_.stop();
+				observe_current_media();
+			} else if (settlement_elapsed_.elapsed() >= 2000) {
+				locked(tr("旧视频输入未能及时释放，请退出后重试。"));
+			} else {
+				observe_current_media();
+			}
+		});
 		locked(tr("请登录已有 WebOBS 账号。"));
 		if (origin_.scheme() != "http" || origin_.host() != "127.0.0.1" || origin_.port() < 1 ||
 		    !origin_.userInfo().isEmpty() || !origin_.path().isEmpty() || origin_.hasQuery() || origin_.hasFragment() ||
@@ -1025,10 +1060,10 @@ public:
 		connect(&heartbeat_, &QTimer::timeout, this, [this] {
 			refresh_video_health();
 			renew_projectors(); // Remains active while the main view resolves another scene.
-			if (heartbeat_pending_ || applying_ || user_id_.isEmpty())
+			if (heartbeat_pending_ || user_id_.isEmpty())
 				return;
 			heartbeat_pending_ = true;
-			const auto main_generation = main_generation_;
+			const std::weak_ptr<ProductSceneGraph> renewed_graph = wall_;
 			const bool active = !watching_.isEmpty();
 			const bool scene_active = active && !watching_scene_id_.isEmpty();
 			const QString path = scene_active ? "/api/v1/native/scenes/authorize" :
@@ -1036,9 +1071,11 @@ public:
 			const QJsonObject renewal = scene_active ?
 				QJsonObject{{"sceneId", watching_scene_id_}, {"revision", watching_studio_revision_}} :
 				QJsonObject{{"cameras", watching_}};
-			request(path, active ? "POST" : "GET", renewal, [this, active, scene_active, main_generation](int code, const QJsonObject &body) {
-				if (main_generation != main_generation_) return;
+			request(path, active ? "POST" : "GET", renewal, [this, active, scene_active, renewed_graph](int code, const QJsonObject &body) {
 				heartbeat_pending_ = false;
+				// A finished renewal of the old graph cannot revoke a newer graph.
+				// A graph retained during preparation MUST still enforce its result.
+				if ((active && renewed_graph.expired()) || renewed_graph.lock() != wall_) return;
 				if (code != 200)
 					locked(tr("会话或摄像机权限已失效，请重新登录。"));
 				else if (active && body.value("cameraVersions").toObject() != watching_versions_)
@@ -1052,6 +1089,7 @@ public:
 	{
 		tearing_down_ = true;
 		heartbeat_.stop();
+		settlement_.stop();
 		retirement_.stop();
 		client_.reset();
 		clear_media();

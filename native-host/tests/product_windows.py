@@ -188,7 +188,9 @@ def exercise(runtime, report, *, with_media=False, retained_profile=None):
             return value
 
         def check_graph(*, repeat_first=False, reverse=False, expected_media=None):
-            wait_for(lambda: state().get("phase") == "graph-applied", "UI did not apply authorized camera graph", timeout=35)
+            expected = expected_media if expected_media is not None else (1 if repeat_first else 5)
+            wait_for(lambda: state().get("phase") == "graph-applied" and state().get("mediaSources") == expected,
+                "UI did not settle the complete authorized camera graph", timeout=35)
             observed = state()
             assert observed["sessionBound"] is True and observed["mediaSources"] == (
                 expected_media if expected_media is not None else (1 if repeat_first else 5))
@@ -421,6 +423,19 @@ def exercise(runtime, report, *, with_media=False, retained_profile=None):
                 check_graph()
                 assert ui("save")
                 wait_for(lambda: read_json(paths[0]) == saved, "five-camera workspace save did not commit")
+                phase = "same-canvas-source-retention"
+                reference = {binding["cameraId"]: binding["sourceUuid"] for binding in state()["bindings"]}
+                assert ui("choose", indices=[5, 4, 3, 2, 1])
+                changed = check_graph(reverse=True)
+                assert {binding["cameraId"]: binding["sourceUuid"] for binding in changed["bindings"]} == reference, \
+                    "same-canvas layout change recreated compatible media sources"
+                time.sleep(3)
+                check_pixels("continuous-reordered", reverse=True)
+                assert ui("choose", indices=[1, 2, 3, 4, 5])
+                changed = check_graph()
+                assert {binding["cameraId"]: binding["sourceUuid"] for binding in changed["bindings"]} == reference, \
+                    "return layout recreated compatible media sources"
+                evidence["checks"].append("same-canvas-layout-retains-owned-sources-without-projectors")
                 phase = "fixed-scene-projectors"
                 reference = {binding["cameraId"]: binding["sourceUuid"] for binding in state()["bindings"]}
                 assert ui("projector", slot=1)

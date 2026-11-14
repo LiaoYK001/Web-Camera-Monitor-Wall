@@ -17,7 +17,10 @@ $productHash = (Get-FileHash -LiteralPath $productFrontend -Algorithm SHA256).Ha
 # product restore interception; this executable is test input, not a candidate.
 cmake -S (Join-Path $buildRoot 'obs-source') -B $obsBuild -DWEBOBS_PRODUCT_FRONTEND=OFF
 if ($LASTEXITCODE -ne 0) { throw 'Unguarded frontend control configuration failed.' }
-cmake --build $obsBuild --config Release --target obs-studio --parallel 4
+# The pinned win-capture dependencies launch independent nested MSBuild jobs
+# into the SAME build_x86 tree. Serialize this control-only rebuild to avoid
+# concurrent ZERO_CHECK writers; retain the complete upstream target graph.
+cmake --build $obsBuild --config Release --target obs-studio --parallel 1
 if ($LASTEXITCODE -ne 0) { throw 'Unguarded frontend control compilation failed.' }
 New-Item -ItemType Directory $control | Out-Null
 $controlExe = Join-Path $control 'obs64.exe'
