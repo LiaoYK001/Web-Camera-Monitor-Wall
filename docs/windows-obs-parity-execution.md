@@ -1260,3 +1260,12 @@ The product regression now exercises one actual synthetic RTSP outage, native ca
 真实 App/AudioWorkspace 的 Chromium 回归通过：原生管理进入 Studio 无 video/audio、可拖拽实际布局并进入脏状态，监看页无媒体；给两路提供有效且已选中的音轨后，音频工作台仍零 video/audio、零 WHEP offers，监听禁用；用户主动切浏览器才创建实际 fixture 视频/会话，切回后清理。另四项既有实际布局视频/无重协商和逐轨通道特殊 source identity 回归通过。Web typecheck/build 通过，原生 Qt URL 接线编译通过。这里是浏览器合成 fixture 的 UI/媒体生命周期证据，不是 Windows 全安装/真实相机/目标机性能；不包含在 dev.92，后续构建继续回归。
 
 The native management URL opts only that browser page into configuration-first presentation. Studio editing remains available without automatic live backdrops, and AudioWorkspace retains configuration/metadata while avoiding local video/audio-only channels. Explicit browser playback still works and retires when native presentation is restored. The real React components pass Chromium lifecycle/editing checks and four existing layout/audio regressions; Web build/typecheck and Qt compilation pass. This is fixture UI evidence, not complete installed-product or performance qualification.
+
+
+#### 音轨空选择与缺失轨道保留 / Preserve empty and missing audio selections
+
+管理页接线回归同时发现 AudioWorkspace 将已保存 audioInputs: [] 和“已选轨不在最新探测列表中”均默认成第一条可用音轨。现只有旧文档完全省略 audioInputs 才默认第一轨；明确空数组保持无选轨，已保存但暂时缺失的轨道连同 gain/mute/offset 保留，并给出缺失提示与明确移除动作。音轨重新探测不会自动替换已有选择或把元数据变化标为用户修改；旧无配置且确认无音轨的来源仍保持省略语义。实际有效轨道列表控制通道创建，缺失选择不会开另一条轨道。
+
+Chromium 实际组件七项回归通过：空选择和缺失选择在两条有效轨道可用时均不创建 audio-only offers，修改来源主静音并保存仍保留原选择与参数；缺失轨只有显式移除再保存才变成 []。原有 manual retry、三类 source identity 的真实逐轨通道流程与原生管理页面均通过。Web typecheck/build 通过；这仍是 API/媒体 fixture 的浏览器接线证明，不是原生解码音频、扬声器或完整 Windows 安装验收。完整多轨原生实现、音频状态与跨 revision 编辑冲突仍按 R2 矩阵继续完成。
+
+AudioWorkspace now distinguishes legacy omitted selection from explicit silence and missing saved tracks. Missing tracks and their parameters remain visible/preserved until explicitly removed; metadata retry does not silently choose another track. Seven real-component Chromium regressions and Web build/typecheck pass, including preserved writes and zero audio-only offers for empty/missing selections. Native multi-track/audio-output and revision-conflict qualification remain open.

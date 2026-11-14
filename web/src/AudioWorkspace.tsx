@@ -25,6 +25,26 @@ interface TrackSelection {
   mode: 'merged' | 'independent';
 }
 
+function initialTrackSelection(source: SceneSource | undefined, tracks: SourceAudioTrack[]): TrackSelection {
+  const saved = source?.audioInputs ?? [];
+  const gain: Record<number, number> = {};
+  const muted: Record<number, boolean> = {};
+  const offset: Record<number, number> = {};
+  for (const input of saved) {
+    gain[input.track] = input.gain;
+    muted[input.track] = input.muted;
+    offset[input.track] = input.syncOffsetMs ?? 0;
+  }
+  return {
+    // Explicit [] is intentional silence. Missing selected tracks must not
+    // silently switch to a different track either; only legacy omission defaults.
+    selected: source?.audioInputs !== undefined
+      ? saved.map((input) => input.track).sort((left, right) => left - right)
+      : defaultSelectedTracks(tracks),
+    gain, muted, offset, mode: 'merged',
+  };
+}
+
 interface ChannelEntry {
   element: HTMLAudioElement;
   connection: AudioTrackConnection;
@@ -105,24 +125,12 @@ export default function AudioWorkspace({ studio, onCommitted, localPlayback = tr
       void fetchSourceAudioTracks(source.id, controller.signal, source.kind === 'camera' ? source : undefined).then((value) => {
         if (cancelled) return;
         setTracksBySource((current) => ({ ...current, [source.id]: value }));
-        if (value.status === 'available') {
+        if (value.status === 'available' || (value.status === 'none' && source.audioInputs !== undefined)) {
           // A saved schema 6 selection wins; otherwise the first real track is
           // selected by default and multi-select keeps the others available.
           setSelection((current) => {
             if (ownRecordValue(current, source.id)) return current;
-            const saved = source.audioInputs?.filter((input) => value.tracks.some((track) => track.index === input.track)) ?? [];
-            const gain: Record<number, number> = {};
-            const muted: Record<number, boolean> = {};
-            const offset: Record<number, number> = {};
-            for (const input of saved) {
-              gain[input.track] = input.gain;
-              muted[input.track] = input.muted;
-              offset[input.track] = input.syncOffsetMs ?? 0;
-            }
-            const selected = saved.length > 0
-              ? saved.map((input) => input.track).sort((left, right) => left - right)
-              : defaultSelectedTracks(value.tracks);
-            return { ...current, [source.id]: { selected, gain, muted, offset, mode: 'merged' } };
+            return { ...current, [source.id]: initialTrackSelection(source, value.status === 'available' ? value.tracks : []) };
           });
         }
       });
@@ -227,8 +235,9 @@ export default function AudioWorkspace({ studio, onCommitted, localPlayback = tr
       const value = await fetchSourceAudioTracks(sourceId, undefined, source?.kind === 'camera' ? source : undefined);
       if (generation !== probeGeneration.current) return;
       setTracksBySource((current) => ({ ...current, [sourceId]: value }));
-      if (value.status === 'available') {
-        updateSelection(sourceId, (current) => ({ ...current, selected: current.selected.length > 0 ? current.selected : defaultSelectedTracks(value.tracks) }));
+      if (value.status === 'available' || (value.status === 'none' && source?.audioInputs !== undefined)) {
+        setSelection((current) => ownRecordValue(current, sourceId) ? current
+          : { ...current, [sourceId]: initialTrackSelection(source, value.status === 'available' ? value.tracks : []) });
       }
     } catch {
       if (generation === probeGeneration.current) setTracksBySource((current) => ({ ...current,
@@ -287,12 +296,20 @@ export default function AudioWorkspace({ studio, onCommitted, localPlayback = tr
           : probed.status === 'none' ? 'none'
             : probed.status === 'loading' ? 'loading' : 'unprobed')
         : sourceAudioTrackState({ kind: source.kind, liveAudioTracks: meter?.audioTracks, streamBound: meter?.streamBound });
-      // F6-02: video-only sources are omitted from the audio workspace entirely.
-      if (trackState === 'none') return null;
       const state = ownRecordValue(selection, source.id);
+      const selected = state?.selected ?? source.audioInputs?.map((input) => input.track) ?? [];
+      const missing = selected.filter((index) => !apiTracks.some((track) => track.index === index));
+      // Hide confirmed video-only sources unless a saved track needs attention.
+      if (trackState === 'none' && selected.length === 0) return null;
       const mode = state?.mode ?? 'merged';
       return <article className="audio-channel" key={source.id}>
         <div><strong>{source.name}</strong><small>{cameraProfile}</small><span>{!localPlayback ? '原生宿主配置' : topology === 'direct' ? 'Browser Web Audio' : 'libobs Composite'}</span></div>
+        {(trackState === 'available' || trackState === 'none') && missing.length > 0 && <div className="audio-track-missing" role="alert">
+          <span>已选音轨 {missing.map((index) => index + 1).join('、')} 当前不可用，配置已保留。</span>
+          <button type="button" onClick={() => updateSelection(source.id, (current) => ({ ...current,
+            selected: current.selected.filter((index) => !missing.includes(index)),
+          }))}>移除缺失音轨</button>
+        </div>}
         {trackState === 'unprobed'
             ? <div className="audio-track-missing"><span role="status">{probed?.status === 'unavailable' ? '音轨探测失败，请检查源连接、VPN 和访问权限后重试。' : '音频轨道待探测'}</span><button type="button" onClick={() => void reprobe(source.id)}>重新探测</button></div>
             : trackState === 'loading'
