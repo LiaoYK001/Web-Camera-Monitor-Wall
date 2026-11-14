@@ -8,6 +8,14 @@ The R1 product variant now wires these libraries through the existing core liste
 
 [NativeControlAuth](../core/include/webobs/native_control_auth.hpp) 直接复用 [SessionStore](../core/include/webobs/authentication.hpp) 的 SQLite 持久会话和令牌哈希。[NativeClusterAuthorizationBackend](../core/include/webobs/native_cluster_authorization.hpp) 实现其 fresh RBAC 回调；没有另造 session 协议、Basic 管理员回退或新账号服务。
 
+## 原生产品的管理浏览器会话 / Native-product management sessions
+
+设置原生宿主模式时，普通 `/api/v1/auth/login` 也通过现有内部 native-login 做真实密码验证，并将不可变 userId/authEpoch 写入同一个 SessionStore；响应保持原浏览器格式，不向页面发送 epoch 或宿主凭据。该模式关闭 Basic 兼容回退；旧 username-only cookie 必须重新登录，不按用户名补绑定。未设置原生模式的既有 HTTP/Electron 登录协议保持兼容。
+
+普通 API 请求沿用原有 permission/camera scope 推导，但使用 bound native-authorize，同时精确核对返回的身份和权限；账户不存在/禁用/epoch 变化撤销该确切绑定，权限不足为 403，服务或格式异常为 503。`auth/session` 与个人账户 API 使用内部 `/auth/native-session` 检查身份有效性，不额外要求媒体权限；它不创建会话、不赋予观看权限。身份与权限后端调用后均重新检查本地会话，进行中的单会话注销不会撤销同身份的另一登录。个人账户服务仍执行其原有操作校验。
+
+The ordinary browser login in native product mode now password-binds immutable identity through the existing account service and SessionStore, without exposing epoch or host credentials. Bound permission decisions protect ordinary APIs; a separate internal identity-only check protects session/own-account routes without inventing a media-role requirement. Legacy unbound cookies require fresh login, Basic fallback is disabled in native mode, and non-native HTTP compatibility remains unchanged. Replies are correlated and local sessions are rechecked after authority I/O. This is not the complete Studio engine bridge, continuous WebSocket revocation, an atomic execution fence or legacy installed-data migration.
+
 ## 固定命令与检查 / Allowlisted checks
 
 - `read_scene` → `scene.read`；`write_scene` → `scene.write`；`view_camera` → `live.view`。最后一种必须带一个 camera ID；其余允许一个明确 scope。URL、路径、列表和通配符不能作为 camera scope。
@@ -58,7 +66,7 @@ The UI requires matching revisions immediately after resolution and on each rene
 
 库只检查声明的单个 scope，不能解析整场景。可信执行 adapter 必须从实际目标推导所有受影响 camera ID 并逐个授权，对读取结果做可见性过滤。无 scope 的 `scene.read/write` 是粗粒度权限，**不是所有相机范围的豁免**；现有 cluster 的管理员/显式 scope 许可也不是 camera 对象存在性证明，执行前须解析目标。
 
-原生菜单/快捷键/dock/脚本等修改入口必须界定和防绕过。`authorize` 后应立即执行对应白名单动作；最后检查之后发生撤销的处理仍须执行序列化策略定义。SessionStore 与 NativeControlAuth 已实现完整 username/userId/authEpoch 绑定及许可后复查；旧 HTTP/Electron 协议没有因此改成原生绑定协议。整操作编排器没有本地会话输入，尚须宿主把会话生命周期与多资源检查、策略一致性和执行序列化正确连接。
+原生菜单/快捷键/dock/脚本等修改入口必须界定和防绕过。`authorize` 后应立即执行对应白名单动作；最后检查之后发生撤销的处理仍须执行序列化策略定义。SessionStore 与 NativeControlAuth 已实现完整 username/userId/authEpoch 绑定及许可后复查；普通 HTTP 在原生宿主模式已使用绑定身份；非原生 HTTP/Electron 兼容协议保留原语义。整操作编排器没有本地会话输入，尚须宿主把会话生命周期与多资源检查、策略一致性和执行序列化正确连接。
 
 The libraries do not implement native login, graph-derived multi-camera authorization, UI bypass controls, private ACL provisioning, account-service ownership or reversible migration. Immutable user/session authentication bindings are implemented in the native gate; whole-operation session wiring, atomic policy consistency and execution fencing remain unresolved integration issues. libcurl ownership is balanced; concurrent invocation assumes normal C++ object lifetime and a supported modern libcurl build with thread-safe global initialization. Destruction/mutation concurrent with a call is not supported.
 

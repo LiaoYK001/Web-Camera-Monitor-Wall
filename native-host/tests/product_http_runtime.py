@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import contextlib
+import hashlib
 from http.server import ThreadingHTTPServer
 import importlib.util
 import json
@@ -88,12 +89,19 @@ def exercise(binary):
         resolved = []
         authority_paths = []
         batch_hooks = []
+        identity_hooks = []
+        authority_overrides = {}
 
         class AccountHandler(cluster.Handler):
             def do_POST(self):
                 authority_paths.append(self.path)
+                if self.path in authority_overrides:
+                    self.response(*authority_overrides.pop(self.path))
+                    return
                 if self.path == "/auth/native-authorize-batch" and batch_hooks:
                     batch_hooks.pop(0)()
+                if self.path == "/auth/native-session" and identity_hooks:
+                    identity_hooks.pop(0)()
                 super().do_POST()
 
         class RegistryHandler(camera.Handler):
@@ -190,6 +198,53 @@ def exercise(binary):
                 code, setup_issued, _ = request("/api/v1/auth/login", first_admin, use_cookie=False)
                 assert code == 200 and setup_issued
                 setup_cookie = setup_issued.split(";", 1)[0]
+                assert request("/api/v1/auth/session", cookie_override=setup_cookie)[0] == 200
+                assert request("/api/v2/account/me", cookie_override=setup_cookie)[0] == 200
+                authority_overrides["/auth/native-session"] = (503, {"error": {
+                    "code": "fixture_unavailable", "message": "synthetic unavailable"}})
+                assert request("/api/v1/auth/session", cookie_override=setup_cookie)[0] == 503
+                assert request("/api/v1/auth/session", cookie_override=setup_cookie)[0] == 200, \
+                    "authority outage permanently revoked a valid account session"
+                authority_overrides["/auth/native-session"] = (200, {"authenticated": True,
+                    "userId": "0" * 32, "authEpoch": "0" * 32})
+                assert request("/api/v1/auth/session", cookie_override=setup_cookie)[0] == 503
+                authority_overrides["/auth/native-authorize"] = (200, {"allowed": True,
+                    "permission": "scene.read", "userId": "0" * 32, "authEpoch": "0" * 32})
+                assert request("/api/v1/studio", cookie_override=setup_cookie)[0] == 503
+                assert request("/api/v1/studio", cookie_override=setup_cookie)[0] == 200
+                with contextlib.closing(sqlite3.connect(private / "sessions.db")) as database:
+                    row = database.execute("SELECT user_id,auth_epoch FROM auth_sessions WHERE user_name=?",
+                                           (first_admin["username"],)).fetchone()
+                    assert row and all(isinstance(value, str) and len(value) == 32 for value in row), \
+                        "ordinary native-product login did not bind identity"
+                # A legacy username-only cookie cannot acquire a current identity
+                # merely by visiting either management or native routes.
+                code, legacy_issued, _ = request("/api/v1/auth/login", first_admin, use_cookie=False)
+                assert code == 200 and legacy_issued
+                legacy_cookie = legacy_issued.split(";", 1)[0]
+                legacy_hash = hashlib.sha256(legacy_cookie.split("=", 1)[1].encode()).hexdigest()
+                with contextlib.closing(sqlite3.connect(private / "sessions.db")) as database, database:
+                    changed = database.execute("UPDATE auth_sessions SET user_id=NULL,auth_epoch=NULL "
+                                               "WHERE session_id_hash=?", (legacy_hash,))
+                    assert changed.rowcount == 1
+                authority_paths.clear()
+                assert request("/api/v1/native/auth/session", cookie_override=legacy_cookie)[0] == 401
+                assert request("/api/v1/auth/session", cookie_override=legacy_cookie)[0] == 401
+                assert authority_paths == [], "unbound management session reached authoritative identity lookup"
+                assert request("/api/v1/studio", cookie_override=setup_cookie)[0] == 200, \
+                    "rejecting an unbound cookie revoked another bound login"
+                code, retiring_issued, _ = request("/api/v1/auth/login", first_admin, use_cookie=False)
+                assert code == 200 and retiring_issued
+                retiring_cookie = retiring_issued.split(";", 1)[0]
+                retiring_hash = hashlib.sha256(retiring_cookie.split("=", 1)[1].encode()).hexdigest()
+                def retire_inflight_session():
+                    with contextlib.closing(sqlite3.connect(private / "sessions.db")) as database, database:
+                        database.execute("DELETE FROM auth_sessions WHERE session_id_hash=?", (retiring_hash,))
+                identity_hooks.append(retire_inflight_session)
+                assert request("/api/v1/auth/session", cookie_override=retiring_cookie)[0] == 401
+                assert not identity_hooks
+                assert request("/api/v1/auth/session", cookie_override=setup_cookie)[0] == 200, \
+                    "one session logout revoked another session for the same identity"
                 code, _, bootstrap_studio = request("/api/v1/studio", cookie_override=setup_cookie)
                 assert code == 200 and bootstrap_studio["revision"] == 0
                 code, _, stored_fixture = request("/api/v1/studio", fixture_studio, method="PUT", revision=0,
@@ -354,10 +409,18 @@ def exercise(binary):
                     "sceneId": "allowed", "fingerprint": active_fingerprint})
                 assert code == 200 and renewed_scene["cameraVersions"] == {"camera-a": 2}
                 assert len(resolved) == before, "configuration renewal unexpectedly read endpoint credentials"
+                code, browser_issued, browser_identity = request("/api/v1/auth/login", login, use_cookie=False)
+                assert code == 200 and browser_issued and "authEpoch" not in browser_identity
+                browser_cookie = browser_issued.split(";", 1)[0]
+                assert request("/api/v1/auth/session", cookie_override=browser_cookie)[0] == 200
+                assert request("/api/v1/studio", cookie_override=browser_cookie)[0] == 200
                 # Real account epoch change invalidates the existing session.
                 with cluster.STORE.lock, cluster.STORE.db:
                     cluster.STORE.db.execute("UPDATE users SET auth_epoch=? WHERE username=?",
                                              (secrets.token_hex(16), "native-viewer"))
+                assert request("/api/v1/studio", cookie_override=browser_cookie)[0] == 401, \
+                    "ordinary management API accepted a revoked identity"
+                assert request("/api/v1/auth/session", cookie_override=browser_cookie)[0] == 401
                 assert request("/api/v1/native/auth/session")[0] == 401
                 assert request("/api/v1/native/scenes/authorize", {
                     "sceneId": "allowed", "fingerprint": active_fingerprint})[0] == 401
@@ -366,7 +429,71 @@ def exercise(binary):
                 cookie = issued.split(";", 1)[0]
                 assert request("/api/v1/native/auth/logout", {}, method="POST")[0] == 200
                 assert request("/api/v1/native/auth/session")[0] == 401
+                code, fresh_issued, _ = request("/api/v1/auth/login", login, use_cookie=False)
+                assert code == 200 and fresh_issued
+                fresh_cookie = fresh_issued.split(";", 1)[0]
+                assert request("/api/v1/auth/session", cookie_override=fresh_cookie)[0] == 200
+                cluster.STORE.change_own_password("native-viewer", {
+                    "currentPassword": password, "newPassword": password})
+                assert request("/api/v1/auth/session", cookie_override=fresh_cookie)[0] == 401, \
+                    "session-only validation accepted an actual password reset"
+                code, old_issued, _ = request("/api/v1/auth/login", login, use_cookie=False)
+                assert code == 200 and old_issued
+                old_cookie = old_issued.split(";", 1)[0]
+                with cluster.STORE.lock, cluster.STORE.db:
+                    cluster.STORE.db.execute("DELETE FROM users WHERE username=?", ("native-viewer",))
+                cluster.STORE.create_user({"username": "native-viewer", "password": password,
+                    "roles": ["viewer"], "scopes": [{"kind": "camera", "id": "camera-a"}]})
+                code, recreated_issued, _ = request("/api/v1/auth/login", login, use_cookie=False)
+                assert code == 200 and recreated_issued
+                recreated_cookie = recreated_issued.split(";", 1)[0]
+                assert request("/api/v2/account/me", cookie_override=old_cookie)[0] == 401
+                assert request("/api/v2/account/me", cookie_override=recreated_cookie)[0] == 200, \
+                    "rejecting a former account revoked its same-name replacement"
                 print("PASS real native login, bound identity, scope, strict Profile, epoch revocation and logout")
+            finally:
+                if process.poll() is None:
+                    if os.name == "nt":
+                        process.terminate()
+                    else:
+                        os.killpg(process.pid, signal.SIGTERM)
+                    try:
+                        process.wait(timeout=15)
+                    except subprocess.TimeoutExpired:
+                        process.kill()
+                        process.wait(timeout=5)
+
+        # Reuse only this disposable fixture to check the non-native HTTP
+        # compatibility path; this is not an installed legacy-upgrade test.
+        legacy_environment = dict(environment)
+        legacy_environment.pop("WEBOBS_NATIVE_HOST_TOKEN")
+        with (private / "private-legacy-core.log").open("wb") as legacy_log:
+            process = subprocess.Popen([str(binary), "--duration-seconds", "30"], env=legacy_environment,
+                stdin=subprocess.DEVNULL, stdout=legacy_log, stderr=legacy_log,
+                start_new_session=os.name != "nt")
+            try:
+                deadline = time.monotonic() + 15
+                while time.monotonic() < deadline:
+                    assert process.poll() is None, "compatibility control process exited before readiness"
+                    try:
+                        if request("/api/v1/health")[0] == 200:
+                            break
+                    except OSError:
+                        time.sleep(0.1)
+                else:
+                    raise AssertionError("compatibility control process did not become ready")
+                code, compatibility_issued, _ = request("/api/v1/auth/login", login, use_cookie=False)
+                assert code == 200 and compatibility_issued
+                compatibility_cookie = compatibility_issued.split(";", 1)[0]
+                compatibility_hash = hashlib.sha256(compatibility_cookie.split("=", 1)[1].encode()).hexdigest()
+                with contextlib.closing(sqlite3.connect(private / "sessions.db")) as database:
+                    row = database.execute("SELECT user_id,auth_epoch FROM auth_sessions WHERE session_id_hash=?",
+                                           (compatibility_hash,)).fetchone()
+                    assert row == (None, None), "non-native compatibility login protocol changed"
+                assert request("/api/v1/auth/session", cookie_override=compatibility_cookie)[0] == 200
+                assert request("/api/v1/studio", cookie_override=compatibility_cookie)[0] == 200
+                assert request("/api/v1/native/auth/session", cookie_override=compatibility_cookie)[0] == 404
+                print("PASS non-native username-session HTTP compatibility (isolated fixture, not upgrade proof)")
             finally:
                 if process.poll() is None:
                     if os.name == "nt":

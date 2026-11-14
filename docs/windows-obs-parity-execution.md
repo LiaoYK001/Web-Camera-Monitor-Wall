@@ -1302,3 +1302,20 @@ Linux 新内容测试和全套九项 core CTest 通过；真实 HTTP/账号/Regi
 新的 Windows gate 接好保存场景固定投影 → 普通 API 添加/编辑未显示场景及 Preview 指针 → 主图/固定图续验到新 revision → 来源 UUID 保持及两窗口最终像素 → 正常关闭；既有显示场景更改清屏门禁保留。这个新接口不在正在执行的 dev.93（43625385803，source 3ec6dfa），尚待后续实际 Windows 编译/安装/媒体验证，不当成完整 TAKE/Preview-Program bridge。
 
 Canonical scene-content preconditions now reach the real native control and Qt view paths. Unrelated Studio revisions can preserve retained graphs; actual flattened content changes still reject, with all fresh camera/session checks intact. Nine core CTests, real concurrent HTTP/authority regressions, Qt compilation and existing contracts pass locally. New actual Windows two-window continuity tests are wired but pending after dev.93; full TAKE/Program integration remains open.
+
+
+#### dev.93 当前安装与断流门禁通过 / Current installed and input-fault gates pass
+
+43625385803（source 3ec6dfa105a194833796c3e2bb3b186ea8110b69，4.1.0-dev.93）整体 success。便携与真实安装后各 35 项检查、27 组最终窗口捕获通过，均包含一路合成 RTSP 断开→原生 callback 停滞→恢复发布→五路最终画面重新推进，来源 UUID 不变。中断到停滞观察分别 13297/11500 ms，恢复发布启动到八帧像素完成分别 19422/11454 ms；这是包含测试调度/重连/采样的有限故障观察时间，不是端到端延迟或长稳指标。注销退休分别 4/3 ms（原生 handler 范围）。显式空音轨选择仍保留场景视频；实际 D3D11 renderer 可读校验通过，不等于逐路硬解。
+
+恢复正负 I/O 九项及真实 NSIS 中文路径、安装入口/媒体、快捷方式、卸载保留通过。安装逻辑字节 198529824，主流分配 201469992，1865 文件；setup 70141373 字节。核心/媒体 bin/64bit 82991616，web/models 29462611，web/assets 27159997，Python 23785687，其他 bin 13906440 字节，扩展与运行后成本仍需最终产品核算。旧数据升级、完整功能迁移 false，所有二进制仍禁止发布。场景内容 fingerprint 与后续管理会话绑定不在该 source，需要新 Windows 回归。
+
+Dev.93 passes the current portable/fresh-installed, restore-control and lifecycle gates, including one synthetic RTSP outage/recovery with unchanged owned-source identities. Both product surfaces pass 35 checks and 27 capture groups. Installation is 198,529,824 logical bytes; setup is 70,141,373 bytes. Fault observation timings include scheduling/reconnect/capture and do not qualify camera latency, hardware decode, target-device performance or long stability. Complete functionality, legacy upgrade and publication remain unqualified; later source additions need another run.
+
+#### R1/R2 管理网页与原生身份一致 / Management and native identity alignment
+
+原生产品模式的真实普通网页登录现接到已有 native-login，并持久绑定 immutable userId/authEpoch；所有普通控制 API 使用 bound 权限决定。session 与个人账号 API 增加内部 identity-only 校验，不要求额外 scene/live 权限。该模式不允许 Basic 回退、不按用户名升级旧 cookie；非原生部署仍保留原普通协议。后端回复严格核对身份/权限与结构，服务异常返回 503；许可后重验本地会话。账号失效只撤销确切旧绑定，单会话退出只撤销对应 token。
+
+实际 core/真实 AccountHandler、Argon2、Registry HTTP 回归覆盖：普通网页登录持久绑定；未绑定旧 cookie 零后端请求拒绝且不影响另一登录；内部身份/权限服务 503 或错误身份的伪 200 不放行且可恢复；后端 I/O 期间该 token 被撤销后拒绝、同身份另一登录不受影响；实际密码自助重设、epoch 撤销、同名账号重建后旧个人账号入口拒绝且新登录有效。另启动非原生 core 验证真实普通登录仍生成 unbound cookie、session/Studio 可用、native 接口关闭。这是隔离 HTTP 兼容证据，不是旧版安装升级。账号协议 22 项、core 九项 CTest 与 build contracts 44 项通过；此后源码需 Windows 新构建。完整 TAKE/Program/执行 fencing、持续 WebSocket 会话撤销和 R3–R7 仍继续。
+
+Native product management login and ordinary APIs now retain and freshly validate immutable account identity. Actual account/core HTTP tests cover stale/unbound cookies, account recreation, password/epoch revocation, authority failures or mismatched replies, in-flight local logout and isolation of other sessions. A second non-native process verifies the existing username-cookie compatibility protocol. These isolated tests do not establish legacy installed upgrades or the complete Studio engine bridge; Windows validation is pending.

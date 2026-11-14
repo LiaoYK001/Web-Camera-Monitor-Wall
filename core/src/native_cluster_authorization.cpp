@@ -159,6 +159,31 @@ NativeAuthorizationDecision NativeClusterAuthorizationBackend::operator()(std::s
     return request(principal, nullptr, permission, camera_id);
 }
 
+NativeAuthorizationDecision NativeClusterAuthorizationBackend::validate_identity(std::string_view principal,
+    const SessionIdentity &identity) const noexcept
+{
+    if (!configured() || !identifier(principal, 3) || !lower_hex(identity.user_id, 32) ||
+        !lower_hex(identity.auth_epoch, 32))
+        return Decision::unavailable;
+    try {
+        const std::string body = "{\"username\":\"" + std::string(principal) + "\",\"userId\":\"" +
+            identity.user_id + "\",\"authEpoch\":\"" + identity.auth_epoch + "\"}";
+        long status = 0;
+        std::string reply;
+        if (!exchange("/auth/native-session", body, status, reply))
+            return Decision::unavailable;
+        if (status != 200)
+            return parse_response(status, reply, {}, &identity);
+        std::unique_ptr<json_t, decltype(&json_decref)> root(
+            json_loadb(reply.data(), reply.size(), JSON_REJECT_DUPLICATES, nullptr), &json_decref);
+        return json_is_object(root.get()) && json_object_size(root.get()) == 3 &&
+            json_is_true(json_object_get(root.get(), "authenticated")) &&
+            string_value(json_object_get(root.get(), "userId")) == identity.user_id &&
+            string_value(json_object_get(root.get(), "authEpoch")) == identity.auth_epoch
+            ? Decision::allowed : Decision::unavailable;
+    } catch (...) { return Decision::unavailable; }
+}
+
 NativeAuthorizationDecision NativeClusterAuthorizationBackend::operator()(std::string_view principal,
     const SessionIdentity &identity, std::string_view permission, std::string_view camera_id) const noexcept
 {

@@ -645,16 +645,21 @@ std::string camera_scope_for_target(std::string_view target, std::string_view bo
 
 enum class ClusterAuthorization { allowed, user_unknown, denied, unavailable };
 
-ClusterAuthorization cluster_authorize(std::string_view username, const HttpRequest &request)
+ClusterAuthorization cluster_authorize(std::string_view username, const HttpRequest &request,
+                                       const SessionIdentity *identity = nullptr)
 {
     const char *token_value = std::getenv("WEBOBS_CLUSTER_INTERNAL_TOKEN");
     if (!token_value)
         return ClusterAuthorization::unavailable;
     const std::string permission = permission_for_request(request);
     const std::string camera_id = camera_scope_for_target(view(request.target()), view(request.body()));
-    const std::string body = "{\"cameraId\":\"" + json_escape(camera_id) +
+    std::string body = "{\"cameraId\":\"" + json_escape(camera_id) +
                              "\",\"permission\":\"" + json_escape(permission) +
-                             "\",\"username\":\"" + json_escape(username) + "\"}";
+                             "\",\"username\":\"" + json_escape(username) + "\"";
+    if (identity)
+        body += ",\"userId\":\"" + json_escape(identity->user_id) +
+                "\",\"authEpoch\":\"" + json_escape(identity->auth_epoch) + "\"";
+    body += "}";
     CURL *handle = curl_easy_init();
     if (!handle)
         return ClusterAuthorization::unavailable;
@@ -662,17 +667,22 @@ ClusterAuthorization cluster_authorize(std::string_view username, const HttpRequ
     const std::string token_header = "X-WebObs-Internal-Admin: " + std::string(token_value);
     curl_slist *headers = curl_slist_append(nullptr, "Content-Type: application/json");
     headers = curl_slist_append(headers, token_header.c_str());
-    curl_easy_setopt(handle, CURLOPT_URL, runtime_http(8095, "/auth/authorize").c_str());
+    curl_easy_setopt(handle, CURLOPT_URL, runtime_http(8095,
+        identity ? "/auth/native-authorize" : "/auth/authorize").c_str());
     curl_easy_setopt(handle, CURLOPT_PROTOCOLS_STR, "http");
     curl_easy_setopt(handle, CURLOPT_CONNECTTIMEOUT_MS, 500L);
     curl_easy_setopt(handle, CURLOPT_TIMEOUT_MS, 2000L);
     curl_easy_setopt(handle, CURLOPT_NOSIGNAL, 1L);
     curl_easy_setopt(handle, CURLOPT_FOLLOWLOCATION, 0L);
+    curl_easy_setopt(handle, CURLOPT_PROXY, "");
+    curl_easy_setopt(handle, CURLOPT_NOPROXY, "*");
     curl_easy_setopt(handle, CURLOPT_HTTPHEADER, headers);
     curl_easy_setopt(handle, CURLOPT_POSTFIELDS, body.data());
     curl_easy_setopt(handle, CURLOPT_POSTFIELDSIZE_LARGE, static_cast<curl_off_t>(body.size()));
     curl_easy_setopt(handle, CURLOPT_WRITEFUNCTION,
         +[](char *data, std::size_t size, std::size_t count, void *context) -> std::size_t {
+            if (size != 0 && count > (std::numeric_limits<std::size_t>::max)() / size)
+                return 0;
             const std::size_t bytes = size * count;
             auto &destination = *static_cast<std::string *>(context);
             if (bytes > 4096 || destination.size() > 4096 - bytes)
@@ -686,6 +696,32 @@ ClusterAuthorization cluster_authorize(std::string_view username, const HttpRequ
         curl_easy_getinfo(handle, CURLINFO_RESPONSE_CODE, &status);
     curl_slist_free_all(headers);
     curl_easy_cleanup(handle);
+    if (identity) {
+        std::unique_ptr<json_t, decltype(&json_decref)> root(
+            json_loadb(response_body.data(), response_body.size(), JSON_REJECT_DUPLICATES, nullptr), &json_decref);
+        const auto text = [](json_t *value) -> std::string_view {
+            return json_is_string(value) ? std::string_view(json_string_value(value), json_string_length(value))
+                                         : std::string_view{};
+        };
+        if (!json_is_object(root.get()))
+            return ClusterAuthorization::unavailable;
+        if (status == 200)
+            return json_object_size(root.get()) == 4 && json_is_true(json_object_get(root.get(), "allowed")) &&
+                text(json_object_get(root.get(), "permission")) == permission &&
+                text(json_object_get(root.get(), "userId")) == identity->user_id &&
+                text(json_object_get(root.get(), "authEpoch")) == identity->auth_epoch
+                ? ClusterAuthorization::allowed : ClusterAuthorization::unavailable;
+        auto *error = json_object_get(root.get(), "error");
+        if (json_object_size(root.get()) != 1 || !json_is_object(error) || json_object_size(error) != 2)
+            return ClusterAuthorization::unavailable;
+        const auto code = text(json_object_get(error, "code"));
+        const auto message = text(json_object_get(error, "message"));
+        if (status == 404 && code == "user_not_found" && message == "user is not managed by RBAC")
+            return ClusterAuthorization::user_unknown;
+        if (status == 403 && code == "permission_rejected" && message == "permission or resource scope was rejected")
+            return ClusterAuthorization::denied;
+        return ClusterAuthorization::unavailable;
+    }
     if (status == 200)
         return ClusterAuthorization::allowed;
     if (status == 404)
@@ -4564,7 +4600,9 @@ private:
                     error_body("native_request_unavailable", "native product service is busy")));
             return;
         }
-        const bool basic_auth_enabled = authenticator_.enabled() && compatibility_basic_auth_enabled();
+        const char *native_host_token = std::getenv("WEBOBS_NATIVE_HOST_TOKEN");
+        const bool native_product = native_host_token && *native_host_token;
+        const bool basic_auth_enabled = !native_product && authenticator_.enabled() && compatibility_basic_auth_enabled();
         const bool static_resource = !target.starts_with("/api/v1/") &&
                                      !target.starts_with("/api/v2/") &&
                                      !target.starts_with("/api/v3/") && target != "/metrics";
@@ -4613,12 +4651,16 @@ private:
                 return;
             }
             std::string authenticated_username;
+            std::optional<SessionIdentity> authenticated_identity;
             long cluster_login_status = 0;
             if (cluster_auth_enabled) {
-                const ClusterLoginResult cluster_result = cluster_login(credentials->first, credentials->second, client_key_);
+                const ClusterLoginResult cluster_result = cluster_login(credentials->first, credentials->second,
+                    client_key_, native_product);
                 cluster_login_status = cluster_result.status;
-                if (cluster_result.status == 200)
+                if (cluster_result.status == 200) {
                     authenticated_username = cluster_result.username;
+                    authenticated_identity = cluster_result.identity;
+                }
             }
             AuthenticationDecision decision = AuthenticationDecision::invalid_credentials;
             if (authenticated_username.empty() && basic_auth_enabled) {
@@ -4644,7 +4686,10 @@ private:
                 send(authentication_response(decision, version, authenticator_.retry_after_seconds()));
                 return;
             }
-            const auto token = session_store_.create(authenticated_username, client_key_);
+            const auto token = native_product
+                ? (authenticated_identity ? session_store_.create_bound(authenticated_username, client_key_,
+                    *authenticated_identity) : std::nullopt)
+                : session_store_.create(authenticated_username, client_key_);
             if (!token) {
                 send(response(http::status::internal_server_error, version,
                               error_body("session_create_failed", "could not create a browser session")));
@@ -4667,7 +4712,7 @@ private:
             session_record = session_store_.validate_and_slide(*session_token);
         bool basic_authenticated = false;
         const bool device_request = v2_device_route(request);
-        const bool authentication_enabled = basic_auth_enabled || cluster_authentication_enabled();
+        const bool authentication_enabled = native_product || basic_auth_enabled || cluster_authentication_enabled();
         if (!public_probe && !device_request && !static_resource &&
             authentication_enabled && !session_record) {
             if (!basic_auth_enabled) {
@@ -4699,6 +4744,48 @@ private:
                 return;
             }
             basic_authenticated = true;
+        }
+        const auto reject_bound_session = [&](bool identity_revoked = false) {
+            if (identity_revoked && session_record && session_record->identity)
+                session_store_.revoke_identity(session_record->user, *session_record->identity);
+            else if (session_token)
+                session_store_.revoke(*session_token);
+            auto result = response(http::status::unauthorized, version,
+                error_body("session_revoked", "the account session is no longer valid"));
+            result.set(http::field::set_cookie, session_store_.clear_cookie_header());
+            send(std::move(result));
+        };
+        if (native_product && session_record && !public_probe && !device_request && !static_resource &&
+            target != "/api/v1/auth/logout") {
+            if (!session_record->identity) {
+                // Existing username-only cookies require a fresh password login.
+                reject_bound_session();
+                return;
+            }
+            if (target == "/api/v1/auth/session" || target.starts_with("/api/v2/account/")) {
+                NativeClusterAuthorizationConfig config;
+                config.port = static_cast<std::uint16_t>(runtime_port(8095));
+                if (const char *internal = std::getenv("WEBOBS_CLUSTER_INTERNAL_TOKEN"))
+                    config.internal_token = internal;
+                const NativeClusterAuthorizationBackend backend(std::move(config));
+                const auto decision = backend.validate_identity(session_record->user, *session_record->identity);
+                if (decision == NativeAuthorizationDecision::unknown_user) {
+                    reject_bound_session(true);
+                    return;
+                }
+                if (decision != NativeAuthorizationDecision::allowed) {
+                    send(response(http::status::service_unavailable, version,
+                        error_body("authorization_unavailable", "account validation is unavailable")));
+                    return;
+                }
+                const auto current = session_store_.validate_and_slide(*session_token);
+                if (!current || !current->identity || current->user != session_record->user ||
+                    current->identity->user_id != session_record->identity->user_id ||
+                    current->identity->auth_epoch != session_record->identity->auth_epoch) {
+                    reject_bound_session();
+                    return;
+                }
+            }
         }
         if (target == "/api/v1/auth/session") {
             if (request.method() != http::verb::get) {
@@ -4741,10 +4828,15 @@ private:
         if (session_record && !public_probe && !device_request && !static_resource &&
             target != "/api/v1/auth/session" && !target.starts_with("/api/v2/account/") &&
             cluster_authentication_enabled()) {
-            const ClusterAuthorization authorization = cluster_authorize(session_record->user, request);
+            const ClusterAuthorization authorization = cluster_authorize(session_record->user, request,
+                native_product ? &*session_record->identity : nullptr);
             const bool legacy_admin = basic_auth_enabled &&
                 session_record->user == authenticator_.configured_username();
             if (authorization == ClusterAuthorization::user_unknown && !legacy_admin) {
+                if (native_product) {
+                    reject_bound_session(true);
+                    return;
+                }
                 session_store_.revoke_user(session_record->user);
                 HttpResponse result = response(http::status::unauthorized, version,
                     error_body("session_revoked", "the user is disabled or no longer exists"));
@@ -4761,6 +4853,15 @@ private:
                 send(response(http::status::service_unavailable, version,
                               error_body("authorization_unavailable", "RBAC authorization is unavailable")));
                 return;
+            }
+            if (native_product) {
+                const auto current = session_store_.validate_and_slide(*session_token);
+                if (!current || !current->identity || current->user != session_record->user ||
+                    current->identity->user_id != session_record->identity->user_id ||
+                    current->identity->auth_epoch != session_record->identity->auth_epoch) {
+                    reject_bound_session();
+                    return;
+                }
             }
         }
         if (target.starts_with("/api/v2/account/")) {

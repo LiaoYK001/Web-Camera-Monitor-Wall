@@ -622,6 +622,26 @@ class ClusterStore:
             raise ApiError(401, "invalid_credentials", "credentials were rejected")
         return identity
 
+    def native_session(self, value: Any) -> dict[str, Any]:
+        """Validate an already password-bound session without requiring a role.
+
+        Internal-only: this does not authenticate a username or issue a session.
+        Accounts with no media permissions must still be able to manage their
+        own account, and old username-only cookies must never gain a binding.
+        """
+        fields = {"username", "userId", "authEpoch"}
+        value = require_exact_object(value, fields, fields)
+        if not isinstance(value["username"], str) or not USERNAME.fullmatch(value["username"]) or \
+                not self._valid_native_guard(value["userId"]) or not self._valid_native_guard(value["authEpoch"]):
+            raise ApiError(400, "invalid_request", "native session fields are invalid")
+        with self._native_auth_transaction():
+            row = self.db.execute("SELECT id,username,enabled,auth_epoch FROM users WHERE id=?",
+                                  (value["userId"],)).fetchone()
+            if row is None or not row["enabled"] or row["username"] != value["username"] or \
+                    not self._valid_native_guard(row["auth_epoch"]) or row["auth_epoch"] != value["authEpoch"]:
+                raise ApiError(404, "user_not_found", "user is not managed by RBAC")
+        return {"authenticated": True, "userId": value["userId"], "authEpoch": value["authEpoch"]}
+
     def native_authorize(self, value: Any) -> dict[str, Any]:
         fields = {"username", "userId", "authEpoch", "permission", "cameraId"}
         value = require_exact_object(value, fields, fields)
@@ -2460,6 +2480,8 @@ class Handler(http.server.BaseHTTPRequestHandler):
         self.admin()
         if path == "/auth/native-login" and self.command == "POST":
             self.response(200, STORE.native_login(self.read_json()))
+        elif path == "/auth/native-session" and self.command == "POST":
+            self.response(200, STORE.native_session(self.read_json()))
         elif path == "/auth/native-authorize" and self.command == "POST":
             self.response(200, STORE.native_authorize(self.read_json()))
         elif path == "/auth/native-authorize-batch" and self.command == "POST":

@@ -32,6 +32,9 @@ class NativeClusterAuthorizationBackend {
 public:
     explicit NativeClusterAuthorizationBackend(NativeClusterAuthorizationConfig config);
     [[nodiscard]] bool configured() const noexcept { return static_cast<bool>(runtime_); }
+    // Fresh identity check for session/own-account routes, without a media grant.
+    [[nodiscard]] NativeAuthorizationDecision validate_identity(std::string_view principal,
+        const SessionIdentity &identity) const noexcept;
     // principal must come from NativeControlAuth's freshly validated SessionStore.
     // No grants are cached; every valid invocation performs its own bounded POST.
     // Legacy diagnostic adapter only; NativeControlAuth cannot call this overload.

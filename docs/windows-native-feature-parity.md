@@ -91,3 +91,6 @@ Dev.92（43620903246、c1bf843）整体 success，便携/实际 NSIS 安装后�
 
 
 R2 场景内容前置条件已接入真实服务与主图/固定投影：无关全局 revision 更新可继续，实际显示内容与 camera/身份变化仍 fresh 核验/拒绝。Linux 九项 CTest、真实并发 HTTP/权限与 Qt/契约通过；新多窗口最终像素待 dev.93 后 source，完整 TAKE/Preview-Program 仍未接线。 / Scene-content preconditions are wired with fresh authorization preserved; Windows continuity and full Studio integration remain pending.
+
+
+Dev.93（43625385803、3ec6dfa）便携/实际安装各 35 项、27 组最终像素通过；一路合成 RTSP 断流恢复保持来源身份，空音轨选择保留视频。恢复与 NSIS/卸载保留通过；198529824 logical B、setup 70141373 B。仍无真实硬解/目标机/完整功能/旧版升级资格。后续管理网页登录与普通 API 已接不可变身份，本机真实账号/HTTP 回归通过，需新 Windows source；完整 Studio/TAKE bridge 继续。 / Dev.93 passes current installed/fault gates; complete features, upgrade and performance remain open. Bound management identity is locally integrated and awaiting Windows validation.

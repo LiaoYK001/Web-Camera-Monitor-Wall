@@ -180,6 +180,25 @@ class NativeAccountIdentityTests(unittest.TestCase):
             "authEpoch": identity["authEpoch"], "permission": "settings.manage"}, "authorization body mismatch")
         self.assertTrue(all("authEpoch" not in item for item in self.store.list_users()["users"]))
 
+    def test_session_identity_requires_internal_auth_and_never_grants_media(self):
+        self.create(scopes=[{"kind": "camera", "id": "camera-a"}])
+        identity = self.login()
+        binding = {key: identity[key] for key in ("username", "userId", "authEpoch")}
+        status, result = self.request("/auth/native-session", binding)
+        self.assertEqual(status, 200)
+        self.assertEqual(result, {"authenticated": True, "userId": identity["userId"],
+                                  "authEpoch": identity["authEpoch"]})
+        self.assert_api_error(403, lambda: self.store.native_authorize(
+            self.authorization(identity, "settings.manage")))
+        for token in (None, "wrong-token"):
+            status, result = self.request("/auth/native-session", binding, token=token, raw=b"not json")
+            self.assertEqual(status, 403)
+            self.assertEqual(result["error"]["code"], "internal_auth_rejected")
+        for change in ({"userId": "A" * 32}, {"authEpoch": ""}, {"permission": "scene.read"}):
+            self.assert_api_error(400, lambda: self.store.native_session({**binding, **change}))
+        self.update(identity, {"password": PASSWORD})
+        self.assert_api_error(404, lambda: self.store.native_session(binding))
+
     def test_same_password_reset_and_self_change_each_rotate(self):
         self.create()
         first = self.login()
