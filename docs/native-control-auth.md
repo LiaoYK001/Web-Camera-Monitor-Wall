@@ -14,7 +14,15 @@ The R1 product variant now wires these libraries through the existing core liste
 
 普通 API 请求沿用原有 permission/camera scope 推导，但使用 bound native-authorize，同时精确核对返回的身份和权限；账户不存在/禁用/epoch 变化撤销该确切绑定，权限不足为 403，服务或格式异常为 503。`auth/session` 与个人账户 API 使用内部 `/auth/native-session` 检查身份有效性，不额外要求媒体权限；它不创建会话、不赋予观看权限。身份与权限后端调用后均重新检查本地会话，进行中的单会话注销不会撤销同身份的另一登录。个人账户服务仍执行其原有操作校验。
 
-The ordinary browser login in native product mode now password-binds immutable identity through the existing account service and SessionStore, without exposing epoch or host credentials. Bound permission decisions protect ordinary APIs; a separate internal identity-only check protects session/own-account routes without inventing a media-role requirement. Legacy unbound cookies require fresh login, Basic fallback is disabled in native mode, and non-native HTTP compatibility remains unchanged. Replies are correlated and local sessions are rechecked after authority I/O. This is not the complete Studio engine bridge, continuous WebSocket revocation, an atomic execution fence or legacy installed-data migration.
+The ordinary browser login in native product mode now password-binds immutable identity through the existing account service and SessionStore, without exposing epoch or host credentials. Bound permission decisions protect ordinary APIs; a separate internal identity-only check protects session/own-account routes without inventing a media-role requirement. Legacy unbound cookies require fresh login, Basic fallback is disabled in native mode, and non-native HTTP compatibility remains unchanged. Replies are correlated and local sessions are rechecked after authority I/O. This is not the complete Studio engine bridge, an atomic execution fence or legacy installed-data migration.
+
+### 管理 WebSocket 的持续授权 / Continuous management WebSocket authorization
+
+原生产品模式的真实 `/api/v1/ws` 在已有握手校验之外，每两秒通过有界 RequestPool 重新核验同一 token/immutable identity 与该路由的原有 `live.view` 权限，后端 I/O 后再查本地会话。权限决定到期后不开始发送队列更新；续验成功才恢复，失效、权限拒绝、权威服务不可用或 worker queue 饱和都关闭该连接。没有复用为执行授权；已发送的网络数据不可能追溯撤回。单 token 注销不撤销同身份另一会话；账号/epoch 失效撤销确切绑定。关闭 socket 同时取消 timer，避免断开后继续轮询。原有最多 16 条 outbound 队列保持，查询不在 socket 事件线程阻塞。
+
+非原生部署保留原协议，不额外启用该原生绑定策略。真实 core/TCP WebSocket 回归包含初始 snapshot、RFC6455 ping/pong、注销、密码重设、角色撤权、服务 503、另一会话继续使用、断开后无重复后台请求，以及非原生 socket 兼容；不把这项视作所有业务流/远端服务已完成授权审计。
+
+Native-product WebSockets now renew the same session identity and existing route permission on a two-second decision lease through the bounded worker pool. Expired decisions prevent starting queued writes; failed renewal or saturation closes the connection. Local sessions are checked before/after authority I/O, and peer closure retires the timer. Actual TCP/upgrade/frame tests cover logout, password/role revocation, unavailable authority, parallel-session isolation, no orphan polling and non-native compatibility. This is not a reusable execution grant, retroactive recall of sent data or a complete remote/business-stream audit.
 
 ## 固定命令与检查 / Allowlisted checks
 

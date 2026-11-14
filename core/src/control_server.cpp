@@ -2930,7 +2930,10 @@ private:
 
 class WebSocketSession : public std::enable_shared_from_this<WebSocketSession> {
 public:
-    WebSocketSession(tcp::socket socket, WebSocketHub &hub) : stream_(std::move(socket)), hub_(hub) {}
+    using IdentityCheck = std::function<bool()>;
+    WebSocketSession(tcp::socket socket, WebSocketHub &hub, RequestPool &pool, IdentityCheck check = {})
+        : stream_(std::move(socket)), hub_(hub), pool_(pool), identity_check_(std::move(check)),
+          authorization_timer_(stream_.get_executor()) {}
 
     void run(HttpRequest request, std::string initial_message)
     {
@@ -2959,6 +2962,10 @@ private:
         if (error)
             return;
         stream_.text(true);
+        if (identity_check_) {
+            authorized_until_ = std::chrono::steady_clock::now() + std::chrono::seconds(2);
+            schedule_authorization();
+        }
         hub_.join(shared_from_this());
         send(std::move(initial_message_));
         do_read();
@@ -2971,14 +2978,17 @@ private:
 
     void on_read(beast::error_code error, std::size_t)
     {
-        if (error)
+        if (error) {
+            close_revoked();
             return;
+        }
         buffer_.consume(buffer_.size());
         do_read();
     }
 
     void on_send(std::shared_ptr<const std::string> message)
     {
+        if (closed_) return;
         if (outbound_.size() >= 16)
             return;
         outbound_.push_back(std::move(message));
@@ -2989,14 +2999,23 @@ private:
 
     void do_write()
     {
+        // Do not emit queued updates after the current decision lease expires,
+        // including while a slow authority request is still in flight.
+        if (closed_ || writing_ || outbound_.empty() ||
+            (identity_check_ && std::chrono::steady_clock::now() >= authorized_until_))
+            return;
+        writing_ = true;
         stream_.async_write(net::buffer(*outbound_.front()),
                             beast::bind_front_handler(&WebSocketSession::on_write, shared_from_this()));
     }
 
     void on_write(beast::error_code error, std::size_t)
     {
-        if (error)
+        writing_ = false;
+        if (error) {
+            close_revoked();
             return;
+        }
         outbound_.pop_front();
         if (!outbound_.empty())
             do_write();
@@ -3005,8 +3024,43 @@ private:
     websocket::stream<beast::tcp_stream> stream_;
     beast::flat_buffer buffer_;
     WebSocketHub &hub_;
+    RequestPool &pool_;
+    IdentityCheck identity_check_;
+    net::steady_timer authorization_timer_;
+    std::chrono::steady_clock::time_point authorized_until_{};
+    bool closed_ = false, writing_ = false;
     std::string initial_message_;
     std::deque<std::shared_ptr<const std::string>> outbound_;
+
+    void close_revoked()
+    {
+        if (closed_) return;
+        closed_ = true;
+        authorization_timer_.cancel();
+        beast::error_code ignored;
+        auto &socket = beast::get_lowest_layer(stream_).socket();
+        socket.cancel(ignored);
+        socket.shutdown(tcp::socket::shutdown_both, ignored);
+        socket.close(ignored);
+    }
+    void schedule_authorization()
+    {
+        authorization_timer_.expires_at(authorized_until_);
+        authorization_timer_.async_wait([self = shared_from_this()](beast::error_code error) {
+            if (error || self->closed_) return;
+            if (!self->pool_.post([self] {
+                bool allowed = false;
+                try { allowed = self->identity_check_(); } catch (...) {}
+                net::post(self->stream_.get_executor(), [self, allowed] {
+                    if (self->closed_) return;
+                    if (!allowed) { self->close_revoked(); return; }
+                    self->authorized_until_ = std::chrono::steady_clock::now() + std::chrono::seconds(2);
+                    self->do_write();
+                    self->schedule_authorization();
+                });
+            })) self->close_revoked();
+        });
+    }
 };
 
 void WebSocketHub::join(const std::shared_ptr<WebSocketSession> &session)
@@ -4947,7 +5001,25 @@ private:
                               error_body("serialization_failed", snapshot.error, snapshot.revision)));
                 return;
             }
-            std::make_shared<WebSocketSession>(stream_.release_socket(), hub_)
+            WebSocketSession::IdentityCheck identity_check;
+            if (native_product && session_record && session_record->identity && session_token) {
+                identity_check = [sessions = &session_store_, token = *session_token,
+                    principal = session_record->user, identity = *session_record->identity] {
+                    const auto matches = [&](const auto &record) {
+                        return record && record->identity && record->user == principal &&
+                            record->identity->user_id == identity.user_id &&
+                            record->identity->auth_epoch == identity.auth_epoch;
+                    };
+                    if (!matches(sessions->validate_and_slide(token))) return false;
+                    const HttpRequest check_request(http::verb::get, "/api/v1/ws", 11);
+                    const auto decision = cluster_authorize(principal, check_request, &identity);
+                    if (decision == ClusterAuthorization::user_unknown)
+                        sessions->revoke_identity(principal, identity);
+                    return decision == ClusterAuthorization::allowed &&
+                        matches(sessions->validate_and_slide(token));
+                };
+            }
+            std::make_shared<WebSocketSession>(stream_.release_socket(), hub_, pool_, std::move(identity_check))
                 ->run(std::move(request), scene_event("scene.snapshot", snapshot.public_json));
             return;
         }

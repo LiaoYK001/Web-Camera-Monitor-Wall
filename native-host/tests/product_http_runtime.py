@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import base64
 import contextlib
 import hashlib
 from http.server import ThreadingHTTPServer
@@ -15,6 +16,7 @@ import secrets
 import signal
 import socket
 import sqlite3
+import struct
 import subprocess
 import sys
 import tempfile
@@ -24,6 +26,83 @@ import urllib.error
 import urllib.request
 
 ROOT = Path(__file__).resolve().parents[2]
+
+
+class WebSocketProbe:
+    """Bounded real TCP/RFC6455 observer, without an extra runtime dependency."""
+    def __init__(self, port, cookie):
+        self.socket = socket.create_connection(("127.0.0.1", port), timeout=6)
+        self.reader = self.socket.makefile("rb")
+        try:
+            key = base64.b64encode(secrets.token_bytes(16)).decode()
+            origin = f"http://127.0.0.1:{port}"
+            self.socket.sendall((f"GET /api/v1/ws HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\n"
+                f"Origin: {origin}\r\nCookie: {cookie}\r\nUpgrade: websocket\r\nConnection: Upgrade\r\n"
+                f"Sec-WebSocket-Key: {key}\r\nSec-WebSocket-Version: 13\r\n\r\n").encode())
+            assert self.reader.readline(4096).startswith(b"HTTP/1.1 101 "), "real WebSocket upgrade failed"
+            headers = {}
+            size = 0
+            for _ in range(128):
+                line = self.reader.readline(4096)
+                size += len(line)
+                assert line and size <= 16384
+                if line == b"\r\n":
+                    break
+                name, value = line.split(b":", 1)
+                headers[name.lower()] = value.strip()
+            else:
+                raise AssertionError("WebSocket upgrade headers exceeded limit")
+            expected = base64.b64encode(hashlib.sha1((key + "258EAFA5-E914-47DA-95CA-C5AB0DC85B11").encode()).digest())
+            assert headers.get(b"sec-websocket-accept") == expected
+            opcode, payload = self.frame()
+            assert opcode == 1 and isinstance(json.loads(payload), dict)
+        except BaseException:
+            self.close()
+            raise
+
+    def frame(self):
+        def read(count):
+            data = self.reader.read(count)
+            if len(data) != count:
+                raise EOFError("owned WebSocket closed")
+            return data
+        first, second = read(2)
+        assert first & 0x80 and not first & 0x70 and not second & 0x80
+        length = second & 0x7f
+        if length == 126:
+            length = struct.unpack("!H", read(2))[0]
+        elif length == 127:
+            length = struct.unpack("!Q", read(8))[0]
+        assert length <= 2 * 1024 * 1024
+        return first & 0x0f, read(length)
+
+    def ping(self):
+        payload, mask = b"health", secrets.token_bytes(4)
+        self.socket.sendall(bytes((0x89, 0x80 | len(payload))) + mask +
+            bytes(value ^ mask[index % 4] for index, value in enumerate(payload)))
+        opcode, reply = self.frame()
+        assert opcode == 10 and reply == payload, "unrevoked WebSocket did not remain usable"
+
+    def wait_closed(self):
+        deadline = time.monotonic() + 6
+        try:
+            while time.monotonic() < deadline:
+                self.socket.settimeout(max(0.01, deadline - time.monotonic()))
+                if self.frame()[0] == 8:
+                    return
+        except (EOFError, ConnectionResetError, ConnectionAbortedError):
+            return
+        raise AssertionError("revoked WebSocket remained open beyond its deadline")
+
+    def close(self):
+        self.reader.close()
+        self.socket.close()
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *_args):
+        self.close()
 
 
 def load(name, path):
@@ -149,7 +228,8 @@ def exercise(binary):
             except urllib.error.HTTPError as error:
                 reply = error
             with reply:
-                return reply.status, reply.headers.get("Set-Cookie", ""), json.loads(reply.read())
+                payload = reply.read()
+                return reply.status, reply.headers.get("Set-Cookie", ""), json.loads(payload) if payload else {}
 
         with (private / "private-core.log").open("wb") as log:
             process = subprocess.Popen([str(binary), "--duration-seconds", "120"], env=environment,
@@ -450,6 +530,52 @@ def exercise(binary):
                 assert request("/api/v2/account/me", cookie_override=old_cookie)[0] == 401
                 assert request("/api/v2/account/me", cookie_override=recreated_cookie)[0] == 200, \
                     "rejecting a former account revoked its same-name replacement"
+                # Real upgraded sockets must not outlive logout/password/role
+                # changes, and closing one token must preserve another login.
+                code, parallel_issued, _ = request("/api/v1/auth/login", login, use_cookie=False)
+                assert code == 200 and parallel_issued
+                parallel_cookie = parallel_issued.split(";", 1)[0]
+                with WebSocketProbe(port, recreated_cookie) as first_ws, \
+                        WebSocketProbe(port, parallel_cookie) as second_ws:
+                    first_ws.ping()
+                    second_ws.ping()
+                    assert request("/api/v1/auth/logout", {}, cookie_override=recreated_cookie)[0] == 204
+                    first_ws.wait_closed()
+                    second_ws.ping()
+                    assert request("/api/v1/auth/session", cookie_override=parallel_cookie)[0] == 200
+                    cluster.STORE.change_own_password("native-viewer", {
+                        "currentPassword": password, "newPassword": password})
+                    second_ws.wait_closed()
+                code, role_issued, _ = request("/api/v1/auth/login", login, use_cookie=False)
+                assert code == 200 and role_issued
+                role_cookie = role_issued.split(";", 1)[0]
+                with WebSocketProbe(port, role_cookie) as role_ws:
+                    with cluster.STORE.lock:
+                        row = cluster.STORE.db.execute("SELECT id,revision FROM users WHERE username=?",
+                                                       ("native-viewer",)).fetchone()
+                    cluster.STORE.update_user(row["id"], {"roles": ["auditor"]}, row["revision"])
+                    role_ws.wait_closed()
+                # Identity-only session/own-account access still works without
+                # media roles; an active socket never becomes a cached grant.
+                assert request("/api/v1/auth/session", cookie_override=role_cookie)[0] == 200
+                assert request("/api/v2/account/me", cookie_override=role_cookie)[0] == 200
+                assert request("/api/v1/studio", cookie_override=role_cookie)[0] == 403
+                cluster.STORE.update_user(row["id"], {"roles": ["viewer"]}, row["revision"] + 1)
+                with WebSocketProbe(port, role_cookie) as unavailable_ws:
+                    authority_overrides["/auth/native-authorize"] = (503, {"error": {
+                        "code": "fixture_unavailable", "message": "synthetic unavailable"}})
+                    unavailable_ws.wait_closed()
+                assert request("/api/v1/auth/session", cookie_override=role_cookie)[0] == 200
+                with WebSocketProbe(port, role_cookie) as retiring_ws:
+                    retiring_ws.ping()
+                # A closed peer must release its timer/self-reference rather
+                # than keep authorizing forever without a live consumer.
+                time.sleep(2.2)
+                retired_authority_calls = len(authority_paths)
+                time.sleep(2.2)
+                assert len(authority_paths) == retired_authority_calls, \
+                    "closed WebSocket retained a repeating authority timer"
+                print("PASS real WebSocket logout/password/role revocation and same-identity session isolation")
                 print("PASS real native login, bound identity, scope, strict Profile, epoch revocation and logout")
             finally:
                 if process.poll() is None:
@@ -492,6 +618,8 @@ def exercise(binary):
                     assert row == (None, None), "non-native compatibility login protocol changed"
                 assert request("/api/v1/auth/session", cookie_override=compatibility_cookie)[0] == 200
                 assert request("/api/v1/studio", cookie_override=compatibility_cookie)[0] == 200
+                with WebSocketProbe(port, compatibility_cookie) as compatibility_ws:
+                    compatibility_ws.ping()
                 assert request("/api/v1/native/auth/session", cookie_override=compatibility_cookie)[0] == 404
                 print("PASS non-native username-session HTTP compatibility (isolated fixture, not upgrade proof)")
             finally:

@@ -1328,3 +1328,12 @@ Native product management login and ordinary APIs now retain and freshly validat
 私密诊断从实际 OBS frontend 查询 Program root UUID、Studio 状态、完整子树媒体源数量及主监看是否等于 Program。实际 Windows gate 要求启动锁定和每组窗口像素捕获期间均维持同一个空 Program、Preview/Program 分离，并继续原五路最终画面/同源/切换/断流/撤权/投影门禁。Qt 实际头文件编译、OBS 固定补丁 apply --check、44 build contracts、22 pixel contracts（两项既有 skip）通过；尚待 dev.94（6df8e5a、43629933739）之后的新 source 实际运行。该步骤不实现 TAKE/过渡、Program 录像/推流消费者或浏览器→引擎原子 bridge，不以隔离 Program 的回读当成 Program 最终像素证据。
 
 The real OBS Studio Preview now owns local monitor selection, initialized against an empty Program before authentication. Selection fails closed without Studio mode instead of falling back to global output. Product-copy configuration disables source/swap duplication. Actual Windows regressions are extended to verify unchanged empty Program identity/tree during local viewing and every pixel capture; local compilation and existing contracts pass, with Windows runtime validation pending after dev.94. Full TAKE/transitions, output consumers and the authenticated engine bridge remain open.
+
+
+#### R1/R2 管理 WebSocket 持续续验 / Continuous management WebSocket renewal
+
+原生产品模式 `/api/v1/ws` 现保留真实握手检查，并每两秒在有界 RequestPool 中核验原 cookie 的相同 immutable identity、原有 live.view 路由权限和请求后本地会话；不在 socket 线程阻塞网络。决定过期期间不开始发送已排队消息（队列上限仍为 16）；新决定通过再继续，失效/撤权/服务故障或队列拒绝则关闭 socket。关闭同时取消 timer；普通非原生部署无此新增绑定策略。
+
+本机实际 core+账号+Argon2 HTTP 回归加入标准库原始 TCP/RFC6455 握手、snapshot 与 ping/pong：注销一 token 只关闭该 socket，另一登录/长连接仍可用；真实密码修改、viewer→auditor 撤媒体角色均自动关闭；无媒体角色仍可 session/个人账号访问；权威 503 关闭 socket 但不误撤销有效登录；peer 断开后超过续验间隔不再请求后端。另实际非原生 core 登录和 socket 保持兼容。九项 CTest 全通过。这里不声称对已发网络数据追溯撤回、所有远端媒体/业务流审计或原子执行 fencing；新 Windows source 尚待编译/安装回归。
+
+Native management WebSockets now use bounded asynchronous two-second identity/permission renewal, hold queued writes after decision expiry and retire failed/disconnected consumers. Actual TCP/account/core regressions and all nine CTests pass, including revocation, parallel-session isolation, authority failure, no orphan polling and legacy HTTP/socket compatibility. Later Windows qualification and the full Studio engine/business-stream work remain open.
