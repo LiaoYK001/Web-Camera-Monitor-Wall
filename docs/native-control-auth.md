@@ -20,6 +20,14 @@ The ordinary browser login in native product mode now password-binds immutable i
 
 Queued native management mutations now freshly recheck the captured session/identity and route permission immediately before the business handler, including the saturated inline path. Deterministic real-authority tests prove rejection after an initial allowed decision without persisting the Studio mutation, and preserve the clearing cookie. This is not a global cross-service transaction fence.
 
+### 个人账号业务内的身份事务 / Identity inside own-account operations
+
+原生管理个人账号代理先擦除所有客户端 Principal/Account-Id/Account-Epoch，再从已绑定会话补入受信元数据。固定 loopback 账号服务仍要求内部管理员 header，精确校验单个完整身份 header 对；不转发产品 cookie、宿主 token。个人资料、密码与五类偏好的实际操作通过 native_account 在同一 BEGIN IMMEDIATE 事务中核对 immutable identity，再调用原有业务实现。嵌套 preference helper 复用已有事务，不能提前 commit 外层身份 fence；响应在外层提交之后生成。密码操作本身允许旋转 epoch，随后旧会话失效。非原生代理删除伪造绑定 header，保留原有 username 协议。
+
+真实 TCP 代理测试在 core 两次核验后、账号服务处理前删除并重建同名账号，旧 PATCH 被拒绝/清 cookie，新账号数据未改；同时验证客户端伪造身份被替换、产品凭据未转发、无媒体角色的本人资料与改密码仍可用。SQLite 第二连接在每次嵌套 preference 前后尝试修改身份均被锁拒绝；模拟审计写入失败回滚资料并退出事务。这项事务 fence 仅覆盖该账号数据库的本人操作，不是整个 Program/跨服务 fencing。
+
+Native own-account forwarding now derives internal actor headers from the bound session after stripping client values. The existing account operations validate that identity and execute inside one explicit SQLite transaction; nested preference helpers cannot commit the identity fence early. Actual proxy, hostile-header, same-name replacement, second-connection exclusion and rollback tests pass. Non-native compatibility stays intact. This fence covers own-account data in this database, not all Program or cross-service operations.
+
 ### 管理 WebSocket 的持续授权 / Continuous management WebSocket authorization
 
 原生产品模式的真实 `/api/v1/ws` 在已有握手校验之外，每两秒通过有界 RequestPool 重新核验同一 token/immutable identity 与该路由的原有 `live.view` 权限，后端 I/O 后再查本地会话。权限决定到期后不开始发送队列更新；续验成功才恢复，失效、权限拒绝、权威服务不可用或 worker queue 饱和都关闭该连接。没有复用为执行授权；已发送的网络数据不可能追溯撤回。单 token 注销不撤销同身份另一会话；账号/epoch 失效撤销确切绑定。关闭 socket 同时取消 timer，避免断开后继续轮询。原有最多 16 条 outbound 队列保持，查询不在 socket 事件线程阻塞。

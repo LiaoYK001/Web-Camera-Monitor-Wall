@@ -171,6 +171,7 @@ def exercise(binary):
         identity_hooks = []
         authority_overrides = {}
         before_authority_hooks, after_authority_hooks, authorization_statuses = [], [], []
+        account_hooks = []
 
         class AccountHandler(cluster.Handler):
             def response(self, status, value=None):
@@ -198,6 +199,11 @@ def exercise(binary):
                         hook()
                     return
                 super().do_POST()
+
+            def do_PATCH(self):
+                if self.path.startswith("/account/") and account_hooks:
+                    account_hooks.pop(0)(self.headers)
+                super().do_PATCH()
 
         class RegistryHandler(camera.Handler):
             def do_GET(self):
@@ -230,8 +236,9 @@ def exercise(binary):
         cookie = ""
 
         def request(path, value=None, *, method=None, secret=host_secret, request_origin=origin,
-                    use_cookie=True, cookie_override=None, revision=None):
+                    use_cookie=True, cookie_override=None, revision=None, extra_headers=None):
             headers = {"Origin": request_origin, "Content-Type": "application/json", "X-WebOBS-Native-Host": secret}
+            headers.update(extra_headers or {})
             effective_cookie = cookie if cookie_override is None else cookie_override
             if effective_cookie and use_cookie:
                 headers["Cookie"] = effective_cookie
@@ -488,6 +495,44 @@ def exercise(binary):
                     "queued mutation ignored logout during execution authorization"
                 assert request("/api/v1/studio", cookie_override=admin_cookie)[2] == before_mutation
                 print("PASS queued real Studio mutations recheck roles and in-flight local logout before persistence")
+                code, operation_issued, _ = request("/api/v1/auth/login", {
+                    "username": "mutation-admin", "password": executor_password}, use_cookie=False)
+                assert code == 200 and operation_issued
+                operation_cookie = operation_issued.split(";", 1)[0]
+                with cluster.STORE.lock:
+                    operation_row = cluster.STORE.db.execute("SELECT id,auth_epoch FROM users WHERE username=?",
+                                                             ("mutation-admin",)).fetchone()
+                def replace_account_after_core_validation(headers):
+                    assert headers.get("X-WebObs-Principal") == "mutation-admin"
+                    assert headers.get("X-WebObs-Account-Id") == operation_row["id"]
+                    assert headers.get("X-WebObs-Account-Epoch") == operation_row["auth_epoch"]
+                    assert headers.get("Cookie") is None and headers.get("X-WebOBS-Native-Host") is None
+                    with cluster.STORE.lock, cluster.STORE.db:
+                        cluster.STORE.db.execute("DELETE FROM users WHERE id=?", (operation_row["id"],))
+                    cluster.STORE.create_user({"username": "mutation-admin", "password": executor_password,
+                                              "roles": ["auditor"]})
+                account_hooks.append(replace_account_after_core_validation)
+                code, clearing_cookie, _ = request("/api/v2/account/me", {"displayName": "Must not transfer"},
+                    method="PATCH", cookie_override=operation_cookie, extra_headers={
+                        "X-WebObs-Principal": "native-admin", "X-WebObs-Account-Id": "0" * 32,
+                        "X-WebObs-Account-Epoch": "0" * 32})
+                assert code == 401 and "Max-Age=0" in clearing_cookie and not account_hooks
+                code, replacement_issued, _ = request("/api/v1/auth/login", {
+                    "username": "mutation-admin", "password": executor_password}, use_cookie=False)
+                assert code == 200 and replacement_issued
+                replacement_cookie = replacement_issued.split(";", 1)[0]
+                code, _, profile = request("/api/v2/account/me", cookie_override=replacement_cookie)
+                assert code == 200 and profile["displayName"] == "mutation-admin", \
+                    "a stale forwarded actor modified its same-name replacement"
+                code, _, profile = request("/api/v2/account/me", {"displayName": "Current own account"},
+                    method="PATCH", cookie_override=replacement_cookie)
+                assert code == 200 and profile["displayName"] == "Current own account"
+                code, _, changed_password = request("/api/v2/account/password", {
+                    "currentPassword": executor_password, "newPassword": executor_password},
+                    cookie_override=replacement_cookie)
+                assert code == 200 and changed_password == {"changed": True}
+                assert request("/api/v1/auth/session", cookie_override=replacement_cookie)[0] == 401
+                print("PASS real account proxy binds immutable actor inside own-account transaction")
                 with contextlib.closing(sqlite3.connect(private / "sessions.db")) as database:
                     row = database.execute("SELECT user_id,auth_epoch FROM auth_sessions WHERE user_id=?",
                         (identity["userId"],)).fetchone()
@@ -669,7 +714,17 @@ def exercise(binary):
                                            (compatibility_hash,)).fetchone()
                     assert row == (None, None), "non-native compatibility login protocol changed"
                 assert request("/api/v1/auth/session", cookie_override=compatibility_cookie)[0] == 200
-                assert request("/api/v1/studio", cookie_override=compatibility_cookie)[0] == 200
+                code, _, legacy_studio = request("/api/v1/studio", cookie_override=compatibility_cookie)
+                assert code == 200
+                legacy_studio["scenes"][1]["name"] = "Legacy HTTP mutation remains available"
+                assert request("/api/v1/studio", legacy_studio, method="PUT", revision=legacy_studio["revision"],
+                               cookie_override=setup_cookie)[0] == 200
+                code, _, legacy_profile = request("/api/v2/account/me", {"displayName": "Legacy own account"},
+                    method="PATCH", cookie_override=compatibility_cookie, extra_headers={
+                        "X-WebObs-Principal": "native-admin", "X-WebObs-Account-Id": "0" * 32,
+                        "X-WebObs-Account-Epoch": "0" * 32})
+                assert code == 200 and legacy_profile["username"] == "native-viewer" and \
+                    legacy_profile["displayName"] == "Legacy own account"
                 with WebSocketProbe(port, compatibility_cookie) as compatibility_ws:
                     compatibility_ws.ping()
                 assert request("/api/v1/native/auth/session", cookie_override=compatibility_cookie)[0] == 404

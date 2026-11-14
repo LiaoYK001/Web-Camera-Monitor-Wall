@@ -2510,6 +2510,26 @@ public:
                 }
                 const std::string principal_header = "X-WebObs-Principal: " + std::string(principal);
                 headers = curl_slist_append(headers, principal_header.c_str());
+                const auto id = view(request["X-WebObs-Account-Id"]);
+                const auto epoch = view(request["X-WebObs-Account-Epoch"]);
+                if (!id.empty() || !epoch.empty()) {
+                    const auto guard = [](std::string_view text) {
+                        return text.size() == 32 && std::all_of(text.begin(), text.end(), [](char c) {
+                            return (c >= '0' && c <= '9') || (c >= 'a' && c <= 'f');
+                        });
+                    };
+                    if (!guard(id) || !guard(epoch)) {
+                        curl_slist_free_all(headers);
+                        curl_easy_cleanup(handle);
+                        return response(http::status::unauthorized, request.version(),
+                            error_body("account_rejected", "account session is unavailable"));
+                    }
+                    for (const auto &[name, value] : {std::pair{"X-WebObs-Account-Id: ", id},
+                                                     std::pair{"X-WebObs-Account-Epoch: ", epoch}}) {
+                        const auto header = name + std::string(value);
+                        headers = curl_slist_append(headers, header.c_str());
+                    }
+                }
             }
         }
         curl_easy_setopt(handle, CURLOPT_URL, url.c_str());
@@ -4962,8 +4982,14 @@ private:
         }
         if (target.starts_with("/api/v2/account/")) {
             request.erase("X-WebObs-Principal");
+            request.erase("X-WebObs-Account-Id");
+            request.erase("X-WebObs-Account-Epoch");
             if (session_record)
                 request.set("X-WebObs-Principal", session_record->user);
+            if (native_product && session_record && session_record->identity) {
+                request.set("X-WebObs-Account-Id", session_record->identity->user_id);
+                request.set("X-WebObs-Account-Epoch", session_record->identity->auth_epoch);
+            }
         }
         if (target.starts_with("/api/v1/nvr")) {
             request.erase("X-WebObs-Nvr-Principal");
@@ -5075,14 +5101,19 @@ private:
             request.method() == http::verb::patch || request.method() == http::verb::delete_;
         const auto actor = native_product && mutating ? session_record : std::nullopt;
         auto queued = std::make_shared<HttpRequest>(std::move(request));
-        const auto execute = [this, queued, cookie_token, actor] {
+        const auto execute = [this, queued, cookie_token, actor, native_product] {
             // The worker may start well after the initial HTTP gate. Never turn
             // that earlier decision into a permission to execute queued work.
             if (actor && cookie_token)
                 if (auto rejected = native_mutation_rejection(*queued, *cookie_token, *actor))
                     return std::move(*rejected);
-            return handle_request(*queued, controller_, studio_, hub_, whep_proxy_,
+            auto result = handle_request(*queued, controller_, studio_, hub_, whep_proxy_,
                 nvr_proxy_, camera_proxy_, allowed_origins_, runtime_status_, metrics_, authenticator_);
+            if (native_product && cookie_token && result.result() == http::status::unauthorized) {
+                session_store_.revoke(*cookie_token);
+                result.set(http::field::set_cookie, session_store_.clear_cookie_header());
+            }
+            return result;
         };
         const bool dispatched = pool_.post(
             [this, self, execute, cookie_token] {

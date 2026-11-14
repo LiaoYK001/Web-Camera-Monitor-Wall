@@ -1346,3 +1346,12 @@ Native management WebSockets now use bounded asynchronous two-second identity/pe
 真实 HTTP/AccountHandler/Studio 回归用真实 authority RLock 将“第一次允许回复→改角色但不改 epoch→第二次决定”固定为 200/403，要求 Studio revision/全文未改；另一例第二次决定期间删除原 token，要求 200/200 后业务返回 401 与 Max-Age=0，Studio 不写且另一登录仍有效。此前原生权限/并发内容、WebSocket/断开清理及非原生兼容回归均通过。编译通过，新 Windows source 待后续构建。该步骤不是整个 TAKE/跨库/所有后端事务 fencing；个人账户代理仍需在真实业务事务内核对 actor，不能只依赖前置检查。
 
 Native management mutations now revalidate their captured actor immediately before handler execution after queueing. Deterministic actual HTTP tests reject role changes or in-flight logout after the initial grant, preserve document state and keep the clearing cookie. Existing native/socket/compatibility regressions pass. Full TAKE and cross-service/transaction fencing, including identity inside actual account operations, remain open.
+
+
+#### R1 本人账号事务内身份校验 / Own-account identity transaction fence
+
+core 个人账号代理擦除客户端身份 header，使用 bound session 重新构造 Principal/Account-Id/Account-Epoch；proxy 仅转发校验后的严格字段与已有内部 admin 凭据，不转发产品 Cookie/宿主 secret。真实账号 Handler 对完整单个身份对走 native_account：在显式 BEGIN IMMEDIATE 内核对 actor 并执行既有资料、密码、偏好操作，嵌套 preference helper 不提交外层事务，提交后才生成 HTTP 回复。上游 401 会撤销原 token 并清 cookie，不滑动恢复它。非原生协议删除伪造绑定字段并继续既有本人操作。
+
+实际 AccountHandler/core/Argon2 TCP 回归在 core 初始与 worker 校验通过后、上游 PATCH 前替换同名账号；证明 header 来源为原会话（替换客户端的伪 Principal/全零 guard），旧 actor 401/clear-cookie、新账号资料原样；新无媒体角色账号可修改本人资料，真实代理改密码后旧会话失效。25 项账号协议测试包含第二 SQLite 连接在每个嵌套 preference 前后修改身份均锁失败、模拟写入后审计失败完整回滚、缺失/重复 header 拒绝。42 项既有 cluster 单测和九项 core CTest 通过；完整 HTTP/并发内容/入队/长连接/非原生普通修改均通过。新 Windows source 待后续构建；当前 dev.94 6df8e5a 不含本次 Program 分离、长连接、入队与账号事务修改。完整 TAKE 与其他跨服务事务/业务功能继续。
+
+Trusted own-account actor headers and transactional identity validation are now connected to the real proxy and existing account operations. Actual TCP tests reject a same-name replacement after both core gates, strip client identity injection and retain current-user functionality. Twenty-five identity/protocol, forty-two cluster and nine core CTests pass, including real second-connection exclusion and rollback; existing HTTP/socket/compatibility regression passes. Windows validation of this later source and the full Program/business integration remain pending.

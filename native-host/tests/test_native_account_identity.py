@@ -109,7 +109,7 @@ class NativeAccountIdentityTests(unittest.TestCase):
         self.assert_api_error(404, lambda: self.store.native_authorize(self.authorization(identity)),
                               "user_not_found", "user is not managed by RBAC")
 
-    def request(self, path, value, *, token=TOKEN, method="POST", raw=None):
+    def request(self, path, value, *, token=TOKEN, method="POST", raw=None, extra_headers=()):
         """Run the actual HTTP dispatch/read_json/admin chain without sockets."""
         body = json.dumps(value).encode() if raw is None else raw
         handler = cluster.Handler.__new__(cluster.Handler)
@@ -120,6 +120,8 @@ class NativeAccountIdentityTests(unittest.TestCase):
         handler.headers["Content-Length"] = str(len(body))
         if token is not None:
             handler.headers["X-WebObs-Internal-Admin"] = token
+        for name, value in extra_headers:
+            handler.headers[name] = value
         handler.rfile = io.BytesIO(body)
         responses = []
         handler.response = lambda status, value=None: responses.append((status, value))
@@ -198,6 +200,73 @@ class NativeAccountIdentityTests(unittest.TestCase):
             self.assert_api_error(400, lambda: self.store.native_session({**binding, **change}))
         self.update(identity, {"password": PASSWORD})
         self.assert_api_error(404, lambda: self.store.native_session(binding))
+
+    def test_bound_account_operations_preserve_existing_features_and_reject_recreated_actor(self):
+        self.create(roles=["auditor"])
+        identity = self.login()
+        binding = {key: identity[key] for key in ("username", "userId", "authEpoch")}
+        profile = self.store.native_account(binding, "/account/me", "PATCH", {"displayName": "Bound user"})
+        self.assertEqual(profile["displayName"], "Bound user")
+        saved = self.store.native_account(binding, "/account/preferences/workspace-layout", "PUT",
+                                          {"value": {"layout": "synthetic"}})
+        self.assertEqual(saved["value"], {"layout": "synthetic"})
+        self.assertEqual(self.store.native_account(binding, "/account/preferences/workspace-layout", "GET"), saved)
+        with mock.patch.object(self.store, "_audit", side_effect=RuntimeError("synthetic write failure")):
+            self.assert_api_error(503, lambda: self.store.native_account(binding, "/account/me", "PATCH",
+                                                                       {"displayName": "Must roll back"}))
+        self.assertEqual(self.store.native_account(binding, "/account/me", "GET")["displayName"], "Bound user")
+        self.assertFalse(self.store.db.in_transaction)
+        with self.store.lock, self.store.db:
+            self.store.db.execute("DELETE FROM users WHERE id=?", (identity["userId"],))
+        self.create(roles=["auditor"])
+        self.assert_api_error(401, lambda: self.store.native_account(binding, "/account/me", "PATCH",
+                                                                   {"displayName": "Must not transfer"}))
+        fresh = self.login()
+        current = {key: fresh[key] for key in ("username", "userId", "authEpoch")}
+        self.assertEqual(self.store.native_account(current, "/account/me", "GET")["displayName"], "viewer-one")
+        self.assertEqual(self.store.native_account(current, "/account/password", "POST",
+            {"currentPassword": PASSWORD, "newPassword": PASSWORD}), {"changed": True})
+        self.assert_api_error(401, lambda: self.store.native_account(current, "/account/me", "GET"))
+        self.assertFalse(self.store.db.in_transaction)
+
+    def test_native_account_fence_survives_nested_preferences_against_second_connection(self):
+        self.create()
+        identity = self.login()
+        binding = {key: identity[key] for key in ("username", "userId", "authEpoch")}
+        preference = self.store.account_preference
+        attempted = []
+        def assert_fenced():
+            self.assertTrue(self.store.db.in_transaction)
+            with contextlib.closing(sqlite3.connect(self.store.path, timeout=0)) as competitor:
+                with self.assertRaises(sqlite3.OperationalError) as caught:
+                    competitor.execute("UPDATE users SET auth_epoch=? WHERE id=?", ("f" * 32, identity["userId"]))
+                self.assertIn("locked", str(caught.exception))
+            attempted.append(True)
+        def guarded(*args, **kwargs):
+            assert_fenced()
+            result = preference(*args, **kwargs)
+            assert_fenced()
+            return result
+        with mock.patch.object(self.store, "account_preference", side_effect=guarded):
+            result = self.store.native_account(binding, "/account/me", "PATCH", {"displayName": "Fenced profile"})
+        self.assertEqual(result["displayName"], "Fenced profile")
+        self.assertGreaterEqual(len(attempted), 6)
+        self.assertFalse(self.store.db.in_transaction)
+        self.assertEqual(self.login(), identity)
+
+    def test_account_handler_requires_complete_single_internal_binding_headers(self):
+        self.create()
+        identity = self.login()
+        headers = [("X-WebObs-Principal", identity["username"]), ("X-WebObs-Account-Id", identity["userId"]),
+                   ("X-WebObs-Account-Epoch", identity["authEpoch"])]
+        status, profile = self.request("/account/me", {}, method="GET", extra_headers=headers)
+        self.assertEqual(status, 200)
+        self.assertNotIn("authEpoch", profile)
+        for bad in (headers[:-1], headers + [headers[-1]]):
+            status, _ = self.request("/account/me", {}, method="GET", extra_headers=bad)
+            self.assertEqual(status, 401)
+        status, _ = self.request("/account/me", {}, method="GET", extra_headers=headers, token=None)
+        self.assertEqual(status, 403)
 
     def test_same_password_reset_and_self_change_each_rotate(self):
         self.create()

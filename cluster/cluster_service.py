@@ -622,25 +622,63 @@ class ClusterStore:
             raise ApiError(401, "invalid_credentials", "credentials were rejected")
         return identity
 
-    def native_session(self, value: Any) -> dict[str, Any]:
-        """Validate an already password-bound session without requiring a role.
-
-        Internal-only: this does not authenticate a username or issue a session.
-        Accounts with no media permissions must still be able to manage their
-        own account, and old username-only cookies must never gain a binding.
-        """
+    def _native_session_binding(self, value: Any) -> dict[str, str]:
         fields = {"username", "userId", "authEpoch"}
         value = require_exact_object(value, fields, fields)
         if not isinstance(value["username"], str) or not USERNAME.fullmatch(value["username"]) or \
                 not self._valid_native_guard(value["userId"]) or not self._valid_native_guard(value["authEpoch"]):
             raise ApiError(400, "invalid_request", "native session fields are invalid")
+        return value
+
+    def _verify_native_session_locked(self, value: dict[str, str]) -> None:
+        row = self.db.execute("SELECT id,username,enabled,auth_epoch FROM users WHERE id=?",
+                              (value["userId"],)).fetchone()
+        if row is None or not row["enabled"] or row["username"] != value["username"] or \
+                not self._valid_native_guard(row["auth_epoch"]) or row["auth_epoch"] != value["authEpoch"]:
+            raise ApiError(404, "user_not_found", "user is not managed by RBAC")
+
+    def native_session(self, value: Any) -> dict[str, Any]:
+        """Internal identity check, not a password login or media permission."""
+        value = self._native_session_binding(value)
         with self._native_auth_transaction():
-            row = self.db.execute("SELECT id,username,enabled,auth_epoch FROM users WHERE id=?",
-                                  (value["userId"],)).fetchone()
-            if row is None or not row["enabled"] or row["username"] != value["username"] or \
-                    not self._valid_native_guard(row["auth_epoch"]) or row["auth_epoch"] != value["authEpoch"]:
-                raise ApiError(404, "user_not_found", "user is not managed by RBAC")
+            self._verify_native_session_locked(value)
         return {"authenticated": True, "userId": value["userId"], "authEpoch": value["authEpoch"]}
+
+    @contextlib.contextmanager
+    def _account_transaction(self):
+        """Do not let a nested preference helper commit the native actor fence."""
+        with self.lock:
+            if self.db.in_transaction:
+                yield
+            else:
+                with self.db:
+                    self.db.execute("BEGIN IMMEDIATE")
+                    yield
+
+    def native_account(self, binding: Any, path: str, method: str, value: Any = None) -> dict[str, Any]:
+        """Check actor and perform the existing own-account operation atomically."""
+        binding = self._native_session_binding(binding)
+        with self._native_auth_transaction():
+            try:
+                self._verify_native_session_locked(binding)
+            except ApiError as error:
+                if error.status == 404:
+                    raise ApiError(401, "account_rejected", "account is unavailable") from None
+                raise
+            username = binding["username"]
+            if path == "/account/me" and method == "GET":
+                result = self.account_profile(username)
+            elif path == "/account/me" and method == "PATCH":
+                result = self.update_account_profile(username, value)
+            elif path == "/account/password" and method == "POST":
+                result = self.change_own_password(username, value)
+            elif path in {"/account/preferences/monitor-view", "/account/preferences/workspace-layout",
+                          "/account/preferences/config-profiles", "/account/preferences/active-profile",
+                          "/account/preferences/camera-preferences"} and method in {"GET", "PUT"}:
+                result = self.account_preference(username, path.rsplit("/", 1)[-1], value, method == "PUT")
+            else:
+                raise ApiError(404, "not_found", "resource was not found")
+        return result
 
     def native_authorize(self, value: Any) -> dict[str, Any]:
         fields = {"username", "userId", "authEpoch", "permission", "cameraId"}
@@ -957,7 +995,7 @@ class ClusterStore:
                            write: bool = False) -> dict[str, Any]:
         if kind not in {"monitor-view", "workspace-layout", "config-profiles", "active-profile", "camera-preferences", "profile"}:
             raise ApiError(404, "preference_not_found", "account preference is unknown")
-        with self.lock, self.db:
+        with self._account_transaction():
             user = self.db.execute("SELECT id FROM users WHERE username=? AND enabled=1", (username,)).fetchone()
             if user is None:
                 raise ApiError(401, "account_rejected", "account is unavailable")
@@ -1025,7 +1063,7 @@ class ClusterStore:
             if not isinstance(value["avatar"], str) or value["avatar"] not in {"person", "camera", "shield", "eye", "star", "sun"}:
                 raise ApiError(400, "invalid_avatar", "avatar is invalid")
             current["avatar"] = value["avatar"]
-        with self.lock, self.db:
+        with self._account_transaction():
             self.account_preference(username, "profile", {"value": current}, write=True)
             row = self.db.execute("SELECT id FROM users WHERE username=?", (username,)).fetchone()
             self._audit("account.profile.updated", username, row["id"], "completed")
@@ -1036,7 +1074,7 @@ class ClusterStore:
                                      {"currentPassword", "newPassword"})
         if not isinstance(value["currentPassword"], str) or not isinstance(value["newPassword"], str):
             raise ApiError(400, "invalid_password", "password must be a string")
-        with self.lock, self.db:
+        with self._account_transaction():
             row = self.db.execute("SELECT * FROM users WHERE username=? AND enabled=1", (username,)).fetchone()
             if row is None or not self.hasher.verify(row["password_hash"], value["currentPassword"]):
                 raise ApiError(401, "invalid_credentials", "current password was rejected")
@@ -2496,6 +2534,17 @@ class Handler(http.server.BaseHTTPRequestHandler):
             value = self.read_json()
             require_exact_object(value, {"username", "permission", "cameraIds"}, {"username", "permission", "cameraIds"})
             self.response(200, STORE.authorize_cameras(value["username"], value["permission"], value["cameraIds"]))
+        elif path.startswith("/account/") and (self.headers.get_all("X-WebObs-Account-Id") or
+                                               self.headers.get_all("X-WebObs-Account-Epoch")):
+            ids = self.headers.get_all("X-WebObs-Account-Id", [])
+            epochs = self.headers.get_all("X-WebObs-Account-Epoch", [])
+            if len(ids) != 1 or len(epochs) != 1:
+                raise ApiError(401, "account_rejected", "account is unavailable")
+            binding = {"username": self.headers.get("X-WebObs-Principal", ""),
+                       "userId": ids[0], "authEpoch": epochs[0]}
+            result = STORE.native_account(binding, path, self.command,
+                self.read_json() if self.command in {"POST", "PUT", "PATCH"} else None)
+            self.response(200, result)
         elif path == "/account/me" and self.command in {"GET", "PATCH"}:
             username = self.headers.get("X-WebObs-Principal", "")
             if not USERNAME.fullmatch(username):
