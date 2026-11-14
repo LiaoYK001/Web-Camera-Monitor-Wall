@@ -82,3 +82,6 @@ R2 统计入口继续接线到 OBS 原有 OBSBasicStats，真实会话/scene.rea
 
 
 Dev.91（43616770312、49cd463）实际 portable 31 项检查、25 组八帧像素通过，含两固定投影共用来源、全屏/关闭、仅投影 camera 撤权退休及手动保存回切；logoutRetirementMs=3。恢复正对照在编译前置失败（嵌套 MSBuild 同写 build_x86），未运行 I/O 探针。NSIS 实测 198,496,992 logical B / 201,433,128 allocation B，快捷方式报告目标不存在，installed UI 未执行。新帧进度/统计/同画布来源保活均待新构建。 / Dev.91 validates actual fixed-projector media and permission paths, while restore-build and installed-shortcut failures keep the full gate red.
+
+
+实际 D3D11 渲染设备查询已进入原生 UI/私密状态，复用 prototype 同一实现，区分硬件 vendor、软件/未知并记录 LUID/显存容量；本机编译与回执检查通过，Windows 产品验证待 dev.92 之后。逐路硬解与显存占用尚未证明。 / The actual renderer adapter is wired into the product surface, with Windows product validation still pending and no decode/usage claim.

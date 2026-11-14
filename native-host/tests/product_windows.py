@@ -195,6 +195,8 @@ def exercise(runtime, report, *, with_media=False, retained_profile=None):
             assert observed["sessionBound"] is True and observed["mediaSources"] == (
                 expected_media if expected_media is not None else (1 if repeat_first else 5))
             assert observed.get("previewLocked") is True
+            import smoke_windows
+            smoke_windows.check_renderer_receipt(observed.get("renderer"))
             bindings = observed["bindings"]
             assert [(item["cameraId"], item["profileId"]) for item in bindings] == [
                 (f"fixture-{1 if repeat_first else (6 - index if reverse else index)}", "main") for index in range(1, 6)]
@@ -648,7 +650,7 @@ def exercise(runtime, report, *, with_media=False, retained_profile=None):
             observed = state()
             evidence["observedState"] = {key: observed[key] for key in (
                 "phase", "mediaSources", "sessionBound", "catalogItems", "selectionIndices", "previewLocked",
-                "lastRetirementMs", "mainGeneration", "studioRevision") if key in observed}
+                "lastRetirementMs", "mainGeneration", "studioRevision", "renderer") if key in observed}
             evidence["observedState"]["watchingSavedScene"] = bool(observed.get("sceneId"))
             evidence["observedState"]["projectorCount"] = len(observed.get("projectors", []))
             markers = ("ModuleNotFoundError", "ImportError", "PermissionError", "FileNotFoundError",

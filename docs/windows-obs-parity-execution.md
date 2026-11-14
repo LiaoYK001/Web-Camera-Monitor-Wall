@@ -1231,3 +1231,14 @@ Dev.91 passes 31 actual portable checks and 25 eight-frame capture groups, inclu
 实际 NSIS gate 改用相同原生 Unicode reader，同时通过 GetArguments 核验空参数，并对双方已有路径 GetLongPathNameW 后精确比较；不放宽正确目标、真实文件存在或空参数条件。快速 job 增加非空参数与错误目标的原生负向检查，保留 WScript 差异作诊断；待新 job。随后完整产品仍必须执行原先 installed UI/HEVC/退出/卸载数据保留门禁。恢复对照的嵌套 MSBuild 串行修复也仍待完整回归。
 
 A fast isolated Windows reproduction using the exact NSIS source demonstrates correct native Unicode Shell Link targets for ASCII and Chinese paths, while WScript.Shell loses the Chinese target under ACP 1252. The real installer gate now uses IShellLinkW, checks GetArguments and canonical existing paths, and retains all installed UI/media/uninstall gates. New wrong-target/argument controls and full product validation remain pending. The inert-payload reproduction does not qualify an installed product.
+
+
+#### R5 实际渲染设备进入产品入口 / Actual renderer device reaches the product surface
+
+原有 prototype 的 D3D11 device → IDXGIDevice → adapter 描述查询复用于真实 ProductWindow，Qt JSON 格式提取为共用 helper，保持原回执格式。窗口在初次创建及应用新主图时读取实际设备，不在逐帧或常驻 heartbeat 中获取 graphics lock。界面区分 NVIDIA/Intel/AMD/其他/软件/未知渲染器，私密 product state 保留 vendor/device ID、LUID、software 和专用显存容量，便于后续与 PDH 对照；容量不是占用。硬解标记仍明确 false，未知状态不猜测显卡，也未改注册表或重选设备。固定 OBS frontend 已保留自己的高性能 GPU 导出提示，但提示不代表实际选用。
+
+本机产品/插件 Qt 编译检查及现有硬件/软件 adapter 回执校验回归通过。新 Windows 产品 UI gate 将复用既有 renderer receipt 校验器要求实际可读 D3D11 adapter，软件适配器允许但明确标识；此修改不包含在正在执行的 dev.92。逐路硬解、同 GPU 解码/渲染和最终设备性能仍待实际证明。
+
+独立快速 job 43620903134（source c1bf843）success，包含原生目标存在/规范路径/空参数的 ASCII 与中文正向检查，以及非空参数、错误目标负向检查。完整 dev.92（43620903246、同 source）已启动，仍待其全部编译、UI、恢复 I/O 和真实安装门禁，不以快速 job 替代完整结果。
+
+The actual D3D11 renderer query is now shared by prototype receipts and the product UI, sampled only at initialization/graph application. Product diagnostics expose the real adapter identity and capacity without claiming decode or usage proof. Local Qt/receipt checks pass; Windows product validation is pending after dev.92. The independent Unicode shortcut positive and negative controls pass in run 43620903134, while complete dev.92 validation remains in progress.

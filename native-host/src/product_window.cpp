@@ -2,6 +2,7 @@
 #include "product_bootstrap.hpp"
 #include "product_http_client.hpp"
 #include "product_scene.hpp"
+#include "renderer_device_qt.hpp"
 #include "layout.hpp"
 #include "wall.hpp"
 
@@ -64,6 +65,8 @@ class ProductWindow final : public QWidget {
 	QLineEdit *username_, *password_;
 	QLabel *status_;
 	QLabel *video_health_;
+	QLabel *renderer_label_;
+	RendererDevice renderer_device_;
 	QElapsedTimer health_clock_;
 	struct InputHealth { std::int64_t serial = 0; qint64 changed_ms = 0; bool sampled = false, advanced = false; };
 	std::map<std::string, InputHealth> input_health_;
@@ -102,6 +105,20 @@ class ProductWindow final : public QWidget {
 	qint64 last_retirement_ms_ = 0;
 
 	using Reply = std::function<void(int, const QJsonObject &)>;
+	void refresh_renderer()
+	{
+		renderer_device_ = observe_renderer_device();
+		QString adapter = tr("状态未知");
+		if (renderer_device_.available) {
+			if (renderer_device_.software) adapter = tr("软件适配器");
+			else if (renderer_device_.vendor_id == 0x10de) adapter = "NVIDIA";
+			else if (renderer_device_.vendor_id == 0x8086) adapter = "Intel";
+			else if (renderer_device_.vendor_id == 0x1002) adapter = "AMD";
+			else adapter = tr("其他适配器");
+			adapter += " (D3D11)";
+		}
+		renderer_label_->setText(tr("画面渲染：%1").arg(adapter));
+	}
 	void refresh_video_health()
 	{
 		std::map<std::string, ProductVideoProgress> inputs;
@@ -181,6 +198,7 @@ class ProductWindow final : public QWidget {
 		state.insert("restoreGuardHits", frontend_->property("webobsRestoreGuardHits").toInt());
 		state.insert("refusedCollection", frontend_->property("webobsRefusedCollection").toString());
 		state.insert("lastRetirementMs", last_retirement_ms_);
+		state.insert("renderer", renderer_device_json(renderer_device_));
 		state.insert("statsOpen", stats_window_ && stats_window_->isVisible());
 		if (stats_window_ && stats_window_->isVisible())
 			state.insert("statsWindow", QJsonObject{{"role", "host-stats"},
@@ -647,6 +665,7 @@ class ProductWindow final : public QWidget {
 		}
 		select_wall(candidate->scene);
 		wall_ = std::move(candidate);
+		refresh_renderer();
 		watching_ = selected;
 		watching_versions_ = versions;
 		watching_scene_id_ = scene_id;
@@ -891,6 +910,12 @@ public:
 		video_health_->setWordWrap(true);
 		video_health_->setToolTip(tr("只检查 OBS 媒体源是否交付新视频帧；不代表最终画面、硬解或独显验证。低于每六秒一帧的来源可能显示停滞。"));
 		layout->addWidget(video_health_);
+		renderer_label_ = new QLabel(this);
+		renderer_label_->setObjectName("webobsRendererDevice");
+		renderer_label_->setWordWrap(true);
+		renderer_label_->setToolTip(tr("显示 OBS 实际使用的画面渲染适配器；不代表摄像机解码使用相同显卡或已启用硬解。"));
+		layout->addWidget(renderer_label_);
+		refresh_renderer();
 		auto *form = new QFormLayout;
 		username_ = new QLineEdit(this);
 		username_->setObjectName("webobsUsername");

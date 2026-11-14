@@ -3,6 +3,7 @@
 #include "product_bootstrap.hpp"
 #include "ownership_store.hpp"
 #include "renderer_device.hpp"
+#include "renderer_device_qt.hpp"
 #include "startup_bootstrap.hpp"
 #include "wall.hpp"
 #include "wall_snapshot.hpp"
@@ -53,19 +54,7 @@ bool frontend_alive = false;
 
 QJsonObject renderer_receipt()
 {
-	const auto device = webobs::native_host::observe_renderer_device();
-	QJsonObject value{{"available", device.available}, {"hardwareDecodeVerified", false}};
-	if (!device.available)
-		return value;
-	value.insert("api", QStringLiteral("d3d11"));
-	// Same high:low LUID representation as the private PDH GPU diagnostic.
-	value.insert("adapterLuid", QStringLiteral("%1:%2").arg(device.luid_high, 8, 16, QLatin1Char('0'))
-		.arg(device.luid_low, 8, 16, QLatin1Char('0')));
-	value.insert("vendorId", int(device.vendor_id));
-	value.insert("deviceId", int(device.device_id));
-	value.insert("software", device.software);
-	value.insert("dedicatedVideoMemoryCapacityBytes", double(device.dedicated_video_memory));
-	return value;
+	return webobs::native_host::renderer_device_json(webobs::native_host::observe_renderer_device());
 }
 
 // Development-only load receipt. No arbitrary output path, camera/source settings,
