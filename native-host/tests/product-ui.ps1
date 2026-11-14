@@ -56,6 +56,9 @@ public static class ProductTestWindow {
                 'webobsRefreshCatalog' { '刷新设备目录' }
                 'webobsWatchScene' { '监看所选 Studio 场景' }
                 'webobsStudioScene' { $kind = [System.Windows.Automation.ControlType]::ComboBox; '已保存的 Studio 场景' }
+                'webobsFixedProjector1' { '固定场景投影 1' }
+                'webobsFixedProjector2' { '固定场景投影 2' }
+                'webobsCloseProjectors' { '关闭固定投影' }
                 default {
                     if ($Identity -match '^webobsCameraSlot([1-5])$') {
                         $kind = [System.Windows.Automation.ControlType]::ComboBox
@@ -141,6 +144,20 @@ public static class ProductTestWindow {
             Invoke-Control 'webobsWatch'
         }
         'save' { Invoke-Control 'webobsSaveLayout' }
+        'projector' {
+            if ([int]$operation.slot -notin @(1,2)) { throw 'Invalid fixed projector slot.' }
+            Invoke-Control "webobsFixedProjector$([int]$operation.slot)"
+        }
+        'projector-close' { Invoke-Control 'webobsCloseProjectors' }
+        'projector-window-close' {
+            $window.GetCurrentPattern([System.Windows.Automation.WindowPattern]::Pattern).Close()
+        }
+        'projector-fullscreen' {
+            if ([ProductTestWindow]::GetForegroundWindow() -ne [IntPtr]$window.Current.NativeWindowHandle) {
+                throw 'Owned projector is not the foreground root.'
+            }
+            [System.Windows.Forms.SendKeys]::SendWait('{F11}')
+        }
         'scene' {
             $choice = [int]$operation.index
             if ($choice -lt 1 -or $choice -gt 64 -or

@@ -134,7 +134,12 @@ def exercise(runtime, report, *, with_media=False, retained_profile=None):
 
         def ui(action, **fields):
             owned = state()
-            windows = owned.get("windows", [])
+            wanted_roles = {"main-preview"}
+            if action in ("projector-fullscreen", "projector-window-close"):
+                slot = fields.get("slot")
+                assert type(slot) is int and slot in (1, 2)
+                wanted_roles = {f"fixed-scene-{slot}", f"fixed-scene-fullscreen-{slot}"}
+            windows = [window for window in owned.get("windows", []) if window.get("role") in wanted_roles]
             if len(windows) != 1 or owned.get("pid") != str(frontend_pid):
                 return False
             try:
@@ -154,7 +159,13 @@ def exercise(runtime, report, *, with_media=False, retained_profile=None):
                 raise AssertionError("product UI Automation did not return a bounded result") from None
             if reply.get("passed") is not True:
                 evidence["lastUiFailure"] = {key: reply[key] for key in ("stage", "code", "exceptionType") if key in reply}
-            return result.returncode == 0 and reply.get("passed") is True
+            passed = result.returncode == 0 and reply.get("passed") is True
+            if passed and action in ("choose", "scene"):
+                before = owned.get("mainGeneration")
+                assert type(before) is int
+                wait_for(lambda: state().get("mainGeneration", -1) > before,
+                    "actual native watch action was not acknowledged", timeout=5)
+            return passed
 
         def start():
             nonlocal process, frontend_pid
@@ -174,20 +185,54 @@ def exercise(runtime, report, *, with_media=False, retained_profile=None):
             wait_for(lambda: ui("inspect"), "actual product controls not accessible")
             return value
 
-        def check_graph(*, repeat_first=False):
+        def check_graph(*, repeat_first=False, reverse=False, expected_media=None):
             wait_for(lambda: state().get("phase") == "graph-applied", "UI did not apply authorized camera graph", timeout=35)
             observed = state()
-            assert observed["sessionBound"] is True and observed["mediaSources"] == (1 if repeat_first else 5)
+            assert observed["sessionBound"] is True and observed["mediaSources"] == (
+                expected_media if expected_media is not None else (1 if repeat_first else 5))
             assert observed.get("previewLocked") is True
             bindings = observed["bindings"]
             assert [(item["cameraId"], item["profileId"]) for item in bindings] == [
-                (f"fixture-{1 if repeat_first else index}", "main") for index in range(1, 6)]
+                (f"fixture-{1 if repeat_first else (6 - index if reverse else index)}", "main") for index in range(1, 6)]
             assert len({item["sourceUuid"] for item in bindings}) == (1 if repeat_first else 5)
             assert observed["videoInfo"] == {"baseWidth": 1920, "baseHeight": 1080,
                 "outputWidth": 1920, "outputHeight": 1080, "fpsNumerator": 30, "fpsDenominator": 1}
             return observed
 
-        def check_pixels(label, *, blank=False, repeat_first=False):
+        def check_projectors(orders, reference):
+            observed = state()
+            views = observed.get("projectors", [])
+            assert [view["slot"] for view in views] == sorted(orders)
+            assert observed["mediaSources"] == 5, "fixed views duplicated camera media sources"
+            for view in views:
+                reverse = orders[view["slot"]] == "reverse"
+                assert [(binding["cameraId"], binding["profileId"]) for binding in view["bindings"]] == [
+                    (f"fixture-{6 - index if reverse else index}", "main") for index in range(1, 6)]
+                assert {binding["cameraId"]: binding["sourceUuid"] for binding in view["bindings"]} == reference
+            for binding in observed.get("bindings", []):
+                assert reference[binding["cameraId"]] == binding["sourceUuid"]
+            return observed
+
+        def fixed_windows():
+            return [window for window in state().get("windows", []) if window["role"].startswith("fixed-scene-")]
+
+        def owned_windows_closed(windows):
+            from ctypes import wintypes
+            user = ctypes.WinDLL("user32", use_last_error=True)
+            user.IsWindow.argtypes = [wintypes.HWND]
+            user.IsWindow.restype = wintypes.BOOL
+            user.GetWindowThreadProcessId.argtypes = [wintypes.HWND, ctypes.POINTER(wintypes.DWORD)]
+            user.GetWindowThreadProcessId.restype = wintypes.DWORD
+            for window in windows:
+                handle = wintypes.HWND(int(window["rootHwnd"], 16))
+                if user.IsWindow(handle):
+                    owner = wintypes.DWORD()
+                    user.GetWindowThreadProcessId(handle, ctypes.byref(owner))
+                    if owner.value == frontend_pid:
+                        return False
+            return True
+
+        def check_pixels(label, *, blank=False, repeat_first=False, reverse=False, expected_media=None, projector_orders=None):
             from ctypes import wintypes
             import pixel_windows
             kernel = ctypes.WinDLL("kernel32", use_last_error=True)
@@ -203,7 +248,7 @@ def exercise(runtime, report, *, with_media=False, retained_profile=None):
                 created = pixel_windows.creation_time(Frontend())
             finally:
                 kernel.CloseHandle(handle)
-            observed = state() if blank else check_graph(repeat_first=repeat_first)
+            observed = state() if blank else check_graph(repeat_first=repeat_first, reverse=reverse, expected_media=expected_media)
             if blank:
                 assert observed.get("phase") == "locked" and observed.get("mediaSources") == 0
             assert observed.get("windows", [{}])[0].get("qtClass") == "OBSBasicPreview"
@@ -219,14 +264,20 @@ def exercise(runtime, report, *, with_media=False, retained_profile=None):
             capture = pixel_windows.capture_report(result)
             evidence.setdefault("captures", []).append({"phase": label, **capture})
             assert result.returncode == 0 and capture.get("captureFailed") is False, "actual product preview capture failed"
-            analysis = subprocess.run([shutil.which("node"), str(HERE / "pixel-pattern.cjs"), "analyze-empty" if blank else "analyze",
-                str(target / "main-preview"), "main-preview", "repeat-first" if repeat_first else "forward", "true"],
-                capture_output=True, text=True, encoding="utf-8", timeout=20)
-            assert len(analysis.stdout) <= 16384, "oversized synthetic pixel analysis"
-            result = json.loads(analysis.stdout)
-            assert isinstance(result, dict), "invalid synthetic pixel analysis"
-            evidence["captures"][-1]["analysis"] = result
-            assert analysis.returncode == 0 and result.get("passed") is True, "product preview failed the expected final-pixel state"
+            orders = {"main-preview": "repeat-first" if repeat_first else ("reverse" if reverse else "forward")}
+            orders.update(projector_orders or {})
+            assert set(orders) == {window["role"] for window in observed["windows"]}
+            for role, order in orders.items():
+                analysis = subprocess.run([shutil.which("node"), str(HERE / "pixel-pattern.cjs"), "analyze-empty" if blank else "analyze",
+                    str(target / role), role, order, "true"], capture_output=True, text=True, encoding="utf-8", timeout=20)
+                assert len(analysis.stdout) <= 16384, "oversized synthetic pixel analysis"
+                result = json.loads(analysis.stdout)
+                assert isinstance(result, dict), "invalid synthetic pixel analysis"
+                if role == "main-preview":
+                    evidence["captures"][-1]["analysis"] = result
+                else:
+                    evidence["captures"][-1].setdefault("projectorAnalysis", {})[role] = result
+                assert analysis.returncode == 0 and result.get("passed") is True, "product view failed its expected final-pixel state"
 
         frontend_pid = 0
         try:
@@ -320,7 +371,9 @@ def exercise(runtime, report, *, with_media=False, retained_profile=None):
                 check_graph()
                 time.sleep(3)
                 check_pixels("studio-scene")
-                assert ui("save") and read_json(paths[0]) == {"schema": 2, "sceneId": "fixture-five"}
+                assert ui("save")
+                wait_for(lambda: read_json(paths[0]) == {"schema": 2, "sceneId": "fixture-five"},
+                    "scene-ID workspace save did not commit")
                 assert ui("logout")
                 wait_for(lambda: state().get("phase") == "locked", "Studio scene did not retire on logout")
                 check_pixels("studio-logout", blank=True)
@@ -345,9 +398,56 @@ def exercise(runtime, report, *, with_media=False, retained_profile=None):
                     "saved-scene-id-restores-only-after-login", "studio-revision-change-clears-stale-native-pixels"])
                 # Restore the original five-camera workspace for subsequent
                 # independent account, restart and permission regressions.
+                phase = "restore-five-camera-workspace"
+                assert ui("choose", indices=[1, 2, 3, 4, 5])
+                wait_for(lambda: state().get("phase") == "graph-applied" and state().get("sceneId") == "",
+                    "manual camera graph did not replace saved-scene mode")
+                check_graph()
+                assert ui("save")
+                wait_for(lambda: read_json(paths[0]) == saved, "five-camera workspace save did not commit")
+                phase = "fixed-scene-projectors"
+                reference = {binding["cameraId"]: binding["sourceUuid"] for binding in state()["bindings"]}
+                assert ui("projector", slot=1)
+                wait_for(lambda: len(state().get("projectors", [])) == 1, "first native Scene projector did not open")
+                assert ui("choose", indices=[5, 4, 3, 2, 1])
+                check_graph(reverse=True)
+                check_projectors({1: "forward"}, reference)
+                assert ui("projector", slot=2)
+                wait_for(lambda: len(state().get("projectors", [])) == 2, "second native Scene projector did not open")
+                assert ui("choose", indices=[1, 1, 1, 1, 1])
+                check_graph(repeat_first=True, expected_media=5)
+                check_projectors({1: "forward", 2: "reverse"}, reference)
+                time.sleep(3)
+                check_pixels("fixed-different-scenes", repeat_first=True, expected_media=5,
+                    projector_orders={"fixed-scene-1": "forward", "fixed-scene-2": "reverse"})
+                assert ui("projector-fullscreen", slot=1)
+                wait_for(lambda: any(view["slot"] == 1 and view["fullscreen"] for view in state().get("projectors", [])),
+                    "native Scene projector did not enter fullscreen")
+                check_projectors({1: "forward", 2: "reverse"}, reference)
+                check_pixels("fixed-fullscreen", repeat_first=True, expected_media=5,
+                    projector_orders={"fixed-scene-fullscreen-1": "forward", "fixed-scene-2": "reverse"})
+                assert ui("projector-fullscreen", slot=1)
+                wait_for(lambda: any(view["slot"] == 1 and not view["fullscreen"] for view in state().get("projectors", [])),
+                    "native Scene projector did not return to windowed mode")
+                first_window = [window for window in fixed_windows() if window["role"] == "fixed-scene-1"]
+                assert len(first_window) == 1 and ui("projector-window-close", slot=1)
+                wait_for(lambda: len(state().get("projectors", [])) == 1 and owned_windows_closed(first_window),
+                    "closed native projector retained its window or graph consumer")
+                check_projectors({2: "reverse"}, reference)
+                check_pixels("fixed-one-closed", repeat_first=True, expected_media=5,
+                    projector_orders={"fixed-scene-2": "reverse"})
                 assert ui("choose", indices=[1, 2, 3, 4, 5])
                 check_graph()
-                assert ui("save") and read_json(paths[0]) == saved
+                check_projectors({2: "reverse"}, reference)
+                remaining_windows = fixed_windows()
+                assert ui("projector-close")
+                wait_for(lambda: state().get("projectors") == [] and owned_windows_closed(remaining_windows),
+                    "close-projectors button did not retire the remaining window")
+                check_graph()
+                check_pixels("fixed-all-closed")
+                evidence["checks"].extend(["two-fixed-scene-projectors-share-owned-decoders",
+                    "main-switch-preserves-two-different-projector-scenes", "native-projector-fullscreen-windowed-final-pixels",
+                    "closing-one-projector-preserves-other-and-main"])
             phase = "logout"
             assert ui("logout")
             wait_for(lambda: state().get("phase") == "locked", "logout did not lock product UI")
@@ -387,14 +487,26 @@ def exercise(runtime, report, *, with_media=False, retained_profile=None):
                 assert read_json(viewer_paths[0]) == saved and owner_workspace.read_bytes() == owner_bytes
                 evidence["checks"].extend(["scoped-viewer-catalog-excludes-forbidden-camera",
                     "scoped-viewer-five-hevc-final-pixels", "separate-account-workspace-does-not-overwrite-owner"])
+                viewer_reference = {binding["cameraId"]: binding["sourceUuid"] for binding in state()["bindings"]}
+                assert ui("projector", slot=1)
+                wait_for(lambda: len(state().get("projectors", [])) == 1, "viewer fixed projector did not open")
+                assert ui("choose", indices=[1, 1, 1, 1, 1])
+                check_graph(repeat_first=True, expected_media=5)
+                check_projectors({1: "forward"}, viewer_reference)
+                check_pixels("viewer-projector-only-camera", repeat_first=True, expected_media=5,
+                    projector_orders={"fixed-scene-1": "forward"})
+                viewer_projector_windows = fixed_windows()
                 phase = "camera-scope-revocation-api"
                 code, _, changed_viewer = request("/api/v2/users/" + viewer["id"],
                     {"scopes": viewer_scopes[:-1]}, cookie, method="PATCH", revision=viewer["revision"])
                 assert code == 200, "ordinary user API did not revoke one camera scope"
                 wait_for(lambda: state().get("phase") == "locked", "revoked camera scope remained viewable", timeout=8)
                 assert state()["sessionBound"] is False and state()["mediaSources"] == 0
+                wait_for(lambda: state().get("projectors") == [] and owned_windows_closed(viewer_projector_windows),
+                    "revoked camera retained its fixed projector window")
                 check_pixels("camera-scope-revoked", blank=True)
-                evidence["checks"].append("ordinary-camera-scope-change-clears-actual-viewer-preview")
+                evidence["checks"].extend(["ordinary-camera-scope-change-clears-actual-viewer-preview",
+                    "revoked-camera-only-in-fixed-projector-closes-protected-views"])
                 code, _, _ = request("/api/v2/users/" + viewer["id"], {"scopes": viewer_scopes}, cookie,
                     method="PATCH", revision=changed_viewer["revision"])
                 assert code == 200
@@ -503,7 +615,9 @@ def exercise(runtime, report, *, with_media=False, retained_profile=None):
             observed = state()
             evidence["observedState"] = {key: observed[key] for key in (
                 "phase", "mediaSources", "sessionBound", "catalogItems", "selectionIndices", "previewLocked",
-                "lastRetirementMs") if key in observed}
+                "lastRetirementMs", "mainGeneration", "studioRevision") if key in observed}
+            evidence["observedState"]["watchingSavedScene"] = bool(observed.get("sceneId"))
+            evidence["observedState"]["projectorCount"] = len(observed.get("projectors", []))
             markers = ("ModuleNotFoundError", "ImportError", "PermissionError", "FileNotFoundError",
                        "RuntimeError", "AttributeError", "ValueError", "control exited during startup",
                        "control health deadline exceeded", "a required product service exited", "saved control port is unavailable")

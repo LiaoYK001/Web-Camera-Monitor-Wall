@@ -416,7 +416,19 @@ def validate_state(state: dict, seq: int, token: str, pid: int) -> None:
 # The public receipt deliberately carries no PowerShell exception text, paths,
 # process identity, token or HWND. Even valid JSON from the private subprocess is
 # projected onto this finite schema, never copied into the artifact verbatim.
-CAPTURE_ROLES = ("main-preview", "program-projector", "program-fullscreen")
+CAPTURE_ROLES = ("main-preview", "program-projector", "program-fullscreen",
+                 "fixed-scene-1", "fixed-scene-2", "fixed-scene-fullscreen-1", "fixed-scene-fullscreen-2")
+
+
+def valid_capture_roles(roles):
+    """Only the prototype pair or the product's main + two fixed views."""
+    if len(roles) > 3 or len(set(roles)) != len(roles) or not set(roles) <= set(CAPTURE_ROLES):
+        return False
+    fixed = [role for role in roles if role.startswith("fixed-scene-")]
+    if fixed:
+        return "main-preview" in roles and not any(role.startswith("program-") for role in roles) and \
+            len({role.rsplit("-", 1)[1] for role in fixed}) == len(fixed)
+    return len(roles) <= 2 and (len(roles) < 2 or "main-preview" in roles)
 CAPTURE_CODES = {
     "input": {"input-validation", "windows-required", "output-directory", "state-size", "state-identity", "state-roles", "window-state", "native-arguments"},
     "assembly-load": {"reference-assemblies"}, "compile": {"csharp-compilation"},
@@ -467,7 +479,7 @@ def capture_report(completed: subprocess.CompletedProcess) -> dict:
         if not isinstance(value, dict) or value.get("schema") != 1 or type(value.get("captureFailed")) is not bool:
             raise ValueError("Invalid capture report")
         captures = value.get("captures")
-        if not isinstance(captures, list) or len(captures) > 2:
+        if not isinstance(captures, list) or len(captures) > 3:
             raise ValueError("Unexpected capture roles")
         result = {"schema": 1, "captureFailed": value["captureFailed"], "captures": []}
         seen = set()
@@ -486,6 +498,8 @@ def capture_report(completed: subprocess.CompletedProcess) -> dict:
             if role["captureFailed"]:
                 safe["diagnostic"] = _safe_diagnostic(role.get("diagnostic"))
             result["captures"].append(safe)
+        if not valid_capture_roles(list(seen)):
+            raise ValueError("Inconsistent capture role combination")
         if "diagnostic" in value:
             result["diagnostic"] = _safe_diagnostic(value["diagnostic"])
         if value["captureFailed"]:

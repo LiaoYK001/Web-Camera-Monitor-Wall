@@ -86,6 +86,12 @@ std::shared_ptr<ProductSceneSource> ProductSourcePool::acquire(const std::string
 	auto key = configuration;
 	key.id.clear();
 	key.name.clear();
+	// These fields belong to browser sources in the persisted schema. Live
+	// cameras must keep playing for AUX-only Scene projectors too: OBS Media
+	// Source's restart-on-activate also STOPS playback on Program deactivation.
+	// Owned graph lifetime, rather than Program activation, stops protected I/O.
+	key.shutdown_when_hidden = false;
+	key.restart_when_active = false;
 	for (auto &weak : entries_) {
 		auto entry = weak.lock();
 		if (entry && entry->configuration == key && same_camera(entry->camera, camera)) {
@@ -103,8 +109,7 @@ std::shared_ptr<ProductSceneSource> ProductSourcePool::acquire(const std::string
 	auto entry = std::make_shared<ProductSceneSource>();
 	entry->configuration = key;
 	entry->camera = camera;
-	entry->source = create_product_camera_source(camera, configuration.shutdown_when_hidden,
-		configuration.restart_when_active);
+	entry->source = create_product_camera_source(camera, key.shutdown_when_hidden, key.restart_when_active);
 	if (!entry->source) {
 		error = "scene-source-create-failed";
 		return {};

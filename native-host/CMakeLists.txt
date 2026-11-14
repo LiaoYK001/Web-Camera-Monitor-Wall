@@ -25,7 +25,7 @@ if(WEBOBS_NATIVE_BUILD_PLUGIN)
   target_sources(webobs-native-host PRIVATE src/product_media.cpp)
   if(WEBOBS_NATIVE_PRODUCT_MODE)
     find_package(Qt6 CONFIG REQUIRED COMPONENTS Network)
-    target_sources(webobs-native-host PRIVATE src/product_window.cpp src/product_scene.cpp)
+    target_sources(webobs-native-host PRIVATE src/product_window.cpp src/product_scene.cpp src/product_http_client.cpp)
     target_sources(webobs-native-host PRIVATE ../core/src/obs_scene_items.cpp
       ../core/src/scene_document.cpp ../core/src/browser_security.cpp ../core/src/redaction.cpp)
     # Reuse the pinned OBS dependency tree and finder; no second JSON runtime.
@@ -109,4 +109,18 @@ if(WEBOBS_NATIVE_BUILD_TESTS)
     native-source-ownership-api-contract native-ownership-store-api-contract native-wall-live-decision-api-contract
     native-wall-apply-plan-api-contract
     PROPERTIES TIMEOUT 30 LABELS "native;api-contract;no-media")
+  if(WEBOBS_NATIVE_BUILD_PLUGIN AND WEBOBS_NATIVE_PRODUCT_MODE)
+    add_executable(native-product-http-client-test tests/product_http_client_test.cpp src/product_http_client.cpp)
+    target_include_directories(native-product-http-client-test PRIVATE src)
+    target_compile_features(native-product-http-client-test PRIVATE cxx_std_20)
+    target_link_libraries(native-product-http-client-test PRIVATE Qt6::Core Qt6::Network)
+    if(MSVC)
+      target_compile_options(native-product-http-client-test PRIVATE /W4 /utf-8)
+    else()
+      target_compile_options(native-product-http-client-test PRIVATE -Wall -Wextra -Werror)
+    endif()
+    add_test(NAME native-product-http-client COMMAND native-product-http-client-test)
+    set_tests_properties(native-product-http-client PROPERTIES TIMEOUT 15 LABELS "native;qt-network;no-media"
+      ENVIRONMENT_MODIFICATION "PATH=path_list_prepend:$<TARGET_FILE_DIR:Qt6::Network>")
+  endif()
 endif()

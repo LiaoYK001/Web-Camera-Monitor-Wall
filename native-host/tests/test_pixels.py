@@ -245,6 +245,22 @@ class PixelContractTests(unittest.TestCase):
         for secret in ("private", "token", "777", "HWND123"):
             self.assertNotIn(secret, json.dumps(report))
 
+    def test_two_fixed_projectors_have_bounded_distinct_roles(self):
+        payload = self.capture_result()
+        prototype = payload["captures"][1]
+        for roles in (("main-preview", "fixed-scene-1", "fixed-scene-2"),
+                      ("main-preview", "fixed-scene-fullscreen-1", "fixed-scene-2")):
+            payload["captures"] = [{**prototype, "role": role} for role in roles]
+            report = gate.capture_report(subprocess.CompletedProcess([], 0, json.dumps(payload), ""))
+            self.assertFalse(report["captureFailed"])
+            self.assertEqual(len(report["captures"]), 3)
+        for roles in (("main-preview", "fixed-scene-1", "fixed-scene-fullscreen-1"),
+                      ("main-preview", "fixed-scene-1", "program-projector"),
+                      ("fixed-scene-1", "fixed-scene-2"),
+                      ("main-preview", "fixed-scene-3")):
+            payload["captures"] = [{**prototype, "role": role} for role in roles]
+            self.assertTrue(gate.capture_report(subprocess.CompletedProcess([], 0, json.dumps(payload), ""))["captureFailed"])
+
     def test_capture_report_rejects_unsafe_or_inconsistent_categories(self):
         for bad in ({}, {"schema": 1, "captureFailed": False, "captures": []},
                     {"schema": 1, "captureFailed": True, "captures": [], "diagnostic": {"stage": "private-path", "code": "secret"}}):

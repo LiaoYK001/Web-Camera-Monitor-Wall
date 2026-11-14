@@ -240,3 +240,12 @@ resolve 返回无原始 URL 的 SceneDocument 及分开的私密解析绑定；a
 这接的是“已保存场景监看”，尚不是 Preview/Program/TAKE 控制与编辑语义迁移。目前显式音轨混合、LUT/遮罩资产与未接 resolver 的其他来源仍拒绝；旧数据迁移和完整原生菜单旁路验收仍打开。Linux 真实 core/account/Registry HTTP 测试通过摘要不含端点、拒绝场景零端点读取、允许/嵌套场景、普通管理员 API 改文档后旧 revision 拒绝、viewer 写 Studio 拒绝与无端点续验。新的真实 Windows UI/像素、保存/恢复与文档变更清屏脚本已接入，尚待对应 source 构建执行。
 
 The saved-scene routes derive all bindings from the live canonical Studio document, including nested scenes, and reuse whole-selection Profile authorization before private resolution. Revision and identity checks surround the operation. The Qt action resolves, renews, then builds through the same owned graph path; its bounded heartbeat rejects stale documents. Per-account workspace persistence stores only a scene ID and reauthorizes on login. Actual Linux service tests pass; new Windows UI/pixel execution is pending. Preview/Program/TAKE, full editing, unresolved source/assets/audio routing and legacy migration remain separate open work.
+
+
+### 固定投影及异步会话边界 / Fixed projectors and asynchronous sessions
+
+固定 Scene 投影只接收本产品已持有的不可变图；打开前从当前图的可信 camera/Profile 或规范 scene/revision 重新授权，不接收外部 UUID/名称映射。每个窗口持有图及独立权限续验身份，关闭时仅释放该消费者；换主图不取消投影续验。用户退出、任一作用域/身份失效会关闭所属窗口、清空受保护输入并等待实际媒体退休。相机使用 OBS continuous-live 设置，避免 Program deactivation 停掉仍在 AUX projector 显示的来源。投影持久恢复与完整编辑/输出消费者尚待后续阶段。
+
+实际 ProductHttpClient 关闭自动 cookie load/save，只允许当前登录代成功响应设置已验证的 webobs_session。新登录/退出使旧回调失效，晚到响应既不能回调新 UI，也不能经 QNAM cookie jar 改写新用户；16 个待决请求、16 KiB 请求和 2 MiB 回复有界，固定 loopback、期限、Origin、host token 与禁止重定向仍保留。真实 Qt TCP/事件循环回归证明这些传输性质；Windows 实际用户/媒体测试仍独立，不用传输夹具替代授权资格。
+
+Fixed projectors retain only already-owned immutable product graphs and receive independent fresh authorization. Product HTTP cookies are generation-bound and manually committed only by the current valid login; late replies cannot mutate a later session. Real Qt transport tests cover out-of-order replies, redirection, bounds and destruction, while actual account/media and installed-product gates remain separate.

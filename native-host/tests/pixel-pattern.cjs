@@ -111,7 +111,7 @@ if (require.main === module) {
     fs.writeFileSync(args[1], Buffer.concat(Array.from({ length: pattern.FRAMES }, (_, counter) => pattern.frame(channel,counter))), { flag: 'wx' });
   } else if (mode === 'analyze' || mode === 'analyze-empty') {
     const [directory, role, order, dynamic] = args;
-    assert.ok(['main-preview', 'program-projector', 'program-fullscreen'].includes(role));
+    assert.ok(['main-preview', 'program-projector', 'program-fullscreen', 'fixed-scene-1', 'fixed-scene-2', 'fixed-scene-fullscreen-1', 'fixed-scene-fullscreen-2'].includes(role));
     console.log(JSON.stringify(analyze(directory, { inset: role === 'main-preview' ? 10 : 0,
       empty: mode === 'analyze-empty', order: order === 'reverse' ? REVERSED : order === 'repeat-first' ? REPEAT_FIRST : ORDER, dynamic: dynamic === 'true' })));
   } else throw new Error('Expected selftest, fixture or analyze');

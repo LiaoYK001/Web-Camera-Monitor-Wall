@@ -98,9 +98,23 @@ void run()
 		return true;
 	}, &count);
 	require(count == 5, "shared graph lost items");
+	auto *live_source = obs_get_source_by_uuid(first->uuids.front().c_str());
+	auto *live_settings = obs_source_get_settings(live_source);
+	require(!obs_data_get_bool(live_settings, "restart_on_activate") &&
+		!obs_data_get_bool(live_settings, "close_when_inactive"),
+		"live camera would stop for an AUX-only fixed projector");
+	obs_data_release(live_settings);
+	obs_source_release(live_source);
 	auto second_doc = doc;
 	second_doc.id = "second";
-	for (auto &source : second_doc.sources) { source.id += "-renamed"; source.name += " renamed"; }
+	for (auto &source : second_doc.sources) {
+		source.id += "-renamed";
+		source.name += " renamed";
+		// Browser-only defaults in a parsed camera document are not distinct
+		// camera playback settings and must not cause a second media input.
+		source.shutdown_when_hidden = false;
+		source.restart_when_active = false;
+	}
 	for (auto &item : second_doc.items) item.source_id += "-renamed";
 	auto second = create_product_scene(pool, owner, second_doc, bindings, error);
 	require(second && created == 2 && second->uuids == first->uuids, "compatible second scene duplicated input");

@@ -1161,3 +1161,24 @@ Dev.88 passes actual one-HEVC-source/five-item final pixels and the unchanged fi
 后续把 Studio 测试夹具改为 core 正常启动后，通过普通管理员登录和已有 GET/If-Match PUT Studio API 保存，沿用生产的私密原子写入路径，而不是在进程启动前由 Python 预置文件。保持 viewer 写入拒绝、规范场景派生、整批 scope、嵌套、版本变更和零端点读取断言，native session 的数据库断言也按真实 immutable userId 精确查询，避免新增普通管理员会话影响首行选择。readiness 失败仅输出数字退出码与固定启动类别，不上传日志/路径。Linux 真实 core/account/Registry 回归通过，Windows 效果待下一轮。
 
 Dev.89 compiles the saved-scene Qt plugin and core but fails packaged-interpreter core readiness before UI, restore or installer execution. The exact cause is unproven because the old failure omitted exit status. The next fixture uses the ordinary authenticated Studio API and production private writer after startup, preserving authorization/revision assertions and adding bounded startup diagnostics. Linux real-service integration passes; Windows remains pending.
+
+
+#### dev.90 既有场景实际像素通过、回切保存同步失败 / Saved-scene pixels pass; return/save synchronization fails
+
+`43611384570`（source be7bd3d、dev.90）总体 failure。生产 API 写夹具后的包内真实 core/account/Registry HTTP 联调通过；Qt 实际场景列表选择、普通 Studio API 文档进入原生五路、保存 sceneId、退出清屏、重登恢复、普通 API 推进 revision 后清屏、按新 revision 恢复均已执行。watch/shared-camera/distinct-after-sharing/studio-scene/studio-logout/studio-restored/studio-changed/studio-current-revision 共八组各八帧最终像素通过。回执 mediaQualified=false，不能扩大为整轮媒体或安装资格通过。登录前恢复 I/O 对照九项继续通过，NSIS 因 UI 门禁失败未执行。
+
+失败阶段仍旧粗记 studio-revision-renewal，但上述三个场景检查已经追加，后面只剩回切五路/保存。失败时 graph-applied、五来源、五选择均存在，未有 UIA 错误分类；旧脚本只等待 graph-applied，可能读到相同摄像机的上一张场景图，还会在 QSaveFile 提交前立即读取已有文件，尚不能据此断言确切根因。后续以实际 mainGeneration 确认观看动作已进入 Qt，等待明确退出 saved-scene 模式，再触发保存并等待期望数据真正提交；产品连接期间禁用保存，失败阶段细化为 restore-five-camera-workspace，并保留安全的模式/操作计数。具体修复效果待下一轮。
+
+Dev.90 passes actual saved-scene selection, final five-stream pixels, ID-only restore and ordinary-API revision blanking, plus the independent restore isolation gate. It then fails while returning/saving the original camera workspace, before later lifecycle or installation. The next regression waits for the actual operation generation, exact mode and committed workspace; the old broad phase does not prove the precise failure cause.
+
+#### R2 固定 Scene 多投影与独立会话续验 / Fixed Scene projectors and independent session renewal
+
+产品入口接入两个既有 OBS Scene projector，保留各自不可变图的共享所有权。打开前重新核对当前全部 camera/Profile 或规范 scene/revision；切主画面仅切到产品空白 Preview 并释放主消费者，不修改投影仍使用的场景项。不同图经同一来源池复用兼容摄像机；同图投影直接共享同一个图，不创建额外播放器或媒体源。每个投影独立续验，主画面解析期间仍运行；旧主画面/旧窗口回复以不同操作 ID 丢弃，账户切换则整代失效。退出/失权关闭所属投影并释放最后图引用，继续要求实际 ffmpeg_source 退休，不忽略 removed 对象。
+
+这里还修正相机与浏览器专属生命周期默认值的混用：camera JSON 不能设置 shutdownWhenHidden/restartWhenActive；Live Media Source 统一 close_when_inactive=false、restart_on_activate=false，解码寿命由受授权图所有权控制。固定 OBS ffmpeg 的 restart-on-activate 会在 Program deactivation 时 stop；若保留它，只有 AUX Scene projector 的摄像机可能冻结。该调整使用现有 OBS 设置，没有修改上游或另造解码器。相同实际视频尺寸/帧率不再无故 reset video；有固定投影时拒绝改变其全局画布/帧率。F11/双击通过现有 OBS projector monitor/windowed 槽切换，原生上下文菜单仍只提供投影展示操作。
+
+Native HTTP 客户端提取为实际产品使用的 ProductHttpClient。固定 loopback/Origin/host-token、禁止代理与重定向、16 KiB 请求/2 MiB 回复/16 个并发与期限限制继续生效。Cookie 不再由 QNAM 自动更新，只接受当前登录代的一个有效 HttpOnly session cookie，避免晚到 logout/login 响应覆盖新账户；析构先断开并终止所有本客户端回复。投影打开的待决回调只持弱图引用，避免退出时等待网络回复才停止媒体。实际 Qt HTTP/事件循环回归通过旧退出晚到、两次登录乱序、非登录 cookie 注入、重定向零转发、非法 cookie、超时、超大回复、并发上限与析构；这不是账号/摄像机资格。测试只在产品模式编译为独立不安装目标，Windows 使用同一固定 Qt SDK DLL 路径。
+
+Linux Qt 6.11.2 真 HTTP 测试、产品窗口/客户端语法、固定头 API 7/7、构建契约 44/44、像素协议 22 通过/2 平台跳过、实际 libobs 图/Program 回归通过。ASan 尝试因本机缺链接所需 libasan runtime 未执行，不计为 sanitizer 通过；没有修改系统软件。新 Windows 脚本要求三张实际窗口各八帧、两个不同固定布局、主画面切换后 UUID/物理来源仍共享、F11 往返、关闭一个不影响其他，以及只撤销投影使用的第五相机也能关闭全部受保护画面。有限固定角色扩展保持原 PID/映像/创建时间/HWND/遮挡/像素门槛。以上新增多投影/会话行为尚待 Windows，持久投影恢复、完整 Studio 编辑/TAKE、声音及 R3–R7 仍未完成。
+
+Two actual OBS Scene projectors are wired to shared immutable graphs with fresh opening checks and independent ongoing authorization. Main-view replacement preserves fixed graphs; account loss retires all owned consumers. Live-source lifecycle settings avoid stopping AUX-only projectors, and unchanged video configurations avoid resets. The actual Qt transport now isolates session generations and cookies, with real HTTP/event-loop regressions. New multi-window final-pixel and projector-only scope-revocation tests are wired but await Windows execution. Complete Studio, projector persistence, audio, business migration, updates and final performance/installation qualification remain open.

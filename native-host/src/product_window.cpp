@@ -1,5 +1,6 @@
 #include "product_window.hpp"
 #include "product_bootstrap.hpp"
+#include "product_http_client.hpp"
 #include "product_scene.hpp"
 #include "layout.hpp"
 #include "wall.hpp"
@@ -7,6 +8,7 @@
 #include <obs-frontend-api.h>
 #include <obs-module.h>
 #include <QAction>
+#include <QApplication>
 #include <QCloseEvent>
 #include <QComboBox>
 #include <QCoreApplication>
@@ -23,19 +25,19 @@
 #include <QJsonObject>
 #include <QLabel>
 #include <QLineEdit>
-#include <QNetworkAccessManager>
-#include <QNetworkCookieJar>
-#include <QNetworkProxy>
-#include <QNetworkReply>
+#include <QKeyEvent>
+#include <QMouseEvent>
 #include <QPointer>
 #include <QPushButton>
 #include <QRegularExpression>
 #include <QSaveFile>
+#include <QScreen>
 #include <QTimer>
 #include <QUrl>
 #include <QVBoxLayout>
 #include <QWidget>
 
+#include <algorithm>
 #include <array>
 #include <functional>
 #include <memory>
@@ -47,11 +49,9 @@ class ProductWindow;
 QPointer<ProductWindow> product_window;
 
 class ProductWindow final : public QWidget {
-	// One bounded Studio document plus its separately authorized private bindings.
-	static constexpr qint64 response_limit = 2 * maximum_scene_json_bytes;
 	QWidget *frontend_;
 	QWidget *preview_ = nullptr;
-	QNetworkAccessManager network_;
+	std::unique_ptr<ProductHttpClient> client_;
 	QTimer heartbeat_;
 	QTimer retirement_;
 	QElapsedTimer retirement_elapsed_;
@@ -63,13 +63,30 @@ class ProductWindow final : public QWidget {
 	QComboBox *scenes_ = nullptr;
 	std::array<QComboBox *, 5> slots_{};
 	ProductSourcePool source_pool_;
-	std::unique_ptr<ProductSceneGraph> wall_;
+	std::shared_ptr<ProductSceneGraph> wall_;
+	obs_scene_t *blank_scene_ = nullptr;
+	bool tearing_down_ = false;
+	struct ProjectorView {
+		quint64 id = 0;
+		QPointer<QWidget> window;
+		std::shared_ptr<ProductSceneGraph> graph;
+		QJsonArray cameras;
+		QJsonObject versions;
+		QString scene_id;
+		qint64 studio_revision = -1;
+		bool heartbeat_pending = false;
+	};
+	std::array<std::unique_ptr<ProjectorView>, 2> projectors_;
+	std::array<QPushButton *, 2> projector_buttons_{};
+	QPushButton *close_projectors_ = nullptr;
+	std::array<bool, 2> projector_pending_{};
+	quint64 next_projector_id_ = 0;
 	QJsonArray watching_;
 	QJsonObject watching_versions_;
 	QString watching_scene_id_;
 	qint64 watching_studio_revision_ = -1;
 	QString user_id_;
-	quint64 generation_ = 0;
+	quint64 main_generation_ = 0;
 	bool heartbeat_pending_ = false;
 	bool applying_ = false;
 	qint64 last_retirement_ms_ = 0;
@@ -109,6 +126,7 @@ class ProductWindow final : public QWidget {
 			{"selectionIndices", selection_indices},
 			{"sceneId", watching_scene_id_}, {"studioRevision", watching_studio_revision_},
 			{"studioChoices", studio_choices},
+			{"mainGeneration", qint64(main_generation_)},
 			{"sessionBound", !user_id_.isEmpty()}, {"mediaSources", media_sources}, {"bindings", bindings},
 			{"videoAvailable", video_available}, {"hardwareDecodeVerified", false}};
 		state.insert("previewLocked", preview_ && preview_->property("webobsPreviewLocked").toBool());
@@ -120,6 +138,28 @@ class ProductWindow final : public QWidget {
 				{"qtClass", QString::fromLatin1(preview_->metaObject()->className())},
 				{"hwnd", QString::number(quintptr(preview_->winId()), 16)},
 				{"rootHwnd", QString::number(quintptr(window()->winId()), 16)}}});
+		QJsonArray projector_states;
+		auto windows = state.value("windows").toArray();
+		for (std::size_t i = 0; i < projectors_.size(); ++i) {
+			if (!projectors_[i] || !projectors_[i]->window) continue;
+			const auto &view = *projectors_[i];
+			QJsonArray view_bindings;
+			for (int item = 0; item < view.cameras.size(); ++item) {
+				auto binding = view.cameras[item].toObject();
+				binding.insert("sourceUuid", QString::fromStdString(view.graph->uuids[std::size_t(item)]));
+				view_bindings.append(binding);
+			}
+			projector_states.append(QJsonObject{{"slot", int(i + 1)}, {"sceneId", view.scene_id},
+				{"studioRevision", view.studio_revision}, {"bindings", view_bindings},
+				{"fullscreen", view.window->isFullScreen()}});
+			const auto role = view.window->isFullScreen() ? "fixed-scene-fullscreen-%1" : "fixed-scene-%1";
+			windows.append(QJsonObject{{"role", QString::fromLatin1(role).arg(i + 1)},
+				{"qtClass", QString::fromLatin1(view.window->metaObject()->className())},
+				{"hwnd", QString::number(quintptr(view.window->winId()), 16)},
+				{"rootHwnd", QString::number(quintptr(view.window->winId()), 16)}});
+		}
+		state.insert("windows", windows);
+		state.insert("projectors", projector_states);
 		if (video_available)
 			state.insert("videoInfo", QJsonObject{{"baseWidth", int(video.base_width)},
 				{"baseHeight", int(video.base_height)}, {"outputWidth", int(video.output_width)},
@@ -136,65 +176,178 @@ class ProductWindow final : public QWidget {
 	void request(const QString &path, const QByteArray &method, const QJsonObject &body, Reply callback,
 		     int timeout_ms = 2000)
 	{
-		const auto generation = generation_;
-		QUrl url = origin_;
-		url.setPath(path);
-		QNetworkRequest message(url);
-		message.setRawHeader("Origin", origin_.toString(QUrl::RemovePath).toUtf8());
-		message.setRawHeader("X-WebOBS-Native-Host", host_secret_);
-		message.setHeader(QNetworkRequest::ContentTypeHeader, "application/json");
-		message.setAttribute(QNetworkRequest::RedirectPolicyAttribute, QNetworkRequest::ManualRedirectPolicy);
-		message.setTransferTimeout(timeout_ms);
-		QNetworkReply *reply = method == "GET" ? network_.get(message) :
-			network_.post(message, QJsonDocument(body).toJson(QJsonDocument::Compact));
-		reply->setReadBufferSize(response_limit);
-		auto *deadline = new QTimer(reply);
-		deadline->setSingleShot(true);
-		connect(deadline, &QTimer::timeout, reply, &QNetworkReply::abort);
-		deadline->start(timeout_ms);
-		auto bytes = std::make_shared<QByteArray>();
-		connect(reply, &QNetworkReply::readyRead, this, [reply, bytes] {
-			if (reply->bytesAvailable() > response_limit - bytes->size()) {
-				reply->abort();
-				return;
-			}
-			bytes->append(reply->readAll());
-		});
-		connect(reply, &QNetworkReply::finished, this, [this, reply, bytes, deadline, generation, callback] {
-			deadline->stop();
-			const int code = reply->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt();
-			const auto document = QJsonDocument::fromJson(*bytes);
-			const bool valid = reply->error() == QNetworkReply::NoError && document.isObject();
-			reply->deleteLater();
-			if (generation == generation_)
-				callback(valid ? code : (code >= 400 ? code : 0), document.object());
-		});
+		if (client_) client_->request(path, method, body, std::move(callback), timeout_ms);
+		else callback(0, {});
 	}
 
-	void clear_media()
+	void update_projector_controls()
 	{
+		for (std::size_t i = 0; i < projector_buttons_.size(); ++i)
+			if (projector_buttons_[i])
+				projector_buttons_[i]->setEnabled(!user_id_.isEmpty() && !applying_ && wall_ && !projector_pending_[i]);
+		if (close_projectors_)
+			close_projectors_->setEnabled(bool(projectors_[0]) || bool(projectors_[1]));
+	}
+	void observe_current_media()
+	{
+		if (!tearing_down_ && !user_id_.isEmpty())
+			observe_state(applying_ ? "connecting" : (watching_.isEmpty() ? "authenticated" : "graph-applied"));
+	}
+	void close_projector(std::size_t index)
+	{
+		auto retired = std::move(projectors_[index]);
+		if (retired && retired->window)
+			retired->window->close(); // OBS removes its own projector-list entry.
+		retired.reset();
+		update_projector_controls();
+	}
+	void clear_main_media()
+	{
+		save_->setEnabled(false);
 		watching_ = {};
 		watching_versions_ = {};
 		watching_scene_id_.clear();
 		watching_studio_revision_ = -1;
 		if (!obs_initialized())
 			return;
-		// Graph teardown detaches pictures first and retires only its last-owned
-		// media entries. Other authorized graphs can retain shared sources.
+		// Main Preview must blank without editing a graph still presented by a
+		// fixed projector. The empty scene has no endpoint or media source.
+		if (!tearing_down_) {
+			if (!blank_scene_)
+				blank_scene_ = obs_scene_create("WebOBS locked preview");
+			if (blank_scene_ && !obs_source_removed(obs_scene_get_source(blank_scene_)))
+				select_wall(blank_scene_);
+		}
 		wall_.reset();
+	}
+	void clear_media()
+	{
+		clear_main_media();
+		projector_pending_.fill(false);
+		for (std::size_t i = 0; i < projectors_.size(); ++i) close_projector(i);
+	}
+	void toggle_projector_fullscreen(QWidget *window)
+	{
+		if (window->isFullScreen()) {
+			QMetaObject::invokeMethod(window, "OpenWindowedProjector", Qt::DirectConnection);
+			return;
+		}
+		const auto screens = QGuiApplication::screens();
+		if (screens.isEmpty()) return;
+		const int monitor = (std::max)(0, int(screens.indexOf(window->screen())));
+		// Invoke the pinned projector's existing monitor action, including its
+		// native saved-monitor/geometry/cursor behavior. No new renderer is used.
+		QAction action(this);
+		action.setProperty("monitor", monitor);
+		QObject::connect(&action, SIGNAL(triggered(bool)), window, SLOT(OpenFullScreenProjector()));
+		action.trigger();
+	}
+	void open_projector(std::size_t index)
+	{
+		if (index >= projectors_.size() || projector_pending_[index] || applying_ || !wall_ || user_id_.isEmpty())
+			return;
+		const auto main_generation = main_generation_;
+		const std::weak_ptr<ProductSceneGraph> graph_reference = wall_;
+		const auto cameras = watching_;
+		const auto versions = watching_versions_;
+		const auto scene_id = watching_scene_id_;
+		const auto revision = watching_studio_revision_;
+		const bool scene = !scene_id.isEmpty();
+		projector_pending_[index] = true;
+		update_projector_controls();
+		const QJsonObject renewal = scene ? QJsonObject{{"sceneId", scene_id}, {"revision", revision}} :
+			QJsonObject{{"cameras", cameras}};
+		request(scene ? "/api/v1/native/scenes/authorize" : "/api/v1/native/cameras/authorize", "POST", renewal,
+			[this, index, main_generation, graph_reference, cameras, versions, scene_id, revision, scene]
+			(int code, const QJsonObject &body) {
+			projector_pending_[index] = false;
+			update_projector_controls();
+			const auto graph = graph_reference.lock();
+			if (!graph || main_generation != main_generation_ || wall_ != graph || applying_) return;
+			if (code != 200 || body.value("cameraVersions").toObject() != versions ||
+			    (scene && body.value("studioRevision").toInteger(-1) != revision)) {
+				locked(tr("投影观看权限或配置已失效，请重新登录。"));
+				return;
+			}
+			std::set<QWidget *> previous;
+			for (auto *widget : QApplication::allWidgets())
+				if (QString::fromLatin1(widget->metaObject()->className()) == "OBSProjector") previous.insert(widget);
+			obs_frontend_open_projector("Scene", -1, "", obs_source_get_name(obs_scene_get_source(graph->scene)));
+			QWidget *opened = nullptr;
+			for (auto *widget : QApplication::allWidgets()) {
+				if (QString::fromLatin1(widget->metaObject()->className()) == "OBSProjector" && !previous.contains(widget)) {
+					if (opened) {
+						widget->close();
+						opened->close();
+						status_->setText(tr("投影窗口身份不唯一，请重试。"));
+						return;
+					}
+					opened = widget;
+				}
+			}
+			if (!opened) {
+				status_->setText(tr("OBS 未能打开投影窗口，请重试。"));
+				return;
+			}
+			auto view = std::make_unique<ProjectorView>();
+			view->id = ++next_projector_id_;
+			view->window = opened;
+			view->graph = graph;
+			view->cameras = cameras;
+			view->versions = versions;
+			view->scene_id = scene_id;
+			view->studio_revision = revision;
+			const auto id = view->id;
+			opened->installEventFilter(this);
+			opened->setWindowTitle(tr("WebOBS 固定场景投影 %1 · F11 全屏").arg(index + 1));
+			connect(opened, &QObject::destroyed, this, [this, index, id] {
+				if (projectors_[index] && projectors_[index]->id == id) {
+					projectors_[index].reset();
+					update_projector_controls();
+					observe_current_media();
+				}
+			});
+			close_projector(index);
+			projectors_[index] = std::move(view);
+			update_projector_controls();
+			observe_current_media();
+		});
+	}
+	void renew_projectors()
+	{
+		if (user_id_.isEmpty()) return;
+		for (std::size_t i = 0; i < projectors_.size(); ++i) {
+			if (!projectors_[i] || !projectors_[i]->window || projectors_[i]->heartbeat_pending) continue;
+			auto &view = *projectors_[i];
+			view.heartbeat_pending = true;
+			const auto id = view.id;
+			const bool scene = !view.scene_id.isEmpty();
+			const QJsonObject renewal = scene ?
+				QJsonObject{{"sceneId", view.scene_id}, {"revision", view.studio_revision}} :
+				QJsonObject{{"cameras", view.cameras}};
+			request(scene ? "/api/v1/native/scenes/authorize" : "/api/v1/native/cameras/authorize", "POST", renewal,
+				[this, i, id, scene](int code, const QJsonObject &body) {
+				if (!projectors_[i] || projectors_[i]->id != id) return;
+				auto &current = *projectors_[i];
+				current.heartbeat_pending = false;
+				if (code != 200 || body.value("cameraVersions").toObject() != current.versions ||
+				    (scene && body.value("studioRevision").toInteger(-1) != current.studio_revision))
+					locked(tr("投影会话、摄像机权限或配置已失效，请重新登录。"));
+			});
+		}
 	}
 
 	void locked(const QString &message)
 	{
-		++generation_;
+		if (client_) client_->reset_session();
+		++main_generation_;
 		retirement_elapsed_.start();
 		heartbeat_.stop();
 		retirement_.stop();
 		heartbeat_pending_ = false;
 		applying_ = false;
-		clear_media();
 		user_id_.clear();
-		network_.setCookieJar(new QNetworkCookieJar(&network_));
+		clear_media();
 		login_->setEnabled(true);
 		for (auto *button : {watch_, save_, logout_, refresh_, scene_watch_})
 			button->setEnabled(false);
@@ -260,7 +413,7 @@ class ProductWindow final : public QWidget {
 			}
 			user_id_ = id;
 			observe_state("authenticated");
-			for (auto *button : {watch_, save_, logout_, refresh_, scene_watch_})
+			for (auto *button : {watch_, logout_, refresh_, scene_watch_})
 				button->setEnabled(true);
 			status_->setText(tr("已登录，正在读取授权设备目录…"));
 			heartbeat_.start(2000);
@@ -342,10 +495,11 @@ class ProductWindow final : public QWidget {
 
 	void begin_connecting()
 	{
-		++generation_;
+		++main_generation_;
 		heartbeat_pending_ = false;
-		clear_media();
+		clear_main_media();
 		applying_ = true;
+		update_projector_controls();
 		observe_state("connecting");
 		for (auto *button : {watch_, refresh_, scene_watch_}) button->setEnabled(false);
 		scenes_->setEnabled(false);
@@ -357,9 +511,26 @@ class ProductWindow final : public QWidget {
 		const QJsonArray &selected, const QJsonObject &versions, const QJsonObject &video,
 		const QString &scene_id = {}, qint64 studio_revision = -1)
 	{
-		clear_media();
+		clear_main_media();
 		std::string error;
-		if (!apply_product_video_config(video.value("width").toInt(), video.value("height").toInt(),
+		obs_video_info actual{};
+		const bool same_video = obs_get_video_info(&actual) &&
+			actual.base_width == unsigned(video.value("width").toInt()) &&
+			actual.base_height == unsigned(video.value("height").toInt()) &&
+			actual.output_width == actual.base_width && actual.output_height == actual.base_height &&
+			actual.fps_den != 0 && std::uint64_t(actual.fps_num) ==
+			std::uint64_t(video.value("fps").toInt()) * actual.fps_den;
+		if (!same_video && (projectors_[0] || projectors_[1])) {
+			applying_ = false;
+			for (auto *button : {watch_, refresh_, scene_watch_}) button->setEnabled(true);
+			scenes_->setEnabled(true);
+			for (auto *slot : slots_) slot->setEnabled(true);
+			update_projector_controls();
+			status_->setText(tr("请先关闭固定投影，再更改主画面的画布或帧率。"));
+			observe_current_media();
+			return;
+		}
+		if (!same_video && !apply_product_video_config(video.value("width").toInt(), video.value("height").toInt(),
 			video.value("fps").toInt(), error)) {
 			locked(tr("无法应用项目画布或帧率，请检查视频设置。"));
 			return;
@@ -370,7 +541,8 @@ class ProductWindow final : public QWidget {
 		scenes_->setEnabled(true);
 		for (auto *slot : slots_) slot->setEnabled(true);
 		if (!wall_ || !wall_->scene) {
-			clear_media();
+			clear_main_media();
+			update_projector_controls();
 			status_->setText(tr("原生画面创建失败；部分来源、音轨或资产仍需接入。"));
 			observe_state("graph-failed");
 			return;
@@ -380,6 +552,8 @@ class ProductWindow final : public QWidget {
 		watching_versions_ = versions;
 		watching_scene_id_ = scene_id;
 		watching_studio_revision_ = studio_revision;
+		save_->setEnabled(true);
+		update_projector_controls();
 		observe_state("graph-applied");
 		status_->setText(tr("原生监看已连接。"));
 	}
@@ -540,6 +714,22 @@ class ProductWindow final : public QWidget {
 	}
 	bool eventFilter(QObject *object, QEvent *event) override
 	{
+		for (const auto &view : projectors_) {
+			if (!view || object != view->window.data()) continue;
+			if (event->type() == QEvent::WindowStateChange)
+				QTimer::singleShot(0, this, [this] { observe_current_media(); });
+			if (event->type() == QEvent::KeyPress && static_cast<QKeyEvent *>(event)->key() == Qt::Key_F11) {
+				if (!static_cast<QKeyEvent *>(event)->isAutoRepeat()) toggle_projector_fullscreen(view->window);
+				observe_current_media();
+				return true;
+			}
+			if (event->type() == QEvent::MouseButtonDblClick &&
+			    static_cast<QMouseEvent *>(event)->button() == Qt::LeftButton) {
+				toggle_projector_fullscreen(view->window);
+				observe_current_media();
+				return true;
+			}
+		}
 		if (object == preview_) {
 			switch (event->type()) {
 			case QEvent::MouseButtonPress:
@@ -568,7 +758,7 @@ class ProductWindow final : public QWidget {
 	}
 
 public:
-	explicit ProductWindow(QWidget *frontend) : QWidget(frontend, Qt::Window), frontend_(frontend), network_(this)
+	explicit ProductWindow(QWidget *frontend) : QWidget(frontend, Qt::Window), frontend_(frontend)
 	{
 		setWindowTitle("WebOBS Wall");
 		setObjectName("webobsProductWindow");
@@ -627,6 +817,21 @@ public:
 		scene_watch_->setObjectName("webobsWatchScene");
 		layout->addWidget(scenes_);
 		layout->addWidget(scene_watch_);
+		auto *projector_row = new QHBoxLayout;
+		for (std::size_t i = 0; i < projector_buttons_.size(); ++i) {
+			projector_buttons_[i] = new QPushButton(tr("固定场景投影 %1").arg(i + 1), this);
+			projector_buttons_[i]->setObjectName(QString("webobsFixedProjector%1").arg(i + 1));
+			projector_row->addWidget(projector_buttons_[i]);
+			connect(projector_buttons_[i], &QPushButton::clicked, this, [this, i] { open_projector(i); });
+		}
+		layout->addLayout(projector_row);
+		close_projectors_ = new QPushButton(tr("关闭固定投影"), this);
+		close_projectors_->setObjectName("webobsCloseProjectors");
+		layout->addWidget(close_projectors_);
+		connect(close_projectors_, &QPushButton::clicked, this, [this] {
+			for (std::size_t i = 0; i < projectors_.size(); ++i) close_projector(i);
+			observe_current_media();
+		});
 		auto *manage = new QPushButton(tr("打开设备与系统管理"), this);
 		layout->addWidget(manage);
 		layout->addStretch(1);
@@ -643,7 +848,6 @@ public:
 				break;
 			}
 		}
-		network_.setProxy(QNetworkProxy::NoProxy);
 		origin_ = QUrl(qEnvironmentVariable("WEBOBS_NATIVE_CONTROL_ORIGIN"));
 		host_secret_ = qgetenv("WEBOBS_NATIVE_HOST_TOKEN");
 		connect(&retirement_, &QTimer::timeout, this, [this] {
@@ -669,6 +873,7 @@ public:
 			manage->setEnabled(false);
 			return;
 		}
+		client_ = std::make_unique<ProductHttpClient>(origin_, host_secret_, this);
 		connect(login_, &QPushButton::clicked, this, [this] {
 			const QJsonObject credentials{{"username", username_->text()}, {"password", password_->text()}};
 			password_->clear();
@@ -719,9 +924,11 @@ public:
 			QDesktopServices::openUrl(url);
 		});
 		connect(&heartbeat_, &QTimer::timeout, this, [this] {
+			renew_projectors(); // Remains active while the main view resolves another scene.
 			if (heartbeat_pending_ || applying_ || user_id_.isEmpty())
 				return;
 			heartbeat_pending_ = true;
+			const auto main_generation = main_generation_;
 			const bool active = !watching_.isEmpty();
 			const bool scene_active = active && !watching_scene_id_.isEmpty();
 			const QString path = scene_active ? "/api/v1/native/scenes/authorize" :
@@ -729,7 +936,8 @@ public:
 			const QJsonObject renewal = scene_active ?
 				QJsonObject{{"sceneId", watching_scene_id_}, {"revision", watching_studio_revision_}} :
 				QJsonObject{{"cameras", watching_}};
-			request(path, active ? "POST" : "GET", renewal, [this, active, scene_active](int code, const QJsonObject &body) {
+			request(path, active ? "POST" : "GET", renewal, [this, active, scene_active, main_generation](int code, const QJsonObject &body) {
+				if (main_generation != main_generation_) return;
 				heartbeat_pending_ = false;
 				if (code != 200)
 					locked(tr("会话或摄像机权限已失效，请重新登录。"));
@@ -742,7 +950,16 @@ public:
 	}
 	~ProductWindow() override
 	{
+		tearing_down_ = true;
+		heartbeat_.stop();
+		retirement_.stop();
+		client_.reset();
 		clear_media();
+		if (blank_scene_ && obs_initialized()) {
+			obs_source_remove(obs_scene_get_source(blank_scene_));
+			obs_scene_release(blank_scene_);
+			blank_scene_ = nullptr;
+		}
 		// OBS retains its UI pointer through frontend teardown.
 		if (preview_) {
 			preview_->setParent(frontend_);

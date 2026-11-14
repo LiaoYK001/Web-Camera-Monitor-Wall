@@ -25,7 +25,7 @@ One pinned OBS frontend owns local media. Reuse the existing Direct-only core fo
 | LIVE | `DirectPreview.tsx`、`ProgramPreview.tsx`、core OBS | 原生 OBS Media Source 与 Preview/Program | 认证后建图，同源兼容设置共享 | OBS、obs-ffmpeg | 真实插件、真实服务、动态 H.264/H.265 最终像素 | 原型实测反馈 dev.53；产品 dev.86 九组八帧显示/清屏及重登重启通过 | 真实相机/目标机硬解/性能/长稳及安装态仍待验证 |
 | STUDIO | `SceneCollection.tsx`、`sceneSchema.ts`、`StudioController` | 原生场景切换/编辑与现有管理 Studio | Scene/Source UUID、草稿、revision、嵌套 | OBS、core、WebUI | 保存/恢复、裁剪/层级/锁定、冲突、TAKE | SceneDocument 相机建图及后台 Studio 场景列表/监看按钮已接线；Linux 实际 HTTP 与 libobs 共享/引用/变换测试通过 | Windows 场景/嵌套显示与共享像素待执行；编辑、TAKE/过渡、Preview/Program 与业务来源仍待接线 |
 | LAYOUT | `monitorView.ts`、监控偏好、设备布局 | 原生网格/轮换/事件提升/主子码流 | 账号与设备偏好分离 | OBS、account、clients | 既有布局范围、人工选择、帧率/分辨率回读 | 原生未接线 | 不限五路的布局接线 |
-| PROJECT | `ProjectorView.tsx`、desktop fixed projector IPC | 原生 Program 与固定 Scene 多投影 | 固定场景身份、同源引用 | OBS/Qt | 双固定场景、切 Program、重开/全屏/DPI | 原型 Program 像素覆盖，产品入口待接线 | 多投影授权和消费者寿命 |
+| PROJECT | `ProjectorView.tsx`、desktop fixed projector IPC | 原生 Program 与固定 Scene 多投影 | 固定场景身份、同源引用 | OBS/Qt | 双固定场景、切 Program、重开/全屏/DPI | 原型 Program 像素覆盖；产品已接两个固定 Scene 投影/共享引用/独立续验，Windows 待执行 | 三窗口像素、权限/关闭、DPI 与持久恢复验收 |
 | AUDIO | `AudioWorkspace.tsx`、`sourceAudio.ts`、schema-v6 | 原生混音/监听/电平，管理音轨页 | 账号监听偏好与项目轨道语义 | OBS、必要音轨适配组件 | 无重复扬声器输出、多轨保存、失效轨报错 | 原生未接线 | 音轨与运行时映射 |
 | OVERLAY | `MonitorProcessStatus.tsx`、analytics、隐私遮罩 | 原生叠层及管理配置 | 本地/录像/远端范围分开 | OBS、可选 analytics | 边框/检测框/音量表与最终像素、隐私遮罩 | 原生未接线 | overlay 来源和数据连接 |
 | PTZ | `CameraDeviceControls.tsx`、`useShortTalk.ts` | 原生设备控制入口及管理页 | camera scope、移动脉冲、超时停止 | camera | 松键/断开停止、预置位、对讲收尾、快照 | 旧实现可用，原生未接线 | UI 与设备命令接线 |
@@ -70,3 +70,6 @@ dev.87 实际 NSIS 安装前首启测量：198,314,717 logical B、201,252,904 u
 
 
 dev.88（43230943802、source 1dda0c5）：23 项实际 portable UI 检查和十五组八帧像素通过，含五格仅一个实际 HEVC 来源与切回独立五路；登录前恢复正/负 I/O 对照九项通过。NSIS 198,392,037 logical B / 201,326,632 allocation B，仍失败于快捷方式目标比较，installed UI/卸载待执行。已保存 Studio 场景的新入口未包含在该构建，完整 Studio/功能/迁移/更新/性能仍未完成。 / Dev.88 passes actual source sharing and pre-authentication restore isolation, but not installed-entry or full-product qualification.
+
+
+dev.90（43611384570、source be7bd3d）实际保存场景 UI、五路最终像素、sceneId 登录后恢复及普通 API revision 变更清屏的八组捕获通过；整轮回切五路/保存阶段失败，NSIS 未执行。后续多投影、观看操作/保存同步及手动 session cookie 接线均待新 Windows source，不提前记为通过。 / Saved-scene subchecks pass in dev.90, while the full UI gate fails later; projector/session changes remain pending Windows.
