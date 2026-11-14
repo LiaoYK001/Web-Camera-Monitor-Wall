@@ -4,6 +4,7 @@
 #include "webobs/authentication.hpp"
 #include "webobs/native_control_auth.hpp"
 #include "webobs/native_cluster_authorization.hpp"
+#include "webobs/native_scene_fingerprint.hpp"
 #include "webobs/go2rtc_proxy.hpp"
 #include "webobs/nvr_media_proxy.hpp"
 #include "webobs/audio_tracks.hpp"
@@ -4264,7 +4265,12 @@ private:
                 "\",\"previewSceneId\":\"" + json_escape(parsed.document->preview_scene_id) + "\",\"scenes\":[";
             for (const auto &scene : parsed.document->scenes) {
                 if (summaries.back() != '[') summaries += ',';
-                summaries += "{\"id\":\"" + json_escape(scene.id) + "\",\"name\":\"" + json_escape(scene.name) + "\"}";
+                summaries += "{\"id\":\"" + json_escape(scene.id) + "\",\"name\":\"" + json_escape(scene.name) + "\"";
+                const auto flattened = flatten_studio_scene(*parsed.document, scene.id);
+                const auto fingerprint = flattened.ok() ?
+                    native_scene_fingerprint(*flattened.document, runtime_status_.configured_fps) : std::nullopt;
+                if (fingerprint) summaries += ",\"fingerprint\":\"" + *fingerprint + "\"";
+                summaries += '}';
             }
             summaries += "]}";
             send_response(response(http::status::ok, version, std::move(summaries)));
@@ -4287,21 +4293,34 @@ private:
             json_loadb(request.body().data(), request.body().size(), JSON_REJECT_DUPLICATES, nullptr), &json_decref);
         std::optional<SceneDocument> scene_document;
         std::optional<std::uint64_t> studio_revision;
+        std::optional<std::string> scene_fingerprint;
+        std::string requested_scene_id;
+        bool fingerprint_precondition = false;
         if (scene_request) {
             auto *id = body ? json_object_get(body.get(), "sceneId") : nullptr;
             auto *revision = body ? json_object_get(body.get(), "revision") : nullptr;
+            auto *fingerprint = body ? json_object_get(body.get(), "fingerprint") : nullptr;
+            fingerprint_precondition = json_is_string(fingerprint);
+            const std::string expected_fingerprint = fingerprint_precondition ?
+                std::string(json_string_value(fingerprint), json_string_length(fingerprint)) : std::string{};
+            const bool valid_precondition = fingerprint_precondition ?
+                expected_fingerprint.size() == 64 && std::all_of(expected_fingerprint.begin(), expected_fingerprint.end(),
+                    [](char c) { return (c >= '0' && c <= '9') || (c >= 'a' && c <= 'f'); }) :
+                json_is_integer(revision) && json_integer_value(revision) >= 0;
             if (!json_is_object(body.get()) || json_object_size(body.get()) != 2 || !json_is_string(id) ||
-                !json_is_integer(revision) || json_integer_value(revision) < 0 ||
+                !valid_precondition ||
                 !identifier(std::string(json_string_value(id), json_string_length(id)))) {
                 reject(http::status::bad_request, "native_scene_invalid");
                 return;
             }
-            studio_revision = static_cast<std::uint64_t>(json_integer_value(revision));
             const auto snapshot = studio_.snapshot();
-            if (!snapshot.ok() || snapshot.revision != *studio_revision) {
+            if (!snapshot.ok() || (!fingerprint_precondition &&
+                snapshot.revision != static_cast<std::uint64_t>(json_integer_value(revision)))) {
                 reject(http::status::precondition_failed, "native_studio_changed");
                 return;
             }
+            studio_revision = snapshot.revision;
+            requested_scene_id.assign(json_string_value(id), json_string_length(id));
             const auto parsed = parse_studio_json(snapshot.public_json);
             const auto flattened = parsed.ok() ? flatten_studio_scene(*parsed.document,
                 std::string_view(json_string_value(id), json_string_length(id))) : StudioFlattenResult{};
@@ -4312,6 +4331,15 @@ private:
                 return;
             }
             scene_document = *flattened.document;
+            scene_fingerprint = native_scene_fingerprint(*scene_document, runtime_status_.configured_fps);
+            if (!scene_fingerprint) {
+                reject(http::status::service_unavailable, "native_studio_unavailable");
+                return;
+            }
+            if (fingerprint_precondition && *scene_fingerprint != expected_fingerprint) {
+                reject(http::status::precondition_failed, "native_scene_changed");
+                return;
+            }
             // Derive bindings from the server's canonical document, never a
             // caller-supplied source list or raw URL. The existing whole-batch
             // authority/strict-Profile path below owns all private resolution.
@@ -4437,9 +4465,24 @@ private:
         }
         if (studio_revision) {
             const auto current_studio = studio_.snapshot();
-            if (!current_studio.ok() || current_studio.revision != *studio_revision) {
+            if (!current_studio.ok()) {
                 reject(http::status::precondition_failed, "native_studio_changed");
                 return;
+            }
+            if (current_studio.revision != *studio_revision) {
+                if (!fingerprint_precondition) {
+                    reject(http::status::precondition_failed, "native_studio_changed");
+                    return;
+                }
+                const auto parsed = parse_studio_json(current_studio.public_json);
+                const auto flattened = parsed.ok() ? flatten_studio_scene(*parsed.document, requested_scene_id) : StudioFlattenResult{};
+                const auto current_fingerprint = flattened.ok() ?
+                    native_scene_fingerprint(*flattened.document, runtime_status_.configured_fps) : std::nullopt;
+                if (!current_fingerprint || current_fingerprint != scene_fingerprint) {
+                    reject(http::status::precondition_failed, "native_scene_changed");
+                    return;
+                }
+                studio_revision = current_studio.revision;
             }
         }
         const auto canvas = scene_document ? scene_document->canvas : controller_.private_document_snapshot().canvas;
@@ -4454,6 +4497,7 @@ private:
             std::to_string(runtime_status_.configured_fps) + "}";
         if (scene_document) {
             result += ",\"studioRevision\":" + std::to_string(*studio_revision);
+            result += ",\"sceneFingerprint\":\"" + *scene_fingerprint + "\"";
             if (resolve) {
                 const auto encoded_scene = serialize_scene_json(*scene_document, SceneJsonView::public_api);
                 if (!encoded_scene.ok()) {

@@ -1291,3 +1291,14 @@ Track-only audio drafts now retain their original revision, preserve conflicts, 
 NSIS passed=true、freshInstalledEntryQualified=true：中文/空格路径实际安装、载荷哈希、原生 IShellLinkW 目标存在/规范匹配/空参数、已安装完整 UI/media/lifecycle，以及卸载后 private profile 字节和未知文件保留均通过。footprint 198,521,443 logical B / 201,453,608 unnamed-stream allocation B / 1865 files；setup 70,130,550 B。旧版升级、完整功能迁移仍 false，所有二进制 publicationForbidden，未公开中间包。渲染器产品标签、断流故障回归、明确空音频、管理页不自动播放和新音频草稿保护均不在 dev.92，需要下一 source。R1 安装闭环的这一步不当成整个 R0–R7 交付完成。
 
 Dev.92 passes the current portable, restore-control and fresh-installed gates. Both real product surfaces pass 34 checks and 256 analyzed window frames; native Unicode shortcut verification and uninstall data/unknown-file retention pass. The measured incomplete installation is 198,521,443 logical bytes, not a full-feature/OBS-size qualification. All internal binaries remain publication-forbidden; legacy migration, complete features and target-device performance remain open, and later source additions need a fresh run.
+
+
+#### R2 已显示场景的内容前置条件 / Content preconditions for retained scenes
+
+场景目录/resolve/authorize 与真实 Qt 主窗口/固定投影接入 canonical scene fingerprint，旧 `{sceneId, revision}` 模式保留严格前后 revision 一致；新二字段内容模式核对展开相机场景及配置 fps。摘要仅归零全局 revision，绑定真实来源/布局/裁剪/音频/过滤器等。它不提供授权；每次仍做同一 bound identity、fresh scene.read、完整 Profile/camera scope、cameraVersions、会话与 deadline 核验，authorize 仍零端点读取。主图和投影可在无关 Studio revision 更新后继续，实际显示内容或嵌套变化仍拒绝并清空；初次选择也不会因仅无关 revision 更新而误拒绝。
+
+Linux 新内容测试和全套九项 core CTest 通过；真实 HTTP/账号/Registry 回归通过普通保存、内容解析、畸形/混合前置条件、禁用与 epoch 撤销。特别在账户 batch 授权期间通过真实普通 Studio API 并发保存：无关场景变化返回当前 revision 并保持同一内容值；显示场景和嵌套实际几何变化返回 412，纯 authorize 过程中私密端点读取为零。Qt 源编译与 44 build contracts、22 pixel contracts（另两项平台/opt-in skip）通过。
+
+新的 Windows gate 接好保存场景固定投影 → 普通 API 添加/编辑未显示场景及 Preview 指针 → 主图/固定图续验到新 revision → 来源 UUID 保持及两窗口最终像素 → 正常关闭；既有显示场景更改清屏门禁保留。这个新接口不在正在执行的 dev.93（43625385803，source 3ec6dfa），尚待后续实际 Windows 编译/安装/媒体验证，不当成完整 TAKE/Preview-Program bridge。
+
+Canonical scene-content preconditions now reach the real native control and Qt view paths. Unrelated Studio revisions can preserve retained graphs; actual flattened content changes still reject, with all fresh camera/session checks intact. Nine core CTests, real concurrent HTTP/authority regressions, Qt compilation and existing contracts pass locally. New actual Windows two-window continuity tests are wired but pending after dev.93; full TAKE/Program integration remains open.

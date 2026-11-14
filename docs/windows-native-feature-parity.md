@@ -88,3 +88,6 @@ Dev.91（43616770312、49cd463）实际 portable 31 项检查、25 组八帧像�
 
 
 Dev.92（43620903246、c1bf843）整体 success，便携/实际 NSIS 安装后各 34 项检查、26 组/256 帧通过；恢复正负 I/O 对照九项通过。安装 footprint 198,521,443 logical B / 201,453,608 allocation B，原生快捷方式与卸载保留通过。全部仍为未完成业务融合的内部范围，旧版升级/完整功能 false，二进制未发布；目标机/完整功能性能未达标证明。 / Dev.92 validates the current isolated fresh-install scope, not complete legacy migration or the full R0–R7 objective.
+
+
+R2 场景内容前置条件已接入真实服务与主图/固定投影：无关全局 revision 更新可继续，实际显示内容与 camera/身份变化仍 fresh 核验/拒绝。Linux 九项 CTest、真实并发 HTTP/权限与 Qt/契约通过；新多窗口最终像素待 dev.93 后 source，完整 TAKE/Preview-Program 仍未接线。 / Scene-content preconditions are wired with fresh authorization preserved; Windows continuity and full Studio integration remain pending.

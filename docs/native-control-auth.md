@@ -2,9 +2,9 @@
 
 ## 当前交付与限制 / Delivered scope and limits
 
-本文记录 renderer-free C++ 边界、真实账号后端 adapter 和后续产品接线。R1 产品变体已通过现有 core listener 连接 Qt 登录/注册、授权目录、来源解析与 OBS 观看动作，独立 supervisor 启动真实服务；core 保持 Direct-only。Linux 真实服务接线已验证，Windows 实际入口/UI/媒体门禁仍在持续执行，不能把库测试或编译通过写成安装态账号产品、旧数据迁移或 P3 验收。Electron 兼容产品仍为默认交付。最新回执见 [执行记录](windows-obs-parity-execution.md)。
+本文记录 renderer-free C++ 边界、真实账号后端 adapter 和后续产品接线。R1 产品变体已通过现有 core listener 连接 Qt 登录/注册、授权目录、来源解析与 OBS 观看动作，独立 supervisor 启动真实服务；core 保持 Direct-only。dev.92 已通过当前范围的便携/真实 NSIS 安装入口、UI/媒体、恢复 I/O 和卸载保留门禁；后续源码仍需新回归，旧数据迁移、全部旁路、完整功能与目标机性能仍未完成。Electron 兼容产品仍为默认交付。最新回执见 [执行记录](windows-obs-parity-execution.md)。
 
-The R1 product variant now wires these libraries through the existing core listener to the actual Qt login/catalog/watch flow and supervised services. The core stays Direct-only. Linux real-service integration is tested; actual Windows UI/media and installed-product gates remain open. The standalone libraries alone prove neither a complete account product nor migration, and the compatibility Electron product remains the default delivery.
+The R1 product variant now wires these libraries through the existing core listener to the actual Qt login/catalog/watch flow and supervised services. The core stays Direct-only. Dev.92 passes the current portable/fresh-installed UI/media, restore-I/O and uninstall-retention gates. Later source additions still need fresh runs; legacy migration, all bypass paths, complete features and target-device performance remain open. The standalone libraries alone prove neither a complete account product nor migration, and the compatibility Electron product remains the default delivery.
 
 [NativeControlAuth](../core/include/webobs/native_control_auth.hpp) 直接复用 [SessionStore](../core/include/webobs/authentication.hpp) 的 SQLite 持久会话和令牌哈希。[NativeClusterAuthorizationBackend](../core/include/webobs/native_cluster_authorization.hpp) 实现其 fresh RBAC 回调；没有另造 session 协议、Basic 管理员回退或新账号服务。
 
@@ -48,9 +48,9 @@ The actual native selection routes use this adapter before resolving any endpoin
 
 Product viewing uses exact camera/Profile requirements. A single read-only Registry transaction checks groups, both enabled flags and camera revisions. Missing/disabled Profiles reject before endpoint resolution. The typed adapter validates exact Profile echoes and the complete camera-version map with positive exactly representable integer revisions. Profile replies are bounded at 8 KiB for maximal identifiers; ordinary replies retain 4 KiB.
 
-原生窗口在 resolve 后的紧邻授权要求两个版本映射一致，持续续验也必须匹配当前建图的映射；真实管理 API 更新（包括端点、Profile、凭据等会推进 Registry revision 的保存）使旧画面清空，重新登录连接后读取新资料。当前任意 camera revision 变化均要求重连，改名/标签也可能触发；R2 仍需改善为兼容设置分类和更细的消费者重建，不把该保守中间行为当作最终交互。观看切换先释放旧媒体并推进 UI 请求代次，忽略此前迟到回复；建图期间没有受保护旧来源继续播放。Workspace 仍只保存 camera/Profile ID，版本不是缓存授权或永久端点。
+原生窗口在 resolve 后的紧邻授权要求两个版本映射一致，持续续验也必须匹配当前建图的映射；真实管理 API 更新（包括端点、Profile、凭据等会推进 Registry revision 的保存）使旧画面清空，重新登录连接后读取新资料。当前任意 camera revision 变化均要求重连，改名/标签也可能触发；R2 仍需改善为兼容设置分类和更细的消费者重建，不把该保守中间行为当作最终交互。同画布切换保留旧的已授权图，并在解析候选图期间继续续查该确切图；候选复用兼容的自有来源，成功切换后才释放旧图。旧图迟到续查不作用于新图，注销/新登录仍取消旧会话回调。任一持续授权失败会清空全部所属受保护画面，不能用候选解析中来暂停权限检查。Workspace 仍只保存 camera/Profile ID，版本不是缓存授权或永久端点。
 
-The UI requires matching revisions immediately after resolution and on each renewal. Registry updates clear the old view; reconnecting resolves fresh data. Any camera revision currently triggers reconnect, including non-media metadata edits, so R2 still owns smoother compatibility-aware rebuilding. Switching viewing advances the UI request generation and releases old media before resolving, preventing late replies from restoring stale state. Persisted workspaces remain ID-only.
+The UI requires matching revisions immediately after resolution and on each renewal. Registry updates clear the old view; reconnecting resolves fresh data. Any camera revision currently triggers reconnect, including non-media metadata edits, so R2 still owns smoother compatibility-aware rebuilding. Same-canvas switching retains and continuously renews the exact old authorized graph while preparing its successor. Compatible owned sources survive the switch; old graph replies cannot affect a newer graph, and session generations cancel old-login callbacks. Persisted workspaces remain ID-only.
 
 ## 接入前仍须保留的契约 / Remaining integration contracts
 
@@ -228,23 +228,25 @@ The build contract now asserts exactly one `evaluate_ui_action` call in the plug
 
 原生模式的 Windows core listener（存在一次启动 host token）在 bind 前使用 `SO_EXCLUSIVEADDRUSE`，不使用 Windows 的强制重绑定 `SO_REUSEADDR`；supervisor 预留的控制/账号/Registry sockets 同样独占。POSIX 与非原生控制路径保留既有行为。失败拒绝启动，不切换已保存的管理 origin。依据 [Microsoft socket 选项说明](https://learn.microsoft.com/en-us/windows/win32/winsock/using-so-reuseaddr-and-so-exclusiveaddruse)，默认或 reuse listener 都不能作为原生账号入口的独占保证。
 
-The Windows native core and supervisor socket reservations now request exclusive ownership before binding. The actual Windows core HTTP test and unified-entry test attempt a competing forced rebind on their own disposable loopback listener; installed-entry restart also verifies the same saved origin. Windows execution is pending until a build containing this change runs. Linux real core/service checks do not qualify Windows Winsock or restart behavior.
+The Windows native core and supervisor socket reservations now request exclusive ownership before binding. The actual Windows core HTTP test and unified-entry test attempt a competing forced rebind on their own disposable loopback listener; installed-entry restart also verifies the same saved origin. Dev.92 passes these actual Windows bind/refusal and installed-entry restart checks within its isolated fixture scope; this is separate from complete legacy upgrade qualification.
 
 
 ### 已保存场景监看接线 / Saved-scene monitoring integration
 
-新增内部 `GET /api/v1/native/scenes` 返回当前 Studio revision、Program/Preview ID 与最多 64 个场景的 id/name 摘要，不返回来源 URL。`POST /api/v1/native/scenes/resolve` 与 `/authorize` 只接受 `{sceneId, revision}`；请求仍经过同一个 host token、loopback、Origin/Host、bound userId/authEpoch 和 scene.read 门禁。core 从当前 StudioController 文档展开该场景及嵌套，派生全部 camera/Profile 需求，复用整批授权、严格 Profile/版本与会话/deadline 复查，任一来源不受支持或任一相机拒绝都拒绝整个动作。不是由客户端提交的 camera 清单替代真实场景。全局 Studio revision 在读取前及返回前都必须相同。
+内部 `GET /api/v1/native/scenes` 返回当前 Studio revision、Program/Preview ID 与最多 64 个场景的 id/name 摘要；可展开的相机场景带内容 fingerprint，不包含来源 URL。`POST /api/v1/native/scenes/resolve` 与 `/authorize` 严格接受 `{sceneId, revision}` 或 `{sceneId, fingerprint}` 两种二字段前置条件，拒绝混合、额外字段、畸形指纹/标识符。旧 revision 模式仍要求整份文档读取前后 revision 一致；内容模式在读取前和返回前核对当前规范展开内容。请求继续经过 host token、loopback、Origin/Host、bound userId/authEpoch 和 scene.read；从服务端文档派生完整 camera/Profile 批次，全部 fresh 权限、Profile 启用、cameraVersions 与会话期限复查均保持，任一失败不返回可执行子集。
 
-resolve 返回无原始 URL 的 SceneDocument 及分开的私密解析绑定；authorize 返回 revision、cameraVersions 和视频参数，既不读取端点也不重复传送整个文档。Qt 选择按钮先 resolve，再以同一 scene/revision 续验后建图，后续 heartbeat 对相同场景/revision 续验；文档或设备版本改变、scope/身份失效则清屏。Qt 响应上限固定为 2 MiB，选择请求上限仍为 16 KiB。原生本地布局仅保存 `{schema:2, sceneId}`；重登后读取当时的文档与权限，保留原 schema-1 五路 ID 布局兼容。
+`native_scene_fingerprint` 是内容前置条件，不是授权 token/capability。它用现有 OpenSSL SHA-256 对版本域、配置 fps 和规范 public camera SceneDocument 编码摘要，仅将全局 revision 归零；实际展开的来源身份、布局、过滤器、音频与可见性等仍绑定。无关场景/Program/Preview 指针更新不改变显示场景的指纹，实际内容/嵌套结果或 fps 改变则拒绝旧值。它不替代 Registry 版本或身份 epoch，不缓存任何许可，不证明视频显示或硬解。
 
-这接的是“已保存场景监看”，尚不是 Preview/Program/TAKE 控制与编辑语义迁移。目前显式音轨混合、LUT/遮罩资产与未接 resolver 的其他来源仍拒绝；旧数据迁移和完整原生菜单旁路验收仍打开。Linux 真实 core/account/Registry HTTP 测试通过摘要不含端点、拒绝场景零端点读取、允许/嵌套场景、普通管理员 API 改文档后旧 revision 拒绝、viewer 写 Studio 拒绝与无端点续验。新的真实 Windows UI/像素、保存/恢复与文档变更清屏脚本已接入，尚待对应 source 构建执行。
+resolve 返回无原始 URL 的 SceneDocument、分开的私密绑定、sceneFingerprint 与当前 studioRevision；authorize 只返回元数据，不读取端点。Qt 使用目录给出的内容前置条件 resolve，再立即 authorize 验证相同指纹及 cameraVersions 后建图；固定投影与主画面随后各自持续续验。布局持久化仍只有 `{schema:2, sceneId}`，从不持久保存该指纹为离线授权。请求 16 KiB、回复 2 MiB 上限保持。新 Windows 回归会要求未显示场景的保存不能销毁现有主图/固定图或更换来源 UUID，并以实际多窗口像素确认；尚待包含该改动的构建。
 
-The saved-scene routes derive all bindings from the live canonical Studio document, including nested scenes, and reuse whole-selection Profile authorization before private resolution. Revision and identity checks surround the operation. The Qt action resolves, renews, then builds through the same owned graph path; its bounded heartbeat rejects stale documents. Per-account workspace persistence stores only a scene ID and reauthorizes on login. Actual Linux service tests pass; new Windows UI/pixel execution is pending. Preview/Program/TAKE, full editing, unresolved source/assets/audio routing and legacy migration remain separate open work.
+Linux 新 CTest 与真实账户/Registry/core HTTP 回归通过，包含无关并发更新允许、相关/嵌套内容并发更新拒绝、内容模式重新解析、坏/混合前置条件、camera/Profile 禁用与配置版本变化、authEpoch 撤销，且纯 authorize 零私密端点读取。Qt 编译、既有安全 CTest 与构建/pixel contracts 通过。它不构成完整 Studio TAKE/Preview-Program 引擎 bridge、全部来源/音轨或旧数据迁移完成。
+
+The native scene routes accept either an exact global revision or an exact canonical content fingerprint. Content checks bind flattened camera-scene content and configured fps while ignoring unrelated global revisions. They do not authorize anything: fresh bound-session, role/scope, whole Profile batch, Registry version and deadline checks remain mandatory. Resolution and immediate pre-application renewal compare the same fingerprint; each retained view renews independently. ID-only persistence does not cache grants. Linux concurrent-update and authorization regressions pass; actual Windows multi-window continuity remains pending for the new source. Full Studio/TAKE, business sources/audio and migration are still open.
 
 
 ### 固定投影及异步会话边界 / Fixed projectors and asynchronous sessions
 
-固定 Scene 投影只接收本产品已持有的不可变图；打开前从当前图的可信 camera/Profile 或规范 scene/revision 重新授权，不接收外部 UUID/名称映射。每个窗口持有图及独立权限续验身份，关闭时仅释放该消费者；换主图不取消投影续验。用户退出、任一作用域/身份失效会关闭所属窗口、清空受保护输入并等待实际媒体退休。相机使用 OBS continuous-live 设置，避免 Program deactivation 停掉仍在 AUX projector 显示的来源。投影持久恢复与完整编辑/输出消费者尚待后续阶段。
+固定 Scene 投影只接收本产品已持有的不可变图；打开前从当前图的可信 camera/Profile 或规范 scene/内容指纹重新授权，不接收外部 UUID/名称映射。每个窗口持有图及独立权限续验身份，关闭时仅释放该消费者；换主图不取消投影续验。用户退出、任一作用域/身份失效会关闭所属窗口、清空受保护输入并等待实际媒体退休。相机使用 OBS continuous-live 设置，避免 Program deactivation 停掉仍在 AUX projector 显示的来源。投影持久恢复与完整编辑/输出消费者尚待后续阶段。
 
 实际 ProductHttpClient 关闭自动 cookie load/save，只允许当前登录代成功响应设置已验证的 webobs_session。新登录/退出使旧回调失效，晚到响应既不能回调新 UI，也不能经 QNAM cookie jar 改写新用户；16 个待决请求、16 KiB 请求和 2 MiB 回复有界，固定 loopback、期限、Origin、host token 与禁止重定向仍保留。真实 Qt TCP/事件循环回归证明这些传输性质；Windows 实际用户/媒体测试仍独立，不用传输夹具替代授权资格。
 

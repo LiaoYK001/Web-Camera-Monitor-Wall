@@ -9,6 +9,7 @@ import importlib.util
 import json
 import os
 from pathlib import Path
+import re
 import secrets
 import signal
 import socket
@@ -86,10 +87,13 @@ def exercise(binary):
             "roles": ["viewer"], "scopes": [{"kind": "camera", "id": "camera-a"}]})
         resolved = []
         authority_paths = []
+        batch_hooks = []
 
         class AccountHandler(cluster.Handler):
             def do_POST(self):
                 authority_paths.append(self.path)
+                if self.path == "/auth/native-authorize-batch" and batch_hooks:
+                    batch_hooks.pop(0)()
                 super().do_POST()
 
         class RegistryHandler(camera.Handler):
@@ -215,15 +219,20 @@ def exercise(binary):
                                 {"sceneId": "../allowed", "revision": 1}):
                     assert request("/api/v1/native/scenes/resolve", invalid)[0] == 400
                 assert request("/api/v1/native/scenes/resolve", {"sceneId": "allowed", "revision": 0})[0] == 412
+                fingerprints = {}
                 for scene_id in ("allowed", "nested"):
                     status, _, value = request("/api/v1/native/scenes/resolve", {"sceneId": scene_id, "revision": 1})
                     assert status == 200 and value["studioRevision"] == 1 and value["cameraVersions"] == {"camera-a": 1}
                     assert len(value["cameras"]) == 1 and value["cameras"][0]["cameraId"] == "camera-a"
+                    fingerprints[scene_id] = value["sceneFingerprint"]
+                    assert re.fullmatch(r"[a-f0-9]{64}", fingerprints[scene_id])
                     assert value["scene"]["sources"][0]["kind"] == "camera" and "rtsp://" not in json.dumps(value["scene"])
                     before = list(resolved)
                     status, _, renewed_scene = request("/api/v1/native/scenes/authorize", {"sceneId": scene_id, "revision": 1})
                     assert status == 200 and renewed_scene["studioRevision"] == 1 and "scene" not in renewed_scene
                     assert resolved == before and "url" not in json.dumps(renewed_scene)
+                    assert request("/api/v1/native/scenes/authorize", {
+                        "sceneId": scene_id, "fingerprint": fingerprints[scene_id]})[0] == 200
                 resolved.clear()
                 # Change the canonical document through the ordinary admin API,
                 # rather than editing a file that the live controller cannot see.
@@ -239,8 +248,59 @@ def exercise(binary):
                 assert code == 200 and updated["revision"] == 2
                 assert request("/api/v1/native/scenes/authorize", {"sceneId": "allowed", "revision": 1})[0] == 412
                 assert request("/api/v1/native/scenes/resolve", {"sceneId": "allowed", "revision": 1})[0] == 412
+                assert request("/api/v1/native/scenes/authorize", {
+                    "sceneId": "allowed", "fingerprint": fingerprints["allowed"]})[0] == 412
                 assert resolved == [], "stale canonical scene read private endpoints after an ordinary API update"
-                assert request("/api/v1/native/scenes/authorize", {"sceneId": "allowed", "revision": 2})[0] == 200
+                code, _, active_scene = request("/api/v1/native/scenes/authorize", {"sceneId": "allowed", "revision": 2})
+                assert code == 200
+                active_fingerprint = active_scene["sceneFingerprint"]
+                unrelated = json.loads(json.dumps(updated))
+                unrelated["scenes"][1]["name"] = "Unrelated scene updated"
+                code, _, unrelated = request("/api/v1/studio", unrelated, method="PUT", revision=2,
+                    cookie_override=admin_cookie)
+                assert code == 200 and unrelated["revision"] == 3
+                code, _, unchanged_scene = request("/api/v1/native/scenes/authorize", {
+                    "sceneId": "allowed", "fingerprint": active_fingerprint})
+                assert code == 200 and unchanged_scene["studioRevision"] == 3
+                assert unchanged_scene["sceneFingerprint"] == active_fingerprint
+                assert request("/api/v1/native/scenes/authorize", {"sceneId": "allowed", "revision": 2})[0] == 412
+                for invalid in ("", "0" * 63, "A" * 64):
+                    assert request("/api/v1/native/scenes/authorize", {"sceneId": "allowed", "fingerprint": invalid})[0] == 400
+                assert request("/api/v1/native/scenes/authorize", {"sceneId": "allowed", "fingerprint": "0" * 64})[0] == 412
+                assert request("/api/v1/native/scenes/authorize", {
+                    "sceneId": "allowed", "revision": 3, "fingerprint": active_fingerprint})[0] == 400
+                assert resolved == [], "fingerprint renewal read a private endpoint"
+                code, _, content_resolved = request("/api/v1/native/scenes/resolve", {
+                    "sceneId": "allowed", "fingerprint": active_fingerprint})
+                assert code == 200 and content_resolved["studioRevision"] == 3
+                assert content_resolved["sceneFingerprint"] == active_fingerprint and len(resolved) == 1
+                resolved.clear()
+                # Edit through the real public controller while the native
+                # request is in its batch-authority call. The final content
+                # recheck must distinguish unrelated and relevant changes.
+                concurrent_results = []
+                concurrent = json.loads(json.dumps(unrelated))
+                concurrent["scenes"][1]["name"] = "Unrelated concurrent edit"
+                batch_hooks.append(lambda: concurrent_results.append(request("/api/v1/studio", concurrent,
+                    method="PUT", revision=3, cookie_override=admin_cookie)))
+                code, _, concurrent_authorized = request("/api/v1/native/scenes/authorize", {
+                    "sceneId": "allowed", "fingerprint": active_fingerprint})
+                assert concurrent_results[0][0] == 200 and concurrent_results[0][2]["revision"] == 4
+                assert code == 200 and concurrent_authorized["studioRevision"] == 4
+                concurrent = json.loads(json.dumps(concurrent_results[0][2]))
+                # Large enough to survive the nested scene's integer scaling.
+                concurrent["scenes"][0]["items"][0]["x"] += 120
+                batch_hooks.append(lambda: concurrent_results.append(request("/api/v1/studio", concurrent,
+                    method="PUT", revision=4, cookie_override=admin_cookie)))
+                assert request("/api/v1/native/scenes/authorize", {
+                    "sceneId": "allowed", "fingerprint": active_fingerprint})[0] == 412
+                assert concurrent_results[1][0] == 200 and concurrent_results[1][2]["revision"] == 5
+                assert request("/api/v1/native/scenes/authorize", {
+                    "sceneId": "nested", "fingerprint": fingerprints["nested"]})[0] == 412
+                code, _, current_scene = request("/api/v1/native/scenes/authorize", {"sceneId": "allowed", "revision": 5})
+                assert code == 200
+                active_fingerprint = current_scene["sceneFingerprint"]
+                assert resolved == [], "concurrent scene renewal read endpoint credentials"
                 with contextlib.closing(sqlite3.connect(private / "sessions.db")) as database:
                     row = database.execute("SELECT user_id,auth_epoch FROM auth_sessions WHERE user_id=?",
                         (identity["userId"],)).fetchone()
@@ -277,6 +337,8 @@ def exercise(binary):
                     with camera.connect() as database:
                         database.execute(f"UPDATE {table} SET enabled=0")
                     assert request("/api/v1/native/cameras/authorize", selection)[0] == 403
+                    assert request("/api/v1/native/scenes/authorize", {
+                        "sceneId": "allowed", "fingerprint": active_fingerprint})[0] == 403
                     assert request("/api/v1/native/cameras/resolve", selection)[0] == 403
                     assert len(resolved) == before, "disabled Profile reached private endpoint resolution"
                     with camera.connect() as database:
@@ -288,12 +350,17 @@ def exercise(binary):
                 assert changed["revision"] == 2
                 code, _, renewed = request("/api/v1/native/cameras/authorize", selection)
                 assert code == 200 and renewed["cameraVersions"] == {"camera-a": 2}
+                code, _, renewed_scene = request("/api/v1/native/scenes/authorize", {
+                    "sceneId": "allowed", "fingerprint": active_fingerprint})
+                assert code == 200 and renewed_scene["cameraVersions"] == {"camera-a": 2}
                 assert len(resolved) == before, "configuration renewal unexpectedly read endpoint credentials"
                 # Real account epoch change invalidates the existing session.
                 with cluster.STORE.lock, cluster.STORE.db:
                     cluster.STORE.db.execute("UPDATE users SET auth_epoch=? WHERE username=?",
                                              (secrets.token_hex(16), "native-viewer"))
                 assert request("/api/v1/native/auth/session")[0] == 401
+                assert request("/api/v1/native/scenes/authorize", {
+                    "sceneId": "allowed", "fingerprint": active_fingerprint})[0] == 401
                 assert request("/api/v1/native/cameras/resolve", selection)[0] == 401
                 _, issued, _ = request("/api/v1/native/auth/login", login)
                 cookie = issued.split(";", 1)[0]

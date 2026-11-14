@@ -85,6 +85,7 @@ class ProductWindow final : public QWidget {
 		QJsonArray cameras;
 		QJsonObject versions;
 		QString scene_id;
+		QString scene_fingerprint;
 		qint64 studio_revision = -1;
 		bool heartbeat_pending = false;
 	};
@@ -98,6 +99,7 @@ class ProductWindow final : public QWidget {
 	QJsonArray watching_;
 	QJsonObject watching_versions_;
 	QString watching_scene_id_;
+	QString watching_scene_fingerprint_;
 	qint64 watching_studio_revision_ = -1;
 	QString user_id_;
 	quint64 main_generation_ = 0;
@@ -191,6 +193,7 @@ class ProductWindow final : public QWidget {
 			{"catalogItems", slots_[0] && slots_[0]->count() > 0 ? slots_[0]->count() - 1 : 0},
 			{"selectionIndices", selection_indices},
 			{"sceneId", watching_scene_id_}, {"studioRevision", watching_studio_revision_},
+			{"sceneFingerprint", watching_scene_fingerprint_},
 			{"studioChoices", studio_choices},
 			{"mainGeneration", qint64(main_generation_)},
 			{"sessionBound", !user_id_.isEmpty()}, {"mediaSources", media_sources}, {"bindings", bindings},
@@ -222,6 +225,7 @@ class ProductWindow final : public QWidget {
 				view_bindings.append(binding);
 			}
 			projector_states.append(QJsonObject{{"slot", int(i + 1)}, {"sceneId", view.scene_id},
+				{"sceneFingerprint", view.scene_fingerprint},
 				{"studioRevision", view.studio_revision}, {"bindings", view_bindings},
 				{"fullscreen", view.window->isFullScreen()}});
 			const auto role = view.window->isFullScreen() ? "fixed-scene-fullscreen-%1" : "fixed-scene-%1";
@@ -279,6 +283,7 @@ class ProductWindow final : public QWidget {
 		watching_ = {};
 		watching_versions_ = {};
 		watching_scene_id_.clear();
+		watching_scene_fingerprint_.clear();
 		watching_studio_revision_ = -1;
 		if (!obs_initialized())
 			return;
@@ -360,21 +365,22 @@ class ProductWindow final : public QWidget {
 		const auto cameras = watching_;
 		const auto versions = watching_versions_;
 		const auto scene_id = watching_scene_id_;
-		const auto revision = watching_studio_revision_;
+		const auto fingerprint = watching_scene_fingerprint_;
 		const bool scene = !scene_id.isEmpty();
 		projector_pending_[index] = true;
 		update_projector_controls();
-		const QJsonObject renewal = scene ? QJsonObject{{"sceneId", scene_id}, {"revision", revision}} :
+		const QJsonObject renewal = scene ? QJsonObject{{"sceneId", scene_id}, {"fingerprint", fingerprint}} :
 			QJsonObject{{"cameras", cameras}};
 		request(scene ? "/api/v1/native/scenes/authorize" : "/api/v1/native/cameras/authorize", "POST", renewal,
-			[this, index, main_generation, graph_reference, cameras, versions, scene_id, revision, scene]
+			[this, index, main_generation, graph_reference, cameras, versions, scene_id, fingerprint, scene]
 			(int code, const QJsonObject &body) {
 			projector_pending_[index] = false;
 			update_projector_controls();
 			const auto graph = graph_reference.lock();
 			if (!graph || main_generation != main_generation_ || wall_ != graph || applying_) return;
 			if (code != 200 || body.value("cameraVersions").toObject() != versions ||
-			    (scene && body.value("studioRevision").toInteger(-1) != revision)) {
+			    (scene && (body.value("sceneFingerprint").toString() != fingerprint ||
+				body.value("studioRevision").toInteger(-1) < 0))) {
 				locked(tr("投影观看权限或配置已失效，请重新登录。"));
 				return;
 			}
@@ -405,7 +411,8 @@ class ProductWindow final : public QWidget {
 			view->cameras = cameras;
 			view->versions = versions;
 			view->scene_id = scene_id;
-			view->studio_revision = revision;
+			view->scene_fingerprint = fingerprint;
+			view->studio_revision = scene ? body.value("studioRevision").toInteger(-1) : -1;
 			const auto id = view->id;
 			opened->installEventFilter(this);
 			opened->setWindowTitle(tr("WebOBS 固定场景投影 %1 · F11 全屏").arg(index + 1));
@@ -432,7 +439,7 @@ class ProductWindow final : public QWidget {
 			const auto id = view.id;
 			const bool scene = !view.scene_id.isEmpty();
 			const QJsonObject renewal = scene ?
-				QJsonObject{{"sceneId", view.scene_id}, {"revision", view.studio_revision}} :
+				QJsonObject{{"sceneId", view.scene_id}, {"fingerprint", view.scene_fingerprint}} :
 				QJsonObject{{"cameras", view.cameras}};
 			request(scene ? "/api/v1/native/scenes/authorize" : "/api/v1/native/cameras/authorize", "POST", renewal,
 				[this, i, id, scene](int code, const QJsonObject &body) {
@@ -440,8 +447,13 @@ class ProductWindow final : public QWidget {
 				auto &current = *projectors_[i];
 				current.heartbeat_pending = false;
 				if (code != 200 || body.value("cameraVersions").toObject() != current.versions ||
-				    (scene && body.value("studioRevision").toInteger(-1) != current.studio_revision))
+				    (scene && (body.value("sceneFingerprint").toString() != current.scene_fingerprint ||
+					body.value("studioRevision").toInteger(-1) < 0)))
 					locked(tr("投影会话、摄像机权限或配置已失效，请重新登录。"));
+				else if (scene && body.value("studioRevision").toInteger(-1) != current.studio_revision) {
+					current.studio_revision = body.value("studioRevision").toInteger(-1);
+					observe_current_media();
+				}
 			});
 		}
 	}
@@ -590,7 +602,8 @@ class ProductWindow final : public QWidget {
 			for (const auto value : body.value("scenes").toArray()) {
 				const auto scene = value.toObject();
 				scenes_->addItem(scene.value("name").toString(),
-					QJsonObject{{"sceneId", scene.value("id")}, {"revision", body.value("revision")}});
+					QJsonObject{{"sceneId", scene.value("id")}, {"revision", body.value("revision")},
+						{"fingerprint", scene.value("fingerprint")}});
 				if (scene.value("id").toString() == restore_id)
 					restored = scenes_->count() - 1;
 			}
@@ -621,7 +634,7 @@ class ProductWindow final : public QWidget {
 
 	void apply_graph(const SceneDocument &document, const std::vector<ProductCamera> &cameras,
 		const QJsonArray &selected, const QJsonObject &versions, const QJsonObject &video,
-		const QString &scene_id = {}, qint64 studio_revision = -1)
+		const QString &scene_id = {}, qint64 studio_revision = -1, const QString &fingerprint = {})
 	{
 		std::string error;
 		obs_video_info actual{};
@@ -670,6 +683,7 @@ class ProductWindow final : public QWidget {
 		watching_ = selected;
 		watching_versions_ = versions;
 		watching_scene_id_ = scene_id;
+		watching_scene_fingerprint_ = fingerprint;
 		watching_studio_revision_ = studio_revision;
 		save_->setEnabled(true);
 		update_projector_controls();
@@ -686,20 +700,30 @@ class ProductWindow final : public QWidget {
 
 	void watch_scene()
 	{
-		const auto wanted = scenes_->currentData().toJsonObject();
-		const auto id = wanted.value("sceneId").toString();
-		const auto revision = wanted.value("revision").toInteger(-1);
+		const auto choice = scenes_->currentData().toJsonObject();
+		const auto id = choice.value("sceneId").toString();
+		const auto revision = choice.value("revision").toInteger(-1);
+		const auto expected_fingerprint = choice.value("fingerprint").toString();
+		const bool by_content = QRegularExpression("^[a-f0-9]{64}$").match(expected_fingerprint).hasMatch();
+		const QJsonObject wanted = by_content ? QJsonObject{{"sceneId", id}, {"fingerprint", expected_fingerprint}} :
+			QJsonObject{{"sceneId", id}, {"revision", revision}};
 		if (id.isEmpty() || revision < 0 || user_id_.isEmpty() || applying_) return;
 		begin_connecting();
 		request("/api/v1/native/scenes/resolve", "POST", wanted,
-			[this, wanted, id, revision](int code, const QJsonObject &body) {
-			if (code != 200 || body.value("studioRevision").toInteger(-1) != revision || !body.value("scene").isObject()) {
+			[this, wanted, id, revision, expected_fingerprint, by_content](int code, const QJsonObject &body) {
+			const auto fingerprint = body.value("sceneFingerprint").toString();
+			if (code != 200 || body.value("studioRevision").toInteger(-1) < 0 ||
+			    (!by_content && body.value("studioRevision").toInteger(-1) != revision) ||
+			    (by_content && fingerprint != expected_fingerprint) || !body.value("scene").isObject() ||
+			    !QRegularExpression("^[a-f0-9]{64}$").match(fingerprint).hasMatch()) {
 				locked(tr("场景不可用或已变更，请登录后刷新；部分业务来源仍需接入。"));
 				return;
 			}
 			request("/api/v1/native/scenes/authorize", "POST", wanted,
-				[this, id, revision, body](int status, const QJsonObject &authorization) {
-				if (status != 200 || authorization.value("studioRevision").toInteger(-1) != revision ||
+				[this, id, revision, by_content, fingerprint, body](int status, const QJsonObject &authorization) {
+				if (status != 200 || authorization.value("studioRevision").toInteger(-1) < 0 ||
+				    (!by_content && authorization.value("studioRevision").toInteger(-1) != revision) ||
+				    authorization.value("sceneFingerprint").toString() != fingerprint ||
 				    authorization.value("cameraVersions") != body.value("cameraVersions")) {
 					locked(tr("场景或摄像机权限已变更，请重新登录。"));
 					return;
@@ -740,7 +764,7 @@ class ProductWindow final : public QWidget {
 					selected.append(QJsonObject{{"cameraId", binding.value("cameraId")}, {"profileId", binding.value("profileId")}});
 				}
 				apply_graph(*parsed.document, cameras, selected, body.value("cameraVersions").toObject(),
-					authorization.value("video").toObject(), id, revision);
+					authorization.value("video").toObject(), id, authorization.value("studioRevision").toInteger(-1), fingerprint);
 			}, 12000);
 		}, 12000);
 	}
@@ -1098,7 +1122,7 @@ public:
 			const QString path = scene_active ? "/api/v1/native/scenes/authorize" :
 				(active ? "/api/v1/native/cameras/authorize" : "/api/v1/native/auth/session");
 			const QJsonObject renewal = scene_active ?
-				QJsonObject{{"sceneId", watching_scene_id_}, {"revision", watching_studio_revision_}} :
+				QJsonObject{{"sceneId", watching_scene_id_}, {"fingerprint", watching_scene_fingerprint_}} :
 				QJsonObject{{"cameras", watching_}};
 			request(path, active ? "POST" : "GET", renewal, [this, active, scene_active, renewed_graph](int code, const QJsonObject &body) {
 				heartbeat_pending_ = false;
@@ -1109,8 +1133,13 @@ public:
 					locked(tr("会话或摄像机权限已失效，请重新登录。"));
 				else if (active && body.value("cameraVersions").toObject() != watching_versions_)
 					locked(tr("设备配置已变更，请重新登录后连接。"));
-				else if (scene_active && body.value("studioRevision").toInteger(-1) != watching_studio_revision_)
+				else if (scene_active && (body.value("sceneFingerprint").toString() != watching_scene_fingerprint_ ||
+					body.value("studioRevision").toInteger(-1) < 0))
 					locked(tr("场景已变更，请重新登录后连接。"));
+				else if (scene_active && body.value("studioRevision").toInteger(-1) != watching_studio_revision_) {
+					watching_studio_revision_ = body.value("studioRevision").toInteger(-1);
+					observe_current_media();
+				}
 			});
 		});
 	}

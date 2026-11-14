@@ -52,6 +52,7 @@ add_library(webobs-common
     core/src/audit_event.cpp
     core/src/browser_security.cpp
     core/src/native_control_auth.cpp
+    core/src/native_scene_fingerprint.cpp
     core/src/config.cpp
     core/src/redaction.cpp
     core/src/scene_document.cpp
@@ -180,6 +181,11 @@ if(WEBOBS_BUILD_TESTS)
     target_link_libraries(webobs-native-control-auth-tests PRIVATE webobs-common)
     webobs_warnings(webobs-native-control-auth-tests)
     add_test(NAME webobs-native-control-auth-tests COMMAND webobs-native-control-auth-tests)
+    add_executable(webobs-native-scene-fingerprint-tests core/tests/native_scene_fingerprint_tests.cpp)
+    target_link_libraries(webobs-native-scene-fingerprint-tests PRIVATE webobs-common)
+    webobs_warnings(webobs-native-scene-fingerprint-tests)
+    add_test(NAME webobs-native-scene-fingerprint-tests COMMAND webobs-native-scene-fingerprint-tests)
+    set_tests_properties(webobs-native-scene-fingerprint-tests PROPERTIES TIMEOUT 30 LABELS "native-control;scene")
     set_tests_properties(webobs-native-control-auth-tests PROPERTIES TIMEOUT 30 LABELS "security;native-control")
     add_executable(webobs-session-identity-tests core/tests/session_identity_tests.cpp)
     target_link_libraries(webobs-session-identity-tests PRIVATE webobs-common)

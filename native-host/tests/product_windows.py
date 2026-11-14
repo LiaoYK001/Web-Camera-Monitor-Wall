@@ -415,6 +415,30 @@ def exercise(runtime, report, *, with_media=False, retained_profile=None):
                 check_graph()
                 time.sleep(3)
                 check_pixels("studio-scene")
+                phase = "unrelated-studio-revision-preserves-fixed-scene"
+                scene_state = state()
+                scene_fingerprint = scene_state.get("sceneFingerprint")
+                assert isinstance(scene_fingerprint, str) and len(scene_fingerprint) == 64
+                scene_sources = {item["cameraId"]: item["sourceUuid"] for item in scene_state["bindings"]}
+                assert ui("projector", slot=1)
+                wait_for(lambda: len(state().get("projectors", [])) == 1, "saved-scene fixed projector did not open")
+                unrelated = json.loads(json.dumps(studio["scenes"][0]))
+                unrelated.update(id="fixture-unrelated", name="Unrelated saved scene")
+                studio["scenes"].append(unrelated)
+                studio["previewSceneId"] = unrelated["id"]
+                code, _, studio = request("/api/v1/studio", studio, cookie, method="PUT", revision=studio["revision"])
+                assert code == 200
+                wait_for(lambda: state().get("phase") == "graph-applied" and
+                    state().get("studioRevision") == studio["revision"] and
+                    all(view["studioRevision"] == studio["revision"] for view in state().get("projectors", [])),
+                    "unchanged displayed scene did not survive an unrelated Studio revision", timeout=8)
+                assert state().get("sceneFingerprint") == scene_fingerprint
+                assert len(state().get("projectors", [])) == 1
+                check_projectors({1: "forward"}, scene_sources)
+                check_pixels("studio-unrelated-revision", projector_orders={"fixed-scene-1": "forward"})
+                assert ui("projector-close")
+                wait_for(lambda: not state().get("projectors"), "saved-scene projector did not close")
+                evidence["checks"].append("unrelated-studio-save-preserves-authorized-fixed-scene-and-main")
                 assert ui("save")
                 wait_for(lambda: read_json(paths[0]) == {"schema": 2, "sceneId": "fixture-five"},
                     "scene-ID workspace save did not commit")
