@@ -36,6 +36,7 @@
 #include <QScrollArea>
 #include <QTimer>
 #include <QUrl>
+#include <QUrlQuery>
 #include <QVBoxLayout>
 #include <QWidget>
 
@@ -1079,6 +1080,9 @@ public:
 		});
 		connect(manage, &QPushButton::clicked, this, [this] {
 			auto url = origin_;
+			QUrlQuery query;
+			query.addQueryItem("native-management", "1");
+			url.setQuery(query);
 			url.setFragment("/devices");
 			QDesktopServices::openUrl(url);
 		});

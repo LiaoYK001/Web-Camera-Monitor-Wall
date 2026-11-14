@@ -245,3 +245,6 @@ Native HEVC requires an actual active video offer plus registry-confirmed zero B
 用户 2026-10-30 授权将已通过测试的 dev.17 放到 GitHub 预发布下载。`windows-desktop.yaml` 的手动 `publish_dev17=true` 入口只允许版本 `4.1.0-dev.17`、固定成功构建 41062148722 / 附件 12981884498 / 源码 `4ca94a4`。它在托管运行器内核对构建身份、原始 SHA-256 与运行清单，上传到既有空白开发预发布草稿后公开；不重新构建、不覆盖附件、不发布 `latest.yml`、不提升 Latest。普通构建与可复用工作流不会触发发布。
 
 On 2026-10-30 the user authorized GitHub prerelease downloads for tested dev.17. The manual `publish_dev17=true` entry accepts only `4.1.0-dev.17` and frozen successful run 41062148722 / artifact 12981884498 / source `4ca94a4`. A hosted runner verifies build identity, original SHA-256 checksums and runtime manifest before attaching files to the existing empty development draft and publishing it. It does not rebuild, overwrite attachments, publish `latest.yml` or promote Latest. Normal builds and reusable workflow calls do not publish.
+
+
+原生融合宿主的管理入口使用 `?native-management=1#/devices` 打开本机管理 WebUI。此参数只控制本页默认展示，所有账号/角色/逐摄像机鉴权保持原有 API 边界；不携带会话或授权。Studio/监看默认指向原生窗口，保留布局编辑；音频页保留元数据与配置，默认不创建浏览器媒体或监听通道。明确选择浏览器媒体后才启用其播放器。普通远端 Web/PWA URL 不带该参数，沿用其播放行为。完整可选服务和安装升级仍按功能矩阵验收。 / The native-host management URL opts that page into configuration-first presentation without granting authority. Explicit browser playback remains available; ordinary remote URLs retain their defaults.

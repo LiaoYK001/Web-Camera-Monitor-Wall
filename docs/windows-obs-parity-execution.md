@@ -1251,3 +1251,12 @@ The actual D3D11 renderer query is now shared by prototype receipts and the prod
 已保存场景的 audioInputs: [] 按既有 schema 的“不贡献音频”语义接入：视频仍使用同一个相机媒体源，实际 OBS policy 强制 mute、volume=0、mixers=0、monitoring=none，空选择下无效的总线/增益/偏移参数规范化后可跨图复用。未接线的非空逐轨选择继续在整个文档预检期间拒绝，避免悄悄选默认轨。Linux 实际 libobs inert-source 回归通过静音/零总线/无监听的 SDK 回读、配置规范化复用与最后来源退休；这不是解码后的音频采样或扬声器证明。Windows 已保存 Studio fixture 增加明确空数组，要求整个五路视频仍可显示，待下一轮。多输入轨道、独立音轨适配、混音 UI、监听与真实音频输出验收仍未完成。
 
 The product regression now exercises one actual synthetic RTSP outage, native callback-stall observation, same-source automatic recovery and all-five final pixels. Explicit empty audioInputs retain camera video while mapping to muted/zero-volume/zero-bus/no-monitoring OBS policy; inert-source SDK readback, normalization/reuse and retirement pass locally. Nonempty per-track routing remains explicitly unsupported. Windows media/fault and real decoded-audio evidence remain pending, and no long-stability or hardware claim is made.
+
+
+#### R2 管理浏览器默认不重复播放 / Management browser avoids duplicate playback by default
+
+原生“打开设备与系统管理” URL 增加 native-management=1（仍进入已有 devices 管理区）。App 将该参数仅视为本页展示偏好，不授予权限、不包含 token、不改变公共/远端播放默认行为。管理浏览器转入 Studio/监看时默认显示原生窗口指引；布局编辑继续可操作，实时底图不挂载。音频工作台保留轨道元数据与配置编辑，但不挂载 DirectPreview、audio-only WHEP 或本地监听；该页仍可按原有 API 探测轨道，探测不是连续媒体播放，成本仍须在可选功能中计入。明确选择已有“浏览器媒体/服务端 Program”动作后恢复原来播放器；可再回到原生画面并退休浏览器媒体。
+
+真实 App/AudioWorkspace 的 Chromium 回归通过：原生管理进入 Studio 无 video/audio、可拖拽实际布局并进入脏状态，监看页无媒体；给两路提供有效且已选中的音轨后，音频工作台仍零 video/audio、零 WHEP offers，监听禁用；用户主动切浏览器才创建实际 fixture 视频/会话，切回后清理。另四项既有实际布局视频/无重协商和逐轨通道特殊 source identity 回归通过。Web typecheck/build 通过，原生 Qt URL 接线编译通过。这里是浏览器合成 fixture 的 UI/媒体生命周期证据，不是 Windows 全安装/真实相机/目标机性能；不包含在 dev.92，后续构建继续回归。
+
+The native management URL opts only that browser page into configuration-first presentation. Studio editing remains available without automatic live backdrops, and AudioWorkspace retains configuration/metadata while avoiding local video/audio-only channels. Explicit browser playback still works and retires when native presentation is restored. The real React components pass Chromium lifecycle/editing checks and four existing layout/audio regressions; Web build/typecheck and Qt compilation pass. This is fixture UI evidence, not complete installed-product or performance qualification.

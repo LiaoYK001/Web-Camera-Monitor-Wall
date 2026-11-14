@@ -30,7 +30,7 @@ interface ChannelEntry {
   connection: AudioTrackConnection;
 }
 
-export default function AudioWorkspace({ studio, onCommitted }: { studio: StudioDocument; onCommitted: (studio: StudioDocument) => void }) {
+export default function AudioWorkspace({ studio, onCommitted, localPlayback = true }: { studio: StudioDocument; onCommitted: (studio: StudioDocument) => void; localPlayback?: boolean }) {
   const [nativeForeground, setNativeForeground] = useState(window.webobsAndroidForeground !== false);
   useEffect(() => subscribePageVisibility(() => setNativeForeground(window.webobsAndroidForeground !== false)), []);
   const [sceneId, setSceneId] = useState(studio.previewSceneId);
@@ -52,12 +52,12 @@ export default function AudioWorkspace({ studio, onCommitted }: { studio: Studio
   const sourceIds = scene ? scene.sources.map((source) => `${source.id}:${source.kind}:${source.kind === 'camera' ? `${source.cameraId}/${source.profileId}` : ''}`).join(',') : '';
 
   useEffect(() => {
-    if (topology !== 'direct') return;
+    if (topology !== 'direct' || !localPlayback) return;
     setSnapshot(mixer.getSnapshot());
     const receive = (event: Event) => setSnapshot((event as CustomEvent<DirectAudioSnapshot>).detail);
     window.addEventListener('webobs:direct-audio-meters', receive);
     return () => window.removeEventListener('webobs:direct-audio-meters', receive);
-  }, [topology, mixer]);
+  }, [topology, mixer, localPlayback]);
   useEffect(() => { setPending(null); }, [studio.revision]);
   useEffect(() => {
     if (topology !== 'composite' || !scene) return;
@@ -132,7 +132,7 @@ export default function AudioWorkspace({ studio, onCommitted }: { studio: Studio
 
   // Keep the mixer and the audio-only WHEP channels in sync with the selection.
   useEffect(() => {
-    const activeSources = new Set(nativeForeground ? scene.sources.map((source) => source.id) : []);
+    const activeSources = new Set(nativeForeground && localPlayback ? scene.sources.map((source) => source.id) : []);
     for (const [key, entry] of [...channels.current]) {
       const [sourceId, index] = key.split('#');
       const probed = ownRecordValue(tracksBySource, sourceId);
@@ -183,7 +183,7 @@ export default function AudioWorkspace({ studio, onCommitted }: { studio: Studio
         channels.current.delete(key);
       }
     }
-  }, [scene.id, sourceIds, selection, tracksBySource, mixer, nativeForeground]);
+  }, [scene.id, sourceIds, selection, tracksBySource, mixer, nativeForeground, localPlayback]);
 
   useEffect(() => {
     const open = channels.current;
@@ -269,11 +269,12 @@ export default function AudioWorkspace({ studio, onCommitted }: { studio: Studio
       <div className="audio-actions"><select aria-label="Scene" value={scene.id} onChange={(event) => setSceneId(event.target.value)}>{studio.scenes.map((value) => <option value={value.id} key={value.id}>{value.name}</option>)}</select>
         <button type="button" className={topology === 'direct' ? 'active' : ''} onClick={() => setTopology('direct')}>Direct</button>
         <button type="button" className={topology === 'composite' ? 'active' : ''} onClick={() => setTopology('composite')}>Composite</button>
-        <button type="button" onClick={() => window.dispatchEvent(new Event('webobs:audio-monitor-enable'))}>启用本地监听</button>
+        <button type="button" disabled={!localPlayback} onClick={() => window.dispatchEvent(new Event('webobs:audio-monitor-enable'))}>启用本地监听</button>
         <button type="button" onClick={() => window.dispatchEvent(new Event('webobs:audio-monitor-disable'))}>静音监听</button>
         <button className="primary-button" type="button" disabled={(!pending && !audioDirty) || saving} onClick={() => void commit()}>{saving ? '保存中…' : '保存音频配置'}</button></div></header>
     {error && <div className="alert conflict-alert">{error}</div>}
-    <div className="audio-monitor-preview"><DirectPreview compact audioWorkspace scene={scene} /></div>
+    {localPlayback ? <div className="audio-monitor-preview"><DirectPreview compact audioWorkspace scene={scene} /></div>
+      : <p role="status">声音配置在此编辑，实时监听与画面由 WebOBS Wall 原生窗口提供。</p>}
     {scene.sources.some((source) => ownRecordValue(tracksBySource, source.id)?.status === 'none') && <p role="status">已确认无音轨：{scene.sources.filter((source) => ownRecordValue(tracksBySource, source.id)?.status === 'none').map((source) => source.name).join('、')}。这些来源不显示音频控制。</p>}
     <div className="audio-mixer-head"><span>来源 / Profile</span><span>电平</span><span>静音 / 音量</span><span>监听 / 同步</span><span>音轨</span></div>
     <div className="audio-mixer-list">{scene.sources.map((source) => {
@@ -291,7 +292,7 @@ export default function AudioWorkspace({ studio, onCommitted }: { studio: Studio
       const state = ownRecordValue(selection, source.id);
       const mode = state?.mode ?? 'merged';
       return <article className="audio-channel" key={source.id}>
-        <div><strong>{source.name}</strong><small>{cameraProfile}</small><span>{topology === 'direct' ? 'Browser Web Audio' : 'libobs Composite'}</span></div>
+        <div><strong>{source.name}</strong><small>{cameraProfile}</small><span>{!localPlayback ? '原生宿主配置' : topology === 'direct' ? 'Browser Web Audio' : 'libobs Composite'}</span></div>
         {trackState === 'unprobed'
             ? <div className="audio-track-missing"><span role="status">{probed?.status === 'unavailable' ? '音轨探测失败，请检查源连接、VPN 和访问权限后重试。' : '音频轨道待探测'}</span><button type="button" onClick={() => void reprobe(source.id)}>重新探测</button></div>
             : trackState === 'loading'
@@ -315,7 +316,7 @@ export default function AudioWorkspace({ studio, onCommitted }: { studio: Studio
                         ? [...current.selected, track.index].sort((left, right) => left - right)
                         : current.selected.filter((value) => value !== track.index),
                     }))} />{trackLabel(track)}
-                    {selected && <span className="audio-track-state">{channel ?? '连接中'}{mode === 'independent' && trackMeter ? ` · ${dbLabel(trackMeter.rmsDbfs)}` : ''}</span>}
+                    {selected && <span className="audio-track-state">{!localPlayback ? '浏览器试听关闭' : channel ?? '连接中'}{localPlayback && mode === 'independent' && trackMeter ? ` · ${dbLabel(trackMeter.rmsDbfs)}` : ''}</span>}
                   </label>;
                 })}</div>
                 <div className="audio-track-controls">{apiTracks.filter((track) => state?.selected.includes(track.index)).map((track) => <div className="audio-track-control" key={track.index}>
