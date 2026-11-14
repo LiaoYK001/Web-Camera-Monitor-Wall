@@ -73,3 +73,6 @@ dev.88（43230943802、source 1dda0c5）：23 项实际 portable UI 检查和十
 
 
 dev.90（43611384570、source be7bd3d）实际保存场景 UI、五路最终像素、sceneId 登录后恢复及普通 API revision 变更清屏的八组捕获通过；整轮回切五路/保存阶段失败，NSIS 未执行。后续多投影、观看操作/保存同步及手动 session cookie 接线均待新 Windows source，不提前记为通过。 / Saved-scene subchecks pass in dev.90, while the full UI gate fails later; projector/session changes remain pending Windows.
+
+
+R2 后续源码增加 OBS 原有媒体 callback 的轻量视频输入进度，主画面/两固定投影去重并在现有 heartbeat 中显示首帧/推进/六秒停滞/未知。Linux 实际 libobs proc-handler 分支（inert fixture）、补丁后完整 C 源与 Qt 编译检查通过；Windows 实际 HEVC 状态 UI 门禁待下一 source。它不等价于最终显示、硬解/独显或性能证明，dev.91 不含这项修改。 / Lightweight owned-source input progress is wired into the native UI; local protocol/compile checks pass, while actual Windows HEVC verification is pending and does not qualify final display or hardware performance.

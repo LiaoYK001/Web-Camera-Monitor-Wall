@@ -8,6 +8,11 @@
 namespace webobs::native_host {
 struct ProductSceneSource;
 class ProductSceneGraph;
+struct ProductVideoProgress {
+	std::string uuid;
+	bool available = false;
+	std::int64_t serial = 0; // Opaque delivered-video callback serial, never a rendering/hardware claim.
+};
 
 // Main-thread only. Entries are owned by graphs, never by a global OBS name.
 // The immutable account boundary is retained until all old graphs are gone.
@@ -35,6 +40,7 @@ public:
 	ProductSceneGraph(const ProductSceneGraph &) = delete;
 	ProductSceneGraph &operator=(const ProductSceneGraph &) = delete;
 	~ProductSceneGraph();
+	std::vector<ProductVideoProgress> video_progress() const;
 	friend std::unique_ptr<ProductSceneGraph> create_product_scene(
 		ProductSourcePool &, const std::string &, const SceneDocument &,
 		const std::vector<ProductCamera> &, std::string &);

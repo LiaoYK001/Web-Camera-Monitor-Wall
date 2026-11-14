@@ -1182,3 +1182,14 @@ Native HTTP 客户端提取为实际产品使用的 ProductHttpClient。固定 l
 Linux Qt 6.11.2 真 HTTP 测试、产品窗口/客户端语法、固定头 API 7/7、构建契约 44/44、像素协议 22 通过/2 平台跳过、实际 libobs 图/Program 回归通过。ASan 尝试因本机缺链接所需 libasan runtime 未执行，不计为 sanitizer 通过；没有修改系统软件。新 Windows 脚本要求三张实际窗口各八帧、两个不同固定布局、主画面切换后 UUID/物理来源仍共享、F11 往返、关闭一个不影响其他，以及只撤销投影使用的第五相机也能关闭全部受保护画面。有限固定角色扩展保持原 PID/映像/创建时间/HWND/遮挡/像素门槛。以上新增多投影/会话行为尚待 Windows，持久投影恢复、完整 Studio 编辑/TAKE、声音及 R3–R7 仍未完成。
 
 Two actual OBS Scene projectors are wired to shared immutable graphs with fresh opening checks and independent ongoing authorization. Main-view replacement preserves fixed graphs; account loss retires all owned consumers. Live-source lifecycle settings avoid stopping AUX-only projectors, and unchanged video configurations avoid resets. The actual Qt transport now isolates session generations and cookies, with real HTTP/event-loop regressions. New multi-window final-pixel and projector-only scope-revocation tests are wired but await Windows execution. Complete Studio, projector persistence, audio, business migration, updates and final performance/installation qualification remain open.
+
+
+#### R2 原生视频输入进度 / Native video-input progress
+
+在 dev.91（43616770312、source 49cd463）继续构建期间，产品外置 OBS 补丁在既有 FFmpeg Media Source 的非空 video callback 完成 output 后增加一个原子 serial。读取通过该来源的只读 proc handler，不新增拉流、解码、滤镜、逐帧 CPU/GPU 读回或媒体进程。serial 是有界回绕的不透明进度标记，不是累计帧总数、最终显示证明或硬解/独显证明。上游 checkout 保持未修改，补丁继续仅应用于校验后的构建副本并随许可证归档。
+
+真实 ProductSceneGraph 按自己持有的来源读取，并按 UUID 去重；未知协议、缺失字段和负数均标记不可用。窗口在现有两秒 heartbeat 上合并主画面与两个固定投影的来源，显示已收帧、近期推进、六秒无新回调及未知状态，清理退休来源的本地样本。低帧率来源可能触发六秒停滞提示，tooltip 明确其范围。建图成功文案不再直接声称已经连接视频；侧栏可滚动以保留较矮窗口中的全部操作入口。此状态不写每帧日志，不取代最终像素/音频和设备级验证。
+
+Linux 实际 libobs 图回归通过了未提供遥测、零回调、有效 serial、版本不符和负值分支，以及五个文档引用只查询一个真实来源；这里仍是明确的 inert fixture。补丁后的完整 OBS FFmpeg C 源码使用本机真实 OBS/FFmpeg 头文件语法检查通过，产品 Qt 源码语法检查通过；44 项 build contracts、22 项 pixel contracts（另两项平台/opt-in skip）及六项 package 回归通过。Windows UI 新增从五路实际合成 HEVC 的回调进度读取状态标签，保留独立最终像素门禁，尚待下一构建，不能提前记为媒体或性能通过。
+
+The product-owned build-copy patch adds an atomic opaque serial after non-null OBS FFmpeg video delivery. The real scene graph queries only its owned sources and deduplicates shared inputs. The native UI samples through the existing heartbeat, distinguishes received/progressing/stalled/unknown inputs, and keeps controls available in a scrolling sidebar. No extra media path or frame readback is introduced. Linux real-libobs inert-fixture validation and patched-source/Qt syntax checks pass; actual five-HEVC callback/UI verification remains pending the next Windows build. These counters do not establish final pixels, hardware decoding or target-device performance.

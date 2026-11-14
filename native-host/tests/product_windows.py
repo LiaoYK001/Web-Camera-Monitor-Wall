@@ -328,6 +328,9 @@ def exercise(runtime, report, *, with_media=False, retained_profile=None):
                 phase = "product-final-pixels"
                 time.sleep(3)
                 check_pixels("watch")
+                wait_for(lambda: ui("video-progress", sources=5),
+                    "actual five HEVC inputs did not report delivered video progress", timeout=15)
+                evidence["checks"].append("five-hevc-delivered-video-progress")
                 assert ui("save")
                 paths = wait_for(lambda: list((profile / "native-profile").rglob("workspace-*.json")),
                     "product save button did not persist the bound workspace")
@@ -341,6 +344,8 @@ def exercise(runtime, report, *, with_media=False, retained_profile=None):
                 check_graph(repeat_first=True)
                 time.sleep(3)
                 check_pixels("shared-camera", repeat_first=True)
+                wait_for(lambda: ui("video-progress", sources=1),
+                    "five repeated tiles duplicated input progress accounting", timeout=15)
                 evidence["checks"].append("five-items-one-owned-hevc-source-final-pixels")
                 # Preserve the five DISTINCT-channel baseline and saved workspace.
                 assert ui("choose", indices=[1, 2, 3, 4, 5])
@@ -420,6 +425,8 @@ def exercise(runtime, report, *, with_media=False, retained_profile=None):
                 time.sleep(3)
                 check_pixels("fixed-different-scenes", repeat_first=True, expected_media=5,
                     projector_orders={"fixed-scene-1": "forward", "fixed-scene-2": "reverse"})
+                wait_for(lambda: ui("video-progress", sources=5),
+                    "main and fixed projector input progress was not shared", timeout=15)
                 assert ui("projector-fullscreen", slot=1)
                 wait_for(lambda: any(view["slot"] == 1 and view["fullscreen"] for view in state().get("projectors", [])),
                     "native Scene projector did not enter fullscreen")

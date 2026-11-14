@@ -144,6 +144,26 @@ ProductSceneGraph::~ProductSceneGraph()
 	sources_.clear();
 }
 
+std::vector<ProductVideoProgress> ProductSceneGraph::video_progress() const
+{
+	std::vector<ProductVideoProgress> result;
+	for (const auto &entry : sources_) {
+		if (!entry || !entry->source || obs_source_removed(entry->source)) continue;
+		const std::string uuid = obs_source_get_uuid(entry->source);
+		if (std::any_of(result.begin(), result.end(), [&](const auto &item) { return item.uuid == uuid; })) continue;
+		calldata_t data;
+		calldata_init(&data);
+		const bool called = proc_handler_call(obs_source_get_proc_handler(entry->source),
+			"webobs_get_video_progress", &data);
+		long long schema = 0, serial = -1;
+		const bool available = called && calldata_get_int(&data, "schema", &schema) && schema == 1 &&
+			calldata_get_int(&data, "serial", &serial) && serial >= 0;
+		result.push_back({uuid, available, available ? serial : 0});
+		calldata_free(&data);
+	}
+	return result;
+}
+
 std::unique_ptr<ProductSceneGraph> create_product_scene(ProductSourcePool &pool,
 	const std::string &owner, const SceneDocument &document,
 	const std::vector<ProductCamera> &bindings, std::string &error)

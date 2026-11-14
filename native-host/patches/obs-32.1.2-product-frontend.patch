@@ -160,3 +160,60 @@
  
  	friend class SourceTree;
  	friend class SourceTreeItem;
+--- a/plugins/obs-ffmpeg/obs-ffmpeg-source.c
++++ b/plugins/obs-ffmpeg/obs-ffmpeg-source.c
+@@ -15,6 +15,7 @@
+  */
+ 
+ #include <obs-module.h>
++#include <limits.h>
+ #include <util/threading.h>
+ #include <util/platform.h>
+ #include <util/dstr.h>
+@@ -29,6 +30,9 @@
+ #define FF_BLOG(level, format, ...) FF_LOG_S(s->source, level, format, ##__VA_ARGS__)
+ 
+ struct ffmpeg_source {
++	// Opaque progress serial: delivered video callbacks, not rendered frames or hardware proof.
++	volatile long webobs_video_serial;
++
+ 	media_playback_t *media;
+ 	bool destroy_media;
+ 
+@@ -241,6 +245,13 @@
+ {
+ 	struct ffmpeg_source *s = opaque;
+ 	obs_source_output_video(s->source, f);
++	if (f) {
++		// One media callback writer; the UI only performs atomic reads. Wrap before overflow.
++		if (os_atomic_load_long(&s->webobs_video_serial) == LONG_MAX)
++			os_atomic_store_long(&s->webobs_video_serial, 1);
++		else
++			os_atomic_inc_long(&s->webobs_video_serial);
++	}
+ }
+ 
+ static void preload_frame(void *opaque, struct obs_source_frame *f)
+@@ -592,6 +603,13 @@
+ 		obs_source_media_stop(s->source);
+ }
+ 
++static void webobs_get_video_progress(void *data, calldata_t *cd)
++{
++	struct ffmpeg_source *s = data;
++	calldata_set_int(cd, "schema", 1);
++	calldata_set_int(cd, "serial", os_atomic_load_long(&s->webobs_video_serial));
++}
++
+ static void *ffmpeg_source_create(obs_data_t *settings, obs_source_t *source)
+ {
+ 	struct ffmpeg_source *s = bzalloc(sizeof(struct ffmpeg_source));
+@@ -623,6 +641,8 @@
+ 						    ffmpeg_source_stop_hotkey, s);
+ 
+ 	proc_handler_t *ph = obs_source_get_proc_handler(source);
++	proc_handler_add(ph, "void webobs_get_video_progress(out int schema, out int serial)",
++			 webobs_get_video_progress, s);
+ 	proc_handler_add(ph, "void restart()", restart_proc, s);
+ 	proc_handler_add(ph, "void preload_first_frame()", preload_first_frame_proc, s);
+ 	proc_handler_add(ph, "void get_duration(out int duration)", get_duration, s);

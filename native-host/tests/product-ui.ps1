@@ -59,6 +59,7 @@ public static class ProductTestWindow {
                 'webobsFixedProjector1' { '固定场景投影 1' }
                 'webobsFixedProjector2' { '固定场景投影 2' }
                 'webobsCloseProjectors' { '关闭固定投影' }
+                'webobsVideoHealth' { $kind = [System.Windows.Automation.ControlType]::Text; '' }
                 default {
                     if ($Identity -match '^webobsCameraSlot([1-5])$') {
                         $kind = [System.Windows.Automation.ControlType]::ComboBox
@@ -68,7 +69,8 @@ public static class ProductTestWindow {
             }
             $controlCandidates = @($window.FindAll([System.Windows.Automation.TreeScope]::Descendants,
                 [System.Windows.Automation.Condition]::TrueCondition) | Where-Object {
-                    $_.Current.Name -eq $name -and $_.Current.ControlType -eq $kind
+                    ($_.Current.Name -eq $name -or ($Identity -eq 'webobsVideoHealth' -and
+                        $_.Current.Name -match '^视频输入：')) -and $_.Current.ControlType -eq $kind
                 })
             if ($controlCandidates.Count -eq 1) { $found = $controlCandidates[0] }
         }
@@ -144,6 +146,14 @@ public static class ProductTestWindow {
             Invoke-Control 'webobsWatch'
         }
         'save' { Invoke-Control 'webobsSaveLayout' }
+        'video-progress' {
+            if ([int]$operation.sources -notin @(1,5)) { throw 'Invalid synthetic source count.' }
+            $health = Find-Control 'webobsVideoHealth'
+            $code = 'verify-video-input-progress'
+            $expected = '视频输入：' + [int]$operation.sources + ' 路，已收帧 ' +
+                [int]$operation.sources + '，近期推进 ' + [int]$operation.sources + '，停滞 0，状态未知 0。'
+            if ($health.Current.Name -ne $expected) { throw 'Video input callbacks have not progressed.' }
+        }
         'projector' {
             if ([int]$operation.slot -notin @(1,2)) { throw 'Invalid fixed projector slot.' }
             Invoke-Control "webobsFixedProjector$([int]$operation.slot)"

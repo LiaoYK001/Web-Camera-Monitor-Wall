@@ -32,6 +32,7 @@
 #include <QRegularExpression>
 #include <QSaveFile>
 #include <QScreen>
+#include <QScrollArea>
 #include <QTimer>
 #include <QUrl>
 #include <QVBoxLayout>
@@ -41,6 +42,7 @@
 #include <array>
 #include <functional>
 #include <memory>
+#include <map>
 #include <set>
 
 namespace webobs::native_host {
@@ -59,6 +61,10 @@ class ProductWindow final : public QWidget {
 	QByteArray host_secret_;
 	QLineEdit *username_, *password_;
 	QLabel *status_;
+	QLabel *video_health_;
+	QElapsedTimer health_clock_;
+	struct InputHealth { std::int64_t serial = 0; qint64 changed_ms = 0; bool sampled = false, advanced = false; };
+	std::map<std::string, InputHealth> input_health_;
 	QPushButton *login_, *create_account_, *watch_, *save_, *logout_, *refresh_, *scene_watch_;
 	QComboBox *scenes_ = nullptr;
 	std::array<QComboBox *, 5> slots_{};
@@ -92,6 +98,36 @@ class ProductWindow final : public QWidget {
 	qint64 last_retirement_ms_ = 0;
 
 	using Reply = std::function<void(int, const QJsonObject &)>;
+	void refresh_video_health()
+	{
+		std::map<std::string, ProductVideoProgress> inputs;
+		auto collect = [&](const std::shared_ptr<ProductSceneGraph> &graph) {
+			if (graph) for (const auto &input : graph->video_progress()) inputs.emplace(input.uuid, input);
+		};
+		collect(wall_);
+		for (const auto &view : projectors_) if (view && view->window) collect(view->graph);
+		std::erase_if(input_health_, [&](const auto &entry) { return !inputs.contains(entry.first); });
+		int received = 0, progressing = 0, stalled = 0, unavailable = 0;
+		const auto now = health_clock_.elapsed();
+		for (const auto &[uuid, input] : inputs) {
+			if (!input.available) { ++unavailable; input_health_.erase(uuid); continue; }
+			auto &health = input_health_[uuid];
+			if (!health.sampled || health.serial != input.serial) {
+				health.advanced = health.sampled && health.serial != input.serial;
+				health.serial = input.serial;
+				health.changed_ms = now;
+				health.sampled = true;
+			}
+			if (input.serial > 0) {
+				++received;
+				if (now - health.changed_ms >= 6000) ++stalled;
+				else if (health.advanced) ++progressing;
+			}
+		}
+		if (inputs.empty()) video_health_->setText(tr("视频输入：未监看"));
+		else video_health_->setText(tr("视频输入：%1 路，已收帧 %2，近期推进 %3，停滞 %4，状态未知 %5。")
+			.arg(inputs.size()).arg(received).arg(progressing).arg(stalled).arg(unavailable));
+	}
 	int media_source_count() const
 	{
 		int media_sources = 0;
@@ -225,6 +261,8 @@ class ProductWindow final : public QWidget {
 		clear_main_media();
 		projector_pending_.fill(false);
 		for (std::size_t i = 0; i < projectors_.size(); ++i) close_projector(i);
+		input_health_.clear();
+		if (!tearing_down_) refresh_video_health();
 	}
 	void toggle_projector_fullscreen(QWidget *window)
 	{
@@ -555,7 +593,8 @@ class ProductWindow final : public QWidget {
 		save_->setEnabled(true);
 		update_projector_controls();
 		observe_state("graph-applied");
-		status_->setText(tr("原生监看已连接。"));
+		status_->setText(tr("原生场景已创建，视频状态见下方。"));
+		refresh_video_health();
 	}
 
 	void watch_scene()
@@ -769,9 +808,22 @@ public:
 		controls->setMaximumWidth(360);
 		auto *layout = new QVBoxLayout(controls);
 		layout->setContentsMargins(0, 0, 0, 0);
-		body->addWidget(controls);
+		auto *sidebar = new QScrollArea(this);
+		sidebar->setWidgetResizable(true);
+		sidebar->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
+		sidebar->setMinimumWidth(300);
+		sidebar->setMaximumWidth(380);
+		sidebar->setWidget(controls);
+		body->addWidget(sidebar);
 		status_ = new QLabel(tr("登录 WebOBS 后选择已有摄像机。"), this);
+		status_->setWordWrap(true);
 		layout->addWidget(status_);
+		health_clock_.start();
+		video_health_ = new QLabel(tr("视频输入：未监看"), this);
+		video_health_->setObjectName("webobsVideoHealth");
+		video_health_->setWordWrap(true);
+		video_health_->setToolTip(tr("只检查 OBS 媒体源是否交付新视频帧；不代表最终画面、硬解或独显验证。低于每六秒一帧的来源可能显示停滞。"));
+		layout->addWidget(video_health_);
 		auto *form = new QFormLayout;
 		username_ = new QLineEdit(this);
 		username_->setObjectName("webobsUsername");
@@ -924,6 +976,7 @@ public:
 			QDesktopServices::openUrl(url);
 		});
 		connect(&heartbeat_, &QTimer::timeout, this, [this] {
+			refresh_video_health();
 			renew_projectors(); // Remains active while the main view resolves another scene.
 			if (heartbeat_pending_ || applying_ || user_id_.isEmpty())
 				return;

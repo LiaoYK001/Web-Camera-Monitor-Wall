@@ -11,6 +11,14 @@ namespace {
 using namespace webobs;
 using namespace webobs::native_host;
 std::atomic_int created = 0, destroyed = 0;
+long long progress_schema = 1, progress_serial = 0;
+int progress_queries = 0;
+void fixture_progress(void *, calldata_t *data)
+{
+	++progress_queries;
+	calldata_set_int(data, "schema", progress_schema);
+	calldata_set_int(data, "serial", progress_serial);
+}
 const std::string owner(32, 'a'), other_owner(32, 'b');
 const char *fixture_name(void *) { return "Inert graph ownership fixture"; }
 void *fixture_create(obs_data_t *, obs_source_t *) { ++created; return new int(1); }
@@ -99,6 +107,24 @@ void run()
 	}, &count);
 	require(count == 5, "shared graph lost items");
 	auto *live_source = obs_get_source_by_uuid(first->uuids.front().c_str());
+	auto progress = first->video_progress();
+	require(progress.size() == 1 && progress.front().uuid == first->uuids.front() && !progress.front().available,
+		"unavailable frame callback telemetry was invented or shared sources were counted twice");
+	proc_handler_add(obs_source_get_proc_handler(live_source),
+		"void webobs_get_video_progress(out int schema, out int serial)", fixture_progress, nullptr);
+	progress = first->video_progress();
+	require(progress_queries == 1 && progress.size() == 1 && progress.front().available && progress.front().serial == 0,
+		"zero callbacks were not distinguished from missing telemetry");
+	progress_serial = 17;
+	progress = first->video_progress();
+	require(progress_queries == 2 && progress.front().available && progress.front().serial == 17,
+		"owned source callback serial was not read through the real proc handler");
+	progress_schema = 2;
+	require(!first->video_progress().front().available, "unsupported telemetry schema was accepted");
+	progress_schema = 1;
+	progress_serial = -1;
+	require(!first->video_progress().front().available, "invalid callback serial was accepted");
+	progress_serial = 17;
 	auto *live_settings = obs_source_get_settings(live_source);
 	require(!obs_data_get_bool(live_settings, "restart_on_activate") &&
 		!obs_data_get_bool(live_settings, "close_when_inactive"),
