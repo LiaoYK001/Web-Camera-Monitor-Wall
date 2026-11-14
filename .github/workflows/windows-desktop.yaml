@@ -138,7 +138,7 @@ jobs:
           python3 tests/test_online_source.py
 
   windows:
-    if: ${{ !inputs.installed_upgrade && !inputs.footprint_check }}
+    if: ${{ !inputs.installed_upgrade && !inputs.footprint_check && !inputs.installer_shortcut_check }}
     needs: audit
     runs-on: windows-2022
     environment: windows-desktop-build

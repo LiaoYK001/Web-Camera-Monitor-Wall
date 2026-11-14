@@ -34,11 +34,28 @@ foreach ($scope in @('ascii', 'unicode')) {
         if (-not (Test-Path -LiteralPath $expected -PathType Leaf)) { throw 'Synthetic target missing.' }
         $native = & $probe $shortcut $expected | ConvertFrom-Json
         if ($LASTEXITCODE -ne 0) { throw 'Native Unicode link read failed.' }
+        if (-not $native.nativeTargetExists -or -not $native.canonicalTargetMatches -or -not $native.argumentsEmpty) {
+            throw 'Native Unicode shortcut target or arguments are invalid.'
+        }
         $shell = New-Object -ComObject WScript.Shell
         $link = $shell.CreateShortcut($shortcut)
         $native | Add-Member -NotePropertyName scope -NotePropertyValue $scope
         $native | Add-Member -NotePropertyName wscriptTargetExists -NotePropertyValue (Test-Path -LiteralPath $link.TargetPath -PathType Leaf)
         $native | Add-Member -NotePropertyName wscriptTargetMatches -NotePropertyValue ([string]::Equals($link.TargetPath,$expected,[StringComparison]::OrdinalIgnoreCase))
+        if ($scope -eq 'ascii') {
+            $negativePath = Join-Path $output 'nonempty-arguments.lnk'
+            $negativeLink = $shell.CreateShortcut($negativePath)
+            $negativeLink.TargetPath = $expected
+            $negativeLink.Arguments = '--fixture-extra'
+            $negativeLink.Save()
+            [Runtime.InteropServices.Marshal]::FinalReleaseComObject($negativeLink) | Out-Null
+            $negative = & $probe $negativePath $expected | ConvertFrom-Json
+            if ($LASTEXITCODE -ne 0 -or $negative.argumentsEmpty -or -not $negative.canonicalTargetMatches) {
+                throw 'Native argument refusal control failed.'
+            }
+            $wrong = & $probe $shortcut (Join-Path $installed 'bin/other-entry.exe') | ConvertFrom-Json
+            if ($LASTEXITCODE -ne 0 -or $wrong.canonicalTargetMatches) { throw 'Native wrong-target refusal control failed.' }
+        }
         [Runtime.InteropServices.Marshal]::FinalReleaseComObject($link) | Out-Null
         [Runtime.InteropServices.Marshal]::FinalReleaseComObject($shell) | Out-Null
         $results += $native

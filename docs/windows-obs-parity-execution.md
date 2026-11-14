@@ -1222,3 +1222,12 @@ run 43616770312、source 49cd463 最终 failure。portable 产品入口 passed=t
 NSIS 已安装/核验全部载荷：198,496,992 logical B / 201,433,128 unnamed-stream allocation B / 1865 files；setup 70,131,234 B。失败仍 installed-shortcut，这次诊断明确 targetPresent=true、targetExists=false、fileNameMatches=true、usesShortAlias=false、argumentsEmpty=true。故不能再将问题解释为纯 8.3 比较；真实目标路径或读取方式仍需定位，installed UI/卸载未执行。帧进度、OBS 统计和同画布复用修改均未包含在 dev.91。
 
 Dev.91 passes 31 actual portable checks and 25 eight-frame capture groups, including fixed-scene sharing/fullscreen/retirement and manual-save recovery. The restore control fails before probing due to a logged concurrent nested-MSBuild ZERO_CHECK writer; its rebuild is serialized without removing dependencies. NSIS measured installation again fails because the reported shortcut target does not exist, not merely an alias mismatch. Installed-entry, upgrade, complete features and target-device performance remain open.
+
+
+#### Unicode 快捷方式根因复现 / Reproduced Unicode shortcut-reader defect
+
+独立快速 Windows job 43620589595（source 657a55b）使用同一个产品 NSIS 源、惰性不可执行载荷及全新隔离目录，完成 ASCII/中文两次真实安装/卸载。MSVC 编译的原生 IShellLinkW/IPersistFile/GetPath(SLGP_RAWPATH) 对两种路径均给出 targetExists=true、targetMatches=true。WScript.Shell 对 ASCII 也正确，但中文目标 exists=false、matches=false；runner ANSI code page=1252。原生路径长度与预期完全一致，首次差异位于字符串末尾。这在相同 NSIS 源/目录形态下证明 reader 差异，不能继续把 dev.91 的 WScript false 判断为真实快捷方式损坏。此惰性载荷没有启动产品，job 成功不等于产品安装验收。
+
+实际 NSIS gate 改用相同原生 Unicode reader，同时通过 GetArguments 核验空参数，并对双方已有路径 GetLongPathNameW 后精确比较；不放宽正确目标、真实文件存在或空参数条件。快速 job 增加非空参数与错误目标的原生负向检查，保留 WScript 差异作诊断；待新 job。随后完整产品仍必须执行原先 installed UI/HEVC/退出/卸载数据保留门禁。恢复对照的嵌套 MSBuild 串行修复也仍待完整回归。
+
+A fast isolated Windows reproduction using the exact NSIS source demonstrates correct native Unicode Shell Link targets for ASCII and Chinese paths, while WScript.Shell loses the Chinese target under ACP 1252. The real installer gate now uses IShellLinkW, checks GetArguments and canonical existing paths, and retains all installed UI/media/uninstall gates. New wrong-target/argument controls and full product validation remain pending. The inert-payload reproduction does not qualify an installed product.

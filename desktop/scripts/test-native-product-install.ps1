@@ -58,41 +58,23 @@ try {
     $report.footprint = $footprint
     $phase = 'installed-shortcut'
     if (-not (Test-Path -LiteralPath $shortcut -PathType Leaf)) { throw 'Installed integration shortcut missing.' }
-    $shell = New-Object -ComObject WScript.Shell
-    $link = $shell.CreateShortcut($shortcut)
+    # WScript.Shell.TargetPath loses Unicode in this runner's ACP 1252 even
+    # when the link is valid. Read the actual IShellLinkW target/arguments.
+    $probe = Join-Path $out 'shortcut-probe.exe'
+    & cl.exe /nologo /std:c++20 /EHsc /W4 /WX (Join-Path $repoRoot 'desktop/tests/native-shortcut-probe.cpp') "/Fe:$probe" "/Fo:$out/shortcut-probe.obj" ole32.lib uuid.lib
+    if ($LASTEXITCODE -ne 0) { throw 'Native Unicode shortcut reader compilation failed.' }
     $expectedTarget = [IO.Path]::GetFullPath((Join-Path $installed 'bin/webobs-wall.exe'))
-    # Shell links may return existing 8.3 aliases. GetFullPath only performs
-    # lexical normalization; expand both existing paths before exact comparison.
-    Add-Type -TypeDefinition @'
-using System;
-using System.ComponentModel;
-using System.Runtime.InteropServices;
-using System.Text;
-public static class WebOBSInstalledShortcutPath {
-    [DllImport("kernel32.dll", CharSet=CharSet.Unicode, ExactSpelling=true, SetLastError=true)]
-    private static extern uint GetLongPathNameW(string path, StringBuilder result, uint size);
-    public static string ExistingLongPath(string path) {
-        var result = new StringBuilder(32768);
-        uint count = GetLongPathNameW(path, result, (uint)result.Capacity);
-        if (count == 0 || count >= result.Capacity) throw new Win32Exception(Marshal.GetLastWin32Error());
-        return result.ToString();
-    }
-}
-'@
-    $target = [string]$link.TargetPath
-    $report.shortcutTargetPresent = -not [string]::IsNullOrEmpty($target)
-    $report.shortcutTargetExists = $report.shortcutTargetPresent -and (Test-Path -LiteralPath $target -PathType Leaf)
-    $report.shortcutTargetUsesShortAlias = $target -match '(?i)~[0-9]+(?:\\|$)'
-    $report.shortcutTargetFileNameMatches = [string]::Equals([IO.Path]::GetFileName($target), 'webobs-wall.exe', [StringComparison]::OrdinalIgnoreCase)
-    $report.shortcutTargetMatches = $report.shortcutTargetExists -and [string]::Equals(
-        [WebOBSInstalledShortcutPath]::ExistingLongPath([IO.Path]::GetFullPath($target)),
-        [WebOBSInstalledShortcutPath]::ExistingLongPath($expectedTarget), [StringComparison]::OrdinalIgnoreCase)
-    $report.shortcutArgumentsEmpty = [string]::IsNullOrEmpty($link.Arguments)
-    if (-not $report.shortcutTargetMatches -or -not $report.shortcutArgumentsEmpty) {
+    $observedShortcut = & $probe $shortcut $expectedTarget | ConvertFrom-Json
+    if ($LASTEXITCODE -ne 0) { throw 'Native Unicode shortcut reader failed.' }
+    $report.shortcutReader = 'IShellLinkW/GetPath/GetArguments'
+    $report.shortcutTargetPresent = $observedShortcut.targetLength -gt 0
+    $report.shortcutTargetExists = $observedShortcut.nativeTargetExists
+    $report.shortcutTargetMatches = $observedShortcut.canonicalTargetMatches
+    $report.shortcutArgumentsEmpty = $observedShortcut.argumentsEmpty
+    if (-not $report.shortcutTargetPresent -or -not $report.shortcutTargetExists -or
+        -not $report.shortcutTargetMatches -or -not $report.shortcutArgumentsEmpty) {
         throw 'Installed shortcut does not target the unified native entry.'
     }
-    [Runtime.InteropServices.Marshal]::FinalReleaseComObject($link) | Out-Null
-    [Runtime.InteropServices.Marshal]::FinalReleaseComObject($shell) | Out-Null
     $phase = 'installed-entry-ui-and-media'
     & $python -B (Join-Path $repoRoot 'native-host/tests/product_windows.py') --runtime $installed --with-media --retained-profile $profile --report (Join-Path $buildRoot 'native-product-installed-ui.json')
     if ($LASTEXITCODE -ne 0) { throw 'Actual installed product entry/UI/media gate failed.' }
