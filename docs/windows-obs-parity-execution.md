@@ -1337,3 +1337,12 @@ The real OBS Studio Preview now owns local monitor selection, initialized agains
 本机实际 core+账号+Argon2 HTTP 回归加入标准库原始 TCP/RFC6455 握手、snapshot 与 ping/pong：注销一 token 只关闭该 socket，另一登录/长连接仍可用；真实密码修改、viewer→auditor 撤媒体角色均自动关闭；无媒体角色仍可 session/个人账号访问；权威 503 关闭 socket 但不误撤销有效登录；peer 断开后超过续验间隔不再请求后端。另实际非原生 core 登录和 socket 保持兼容。九项 CTest 全通过。这里不声称对已发网络数据追溯撤回、所有远端媒体/业务流审计或原子执行 fencing；新 Windows source 尚待编译/安装回归。
 
 Native management WebSockets now use bounded asynchronous two-second identity/permission renewal, hold queued writes after decision expiry and retire failed/disconnected consumers. Actual TCP/account/core regressions and all nine CTests pass, including revocation, parallel-session isolation, authority failure, no orphan polling and legacy HTTP/socket compatibility. Later Windows qualification and the full Studio engine/business-stream work remain open.
+
+
+#### 原生管理变更的入队后复验 / Revalidate queued native management mutations
+
+普通原生管理 mutating 请求现在捕获已验证的 actor/token，worker（或既有饱和 inline 路径）真正调用 handler 前重做 fresh 权限与前后本地身份检查；个人账户保持 identity-only。原有只读请求/非原生部署不增加额外权威查询。共用有界 request 对象，401 clear-cookie 不被回复包装覆盖。
+
+真实 HTTP/AccountHandler/Studio 回归用真实 authority RLock 将“第一次允许回复→改角色但不改 epoch→第二次决定”固定为 200/403，要求 Studio revision/全文未改；另一例第二次决定期间删除原 token，要求 200/200 后业务返回 401 与 Max-Age=0，Studio 不写且另一登录仍有效。此前原生权限/并发内容、WebSocket/断开清理及非原生兼容回归均通过。编译通过，新 Windows source 待后续构建。该步骤不是整个 TAKE/跨库/所有后端事务 fencing；个人账户代理仍需在真实业务事务内核对 actor，不能只依赖前置检查。
+
+Native management mutations now revalidate their captured actor immediately before handler execution after queueing. Deterministic actual HTTP tests reject role changes or in-flight logout after the initial grant, preserve document state and keep the clearing cookie. Existing native/socket/compatibility regressions pass. Full TAKE and cross-service/transaction fencing, including identity inside actual account operations, remain open.

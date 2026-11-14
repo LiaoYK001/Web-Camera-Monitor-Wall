@@ -4210,6 +4210,48 @@ public:
     void run() { do_read(); }
 
 private:
+    std::optional<HttpResponse> native_mutation_rejection(const HttpRequest &request,
+        const std::string &token, const SessionRecord &actor)
+    {
+        const auto matches = [&](const auto &record) {
+            return actor.identity && record && record->identity && record->user == actor.user &&
+                record->identity->user_id == actor.identity->user_id &&
+                record->identity->auth_epoch == actor.identity->auth_epoch;
+        };
+        const auto unauthenticated = [&] {
+            session_store_.revoke(token);
+            auto result = response(http::status::unauthorized, request.version(),
+                error_body("session_revoked", "the account session is no longer valid"));
+            result.set(http::field::set_cookie, session_store_.clear_cookie_header());
+            return result;
+        };
+        if (!matches(session_store_.validate_and_slide(token))) return unauthenticated();
+        ClusterAuthorization decision;
+        if (view(request.target()).starts_with("/api/v2/account/")) {
+            NativeClusterAuthorizationConfig config;
+            config.port = static_cast<std::uint16_t>(runtime_port(8095));
+            if (const char *internal = std::getenv("WEBOBS_CLUSTER_INTERNAL_TOKEN")) config.internal_token = internal;
+            const auto checked = NativeClusterAuthorizationBackend(std::move(config)).validate_identity(actor.user, *actor.identity);
+            decision = checked == NativeAuthorizationDecision::allowed ? ClusterAuthorization::allowed :
+                checked == NativeAuthorizationDecision::unknown_user ? ClusterAuthorization::user_unknown :
+                ClusterAuthorization::unavailable;
+        } else {
+            decision = cluster_authorize(actor.user, request, &*actor.identity);
+        }
+        if (decision == ClusterAuthorization::user_unknown) {
+            session_store_.revoke_identity(actor.user, *actor.identity);
+            return unauthenticated();
+        }
+        if (decision == ClusterAuthorization::denied)
+            return response(http::status::forbidden, request.version(),
+                error_body("permission_rejected", "role or camera scope rejected this operation"));
+        if (decision != ClusterAuthorization::allowed)
+            return response(http::status::service_unavailable, request.version(),
+                error_body("authorization_unavailable", "RBAC authorization is unavailable"));
+        if (!matches(session_store_.validate_and_slide(token))) return unauthenticated();
+        return std::nullopt;
+    }
+
     // Native product UI uses the existing account/session service and the same
     // loopback listener. The one-boot host secret stays in the supervisor and
     // native process, never in a management page or a camera configuration.
@@ -5029,13 +5071,23 @@ private:
         std::optional<std::string> cookie_token;
         if (session_token && session_record)
             cookie_token = *session_token;
-        HttpRequest queued = request;
+        const bool mutating = request.method() == http::verb::post || request.method() == http::verb::put ||
+            request.method() == http::verb::patch || request.method() == http::verb::delete_;
+        const auto actor = native_product && mutating ? session_record : std::nullopt;
+        auto queued = std::make_shared<HttpRequest>(std::move(request));
+        const auto execute = [this, queued, cookie_token, actor] {
+            // The worker may start well after the initial HTTP gate. Never turn
+            // that earlier decision into a permission to execute queued work.
+            if (actor && cookie_token)
+                if (auto rejected = native_mutation_rejection(*queued, *cookie_token, *actor))
+                    return std::move(*rejected);
+            return handle_request(*queued, controller_, studio_, hub_, whep_proxy_,
+                nvr_proxy_, camera_proxy_, allowed_origins_, runtime_status_, metrics_, authenticator_);
+        };
         const bool dispatched = pool_.post(
-            [this, self, request = std::move(queued), cookie_token]() mutable {
-                HttpResponse result = handle_request(request, controller_, studio_, hub_, whep_proxy_,
-                                                     nvr_proxy_, camera_proxy_, allowed_origins_,
-                                                     runtime_status_, metrics_, authenticator_);
-                if (cookie_token)
+            [this, self, execute, cookie_token] {
+                HttpResponse result = execute();
+                if (cookie_token && result.result() != http::status::unauthorized)
                     result.set(http::field::set_cookie, session_store_.set_cookie_header(*cookie_token));
                 net::post(stream_.get_executor(),
                           [self, result = std::move(result)]() mutable { self->send(std::move(result)); });
@@ -5043,10 +5095,9 @@ private:
         if (dispatched)
             return;
         // Pool saturated: serve the request here instead of dropping it.
-        HttpResponse result = handle_request(request, controller_, studio_, hub_, whep_proxy_, nvr_proxy_, camera_proxy_,
-                                             allowed_origins_, runtime_status_, metrics_, authenticator_);
-        if (session_token && session_record)
-            result.set(http::field::set_cookie, session_store_.set_cookie_header(*session_token));
+        HttpResponse result = execute();
+        if (cookie_token && result.result() != http::status::unauthorized)
+            result.set(http::field::set_cookie, session_store_.set_cookie_header(*cookie_token));
         send(std::move(result));
     }
 

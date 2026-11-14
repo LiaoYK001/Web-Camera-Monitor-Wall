@@ -170,8 +170,14 @@ def exercise(binary):
         batch_hooks = []
         identity_hooks = []
         authority_overrides = {}
+        before_authority_hooks, after_authority_hooks, authorization_statuses = [], [], []
 
         class AccountHandler(cluster.Handler):
+            def response(self, status, value=None):
+                if self.path == "/auth/native-authorize":
+                    authorization_statuses.append(status)
+                super().response(status, value)
+
             def do_POST(self):
                 authority_paths.append(self.path)
                 if self.path in authority_overrides:
@@ -181,6 +187,16 @@ def exercise(binary):
                     batch_hooks.pop(0)()
                 if self.path == "/auth/native-session" and identity_hooks:
                     identity_hooks.pop(0)()
+                if self.path == "/auth/native-authorize" and before_authority_hooks:
+                    before_authority_hooks.pop(0)()
+                if self.path == "/auth/native-authorize" and after_authority_hooks:
+                    hook = after_authority_hooks.pop(0)
+                    # Hold the real authority RLock through reply + role change;
+                    # a second decision cannot overtake this deterministic fence.
+                    with cluster.STORE.lock:
+                        super().do_POST()
+                        hook()
+                    return
                 super().do_POST()
 
         class RegistryHandler(camera.Handler):
@@ -436,6 +452,42 @@ def exercise(binary):
                 assert code == 200
                 active_fingerprint = current_scene["sceneFingerprint"]
                 assert resolved == [], "concurrent scene renewal read endpoint credentials"
+                # A queued mutation must not treat the first successful HTTP
+                # decision as a durable execution grant. Change roles after
+                # that real response while preserving identity/epoch.
+                executor_password = secrets.token_urlsafe(24)
+                executor = cluster.STORE.create_user({"username": "mutation-admin", "password": executor_password,
+                                                      "roles": ["admin"]})
+                code, executor_issued, _ = request("/api/v1/auth/login", {
+                    "username": "mutation-admin", "password": executor_password}, use_cookie=False)
+                assert code == 200 and executor_issued
+                executor_cookie = executor_issued.split(";", 1)[0]
+                code, _, before_mutation = request("/api/v1/studio", cookie_override=admin_cookie)
+                assert code == 200
+                mutation = json.loads(json.dumps(before_mutation))
+                mutation["scenes"][0]["name"] = "Rejected mutation must not persist"
+                authorization_statuses.clear()
+                after_authority_hooks.append(lambda: cluster.STORE.update_user(
+                    executor["id"], {"roles": ["auditor"]}, executor["revision"]))
+                code, _, _ = request("/api/v1/studio", mutation, method="PUT",
+                    revision=before_mutation["revision"], cookie_override=executor_cookie)
+                assert code == 403 and authorization_statuses == [200, 403], \
+                    "queued mutation reused an earlier role grant"
+                assert request("/api/v1/studio", cookie_override=admin_cookie)[2] == before_mutation
+                assert request("/api/v1/auth/session", cookie_override=executor_cookie)[0] == 200
+                cluster.STORE.update_user(executor["id"], {"roles": ["admin"]}, executor["revision"] + 1)
+                executor_hash = hashlib.sha256(executor_cookie.split("=", 1)[1].encode()).hexdigest()
+                def retire_executor_session():
+                    with contextlib.closing(sqlite3.connect(private / "sessions.db")) as database, database:
+                        database.execute("DELETE FROM auth_sessions WHERE session_id_hash=?", (executor_hash,))
+                after_authority_hooks.append(lambda: before_authority_hooks.append(retire_executor_session))
+                authorization_statuses.clear()
+                code, clearing_cookie, _ = request("/api/v1/studio", mutation, method="PUT",
+                    revision=before_mutation["revision"], cookie_override=executor_cookie)
+                assert code == 401 and authorization_statuses == [200, 200] and "Max-Age=0" in clearing_cookie, \
+                    "queued mutation ignored logout during execution authorization"
+                assert request("/api/v1/studio", cookie_override=admin_cookie)[2] == before_mutation
+                print("PASS queued real Studio mutations recheck roles and in-flight local logout before persistence")
                 with contextlib.closing(sqlite3.connect(private / "sessions.db")) as database:
                     row = database.execute("SELECT user_id,auth_epoch FROM auth_sessions WHERE user_id=?",
                         (identity["userId"],)).fetchone()

@@ -16,6 +16,10 @@ The R1 product variant now wires these libraries through the existing core liste
 
 The ordinary browser login in native product mode now password-binds immutable identity through the existing account service and SessionStore, without exposing epoch or host credentials. Bound permission decisions protect ordinary APIs; a separate internal identity-only check protects session/own-account routes without inventing a media-role requirement. Legacy unbound cookies require fresh login, Basic fallback is disabled in native mode, and non-native HTTP compatibility remains unchanged. Replies are correlated and local sessions are rechecked after authority I/O. This is not the complete Studio engine bridge, an atomic execution fence or legacy installed-data migration.
 
+普通原生管理 POST/PUT/PATCH/DELETE 在进入有界 worker 队列后、真正调用现有业务 handler 之前，再对原 token 与不可变身份做一次 fresh 权限决定和本地复查；个人账户仍仅验证身份。队列满的既有 inline 路径使用同一 guard。401 保留清除 cookie，不被外层滑动续期覆盖；非原生协议与只读请求不额外增加这一查询。真实 HTTP 确定性回归在第一次 200 授权回复之后改角色（保持 epoch），要求 worker 阶段 403 且 Studio 不变；另一例在第二次授权期间删 token，要求 401/clear-cookie 且不写文档。该检查收紧入队边界，不宣称跨账户库/业务库的全局事务 fencing。
+
+Queued native management mutations now freshly recheck the captured session/identity and route permission immediately before the business handler, including the saturated inline path. Deterministic real-authority tests prove rejection after an initial allowed decision without persisting the Studio mutation, and preserve the clearing cookie. This is not a global cross-service transaction fence.
+
 ### 管理 WebSocket 的持续授权 / Continuous management WebSocket authorization
 
 原生产品模式的真实 `/api/v1/ws` 在已有握手校验之外，每两秒通过有界 RequestPool 重新核验同一 token/immutable identity 与该路由的原有 `live.view` 权限，后端 I/O 后再查本地会话。权限决定到期后不开始发送队列更新；续验成功才恢复，失效、权限拒绝、权威服务不可用或 worker queue 饱和都关闭该连接。没有复用为执行授权；已发送的网络数据不可能追溯撤回。单 token 注销不撤销同身份另一会话；账号/epoch 失效撤销确切绑定。关闭 socket 同时取消 timer，避免断开后继续轮询。原有最多 16 条 outbound 队列保持，查询不在 socket 事件线程阻塞。
