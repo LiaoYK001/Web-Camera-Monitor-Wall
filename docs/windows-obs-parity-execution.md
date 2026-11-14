@@ -1152,3 +1152,12 @@ Saved canonical Studio camera scenes are now wired to the actual native selectio
 后续 e22667a 的已保存场景接线不包含在该次 Windows 运行。该 Qt 窗口已用解包到临时目录的 Fedora Qt 6.11.2 头进行 C++20 语法检查通过；未修改/安装系统 Qt，也不代替锁定 Windows Qt 6.8.3/MSVC 编译或实际 UI。完整产品交付与 R2–R7 仍打开。
 
 Dev.88 passes actual one-HEVC-source/five-item final pixels and the unchanged five-distinct-channel baseline, with 23 portable checks and fifteen eight-frame capture groups. The real unguarded/protected pre-login restore I/O gate passes all nine checks. NSIS again reaches measured installation but fails exact shortcut-target comparison before installed UI; the next check expands existing Windows short aliases and retains bounded classifications. This remains an internal incomplete product with publication forbidden. New saved-scene wiring still awaits Windows execution.
+
+
+#### dev.89 场景编译通过、真实控制启动仍失败 / Scene compilation passes; real control startup fails
+
+`43235025838`（source e26e883、dev.89）已结束 failure。固定 OBS/Qt 插件和实际 core 的 MSVC 编译、core CTest、管理 WebUI typecheck/build 及 runtime stage 完成；新的包内解释器 HTTP 测试在 isolated core readiness 前退出，因此没有运行新场景 UI/像素、恢复对照或更新后的快捷方式检查。不将编译通过记为场景功能通过。旧断言没有保留进程退出码/固定启动分类，不能依据这次日志推断确切根因。
+
+后续把 Studio 测试夹具改为 core 正常启动后，通过普通管理员登录和已有 GET/If-Match PUT Studio API 保存，沿用生产的私密原子写入路径，而不是在进程启动前由 Python 预置文件。保持 viewer 写入拒绝、规范场景派生、整批 scope、嵌套、版本变更和零端点读取断言，native session 的数据库断言也按真实 immutable userId 精确查询，避免新增普通管理员会话影响首行选择。readiness 失败仅输出数字退出码与固定启动类别，不上传日志/路径。Linux 真实 core/account/Registry 回归通过，Windows 效果待下一轮。
+
+Dev.89 compiles the saved-scene Qt plugin and core but fails packaged-interpreter core readiness before UI, restore or installer execution. The exact cause is unproven because the old failure omitted exit status. The next fixture uses the ordinary authenticated Studio API and production private writer after startup, preserving authorization/revision assertions and adding bounded startup diagnostics. Linux real-service integration passes; Windows remains pending.

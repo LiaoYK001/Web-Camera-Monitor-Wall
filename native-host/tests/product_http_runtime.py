@@ -74,9 +74,9 @@ def exercise(binary):
         for document in (allowed_scene, denied_scene, raw_scene, nested_scene):
             for source in document["sources"]:
                 source.update(muted=True, volume=1, syncOffsetMs=0, monitoring="off", audioTrack=1)
-        (private / "studio.json").write_text(json.dumps({"schemaVersion": 1, "revision": 7,
+        fixture_studio = {"schemaVersion": 1, "revision": 0,
             "programSceneId": "allowed", "previewSceneId": "allowed", "transition": {"kind": "cut", "durationMs": 300},
-            "scenes": [allowed_scene, denied_scene, raw_scene, nested_scene]}), encoding="utf-8")
+            "scenes": [allowed_scene, denied_scene, raw_scene, nested_scene]}
         cluster.INTERNAL_TOKEN = secrets.token_hex(32)
         cluster.STORE = cluster.ClusterStore(private / "accounts.db", cluster.PasswordHasher(),
                                             camera_registry_path=camera.DB_PATH)
@@ -147,6 +147,16 @@ def exercise(binary):
                 deadline = time.monotonic() + 15
                 while time.monotonic() < deadline:
                     if process.poll() is not None:
+                        # Public diagnostics contain only exit status and fixed
+                        # startup categories, never private logs/URLs/paths.
+                        categories = ("Could not load Studio state", "Could not initialize Studio state",
+                                      "scene storage error", "Could not start native control server")
+                        try:
+                            tail = (private / "private-core.log").read_bytes()[-65536:].decode("utf-8", errors="replace")
+                        except OSError:
+                            tail = ""
+                        print(json.dumps({"phase": "readiness", "exitCode": process.returncode,
+                            "startupCategories": [marker for marker in categories if marker in tail]}))
                         raise AssertionError("isolated control process exited before readiness")
                     try:
                         if request("/api/v1/health")[0] == 200:
@@ -171,6 +181,17 @@ def exercise(binary):
                 assert request("/api/v1/auth/setup", first_admin)[0] == 201
                 assert request("/api/v1/auth/setup")[2]["registrationOpen"] is False
                 assert request("/api/v1/auth/setup", first_admin)[0] == 409
+                # Save the fixture through the real authenticated controller and
+                # private atomic writer, rather than pre-seeding a platform file.
+                code, setup_issued, _ = request("/api/v1/auth/login", first_admin, use_cookie=False)
+                assert code == 200 and setup_issued
+                setup_cookie = setup_issued.split(";", 1)[0]
+                code, _, bootstrap_studio = request("/api/v1/studio", cookie_override=setup_cookie)
+                assert code == 200 and bootstrap_studio["revision"] == 0
+                code, _, stored_fixture = request("/api/v1/studio", fixture_studio, method="PUT", revision=0,
+                    cookie_override=setup_cookie)
+                assert code == 200 and stored_fixture["revision"] == 1, \
+                    f"ordinary Studio API did not persist the fixture (HTTP {code})"
                 assert request("/api/v1/native/auth/login", login, secret="0" * 64)[0] == 403
                 assert request("/api/v1/native/auth/login", login, request_origin="https://untrusted.invalid")[0] == 403
                 assert request("/api/v1/native/auth/session")[0] == 401
@@ -183,25 +204,25 @@ def exercise(binary):
                 assert status == 200 and [item["id"] for item in catalog["cameras"]] == ["camera-a"], \
                     "native catalog exposed an unauthorized camera"
                 status, _, scenes = request("/api/v1/native/scenes")
-                assert status == 200 and scenes["revision"] == 7
+                assert status == 200 and scenes["revision"] == 1
                 assert [item["id"] for item in scenes["scenes"]] == ["allowed", "denied", "unbound", "nested"]
                 assert "rtsp://" not in json.dumps(scenes) and "127.0.0.1" not in json.dumps(scenes)
                 for scene_id, expected in (("denied", 403), ("unbound", 409), ("missing", 409)):
-                    assert request("/api/v1/native/scenes/resolve", {"sceneId": scene_id, "revision": 7})[0] == expected
+                    assert request("/api/v1/native/scenes/resolve", {"sceneId": scene_id, "revision": 1})[0] == expected
                     assert resolved == [], "rejected scene resolved a private endpoint"
                 for invalid in ({"sceneId": "allowed", "revision": True},
-                                {"sceneId": "allowed", "revision": 7, "cameras": []},
-                                {"sceneId": "../allowed", "revision": 7}):
+                                {"sceneId": "allowed", "revision": 1, "cameras": []},
+                                {"sceneId": "../allowed", "revision": 1}):
                     assert request("/api/v1/native/scenes/resolve", invalid)[0] == 400
-                assert request("/api/v1/native/scenes/resolve", {"sceneId": "allowed", "revision": 6})[0] == 412
+                assert request("/api/v1/native/scenes/resolve", {"sceneId": "allowed", "revision": 0})[0] == 412
                 for scene_id in ("allowed", "nested"):
-                    status, _, value = request("/api/v1/native/scenes/resolve", {"sceneId": scene_id, "revision": 7})
-                    assert status == 200 and value["studioRevision"] == 7 and value["cameraVersions"] == {"camera-a": 1}
+                    status, _, value = request("/api/v1/native/scenes/resolve", {"sceneId": scene_id, "revision": 1})
+                    assert status == 200 and value["studioRevision"] == 1 and value["cameraVersions"] == {"camera-a": 1}
                     assert len(value["cameras"]) == 1 and value["cameras"][0]["cameraId"] == "camera-a"
                     assert value["scene"]["sources"][0]["kind"] == "camera" and "rtsp://" not in json.dumps(value["scene"])
                     before = list(resolved)
-                    status, _, renewed_scene = request("/api/v1/native/scenes/authorize", {"sceneId": scene_id, "revision": 7})
-                    assert status == 200 and renewed_scene["studioRevision"] == 7 and "scene" not in renewed_scene
+                    status, _, renewed_scene = request("/api/v1/native/scenes/authorize", {"sceneId": scene_id, "revision": 1})
+                    assert status == 200 and renewed_scene["studioRevision"] == 1 and "scene" not in renewed_scene
                     assert resolved == before and "url" not in json.dumps(renewed_scene)
                 resolved.clear()
                 # Change the canonical document through the ordinary admin API,
@@ -210,18 +231,19 @@ def exercise(binary):
                 assert code == 200 and admin_issued
                 admin_cookie = admin_issued.split(";", 1)[0]
                 code, _, studio = request("/api/v1/studio", cookie_override=admin_cookie)
-                assert code == 200 and studio["revision"] == 7
+                assert code == 200 and studio["revision"] == 1
                 studio["scenes"][0]["name"] = "Allowed revised through existing API"
-                assert request("/api/v1/studio", studio, method="PUT", revision=7)[0] == 403
-                code, _, updated = request("/api/v1/studio", studio, method="PUT", revision=7,
+                assert request("/api/v1/studio", studio, method="PUT", revision=1)[0] == 403
+                code, _, updated = request("/api/v1/studio", studio, method="PUT", revision=1,
                     cookie_override=admin_cookie)
-                assert code == 200 and updated["revision"] == 8
-                assert request("/api/v1/native/scenes/authorize", {"sceneId": "allowed", "revision": 7})[0] == 412
-                assert request("/api/v1/native/scenes/resolve", {"sceneId": "allowed", "revision": 7})[0] == 412
+                assert code == 200 and updated["revision"] == 2
+                assert request("/api/v1/native/scenes/authorize", {"sceneId": "allowed", "revision": 1})[0] == 412
+                assert request("/api/v1/native/scenes/resolve", {"sceneId": "allowed", "revision": 1})[0] == 412
                 assert resolved == [], "stale canonical scene read private endpoints after an ordinary API update"
-                assert request("/api/v1/native/scenes/authorize", {"sceneId": "allowed", "revision": 8})[0] == 200
+                assert request("/api/v1/native/scenes/authorize", {"sceneId": "allowed", "revision": 2})[0] == 200
                 with contextlib.closing(sqlite3.connect(private / "sessions.db")) as database:
-                    row = database.execute("SELECT user_id,auth_epoch FROM auth_sessions").fetchone()
+                    row = database.execute("SELECT user_id,auth_epoch FROM auth_sessions WHERE user_id=?",
+                        (identity["userId"],)).fetchone()
                     assert row and len(row[0]) == len(row[1]) == 32, "session was not identity-bound"
                 selection = {"cameras": [{"cameraId": "camera-a", "profileId": "main"}]}
                 denied = {"cameras": selection["cameras"] + [{"cameraId": "camera-b", "profileId": "main"}]}
