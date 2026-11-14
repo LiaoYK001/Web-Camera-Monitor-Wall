@@ -55,6 +55,10 @@ on:
         description: 'Validate only the Windows installed-tree footprint contracts; no build, installer or product start'
         default: false
         type: boolean
+      installer_shortcut_check:
+        description: 'Reproduce Unicode NSIS Shell Links with an inert payload; no product build or publication'
+        default: false
+        type: boolean
       obs_size_baseline:
         description: 'With native_host: install the pinned stock OBS 32.1.2 and record a same-OS installed-size reference'
         default: false
@@ -71,10 +75,37 @@ permissions:
 concurrency:
   # Independent read-only prototype/diagnostic runners do not share product
   # output trees. Keep product/install/publication operations serialized.
-  group: webobs-windows-desktop-build-${{ (inputs.native_host || inputs.native_host_pixels) && 'native-host' || inputs.diagnose_dev17 && 'frozen-preview' || inputs.footprint_check && 'footprint' || 'product' }}
+  group: webobs-windows-desktop-build-${{ (inputs.native_host || inputs.native_host_pixels) && 'native-host' || inputs.diagnose_dev17 && 'frozen-preview' || inputs.footprint_check && 'footprint' || inputs.installer_shortcut_check && 'shortcut' || 'product' }}
   cancel-in-progress: false
 
 jobs:
+  shortcut-contracts:
+    if: ${{ inputs.installer_shortcut_check }}
+    runs-on: windows-2022
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - name: Select existing VS compiler
+        shell: pwsh
+        run: |
+          $vswhere = Join-Path ${env:ProgramFiles(x86)} 'Microsoft Visual Studio\Installer\vswhere.exe'
+          $vs = & $vswhere -latest -products '*' -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath
+          if (-not $vs) { throw 'MSVC x64 not available on runner' }
+          Import-Module (Join-Path $vs 'Common7\Tools\Microsoft.VisualStudio.DevShell.dll')
+          Enter-VsDevShell -VsInstallPath $vs -SkipAutomaticLocation -DevCmdArguments '-arch=x64 -host_arch=x64'
+          Get-ChildItem Env: | Where-Object Name -In @('PATH','INCLUDE','LIB','LIBPATH','VCToolsInstallDir','VSINSTALLDIR','WindowsSdkDir','WindowsSDKVersion') | ForEach-Object { "$($_.Name)=$($_.Value)" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8 }
+      - name: Exercise the actual NSIS Unicode Shell Link with an inert payload
+        shell: pwsh
+        run: pwsh -NoProfile -File desktop/tests/test-native-shortcut.ps1 -OutputDirectory build/shortcut-contracts
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        if: always()
+        with:
+          name: native-shortcut-contracts
+          path: build/shortcut-contracts/shortcut-contracts.json
+          if-no-files-found: warn
+          retention-days: 7
   footprint-contracts:
     if: ${{ inputs.footprint_check }}
     runs-on: windows-2022
@@ -90,7 +121,7 @@ jobs:
           pwsh -NoProfile -File desktop/tests/test-installed-tree-footprint.ps1
 
   audit:
-    if: ${{ !inputs.publish_dev17 && !inputs.publish_dev18 && !inputs.diagnose_dev17 && !inputs.native_host && !inputs.native_host_pixels && !inputs.footprint_check }}
+    if: ${{ !inputs.publish_dev17 && !inputs.publish_dev18 && !inputs.diagnose_dev17 && !inputs.native_host && !inputs.native_host_pixels && !inputs.footprint_check && !inputs.installer_shortcut_check }}
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
