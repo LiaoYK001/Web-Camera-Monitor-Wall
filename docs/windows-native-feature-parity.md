@@ -76,3 +76,6 @@ dev.90（43611384570、source be7bd3d）实际保存场景 UI、五路最终像�
 
 
 R2 后续源码增加 OBS 原有媒体 callback 的轻量视频输入进度，主画面/两固定投影去重并在现有 heartbeat 中显示首帧/推进/六秒停滞/未知。Linux 实际 libobs proc-handler 分支（inert fixture）、补丁后完整 C 源与 Qt 编译检查通过；Windows 实际 HEVC 状态 UI 门禁待下一 source。它不等价于最终显示、硬解/独显或性能证明，dev.91 不含这项修改。 / Lightweight owned-source input progress is wired into the native UI; local protocol/compile checks pass, while actual Windows HEVC verification is pending and does not qualify final display or hardware performance.
+
+
+R2 统计入口继续接线到 OBS 原有 OBSBasicStats，真实会话/scene.read 核验后才打开，注销关闭，标题注明仅宿主进程；本机 Qt/控件检查通过，Windows 实际窗口回归待下一构建。完整实时占用、多进程总量和分引擎 GPU 仍未完成。 / The authenticated native host-statistics entry now reuses OBS's existing surface; Windows UI validation and full product accounting remain pending.

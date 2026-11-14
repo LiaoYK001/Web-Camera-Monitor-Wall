@@ -59,6 +59,7 @@ public static class ProductTestWindow {
                 'webobsFixedProjector1' { '固定场景投影 1' }
                 'webobsFixedProjector2' { '固定场景投影 2' }
                 'webobsCloseProjectors' { '关闭固定投影' }
+                'webobsHostStats' { 'OBS 宿主统计' }
                 'webobsVideoHealth' { $kind = [System.Windows.Automation.ControlType]::Text; '' }
                 default {
                     if ($Identity -match '^webobsCameraSlot([1-5])$') {
@@ -105,6 +106,7 @@ public static class ProductTestWindow {
             $null = Find-Control 'webobsUsername'
             $null = Find-Control 'webobsPassword'
             $null = Find-Control 'webobsLogin'
+            if ((Find-Control 'webobsHostStats').Current.IsEnabled) { throw 'Host stats enabled before login.' }
         }
         'login' {
             Set-Control 'webobsUsername' $operation.username
@@ -146,6 +148,8 @@ public static class ProductTestWindow {
             Invoke-Control 'webobsWatch'
         }
         'save' { Invoke-Control 'webobsSaveLayout' }
+        'stats' { Invoke-Control 'webobsHostStats' }
+        'stats-close' { $window.GetCurrentPattern([System.Windows.Automation.WindowPattern]::Pattern).Close() }
         'video-progress' {
             if ([int]$operation.sources -notin @(1,5)) { throw 'Invalid synthetic source count.' }
             $health = Find-Control 'webobsVideoHealth'

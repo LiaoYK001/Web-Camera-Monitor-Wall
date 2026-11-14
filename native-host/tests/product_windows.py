@@ -140,6 +140,8 @@ def exercise(runtime, report, *, with_media=False, retained_profile=None):
                 assert type(slot) is int and slot in (1, 2)
                 wanted_roles = {f"fixed-scene-{slot}", f"fixed-scene-fullscreen-{slot}"}
             windows = [window for window in owned.get("windows", []) if window.get("role") in wanted_roles]
+            if action == "stats-close":
+                windows = [owned["statsWindow"]] if owned.get("statsOpen") is True and isinstance(owned.get("statsWindow"), dict) else []
             if len(windows) != 1 or owned.get("pid") != str(frontend_pid):
                 return False
             try:
@@ -331,6 +333,15 @@ def exercise(runtime, report, *, with_media=False, retained_profile=None):
                 wait_for(lambda: ui("video-progress", sources=5),
                     "actual five HEVC inputs did not report delivered video progress", timeout=15)
                 evidence["checks"].append("five-hevc-delivered-video-progress")
+                phase = "native-obs-host-statistics"
+                assert ui("stats")
+                wait_for(lambda: state().get("statsOpen") is True,
+                    "actual OBS statistics window did not open")
+                assert state()["statsWindow"]["qtClass"] == "OBSBasicStats"
+                assert ui("stats-close")
+                wait_for(lambda: state().get("statsOpen") is False,
+                    "actual OBS statistics window did not close")
+                evidence["checks"].append("authenticated-existing-obs-statistics-window")
                 assert ui("save")
                 paths = wait_for(lambda: list((profile / "native-profile").rglob("workspace-*.json")),
                     "product save button did not persist the bound workspace")

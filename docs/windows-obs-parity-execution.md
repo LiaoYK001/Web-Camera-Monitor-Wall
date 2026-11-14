@@ -1193,3 +1193,12 @@ Two actual OBS Scene projectors are wired to shared immutable graphs with fresh 
 Linux 实际 libobs 图回归通过了未提供遥测、零回调、有效 serial、版本不符和负值分支，以及五个文档引用只查询一个真实来源；这里仍是明确的 inert fixture。补丁后的完整 OBS FFmpeg C 源码使用本机真实 OBS/FFmpeg 头文件语法检查通过，产品 Qt 源码语法检查通过；44 项 build contracts、22 项 pixel contracts（另两项平台/opt-in skip）及六项 package 回归通过。Windows UI 新增从五路实际合成 HEVC 的回调进度读取状态标签，保留独立最终像素门禁，尚待下一构建，不能提前记为媒体或性能通过。
 
 The product-owned build-copy patch adds an atomic opaque serial after non-null OBS FFmpeg video delivery. The real scene graph queries only its owned sources and deduplicates shared inputs. The native UI samples through the existing heartbeat, distinguishes received/progressing/stalled/unknown inputs, and keeps controls available in a scrolling sidebar. No extra media path or frame readback is introduced. Linux real-libobs inert-fixture validation and patched-source/Qt syntax checks pass; actual five-HEVC callback/UI verification remains pending the next Windows build. These counters do not establish final pixels, hardware decoding or target-device performance.
+
+
+#### R2 复用 OBS 宿主统计 / Reuse OBS host statistics
+
+产品窗口新增“OBS 宿主统计”按钮。先通过真实 native session/read-scene 权限接口再调用固定 OBS 前端已有的 on_stats_triggered，不引入第二套统计窗口、媒体宿主或后台常驻采样。只接收本进程确切 OBSBasicStats 顶层窗口，复用其原有 FPS、渲染耗时、掉帧、CPU 和内存；标题与 tooltip 明确 CPU/内存仅 OBS 宿主进程，不能代表 Python/core/launcher 的总量，也不验证独显解码。未登录按钮禁用，注销/权限失效/退出关闭所持统计窗口。其窗口身份独立于媒体 capture roles，避免把统计窗口当作监看画面。
+
+本机 Qt 编译检查与产品控件映射检查通过；新的 Windows UI gate 将检查未登录禁用，登录后打开确切 OBSBasicStats，再用其实际所属 root HWND 正常关闭，并确认状态同步。该检查尚未执行，不据源码接线宣称统计界面或安装态已验收。完整产品 all-owned-process CPU/内存、分适配器/引擎 GPU、显存、长稳和 OBS 对照仍为 R5 门槛。
+
+The authenticated product button opens the pinned frontend's existing OBSBasicStats surface and retires it on logout or shutdown. Its title explicitly scopes CPU/memory to the OBS host. Local Qt compilation and control mapping checks pass; the real Windows open/close UI regression is pending. This reuse does not qualify complete-process or target-device performance.

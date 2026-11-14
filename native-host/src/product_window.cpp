@@ -85,6 +85,8 @@ class ProductWindow final : public QWidget {
 	std::array<std::unique_ptr<ProjectorView>, 2> projectors_;
 	std::array<QPushButton *, 2> projector_buttons_{};
 	QPushButton *close_projectors_ = nullptr;
+	QPushButton *stats_button_ = nullptr;
+	QPointer<QWidget> stats_window_;
 	std::array<bool, 2> projector_pending_{};
 	quint64 next_projector_id_ = 0;
 	QJsonArray watching_;
@@ -169,6 +171,11 @@ class ProductWindow final : public QWidget {
 		state.insert("restoreGuardHits", frontend_->property("webobsRestoreGuardHits").toInt());
 		state.insert("refusedCollection", frontend_->property("webobsRefusedCollection").toString());
 		state.insert("lastRetirementMs", last_retirement_ms_);
+		state.insert("statsOpen", stats_window_ && stats_window_->isVisible());
+		if (stats_window_ && stats_window_->isVisible())
+			state.insert("statsWindow", QJsonObject{{"role", "host-stats"},
+				{"qtClass", QString::fromLatin1(stats_window_->metaObject()->className())},
+				{"rootHwnd", QString::number(quintptr(stats_window_->winId()), 16)}});
 		if (preview_)
 			state.insert("windows", QJsonArray{QJsonObject{{"role", "main-preview"},
 				{"qtClass", QString::fromLatin1(preview_->metaObject()->className())},
@@ -258,11 +265,46 @@ class ProductWindow final : public QWidget {
 	}
 	void clear_media()
 	{
+		if (stats_window_) stats_window_->close();
+		stats_window_.clear();
 		clear_main_media();
 		projector_pending_.fill(false);
 		for (std::size_t i = 0; i < projectors_.size(); ++i) close_projector(i);
 		input_health_.clear();
 		if (!tearing_down_) refresh_video_health();
+	}
+	void open_stats()
+	{
+		if (user_id_.isEmpty()) return;
+		request("/api/v1/native/auth/session", "GET", {}, [this](int code, const QJsonObject &) {
+			if (code != 200) {
+				locked(tr("会话已失效，请重新登录。"));
+				return;
+			}
+			if (!QMetaObject::invokeMethod(frontend_, "on_stats_triggered", Qt::DirectConnection)) {
+				status_->setText(tr("无法打开原生统计窗口。"));
+				return;
+			}
+			QWidget *found = nullptr;
+			for (auto *widget : QApplication::allWidgets()) {
+				if (!widget->isWindow() || QString::fromLatin1(widget->metaObject()->className()) != "OBSBasicStats") continue;
+				if (found) {
+					status_->setText(tr("原生统计窗口身份不唯一，请退出后重试。"));
+					return;
+				}
+				found = widget;
+			}
+			if (!found) {
+				status_->setText(tr("未找到原生统计窗口。"));
+				return;
+			}
+			if (stats_window_ != found) {
+				stats_window_ = found;
+				found->setWindowTitle(tr("WebOBS · OBS 宿主统计（仅宿主进程）"));
+				connect(found, &QObject::destroyed, this, [this] { observe_current_media(); });
+			}
+			observe_current_media();
+		});
 	}
 	void toggle_projector_fullscreen(QWidget *window)
 	{
@@ -387,7 +429,7 @@ class ProductWindow final : public QWidget {
 		user_id_.clear();
 		clear_media();
 		login_->setEnabled(true);
-		for (auto *button : {watch_, save_, logout_, refresh_, scene_watch_})
+		for (auto *button : {watch_, save_, logout_, refresh_, scene_watch_, stats_button_})
 			button->setEnabled(false);
 		for (auto *slot : slots_) {
 			slot->clear();
@@ -451,7 +493,7 @@ class ProductWindow final : public QWidget {
 			}
 			user_id_ = id;
 			observe_state("authenticated");
-			for (auto *button : {watch_, logout_, refresh_, scene_watch_})
+			for (auto *button : {watch_, logout_, refresh_, scene_watch_, stats_button_})
 				button->setEnabled(true);
 			status_->setText(tr("已登录，正在读取授权设备目录…"));
 			heartbeat_.start(2000);
@@ -886,6 +928,11 @@ public:
 		});
 		auto *manage = new QPushButton(tr("打开设备与系统管理"), this);
 		layout->addWidget(manage);
+		stats_button_ = new QPushButton(tr("OBS 宿主统计"), this);
+		stats_button_->setObjectName("webobsHostStats");
+		stats_button_->setToolTip(tr("查看 OBS 原有 FPS、渲染延迟和掉帧。CPU、内存仅统计宿主进程。"));
+		layout->addWidget(stats_button_);
+		connect(stats_button_, &QPushButton::clicked, this, [this] { open_stats(); });
 		layout->addStretch(1);
 		for (auto *widget : frontend->findChildren<QWidget *>("preview")) {
 			if (QString::fromLatin1(widget->metaObject()->className()) == "OBSBasicPreview") {
