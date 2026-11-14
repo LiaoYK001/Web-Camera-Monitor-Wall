@@ -367,6 +367,26 @@ def exercise(runtime, report, *, with_media=False, retained_profile=None):
                 check_graph()
                 time.sleep(3)
                 check_pixels("distinct-after-sharing")
+                phase = "native-input-stall-and-rtsp-recovery"
+                before_fault = {item["cameraId"]: item["sourceUuid"] for item in state()["bindings"]}
+                interrupted_at = time.monotonic()
+                rtsp.interrupt_publisher(0)
+                wait_for(lambda: ui("video-progress", sources=5, stalled=1),
+                    "native media source did not expose the interrupted input's stalled video callbacks", timeout=25)
+                stalled_after = round((time.monotonic() - interrupted_at) * 1000)
+                check_graph()
+                resumed_at = time.monotonic()
+                rtsp.restart_publisher(0)
+                wait_for(lambda: ui("video-progress", sources=5),
+                    "actual OBS media input did not recover after RTSP publishing resumed", timeout=35)
+                recovered = check_graph()
+                assert {item["cameraId"]: item["sourceUuid"] for item in recovered["bindings"]} == before_fault, \
+                    "RTSP recovery replaced product media sources"
+                check_pixels("native-rtsp-recovered")
+                evidence["inputFault"] = {"interruptedInputs": 1, "stallObservedMs": stalled_after,
+                    "recoveryAndPixelObservedMs": round((time.monotonic() - resumed_at) * 1000),
+                    "sameSourceUuids": True}
+                evidence["checks"].append("actual-obs-input-stall-and-rtsp-recovery-final-pixels")
                 phase = "existing-studio-api-to-native-scene"
                 code, _, studio = request("/api/v1/studio", cookie=cookie)
                 assert code == 200
@@ -377,6 +397,10 @@ def exercise(runtime, report, *, with_media=False, retained_profile=None):
                     fixture_scene["sources"].append({"id": source_id, "kind": "camera", "name": f"Camera {index}",
                         "cameraId": f"fixture-{index + 1}", "profileId": "main", "hardwareDecode": "auto",
                         "muted": True, "volume": 1, "syncOffsetMs": 0, "monitoring": "off", "audioTrack": 1})
+                    if index == 4:
+                        # Existing schema explicitly selects no audio; video
+                        # must remain usable rather than reject the scene.
+                        fixture_scene["sources"][-1]["audioInputs"] = []
                     fixture_scene["items"].append({"id": f"fixture-item-{index}", "sourceId": source_id,
                         "x": (index % 3) * 640, "y": (index // 3) * 540, "width": 640, "height": 540,
                         "scaleMode": "contain", "crop": {"top": 0, "right": 0, "bottom": 0, "left": 0},

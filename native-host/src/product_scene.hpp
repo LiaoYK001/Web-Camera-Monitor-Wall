@@ -49,7 +49,8 @@ public:
 // Resolved bindings must come from the authenticated product authority. Every
 // document source is checked against its exact binding before any source I/O.
 // No authorization is granted by this renderer. Unsupported business-source
-// kinds/audio routing/assets fail explicitly until their resolvers are wired.
+// kinds, nonempty per-track audio routing and assets fail explicitly until
+// their resolvers are wired. Explicit empty audioInputs keep video but silence audio.
 std::unique_ptr<ProductSceneGraph> create_product_scene(ProductSourcePool &pool,
 	const std::string &owner, const SceneDocument &document,
 	const std::vector<ProductCamera> &bindings, std::string &error);

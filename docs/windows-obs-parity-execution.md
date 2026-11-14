@@ -1242,3 +1242,12 @@ A fast isolated Windows reproduction using the exact NSIS source demonstrates co
 独立快速 job 43620903134（source c1bf843）success，包含原生目标存在/规范路径/空参数的 ASCII 与中文正向检查，以及非空参数、错误目标负向检查。完整 dev.92（43620903246、同 source）已启动，仍待其全部编译、UI、恢复 I/O 和真实安装门禁，不以快速 job 替代完整结果。
 
 The actual D3D11 renderer query is now shared by prototype receipts and the product UI, sampled only at initialization/graph application. Product diagnostics expose the real adapter identity and capacity without claiming decode or usage proof. Local Qt/receipt checks pass; Windows product validation is pending after dev.92. The independent Unicode shortcut positive and negative controls pass in run 43620903134, while complete dev.92 validation remains in progress.
+
+
+#### R2/R5 断流回归与明确空音频选择 / Input-fault regression and explicit empty audio selection
+
+实际产品 Windows gate 增加中断第一路合成 RTSP 发布、等原生状态显示恰好一路六秒无视频回调、恢复发布后要求五路回调重新推进、全部来源 UUID 保持不变，并重新验证五路最终窗口八帧。记录自中断到状态观察、自恢复发布开始到最终像素完成的有限时间，不宣称是摄像机端延迟或长稳；完整五路基线保持。测试 publisher/gateway 仅为隔离 fixture，不引入产品进程。尚待 dev.92 之后的新 Windows source。
+
+已保存场景的 audioInputs: [] 按既有 schema 的“不贡献音频”语义接入：视频仍使用同一个相机媒体源，实际 OBS policy 强制 mute、volume=0、mixers=0、monitoring=none，空选择下无效的总线/增益/偏移参数规范化后可跨图复用。未接线的非空逐轨选择继续在整个文档预检期间拒绝，避免悄悄选默认轨。Linux 实际 libobs inert-source 回归通过静音/零总线/无监听的 SDK 回读、配置规范化复用与最后来源退休；这不是解码后的音频采样或扬声器证明。Windows 已保存 Studio fixture 增加明确空数组，要求整个五路视频仍可显示，待下一轮。多输入轨道、独立音轨适配、混音 UI、监听与真实音频输出验收仍未完成。
+
+The product regression now exercises one actual synthetic RTSP outage, native callback-stall observation, same-source automatic recovery and all-five final pixels. Explicit empty audioInputs retain camera video while mapping to muted/zero-volume/zero-bus/no-monitoring OBS policy; inert-source SDK readback, normalization/reuse and retirement pass locally. Nonempty per-track routing remains explicitly unsupported. Windows media/fault and real decoded-audio evidence remain pending, and no long-stability or hardware claim is made.

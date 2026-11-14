@@ -79,6 +79,7 @@ void run()
 		"invalid document created media");
 	auto unsupported = doc;
 	unsupported.sources.back().audio_inputs_explicit = true;
+	unsupported.sources.back().audio_inputs.push_back({1, 1.0, false, 0});
 	require(!create_product_scene(pool, owner, unsupported, bindings, error) && created == 0,
 		"unresolved audio routing created media");
 	// A same-named non-pool object cannot be borrowed by the product renderer.
@@ -173,6 +174,31 @@ void run()
 	obs_wait_for_destroy_queue();
 	obs_source_remove(foreign);
 	obs_source_release(foreign);
+	obs_wait_for_destroy_queue();
+	auto silent_document = doc;
+	for (auto &source : silent_document.sources) {
+		source.audio_inputs_explicit = true;
+		source.muted = false;
+		source.volume = 1;
+		source.monitoring = "monitor-and-output";
+		source.audio_track = 6;
+		source.sync_offset_ms = 100;
+	}
+	auto silent = create_product_scene(pool, owner, silent_document, bindings, error);
+	require(silent && created == 4, "explicit empty audio selection rejected the video scene");
+	auto *silent_source = obs_get_source_by_uuid(silent->uuids.front().c_str());
+	require(silent_source && obs_source_muted(silent_source) && obs_source_get_volume(silent_source) == 0 &&
+		obs_source_get_audio_mixers(silent_source) == 0 &&
+		obs_source_get_monitoring_type(silent_source) == OBS_MONITORING_TYPE_NONE &&
+		obs_source_get_sync_offset(silent_source) == 0,
+		"explicit empty audio selection left an output or monitoring contribution");
+	obs_source_release(silent_source);
+	for (auto &source : silent_document.sources) { source.volume = 0.5; source.audio_track = 2; }
+	auto silent_second = create_product_scene(pool, owner, silent_document, bindings, error);
+	require(silent_second && created == 4 && silent_second->uuids == silent->uuids,
+		"irrelevant controls duplicated an explicitly silent media source");
+	silent.reset();
+	silent_second.reset();
 	obs_wait_for_destroy_queue();
 	require(created == destroyed, "inert source lifetime imbalance");
 }

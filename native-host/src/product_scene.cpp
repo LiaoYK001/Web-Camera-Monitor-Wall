@@ -42,6 +42,11 @@ bool valid_owner(const std::string &owner)
 		return (c >= '0' && c <= '9') || (c >= 'a' && c <= 'f');
 	});
 }
+std::uint32_t audio_mixers(const SceneSource &configuration)
+{
+	return configuration.audio_inputs_explicit && configuration.audio_inputs.empty() ? 0u :
+		(1u << (configuration.audio_track - 1));
+}
 } // namespace
 
 struct ProductSceneSource {
@@ -56,7 +61,7 @@ struct ProductSceneSource {
 			filters_state(source) == filters && obs_source_muted(source) == configuration.muted &&
 			obs_source_get_volume(source) == float(configuration.volume) &&
 			obs_source_get_sync_offset(source) == std::int64_t(configuration.sync_offset_ms) * 1000000 &&
-			obs_source_get_audio_mixers(source) == (1u << (configuration.audio_track - 1)) &&
+			obs_source_get_audio_mixers(source) == audio_mixers(configuration) &&
 			obs_source_get_monitoring_type(source) == monitoring(configuration);
 	}
 	~ProductSceneSource()
@@ -92,6 +97,15 @@ std::shared_ptr<ProductSceneSource> ProductSourcePool::acquire(const std::string
 	// Owned graph lifetime, rather than Program activation, stops protected I/O.
 	key.shutdown_when_hidden = false;
 	key.restart_when_active = false;
+	if (key.audio_inputs_explicit && key.audio_inputs.empty()) {
+		// Explicit [] is the existing schema's "contributes no audio" policy.
+		// Retain video decoding, with neither output-bus nor monitor contribution.
+		key.muted = true;
+		key.volume = 0;
+		key.monitoring = "off";
+		key.audio_track = 1;
+		key.sync_offset_ms = 0;
+	}
 	for (auto &weak : entries_) {
 		auto entry = weak.lock();
 		if (entry && entry->configuration == key && same_camera(entry->camera, camera)) {
@@ -114,11 +128,11 @@ std::shared_ptr<ProductSceneSource> ProductSourcePool::acquire(const std::string
 		error = "scene-source-create-failed";
 		return {};
 	}
-	obs_source_set_muted(entry->source, configuration.muted);
-	obs_source_set_volume(entry->source, float(configuration.volume));
-	obs_source_set_sync_offset(entry->source, std::int64_t(configuration.sync_offset_ms) * 1000000);
-	obs_source_set_audio_mixers(entry->source, 1u << (configuration.audio_track - 1));
-	obs_source_set_monitoring_type(entry->source, monitoring(configuration));
+	obs_source_set_muted(entry->source, key.muted);
+	obs_source_set_volume(entry->source, float(key.volume));
+	obs_source_set_sync_offset(entry->source, std::int64_t(key.sync_offset_ms) * 1000000);
+	obs_source_set_audio_mixers(entry->source, audio_mixers(key));
+	obs_source_set_monitoring_type(entry->source, monitoring(key));
 	if (!attach_obs_source_filters(entry->source, configuration, camera.name)) {
 		error = "scene-filter-create-failed";
 		return {};
@@ -199,7 +213,7 @@ std::unique_ptr<ProductSceneGraph> create_product_scene(ProductSourcePool &pool,
 			error = "scene-camera-binding-conflict";
 			return {};
 		}
-		if (!source.audio_inputs.empty() || source.audio_inputs_explicit ||
+		if (!source.audio_inputs.empty() ||
 		    std::any_of(source.filters.begin(), source.filters.end(), [](const auto &filter) {
 			return filter.kind == "lut" || filter.kind == "mask-blend";
 		    })) {

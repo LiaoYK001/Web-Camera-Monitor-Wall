@@ -152,10 +152,12 @@ public static class ProductTestWindow {
         'stats-close' { $window.GetCurrentPattern([System.Windows.Automation.WindowPattern]::Pattern).Close() }
         'video-progress' {
             if ([int]$operation.sources -notin @(1,5)) { throw 'Invalid synthetic source count.' }
+            $stalled = [int]$operation.stalled
+            if ($stalled -notin @(0,1) -or $stalled -gt [int]$operation.sources) { throw 'Invalid synthetic stall count.' }
             $health = Find-Control 'webobsVideoHealth'
             $code = 'verify-video-input-progress'
             $expected = '视频输入：' + [int]$operation.sources + ' 路，已收帧 ' +
-                [int]$operation.sources + '，近期推进 ' + [int]$operation.sources + '，停滞 0，状态未知 0。'
+                [int]$operation.sources + '，近期推进 ' + ([int]$operation.sources - $stalled) + '，停滞 ' + $stalled + '，状态未知 0。'
             if ($health.Current.Name -ne $expected) { throw 'Video input callbacks have not progressed.' }
         }
         'projector' {
