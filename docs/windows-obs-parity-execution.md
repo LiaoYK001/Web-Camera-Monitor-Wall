@@ -1269,3 +1269,25 @@ The native management URL opts only that browser page into configuration-first p
 Chromium 实际组件七项回归通过：空选择和缺失选择在两条有效轨道可用时均不创建 audio-only offers，修改来源主静音并保存仍保留原选择与参数；缺失轨只有显式移除再保存才变成 []。原有 manual retry、三类 source identity 的真实逐轨通道流程与原生管理页面均通过。Web typecheck/build 通过；这仍是 API/媒体 fixture 的浏览器接线证明，不是原生解码音频、扬声器或完整 Windows 安装验收。完整多轨原生实现、音频状态与跨 revision 编辑冲突仍按 R2 矩阵继续完成。
 
 AudioWorkspace now distinguishes legacy omitted selection from explicit silence and missing saved tracks. Missing tracks and their parameters remain visible/preserved until explicitly removed; metadata retry does not silently choose another track. Seven real-component Chromium regressions and Web build/typecheck pass, including preserved writes and zero audio-only offers for empty/missing selections. Native multi-track/audio-output and revision-conflict qualification remain open.
+
+
+#### R2 音频草稿、冲突和生命周期 / Audio drafts, conflicts and lifecycle
+
+音轨-only 修改现在与来源主设置一样固定最初 Studio 文档/revision，保存继续使用既有 If-Match；草稿存在时先保存/放弃再切场景，避免同名 source ID 跨场景混用。未修改状态收到新 revision 会更新音轨选择；有草稿则保留并显示冲突，禁止用旧音轨覆盖新 revision。保存中禁止修改，较新的服务器状态优先于迟到的旧成功回复。明确放弃/重新载入才恢复编辑，加载失败保留草稿。
+
+音频页接入现有 useDesktopWork 和 useDraftGuard，未保存/保存中状态可被现有更新前置读口观测，导航/刷新得到对应保护。保存十秒、重载八秒有界；保存超时不假设失败或自动覆盖，保留草稿并要求重载核对。请求绑定组件生命周期，卸载取消 pending save/reload，不执行迟到的 onCommitted。replaceStudio 仅增加可选 AbortSignal，不改变请求权限、文档或 If-Match。
+
+真实 React 组件的 Chromium 十三项回归及 Web typecheck/build 通过，包含 pristine revision 更新、track-only 脏状态/导航保护、显式冲突重载、正确 If-Match、新服务器状态压过迟到回复、HTTP 412、超时结果未知、卸载取消；原空/缺失轨保留、原生管理无播放和既有逐轨通道也通过。该浏览器 fixture 证据不代表原生多轨音频、Windows 原生 updater 已读取外部浏览器状态或完整产品升级。原生完整 Studio/引擎 bridge 与 R3–R7 仍继续。
+
+Track-only audio drafts now retain their original revision, preserve conflicts, avoid cross-scene state mixing and reject stale successful replies. Existing navigation/update-work guards, bounded save/reload and component-owned cancellation are wired. Thirteen Chromium component regressions and the Web build pass. This does not qualify native multi-track audio, the future native updater's external-browser integration or complete upgrades.
+
+
+#### dev.92 首次完整通过当前安装门禁 / First complete pass of the current installation gate
+
+43620903246（source c1bf84330a16d54941f72b0dc2495785a7e30d39，4.1.0-dev.92）最终 success。portable 与真实 NSIS 安装后的 UI 均 passed=true，各 34 项检查、26 组捕获、256 帧分析通过（每个窗口八帧，多窗口组分别捕获）。新增实际 HEVC video callback 进度、认证 OBSBasicStats 正常开/关、没有投影保活的同画布反序切换/切回保持全部 camera→source UUID，以及既有多投影/撤权/保存/重启/Job 回归通过；logoutRetirementMs 分别为 3/4。仍是隔离 CI 五路 320×180/10fps HEVC 软件解码，非真实相机/硬解/目标机/长稳。
+
+恢复 I/O 正负对照九项通过：同一集合 unguarded 实际 RTSP 两次请求；protected 锁定、零来源、无会话、零登录前 RTSP 请求；两端各普通关闭一个确切 root HWND，原集合及外部 OBS profile 保持不变。此门禁不等于全部原生菜单旁路审计。
+
+NSIS passed=true、freshInstalledEntryQualified=true：中文/空格路径实际安装、载荷哈希、原生 IShellLinkW 目标存在/规范匹配/空参数、已安装完整 UI/media/lifecycle，以及卸载后 private profile 字节和未知文件保留均通过。footprint 198,521,443 logical B / 201,453,608 unnamed-stream allocation B / 1865 files；setup 70,130,550 B。旧版升级、完整功能迁移仍 false，所有二进制 publicationForbidden，未公开中间包。渲染器产品标签、断流故障回归、明确空音频、管理页不自动播放和新音频草稿保护均不在 dev.92，需要下一 source。R1 安装闭环的这一步不当成整个 R0–R7 交付完成。
+
+Dev.92 passes the current portable, restore-control and fresh-installed gates. Both real product surfaces pass 34 checks and 256 analyzed window frames; native Unicode shortcut verification and uninstall data/unknown-file retention pass. The measured incomplete installation is 198,521,443 logical bytes, not a full-feature/OBS-size qualification. All internal binaries remain publication-forbidden; legacy migration, complete features and target-device performance remain open, and later source additions need a fresh run.

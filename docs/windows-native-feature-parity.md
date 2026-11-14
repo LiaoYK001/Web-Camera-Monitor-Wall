@@ -18,14 +18,14 @@ One pinned OBS frontend owns local media. Reuse the existing Direct-only core fo
 
 | ID | 旧入口与实际代码 | 新入口与迁移位置 | 数据与权限 | 组件 | 真实接线验证 | 状态与证据 | 当前阻塞 |
 | --- | --- | --- | --- | --- | --- | --- | --- |
-| AUTH | `LoginGate.tsx`、`AccountWorkspace.tsx`、core auth、cluster accounts | 原生登录/建账/退出，管理浏览器账号页 | 同一账号、绑定 userId/authEpoch，会话撤销 | core Direct-only、cluster | 安装后真实账号登录、改密/禁用/过期关闭画面 | 真实账号服务与原生登录接线；dev.91 便携 UI 建账/重登/重启/改密撤销通过 | 旧账号数据迁移、安装态、全部恢复/编辑旁路审计仍未完成 |
-| RBAC | `UserAccessEditor.tsx`、cluster role/camera scope | 原生目录和每次执行/持续观看校验 | 角色、camera/group scope，未知来源拒绝 | cluster、Registry | 同名重建账号、换组、隐藏/嵌套来源、权限撤销 | dev.91 scoped viewer、普通 API 撤权/改密及仅投影 camera 撤权清屏通过；历史 dev.88/90 恢复 I/O 对照通过 | 本轮恢复探针前构建失败；全部原生编辑旁路和安装态安全审计未完成 |
-| DEV | `CameraRegistry.tsx`、`camera_registry.py` | 原生摄像机/Profile 选择，本机设备管理页 | 稳定 camera/profile ID、Secret 引用 | camera、core | 选已有设备进入媒体源，禁用/缺失 Profile 可见报错 | dev.91 已有设备 API 到原生选择/五路最终像素、禁用与配置更新清屏、保存/登录恢复通过 | 旧个人设备数据迁移、完整 ONVIF/设备控制和安装态未完成 |
+| AUTH | `LoginGate.tsx`、`AccountWorkspace.tsx`、core auth、cluster accounts | 原生登录/建账/退出，管理浏览器账号页 | 同一账号、绑定 userId/authEpoch，会话撤销 | core Direct-only、cluster | 安装后真实账号登录、改密/禁用/过期关闭画面 | dev.92 便携与 NSIS 安装后真实账号登录/重登/重启/改密撤销通过 | 旧账号数据迁移与全部恢复/编辑旁路审计未完成 |
+| RBAC | `UserAccessEditor.tsx`、cluster role/camera scope | 原生目录和每次执行/持续观看校验 | 角色、camera/group scope，未知来源拒绝 | cluster、Registry | 同名重建账号、换组、隐藏/嵌套来源、权限撤销 | dev.92 便携/安装 scoped viewer、撤权/改密、仅投影 camera 撤权清屏及恢复 I/O 对照通过 | 全部原生编辑旁路、旧数据 ACL/迁移安全与更多授权故障仍待审计 |
+| DEV | `CameraRegistry.tsx`、`camera_registry.py` | 原生摄像机/Profile 选择，本机设备管理页 | 稳定 camera/profile ID、Secret 引用 | camera、core | 选已有设备进入媒体源，禁用/缺失 Profile 可见报错 | dev.92 便携与安装后已有设备 API 到选择/五路像素、禁用/更新、保存恢复通过 | 旧个人设备数据迁移、完整 ONVIF/设备控制尚未完成 |
 | IMPORT | `bulkSourceImport.ts`、ONVIF API | 设备库批量导入/ONVIF 页面 | 去重、配置保留、device.manage | camera、WebUI | 实际导入、失败不覆盖、重启保留 | 旧实现可用，原生未接线 | 管理入口与安装组件 |
-| LIVE | `DirectPreview.tsx`、`ProgramPreview.tsx`、core OBS | 原生 OBS Media Source 与 Preview/Program | 认证后建图，同源兼容设置共享 | OBS、obs-ffmpeg | 真实插件、真实服务、动态 H.264/H.265 最终像素 | dev.91 五路合成 HEVC、重复源共享及主画面/固定投影最终像素通过；同画布切换保活新源码待 Windows | 真实相机/目标机硬解/性能/长稳及安装态仍待验证 |
-| STUDIO | `SceneCollection.tsx`、`sceneSchema.ts`、`StudioController` | 原生场景切换/编辑与现有管理 Studio | Scene/Source UUID、草稿、revision、嵌套 | OBS、core、WebUI | 保存/恢复、裁剪/层级/锁定、冲突、TAKE | 已保存 Studio 场景选择、sceneId 登录恢复、revision 更新清屏在 dev.91 通过；Linux 引用/变换通过 | 完整编辑、嵌套/各布局 Windows 像素、TAKE/过渡、Preview/Program 与业务来源待接线 |
+| LIVE | `DirectPreview.tsx`、`ProgramPreview.tsx`、core OBS | 原生 OBS Media Source 与 Preview/Program | 认证后建图，同源兼容设置共享 | OBS、obs-ffmpeg | 真实插件、真实服务、动态 H.264/H.265 最终像素 | dev.92 实际便携/安装 HEVC 最终像素、共享、多窗口与同画布复用通过；callback 进度通过 | 真实相机/硬解/目标机性能/长稳、断流新回归待验证 |
+| STUDIO | `SceneCollection.tsx`、`sceneSchema.ts`、`StudioController` | 原生场景切换/编辑与现有管理 Studio | Scene/Source UUID、草稿、revision、嵌套 | OBS、core、WebUI | 保存/恢复、裁剪/层级/锁定、冲突、TAKE | dev.92 便携/安装保存场景、sceneId 登录恢复、revision 变更清屏与同画布切换通过 | 完整编辑、嵌套/各布局、TAKE/过渡、Preview/Program 与业务来源仍待接线 |
 | LAYOUT | `monitorView.ts`、监控偏好、设备布局 | 原生网格/轮换/事件提升/主子码流 | 账号与设备偏好分离 | OBS、account、clients | 既有布局范围、人工选择、帧率/分辨率回读 | 原生未接线 | 不限五路的布局接线 |
-| PROJECT | `ProjectorView.tsx`、desktop fixed projector IPC | 原生 Program 与固定 Scene 多投影 | 固定场景身份、同源引用 | OBS/Qt | 双固定场景、切 Program、重开/全屏/DPI | dev.91 双固定 Scene 共用来源、不同布局同时显示、F11/回窗、单个关闭和撤权退休通过 | 持续 Program 投影、DPI/多显示器与投影持久恢复未完成 |
+| PROJECT | `ProjectorView.tsx`、desktop fixed projector IPC | 原生 Program 与固定 Scene 多投影 | 固定场景身份、同源引用 | OBS/Qt | 双固定场景、切 Program、重开/全屏/DPI | dev.92 便携/安装双固定 Scene 共用来源、不同布局、全屏/回窗/关闭与撤权退休通过 | 持续 Program 投影、DPI/多显示器、投影持久恢复未完成 |
 | AUDIO | `AudioWorkspace.tsx`、`sourceAudio.ts`、schema-v6 | 原生混音/监听/电平，管理音轨页 | 账号监听偏好与项目轨道语义 | OBS、必要音轨适配组件 | 无重复扬声器输出、多轨保存、失效轨报错 | 相机源主音量/静音/监听/总线已映射；明确空 audioInputs 已接视频保留与强制无音频，Linux 实际 SDK policy 通过 | Windows 空选择场景待验证；非空逐轨适配、音轨 UI、电平及实际音频输出未完成 |
 | OVERLAY | `MonitorProcessStatus.tsx`、analytics、隐私遮罩 | 原生叠层及管理配置 | 本地/录像/远端范围分开 | OBS、可选 analytics | 边框/检测框/音量表与最终像素、隐私遮罩 | 原生未接线 | overlay 来源和数据连接 |
 | PTZ | `CameraDeviceControls.tsx`、`useShortTalk.ts` | 原生设备控制入口及管理页 | camera scope、移动脉冲、超时停止 | camera | 松键/断开停止、预置位、对讲收尾、快照 | 旧实现可用，原生未接线 | UI 与设备命令接线 |
@@ -38,9 +38,9 @@ One pinned OBS frontend owns local media. Reuse the existing Direct-only core fo
 | ONLINE | `Go2rtcOnlineSources.tsx`、`online_source.py` | 网站来源目录/Profile，原生观看 | 锁定提取器、Cookie 私密目录 | go2rtc、yt-dlp/Streamlink/EJS | 真实解析/relay/认证实播，预算与退出清理 | 旧实现可用，原生未接线 | 可选完整离线组件 |
 | REMOTE | WebUI/PWA、Android 既有客户端 | 同一 Windows 服务的远程入口 | HTTPS、Origin、Direct/Composite scope | core、按需 gateway/Caddy | 既有客户端登录/播放，一个观看端退出不误停其他端 | 旧实现可用，原生未接线 | 原生引擎远端输出 adapter |
 | OFFLINE | `DeviceSyncPanel.tsx`、`useDeviceSync.ts`、v2 | 受认证管理页与原生布局状态同步 | 签名/加密缓存、冲突、有限离线权限 | clients、core、WebUI | 离线编辑、重连冲突选择、Program 不被覆盖 | 旧实现可用，原生未接线 | 设备状态与原生 scene 映射 |
-| OPS | `ProblemCenter.tsx`、`DeveloperDiagnostics.tsx` | 原生问题/诊断入口与受认证管理页 | 有界脱敏导出、settings.manage | core、业务服务 | 解码/组件/连接故障定位、脱敏支持包 | 帧输入进度与认证后的 OBS 原有统计窗口已接线，本机编译/协议通过，Windows UI 待执行 | 全进程实时总量、GPU 引擎、完整支持包和组件故障入口未完成 |
+| OPS | `ProblemCenter.tsx`、`DeveloperDiagnostics.tsx` | 原生问题/诊断入口与受认证管理页 | 有界脱敏导出、settings.manage | core、业务服务 | 解码/组件/连接故障定位、脱敏支持包 | dev.92 实际 callback 状态与认证 OBSBasicStats 便携/安装通过；实际渲染器标签新源码待 Windows | 全进程实时总量、GPU 引擎、支持包和组件故障入口未完成 |
 | BACKUP | backup 服务、原型 restore helper | 管理页及安装升级一致性备份 | 活跃 SQLite 快照、Secret、录像路径 | backup、原生 updater | 损坏/中断/磁盘满、幂等迁移和真实恢复 | 原型文件备份覆盖，完整迁移待实现 | 旧数据全量映射与数据库一致性 |
-| LIFE | `main.mjs`、`supervisor.mjs`、`job_host.cpp` | 原生单实例/托盘/supervisor | Job、任务消费者、正常退出和崩溃收束 | Qt、Win32、按需服务 | 安装态关闭/托盘/后台任务/故意崩溃零遗留 | dev.91 便携入口固定 origin、正常退出、重启与 launcher 崩溃 Job 收束通过 | 托盘/后台任务、旧数据迁移及安装后生命周期未完成 |
+| LIFE | `main.mjs`、`supervisor.mjs`、`job_host.cpp` | 原生单实例/托盘/supervisor | Job、任务消费者、正常退出和崩溃收束 | Qt、Win32、按需服务 | 安装态关闭/托盘/后台任务/故意崩溃零遗留 | dev.92 便携/安装单入口、origin、正常退出、重启、崩溃收束、卸载 profile/未知文件保留通过 | 托盘/后台任务、旧数据迁移、完整覆盖安装和升级生命周期未完成 |
 | UPDATE | desktop updater/NSIS、稳定 feed | 原生更新设置/下载/确认/安装 | SHA-512/size、版本、备份、用户确认 | 原生 updater、NSIS | 旧稳定升级、新原生后续升级、截断/断网/失败恢复 | 原型 NSIS 部分通过，原生 updater 待实现 | electron-updater 替代与完整数据升级 |
 
 ## 进程和体积口径 / Process and size accounting
@@ -85,3 +85,6 @@ Dev.91（43616770312、49cd463）实际 portable 31 项检查、25 组八帧像�
 
 
 实际 D3D11 渲染设备查询已进入原生 UI/私密状态，复用 prototype 同一实现，区分硬件 vendor、软件/未知并记录 LUID/显存容量；本机编译与回执检查通过，Windows 产品验证待 dev.92 之后。逐路硬解与显存占用尚未证明。 / The actual renderer adapter is wired into the product surface, with Windows product validation still pending and no decode/usage claim.
+
+
+Dev.92（43620903246、c1bf843）整体 success，便携/实际 NSIS 安装后各 34 项检查、26 组/256 帧通过；恢复正负 I/O 对照九项通过。安装 footprint 198,521,443 logical B / 201,453,608 allocation B，原生快捷方式与卸载保留通过。全部仍为未完成业务融合的内部范围，旧版升级/完整功能 false，二进制未发布；目标机/完整功能性能未达标证明。 / Dev.92 validates the current isolated fresh-install scope, not complete legacy migration or the full R0–R7 objective.
