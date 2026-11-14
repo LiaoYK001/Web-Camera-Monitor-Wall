@@ -99,6 +99,7 @@ def exercise(runtime, report, *, with_media=False, retained_profile=None):
         status_path = profile / "run/native-status.json"
         opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
         rtsp = None
+        idle_program_uuid = None
 
         def request(path, body=None, cookie="", *, method=None, revision=None):
             origin = status()["origin"]
@@ -170,7 +171,7 @@ def exercise(runtime, report, *, with_media=False, retained_profile=None):
             return passed
 
         def start():
-            nonlocal process, frontend_pid
+            nonlocal process, frontend_pid, idle_program_uuid
             previous = status().get("ownerPid")
             process = subprocess.Popen([str(entry)], env=environment, stdin=subprocess.DEVNULL,
                 stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
@@ -184,6 +185,11 @@ def exercise(runtime, report, *, with_media=False, retained_profile=None):
             wait_for(lambda: state().get("phase") == "locked", "actual product window did not lock before authentication")
             assert state()["mediaSources"] == 0, "media source restored before login"
             assert state().get("previewLocked") is True, "product monitor preview retained OBS editing guides"
+            program = state().get("program", {})
+            assert program.get("studioMode") is True and program.get("mediaSources") == 0
+            assert isinstance(program.get("sceneUuid"), str) and program["sceneUuid"]
+            idle_program_uuid = program["sceneUuid"]
+            assert program.get("monitorIsProgram") is False
             wait_for(lambda: ui("inspect"), "actual product controls not accessible")
             return value
 
@@ -195,6 +201,7 @@ def exercise(runtime, report, *, with_media=False, retained_profile=None):
             assert observed["sessionBound"] is True and observed["mediaSources"] == (
                 expected_media if expected_media is not None else (1 if repeat_first else 5))
             assert observed.get("previewLocked") is True
+            check_monitor_program(observed)
             import smoke_windows
             smoke_windows.check_renderer_receipt(observed.get("renderer"))
             bindings = observed["bindings"]
@@ -204,6 +211,13 @@ def exercise(runtime, report, *, with_media=False, retained_profile=None):
             assert observed["videoInfo"] == {"baseWidth": 1920, "baseHeight": 1080,
                 "outputWidth": 1920, "outputHeight": 1080, "fpsNumerator": 30, "fpsDenominator": 1}
             return observed
+
+        def check_monitor_program(observed=None):
+            program = (observed if observed is not None else state()).get("program", {})
+            assert program.get("studioMode") is True, "local monitor lost Preview/Program separation"
+            assert program.get("sceneUuid") == idle_program_uuid and program.get("mediaSources") == 0, \
+                "local monitor selection changed or populated global Program output"
+            assert program.get("monitorIsProgram") is False, "local monitor became the Program scene"
 
         def check_projectors(orders, reference):
             observed = state()
@@ -239,6 +253,7 @@ def exercise(runtime, report, *, with_media=False, retained_profile=None):
             return True
 
         def check_pixels(label, *, blank=False, repeat_first=False, reverse=False, expected_media=None, projector_orders=None):
+            check_monitor_program()
             from ctypes import wintypes
             import pixel_windows
             kernel = ctypes.WinDLL("kernel32", use_last_error=True)
@@ -486,6 +501,7 @@ def exercise(runtime, report, *, with_media=False, retained_profile=None):
                 assert {binding["cameraId"]: binding["sourceUuid"] for binding in changed["bindings"]} == reference, \
                     "return layout recreated compatible media sources"
                 evidence["checks"].append("same-canvas-layout-retains-owned-sources-without-projectors")
+                evidence["checks"].append("local-monitor-switches-preserve-independent-program-output")
                 phase = "fixed-scene-projectors"
                 reference = {binding["cameraId"]: binding["sourceUuid"] for binding in state()["bindings"]}
                 assert ui("projector", slot=1)
@@ -698,7 +714,7 @@ def exercise(runtime, report, *, with_media=False, retained_profile=None):
             observed = state()
             evidence["observedState"] = {key: observed[key] for key in (
                 "phase", "mediaSources", "sessionBound", "catalogItems", "selectionIndices", "previewLocked",
-                "lastRetirementMs", "mainGeneration", "studioRevision", "renderer") if key in observed}
+                "lastRetirementMs", "mainGeneration", "studioRevision", "renderer", "program") if key in observed}
             evidence["observedState"]["watchingSavedScene"] = bool(observed.get("sceneId"))
             evidence["observedState"]["projectorCount"] = len(observed.get("projectors", []))
             markers = ("ModuleNotFoundError", "ImportError", "PermissionError", "FileNotFoundError",

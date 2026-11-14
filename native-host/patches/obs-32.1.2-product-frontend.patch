@@ -48,6 +48,19 @@
  	if (safe_mode || disable_3p_plugins) {
  		SetSafeModuleNames();
  	} else {
+@@ -1065,6 +1078,12 @@
+ 	sceneDuplicationMode = config_get_bool(App()->GetUserConfig(), "BasicWindow", "SceneDuplicationMode");
+ 	swapScenesMode = config_get_bool(App()->GetUserConfig(), "BasicWindow", "SwapScenesMode");
+ 	editPropertiesMode = config_get_bool(App()->GetUserConfig(), "BasicWindow", "EditPropertiesMode");
++#ifdef WEBOBS_PRODUCT_FRONTEND
++	// Product graphs already own source reuse and independent local Preview.
++	sceneDuplicationMode = false;
++	swapScenesMode = false;
++	editPropertiesMode = false;
++#endif
+ 
+ 	if (!opt_studio_mode) {
+ 		SetPreviewProgramMode(config_get_bool(App()->GetUserConfig(), "BasicWindow", "PreviewProgramMode"));
 --- a/frontend/widgets/OBSBasic_SceneCollections.cpp
 +++ b/frontend/widgets/OBSBasic_SceneCollections.cpp
 @@ -804,6 +804,9 @@

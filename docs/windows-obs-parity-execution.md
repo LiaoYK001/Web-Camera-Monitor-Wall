@@ -1319,3 +1319,12 @@ Dev.93 passes the current portable/fresh-installed, restore-control and lifecycl
 实际 core/真实 AccountHandler、Argon2、Registry HTTP 回归覆盖：普通网页登录持久绑定；未绑定旧 cookie 零后端请求拒绝且不影响另一登录；内部身份/权限服务 503 或错误身份的伪 200 不放行且可恢复；后端 I/O 期间该 token 被撤销后拒绝、同身份另一登录不受影响；实际密码自助重设、epoch 撤销、同名账号重建后旧个人账号入口拒绝且新登录有效。另启动非原生 core 验证真实普通登录仍生成 unbound cookie、session/Studio 可用、native 接口关闭。这是隔离 HTTP 兼容证据，不是旧版安装升级。账号协议 22 项、core 九项 CTest 与 build contracts 44 项通过；此后源码需 Windows 新构建。完整 TAKE/Program/执行 fencing、持续 WebSocket 会话撤销和 R3–R7 仍继续。
 
 Native product management login and ordinary APIs now retain and freshly validate immutable account identity. Actual account/core HTTP tests cover stale/unbound cookies, account recreation, password/epoch revocation, authority failures or mismatched replies, in-flight local logout and isolation of other sessions. A second non-native process verifies the existing username-cookie compatibility protocol. These isolated tests do not establish legacy installed upgrades or the complete Studio engine bridge; Windows validation is pending.
+
+
+#### R2 原生本地 Preview 与 Program 分离 / Separate local Preview from Program
+
+原生产品在任何受保护来源创建之前以空场景初始化 OBS 真正的 Studio Preview/Program。手动摄像机与已保存 Studio 场景只通过 set_current_preview_scene 选择；Studio mode 不可用时拒绝，不再复用可能改变全局 Program 的普通 select_wall 回退。清空本地监看仍只作用 Preview，固定 Scene 投影保持原图引用与持续权限核验。产品构建副本显式关闭 OBS 的 source duplication、swap 与 edit-properties duplication 设置，复用产品已有自有来源池，不受用户 profile 残留设置影响。
+
+私密诊断从实际 OBS frontend 查询 Program root UUID、Studio 状态、完整子树媒体源数量及主监看是否等于 Program。实际 Windows gate 要求启动锁定和每组窗口像素捕获期间均维持同一个空 Program、Preview/Program 分离，并继续原五路最终画面/同源/切换/断流/撤权/投影门禁。Qt 实际头文件编译、OBS 固定补丁 apply --check、44 build contracts、22 pixel contracts（两项既有 skip）通过；尚待 dev.94（6df8e5a、43629933739）之后的新 source 实际运行。该步骤不实现 TAKE/过渡、Program 录像/推流消费者或浏览器→引擎原子 bridge，不以隔离 Program 的回读当成 Program 最终像素证据。
+
+The real OBS Studio Preview now owns local monitor selection, initialized against an empty Program before authentication. Selection fails closed without Studio mode instead of falling back to global output. Product-copy configuration disables source/swap duplication. Actual Windows regressions are extended to verify unchanged empty Program identity/tree during local viewing and every pixel capture; local compilation and existing contracts pass, with Windows runtime validation pending after dev.94. Full TAKE/transitions, output consumers and the authenticated engine bridge remain open.

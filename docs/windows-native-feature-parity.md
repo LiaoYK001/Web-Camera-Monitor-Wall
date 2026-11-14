@@ -94,3 +94,6 @@ R2 场景内容前置条件已接入真实服务与主图/固定投影：无关�
 
 
 Dev.93（43625385803、3ec6dfa）便携/实际安装各 35 项、27 组最终像素通过；一路合成 RTSP 断流恢复保持来源身份，空音轨选择保留视频。恢复与 NSIS/卸载保留通过；198529824 logical B、setup 70141373 B。仍无真实硬解/目标机/完整功能/旧版升级资格。后续管理网页登录与普通 API 已接不可变身份，本机真实账号/HTTP 回归通过，需新 Windows source；完整 Studio/TAKE bridge 继续。 / Dev.93 passes current installed/fault gates; complete features, upgrade and performance remain open. Bound management identity is locally integrated and awaiting Windows validation.
+
+
+R2 本地监看已从普通输出选择改接 OBS 原生 Studio Preview，Program 在无受保护来源时独立初始化；禁用产品 profile 的 source/swap duplication，缺 Studio 时拒绝回退。实际 Windows gate 新增各阶段 Program root/媒体树保持检查，本机 Qt/补丁/契约通过，待 dev.94 后实际构建。完整 TAKE/原子 bridge 仍未完成。 / Local viewing now targets real Studio Preview with independent idle Program; actual Windows routing verification is pending and full TAKE remains open.

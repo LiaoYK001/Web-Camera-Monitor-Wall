@@ -77,6 +77,7 @@ class ProductWindow final : public QWidget {
 	ProductSourcePool source_pool_;
 	std::shared_ptr<ProductSceneGraph> wall_;
 	obs_scene_t *blank_scene_ = nullptr;
+	QString idle_program_uuid_;
 	bool tearing_down_ = false;
 	struct ProjectorView {
 		quint64 id = 0;
@@ -170,6 +171,33 @@ class ProductWindow final : public QWidget {
 			if (view && view->window) inputs.insert(view->graph->uuids.begin(), view->graph->uuids.end());
 		return inputs.size();
 	}
+	QJsonObject program_state() const
+	{
+		auto *source = obs_frontend_get_current_scene();
+		int media_sources = 0;
+		if (source)
+			obs_source_enum_full_tree(source, [](obs_source_t *, obs_source_t *child, void *context) {
+				if (const char *id = obs_source_get_unversioned_id(child); id && std::string_view(id) == "ffmpeg_source")
+					++*static_cast<int *>(context);
+			}, &media_sources);
+		QJsonObject result{{"studioMode", obs_frontend_preview_program_mode_active()},
+			{"sceneUuid", source ? QString::fromUtf8(obs_source_get_uuid(source)) : QString{}},
+			{"mediaSources", media_sources},
+			{"monitorIsProgram", source && wall_ && source == obs_scene_get_source(wall_->scene)}};
+		obs_source_release(source);
+		return result;
+	}
+	bool select_monitor(obs_scene_t *scene)
+	{
+		// A local view must NEVER fall back to changing global output when
+		// Studio mode is unavailable. Program will have its own TAKE consumer.
+		if (!scene || !obs_frontend_preview_program_mode_active()) return false;
+		obs_frontend_set_current_preview_scene(obs_scene_get_source(scene));
+		auto *selected = obs_frontend_get_current_preview_scene();
+		const bool matched = selected == obs_scene_get_source(scene);
+		obs_source_release(selected);
+		return matched;
+	}
 	void observe_state(const char *phase)
 	{
 		const int media_sources = media_source_count();
@@ -199,6 +227,7 @@ class ProductWindow final : public QWidget {
 			{"sessionBound", !user_id_.isEmpty()}, {"mediaSources", media_sources}, {"bindings", bindings},
 			{"videoAvailable", video_available}, {"hardwareDecodeVerified", false}};
 		state.insert("previewLocked", preview_ && preview_->property("webobsPreviewLocked").toBool());
+		state.insert("program", program_state());
 		state.insert("restoreGuardHits", frontend_->property("webobsRestoreGuardHits").toInt());
 		state.insert("refusedCollection", frontend_->property("webobsRefusedCollection").toString());
 		state.insert("lastRetirementMs", last_retirement_ms_);
@@ -293,7 +322,7 @@ class ProductWindow final : public QWidget {
 			if (!blank_scene_)
 				blank_scene_ = obs_scene_create("WebOBS locked preview");
 			if (blank_scene_ && !obs_source_removed(obs_scene_get_source(blank_scene_)))
-				select_wall(blank_scene_);
+				(void)select_monitor(blank_scene_);
 		}
 		wall_.reset();
 	}
@@ -677,7 +706,11 @@ class ProductWindow final : public QWidget {
 			observe_state("graph-failed");
 			return;
 		}
-		select_wall(candidate->scene);
+		if (!select_monitor(candidate->scene)) {
+			candidate.reset();
+			locked(tr("原生 Preview 不可用，请退出后重新打开。"));
+			return;
+		}
 		wall_ = std::move(candidate);
 		refresh_renderer();
 		watching_ = selected;
@@ -910,6 +943,14 @@ class ProductWindow final : public QWidget {
 public:
 	explicit ProductWindow(QWidget *frontend) : QWidget(frontend, Qt::Window), frontend_(frontend)
 	{
+		// Initialize OBS's real Preview/Program separation while no protected
+		// source exists. The product restore guard already refused collection I/O.
+		obs_frontend_set_preview_program_mode(false);
+		blank_scene_ = obs_scene_create("WebOBS locked preview");
+		if (blank_scene_)
+			obs_frontend_set_current_scene(obs_scene_get_source(blank_scene_));
+		obs_frontend_set_preview_program_mode(true);
+		idle_program_uuid_ = program_state().value("sceneUuid").toString();
 		setWindowTitle("WebOBS Wall");
 		setObjectName("webobsProductWindow");
 		resize(1280, 800);
@@ -1049,6 +1090,12 @@ public:
 			}
 		});
 		locked(tr("请登录已有 WebOBS 账号。"));
+		if (!blank_scene_ || idle_program_uuid_.isEmpty() || !obs_frontend_preview_program_mode_active()) {
+			status_->setText(tr("无法初始化 OBS Preview/Program，请退出后重新打开。"));
+			login_->setEnabled(false);
+			manage->setEnabled(false);
+			return;
+		}
 		if (origin_.scheme() != "http" || origin_.host() != "127.0.0.1" || origin_.port() < 1 ||
 		    !origin_.userInfo().isEmpty() || !origin_.path().isEmpty() || origin_.hasQuery() || origin_.hasFragment() ||
 		    !QRegularExpression("^[a-f0-9]{64}$").match(QString::fromLatin1(host_secret_)).hasMatch()) {
@@ -1180,7 +1227,6 @@ void start_product_window()
 	}
 	frontend->hide();
 	product_window->show();
-	obs_frontend_set_preview_program_mode(false);
 	obs_frontend_set_preview_enabled(true);
 }
 
