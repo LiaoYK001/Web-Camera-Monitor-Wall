@@ -113,11 +113,21 @@ def load(name, path):
     return module
 
 
-def exercise(binary):
+def exercise(binary, web_root=None):
     with tempfile.TemporaryDirectory(prefix="webobs-product-http-") as temporary, contextlib.ExitStack() as cleanup:
         private = Path(temporary)
         if os.name == "nt":
             load("product_private_directory", ROOT / "desktop/python/private_directory.py").protect(private)
+        # Never depend on a Linux compile-time UI path or a developer's files.
+        # Packaged Windows checks supply the actual staged management bundle;
+        # standalone protocol checks own their small presentation fixture.
+        if web_root is None:
+            web_root = private / "web"
+            web_root.mkdir()
+            (web_root / "index.html").write_text("<!doctype html><html><body>HTTP shell fixture</body></html>", encoding="utf-8")
+        web_root = Path(web_root).resolve(strict=True)
+        if not (web_root / "index.html").is_file():
+            raise ValueError("HTTP check requires an installed management shell")
         cluster = load("product_account_runtime", ROOT / "cluster/cluster_service.py")
         camera = load("product_registry_runtime", ROOT / "camera/camera_registry.py")
         camera.DB_PATH = private / "cameras.db"
@@ -223,6 +233,7 @@ def exercise(binary):
         host_secret = secrets.token_hex(32)
         environment = {key: value for key, value in os.environ.items() if not key.startswith("WEBOBS_")}
         environment.update(WEBOBS_HTTP_PORT=str(port), WEBOBS_LISTEN_ADDRESS="127.0.0.1",
+            WEBOBS_WEB_ROOT=str(web_root),
             WEBOBS_CLUSTER_INTERNAL_PORT=str(account_server.server_port),
             WEBOBS_CAMERA_INTERNAL_PORT=str(camera_server.server_port),
             WEBOBS_CLUSTER_INTERNAL_TOKEN=cluster.INTERNAL_TOKEN, WEBOBS_NATIVE_HOST_TOKEN=host_secret,
@@ -756,4 +767,6 @@ def exercise(binary):
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--binary", type=Path, required=True)
-    exercise(parser.parse_args().binary.resolve(strict=True))
+    parser.add_argument("--web-root", type=Path, help="Actual staged UI; omitted only for isolated protocol fixtures")
+    arguments = parser.parse_args()
+    exercise(arguments.binary.resolve(strict=True), arguments.web_root)

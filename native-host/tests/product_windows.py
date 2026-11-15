@@ -333,6 +333,15 @@ def exercise(runtime, report, *, with_media=False, retained_profile=None):
             started = start()
             assert sorted(service["name"] for service in started["services"]) == ["accounts-and-registry", "control", "frontend"]
             evidence["checks"].append("single-entry-real-core-authority-and-qt")
+            phase = "installed-management-shell"
+            expected_shell = (runtime / "web/index.html").read_bytes()
+            assert 0 < len(expected_shell) <= 2 * 1024 * 1024
+            for path in ("/?native-management=1", "/index.html?native-management=1"):
+                with opener.open(started["origin"] + path, timeout=15) as shell:
+                    assert shell.status == 200 and shell.headers.get_content_type() == "text/html"
+                    assert shell.headers.get("Cache-Control") == "no-cache"
+                    assert shell.read(2 * 1024 * 1024 + 1) == expected_shell, "installed management shell differs from payload"
+            evidence["checks"].append("management-entry-serves-actual-staged-ui-through-supervised-core")
             phase = "saved-studio-mode-cold-start"
             initial_origin = started["origin"]
             initial_boot = started["bootId"]
