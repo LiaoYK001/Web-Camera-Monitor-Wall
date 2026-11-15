@@ -11,6 +11,8 @@ import {
 } from 'react';
 import { connectSceneEvents, ControlApiError, fetchCameras, fetchStudio, fetchStudioCapabilities, replaceStudio, studioAction } from './api';
 import DirectPreview from './DirectPreview';
+import NativeProgramPreview from './NativeProgramPreview';
+import NativeHostSurface from './NativeHostSurface';
 import ProgramPreview from './ProgramPreview';
 import SceneCollection, { arrangeSceneGrid, cameraSourceId, type SceneOperation } from './SceneCollection';
 import { openProjectorWindow } from './projector';
@@ -131,6 +133,8 @@ function EmptyState({ onAdd }: { onAdd: () => void }) {
 }
 
 export default function App() {
+  const [nativeHostEntry] = useState(() => new URLSearchParams(window.location.search).get('native-management') === '1');
+  const [nativeManagement, setNativeManagement] = useState(nativeHostEntry);
   const [productArea, setProductArea] = useState<ProductArea>(areaFromHash());
   const [baseline, setBaseline] = useState<SceneDocument | null>(null);
   const [draft, setDraft] = useState<SceneDocument | null>(null);
@@ -155,8 +159,10 @@ export default function App() {
   const [adding, setAdding] = useState(false);
   const [workspaceMode, setWorkspaceMode] = useState<WorkspaceMode>('program');
   const [playbackMode, setPlaybackMode] = useState<PlaybackMode>(initialPlaybackMode);
+  const [nativeMonitor, setNativeMonitor] = useState(false);
   const [canvasZoom, setCanvasZoom] = useState(1);
   const [liveLayoutPreview, setLiveLayoutPreview] = useState(true);
+  const showLayoutMedia = liveLayoutPreview && !nativeManagement;
   const [newKind, setNewKind] = useState<AddSourceKind>('camera');
   const [newName, setNewName] = useState('新摄像头');
   const [newUrl, setNewUrl] = useState('');
@@ -986,18 +992,20 @@ export default function App() {
     const monitorScene = programScene ?? studioDraft.scenes.find((scene) => scene.id === studioDraft.programSceneId) ?? draft;
     return <WorkspaceShell area={productArea} onNavigate={navigate} connection={connection}><section className="monitor-workspace page-panel">
       <header className="monitor-heading"><div><span className="eyebrow">Live monitor</span><h1>{monitorScene.name}</h1></div><div>
-        <button type="button" onClick={() => setPlaybackMode('direct')} className={playbackMode === 'direct' ? 'active' : ''}>浏览器媒体</button>
-        <button type="button" onClick={() => setPlaybackMode('composite')} className={playbackMode === 'composite' ? 'active' : ''}>服务端 Program</button>
-        <button type="button" onClick={() => void toggleFullscreen()}>真全屏</button>
+        {window.webobsDesktop?.nativePreview && !deviceWorkspace && <button type="button" onClick={() => setNativeMonitor(true)} className={nativeMonitor ? 'active' : ''}>Windows 原生监看（试验）</button>}
+        {nativeHostEntry && <button type="button" onClick={() => setNativeManagement(true)} className={nativeManagement ? 'active' : ''}>Windows 原生画面</button>}
+        <button type="button" onClick={() => { setNativeManagement(false); setNativeMonitor(false); setPlaybackMode('direct'); }} className={!nativeManagement && !nativeMonitor && playbackMode === 'direct' ? 'active' : ''}>浏览器媒体</button>
+        <button type="button" onClick={() => { setNativeManagement(false); setNativeMonitor(false); setPlaybackMode('composite'); }} className={!nativeManagement && !nativeMonitor && playbackMode === 'composite' ? 'active' : ''}>服务端 Program</button>
+        {!nativeManagement && !nativeMonitor && <button type="button" onClick={() => void toggleFullscreen()}>真全屏</button>}
       </div></header><Suspense fallback={<div className="monitor-process-status"><button type="button" className="ghost-button" disabled aria-busy="true">实时占用</button></div>}><MonitorProcessStatus /></Suspense><div ref={monitorRef} className="monitor-surface">
-        {playbackMode === 'direct' ? <DirectPreview scene={monitorScene} /> : <ProgramPreview aspectRatio={`${monitorScene.canvas.width} / ${monitorScene.canvas.height}`} />}
+        {nativeManagement ? <NativeHostSurface /> : nativeMonitor && !deviceWorkspace ? <NativeProgramPreview /> : playbackMode === 'direct' ? <DirectPreview scene={monitorScene} /> : <ProgramPreview aspectRatio={`${monitorScene.canvas.width} / ${monitorScene.canvas.height}`} />}
         {fullscreen && <div className="fullscreen-overlay"><button type="button" onClick={() => void toggleFullscreen()}>退出全屏</button><span>{wakeLockState === 'active' ? '● 屏幕常亮' : wakeLockState === 'unsupported' ? '⚠ 不支持防休眠' : ''}</span></div>}
       </div></section></WorkspaceShell>;
   }
 
   if (productArea === 'audio') {
     if (deviceWorkspace) return <WorkspaceShell area={productArea} onNavigate={navigate} connection={connection}><section className="page-panel"><h1>设备布局声音</h1><p>在 Studio 选择来源调整此设备布局的声音。服务器声音工作台在返回服务器布局后可用。</p><button type="button" onClick={() => navigate('studio')}>返回设备 Studio</button></section></WorkspaceShell>;
-    return <WorkspaceShell area={productArea} onNavigate={navigate} connection={connection}><AudioWorkspace studio={studioDraft} onCommitted={applyRemoteStudio} /></WorkspaceShell>;
+    return <WorkspaceShell area={productArea} onNavigate={navigate} connection={connection}><AudioWorkspace studio={studioDraft} onCommitted={applyRemoteStudio} localPlayback={!nativeManagement} /></WorkspaceShell>;
   }
 
   if (productArea === 'storage') {
@@ -1317,7 +1325,7 @@ export default function App() {
               <button className={workspaceMode === 'layout' ? 'active' : ''} type="button" onClick={() => setWorkspaceMode('layout')}>布局编辑</button>
             </div>
           </div>
-          {workspaceMode === 'program' && (
+          {workspaceMode === 'program' && !nativeManagement && (
             <div className="playback-mode" aria-label="实时播放渲染模式">
               <span>渲染路径</span>
               <button className={playbackMode === 'composite' ? 'active' : ''} type="button" onClick={() => selectPlaybackMode('composite')}>服务端合成</button>
@@ -1326,7 +1334,7 @@ export default function App() {
             </div>
           )}
           {workspaceMode === 'layout' && <div className="canvas-tools" aria-label="画布工具">
-            <label><input type="checkbox" checked={liveLayoutPreview} onChange={(event) => setLiveLayoutPreview(event.target.checked)} />实时画面</label>
+            <label><input type="checkbox" checked={showLayoutMedia} disabled={nativeManagement} onChange={(event) => setLiveLayoutPreview(event.target.checked)} />实时画面</label>
             <span>缩放 {Math.round(canvasZoom * 100)}%</span>
             <button type="button" onClick={() => setCanvasZoom((value) => clamp(value - 0.1, 0.5, 1.5))}>−</button>
             <button type="button" onClick={() => setCanvasZoom(1)}>适屏</button>
@@ -1346,17 +1354,17 @@ export default function App() {
               </div>
             )}
             {workspaceMode === 'program' ? (
-              playbackMode === 'composite'
+              nativeManagement ? <NativeHostSurface /> : playbackMode === 'composite'
                 ? <ProgramPreview aspectRatio={`${draft.canvas.width} / ${draft.canvas.height}`} />
                 : <DirectPreview sceneLayout scene={programScene ?? baseline ?? draft} />
             ) : draft.items.length === 0 ? <EmptyState onAdd={() => setAdding(true)} /> : (
               <div
-                className={`stage${liveLayoutPreview ? ' stage-live' : ''}`}
+                className={`stage${showLayoutMedia ? ' stage-live' : ''}`}
                 ref={stageRef}
                 style={{ aspectRatio: `${draft.canvas.width} / ${draft.canvas.height}`, backgroundColor: draft.canvas.backgroundColor, transform: `scale(${canvasZoom})` }}
                 onPointerDown={() => { setSelectedSourceId(null); setSelectedSourceIds([]); }}
               >
-                {liveLayoutPreview && <DirectPreview compact layoutPreview scene={draft} />}
+                {showLayoutMedia && <DirectPreview compact layoutPreview scene={draft} />}
                 <div className="stage-grid" aria-hidden="true" />
                 <div className="stage-safe-area" aria-hidden="true" />
                 {[...draft.items].sort((left, right) => left.zIndex - right.zIndex).map((item) => {
@@ -1385,7 +1393,7 @@ export default function App() {
                       onKeyDown={(event) => { if (event.key === 'Enter' || event.key === ' ') selectSource(source.id, event.shiftKey || event.ctrlKey || event.metaKey); }}
                       onPointerDown={(event) => beginPointer(event, item, 'move')}
                     >
-                      {!liveLayoutPreview && <div className="tile-noise" aria-hidden="true" />}
+                      {!showLayoutMedia && <div className="tile-noise" aria-hidden="true" />}
                       <span className="tile-tag">{source.kind === 'rtsp'
                         ? `RTSP · ${source.transport.toUpperCase()}`
                         : source.kind === 'camera' ? `CAMERA · ${source.profileId}`

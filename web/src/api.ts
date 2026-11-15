@@ -181,11 +181,12 @@ export async function fetchStudioCapabilities(signal?: AbortSignal): Promise<Stu
   return (await response.json()) as StudioCapabilities;
 }
 
-export async function replaceStudio(studio: StudioDocument): Promise<StudioDocument> {
+export async function replaceStudio(studio: StudioDocument, signal?: AbortSignal): Promise<StudioDocument> {
   const response = await fetch('/api/v1/studio', {
     method: 'PUT',
     headers: { 'Content-Type': 'application/json', 'If-Match': `"${studio.revision}"` },
     body: JSON.stringify(studio),
+    signal,
   });
   if (!response.ok) throw await parseError(response);
   return (await response.json()) as StudioDocument;

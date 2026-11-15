@@ -1,0 +1,8 @@
+{
+  "schema": 1,
+  "pixelTestBuild": true,
+  "defaultProduct": false,
+  "redistributable": false,
+  "publicationForbidden": true,
+  "purpose": "Synthetic native-window pixels only; contains an opt-in test harness. Never package, redistribute or publish this runtime."
+}

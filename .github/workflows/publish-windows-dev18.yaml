@@ -1,0 +1,139 @@
+name: Publish frozen Windows dev.18 prerelease
+
+on:
+  workflow_call:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  actions: read
+
+concurrency:
+  group: webobs-publish-frozen-dev18
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    runs-on: windows-2022
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - name: Verify offline asset guard positive and negative contracts on Windows
+        shell: pwsh
+        run: |
+          python -B desktop/tests/test_dev_prerelease.py
+          if ($LASTEXITCODE -ne 0) { throw 'Offline asset guard contracts failed; no publication attempted.' }
+      - name: Verify frozen successful run and immutable artifact identity
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          if ($env:GH_REPO -cne 'LiaoYK001/Web-Camera-Monitor-Wall') { throw 'Publication is restricted to the reviewed repository.' }
+          $run = gh api 'repos/LiaoYK001/Web-Camera-Monitor-Wall/actions/runs/41181595863' | ConvertFrom-Json
+          if ($LASTEXITCODE -ne 0) { throw 'Cannot read frozen build run.' }
+          if ($run.status -ne 'completed' -or $run.conclusion -ne 'success' -or $run.head_sha -cne '24e8eb371582c646c5e4c7059e070d37b4fdfcaa' -or $run.event -ne 'workflow_dispatch' -or $run.path -ne '.github/workflows/windows-desktop.yaml') { throw 'Frozen build identity or conclusion changed.' }
+          $jobs = gh api 'repos/LiaoYK001/Web-Camera-Monitor-Wall/actions/runs/41181595863/jobs?per_page=100' | ConvertFrom-Json
+          if ($LASTEXITCODE -ne 0 -or $jobs.total_count -gt 100) { throw 'Cannot inspect the complete frozen job list.' }
+          foreach ($name in @('audit','windows')) {
+            $job = @($jobs.jobs | Where-Object name -CEQ $name)
+            if ($job.Count -ne 1 -or $job[0].conclusion -ne 'success') { throw 'Required frozen product job did not pass.' }
+          }
+          $artifact = gh api 'repos/LiaoYK001/Web-Camera-Monitor-Wall/actions/artifacts/13035199490' | ConvertFrom-Json
+          if ($LASTEXITCODE -ne 0) { throw 'Cannot read frozen artifact.' }
+          if ($artifact.expired -or $artifact.name -cne 'webobs-windows-4.1.0-dev.18' -or $artifact.size_in_bytes -ne 1031259327 -or $artifact.digest -cne 'sha256:fb2581a20dd9388c2ed63af2f6b824854bfc765dfbe036bbbe5c7b037907a594' -or $artifact.workflow_run.id -ne 41181595863 -or $artifact.workflow_run.head_sha -cne '24e8eb371582c646c5e4c7059e070d37b4fdfcaa') { throw 'Frozen artifact identity changed.' }
+          $release = gh api --paginate 'repos/LiaoYK001/Web-Camera-Monitor-Wall/releases?per_page=100' --jq '.[] | select(.tag_name == "v4.1.0-dev.18")' | ConvertFrom-Json
+          if ($LASTEXITCODE -ne 0 -or $release.id -ne 429805359 -or !$release.draft -or !$release.prerelease -or $release.tag_name -cne 'v4.1.0-dev.18' -or $release.target_commitish -cne '24e8eb371582c646c5e4c7059e070d37b4fdfcaa' -or @($release.assets).Count -ne 0) { throw 'Require the frozen existing empty development draft; do not overwrite published assets.' }
+          $tag = gh api 'repos/LiaoYK001/Web-Camera-Monitor-Wall/git/ref/tags/v4.1.0-dev.18' | ConvertFrom-Json
+          if ($LASTEXITCODE -ne 0) { throw 'Frozen tag is missing.' }
+          $object = $tag.object
+          for ($i=0; $object.type -eq 'tag' -and $i -lt 4; $i++) {
+            $annotation = gh api "repos/LiaoYK001/Web-Camera-Monitor-Wall/git/tags/$($object.sha)" | ConvertFrom-Json
+            if ($LASTEXITCODE -ne 0) { throw 'Cannot resolve annotated frozen tag.' }
+            $object = $annotation.object
+          }
+          if ($object.type -ne 'commit' -or $object.sha -cne '24e8eb371582c646c5e4c7059e070d37b4fdfcaa') { throw 'Tag does not point at the actual tested product source; do not move it.' }
+      - name: Download the existing artifact without rebuilding
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          @'
+          import hashlib, os, pathlib, sys, urllib.error, urllib.parse, urllib.request
+          class NoRedirect(urllib.request.HTTPRedirectHandler):
+              def redirect_request(self, req, fp, code, msg, headers, newurl): return None
+          try:
+              request = urllib.request.Request('https://api.github.com/repos/LiaoYK001/Web-Camera-Monitor-Wall/actions/artifacts/13035199490/zip', headers={'Authorization': 'Bearer ' + os.environ['GH_TOKEN'], 'Accept': 'application/vnd.github+json'})
+              try:
+                  urllib.request.build_opener(NoRedirect).open(request, timeout=60)
+                  raise RuntimeError('Expected artifact redirect')
+              except urllib.error.HTTPError as error:
+                  if error.code != 302: raise RuntimeError('Cannot obtain artifact redirect') from None
+                  location = error.headers['Location']
+              target = urllib.parse.urlsplit(location)
+              if target.scheme != 'https' or not target.hostname or not target.hostname.endswith('.blob.core.windows.net') or target.username or target.password:
+                  raise RuntimeError('Unexpected artifact storage')
+              digest, count = hashlib.sha256(), 0
+              with urllib.request.urlopen(location, timeout=120) as source, pathlib.Path('frozen-dev18.zip').open('xb') as destination:
+                  while block := source.read(1024 * 1024):
+                      count += len(block)
+                      if count > 1031259327: raise RuntimeError('Artifact exceeded frozen size')
+                      digest.update(block); destination.write(block)
+              if count != 1031259327 or digest.hexdigest() != 'fb2581a20dd9388c2ed63af2f6b824854bfc765dfbe036bbbe5c7b037907a594':
+                  raise RuntimeError('Artifact bytes do not match frozen digest')
+          except Exception:
+              print('Frozen artifact download or digest verification failed; private redirect omitted.', file=sys.stderr)
+              sys.exit(1)
+          print('Frozen artifact archive SHA-256 and exact bytes verified.')
+          '@ | python -
+          if ($LASTEXITCODE -ne 0) { throw 'Frozen artifact download failed.' }
+          Expand-Archive -LiteralPath frozen-dev18.zip -DestinationPath frozen-dev18
+      - name: Verify all exact development assets and copy bytes unchanged
+        shell: pwsh
+        run: |
+          python -B desktop/scripts/prepare-dev-prerelease.py --version 4.1.0-dev.18 --revision 24e8eb371582c646c5e4c7059e070d37b4fdfcaa --input frozen-dev18 --output verified-dev18
+          if ($LASTEXITCODE -ne 0) { throw 'Frozen development asset verification failed.' }
+      - name: Attach verified bytes then publish only as a non-latest prerelease
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $names = @(
+            'WebOBS-4.1.0-dev.18-windows-x64-DEVELOPMENT-UNSIGNED.exe',
+            'WebOBS-4.1.0-dev.18-windows-x64-DEVELOPMENT-UNSIGNED.exe.blockmap',
+            'webobs-windows-4.1.0-dev.18-sbom.cdx.json',
+            'webobs-windows-4.1.0-dev.18-runtime-manifest.json',
+            'webobs-windows-4.1.0-dev.18-dependencies.lock.json',
+            'webobs-windows-4.1.0-dev.18-licenses.tar.gz',
+            'webobs-windows-4.1.0-dev.18-footprint.json',
+            'webobs-windows-4.1.0-dev.18-SHA256SUMS.txt'
+          )
+          $latestBefore = gh api 'repos/LiaoYK001/Web-Camera-Monitor-Wall/releases/latest' | ConvertFrom-Json
+          if ($LASTEXITCODE -ne 0) { throw 'Cannot freeze stable Latest identity.' }
+          $release = gh api --paginate 'repos/LiaoYK001/Web-Camera-Monitor-Wall/releases?per_page=100' --jq '.[] | select(.tag_name == "v4.1.0-dev.18")' | ConvertFrom-Json
+          if ($LASTEXITCODE -ne 0 -or !$release.draft -or !$release.prerelease -or @($release.assets).Count -ne 0) { throw 'Draft is no longer empty; stop rather than overwrite.' }
+          foreach ($name in $names) {
+            gh release upload v4.1.0-dev.18 (Join-Path 'verified-dev18' $name)
+            if ($LASTEXITCODE -ne 0) { throw 'Upload failed; leave draft unpublished and do not overwrite partial assets.' }
+          }
+          $attached = gh api --paginate 'repos/LiaoYK001/Web-Camera-Monitor-Wall/releases?per_page=100' --jq '.[] | select(.tag_name == "v4.1.0-dev.18")' | ConvertFrom-Json
+          if ($LASTEXITCODE -ne 0 -or !$attached.draft -or !$attached.prerelease -or @($attached.assets).Count -ne $names.Count) { throw 'Incomplete draft attachments; stop before publication.' }
+          foreach ($name in $names) {
+            $asset = @($attached.assets | Where-Object name -CEQ $name)
+            $file = Get-Item -LiteralPath (Join-Path 'verified-dev18' $name)
+            $sha = (Get-FileHash -LiteralPath $file.FullName -Algorithm SHA256).Hash.ToLowerInvariant()
+            if ($asset.Count -ne 1 -or $asset[0].size -ne $file.Length -or $asset[0].digest -cne "sha256:$sha") { throw 'GitHub attachment digest does not match the verified frozen file.' }
+          }
+          gh release edit v4.1.0-dev.18 --draft=false --prerelease --latest=false
+          if ($LASTEXITCODE -ne 0) { throw 'Pre-release publication failed.' }
+          $published = gh api --paginate 'repos/LiaoYK001/Web-Camera-Monitor-Wall/releases?per_page=100' --jq '.[] | select(.tag_name == "v4.1.0-dev.18")' | ConvertFrom-Json
+          if ($LASTEXITCODE -ne 0 -or $published.draft -or !$published.prerelease) { throw 'Development publication state is not correct.' }
+          $latestAfter = gh api 'repos/LiaoYK001/Web-Camera-Monitor-Wall/releases/latest' | ConvertFrom-Json
+          if ($LASTEXITCODE -ne 0 -or $latestAfter.id -ne $latestBefore.id -or $latestAfter.tag_name -cne $latestBefore.tag_name) { throw 'Stable Latest unexpectedly changed.' }
+          Write-Output $published.html_url

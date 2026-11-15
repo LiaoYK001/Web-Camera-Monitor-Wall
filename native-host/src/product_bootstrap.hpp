@@ -1,0 +1,39 @@
+#pragma once
+
+#include <obs.h>
+#include "product_media.hpp"
+
+#include <array>
+#include <optional>
+#include <string>
+
+namespace webobs::native_host {
+
+struct ProductWallResult {
+	obs_scene_t *scene = nullptr; // Owned reference; caller must release.
+	std::array<obs_source_t *, 5> sources{};
+	std::array<std::string, 5> uuids;
+	int created = 0;
+	int reused = 0;
+	bool scene_reused = false;
+	std::string error;
+	// Per-slot ownership: true only for sources created by THIS attempt.
+	// Reused slots stay false, so provenance/rollback never treat them as new.
+	std::array<bool, 5> created_here{};
+
+	// Releases every still-owned source and the scene reference.
+	void release();
+};
+
+// Creates or reuses the five OBS Media Sources and the wall scene. Existing
+// same-named sources are reused only when their media settings already match;
+// otherwise the bootstrap fails without overwriting them. Newly created sources
+// are removed again when a later step fails.
+ProductWallResult create_product_five_camera_wall(const std::array<ProductCamera, 5> &cameras,
+						 const std::string &wall_name);
+
+// Applies the private product canvas/integer fps to the current portable profile.
+// Refuses active video outputs before mutation and verifies actual base/output
+// sizes and rational fps after the frontend reset. Not an atomic profile change.
+bool apply_product_video_config(int width, int height, int fps, std::string &error);
+} // namespace webobs::native_host

@@ -218,6 +218,14 @@ class NativeReleaseWorkflowPolicyTests(unittest.TestCase):
         self.assertIsNotNone(upload)
         self.assertNotIn("private-driver", upload.group(0))
 
+    def test_condition_expressions_are_not_split_into_multiple_blocks(self) -> None:
+        # `${{ a }} && ${{ b }}` is parsed as the truthy string "false && false",
+        # so a step can run when its inputs are all false.
+        for path in sorted((ROOT / ".github" / "workflows").glob("*.y*ml")):
+            text = path.read_text(encoding="utf-8")
+            self.assertNotIn("}} && ${{", text, path.name)
+            self.assertNotIn("}} || ${{", text, path.name)
+
     def test_publish_requires_source_and_all_binary_sidecars(self) -> None:
         publish = self.text[self.text.index("  publish:\n"):]
         self.assertIn("scripts/create-source-bundle.sh", publish)

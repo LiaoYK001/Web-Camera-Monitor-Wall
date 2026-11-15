@@ -31,6 +31,53 @@ const scene = {
 
 const studio = { revision: 1, programSceneId: 'scene-1', previewSceneId: 'scene-1', scenes: [scene] };
 
+for (const savedInputs of [[], [{ track: 3, gain: 0.4, muted: false }]])
+test(`saved audio selection ${savedInputs.length ? 'with a missing track' : 'with no tracks'} is preserved`, async ({ page }) => {
+  let offers = 0;
+  const writes: unknown[] = [];
+  await page.route('**/api/v1/account-cameras/cam-a/main/audio-tracks', (route) => route.fulfill({
+    json: { probed: true, tracks: [track(0, 1), track(1, 2)] },
+  }));
+  await page.route('**/audio-tracks/*/whep**', (route) => {
+    offers++;
+    return route.fulfill({ status: 503, json: {} });
+  });
+  await page.route('**/api/v1/studio', (route) => {
+    if (route.request().method() !== 'PUT') return route.fulfill({ status: 404, json: {} });
+    const body = route.request().postDataJSON();
+    writes.push(body);
+    return route.fulfill({ json: body });
+  });
+  await page.goto('/');
+  await page.evaluate(async (document) => {
+    const { mountAudioWorkspace } = await import('/tests/harness/audioWorkspaceMount.tsx');
+    const host = window.document.createElement('div');
+    window.document.body.appendChild(host);
+    mountAudioWorkspace(document as never, host);
+  }, { ...studio, scenes: [{ ...scene, sources: [cameraSource('silent-source', 'Silent camera', 'cam-a', savedInputs)], items: [] }] });
+  const tracks = page.locator('.audio-track input[type="checkbox"]');
+  await expect(tracks).toHaveCount(2);
+  await expect(tracks.nth(0)).not.toBeChecked();
+  await expect(tracks.nth(1)).not.toBeChecked();
+  await expect(page.locator('audio[data-audio-track]')).toHaveCount(0);
+  if (savedInputs.length) await expect(page.locator('.audio-track-missing[role="alert"]')).toContainText('当前不可用，配置已保留');
+  expect(offers).toBe(0);
+  // A different master setting must not quietly reintroduce the first track.
+  await page.getByRole('checkbox', { name: '来源静音', exact: true }).uncheck();
+  await page.getByRole('button', { name: '保存音频配置', exact: true }).click();
+  await expect.poll(() => writes.length).toBe(1);
+  const saved = writes[0] as { scenes: Array<{ sources: Array<{ audioInputs?: unknown[] }> }> };
+  expect(saved.scenes[0].sources[0].audioInputs).toEqual(savedInputs.map((input) => ({ ...input, syncOffsetMs: 0 })));
+  expect(offers).toBe(0);
+  if (savedInputs.length) {
+    await page.getByRole('button', { name: '移除缺失音轨', exact: true }).click();
+    await page.getByRole('button', { name: '保存音频配置', exact: true }).click();
+    await expect.poll(() => writes.length).toBe(2);
+    expect((writes[1] as typeof saved).scenes[0].sources[0].audioInputs).toEqual([]);
+    expect(offers).toBe(0);
+  }
+});
+
 test('manual camera retry probes its account profile and distinguishes confirmed silence from failure', async ({ page }) => {
   let probes = 0;
   const audioUrls: string[] = [];

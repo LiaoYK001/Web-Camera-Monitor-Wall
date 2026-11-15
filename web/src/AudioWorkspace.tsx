@@ -1,6 +1,9 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { isPageVisible, subscribePageVisibility } from './pageVisibility';
-import { fetchAudioMeters, probeSourceProfile, replaceStudio } from './api';
+import { ControlApiError, fetchAudioMeters, fetchStudio, probeSourceProfile, replaceStudio } from './api';
+import { useDesktopWork } from './desktopRuntime';
+import { useDraftGuard } from './useDraftGuard';
+import { withRequestTimeout } from './requestTimeout';
 import DirectPreview from './DirectPreview';
 import { connectAudioTrack, type AudioChannelState, type AudioTrackConnection } from './audioTrackChannel';
 import { getDirectAudioMixer, type DirectAudioSnapshot, type DirectAudioTrackSelection } from './directAudioMixer';
@@ -25,12 +28,32 @@ interface TrackSelection {
   mode: 'merged' | 'independent';
 }
 
+function initialTrackSelection(source: SceneSource | undefined, tracks: SourceAudioTrack[]): TrackSelection {
+  const saved = source?.audioInputs ?? [];
+  const gain: Record<number, number> = {};
+  const muted: Record<number, boolean> = {};
+  const offset: Record<number, number> = {};
+  for (const input of saved) {
+    gain[input.track] = input.gain;
+    muted[input.track] = input.muted;
+    offset[input.track] = input.syncOffsetMs ?? 0;
+  }
+  return {
+    // Explicit [] is intentional silence. Missing selected tracks must not
+    // silently switch to a different track either; only legacy omission defaults.
+    selected: source?.audioInputs !== undefined
+      ? saved.map((input) => input.track).sort((left, right) => left - right)
+      : defaultSelectedTracks(tracks),
+    gain, muted, offset, mode: 'merged',
+  };
+}
+
 interface ChannelEntry {
   element: HTMLAudioElement;
   connection: AudioTrackConnection;
 }
 
-export default function AudioWorkspace({ studio, onCommitted }: { studio: StudioDocument; onCommitted: (studio: StudioDocument) => void }) {
+export default function AudioWorkspace({ studio, onCommitted, localPlayback = true }: { studio: StudioDocument; onCommitted: (studio: StudioDocument) => void; localPlayback?: boolean }) {
   const [nativeForeground, setNativeForeground] = useState(window.webobsAndroidForeground !== false);
   useEffect(() => subscribePageVisibility(() => setNativeForeground(window.webobsAndroidForeground !== false)), []);
   const [sceneId, setSceneId] = useState(studio.previewSceneId);
@@ -44,6 +67,19 @@ export default function AudioWorkspace({ studio, onCommitted }: { studio: Studio
   const [audioDirty, setAudioDirty] = useState(false);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
+  const [conflict, setConflict] = useState(false);
+  const [reloadGeneration, setReloadGeneration] = useState(0);
+  const lastRevision = useRef(studio.revision);
+  const latestStudio = useRef(studio);
+  latestStudio.current = studio;
+  const requestOwner = useRef(new AbortController());
+  useEffect(() => {
+    const owner = new AbortController(); requestOwner.current = owner;
+    return () => owner.abort();
+  }, []);
+  const dirty = Boolean(pending) || audioDirty;
+  useDesktopWork('audio-workspace', dirty, saving);
+  useDraftGuard(dirty, saving, '离开将放弃未保存的音频修改，继续吗？', setError);
   const channels = useRef(new Map<string, ChannelEntry>());
   const probeGeneration = useRef(0);
   const mixer = useMemo(() => getDirectAudioMixer(), []);
@@ -52,13 +88,23 @@ export default function AudioWorkspace({ studio, onCommitted }: { studio: Studio
   const sourceIds = scene ? scene.sources.map((source) => `${source.id}:${source.kind}:${source.kind === 'camera' ? `${source.cameraId}/${source.profileId}` : ''}`).join(',') : '';
 
   useEffect(() => {
-    if (topology !== 'direct') return;
+    if (topology !== 'direct' || !localPlayback) return;
     setSnapshot(mixer.getSnapshot());
     const receive = (event: Event) => setSnapshot((event as CustomEvent<DirectAudioSnapshot>).detail);
     window.addEventListener('webobs:direct-audio-meters', receive);
     return () => window.removeEventListener('webobs:direct-audio-meters', receive);
-  }, [topology, mixer]);
-  useEffect(() => { setPending(null); }, [studio.revision]);
+  }, [topology, mixer, localPlayback]);
+  useEffect(() => {
+    if (lastRevision.current === studio.revision) return;
+    lastRevision.current = studio.revision;
+    if (dirty) {
+      setConflict(true);
+      setError('服务器音频或场景配置已更新。当前修改已保留，请放弃修改并重新载入后再编辑。');
+    } else {
+      setSelection({});
+      setChannelStates({});
+    }
+  }, [studio.revision]);
   useEffect(() => {
     if (topology !== 'composite' || !scene) return;
     let active = true;
@@ -105,34 +151,22 @@ export default function AudioWorkspace({ studio, onCommitted }: { studio: Studio
       void fetchSourceAudioTracks(source.id, controller.signal, source.kind === 'camera' ? source : undefined).then((value) => {
         if (cancelled) return;
         setTracksBySource((current) => ({ ...current, [source.id]: value }));
-        if (value.status === 'available') {
+        if (value.status === 'available' || (value.status === 'none' && source.audioInputs !== undefined)) {
           // A saved schema 6 selection wins; otherwise the first real track is
           // selected by default and multi-select keeps the others available.
           setSelection((current) => {
             if (ownRecordValue(current, source.id)) return current;
-            const saved = source.audioInputs?.filter((input) => value.tracks.some((track) => track.index === input.track)) ?? [];
-            const gain: Record<number, number> = {};
-            const muted: Record<number, boolean> = {};
-            const offset: Record<number, number> = {};
-            for (const input of saved) {
-              gain[input.track] = input.gain;
-              muted[input.track] = input.muted;
-              offset[input.track] = input.syncOffsetMs ?? 0;
-            }
-            const selected = saved.length > 0
-              ? saved.map((input) => input.track).sort((left, right) => left - right)
-              : defaultSelectedTracks(value.tracks);
-            return { ...current, [source.id]: { selected, gain, muted, offset, mode: 'merged' } };
+            return { ...current, [source.id]: initialTrackSelection(source, value.status === 'available' ? value.tracks : []) };
           });
         }
       });
     }
     return () => { cancelled = true; probeGeneration.current += 1; controller.abort(); };
-  }, [scene.id, sourceIds]);
+  }, [scene.id, sourceIds, studio.revision, reloadGeneration]);
 
   // Keep the mixer and the audio-only WHEP channels in sync with the selection.
   useEffect(() => {
-    const activeSources = new Set(nativeForeground ? scene.sources.map((source) => source.id) : []);
+    const activeSources = new Set(nativeForeground && localPlayback ? scene.sources.map((source) => source.id) : []);
     for (const [key, entry] of [...channels.current]) {
       const [sourceId, index] = key.split('#');
       const probed = ownRecordValue(tracksBySource, sourceId);
@@ -183,7 +217,7 @@ export default function AudioWorkspace({ studio, onCommitted }: { studio: Studio
         channels.current.delete(key);
       }
     }
-  }, [scene.id, sourceIds, selection, tracksBySource, mixer, nativeForeground]);
+  }, [scene.id, sourceIds, selection, tracksBySource, mixer, nativeForeground, localPlayback]);
 
   useEffect(() => {
     const open = channels.current;
@@ -201,12 +235,16 @@ export default function AudioWorkspace({ studio, onCommitted }: { studio: Studio
   const meterBySource = useMemo(() => new Map(snapshot.sources.map((value) => [value.sourceId, value])), [snapshot]);
   if (!scene) return <section className="page-panel"><p>当前没有可用 Scene。</p></section>;
   const update = (sourceId: string, change: Partial<SceneSource>) => {
+    if (saving || conflict) return;
     const base = pending ?? studio;
     setPending({ ...base, scenes: base.scenes.map((candidate) => candidate.id !== scene.id ? candidate : {
       ...candidate, sources: candidate.sources.map((source) => source.id === sourceId ? { ...source, ...change } as SceneSource : source),
     }) });
   };
   const updateSelection = (sourceId: string, change: (current: TrackSelection) => TrackSelection) => {
+    if (saving || conflict) return;
+    // Track-only edits must retain the same If-Match base as master edits.
+    setPending((current) => current ?? studio);
     setAudioDirty(true);
     setSelection((current) => {
       const fallback: TrackSelection = { selected: [], gain: {}, muted: {}, offset: {}, mode: 'merged' };
@@ -227,8 +265,9 @@ export default function AudioWorkspace({ studio, onCommitted }: { studio: Studio
       const value = await fetchSourceAudioTracks(sourceId, undefined, source?.kind === 'camera' ? source : undefined);
       if (generation !== probeGeneration.current) return;
       setTracksBySource((current) => ({ ...current, [sourceId]: value }));
-      if (value.status === 'available') {
-        updateSelection(sourceId, (current) => ({ ...current, selected: current.selected.length > 0 ? current.selected : defaultSelectedTracks(value.tracks) }));
+      if (value.status === 'available' || (value.status === 'none' && source?.audioInputs !== undefined)) {
+        setSelection((current) => ownRecordValue(current, sourceId) ? current
+          : { ...current, [sourceId]: initialTrackSelection(source, value.status === 'available' ? value.tracks : []) });
       }
     } catch {
       if (generation === probeGeneration.current) setTracksBySource((current) => ({ ...current,
@@ -254,29 +293,68 @@ export default function AudioWorkspace({ studio, onCommitted }: { studio: Studio
     }),
   });
   const commit = async () => {
+    if (saving || conflict) return;
+    const owner = requestOwner.current;
     setSaving(true); setError('');
     try {
-      const committed = await replaceStudio(withAudioInputs(pending ?? studio));
+      const candidate = withAudioInputs(pending ?? studio);
+      const committed = await withRequestTimeout(10000, (signal) => replaceStudio(candidate, signal), owner.signal);
+      if (owner.signal.aborted) return;
+      if (latestStudio.current.revision > committed.revision) {
+        setConflict(true);
+        setError('保存期间服务器配置再次更新。请重新载入最新配置后核对。');
+        return;
+      }
       setPending(null);
       setAudioDirty(false);
+      setConflict(false); setError('');
       onCommitted(committed);
     }
-    catch (reason) { setError(reason instanceof Error ? reason.message : '音频配置保存失败'); }
-    finally { setSaving(false); }
+    catch (reason) {
+      if (owner.signal.aborted) return;
+      if (reason instanceof DOMException && reason.name === 'TimeoutError') {
+        setConflict(true);
+        setError('保存结果尚未确认，请重新载入核对；当前修改已保留。');
+        return;
+      }
+      if (reason instanceof ControlApiError && reason.status === 412) setConflict(true);
+      setError(reason instanceof Error ? reason.message : '音频配置保存失败');
+    }
+    finally { if (!owner.signal.aborted) setSaving(false); }
+  };
+  const reload = async () => {
+    if (saving) return;
+    const owner = requestOwner.current;
+    setSaving(true);
+    try {
+      const current = await withRequestTimeout(8000, fetchStudio, owner.signal);
+      if (owner.signal.aborted) return;
+      setPending(null); setAudioDirty(false); setSelection({}); setChannelStates({});
+      setConflict(false); setError('');
+      setReloadGeneration((generation) => generation + 1);
+      onCommitted(current);
+    } catch (reason) {
+      if (owner.signal.aborted) return;
+      setError(reason instanceof Error ? reason.message : '重新载入失败，当前修改已保留。');
+    } finally { if (!owner.signal.aborted) setSaving(false); }
   };
   return <section className="audio-workspace page-panel">
     <header className="page-heading"><div><span className="eyebrow">Per-source audio</span><h1>音频工作台</h1><p>仅展示含音轨的源。Direct 按真实音轨在浏览器本地测量，每条选中音轨使用独立 audio-only 通道；Composite 仅在 libobs 返回真实电平时显示数值。多轨支持多选、合并/独立与逐轨电平。</p></div>
-      <div className="audio-actions"><select aria-label="Scene" value={scene.id} onChange={(event) => setSceneId(event.target.value)}>{studio.scenes.map((value) => <option value={value.id} key={value.id}>{value.name}</option>)}</select>
+      <div className="audio-actions"><select aria-label="Scene" value={scene.id} disabled={dirty || saving || conflict}
+        title={dirty ? '先保存或放弃音频修改，再切换场景' : undefined}
+        onChange={(event) => { setSelection({}); setTracksBySource({}); setChannelStates({}); setSceneId(event.target.value); }}>{studio.scenes.map((value) => <option value={value.id} key={value.id}>{value.name}</option>)}</select>
         <button type="button" className={topology === 'direct' ? 'active' : ''} onClick={() => setTopology('direct')}>Direct</button>
         <button type="button" className={topology === 'composite' ? 'active' : ''} onClick={() => setTopology('composite')}>Composite</button>
-        <button type="button" onClick={() => window.dispatchEvent(new Event('webobs:audio-monitor-enable'))}>启用本地监听</button>
+        <button type="button" disabled={!localPlayback} onClick={() => window.dispatchEvent(new Event('webobs:audio-monitor-enable'))}>启用本地监听</button>
         <button type="button" onClick={() => window.dispatchEvent(new Event('webobs:audio-monitor-disable'))}>静音监听</button>
-        <button className="primary-button" type="button" disabled={(!pending && !audioDirty) || saving} onClick={() => void commit()}>{saving ? '保存中…' : '保存音频配置'}</button></div></header>
+        <button className="primary-button" type="button" disabled={!dirty || saving || conflict} onClick={() => void commit()}>{saving ? '保存中…' : '保存音频配置'}</button>
+        {(dirty || conflict) && <button type="button" disabled={saving} onClick={() => void reload()}>放弃修改并重新载入</button>}</div></header>
     {error && <div className="alert conflict-alert">{error}</div>}
-    <div className="audio-monitor-preview"><DirectPreview compact audioWorkspace scene={scene} /></div>
+    {localPlayback ? <div className="audio-monitor-preview"><DirectPreview compact audioWorkspace scene={scene} /></div>
+      : <p role="status">声音配置在此编辑，实时监听与画面由 WebOBS Wall 原生窗口提供。</p>}
     {scene.sources.some((source) => ownRecordValue(tracksBySource, source.id)?.status === 'none') && <p role="status">已确认无音轨：{scene.sources.filter((source) => ownRecordValue(tracksBySource, source.id)?.status === 'none').map((source) => source.name).join('、')}。这些来源不显示音频控制。</p>}
     <div className="audio-mixer-head"><span>来源 / Profile</span><span>电平</span><span>静音 / 音量</span><span>监听 / 同步</span><span>音轨</span></div>
-    <div className="audio-mixer-list">{scene.sources.map((source) => {
+    <fieldset className="audio-mixer-list" disabled={saving || conflict} style={{ border: 0, padding: 0, margin: 0, minWidth: 0 }}>{scene.sources.map((source) => {
       const meter = meterBySource.get(source.id);
       const cameraProfile = source.kind === 'camera' ? `${source.cameraId} / ${source.profileId}` : source.kind;
       const probed = ownRecordValue(tracksBySource, source.id);
@@ -286,12 +364,20 @@ export default function AudioWorkspace({ studio, onCommitted }: { studio: Studio
           : probed.status === 'none' ? 'none'
             : probed.status === 'loading' ? 'loading' : 'unprobed')
         : sourceAudioTrackState({ kind: source.kind, liveAudioTracks: meter?.audioTracks, streamBound: meter?.streamBound });
-      // F6-02: video-only sources are omitted from the audio workspace entirely.
-      if (trackState === 'none') return null;
       const state = ownRecordValue(selection, source.id);
+      const selected = state?.selected ?? source.audioInputs?.map((input) => input.track) ?? [];
+      const missing = selected.filter((index) => !apiTracks.some((track) => track.index === index));
+      // Hide confirmed video-only sources unless a saved track needs attention.
+      if (trackState === 'none' && selected.length === 0) return null;
       const mode = state?.mode ?? 'merged';
       return <article className="audio-channel" key={source.id}>
-        <div><strong>{source.name}</strong><small>{cameraProfile}</small><span>{topology === 'direct' ? 'Browser Web Audio' : 'libobs Composite'}</span></div>
+        {(trackState === 'available' || trackState === 'none') && missing.length > 0 && <div className="audio-track-missing" role="alert" style={{ gridColumn: '1 / -1' }}>
+          <span>已选音轨 {missing.map((index) => index + 1).join('、')} 当前不可用，配置已保留。</span>
+          <button type="button" onClick={() => updateSelection(source.id, (current) => ({ ...current,
+            selected: current.selected.filter((index) => !missing.includes(index)),
+          }))}>移除缺失音轨</button>
+        </div>}
+        <div><strong>{source.name}</strong><small>{cameraProfile}</small><span>{!localPlayback ? '原生宿主配置' : topology === 'direct' ? 'Browser Web Audio' : 'libobs Composite'}</span></div>
         {trackState === 'unprobed'
             ? <div className="audio-track-missing"><span role="status">{probed?.status === 'unavailable' ? '音轨探测失败，请检查源连接、VPN 和访问权限后重试。' : '音频轨道待探测'}</span><button type="button" onClick={() => void reprobe(source.id)}>重新探测</button></div>
             : trackState === 'loading'
@@ -315,7 +401,7 @@ export default function AudioWorkspace({ studio, onCommitted }: { studio: Studio
                         ? [...current.selected, track.index].sort((left, right) => left - right)
                         : current.selected.filter((value) => value !== track.index),
                     }))} />{trackLabel(track)}
-                    {selected && <span className="audio-track-state">{channel ?? '连接中'}{mode === 'independent' && trackMeter ? ` · ${dbLabel(trackMeter.rmsDbfs)}` : ''}</span>}
+                    {selected && <span className="audio-track-state">{!localPlayback ? '浏览器试听关闭' : channel ?? '连接中'}{localPlayback && mode === 'independent' && trackMeter ? ` · ${dbLabel(trackMeter.rmsDbfs)}` : ''}</span>}
                   </label>;
                 })}</div>
                 <div className="audio-track-controls">{apiTracks.filter((track) => state?.selected.includes(track.index)).map((track) => <div className="audio-track-control" key={track.index}>
@@ -328,6 +414,6 @@ export default function AudioWorkspace({ studio, onCommitted }: { studio: Studio
                 <div><select value={source.monitoring} onChange={(event) => update(source.id, { monitoring: event.target.value as AudioMonitoring })}><option value="off">关闭监听</option><option value="monitor-only">仅监听</option><option value="monitor-and-output">监听并输出</option></select><label>偏移 <input type="number" min="-10000" max="10000" value={source.syncOffsetMs} onChange={(event) => update(source.id, { syncOffsetMs: Number(event.target.value) })} /> ms</label></div>
               </>}
       </article>;
-    })}</div>
+    })}</fieldset>
   </section>;
 }

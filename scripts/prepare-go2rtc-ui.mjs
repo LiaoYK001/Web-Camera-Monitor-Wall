@@ -11,6 +11,14 @@ if (path.resolve(output) !== path.resolve(root, 'web', 'go2rtc-dist')) throw new
 rmSync(output, { recursive: true, force: true });
 mkdirSync(output, { recursive: true });
 const packages = ['monaco-editor', 'dompurify', 'js-yaml', 'vis-network', 'qrcodejs', 'hls.js'];
+const runtimeAssets = {
+  'monaco-editor': ['min'], // Preserve every editor/worker/language lazy import.
+  dompurify: ['dist/purify.min.js'],
+  'js-yaml': ['dist/js-yaml.min.js'],
+  'vis-network': ['standalone/umd/vis-network.min.js'],
+  qrcodejs: ['qrcode.min.js'],
+  'hls.js': ['dist/hls.min.js'], // Full build, including its inline worker.
+};
 for (const name of packages) {
   // Read the installed package root directly: recent Monaco exports intentionally
   // hide package.json. pnpm's direct dependency symlink still identifies the
@@ -18,10 +26,16 @@ for (const name of packages) {
   const packageRoot = realpathSync(path.join(root, 'web/node_modules', name));
   if (JSON.parse(readFileSync(path.join(packageRoot, 'package.json'), 'utf8')).name !== name)
     throw new Error(`Unexpected installed package: ${name}`);
-  // Monaco's complete min/ tree includes its workers. esm/ and dev/ are not
-  // used by the upstream UI; their deep paths also exceed NSIS rename limits.
-  cpSync(packageRoot, path.join(output, 'vendor', name), { recursive: true, dereference: true,
-    filter: source => name !== 'monaco-editor' || !['esm', 'dev'].includes(path.relative(packageRoot, source).split(path.sep)[0]) });
+  const destination = path.join(output, 'vendor', name);
+  mkdirSync(destination, { recursive: true });
+  // Ship the actual offline browser assets, not npm's source, alternate builds,
+  // source maps, examples or transitive node_modules. Keep metadata and licenses.
+  for (const file of [...runtimeAssets[name], ...readdirSync(packageRoot).filter(file =>
+    file === 'package.json' || /^(license|copying|notice|thirdpartynotices)([._-]|$)/i.test(file))]) {
+    const target = path.join(destination, file);
+    mkdirSync(path.dirname(target), { recursive: true });
+    cpSync(path.join(packageRoot, file), target, { recursive: true, dereference: true });
+  }
 }
 patchMonacoSanitizer(path.join(output, 'vendor/monaco-editor'), path.join(output, 'vendor/dompurify'));
 const replacements = [
