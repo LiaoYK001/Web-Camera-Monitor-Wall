@@ -291,6 +291,13 @@ def exercise(binary):
                         else:
                             raise AssertionError("native listener permitted a forced rebind")
                 login = {"username": "native-viewer", "password": password}
+                for path in ("/?native-management=1", "/index.html?native-management=1"):
+                    with opener.open(origin + path, timeout=5) as shell:
+                        assert shell.status == 200 and shell.headers.get_content_type() == "text/html"
+                        assert shell.headers.get("Cache-Control") == "no-cache"
+                        assert b"<html" in shell.read(2 * 1024 * 1024).lower()
+                assert request("/api/v1/auth/session", use_cookie=False)[0] == 401, \
+                    "native management presentation flag granted an account session"
                 assert request("/api/v1/auth/setup")[2]["registrationOpen"] is True
                 first_admin = {"username": "native-admin", "password": secrets.token_urlsafe(24)}
                 assert request("/api/v1/auth/setup", first_admin)[0] == 201

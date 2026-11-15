@@ -254,3 +254,7 @@ On 2026-10-30 the user authorized GitHub prerelease downloads for tested dev.17.
 
 
 原生融合宿主的管理入口使用 `?native-management=1#/devices` 打开本机管理 WebUI。此参数只控制本页默认展示，所有账号/角色/逐摄像机鉴权保持原有 API 边界；不携带会话或授权。Studio/监看默认指向原生窗口，保留布局编辑；音频页保留元数据与配置，默认不创建浏览器媒体或监听通道。明确选择浏览器媒体后才启用其播放器。普通远端 Web/PWA URL 不带该参数，沿用其播放行为。完整可选服务和安装升级仍按功能矩阵验收。 / The native-host management URL opts that page into configuration-first presentation without granting authority. Explicit browser playback remains available; ordinary remote URLs retain their defaults.
+
+v4.5 预览的冻结字节复用：允许先从候选提交完成 Windows 构建，再依次完成候选 → dev 和版本化 dev → main PR。发布前必须核对候选 SHA 已在 main 历史中、且其 Git tree 与发布合并提交完全一致；Tag、源码包、资格回执和附件均保留真实构建 SHA。若树不同则重新构建，不重写回执或替换已发布附件。此规则只减少重复构建，不免除检查、评审或发布 PR。
+
+For this preview, a frozen candidate may be built while release review runs. Before publication its exact commit must be reviewed into main history and its Git tree must equal the release merge tree. Tag, source, receipts and binaries retain the actual build SHA; any tree difference requires a rebuild. This does not waive checks or either PR.

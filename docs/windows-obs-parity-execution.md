@@ -1374,3 +1374,9 @@ supervisor/Qt 状态加入无授权意义的 per-boot ID；UI gate 同时核对�
 Linux 实际 supervisor/真实账号与 core 回归通过 boot 分代、正常/故障退出码、预期端口冲突分类、原账号/固定 origin 保留和故障清理（frontend 是 fixture，非 Qt）。真实 Qt 头文件编译、补丁 apply --check、44 build contracts 与 22 pixel contracts（两项既有 skip）通过。新实际 Windows 源码待 dev.96，不以本机契约替代其结果。
 
 A saved OBS Studio preference created an avoidable pre-product initialization/toggle path. The product copy now defers Studio initialization to its controlled empty-Program bootstrap and republishes visible HWNDs. Boot-scoped status, numeric child exits and fixed-category log diagnostics distinguish current failures from intentional earlier probes. An early real saved-preference cold restart is added before the full media/install gates. Local supervisor/Qt/contract checks pass; whether this resolves dev.95 remains pending actual Windows validation.
+
+#### v4.5 首用管理入口 / First-use management entry
+
+真实 core/账号/Registry + Chromium 首用检查发现 `/?native-management=1#/devices` 的 HTTP 部分因静态入口只匹配 `/` 返回 404。现在仅为原生入口明确允许的 `/?native-management=1` 和 `/index.html?native-management=1` 映射同一 index.html；不解释其他路径/任意查询，不赋予身份，保留 Host/Origin、缓存和路径检查。真实 HTTP 回归检查两入口 HTML/no-cache 与未认证 API 仍 401。修复后真实 Chromium 经实际服务完成新账号登录、手动创建 1 路、批量添加 4 路、目录 5 路，零 WHEP offers/零 video/audio 元素；前端宿主为 Linux fixture，不宣称实际 Windows Qt/相机证明。Windows 最终预览仍重跑完整 gate。
+
+Actual core/account/Registry plus Chromium first-use testing exposed a 404 on the native management presentation URL. Only the two explicitly emitted shell URLs now map to index.html, without changing authorization or generic path/query handling. Actual browser login/manual-plus-bulk creation reaches five entries with no media connections. This is real Linux browser/backend wiring evidence; final Windows/media qualification remains separate.

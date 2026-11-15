@@ -2754,6 +2754,10 @@ bool hashed_static_asset(std::string_view filename)
 
 std::optional<HttpResponse> static_file_response(std::string_view target, unsigned int version)
 {
+    // This allowlisted presentation flag is emitted by the native management
+    // entry. It selects no file or permission and must still serve the shell.
+    if (target == "/?native-management=1" || target == "/index.html?native-management=1")
+        target = target.substr(0, target.find('?'));
     std::string filename;
     bool immutable = false;
     if (target == "/" || target == "/index.html") {
