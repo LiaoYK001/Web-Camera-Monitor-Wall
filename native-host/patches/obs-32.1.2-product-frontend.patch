@@ -48,7 +48,7 @@
  	if (safe_mode || disable_3p_plugins) {
  		SetSafeModuleNames();
  	} else {
-@@ -1065,6 +1078,12 @@
+@@ -1065,13 +1078,28 @@
  	sceneDuplicationMode = config_get_bool(App()->GetUserConfig(), "BasicWindow", "SceneDuplicationMode");
  	swapScenesMode = config_get_bool(App()->GetUserConfig(), "BasicWindow", "SwapScenesMode");
  	editPropertiesMode = config_get_bool(App()->GetUserConfig(), "BasicWindow", "EditPropertiesMode");
@@ -59,8 +59,24 @@
 +	editPropertiesMode = false;
 +#endif
  
++#ifdef WEBOBS_PRODUCT_FRONTEND
++	// The authenticated product creates its idle Program and enables Studio
++	// exactly once, after collection restoration has been refused. A saved
++	// frontend preference must not create an earlier, competing Studio UI.
++	SetPreviewProgramMode(false);
++	setProperty("webobsStudioDeferredToProduct", !IsPreviewProgramMode());
++	opt_studio_mode = false;
++#else
  	if (!opt_studio_mode) {
  		SetPreviewProgramMode(config_get_bool(App()->GetUserConfig(), "BasicWindow", "PreviewProgramMode"));
+ 	} else {
+ 		SetPreviewProgramMode(true);
+ 		opt_studio_mode = false;
+ 	}
++#endif
+ 
+ #define SET_VISIBILITY(name, control)                                                                \
+ 	do {                                                                                         \
 --- a/frontend/widgets/OBSBasic_SceneCollections.cpp
 +++ b/frontend/widgets/OBSBasic_SceneCollections.cpp
 @@ -804,6 +804,9 @@

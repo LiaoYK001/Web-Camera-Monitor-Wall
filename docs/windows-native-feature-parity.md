@@ -97,3 +97,6 @@ Dev.93（43625385803、3ec6dfa）便携/实际安装各 35 项、27 组最终像
 
 
 R2 本地监看已从普通输出选择改接 OBS 原生 Studio Preview，Program 在无受保护来源时独立初始化；禁用产品 profile 的 source/swap duplication，缺 Studio 时拒绝回退。实际 Windows gate 新增各阶段 Program root/媒体树保持检查，本机 Qt/补丁/契约通过，待 dev.94 后实际构建。完整 TAKE/原子 bridge 仍未完成。 / Local viewing now targets real Studio Preview with independent idle Program; actual Windows routing verification is pending and full TAKE remains open.
+
+
+Dev.94（43629933739、6df8e5a）当前完整 gate success，便携/安装各 36 检查、28 组/280 帧、恢复九项与卸载保留通过；安装 198550830 logical B。Dev.95（43632728117、f1d393d）前 30 检查/248 帧含 Preview/Program 分离通过，但重启 entry -1/窗口访问失败，安装未验；旧日志的预期端口冲突不能当根因。产品独占 Studio 初始化、boot/退出诊断和提前保存偏好冷重启 gate 已接源码，本机通过，实际 Windows 待 dev.96。 / Dev.94 passes the current scope; dev.95 fails at restart after successful routing/media checks. Controlled initialization and scoped diagnostics await Windows validation; complete features/upgrade/performance remain open.

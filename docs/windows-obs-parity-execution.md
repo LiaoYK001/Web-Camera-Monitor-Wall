@@ -1355,3 +1355,22 @@ core 个人账号代理擦除客户端身份 header，使用 bound session 重�
 实际 AccountHandler/core/Argon2 TCP 回归在 core 初始与 worker 校验通过后、上游 PATCH 前替换同名账号；证明 header 来源为原会话（替换客户端的伪 Principal/全零 guard），旧 actor 401/clear-cookie、新账号资料原样；新无媒体角色账号可修改本人资料，真实代理改密码后旧会话失效。25 项账号协议测试包含第二 SQLite 连接在每个嵌套 preference 前后修改身份均锁失败、模拟写入后审计失败完整回滚、缺失/重复 header 拒绝。42 项既有 cluster 单测和九项 core CTest 通过；完整 HTTP/并发内容/入队/长连接/非原生普通修改均通过。新 Windows source 待后续构建；当前 dev.94 6df8e5a 不含本次 Program 分离、长连接、入队与账号事务修改。完整 TAKE 与其他跨服务事务/业务功能继续。
 
 Trusted own-account actor headers and transactional identity validation are now connected to the real proxy and existing account operations. Actual TCP tests reject a same-name replacement after both core gates, strip client identity injection and retain current-user functionality. Twenty-five identity/protocol, forty-two cluster and nine core CTests pass, including real second-connection exclusion and rollback; existing HTTP/socket/compatibility regression passes. Windows validation of this later source and the full Program/business integration remain pending.
+
+
+#### dev.94 全部门禁通过；dev.95 在重启阶段失败 / Dev.94 passes; dev.95 fails at restart
+
+43629933739（4.1.0-dev.94，source 6df8e5ad12268d71dea335abf59eda6fb928d176）success。便携与真实 NSIS 安装各 36 项、28 组/280 帧通过，新增无关 Studio revision 下主图/固定场景续验与源身份/最终像素保持；恢复 I/O 九项、普通关闭、重启认证、崩溃清理和卸载保留通过。安装 198550830 logical B / 201490472 main-stream allocation B / 1865 文件，setup 70144117 B。依然为不完整业务融合范围，旧版升级、完整功能和目标机性能均未取得资格。
+
+43632728117（4.1.0-dev.95，source f1d393de04fd5ebb6a54a20247356241732fdd59）failure。编译、真实账号/HTTP 与恢复 I/O 对照通过；实际便携 UI 已通过 30 项、24 组/248 帧，含本地 Preview/Program 分离、来源共享、断流、固定投影、撤权和普通关闭。在 restart-login 阶段 entryExitCode=4294967295，UIA 无法访问产品 root HWND；安装门禁未运行。聚合日志的 saved-control-port-unavailable 也包含此前故意占端口的负向启动，不能据此认定真实失败源于端口，更不能因此降低独占或更换已保存 origin。没有发布中间包。
+
+Dev.94 passes all current portable/fresh-installed gates with 36 checks and 280 analyzed frames per surface. Dev.95 passes the first 30 portable checks and restore controls, then fails at restart with a nonzero entry exit and inaccessible root HWND; installation does not qualify. The aggregated port-error marker includes the intentional conflict probe and does not establish a root cause. Neither run establishes complete features, legacy upgrade or target-device performance.
+
+#### 产品独占 Studio 初始化与按启动分代诊断 / Product-owned Studio initialization and boot-scoped diagnostics
+
+核对固定源码发现保存的 OBS PreviewProgramMode=true 会在 Load guard 前先建立 Studio UI，产品构造器随后关闭再重建，存在不必要的两次模式初始化。产品构建副本现忽略该启动偏好，只在 authenticated product surface 建立空 Program 后启用 Studio；没有改上游 checkout。实际可见窗口完成 show/layout 后重新发布 HWND，避免仅保留构造期句柄。此路径修正是否解决 dev.95 的退出仍须新 Windows 运行，未宣称已经确认根因。
+
+supervisor/Qt 状态加入无授权意义的 per-boot ID；UI gate 同时核对当前 boot 与进程，拒绝旧状态/句柄。当前启动的固定失败类别与子进程数字退出码独立记录，区分此前预期的负向日志；仅从当前 boot 最新 OBS 私密日志导出固定类别计数，不发布原日志、路径、异常文本或凭据。新增前置真实冷启动门禁：未登录正常关闭、确认 user.ini 实际保存 Studio=true、保持同一 origin 重开并要求产品接管初始化/仍锁定，然后再进行原来的完整五路/多窗口/退出后重启/安装回归。
+
+Linux 实际 supervisor/真实账号与 core 回归通过 boot 分代、正常/故障退出码、预期端口冲突分类、原账号/固定 origin 保留和故障清理（frontend 是 fixture，非 Qt）。真实 Qt 头文件编译、补丁 apply --check、44 build contracts 与 22 pixel contracts（两项既有 skip）通过。新实际 Windows 源码待 dev.96，不以本机契约替代其结果。
+
+A saved OBS Studio preference created an avoidable pre-product initialization/toggle path. The product copy now defers Studio initialization to its controlled empty-Program bootstrap and republishes visible HWNDs. Boot-scoped status, numeric child exits and fixed-category log diagnostics distinguish current failures from intentional earlier probes. An early real saved-preference cold restart is added before the full media/install gates. Local supervisor/Qt/contract checks pass; whether this resolves dev.95 remains pending actual Windows validation.

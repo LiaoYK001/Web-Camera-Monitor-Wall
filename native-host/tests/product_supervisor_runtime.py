@@ -106,6 +106,8 @@ def exercise(binary, sodium):
 
         try:
             process, state = start()
+            first_boot = state["bootId"]
+            assert len(first_boot) == 32 and all(c in "0123456789abcdef" for c in first_boot)
             assert sorted(service["name"] for service in state["services"]) == ["accounts-and-registry", "control", "frontend"]
             assert next(service for service in state["services"] if service["name"] == "accounts-and-registry")["pid"] == process.pid
             origin = state["origin"]
@@ -126,6 +128,8 @@ def exercise(binary, sodium):
             os.kill(frontend_pid, signal.SIGTERM)
             assert process.wait(timeout=30) == 0, "normal frontend close did not complete orderly shutdown"
             assert current()["phase"] == "stopped"
+            assert current()["bootId"] == first_boot and current()["failureReason"] == ""
+            assert all(type(service["exitCode"]) is int for service in current()["services"])
             wait_for(lambda: assert_closed(origin), "control listener survived normal close", timeout=5)
             network_path = profile / "config/native-network.json"
             saved_network = network_path.read_bytes()
@@ -138,8 +142,11 @@ def exercise(binary, sodium):
                 assert refused.returncode == 1, "occupied saved origin was silently replaced"
                 assert network_path.read_bytes() == saved_network
                 assert current()["phase"] == "stopped" and current()["services"] == []
+                assert current()["bootId"] != first_boot
+                assert current()["failureReason"] == "saved-control-port-unavailable"
             # Restart uses the same real account store; no reset or re-registration.
             process, state = start()
+            assert state["bootId"] != first_boot and state["failureReason"] == ""
             assert state["origin"] == origin and network_path.read_bytes() == saved_network
             assert request(state["origin"], "/api/v1/auth/setup")[2]["registrationOpen"] is False
             assert request(state["origin"], "/api/v1/auth/login", account)[0] == 200
@@ -154,6 +161,8 @@ def exercise(binary, sodium):
             else:
                 raise AssertionError("frontend fixture survived required-service failure")
             assert current()["phase"] == "stopped"
+            assert current()["bootId"] == state["bootId"] and current()["failureReason"] == "startup-or-service-error"
+            assert next(service for service in current()["services"] if service["name"] == "control")["exitCode"] != 0
             for invalid in ('{"schema":1,"controlPort":true}',
                             '{"schema":true,"controlPort":12345}',
                             '{"schema":1,"controlPort":12345,"controlPort":12346}',

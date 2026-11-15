@@ -68,15 +68,19 @@ class ProductSupervisor:
         self.opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
         self.resources = contextlib.ExitStack()
         self.origin = ""
+        self.boot_id = secrets.token_hex(16)
+        self.failure_reason = ""
         self.owns_profile = False
         self.authority_servers = []
         self.authority_threads = []
         self.authority_store = None
 
     def status(self, phase):
-        value = {"schema": 1, "phase": phase, "origin": self.origin,
+        value = {"schema": 1, "phase": phase, "origin": self.origin, "bootId": self.boot_id,
+                 "failureReason": self.failure_reason,
                  "ownerPid": os.getpid(), "services": [
-                     {"name": name, "pid": process.pid, "running": process.poll() is None}
+                     {"name": name, "pid": process.pid, "running": (code := process.poll()) is None,
+                      "exitCode": code}
                      for name, process in self.children]}
         if self.authority_store is not None:
             value["services"].append({"name": "accounts-and-registry", "pid": os.getpid(),
@@ -144,6 +148,7 @@ class ProductSupervisor:
             "WEBOBS_LIBSODIUM_LIBRARY": str(self.runtime / "bin/libsodium.dll"),
             "WEBOBS_CLUSTER_INTERNAL_TOKEN": secrets.token_hex(32),
             "WEBOBS_NATIVE_HOST_TOKEN": secrets.token_hex(32),
+            "WEBOBS_NATIVE_BOOT_ID": self.boot_id,
             "WEBOBS_WEBRTC_ENABLED": "true", "WEBOBS_COMPOSITE_ENABLED": "false",
             "WEBOBS_NVR_ENABLED": "false", "WEBOBS_GO2RTC_ENABLED": "false",
             "WEBOBS_CAMERA_BACKGROUND_PROBES": "false", "WEBOBS_CAMERA_BACKGROUND_EVENTS": "false",
@@ -180,6 +185,7 @@ class ProductSupervisor:
             try:
                 return self.port(value["controlPort"])
             except OSError:
+                self.failure_reason = "saved-control-port-unavailable"
                 raise RuntimeError("saved control port is unavailable") from None
         lease, port = self.port()
         # Commit once before exposing the first browser origin. Later launches
@@ -333,6 +339,7 @@ class ProductSupervisor:
             frontend_environment.update(PATH=self.environment["PATH"],
                 WEBOBS_NATIVE_CONTROL_ORIGIN=self.origin,
                 WEBOBS_NATIVE_HOST_TOKEN=self.environment["WEBOBS_NATIVE_HOST_TOKEN"],
+                WEBOBS_NATIVE_BOOT_ID=self.boot_id,
                 WEBOBS_NATIVE_PROFILE_ROOT=str(self.root / "native-profile"))
             frontend = self.start("frontend", [str(self.runtime / "bin/64bit/obs64.exe"),
                 "--portable", "--disable-updater"], environment=frontend_environment)
@@ -341,8 +348,12 @@ class ProductSupervisor:
                 if (any(process.poll() is not None for name, process in self.children if name != "frontend") or
                         any(not thread.is_alive() for thread in self.authority_threads)):
                     raise RuntimeError("a required product service exited")
+            if frontend.returncode:
+                self.failure_reason = "frontend-exited"
             return frontend.returncode or 0
         except Exception:
+            if not self.failure_reason:
+                self.failure_reason = "startup-or-service-error"
             if self.owns_profile and (self.root / "logs").is_dir():
                 with (self.root / "logs/native-startup.log").open("a", encoding="utf-8") as output:
                     traceback.print_exc(file=output)

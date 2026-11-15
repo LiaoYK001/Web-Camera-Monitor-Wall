@@ -217,6 +217,7 @@ class ProductWindow final : public QWidget {
 			bindings.append(binding);
 		}
 		QJsonObject state{{"schema", 1}, {"phase", QString::fromLatin1(phase)},
+			{"bootId", qEnvironmentVariable("WEBOBS_NATIVE_BOOT_ID")},
 			{"pid", QString::number(QCoreApplication::applicationPid())},
 			{"catalogItems", slots_[0] && slots_[0]->count() > 0 ? slots_[0]->count() - 1 : 0},
 			{"selectionIndices", selection_indices},
@@ -228,6 +229,7 @@ class ProductWindow final : public QWidget {
 			{"videoAvailable", video_available}, {"hardwareDecodeVerified", false}};
 		state.insert("previewLocked", preview_ && preview_->property("webobsPreviewLocked").toBool());
 		state.insert("program", program_state());
+		state.insert("startupStudioDeferred", frontend_->property("webobsStudioDeferredToProduct").toBool());
 		state.insert("restoreGuardHits", frontend_->property("webobsRestoreGuardHits").toInt());
 		state.insert("refusedCollection", frontend_->property("webobsRefusedCollection").toString());
 		state.insert("lastRetirementMs", last_retirement_ms_);
@@ -941,6 +943,11 @@ class ProductWindow final : public QWidget {
 	}
 
 public:
+	void observe_visible_window()
+	{
+		if (user_id_.isEmpty()) observe_state("locked");
+		else observe_current_media();
+	}
 	explicit ProductWindow(QWidget *frontend) : QWidget(frontend, Qt::Window), frontend_(frontend)
 	{
 		// Initialize OBS's real Preview/Program separation while no protected
@@ -1228,6 +1235,11 @@ void start_product_window()
 	frontend->hide();
 	product_window->show();
 	obs_frontend_set_preview_enabled(true);
+	// Native handles can change during the first show/layout. Publish the
+	// actual visible product root again instead of keeping a constructor HWND.
+	QTimer::singleShot(0, product_window, [] {
+		if (product_window) product_window->observe_visible_window();
+	});
 }
 
 void stop_product_window()

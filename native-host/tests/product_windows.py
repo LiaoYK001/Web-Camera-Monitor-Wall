@@ -7,10 +7,12 @@ claim installed-product, real-camera, performance or hardware-decode acceptance.
 from __future__ import annotations
 
 import argparse
+import configparser
 import contextlib
 import ctypes
 import json
 import os
+import re
 from pathlib import Path
 import secrets
 import shutil
@@ -100,6 +102,8 @@ def exercise(runtime, report, *, with_media=False, retained_profile=None):
         opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
         rtsp = None
         idle_program_uuid = None
+        active_boot_id = None
+        boot_started_at = 0.0
 
         def request(path, body=None, cookie="", *, method=None, revision=None):
             origin = status()["origin"]
@@ -129,7 +133,7 @@ def exercise(runtime, report, *, with_media=False, retained_profile=None):
                 return {}
             try:
                 value = read_json(paths[0])
-                return value if value.get("pid") == str(frontend_pid) else {}
+                return value if value.get("pid") == str(frontend_pid) and value.get("bootId") == active_boot_id else {}
             except (OSError, ValueError):
                 return {}
 
@@ -171,20 +175,26 @@ def exercise(runtime, report, *, with_media=False, retained_profile=None):
             return passed
 
         def start():
-            nonlocal process, frontend_pid, idle_program_uuid
-            previous = status().get("ownerPid")
+            nonlocal process, frontend_pid, idle_program_uuid, active_boot_id, boot_started_at
+            previous = status().get("bootId")
+            active_boot_id = None
+            frontend_pid = 0
+            boot_started_at = time.time()
             process = subprocess.Popen([str(entry)], env=environment, stdin=subprocess.DEVNULL,
                 stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
             def ready():
                 assert process.poll() is None, "native product entry exited during startup"
                 value = status()
-                return value if value.get("phase") == "running" and value.get("ownerPid") != previous else None
+                return value if value.get("phase") == "running" and value.get("bootId") != previous and \
+                    isinstance(value.get("bootId"), str) and re.fullmatch(r"[a-f0-9]{32}", value["bootId"]) else None
             value = wait_for(ready, "native entry did not start required services", timeout=45)
+            active_boot_id = value["bootId"]
             known_pids.extend([value["ownerPid"], *(service["pid"] for service in value["services"])])
             frontend_pid = next(service["pid"] for service in value["services"] if service["name"] == "frontend")
             wait_for(lambda: state().get("phase") == "locked", "actual product window did not lock before authentication")
             assert state()["mediaSources"] == 0, "media source restored before login"
             assert state().get("previewLocked") is True, "product monitor preview retained OBS editing guides"
+            assert state().get("startupStudioDeferred") is True, "saved OBS mode bypassed product-owned Studio initialization"
             program = state().get("program", {})
             assert program.get("studioMode") is True and program.get("mediaSources") == 0
             assert isinstance(program.get("sceneUuid"), str) and program["sceneUuid"]
@@ -306,6 +316,19 @@ def exercise(runtime, report, *, with_media=False, retained_profile=None):
             started = start()
             assert sorted(service["name"] for service in started["services"]) == ["accounts-and-registry", "control", "frontend"]
             evidence["checks"].append("single-entry-real-core-authority-and-qt")
+            phase = "saved-studio-mode-cold-start"
+            initial_origin = started["origin"]
+            initial_boot = started["bootId"]
+            assert ui("close")
+            assert process.wait(timeout=40) == 0
+            wait_for(lambda: not any(alive(pid) for pid in known_pids), "pre-login close retained owned processes")
+            preferences = configparser.ConfigParser(interpolation=None)
+            preferences.read_string((profile / "native-profile/obs-studio/user.ini").read_text(encoding="utf-8-sig"))
+            assert preferences.getboolean("BasicWindow", "PreviewProgramMode") is True, \
+                "cold-start control did not actually persist Studio mode"
+            started = start()
+            assert started["origin"] == initial_origin and started["bootId"] != initial_boot
+            evidence["checks"].append("saved-studio-preference-starts-locked-through-product-only")
             phase = "exclusive-control-listener"
             with socket.socket() as competing_listener:
                 competing_listener.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
@@ -711,12 +734,36 @@ def exercise(runtime, report, *, with_media=False, retained_profile=None):
             # counts and numeric exit status leave this disposable test profile.
             evidence["failurePhase"] = phase
             evidence["entryExitCode"] = process.poll() if process is not None else None
+            stopped = status()
+            if stopped.get("bootId") == active_boot_id or (process is not None and stopped.get("ownerPid") == process.pid):
+                reason = stopped.get("failureReason")
+                evidence["currentBootFailure"] = reason if reason in {
+                    "", "saved-control-port-unavailable", "frontend-exited", "startup-or-service-error"} else "unknown"
+                evidence["serviceExits"] = [{"name": service["name"], "running": service.get("running") is True,
+                    "exitCode": service.get("exitCode") if type(service.get("exitCode")) is int else None}
+                    for service in stopped.get("services", []) if service.get("name") in {
+                        "control", "frontend", "accounts-and-registry"}]
             observed = state()
             evidence["observedState"] = {key: observed[key] for key in (
                 "phase", "mediaSources", "sessionBound", "catalogItems", "selectionIndices", "previewLocked",
-                "lastRetirementMs", "mainGeneration", "studioRevision", "renderer", "program") if key in observed}
+                "lastRetirementMs", "mainGeneration", "studioRevision", "renderer", "program",
+                "startupStudioDeferred") if key in observed}
             evidence["observedState"]["watchingSavedScene"] = bool(observed.get("sceneId"))
             evidence["observedState"]["projectorCount"] = len(observed.get("projectors", []))
+            # Only fixed categories/counts from this boot's newest OBS log.
+            # Never publish its contents, path, exception text or camera URL.
+            obs_markers = ("Switched to Preview/Program mode", "Switched to regular Preview mode",
+                "Failed to initialize", "Failed to create", "QWidget", "QObject", "QLayout",
+                "Shutting down", "All scene data cleared", "Number of remaining allocations")
+            obs_logs = [path for path in (profile / "native-profile/obs-studio/logs").glob("*.txt")
+                if not path.is_symlink() and path.is_file() and path.stat().st_mtime >= boot_started_at - 2]
+            evidence["currentBootObsLogPresent"] = bool(obs_logs)
+            if obs_logs:
+                newest = max(obs_logs, key=lambda path: path.stat().st_mtime)
+                with newest.open("rb") as log:
+                    log.seek(max(0, newest.stat().st_size - 2 * 1024 * 1024))
+                    tail = log.read(2 * 1024 * 1024).decode("utf-8", errors="replace")
+                evidence["currentBootObsMarkers"] = {marker: min(1000, tail.count(marker)) for marker in obs_markers}
             markers = ("ModuleNotFoundError", "ImportError", "PermissionError", "FileNotFoundError",
                        "RuntimeError", "AttributeError", "ValueError", "control exited during startup",
                        "control health deadline exceeded", "a required product service exited", "saved control port is unavailable")
