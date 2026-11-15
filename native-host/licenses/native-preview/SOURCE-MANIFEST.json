@@ -1193,6 +1193,21 @@
           "sha256": "1f65085e54c036645082257618db2c7b787e68c3b02485e214ecd09e0834ee8f"
         }
       ]
+    },
+    {
+      "name": "onnxruntime-web",
+      "version": "1.29.0",
+      "source": "https://github.com/microsoft/onnxruntime/tree/v1.29.0",
+      "licenses": [
+        {
+          "path": "web/onnxruntime-web/LICENSE",
+          "sha256": "2f07c72751aed99790b8a4869cf2311df85a860b22ded05fa22803587a48922c"
+        },
+        {
+          "path": "web/onnxruntime-web/ThirdPartyNotices.txt",
+          "sha256": "53d3fa5821ac016ac24dd35775c996efec86e2ae0841e9a3a5e146c0ae916845"
+        }
+      ]
     }
   ]
 }
