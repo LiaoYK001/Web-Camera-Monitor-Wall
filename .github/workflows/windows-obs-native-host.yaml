@@ -7,11 +7,16 @@ on:
       version: { type: string, required: true }
       pixel_test: { type: boolean, default: false }
       product_mode: { type: boolean, default: false }
+      native_preview: { type: boolean, default: false }
       measure_obs_baseline: { type: boolean, default: false }
       upgrade_previous: { type: boolean, default: false }
   workflow_dispatch:
     inputs:
       product_mode:
+        type: boolean
+        default: false
+      native_preview:
+        description: 'Explicit v4.5 native monitor preview only; isolated install, no stable update feed'
         type: boolean
         default: false
       pixel_test:
@@ -38,7 +43,7 @@ permissions:
 jobs:
   native-host:
     runs-on: windows-2022
-    timeout-minutes: 60
+    timeout-minutes: 75
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
@@ -57,6 +62,8 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw 'Runtime PDB pruning contract failed.' }
           python -B native-host/tests/test_product_package.py
           if ($LASTEXITCODE -ne 0) { throw 'Internal product payload contamination/tamper contract failed.' }
+          python -B native-host/tests/test_preview_release.py
+          if ($LASTEXITCODE -ne 0) { throw 'Scoped preview identity/export contract failed.' }
           python -B native-host/tests/test_product_restore_protocol.py
           if ($LASTEXITCODE -ne 0) { throw 'Fragmented restore-I/O request witness failed.' }
           python -B native-host/qualification/test_windows_api.py
@@ -113,10 +120,12 @@ jobs:
           NATIVE_VERSION: ${{ inputs.version }}
           NATIVE_PIXEL_TEST: ${{ inputs.pixel_test }}
           NATIVE_PRODUCT_MODE: ${{ inputs.product_mode }}
+          NATIVE_PREVIEW: ${{ inputs.native_preview }}
         run: |
           $parameters = @{Version=$env:NATIVE_VERSION;BuildDirectory="$env:GITHUB_WORKSPACE/build/obs-native-ci"}
           if ($env:NATIVE_PIXEL_TEST -eq 'true') { $parameters.PixelTest=$true }
           if ($env:NATIVE_PRODUCT_MODE -eq 'true') { $parameters.ProductMode=$true; $parameters.DeferProductServices=$true }
+          if ($env:NATIVE_PREVIEW -eq 'true') { $parameters.NativePreview=$true }
           ./desktop/scripts/build-obs-native.ps1 @parameters
       - name: Build and stage the integrated control and account services
         id: product-control
@@ -153,6 +162,20 @@ jobs:
             if ($restore.cleanupFailed) { throw 'Owned restore-control cleanup failed; do not start another product.' }
           }
           ./desktop/scripts/test-native-product-install.ps1 -BuildDirectory "$env:GITHUB_WORKSPACE/build/obs-native-ci"
+      - name: Export verified native monitor preview bytes
+        if: success() && inputs.native_preview
+        shell: pwsh
+        run: |
+          $revision = (git rev-parse HEAD).Trim()
+          python -B native-host/scripts/preview_assets.py --build build/obs-native-ci --output build/native-preview-assets --revision $revision
+          if ($LASTEXITCODE -ne 0) { throw 'Qualified native preview export failed.' }
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        if: success() && inputs.native_preview
+        with:
+          name: webobs-native-monitor-preview-${{ inputs.version }}
+          path: build/native-preview-assets/*
+          if-no-files-found: error
+          retention-days: 14
       - name: Retain only sanitized internal product receipts
         if: always() && inputs.product_mode
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a

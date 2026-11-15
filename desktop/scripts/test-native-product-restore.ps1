@@ -10,7 +10,8 @@ $obsBuild = Join-Path $buildRoot 'obs-build'
 $control = Join-Path $buildRoot 'restore-negative-control'
 if (Test-Path -LiteralPath $control) { throw 'Restore control output must be new.' }
 $manifest = Get-Content -LiteralPath (Join-Path $runtime 'webobs-native-prototype.json') -Raw | ConvertFrom-Json
-if (-not $manifest.productIntegration -or -not $manifest.publicationForbidden) { throw 'Internal integrated runtime required.' }
+& (Join-Path $runtime 'python/python.exe') -B (Join-Path $repoRoot 'native-host/scripts/product_package.py') --runtime $runtime
+if ($LASTEXITCODE -ne 0 -or -not $manifest.productIntegration) { throw 'Verified integrated runtime required.' }
 $productFrontend = Join-Path $runtime 'bin/64bit/obs64.exe'
 $productHash = (Get-FileHash -LiteralPath $productFrontend -Algorithm SHA256).Hash
 # Reconfigure only the verified disposable source/build copy. OFF removes the

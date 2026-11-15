@@ -8,9 +8,16 @@ $buildRoot = [IO.Path]::GetFullPath($BuildDirectory)
 $runtime = Join-Path $buildRoot 'runtime'
 $python = Join-Path $runtime 'python/python.exe'
 $verifier = Join-Path $repoRoot 'native-host/scripts/product_package.py'
+$manifest = Get-Content -LiteralPath (Join-Path $runtime 'webobs-native-prototype.json') -Raw | ConvertFrom-Json
+$preview = $manifest.releaseProfile -eq 'native-monitor-preview'
 $appKey = 'HKCU:\Software\WebOBS\WallIntegration'
 $uninstallKey = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\WebOBSWallIntegration'
 $shortcut = Join-Path ([Environment]::GetFolderPath('Programs')) 'WebOBS Wall Integration.lnk'
+if ($preview) {
+    $appKey = 'HKCU:\Software\WebOBS\WallPreview'
+    $uninstallKey = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\WebOBSWallPreview'
+    $shortcut = Join-Path ([Environment]::GetFolderPath('Programs')) 'WebOBS Wall v4.5 Preview.lnk'
+}
 if ((Test-Path $appKey) -or (Test-Path $uninstallKey) -or (Test-Path -LiteralPath $shortcut)) {
     throw 'Existing integration installation or shortcut: qualification refuses to replace it.'
 }
@@ -23,18 +30,22 @@ if ($LASTEXITCODE -ne 0) { throw 'Clean product payload verification failed.' }
 $payload = $payloadJson | ConvertFrom-Json
 $version = $payload.version
 $makensis = (Get-Command makensis.exe -ErrorAction Stop).Source
-& $makensis /V2 "/DVERSION=$version" "/DPACKAGE_DIR=$runtime" "/DOUTPUT_DIR=$out" "/DOWNED_REMOVALS=$removals" (Join-Path $repoRoot 'native-host/installer/WebOBSProductIntegration.nsi')
+$nsisArgs = @('/V2',"/DVERSION=$version","/DPACKAGE_DIR=$runtime","/DOUTPUT_DIR=$out","/DOWNED_REMOVALS=$removals")
+if ($preview) { $nsisArgs += '/DNATIVE_PREVIEW' }
+& $makensis @nsisArgs (Join-Path $repoRoot 'native-host/installer/WebOBSProductIntegration.nsi')
 if ($LASTEXITCODE -ne 0) { throw 'Internal integrated NSIS compilation failed.' }
 $setup = Join-Path $out "WebOBS-Wall-$version-INTERNAL-SETUP.exe"
+if ($preview) { $setup = Join-Path $out "WebOBS-Wall-$version-windows-x64-PREVIEW-UNSIGNED.exe" }
 if (-not (Test-Path -LiteralPath $setup -PathType Leaf)) { throw 'Internal installer missing.' }
 $privateRoot = Join-Path ([IO.Path]::GetTempPath()) ('WebOBS Wall 安装-' + [Guid]::NewGuid().ToString('N'))
 & $python -B (Join-Path $repoRoot 'desktop/python/private_directory.py') $privateRoot
 if ($LASTEXITCODE -ne 0) { throw 'Private install scope protection failed.' }
 $installed = Join-Path $privateRoot 'app'
 $profile = Join-Path $privateRoot 'profile'
+if ($preview) { $profile = Join-Path $privateRoot 'local-data/WebOBS/NativePreview' }
 $report = [ordered]@{
     schema=1;kind='internal-native-product-nsis';version=$version;sourceRevision=$payload.sourceRevision
-    passed=$false;publicationForbidden=$true;freshInstalledEntryQualified=$false
+    passed=$false;publicationForbidden=(-not $preview);freshInstalledEntryQualified=$false
     legacyUpgradeQualified=$false;fullFeatureMigrationQualified=$false
     setupBytes=(Get-Item -LiteralPath $setup).Length
     setupSha256=(Get-FileHash -LiteralPath $setup -Algorithm SHA256).Hash.ToLowerInvariant()

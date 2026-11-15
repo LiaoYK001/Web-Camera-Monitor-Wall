@@ -8,6 +8,7 @@ from pathlib import Path
 import shutil
 
 from prepare import OBS_COMMIT, OBS_VERSION
+from release_policy import configure_preview
 
 REQUIRED = (
     "bin/64bit/obs64.exe",
@@ -22,8 +23,10 @@ REQUIRED = (
 )
 
 
-def finalize(repo: Path, source: Path, runtime: Path, version: str, product: bool = False) -> dict:
-    if not version or "-dev." not in version:
+def finalize(repo: Path, source: Path, runtime: Path, version: str, product: bool = False, native_preview: bool = False) -> dict:
+    if native_preview and (not product or version != "4.5.0"):
+        raise ValueError("preview delivery requires the authorized v4.5 product profile")
+    if not native_preview and (not version or "-dev." not in version):
         raise ValueError("Only an explicitly development-tagged prototype may be staged")
     if not runtime.is_dir() or runtime.is_symlink() or (runtime / "webobs-native-prototype.json").exists():
         raise ValueError("Staging requires a new, separate runtime directory")
@@ -35,8 +38,9 @@ def finalize(repo: Path, source: Path, runtime: Path, version: str, product: boo
     # Do not strip/rewrite DLLs after OBS's own runtime and Qt deployment.
     for sentinel in ("portable_mode.txt", "disable_updater.txt"):
         (runtime / sentinel).write_text("WebOBS independent development prototype\n", encoding="utf-8")
-    shutil.copy2(repo / "native-host/scripts/launch-native.ps1", runtime / "launch-native.ps1")
-    shutil.copy2(repo / "native-host/README.md", runtime / "NATIVE-PROTOTYPE-README.md")
+    if not native_preview:
+        shutil.copy2(repo / "native-host/scripts/launch-native.ps1", runtime / "launch-native.ps1")
+        shutil.copy2(repo / "native-host/README.md", runtime / "NATIVE-PROTOTYPE-README.md")
     licenses = runtime / "licenses/webobs-native"
     licenses.mkdir(parents=True, exist_ok=True)
     shutil.copy2(source / "COPYING", licenses / "OBS-COPYING.txt")
@@ -73,6 +77,9 @@ def finalize(repo: Path, source: Path, runtime: Path, version: str, product: boo
     if product:
         manifest.update(productIntegration=True, publicationForbidden=True,
                         qualification="R1 integration in progress; internal automation build")
+    if native_preview:
+        configure_preview(manifest)
+        shutil.copy2(repo / "docs/windows-v4.5-quickstart.md", runtime / "START-HERE.md")
     (runtime / "webobs-native-prototype.json").write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf-8")
     return manifest
 
@@ -84,6 +91,7 @@ if __name__ == "__main__":
     parser.add_argument("--runtime", type=Path, required=True)
     parser.add_argument("--version", required=True)
     parser.add_argument("--product", action="store_true")
+    parser.add_argument("--native-preview", action="store_true")
     args = parser.parse_args()
-    manifest = finalize(args.repo.resolve(), args.source.resolve(), args.runtime.resolve(), args.version, args.product)
+    manifest = finalize(args.repo.resolve(), args.source.resolve(), args.runtime.resolve(), args.version, args.product, args.native_preview)
     print(json.dumps(manifest, indent=2))

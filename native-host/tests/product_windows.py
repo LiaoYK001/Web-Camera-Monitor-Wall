@@ -24,6 +24,8 @@ import tempfile
 import time
 import urllib.error
 import urllib.request
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
+from release_policy import delivery
 
 ROOT = Path(__file__).resolve().parents[2]
 HERE = Path(__file__).resolve().parent
@@ -73,7 +75,8 @@ def exercise(runtime, report, *, with_media=False, retained_profile=None):
     if component_receipt.is_symlink() or component_receipt.stat().st_size > 16 * 1024 * 1024:
         raise ValueError("missing or oversized component receipt")
     components = json.loads(component_receipt.read_text(encoding="utf-8"))
-    if manifest.get("productIntegration") is not True or manifest.get("publicationForbidden") is not True:
+    preview_delivery = delivery(manifest) == "native-monitor-preview"
+    if manifest.get("productIntegration") is not True:
         raise ValueError("internal integrated build required")
     if components.get("fullFeatureMigrationQualified") is not False:
         raise ValueError("R1 test must not imply a complete product")
@@ -87,11 +90,24 @@ def exercise(runtime, report, *, with_media=False, retained_profile=None):
     phase = "prepare"
     with tempfile.TemporaryDirectory(prefix="WebOBS 产品接线-") as temporary:
         private = Path(temporary)
-        profile = Path(retained_profile).absolute() if retained_profile is not None else private / "profile"
+        profile = Path(retained_profile).absolute() if retained_profile is not None else (
+            private / "local-data/WebOBS/NativePreview" if preview_delivery else private / "profile")
         if profile.exists() or profile.is_symlink():
             raise ValueError("product gate requires a NEW disposable profile")
         environment = dict(os.environ)
-        environment["WEBOBS_PRODUCT_TEST_ROOT"] = str(profile)
+        legacy_markers = []
+        if preview_delivery:
+            if profile.name != "NativePreview" or profile.parent.name != "WebOBS":
+                raise ValueError("preview gate requires the actual isolated default data-root shape")
+            environment.pop("WEBOBS_PRODUCT_TEST_ROOT", None)
+            environment["LOCALAPPDATA"] = str(profile.parents[1])
+            for relative in ("config/legacy-marker.txt", "NativeIntegration/config/internal-marker.txt"):
+                marker = profile.parent / relative
+                marker.parent.mkdir(parents=True, exist_ok=True)
+                marker.write_bytes(b"synthetic retained older installation data")
+                legacy_markers.append(marker)
+        else:
+            environment["WEBOBS_PRODUCT_TEST_ROOT"] = str(profile)
         if with_media:
             environment["WEBOBS_PRODUCT_ALLOW_TEST_ENDPOINTS"] = "true"
         account = {"username": "native-owner", "password": secrets.token_urlsafe(24)}
@@ -725,6 +741,9 @@ def exercise(runtime, report, *, with_media=False, retained_profile=None):
             process.wait(timeout=10)
             wait_for(lambda: not any(alive(pid) for pid in known_pids), "Windows Job left owned services after launcher crash", timeout=15)
             evidence["checks"].append("launcher-crash-job-cleans-all-owned-processes")
+            if preview_delivery:
+                assert all(marker.read_bytes() == b"synthetic retained older installation data" for marker in legacy_markers)
+                evidence["checks"].append("preview-default-data-root-isolated-from-legacy-and-internal")
             evidence.pop("lastUiFailure", None)
             evidence["mediaQualified"] = with_media
             evidence["mediaScope"] = "synthetic-five-hevc-final-preview-pixels" if with_media else "not-run"

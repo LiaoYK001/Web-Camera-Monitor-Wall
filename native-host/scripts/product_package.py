@@ -11,11 +11,14 @@ import hashlib
 import json
 from pathlib import Path, PurePosixPath
 import re
+import sys
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from release_policy import delivery, copy_delivery
 
 OBS_COMMIT = "fb4d98bf88fae5fc85cb11fc57f7c5e309282194"
 REQUIRED = {"bin/webobs-wall.exe", "bin/webobsd.exe", "bin/64bit/obs64.exe",
             "obs-plugins/64bit/webobs-native-host.dll", "python/python.exe",
-            "services/product/supervisor.py", "web/index.html"}
+            "services/product/supervisor.py", "services/product/release_policy.py", "web/index.html"}
 
 
 def digest(path):
@@ -38,11 +41,14 @@ def verify(runtime, *, installed=False):
         raise ValueError("product runtime must be a real directory")
     manifest = bounded_json(runtime / "webobs-native-prototype.json", 16384)
     receipt = bounded_json(runtime / "product-components.json", 16 * 1024 * 1024)
-    if (manifest.get("productIntegration") is not True or manifest.get("publicationForbidden") is not True or
+    delivery(manifest)
+    if manifest.get("releaseProfile") and not (runtime / "START-HERE.md").is_file():
+        raise ValueError("preview instructions are required")
+    if (manifest.get("productIntegration") is not True or
             manifest.get("defaultProduct") is not False or manifest.get("obsCommit") != OBS_COMMIT or
-            not re.fullmatch(r"\d+\.\d+\.\d+-dev\.[0-9A-Za-z.-]+", manifest.get("version", "")) or
             receipt.get("kind") != "native-product-integration-components" or receipt.get("schema") != 1 or
-            receipt.get("publicationForbidden") is not True or receipt.get("obsCommit") != OBS_COMMIT or
+            any(receipt.get(k) != v or type(receipt.get(k)) is not type(v) for k, v in copy_delivery(manifest).items()) or
+            receipt.get("obsCommit") != OBS_COMMIT or
             receipt.get("version") != manifest["version"] or receipt.get("fullFeatureMigrationQualified") is not False or
             not re.fullmatch(r"[a-f0-9]{40}", receipt.get("sourceRevision", ""))):
         raise ValueError("internal product build identity mismatch")
@@ -88,7 +94,7 @@ def verify(runtime, *, installed=False):
             "sourceRevision": receipt["sourceRevision"], "files": sorted(actual),
             "totalBytes": total + (runtime / "product-components.json").stat().st_size +
                 ((runtime / "Uninstall.exe").stat().st_size if installed else 0),
-            "publicationForbidden": True, "fullFeatureMigrationQualified": False}
+            **copy_delivery(manifest), "fullFeatureMigrationQualified": False}
 
 
 def write_removals(payload, destination):

@@ -149,7 +149,7 @@ def exercise(binary):
         denied_scene = scene("denied", ["camera-a", "camera-b"])
         raw_scene = scene("unbound", ["camera-a"])
         raw_scene["sources"] = [{"id": "source-0", "name": "Unbound private source", "kind": "rtsp",
-            "rtspUrl": "rtsp://private:private@127.0.0.1:9/not-a-catalog-binding", "transport": "tcp"}]
+            "rtspUrl": "rtsp://127.0.0.1:9/not-a-catalog-binding", "transport": "tcp"}]
         nested_scene = scene("nested", ["camera-a"])
         nested_scene["sources"] = [{"id": "source-0", "name": "Nested allowed", "kind": "nested", "sceneId": "allowed"}]
         for document in (allowed_scene, denied_scene, raw_scene, nested_scene):

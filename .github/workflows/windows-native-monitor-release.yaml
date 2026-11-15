@@ -1,0 +1,16 @@
+name: Qualify Windows v4.5 native monitor preview
+on:
+  workflow_dispatch:
+permissions:
+  contents: read
+  actions: read
+concurrency:
+  group: webobs-windows-native-preview-v4.5
+  cancel-in-progress: false
+jobs:
+  preview:
+    uses: ./.github/workflows/windows-obs-native-host.yaml
+    with:
+      version: '4.5.0'
+      product_mode: true
+      native_preview: true

@@ -959,6 +959,9 @@ public:
 		obs_frontend_set_preview_program_mode(true);
 		idle_program_uuid_ = program_state().value("sceneUuid").toString();
 		setWindowTitle("WebOBS Wall");
+		const bool preview_delivery = qEnvironmentVariable("WEBOBS_NATIVE_PREVIEW") == "true";
+		if (preview_delivery)
+			setWindowTitle(tr("WebOBS Wall v4.5 · 原生监看预览版"));
 		setObjectName("webobsProductWindow");
 		resize(1280, 800);
 		auto *body = new QHBoxLayout(this);
@@ -966,6 +969,11 @@ public:
 		controls->setMinimumWidth(280);
 		controls->setMaximumWidth(360);
 		auto *layout = new QVBoxLayout(controls);
+		if (preview_delivery) {
+			auto *notice = new QLabel(tr("v4.5 预览版：原生监看、账号、场景与投影。录像/NVR、旧数据导入和自动更新尚未提供。"), controls);
+			notice->setWordWrap(true);
+			layout->addWidget(notice);
+		}
 		layout->setContentsMargins(0, 0, 0, 0);
 		auto *sidebar = new QScrollArea(this);
 		sidebar->setWidgetResizable(true);

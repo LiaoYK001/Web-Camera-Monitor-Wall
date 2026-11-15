@@ -9,6 +9,7 @@ param(
     [switch]$SmokeTest,
     [switch]$PixelTest,
     [switch]$ProductMode,
+    [switch]$NativePreview,
     [switch]$DeferProductServices
 )
 $ErrorActionPreference = 'Stop'
@@ -19,7 +20,9 @@ if ($SmokeTest -and $PixelTest) { throw 'Choose startup SmokeTest OR finite Pixe
 if ($PixelTest -and -not (Get-Command 'node' -ErrorAction SilentlyContinue)) { throw 'PixelTest requires Node for synthetic patterns/pixel analysis, never for the native host.' }
 $pixelBuild = if ($PixelTest) { 'ON' } else { 'OFF' }
 if (-not $IsWindows -or -not [Environment]::Is64BitOperatingSystem -or [Runtime.InteropServices.RuntimeInformation]::OSArchitecture -ne 'X64') { throw 'The OBS prototype requires Windows x64.' }
-if ($Version -notmatch '^\d+\.\d+\.\d+-dev\.[0-9A-Za-z.-]+$') { throw 'This independent prototype accepts X.Y.Z-dev.* versions only; no release/package/publication mode exists.' }
+if ($NativePreview) {
+    if (-not $ProductMode -or $Version -ne '4.5.0') { throw 'Explicit preview delivery requires product mode and version 4.5.0.' }
+} elseif ($Version -notmatch '^\d+\.\d+\.\d+-dev\.[0-9A-Za-z.-]+$') { throw 'Internal prototypes accept development versions only.' }
 $repoRoot = (Resolve-Path (Join-Path $PSScriptRoot '../..')).Path
 if (-not $BuildDirectory) { $BuildDirectory = Join-Path $repoRoot ('build/obs-native-windows/' + $Version + '-' + [Guid]::NewGuid().ToString('N').Substring(0,8)) }
 $buildRoot = [IO.Path]::GetFullPath($BuildDirectory)
@@ -82,6 +85,7 @@ Invoke-Checked 'cmake' @('--install',$pluginBuild,'--config','Release','--prefix
 Invoke-Checked 'python' @((Join-Path $repoRoot 'native-host/scripts/prune_runtime.py'),'--runtime',$runtime,'--report',(Join-Path $buildRoot 'native-runtime-prune.json'))
 $stageArguments = @((Join-Path $repoRoot 'native-host/scripts/stage.py'),'--repo',$repoRoot,'--source',$source,'--runtime',$runtime,'--version',$Version)
 if ($ProductMode) { $stageArguments += '--product' }
+if ($NativePreview) { $stageArguments += '--native-preview' }
 Invoke-Checked 'python' $stageArguments
 if ($PixelTest) {
     # A test-enabled runtime must never masquerade as a redistributable prototype.

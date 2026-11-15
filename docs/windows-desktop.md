@@ -1,5 +1,11 @@
 # Windows 桌面客户端 / Windows desktop
 
+## v4.5 原生监看先用版 / Native monitor preview
+
+2026-11-16 用户选择先发布 Windows x64 原生监看预览版。专用 `windows-native-monitor-release.yaml` 复用完整原生安装/媒体门禁，显式 `NativePreview` 构建版本 4.5.0，隔离安装键/快捷方式与 `%LOCALAPPDATA%/WebOBS/NativePreview`。它不是旧版升级或完整融合版，不生成 latest.yml、不变更稳定更新源；仅经全部匹配源码门禁后导出可公开的干净安装包/ZIP。用户已接受此范围，原先“只在完整最终候选集中验收”的交付安排对本次先用版变更；未完成能力仍如实标注。见[使用说明](windows-v4.5-quickstart.md)、[发布说明](release-notes-v4.5.md)。
+
+The requested v4.5 preview uses an explicit delivery profile, separate installation/data and matching full CI gates. It does not migrate legacy data, qualify complete functionality or update stable feeds. The user explicitly chose early native-monitor delivery; all remaining capabilities stay disclosed.
+
 ## 2026-10-31 架构决定与迁移边界 / Native OBS architecture decision
 
 用户决定将 Windows 默认本地监看向固定 OBS 原生前端/Qt 宿主、obs-ffmpeg 媒体源、libobs 场景和原生预览/投影收敛，能复用则不重复实现，包括依赖和安装体积控制。下文 Electron/完整服务/NSIS 描述的是**当前兼容实现**，不再是永久架构要求。原生最小宿主在独立配置中验证；功能、账号/权限、来源标识、音频、退出/崩溃、升级备份和安装生命周期迁移门槛未通过前，不静默移除现有能力或切换默认包。`clients/` Qt/GStreamer 产品保持独立，不并入主媒体链。

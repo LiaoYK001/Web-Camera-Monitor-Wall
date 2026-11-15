@@ -51,10 +51,11 @@ def exercise(binary, sodium):
         shutil.copy2(ROOT / "desktop/python/private_directory.py", runtime / "services/desktop-tools/private_directory.py")
         supervisor = runtime / "services/product/supervisor.py"
         shutil.copy2(ROOT / "native-host/scripts/product_supervisor.py", supervisor)
+        shutil.copy2(ROOT / "native-host/scripts/release_policy.py", supervisor.with_name("release_policy.py"))
         shutil.copy2(binary, runtime / "bin/webobsd.exe")
         shutil.copy2(sodium, runtime / "bin/libsodium.dll")
         (runtime / "webobs-native-prototype.json").write_text(json.dumps({
-            "obsCommit": "fb4d98bf88fae5fc85cb11fc57f7c5e309282194",
+            "obsCommit": "fb4d98bf88fae5fc85cb11fc57f7c5e309282194", "version": "4.1.0-dev.fixture",
             "productIntegration": True, "publicationForbidden": True}), encoding="utf-8")
         frontend = runtime / "bin/64bit/obs64.exe"
         frontend.write_text(f"#!{sys.executable}\nimport signal,time\n"

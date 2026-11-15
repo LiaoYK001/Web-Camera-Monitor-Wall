@@ -41,6 +41,14 @@ def unique_configuration(pairs):
     return value
 
 
+def delivery_profile(manifest):
+    # Embedded Python intentionally omits the script directory from sys.path.
+    specification = importlib.util.spec_from_file_location("native_release_policy", Path(__file__).with_name("release_policy.py"))
+    module = importlib.util.module_from_spec(specification)
+    specification.loader.exec_module(module)
+    return module.delivery(manifest)
+
+
 def protect(root, runtime):
     for path in (root, *root.parents):
         if path.is_symlink():
@@ -94,8 +102,10 @@ class ProductSupervisor:
     def prepare(self):
         manifest = self.runtime / "webobs-native-prototype.json"
         value = json.loads(manifest.read_text(encoding="utf-8"))
+        self.preview = delivery_profile(value) == "native-monitor-preview"
+        self.version = value["version"]
         if (value.get("obsCommit") != "fb4d98bf88fae5fc85cb11fc57f7c5e309282194"
-                or value.get("productIntegration") is not True or value.get("publicationForbidden") is not True):
+                or value.get("productIntegration") is not True):
             raise ValueError("this supervisor requires the internal integrated product build")
         for directory in (self.root, self.root / "run"):
             for path in (directory, *directory.parents):
@@ -340,6 +350,8 @@ class ProductSupervisor:
                 WEBOBS_NATIVE_CONTROL_ORIGIN=self.origin,
                 WEBOBS_NATIVE_HOST_TOKEN=self.environment["WEBOBS_NATIVE_HOST_TOKEN"],
                 WEBOBS_NATIVE_BOOT_ID=self.boot_id,
+                WEBOBS_NATIVE_PRODUCT_VERSION=self.version,
+                WEBOBS_NATIVE_PREVIEW="true" if self.preview else "false",
                 WEBOBS_NATIVE_PROFILE_ROOT=str(self.root / "native-profile"))
             frontend = self.start("frontend", [str(self.runtime / "bin/64bit/obs64.exe"),
                 "--portable", "--disable-updater"], environment=frontend_environment)
@@ -364,7 +376,9 @@ class ProductSupervisor:
 
 def main():
     runtime = Path(__file__).resolve().parents[2]
-    root = Path(os.environ["LOCALAPPDATA"]) / "WebOBS/NativeIntegration"
+    manifest = json.loads((runtime / "webobs-native-prototype.json").read_text(encoding="utf-8"))
+    profile = "NativePreview" if delivery_profile(manifest) == "native-monitor-preview" else "NativeIntegration"
+    root = Path(os.environ["LOCALAPPDATA"]) / "WebOBS" / profile
     # Internal builds accept a separately owned test profile. R6 freezes the
     # production data/upgrade location after migration qualification.
     if os.environ.get("WEBOBS_PRODUCT_TEST_ROOT"):

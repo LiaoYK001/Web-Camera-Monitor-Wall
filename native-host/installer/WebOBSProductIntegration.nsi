@@ -15,17 +15,29 @@ Unicode True
 !ifndef OWNED_REMOVALS
   !error "Verified owned-file uninstall include required."
 !endif
-!define PRODUCT "WebOBS Wall Integration"
-!define APP_ROOT "Software\WebOBS\WallIntegration"
-!define UNINST_ROOT "Software\Microsoft\Windows\CurrentVersion\Uninstall\WebOBSWallIntegration"
+!ifdef NATIVE_PREVIEW
+  !define PRODUCT "WebOBS Wall v4.5 Preview"
+  !define APP_ROOT "Software\WebOBS\WallPreview"
+  !define UNINST_ROOT "Software\Microsoft\Windows\CurrentVersion\Uninstall\WebOBSWallPreview"
+  OutFile "${OUTPUT_DIR}\WebOBS-Wall-${VERSION}-windows-x64-PREVIEW-UNSIGNED.exe"
+  InstallDir "$LOCALAPPDATA\Programs\WebOBS Wall Preview"
+  BrandingText "Native monitor preview - no automatic updates or legacy data migration"
+!else
+  !define PRODUCT "WebOBS Wall Integration"
+  !define APP_ROOT "Software\WebOBS\WallIntegration"
+  !define UNINST_ROOT "Software\Microsoft\Windows\CurrentVersion\Uninstall\WebOBSWallIntegration"
+  OutFile "${OUTPUT_DIR}\WebOBS-Wall-${VERSION}-INTERNAL-SETUP.exe"
+  InstallDir "$LOCALAPPDATA\Programs\WebOBS Wall Integration"
+  BrandingText "Internal integration build - not a complete release"
+!endif
 Name "${PRODUCT} ${VERSION}"
-OutFile "${OUTPUT_DIR}\WebOBS-Wall-${VERSION}-INTERNAL-SETUP.exe"
-InstallDir "$LOCALAPPDATA\Programs\WebOBS Wall Integration"
 RequestExecutionLevel user
 SetCompressor /SOLID lzma
 SetCompressorDictSize 64
-BrandingText "Internal integration build - not a complete release"
 !insertmacro MUI_PAGE_WELCOME
+!ifdef NATIVE_PREVIEW
+  !insertmacro MUI_PAGE_LICENSE "${PACKAGE_DIR}\licenses\webobs-native\PLUGIN-COPYING.txt"
+!endif
 !insertmacro MUI_PAGE_DIRECTORY
 !insertmacro MUI_PAGE_INSTFILES
 !insertmacro MUI_UNPAGE_CONFIRM
@@ -40,7 +52,7 @@ Function .onInit
   SetShellVarContext current
   ReadRegStr $0 HKCU "${APP_ROOT}" "InstallDir"
   StrCmp $0 "" +2
-    Abort "An internal integration installation already exists. Upgrade qualification is not enabled."
+    Abort "This installation already exists. Uninstall it first; private data is retained. Automatic upgrade is not enabled."
   IfFileExists "$SMPROGRAMS\${PRODUCT}.lnk" 0 +2
     Abort "The integration shortcut already exists. No existing shortcuts will be replaced."
 FunctionEnd
@@ -63,7 +75,7 @@ Section "Integrated native product"
   WriteUninstaller "$INSTDIR\Uninstall.exe"
   CreateShortCut "$SMPROGRAMS\${PRODUCT}.lnk" "$INSTDIR\bin\webobs-wall.exe"
   WriteRegStr HKCU "${APP_ROOT}" "InstallDir" "$INSTDIR"
-  WriteRegStr HKCU "${UNINST_ROOT}" "DisplayName" "${PRODUCT} (internal)"
+  WriteRegStr HKCU "${UNINST_ROOT}" "DisplayName" "${PRODUCT}"
   WriteRegStr HKCU "${UNINST_ROOT}" "DisplayVersion" "${VERSION}"
   WriteRegStr HKCU "${UNINST_ROOT}" "InstallLocation" "$INSTDIR"
   WriteRegStr HKCU "${UNINST_ROOT}" "UninstallString" '"$INSTDIR\Uninstall.exe"'

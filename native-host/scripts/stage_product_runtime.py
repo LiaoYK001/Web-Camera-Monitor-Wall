@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+from release_policy import delivery, copy_delivery
 import importlib.util
 import json
 from pathlib import Path
@@ -40,7 +41,8 @@ def stage(repo, runtime, core, vcpkg, cache):
         raise ValueError("stage product services only into a clean native media build")
     manifest_path = runtime / "webobs-native-prototype.json"
     manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
-    if manifest.get("productIntegration") is not True or manifest.get("publicationForbidden") is not True:
+    delivery(manifest)
+    if manifest.get("productIntegration") is not True:
         raise ValueError("expected an internal product integration build")
     for path in (runtime / "python", runtime / "services", runtime / "product-components.json"):
         if path.exists() or path.is_symlink():
@@ -75,6 +77,7 @@ def stage(repo, runtime, core, vcpkg, cache):
     shutil.copy2(repo / "desktop/python/private_directory.py", services / "desktop-tools/private_directory.py")
     (services / "product").mkdir()
     shutil.copy2(repo / "native-host/scripts/product_supervisor.py", services / "product/supervisor.py")
+    shutil.copy2(repo / "native-host/scripts/release_policy.py", services / "product/release_policy.py")
     if not (repo / "web/dist/index.html").is_file():
         raise ValueError("product management UI must be built before staging")
     shutil.copytree(repo / "web/dist", runtime / "web")
@@ -96,7 +99,7 @@ def stage(repo, runtime, core, vcpkg, cache):
                           "sha256": digest(path)})
     revision = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=repo, text=True).strip()
     receipt = {"schema": 1, "kind": "native-product-integration-components", "sourceRevision": revision,
-        "version": manifest["version"], "obsCommit": OBS_COMMIT, "publicationForbidden": True,
+        "version": manifest["version"], "obsCommit": OBS_COMMIT, **copy_delivery(manifest),
         "defaultServices": ["accounts-and-registry", "control", "frontend"],
         "controlMode": "direct-only", "files": files, "totalBytesBeforeReceipt": sum(item["bytes"] for item in files),
         "fullFeatureMigrationQualified": False}
