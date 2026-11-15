@@ -526,8 +526,13 @@ std::string permission_for_request(const HttpRequest &request)
         target.starts_with("/api/v1/motion-zones"))
         return mutating ? "event.ack" : "live.view";
     if (target.starts_with("/api/v1/cameras") || target.starts_with("/api/v2/source-catalog") ||
-        target.starts_with("/api/v1/onvif") || target == "/api/v1/camera-detect")
-        return mutating ? "device.manage" : "live.view";
+        target.starts_with("/api/v1/onvif") || target == "/api/v1/camera-detect") {
+        // The preview's browser is an administrator configuration surface.
+        // Viewers obtain only their filtered camera catalog via /native/cameras;
+        // do not expose the unfiltered configuration list to live.view alone.
+        const char *preview = std::getenv("WEBOBS_NATIVE_PREVIEW");
+        return mutating || (preview && std::string_view(preview) == "true") ? "device.manage" : "live.view";
+    }
     if (target.starts_with("/api/v1/studio") || target.starts_with("/api/v1/scene") ||
         target.starts_with("/api/v2/scenes"))
         return mutating ? "scene.write" : "scene.read";

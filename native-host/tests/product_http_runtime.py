@@ -226,6 +226,7 @@ def exercise(binary):
             WEBOBS_CLUSTER_INTERNAL_PORT=str(account_server.server_port),
             WEBOBS_CAMERA_INTERNAL_PORT=str(camera_server.server_port),
             WEBOBS_CLUSTER_INTERNAL_TOKEN=cluster.INTERNAL_TOKEN, WEBOBS_NATIVE_HOST_TOKEN=host_secret,
+            WEBOBS_NATIVE_PREVIEW="true",
             WEBOBS_COMPAT_BASIC_AUTH="false", WEBOBS_SESSION_COOKIE_SECURE="false",
             WEBOBS_SESSION_DATABASE=str(private / "sessions.db"), WEBOBS_SCENE_FILE=str(private / "scene.json"),
             WEBOBS_WEBRTC_ENABLED="true", WEBOBS_COMPOSITE_ENABLED="false", WEBOBS_NVR_ENABLED="false",
@@ -369,6 +370,8 @@ def exercise(binary):
                 assert len(identity["userId"]) == 32
                 cookie = issued.split(";", 1)[0]
                 assert request("/api/v1/native/auth/session")[0] == 200
+                assert request("/api/v1/cameras")[0] == 403
+                assert request("/api/v2/source-catalog?page=1&limit=256")[0] == 403
                 status, _, catalog = request("/api/v1/native/cameras")
                 assert status == 200 and [item["id"] for item in catalog["cameras"]] == ["camera-a"], \
                     "native catalog exposed an unauthorized camera"
@@ -697,6 +700,7 @@ def exercise(binary):
         # compatibility path; this is not an installed legacy-upgrade test.
         legacy_environment = dict(environment)
         legacy_environment.pop("WEBOBS_NATIVE_HOST_TOKEN")
+        legacy_environment.pop("WEBOBS_NATIVE_PREVIEW")
         with (private / "private-legacy-core.log").open("wb") as legacy_log:
             process = subprocess.Popen([str(binary), "--duration-seconds", "30"], env=legacy_environment,
                 stdin=subprocess.DEVNULL, stdout=legacy_log, stderr=legacy_log,

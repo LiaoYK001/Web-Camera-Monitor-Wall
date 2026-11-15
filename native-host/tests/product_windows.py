@@ -99,7 +99,8 @@ def exercise(runtime, report, *, with_media=False, retained_profile=None):
         if preview_delivery:
             if profile.name != "NativePreview" or profile.parent.name != "WebOBS":
                 raise ValueError("preview gate requires the actual isolated default data-root shape")
-            environment.pop("WEBOBS_PRODUCT_TEST_ROOT", None)
+            # A public preview must ignore a stale internal test-root override.
+            environment["WEBOBS_PRODUCT_TEST_ROOT"] = str(private / "must-not-be-used")
             environment["LOCALAPPDATA"] = str(profile.parents[1])
             for relative in ("config/legacy-marker.txt", "NativeIntegration/config/internal-marker.txt"):
                 marker = profile.parent / relative

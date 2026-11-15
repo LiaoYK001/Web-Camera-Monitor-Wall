@@ -8,7 +8,7 @@ Windows x64 unsigned preview. This delivers native monitoring, not the complete 
 
 1. 安装 `WebOBS-Wall-4.5.0-windows-x64-PREVIEW-UNSIGNED.exe`，从开始菜单 **WebOBS Wall v4.5 Preview** 启动。免安装 ZIP 请先完整解压，再运行 `bin/webobs-wall.exe`，不要直接运行 `obs64.exe`。
 2. 首次填写用户名和密码，点击“创建首个管理员账号”。这是本预览版自己的账号；旧版账号和配置不会自动导入。
-3. 点击“打开设备与系统管理”，在本机浏览器登录刚创建的账号。手动添加 RTSP 摄像机并配置 Profile；URL、密码只填在自己的电脑，不要发到公开反馈里。
+3. 点击“打开设备与系统管理”，在本机浏览器登录刚创建的管理员账号。手动添加 RTSP 摄像机并配置 Profile；URL、密码只填在自己的电脑，不要发到公开反馈里。设备配置目录仅向管理员开放，普通观看账号在原生窗口中只看到获准的摄像机。
 4. 返回原生窗口，点击“刷新设备目录”，选择五个 Profile，点击“开始原生监看”。同一路重复选择会复用兼容来源。
 5. 点击“保存布局”。关闭重开后需要登录，登录后恢复保存的摄像机选择/已保存场景。固定场景投影可打开两个；投影窗口 F11/双击切全屏，Esc 返回。
 

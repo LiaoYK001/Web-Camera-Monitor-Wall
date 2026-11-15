@@ -158,6 +158,7 @@ class ProductSupervisor:
             "WEBOBS_LIBSODIUM_LIBRARY": str(self.runtime / "bin/libsodium.dll"),
             "WEBOBS_CLUSTER_INTERNAL_TOKEN": secrets.token_hex(32),
             "WEBOBS_NATIVE_HOST_TOKEN": secrets.token_hex(32),
+            "WEBOBS_NATIVE_PREVIEW": "true" if self.preview else "false",
             "WEBOBS_NATIVE_BOOT_ID": self.boot_id,
             "WEBOBS_WEBRTC_ENABLED": "true", "WEBOBS_COMPOSITE_ENABLED": "false",
             "WEBOBS_NVR_ENABLED": "false", "WEBOBS_GO2RTC_ENABLED": "false",
@@ -381,7 +382,7 @@ def main():
     root = Path(os.environ["LOCALAPPDATA"]) / "WebOBS" / profile
     # Internal builds accept a separately owned test profile. R6 freezes the
     # production data/upgrade location after migration qualification.
-    if os.environ.get("WEBOBS_PRODUCT_TEST_ROOT"):
+    if profile != "NativePreview" and os.environ.get("WEBOBS_PRODUCT_TEST_ROOT"):
         root = Path(os.environ["WEBOBS_PRODUCT_TEST_ROOT"])
     supervisor = ProductSupervisor(runtime, root)
     for selected in (signal.SIGINT, signal.SIGTERM):
