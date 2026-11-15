@@ -10,6 +10,10 @@ on:
       obs_size_baseline: { type: boolean, default: false }
   workflow_dispatch:
     inputs:
+      native_preview:
+        description: 'Explicit v4.5 native monitor preview; requires native_host/product_mode, no stable feed'
+        default: false
+        type: boolean
       product_mode:
         description: 'Internal R1 product integration build with authenticated Qt UI and pre-restore frontend hook'
         default: false
@@ -312,6 +316,7 @@ jobs:
     with:
       version: ${{ inputs.version }}
       product_mode: ${{ inputs.product_mode || false }}
+      native_preview: ${{ inputs.native_preview || false }}
       measure_obs_baseline: ${{ inputs.obs_size_baseline }}
       upgrade_previous: ${{ inputs.upgrade_previous }}
 
