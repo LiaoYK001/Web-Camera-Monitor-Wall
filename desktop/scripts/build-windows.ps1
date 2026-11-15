@@ -127,6 +127,13 @@ try {
     # Exercise the installed services with embedded Python, without writing
     # bytecode into the immutable runtime or depending on developer packages.
     Invoke-Checked (Join-Path $runtimeRoot 'python\python.exe') @('-I','-B',(Join-Path $repoRoot 'tests\test_camera_registry.py'),
+        'CameraRegistryTests.test_video_reordering_is_probed_and_persisted_without_an_extra_read',
+        'CameraRegistryTests.test_probe_jobs_coalesce_bound_results_and_never_return_exception_secrets',
+        'CameraRegistryTests.test_probe_cannot_overwrite_a_changed_source',
+        'CameraRegistryTests.test_only_product_go2rtc_probe_uses_the_cold_start_budget',
+        'CameraRegistryTests.test_queued_probe_http_completion_accepts_a_cached_result',
+        'CameraRegistryTests.test_manual_probe_refresh_replaces_cached_codec_at_the_same_endpoint',
+        'CameraRegistryTests.test_automatic_and_manual_probes_share_the_same_pending_job',
         'CameraRegistryTests.test_invalid_continuous_move_never_reaches_the_camera',
         'CameraRegistryTests.test_device_ptz_timeout_is_negotiated_persisted_and_sent',
         'CameraRegistryTests.test_ptz_duration_outside_device_range_never_moves',
@@ -144,7 +151,9 @@ try {
     if ($null -eq $savedCameraTest) { Remove-Item Env:WEBOBS_TEST_CAMERA_REGISTRY -ErrorAction SilentlyContinue } else { $env:WEBOBS_TEST_CAMERA_REGISTRY = $savedCameraTest }
     if ($null -eq $savedNvrTest) { Remove-Item Env:WEBOBS_TEST_NVR_SERVICE -ErrorAction SilentlyContinue } else { $env:WEBOBS_TEST_NVR_SERVICE = $savedNvrTest }
 }
+Invoke-Checked 'pnpm' @('--dir',(Join-Path $repoRoot 'web'),'exec','playwright','install','chromium')
 Invoke-Checked 'pnpm' @('--dir',$desktopRoot,'test:runtime')
+Invoke-Checked 'pnpm' @('--dir',$desktopRoot,'test:source-ui','--runtime',$runtimeRoot,'--receipt',(Join-Path $buildRoot 'windows-source-ui.json'))
 Invoke-Checked 'pnpm' @('--dir',$desktopRoot,'test:main')
 if (-not $SkipPackage) {
     $distributionPath = Join-Path $desktopRoot 'src\distribution.json'
@@ -154,6 +163,7 @@ if (-not $SkipPackage) {
     } finally { [IO.File]::WriteAllBytes($distributionPath,$savedDistribution) }
     Invoke-Checked 'pnpm' @('--dir',$desktopRoot,'test:package')
     Invoke-Checked 'pnpm' @('--dir',$desktopRoot,'test:install')
+    Copy-Item -LiteralPath (Join-Path $buildRoot 'windows-source-ui.json') -Destination (Join-Path $desktopRoot "out/$Version/windows-source-ui.json")
     Invoke-Checked 'node' @((Join-Path $PSScriptRoot 'release-assets.mjs'),$Version)
 }
 Write-Output "Built WebOBS $Version. Runtime: $runtimeRoot. Windows 10/11 installation and actual camera checks remain separate qualification steps."

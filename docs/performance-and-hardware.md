@@ -1,5 +1,11 @@
 # 视频硬件与性能验收指南
 
+## Windows v4.1 新决定 / Windows v4.1 architecture override
+
+2026-10-31 用户要求 Windows 本地普通 RTSP 监看按固定 OBS 原生前端、媒体源和显示体系收敛，不再把浏览器兼容转码/WebRTC 当本地必经路径；现有完整 Electron 产品仍是迁移回退，`clients/` Qt/GStreamer 仍独立。目标与公平同机验收以[OBS 同等开销计划](windows-obs-parity-dsh-plan.md)和[执行记录](windows-obs-parity-execution.md)为准。下文 v1/容器/浏览器路径是已有部署的说明，不是 Windows 新宿主的永久要求；`auto`、D3D11 可用与 draw callback 增长均不证明实际硬解或最终图像。
+
+The pinned native OBS frontend/media/display is now the Windows local-monitor target. Existing v1/container/browser paths below remain deployment documentation, not a mandate to retain duplicate local media runtimes. Hardware decode, final picture, complete process cost and installed bytes need independent evidence.
+
 ## 1. 执行链原则
 
 v1 默认优先级是 Gateway Direct relay、Gateway Direct 单轨必要转码、Hybrid hardware transcode、Composite hardware、Composite software fallback。Gateway Direct-only 进程不会调用 `obs_startup`，因此没有服务端视频解码、场景合成或 H.264 编码；但 MediaMTX 仍在 WHEP reader 存在时拉取并转发 RTP/WebRTC 包，所以当前 `direct` 是网关直通，不是 Docker 退出媒体数据面的真直连。

@@ -1,5 +1,36 @@
 import { expect, test } from '@playwright/test';
 
+test('native HEVC survives one startup rejection and repeated rejections use compatibility codecs', async ({ page }) => {
+  await page.goto('/');
+  const offers = await page.evaluate(async () => {
+    const requests: string[] = [];
+    const capabilities = [{ mimeType: 'video/H264', clockRate: 90000 }, { mimeType: 'video/H265', clockRate: 90000 }];
+    (window as any).RTCRtpReceiver = { getCapabilities: () => ({ codecs: capabilities }) };
+    class Peer {
+      connectionState = 'new'; iceGatheringState = 'complete'; localDescription: any = null;
+      codecs = capabilities;
+      addTransceiver(kind: string) { return { setCodecPreferences: (values: typeof capabilities) => { if (kind === 'video') this.codecs = values; } }; }
+      async createOffer() { return { type: 'offer', sdp: 'v=0\r\nm=video 9 UDP/TLS/RTP/SAVPF 96\r\n'+this.codecs.map((value,index) => `a=rtpmap:${96+index} ${value.mimeType.slice(6)}/90000\r\n`).join('') }; }
+      async setLocalDescription(value: any) { this.localDescription = value; }
+      close() { this.connectionState = 'closed'; }
+    }
+    (window as any).RTCPeerConnection = Peer;
+    const original = window.fetch;
+    window.fetch = async (input, init) => {
+      if (init?.method === 'POST' && String(input).includes('/whep')) { requests.push(String(init.body)); return new Response('{}', { status: 502 }); }
+      return original(input, init);
+    };
+    const { connectSource } = await import('/src/whep.ts');
+    const connection = connectSource(document.createElement('video'), '/api/v1/sources/native/whep', () => {});
+    const deadline = performance.now()+12000;
+    while (requests.length < 3 && performance.now()<deadline) await new Promise(resolve => setTimeout(resolve,50));
+    connection.close(); return requests;
+  });
+  expect(offers.length).toBeGreaterThanOrEqual(3);
+  expect(offers[0]).toContain('H265/90000'); expect(offers[1]).toContain('H265/90000');
+  expect(offers[2]).not.toContain('H265/90000'); expect(offers[2]).toContain('H264/90000');
+});
+
 // Drives the real whep.ts state machine with a scripted RTCPeerConnection and a
 // stubbed requestVideoFrameCallback so "live" can only be reached by an
 // actually presented frame.

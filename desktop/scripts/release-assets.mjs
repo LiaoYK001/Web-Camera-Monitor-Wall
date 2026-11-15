@@ -4,6 +4,7 @@ import { fileURLToPath } from 'node:url';
 import { execFileSync } from 'node:child_process';
 import { digestFile } from '../src/runtime-integrity.mjs';
 import { verifyUpdateMetadata } from './update-metadata.mjs';
+import { runtimeFootprint } from './runtime-footprint.mjs';
 const root=path.resolve(path.dirname(fileURLToPath(import.meta.url)),'..','..');
 const version=process.argv[2];
 if(!/^\d+\.\d+\.\d+(?:-dev\.[0-9A-Za-z.-]+)?$/.test(version))throw new Error('Invalid release version');
@@ -18,7 +19,12 @@ await cp(path.join(root,'desktop','runtime','manifest.json'),path.join(out,`webo
 await cp(path.join(root,'desktop','dependencies.lock.json'),path.join(out,`webobs-windows-${version}-dependencies.lock.json`));
 execFileSync('tar',['-czf',path.join(out,`webobs-windows-${version}-licenses.tar.gz`),'-C',path.join(root,'desktop','runtime'),'licenses']);
 const prefix=`webobs-windows-${version}`;
-const assets=[...files,`${prefix}-sbom.cdx.json`,`${prefix}-runtime-manifest.json`,`${prefix}-dependencies.lock.json`,`${prefix}-licenses.tar.gz`];
+const footprint = await runtimeFootprint(path.join(out, 'win-unpacked'));
+const { stat } = await import('node:fs/promises');
+footprint.version = version;
+footprint.installers = await Promise.all(files.filter(name=>name.endsWith('.exe')).map(async name=>({name,bytes:(await stat(path.join(out,name))).size})));
+await writeFile(path.join(out,`${prefix}-footprint.json`),JSON.stringify(footprint,null,2)+'\n');
+const assets=[...files,`${prefix}-sbom.cdx.json`,`${prefix}-runtime-manifest.json`,`${prefix}-dependencies.lock.json`,`${prefix}-licenses.tar.gz`,`${prefix}-footprint.json`];
 const checksums=[];
 for(const name of assets.sort()) {
   if(!/^[A-Za-z0-9][A-Za-z0-9._-]{0,199}$/.test(name))continue;

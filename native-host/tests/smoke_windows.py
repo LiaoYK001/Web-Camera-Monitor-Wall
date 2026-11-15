@@ -1,0 +1,497 @@
+#!/usr/bin/env python3
+"""Actual Windows Qt/plugin/portable startup smoke; never camera qualification."""
+from __future__ import annotations
+
+import argparse
+import hashlib
+import json
+import os
+import re
+from pathlib import Path
+import secrets
+import shutil
+import subprocess
+import sys
+import time
+from typing import Sequence
+
+
+PRODUCT_URLS = tuple(f"rtsp://127.0.0.1:9/smoke-{index}" for index in range(1, 6))
+FORBIDDEN_PROCESS_NAMES = frozenset({"ffmpeg.exe", "go2rtc.exe", "mediamtx.exe", "python.exe", "python3.exe",
+                                     "node.exe", "caddy.exe", "webobs.exe", "electron.exe"})
+SERVICE_LISTENER_PORTS = frozenset({80, 443, 1984, 8554, 8555, 8888, 9000, 8080})
+
+
+def product_config_payload() -> dict:
+    cameras = [{"id": f"cam-{index}", "name": f"Smoke Camera {index}", "url": PRODUCT_URLS[index - 1],
+                "hardwareDecode": False} for index in range(1, 6)]
+    return {"schema": 1, "cameras": cameras}
+
+
+def write_product_config(path: Path) -> None:
+    """Write the product camera config a real installation would ship privately."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(product_config_payload()), encoding="utf-8")
+
+
+def check_product_receipt(receipt_path: Path, urls: Sequence[str] = PRODUCT_URLS, *, expect_created: int = 5,
+                          expect_reused: int = 0, expect_scene_reused: bool | None = None,
+                          expect_ownership_entries: int | None = None,
+                          expect_binding_bound: int | None = None,
+                          expect_video: dict | None = None,
+                          expect_hardware_requests: int | None = None) -> dict:
+    """Validate the URL-free bootstrap receipt; never leak or print camera URLs."""
+    text = receipt_path.read_text(encoding="utf-8")
+    receipt = json.loads(text)
+    if receipt.get("ok") is not True or receipt.get("created") != expect_created or receipt.get("items") != 5:
+        raise AssertionError("Product camera bootstrap created/reused an unexpected number of sources")
+    if receipt.get("reused") != expect_reused or receipt.get("canvasApplied") not in (True, False):
+        raise AssertionError("Product camera bootstrap reuse/canvas flag mismatch")
+    if expect_scene_reused is not None and receipt.get("sceneReused") is not expect_scene_reused:
+        raise AssertionError("Product camera bootstrap wall reuse mismatch")
+    if "error" in receipt:
+        raise AssertionError("Product camera bootstrap reported an error")
+    if expect_video is not None:
+        if receipt.get("canvasApplied") is not True or receipt.get("videoInfo") != expect_video:
+            raise AssertionError("Actual OBS canvas/output/fps did not match the requested mode")
+        check_renderer_receipt(receipt.get("renderer"))
+    if expect_hardware_requests is not None:
+        value = receipt.get("hardwareDecodeRequestedSources")
+        if type(value) is not int or value != expect_hardware_requests:
+            raise AssertionError("Stored OBS source hardware-decode requests did not match policy")
+    for url in urls:
+        if url in text:
+            raise AssertionError("Product bootstrap receipt leaked a camera URL")
+    if "ownershipLedger" in receipt:
+        raise AssertionError("Product bootstrap ownership ledger persistence failed")
+    # Receipts from plugin versions predating the ledger report no such field
+    # (cross-version upgrade smokes run pinned older binaries); only a
+    # reported count may be asserted, and an explicit failure marker is fatal.
+    if (expect_ownership_entries is not None and "ownershipEntries" in receipt
+            and receipt["ownershipEntries"] != expect_ownership_entries):
+        raise AssertionError("Product bootstrap ownership ledger entry count mismatch")
+    if expect_binding_bound is not None:
+        if receipt.get("bindingInspection") != "observed" or receipt.get("bindingItems") != 5:
+            raise AssertionError("Product bootstrap binding inspection was not observed")
+        bound = receipt.get("bindingBound")
+        unbound = receipt.get("bindingUnbound")
+        if type(bound) is not int or type(unbound) is not int or bound + unbound != 5:
+            raise AssertionError("Product bootstrap binding receipt is malformed")
+        if bound != expect_binding_bound:
+            raise AssertionError("Product bootstrap bound provenance count mismatch")
+    return receipt
+
+
+def check_renderer_receipt(value) -> None:
+    if (not isinstance(value, dict) or value.get("available") is not True
+            or value.get("api") != "d3d11" or value.get("hardwareDecodeVerified") is not False
+            or type(value.get("software")) is not bool
+            or not isinstance(value.get("adapterLuid"), str)
+            or re.fullmatch(r"[a-f0-9]{8}:[a-f0-9]{8}", value["adapterLuid"]) is None):
+        raise AssertionError("Actual OBS renderer adapter was not identified")
+    for key in ("vendorId", "deviceId", "dedicatedVideoMemoryCapacityBytes"):
+        if type(value.get(key)) is not int or not 0 <= value[key] <= 2 ** 53:
+            raise AssertionError("Actual OBS renderer adapter metadata is invalid")
+
+
+def launch_once(runtime: Path, pwsh: str, environment: dict, token: str, product_file: Path | None,
+                receipt: str, reuse: bool = False, gate: Path | None = None,
+                diagnostic: bool = True) -> None:
+    args = [pwsh, "-NoProfile", "-File", str(runtime / "launch-native.ps1"), "-AllowPrototype",
+            "-SmokeToken", token, "-TimeoutSeconds", "90"]
+    if product_file is not None:
+        args.extend(["-ProductConfig", str(product_file)])
+    if diagnostic:
+        args.append("-DiagnosticBootstrap")
+    if gate is not None:
+        args.extend(["-ProcessGatePath", str(gate)])
+    if reuse:
+        args.append("-ReuseProfile")
+    environment = dict(environment)
+    environment["WEBOBS_NATIVE_SMOKE_RECEIPT"] = receipt
+    process = subprocess.run(args, cwd=runtime.parent, env=environment, check=False)
+    if process.returncode:
+        raise RuntimeError(f"Native startup/normal close failed with exit code {process.returncode}")
+
+
+def check_process_gate(path: Path) -> dict:
+    """Reject helper services and post-exit orphans observed around one real OBS launch."""
+    gate = json.loads(path.read_text(encoding="utf-8"))
+    if gate.get("schema") != 1 or gate.get("samples", 0) < 1:
+        raise AssertionError("Native process gate did not sample the running process tree")
+    names = [str(item.get("name", "")).lower() for item in gate.get("observed", [])]
+    forbidden = sorted(set(names) & FORBIDDEN_PROCESS_NAMES)
+    if forbidden:
+        raise AssertionError(f"Native host started unrelated helper processes: {forbidden}")
+    orphans = gate.get("orphans", [])
+    if orphans:
+        raise AssertionError(f"Native host left {len(orphans)} process(es) after normal exit: "
+                             + ", ".join(sorted({str(item.get('name', '?')) for item in orphans})))
+    service_ports = sorted({int(item.get("port", 0)) for item in gate.get("listeners", [])
+                            if int(item.get("port", 0)) in SERVICE_LISTENER_PORTS})
+    if service_ports:
+        raise AssertionError(f"Native host opened gateway/website listener ports: {service_ports}")
+    return {"schema": 1, "samples": int(gate.get("samples", 0)),
+            "observedNames": sorted(set(names)), "serviceListenerPorts": [],
+            "orphanCount": 0}
+
+
+def verify_smoke(receipt_path: Path, token: str, profile: Path) -> dict:
+    receipt = json.loads(receipt_path.read_text(encoding="utf-8"))
+    if receipt.get("token") != token or receipt.get("obsVersion") != "32.1.2" or receipt.get("qtPlatform") != "windows":
+        raise AssertionError("Native plugin identity/token mismatch")
+    if Path(receipt["profile"]).resolve() != profile or Path(receipt["moduleConfig"]).resolve() != profile / "plugin_config/webobs-native-host":
+        raise AssertionError("OBS reported a non-portable plugin configuration path")
+    for flag in ("dockLoaded", "mediaSourceRegistered", "finishedLoading"):
+        if receipt.get(flag) is not True:
+            raise AssertionError(f"Native startup receipt missing {flag}")
+    if receipt.get("mediaQualified") is not False:
+        raise AssertionError("A startup smoke cannot qualify media")
+    if (receipt.get("diagnosticOnly") is not True or receipt.get("accountAuthorization") is not False
+            or receipt.get("migrationQualified") is not False):
+        raise AssertionError("A diagnostic receipt must explicitly disclaim account authorization/migration")
+    if not (profile / "global.ini").is_file() or not (profile / "user.ini").is_file():
+        raise AssertionError("Portable OBS did not persist its own configuration")
+    return receipt
+
+
+def check_restored_graph_refusal(receipt: dict, module: Path, *, expected_sources: int) -> None:
+    """Ordinary launch over an OBS-restored wall: measure the graph, refuse bootstrap.
+
+    OBS loads the saved scene collection before FINISHED_LOADING. This check does
+    not claim pre-load isolation; it proves the plugin observes the already
+    restored ffmpeg sources and still performs no bootstrap or ownership write.
+    """
+    if receipt.get("startupBootstrap") != "refused":
+        raise AssertionError("Ordinary startup must refuse automatic bootstrap over a restored wall")
+    before, after = receipt.get("beforeBootstrap"), receipt.get("afterBootstrap")
+    if not isinstance(before, dict) or not before:
+        raise AssertionError("Ordinary startup receipt lacks a graph observation")
+    if before != after:
+        raise AssertionError("Ordinary startup changed the graph observation")
+    if before.get("mediaSources") != expected_sources or before.get("videoAvailable") is not True:
+        raise AssertionError(
+            f"OBS-restored graph not observed before the plugin gate: mediaSources={before.get('mediaSources')}")
+    for name in ("product-bootstrap.json", "source-ownership.json"):
+        if not (module / name).is_file():
+            raise AssertionError(f"Restored-graph fixture lacks the private {name}")
+
+
+def check_startup_refusal(receipt: dict, module: Path) -> None:
+    if receipt.get("startupBootstrap") != "refused":
+        raise AssertionError("Ordinary startup must refuse automatic bootstrap even with a smoke token")
+    before, after = receipt.get("beforeBootstrap"), receipt.get("afterBootstrap")
+    if (not isinstance(before, dict) or not before or before != after
+            or before.get("mediaSources") != 0 or before.get("videoAvailable") is not True):
+        raise AssertionError("Plugin startup changed video/media in the fresh refusal fixture")
+    for name in ("product-bootstrap.json", "wall-bootstrap.json", "source-ownership.json"):
+        if (module / name).exists():
+            raise AssertionError("Refused startup wrote a bootstrap/ownership receipt")
+
+
+def run_startup_refusal(runtime: Path, pwsh: str, environment: dict, token: str,
+                        product_file: Path, profile: Path) -> None:
+    """Actual plugin event, fresh synthetic profile only; NOT OBS pre-load isolation."""
+    module = profile / "plugin_config/webobs-native-host"
+    environment = dict(environment)
+    # Inherited selectors MUST NOT opt an ordinary launcher into diagnostics.
+    environment["WEBOBS_NATIVE_DIAGNOSTIC_BOOTSTRAP"] = "isolated-prototype-v1"
+    environment["WEBOBS_NATIVE_DIAGNOSTIC_ROOT"] = str(runtime)
+    original = product_file.read_bytes()
+    payload = json.loads(original)
+    payload["canvas"] = {"width": 1280, "height": 720, "fps": 15}
+    product_file.write_text(json.dumps(payload), encoding="utf-8")
+    try:
+        name = f"native-smoke-{token[:12]}-refused-product.json"
+        launch_once(runtime, pwsh, environment, token, product_file, name, diagnostic=False)
+        check_startup_refusal(verify_smoke(profile / name, token, profile), module)
+        if (runtime / "backups").exists():
+            raise AssertionError("Ordinary startup unexpectedly performed the plugin backup")
+        if (module / "product.json").read_bytes() != product_file.read_bytes():
+            raise AssertionError("Refusal modified the synthetic private product config")
+        # Exercise the wall.json fallback in the SAME fresh disposable fixture.
+        private_product = module / "product.json"
+        if private_product.resolve() != (runtime / "config/obs-studio/plugin_config/webobs-native-host/product.json").resolve():
+            raise AssertionError("Unexpected private refusal fixture path")
+        private_product.unlink()
+        wall = module / "wall.json"
+        wall.write_text(json.dumps({"schema": 1, "sources": [
+            f"11111111-2222-3333-4444-{index:012d}" for index in range(5)]}), encoding="utf-8")
+        name = f"native-smoke-{token[:12]}-refused-wall.json"
+        launch_once(runtime, pwsh, environment, token, None, name, reuse=True, diagnostic=False)
+        check_startup_refusal(verify_smoke(profile / name, token, profile), module)
+        wall.unlink()
+    finally:
+        product_file.write_bytes(original)
+
+
+def fingerprint(root: Path) -> dict:
+    """Private before/after comparison, never print paths or file contents."""
+    if not root.exists():
+        return {}
+    if root.is_symlink():
+        raise ValueError("Refuse an external OBS profile symlink")
+    state = {}
+    total = 0
+    for path in root.rglob("*"):
+        if path.is_symlink():
+            raise ValueError("Refuse symlinks in the external OBS profile")
+        if not path.is_file():
+            continue
+        size = path.stat().st_size
+        total += size
+        if len(state) >= 10000 or total > 64 * 1024 * 1024:
+            raise ValueError("External OBS profile too large for bounded isolation smoke; use a dedicated Windows test account")
+        state[str(path.relative_to(root))] = hashlib.sha256(path.read_bytes()).hexdigest()
+    return state
+
+
+def run(runtime: Path, result: Path, *, existing_wall: bool = False, verify_video: bool = False) -> dict:
+    if sys.platform != "win32":
+        raise RuntimeError("The Qt startup smoke requires actual Windows x64")
+    profile = (runtime / "config/obs-studio").resolve()
+    if existing_wall:
+        if not profile.is_dir() or not (profile / "global.ini").is_file() or not (profile / "user.ini").is_file():
+            raise ValueError("Existing-wall smoke requires an installed private portable profile")
+    elif (runtime / "config").exists():
+        raise ValueError("Use a NEW disposable runtime; never overwrite private configuration")
+    if result.exists():
+        raise ValueError("Use a NEW result path")
+    pwsh = shutil.which("pwsh")
+    if not pwsh:
+        raise RuntimeError("PowerShell 7.2+ is required")
+    appdata = os.environ.get("APPDATA")
+    if not appdata:
+        raise RuntimeError("APPDATA is required for private before/after isolation verification")
+    external = Path(appdata) / "obs-studio"
+    before = fingerprint(external)
+    token = secrets.token_hex(16)
+    environment = os.environ.copy()
+    # The real launcher must remove these, including Qt's plugin override.
+    for name in ("OBS_PLUGINS_PATH", "OBS_PLUGINS_DATA_PATH", "OBS_CONFIG_PATH", "QT_PLUGIN_PATH", "QT_QPA_PLATFORM_PLUGIN_PATH", "QML2_IMPORT_PATH"):
+        environment[name] = str(runtime / "deliberately-nonexistent-external-override")
+    product_file = (result.parent / (result.stem + "-product.json")).resolve()
+    write_product_config(product_file)
+    expected_video = None
+    if verify_video:
+        payload = product_config_payload()
+        for camera in payload["cameras"]:
+            del camera["hardwareDecode"]
+        payload["canvas"] = {"width": 1280, "height": 720, "fps": 15}
+        product_file.write_text(json.dumps(payload), encoding="utf-8")
+        expected_video = {"baseWidth": 1280, "baseHeight": 720, "outputWidth": 1280,
+                          "outputHeight": 720, "fpsNumerator": 15, "fpsDenominator": 1}
+    first_name = f"native-smoke-{token[:12]}-first.json"
+    second_name = f"native-smoke-{token[:12]}-second.json"
+    gate_path = result.parent / (result.stem + "-process-gate.json")
+    try:
+        if not existing_wall:
+            run_startup_refusal(runtime, pwsh, environment, token, product_file, profile)
+        launch_once(runtime, pwsh, environment, token, product_file, first_name, reuse=True,
+                    gate=gate_path)
+        process_gate = check_process_gate(gate_path)
+        first_receipt = verify_smoke(profile / first_name, token, profile)
+        if first_receipt.get("startupBootstrap") != "diagnostic-completed":
+            raise AssertionError("Explicit isolated bootstrap diagnostic did not run")
+        product = check_product_receipt(
+            profile / "plugin_config/webobs-native-host/product-bootstrap.json",
+            expect_created=0 if existing_wall else 5,
+            expect_reused=5 if existing_wall else 0,
+            expect_scene_reused=True if existing_wall else None,
+            expect_ownership_entries=5, expect_binding_bound=5, expect_video=expected_video,
+            expect_hardware_requests=5 if verify_video else None)
+        if existing_wall:
+            second = product
+        else:
+            module = profile / "plugin_config/webobs-native-host"
+            bootstrap_bytes = (module / "product-bootstrap.json").read_bytes()
+            ownership_bytes = (module / "source-ownership.json").read_bytes()
+            restored_name = f"native-smoke-{token[:12]}-restored.json"
+            launch_once(runtime, pwsh, environment, token, product_file, restored_name,
+                        reuse=True, diagnostic=False)
+            check_restored_graph_refusal(verify_smoke(profile / restored_name, token, profile),
+                                         module, expected_sources=5)
+            if (module / "product-bootstrap.json").read_bytes() != bootstrap_bytes:
+                raise AssertionError("Ordinary startup mutated the bootstrap receipt")
+            if (module / "source-ownership.json").read_bytes() != ownership_bytes:
+                raise AssertionError("Ordinary startup rewrote the ownership ledger")
+            launch_once(runtime, pwsh, environment, token, product_file, second_name, reuse=True)
+            verify_smoke(profile / second_name, token, profile)
+            second = check_product_receipt(profile / "plugin_config/webobs-native-host/product-bootstrap.json",
+                                           expect_created=0, expect_reused=5, expect_scene_reused=True,
+                                           expect_ownership_entries=5, expect_binding_bound=5,
+                                           expect_video=expected_video,
+                                           expect_hardware_requests=5 if verify_video else None)
+    finally:
+        product_file.unlink(missing_ok=True)
+    if fingerprint(external) != before:
+        raise AssertionError("External OBS profile changed during native portable smoke; do not publish private files")
+    qualification = ("Single launch over an installed private profile: reuse only; "
+                     "no camera/pixel/performance/auth/upgrade claim") if existing_wall else (
+        "Two launches in one disposable profile: fresh product creation then reuse; "
+        "no camera/pixel/performance/auth/upgrade claim")
+    summary = {"schema": 1, "status": "passed", "existingWallMode": existing_wall,
+               "diagnosticOnly": True, "accountAuthorization": False, "migrationQualified": False,
+               "ordinaryStartupRefusalVerified": not existing_wall,
+               "obsVersion": "32.1.2", "qtVersion": first_receipt["qtVersion"],
+               "dockLoaded": True, "mediaSourceRegistered": True, "normalExit": True,
+               "portableProfile": True, "externalObsProfileUnchanged": True,
+               "productCameraCreated": product["created"], "productCameraReused": product["reused"],
+               "productCameraCreatedSecond": second["created"], "productCameraReusedSecond": second["reused"],
+               "productSceneReusedSecond": second["sceneReused"],
+               "productOwnershipEntries": product.get("ownershipEntries"),
+               "productOwnershipEntriesSecond": second.get("ownershipEntries"),
+               "restoredGraphRefusalVerified": not existing_wall,
+               "restoredMediaSources": 5 if not existing_wall else None,
+               "productBindingBound": product.get("bindingBound"),
+               "productBindingBoundSecond": second.get("bindingBound"),
+               "verifiedVideoInfo": product.get("videoInfo") if verify_video else None,
+               "actualRenderer": product.get("renderer") if verify_video else None,
+               "hardwareDecodeRequestedSources": product.get("hardwareDecodeRequestedSources"),
+               "inheritedPluginOverridesCleared": True, "mediaQualified": False,
+               "processGate": process_gate, "qualification": qualification}
+    with result.open("x", encoding="utf-8") as output:
+        json.dump(summary, output, indent=2)
+        output.write("\n")
+    print(json.dumps(summary, indent=2))
+    return summary
+
+
+def _obs64_count() -> int:
+    output = subprocess.run(["tasklist", "/FI", "IMAGENAME eq obs64.exe", "/FO", "CSV", "/NH"],
+                            check=False, capture_output=True, text=True).stdout
+    return sum(1 for line in output.splitlines() if "obs64.exe" in line)
+
+
+def run_second_instance(runtime: Path, result: Path, *, hold_seconds: int = 30) -> dict:
+    """Hold one real host, prove the launcher refuses a second one, then contain the first."""
+    if sys.platform != "win32":
+        raise RuntimeError("The second-instance smoke requires actual Windows x64")
+    if (runtime / "config").exists():
+        raise ValueError("Second-instance smoke requires a NEW disposable runtime; never overwrite private configuration")
+    if result.exists():
+        raise ValueError("Use a NEW result path")
+    pwsh = shutil.which("pwsh")
+    if not pwsh:
+        raise RuntimeError("PowerShell 7.2+ is required")
+    environment = os.environ.copy()
+    for name in ("WEBOBS_NATIVE_SMOKE_TOKEN", "WEBOBS_NATIVE_SMOKE_RECEIPT", "WEBOBS_NATIVE_PIXEL_TOKEN",
+                 "WEBOBS_NATIVE_RESTART_TOKEN", "OBS_PLUGINS_PATH", "OBS_PLUGINS_DATA_PATH", "OBS_CONFIG_PATH",
+                 "QT_PLUGIN_PATH", "QT_QPA_PLATFORM_PLUGIN_PATH", "QML2_IMPORT_PATH"):
+        environment.pop(name, None)
+    gate_path = result.parent / (result.stem + "-process-gate.json")
+    product_file = (result.parent / (result.stem + "-product.json")).resolve()
+    write_product_config(product_file)
+    first_args = [pwsh, "-NoProfile", "-File", str(runtime / "launch-native.ps1"), "-AllowPrototype",
+                  "-CrashProbe", "-DiagnosticBootstrap", "-TimeoutSeconds", "120", "-CrashAfterSeconds", str(hold_seconds),
+                  "-ProcessGatePath", str(gate_path), "-ProductConfig", str(product_file)]
+    second_args = [pwsh, "-NoProfile", "-File", str(runtime / "launch-native.ps1"), "-AllowPrototype"]
+    try:
+        first = subprocess.Popen(first_args, cwd=runtime.parent, env=environment)
+        try:
+            deadline = time.monotonic() + 45
+            while time.monotonic() < deadline and _obs64_count() < 1:
+                time.sleep(0.5)
+            if _obs64_count() < 1:
+                raise AssertionError("The first host never started")
+            time.sleep(4)
+            hosts_before = _obs64_count()
+            started = time.monotonic()
+            second = subprocess.run(second_args, cwd=runtime.parent, env=environment, check=False,
+                                    capture_output=True, text=True, timeout=60)
+            elapsed_ms = int((time.monotonic() - started) * 1000)
+            time.sleep(1)
+            hosts_after = _obs64_count()
+        finally:
+            first.wait(timeout=120)
+        gate = json.loads(gate_path.read_text(encoding="utf-8"))
+        if second.returncode != 0:
+            raise AssertionError(f"The refused second launcher exited {second.returncode}: {second.stderr[-400:]}")
+        if "already running" not in (second.stdout + second.stderr).lower():
+            raise AssertionError(f"The second launcher did not report the single-instance refusal: {second.stdout[-400:]}")
+        if elapsed_ms > 20000:
+            raise AssertionError(f"The second launcher was not refused promptly: {elapsed_ms} ms")
+        if hosts_before != 1 or hosts_after != 1:
+            raise AssertionError(f"Expected exactly one real host before/after the refusal, saw {hosts_before}/{hosts_after}")
+        if gate.get("crashed") is not True or int(gate.get("samples", 0)) < 2:
+            raise AssertionError(f"The held first host was not deliberately killed: {gate.get('crashed')}/{gate.get('samples')}")
+        checked = check_process_gate(gate_path)
+        summary = {"schema": 1, "kind": "native-second-instance-smoke", "status": "passed",
+                   "holdSeconds": hold_seconds, "secondExitCode": int(second.returncode),
+                   "secondElapsedMs": elapsed_ms, "hostsBefore": hosts_before, "hostsAfter": hosts_after,
+                   "refused": True, "processGate": checked,
+                   "qualification": "Launcher-level single instance only: no camera, pixel, performance, auth or upgrade claim"}
+        with result.open("x", encoding="utf-8") as output:
+            json.dump(summary, output, indent=2)
+            output.write("\n")
+        print(json.dumps(summary, indent=2))
+        return summary
+    finally:
+        product_file.unlink(missing_ok=True)
+
+
+def run_crash(runtime: Path, result: Path, *, crash_after: int = 8) -> dict:
+    """Kill the real OBS host and require no surviving process from the install root."""
+    if sys.platform != "win32":
+        raise RuntimeError("The crash containment smoke requires actual Windows x64")
+    if (runtime / "config").exists():
+        raise ValueError("Crash smoke requires a NEW disposable runtime; never overwrite private configuration")
+    if result.exists():
+        raise ValueError("Use a NEW result path")
+    pwsh = shutil.which("pwsh")
+    if not pwsh:
+        raise RuntimeError("PowerShell 7.2+ is required")
+    environment = os.environ.copy()
+    for name in ("OBS_PLUGINS_PATH", "OBS_PLUGINS_DATA_PATH", "OBS_CONFIG_PATH", "QT_PLUGIN_PATH", "QT_QPA_PLATFORM_PLUGIN_PATH", "QML2_IMPORT_PATH"):
+        environment[name] = str(runtime / "deliberately-nonexistent-external-override")
+    gate_path = result.parent / (result.stem + "-process-gate.json")
+    product_file = (result.parent / (result.stem + "-product.json")).resolve()
+    write_product_config(product_file)
+    args = [pwsh, "-NoProfile", "-File", str(runtime / "launch-native.ps1"), "-AllowPrototype",
+            "-CrashProbe", "-DiagnosticBootstrap", "-TimeoutSeconds", "120", "-CrashAfterSeconds", str(crash_after),
+            "-ProcessGatePath", str(gate_path), "-ProductConfig", str(product_file)]
+    try:
+        process = subprocess.run(args, cwd=runtime.parent, env=environment, check=False)
+    finally:
+        product_file.unlink(missing_ok=True)
+    gate = json.loads(gate_path.read_text(encoding="utf-8"))
+    if gate.get("crashed") is not True:
+        raise AssertionError(f"Crash smoke launcher did not record the deliberate kill "
+                             f"(exit={process.returncode}, samples={gate.get('samples')}, "
+                             f"observed={[item.get('name') for item in gate.get('observed', [])]})")
+    if int(gate.get("samples", 0)) < 2:
+        raise AssertionError("Crash smoke did not sample the running process tree before the kill")
+    checked = check_process_gate(gate_path)
+    summary = {"schema": 1, "kind": "native-crash-smoke", "status": "passed",
+               "crashAfterSeconds": crash_after, "exitCode": int(process.returncode),
+               "processGate": checked,
+               "qualification": "Deliberate host kill only: no camera, pixel, performance, auth or upgrade claim"}
+    with result.open("x", encoding="utf-8") as output:
+        json.dump(summary, output, indent=2)
+        output.write("\n")
+    print(json.dumps(summary, indent=2))
+    return summary
+
+
+if __name__ == "__main__":
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--runtime", type=Path, required=True)
+    parser.add_argument("--result", type=Path, required=True)
+    parser.add_argument("--existing-wall", action="store_true",
+                        help="existing installed profile already owns the five-camera wall")
+    parser.add_argument("--verify-video", action="store_true",
+                        help="require actual 1280x720 / 15fps OBS mode after both launches")
+    parser.add_argument("--crash-smoke", action="store_true",
+                        help="deliberately kill the host and require no surviving process")
+    parser.add_argument("--crash-after-seconds", type=int, default=8)
+    parser.add_argument("--second-instance-smoke", action="store_true",
+                        help="hold one host and require the launcher to refuse a second one")
+    parser.add_argument("--hold-seconds", type=int, default=30)
+    args = parser.parse_args()
+    if args.second_instance_smoke:
+        run_second_instance(args.runtime.resolve(), args.result.resolve(), hold_seconds=args.hold_seconds)
+    elif args.crash_smoke:
+        run_crash(args.runtime.resolve(), args.result.resolve(), crash_after=args.crash_after_seconds)
+    else:
+        run(args.runtime.resolve(), args.result.resolve(), existing_wall=args.existing_wall,
+            verify_video=args.verify_video)

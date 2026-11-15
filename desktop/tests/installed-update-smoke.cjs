@@ -1,8 +1,11 @@
 // Real NSIS download/install and native service/data upgrade in an isolated profile.
 // The local feed and silent installer launcher are test-only; production uses
 // GitHub and the interactive installer after the user's explicit confirmation.
-const { app, safeStorage }=require('electron');
-const { NsisUpdater }=require('electron-updater');
+const { createRequire }=require('node:module');
+const { pathToFileURL }=require('node:url');
+const desktopRequire=createRequire(require('node:path').join(__dirname,'../package.json'));
+const { app, safeStorage }=desktopRequire('electron');
+let NsisUpdater, previousRequire;
 const fs=require('node:fs/promises');
 const { createReadStream }=require('node:fs');
 const { spawn }=require('node:child_process');
@@ -18,21 +21,42 @@ const pause=ms=>new Promise(resolve=>setTimeout(resolve,ms));
   if(!root || !installation || !artifacts || !from)throw new Error('Use the isolated upgrade launcher');
   app.setPath('userData',path.join(root,'electron-harness'));
   let supervisor, controller, server, exitCode=0;
+  const trace=[];
+  function phase(name,detail={}) { trace.push({at:new Date().toISOString(),name,...detail});console.log('UPGRADE_PHASE '+JSON.stringify(trace.at(-1))); }
   try {
     await app.whenReady();
     const { Supervisor }=await import('../src/supervisor.mjs');
-    const { UpdateController }=await import('../src/updates.mjs');
     const { defaults }=await import('../src/settings.mjs');
     const { verifyUpdateMetadata }=await import('../scripts/update-metadata.mjs');
     const { verifyRuntime }=await import('../src/runtime-integrity.mjs');
     const runtime=path.join(installation,'resources','runtime'), data=path.join(root,'profile','WebOBS');
     const target=process.env.WEBOBS_UPGRADE_SMOKE_VERSION;
-    await verifyRuntime(runtime);
+    // Use the previous installed payload's own complete integrity contract.
+    // v4 required components must not be imposed on a valid v3.5 package.
+    const previousModules=path.join(root,'previous-release-src');
+    await fs.mkdir(previousModules,{recursive:false});
+    const previousArchive=path.join(root,'previous-app');
+    const previousModuleHashes={};
+    for(const name of await fs.readdir(path.join(previousArchive,'src'))){
+      if(!/^[A-Za-z0-9._-]+\.mjs$/.test(name))continue;
+      const content=await fs.readFile(path.join(previousArchive,'src',name));
+      await fs.writeFile(path.join(previousModules,name),content);
+      previousModuleHashes[name]=crypto.createHash('sha256').update(content).digest('hex');
+    }
+    const previousImport=name=>import(pathToFileURL(path.join(previousModules,name)).href);
+    const {verifyRuntime:previousVerifyRuntime}=await previousImport('runtime-integrity.mjs');
+    const {Supervisor:PreviousSupervisor}=await previousImport('supervisor.mjs');
+    const {UpdateController:PreviousUpdateController}=await previousImport('updates.mjs');
+    await previousVerifyRuntime(runtime);
+    phase('previous-runtime-verified');
+    previousRequire=createRequire(path.join(previousArchive,'package.json'));
+    ({NsisUpdater}=previousRequire('electron-updater'));
     const originalManifest=JSON.parse(await fs.readFile(path.join(runtime,'manifest.json'),'utf8'));
     assert.equal(originalManifest.version,from);
     const settings={...defaults,autoCheck:true,autoDownload:true,recordingDirectory:path.join(root,'Videos','WebOBS')};
-    supervisor=new Supervisor({runtime,root:data,videos:path.join(root,'Videos'),settings,version:from,safeStorage});
+    supervisor=new PreviousSupervisor({runtime,root:data,videos:path.join(root,'Videos'),settings,version:from,safeStorage});
     await supervisor.start();
+    phase('previous-native-started');
     const origin=supervisor.origin;
     const credentials={username:'upgrade-smoke-admin',password:crypto.randomBytes(24).toString('hex')};
     const request={method:'POST',headers:{Origin:origin,'Content-Type':'application/json'},body:JSON.stringify(credentials)};
@@ -54,22 +78,23 @@ const pause=ms=>new Promise(resolve=>setTimeout(resolve,ms));
     await fs.writeFile(config,`provider: generic\nurl: ${url}\nupdaterCacheDirName: upgrade-cache\n`);
     const adapter={version:from,name:'WebOBS upgrade validation',isPackaged:true,userDataPath:path.join(root,'updater'),baseCachePath:root,appUpdateConfigPath:config,whenReady:()=>app.whenReady(),onQuit:()=>{},quit:()=>{},relaunch:()=>{}};
     const updater=new NsisUpdater(null,adapter);
-    const { ElectronHttpExecutor }=require(path.join(path.dirname(require.resolve('electron-updater/package.json')),'out','electronHttpExecutor.js'));
+    const { ElectronHttpExecutor }=previousRequire(path.join(path.dirname(previousRequire.resolve('electron-updater/package.json')),'out','electronHttpExecutor.js'));
     updater.httpExecutor=new ElectronHttpExecutor();updater.setFeedURL({provider:'generic',url});
     updater.logger={info(){},warn(){},error(){},debug(){}};updater.disableDifferentialDownload=true;
     updater.verifyUpdateCodeSignature=async()=>{throw new Error('Unsigned update requested signing');};
     let installed=false;
-    controller=new UpdateController({updater,official:true,publisher:null,packaged:true,settings,root:data,supervisor,version:from,
+    controller=new PreviousUpdateController({updater,official:true,publisher:null,packaged:true,settings,root:data,supervisor,version:from,
       windowWork:()=>[],confirmStop:async()=>true,beforeInstall:()=>{installed=true;},launchInstaller:file=>new Promise((resolve,reject)=>{
+        phase('nsis-upgrade-start');
         const child=spawn(file,['/S',`/D=${installation}`],{windowsHide:true,windowsVerbatimArguments:true,stdio:'ignore'});
-        const timeout=setTimeout(()=>{child.kill();reject(new Error('NSIS upgrade exceeded five minutes'));},300000);
-        child.once('error',error=>{clearTimeout(timeout);reject(error);});child.once('exit',code=>{clearTimeout(timeout);code===0?resolve():reject(new Error(`NSIS update failed (${code})`));});
+        const timeout=setTimeout(()=>{phase('nsis-upgrade-timeout',{budgetMs:300000});child.kill();reject(new Error('NSIS upgrade exceeded five minutes'));},300000);
+        child.once('error',error=>{clearTimeout(timeout);phase('nsis-launch-error',{code:error.code});reject(error);});child.once('exit',code=>{clearTimeout(timeout);phase('nsis-upgrade-exit',{code});code===0?resolve():reject(new Error(`NSIS update failed (${code})`));});
       })});
     controller.start();
     const deadline=Date.now()+180000;
     while(controller.status().phase!=='downloaded' && Date.now()<deadline){if(controller.status().phase==='error')throw new Error(controller.status().message);await pause(200);}
     assert.equal(controller.status().phase,'downloaded');assert.equal(installed,false,'Download must not install');
-    await controller.install();assert.equal(installed,true,controller.status().message);controller.dispose();
+    await controller.install();assert.equal(installed,true,controller.status().message);controller.dispose();phase('explicit-install-completed');
     const pending=JSON.parse(await fs.readFile(path.join(data,'pending-update.json'),'utf8'));
     assert.equal(pending.from,from);assert.equal(pending.to,target);assert.ok((await fs.stat(pending.snapshot)).isDirectory());
     await verifyRuntime(runtime);const upgraded=JSON.parse(await fs.readFile(path.join(runtime,'manifest.json'),'utf8'));assert.equal(upgraded.version,target);
@@ -79,12 +104,14 @@ const pause=ms=>new Promise(resolve=>setTimeout(resolve,ms));
     const after=await fetch(supervisor.origin+'/api/v2/account/preferences/monitor-view',{headers:{Origin:supervisor.origin,Cookie:cookie}});
     assert.equal(after.status,200);assert.deepEqual(await after.json(),preferences);
     assert.equal(await fs.readFile(path.join(data,'retained-upgrade.marker'),'utf8'),'preserve this data');
+    assert.equal((await (await fetch(supervisor.origin+'/api/v1/health')).json()).milestone,upgraded.milestone);
     await supervisor.stop();
     await fs.writeFile(path.join(artifacts,'windows-update-smoke.json'),JSON.stringify({schema:1,from,version:target,revision:upgraded.revision,
       installerSha256:crypto.createHash('sha256').update(await fs.readFile(path.join(artifacts,info.installer))).digest('hex'),
       checks:{realUpdaterDownload:'passed',explicitInstall:'passed',nativeStopSnapshot:'passed',nsisUpgrade:'passed',accountDataRetention:'passed',postUpgradeHealth:'passed'},
+      harness:{testerRevision:process.env.GITHUB_SHA || null,previousInstalledModules:true,previousModuleSha256:previousModuleHashes,previousRuntimeRevision:originalManifest.revision,currentRuntimeRevision:upgraded.revision,previousArchiveExtraction:JSON.parse(await fs.readFile(path.join(root,'previous-app-extraction.json'),'utf8')),originalFixtureCompatibleWithPreviousVersion:false,reason:'Original fixture applies v4 required components to v3.5; this probe uses matching previous installed modules, independently extracted before test startup so the harness holds no archive handle during NSIS replacement. Product sources, download/installer budgets and data assertions remain unchanged.'},
       qualification:'host smoke with a local feed and silent test launcher; not GitHub delivery, GUI automation, clean-machine or camera qualification'},null,2));
     console.log('Two actual unsigned NSIS versions: real updater detection/download, explicit install, normal native stop, snapshot, upgrade health and account/data retention passed. Local feed/silent launch are test-only.');
   }catch(error){console.error(error);exitCode=1;}
-  finally {controller?.dispose();if(supervisor)await supervisor.stop().catch(()=>{});if(server)await new Promise(resolve=>server.close(resolve));app.exit(exitCode);}
+  finally {controller?.dispose();if(supervisor)await supervisor.stop().catch(()=>{});if(server)await new Promise(resolve=>server.close(resolve));await fs.writeFile(path.join(artifacts,'windows-upgrade-trace.json'),JSON.stringify({schema:1,from,version:process.env.WEBOBS_UPGRADE_SMOKE_VERSION,exitCode,trace},null,2));app.exit(exitCode);}
 })();

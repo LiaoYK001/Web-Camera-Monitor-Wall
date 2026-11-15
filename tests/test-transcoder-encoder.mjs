@@ -17,6 +17,8 @@ const stubDirectory = mkdtempSync(path.join(os.tmpdir(), 'webobs-transcoder-'));
 const stub = path.join(stubDirectory, 'ffmpeg');
 writeFileSync(stub, '#!/bin/sh\nprintf \'%s\\n\' "$@"\n');
 chmodSync(stub, 0o755);
+writeFileSync(path.join(stubDirectory, 'ffprobe'), '#!/bin/sh\nexit 0\n');
+chmodSync(path.join(stubDirectory, 'ffprobe'), 0o755);
 
 function run(args) {
   return new Promise((resolve) => {
@@ -57,4 +59,16 @@ test('the hybrid copy path stays a copy and adds no x264 tuning', async () => {
   const argv = result.argv.join(' ');
   assert.match(argv, /-c:v copy/);
   assert.doesNotMatch(argv, /x264/);
+});
+
+test('go2rtc cold startup uses only the fixed budget while camera defaults stay short', async () => {
+  const ordinary = await run([source, target, 'copy', 'transcode']);
+  const website = await run([source, target, 'copy', 'transcode', '90']);
+  assert.equal(ordinary.code, 0); assert.equal(website.code, 0);
+  assert.equal(ordinary.argv[ordinary.argv.indexOf('-timeout') + 1], '8000000');
+  assert.equal(website.argv[website.argv.indexOf('-timeout') + 1], '8000000', 'cold readiness must not extend steady-state stall detection');
+  assert.match(website.argv.join(' '), /-c:v copy/);
+  for (const extra of ['0', '91', '90000000', '90;touch /tmp/rejected']) {
+    assert.equal((await run([source, target, 'copy', 'transcode', extra])).code, 2);
+  }
 });

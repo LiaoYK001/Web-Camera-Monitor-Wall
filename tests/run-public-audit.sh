@@ -124,10 +124,12 @@ tests/test_event_service.py|user:password
 tests/run-contracts.sh|test-user:supersecret
 tests/run-contracts.sh|***:***
 tests/test_v2_client_control.py|fixture-user:fixture-password
+native-host/tests/test_legacy_import.py|fixture-user:fixture-password
 tests/test_camera_registry.py|user:password
 tests/test_camera_registry.py|user:pass
 tests/test_camera_registry.py|*****:*****
 web/tests/local-runtime/scenes-go2rtc-optimization.spec.ts|private:do-not-display
+web/tests/local-runtime/online-sources.spec.ts|fixture-user:fixture-password
 docs/bulk-source-import.md|user:password
 web/src/CameraRegistry.tsx|user:password
 web/src/SourceCatalog.tsx|user:password

@@ -44,6 +44,7 @@ constexpr SettingSpec setting_specs[] = {
     {"--source-recovery-max-seconds", "WEBOBS_SOURCE_RECOVERY_MAX_SECONDS", "source_recovery_max"},
     {"--webrtc-enabled", "WEBOBS_WEBRTC_ENABLED", "webrtc_enabled"},
     {"--composite-enabled", "WEBOBS_COMPOSITE_ENABLED", "composite_enabled"},
+    {"--composite-on-demand", "WEBOBS_COMPOSITE_ON_DEMAND", "composite_on_demand"},
     {"--nvr-enabled", "WEBOBS_NVR_ENABLED", "nvr_enabled"},
     {"--camera-registry-enabled", "WEBOBS_CAMERA_REGISTRY_ENABLED", "camera_registry_enabled"},
     {"--whip-url", "WEBOBS_WHIP_URL", "whip_url"},
@@ -262,7 +263,7 @@ ParseResult parse_config(const std::vector<std::string> &arguments, const Enviro
         {"pwa_media_allowed_origins", ""},
         {"source_stale_seconds", "10"}, {"source_recovery_base", "3"},
         {"source_recovery_max", "60"},
-        {"webrtc_enabled", "false"}, {"composite_enabled", "false"}, {"nvr_enabled", "false"},
+        {"webrtc_enabled", "false"}, {"composite_enabled", "false"}, {"composite_on_demand", "false"}, {"nvr_enabled", "false"},
         {"camera_registry_enabled", "true"},
         {"whip_url", "http://127.0.0.1:8889/program/whip"},
         {"browser_allowed_origins", ""}, {"browser_allow_private_networks", "false"},
@@ -397,6 +398,8 @@ ParseResult parse_config(const std::vector<std::string> &arguments, const Enviro
         return failure("webrtc-enabled must be true or false");
     if (!parse_boolean(values["composite_enabled"], config.composite_enabled))
         return failure("composite-enabled must be true or false");
+    if (!parse_boolean(values["composite_on_demand"], config.composite_on_demand))
+        return failure("composite-on-demand must be true or false");
     if (config.composite_enabled && !config.webrtc_enabled)
         return failure("composite-enabled requires webrtc-enabled true");
     if (!parse_boolean(values["nvr_enabled"], config.nvr_enabled))
@@ -539,7 +542,8 @@ Options:
   --source-recovery-base-seconds <n> Initial RTSP restart backoff (default: 5)
   --source-recovery-max-seconds <n>  Maximum RTSP restart backoff (default: 60)
   --webrtc-enabled <bool>          Publish the program through WHIP (default: false)
-  --composite-enabled <bool>       Activate OBS sources and Program WHIP (default: false)
+  --composite-enabled <bool>       Enable OBS sources and Program WHIP (default: false)
+  --composite-on-demand <bool>     Publish only while viewers request Composite (default: false)
   --nvr-enabled <bool>             Run the independent per-camera NVR service (default: false)
   --camera-registry-enabled <bool> Run the SQLite Camera Registry service (default: true)
   --whip-url <url>                 WHIP publish URL (default: internal MediaMTX)

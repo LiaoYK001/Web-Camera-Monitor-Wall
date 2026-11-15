@@ -1,0 +1,248 @@
+--- a/frontend/CMakeLists.txt
++++ b/frontend/CMakeLists.txt
+@@ -28,6 +28,11 @@
+ 
+ add_executable(obs-studio)
+ add_executable(OBS::studio ALIAS obs-studio)
++
++option(WEBOBS_PRODUCT_FRONTEND "Use the WebOBS authenticated product surface" ON)
++if(WEBOBS_PRODUCT_FRONTEND)
++  target_compile_definitions(obs-studio PRIVATE WEBOBS_PRODUCT_FRONTEND=1)
++endif()
+ 
+ target_link_libraries(
+   obs-studio
+--- a/frontend/widgets/OBSBasic.cpp
++++ b/frontend/widgets/OBSBasic.cpp
+@@ -221,6 +221,11 @@
+ 
+ OBSBasic::OBSBasic(QWidget *parent) : OBSMainWindow(parent), undo_s(ui), ui(new Ui::OBSBasic)
+ {
++#ifdef WEBOBS_PRODUCT_FRONTEND
++	setProperty("webobsProductFrontend", true);
++	setAttribute(Qt::WA_DontShowOnScreen);
++	disable_3p_plugins = true;
++#endif
+ 	collections = {};
+ 
+ 	setAttribute(Qt::WA_NativeWindow);
+@@ -244,6 +249,10 @@
+ 	api = InitializeAPIInterface(this);
+ 
+ 	ui->setupUi(this);
++#ifdef WEBOBS_PRODUCT_FRONTEND
++	// Monitoring reuses OBS's locked preview, without editing/spacing guides.
++	ui->preview->SetLocked(true);
++#endif
+ 	ui->previewDisabledWidget->setVisible(false);
+ 
+ 	/* Set up streaming connections */
+@@ -1020,6 +1029,10 @@
+ 	struct obs_module_failure_info mfi;
+ 
+ 	// Safe Mode disables third-party plugins so we don't need to add each path outside the OBS bundle/installation.
++#ifdef WEBOBS_PRODUCT_FRONTEND
++	obs_add_safe_module("webobs-native-host");
++	obs_add_core_module("webobs-native-host");
++#endif
+ 	if (safe_mode || disable_3p_plugins) {
+ 		SetSafeModuleNames();
+ 	} else {
+@@ -1065,13 +1078,28 @@
+ 	sceneDuplicationMode = config_get_bool(App()->GetUserConfig(), "BasicWindow", "SceneDuplicationMode");
+ 	swapScenesMode = config_get_bool(App()->GetUserConfig(), "BasicWindow", "SwapScenesMode");
+ 	editPropertiesMode = config_get_bool(App()->GetUserConfig(), "BasicWindow", "EditPropertiesMode");
++#ifdef WEBOBS_PRODUCT_FRONTEND
++	// Product graphs already own source reuse and independent local Preview.
++	sceneDuplicationMode = false;
++	swapScenesMode = false;
++	editPropertiesMode = false;
++#endif
+ 
++#ifdef WEBOBS_PRODUCT_FRONTEND
++	// The authenticated product creates its idle Program and enables Studio
++	// exactly once, after collection restoration has been refused. A saved
++	// frontend preference must not create an earlier, competing Studio UI.
++	SetPreviewProgramMode(false);
++	setProperty("webobsStudioDeferredToProduct", !IsPreviewProgramMode());
++	opt_studio_mode = false;
++#else
+ 	if (!opt_studio_mode) {
+ 		SetPreviewProgramMode(config_get_bool(App()->GetUserConfig(), "BasicWindow", "PreviewProgramMode"));
+ 	} else {
+ 		SetPreviewProgramMode(true);
+ 		opt_studio_mode = false;
+ 	}
++#endif
+ 
+ #define SET_VISIBILITY(name, control)                                                                \
+ 	do {                                                                                         \
+--- a/frontend/widgets/OBSBasic_SceneCollections.cpp
++++ b/frontend/widgets/OBSBasic_SceneCollections.cpp
+@@ -804,6 +804,9 @@
+ 
+ void OBSBasic::Save(SceneCollection &collection)
+ {
++#ifdef WEBOBS_PRODUCT_FRONTEND
++	return;
++#endif
+ 	OBSDataAutoRelease saveData = obs_data_create();
+ 
+ 	// Scene collection name
+@@ -1118,6 +1121,12 @@
+ 
+ void OBSBasic::Load(SceneCollection &collection)
+ {
++#ifdef WEBOBS_PRODUCT_FRONTEND
++	setProperty("webobsRefusedCollection", QString::fromStdString(collection.getName()));
++	setProperty("webobsRestoreGuardHits", property("webobsRestoreGuardHits").toInt() + 1);
++	CreateDefaultScene(false);
++	return;
++#endif
+ 	disableSaving++;
+ 
+ 	lastOutputResolution.reset();
+@@ -1168,6 +1177,9 @@
+ 
+ void OBSBasic::LoadData(obs_data_t *data, SceneCollection &collection)
+ {
++#ifdef WEBOBS_PRODUCT_FRONTEND
++	return;
++#endif
+ 	ClearSceneData();
+ 	ClearContextBar();
+ 
+--- a/frontend/widgets/OBSBasic_Hotkeys.cpp
++++ b/frontend/widgets/OBSBasic_Hotkeys.cpp
+@@ -23,6 +23,9 @@
+ 
+ void OBSBasic::InitHotkeys()
+ {
++#ifdef WEBOBS_PRODUCT_FRONTEND
++	return;
++#endif
+ 	ProfileScope("OBSBasic::InitHotkeys");
+ 
+ 	struct obs_hotkeys_translations t = {};
+--- a/frontend/widgets/OBSBasic_SysTray.cpp
++++ b/frontend/widgets/OBSBasic_SysTray.cpp
+@@ -106,6 +106,9 @@
+ 
+ void OBSBasic::SystemTray(bool firstStarted)
+ {
++#ifdef WEBOBS_PRODUCT_FRONTEND
++	return;
++#endif
+ 	if (!QSystemTrayIcon::isSystemTrayAvailable())
+ 		return;
+ 	if (!trayIcon && !firstStarted)
+--- a/frontend/OBSApp.cpp
++++ b/frontend/OBSApp.cpp
+@@ -37,6 +37,7 @@
+ 
+ #include <QCheckBox>
+ #include <QDesktopServices>
++#include <QDir>
+ #if defined(_WIN32) || defined(ENABLE_SPARKLE_UPDATER)
+ #include <QFile>
+ #endif
+@@ -1676,6 +1676,14 @@
+ 
+ int GetAppConfigPath(char *path, size_t size, const char *name)
+ {
++#ifdef WEBOBS_PRODUCT_FRONTEND
++	const QString root = qEnvironmentVariable("WEBOBS_NATIVE_PROFILE_ROOT");
++	if (root.isEmpty() || !QDir::isAbsolutePath(root))
++		return -1;
++	const auto utf8 = root.toUtf8();
++	return name && *name ? snprintf(path, size, "%s/%s", utf8.constData(), name)
++			    : snprintf(path, size, "%s", utf8.constData());
++#endif
+ #if ALLOW_PORTABLE_MODE
+ 	if (portable_mode) {
+ 		if (name && *name) {
+@@ -1693,6 +1701,15 @@
+ 
+ char *GetAppConfigPathPtr(const char *name)
+ {
++#ifdef WEBOBS_PRODUCT_FRONTEND
++	const QString root = qEnvironmentVariable("WEBOBS_NATIVE_PROFILE_ROOT");
++	if (root.isEmpty() || !QDir::isAbsolutePath(root))
++		return nullptr;
++	QString result = root;
++	if (name && *name)
++		result += "/" + QString::fromUtf8(name);
++	return bstrdup(result.toUtf8().constData());
++#endif
+ #if ALLOW_PORTABLE_MODE
+ 	if (portable_mode) {
+ 		char path[512];
+--- a/frontend/widgets/OBSBasicPreview.hpp
++++ b/frontend/widgets/OBSBasicPreview.hpp
+@@ -33,6 +33,9 @@
+ 
+ class OBSBasicPreview : public OBSQTDisplay {
+ 	Q_OBJECT
++#ifdef WEBOBS_PRODUCT_FRONTEND
++	Q_PROPERTY(bool webobsPreviewLocked READ Locked)
++#endif
+ 
+ 	friend class SourceTree;
+ 	friend class SourceTreeItem;
+--- a/plugins/obs-ffmpeg/obs-ffmpeg-source.c
++++ b/plugins/obs-ffmpeg/obs-ffmpeg-source.c
+@@ -15,6 +15,7 @@
+  */
+ 
+ #include <obs-module.h>
++#include <limits.h>
+ #include <util/threading.h>
+ #include <util/platform.h>
+ #include <util/dstr.h>
+@@ -29,6 +30,9 @@
+ #define FF_BLOG(level, format, ...) FF_LOG_S(s->source, level, format, ##__VA_ARGS__)
+ 
+ struct ffmpeg_source {
++	// Opaque progress serial: delivered video callbacks, not rendered frames or hardware proof.
++	volatile long webobs_video_serial;
++
+ 	media_playback_t *media;
+ 	bool destroy_media;
+ 
+@@ -241,6 +245,13 @@
+ {
+ 	struct ffmpeg_source *s = opaque;
+ 	obs_source_output_video(s->source, f);
++	if (f) {
++		// One media callback writer; the UI only performs atomic reads. Wrap before overflow.
++		if (os_atomic_load_long(&s->webobs_video_serial) == LONG_MAX)
++			os_atomic_store_long(&s->webobs_video_serial, 1);
++		else
++			os_atomic_inc_long(&s->webobs_video_serial);
++	}
+ }
+ 
+ static void preload_frame(void *opaque, struct obs_source_frame *f)
+@@ -592,6 +603,13 @@
+ 		obs_source_media_stop(s->source);
+ }
+ 
++static void webobs_get_video_progress(void *data, calldata_t *cd)
++{
++	struct ffmpeg_source *s = data;
++	calldata_set_int(cd, "schema", 1);
++	calldata_set_int(cd, "serial", os_atomic_load_long(&s->webobs_video_serial));
++}
++
+ static void *ffmpeg_source_create(obs_data_t *settings, obs_source_t *source)
+ {
+ 	struct ffmpeg_source *s = bzalloc(sizeof(struct ffmpeg_source));
+@@ -623,6 +641,8 @@
+ 						    ffmpeg_source_stop_hotkey, s);
+ 
+ 	proc_handler_t *ph = obs_source_get_proc_handler(source);
++	proc_handler_add(ph, "void webobs_get_video_progress(out int schema, out int serial)",
++			 webobs_get_video_progress, s);
+ 	proc_handler_add(ph, "void restart()", restart_proc, s);
+ 	proc_handler_add(ph, "void preload_first_frame()", preload_first_frame_proc, s);
+ 	proc_handler_add(ph, "void get_duration(out int duration)", get_duration, s);

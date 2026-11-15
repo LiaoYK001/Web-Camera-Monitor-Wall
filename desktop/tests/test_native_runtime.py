@@ -10,6 +10,7 @@ import time
 import unittest
 import sqlite3
 from contextlib import closing
+from unittest.mock import patch, Mock
 
 ROOT=pathlib.Path(__file__).resolve().parents[2]
 sys.path.insert(0,str(ROOT))
@@ -189,6 +190,45 @@ class SnapshotTests(unittest.TestCase):
             self.assertIn('setts=ts=TS+150/(1000*TB)',args)
             for values in [['rtsp://a b','mix-'+'b'*32,'audio-mix','0:1:0'],['direct-'+'a'*32,'hybrid-'+'b'*32,'transcode','; calc']]:
                 with self.assertRaises(ValueError):transcoder.arguments(values)
+
+    def test_hybrid_decode_fallback_preserves_hardware_encoding_and_passthrough(self):
+        values=['direct-'+'a'*32,'hybrid-'+'b'*32,'transcode','copy']
+        env={'WEBOBS_FFMPEG_PATH':'ffmpeg','WEBOBS_NVIDIA_ENCODE_SUPPORTED':'true','WEBOBS_NVIDIA_DECODE_SUPPORTED':'true','WEBOBS_HYBRID_VIDEO_ENCODER':'auto','WEBOBS_SOFTWARE_FALLBACK':'false'}
+        with patch.dict(os.environ,env):
+            call=Mock(side_effect=[1,0])
+            self.assertEqual(transcoder.run_transcoder(values,call),0)
+            first,second=[item.args[0] for item in call.call_args_list]
+            self.assertLess(first.index('-hwaccel'),first.index('-i'))
+            self.assertEqual(first[first.index('-hwaccel')+1],'cuda')
+            self.assertNotIn('-hwaccel',second)
+            self.assertEqual(second[second.index('-c:v')+1],'h264_nvenc')
+            values[2]='copy'
+            call=Mock(return_value=0);transcoder.run_transcoder(values,call)
+            self.assertNotIn('-hwaccel',call.call_args.args[0])
+            self.assertEqual(call.call_args.args[0][call.call_args.args[0].index('-c:v')+1],'copy')
+
+    def test_go2rtc_startup_budget_is_fixed_and_keeps_hardware_fallback(self):
+        values=['direct-'+'a'*32,'hybrid-'+'b'*32,'transcode','copy','90']
+        env={'WEBOBS_FFMPEG_PATH':'ffmpeg','WEBOBS_NVIDIA_ENCODE_SUPPORTED':'true','WEBOBS_NVIDIA_DECODE_SUPPORTED':'true','WEBOBS_HYBRID_VIDEO_ENCODER':'auto','WEBOBS_SOFTWARE_FALLBACK':'false'}
+        with patch.dict(os.environ,env),patch.object(transcoder,'prepare_cold_input',return_value=0) as prepare:
+            call=Mock(side_effect=[1,0]);self.assertEqual(transcoder.run_transcoder(values,call),0);prepare.assert_called_once_with(values)
+            for invocation in call.call_args_list:
+                args=invocation.args[0];self.assertEqual(args[args.index('-timeout')+1],'8000000')
+            ordinary=transcoder.arguments(values[:4]);self.assertEqual(ordinary[ordinary.index('-timeout')+1],'8000000')
+            for extra in ('0','91','90000000','90;calc'):
+                with self.assertRaises(ValueError):transcoder.arguments(values[:4]+[extra])
+            with self.assertRaises(ValueError):transcoder.arguments([values[0],'audio-'+'b'*32+'-t0','audio-track','0','90'])
+
+    def test_cold_probe_is_bounded_and_failed_warmup_never_starts_transcoding(self):
+        values=['direct-'+'a'*32,'hybrid-'+'b'*32,'copy','transcode','90']
+        with patch.dict(os.environ,{'WEBOBS_FFMPEG_PATH':'/bundle/ffmpeg'}),patch.object(transcoder.subprocess,'run',return_value=Mock(returncode=0)) as run:
+            self.assertEqual(transcoder.prepare_cold_input(values),0)
+            self.assertEqual(run.call_args.kwargs['timeout'],90)
+            self.assertEqual(run.call_args.kwargs['stderr'],subprocess.DEVNULL)
+            self.assertIn('90000000',run.call_args.args[0])
+            self.assertEqual(run.call_args.args[0][-1],'rtsp://127.0.0.1:8554/'+values[0])
+        with patch.object(transcoder,'prepare_cold_input',return_value=1):
+            call=Mock();self.assertEqual(transcoder.run_transcoder(values,call),1);call.assert_not_called()
 
     @unittest.skipUnless(os.name=='nt' and (ROOT/'desktop/runtime/bin/webobs-job.exe').exists(),'requires a built Windows runtime')
     def test_console_stop_reaches_owned_child_and_preserves_normal_exit(self):

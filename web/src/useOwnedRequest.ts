@@ -17,14 +17,14 @@ export function useOwnedRequest(report: (message: string) => void, beforeMutatio
     owner.current.controller.abort(); owner.current = null; setBusy(false); setMutating(false);
   };
   const run = async <T,>(name: string, operation: (signal: AbortSignal) => Promise<T>, apply: (value: T) => void,
-    mutation = true, failed?: (reason: unknown) => void): Promise<boolean> => {
+    mutation = true, failed?: (reason: unknown) => void, timeoutMs = 20000): Promise<boolean> => {
     if (!active.current || owner.current) return false;
     const current = { controller: new AbortController(), mutation, name }; owner.current = current;
     if (mutation) beforeMutation?.();
     setBusy(true); setMutating(mutation); report('');
     const owns = () => active.current && owner.current === current && !current.controller.signal.aborted;
     try {
-      const value = await withRequestTimeout(20000, operation, current.controller.signal);
+      const value = await withRequestTimeout(timeoutMs, operation, current.controller.signal);
       if (!owns()) return false;
       apply(value); return true;
     } catch (reason) {

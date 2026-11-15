@@ -2,9 +2,13 @@
 #include "webobs/control_server.hpp"
 
 #include "webobs/authentication.hpp"
+#include "webobs/native_control_auth.hpp"
+#include "webobs/native_cluster_authorization.hpp"
+#include "webobs/native_scene_fingerprint.hpp"
 #include "webobs/go2rtc_proxy.hpp"
 #include "webobs/nvr_media_proxy.hpp"
 #include "webobs/audio_tracks.hpp"
+#include "webobs/receiver_codecs.hpp"
 #include "webobs/audit_event.hpp"
 #include "webobs/scene_controller.hpp"
 #include "webobs/studio_controller.hpp"
@@ -16,6 +20,8 @@
 #include <boost/beast/websocket.hpp>
 #include <curl/curl.h>
 #include <jansson.h>
+#include <limits>
+#include <openssl/crypto.h>
 #include <util/base.h>
 
 #include <csignal>
@@ -45,11 +51,14 @@
 #include <mutex>
 #include <optional>
 #include <random>
+#include <set>
+#include <span>
 #include <sstream>
 #include <string>
 #include <string_view>
 #include <thread>
 #include <unordered_map>
+#include <unordered_set>
 #include <utility>
 #include <vector>
 
@@ -309,6 +318,7 @@ bool compatibility_basic_auth_enabled()
 struct ClusterLoginResult {
     long status = 0;
     std::string username;
+    std::optional<SessionIdentity> identity;
 };
 
 // Password hashing may exceed three seconds during native OBS startup on a slow CPU.
@@ -316,7 +326,7 @@ struct ClusterLoginResult {
 constexpr long account_password_timeout_ms = 10000L;
 
 ClusterLoginResult cluster_login(std::string_view username, std::string_view password,
-                                 std::string_view client_key)
+                                 std::string_view client_key, bool native = false)
 {
     ClusterLoginResult result;
     CURL *handle = curl_easy_init();
@@ -327,17 +337,36 @@ ClusterLoginResult cluster_login(std::string_view username, std::string_view pas
                              "\",\"password\":\"" + json_escape(password) +
                              "\",\"username\":\"" + json_escape(username) + "\"}";
     curl_slist *headers = curl_slist_append(nullptr, "Content-Type: application/json");
-    curl_easy_setopt(handle, CURLOPT_URL, runtime_http(8095, "/auth/login").c_str());
+    if (native) {
+        const char *internal = std::getenv("WEBOBS_CLUSTER_INTERNAL_TOKEN");
+        if (!internal || std::string_view(internal).size() != 64) {
+            curl_slist_free_all(headers);
+            curl_easy_cleanup(handle);
+            return result;
+        }
+        auto *next = curl_slist_append(headers, ("X-WebObs-Internal-Admin: " + std::string(internal)).c_str());
+        if (!next) {
+            curl_slist_free_all(headers);
+            curl_easy_cleanup(handle);
+            return result;
+        }
+        headers = next;
+    }
+    curl_easy_setopt(handle, CURLOPT_URL, runtime_http(8095, native ? "/auth/native-login" : "/auth/login").c_str());
     curl_easy_setopt(handle, CURLOPT_PROTOCOLS_STR, "http");
     curl_easy_setopt(handle, CURLOPT_CONNECTTIMEOUT_MS, 500L);
     curl_easy_setopt(handle, CURLOPT_TIMEOUT_MS, account_password_timeout_ms);
     curl_easy_setopt(handle, CURLOPT_NOSIGNAL, 1L);
     curl_easy_setopt(handle, CURLOPT_FOLLOWLOCATION, 0L);
+    curl_easy_setopt(handle, CURLOPT_PROXY, "");
+    curl_easy_setopt(handle, CURLOPT_NOPROXY, "*");
     curl_easy_setopt(handle, CURLOPT_HTTPHEADER, headers);
     curl_easy_setopt(handle, CURLOPT_POSTFIELDS, body.data());
     curl_easy_setopt(handle, CURLOPT_POSTFIELDSIZE_LARGE, static_cast<curl_off_t>(body.size()));
     curl_easy_setopt(handle, CURLOPT_WRITEFUNCTION,
         +[](char *data, std::size_t size, std::size_t count, void *context) -> std::size_t {
+            if (size != 0 && count > (std::numeric_limits<std::size_t>::max)() / size)
+                return 0;
             const std::size_t bytes = size * count;
             auto &destination = *static_cast<std::string *>(context);
             constexpr std::size_t maximum = 16 * 1024;
@@ -366,6 +395,23 @@ ClusterLoginResult cluster_login(std::string_view username, std::string_view pas
     }
     if (result.username.empty())
         result.status = 0;
+    if (native) {
+        const auto guard = [](json_t *field) {
+            if (!json_is_string(field) || json_string_length(field) != 32)
+                return false;
+            const std::string_view text(json_string_value(field), 32);
+            return std::all_of(text.begin(), text.end(), [](char c) {
+                return (c >= '0' && c <= '9') || (c >= 'a' && c <= 'f');
+            });
+        };
+        auto *user_id = root ? json_object_get(root, "userId") : nullptr;
+        auto *epoch = root ? json_object_get(root, "authEpoch") : nullptr;
+        if (result.status == 200 && json_object_size(root) == 3 && guard(user_id) && guard(epoch) &&
+            json_string_length(value) == result.username.size() && result.username == username)
+            result.identity = SessionIdentity{json_string_value(user_id), json_string_value(epoch)};
+        else
+            result.status = 0;
+    }
     json_decref(root);
     return result;
 }
@@ -480,8 +526,13 @@ std::string permission_for_request(const HttpRequest &request)
         target.starts_with("/api/v1/motion-zones"))
         return mutating ? "event.ack" : "live.view";
     if (target.starts_with("/api/v1/cameras") || target.starts_with("/api/v2/source-catalog") ||
-        target.starts_with("/api/v1/onvif") || target == "/api/v1/camera-detect")
-        return mutating ? "device.manage" : "live.view";
+        target.starts_with("/api/v1/onvif") || target == "/api/v1/camera-detect") {
+        // The preview's browser is an administrator configuration surface.
+        // Viewers obtain only their filtered camera catalog via /native/cameras;
+        // do not expose the unfiltered configuration list to live.view alone.
+        const char *preview = std::getenv("WEBOBS_NATIVE_PREVIEW");
+        return mutating || (preview && std::string_view(preview) == "true") ? "device.manage" : "live.view";
+    }
     if (target.starts_with("/api/v1/studio") || target.starts_with("/api/v1/scene") ||
         target.starts_with("/api/v2/scenes"))
         return mutating ? "scene.write" : "scene.read";
@@ -599,16 +650,21 @@ std::string camera_scope_for_target(std::string_view target, std::string_view bo
 
 enum class ClusterAuthorization { allowed, user_unknown, denied, unavailable };
 
-ClusterAuthorization cluster_authorize(std::string_view username, const HttpRequest &request)
+ClusterAuthorization cluster_authorize(std::string_view username, const HttpRequest &request,
+                                       const SessionIdentity *identity = nullptr)
 {
     const char *token_value = std::getenv("WEBOBS_CLUSTER_INTERNAL_TOKEN");
     if (!token_value)
         return ClusterAuthorization::unavailable;
     const std::string permission = permission_for_request(request);
     const std::string camera_id = camera_scope_for_target(view(request.target()), view(request.body()));
-    const std::string body = "{\"cameraId\":\"" + json_escape(camera_id) +
+    std::string body = "{\"cameraId\":\"" + json_escape(camera_id) +
                              "\",\"permission\":\"" + json_escape(permission) +
-                             "\",\"username\":\"" + json_escape(username) + "\"}";
+                             "\",\"username\":\"" + json_escape(username) + "\"";
+    if (identity)
+        body += ",\"userId\":\"" + json_escape(identity->user_id) +
+                "\",\"authEpoch\":\"" + json_escape(identity->auth_epoch) + "\"";
+    body += "}";
     CURL *handle = curl_easy_init();
     if (!handle)
         return ClusterAuthorization::unavailable;
@@ -616,17 +672,22 @@ ClusterAuthorization cluster_authorize(std::string_view username, const HttpRequ
     const std::string token_header = "X-WebObs-Internal-Admin: " + std::string(token_value);
     curl_slist *headers = curl_slist_append(nullptr, "Content-Type: application/json");
     headers = curl_slist_append(headers, token_header.c_str());
-    curl_easy_setopt(handle, CURLOPT_URL, runtime_http(8095, "/auth/authorize").c_str());
+    curl_easy_setopt(handle, CURLOPT_URL, runtime_http(8095,
+        identity ? "/auth/native-authorize" : "/auth/authorize").c_str());
     curl_easy_setopt(handle, CURLOPT_PROTOCOLS_STR, "http");
     curl_easy_setopt(handle, CURLOPT_CONNECTTIMEOUT_MS, 500L);
     curl_easy_setopt(handle, CURLOPT_TIMEOUT_MS, 2000L);
     curl_easy_setopt(handle, CURLOPT_NOSIGNAL, 1L);
     curl_easy_setopt(handle, CURLOPT_FOLLOWLOCATION, 0L);
+    curl_easy_setopt(handle, CURLOPT_PROXY, "");
+    curl_easy_setopt(handle, CURLOPT_NOPROXY, "*");
     curl_easy_setopt(handle, CURLOPT_HTTPHEADER, headers);
     curl_easy_setopt(handle, CURLOPT_POSTFIELDS, body.data());
     curl_easy_setopt(handle, CURLOPT_POSTFIELDSIZE_LARGE, static_cast<curl_off_t>(body.size()));
     curl_easy_setopt(handle, CURLOPT_WRITEFUNCTION,
         +[](char *data, std::size_t size, std::size_t count, void *context) -> std::size_t {
+            if (size != 0 && count > (std::numeric_limits<std::size_t>::max)() / size)
+                return 0;
             const std::size_t bytes = size * count;
             auto &destination = *static_cast<std::string *>(context);
             if (bytes > 4096 || destination.size() > 4096 - bytes)
@@ -640,6 +701,32 @@ ClusterAuthorization cluster_authorize(std::string_view username, const HttpRequ
         curl_easy_getinfo(handle, CURLINFO_RESPONSE_CODE, &status);
     curl_slist_free_all(headers);
     curl_easy_cleanup(handle);
+    if (identity) {
+        std::unique_ptr<json_t, decltype(&json_decref)> root(
+            json_loadb(response_body.data(), response_body.size(), JSON_REJECT_DUPLICATES, nullptr), &json_decref);
+        const auto text = [](json_t *value) -> std::string_view {
+            return json_is_string(value) ? std::string_view(json_string_value(value), json_string_length(value))
+                                         : std::string_view{};
+        };
+        if (!json_is_object(root.get()))
+            return ClusterAuthorization::unavailable;
+        if (status == 200)
+            return json_object_size(root.get()) == 4 && json_is_true(json_object_get(root.get(), "allowed")) &&
+                text(json_object_get(root.get(), "permission")) == permission &&
+                text(json_object_get(root.get(), "userId")) == identity->user_id &&
+                text(json_object_get(root.get(), "authEpoch")) == identity->auth_epoch
+                ? ClusterAuthorization::allowed : ClusterAuthorization::unavailable;
+        auto *error = json_object_get(root.get(), "error");
+        if (json_object_size(root.get()) != 1 || !json_is_object(error) || json_object_size(error) != 2)
+            return ClusterAuthorization::unavailable;
+        const auto code = text(json_object_get(error, "code"));
+        const auto message = text(json_object_get(error, "message"));
+        if (status == 404 && code == "user_not_found" && message == "user is not managed by RBAC")
+            return ClusterAuthorization::user_unknown;
+        if (status == 403 && code == "permission_rejected" && message == "permission or resource scope was rejected")
+            return ClusterAuthorization::denied;
+        return ClusterAuthorization::unavailable;
+    }
     if (status == 200)
         return ClusterAuthorization::allowed;
     if (status == 404)
@@ -695,15 +782,20 @@ struct ResolvedCameraEndpoint {
     std::string audio_codec;
     std::string transport_mode;
     std::optional<std::vector<AudioTrackDescriptor>> probed_audio_tracks;
+    bool video_reordering = false;
+    bool video_reordering_known = false;
+    std::string hardware_decode = "auto";
 };
 
 std::optional<ResolvedCameraEndpoint> resolve_camera_endpoint(std::string_view camera_id,
-                                                              std::string_view profile_id)
+                                                              std::string_view profile_id,
+                                                              bool require_profile = false)
 {
     std::string body;
     CURL *handle = curl_easy_init();
     if (!handle) return std::nullopt;
-    const std::string url = runtime_http(8092, "/resolve/") + std::string(camera_id) + "/" + std::string(profile_id);
+    const std::string url = runtime_http(8092, "/resolve/") + std::string(camera_id) + "/" + std::string(profile_id) +
+        (require_profile ? "?requireProfile=1" : "");
     const auto write = [](char *data, std::size_t size, std::size_t count, void *context) -> std::size_t {
         const std::size_t bytes = size * count;
         auto &output = *static_cast<std::string *>(context);
@@ -711,6 +803,8 @@ std::optional<ResolvedCameraEndpoint> resolve_camera_endpoint(std::string_view c
         output.append(data, bytes); return bytes;
     };
     curl_easy_setopt(handle, CURLOPT_URL, url.c_str());
+    curl_easy_setopt(handle, CURLOPT_PROXY, "");
+    curl_easy_setopt(handle, CURLOPT_NOPROXY, "*");
     curl_easy_setopt(handle, CURLOPT_PROTOCOLS_STR, "http");
     curl_easy_setopt(handle, CURLOPT_CONNECTTIMEOUT_MS, 1000L);
     curl_easy_setopt(handle, CURLOPT_TIMEOUT_MS, 3000L);
@@ -737,6 +831,10 @@ std::optional<ResolvedCameraEndpoint> resolve_camera_endpoint(std::string_view c
             json_is_string(audio_codec) ? json_string_value(audio_codec) : "", "auto", std::nullopt};
         if (json_t *transport = json_object_get(root, "transportMode"); json_is_string(transport))
             result->transport_mode = json_string_value(transport);
+        if (json_t *hardware = json_object_get(root, "hardwareDecode"); json_is_string(hardware))
+            result->hardware_decode = json_string_value(hardware);
+        result->video_reordering = json_is_true(json_object_get(root, "videoReordering"));
+        result->video_reordering_known = json_is_true(json_object_get(root, "videoReorderingKnown"));
         if (json_is_true(json_object_get(root, "tracksProbed")) && json_is_array(json_object_get(root, "audioTracks"))) {
             json_t *probe = json_object();
             json_object_set(probe, "streams", json_object_get(root, "audioTracks"));
@@ -820,10 +918,13 @@ public:
                 route == direct_routes_.end() ? std::string{} : route->second.audio_codec;
             const bool video_transcode = route != direct_routes_.end() && route->second.video_transcode;
             const bool audio_transcode = route != direct_routes_.end() && route->second.audio_transcode;
+            const bool native_hevc_eligible = route != direct_routes_.end() &&
+                hevc_passthrough_allowed(codec, route->second.video_reordering_known,
+                                         route->second.video_reordering, true, false);
             const std::string video_delivery = video_transcode ? "transcode" : "copy";
             const std::string audio_delivery = audio_transcode ? "transcode" : "copy";
             const std::string cost = video_transcode ? "high" : audio_transcode ? "medium" : "low";
-            const std::string reason = video_transcode ? "video_codec_incompatible" :
+            const std::string reason = video_transcode ? (route->second.video_reordering ? "video_frame_reordering" : "video_codec_incompatible") :
                                        audio_transcode ? "audio_codec_incompatible" : "";
             const std::string encoder = video_transcode
                 ? (video_encoder_backend_ready(VideoEncoderKind::vaapi, runtime_status_.video_encoder.vaapi) ? "h264_vaapi" : "libx264")
@@ -841,11 +942,36 @@ public:
                     ",\"serverAudioTranscode\":" + (audio_transcode ? "true" : "false") +
                     ",\"decoder\":\"" + (video_transcode ? "vaapi-or-software" : "browser") +
                     "\",\"encoder\":\"" + encoder + "\",\"serverCost\":\"" + cost +
-                    "\",\"compositePublisherActive\":" +
+                    "\",\"strategyScope\":\"compatibility-default\",\"nativeHevcEligible\":" +
+                    (native_hevc_eligible ? "true" : "false") + ",\"compositePublisherActive\":" +
                     (runtime_status_.webrtc_ready.load() ? "true" : "false") + "}";
         }
         body += "]}";
         return response(http::status::ok, version, std::move(body));
+    }
+
+    bool composite_requested()
+    {
+        // Called only by the engine thread, never by the HTTP worker. The
+        // publisher stays warm while negotiation retries, then actual gateway
+        // readers decide demand (including clients that crash without DELETE).
+        const auto now = std::chrono::steady_clock::now().time_since_epoch();
+        const auto milliseconds = std::chrono::duration_cast<std::chrono::milliseconds>(now).count();
+        if (milliseconds - last_program_request_.load() < 45000)
+            return true;
+        if (!runtime_status_.webrtc_ready.load())
+            return false;
+        const auto upstream = request_http(std::string(control_origin) + "/v3/paths/get/program", {}, "GET", {}, 1000L);
+        if (upstream.ok && upstream.status == 404)
+            return false;
+        if (!upstream.ok || upstream.status != 200)
+            return true; // A monitoring outage must not stop active viewers.
+        json_error_t error{};
+        json_t *root = json_loads(upstream.body.c_str(), JSON_REJECT_DUPLICATES, &error);
+        const json_t *readers = root ? json_object_get(root, "readers") : nullptr;
+        const bool requested = !json_is_array(readers) || json_array_size(readers) > 0;
+        if (root) json_decref(root);
+        return requested;
     }
 
     HttpResponse create_program(const HttpRequest &request)
@@ -877,7 +1003,7 @@ public:
         {
             const auto route_lock = route_lock_for(source->id);
             const std::lock_guard operation_lock(*route_lock);
-            route = ensure_playback_route(*source);
+            route = ensure_playback_route(*source, false, receiver_offers_hevc(request.body()));
         }
         if (!route)
             return response(http::status::bad_gateway, request.version(),
@@ -902,7 +1028,7 @@ public:
         {
             const auto route_lock = route_lock_for(source.id);
             const std::lock_guard operation_lock(*route_lock);
-            route = ensure_playback_route(source);
+            route = ensure_playback_route(source, false, receiver_offers_hevc(request.body()));
         }
         if (!route)
             return response(http::status::bad_gateway, request.version(),
@@ -1096,10 +1222,19 @@ private:
         std::string transport;
         std::string codec;
         std::string audio_codec;
+        std::string registry_video_codec;
+        std::string registry_audio_codec;
+        std::string camera_id;
+        std::string profile_id;
+        std::chrono::steady_clock::time_point last_track_refresh{};
         bool transcode = false;
         bool video_transcode = false;
+        bool video_reordering = false;
+        bool video_reordering_known = false;
         bool audio_transcode = false;
+        bool go2rtc_startup = false;
         std::string hybrid_path;
+        std::string native_hevc_path;
         /** Per-track audio-only MediaMTX paths, keyed by 0:a:<index> (F5-05). */
         std::unordered_map<int, std::string> audio_paths;
         /** Probe cache of the real audio tracks of this source. */
@@ -1150,7 +1285,7 @@ private:
     }
 
     static UpstreamResponse request_http(std::string_view url, std::string_view body,
-                                         std::string_view method, std::string_view content_type)
+                                         std::string_view method, std::string_view content_type, long timeout_ms = 15000L)
     {
         UpstreamResponse result;
         CURL *handle = curl_easy_init();
@@ -1167,7 +1302,7 @@ private:
         curl_easy_setopt(handle, CURLOPT_URL, url_value.c_str());
         curl_easy_setopt(handle, CURLOPT_PROTOCOLS_STR, "http");
         curl_easy_setopt(handle, CURLOPT_CONNECTTIMEOUT_MS, 1500L);
-        curl_easy_setopt(handle, CURLOPT_TIMEOUT_MS, 15000L);
+        curl_easy_setopt(handle, CURLOPT_TIMEOUT_MS, timeout_ms);
         curl_easy_setopt(handle, CURLOPT_NOSIGNAL, 1L);
         curl_easy_setopt(handle, CURLOPT_WRITEFUNCTION, &write_body);
         curl_easy_setopt(handle, CURLOPT_WRITEDATA, &result.body);
@@ -1243,11 +1378,23 @@ private:
                                 error_body("session_limit", "Too many active WebRTC playback sessions"));
         }
 
+        if (path == "program") {
+            last_program_request_.store(std::chrono::duration_cast<std::chrono::milliseconds>(
+                std::chrono::steady_clock::now().time_since_epoch()).count());
+            if (runtime_status_.composite_idle.load())
+                return response(http::status::service_unavailable, version,
+                                error_body("composite_starting", "Composite publisher is starting; retry playback"));
+        }
+
         const std::string create_url = std::string(upstream_origin) + "/" + std::string(path) + "/whep";
         UpstreamResponse upstream = request_http(create_url, request.body(), "POST", "application/sdp");
-        if (!upstream.ok || upstream.status != 201 || upstream.body.empty())
+        if (!upstream.ok || upstream.status != 201 || upstream.body.empty()) {
+            if (upstream.ok && (upstream.status == 400 || upstream.status == 500) &&
+                lowercase(upstream.body).find("codec") != std::string::npos)
+                refresh_rejected_tracks(path);
             return response(http::status::bad_gateway, version,
                             error_body("whep_upstream", "WebRTC signaling did not accept the offer"));
+        }
         const std::string upstream_prefix = "/" + std::string(path) + "/whep/";
         const auto upstream_location = normalize_location(upstream.location, upstream_prefix);
         if (!upstream_location)
@@ -1323,6 +1470,30 @@ private:
         return codec.empty() || codec == "opus" || codec == "pcm_alaw" || codec == "pcm_mulaw";
     }
 
+    void refresh_rejected_tracks(std::string_view path)
+    {
+        std::string camera_id, profile_id;
+        {
+            const std::lock_guard lock(route_state_mutex_);
+            for (auto &[id, route] : direct_routes_) {
+                if (route.path != path && route.hybrid_path != path && route.native_hevc_path != path) continue;
+                const auto now = std::chrono::steady_clock::now();
+                if (route.camera_id.empty() || route.profile_id.empty() ||
+                    (route.last_track_refresh != std::chrono::steady_clock::time_point{} &&
+                     now - route.last_track_refresh < std::chrono::seconds(30))) return;
+                route.last_track_refresh = now;
+                camera_id = route.camera_id; profile_id = route.profile_id;
+                break;
+            }
+        }
+        if (camera_id.empty()) return;
+        // A named source may change codecs without changing its registry URL.
+        // Queue a bounded fresh probe only after a codec rejection, never for
+        // idle sources or ordinary network timeouts. Do not forward credentials.
+        request_http(runtime_http(8092, "/source-catalog/") + camera_id + "/profiles/" + profile_id + "/probe",
+                     R"({"async":true,"refresh":true})", "POST", "application/json", 1000L);
+    }
+
     void delete_config_path(std::string_view path)
     {
         if (path.empty())
@@ -1343,6 +1514,7 @@ private:
             direct_routes_.erase(found);
         }
         delete_config_path(route.hybrid_path);
+        delete_config_path(route.native_hevc_path);
         for (const auto &entry : route.audio_paths)
             delete_config_path(entry.second);
         delete_config_path(route.path);
@@ -1390,12 +1562,19 @@ private:
     std::optional<std::string> ensure_direct_route(const SceneSource &source)
     {
         std::string effective_url = source.rtsp_url;
+        bool video_reordering = false;
+        bool video_reordering_known = false;
+        std::string registry_video_codec, registry_audio_codec;
         std::string source_transport = source.kind == "rtsp" ? source.transport : "tcp";
         if (source.kind == "camera") {
             const auto resolved = resolve_camera_endpoint(source.camera_id, source.profile_id);
             if (!resolved)
                 return std::nullopt;
             effective_url = resolved->endpoint;
+            video_reordering = resolved->video_reordering;
+            video_reordering_known = resolved->video_reordering_known;
+            registry_video_codec = resolved->video_codec;
+            registry_audio_codec = resolved->audio_codec;
             if (resolved->transport_mode == "rtsp-udp") source_transport = "udp";
             else if (resolved->transport_mode == "rtsp-udp-multicast") source_transport = "multicast";
         }
@@ -1405,6 +1584,7 @@ private:
         DirectRoute route;
         bool adding = false;
         std::string previous_hybrid_path;
+        std::string previous_native_hevc_path;
         std::vector<std::string> previous_audio_paths;
         {
             const std::lock_guard lock(route_state_mutex_);
@@ -1412,6 +1592,10 @@ private:
             adding = existing == direct_routes_.end();
             if (!adding && existing->second.source_key == source_key &&
                 existing->second.rtsp_url == effective_url &&
+                existing->second.video_reordering == video_reordering &&
+                existing->second.video_reordering_known == video_reordering_known &&
+                existing->second.registry_video_codec == registry_video_codec &&
+                existing->second.registry_audio_codec == registry_audio_codec &&
                 existing->second.transport == source_transport)
                 return existing->second.path;
             if (adding) {
@@ -1425,12 +1609,14 @@ private:
             } else {
                 route = existing->second;
                 previous_hybrid_path = route.hybrid_path;
+                previous_native_hevc_path = route.native_hevc_path;
                 route.codec.clear();
                 route.audio_codec.clear();
                 route.transcode = false;
                 route.video_transcode = false;
                 route.audio_transcode = false;
                 route.hybrid_path.clear();
+                route.native_hevc_path.clear();
                 for (const auto &entry : route.audio_paths)
                     previous_audio_paths.push_back(entry.second);
                 route.audio_paths.clear();
@@ -1440,10 +1626,21 @@ private:
             }
         }
         route.rtsp_url = effective_url;
+        route.registry_video_codec = registry_video_codec;
+        route.registry_audio_codec = registry_audio_codec;
+        route.camera_id = source.kind == "camera" ? source.camera_id : std::string{};
+        route.profile_id = source.kind == "camera" ? source.profile_id : std::string{};
+        // Website extraction is owned by the fixed go2rtc relay (90s startup).
+        // Keep ordinary camera budgets; recognize only this product's loopback
+        // go2rtc listener, never a renderer-supplied duration or external host.
+        route.go2rtc_startup = effective_url.starts_with(runtime_rtsp(18554, "/"));
+        route.video_reordering = video_reordering;
+        route.video_reordering_known = video_reordering_known;
         route.source_key = source_key;
         route.transport = source_transport;
         const std::string body = "{\"source\":\"" + json_escape(route.rtsp_url) +
-                                 "\",\"sourceOnDemand\":true,\"sourceOnDemandStartTimeout\":\"10s\"," +
+                                 "\",\"sourceOnDemand\":true,\"sourceOnDemandStartTimeout\":\"" +
+                                 (route.go2rtc_startup ? "90s" : "10s") + "\"," +
                                  "\"sourceOnDemandCloseAfter\":\"5s\",\"maxReaders\":8," +
                                  "\"overridePublisher\":false,\"rtspTransport\":\"" +
                                  json_escape(route.transport) + "\"}";
@@ -1454,6 +1651,7 @@ private:
         if (!configured.ok || configured.status != 200)
             return std::nullopt;
         delete_config_path(previous_hybrid_path);
+        delete_config_path(previous_native_hevc_path);
         for (const std::string &audio_path : previous_audio_paths)
             delete_config_path(audio_path);
         {
@@ -1464,7 +1662,8 @@ private:
     }
 
     std::optional<std::string> ensure_playback_route(const SceneSource &source,
-                                                     bool force_video_transcode = false)
+                                                     bool force_video_transcode = false,
+                                                     bool receiver_hevc = false)
     {
         const auto direct_path = ensure_direct_route(source);
         if (!direct_path)
@@ -1485,7 +1684,7 @@ private:
             if (resolved && !resolved->video_codec.empty() && resolved->video_codec != "unknown") {
                 route.codec = resolved->video_codec;
                 route.audio_codec = resolved->audio_codec == "unknown" ? "" : resolved->audio_codec;
-                route.video_transcode = !browser_compatible_codec(route.codec);
+                route.video_transcode = !browser_compatible_codec(route.codec) || (route.codec == "h264" && route.video_reordering);
                 route.audio_transcode = !browser_compatible_audio_codec(route.audio_codec);
                 route.transcode = route.video_transcode || route.audio_transcode;
                 const std::lock_guard lock(route_state_mutex_);
@@ -1529,37 +1728,45 @@ private:
             direct_routes_.at(source.id).video_transcode = true;
             direct_routes_.at(source.id).transcode = true;
         }
-        if (!route.transcode)
+        const bool native_hevc = hevc_passthrough_allowed(route.codec, route.video_reordering_known,
+                                                         route.video_reordering, receiver_hevc, force_video_transcode);
+        if (!route.transcode || (native_hevc && !route.audio_transcode))
             return route.path;
 
-        if (route.hybrid_path.empty()) {
+        // Native HEVC receivers may still need an audio-only conversion. Keep
+        // that path separate from H.264 fallback for simultaneous older clients.
+        std::string& hybrid_path = native_hevc ? route.native_hevc_path : route.hybrid_path;
+        if (hybrid_path.empty()) {
             {
                 const std::lock_guard lock(route_state_mutex_);
                 do {
-                    route.hybrid_path = "hybrid-" + random_token();
-                } while (std::any_of(direct_routes_.begin(), direct_routes_.end(), [&route](const auto &entry) {
-                    return entry.second.hybrid_path == route.hybrid_path;
+                    hybrid_path = "hybrid-" + random_token();
+                } while (std::any_of(direct_routes_.begin(), direct_routes_.end(), [&hybrid_path](const auto &entry) {
+                    return entry.second.hybrid_path == hybrid_path || entry.second.native_hevc_path == hybrid_path;
                 }));
             }
             const std::string command = command_quote(transcoder_executable()) + " " + route.path + " " +
-                                        route.hybrid_path + " " +
-                                        (route.video_transcode ? "transcode" : "copy") + " " +
-                                        (route.audio_transcode ? "transcode" : "copy");
+                                        hybrid_path + " " +
+                                        (route.video_transcode && !native_hevc ? "transcode" : "copy") + " " +
+                                        (route.audio_transcode ? "transcode" : "copy") +
+                                        (route.go2rtc_startup ? " 90" : "");
             const std::string body =
                 std::string("{\"source\":\"publisher\",\"overridePublisher\":false,\"maxReaders\":8,") +
                 "\"runOnDemand\":\"" + json_escape(command) +
-                "\",\"runOnDemandRestart\":false,\"runOnDemandStartTimeout\":\"10s\"," +
+                "\",\"runOnDemandRestart\":false,\"runOnDemandStartTimeout\":\"" +
+                (route.go2rtc_startup ? "95s" : "10s") + "\"," +
                 "\"runOnDemandCloseAfter\":\"2s\"}";
-            const std::string url = std::string(control_origin) + "/v3/config/paths/add/" + route.hybrid_path;
+            const std::string url = std::string(control_origin) + "/v3/config/paths/add/" + hybrid_path;
             const UpstreamResponse configured = request_http(url, body, "POST", "application/json");
             if (!configured.ok || configured.status != 200) {
-                route.hybrid_path.clear();
+                hybrid_path.clear();
                 return std::nullopt;
             }
             const std::lock_guard lock(route_state_mutex_);
-            direct_routes_.at(source.id).hybrid_path = route.hybrid_path;
+            if (native_hevc) direct_routes_.at(source.id).native_hevc_path = hybrid_path;
+            else direct_routes_.at(source.id).hybrid_path = hybrid_path;
         }
-        return route.hybrid_path;
+        return hybrid_path;
     }
 
     /**
@@ -1828,6 +2035,7 @@ private:
         }
         for (const DirectRoute &route : removed) {
             delete_config_path(route.hybrid_path);
+            delete_config_path(route.native_hevc_path);
             for (const auto &entry : route.audio_paths)
                 delete_config_path(entry.second);
             delete_config_path(route.path);
@@ -1856,6 +2064,7 @@ private:
         std::erase_if(sessions_, [cutoff](const auto &entry) { return entry.second.created_at < cutoff; });
     }
 
+    std::atomic<std::int64_t> last_program_request_{-45000};
     bool enabled_ = false;
     bool composite_enabled_ = false;
     SceneController &controller_;
@@ -2306,6 +2515,26 @@ public:
                 }
                 const std::string principal_header = "X-WebObs-Principal: " + std::string(principal);
                 headers = curl_slist_append(headers, principal_header.c_str());
+                const auto id = view(request["X-WebObs-Account-Id"]);
+                const auto epoch = view(request["X-WebObs-Account-Epoch"]);
+                if (!id.empty() || !epoch.empty()) {
+                    const auto guard = [](std::string_view text) {
+                        return text.size() == 32 && std::all_of(text.begin(), text.end(), [](char c) {
+                            return (c >= '0' && c <= '9') || (c >= 'a' && c <= 'f');
+                        });
+                    };
+                    if (!guard(id) || !guard(epoch)) {
+                        curl_slist_free_all(headers);
+                        curl_easy_cleanup(handle);
+                        return response(http::status::unauthorized, request.version(),
+                            error_body("account_rejected", "account session is unavailable"));
+                    }
+                    for (const auto &[name, value] : {std::pair{"X-WebObs-Account-Id: ", id},
+                                                     std::pair{"X-WebObs-Account-Epoch: ", epoch}}) {
+                        const auto header = name + std::string(value);
+                        headers = curl_slist_append(headers, header.c_str());
+                    }
+                }
             }
         }
         curl_easy_setopt(handle, CURLOPT_URL, url.c_str());
@@ -2530,6 +2759,10 @@ bool hashed_static_asset(std::string_view filename)
 
 std::optional<HttpResponse> static_file_response(std::string_view target, unsigned int version)
 {
+    // This allowlisted presentation flag is emitted by the native management
+    // entry. It selects no file or permission and must still serve the shell.
+    if (target == "/?native-management=1" || target == "/index.html?native-management=1")
+        target = target.substr(0, target.find('?'));
     std::string filename;
     bool immutable = false;
     if (target == "/" || target == "/index.html") {
@@ -2726,7 +2959,10 @@ private:
 
 class WebSocketSession : public std::enable_shared_from_this<WebSocketSession> {
 public:
-    WebSocketSession(tcp::socket socket, WebSocketHub &hub) : stream_(std::move(socket)), hub_(hub) {}
+    using IdentityCheck = std::function<bool()>;
+    WebSocketSession(tcp::socket socket, WebSocketHub &hub, RequestPool &pool, IdentityCheck check = {})
+        : stream_(std::move(socket)), hub_(hub), pool_(pool), identity_check_(std::move(check)),
+          authorization_timer_(stream_.get_executor()) {}
 
     void run(HttpRequest request, std::string initial_message)
     {
@@ -2755,6 +2991,10 @@ private:
         if (error)
             return;
         stream_.text(true);
+        if (identity_check_) {
+            authorized_until_ = std::chrono::steady_clock::now() + std::chrono::seconds(2);
+            schedule_authorization();
+        }
         hub_.join(shared_from_this());
         send(std::move(initial_message_));
         do_read();
@@ -2767,14 +3007,17 @@ private:
 
     void on_read(beast::error_code error, std::size_t)
     {
-        if (error)
+        if (error) {
+            close_revoked();
             return;
+        }
         buffer_.consume(buffer_.size());
         do_read();
     }
 
     void on_send(std::shared_ptr<const std::string> message)
     {
+        if (closed_) return;
         if (outbound_.size() >= 16)
             return;
         outbound_.push_back(std::move(message));
@@ -2785,14 +3028,23 @@ private:
 
     void do_write()
     {
+        // Do not emit queued updates after the current decision lease expires,
+        // including while a slow authority request is still in flight.
+        if (closed_ || writing_ || outbound_.empty() ||
+            (identity_check_ && std::chrono::steady_clock::now() >= authorized_until_))
+            return;
+        writing_ = true;
         stream_.async_write(net::buffer(*outbound_.front()),
                             beast::bind_front_handler(&WebSocketSession::on_write, shared_from_this()));
     }
 
     void on_write(beast::error_code error, std::size_t)
     {
-        if (error)
+        writing_ = false;
+        if (error) {
+            close_revoked();
             return;
+        }
         outbound_.pop_front();
         if (!outbound_.empty())
             do_write();
@@ -2801,8 +3053,43 @@ private:
     websocket::stream<beast::tcp_stream> stream_;
     beast::flat_buffer buffer_;
     WebSocketHub &hub_;
+    RequestPool &pool_;
+    IdentityCheck identity_check_;
+    net::steady_timer authorization_timer_;
+    std::chrono::steady_clock::time_point authorized_until_{};
+    bool closed_ = false, writing_ = false;
     std::string initial_message_;
     std::deque<std::shared_ptr<const std::string>> outbound_;
+
+    void close_revoked()
+    {
+        if (closed_) return;
+        closed_ = true;
+        authorization_timer_.cancel();
+        beast::error_code ignored;
+        auto &socket = beast::get_lowest_layer(stream_).socket();
+        socket.cancel(ignored);
+        socket.shutdown(tcp::socket::shutdown_both, ignored);
+        socket.close(ignored);
+    }
+    void schedule_authorization()
+    {
+        authorization_timer_.expires_at(authorized_until_);
+        authorization_timer_.async_wait([self = shared_from_this()](beast::error_code error) {
+            if (error || self->closed_) return;
+            if (!self->pool_.post([self] {
+                bool allowed = false;
+                try { allowed = self->identity_check_(); } catch (...) {}
+                net::post(self->stream_.get_executor(), [self, allowed] {
+                    if (self->closed_) return;
+                    if (!allowed) { self->close_revoked(); return; }
+                    self->authorized_until_ = std::chrono::steady_clock::now() + std::chrono::seconds(2);
+                    self->do_write();
+                    self->schedule_authorization();
+                });
+            })) self->close_revoked();
+        });
+    }
 };
 
 void WebSocketHub::join(const std::shared_ptr<WebSocketSession> &session)
@@ -2966,17 +3253,42 @@ HttpResponse process_diagnostics_response(unsigned int version, const RuntimeSta
     const auto captured_at = std::chrono::steady_clock::now();
 #ifdef _WIN32
     std::unordered_map<std::string, ProcessTotal> totals;
+    std::vector<PROCESSENTRY32W> entries;
     HANDLE snapshot = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
     if (snapshot != INVALID_HANDLE_VALUE) {
         PROCESSENTRY32W entry{}; entry.dwSize = sizeof(entry);
-        if (Process32FirstW(snapshot, &entry)) do {
+        if (Process32FirstW(snapshot, &entry)) do { entries.push_back(entry); } while (Process32NextW(snapshot, &entry));
+        CloseHandle(snapshot);
+    }
+    unsigned long owner_pid = GetCurrentProcessId();
+    if (const char *value = std::getenv("WEBOBS_DESKTOP_OWNER_PID")) {
+        const std::string_view text(value);
+        unsigned long parsed = 0;
+        const auto result = std::from_chars(text.data(), text.data()+text.size(), parsed);
+        if (result.ec == std::errc{} && result.ptr == text.data()+text.size() && parsed > 0) owner_pid = parsed;
+    }
+    std::unordered_set<unsigned long> owned{owner_pid};
+    for (std::size_t depth = 0; depth < 64; ++depth) {
+        const auto before = owned.size();
+        for (const auto &entry : entries)
+            if (owned.contains(entry.th32ParentProcessID)) owned.insert(entry.th32ProcessID);
+        if (owned.size() == before) break;
+    }
+    for (const auto &entry : entries) {
+            if (!owned.contains(entry.th32ProcessID)) continue;
             std::wstring executable(entry.szExeFile);
-            std::string role;
+            // Compare ASCII executable names without locale-dependent casing.
+            for (auto &character : executable) if (character >= L'A' && character <= L'Z') character += L'a'-L'A';
+            std::string role = "runtime";
             if (executable == L"webobsd.exe") role = "webobsd";
             else if (executable == L"mediamtx.exe") role = "mediamtx";
+            else if (executable == L"go2rtc.exe") role = "go2rtc";
             else if (executable == L"ffmpeg.exe") role = "ffmpeg";
             else if (executable == L"caddy.exe") role = "caddy";
-            if (role.empty()) continue;
+            else if (executable == L"webobs.exe" || executable == L"electron.exe" || executable == L"webobs-wall.exe") role = "desktop";
+            else if (executable == L"obs64.exe") role = "obs-native";
+            else if (executable == L"python.exe") role = "python";
+            else if (executable.starts_with(L"obs-browser")) role = "obs-browser";
             HANDLE process = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION|PROCESS_VM_READ, FALSE, entry.th32ProcessID);
             PROCESS_MEMORY_COUNTERS memory{};
             auto& total = totals[role]; ++total.instances;
@@ -2995,16 +3307,19 @@ HttpResponse process_diagnostics_response(unsigned int version, const RuntimeSta
                 }
                 CloseHandle(process);
             }
-        } while (Process32NextW(snapshot, &entry));
-        CloseHandle(snapshot);
     }
+    std::erase_if(previous_samples, [&owned](const auto &sample) {
+        unsigned long pid = 0;
+        std::from_chars(sample.first.data(), sample.first.data()+sample.first.size(), pid);
+        return !owned.contains(pid);
+    });
     std::uint64_t rtsp_sessions = 0;
     int gpu_busy_percent = -1;
 #else
     const long clock_ticks = std::max<long>(1, sysconf(_SC_CLK_TCK));
     std::unordered_map<std::string, ProcessTotal> totals;
     const auto recognized = [](std::string_view name) -> std::string_view {
-        if (name == "webobsd" || name == "mediamtx" || name == "ffmpeg" || name == "caddy")
+        if (name == "webobsd" || name == "mediamtx" || name == "go2rtc" || name == "ffmpeg" || name == "caddy")
             return name;
         if (name.starts_with("obs-browser"))
             return "obs-browser";
@@ -3095,9 +3410,17 @@ HttpResponse process_diagnostics_response(unsigned int version, const RuntimeSta
     }
 
 #endif
-    std::string body = "{\"processes\":[";
+    const auto logical_cores = std::max(1u, std::thread::hardware_concurrency());
+    std::string body = "{\"cpuLogicalCores\":" + std::to_string(logical_cores) +
+        ",\"cpuMeasurement\":\"one-core\",\"scope\":\"" +
+#ifdef _WIN32
+        "desktop-process-tree"
+#else
+        "matching-processes"
+#endif
+        + std::string("\",\"processes\":[");
     bool first = true;
-    for (const std::string_view role : {"webobsd", "mediamtx", "ffmpeg", "caddy", "obs-browser"}) {
+    for (const std::string_view role : {"desktop", "webobsd", "obs-native", "go2rtc", "mediamtx", "ffmpeg", "python", "caddy", "obs-browser", "runtime"}) {
         const ProcessTotal total = totals[std::string(role)];
         if (!first)
             body.push_back(',');
@@ -3499,6 +3822,50 @@ HttpResponse handle_request(const HttpRequest &request, SceneController &control
 
     if (request.method() == http::verb::get && target == "/api/v1/program/status")
         return whep_proxy.status(version);
+    if (target == "/api/v1/program/native-preview") {
+        // Account authentication/RBAC has already run. The extra one-boot secret
+        // exists only in the supervised desktop main process, never a renderer,
+        // browser or LAN client. No arbitrary native handles/commands are accepted.
+        const char *secret = std::getenv("WEBOBS_NATIVE_PREVIEW_TOKEN");
+        const auto supplied = view(request["X-WebOBS-Native-Token"]);
+        if (!runtime_status.native_preview.supported || !secret ||
+            supplied.size() != 64 || std::string_view(secret).size() != 64 ||
+            CRYPTO_memcmp(supplied.data(), secret, 64) != 0 ||
+            !request_origin_allowed(request, true, allowed_origins) ||
+            request["Sec-Fetch-Site"] == "cross-site")
+            return response(http::status::forbidden, version,
+                            error_body("native_preview_rejected", "Use the local desktop native monitor"));
+        if (!request.body().empty())
+            return response(http::status::bad_request, version,
+                            error_body("invalid_native_preview", "Request body must be empty"));
+        auto &preview = runtime_status.native_preview;
+        if (request.method() == http::verb::post) preview.open();
+        else if (request.method() == http::verb::get) {
+            preview.renew();
+            preview.request_draw_sample();
+        }
+        else if (request.method() == http::verb::delete_) preview.requested.store(false);
+        else return response(http::status::method_not_allowed, version,
+                             error_body("method_not_allowed", "Use GET, POST or DELETE"));
+        const auto sample = preview.draw_sample();
+        const auto boolean = [](bool value) { return value ? "true" : "false"; };
+        return response(http::status::ok, version,
+                        "{\"supported\":true,\"requested\":" + std::string(boolean(preview.requested.load())) +
+                        ",\"state\":" + std::to_string(preview.state.load()) +
+                        ",\"frames\":" + std::to_string(preview.frames.load()) +
+                        ",\"draw_sample\":{\"available\":" + boolean(sample.available) +
+                        ",\"video_ready\":" + boolean(sample.video_ready) +
+                        ",\"main_texture_ready\":" + boolean(sample.main_texture_ready) +
+                        ",\"output_bound\":" + boolean(sample.output_bound) +
+                        ",\"output_active\":" + boolean(sample.output_active) +
+                        ",\"output_showing\":" + boolean(sample.output_showing) +
+                        ",\"base_width\":" + std::to_string(sample.base_width) +
+                        ",\"base_height\":" + std::to_string(sample.base_height) +
+                        ",\"display_width\":" + std::to_string(sample.display_width) +
+                        ",\"display_height\":" + std::to_string(sample.display_height) +
+                        ",\"frame\":" + std::to_string(sample.frame) +
+                        ",\"sampled_at_ms\":" + std::to_string(sample.sampled_at_ms) + "}}");
+    }
     if (request.method() == http::verb::get && target == "/api/v1/playback/capabilities")
         return whep_proxy.capabilities(version);
 
@@ -3872,6 +4239,439 @@ public:
     void run() { do_read(); }
 
 private:
+    std::optional<HttpResponse> native_mutation_rejection(const HttpRequest &request,
+        const std::string &token, const SessionRecord &actor)
+    {
+        const auto matches = [&](const auto &record) {
+            return actor.identity && record && record->identity && record->user == actor.user &&
+                record->identity->user_id == actor.identity->user_id &&
+                record->identity->auth_epoch == actor.identity->auth_epoch;
+        };
+        const auto unauthenticated = [&] {
+            session_store_.revoke(token);
+            auto result = response(http::status::unauthorized, request.version(),
+                error_body("session_revoked", "the account session is no longer valid"));
+            result.set(http::field::set_cookie, session_store_.clear_cookie_header());
+            return result;
+        };
+        if (!matches(session_store_.validate_and_slide(token))) return unauthenticated();
+        ClusterAuthorization decision;
+        if (view(request.target()).starts_with("/api/v2/account/")) {
+            NativeClusterAuthorizationConfig config;
+            config.port = static_cast<std::uint16_t>(runtime_port(8095));
+            if (const char *internal = std::getenv("WEBOBS_CLUSTER_INTERNAL_TOKEN")) config.internal_token = internal;
+            const auto checked = NativeClusterAuthorizationBackend(std::move(config)).validate_identity(actor.user, *actor.identity);
+            decision = checked == NativeAuthorizationDecision::allowed ? ClusterAuthorization::allowed :
+                checked == NativeAuthorizationDecision::unknown_user ? ClusterAuthorization::user_unknown :
+                ClusterAuthorization::unavailable;
+        } else {
+            decision = cluster_authorize(actor.user, request, &*actor.identity);
+        }
+        if (decision == ClusterAuthorization::user_unknown) {
+            session_store_.revoke_identity(actor.user, *actor.identity);
+            return unauthenticated();
+        }
+        if (decision == ClusterAuthorization::denied)
+            return response(http::status::forbidden, request.version(),
+                error_body("permission_rejected", "role or camera scope rejected this operation"));
+        if (decision != ClusterAuthorization::allowed)
+            return response(http::status::service_unavailable, request.version(),
+                error_body("authorization_unavailable", "RBAC authorization is unavailable"));
+        if (!matches(session_store_.validate_and_slide(token))) return unauthenticated();
+        return std::nullopt;
+    }
+
+    // Native product UI uses the existing account/session service and the same
+    // loopback listener. The one-boot host secret stays in the supervisor and
+    // native process, never in a management page or a camera configuration.
+    void handle_native_host(const HttpRequest &request)
+    {
+        const auto version = request.version();
+        const auto send_response = [self = shared_from_this()](HttpResponse message) {
+            net::post(self->stream_.get_executor(), [self, message = std::move(message)]() mutable {
+                self->send(std::move(message));
+            });
+        };
+        const std::string_view target = view(request.target());
+        const auto reject = [&](http::status status, const char *code) {
+            send_response(response(status, version, error_body(code, "native product request was rejected")));
+        };
+        const char *expected = std::getenv("WEBOBS_NATIVE_HOST_TOKEN");
+        if (!expected || std::string_view(expected).size() != 64) {
+            reject(http::status::not_found, "native_host_disabled");
+            return;
+        }
+        std::size_t origins = 0, hosts = 0, cookies = 0, secrets = 0;
+        for (const auto &field : request.base()) {
+            origins += field.name() == http::field::origin;
+            hosts += field.name() == http::field::host;
+            cookies += field.name() == http::field::cookie;
+            secrets += beast::iequals(field.name_string(), "X-WebOBS-Native-Host");
+        }
+        const auto supplied = view(request["X-WebOBS-Native-Host"]);
+        if (origins != 1 || hosts != 1 || cookies > 1 || secrets != 1 ||
+            (client_key_ != "127.0.0.1" && client_key_ != "::1") ||
+            supplied.size() != 64 || CRYPTO_memcmp(supplied.data(), expected, 64) != 0 ||
+            !request_origin_allowed(request, false, allowed_origins_) ||
+            request.body().size() > 16384) {
+            reject(http::status::forbidden, "native_host_rejected");
+            return;
+        }
+        if (target == "/api/v1/native/auth/login" && request.method() == http::verb::post) {
+            const auto credentials = parse_login_body(request);
+            if (!credentials || !session_store_.enabled() || !cluster_authentication_enabled()) {
+                reject(http::status::bad_request, "native_login_invalid");
+                return;
+            }
+            const auto login = cluster_login(credentials->first, credentials->second, client_key_, true);
+            if (login.status != 200 || !login.identity) {
+                const auto status = login.status == 401 ? http::status::unauthorized :
+                    login.status == 429 ? http::status::too_many_requests : http::status::service_unavailable;
+                reject(status, "native_login_rejected");
+                return;
+            }
+            const auto token = session_store_.create_bound(login.username, client_key_, *login.identity);
+            if (!token) {
+                reject(http::status::service_unavailable, "native_session_unavailable");
+                return;
+            }
+            auto result = response(http::status::ok, version,
+                "{\"authenticated\":true,\"user\":\"" + json_escape(login.username) +
+                "\",\"userId\":\"" + login.identity->user_id + "\"}");
+            result.set(http::field::set_cookie, session_store_.set_cookie_header(*token));
+            send_response(std::move(result));
+            return;
+        }
+        const auto token = session_cookie_token(request);
+        if (target == "/api/v1/native/auth/logout" && request.method() == http::verb::post) {
+            if (token)
+                session_store_.revoke(*token);
+            auto result = response(http::status::ok, version, "{\"authenticated\":false}");
+            result.set(http::field::set_cookie, session_store_.clear_cookie_header());
+            send_response(std::move(result));
+            return;
+        }
+        NativeClusterAuthorizationConfig backend_config;
+        backend_config.port = static_cast<std::uint16_t>(runtime_port(8095));
+        if (const char *internal = std::getenv("WEBOBS_CLUSTER_INTERNAL_TOKEN"))
+            backend_config.internal_token = internal;
+        NativeClusterAuthorizationBackend backend(std::move(backend_config));
+        const std::string host(view(request[http::field::host]));
+        const std::string origin = "http://" + host;
+        NativeControlAuth authorization(session_store_, {origin, host},
+            [backend](auto principal, const auto &identity, auto permission, auto camera) {
+                return backend(principal, identity, permission, camera);
+            });
+        const auto authorize = [&](NativeControlCommand command, std::string_view camera = {}) {
+            return authorization.authorize({client_key_, view(request[http::field::origin]), host,
+                token ? std::string_view(*token) : std::string_view{}, command, camera});
+        };
+        const auto session = authorize(NativeControlCommand::read_scene);
+        if (!session.allowed()) {
+            reject(static_cast<http::status>(session.status_code()), "native_session_rejected");
+            return;
+        }
+        if (target == "/api/v1/native/auth/session" && request.method() == http::verb::get && request.body().empty()) {
+            send_response(response(http::status::ok, version,
+                "{\"authenticated\":true,\"user\":\"" + json_escape(session.principal) + "\"}"));
+            return;
+        }
+        if (target == "/api/v1/native/cameras" && request.method() == http::verb::get && request.body().empty()) {
+            auto upstream_request = request;
+            upstream_request.target("/api/v2/source-catalog?page=1&limit=256");
+            const auto upstream = camera_proxy_.forward(upstream_request);
+            std::unique_ptr<json_t, decltype(&json_decref)> catalog(
+                json_loadb(upstream.body().data(), upstream.body().size(), JSON_REJECT_DUPLICATES, nullptr), &json_decref);
+            auto *items = catalog ? json_object_get(catalog.get(), "items") : nullptr;
+            if (upstream.result() != http::status::ok || !json_is_array(items) || json_array_size(items) > 256) {
+                reject(http::status::service_unavailable, "native_catalog_unavailable");
+                return;
+            }
+            std::unique_ptr<json_t, decltype(&json_decref)> visible(json_array(), &json_decref);
+            const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(10);
+            for (std::size_t i = 0; i < json_array_size(items); ++i) {
+                auto *item = json_array_get(items, i);
+                auto *id = json_object_get(item, "id");
+                if (!json_is_string(id)) {
+                    reject(http::status::service_unavailable, "native_catalog_invalid");
+                    return;
+                }
+                const auto decision = authorize(NativeControlCommand::view_camera,
+                    std::string_view(json_string_value(id), json_string_length(id)));
+                if (std::chrono::steady_clock::now() >= deadline ||
+                    (!decision.allowed() && decision.status != NativeControlStatus::forbidden)) {
+                    reject(http::status::service_unavailable, "native_catalog_expired");
+                    return;
+                }
+                if (decision.allowed())
+                    json_array_append(visible.get(), item);
+            }
+            std::unique_ptr<char, decltype(&std::free)> encoded(json_dumps(visible.get(), JSON_COMPACT), &std::free);
+            if (!encoded) {
+                reject(http::status::service_unavailable, "native_catalog_unavailable");
+                return;
+            }
+            send_response(response(http::status::ok, version, "{\"cameras\":" + std::string(encoded.get()) + "}"));
+            return;
+        }
+        if (target == "/api/v1/native/scenes" && request.method() == http::verb::get && request.body().empty()) {
+            const auto snapshot = studio_.snapshot();
+            const auto parsed = snapshot.ok() ? parse_studio_json(snapshot.public_json) : StudioParseResult{};
+            if (!parsed.ok()) {
+                reject(http::status::service_unavailable, "native_studio_unavailable");
+                return;
+            }
+            std::string summaries = "{\"revision\":" + std::to_string(snapshot.revision) +
+                ",\"programSceneId\":\"" + json_escape(parsed.document->program_scene_id) +
+                "\",\"previewSceneId\":\"" + json_escape(parsed.document->preview_scene_id) + "\",\"scenes\":[";
+            for (const auto &scene : parsed.document->scenes) {
+                if (summaries.back() != '[') summaries += ',';
+                summaries += "{\"id\":\"" + json_escape(scene.id) + "\",\"name\":\"" + json_escape(scene.name) + "\"";
+                const auto flattened = flatten_studio_scene(*parsed.document, scene.id);
+                const auto fingerprint = flattened.ok() ?
+                    native_scene_fingerprint(*flattened.document, runtime_status_.configured_fps) : std::nullopt;
+                if (fingerprint) summaries += ",\"fingerprint\":\"" + *fingerprint + "\"";
+                summaries += '}';
+            }
+            summaries += "]}";
+            send_response(response(http::status::ok, version, std::move(summaries)));
+            return;
+        }
+        const bool scene_request = target == "/api/v1/native/scenes/resolve" ||
+                                   target == "/api/v1/native/scenes/authorize";
+        const bool resolve = target == "/api/v1/native/cameras/resolve" || target == "/api/v1/native/scenes/resolve";
+        if ((!resolve && !scene_request && target != "/api/v1/native/cameras/authorize") || request.method() != http::verb::post) {
+            reject(http::status::not_found, "native_route_unknown");
+            return;
+        }
+        const auto identifier = [](const std::string &value) {
+            return !value.empty() && value.size() <= 64 && std::all_of(value.begin(), value.end(), [](char c) {
+                return (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') ||
+                    (c >= '0' && c <= '9') || c == '.' || c == '_' || c == '-';
+            });
+        };
+        std::unique_ptr<json_t, decltype(&json_decref)> body(
+            json_loadb(request.body().data(), request.body().size(), JSON_REJECT_DUPLICATES, nullptr), &json_decref);
+        std::optional<SceneDocument> scene_document;
+        std::optional<std::uint64_t> studio_revision;
+        std::optional<std::string> scene_fingerprint;
+        std::string requested_scene_id;
+        bool fingerprint_precondition = false;
+        if (scene_request) {
+            auto *id = body ? json_object_get(body.get(), "sceneId") : nullptr;
+            auto *revision = body ? json_object_get(body.get(), "revision") : nullptr;
+            auto *fingerprint = body ? json_object_get(body.get(), "fingerprint") : nullptr;
+            fingerprint_precondition = json_is_string(fingerprint);
+            const std::string expected_fingerprint = fingerprint_precondition ?
+                std::string(json_string_value(fingerprint), json_string_length(fingerprint)) : std::string{};
+            const bool valid_precondition = fingerprint_precondition ?
+                expected_fingerprint.size() == 64 && std::all_of(expected_fingerprint.begin(), expected_fingerprint.end(),
+                    [](char c) { return (c >= '0' && c <= '9') || (c >= 'a' && c <= 'f'); }) :
+                json_is_integer(revision) && json_integer_value(revision) >= 0;
+            if (!json_is_object(body.get()) || json_object_size(body.get()) != 2 || !json_is_string(id) ||
+                !valid_precondition ||
+                !identifier(std::string(json_string_value(id), json_string_length(id)))) {
+                reject(http::status::bad_request, "native_scene_invalid");
+                return;
+            }
+            const auto snapshot = studio_.snapshot();
+            if (!snapshot.ok() || (!fingerprint_precondition &&
+                snapshot.revision != static_cast<std::uint64_t>(json_integer_value(revision)))) {
+                reject(http::status::precondition_failed, "native_studio_changed");
+                return;
+            }
+            studio_revision = snapshot.revision;
+            requested_scene_id.assign(json_string_value(id), json_string_length(id));
+            const auto parsed = parse_studio_json(snapshot.public_json);
+            const auto flattened = parsed.ok() ? flatten_studio_scene(*parsed.document,
+                std::string_view(json_string_value(id), json_string_length(id))) : StudioFlattenResult{};
+            if (!flattened.ok() || flattened.document->sources.empty() ||
+                std::any_of(flattened.document->sources.begin(), flattened.document->sources.end(),
+                    [](const auto &source) { return source.kind != "camera"; })) {
+                reject(http::status::conflict, "native_scene_source_unavailable");
+                return;
+            }
+            scene_document = *flattened.document;
+            scene_fingerprint = native_scene_fingerprint(*scene_document, runtime_status_.configured_fps);
+            if (!scene_fingerprint) {
+                reject(http::status::service_unavailable, "native_studio_unavailable");
+                return;
+            }
+            if (fingerprint_precondition && *scene_fingerprint != expected_fingerprint) {
+                reject(http::status::precondition_failed, "native_scene_changed");
+                return;
+            }
+            // Derive bindings from the server's canonical document, never a
+            // caller-supplied source list or raw URL. The existing whole-batch
+            // authority/strict-Profile path below owns all private resolution.
+            body.reset(json_object());
+            auto *selected = json_array();
+            json_object_set_new(body.get(), "cameras", selected);
+            for (const auto &source : scene_document->sources) {
+                auto *binding = json_object();
+                json_object_set_new(binding, "cameraId", json_string(source.camera_id.c_str()));
+                json_object_set_new(binding, "profileId", json_string(source.profile_id.c_str()));
+                json_array_append_new(selected, binding);
+            }
+        }
+        auto *cameras = body ? json_object_get(body.get(), "cameras") : nullptr;
+        if (!json_is_object(body.get()) || json_object_size(body.get()) != 1 || !json_is_array(cameras) ||
+            json_array_size(cameras) < 1 || json_array_size(cameras) > 64) {
+            reject(http::status::bad_request, "native_cameras_invalid");
+            return;
+        }
+        std::vector<std::pair<std::string, std::string>> selected;
+        for (std::size_t i = 0; i < json_array_size(cameras); ++i) {
+            auto *camera = json_array_get(cameras, i);
+            auto *id = json_object_get(camera, "cameraId");
+            auto *profile = json_object_get(camera, "profileId");
+            if (!json_is_object(camera) || json_object_size(camera) != 2 ||
+                !json_is_string(id) || !json_is_string(profile)) {
+                reject(http::status::bad_request, "native_camera_invalid");
+                return;
+            }
+            selected.emplace_back(std::string(json_string_value(id), json_string_length(id)),
+                                  std::string(json_string_value(profile), json_string_length(profile)));
+            if (!identifier(selected.back().first) || !identifier(selected.back().second)) {
+                reject(http::status::bad_request, "native_camera_invalid");
+                return;
+            }
+        }
+        const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(10);
+        // Authorize the complete selection before resolving ANY private URL.
+        const auto bound = token ? session_store_.validate_and_slide(*token) : std::nullopt;
+        if (!bound || !bound->identity || bound->user != session.principal) {
+            reject(http::status::unauthorized, "native_session_rejected");
+            return;
+        }
+        std::vector<NativeClusterProfileRequirement> requirements;
+        std::set<std::pair<std::string_view, std::string_view>> profile_ids;
+        for (const auto &[id, profile] : selected) {
+            if (profile_ids.emplace(id, profile).second)
+                requirements.push_back({id, profile});
+        }
+        // Preserve the authority's sixteen-item bound. All chunks must pass;
+        // no URL or partially executable subset leaves this request on failure.
+        NativeCameraVersions camera_versions;
+        for (std::size_t offset = 0; offset < requirements.size(); offset += 16) {
+            const auto count = (std::min)(std::size_t(16), requirements.size() - offset);
+            NativeCameraVersions chunk_versions;
+            const auto decision = backend.authorize_profiles(bound->user, *bound->identity,
+                std::span<const NativeClusterProfileRequirement>(requirements.data() + offset, count), &chunk_versions);
+            if (std::chrono::steady_clock::now() >= deadline || decision != NativeAuthorizationDecision::allowed) {
+                auto status = http::status::service_unavailable;
+                if (std::chrono::steady_clock::now() < deadline) {
+                    if (decision == NativeAuthorizationDecision::denied)
+                        status = http::status::forbidden;
+                    else if (decision == NativeAuthorizationDecision::unknown_user &&
+                             session_store_.revoke_identity(bound->user, *bound->identity) > 0)
+                        status = http::status::unauthorized;
+                }
+                reject(status, "native_camera_rejected");
+                return;
+            }
+            for (const auto &[camera, revision] : chunk_versions) {
+                const auto [existing, inserted] = camera_versions.emplace(camera, revision);
+                if (!inserted && existing->second != revision) {
+                    reject(http::status::service_unavailable, "native_catalog_changed");
+                    return;
+                }
+            }
+        }
+        const auto current = session_store_.validate_and_slide(*token);
+        if (!current || current->user != bound->user || !current->identity ||
+            current->identity->user_id != bound->identity->user_id ||
+            current->identity->auth_epoch != bound->identity->auth_epoch) {
+            reject(http::status::unauthorized, "native_session_rejected");
+            return;
+        }
+        std::string result = "{\"authorized\":true,\"cameras\":[";
+        for (const auto &[id, profile] : selected) {
+            if (std::chrono::steady_clock::now() >= deadline) {
+                reject(http::status::service_unavailable, "native_request_expired");
+                return;
+            }
+            if (result.back() != '[')
+                result += ',';
+            result += "{\"cameraId\":\"" + json_escape(id) + "\",\"profileId\":\"" + json_escape(profile) + "\"";
+            if (resolve) {
+                const auto endpoint = resolve_camera_endpoint(id, profile, true);
+                if (!endpoint || endpoint->endpoint.size() > 2048) {
+                    reject(http::status::service_unavailable, "native_profile_unavailable");
+                    return;
+                }
+                std::string transport = "auto";
+                if (endpoint->endpoint.starts_with("rtsp://") || endpoint->endpoint.starts_with("rtsps://")) {
+                    if (endpoint->transport_mode == "auto" || endpoint->transport_mode == "rtsp-tcp")
+                        transport = "tcp";
+                    else if (endpoint->transport_mode == "rtsp-udp")
+                        transport = "udp";
+                    else if (endpoint->transport_mode == "rtsp-udp-multicast")
+                        transport = "udp_multicast";
+                    else {
+                        reject(http::status::unprocessable_entity, "native_transport_unsupported");
+                        return;
+                    }
+                }
+                result += ",\"url\":\"" + json_escape(endpoint->endpoint) +
+                    "\",\"transport\":\"" + transport +
+                    "\",\"hardwareDecode\":\"" + json_escape(endpoint->hardware_decode) + "\"";
+            }
+            result += '}';
+        }
+        const auto final_session = authorize(NativeControlCommand::read_scene);
+        if (std::chrono::steady_clock::now() >= deadline || !final_session.allowed()) {
+            reject(http::status::service_unavailable, "native_request_expired");
+            return;
+        }
+        if (studio_revision) {
+            const auto current_studio = studio_.snapshot();
+            if (!current_studio.ok()) {
+                reject(http::status::precondition_failed, "native_studio_changed");
+                return;
+            }
+            if (current_studio.revision != *studio_revision) {
+                if (!fingerprint_precondition) {
+                    reject(http::status::precondition_failed, "native_studio_changed");
+                    return;
+                }
+                const auto parsed = parse_studio_json(current_studio.public_json);
+                const auto flattened = parsed.ok() ? flatten_studio_scene(*parsed.document, requested_scene_id) : StudioFlattenResult{};
+                const auto current_fingerprint = flattened.ok() ?
+                    native_scene_fingerprint(*flattened.document, runtime_status_.configured_fps) : std::nullopt;
+                if (!current_fingerprint || current_fingerprint != scene_fingerprint) {
+                    reject(http::status::precondition_failed, "native_scene_changed");
+                    return;
+                }
+                studio_revision = current_studio.revision;
+            }
+        }
+        const auto canvas = scene_document ? scene_document->canvas : controller_.private_document_snapshot().canvas;
+        result += "],\"cameraVersions\":{";
+        for (const auto &[camera, revision] : camera_versions) {
+            if (result.back() != '{')
+                result += ',';
+            result += "\"" + json_escape(camera) + "\":" + std::to_string(revision);
+        }
+        result += "},\"video\":{\"width\":" + std::to_string(canvas.width) +
+            ",\"height\":" + std::to_string(canvas.height) + ",\"fps\":" +
+            std::to_string(runtime_status_.configured_fps) + "}";
+        if (scene_document) {
+            result += ",\"studioRevision\":" + std::to_string(*studio_revision);
+            result += ",\"sceneFingerprint\":\"" + *scene_fingerprint + "\"";
+            if (resolve) {
+                const auto encoded_scene = serialize_scene_json(*scene_document, SceneJsonView::public_api);
+                if (!encoded_scene.ok()) {
+                    reject(http::status::service_unavailable, "native_studio_unavailable");
+                    return;
+                }
+                result += ",\"scene\":" + encoded_scene.json;
+            }
+        }
+        result += '}';
+        send_response(response(http::status::ok, version, std::move(result)));
+    }
+
     void do_read()
     {
         parser_.emplace();
@@ -3906,7 +4706,28 @@ private:
             return;
         }
         const std::string_view target = view(request.target());
-        const bool basic_auth_enabled = authenticator_.enabled() && compatibility_basic_auth_enabled();
+        if (target.starts_with("/api/v1/native/")) {
+            const auto self = shared_from_this();
+            const auto queued_at = std::chrono::steady_clock::now();
+            if (!pool_.post([self, queued_at, request = std::move(request)] {
+                try {
+                    if (std::chrono::steady_clock::now() - queued_at < std::chrono::seconds(2)) {
+                        self->handle_native_host(request);
+                        return;
+                    }
+                } catch (...) { /* Keep private transport/parser details out of responses. */ }
+                net::post(self->stream_.get_executor(), [self] {
+                    self->send(response(http::status::service_unavailable, 11,
+                        error_body("native_request_unavailable", "native product service is busy")));
+                });
+            }))
+                send(response(http::status::service_unavailable, version,
+                    error_body("native_request_unavailable", "native product service is busy")));
+            return;
+        }
+        const char *native_host_token = std::getenv("WEBOBS_NATIVE_HOST_TOKEN");
+        const bool native_product = native_host_token && *native_host_token;
+        const bool basic_auth_enabled = !native_product && authenticator_.enabled() && compatibility_basic_auth_enabled();
         const bool static_resource = !target.starts_with("/api/v1/") &&
                                      !target.starts_with("/api/v2/") &&
                                      !target.starts_with("/api/v3/") && target != "/metrics";
@@ -3955,12 +4776,16 @@ private:
                 return;
             }
             std::string authenticated_username;
+            std::optional<SessionIdentity> authenticated_identity;
             long cluster_login_status = 0;
             if (cluster_auth_enabled) {
-                const ClusterLoginResult cluster_result = cluster_login(credentials->first, credentials->second, client_key_);
+                const ClusterLoginResult cluster_result = cluster_login(credentials->first, credentials->second,
+                    client_key_, native_product);
                 cluster_login_status = cluster_result.status;
-                if (cluster_result.status == 200)
+                if (cluster_result.status == 200) {
                     authenticated_username = cluster_result.username;
+                    authenticated_identity = cluster_result.identity;
+                }
             }
             AuthenticationDecision decision = AuthenticationDecision::invalid_credentials;
             if (authenticated_username.empty() && basic_auth_enabled) {
@@ -3986,7 +4811,10 @@ private:
                 send(authentication_response(decision, version, authenticator_.retry_after_seconds()));
                 return;
             }
-            const auto token = session_store_.create(authenticated_username, client_key_);
+            const auto token = native_product
+                ? (authenticated_identity ? session_store_.create_bound(authenticated_username, client_key_,
+                    *authenticated_identity) : std::nullopt)
+                : session_store_.create(authenticated_username, client_key_);
             if (!token) {
                 send(response(http::status::internal_server_error, version,
                               error_body("session_create_failed", "could not create a browser session")));
@@ -4009,7 +4837,7 @@ private:
             session_record = session_store_.validate_and_slide(*session_token);
         bool basic_authenticated = false;
         const bool device_request = v2_device_route(request);
-        const bool authentication_enabled = basic_auth_enabled || cluster_authentication_enabled();
+        const bool authentication_enabled = native_product || basic_auth_enabled || cluster_authentication_enabled();
         if (!public_probe && !device_request && !static_resource &&
             authentication_enabled && !session_record) {
             if (!basic_auth_enabled) {
@@ -4041,6 +4869,48 @@ private:
                 return;
             }
             basic_authenticated = true;
+        }
+        const auto reject_bound_session = [&](bool identity_revoked = false) {
+            if (identity_revoked && session_record && session_record->identity)
+                session_store_.revoke_identity(session_record->user, *session_record->identity);
+            else if (session_token)
+                session_store_.revoke(*session_token);
+            auto result = response(http::status::unauthorized, version,
+                error_body("session_revoked", "the account session is no longer valid"));
+            result.set(http::field::set_cookie, session_store_.clear_cookie_header());
+            send(std::move(result));
+        };
+        if (native_product && session_record && !public_probe && !device_request && !static_resource &&
+            target != "/api/v1/auth/logout") {
+            if (!session_record->identity) {
+                // Existing username-only cookies require a fresh password login.
+                reject_bound_session();
+                return;
+            }
+            if (target == "/api/v1/auth/session" || target.starts_with("/api/v2/account/")) {
+                NativeClusterAuthorizationConfig config;
+                config.port = static_cast<std::uint16_t>(runtime_port(8095));
+                if (const char *internal = std::getenv("WEBOBS_CLUSTER_INTERNAL_TOKEN"))
+                    config.internal_token = internal;
+                const NativeClusterAuthorizationBackend backend(std::move(config));
+                const auto decision = backend.validate_identity(session_record->user, *session_record->identity);
+                if (decision == NativeAuthorizationDecision::unknown_user) {
+                    reject_bound_session(true);
+                    return;
+                }
+                if (decision != NativeAuthorizationDecision::allowed) {
+                    send(response(http::status::service_unavailable, version,
+                        error_body("authorization_unavailable", "account validation is unavailable")));
+                    return;
+                }
+                const auto current = session_store_.validate_and_slide(*session_token);
+                if (!current || !current->identity || current->user != session_record->user ||
+                    current->identity->user_id != session_record->identity->user_id ||
+                    current->identity->auth_epoch != session_record->identity->auth_epoch) {
+                    reject_bound_session();
+                    return;
+                }
+            }
         }
         if (target == "/api/v1/auth/session") {
             if (request.method() != http::verb::get) {
@@ -4083,10 +4953,15 @@ private:
         if (session_record && !public_probe && !device_request && !static_resource &&
             target != "/api/v1/auth/session" && !target.starts_with("/api/v2/account/") &&
             cluster_authentication_enabled()) {
-            const ClusterAuthorization authorization = cluster_authorize(session_record->user, request);
+            const ClusterAuthorization authorization = cluster_authorize(session_record->user, request,
+                native_product ? &*session_record->identity : nullptr);
             const bool legacy_admin = basic_auth_enabled &&
                 session_record->user == authenticator_.configured_username();
             if (authorization == ClusterAuthorization::user_unknown && !legacy_admin) {
+                if (native_product) {
+                    reject_bound_session(true);
+                    return;
+                }
                 session_store_.revoke_user(session_record->user);
                 HttpResponse result = response(http::status::unauthorized, version,
                     error_body("session_revoked", "the user is disabled or no longer exists"));
@@ -4104,11 +4979,26 @@ private:
                               error_body("authorization_unavailable", "RBAC authorization is unavailable")));
                 return;
             }
+            if (native_product) {
+                const auto current = session_store_.validate_and_slide(*session_token);
+                if (!current || !current->identity || current->user != session_record->user ||
+                    current->identity->user_id != session_record->identity->user_id ||
+                    current->identity->auth_epoch != session_record->identity->auth_epoch) {
+                    reject_bound_session();
+                    return;
+                }
+            }
         }
         if (target.starts_with("/api/v2/account/")) {
             request.erase("X-WebObs-Principal");
+            request.erase("X-WebObs-Account-Id");
+            request.erase("X-WebObs-Account-Epoch");
             if (session_record)
                 request.set("X-WebObs-Principal", session_record->user);
+            if (native_product && session_record && session_record->identity) {
+                request.set("X-WebObs-Account-Id", session_record->identity->user_id);
+                request.set("X-WebObs-Account-Epoch", session_record->identity->auth_epoch);
+            }
         }
         if (target.starts_with("/api/v1/nvr")) {
             request.erase("X-WebObs-Nvr-Principal");
@@ -4188,7 +5078,25 @@ private:
                               error_body("serialization_failed", snapshot.error, snapshot.revision)));
                 return;
             }
-            std::make_shared<WebSocketSession>(stream_.release_socket(), hub_)
+            WebSocketSession::IdentityCheck identity_check;
+            if (native_product && session_record && session_record->identity && session_token) {
+                identity_check = [sessions = &session_store_, token = *session_token,
+                    principal = session_record->user, identity = *session_record->identity] {
+                    const auto matches = [&](const auto &record) {
+                        return record && record->identity && record->user == principal &&
+                            record->identity->user_id == identity.user_id &&
+                            record->identity->auth_epoch == identity.auth_epoch;
+                    };
+                    if (!matches(sessions->validate_and_slide(token))) return false;
+                    const HttpRequest check_request(http::verb::get, "/api/v1/ws", 11);
+                    const auto decision = cluster_authorize(principal, check_request, &identity);
+                    if (decision == ClusterAuthorization::user_unknown)
+                        sessions->revoke_identity(principal, identity);
+                    return decision == ClusterAuthorization::allowed &&
+                        matches(sessions->validate_and_slide(token));
+                };
+            }
+            std::make_shared<WebSocketSession>(stream_.release_socket(), hub_, pool_, std::move(identity_check))
                 ->run(std::move(request), scene_event("scene.snapshot", snapshot.public_json));
             return;
         }
@@ -4198,13 +5106,28 @@ private:
         std::optional<std::string> cookie_token;
         if (session_token && session_record)
             cookie_token = *session_token;
-        HttpRequest queued = request;
+        const bool mutating = request.method() == http::verb::post || request.method() == http::verb::put ||
+            request.method() == http::verb::patch || request.method() == http::verb::delete_;
+        const auto actor = native_product && mutating ? session_record : std::nullopt;
+        auto queued = std::make_shared<HttpRequest>(std::move(request));
+        const auto execute = [this, queued, cookie_token, actor, native_product] {
+            // The worker may start well after the initial HTTP gate. Never turn
+            // that earlier decision into a permission to execute queued work.
+            if (actor && cookie_token)
+                if (auto rejected = native_mutation_rejection(*queued, *cookie_token, *actor))
+                    return std::move(*rejected);
+            auto result = handle_request(*queued, controller_, studio_, hub_, whep_proxy_,
+                nvr_proxy_, camera_proxy_, allowed_origins_, runtime_status_, metrics_, authenticator_);
+            if (native_product && cookie_token && result.result() == http::status::unauthorized) {
+                session_store_.revoke(*cookie_token);
+                result.set(http::field::set_cookie, session_store_.clear_cookie_header());
+            }
+            return result;
+        };
         const bool dispatched = pool_.post(
-            [this, self, request = std::move(queued), cookie_token]() mutable {
-                HttpResponse result = handle_request(request, controller_, studio_, hub_, whep_proxy_,
-                                                     nvr_proxy_, camera_proxy_, allowed_origins_,
-                                                     runtime_status_, metrics_, authenticator_);
-                if (cookie_token)
+            [this, self, execute, cookie_token] {
+                HttpResponse result = execute();
+                if (cookie_token && result.result() != http::status::unauthorized)
                     result.set(http::field::set_cookie, session_store_.set_cookie_header(*cookie_token));
                 net::post(stream_.get_executor(),
                           [self, result = std::move(result)]() mutable { self->send(std::move(result)); });
@@ -4212,10 +5135,9 @@ private:
         if (dispatched)
             return;
         // Pool saturated: serve the request here instead of dropping it.
-        HttpResponse result = handle_request(request, controller_, studio_, hub_, whep_proxy_, nvr_proxy_, camera_proxy_,
-                                             allowed_origins_, runtime_status_, metrics_, authenticator_);
-        if (session_token && session_record)
-            result.set(http::field::set_cookie, session_store_.set_cookie_header(*session_token));
+        HttpResponse result = execute();
+        if (cookie_token && result.result() != http::status::unauthorized)
+            result.set(http::field::set_cookie, session_store_.set_cookie_header(*cookie_token));
         send(std::move(result));
     }
 
@@ -4269,8 +5191,20 @@ public:
     {
         beast::error_code error;
         acceptor_.open(endpoint.protocol(), error);
-        if (!error)
-            acceptor_.set_option(net::socket_base::reuse_address(true), error);
+        if (!error) {
+#ifdef _WIN32
+            const char *native_host = std::getenv("WEBOBS_NATIVE_HOST_TOKEN");
+            if (native_host && *native_host) {
+                // Windows SO_REUSEADDR permits force-binding an active listener.
+                // The authenticated native origin must remain owned by this core.
+                const BOOL exclusive = TRUE;
+                if (::setsockopt(acceptor_.native_handle(), SOL_SOCKET, SO_EXCLUSIVEADDRUSE,
+                                 reinterpret_cast<const char *>(&exclusive), sizeof(exclusive)) == SOCKET_ERROR)
+                    error.assign(::WSAGetLastError(), net::error::get_system_category());
+            } else
+#endif
+                acceptor_.set_option(net::socket_base::reuse_address(true), error);
+        }
         if (!error)
             acceptor_.bind(endpoint, error);
         if (!error)
@@ -4343,6 +5277,7 @@ struct ControlServer::Impl {
           camera_proxy(configuration.camera_registry_enabled)
     {
         pwa_media_allowed_origins = configuration.pwa_media_allowed_origins;
+        status.configured_fps = configuration.fps;
     }
 
     const Config &config;
@@ -4395,6 +5330,11 @@ std::optional<std::string> ControlServer::start()
     impl_->listener->run();
     impl_->thread = std::thread([this] { impl_->context.run(); });
     return std::nullopt;
+}
+
+bool ControlServer::composite_requested()
+{
+    return impl_->whep_proxy.composite_requested();
 }
 
 void ControlServer::stop()

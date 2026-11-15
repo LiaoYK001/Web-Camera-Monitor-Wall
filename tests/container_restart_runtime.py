@@ -65,7 +65,7 @@ def run(options):
         admin.expect('/api/v1/auth/login', body=account, method='POST')
         config = 'streams:\n  synthetic: "ffmpeg:virtual?video=testsrc2&size=160x90#video=h264"\n'
         admin.expect(PREFIX + 'api/config', body=config, method='POST')
-        admin.expect(PREFIX + 'api/restart', method='POST')
+        admin.expect(PREFIX + 'api/restart', 202, method='POST')
         for _ in range(40):
             try:
                 assert b'synthetic' in admin.expect(PREFIX + 'api/streams')

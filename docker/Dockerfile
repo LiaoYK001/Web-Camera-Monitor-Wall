@@ -19,8 +19,8 @@ RUN WEBOBS_BUILD_VERSION="${WEBOBS_BUILD_VERSION}" pnpm run build
 
 COPY go2rtc/go2rtc/www /src/go2rtc/go2rtc/www
 COPY go2rtc/go2rtc/LICENSE /src/go2rtc/go2rtc/LICENSE
-COPY go2rtc/dependencies.lock.json /src/go2rtc/dependencies.lock.json
-COPY scripts/prepare-go2rtc-ui.mjs scripts/patch-monaco-sanitizer.mjs /src/scripts/
+COPY go2rtc/dependencies.lock.json go2rtc/config-save.js /src/go2rtc/
+COPY scripts/prepare-go2rtc-ui.mjs scripts/patch-monaco-sanitizer.mjs scripts/patch-go2rtc-mse.mjs /src/scripts/
 RUN pnpm go2rtc:ui
 
 # Build the complete pinned upstream module, including every source adapter.

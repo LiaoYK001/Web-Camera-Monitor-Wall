@@ -10,6 +10,22 @@ const { SourceMapConsumer, SourceMapGenerator, SourceNode } = postcssRequire('so
 const basic = { version: 3, sources: ['input.css'], names: [], mappings: 'AAAA', sourcesContent: ['a{}'] };
 const indexed = (line, column = 0, map = basic) => ({ version: 3, sections: [{ offset: { line, column }, map }] });
 
+test('actual Workbox scans assets with patched glob and preserves exclusions', async t => {
+  const { mkdtemp, mkdir, writeFile, rm } = await import('node:fs/promises');
+  const path = await import('node:path');
+  const os = await import('node:os');
+  const pwa = createRequire(require.resolve('vite-plugin-pwa'));
+  const workbox = pwa('workbox-build');
+  const root = await mkdtemp(path.join(os.tmpdir(), 'webobs-workbox-glob-'));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  await mkdir(path.join(root, 'private'));
+  for (const name of ['index.html', 'main.js', 'private/secret.js']) await writeFile(path.join(root, name), name);
+  const result = await workbox.getManifest({ globDirectory: root, globPatterns: ['**/*.{html,js}'], globIgnores: ['private/**'] });
+  assert.deepEqual(result.manifestEntries.map(item => item.url).sort(), ['index.html', 'main.js']);
+  assert.equal(result.warnings.length, 0);
+  assert.ok(result.manifestEntries.every(item => /^[a-f0-9]+$/.test(item.revision)));
+});
+
 test('Vite/PostCSS resolves the reviewed source-map-js patch', () => {
   assert.equal(postcssRequire('source-map-js/package.json').version, '1.2.2');
 });
@@ -44,4 +60,34 @@ test('actual PostCSS ordinary map generation still round-trips', async () => {
   const consumer = new SourceMapConsumer(map);
   assert.equal(consumer.originalPositionFor({ line: 1, column: 0 }).source, 'input.css');
   assert.equal(SourceNode.fromStringWithSourceMap(result.css, consumer).toString(), result.css);
+});
+
+test('patched Workbox resolver clones and freezes defaults without the vulnerable merge dependency', async t => {
+  const { mkdtemp, mkdir, writeFile, rm } = await import('node:fs/promises');
+  const path = await import('node:path');
+  const os = await import('node:os');
+  const { pathToFileURL } = await import('node:url');
+  const pwa = createRequire(require.resolve('vite-plugin-pwa'));
+  const workbox = createRequire(pwa.resolve('workbox-build'));
+  const resolver = workbox('@rollup/plugin-node-resolve');
+  const esm = await import(pathToFileURL(path.join(path.dirname(path.dirname(workbox.resolve('@rollup/plugin-node-resolve'))), 'es/index.js')).href);
+  assert.deepEqual(esm.DEFAULTS, resolver.DEFAULTS);
+  assert.deepEqual(resolver.DEFAULTS.extensions, ['.mjs', '.js', '.json', '.node']);
+  assert.equal(Object.isFrozen(resolver.DEFAULTS), true);
+  assert.equal(Object.isFrozen(resolver.DEFAULTS.extensions), true);
+  assert.equal(Object.isFrozen(esm.DEFAULTS.extensions), true);
+  const root = await mkdtemp(path.join(os.tmpdir(), 'webobs-resolver-'));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  await mkdir(path.join(root, 'node_modules/fixture-package'), { recursive: true });
+  await writeFile(path.join(root, 'node_modules/fixture-package/package.json'), JSON.stringify({ name: 'fixture-package', version: '1.0.0', main: 'index.js' }));
+  await writeFile(path.join(root, 'node_modules/fixture-package/index.js'), 'export const answer = 42;');
+  await writeFile(path.join(root, 'input.js'), "export { answer } from 'fixture-package';");
+  for (const plugin of [resolver.nodeResolve, esm.nodeResolve]) {
+    const bundle = await workbox('rollup').rollup({ input: path.join(root, 'input.js'), plugins: [plugin()] });
+    try {
+      const built = await bundle.generate({ format: 'esm' });
+      assert.match(built.output[0].code, /answer = 42/);
+      assert.doesNotMatch(built.output[0].code, /from ['"]fixture-package/);
+    } finally { await bundle.close(); }
+  }
 });

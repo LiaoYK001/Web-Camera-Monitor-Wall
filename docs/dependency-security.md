@@ -46,3 +46,27 @@ node --test tests/build-proxy.test.mjs
 - 审计通过只说明当前锁文件在当日公开数据下没有已知告警，不等于依赖不存在未知缺陷，也不等于已完成 SBOM/许可证或完整打包验收。
 - 本环境的 registry 主机不可直接抓取，因此 §3 的“无可用修复版本”来自修復轮次记录与 advisory 元数据；若上游状态变化，以重新审计结果为准。
 - Android 侧依赖（Gradle/JUnit/lint）与容器镜像基础层不在 `pnpm audit` 范围内，需要各自的候选构建与审计证据。
+
+## 2026-10-30 Windows 性能候选续接 / Windows performance candidate follow-up
+
+本轮公开 CI 在旧锁文件上因新通告失败，性能候选需同时完成门禁修复。Electron 在同一 44.x 主版本更新到 44.9.1，Vite 更新到 8.1.6，DOMPurify 更新到 3.4.17；fast-uri/serialize-javascript/undici 6.x/7.x 分别固定到 3.1.9/7.1.3/6.29.1/7.30.1。Monaco 的内嵌 DOMPurify 仍必须经过完整工厂替换，不能只改顶层 package.json；资源回归与镜像探针期望同步到 3.4.17。
+
+The stale locks failed the public audit gate. Electron/Vite/DOMPurify receive same-major fixes, and affected transitive dependencies receive pinned patched versions. The actual Monaco sanitizer factory and its probes are updated as well; a top-level package override alone cannot patch the embedded copy.
+
+依据：[Electron 通告](https://github.com/advisories/GHSA-jr5w-w6x2-84p9)、[DOMPurify 通告](https://github.com/advisories/GHSA-cg2g-xh64-v4q7)、[Vite 通告](https://github.com/advisories/GHSA-587h-7wmj-h5pm)、[Undici 通告](https://github.com/advisories/GHSA-xjj6-f33q-929c)。Sources: the linked upstream advisories specify the affected and fixed versions.
+
+`deepmerge` 4.3.1 的 [GHSA-gcqx-w48m-w2h4](https://github.com/advisories/GHSA-gcqx-w48m-w2h4) 尚无已发布修复版。它只经 Workbox 的 `@rollup/plugin-node-resolve@16.0.3` 进入此工作区，而该消费者在 CJS/ESM 中只调用一次 `deepMerge({}, defaults)`，输入是自身固定的纯数据默认选项。采用限定版本的源码补丁，将这处调用改为 Node 24 的 `structuredClone(defaults)`，保留现有递归冻结；同时移除该消费者不再使用的 deepmerge 依赖。没有伪造上游版本或忽略 advisory，未来升级消费者时须重新审查并去掉补丁。
+
+There is no published fixed deepmerge release. A version-scoped node-resolve patch replaces its sole constant-defaults clone with native structuredClone in both distributions and removes the now-unused dependency using pnpm's scoped removal override. Recursive freezing remains. This is neither an advisory suppression nor a fabricated upstream release. Reassess/remove the patch when upgrading the consumer.
+
+`dependency-security.test.mjs` 通过 Workbox 的真实解析路径同时加载 CJS/ESM 构建，检查默认数组和冻结，并实际使用 Rollup 构建临时包的导入；普通 PWA 生产构建也验证了真实 Workbox 消费链。两个工作区 `pnpm audit --audit-level=low` 当前均通过。Electron 的真实沙盒/下载器/代理/TLS/更新回退及 Windows 全量候选仍分别验证，不用审计结果替代。
+
+The dependency regression loads both actual Workbox resolver builds, checks defaults/freezing and bundles a temporary package through real Rollup. Both low-threshold workspace audits pass. Native Electron, downloader/proxy/TLS/update contracts and complete Windows packaging retain their separate gates.
+
+## 2026-11-06：恢复 minimatch / glob 审计门禁
+
+接手时公共 CI 被 [minimatch GHSA-g3hv-75wg-m249](https://github.com/advisories/GHSA-g3hv-75wg-m249) 和 [glob GHSA-3g3m-2fjr-6pw4](https://github.com/advisories/GHSA-3g3m-2fjr-6pw4) 阻断。修复版分别为 minimatch 11.0.1 与 glob 14.0.2；通过 pnpm 范围覆盖只更新受影响的 minimatch >=7 和 glob >=9，保留较旧消费者的原有 API。没有忽略公告。两个工作区使用锁定 pnpm 11.16.0 更新并执行低阈值审计。
+
+这是跨主版本的构建依赖更新，验证真实消费者：Workbox `getManifest` 在临时文件树扫描/过滤并生成 revision；Electron builder 的实际 `FileMatcher` 检查 include/exclude，实际 ASAR 创建/读取回归确认排除文件未入包。网页生产构建、桌面测试和相关依赖回归本地通过；平台回执另记执行台账，不将 Linux 成功冒充 Windows 安装验证。
+
+Public CI was blocked by the two advisories above. Scoped pnpm overrides upgrade the affected minimatch >=7 and glob >=9 consumers to 11.0.1 / 14.0.2 while leaving older APIs intact. Both low-threshold workspace audits pass with locked pnpm 11.16.0. Because these are major-version dependency changes, regressions exercise actual Workbox scanning/revisions and Electron builder file filtering plus an ASAR round trip. Local production web build and desktop tests pass; Windows platform evidence is recorded separately.

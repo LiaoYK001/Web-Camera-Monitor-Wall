@@ -29,7 +29,7 @@ try {
   const evidenceResponse = await context.request.get(`${vendor}webobs-sanitizer.json`);
   assert.equal(evidenceResponse.status(), 200);
   const evidence = await evidenceResponse.json();
-  assert.equal(evidence.dompurifyVersion, '3.4.16');
+  assert.equal(evidence.dompurifyVersion, '3.4.17');
   const actualSource = await (await context.request.get(`${vendor}${evidence.file}`)).body();
   assert.equal(createHash('sha256').update(actualSource).digest('hex'), evidence.packagedSha256);
   const sanitizerPage = await context.newPage();
@@ -50,7 +50,7 @@ try {
     }
     return results;
   });
-  assert(hooks.every(result => result.version === '3.4.16' && !result.armed), JSON.stringify(hooks));
+  assert(hooks.every(result => result.version === '3.4.17' && !result.armed), JSON.stringify(hooks));
   await sanitizerPage.close();
   console.log('PASS: packaged sanitizer SHA-256 and afterSanitize detached-subtree XSS regressions');
   await page.screenshot({ path: '../tests/artifacts/go2rtc/workspace.png', fullPage: true });
