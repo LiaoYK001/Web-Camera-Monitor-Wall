@@ -24,7 +24,7 @@ class PreviewReleaseTests(unittest.TestCase):
                          "obsCommit": product_package.OBS_COMMIT}
         release_policy.configure_preview(self.manifest)
         (self.runtime / "webobs-native-prototype.json").write_text(json.dumps(self.manifest))
-        for name in product_package.REQUIRED | {"START-HERE.md"}:
+        for name in product_package.REQUIRED | product_package.PREVIEW_REQUIRED:
             path = self.runtime / name
             path.parent.mkdir(parents=True, exist_ok=True)
             path.write_bytes(b"synthetic nonexecutable fixture")

@@ -5,3 +5,5 @@
 Dockerfile text eol=lf
 *.patch text eol=lf -whitespace
 clients/packaging/linux/AppRun text eol=lf
+# Preserve upstream license bytes against their recorded SHA-256 values.
+native-host/licenses/native-preview/** -text -whitespace

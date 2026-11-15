@@ -80,6 +80,7 @@ def finalize(repo: Path, source: Path, runtime: Path, version: str, product: boo
     if native_preview:
         configure_preview(manifest)
         shutil.copy2(repo / "docs/windows-v4.5-quickstart.md", runtime / "START-HERE.md")
+        shutil.copytree(repo / "native-host/licenses/native-preview", runtime / "licenses/native-preview")
     (runtime / "webobs-native-prototype.json").write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf-8")
     return manifest
 
