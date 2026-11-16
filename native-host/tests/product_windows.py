@@ -91,6 +91,9 @@ def exercise(runtime, report, *, with_media=False, retained_profile=None):
         "installedProductQualified": False, "mediaQualified": False, "hardwareDecodeVerified": False,
         "fullFeatureMigrationQualified": False}
     phase = "prepare"
+    gate_failed = [False]
+    def checkpoint(name):
+        evidence["lastCheckpoint"] = name
     with tempfile.TemporaryDirectory(prefix="WebOBS 产品接线-") as temporary:
         private = Path(temporary)
         profile = Path(retained_profile).absolute() if retained_profile is not None else (
@@ -668,8 +671,10 @@ def exercise(runtime, report, *, with_media=False, retained_profile=None):
                     "main-switch-preserves-two-different-projector-scenes", "native-projector-fullscreen-windowed-final-pixels",
                     "closing-one-projector-preserves-other-and-main"])
                 phase = "native-program-take"
+                checkpoint("program-choose")
                 assert ui("choose", indices=[1, 2, 3, 4, 5])
                 check_graph()
+                checkpoint("program-choose-applied")
                 alt_scene = {"schemaVersion": 6, "revision": 0, "id": "fixture-alt", "name": "Fixture Program alt",
                     "canvas": {"width": 1920, "height": 1080, "backgroundColor": "#000000"},
                     "sources": [{"id": "fixture-alt-source", "kind": "camera", "name": "Program alt camera",
@@ -693,20 +698,26 @@ def exercise(runtime, report, *, with_media=False, retained_profile=None):
                     state().get("program", {}).get("mediaSources") == 5,
                     "native Program did not apply the saved scene", timeout=20)
                 check_monitor_program(program_scene="fixture-five", program_media=5)
+                checkpoint("program-five-applied")
                 assert ui("program-projector")
                 wait_for(lambda: any(window.get("role") == "program-projector" for window in state().get("windows", [])),
                     "native Program projector did not open", timeout=8)
+                checkpoint("program-projector-open")
                 check_pixels("program-before-take", quick_order=[1, 2, 3, 4, 5],
                     program_scene="fixture-five", program_media=5,
                     projector_orders={"program-projector": "forward"})
+                checkpoint("program-before-pixels")
                 before_take = state().get("program", {}).get("sceneUuid")
                 assert isinstance(before_take, str) and before_take
+                checkpoint("program-take-request")
                 code, _, taken = request("/api/v1/studio/take", cookie=cookie, method="POST", revision=studio["revision"])
                 assert code == 200 and taken["programSceneId"] == "fixture-alt", "Studio TAKE did not commit the preview scene"
+                checkpoint("program-take-committed")
                 wait_for(lambda: state().get("programSceneId") == "fixture-alt" and
                     state().get("programApplyState") == "applied" and
                     state().get("program", {}).get("mediaSources") == 1,
                     "native Program did not switch to the TAKE target", timeout=20)
+                checkpoint("program-take-applied")
                 after_take = state().get("program", {}).get("sceneUuid")
                 assert isinstance(after_take, str) and after_take != before_take, "TAKE reused the previous Program scene"
                 time.sleep(2)  # Let the configured 400 ms fade finish before final pixels.
@@ -714,9 +725,11 @@ def exercise(runtime, report, *, with_media=False, retained_profile=None):
                 assert code == 200 and runtime["native"] is True and runtime["status"] == "applied" and \
                     runtime["appliedRevision"] == taken["revision"] and runtime["appliedSceneId"] == "fixture-alt", \
                     "Program runtime receipt did not match the committed TAKE"
+                checkpoint("program-runtime-receipt")
                 check_pixels("program-after-take", quick_order=[1, 2, 3, 4, 5],
                     program_scene="fixture-alt", program_media=1,
                     projector_orders={"program-projector": "quick-1"})
+                checkpoint("program-after-pixels")
                 assert ui("projector-close")
                 wait_for(lambda: not state().get("windows") or
                     all(window.get("role") == "main-preview" for window in state().get("windows", [])),
@@ -727,9 +740,11 @@ def exercise(runtime, report, *, with_media=False, retained_profile=None):
                 code, _, studio = request("/api/v1/studio", studio, cookie=cookie, method="PUT",
                     revision=studio["revision"])
                 assert code == 200
+                checkpoint("program-cleared-put")
                 wait_for(lambda: state().get("programApplyState") == "idle" and
                     state().get("program", {}).get("mediaSources") == 0,
                     "empty Program scene did not clear the previous protected output", timeout=12)
+                checkpoint("program-cleared-applied")
                 check_pixels("program-cleared", quick_order=[1, 2, 3, 4, 5])
                 evidence["checks"].extend(["studio-take-applies-real-obs-program-final-pixels",
                     "program-projector-shows-real-program-not-preview",
@@ -898,6 +913,7 @@ def exercise(runtime, report, *, with_media=False, retained_profile=None):
             evidence["mediaScope"] = "synthetic-five-hevc-final-preview-pixels" if with_media else "not-run"
             evidence["passed"] = True
         except Exception:
+            gate_failed[0] = True
             # Synthetic logs stay private. Only fixed marker categories, bounded
             # counts and numeric exit status leave this disposable test profile.
             evidence["failurePhase"] = phase
@@ -915,9 +931,11 @@ def exercise(runtime, report, *, with_media=False, retained_profile=None):
             evidence["observedState"] = {key: observed[key] for key in (
                 "phase", "mediaSources", "sessionBound", "catalogItems", "selectionIndices", "previewLocked",
                 "lastRetirementMs", "mainGeneration", "studioRevision", "renderer", "program",
-                "startupStudioDeferred") if key in observed}
+                "programSceneId", "programSceneFingerprint", "programApplyState", "startupStudioDeferred") if key in observed}
             evidence["observedState"]["watchingSavedScene"] = bool(observed.get("sceneId"))
             evidence["observedState"]["projectorCount"] = len(observed.get("projectors", []))
+            evidence["observedState"]["windowRoles"] = [window.get("role") for window in observed.get("windows", [])
+                                                       if isinstance(window, dict)]
             # Only fixed categories/counts from this boot's newest OBS log.
             # Never publish its contents, path, exception text or camera URL.
             obs_markers = ("Switched to Preview/Program mode", "Switched to regular Preview mode",
@@ -945,16 +963,31 @@ def exercise(runtime, report, *, with_media=False, retained_profile=None):
             evidence["privateLogMarkers"] = sorted(set(evidence["privateLogMarkers"]))
             raise AssertionError("native product entry/UI gate failed at " + phase) from None
         finally:
+            cleanup_failed = False
             if process is not None and process.poll() is None:
                 process.kill()
                 process.wait(timeout=10)
-            wait_for(lambda: not any(alive(pid) for pid in known_pids),
-                     "owned Windows process survived gate cleanup", timeout=15)
+            try:
+                wait_for(lambda: not any(alive(pid) for pid in known_pids),
+                         "owned Windows process survived gate cleanup", timeout=15)
+            except Exception:
+                cleanup_failed = True
+                evidence["cleanupFailed"] = True
+                for pid in known_pids:
+                    subprocess.run(["taskkill", "/PID", str(pid), "/T", "/F"],
+                                   stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                try:
+                    wait_for(lambda: not any(alive(pid) for pid in known_pids),
+                             "owned Windows process survived forced cleanup", timeout=10)
+                except Exception:
+                    evidence["forcedCleanupFailed"] = True
             if rtsp is not None:
                 rtsp.stop()
             report.parent.mkdir(parents=True, exist_ok=True)
             report.write_text(json.dumps(evidence, indent=2) + "\n", encoding="utf-8")
             print(json.dumps(evidence))
+            if cleanup_failed and not gate_failed[0]:
+                raise AssertionError("owned Windows process survived gate cleanup")
 
 
 if __name__ == "__main__":
