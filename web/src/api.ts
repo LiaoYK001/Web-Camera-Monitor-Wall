@@ -1,5 +1,5 @@
 import { downloadVerifiedArchivedRecording, type ArchivePlaybackTicket } from './archiveDownload';
-import type { AnalyticsJob, AnalyticsPolicy, AnalyticsRuntimePlan, AnalyticsStatus, ApiErrorEnvelope, ArchiveTarget, AudioMeterSnapshot, BackupJob, CameraDetection, CameraRecord, ClientCameraGrant, ClientEnrollment, ClusterNode, ClusterRecordingTimeline, ClusterRole, ClusterUser, DeviceOperation, EnrolledClient, EventRule, ExternalProvider, MonitorEvent, MotionZone, NvrExport, NvrStatus, NvrTimeline, OnvifEvent, OnvifPreset, OperationalIssue, PlaybackCapabilities, ProcessDiagnostics, RecordingPlacement, ResourceCapacity, RuntimeSettings, SceneDocument, SceneEvent, SourceCatalogItem, SourceCatalogPage, StorageVolume, StudioCapabilities, StudioDocument, SystemCapabilities } from './types';
+import type { AnalyticsJob, AnalyticsPolicy, AnalyticsRuntimePlan, AnalyticsStatus, ApiErrorEnvelope, ArchiveTarget, AudioMeterSnapshot, BackupJob, CameraDetection, CameraRecord, ClientCameraGrant, ClientEnrollment, ClusterNode, ClusterRecordingTimeline, ClusterRole, ClusterUser, DeviceOperation, EnrolledClient, EventRule, ExternalProvider, MonitorEvent, MotionZone, NvrConfig, NvrExport, NvrStatus, NvrTimeline, OnvifEvent, OnvifPreset, OperationalIssue, PlaybackCapabilities, ProcessDiagnostics, RecordingPlacement, ResourceCapacity, RuntimeSettings, SceneDocument, SceneEvent, SourceCatalogItem, SourceCatalogPage, StorageVolume, StudioCapabilities, StudioDocument, SystemCapabilities } from './types';
 
 export class ControlApiError extends Error {
   readonly status: number;
@@ -204,6 +204,24 @@ export async function studioAction(
   return (await response.json()) as StudioDocument;
 }
 
+export interface StudioRuntimeStatus {
+  native: boolean;
+  studioRevision: number;
+  programSceneId: string;
+  status: 'idle' | 'pending' | 'applied' | 'failed';
+  targetRevision: number;
+  targetSceneId: string;
+  appliedRevision: number;
+  appliedSceneId: string;
+  error: string;
+}
+
+export async function fetchStudioRuntime(signal?: AbortSignal): Promise<StudioRuntimeStatus> {
+  const response = await fetch('/api/v1/studio/runtime', { cache: 'no-store', signal });
+  if (!response.ok) throw await parseError(response);
+  return (await response.json()) as StudioRuntimeStatus;
+}
+
 export { connectSceneEvents } from './sceneEvents';
 
 async function nvrRequest<T>(path: string, init?: RequestInit): Promise<T> {
@@ -214,6 +232,13 @@ async function nvrRequest<T>(path: string, init?: RequestInit): Promise<T> {
 
 export const fetchNvrStatus = (signal?: AbortSignal) =>
   nvrRequest<NvrStatus>('/status', { signal });
+
+export const fetchNvrConfig = (signal?: AbortSignal) =>
+  nvrRequest<NvrConfig>('/config', { signal });
+
+export const saveNvrConfig = (config: NvrConfig, signal?: AbortSignal) =>
+  nvrRequest<NvrConfig>('/config', { method: 'PUT', signal,
+    headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(config) });
 
 export const fetchNvrTimeline = (fromUtcMs: number, toUtcMs: number, cameraIds: string[], signal?: AbortSignal) => {
   const query = new URLSearchParams({ from: String(fromUtcMs), to: String(toUtcMs) });

@@ -76,6 +76,10 @@ def exercise(runtime, report, *, with_media=False, retained_profile=None):
         raise ValueError("missing or oversized component receipt")
     components = json.loads(component_receipt.read_text(encoding="utf-8"))
     preview_delivery = delivery(manifest) == "native-monitor-preview"
+    complete_services = all((runtime / marker).is_file() for marker in (
+        "services/events/event_service.py", "services/nvr/nvr_service.py",
+        "services/v2/client_control_service.py", "bin/go2rtc.exe",
+        "bin/node.exe", "bin/webobs-online-source.exe"))
     if manifest.get("productIntegration") is not True:
         raise ValueError("internal integrated build required")
     if components.get("fullFeatureMigrationQualified") is not False:
@@ -88,6 +92,9 @@ def exercise(runtime, report, *, with_media=False, retained_profile=None):
         "installedProductQualified": False, "mediaQualified": False, "hardwareDecodeVerified": False,
         "fullFeatureMigrationQualified": False}
     phase = "prepare"
+    gate_failed = [False]
+    def checkpoint(name):
+        evidence["lastCheckpoint"] = name
     with tempfile.TemporaryDirectory(prefix="WebOBS 产品接线-") as temporary:
         private = Path(temporary)
         profile = Path(retained_profile).absolute() if retained_profile is not None else (
@@ -137,6 +144,20 @@ def exercise(runtime, report, *, with_media=False, retained_profile=None):
                 reply = error
             with reply:
                 return reply.status, reply.headers.get("Set-Cookie", ""), json.loads(reply.read())
+
+        def raw_request(path, cookie="", *, headers=None):
+            origin = status()["origin"]
+            request_headers = {"Origin": origin}
+            if cookie:
+                request_headers["Cookie"] = cookie
+            request_headers.update(headers or {})
+            message = urllib.request.Request(origin + path, headers=request_headers, method="GET")
+            try:
+                reply = opener.open(message, timeout=15)
+            except urllib.error.HTTPError as error:
+                reply = error
+            with reply:
+                return reply.status, reply.headers, reply.read(1024 * 1024)
 
         def status():
             try:
@@ -220,7 +241,8 @@ def exercise(runtime, report, *, with_media=False, retained_profile=None):
             wait_for(lambda: ui("inspect"), "actual product controls not accessible")
             return value
 
-        def check_graph(*, repeat_first=False, reverse=False, expected_media=None, quick_order=None):
+        def check_graph(*, repeat_first=False, reverse=False, expected_media=None, quick_order=None,
+                program_scene=None, program_media=None):
             order = quick_order if quick_order is not None else [1] * 5 if repeat_first else list(range(5, 0, -1)) if reverse else list(range(1, 6))
             expected = expected_media if expected_media is not None else len(set(order))
             pairs = [(f"fixture-{index}", "main") for index in order]
@@ -233,7 +255,7 @@ def exercise(runtime, report, *, with_media=False, retained_profile=None):
             observed = wait_for(ready, "UI did not settle the complete authorized camera graph", timeout=35)
             assert observed["sessionBound"] is True and observed["mediaSources"] == expected
             assert observed.get("previewLocked") is True
-            check_monitor_program(observed)
+            check_monitor_program(observed, program_scene=program_scene, program_media=program_media)
             import smoke_windows
             smoke_windows.check_renderer_receipt(observed.get("renderer"))
             assert len({item["sourceUuid"] for item in observed["bindings"]}) == len(set(order))
@@ -243,12 +265,20 @@ def exercise(runtime, report, *, with_media=False, retained_profile=None):
                 "outputWidth": 1920, "outputHeight": 1080, "fpsNumerator": 30, "fpsDenominator": 1}
             return observed
 
-        def check_monitor_program(observed=None):
-            program = (observed if observed is not None else state()).get("program", {})
+        def check_monitor_program(observed=None, *, program_scene=None, program_media=None):
+            value = observed if observed is not None else state()
+            program = value.get("program", {})
             assert program.get("studioMode") is True, "local monitor lost Preview/Program separation"
-            assert program.get("sceneUuid") == idle_program_uuid and program.get("mediaSources") == 0, \
-                "local monitor selection changed or populated global Program output"
-            assert program.get("monitorIsProgram") is False, "local monitor became the Program scene"
+            if program_scene is None:
+                assert program.get("sceneUuid") == idle_program_uuid and program.get("mediaSources") == 0, \
+                    "local monitor selection changed or populated global Program output"
+                assert program.get("monitorIsProgram") is False, "local monitor became the Program scene"
+            else:
+                expected_media = 0 if program_media is None else program_media
+                assert value.get("programSceneId") == program_scene, "native Program did not apply the TAKE target"
+                assert value.get("programApplyState") == "applied", "native Program has not confirmed the TAKE"
+                assert program.get("mediaSources") == expected_media, \
+                    "native Program pixels do not match the applied scene media count"
 
         def check_projectors(orders, reference):
             observed = state()
@@ -283,8 +313,10 @@ def exercise(runtime, report, *, with_media=False, retained_profile=None):
                         return False
             return True
 
-        def check_pixels(label, *, blank=False, repeat_first=False, reverse=False, expected_media=None, projector_orders=None, quick_order=None):
-            check_monitor_program()
+        def check_pixels(label, *, blank=False, repeat_first=False, reverse=False, expected_media=None,
+                projector_orders=None, quick_order=None, program_scene=None, program_media=None):
+            checkpoint("pixels-" + label + "-program")
+            check_monitor_program(program_scene=program_scene, program_media=program_media)
             from ctypes import wintypes
             import pixel_windows
             kernel = ctypes.WinDLL("kernel32", use_last_error=True)
@@ -300,7 +332,11 @@ def exercise(runtime, report, *, with_media=False, retained_profile=None):
                 created = pixel_windows.creation_time(Frontend())
             finally:
                 kernel.CloseHandle(handle)
-            observed = state() if blank else check_graph(repeat_first=repeat_first, reverse=reverse, expected_media=expected_media, quick_order=quick_order)
+            checkpoint("pixels-" + label + "-graph")
+            observed = state() if blank else check_graph(repeat_first=repeat_first, reverse=reverse,
+                expected_media=expected_media, quick_order=quick_order,
+                program_scene=program_scene, program_media=program_media)
+            checkpoint("pixels-" + label + "-observed")
             if blank:
                 assert observed.get("phase") == "locked" and observed.get("mediaSources") == 0
             assert observed.get("windows", [{}])[0].get("qtClass") == "OBSBasicPreview"
@@ -309,12 +345,50 @@ def exercise(runtime, report, *, with_media=False, retained_profile=None):
             metadata = target / "capture-state.json"
             metadata.write_text(json.dumps({"schema": 1, "scope": "synthetic-test-only",
                 "pid": str(frontend_pid), "windows": observed["windows"]}), encoding="utf-8")
-            result = subprocess.run([powershell, "-NoLogo", "-NoProfile", "-File", str(HERE / "capture-pixels.ps1"),
-                "-ExpectedProcessId", str(frontend_pid), "-ExpectedExecutable", str(runtime / "bin/64bit/obs64.exe"),
-                "-ExpectedCreationTime", created, "-StateFile", str(metadata), "-OutputDirectory", str(target)],
-                capture_output=True, text=True, encoding="utf-8", timeout=35)
+            checkpoint("pixels-" + label + "-capture-setup")
+            checkpoint("pixels-" + label + "-capture-start")
+            try:
+                # Normalize every argument and avoid PowerShell prompts/invalid
+                # console output turning a pixel capture into an opaque launch
+                # TypeError under a fully loaded product host.
+                capture_command = [str(powershell), "-NoLogo", "-NoProfile", "-NonInteractive", "-File",
+                    str(HERE / "capture-pixels.ps1"), "-ExpectedProcessId", str(frontend_pid),
+                    "-ExpectedExecutable", str(runtime / "bin/64bit/obs64.exe"),
+                    "-ExpectedCreationTime", str(created), "-StateFile", str(metadata), "-OutputDirectory", str(target)]
+                process = subprocess.Popen(capture_command, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                    text=True, encoding="utf-8", errors="replace", close_fds=True,
+                    creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+                try:
+                    stdout, stderr = process.communicate(timeout=35)
+                except subprocess.TimeoutExpired:
+                    process.kill()
+                    stdout, stderr = process.communicate()
+                    raise
+                result = subprocess.CompletedProcess(capture_command, process.returncode, stdout, stderr)
+            except subprocess.TimeoutExpired:
+                evidence.setdefault("captures", []).append({"phase": label,
+                    "captureFailed": True, "diagnostic": {"stage": "timeout", "code": "capture-timeout"}})
+                checkpoint("pixels-" + label + "-capture-timeout")
+                raise
+            except Exception as error:
+                # Keep only the exception class and numeric Win32/POSIX code;
+                # never copy paths, command lines or private state.
+                message = str(error)
+                for private_value in (str(metadata), str(target), str(runtime), str(profile)):
+                    message = message.replace(private_value, "<private>")
+                evidence["captureLaunchError"] = {
+                    "type": type(error).__name__,
+                    "winerror": int(getattr(error, "winerror", 0) or 0),
+                    "errno": int(getattr(error, "errno", 0) or 0),
+                    "message": message[:200],
+                }
+                checkpoint("pixels-" + label + "-capture-error")
+                raise
+            checkpoint("pixels-" + label + "-capture-returned")
             capture = pixel_windows.capture_report(result)
+            checkpoint("pixels-" + label + "-capture-report")
             evidence.setdefault("captures", []).append({"phase": label, **capture})
+            checkpoint("pixels-" + label + "-captured")
             assert result.returncode == 0 and capture.get("captureFailed") is False, "actual product preview capture failed"
             orders = {"main-preview": ("quick-" + ",".join(map(str, quick_order))) if quick_order is not None else
                 "repeat-first" if repeat_first else "reverse" if reverse else "forward"}
@@ -322,7 +396,8 @@ def exercise(runtime, report, *, with_media=False, retained_profile=None):
             assert set(orders) == {window["role"] for window in observed["windows"]}
             for role, order in orders.items():
                 analysis = subprocess.run([shutil.which("node"), str(HERE / "pixel-pattern.cjs"), "analyze-empty" if blank else "analyze",
-                    str(target / role), role, order, "true"], capture_output=True, text=True, encoding="utf-8", timeout=20)
+                    str(target / role), role, order, "true"], capture_output=True, text=True, encoding="utf-8",
+                    errors="replace", timeout=20)
                 assert len(analysis.stdout) <= 16384, "oversized synthetic pixel analysis"
                 result = json.loads(analysis.stdout)
                 assert isinstance(result, dict), "invalid synthetic pixel analysis"
@@ -336,7 +411,12 @@ def exercise(runtime, report, *, with_media=False, retained_profile=None):
         try:
             phase = "first-entry"
             started = start()
-            assert sorted(service["name"] for service in started["services"]) == ["accounts-and-registry", "control", "frontend"]
+            running_services = sorted(service["name"] for service in started["services"])
+            assert {"accounts-and-registry", "control", "frontend"} <= set(running_services)
+            if complete_services:
+                assert {"events", "nvr", "clients", "go2rtc", "backup"} <= set(running_services)
+            else:
+                assert running_services == ["accounts-and-registry", "control", "frontend"]
             evidence["checks"].append("single-entry-real-core-authority-and-qt")
             phase = "installed-management-shell"
             expected_shell = (runtime / "web/index.html").read_bytes()
@@ -357,6 +437,10 @@ def exercise(runtime, report, *, with_media=False, retained_profile=None):
             preferences.read_string((profile / "native-profile/obs-studio/user.ini").read_text(encoding="utf-8-sig"))
             assert preferences.getboolean("BasicWindow", "PreviewProgramMode") is True, \
                 "cold-start control did not actually persist Studio mode"
+            # Let Windows release profile handles after the complete-service
+            # process tree has exited; a real user never starts the next launch
+            # inside the same millisecond as the previous owner exit.
+            time.sleep(1)
             started = start()
             assert started["origin"] == initial_origin and started["bootId"] != initial_boot
             evidence["checks"].append("saved-studio-preference-starts-locked-through-product-only")
@@ -387,6 +471,29 @@ def exercise(runtime, report, *, with_media=False, retained_profile=None):
                 code, issued, _ = request("/api/v1/auth/login", account)
                 assert code == 200 and issued
                 cookie = issued.split(";", 1)[0]
+                if complete_services:
+                    phase = "complete-business-services"
+                    for path in ("/api/v1/nvr/status", "/api/v1/events?limit=1",
+                                 "/api/v1/go2rtc/api", "/api/v2/clients"):
+                        code, _, _ = request(path, cookie=cookie)
+                        assert code == 200, f"complete business service unavailable: {path}"
+                    evidence["checks"].append("complete-business-services-running-in-one-product-entry")
+                    phase = "complete-online-source-runtime"
+                    online_environment = dict(os.environ)
+                    online_environment.update({
+                        "WEBOBS_NODE_PATH": str(runtime / "bin/node.exe"),
+                        "WEBOBS_FFMPEG_PATH": str(runtime / "bin/ffmpeg.exe"),
+                        "WEBOBS_FFPROBE_PATH": str(runtime / "bin/ffprobe.exe"),
+                    })
+                    online = subprocess.run([str(runtime / "bin/webobs-online-source.exe"), "--self-test"],
+                        capture_output=True, text=True, encoding="utf-8", timeout=45, env=online_environment,
+                        stdin=subprocess.DEVNULL)
+                    assert online.returncode == 0 and '"yt-dlp"' in online.stdout and '"node"' in online.stdout, \
+                        "bundled website extractors or Node runtime failed their self-test"
+                    evidence["checks"].append("complete-online-source-extractors-and-node-runtime-self-test")
+                    phase = "complete-business-management-entries"
+                    assert ui("management-entries"), "complete product management entries are not discoverable"
+                    evidence["checks"].append("complete-business-management-entries-discoverable")
                 for index, endpoint in enumerate(rtsp.urls, 1):
                     code, _, _ = request("/api/v1/cameras", {"id": f"fixture-{index}", "name": f"Fixture {index}",
                         "address": endpoint, "adapter": "rtsp", "hardwareDecode": "off", "profiles": [{
@@ -415,6 +522,75 @@ def exercise(runtime, report, *, with_media=False, retained_profile=None):
                 wait_for(lambda: state().get("statsOpen") is False,
                     "actual OBS statistics window did not close")
                 evidence["checks"].append("authenticated-existing-obs-statistics-window")
+                phase = "complete-business-nvr"
+                recording_started = int(time.time() * 1000) - 60_000
+                nvr_configuration = {
+                    "schemaVersion": 1, "segmentSeconds": 2, "maxAgeHours": 1,
+                    "maxBytes": 0, "minFreeBytes": 0,
+                    "cameras": [{"id": "fixture-recording", "name": "Fixture recording",
+                        "policy": "continuous", "cameraId": "fixture-1", "mainProfileId": "main",
+                        "stream": "main", "mode": "copy", "transport": "tcp", "segmentSeconds": 2,
+                        "maxAgeHours": 1, "maxBytes": 0, "preEventSeconds": 0, "schedule": []}],
+                }
+                code, _, configured_nvr = request("/api/v1/nvr/config", nvr_configuration,
+                    cookie=cookie, method="PUT")
+                assert code == 200, "complete product could not configure the real NVR"
+                def recorded_segment():
+                    code, _, value = request("/api/v1/nvr/status", cookie=cookie)
+                    if code != 200:
+                        return None
+                    camera = next((item for item in value.get("cameras", [])
+                        if item.get("id") == "fixture-recording"), None)
+                    return camera if camera and camera.get("segments", 0) > 0 else None
+                wait_for(recorded_segment, "real NVR did not finish a recorded segment", timeout=35)
+                now = int(time.time() * 1000)
+                code, _, timeline = request(
+                    f"/api/v1/nvr/timeline?from={recording_started}&to={now + 60_000}&cameraId=fixture-recording",
+                    cookie=cookie)
+                assert code == 200, "recorded NVR timeline is unavailable"
+                timeline_cameras = [item for item in timeline.get("cameras", [])
+                    if item.get("cameraId") == "fixture-recording"]
+                segments = timeline_cameras[0].get("segments", []) if timeline_cameras else []
+                assert segments, "real NVR timeline did not contain the recorded segment"
+                segment_id = segments[0]["id"]
+                code, reply_headers, media = raw_request(f"/api/v1/nvr/media/{segment_id}", cookie,
+                    headers={"Range": "bytes=0-63"})
+                assert code in (200, 206) and len(media) > 16 and b"ftyp" in media[:64], \
+                    "authenticated NVR media was not playable MP4 output"
+                assert reply_headers.get("Content-Type", "").startswith("video/"), \
+                    "NVR media response has the wrong content type"
+                nvr_configuration["cameras"][0]["policy"] = "off"
+                code, _, _ = request("/api/v1/nvr/config", nvr_configuration, cookie=cookie, method="PUT")
+                assert code == 200, "NVR recording could not be stopped after its gate"
+                evidence["checks"].append("nvr-records-real-registry-camera-and-serves-authenticated-media")
+                phase = "complete-business-events"
+                code, _, created_rule = request("/api/v1/event-rules", {
+                    "id": "fixture-rule", "name": "Fixture outbox rule", "enabled": True,
+                    "conditions": {"cameraId": "fixture-1"},
+                    "actions": [{"kind": "webhook", "destinationRef": "fixture"}],
+                    "cooldownMs": 0}, cookie=cookie, method="POST")
+                assert code == 201 and created_rule.get("id") == "fixture-rule", \
+                    "complete product could not persist an event rule"
+                event_body = {"cameraId": "fixture-1", "type": "manual-marker", "source": "manual",
+                    "topic": "fixture.qa", "severity": "info", "occurredAt": int(time.time() * 1000),
+                    "properties": {"durationMs": 0}, "dedupeKey": "fixture-complete-product-event"}
+                code, _, stored_event = request("/api/v1/events", event_body, cookie=cookie, method="POST")
+                assert code == 201 and stored_event.get("id"), "complete product could not ingest an event"
+                code, _, duplicate = request("/api/v1/events", event_body, cookie=cookie, method="POST")
+                assert code == 201 and duplicate.get("deduplicated") is True and \
+                    duplicate.get("id") == stored_event.get("id"), "event deduplication changed the event identity"
+                def routed_outbox():
+                    code, _, value = request("/api/v1/notification-outbox", cookie=cookie)
+                    if code != 200:
+                        return None
+                    entry = next((item for item in value.get("outbox", [])
+                        if item.get("event_id") == stored_event["id"]), None)
+                    return entry if entry else None
+                outbox = wait_for(routed_outbox, "event rule did not create a durable notification outbox entry",
+                    timeout=10)
+                assert outbox.get("kind") == "webhook" and outbox.get("destination_ref") == "fixture", \
+                    "notification outbox lost the configured destination"
+                evidence["checks"].append("events-persist-dedupe-and-route-to-durable-outbox")
                 assert ui("save")
                 paths = wait_for(lambda: list((profile / "native-profile").rglob("workspace-*.json")),
                     "product save button did not persist the bound workspace")
@@ -509,11 +685,15 @@ def exercise(runtime, report, *, with_media=False, retained_profile=None):
                         "x": (index % 3) * 640, "y": (index // 3) * 540, "width": 640, "height": 540,
                         "scaleMode": "contain", "crop": {"top": 0, "right": 0, "bottom": 0, "left": 0},
                         "visible": True, "locked": True, "zIndex": index})
-                studio.update(programSceneId="fixture-five", previewSceneId="fixture-five", scenes=[fixture_scene])
+                empty_scene = {"schemaVersion": 6, "revision": 0, "id": "fixture-empty", "name": "Empty Program",
+                    "canvas": {"width": 1920, "height": 1080, "backgroundColor": "#000000"}, "sources": [], "items": []}
+                studio.update(programSceneId="fixture-empty", previewSceneId="fixture-five",
+                    scenes=[fixture_scene, empty_scene])
                 code, _, studio = request("/api/v1/studio", studio, cookie, method="PUT", revision=studio["revision"])
                 assert code == 200, "ordinary Studio API could not save the camera scene"
                 assert ui("refresh")
-                wait_for(lambda: state().get("studioChoices") == ["fixture-five"], "saved Studio scene did not enter native choices")
+                wait_for(lambda: state().get("studioChoices", [])[:1] == ["fixture-five"],
+                    "saved Studio scene did not enter native choices")
                 assert ui("scene", index=1, fixtureName="Fixture Studio five")
                 wait_for(lambda: state().get("sceneId") == "fixture-five", "native action did not select saved Studio scene")
                 check_graph()
@@ -636,6 +816,97 @@ def exercise(runtime, report, *, with_media=False, retained_profile=None):
                 evidence["checks"].extend(["two-fixed-scene-projectors-share-owned-decoders",
                     "main-switch-preserves-two-different-projector-scenes", "native-projector-fullscreen-windowed-final-pixels",
                     "closing-one-projector-preserves-other-and-main"])
+                phase = "native-program-take"
+                checkpoint("program-choose")
+                assert ui("choose", indices=[1, 2, 3, 4, 5])
+                check_graph()
+                checkpoint("program-choose-applied")
+                alt_scene = {"schemaVersion": 6, "revision": 0, "id": "fixture-alt", "name": "Fixture Program alt",
+                    "canvas": {"width": 1920, "height": 1080, "backgroundColor": "#000000"},
+                    "sources": [{"id": "fixture-alt-source", "kind": "camera", "name": "Program alt camera",
+                        "cameraId": "fixture-1", "profileId": "main", "hardwareDecode": "auto",
+                        "muted": True, "volume": 1, "syncOffsetMs": 0, "monitoring": "off", "audioTrack": 1,
+                        "audioInputs": []}],
+                    "items": [{"id": "fixture-alt-item", "sourceId": "fixture-alt-source", "x": 0, "y": 0,
+                        "width": 1920, "height": 1080, "scaleMode": "contain",
+                        "crop": {"top": 0, "right": 0, "bottom": 0, "left": 0},
+                        "visible": True, "locked": True, "zIndex": 0}]}
+                code, _, studio = request("/api/v1/studio", cookie=cookie)
+                assert code == 200
+                kept = [scene for scene in studio["scenes"] if scene["id"] in ("fixture-five", "fixture-empty")]
+                assert {scene["id"] for scene in kept} == {"fixture-five", "fixture-empty"}
+                studio.update(programSceneId="fixture-five", previewSceneId="fixture-alt",
+                    transition={"kind": "fade", "durationMs": 400}, scenes=kept + [alt_scene])
+                code, _, studio = request("/api/v1/studio", studio, cookie=cookie, method="PUT", revision=studio["revision"])
+                assert code == 200, "Studio accepted a second scene for the Program TAKE"
+                wait_for(lambda: state().get("programSceneId") == "fixture-five" and
+                    state().get("programApplyState") == "applied" and
+                    state().get("program", {}).get("mediaSources") == 5,
+                    "native Program did not apply the saved scene", timeout=20)
+                check_monitor_program(program_scene="fixture-five", program_media=5)
+                checkpoint("program-five-applied")
+                assert ui("program-projector")
+                wait_for(lambda: any(window.get("role") == "program-projector" for window in state().get("windows", [])),
+                    "native Program projector did not open", timeout=8)
+                checkpoint("program-projector-open")
+                # fixture-five deliberately keeps its fifth source with explicit
+                # empty audioInputs, so its silent video variant is a separate
+                # owned source from the normal quick-wall input (5 + 1 = 6).
+                check_pixels("program-before-take", quick_order=[1, 2, 3, 4, 5],
+                    expected_media=6, program_scene="fixture-five", program_media=5,
+                    projector_orders={"program-projector": "forward"})
+                checkpoint("program-before-pixels")
+                before_take = state().get("program", {}).get("sceneUuid")
+                assert isinstance(before_take, str) and before_take
+                # The initial Program application above exercised the real fade.
+                # Use a cut for the TAKE so the outgoing scene must retire
+                # immediately; this also verifies the transition selection path.
+                studio["transition"] = {"kind": "cut", "durationMs": 0}
+                code, _, studio = request("/api/v1/studio", studio, cookie=cookie, method="PUT",
+                    revision=studio["revision"])
+                assert code == 200
+                checkpoint("program-take-request")
+                code, _, taken = request("/api/v1/studio/take", cookie=cookie, method="POST", revision=studio["revision"])
+                assert code == 200 and taken["programSceneId"] == "fixture-alt", "Studio TAKE did not commit the preview scene"
+                checkpoint("program-take-committed")
+                wait_for(lambda: state().get("programSceneId") == "fixture-alt" and
+                    state().get("programApplyState") == "applied" and
+                    state().get("program", {}).get("mediaSources") == 1,
+                    "native Program did not switch to the TAKE target", timeout=20)
+                checkpoint("program-take-applied")
+                after_take = state().get("program", {}).get("sceneUuid")
+                assert isinstance(after_take, str) and after_take != before_take, "TAKE reused the previous Program scene"
+                time.sleep(1)  # Allow the cut TAKE and source retirement to settle.
+                code, _, studio_runtime = request("/api/v1/studio/runtime", cookie=cookie)
+                assert code == 200 and studio_runtime["native"] is True and studio_runtime["status"] == "applied" and \
+                    studio_runtime["appliedRevision"] == taken["revision"] and \
+                    studio_runtime["appliedSceneId"] == "fixture-alt", \
+                    "Program runtime receipt did not match the committed TAKE"
+                checkpoint("program-runtime-receipt")
+                check_pixels("program-after-take", quick_order=[1, 2, 3, 4, 5],
+                    expected_media=6, program_scene="fixture-alt", program_media=1,
+                    projector_orders={"program-projector": "quick-1"})
+                checkpoint("program-after-pixels")
+                assert ui("projector-close")
+                wait_for(lambda: not state().get("windows") or
+                    all(window.get("role") == "main-preview" for window in state().get("windows", [])),
+                    "Program projector did not close", timeout=8)
+                code, _, studio = request("/api/v1/studio", cookie=cookie)
+                assert code == 200
+                studio["programSceneId"] = "fixture-empty"
+                code, _, studio = request("/api/v1/studio", studio, cookie=cookie, method="PUT",
+                    revision=studio["revision"])
+                assert code == 200
+                checkpoint("program-cleared-put")
+                wait_for(lambda: state().get("programApplyState") == "idle" and
+                    state().get("program", {}).get("mediaSources") == 0,
+                    "empty Program scene did not clear the previous protected output", timeout=12)
+                checkpoint("program-cleared-applied")
+                check_pixels("program-cleared", quick_order=[1, 2, 3, 4, 5])
+                evidence["checks"].extend(["studio-take-applies-real-obs-program-final-pixels",
+                    "program-projector-shows-real-program-not-preview",
+                    "take-document-revision-and-program-receipt-match",
+                    "empty-program-scene-clears-previous-output"])
             phase = "logout"
             assert ui("logout")
             wait_for(lambda: state().get("phase") == "locked", "logout did not lock product UI")
@@ -725,9 +996,20 @@ def exercise(runtime, report, *, with_media=False, retained_profile=None):
                         assert ui("login", **account)
                         check_graph()
             phase = "normal-close"
-            assert ui("close")
-            assert process.wait(timeout=40) == 0, "normal UI close failed orderly shutdown"
-            wait_for(lambda: not any(alive(pid) for pid in known_pids), "owned process survived normal close")
+            evidence["normalCloseUi"] = bool(ui("close"))
+            assert evidence["normalCloseUi"], "main product window was not closable"
+            try:
+                exit_code = process.wait(timeout=70)
+            except subprocess.TimeoutExpired:
+                evidence["normalCloseTimeout"] = True
+                raise AssertionError("normal UI close exceeded the shutdown deadline") from None
+            evidence["normalCloseExitCode"] = exit_code
+            assert exit_code == 0, "normal UI close failed orderly shutdown"
+            try:
+                wait_for(lambda: not any(alive(pid) for pid in known_pids), "owned process survived normal close")
+            except AssertionError:
+                evidence["normalCloseAlivePids"] = sum(1 for pid in known_pids if alive(pid))
+                raise
             evidence["checks"].append("normal-ui-close-cleans-owned-processes")
             phase = "persistent-origin-conflict"
             original_origin = started["origin"]
@@ -799,6 +1081,7 @@ def exercise(runtime, report, *, with_media=False, retained_profile=None):
             evidence["mediaScope"] = "synthetic-five-hevc-final-preview-pixels" if with_media else "not-run"
             evidence["passed"] = True
         except Exception:
+            gate_failed[0] = True
             # Synthetic logs stay private. Only fixed marker categories, bounded
             # counts and numeric exit status leave this disposable test profile.
             evidence["failurePhase"] = phase
@@ -816,9 +1099,11 @@ def exercise(runtime, report, *, with_media=False, retained_profile=None):
             evidence["observedState"] = {key: observed[key] for key in (
                 "phase", "mediaSources", "sessionBound", "catalogItems", "selectionIndices", "previewLocked",
                 "lastRetirementMs", "mainGeneration", "studioRevision", "renderer", "program",
-                "startupStudioDeferred") if key in observed}
+                "programSceneId", "programSceneFingerprint", "programApplyState", "startupStudioDeferred") if key in observed}
             evidence["observedState"]["watchingSavedScene"] = bool(observed.get("sceneId"))
             evidence["observedState"]["projectorCount"] = len(observed.get("projectors", []))
+            evidence["observedState"]["windowRoles"] = [window.get("role") for window in observed.get("windows", [])
+                                                       if isinstance(window, dict)]
             # Only fixed categories/counts from this boot's newest OBS log.
             # Never publish its contents, path, exception text or camera URL.
             obs_markers = ("Switched to Preview/Program mode", "Switched to regular Preview mode",
@@ -842,20 +1127,35 @@ def exercise(runtime, report, *, with_media=False, retained_profile=None):
                     with log.open("rb") as source:
                         source.seek(max(0, log.stat().st_size - 131072))
                         tail = source.read(131072).decode("utf-8", errors="replace")
-                    evidence["privateLogMarkers"].extend(marker for marker in markers if marker in tail)
+                    evidence["privateLogMarkers"].extend(f"{log.name}:{marker}" for marker in markers if marker in tail)
             evidence["privateLogMarkers"] = sorted(set(evidence["privateLogMarkers"]))
             raise AssertionError("native product entry/UI gate failed at " + phase) from None
         finally:
+            cleanup_failed = False
             if process is not None and process.poll() is None:
                 process.kill()
                 process.wait(timeout=10)
-            wait_for(lambda: not any(alive(pid) for pid in known_pids),
-                     "owned Windows process survived gate cleanup", timeout=15)
+            try:
+                wait_for(lambda: not any(alive(pid) for pid in known_pids),
+                         "owned Windows process survived gate cleanup", timeout=15)
+            except Exception:
+                cleanup_failed = True
+                evidence["cleanupFailed"] = True
+                for pid in known_pids:
+                    subprocess.run(["taskkill", "/PID", str(pid), "/T", "/F"],
+                                   stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                try:
+                    wait_for(lambda: not any(alive(pid) for pid in known_pids),
+                             "owned Windows process survived forced cleanup", timeout=10)
+                except Exception:
+                    evidence["forcedCleanupFailed"] = True
             if rtsp is not None:
                 rtsp.stop()
             report.parent.mkdir(parents=True, exist_ok=True)
             report.write_text(json.dumps(evidence, indent=2) + "\n", encoding="utf-8")
             print(json.dumps(evidence))
+            if cleanup_failed and not gate_failed[0]:
+                raise AssertionError("owned Windows process survived gate cleanup")
 
 
 if __name__ == "__main__":

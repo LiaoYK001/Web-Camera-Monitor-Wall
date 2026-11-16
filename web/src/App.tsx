@@ -9,7 +9,7 @@ import {
   useRef,
   useState,
 } from 'react';
-import { connectSceneEvents, ControlApiError, fetchCameras, fetchStudio, fetchStudioCapabilities, replaceStudio, studioAction } from './api';
+import { connectSceneEvents, ControlApiError, fetchCameras, fetchStudio, fetchStudioCapabilities, fetchStudioRuntime, replaceStudio, studioAction } from './api';
 import DirectPreview from './DirectPreview';
 import NativeProgramPreview from './NativeProgramPreview';
 import NativeHostSurface from './NativeHostSurface';
@@ -42,6 +42,7 @@ const SettingsWorkspace = lazy(() => import('./SettingsWorkspace'));
 const ClusterAdmin = lazy(() => import('./ClusterAdmin'));
 const AccountWorkspace = lazy(() => import('./AccountWorkspace'));
 const AnalyticsWorkspace = lazy(() => import('./AnalyticsWorkspace'));
+const NvrSettings = lazy(() => import('./NvrSettings'));
 
 type ConnectionState = 'connecting' | 'online' | 'offline';
 type WorkspaceMode = 'program' | 'layout';
@@ -894,6 +895,28 @@ export default function App() {
     try {
       const committed = await studioAction(action, studioDraft.revision);
       applyRemoteStudio(committed);
+      // A successful document commit is not proof that the native OBS Program
+      // moved. Wait for the host receipt at this exact revision; a timeout is
+      // reported as unconfirmed rather than as a completed take.
+      let runtime = await fetchStudioRuntime();
+      if (runtime.native) {
+        const deadline = Date.now() + 8000;
+        while (runtime.native && runtime.targetRevision < committed.revision && Date.now() < deadline) {
+          await new Promise((resolve) => setTimeout(resolve, 250));
+          runtime = await fetchStudioRuntime();
+        }
+        while (runtime.native && runtime.targetRevision >= committed.revision &&
+          runtime.status === 'pending' && Date.now() < deadline) {
+          await new Promise((resolve) => setTimeout(resolve, 250));
+          runtime = await fetchStudioRuntime();
+        }
+      }
+      if (runtime.native && (runtime.appliedRevision < committed.revision || runtime.status !== 'applied')) {
+        setNotice(action === 'take'
+          ? `TAKE 已提交，但原生 Program 未确认（${runtime.error || '等待超时'}）；画面保持上一个 Program。可重新 TAKE 重试。`
+          : `${action === 'undo' ? '撤销' : '重做'}已保存，但原生 Program 未确认（${runtime.error || '等待超时'}）。`);
+        return;
+      }
       setNotice(action === 'take' ? `Take 完成：${committed.programSceneId} 已进入 Program。`
         : `${action === 'undo' ? '撤销' : '重做'}完成（s${committed.revision}）。`);
     } catch (error) {
@@ -1009,7 +1032,7 @@ export default function App() {
   }
 
   if (productArea === 'storage') {
-    return <WorkspaceShell area={productArea} onNavigate={navigate} connection={connection}><section className="page-panel"><header className="page-heading"><div><span className="eyebrow">Storage</span><h1>存储</h1><p>录像状态、时间线与部署卷信息。</p></div><button type="button" onClick={() => navigate('archive')}>打开录像回放</button></header><SystemStatus onBack={() => navigate('monitor')} /></section></WorkspaceShell>;
+    return <WorkspaceShell area={productArea} onNavigate={navigate} connection={connection}><NvrSettings onOpenArchive={() => navigate('archive')} /><SystemStatus onBack={() => navigate('monitor')} /></WorkspaceShell>;
   }
   if (productArea === 'admin') {
     return <WorkspaceShell area={productArea} onNavigate={navigate} connection={connection}><ClusterAdmin /></WorkspaceShell>;

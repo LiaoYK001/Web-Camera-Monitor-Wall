@@ -22,6 +22,15 @@ REQUIRED = {"bin/webobs-wall.exe", "bin/webobsd.exe", "bin/64bit/obs64.exe",
 PREVIEW_REQUIRED = {"START-HERE.md", "licenses/native-preview/SOURCE-MANIFEST.json",
                     "licenses/native-preview/qtbase/LICENSES/LGPL-3.0-only.txt",
                     "licenses/native-preview/qtbase/LICENSES/GPL-3.0-only.txt"}
+COMPLETE_REQUIRED = {"bin/go2rtc.exe", "bin/ffmpeg.exe", "bin/ffprobe.exe",
+                     "bin/node.exe", "bin/webobs-online-source.exe",
+                     "services/events/event_service.py", "services/nvr/nvr_service.py",
+                     "services/v2/client_control_service.py", "services/backup/encrypted_backup.py",
+                     "services/go2rtc/online_source.py",
+                     "licenses/online-source/online-source-dependencies.lock.json",
+                     "services/product/migrate_legacy.py", "services/product/native_updater.py",
+                     "MIGRATE-LEGACY.cmd", "CHECK-UPDATES.cmd", "RESTORE-BACKUP.cmd",
+                     "etc/go2rtc.yaml", "etc/mediamtx.yml"}
 
 
 def digest(path):
@@ -44,9 +53,14 @@ def verify(runtime, *, installed=False):
         raise ValueError("product runtime must be a real directory")
     manifest = bounded_json(runtime / "webobs-native-prototype.json", 16384)
     receipt = bounded_json(runtime / "product-components.json", 16 * 1024 * 1024)
-    delivery(manifest)
-    if manifest.get("releaseProfile") and not all((runtime / path).is_file() for path in PREVIEW_REQUIRED):
+    profile = delivery(manifest)
+    if profile == "native-monitor-preview" and not all((runtime / path).is_file() for path in PREVIEW_REQUIRED):
         raise ValueError("preview instructions and library licenses are required")
+    if profile == "native-complete-candidate":
+        if not all((runtime / path).is_file() for path in COMPLETE_REQUIRED):
+            raise ValueError("complete product service or entry files are missing")
+        if receipt.get("completeStaging") is not True:
+            raise ValueError("complete product receipt does not describe complete staging")
     if (manifest.get("productIntegration") is not True or
             manifest.get("defaultProduct") is not False or manifest.get("obsCommit") != OBS_COMMIT or
             receipt.get("kind") != "native-product-integration-components" or receipt.get("schema") != 1 or
@@ -93,7 +107,8 @@ def verify(runtime, *, installed=False):
     if (actual != allowed or not REQUIRED <= owned or
             receipt.get("totalBytesBeforeReceipt") != total):
         raise ValueError("unaccounted or incomplete product payload")
-    return {"schema": 1, "kind": "internal-native-product-payload", "version": manifest["version"],
+    return {"schema": 1, "kind": ("native-complete-candidate-payload" if profile == "native-complete-candidate"
+                                  else "internal-native-product-payload"), "version": manifest["version"],
             "sourceRevision": receipt["sourceRevision"], "files": sorted(actual),
             "totalBytes": total + (runtime / "product-components.json").stat().st_size +
                 ((runtime / "Uninstall.exe").stat().st_size if installed else 0),

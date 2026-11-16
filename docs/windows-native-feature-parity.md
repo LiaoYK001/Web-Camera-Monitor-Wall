@@ -118,3 +118,14 @@ The v5.0 quick wall now supports bounded 1–64 selectors with one shared catalo
 本轮最终 Windows [run43816563388](https://github.com/LiaoYK001/Web-Camera-Monitor-Wall/actions/runs/43816563388) success，实际源码 `429155676834047d5be5b3fbc1b900abf660f831`、内部版本 `5.0.0-dev.1`。便携/实际NSIS安装各43项（四项新增quick-wall检查）、恢复9项与卸载保留通过；内部模式无v4.5预览专属目录项，不将数量写作44。预览/非预览实际HTTP及非原生目录兼容也通过。原始回执摘要、安装字节与边界见[脱敏资格摘要](qualification/windows-v5-quick-wall-2026-11-16.json)。安装器仍禁止发布，不更新v4.5或稳定源；后续仅回执文档提交不作为新二进制资格。
 
 The internal Windows candidate passes43 portable/43 installed/9 restore checks, including variable layouts and authenticated persistence. All receipts bind4291556; the added documentation is not a rebuilt installer. Complete Studio, audio, business/data migration, native updating and physical-device performance remain open.
+
+## v5.0 完整候选集成进展（2026-11-16，待冻结证据）
+
+本轮把以下代码接入统一原生入口，并在 `codex/v5-integration` 上执行一次完整 Windows 候选构建/安装验收；在 CI 回执落盘前，下列项目不写作已通过。
+
+- W1：`StudioController` 的 TAKE 目标由原生宿主 `/native/studio` 解析并在 OBS frontend 线程执行真实 cut/fade；回读当前 Program source 后通过 `/native/studio/program` 回执，管理页以 `/studio/runtime` 等待真实回执。新增 Program 投影与失败时保留上一个 Program 的行为。
+- W2：完整构建通过锁定的依赖集合暂存 events、NVR、v2、go2rtc、backup 与内嵌 Python 包；supervisor 在同一用户 Job 内启动并收尾。MediaMTX、合成、转码仍默认不启动；远端 Caddy/LAN、检测 provider 与 OBS 合成输出仍是开放缺口。
+- W3：显式旧配置迁移使用 SQLite backup API、拒绝覆盖/未确认停机，保留旧数据；原生更新器固定 GitHub Release HTTPS 源，校验大小/SHA-512 并要求确认；完整 NSIS 支持覆盖升级、迁移/更新/恢复快捷方式与卸载保留数据。
+- W4：`5.0.0-rc.N` 候选身份、完整载荷校验、`latest.yml` 与 GitHub Actions 候选附件上传；候选仍不是稳定 feed，也不替代目标机最终验收。
+
+Evidence must be updated with the actual candidate run, installer bytes/SHA-256 and installed/upgrade results before this section is cited as qualification.

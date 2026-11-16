@@ -15,6 +15,14 @@ Unicode True
 !ifndef OWNED_REMOVALS
   !error "Verified owned-file uninstall include required."
 !endif
+!ifdef COMPLETE
+  !define PRODUCT "WebOBS Wall"
+  !define APP_ROOT "Software\WebOBS\Wall"
+  !define UNINST_ROOT "Software\Microsoft\Windows\CurrentVersion\Uninstall\WebOBSWall"
+  OutFile "${OUTPUT_DIR}\WebOBS-Wall-${VERSION}-windows-x64-SETUP.exe"
+  InstallDir "$LOCALAPPDATA\Programs\WebOBS Wall"
+  BrandingText "WebOBS complete Windows product - data and components stay with this installation"
+!else
 !ifdef NATIVE_PREVIEW
   !define PRODUCT "WebOBS Wall v4.5 Preview"
   !define APP_ROOT "Software\WebOBS\WallPreview"
@@ -29,6 +37,7 @@ Unicode True
   OutFile "${OUTPUT_DIR}\WebOBS-Wall-${VERSION}-INTERNAL-SETUP.exe"
   InstallDir "$LOCALAPPDATA\Programs\WebOBS Wall Integration"
   BrandingText "Internal integration build - not a complete release"
+!endif
 !endif
 Name "${PRODUCT} ${VERSION}"
 RequestExecutionLevel user
@@ -51,10 +60,12 @@ Function .onInit
   SetRegView 64
   SetShellVarContext current
   ReadRegStr $0 HKCU "${APP_ROOT}" "InstallDir"
+!ifndef COMPLETE
   StrCmp $0 "" +2
     Abort "This installation already exists. Uninstall it first; private data is retained. Automatic upgrade is not enabled."
   IfFileExists "$SMPROGRAMS\${PRODUCT}.lnk" 0 +2
     Abort "The integration shortcut already exists. No existing shortcuts will be replaced."
+!endif
 FunctionEnd
 
 Function un.onInit
@@ -66,14 +77,20 @@ Function un.onInit
 FunctionEnd
 
 Section "Integrated native product"
-  ; R1 permits fresh isolated installation only. R4 owns qualified migration and
-  ; upgrade; do not overwrite either legacy product data or arbitrary files.
+!ifndef COMPLETE
+  ; Internal/preview installs permit fresh isolated installation only.
   IfFileExists "$INSTDIR\*.*" 0 +2
     Abort "Choose a new installation directory."
+!endif
   SetOutPath "$INSTDIR"
   File /r "${PACKAGE_DIR}\*.*"
   WriteUninstaller "$INSTDIR\Uninstall.exe"
   CreateShortCut "$SMPROGRAMS\${PRODUCT}.lnk" "$INSTDIR\bin\webobs-wall.exe"
+!ifdef COMPLETE
+  CreateShortCut "$SMPROGRAMS\WebOBS Wall - Import old data.lnk" "$INSTDIR\MIGRATE-LEGACY.cmd"
+  CreateShortCut "$SMPROGRAMS\WebOBS Wall - Check for updates.lnk" "$INSTDIR\CHECK-UPDATES.cmd"
+  CreateShortCut "$SMPROGRAMS\WebOBS Wall - Restore backup.lnk" "$INSTDIR\RESTORE-BACKUP.cmd"
+!endif
   WriteRegStr HKCU "${APP_ROOT}" "InstallDir" "$INSTDIR"
   WriteRegStr HKCU "${UNINST_ROOT}" "DisplayName" "${PRODUCT}"
   WriteRegStr HKCU "${UNINST_ROOT}" "DisplayVersion" "${VERSION}"
@@ -90,6 +107,11 @@ Section "Uninstall"
   ; outside INSTDIR and intentionally retained; unknown files are also retained.
   !include "${OWNED_REMOVALS}"
   Delete "$SMPROGRAMS\${PRODUCT}.lnk"
+!ifdef COMPLETE
+  Delete "$SMPROGRAMS\WebOBS Wall - Import old data.lnk"
+  Delete "$SMPROGRAMS\WebOBS Wall - Check for updates.lnk"
+  Delete "$SMPROGRAMS\WebOBS Wall - Restore backup.lnk"
+!endif
   Delete "$INSTDIR\Uninstall.exe"
   RMDir "$INSTDIR"
   DeleteRegKey HKCU "${APP_ROOT}"

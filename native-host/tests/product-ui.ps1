@@ -60,6 +60,7 @@ public static class ProductTestWindow {
                 'webobsFixedProjector1' { '固定场景投影 1' }
                 'webobsFixedProjector2' { '固定场景投影 2' }
                 'webobsCloseProjectors' { '关闭固定投影' }
+                'webobsProgramProjector' { '打开 Program 投影' }
                 'webobsHostStats' { 'OBS 宿主统计' }
                 'webobsVideoHealth' { $kind = [System.Windows.Automation.ControlType]::Text; '' }
                 default {
@@ -114,6 +115,14 @@ public static class ProductTestWindow {
             $null = Find-Control 'webobsPassword'
             $null = Find-Control 'webobsLogin'
             if ((Find-Control 'webobsHostStats').Current.IsEnabled) { throw 'Host stats enabled before login.' }
+        }
+        'management-entries' {
+            foreach ($identity in @('webobsManageAudio', 'webobsManageAnalytics', 'webobsManageEvents',
+                    'webobsManageArchive', 'webobsManageStorage', 'webobsManageGo2rtc', 'webobsManageAdmin',
+                    'webobsManageAccount', 'webobsManageSettings')) {
+                $control = Find-Control $identity
+                if (-not $control.Current.IsEnabled) { throw "Management entry $identity is disabled." }
+            }
         }
         'login' {
             Set-Control 'webobsUsername' $operation.username
@@ -181,6 +190,7 @@ public static class ProductTestWindow {
             Invoke-Control "webobsFixedProjector$([int]$operation.slot)"
         }
         'projector-close' { Invoke-Control 'webobsCloseProjectors' }
+        'program-projector' { Invoke-Control 'webobsProgramProjector' }
         'projector-window-close' {
             $window.GetCurrentPattern([System.Windows.Automation.WindowPattern]::Pattern).Close()
         }

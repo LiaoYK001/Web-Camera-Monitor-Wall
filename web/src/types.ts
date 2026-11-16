@@ -209,6 +209,19 @@ export interface NvrStatus {
   cameras: Array<{ id: string; policy: string; state: string; segments: number; eventActive: boolean }>;
 }
 
+export interface NvrCameraConfig {
+  id: string; name: string; policy: 'off' | 'continuous' | 'event' | 'scheduled';
+  mainUrl: string; subUrl: string; cameraId: string; mainProfileId: string; subProfileId: string;
+  stream: 'main' | 'sub'; mode: 'auto' | 'copy' | 'transcode'; transport: 'tcp' | 'udp';
+  segmentSeconds: number; maxAgeHours: number; maxBytes: number; preEventSeconds: number;
+  schedule: Array<{ days: number[]; start: string; end: string }>;
+}
+
+export interface NvrConfig {
+  schemaVersion: 1; segmentSeconds: number; maxAgeHours: number; maxBytes: number;
+  minFreeBytes: number; cameras: NvrCameraConfig[];
+}
+
 export interface NvrExport {
   exportId: string;
   auditId: string;
