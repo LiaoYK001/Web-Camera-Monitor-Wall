@@ -212,10 +212,12 @@ def backup_config(config_root: Path, data_root: Path) -> None:
     if not key.is_file() or not module.is_file():
         return
     # The packaged service uses the same private key and verifies its own output.
+    runtime = Path(sys.executable).resolve().parent.parent
     subprocess.run([sys.executable, "-B", str(module), "create"], check=True,
                    env={**os.environ, "WEBOBS_BACKUP_CONFIG_ROOT": str(config_root),
                         "WEBOBS_BACKUP_ROOT": str(data_root / "backups"),
-                        "WEBOBS_BACKUP_KEY_FILE": str(key)},
+                        "WEBOBS_BACKUP_KEY_FILE": str(key),
+                        "WEBOBS_LIBSODIUM_LIBRARY": str(runtime / "bin/libsodium.dll")},
                    timeout=300, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 
 
