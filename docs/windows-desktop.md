@@ -1,3 +1,5 @@
+> **完整融合版开发：v5.0 / Complete integration: v5.0.** 用户于 2026-11-16 在 v4.5 预览发布后决定继续完整产品开发，后续完整版本从 v5.0 开始。下述 v4.5 是历史预览范围；完整 Studio、声音、业务回接、旧数据迁移、原生更新、完整安装与性能门槛仍需完成。当前不恢复已暂停平台，也不提前启用稳定更新源。 / The next complete product is v5.0; the historical preview does not satisfy full integration or release gates.
+
 # Windows 桌面客户端 / Windows desktop
 
 ## v4.5 原生监看先用版 / Native monitor preview

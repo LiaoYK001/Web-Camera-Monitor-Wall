@@ -33,6 +33,9 @@
 #include <QRegularExpression>
 #include <QSaveFile>
 #include <QScreen>
+#include <QSignalBlocker>
+#include <QSpinBox>
+#include <QStandardItemModel>
 #include <QScrollArea>
 #include <QTimer>
 #include <QUrl>
@@ -46,6 +49,7 @@
 #include <memory>
 #include <map>
 #include <set>
+#include <vector>
 
 namespace webobs::native_host {
 namespace {
@@ -73,7 +77,10 @@ class ProductWindow final : public QWidget {
 	std::map<std::string, InputHealth> input_health_;
 	QPushButton *login_, *create_account_, *watch_, *save_, *logout_, *refresh_, *scene_watch_;
 	QComboBox *scenes_ = nullptr;
-	std::array<QComboBox *, 5> slots_{};
+	QSpinBox *slot_count_ = nullptr;
+	QFormLayout *camera_form_ = nullptr;
+	QStandardItemModel *camera_choices_ = nullptr;
+	std::vector<QComboBox *> slots_;
 	ProductSourcePool source_pool_;
 	std::shared_ptr<ProductSceneGraph> wall_;
 	obs_scene_t *blank_scene_ = nullptr;
@@ -221,6 +228,7 @@ class ProductWindow final : public QWidget {
 			{"pid", QString::number(QCoreApplication::applicationPid())},
 			{"catalogItems", slots_[0] && slots_[0]->count() > 0 ? slots_[0]->count() - 1 : 0},
 			{"selectionIndices", selection_indices},
+			{"slotCount", int(slots_.size())},
 			{"sceneId", watching_scene_id_}, {"studioRevision", watching_studio_revision_},
 			{"sceneFingerprint", watching_scene_fingerprint_},
 			{"studioChoices", studio_choices},
@@ -504,10 +512,9 @@ class ProductWindow final : public QWidget {
 		login_->setEnabled(true);
 		for (auto *button : {watch_, save_, logout_, refresh_, scene_watch_, stats_button_})
 			button->setEnabled(false);
-		for (auto *slot : slots_) {
-			slot->clear();
-			slot->setEnabled(false);
-		}
+		slot_count_->setEnabled(false);
+		camera_choices_->clear();
+		for (auto *slot : slots_) slot->setEnabled(false);
 		scenes_->clear();
 		scenes_->setEnabled(false);
 		status_->setText(message);
@@ -543,6 +550,26 @@ class ProductWindow final : public QWidget {
 			selected.append(item);
 		}
 		return selected;
+	}
+
+	void resize_slots(int count, const QJsonArray &selected = {})
+	{
+		if (count < 1 || count > int(maximum_quick_wall_slots)) return;
+		while (camera_form_->rowCount()) camera_form_->removeRow(0);
+		slots_.clear();
+		for (int i = 0; i < count; ++i) {
+			auto *slot = new QComboBox(this);
+			slot->setObjectName(QString("webobsCameraSlot%1").arg(i + 1));
+			slot->setAccessibleName(tr("画面 %1").arg(i + 1));
+			// Share metadata across selectors instead of copying the whole
+			// camera catalog up to 64 times. Authorization is still fresh at watch.
+			slot->setModel(camera_choices_);
+			const int match = i < selected.size() ? slot->findData(selected[i].toObject()) : 0;
+			slot->setCurrentIndex(match > 0 ? match : 0);
+			slot->setEnabled(!user_id_.isEmpty() && !applying_);
+			camera_form_->addRow(tr("画面 %1").arg(i + 1), slot);
+			slots_.push_back(slot);
+		}
 	}
 
 	void refresh_registration()
@@ -581,25 +608,29 @@ class ProductWindow final : public QWidget {
 				locked(tr("无法核验摄像机权限，请重新登录。"));
 				return;
 			}
-			for (auto *slot : slots_) {
-				slot->clear();
-				slot->addItem(tr("选择摄像机与 Profile"), QJsonObject{});
-				for (const auto camera_value : body.value("cameras").toArray()) {
-					const auto camera = camera_value.toObject();
-					if (!camera.value("enabled").toBool())
+			QJsonArray saved_selection;
+			for (auto *slot : slots_) saved_selection.append(slot->currentData().toJsonObject());
+			camera_choices_->clear();
+			auto *placeholder = new QStandardItem(tr("选择摄像机与 Profile"));
+			placeholder->setData(QJsonObject{}, Qt::UserRole);
+			placeholder->setFlags(Qt::ItemIsEnabled | Qt::ItemIsSelectable);
+			camera_choices_->appendRow(placeholder);
+			for (const auto camera_value : body.value("cameras").toArray()) {
+				const auto camera = camera_value.toObject();
+				if (!camera.value("enabled").toBool())
+					continue;
+				for (const auto profile_value : camera.value("profiles").toArray()) {
+					const auto profile = profile_value.toObject();
+					if (!profile.value("enabled").toBool())
 						continue;
-					for (const auto profile_value : camera.value("profiles").toArray()) {
-						const auto profile = profile_value.toObject();
-						if (!profile.value("enabled").toBool())
-							continue;
-						slot->addItem(camera.value("name").toString() + " / " + profile.value("name").toString(),
-							QJsonObject{{"cameraId", camera.value("id")}, {"profileId", profile.value("id")}});
-					}
+					auto *choice = new QStandardItem(camera.value("name").toString() + " / " + profile.value("name").toString());
+					choice->setData(QJsonObject{{"cameraId", camera.value("id")}, {"profileId", profile.value("id")}}, Qt::UserRole);
+					choice->setFlags(Qt::ItemIsEnabled | Qt::ItemIsSelectable);
+					camera_choices_->appendRow(choice);
 				}
-				slot->setEnabled(true);
 			}
-			observe_state(watching_.isEmpty() ? "authenticated" : "graph-applied");
 			QString restore_scene;
+			int count = restore ? 5 : slot_count_->value();
 			if (restore) {
 				QFile file(workspace_path());
 				if (file.size() <= 16384 && file.open(QIODevice::ReadOnly)) {
@@ -608,16 +639,21 @@ class ProductWindow final : public QWidget {
 						restore_scene = workspace.value("sceneId").toString();
 					else {
 						const auto saved = workspace.value("cameras").toArray();
-						if (saved.size() == 5)
-							for (int i = 0; i < 5; ++i) {
-								const int index = slots_[i]->findData(saved[i].toObject());
-								slots_[i]->setCurrentIndex(index > 0 ? index : 0);
-							}
+						if (!saved.isEmpty() && saved.size() <= int(maximum_quick_wall_slots)) {
+							count = int(saved.size());
+							saved_selection = saved;
+						}
 					}
 				}
-				if (restore_scene.isEmpty() && selection().size() == 5)
-					watch();
 			}
+			{
+				const QSignalBlocker blocker(slot_count_);
+				slot_count_->setValue(count);
+			}
+			resize_slots(count, saved_selection);
+			slot_count_->setEnabled(!applying_);
+			observe_state(watching_.isEmpty() ? "authenticated" : "graph-applied");
+			if (restore && restore_scene.isEmpty() && selection().size() == count) watch();
 			refresh_scenes(restore_scene);
 		}, 12000);
 	}
@@ -659,6 +695,7 @@ class ProductWindow final : public QWidget {
 		observe_state("connecting");
 		for (auto *button : {watch_, refresh_, scene_watch_}) button->setEnabled(false);
 		scenes_->setEnabled(false);
+		slot_count_->setEnabled(false);
 		for (auto *slot : slots_) slot->setEnabled(false);
 		status_->setText(tr("正在核验权限并连接摄像机…"));
 	}
@@ -680,6 +717,7 @@ class ProductWindow final : public QWidget {
 			save_->setEnabled(wall_ && !watching_.isEmpty());
 			for (auto *button : {watch_, refresh_, scene_watch_}) button->setEnabled(true);
 			scenes_->setEnabled(true);
+			slot_count_->setEnabled(true);
 			for (auto *slot : slots_) slot->setEnabled(true);
 			update_projector_controls();
 			status_->setText(tr("请先关闭固定投影，再更改主画面的画布或帧率。"));
@@ -700,6 +738,7 @@ class ProductWindow final : public QWidget {
 		applying_ = false;
 		for (auto *button : {watch_, refresh_, scene_watch_}) button->setEnabled(true);
 		scenes_->setEnabled(true);
+		slot_count_->setEnabled(true);
 		for (auto *slot : slots_) slot->setEnabled(true);
 		if (!candidate || !candidate->scene) {
 			clear_main_media();
@@ -807,15 +846,15 @@ class ProductWindow final : public QWidget {
 	void watch()
 	{
 		const QJsonArray selected = selection();
-		if (selected.size() != 5 || user_id_.isEmpty() || applying_) {
-			status_->setText(tr("请选择五个摄像机 Profile。"));
+		if (selected.size() != qsizetype(slots_.size()) || selected.isEmpty() || user_id_.isEmpty() || applying_) {
+			status_->setText(tr("请为每个画面选择摄像机 Profile。"));
 			observe_state("selection-incomplete");
 			return;
 		}
 		begin_connecting();
 		request("/api/v1/native/cameras/resolve", "POST", {{"cameras", selected}},
 			[this, selected](int code, const QJsonObject &body) {
-			if (code != 200 || body.value("cameras").toArray().size() != 5) {
+			if (code != 200 || body.value("cameras").toArray().size() != selected.size()) {
 				locked(tr("摄像机授权或连接资料不可用，请重新登录。"));
 				return;
 			}
@@ -840,12 +879,16 @@ class ProductWindow final : public QWidget {
 					return;
 				}
 				const auto video = authorization.value("video").toObject();
-				std::vector<ProductCamera> cameras(5);
+				std::vector<ProductCamera> cameras(std::size_t(selected.size()));
 				SceneDocument document;
 				document.canvas.width = video.value("width").toInt();
 				document.canvas.height = video.value("height").toInt();
-				const auto tiles = five_tile_layout(unsigned(document.canvas.width), unsigned(document.canvas.height));
-				for (int i = 0; i < 5; ++i) {
+				const auto tiles = quick_wall_layout(unsigned(document.canvas.width), unsigned(document.canvas.height), unsigned(selected.size()));
+				if (tiles.size() != std::size_t(selected.size())) {
+					locked(tr("画布不足以容纳所选路数，请修复画布设置。"));
+					return;
+				}
+				for (int i = 0; i < selected.size(); ++i) {
 					const auto item = resolved[i].toObject();
 					const auto wanted = selected[i].toObject();
 					if (item.value("cameraId") != wanted.value("cameraId") ||
@@ -1017,14 +1060,26 @@ public:
 		create_account_->setEnabled(false);
 		create_account_->setObjectName("webobsCreateAccount");
 		layout->addWidget(create_account_);
-		auto *cameras = new QFormLayout;
-		for (std::size_t i = 0; i < slots_.size(); ++i) {
-			slots_[i] = new QComboBox(this);
-			slots_[i]->setObjectName(QString("webobsCameraSlot%1").arg(i + 1));
-			slots_[i]->setAccessibleName(tr("画面 %1").arg(i + 1));
-			cameras->addRow(tr("画面 %1").arg(i + 1), slots_[i]);
-		}
-		layout->addLayout(cameras);
+		slot_count_ = new QSpinBox(this);
+		slot_count_->setRange(1, int(maximum_quick_wall_slots));
+		slot_count_->setValue(5);
+		slot_count_->setKeyboardTracking(false);
+		slot_count_->setToolTip(tr("选择要配置的路数，再点击“开始原生监看”应用。"));
+		slot_count_->setObjectName("webobsCameraCount");
+		slot_count_->setAccessibleName(tr("监看路数"));
+		auto *count_form = new QFormLayout;
+		count_form->addRow(tr("监看路数"), slot_count_);
+		layout->addLayout(count_form);
+		camera_choices_ = new QStandardItemModel(this);
+		camera_form_ = new QFormLayout;
+		layout->addLayout(camera_form_);
+		resize_slots(5);
+		connect(slot_count_, &QSpinBox::valueChanged, this, [this](int count) {
+			QJsonArray selected;
+			for (auto *slot : slots_) selected.append(slot->currentData().toJsonObject());
+			resize_slots(count, selected);
+			observe_current_media();
+		});
 		watch_ = new QPushButton(tr("开始原生监看"), this);
 		save_ = new QPushButton(tr("保存布局"), this);
 		logout_ = new QPushButton(tr("退出账号"), this);

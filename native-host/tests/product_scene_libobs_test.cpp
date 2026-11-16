@@ -30,12 +30,12 @@ void require(bool value, const char *message)
 {
 	if (!value) throw std::runtime_error(message);
 }
-SceneDocument document()
+SceneDocument document(int count = 5)
 {
 	SceneDocument doc;
 	doc.canvas.width = 320;
 	doc.canvas.height = 180;
-	for (int i = 0; i < 5; ++i) {
+	for (int i = 0; i < count; ++i) {
 		SceneSource source;
 		source.id = "source-" + std::to_string(i);
 		source.name = "Fixture " + std::to_string(i);
@@ -201,6 +201,29 @@ void run()
 	silent_second.reset();
 	obs_wait_for_destroy_queue();
 	require(created == destroyed, "inert source lifetime imbalance");
+	const auto before_variable = created.load();
+	std::unique_ptr<ProductSceneGraph> variable;
+	std::string retained_uuid;
+	for (int count : {1, 7, 64, 1}) {
+		auto next = create_product_scene(pool, owner, document(count),
+			std::vector<ProductCamera>(std::size_t(count), bindings.front()), error);
+		require(next && next->uuids.size() == std::size_t(count), "variable graph lost camera bindings");
+		for (const auto &id : next->uuids) {
+			if (retained_uuid.empty()) retained_uuid = id;
+			require(id == retained_uuid, "resizing compatible shared tiles duplicated the input");
+		}
+		std::size_t items = 0;
+		obs_scene_enum_items(next->scene, [](obs_scene_t *, obs_sceneitem_t *, void *value) {
+			++*static_cast<std::size_t *>(value); return true;
+		}, &items);
+		require(items == std::size_t(count), "actual libobs graph lost variable-layout items");
+		variable = std::move(next);
+		obs_wait_for_destroy_queue();
+		require(created == before_variable + 1, "variable layout restarted a compatible decoder input");
+	}
+	variable.reset();
+	obs_wait_for_destroy_queue();
+	require(created == destroyed, "variable graph leaked its last owned input");
 }
 } // namespace
 

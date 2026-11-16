@@ -6,6 +6,12 @@
 
 Baseline is the native branch at 4678f3a, PR #53 targeting dev. The user reports working native pictures in dev.53. Full-product hardware performance and personal-data migration await the final integrated candidate. Existing protocol modules and prototype receipts qualify only their recorded scope.
 
+## 2026-11-16 当前核对 / Current verified baseline
+
+完整版本开发从 **v5.0** 开始，v4.5 保持历史预览。当前已发布源码 `24fd012`，最终 Windows run `43783406841` success：便携与真实 NSIS 安装各 40 项、认证前恢复 I/O 对照 9 项及卸载保留数据通过。安装 200,614,374 logical / 204,053,288 allocation bytes；这些是预览范围，不是完整功能、旧数据迁移、逐路硬解或 OBS 同机性能资格。以下 24 行逐项核对当前产品入口，旧 dev 记录仍保留为历史，不批量升级为完整通过。
+
+The next complete release is v5.0. Final v4.5 evidence is scoped to its real native preview/installation paths. The 24 capability rows retain gaps for complete integration and physical qualification. Public source/receipts: [v4.5 Release](https://github.com/LiaoYK001/Web-Camera-Monitor-Wall/releases/tag/v4.5).
+
 ## 媒体与控制架构 / Media and control architecture
 
 Windows 采用一个固定 OBS frontend/Qt 媒体宿主。现有 core 的 Direct-only 路径已跳过 `obs_startup`，R1 复用它承载账号、Registry 代理和产品文档。原生 Qt 通过同一个有界、会话认证的 loopback HTTP 控制面访问服务，OBS 对象变更在 frontend 线程执行。管理功能继续使用本机受认证 WebUI，默认打开管理区，避免额外播放本地墙。
@@ -18,15 +24,15 @@ One pinned OBS frontend owns local media. Reuse the existing Direct-only core fo
 
 | ID | 旧入口与实际代码 | 新入口与迁移位置 | 数据与权限 | 组件 | 真实接线验证 | 状态与证据 | 当前阻塞 |
 | --- | --- | --- | --- | --- | --- | --- | --- |
-| AUTH | `LoginGate.tsx`、`AccountWorkspace.tsx`、core auth、cluster accounts | 原生登录/建账/退出，管理浏览器账号页 | 同一账号、绑定 userId/authEpoch，会话撤销 | core Direct-only、cluster | 安装后真实账号登录、改密/禁用/过期关闭画面 | dev.92 便携与 NSIS 安装后真实账号登录/重登/重启/改密撤销通过 | 旧账号数据迁移与全部恢复/编辑旁路审计未完成 |
-| RBAC | `UserAccessEditor.tsx`、cluster role/camera scope | 原生目录和每次执行/持续观看校验 | 角色、camera/group scope，未知来源拒绝 | cluster、Registry | 同名重建账号、换组、隐藏/嵌套来源、权限撤销 | dev.92 便携/安装 scoped viewer、撤权/改密、仅投影 camera 撤权清屏及恢复 I/O 对照通过 | 全部原生编辑旁路、旧数据 ACL/迁移安全与更多授权故障仍待审计 |
-| DEV | `CameraRegistry.tsx`、`camera_registry.py` | 原生摄像机/Profile 选择，本机设备管理页 | 稳定 camera/profile ID、Secret 引用 | camera、core | 选已有设备进入媒体源，禁用/缺失 Profile 可见报错 | dev.92 便携与安装后已有设备 API 到选择/五路像素、禁用/更新、保存恢复通过 | 旧个人设备数据迁移、完整 ONVIF/设备控制尚未完成 |
-| IMPORT | `bulkSourceImport.ts`、ONVIF API | 设备库批量导入/ONVIF 页面 | 去重、配置保留、device.manage | camera、WebUI | 实际导入、失败不覆盖、重启保留 | 旧实现可用，原生未接线 | 管理入口与安装组件 |
-| LIVE | `DirectPreview.tsx`、`ProgramPreview.tsx`、core OBS | 原生 OBS Media Source 与 Preview/Program | 认证后建图，同源兼容设置共享 | OBS、obs-ffmpeg | 真实插件、真实服务、动态 H.264/H.265 最终像素 | dev.92 实际便携/安装 HEVC 最终像素、共享、多窗口与同画布复用通过；callback 进度通过 | 真实相机/硬解/目标机性能/长稳、断流新回归待验证 |
-| STUDIO | `SceneCollection.tsx`、`sceneSchema.ts`、`StudioController` | 原生场景切换/编辑与现有管理 Studio | Scene/Source UUID、草稿、revision、嵌套 | OBS、core、WebUI | 保存/恢复、裁剪/层级/锁定、冲突、TAKE | dev.92 便携/安装保存场景、sceneId 登录恢复、revision 变更清屏与同画布切换通过 | 完整编辑、嵌套/各布局、TAKE/过渡、Preview/Program 与业务来源仍待接线 |
-| LAYOUT | `monitorView.ts`、监控偏好、设备布局 | 原生网格/轮换/事件提升/主子码流 | 账号与设备偏好分离 | OBS、account、clients | 既有布局范围、人工选择、帧率/分辨率回读 | 原生未接线 | 不限五路的布局接线 |
-| PROJECT | `ProjectorView.tsx`、desktop fixed projector IPC | 原生 Program 与固定 Scene 多投影 | 固定场景身份、同源引用 | OBS/Qt | 双固定场景、切 Program、重开/全屏/DPI | dev.92 便携/安装双固定 Scene 共用来源、不同布局、全屏/回窗/关闭与撤权退休通过 | 持续 Program 投影、DPI/多显示器、投影持久恢复未完成 |
-| AUDIO | `AudioWorkspace.tsx`、`sourceAudio.ts`、schema-v6 | 原生混音/监听/电平，管理音轨页 | 账号监听偏好与项目轨道语义 | OBS、必要音轨适配组件 | 无重复扬声器输出、多轨保存、失效轨报错 | 相机源主音量/静音/监听/总线已映射；明确空 audioInputs 已接视频保留与强制无音频，Linux 实际 SDK policy 通过 | Windows 空选择场景待验证；非空逐轨适配、音轨 UI、电平及实际音频输出未完成 |
+| AUTH | `LoginGate.tsx`、`AccountWorkspace.tsx`、core auth、cluster accounts | 原生登录/建账/退出，管理浏览器账号页 | 同一账号、绑定 userId/authEpoch，会话撤销 | core Direct-only、cluster | 安装后真实账号登录、改密/禁用/过期关闭画面 | v4.5 最终便携/安装：真实建账、登录/重登、改密/禁用/重启撤销通过 | 旧账号数据迁移及所有编辑/输出旁路仍需完整审计 |
+| RBAC | `UserAccessEditor.tsx`、cluster role/camera scope | 原生目录和每次执行/持续观看校验 | 角色、camera/group scope，未知来源拒绝 | cluster、Registry | 同名重建账号、换组、隐藏/嵌套来源、权限撤销 | v4.5：逐相机/Profile目录与执行、持续撤权、投影退休、认证前恢复 I/O 隔离通过 | 全输出/编辑操作执行栅栏、角色/组跨快照一致性及旧数据 ACL 仍开放 |
+| DEV | `CameraRegistry.tsx`、`camera_registry.py` | 原生摄像机/Profile 选择，本机设备管理页 | 稳定 camera/profile ID、Secret 引用 | camera、core | 选已有设备进入媒体源，禁用/缺失 Profile 可见报错 | v4.5：设备 API 到原生五路/Profile选择、禁用/变更/保存恢复通过 | 旧个人设备导入、完整 ONVIF/PTZ/对讲与设备实测未完成 |
+| IMPORT | `bulkSourceImport.ts`、ONVIF API | 设备库批量导入/ONVIF 页面 | 去重、配置保留、device.manage | camera、WebUI | 实际导入、失败不覆盖、重启保留 | 管理页接入手动/批量设备；Linux实际服务+Chromium首用新增1+4路并读取5路，缺FFprobe仍可保存 | 浏览器首用证据不替代完整 Windows ONVIF/大批量/旧数据导入验收 |
+| LIVE | `DirectPreview.tsx`、`ProgramPreview.tsx`、core OBS | 原生 OBS Media Source 与 Preview/Program | 认证后建图，同源兼容设置共享 | OBS、obs-ffmpeg | 真实插件、真实服务、动态 H.264/H.265 最终像素 | v4.5：五路动态 HEVC、实际最终像素、同源复用、输入推进、断流恢复、重启和撤权通过 | 真实相机、逐路硬解、目标机同条件OBS对照与长稳仍待；v5.0快捷墙1/4/7路Windows动态像素通过；64为有界接口/网格，不是64解码器实测 |
+| STUDIO | `SceneCollection.tsx`、`sceneSchema.ts`、`StudioController` | 原生场景切换/编辑与现有管理 Studio | Scene/Source UUID、草稿、revision、嵌套 | OBS、core、WebUI | 保存/恢复、裁剪/层级/锁定、冲突、TAKE | v4.5：已保存相机场景/sceneId认证后恢复、内容前置条件及本地Preview与空Program分离通过 | 完整编辑、原子文档/运行时bridge、TAKE/过渡及业务来源未接线 |
+| LAYOUT | `monitorView.ts`、监控偏好、设备布局 | 原生网格/轮换/事件提升/主子码流 | 账号与设备偏好分离 | OBS、account、clients | 既有布局范围、人工选择、帧率/分辨率回读 | 受支持的已保存相机场景可映射布局/裁剪/层级；不同固定Scene最终画面通过 | v5.0快捷墙1–64路源码与本机几何/真实libobs复用通过，Windows便携及安装1/4/7路通过；完整编辑/复杂嵌套仍未完成 |
+| PROJECT | `ProjectorView.tsx`、desktop fixed projector IPC | 原生 Program 与固定 Scene 多投影 | 固定场景身份、同源引用 | OBS/Qt | 双固定场景、切 Program、重开/全屏/DPI | v4.5：两固定Scene共用来源、不同布局、全屏/回窗/关闭与仅投影相机撤权清屏通过 | 持续Program投影、物理多屏/DPI与投影持久恢复未完成 |
+| AUDIO | `AudioWorkspace.tsx`、`sourceAudio.ts`、schema-v6 | 原生混音/监听/电平，管理音轨页 | 账号监听偏好与项目轨道语义 | OBS、必要音轨适配组件 | 无重复扬声器输出、多轨保存、失效轨报错 | 相机主音量/静音/监听/总线映射与显式空audioInputs无音频policy已接；v4.5空选择场景视频通过 | 非空逐轨、音频UI/电平、实际解码采样/扬声器与输出混音未完成 |
 | OVERLAY | `MonitorProcessStatus.tsx`、analytics、隐私遮罩 | 原生叠层及管理配置 | 本地/录像/远端范围分开 | OBS、可选 analytics | 边框/检测框/音量表与最终像素、隐私遮罩 | 原生未接线 | overlay 来源和数据连接 |
 | PTZ | `CameraDeviceControls.tsx`、`useShortTalk.ts` | 原生设备控制入口及管理页 | camera scope、移动脉冲、超时停止 | camera | 松键/断开停止、预置位、对讲收尾、快照 | 旧实现可用，原生未接线 | UI 与设备命令接线 |
 | OUTPUT | core OBS 录像/推流、`SystemStatus.tsx` | 原生宿主按需求录制/推流 | 输出状态、退出保护、轨道 | OBS 编码/输出组件 | 本地关闭后持续任务、无需求编码器为零 | 原生未接线 | 单一输出所有者和 engine adapter |
@@ -38,10 +44,10 @@ One pinned OBS frontend owns local media. Reuse the existing Direct-only core fo
 | ONLINE | `Go2rtcOnlineSources.tsx`、`online_source.py` | 网站来源目录/Profile，原生观看 | 锁定提取器、Cookie 私密目录 | go2rtc、yt-dlp/Streamlink/EJS | 真实解析/relay/认证实播，预算与退出清理 | 旧实现可用，原生未接线 | 可选完整离线组件 |
 | REMOTE | WebUI/PWA、Android 既有客户端 | 同一 Windows 服务的远程入口 | HTTPS、Origin、Direct/Composite scope | core、按需 gateway/Caddy | 既有客户端登录/播放，一个观看端退出不误停其他端 | 旧实现可用，原生未接线 | 原生引擎远端输出 adapter |
 | OFFLINE | `DeviceSyncPanel.tsx`、`useDeviceSync.ts`、v2 | 受认证管理页与原生布局状态同步 | 签名/加密缓存、冲突、有限离线权限 | clients、core、WebUI | 离线编辑、重连冲突选择、Program 不被覆盖 | 旧实现可用，原生未接线 | 设备状态与原生 scene 映射 |
-| OPS | `ProblemCenter.tsx`、`DeveloperDiagnostics.tsx` | 原生问题/诊断入口与受认证管理页 | 有界脱敏导出、settings.manage | core、业务服务 | 解码/组件/连接故障定位、脱敏支持包 | dev.92 实际 callback 状态与认证 OBSBasicStats 便携/安装通过；实际渲染器标签新源码待 Windows | 全进程实时总量、GPU 引擎、支持包和组件故障入口未完成 |
-| BACKUP | backup 服务、原型 restore helper | 管理页及安装升级一致性备份 | 活跃 SQLite 快照、Secret、录像路径 | backup、原生 updater | 损坏/中断/磁盘满、幂等迁移和真实恢复 | 原型文件备份覆盖，完整迁移待实现 | 旧数据全量映射与数据库一致性 |
-| LIFE | `main.mjs`、`supervisor.mjs`、`job_host.cpp` | 原生单实例/托盘/supervisor | Job、任务消费者、正常退出和崩溃收束 | Qt、Win32、按需服务 | 安装态关闭/托盘/后台任务/故意崩溃零遗留 | dev.92 便携/安装单入口、origin、正常退出、重启、崩溃收束、卸载 profile/未知文件保留通过 | 托盘/后台任务、旧数据迁移、完整覆盖安装和升级生命周期未完成 |
-| UPDATE | desktop updater/NSIS、稳定 feed | 原生更新设置/下载/确认/安装 | SHA-512/size、版本、备份、用户确认 | 原生 updater、NSIS | 旧稳定升级、新原生后续升级、截断/断网/失败恢复 | 原型 NSIS 部分通过，原生 updater 待实现 | electron-updater 替代与完整数据升级 |
+| OPS | `ProblemCenter.tsx`、`DeveloperDiagnostics.tsx` | 原生问题/诊断入口与受认证管理页 | 有界脱敏导出、settings.manage | core、业务服务 | 解码/组件/连接故障定位、脱敏支持包 | v4.5：输入推进/停滞、认证OBSBasicStats和实际渲染器标签进入便携/安装入口 | 尚非全进程CPU/内存或分引擎GPU/显存；支持包与完整故障入口未完成 |
+| BACKUP | backup 服务、原型 restore helper | 管理页及安装升级一致性备份 | 活跃 SQLite 快照、Secret、录像路径 | backup、原生 updater | 损坏/中断/磁盘满、幂等迁移和真实恢复 | 仅历史原型文件备份；v4.5认证前恢复隔离不是旧数据迁移/全库备份验收 | 旧数据全量映射、活跃SQLite一致性、失败恢复与幂等迁移仍未完成 |
+| LIFE | `main.mjs`、`supervisor.mjs`、`job_host.cpp` | 原生单实例/托盘/supervisor | Job、任务消费者、正常退出和崩溃收束 | Qt、Win32、按需服务 | 安装态关闭/托盘/后台任务/故意崩溃零遗留 | v4.5：独立安装/NativePreview数据、Unicode路径、快捷方式、origin、重启、退出/崩溃回收、卸载保留通过 | 托盘/后台任务、完整业务消费者、旧版升级/覆盖安装仍未完成 |
+| UPDATE | desktop updater/NSIS、稳定 feed | 原生更新设置/下载/确认/安装 | SHA-512/size、版本、备份、用户确认 | 原生 updater、NSIS | 旧稳定升级、新原生后续升级、截断/断网/失败恢复 | v4.5明确手动卸载换包，无原生updater；旧electron-updater不进入新默认包 | 下载SHA-512/size、确认安装、正常停机、备份恢复及旧版升级仍待原生接线 |
 
 ## 进程和体积口径 / Process and size accounting
 
@@ -100,3 +106,15 @@ R2 本地监看已从普通输出选择改接 OBS 原生 Studio Preview，Progra
 
 
 Dev.94（43629933739、6df8e5a）当前完整 gate success，便携/安装各 36 检查、28 组/280 帧、恢复九项与卸载保留通过；安装 198550830 logical B。Dev.95（43632728117、f1d393d）前 30 检查/248 帧含 Preview/Program 分离通过，但重启 entry -1/窗口访问失败，安装未验；旧日志的预期端口冲突不能当根因。产品独占 Studio 初始化、boot/退出诊断和提前保存偏好冷重启 gate 已接源码，本机通过，实际 Windows 待 dev.96。 / Dev.94 passes the current scope; dev.95 fails at restart after successful routing/media checks. Controlled initialization and scoped diagnostics await Windows validation; complete features/upgrade/performance remain open.
+
+## v5.0 开发：可变路数快捷监看 / Variable quick wall
+
+独立工作树 `codex/windows-v5-integration` 将原生快捷墙从固定5路接为1–64路，默认仍为5路，原五路3×2布局不变；旧schema 1的五路选择可读，非五路按当前账号保存/重新认证后恢复。选择器共享单个目录模型，改变路数只编辑选择草稿，点击监看后仍先resolve/重新授权并比较相机配置版本，再复用原来源建图；Preview不改Program。上限表示接口与布局边界，不是64台真实相机的硬件/性能承诺。
+
+本机：网格测试覆盖1–64、奇数与uint32极值画布、无重叠/越界/零尺寸、整方格铺满及五路兼容；Qt 6.11.2头/GCC16语法检查通过（厂商头按system include处理）；API CTest 8/8；44构建契约、像素24项（2平台跳过）通过。实际固定libobs图测试1→7→64→1个同源item保持一个输入UUID，最后释放平衡；输入为inert fixture，不是64路解码证明。新增Windows门禁覆盖1/4/7路最终动态像素、改变路数不影响正在播放的图、交集UUID复用、7路保存/注销/认证恢复；source4291556的run43816563388已完整通过。完整Studio/TAKE/音轨/业务迁移继续开放。
+
+The v5.0 quick wall now supports bounded 1–64 selectors with one shared catalog model, five-slot compatibility, fresh authorization, retained inputs and account-scoped persistence. Local geometry/API/Qt/real-libobs reference tests pass. Windows final-pixel and installed-entry gates pass for source4291556; inert inputs do not qualify decoding capacity, and this slice does not complete full R2 or OBS performance parity.
+
+本轮最终 Windows [run43816563388](https://github.com/LiaoYK001/Web-Camera-Monitor-Wall/actions/runs/43816563388) success，实际源码 `429155676834047d5be5b3fbc1b900abf660f831`、内部版本 `5.0.0-dev.1`。便携/实际NSIS安装各43项（四项新增quick-wall检查）、恢复9项与卸载保留通过；内部模式无v4.5预览专属目录项，不将数量写作44。预览/非预览实际HTTP及非原生目录兼容也通过。原始回执摘要、安装字节与边界见[脱敏资格摘要](qualification/windows-v5-quick-wall-2026-11-16.json)。安装器仍禁止发布，不更新v4.5或稳定源；后续仅回执文档提交不作为新二进制资格。
+
+The internal Windows candidate passes43 portable/43 installed/9 restore checks, including variable layouts and authenticated persistence. All receipts bind4291556; the added documentation is not a rebuilt installer. Complete Studio, audio, business/data migration, native updating and physical-device performance remain open.
