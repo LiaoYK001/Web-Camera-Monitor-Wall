@@ -76,6 +76,9 @@ def exercise(runtime, report, *, with_media=False, retained_profile=None):
         raise ValueError("missing or oversized component receipt")
     components = json.loads(component_receipt.read_text(encoding="utf-8"))
     preview_delivery = delivery(manifest) == "native-monitor-preview"
+    complete_services = all((runtime / marker).is_file() for marker in (
+        "services/events/event_service.py", "services/nvr/nvr_service.py",
+        "services/v2/client_control_service.py", "bin/go2rtc.exe"))
     if manifest.get("productIntegration") is not True:
         raise ValueError("internal integrated build required")
     if components.get("fullFeatureMigrationQualified") is not False:
@@ -336,7 +339,12 @@ def exercise(runtime, report, *, with_media=False, retained_profile=None):
         try:
             phase = "first-entry"
             started = start()
-            assert sorted(service["name"] for service in started["services"]) == ["accounts-and-registry", "control", "frontend"]
+            running_services = sorted(service["name"] for service in started["services"])
+            assert {"accounts-and-registry", "control", "frontend"} <= set(running_services)
+            if complete_services:
+                assert {"events", "nvr", "clients", "go2rtc", "backup"} <= set(running_services)
+            else:
+                assert running_services == ["accounts-and-registry", "control", "frontend"]
             evidence["checks"].append("single-entry-real-core-authority-and-qt")
             phase = "installed-management-shell"
             expected_shell = (runtime / "web/index.html").read_bytes()
@@ -387,6 +395,13 @@ def exercise(runtime, report, *, with_media=False, retained_profile=None):
                 code, issued, _ = request("/api/v1/auth/login", account)
                 assert code == 200 and issued
                 cookie = issued.split(";", 1)[0]
+                if complete_services:
+                    phase = "complete-business-services"
+                    for path in ("/api/v1/nvr/status", "/api/v1/events?limit=1",
+                                 "/api/v1/go2rtc/api", "/api/v2/clients"):
+                        code, _, _ = request(path, cookie=cookie)
+                        assert code == 200, f"complete business service unavailable: {path}"
+                    evidence["checks"].append("complete-business-services-running-in-one-product-entry")
                 for index, endpoint in enumerate(rtsp.urls, 1):
                     code, _, _ = request("/api/v1/cameras", {"id": f"fixture-{index}", "name": f"Fixture {index}",
                         "address": endpoint, "adapter": "rtsp", "hardwareDecode": "off", "profiles": [{

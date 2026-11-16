@@ -49,6 +49,7 @@
 #include <memory>
 #include <map>
 #include <set>
+#include <tuple>
 #include <vector>
 
 namespace webobs::native_host {
@@ -346,6 +347,20 @@ class ProductWindow final : public QWidget {
 		input_health_.clear();
 		if (!tearing_down_) refresh_video_health();
 	}
+	void open_management_page(const QString &fragment)
+	{
+		if (user_id_.isEmpty()) {
+			status_->setText(tr("请先登录后再打开管理页面。"));
+			return;
+		}
+		auto url = origin_;
+		QUrlQuery query;
+		query.addQueryItem("native-management", "1");
+		url.setQuery(query);
+		url.setFragment(fragment);
+		QDesktopServices::openUrl(url);
+	}
+
 	void open_stats()
 	{
 		if (user_id_.isEmpty()) return;
@@ -1112,8 +1127,20 @@ public:
 			for (std::size_t i = 0; i < projectors_.size(); ++i) close_projector(i);
 			observe_current_media();
 		});
-		auto *manage = new QPushButton(tr("打开设备与系统管理"), this);
+		auto *manage = new QPushButton(tr("设备与来源管理"), this);
+		manage->setObjectName("webobsManageDevices");
 		layout->addWidget(manage);
+		for (const auto &[text, fragment, object] : std::array<std::tuple<const char *, const char *, const char *>, 4>{{
+				{"事件与通知", "/events", "webobsManageEvents"},
+				{"录像与回放", "/archive", "webobsManageArchive"},
+				{"网站来源", "/go2rtc", "webobsManageGo2rtc"},
+				{"系统设置", "/settings", "webobsManageSettings"}}}) {
+			auto *button = new QPushButton(tr(text), this);
+			button->setObjectName(QString::fromLatin1(object));
+			layout->addWidget(button);
+			connect(button, &QPushButton::clicked, this,
+				[this, fragment = QString::fromLatin1(fragment)] { open_management_page(fragment); });
+		}
 		stats_button_ = new QPushButton(tr("OBS 宿主统计"), this);
 		stats_button_->setObjectName("webobsHostStats");
 		stats_button_->setToolTip(tr("查看 OBS 原有 FPS、渲染延迟和掉帧。CPU、内存仅统计宿主进程。"));
@@ -1219,14 +1246,7 @@ public:
 			request("/api/v1/native/auth/logout", "POST", {}, [](int, const QJsonObject &) {});
 			locked(tr("已退出账号。"));
 		});
-		connect(manage, &QPushButton::clicked, this, [this] {
-			auto url = origin_;
-			QUrlQuery query;
-			query.addQueryItem("native-management", "1");
-			url.setQuery(query);
-			url.setFragment("/devices");
-			QDesktopServices::openUrl(url);
-		});
+		connect(manage, &QPushButton::clicked, this, [this] { open_management_page("/devices"); });
 		connect(&heartbeat_, &QTimer::timeout, this, [this] {
 			refresh_video_health();
 			renew_projectors(); // Remains active while the main view resolves another scene.

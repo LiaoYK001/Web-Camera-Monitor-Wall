@@ -82,6 +82,9 @@ class ProductSupervisor:
         self.authority_servers = []
         self.authority_threads = []
         self.authority_store = None
+        self.complete = False
+        self.recordings = None
+        self.backup_key = None
 
     def status(self, phase):
         value = {"schema": 1, "phase": phase, "origin": self.origin, "bootId": self.boot_id,
@@ -107,6 +110,9 @@ class ProductSupervisor:
         if (value.get("obsCommit") != "fb4d98bf88fae5fc85cb11fc57f7c5e309282194"
                 or value.get("productIntegration") is not True):
             raise ValueError("this supervisor requires the internal integrated product build")
+        complete_markers = ("services/events/event_service.py", "services/nvr/nvr_service.py",
+                            "services/v2/client_control_service.py", "bin/go2rtc.exe")
+        self.complete = all((self.runtime / marker).is_file() for marker in complete_markers)
         for directory in (self.root, self.root / "run"):
             for path in (directory, *directory.parents):
                 if path.is_symlink() or (path.exists() and getattr(path.lstat(), "st_file_attributes", 0) & 0x400):
@@ -129,7 +135,12 @@ class ProductSupervisor:
             return False
         self.owns_profile = True
         protect(self.root, self.runtime)
-        for name in ("config", "logs", "native-profile/obs-studio"):
+        directories = ["config", "logs", "native-profile/obs-studio"]
+        if self.complete:
+            directories += ["recordings", "backups", "snapshots", "config/go2rtc", "config/keys",
+                            "config/node", "config/secrets", "config/notification-secrets",
+                            "config/camera-secrets", "run"]
+        for name in directories:
             (self.root / name).mkdir(parents=True, exist_ok=True)
         ini = self.root / "native-profile/obs-studio/user.ini"
         if not ini.exists():
@@ -137,6 +148,19 @@ class ProductSupervisor:
                 output.write("[General]\nFirstRun=true\n[BasicWindow]\nSysTrayEnabled=false\n")
         protect(self.root / "config", self.runtime)
         protect(self.root / "native-profile", self.runtime)
+        if self.complete:
+            for name in ("recordings", "backups"):
+                protect(self.root / name, self.runtime)
+            key_path = self.root / "run/backup.key"
+            if not key_path.exists():
+                with key_path.open("xb") as output:
+                    output.write(secrets.token_bytes(32))
+                    output.flush()
+                    os.fsync(output.fileno())
+            if key_path.is_symlink() or key_path.stat().st_size != 32:
+                raise ValueError("product backup key must be a private 32-byte file")
+            if os.name != "nt":
+                key_path.chmod(0o600)
         self.environment = clean_environment(os.environ)
         system = Path(os.environ.get("SystemRoot", r"C:\Windows")) / "System32"
         self.environment["PATH"] = os.pathsep.join(map(str, (
@@ -166,6 +190,44 @@ class ProductSupervisor:
             "WEBOBS_WHIP_URL": "http://127.0.0.1:9/native-unused/whip",
             "WEBOBS_NODE_ROLE": "standalone",
         })
+        if self.complete:
+            self.recordings = self.root / "recordings"
+            detector_model = self.runtime / "web/models/ssd_mobilenet_v1_12.onnx"
+            self.environment.update({
+                "WEBOBS_EVENT_DATABASE": str(config / "events.db"),
+                "WEBOBS_V2_DATABASE": str(config / "v2-clients.db"),
+                "WEBOBS_V2_SHARED_SCENES": str(config / "shared-scenes-v2.json"),
+                "WEBOBS_V2_SIGNING_KEY": str(config / "keys/client-grant-signing.key"),
+                "WEBOBS_V2_INTERNAL_TOKEN": secrets.token_hex(32),
+                "WEBOBS_NVR_CONFIG": str(config / "nvr.json"),
+                "WEBOBS_NVR_STORAGE": str(self.recordings),
+                "WEBOBS_NVR_DATABASE": str(self.recordings / "catalog.sqlite3"),
+                "WEBOBS_NVR_CATALOG": str(self.recordings / "catalog.sqlite3"),
+                "WEBOBS_NVR_VOLUMES_ROOT": str(self.recordings / "volumes"),
+                "WEBOBS_NVR_STORAGE_ROOT": str(self.recordings),
+                "WEBOBS_ARCHIVE_CONFIG": str(config / "archive.json"),
+                "WEBOBS_ARCHIVE_QUEUE": str(config / "archive-queue.sqlite3"),
+                "WEBOBS_ARCHIVE_PYTHON_MODULE": str(self.runtime / "services/archive/s3_archive.py"),
+                "WEBOBS_BACKUP_CONFIG_ROOT": str(config),
+                "WEBOBS_BACKUP_ROOT": str(self.root / "backups"),
+                "WEBOBS_BACKUP_KEY_FILE": str(self.root / "run/backup.key"),
+                "WEBOBS_BACKUP_S3_CONFIG": str(config / "archive.json"),
+                "WEBOBS_GO2RTC_CONFIG": str(config / "go2rtc/go2rtc.yaml"),
+                "WEBOBS_GO2RTC_TEMPLATE": str(self.runtime / "etc/go2rtc.yaml"),
+                "WEBOBS_GO2RTC_WEB_ROOT": str(self.runtime / "go2rtc-www"),
+                "WEBOBS_GO2RTC_WEBRTC_BIND": "127.0.0.1",
+                "WEBOBS_ONLINE_SOURCES_ENABLED": "true",
+                "WEBOBS_FFMPEG_PATH": str(self.runtime / "bin/ffmpeg.exe"),
+                "WEBOBS_TRANSCODER_PATH": str(self.runtime / "bin/webobs-transcoder.exe"),
+                "WEBOBS_DETECTOR_PYTHON_MODULE": str(self.runtime / "services/analytics/detector_worker.py"),
+                "WEBOBS_CAMERA_BACKGROUND_PROBES": "true",
+                "WEBOBS_NVR_ENABLED": "true", "WEBOBS_GO2RTC_ENABLED": "true",
+                "WEBOBS_COMPOSITE_ENABLED": "false",
+            })
+            if detector_model.is_file():
+                self.environment["WEBOBS_DETECTOR_MODEL"] = str(detector_model)
+            if (self.runtime / "bin/go2rtc.exe").is_file():
+                self.environment["WEBOBS_GO2RTC_BINARY"] = str(self.runtime / "bin/go2rtc.exe")
         if os.environ.get("WEBOBS_PRODUCT_ALLOW_TEST_ENDPOINTS") == "true":
             self.environment["WEBOBS_CAMERA_ALLOW_TEST_ENDPOINTS"] = "true"
         return True
@@ -328,6 +390,12 @@ class ProductSupervisor:
             self.owns_profile = False
             self.resources.close()
 
+    def start_python(self, name, relative, health, args=()):
+        script = self.runtime / "services" / relative
+        if not script.is_file():
+            raise RuntimeError(f"missing product service: {name}")
+        return self.start(name, [sys.executable, "-B", str(script), *args], health=health)
+
     def run(self):
         try:
             if not self.prepare():
@@ -336,14 +404,38 @@ class ProductSupervisor:
             # listener. Registry/account ports remain private per-boot details.
             leases = {"control": self.control_port()}
             leases.update({name: self.port() for name in ("camera", "cluster")})
+            extra = ("events", "nvr", "clients", "go2rtcApi", "go2rtcRtsp", "go2rtcWebrtc") if self.complete else ()
+            leases.update({name: self.port() for name in extra})
             camera_port = leases["camera"][1]
             cluster_port = leases["cluster"][1]
             control_port = leases["control"][1]
             self.environment.update(WEBOBS_CAMERA_INTERNAL_PORT=str(camera_port),
                 WEBOBS_CLUSTER_INTERNAL_PORT=str(cluster_port), WEBOBS_HTTP_PORT=str(control_port))
+            if self.complete:
+                self.environment.update(
+                    WEBOBS_EVENTS_INTERNAL_PORT=str(leases["events"][1]),
+                    WEBOBS_NVR_INTERNAL_PORT=str(leases["nvr"][1]),
+                    WEBOBS_V2_INTERNAL_PORT=str(leases["clients"][1]),
+                    WEBOBS_GO2RTC_API_PORT=str(leases["go2rtcApi"][1]),
+                    WEBOBS_GO2RTC_RTSP_PORT=str(leases["go2rtcRtsp"][1]),
+                    WEBOBS_GO2RTC_WEBRTC_PORT=str(leases["go2rtcWebrtc"][1]))
             self.origin = f"http://127.0.0.1:{control_port}"
             self.environment["WEBOBS_CONTROL_ALLOWED_ORIGINS"] = self.origin
             self.start_authority(leases)
+            if self.complete:
+                for name in extra:
+                    leases[name][0].close()
+                self.start_python("events", "events/event_service.py",
+                                  f"http://127.0.0.1:{leases['events'][1]}/health")
+                self.start_python("nvr", "nvr/nvr_service.py",
+                                  f"http://127.0.0.1:{leases['nvr'][1]}/health")
+                self.start_python("clients", "v2/client_control_service.py",
+                                  f"http://127.0.0.1:{leases['clients'][1]}/health")
+                self.start_python("go2rtc", "go2rtc/runtime.py",
+                                  f"http://127.0.0.1:{leases['go2rtcApi'][1]}/api/v1/go2rtc/api")
+                if (self.root / "config/archive.json").is_file():
+                    self.start_python("archive", "archive/s3_archive.py", "")
+                self.start_python("backup", "backup/encrypted_backup.py", "", ["schedule"])
             self.start("control", [str(self.runtime / "bin/webobsd.exe")],
                        health=self.origin + "/api/v1/health", lease=leases["control"][0])
             frontend_environment = clean_environment(os.environ)
@@ -378,7 +470,11 @@ class ProductSupervisor:
 def main():
     runtime = Path(__file__).resolve().parents[2]
     manifest = json.loads((runtime / "webobs-native-prototype.json").read_text(encoding="utf-8"))
-    profile = "NativePreview" if delivery_profile(manifest) == "native-monitor-preview" else "NativeIntegration"
+    complete = all((runtime / marker).is_file() for marker in (
+        "services/events/event_service.py", "services/nvr/nvr_service.py",
+        "services/v2/client_control_service.py", "bin/go2rtc.exe"))
+    profile = ("Native" if complete else
+               "NativePreview" if delivery_profile(manifest) == "native-monitor-preview" else "NativeIntegration")
     root = Path(os.environ["LOCALAPPDATA"]) / "WebOBS" / profile
     # Internal builds accept a separately owned test profile. R6 freezes the
     # production data/upgrade location after migration qualification.

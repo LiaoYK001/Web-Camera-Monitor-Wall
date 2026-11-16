@@ -4,7 +4,8 @@ param(
     [Parameter(Mandatory=$true)][string]$BuildDirectory,
     [Parameter(Mandatory=$true)][string]$Version,
     [ValidateRange(1,64)][int]$Parallel = 4,
-    [switch]$Offline
+    [switch]$Offline,
+    [switch]$Complete
 )
 $ErrorActionPreference = 'Stop'
 $repoRoot = (Resolve-Path (Join-Path $PSScriptRoot '../..')).Path
@@ -18,6 +19,7 @@ function Invoke-Checked([string]$Program, [string[]]$Arguments) {
 $stager = Join-Path $repoRoot 'native-host/scripts/stage_product_runtime.py'
 $prepareArguments = @($stager,'prepare','--repo',$repoRoot,'--build-root',$buildRoot,'--cache',$cacheRoot)
 if ($Offline) { $prepareArguments += '--offline' }
+if ($Complete) { $prepareArguments += '--complete' }
 Invoke-Checked 'python' $prepareArguments
 $vcpkgRoot = Join-Path $buildRoot ('vcpkg-source/vcpkg-' + $lock.vcpkgCommit)
 if ($Offline) { throw 'Product offline builds require a prequalified vcpkg toolchain; runtime installation itself is offline.' }
@@ -61,11 +63,16 @@ try {
 Invoke-Checked 'cmake' @('--install',$coreBuild,'--config','Release')
 Invoke-Checked 'npx' @('--yes','pnpm@11.16.0','--dir',"$repoRoot/web",'install','--frozen-lockfile')
 Invoke-Checked 'npx' @('--yes','pnpm@11.16.0','--dir',"$repoRoot/web",'typecheck')
+if ($Complete) {
+    Invoke-Checked 'npx' @('--yes','pnpm@11.16.0','--dir',"$repoRoot/web",'go2rtc:ui')
+}
 $env:WEBOBS_BUILD_VERSION = $Version
 $env:WEBOBS_BUILD_MILESTONE = 'v4-M1-dev'
 Invoke-Checked 'npx' @('--yes','pnpm@11.16.0','--dir',"$repoRoot/web",'build')
-Invoke-Checked 'python' @($stager,'stage','--repo',$repoRoot,'--build-root',$buildRoot,'--cache',$cacheRoot,
+$stageArguments = @($stager,'stage','--repo',$repoRoot,'--build-root',$buildRoot,'--cache',$cacheRoot,
     '--core',$coreInstall,'--vcpkg',"$vcpkgInstalled/x64-windows")
+if ($Complete) { $stageArguments += '--complete' }
+Invoke-Checked 'python' $stageArguments
 $runtime = Join-Path $buildRoot 'runtime'
 $previousPath = $env:PATH
 $previousSodium = $env:WEBOBS_LIBSODIUM_LIBRARY

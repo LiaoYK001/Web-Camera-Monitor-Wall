@@ -7,12 +7,17 @@ on:
       version: { type: string, required: true }
       pixel_test: { type: boolean, default: false }
       product_mode: { type: boolean, default: false }
+      complete: { type: boolean, default: false }
       native_preview: { type: boolean, default: false }
       measure_obs_baseline: { type: boolean, default: false }
       upgrade_previous: { type: boolean, default: false }
   workflow_dispatch:
     inputs:
       product_mode:
+        type: boolean
+        default: false
+      complete:
+        description: 'Stage all existing business services and shipped dependencies for the complete product'
         type: boolean
         default: false
       native_preview:
@@ -133,8 +138,11 @@ jobs:
         shell: pwsh
         env:
           NATIVE_VERSION: ${{ inputs.version }}
+          NATIVE_COMPLETE: ${{ inputs.complete }}
         run: |
-          ./desktop/scripts/build-native-product-control.ps1 -Version $env:NATIVE_VERSION -BuildDirectory "$env:GITHUB_WORKSPACE/build/obs-native-ci"
+          $parameters = @{Version=$env:NATIVE_VERSION;BuildDirectory="$env:GITHUB_WORKSPACE/build/obs-native-ci"}
+          if ($env:NATIVE_COMPLETE -eq 'true') { $parameters.Complete = $true }
+          ./desktop/scripts/build-native-product-control.ps1 @parameters
       - name: Exercise the actual integrated launcher and authenticated product window
         id: product-ui
         if: inputs.product_mode
