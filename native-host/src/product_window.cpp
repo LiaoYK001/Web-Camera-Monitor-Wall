@@ -501,6 +501,19 @@ class ProductWindow final : public QWidget {
 		report_program("applied", studio_revision, scene_id, fingerprint);
 		update_projector_controls();
 		observe_current_media();
+		if (transition_kind == "fade" && duration_ms > 0) {
+			// OBS keeps both sides of a completed fade in its transition source.
+			// Settle the transition on the confirmed Program after the fade so
+			// the outgoing scene and its decoders can actually retire.
+			QTimer::singleShot(duration_ms + 200, this, [this, scene_id, fingerprint] {
+				if (program_scene_id_ != scene_id || program_fingerprint_ != fingerprint || !program_) return;
+				if (obs_source_t *output = obs_get_output_source(0)) {
+					obs_transition_set(output, obs_scene_get_source(program_->scene));
+					obs_source_release(output);
+				}
+				refresh_video_health();
+			});
+		}
 		return true;
 	}
 
