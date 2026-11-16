@@ -109,6 +109,37 @@ try {
         }) -join "`n"
     }
     $before = Get-ProfileFingerprint
+    if ($complete) {
+        $phase = 'same-machine-upgrade'
+        $match = [regex]::Match($version, '^(5\.0\.0-rc\.)([0-9]+)$')
+        if (-not $match.Success) { throw 'Complete candidate version is not rc.N.' }
+        $upgradeVersion = $match.Groups[1].Value + ([int]$match.Groups[2].Value + 1)
+        $upgradeOut = Join-Path $buildRoot 'upgrade-installer'
+        New-Item -ItemType Directory $upgradeOut | Out-Null
+        $upgradeRemovals = Join-Path $upgradeOut 'owned-removals.nsh'
+        $null = & $python -B $verifier --runtime $runtime --removals $upgradeRemovals
+        if ($LASTEXITCODE -ne 0) { throw 'Upgrade payload verification failed.' }
+        $upgradeArgs = @('/V2',"/DVERSION=$upgradeVersion","/DPACKAGE_DIR=$runtime",
+            "/DOUTPUT_DIR=$upgradeOut","/DOWNED_REMOVALS=$upgradeRemovals",'/DCOMPLETE')
+        & $makensis @upgradeArgs (Join-Path $repoRoot 'native-host/installer/WebOBSProductIntegration.nsi')
+        if ($LASTEXITCODE -ne 0) { throw 'Upgrade NSIS compilation failed.' }
+        $upgradeSetup = Join-Path $upgradeOut "WebOBS-Wall-$upgradeVersion-windows-x64-SETUP.exe"
+        if (-not (Test-Path -LiteralPath $upgradeSetup -PathType Leaf)) { throw 'Upgrade installer missing.' }
+        if ((Get-FileHash -LiteralPath $upgradeSetup -Algorithm SHA256).Hash -eq
+            (Get-FileHash -LiteralPath $setup -Algorithm SHA256).Hash) {
+            throw 'Upgrade installer is byte-identical to the fresh installer.'
+        }
+        $upgrade = Start-Process -FilePath $upgradeSetup -ArgumentList '/S', "/D=$installed" -Wait -PassThru
+        if ($upgrade.ExitCode -ne 0) { throw 'Actual NSIS upgrade installation failed.' }
+        if ((Get-ItemProperty $uninstallKey).DisplayVersion -ne $upgradeVersion) {
+            throw 'Upgrade did not update the installed version registration.'
+        }
+        if ((Get-ProfileFingerprint) -ne $before) {
+            throw 'Upgrade changed retained account/profile data.'
+        }
+        $report.upgradeVersion = $upgradeVersion
+        $report.sameMachineUpgradeQualified = $true
+    }
     $unknown = Join-Path $installed 'user-notes.txt'
     [IO.File]::WriteAllText($unknown, 'private synthetic uninstall-retention marker')
     $phase = 'uninstall-and-retain-data'
