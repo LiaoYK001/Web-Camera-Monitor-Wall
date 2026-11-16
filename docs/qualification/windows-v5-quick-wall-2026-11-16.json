@@ -1,0 +1,43 @@
+{
+  "schema": 1,
+  "kind": "internal-native-quick-wall-qualification",
+  "version": "5.0.0-dev.1",
+  "sourceRevision": "429155676834047d5be5b3fbc1b900abf660f831",
+  "windowsRun": 43816563388,
+  "runUrl": "https://github.com/LiaoYK001/Web-Camera-Monitor-Wall/actions/runs/43816563388",
+  "conclusion": "success",
+  "scope": "GitHub Windows Server 2022; synthetic five distinct H.265 inputs, 1/4/7 displayed tiles; not physical cameras, 64 decoders or target-machine OBS parity",
+  "portableChecks": 43,
+  "installedChecks": 43,
+  "restoreChecks": 9,
+  "variableLayoutChecks": [
+    "quick-wall-one-four-seven-final-pixels",
+    "quick-wall-draft-does-not-change-running-media",
+    "quick-wall-resize-retains-shared-inputs-and-idle-program",
+    "quick-wall-seven-save-logout-authenticated-restore"
+  ],
+  "installer": {
+    "bytes": 70147554,
+    "sha256": "01ff689b4bbbbb1e9aee9da95eb26f0f7c45bb30122ba2de4698f7f94c8675d2",
+    "publicationForbidden": true
+  },
+  "installedFootprint": {
+    "scope": "isolated-nsis-install-before-first-start",
+    "logicalBytes": 198593714,
+    "mainStreamAllocationBytes": 201531432,
+    "fileCount": 1866
+  },
+  "fullFeatureMigrationQualified": false,
+  "hardwareDecodeVerified": false,
+  "obsPerformanceParityQualified": false,
+  "rawReceiptSha256": {
+    "native-product-entry-ui.json": "0b4af26141c367d7664d8226b5b8c7db22ccea6b343e5dd3243036fdb47f88da",
+    "native-product-installed-ui.json": "b92488bc6632514d1b631e9dd0ad7ea6890de057f7347a9149c35db9f0163d2d",
+    "native-product-restore.json": "30844738a4a4050e21dfe17f6d77392397db9cac4a6b154083dcd65416b2bb7b",
+    "native-product-nsis.json": "a4ad3ef00fcc3c2151deaad801fb378c506686d252d66b7081b244c224c7fef2"
+  },
+  "artifact": {
+    "id": 14204123680,
+    "sha256": "e64771d31312d4314c49d9e83945c8c1ad64dfd00939b86f92e56d56824fbba9"
+  }
+}
