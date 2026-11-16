@@ -2,6 +2,7 @@
 """Legacy config migration contracts: consistent SQLite, no overwrite, old bytes kept."""
 from __future__ import annotations
 
+from contextlib import closing
 import importlib.util
 import json
 from pathlib import Path
@@ -21,12 +22,14 @@ def load():
 
 def make_legacy(source: Path):
     source.mkdir(parents=True)
-    with sqlite3.connect(source / "cluster.sqlite3") as database:
+    with closing(sqlite3.connect(source / "cluster.sqlite3")) as database:
         database.execute("CREATE TABLE users (id TEXT PRIMARY KEY, username TEXT)")
         database.execute("INSERT INTO users VALUES ('1', 'owner')")
-    with sqlite3.connect(source / "cameras.db") as database:
+        database.commit()
+    with closing(sqlite3.connect(source / "cameras.db")) as database:
         database.execute("CREATE TABLE cameras (id TEXT PRIMARY KEY)")
         database.execute("INSERT INTO cameras VALUES ('camera-a')")
+        database.commit()
     (source / "scene.json").write_text(json.dumps({
         "schemaVersion": 6, "revision": 1, "id": "scene-a", "name": "Scene A",
         "canvas": {"width": 1920, "height": 1080, "backgroundColor": "#000000"},
@@ -47,9 +50,9 @@ def exercise():
         destination = base / "Native" / "config"
         receipt = migrate.migrate(source, destination, confirm_stopped=True, include_backup_key=False)
         assert receipt["status"] == "migrated" and receipt["sourcePreserved"] is True
-        with sqlite3.connect(destination / "cluster.sqlite3") as database:
+        with closing(sqlite3.connect(destination / "cluster.sqlite3")) as database:
             assert database.execute("SELECT username FROM users").fetchone() == ("owner",)
-        with sqlite3.connect(destination / "cameras.db") as database:
+        with closing(sqlite3.connect(destination / "cameras.db")) as database:
             assert database.execute("SELECT id FROM cameras").fetchone() == ("camera-a",)
         assert json.loads((destination / "scene.json").read_text())["id"] == "scene-a"
         assert (destination / "secrets" / "camera.key").read_bytes() == b"private"
