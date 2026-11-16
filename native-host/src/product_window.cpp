@@ -513,7 +513,16 @@ class ProductWindow final : public QWidget {
 					}
 				});
 			} else {
+				// A cut is complete as soon as the frontend selects the new scene,
+				// but the transition still owns both sides until it is settled.
+				// Collapse it immediately so the previous Program graph (and any
+				// source variant unique to it) is released after the cut.
+				if (obs_source_t *output = obs_get_output_source(0)) {
+					obs_transition_set(output, obs_scene_get_source(program_->scene));
+					obs_source_release(output);
+				}
 				retired.reset();
+				refresh_video_health();
 			}
 		}
 		return true;
