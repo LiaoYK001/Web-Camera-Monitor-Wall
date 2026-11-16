@@ -27,27 +27,27 @@ One pinned OBS frontend owns local media. Reuse the existing Direct-only core fo
 | AUTH | `LoginGate.tsx`、`AccountWorkspace.tsx`、core auth、cluster accounts | 原生登录/建账/退出，管理浏览器账号页 | 同一账号、绑定 userId/authEpoch，会话撤销 | core Direct-only、cluster | 安装后真实账号登录、改密/禁用/过期关闭画面 | v4.5 最终便携/安装：真实建账、登录/重登、改密/禁用/重启撤销通过；本机双模式 HTTP 回归含 epoch/撤权/队列复检与设备管理面 viewer-403 | R1-001 全入口审计(2026-11-16)已核对 core/native/cluster 实际入口，补 v2 设备管理面、排队会话复检与 legacy WS 撤权轮询；旧账号数据迁移、旧数据 ACL、已建立媒体通道服务端关闭与同源码 Windows 产品覆盖仍开放 |
 | RBAC | `UserAccessEditor.tsx`、cluster role/camera scope | 原生目录和每次执行/持续观看校验 | 角色、camera/group scope，未知来源拒绝 | cluster、Registry | 同名重建账号、换组、隐藏/嵌套来源、权限撤销 | v4.5：逐相机/Profile目录与执行、持续撤权、投影退休、认证前恢复 I/O 隔离通过 | R1-001 审计确认 native mutation 执行时双重 validate/epoch 回声、v2 设备管理面 node.manage 与 sources 直接路由相机作用域栅栏（越权 WHEP/音频创建 403）；Studio/输出完整执行栅栏、角色/组跨快照一致性、旧数据 ACL 与 Windows 同源码覆盖仍开放 |
 | DEV | `CameraRegistry.tsx`、`camera_registry.py` | 原生摄像机/Profile 选择，本机设备管理页 | 稳定 camera/profile ID、Secret 引用 | camera、core | 选已有设备进入媒体源，禁用/缺失 Profile 可见报错 | v4.5：设备 API 到原生五路/Profile选择、禁用/变更/保存恢复通过 | 旧个人设备导入、完整 ONVIF/PTZ/对讲与设备实测未完成 |
-| IMPORT | `bulkSourceImport.ts`、ONVIF API | 设备库批量导入/ONVIF 页面 | 去重、配置保留、device.manage | camera、WebUI | 实际导入、失败不覆盖、重启保留 | 管理页接入手动/批量设备；Linux实际服务+Chromium首用新增1+4路并读取5路，缺FFprobe仍可保存 | 浏览器首用证据不替代完整 Windows ONVIF/大批量/旧数据导入验收 |
+| IMPORT | `bulkSourceImport.ts`、ONVIF API、`migrate_legacy.py` | 设备库批量导入/ONVIF 页面；旧 WebOBS 4.x / v4.5 NativePreview 显式导入 | 去重、配置保留、device.manage；SQLite 一致性、账号绑定工作区、拒绝覆盖 | camera、WebUI、product migration | 实际导入、失败不覆盖、重启保留、旧档案迁移 | 管理页接入手动/批量设备；Linux实际服务+Chromium首用新增1+4路并读取5路；v5.0-rc.1 单元验证覆盖旧配置/v4.5 工作区、损坏/覆盖拒绝 | 浏览器首用和合成迁移不替代完整 Windows ONVIF/大批量、用户本人旧档案和目标机迁移验收 |
 | LIVE | `DirectPreview.tsx`、`ProgramPreview.tsx`、core OBS | 原生 OBS Media Source 与 Preview/Program | 认证后建图，同源兼容设置共享 | OBS、obs-ffmpeg | 真实插件、真实服务、动态 H.264/H.265 最终像素 | v4.5：五路动态 HEVC、实际最终像素、同源复用、输入推进、断流恢复、重启和撤权通过 | 真实相机、逐路硬解、目标机同条件OBS对照与长稳仍待；v5.0快捷墙1/4/7路Windows动态像素通过；64为有界接口/网格，不是64解码器实测 |
-| STUDIO | `SceneCollection.tsx`、`sceneSchema.ts`、`StudioController` | 原生场景切换/编辑与现有管理 Studio | Scene/Source UUID、草稿、revision、嵌套 | OBS、core、WebUI | 保存/恢复、裁剪/层级/锁定、冲突、TAKE | v4.5：已保存相机场景/sceneId认证后恢复、内容前置条件及本地Preview与空Program分离通过 | 完整编辑、原子文档/运行时bridge、TAKE/过渡及业务来源未接线 |
+| STUDIO | `SceneCollection.tsx`、`sceneSchema.ts`、`StudioController`、`product_window.cpp` | 原生场景切换/编辑与现有管理 Studio | Scene/Source UUID、草稿、revision、嵌套 | OBS、core、WebUI | 保存/恢复、裁剪/层级/锁定、冲突、TAKE | v5.0-rc.1：真实原生 cut/fade TAKE、Program source 回读/回执、旧 Program 图释放、Program/固定投影最终像素和空 Program 清屏通过；保存/恢复及无关 revision 保持 | 完整嵌套编辑、复杂冲突/撤销业务来源及目标机兼容仍开放 |
 | LAYOUT | `monitorView.ts`、监控偏好、设备布局 | 原生网格/轮换/事件提升/主子码流 | 账号与设备偏好分离 | OBS、account、clients | 既有布局范围、人工选择、帧率/分辨率回读 | 受支持的已保存相机场景可映射布局/裁剪/层级；不同固定Scene最终画面通过 | v5.0快捷墙1–64路源码与本机几何/真实libobs复用通过，Windows便携及安装1/4/7路通过；完整编辑/复杂嵌套仍未完成 |
-| PROJECT | `ProjectorView.tsx`、desktop fixed projector IPC | 原生 Program 与固定 Scene 多投影 | 固定场景身份、同源引用 | OBS/Qt | 双固定场景、切 Program、重开/全屏/DPI | v4.5：两固定Scene共用来源、不同布局、全屏/回窗/关闭与仅投影相机撤权清屏通过 | 持续Program投影、物理多屏/DPI与投影持久恢复未完成 |
+| PROJECT | `ProjectorView.tsx`、desktop fixed projector IPC、`product_window.cpp` | 原生 Program 与固定 Scene 多投影 | 固定场景身份、同源引用 | OBS/Qt | 双固定场景、切 Program、重开/全屏/DPI | v4.5 两固定Scene共用来源/全屏/关闭/撤权清屏；v5.0-rc.1 双固定投影、Program 投影、TAKE 前后最终像素和关闭/重开通过 | 物理多屏/DPI、睡眠唤醒和更完整投影持久恢复待目标机；not full device qualification |
 | AUDIO | `AudioWorkspace.tsx`、`sourceAudio.ts`、schema-v6 | 原生混音/监听/电平，管理音轨页 | 账号监听偏好与项目轨道语义 | OBS、必要音轨适配组件 | 无重复扬声器输出、多轨保存、失效轨报错 | 相机主音量/静音/监听/总线映射与显式空audioInputs无音频policy已接；v4.5空选择场景视频通过 | 非空逐轨、音频UI/电平、实际解码采样/扬声器与输出混音未完成 |
 | OVERLAY | `MonitorProcessStatus.tsx`、analytics、隐私遮罩 | 原生叠层及管理配置 | 本地/录像/远端范围分开 | OBS、可选 analytics | 边框/检测框/音量表与最终像素、隐私遮罩 | 原生未接线 | overlay 来源和数据连接 |
-| PTZ | `CameraDeviceControls.tsx`、`useShortTalk.ts` | 原生设备控制入口及管理页 | camera scope、移动脉冲、超时停止 | camera | 松键/断开停止、预置位、对讲收尾、快照 | 旧实现可用，原生未接线 | UI 与设备命令接线 |
+| PTZ | `CameraDeviceControls.tsx`、`useShortTalk.ts` | 受认证管理页设备详情入口；原生窗口提供设备管理入口 | camera scope、移动脉冲、超时停止 | camera | 松键/断开停止、预置位、对讲收尾、快照 | 管理页入口与真实 camera 服务已在完整安装中启动；未做本次硬件交互 | 真实 ONVIF 相机、松键/断开收尾、对讲设备和实际最终画面待目标机 |
 | OUTPUT | core OBS 录像/推流、`SystemStatus.tsx` | 原生宿主按需求录制/推流 | 输出状态、退出保护、轨道 | OBS 编码/输出组件 | 本地关闭后持续任务、无需求编码器为零 | 原生未接线 | 单一输出所有者和 engine adapter |
-| NVR | `NvrTimeline.tsx`、`nvr_service.py` | 本机录像管理入口与按需后台服务 | 原码流、配额、多卷、索引 | NVR、必要 FFmpeg | 计划、磁盘满、掉盘恢复、保留历史录像 | 旧实现可用，原生未接线 | 原生 supervisor 与安装 |
-| EVIDENCE | `NvrExportPanel.tsx`、archive、timeline | 回放/归档/证据页面 | Range、审计、hash、lease | NVR、archive | 真实媒体 seek/大文件导出、路径与权限 | 旧实现可用，原生未接线 | 浏览器管理入口和媒体按需组件 |
-| EVENTS | `EventsPanel.tsx`、`event_service.py` | 事件/规则/通知入口 | 权限、持久 outbox、重试预算 | events、可选通知集成 | MQTT/HA、重复抑制、重启恢复、事件录制 | 旧实现可用，原生未接线 | 后台消费者和组件安装 |
-| DETECT | `AnalyticsWorkspace.tsx`、analytics providers | 检测配置/叠层及可选离线组件 | provider、任务授权、作用域 | analytics、模型/推理运行时 | 开关任务、lease/撤销、事件关联、成本增量 | 旧实现可用，原生未接线 | 按需进程与模型分发 |
-| G2R | `Go2rtcWorkspace.tsx`、固定代理 | 本机管理页与来源适配 | `/api/v1/go2rtc/`、settings.manage | go2rtc | 配置保存、重载、HTTP/WS、凭据隔离 | 旧实现可用，原生未接线 | 按需需求和 supervisor |
-| ONLINE | `Go2rtcOnlineSources.tsx`、`online_source.py` | 网站来源目录/Profile，原生观看 | 锁定提取器、Cookie 私密目录 | go2rtc、yt-dlp/Streamlink/EJS | 真实解析/relay/认证实播，预算与退出清理 | 旧实现可用，原生未接线 | 可选完整离线组件 |
+| NVR | `NvrTimeline.tsx`、`NvrSettings.tsx`、`nvr_service.py` | 原生 supervisor 内的录像管理入口、时间线和配置页 | 原码流、配额、多卷、索引 | NVR、必要 FFmpeg | 计划、磁盘满、掉盘恢复、保留历史录像 | v5.0-rc.1：真实注册表相机录制、鉴权 MP4、时间线、policy off 收束和安装态通过；配置页支持连续/事件/分段/容量 | 多卷/掉盘/配额故障、目标机真实录像编码和长时间回放仍待 |
+| EVIDENCE | `NvrExportPanel.tsx`、archive、timeline | 回放/归档/证据页面和原生回放入口 | Range、审计、hash、lease | NVR、archive | 真实媒体 seek/大文件导出、路径与权限 | v5.0-rc.1 鉴权 MP4/Range 和回放页入口已验证；导出服务已安装 | 大文件 seek/导出、磁盘/权限/审计和目标机数量仍待 |
+| EVENTS | `EventsPanel.tsx`、`event_service.py` | 事件/规则/通知入口 | 权限、持久 outbox、重试预算 | events、可选通知集成 | MQTT/HA、重复抑制、重启恢复、事件录制 | v5.0-rc.1：真实事件创建/去重、规则和持久 outbox 通过；events 服务随完整安装启动 | MQTT/HA 实际目标、重启去重、事件录像和通知投递仍待 |
+| DETECT | `AnalyticsWorkspace.tsx`、analytics providers | 检测配置/叠层及完整安装内模型/ORT 组件 | provider、任务授权、作用域 | analytics、模型/推理运行时 | 开关任务、lease/撤销、事件关联、成本增量 | 完整包已验证内置 ONNX/ORT 资产和管理页；检测最终像素未在本次门禁开启 | 目标机检测任务、provider、叠层最终像素与资源增量待 |
+| G2R | `Go2rtcWorkspace.tsx`、固定代理、`go2rtc/runtime.py` | 完整安装内受认证管理页与来源适配 | `/api/v1/go2rtc/`、settings.manage | go2rtc | 配置保存、重载、HTTP/WS、凭据隔离 | v5.0-rc.1 go2rtc 服务随产品启动，管理入口和在线解析器自检通过 | 真实网站/长直播、外部站点 Cookie/重连及按需进程预算仍需目标验证 |
+| ONLINE | `Go2rtcOnlineSources.tsx`、`online_source.py` | 网站来源目录/Profile，原生观看 | 锁定提取器、Cookie 私密目录 | go2rtc、yt-dlp/Streamlink/EJS/Node | 真实解析/relay/认证实播，预算与退出清理 | v5.0-rc.1 完整包已暂存锁定 yt-dlp/Streamlink/Node/EJS 并通过 `webobs-online-source --self-test` | 公开网站解析/实播、Cookie 认证、重连和退出清理仍待目标机；组件来源清单为候选未复审 |
 | REMOTE | WebUI/PWA、Android 既有客户端 | 同一 Windows 服务的远程入口 | HTTPS、Origin、Direct/Composite scope | core、按需 gateway/Caddy | 既有客户端登录/播放，一个观看端退出不误停其他端 | 旧实现可用，原生未接线 | 原生引擎远端输出 adapter |
 | OFFLINE | `DeviceSyncPanel.tsx`、`useDeviceSync.ts`、v2 | 受认证管理页与原生布局状态同步 | 签名/加密缓存、冲突、有限离线权限 | clients、core、WebUI | 离线编辑、重连冲突选择、Program 不被覆盖 | 旧实现可用，原生未接线 | 设备状态与原生 scene 映射 |
 | OPS | `ProblemCenter.tsx`、`DeveloperDiagnostics.tsx` | 原生问题/诊断入口与受认证管理页 | 有界脱敏导出、settings.manage | core、业务服务 | 解码/组件/连接故障定位、脱敏支持包 | v4.5：输入推进/停滞、认证OBSBasicStats和实际渲染器标签进入便携/安装入口 | 尚非全进程CPU/内存或分引擎GPU/显存；支持包与完整故障入口未完成 |
-| BACKUP | backup 服务、原型 restore helper | 管理页及安装升级一致性备份 | 活跃 SQLite 快照、Secret、录像路径 | backup、原生 updater | 损坏/中断/磁盘满、幂等迁移和真实恢复 | 仅历史原型文件备份；v4.5认证前恢复隔离不是旧数据迁移/全库备份验收 | 旧数据全量映射、活跃SQLite一致性、失败恢复与幂等迁移仍未完成 |
-| LIFE | `main.mjs`、`supervisor.mjs`、`job_host.cpp` | 原生单实例/托盘/supervisor | Job、任务消费者、正常退出和崩溃收束 | Qt、Win32、按需服务 | 安装态关闭/托盘/后台任务/故意崩溃零遗留 | v4.5：独立安装/NativePreview数据、Unicode路径、快捷方式、origin、重启、退出/崩溃回收、卸载保留通过 | 托盘/后台任务、完整业务消费者、旧版升级/覆盖安装仍未完成 |
-| UPDATE | desktop updater/NSIS、稳定 feed | 原生更新设置/下载/确认/安装 | SHA-512/size、版本、备份、用户确认 | 原生 updater、NSIS | 旧稳定升级、新原生后续升级、截断/断网/失败恢复 | v4.5明确手动卸载换包，无原生updater；旧electron-updater不进入新默认包 | 下载SHA-512/size、确认安装、正常停机、备份恢复及旧版升级仍待原生接线 |
+| BACKUP | backup 服务、`migrate_legacy.py`、restore helper | 管理页、迁移快捷方式和更新前备份 | 活跃 SQLite 快照、Secret、录像路径 | backup、原生 updater | 损坏/中断/磁盘满、幂等迁移和真实恢复 | v5.0-rc.1 搬迁使用 SQLite backup API，更新前备份使用打包 libsodium，恢复隔离对照 9/9；完整 NSIS 卸载保留数据 | 用户本人档案实际搬迁、旧 DPAPI 密钥、磁盘满/中断和恢复演练仍待 |
+| LIFE | `main.mjs`、`supervisor.mjs`、`job_host.cpp`、`product_supervisor.py` | 原生单实例/托盘/supervisor | Job、任务消费者、正常退出和崩溃收束 | Qt、Win32、按需服务 | 安装态关闭/托盘/后台任务/故意崩溃零遗留 | v5.0-rc.1 便携/安装各52项通过正常关闭、重启、origin 冲突、撤权和 launcher 崩溃清理；完整 NSIS 覆盖升级/卸载保留通过 | 托盘后台长任务、睡眠唤醒、完整服务持续消费者和目标机生命周期仍待 |
+| UPDATE | desktop updater/NSIS、native updater | 安装后“检查更新”入口、原生下载/确认/安装 | SHA-512/size、版本、备份、用户确认 | 原生 updater、NSIS | 旧稳定升级、新原生后续升级、截断/断网/失败恢复 | v5.0-rc.1 `latest.yml` 与安装字节绑定，同机 rc.1→rc.2 覆盖升级和更新前备份通过；候选为固定 prerelease feed | 稳定 feed、旧稳定→v5 实机、截断/断网/签名和目标机恢复仍待 |
 
 ## 进程和体积口径 / Process and size accounting
 
@@ -119,13 +119,14 @@ The v5.0 quick wall now supports bounded 1–64 selectors with one shared catalo
 
 The internal Windows candidate passes43 portable/43 installed/9 restore checks, including variable layouts and authenticated persistence. All receipts bind4291556; the added documentation is not a rebuilt installer. Complete Studio, audio, business/data migration, native updating and physical-device performance remain open.
 
-## v5.0 完整候选集成进展（2026-11-16，待冻结证据）
+## v5.0.0-rc.1 完整融合候选（2026-11-17 已发布 prerelease）
 
-本轮把以下代码接入统一原生入口，并在 `codex/v5-integration` 上执行一次完整 Windows 候选构建/安装验收；在 CI 回执落盘前，下列项目不写作已通过。
+完整 Windows 候选 [run 43956468003](https://github.com/LiaoYK001/Web-Camera-Monitor-Wall/actions/runs/43956468003) 在源码 `8828532c60648f52fae9bee222fa41b80beee7ab` 上 **success**。便携产品门禁 52/52、实际 NSIS 安装后产品门禁 52/52、恢复隔离 9/9，共 35 组最终像素捕获；覆盖真实 Program cut/fade TAKE 与 Program 投影、NVR 实际录制与鉴权 MP4、事件去重/持久 outbox、go2rtc 服务与网站解析器自检、托管账号/相机范围撤权、普通关闭/重启/改密/launcher 崩溃收束。完整 NSIS 还通过同机 rc.1→rc.2 覆盖升级、profile 字节保留和卸载保留用户数据。
 
-- W1：`StudioController` 的 TAKE 目标由原生宿主 `/native/studio` 解析并在 OBS frontend 线程执行真实 cut/fade；回读当前 Program source 后通过 `/native/studio/program` 回执，管理页以 `/studio/runtime` 等待真实回执。新增 Program 投影与失败时保留上一个 Program 的行为。
-- W2：完整构建通过锁定的依赖集合暂存 events、NVR、v2、go2rtc、backup 与内嵌 Python 包；supervisor 在同一用户 Job 内启动并收尾。MediaMTX、合成、转码仍默认不启动；远端 Caddy/LAN、检测 provider 与 OBS 合成输出仍是开放缺口。
-- W3：显式旧配置迁移使用 SQLite backup API、拒绝覆盖/未确认停机，保留旧数据；原生更新器固定 GitHub Release HTTPS 源，校验大小/SHA-512 并要求确认；完整 NSIS 支持覆盖升级、迁移/更新/恢复快捷方式与卸载保留数据。
-- W4：`5.0.0-rc.N` 候选身份、完整载荷校验、`latest.yml` 与 GitHub Actions 候选附件上传；候选仍不是稳定 feed，也不替代目标机最终验收。
+安装器 212,117,618 B，SHA-256 `3d16014dab7700e6bc4f73c5c0bfba5700382c78fb3f24041589b58a4e67016c`；候选 [Release](https://github.com/LiaoYK001/Web-Camera-Monitor-Wall/releases/tag/v5.0.0-rc.1) 为 prerelease、非 Latest、固定候选 feed。安装树首启前 794,551,075 logical B / 806,587,720 allocation B、6,972 files；仍不是完整功能/目标机性能资格。
 
-Evidence must be updated with the actual candidate run, installer bytes/SHA-256 and installed/upgrade results before this section is cited as qualification.
+The complete Windows candidate run 43956468003 passed on source 8828532: 52/52 portable product checks, 52/52 installed checks, 9/9 restore isolation, and 35 final-pixel groups covering real Program TAKE/projector, NVR recording/authenticated MP4, events/outbox, go2rtc/online-extractor self-test, scoped revocation, normal close/restart/password change/launcher crash cleanup. Fresh NSIS, same-machine rc.1→rc.2 upgrade, profile byte retention and data-retaining uninstall also passed. The candidate Release is a prerelease, not Latest, with a pinned candidate feed.
+
+未关闭边界：目标机真实五路/逐路硬解/物理多屏/DPI/音频/两小时长稳、个人旧档案实际迁移、非空逐轨音频、OBS 合成录像/推流、LAN/Caddy 远端和部分分析叠层。候选不得替代这些最终验收，也不得据此开放稳定 feed 或恢复暂停平台。
+
+Open boundaries: target-machine real five-camera/per-stream hardware decode, physical multi-monitor/DPI/audio and two-hour stability; the user's own legacy profile migration; nonempty multi-track audio; OBS composite recording/streaming; LAN/Caddy remote access and part of analytics overlays. The candidate does not replace those final gates or authorize a stable feed or paused platforms.
