@@ -503,13 +503,21 @@ class ProductWindow final : public QWidget {
 				// Settle on the confirmed Program and release the outgoing graph in
 				// one deferred step so its decoders actually retire after the fade.
 				QTimer::singleShot(duration_ms + 250, this,
-					[this, retired = std::move(retired), scene_id, fingerprint] {
+					[this, retired = std::move(retired), scene_id, fingerprint]() mutable {
 					if (program_scene_id_ == scene_id && program_fingerprint_ == fingerprint && program_) {
 						if (obs_source_t *output = obs_get_output_source(0)) {
 							obs_transition_set(output, obs_scene_get_source(program_->scene));
 							obs_source_release(output);
 						}
+					}
+					retired.reset();
+					if (program_scene_id_ == scene_id && program_fingerprint_ == fingerprint) {
 						refresh_video_health();
+						// The visible state is written by observe_state(). Do not
+						// leave the previous graph's source count in that snapshot
+						// after the transition has actually released it.
+						settlement_elapsed_.start();
+						settlement_.start(50);
 					}
 				});
 			} else {
@@ -523,6 +531,8 @@ class ProductWindow final : public QWidget {
 				}
 				retired.reset();
 				refresh_video_health();
+				settlement_elapsed_.start();
+				settlement_.start(50);
 			}
 		}
 		return true;
