@@ -242,6 +242,7 @@ class ProductSupervisor:
                 "WEBOBS_BACKUP_ROOT": str(self.root / "backups"),
                 "WEBOBS_BACKUP_KEY_FILE": str(self.root / "run/backup.key"),
                 "WEBOBS_BACKUP_S3_CONFIG": str(config / "archive.json"),
+                "WEBOBS_RESTORE_CONFIRM": "replace-config",
                 "WEBOBS_GO2RTC_CONFIG": str(config / "go2rtc/go2rtc.yaml"),
                 "WEBOBS_GO2RTC_TEMPLATE": str(self.runtime / "etc/go2rtc.yaml"),
                 "WEBOBS_GO2RTC_WEB_ROOT": str(self.runtime / "go2rtc-www"),

@@ -62,6 +62,8 @@ def stage_complete(repo, runtime, cache, build_root):
             extract(archive, destination)
     site = runtime / "python/Lib/site-packages"
     site.mkdir(parents=True, exist_ok=True)
+    (runtime / "python/python312._pth").write_text(
+        "python312.zip\n.\nLib/site-packages\n../services\nimport site\n", encoding="ascii")
     for package in ("numpy", "onnxruntime", "flatbuffers", "packaging", "protobuf"):
         for source in (unpack / package).iterdir():
             if source.name.startswith("."):
