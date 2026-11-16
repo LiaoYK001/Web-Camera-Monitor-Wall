@@ -456,7 +456,7 @@ class ProductWindow final : public QWidget {
 		}
 		auto candidate = create_product_scene(source_pool_, user_id_.toStdString(), document, cameras, error);
 		if (!candidate || !candidate->scene) {
-			if (error.isEmpty()) error = "program-graph-create-failed";
+			if (error.empty()) error = "program-graph-create-failed";
 			return false;
 		}
 		// A new TAKE must not be silently dropped because an older fade is still
