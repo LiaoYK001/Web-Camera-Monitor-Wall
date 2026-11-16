@@ -1344,10 +1344,10 @@ public:
 			obs_frontend_set_current_scene(obs_scene_get_source(blank_scene_));
 		obs_frontend_set_preview_program_mode(true);
 		idle_program_uuid_ = program_state().value("sceneUuid").toString();
-		setWindowTitle("WebOBS Wall");
 		const bool preview_delivery = qEnvironmentVariable("WEBOBS_NATIVE_PREVIEW") == "true";
-		if (preview_delivery)
-			setWindowTitle(tr("WebOBS Wall v4.5 · 原生监看预览版"));
+		const QString product_version = qEnvironmentVariable("WEBOBS_NATIVE_PRODUCT_VERSION");
+		setWindowTitle(preview_delivery ? tr("WebOBS Wall v4.5 · 原生监看预览版") :
+			(product_version.isEmpty() ? tr("WebOBS Wall") : tr("WebOBS Wall %1").arg(product_version)));
 		setObjectName("webobsProductWindow");
 		resize(1280, 800);
 		auto *body = new QHBoxLayout(this);
