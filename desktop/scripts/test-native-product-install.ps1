@@ -53,8 +53,9 @@ $installed = Join-Path $privateRoot 'app'
 $profile = Join-Path $privateRoot 'profile'
 if ($preview) { $profile = Join-Path $privateRoot 'local-data/WebOBS/NativePreview' }
 $report = [ordered]@{
-    schema=1;kind='internal-native-product-nsis';version=$version;sourceRevision=$payload.sourceRevision
-    passed=$false;publicationForbidden=(-not $preview);freshInstalledEntryQualified=$false
+    schema=1;kind=$(if ($complete) { 'native-complete-candidate-nsis' } else { 'internal-native-product-nsis' })
+    version=$version;sourceRevision=$payload.sourceRevision
+    passed=$false;publicationForbidden=$payload.publicationForbidden;freshInstalledEntryQualified=$false
     legacyUpgradeQualified=$false;fullFeatureMigrationQualified=$false
     setupBytes=(Get-Item -LiteralPath $setup).Length
     setupSha256=(Get-FileHash -LiteralPath $setup -Algorithm SHA256).Hash.ToLowerInvariant()

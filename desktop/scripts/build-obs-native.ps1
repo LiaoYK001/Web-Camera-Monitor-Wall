@@ -10,6 +10,7 @@ param(
     [switch]$PixelTest,
     [switch]$ProductMode,
     [switch]$NativePreview,
+    [switch]$Complete,
     [switch]$DeferProductServices
 )
 $ErrorActionPreference = 'Stop'
@@ -20,7 +21,11 @@ if ($SmokeTest -and $PixelTest) { throw 'Choose startup SmokeTest OR finite Pixe
 if ($PixelTest -and -not (Get-Command 'node' -ErrorAction SilentlyContinue)) { throw 'PixelTest requires Node for synthetic patterns/pixel analysis, never for the native host.' }
 $pixelBuild = if ($PixelTest) { 'ON' } else { 'OFF' }
 if (-not $IsWindows -or -not [Environment]::Is64BitOperatingSystem -or [Runtime.InteropServices.RuntimeInformation]::OSArchitecture -ne 'X64') { throw 'The OBS prototype requires Windows x64.' }
-if ($NativePreview) {
+if ($Complete) {
+    if (-not $ProductMode -or $NativePreview -or $Version -notmatch '^5\.0\.0-rc\.[0-9]+$') {
+        throw 'Complete candidate delivery requires product mode and an explicit 5.0.0-rc.N version.'
+    }
+} elseif ($NativePreview) {
     if (-not $ProductMode -or $Version -ne '4.5.0') { throw 'Explicit preview delivery requires product mode and version 4.5.0.' }
 } elseif ($Version -notmatch '^\d+\.\d+\.\d+-dev\.[0-9A-Za-z.-]+$') { throw 'Internal prototypes accept development versions only.' }
 $repoRoot = (Resolve-Path (Join-Path $PSScriptRoot '../..')).Path
@@ -86,6 +91,7 @@ Invoke-Checked 'python' @((Join-Path $repoRoot 'native-host/scripts/prune_runtim
 $stageArguments = @((Join-Path $repoRoot 'native-host/scripts/stage.py'),'--repo',$repoRoot,'--source',$source,'--runtime',$runtime,'--version',$Version)
 if ($ProductMode) { $stageArguments += '--product' }
 if ($NativePreview) { $stageArguments += '--native-preview' }
+if ($Complete) { $stageArguments += '--complete' }
 Invoke-Checked 'python' $stageArguments
 if ($PixelTest) {
     # A test-enabled runtime must never masquerade as a redistributable prototype.

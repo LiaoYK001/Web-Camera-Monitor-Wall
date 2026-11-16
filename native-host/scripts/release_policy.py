@@ -3,6 +3,11 @@ import re
 
 PREVIEW_VERSION = "4.5.0"
 PREVIEW_PROFILE = "native-monitor-preview"
+COMPLETE_PROFILE = "native-complete-candidate"
+COMPLETE_FIELDS = {"releaseProfile": COMPLETE_PROFILE, "publicationForbidden": False,
+                   "stableUpdaterEnabled": False, "legacyUpgradeQualified": False,
+                   "fullFeatureMigrationQualified": False, "dataProfile": "Native",
+                   "candidate": True}
 PREVIEW_FIELDS = {"releaseProfile": PREVIEW_PROFILE, "publicationForbidden": False,
                   "stableUpdaterEnabled": False, "legacyUpgradeQualified": False,
                   "fullFeatureMigrationQualified": False, "dataProfile": "NativePreview"}
@@ -11,6 +16,13 @@ PREVIEW_FIELDS = {"releaseProfile": PREVIEW_PROFILE, "publicationForbidden": Fal
 def delivery(manifest):
     if not isinstance(manifest, dict):
         raise ValueError("invalid native delivery identity")
+    if manifest.get("releaseProfile") == COMPLETE_PROFILE:
+        if not re.fullmatch(r"5\.0\.0-rc\.[0-9]+", manifest.get("version", "")):
+            raise ValueError("complete candidate identity requires 5.0.0-rc.N")
+        if any(type(manifest.get(key)) is not type(value) or manifest.get(key) != value
+               for key, value in COMPLETE_FIELDS.items()):
+            raise ValueError("invalid complete candidate identity")
+        return COMPLETE_PROFILE
     if manifest.get("releaseProfile") is not None:
         if manifest.get("version") != PREVIEW_VERSION or any(
                 type(manifest.get(key)) is not type(value) or manifest.get(key) != value
@@ -32,5 +44,21 @@ def configure_preview(manifest):
     delivery(manifest)
 
 
+def configure_complete(manifest):
+    if not re.fullmatch(r"5\.0\.0-rc\.[0-9]+", manifest.get("version", "")):
+        raise ValueError("complete candidate version must be 5.0.0-rc.N")
+    if manifest.get("productIntegration") is not True:
+        raise ValueError("complete candidate requires the integrated product")
+    manifest.update(COMPLETE_FIELDS)
+    manifest.update(qualification="complete candidate; target-machine media, migration and OBS parity acceptance still required",
+                    profile="%LOCALAPPDATA%/WebOBS/Native; retained on uninstall")
+    delivery(manifest)
+
+
 def copy_delivery(manifest):
-    return dict(PREVIEW_FIELDS) if delivery(manifest) == PREVIEW_PROFILE else {"publicationForbidden": True}
+    profile = delivery(manifest)
+    if profile == PREVIEW_PROFILE:
+        return dict(PREVIEW_FIELDS)
+    if profile == COMPLETE_PROFILE:
+        return dict(COMPLETE_FIELDS)
+    return {"publicationForbidden": True}
