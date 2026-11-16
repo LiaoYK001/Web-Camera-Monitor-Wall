@@ -72,7 +72,7 @@ $previousSodium = $env:WEBOBS_LIBSODIUM_LIBRARY
 try {
     $env:PATH = "$runtime/bin;$runtime/bin/64bit;$env:SystemRoot/System32"
     $env:WEBOBS_LIBSODIUM_LIBRARY = "$runtime/bin/libsodium.dll"
-    Invoke-Checked "$runtime/python/python.exe" @('-B',"$repoRoot/native-host/tests/product_http_runtime.py",'--binary',"$runtime/bin/webobsd.exe")
+    Invoke-Checked "$runtime/python/python.exe" @('-B',"$repoRoot/native-host/tests/product_http_runtime.py",'--binary',"$runtime/bin/webobsd.exe",'--web-root',"$runtime/web")
 } finally {
     $env:PATH = $previousPath
     $env:WEBOBS_LIBSODIUM_LIBRARY = $previousSodium
