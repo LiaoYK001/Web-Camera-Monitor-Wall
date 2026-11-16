@@ -429,7 +429,7 @@ class ProductWindow final : public QWidget {
 
 	bool apply_program_graph(const SceneDocument &document, const std::vector<ProductCamera> &cameras,
 		const QJsonObject &video, const QString &scene_id, qint64 studio_revision,
-		const QString &fingerprint, const QString &transition_kind, int duration_ms, QString &error)
+		const QString &fingerprint, const QString &transition_kind, int duration_ms, std::string &error)
 	{
 		obs_video_info actual{};
 		const bool same_video = obs_get_video_info(&actual) &&
@@ -590,11 +590,11 @@ class ProductWindow final : public QWidget {
 					const auto transition = body.value("transition").toObject();
 					const auto kind = transition.value("kind").toString() == "fade" ? "fade" : "cut";
 					const int duration = std::clamp(int(transition.value("durationMs").toInt(0)), 0, 10000);
-					QString error;
+					std::string error;
 					if (!apply_program_graph(*parsed.document, cameras, authorization.value("video").toObject(),
 						scene_id, authorized_revision, fingerprint, QString::fromLatin1(kind), duration, error))
 						fail_program(revision, scene_id, fingerprint,
-							error.isEmpty() ? "program-apply-failed" : error);
+							error.empty() ? QStringLiteral("program-apply-failed") : QString::fromStdString(error));
 				}, 12000);
 			}, 12000);
 		});
