@@ -1,0 +1,391 @@
+{
+  "schema": 1,
+  "kind": "webobs-wall-complete-candidate-verification",
+  "status": "complete-candidate-pending-target-machine-acceptance",
+  "version": "5.0.0-rc.1",
+  "candidate": true,
+  "stable": false,
+  "latest": false,
+  "sourceRevision": "8828532c60648f52fae9bee222fa41b80beee7ab",
+  "run": {
+    "id": 43956468003,
+    "url": "https://github.com/LiaoYK001/Web-Camera-Monitor-Wall/actions/runs/43956468003",
+    "conclusion": "success"
+  },
+  "installer": {
+    "name": "WebOBS-Wall-5.0.0-rc.1-windows-x64-SETUP.exe",
+    "bytes": 212117618,
+    "sha256": "3d16014dab7700e6bc4f73c5c0bfba5700382c78fb3f24041589b58a4e67016c",
+    "sha512Base64": "GQaVEz2p2j6dvD4JT/sD/YtkjKIZ0VtTsA6n3hI2PorrdZS2+/xRDKzwh/JmRqMFCtw9yApJzJwoYL70LYfItA=="
+  },
+  "gates": {
+    "portableProductPassed": true,
+    "installedProductPassed": true,
+    "portableChecks": 52,
+    "installedChecks": 52,
+    "captureGroups": 35,
+    "restoreIsolationPassed": true,
+    "restoreChecks": 9,
+    "nsisPassed": true,
+    "freshInstalledEntryQualified": true,
+    "sameMachineUpgradeQualified": true,
+    "upgradeVersion": "5.0.0-rc.2",
+    "retainedProfileUnchanged": true,
+    "unknownFilesRetained": true
+  },
+  "footprint": {
+    "schema": 1,
+    "scope": "isolated-nsis-install-before-first-start",
+    "status": "measured",
+    "logicalBytes": 794551075,
+    "fileCount": 6972,
+    "directoryCountIncludingRoot": 956,
+    "mainStreamAllocationBytes": 806587720,
+    "allocationUnitBytes": 4096,
+    "sizeGroups": [
+      {
+        "name": "bin",
+        "logicalBytes": 431197520,
+        "allocationBytes": 431263744,
+        "fileCount": 43,
+        "directoryCount": 1
+      },
+      {
+        "name": "python/Lib",
+        "logicalBytes": 149112582,
+        "allocationBytes": 157701336,
+        "fileCount": 4827,
+        "directoryCount": 663
+      },
+      {
+        "name": "bin/64bit",
+        "logicalBytes": 82991616,
+        "allocationBytes": 83075072,
+        "fileCount": 42,
+        "directoryCount": 5
+      },
+      {
+        "name": "web/models",
+        "logicalBytes": 29462611,
+        "allocationBytes": 29467160,
+        "fileCount": 3,
+        "directoryCount": 1
+      },
+      {
+        "name": "web/assets",
+        "logicalBytes": 27167699,
+        "allocationBytes": 27226624,
+        "fileCount": 26,
+        "directoryCount": 1
+      },
+      {
+        "name": "go2rtc-www/vendor",
+        "logicalBytes": 27071920,
+        "allocationBytes": 27377560,
+        "fileCount": 172,
+        "directoryCount": 24
+      },
+      {
+        "name": "python",
+        "logicalBytes": 23785706,
+        "allocationBytes": 23875648,
+        "fileCount": 41,
+        "directoryCount": 1
+      },
+      {
+        "name": "data/obs-studio",
+        "logicalBytes": 6366768,
+        "allocationBytes": 6769440,
+        "fileCount": 264,
+        "directoryCount": 17
+      },
+      {
+        "name": "data/obs-plugins",
+        "logicalBytes": 5899417,
+        "allocationBytes": 7695144,
+        "fileCount": 1191,
+        "directoryCount": 43
+      },
+      {
+        "name": "obs-plugins/64bit",
+        "logicalBytes": 3995136,
+        "allocationBytes": 4018176,
+        "fileCount": 18,
+        "directoryCount": 1
+      },
+      {
+        "name": "licenses/product-control",
+        "logicalBytes": 3946034,
+        "allocationBytes": 4292152,
+        "fileCount": 207,
+        "directoryCount": 76
+      },
+      {
+        "name": ".",
+        "logicalBytes": 1540379,
+        "allocationBytes": 1560768,
+        "fileCount": 11,
+        "directoryCount": 1
+      },
+      {
+        "name": "licenses/complete",
+        "logicalBytes": 500190,
+        "allocationBytes": 528584,
+        "fileCount": 15,
+        "directoryCount": 22
+      },
+      {
+        "name": "licenses/online-source",
+        "logicalBytes": 344175,
+        "allocationBytes": 423064,
+        "fileCount": 39,
+        "directoryCount": 80
+      },
+      {
+        "name": "services/camera",
+        "logicalBytes": 219627,
+        "allocationBytes": 221184,
+        "fileCount": 1,
+        "directoryCount": 1
+      },
+      {
+        "name": "services/cluster",
+        "logicalBytes": 206219,
+        "allocationBytes": 208896,
+        "fileCount": 2,
+        "directoryCount": 1
+      },
+      {
+        "name": "go2rtc-www",
+        "logicalBytes": 161463,
+        "allocationBytes": 192880,
+        "fileCount": 17,
+        "directoryCount": 1
+      },
+      {
+        "name": "services/nvr",
+        "logicalBytes": 123459,
+        "allocationBytes": 126976,
+        "fileCount": 2,
+        "directoryCount": 1
+      },
+      {
+        "name": "data/libobs",
+        "logicalBytes": 106377,
+        "allocationBytes": 163840,
+        "fileCount": 21,
+        "directoryCount": 1
+      },
+      {
+        "name": "services/v2",
+        "logicalBytes": 98558,
+        "allocationBytes": 102400,
+        "fileCount": 1,
+        "directoryCount": 1
+      },
+      {
+        "name": "services/product",
+        "logicalBytes": 56439,
+        "allocationBytes": 61440,
+        "fileCount": 4,
+        "directoryCount": 1
+      },
+      {
+        "name": "services/events",
+        "logicalBytes": 37415,
+        "allocationBytes": 40960,
+        "fileCount": 1,
+        "directoryCount": 1
+      },
+      {
+        "name": "licenses/webobs-native",
+        "logicalBytes": 30991,
+        "allocationBytes": 33568,
+        "fileCount": 5,
+        "directoryCount": 1
+      },
+      {
+        "name": "services/backup",
+        "logicalBytes": 29030,
+        "allocationBytes": 32768,
+        "fileCount": 2,
+        "directoryCount": 1
+      },
+      {
+        "name": "web",
+        "logicalBytes": 23506,
+        "allocationBytes": 29664,
+        "fileCount": 5,
+        "directoryCount": 1
+      },
+      {
+        "name": "services/go2rtc",
+        "logicalBytes": 22559,
+        "allocationBytes": 24576,
+        "fileCount": 2,
+        "directoryCount": 1
+      },
+      {
+        "name": "services/archive",
+        "logicalBytes": 17617,
+        "allocationBytes": 20480,
+        "fileCount": 1,
+        "directoryCount": 1
+      },
+      {
+        "name": "services/desktop-tools",
+        "logicalBytes": 16213,
+        "allocationBytes": 28672,
+        "fileCount": 4,
+        "directoryCount": 1
+      },
+      {
+        "name": "services/analytics",
+        "logicalBytes": 14483,
+        "allocationBytes": 16384,
+        "fileCount": 2,
+        "directoryCount": 1
+      },
+      {
+        "name": "services",
+        "logicalBytes": 3243,
+        "allocationBytes": 4096,
+        "fileCount": 1,
+        "directoryCount": 1
+      },
+      {
+        "name": "etc",
+        "logicalBytes": 2123,
+        "allocationBytes": 4464,
+        "fileCount": 2,
+        "directoryCount": 1
+      },
+      {
+        "name": "data",
+        "logicalBytes": 0,
+        "allocationBytes": 0,
+        "fileCount": 0,
+        "directoryCount": 1
+      },
+      {
+        "name": "licenses",
+        "logicalBytes": 0,
+        "allocationBytes": 0,
+        "fileCount": 0,
+        "directoryCount": 1
+      },
+      {
+        "name": "obs-plugins",
+        "logicalBytes": 0,
+        "allocationBytes": 0,
+        "fileCount": 0,
+        "directoryCount": 1
+      }
+    ],
+    "sizeGroupsComplete": true,
+    "startedAt": "2026-11-16T21:43:45.1673903Z",
+    "completedAt": "2026-11-16T21:43:45.5466659Z",
+    "elapsedMilliseconds": 379,
+    "method": {
+      "logical": "GetFileInformationByHandleEx(FILE_STANDARD_INFO).EndOfFile; sum regular unnamed data streams",
+      "allocation": "GetFileInformationByHandleEx(FILE_STANDARD_INFO).AllocationSize; sum regular unnamed data streams",
+      "identity": "GetFileInformationByHandleEx(FILE_ID_INFO); hard links and duplicate identities rejected",
+      "reparsePoints": "rejected for root, ancestors and every entry; no link traversal",
+      "sizeGroups": "relative containing-directory paths truncated to two components; files directly in the root use \".\"; at most 199 groups plus \"__other__\"; no file names or absolute paths",
+      "unknownOrFailure": "fail closed; no partial result and no replacement zero"
+    },
+    "limits": {
+      "maximumFiles": 200000,
+      "maximumDirectories": 20000,
+      "maximumDepth": 128,
+      "maximumSeconds": 300,
+      "maximumSizeGroups": 200,
+      "atomicSnapshot": false,
+      "consistency": "before first product start; read handles and entry-set checks, not a filesystem snapshot",
+      "totalVolumeUsage": false,
+      "excludes": [
+        "filesystem metadata and directory allocation",
+        "alternate data streams",
+        "external user profiles, recordings, caches and other directories",
+        "installer archive and space on other volumes"
+      ]
+    }
+  },
+  "runtime": {
+    "files": 6970,
+    "bytesBeforeReceipt": 793065546,
+    "defaultServices": [
+      "accounts-and-registry",
+      "control",
+      "frontend",
+      "events",
+      "nvr",
+      "clients",
+      "go2rtc",
+      "backup"
+    ],
+    "releaseProfile": "native-complete-candidate"
+  },
+  "checks": [
+    "single-entry-real-core-authority-and-qt",
+    "management-entry-serves-actual-staged-ui-through-supervised-core",
+    "saved-studio-preference-starts-locked-through-product-only",
+    "active-control-origin-refuses-forced-rebind",
+    "first-account-through-product-ui",
+    "complete-business-services-running-in-one-product-entry",
+    "complete-online-source-extractors-and-node-runtime-self-test",
+    "complete-business-management-entries-discoverable",
+    "five-hevc-delivered-video-progress",
+    "authenticated-existing-obs-statistics-window",
+    "nvr-records-real-registry-camera-and-serves-authenticated-media",
+    "events-persist-dedupe-and-route-to-durable-outbox",
+    "existing-camera-api-to-native-selection",
+    "five-hevc-final-pixels",
+    "save-only-bound-camera-profile-ids",
+    "five-items-one-owned-hevc-source-final-pixels",
+    "quick-wall-one-four-seven-final-pixels",
+    "quick-wall-draft-does-not-change-running-media",
+    "quick-wall-resize-retains-shared-inputs-and-idle-program",
+    "quick-wall-seven-save-logout-authenticated-restore",
+    "actual-obs-input-stall-and-rtsp-recovery-final-pixels",
+    "unrelated-studio-save-preserves-authorized-fixed-scene-and-main",
+    "ordinary-studio-document-to-native-final-pixels",
+    "saved-scene-id-restores-only-after-login",
+    "studio-revision-change-clears-stale-native-pixels",
+    "same-canvas-layout-retains-owned-sources-without-projectors",
+    "local-monitor-switches-preserve-independent-program-output",
+    "two-fixed-scene-projectors-share-owned-decoders",
+    "main-switch-preserves-two-different-projector-scenes",
+    "native-projector-fullscreen-windowed-final-pixels",
+    "closing-one-projector-preserves-other-and-main",
+    "studio-take-applies-real-obs-program-final-pixels",
+    "program-projector-shows-real-program-not-preview",
+    "take-document-revision-and-program-receipt-match",
+    "empty-program-scene-clears-previous-output",
+    "logout-clears-bound-session",
+    "scoped-viewer-catalog-excludes-forbidden-camera",
+    "scoped-viewer-five-hevc-final-pixels",
+    "separate-account-workspace-does-not-overwrite-owner",
+    "ordinary-camera-scope-change-clears-actual-viewer-preview",
+    "revoked-camera-only-in-fixed-projector-closes-protected-views",
+    "relogin-restores-saved-five-hevc-final-pixels",
+    "disabled-stream_profiles-clears-final-preview",
+    "disabled-cameras-clears-final-preview",
+    "normal-ui-close-cleans-owned-processes",
+    "persistent-control-origin-and-conflict-refusal",
+    "restart-authenticates-before-restoring-five-hevc-final-pixels",
+    "restart-keeps-account-requires-login",
+    "real-catalog-change-clears-stale-preview-and-reconnects",
+    "real-authority-revocation-locks-ui",
+    "ordinary-password-change-revokes-active-native-session",
+    "launcher-crash-job-cleans-all-owned-processes"
+  ],
+  "knownLimits": [
+    "target-machine real five-camera media, physical multi-monitor/DPI, audio devices, per-stream hardware decode and two-hour stability remain pending",
+    "fullFeatureMigrationQualified=false; personal legacy/stable/v4.5 migration awaits a real isolated target run",
+    "nonempty multi-track audio, OBS composite recording/streaming outputs, LAN/Caddy remote access and part of analytics overlays remain open",
+    "unsigned installer; candidate feed pinned to this prerelease tag, no stable feed or in-app automatic update",
+    "v4.5 preview and paused Android/container delivery unchanged"
+  ],
+  "generatedAt": "2026-11-16T22:04:40.006594Z"
+}
