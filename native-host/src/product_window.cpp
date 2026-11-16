@@ -89,6 +89,7 @@ class ProductWindow final : public QWidget {
 	QString program_scene_id_;
 	QString program_fingerprint_;
 	qint64 program_studio_revision_ = -1;
+	qint64 program_reported_revision_ = -1;
 	qint64 program_target_revision_ = -1;
 	QString program_target_scene_id_;
 	QString program_target_fingerprint_;
@@ -388,7 +389,11 @@ class ProductWindow final : public QWidget {
 		QJsonObject body{{"revision", revision}, {"sceneId", scene_id},
 			{"fingerprint", fingerprint}, {"status", state}};
 		if (!error.isEmpty()) body.insert("error", error);
-		request("/api/v1/native/studio/program", "POST", body, [](int, const QJsonObject &) {});
+		program_reported_revision_ = -1;
+		request("/api/v1/native/studio/program", "POST", body,
+			[this, revision](int code, const QJsonObject &) {
+				if (code == 200) program_reported_revision_ = revision;
+			});
 	}
 
 	void clear_program_media()
@@ -399,6 +404,7 @@ class ProductWindow final : public QWidget {
 		program_scene_id_.clear();
 		program_fingerprint_.clear();
 		program_studio_revision_ = -1;
+		program_reported_revision_ = -1;
 		program_target_revision_ = -1;
 		program_target_scene_id_.clear();
 		program_target_fingerprint_.clear();
@@ -535,7 +541,7 @@ class ProductWindow final : public QWidget {
 				return;
 			if (!program_scene_id_.isEmpty() && scene_id == program_scene_id_ &&
 				fingerprint == program_fingerprint_ && program_apply_state_ == "applied") {
-				if (program_studio_revision_ != revision) {
+				if (program_studio_revision_ != revision || program_reported_revision_ != revision) {
 					program_studio_revision_ = revision;
 					report_program("applied", revision, scene_id, fingerprint);
 					observe_current_media();
