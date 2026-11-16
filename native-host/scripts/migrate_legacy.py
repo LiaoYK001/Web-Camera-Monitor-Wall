@@ -117,6 +117,8 @@ def dpapi_key(source: Path) -> bytes | None:
 
 def migrate(source: Path, destination: Path, *, confirm_stopped: bool,
             include_backup_key: bool) -> dict:
+    if os.name != "nt":
+        os.umask(0o077)
     source, destination = source.resolve(), destination.resolve()
     if not confirm_stopped:
         raise MigrationError("legacy product must be stopped and confirmed")

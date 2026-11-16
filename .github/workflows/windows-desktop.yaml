@@ -22,6 +22,10 @@ on:
         description: 'Stage the complete business service set and shipped dependencies (not a release authorization)'
         default: false
         type: boolean
+      update_feed:
+        description: 'Optional pinned HTTPS latest.yml URL for the complete candidate'
+        default: ''
+        type: string
       native_host:
         description: 'Build the independent non-default OBS/Qt prototype; no legacy installer or publication'
         default: false
@@ -321,6 +325,7 @@ jobs:
       version: ${{ inputs.version }}
       product_mode: ${{ inputs.product_mode || false }}
       complete: ${{ inputs.complete || false }}
+      update_feed: ${{ inputs.update_feed || '' }}
       native_preview: ${{ inputs.native_preview || false }}
       measure_obs_baseline: ${{ inputs.obs_size_baseline }}
       upgrade_previous: ${{ inputs.upgrade_previous }}

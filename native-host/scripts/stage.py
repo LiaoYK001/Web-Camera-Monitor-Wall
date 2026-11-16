@@ -23,7 +23,7 @@ REQUIRED = (
 )
 
 
-def finalize(repo: Path, source: Path, runtime: Path, version: str, product: bool = False, native_preview: bool = False) -> dict:
+def finalize(repo: Path, source: Path, runtime: Path, version: str, product: bool = False, native_preview: bool = False, complete: bool = False) -> dict:
     if native_preview and (not product or version != "4.5.0"):
         raise ValueError("preview delivery requires the authorized v4.5 product profile")
     if not native_preview and (not version or "-dev." not in version):
@@ -77,6 +77,9 @@ def finalize(repo: Path, source: Path, runtime: Path, version: str, product: boo
     if product:
         manifest.update(productIntegration=True, publicationForbidden=True,
                         qualification="R1 integration in progress; internal automation build")
+    if complete:
+        from release_policy import configure_complete
+        configure_complete(manifest)
     if native_preview:
         configure_preview(manifest)
         shutil.copy2(repo / "docs/windows-v4.5-quickstart.md", runtime / "START-HERE.md")
@@ -93,6 +96,8 @@ if __name__ == "__main__":
     parser.add_argument("--version", required=True)
     parser.add_argument("--product", action="store_true")
     parser.add_argument("--native-preview", action="store_true")
+    parser.add_argument("--complete", action="store_true")
     args = parser.parse_args()
-    manifest = finalize(args.repo.resolve(), args.source.resolve(), args.runtime.resolve(), args.version, args.product, args.native_preview)
+    manifest = finalize(args.repo.resolve(), args.source.resolve(), args.runtime.resolve(), args.version,
+                        args.product, args.native_preview, args.complete)
     print(json.dumps(manifest, indent=2))
