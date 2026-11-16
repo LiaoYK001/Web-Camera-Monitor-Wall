@@ -27,6 +27,7 @@ def exercise():
         root = private / "profile"
         for marker in ("services/events/event_service.py", "services/nvr/nvr_service.py",
                        "services/v2/client_control_service.py", "bin/go2rtc.exe",
+                       "bin/node.exe", "bin/webobs-online-source.exe",
                        "services/desktop-tools/private_directory.py"):
             path = runtime / marker
             path.parent.mkdir(parents=True, exist_ok=True)
@@ -56,6 +57,8 @@ def exercise():
             assert environment["WEBOBS_COMPOSITE_ENABLED"] == "false"
             assert Path(environment["WEBOBS_FFMPEG_PATH"]).name == "ffmpeg.exe"
             assert Path(environment["WEBOBS_FFMPEG_PATH"]).parent.name == "bin"
+            assert Path(environment["WEBOBS_FFPROBE_PATH"]).name == "ffprobe.exe"
+            assert Path(environment["WEBOBS_NODE_PATH"]).name == "node.exe"
             assert environment["WEBOBS_NVR_STORAGE"] == str(root / "recordings")
             assert environment["WEBOBS_BACKUP_KEY_FILE"] == str(key)
             assert environment["WEBOBS_GO2RTC_CONFIG"] == str(root / "config/go2rtc/go2rtc.yaml")

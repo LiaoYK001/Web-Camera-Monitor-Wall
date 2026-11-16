@@ -42,6 +42,7 @@ const SettingsWorkspace = lazy(() => import('./SettingsWorkspace'));
 const ClusterAdmin = lazy(() => import('./ClusterAdmin'));
 const AccountWorkspace = lazy(() => import('./AccountWorkspace'));
 const AnalyticsWorkspace = lazy(() => import('./AnalyticsWorkspace'));
+const NvrSettings = lazy(() => import('./NvrSettings'));
 
 type ConnectionState = 'connecting' | 'online' | 'offline';
 type WorkspaceMode = 'program' | 'layout';
@@ -1031,7 +1032,7 @@ export default function App() {
   }
 
   if (productArea === 'storage') {
-    return <WorkspaceShell area={productArea} onNavigate={navigate} connection={connection}><section className="page-panel"><header className="page-heading"><div><span className="eyebrow">Storage</span><h1>存储</h1><p>录像状态、时间线与部署卷信息。</p></div><button type="button" onClick={() => navigate('archive')}>打开录像回放</button></header><SystemStatus onBack={() => navigate('monitor')} /></section></WorkspaceShell>;
+    return <WorkspaceShell area={productArea} onNavigate={navigate} connection={connection}><NvrSettings onOpenArchive={() => navigate('archive')} /><SystemStatus onBack={() => navigate('monitor')} /></WorkspaceShell>;
   }
   if (productArea === 'admin') {
     return <WorkspaceShell area={productArea} onNavigate={navigate} connection={connection}><ClusterAdmin /></WorkspaceShell>;

@@ -75,6 +75,12 @@ def stage_complete(repo, runtime, cache, build_root):
             else:
                 shutil.copy2(source, destination)
     binaries = runtime / "bin"
+    online_installer = importlib.util.spec_from_file_location(
+        "product_online_source_installer", repo / "scripts/install-online-source-runtime.py")
+    online_module = importlib.util.module_from_spec(online_installer)
+    online_installer.loader.exec_module(online_module)
+    online_module.install(repo / "go2rtc/online-source-dependencies.lock.json", "windows-x64",
+                          cache / "online-source", site, binaries, runtime / "licenses/online-source")
     for name in ("go2rtc", "mediamtx", "caddy"):
         found = list((unpack / name).rglob(name + ".exe"))
         if len(found) != 1:

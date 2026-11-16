@@ -116,6 +116,14 @@ public static class ProductTestWindow {
             $null = Find-Control 'webobsLogin'
             if ((Find-Control 'webobsHostStats').Current.IsEnabled) { throw 'Host stats enabled before login.' }
         }
+        'management-entries' {
+            foreach ($identity in @('webobsManageAudio', 'webobsManageAnalytics', 'webobsManageEvents',
+                    'webobsManageArchive', 'webobsManageStorage', 'webobsManageGo2rtc', 'webobsManageAdmin',
+                    'webobsManageAccount', 'webobsManageSettings')) {
+                $control = Find-Control $identity
+                if (-not $control.Current.IsEnabled) { throw "Management entry $identity is disabled." }
+            }
+        }
         'login' {
             Set-Control 'webobsUsername' $operation.username
             Set-Control 'webobsPassword' $operation.password

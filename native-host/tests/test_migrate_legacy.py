@@ -88,5 +88,46 @@ def exercise():
         print("PASS explicit legacy config migration keeps old data and rejects overwrite/invalid input")
 
 
+def exercise_preview_workspaces():
+    migrate = load()
+    with tempfile.TemporaryDirectory(prefix="webobs-preview-migration-") as temporary:
+        base = Path(temporary)
+        root = base / "NativePreview"
+        source = root / "config"
+        source.mkdir(parents=True)
+        with closing(sqlite3.connect(source / "cluster.sqlite3")) as database:
+            database.execute("CREATE TABLE users (id TEXT PRIMARY KEY, username TEXT)")
+            database.execute("INSERT INTO users VALUES ('a' * 32, 'preview-owner')")
+            database.commit()
+        profile = root / "native-profile"
+        profile.mkdir()
+        owner = "a" * 32
+        workspace = profile / f"workspace-{owner}.json"
+        workspace.write_text(json.dumps({"schema": 2, "sceneId": "fixture-five"}), encoding="utf-8")
+        (profile / "workspace-not-an-account.json").write_text("{}", encoding="utf-8")
+        (profile / ("workspace-" + "b" * 32 + ".json")).write_text("{", encoding="utf-8")
+        destination = base / "Native" / "config"
+        try:
+            migrate.migrate(source, destination, confirm_stopped=True,
+                            include_backup_key=False, include_preview_workspaces=True)
+        except migrate.MigrationError:
+            # The malformed workspace must abort the whole migration atomically.
+            assert not destination.exists() or not any(destination.iterdir())
+        else:
+            raise AssertionError("migration accepted a malformed v4.5 workspace")
+        (profile / ("workspace-" + "b" * 32 + ".json")).unlink()
+        receipt = migrate.migrate(source, destination, confirm_stopped=True,
+                                  include_backup_key=False, include_preview_workspaces=True)
+        assert receipt["status"] == "migrated" and receipt["previewWorkspacesCopied"] == 1
+        migrated = destination / "native-profile" / workspace.name
+        assert migrated.read_bytes() == workspace.read_bytes()
+        assert not (destination / "native-profile/workspace-not-an-account.json").exists()
+        manifest = json.loads((destination / "native-migration.json").read_text())
+        assert manifest["sourceKind"] == "explicit-native-preview"
+        assert manifest["previewWorkspacesCopied"] == 1
+        print("PASS v4.5 native preview migration keeps account workspace and rejects invalid entries")
+
+
 if __name__ == "__main__":
     exercise()
+    exercise_preview_workspaces()

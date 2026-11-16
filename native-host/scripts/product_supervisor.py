@@ -112,7 +112,8 @@ class ProductSupervisor:
                 or value.get("productIntegration") is not True):
             raise ValueError("this supervisor requires the internal integrated product build")
         complete_markers = ("services/events/event_service.py", "services/nvr/nvr_service.py",
-                            "services/v2/client_control_service.py", "bin/go2rtc.exe")
+                            "services/v2/client_control_service.py", "bin/go2rtc.exe",
+                            "bin/node.exe", "bin/webobs-online-source.exe")
         self.complete = all((self.runtime / marker).is_file() for marker in complete_markers)
         for directory in (self.root, self.root / "run"):
             for path in (directory, *directory.parents):
@@ -251,6 +252,8 @@ class ProductSupervisor:
                 "WEBOBS_GO2RTC_WEBRTC_BIND": "127.0.0.1",
                 "WEBOBS_ONLINE_SOURCES_ENABLED": "true",
                 "WEBOBS_FFMPEG_PATH": str(self.runtime / "bin/ffmpeg.exe"),
+                "WEBOBS_FFPROBE_PATH": str(self.runtime / "bin/ffprobe.exe"),
+                "WEBOBS_NODE_PATH": str(self.runtime / "bin/node.exe"),
                 "WEBOBS_TRANSCODER_PATH": str(self.runtime / "bin/webobs-transcoder.exe"),
                 "WEBOBS_DETECTOR_PYTHON_MODULE": str(self.runtime / "services/analytics/detector_worker.py"),
                 "WEBOBS_CAMERA_BACKGROUND_PROBES": "true",
@@ -505,7 +508,8 @@ def main():
     manifest = json.loads((runtime / "webobs-native-prototype.json").read_text(encoding="utf-8"))
     complete = all((runtime / marker).is_file() for marker in (
         "services/events/event_service.py", "services/nvr/nvr_service.py",
-        "services/v2/client_control_service.py", "bin/go2rtc.exe"))
+        "services/v2/client_control_service.py", "bin/go2rtc.exe",
+        "bin/node.exe", "bin/webobs-online-source.exe"))
     profile = ("Native" if complete else
                "NativePreview" if delivery_profile(manifest) == "native-monitor-preview" else "NativeIntegration")
     root = Path(os.environ["LOCALAPPDATA"]) / "WebOBS" / profile

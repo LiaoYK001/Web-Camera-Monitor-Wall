@@ -24,6 +24,7 @@ import tempfile
 DATABASES = ("cluster.sqlite3", "cameras.db", "events.db", "v2-clients.db")
 JSON_FILES = ("scene.json", "studio.json", "nvr.json", "archive.json", "desktop.json")
 DIRECTORIES = ("keys", "camera-secrets", "notification-secrets", "secrets", "go2rtc")
+PREVIEW_WORKSPACE = re.compile(r"^workspace-([a-f0-9]{32})\.json$")
 RECEIPT = "native-migration.json"
 
 
@@ -85,6 +86,28 @@ def copy_tree(source: Path, destination: Path):
         shutil.copy2(item, target)
 
 
+def copy_preview_workspaces(preview_profile: Path, staging: Path) -> list[str]:
+    """Copy only account-bound native monitor workspaces from a v4.5 profile."""
+    if preview_profile.is_symlink() or not preview_profile.is_dir():
+        raise MigrationError("v4.5 native profile is unavailable")
+    copied = []
+    for item in sorted(preview_profile.iterdir()):
+        if PREVIEW_WORKSPACE.fullmatch(item.name) is None:
+            continue
+        safe_file(item, 256 * 1024)
+        try:
+            value = json.loads(item.read_text(encoding="utf-8"))
+        except (OSError, UnicodeError, ValueError):
+            raise MigrationError("v4.5 workspace is invalid") from None
+        if not isinstance(value, dict) or value.get("schema") not in (1, 2):
+            raise MigrationError("v4.5 workspace has an unsupported schema")
+        target = staging / "native-profile" / item.name
+        target.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(item, target)
+        copied.append("native-profile/" + item.name)
+    return copied
+
+
 def dpapi_key(source: Path) -> bytes | None:
     """Best-effort decrypt of Electron safeStorage's current-user DPAPI blob."""
     if os.name != "nt" or source.is_symlink() or not source.is_file():
@@ -116,7 +139,7 @@ def dpapi_key(source: Path) -> bytes | None:
 
 
 def migrate(source: Path, destination: Path, *, confirm_stopped: bool,
-            include_backup_key: bool) -> dict:
+            include_backup_key: bool, include_preview_workspaces: bool = False) -> dict:
     if os.name != "nt":
         os.umask(0o077)
     source, destination = source.resolve(), destination.resolve()
@@ -147,6 +170,10 @@ def migrate(source: Path, destination: Path, *, confirm_stopped: bool,
             if candidate.is_dir() and not candidate.is_symlink():
                 copy_tree(candidate, staging / name)
                 files.append(name + "/")
+        preview_workspaces = []
+        if include_preview_workspaces:
+            preview_workspaces = copy_preview_workspaces(source.parent / "native-profile", staging)
+            files.extend(preview_workspaces)
         if not files:
             raise MigrationError("legacy profile contains no supported product data")
         recordings = None
@@ -170,8 +197,10 @@ def migrate(source: Path, destination: Path, *, confirm_stopped: bool,
                 key_migrated = True
         manifest = {
             "schema": 1, "kind": "native-legacy-config-migration",
-            "sourceKind": "explicit-legacy-config", "destinationKind": "new-native-profile",
+            "sourceKind": ("explicit-native-preview" if include_preview_workspaces else
+                           "explicit-legacy-config"), "destinationKind": "new-native-profile",
             "files": files, "backupKeyMigrated": key_migrated,
+            "previewWorkspacesCopied": len(preview_workspaces),
             "recordingsPath": str(recordings) if recordings is not None else None,
         }
         (staging / "native-migration.json").write_text(
@@ -182,6 +211,7 @@ def migrate(source: Path, destination: Path, *, confirm_stopped: bool,
         receipt = {
             "schema": 1, "status": "migrated", "kind": "native-legacy-config-migration",
             "files": len(files), "backupKeyMigrated": key_migrated,
+            "previewWorkspacesCopied": len(preview_workspaces),
             "recordingsConfigured": recordings is not None,
             "sourcePreserved": True, "applied": True,
         }
@@ -199,11 +229,14 @@ def main(argv=None):
     parser.add_argument("--destination", required=True)
     parser.add_argument("--confirm-stopped", action="store_true")
     parser.add_argument("--include-backup-key", action="store_true")
+    parser.add_argument("--include-preview-workspaces", action="store_true",
+                        help="copy account-bound monitor workspaces from a v4.5 NativePreview profile")
     arguments = parser.parse_args(argv)
     try:
         result = migrate(Path(arguments.source), Path(arguments.destination),
                          confirm_stopped=arguments.confirm_stopped,
-                         include_backup_key=arguments.include_backup_key)
+                         include_backup_key=arguments.include_backup_key,
+                         include_preview_workspaces=arguments.include_preview_workspaces)
         print(json.dumps(result, sort_keys=True))
         return 0
     except (MigrationError, OSError, sqlite3.Error):

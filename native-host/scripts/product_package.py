@@ -23,8 +23,11 @@ PREVIEW_REQUIRED = {"START-HERE.md", "licenses/native-preview/SOURCE-MANIFEST.js
                     "licenses/native-preview/qtbase/LICENSES/LGPL-3.0-only.txt",
                     "licenses/native-preview/qtbase/LICENSES/GPL-3.0-only.txt"}
 COMPLETE_REQUIRED = {"bin/go2rtc.exe", "bin/ffmpeg.exe", "bin/ffprobe.exe",
+                     "bin/node.exe", "bin/webobs-online-source.exe",
                      "services/events/event_service.py", "services/nvr/nvr_service.py",
                      "services/v2/client_control_service.py", "services/backup/encrypted_backup.py",
+                     "services/go2rtc/online_source.py",
+                     "licenses/online-source/online-source-dependencies.lock.json",
                      "services/product/migrate_legacy.py", "services/product/native_updater.py",
                      "MIGRATE-LEGACY.cmd", "CHECK-UPDATES.cmd", "RESTORE-BACKUP.cmd",
                      "etc/go2rtc.yaml", "etc/mediamtx.yml"}

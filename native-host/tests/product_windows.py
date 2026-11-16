@@ -78,7 +78,8 @@ def exercise(runtime, report, *, with_media=False, retained_profile=None):
     preview_delivery = delivery(manifest) == "native-monitor-preview"
     complete_services = all((runtime / marker).is_file() for marker in (
         "services/events/event_service.py", "services/nvr/nvr_service.py",
-        "services/v2/client_control_service.py", "bin/go2rtc.exe"))
+        "services/v2/client_control_service.py", "bin/go2rtc.exe",
+        "bin/node.exe", "bin/webobs-online-source.exe"))
     if manifest.get("productIntegration") is not True:
         raise ValueError("internal integrated build required")
     if components.get("fullFeatureMigrationQualified") is not False:
@@ -143,6 +144,20 @@ def exercise(runtime, report, *, with_media=False, retained_profile=None):
                 reply = error
             with reply:
                 return reply.status, reply.headers.get("Set-Cookie", ""), json.loads(reply.read())
+
+        def raw_request(path, cookie="", *, headers=None):
+            origin = status()["origin"]
+            request_headers = {"Origin": origin}
+            if cookie:
+                request_headers["Cookie"] = cookie
+            request_headers.update(headers or {})
+            message = urllib.request.Request(origin + path, headers=request_headers, method="GET")
+            try:
+                reply = opener.open(message, timeout=15)
+            except urllib.error.HTTPError as error:
+                reply = error
+            with reply:
+                return reply.status, reply.headers, reply.read(1024 * 1024)
 
         def status():
             try:
@@ -417,6 +432,22 @@ def exercise(runtime, report, *, with_media=False, retained_profile=None):
                         code, _, _ = request(path, cookie=cookie)
                         assert code == 200, f"complete business service unavailable: {path}"
                     evidence["checks"].append("complete-business-services-running-in-one-product-entry")
+                    phase = "complete-online-source-runtime"
+                    online_environment = dict(os.environ)
+                    online_environment.update({
+                        "WEBOBS_NODE_PATH": str(runtime / "bin/node.exe"),
+                        "WEBOBS_FFMPEG_PATH": str(runtime / "bin/ffmpeg.exe"),
+                        "WEBOBS_FFPROBE_PATH": str(runtime / "bin/ffprobe.exe"),
+                    })
+                    online = subprocess.run([str(runtime / "bin/webobs-online-source.exe"), "--self-test"],
+                        capture_output=True, text=True, encoding="utf-8", timeout=45, env=online_environment,
+                        stdin=subprocess.DEVNULL)
+                    assert online.returncode == 0 and '"yt-dlp"' in online.stdout and '"node"' in online.stdout, \
+                        "bundled website extractors or Node runtime failed their self-test"
+                    evidence["checks"].append("complete-online-source-extractors-and-node-runtime-self-test")
+                    phase = "complete-business-management-entries"
+                    assert ui("management-entries"), "complete product management entries are not discoverable"
+                    evidence["checks"].append("complete-business-management-entries-discoverable")
                 for index, endpoint in enumerate(rtsp.urls, 1):
                     code, _, _ = request("/api/v1/cameras", {"id": f"fixture-{index}", "name": f"Fixture {index}",
                         "address": endpoint, "adapter": "rtsp", "hardwareDecode": "off", "profiles": [{
@@ -445,6 +476,75 @@ def exercise(runtime, report, *, with_media=False, retained_profile=None):
                 wait_for(lambda: state().get("statsOpen") is False,
                     "actual OBS statistics window did not close")
                 evidence["checks"].append("authenticated-existing-obs-statistics-window")
+                phase = "complete-business-nvr"
+                recording_started = int(time.time() * 1000) - 60_000
+                nvr_configuration = {
+                    "schemaVersion": 1, "segmentSeconds": 2, "maxAgeHours": 1,
+                    "maxBytes": 0, "minFreeBytes": 0,
+                    "cameras": [{"id": "fixture-recording", "name": "Fixture recording",
+                        "policy": "continuous", "cameraId": "fixture-1", "mainProfileId": "main",
+                        "stream": "main", "mode": "copy", "transport": "tcp", "segmentSeconds": 2,
+                        "maxAgeHours": 1, "maxBytes": 0, "preEventSeconds": 0, "schedule": []}],
+                }
+                code, _, configured_nvr = request("/api/v1/nvr/config", nvr_configuration,
+                    cookie=cookie, method="PUT")
+                assert code == 200, "complete product could not configure the real NVR"
+                def recorded_segment():
+                    code, _, value = request("/api/v1/nvr/status", cookie=cookie)
+                    if code != 200:
+                        return None
+                    camera = next((item for item in value.get("cameras", [])
+                        if item.get("id") == "fixture-recording"), None)
+                    return camera if camera and camera.get("segments", 0) > 0 else None
+                wait_for(recorded_segment, "real NVR did not finish a recorded segment", timeout=35)
+                now = int(time.time() * 1000)
+                code, _, timeline = request(
+                    f"/api/v1/nvr/timeline?from={recording_started}&to={now + 60_000}&cameraId=fixture-recording",
+                    cookie=cookie)
+                assert code == 200, "recorded NVR timeline is unavailable"
+                timeline_cameras = [item for item in timeline.get("cameras", [])
+                    if item.get("cameraId") == "fixture-recording"]
+                segments = timeline_cameras[0].get("segments", []) if timeline_cameras else []
+                assert segments, "real NVR timeline did not contain the recorded segment"
+                segment_id = segments[0]["id"]
+                code, reply_headers, media = raw_request(f"/api/v1/nvr/media/{segment_id}", cookie,
+                    headers={"Range": "bytes=0-63"})
+                assert code in (200, 206) and len(media) > 16 and b"ftyp" in media[:64], \
+                    "authenticated NVR media was not playable MP4 output"
+                assert reply_headers.get("Content-Type", "").startswith("video/"), \
+                    "NVR media response has the wrong content type"
+                nvr_configuration["cameras"][0]["policy"] = "off"
+                code, _, _ = request("/api/v1/nvr/config", nvr_configuration, cookie=cookie, method="PUT")
+                assert code == 200, "NVR recording could not be stopped after its gate"
+                evidence["checks"].append("nvr-records-real-registry-camera-and-serves-authenticated-media")
+                phase = "complete-business-events"
+                code, _, created_rule = request("/api/v1/event-rules", {
+                    "id": "fixture-rule", "name": "Fixture outbox rule", "enabled": True,
+                    "conditions": {"cameraId": "fixture-1"},
+                    "actions": [{"kind": "webhook", "destinationRef": "fixture"}],
+                    "cooldownMs": 0}, cookie=cookie, method="POST")
+                assert code == 201 and created_rule.get("id") == "fixture-rule", \
+                    "complete product could not persist an event rule"
+                event_body = {"cameraId": "fixture-1", "type": "manual-marker", "source": "manual",
+                    "topic": "fixture.qa", "severity": "info", "occurredAt": int(time.time() * 1000),
+                    "properties": {"durationMs": 0}, "dedupeKey": "fixture-complete-product-event"}
+                code, _, stored_event = request("/api/v1/events", event_body, cookie=cookie, method="POST")
+                assert code == 201 and stored_event.get("id"), "complete product could not ingest an event"
+                code, _, duplicate = request("/api/v1/events", event_body, cookie=cookie, method="POST")
+                assert code == 201 and duplicate.get("deduplicated") is True and \
+                    duplicate.get("id") == stored_event.get("id"), "event deduplication changed the event identity"
+                def routed_outbox():
+                    code, _, value = request("/api/v1/notification-outbox", cookie=cookie)
+                    if code != 200:
+                        return None
+                    entry = next((item for item in value.get("outbox", [])
+                        if item.get("event_id") == stored_event["id"]), None)
+                    return entry if entry else None
+                outbox = wait_for(routed_outbox, "event rule did not create a durable notification outbox entry",
+                    timeout=10)
+                assert outbox.get("kind") == "webhook" and outbox.get("destination_ref") == "fixture", \
+                    "notification outbox lost the configured destination"
+                evidence["checks"].append("events-persist-dedupe-and-route-to-durable-outbox")
                 assert ui("save")
                 paths = wait_for(lambda: list((profile / "native-profile").rglob("workspace-*.json")),
                     "product save button did not persist the bound workspace")

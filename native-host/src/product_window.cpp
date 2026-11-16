@@ -1510,10 +1510,15 @@ public:
 		auto *manage = new QPushButton(tr("设备与来源管理"), this);
 		manage->setObjectName("webobsManageDevices");
 		layout->addWidget(manage);
-		for (const auto &[text, fragment, object] : std::array<std::tuple<const char *, const char *, const char *>, 4>{{
+		for (const auto &[text, fragment, object] : std::array<std::tuple<const char *, const char *, const char *>, 9>{{
+				{"音频与监听", "/audio", "webobsManageAudio"},
+				{"分析策略", "/analytics", "webobsManageAnalytics"},
 				{"事件与通知", "/events", "webobsManageEvents"},
 				{"录像与回放", "/archive", "webobsManageArchive"},
+				{"录像与存储", "/storage", "webobsManageStorage"},
 				{"网站来源", "/go2rtc", "webobsManageGo2rtc"},
+				{"账号与权限", "/admin", "webobsManageAdmin"},
+				{"我的账号", "/account", "webobsManageAccount"},
 				{"系统设置", "/settings", "webobsManageSettings"}}}) {
 			auto *button = new QPushButton(tr(text), this);
 			button->setObjectName(QString::fromLatin1(object));
