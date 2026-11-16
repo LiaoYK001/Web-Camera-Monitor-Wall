@@ -122,13 +122,14 @@ def exercise(runtime, control_frontend, report):
     supervisor = load("restore_test_supervisor", ROOT / "native-host/scripts/product_supervisor.py")
     package = load("restore_test_package_verifier", ROOT / "native-host/scripts/product_package.py")
     payload = package.verify(runtime)
+    preview_delivery = payload.get("releaseProfile") == "native-monitor-preview"
     if control_frontend.is_symlink() or not control_frontend.is_file():
         raise ValueError("a separate compiled frontend control is required")
     private_directory = load("restore_test_private_directory", ROOT / "desktop/python/private_directory.py")
     external = Path(os.environ["APPDATA"]) / "obs-studio"
     external_before = fingerprint(external)
     result = {"schema": 1, "kind": "native-product-restore-isolation", "sourceRevision": payload["sourceRevision"],
-        "passed": False, "publicationForbidden": True, "fullFeatureMigrationQualified": False,
+        "passed": False, "publicationForbidden": payload["publicationForbidden"], "fullFeatureMigrationQualified": False,
         "nativeMenuBypassesQualified": False, "checks": []}
     phase = "prepare"
     with tempfile.TemporaryDirectory(prefix="WebOBS 恢复拦截-") as temporary, contextlib.ExitStack() as cleanup:
@@ -166,7 +167,7 @@ def exercise(runtime, control_frontend, report):
         shutil.copy2(control_frontend, control / "bin/64bit/obs64.exe")
         (control / "portable_mode.txt").write_bytes(b"")
         control_collection = seed(control / "config", encoded)
-        profile = private / "protected-profile"
+        profile = private / "local-data/WebOBS/NativePreview" if preview_delivery else private / "protected-profile"
         protected_collection = seed(profile / "native-profile", encoded)
         assert control_collection.read_bytes() == protected_collection.read_bytes() == encoded
         result["fixtureSha256"] = hashlib.sha256(encoded).hexdigest()
@@ -239,6 +240,11 @@ def exercise(runtime, control_frontend, report):
             result["unguardedRtspRequests"] = baseline
             phase = "protected-preauthentication-restore"
             product_environment = dict(os.environ, WEBOBS_PRODUCT_TEST_ROOT=str(profile))
+            if preview_delivery:
+                # Seed the collection at the actual public data path. The
+                # preview deliberately ignores the internal test-root override.
+                product_environment["LOCALAPPDATA"] = str(profile.parents[1])
+                product_environment["WEBOBS_PRODUCT_TEST_ROOT"] = str(private / "must-not-be-used")
             current = subprocess.Popen([str(runtime / "bin/webobs-wall.exe")], env=product_environment,
                 stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
             processes.append(current)
