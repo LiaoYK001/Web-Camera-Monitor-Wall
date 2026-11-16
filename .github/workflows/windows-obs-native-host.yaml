@@ -67,6 +67,12 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw 'Runtime PDB pruning contract failed.' }
           python -B native-host/tests/test_product_package.py
           if ($LASTEXITCODE -ne 0) { throw 'Internal product payload contamination/tamper contract failed.' }
+          python -B native-host/tests/test_complete_supervisor.py
+          if ($LASTEXITCODE -ne 0) { throw 'Complete product supervisor/staging contract failed.' }
+          python -B native-host/tests/test_migrate_legacy.py
+          if ($LASTEXITCODE -ne 0) { throw 'Legacy data migration contract failed.' }
+          python -B native-host/tests/test_native_updater.py
+          if ($LASTEXITCODE -ne 0) { throw 'Native updater verification contract failed.' }
           python -B native-host/tests/test_preview_release.py
           if ($LASTEXITCODE -ne 0) { throw 'Scoped preview identity/export contract failed.' }
           python -B native-host/tests/test_product_restore_protocol.py

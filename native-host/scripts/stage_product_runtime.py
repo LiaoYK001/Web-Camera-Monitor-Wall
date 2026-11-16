@@ -97,6 +97,12 @@ def stage_complete(repo, runtime, cache, build_root):
     tools.mkdir(parents=True, exist_ok=True)
     for source in (repo / "go2rtc").glob("*.py"):
         shutil.copy2(source, tools / source.name)
+    shutil.copy2(repo / "native-host/scripts/migrate-legacy.cmd", runtime / "MIGRATE-LEGACY.cmd")
+    shutil.copy2(repo / "native-host/scripts/check-updates.cmd", runtime / "CHECK-UPDATES.cmd")
+    shutil.copy2(repo / "native-host/scripts/restore-backup.cmd", runtime / "RESTORE-BACKUP.cmd")
+    feed = repo / "native-host/update-feed.url"
+    if feed.is_file():
+        shutil.copy2(feed, runtime / "update-feed.url")
     etc = runtime / "etc"
     etc.mkdir(exist_ok=True)
     shutil.copy2(repo / "gateway/mediamtx.yml", etc / "mediamtx.yml")
@@ -158,6 +164,8 @@ def stage(repo, runtime, core, vcpkg, cache, complete=False):
     (services / "product").mkdir()
     shutil.copy2(repo / "native-host/scripts/product_supervisor.py", services / "product/supervisor.py")
     shutil.copy2(repo / "native-host/scripts/release_policy.py", services / "product/release_policy.py")
+    shutil.copy2(repo / "native-host/scripts/migrate_legacy.py", services / "product/migrate_legacy.py")
+    shutil.copy2(repo / "native-host/scripts/native_updater.py", services / "product/native_updater.py")
     if not (repo / "web/dist/index.html").is_file():
         raise ValueError("product management UI must be built before staging")
     shutil.copytree(repo / "web/dist", runtime / "web")

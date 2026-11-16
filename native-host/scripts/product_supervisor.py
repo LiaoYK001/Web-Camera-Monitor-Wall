@@ -12,6 +12,7 @@ import json
 import os
 from pathlib import Path
 import secrets
+import shutil
 import signal
 import socket
 import subprocess
@@ -142,6 +143,17 @@ class ProductSupervisor:
                             "config/camera-secrets", "run"]
         for name in directories:
             (self.root / name).mkdir(parents=True, exist_ok=True)
+        pending_update = self.root / "run/pending-update.json"
+        if pending_update.is_file() and not pending_update.is_symlink() and pending_update.stat().st_size <= 65536:
+            try:
+                update = json.loads(pending_update.read_text(encoding="utf-8"))
+                if isinstance(update, dict) and update.get("to") == self.version:
+                    (self.root / "run/installed-version.json").write_text(json.dumps({
+                        "schema": 1, "version": self.version, "previous": update.get("from"),
+                        "installerSha512": update.get("sha512")}, indent=2) + "\n", encoding="utf-8")
+                    pending_update.unlink(missing_ok=True)
+            except (OSError, ValueError):
+                pass
         ini = self.root / "native-profile/obs-studio/user.ini"
         if not ini.exists():
             with ini.open("x", encoding="utf-8") as output:
@@ -152,6 +164,9 @@ class ProductSupervisor:
             for name in ("recordings", "backups"):
                 protect(self.root / name, self.runtime)
             key_path = self.root / "run/backup.key"
+            migrated_key = self.root / "config/backup.key"
+            if not key_path.exists() and migrated_key.is_file() and not migrated_key.is_symlink():
+                shutil.copy2(migrated_key, key_path)
             if not key_path.exists():
                 with key_path.open("xb") as output:
                     output.write(secrets.token_bytes(32))
@@ -191,7 +206,22 @@ class ProductSupervisor:
             "WEBOBS_NODE_ROLE": "standalone",
         })
         if self.complete:
-            self.recordings = self.root / "recordings"
+            migration = config / "native-migration.json"
+            migrated_recording = None
+            if migration.is_file() and not migration.is_symlink() and migration.stat().st_size <= 65536:
+                try:
+                    value = json.loads(migration.read_text(encoding="utf-8"))
+                    candidate = value.get("recordingsPath") if isinstance(value, dict) else None
+                    if isinstance(candidate, str) and candidate and Path(candidate).is_absolute():
+                        migrated_recording = Path(candidate)
+                except (OSError, ValueError):
+                    migrated_recording = None
+            if os.environ.get("WEBOBS_PRODUCT_TEST_ROOT"):
+                self.recordings = self.root / "recordings"
+            else:
+                self.recordings = migrated_recording or (
+                    Path(os.environ.get("USERPROFILE", str(self.root))) / "Videos" / "WebOBS")
+            self.recordings.mkdir(parents=True, exist_ok=True)
             detector_model = self.runtime / "web/models/ssd_mobilenet_v1_12.onnx"
             self.environment.update({
                 "WEBOBS_EVENT_DATABASE": str(config / "events.db"),
