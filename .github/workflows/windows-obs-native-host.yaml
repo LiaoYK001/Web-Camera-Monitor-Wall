@@ -80,6 +80,8 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw 'Native updater verification contract failed.' }
           python -B native-host/tests/test_complete_release_policy.py
           if ($LASTEXITCODE -ne 0) { throw 'Complete candidate release identity failed.' }
+          python -B native-host/tests/test_update_manifest.py
+          if ($LASTEXITCODE -ne 0) { throw 'Candidate update manifest failed.' }
           python -B native-host/tests/test_preview_release.py
           if ($LASTEXITCODE -ne 0) { throw 'Scoped preview identity/export contract failed.' }
           python -B native-host/tests/test_product_restore_protocol.py
