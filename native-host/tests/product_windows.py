@@ -315,6 +315,7 @@ def exercise(runtime, report, *, with_media=False, retained_profile=None):
 
         def check_pixels(label, *, blank=False, repeat_first=False, reverse=False, expected_media=None,
                 projector_orders=None, quick_order=None, program_scene=None, program_media=None):
+            checkpoint("pixels-" + label + "-program")
             check_monitor_program(program_scene=program_scene, program_media=program_media)
             from ctypes import wintypes
             import pixel_windows
@@ -331,9 +332,11 @@ def exercise(runtime, report, *, with_media=False, retained_profile=None):
                 created = pixel_windows.creation_time(Frontend())
             finally:
                 kernel.CloseHandle(handle)
+            checkpoint("pixels-" + label + "-graph")
             observed = state() if blank else check_graph(repeat_first=repeat_first, reverse=reverse,
                 expected_media=expected_media, quick_order=quick_order,
                 program_scene=program_scene, program_media=program_media)
+            checkpoint("pixels-" + label + "-observed")
             if blank:
                 assert observed.get("phase") == "locked" and observed.get("mediaSources") == 0
             assert observed.get("windows", [{}])[0].get("qtClass") == "OBSBasicPreview"
@@ -342,12 +345,19 @@ def exercise(runtime, report, *, with_media=False, retained_profile=None):
             metadata = target / "capture-state.json"
             metadata.write_text(json.dumps({"schema": 1, "scope": "synthetic-test-only",
                 "pid": str(frontend_pid), "windows": observed["windows"]}), encoding="utf-8")
-            result = subprocess.run([powershell, "-NoLogo", "-NoProfile", "-File", str(HERE / "capture-pixels.ps1"),
-                "-ExpectedProcessId", str(frontend_pid), "-ExpectedExecutable", str(runtime / "bin/64bit/obs64.exe"),
-                "-ExpectedCreationTime", created, "-StateFile", str(metadata), "-OutputDirectory", str(target)],
-                capture_output=True, text=True, encoding="utf-8", timeout=35)
+            try:
+                result = subprocess.run([powershell, "-NoLogo", "-NoProfile", "-File", str(HERE / "capture-pixels.ps1"),
+                    "-ExpectedProcessId", str(frontend_pid), "-ExpectedExecutable", str(runtime / "bin/64bit/obs64.exe"),
+                    "-ExpectedCreationTime", created, "-StateFile", str(metadata), "-OutputDirectory", str(target)],
+                    capture_output=True, text=True, encoding="utf-8", timeout=35)
+            except subprocess.TimeoutExpired:
+                evidence.setdefault("captures", []).append({"phase": label,
+                    "captureFailed": True, "diagnostic": {"stage": "timeout", "code": "capture-timeout"}})
+                checkpoint("pixels-" + label + "-capture-timeout")
+                raise
             capture = pixel_windows.capture_report(result)
             evidence.setdefault("captures", []).append({"phase": label, **capture})
+            checkpoint("pixels-" + label + "-captured")
             assert result.returncode == 0 and capture.get("captureFailed") is False, "actual product preview capture failed"
             orders = {"main-preview": ("quick-" + ",".join(map(str, quick_order))) if quick_order is not None else
                 "repeat-first" if repeat_first else "reverse" if reverse else "forward"}
