@@ -348,10 +348,16 @@ def exercise(runtime, report, *, with_media=False, retained_profile=None):
             checkpoint("pixels-" + label + "-capture-setup")
             checkpoint("pixels-" + label + "-capture-start")
             try:
-                result = subprocess.run([powershell, "-NoLogo", "-NoProfile", "-File", str(HERE / "capture-pixels.ps1"),
-                    "-ExpectedProcessId", str(frontend_pid), "-ExpectedExecutable", str(runtime / "bin/64bit/obs64.exe"),
-                    "-ExpectedCreationTime", created, "-StateFile", str(metadata), "-OutputDirectory", str(target)],
-                    capture_output=True, text=True, encoding="utf-8", timeout=35)
+                # Normalize every argument and avoid PowerShell prompts/invalid
+                # console output turning a pixel capture into an opaque launch
+                # TypeError under a fully loaded product host.
+                capture_command = [str(powershell), "-NoLogo", "-NoProfile", "-NonInteractive", "-File",
+                    str(HERE / "capture-pixels.ps1"), "-ExpectedProcessId", str(frontend_pid),
+                    "-ExpectedExecutable", str(runtime / "bin/64bit/obs64.exe"),
+                    "-ExpectedCreationTime", str(created), "-StateFile", str(metadata), "-OutputDirectory", str(target)]
+                result = subprocess.run(capture_command, capture_output=True, text=True, encoding="utf-8",
+                    errors="replace", timeout=35, close_fds=True,
+                    creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
             except subprocess.TimeoutExpired:
                 evidence.setdefault("captures", []).append({"phase": label,
                     "captureFailed": True, "diagnostic": {"stage": "timeout", "code": "capture-timeout"}})
@@ -379,7 +385,8 @@ def exercise(runtime, report, *, with_media=False, retained_profile=None):
             assert set(orders) == {window["role"] for window in observed["windows"]}
             for role, order in orders.items():
                 analysis = subprocess.run([shutil.which("node"), str(HERE / "pixel-pattern.cjs"), "analyze-empty" if blank else "analyze",
-                    str(target / role), role, order, "true"], capture_output=True, text=True, encoding="utf-8", timeout=20)
+                    str(target / role), role, order, "true"], capture_output=True, text=True, encoding="utf-8",
+                    errors="replace", timeout=20)
                 assert len(analysis.stdout) <= 16384, "oversized synthetic pixel analysis"
                 result = json.loads(analysis.stdout)
                 assert isinstance(result, dict), "invalid synthetic pixel analysis"
