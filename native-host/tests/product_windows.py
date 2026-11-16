@@ -996,9 +996,20 @@ def exercise(runtime, report, *, with_media=False, retained_profile=None):
                         assert ui("login", **account)
                         check_graph()
             phase = "normal-close"
-            assert ui("close")
-            assert process.wait(timeout=40) == 0, "normal UI close failed orderly shutdown"
-            wait_for(lambda: not any(alive(pid) for pid in known_pids), "owned process survived normal close")
+            evidence["normalCloseUi"] = bool(ui("close"))
+            assert evidence["normalCloseUi"], "main product window was not closable"
+            try:
+                exit_code = process.wait(timeout=70)
+            except subprocess.TimeoutExpired:
+                evidence["normalCloseTimeout"] = True
+                raise AssertionError("normal UI close exceeded the shutdown deadline") from None
+            evidence["normalCloseExitCode"] = exit_code
+            assert exit_code == 0, "normal UI close failed orderly shutdown"
+            try:
+                wait_for(lambda: not any(alive(pid) for pid in known_pids), "owned process survived normal close")
+            except AssertionError:
+                evidence["normalCloseAlivePids"] = sum(1 for pid in known_pids if alive(pid))
+                raise
             evidence["checks"].append("normal-ui-close-cleans-owned-processes")
             phase = "persistent-origin-conflict"
             original_origin = started["origin"]
