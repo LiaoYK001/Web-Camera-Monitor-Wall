@@ -5,8 +5,21 @@ const fs = require('node:fs');
 const path = require('node:path');
 const pattern = require('../../desktop/tests/native-preview-pattern.cjs');
 const ORDER = [0, 1, 2, 3, 4], REVERSED = [4, 3, 2, 1, 0], REPEAT_FIRST = [0, 0, 0, 0, 0];
-function inspect(image, { order = ORDER, dynamic = true, inset = 0 } = {}) {
-  assert.equal(order.length, 5);
+function geometry(order, quick) {
+  assert.ok(order.length >= 1 && order.length <= 64 && order.every(c => Number.isInteger(c) && c >= 0 && c < 5));
+  if (!quick) assert.equal(order.length, 5);
+  const columns = quick ? Math.ceil(Math.sqrt(order.length)) : 3;
+  const rows = quick ? Math.ceil(order.length / columns) : 2;
+  const width = 960 / columns, height = 540 / rows, fit = Math.min(width / 320, height / 180);
+  return { columns, rows, width, height, fit, padX: (width - 320 * fit) / 2, padY: (height - 180 * fit) / 2 };
+}
+function quickProgress(samples, count) {
+  assert.ok(samples.length >= 3 && samples.every(s => s.length === count), 'Need multiple complete quick-wall samples');
+  for (let slot = 0; slot < count; slot++)
+    assert.ok(new Set(samples.map(sample => sample[slot])).size >= 2, `Frozen final pixels on slot ${slot + 1}`);
+}
+function inspect(image, { order = ORDER, dynamic = true, inset = 0, quick = false } = {}) {
+  const grid = geometry(order, quick);
   const scale = Math.min((image.width - inset * 2) / 960, (image.height - inset * 2) / 540);
   assert.ok(scale > 0 && image.width >= 320 && image.height >= 180, 'Client is too small');
   const left = (image.width - scale * 960) / 2, top = (image.height - scale * 540) / 2;
@@ -14,12 +27,13 @@ function inspect(image, { order = ORDER, dynamic = true, inset = 0 } = {}) {
   const near = (actual, expected, message, tolerance = 48) => assert.ok(actual.every((v, i) => Math.abs(v - expected[i]) <= tolerance), message + ': ' + actual.join(','));
   const counters = [];
   order.forEach((channel, slot) => {
-    // Each 320x180 input fits at 1:1 inside its 320x270 tile with 45px
-    // vertical inner bars. Projector/main-Preview scaling is applied afterward.
-    const x0 = slot % 3 * 320, y0 = Math.floor(slot / 3) * 270;
-    const sample = (x, y) => sampleCanvas(x0 + x, y0 + 45 + y);
+    const x0 = slot % grid.columns * grid.width, y0 = Math.floor(slot / grid.columns) * grid.height;
+    const sample = (x, y) => sampleCanvas(x0 + grid.padX + x * grid.fit, y0 + grid.padY + y * grid.fit);
     for (const [x, y] of [[40, 70], [260, 70], [160, 150]]) near(sample(x, y), pattern.COLORS[channel], `Wrong channel ${channel + 1} in tile ${slot}`);
-    for (const y of [20, 250]) near(sampleCanvas(x0 + 160, y0 + y), [0, 0, 0], `Wrong SCALE_INNER bar in tile ${slot}`, 30);
+    if (grid.padY > 8) for (const y of [grid.padY / 2, grid.height - grid.padY / 2])
+      near(sampleCanvas(x0 + grid.width / 2, y0 + y), [0, 0, 0], `Wrong SCALE_INNER bar in tile ${slot}`, 30);
+    if (grid.padX > 8) for (const x of [grid.padX / 2, grid.width - grid.padX / 2])
+      near(sampleCanvas(x0 + x, y0 + grid.height / 2), [0, 0, 0], `Wrong SCALE_INNER bar in tile ${slot}`, 30);
     if (!dynamic) return;
     near(sample(32, 28), [255, 255, 255], `Missing white marker on channel ${channel + 1}`);
     near(sample(288, 152), [0, 0, 0], `Missing black marker on channel ${channel + 1}`);
@@ -32,7 +46,12 @@ function inspect(image, { order = ORDER, dynamic = true, inset = 0 } = {}) {
     assert.ok(counter < pattern.FRAMES, `Invalid timecode on channel ${channel + 1}`);
     counters.push(counter);
   });
-  for (const [x, y] of [[810, 350], [900, 480], [700, 500]]) near(sampleCanvas(x, y), [0, 0, 0], 'Sixth tile must be empty', 30);
+  if (!quick) for (const [x, y] of [[810, 350], [900, 480], [700, 500]])
+    near(sampleCanvas(x, y), [0, 0, 0], 'Sixth tile must be empty', 30);
+  for (let slot = order.length; slot < grid.columns * grid.rows; slot++)
+    for (const offset of [0.25, 0.5, 0.75])
+      near(sampleCanvas((slot % grid.columns + offset) * grid.width,
+        (Math.floor(slot / grid.columns) + offset) * grid.height), [0, 0, 0], 'Unused quick-wall cell must be empty', 30);
   return counters;
 }
 function inspectEmpty(image, { inset = 0 } = {}) {
@@ -64,20 +83,26 @@ function analyze(directory, options) {
   }
   let temporalProgress = options.empty || !options.dynamic, progressError;
   if (options.dynamic && !options.empty) {
-    try { pattern.progress(samples.filter(s => s.passed).map(s => s.counters)); temporalProgress = true; }
+    try {
+      const counters = samples.filter(s => s.passed).map(s => s.counters);
+      if (options.quick) quickProgress(counters, options.order.length); else pattern.progress(counters);
+      temporalProgress = true;
+    }
     catch (error) { progressError = String(error.message); }
   }
   return { passed: samples.every(s => s.passed) && temporalProgress, samples, temporalProgress, ...(progressError ? { progressError } : {}) };
 }
-function synthetic(width, height, { order = ORDER, counter = 3, inset = 0, dynamic = true } = {}) {
+function synthetic(width, height, { order = ORDER, counter = 3, inset = 0, dynamic = true, quick = false } = {}) {
+  const grid = geometry(order, quick);
   const sources = order.map(c => pattern.frame(c, counter));
   const scale = Math.min((width - 2 * inset) / 960, (height - 2 * inset) / 540);
   const left = (width - 960 * scale) / 2, top = (height - 540 * scale) / 2;
   return { width, height, pixel(x, y) {
     const cx = (x + 0.5 - left) / scale, cy = (y + 0.5 - top) / scale;
     if (cx < 0 || cx >= 960 || cy < 0 || cy >= 540) return [0, 0, 0];
-    const slot = Math.floor(cy / 270) * 3 + Math.floor(cx / 320), sx = Math.floor(cx % 320), sy = Math.floor(cy % 270) - 45;
-    if (slot >= 5 || sy < 0 || sy >= 180) return [0, 0, 0];
+    const slot = Math.floor(cy / grid.height) * grid.columns + Math.floor(cx / grid.width);
+    const sx = Math.floor((cx % grid.width - grid.padX) / grid.fit), sy = Math.floor((cy % grid.height - grid.padY) / grid.fit);
+    if (slot >= order.length || sx < 0 || sx >= 320 || sy < 0 || sy >= 180) return [0, 0, 0];
     if (!dynamic) return pattern.COLORS[order[slot]];
     const at = (sy * 320 + sx) * 3;
     return [...sources[slot].subarray(at, at + 3)];
@@ -100,6 +125,16 @@ function selftest() {
   assert.throws(() => inspect(synthetic(960,540), { order: REPEAT_FIRST }), /Wrong channel/);
   assert.deepEqual(inspectEmpty({ width: 960, height: 540, pixel: () => [0,0,0] }), []);
   assert.throws(() => inspectEmpty(synthetic(960,540)), /retained visible media/);
+  for (const count of [1, 2, 3, 4, 7, 16, 64]) {
+    const order = Array.from({ length: count }, (_, i) => i % 5);
+    for (const [width, height, inset] of [[960, 540, 0], [1280, 760, 10]])
+      assert.deepEqual(inspect(synthetic(width, height, { order, inset, quick: true }), { order, inset, quick: true }), Array(count).fill(3));
+    quickProgress([0, 1, 2].map(counter => inspect(synthetic(960, 540, { order, counter, quick: true }), { order, quick: true })), count);
+    assert.throws(() => quickProgress(Array.from({ length: 8 }, () => Array(count).fill(3)), count), /Frozen/);
+  }
+  assert.throws(() => quickProgress([0, 1, 2].map(i => [i,i,i,i,i,i,0]), 7), /slot 7/);
+  const wrong = [0, 1, 2, 3, 4, 0, 1];
+  assert.throws(() => inspect(synthetic(960,540,{ order: wrong, quick: true }), { order: [1,1,2,3,4,0,1], quick: true }), /Wrong channel/);
   console.log('PASS: 3x2 SCALE_INNER, Preview inset, colors, markers, all five temporal channels and negative cases');
 }
 if (require.main === module) {
@@ -112,8 +147,11 @@ if (require.main === module) {
   } else if (mode === 'analyze' || mode === 'analyze-empty') {
     const [directory, role, order, dynamic] = args;
     assert.ok(['main-preview', 'program-projector', 'program-fullscreen', 'fixed-scene-1', 'fixed-scene-2', 'fixed-scene-fullscreen-1', 'fixed-scene-fullscreen-2'].includes(role));
+    const quick = /^quick-[1-5](,[1-5]){0,63}$/.test(order);
+    assert.ok(quick || ['forward', 'reverse', 'repeat-first'].includes(order));
+    const channels = quick ? order.slice(6).split(',').map(c => Number(c) - 1) : order === 'reverse' ? REVERSED : order === 'repeat-first' ? REPEAT_FIRST : ORDER;
     console.log(JSON.stringify(analyze(directory, { inset: role === 'main-preview' ? 10 : 0,
-      empty: mode === 'analyze-empty', order: order === 'reverse' ? REVERSED : order === 'repeat-first' ? REPEAT_FIRST : ORDER, dynamic: dynamic === 'true' })));
+      empty: mode === 'analyze-empty', order: channels, quick, dynamic: dynamic === 'true' })));
   } else throw new Error('Expected selftest, fixture or analyze');
 }
 module.exports = { inspect, inspectEmpty, analyze, synthetic };

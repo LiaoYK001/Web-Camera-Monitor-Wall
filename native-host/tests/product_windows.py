@@ -220,21 +220,25 @@ def exercise(runtime, report, *, with_media=False, retained_profile=None):
             wait_for(lambda: ui("inspect"), "actual product controls not accessible")
             return value
 
-        def check_graph(*, repeat_first=False, reverse=False, expected_media=None):
-            expected = expected_media if expected_media is not None else (1 if repeat_first else 5)
-            wait_for(lambda: state().get("phase") == "graph-applied" and state().get("mediaSources") == expected,
-                "UI did not settle the complete authorized camera graph", timeout=35)
-            observed = state()
-            assert observed["sessionBound"] is True and observed["mediaSources"] == (
-                expected_media if expected_media is not None else (1 if repeat_first else 5))
+        def check_graph(*, repeat_first=False, reverse=False, expected_media=None, quick_order=None):
+            order = quick_order if quick_order is not None else [1] * 5 if repeat_first else list(range(5, 0, -1)) if reverse else list(range(1, 6))
+            expected = expected_media if expected_media is not None else len(set(order))
+            pairs = [(f"fixture-{index}", "main") for index in order]
+
+            def ready():
+                value = state()
+                actual = [(item.get("cameraId"), item.get("profileId")) for item in value.get("bindings", [])]
+                return value if value.get("phase") == "graph-applied" and value.get("mediaSources") == expected and actual == pairs else None
+
+            observed = wait_for(ready, "UI did not settle the complete authorized camera graph", timeout=35)
+            assert observed["sessionBound"] is True and observed["mediaSources"] == expected
             assert observed.get("previewLocked") is True
             check_monitor_program(observed)
             import smoke_windows
             smoke_windows.check_renderer_receipt(observed.get("renderer"))
-            bindings = observed["bindings"]
-            assert [(item["cameraId"], item["profileId"]) for item in bindings] == [
-                (f"fixture-{1 if repeat_first else (6 - index if reverse else index)}", "main") for index in range(1, 6)]
-            assert len({item["sourceUuid"] for item in bindings}) == (1 if repeat_first else 5)
+            assert len({item["sourceUuid"] for item in observed["bindings"]}) == len(set(order))
+            if quick_order is not None:
+                assert observed.get("slotCount") == len(order)
             assert observed["videoInfo"] == {"baseWidth": 1920, "baseHeight": 1080,
                 "outputWidth": 1920, "outputHeight": 1080, "fpsNumerator": 30, "fpsDenominator": 1}
             return observed
@@ -279,7 +283,7 @@ def exercise(runtime, report, *, with_media=False, retained_profile=None):
                         return False
             return True
 
-        def check_pixels(label, *, blank=False, repeat_first=False, reverse=False, expected_media=None, projector_orders=None):
+        def check_pixels(label, *, blank=False, repeat_first=False, reverse=False, expected_media=None, projector_orders=None, quick_order=None):
             check_monitor_program()
             from ctypes import wintypes
             import pixel_windows
@@ -296,7 +300,7 @@ def exercise(runtime, report, *, with_media=False, retained_profile=None):
                 created = pixel_windows.creation_time(Frontend())
             finally:
                 kernel.CloseHandle(handle)
-            observed = state() if blank else check_graph(repeat_first=repeat_first, reverse=reverse, expected_media=expected_media)
+            observed = state() if blank else check_graph(repeat_first=repeat_first, reverse=reverse, expected_media=expected_media, quick_order=quick_order)
             if blank:
                 assert observed.get("phase") == "locked" and observed.get("mediaSources") == 0
             assert observed.get("windows", [{}])[0].get("qtClass") == "OBSBasicPreview"
@@ -312,7 +316,8 @@ def exercise(runtime, report, *, with_media=False, retained_profile=None):
             capture = pixel_windows.capture_report(result)
             evidence.setdefault("captures", []).append({"phase": label, **capture})
             assert result.returncode == 0 and capture.get("captureFailed") is False, "actual product preview capture failed"
-            orders = {"main-preview": "repeat-first" if repeat_first else ("reverse" if reverse else "forward")}
+            orders = {"main-preview": ("quick-" + ",".join(map(str, quick_order))) if quick_order is not None else
+                "repeat-first" if repeat_first else "reverse" if reverse else "forward"}
             orders.update(projector_orders or {})
             assert set(orders) == {window["role"] for window in observed["windows"]}
             for role, order in orders.items():
@@ -431,6 +436,41 @@ def exercise(runtime, report, *, with_media=False, retained_profile=None):
                 check_graph()
                 time.sleep(3)
                 check_pixels("distinct-after-sharing")
+                phase = "variable-quick-wall-layout"
+                previous = state()["bindings"]
+                for indices in ([1], [1, 2, 3, 4], [1, 2, 3, 4, 5, 1, 2]):
+                    assert ui("resize", count=len(indices))
+                    wait_for(lambda: state().get("slotCount") == len(indices), "actual count control did not resize selectors")
+                    assert state()["bindings"] == previous, "editing slot count changed the running media graph"
+                    check_monitor_program()
+                    assert ui("choose", indices=indices)
+                    current = check_graph(quick_order=indices)
+                    before = {item["cameraId"]: item["sourceUuid"] for item in previous}
+                    after = {item["cameraId"]: item["sourceUuid"] for item in current["bindings"]}
+                    assert all(before[key] == after[key] for key in before.keys() & after.keys()), \
+                        "resizing the quick wall restarted retained compatible inputs"
+                    wait_for(lambda: ui("video-progress", sources=len(set(indices))),
+                        "variable-layout inputs did not advance before visible capture", timeout=15)
+                    check_pixels("quick-wall-" + str(len(indices)), quick_order=indices)
+                    previous = current["bindings"]
+                evidence["checks"].extend(["quick-wall-one-four-seven-final-pixels", "quick-wall-draft-does-not-change-running-media",
+                    "quick-wall-resize-retains-shared-inputs-and-idle-program"])
+                assert ui("save")
+                wait_for(lambda: len(read_json(paths[0]).get("cameras", [])) == 7,
+                    "seven-slot workspace was not persisted")
+                assert ui("logout")
+                wait_for(lambda: state().get("phase") == "locked" and state().get("mediaSources") == 0,
+                    "variable quick wall retained media after logout")
+                assert ui("login", **account)
+                check_graph(quick_order=[1, 2, 3, 4, 5, 1, 2])
+                wait_for(lambda: ui("video-progress", sources=5), "restored quick-wall inputs did not advance", timeout=15)
+                check_pixels("quick-wall-seven-restored", quick_order=[1, 2, 3, 4, 5, 1, 2])
+                evidence["checks"].append("quick-wall-seven-save-logout-authenticated-restore")
+                assert ui("choose", indices=[1, 2, 3, 4, 5])
+                check_graph()
+                assert ui("save")
+                wait_for(lambda: len(read_json(paths[0]).get("cameras", [])) == 5,
+                    "five-slot baseline was not restored to workspace")
                 phase = "native-input-stall-and-rtsp-recovery"
                 before_fault = {item["cameraId"]: item["sourceUuid"] for item in state()["bindings"]}
                 interrupted_at = time.monotonic()

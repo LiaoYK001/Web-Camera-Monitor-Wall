@@ -55,6 +55,7 @@ public static class ProductTestWindow {
                 'webobsLogout' { '退出账号' }
                 'webobsRefreshCatalog' { '刷新设备目录' }
                 'webobsWatchScene' { '监看所选 Studio 场景' }
+                'webobsCameraCount' { $kind = [System.Windows.Automation.ControlType]::Spinner; '监看路数' }
                 'webobsStudioScene' { $kind = [System.Windows.Automation.ControlType]::ComboBox; '已保存的 Studio 场景' }
                 'webobsFixedProjector1' { '固定场景投影 1' }
                 'webobsFixedProjector2' { '固定场景投影 2' }
@@ -62,7 +63,7 @@ public static class ProductTestWindow {
                 'webobsHostStats' { 'OBS 宿主统计' }
                 'webobsVideoHealth' { $kind = [System.Windows.Automation.ControlType]::Text; '' }
                 default {
-                    if ($Identity -match '^webobsCameraSlot([1-5])$') {
+                    if ($Identity -match '^webobsCameraSlot([1-9][0-9]?)$' -and [int]$Matches[1] -le 64) {
                         $kind = [System.Windows.Automation.ControlType]::ComboBox
                         "画面 $($Matches[1])"
                     } else { throw 'Unknown fixture control.' }
@@ -87,7 +88,13 @@ public static class ProductTestWindow {
     function Set-Control([string]$Identity, [string]$Value) {
         $control = Find-Control $Identity
         $script:code = 'set-' + $Identity
+        if (-not $control.Current.IsEnabled) { throw 'Product text control disabled.' }
         $pattern = $null
+        if ($Identity -eq 'webobsCameraCount' -and $control.TryGetCurrentPattern(
+            [System.Windows.Automation.RangeValuePattern]::Pattern, [ref]$pattern)) {
+            $pattern.SetValue([double]$Value)
+            return
+        }
         $valueSet = $false
         if ($control.TryGetCurrentPattern([System.Windows.Automation.ValuePattern]::Pattern, [ref]$pattern)) {
             try { $pattern.SetValue($Value); $valueSet = $true } catch { }
@@ -118,9 +125,18 @@ public static class ProductTestWindow {
             Set-Control 'webobsPassword' $operation.password
             Invoke-Control 'webobsCreateAccount'
         }
+        'resize' {
+            $count = [int]$operation.count
+            if ($count -lt 1 -or $count -gt 64) { throw 'Invalid bounded fixture count.' }
+            Set-Control 'webobsCameraCount' ([string]$count)
+            [System.Windows.Forms.SendKeys]::SendWait('{TAB}')
+        }
         'choose' {
-            if (@($operation.indices).Count -ne 5) { throw 'Five fixture choices required.' }
-            for ($index=0; $index -lt 5; ++$index) {
+            $count = @($operation.indices).Count
+            if ($count -lt 1 -or $count -gt 64) { throw 'Invalid bounded fixture count.' }
+            Set-Control 'webobsCameraCount' ([string]$count)
+            [System.Windows.Forms.SendKeys]::SendWait('{TAB}')
+            for ($index=0; $index -lt $count; ++$index) {
                 $choice = [int]$operation.indices[$index]
                 if ($choice -lt 1 -or $choice -gt 5) { throw 'Invalid fixture index.' }
                 $control = Find-Control "webobsCameraSlot$($index+1)"
@@ -151,7 +167,7 @@ public static class ProductTestWindow {
         'stats' { Invoke-Control 'webobsHostStats' }
         'stats-close' { $window.GetCurrentPattern([System.Windows.Automation.WindowPattern]::Pattern).Close() }
         'video-progress' {
-            if ([int]$operation.sources -notin @(1,5)) { throw 'Invalid synthetic source count.' }
+            if ([int]$operation.sources -lt 1 -or [int]$operation.sources -gt 5) { throw 'Invalid synthetic source count.' }
             $stalled = [int]$operation.stalled
             if ($stalled -notin @(0,1) -or $stalled -gt [int]$operation.sources) { throw 'Invalid synthetic stall count.' }
             $health = Find-Control 'webobsVideoHealth'
