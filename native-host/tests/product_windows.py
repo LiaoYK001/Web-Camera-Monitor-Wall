@@ -345,6 +345,8 @@ def exercise(runtime, report, *, with_media=False, retained_profile=None):
             metadata = target / "capture-state.json"
             metadata.write_text(json.dumps({"schema": 1, "scope": "synthetic-test-only",
                 "pid": str(frontend_pid), "windows": observed["windows"]}), encoding="utf-8")
+            checkpoint("pixels-" + label + "-capture-setup")
+            checkpoint("pixels-" + label + "-capture-start")
             try:
                 result = subprocess.run([powershell, "-NoLogo", "-NoProfile", "-File", str(HERE / "capture-pixels.ps1"),
                     "-ExpectedProcessId", str(frontend_pid), "-ExpectedExecutable", str(runtime / "bin/64bit/obs64.exe"),
@@ -355,7 +357,9 @@ def exercise(runtime, report, *, with_media=False, retained_profile=None):
                     "captureFailed": True, "diagnostic": {"stage": "timeout", "code": "capture-timeout"}})
                 checkpoint("pixels-" + label + "-capture-timeout")
                 raise
+            checkpoint("pixels-" + label + "-capture-returned")
             capture = pixel_windows.capture_report(result)
+            checkpoint("pixels-" + label + "-capture-report")
             evidence.setdefault("captures", []).append({"phase": label, **capture})
             checkpoint("pixels-" + label + "-captured")
             assert result.returncode == 0 and capture.get("captureFailed") is False, "actual product preview capture failed"
