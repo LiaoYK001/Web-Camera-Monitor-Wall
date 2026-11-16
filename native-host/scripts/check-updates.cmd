@@ -12,7 +12,9 @@ if "%FEED%"=="" (
   pause
   exit /b 1
 )
-for /f "delims=" %%V in ('"%RUNTIME%python\python.exe" -c "import json;print(json.load(open(r'%RUNTIME%webobs-native-prototype.json'))['version'])"') do set "CURRENT=%%V"
+"%RUNTIME%python\python.exe" -c "import json;print(json.load(open(r'%RUNTIME%webobs-native-prototype.json'))['version'])" > "%TEMP%\webobs-current-version.txt"
+set /p CURRENT=<"%TEMP%\webobs-current-version.txt"
+del "%TEMP%\webobs-current-version.txt" >nul 2>nul
 "%RUNTIME%python\python.exe" -B "%RUNTIME%services\product\native_updater.py" check --feed "%FEED%" --current "%CURRENT%" --output "%DATA%\run\update-check.json"
 if errorlevel 1 (
   echo Update check failed; the current version was kept.

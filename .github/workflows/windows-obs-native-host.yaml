@@ -206,7 +206,7 @@ jobs:
           python -B native-host/scripts/update_manifest.py --installer $installer.FullName --version ${{ inputs.version }} --output (Join-Path $out 'latest.yml')
           if ($LASTEXITCODE -ne 0) { throw 'Complete candidate update metadata failed.' }
       - name: Upload complete candidate installer and update metadata
-        if: inputs.complete && steps.product-ui.outcome == 'success'
+        if: always() && inputs.complete && steps.product-ui.outcome == 'success'
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
           name: webobs-wall-complete-candidate-${{ inputs.version }}
