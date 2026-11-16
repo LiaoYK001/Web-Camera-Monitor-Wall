@@ -712,6 +712,13 @@ def exercise(runtime, report, *, with_media=False, retained_profile=None):
                 checkpoint("program-before-pixels")
                 before_take = state().get("program", {}).get("sceneUuid")
                 assert isinstance(before_take, str) and before_take
+                # The initial Program application above exercised the real fade.
+                # Use a cut for the TAKE so the outgoing scene must retire
+                # immediately; this also verifies the transition selection path.
+                studio["transition"] = {"kind": "cut", "durationMs": 0}
+                code, _, studio = request("/api/v1/studio", studio, cookie=cookie, method="PUT",
+                    revision=studio["revision"])
+                assert code == 200
                 checkpoint("program-take-request")
                 code, _, taken = request("/api/v1/studio/take", cookie=cookie, method="POST", revision=studio["revision"])
                 assert code == 200 and taken["programSceneId"] == "fixture-alt", "Studio TAKE did not commit the preview scene"
@@ -723,7 +730,7 @@ def exercise(runtime, report, *, with_media=False, retained_profile=None):
                 checkpoint("program-take-applied")
                 after_take = state().get("program", {}).get("sceneUuid")
                 assert isinstance(after_take, str) and after_take != before_take, "TAKE reused the previous Program scene"
-                time.sleep(2)  # Let the configured 400 ms fade finish before final pixels.
+                time.sleep(1)  # Allow the cut TAKE and source retirement to settle.
                 code, _, runtime = request("/api/v1/studio/runtime", cookie=cookie)
                 assert code == 200 and runtime["native"] is True and runtime["status"] == "applied" and \
                     runtime["appliedRevision"] == taken["revision"] and runtime["appliedSceneId"] == "fixture-alt", \

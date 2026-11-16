@@ -494,25 +494,27 @@ class ProductWindow final : public QWidget {
 		program_target_scene_id_ = scene_id;
 		program_target_fingerprint_ = fingerprint;
 		program_apply_state_ = "applied";
-		if (retired) {
-			const int retired_after = transition_kind == "fade" ? duration_ms + 750 : 0;
-			QTimer::singleShot(retired_after, this, [retired = std::move(retired)] {});
-		}
 		report_program("applied", studio_revision, scene_id, fingerprint);
 		update_projector_controls();
 		observe_current_media();
-		if (transition_kind == "fade" && duration_ms > 0) {
-			// OBS keeps both sides of a completed fade in its transition source.
-			// Settle the transition on the confirmed Program after the fade so
-			// the outgoing scene and its decoders can actually retire.
-			QTimer::singleShot(duration_ms + 200, this, [this, scene_id, fingerprint] {
-				if (program_scene_id_ != scene_id || program_fingerprint_ != fingerprint || !program_) return;
-				if (obs_source_t *output = obs_get_output_source(0)) {
-					obs_transition_set(output, obs_scene_get_source(program_->scene));
-					obs_source_release(output);
-				}
-				refresh_video_health();
-			});
+		if (retired) {
+			if (transition_kind == "fade" && duration_ms > 0) {
+				// OBS keeps both sides of a completed fade in its transition source.
+				// Settle on the confirmed Program and release the outgoing graph in
+				// one deferred step so its decoders actually retire after the fade.
+				QTimer::singleShot(duration_ms + 250, this,
+					[this, retired = std::move(retired), scene_id, fingerprint] {
+					if (program_scene_id_ == scene_id && program_fingerprint_ == fingerprint && program_) {
+						if (obs_source_t *output = obs_get_output_source(0)) {
+							obs_transition_set(output, obs_scene_get_source(program_->scene));
+							obs_source_release(output);
+						}
+						refresh_video_health();
+					}
+				});
+			} else {
+				retired.reset();
+			}
 		}
 		return true;
 	}
