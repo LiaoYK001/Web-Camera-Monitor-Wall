@@ -661,6 +661,20 @@ def exercise(binary, web_root=None, preview=False):
                     first_ws.wait_closed()
                     second_ws.ping()
                     assert request("/api/v1/auth/session", cookie_override=parallel_cookie)[0] == 200
+                    # Device-client administration surfaces (enrollment inventory,
+                    # approval, enrolled clients) must fail closed for holders of
+                    # live.view even though the proxy attaches the internal
+                    # administration header for these exact routes.
+                    for fenced in ("/api/v2/enrollments", "/api/v2/clients"):
+                        code, _, fenced_body = request(fenced, cookie_override=parallel_cookie)
+                        assert code == 403 and fenced_body.get("error", {}).get("code") == "permission_rejected", \
+                            "viewer reached device-client administration inventory"
+                    code, _, _ = request("/api/v2/enrollments/device-1/approve", {}, method="POST",
+                        cookie_override=parallel_cookie)
+                    assert code == 403, "viewer approved a pending device enrollment"
+                    code, _, _ = request("/api/v2/enrollments", cookie_override=admin_cookie)
+                    assert code != 403 and code != 401, \
+                        "device administration fence rejected the administrator session"
                     cluster.STORE.change_own_password("native-viewer", {
                         "currentPassword": password, "newPassword": password})
                     second_ws.wait_closed()
@@ -693,6 +707,41 @@ def exercise(binary, web_root=None, preview=False):
                 time.sleep(2.2)
                 assert len(authority_paths) == retired_authority_calls, \
                     "closed WebSocket retained a repeating authority timer"
+                # Direct source routing must honour camera scope: switching the
+                # preview to the denied scene binds source-1 to camera-b, which
+                # the scoped viewer may not pull through the sources surface.
+                code, _, scoped_studio = request("/api/v1/studio", cookie_override=admin_cookie)
+                assert code == 200
+                scoped_studio["previewSceneId"] = "denied"
+                code, _, _ = request("/api/v1/studio", scoped_studio, method="PUT",
+                    revision=scoped_studio["revision"], cookie_override=admin_cookie)
+                assert code == 200, "administrator preview switch to scoped test scene failed"
+                code, _, _ = request("/api/v1/studio/take", {}, method="POST",
+                    revision=scoped_studio["revision"] + 1, cookie_override=admin_cookie)
+                assert code == 200, "administrator take of the scoped test scene failed"
+                code, _, caps = request("/api/v1/playback/capabilities", cookie_override=admin_cookie)
+                assert code == 200
+                enumerated = sorted(item["sourceId"] for item in caps["sources"])
+                assert enumerated == ["denied.source-0", "denied.source-1"], \
+                    f"capabilities enumeration changed unexpectedly: {enumerated}"
+                code, scoped_issued, _ = request("/api/v1/auth/login", login, use_cookie=False)
+                assert code == 200 and scoped_issued
+                scoped_cookie = scoped_issued.split(";", 1)[0]
+                sdp_headers = {"Content-Type": "application/sdp"}
+                code, _, scoped_body = request("/api/v1/sources/denied.source-1/whep", "sdp-out-of-scope",
+                    method="POST", cookie_override=scoped_cookie, extra_headers=sdp_headers)
+                assert code == 403 and scoped_body.get("error", {}).get("code") == "permission_rejected", \
+                    "camera-scoped viewer created a direct route for an out-of-scope camera"
+                code, _, _ = request("/api/v1/sources/denied.source-1/audio-tracks/0/whep", "sdp-audio",
+                    method="POST", cookie_override=scoped_cookie, extra_headers=sdp_headers)
+                assert code == 403, "camera-scoped viewer created an out-of-scope audio route"
+                code, _, scoped_body = request("/api/v1/sources/denied.source-0/whep", "sdp-in-scope",
+                    method="POST", cookie_override=scoped_cookie, extra_headers=sdp_headers)
+                assert code != 403, "in-scope direct playback was rejected by the camera fence"
+                code, _, viewer_caps = request("/api/v1/playback/capabilities", cookie_override=scoped_cookie)
+                assert code == 200 and any(item["sourceId"] == "denied.source-1" for item in viewer_caps["sources"]), \
+                    "capabilities enumeration changed for the scoped viewer"
+                print("PASS direct source WHEP honours camera scope (out-of-scope creation 403)")
                 print("PASS real WebSocket logout/password/role revocation and same-identity session isolation")
                 print("PASS real native login, bound identity, scope, strict Profile, epoch revocation and logout")
             finally:
@@ -751,7 +800,11 @@ def exercise(binary, web_root=None, preview=False):
                     legacy_profile["displayName"] == "Legacy own account"
                 with WebSocketProbe(port, compatibility_cookie) as compatibility_ws:
                     compatibility_ws.ping()
+                    assert request("/api/v1/auth/logout", {}, method="POST",
+                        cookie_override=compatibility_cookie)[0] == 204
+                    compatibility_ws.wait_closed()
                 assert request("/api/v1/native/auth/session", cookie_override=compatibility_cookie)[0] == 404
+                print("PASS legacy username-session WebSocket closes when its session is revoked")
                 print("PASS non-native username-session HTTP compatibility (isolated fixture, not upgrade proof)")
             finally:
                 if process.poll() is None:

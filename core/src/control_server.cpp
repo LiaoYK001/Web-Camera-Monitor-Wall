@@ -484,6 +484,13 @@ std::string permission_for_request(const HttpRequest &request)
         return "audit.view";
     if (target.starts_with("/api/v2/nodes") || target.starts_with("/api/v2/node-enrollments"))
         return "node.manage";
+    // Device-client administration surfaces keep the node.manage fence: the
+    // proxy attaches the internal administration header for these exact
+    // routes, so a live.view holder must not enumerate pending enrollments,
+    // approve devices, or inventory enrolled clients through the browser.
+    if (target == "/api/v2/enrollments" || target.starts_with("/api/v2/enrollments/") ||
+        target == "/api/v2/clients" || target.starts_with("/api/v2/clients/"))
+        return "node.manage";
     if (target.starts_with("/api/v2/storage-volumes") || target.starts_with("/api/v2/recording-placements") ||
         target.starts_with("/api/v2/archive-targets") || target.starts_with("/api/v2/backup-jobs"))
         return "storage.manage";
@@ -653,13 +660,16 @@ std::string camera_scope_for_target(std::string_view target, std::string_view bo
 enum class ClusterAuthorization { allowed, user_unknown, denied, unavailable };
 
 ClusterAuthorization cluster_authorize(std::string_view username, const HttpRequest &request,
-                                       const SessionIdentity *identity = nullptr)
+                                       const SessionIdentity *identity = nullptr,
+                                       std::string_view camera_scope_override = {})
 {
     const char *token_value = std::getenv("WEBOBS_CLUSTER_INTERNAL_TOKEN");
     if (!token_value)
         return ClusterAuthorization::unavailable;
     const std::string permission = permission_for_request(request);
-    const std::string camera_id = camera_scope_for_target(view(request.target()), view(request.body()));
+    const std::string camera_id = camera_scope_override.empty()
+                                      ? camera_scope_for_target(view(request.target()), view(request.body()))
+                                      : std::string(camera_scope_override);
     std::string body = "{\"cameraId\":\"" + json_escape(camera_id) +
                              "\",\"permission\":\"" + json_escape(permission) +
                              "\",\"username\":\"" + json_escape(username) + "\"";
@@ -4955,8 +4965,31 @@ private:
         if (session_record && !public_probe && !device_request && !static_resource &&
             target != "/api/v1/auth/session" && !target.starts_with("/api/v2/account/") &&
             cluster_authentication_enabled()) {
+            // Direct source routing hides a catalog camera behind an opaque
+            // sourceId; resolve it so route creation carries the same camera
+            // scope fence as the account-camera playback path.
+            std::string source_scope;
+            const std::string_view sources_prefix = "/api/v1/sources/";
+            const std::string_view gated_target = view(request.target());
+            const bool source_media_creation =
+                (request.method() == http::verb::post || request.method() == http::verb::put ||
+                 request.method() == http::verb::patch) &&
+                gated_target.starts_with(sources_prefix) &&
+                (gated_target.find("/whep") != std::string_view::npos ||
+                 gated_target.find("/audio-tracks") != std::string_view::npos);
+            if (source_media_creation) {
+                std::string_view source_id = gated_target.substr(sources_prefix.size());
+                source_id = source_id.substr(0, source_id.find_first_of("/?"));
+                if (!source_id.empty()) {
+                    const SceneDocument document = controller_.private_document_snapshot();
+                    const auto source = std::find_if(document.sources.begin(), document.sources.end(),
+                        [source_id](const SceneSource &candidate) { return candidate.id == source_id; });
+                    if (source != document.sources.end() && !source->camera_id.empty())
+                        source_scope = source->camera_id;
+                }
+            }
             const ClusterAuthorization authorization = cluster_authorize(session_record->user, request,
-                native_product ? &*session_record->identity : nullptr);
+                native_product ? &*session_record->identity : nullptr, source_scope);
             const bool legacy_admin = basic_auth_enabled &&
                 session_record->user == authenticator_.configured_username();
             if (authorization == ClusterAuthorization::user_unknown && !legacy_admin) {
@@ -5097,6 +5130,19 @@ private:
                     return decision == ClusterAuthorization::allowed &&
                         matches(sessions->validate_and_slide(token));
                 };
+            } else if (session_record && session_token && cluster_authentication_enabled()) {
+                // A username-only compatibility session has no identity to
+                // echo, but its socket must still stop broadcasting once the
+                // session row is revoked or the account disappears.
+                identity_check = [sessions = &session_store_, token = *session_token,
+                    principal = session_record->user] {
+                    if (!sessions->validate_and_slide(token)) return false;
+                    const HttpRequest check_request(http::verb::get, "/api/v1/ws", 11);
+                    const auto decision = cluster_authorize(principal, check_request, nullptr);
+                    if (decision == ClusterAuthorization::user_unknown)
+                        sessions->revoke_user(principal);
+                    return decision == ClusterAuthorization::allowed && !!sessions->validate_and_slide(token);
+                };
             }
             std::make_shared<WebSocketSession>(stream_.release_socket(), hub_, pool_, std::move(identity_check))
                 ->run(std::move(request), scene_event("scene.snapshot", snapshot.public_json));
@@ -5111,13 +5157,36 @@ private:
         const bool mutating = request.method() == http::verb::post || request.method() == http::verb::put ||
             request.method() == http::verb::patch || request.method() == http::verb::delete_;
         const auto actor = native_product && mutating ? session_record : std::nullopt;
+        const bool session_recheck = session_record && !actor;
         auto queued = std::make_shared<HttpRequest>(std::move(request));
-        const auto execute = [this, queued, cookie_token, actor, native_product] {
+        const auto execute = [this, queued, cookie_token, actor, session_record, session_recheck, native_product] {
             // The worker may start well after the initial HTTP gate. Never turn
             // that earlier decision into a permission to execute queued work.
             if (actor && cookie_token)
                 if (auto rejected = native_mutation_rejection(*queued, *cookie_token, *actor))
                     return std::move(*rejected);
+            if (session_recheck && cookie_token && session_record) {
+                // A queued request may outlive a logout or revocation decided
+                // after its gate, in either session mode. Recheck the session
+                // row locally before the handler runs; role/epoch authority
+                // remains fenced by the cluster decision at the gate and by
+                // the identity echo on the next request.
+                const auto matches = [&](const std::optional<SessionRecord> &record) {
+                    if (!record || record->user != session_record->user)
+                        return false;
+                    if (!session_record->identity)
+                        return true;
+                    return record->identity && record->identity->user_id == session_record->identity->user_id &&
+                        record->identity->auth_epoch == session_record->identity->auth_epoch;
+                };
+                if (!matches(session_store_.validate_and_slide(*cookie_token))) {
+                    session_store_.revoke(*cookie_token);
+                    HttpResponse rejected = response(http::status::unauthorized, queued->version(),
+                        error_body("session_revoked", "the account session is no longer valid"));
+                    rejected.set(http::field::set_cookie, session_store_.clear_cookie_header());
+                    return rejected;
+                }
+            }
             auto result = handle_request(*queued, controller_, studio_, hub_, whep_proxy_,
                 nvr_proxy_, camera_proxy_, allowed_origins_, runtime_status_, metrics_, authenticator_);
             if (native_product && cookie_token && result.result() == http::status::unauthorized) {
