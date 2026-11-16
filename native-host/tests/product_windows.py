@@ -357,6 +357,16 @@ def exercise(runtime, report, *, with_media=False, retained_profile=None):
                     "captureFailed": True, "diagnostic": {"stage": "timeout", "code": "capture-timeout"}})
                 checkpoint("pixels-" + label + "-capture-timeout")
                 raise
+            except Exception as error:
+                # Keep only the exception class and numeric Win32/POSIX code;
+                # never copy paths, command lines or private state.
+                evidence["captureLaunchError"] = {
+                    "type": type(error).__name__,
+                    "winerror": int(getattr(error, "winerror", 0) or 0),
+                    "errno": int(getattr(error, "errno", 0) or 0),
+                }
+                checkpoint("pixels-" + label + "-capture-error")
+                raise
             checkpoint("pixels-" + label + "-capture-returned")
             capture = pixel_windows.capture_report(result)
             checkpoint("pixels-" + label + "-capture-report")
