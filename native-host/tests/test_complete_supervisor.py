@@ -39,6 +39,8 @@ def exercise():
                      runtime / "services/desktop-tools/private_directory.py")
         supervisor_module = load("complete_product_supervisor",
                                  ROOT / "native-host/scripts/product_supervisor.py")
+        previous = os.environ.get("WEBOBS_PRODUCT_TEST_ROOT")
+        os.environ["WEBOBS_PRODUCT_TEST_ROOT"] = str(root)
         supervisor = supervisor_module.ProductSupervisor(runtime, root)
         try:
             assert supervisor.prepare() is True
@@ -59,6 +61,10 @@ def exercise():
             assert "WEBOBS_EVENTS_INTERNAL_PORT" not in environment, "per-boot ports must not leak from prepare"
         finally:
             supervisor.stop()
+            if previous is None:
+                os.environ.pop("WEBOBS_PRODUCT_TEST_ROOT", None)
+            else:
+                os.environ["WEBOBS_PRODUCT_TEST_ROOT"] = previous
         print("PASS complete supervisor paths, services, backup key and direct-only media policy")
 
 
