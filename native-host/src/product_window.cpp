@@ -407,8 +407,14 @@ class ProductWindow final : public QWidget {
 			return;
 		}
 		// Logout and teardown must remove protected Program pixels immediately,
-		// never through a fade that leaves the previous scene visible.
+		// never through a fade that leaves the previous scene visible. Cancel an
+		// in-flight transition first because the frontend refuses a new one while
+		// the previous fade is still active.
 		if (!tearing_down_ && blank_scene_ && !obs_source_removed(obs_scene_get_source(blank_scene_))) {
+			if (obs_source_t *output = obs_get_output_source(0)) {
+				obs_transition_set(output, obs_scene_get_source(blank_scene_));
+				obs_source_release(output);
+			}
 			select_frontend_transition("cut", 0);
 			obs_frontend_set_current_scene(obs_scene_get_source(blank_scene_));
 		}
@@ -454,6 +460,14 @@ class ProductWindow final : public QWidget {
 			return false;
 		}
 		select_frontend_transition(transition_kind, duration_ms);
+		// A new TAKE must not be silently dropped because an older fade is still
+		// running. Settle the active output on the last confirmed Program first.
+		if (obs_source_t *output = obs_get_output_source(0)) {
+			obs_source_t *settle = program_ && program_->scene ?
+				obs_scene_get_source(program_->scene) : obs_scene_get_source(blank_scene_);
+			if (settle) obs_transition_set(output, settle);
+			obs_source_release(output);
+		}
 		obs_frontend_set_current_scene(obs_scene_get_source(candidate->scene));
 		auto *selected = obs_frontend_get_current_scene();
 		const bool matched = selected == obs_scene_get_source(candidate->scene);
