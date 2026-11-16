@@ -355,9 +355,16 @@ def exercise(runtime, report, *, with_media=False, retained_profile=None):
                     str(HERE / "capture-pixels.ps1"), "-ExpectedProcessId", str(frontend_pid),
                     "-ExpectedExecutable", str(runtime / "bin/64bit/obs64.exe"),
                     "-ExpectedCreationTime", str(created), "-StateFile", str(metadata), "-OutputDirectory", str(target)]
-                result = subprocess.run(capture_command, capture_output=True, text=True, encoding="utf-8",
-                    errors="replace", timeout=35, close_fds=True,
+                process = subprocess.Popen(capture_command, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                    text=True, encoding="utf-8", errors="replace", close_fds=True,
                     creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+                try:
+                    stdout, stderr = process.communicate(timeout=35)
+                except subprocess.TimeoutExpired:
+                    process.kill()
+                    stdout, stderr = process.communicate()
+                    raise
+                result = subprocess.CompletedProcess(capture_command, process.returncode, stdout, stderr)
             except subprocess.TimeoutExpired:
                 evidence.setdefault("captures", []).append({"phase": label,
                     "captureFailed": True, "diagnostic": {"stage": "timeout", "code": "capture-timeout"}})
@@ -366,10 +373,14 @@ def exercise(runtime, report, *, with_media=False, retained_profile=None):
             except Exception as error:
                 # Keep only the exception class and numeric Win32/POSIX code;
                 # never copy paths, command lines or private state.
+                message = str(error)
+                for private_value in (str(metadata), str(target), str(runtime), str(profile)):
+                    message = message.replace(private_value, "<private>")
                 evidence["captureLaunchError"] = {
                     "type": type(error).__name__,
                     "winerror": int(getattr(error, "winerror", 0) or 0),
                     "errno": int(getattr(error, "errno", 0) or 0),
+                    "message": message[:200],
                 }
                 checkpoint("pixels-" + label + "-capture-error")
                 raise
