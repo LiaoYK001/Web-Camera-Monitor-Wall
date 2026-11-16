@@ -877,9 +877,10 @@ def exercise(runtime, report, *, with_media=False, retained_profile=None):
                 after_take = state().get("program", {}).get("sceneUuid")
                 assert isinstance(after_take, str) and after_take != before_take, "TAKE reused the previous Program scene"
                 time.sleep(1)  # Allow the cut TAKE and source retirement to settle.
-                code, _, runtime = request("/api/v1/studio/runtime", cookie=cookie)
-                assert code == 200 and runtime["native"] is True and runtime["status"] == "applied" and \
-                    runtime["appliedRevision"] == taken["revision"] and runtime["appliedSceneId"] == "fixture-alt", \
+                code, _, studio_runtime = request("/api/v1/studio/runtime", cookie=cookie)
+                assert code == 200 and studio_runtime["native"] is True and studio_runtime["status"] == "applied" and \
+                    studio_runtime["appliedRevision"] == taken["revision"] and \
+                    studio_runtime["appliedSceneId"] == "fixture-alt", \
                     "Program runtime receipt did not match the committed TAKE"
                 checkpoint("program-runtime-receipt")
                 check_pixels("program-after-take", quick_order=[1, 2, 3, 4, 5],
