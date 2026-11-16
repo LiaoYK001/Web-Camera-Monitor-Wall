@@ -54,7 +54,8 @@ def exercise():
             assert environment["WEBOBS_NVR_ENABLED"] == "true"
             assert environment["WEBOBS_GO2RTC_ENABLED"] == "true"
             assert environment["WEBOBS_COMPOSITE_ENABLED"] == "false"
-            assert environment["WEBOBS_FFMPEG_PATH"].endswith("bin/ffmpeg.exe")
+            assert Path(environment["WEBOBS_FFMPEG_PATH"]).name == "ffmpeg.exe"
+            assert Path(environment["WEBOBS_FFMPEG_PATH"]).parent.name == "bin"
             assert environment["WEBOBS_NVR_STORAGE"] == str(root / "recordings")
             assert environment["WEBOBS_BACKUP_KEY_FILE"] == str(key)
             assert environment["WEBOBS_GO2RTC_CONFIG"] == str(root / "config/go2rtc/go2rtc.yaml")
