@@ -23,3 +23,6 @@ Authentication, Studio/TAKE, media/audio/business integration, migration, native
 - 本机网格/Qt/实际libobs引用及协议回归通过；真实Windows安装态1/4/7路动态画面与恢复门禁待执行。
 
 Variable quick-wall selection is wired and locally tested; actual Windows final pixels/installation remain pending. This is not a complete-release qualification.
+
+原生宿主模式的普通设备配置目录统一要求 `device.manage`，不再只依赖v4.5预览标志。观看账号继续从原生过滤接口取得获准目录；预览与非预览实际HTTP均验证403及原生授权目录，非原生旧接口兼容仍保留。Windows完整候选尚待验证，完整R1审计仍开放。
+Native-host management catalogs consistently require device.manage across preview/internal modes. Native viewers retain their scoped catalog, and legacy non-native compatibility is tested separately. Full Windows and all-entry authorization qualification remain open.

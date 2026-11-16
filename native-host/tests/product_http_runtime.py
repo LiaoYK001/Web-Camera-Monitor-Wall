@@ -113,7 +113,7 @@ def load(name, path):
     return module
 
 
-def exercise(binary, web_root=None):
+def exercise(binary, web_root=None, preview=False):
     with tempfile.TemporaryDirectory(prefix="webobs-product-http-") as temporary, contextlib.ExitStack() as cleanup:
         private = Path(temporary)
         if os.name == "nt":
@@ -237,7 +237,7 @@ def exercise(binary, web_root=None):
             WEBOBS_CLUSTER_INTERNAL_PORT=str(account_server.server_port),
             WEBOBS_CAMERA_INTERNAL_PORT=str(camera_server.server_port),
             WEBOBS_CLUSTER_INTERNAL_TOKEN=cluster.INTERNAL_TOKEN, WEBOBS_NATIVE_HOST_TOKEN=host_secret,
-            WEBOBS_NATIVE_PREVIEW="true",
+            WEBOBS_NATIVE_PREVIEW="true" if preview else "false",
             WEBOBS_COMPAT_BASIC_AUTH="false", WEBOBS_SESSION_COOKIE_SECURE="false",
             WEBOBS_SESSION_DATABASE=str(private / "sessions.db"), WEBOBS_SCENE_FILE=str(private / "scene.json"),
             WEBOBS_WEBRTC_ENABLED="true", WEBOBS_COMPOSITE_ENABLED="false", WEBOBS_NVR_ENABLED="false",
@@ -736,6 +736,8 @@ def exercise(binary, web_root=None):
                                            (compatibility_hash,)).fetchone()
                     assert row == (None, None), "non-native compatibility login protocol changed"
                 assert request("/api/v1/auth/session", cookie_override=compatibility_cookie)[0] == 200
+                assert request("/api/v1/cameras", cookie_override=compatibility_cookie)[0] == 200
+                assert request("/api/v2/source-catalog?page=1&limit=256", cookie_override=compatibility_cookie)[0] == 200
                 code, _, legacy_studio = request("/api/v1/studio", cookie_override=compatibility_cookie)
                 assert code == 200
                 legacy_studio["scenes"][1]["name"] = "Legacy HTTP mutation remains available"
@@ -769,4 +771,6 @@ if __name__ == "__main__":
     parser.add_argument("--binary", type=Path, required=True)
     parser.add_argument("--web-root", type=Path, help="Actual staged UI; omitted only for isolated protocol fixtures")
     arguments = parser.parse_args()
-    exercise(arguments.binary.resolve(strict=True), arguments.web_root)
+    for preview in (False, True):
+        exercise(arguments.binary.resolve(strict=True), arguments.web_root, preview)
+        print("PASS actual native management catalog policy: " + ("preview" if preview else "internal"))
