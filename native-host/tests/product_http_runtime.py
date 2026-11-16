@@ -661,6 +661,20 @@ def exercise(binary, web_root=None, preview=False):
                     first_ws.wait_closed()
                     second_ws.ping()
                     assert request("/api/v1/auth/session", cookie_override=parallel_cookie)[0] == 200
+                    # Device-client administration surfaces (enrollment inventory,
+                    # approval, enrolled clients) must fail closed for holders of
+                    # live.view even though the proxy attaches the internal
+                    # administration header for these exact routes.
+                    for fenced in ("/api/v2/enrollments", "/api/v2/clients"):
+                        code, _, fenced_body = request(fenced, cookie_override=parallel_cookie)
+                        assert code == 403 and fenced_body.get("error", {}).get("code") == "permission_rejected", \
+                            "viewer reached device-client administration inventory"
+                    code, _, _ = request("/api/v2/enrollments/device-1/approve", {}, method="POST",
+                        cookie_override=parallel_cookie)
+                    assert code == 403, "viewer approved a pending device enrollment"
+                    code, _, _ = request("/api/v2/enrollments", cookie_override=admin_cookie)
+                    assert code != 403 and code != 401, \
+                        "device administration fence rejected the administrator session"
                     cluster.STORE.change_own_password("native-viewer", {
                         "currentPassword": password, "newPassword": password})
                     second_ws.wait_closed()

@@ -484,6 +484,13 @@ std::string permission_for_request(const HttpRequest &request)
         return "audit.view";
     if (target.starts_with("/api/v2/nodes") || target.starts_with("/api/v2/node-enrollments"))
         return "node.manage";
+    // Device-client administration surfaces keep the node.manage fence: the
+    // proxy attaches the internal administration header for these exact
+    // routes, so a live.view holder must not enumerate pending enrollments,
+    // approve devices, or inventory enrolled clients through the browser.
+    if (target == "/api/v2/enrollments" || target.starts_with("/api/v2/enrollments/") ||
+        target == "/api/v2/clients" || target.starts_with("/api/v2/clients/"))
+        return "node.manage";
     if (target.starts_with("/api/v2/storage-volumes") || target.starts_with("/api/v2/recording-placements") ||
         target.starts_with("/api/v2/archive-targets") || target.starts_with("/api/v2/backup-jobs"))
         return "storage.manage";
@@ -5111,13 +5118,32 @@ private:
         const bool mutating = request.method() == http::verb::post || request.method() == http::verb::put ||
             request.method() == http::verb::patch || request.method() == http::verb::delete_;
         const auto actor = native_product && mutating ? session_record : std::nullopt;
+        const bool bound_read = native_product && !mutating && session_record && session_record->identity;
         auto queued = std::make_shared<HttpRequest>(std::move(request));
-        const auto execute = [this, queued, cookie_token, actor, native_product] {
+        const auto execute = [this, queued, cookie_token, actor, session_record, bound_read, native_product] {
             // The worker may start well after the initial HTTP gate. Never turn
             // that earlier decision into a permission to execute queued work.
             if (actor && cookie_token)
                 if (auto rejected = native_mutation_rejection(*queued, *cookie_token, *actor))
                     return std::move(*rejected);
+            if (bound_read && cookie_token && session_record) {
+                // A queued read may outlive a local logout decided after its
+                // gate. Recheck the bound session row before the handler runs;
+                // role/epoch authority remains fenced by the cluster identity
+                // echo on the next decision.
+                const auto matches = [&](const std::optional<SessionRecord> &record) {
+                    return record && record->identity && record->user == session_record->user &&
+                        record->identity->user_id == session_record->identity->user_id &&
+                        record->identity->auth_epoch == session_record->identity->auth_epoch;
+                };
+                if (!matches(session_store_.validate_and_slide(*cookie_token))) {
+                    session_store_.revoke(*cookie_token);
+                    HttpResponse rejected = response(http::status::unauthorized, queued->version(),
+                        error_body("session_revoked", "the account session is no longer valid"));
+                    rejected.set(http::field::set_cookie, session_store_.clear_cookie_header());
+                    return rejected;
+                }
+            }
             auto result = handle_request(*queued, controller_, studio_, hub_, whep_proxy_,
                 nvr_proxy_, camera_proxy_, allowed_origins_, runtime_status_, metrics_, authenticator_);
             if (native_product && cookie_token && result.result() == http::status::unauthorized) {
