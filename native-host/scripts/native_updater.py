@@ -26,6 +26,7 @@ MAX_INSTALLER = 4 * 1024 * 1024 * 1024
 VERSION = re.compile(r"^(\d+)\.(\d+)\.(\d+)(?:-([0-9A-Za-z.-]+))?$")
 ALLOWED_HOSTS = ("github.com", "www.github.com", "objects.githubusercontent.com",
                  "release-assets.githubusercontent.com")
+RELEASE_PREFIX = "/LiaoYK001/Web-Camera-Monitor-Wall/releases/download/"
 
 
 class UpdateError(Exception):
@@ -54,7 +55,10 @@ def is_newer(current: str, candidate: str) -> bool:
 
 def allowed(url: str, *, allow_loopback: bool) -> urllib.parse.ParseResult:
     parsed = urllib.parse.urlsplit(url)
-    if parsed.scheme == "https" and parsed.hostname in ALLOWED_HOSTS and not parsed.username and not parsed.password:
+    if (parsed.scheme == "https" and parsed.hostname in ALLOWED_HOSTS and
+            not parsed.username and not parsed.password):
+        if parsed.hostname in ("github.com", "www.github.com") and not parsed.path.startswith(RELEASE_PREFIX):
+            raise UpdateError("update source is not a WebOBS release asset")
         return parsed
     if allow_loopback and parsed.scheme == "http" and parsed.hostname in ("127.0.0.1", "localhost"):
         return parsed

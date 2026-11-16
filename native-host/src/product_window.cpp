@@ -275,7 +275,7 @@ class ProductWindow final : public QWidget {
 		QJsonArray projector_states;
 		auto windows = state.value("windows").toArray();
 		if (program_projector_ && program_projector_->isVisible()) {
-			windows.append(QJsonObject{{"role", "program-projector"},
+			windows.append(QJsonObject{{"role", program_projector_->isFullScreen() ? "program-fullscreen" : "program-projector"},
 				{"qtClass", QString::fromLatin1(program_projector_->metaObject()->className())},
 				{"hwnd", QString::number(quintptr(program_projector_->winId()), 16)},
 				{"rootHwnd", QString::number(quintptr(program_projector_->winId()), 16)}});
@@ -721,6 +721,7 @@ class ProductWindow final : public QWidget {
 			return;
 		}
 		program_projector_ = opened;
+		opened->installEventFilter(this);
 		opened->setWindowTitle(tr("WebOBS Program 投影 · F11 全屏"));
 		connect(opened, &QObject::destroyed, this, [this] {
 			program_projector_.clear();
@@ -1286,6 +1287,21 @@ class ProductWindow final : public QWidget {
 	}
 	bool eventFilter(QObject *object, QEvent *event) override
 	{
+		if (program_projector_ && object == program_projector_.data()) {
+			if (event->type() == QEvent::WindowStateChange)
+				QTimer::singleShot(0, this, [this] { observe_current_media(); });
+			if (event->type() == QEvent::KeyPress && static_cast<QKeyEvent *>(event)->key() == Qt::Key_F11) {
+				if (!static_cast<QKeyEvent *>(event)->isAutoRepeat()) toggle_projector_fullscreen(program_projector_);
+				observe_current_media();
+				return true;
+			}
+			if (event->type() == QEvent::MouseButtonDblClick &&
+			    static_cast<QMouseEvent *>(event)->button() == Qt::LeftButton) {
+				toggle_projector_fullscreen(program_projector_);
+				observe_current_media();
+				return true;
+			}
+		}
 		for (const auto &view : projectors_) {
 			if (!view || object != view->window.data()) continue;
 			if (event->type() == QEvent::WindowStateChange)
