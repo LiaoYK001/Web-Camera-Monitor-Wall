@@ -703,8 +703,11 @@ def exercise(runtime, report, *, with_media=False, retained_profile=None):
                 wait_for(lambda: any(window.get("role") == "program-projector" for window in state().get("windows", [])),
                     "native Program projector did not open", timeout=8)
                 checkpoint("program-projector-open")
+                # fixture-five deliberately keeps its fifth source with explicit
+                # empty audioInputs, so its silent video variant is a separate
+                # owned source from the normal quick-wall input (5 + 1 = 6).
                 check_pixels("program-before-take", quick_order=[1, 2, 3, 4, 5],
-                    program_scene="fixture-five", program_media=5,
+                    expected_media=6, program_scene="fixture-five", program_media=5,
                     projector_orders={"program-projector": "forward"})
                 checkpoint("program-before-pixels")
                 before_take = state().get("program", {}).get("sceneUuid")
@@ -727,7 +730,7 @@ def exercise(runtime, report, *, with_media=False, retained_profile=None):
                     "Program runtime receipt did not match the committed TAKE"
                 checkpoint("program-runtime-receipt")
                 check_pixels("program-after-take", quick_order=[1, 2, 3, 4, 5],
-                    program_scene="fixture-alt", program_media=1,
+                    expected_media=6, program_scene="fixture-alt", program_media=1,
                     projector_orders={"program-projector": "quick-1"})
                 checkpoint("program-after-pixels")
                 assert ui("projector-close")
