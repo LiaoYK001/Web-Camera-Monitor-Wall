@@ -204,6 +204,24 @@ export async function studioAction(
   return (await response.json()) as StudioDocument;
 }
 
+export interface StudioRuntimeStatus {
+  native: boolean;
+  studioRevision: number;
+  programSceneId: string;
+  status: 'idle' | 'pending' | 'applied' | 'failed';
+  targetRevision: number;
+  targetSceneId: string;
+  appliedRevision: number;
+  appliedSceneId: string;
+  error: string;
+}
+
+export async function fetchStudioRuntime(signal?: AbortSignal): Promise<StudioRuntimeStatus> {
+  const response = await fetch('/api/v1/studio/runtime', { cache: 'no-store', signal });
+  if (!response.ok) throw await parseError(response);
+  return (await response.json()) as StudioRuntimeStatus;
+}
+
 export { connectSceneEvents } from './sceneEvents';
 
 async function nvrRequest<T>(path: string, init?: RequestInit): Promise<T> {

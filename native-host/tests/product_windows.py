@@ -223,7 +223,8 @@ def exercise(runtime, report, *, with_media=False, retained_profile=None):
             wait_for(lambda: ui("inspect"), "actual product controls not accessible")
             return value
 
-        def check_graph(*, repeat_first=False, reverse=False, expected_media=None, quick_order=None):
+        def check_graph(*, repeat_first=False, reverse=False, expected_media=None, quick_order=None,
+                program_scene=None, program_media=None):
             order = quick_order if quick_order is not None else [1] * 5 if repeat_first else list(range(5, 0, -1)) if reverse else list(range(1, 6))
             expected = expected_media if expected_media is not None else len(set(order))
             pairs = [(f"fixture-{index}", "main") for index in order]
@@ -236,7 +237,7 @@ def exercise(runtime, report, *, with_media=False, retained_profile=None):
             observed = wait_for(ready, "UI did not settle the complete authorized camera graph", timeout=35)
             assert observed["sessionBound"] is True and observed["mediaSources"] == expected
             assert observed.get("previewLocked") is True
-            check_monitor_program(observed)
+            check_monitor_program(observed, program_scene=program_scene, program_media=program_media)
             import smoke_windows
             smoke_windows.check_renderer_receipt(observed.get("renderer"))
             assert len({item["sourceUuid"] for item in observed["bindings"]}) == len(set(order))
@@ -246,12 +247,20 @@ def exercise(runtime, report, *, with_media=False, retained_profile=None):
                 "outputWidth": 1920, "outputHeight": 1080, "fpsNumerator": 30, "fpsDenominator": 1}
             return observed
 
-        def check_monitor_program(observed=None):
-            program = (observed if observed is not None else state()).get("program", {})
+        def check_monitor_program(observed=None, *, program_scene=None, program_media=None):
+            value = observed if observed is not None else state()
+            program = value.get("program", {})
             assert program.get("studioMode") is True, "local monitor lost Preview/Program separation"
-            assert program.get("sceneUuid") == idle_program_uuid and program.get("mediaSources") == 0, \
-                "local monitor selection changed or populated global Program output"
-            assert program.get("monitorIsProgram") is False, "local monitor became the Program scene"
+            if program_scene is None:
+                assert program.get("sceneUuid") == idle_program_uuid and program.get("mediaSources") == 0, \
+                    "local monitor selection changed or populated global Program output"
+                assert program.get("monitorIsProgram") is False, "local monitor became the Program scene"
+            else:
+                expected_media = 0 if program_media is None else program_media
+                assert value.get("programSceneId") == program_scene, "native Program did not apply the TAKE target"
+                assert value.get("programApplyState") == "applied", "native Program has not confirmed the TAKE"
+                assert program.get("mediaSources") == expected_media, \
+                    "native Program pixels do not match the applied scene media count"
 
         def check_projectors(orders, reference):
             observed = state()
@@ -286,8 +295,9 @@ def exercise(runtime, report, *, with_media=False, retained_profile=None):
                         return False
             return True
 
-        def check_pixels(label, *, blank=False, repeat_first=False, reverse=False, expected_media=None, projector_orders=None, quick_order=None):
-            check_monitor_program()
+        def check_pixels(label, *, blank=False, repeat_first=False, reverse=False, expected_media=None,
+                projector_orders=None, quick_order=None, program_scene=None, program_media=None):
+            check_monitor_program(program_scene=program_scene, program_media=program_media)
             from ctypes import wintypes
             import pixel_windows
             kernel = ctypes.WinDLL("kernel32", use_last_error=True)
@@ -303,7 +313,9 @@ def exercise(runtime, report, *, with_media=False, retained_profile=None):
                 created = pixel_windows.creation_time(Frontend())
             finally:
                 kernel.CloseHandle(handle)
-            observed = state() if blank else check_graph(repeat_first=repeat_first, reverse=reverse, expected_media=expected_media, quick_order=quick_order)
+            observed = state() if blank else check_graph(repeat_first=repeat_first, reverse=reverse,
+                expected_media=expected_media, quick_order=quick_order,
+                program_scene=program_scene, program_media=program_media)
             if blank:
                 assert observed.get("phase") == "locked" and observed.get("mediaSources") == 0
             assert observed.get("windows", [{}])[0].get("qtClass") == "OBSBasicPreview"
@@ -524,11 +536,15 @@ def exercise(runtime, report, *, with_media=False, retained_profile=None):
                         "x": (index % 3) * 640, "y": (index // 3) * 540, "width": 640, "height": 540,
                         "scaleMode": "contain", "crop": {"top": 0, "right": 0, "bottom": 0, "left": 0},
                         "visible": True, "locked": True, "zIndex": index})
-                studio.update(programSceneId="fixture-five", previewSceneId="fixture-five", scenes=[fixture_scene])
+                empty_scene = {"schemaVersion": 6, "revision": 0, "id": "fixture-empty", "name": "Empty Program",
+                    "canvas": {"width": 1920, "height": 1080, "backgroundColor": "#000000"}, "sources": [], "items": []}
+                studio.update(programSceneId="fixture-empty", previewSceneId="fixture-five",
+                    scenes=[fixture_scene, empty_scene])
                 code, _, studio = request("/api/v1/studio", studio, cookie, method="PUT", revision=studio["revision"])
                 assert code == 200, "ordinary Studio API could not save the camera scene"
                 assert ui("refresh")
-                wait_for(lambda: state().get("studioChoices") == ["fixture-five"], "saved Studio scene did not enter native choices")
+                wait_for(lambda: state().get("studioChoices", [])[:1] == ["fixture-five"],
+                    "saved Studio scene did not enter native choices")
                 assert ui("scene", index=1, fixtureName="Fixture Studio five")
                 wait_for(lambda: state().get("sceneId") == "fixture-five", "native action did not select saved Studio scene")
                 check_graph()
@@ -651,6 +667,73 @@ def exercise(runtime, report, *, with_media=False, retained_profile=None):
                 evidence["checks"].extend(["two-fixed-scene-projectors-share-owned-decoders",
                     "main-switch-preserves-two-different-projector-scenes", "native-projector-fullscreen-windowed-final-pixels",
                     "closing-one-projector-preserves-other-and-main"])
+                phase = "native-program-take"
+                assert ui("choose", indices=[1, 2, 3, 4, 5])
+                check_graph()
+                alt_scene = {"schemaVersion": 6, "revision": 0, "id": "fixture-alt", "name": "Fixture Program alt",
+                    "canvas": {"width": 1920, "height": 1080, "backgroundColor": "#000000"},
+                    "sources": [{"id": "fixture-alt-source", "kind": "camera", "name": "Program alt camera",
+                        "cameraId": "fixture-1", "profileId": "main", "hardwareDecode": "auto",
+                        "muted": True, "volume": 1, "syncOffsetMs": 0, "monitoring": "off", "audioTrack": 1,
+                        "audioInputs": []}],
+                    "items": [{"id": "fixture-alt-item", "sourceId": "fixture-alt-source", "x": 0, "y": 0,
+                        "width": 1920, "height": 1080, "scaleMode": "contain",
+                        "crop": {"top": 0, "right": 0, "bottom": 0, "left": 0},
+                        "visible": True, "locked": True, "zIndex": 0}]}
+                code, _, studio = request("/api/v1/studio", cookie=cookie)
+                assert code == 200
+                kept = [scene for scene in studio["scenes"] if scene["id"] in ("fixture-five", "fixture-empty")]
+                assert {scene["id"] for scene in kept} == {"fixture-five", "fixture-empty"}
+                studio.update(programSceneId="fixture-five", previewSceneId="fixture-alt",
+                    transition={"kind": "cut", "durationMs": 0}, scenes=kept + [alt_scene])
+                code, _, studio = request("/api/v1/studio", studio, cookie=cookie, method="PUT", revision=studio["revision"])
+                assert code == 200, "Studio accepted a second scene for the Program TAKE"
+                wait_for(lambda: state().get("programSceneId") == "fixture-five" and
+                    state().get("programApplyState") == "applied" and
+                    state().get("program", {}).get("mediaSources") == 5,
+                    "native Program did not apply the saved scene", timeout=20)
+                check_monitor_program(program_scene="fixture-five", program_media=5)
+                assert ui("program-projector")
+                wait_for(lambda: any(window.get("role") == "program-projector" for window in state().get("windows", [])),
+                    "native Program projector did not open", timeout=8)
+                check_pixels("program-before-take", quick_order=[1, 2, 3, 4, 5],
+                    program_scene="fixture-five", program_media=5,
+                    projector_orders={"program-projector": "forward"})
+                before_take = state().get("program", {}).get("sceneUuid")
+                assert isinstance(before_take, str) and before_take
+                code, _, taken = request("/api/v1/studio/take", cookie=cookie, method="POST", revision=studio["revision"])
+                assert code == 200 and taken["programSceneId"] == "fixture-alt", "Studio TAKE did not commit the preview scene"
+                wait_for(lambda: state().get("programSceneId") == "fixture-alt" and
+                    state().get("programApplyState") == "applied" and
+                    state().get("program", {}).get("mediaSources") == 1,
+                    "native Program did not switch to the TAKE target", timeout=20)
+                after_take = state().get("program", {}).get("sceneUuid")
+                assert isinstance(after_take, str) and after_take != before_take, "TAKE reused the previous Program scene"
+                code, _, runtime = request("/api/v1/studio/runtime", cookie=cookie)
+                assert code == 200 and runtime["native"] is True and runtime["status"] == "applied" and \
+                    runtime["appliedRevision"] == taken["revision"] and runtime["appliedSceneId"] == "fixture-alt", \
+                    "Program runtime receipt did not match the committed TAKE"
+                check_pixels("program-after-take", quick_order=[1, 2, 3, 4, 5],
+                    program_scene="fixture-alt", program_media=1,
+                    projector_orders={"program-projector": "quick-1"})
+                assert ui("projector-close")
+                wait_for(lambda: not state().get("windows") or
+                    all(window.get("role") == "main-preview" for window in state().get("windows", [])),
+                    "Program projector did not close", timeout=8)
+                code, _, studio = request("/api/v1/studio", cookie=cookie)
+                assert code == 200
+                studio["programSceneId"] = "fixture-empty"
+                code, _, studio = request("/api/v1/studio", studio, cookie=cookie, method="PUT",
+                    revision=studio["revision"])
+                assert code == 200
+                wait_for(lambda: state().get("programApplyState") == "idle" and
+                    state().get("program", {}).get("mediaSources") == 0,
+                    "empty Program scene did not clear the previous protected output", timeout=12)
+                check_pixels("program-cleared", quick_order=[1, 2, 3, 4, 5])
+                evidence["checks"].extend(["studio-take-applies-real-obs-program-final-pixels",
+                    "program-projector-shows-real-program-not-preview",
+                    "take-document-revision-and-program-receipt-match",
+                    "empty-program-scene-clears-previous-output"])
             phase = "logout"
             assert ui("logout")
             wait_for(lambda: state().get("phase") == "locked", "logout did not lock product UI")

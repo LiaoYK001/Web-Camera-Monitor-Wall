@@ -62,6 +62,7 @@ class ProductWindow final : public QWidget {
 	QWidget *preview_ = nullptr;
 	std::unique_ptr<ProductHttpClient> client_;
 	QTimer heartbeat_;
+	QTimer program_sync_;
 	QTimer retirement_;
 	QTimer settlement_;
 	QElapsedTimer settlement_elapsed_;
@@ -84,6 +85,16 @@ class ProductWindow final : public QWidget {
 	std::vector<QComboBox *> slots_;
 	ProductSourcePool source_pool_;
 	std::shared_ptr<ProductSceneGraph> wall_;
+	std::shared_ptr<ProductSceneGraph> program_;
+	QString program_scene_id_;
+	QString program_fingerprint_;
+	qint64 program_studio_revision_ = -1;
+	qint64 program_target_revision_ = -1;
+	QString program_target_scene_id_;
+	QString program_target_fingerprint_;
+	QString program_apply_state_ = "idle";
+	bool program_sync_pending_ = false;
+	quint64 program_generation_ = 0;
 	obs_scene_t *blank_scene_ = nullptr;
 	QString idle_program_uuid_;
 	bool tearing_down_ = false;
@@ -101,6 +112,8 @@ class ProductWindow final : public QWidget {
 	std::array<std::unique_ptr<ProjectorView>, 2> projectors_;
 	std::array<QPushButton *, 2> projector_buttons_{};
 	QPushButton *close_projectors_ = nullptr;
+	QPushButton *program_projector_button_ = nullptr;
+	QPointer<QWidget> program_projector_;
 	QPushButton *stats_button_ = nullptr;
 	QPointer<QWidget> stats_window_;
 	std::array<bool, 2> projector_pending_{};
@@ -138,6 +151,7 @@ class ProductWindow final : public QWidget {
 			if (graph) for (const auto &input : graph->video_progress()) inputs.emplace(input.uuid, input);
 		};
 		collect(wall_);
+		collect(program_);
 		for (const auto &view : projectors_) if (view && view->window) collect(view->graph);
 		std::erase_if(input_health_, [&](const auto &entry) { return !inputs.contains(entry.first); });
 		int received = 0, progressing = 0, stalled = 0, unavailable = 0;
@@ -175,6 +189,7 @@ class ProductWindow final : public QWidget {
 	{
 		std::set<std::string> inputs;
 		if (wall_) inputs.insert(wall_->uuids.begin(), wall_->uuids.end());
+		if (program_) inputs.insert(program_->uuids.begin(), program_->uuids.end());
 		for (const auto &view : projectors_)
 			if (view && view->window) inputs.insert(view->graph->uuids.begin(), view->graph->uuids.end());
 		return inputs.size();
@@ -237,6 +252,10 @@ class ProductWindow final : public QWidget {
 			{"sessionBound", !user_id_.isEmpty()}, {"mediaSources", media_sources}, {"bindings", bindings},
 			{"videoAvailable", video_available}, {"hardwareDecodeVerified", false}};
 		state.insert("previewLocked", preview_ && preview_->property("webobsPreviewLocked").toBool());
+		state.insert("programSceneId", program_scene_id_);
+		state.insert("programSceneFingerprint", program_fingerprint_);
+		state.insert("programStudioRevision", program_studio_revision_);
+		state.insert("programApplyState", program_apply_state_);
 		state.insert("program", program_state());
 		state.insert("startupStudioDeferred", frontend_->property("webobsStudioDeferredToProduct").toBool());
 		state.insert("restoreGuardHits", frontend_->property("webobsRestoreGuardHits").toInt());
@@ -255,6 +274,12 @@ class ProductWindow final : public QWidget {
 				{"rootHwnd", QString::number(quintptr(window()->winId()), 16)}}});
 		QJsonArray projector_states;
 		auto windows = state.value("windows").toArray();
+		if (program_projector_ && program_projector_->isVisible()) {
+			windows.append(QJsonObject{{"role", "program-projector"},
+				{"qtClass", QString::fromLatin1(program_projector_->metaObject()->className())},
+				{"hwnd", QString::number(quintptr(program_projector_->winId()), 16)},
+				{"rootHwnd", QString::number(quintptr(program_projector_->winId()), 16)}});
+		}
 		for (std::size_t i = 0; i < projectors_.size(); ++i) {
 			if (!projectors_[i] || !projectors_[i]->window) continue;
 			const auto &view = *projectors_[i];
@@ -302,7 +327,9 @@ class ProductWindow final : public QWidget {
 			if (projector_buttons_[i])
 				projector_buttons_[i]->setEnabled(!user_id_.isEmpty() && !applying_ && wall_ && !projector_pending_[i]);
 		if (close_projectors_)
-			close_projectors_->setEnabled(bool(projectors_[0]) || bool(projectors_[1]));
+			close_projectors_->setEnabled(bool(projectors_[0]) || bool(projectors_[1]) || bool(program_projector_));
+		if (program_projector_button_)
+			program_projector_button_->setEnabled(!user_id_.isEmpty() && !applying_ && bool(program_));
 	}
 	void observe_current_media()
 	{
@@ -337,10 +364,266 @@ class ProductWindow final : public QWidget {
 		}
 		wall_.reset();
 	}
+	void select_frontend_transition(const QString &kind, int duration_ms)
+	{
+		obs_frontend_source_list list{};
+		obs_frontend_get_transitions(&list);
+		const char *wanted = kind == "fade" ? "fade_transition" : "cut_transition";
+		obs_source_t *chosen = nullptr;
+		for (std::size_t i = 0; i < list.sources.num; ++i) {
+			if (list.sources.array[i] && QString::fromUtf8(obs_source_get_unversioned_id(list.sources.array[i])) == wanted) {
+				chosen = list.sources.array[i];
+				break;
+			}
+		}
+		if (chosen) obs_frontend_set_current_transition(chosen);
+		obs_frontend_source_list_free(&list);
+		obs_frontend_set_transition_duration(kind == "fade" ? std::clamp(duration_ms, 50, 10000) : 0);
+	}
+
+	void report_program(const QString &state, qint64 revision, const QString &scene_id,
+		const QString &fingerprint, const QString &error = {})
+	{
+		if (user_id_.isEmpty() || revision < 0 || scene_id.isEmpty()) return;
+		QJsonObject body{{"revision", revision}, {"sceneId", scene_id},
+			{"fingerprint", fingerprint}, {"status", state}};
+		if (!error.isEmpty()) body.insert("error", error);
+		request("/api/v1/native/studio/program", "POST", body, [](int, const QJsonObject &) {});
+	}
+
+	void clear_program_media()
+	{
+		++program_generation_;
+		program_sync_pending_ = false;
+		program_apply_state_ = "idle";
+		program_scene_id_.clear();
+		program_fingerprint_.clear();
+		program_studio_revision_ = -1;
+		program_target_revision_ = -1;
+		program_target_scene_id_.clear();
+		program_target_fingerprint_.clear();
+		if (!obs_initialized()) {
+			program_.reset();
+			update_projector_controls();
+			return;
+		}
+		// Logout and teardown must remove protected Program pixels immediately,
+		// never through a fade that leaves the previous scene visible. Cancel an
+		// in-flight transition first because the frontend refuses a new one while
+		// the previous fade is still active.
+		if (!tearing_down_ && blank_scene_ && !obs_source_removed(obs_scene_get_source(blank_scene_))) {
+			if (obs_source_t *output = obs_get_output_source(0)) {
+				obs_transition_set(output, obs_scene_get_source(blank_scene_));
+				obs_source_release(output);
+			}
+			select_frontend_transition("cut", 0);
+			obs_frontend_set_current_scene(obs_scene_get_source(blank_scene_));
+		}
+		program_.reset();
+		update_projector_controls();
+	}
+
+	void fail_program(qint64 revision, const QString &scene_id, const QString &fingerprint,
+		const QString &error)
+	{
+		program_target_revision_ = revision;
+		program_target_scene_id_ = scene_id;
+		program_target_fingerprint_ = fingerprint;
+		program_apply_state_ = "failed";
+		report_program("failed", revision, scene_id, fingerprint, error);
+		observe_current_media();
+	}
+
+	bool apply_program_graph(const SceneDocument &document, const std::vector<ProductCamera> &cameras,
+		const QJsonObject &video, const QString &scene_id, qint64 studio_revision,
+		const QString &fingerprint, const QString &transition_kind, int duration_ms, std::string &error)
+	{
+		obs_video_info actual{};
+		const bool same_video = obs_get_video_info(&actual) &&
+			actual.base_width == unsigned(video.value("width").toInt()) &&
+			actual.base_height == unsigned(video.value("height").toInt()) &&
+			actual.output_width == actual.base_width && actual.output_height == actual.base_height &&
+			actual.fps_den != 0 && std::uint64_t(actual.fps_num) ==
+			std::uint64_t(video.value("fps").toInt()) * actual.fps_den;
+		if (!same_video) {
+			if (wall_ || projectors_[0] || projectors_[1]) {
+				error = "program-canvas-busy";
+				return false;
+			}
+			program_.reset();
+			if (!apply_product_video_config(video.value("width").toInt(), video.value("height").toInt(),
+				video.value("fps").toInt(), error))
+				return false;
+		}
+		auto candidate = create_product_scene(source_pool_, user_id_.toStdString(), document, cameras, error);
+		if (!candidate || !candidate->scene) {
+			if (error.isEmpty()) error = "program-graph-create-failed";
+			return false;
+		}
+		select_frontend_transition(transition_kind, duration_ms);
+		// A new TAKE must not be silently dropped because an older fade is still
+		// running. Settle the active output on the last confirmed Program first.
+		if (obs_source_t *output = obs_get_output_source(0)) {
+			obs_source_t *settle = program_ && program_->scene ?
+				obs_scene_get_source(program_->scene) : obs_scene_get_source(blank_scene_);
+			if (settle) obs_transition_set(output, settle);
+			obs_source_release(output);
+		}
+		obs_frontend_set_current_scene(obs_scene_get_source(candidate->scene));
+		auto *selected = obs_frontend_get_current_scene();
+		const bool matched = selected == obs_scene_get_source(candidate->scene);
+		obs_source_release(selected);
+		if (!matched) {
+			error = "program-transition-not-observed";
+			return false;
+		}
+		// The outgoing scene remains referenced by OBS for the fade duration.
+		auto retired = std::move(program_);
+		program_ = std::move(candidate);
+		program_scene_id_ = scene_id;
+		program_fingerprint_ = fingerprint;
+		program_studio_revision_ = studio_revision;
+		program_target_revision_ = studio_revision;
+		program_target_scene_id_ = scene_id;
+		program_target_fingerprint_ = fingerprint;
+		program_apply_state_ = "applied";
+		if (retired) {
+			const int retired_after = transition_kind == "fade" ? duration_ms + 750 : 0;
+			QTimer::singleShot(retired_after, this, [retired = std::move(retired)] {});
+		}
+		report_program("applied", studio_revision, scene_id, fingerprint);
+		update_projector_controls();
+		observe_current_media();
+		return true;
+	}
+
+	void sync_program()
+	{
+		if (user_id_.isEmpty() || applying_ || program_sync_pending_ || tearing_down_) return;
+		program_sync_pending_ = true;
+		const auto generation = program_generation_;
+		request("/api/v1/native/studio", "GET", {}, [this, generation](int code, const QJsonObject &body) {
+			program_sync_pending_ = false;
+			if (generation != program_generation_ || user_id_.isEmpty() || tearing_down_) return;
+			if (code == 401 || code == 403) {
+				locked(tr("会话或场景权限已失效，Program 已锁定。"));
+				return;
+			}
+			if (code != 200) return;
+			const auto revision = body.value("revision").toInteger(-1);
+			const auto scene_id = body.value("programSceneId").toString();
+			const auto fingerprint = body.value("programFingerprint").toString();
+			const bool supported = body.value("programSupported").toBool();
+			if (revision < 0 || scene_id.isEmpty()) return;
+			if (body.value("programEmpty").toBool()) {
+				if (!program_scene_id_.isEmpty() || program_) {
+					clear_program_media();
+					observe_current_media();
+				}
+				return;
+			}
+			if (!supported || !QRegularExpression("^[a-f0-9]{64}$").match(fingerprint).hasMatch()) {
+				if (program_target_revision_ != revision || program_target_scene_id_ != scene_id ||
+					program_apply_state_ != "failed") {
+					fail_program(revision, scene_id, fingerprint, "program-source-unsupported");
+				}
+				return;
+			}
+			if (scene_id == program_target_scene_id_ && fingerprint == program_target_fingerprint_ &&
+				program_apply_state_ == "failed")
+				return;
+			if (!program_scene_id_.isEmpty() && scene_id == program_scene_id_ &&
+				fingerprint == program_fingerprint_ && program_apply_state_ == "applied") {
+				if (program_studio_revision_ != revision) {
+					program_studio_revision_ = revision;
+					report_program("applied", revision, scene_id, fingerprint);
+					observe_current_media();
+				}
+				return;
+			}
+			program_target_revision_ = revision;
+			program_target_scene_id_ = scene_id;
+			program_target_fingerprint_ = fingerprint;
+			program_apply_state_ = "pending";
+			observe_current_media();
+			request("/api/v1/native/scenes/resolve", "POST",
+				{{"sceneId", scene_id}, {"fingerprint", fingerprint}},
+				[this, generation, revision, scene_id, fingerprint, body](int resolve_code, const QJsonObject &resolved) {
+				if (generation != program_generation_ || user_id_.isEmpty() || tearing_down_) return;
+				const auto scene_revision = resolved.value("studioRevision").toInteger(revision);
+				if (resolve_code != 200 || !resolved.value("scene").isObject() ||
+					resolved.value("sceneFingerprint").toString() != fingerprint ||
+					scene_revision < 0) {
+					fail_program(revision, scene_id, fingerprint, "program-scene-unavailable");
+					return;
+				}
+				request("/api/v1/native/scenes/authorize", "POST",
+					{{"sceneId", scene_id}, {"fingerprint", fingerprint}},
+					[this, generation, revision, scene_id, fingerprint, body, resolved, scene_revision]
+					(int authorize_code, const QJsonObject &authorization) {
+					if (generation != program_generation_ || user_id_.isEmpty() || tearing_down_) return;
+					if (authorize_code != 200 ||
+						authorization.value("sceneFingerprint").toString() != fingerprint ||
+						authorization.value("cameraVersions") != resolved.value("cameraVersions")) {
+						fail_program(revision, scene_id, fingerprint, "program-authorization-rejected");
+						return;
+					}
+					const auto authorized_revision = authorization.value("studioRevision").toInteger(scene_revision);
+					const auto bytes = QJsonDocument(resolved.value("scene").toObject()).toJson(QJsonDocument::Compact);
+					auto parsed = parse_scene_json(std::string_view(bytes.constData(), std::size_t(bytes.size())));
+					const auto bindings = resolved.value("cameras").toArray();
+					if (!parsed.ok() || parsed.document->sources.size() != std::size_t(bindings.size())) {
+						fail_program(revision, scene_id, fingerprint, "program-scene-invalid");
+						return;
+					}
+					std::vector<ProductCamera> cameras;
+					for (int i = 0; i < bindings.size(); ++i) {
+						auto &source = parsed.document->sources[std::size_t(i)];
+						const auto binding = bindings[i].toObject();
+						if (source.kind != "camera" || source.camera_id != binding.value("cameraId").toString().toStdString() ||
+							source.profile_id != binding.value("profileId").toString().toStdString()) {
+							fail_program(revision, scene_id, fingerprint, "program-binding-mismatch");
+							return;
+						}
+						ProductCamera camera;
+						camera.id = source.camera_id;
+						camera.profile_id = source.profile_id;
+						camera.name = "WebOBS Program " + source.id;
+						camera.url = binding.value("url").toString().toStdString();
+						camera.transport = binding.value("transport").toString().toStdString();
+						const auto requested_hardware = source.hardware_decode == "auto" ?
+							binding.value("hardwareDecode").toString().toStdString() : source.hardware_decode;
+						if (requested_hardware != "auto" && requested_hardware != "on" && requested_hardware != "off") {
+							fail_program(revision, scene_id, fingerprint, "program-decode-invalid");
+							return;
+						}
+						if (requested_hardware != "auto") camera.hardware_decode = requested_hardware == "on";
+						source.hardware_decode = requested_hardware;
+						source.transport = camera.transport;
+						cameras.push_back(std::move(camera));
+					}
+					const auto transition = body.value("transition").toObject();
+					const auto kind = transition.value("kind").toString() == "fade" ? "fade" : "cut";
+					const int duration = std::clamp(int(transition.value("durationMs").toInt(0)), 0, 10000);
+					std::string error;
+					if (!apply_program_graph(*parsed.document, cameras, authorization.value("video").toObject(),
+						scene_id, authorized_revision, fingerprint, QString::fromLatin1(kind), duration, error))
+						fail_program(revision, scene_id, fingerprint,
+							error.empty() ? QStringLiteral("program-apply-failed") : QString::fromStdString(error));
+				}, 12000);
+			}, 12000);
+		});
+	}
+
 	void clear_media()
 	{
 		if (stats_window_) stats_window_->close();
 		stats_window_.clear();
+		if (program_projector_) {
+			program_projector_->close();
+			program_projector_.clear();
+		}
+		clear_program_media();
 		clear_main_media();
 		projector_pending_.fill(false);
 		for (std::size_t i = 0; i < projectors_.size(); ++i) close_projector(i);
@@ -410,6 +693,48 @@ class ProductWindow final : public QWidget {
 		QObject::connect(&action, SIGNAL(triggered(bool)), window, SLOT(OpenFullScreenProjector()));
 		action.trigger();
 	}
+	void open_program_projector()
+	{
+		if (user_id_.isEmpty() || !program_ || program_projector_) {
+			status_->setText(tr("TAKE 后存在已确认的 Program 时才能打开 Program 投影。"));
+			return;
+		}
+		std::set<QWidget *> previous;
+		for (auto *widget : QApplication::allWidgets())
+			if (QString::fromLatin1(widget->metaObject()->className()) == "OBSProjector") previous.insert(widget);
+		obs_frontend_open_projector("StudioProgram", -1, "", "");
+		QWidget *opened = nullptr;
+		for (auto *widget : QApplication::allWidgets()) {
+			if (QString::fromLatin1(widget->metaObject()->className()) == "OBSProjector" && !previous.contains(widget)) {
+				if (opened) {
+					widget->close();
+					opened->close();
+					status_->setText(tr("Program 投影窗口身份不唯一，请重试。"));
+					return;
+				}
+				opened = widget;
+			}
+		}
+		if (!opened) {
+			status_->setText(tr("OBS 未能打开 Program 投影窗口。"));
+			return;
+		}
+		program_projector_ = opened;
+		opened->setWindowTitle(tr("WebOBS Program 投影 · F11 全屏"));
+		connect(opened, &QObject::destroyed, this, [this] {
+			program_projector_.clear();
+			observe_current_media();
+		});
+		observe_current_media();
+	}
+
+	void close_program_projector()
+	{
+		if (program_projector_) program_projector_->close();
+		program_projector_.clear();
+		observe_current_media();
+	}
+
 	void open_projector(std::size_t index)
 	{
 		if (index >= projectors_.size() || projector_pending_[index] || applying_ || !wall_ || user_id_.isEmpty())
@@ -518,6 +843,7 @@ class ProductWindow final : public QWidget {
 		++main_generation_;
 		retirement_elapsed_.start();
 		heartbeat_.stop();
+		program_sync_.stop();
 		settlement_.stop();
 		retirement_.stop();
 		heartbeat_pending_ = false;
@@ -525,8 +851,8 @@ class ProductWindow final : public QWidget {
 		user_id_.clear();
 		clear_media();
 		login_->setEnabled(true);
-		for (auto *button : {watch_, save_, logout_, refresh_, scene_watch_, stats_button_})
-			button->setEnabled(false);
+		for (auto *button : {watch_, save_, logout_, refresh_, scene_watch_, stats_button_, program_projector_button_})
+			if (button) button->setEnabled(false);
 		slot_count_->setEnabled(false);
 		camera_choices_->clear();
 		for (auto *slot : slots_) slot->setEnabled(false);
@@ -612,6 +938,8 @@ class ProductWindow final : public QWidget {
 				button->setEnabled(true);
 			status_->setText(tr("已登录，正在读取授权设备目录…"));
 			heartbeat_.start(2000);
+			program_sync_.start(1000);
+			sync_program();
 			refresh_catalog(true);
 		}, 12000);
 	}
@@ -1125,8 +1453,13 @@ public:
 		layout->addWidget(close_projectors_);
 		connect(close_projectors_, &QPushButton::clicked, this, [this] {
 			for (std::size_t i = 0; i < projectors_.size(); ++i) close_projector(i);
-			observe_current_media();
+			close_program_projector();
 		});
+		program_projector_button_ = new QPushButton(tr("打开 Program 投影"), this);
+		program_projector_button_->setObjectName("webobsProgramProjector");
+		program_projector_button_->setToolTip(tr("显示 OBS 真实 Program 输出；TAKE 确认后才可用。"));
+		layout->addWidget(program_projector_button_);
+		connect(program_projector_button_, &QPushButton::clicked, this, [this] { open_program_projector(); });
 		auto *manage = new QPushButton(tr("设备与来源管理"), this);
 		manage->setObjectName("webobsManageDevices");
 		layout->addWidget(manage);
@@ -1247,6 +1580,7 @@ public:
 			locked(tr("已退出账号。"));
 		});
 		connect(manage, &QPushButton::clicked, this, [this] { open_management_page("/devices"); });
+		connect(&program_sync_, &QTimer::timeout, this, [this] { sync_program(); });
 		connect(&heartbeat_, &QTimer::timeout, this, [this] {
 			refresh_video_health();
 			renew_projectors(); // Remains active while the main view resolves another scene.
@@ -1284,6 +1618,7 @@ public:
 	{
 		tearing_down_ = true;
 		heartbeat_.stop();
+		program_sync_.stop();
 		settlement_.stop();
 		retirement_.stop();
 		client_.reset();

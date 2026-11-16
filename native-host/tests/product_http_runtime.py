@@ -390,6 +390,32 @@ def exercise(binary, web_root=None, preview=False):
                 assert status == 200 and scenes["revision"] == 1
                 assert [item["id"] for item in scenes["scenes"]] == ["allowed", "denied", "unbound", "nested"]
                 assert "rtsp://" not in json.dumps(scenes) and "127.0.0.1" not in json.dumps(scenes)
+                status, _, program = request("/api/v1/native/studio")
+                assert status == 200 and program["revision"] == 1 and program["programSceneId"] == "allowed"
+                assert program["transition"] == {"kind": "cut", "durationMs": 300}
+                assert program["programSupported"] is True
+                assert re.fullmatch(r"[a-f0-9]{64}", program["programFingerprint"])
+                code, _, runtime = request("/api/v1/studio/runtime")
+                assert code == 200 and runtime["native"] is True and runtime["status"] == "idle"
+                assert request("/api/v1/native/studio/program", {"revision": 1, "sceneId": "allowed",
+                    "fingerprint": "0" * 64, "status": "applied"}, method="POST")[0] == 200
+                code, _, runtime = request("/api/v1/studio/runtime")
+                assert code == 200 and runtime["status"] == "applied" and runtime["appliedRevision"] == 1
+                assert request("/api/v1/native/studio/program", {"revision": 1, "sceneId": "allowed",
+                    "fingerprint": program["programFingerprint"], "status": "failed",
+                    "error": "program-apply-failed"}, method="POST")[0] == 200
+                code, _, runtime = request("/api/v1/studio/runtime")
+                assert code == 200 and runtime["status"] == "failed" and runtime["error"] == "program-apply-failed"
+                assert request("/api/v1/native/studio/program", {"revision": 1, "sceneId": "allowed",
+                    "fingerprint": program["programFingerprint"], "status": "applied"}, method="POST")[0] == 200
+                assert request("/api/v1/native/studio/program", {"revision": 0, "sceneId": "allowed",
+                    "fingerprint": program["programFingerprint"], "status": "applied"}, method="POST")[0] == 412
+                assert request("/api/v1/native/studio/program", {"revision": 1, "sceneId": "nested",
+                    "fingerprint": program["programFingerprint"], "status": "applied"}, method="POST")[0] == 412
+                assert request("/api/v1/native/studio/program", {"revision": 1, "sceneId": "allowed",
+                    "fingerprint": "A" * 64, "status": "applied"}, method="POST")[0] == 400
+                assert request("/api/v1/native/studio/program", {"revision": 1, "sceneId": "allowed",
+                    "fingerprint": program["programFingerprint"], "status": "unknown"}, method="POST")[0] == 400
                 for scene_id, expected in (("denied", 403), ("unbound", 409), ("missing", 409)):
                     assert request("/api/v1/native/scenes/resolve", {"sceneId": scene_id, "revision": 1})[0] == expected
                     assert resolved == [], "rejected scene resolved a private endpoint"

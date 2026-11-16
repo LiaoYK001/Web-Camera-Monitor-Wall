@@ -195,7 +195,7 @@ def download(manifest: dict, output: Path, *, allow_loopback=False) -> dict:
 def stop_required() -> None:
     if os.name != "nt":
         return
-    for image in ("webobs-wall.exe", "obs64.exe"):
+    for image in ("webobs-wall.exe", "obs64.exe", "webobsd.exe"):
         result = subprocess.run(["tasklist", "/FI", f"IMAGENAME eq {image}", "/NH"],
                                 capture_output=True, text=True, encoding="utf-8", errors="replace")
         if image in result.stdout.lower():

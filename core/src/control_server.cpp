@@ -3513,7 +3513,7 @@ HttpResponse handle_request(const HttpRequest &request, SceneController &control
                             WebSocketHub &hub,
                             WhepProxy &whep_proxy, NvrProxy &nvr_proxy, CameraProxy &camera_proxy,
                             const std::vector<std::string> &allowed_origins,
-                            const RuntimeStatus &runtime_status, const ControlMetrics &metrics,
+                            RuntimeStatus &runtime_status, const ControlMetrics &metrics,
                             const BasicAuthenticator &authenticator)
 {
     const unsigned int version = request.version();
@@ -4039,9 +4039,59 @@ HttpResponse handle_request(const HttpRequest &request, SceneController &control
 
     constexpr std::string_view studio_target = "/api/v1/studio";
     constexpr std::string_view studio_capabilities_target = "/api/v1/studio/capabilities";
+    constexpr std::string_view studio_runtime_target = "/api/v1/studio/runtime";
     const bool studio_action = target == "/api/v1/studio/take" || target == "/api/v1/studio/undo" ||
                                target == "/api/v1/studio/redo";
-    if (target == studio_target || target == studio_capabilities_target || studio_action) {
+    if (target == studio_target || target == studio_capabilities_target || target == studio_runtime_target ||
+        studio_action) {
+        if (target == studio_runtime_target) {
+            if (request.method() != http::verb::get) {
+                HttpResponse result = response(http::status::method_not_allowed, version,
+                                               error_body("method_not_allowed", "use GET"));
+                result.set(http::field::allow, "GET");
+                return result;
+            }
+            const StudioUpdateResult snapshot = studio.snapshot();
+            const StudioParseResult parsed = snapshot.ok() ? parse_studio_json(snapshot.public_json) : StudioParseResult{};
+            if (!parsed.ok())
+                return response(http::status::service_unavailable, version,
+                                error_body("native_studio_unavailable", "Studio document is unavailable"));
+            const char *token = std::getenv("WEBOBS_NATIVE_HOST_TOKEN");
+            const bool native_product = token && *token;
+            std::string state, error, target_scene, applied_scene;
+            std::uint64_t target_revision = 0, applied_revision = 0;
+            {
+                std::lock_guard lock(runtime_status.native_program.mutex);
+                const NativeProgramStatus &value = runtime_status.native_program;
+                state = value.state;
+                error = value.error;
+                target_scene = value.scene_id;
+                target_revision = value.revision;
+                applied_scene = value.applied_scene_id;
+                applied_revision = value.applied_revision;
+            }
+            if (!native_product) {
+                // Direct-only core already applies the flattened Program through
+                // its own libobs graph; there is no second host to wait for.
+                state = "applied";
+                target_scene = parsed.document->program_scene_id;
+                target_revision = snapshot.revision;
+                applied_scene = target_scene;
+                applied_revision = snapshot.revision;
+            }
+            const std::string body = "{\"native\":" + std::string(native_product ? "true" : "false") +
+                ",\"studioRevision\":" + std::to_string(snapshot.revision) +
+                ",\"programSceneId\":\"" + json_escape(parsed.document->program_scene_id) +
+                "\",\"status\":\"" + json_escape(state) +
+                "\",\"targetRevision\":" + std::to_string(target_revision) +
+                ",\"targetSceneId\":\"" + json_escape(target_scene) +
+                "\",\"appliedRevision\":" + std::to_string(applied_revision) +
+                ",\"appliedSceneId\":\"" + json_escape(applied_scene) +
+                "\",\"error\":\"" + json_escape(error) + "\"}";
+            HttpResponse result = response(http::status::ok, version, body);
+            result.set(http::field::etag, etag(snapshot.revision));
+            return result;
+        }
         if (target == studio_capabilities_target) {
             if (request.method() != http::verb::get) {
                 HttpResponse result = response(http::status::method_not_allowed, version,
@@ -4138,6 +4188,20 @@ HttpResponse handle_request(const HttpRequest &request, SceneController &control
             const SceneSnapshot program = controller.snapshot();
             if (program.ok())
                 hub.broadcast(scene_event("scene.updated", program.public_json));
+            const char *token = std::getenv("WEBOBS_NATIVE_HOST_TOKEN");
+            const bool native_product = token && *token;
+            const StudioParseResult committed = parse_studio_json(updated.public_json);
+            {
+                std::lock_guard lock(runtime_status.native_program.mutex);
+                NativeProgramStatus &value = runtime_status.native_program;
+                value.revision = updated.revision;
+                value.scene_id = committed.ok() ? committed.document->program_scene_id : std::string{};
+                value.fingerprint.clear();
+                value.error.clear();
+                value.state = native_product ? "pending" : "applied";
+                value.applied_revision = native_product ? 0 : updated.revision;
+                value.applied_scene_id = native_product ? std::string{} : value.scene_id;
+            }
         }
         HttpResponse result = response(http::status::ok, version, updated.public_json);
         result.set(http::field::etag, etag(updated.revision));
@@ -4447,6 +4511,102 @@ private:
             }
             summaries += "]}";
             send_response(response(http::status::ok, version, std::move(summaries)));
+            return;
+        }
+        if (target == "/api/v1/native/studio" && request.method() == http::verb::get && request.body().empty()) {
+            const auto snapshot = studio_.snapshot();
+            const auto parsed = snapshot.ok() ? parse_studio_json(snapshot.public_json) : StudioParseResult{};
+            if (!parsed.ok()) {
+                reject(http::status::service_unavailable, "native_studio_unavailable");
+                return;
+            }
+            const auto flattened = flatten_studio_scene(*parsed.document, parsed.document->program_scene_id);
+            const auto fingerprint = flattened.ok() ?
+                native_scene_fingerprint(*flattened.document, runtime_status_.configured_fps) : std::nullopt;
+            const bool empty = flattened.ok() && flattened.document->sources.empty();
+            const std::string body = "{\"revision\":" + std::to_string(snapshot.revision) +
+                ",\"programSceneId\":\"" + json_escape(parsed.document->program_scene_id) +
+                "\",\"previewSceneId\":\"" + json_escape(parsed.document->preview_scene_id) +
+                "\",\"programEmpty\":" + (empty ? "true" : "false") +
+                ",\"programSupported\":" + (fingerprint ? "true" : "false") +
+                ",\"programFingerprint\":\"" + (fingerprint ? *fingerprint : std::string{}) +
+                "\",\"transition\":{\"kind\":\"" + json_escape(parsed.document->transition.kind) +
+                "\",\"durationMs\":" + std::to_string(parsed.document->transition.duration_ms) + "}}";
+            send_response(response(http::status::ok, version, body));
+            return;
+        }
+        if (target == "/api/v1/native/studio/program" && request.method() == http::verb::post) {
+            std::unique_ptr<json_t, decltype(&json_decref)> body(
+                json_loadb(request.body().data(), request.body().size(), JSON_REJECT_DUPLICATES, nullptr), &json_decref);
+            auto *revision = body ? json_object_get(body.get(), "revision") : nullptr;
+            auto *scene = body ? json_object_get(body.get(), "sceneId") : nullptr;
+            auto *fingerprint = body ? json_object_get(body.get(), "fingerprint") : nullptr;
+            auto *state = body ? json_object_get(body.get(), "status") : nullptr;
+            auto *error = body ? json_object_get(body.get(), "error") : nullptr;
+            const auto valid_id = [](const char *value, std::size_t length) {
+                return length > 0 && length <= 64 && std::all_of(value, value + length, [](char c) {
+                    return (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') ||
+                        (c >= '0' && c <= '9') || c == '.' || c == '_' || c == '-';
+                });
+            };
+            const auto valid_state = [](const char *value, std::size_t length) {
+                return (length == 7 && std::string_view(value, length) == "applied") ||
+                    (length == 6 && std::string_view(value, length) == "failed");
+            };
+            const auto valid_fingerprint = [](const char *value, std::size_t length) {
+                return length == 0 || (length == 64 && std::all_of(value, value + length, [](char c) {
+                    return (c >= '0' && c <= '9') || (c >= 'a' && c <= 'f');
+                }));
+            };
+            const auto valid_error = [](const char *value, std::size_t length) {
+                return length <= 64 && std::all_of(value, value + length, [](char c) {
+                    return (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') || c == '-';
+                });
+            };
+            if (!json_is_object(body.get()) || (json_object_size(body.get()) != 4 && json_object_size(body.get()) != 5) ||
+                !json_is_integer(revision) || json_integer_value(revision) < 0 ||
+                !json_is_string(scene) || !json_is_string(fingerprint) || !json_is_string(state) ||
+                (error && !json_is_string(error)) ||
+                !valid_id(json_string_value(scene), json_string_length(scene)) ||
+                !valid_fingerprint(json_string_value(fingerprint), json_string_length(fingerprint)) ||
+                !valid_state(json_string_value(state), json_string_length(state)) ||
+                (error && !valid_error(json_string_value(error), json_string_length(error)))) {
+                reject(http::status::bad_request, "native_program_report_invalid");
+                return;
+            }
+            const auto snapshot = studio_.snapshot();
+            const auto parsed = snapshot.ok() ? parse_studio_json(snapshot.public_json) : StudioParseResult{};
+            if (!parsed.ok()) {
+                reject(http::status::service_unavailable, "native_studio_unavailable");
+                return;
+            }
+            const std::string reported_scene(json_string_value(scene), json_string_length(scene));
+            const std::string reported_state(json_string_value(state), json_string_length(state));
+            const std::string reported_error = error ?
+                std::string(json_string_value(error), json_string_length(error)) : std::string{};
+            if (snapshot.revision != static_cast<std::uint64_t>(json_integer_value(revision)) ||
+                parsed.document->program_scene_id != reported_scene) {
+                reject(http::status::precondition_failed, "native_program_report_stale");
+                return;
+            }
+            {
+                std::lock_guard lock(runtime_status_.native_program.mutex);
+                NativeProgramStatus &value = runtime_status_.native_program;
+                if (value.revision > snapshot.revision) {
+                    reject(http::status::precondition_failed, "native_program_report_stale");
+                    return;
+                }
+                value.revision = snapshot.revision;
+                value.scene_id = reported_scene;
+                value.fingerprint.assign(json_string_value(fingerprint), json_string_length(fingerprint));
+                value.state = reported_state;
+                value.error = reported_state == "failed" ? reported_error : std::string{};
+                if (reported_state == "applied") {
+                    value.applied_revision = snapshot.revision;
+                    value.applied_scene_id = reported_scene;
+                }
+            }
+            send_response(response(http::status::ok, version, "{\"accepted\":true}"));
             return;
         }
         const bool scene_request = target == "/api/v1/native/scenes/resolve" ||
