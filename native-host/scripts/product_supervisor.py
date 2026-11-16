@@ -228,6 +228,8 @@ class ProductSupervisor:
                 "WEBOBS_V2_DATABASE": str(config / "v2-clients.db"),
                 "WEBOBS_V2_SHARED_SCENES": str(config / "shared-scenes-v2.json"),
                 "WEBOBS_V2_SIGNING_KEY": str(config / "keys/client-grant-signing.key"),
+                "WEBOBS_SECRETS_ROOT": str(config / "secrets"),
+                "WEBOBS_NOTIFICATION_SECRET_ROOT": str(config / "notification-secrets"),
                 "WEBOBS_V2_INTERNAL_TOKEN": secrets.token_hex(32),
                 "WEBOBS_NVR_CONFIG": str(config / "nvr.json"),
                 "WEBOBS_NVR_STORAGE": str(self.recordings),
