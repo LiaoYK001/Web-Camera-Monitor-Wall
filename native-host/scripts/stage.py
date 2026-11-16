@@ -26,7 +26,7 @@ REQUIRED = (
 def finalize(repo: Path, source: Path, runtime: Path, version: str, product: bool = False, native_preview: bool = False, complete: bool = False) -> dict:
     if native_preview and (not product or version != "4.5.0"):
         raise ValueError("preview delivery requires the authorized v4.5 product profile")
-    if not native_preview and (not version or "-dev." not in version):
+    if not native_preview and not complete and (not version or "-dev." not in version):
         raise ValueError("Only an explicitly development-tagged prototype may be staged")
     if not runtime.is_dir() or runtime.is_symlink() or (runtime / "webobs-native-prototype.json").exists():
         raise ValueError("Staging requires a new, separate runtime directory")
