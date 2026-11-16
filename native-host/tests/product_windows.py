@@ -419,6 +419,10 @@ def exercise(runtime, report, *, with_media=False, retained_profile=None):
             preferences.read_string((profile / "native-profile/obs-studio/user.ini").read_text(encoding="utf-8-sig"))
             assert preferences.getboolean("BasicWindow", "PreviewProgramMode") is True, \
                 "cold-start control did not actually persist Studio mode"
+            # Let Windows release profile handles after the complete-service
+            # process tree has exited; a real user never starts the next launch
+            # inside the same millisecond as the previous owner exit.
+            time.sleep(1)
             started = start()
             assert started["origin"] == initial_origin and started["bootId"] != initial_boot
             evidence["checks"].append("saved-studio-preference-starts-locked-through-product-only")
@@ -1093,7 +1097,7 @@ def exercise(runtime, report, *, with_media=False, retained_profile=None):
                     with log.open("rb") as source:
                         source.seek(max(0, log.stat().st_size - 131072))
                         tail = source.read(131072).decode("utf-8", errors="replace")
-                    evidence["privateLogMarkers"].extend(marker for marker in markers if marker in tail)
+                    evidence["privateLogMarkers"].extend(f"{log.name}:{marker}" for marker in markers if marker in tail)
             evidence["privateLogMarkers"] = sorted(set(evidence["privateLogMarkers"]))
             raise AssertionError("native product entry/UI gate failed at " + phase) from None
         finally:
