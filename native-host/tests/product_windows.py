@@ -670,7 +670,7 @@ def exercise(runtime, report, *, with_media=False, retained_profile=None):
                 kept = [scene for scene in studio["scenes"] if scene["id"] in ("fixture-five", "fixture-empty")]
                 assert {scene["id"] for scene in kept} == {"fixture-five", "fixture-empty"}
                 studio.update(programSceneId="fixture-five", previewSceneId="fixture-alt",
-                    transition={"kind": "cut", "durationMs": 0}, scenes=kept + [alt_scene])
+                    transition={"kind": "fade", "durationMs": 400}, scenes=kept + [alt_scene])
                 code, _, studio = request("/api/v1/studio", studio, cookie=cookie, method="PUT", revision=studio["revision"])
                 assert code == 200, "Studio accepted a second scene for the Program TAKE"
                 wait_for(lambda: state().get("programSceneId") == "fixture-five" and
@@ -694,6 +694,7 @@ def exercise(runtime, report, *, with_media=False, retained_profile=None):
                     "native Program did not switch to the TAKE target", timeout=20)
                 after_take = state().get("program", {}).get("sceneUuid")
                 assert isinstance(after_take, str) and after_take != before_take, "TAKE reused the previous Program scene"
+                time.sleep(2)  # Let the configured 400 ms fade finish before final pixels.
                 code, _, runtime = request("/api/v1/studio/runtime", cookie=cookie)
                 assert code == 200 and runtime["native"] is True and runtime["status"] == "applied" and \
                     runtime["appliedRevision"] == taken["revision"] and runtime["appliedSceneId"] == "fixture-alt", \
