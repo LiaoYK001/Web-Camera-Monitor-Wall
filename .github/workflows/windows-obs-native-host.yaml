@@ -95,14 +95,7 @@ jobs:
           [Security.Cryptography.RandomNumberGenerator]::Fill($key)
           [IO.File]::WriteAllBytes((Join-Path $run 'backup.key'), $key)
           Set-Content -LiteralPath (Join-Path $config 'fixture.json') -Value '{"synthetic":true}' -Encoding utf8
-          $dbCode = @'
-import sqlite3, sys
-database = sqlite3.connect(sys.argv[1])
-database.execute("create table fixture(value text)")
-database.execute("insert into fixture values('private')")
-database.commit()
-database.close()
-'@
+          $dbCode = 'import sqlite3,sys; d=sqlite3.connect(sys.argv[1]); d.execute("create table fixture(value text)"); d.execute("insert into fixture values(''private'')"); d.commit(); d.close()'
           & $python -B -c $dbCode (Join-Path $config 'cluster.sqlite3')
           $env:WEBOBS_BACKUP_CONFIG_ROOT = $config
           $env:WEBOBS_BACKUP_ROOT = $backups
