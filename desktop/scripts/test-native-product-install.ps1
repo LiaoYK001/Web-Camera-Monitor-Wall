@@ -167,7 +167,7 @@ try {
         $report.upgradeVersion = $upgradeVersion
         $report.sameMachineUpgradeQualified = $true
         $report.installedUpdaterQualified = $true
-        $report.retentionScope = 'profile content excluding update metadata (run) and generated backups'
+        $report.retentionScope = 'durable profile files excluding run/backups, logs/crashes/sentinels and SQLite WAL sidecars'
         $phase = 'same-machine-upgrade-inventory'
         $null = & $python -B $verifier --runtime $installed --installed
         if ($LASTEXITCODE -ne 0) { throw 'Upgraded runtime inventory/version failed.' }
