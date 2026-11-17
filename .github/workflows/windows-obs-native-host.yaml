@@ -12,6 +12,7 @@ on:
       native_preview: { type: boolean, default: false }
       measure_obs_baseline: { type: boolean, default: false }
       upgrade_previous: { type: boolean, default: false }
+      diag_restore: { type: boolean, default: false }
   workflow_dispatch:
     inputs:
       product_mode:
@@ -41,6 +42,10 @@ on:
         description: 'Install the pinned previous prototype, upgrade it in place and verify the private profile survives'
         type: boolean
         default: false
+      diag_restore:
+        description: 'Temporary installed backup/restore diagnostic only; skips the product build'
+        type: boolean
+        default: false
       version:
         type: string
         required: true
@@ -51,7 +56,75 @@ permissions:
   actions: read
 
 jobs:
+  diag-restore:
+    if: ${{ inputs.diag_restore }}
+    runs-on: windows-2022
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      - name: Download the failed rc.9 installed candidate
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh run download 44120793618 --repo $env:GITHUB_REPOSITORY `
+            --name webobs-wall-complete-candidate-5.1.0-rc.9 --dir "$env:RUNNER_TEMP/candidate"
+          $setup = Get-ChildItem "$env:RUNNER_TEMP/candidate" -Filter '*.exe' | Select-Object -First 1
+          if (-not $setup) { throw 'Candidate installer missing.' }
+          "INSTALLER=$($setup.FullName)" | Out-File $env:GITHUB_ENV -Append -Encoding utf8
+      - name: Install candidate into a disposable root
+        shell: pwsh
+        run: |
+          $root = Join-Path $env:RUNNER_TEMP 'diag-install'
+          if (Test-Path $root) { Remove-Item -Recurse -Force $root }
+          $p = Start-Process -FilePath $env:INSTALLER -ArgumentList '/S', "/D=$root" -Wait -PassThru
+          if ($p.ExitCode -ne 0) { throw "Installer exit $($p.ExitCode)." }
+          "INSTALLED=$root" | Out-File $env:GITHUB_ENV -Append -Encoding utf8
+      - name: Create and restore a synthetic encrypted backup
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $installed = $env:INSTALLED
+          $python = Join-Path $installed 'python/python.exe'
+          $data = Join-Path $env:RUNNER_TEMP 'diag-data'
+          $config = Join-Path $data 'config'
+          $run = Join-Path $data 'run'
+          $backups = Join-Path $data 'backups'
+          New-Item -ItemType Directory -Force -Path $config,$run,$backups | Out-Null
+          $key = New-Object byte[] 32
+          [Security.Cryptography.RandomNumberGenerator]::Fill($key)
+          [IO.File]::WriteAllBytes((Join-Path $run 'backup.key'), $key)
+          Set-Content -LiteralPath (Join-Path $config 'fixture.json') -Value '{"synthetic":true}' -Encoding utf8
+          $dbCode = @'
+import sqlite3, sys
+database = sqlite3.connect(sys.argv[1])
+database.execute("create table fixture(value text)")
+database.execute("insert into fixture values('private')")
+database.commit()
+database.close()
+'@
+          & $python -B -c $dbCode (Join-Path $config 'cluster.sqlite3')
+          $env:WEBOBS_BACKUP_CONFIG_ROOT = $config
+          $env:WEBOBS_BACKUP_ROOT = $backups
+          $env:WEBOBS_BACKUP_KEY_FILE = Join-Path $run 'backup.key'
+          $env:WEBOBS_LIBSODIUM_LIBRARY = Join-Path $installed 'bin/libsodium.dll'
+          $create = & $python -B (Join-Path $installed 'services/backup/encrypted_backup.py') create 2>&1 | Out-String
+          $createExit = $LASTEXITCODE
+          Write-Output "encrypted_backup create exit: $createExit"
+          if ($createExit -ne 0) { Write-Output $create; throw 'Synthetic encrypted backup creation failed.' }
+          $archive = Get-ChildItem $backups -Filter '*.wobk' | Select-Object -First 1
+          if (-not $archive) { throw 'Synthetic encrypted backup missing.' }
+          Set-Content -LiteralPath (Join-Path $config 'stale-marker.json') -Value '{}' -Encoding utf8
+          $env:WEBOBS_RESTORE_CONFIRM = 'replace-config'
+          $restore = & $python -B (Join-Path $installed 'services/backup/encrypted_backup.py') restore `
+            $archive.FullName --config-root $config --key-file (Join-Path $run 'backup.key') 2>&1 | Out-String
+          $restoreExit = $LASTEXITCODE
+          Write-Output "encrypted_backup restore exit: $restoreExit"
+          Write-Output $restore
+          if ($restoreExit -ne 0) { throw 'Installed encrypted backup restore failed.' }
+          if (Test-Path (Join-Path $config 'stale-marker.json')) { throw 'Restore did not replace target config.' }
   native-host:
+    if: ${{ !inputs.diag_restore }}
     runs-on: windows-2022
     timeout-minutes: ${{ inputs.complete && 180 || 75 }}
     steps:
