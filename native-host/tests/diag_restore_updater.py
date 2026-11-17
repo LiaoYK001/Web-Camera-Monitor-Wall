@@ -3,8 +3,10 @@ from __future__ import annotations
 
 import importlib.util
 import json
+import os
 from pathlib import Path
 import shutil
+import subprocess
 import sys
 import traceback
 
@@ -29,5 +31,14 @@ try:
     result = updater.restore_backup(archives[0], target, confirm=True, runtime_root=runtime)
     print(json.dumps(result))
 except Exception:
+    replay = subprocess.run([
+        str(runtime / "python/python.exe"), "-B", str(runtime / "services/backup/encrypted_backup.py"),
+        "restore", str(archives[0].resolve()), "--config-root", str((target / "config").resolve()),
+        "--key-file", str((target / "run/backup.key").resolve())],
+        capture_output=True, text=True, encoding="utf-8", errors="replace",
+        env={**os.environ, "WEBOBS_RESTORE_CONFIRM": "replace-config",
+             "WEBOBS_LIBSODIUM_LIBRARY": str(runtime / "bin/libsodium.dll")})
+    print("replay exit", replay.returncode)
+    print(replay.stderr[-4096:])
     traceback.print_exc()
     raise
