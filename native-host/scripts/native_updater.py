@@ -364,6 +364,17 @@ def _backup_error_code(stderr: str, fallback: str) -> str:
         return "backup-file-missing"
     if "oserror" in text or "winerror" in text or "ioerror" in text:
         return "backup-filesystem-error"
+    for marker, code in (
+        ("tarfile.", "backup-archive-format-error"),
+        ("json.decoder", "backup-manifest-format-error"),
+        ("unicodeerror", "backup-encoding-error"),
+        ("keyerror", "backup-manifest-key-error"),
+        ("valueerror", "backup-value-error"),
+        ("typeerror", "backup-type-error"),
+        ("eoferror", "backup-truncated-error"),
+    ):
+        if marker in text:
+            return code
     return fallback
 
 
@@ -452,10 +463,27 @@ def install(manifest: dict, output: Path, install_dir: Path | None, data_root: P
         (data_root / "run").mkdir(parents=True, exist_ok=True)
         (data_root / "run/pending-update.json").write_text(json.dumps(pending, indent=2) + "\n",
                                                            encoding="utf-8")
-        command = [str(installer), "/S"]
-        if install_dir is not None:
-            command.append("/D=" + str(install_dir))
-        subprocess.run(command, check=True, timeout=1800)
+        if os.name == "nt" and install_dir is not None:
+            powershell = shutil.which("powershell.exe") or shutil.which("pwsh.exe")
+            if not powershell:
+                fallback = Path(os.environ.get("SystemRoot", r"C:\Windows")) / \
+                    "System32/WindowsPowerShell/v1.0/powershell.exe"
+                powershell = str(fallback) if fallback.is_file() else ""
+            if not powershell:
+                raise UpdateError("Windows PowerShell is unavailable for the installer")
+            script = ("$ErrorActionPreference='Stop'; "
+                      "$target = '/D=' + $env:WEBOBS_UPDATE_INSTALL_DIR; "
+                      "$p = Start-Process -FilePath $env:WEBOBS_UPDATE_INSTALLER "
+                      "-ArgumentList '/S',$target -Wait -PassThru; exit $p.ExitCode")
+            subprocess.run([powershell, "-NoLogo", "-NoProfile", "-NonInteractive", "-Command", script],
+                           check=True, timeout=1800,
+                           env={**os.environ, "WEBOBS_UPDATE_INSTALLER": str(installer),
+                                "WEBOBS_UPDATE_INSTALL_DIR": str(install_dir)})
+        else:
+            command = [str(installer), "/S"]
+            if install_dir is not None:
+                command.append("/D=" + str(install_dir))
+            subprocess.run(command, check=True, timeout=1800)
     except Exception:
         (data_root / "run/pending-update.json").unlink(missing_ok=True)
         raise
