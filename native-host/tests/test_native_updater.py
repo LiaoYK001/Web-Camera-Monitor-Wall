@@ -95,7 +95,7 @@ def exercise():
             cached.write_bytes(installer)
             # Changes during a slow backup must also fail before execution.
             with patch.object(updater, "stop_required"), \
-                    patch.object(updater, "backup_config", side_effect=lambda *args:
+                    patch.object(updater, "backup_config", side_effect=lambda *args, **kwargs:
                                  cached.write_bytes(b"X" * len(installer))), \
                     patch.object(updater.subprocess, "run") as execute:
                 try:

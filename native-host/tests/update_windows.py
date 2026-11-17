@@ -85,7 +85,7 @@ def exercise(runtime: Path, installer: Path, profile: Path, installed: Path, rep
                 target.write(bytes([first[0] ^ 0xFF]))
             try:
                 updater.install(manifest, output, installed, profile, confirm=True,
-                                allow_loopback=True)
+                                allow_loopback=True, runtime_root=installed)
             except updater.UpdateError:
                 pass
             else:
@@ -128,7 +128,8 @@ def exercise(runtime: Path, installer: Path, profile: Path, installed: Path, rep
             shutil.copy2(profile / "run/backup.key", restored_root / "run/backup.key")
             (restored_root / "config").mkdir()
             (restored_root / "config/stale-marker.json").write_text("{}")
-            restored = updater.restore_backup(archives[0], restored_root, confirm=True)
+            restored = updater.restore_backup(archives[0], restored_root, confirm=True,
+                                              runtime_root=installed)
             assert restored["configurationRestored"] is True
             assert not (restored_root / "config/stale-marker.json").exists()
             def database_fingerprint(path):

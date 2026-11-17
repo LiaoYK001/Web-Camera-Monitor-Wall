@@ -311,39 +311,70 @@ def stop_required() -> None:
             raise UpdateError("close WebOBS Wall before installing the update")
 
 
-def backup_config(config_root: Path, data_root: Path) -> None:
+def _runtime_root(value: Path | None) -> Path:
+    runtime = (Path(value).resolve(strict=True) if value is not None
+               else Path(sys.executable).resolve().parent.parent)
+    if any(path.is_symlink() for path in (runtime, *runtime.parents)):
+        raise UpdateError("maintenance runtime path is unsafe")
+    if not (runtime / "python/python.exe").is_file() or not (runtime / "bin/libsodium.dll").is_file():
+        raise UpdateError("maintenance runtime components are unavailable")
+    return runtime
+
+
+def backup_config(config_root: Path, data_root: Path, *, runtime_root: Path | None = None) -> None:
     key = data_root / "run/backup.key"
-    module = Path(sys.executable).resolve().parent.parent / "services/backup/encrypted_backup.py"
+    runtime = _runtime_root(runtime_root)
+    module = runtime / "services/backup/encrypted_backup.py"
     if not key.is_file() or not module.is_file():
         if config_root.is_dir() and any(config_root.iterdir()):
             raise UpdateError("configuration backup is unavailable; update was not started")
         return
     # The packaged service uses the same private key and verifies its own output.
-    runtime = Path(sys.executable).resolve().parent.parent
-    subprocess.run([sys.executable, "-B", str(module), "create"], check=True,
-                   env={**os.environ, "WEBOBS_BACKUP_CONFIG_ROOT": str(config_root),
-                        "WEBOBS_BACKUP_ROOT": str(data_root / "backups"),
-                        "WEBOBS_BACKUP_KEY_FILE": str(key),
-                        "WEBOBS_LIBSODIUM_LIBRARY": str(runtime / "bin/libsodium.dll")},
-                   timeout=300, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    result = subprocess.run([str(runtime / "python/python.exe"), "-B", str(module), "create"],
+                            env={**os.environ, "WEBOBS_BACKUP_CONFIG_ROOT": str(config_root),
+                                 "WEBOBS_BACKUP_ROOT": str(data_root / "backups"),
+                                 "WEBOBS_BACKUP_KEY_FILE": str(key),
+                                 "WEBOBS_LIBSODIUM_LIBRARY": str(runtime / "bin/libsodium.dll")},
+                            timeout=300, capture_output=True, text=True, encoding="utf-8", errors="replace")
+    if result.returncode:
+        raise UpdateError(_backup_error_code(result.stderr, "backup-create-failed"))
 
 
-def restore_backup(archive: Path, data_root: Path, *, confirm: bool) -> dict:
+def _backup_error_code(stderr: str, fallback: str) -> str:
+    text = (stderr or "").lower()
+    for marker, code in (
+        ("confirmation", "backup-confirmation-invalid"),
+        ("backup key", "backup-key-invalid"),
+        ("authentication", "backup-authentication-failed"),
+        ("integrity", "backup-integrity-failed"),
+        ("unsafe", "backup-archive-unsafe"),
+        ("libsodium", "backup-runtime-unavailable"),
+        ("no such file", "backup-component-missing"),
+    ):
+        if marker in text:
+            return code
+    return fallback
+
+
+def restore_backup(archive: Path, data_root: Path, *, confirm: bool,
+                   runtime_root: Path | None = None) -> dict:
     if not confirm:
         raise UpdateError("restoring configuration requires explicit confirmation")
     stop_required()
-    runtime = Path(sys.executable).resolve().parent.parent
+    runtime = _runtime_root(runtime_root)
     module = runtime / "services/backup/encrypted_backup.py"
     key = data_root / "run/backup.key"
     if (archive.is_symlink() or not archive.is_file() or key.is_symlink() or
             not key.is_file() or key.stat().st_size != 32 or not module.is_file()):
         raise UpdateError("backup archive, original key or restore component is unavailable")
-    subprocess.run([sys.executable, "-B", str(module), "restore", str(archive.resolve()),
-                    "--config-root", str((data_root / "config").resolve()),
-                    "--key-file", str(key.resolve())], check=True, timeout=300,
-                   env={**os.environ, "WEBOBS_RESTORE_CONFIRM": "replace-config",
-                        "WEBOBS_LIBSODIUM_LIBRARY": str(runtime / "bin/libsodium.dll")},
-                   stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    result = subprocess.run([str(runtime / "python/python.exe"), "-B", str(module), "restore", str(archive.resolve()),
+                             "--config-root", str((data_root / "config").resolve()),
+                             "--key-file", str(key.resolve())], timeout=300,
+                            env={**os.environ, "WEBOBS_RESTORE_CONFIRM": "replace-config",
+                                 "WEBOBS_LIBSODIUM_LIBRARY": str(runtime / "bin/libsodium.dll")},
+                            capture_output=True, text=True, encoding="utf-8", errors="replace")
+    if result.returncode:
+        raise UpdateError(_backup_error_code(result.stderr, "backup-restore-failed"))
     return {"schema": 1, "status": "restored", "configurationRestored": True}
 
 
@@ -377,7 +408,7 @@ def verify_installer(installer: Path, manifest: dict) -> dict:
 
 
 def install(manifest: dict, output: Path, install_dir: Path | None, data_root: Path, *,
-            confirm: bool, allow_loopback=False) -> dict:
+            confirm: bool, allow_loopback=False, runtime_root: Path | None = None) -> dict:
     if not confirm:
         raise UpdateError("installation requires explicit confirmation")
     if manifest.get("status") != "available" or not is_newer(
@@ -400,7 +431,7 @@ def install(manifest: dict, output: Path, install_dir: Path | None, data_root: P
     receipt = verify_installer(installer, manifest)
     config_root = data_root / "config"
     try:
-        backup_config(config_root, data_root)
+        backup_config(config_root, data_root, runtime_root=runtime_root)
         # Backup can take time; validate the final cache again before execution.
         receipt = verify_installer(installer, manifest)
         pending = {"schema": 1, "from": manifest.get("current"), "to": manifest["version"],
