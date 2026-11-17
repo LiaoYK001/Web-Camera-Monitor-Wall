@@ -137,9 +137,11 @@ try {
         }
         & $python -B (Join-Path $repoRoot 'native-host/tests/update_windows.py') --runtime $runtime --installer $upgradeSetup --profile $profile --installed $installed --report (Join-Path $buildRoot 'native-product-updater.json')
         if ($LASTEXITCODE -ne 0) { throw 'Actual installed updater/NSIS upgrade failed.' }
-        if ((Get-ItemProperty $uninstallKey).DisplayVersion -ne $upgradeVersion) {
-            throw 'Upgrade did not update the installed version registration.'
-        }
+        $phase = 'same-machine-upgrade-version'
+        $registeredVersion = (Get-ItemProperty $uninstallKey).DisplayVersion
+        $report.registeredVersion = $registeredVersion
+        if ($registeredVersion -ne $upgradeVersion) { throw 'Upgrade did not update the installed version registration.' }
+        $phase = 'same-machine-upgrade-profile-fingerprint'
         if ((Get-ProfileFingerprint) -ne $before) {
             throw 'Upgrade changed retained account/profile data.'
         }
@@ -147,6 +149,7 @@ try {
         $report.sameMachineUpgradeQualified = $true
         $report.installedUpdaterQualified = $true
         $report.retentionScope = 'profile content excluding update metadata (run) and generated backups'
+        $phase = 'same-machine-upgrade-inventory'
         $null = & $python -B $verifier --runtime $installed --installed
         if ($LASTEXITCODE -ne 0) { throw 'Upgraded runtime inventory/version failed.' }
         $phase = 'upgraded-entry-ui-and-media'
