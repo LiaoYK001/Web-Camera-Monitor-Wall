@@ -93,7 +93,7 @@ jobs:
           if (Test-Path $out) { Remove-Item -Recurse -Force $out }
           Copy-Item -LiteralPath $installed -Destination $base -Recurse
           Remove-Item -LiteralPath (Join-Path $base 'Uninstall.exe') -Force -ErrorAction SilentlyContinue
-          New-Item -ItemType Directory -Path $upgrade,$out | Out-Null
+          New-Item -ItemType Directory -Path $out | Out-Null
           & (Join-Path $installed 'python/python.exe') -B native-host/tests/prepare_upgrade_runtime.py `
             --runtime $base --output $upgrade --version 5.1.0-rc.12
           if ($LASTEXITCODE -ne 0) { throw 'Diagnostic upgrade runtime preparation failed.' }
