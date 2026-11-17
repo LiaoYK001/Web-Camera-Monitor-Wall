@@ -59,7 +59,7 @@ jobs:
   diag-restore:
     if: ${{ inputs.diag_restore }}
     runs-on: windows-2022
-    timeout-minutes: 20
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
       - name: Download the failed rc.9 installed candidate
@@ -80,6 +80,47 @@ jobs:
           $p = Start-Process -FilePath $env:INSTALLER -ArgumentList '/S', "/D=$root" -Wait -PassThru
           if ($p.ExitCode -ne 0) { throw "Installer exit $($p.ExitCode)." }
           "INSTALLED=$root" | Out-File $env:GITHUB_ENV -Append -Encoding utf8
+      - name: Create a real synthetic installed profile through the product UI
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $installed = $env:INSTALLED
+          $profile = Join-Path $env:RUNNER_TEMP 'diag-profile'
+          if (Test-Path $profile) { Remove-Item -Recurse -Force $profile }
+          & (Join-Path $installed 'python/python.exe') -B native-host/tests/product_windows.py `
+            --runtime $installed --with-media --retained-profile $profile `
+            --report (Join-Path $env:RUNNER_TEMP 'diag-product-ui.json')
+          if ($LASTEXITCODE -ne 0) { throw 'Diagnostic installed product UI failed.' }
+          "DIAG_PROFILE=$profile" | Out-File $env:GITHUB_ENV -Append -Encoding utf8
+      - name: Create and restore a backup of the real synthetic profile
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $installed = $env:INSTALLED
+          $profile = $env:DIAG_PROFILE
+          $python = Join-Path $installed 'python/python.exe'
+          $restore = Join-Path $env:RUNNER_TEMP 'diag-restore-probe'
+          $restoreConfig = Join-Path $restore 'config'
+          $restoreRun = Join-Path $restore 'run'
+          if (Test-Path $restore) { Remove-Item -Recurse -Force $restore }
+          New-Item -ItemType Directory -Force -Path $restoreConfig,$restoreRun | Out-Null
+          Copy-Item -LiteralPath (Join-Path $profile 'run/backup.key') -Destination (Join-Path $restoreRun 'backup.key')
+          Set-Content -LiteralPath (Join-Path $restoreConfig 'stale-marker.json') -Value '{}' -Encoding utf8
+          $env:WEBOBS_BACKUP_CONFIG_ROOT = Join-Path $profile 'config'
+          $env:WEBOBS_BACKUP_ROOT = Join-Path $profile 'backups'
+          $env:WEBOBS_BACKUP_KEY_FILE = Join-Path $profile 'run/backup.key'
+          $env:WEBOBS_LIBSODIUM_LIBRARY = Join-Path $installed 'bin/libsodium.dll'
+          & $python -B (Join-Path $installed 'services/backup/encrypted_backup.py') create
+          if ($LASTEXITCODE -ne 0) { throw 'Real synthetic profile backup failed.' }
+          $archive = Get-ChildItem (Join-Path $profile 'backups') -Filter '*.wobk' | Sort-Object LastWriteTimeUtc -Descending | Select-Object -First 1
+          if (-not $archive) { throw 'Real synthetic profile backup missing.' }
+          $env:WEBOBS_RESTORE_CONFIRM = 'replace-config'
+          $output = & $python -B (Join-Path $installed 'services/backup/encrypted_backup.py') restore `
+            $archive.FullName --config-root $restoreConfig --key-file (Join-Path $restoreRun 'backup.key') 2>&1 | Out-String
+          $exit = $LASTEXITCODE
+          Write-Output "real-profile encrypted restore exit: $exit"
+          Write-Output $output
+          if ($exit -ne 0) { throw 'Real synthetic profile restore failed.' }
       - name: Create and restore a synthetic encrypted backup
         shell: pwsh
         run: |
