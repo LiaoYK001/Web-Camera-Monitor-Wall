@@ -212,11 +212,11 @@ def exercise_maintenance():
         profile = root / "profile"
         path_file = root / "maintenance.path"
         receipt = updater.prepare_maintenance(runtime, profile, path_file)
-        capsule = Path(path_file.read_text())
+        capsule = Path(path_file.read_text(encoding="utf-8"))
         assert receipt["outsideInstalledRuntime"] is True and not capsule.is_relative_to(runtime)
         assert (capsule / "python/python.exe").read_bytes() == b"inert, never executed"
         assert not (capsule / "python/Lib").exists()
-        assert (capsule / ".webobs-maintenance-origin").read_text() == str(runtime)
+        assert (capsule / ".webobs-maintenance-origin").read_text(encoding="utf-8") == str(runtime.resolve())
         updater.cleanup_maintenance(profile)
         assert capsule.exists(), "unfinished recovery tool was removed"
         with patch.object(updater.sys, "executable", str(capsule / "python/python.exe")):
