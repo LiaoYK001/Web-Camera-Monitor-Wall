@@ -62,13 +62,13 @@ jobs:
     timeout-minutes: 45
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
-      - name: Download the failed rc.9 installed candidate
+      - name: Download the failed rc.11 installed candidate
         shell: pwsh
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          gh run download 44120793618 --repo $env:GITHUB_REPOSITORY `
-            --name webobs-wall-complete-candidate-5.1.0-rc.9 --dir "$env:RUNNER_TEMP/candidate"
+          gh run download 44143228832 --repo $env:GITHUB_REPOSITORY `
+            --name webobs-wall-complete-candidate-5.1.0-rc.11 --dir "$env:RUNNER_TEMP/candidate"
           $setup = Get-ChildItem "$env:RUNNER_TEMP/candidate" -Filter '*.exe' | Select-Object -First 1
           if (-not $setup) { throw 'Candidate installer missing.' }
           "INSTALLER=$($setup.FullName)" | Out-File $env:GITHUB_ENV -Append -Encoding utf8
