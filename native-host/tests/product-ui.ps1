@@ -35,16 +35,8 @@ public static class ProductTestWindow {
         $found = $window.FindFirst([System.Windows.Automation.TreeScope]::Descendants,
             [System.Windows.Automation.PropertyCondition]::new(
                 [System.Windows.Automation.AutomationElement]::AutomationIdProperty, $Identity))
-        if ($null -eq $found) {
-            # Some Qt Windows providers qualify AutomationId with the QObject
-            # ancestry. Search only this exact process-owned product root.
-            $descendants = $window.FindAll([System.Windows.Automation.TreeScope]::Descendants,
-                [System.Windows.Automation.Condition]::TrueCondition)
-            $controlCandidates = @($descendants | Where-Object {
-                ([string]$_.Current.AutomationId).EndsWith('.' + $Identity, [StringComparison]::Ordinal)
-            })
-            if ($controlCandidates.Count -eq 1) { $found = $controlCandidates[0] }
-        }
+        $kind = $null
+        $name = $null
         if ($null -eq $found) {
             $kind = [System.Windows.Automation.ControlType]::Button
             $name = switch ($Identity) {
@@ -72,11 +64,34 @@ public static class ProductTestWindow {
                     } else { throw 'Unknown fixture control.' }
                 }
             }
-            $controlCandidates = @($window.FindAll([System.Windows.Automation.TreeScope]::Descendants,
-                [System.Windows.Automation.Condition]::TrueCondition) | Where-Object {
-                    ($_.Current.Name -eq $name -or ($Identity -eq 'webobsVideoHealth' -and
-                        $_.Current.Name -match '^视频输入：')) -and $_.Current.ControlType -eq $kind
-                })
+        }
+        if ($null -eq $found -and $name) {
+            # Prefer a direct property query over enumerating a fully loaded
+            # OBS window. This is both faster and less likely to race a display
+            # teardown while a Program projector is closing.
+            $nameCondition = [System.Windows.Automation.PropertyCondition]::new(
+                [System.Windows.Automation.AutomationElement]::NameProperty, $name)
+            $typeCondition = [System.Windows.Automation.PropertyCondition]::new(
+                [System.Windows.Automation.AutomationElement]::ControlTypeProperty, $kind)
+            $nameAndType = [System.Windows.Automation.AndCondition]::new(
+                [System.Windows.Automation.Condition[]]@($nameCondition, $typeCondition))
+            $found = $window.FindFirst([System.Windows.Automation.TreeScope]::Descendants, $nameAndType)
+        }
+        if ($null -eq $found) {
+            # Some Qt Windows providers qualify AutomationId with the QObject
+            # ancestry. Search only this exact process-owned product root.
+            $descendants = $window.FindAll([System.Windows.Automation.TreeScope]::Descendants,
+                [System.Windows.Automation.Condition]::TrueCondition)
+            $controlCandidates = @($descendants | Where-Object {
+                ([string]$_.Current.AutomationId).EndsWith('.' + $Identity, [StringComparison]::Ordinal)
+            })
+            if ($controlCandidates.Count -eq 1) { $found = $controlCandidates[0] }
+        }
+        if ($null -eq $found) {
+            $controlCandidates = @($descendants | Where-Object {
+                ($_.Current.Name -eq $name -or ($Identity -eq 'webobsVideoHealth' -and
+                    $_.Current.Name -match '^视频输入：')) -and $_.Current.ControlType -eq $kind
+            })
             if ($controlCandidates.Count -eq 1) { $found = $controlCandidates[0] }
         }
         if ($null -eq $found) { throw 'Product control missing.' }

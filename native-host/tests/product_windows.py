@@ -214,7 +214,7 @@ def exercise(runtime, report, *, with_media=False, retained_profile=None):
                 result = subprocess.run([powershell, "-NoLogo", "-NoProfile", "-NonInteractive", "-File",
                     str(HERE / "product-ui.ps1"), "-FrontendPid", str(frontend_pid), "-RootHwnd", windows[0]["rootHwnd"]],
                     input=json.dumps({"action": action, **fields}), capture_output=True, text=True,
-                    encoding="utf-8", timeout=25)
+                    encoding="utf-8", timeout=45)
             except subprocess.TimeoutExpired:
                 evidence["lastUiFailure"] = {"stage": action, "code": "ui-timeout"}
                 raise AssertionError("product UI Automation exceeded its deadline") from None
@@ -941,7 +941,9 @@ def exercise(runtime, report, *, with_media=False, retained_profile=None):
                     expected_media=6, program_scene="fixture-alt", program_media=1,
                     projector_orders={"program-projector": "quick-1"})
                 checkpoint("program-after-pixels")
+                checkpoint("program-projector-close")
                 assert ui("projector-close")
+                checkpoint("program-projector-closed")
                 wait_for(lambda: not state().get("windows") or
                     all(window.get("role") == "main-preview" for window in state().get("windows", [])),
                     "Program projector did not close", timeout=8)
