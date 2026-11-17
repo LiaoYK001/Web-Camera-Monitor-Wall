@@ -800,17 +800,24 @@ def exercise(runtime, report, *, with_media=False, retained_profile=None):
                 reference = {binding["cameraId"]: binding["sourceUuid"] for binding in state()["bindings"]}
                 assert ui("projector", slot=1)
                 wait_for(lambda: len(state().get("projectors", [])) == 1, "first native Scene projector did not open")
+                checkpoint("projector-first-open")
                 assert ui("projector-place", slot=1)
                 wait_for(lambda: state().get("projectorPreferences", {}).get("fixed-1"),
                     "actual projector move was not observed by the product")
                 placement = wait_for(lambda: read_json(paths[0]).get("projectorPlacements", {}).get("fixed-1"),
                     "actual projector move was not saved in its account workspace")
+                evidence["projectorPlacement"] = placement
+                checkpoint("projector-placed-and-saved")
                 assert ui("projector-window-close", slot=1)
                 wait_for(lambda: not state().get("projectors"), "placement probe did not close")
+                checkpoint("projector-window-closed")
                 assert ui("projector", slot=1)
                 restored = wait_for(lambda: next((view for view in state().get("projectors", [])
                     if view.get("slot") == 1), None), "placement probe did not reopen")
                 expected_rect = {key: placement[key] for key in ("x", "y", "width", "height")}
+                evidence["projectorReopenGeometry"] = restored.get("geometry")
+                evidence["projectorExpectedGeometry"] = expected_rect
+                checkpoint("projector-reopened")
                 wait_for(lambda: next((view for view in state().get("projectors", [])
                     if view.get("slot") == 1 and view.get("geometry") == expected_rect), None),
                     "reopened OBS projector did not restore its logical geometry")

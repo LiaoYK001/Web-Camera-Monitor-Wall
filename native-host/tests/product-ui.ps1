@@ -17,6 +17,7 @@ public static class ProductTestWindow {
     [DllImport("user32.dll")] public static extern IntPtr GetForegroundWindow();
     [DllImport("user32.dll")] public static extern uint GetWindowThreadProcessId(IntPtr window,out uint pid);
     [DllImport("user32.dll")] public static extern bool SetWindowPos(IntPtr window,IntPtr after,int x,int y,int width,int height,uint flags);
+    [DllImport("user32.dll")] public static extern bool PostMessage(IntPtr window,uint message,IntPtr wParam,IntPtr lParam);
 }
 '@
     $operation = [Console]::In.ReadToEnd() | ConvertFrom-Json
@@ -193,7 +194,12 @@ public static class ProductTestWindow {
         'projector-close' { Invoke-Control 'webobsCloseProjectors' }
         'program-projector' { Invoke-Control 'webobsProgramProjector' }
         'projector-window-close' {
-            $window.GetCurrentPattern([System.Windows.Automation.WindowPattern]::Pattern).Close()
+            # OBSProjector does not expose a reliable UIA WindowPattern.Close
+            # action on Windows. Exercise the same WM_CLOSE path as the title bar.
+            if (-not [ProductTestWindow]::PostMessage([IntPtr]$window.Current.NativeWindowHandle,
+                0x0010, [IntPtr]::Zero, [IntPtr]::Zero)) {
+                throw 'Owned projector close request failed.'
+            }
         }
         'projector-place' {
             if ([int]$operation.slot -notin @(1,2)) { throw 'Invalid projector fixture slot.' }
