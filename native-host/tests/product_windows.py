@@ -90,6 +90,33 @@ def alive(pid):
         kernel.CloseHandle(handle)
 
 
+def process_creation_time(pid):
+    """Return the kernel creation time so a reused Windows PID is not ours."""
+    from ctypes import wintypes
+
+    class FileTime(ctypes.Structure):
+        _fields_ = [("low", wintypes.DWORD), ("high", wintypes.DWORD)]
+
+    kernel = ctypes.WinDLL("kernel32", use_last_error=True)
+    kernel.OpenProcess.argtypes = [wintypes.DWORD, wintypes.BOOL, wintypes.DWORD]
+    kernel.OpenProcess.restype = wintypes.HANDLE
+    kernel.GetProcessTimes.argtypes = [wintypes.HANDLE, ctypes.POINTER(FileTime),
+        ctypes.POINTER(FileTime), ctypes.POINTER(FileTime), ctypes.POINTER(FileTime)]
+    kernel.GetProcessTimes.restype = wintypes.BOOL
+    kernel.CloseHandle.argtypes = [wintypes.HANDLE]
+    handle = kernel.OpenProcess(0x1000, False, pid)
+    if not handle:
+        return None
+    try:
+        created, exited, kernel_time, user_time = FileTime(), FileTime(), FileTime(), FileTime()
+        if not kernel.GetProcessTimes(handle, ctypes.byref(created), ctypes.byref(exited),
+            ctypes.byref(kernel_time), ctypes.byref(user_time)):
+            return None
+        return (int(created.high) << 32) | int(created.low)
+    finally:
+        kernel.CloseHandle(handle)
+
+
 def exercise(runtime, report, *, with_media=False, retained_profile=None):
     if os.name != "nt":
         raise ValueError("actual Windows product gate requires Windows")
@@ -145,6 +172,20 @@ def exercise(runtime, report, *, with_media=False, retained_profile=None):
         entry = runtime / "bin/webobs-wall.exe"
         process = None
         known_pids = []
+        known_pid_creations = {}
+        def remember_owned_pids(pids):
+            for pid in pids:
+                pid = int(pid)
+                if pid not in known_pids:
+                    known_pids.append(pid)
+                created = process_creation_time(pid)
+                if created is not None:
+                    known_pid_creations[pid] = created
+        def owned_alive(pid):
+            if not alive(pid):
+                return False
+            expected = known_pid_creations.get(int(pid))
+            return expected is None or process_creation_time(pid) == expected
         status_path = profile / "run/native-status.json"
         opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
         rtsp = None
@@ -250,7 +291,7 @@ def exercise(runtime, report, *, with_media=False, retained_profile=None):
                     isinstance(value.get("bootId"), str) and re.fullmatch(r"[a-f0-9]{32}", value["bootId"]) else None
             value = wait_for(ready, "native entry did not start required services", timeout=45)
             active_boot_id = value["bootId"]
-            known_pids.extend([value["ownerPid"], *(service["pid"] for service in value["services"])])
+            remember_owned_pids([value["ownerPid"], *(service["pid"] for service in value["services"])])
             frontend_pid = next(service["pid"] for service in value["services"] if service["name"] == "frontend")
             wait_for(lambda: state().get("phase") == "locked", "actual product window did not lock before authentication")
             assert state()["mediaSources"] == 0, "media source restored before login"
@@ -455,7 +496,7 @@ def exercise(runtime, report, *, with_media=False, retained_profile=None):
             initial_boot = started["bootId"]
             assert ui("close")
             assert process.wait(timeout=40) == 0
-            wait_for(lambda: not any(alive(pid) for pid in known_pids), "pre-login close retained owned processes")
+            wait_for(lambda: not any(owned_alive(pid) for pid in known_pids), "pre-login close retained owned processes")
             preferences = configparser.ConfigParser(interpolation=None)
             preferences.read_string((profile / "native-profile/obs-studio/user.ini").read_text(encoding="utf-8-sig"))
             assert preferences.getboolean("BasicWindow", "PreviewProgramMode") is True, \
@@ -1063,9 +1104,9 @@ def exercise(runtime, report, *, with_media=False, retained_profile=None):
             evidence["normalCloseExitCode"] = exit_code
             assert exit_code == 0, "normal UI close failed orderly shutdown"
             try:
-                wait_for(lambda: not any(alive(pid) for pid in known_pids), "owned process survived normal close")
+                wait_for(lambda: not any(owned_alive(pid) for pid in known_pids), "owned process survived normal close")
             except AssertionError:
-                evidence["normalCloseAlivePids"] = sum(1 for pid in known_pids if alive(pid))
+                evidence["normalCloseAlivePids"] = sum(1 for pid in known_pids if owned_alive(pid))
                 raise
             evidence["checks"].append("normal-ui-close-cleans-owned-processes")
             if complete_services:
@@ -1103,7 +1144,7 @@ def exercise(runtime, report, *, with_media=False, retained_profile=None):
                     wait_for(lambda: state().get("phase") == "authenticated", "imported account login failed")
                 assert ui("close")
                 assert process.wait(timeout=70) == 0
-                wait_for(lambda: not any(alive(pid) for pid in known_pids), "migration probe retained processes")
+                wait_for(lambda: not any(owned_alive(pid) for pid in known_pids), "migration probe retained processes")
                 evidence["checks"].extend(["actual-plugin-workspace-import-restores-after-authentication",
                                            "import-preserves-source-account-workspace"])
             phase = "persistent-origin-conflict"
@@ -1166,7 +1207,7 @@ def exercise(runtime, report, *, with_media=False, retained_profile=None):
             phase = "owner-crash"
             process.kill()
             process.wait(timeout=10)
-            wait_for(lambda: not any(alive(pid) for pid in known_pids), "Windows Job left owned services after launcher crash", timeout=15)
+            wait_for(lambda: not any(owned_alive(pid) for pid in known_pids), "Windows Job left owned services after launcher crash", timeout=15)
             evidence["checks"].append("launcher-crash-job-cleans-all-owned-processes")
             if preview_delivery:
                 assert all(marker.read_bytes() == b"synthetic retained older installation data" for marker in legacy_markers)
@@ -1238,16 +1279,18 @@ def exercise(runtime, report, *, with_media=False, retained_profile=None):
                 process.kill()
                 process.wait(timeout=10)
             try:
-                wait_for(lambda: not any(alive(pid) for pid in known_pids),
+                wait_for(lambda: not any(owned_alive(pid) for pid in known_pids),
                          "owned Windows process survived gate cleanup", timeout=15)
             except Exception:
                 cleanup_failed = True
                 evidence["cleanupFailed"] = True
                 for pid in known_pids:
+                    if not owned_alive(pid):
+                        continue
                     subprocess.run(["taskkill", "/PID", str(pid), "/T", "/F"],
                                    stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
                 try:
-                    wait_for(lambda: not any(alive(pid) for pid in known_pids),
+                    wait_for(lambda: not any(owned_alive(pid) for pid in known_pids),
                              "owned Windows process survived forced cleanup", timeout=10)
                 except Exception:
                     evidence["forcedCleanupFailed"] = True
