@@ -13,5 +13,10 @@ overrides:
   undici@7: 7.30.1
   # Keep legacy minimatch/glob APIs below the affected major versions intact.
   'minimatch@>=7 <11.0.1': 11.0.1
+  # GHSA-fc5q-39xc-vjpf has no published fixed picomatch release yet.
+  # The local patch literalizes repeated extglobs containing wildcards; the
+  # audit command explicitly ignores only this mitigated build-time advisory.
+  picomatch: 4.0.7
 patchedDependencies:
   global-agent@4.1.3: patches/global-agent@4.1.3.patch
+  picomatch@4.0.7: patches/picomatch@4.0.7.patch

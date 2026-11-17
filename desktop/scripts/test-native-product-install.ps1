@@ -104,12 +104,26 @@ try {
         if (-not (Test-Path -LiteralPath (Join-Path $profile $file))) { throw 'Installed account/camera data missing.' }
     }
     function Get-ProfileFingerprint {
-        # Updating creates a backup and pending-update metadata by design.
-        @((Get-ChildItem -LiteralPath $profile -Recurse -File | Where-Object {
-            $_.FullName.Substring($profile.Length + 1) -notmatch '^(run|backups)[\\/]'
-        } | Sort-Object FullName) | ForEach-Object {
-            $_.FullName.Substring($profile.Length) + ':' + (Get-FileHash -LiteralPath $_.FullName -Algorithm SHA256).Hash
-        }) -join "`n"
+        # Hash only durable user data. Update metadata, generated backups,
+        # logs/crash dumps, per-run sentinels and SQLite WAL sidecars are
+        # runtime artifacts; opening a WAL database read-only can create an
+        # empty WAL/SHM pair even when no user row changed.
+        $state = @{}
+        foreach ($file in @(Get-ChildItem -LiteralPath $profile -Recurse -File)) {
+            $relative = $file.FullName.Substring($profile.Length + 1).Replace('\', '/')
+            if ($relative -match '^(run|backups)/' -or
+                $relative -match '(^|/)(logs|crashes)/' -or
+                $relative -match '(^|/)\.sentinel(/|$)' -or
+                $relative -match '\.(db|sqlite3)-(wal|shm)$') {
+                continue
+            }
+            $state[$relative] = (Get-FileHash -LiteralPath $file.FullName -Algorithm SHA256).Hash
+        }
+        return $state
+    }
+    function Compare-ProfileFingerprint($before, $after) {
+        $paths = @(@($before.Keys) + @($after.Keys) | Sort-Object -Unique)
+        return @($paths | Where-Object { $before[$_] -ne $after[$_] })
     }
     $before = Get-ProfileFingerprint
     if ($complete) {
@@ -142,7 +156,12 @@ try {
         $report.registeredVersion = $registeredVersion
         if ($registeredVersion -ne $upgradeVersion) { throw 'Upgrade did not update the installed version registration.' }
         $phase = 'same-machine-upgrade-profile-fingerprint'
-        if ((Get-ProfileFingerprint) -ne $before) {
+        $afterUpgrade = Get-ProfileFingerprint
+        $changedAfterUpgrade = Compare-ProfileFingerprint $before $afterUpgrade
+        $report.profileFingerprintBeforeCount = $before.Count
+        $report.profileFingerprintAfterCount = $afterUpgrade.Count
+        if ($changedAfterUpgrade.Count -ne 0) {
+            $report.profileFingerprintChangedPaths = @($changedAfterUpgrade | Select-Object -First 32)
             throw 'Upgrade changed retained account/profile data.'
         }
         $report.upgradeVersion = $upgradeVersion
@@ -171,7 +190,14 @@ try {
         if (-not $done) { Start-Sleep -Milliseconds 100 }
     } until ($done -or [DateTime]::UtcNow -ge $deadline)
     if (-not $done) { throw 'Owned files/registration/shortcut survived uninstall.' }
-    if ((Get-ProfileFingerprint) -ne $before -or [IO.File]::ReadAllText($unknown) -ne 'private synthetic uninstall-retention marker') {
+    $afterUninstall = Get-ProfileFingerprint
+    $changedAfterUninstall = Compare-ProfileFingerprint $before $afterUninstall
+    $report.profileFingerprintAfterUninstallCount = $afterUninstall.Count
+    if ($changedAfterUninstall.Count -ne 0 -or
+        [IO.File]::ReadAllText($unknown) -ne 'private synthetic uninstall-retention marker') {
+        if ($changedAfterUninstall.Count -ne 0) {
+            $report.profileFingerprintChangedPaths = @($changedAfterUninstall | Select-Object -First 32)
+        }
         throw 'Uninstall changed retained account/profile or unknown files.'
     }
     $report.retainedProfileUnchanged = $true

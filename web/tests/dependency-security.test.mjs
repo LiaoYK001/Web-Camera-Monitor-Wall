@@ -30,6 +30,13 @@ test('Vite/PostCSS resolves the reviewed source-map-js patch', () => {
   assert.equal(postcssRequire('source-map-js/package.json').version, '1.2.2');
 });
 
+test('Vite resolves the mitigated repeated-extglob parser without changing ordinary extglobs', () => {
+  const picomatch = createRequire(require.resolve('vite'))('picomatch');
+  assert.equal(picomatch.isMatch('+(*a)', '+(*a)'), true);
+  assert.equal(picomatch.isMatch('attacker-controlled-input', '+(*a)'), false);
+  assert.equal(picomatch.isMatch('ab', '+(a|b)'), true);
+});
+
 test('indexed maps reject invalid and excessive offsets before expansion', () => {
   for (const offset of [-1, 0.5, '1', NaN, Infinity, Number.MAX_SAFE_INTEGER + 1]) {
     assert.throws(() => new SourceMapConsumer(indexed(offset)), /non-negative integers/);
