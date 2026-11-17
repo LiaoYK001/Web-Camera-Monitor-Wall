@@ -1,0 +1,75 @@
+name: Diagnostic installed backup restore
+
+# Temporary internal diagnostic only. Never publishes bytes or feeds.
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  restore:
+    runs-on: windows-2022
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      - name: Download the failed rc.6 installed candidate
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh run download 44093199118 --repo $env:GITHUB_REPOSITORY `
+            --name webobs-wall-complete-candidate-5.1.0-rc.6 --dir "$env:RUNNER_TEMP/candidate"
+          $setup = Get-ChildItem "$env:RUNNER_TEMP/candidate" -Filter '*.exe' | Select-Object -First 1
+          if (-not $setup) { throw 'Candidate installer missing.' }
+          "INSTALLER=$($setup.FullName)" | Out-File $env:GITHUB_ENV -Append -Encoding utf8
+      - name: Install candidate into a disposable root
+        shell: pwsh
+        run: |
+          $root = Join-Path $env:RUNNER_TEMP 'diag-install'
+          if (Test-Path $root) { Remove-Item -Recurse -Force $root }
+          $p = Start-Process -FilePath $env:INSTALLER -ArgumentList '/S', "/D=$root" -Wait -PassThru
+          if ($p.ExitCode -ne 0) { throw "Installer exit $($p.ExitCode)." }
+          "INSTALLED=$root" | Out-File $env:GITHUB_ENV -Append -Encoding utf8
+      - name: Create and restore a synthetic encrypted backup
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $installed = $env:INSTALLED
+          $python = Join-Path $installed 'python/python.exe'
+          $data = Join-Path $env:RUNNER_TEMP 'diag-data'
+          $config = Join-Path $data 'config'
+          $run = Join-Path $data 'run'
+          $backups = Join-Path $data 'backups'
+          New-Item -ItemType Directory -Force -Path $config,$run,$backups | Out-Null
+          $key = New-Object byte[] 32
+          [Security.Cryptography.RandomNumberGenerator]::Fill($key)
+          [IO.File]::WriteAllBytes((Join-Path $run 'backup.key'), $key)
+          Set-Content -LiteralPath (Join-Path $config 'fixture.json') -Value '{"synthetic":true}' -Encoding utf8
+          $dbCode = @'
+import sqlite3, sys
+database = sqlite3.connect(sys.argv[1])
+database.execute("create table fixture(value text)")
+database.execute("insert into fixture values('private')")
+database.commit()
+database.close()
+'@
+          & $python -B -c $dbCode (Join-Path $config 'cluster.sqlite3')
+          if ($LASTEXITCODE -ne 0) { throw 'Synthetic SQLite setup failed.' }
+          $env:WEBOBS_BACKUP_CONFIG_ROOT = $config
+          $env:WEBOBS_BACKUP_ROOT = $backups
+          $env:WEBOBS_BACKUP_KEY_FILE = Join-Path $run 'backup.key'
+          $env:WEBOBS_LIBSODIUM_LIBRARY = Join-Path $installed 'bin/libsodium.dll'
+          $create = & $python -B (Join-Path $installed 'services/backup/encrypted_backup.py') create 2>&1 | Out-String
+          if ($LASTEXITCODE -ne 0) { Write-Output $create; throw 'Synthetic encrypted backup creation failed.' }
+          $archive = Get-ChildItem $backups -Filter '*.wobk' | Select-Object -First 1
+          if (-not $archive) { throw 'Synthetic encrypted backup missing.' }
+          Set-Content -LiteralPath (Join-Path $config 'stale-marker.json') -Value '{}' -Encoding utf8
+          $env:WEBOBS_RESTORE_CONFIRM = 'replace-config'
+          $restore = & $python -B (Join-Path $installed 'services/product/native_updater.py') restore `
+            --archive $archive.FullName --data-root $data --confirm 2>&1 | Out-String
+          Write-Output "native_updater restore exit: $LASTEXITCODE"
+          Write-Output $restore
+          if ($LASTEXITCODE -ne 0) { throw 'Installed native updater restore failed.' }
+          if (Test-Path (Join-Path $config 'stale-marker.json')) { throw 'Restore did not replace target config.' }
