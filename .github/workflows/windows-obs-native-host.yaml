@@ -121,6 +121,14 @@ jobs:
           Write-Output "real-profile encrypted restore exit: $exit"
           Write-Output $output
           if ($exit -ne 0) { throw 'Real synthetic profile restore failed.' }
+      - name: Exercise the installed updater backup and restore path
+        shell: pwsh
+        run: |
+          $target = Join-Path $env:RUNNER_TEMP 'diag-updater-restore'
+          if (Test-Path $target) { Remove-Item -Recurse -Force $target }
+          & (Join-Path $env:INSTALLED 'python/python.exe') -B native-host/tests/diag_restore_updater.py `
+            $env:INSTALLED $env:DIAG_PROFILE $target
+          if ($LASTEXITCODE -ne 0) { throw 'Installed updater restore path failed.' }
       - name: Create and restore a synthetic encrypted backup
         shell: pwsh
         run: |
