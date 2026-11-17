@@ -801,11 +801,17 @@ def exercise(runtime, report, *, with_media=False, retained_profile=None):
                 assert ui("projector", slot=1)
                 wait_for(lambda: len(state().get("projectors", [])) == 1, "first native Scene projector did not open")
                 checkpoint("projector-first-open")
+                previous_geometry = state()["projectors"][0].get("geometry")
+                previous_placement = read_json(paths[0]).get("projectorPlacements", {}).get("fixed-1")
                 assert ui("projector-place", slot=1)
-                wait_for(lambda: state().get("projectorPreferences", {}).get("fixed-1"),
-                    "actual projector move was not observed by the product")
-                placement = wait_for(lambda: read_json(paths[0]).get("projectorPlacements", {}).get("fixed-1"),
+                moved = wait_for(lambda: next((view for view in state().get("projectors", [])
+                    if view.get("slot") == 1 and view.get("geometry") != previous_geometry), None),
+                    "actual projector move was not observed in the runtime state")
+                placement = wait_for(lambda: (lambda value: value if value and value != previous_placement else None)(
+                    read_json(paths[0]).get("projectorPlacements", {}).get("fixed-1")),
                     "actual projector move was not saved in its account workspace")
+                assert {key: placement[key] for key in ("x", "y", "width", "height")} == moved.get("geometry"), \
+                    "projector runtime geometry and saved preference disagree"
                 evidence["projectorPlacement"] = placement
                 checkpoint("projector-placed-and-saved")
                 assert ui("projector-window-close", slot=1)
