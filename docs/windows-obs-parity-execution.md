@@ -1,5 +1,11 @@
 # Windows OBS 同等开销执行记录 / OBS parity execution record
 
+## 2026-11-17 / v5.1迁移与更新首批修复
+
+用户指定下一正式交付v5.1并以其进行主要Windows验证。独立工作树`codex/v51-hardening`基于dev2258a37；保留rc.1发布身份，未改变稳定feed。FIX-001修复真实OBS插件路径下的v4.5工作区读取与目标路径，整个新profile一起提交/失败恢复空目标；修复缓存EXE执行前和备份后size/SHA-512复检、同版/回退拒绝、缺失必要备份拒绝及预发布数字比较。
+
+本轮实际执行`python3 -B native-host/tests/test_migrate_legacy.py`（旧配置、真实v4.5路径、提交故障重试3组）及`test_native_updater.py`（真实loopback下载、缓存截断/同尺寸改写/追加、备份期间改写、确认和回退拒绝、SemVer）通过。测试不执行EXE，安装调用用mock隔离；Windows安装、实际旧档案与完整更新/功能/性能仍待后续，未宣称R4整体完成。
+
 ## 2026-10-31 / P0 冻结现场（首轮，尚未通过实机基线）
 
 本记录执行 [用户 P0–P5 计划](windows-obs-parity-dsh-plan.md)，不是完成声明。The plan remains open; build/fixture success is not hardware or performance qualification.

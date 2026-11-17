@@ -10,6 +10,7 @@ import json
 from pathlib import Path
 import tempfile
 import threading
+from unittest.mock import patch
 
 ROOT = Path(__file__).resolve().parents[2]
 
@@ -41,6 +42,18 @@ def exercise():
     assert updater.is_newer("5.0.0", "5.0.1")
     assert updater.is_newer("5.0.0-rc.1", "5.0.0")
     assert not updater.is_newer("5.0.1", "5.0.0")
+    assert updater.is_newer("5.1.0-rc.9", "5.1.0-rc.10")
+    assert not updater.is_newer("5.1.0-rc.10", "5.1.0-rc.9")
+    assert updater.is_newer("5.1.0-alpha.9", "5.1.0-alpha.beta")
+    assert updater.is_newer("5.1.0-rc", "5.1.0-rc.1")
+    assert not updater.is_newer("5.1.0+build.1", "5.1.0+build.2")
+    for invalid in ("5.01.0", "5.1.0-rc.01", "5.1.0-rc..1", "../../setup"):
+        try:
+            updater.version_key(invalid)
+        except updater.UpdateError:
+            pass
+        else:
+            raise AssertionError("invalid update version was accepted")
     installer = b"MZ" + b"synthetic-installer" * 1000
     with tempfile.TemporaryDirectory(prefix="webobs-updater-") as temporary:
         base = Path(temporary)
@@ -61,6 +74,58 @@ def exercise():
             receipt = updater.download(result, output, allow_loopback=True)
             assert receipt["verified"] is True and (output / receipt["installer"]).read_bytes() == installer
             assert receipt["sha512"] == digest
+            cached = output / receipt["installer"]
+            # A previously verified receipt must not authorize changed bytes.
+            for corruption in (b"MZ-corrupt", b"X" * len(installer), installer + b"extra"):
+                cached.write_bytes(corruption)
+                with patch.object(updater, "stop_required"), \
+                        patch.object(updater, "backup_config") as backup, \
+                        patch.object(updater.subprocess, "run") as execute:
+                    try:
+                        updater.install(result, output, None, base / "data", confirm=True)
+                    except updater.UpdateError:
+                        pass
+                    else:
+                        raise AssertionError("updater accepted a corrupted cached installer")
+                    assert not execute.called and not backup.called
+            cached.write_bytes(installer)
+            # Changes during a slow backup must also fail before execution.
+            with patch.object(updater, "stop_required"), \
+                    patch.object(updater, "backup_config", side_effect=lambda *args:
+                                 cached.write_bytes(b"X" * len(installer))), \
+                    patch.object(updater.subprocess, "run") as execute:
+                try:
+                    updater.install(result, output, None, base / "data", confirm=True)
+                except updater.UpdateError:
+                    pass
+                else:
+                    raise AssertionError("installer changed during backup was executed")
+                assert not execute.called
+                assert not (base / "data/run/pending-update.json").exists()
+            cached.write_bytes(installer)
+            with patch.object(updater, "stop_required"), \
+                    patch.object(updater, "backup_config"), \
+                    patch.object(updater.subprocess, "run") as execute:
+                installed = updater.install(result, output, None, base / "data", confirm=True)
+                assert installed["status"] == "installed" and execute.call_count == 1
+            for refused in (dict(result, status="current"), dict(result, current="5.0.2")):
+                with patch.object(updater.subprocess, "run") as execute:
+                    try:
+                        updater.install(refused, output, None, base / "data", confirm=True)
+                    except updater.UpdateError:
+                        pass
+                    else:
+                        raise AssertionError("same/older unavailable update was executed")
+                    assert not execute.called
+            config = base / "without-backup/config"
+            config.mkdir(parents=True)
+            (config / "scene.json").write_text("{}", encoding="utf-8")
+            try:
+                updater.backup_config(config, config.parent)
+            except updater.UpdateError:
+                pass
+            else:
+                raise AssertionError("missing backup material silently allowed an update")
             bad = dict(result, sha512="A" * 100)
             bad_output = base / "bad"
             try:

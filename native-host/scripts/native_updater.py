@@ -23,7 +23,9 @@ import urllib.request
 
 MAX_FEED = 1024 * 1024
 MAX_INSTALLER = 4 * 1024 * 1024 * 1024
-VERSION = re.compile(r"^(\d+)\.(\d+)\.(\d+)(?:-([0-9A-Za-z.-]+))?$")
+VERSION = re.compile(r"^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)"
+                     r"(?:-([0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*))?"
+                     r"(?:\+([0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*))?$")
 ALLOWED_HOSTS = ("github.com", "www.github.com", "objects.githubusercontent.com",
                  "release-assets.githubusercontent.com")
 RELEASE_PREFIX = "/LiaoYK001/Web-Camera-Monitor-Wall/releases/download/"
@@ -34,11 +36,16 @@ class UpdateError(Exception):
 
 
 def version_key(value: str):
+    if not isinstance(value, str) or len(value) > 128:
+        raise UpdateError("invalid update version")
     match = VERSION.fullmatch(value)
     if not match:
         raise UpdateError("invalid update version")
     numbers = tuple(int(part) for part in match.groups()[:3])
     suffix = match.group(4)
+    if suffix and any(part.isdigit() and len(part) > 1 and part.startswith("0")
+                      for part in suffix.split(".")):
+        raise UpdateError("invalid numeric prerelease identifier")
     return numbers, suffix
 
 
@@ -50,7 +57,17 @@ def is_newer(current: str, candidate: str) -> bool:
         return True
     if right[1] is not None and left[1] is None:
         return False
-    return (right[1] or "") > (left[1] or "")
+    if left[1] is None:
+        return False
+    for current_part, candidate_part in zip(left[1].split("."), right[1].split(".")):
+        if current_part == candidate_part:
+            continue
+        if current_part.isdigit() and candidate_part.isdigit():
+            return int(candidate_part) > int(current_part)
+        if current_part.isdigit() != candidate_part.isdigit():
+            return current_part.isdigit()  # numeric identifiers precede text
+        return candidate_part > current_part
+    return len(right[1].split(".")) > len(left[1].split("."))
 
 
 def allowed(url: str, *, allow_loopback: bool) -> urllib.parse.ParseResult:
@@ -210,6 +227,8 @@ def backup_config(config_root: Path, data_root: Path) -> None:
     key = data_root / "run/backup.key"
     module = Path(sys.executable).resolve().parent.parent / "services/backup/encrypted_backup.py"
     if not key.is_file() or not module.is_file():
+        if config_root.is_dir() and any(config_root.iterdir()):
+            raise UpdateError("configuration backup is unavailable; update was not started")
         return
     # The packaged service uses the same private key and verifies its own output.
     runtime = Path(sys.executable).resolve().parent.parent
@@ -221,10 +240,42 @@ def backup_config(config_root: Path, data_root: Path) -> None:
                    timeout=300, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 
 
+def verify_installer(installer: Path, manifest: dict) -> dict:
+    """A receipt is bookkeeping, never authority for executable bytes."""
+    size = manifest.get("size")
+    expected = manifest.get("sha512")
+    if (type(size) is not int or not 1024 <= size <= MAX_INSTALLER or
+            not isinstance(expected, str)):
+        raise UpdateError("invalid installer integrity metadata")
+    try:
+        if len(base64.b64decode(expected, validate=True)) != 64:
+            raise ValueError("invalid digest length")
+    except ValueError:
+        raise UpdateError("invalid installer SHA-512") from None
+    if (installer.is_symlink() or not installer.is_file() or
+            getattr(installer.lstat(), "st_file_attributes", 0) & 0x400):
+        raise UpdateError("verified installer is missing or linked")
+    digest = hashlib.sha512()
+    total = 0
+    with installer.open("rb") as source:
+        for block in iter(lambda: source.read(1 << 20), b""):
+            total += len(block)
+            if total > size:
+                raise UpdateError("installer size mismatch")
+            digest.update(block)
+    if total != size or base64.b64encode(digest.digest()).decode("ascii") != expected:
+        raise UpdateError("installer size or SHA-512 mismatch")
+    return {"schema": 1, "version": manifest["version"], "sha512": expected,
+            "bytes": total, "installer": installer.name, "verified": True}
+
+
 def install(manifest: dict, output: Path, install_dir: Path | None, data_root: Path, *,
             confirm: bool, allow_loopback=False) -> dict:
     if not confirm:
         raise UpdateError("installation requires explicit confirmation")
+    if manifest.get("status") != "available" or not is_newer(
+            manifest.get("current"), manifest.get("version")):
+        raise UpdateError("no newer update is available")
     stop_required()
     receipt_path = output / "update-receipt.json"
     installer = output / ("WebOBS-Wall-" + manifest["version"] + "-windows-x64.exe")
@@ -237,9 +288,12 @@ def install(manifest: dict, output: Path, install_dir: Path | None, data_root: P
         installer = output / receipt["installer"]
     if not installer.is_file():
         raise UpdateError("verified installer is missing")
+    receipt = verify_installer(installer, manifest)
     config_root = data_root / "config"
     try:
         backup_config(config_root, data_root)
+        # Backup can take time; validate the final cache again before execution.
+        receipt = verify_installer(installer, manifest)
         pending = {"schema": 1, "from": manifest.get("current"), "to": manifest["version"],
                    "installer": str(installer), "sha512": receipt["sha512"],
                    "size": receipt["bytes"]}
