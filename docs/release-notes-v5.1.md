@@ -14,4 +14,8 @@
 
 投影窗口增加按账号持久保存的屏幕、位置、大小和全屏偏好，复用现有workspace与OBS窗口；原显示器缺失时，约束到当前桌面可见区域并回退窗口模式。位置写入在移动/缩放后去抖，不增加空闲轮询。保存的是窗口偏好，打开仍经现有授权；尚未自动恢复多个固定Scene媒体窗口。Qt几何回归及界面语法检查通过，新Windows最终窗口门禁待执行；物理多屏/DPI仍待主要验证。
 
+维护流程继续修复：检查更新不再把带单引号的Windows路径拼进Python代码；已是最新时结束，不再要求安装；自定义安装位置与安装前实际版本重新核对，稳定通道拒绝预发布更新。支持GitHub正式Latest资产路径，但未提前启用稳定feed。恢复备份命令补齐停止检查、明确确认和打包libsodium路径。
+
+更新改用安装树之外的独立维护解释器，避免更新自身Python文件时占用；仅复制嵌入解释器和维护依赖，不带可选site-packages，临时字节计入维护回执，完成后在后续产品启动清理。Windows门禁将从已安装Python创建维护工具，退出该解释器后再执行NSIS，并恢复真实加密备份核对数据库语义。新的实际Windows结果仍待后续源码回执，不用早先c689e1b运行冒充这些修改已验证。
+
 In development, not a qualified candidate or a published release. The requested v5.1 delivery hardens migration and updates and completes outstanding product integration. Published v4.5/rc.1 bytes remain immutable; no unmeasured target-device or OBS-parity claim is implied.

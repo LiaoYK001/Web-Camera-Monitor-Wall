@@ -7,12 +7,16 @@ from __future__ import annotations
 
 import argparse
 import base64
+from contextlib import closing
 import hashlib
 import http.server
 import importlib.util
 import json
 import os
 from pathlib import Path
+import shutil
+import sqlite3
+import subprocess
 import tempfile
 import threading
 
@@ -91,15 +95,57 @@ def exercise(runtime: Path, installer: Path, profile: Path, installed: Path, rep
             with cached.open("r+b") as target:
                 target.write(first)
             before = set((profile / "backups").rglob("*"))
-            outcome = updater.install(manifest, output, installed, profile, confirm=True,
-                                      allow_loopback=True)
+            maintenance_path = Path(private) / "maintenance.path"
+            prepared = subprocess.run([str(installed / "python/python.exe"), "-B", str(updater_path),
+                "prepare-maintenance", "--runtime", str(installed), "--data-root", str(profile),
+                "--output", str(maintenance_path)], capture_output=True, text=True, timeout=90)
+            assert prepared.returncode == 0, "installed maintenance bootstrap failed"
+            capsule = Path(maintenance_path.read_text(encoding="utf-8"))
+            assert not capsule.is_relative_to(installed), "updater still runs inside the overwritten installation"
+            update_manifest = Path(private) / "update.json"
+            update_manifest.write_text(json.dumps(manifest), encoding="utf-8")
+            executed = subprocess.run([str(capsule / "python/python.exe"), "-B",
+                str(capsule / "services/product/native_updater.py"), "install",
+                "--manifest", str(update_manifest), "--output", str(output),
+                "--install-dir", str(installed), "--current-runtime", str(installed / "webobs-native-prototype.json"),
+                "--data-root", str(profile), "--confirm", "--allow-insecure-loopback-test"],
+                capture_output=True, text=True, timeout=1800)
+            assert executed.returncode == 0, "independent installed updater failed"
+            outcome = json.loads(executed.stdout)
             assert outcome["status"] == "installed"
+            updater.cleanup_maintenance(profile)
+            assert not capsule.exists(), "completed maintenance runtime did not clean up"
+            evidence.update(independentMaintenanceRuntime=True, maintenanceCleaned=True,
+                            maintenanceRuntimeBytes=json.loads(prepared.stdout)["copiedBytes"])
             assert any(p.is_file() for p in set((profile / "backups").rglob("*")) - before), \
                 "installed updater did not produce an encrypted pre-update backup"
+            archives = [p for p in set((profile / "backups").rglob("*.wobk")) - before if p.is_file()]
+            assert len(archives) == 1, "pre-update encrypted backup is ambiguous"
+            # Restore into a separate disposable target using the same original
+            # key. Never replace the retained profile used by the install gate.
+            restored_root = Path(private) / "restore-probe"
+            (restored_root / "run").mkdir(parents=True)
+            shutil.copy2(profile / "run/backup.key", restored_root / "run/backup.key")
+            (restored_root / "config").mkdir()
+            (restored_root / "config/stale-marker.json").write_text("{}")
+            restored = updater.restore_backup(archives[0], restored_root, confirm=True)
+            assert restored["configurationRestored"] is True
+            assert not (restored_root / "config/stale-marker.json").exists()
+            def database_fingerprint(path):
+                with closing(sqlite3.connect(path.as_uri() + "?mode=ro", uri=True)) as database:
+                    assert database.execute("PRAGMA integrity_check").fetchone() == ("ok",)
+                    version = database.execute("PRAGMA user_version").fetchone()
+                    # SQLite backup may rewrite page headers; compare schema
+                    # and rows, never expose account/secret contents in reports.
+                    return version, hashlib.sha256("\n".join(database.iterdump()).encode()).digest()
+            for name in ("cluster.sqlite3", "cameras.db"):
+                assert database_fingerprint(restored_root / "config" / name) == \
+                    database_fingerprint(profile / "config" / name), \
+                    "restored account/camera database differs from retained data"
             assert json.loads((installed / "webobs-native-prototype.json").read_text())["version"] == version
             assert json.loads((installed / "product-components.json").read_text())["version"] == version
             evidence.update(downloadVerified=True, backupCreated=True, actualNsisExecuted=True,
-                            actualRuntimeVersionChanged=True, passed=True)
+                            actualRuntimeVersionChanged=True, encryptedRestoreVerified=True, passed=True)
     finally:
         server.shutdown()
         server.server_close()

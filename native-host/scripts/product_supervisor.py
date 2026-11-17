@@ -162,6 +162,12 @@ class ProductSupervisor:
         protect(self.root / "config", self.runtime)
         protect(self.root / "native-profile", self.runtime)
         if self.complete:
+            updater_path = self.runtime / "services/product/native_updater.py"
+            if updater_path.is_file() and not updater_path.is_symlink():
+                specification = importlib.util.spec_from_file_location("native_maintenance_cleanup", updater_path)
+                updater_module = importlib.util.module_from_spec(specification)
+                specification.loader.exec_module(updater_module)
+                updater_module.cleanup_maintenance(self.root)
             for name in ("recordings", "backups"):
                 protect(self.root / name, self.runtime)
             key_path = self.root / "run/backup.key"

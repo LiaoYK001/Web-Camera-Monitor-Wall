@@ -3,10 +3,12 @@
 from __future__ import annotations
 
 import base64
+import contextlib
 import hashlib
 import http.server
 import importlib.util
 import json
+import io
 from pathlib import Path
 import tempfile
 import threading
@@ -47,6 +49,8 @@ def exercise():
     assert updater.is_newer("5.1.0-alpha.9", "5.1.0-alpha.beta")
     assert updater.is_newer("5.1.0-rc", "5.1.0-rc.1")
     assert not updater.is_newer("5.1.0+build.1", "5.1.0+build.2")
+    updater.allowed("https://github.com/LiaoYK001/Web-Camera-Monitor-Wall/releases/latest/download/latest.yml",
+                    allow_loopback=False)
     for invalid in ("5.01.0", "5.1.0-rc.01", "5.1.0-rc..1", "../../setup"):
         try:
             updater.version_key(invalid)
@@ -147,6 +151,40 @@ def exercise():
                 pass
             current = updater.check(origin + "/latest.yml", "5.0.2", allow_loopback=True)
             assert current["status"] == "current"
+            identity = base / "用户 O'Neil runtime.json"
+            identity.write_text(json.dumps({"productIntegration": True, "version": "5.0.1"}))
+            assert updater.main(["check", "--feed", origin + "/latest.yml",
+                "--current-runtime", str(identity), "--output", str(base / "up-to-date.json"),
+                "--allow-insecure-loopback-test", "--exit-code"]) == 2
+            assert json.loads((base / "up-to-date.json").read_text())["status"] == "current"
+            identity.write_text(json.dumps({"productIntegration": True, "version": "5.0.2"}))
+            manifest_path = base / "outdated-check.json"
+            manifest_path.write_text(json.dumps(result))
+            with patch.object(updater.subprocess, "run") as execute, contextlib.redirect_stderr(io.StringIO()):
+                assert updater.main(["install", "--manifest", str(manifest_path),
+                    "--output", str(output), "--data-root", str(base / "data"),
+                    "--current-runtime", str(identity), "--confirm"]) == 1
+                assert not execute.called
+            feed_path = feed_dir / "latest.yml"
+            stable_feed = feed_path.read_text()
+            feed_path.write_text(stable_feed.replace("version: 5.0.1", "version: 5.1.0-rc.1"))
+            try:
+                updater.check(origin + "/latest.yml", "5.0.0", allow_loopback=True)
+            except updater.UpdateError:
+                pass
+            else:
+                raise AssertionError("stable check accepted a prerelease update feed")
+            feed_path.write_text(stable_feed)
+            for confirmation in (False, True):
+                with patch.object(updater.subprocess, "run") as execute, \
+                        patch.object(updater, "stop_required", side_effect=updater.UpdateError("product running")):
+                    try:
+                        updater.restore_backup(base / "unused.wobk", base / "data", confirm=confirmation)
+                    except updater.UpdateError:
+                        pass
+                    else:
+                        raise AssertionError("restore ignored confirmation or running product")
+                    assert not execute.called
             try:
                 updater.check("https://example.invalid/latest.yml", "5.0.0")
             except updater.UpdateError:
@@ -159,5 +197,36 @@ def exercise():
         print("PASS native updater feed, version, size/SHA-512, origin and explicit-confirmation contracts")
 
 
+def exercise_maintenance():
+    updater = load()
+    with tempfile.TemporaryDirectory(prefix="webobs-maintenance-") as temporary:
+        root = Path(temporary)
+        runtime = root / "用户 O'Neil install"
+        for name in ("python/python.exe", "python/python312.dll", "python/python312.zip",
+                     "services/product/native_updater.py", "services/backup/encrypted_backup.py",
+                     "services/runtime_support.py", "bin/libsodium.dll", "CHECK-UPDATES.cmd",
+                     "python/Lib/site-packages/unneeded-fixture.py"):
+            p = runtime / name
+            p.parent.mkdir(parents=True, exist_ok=True)
+            p.write_bytes(b"inert, never executed")
+        profile = root / "profile"
+        path_file = root / "maintenance.path"
+        receipt = updater.prepare_maintenance(runtime, profile, path_file)
+        capsule = Path(path_file.read_text())
+        assert receipt["outsideInstalledRuntime"] is True and not capsule.is_relative_to(runtime)
+        assert (capsule / "python/python.exe").read_bytes() == b"inert, never executed"
+        assert not (capsule / "python/Lib").exists()
+        assert (capsule / ".webobs-maintenance-origin").read_text() == str(runtime)
+        updater.cleanup_maintenance(profile)
+        assert capsule.exists(), "unfinished recovery tool was removed"
+        with patch.object(updater.sys, "executable", str(capsule / "python/python.exe")):
+            updater.finish_maintenance()
+        updater.cleanup_maintenance(profile)
+        assert not capsule.exists()
+        assert (runtime / "python/python.exe").is_file()
+        print("PASS external maintenance runtime excludes optional packages and cleans only completed capsules")
+
+
 if __name__ == "__main__":
     exercise()
+    exercise_maintenance()
