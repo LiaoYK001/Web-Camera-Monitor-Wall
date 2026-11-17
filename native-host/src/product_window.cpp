@@ -38,6 +38,7 @@
 #include <QSpinBox>
 #include <QStandardItemModel>
 #include <QScrollArea>
+#include <QThread>
 #include <QTimer>
 #include <QUrl>
 #include <QUrlQuery>
@@ -261,6 +262,7 @@ class ProductWindow final : public QWidget {
 		state.insert("programSceneFingerprint", program_fingerprint_);
 		state.insert("programStudioRevision", program_studio_revision_);
 		state.insert("programApplyState", program_apply_state_);
+		state.insert("programSyncPending", program_sync_pending_);
 		state.insert("program", program_state());
 		state.insert("startupStudioDeferred", frontend_->property("webobsStudioDeferredToProduct").toBool());
 		state.insert("restoreGuardHits", frontend_->property("webobsRestoreGuardHits").toInt());
@@ -315,11 +317,25 @@ class ProductWindow final : public QWidget {
 				{"outputHeight", int(video.output_height)}, {"fpsNumerator", int(video.fps_num)},
 				{"fpsDenominator", int(video.fps_den)}});
 		char *path = obs_module_config_path("product-state.json");
-		QSaveFile file(QString::fromUtf8(path ? path : ""));
+		const QString state_path = QString::fromUtf8(path ? path : "");
 		bfree(path);
 		const auto encoded = QJsonDocument(state).toJson();
-		if (!QDir().mkpath(QFileInfo(file.fileName()).absolutePath()) || !file.open(QIODevice::WriteOnly) ||
-		    file.write(encoded) != encoded.size() || !file.commit())
+		bool published = state_path.isEmpty();
+		// The UI gate and support tooling read this private observation file
+		// while the product writes it. Windows can transiently reject a
+		// QSaveFile replace when a reader still has the old handle open; retry
+		// a bounded number of times instead of leaving the observation stale.
+		for (int attempt = 0; attempt < 8 && !published; ++attempt) {
+			QSaveFile file(state_path);
+			if (QDir().mkpath(QFileInfo(file.fileName()).absolutePath()) && file.open(QIODevice::WriteOnly) &&
+			    file.write(encoded) == encoded.size() && file.commit()) {
+				published = true;
+				break;
+			}
+			if (attempt < 7)
+				QThread::msleep(15);
+		}
+		if (!published)
 			blog(LOG_WARNING, "WebOBS product state observation is unavailable");
 	}
 	void request(const QString &path, const QByteArray &method, const QJsonObject &body, Reply callback,

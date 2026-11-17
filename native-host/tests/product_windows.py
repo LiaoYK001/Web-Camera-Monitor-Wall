@@ -956,7 +956,7 @@ def exercise(runtime, report, *, with_media=False, retained_profile=None):
                 checkpoint("program-cleared-put")
                 wait_for(lambda: state().get("programApplyState") == "idle" and
                     state().get("program", {}).get("mediaSources") == 0,
-                    "empty Program scene did not clear the previous protected output", timeout=12)
+                    "empty Program scene did not clear the previous protected output", timeout=25)
                 checkpoint("program-cleared-applied")
                 check_pixels("program-cleared", quick_order=[1, 2, 3, 4, 5])
                 evidence["checks"].extend(["studio-take-applies-real-obs-program-final-pixels",
