@@ -353,6 +353,16 @@ def _backup_error_code(stderr: str, fallback: str) -> str:
     ):
         if marker in text:
             return code
+    # BackupError messages are deliberately generic. Keep only a bounded
+    # classification, never a path or traceback.
+    if "sqlerror" in text or "sqlite" in text:
+        return "backup-database-error"
+    if "permissionerror" in text or "access is denied" in text:
+        return "backup-permission-failed"
+    if "filenotfounderror" in text or "cannot find" in text or "no such file" in text:
+        return "backup-file-missing"
+    if "oserror" in text or "winerror" in text or "ioerror" in text:
+        return "backup-filesystem-error"
     return fallback
 
 
