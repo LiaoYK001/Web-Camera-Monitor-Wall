@@ -56,12 +56,27 @@ public static class ProductTestWindow {
                 'webobsCloseProjectors' { '关闭固定投影' }
                 'webobsProgramProjector' { '打开 Program 投影' }
                 'webobsHostStats' { 'OBS 宿主统计' }
+                'webobsManageDevices' { '设备与来源管理' }
+                'webobsManageAudio' { '音频与监听' }
+                'webobsManageAnalytics' { '分析策略' }
+                'webobsManageEvents' { '事件与通知' }
+                'webobsManageArchive' { '录像与回放' }
+                'webobsManageStorage' { '录像与存储' }
+                'webobsManageGo2rtc' { '网站来源' }
+                'webobsManageAdmin' { '账号与权限' }
+                'webobsManageAccount' { '我的账号' }
+                'webobsManageSettings' { '系统设置' }
                 'webobsVideoHealth' { $kind = [System.Windows.Automation.ControlType]::Text; '' }
                 default {
                     if ($Identity -match '^webobsCameraSlot([1-9][0-9]?)$' -and [int]$Matches[1] -le 64) {
                         $kind = [System.Windows.Automation.ControlType]::ComboBox
                         "画面 $($Matches[1])"
-                    } else { throw 'Unknown fixture control.' }
+                    } else {
+                        # Unknown identities still get the AutomationId suffix
+                        # fallback below; do not fail before that query.
+                        $kind = $null
+                        $null
+                    }
                 }
             }
         }
