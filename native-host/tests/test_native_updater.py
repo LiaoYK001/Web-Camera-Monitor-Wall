@@ -227,6 +227,33 @@ def exercise_maintenance():
         print("PASS external maintenance runtime excludes optional packages and cleans only completed capsules")
 
 
+def exercise_restore_environment():
+    updater = load()
+    with tempfile.TemporaryDirectory(prefix="webobs-restore-env-") as temporary:
+        root = Path(temporary)
+        runtime = root / "runtime"
+        for name in ("python/python.exe", "bin/libsodium.dll", "services/backup/encrypted_backup.py"):
+            path = runtime / name
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_bytes(b"inert")
+        data = root / "profile"
+        (data / "run").mkdir(parents=True)
+        (data / "run/backup.key").write_bytes(b"k" * 32)
+        archive = root / "fixture.wobk"
+        archive.write_bytes(b"archive")
+        with patch.object(updater, "stop_required"), patch.object(updater.subprocess, "run") as execute:
+            execute.return_value.returncode = 0
+            execute.return_value.stderr = ""
+            result = updater.restore_backup(archive, data, confirm=True, runtime_root=runtime)
+            assert result["configurationRestored"] is True
+            environment = execute.call_args.kwargs["env"]
+            backup_root = Path(environment["WEBOBS_BACKUP_ROOT"])
+            assert backup_root.is_absolute() and backup_root == (data / "backups").resolve()
+            assert Path(environment["WEBOBS_LIBSODIUM_LIBRARY"]).is_absolute()
+    print("PASS restore supplies an absolute backup root to the packaged CLI")
+
+
 if __name__ == "__main__":
     exercise()
     exercise_maintenance()
+    exercise_restore_environment()

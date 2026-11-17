@@ -343,6 +343,7 @@ def backup_config(config_root: Path, data_root: Path, *, runtime_root: Path | No
 def _backup_error_code(stderr: str, fallback: str) -> str:
     text = (stderr or "").lower()
     for marker, code in (
+        ("absolute", "backup-path-not-absolute"),
         ("confirmation", "backup-confirmation-invalid"),
         ("backup key", "backup-key-invalid"),
         ("authentication", "backup-authentication-failed"),
@@ -381,6 +382,7 @@ def restore_backup(archive: Path, data_root: Path, *, confirm: bool,
                              "--config-root", str((data_root / "config").resolve()),
                              "--key-file", str(key.resolve())], timeout=300,
                             env={**os.environ, "WEBOBS_RESTORE_CONFIRM": "replace-config",
+                                 "WEBOBS_BACKUP_ROOT": str((data_root / "backups").resolve()),
                                  "WEBOBS_LIBSODIUM_LIBRARY": str(runtime / "bin/libsodium.dll")},
                             capture_output=True, text=True, encoding="utf-8", errors="replace")
     if result.returncode:
