@@ -12,4 +12,6 @@
 
 构建管线已支持精确的5.1.0-rc.N内部验收候选（不开放稳定发行）。Windows门禁新增真实Qt保存工作区的迁移/登录恢复、独立运行时版本及清单的升级测试包、经过已安装更新器的下载/改写缓存拒绝/备份/NSIS执行，以及升级后产品入口与媒体。测试包仍为同源码构造的下一版本夹具，不冒充已发布下一版本。候选发布脚本新增必填`-SourceRevision <40位SHA>`，避免Tag默认落到无关分支；Windows实际结果仍需新run回执。
 
+投影窗口增加按账号持久保存的屏幕、位置、大小和全屏偏好，复用现有workspace与OBS窗口；原显示器缺失时，约束到当前桌面可见区域并回退窗口模式。位置写入在移动/缩放后去抖，不增加空闲轮询。保存的是窗口偏好，打开仍经现有授权；尚未自动恢复多个固定Scene媒体窗口。Qt几何回归及界面语法检查通过，新Windows最终窗口门禁待执行；物理多屏/DPI仍待主要验证。
+
 In development, not a qualified candidate or a published release. The requested v5.1 delivery hardens migration and updates and completes outstanding product integration. Published v4.5/rc.1 bytes remain immutable; no unmeasured target-device or OBS-parity claim is implied.

@@ -16,6 +16,7 @@ public static class ProductTestWindow {
     [DllImport("user32.dll")] public static extern bool ShowWindow(IntPtr window,int command);
     [DllImport("user32.dll")] public static extern IntPtr GetForegroundWindow();
     [DllImport("user32.dll")] public static extern uint GetWindowThreadProcessId(IntPtr window,out uint pid);
+    [DllImport("user32.dll")] public static extern bool SetWindowPos(IntPtr window,IntPtr after,int x,int y,int width,int height,uint flags);
 }
 '@
     $operation = [Console]::In.ReadToEnd() | ConvertFrom-Json
@@ -193,6 +194,11 @@ public static class ProductTestWindow {
         'program-projector' { Invoke-Control 'webobsProgramProjector' }
         'projector-window-close' {
             $window.GetCurrentPattern([System.Windows.Automation.WindowPattern]::Pattern).Close()
+        }
+        'projector-place' {
+            if ([int]$operation.slot -notin @(1,2)) { throw 'Invalid projector fixture slot.' }
+            if (-not [ProductTestWindow]::SetWindowPos([IntPtr]$window.Current.NativeWindowHandle,
+                [IntPtr]::Zero,120,120,800,500,20)) { throw 'Owned projector placement failed.' }
         }
         'projector-fullscreen' {
             if ([ProductTestWindow]::GetForegroundWindow() -ne [IntPtr]$window.Current.NativeWindowHandle) {

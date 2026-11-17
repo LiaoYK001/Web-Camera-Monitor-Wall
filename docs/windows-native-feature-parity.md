@@ -6,6 +6,8 @@
 
 The v5.1 source fixes actual preview workspace paths and transactional profile publication, rehashes cached installers before execution, and compares prerelease numeric identifiers correctly. Local integration/regression passes do not qualify a new Windows installer, full migration or the remaining product features.
 
+R2-004源码新增按账号workspace保存的固定/Program投影窗口位置、屏幕、大小及全屏偏好；重新打开时复用OBS窗口并按Qt逻辑坐标恢复，原屏幕缺失则夹到可见桌面并窗口回退；移动事件去抖写入，无新增常驻采样。Qt几何边界回归与完整product_window语法检查通过，Windows实际位置保存/关闭/重开门禁已加入但尚待新source运行。固定Scene媒体自动恢复和物理DPI/显示器故障仍开放，不关闭完整R2-004。
+
 2026-11-11。基线 `codex/windows-native-monitor@4678f3a`，PR #53 面向 `dev`。旧完整 Windows 产品与已发布原型分别核对，用户反馈 dev.53 原生画面正常，最终完整产品的性能和个人数据升级待集中验收。
 
 执行依据为 [完整任务书](windows-webobs-wall-release-plan-2026-11-11.md)。状态按“旧实现可用、原生未接线”“接线开发中”“自动化通过”“最终设备待验收”记录，每项保留实际入口和证据。

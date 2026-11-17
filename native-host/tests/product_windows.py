@@ -178,7 +178,7 @@ def exercise(runtime, report, *, with_media=False, retained_profile=None):
         def ui(action, **fields):
             owned = state()
             wanted_roles = {"main-preview"}
-            if action in ("projector-fullscreen", "projector-window-close"):
+            if action in ("projector-fullscreen", "projector-window-close", "projector-place"):
                 slot = fields.get("slot")
                 assert type(slot) is int and slot in (1, 2)
                 wanted_roles = {f"fixed-scene-{slot}", f"fixed-scene-fullscreen-{slot}"}
@@ -775,6 +775,20 @@ def exercise(runtime, report, *, with_media=False, retained_profile=None):
                 reference = {binding["cameraId"]: binding["sourceUuid"] for binding in state()["bindings"]}
                 assert ui("projector", slot=1)
                 wait_for(lambda: len(state().get("projectors", [])) == 1, "first native Scene projector did not open")
+                assert ui("projector-place", slot=1)
+                placement = wait_for(lambda: read_json(paths[0]).get("projectorPlacements", {}).get("fixed-1"),
+                    "actual projector move was not saved in its account workspace")
+                assert ui("projector-window-close", slot=1)
+                wait_for(lambda: not state().get("projectors"), "placement probe did not close")
+                assert ui("projector", slot=1)
+                restored = wait_for(lambda: next((view for view in state().get("projectors", [])
+                    if view.get("slot") == 1), None), "placement probe did not reopen")
+                expected_rect = {key: placement[key] for key in ("x", "y", "width", "height")}
+                wait_for(lambda: next((view for view in state().get("projectors", [])
+                    if view.get("slot") == 1 and view.get("geometry") == expected_rect), None),
+                    "reopened OBS projector did not restore its logical geometry")
+                check_graph()
+                evidence["checks"].append("account-projector-geometry-persists-and-restores-with-shared-inputs")
                 assert ui("choose", indices=[5, 4, 3, 2, 1])
                 check_graph(reverse=True)
                 check_projectors({1: "forward"}, reference)
