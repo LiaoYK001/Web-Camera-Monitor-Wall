@@ -104,22 +104,28 @@ try {
         if (-not (Test-Path -LiteralPath (Join-Path $profile $file))) { throw 'Installed account/camera data missing.' }
     }
     function Get-ProfileFingerprint {
-        @((Get-ChildItem -LiteralPath $profile -Recurse -File | Sort-Object FullName) | ForEach-Object {
+        # Updating creates a backup and pending-update metadata by design.
+        @((Get-ChildItem -LiteralPath $profile -Recurse -File | Where-Object {
+            $_.FullName.Substring($profile.Length + 1) -notmatch '^(run|backups)[\\/]'
+        } | Sort-Object FullName) | ForEach-Object {
             $_.FullName.Substring($profile.Length) + ':' + (Get-FileHash -LiteralPath $_.FullName -Algorithm SHA256).Hash
         }) -join "`n"
     }
     $before = Get-ProfileFingerprint
     if ($complete) {
         $phase = 'same-machine-upgrade'
-        $match = [regex]::Match($version, '^(5\.0\.0-rc\.)([0-9]+)$')
+        $match = [regex]::Match($version, '^(5\.[01]\.0-rc\.)([0-9]+)$')
         if (-not $match.Success) { throw 'Complete candidate version is not rc.N.' }
         $upgradeVersion = $match.Groups[1].Value + ([int]$match.Groups[2].Value + 1)
         $upgradeOut = Join-Path $buildRoot 'upgrade-installer'
         New-Item -ItemType Directory $upgradeOut | Out-Null
+        $upgradeRuntime = Join-Path $buildRoot 'upgrade-runtime'
+        & $python -B (Join-Path $repoRoot 'native-host/tests/prepare_upgrade_runtime.py') --runtime $runtime --output $upgradeRuntime --version $upgradeVersion
+        if ($LASTEXITCODE -ne 0) { throw 'Distinct upgrade runtime preparation failed.' }
         $upgradeRemovals = Join-Path $upgradeOut 'owned-removals.nsh'
-        $null = & $python -B $verifier --runtime $runtime --removals $upgradeRemovals
+        $null = & $python -B $verifier --runtime $upgradeRuntime --removals $upgradeRemovals
         if ($LASTEXITCODE -ne 0) { throw 'Upgrade payload verification failed.' }
-        $upgradeArgs = @('/V2',"/DVERSION=$upgradeVersion","/DPACKAGE_DIR=$runtime",
+        $upgradeArgs = @('/V2',"/DVERSION=$upgradeVersion","/DPACKAGE_DIR=$upgradeRuntime",
             "/DOUTPUT_DIR=$upgradeOut","/DOWNED_REMOVALS=$upgradeRemovals",'/DCOMPLETE')
         & $makensis @upgradeArgs (Join-Path $repoRoot 'native-host/installer/WebOBSProductIntegration.nsi')
         if ($LASTEXITCODE -ne 0) { throw 'Upgrade NSIS compilation failed.' }
@@ -129,8 +135,8 @@ try {
             (Get-FileHash -LiteralPath $setup -Algorithm SHA256).Hash) {
             throw 'Upgrade installer is byte-identical to the fresh installer.'
         }
-        $upgrade = Start-Process -FilePath $upgradeSetup -ArgumentList '/S', "/D=$installed" -Wait -PassThru
-        if ($upgrade.ExitCode -ne 0) { throw 'Actual NSIS upgrade installation failed.' }
+        & $python -B (Join-Path $repoRoot 'native-host/tests/update_windows.py') --runtime $runtime --installer $upgradeSetup --profile $profile --installed $installed --report (Join-Path $buildRoot 'native-product-updater.json')
+        if ($LASTEXITCODE -ne 0) { throw 'Actual installed updater/NSIS upgrade failed.' }
         if ((Get-ItemProperty $uninstallKey).DisplayVersion -ne $upgradeVersion) {
             throw 'Upgrade did not update the installed version registration.'
         }
@@ -139,6 +145,14 @@ try {
         }
         $report.upgradeVersion = $upgradeVersion
         $report.sameMachineUpgradeQualified = $true
+        $report.installedUpdaterQualified = $true
+        $report.retentionScope = 'profile content excluding update metadata (run) and generated backups'
+        $null = & $python -B $verifier --runtime $installed --installed
+        if ($LASTEXITCODE -ne 0) { throw 'Upgraded runtime inventory/version failed.' }
+        $phase = 'upgraded-entry-ui-and-media'
+        & $python -B (Join-Path $repoRoot 'native-host/tests/product_windows.py') --runtime $installed --with-media --retained-profile (Join-Path $privateRoot 'upgraded-profile') --report (Join-Path $buildRoot 'native-product-upgraded-ui.json')
+        if ($LASTEXITCODE -ne 0) { throw 'New payload did not pass actual upgraded entry/media.' }
+        $report.upgradedEntryQualified = $true
     }
     $unknown = Join-Path $installed 'user-notes.txt'
     [IO.File]::WriteAllText($unknown, 'private synthetic uninstall-retention marker')

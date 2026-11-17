@@ -17,8 +17,8 @@ def delivery(manifest):
     if not isinstance(manifest, dict):
         raise ValueError("invalid native delivery identity")
     if manifest.get("releaseProfile") == COMPLETE_PROFILE:
-        if not re.fullmatch(r"5\.0\.0-rc\.[0-9]+", manifest.get("version", "")):
-            raise ValueError("complete candidate identity requires 5.0.0-rc.N")
+        if not re.fullmatch(r"5\.[01]\.0-rc\.[0-9]+", manifest.get("version", "")):
+            raise ValueError("complete candidate identity requires 5.0.0-rc.N or 5.1.0-rc.N")
         if any(type(manifest.get(key)) is not type(value) or manifest.get(key) != value
                for key, value in COMPLETE_FIELDS.items()):
             raise ValueError("invalid complete candidate identity")
@@ -45,8 +45,8 @@ def configure_preview(manifest):
 
 
 def configure_complete(manifest):
-    if not re.fullmatch(r"5\.0\.0-rc\.[0-9]+", manifest.get("version", "")):
-        raise ValueError("complete candidate version must be 5.0.0-rc.N")
+    if not re.fullmatch(r"5\.[01]\.0-rc\.[0-9]+", manifest.get("version", "")):
+        raise ValueError("complete candidate version must be 5.0.0-rc.N or 5.1.0-rc.N")
     if manifest.get("productIntegration") is not True:
         raise ValueError("complete candidate requires the integrated product")
     manifest.update(COMPLETE_FIELDS)

@@ -27,7 +27,7 @@ def exercise():
     assert manifest["fullFeatureMigrationQualified"] is False
     assert manifest["dataProfile"] == "Native"
     assert policy.copy_delivery(manifest)["candidate"] is True
-    for invalid in ("5.0.0", "5.0.0-dev.1", "5.0.0-rc", "5.1.0-rc.1"):
+    for invalid in ("5.0.0", "5.0.0-dev.1", "5.0.0-rc", "5.2.0-rc.1"):
         candidate = {"version": invalid, "productIntegration": True}
         try:
             policy.configure_complete(candidate)
@@ -35,6 +35,10 @@ def exercise():
             pass
         else:
             raise AssertionError("complete identity accepted an invalid candidate version")
+    v51 = {"version": "5.1.0-rc.1", "productIntegration": True}
+    policy.configure_complete(v51)
+    assert policy.delivery(v51) == policy.COMPLETE_PROFILE
+    assert v51["fullFeatureMigrationQualified"] is False
     internal = {"version": "5.0.0-dev.1", "publicationForbidden": True}
     assert policy.delivery(internal) == "internal"
     assert policy.copy_delivery(internal) == {"publicationForbidden": True}

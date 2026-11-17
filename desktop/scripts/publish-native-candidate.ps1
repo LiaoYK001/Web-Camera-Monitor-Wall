@@ -7,12 +7,13 @@ param(
     [Parameter(Mandatory=$true)][string]$Manifest,
     [Parameter(Mandatory=$true)][string]$Version,
     [Parameter(Mandatory=$true)][string]$Repository,
+    [Parameter(Mandatory=$true)][ValidatePattern('^[a-f0-9]{40}$')][string]$SourceRevision,
     [Parameter(Mandatory=$true)][string]$Notes,
     [switch]$Confirm
 )
 $ErrorActionPreference = 'Stop'
 if (-not $Confirm) { throw 'Explicit -Confirm is required; candidate publication is never automatic.' }
-if ($Version -notmatch '^5\.0\.0-rc\.[0-9]+$') { throw 'Candidate version must be 5.0.0-rc.N.' }
+if ($Version -notmatch '^5\.[01]\.0-rc\.[0-9]+$') { throw 'Candidate version must be 5.0.0-rc.N or 5.1.0-rc.N.' }
 $installer = (Resolve-Path -LiteralPath $Installer).Path
 $manifestPath = (Resolve-Path -LiteralPath $Manifest).Path
 $notesPath = (Resolve-Path -LiteralPath $Notes).Path
@@ -38,7 +39,7 @@ $checksums = Join-Path (Split-Path -Parent $installer) 'SHA256SUMS.txt'
 "$sha256  $(Split-Path -Leaf $installer)" | Set-Content -LiteralPath $checksums -Encoding ascii
 $args = @('release','create',$tag,$installer,$manifestPath,$checksums,
     '--repo',$Repository,'--title',"WebOBS Wall $Version 完整候选 / complete candidate",
-    '--notes-file',$notesPath,'--prerelease','--latest=false')
+    '--notes-file',$notesPath,'--target',$SourceRevision,'--prerelease','--latest=false')
 & gh @args
 if ($LASTEXITCODE -ne 0) { throw 'Candidate release creation failed.' }
 Write-Output "Published $tag prerelease from $((Get-Item -LiteralPath $installer).FullName) ($size bytes, sha256 $sha256)."

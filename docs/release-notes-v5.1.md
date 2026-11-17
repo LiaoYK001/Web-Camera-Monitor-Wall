@@ -10,4 +10,6 @@
 
 本机SQLite/文件迁移与故障注入、HTTP更新下载和缓存损坏负向回归通过；安装执行器在这些本机测试中为隔离mock，不能当作新Windows安装/个人旧档案验证。完整声音、输出、远端/离线及性能资格仍未完成。
 
+构建管线已支持精确的5.1.0-rc.N内部验收候选（不开放稳定发行）。Windows门禁新增真实Qt保存工作区的迁移/登录恢复、独立运行时版本及清单的升级测试包、经过已安装更新器的下载/改写缓存拒绝/备份/NSIS执行，以及升级后产品入口与媒体。测试包仍为同源码构造的下一版本夹具，不冒充已发布下一版本。候选发布脚本新增必填`-SourceRevision <40位SHA>`，避免Tag默认落到无关分支；Windows实际结果仍需新run回执。
+
 In development, not a qualified candidate or a published release. The requested v5.1 delivery hardens migration and updates and completes outstanding product integration. Published v4.5/rc.1 bytes remain immutable; no unmeasured target-device or OBS-parity claim is implied.

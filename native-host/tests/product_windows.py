@@ -1011,6 +1011,44 @@ def exercise(runtime, report, *, with_media=False, retained_profile=None):
                 evidence["normalCloseAlivePids"] = sum(1 for pid in known_pids if alive(pid))
                 raise
             evidence["checks"].append("normal-ui-close-cleans-owned-processes")
+            if complete_services:
+                phase = "real-plugin-workspace-import"
+                # Reuse only this gate's stopped disposable data. The source
+                # workspace was created by the actual Qt UI/OBS module path.
+                original_profile = profile
+                before_workspaces = {p.relative_to(original_profile): p.read_bytes()
+                                     for p in (original_profile / "native-profile").rglob("workspace-*.json")}
+                assert before_workspaces, "product gate did not create real saved workspaces"
+                imported = private / "migrated-native"
+                migration = subprocess.run([str(runtime / "python/python.exe"), "-B",
+                    str(runtime / "services/product/migrate_legacy.py"),
+                    "--source", str(original_profile / "config"),
+                    "--destination", str(imported / "config"), "--confirm-stopped",
+                    "--include-preview-workspaces"], capture_output=True, text=True, timeout=60)
+                assert migration.returncode == 0, "packaged workspace migration failed"
+                migration_receipt = json.loads(migration.stdout)
+                assert migration_receipt["previewWorkspacesCopied"] == len(before_workspaces)
+                for relative, content in before_workspaces.items():
+                    assert (original_profile / relative).read_bytes() == content
+                    assert (imported / relative).read_bytes() == content
+                profile = imported
+                status_path = profile / "run/native-status.json"
+                environment["WEBOBS_PRODUCT_TEST_ROOT"] = str(profile)
+                started = start()
+                if with_media:
+                    check_pixels("import-before-authentication", blank=True)
+                assert ui("login", **account)
+                if with_media:
+                    check_graph()
+                    time.sleep(3)
+                    check_pixels("imported-plugin-workspace")
+                else:
+                    wait_for(lambda: state().get("phase") == "authenticated", "imported account login failed")
+                assert ui("close")
+                assert process.wait(timeout=70) == 0
+                wait_for(lambda: not any(alive(pid) for pid in known_pids), "migration probe retained processes")
+                evidence["checks"].extend(["actual-plugin-workspace-import-restores-after-authentication",
+                                           "import-preserves-source-account-workspace"])
             phase = "persistent-origin-conflict"
             original_origin = started["origin"]
             network_path = profile / "config/native-network.json"

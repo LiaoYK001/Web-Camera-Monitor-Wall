@@ -82,6 +82,8 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw 'Complete candidate release identity failed.' }
           python -B native-host/tests/test_update_manifest.py
           if ($LASTEXITCODE -ne 0) { throw 'Candidate update manifest failed.' }
+          python -B native-host/tests/test_upgrade_runtime.py
+          if ($LASTEXITCODE -ne 0) { throw 'Distinct upgrade runtime fixture failed.' }
           python -B native-host/tests/test_preview_release.py
           if ($LASTEXITCODE -ne 0) { throw 'Scoped preview identity/export contract failed.' }
           python -B native-host/tests/test_product_restore_protocol.py
@@ -244,6 +246,8 @@ jobs:
             build/obs-native-ci/native-product-restore.json
             build/obs-native-ci/native-product-installed-ui.json
             build/obs-native-ci/native-product-nsis.json
+            build/obs-native-ci/native-product-updater.json
+            build/obs-native-ci/native-product-upgraded-ui.json
             build/obs-native-ci/runtime/product-components.json
       - name: Inventory the runtime and enforce the P4 size budget
         # The builder already inventories BOTH variants before first start.

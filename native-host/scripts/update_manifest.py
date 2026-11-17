@@ -18,9 +18,11 @@ def main(argv=None):
     parser.add_argument("--version", required=True)
     parser.add_argument("--output", type=Path, required=True)
     arguments = parser.parse_args(argv)
-    if not re.fullmatch(r"5\.0\.0-rc\.[0-9]+", arguments.version):
-        raise SystemExit("complete candidate version must be 5.0.0-rc.N")
+    if not re.fullmatch(r"5\.[01]\.0-rc\.[0-9]+", arguments.version):
+        raise SystemExit("complete candidate version must be 5.0.0-rc.N or 5.1.0-rc.N")
     installer = arguments.installer.absolute()
+    if installer.name != f"WebOBS-Wall-{arguments.version}-windows-x64-SETUP.exe":
+        raise SystemExit("installer name does not match its update version")
     if installer.is_symlink() or not installer.is_file():
         raise SystemExit("installer is missing")
     digest = hashlib.sha512()

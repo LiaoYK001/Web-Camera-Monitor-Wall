@@ -2,6 +2,8 @@
 
 ## 2026-11-17 / v5.1迁移与更新首批修复
 
+后续V51-002源码接入v5.1候选版本范围、更新元数据版本/安装器文件名匹配和候选Tag显式SourceRevision。实际Windows门禁改为构建独立运行时版本/重算清单的下一版本夹具，调用安装后native_updater经隔离loopback feed完成下载、缓存篡改拒绝、备份与真实NSIS，再验证新运行时/清单及重新运行入口媒体；原产品gate新增真实Qt插件目录工作区导入和认证后回显。夹具为同源码模拟下一版本，不据此宣称独立发布版本或完整R4合格。本机版本/清单、独立payload防改写、supervisor和包校验通过，实际Windows待新source运行。
+
 用户指定下一正式交付v5.1并以其进行主要Windows验证。独立工作树`codex/v51-hardening`基于dev2258a37；保留rc.1发布身份，未改变稳定feed。FIX-001修复真实OBS插件路径下的v4.5工作区读取与目标路径，整个新profile一起提交/失败恢复空目标；修复缓存EXE执行前和备份后size/SHA-512复检、同版/回退拒绝、缺失必要备份拒绝及预发布数字比较。
 
 本轮实际执行`python3 -B native-host/tests/test_migrate_legacy.py`（旧配置、真实v4.5路径、提交故障重试3组）及`test_native_updater.py`（真实loopback下载、缓存截断/同尺寸改写/追加、备份期间改写、确认和回退拒绝、SemVer）通过。测试不执行EXE，安装调用用mock隔离；Windows安装、实际旧档案与完整更新/功能/性能仍待后续，未宣称R4整体完成。
