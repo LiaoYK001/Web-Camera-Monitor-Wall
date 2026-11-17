@@ -80,6 +80,38 @@ jobs:
           $p = Start-Process -FilePath $env:INSTALLER -ArgumentList '/S', "/D=$root" -Wait -PassThru
           if ($p.ExitCode -ne 0) { throw "Installer exit $($p.ExitCode)." }
           "INSTALLED=$root" | Out-File $env:GITHUB_ENV -Append -Encoding utf8
+      - name: Rebuild and apply an rc.12 upgrade installer
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $installed = $env:INSTALLED
+          $base = Join-Path $env:RUNNER_TEMP 'diag-upgrade-base'
+          $upgrade = Join-Path $env:RUNNER_TEMP 'diag-upgrade-runtime'
+          $out = Join-Path $env:RUNNER_TEMP 'diag-upgrade-installer'
+          if (Test-Path $base) { Remove-Item -Recurse -Force $base }
+          if (Test-Path $upgrade) { Remove-Item -Recurse -Force $upgrade }
+          if (Test-Path $out) { Remove-Item -Recurse -Force $out }
+          Copy-Item -LiteralPath $installed -Destination $base -Recurse
+          Remove-Item -LiteralPath (Join-Path $base 'Uninstall.exe') -Force -ErrorAction SilentlyContinue
+          New-Item -ItemType Directory -Path $upgrade,$out | Out-Null
+          & (Join-Path $installed 'python/python.exe') -B native-host/tests/prepare_upgrade_runtime.py `
+            --runtime $base --output $upgrade --version 5.1.0-rc.12
+          if ($LASTEXITCODE -ne 0) { throw 'Diagnostic upgrade runtime preparation failed.' }
+          & (Join-Path $installed 'python/python.exe') -B native-host/scripts/product_package.py `
+            --runtime $upgrade --removals (Join-Path $out 'owned-removals.nsh')
+          if ($LASTEXITCODE -ne 0) { throw 'Diagnostic upgrade payload verification failed.' }
+          & 'C:\Program Files (x86)\NSIS\makensis.exe' /V2 /DVERSION=5.1.0-rc.12 `
+            "/DPACKAGE_DIR=$upgrade" "/DOUTPUT_DIR=$out" `
+            "/DOWNED_REMOVALS=$(Join-Path $out 'owned-removals.nsh')" /DCOMPLETE `
+            native-host/installer/WebOBSProductIntegration.nsi
+          if ($LASTEXITCODE -ne 0) { throw 'Diagnostic upgrade NSIS compilation failed.' }
+          $setup = Join-Path $out 'WebOBS-Wall-5.1.0-rc.12-windows-x64-SETUP.exe'
+          if (-not (Test-Path $setup)) { throw 'Diagnostic upgrade installer missing.' }
+          $p = Start-Process -FilePath $setup -ArgumentList '/S', "/D=$installed" -Wait -PassThru
+          if ($p.ExitCode -ne 0) { throw "Diagnostic upgrade installer exit $($p.ExitCode)." }
+          $manifest = Get-Content -LiteralPath (Join-Path $installed 'webobs-native-prototype.json') -Raw | ConvertFrom-Json
+          Write-Output "diagnostic upgraded manifest version: $($manifest.version)"
+          if ($manifest.version -ne '5.1.0-rc.12') { throw 'Diagnostic upgrade did not reach the requested install root.' }
       - name: Create a real synthetic installed profile through the product UI
         shell: pwsh
         run: |
