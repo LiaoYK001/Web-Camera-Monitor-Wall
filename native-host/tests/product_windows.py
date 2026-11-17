@@ -50,6 +50,29 @@ def wait_for(predicate, message, timeout=30):
     raise AssertionError(message)
 
 
+def split_workspace(value):
+    """Return the media payload and validated optional projector preferences."""
+    if not isinstance(value, dict):
+        raise AssertionError("account workspace is not a JSON object")
+    placements = value.get("projectorPlacements")
+    base = {key: item for key, item in value.items() if key != "projectorPlacements"}
+    if placements is None:
+        return base, {}
+    assert isinstance(placements, dict), "account projector preferences are not an object"
+    assert set(placements) <= {"fixed-1", "fixed-2", "program"}, \
+        "account workspace contains an unknown projector role"
+    for role, placement in placements.items():
+        assert isinstance(placement, dict), "projector preference is not an object"
+        assert set(placement) == {"x", "y", "width", "height", "screen", "fullscreen"}, \
+            "projector preference has an unexpected schema"
+        assert all(type(placement[key]) is int for key in ("x", "y", "width", "height"))
+        assert isinstance(placement["screen"], str) and len(placement["screen"]) <= 128
+        assert type(placement["fullscreen"]) is bool
+        assert abs(placement["x"]) <= 100000 and abs(placement["y"]) <= 100000
+        assert 1 <= placement["width"] <= 16384 and 1 <= placement["height"] <= 16384
+    return base, placements
+
+
 def alive(pid):
     from ctypes import wintypes
     kernel = ctypes.WinDLL("kernel32", use_last_error=True)
@@ -724,7 +747,8 @@ def exercise(runtime, report, *, with_media=False, retained_profile=None):
                 wait_for(lambda: not state().get("projectors"), "saved-scene projector did not close")
                 evidence["checks"].append("unrelated-studio-save-preserves-authorized-fixed-scene-and-main")
                 assert ui("save")
-                wait_for(lambda: read_json(paths[0]) == {"schema": 2, "sceneId": "fixture-five"},
+                wait_for(lambda: split_workspace(read_json(paths[0]))[0] ==
+                    {"schema": 2, "sceneId": "fixture-five"},
                     "scene-ID workspace save did not commit")
                 assert ui("logout")
                 wait_for(lambda: state().get("phase") == "locked", "Studio scene did not retire on logout")
@@ -756,7 +780,8 @@ def exercise(runtime, report, *, with_media=False, retained_profile=None):
                     "manual camera graph did not replace saved-scene mode")
                 check_graph()
                 assert ui("save")
-                wait_for(lambda: read_json(paths[0]) == saved, "five-camera workspace save did not commit")
+                wait_for(lambda: split_workspace(read_json(paths[0]))[0] == saved,
+                    "five-camera workspace save did not commit")
                 phase = "same-canvas-source-retention"
                 reference = {binding["cameraId"]: binding["sourceUuid"] for binding in state()["bindings"]}
                 assert ui("choose", indices=[5, 4, 3, 2, 1])
@@ -957,7 +982,8 @@ def exercise(runtime, report, *, with_media=False, retained_profile=None):
                 viewer_paths = wait_for(lambda: list((profile / "native-profile").rglob(
                     "workspace-" + viewer["id"] + ".json")), "viewer workspace was not bound to its account identity")
                 assert len(viewer_paths) == 1 and viewer_paths[0] != owner_workspace
-                assert read_json(viewer_paths[0]) == saved and owner_workspace.read_bytes() == owner_bytes
+                viewer_workspace, _ = split_workspace(read_json(viewer_paths[0]))
+                assert viewer_workspace == saved and owner_workspace.read_bytes() == owner_bytes
                 evidence["checks"].extend(["scoped-viewer-catalog-excludes-forbidden-camera",
                     "scoped-viewer-five-hevc-final-pixels", "separate-account-workspace-does-not-overwrite-owner"])
                 viewer_reference = {binding["cameraId"]: binding["sourceUuid"] for binding in state()["bindings"]}
