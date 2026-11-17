@@ -801,6 +801,8 @@ def exercise(runtime, report, *, with_media=False, retained_profile=None):
                 assert ui("projector", slot=1)
                 wait_for(lambda: len(state().get("projectors", [])) == 1, "first native Scene projector did not open")
                 assert ui("projector-place", slot=1)
+                wait_for(lambda: state().get("projectorPreferences", {}).get("fixed-1"),
+                    "actual projector move was not observed by the product")
                 placement = wait_for(lambda: read_json(paths[0]).get("projectorPlacements", {}).get("fixed-1"),
                     "actual projector move was not saved in its account workspace")
                 assert ui("projector-window-close", slot=1)
@@ -1180,6 +1182,13 @@ def exercise(runtime, report, *, with_media=False, retained_profile=None):
                 "programSceneId", "programSceneFingerprint", "programApplyState", "startupStudioDeferred") if key in observed}
             evidence["observedState"]["watchingSavedScene"] = bool(observed.get("sceneId"))
             evidence["observedState"]["projectorCount"] = len(observed.get("projectors", []))
+            evidence["observedState"]["projectorGeometry"] = [
+                {"slot": view.get("slot"), "geometry": view.get("geometry"),
+                 "fullscreen": view.get("fullscreen")}
+                for view in observed.get("projectors", []) if isinstance(view, dict)]
+            preferences = observed.get("projectorPreferences", {})
+            evidence["observedState"]["projectorPreferenceRoles"] = (
+                sorted(preferences) if isinstance(preferences, dict) else [])
             evidence["observedState"]["windowRoles"] = [window.get("role") for window in observed.get("windows", [])
                                                        if isinstance(window, dict)]
             # Only fixed categories/counts from this boot's newest OBS log.

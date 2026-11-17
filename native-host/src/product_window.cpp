@@ -227,6 +227,7 @@ class ProductWindow final : public QWidget {
 	}
 	void observe_state(const char *phase)
 	{
+		remember_open_projector_placements();
 		const int media_sources = media_source_count();
 		obs_video_info video{};
 		const bool video_available = obs_get_video_info(&video);
@@ -307,6 +308,7 @@ class ProductWindow final : public QWidget {
 		}
 		state.insert("windows", windows);
 		state.insert("projectors", projector_states);
+		state.insert("projectorPreferences", projector_placements_);
 		if (video_available)
 			state.insert("videoInfo", QJsonObject{{"baseWidth", int(video.base_width)},
 				{"baseHeight", int(video.base_height)}, {"outputWidth", int(video.output_width)},
@@ -345,8 +347,10 @@ class ProductWindow final : public QWidget {
 	void close_projector(std::size_t index)
 	{
 		auto retired = std::move(projectors_[index]);
-		if (retired && retired->window)
+		if (retired && retired->window) {
+			remember_projector_placement(QString("fixed-%1").arg(index + 1), retired->window);
 			retired->window->close(); // OBS removes its own projector-list entry.
+		}
 		retired.reset();
 		update_projector_controls();
 	}
@@ -744,10 +748,23 @@ class ProductWindow final : public QWidget {
 		if (user_id_.isEmpty() || !window || !window->screen()) return;
 		const auto rect = window->isFullScreen() ? window->normalGeometry() : window->geometry();
 		if (rect.isEmpty()) return;
-		projector_placements_[role] = QJsonObject{{"x", rect.x()}, {"y", rect.y()},
+		const auto placement = QJsonObject{{"x", rect.x()}, {"y", rect.y()},
 			{"width", rect.width()}, {"height", rect.height()},
 			{"screen", window->screen()->name().left(128)}, {"fullscreen", window->isFullScreen()}};
+		if (projector_placements_.value(role).toObject() == placement) return;
+		projector_placements_[role] = placement;
 		placement_save_.start(500); // Debounce resize/move; no idle polling or per-pixel writes.
+	}
+	void remember_open_projector_placements()
+	{
+		// Win32 moves do not always produce a Qt Move event for OBS projector
+		// windows. Piggyback on the existing heartbeat/state observation as a
+		// bounded safety net; identical geometry never schedules another write.
+		for (std::size_t i = 0; i < projectors_.size(); ++i)
+			if (projectors_[i] && projectors_[i]->window)
+				remember_projector_placement(QString("fixed-%1").arg(i + 1), projectors_[i]->window);
+		if (program_projector_)
+			remember_projector_placement("program", program_projector_);
 	}
 	void save_projector_placements()
 	{
@@ -826,7 +843,10 @@ class ProductWindow final : public QWidget {
 
 	void close_program_projector()
 	{
-		if (program_projector_) program_projector_->close();
+		if (program_projector_) {
+			remember_projector_placement("program", program_projector_);
+			program_projector_->close();
+		}
 		program_projector_.clear();
 		observe_current_media();
 	}
@@ -1723,8 +1743,12 @@ public:
 		connect(manage, &QPushButton::clicked, this, [this] { open_management_page("/devices"); });
 		connect(&program_sync_, &QTimer::timeout, this, [this] { sync_program(); });
 		placement_save_.setSingleShot(true);
-		connect(&placement_save_, &QTimer::timeout, this, [this] { save_projector_placements(); });
+		connect(&placement_save_, &QTimer::timeout, this, [this] {
+			save_projector_placements();
+			observe_current_media();
+		});
 		connect(&heartbeat_, &QTimer::timeout, this, [this] {
+			remember_open_projector_placements();
 			refresh_video_health();
 			renew_projectors(); // Remains active while the main view resolves another scene.
 			if (heartbeat_pending_ || user_id_.isEmpty())
