@@ -123,7 +123,7 @@ try {
     }
     function Compare-ProfileFingerprint($before, $after) {
         $paths = @(@($before.Keys) + @($after.Keys) | Sort-Object -Unique)
-        return @($paths | Where-Object { $before[$_] -ne $after[$_] })
+        return ,@($paths | Where-Object { $before[$_] -ne $after[$_] })
     }
     $before = Get-ProfileFingerprint
     if ($complete) {
