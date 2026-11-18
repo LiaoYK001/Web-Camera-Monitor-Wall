@@ -557,7 +557,7 @@ class ProductWindow final : public QWidget {
 		if (program_) owned_video_uuids.insert(program_->uuids.begin(), program_->uuids.end());
 		for (const auto &view : projectors_)
 			if (view && view->window)
-				owned_video_uuids.insert(view.graph->uuids.begin(), view.graph->uuids.end());
+				owned_video_uuids.insert(view->graph->uuids.begin(), view->graph->uuids.end());
 		QJsonArray video_inputs;
 		const auto health_now = health_clock_.elapsed();
 		for (const auto &uuid : owned_video_uuids) {
