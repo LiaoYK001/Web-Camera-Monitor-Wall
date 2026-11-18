@@ -6,10 +6,13 @@ import base64
 import hashlib
 import importlib.util
 from pathlib import Path
+import sys
 import tempfile
 
 
 ROOT = Path(__file__).resolve().parents[2]
+SCRIPTS = ROOT / "native-host/scripts"
+sys.path.insert(0, str(SCRIPTS))
 
 
 def load():
