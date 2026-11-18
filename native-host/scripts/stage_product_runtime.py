@@ -172,6 +172,7 @@ def stage(repo, runtime, core, vcpkg, cache, complete=False):
     (services / "product").mkdir()
     shutil.copy2(repo / "native-host/scripts/product_supervisor.py", services / "product/supervisor.py")
     shutil.copy2(repo / "native-host/scripts/release_policy.py", services / "product/release_policy.py")
+    shutil.copy2(repo / "native-host/scripts/product_lan.py", services / "product/product_lan.py")
     shutil.copy2(repo / "native-host/scripts/migrate_legacy.py", services / "product/migrate_legacy.py")
     shutil.copy2(repo / "native-host/scripts/native_updater.py", services / "product/native_updater.py")
     if not (repo / "web/dist/index.html").is_file():
