@@ -303,9 +303,11 @@ def recover_interrupted(journal_path: pathlib.Path) -> str | None:
 
     The staged copy names tell which side already landed: the configuration
     directory is committed exactly when its staged copy is gone. Before that
-    point the previous pair is restored; after it the remaining staged native
-    profile is landed, so configuration and native profile always move as a
-    pair. Previous data is never deleted here.
+    point BOTH previous halves are restored, including a native profile that
+    had already been swapped out; after it the remaining staged native profile
+    is landed, so configuration and native profile always move as a pair.
+    Anything unexpected at a live path is parked instead of deleted, and
+    previous data is never deleted here.
     """
     if not journal_path.exists():
         return None
@@ -332,15 +334,27 @@ def recover_interrupted(journal_path: pathlib.Path) -> str | None:
         # The configuration directory never landed: put the previous pair back.
         if config_root is not None and not config_root.exists() and rollback is not None and rollback.exists():
             os.replace(rollback, config_root)
+        # The native half can already be swapped out in this same window. Leaving
+        # it parked would pair a recovered configuration with a missing OBS
+        # profile, and nothing else ever claims that directory again.
+        if (native_profile is not None and not native_profile.exists()
+                and native_rollback is not None and native_rollback.exists()):
+            os.replace(native_rollback, native_profile)
         _remove_tree(activated_native)
         _remove_tree(activated)
         journal_path.unlink()
         return "rolled-back"
     if activated_native is not None and activated_native.exists():
-        if native_profile is not None and native_profile.exists():
-            raise BackupError("restore journal is inconsistent")
         if native_profile is None:
             _remove_tree(activated_native)
+        elif native_profile.exists():
+            # The configuration half landed, so the staged copy is the profile that
+            # pair belongs to. Whatever stands at the live path was created after
+            # the crash: park it (never delete) and land the matching pair.
+            parked = native_profile.parent / \
+                f".webobs-native-parked-{time.strftime('%Y%m%dT%H%M%SZ', time.gmtime())}-{uuid.uuid4().hex[:8]}"
+            os.replace(native_profile, parked)
+            os.replace(activated_native, native_profile)
         else:
             os.replace(activated_native, native_profile)
     journal_path.unlink()
@@ -437,7 +451,11 @@ def restore(config_root: pathlib.Path, archive_path: pathlib.Path, key_file: pat
                 os.replace(rollback, config_root)
             if native_rollback is not None:
                 if native_profile.exists():
-                    shutil.rmtree(native_profile)
+                    # A live profile appeared during this failed swap; keep those
+                    # bytes parked rather than delete them on an error path.
+                    parked = native_profile.parent / \
+                        f".webobs-native-parked-{stamp}-{uuid.uuid4().hex[:8]}"
+                    os.replace(native_profile, parked)
                 os.replace(native_rollback, native_profile)
             _remove_tree(activated_native)
             _remove_tree(activated)

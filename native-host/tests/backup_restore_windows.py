@@ -54,6 +54,16 @@ if str(mode) == "interrupt":
             time.sleep(30)
         return result
     os.replace = guarded
+elif str(mode) == "interrupt-native":
+    def guarded(source, destination):
+        result = original(source, destination)
+        if pathlib.Path(source) == native:
+            # The previous OBS profile has just moved aside and the configuration
+            # half has not landed yet: this is the other half of the swap window.
+            sentinel.write_text("native-swapped-out", encoding="utf-8")
+            time.sleep(30)
+        return result
+    os.replace = guarded
 native = None if str(mode) == "config-only" else profile / "native-profile"
 try:
     module.restore(config_root, archive, key, sodium, True, native_profile=native)
@@ -216,6 +226,66 @@ def exercise(runtime, profile_parent, report):
             "webobs-wall", "webobsd", "obs64", "caddy", "mediamtx", "go2rtc"}
         assert survivors == set(), f"product processes survived the first-start check: {sorted(survivors)}"
         evidence["checks"].append("first-installed-start-leaves-no-product-process-behind")
+
+        phase = "interrupted-native-swap"
+        # The other half of the swap window: the previous OBS profile has already
+        # moved aside while the configuration half has not landed. Recovering only
+        # the configuration would start the product on a missing profile and leave
+        # the previous profile parked with nothing to claim it.
+        set_marker(config / CONFIG_MARKER, "live-before-native-swap")
+        set_marker(native / NATIVE_MARKER, "live-before-native-swap")
+        native_sentinel = private / "native-swap-sentinel.txt"
+        native_process, native_log = run_restore(runtime_python, runtime, profile, archive, key_file,
+            native_sentinel, "interrupt-native", private)
+        wait_for(lambda: native_sentinel.is_file(), "restore did not swap the OBS profile half out",
+            timeout=40)
+        assert journal.is_file(), "the restore journal did not survive the native swap window"
+        native_payload = json.loads(journal.read_text(encoding="utf-8"))
+        assert native_payload.get("configRollback") and native_payload.get("nativeRollback"), \
+            "journal does not record both previous halves"
+        assert not config.exists() and not native.exists(), \
+            "one half was still live while the journal claims both were swapped out"
+        native_process.kill()
+        native_process.wait(timeout=30)
+        native_log.close()
+        assert native_process.returncode != 0, "terminated native-swap restore reported success"
+        evidence["nativeSwapExitCode"] = native_process.returncode
+        evidence["checks"].append("restore-process-terminated-after-the-native-swap")
+
+        phase = "second-installed-start"
+        environment = dict(os.environ)
+        environment["WEBOBS_PRODUCT_TEST_ROOT"] = str(profile)
+        launched = subprocess.Popen([str(entry)], env=environment, stdin=subprocess.DEVNULL,
+            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        def native_rolled_back():
+            assert launched.poll() is None, \
+                f"the installed entry refused to start over a native-half swap ({launched.returncode})"
+            value = status()
+            return value if value.get("phase") == "running" and isinstance(value.get("bootId"), str) \
+                and re.fullmatch(r"[a-f0-9]{32}", value["bootId"]) else None
+        owned = []
+        try:
+            started = wait_for(native_rolled_back,
+                "the installed entry did not return both halves of the previous pair", timeout=120)
+            assert not journal.exists(), "the installed entry left the native-swap journal behind"
+            assert marker_value(config / CONFIG_MARKER) == "live-before-native-swap", \
+                "the installed entry did not restore the previous configuration half"
+            assert marker_value(native / NATIVE_MARKER) == "live-before-native-swap", \
+                "the installed entry left the previous OBS profile parked"
+            assert not any(list(profile.glob(".webobs-restore-*"))
+                + list(profile.glob(".webobs-native-restore-*"))), \
+                "the archive staging survived the native-swap rollback"
+            parked_native = Path(native_payload["nativeRollback"])
+            assert not parked_native.exists(), \
+                "the previous OBS profile stayed parked instead of becoming live again"
+            owned = [started["ownerPid"], *[service["pid"] for service in started.get("services", [])]]
+            evidence["checks"].append("native-swap-interruption-returns-the-previous-pair")
+        finally:
+            launched.kill()
+            launched.wait(timeout=30)
+        wait_for(lambda: not any(alive(pid) for pid in owned),
+            "product processes survived the native-swap rollback start", timeout=30)
+        evidence["checks"].append("native-swap-rollback-start-leaves-no-product-process-behind")
 
         phase = "retry-full-restore"
         set_marker(config / CONFIG_MARKER, "live-again")
