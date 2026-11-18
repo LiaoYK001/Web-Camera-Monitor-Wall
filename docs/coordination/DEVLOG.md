@@ -1,12 +1,18 @@
 # 开发日志 / Development log
 
 > 自动生成，勿手改；唯一数据源为 [state.json](state.json)。
-> 快照版本 233 · 2026-11-19T02:11:41+08:00（UTC+08）
+> 快照版本 234 · 2026-11-19T02:12:46+08:00（UTC+08）
 
 [总览](STATUS.md) · [路线图](ROADMAP.md) · [任务](TASKS.md) · [日志](DEVLOG.md) · [交接](HANDOFF.md) · [协作规则](PLAYBOOK.md)
 
 既有产品开发历史继续保留在 [原始执行记录](../windows-obs-parity-execution.md)，不把本轮文档工作当作产品验证。
 
+## #234 · 2026-11-19T02:12:46+08:00 · log
+
+- Agent：`deepseek-v51-20261118-01`；任务：`V51-014`
+- 记录：补充 f2df106/2512b58：NSIS 安装门禁现在用同一个 IShellLinkW Unicode 读取器逐一验证三个辅助入口快捷方式（导入旧数据、检查更新、恢复备份）存在、目标真实存在且指向本次安装目录内的 MIGRATE-LEGACY.cmd / CHECK-UPDATES.cmd / RESTORE-BACKUP.cmd，并把 helperEntryShortcutsQualified 写入 NSIS 回执。
+- 证据：本机无法运行 pwsh，PowerShell 接线需在 Windows 安装门禁首次执行时验证；NSIS 源 WebOBSProductIntegration.nsi 第 88-92 行确认三个快捷方式只在 COMPLETE 构建创建，门禁也只在 complete 阶段运行。
+- 源码：`7aa74da29934f0e118aaa1b472d02e2d87740e05`
 ## #233 · 2026-11-19T02:11:41+08:00 · log
 
 - Agent：`deepseek-v51-20261118-01`；任务：`V51-008`

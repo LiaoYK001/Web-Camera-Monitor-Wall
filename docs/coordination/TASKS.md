@@ -1,7 +1,7 @@
 # 任务与认领 / Tasks and ownership
 
 > 自动生成，勿手改；唯一数据源为 [state.json](state.json)。
-> 快照版本 233 · 2026-11-19T02:11:41+08:00（UTC+08）
+> 快照版本 234 · 2026-11-19T02:12:46+08:00（UTC+08）
 
 [总览](STATUS.md) · [路线图](ROADMAP.md) · [任务](TASKS.md) · [日志](DEVLOG.md) · [交接](HANDOFF.md) · [协作规则](PLAYBOOK.md)
 
@@ -521,6 +521,6 @@
 - 验收：已安装入口先建立旧账号/设备/事件，再用包内 migrate_legacy.py 导入到新档案；导入后旧账号可登录、首次建档关闭、设备与事件保留、DPAPI 备份密钥可解密、旧会话失效；源目录逐文件哈希不变、重复导入被拒绝、结束后无残留进程；回执区分配置导入合格与 fullFeatureMigrationQualified 仍为 false，不夸大
 - 下一步：本机语法与 Linux 契约复跑后，随下一次完整候选在 Windows 安装态产出 native-product-legacy-import.json；用户本人旧档案迁移留待目标机。
 - 阻塞：无
-- 证据：test_migrate_legacy.py 本地 PASS；安装包文件清单含 MIGRATE-LEGACY.cmd；尚无安装态导入回执。；基线 codex/v51-r3-005-devices @ 427cde6；rc.53 run 44364213218 正在验证解码计数修复。；本机：python3 -m py_compile 通过；workflow YAML 解析通过且回执清单含 native-product-legacy-import.json；无 pwsh 本机，PowerShell 接线需在 Windows 运行验证；门禁尚未执行，未记为通过。
-- 最新记录：新增安装态门禁 native-host/tests/legacy_import_windows.py 并接线 NSIS 安装门禁 installed-legacy-import + 回执上传，提交 d9c8c0f 已开 PR #76（基线 #75 427cde6）。门禁把“包内 importer=受审脚本”“MIGRATE-LEGACY.cmd 指向产品数据根”“旧安装→导入→新安装登录/保留/拒绝覆盖/会话失效/进程回收”写成可证伪断言。
-- 最近更新：2026-11-19T02:07:03+08:00
+- 证据：test_migrate_legacy.py 本地 PASS；安装包文件清单含 MIGRATE-LEGACY.cmd；尚无安装态导入回执。；基线 codex/v51-r3-005-devices @ 427cde6；rc.53 run 44364213218 正在验证解码计数修复。；本机：python3 -m py_compile 通过；workflow YAML 解析通过且回执清单含 native-product-legacy-import.json；无 pwsh 本机，PowerShell 接线需在 Windows 运行验证；门禁尚未执行，未记为通过。；本机无法运行 pwsh，PowerShell 接线需在 Windows 安装门禁首次执行时验证；NSIS 源 WebOBSProductIntegration.nsi 第 88-92 行确认三个快捷方式只在 COMPLETE 构建创建，门禁也只在 complete 阶段运行。
+- 最新记录：补充 f2df106/2512b58：NSIS 安装门禁现在用同一个 IShellLinkW Unicode 读取器逐一验证三个辅助入口快捷方式（导入旧数据、检查更新、恢复备份）存在、目标真实存在且指向本次安装目录内的 MIGRATE-LEGACY.cmd / CHECK-UPDATES.cmd / RESTORE-BACKUP.cmd，并把 helperEntryShortcutsQualified 写入 NSIS 回执。
+- 最近更新：2026-11-19T02:12:46+08:00

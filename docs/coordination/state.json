@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
-  "revision": 233,
-  "updated_at": "2026-11-19T02:11:41+08:00",
+  "revision": 234,
+  "updated_at": "2026-11-19T02:12:46+08:00",
   "project": "monitor_wall_czl",
   "baseline_revision": "24fd012ea8ee130ffb9d42473c489d708c9326c3",
   "summary": "当前继续Windows x64 v5.1完整修复与正式交付准备；用户主要Windows验证使用v5.1。rc.1发行/基础门禁属实，但审查复现迁移/更新缺陷，完整声音、合成输出、远端/离线等仍需开发；不以历史候选或版本号认定完整通过。v4.5/rc.1公开字节与暂停平台不变。",
@@ -1470,12 +1470,13 @@
       "evidence": [
         "test_migrate_legacy.py 本地 PASS；安装包文件清单含 MIGRATE-LEGACY.cmd；尚无安装态导入回执。",
         "基线 codex/v51-r3-005-devices @ 427cde6；rc.53 run 44364213218 正在验证解码计数修复。",
-        "本机：python3 -m py_compile 通过；workflow YAML 解析通过且回执清单含 native-product-legacy-import.json；无 pwsh 本机，PowerShell 接线需在 Windows 运行验证；门禁尚未执行，未记为通过。"
+        "本机：python3 -m py_compile 通过；workflow YAML 解析通过且回执清单含 native-product-legacy-import.json；无 pwsh 本机，PowerShell 接线需在 Windows 运行验证；门禁尚未执行，未记为通过。",
+        "本机无法运行 pwsh，PowerShell 接线需在 Windows 安装门禁首次执行时验证；NSIS 源 WebOBSProductIntegration.nsi 第 88-92 行确认三个快捷方式只在 COMPLETE 构建创建，门禁也只在 complete 阶段运行。"
       ],
       "blocker": "",
       "next_step": "本机语法与 Linux 契约复跑后，随下一次完整候选在 Windows 安装态产出 native-product-legacy-import.json；用户本人旧档案迁移留待目标机。",
-      "updated_at": "2026-11-19T02:07:03+08:00",
-      "last_note": "新增安装态门禁 native-host/tests/legacy_import_windows.py 并接线 NSIS 安装门禁 installed-legacy-import + 回执上传，提交 d9c8c0f 已开 PR #76（基线 #75 427cde6）。门禁把“包内 importer=受审脚本”“MIGRATE-LEGACY.cmd 指向产品数据根”“旧安装→导入→新安装登录/保留/拒绝覆盖/会话失效/进程回收”写成可证伪断言。"
+      "updated_at": "2026-11-19T02:12:46+08:00",
+      "last_note": "补充 f2df106/2512b58：NSIS 安装门禁现在用同一个 IShellLinkW Unicode 读取器逐一验证三个辅助入口快捷方式（导入旧数据、检查更新、恢复备份）存在、目标真实存在且指向本次安装目录内的 MIGRATE-LEGACY.cmd / CHECK-UPDATES.cmd / RESTORE-BACKUP.cmd，并把 helperEntryShortcutsQualified 写入 NSIS 回执。"
     }
   ],
   "events": [
@@ -4157,6 +4158,18 @@
         "run 44364213218 编译日志 11_Compile…txt 第 2914/2918 行 C2039；本机 python3 -m py_compile 通过；rc.54 run 44366334192 已取消（含不可靠的 pts 规则）；栈头 8b09fa3/7169e21/985226a/5b8a9ac/f78e76e/bc7dc97。"
       ],
       "git_revision": "a3dc48a4d9c96d1ed30114ed3ef7c2624f10ca56"
+    },
+    {
+      "sequence": 234,
+      "at": "2026-11-19T02:12:46+08:00",
+      "agent": "deepseek-v51-20261118-01",
+      "task": "V51-014",
+      "action": "log",
+      "note": "补充 f2df106/2512b58：NSIS 安装门禁现在用同一个 IShellLinkW Unicode 读取器逐一验证三个辅助入口快捷方式（导入旧数据、检查更新、恢复备份）存在、目标真实存在且指向本次安装目录内的 MIGRATE-LEGACY.cmd / CHECK-UPDATES.cmd / RESTORE-BACKUP.cmd，并把 helperEntryShortcutsQualified 写入 NSIS 回执。",
+      "evidence": [
+        "本机无法运行 pwsh，PowerShell 接线需在 Windows 安装门禁首次执行时验证；NSIS 源 WebOBSProductIntegration.nsi 第 88-92 行确认三个快捷方式只在 COMPLETE 构建创建，门禁也只在 complete 阶段运行。"
+      ],
+      "git_revision": "7aa74da29934f0e118aaa1b472d02e2d87740e05"
     }
   ]
 }
