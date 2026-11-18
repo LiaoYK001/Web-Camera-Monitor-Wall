@@ -426,8 +426,47 @@ def exercise(runtime, report, *, with_media=False, retained_profile=None):
                         return False
             return True
 
+        def fixture_publisher_health():
+            """Bounded harness health: publisher process state and readable loopback paths.
+
+            A frozen final-pixel slot can come from the product decoder or from the test
+            fixture that feeds it. This reads only process state and whether each synthetic
+            RTSP path is still readable, so the receipt says which side stalled.
+            """
+            publishers = []
+            for index, publisher in enumerate(rtsp.publishers):
+                if publisher is None:
+                    state = "absent"
+                elif publisher.poll() is None:
+                    state = "alive"
+                else:
+                    state = "exited"
+                publishers.append({"index": index, "state": state})
+            readable = []
+            for url in rtsp.urls:
+                try:
+                    probe = subprocess.run([str(ffprobe), "-v", "error", "-rtsp_transport", "tcp",
+                        "-select_streams", "v:0", "-show_entries", "stream=codec_name", "-of", "json", url],
+                        capture_output=True, text=True, timeout=8)
+                    readable.append(probe.returncode == 0)
+                except subprocess.TimeoutExpired:
+                    readable.append(False)
+            return {"publishers": publishers, "readable": readable}
+
         def check_pixels(label, *, blank=False, repeat_first=False, reverse=False, expected_media=None,
-                projector_orders=None, quick_order=None, program_scene=None, program_media=None):
+                projector_orders=None, quick_order=None, program_scene=None, program_media=None,
+                fixture_retry=True):
+            # A loopback publisher is harness state, not product state: ffmpeg can exit while
+            # looping a synthetic file, and then every reader of that path stalls through no
+            # fault of the product. Restart dead publishers before capturing and record it.
+            dead = [index for index, publisher in enumerate(rtsp.publishers)
+                if publisher is None or publisher.poll() is not None]
+            if dead and not blank:
+                evidence.setdefault("fixturePublisherWatch", []).append({"phase": label, "dead": dead})
+                for index in dead:
+                    rtsp.restart_publisher(index)
+                wait_for(lambda: ui("video-progress", sources=5, stalled=0),
+                    "restarted loopback publisher did not resume frame progress", timeout=60)
             checkpoint("pixels-" + label + "-program")
             check_monitor_program(program_scene=program_scene, program_media=program_media)
             from ctypes import wintypes
@@ -539,6 +578,29 @@ def exercise(runtime, report, *, with_media=False, retained_profile=None):
                     evidence["captures"][-1]["analysis"] = result
                 else:
                     evidence["captures"][-1].setdefault("projectorAnalysis", {})[role] = result
+                if result.get("passed") is not True:
+                    harness = fixture_publisher_health()
+                    dead = [entry["index"] for entry in harness["publishers"] if entry["state"] != "alive"]
+                    unreadable = [index for index, ok in enumerate(harness["readable"]) if not ok]
+                    evidence["pixelFailureDiagnostics"] = {"phase": label, "role": role,
+                        "temporalProgress": result.get("temporalProgress"),
+                        "progressError": str(result.get("progressError") or "")[:120],
+                        "publisherState": harness["publishers"], "unreadablePaths": unreadable}
+                    if (dead or unreadable) and fixture_retry:
+                        # The synthetic fixture itself dropped out: restart every dead publisher,
+                        # prove the host resumes decoding, then re-run this exact pixel phase
+                        # once. A product-side stall with a healthy fixture still fails below.
+                        evidence["fixtureRestartedAfterPixelFailure"] = {"phase": label,
+                            "deadPublishers": dead, "unreadablePaths": unreadable}
+                        for index in sorted(set(dead + unreadable)):
+                            rtsp.restart_publisher(index)
+                        wait_for(lambda: ui("video-progress", sources=5, stalled=0),
+                            "restarted loopback fixture did not resume frame progress", timeout=60)
+                        evidence["fixtureRestartResumed"] = label
+                        return check_pixels(label, blank=blank, repeat_first=repeat_first, reverse=reverse,
+                            expected_media=expected_media, projector_orders=projector_orders,
+                            quick_order=quick_order, program_scene=program_scene,
+                            program_media=program_media, fixture_retry=False)
                 assert analysis.returncode == 0 and result.get("passed") is True, "product view failed its expected final-pixel state"
 
         frontend_pid = 0
