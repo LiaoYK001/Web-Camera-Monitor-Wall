@@ -1,5 +1,11 @@
 #!/usr/bin/env python3
-"""Finalize a separate non-default portable prototype, never an installer."""
+"""Finalize a separate non-default portable runtime, never an installer.
+
+Development prototypes, the authorized v4.5 preview and internal complete
+candidates stay outside the stable updater feed. A stable runtime identity is
+recorded only when the caller passes the location of the actual acceptance
+receipt, and its release Tag comes from the shared version mapping.
+"""
 from __future__ import annotations
 
 import argparse
@@ -8,7 +14,7 @@ from pathlib import Path
 import shutil
 
 from prepare import OBS_COMMIT, OBS_VERSION
-from release_policy import configure_preview
+from release_policy import apply_acceptance, configure_preview
 
 REQUIRED = (
     "bin/64bit/obs64.exe",
@@ -23,10 +29,15 @@ REQUIRED = (
 )
 
 
-def finalize(repo: Path, source: Path, runtime: Path, version: str, product: bool = False, native_preview: bool = False, complete: bool = False) -> dict:
+def finalize(repo: Path, source: Path, runtime: Path, version: str, product: bool = False, native_preview: bool = False, complete: bool = False,
+             stable: bool = False, acceptance: Path | None = None) -> dict:
     if native_preview and (not product or version != "4.5.0"):
         raise ValueError("preview delivery requires the authorized v4.5 product profile")
-    if not native_preview and not complete and (not version or "-dev." not in version):
+    if stable and complete:
+        raise ValueError("stable release and internal candidate profiles are mutually exclusive")
+    if stable and not product:
+        raise ValueError("stable delivery requires the integrated product profile")
+    if not native_preview and not complete and not stable and (not version or "-dev." not in version):
         raise ValueError("Only an explicitly development-tagged prototype may be staged")
     if not runtime.is_dir() or runtime.is_symlink() or (runtime / "webobs-native-prototype.json").exists():
         raise ValueError("Staging requires a new, separate runtime directory")
@@ -80,6 +91,10 @@ def finalize(repo: Path, source: Path, runtime: Path, version: str, product: boo
     if complete:
         from release_policy import configure_complete
         configure_complete(manifest)
+    if stable:
+        if acceptance is None:
+            raise ValueError("stable delivery requires the recorded acceptance file")
+        apply_acceptance(manifest, acceptance)
     if native_preview:
         configure_preview(manifest)
         shutil.copy2(repo / "docs/windows-v4.5-quickstart.md", runtime / "START-HERE.md")
@@ -97,7 +112,11 @@ if __name__ == "__main__":
     parser.add_argument("--product", action="store_true")
     parser.add_argument("--native-preview", action="store_true")
     parser.add_argument("--complete", action="store_true")
+    parser.add_argument("--stable", action="store_true")
+    parser.add_argument("--acceptance", type=Path,
+                        help="recorded acceptance file required with --stable")
     args = parser.parse_args()
     manifest = finalize(args.repo.resolve(), args.source.resolve(), args.runtime.resolve(), args.version,
-                        args.product, args.native_preview, args.complete)
+                        args.product, args.native_preview, args.complete, args.stable,
+                        args.acceptance)
     print(json.dumps(manifest, indent=2))
