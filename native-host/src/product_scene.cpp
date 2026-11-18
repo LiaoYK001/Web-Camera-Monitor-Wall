@@ -251,7 +251,11 @@ struct ProductSceneSource {
 		obs_data_set_bool(settings.get(), "restart_on_activate", false);
 		obs_data_set_bool(settings.get(), "close_when_inactive", false);
 		obs_data_set_int(settings.get(), "buffering_mb", 1);
-		obs_data_set_int(settings.get(), "reconnect_delay_sec", 2);
+		// ffmpeg only binds its listen socket after it has opened the camera input, so the
+		// first open of this endpoint can fail while the mixer is still connecting. One
+		// second instead of the upstream default (10) or the previous 2 keeps that
+		// lead-in short; the receipt still measures when audio actually became live.
+		obs_data_set_int(settings.get(), "reconnect_delay_sec", 1);
 		const std::string name = "WebOBS audio mix " + camera.id;
 		audio_source = obs_source_create("ffmpeg_source", name.c_str(), settings.get(), nullptr);
 		if (!audio_source) {
