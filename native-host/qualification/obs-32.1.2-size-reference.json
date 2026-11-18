@@ -1,0 +1,31 @@
+{
+  "schema": 1,
+  "kind": "stock-obs-size-reference",
+  "obsVersion": "32.1.2",
+  "installerBytes": 157809480,
+  "installerSha256": "94d180c1fc481ccc307b95513f795d088d63ac4f61ad3253c2ac0d94d0844110",
+  "logicalBytes": 479371662,
+  "allocationBytes": 482421648,
+  "fileCount": 2158,
+  "directoryCount": 88,
+  "allocationUnitBytes": 4096,
+  "groupBytes": {
+    "obs-plugins/64bit": 317367244,
+    "bin/64bit": 137144384,
+    "data/obs-plugins": 11402872,
+    "data/obs-scripting": 6835991,
+    "data/obs-studio": 6366768,
+    "data/libobs": 106377
+  },
+  "measuredOn": {
+    "os": "GitHub-hosted Windows Server 2022",
+    "run": "41221199820",
+    "sourceRevision": "d6e9c44",
+    "phase": "installed, before first start"
+  },
+  "limits": [
+    "the installer hash is recorded for this download, not an independently published checksum",
+    "silent installation of the pinned upstream installer on a CI runner, not a user machine",
+    "same measurement tool as the product installed-tree receipt, so the two sides are comparable"
+  ]
+}
