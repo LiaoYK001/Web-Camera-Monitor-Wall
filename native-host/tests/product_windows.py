@@ -532,11 +532,19 @@ def exercise(runtime, report, *, with_media=False, retained_profile=None):
                 assert fixtures[0]["audioTracks"] == 2, "dual audio-track fixture was not encoded"
                 evidence["fixtures"] = fixtures
                 rtsp = pixel_windows.LoopbackRtsp(private, ffmpeg, ffprobe, fixtures, secrets.token_hex(16), False)
-                audio_probe = subprocess.run(
-                    [str(ffprobe), "-v", "error", "-rtsp_transport", "tcp", "-select_streams", "a",
-                     "-show_entries", "stream=codec_name,codec_type", "-of", "json", rtsp.urls[0]],
-                    capture_output=True, text=True, encoding="utf-8", timeout=20)
-                audio_streams = json.loads(audio_probe.stdout).get("streams", []) if audio_probe.returncode == 0 else []
+                audio_streams = []
+                audio_deadline = time.monotonic() + 15
+                while time.monotonic() < audio_deadline:
+                    audio_probe = subprocess.run(
+                        [str(ffprobe), "-v", "error", "-rtsp_transport", "tcp", "-select_streams", "a",
+                         "-show_entries", "stream=codec_name,codec_type", "-of", "json", rtsp.urls[0]],
+                        capture_output=True, text=True, encoding="utf-8", timeout=20)
+                    audio_streams = json.loads(audio_probe.stdout).get("streams", []) \
+                        if audio_probe.returncode == 0 else []
+                    if len(audio_streams) == 2:
+                        break
+                    time.sleep(0.5)
+                evidence["rtspAudioTracks"] = len(audio_streams)
                 assert len(audio_streams) == 2, "loopback RTSP did not expose both synthetic audio tracks"
                 phase = "existing-camera-api"
                 code, issued, _ = request("/api/v1/auth/login", account)

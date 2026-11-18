@@ -216,7 +216,7 @@ class LoopbackRtsp:
 
     def _publisher_command(self, index: int) -> list[str]:
         return [str(self.ffmpeg), "-hide_banner", "-loglevel", "error", "-nostdin", "-re", "-stream_loop", "-1",
-                "-i", str(self.fixture_paths[index]), "-c", "copy", "-f", "rtsp", "-rtsp_transport", "tcp",
+                "-i", str(self.fixture_paths[index]), "-map", "0", "-c", "copy", "-f", "rtsp", "-rtsp_transport", "tcp",
                 self.urls[index]]
 
     def _start_publisher(self, index: int) -> None:
