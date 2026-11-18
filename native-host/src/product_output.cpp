@@ -409,8 +409,11 @@ struct ProductProgramOutputImpl {
 	{
 		if (recording && (!recording_output.value || !obs_output_active(recording_output.value))) {
 			const QString detail = bounded_error(obs_output_get_last_error(recording_output.value));
-			remove_partial(detail.isEmpty() ? "recording-output-lost"
-				: "recording-output-lost: " + detail);
+			// remove_partial takes the caller's error by reference, so the reason
+			// needs its own named QString instead of a ternary temporary.
+			QString reason = detail.isEmpty() ? QStringLiteral("recording-output-lost")
+				: QStringLiteral("recording-output-lost: ") + detail;
+			remove_partial(reason);
 			// No finished artifact exists, so the receipt must not name one.
 			final_path.clear();
 			recording_bytes = 0;
@@ -419,9 +422,13 @@ struct ProductProgramOutputImpl {
 		if (!streaming)
 			return;
 		const bool relay_running = media_mtx.state() == QProcess::Running;
-		const bool output_live = whip_output.value && obs_output_active(whip_output.value) &&
-			!obs_output_reconnecting(whip_output.value);
-		if (relay_running && output_live)
+		// WHIP becomes active only after the loopback handshake completes, and a
+		// live reconnect is still the same user-facing output, so neither counts
+		// as a loss. A dead relay is definitive; a dead output needs the short
+		// start window so a slow handshake is not reported as a failure.
+		const bool output_live = whip_output.value &&
+			(obs_output_active(whip_output.value) || obs_output_reconnecting(whip_output.value));
+		if (relay_running && (output_live || stream_clock.elapsed() < 5000))
 			return;
 		const QString detail = whip_output.value ?
 			bounded_error(obs_output_get_last_error(whip_output.value)) : QString();
