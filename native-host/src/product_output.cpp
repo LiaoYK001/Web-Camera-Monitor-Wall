@@ -10,6 +10,7 @@
 #include <QFileInfo>
 #include <QHostAddress>
 #include <QProcess>
+#include <QProcessEnvironment>
 #include <QSaveFile>
 #include <QTcpServer>
 #include <QTcpSocket>
@@ -108,6 +109,15 @@ bool port_available(int port)
 void wait_ms(int milliseconds)
 {
 	QThread::msleep(static_cast<unsigned long>(milliseconds));
+}
+
+QProcessEnvironment child_environment()
+{
+	QProcessEnvironment environment = QProcessEnvironment::systemEnvironment();
+	for (const auto &key : environment.keys())
+		if (key.startsWith("WEBOBS_"))
+			environment.remove(key);
+	return environment;
 }
 
 bool wait_output_inactive(obs_output_t *output, int timeout_ms)
@@ -256,6 +266,7 @@ struct ProductProgramOutputImpl {
 			return false;
 		}
 		media_mtx.setProcessChannelMode(QProcess::MergedChannels);
+		media_mtx.setProcessEnvironment(child_environment());
 		media_mtx.start(binary, {config_path});
 		if (!media_mtx.waitForStarted(5000)) {
 			error = "mediamtx-start-failed";
@@ -401,6 +412,7 @@ struct ProductProgramOutputImpl {
 		}
 		QProcess remux;
 		remux.setProcessChannelMode(QProcess::MergedChannels);
+		remux.setProcessEnvironment(child_environment());
 		remux.start(ffmpeg, {"-hide_banner", "-loglevel", "error", "-y", "-i", temporary_path,
 			"-map", "0", "-c", "copy", "-movflags", "+faststart", final_path});
 		if (!remux.waitForStarted(5000) || !remux.waitForFinished(120000) ||

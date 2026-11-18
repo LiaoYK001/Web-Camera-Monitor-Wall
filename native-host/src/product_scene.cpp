@@ -224,6 +224,8 @@ struct ProductSceneSource {
 			  << QStringLiteral("tcp://127.0.0.1:%1?listen=1").arg(port);
 		auto process = std::make_unique<QProcess>();
 		process->setProcessChannelMode(QProcess::MergedChannels);
+		// The mixer never needs product tokens or camera secrets. Do not pass
+		// the frontend's private WEBOBS_* environment to a long-lived child.
 		QProcessEnvironment environment = QProcessEnvironment::systemEnvironment();
 		for (const auto &key : environment.keys())
 			if (key.startsWith("WEBOBS_"))
