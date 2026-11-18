@@ -250,6 +250,7 @@ class ProductSupervisor:
                 "WEBOBS_ARCHIVE_QUEUE": str(config / "archive-queue.sqlite3"),
                 "WEBOBS_ARCHIVE_PYTHON_MODULE": str(self.runtime / "services/archive/s3_archive.py"),
                 "WEBOBS_BACKUP_CONFIG_ROOT": str(config),
+                "WEBOBS_BACKUP_NATIVE_PROFILE": str(self.root / "native-profile"),
                 "WEBOBS_BACKUP_ROOT": str(self.root / "backups"),
                 "WEBOBS_BACKUP_KEY_FILE": str(self.root / "run/backup.key"),
                 "WEBOBS_BACKUP_S3_CONFIG": str(config / "archive.json"),
