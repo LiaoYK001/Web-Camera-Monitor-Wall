@@ -16,6 +16,9 @@ struct ProductVideoProgress {
 struct ProductAudioProgress {
 	std::string source_id;
 	bool available = false;
+	bool source_active = false;
+	bool source_showing = false;
+	int process_exit_code = -1;
 	float peak_dbfs = -120.0f;
 };
 

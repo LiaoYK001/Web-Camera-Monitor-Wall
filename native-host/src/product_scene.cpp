@@ -382,6 +382,9 @@ std::vector<ProductAudioProgress> ProductSceneGraph::audio_progress() const
 			continue;
 		result.push_back({entry->document_id,
 			entry->audio_mix_process->state() == QProcess::Running,
+			obs_source_active(entry->audio_source),
+			obs_source_showing(entry->audio_source),
+			entry->audio_mix_process->state() == QProcess::NotRunning ? entry->audio_mix_process->exitCode() : -1,
 			entry->audio_peak_db.load(std::memory_order_relaxed)});
 	}
 #endif

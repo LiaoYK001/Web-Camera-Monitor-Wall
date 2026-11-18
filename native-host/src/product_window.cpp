@@ -297,7 +297,9 @@ class ProductWindow final : public QWidget {
 				if (!audio_seen.insert(audio.source_id).second)
 					continue;
 				audio_sources.append(QJsonObject{{"sourceId", QString::fromStdString(audio.source_id)},
-					{"available", audio.available}, {"peakDbfs", double(audio.peak_dbfs)}});
+					{"available", audio.available}, {"active", audio.source_active},
+					{"showing", audio.source_showing}, {"processExitCode", audio.process_exit_code},
+					{"peakDbfs", double(audio.peak_dbfs)}});
 			}
 		};
 		collect_audio(wall_);

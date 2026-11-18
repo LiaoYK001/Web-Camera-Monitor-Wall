@@ -532,6 +532,12 @@ def exercise(runtime, report, *, with_media=False, retained_profile=None):
                 assert fixtures[0]["audioTracks"] == 2, "dual audio-track fixture was not encoded"
                 evidence["fixtures"] = fixtures
                 rtsp = pixel_windows.LoopbackRtsp(private, ffmpeg, ffprobe, fixtures, secrets.token_hex(16), False)
+                audio_probe = subprocess.run(
+                    [str(ffprobe), "-v", "error", "-rtsp_transport", "tcp", "-select_streams", "a",
+                     "-show_entries", "stream=codec_name,codec_type", "-of", "json", rtsp.urls[0]],
+                    capture_output=True, text=True, encoding="utf-8", timeout=20)
+                audio_streams = json.loads(audio_probe.stdout).get("streams", []) if audio_probe.returncode == 0 else []
+                assert len(audio_streams) == 2, "loopback RTSP did not expose both synthetic audio tracks"
                 phase = "existing-camera-api"
                 code, issued, _ = request("/api/v1/auth/login", account)
                 assert code == 200 and issued
@@ -1252,6 +1258,7 @@ def exercise(runtime, report, *, with_media=False, retained_profile=None):
                 sorted(preferences) if isinstance(preferences, dict) else [])
             evidence["observedState"]["windowRoles"] = [window.get("role") for window in observed.get("windows", [])
                                                        if isinstance(window, dict)]
+            evidence["observedState"]["audioSources"] = observed.get("audioSources", [])
             # Only fixed categories/counts from this boot's newest OBS log.
             # Never publish its contents, path, exception text or camera URL.
             obs_markers = ("Switched to Preview/Program mode", "Switched to regular Preview mode",
