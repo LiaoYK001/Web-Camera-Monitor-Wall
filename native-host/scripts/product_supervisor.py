@@ -174,6 +174,8 @@ class ProductSupervisor:
         self.lan_server = None
         self.lan_thread = None
         self.token = ""
+        self.phase = "startup"
+        self.status_lock = threading.Lock()
         self.lan_lock = threading.Lock()
         self.lan_dirty = threading.Event()
         self.lan_process = None
@@ -186,22 +188,27 @@ class ProductSupervisor:
         self.backup_key = None
 
     def status(self, phase):
+        self.phase = phase
         value = {"schema": 1, "phase": phase, "origin": self.origin, "bootId": self.boot_id,
                  "failureReason": self.failure_reason,
                  "ownerPid": os.getpid(), "services": [
                      {"name": name, "pid": process.pid, "running": (code := process.poll()) is None,
                       "exitCode": code}
                      for name, process in self.children],
-                 "lan": self.lan.status(self.lan_value),
+                 "lan": self.lan_status(),
                  "lanSwitchPort": self.lan_server.server_port if self.lan_server else 0}
         if self.authority_store is not None:
             value["services"].append({"name": "accounts-and-registry", "pid": os.getpid(),
                                        "running": all(thread.is_alive() for thread in self.authority_threads)})
         target = self.root / "run/native-status.json"
+        target.parent.mkdir(parents=True, exist_ok=True)
         temporary = target.with_suffix(".new")
-        with temporary.open("w", encoding="utf-8") as output:
-            json.dump(value, output)
-        temporary.replace(target)
+        # A LAN toggle is answered on the switch thread while the supervisor loop
+        # keeps publishing phases, so the publish must stay serialized.
+        with self.status_lock:
+            with temporary.open("w", encoding="utf-8") as output:
+                json.dump(value, output)
+            temporary.replace(target)
 
     def recover_interrupted_restore(self):
         """Converge a half restore while still holding the exclusive data lock.
@@ -600,6 +607,9 @@ class ProductSupervisor:
             addresses = self.lan.discover_addresses() if setting["enabled"] else []
             self.lan_value = self.lan.plan(setting, addresses, self.lan_control_port, self.root)
             self.lan_dirty.set()
+        # The status file is what the installed gates and the support bundle
+        # observe, so a toggle must publish the same receipt the switch returns.
+        self.status(self.phase)
         return self.lan_status()
 
     def reserve_lan_port(self, address, port):

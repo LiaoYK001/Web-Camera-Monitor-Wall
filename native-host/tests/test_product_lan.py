@@ -194,6 +194,11 @@ class SupervisorEntryTests(unittest.TestCase):
         supervisor.lan_server = None
         supervisor.token = "t" * 64
         supervisor.lan_thread = None
+        supervisor.phase = "running"
+        supervisor.status_lock = threading.Lock()
+        supervisor.boot_id = "stub-boot"
+        supervisor.children = []
+        supervisor.authority_store = None
         if reserve is not None:
             supervisor.reserve_lan_port = reserve
         return supervisor
@@ -288,6 +293,9 @@ class SwitchServerTests(unittest.TestCase):
         self.supervisor = SupervisorEntryTests().stub(self.root, ["192.168.1.20"],
             reserve=lambda address, port: socket.socket())
         self.server = product_supervisor.LanControlServer(self.supervisor)
+        # The real supervisor owns its switch, so the receipt and the published
+        # status file can report the same port the window dials.
+        self.supervisor.lan_server = self.server
         self.thread = threading.Thread(target=self.server.serve_forever, daemon=True)
         self.thread.start()
         self.base = f"http://127.0.0.1:{self.server.server_port}"
@@ -331,6 +339,16 @@ class SwitchServerTests(unittest.TestCase):
         self.assertEqual(value["urls"], ["https://192.168.1.20:19443"])
         self.assertEqual(self.request("GET", "/lan", headers=self.token)[1]["port"], 19443)
         self.assertEqual(product_lan.read_setting(self.root), {"enabled": True, "port": 19443})
+        # Installed gates and the support bundle read the published status file
+        # instead of a token they are not allowed to hold.
+        published = json.loads((self.root / "run/native-status.json").read_text(encoding="utf-8"))
+        self.assertEqual(published["phase"], "running")
+        self.assertEqual(published["origin"], "http://127.0.0.1:55123")
+        self.assertEqual(published["lan"]["enabled"], True)
+        self.assertEqual(published["lan"]["port"], 19443)
+        self.assertIs(published["lan"]["pendingRestart"], True)
+        self.assertEqual(published["lanSwitchPort"], self.server.server_port)
+        self.assertEqual(published["lan"]["switchPort"], self.server.server_port)
 
 
 if __name__ == "__main__":
