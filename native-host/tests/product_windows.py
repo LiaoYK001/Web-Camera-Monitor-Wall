@@ -583,27 +583,53 @@ def exercise(runtime, report, *, with_media=False, retained_profile=None):
                 # A cut TAKE retires and re-creates owned sources while the wall keeps
                 # running, so the capture window can straddle that switch and report a
                 # frozen slot for a wall that is mid-switch. The host's own per-input
-                # health counters (frame serial and time since the last serial change,
-                # counted over the wall, the Program Scene and every open projector) must
-                # show every input advancing before the pixel assertion starts. The count
-                # is read from the state instead of hard-coded, because a Program Scene
-                # legitimately owns more inputs than the five-input wall.
+                # health counters (frame serial and time since the last serial change)
+                # must show the inputs OBS itself reports as playing before the pixel
+                # assertion starts, and the input count is read from the state because a
+                # Program Scene legitimately owns more inputs than the five-input wall.
+                # rc.47 timed out here for a different reason than a stall: the wait
+                # covered *every* input, including the Program-owned source the TAKE had
+                # just created, whose first media frame can legitimately take longer than
+                # the wait. That is OBS's media-open state, not a frozen tile. Inputs OBS
+                # does not report as showing, active and PLAYING are now recorded instead
+                # of awaited, and a tile that really never paints still fails the pixel
+                # assertion below with the in-window serial evidence attached.
+                def unawaited_inputs(snapshot):
+                    entries = [entry for entry in snapshot.get("videoInputs", []) if isinstance(entry, dict)]
+                    playing = [entry for entry in entries if entry.get("showing") is True
+                        and entry.get("active") is True and entry.get("mediaState") == 1]
+                    if len(playing) < 5:
+                        return {"reason": "fewer than five inputs are showing and PLAYING",
+                            "entries": [{"uuid": str(entry.get("uuid") or ""),
+                                "serial": entry.get("serial"), "stalledMs": entry.get("stalledMs"),
+                                "showing": entry.get("showing"), "active": entry.get("active"),
+                                "mediaState": entry.get("mediaState")} for entry in entries[:8]]}
+                    stagnant = [entry for entry in playing
+                        if type(entry.get("serial")) is not int or int(entry["serial"]) <= 0
+                        or type(entry.get("stalledMs")) is not int
+                        or int(entry["stalledMs"]) < 0 or int(entry["stalledMs"]) > 2000]
+                    if not stagnant:
+                        return None
+                    return {"reason": "a PLAYING input reports no advancing frame counter",
+                        "offending": [{"uuid": str(entry.get("uuid") or ""),
+                            "serial": entry.get("serial"), "stalledMs": entry.get("stalledMs"),
+                            "mediaState": entry.get("mediaState"),
+                            "firstFrame": (type(entry.get("serial")) is int
+                                and int(entry["serial"]) <= 0)} for entry in stagnant[:6]]}
                 def inputs_advancing(snapshot):
                     entries = [entry for entry in snapshot.get("videoInputs", []) if isinstance(entry, dict)]
-                    if len(entries) < 5:
+                    playing = [entry for entry in entries if entry.get("showing") is True
+                        and entry.get("active") is True and entry.get("mediaState") == 1]
+                    if len(playing) < 5 or unawaited_inputs(snapshot) is not None:
                         return None
-                    for entry in entries:
-                        serial, stalled = entry.get("serial"), entry.get("stalledMs")
-                        if type(serial) is not int or serial <= 0 or type(stalled) is not int \
-                                or stalled < 0 or stalled > 2000:
-                            return None
-                    return {"inputs": len(entries),
-                        "worstStalledMs": max(int(entry["stalledMs"]) for entry in entries)}
+                    return {"inputs": len(entries), "awaited": len(playing),
+                        "notPlayingYet": len(entries) - len(playing),
+                        "worstStalledMs": max(int(entry["stalledMs"]) for entry in playing)}
                 waited = time.monotonic()
                 advancing = wait_for(lambda: inputs_advancing(state()),
-                    lambda: (label + ": the host did not report every watched input advancing: "
-                        + json.dumps(state().get("videoInputs", []), sort_keys=True)[:400]),
-                    timeout=20)
+                    lambda: (label + ": the host did not report its playing inputs advancing: "
+                        + json.dumps(unawaited_inputs(state()), sort_keys=True)[:700]),
+                    timeout=25)
                 evidence.setdefault("programPixelInputWait", []).append(
                     {"phase": label, "waitedMs": int((time.monotonic() - waited) * 1000), **advancing})
             if blank:
@@ -2248,9 +2274,13 @@ def exercise(runtime, report, *, with_media=False, retained_profile=None):
             evidence["observedState"]["audioSources"] = observed.get("audioSources", [])
             # Only fixed categories/counts from this boot's newest OBS log.
             # Never publish its contents, path, exception text or camera URL.
+            # The two reconnect markers are OBS's own words for a media input that lost
+            # its connection: a frozen tile with a rising "Disconnected" count is a media
+            # transport stall, not a render stall, so the receipt states which one it was.
             obs_markers = ("Switched to Preview/Program mode", "Switched to regular Preview mode",
                 "Failed to initialize", "Failed to create", "QWidget", "QObject", "QLayout",
-                "Shutting down", "All scene data cleared", "Number of remaining allocations")
+                "Shutting down", "All scene data cleared", "Number of remaining allocations",
+                "Disconnected. Reconnecting", "Reconnected.", "MP: Failed to open media")
             obs_logs = [path for path in (profile / "native-profile/obs-studio/logs").glob("*.txt")
                 if not path.is_symlink() and path.is_file() and path.stat().st_mtime >= boot_started_at - 2]
             evidence["currentBootObsLogPresent"] = bool(obs_logs)
@@ -2268,14 +2298,39 @@ def exercise(runtime, report, *, with_media=False, retained_profile=None):
                     "bad settings specified", "x264 failed to load", "has no media set",
                     "Failed to create process pipe", "Unable to write", "encoder '")
                 diagnostic_lines = []
+                media_lines = []
                 for line in tail.splitlines():
-                    if not any(marker in line for marker in audio_markers):
-                        continue
                     clean = re.sub(r"(?:rtsp|rtsps|udp|http|https)://\S+", "<url>", line)
                     for private_value in (str(private), str(runtime), str(profile)):
                         clean = clean.replace(private_value, "<private>")
-                    diagnostic_lines.append(clean[:200])
+                    clean = clean[:200]
+                    if any(marker in line for marker in audio_markers):
+                        diagnostic_lines.append(clean)
+                    if any(marker in line for marker in ("Disconnected. Reconnecting", "Reconnected.",
+                            "MP: Failed to open media", "Error opening input")):
+                        media_lines.append(clean)
                 evidence["obsDiagnosticLines"] = diagnostic_lines[-12:]
+                # Scene add/remove lines used to crowd the window above, so transport
+                # failures get their own bounded tail instead of being filtered away.
+                evidence["mediaDiagnosticLines"] = media_lines[-8:]
+                # A marker count alone cannot say what failed. Keep one sanitized
+                # example line per marker that actually occurred, so "Failed to
+                # initialize: 1" names the source or filter behind it instead of
+                # leaving the next reader to guess. URLs, private paths and the
+                # absolute runtime/profile roots are replaced first.
+                wanted = {marker for marker, count in evidence["currentBootObsMarkers"].items() if count}
+                marker_lines = {}
+                for line in tail.splitlines():
+                    if len(marker_lines) == len(wanted):
+                        break
+                    for marker in wanted:
+                        if marker in marker_lines or marker not in line:
+                            continue
+                        clean = re.sub(r"(?:rtsp|rtsps|udp|http|https)://\S+", "<url>", line)
+                        for private_value in (str(private), str(runtime), str(profile)):
+                            clean = clean.replace(private_value, "<private>")
+                        marker_lines[marker] = clean[:160]
+                evidence["currentBootObsMarkerLines"] = marker_lines
             markers = ("ModuleNotFoundError", "ImportError", "PermissionError", "FileNotFoundError",
                        "RuntimeError", "AttributeError", "ValueError", "control exited during startup",
                        "control health deadline exceeded", "a required product service exited", "saved control port is unavailable")
