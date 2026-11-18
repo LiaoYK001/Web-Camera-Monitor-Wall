@@ -535,15 +535,45 @@ class ProductWindow final : public QWidget {
 			}
 			return true;
 		}, &media_showing);
+		// Read the decoder's own counter at snapshot time instead of trusting the heartbeat
+		// cache. That cache refreshes only every two seconds and stops refreshing whenever the
+		// main thread is busy (a Program apply or a UI Automation capture), which made run
+		// 44356064395 report five wall inputs as frozen for 30 s while the captured fixture
+		// counters kept advancing every ~330 ms. A missing entry means "this owned source
+		// exposes no video callback counter yet (or is already removed)"; the gate must read
+		// that as "no frame delivered", never as a frozen tile.
+		std::map<std::string, ProductVideoProgress> raw_counter;
+		auto collect_raw = [&](const std::shared_ptr<ProductSceneGraph> &graph) {
+			if (!graph) return;
+			for (const auto &input : graph->video_progress()) raw_counter.emplace(input.uuid, input);
+		};
+		collect_raw(wall_);
+		collect_raw(program_);
+		for (const auto &view : projectors_)
+			if (view && view->window)
+				collect_raw(view->graph);
+		std::set<std::string> owned_video_uuids;
+		if (wall_) owned_video_uuids.insert(wall_->uuids.begin(), wall_->uuids.end());
+		if (program_) owned_video_uuids.insert(program_->uuids.begin(), program_->uuids.end());
+		for (const auto &view : projectors_)
+			if (view && view->window)
+				owned_video_uuids.insert(view.graph->uuids.begin(), view.graph->uuids.end());
 		QJsonArray video_inputs;
 		const auto health_now = health_clock_.elapsed();
-		for (const auto &[uuid, health] : input_health_) {
+		for (const auto &uuid : owned_video_uuids) {
 			if (video_inputs.size() >= 16)
 				break;
 			const auto found = media_showing.find(uuid);
+			const auto health = input_health_.find(uuid);
+			const auto counter = raw_counter.find(uuid);
 			video_inputs.append(QJsonObject{{"uuid", QString::fromStdString(uuid).left(8)},
-				{"serial", qint64(health.serial)},
-				{"stalledMs", health.sampled ? qint64(health_now - health.changed_ms) : qint64(-1)},
+				{"serial", counter != raw_counter.end() && counter->second.available
+					 ? qint64(counter->second.serial) : qint64(-1)},
+				// Kept for the window's own health label only; a receipt must never treat
+				// this tick-cached value as proof that a decoder stopped.
+				{"healthSerial", health != input_health_.end() ? qint64(health->second.serial) : qint64(-1)},
+				{"stalledMs", health != input_health_.end() && health->second.sampled
+					 ? qint64(health_now - health->second.changed_ms) : qint64(-1)},
 				{"showing", found != media_showing.end() ? found->second.showing : false},
 				{"active", found != media_showing.end() ? found->second.active : false},
 				{"mediaState", found != media_showing.end() ? found->second.media_state : 0},

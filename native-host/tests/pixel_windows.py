@@ -264,7 +264,15 @@ class LoopbackRtsp:
         raise RuntimeError("Loopback RTSP stream did not return after restart")
 
     def _packet_flow(self, url: str) -> tuple[int, float | None]:
-        """Count video packets in a short live window and return the newest presentation stamp."""
+        """Count video packets in a short live window and return the oldest presentation stamp.
+
+        Run 44356064395 showed why the newest stamp cannot decide anything: a fresh reader
+        also drains whatever MediaMTX still has buffered, so a publisher that stopped pushing
+        still answers with packets (two samples even read the same packet count) while every
+        product reader on that path froze. The oldest stamp of a freshly opened read answers
+        the question that matters: a live path publishes new packets, so a new reader's first
+        packet carries a later stamp than the reader 0.8 s before it.
+        """
         try:
             probe = subprocess.run([str(self.ffprobe), "-v", "error", "-rtsp_transport", "tcp",
                                     "-select_streams", "v:0", "-show_entries", "packet=pts",
@@ -280,16 +288,18 @@ class LoopbackRtsp:
                 stamps.append(float(line.strip()))
             except ValueError:
                 continue
-        return (len(stamps), max(stamps) if stamps else None)
+        return (len(stamps), min(stamps) if stamps else None)
 
     def path_progress(self) -> list[dict]:
         """Probe every published path twice and report whether packets actually advance.
 
         Opening a path only proves MediaMTX still answers it. A frozen final-pixel slot has to
         distinguish "the fixture stopped pushing packets" from "the product stopped decoding
-        them", so each path is sampled over a short live window on either side of a gap. A
-        looping fixture can rewind its presentation stamp, so flow is decided by packet counts
-        and the stamp delta is reported separately.
+        them", so each path is sampled twice, 0.8 s apart, with a fresh reader. Flow is the
+        oldest stamp of each fresh read moving forward: a publisher that stopped pushing still
+        replays whatever is buffered, so packet counts and readability prove nothing by
+        themselves. A looping fixture keeps advancing presentation stamps because the publisher
+        copies with a per-loop timestamp offset.
         """
         report = []
         for index, url in enumerate(self.urls):
@@ -297,9 +307,15 @@ class LoopbackRtsp:
             time.sleep(0.8)
             second, second_pts = self._packet_flow(url)
             report.append({"index": index, "packets": [first, second],
+                           "oldestPts": [first_pts, second_pts],
                            "ptsDelta": (round(second_pts - first_pts, 3)
                                         if first_pts is not None and second_pts is not None else None),
-                           "flowing": first > 0 and second > 0})
+                           # Stalled only when a fresh reader cannot see newer packets than
+                           # the reader before it. Both samples still returning packets is
+                           # exactly what a buffered replay looks like, so counts alone are
+                           # not evidence of a live publisher.
+                           "flowing": (first > 0 and second > 0 and first_pts is not None
+                                       and second_pts is not None and second_pts > first_pts)})
         return report
 
     def stop(self) -> None:
