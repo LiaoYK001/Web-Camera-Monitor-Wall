@@ -31,6 +31,10 @@ import tempfile
 import time
 
 HERE = Path(__file__).resolve().parent
+if str(HERE) not in sys.path:
+    sys.path.insert(0, str(HERE))
+from window_close import close_closable_windows
+
 REPO = HERE.parents[1]
 RUNTIME_SCRIPTS = REPO / "native-host/scripts"
 # Durable user data only: run state, logs, crash dumps, generated backups and SQLite
@@ -97,16 +101,22 @@ def dpapi_protect(data: bytes) -> bytes:
 
 
 class Client:
-    """One loopback session against the installed product entry."""
+    """One loopback session against the installed product entry.
 
-    def __init__(self, port):
+    Every request carries the product's own Origin: a state-changing request
+    without it is not a request a browser or the product UI can actually make, and
+    the control server rejects a mismatching one.
+    """
+
+    def __init__(self, port, origin):
         self.port = int(port)
+        assert isinstance(origin, str) and origin, "the product origin is required"
+        self.origin = origin
         self.cookie = ""
 
     def request(self, path, body=None, *, cookie=None, origin=None, method=None):
-        headers = {"Host": f"127.0.0.1:{self.port}", "Content-Type": "application/json"}
-        if origin is not None:
-            headers["Origin"] = origin
+        headers = {"Host": f"127.0.0.1:{self.port}", "Content-Type": "application/json",
+                   "Origin": self.origin if origin is None else origin}
         session = self.cookie if cookie is None else cookie
         if session:
             headers["Cookie"] = session
@@ -186,11 +196,12 @@ def exercise(runtime, report):
     backup_key = secrets.token_hex(32)
     camera_id = "legacy-camera"
     process = None
+    frontend_pid = 0
     baseline = runtime_processes(runtime, powershell)
     seen = set()
 
     def launch(profile: Path):
-        nonlocal process, seen
+        nonlocal process, seen, frontend_pid
         environment = dict(os.environ)
         environment["WEBOBS_PRODUCT_TEST_ROOT"] = str(profile)
         # The old camera endpoint is a closed loopback port: creation must succeed and
@@ -205,20 +216,36 @@ def exercise(runtime, report):
                 if (profile / "run/native-status.json").is_file() else {}
             return value if value.get("phase") == "running" else None
         status = wait_for(ready, "the installed entry did not start its services")
+        frontend = next((item for item in status.get("services", [])
+                         if item.get("name") == "frontend" and isinstance(item.get("pid"), int)), None)
+        assert frontend is not None, "the installed entry did not report its frontend process"
+        frontend_pid = int(frontend["pid"])
         seen |= runtime_processes(runtime, powershell) - baseline
         return status
 
     def stop(profile: Path):
-        nonlocal process
+        nonlocal process, frontend_pid
         if process is None:
             return
-        process.terminate()
+        # Terminating the launcher would close its kill-on-close Job and take the
+        # supervisor down with it, so its ordered shutdown - and the phase
+        # "stopped" receipt it writes - would never happen. Closing the product
+        # window is what the supervisor's own stop does and what a user does.
+        assert frontend_pid, "the installed entry did not report a frontend process"
+        if not close_closable_windows([frontend_pid]):
+            process.kill()
+            process.wait(timeout=20)
+            process = None
+            raise AssertionError("the installed entry exposed no closable product window")
         try:
-            process.wait(timeout=40)
+            process.wait(timeout=90)
         except subprocess.TimeoutExpired:
             process.kill()
             process.wait(timeout=15)
+            process = None
+            raise AssertionError("closing the product window did not shut the installed entry down")
         process = None
+        frontend_pid = 0
         def stopped():
             value = read_json(profile / "run/native-status.json") \
                 if (profile / "run/native-status.json").is_file() else {}
@@ -247,7 +274,7 @@ def exercise(runtime, report):
             status = launch(legacy)
             origin = status["origin"]
             port = int(origin.rsplit(":", 1)[1])
-            client = Client(port)
+            client = Client(port, origin)
             code, body = client.request("/api/v1/auth/setup", origin=origin)
             assert code == 200 and json.loads(body).get("registrationOpen") is True, \
                 f"a fresh install did not open first-account setup: {code} {body[:160]}"
@@ -319,7 +346,7 @@ def exercise(runtime, report):
             evidence["lastCheckpoint"] = "imported-install-started"
             status = launch(imported)
             origin = status["origin"]
-            client = Client(int(origin.rsplit(":", 1)[1]))
+            client = Client(int(origin.rsplit(":", 1)[1]), origin)
             code, body = client.request("/api/v1/auth/setup", origin=origin)
             assert code == 200 and json.loads(body).get("registrationOpen") is False, \
                 "an imported account store still opened a new first account"
@@ -358,7 +385,7 @@ def exercise(runtime, report):
                        for item in policies), "the old recording policy was not accepted after import"
             evidence["checks"].append("imported-camera-events-and-recording-policy-are-readable")
 
-            stale = Client(int(origin.rsplit(":", 1)[1]))
+            stale = Client(int(origin.rsplit(":", 1)[1]), origin)
             stale.cookie = legacy_cookie
             code, _ = stale.request("/api/v1/auth/session", origin=origin)
             assert code == 401, "an old session cookie was accepted on the imported profile"
