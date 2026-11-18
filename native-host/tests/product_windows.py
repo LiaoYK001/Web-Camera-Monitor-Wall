@@ -41,13 +41,20 @@ def read_json(path):
 
 
 def wait_for(predicate, message, timeout=30):
+    """Poll until the predicate is truthy, then report why it never became so.
+
+    ``message`` may be a callable: a formatted failure string built eagerly at the
+    call site would read evidence that only the first probe writes (and crash with
+    KeyError before the wait ever starts), so the report is assembled at timeout.
+    """
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
         result = predicate()
         if result:
             return result
         time.sleep(.1)
-    raise AssertionError(message)
+    detail = message() if callable(message) else message
+    raise AssertionError(detail)
 
 
 def split_workspace(value):
@@ -1299,11 +1306,11 @@ def exercise(runtime, report, *, with_media=False, retained_profile=None):
                         value.get("programApplyState") == "applied" and
                         isinstance(value.get("program"), dict) and
                         value["program"].get("mediaSources") == 2) else None
-                wait_for(default_bus_applied,
-                    "default-bus Program scene did not apply: core="
-                    + json.dumps(evidence["programDefaultBusRuntimeReceipt"], sort_keys=True)[:340]
-                    + " host=" + json.dumps(evidence["programDefaultBusApplyAttempt"], sort_keys=True)[:400],
-                    timeout=45)
+                def default_bus_failure():
+                    return ("default-bus Program scene did not apply: core="
+                        + json.dumps(evidence.get("programDefaultBusRuntimeReceipt", {}), sort_keys=True)[:340]
+                        + " host=" + json.dumps(evidence.get("programDefaultBusApplyAttempt", {}), sort_keys=True)[:400])
+                wait_for(default_bus_applied, default_bus_failure, timeout=45)
                 checkpoint("program-default-bus-applied")
                 default_selection = state().get("programOutput", {}).get("selectedAudioTracks")
                 assert default_selection == 1, \
