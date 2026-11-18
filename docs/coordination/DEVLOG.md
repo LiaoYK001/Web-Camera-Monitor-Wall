@@ -1,12 +1,42 @@
 # 开发日志 / Development log
 
 > 自动生成，勿手改；唯一数据源为 [state.json](state.json)。
-> 快照版本 216 · 2026-11-19T01:22:23+08:00（UTC+08）
+> 快照版本 221 · 2026-11-19T01:23:04+08:00（UTC+08）
 
 [总览](STATUS.md) · [路线图](ROADMAP.md) · [任务](TASKS.md) · [日志](DEVLOG.md) · [交接](HANDOFF.md) · [协作规则](PLAYBOOK.md)
 
 既有产品开发历史继续保留在 [原始执行记录](../windows-obs-parity-execution.md)，不把本轮文档工作当作产品验证。
 
+## #221 · 2026-11-19T01:23:04+08:00 · update
+
+- Agent：`deepseek-v51-20261118-01`；任务：`V51-008`
+- 记录：继续 Program 输出验收。
+- 证据：无新增验收证据
+- 源码：`baf033540fd90e0b4a006562fa40c9fddc0d9cda`
+## #220 · 2026-11-19T01:23:04+08:00 · claim
+
+- Agent：`deepseek-v51-20261118-01`；任务：`V51-008`
+- 记录：重新认领：Program 输出验收与像素/回环门禁证据，包含 39c43fd 的回环恢复修复。
+- 证据：python3 -m py_compile native-host/tests/product_windows.py；native-host/tests/test_build_contract.py 45 OK；native-host/tests/test_complete_supervisor.py PASS
+- 源码：`baf033540fd90e0b4a006562fa40c9fddc0d9cda`
+## #219 · 2026-11-19T01:23:04+08:00 · update
+
+- Agent：`deepseek-v51-20261118-01`；任务：`V51-013`
+- 记录：协调后调整声明范围：native-host/tests/product_windows.py 的门禁改动归同一 Agent 的 V51-008 持有，本任务声明合成设备与相机注册表测试文件；实现同在一个 PR。
+- 证据：PR #75 head c19bcda
+- 源码：`baf033540fd90e0b4a006562fa40c9fddc0d9cda`
+## #218 · 2026-11-19T01:23:04+08:00 · claim
+
+- Agent：`deepseek-v51-20261118-01`；任务：`V51-013`
+- 记录：已实现并提交为 PR #75（分支 codex/v51-r3-005-devices，head c19bcda，base #74）：抽出共享合成 ONVIF 设备 tests/onvif_device_emulator.py；安装态门禁新增 complete-business-device-operations 相位，实跑 probe(authenticated/credentialsExtracted/含 snapshot profile)、camera 创建 201 且文档不含口令、onvif/sync、预置位列表、连续 PTZ autoStopMs=350 且设备实际收到 PT0.350S、定时 Stop 到达设备、SetPreset/GotoPreset、快照 content-type 与 sha256；再以 camera 作用域 viewer 取得 403，并证明拒绝窗口内控制面未出现任何 PTZ/预置位/快照 SOAP 动作且合成设备 snapshot_reads 未增加；最后删除相机并刷新回 5 路。
+- 证据：python3 tests/test_camera_registry.py 58 OK；合成设备冒烟：三个 profile(含 snapshot)、sync、presets [preset-1]、moved state accepted/autoStopMs 350/deviceTimeoutMs 350、ptz_moves PT0.350S、自动停止到达设备、preset-created、goto accepted、快照 image/jpeg；Windows 安装态证据待后续 rc 运行；合成 SOAP 设备不等于真机验收
+- 源码：`baf033540fd90e0b4a006562fa40c9fddc0d9cda`
+## #217 · 2026-11-19T01:23:04+08:00 · release
+
+- Agent：`deepseek-v51-20261118-01`；任务：`V51-008`
+- 记录：临时释放以便消除与 V51-013 的声明范围重叠；任务仍在进行，稍后重新认领。
+- 证据：见上一条 revision 216 日志
+- 源码：`baf033540fd90e0b4a006562fa40c9fddc0d9cda`
 ## #216 · 2026-11-19T01:22:23+08:00 · log
 
 - Agent：`deepseek-v51-20261118-01`；任务：`V51-008`
