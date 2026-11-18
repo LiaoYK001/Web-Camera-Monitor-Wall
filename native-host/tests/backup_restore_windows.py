@@ -157,29 +157,65 @@ def exercise(runtime, profile_parent, report):
         evidence["checks"].append("restore-process-terminated-between-the-two-swaps")
 
         phase = "first-installed-start"
-        os.environ["WEBOBS_PRODUCT_TEST_ROOT"] = str(profile)
-        supervisor = load("installed_supervisor_recovery", supervisor_service)
-        owner = supervisor.ProductSupervisor(runtime, profile)
+        # This is the user's scenario: a killed restore leaves the pair split, and the
+        # next Start-Menu launch is the first thing that can converge it. Launch the real
+        # installed entry (not a dedicated command) so the ordering is proved through the
+        # product's own start path: exclusive data lock, journal convergence, and only then
+        # directory creation plus reading the configuration and the OBS profile.
+        status_path = profile / "run/native-status.json"
+
+        def status():
+            return read_json(status_path) if status_path.is_file() else {}
+
+        environment = dict(os.environ)
+        environment["WEBOBS_PRODUCT_TEST_ROOT"] = str(profile)
+        launched = subprocess.Popen([str(entry)], env=environment, stdin=subprocess.DEVNULL,
+            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        def first_running():
+            assert launched.poll() is None, \
+                f"the installed entry refused to start over the interrupted restore ({launched.returncode})"
+            value = status()
+            return value if value.get("phase") == "running" and isinstance(value.get("bootId"), str) \
+                and re.fullmatch(r"[a-f0-9]{32}", value["bootId"]) else None
+        started = None
+        owned = []
         try:
-            assert owner.prepare() is True, "installed product start refused to take the data root"
+            started = wait_for(first_running,
+                "the installed entry did not converge the interrupted restore and start", timeout=120)
+            assert not journal.exists(), "the installed entry left the interrupted restore journal behind"
+            assert not staged.exists(), "the installed entry never landed the pending OBS profile half"
+            assert not (profile / "run/restore-recovery.json").exists(), \
+                "the installed entry recorded a bounded recovery failure instead of converging"
+            assert marker_value(config / CONFIG_MARKER) == "backup", \
+                "the installed entry started without the restored configuration"
+            assert marker_value(native / NATIVE_MARKER) == "backup", \
+                "the installed entry started on a mismatched OBS profile half"
+            state_paths = list((profile / "native-profile").rglob("product-state.json"))
+            assert len(state_paths) == 1, "the running host did not publish one product state"
+            rollback = Path(payload["configRollback"])
+            rollback_native = Path(payload["nativeRollback"])
+            assert marker_value(rollback / CONFIG_MARKER) == "live" \
+                and marker_value(rollback_native / NATIVE_MARKER) == "live", \
+                "the installed entry deleted the previous pair instead of keeping it retryable"
+            evidence["retainedRollbackPair"] = {"config": marker_value(rollback / CONFIG_MARKER),
+                "nativeProfile": marker_value(rollback_native / NATIVE_MARKER)}
+            owned = [started["ownerPid"], *[service["pid"] for service in started.get("services", [])]]
+            evidence["firstInstalledStart"] = {"bootId": started["bootId"], "phase": started["phase"],
+                "services": sorted(service["name"] for service in started.get("services", []))}
+            evidence["checks"].append("first-installed-start-converges-the-pair-and-keeps-previous-data")
         finally:
-            owner.stop()
-        assert not journal.exists(), "installed startup left the restore journal behind"
-        assert not staged.exists(), "installed startup never landed the pending OBS profile"
-        assert not (profile / "run/restore-recovery.json").exists(), \
-            "installed startup recorded a recovery failure"
-        assert marker_value(config / CONFIG_MARKER) == "backup", \
-            "configuration did not reach the restored pair"
-        assert marker_value(native / NATIVE_MARKER) == "backup", \
-            "the OBS profile did not move with the restored configuration"
-        rollback = Path(payload["configRollback"])
-        rollback_native = Path(payload["nativeRollback"])
-        assert marker_value(rollback / CONFIG_MARKER) == "live" \
-            and marker_value(rollback_native / NATIVE_MARKER) == "live", \
-            "startup deleted the previous pair instead of keeping it retryable"
-        evidence["retainedRollbackPair"] = {"config": marker_value(rollback / CONFIG_MARKER),
-            "nativeProfile": marker_value(rollback_native / NATIVE_MARKER)}
-        evidence["checks"].append("first-installed-start-converges-the-pair-and-keeps-previous-data")
+            launched.kill()
+            launched.wait(timeout=30)
+        if owned:
+            wait_for(lambda: not any(alive(pid) for pid in owned),
+                "the interrupted-restore first start left its own product processes alive", timeout=30)
+        listing = subprocess.run([powershell, "-NoLogo", "-NoProfile", "-NonInteractive", "-Command",
+            "Get-Process | ForEach-Object { $_.ProcessName }"], capture_output=True, text=True,
+            encoding="utf-8", errors="replace", timeout=25)
+        survivors = {name.strip().lower() for name in listing.stdout.splitlines()} & {
+            "webobs-wall", "webobsd", "obs64", "caddy", "mediamtx", "go2rtc"}
+        assert survivors == set(), f"product processes survived the first-start check: {sorted(survivors)}"
+        evidence["checks"].append("first-installed-start-leaves-no-product-process-behind")
 
         phase = "retry-full-restore"
         set_marker(config / CONFIG_MARKER, "live-again")
@@ -199,7 +235,22 @@ def exercise(runtime, profile_parent, report):
         legacy_archive = backup.create(config, backups, key_file, sodium)
         set_marker(config / CONFIG_MARKER, "legacy-live")
         set_marker(native / NATIVE_MARKER, "kept-native")
-        legacy_process, legacy_log = run_restore(runtime_python, runtime, profile, archive, key_file,
+        # A paired archive must never be half-restored. The packaged service refuses it
+        # when the caller does not name the OBS profile, so both halves stay as they are.
+        refused, refused_log = run_restore(runtime_python, runtime, profile, archive, key_file,
+            private / "unused-paired-sentinel.txt", "config-only", private)
+        assert refused.wait(timeout=120) != 0, \
+            "a paired archive was half-restored without naming the OBS profile"
+        refused_log.close()
+        assert marker_value(config / CONFIG_MARKER) == "legacy-live" \
+            and marker_value(native / NATIVE_MARKER) == "kept-native", \
+            "the refused paired restore still changed one half of the pair"
+        assert not journal.exists(), "the refused paired restore left a journal behind"
+        assert not any(list(profile.glob(".webobs-restore-*")) + list(profile.glob(".webobs-native-restore-*"))
+            + list(profile.glob(".webobs-decrypt-*"))), "the refused paired restore leaked staging directories"
+        evidence["checks"].append("paired-archive-refuses-a-half-restore")
+
+        legacy_process, legacy_log = run_restore(runtime_python, runtime, profile, legacy_archive, key_file,
             private / "unused-legacy-sentinel.txt", "config-only", private)
         assert legacy_process.wait(timeout=180) == 0, "a configuration-only archive could not be restored"
         legacy_log.close()
