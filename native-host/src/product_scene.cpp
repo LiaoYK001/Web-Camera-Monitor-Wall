@@ -5,13 +5,15 @@
 #include <atomic>
 #include <map>
 #include <tuple>
+#include <utility>
 #ifdef WEBOBS_NATIVE_PRODUCT_MODE
 #include <QCoreApplication>
 #include <QDir>
 #include <QFileInfo>
 #include <QProcess>
+#include <QProcessEnvironment>
 #include <QStringList>
-#include <QUdpSocket>
+#include <QTcpServer>
 #include <QUrl>
 #include <obs-audio-controls.h>
 #endif
@@ -105,6 +107,7 @@ struct ProductSceneSource {
 	std::string audio_settings;
 	obs_volmeter_t *audio_volmeter = nullptr;
 	std::atomic<float> audio_peak_db{-120.0f};
+	QByteArray audio_mix_log;
 #endif
 	bool intact() const
 	{
@@ -180,14 +183,14 @@ struct ProductSceneSource {
 			error = "scene-audio-mixer-unavailable";
 			return false;
 		}
-		QUdpSocket socket;
-		if (!socket.bind(QHostAddress::LocalHost, 0)) {
+		QTcpServer server;
+		if (!server.listen(QHostAddress::LocalHost, 0)) {
 			error = "scene-audio-mixer-port-failed";
 			return false;
 		}
-		const int port = int(socket.localPort());
-		socket.close();
-		QStringList arguments{"-hide_banner", "-loglevel", "error", "-nostats"};
+		const int port = int(server.serverPort());
+		server.close();
+		QStringList arguments{"-hide_banner", "-loglevel", "error", "-nostats", "-nostdin"};
 		const QUrl url(QString::fromStdString(camera.url));
 		if (url.scheme() == "rtsp" || url.scheme() == "rtsps") {
 			arguments << "-rtsp_transport"
@@ -213,9 +216,15 @@ struct ProductSceneSource {
 					 .arg(configuration.audio_inputs.size());
 		arguments << "-filter_complex" << graph << "-map" << "[amixed]" << "-vn" << "-c:a" << "aac"
 			  << "-b:a" << "128k" << "-ar" << "48000" << "-ac" << "2" << "-f" << "mpegts"
-			  << QStringLiteral("udp://127.0.0.1:%1?pkt_size=1316").arg(port);
+			  << "-flush_packets" << "1"
+			  << QStringLiteral("tcp://127.0.0.1:%1?listen=1").arg(port);
 		auto process = std::make_unique<QProcess>();
 		process->setProcessChannelMode(QProcess::MergedChannels);
+		QProcessEnvironment environment = QProcessEnvironment::systemEnvironment();
+		for (const auto &key : environment.keys())
+			if (key.startsWith("WEBOBS_"))
+				environment.remove(key);
+		process->setProcessEnvironment(environment);
 		process->start(ffmpeg, arguments);
 		if (!process->waitForStarted(3000) || process->state() != QProcess::Running) {
 			error = "scene-audio-mixer-start-failed";
@@ -225,12 +234,12 @@ struct ProductSceneSource {
 		Data settings(obs_data_create(), &obs_data_release);
 		obs_data_set_bool(settings.get(), "is_local_file", false);
 		obs_data_set_string(settings.get(), "input",
-			QStringLiteral("udp://127.0.0.1:%1?pkt_size=1316").arg(port).toUtf8().constData());
+			QStringLiteral("tcp://127.0.0.1:%1").arg(port).toUtf8().constData());
 		obs_data_set_string(settings.get(), "input_format", "mpegts");
 		// Audio-only media sources have no rendered surface and therefore
 		// never acquire OBS's "showing" reference. The upstream ffmpeg_source
 		// restart-on-activate path deliberately refuses to start playback when
-		// the source is not showing, which would leave the UDP mixer unread.
+		// the source is not showing, which would leave the local mixer unread.
 		// Start with the owned graph instead: the source lives exactly as long
 		// as this graph and is removed by the destructor.
 		obs_data_set_bool(settings.get(), "restart_on_activate", false);
@@ -379,19 +388,37 @@ std::vector<ProductVideoProgress> ProductSceneGraph::video_progress() const
 	return result;
 }
 
-std::vector<ProductAudioProgress> ProductSceneGraph::audio_progress() const
+std::vector<ProductAudioProgress> ProductSceneGraph::audio_progress()
 {
 	std::vector<ProductAudioProgress> result;
 #ifdef WEBOBS_NATIVE_PRODUCT_MODE
 	for (const auto &entry : sources_) {
 		if (!entry || !entry->audio_source || !entry->audio_mix_process)
 			continue;
+		entry->audio_mix_log.append(entry->audio_mix_process->readAll());
+		if (entry->audio_mix_log.size() > 512)
+			entry->audio_mix_log = entry->audio_mix_log.right(512);
+		std::string log = entry->audio_mix_log.toStdString();
+		for (std::size_t at = log.find("://"); at != std::string::npos; at = log.find("://", at)) {
+			const std::size_t begin = log.rfind(' ', at);
+			const std::size_t start = begin == std::string::npos ? 0 : begin + 1;
+			std::size_t end = log.find_first_of(" \r\n\t", at + 3);
+			if (end == std::string::npos) end = log.size();
+			log.replace(start, end - start, "<url>");
+			at = start + 5;
+		}
 		result.push_back({entry->document_id,
 			entry->audio_mix_process->state() == QProcess::Running,
 			obs_source_active(entry->audio_source),
 			obs_source_showing(entry->audio_source),
 			entry->audio_mix_process->state() == QProcess::NotRunning ? entry->audio_mix_process->exitCode() : -1,
-			entry->audio_peak_db.load(std::memory_order_relaxed)});
+			entry->audio_peak_db.load(std::memory_order_relaxed),
+			int(obs_source_media_get_state(entry->audio_source)),
+			double(obs_source_get_volume(entry->audio_source)),
+			obs_source_muted(entry->audio_source),
+			unsigned(obs_source_get_audio_mixers(entry->audio_source)),
+			std::int64_t(obs_source_get_sync_offset(entry->audio_source)),
+			std::move(log)});
 	}
 #endif
 	return result;

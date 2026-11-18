@@ -1285,6 +1285,19 @@ def exercise(runtime, report, *, with_media=False, retained_profile=None):
                     log.seek(max(0, newest.stat().st_size - 2 * 1024 * 1024))
                     tail = log.read(2 * 1024 * 1024).decode("utf-8", errors="replace")
                 evidence["currentBootObsMarkers"] = {marker: min(1000, tail.count(marker)) for marker in obs_markers}
+                audio_markers = ("MP: Failed to open media", "MP: Failed to find stream info",
+                    "MP: Could not initialize audio or video", "Disconnected. Reconnecting",
+                    "Reconnected.", "ffmpeg_source", "Error opening input", "frame size not set",
+                    "Stream specifier", "matches no streams", "Could not open", "Audio")
+                diagnostic_lines = []
+                for line in tail.splitlines():
+                    if not any(marker in line for marker in audio_markers):
+                        continue
+                    clean = re.sub(r"(?:rtsp|rtsps|udp|http|https)://\S+", "<url>", line)
+                    for private_value in (str(private), str(runtime), str(profile)):
+                        clean = clean.replace(private_value, "<private>")
+                    diagnostic_lines.append(clean[:200])
+                evidence["obsDiagnosticLines"] = diagnostic_lines[-12:]
             markers = ("ModuleNotFoundError", "ImportError", "PermissionError", "FileNotFoundError",
                        "RuntimeError", "AttributeError", "ValueError", "control exited during startup",
                        "control health deadline exceeded", "a required product service exited", "saved control port is unavailable")

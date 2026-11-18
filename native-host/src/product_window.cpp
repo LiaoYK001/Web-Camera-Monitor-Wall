@@ -299,7 +299,11 @@ class ProductWindow final : public QWidget {
 				audio_sources.append(QJsonObject{{"sourceId", QString::fromStdString(audio.source_id)},
 					{"available", audio.available}, {"active", audio.source_active},
 					{"showing", audio.source_showing}, {"processExitCode", audio.process_exit_code},
-					{"peakDbfs", double(audio.peak_dbfs)}});
+					{"peakDbfs", double(audio.peak_dbfs)},
+					{"mediaState", audio.media_state}, {"volume", audio.volume},
+					{"muted", audio.muted}, {"mixers", double(audio.mixers)},
+					{"syncOffset", double(audio.sync_offset)},
+					{"mixerLog", QString::fromStdString(audio.mixer_log)}});
 			}
 		};
 		collect_audio(wall_);

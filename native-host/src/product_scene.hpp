@@ -2,6 +2,7 @@
 
 #include "product_media.hpp"
 #include "webobs/scene_document.hpp"
+#include <cstdint>
 #include <memory>
 #include <vector>
 
@@ -20,6 +21,12 @@ struct ProductAudioProgress {
 	bool source_showing = false;
 	int process_exit_code = -1;
 	float peak_dbfs = -120.0f;
+	int media_state = 0;
+	double volume = 0;
+	bool muted = false;
+	unsigned int mixers = 0;
+	std::int64_t sync_offset = 0;
+	std::string mixer_log;
 };
 
 // Main-thread only. Entries are owned by graphs, never by a global OBS name.
@@ -51,7 +58,7 @@ public:
 	ProductSceneGraph &operator=(const ProductSceneGraph &) = delete;
 	~ProductSceneGraph();
 	std::vector<ProductVideoProgress> video_progress() const;
-	std::vector<ProductAudioProgress> audio_progress() const;
+	std::vector<ProductAudioProgress> audio_progress();
 	friend std::unique_ptr<ProductSceneGraph> create_product_scene(
 		ProductSourcePool &, const std::string &, const SceneDocument &,
 		const std::vector<ProductCamera> &, std::string &);
