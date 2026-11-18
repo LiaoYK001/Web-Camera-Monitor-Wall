@@ -1,12 +1,24 @@
 # 开发日志 / Development log
 
 > 自动生成，勿手改；唯一数据源为 [state.json](state.json)。
-> 快照版本 243 · 2026-11-19T03:28:28+08:00（UTC+08）
+> 快照版本 245 · 2026-11-19T04:02:29+08:00（UTC+08）
 
 [总览](STATUS.md) · [路线图](ROADMAP.md) · [任务](TASKS.md) · [日志](DEVLOG.md) · [交接](HANDOFF.md) · [协作规则](PLAYBOOK.md)
 
 既有产品开发历史继续保留在 [原始执行记录](../windows-obs-parity-execution.md)，不把本轮文档工作当作产品验证。
 
+## #245 · 2026-11-19T04:02:29+08:00 · log
+
+- Agent：`deepseek-v51-20261118-01`；任务：`V51-008`
+- 记录：rc.59 已派发并处于 OBS 编译阶段（run 44385767337，sha a5337f8，含 #67→#76 全栈）；等待期间对四个尚无 Windows 证据的安装态门禁做了静态预审：导入入口文本断言由 stage_product_runtime.py 复制的 migrate-legacy.cmd 满足（含 %LOCALAPPDATA%\WebOBS\Native\config、--confirm-stopped、--include-backup-key）；会话库 config/auth-sessions.db 不在 migrate_legacy 的 DATABASES 列表内，因此旧 cookie 在导入档必为 401；supervisor.prepare 在持有独占锁后、创建 config/native-profile 之前调用 recover_interrupted_restore，且 encrypted_backup 仅在 SodiumStream 实例化时才加载 libsodium；无私网 IPv4 时 plan 仍 enabled=true 且 start_lan_switch 无条件启动，故 LAN 降级分支可成立；complete 且 soak=0 时 job 超时 180 分钟。 / rc.59 dispatched (run 44385767337, sha a5337f8, full #67→#76 stack) and compiling OBS; while waiting I statically pre-reviewed the four install-gate suites that still lack Windows evidence.
+- 证据：gh run 44385767337; native-host/scripts/migrate_legacy.py DATABASES; native-host/scripts/product_supervisor.py prepare()/recover_interrupted_restore(); native-host/scripts/product_lan.py plan(); .github/workflows/windows-obs-native-host.yaml timeout-minutes
+- 源码：`a0377c781ccaa725ba32c604c09c72fd4b2e52da`
+## #244 · 2026-11-19T03:57:12+08:00 · log
+
+- Agent：`deepseek-v51-20261118-01`；任务：`V51-008`
+- 记录：rc.58（run 44380596633，sha 99b6734）证明 RTMP 发布链路可用：门禁推进到 program-publish-disconnect，Program 以回环 RTMP 发布、RTSP 回读双音 AAC、WHEP 端点应答、杀掉私有中继后报告 publish- 断开并在新端口重启；唯一失败为 recovered publisher is not readable by a real consumer，原因是恢复后只单次 ffprobe，而中继路径需等关键帧才 ready（首次推流本来就有 30 秒有界重试）。已在 92238a3 让恢复后的播放 URL 走同一有界重试并要求至少 10 个解码帧（回执新增 publishReplayFrameCount），未放宽任何断言。随后把 #70→#76 重新变基（73abac5/543cae6/9bb6962/89d7238/a5337f8）并从 #76 头派发 rc.59（run 44385767337，完整栈：Program 输出、成对备份恢复、LAN 入口、设备操作、旧数据导入）。NSIS 安装态门禁在 rc.58 因先前失败被跳过，LAN 与成对恢复仍无 Windows 证据。/ rc.58 proved the RTMP publish chain works: the gate reached program-publish-disconnect with RTSP AAC read-back, an answering WHEP endpoint and a publish- disconnect plus restart on fresh ports; the only failure was a single post-recovery ffprobe against a relay path that is readable only after a keyframe, fixed in 92238a3 with the same bounded retry plus a ten-frame requirement. The stack was rebased and rc.59 (run 44385767337) was dispatched from the full stack head a5337f8. The NSIS install gate was skipped in rc.58, so the LAN entry and paired restore still lack Windows evidence.
+- 证据：rc.58 receipt failurePhase program-publish-disconnect / lastCheckpoint program-publish-disconnect-reported; fix commit 92238a3; rc.59 run 44385767337 sha a5337f8
+- 源码：`a0377c781ccaa725ba32c604c09c72fd4b2e52da`
 ## #243 · 2026-11-19T03:28:28+08:00 · log
 
 - Agent：`deepseek-v51-20261118-01`；任务：`V51-008`

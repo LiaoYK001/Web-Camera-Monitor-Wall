@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
-  "revision": 243,
-  "updated_at": "2026-11-19T03:28:28+08:00",
+  "revision": 245,
+  "updated_at": "2026-11-19T04:02:29+08:00",
   "project": "monitor_wall_czl",
   "baseline_revision": "24fd012ea8ee130ffb9d42473c489d708c9326c3",
   "summary": "当前继续Windows x64 v5.1完整修复与正式交付准备；用户主要Windows验证使用v5.1。rc.1发行/基础门禁属实，但审查复现迁移/更新缺陷，完整声音、合成输出、远端/离线等仍需开发；不以历史候选或版本号认定完整通过。v4.5/rc.1公开字节与暂停平台不变。",
@@ -1296,12 +1296,14 @@
         "本机用同一 v1.18.2 二进制复现：改前 ERR+exit1，改后 API/RTSP/WHIP 就绪且 WHIP 返回真实握手错误；test_build_contract.py 46 项通过；提交 ea2d704（PR #67）",
         "run 44373450534 conclusion=cancelled；run 44374662264 in_progress sha 738a62a",
         "PR #67 head b003ae7; run 44374662264 in progress (rc.57, sha 738a62a)",
-        "run 44374662264 artifact native-product-integration-receipts-5.1.0-rc.57 (failurePhase program-streaming, streamError stream-service-unavailable); rc.58 run 44380596633 sha 99b6734"
+        "run 44374662264 artifact native-product-integration-receipts-5.1.0-rc.57 (failurePhase program-streaming, streamError stream-service-unavailable); rc.58 run 44380596633 sha 99b6734",
+        "rc.58 receipt failurePhase program-publish-disconnect / lastCheckpoint program-publish-disconnect-reported; fix commit 92238a3; rc.59 run 44385767337 sha a5337f8",
+        "gh run 44385767337; native-host/scripts/migrate_legacy.py DATABASES; native-host/scripts/product_supervisor.py prepare()/recover_interrupted_restore(); native-host/scripts/product_lan.py plan(); .github/workflows/windows-obs-native-host.yaml timeout-minutes"
       ],
       "blocker": "",
       "next_step": "rc.52 结果决定下一步：若停滞输入名与逐路包数证明回环仍流动而 Program 专用输入零帧，则需在宿主做有界媒体重开；否则按 #67→#70→#71→#74 顺序合并并复跑 rc.53。",
-      "updated_at": "2026-11-19T03:28:28+08:00",
-      "last_note": "rc.57 回执直接证实两处根因：中继现已就绪并分配动态端口（streamPublishUrl=127.0.0.1:58303、streamPlaybackUrl=rtsp://127.0.0.1:58302/program，不再出现 mediamtx-timeout），但 streamError=stream-service-unavailable，因为固定 Windows OBS 构建的禁用插件清单含 obs-webrtc，whip_custom/whip_output 不存在。同一回执还证明默认总线 Program 录像真实可用：Program 20261118-191832.mp4 17,446,129 B、41 秒、mask=1、低于 600Hz RMS 1378.5、高于 660Hz RMS 908.8。已取消该 run（后续门禁必然在同一处失败）并从 #74 头 99b6734 派发 rc.58（run 44380596633，complete=true、soak=0、measure_obs_baseline=true、upgrade_previous=true），验证 RTMP 发布、成对备份恢复与 LAN 入口。/ The rc.57 receipt proves both root causes: the relay is now ready with dynamic ports (publish 127.0.0.1:58303, playback rtsp 58302, no mediamtx-timeout) while streamError=stream-service-unavailable because the pinned Windows OBS build disables obs-webrtc, so whip_custom/whip_output do not exist. The same receipt also shows a real default-bus Program MP4 (17,446,129 bytes, 41 s, mask 1, 1378.5 below 600 Hz and 908.8 above 660 Hz). Cancelled that run and dispatched rc.58 (run 44380596633) from #74 head 99b6734 to validate RTMP publishing, paired backup restore and the LAN entry."
+      "updated_at": "2026-11-19T04:02:29+08:00",
+      "last_note": "rc.59 已派发并处于 OBS 编译阶段（run 44385767337，sha a5337f8，含 #67→#76 全栈）；等待期间对四个尚无 Windows 证据的安装态门禁做了静态预审：导入入口文本断言由 stage_product_runtime.py 复制的 migrate-legacy.cmd 满足（含 %LOCALAPPDATA%\\WebOBS\\Native\\config、--confirm-stopped、--include-backup-key）；会话库 config/auth-sessions.db 不在 migrate_legacy 的 DATABASES 列表内，因此旧 cookie 在导入档必为 401；supervisor.prepare 在持有独占锁后、创建 config/native-profile 之前调用 recover_interrupted_restore，且 encrypted_backup 仅在 SodiumStream 实例化时才加载 libsodium；无私网 IPv4 时 plan 仍 enabled=true 且 start_lan_switch 无条件启动，故 LAN 降级分支可成立；complete 且 soak=0 时 job 超时 180 分钟。 / rc.59 dispatched (run 44385767337, sha a5337f8, full #67→#76 stack) and compiling OBS; while waiting I statically pre-reviewed the four install-gate suites that still lack Windows evidence."
     },
     {
       "id": "COORD-008",
@@ -4279,6 +4281,30 @@
         "run 44374662264 artifact native-product-integration-receipts-5.1.0-rc.57 (failurePhase program-streaming, streamError stream-service-unavailable); rc.58 run 44380596633 sha 99b6734"
       ],
       "git_revision": "1c3875fada7c561e153a8e936a01919f8df0d5ab"
+    },
+    {
+      "sequence": 244,
+      "at": "2026-11-19T03:57:12+08:00",
+      "agent": "deepseek-v51-20261118-01",
+      "task": "V51-008",
+      "action": "log",
+      "note": "rc.58（run 44380596633，sha 99b6734）证明 RTMP 发布链路可用：门禁推进到 program-publish-disconnect，Program 以回环 RTMP 发布、RTSP 回读双音 AAC、WHEP 端点应答、杀掉私有中继后报告 publish- 断开并在新端口重启；唯一失败为 recovered publisher is not readable by a real consumer，原因是恢复后只单次 ffprobe，而中继路径需等关键帧才 ready（首次推流本来就有 30 秒有界重试）。已在 92238a3 让恢复后的播放 URL 走同一有界重试并要求至少 10 个解码帧（回执新增 publishReplayFrameCount），未放宽任何断言。随后把 #70→#76 重新变基（73abac5/543cae6/9bb6962/89d7238/a5337f8）并从 #76 头派发 rc.59（run 44385767337，完整栈：Program 输出、成对备份恢复、LAN 入口、设备操作、旧数据导入）。NSIS 安装态门禁在 rc.58 因先前失败被跳过，LAN 与成对恢复仍无 Windows 证据。/ rc.58 proved the RTMP publish chain works: the gate reached program-publish-disconnect with RTSP AAC read-back, an answering WHEP endpoint and a publish- disconnect plus restart on fresh ports; the only failure was a single post-recovery ffprobe against a relay path that is readable only after a keyframe, fixed in 92238a3 with the same bounded retry plus a ten-frame requirement. The stack was rebased and rc.59 (run 44385767337) was dispatched from the full stack head a5337f8. The NSIS install gate was skipped in rc.58, so the LAN entry and paired restore still lack Windows evidence.",
+      "evidence": [
+        "rc.58 receipt failurePhase program-publish-disconnect / lastCheckpoint program-publish-disconnect-reported; fix commit 92238a3; rc.59 run 44385767337 sha a5337f8"
+      ],
+      "git_revision": "a0377c781ccaa725ba32c604c09c72fd4b2e52da"
+    },
+    {
+      "sequence": 245,
+      "at": "2026-11-19T04:02:29+08:00",
+      "agent": "deepseek-v51-20261118-01",
+      "task": "V51-008",
+      "action": "log",
+      "note": "rc.59 已派发并处于 OBS 编译阶段（run 44385767337，sha a5337f8，含 #67→#76 全栈）；等待期间对四个尚无 Windows 证据的安装态门禁做了静态预审：导入入口文本断言由 stage_product_runtime.py 复制的 migrate-legacy.cmd 满足（含 %LOCALAPPDATA%\\WebOBS\\Native\\config、--confirm-stopped、--include-backup-key）；会话库 config/auth-sessions.db 不在 migrate_legacy 的 DATABASES 列表内，因此旧 cookie 在导入档必为 401；supervisor.prepare 在持有独占锁后、创建 config/native-profile 之前调用 recover_interrupted_restore，且 encrypted_backup 仅在 SodiumStream 实例化时才加载 libsodium；无私网 IPv4 时 plan 仍 enabled=true 且 start_lan_switch 无条件启动，故 LAN 降级分支可成立；complete 且 soak=0 时 job 超时 180 分钟。 / rc.59 dispatched (run 44385767337, sha a5337f8, full #67→#76 stack) and compiling OBS; while waiting I statically pre-reviewed the four install-gate suites that still lack Windows evidence.",
+      "evidence": [
+        "gh run 44385767337; native-host/scripts/migrate_legacy.py DATABASES; native-host/scripts/product_supervisor.py prepare()/recover_interrupted_restore(); native-host/scripts/product_lan.py plan(); .github/workflows/windows-obs-native-host.yaml timeout-minutes"
+      ],
+      "git_revision": "a0377c781ccaa725ba32c604c09c72fd4b2e52da"
     }
   ]
 }

@@ -1,7 +1,7 @@
 # 当前交接 / Current handoff
 
 > 自动生成，勿手改；唯一数据源为 [state.json](state.json)。
-> 快照版本 243 · 2026-11-19T03:28:28+08:00（UTC+08）
+> 快照版本 245 · 2026-11-19T04:02:29+08:00（UTC+08）
 
 [总览](STATUS.md) · [路线图](ROADMAP.md) · [任务](TASKS.md) · [日志](DEVLOG.md) · [交接](HANDOFF.md) · [协作规则](PLAYBOOK.md)
 
@@ -22,6 +22,6 @@
 
 ## 最近一次同步
 
-rc.57 回执直接证实两处根因：中继现已就绪并分配动态端口（streamPublishUrl=127.0.0.1:58303、streamPlaybackUrl=rtsp://127.0.0.1:58302/program，不再出现 mediamtx-timeout），但 streamError=stream-service-unavailable，因为固定 Windows OBS 构建的禁用插件清单含 obs-webrtc，whip_custom/whip_output 不存在。同一回执还证明默认总线 Program 录像真实可用：Program 20261118-191832.mp4 17,446,129 B、41 秒、mask=1、低于 600Hz RMS 1378.5、高于 660Hz RMS 908.8。已取消该 run（后续门禁必然在同一处失败）并从 #74 头 99b6734 派发 rc.58（run 44380596633，complete=true、soak=0、measure_obs_baseline=true、upgrade_previous=true），验证 RTMP 发布、成对备份恢复与 LAN 入口。/ The rc.57 receipt proves both root causes: the relay is now ready with dynamic ports (publish 127.0.0.1:58303, playback rtsp 58302, no mediamtx-timeout) while streamError=stream-service-unavailable because the pinned Windows OBS build disables obs-webrtc, so whip_custom/whip_output do not exist. The same receipt also shows a real default-bus Program MP4 (17,446,129 bytes, 41 s, mask 1, 1378.5 below 600 Hz and 908.8 above 660 Hz). Cancelled that run and dispatched rc.58 (run 44380596633) from #74 head 99b6734 to validate RTMP publishing, paired backup restore and the LAN entry.
+rc.59 已派发并处于 OBS 编译阶段（run 44385767337，sha a5337f8，含 #67→#76 全栈）；等待期间对四个尚无 Windows 证据的安装态门禁做了静态预审：导入入口文本断言由 stage_product_runtime.py 复制的 migrate-legacy.cmd 满足（含 %LOCALAPPDATA%\WebOBS\Native\config、--confirm-stopped、--include-backup-key）；会话库 config/auth-sessions.db 不在 migrate_legacy 的 DATABASES 列表内，因此旧 cookie 在导入档必为 401；supervisor.prepare 在持有独占锁后、创建 config/native-profile 之前调用 recover_interrupted_restore，且 encrypted_backup 仅在 SodiumStream 实例化时才加载 libsodium；无私网 IPv4 时 plan 仍 enabled=true 且 start_lan_switch 无条件启动，故 LAN 降级分支可成立；complete 且 soak=0 时 job 超时 180 分钟。 / rc.59 dispatched (run 44385767337, sha a5337f8, full #67→#76 stack) and compiling OBS; while waiting I statically pre-reviewed the four install-gate suites that still lack Windows evidence.
 
 以任务中的验收条件决定完成；没有 Windows/硬件/发布证据时保持对应事项开放。
