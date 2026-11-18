@@ -222,7 +222,7 @@ def exercise(runtime, report):
                 "the status file did not publish the private switch port"
             assert published.get("lan", {}).get("enabled") is True, \
                 "the status file did not report the enabled LAN entry"
-            assert published.get("lan", {}).get("urls") == receipt.get("urls") or [], \
+            assert published.get("lan", {}).get("urls") == (receipt.get("urls") or []), \
                 "the status file and the switch receipt disagree about the published URLs"
             evidence["checks"].append("lan-receipt-published-for-support-diagnostics")
 
