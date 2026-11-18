@@ -231,9 +231,10 @@ def exercise():
         assert policy.tag_for_version(stable_version) == "v5.1"
         assert policy.tag_for_version("5.1.2") == "v5.1.2"
         assert policy.tag_for_version(candidate_version) == "v5.1.0-rc.26"
-        assert module.read_acceptance(receipt, stable_version,
-                                      "LiaoYK001/Web-Camera-Monitor-Wall",
-                                      REVISION).startswith("docs/qualification/")
+        accepted = module.read_acceptance(policy_module, receipt, stable_version,
+                                          "LiaoYK001/Web-Camera-Monitor-Wall", REVISION)
+        assert accepted["qualificationReceipt"].startswith("docs/qualification/")
+        assert accepted["legacyUpgradeQualified"] is True
     print("PASS candidate Tags come from the shared policy; stable publication requires "
           "recorded acceptance and a reviewed main revision")
 

@@ -28,10 +28,6 @@ class PublishError(RuntimeError):
     pass
 
 
-ACCEPTANCE_KEYS = ("productIntegration", "installationQualified",
-                   "legacyUpgradeQualified", "fullFeatureMigrationQualified")
-
-
 def load_release_policy():
     """Load the single native release policy next to this script.
 
@@ -46,34 +42,13 @@ def load_release_policy():
     return module
 
 
-def read_acceptance(path: Path, version: str, repository: str, source_revision: str) -> str:
-    """Return the recorded receipt location after binding it to this release.
-
-    The receipt lives outside Git. A stable publication is only accepted when
-    the actual installation, legacy upgrade, full-feature migration and product
-    integration acceptance were all recorded for this version, repository and
-    source revision.
-    """
+def read_acceptance(policy, path: Path, version: str, repository: str, source_revision: str) -> dict:
+    """Delegate to the shared policy so one acceptance contract gates every tool."""
     try:
-        payload = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, ValueError) as error:
-        raise PublishError(f"acceptance receipt is unreadable: {error}") from error
-    if not isinstance(payload, dict):
-        raise PublishError("acceptance receipt must be a JSON object")
-    if payload.get("version") != version:
-        raise PublishError("acceptance receipt belongs to another version")
-    if payload.get("repository") != repository:
-        raise PublishError("acceptance receipt belongs to another repository")
-    recorded = str(payload.get("sourceRevision") or "").lower()
-    if recorded and recorded != source_revision:
-        raise PublishError("acceptance receipt belongs to another source revision")
-    missing = [key for key in ACCEPTANCE_KEYS if payload.get(key) is not True]
-    if missing:
-        raise PublishError("acceptance receipt is missing recorded gates: " + ", ".join(missing))
-    receipt = payload.get("qualificationReceipt")
-    if not isinstance(receipt, str) or not 12 <= len(receipt) <= 512:
-        raise PublishError("acceptance receipt needs a bounded qualificationReceipt location")
-    return receipt
+        return policy.read_acceptance(path, version=version, repository=repository,
+                                      source_revision=source_revision)
+    except ValueError as error:
+        raise PublishError(str(error)) from error
 
 
 def require_main_ancestry(runner, repository: str, source_revision: str) -> str:
@@ -101,12 +76,11 @@ def release_tag(policy, version: str, *, final: bool, acceptance: Path | None,
         if acceptance is None:
             raise PublishError(
                 "stable publication requires --acceptance with recorded Windows acceptance")
-        receipt = read_acceptance(acceptance.resolve(strict=True), version, repository, source_revision)
-        identity = {"version": version, "productIntegration": True, "installationQualified": True,
-                    "legacyUpgradeQualified": True, "fullFeatureMigrationQualified": True}
+        identity = {"version": version}
         try:
-            policy.configure_stable(identity, qualification_receipt=receipt)
-            return identity["releaseTag"], receipt
+            applied = policy.apply_acceptance(identity, acceptance.resolve(strict=True),
+                                             repository=repository, source_revision=source_revision)
+            return applied["releaseTag"], applied["qualificationReceipt"]
         except ValueError as error:
             raise PublishError(f"stable identity rejected: {error}") from error
     try:
