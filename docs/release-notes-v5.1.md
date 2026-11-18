@@ -28,7 +28,7 @@ Every value below comes from one Windows run and is bound at freeze. The stable 
 
 安装目录 / install directory: `%LOCALAPPDATA%\Programs\WebOBS Wall`。私有数据 / private data: `%LOCALAPPDATA%\WebOBS\Native`（账号配置、OBS profile、录像索引、密钥、备份、支持包）。卸载默认保留该数据目录、录像与未知文件，只删除已验证的包内文件。Uninstall keeps that private data directory, recordings and unknown files and removes only verified packaged files.
 
-原生窗口控制板提供：开始原生监看、保存布局、刷新设备目录、退出账号、已保存 Studio 场景监看、固定场景投影、Program 投影、**录制 Program**、**推流 Program**、输出健康状态、**生成支持包**、**开启局域网共享**及其状态；关窗进入托盘，托盘重显不会创建第二个宿主。
+原生窗口控制板提供：开始原生监看、保存布局、刷新设备目录、退出账号、已保存 Studio 场景监看、固定场景投影、Program 投影、**录制 Program**、**推流 Program**、输出健康状态、**生成支持包**、**开启局域网共享**及其状态；关窗在有活动 Program 输出时进入托盘、托盘重显复用同一宿主（源码已接线；CI runner 没有系统托盘，这一条需要目标机验收）。
 The single control panel provides watch, save layout, refresh catalog, logout, saved Studio scene watch, fixed projectors, Program projector, **Record Program**, **Stream Program**, output health, **Generate support bundle** and **Enable LAN sharing**; closing hides to the tray and re-showing reuses the same host.
 
 ## 相对 v5.0.0-rc.1 新增 / Added since v5.0.0-rc.1
