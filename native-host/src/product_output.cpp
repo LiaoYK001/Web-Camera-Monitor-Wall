@@ -314,7 +314,9 @@ struct ProductProgramOutputImpl {
 		recording_error.clear();
 		recording_ready = false;
 		if (!QDir().mkpath(recordings_root)) {
-			error = "recording-directory-failed";
+			// The status receipt must carry the same reason the UI shows; a
+			// silently refused start would look like an idle product.
+			recording_error = error = "recording-directory-failed";
 			return false;
 		}
 		const QString stamp = QDateTime::currentDateTime().toString("yyyyMMdd-HHmmss");
@@ -331,7 +333,7 @@ struct ProductProgramOutputImpl {
 		obs_encoder_t *video = obs_video_encoder_create("obs_x264", "WebOBS Program recording x264",
 			video_settings.get(), nullptr);
 		if (!video) {
-			error = "recording-encoder-unavailable";
+			recording_error = error = "recording-encoder-unavailable";
 			return false;
 		}
 		recording_video.reset(video);
@@ -364,7 +366,7 @@ struct ProductProgramOutputImpl {
 			if (!audio) {
 				obs_data_release(audio_settings);
 				release_recording();
-				error = "recording-audio-encoder-unavailable";
+				recording_error = error = "recording-audio-encoder-unavailable";
 				return false;
 			}
 			obs_encoder_set_audio(audio, obs_get_audio());
@@ -398,6 +400,39 @@ struct ProductProgramOutputImpl {
 		recording = false;
 		QFile::remove(temporary_path);
 		recording_error = error;
+	}
+	// Called from the observer path. A user-initiated stop already finalizes the
+	// artifact; anything else is an unexpected loss of the OBS output or of the
+	// private MediaMTX relay, and the product must stop advertising an output
+	// that can no longer deliver frames.
+	void refresh()
+	{
+		if (recording && (!recording_output.value || !obs_output_active(recording_output.value))) {
+			const QString detail = bounded_error(obs_output_get_last_error(recording_output.value));
+			remove_partial(detail.isEmpty() ? "recording-output-lost"
+				: "recording-output-lost: " + detail);
+			// No finished artifact exists, so the receipt must not name one.
+			final_path.clear();
+			recording_bytes = 0;
+			return;
+		}
+		if (!streaming)
+			return;
+		const bool relay_running = media_mtx.state() == QProcess::Running;
+		const bool output_live = whip_output.value && obs_output_active(whip_output.value) &&
+			!obs_output_reconnecting(whip_output.value);
+		if (relay_running && output_live)
+			return;
+		const QString detail = whip_output.value ?
+			bounded_error(obs_output_get_last_error(whip_output.value)) : QString();
+		if (!relay_running)
+			stream_error = detail.isEmpty() ? "whip-relay-exited" : "whip-relay-exited: " + detail;
+		else
+			stream_error = detail.isEmpty() ? "whip-output-lost" : "whip-output-lost: " + detail;
+		release_streaming();
+		streaming = false;
+		streaming_tracks = 0;
+		stop_media_mtx();
 	}
 	bool stop_recording(QString &error)
 	{
@@ -608,6 +643,7 @@ void ProductProgramOutput::shutdown()
 
 ProductProgramOutputStatus ProductProgramOutput::status() const
 {
+	impl_->refresh();
 	ProductProgramOutputStatus value;
 	value.recording = impl_->recording;
 	value.recording_ready = impl_->recording_ready;
